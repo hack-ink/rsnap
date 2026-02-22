@@ -11,10 +11,7 @@ pub fn capture_primary_display_to_cache<R>(app: &AppHandle<R>) -> Result<PathBuf
 where
 	R: Runtime,
 {
-	let cache_dir = app
-		.path()
-		.app_cache_dir()
-		.map_err(|err| format!("Failed to resolve app cache directory: {err}"))?;
+	let cache_dir = app_cache_path(app)?;
 	let monitors = xcap::Monitor::all()
 		.map_err(|err| format!("Unable to enumerate monitors: {err}"))?
 		.into_iter()
@@ -38,6 +35,24 @@ where
 		.map_err(|err| format!("Failed to save image to {}: {err}", output_path.display()))?;
 
 	Ok(output_path)
+}
+
+pub fn app_cache_path<R>(app: &AppHandle<R>) -> Result<PathBuf, String>
+where
+	R: Runtime,
+{
+	app.path()
+		.app_cache_dir()
+		.map_err(|err| format!("Failed to resolve app cache directory: {err}"))
+}
+
+pub fn last_capture_path<R>(app: &AppHandle<R>) -> Result<PathBuf, String>
+where
+	R: Runtime,
+{
+	let cache_dir = app_cache_path(app)?;
+
+	Ok(resolve_output_path(&cache_dir))
 }
 
 fn resolve_output_path(cache_dir: &Path) -> PathBuf {
