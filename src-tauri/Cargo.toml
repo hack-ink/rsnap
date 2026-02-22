@@ -13,6 +13,10 @@ version.workspace     = true
 all-features = true
 
 [dependencies]
+arboard                      = "3"
+base64                       = "0.22"
+dirs                         = "6"
+image                        = "0.25"
 tauri                        = { version = "2", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 xcap                         = "0.3"
