@@ -1,9 +1,13 @@
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-
 mod capture;
 mod tray;
 
-fn handle_capture_now<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+use tauri::{AppHandle, Runtime};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+fn handle_capture_now<R>(app: &AppHandle<R>)
+where
+	R: Runtime,
+{
 	match capture::capture_primary_display_to_cache(app) {
 		Ok(path) => println!("Capture saved to {}", path.display()),
 		Err(err) => eprintln!("Capture failed: {err}"),
@@ -17,11 +21,13 @@ fn main() {
 		.plugin(tauri_plugin_global_shortcut::Builder::new().build())
 		.setup(move |app| {
 			tray::setup(app)?;
+
 			app.global_shortcut().on_shortcut(default_shortcut, move |_app, _, event| {
 				if event.state == ShortcutState::Pressed {
 					handle_capture_now(_app);
 				}
 			})?;
+
 			Ok(())
 		})
 		.on_menu_event(|app, event| match event.id().as_ref() {
