@@ -6,7 +6,6 @@ use std::{
 
 use arboard::{Clipboard, ImageData};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use image::load_from_memory;
 
 pub fn save_png_base64_to_downloads(
 	file_name: String,
@@ -21,6 +20,7 @@ pub fn save_png_base64_to_downloads(
 	})?;
 
 	let output_path = output_path_for_downloads(&downloads_dir, file_name)?;
+
 	fs::write(&output_path, bytes)
 		.map_err(|err| format!("Failed to save png to {}: {err}", output_path.display()))?;
 
@@ -29,19 +29,18 @@ pub fn save_png_base64_to_downloads(
 
 pub fn copy_png_base64(png_base64: String) -> Result<(), String> {
 	let bytes = decode_png_base64(png_base64)?;
-	let image = load_from_memory(&bytes).map_err(|err| format!("Failed to decode PNG: {err}"))?;
+	let image =
+		image::load_from_memory(&bytes).map_err(|err| format!("Failed to decode PNG: {err}"))?;
 	let image = image.to_rgba8();
 	let width = image.width();
 	let height = image.height();
-
-	let mut clipboard =
-		Clipboard::new().map_err(|err| format!("Failed to open clipboard: {err}"))?;
-
 	let image = ImageData {
 		width: width as usize,
 		height: height as usize,
 		bytes: Cow::Owned(image.into_raw()),
 	};
+	let mut clipboard =
+		Clipboard::new().map_err(|err| format!("Failed to open clipboard: {err}"))?;
 
 	clipboard
 		.set_image(image)
@@ -63,12 +62,15 @@ fn output_path_for_downloads(downloads_dir: &Path, file_name: String) -> Result<
 	}
 
 	let path = downloads_dir.join(&file_name);
+
 	validate_png_extension(&path)?;
+
 	Ok(path)
 }
 
-fn validate_png_extension(path: &std::path::Path) -> Result<(), String> {
+fn validate_png_extension(path: &Path) -> Result<(), String> {
 	let ext = path.extension().and_then(|value| value.to_str());
+
 	match ext {
 		Some("png") => Ok(()),
 		Some("PNG") => Ok(()),
