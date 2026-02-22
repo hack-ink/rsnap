@@ -177,16 +177,16 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:app:default`\n- `core:event:default`\n- `core:image:default`\n- `core:menu:default`\n- `core:path:default`\n- `core:resources:default`\n- `core:tray:default`\n- `core:webview:default`\n- `core:window:default`",
+          "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",
-          "markdownDescription": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:app:default`\n- `core:event:default`\n- `core:image:default`\n- `core:menu:default`\n- `core:path:default`\n- `core:resources:default`\n- `core:tray:default`\n- `core:webview:default`\n- `core:window:default`"
+          "markdownDescription": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`"
         },
         {
-          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-bundle-type`\n- `allow-identifier`\n- `allow-name`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-tauri-version`\n- `allow-version`",
+          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-version`\n- `allow-name`\n- `allow-tauri-version`\n- `allow-identifier`\n- `allow-bundle-type`\n- `allow-register-listener`\n- `allow-remove-listener`",
           "type": "string",
           "const": "core:app:default",
-          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-bundle-type`\n- `allow-identifier`\n- `allow-name`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-tauri-version`\n- `allow-version`"
+          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-version`\n- `allow-name`\n- `allow-tauri-version`\n- `allow-identifier`\n- `allow-bundle-type`\n- `allow-register-listener`\n- `allow-remove-listener`"
         },
         {
           "description": "Enables the app_hide command without any pre-configured scope.",
@@ -357,10 +357,10 @@
           "markdownDescription": "Denies the version command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-emit`\n- `allow-emit-to`\n- `allow-listen`\n- `allow-unlisten`",
+          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-listen`\n- `allow-unlisten`\n- `allow-emit`\n- `allow-emit-to`",
           "type": "string",
           "const": "core:event:default",
-          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-emit`\n- `allow-emit-to`\n- `allow-listen`\n- `allow-unlisten`"
+          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-listen`\n- `allow-unlisten`\n- `allow-emit`\n- `allow-emit-to`"
         },
         {
           "description": "Enables the emit command without any pre-configured scope.",
@@ -411,10 +411,10 @@
           "markdownDescription": "Denies the unlisten command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-from-bytes`\n- `allow-from-path`\n- `allow-new`\n- `allow-rgba`\n- `allow-size`",
+          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-from-bytes`\n- `allow-from-path`\n- `allow-rgba`\n- `allow-size`",
           "type": "string",
           "const": "core:image:default",
-          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-from-bytes`\n- `allow-from-path`\n- `allow-new`\n- `allow-rgba`\n- `allow-size`"
+          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-from-bytes`\n- `allow-from-path`\n- `allow-rgba`\n- `allow-size`"
         },
         {
           "description": "Enables the from_bytes command without any pre-configured scope.",
@@ -477,10 +477,10 @@
           "markdownDescription": "Denies the size command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-append`\n- `allow-create-default`\n- `allow-get`\n- `allow-insert`\n- `allow-is-checked`\n- `allow-is-enabled`\n- `allow-items`\n- `allow-new`\n- `allow-popup`\n- `allow-prepend`\n- `allow-remove`\n- `allow-remove-at`\n- `allow-set-accelerator`\n- `allow-set-as-app-menu`\n- `allow-set-as-help-menu-for-nsapp`\n- `allow-set-as-window-menu`\n- `allow-set-as-windows-menu-for-nsapp`\n- `allow-set-checked`\n- `allow-set-enabled`\n- `allow-set-icon`\n- `allow-set-text`\n- `allow-text`",
+          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-append`\n- `allow-prepend`\n- `allow-insert`\n- `allow-remove`\n- `allow-remove-at`\n- `allow-items`\n- `allow-get`\n- `allow-popup`\n- `allow-create-default`\n- `allow-set-as-app-menu`\n- `allow-set-as-window-menu`\n- `allow-text`\n- `allow-set-text`\n- `allow-is-enabled`\n- `allow-set-enabled`\n- `allow-set-accelerator`\n- `allow-set-as-windows-menu-for-nsapp`\n- `allow-set-as-help-menu-for-nsapp`\n- `allow-is-checked`\n- `allow-set-checked`\n- `allow-set-icon`",
           "type": "string",
           "const": "core:menu:default",
-          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-append`\n- `allow-create-default`\n- `allow-get`\n- `allow-insert`\n- `allow-is-checked`\n- `allow-is-enabled`\n- `allow-items`\n- `allow-new`\n- `allow-popup`\n- `allow-prepend`\n- `allow-remove`\n- `allow-remove-at`\n- `allow-set-accelerator`\n- `allow-set-as-app-menu`\n- `allow-set-as-help-menu-for-nsapp`\n- `allow-set-as-window-menu`\n- `allow-set-as-windows-menu-for-nsapp`\n- `allow-set-checked`\n- `allow-set-enabled`\n- `allow-set-icon`\n- `allow-set-text`\n- `allow-text`"
+          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-append`\n- `allow-prepend`\n- `allow-insert`\n- `allow-remove`\n- `allow-remove-at`\n- `allow-items`\n- `allow-get`\n- `allow-popup`\n- `allow-create-default`\n- `allow-set-as-app-menu`\n- `allow-set-as-window-menu`\n- `allow-text`\n- `allow-set-text`\n- `allow-is-enabled`\n- `allow-set-enabled`\n- `allow-set-accelerator`\n- `allow-set-as-windows-menu-for-nsapp`\n- `allow-set-as-help-menu-for-nsapp`\n- `allow-is-checked`\n- `allow-set-checked`\n- `allow-set-icon`"
         },
         {
           "description": "Enables the append command without any pre-configured scope.",
@@ -747,10 +747,10 @@
           "markdownDescription": "Denies the text command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-basename`\n- `allow-dirname`\n- `allow-extname`\n- `allow-is-absolute`\n- `allow-join`\n- `allow-normalize`\n- `allow-resolve`\n- `allow-resolve-directory`",
+          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-resolve-directory`\n- `allow-resolve`\n- `allow-normalize`\n- `allow-join`\n- `allow-dirname`\n- `allow-extname`\n- `allow-basename`\n- `allow-is-absolute`",
           "type": "string",
           "const": "core:path:default",
-          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-basename`\n- `allow-dirname`\n- `allow-extname`\n- `allow-is-absolute`\n- `allow-join`\n- `allow-normalize`\n- `allow-resolve`\n- `allow-resolve-directory`"
+          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-resolve-directory`\n- `allow-resolve`\n- `allow-normalize`\n- `allow-join`\n- `allow-dirname`\n- `allow-extname`\n- `allow-basename`\n- `allow-is-absolute`"
         },
         {
           "description": "Enables the basename command without any pre-configured scope.",
@@ -867,10 +867,10 @@
           "markdownDescription": "Denies the close command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-get-by-id`\n- `allow-new`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-icon-as-template`\n- `allow-set-menu`\n- `allow-set-show-menu-on-left-click`\n- `allow-set-temp-dir-path`\n- `allow-set-title`\n- `allow-set-tooltip`\n- `allow-set-visible`",
+          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-get-by-id`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-menu`\n- `allow-set-tooltip`\n- `allow-set-title`\n- `allow-set-visible`\n- `allow-set-temp-dir-path`\n- `allow-set-icon-as-template`\n- `allow-set-show-menu-on-left-click`",
           "type": "string",
           "const": "core:tray:default",
-          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-get-by-id`\n- `allow-new`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-icon-as-template`\n- `allow-set-menu`\n- `allow-set-show-menu-on-left-click`\n- `allow-set-temp-dir-path`\n- `allow-set-title`\n- `allow-set-tooltip`\n- `allow-set-visible`"
+          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-get-by-id`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-menu`\n- `allow-set-tooltip`\n- `allow-set-title`\n- `allow-set-visible`\n- `allow-set-temp-dir-path`\n- `allow-set-icon-as-template`\n- `allow-set-show-menu-on-left-click`"
         },
         {
           "description": "Enables the get_by_id command without any pre-configured scope.",
@@ -1005,10 +1005,10 @@
           "markdownDescription": "Denies the set_visible command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-webviews`\n- `allow-internal-toggle-devtools`\n- `allow-webview-position`\n- `allow-webview-size`",
+          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-webviews`\n- `allow-webview-position`\n- `allow-webview-size`\n- `allow-internal-toggle-devtools`",
           "type": "string",
           "const": "core:webview:default",
-          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-webviews`\n- `allow-internal-toggle-devtools`\n- `allow-webview-position`\n- `allow-webview-size`"
+          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-webviews`\n- `allow-webview-position`\n- `allow-webview-size`\n- `allow-internal-toggle-devtools`"
         },
         {
           "description": "Enables the clear_all_browsing_data command without any pre-configured scope.",
@@ -1227,10 +1227,10 @@
           "markdownDescription": "Denies the webview_size command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-available-monitors`\n- `allow-current-monitor`\n- `allow-cursor-position`\n- `allow-get-all-windows`\n- `allow-inner-position`\n- `allow-inner-size`\n- `allow-internal-toggle-maximize`\n- `allow-is-always-on-top`\n- `allow-is-closable`\n- `allow-is-decorated`\n- `allow-is-enabled`\n- `allow-is-focused`\n- `allow-is-fullscreen`\n- `allow-is-maximizable`\n- `allow-is-maximized`\n- `allow-is-minimizable`\n- `allow-is-minimized`\n- `allow-is-resizable`\n- `allow-is-visible`\n- `allow-monitor-from-point`\n- `allow-outer-position`\n- `allow-outer-size`\n- `allow-primary-monitor`\n- `allow-scale-factor`\n- `allow-theme`\n- `allow-title`",
+          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-windows`\n- `allow-scale-factor`\n- `allow-inner-position`\n- `allow-outer-position`\n- `allow-inner-size`\n- `allow-outer-size`\n- `allow-is-fullscreen`\n- `allow-is-minimized`\n- `allow-is-maximized`\n- `allow-is-focused`\n- `allow-is-decorated`\n- `allow-is-resizable`\n- `allow-is-maximizable`\n- `allow-is-minimizable`\n- `allow-is-closable`\n- `allow-is-visible`\n- `allow-is-enabled`\n- `allow-title`\n- `allow-current-monitor`\n- `allow-primary-monitor`\n- `allow-monitor-from-point`\n- `allow-available-monitors`\n- `allow-cursor-position`\n- `allow-theme`\n- `allow-is-always-on-top`\n- `allow-internal-toggle-maximize`",
           "type": "string",
           "const": "core:window:default",
-          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-available-monitors`\n- `allow-current-monitor`\n- `allow-cursor-position`\n- `allow-get-all-windows`\n- `allow-inner-position`\n- `allow-inner-size`\n- `allow-internal-toggle-maximize`\n- `allow-is-always-on-top`\n- `allow-is-closable`\n- `allow-is-decorated`\n- `allow-is-enabled`\n- `allow-is-focused`\n- `allow-is-fullscreen`\n- `allow-is-maximizable`\n- `allow-is-maximized`\n- `allow-is-minimizable`\n- `allow-is-minimized`\n- `allow-is-resizable`\n- `allow-is-visible`\n- `allow-monitor-from-point`\n- `allow-outer-position`\n- `allow-outer-size`\n- `allow-primary-monitor`\n- `allow-scale-factor`\n- `allow-theme`\n- `allow-title`"
+          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-windows`\n- `allow-scale-factor`\n- `allow-inner-position`\n- `allow-outer-position`\n- `allow-inner-size`\n- `allow-outer-size`\n- `allow-is-fullscreen`\n- `allow-is-minimized`\n- `allow-is-maximized`\n- `allow-is-focused`\n- `allow-is-decorated`\n- `allow-is-resizable`\n- `allow-is-maximizable`\n- `allow-is-minimizable`\n- `allow-is-closable`\n- `allow-is-visible`\n- `allow-is-enabled`\n- `allow-title`\n- `allow-current-monitor`\n- `allow-primary-monitor`\n- `allow-monitor-from-point`\n- `allow-available-monitors`\n- `allow-cursor-position`\n- `allow-theme`\n- `allow-is-always-on-top`\n- `allow-internal-toggle-maximize`"
         },
         {
           "description": "Enables the available_monitors command without any pre-configured scope.",
