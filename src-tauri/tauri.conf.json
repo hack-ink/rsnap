@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "rsnap",
+  "version": "0.1.0",
+  "identifier": "com.hack-ink.rsnap",
+  "build": {
+    "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:5173"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "rsnap",
+        "width": 800,
+        "height": 600
+      }
+    ]
+  }
+}

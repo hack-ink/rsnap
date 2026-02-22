@@ -1,0 +1,20 @@
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  background: #f4f4f5;
+  color: #111827;
+}
+
+main {
+  text-align: center;
+}
+
+button {
+  padding: 0.6rem 1rem;
+  border: 1px solid #111827;
+  background: #fff;
+  color: #111827;
+}

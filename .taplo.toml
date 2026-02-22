@@ -3,6 +3,8 @@ exclude = [
 	".worktrees",
 	".worktrees/**",
 	"Makefile.toml",
+	"target",
+	"target/**",
 ]
 
 [formatting]
