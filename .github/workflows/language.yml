@@ -32,7 +32,14 @@ concurrency:
 jobs:
   rust:
     name: Rust checks
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Fetch latest code
         uses: actions/checkout@v6
@@ -56,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(curl -fsSL https://api.github.com/repos/hack-ink/vibe-style/releases/latest | grep -oE '"tag_name": "v[^"]+"' | cut -d'"' -f4)"
-          TARGET="x86_64-unknown-linux-gnu"
+          TARGET="$(rustc -vV | sed -n 's/^host: //p')"
           ASSET="vibe-style-${TARGET}-${VERSION}.tgz"
 
           curl -fsSLO "https://github.com/hack-ink/vibe-style/releases/download/${VERSION}/${ASSET}"
