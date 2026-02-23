@@ -96,19 +96,37 @@ jobs:
           curl -fsSL "${url}" -o "${tmp}/${asset}"
           mkdir -p "${tmp}/extract"
 
-          if [[ "${ext}" == "tgz" ]]; then
-            tar -xzf "${tmp}/${asset}" -C "${tmp}/extract"
-          else
-            tar -xf "${tmp}/${asset}" -C "${tmp}/extract"
-          fi
+          export ARCHIVE="${tmp}/${asset}"
+          export EXT="${ext}"
+          export DEST="${tmp}/extract"
+          python - <<'PY'
+          import os
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          archive = Path(os.environ["ARCHIVE"])
+          ext = os.environ["EXT"]
+          dest = Path(os.environ["DEST"])
+          dest.mkdir(parents=True, exist_ok=True)
+
+          if ext == "tgz":
+            with tarfile.open(archive, "r:gz") as tf:
+              tf.extractall(dest)
+          elif ext == "zip":
+            with zipfile.ZipFile(archive) as zf:
+              zf.extractall(dest)
+          else:
+            raise SystemExit(f"unsupported archive ext: {ext}")
+          PY
 
           install_dir="${RUNNER_TEMP}/vibe-style-bin"
           mkdir -p "${install_dir}"
 
-          extracted_dir="$(find "${tmp}/extract" -maxdepth 1 -type d -name "vibe-style-*-${tag}" -print -quit)"
+          extracted_dir="$(ls -d "${tmp}/extract"/vibe-style-*-"${tag}" 2>/dev/null | head -n 1 || true)"
           if [[ -z "${extracted_dir}" ]]; then
             echo "Could not find extracted vibe-style directory for tag ${tag}" >&2
-            find "${tmp}/extract" -maxdepth 2 -type f -print >&2
+            ls -la "${tmp}/extract" >&2 || true
             exit 1
           fi
 
