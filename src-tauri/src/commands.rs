@@ -43,15 +43,17 @@ pub fn capture_now_with_app<R>(app: &AppHandle<R>) -> Result<(), String>
 where
 	R: Runtime,
 {
-	ensure_screen_recording_permission()?;
-
 	match read_capture_selection_from_sidecar(app) {
 		Ok(selection) => match selection {
 			CaptureSelection::Cancel => return Ok(()),
 			CaptureSelection::Window { window_id } => {
+				ensure_screen_recording_permission()?;
+
 				capture::capture_window_to_cache(app, window_id)?;
 			},
 			CaptureSelection::Region { rect } => {
+				ensure_screen_recording_permission()?;
+
 				capture::capture_region_to_cache(
 					app,
 					capture::RectI32 {
@@ -65,11 +67,15 @@ where
 			CaptureSelection::Error { message } => {
 				eprintln!("Overlay sidecar error: {message}");
 
+				ensure_screen_recording_permission()?;
+
 				capture::capture_primary_display_to_cache(app)?;
 			},
 		},
 		Err(err) => {
 			eprintln!("Overlay sidecar failed; falling back to primary display: {err}");
+
+			ensure_screen_recording_permission()?;
 
 			capture::capture_primary_display_to_cache(app)?;
 		},
@@ -183,10 +189,17 @@ fn ensure_screen_recording_permission() -> Result<(), String> {
 	#[link(name = "CoreGraphics", kind = "framework")]
 	unsafe extern "C" {
 		fn CGPreflightScreenCaptureAccess() -> bool;
+
+		fn CGRequestScreenCaptureAccess() -> bool;
 	}
 
-	let ok = unsafe { CGPreflightScreenCaptureAccess() };
+	let mut ok = unsafe { CGPreflightScreenCaptureAccess() };
 
+	if !ok {
+		let _ = unsafe { CGRequestScreenCaptureAccess() };
+
+		ok = unsafe { CGPreflightScreenCaptureAccess() };
+	}
 	if ok {
 		Ok(())
 	} else {
@@ -220,7 +233,7 @@ fn read_capture_selection_from_sidecar<R>(app: &AppHandle<R>) -> Result<CaptureS
 where
 	R: Runtime,
 {
-	let timeout = Duration::from_secs(10);
+	let timeout = Duration::from_secs(10 * 60);
 	let candidates = overlay_sidecar_candidates(app)?;
 	let mut last_err = None;
 
@@ -295,6 +308,9 @@ where
 	if let Ok(resource_dir) = app.path().resource_dir() {
 		for name in &binary_names {
 			candidates.push(resource_dir.join(name));
+		}
+		for name in &binary_names {
+			candidates.push(resource_dir.join("bin").join(name));
 		}
 	}
 
