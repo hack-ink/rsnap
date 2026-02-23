@@ -10,6 +10,7 @@ use raw_window_handle::{
 	RawWindowHandle,
 };
 use softbuffer::{Context, Surface};
+#[cfg(not(target_os = "macos"))] use winit::window::Fullscreen;
 use winit::{
 	application::ApplicationHandler,
 	dpi::{LogicalPosition, PhysicalPosition, PhysicalSize},
@@ -17,7 +18,7 @@ use winit::{
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
 	keyboard::{Key, NamedKey},
 	monitor::MonitorHandle,
-	window::{Fullscreen, WindowId, WindowLevel},
+	window::{WindowId, WindowLevel},
 };
 
 use rsnap_overlay_protocol::{OverlayOutput, Point, Rect};
@@ -47,15 +48,37 @@ impl App {
 
 		for monitor in monitors {
 			let origin = monitor_origin(&monitor);
-			let attrs = winit::window::Window::default_attributes()
+			let mut attrs = winit::window::Window::default_attributes()
 				.with_title("rsnap-overlay")
 				.with_decorations(false)
 				.with_resizable(false)
 				.with_transparent(true)
-				.with_window_level(WindowLevel::AlwaysOnTop)
-				.with_inner_size(PhysicalSize::new(monitor.size().width, monitor.size().height))
-				.with_position(PhysicalPosition::new(monitor.position().x, monitor.position().y))
-				.with_fullscreen(Some(Fullscreen::Borderless(Some(monitor))));
+				.with_window_level(WindowLevel::AlwaysOnTop);
+
+			#[cfg(target_os = "macos")]
+			{
+				// On macOS, using `Fullscreen::Borderless` makes the overlay behave like a
+				// dedicated full-screen Space, which is not the desired UX. Instead, keep a
+				// normal borderless window sized to the monitor and rely on window level +
+				// collection behavior to show above other apps.
+				let scale_factor = monitor.scale_factor();
+				let position: LogicalPosition<f64> =
+					monitor.position().to_logical::<f64>(scale_factor);
+				let size = monitor.size().to_logical::<f64>(scale_factor);
+
+				attrs = attrs.with_inner_size(size).with_position(position);
+			}
+			#[cfg(not(target_os = "macos"))]
+			{
+				attrs = attrs
+					.with_inner_size(PhysicalSize::new(monitor.size().width, monitor.size().height))
+					.with_position(PhysicalPosition::new(
+						monitor.position().x,
+						monitor.position().y,
+					))
+					.with_fullscreen(Some(Fullscreen::Borderless(Some(monitor))));
+			}
+
 			let window = match event_loop.create_window(attrs) {
 				Ok(window) => window,
 				Err(err) => finish(OverlayOutput::Error {
