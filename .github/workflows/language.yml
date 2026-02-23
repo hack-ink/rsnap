@@ -136,6 +136,7 @@ jobs:
 
           chmod +x "${install_dir}/"* || true
           echo "${install_dir}" >> "${GITHUB_PATH}"
+          export PATH="${install_dir}:${PATH}"
           cargo vstyle --version
 
       - name: Install nextest
