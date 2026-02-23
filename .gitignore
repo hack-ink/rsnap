@@ -42,6 +42,7 @@ target
 
 # Tauri sidecar staging
 src-tauri/bin/rsnap-overlay-*
+src-tauri/bin/rsnap-overlay
 
 ## Swift
 .build
