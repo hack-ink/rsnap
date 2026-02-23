@@ -491,6 +491,8 @@ fn set_overlay_opacity(window: &winit::window::Window, alpha: u8) {
 
 #[cfg(windows)]
 fn set_overlay_opacity_windows(window: &winit::window::Window, alpha: u8) {
+	use windows_sys::Win32::Foundation::HWND;
+
 	use windows_sys::Win32::UI::WindowsAndMessaging::{
 		GWL_EXSTYLE, GetWindowLongW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongW,
 		WS_EX_LAYERED,
@@ -503,7 +505,7 @@ fn set_overlay_opacity_windows(window: &winit::window::Window, alpha: u8) {
 	let RawWindowHandle::Win32(handle) = handle.as_raw() else {
 		return;
 	};
-	let hwnd = handle.hwnd.get();
+	let hwnd = handle.hwnd.get() as HWND;
 
 	unsafe {
 		let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
