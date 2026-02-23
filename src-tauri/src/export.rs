@@ -7,24 +7,14 @@ use std::{
 use arboard::{Clipboard, ImageData};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-pub fn save_png_base64_to_downloads(
+pub fn save_png_base64_to_dir(
+	output_dir: &Path,
 	file_name: String,
 	png_base64: String,
 ) -> Result<String, String> {
 	let bytes = decode_png_base64(png_base64)?;
-	let downloads_dir = dirs::download_dir()
-		.ok_or_else(|| String::from("Unable to resolve the user downloads directory"))?;
 
-	fs::create_dir_all(&downloads_dir).map_err(|err| {
-		format!("Failed to create downloads directory {}: {err}", downloads_dir.display())
-	})?;
-
-	let output_path = output_path_for_downloads(&downloads_dir, file_name)?;
-
-	fs::write(&output_path, bytes)
-		.map_err(|err| format!("Failed to save png to {}: {err}", output_path.display()))?;
-
-	Ok(output_path.to_string_lossy().to_string())
+	save_png_bytes_to_dir(output_dir, file_name, bytes)
 }
 
 pub fn copy_png_base64(png_base64: String) -> Result<(), String> {
@@ -66,6 +56,23 @@ fn output_path_for_downloads(downloads_dir: &Path, file_name: String) -> Result<
 	validate_png_extension(&path)?;
 
 	Ok(path)
+}
+
+fn save_png_bytes_to_dir(
+	output_dir: &Path,
+	file_name: String,
+	bytes: Vec<u8>,
+) -> Result<String, String> {
+	fs::create_dir_all(output_dir).map_err(|err| {
+		format!("Failed to create output directory {}: {err}", output_dir.display())
+	})?;
+
+	let output_path = output_path_for_downloads(output_dir, file_name)?;
+
+	fs::write(&output_path, bytes)
+		.map_err(|err| format!("Failed to save png to {}: {err}", output_path.display()))?;
+
+	Ok(output_path.to_string_lossy().to_string())
 }
 
 fn validate_png_extension(path: &Path) -> Result<(), String> {
