@@ -50,14 +50,15 @@ impl App {
 		}
 
 		for monitor in monitors {
+			let (x, y, width, height) = monitor_physical_rect(&monitor);
 			let attrs = winit::window::Window::default_attributes()
 				.with_title("rsnap-overlay")
 				.with_decorations(false)
 				.with_resizable(false)
 				.with_transparent(true)
 				.with_window_level(WindowLevel::AlwaysOnTop)
-				.with_inner_size(PhysicalSize::new(monitor.width(), monitor.height()))
-				.with_position(PhysicalPosition::new(monitor.x(), monitor.y()));
+				.with_inner_size(PhysicalSize::new(width, height))
+				.with_position(PhysicalPosition::new(x, y));
 			let window = match event_loop.create_window(attrs) {
 				Ok(window) => window,
 				Err(err) => finish(OverlayOutput::Error {
@@ -76,10 +77,8 @@ impl App {
 				Err(err) => finish(OverlayOutput::Error { message: format!("{err:#}") }),
 			};
 
-			self.overlays.insert(
-				renderer.window().id(),
-				OverlayWindow { origin: Point { x: monitor.x(), y: monitor.y() }, renderer },
-			);
+			self.overlays
+				.insert(renderer.window().id(), OverlayWindow { origin: Point { x, y }, renderer });
 		}
 
 		self.request_redraw_all();
@@ -393,18 +392,17 @@ fn hit_test_window_info(point: Point) -> Result<Option<(u32, Rect)>> {
 	let mut best: Option<(u32, Rect, i32)> = None;
 
 	for window in windows.into_iter() {
-		if window.pid() == self_pid
-			|| window.is_minimized()
-			|| window.width() == 0
-			|| window.height() == 0
+		let rect = window_physical_rect(&window);
+
+		if window.pid() == self_pid || window.is_minimized() || rect.width == 0 || rect.height == 0
 		{
 			continue;
 		}
 
-		let contains = point.x >= window.x()
-			&& point.y >= window.y()
-			&& point.x < window.x().saturating_add_unsigned(window.width())
-			&& point.y < window.y().saturating_add_unsigned(window.height());
+		let contains = point.x >= rect.x
+			&& point.y >= rect.y
+			&& point.x < rect.x.saturating_add_unsigned(rect.width)
+			&& point.y < rect.y.saturating_add_unsigned(rect.height);
 
 		if !contains {
 			continue;
@@ -416,20 +414,48 @@ fn hit_test_window_info(point: Point) -> Result<Option<(u32, Rect)>> {
 		};
 
 		if replace {
-			best = Some((
-				window.id(),
-				Rect {
-					x: window.x(),
-					y: window.y(),
-					width: window.width(),
-					height: window.height(),
-				},
-				window.z(),
-			));
+			best = Some((window.id(), rect, window.z()));
 		}
 	}
 
 	Ok(best.map(|(id, rect, _z)| (id, rect)))
+}
+
+fn monitor_physical_rect(monitor: &xcap::Monitor) -> (i32, i32, u32, u32) {
+	#[cfg(target_os = "macos")]
+	{
+		let scale = monitor.scale_factor() as f64;
+		let x = ((monitor.x() as f64) * scale).round() as i32;
+		let y = ((monitor.y() as f64) * scale).round() as i32;
+		let width = ((monitor.width() as f64) * scale).round().max(0.0) as u32;
+		let height = ((monitor.height() as f64) * scale).round().max(0.0) as u32;
+
+		(x, y, width, height)
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	{
+		(monitor.x(), monitor.y(), monitor.width(), monitor.height())
+	}
+}
+
+fn window_physical_rect(window: &xcap::Window) -> Rect {
+	#[cfg(target_os = "macos")]
+	{
+		let monitor = window.current_monitor();
+		let scale = monitor.scale_factor() as f64;
+		let x = ((window.x() as f64) * scale).round() as i32;
+		let y = ((window.y() as f64) * scale).round() as i32;
+		let width = ((window.width() as f64) * scale).round().max(0.0) as u32;
+		let height = ((window.height() as f64) * scale).round().max(0.0) as u32;
+
+		Rect { x, y, width, height }
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	{
+		Rect { x: window.x(), y: window.y(), width: window.width(), height: window.height() }
+	}
 }
 
 fn translate_rect(rect: Rect, origin: Point) -> Rect {
