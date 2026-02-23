@@ -1,6 +1,7 @@
 mod capture;
 mod commands;
 mod export;
+mod settings;
 mod tray;
 
 use tauri::{AppHandle, Manager, Runtime};
@@ -29,7 +30,9 @@ fn main() {
 		.invoke_handler(tauri::generate_handler![
 			commands::capture_now,
 			commands::get_last_capture_base64,
+			commands::get_settings,
 			commands::save_png_base64,
+			commands::set_output_dir,
 			commands::copy_png_base64,
 			commands::open_pin_window,
 		])
@@ -46,7 +49,10 @@ fn main() {
 		})
 		.on_menu_event(|app, event| match event.id().as_ref() {
 			"capture-now" => handle_capture_now(app.app_handle()),
-			"settings" => println!("Settings selected from tray"),
+			"settings" =>
+				if let Err(err) = commands::show_settings_window(app.app_handle()) {
+					eprintln!("Failed to open settings window: {err}");
+				},
 			"quit" => app.exit(0),
 			_ => {},
 		})

@@ -5,6 +5,7 @@ import {
   openPinWindow,
   savePngBase64,
 } from './api'
+import { listen } from '@tauri-apps/api/event'
 
 type CropRect = {
   x: number
@@ -241,6 +242,24 @@ const createEditor = () => {
     const result = await getLastCaptureBase64()
     await loadCapture(result)
   }
+
+  void listen('rsnap://capture-updated', async () => {
+    try {
+      await refreshLastCapture()
+    } catch {
+      // ignore background refresh errors
+    }
+  })
+
+  window.addEventListener('focus', () => {
+    void refreshLastCapture().catch(() => {})
+  })
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      void refreshLastCapture().catch(() => {})
+    }
+  })
 
   const finalizeSelection = (): void => {
     if (!state.selection || !state.image) return

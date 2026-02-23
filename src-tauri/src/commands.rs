@@ -1,17 +1,17 @@
 use std::{
 	fs,
 	io::{BufRead as _, BufReader},
-	path::{Path, PathBuf},
+	path::Path,
 	process::{Command, Stdio},
 	sync::mpsc,
 	time::Duration,
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use serde::Deserialize;
-use tauri::{AppHandle, Manager, Runtime, Wry};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder, Wry};
 
-use crate::{capture, export};
+use crate::{capture, export, settings};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -24,6 +24,11 @@ enum CaptureSelection {
 	Region { rect: RectI32Json },
 	#[serde(rename = "error")]
 	Error { message: String },
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SettingsDto {
+	pub output_dir: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,14 +91,20 @@ pub fn get_last_capture_base64(app: AppHandle<Wry>) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn save_png_base64(png_base64: String) -> Result<String, String> {
+pub fn save_png_base64(app: AppHandle<Wry>, png_base64: String) -> Result<String, String> {
 	let timestamp = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
 		.map_err(|err| format!("Failed to compute timestamp: {err}"))?
 		.as_millis();
 	let default_name = format!("rsnap-capture-{timestamp}.png");
+	let output_dir = settings::resolve_output_dir(&app).unwrap_or_else(|_| {
+		dirs::desktop_dir()
+			.or_else(dirs::download_dir)
+			.or_else(dirs::home_dir)
+			.unwrap_or_else(|| std::path::PathBuf::from("."))
+	});
 
-	export::save_png_base64_to_downloads(default_name, png_base64)
+	export::save_png_base64_to_dir(&output_dir, default_name, png_base64)
 }
 
 #[tauri::command]
@@ -115,6 +126,56 @@ pub fn open_pin_window(app: AppHandle<Wry>) -> Result<(), String> {
 	Ok(())
 }
 
+#[tauri::command]
+pub fn get_settings(app: AppHandle<Wry>) -> Result<SettingsDto, String> {
+	let settings = settings::load_settings(&app).unwrap_or_else(|_| settings::default_settings());
+
+	Ok(SettingsDto { output_dir: settings.output_dir })
+}
+
+#[tauri::command]
+pub fn set_output_dir(app: AppHandle<Wry>, output_dir: String) -> Result<SettingsDto, String> {
+	let trimmed = output_dir.trim();
+
+	if trimmed.is_empty() {
+		return Err(String::from("Output directory is empty"));
+	}
+
+	let mut settings =
+		settings::load_settings(&app).unwrap_or_else(|_| settings::default_settings());
+
+	settings.output_dir = trimmed.to_string();
+
+	settings::save_settings(&app, &settings)?;
+
+	Ok(SettingsDto { output_dir: settings.output_dir })
+}
+
+pub fn show_settings_window<R>(app: &AppHandle<R>) -> Result<(), String>
+where
+	R: Runtime,
+{
+	if let Some(window) = app.get_webview_window("settings") {
+		window.show().map_err(|err| format!("Failed to show settings window: {err}"))?;
+		window.set_focus().map_err(|err| format!("Failed to focus settings window: {err}"))?;
+
+		return Ok(());
+	}
+
+	let url = WebviewUrl::App(String::from("index.html?view=settings").into());
+	let window = WebviewWindowBuilder::new(app, "settings", url)
+		.title("rsnap Settings")
+		.inner_size(520.0, 360.0)
+		.resizable(false)
+		.build()
+		.map_err(|err| format!("Failed to create settings window: {err}"))?;
+
+	window.show().map_err(|err| format!("Failed to show settings window: {err}"))?;
+	window.set_focus().map_err(|err| format!("Failed to focus settings window: {err}"))?;
+
+	Ok(())
+}
+
 fn reveal_main_window<R>(app: &AppHandle<R>) -> Result<(), String>
 where
 	R: Runtime,
@@ -124,9 +185,8 @@ where
 
 	window.show().map_err(|err| format!("Failed to show editor window: {err}"))?;
 	window.set_focus().map_err(|err| format!("Failed to focus editor window: {err}"))?;
-	window
-		.eval("window.location.reload()")
-		.map_err(|err| format!("Failed to refresh editor content: {err}"))?;
+
+	let _ = window.emit("rsnap://capture-updated", ());
 
 	Ok(())
 }
@@ -173,12 +233,12 @@ where
 	Err(format!("Unable to launch overlay sidecar ({hint})"))
 }
 
-fn overlay_sidecar_candidates<R>(app: &AppHandle<R>) -> Result<Vec<PathBuf>, String>
+fn overlay_sidecar_candidates<R>(app: &AppHandle<R>) -> Result<Vec<std::path::PathBuf>, String>
 where
 	R: Runtime,
 {
 	if let Ok(path) = std::env::var("RSNAP_OVERLAY_PATH") {
-		let path = PathBuf::from(path);
+		let path = std::path::PathBuf::from(path);
 
 		return Ok(vec![path]);
 	}

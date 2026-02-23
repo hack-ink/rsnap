@@ -1,5 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 
+export type SettingsDto = {
+  output_dir: string
+}
+
 const normalizeResult = (value: string): string => {
   const normalized = value.trim()
   if (!normalized) return ''
@@ -29,4 +33,14 @@ export const copyPngBase64 = async (pngBase64: string): Promise<void> => {
 
 export const openPinWindow = async (): Promise<void> => {
   await invoke('open_pin_window')
+}
+
+export const getSettings = async (): Promise<SettingsDto> => {
+  return invoke<SettingsDto>('get_settings')
+}
+
+export const setOutputDir = async (outputDir: string): Promise<SettingsDto> => {
+  return invoke<SettingsDto>('set_output_dir', {
+    outputDir: outputDir.trim(),
+  })
 }
