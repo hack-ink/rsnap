@@ -18,7 +18,6 @@ where
 	R: Runtime,
 {
 	let path = settings_path(app)?;
-
 	let bytes = match fs::read(&path) {
 		Ok(bytes) => bytes,
 		Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -36,6 +35,7 @@ where
 	R: Runtime,
 {
 	let path = settings_path(app)?;
+
 	if let Some(parent) = path.parent() {
 		fs::create_dir_all(parent).map_err(|err| {
 			format!("Failed to create settings directory {}: {err}", parent.display())
@@ -44,6 +44,7 @@ where
 
 	let bytes = serde_json::to_vec_pretty(settings)
 		.map_err(|err| format!("Failed to serialize settings JSON: {err}"))?;
+
 	fs::write(&path, bytes)
 		.map_err(|err| format!("Failed to write settings file {}: {err}", path.display()))?;
 
@@ -56,9 +57,11 @@ where
 {
 	let settings = load_settings(app)?;
 	let value = expand_tilde(settings.output_dir.trim())?;
+
 	if value.as_os_str().is_empty() {
 		return Err(String::from("Output directory is empty"));
 	}
+
 	Ok(value)
 }
 
@@ -91,6 +94,7 @@ fn expand_tilde(value: &str) -> Result<PathBuf, String> {
 	if let Some(rest) = value.strip_prefix("~/") {
 		let home =
 			dirs::home_dir().ok_or_else(|| String::from("Unable to resolve home directory"))?;
+
 		return Ok(home.join(rest));
 	}
 

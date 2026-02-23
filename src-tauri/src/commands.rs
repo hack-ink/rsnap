@@ -43,6 +43,8 @@ pub fn capture_now_with_app<R>(app: &AppHandle<R>) -> Result<(), String>
 where
 	R: Runtime,
 {
+	ensure_screen_recording_permission()?;
+
 	match read_capture_selection_from_sidecar(app) {
 		Ok(selection) => match selection {
 			CaptureSelection::Cancel => return Ok(()),
@@ -173,6 +175,29 @@ where
 	window.show().map_err(|err| format!("Failed to show settings window: {err}"))?;
 	window.set_focus().map_err(|err| format!("Failed to focus settings window: {err}"))?;
 
+	Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_screen_recording_permission() -> Result<(), String> {
+	#[link(name = "CoreGraphics", kind = "framework")]
+	unsafe extern "C" {
+		fn CGPreflightScreenCaptureAccess() -> bool;
+	}
+
+	let ok = unsafe { CGPreflightScreenCaptureAccess() };
+
+	if ok {
+		Ok(())
+	} else {
+		Err(String::from(
+			"macOS Screen Recording permission is required. Go to System Settings -> Privacy & Security -> Screen Recording, enable rsnap, then relaunch.",
+		))
+	}
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_screen_recording_permission() -> Result<(), String> {
 	Ok(())
 }
 
