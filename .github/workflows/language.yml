@@ -60,9 +60,65 @@ jobs:
           tool: cargo-make
 
       - name: Install vibe-style
-        uses: taiki-e/install-action@v2
-        with:
-          tool: vibe-style
+        run: |
+          set -euo pipefail
+
+          repo="hack-ink/vibe-style"
+          latest_effective_url="$(
+            curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${repo}/releases/latest"
+          )"
+          tag="${latest_effective_url##*/}"
+
+          case "${RUNNER_OS}" in
+            macOS)
+              arch="$(uname -m)"
+              if [[ "${arch}" == "arm64" ]]; then
+                triple="aarch64-apple-darwin"
+              else
+                triple="x86_64-apple-darwin"
+              fi
+              ext="tgz"
+              ;;
+            Windows)
+              triple="x86_64-pc-windows-msvc"
+              ext="zip"
+              ;;
+            *)
+              echo "Unsupported runner OS: ${RUNNER_OS}" >&2
+              exit 1
+              ;;
+          esac
+
+          asset="vibe-style-${triple}-${tag}.${ext}"
+          url="https://github.com/${repo}/releases/download/${tag}/${asset}"
+
+          tmp="$(mktemp -d)"
+          curl -fsSL "${url}" -o "${tmp}/${asset}"
+          mkdir -p "${tmp}/extract"
+
+          if [[ "${ext}" == "tgz" ]]; then
+            tar -xzf "${tmp}/${asset}" -C "${tmp}/extract"
+          else
+            tar -xf "${tmp}/${asset}" -C "${tmp}/extract"
+          fi
+
+          install_dir="${RUNNER_TEMP}/vibe-style-bin"
+          mkdir -p "${install_dir}"
+
+          extracted_dir="$(find "${tmp}/extract" -maxdepth 1 -type d -name "vibe-style-*-${tag}" -print -quit)"
+          if [[ -z "${extracted_dir}" ]]; then
+            echo "Could not find extracted vibe-style directory for tag ${tag}" >&2
+            find "${tmp}/extract" -maxdepth 2 -type f -print >&2
+            exit 1
+          fi
+
+          # `cargo vstyle` looks for `cargo-vstyle` on PATH.
+          cp "${extracted_dir}/cargo-vstyle"* "${install_dir}/"
+          cp "${extracted_dir}/vstyle"* "${install_dir}/" || true
+
+          chmod +x "${install_dir}/"* || true
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          cargo vstyle --version
 
       - name: Install nextest
         uses: taiki-e/install-action@v2
