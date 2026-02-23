@@ -132,6 +132,7 @@ MVP intentionally avoids complex cycling/search; those can be added later withou
 ## Packaging and security (Tauri v2)
 
 - Sidecar is bundled via `tauri.conf.json` `bundle.externalBin`.
+- Build and stage the sidecar into `src-tauri/bin/rsnap-overlay-$TARGET_TRIPLE` before packaging.
 - Execution uses Tauri shell plugin and should be constrained by capabilities once we introduce them.
 
 ---
@@ -143,4 +144,3 @@ MVP intentionally avoids complex cycling/search; those can be added later withou
 3. Add robust multi-monitor compositing + crop correctness.
 4. Harden timeouts, error messages, and dev tooling.
 5. Optional: window cycling/search, HUD details.
-

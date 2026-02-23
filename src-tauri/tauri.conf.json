@@ -7,6 +7,9 @@
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:5173"
   },
+  "bundle": {
+    "externalBin": ["bin/rsnap-overlay"]
+  },
   "app": {
     "windows": [
       {
