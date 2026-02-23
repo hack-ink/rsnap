@@ -37,6 +37,12 @@ fn main() {
 			commands::open_pin_window,
 		])
 		.setup(move |app| {
+			#[cfg(target_os = "macos")]
+			{
+				app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory)?;
+				app.handle().set_dock_visibility(false)?;
+			}
+
 			tray::setup(app)?;
 
 			app.global_shortcut().on_shortcut(default_shortcut, move |_app, _, event| {
