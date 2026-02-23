@@ -12,7 +12,7 @@ use raw_window_handle::{
 use softbuffer::{Context, Surface};
 use winit::{
 	application::ApplicationHandler,
-	dpi::{PhysicalPosition, PhysicalSize},
+	dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
 	event::{ElementState, MouseButton, WindowEvent},
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
 	keyboard::{Key, NamedKey},
@@ -50,15 +50,14 @@ impl App {
 		}
 
 		for monitor in monitors {
-			let (x, y, width, height) = monitor_physical_rect(&monitor);
 			let attrs = winit::window::Window::default_attributes()
 				.with_title("rsnap-overlay")
 				.with_decorations(false)
 				.with_resizable(false)
 				.with_transparent(true)
 				.with_window_level(WindowLevel::AlwaysOnTop)
-				.with_inner_size(PhysicalSize::new(width, height))
-				.with_position(PhysicalPosition::new(x, y));
+				.with_inner_size(window_inner_size_for_monitor(&monitor))
+				.with_position(window_position_for_monitor(&monitor));
 			let window = match event_loop.create_window(attrs) {
 				Ok(window) => window,
 				Err(err) => finish(OverlayOutput::Error {
@@ -77,8 +76,10 @@ impl App {
 				Err(err) => finish(OverlayOutput::Error { message: format!("{err:#}") }),
 			};
 
-			self.overlays
-				.insert(renderer.window().id(), OverlayWindow { origin: Point { x, y }, renderer });
+			self.overlays.insert(
+				renderer.window().id(),
+				OverlayWindow { origin: monitor_origin(&monitor), renderer },
+			);
 		}
 
 		self.request_redraw_all();
@@ -120,9 +121,11 @@ impl ApplicationHandler for App {
 				}
 			},
 			WindowEvent::CursorMoved { position, .. } => {
+				let (dx, dy) = cursor_delta_for_event(overlay.renderer.window(), position);
+
 				self.state.cursor_global = Point {
-					x: overlay.origin.x.saturating_add(position.x.round() as i32),
-					y: overlay.origin.y.saturating_add(position.y.round() as i32),
+					x: overlay.origin.x.saturating_add(dx),
+					y: overlay.origin.y.saturating_add(dy),
 				};
 
 				if let Some(down_at) = self.state.mouse_down_at_global {
@@ -392,17 +395,18 @@ fn hit_test_window_info(point: Point) -> Result<Option<(u32, Rect)>> {
 	let mut best: Option<(u32, Rect, i32)> = None;
 
 	for window in windows.into_iter() {
-		let rect = window_physical_rect(&window);
-
-		if window.pid() == self_pid || window.is_minimized() || rect.width == 0 || rect.height == 0
+		if window.pid() == self_pid
+			|| window.is_minimized()
+			|| window.width() == 0
+			|| window.height() == 0
 		{
 			continue;
 		}
 
-		let contains = point.x >= rect.x
-			&& point.y >= rect.y
-			&& point.x < rect.x.saturating_add_unsigned(rect.width)
-			&& point.y < rect.y.saturating_add_unsigned(rect.height);
+		let contains = point.x >= window.x()
+			&& point.y >= window.y()
+			&& point.x < window.x().saturating_add_unsigned(window.width())
+			&& point.y < window.y().saturating_add_unsigned(window.height());
 
 		if !contains {
 			continue;
@@ -414,47 +418,62 @@ fn hit_test_window_info(point: Point) -> Result<Option<(u32, Rect)>> {
 		};
 
 		if replace {
-			best = Some((window.id(), rect, window.z()));
+			best = Some((
+				window.id(),
+				Rect {
+					x: window.x(),
+					y: window.y(),
+					width: window.width(),
+					height: window.height(),
+				},
+				window.z(),
+			));
 		}
 	}
 
 	Ok(best.map(|(id, rect, _z)| (id, rect)))
 }
 
-fn monitor_physical_rect(monitor: &xcap::Monitor) -> (i32, i32, u32, u32) {
+fn monitor_origin(monitor: &xcap::Monitor) -> Point {
+	Point { x: monitor.x(), y: monitor.y() }
+}
+
+fn window_inner_size_for_monitor(monitor: &xcap::Monitor) -> winit::dpi::Size {
 	#[cfg(target_os = "macos")]
 	{
-		let scale = monitor.scale_factor() as f64;
-		let x = ((monitor.x() as f64) * scale).round() as i32;
-		let y = ((monitor.y() as f64) * scale).round() as i32;
-		let width = ((monitor.width() as f64) * scale).round().max(0.0) as u32;
-		let height = ((monitor.height() as f64) * scale).round().max(0.0) as u32;
-
-		(x, y, width, height)
+		winit::dpi::Size::Logical(LogicalSize::new(monitor.width() as f64, monitor.height() as f64))
 	}
-
 	#[cfg(not(target_os = "macos"))]
 	{
-		(monitor.x(), monitor.y(), monitor.width(), monitor.height())
+		winit::dpi::Size::Physical(PhysicalSize::new(monitor.width(), monitor.height()))
 	}
 }
 
-fn window_physical_rect(window: &xcap::Window) -> Rect {
+fn window_position_for_monitor(monitor: &xcap::Monitor) -> winit::dpi::Position {
 	#[cfg(target_os = "macos")]
 	{
-		let monitor = window.current_monitor();
-		let scale = monitor.scale_factor() as f64;
-		let x = ((window.x() as f64) * scale).round() as i32;
-		let y = ((window.y() as f64) * scale).round() as i32;
-		let width = ((window.width() as f64) * scale).round().max(0.0) as u32;
-		let height = ((window.height() as f64) * scale).round().max(0.0) as u32;
+		winit::dpi::Position::Logical(LogicalPosition::new(monitor.x() as f64, monitor.y() as f64))
+	}
+	#[cfg(not(target_os = "macos"))]
+	{
+		winit::dpi::Position::Physical(PhysicalPosition::new(monitor.x(), monitor.y()))
+	}
+}
 
-		Rect { x, y, width, height }
+fn cursor_delta_for_event(
+	window: &winit::window::Window,
+	position: PhysicalPosition<f64>,
+) -> (i32, i32) {
+	#[cfg(target_os = "macos")]
+	{
+		let logical: LogicalPosition<f64> = position.to_logical(window.scale_factor());
+
+		(logical.x.round() as i32, logical.y.round() as i32)
 	}
 
 	#[cfg(not(target_os = "macos"))]
 	{
-		Rect { x: window.x(), y: window.y(), width: window.width(), height: window.height() }
+		(position.x.round() as i32, position.y.round() as i32)
 	}
 }
 

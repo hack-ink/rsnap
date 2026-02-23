@@ -3,7 +3,7 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-use image::{Rgba, RgbaImage};
+use image::RgbaImage;
 use tauri::{AppHandle, Manager, Runtime};
 
 const LAST_CAPTURE_FILE: &str = "last_capture.png";
@@ -62,107 +62,17 @@ where
 	}
 
 	let cache_dir = app_cache_path(app)?;
-	let monitors = xcap::Monitor::all()
-		.map_err(|err| format!("Unable to enumerate monitors: {err}"))?
-		.into_iter()
-		.collect::<Vec<_>>();
+	let (cx, cy) = rect_center_point(rect)?;
+	let monitor = xcap::Monitor::from_point(cx, cy)
+		.map_err(|err| format!("Failed to resolve monitor for point ({cx},{cy}): {err}"))?;
 
-	if monitors.is_empty() {
-		return Err(String::from("No monitor detected"));
-	}
+	ensure_rect_within_monitor(rect, &monitor)?;
 
-	struct MonitorCapture {
-		x: i32,
-		y: i32,
-		width: u32,
-		height: u32,
-		image: RgbaImage,
-	}
-
-	let mut captures = Vec::with_capacity(monitors.len());
-
-	for monitor in monitors {
-		let image = monitor
-			.capture_image()
-			.map_err(|err| format!("Failed to capture monitor {}: {err}", monitor.name()))?;
-		let (x, y) = monitor_physical_origin(&monitor);
-		let width = image.width();
-		let height = image.height();
-
-		captures.push(MonitorCapture { x, y, width, height, image });
-	}
-
-	let min_x = captures
-		.iter()
-		.map(|cap| cap.x)
-		.min()
-		.ok_or_else(|| String::from("No monitor detected"))?;
-	let min_y = captures
-		.iter()
-		.map(|cap| cap.y)
-		.min()
-		.ok_or_else(|| String::from("No monitor detected"))?;
-	let max_x = captures
-		.iter()
-		.map(|cap| cap.x.saturating_add_unsigned(cap.width))
-		.max()
-		.ok_or_else(|| String::from("No monitor detected"))?;
-	let max_y = captures
-		.iter()
-		.map(|cap| cap.y.saturating_add_unsigned(cap.height))
-		.max()
-		.ok_or_else(|| String::from("No monitor detected"))?;
-	let desktop_width = u32::try_from(max_x - min_x)
-		.map_err(|_| format!("Virtual desktop width overflow: min_x={min_x} max_x={max_x}"))?;
-	let desktop_height = u32::try_from(max_y - min_y)
-		.map_err(|_| format!("Virtual desktop height overflow: min_y={min_y} max_y={max_y}"))?;
-	let mut desktop = RgbaImage::from_pixel(desktop_width, desktop_height, Rgba([0, 0, 0, 0]));
-
-	for cap in captures {
-		let offset_x = i64::from(cap.x - min_x);
-		let offset_y = i64::from(cap.y - min_y);
-
-		image::imageops::overlay(&mut desktop, &cap.image, offset_x, offset_y);
-	}
-
-	let desktop_left = i64::from(min_x);
-	let desktop_top = i64::from(min_y);
-	let desktop_right = i64::from(max_x);
-	let desktop_bottom = i64::from(max_y);
-	let rect_left = i64::from(rect.x);
-	let rect_top = i64::from(rect.y);
-	let rect_right = rect_left.saturating_add(rect.width.into());
-	let rect_bottom = rect_top.saturating_add(rect.height.into());
-	let crop_left = rect_left.max(desktop_left);
-	let crop_top = rect_top.max(desktop_top);
-	let crop_right = rect_right.min(desktop_right);
-	let crop_bottom = rect_bottom.min(desktop_bottom);
-
-	if crop_right <= crop_left || crop_bottom <= crop_top {
-		return Err(format!(
-			"Selected region is outside the virtual desktop bounds: rect=({},{},{},{}) desktop=({},{},{},{})",
-			rect_left,
-			rect_top,
-			rect_right,
-			rect_bottom,
-			desktop_left,
-			desktop_top,
-			desktop_right,
-			desktop_bottom
-		));
-	}
-
-	let crop_x = u32::try_from(crop_left - desktop_left)
-		.map_err(|_| format!("Invalid crop x offset: crop_left={crop_left}"))?;
-	let crop_y = u32::try_from(crop_top - desktop_top)
-		.map_err(|_| format!("Invalid crop y offset: crop_top={crop_top}"))?;
-	let crop_w = u32::try_from(crop_right - crop_left).map_err(|_| {
-		format!("Invalid crop width: crop_left={crop_left} crop_right={crop_right}")
-	})?;
-	let crop_h = u32::try_from(crop_bottom - crop_top).map_err(|_| {
-		format!("Invalid crop height: crop_top={crop_top} crop_bottom={crop_bottom}")
-	})?;
-	let cropped = image::imageops::crop_imm(&desktop, crop_x, crop_y, crop_w, crop_h).to_image();
+	let image = monitor
+		.capture_image()
+		.map_err(|err| format!("Failed to capture monitor {}: {err}", monitor.name()))?;
+	let (crop_x, crop_y, crop_w, crop_h) = monitor_crop_rect_px(rect, &monitor, &image)?;
+	let cropped = image::imageops::crop_imm(&image, crop_x, crop_y, crop_w, crop_h).to_image();
 
 	save_capture_to_cache_dir(&cache_dir, &cropped)
 }
@@ -185,20 +95,66 @@ where
 	Ok(resolve_output_path(&cache_dir))
 }
 
-fn monitor_physical_origin(monitor: &xcap::Monitor) -> (i32, i32) {
+fn rect_center_point(rect: RectI32) -> Result<(i32, i32), String> {
+	let cx = i64::from(rect.x).saturating_add(i64::from(rect.width) / 2);
+	let cy = i64::from(rect.y).saturating_add(i64::from(rect.height) / 2);
+	let cx = i32::try_from(cx).map_err(|_| format!("Region center x overflow: {cx}"))?;
+	let cy = i32::try_from(cy).map_err(|_| format!("Region center y overflow: {cy}"))?;
+
+	Ok((cx, cy))
+}
+
+fn ensure_rect_within_monitor(rect: RectI32, monitor: &xcap::Monitor) -> Result<(), String> {
+	let left = i64::from(rect.x);
+	let top = i64::from(rect.y);
+	let right = left.saturating_add(i64::from(rect.width));
+	let bottom = top.saturating_add(i64::from(rect.height));
+	let m_left = i64::from(monitor.x());
+	let m_top = i64::from(monitor.y());
+	let m_right = m_left.saturating_add(i64::from(monitor.width()));
+	let m_bottom = m_top.saturating_add(i64::from(monitor.height()));
+
+	if left < m_left || top < m_top || right > m_right || bottom > m_bottom {
+		return Err(format!(
+			"Selected region crosses displays (not supported yet): rect=({left},{top},{right},{bottom}) monitor=({m_left},{m_top},{m_right},{m_bottom})",
+		));
+	}
+
+	Ok(())
+}
+
+fn monitor_crop_rect_px(
+	rect: RectI32,
+	monitor: &xcap::Monitor,
+	image: &RgbaImage,
+) -> Result<(u32, u32, u32, u32), String> {
+	let local_x = rect.x.saturating_sub(monitor.x());
+	let local_y = rect.y.saturating_sub(monitor.y());
 	#[cfg(target_os = "macos")]
-	{
-		let scale = monitor.scale_factor() as f64;
-		let x = ((monitor.x() as f64) * scale).round() as i32;
-		let y = ((monitor.y() as f64) * scale).round() as i32;
-
-		(x, y)
-	}
-
+	let scale = monitor.scale_factor() as f64;
 	#[cfg(not(target_os = "macos"))]
-	{
-		(monitor.x(), monitor.y())
+	let scale = 1.0_f64;
+	let crop_x = ((local_x as f64) * scale).round().max(0.0) as u32;
+	let crop_y = ((local_y as f64) * scale).round().max(0.0) as u32;
+	let crop_w = ((rect.width as f64) * scale).round().max(0.0) as u32;
+	let crop_h = ((rect.height as f64) * scale).round().max(0.0) as u32;
+	let image_w = image.width();
+	let image_h = image.height();
+
+	if crop_x >= image_w || crop_y >= image_h {
+		return Err(format!(
+			"Selected region is outside captured monitor image: crop=({crop_x},{crop_y},{crop_w},{crop_h}) image=({image_w}x{image_h})",
+		));
 	}
+
+	let crop_w = crop_w.min(image_w - crop_x);
+	let crop_h = crop_h.min(image_h - crop_y);
+
+	if crop_w == 0 || crop_h == 0 {
+		return Err(String::from("Selected region is empty after scaling"));
+	}
+
+	Ok((crop_x, crop_y, crop_w, crop_h))
 }
 
 fn resolve_output_path(cache_dir: &Path) -> PathBuf {
