@@ -44,6 +44,13 @@ MVP / in active development.
 - Drag for region capture, or click a window for window capture.
 - The editor opens for export actions (copy/save/pin).
 
+### macOS permissions
+
+rsnap requires **Screen Recording** permission to capture other apps/windows.
+
+- Go to `System Settings` -> `Privacy & Security` -> `Screen Recording`.
+- Enable `rsnap` (the built `.app`), then relaunch the app.
+
 ## Development
 
 This repository uses `cargo make` tasks defined in `Makefile.toml`.
