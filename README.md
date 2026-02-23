@@ -1,88 +1,60 @@
 <div align="center">
 
-# <NAME>
+# rsnap
 
-<DESCRIPTION>
+Xnip-style screenshot utility for macOS + Windows: tray hotkey, native capture overlay, and a
+lightweight editor for crop + export.
 
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Docs](https://img.shields.io/docsrs/<NAME>)](https://docs.rs/<NAME>)
-[![Language Checks](https://github.com/hack-ink/<NAME>/actions/workflows/language.yml/badge.svg?branch=main)](https://github.com/hack-ink/<NAME>/actions/workflows/language.yml)
-[![Release](https://github.com/hack-ink/<NAME>/actions/workflows/release.yml/badge.svg)](https://github.com/hack-ink/<NAME>/actions/workflows/release.yml)
-[![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/hack-ink/<NAME>)](https://github.com/hack-ink/<NAME>/tags)
-[![GitHub last commit](https://img.shields.io/github/last-commit/hack-ink/<NAME>?color=red&style=plastic)](https://github.com/hack-ink/<NAME>)
-[![GitHub code lines](https://tokei.rs/b1/github/hack-ink/<NAME>)](https://github.com/hack-ink/<NAME>)
+[![Language Checks](https://github.com/hack-ink/rsnap/actions/workflows/language.yml/badge.svg?branch=main)](https://github.com/hack-ink/rsnap/actions/workflows/language.yml)
+[![Release](https://github.com/hack-ink/rsnap/actions/workflows/release.yml/badge.svg)](https://github.com/hack-ink/rsnap/actions/workflows/release.yml)
+[![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/hack-ink/rsnap)](https://github.com/hack-ink/rsnap/tags)
+[![GitHub last commit](https://img.shields.io/github/last-commit/hack-ink/rsnap?color=red&style=plastic)](https://github.com/hack-ink/rsnap)
+[![GitHub code lines](https://tokei.rs/b1/github/hack-ink/rsnap)](https://github.com/hack-ink/rsnap)
 
 </div>
 
-## Feature Highlights
-
-### TODO
-
-TODO
-
 ## Status
 
-TODO
+MVP / in active development.
 
-## Usage
+## Feature highlights (current)
 
-### Installation
+- Tray/menubar app with a global hotkey (default: `Ctrl+Shift+S`)
+- Native overlay sidecar:
+  - Drag to select a region
+  - Click to select a window
+  - `Esc` cancels
+- Editor actions:
+  - Crop inside the editor
+  - Copy (PNG) to clipboard
+  - Save (PNG) to disk
+  - Pin (always-on-top)
 
-#### Build from Source
+## Documentation
 
-```sh
-# Clone the repository.
-git clone https://github.com/hack-ink/<NAME>
-cd <NAME>
+- Start here: `docs/index.md`
+- Specs:
+  - Current behavior (as-is): `docs/spec/system_rsnap_current.md`
+  - v1 target behavior (to-be): `docs/spec/system_rsnap_v1.md`
 
-# To install Rust on macOS and Unix, run the following command.
-#
-# To install Rust on Windows, download and run the installer from `https://rustup.rs`.
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable
+## Usage (high level)
 
-# Install the necessary dependencies. (Unix only)
-# Using Ubuntu as an example, this really depends on your distribution.
-sudo apt-get update
-sudo apt-get install <DEPENDENCIES>
-
-# Build the project, and the binary will be available at `target/release/<NAME>`.
-cargo build --release
-
-# If you are a macOS user and want to have a `<NAME>.app`, run the following command.
-# Install `cargo-bundle` to pack the binary into an app.
-cargo install cargo-bundle
-# Pack the app, and the it will be available at `target/release/bundle/osx/<NAME>.app`.
-cargo bundle --release
-```
-
-#### Download Pre-built Binary
-
-- **macOS**
-    - Download the latest pre-built binary from [GitHub Releases](https://github.com/hack-ink/<NAME>/releases/latest).
-- **Windows**
-    - TODO
-- **Unix**
-    - TODO
-
-### Configuration
-
-#### TODO
-
-TODO
-
-### Interaction
-
-TODO
-
-### Update
-
-TODO
+- Use the tray menu or press the global hotkey to start capture.
+- Drag for region capture, or click a window for window capture.
+- The editor opens for export actions (copy/save/pin).
 
 ## Development
 
-### Architecture
+This repository uses `cargo make` tasks defined in `Makefile.toml`.
 
-TODO
+Common commands:
+
+```sh
+cargo make lint-fix
+cargo make fmt
+cargo make test
+```
 
 ## Support Me
 
@@ -92,7 +64,7 @@ Your support is greatly appreciated and motivates me to keep improving this proj
 
 - **Fiat**
     - [Ko-fi](https://ko-fi.com/hack_ink)
-    - [爱发电](https://afdian.com/a/hack_ink)
+    - [Afdian](https://afdian.com/a/hack_ink)
 - **Crypto**
     - **Bitcoin**
         - `bc1pedlrf67ss52md29qqkzr2avma6ghyrt4jx9ecp9457qsl75x247sqcp43c`
