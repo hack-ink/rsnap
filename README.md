@@ -63,6 +63,13 @@ cargo make fmt
 cargo make test
 ```
 
+### Build a macOS `.app` locally
+
+```sh
+./scripts/package-macos-app.sh
+open -n target/release/bundle/macos/rsnap.app
+```
+
 ## Support Me
 
 If you find this project helpful and would like to support its development, you can buy me a coffee!
