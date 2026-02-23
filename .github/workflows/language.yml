@@ -49,7 +49,36 @@ jobs:
         with:
           cache: true
           rustflags: ''
-          components: rustfmt, clippy
+          components: clippy
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      - name: Run lint
+        run: cargo make lint-rust
+
+      - name: Run tests
+        run: cargo make test-rust
+
+  style:
+    name: Style checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch latest code
+        uses: actions/checkout@v6
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+          rustflags: ''
 
       - name: Install nightly rustfmt
         run: rustup toolchain install nightly --component rustfmt
@@ -70,6 +99,10 @@ jobs:
           tag="${latest_effective_url##*/}"
 
           case "${RUNNER_OS}" in
+            Linux)
+              triple="x86_64-unknown-linux-gnu"
+              ext="tgz"
+              ;;
             macOS)
               arch="$(uname -m)"
               if [[ "${arch}" == "arm64" ]]; then
@@ -139,42 +172,13 @@ jobs:
           export PATH="${install_dir}:${PATH}"
           cargo vstyle --version
 
-      - name: Install nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
-
-      - name: Run lint
-        run: cargo make lint
-
-      - name: Run Rust format checks
-        run: cargo make fmt-rust-check
-
-      - name: Run tests
-        run: cargo make test-rust
-
-  toml:
-    name: TOML checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fetch latest code
-        uses: actions/checkout@v6
-
-      - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          cache: true
-          rustflags: ''
-
-      - name: Install cargo-make
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-make
-
       - name: Install taplo
         uses: taiki-e/install-action@v2
         with:
           tool: taplo
 
-      - name: Run TOML format checks
-        run: cargo make fmt-toml-check
+      - name: Run vstyle
+        run: cargo make lint-vstyle
+
+      - name: Run format checks
+        run: cargo make fmt-check
