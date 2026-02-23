@@ -12,11 +12,12 @@ use raw_window_handle::{
 use softbuffer::{Context, Surface};
 use winit::{
 	application::ApplicationHandler,
-	dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize},
+	dpi::{LogicalPosition, PhysicalPosition, PhysicalSize},
 	event::{ElementState, MouseButton, WindowEvent},
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
 	keyboard::{Key, NamedKey},
-	window::{WindowId, WindowLevel},
+	monitor::MonitorHandle,
+	window::{Fullscreen, WindowId, WindowLevel},
 };
 
 use rsnap_overlay_protocol::{OverlayOutput, Point, Rect};
@@ -38,26 +39,23 @@ impl App {
 			return;
 		}
 
-		let monitors = match xcap::Monitor::all() {
-			Ok(monitors) => monitors,
-			Err(err) => finish(OverlayOutput::Error {
-				message: format!("Unable to enumerate monitors: {err}"),
-			}),
-		};
+		let monitors = event_loop.available_monitors().collect::<Vec<_>>();
 
 		if monitors.is_empty() {
 			finish(OverlayOutput::Error { message: String::from("No monitor detected") });
 		}
 
 		for monitor in monitors {
+			let origin = monitor_origin(&monitor);
 			let attrs = winit::window::Window::default_attributes()
 				.with_title("rsnap-overlay")
 				.with_decorations(false)
 				.with_resizable(false)
 				.with_transparent(true)
 				.with_window_level(WindowLevel::AlwaysOnTop)
-				.with_inner_size(window_inner_size_for_monitor(&monitor))
-				.with_position(window_position_for_monitor(&monitor));
+				.with_inner_size(PhysicalSize::new(monitor.size().width, monitor.size().height))
+				.with_position(PhysicalPosition::new(monitor.position().x, monitor.position().y))
+				.with_fullscreen(Some(Fullscreen::Borderless(Some(monitor))));
 			let window = match event_loop.create_window(attrs) {
 				Ok(window) => window,
 				Err(err) => finish(OverlayOutput::Error {
@@ -76,10 +74,7 @@ impl App {
 				Err(err) => finish(OverlayOutput::Error { message: format!("{err:#}") }),
 			};
 
-			self.overlays.insert(
-				renderer.window().id(),
-				OverlayWindow { origin: monitor_origin(&monitor), renderer },
-			);
+			self.overlays.insert(renderer.window().id(), OverlayWindow { origin, renderer });
 		}
 
 		self.request_redraw_all();
@@ -434,30 +429,10 @@ fn hit_test_window_info(point: Point) -> Result<Option<(u32, Rect)>> {
 	Ok(best.map(|(id, rect, _z)| (id, rect)))
 }
 
-fn monitor_origin(monitor: &xcap::Monitor) -> Point {
-	Point { x: monitor.x(), y: monitor.y() }
-}
+fn monitor_origin(monitor: &MonitorHandle) -> Point {
+	let position: LogicalPosition<f64> = monitor.position().to_logical(monitor.scale_factor());
 
-fn window_inner_size_for_monitor(monitor: &xcap::Monitor) -> winit::dpi::Size {
-	#[cfg(target_os = "macos")]
-	{
-		winit::dpi::Size::Logical(LogicalSize::new(monitor.width() as f64, monitor.height() as f64))
-	}
-	#[cfg(not(target_os = "macos"))]
-	{
-		winit::dpi::Size::Physical(PhysicalSize::new(monitor.width(), monitor.height()))
-	}
-}
-
-fn window_position_for_monitor(monitor: &xcap::Monitor) -> winit::dpi::Position {
-	#[cfg(target_os = "macos")]
-	{
-		winit::dpi::Position::Logical(LogicalPosition::new(monitor.x() as f64, monitor.y() as f64))
-	}
-	#[cfg(not(target_os = "macos"))]
-	{
-		winit::dpi::Position::Physical(PhysicalPosition::new(monitor.x(), monitor.y()))
-	}
+	Point { x: position.x.round() as i32, y: position.y.round() as i32 }
 }
 
 fn cursor_delta_for_event(
