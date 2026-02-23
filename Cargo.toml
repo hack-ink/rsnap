@@ -1,5 +1,5 @@
 [workspace]
-members  = ["src-tauri"]
+members  = ["crates/rsnap-overlay", "crates/rsnap-overlay-protocol", "src-tauri"]
 resolver = "3"
 
 [workspace.package]
