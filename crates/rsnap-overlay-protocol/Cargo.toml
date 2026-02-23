@@ -1,0 +1,19 @@
+[package]
+authors.workspace     = true
+description.workspace = true
+edition.workspace     = true
+homepage.workspace    = true
+license.workspace     = true
+name                  = "rsnap-overlay-protocol"
+readme.workspace      = true
+repository.workspace  = true
+version.workspace     = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
