@@ -85,14 +85,11 @@ where
 		let image = monitor
 			.capture_image()
 			.map_err(|err| format!("Failed to capture monitor {}: {err}", monitor.name()))?;
+		let (x, y) = monitor_physical_origin(&monitor);
+		let width = image.width();
+		let height = image.height();
 
-		captures.push(MonitorCapture {
-			x: monitor.x(),
-			y: monitor.y(),
-			width: monitor.width(),
-			height: monitor.height(),
-			image,
-		});
+		captures.push(MonitorCapture { x, y, width, height, image });
 	}
 
 	let min_x = captures
@@ -186,6 +183,22 @@ where
 	let cache_dir = app_cache_path(app)?;
 
 	Ok(resolve_output_path(&cache_dir))
+}
+
+fn monitor_physical_origin(monitor: &xcap::Monitor) -> (i32, i32) {
+	#[cfg(target_os = "macos")]
+	{
+		let scale = monitor.scale_factor() as f64;
+		let x = ((monitor.x() as f64) * scale).round() as i32;
+		let y = ((monitor.y() as f64) * scale).round() as i32;
+
+		(x, y)
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	{
+		(monitor.x(), monitor.y())
+	}
 }
 
 fn resolve_output_path(cache_dir: &Path) -> PathBuf {
