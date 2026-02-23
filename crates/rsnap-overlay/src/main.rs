@@ -557,5 +557,9 @@ fn set_overlay_opacity_macos(window: &winit::window::Window, alpha: u8) {
 	unsafe {
 		let _: () = msg_send![ns_window, setOpaque: false];
 		let _: () = msg_send![ns_window, setAlphaValue: value];
+		// Ensure the overlay can appear above full-screen apps and across Spaces.
+		// NSWindowCollectionBehaviorCanJoinAllSpaces | Transient | FullScreenAuxiliary
+		let behavior: usize = 1 | 8 | 256;
+		let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
 	}
 }
