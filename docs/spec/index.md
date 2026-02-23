@@ -10,6 +10,11 @@ Audience: This documentation is written for LLM consumption and should remain ex
 - Use descriptive file names with stable prefixes (`system_`, `t0_`, `t1_`, `trace_`, `search_`).
 - Link new specs from `docs/index.md` or `docs/guide/index.md` when relevant.
 
+## Specs
+
+- `docs/spec/system_rsnap_current.md`: Current (as-is) rsnap behavior and contracts.
+- `docs/spec/system_rsnap_v1.md`: v1 (to-be) rsnap behavior and contracts.
+
 ## Authoring guidance (LLM-first)
 
 - Use explicit nouns instead of pronouns whenever possible.
