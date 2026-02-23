@@ -40,6 +40,9 @@ __pycache__
 ## Rust
 target
 
+# Tauri sidecar staging
+src-tauri/bin/rsnap-overlay-*
+
 ## Swift
 .build
 xcuserdata

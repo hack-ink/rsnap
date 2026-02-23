@@ -183,17 +183,34 @@ where
 		return Ok(vec![path]);
 	}
 
-	let binary_name = if cfg!(windows) { "rsnap-overlay.exe" } else { "rsnap-overlay" };
+	let mut binary_names = if cfg!(windows) {
+		vec![String::from("rsnap-overlay.exe"), String::from("rsnap-overlay")]
+	} else {
+		vec![String::from("rsnap-overlay")]
+	};
+
+	if let Some(target_triple) = option_env!("RSNAP_TARGET_TRIPLE") {
+		if cfg!(windows) {
+			binary_names.push(format!("rsnap-overlay-{target_triple}.exe"));
+			binary_names.push(format!("rsnap-overlay-{target_triple}"));
+		} else {
+			binary_names.push(format!("rsnap-overlay-{target_triple}"));
+		}
+	}
+
 	let mut candidates = Vec::new();
 
 	if let Ok(current_exe) = std::env::current_exe()
 		&& let Some(dir) = current_exe.parent()
 	{
-		candidates.push(dir.join(binary_name));
-		candidates.push(dir.join("rsnap-overlay"));
+		for name in &binary_names {
+			candidates.push(dir.join(name));
+		}
 	}
 	if let Ok(resource_dir) = app.path().resource_dir() {
-		candidates.push(resource_dir.join(binary_name));
+		for name in &binary_names {
+			candidates.push(resource_dir.join(name));
+		}
 	}
 
 	let mut existing = Vec::new();

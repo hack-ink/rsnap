@@ -153,9 +153,10 @@
 
 - Configure `externalBin` for `rsnap-overlay` (per target triple naming).
 
-**Step 2: Build-time copy**
+**Step 2: Stage the sidecar into `src-tauri/bin/`**
 
-- Update `src-tauri/build.rs` to copy the built sidecar into `src-tauri/bin/` with the expected name.
+- Build and copy the sidecar into `src-tauri/bin/rsnap-overlay-$TARGET_TRIPLE` (or `.exe` on Windows):
+  - Run: `cargo make stage-overlay-sidecar` (optionally set `TARGET_TRIPLE=...`)
 
 **Step 3: Smoke build**
 
@@ -178,4 +179,3 @@
 
 - Run: `cd ui && npm run build`
 - Expected: PASS
-
