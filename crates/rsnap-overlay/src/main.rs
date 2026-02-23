@@ -536,7 +536,7 @@ fn set_overlay_opacity_windows(window: &winit::window::Window, alpha: u8) {
 
 #[cfg(target_os = "macos")]
 fn set_overlay_opacity_macos(window: &winit::window::Window, alpha: u8) {
-	use objc::{msg_send, runtime::Object, sel, sel_impl};
+	use objc::{class, msg_send, runtime::Object, sel, sel_impl};
 
 	let handle = match window.window_handle() {
 		Ok(handle) => handle,
@@ -561,5 +561,12 @@ fn set_overlay_opacity_macos(window: &winit::window::Window, alpha: u8) {
 		// NSWindowCollectionBehaviorCanJoinAllSpaces | Transient | FullScreenAuxiliary
 		let behavior: usize = 1 | 8 | 256;
 		let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
+		let ns_app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+
+		if !ns_app.is_null() {
+			let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
+		}
+
+		let _: () = msg_send![ns_window, makeKeyAndOrderFront: std::ptr::null::<Object>()];
 	}
 }
