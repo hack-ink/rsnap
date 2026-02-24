@@ -1,0 +1,23 @@
+[package]
+authors.workspace     = true
+description.workspace = true
+edition.workspace     = true
+homepage.workspace    = true
+license.workspace     = true
+name                  = "rsnap"
+readme.workspace      = true
+repository.workspace  = true
+version.workspace     = true
+
+[[bin]]
+name = "rsnap"
+path = "src/main.rs"
+
+[dependencies]
+color-eyre         = { workspace = true }
+global-hotkey      = { workspace = true }
+rsnap-overlay      = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+tray-icon          = { workspace = true }
+winit              = { workspace = true }

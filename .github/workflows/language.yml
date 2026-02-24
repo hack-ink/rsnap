@@ -32,14 +32,7 @@ concurrency:
 jobs:
   rust:
     name: Rust checks
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    defaults:
-      run:
-        shell: bash
+    runs-on: ubuntu-latest
     steps:
       - name: Fetch latest code
         uses: actions/checkout@v6
@@ -49,12 +42,30 @@ jobs:
         with:
           cache: true
           rustflags: ''
-          components: clippy
+          components: rustfmt, clippy
+
+      - name: Install nightly rustfmt
+        run: rustup toolchain install nightly --component rustfmt
 
       - name: Install cargo-make
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-make
+
+      - name: Install vibe-style (latest release)
+        run: |
+          set -euo pipefail
+          VERSION="$(curl -fsSL https://api.github.com/repos/hack-ink/vibe-style/releases/latest | grep -oE '"tag_name": "v[^"]+"' | cut -d'"' -f4)"
+          TARGET="x86_64-unknown-linux-gnu"
+          ASSET="vibe-style-${TARGET}-${VERSION}.tgz"
+
+          curl -fsSLO "https://github.com/hack-ink/vibe-style/releases/download/${VERSION}/${ASSET}"
+          tar -xzf "${ASSET}"
+
+          mkdir -p "$HOME/.cargo/bin"
+          install -m 0755 "vibe-style-${TARGET}-${VERSION}/vstyle" "$HOME/.cargo/bin/vstyle"
+          install -m 0755 "vibe-style-${TARGET}-${VERSION}/cargo-vstyle" "$HOME/.cargo/bin/cargo-vstyle"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Install nextest
         uses: taiki-e/install-action@v2
@@ -62,13 +73,16 @@ jobs:
           tool: nextest
 
       - name: Run lint
-        run: cargo make lint-rust
+        run: cargo make lint
+
+      - name: Run Rust format checks
+        run: cargo make fmt-rust-check
 
       - name: Run tests
         run: cargo make test-rust
 
-  style:
-    name: Style checks
+  toml:
+    name: TOML checks
     runs-on: ubuntu-latest
     steps:
       - name: Fetch latest code
@@ -80,105 +94,15 @@ jobs:
           cache: true
           rustflags: ''
 
-      - name: Install nightly rustfmt
-        run: rustup toolchain install nightly --component rustfmt
-
       - name: Install cargo-make
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-make
-
-      - name: Install vibe-style
-        run: |
-          set -euo pipefail
-
-          repo="hack-ink/vibe-style"
-          latest_effective_url="$(
-            curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${repo}/releases/latest"
-          )"
-          tag="${latest_effective_url##*/}"
-
-          case "${RUNNER_OS}" in
-            Linux)
-              triple="x86_64-unknown-linux-gnu"
-              ext="tgz"
-              ;;
-            macOS)
-              arch="$(uname -m)"
-              if [[ "${arch}" == "arm64" ]]; then
-                triple="aarch64-apple-darwin"
-              else
-                triple="x86_64-apple-darwin"
-              fi
-              ext="tgz"
-              ;;
-            Windows)
-              triple="x86_64-pc-windows-msvc"
-              ext="zip"
-              ;;
-            *)
-              echo "Unsupported runner OS: ${RUNNER_OS}" >&2
-              exit 1
-              ;;
-          esac
-
-          asset="vibe-style-${triple}-${tag}.${ext}"
-          url="https://github.com/${repo}/releases/download/${tag}/${asset}"
-
-          tmp="$(mktemp -d)"
-          curl -fsSL "${url}" -o "${tmp}/${asset}"
-          mkdir -p "${tmp}/extract"
-
-          export ARCHIVE="${tmp}/${asset}"
-          export EXT="${ext}"
-          export DEST="${tmp}/extract"
-          python - <<'PY'
-          import os
-          import tarfile
-          import zipfile
-          from pathlib import Path
-
-          archive = Path(os.environ["ARCHIVE"])
-          ext = os.environ["EXT"]
-          dest = Path(os.environ["DEST"])
-          dest.mkdir(parents=True, exist_ok=True)
-
-          if ext == "tgz":
-            with tarfile.open(archive, "r:gz") as tf:
-              tf.extractall(dest)
-          elif ext == "zip":
-            with zipfile.ZipFile(archive) as zf:
-              zf.extractall(dest)
-          else:
-            raise SystemExit(f"unsupported archive ext: {ext}")
-          PY
-
-          install_dir="${RUNNER_TEMP}/vibe-style-bin"
-          mkdir -p "${install_dir}"
-
-          extracted_dir="$(ls -d "${tmp}/extract"/vibe-style-*-"${tag}" 2>/dev/null | head -n 1 || true)"
-          if [[ -z "${extracted_dir}" ]]; then
-            echo "Could not find extracted vibe-style directory for tag ${tag}" >&2
-            ls -la "${tmp}/extract" >&2 || true
-            exit 1
-          fi
-
-          # `cargo vstyle` looks for `cargo-vstyle` on PATH.
-          cp "${extracted_dir}/cargo-vstyle"* "${install_dir}/"
-          cp "${extracted_dir}/vstyle"* "${install_dir}/" || true
-
-          chmod +x "${install_dir}/"* || true
-          echo "${install_dir}" >> "${GITHUB_PATH}"
-          export PATH="${install_dir}:${PATH}"
-          cargo vstyle --version
 
       - name: Install taplo
         uses: taiki-e/install-action@v2
         with:
           tool: taplo
 
-      - name: Run vstyle
-        run: cargo make lint-vstyle
-
-      - name: Run format checks
-        run: cargo make fmt-check
+      - name: Run TOML format checks
+        run: cargo make fmt-toml-check
