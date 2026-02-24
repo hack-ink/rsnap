@@ -29,7 +29,6 @@ pub enum CaptureBackendError {
 pub struct StubCaptureBackend {
 	device_state: DeviceState,
 }
-
 impl StubCaptureBackend {
 	#[must_use]
 	pub fn new() -> Self {
@@ -46,6 +45,7 @@ impl Default for StubCaptureBackend {
 impl CaptureBackend for StubCaptureBackend {
 	fn global_cursor_position(&mut self) -> Result<Option<GlobalPoint>> {
 		let mouse = self.device_state.get_mouse();
+
 		Ok(Some(GlobalPoint::new(mouse.coords.0, mouse.coords.1)))
 	}
 
@@ -67,14 +67,6 @@ pub struct XcapCaptureBackend {
 	cache: Option<CaptureCache>,
 	cache_ttl: Duration,
 }
-
-#[derive(Debug)]
-struct CaptureCache {
-	monitor: MonitorRect,
-	captured_at: Instant,
-	image: RgbaImage,
-}
-
 impl XcapCaptureBackend {
 	#[must_use]
 	pub fn new() -> Self {
@@ -85,6 +77,7 @@ impl XcapCaptureBackend {
 		let Some(cache) = &self.cache else {
 			return false;
 		};
+
 		cache.monitor == monitor && cache.captured_at.elapsed() <= self.cache_ttl
 	}
 
@@ -95,7 +88,9 @@ impl XcapCaptureBackend {
 
 		let image = capture_monitor_image(monitor)
 			.wrap_err_with(|| format!("failed to capture monitor for rgb sampling: {monitor:?}"))?;
+
 		self.cache = Some(CaptureCache { monitor, captured_at: Instant::now(), image });
+
 		Ok(())
 	}
 }
@@ -109,14 +104,17 @@ impl Default for XcapCaptureBackend {
 impl CaptureBackend for XcapCaptureBackend {
 	fn global_cursor_position(&mut self) -> Result<Option<GlobalPoint>> {
 		let mouse = self.device_state.get_mouse();
+
 		Ok(Some(GlobalPoint::new(mouse.coords.0, mouse.coords.1)))
 	}
 
 	fn capture_monitor(&mut self, monitor: MonitorRect) -> Result<RgbaImage> {
 		let image =
 			capture_monitor_image(monitor).wrap_err("failed to capture monitor screenshot")?;
+
 		self.cache =
 			Some(CaptureCache { monitor, captured_at: Instant::now(), image: image.clone() });
+
 		Ok(image)
 	}
 
@@ -130,34 +128,26 @@ impl CaptureBackend for XcapCaptureBackend {
 		}
 
 		self.ensure_cache(monitor)?;
+
 		let Some(cache) = &self.cache else {
 			return Ok(None);
 		};
-
 		let Some((x, y)) = monitor.local_u32_pixels(point) else {
 			return Ok(None);
 		};
 		let Some(pixel) = cache.image.get_pixel_checked(x, y) else {
 			return Ok(None);
 		};
+
 		Ok(Some(Rgb::new(pixel.0[0], pixel.0[1], pixel.0[2])))
 	}
 }
 
-fn capture_monitor_image(monitor: MonitorRect) -> Result<RgbaImage> {
-	let xcap_monitor = xcap_find_monitor(monitor)?;
-	let image = xcap_monitor.capture_image().wrap_err("xcap capture_image failed")?;
-	Ok(image)
-}
-
-fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
-	let monitors = xcap::Monitor::all().wrap_err("xcap Monitor::all failed")?;
-	for m in monitors {
-		if m.id() == monitor.id {
-			return Ok(m);
-		}
-	}
-	Err(CaptureBackendError::MonitorNotFound { monitor }.into())
+#[derive(Debug)]
+struct CaptureCache {
+	monitor: MonitorRect,
+	captured_at: Instant,
+	image: RgbaImage,
 }
 
 #[must_use]
@@ -165,14 +155,36 @@ pub fn default_capture_backend() -> Box<dyn CaptureBackend> {
 	Box::new(XcapCaptureBackend::new())
 }
 
+fn capture_monitor_image(monitor: MonitorRect) -> Result<RgbaImage> {
+	let xcap_monitor = xcap_find_monitor(monitor)?;
+	let image = xcap_monitor.capture_image().wrap_err("xcap capture_image failed")?;
+
+	Ok(image)
+}
+
+fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
+	let monitors = xcap::Monitor::all().wrap_err("xcap Monitor::all failed")?;
+
+	for m in monitors {
+		if m.id() == monitor.id {
+			return Ok(m);
+		}
+	}
+
+	Err(CaptureBackendError::MonitorNotFound { monitor }.into())
+}
+
 #[cfg(test)]
 mod tests {
-	use super::*;
+	use crate::backend::CaptureBackend;
+
+	use crate::backend::StubCaptureBackend;
 
 	#[test]
 	fn stub_backend_returns_cursor_position() {
 		let mut backend = StubCaptureBackend::new();
 		let pos = backend.global_cursor_position().unwrap();
+
 		assert!(pos.is_some());
 	}
 }

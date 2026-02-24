@@ -1,15 +1,17 @@
+use std::time::{Duration, Instant};
+
+use color_eyre::eyre;
 use color_eyre::eyre::Result;
 use global_hotkey::{
 	GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
 	hotkey::{Code, HotKey, Modifiers},
 };
-use rsnap_overlay::{OverlayControl, OverlayExit, OverlaySession};
-use std::time::{Duration, Instant};
-use tracing::{info, warn};
 use tray_icon::{
 	TrayIcon, TrayIconBuilder, TrayIconEvent,
 	menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
 };
+use winit::error::EventLoopError;
+use winit::event::WindowEvent;
 use winit::{
 	application::ApplicationHandler,
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy},
@@ -17,6 +19,7 @@ use winit::{
 };
 
 use crate::icon;
+use rsnap_overlay::{OverlayControl, OverlayExit, OverlaySession};
 
 pub enum UserEvent {
 	TrayIcon(TrayIconEvent),
@@ -33,7 +36,6 @@ struct App {
 	quit_menu_id: Option<MenuId>,
 	overlay_session: Option<OverlaySession>,
 }
-
 impl App {
 	fn new(capture_hotkey: HotKey, hotkey_manager: Option<GlobalHotKeyManager>) -> Self {
 		Self {
@@ -53,24 +55,27 @@ impl App {
 
 	fn start_capture_session(&mut self, event_loop: &ActiveEventLoop, requested_by: &'static str) {
 		if self.overlay_session.is_some() {
-			info!(
+			tracing::info!(
 				requested_by = %requested_by,
 				"Capture already active; ignoring additional start request."
 			);
+
 			return;
 		}
 
 		let mut overlay_session = OverlaySession::new();
+
 		match overlay_session.start(event_loop) {
 			Ok(()) => {
-				info!(
+				tracing::info!(
 					requested_by = %requested_by,
 					hotkey = %self.capture_key_label(),
 					"Capture overlay started."
 				);
+
 				self.overlay_session = Some(overlay_session);
 			},
-			Err(err) => warn!(
+			Err(err) => tracing::warn!(
 				error = %err,
 				requested_by = %requested_by,
 				"Failed to start overlay session."
@@ -90,20 +95,23 @@ impl App {
 		if let Err(err) =
 			tray_menu.append_items(&[&capture_item, &PredefinedMenuItem::separator(), &quit_item])
 		{
-			warn!(error = ?err, "Failed to build tray menu.");
+			tracing::warn!(error = ?err, "Failed to build tray menu.");
+
 			event_loop.exit();
+
 			return;
 		}
 
 		let icon = match icon::default_tray_icon() {
 			Ok(icon) => icon,
 			Err(err) => {
-				warn!(error = ?err, "Failed to create tray icon image.");
+				tracing::warn!(error = ?err, "Failed to create tray icon image.");
+
 				event_loop.exit();
+
 				return;
 			},
 		};
-
 		let tray_icon = match TrayIconBuilder::new()
 			.with_tooltip("rsnap")
 			.with_menu(Box::new(tray_menu))
@@ -112,8 +120,10 @@ impl App {
 		{
 			Ok(icon) => icon,
 			Err(err) => {
-				warn!(error = ?err, "Failed to build tray icon.");
+				tracing::warn!(error = ?err, "Failed to build tray icon.");
+
 				event_loop.exit();
+
 				return;
 			},
 		};
@@ -129,20 +139,21 @@ impl App {
 		};
 
 		match exit {
-			OverlayExit::Cancelled => info!("Capture cancelled."),
+			OverlayExit::Cancelled => tracing::info!("Capture cancelled."),
 			OverlayExit::PngBytes(png_bytes) => {
-				info!(bytes = png_bytes.len(), "Capture copied to clipboard.");
+				tracing::info!(bytes = png_bytes.len(), "Capture copied to clipboard.");
 			},
-			OverlayExit::Error(message) => warn!(error = %message, "Capture failed."),
+			OverlayExit::Error(message) => tracing::warn!(error = %message, "Capture failed."),
 		};
 
-		info!("Capture overlay ended.");
+		tracing::info!("Capture overlay ended.");
 	}
 
 	fn handle_overlay_control(&mut self, control: OverlayControl) {
 		let OverlayControl::Exit(exit) = control else {
 			return;
 		};
+
 		self.end_overlay_session(exit);
 	}
 }
@@ -156,21 +167,25 @@ impl ApplicationHandler<UserEvent> for App {
 		match event {
 			UserEvent::Menu(event) => {
 				let id = event.id();
+
 				if Some(id) == self.capture_menu_id.as_ref() {
-					info!("Capture requested from tray menu.");
+					tracing::info!("Capture requested from tray menu.");
+
 					self.start_capture_session(event_loop, "tray-menu");
 				} else if Some(id) == self.quit_menu_id.as_ref() {
-					info!("Quit requested from tray menu.");
+					tracing::info!("Quit requested from tray menu.");
+
 					self.end_overlay_session(OverlayExit::Cancelled);
 					event_loop.exit();
 				} else {
-					warn!(menu_id = ?id.as_ref(), "Ignoring unknown menu event.");
+					tracing::warn!(menu_id = ?id.as_ref(), "Ignoring unknown menu event.");
 				}
 			},
 
 			UserEvent::HotKey(event) => {
 				if event.state() == HotKeyState::Pressed && event.id() == self.capture_hotkey_id {
-					info!(hotkey = %self.capture_key_label(), "Capture requested from hotkey.");
+					tracing::info!(hotkey = %self.capture_key_label(), "Capture requested from hotkey.");
+
 					self.start_capture_session(event_loop, "global-hotkey");
 				}
 			},
@@ -183,14 +198,16 @@ impl ApplicationHandler<UserEvent> for App {
 		&mut self,
 		_event_loop: &ActiveEventLoop,
 		window_id: WindowId,
-		event: winit::event::WindowEvent,
+		event: WindowEvent,
 	) {
 		let control = {
 			let Some(session) = self.overlay_session.as_mut() else {
 				return;
 			};
+
 			session.handle_window_event(window_id, &event)
 		};
+
 		self.handle_overlay_control(control);
 	}
 
@@ -207,8 +224,10 @@ impl ApplicationHandler<UserEvent> for App {
 			let Some(session) = self.overlay_session.as_mut() else {
 				return;
 			};
+
 			session.about_to_wait()
 		};
+
 		self.handle_overlay_control(control);
 	}
 }
@@ -216,23 +235,24 @@ impl ApplicationHandler<UserEvent> for App {
 pub fn run() -> Result<()> {
 	let capture_hotkey = HotKey::new(Some(Modifiers::ALT), Code::KeyX);
 	let capture_hotkey_id = capture_hotkey.id();
-
 	let mut hotkey_manager = match GlobalHotKeyManager::new() {
 		Ok(manager) => Some(manager),
 		Err(err) => {
-			warn!(error = ?err, "Failed to create global hotkey manager.");
+			tracing::warn!(error = ?err, "Failed to create global hotkey manager.");
+
 			None
 		},
 	};
+
 	if let Some(manager) = hotkey_manager.as_mut() {
 		if let Err(err) = manager.register(capture_hotkey) {
-			warn!(
+			tracing::warn!(
 				error = ?err,
 				hotkey_id = %capture_hotkey_id,
 				"Failed to register capture hotkey."
 			);
 		} else {
-			info!(hotkey_id = %capture_hotkey_id, "Registered capture hotkey.");
+			tracing::info!(hotkey_id = %capture_hotkey_id, "Registered capture hotkey.");
 		}
 	}
 
@@ -241,32 +261,38 @@ pub fn run() -> Result<()> {
 	#[cfg(target_os = "macos")]
 	{
 		use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+
 		event_loop_builder.with_activation_policy(ActivationPolicy::Accessory);
 		event_loop_builder.with_activate_ignoring_other_apps(false);
 		event_loop_builder.with_default_menu(false);
 	}
 
 	let event_loop = event_loop_builder.build()?;
+	let tray_proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
 	let mut app = App::new(capture_hotkey, hotkey_manager);
 
-	let tray_proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
 	TrayIconEvent::set_event_handler(Some(move |event| {
 		let _ = tray_proxy.send_event(UserEvent::TrayIcon(event));
 	}));
 
 	let menu_proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
+
 	MenuEvent::set_event_handler(Some(move |event| {
 		let _ = menu_proxy.send_event(UserEvent::Menu(event));
 	}));
 
 	let hotkey_proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
+
 	GlobalHotKeyEvent::set_event_handler(Some(move |event| {
 		let _ = hotkey_proxy.send_event(UserEvent::HotKey(event));
 	}));
 
-	info!("Starting menubar-only rsnap app (capture hotkey: {}).", app.capture_key_label());
-	event_loop
-		.run_app(&mut app)
-		.map_err(|err: winit::error::EventLoopError| color_eyre::eyre::eyre!(err))?;
+	tracing::info!(
+		hotkey = %app.capture_key_label(),
+		"Starting menubar-only rsnap app."
+	);
+
+	event_loop.run_app(&mut app).map_err(|err: EventLoopError| eyre::eyre!(err))?;
+
 	Ok(())
 }
