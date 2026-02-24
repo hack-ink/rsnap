@@ -6,8 +6,10 @@ use std::{
 
 use color_eyre::eyre::{self, Result, WrapErr};
 use device_query::DeviceQuery;
+use egui::Align;
 use egui::ClippedPrimitive;
 use egui::FullOutput;
+use egui::Layout;
 use egui::{Color32, CornerRadius, Frame, Margin, Pos2, Rect, Vec2, ViewportId};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use image::RgbaImage;
@@ -783,30 +785,38 @@ impl WindowRenderer {
 				.order(egui::Order::Foreground)
 				.fixed_pos(Pos2::new(hud_x, hud_y))
 				.show(ctx, |ui| {
-					let card_fill = Color32::from_rgba_unmultiplied(18, 18, 20, 230);
-					let card_stroke =
-						egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 28));
-					let card_shadow = egui::epaint::Shadow {
-						offset: [0, 10],
-						blur: 24,
+					let pill_fill = Color32::from_rgba_unmultiplied(18, 18, 20, 220);
+					let pill_stroke =
+						egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
+					let pill_shadow = egui::epaint::Shadow {
+						offset: [0, 6],
+						blur: 16,
 						spread: 0,
-						color: Color32::from_rgba_unmultiplied(0, 0, 0, 120),
+						color: Color32::from_rgba_unmultiplied(0, 0, 0, 90),
 					};
+					let pill_radius = 18;
 					let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
 					let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
-
-					Frame {
-						fill: card_fill,
-						stroke: card_stroke,
-						shadow: card_shadow,
-						corner_radius: CornerRadius::same(12),
-						inner_margin: Margin::symmetric(10, 9),
+					let accent_color = match state.rgb {
+						Some(rgb) => Color32::from_rgb(rgb.r, rgb.g, rgb.b),
+						None => Color32::from_rgba_unmultiplied(255, 255, 255, 26),
+					};
+					let hint = match state.mode {
+						OverlayMode::Live => "Click to freeze",
+						OverlayMode::Frozen => "Space to copy PNG",
+					};
+					let inner = Frame {
+						fill: pill_fill,
+						stroke: pill_stroke,
+						shadow: pill_shadow,
+						corner_radius: CornerRadius::same(pill_radius),
+						inner_margin: Margin::symmetric(12, 8),
 						..Frame::default()
 					}
 					.show(ui, |ui| {
-						ui.set_min_width(220.0);
+						ui.set_min_width(340.0);
 
-						ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+						ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
 
 						if let Some(err) = &state.error_message {
 							ui.label(egui::RichText::new(err).color(label_color));
@@ -814,68 +824,48 @@ impl WindowRenderer {
 							return;
 						}
 
-						let x_y = format!("x={}, y={}", cursor.x, cursor.y);
+						let pos_text = format!("x={}, y={}", cursor.x, cursor.y);
+						let rgb_text = match state.rgb {
+							Some(rgb) => format!("{}, {}, {}", rgb.r, rgb.g, rgb.b),
+							None => String::from("?, ?, ?"),
+						};
 
 						ui.horizontal(|ui| {
-							ui.label(
-								egui::RichText::new("POS")
-									.color(secondary_color)
-									.size(11.0)
-									.strong(),
-							);
-							ui.label(egui::RichText::new(x_y).color(label_color).monospace());
-						});
+							ui.label(egui::RichText::new(pos_text).color(label_color).monospace());
+							ui.label(egui::RichText::new("•").color(secondary_color));
 
-						ui.horizontal(|ui| {
-							ui.label(
-								egui::RichText::new("RGB")
-									.color(secondary_color)
-									.size(11.0)
-									.strong(),
-							);
-
-							let swatch_size = egui::vec2(12.0, 12.0);
+							let swatch_size = egui::vec2(10.0, 10.0);
 							let (rect, _) =
 								ui.allocate_exact_size(swatch_size, egui::Sense::hover());
-							let (swatch_fill, rgb_text) = match state.rgb {
-								Some(rgb) => (
-									Color32::from_rgb(rgb.r, rgb.g, rgb.b),
-									format!("rgb({}, {}, {})", rgb.r, rgb.g, rgb.b),
-								),
-								None => (
-									Color32::from_rgba_unmultiplied(255, 255, 255, 26),
-									String::from("rgb(?, ?, ?)"),
-								),
-							};
 
-							ui.painter().rect_filled(rect, 4.0, swatch_fill);
+							ui.painter().rect_filled(rect, 3.0, accent_color);
 							ui.painter().rect_stroke(
 								rect,
-								4.0,
+								3.0,
 								egui::Stroke::new(
 									1.0,
-									Color32::from_rgba_unmultiplied(255, 255, 255, 38),
+									Color32::from_rgba_unmultiplied(255, 255, 255, 36),
 								),
 								egui::StrokeKind::Inside,
 							);
 							ui.label(egui::RichText::new(rgb_text).color(label_color).monospace());
+							ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+								ui.label(egui::RichText::new(hint).color(secondary_color));
+							});
 						});
-
-						ui.add_space(2.0);
-
-						match state.mode {
-							OverlayMode::Live => {
-								ui.label(
-									egui::RichText::new("Click to freeze").color(secondary_color),
-								);
-							},
-							OverlayMode::Frozen => {
-								ui.label(
-									egui::RichText::new("Space to copy PNG").color(secondary_color),
-								);
-							},
-						}
 					});
+					let pill_rect = inner.response.rect;
+					let accent_width = 3.0;
+					let accent_rect = Rect::from_min_max(
+						pill_rect.min,
+						Pos2::new(pill_rect.min.x + accent_width, pill_rect.max.y),
+					);
+
+					ui.painter().rect_filled(
+						accent_rect,
+						CornerRadius { nw: pill_radius, ne: 0, sw: pill_radius, se: 0 },
+						accent_color,
+					);
 				});
 		})
 	}
