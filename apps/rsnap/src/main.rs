@@ -10,5 +10,6 @@ fn main() -> Result<()> {
 		.init();
 
 	tracing::info!("Starting rsnap.");
+
 	rsnap::app::run()
 }

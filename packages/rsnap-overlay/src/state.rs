@@ -5,7 +5,6 @@ pub struct GlobalPoint {
 	pub x: i32,
 	pub y: i32,
 }
-
 impl GlobalPoint {
 	#[must_use]
 	pub fn new(x: i32, y: i32) -> Self {
@@ -19,7 +18,6 @@ pub struct Rgb {
 	pub g: u8,
 	pub b: u8,
 }
-
 impl Rgb {
 	#[must_use]
 	pub fn new(r: u8, g: u8, b: u8) -> Self {
@@ -36,11 +34,10 @@ pub struct MonitorRect {
 	/// Monitor pixel scale factor in thousandths (e.g. 1.0 -> 1000, 2.0 -> 2000).
 	pub scale_factor_x1000: u32,
 }
-
 impl MonitorRect {
 	#[must_use]
 	pub fn scale_factor(&self) -> f32 {
-		(self.scale_factor_x1000 as f32) / 1000.0
+		(self.scale_factor_x1000 as f32) / 1_000.0
 	}
 
 	#[must_use]
@@ -49,6 +46,7 @@ impl MonitorRect {
 			point.x >= self.origin.x && point.x < self.origin.x.saturating_add_unsigned(self.width);
 		let y_ok = point.y >= self.origin.y
 			&& point.y < self.origin.y.saturating_add_unsigned(self.height);
+
 		x_ok && y_ok
 	}
 
@@ -57,8 +55,10 @@ impl MonitorRect {
 		if !self.contains(point) {
 			return None;
 		}
+
 		let local_x = point.x.saturating_sub(self.origin.x) as u32;
 		let local_y = point.y.saturating_sub(self.origin.y) as u32;
+
 		Some((local_x, local_y))
 	}
 
@@ -68,6 +68,7 @@ impl MonitorRect {
 		let sf = self.scale_factor();
 		let px = ((local_x as f32) * sf).round() as u32;
 		let py = ((local_y as f32) * sf).round() as u32;
+
 		Some((px, py))
 	}
 }
@@ -88,7 +89,6 @@ pub(crate) struct OverlayState {
 	pub frozen_generation: u64,
 	pub error_message: Option<String>,
 }
-
 impl OverlayState {
 	pub fn new() -> Self {
 		Self {
@@ -135,7 +135,7 @@ impl OverlayState {
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+	use crate::state::{GlobalPoint, MonitorRect};
 
 	#[test]
 	fn monitor_contains_and_local_coords() {
@@ -144,14 +144,13 @@ mod tests {
 			origin: GlobalPoint::new(-100, 50),
 			width: 200,
 			height: 100,
-			scale_factor_x1000: 1000,
+			scale_factor_x1000: 1_000,
 		};
 
 		assert!(monitor.contains(GlobalPoint::new(-100, 50)));
 		assert!(monitor.contains(GlobalPoint::new(99, 149)));
 		assert!(!monitor.contains(GlobalPoint::new(100, 149)));
 		assert!(!monitor.contains(GlobalPoint::new(99, 150)));
-
 		assert_eq!(monitor.local_u32(GlobalPoint::new(-100, 50)), Some((0, 0)));
 		assert_eq!(monitor.local_u32(GlobalPoint::new(-1, 51)), Some((99, 1)));
 		assert_eq!(monitor.local_u32(GlobalPoint::new(100, 50)), None);

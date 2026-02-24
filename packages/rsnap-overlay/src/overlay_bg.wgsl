@@ -29,6 +29,6 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 	// If this ends up vertically flipped on a given backend, adjust here.
-	return textureSample(bg_tex, bg_samp, in.uv);
+	let c = textureSample(bg_tex, bg_samp, in.uv);
+	return vec4<f32>(c.rgb, 1.0);
 }
-
