@@ -778,39 +778,102 @@ impl WindowRenderer {
 			let (hud_x, hud_y) = match hud_anchor {
 				HudAnchor::Cursor => (local_cursor.x + 14.0, local_cursor.y + 14.0),
 			};
-			let mut lines = Vec::new();
-
-			if let Some(err) = &state.error_message {
-				lines.push(err.clone());
-			} else {
-				lines.push(format!("x={}, y={}", cursor.x, cursor.y));
-				lines.push(match state.rgb {
-					Some(rgb) => format!("rgb({}, {}, {})", rgb.r, rgb.g, rgb.b),
-					None => String::from("rgb(?, ?, ?)"),
-				});
-				lines.push(match state.mode {
-					OverlayMode::Live => String::from("Click to freeze"),
-					OverlayMode::Frozen => String::from("Space to copy PNG"),
-				});
-			}
 
 			egui::Area::new("hud".into())
 				.order(egui::Order::Foreground)
 				.fixed_pos(Pos2::new(hud_x, hud_y))
 				.show(ctx, |ui| {
+					let card_fill = Color32::from_rgba_unmultiplied(18, 18, 20, 230);
+					let card_stroke =
+						egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 28));
+					let card_shadow = egui::epaint::Shadow {
+						offset: [0, 10],
+						blur: 24,
+						spread: 0,
+						color: Color32::from_rgba_unmultiplied(0, 0, 0, 120),
+					};
+					let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
+					let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
+
 					Frame {
-						fill: Color32::from_rgba_unmultiplied(0, 0, 0, 200),
-						corner_radius: CornerRadius::same(6),
-						inner_margin: Margin::same(8),
+						fill: card_fill,
+						stroke: card_stroke,
+						shadow: card_shadow,
+						corner_radius: CornerRadius::same(12),
+						inner_margin: Margin::symmetric(10, 9),
 						..Frame::default()
 					}
 					.show(ui, |ui| {
-						ui.style_mut().visuals.override_text_color = Some(Color32::WHITE);
+						ui.set_min_width(220.0);
 
-						ui.set_min_width(180.0);
+						ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
 
-						for line in lines {
-							ui.label(line);
+						if let Some(err) = &state.error_message {
+							ui.label(egui::RichText::new(err).color(label_color));
+
+							return;
+						}
+
+						let x_y = format!("x={}, y={}", cursor.x, cursor.y);
+
+						ui.horizontal(|ui| {
+							ui.label(
+								egui::RichText::new("POS")
+									.color(secondary_color)
+									.size(11.0)
+									.strong(),
+							);
+							ui.label(egui::RichText::new(x_y).color(label_color).monospace());
+						});
+
+						ui.horizontal(|ui| {
+							ui.label(
+								egui::RichText::new("RGB")
+									.color(secondary_color)
+									.size(11.0)
+									.strong(),
+							);
+
+							let swatch_size = egui::vec2(12.0, 12.0);
+							let (rect, _) =
+								ui.allocate_exact_size(swatch_size, egui::Sense::hover());
+							let (swatch_fill, rgb_text) = match state.rgb {
+								Some(rgb) => (
+									Color32::from_rgb(rgb.r, rgb.g, rgb.b),
+									format!("rgb({}, {}, {})", rgb.r, rgb.g, rgb.b),
+								),
+								None => (
+									Color32::from_rgba_unmultiplied(255, 255, 255, 26),
+									String::from("rgb(?, ?, ?)"),
+								),
+							};
+
+							ui.painter().rect_filled(rect, 4.0, swatch_fill);
+							ui.painter().rect_stroke(
+								rect,
+								4.0,
+								egui::Stroke::new(
+									1.0,
+									Color32::from_rgba_unmultiplied(255, 255, 255, 38),
+								),
+								egui::StrokeKind::Inside,
+							);
+							ui.label(egui::RichText::new(rgb_text).color(label_color).monospace());
+						});
+
+						ui.add_space(2.0);
+
+						match state.mode {
+							OverlayMode::Live => {
+								ui.label(
+									egui::RichText::new("Click to freeze").color(secondary_color),
+								);
+							},
+							OverlayMode::Frozen => {
+								ui.label(
+									egui::RichText::new("Space to copy PNG").color(secondary_color),
+								);
+							},
 						}
 					});
 				});
