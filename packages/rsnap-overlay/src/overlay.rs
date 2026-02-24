@@ -949,14 +949,17 @@ impl WindowRenderer {
 			}
 		});
 		let pill_rect = inner.response.rect;
-		let accent_rect =
-			Rect::from_min_max(pill_rect.min, Pos2::new(pill_rect.min.x + 3.0, pill_rect.max.y));
-
-		ui.painter().rect_filled(
-			accent_rect,
-			CornerRadius { nw: 18, ne: 0, sw: 18, se: 0 },
-			accent_color,
+		let stroke_width = 1.0;
+		let accent_width = 3.0;
+		let accent_rect = Rect::from_min_max(
+			Pos2::new(pill_rect.min.x + stroke_width, pill_rect.min.y + stroke_width),
+			Pos2::new(
+				pill_rect.min.x + stroke_width + accent_width,
+				pill_rect.max.y - stroke_width,
+			),
 		);
+
+		ui.painter().rect_filled(accent_rect, CornerRadius::ZERO, accent_color);
 	}
 
 	fn render_hud_content(
