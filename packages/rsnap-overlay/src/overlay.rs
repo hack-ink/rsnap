@@ -921,45 +921,62 @@ impl WindowRenderer {
 			Some(rgb) => Color32::from_rgb(rgb.r, rgb.g, rgb.b),
 			None => Color32::from_rgba_unmultiplied(255, 255, 255, 26),
 		};
-		let inner = Frame {
-			fill: Color32::from_rgba_unmultiplied(18, 18, 20, 220),
-			stroke: egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26)),
-			shadow: egui::epaint::Shadow {
-				offset: [0, 1],
-				blur: 6,
-				spread: 0,
-				color: Color32::from_rgba_unmultiplied(0, 0, 0, 42),
-			},
-			corner_radius: CornerRadius::same(18),
-			inner_margin: Margin::symmetric(12, 8),
+		let body_fill = Color32::from_rgba_unmultiplied(18, 18, 20, 220);
+		let pill_stroke =
+			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
+		let pill_shadow = egui::epaint::Shadow {
+			offset: [0, 1],
+			blur: 6,
+			spread: 0,
+			color: Color32::from_rgba_unmultiplied(0, 0, 0, 42),
+		};
+		let pill_radius = 18;
+		let accent_width = 3.0;
+
+		Frame {
+			fill: accent_color,
+			stroke: pill_stroke,
+			shadow: pill_shadow,
+			corner_radius: CornerRadius::same(pill_radius),
+			inner_margin: Margin::ZERO,
 			..Frame::default()
 		}
 		.show(ui, |ui| {
-			ui.set_min_width(340.0);
+			ui.spacing_mut().item_spacing = Vec2::ZERO;
+			ui.horizontal(|ui| {
+				ui.spacing_mut().item_spacing = Vec2::ZERO;
 
-			ui.spacing_mut().item_spacing = egui::vec2(10.0, 6.0);
+				ui.add_space(accent_width);
 
-			if let Some(err) = &state.error_message {
-				ui.label(
-					egui::RichText::new(err)
-						.color(Color32::from_rgba_unmultiplied(235, 235, 245, 235)),
-				);
-			} else {
-				Self::render_hud_content(ui, state, monitor, cursor);
-			}
+				Frame {
+					fill: body_fill,
+					stroke: egui::Stroke::new(0.0, Color32::TRANSPARENT),
+					shadow: egui::epaint::Shadow {
+						offset: [0, 0],
+						blur: 0,
+						spread: 0,
+						color: Color32::TRANSPARENT,
+					},
+					corner_radius: CornerRadius::same(pill_radius),
+					inner_margin: Margin::symmetric(12, 8),
+					..Frame::default()
+				}
+				.show(ui, |ui| {
+					ui.set_min_width(340.0);
+
+					ui.spacing_mut().item_spacing = egui::vec2(10.0, 6.0);
+
+					if let Some(err) = &state.error_message {
+						ui.label(
+							egui::RichText::new(err)
+								.color(Color32::from_rgba_unmultiplied(235, 235, 245, 235)),
+						);
+					} else {
+						Self::render_hud_content(ui, state, monitor, cursor);
+					}
+				});
+			});
 		});
-		let pill_rect = inner.response.rect;
-		let stroke_width = 1.0;
-		let accent_width = 3.0;
-		let accent_rect = Rect::from_min_max(
-			Pos2::new(pill_rect.min.x + stroke_width, pill_rect.min.y + stroke_width),
-			Pos2::new(
-				pill_rect.min.x + stroke_width + accent_width,
-				pill_rect.max.y - stroke_width,
-			),
-		);
-
-		ui.painter().rect_filled(accent_rect, CornerRadius::ZERO, accent_color);
 	}
 
 	fn render_hud_content(
