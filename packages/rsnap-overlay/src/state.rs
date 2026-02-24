@@ -1,4 +1,14 @@
+use std::collections::VecDeque;
+
 use image::RgbaImage;
+
+pub(crate) const COLOR_HISTORY_CAP: usize = 5;
+
+#[derive(Debug)]
+pub struct LoupeSample {
+	pub center: GlobalPoint,
+	pub patch: RgbaImage,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GlobalPoint {
@@ -22,6 +32,11 @@ impl Rgb {
 	#[must_use]
 	pub fn new(r: u8, g: u8, b: u8) -> Self {
 		Self { r, g, b }
+	}
+
+	#[must_use]
+	pub fn hex_upper(self) -> String {
+		format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
 	}
 }
 
@@ -73,7 +88,7 @@ impl MonitorRect {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum OverlayMode {
 	Live,
 	Frozen,
@@ -88,6 +103,9 @@ pub(crate) struct OverlayState {
 	pub frozen_image: Option<RgbaImage>,
 	pub frozen_generation: u64,
 	pub error_message: Option<String>,
+	pub alt_held: bool,
+	pub color_history: VecDeque<Rgb>,
+	pub loupe: Option<LoupeSample>,
 }
 impl OverlayState {
 	pub fn new() -> Self {
@@ -99,6 +117,9 @@ impl OverlayState {
 			frozen_image: None,
 			frozen_generation: 0,
 			error_message: None,
+			alt_held: false,
+			color_history: VecDeque::with_capacity(COLOR_HISTORY_CAP),
+			loupe: None,
 		}
 	}
 
@@ -110,9 +131,26 @@ impl OverlayState {
 		self.error_message = None;
 	}
 
+	pub fn push_color_history(&mut self, rgb: Rgb) {
+		if self.color_history.front().is_some_and(|c| *c == rgb) {
+			return;
+		}
+
+		if let Some(pos) = self.color_history.iter().position(|c| *c == rgb) {
+			self.color_history.remove(pos);
+		}
+
+		self.color_history.push_front(rgb);
+
+		while self.color_history.len() > COLOR_HISTORY_CAP {
+			self.color_history.pop_back();
+		}
+	}
+
 	pub fn begin_freeze(&mut self, monitor: MonitorRect) {
 		self.monitor = Some(monitor);
 		self.frozen_image = None;
+		self.loupe = None;
 		self.mode = OverlayMode::Frozen;
 		self.frozen_generation = self.frozen_generation.wrapping_add(1);
 	}
@@ -129,12 +167,15 @@ impl OverlayState {
 	pub fn unfreeze_to_live(&mut self) {
 		self.mode = OverlayMode::Live;
 		self.frozen_image = None;
+		self.loupe = None;
 		self.frozen_generation = self.frozen_generation.wrapping_add(1);
 	}
 }
 
 #[cfg(test)]
 mod tests {
+	use crate::state::{COLOR_HISTORY_CAP, OverlayState, Rgb};
+
 	use crate::state::{GlobalPoint, MonitorRect};
 
 	#[test]
@@ -154,5 +195,35 @@ mod tests {
 		assert_eq!(monitor.local_u32(GlobalPoint::new(-100, 50)), Some((0, 0)));
 		assert_eq!(monitor.local_u32(GlobalPoint::new(-1, 51)), Some((99, 1)));
 		assert_eq!(monitor.local_u32(GlobalPoint::new(100, 50)), None);
+	}
+
+	#[test]
+	fn color_history_dedupes_and_caps() {
+		let colors = [
+			Rgb::new(1, 2, 3),
+			Rgb::new(4, 5, 6),
+			Rgb::new(7, 8, 9),
+			Rgb::new(10, 11, 12),
+			Rgb::new(13, 14, 15),
+			Rgb::new(16, 17, 18),
+		];
+		let mut state = OverlayState::new();
+
+		for c in colors {
+			state.push_color_history(c);
+		}
+
+		assert_eq!(state.color_history.len(), COLOR_HISTORY_CAP);
+		assert_eq!(state.color_history.front(), Some(&Rgb::new(16, 17, 18)));
+
+		// Dedupe moves to front.
+		state.push_color_history(Rgb::new(10, 11, 12));
+
+		assert_eq!(state.color_history.front(), Some(&Rgb::new(10, 11, 12)));
+
+		// No-op if already at front.
+		state.push_color_history(Rgb::new(10, 11, 12));
+
+		assert_eq!(state.color_history.front(), Some(&Rgb::new(10, 11, 12)));
 	}
 }

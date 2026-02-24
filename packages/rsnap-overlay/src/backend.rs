@@ -15,6 +15,13 @@ pub trait CaptureBackend: Send {
 		monitor: MonitorRect,
 		point: GlobalPoint,
 	) -> Result<Option<Rgb>>;
+	fn rgba_patch_in_monitor(
+		&mut self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		width_px: u32,
+		height_px: u32,
+	) -> Result<Option<RgbaImage>>;
 }
 
 #[derive(Debug, Error)]
@@ -58,6 +65,16 @@ impl CaptureBackend for StubCaptureBackend {
 		_monitor: MonitorRect,
 		_point: GlobalPoint,
 	) -> Result<Option<Rgb>> {
+		Ok(None)
+	}
+
+	fn rgba_patch_in_monitor(
+		&mut self,
+		_monitor: MonitorRect,
+		_point: GlobalPoint,
+		_width_px: u32,
+		_height_px: u32,
+	) -> Result<Option<RgbaImage>> {
 		Ok(None)
 	}
 }
@@ -141,6 +158,29 @@ impl CaptureBackend for XcapCaptureBackend {
 
 		Ok(Some(Rgb::new(pixel.0[0], pixel.0[1], pixel.0[2])))
 	}
+
+	fn rgba_patch_in_monitor(
+		&mut self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		width_px: u32,
+		height_px: u32,
+	) -> Result<Option<RgbaImage>> {
+		if !monitor.contains(point) {
+			return Ok(None);
+		}
+
+		self.ensure_cache(monitor)?;
+
+		let Some(cache) = &self.cache else {
+			return Ok(None);
+		};
+		let Some((center_x, center_y)) = monitor.local_u32_pixels(point) else {
+			return Ok(None);
+		};
+
+		Ok(Some(copy_rgba_patch(&cache.image, center_x, center_y, width_px, height_px)))
+	}
 }
 
 #[derive(Debug)]
@@ -153,6 +193,41 @@ struct CaptureCache {
 #[must_use]
 pub fn default_capture_backend() -> Box<dyn CaptureBackend> {
 	Box::new(XcapCaptureBackend::new())
+}
+
+fn copy_rgba_patch(
+	image: &RgbaImage,
+	center_x: u32,
+	center_y: u32,
+	width_px: u32,
+	height_px: u32,
+) -> RgbaImage {
+	let mut out = RgbaImage::new(width_px.max(1), height_px.max(1));
+	let out_w = out.width();
+	let out_h = out.height();
+	let in_w = image.width() as i32;
+	let in_h = image.height() as i32;
+	let half_w = (out_w as i32) / 2;
+	let half_h = (out_h as i32) / 2;
+	let center_x = center_x as i32;
+	let center_y = center_y as i32;
+
+	for oy in 0..out_h {
+		for ox in 0..out_w {
+			let ix = center_x + (ox as i32) - half_w;
+			let iy = center_y + (oy as i32) - half_h;
+
+			if ix >= 0 && iy >= 0 && ix < in_w && iy < in_h {
+				let pixel = image.get_pixel(ix as u32, iy as u32);
+
+				out.put_pixel(ox, oy, *pixel);
+			} else {
+				out.put_pixel(ox, oy, image::Rgba([0, 0, 0, 0]));
+			}
+		}
+	}
+
+	out
 }
 
 fn capture_monitor_image(monitor: MonitorRect) -> Result<RgbaImage> {
