@@ -1,15 +1,16 @@
+#[cfg(not(target_os = "macos"))] use std::num::NonZeroU32;
 use std::{
 	collections::HashMap,
 	io::{self, Write as _},
-	num::NonZeroU32,
+	sync::OnceLock,
 };
 
 use color_eyre::eyre::{self, Context as _, Result};
-use raw_window_handle::{
-	DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
-	RawWindowHandle,
-};
-use softbuffer::{Context, Surface};
+#[cfg(target_os = "macos")] use objc::runtime::Object;
+#[cfg(not(target_os = "macos"))]
+use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, RawDisplayHandle};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+#[cfg(not(target_os = "macos"))] use softbuffer::{Context, Surface};
 #[cfg(not(target_os = "macos"))] use winit::window::Fullscreen;
 use winit::{
 	application::ApplicationHandler,
@@ -18,12 +19,13 @@ use winit::{
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
 	keyboard::{Key, NamedKey},
 	monitor::MonitorHandle,
-	window::{WindowId, WindowLevel},
+	window::{CursorIcon, WindowId, WindowLevel},
 };
 
 use rsnap_overlay_protocol::{OverlayOutput, Point, Rect};
 
 const DRAG_THRESHOLD_PX: i32 = 4;
+#[cfg(windows)]
 const OVERLAY_ALPHA_U8: u8 = 80;
 
 struct App {
@@ -45,6 +47,8 @@ impl App {
 		if monitors.is_empty() {
 			finish(OverlayOutput::Error { message: String::from("No monitor detected") });
 		}
+
+		maybe_dump_environment(&monitors);
 
 		for monitor in monitors {
 			let origin = monitor_origin(&monitor);
@@ -86,15 +90,26 @@ impl App {
 				}),
 			};
 
-			set_overlay_opacity(&window, OVERLAY_ALPHA_U8);
+			configure_overlay_window(&window);
 
-			let display = match Display::from_window(&window) {
-				Ok(display) => display,
-				Err(err) => finish(OverlayOutput::Error { message: format!("{err:#}") }),
-			};
-			let renderer = match Renderer::new(display, window) {
+			window.set_cursor(CursorIcon::Crosshair);
+
+			#[cfg(target_os = "macos")]
+			let renderer = match Renderer::new(window) {
 				Ok(renderer) => renderer,
 				Err(err) => finish(OverlayOutput::Error { message: format!("{err:#}") }),
+			};
+			#[cfg(not(target_os = "macos"))]
+			let renderer = {
+				let display = match Display::from_window(&window) {
+					Ok(display) => display,
+					Err(err) => finish(OverlayOutput::Error { message: format!("{err:#}") }),
+				};
+
+				match Renderer::new(display, window) {
+					Ok(renderer) => renderer,
+					Err(err) => finish(OverlayOutput::Error { message: format!("{err:#}") }),
+				}
 			};
 
 			self.overlays.insert(renderer.window().id(), OverlayWindow { origin, renderer });
@@ -139,38 +154,14 @@ impl ApplicationHandler for App {
 				}
 			},
 			WindowEvent::CursorMoved { position, .. } => {
-				let (dx, dy) = cursor_delta_for_event(overlay.renderer.window(), position);
-
-				self.state.cursor_global = Point {
-					x: overlay.origin.x.saturating_add(dx),
-					y: overlay.origin.y.saturating_add(dy),
-				};
-
-				if let Some(down_at) = self.state.mouse_down_at_global {
-					let dx = (self.state.cursor_global.x - down_at.x).abs();
-					let dy = (self.state.cursor_global.y - down_at.y).abs();
-
-					if dx >= DRAG_THRESHOLD_PX || dy >= DRAG_THRESHOLD_PX {
-						self.state.dragging = true;
-					}
-				}
-
-				if !self.state.dragging {
-					match hit_test_window_info(self.state.cursor_global) {
-						Ok(Some((window_id, rect))) => {
-							self.state.hover_window_id = Some(window_id);
-							self.state.hover_rect = Some(rect);
-						},
-						Ok(None) => {
-							self.state.hover_window_id = None;
-							self.state.hover_rect = None;
-						},
-
-						Err(err) => finish(OverlayOutput::Error { message: format!("{err:#}") }),
-					}
-				} else {
-					self.state.hover_window_id = None;
-					self.state.hover_rect = None;
+				if let Err(err) = handle_cursor_moved(
+					&mut self.state,
+					overlay.origin,
+					overlay.renderer.window(),
+					window_id,
+					position,
+				) {
+					finish(OverlayOutput::Error { message: format!("{err:#}") });
 				}
 
 				self.request_redraw_all();
@@ -178,33 +169,14 @@ impl ApplicationHandler for App {
 
 			WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => match state {
 				ElementState::Pressed => {
-					self.state.mouse_down_at_global = Some(self.state.cursor_global);
-					self.state.dragging = false;
+					handle_left_mouse_pressed(&mut self.state, window_id);
 
 					self.request_redraw_all();
 				},
 				ElementState::Released => {
-					let Some(down_at) = self.state.mouse_down_at_global.take() else {
-						return;
-					};
-
-					if self.state.dragging {
-						let rect = Rect::from_points(down_at, self.state.cursor_global);
-
-						if rect.width == 0 || rect.height == 0 {
-							finish(OverlayOutput::Cancel);
-						}
-
-						finish(OverlayOutput::Region { rect });
-					}
-
-					if let Some(window_id) = self.state.hover_window_id {
-						finish(OverlayOutput::Window { window_id });
-					}
-
-					match hit_test_window_info(self.state.cursor_global) {
-						Ok(Some((window_id, _))) => finish(OverlayOutput::Window { window_id }),
-						Ok(None) => finish(OverlayOutput::Cancel),
+					match handle_left_mouse_released(&mut self.state, window_id) {
+						Ok(Some(output)) => finish(output),
+						Ok(None) => {},
 						Err(err) => finish(OverlayOutput::Error { message: format!("{err:#}") }),
 					}
 				},
@@ -246,6 +218,7 @@ struct OverlayState {
 	dragging: bool,
 	hover_window_id: Option<u32>,
 	hover_rect: Option<Rect>,
+	trace_remaining: u8,
 }
 impl OverlayState {
 	fn new() -> Self {
@@ -255,14 +228,17 @@ impl OverlayState {
 			dragging: false,
 			hover_window_id: None,
 			hover_rect: None,
+			trace_remaining: if trace_enabled() { 40 } else { 0 },
 		}
 	}
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Clone, Copy)]
 struct Display {
 	raw: RawDisplayHandle,
 }
+#[cfg(not(target_os = "macos"))]
 impl Display {
 	fn from_window(window: &winit::window::Window) -> Result<Self> {
 		let raw = window
@@ -274,17 +250,27 @@ impl Display {
 	}
 }
 
+#[cfg(not(target_os = "macos"))]
 impl HasDisplayHandle for Display {
 	fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
 		Ok(unsafe { DisplayHandle::borrow_raw(self.raw) })
 	}
 }
 
+#[cfg(not(target_os = "macos"))]
 struct Renderer {
 	_context: Context<Display>,
 	surface: Surface<Display, winit::window::Window>,
 	size: PhysicalSize<u32>,
 }
+
+#[cfg(target_os = "macos")]
+struct Renderer {
+	window: winit::window::Window,
+	layers: MacosLayers,
+	size: PhysicalSize<u32>,
+}
+#[cfg(not(target_os = "macos"))]
 impl Renderer {
 	fn new(display: Display, window: winit::window::Window) -> Result<Self> {
 		let context = Context::new(display)
@@ -359,6 +345,322 @@ impl Renderer {
 
 		Ok(())
 	}
+}
+
+#[cfg(target_os = "macos")]
+impl Renderer {
+	fn new(window: winit::window::Window) -> Result<Self> {
+		let size = window.inner_size();
+		let size = PhysicalSize { width: size.width.max(1), height: size.height.max(1) };
+		let layers = MacosLayers::new(&window)?;
+
+		Ok(Self { window, layers, size })
+	}
+
+	fn window(&self) -> &winit::window::Window {
+		&self.window
+	}
+
+	fn request_redraw(&self) {
+		self.window.request_redraw();
+	}
+
+	fn resize(&mut self, size: PhysicalSize<u32>) -> Result<()> {
+		self.size = PhysicalSize { width: size.width.max(1), height: size.height.max(1) };
+
+		Ok(())
+	}
+
+	fn draw(&mut self, state: &OverlayState, origin: Point) -> Result<()> {
+		self.layers.update(state, origin, self.size, self.window.scale_factor());
+
+		Ok(())
+	}
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct NSPoint {
+	x: f64,
+	y: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct NSSize {
+	width: f64,
+	height: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct NSRect {
+	origin: NSPoint,
+	size: NSSize,
+}
+
+#[cfg(target_os = "macos")]
+struct MacosLayers {
+	hover_layer: *mut Object,
+	drag_layer: *mut Object,
+}
+#[cfg(target_os = "macos")]
+impl MacosLayers {
+	fn new(window: &winit::window::Window) -> Result<Self> {
+		use objc::{class, msg_send, runtime::Object, sel, sel_impl};
+
+		let handle =
+			window.window_handle().map_err(|_| eyre::eyre!("Failed to get window handle"))?;
+		let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+			return Err(eyre::eyre!("Unexpected window handle type"));
+		};
+		let ns_view = handle.ns_view.as_ptr() as *mut Object;
+
+		if ns_view.is_null() {
+			return Err(eyre::eyre!("Missing NSView"));
+		}
+
+		unsafe {
+			let _: () = msg_send![ns_view, setWantsLayer: true];
+		}
+
+		let root_layer: *mut Object = unsafe { msg_send![ns_view, layer] };
+
+		if root_layer.is_null() {
+			return Err(eyre::eyre!("NSView has no backing layer"));
+		}
+
+		// Keep default CALayer coordinates (origin at bottom-left) and map `xcap`'s top-left
+		// coordinates explicitly in `set_layer_frame()`.
+		let hover_layer: *mut Object = unsafe { msg_send![class!(CALayer), layer] };
+		let drag_layer: *mut Object = unsafe { msg_send![class!(CALayer), layer] };
+
+		if hover_layer.is_null() || drag_layer.is_null() {
+			return Err(eyre::eyre!("Failed to create CALayer"));
+		}
+
+		unsafe {
+			let green: *mut Object = msg_send![class!(NSColor), systemGreenColor];
+			let white: *mut Object = msg_send![class!(NSColor), whiteColor];
+
+			configure_border_layer(hover_layer, green, 3.0);
+			configure_border_layer(drag_layer, white, 2.0);
+
+			let _: () = msg_send![hover_layer, setHidden: true];
+			let _: () = msg_send![drag_layer, setHidden: true];
+			let _: () = msg_send![root_layer, addSublayer: hover_layer];
+			let _: () = msg_send![root_layer, addSublayer: drag_layer];
+		}
+
+		Ok(Self { hover_layer, drag_layer })
+	}
+
+	fn update(&self, state: &OverlayState, origin: Point, size: PhysicalSize<u32>, scale: f64) {
+		use objc::{msg_send, sel, sel_impl};
+
+		let view_height_points = (size.height as f64) / scale;
+
+		unsafe {
+			let _: () = msg_send![self.hover_layer, setHidden: true];
+			let _: () = msg_send![self.drag_layer, setHidden: true];
+
+			if state.dragging
+				&& let Some(down_at) = state.mouse_down_at_global
+			{
+				let rect = Rect::from_points(down_at, state.cursor_global);
+				let rect = translate_rect(rect, origin);
+
+				set_layer_frame(self.drag_layer, rect, view_height_points);
+
+				let _: () = msg_send![self.drag_layer, setHidden: false];
+
+				return;
+			}
+			if !state.dragging
+				&& let Some(hover) = state.hover_rect
+			{
+				let rect = translate_rect(hover, origin);
+
+				set_layer_frame(self.hover_layer, rect, view_height_points);
+
+				let _: () = msg_send![self.hover_layer, setHidden: false];
+			}
+		}
+	}
+}
+
+fn maybe_dump_environment(monitors: &[MonitorHandle]) {
+	if std::env::var_os("RSNAP_OVERLAY_DUMP").is_none() {
+		return;
+	}
+
+	eprintln!("== rsnap-overlay dump ==");
+	eprintln!("winit monitors:");
+
+	for (idx, monitor) in monitors.iter().enumerate() {
+		let pos = monitor.position();
+		let size = monitor.size();
+
+		eprintln!(
+			"  [{idx}] pos=({}, {}) size=({}, {}) scale_factor={}",
+			pos.x,
+			pos.y,
+			size.width,
+			size.height,
+			monitor.scale_factor()
+		);
+	}
+
+	match xcap::Monitor::all() {
+		Ok(xcap_monitors) => {
+			eprintln!("xcap monitors:");
+
+			for (idx, m) in xcap_monitors.iter().enumerate() {
+				eprintln!(
+					"  [{idx}] pos=({}, {}) size=({}, {}) scale_factor={}",
+					m.x(),
+					m.y(),
+					m.width(),
+					m.height(),
+					m.scale_factor()
+				);
+			}
+		},
+		Err(err) => eprintln!("xcap monitors: error: {err}"),
+	}
+	match xcap::Window::all() {
+		Ok(windows) => {
+			eprintln!("xcap windows (top 10):");
+
+			for (idx, w) in windows.iter().take(10).enumerate() {
+				eprintln!(
+					"  [{idx}] id={} app={} x={} y={} w={} h={} z={} minimized={}",
+					w.id(),
+					w.app_name(),
+					w.x(),
+					w.y(),
+					w.width(),
+					w.height(),
+					w.z(),
+					w.is_minimized()
+				);
+			}
+		},
+		Err(err) => eprintln!("xcap windows: error: {err}"),
+	}
+
+	finish(OverlayOutput::Cancel);
+}
+
+fn handle_cursor_moved(
+	state: &mut OverlayState,
+	overlay_origin: Point,
+	window: &winit::window::Window,
+	window_id: WindowId,
+	position: PhysicalPosition<f64>,
+) -> Result<()> {
+	if state.trace_remaining > 0 {
+		state.trace_remaining = state.trace_remaining.saturating_sub(1);
+
+		eprintln!(
+			"[trace] CursorMoved window_id={window_id:?} pos_physical=({}, {}) scale_factor={}",
+			position.x,
+			position.y,
+			window.scale_factor()
+		);
+	}
+
+	let (dx, dy) = cursor_delta_for_event(window, position);
+
+	state.cursor_global =
+		Point { x: overlay_origin.x.saturating_add(dx), y: overlay_origin.y.saturating_add(dy) };
+
+	if let Some(down_at) = state.mouse_down_at_global {
+		let dx = (state.cursor_global.x - down_at.x).abs();
+		let dy = (state.cursor_global.y - down_at.y).abs();
+
+		if dx >= DRAG_THRESHOLD_PX || dy >= DRAG_THRESHOLD_PX {
+			state.dragging = true;
+		}
+	}
+
+	if !state.dragging {
+		match hit_test_window_info(state.cursor_global)? {
+			Some((window_id, rect)) => {
+				state.hover_window_id = Some(window_id);
+				state.hover_rect = Some(rect);
+			},
+			None => {
+				state.hover_window_id = None;
+				state.hover_rect = None;
+			},
+		}
+	} else {
+		state.hover_window_id = None;
+		state.hover_rect = None;
+	}
+
+	Ok(())
+}
+
+fn handle_left_mouse_pressed(state: &mut OverlayState, window_id: WindowId) {
+	if state.trace_remaining > 0 {
+		state.trace_remaining = state.trace_remaining.saturating_sub(1);
+
+		eprintln!(
+			"[trace] MouseDown window_id={window_id:?} cursor_global=({}, {})",
+			state.cursor_global.x, state.cursor_global.y
+		);
+	}
+
+	state.mouse_down_at_global = Some(state.cursor_global);
+	state.dragging = false;
+}
+
+fn handle_left_mouse_released(
+	state: &mut OverlayState,
+	window_id: WindowId,
+) -> Result<Option<OverlayOutput>> {
+	if state.trace_remaining > 0 {
+		state.trace_remaining = state.trace_remaining.saturating_sub(1);
+
+		eprintln!(
+			"[trace] MouseUp window_id={window_id:?} cursor_global=({}, {}) dragging={}",
+			state.cursor_global.x, state.cursor_global.y, state.dragging
+		);
+	}
+
+	let Some(down_at) = state.mouse_down_at_global.take() else {
+		return Ok(None);
+	};
+
+	if state.dragging {
+		let rect = Rect::from_points(down_at, state.cursor_global);
+
+		return Ok(Some(if rect.width == 0 || rect.height == 0 {
+			OverlayOutput::Cancel
+		} else {
+			OverlayOutput::Region { rect }
+		}));
+	}
+
+	if let Some(window_id) = state.hover_window_id {
+		return Ok(Some(OverlayOutput::Window { window_id }));
+	}
+
+	Ok(Some(match hit_test_window_info(state.cursor_global)? {
+		Some((window_id, _)) => OverlayOutput::Window { window_id },
+		None => OverlayOutput::Cancel,
+	}))
+}
+
+fn trace_enabled() -> bool {
+	static ENABLED: OnceLock<bool> = OnceLock::new();
+
+	*ENABLED.get_or_init(|| std::env::var_os("RSNAP_OVERLAY_TRACE").is_some())
 }
 
 fn main() {
@@ -479,6 +781,129 @@ fn translate_rect(rect: Rect, origin: Point) -> Rect {
 	Rect { x: rect.x - origin.x, y: rect.y - origin.y, width: rect.width, height: rect.height }
 }
 
+fn configure_overlay_window(window: &winit::window::Window) {
+	#[cfg(windows)]
+	configure_overlay_window_windows(window, OVERLAY_ALPHA_U8);
+	#[cfg(target_os = "macos")]
+	configure_overlay_window_macos(window);
+}
+
+#[cfg(windows)]
+fn configure_overlay_window_windows(window: &winit::window::Window, alpha: u8) {
+	use windows_sys::Win32::Foundation::HWND;
+
+	use windows_sys::Win32::UI::WindowsAndMessaging::{
+		GWL_EXSTYLE, GetWindowLongW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongW,
+		WS_EX_LAYERED,
+	};
+
+	let handle = match window.window_handle() {
+		Ok(handle) => handle,
+		Err(_) => return,
+	};
+	let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+		return;
+	};
+	let hwnd = handle.hwnd.get() as HWND;
+
+	unsafe {
+		let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+		let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED as i32);
+		let _ = SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn configure_overlay_window_macos(window: &winit::window::Window) {
+	use objc::{class, msg_send, runtime::Object, sel, sel_impl};
+
+	let handle = match window.window_handle() {
+		Ok(handle) => handle,
+		Err(_) => return,
+	};
+	let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+		return;
+	};
+	let ns_view = handle.ns_view.as_ptr() as *mut Object;
+	let ns_window: *mut Object = unsafe { msg_send![ns_view, window] };
+
+	if ns_window.is_null() {
+		return;
+	}
+
+	unsafe {
+		let _: () = msg_send![ns_window, setOpaque: false];
+		let clear: *mut Object = msg_send![class!(NSColor), clearColor];
+
+		if !clear.is_null() {
+			let _: () = msg_send![ns_window, setBackgroundColor: clear];
+		}
+
+		let _: () = msg_send![ns_window, setIgnoresMouseEvents: false];
+		let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: true];
+		// Force input focus so this window receives both mouse and key events (and does not
+		// click-through).
+		let _: () = msg_send![ns_window, makeKeyWindow];
+		let _: bool = msg_send![ns_window, makeFirstResponder: ns_view];
+		let _: () = msg_send![ns_window, orderFrontRegardless];
+		// Ensure the overlay can intercept clicks even in the menubar area.
+		// NSStatusWindowLevel is 25; use a small bump above it to avoid screensaver-level behavior.
+		let _: () = msg_send![ns_window, setLevel: 26_isize];
+		// Ensure the overlay can appear above full-screen apps and across Spaces.
+		// NSWindowCollectionBehaviorCanJoinAllSpaces | Transient | FullScreenAuxiliary
+		let behavior: usize = 1 | 8 | 256;
+		let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
+		let ns_app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+
+		if !ns_app.is_null() {
+			let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
+		}
+
+		let _: () = msg_send![ns_window, makeKeyAndOrderFront: std::ptr::null::<Object>()];
+
+		if trace_enabled() {
+			let ignores: bool = msg_send![ns_window, ignoresMouseEvents];
+			let accepts_move: bool = msg_send![ns_window, acceptsMouseMovedEvents];
+			let is_key: bool = msg_send![ns_window, isKeyWindow];
+			let level: isize = msg_send![ns_window, level];
+
+			eprintln!(
+				"[trace] NSWindow ignoresMouseEvents={ignores} acceptsMouseMovedEvents={accepts_move} isKeyWindow={is_key} level={level}"
+			);
+		}
+	}
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn configure_border_layer(layer: *mut Object, color: *mut Object, border_width: f64) {
+	use objc::{msg_send, runtime::Object, sel, sel_impl};
+
+	let cg_color: *mut Object = msg_send![color, CGColor];
+	let _: () = msg_send![layer, setBorderWidth: border_width];
+	let _: () = msg_send![layer, setBorderColor: cg_color];
+	let _: () = msg_send![layer, setCornerRadius: 6.0_f64];
+	let shadow_color: *mut Object = msg_send![color, CGColor];
+	let _: () = msg_send![layer, setShadowColor: shadow_color];
+	let _: () = msg_send![layer, setShadowOpacity: 0.65_f32];
+	let _: () = msg_send![layer, setShadowRadius: 10.0_f64];
+	let _: () = msg_send![layer, setShadowOffset: NSSize { width: 0.0, height: 0.0 }];
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn set_layer_frame(layer: *mut Object, rect: Rect, view_height_points: f64) {
+	use objc::{msg_send, sel, sel_impl};
+
+	let x = rect.x as f64;
+	let width = rect.width as f64;
+	let height = rect.height as f64;
+	// `xcap` uses y=0 at top; Core Animation default is y=0 at bottom.
+	let max_y = (view_height_points - height).max(0.0);
+	let y = (view_height_points - rect.y as f64 - height).clamp(0.0, max_y);
+	let frame = NSRect { origin: NSPoint { x, y }, size: NSSize { width, height } };
+	let _: () = msg_send![layer, setFrame: frame];
+}
+
+#[cfg(not(target_os = "macos"))]
 fn draw_rect_outline(buffer: &mut [u32], size: PhysicalSize<u32>, rect: Rect, color: u32) {
 	let width = size.width as i32;
 	let height = size.height as i32;
@@ -506,6 +931,7 @@ fn draw_rect_outline(buffer: &mut [u32], size: PhysicalSize<u32>, rect: Rect, co
 	}
 }
 
+#[cfg(not(target_os = "macos"))]
 fn set_pixel(buffer: &mut [u32], size: PhysicalSize<u32>, x: i32, y: i32, color: u32) {
 	if x < 0 || y < 0 {
 		return;
@@ -522,74 +948,5 @@ fn set_pixel(buffer: &mut [u32], size: PhysicalSize<u32>, x: i32, y: i32, color:
 
 	if idx < buffer.len() {
 		buffer[idx] = color;
-	}
-}
-
-fn set_overlay_opacity(window: &winit::window::Window, alpha: u8) {
-	#[cfg(windows)]
-	set_overlay_opacity_windows(window, alpha);
-	#[cfg(target_os = "macos")]
-	set_overlay_opacity_macos(window, alpha);
-}
-
-#[cfg(windows)]
-fn set_overlay_opacity_windows(window: &winit::window::Window, alpha: u8) {
-	use windows_sys::Win32::Foundation::HWND;
-
-	use windows_sys::Win32::UI::WindowsAndMessaging::{
-		GWL_EXSTYLE, GetWindowLongW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongW,
-		WS_EX_LAYERED,
-	};
-
-	let handle = match window.window_handle() {
-		Ok(handle) => handle,
-		Err(_) => return,
-	};
-	let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-		return;
-	};
-	let hwnd = handle.hwnd.get() as HWND;
-
-	unsafe {
-		let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-		let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED as i32);
-		let _ = SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
-	}
-}
-
-#[cfg(target_os = "macos")]
-fn set_overlay_opacity_macos(window: &winit::window::Window, alpha: u8) {
-	use objc::{class, msg_send, runtime::Object, sel, sel_impl};
-
-	let handle = match window.window_handle() {
-		Ok(handle) => handle,
-		Err(_) => return,
-	};
-	let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
-		return;
-	};
-	let ns_view = handle.ns_view.as_ptr() as *mut Object;
-	let ns_window: *mut Object = unsafe { msg_send![ns_view, window] };
-
-	if ns_window.is_null() {
-		return;
-	}
-
-	let value = (alpha as f64) / 255.0;
-
-	unsafe {
-		let _: () = msg_send![ns_window, setOpaque: false];
-		let _: () = msg_send![ns_window, setAlphaValue: value];
-		// Ensure the overlay can appear above full-screen apps and across Spaces.
-		// NSWindowCollectionBehaviorCanJoinAllSpaces | Transient | FullScreenAuxiliary
-		let behavior: usize = 1 | 8 | 256;
-		let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
-		let ns_app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
-
-		if !ns_app.is_null() {
-			let _: () = msg_send![ns_app, activateIgnoringOtherApps: true];
-		}
-
-		let _: () = msg_send![ns_window, makeKeyAndOrderFront: std::ptr::null::<Object>()];
 	}
 }
