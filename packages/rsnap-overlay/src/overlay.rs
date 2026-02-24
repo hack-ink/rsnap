@@ -10,6 +10,7 @@ use egui::Align;
 use egui::ClippedPrimitive;
 use egui::FullOutput;
 use egui::Layout;
+use egui::Ui;
 use egui::{Color32, CornerRadius, Frame, Margin, Pos2, Rect, Vec2, ViewportId};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use image::RgbaImage;
@@ -29,14 +30,14 @@ use winit::dpi::PhysicalPosition;
 use winit::event::KeyEvent;
 use winit::{
 	dpi::{LogicalPosition, LogicalSize, PhysicalSize},
-	event::{ElementState, MouseButton, WindowEvent},
+	event::{ElementState, Modifiers, MouseButton, WindowEvent},
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
 	keyboard::{Key, NamedKey},
 	window::{CursorIcon, WindowId, WindowLevel},
 };
 
 use crate::{
-	state::{GlobalPoint, MonitorRect, OverlayMode, OverlayState, Rgb},
+	state::{COLOR_HISTORY_CAP, GlobalPoint, MonitorRect, OverlayMode, OverlayState, Rgb},
 	worker::{OverlayWorker, WorkerResponse},
 };
 
@@ -147,6 +148,10 @@ pub struct OverlaySession {
 	last_present_at: Instant,
 	last_rgb_request_at: Instant,
 	rgb_request_interval: Duration,
+	last_loupe_request_at: Instant,
+	loupe_request_interval: Duration,
+	loupe_patch_width_px: u32,
+	loupe_patch_height_px: u32,
 	pending_freeze_capture: Option<MonitorRect>,
 	pending_encode_png: Option<RgbaImage>,
 }
@@ -168,6 +173,10 @@ impl OverlaySession {
 			last_present_at: Instant::now(),
 			last_rgb_request_at: Instant::now(),
 			rgb_request_interval: Duration::from_millis(16),
+			last_loupe_request_at: Instant::now(),
+			loupe_request_interval: Duration::from_millis(33),
+			loupe_patch_width_px: 21,
+			loupe_patch_height_px: 21,
 			pending_freeze_capture: None,
 			pending_encode_png: None,
 		}
@@ -274,6 +283,24 @@ impl OverlaySession {
 
 			while let Some(resp) = worker.try_recv() {
 				match resp {
+					WorkerResponse::SampledLoupe { monitor, point, rgb, patch } => {
+						if matches!(self.state.mode, OverlayMode::Live) {
+							self.state.rgb = rgb;
+							self.state.loupe = patch
+								.map(|patch| crate::state::LoupeSample { center: point, patch });
+
+							let current_monitor =
+								self.state.cursor.and_then(|cursor| self.monitor_at(cursor));
+
+							if let Some(current_monitor) = current_monitor {
+								self.request_redraw_for_monitor(current_monitor);
+							}
+
+							if current_monitor != Some(monitor) {
+								self.request_redraw_for_monitor(monitor);
+							}
+						}
+					},
 					WorkerResponse::SampledRgb { monitor, point, rgb } => {
 						if matches!(self.state.mode, OverlayMode::Live) {
 							let _ = point;
@@ -336,9 +363,45 @@ impl OverlaySession {
 				self.handle_left_mouse_input(window_id, *state)
 			},
 			WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(event),
+			WindowEvent::ModifiersChanged(modifiers) => self.handle_modifiers_changed(modifiers),
 			WindowEvent::RedrawRequested => self.handle_redraw_requested(window_id),
 			_ => OverlayControl::Continue,
 		}
+	}
+
+	fn handle_modifiers_changed(&mut self, modifiers: &Modifiers) -> OverlayControl {
+		let alt = modifiers.state().alt_key();
+
+		if self.state.alt_held == alt {
+			return OverlayControl::Continue;
+		}
+
+		self.state.alt_held = alt;
+
+		if !alt {
+			self.state.loupe = None;
+		} else if matches!(self.state.mode, OverlayMode::Live)
+			&& let Some(cursor) = self.state.cursor
+			&& let Some(monitor) = self.monitor_at(cursor)
+			&& let Some(worker) = &self.worker
+		{
+			worker.try_sample_loupe(
+				monitor,
+				cursor,
+				self.loupe_patch_width_px,
+				self.loupe_patch_height_px,
+			);
+
+			self.last_loupe_request_at = Instant::now();
+		}
+
+		if let Some(monitor) = self.state.cursor.and_then(|cursor| self.monitor_at(cursor)) {
+			self.request_redraw_for_monitor(monitor);
+		} else {
+			self.request_redraw_all();
+		}
+
+		OverlayControl::Continue
 	}
 
 	fn handle_resized(&mut self, window_id: WindowId, size: PhysicalSize<u32>) -> OverlayControl {
@@ -389,6 +452,20 @@ impl OverlaySession {
 
 			self.last_rgb_request_at = Instant::now();
 		}
+		if matches!(self.state.mode, OverlayMode::Live)
+			&& self.state.alt_held
+			&& self.last_loupe_request_at.elapsed() >= self.loupe_request_interval
+			&& let Some(worker) = &self.worker
+		{
+			worker.try_sample_loupe(
+				monitor,
+				global,
+				self.loupe_patch_width_px,
+				self.loupe_patch_height_px,
+			);
+
+			self.last_loupe_request_at = Instant::now();
+		}
 
 		if let Some(old_monitor) = old_monitor
 			&& old_monitor != monitor
@@ -428,9 +505,38 @@ impl OverlaySession {
 		if event.state != ElementState::Pressed {
 			return OverlayControl::Continue;
 		}
+		if event.repeat {
+			return OverlayControl::Continue;
+		}
 
 		match event.logical_key {
 			Key::Named(NamedKey::Escape) => self.exit(OverlayExit::Cancelled),
+			Key::Named(NamedKey::Tab) => {
+				let Some(rgb) = self.state.rgb else {
+					return OverlayControl::Continue;
+				};
+				let hex = rgb.hex_upper();
+
+				match write_text_to_clipboard(&hex) {
+					Ok(()) => {
+						self.state.push_color_history(rgb);
+
+						if let Some(monitor) =
+							self.state.cursor.and_then(|cursor| self.monitor_at(cursor))
+						{
+							self.request_redraw_for_monitor(monitor);
+						} else {
+							self.request_redraw_all();
+						}
+					},
+					Err(err) => {
+						self.state.set_error(format!("{err:#}"));
+						self.request_redraw_all();
+					},
+				}
+
+				OverlayControl::Continue
+			},
 			Key::Named(NamedKey::Space) => {
 				if matches!(self.state.mode, OverlayMode::Frozen)
 					&& self.state.frozen_image.is_some()
@@ -762,112 +868,337 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		hud_anchor: HudAnchor,
 	) -> FullOutput {
+		let can_draw = Self::should_draw_hud(state, monitor);
+		let hud_data = if can_draw {
+			state.cursor.and_then(|cursor| {
+				global_to_local(cursor, monitor).map(|local_cursor| (cursor, local_cursor))
+			})
+		} else {
+			None
+		};
+
 		self.egui_ctx.run(raw_input, |ctx| {
-			if matches!(state.mode, OverlayMode::Frozen)
-				&& state.monitor == Some(monitor)
-				&& state.frozen_image.is_none()
-				&& state.error_message.is_none()
-			{
-				return;
+			if let Some((cursor, local_cursor)) = hud_data {
+				Self::render_hud(ctx, state, monitor, cursor, local_cursor, hud_anchor);
+			}
+		})
+	}
+
+	fn should_draw_hud(state: &OverlayState, monitor: MonitorRect) -> bool {
+		!matches!(state.mode, OverlayMode::Frozen)
+			|| state.monitor != Some(monitor)
+			|| state.frozen_image.is_some()
+			|| state.error_message.is_some()
+	}
+
+	fn render_hud(
+		ctx: &egui::Context,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+		local_cursor: Pos2,
+		hud_anchor: HudAnchor,
+	) {
+		let (hud_x, hud_y) = match hud_anchor {
+			HudAnchor::Cursor => (local_cursor.x + 14.0, local_cursor.y + 14.0),
+		};
+
+		egui::Area::new("hud".into())
+			.order(egui::Order::Foreground)
+			.fixed_pos(Pos2::new(hud_x, hud_y))
+			.show(ctx, |ui| {
+				Self::render_hud_frame(ui, state, monitor, cursor);
+			});
+	}
+
+	fn render_hud_frame(
+		ui: &mut Ui,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+	) {
+		let accent_color = match state.rgb {
+			Some(rgb) => Color32::from_rgb(rgb.r, rgb.g, rgb.b),
+			None => Color32::from_rgba_unmultiplied(255, 255, 255, 26),
+		};
+		let inner = Frame {
+			fill: Color32::from_rgba_unmultiplied(18, 18, 20, 220),
+			stroke: egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26)),
+			shadow: egui::epaint::Shadow {
+				offset: [0, 1],
+				blur: 6,
+				spread: 0,
+				color: Color32::from_rgba_unmultiplied(0, 0, 0, 42),
+			},
+			corner_radius: CornerRadius::same(18),
+			inner_margin: Margin::symmetric(12, 8),
+			..Frame::default()
+		}
+		.show(ui, |ui| {
+			ui.set_min_width(340.0);
+
+			ui.spacing_mut().item_spacing = egui::vec2(10.0, 6.0);
+
+			if let Some(err) = &state.error_message {
+				ui.label(
+					egui::RichText::new(err)
+						.color(Color32::from_rgba_unmultiplied(235, 235, 245, 235)),
+				);
+			} else {
+				Self::render_hud_content(ui, state, monitor, cursor);
+			}
+		});
+		let pill_rect = inner.response.rect;
+		let accent_rect =
+			Rect::from_min_max(pill_rect.min, Pos2::new(pill_rect.min.x + 3.0, pill_rect.max.y));
+
+		ui.painter().rect_filled(
+			accent_rect,
+			CornerRadius { nw: 18, ne: 0, sw: 18, se: 0 },
+			accent_color,
+		);
+	}
+
+	fn render_hud_content(
+		ui: &mut Ui,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+	) {
+		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
+		let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
+		let hint = match (state.mode, state.rgb.is_some()) {
+			(OverlayMode::Live, true) => "Click to freeze • Tab copies HEX • Hold Alt for loupe",
+			(OverlayMode::Frozen, true) => "Space copies PNG • Tab copies HEX • Hold Alt for loupe",
+			(OverlayMode::Live, false) => "Click to freeze • Hold Alt for loupe",
+			(OverlayMode::Frozen, false) => "Space copies PNG • Hold Alt for loupe",
+		};
+		let pos_text = format!("x={}, y={}", cursor.x, cursor.y);
+		let rgb_text = match state.rgb {
+			Some(rgb) => format!("{}, {}, {}  {}", rgb.r, rgb.g, rgb.b, rgb.hex_upper()),
+			None => String::from("?, ?, ?  #??????"),
+		};
+		let swatch_size = egui::vec2(10.0, 10.0);
+
+		ui.vertical(|ui| {
+			ui.horizontal(|ui| {
+				ui.label(egui::RichText::new(pos_text).color(label_color).monospace());
+				ui.label(egui::RichText::new("•").color(secondary_color));
+
+				let (rect, _) = ui.allocate_exact_size(swatch_size, egui::Sense::hover());
+				let swatch_color = match state.rgb {
+					Some(rgb) => Color32::from_rgb(rgb.r, rgb.g, rgb.b),
+					None => Color32::from_rgba_unmultiplied(255, 255, 255, 26),
+				};
+
+				ui.painter().rect_filled(rect, 3.0, swatch_color);
+				ui.painter().rect_stroke(
+					rect,
+					3.0,
+					egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
+					egui::StrokeKind::Inside,
+				);
+				ui.label(egui::RichText::new(rgb_text).color(label_color).monospace());
+				ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+					ui.label(egui::RichText::new(hint).color(secondary_color));
+				});
+			});
+
+			if state.alt_held {
+				Self::render_recent_row(ui, state);
+				Self::render_loupe(ui, state, monitor, cursor);
+			}
+		});
+	}
+
+	fn render_recent_row(ui: &mut Ui, state: &OverlayState) {
+		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
+		let chips = COLOR_HISTORY_CAP;
+		let chip_size = Vec2::splat(12.0);
+		let gap = 6.0;
+		let total_w = (chips as f32) * chip_size.x + ((chips - 1) as f32) * gap;
+
+		ui.horizontal(|ui| {
+			ui.label(egui::RichText::new("Recent").color(label_color));
+
+			let (rect, _) =
+				ui.allocate_exact_size(Vec2::new(total_w, chip_size.y), egui::Sense::hover());
+
+			for i in 0..chips {
+				let min = Pos2::new(rect.min.x + (i as f32) * (chip_size.x + gap), rect.min.y);
+				let chip_rect = Rect::from_min_size(min, chip_size);
+				let chip_fill = state
+					.color_history
+					.get(i)
+					.copied()
+					.map(|rgb| Color32::from_rgb(rgb.r, rgb.g, rgb.b))
+					.unwrap_or(Color32::from_rgba_unmultiplied(255, 255, 255, 14));
+
+				ui.painter().rect_filled(chip_rect, 3.0, chip_fill);
+				ui.painter().rect_stroke(
+					chip_rect,
+					3.0,
+					egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
+					egui::StrokeKind::Inside,
+				);
+			}
+		});
+	}
+
+	fn render_loupe(ui: &mut Ui, state: &OverlayState, monitor: MonitorRect, cursor: GlobalPoint) {
+		const CELL: f32 = 10.0;
+
+		let mode = state.mode;
+
+		if matches!(mode, OverlayMode::Live) {
+			Self::render_live_loupe(ui, state, CELL);
+		} else if matches!(mode, OverlayMode::Frozen)
+			&& state.monitor == Some(monitor)
+			&& state.frozen_image.is_some()
+			&& state.cursor.is_some()
+		{
+			Self::render_frozen_loupe(ui, state, monitor, cursor, CELL);
+		}
+	}
+
+	fn render_live_loupe(ui: &mut Ui, state: &OverlayState, cell: f32) {
+		let fallback_side_px = 21_u32;
+		let (w, h) = state
+			.loupe
+			.as_ref()
+			.map(|loupe| loupe.patch.dimensions())
+			.unwrap_or((fallback_side_px, fallback_side_px));
+		let side = (w.max(h) as f32) * cell;
+		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), egui::Sense::hover());
+		let stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 140));
+		let grid_stroke =
+			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
+
+		if let Some(loupe) = state.loupe.as_ref() {
+			let _ = loupe.center;
+
+			for y in 0..h {
+				for x in 0..w {
+					let cell_min =
+						Pos2::new(rect.min.x + (x as f32) * cell, rect.min.y + (y as f32) * cell);
+					let cell_rect = Rect::from_min_size(cell_min, Vec2::splat(cell));
+					let pixel = loupe.patch.get_pixel_checked(x, y).expect("pixel bounds checked");
+					let fill = Color32::from_rgba_unmultiplied(
+						pixel.0[0], pixel.0[1], pixel.0[2], pixel.0[3],
+					);
+
+					ui.painter().rect_filled(cell_rect, 0.0, fill);
+				}
 			}
 
-			let Some(cursor) = state.cursor else {
-				return;
-			};
-			let Some(local_cursor) = global_to_local(cursor, monitor) else {
-				return;
-			};
-			let (hud_x, hud_y) = match hud_anchor {
-				HudAnchor::Cursor => (local_cursor.x + 14.0, local_cursor.y + 14.0),
-			};
+			let n = w.max(h);
 
-			egui::Area::new("hud".into())
-				.order(egui::Order::Foreground)
-				.fixed_pos(Pos2::new(hud_x, hud_y))
-				.show(ctx, |ui| {
-					let pill_fill = Color32::from_rgba_unmultiplied(18, 18, 20, 220);
-					let pill_stroke =
-						egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
-					let pill_shadow = egui::epaint::Shadow {
-						offset: [0, 6],
-						blur: 16,
-						spread: 0,
-						color: Color32::from_rgba_unmultiplied(0, 0, 0, 90),
-					};
-					let pill_radius = 18;
-					let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
-					let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
-					let accent_color = match state.rgb {
-						Some(rgb) => Color32::from_rgb(rgb.r, rgb.g, rgb.b),
-						None => Color32::from_rgba_unmultiplied(255, 255, 255, 26),
-					};
-					let hint = match state.mode {
-						OverlayMode::Live => "Click to freeze",
-						OverlayMode::Frozen => "Space to copy PNG",
-					};
-					let inner = Frame {
-						fill: pill_fill,
-						stroke: pill_stroke,
-						shadow: pill_shadow,
-						corner_radius: CornerRadius::same(pill_radius),
-						inner_margin: Margin::symmetric(12, 8),
-						..Frame::default()
-					}
-					.show(ui, |ui| {
-						ui.set_min_width(340.0);
+			for i in 0..=n {
+				let x = rect.min.x + (i as f32) * cell;
+				let y = rect.min.y + (i as f32) * cell;
 
-						ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
+				ui.painter().line_segment(
+					[Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)],
+					grid_stroke,
+				);
+				ui.painter().line_segment(
+					[Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)],
+					grid_stroke,
+				);
+			}
+		} else {
+			ui.painter().rect_filled(rect, 3.0, Color32::from_rgba_unmultiplied(255, 255, 255, 10));
+		}
 
-						if let Some(err) = &state.error_message {
-							ui.label(egui::RichText::new(err).color(label_color));
+		ui.painter().rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Outside);
 
-							return;
-						}
+		let center_x = (w / 2) as f32;
+		let center_y = (h / 2) as f32;
+		let center_min = Pos2::new(rect.min.x + center_x * cell, rect.min.y + center_y * cell);
+		let center_rect = Rect::from_min_size(center_min, Vec2::splat(cell));
 
-						let pos_text = format!("x={}, y={}", cursor.x, cursor.y);
-						let rgb_text = match state.rgb {
-							Some(rgb) => format!("{}, {}, {}", rgb.r, rgb.g, rgb.b),
-							None => String::from("?, ?, ?"),
-						};
+		ui.painter().rect_stroke(
+			center_rect,
+			0.0,
+			egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 180)),
+			egui::StrokeKind::Inside,
+		);
+	}
 
-						ui.horizontal(|ui| {
-							ui.label(egui::RichText::new(pos_text).color(label_color).monospace());
-							ui.label(egui::RichText::new("•").color(secondary_color));
+	fn render_frozen_loupe(
+		ui: &mut Ui,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+		cell: f32,
+	) {
+		const LOUPE_RADIUS_PX: i32 = 5;
+		const LOUPE_SIDE_PX: i32 = (LOUPE_RADIUS_PX * 2) + 1;
 
-							let swatch_size = egui::vec2(10.0, 10.0);
-							let (rect, _) =
-								ui.allocate_exact_size(swatch_size, egui::Sense::hover());
+		let side = (LOUPE_SIDE_PX as f32) * cell;
+		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), egui::Sense::hover());
+		let Some(image) = state.frozen_image.as_ref() else {
+			return;
+		};
+		let Some((center_x, center_y)) = monitor.local_u32_pixels(cursor) else {
+			return;
+		};
+		let (width, height) = image.dimensions();
+		let width = width as i32;
+		let height = height as i32;
+		let center_x = center_x as i32;
+		let center_y = center_y as i32;
+		let stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 140));
+		let grid_stroke =
+			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
 
-							ui.painter().rect_filled(rect, 3.0, accent_color);
-							ui.painter().rect_stroke(
-								rect,
-								3.0,
-								egui::Stroke::new(
-									1.0,
-									Color32::from_rgba_unmultiplied(255, 255, 255, 36),
-								),
-								egui::StrokeKind::Inside,
-							);
-							ui.label(egui::RichText::new(rgb_text).color(label_color).monospace());
-							ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-								ui.label(egui::RichText::new(hint).color(secondary_color));
-							});
-						});
-					});
-					let pill_rect = inner.response.rect;
-					let accent_width = 3.0;
-					let accent_rect = Rect::from_min_max(
-						pill_rect.min,
-						Pos2::new(pill_rect.min.x + accent_width, pill_rect.max.y),
-					);
+		for dy in -LOUPE_RADIUS_PX..=LOUPE_RADIUS_PX {
+			for dx in -LOUPE_RADIUS_PX..=LOUPE_RADIUS_PX {
+				let x = center_x + dx;
+				let y = center_y + dy;
+				let cell_x = dx + LOUPE_RADIUS_PX;
+				let cell_y = dy + LOUPE_RADIUS_PX;
+				let cell_min = Pos2::new(
+					rect.min.x + (cell_x as f32) * cell,
+					rect.min.y + (cell_y as f32) * cell,
+				);
+				let cell_rect = Rect::from_min_size(cell_min, Vec2::splat(cell));
+				let fill = if x < 0 || y < 0 || x >= width || y >= height {
+					Color32::from_rgba_unmultiplied(0, 0, 0, 0)
+				} else {
+					let pixel =
+						image.get_pixel_checked(x as u32, y as u32).expect("pixel bounds checked");
 
-					ui.painter().rect_filled(
-						accent_rect,
-						CornerRadius { nw: pill_radius, ne: 0, sw: pill_radius, se: 0 },
-						accent_color,
-					);
-				});
-		})
+					Color32::from_rgb(pixel.0[0], pixel.0[1], pixel.0[2])
+				};
+
+				ui.painter().rect_filled(cell_rect, 0.0, fill);
+			}
+		}
+		for i in 0..=LOUPE_SIDE_PX {
+			let x = rect.min.x + (i as f32) * cell;
+			let y = rect.min.y + (i as f32) * cell;
+
+			ui.painter()
+				.line_segment([Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)], grid_stroke);
+			ui.painter()
+				.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], grid_stroke);
+		}
+
+		ui.painter().rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Outside);
+
+		let center_min = Pos2::new(
+			rect.min.x + (LOUPE_RADIUS_PX as f32) * cell,
+			rect.min.y + (LOUPE_RADIUS_PX as f32) * cell,
+		);
+		let center_rect = Rect::from_min_size(center_min, Vec2::splat(cell));
+
+		ui.painter().rect_stroke(
+			center_rect,
+			0.0,
+			egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 180)),
+			egui::StrokeKind::Inside,
+		);
 	}
 
 	fn sync_egui_textures(&mut self, gpu: &GpuContext, full_output: &FullOutput) {
@@ -1194,6 +1525,16 @@ fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
 			bytes: std::borrow::Cow::Owned(rgba.into_raw()),
 		})
 		.wrap_err("Failed to write image to clipboard")?;
+
+	Ok(())
+}
+
+fn write_text_to_clipboard(text: &str) -> Result<()> {
+	use arboard::Clipboard;
+
+	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
+
+	clipboard.set_text(text.to_string()).wrap_err("Failed to write text to clipboard")?;
 
 	Ok(())
 }

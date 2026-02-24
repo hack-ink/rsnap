@@ -8,15 +8,31 @@ use crate::state::{GlobalPoint, MonitorRect, Rgb};
 #[derive(Debug)]
 pub(crate) enum WorkerRequest {
 	SampleRgb { monitor: MonitorRect, point: GlobalPoint },
+	SampleLoupe { monitor: MonitorRect, point: GlobalPoint, width_px: u32, height_px: u32 },
 	FreezeCapture { monitor: MonitorRect },
 	EncodePng { image: RgbaImage },
 }
 
 #[derive(Debug)]
 pub(crate) enum WorkerResponse {
-	SampledRgb { monitor: MonitorRect, point: GlobalPoint, rgb: Option<Rgb> },
-	CapturedFreeze { monitor: MonitorRect, image: RgbaImage },
-	EncodedPng { png_bytes: Vec<u8> },
+	SampledRgb {
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		rgb: Option<Rgb>,
+	},
+	SampledLoupe {
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		rgb: Option<Rgb>,
+		patch: Option<RgbaImage>,
+	},
+	CapturedFreeze {
+		monitor: MonitorRect,
+		image: RgbaImage,
+	},
+	EncodedPng {
+		png_bytes: Vec<u8>,
+	},
 	Error(String),
 }
 
@@ -32,12 +48,16 @@ impl OverlayWorker {
 		std::thread::spawn(move || {
 			while let Ok(first) = req_rx.recv() {
 				let mut last_sample: Option<(MonitorRect, GlobalPoint)> = None;
+				let mut last_loupe: Option<(MonitorRect, GlobalPoint, u32, u32)> = None;
 				let mut last_freeze: Option<MonitorRect> = None;
 				let mut last_encode: Option<RgbaImage> = None;
 
 				match first {
 					WorkerRequest::SampleRgb { monitor, point } => {
 						last_sample = Some((monitor, point))
+					},
+					WorkerRequest::SampleLoupe { monitor, point, width_px, height_px } => {
+						last_loupe = Some((monitor, point, width_px, height_px));
 					},
 					WorkerRequest::FreezeCapture { monitor } => last_freeze = Some(monitor),
 					WorkerRequest::EncodePng { image } => last_encode = Some(image),
@@ -47,6 +67,9 @@ impl OverlayWorker {
 					match next {
 						WorkerRequest::SampleRgb { monitor, point } => {
 							last_sample = Some((monitor, point))
+						},
+						WorkerRequest::SampleLoupe { monitor, point, width_px, height_px } => {
+							last_loupe = Some((monitor, point, width_px, height_px));
 						},
 						WorkerRequest::FreezeCapture { monitor } => last_freeze = Some(monitor),
 						WorkerRequest::EncodePng { image } => last_encode = Some(image),
@@ -77,6 +100,29 @@ impl OverlayWorker {
 
 					continue;
 				}
+				if let Some((monitor, point, width_px, height_px)) = last_loupe {
+					let rgb = match backend.pixel_rgb_in_monitor(monitor, point) {
+						Ok(rgb) => rgb,
+						Err(err) => {
+							let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
+
+							continue;
+						},
+					};
+					let patch =
+						match backend.rgba_patch_in_monitor(monitor, point, width_px, height_px) {
+							Ok(patch) => patch,
+							Err(err) => {
+								let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
+
+								continue;
+							},
+						};
+					let _ =
+						resp_tx.send(WorkerResponse::SampledLoupe { monitor, point, rgb, patch });
+
+					continue;
+				}
 				if let Some((monitor, point)) = last_sample {
 					match backend.pixel_rgb_in_monitor(monitor, point) {
 						Ok(rgb) => {
@@ -96,6 +142,21 @@ impl OverlayWorker {
 
 	pub(crate) fn try_sample_rgb(&self, monitor: MonitorRect, point: GlobalPoint) {
 		let _ = self.req_tx.try_send(WorkerRequest::SampleRgb { monitor, point });
+	}
+
+	pub(crate) fn try_sample_loupe(
+		&self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		width_px: u32,
+		height_px: u32,
+	) {
+		let _ = self.req_tx.try_send(WorkerRequest::SampleLoupe {
+			monitor,
+			point,
+			width_px,
+			height_px,
+		});
 	}
 
 	pub(crate) fn request_freeze_capture(&self, monitor: MonitorRect) -> bool {
