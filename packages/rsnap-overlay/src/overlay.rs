@@ -273,12 +273,21 @@ impl OverlaySession {
 			while let Some(resp) = worker.try_recv() {
 				match resp {
 					WorkerResponse::SampledRgb { monitor, point, rgb } => {
-						if matches!(self.state.mode, OverlayMode::Live)
-							&& self.state.cursor == Some(point)
-						{
+						if matches!(self.state.mode, OverlayMode::Live) {
+							let _ = point;
+
 							self.state.rgb = rgb;
 
-							self.request_redraw_for_monitor(monitor);
+							let current_monitor =
+								self.state.cursor.and_then(|cursor| self.monitor_at(cursor));
+
+							if let Some(current_monitor) = current_monitor {
+								self.request_redraw_for_monitor(current_monitor);
+							}
+
+							if current_monitor != Some(monitor) {
+								self.request_redraw_for_monitor(monitor);
+							}
 						}
 					},
 					WorkerResponse::CapturedFreeze { monitor, image } => {
@@ -502,9 +511,7 @@ impl OverlaySession {
 		self.state.cursor = Some(cursor);
 
 		match self.state.mode {
-			OverlayMode::Live => {
-				self.state.rgb = None;
-			},
+			OverlayMode::Live => {},
 			OverlayMode::Frozen => {
 				let frozen_monitor = self.state.monitor;
 
