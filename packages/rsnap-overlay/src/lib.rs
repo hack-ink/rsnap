@@ -8,7 +8,8 @@ pub use crate::backend::{
 	CaptureBackend, StubCaptureBackend, XcapCaptureBackend, default_capture_backend,
 };
 pub use crate::overlay::{
-	HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession, ThemeMode,
+	AltActivationMode, HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession,
+	ThemeMode,
 };
 pub use crate::state::{GlobalPoint, MonitorRect, Rgb};
 

@@ -16,9 +16,8 @@ use winit::keyboard::{Key, ModifiersState};
 use winit::window::Theme;
 use winit::window::{Window, WindowId};
 
-use crate::settings::AppSettings;
+use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
 use rsnap_overlay::ThemeMode;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingsPane {
 	General,
@@ -43,12 +42,10 @@ impl SettingsPane {
 		}
 	}
 }
-
 pub enum SettingsControl {
 	Continue,
 	CloseRequested,
 }
-
 pub struct SettingsWindow {
 	window: Arc<Window>,
 	gpu: GpuContext,
@@ -101,17 +98,14 @@ impl SettingsWindow {
 			effective_theme: None,
 		})
 	}
-
 	#[must_use]
 	pub fn window_id(&self) -> WindowId {
 		self.window.id()
 	}
-
 	pub fn focus(&self) {
 		self.window.focus_window();
 		self.window.request_redraw();
 	}
-
 	pub fn handle_window_event(&mut self, event: &WindowEvent) -> SettingsControl {
 		match event {
 			WindowEvent::CloseRequested => return SettingsControl::CloseRequested,
@@ -140,7 +134,6 @@ impl SettingsWindow {
 
 		SettingsControl::Continue
 	}
-
 	pub fn draw(&mut self, settings: &mut AppSettings) -> Result<bool> {
 		if self.last_redraw.elapsed().as_millis() > 1_500 {
 			self.window.request_redraw();
@@ -211,7 +204,6 @@ impl SettingsWindow {
 
 		Ok(settings_changed)
 	}
-
 	fn acquire_frame(&mut self) -> Result<SurfaceTexture> {
 		match self.surface.get_current_texture() {
 			Ok(frame) => Ok(frame),
@@ -228,7 +220,6 @@ impl SettingsWindow {
 			Err(err) => Err(eyre::eyre!("get_current_texture failed: {err:?}")),
 		}
 	}
-
 	fn recreate_surface(&mut self) -> Result<()> {
 		let surface = self
 			.gpu
@@ -242,7 +233,6 @@ impl SettingsWindow {
 
 		Ok(())
 	}
-
 	fn reconfigure_surface(&mut self) {
 		let caps = self.surface.get_capabilities(&self.gpu.adapter);
 
@@ -251,14 +241,12 @@ impl SettingsWindow {
 
 		self.surface.configure(&self.gpu.device, &self.surface_config);
 	}
-
 	fn resize(&mut self, size: PhysicalSize<u32>) {
 		self.surface_config.width = size.width.max(1);
 		self.surface_config.height = size.height.max(1);
 
 		self.reconfigure_surface();
 	}
-
 	fn ui(&mut self, ctx: &egui::Context, settings: &mut AppSettings) -> bool {
 		self.sync_theme(ctx, settings.theme_mode);
 		self.render_top_panel(ctx);
@@ -266,7 +254,6 @@ impl SettingsWindow {
 
 		self.render_central_panel(ctx, settings)
 	}
-
 	fn render_top_panel(&mut self, ctx: &egui::Context) {
 		egui::TopBottomPanel::top("settings_top").show(ctx, |ui| {
 			ui.add_space(6.0);
@@ -283,7 +270,6 @@ impl SettingsWindow {
 			ui.add_space(6.0);
 		});
 	}
-
 	fn render_sidebar(&mut self, ctx: &egui::Context) {
 		egui::SidePanel::left("settings_sidebar").resizable(false).default_width(170.0).show(
 			ctx,
@@ -300,7 +286,6 @@ impl SettingsWindow {
 			},
 		);
 	}
-
 	fn render_central_panel(&mut self, ctx: &egui::Context, settings: &mut AppSettings) -> bool {
 		let mut changed = false;
 
@@ -316,8 +301,119 @@ impl SettingsWindow {
 
 		changed
 	}
-
 	fn render_pane(
+		&mut self,
+		ui: &mut Ui,
+		ctx: &egui::Context,
+		settings: &mut AppSettings,
+	) -> bool {
+		match self.pane {
+			SettingsPane::Overlay => self.render_overlay_pane(ui, settings),
+			SettingsPane::General => self.render_general_pane(ui, ctx, settings),
+			SettingsPane::Hotkeys => {
+				ui.label("Hotkey customization is coming soon.");
+
+				false
+			},
+			SettingsPane::Capture => {
+				ui.label("Capture mode settings are coming soon.");
+
+				false
+			},
+			SettingsPane::Output => {
+				ui.label("Output settings are coming soon.");
+
+				false
+			},
+			SettingsPane::Advanced => {
+				ui.label("Advanced options are coming soon.");
+
+				false
+			},
+			SettingsPane::About => {
+				ui.label(format!("rsnap {}", env!("CARGO_PKG_VERSION")));
+
+				false
+			},
+		}
+	}
+	fn render_overlay_pane(&mut self, ui: &mut Ui, settings: &mut AppSettings) -> bool {
+		let mut changed = false;
+
+		changed |=
+			ui.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD").changed();
+		changed |= ui.checkbox(&mut settings.hud_glass_enabled, "Glass HUD").changed();
+
+		ui.add_space(6.0);
+
+		ui.horizontal(|ui| {
+			ui.label("Alt activation");
+
+			let before = settings.alt_activation;
+
+			egui::ComboBox::from_id_salt("alt_activation")
+				.selected_text(Self::alt_activation_label(settings.alt_activation))
+				.show_ui(ui, |ui| {
+					ui.selectable_value(
+						&mut settings.alt_activation,
+						AltActivationMode::Hold,
+						"Hold",
+					);
+					ui.selectable_value(
+						&mut settings.alt_activation,
+						AltActivationMode::Toggle,
+						"Toggle",
+					);
+				});
+
+			if settings.alt_activation != before {
+				changed = true;
+			}
+		});
+
+		ui.add_space(8.0);
+
+		ui.horizontal(|ui| {
+			ui.label("Loupe sample size");
+
+			let before = settings.loupe_sample_size;
+
+			egui::ComboBox::from_id_salt("loupe_sample_size")
+				.selected_text(Self::loupe_sample_size_label(settings.loupe_sample_size))
+				.show_ui(ui, |ui| {
+					ui.selectable_value(
+						&mut settings.loupe_sample_size,
+						LoupeSampleSize::Small,
+						"Small (15x15)",
+					);
+					ui.selectable_value(
+						&mut settings.loupe_sample_size,
+						LoupeSampleSize::Medium,
+						"Medium (21x21)",
+					);
+					ui.selectable_value(
+						&mut settings.loupe_sample_size,
+						LoupeSampleSize::Large,
+						"Large (31x31)",
+					);
+				});
+
+			if settings.loupe_sample_size != before {
+				changed = true;
+			}
+		});
+		ui.add_enabled_ui(settings.hud_glass_enabled, |ui| {
+			changed |= Self::slider_row(ui, &mut settings.hud_opacity, "Opacity");
+			changed |= Self::slider_row(ui, &mut settings.hud_blur, "Blur");
+			changed |= Self::slider_row(ui, &mut settings.hud_tint, "Tint");
+		});
+
+		ui.add_space(8.0);
+		ui.label("More overlay options will live here.");
+
+		changed
+	}
+	fn render_general_pane(
 		&mut self,
 		ui: &mut Ui,
 		ctx: &egui::Context,
@@ -325,73 +421,28 @@ impl SettingsWindow {
 	) -> bool {
 		let mut changed = false;
 
-		match self.pane {
-			SettingsPane::Overlay => {
-				changed |= ui
-					.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD")
-					.changed();
-				changed |= ui.checkbox(&mut settings.hud_glass_enabled, "Glass HUD").changed();
+		ui.horizontal(|ui| {
+			ui.label("Theme");
 
-				ui.add_space(6.0);
+			let before = settings.theme_mode;
 
-				ui.add_enabled_ui(settings.hud_glass_enabled, |ui| {
-					changed |= Self::slider_row(ui, &mut settings.hud_opacity, "Opacity");
-					changed |= Self::slider_row(ui, &mut settings.hud_blur, "Blur");
-					changed |= Self::slider_row(ui, &mut settings.hud_tint, "Tint");
+			egui::ComboBox::from_id_salt("theme_mode")
+				.selected_text(Self::theme_mode_label(settings.theme_mode))
+				.show_ui(ui, |ui| {
+					ui.selectable_value(&mut settings.theme_mode, ThemeMode::System, "System");
+					ui.selectable_value(&mut settings.theme_mode, ThemeMode::Dark, "Dark");
+					ui.selectable_value(&mut settings.theme_mode, ThemeMode::Light, "Light");
 				});
 
-				ui.add_space(8.0);
-				ui.label("More overlay options will live here.");
-			},
-			SettingsPane::General => {
-				ui.horizontal(|ui| {
-					ui.label("Theme");
+			if settings.theme_mode != before {
+				self.sync_theme(ctx, settings.theme_mode);
 
-					let before = settings.theme_mode;
-
-					egui::ComboBox::from_id_salt("theme_mode")
-						.selected_text(Self::theme_mode_label(settings.theme_mode))
-						.show_ui(ui, |ui| {
-							ui.selectable_value(
-								&mut settings.theme_mode,
-								ThemeMode::System,
-								"System",
-							);
-							ui.selectable_value(&mut settings.theme_mode, ThemeMode::Dark, "Dark");
-							ui.selectable_value(
-								&mut settings.theme_mode,
-								ThemeMode::Light,
-								"Light",
-							);
-						});
-
-					if settings.theme_mode != before {
-						self.sync_theme(ctx, settings.theme_mode);
-
-						changed = true;
-					}
-				});
-			},
-			SettingsPane::Hotkeys => {
-				ui.label("Hotkey customization is coming soon.");
-			},
-			SettingsPane::Capture => {
-				ui.label("Capture mode settings are coming soon.");
-			},
-			SettingsPane::Output => {
-				ui.label("Output settings are coming soon.");
-			},
-			SettingsPane::Advanced => {
-				ui.label("Advanced options are coming soon.");
-			},
-			SettingsPane::About => {
-				ui.label(format!("rsnap {}", env!("CARGO_PKG_VERSION")));
-			},
-		}
+				changed = true;
+			}
+		});
 
 		changed
 	}
-
 	fn slider_row(ui: &mut Ui, amount: &mut f32, label: &'static str) -> bool {
 		let mut changed = false;
 
@@ -413,7 +464,6 @@ impl SettingsWindow {
 
 		changed
 	}
-
 	fn theme_mode_label(mode: ThemeMode) -> &'static str {
 		match mode {
 			ThemeMode::System => "System",
@@ -421,7 +471,19 @@ impl SettingsWindow {
 			ThemeMode::Light => "Light",
 		}
 	}
-
+	fn alt_activation_label(mode: AltActivationMode) -> &'static str {
+		match mode {
+			AltActivationMode::Hold => "Hold",
+			AltActivationMode::Toggle => "Toggle",
+		}
+	}
+	fn loupe_sample_size_label(size: LoupeSampleSize) -> &'static str {
+		match size {
+			LoupeSampleSize::Small => "Small (15x15)",
+			LoupeSampleSize::Medium => "Medium (21x21)",
+			LoupeSampleSize::Large => "Large (31x31)",
+		}
+	}
 	fn requested_window_theme(mode: ThemeMode) -> Option<Theme> {
 		match mode {
 			ThemeMode::System => None,
@@ -429,7 +491,6 @@ impl SettingsWindow {
 			ThemeMode::Light => Some(Theme::Light),
 		}
 	}
-
 	fn effective_theme(&self, mode: ThemeMode) -> Theme {
 		match mode {
 			ThemeMode::System => self.window.theme().unwrap_or(Theme::Dark),
@@ -437,7 +498,6 @@ impl SettingsWindow {
 			ThemeMode::Light => Theme::Light,
 		}
 	}
-
 	fn sync_theme(&mut self, ctx: &egui::Context, mode: ThemeMode) {
 		let requested = Self::requested_window_theme(mode);
 
@@ -458,7 +518,6 @@ impl SettingsWindow {
 			self.effective_theme = Some(effective);
 		}
 	}
-
 	fn sidebar_row(&mut self, ui: &mut Ui, pane: SettingsPane) {
 		let is_selected = self.pane == pane;
 
@@ -467,7 +526,6 @@ impl SettingsWindow {
 		}
 	}
 }
-
 struct GpuContext {
 	instance: wgpu::Instance,
 	adapter: Adapter,
@@ -517,7 +575,6 @@ impl GpuContext {
 		Ok((Self { instance, adapter, device, queue }, surface, surface_config))
 	}
 }
-
 fn pick_surface_format(caps: &SurfaceCapabilities) -> TextureFormat {
 	caps.formats
 		.iter()
@@ -533,7 +590,6 @@ fn pick_surface_format(caps: &SurfaceCapabilities) -> TextureFormat {
 		})
 		.unwrap_or(caps.formats[0])
 }
-
 fn pick_surface_alpha(caps: &SurfaceCapabilities) -> CompositeAlphaMode {
 	caps.alpha_modes
 		.iter()
