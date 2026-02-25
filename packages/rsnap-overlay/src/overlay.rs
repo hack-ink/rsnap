@@ -5,7 +5,7 @@ use std::{
 };
 
 use color_eyre::eyre::{self, Result, WrapErr};
-use device_query::DeviceQuery;
+use device_query::{DeviceQuery, Keycode};
 use egui::ClippedPrimitive;
 use egui::FullOutput;
 use egui::Ui;
@@ -643,8 +643,15 @@ impl OverlaySession {
 	}
 
 	fn handle_modifiers_changed(&mut self, modifiers: &Modifiers) -> OverlayControl {
-		let alt = modifiers.state().alt_key();
+		let mut alt = modifiers.state().alt_key();
 
+		// On macOS with multiple always-on-top windows, winit can transiently report
+		// `alt_key=false` even while the physical Option key is still held (e.g., when
+		// focus changes between overlay/HUD/loupe windows). Prefer the global key state
+		// to avoid flicker.
+		if !alt && self.is_option_key_down() {
+			alt = true;
+		}
 		if self.state.alt_held == alt {
 			return OverlayControl::Continue;
 		}
@@ -696,6 +703,15 @@ impl OverlaySession {
 		}
 
 		OverlayControl::Continue
+	}
+
+	fn is_option_key_down(&self) -> bool {
+		let keys = self.cursor_device.get_keys();
+
+		keys.contains(&Keycode::LOption)
+			|| keys.contains(&Keycode::ROption)
+			|| keys.contains(&Keycode::LAlt)
+			|| keys.contains(&Keycode::RAlt)
 	}
 
 	fn handle_resized(&mut self, window_id: WindowId, size: PhysicalSize<u32>) -> OverlayControl {
@@ -2680,7 +2696,7 @@ impl WindowRenderer {
 				fill: if hud_blur_active && !hud_opaque { Color32::TRANSPARENT } else { body_fill },
 				stroke: outer_stroke,
 				shadow,
-				corner_radius: CornerRadius::same(18),
+				corner_radius: CornerRadius::same(10),
 				inner_margin: tile_padding,
 				..Frame::default()
 			};
