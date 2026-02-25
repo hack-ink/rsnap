@@ -2709,9 +2709,8 @@ fn macos_configure_hud_window(
 
 			let amount = blur_amount.clamp(0.0, 1.0);
 			let radius = if blur_enabled {
-				// Use an eased curve so small slider movements near 0 do not produce huge blur changes.
+				// Map the slider linearly (0..=1) to the native blur radius.
 				// Keep the upper bound conservative; CGS blur radius gets strong quickly.
-				// Keep the slider linear; the OS blur itself is already perceptually non-linear.
 				let max_radius = 28.0;
 
 				(amount * max_radius).round().clamp(0.0, 200.0) as i64
