@@ -345,13 +345,13 @@ impl SettingsWindow {
 						ui,
 						&mut settings.hud_fog_enabled,
 						&mut settings.hud_fog_amount,
-						"Fog",
+						"Blur",
 					);
 					changed |= Self::checkbox_slider_row(
 						ui,
 						&mut settings.hud_milk_enabled,
 						&mut settings.hud_milk_amount,
-						"Milkiness",
+						"Tint",
 					);
 				});
 
