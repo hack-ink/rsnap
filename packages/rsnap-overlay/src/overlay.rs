@@ -981,8 +981,8 @@ impl WindowRenderer {
 		let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
 		let pos_text = format!("x={}, y={}", cursor.x, cursor.y);
 		let rgb_text = match state.rgb {
-			Some(rgb) => format!("{}, {}, {}  {}", rgb.r, rgb.g, rgb.b, rgb.hex_upper()),
-			None => String::from("???, ???, ???  #??????"),
+			Some(rgb) => format!("{:>3},{:>3},{:>3}  {}", rgb.r, rgb.g, rgb.b, rgb.hex_upper()),
+			None => String::from("???,???,???  #??????"),
 		};
 		let swatch_size = egui::vec2(10.0, 10.0);
 
