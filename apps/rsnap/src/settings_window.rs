@@ -2,9 +2,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use color_eyre::eyre::{self, Result, WrapErr};
+use egui::Ui;
 use egui::{Align, Layout};
 use egui_wgpu::{Renderer, ScreenDescriptor};
-use egui_winit::State as EguiWinitState;
+use wgpu::SurfaceTexture;
+use wgpu::TextureFormat;
 use wgpu::{Adapter, CompositeAlphaMode, Device, Queue, Surface, SurfaceCapabilities};
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::WindowEvent;
@@ -23,7 +25,6 @@ pub enum SettingsPane {
 	Advanced,
 	About,
 }
-
 impl SettingsPane {
 	#[must_use]
 	pub fn title(self) -> &'static str {
@@ -50,13 +51,12 @@ pub struct SettingsWindow {
 	surface: Surface<'static>,
 	surface_config: wgpu::SurfaceConfiguration,
 	egui_ctx: egui::Context,
-	egui_state: EguiWinitState,
+	egui_state: egui_winit::State,
 	renderer: Renderer,
 	pane: SettingsPane,
 	search: String,
 	last_redraw: Instant,
 }
-
 impl SettingsWindow {
 	pub fn open(event_loop: &ActiveEventLoop) -> Result<Self> {
 		let attrs = Window::default_attributes()
@@ -66,12 +66,12 @@ impl SettingsWindow {
 			.with_visible(true);
 		let window = event_loop.create_window(attrs).wrap_err("create settings window")?;
 		let window = Arc::new(window);
-
 		let (gpu, surface, surface_config) = GpuContext::new_with_surface(Arc::clone(&window))?;
-
 		let egui_ctx = egui::Context::default();
+
 		egui_ctx.set_visuals(egui::Visuals::dark());
-		let egui_state = EguiWinitState::new(
+
+		let egui_state = egui_winit::State::new(
 			egui_ctx.clone(),
 			egui::ViewportId::ROOT,
 			window.as_ref(),
@@ -79,7 +79,6 @@ impl SettingsWindow {
 			None,
 			None,
 		);
-
 		let renderer = Renderer::new(&gpu.device, surface_config.format, None, 1, false);
 
 		Ok(Self {
@@ -115,21 +114,21 @@ impl SettingsWindow {
 		}
 
 		let _ = self.egui_state.on_window_event(&self.window, event);
+
 		self.window.request_redraw();
 
 		SettingsControl::Continue
 	}
 
 	pub fn draw(&mut self, settings: &mut AppSettings) -> Result<bool> {
-		if self.last_redraw.elapsed().as_millis() > 1500 {
+		if self.last_redraw.elapsed().as_millis() > 1_500 {
 			self.window.request_redraw();
 		}
+
 		self.last_redraw = Instant::now();
 
 		let raw_input = self.egui_state.take_egui_input(&self.window);
-
 		let mut settings_changed = false;
-
 		let egui_ctx = self.egui_ctx.clone();
 		let full_output = egui_ctx.run(raw_input, |ctx| {
 			settings_changed = self.ui(ctx, settings);
@@ -192,15 +191,17 @@ impl SettingsWindow {
 		Ok(settings_changed)
 	}
 
-	fn acquire_frame(&mut self) -> Result<wgpu::SurfaceTexture> {
+	fn acquire_frame(&mut self) -> Result<SurfaceTexture> {
 		match self.surface.get_current_texture() {
 			Ok(frame) => Ok(frame),
 			Err(wgpu::SurfaceError::Outdated) => {
 				self.reconfigure_surface();
+
 				self.surface.get_current_texture().wrap_err("get_current_texture after reconfigure")
 			},
 			Err(wgpu::SurfaceError::Lost) => {
 				self.recreate_surface().wrap_err("recreate surface")?;
+
 				self.surface.get_current_texture().wrap_err("get_current_texture after recreate")
 			},
 			Err(err) => Err(eyre::eyre!("get_current_texture failed: {err:?}")),
@@ -213,7 +214,9 @@ impl SettingsWindow {
 			.instance
 			.create_surface(Arc::clone(&self.window))
 			.wrap_err("create_surface")?;
+
 		self.surface = surface;
+
 		self.reconfigure_surface();
 
 		Ok(())
@@ -221,14 +224,17 @@ impl SettingsWindow {
 
 	fn reconfigure_surface(&mut self) {
 		let caps = self.surface.get_capabilities(&self.gpu.adapter);
+
 		self.surface_config.present_mode = caps.present_modes[0];
 		self.surface_config.alpha_mode = pick_surface_alpha(&caps);
+
 		self.surface.configure(&self.gpu.device, &self.surface_config);
 	}
 
 	fn resize(&mut self, size: PhysicalSize<u32>) {
 		self.surface_config.width = size.width.max(1);
 		self.surface_config.height = size.height.max(1);
+
 		self.reconfigure_surface();
 	}
 
@@ -249,7 +255,6 @@ impl SettingsWindow {
 			});
 			ui.add_space(6.0);
 		});
-
 		egui::SidePanel::left("settings_sidebar").resizable(false).default_width(170.0).show(
 			ctx,
 			|ui| {
@@ -277,6 +282,7 @@ impl SettingsWindow {
 					changed |= ui
 						.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD")
 						.changed();
+
 					ui.add_space(8.0);
 					ui.label("More overlay options will live here.");
 				},
@@ -304,8 +310,9 @@ impl SettingsWindow {
 		changed
 	}
 
-	fn sidebar_row(&mut self, ui: &mut egui::Ui, pane: SettingsPane) {
+	fn sidebar_row(&mut self, ui: &mut Ui, pane: SettingsPane) {
 		let is_selected = self.pane == pane;
+
 		if ui.selectable_label(is_selected, pane.title()).clicked() {
 			self.pane = pane;
 		}
@@ -318,7 +325,6 @@ struct GpuContext {
 	device: Device,
 	queue: Queue,
 }
-
 impl GpuContext {
 	fn new_with_surface(
 		window: Arc<Window>,
@@ -342,7 +348,6 @@ impl GpuContext {
 			None,
 		))
 		.wrap_err("request_device")?;
-
 		let caps = surface.get_capabilities(&adapter);
 		let format = pick_surface_format(&caps);
 		let alpha = pick_surface_alpha(&caps);
@@ -357,13 +362,14 @@ impl GpuContext {
 			view_formats: vec![format],
 			desired_maximum_frame_latency: 2,
 		};
+
 		surface.configure(&device, &surface_config);
 
 		Ok((Self { instance, adapter, device, queue }, surface, surface_config))
 	}
 }
 
-fn pick_surface_format(caps: &SurfaceCapabilities) -> wgpu::TextureFormat {
+fn pick_surface_format(caps: &SurfaceCapabilities) -> TextureFormat {
 	caps.formats
 		.iter()
 		.copied()
