@@ -179,6 +179,8 @@ pub struct OverlaySession {
 	cursor_device: device_query::DeviceState,
 	state: OverlayState,
 	windows: HashMap<WindowId, OverlayWindow>,
+	hud_window: Option<HudOverlayWindow>,
+	hud_outer_pos: Option<GlobalPoint>,
 	gpu: Option<GpuContext>,
 	last_present_at: Instant,
 	last_rgb_request_at: Instant,
@@ -208,6 +210,8 @@ impl OverlaySession {
 			cursor_device: device_query::DeviceState::new(),
 			state: OverlayState::new(),
 			windows: HashMap::new(),
+			hud_window: None,
+			hud_outer_pos: None,
 			gpu: None,
 			last_present_at: Instant::now(),
 			last_rgb_request_at: Instant::now(),
@@ -224,15 +228,23 @@ impl OverlaySession {
 	}
 
 	pub fn set_config(&mut self, config: OverlayConfig) {
-		let prev_show_hud_blur = self.config.show_hud_blur;
+		let prev = self.config.clone();
 
 		self.config = config;
 
 		if !self.is_active() {
 			return;
 		}
-		if prev_show_hud_blur != self.config.show_hud_blur {
-			if self.config.show_hud_blur {
+
+		if let Some(hud_window) = self.hud_window.as_ref() {
+			hud_window.window.set_blur(self.config.show_hud_blur);
+		}
+
+		let prev_fake_blur = prev.show_hud_blur && !cfg!(target_os = "macos");
+		let new_fake_blur = self.use_fake_hud_blur();
+
+		if prev_fake_blur != new_fake_blur {
+			if new_fake_blur {
 				self.last_live_bg_request_at = Instant::now() - self.live_bg_request_interval;
 
 				if matches!(self.state.mode, OverlayMode::Live)
@@ -253,6 +265,10 @@ impl OverlaySession {
 	#[must_use]
 	pub fn is_active(&self) -> bool {
 		!self.windows.is_empty()
+	}
+
+	fn use_fake_hud_blur(&self) -> bool {
+		self.config.show_hud_blur && !cfg!(target_os = "macos")
 	}
 
 	pub fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
@@ -316,6 +332,30 @@ impl OverlaySession {
 				.insert(window.id(), OverlayWindow { monitor: monitor_rect, window, renderer });
 		}
 
+		{
+			let attrs = winit::window::Window::default_attributes()
+				.with_title("rsnap-hud")
+				.with_decorations(false)
+				.with_resizable(false)
+				.with_transparent(true)
+				.with_window_level(WindowLevel::AlwaysOnTop)
+				.with_inner_size(LogicalSize::new(560.0, 72.0));
+			let window = event_loop
+				.create_window(attrs)
+				.map_err(|err| format!("Unable to create HUD window: {err}"))?;
+			let window = Arc::new(window);
+			let _ = window.set_cursor_hittest(false);
+
+			window.set_blur(self.config.show_hud_blur);
+			window.request_redraw();
+
+			let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
+			let renderer = WindowRenderer::new(gpu, Arc::clone(&window))
+				.map_err(|err| format!("Failed to init HUD renderer: {err:#}"))?;
+
+			self.hud_window = Some(HudOverlayWindow { window, renderer });
+		}
+
 		self.request_redraw_all();
 		self.initialize_cursor_state();
 
@@ -326,6 +366,10 @@ impl OverlaySession {
 		for w in self.windows.values() {
 			w.window.request_redraw();
 		}
+
+		if let Some(hud) = self.hud_window.as_ref() {
+			hud.window.request_redraw();
+		}
 	}
 
 	pub fn request_redraw_for_monitor(&self, monitor: MonitorRect) {
@@ -333,6 +377,10 @@ impl OverlaySession {
 			if w.monitor == monitor {
 				w.window.request_redraw();
 			}
+		}
+
+		if let Some(hud) = self.hud_window.as_ref() {
+			hud.window.request_redraw();
 		}
 	}
 
@@ -345,7 +393,7 @@ impl OverlaySession {
 			&& let Some(cursor) = self.state.cursor
 			&& let Some(monitor) = self.monitor_at(cursor)
 		{
-			if self.config.show_hud_blur {
+			if self.use_fake_hud_blur() {
 				self.maybe_request_live_bg(monitor);
 			}
 
@@ -422,7 +470,7 @@ impl OverlaySession {
 							self.state.finish_freeze(monitor, image);
 							self.request_redraw_for_monitor(monitor);
 						} else if matches!(self.state.mode, OverlayMode::Live)
-							&& self.config.show_hud_blur
+							&& self.use_fake_hud_blur()
 							&& self.state.cursor.and_then(|cursor| self.monitor_at(cursor))
 								== Some(monitor)
 						{
@@ -501,7 +549,7 @@ impl OverlaySession {
 			&& let Some(cursor) = self.state.cursor
 			&& let Some(monitor) = self.monitor_at(cursor)
 		{
-			if self.config.show_hud_blur {
+			if self.use_fake_hud_blur() {
 				self.maybe_request_live_bg(monitor);
 			}
 
@@ -531,6 +579,15 @@ impl OverlaySession {
 	}
 
 	fn handle_resized(&mut self, window_id: WindowId, size: PhysicalSize<u32>) -> OverlayControl {
+		if let Some(hud_window) = self.hud_window.as_mut()
+			&& hud_window.window.id() == window_id
+		{
+			match hud_window.renderer.resize(size) {
+				Ok(()) => return OverlayControl::Continue,
+				Err(err) => return self.exit(OverlayExit::Error(format!("{err:#}"))),
+			}
+		}
+
 		let Some(overlay_window) = self.windows.get_mut(&window_id) else {
 			return OverlayControl::Continue;
 		};
@@ -542,6 +599,17 @@ impl OverlaySession {
 	}
 
 	fn handle_scale_factor_changed(&mut self, window_id: WindowId) -> OverlayControl {
+		if let Some(hud_window) = self.hud_window.as_mut()
+			&& hud_window.window.id() == window_id
+		{
+			let size = hud_window.window.inner_size();
+
+			match hud_window.renderer.resize(size) {
+				Ok(()) => return OverlayControl::Continue,
+				Err(err) => return self.exit(OverlayExit::Error(format!("{err:#}"))),
+			}
+		}
+
 		let Some(overlay_window) = self.windows.get_mut(&window_id) else {
 			return OverlayControl::Continue;
 		};
@@ -583,8 +651,9 @@ impl OverlaySession {
 		};
 
 		self.update_cursor_state(monitor, global);
+		self.update_hud_window_position(monitor, global);
 
-		if matches!(self.state.mode, OverlayMode::Live) && self.config.show_hud_blur {
+		if matches!(self.state.mode, OverlayMode::Live) && self.use_fake_hud_blur() {
 			if self.state.live_bg_monitor != Some(monitor) {
 				self.state.live_bg_monitor = None;
 				self.state.live_bg_image = None;
@@ -642,7 +711,7 @@ impl OverlaySession {
 		self.state.clear_error();
 		self.state.begin_freeze(monitor);
 
-		if self.config.show_hud_blur
+		if self.use_fake_hud_blur()
 			&& self.state.live_bg_monitor == Some(monitor)
 			&& let Some(image) = self.state.live_bg_image.take()
 		{
@@ -707,6 +776,43 @@ impl OverlaySession {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
+		let is_hud_window =
+			self.hud_window.as_ref().is_some_and(|hud_window| hud_window.window.id() == window_id);
+
+		if is_hud_window {
+			let monitor = match self.state.mode {
+				OverlayMode::Frozen => self
+					.state
+					.monitor
+					.or_else(|| self.state.cursor.and_then(|cursor| self.monitor_at(cursor))),
+				OverlayMode::Live => self.state.cursor.and_then(|cursor| self.monitor_at(cursor)),
+			}
+			.or_else(|| self.windows.values().next().map(|w| w.monitor));
+
+			if let (Some(monitor), Some(hud_window)) = (monitor, self.hud_window.as_mut())
+				&& let Err(err) = hud_window.renderer.draw(
+					gpu,
+					&self.state,
+					monitor,
+					true,
+					Some(Pos2::ZERO),
+					true,
+					HudAnchor::Cursor,
+					self.config.show_alt_hint_keycap,
+					false,
+					self.config.hud_opaque,
+					self.config.hud_fog_amount,
+					self.config.hud_milk_amount,
+					self.config.theme_mode,
+				) {
+				return self.exit(OverlayExit::Error(format!("{err:#}")));
+			}
+
+			self.last_present_at = Instant::now();
+
+			return OverlayControl::Continue;
+		}
+
 		let Some(overlay_window) = self.windows.get_mut(&window_id) else {
 			return OverlayControl::Continue;
 		};
@@ -715,6 +821,9 @@ impl OverlaySession {
 			gpu,
 			&self.state,
 			overlay_window.monitor,
+			false,
+			None,
+			false,
 			self.config.hud_anchor,
 			self.config.show_alt_hint_keycap,
 			self.config.show_hud_blur,
@@ -744,6 +853,7 @@ impl OverlaySession {
 	fn exit(&mut self, exit: OverlayExit) -> OverlayControl {
 		self.windows.clear();
 
+		self.hud_window = None;
 		self.gpu = None;
 		self.worker = None;
 
@@ -761,9 +871,10 @@ impl OverlaySession {
 		};
 
 		self.update_cursor_state(monitor, cursor);
+		self.update_hud_window_position(monitor, cursor);
 
 		if matches!(self.state.mode, OverlayMode::Live) {
-			if self.config.show_hud_blur {
+			if self.use_fake_hud_blur() {
 				self.maybe_request_live_bg(monitor);
 			}
 
@@ -776,7 +887,7 @@ impl OverlaySession {
 	}
 
 	fn maybe_request_live_bg(&mut self, monitor: MonitorRect) {
-		if !matches!(self.state.mode, OverlayMode::Live) || !self.config.show_hud_blur {
+		if !matches!(self.state.mode, OverlayMode::Live) || !self.use_fake_hud_blur() {
 			return;
 		}
 		if self.state.live_bg_monitor == Some(monitor) && self.state.live_bg_image.is_some() {
@@ -805,6 +916,49 @@ impl OverlaySession {
 			.map(|window| window.monitor)
 	}
 
+	fn update_hud_window_position(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
+		let Some(hud_window) = self.hud_window.as_ref() else {
+			return;
+		};
+		let scale = hud_window.window.scale_factor().max(1.0);
+		let size = hud_window.window.inner_size();
+		let hud_w_points = ((size.width as f64) / scale).ceil().max(1.0) as i32;
+		let hud_h_points = ((size.height as f64) / scale).ceil().max(1.0) as i32;
+		let monitor_right = monitor.origin.x.saturating_add_unsigned(monitor.width);
+		let monitor_bottom = monitor.origin.y.saturating_add_unsigned(monitor.height);
+		let offset_x = 18;
+		let offset_y = 18;
+		let mut x = cursor.x.saturating_add(offset_x);
+		let mut y = cursor.y.saturating_add(offset_y);
+
+		if x.saturating_add(hud_w_points) > monitor_right {
+			x = cursor.x.saturating_sub(offset_x.saturating_add(hud_w_points));
+		}
+		if y.saturating_add(hud_h_points) > monitor_bottom {
+			y = cursor.y.saturating_sub(offset_y.saturating_add(hud_h_points));
+		}
+
+		x = x.clamp(
+			monitor.origin.x,
+			monitor_right.saturating_sub(hud_w_points).max(monitor.origin.x),
+		);
+		y = y.clamp(
+			monitor.origin.y,
+			monitor_bottom.saturating_sub(hud_h_points).max(monitor.origin.y),
+		);
+
+		let desired = GlobalPoint::new(x, y);
+
+		if self.hud_outer_pos == Some(desired) {
+			return;
+		}
+
+		self.hud_outer_pos = Some(desired);
+
+		hud_window.window.set_outer_position(LogicalPosition::new(x as f64, y as f64));
+		hud_window.window.request_redraw();
+	}
+
 	fn update_cursor_state(&mut self, _monitor: MonitorRect, cursor: GlobalPoint) {
 		self.state.cursor = Some(cursor);
 
@@ -823,6 +977,11 @@ impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
 	}
+}
+
+struct HudOverlayWindow {
+	window: Arc<winit::window::Window>,
+	renderer: WindowRenderer,
 }
 
 struct OverlayWindow {
@@ -1225,16 +1384,21 @@ impl WindowRenderer {
 		raw_input: egui::RawInput,
 		state: &OverlayState,
 		monitor: MonitorRect,
+		can_draw_hud: bool,
+		hud_local_cursor_override: Option<Pos2>,
+		hud_compact: bool,
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
 		hud_opaque: bool,
 		theme: HudTheme,
 	) -> (FullOutput, Option<HudPillGeometry>) {
-		let can_draw = Self::should_draw_hud(state, monitor);
-		let hud_data = if can_draw {
+		let hud_data = if can_draw_hud {
 			state.cursor.and_then(|cursor| {
-				global_to_local(cursor, monitor).map(|local_cursor| (cursor, local_cursor))
+				let local_cursor =
+					hud_local_cursor_override.or_else(|| global_to_local(cursor, monitor))?;
+
+				Some((cursor, local_cursor))
 			})
 		} else {
 			None
@@ -1248,6 +1412,7 @@ impl WindowRenderer {
 					monitor,
 					cursor,
 					local_cursor,
+					hud_compact,
 					hud_anchor,
 					show_alt_hint_keycap,
 					hud_blur_active,
@@ -1275,6 +1440,7 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
 		local_cursor: Pos2,
+		hud_compact: bool,
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
@@ -1295,6 +1461,7 @@ impl WindowRenderer {
 					state,
 					monitor,
 					cursor,
+					hud_compact,
 					show_alt_hint_keycap,
 					hud_blur_active,
 					hud_opaque,
@@ -1310,6 +1477,7 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
+		hud_compact: bool,
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
 		hud_opaque: bool,
@@ -1374,16 +1542,18 @@ impl WindowRenderer {
 			egui::StrokeKind::Inside,
 		);
 
-		Self::render_loupe_tile(
-			ui,
-			state,
-			monitor,
-			cursor,
-			pill_rect,
-			hud_blur_active,
-			hud_opaque,
-			theme,
-		);
+		if !hud_compact {
+			Self::render_loupe_tile(
+				ui,
+				state,
+				monitor,
+				cursor,
+				pill_rect,
+				hud_blur_active,
+				hud_opaque,
+				theme,
+			);
+		}
 	}
 
 	fn render_hud_content(
@@ -1937,6 +2107,9 @@ impl WindowRenderer {
 		gpu: &GpuContext,
 		state: &OverlayState,
 		monitor: MonitorRect,
+		draw_hud: bool,
+		hud_local_cursor_override: Option<Pos2>,
+		hud_compact: bool,
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
 		show_hud_blur: bool,
@@ -1952,10 +2125,15 @@ impl WindowRenderer {
 		self.sync_egui_theme(theme);
 
 		let (size, pixels_per_point, raw_input) = self.prepare_egui_input(gpu);
+		let can_draw_hud = draw_hud && Self::should_draw_hud(state, monitor);
 
-		self.sync_hud_bg(gpu, state, monitor)?;
+		if can_draw_hud {
+			self.sync_hud_bg(gpu, state, monitor)?;
+		} else {
+			self.hud_bg = None;
+		}
 
-		let hud_blur_enabled = show_hud_blur && !hud_opaque;
+		let hud_blur_enabled = can_draw_hud && show_hud_blur && !hud_opaque;
 		let hud_blur_active = hud_blur_enabled
 			&& self.hud_bg.is_some()
 			&& match state.mode {
@@ -1966,6 +2144,9 @@ impl WindowRenderer {
 			raw_input,
 			state,
 			monitor,
+			can_draw_hud,
+			hud_local_cursor_override,
+			hud_compact,
 			hud_anchor,
 			show_alt_hint_keycap,
 			hud_blur_active,
