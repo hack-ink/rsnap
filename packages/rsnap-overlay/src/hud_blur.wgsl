@@ -23,6 +23,8 @@ struct HudBlurUniform {
 	radius_blur_soft: vec4<f32>,
 	// surface_size_px.xy, _pad
 	surface_size_px: vec4<f32>,
+	// tint_rgb (linear), tint_alpha
+	tint_rgba: vec4<f32>,
 }
 
 @group(0) @binding(0) var bg_tex: texture_2d<f32>;
@@ -93,5 +95,8 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 	let delta = vec2<f32>(blur_radius_px) / surface_size;
 	let blurred = sample_blur(uv, delta);
 
-	return vec4<f32>(blurred * alpha, alpha);
+	let tint = u.tint_rgba;
+	let color = mix(blurred, tint.rgb, tint.a);
+
+	return vec4<f32>(color * alpha, alpha);
 }

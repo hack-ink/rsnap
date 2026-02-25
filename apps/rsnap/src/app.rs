@@ -2,10 +2,7 @@ use std::time::{Duration, Instant};
 
 use color_eyre::eyre;
 use color_eyre::eyre::Result;
-use global_hotkey::{
-	GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
-	hotkey::{Code, HotKey, Modifiers},
-};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
 use tray_icon::{
 	TrayIcon, TrayIconBuilder, TrayIconEvent,
 	menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
@@ -32,13 +29,19 @@ pub enum UserEvent {
 struct App {
 	capture_hotkey: HotKey,
 	capture_hotkey_id: u32,
-	settings_hotkey: HotKey,
-	settings_hotkey_id: u32,
+	settings_hotkey: Option<HotKey>,
+	settings_hotkey_id: Option<u32>,
 	_hotkey_manager: Option<GlobalHotKeyManager>,
 	tray_icon: Option<TrayIcon>,
+	#[cfg(target_os = "macos")]
+	menubar_menu: Option<Menu>,
 	settings_menu_id: Option<MenuId>,
 	capture_menu_id: Option<MenuId>,
 	quit_menu_id: Option<MenuId>,
+	#[cfg(target_os = "macos")]
+	menubar_settings_menu_id: Option<MenuId>,
+	#[cfg(target_os = "macos")]
+	menubar_quit_menu_id: Option<MenuId>,
 	overlay_session: Option<OverlaySession>,
 	settings_window: Option<SettingsWindow>,
 	settings: AppSettings,
@@ -46,19 +49,25 @@ struct App {
 impl App {
 	fn new(
 		capture_hotkey: HotKey,
-		settings_hotkey: HotKey,
+		settings_hotkey: Option<HotKey>,
 		hotkey_manager: Option<GlobalHotKeyManager>,
 	) -> Self {
 		Self {
 			capture_hotkey_id: capture_hotkey.id(),
 			capture_hotkey,
-			settings_hotkey_id: settings_hotkey.id(),
 			settings_hotkey,
+			settings_hotkey_id: settings_hotkey.as_ref().map(HotKey::id),
 			_hotkey_manager: hotkey_manager,
 			tray_icon: None,
+			#[cfg(target_os = "macos")]
+			menubar_menu: None,
 			settings_menu_id: None,
 			capture_menu_id: None,
 			quit_menu_id: None,
+			#[cfg(target_os = "macos")]
+			menubar_settings_menu_id: None,
+			#[cfg(target_os = "macos")]
+			menubar_quit_menu_id: None,
 			overlay_session: None,
 			settings_window: None,
 			settings: AppSettings::load(),
@@ -70,7 +79,10 @@ impl App {
 	}
 
 	fn settings_key_label(&self) -> String {
-		self.settings_hotkey.to_string()
+		self.settings_hotkey
+			.as_ref()
+			.map(ToString::to_string)
+			.unwrap_or_else(|| String::from("disabled"))
 	}
 
 	fn start_capture_session(&mut self, event_loop: &ActiveEventLoop, requested_by: &'static str) {
@@ -135,20 +147,100 @@ impl App {
 		}
 	}
 
+	#[cfg(target_os = "macos")]
+	fn install_menubar(&mut self, event_loop: &ActiveEventLoop) {
+		if self.menubar_menu.is_some() {
+			return;
+		}
+
+		use tray_icon::menu::accelerator;
+
+		use tray_icon::menu::Submenu;
+
+		let menubar = Menu::new();
+		let settings_item = MenuItem::new(
+			"Settings…",
+			true,
+			Some(accelerator::Accelerator::new(
+				Some(accelerator::Modifiers::SUPER),
+				accelerator::Code::Comma,
+			)),
+		);
+		let quit_item = MenuItem::new(
+			"Quit rsnap",
+			true,
+			Some(accelerator::Accelerator::new(
+				Some(accelerator::Modifiers::SUPER),
+				accelerator::Code::KeyQ,
+			)),
+		);
+		let app_menu = match Submenu::with_items(
+			"rsnap",
+			true,
+			&[&settings_item, &PredefinedMenuItem::separator(), &quit_item],
+		) {
+			Ok(menu) => menu,
+			Err(err) => {
+				tracing::warn!(error = ?err, "Failed to build menubar menu.");
+
+				event_loop.exit();
+
+				return;
+			},
+		};
+
+		if let Err(err) = menubar.append(&app_menu) {
+			tracing::warn!(error = ?err, "Failed to append menubar submenu.");
+
+			event_loop.exit();
+
+			return;
+		}
+
+		menubar.init_for_nsapp();
+
+		self.menubar_settings_menu_id = Some(settings_item.id().clone());
+		self.menubar_quit_menu_id = Some(quit_item.id().clone());
+		self.menubar_menu = Some(menubar);
+	}
+
 	fn install_tray(&mut self, event_loop: &ActiveEventLoop) {
 		if self.tray_icon.is_some() {
 			return;
 		}
 
+		use tray_icon::menu::accelerator;
+
 		let tray_menu = Menu::new();
-		let settings_item = MenuItem::new("Settings…", true, None);
-		let capture_item = MenuItem::new("Capture", true, None);
-		let quit_item = MenuItem::new("Quit", true, None);
+		let capture_item = MenuItem::new(
+			"Capture",
+			true,
+			Some(accelerator::Accelerator::new(
+				Some(accelerator::Modifiers::ALT),
+				accelerator::Code::KeyX,
+			)),
+		);
+		let settings_item = MenuItem::new(
+			"Settings…",
+			true,
+			Some(accelerator::Accelerator::new(
+				Some(accelerator::CMD_OR_CTRL),
+				accelerator::Code::Comma,
+			)),
+		);
+		let quit_item = MenuItem::new(
+			"Quit",
+			true,
+			Some(accelerator::Accelerator::new(
+				Some(accelerator::CMD_OR_CTRL),
+				accelerator::Code::KeyQ,
+			)),
+		);
 
 		if let Err(err) = tray_menu.append_items(&[
-			&settings_item,
-			&PredefinedMenuItem::separator(),
 			&capture_item,
+			&PredefinedMenuItem::separator(),
+			&settings_item,
 			&PredefinedMenuItem::separator(),
 			&quit_item,
 		]) {
@@ -218,6 +310,8 @@ impl App {
 
 impl ApplicationHandler<UserEvent> for App {
 	fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+		#[cfg(target_os = "macos")]
+		self.install_menubar(event_loop);
 		self.install_tray(event_loop);
 	}
 
@@ -225,16 +319,25 @@ impl ApplicationHandler<UserEvent> for App {
 		match event {
 			UserEvent::Menu(event) => {
 				let id = event.id();
+				let mut handled = false;
 
 				if Some(id) == self.settings_menu_id.as_ref() {
+					handled = true;
+
 					tracing::info!("Settings requested from tray menu.");
 
 					self.open_settings_window(event_loop, "tray-menu");
-				} else if Some(id) == self.capture_menu_id.as_ref() {
+				}
+				if Some(id) == self.capture_menu_id.as_ref() {
+					handled = true;
+
 					tracing::info!("Capture requested from tray menu.");
 
 					self.start_capture_session(event_loop, "tray-menu");
-				} else if Some(id) == self.quit_menu_id.as_ref() {
+				}
+				if Some(id) == self.quit_menu_id.as_ref() {
+					handled = true;
+
 					tracing::info!("Quit requested from tray menu.");
 
 					self.end_overlay_session(OverlayExit::Cancelled);
@@ -242,7 +345,31 @@ impl ApplicationHandler<UserEvent> for App {
 					self.settings_window = None;
 
 					event_loop.exit();
-				} else {
+				}
+
+				#[cfg(target_os = "macos")]
+				{
+					if Some(id) == self.menubar_settings_menu_id.as_ref() {
+						handled = true;
+
+						tracing::info!("Settings requested from menubar menu.");
+
+						self.open_settings_window(event_loop, "menubar-menu");
+					}
+					if Some(id) == self.menubar_quit_menu_id.as_ref() {
+						handled = true;
+
+						tracing::info!("Quit requested from menubar menu.");
+
+						self.end_overlay_session(OverlayExit::Cancelled);
+
+						self.settings_window = None;
+
+						event_loop.exit();
+					}
+				}
+
+				if !handled {
 					tracing::warn!(menu_id = ?id.as_ref(), "Ignoring unknown menu event.");
 				}
 			},
@@ -251,12 +378,12 @@ impl ApplicationHandler<UserEvent> for App {
 				if event.state() == HotKeyState::Pressed {
 					if event.id() == self.capture_hotkey_id {
 						tracing::info!(
-							hotkey = %self.capture_key_label(),
-							"Capture requested from hotkey."
+								hotkey = %self.capture_key_label(),
+								"Capture requested from hotkey."
 						);
 
 						self.start_capture_session(event_loop, "global-hotkey");
-					} else if event.id() == self.settings_hotkey_id {
+					} else if self.settings_hotkey_id == Some(event.id()) {
 						tracing::info!(
 							hotkey = %self.settings_key_label(),
 							"Settings requested from hotkey."
@@ -326,10 +453,18 @@ impl ApplicationHandler<UserEvent> for App {
 }
 
 pub fn run() -> Result<()> {
-	let capture_hotkey = HotKey::new(Some(Modifiers::ALT), Code::KeyX);
-	let settings_hotkey = HotKey::new(Some(global_hotkey::hotkey::CMD_OR_CTRL), Code::Comma);
+	let capture_hotkey =
+		HotKey::new(Some(global_hotkey::hotkey::Modifiers::ALT), global_hotkey::hotkey::Code::KeyX);
 	let capture_hotkey_id = capture_hotkey.id();
-	let settings_hotkey_id = settings_hotkey.id();
+	let settings_hotkey = if cfg!(target_os = "macos") {
+		None
+	} else {
+		Some(HotKey::new(
+			Some(global_hotkey::hotkey::CMD_OR_CTRL),
+			global_hotkey::hotkey::Code::Comma,
+		))
+	};
+	let settings_hotkey_id = settings_hotkey.as_ref().map(HotKey::id);
 	let mut hotkey_manager = match GlobalHotKeyManager::new() {
 		Ok(manager) => Some(manager),
 		Err(err) => {
@@ -349,14 +484,19 @@ pub fn run() -> Result<()> {
 		} else {
 			tracing::info!(hotkey_id = %capture_hotkey_id, "Registered capture hotkey.");
 		}
-		if let Err(err) = manager.register(settings_hotkey) {
-			tracing::warn!(
-				error = ?err,
-				hotkey_id = %settings_hotkey_id,
-				"Failed to register settings hotkey."
-			);
-		} else {
-			tracing::info!(hotkey_id = %settings_hotkey_id, "Registered settings hotkey.");
+		if let Some(settings_hotkey) = settings_hotkey.as_ref() {
+			if let Err(err) = manager.register(*settings_hotkey) {
+				tracing::warn!(
+					error = ?err,
+					hotkey_id = %settings_hotkey_id.unwrap_or_default(),
+					"Failed to register settings hotkey."
+				);
+			} else {
+				tracing::info!(
+					hotkey_id = %settings_hotkey_id.unwrap_or_default(),
+					"Registered settings hotkey."
+				);
+			}
 		}
 	}
 
