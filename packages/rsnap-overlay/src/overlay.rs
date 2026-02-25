@@ -61,10 +61,11 @@ pub enum OverlayControl {
 pub struct OverlayConfig {
 	pub hud_anchor: HudAnchor,
 	pub show_alt_hint_keycap: bool,
+	pub show_hud_blur: bool,
 }
 impl Default for OverlayConfig {
 	fn default() -> Self {
-		Self { hud_anchor: HudAnchor::Cursor, show_alt_hint_keycap: true }
+		Self { hud_anchor: HudAnchor::Cursor, show_alt_hint_keycap: true, show_hud_blur: true }
 	}
 }
 
@@ -571,6 +572,7 @@ impl OverlaySession {
 			overlay_window.monitor,
 			self.config.hud_anchor,
 			self.config.show_alt_hint_keycap,
+			self.config.show_hud_blur,
 		) {
 			return self.exit(OverlayExit::Error(format!("{err:#}")));
 		}
@@ -696,8 +698,12 @@ struct WindowRenderer {
 	bg_pipeline: RenderPipeline,
 	bg_bind_group_layout: BindGroupLayout,
 	bg_sampler: wgpu::Sampler,
+	hud_blur_pipeline: RenderPipeline,
+	hud_blur_bind_group_layout: BindGroupLayout,
+	hud_blur_uniform: wgpu::Buffer,
 	frozen_bg: Option<FrozenBg>,
 	frozen_bg_generation: u64,
+	hud_pill: Option<HudPillGeometry>,
 }
 impl WindowRenderer {
 	fn pick_surface_format(caps: &SurfaceCapabilities) -> wgpu::TextureFormat {
@@ -838,6 +844,92 @@ impl WindowRenderer {
 		(bg_pipeline, bg_bind_group_layout, bg_sampler)
 	}
 
+	fn create_hud_blur_pipeline(
+		gpu: &GpuContext,
+		surface_format: wgpu::TextureFormat,
+	) -> (RenderPipeline, BindGroupLayout) {
+		let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+			label: Some("rsnap-hud-blur shader"),
+			source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+				"hud_blur.wgsl"
+			))),
+		});
+		let bind_group_layout =
+			gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+				label: Some("rsnap-hud-blur bgl"),
+				entries: &[
+					wgpu::BindGroupLayoutEntry {
+						binding: 0,
+						visibility: wgpu::ShaderStages::FRAGMENT,
+						ty: wgpu::BindingType::Texture {
+							multisampled: false,
+							view_dimension: wgpu::TextureViewDimension::D2,
+							sample_type: wgpu::TextureSampleType::Float { filterable: true },
+						},
+						count: None,
+					},
+					wgpu::BindGroupLayoutEntry {
+						binding: 1,
+						visibility: wgpu::ShaderStages::FRAGMENT,
+						ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+						count: None,
+					},
+					wgpu::BindGroupLayoutEntry {
+						binding: 2,
+						visibility: wgpu::ShaderStages::FRAGMENT,
+						ty: wgpu::BindingType::Buffer {
+							ty: wgpu::BufferBindingType::Uniform,
+							has_dynamic_offset: false,
+							min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+								HudBlurUniformRaw,
+							>() as u64),
+						},
+						count: None,
+					},
+				],
+			});
+		let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+			label: Some("rsnap-hud-blur pipeline layout"),
+			bind_group_layouts: &[&bind_group_layout],
+			push_constant_ranges: &[],
+		});
+		let pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("rsnap-hud-blur pipeline"),
+			layout: Some(&pipeline_layout),
+			vertex: wgpu::VertexState {
+				module: &shader,
+				entry_point: Some("vs_main"),
+				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				buffers: &[],
+			},
+			primitive: wgpu::PrimitiveState {
+				topology: wgpu::PrimitiveTopology::TriangleList,
+				strip_index_format: None,
+				front_face: wgpu::FrontFace::Ccw,
+				cull_mode: None,
+				polygon_mode: wgpu::PolygonMode::Fill,
+				unclipped_depth: false,
+				conservative: false,
+			},
+			depth_stencil: None,
+			multisample: wgpu::MultisampleState::default(),
+			fragment: Some(wgpu::FragmentState {
+				module: &shader,
+				entry_point: Some("fs_main"),
+				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				targets: &[Some(wgpu::ColorTargetState {
+					format: surface_format,
+					blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+					write_mask: wgpu::ColorWrites::ALL,
+				})],
+			}),
+			multiview: None,
+			cache: None,
+		});
+
+		(pipeline, bind_group_layout)
+	}
+
 	fn apply_pending_reconfigure(&mut self, gpu: &GpuContext) {
 		if self.needs_reconfigure {
 			self.reconfigure(gpu);
@@ -880,7 +972,7 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
-	) -> FullOutput {
+	) -> (FullOutput, Option<HudPillGeometry>) {
 		let can_draw = Self::should_draw_hud(state, monitor);
 		let hud_data = if can_draw {
 			state.cursor.and_then(|cursor| {
@@ -889,8 +981,8 @@ impl WindowRenderer {
 		} else {
 			None
 		};
-
-		self.egui_ctx.run(raw_input, |ctx| {
+		let mut hud_pill = None;
+		let full_output = self.egui_ctx.run(raw_input, |ctx| {
 			if let Some((cursor, local_cursor)) = hud_data {
 				Self::render_hud(
 					ctx,
@@ -900,9 +992,12 @@ impl WindowRenderer {
 					local_cursor,
 					hud_anchor,
 					show_alt_hint_keycap,
+					&mut hud_pill,
 				);
 			}
-		})
+		});
+
+		(full_output, hud_pill)
 	}
 
 	fn should_draw_hud(state: &OverlayState, monitor: MonitorRect) -> bool {
@@ -912,6 +1007,7 @@ impl WindowRenderer {
 			|| state.error_message.is_some()
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn render_hud(
 		ctx: &egui::Context,
 		state: &OverlayState,
@@ -920,6 +1016,7 @@ impl WindowRenderer {
 		local_cursor: Pos2,
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
+		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
 		let (hud_x, hud_y) = match hud_anchor {
 			HudAnchor::Cursor => (local_cursor.x + 14.0, local_cursor.y + 14.0),
@@ -929,7 +1026,14 @@ impl WindowRenderer {
 			.order(egui::Order::Foreground)
 			.fixed_pos(Pos2::new(hud_x, hud_y))
 			.show(ctx, |ui| {
-				Self::render_hud_frame(ui, state, monitor, cursor, show_alt_hint_keycap);
+				Self::render_hud_frame(
+					ui,
+					state,
+					monitor,
+					cursor,
+					show_alt_hint_keycap,
+					hud_pill_out,
+				);
 			});
 	}
 
@@ -939,6 +1043,7 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
 		show_alt_hint_keycap: bool,
+		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
 		let pill_radius = 18_u8;
 		let body_fill = Color32::from_rgba_unmultiplied(28, 28, 32, 156);
@@ -972,6 +1077,10 @@ impl WindowRenderer {
 			}
 		});
 		let pill_rect = inner.response.rect;
+
+		*hud_pill_out =
+			Some(HudPillGeometry { rect: pill_rect, radius_points: f32::from(pill_radius) });
+
 		let inner_stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 44));
 		let inner_rect = pill_rect.shrink(1.0);
 
@@ -1292,11 +1401,13 @@ impl WindowRenderer {
 		}
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn render_frame(
 		&mut self,
 		gpu: &GpuContext,
 		state: &OverlayState,
 		monitor: MonitorRect,
+		show_hud_blur: bool,
 		frame: SurfaceTexture,
 		paint_jobs: &[ClippedPrimitive],
 		screen_descriptor: &ScreenDescriptor,
@@ -1338,6 +1449,16 @@ impl WindowRenderer {
 				rpass.set_bind_group(0, &bg.bind_group, &[]);
 				rpass.draw(0..3, 0..1);
 			}
+			if show_hud_blur
+				&& matches!(state.mode, OverlayMode::Frozen)
+				&& state.monitor == Some(monitor)
+				&& self.hud_pill.is_some()
+				&& let Some(bg) = &self.frozen_bg
+			{
+				rpass.set_pipeline(&self.hud_blur_pipeline);
+				rpass.set_bind_group(0, &bg.hud_blur_bind_group, &[]);
+				rpass.draw(0..3, 0..1);
+			}
 
 			self.egui_renderer.render(&mut rpass, paint_jobs, screen_descriptor);
 		}
@@ -1365,6 +1486,14 @@ impl WindowRenderer {
 		let egui_renderer = Renderer::new(&gpu.device, surface_format, None, 1, false);
 		let (bg_pipeline, bg_bind_group_layout, bg_sampler) =
 			Self::create_bg_pipeline(gpu, surface_format);
+		let (hud_blur_pipeline, hud_blur_bind_group_layout) =
+			Self::create_hud_blur_pipeline(gpu, surface_format);
+		let hud_blur_uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+			label: Some("rsnap-hud-blur uniform"),
+			size: std::mem::size_of::<HudBlurUniformRaw>() as u64,
+			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+			mapped_at_creation: false,
+		});
 
 		Ok(Self {
 			window,
@@ -1376,8 +1505,12 @@ impl WindowRenderer {
 			bg_pipeline,
 			bg_bind_group_layout,
 			bg_sampler,
+			hud_blur_pipeline,
+			hud_blur_bind_group_layout,
+			hud_blur_uniform,
 			frozen_bg: None,
 			frozen_bg_generation: 0,
+			hud_pill: None,
 		})
 	}
 
@@ -1400,6 +1533,7 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
+		show_hud_blur: bool,
 	) -> Result<()> {
 		self.apply_pending_reconfigure(gpu);
 
@@ -1407,9 +1541,12 @@ impl WindowRenderer {
 
 		self.sync_frozen_bg(gpu, state, monitor)?;
 
-		let full_output =
+		let (full_output, hud_pill) =
 			self.run_egui(raw_input, state, monitor, hud_anchor, show_alt_hint_keycap);
 
+		self.hud_pill = hud_pill;
+
+		self.update_hud_blur_uniform(gpu, state, monitor, size, pixels_per_point, show_hud_blur);
 		self.sync_egui_textures(gpu, &full_output);
 
 		let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, pixels_per_point);
@@ -1417,9 +1554,61 @@ impl WindowRenderer {
 			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
 		let frame = self.acquire_frame(gpu)?;
 
-		self.render_frame(gpu, state, monitor, frame, &paint_jobs, &screen_descriptor)?;
+		self.render_frame(
+			gpu,
+			state,
+			monitor,
+			show_hud_blur,
+			frame,
+			&paint_jobs,
+			&screen_descriptor,
+		)?;
 
 		Ok(())
+	}
+
+	fn update_hud_blur_uniform(
+		&mut self,
+		gpu: &GpuContext,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		size: PhysicalSize<u32>,
+		pixels_per_point: f32,
+		show_hud_blur: bool,
+	) {
+		if !show_hud_blur {
+			return;
+		}
+		if !matches!(state.mode, OverlayMode::Frozen) || state.monitor != Some(monitor) {
+			return;
+		}
+		if self.frozen_bg.is_none() {
+			return;
+		}
+
+		let Some(hud_pill) = self.hud_pill else {
+			return;
+		};
+		let surface_w = size.width as f32;
+		let surface_h = size.height as f32;
+
+		if surface_w <= 0.0 || surface_h <= 0.0 {
+			return;
+		}
+
+		let rect = hud_pill.rect;
+		let rect_min_px = [rect.min.x * pixels_per_point, rect.min.y * pixels_per_point];
+		let rect_size_px = [rect.width() * pixels_per_point, rect.height() * pixels_per_point];
+		let radius_px = hud_pill.radius_points * pixels_per_point;
+		let blur_radius_px = 10.0 * pixels_per_point;
+		let edge_softness_px = 1.0 * pixels_per_point;
+		let u = HudBlurUniformRaw {
+			rect_min_size: [rect_min_px[0], rect_min_px[1], rect_size_px[0], rect_size_px[1]],
+			radius_blur_soft: [radius_px, blur_radius_px, edge_softness_px, 0.0],
+			surface_size_px: [surface_w, surface_h, 0.0, 0.0],
+		};
+
+		gpu.queue.write_buffer(&self.hud_blur_uniform, 0, u.as_bytes());
 	}
 
 	fn sync_frozen_bg(
@@ -1520,8 +1709,27 @@ impl WindowRenderer {
 				},
 			],
 		});
+		let hud_blur_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+			label: Some("rsnap-hud-blur bind group"),
+			layout: &self.hud_blur_bind_group_layout,
+			entries: &[
+				wgpu::BindGroupEntry {
+					binding: 0,
+					resource: wgpu::BindingResource::TextureView(&view),
+				},
+				wgpu::BindGroupEntry {
+					binding: 1,
+					resource: wgpu::BindingResource::Sampler(&self.bg_sampler),
+				},
+				wgpu::BindGroupEntry {
+					binding: 2,
+					resource: self.hud_blur_uniform.as_entire_binding(),
+				},
+			],
+		});
 
-		self.frozen_bg = Some(FrozenBg { _texture: texture, _view: view, bind_group });
+		self.frozen_bg =
+			Some(FrozenBg { _texture: texture, _view: view, bind_group, hud_blur_bind_group });
 		self.frozen_bg_generation = state.frozen_generation;
 
 		Ok(())
@@ -1532,6 +1740,31 @@ struct FrozenBg {
 	_texture: wgpu::Texture,
 	_view: wgpu::TextureView,
 	bind_group: BindGroup,
+	hud_blur_bind_group: BindGroup,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HudPillGeometry {
+	rect: Rect,
+	radius_points: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct HudBlurUniformRaw {
+	rect_min_size: [f32; 4],
+	radius_blur_soft: [f32; 4],
+	surface_size_px: [f32; 4],
+}
+impl HudBlurUniformRaw {
+	fn as_bytes(&self) -> &[u8] {
+		unsafe {
+			std::slice::from_raw_parts(
+				std::ptr::from_ref(self).cast::<u8>(),
+				std::mem::size_of::<Self>(),
+			)
+		}
+	}
 }
 
 fn frozen_rgb(

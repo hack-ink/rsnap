@@ -282,6 +282,8 @@ impl SettingsWindow {
 					changed |= ui
 						.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD")
 						.changed();
+					changed |=
+						ui.checkbox(&mut settings.show_hud_blur, "Enable HUD blur").changed();
 
 					ui.add_space(8.0);
 					ui.label("More overlay options will live here.");

@@ -86,6 +86,7 @@ impl App {
 		let overlay_config = OverlayConfig {
 			hud_anchor: HudAnchor::Cursor,
 			show_alt_hint_keycap: self.settings.show_alt_hint_keycap,
+			show_hud_blur: self.settings.show_hud_blur,
 		};
 		let mut overlay_session = OverlaySession::with_config(overlay_config);
 
