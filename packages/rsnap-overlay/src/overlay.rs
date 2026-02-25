@@ -953,7 +953,8 @@ impl WindowRenderer {
 			if let Some(err) = &state.error_message {
 				ui.label(
 					egui::RichText::new(err)
-						.color(Color32::from_rgba_unmultiplied(235, 235, 245, 235)),
+						.color(Color32::from_rgba_unmultiplied(235, 235, 245, 235))
+						.monospace(),
 				);
 			} else {
 				Self::render_hud_content(ui, state, monitor, cursor);
@@ -981,15 +982,15 @@ impl WindowRenderer {
 		let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
 		let pos_text = format!("({},{})", cursor.x, cursor.y);
 		let (hex_text, rgb_text) = match state.rgb {
-			Some(rgb) => (rgb.hex_upper(), format!("{:>3},{:>3},{:>3}", rgb.r, rgb.g, rgb.b)),
-			None => (String::from("#??????"), String::from("???,???,???")),
+			Some(rgb) => (rgb.hex_upper(), format!("{}, {}, {}", rgb.r, rgb.g, rgb.b)),
+			None => (String::from("#??????"), String::from("???, ???, ???")),
 		};
 		let swatch_size = egui::vec2(10.0, 10.0);
 
 		ui.vertical(|ui| {
 			ui.horizontal(|ui| {
 				ui.label(egui::RichText::new(pos_text).color(label_color).monospace());
-				ui.label(egui::RichText::new("•").color(secondary_color));
+				ui.label(egui::RichText::new("•").color(secondary_color).monospace());
 
 				let (rect, _) = ui.allocate_exact_size(swatch_size, egui::Sense::hover());
 				let swatch_color = match state.rgb {
