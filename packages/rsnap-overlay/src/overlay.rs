@@ -978,10 +978,10 @@ impl WindowRenderer {
 	) {
 		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
 		let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
-		let pos_text = format!("xy({}, {})", cursor.x, cursor.y);
+		let pos_text = format!("XY({}, {})", cursor.x, cursor.y);
 		let (hex_text, rgb_text) = match state.rgb {
-			Some(rgb) => (rgb.hex_upper(), format!("rgb({}, {}, {})", rgb.r, rgb.g, rgb.b)),
-			None => (String::from("?"), String::from("rgb(?)")),
+			Some(rgb) => (rgb.hex_upper(), format!("RGB({}, {}, {})", rgb.r, rgb.g, rgb.b)),
+			None => (String::from("?"), String::from("RGB(?)")),
 		};
 		let swatch_size = egui::vec2(10.0, 10.0);
 
