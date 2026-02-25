@@ -26,7 +26,7 @@ objc               = { version = "0.2.7" }
 pollster           = { version = "0.4.0" }
 serde              = { version = "1.0.197", features = ["derive"] }
 serde_json         = { version = "1.0.114" }
-thiserror          = { version = "1.0.57" }
+thiserror          = { version = "2.0.18" }
 tracing            = { version = "0.1.44" }
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tray-icon          = { version = "0.21.3" }
