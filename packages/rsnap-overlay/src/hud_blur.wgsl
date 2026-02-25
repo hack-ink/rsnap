@@ -63,7 +63,8 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 	let uv = pos.xy / surface_size;
 	let blur_amount = clamp(u.effects.x, 0.0, 1.0);
 	let max_lod = max(u.effects.z, 0.0);
-	let lod = clamp(pow(blur_amount, 0.85) * max_lod, 0.0, max_lod);
+	// Stronger curve so mid values feel like "frosted glass" instead of a mild reflection.
+	let lod = clamp(pow(blur_amount, 0.55) * max_lod, 0.0, max_lod);
 	let blurred = textureSampleLevel(bg_tex, bg_samp, uv, lod).rgb;
 
 	// effects.y: tint strength (0..1). Only affects tint mix strength.
