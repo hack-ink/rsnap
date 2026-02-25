@@ -2043,8 +2043,9 @@ impl WindowRenderer {
 			srgb8_to_linear_f32(fill[2]),
 			tint_a,
 		];
+		let flip_y = if cfg!(target_os = "macos") { 1.0 } else { 0.0 };
 		let effects =
-			[hud_fog_amount.clamp(0.0, 1.0), hud_milk_amount.clamp(0.0, 1.0), max_lod, 0.0];
+			[hud_fog_amount.clamp(0.0, 1.0), hud_milk_amount.clamp(0.0, 1.0), max_lod, flip_y];
 		let u = HudBlurUniformRaw {
 			rect_min_size: [rect_min_px[0], rect_min_px[1], rect_size_px[0], rect_size_px[1]],
 			radius_blur_soft: [radius_px, blur_radius_px, edge_softness_px, 0.0],
