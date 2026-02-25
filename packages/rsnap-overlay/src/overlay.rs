@@ -46,6 +46,7 @@ const HUD_PILL_BODY_FILL_DARK_SRGBA8: [u8; 4] = [28, 28, 32, 156];
 const HUD_PILL_BODY_FILL_LIGHT_SRGBA8: [u8; 4] = [232, 236, 243, 176];
 const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
 const HUD_PILL_BLUR_TINT_ALPHA_LIGHT: f32 = 0.22;
+const LOUPE_TILE_CORNER_RADIUS_POINTS: f64 = 12.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
@@ -259,6 +260,7 @@ impl OverlaySession {
 				hud_window.window.as_ref(),
 				self.config.show_hud_blur,
 				self.config.hud_fog_amount,
+				None,
 			);
 
 			#[cfg(not(target_os = "macos"))]
@@ -272,6 +274,7 @@ impl OverlaySession {
 				loupe_window.window.as_ref(),
 				self.config.show_hud_blur,
 				self.config.hud_fog_amount,
+				Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 			);
 
 			#[cfg(not(target_os = "macos"))]
@@ -416,6 +419,7 @@ impl OverlaySession {
 			window.as_ref(),
 			self.config.show_hud_blur,
 			self.config.hud_fog_amount,
+			None,
 		);
 
 		#[cfg(not(target_os = "macos"))]
@@ -453,6 +457,7 @@ impl OverlaySession {
 			window.as_ref(),
 			self.config.show_hud_blur,
 			self.config.hud_fog_amount,
+			Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 		);
 
 		#[cfg(not(target_os = "macos"))]
@@ -496,114 +501,141 @@ impl OverlaySession {
 	}
 
 	pub fn about_to_wait(&mut self) -> OverlayControl {
+		self.maybe_request_keepalive_redraw();
+
+		if self.is_active() {
+			self.sync_alt_held_from_global_keys();
+		}
+
+		self.maybe_tick_live_sampling();
+
+		self.drain_worker_responses()
+	}
+
+	fn maybe_request_keepalive_redraw(&mut self) {
 		// Avoid a tight present loop if the OS delivers spurious redraws.
 		if self.is_active() && self.last_present_at.elapsed() > Duration::from_secs(30) {
 			self.request_redraw_all();
 		}
-		if matches!(self.state.mode, OverlayMode::Live)
-			&& let Some(cursor) = self.state.cursor
-			&& let Some(monitor) = self.active_cursor_monitor()
-		{
-			if self.use_fake_hud_blur() {
-				self.maybe_request_live_bg(monitor);
-			}
+	}
 
-			if let Some(worker) = &self.worker {
-				if self.last_rgb_request_at.elapsed() >= self.rgb_request_interval {
-					worker.try_sample_rgb(monitor, cursor);
-
-					self.last_rgb_request_at = Instant::now();
-				}
-				if self.state.alt_held
-					&& self.last_loupe_request_at.elapsed() >= self.loupe_request_interval
-				{
-					worker.try_sample_loupe(
-						monitor,
-						cursor,
-						self.loupe_patch_width_px,
-						self.loupe_patch_height_px,
-					);
-
-					self.last_loupe_request_at = Instant::now();
-				}
-			}
+	fn maybe_tick_live_sampling(&mut self) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
 		}
 
-		if let Some(worker) = &self.worker {
-			if let Some(image) = self.pending_encode_png.take()
-				&& let Err(image) = worker.request_encode_png(image)
-			{
-				self.pending_encode_png = Some(image);
-			}
+		let Some(cursor) = self.state.cursor else {
+			return;
+		};
+		let Some(monitor) = self.active_cursor_monitor() else {
+			return;
+		};
 
-			while let Some(resp) = worker.try_recv() {
-				match resp {
-					WorkerResponse::SampledLoupe { monitor, point, rgb, patch } => {
-						if matches!(self.state.mode, OverlayMode::Live) {
-							self.state.rgb = rgb;
-							self.state.loupe = patch
-								.map(|patch| crate::state::LoupeSample { center: point, patch });
+		if self.use_fake_hud_blur() {
+			self.maybe_request_live_bg(monitor);
+		}
 
-							let current_monitor = self.active_cursor_monitor();
+		let Some(worker) = &self.worker else {
+			return;
+		};
 
-							if let Some(current_monitor) = current_monitor {
-								self.request_redraw_for_monitor(current_monitor);
-							}
+		if self.last_rgb_request_at.elapsed() >= self.rgb_request_interval {
+			worker.try_sample_rgb(monitor, cursor);
 
-							if current_monitor != Some(monitor) {
-								self.request_redraw_for_monitor(monitor);
-							}
+			self.last_rgb_request_at = Instant::now();
+		}
+		if self.state.alt_held
+			&& self.last_loupe_request_at.elapsed() >= self.loupe_request_interval
+		{
+			worker.try_sample_loupe(
+				monitor,
+				cursor,
+				self.loupe_patch_width_px,
+				self.loupe_patch_height_px,
+			);
+
+			self.last_loupe_request_at = Instant::now();
+		}
+	}
+
+	fn drain_worker_responses(&mut self) -> OverlayControl {
+		let Some(worker) = &self.worker else {
+			return OverlayControl::Continue;
+		};
+
+		if let Some(image) = self.pending_encode_png.take()
+			&& let Err(image) = worker.request_encode_png(image)
+		{
+			self.pending_encode_png = Some(image);
+		}
+
+		while let Some(resp) = worker.try_recv() {
+			match resp {
+				WorkerResponse::SampledLoupe { monitor, point, rgb, patch } => {
+					if matches!(self.state.mode, OverlayMode::Live) {
+						self.state.rgb = rgb;
+						self.state.loupe =
+							patch.map(|patch| crate::state::LoupeSample { center: point, patch });
+
+						let current_monitor = self.active_cursor_monitor();
+
+						if let Some(current_monitor) = current_monitor {
+							self.request_redraw_for_monitor(current_monitor);
 						}
-					},
-					WorkerResponse::SampledRgb { monitor, point, rgb } => {
-						if matches!(self.state.mode, OverlayMode::Live) {
-							let _ = point;
 
-							self.state.rgb = rgb;
-
-							let current_monitor = self.active_cursor_monitor();
-
-							if let Some(current_monitor) = current_monitor {
-								self.request_redraw_for_monitor(current_monitor);
-							}
-
-							if current_monitor != Some(monitor) {
-								self.request_redraw_for_monitor(monitor);
-							}
-						}
-					},
-					WorkerResponse::CapturedFreeze { monitor, image } => {
-						if matches!(self.state.mode, OverlayMode::Frozen)
-							&& self.state.monitor == Some(monitor)
-						{
-							self.state.finish_freeze(monitor, image);
+						if current_monitor != Some(monitor) {
 							self.request_redraw_for_monitor(monitor);
-						} else if matches!(self.state.mode, OverlayMode::Live)
-							&& self.use_fake_hud_blur()
-							&& self.active_cursor_monitor() == Some(monitor)
-						{
-							self.state.live_bg_monitor = Some(monitor);
-							self.state.live_bg_image = Some(image);
-							self.state.live_bg_generation =
-								self.state.live_bg_generation.wrapping_add(1);
+						}
+					}
+				},
+				WorkerResponse::SampledRgb { monitor, point, rgb } => {
+					if matches!(self.state.mode, OverlayMode::Live) {
+						let _ = point;
 
+						self.state.rgb = rgb;
+
+						let current_monitor = self.active_cursor_monitor();
+
+						if let Some(current_monitor) = current_monitor {
+							self.request_redraw_for_monitor(current_monitor);
+						}
+
+						if current_monitor != Some(monitor) {
 							self.request_redraw_for_monitor(monitor);
 						}
-					},
-					WorkerResponse::Error(message) => {
-						self.state.set_error(message);
-						self.request_redraw_all();
-					},
-					WorkerResponse::EncodedPng { png_bytes } => {
-						match write_png_bytes_to_clipboard(&png_bytes) {
-							Ok(()) => return self.exit(OverlayExit::PngBytes(png_bytes)),
-							Err(err) => {
-								self.state.set_error(format!("{err:#}"));
-								self.request_redraw_all();
-							},
-						}
-					},
-				}
+					}
+				},
+				WorkerResponse::CapturedFreeze { monitor, image } => {
+					if matches!(self.state.mode, OverlayMode::Frozen)
+						&& self.state.monitor == Some(monitor)
+					{
+						self.state.finish_freeze(monitor, image);
+						self.request_redraw_for_monitor(monitor);
+					} else if matches!(self.state.mode, OverlayMode::Live)
+						&& self.use_fake_hud_blur()
+						&& self.active_cursor_monitor() == Some(monitor)
+					{
+						self.state.live_bg_monitor = Some(monitor);
+						self.state.live_bg_image = Some(image);
+						self.state.live_bg_generation =
+							self.state.live_bg_generation.wrapping_add(1);
+
+						self.request_redraw_for_monitor(monitor);
+					}
+				},
+				WorkerResponse::Error(message) => {
+					self.state.set_error(message);
+					self.request_redraw_all();
+				},
+				WorkerResponse::EncodedPng { png_bytes } => {
+					match write_png_bytes_to_clipboard(&png_bytes) {
+						Ok(()) => return self.exit(OverlayExit::PngBytes(png_bytes)),
+						Err(err) => {
+							self.state.set_error(format!("{err:#}"));
+							self.request_redraw_all();
+						},
+					}
+				},
 			}
 		}
 
@@ -652,49 +684,8 @@ impl OverlaySession {
 		if !alt && self.is_option_key_down() {
 			alt = true;
 		}
-		if self.state.alt_held == alt {
-			return OverlayControl::Continue;
-		}
 
-		self.state.alt_held = alt;
-
-		if !alt {
-			self.state.loupe = None;
-			self.loupe_outer_pos = None;
-
-			if let Some(loupe_window) = self.loupe_window.as_ref() {
-				loupe_window.window.set_visible(false);
-			}
-		} else if matches!(self.state.mode, OverlayMode::Live)
-			&& let Some(cursor) = self.state.cursor
-			&& let Some(monitor) = self.active_cursor_monitor()
-		{
-			let visible = self.update_loupe_window_position(monitor);
-
-			if let Some(loupe_window) = self.loupe_window.as_ref() {
-				loupe_window.window.set_visible(visible);
-				loupe_window.window.request_redraw();
-			}
-
-			if self.use_fake_hud_blur() {
-				self.maybe_request_live_bg(monitor);
-			}
-
-			if let Some(worker) = &self.worker {
-				worker.try_sample_rgb(monitor, cursor);
-
-				self.last_rgb_request_at = Instant::now();
-
-				worker.try_sample_loupe(
-					monitor,
-					cursor,
-					self.loupe_patch_width_px,
-					self.loupe_patch_height_px,
-				);
-
-				self.last_loupe_request_at = Instant::now();
-			}
-		}
+		self.set_alt_held(alt);
 
 		if let Some(monitor) = self.active_cursor_monitor() {
 			self.request_redraw_for_monitor(monitor);
@@ -714,6 +705,67 @@ impl OverlaySession {
 			|| keys.contains(&Keycode::RAlt)
 	}
 
+	fn sync_alt_held_from_global_keys(&mut self) {
+		let alt = self.is_option_key_down();
+
+		self.set_alt_held(alt);
+	}
+
+	fn set_alt_held(&mut self, alt: bool) {
+		if self.state.alt_held == alt {
+			return;
+		}
+
+		self.state.alt_held = alt;
+
+		if !alt {
+			self.state.loupe = None;
+			self.loupe_outer_pos = None;
+
+			if let Some(loupe_window) = self.loupe_window.as_ref() {
+				loupe_window.window.set_visible(false);
+				loupe_window.window.request_redraw();
+			}
+
+			return;
+		}
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
+
+		let Some(cursor) = self.state.cursor else {
+			return;
+		};
+		let Some(monitor) = self.active_cursor_monitor() else {
+			return;
+		};
+		let visible = self.update_loupe_window_position(monitor);
+
+		if let Some(loupe_window) = self.loupe_window.as_ref() {
+			loupe_window.window.set_visible(visible);
+			loupe_window.window.request_redraw();
+		}
+
+		if self.use_fake_hud_blur() {
+			self.maybe_request_live_bg(monitor);
+		}
+
+		if let Some(worker) = &self.worker {
+			worker.try_sample_rgb(monitor, cursor);
+
+			self.last_rgb_request_at = Instant::now();
+
+			worker.try_sample_loupe(
+				monitor,
+				cursor,
+				self.loupe_patch_width_px,
+				self.loupe_patch_height_px,
+			);
+
+			self.last_loupe_request_at = Instant::now();
+		}
+	}
+
 	fn handle_resized(&mut self, window_id: WindowId, size: PhysicalSize<u32>) -> OverlayControl {
 		if let Some(hud_window) = self.hud_window.as_mut()
 			&& hud_window.window.id() == window_id
@@ -725,6 +777,7 @@ impl OverlaySession {
 						hud_window.window.as_ref(),
 						self.config.show_hud_blur,
 						self.config.hud_fog_amount,
+						None,
 					);
 
 					return OverlayControl::Continue;
@@ -742,6 +795,7 @@ impl OverlaySession {
 						loupe_window.window.as_ref(),
 						self.config.show_hud_blur,
 						self.config.hud_fog_amount,
+						Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 					);
 
 					return OverlayControl::Continue;
@@ -773,6 +827,7 @@ impl OverlaySession {
 						hud_window.window.as_ref(),
 						self.config.show_hud_blur,
 						self.config.hud_fog_amount,
+						None,
 					);
 
 					return OverlayControl::Continue;
@@ -792,6 +847,7 @@ impl OverlaySession {
 						loupe_window.window.as_ref(),
 						self.config.show_hud_blur,
 						self.config.hud_fog_amount,
+						Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 					);
 
 					return OverlayControl::Continue;
@@ -1021,6 +1077,7 @@ impl OverlaySession {
 						hud_window.window.as_ref(),
 						self.config.show_hud_blur,
 						self.config.hud_fog_amount,
+						None,
 					);
 
 					if let Some(cursor) = self.state.cursor {
@@ -1096,6 +1153,7 @@ impl OverlaySession {
 						loupe_window.window.as_ref(),
 						self.config.show_hud_blur,
 						self.config.hud_fog_amount,
+						Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 					);
 
 					needs_reposition = true;
@@ -2643,6 +2701,38 @@ impl WindowRenderer {
 		self.loupe_tile = None;
 
 		let hud_blur_active = show_hud_blur && !hud_opaque;
+		let body_fill = Self::tinted_hud_body_fill(theme, hud_opaque, hud_opacity, hud_milk_amount);
+		let (full_output, loupe_tile_rect) = self.run_loupe_tile_egui(
+			raw_input,
+			state,
+			monitor,
+			cursor,
+			theme,
+			hud_blur_active,
+			hud_opaque,
+			body_fill,
+		);
+
+		self.loupe_tile = loupe_tile_rect;
+
+		self.sync_egui_textures(gpu, &full_output);
+
+		let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, pixels_per_point);
+		let screen_descriptor =
+			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
+		let frame = self.acquire_frame(gpu)?;
+
+		self.render_frame(gpu, false, frame, &paint_jobs, &screen_descriptor)?;
+
+		Ok(())
+	}
+
+	fn tinted_hud_body_fill(
+		theme: HudTheme,
+		hud_opaque: bool,
+		hud_opacity: f32,
+		hud_milk_amount: f32,
+	) -> Color32 {
 		let opacity = if hud_opaque { 1.0 } else { hud_opacity.clamp(0.0, 1.0) };
 		let tint = hud_milk_amount.clamp(0.0, 1.0);
 		let tint_strength = match theme {
@@ -2661,7 +2751,20 @@ impl WindowRenderer {
 		fill[2] = lerp_u8(fill[2], 255, mix);
 		fill[3] = (opacity * 255.0).round().clamp(0.0, 255.0) as u8;
 
-		let body_fill = Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], fill[3]);
+		Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], fill[3])
+	}
+
+	fn run_loupe_tile_egui(
+		&mut self,
+		raw_input: egui::RawInput,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+		theme: HudTheme,
+		hud_blur_active: bool,
+		hud_opaque: bool,
+		body_fill: Color32,
+	) -> (FullOutput, Option<Rect>) {
 		let mut loupe_tile_rect = None;
 		let full_output = self.egui_ctx.run(raw_input, |ctx| {
 			if !state.alt_held {
@@ -2692,11 +2795,12 @@ impl WindowRenderer {
 					HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 18),
 				},
 			};
+			let tile_radius = 12_u8;
 			let frame = Frame {
 				fill: if hud_blur_active && !hud_opaque { Color32::TRANSPARENT } else { body_fill },
 				stroke: outer_stroke,
 				shadow,
-				corner_radius: CornerRadius::same(10),
+				corner_radius: CornerRadius::same(tile_radius),
 				inner_margin: tile_padding,
 				..Frame::default()
 			};
@@ -2719,23 +2823,27 @@ impl WindowRenderer {
 							theme,
 						);
 					});
+					let tile_rect = inner.response.rect;
 
-					loupe_tile_rect = Some(inner.response.rect);
+					loupe_tile_rect = Some(tile_rect);
+
+					let inner_stroke_color = match theme {
+						HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
+						HudTheme::Light => Color32::from_rgba_unmultiplied(255, 255, 255, 140),
+					};
+					let inner_stroke = egui::Stroke::new(1.0, inner_stroke_color);
+					let inner_rect = tile_rect.shrink(1.0);
+
+					ui.painter().rect_stroke(
+						inner_rect,
+						CornerRadius::same(tile_radius.saturating_sub(1)),
+						inner_stroke,
+						egui::StrokeKind::Inside,
+					);
 				});
 		});
 
-		self.loupe_tile = loupe_tile_rect;
-
-		self.sync_egui_textures(gpu, &full_output);
-
-		let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, pixels_per_point);
-		let screen_descriptor =
-			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
-		let frame = self.acquire_frame(gpu)?;
-
-		self.render_frame(gpu, false, frame, &paint_jobs, &screen_descriptor)?;
-
-		Ok(())
+		(full_output, loupe_tile_rect)
 	}
 
 	fn update_hud_blur_uniform(
@@ -3106,6 +3214,7 @@ fn macos_configure_hud_window(
 	window: &winit::window::Window,
 	blur_enabled: bool,
 	blur_amount: f32,
+	corner_radius_points: Option<f64>,
 ) {
 	use objc::runtime::{Object, YES};
 
@@ -3173,11 +3282,11 @@ fn macos_configure_hud_window(
 			return;
 		}
 
-		// Make the HUD window itself a pill, so native blur doesn't show a rectangular boundary.
+		// Round the window itself so native blur doesn't show a rectangular boundary.
 		let scale = window.scale_factor().max(1.0);
 		let size = window.inner_size();
 		let height_points = (size.height as f64) / scale;
-		let radius = height_points * 0.5;
+		let radius = corner_radius_points.unwrap_or(height_points * 0.5);
 		let _: () = msg_send![layer, setCornerRadius: radius];
 		let _: () = msg_send![layer, setMasksToBounds: YES];
 	}
