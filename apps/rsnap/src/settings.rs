@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
+	#[serde(default)]
 	pub show_alt_hint_keycap: bool,
+	#[serde(default)]
+	pub show_hud_blur: bool,
 }
 impl AppSettings {
 	#[must_use]
@@ -50,7 +53,7 @@ impl AppSettings {
 
 impl Default for AppSettings {
 	fn default() -> Self {
-		Self { show_alt_hint_keycap: true }
+		Self { show_alt_hint_keycap: true, show_hud_blur: true }
 	}
 }
 
