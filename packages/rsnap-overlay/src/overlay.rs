@@ -979,10 +979,10 @@ impl WindowRenderer {
 	) {
 		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
 		let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
-		let pos_text = format!("x={}, y={}", cursor.x, cursor.y);
-		let rgb_text = match state.rgb {
-			Some(rgb) => format!("{:>3},{:>3},{:>3}  {}", rgb.r, rgb.g, rgb.b, rgb.hex_upper()),
-			None => String::from("???,???,???  #??????"),
+		let pos_text = format!("({},{})", cursor.x, cursor.y);
+		let (hex_text, rgb_text) = match state.rgb {
+			Some(rgb) => (rgb.hex_upper(), format!("{:>3},{:>3},{:>3}", rgb.r, rgb.g, rgb.b)),
+			None => (String::from("#??????"), String::from("???,???,???")),
 		};
 		let swatch_size = egui::vec2(10.0, 10.0);
 
@@ -1004,7 +1004,8 @@ impl WindowRenderer {
 					egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
 					egui::StrokeKind::Inside,
 				);
-				ui.label(egui::RichText::new(rgb_text).color(label_color).monospace());
+				ui.label(egui::RichText::new(hex_text).color(label_color).monospace());
+				ui.label(egui::RichText::new(rgb_text).color(secondary_color).monospace());
 			});
 
 			if state.alt_held {
