@@ -241,11 +241,17 @@ impl OverlaySession {
 		}
 
 		if let Some(hud_window) = self.hud_window.as_ref() {
-			hud_window.window.set_blur(self.config.show_hud_blur);
 			hud_window.window.set_transparent(true);
 
 			#[cfg(target_os = "macos")]
-			macos_configure_hud_window(hud_window.window.as_ref());
+			macos_configure_hud_window(
+				hud_window.window.as_ref(),
+				self.config.show_hud_blur,
+				self.config.hud_fog_amount,
+			);
+
+			#[cfg(not(target_os = "macos"))]
+			hud_window.window.set_blur(self.config.show_hud_blur);
 		}
 
 		let prev_fake_blur = prev.show_hud_blur && !cfg!(target_os = "macos");
@@ -355,12 +361,17 @@ impl OverlaySession {
 			let window = Arc::new(window);
 			let _ = window.set_cursor_hittest(false);
 
-			window.set_blur(self.config.show_hud_blur);
 			window.set_transparent(true);
 
 			#[cfg(target_os = "macos")]
-			macos_configure_hud_window(window.as_ref());
+			macos_configure_hud_window(
+				window.as_ref(),
+				self.config.show_hud_blur,
+				self.config.hud_fog_amount,
+			);
 
+			#[cfg(not(target_os = "macos"))]
+			window.set_blur(self.config.show_hud_blur);
 			window.request_redraw();
 
 			let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
@@ -599,7 +610,11 @@ impl OverlaySession {
 			match hud_window.renderer.resize(size) {
 				Ok(()) => {
 					#[cfg(target_os = "macos")]
-					macos_configure_hud_window(hud_window.window.as_ref());
+					macos_configure_hud_window(
+						hud_window.window.as_ref(),
+						self.config.show_hud_blur,
+						self.config.hud_fog_amount,
+					);
 
 					return OverlayControl::Continue;
 				},
@@ -626,7 +641,11 @@ impl OverlaySession {
 			match hud_window.renderer.resize(size) {
 				Ok(()) => {
 					#[cfg(target_os = "macos")]
-					macos_configure_hud_window(hud_window.window.as_ref());
+					macos_configure_hud_window(
+						hud_window.window.as_ref(),
+						self.config.show_hud_blur,
+						self.config.hud_fog_amount,
+					);
 
 					return OverlayControl::Continue;
 				},
@@ -845,7 +864,11 @@ impl OverlaySession {
 						));
 
 						#[cfg(target_os = "macos")]
-						macos_configure_hud_window(hud_window.window.as_ref());
+						macos_configure_hud_window(
+							hud_window.window.as_ref(),
+							self.config.show_hud_blur,
+							self.config.hud_fog_amount,
+						);
 
 						if let Some(cursor) = self.state.cursor {
 							self.update_hud_window_position(monitor, cursor);
@@ -1439,6 +1462,7 @@ impl WindowRenderer {
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
 		hud_opaque: bool,
+		hud_milk_amount: f32,
 		theme: HudTheme,
 	) -> (FullOutput, Option<HudPillGeometry>) {
 		let hud_data = if can_draw_hud {
@@ -1467,6 +1491,7 @@ impl WindowRenderer {
 					show_alt_hint_keycap,
 					hud_blur_active,
 					hud_opaque,
+					hud_milk_amount,
 					theme,
 					&mut hud_pill,
 				);
@@ -1495,6 +1520,7 @@ impl WindowRenderer {
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
 		hud_opaque: bool,
+		hud_milk_amount: f32,
 		theme: HudTheme,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
@@ -1515,6 +1541,7 @@ impl WindowRenderer {
 					show_alt_hint_keycap,
 					hud_blur_active,
 					hud_opaque,
+					hud_milk_amount,
 					theme,
 					hud_pill_out,
 				);
@@ -1531,6 +1558,7 @@ impl WindowRenderer {
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
 		hud_opaque: bool,
+		hud_milk_amount: f32,
 		theme: HudTheme,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
@@ -1544,6 +1572,18 @@ impl WindowRenderer {
 				HudTheme::Dark => 44,
 				HudTheme::Light => 60,
 			};
+		}
+		if !hud_opaque && hud_blur_active && hud_compact {
+			// When native blur is enabled, keep a subtle tint so the blur is actually visible.
+			// `hud_milk_amount` increases the tint strength without affecting blur radius.
+			let milk = hud_milk_amount.clamp(0.0, 1.0);
+			let (base, extra, cap) = match theme {
+				HudTheme::Dark => (72.0, 72.0, 170_u8),
+				HudTheme::Light => (86.0, 86.0, 190_u8),
+			};
+			let a = (base + (extra * milk)).round().clamp(0.0, 255.0) as u8;
+
+			fill[3] = a.min(cap);
 		}
 
 		let body_fill = Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], fill[3]);
@@ -1566,7 +1606,11 @@ impl WindowRenderer {
 			}
 		};
 		let inner = Frame {
-			fill: if hud_blur_active && !hud_opaque { Color32::TRANSPARENT } else { body_fill },
+			fill: if hud_blur_active && !hud_opaque && !hud_compact {
+				Color32::TRANSPARENT
+			} else {
+				body_fill
+			},
 			stroke: outer_stroke,
 			shadow: pill_shadow,
 			corner_radius: CornerRadius::same(pill_radius),
@@ -2223,6 +2267,7 @@ impl WindowRenderer {
 			show_alt_hint_keycap,
 			hud_glass_active,
 			hud_opaque,
+			hud_milk_amount,
 			theme,
 		);
 
@@ -2615,7 +2660,11 @@ fn global_to_local(cursor: GlobalPoint, monitor: MonitorRect) -> Option<Pos2> {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_configure_hud_window(window: &winit::window::Window) {
+fn macos_configure_hud_window(
+	window: &winit::window::Window,
+	blur_enabled: bool,
+	blur_amount: f32,
+) {
 	use objc::runtime::{Object, YES};
 
 	use objc::{class, msg_send, sel, sel_impl};
@@ -2633,6 +2682,33 @@ fn macos_configure_hud_window(window: &winit::window::Window) {
 
 		if ns_window.is_null() {
 			return;
+		}
+
+		// winit exposes blur as a boolean. We also set an explicit radius so we can drive it from
+		// settings (this uses the same private CGS API that winit uses internally).
+		{
+			use std::ffi::c_void;
+
+			#[link(name = "CoreGraphics", kind = "framework")]
+			unsafe extern "C" {
+				fn CGSMainConnectionID() -> *mut c_void;
+
+				fn CGSSetWindowBackgroundBlurRadius(
+					connection_id: *mut c_void,
+					window_id: isize,
+					radius: i64,
+				) -> i32;
+			}
+
+			let amount = blur_amount.clamp(0.0, 1.0);
+			let radius = if blur_enabled {
+				// Match winit's default (~80) near the middle of the slider, allow a bit more range.
+				(amount * 120.0).round().clamp(0.0, 160.0) as i64
+			} else {
+				0
+			};
+			let window_number: isize = msg_send![ns_window, windowNumber];
+			let _ = CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, radius);
 		}
 
 		let _: () = msg_send![ns_window, setOpaque: false];
