@@ -1020,10 +1020,8 @@ impl WindowRenderer {
 		pill_rect: Rect,
 	) {
 		let ctx = ui.ctx().clone();
-		let id = egui::Id::new("rsnap-loupe-tile-open");
-		let t = ctx.animate_bool(id, state.alt_held);
 
-		if t <= 0.001 {
+		if !state.alt_held {
 			return;
 		}
 
@@ -1051,15 +1049,12 @@ impl WindowRenderer {
 
 		y = y.clamp(screen.min.y + 6.0, (screen.max.y - tile_h - 6.0).max(screen.min.y + 6.0));
 
-		let slide_px = (1.0 - t) * 10.0;
-		let pos = Pos2::new(x, y - slide_px);
+		let pos = Pos2::new(x, y);
 
 		egui::Area::new(egui::Id::new("rsnap-loupe-tile"))
 			.order(egui::Order::Foreground)
 			.fixed_pos(pos)
 			.show(&ctx, |ui| {
-				ui.set_opacity(t);
-
 				let fill = Color32::from_rgba_unmultiplied(28, 28, 32, 156);
 				let outer_stroke =
 					egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 40));
