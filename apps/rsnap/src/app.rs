@@ -47,6 +47,23 @@ struct App {
 	settings: AppSettings,
 }
 impl App {
+	fn overlay_config(&self) -> OverlayConfig {
+		OverlayConfig {
+			hud_anchor: HudAnchor::Cursor,
+			show_alt_hint_keycap: self.settings.show_alt_hint_keycap,
+			show_hud_blur: self.settings.show_hud_blur,
+		}
+	}
+
+	fn apply_overlay_settings(&mut self) {
+		let config = self.overlay_config();
+		let Some(session) = self.overlay_session.as_mut() else {
+			return;
+		};
+
+		session.set_config(config);
+	}
+
 	fn new(
 		capture_hotkey: HotKey,
 		settings_hotkey: Option<HotKey>,
@@ -95,11 +112,7 @@ impl App {
 			return;
 		}
 
-		let overlay_config = OverlayConfig {
-			hud_anchor: HudAnchor::Cursor,
-			show_alt_hint_keycap: self.settings.show_alt_hint_keycap,
-			show_hud_blur: self.settings.show_hud_blur,
-		};
+		let overlay_config = self.overlay_config();
 		let mut overlay_session = OverlaySession::with_config(overlay_config);
 
 		match overlay_session.start(event_loop) {
@@ -410,6 +423,9 @@ impl ApplicationHandler<UserEvent> for App {
 			match event {
 				WindowEvent::RedrawRequested => match settings_window.draw(&mut self.settings) {
 					Ok(changed) => {
+						if changed {
+							self.apply_overlay_settings();
+						}
 						if changed && let Err(err) = self.settings.save() {
 							tracing::warn!(error = ?err, "Failed to save settings.");
 						}

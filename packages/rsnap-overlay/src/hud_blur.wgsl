@@ -40,35 +40,20 @@ fn sd_rounded_rect(p: vec2<f32>, center: vec2<f32>, half_size: vec2<f32>, radius
 }
 
 fn sample_blur(uv: vec2<f32>, delta: vec2<f32>) -> vec3<f32> {
-	// 13 taps (center + 3 rings in axial directions).
-	let c0 = textureSample(bg_tex, bg_samp, uv).rgb;
+	var sum = vec3<f32>(0.0);
+	var weight_sum = 0.0;
 
-	let c1x1 = textureSample(bg_tex, bg_samp, uv + vec2<f32>( delta.x, 0.0)).rgb;
-	let c1x2 = textureSample(bg_tex, bg_samp, uv + vec2<f32>(-delta.x, 0.0)).rgb;
-	let c1y1 = textureSample(bg_tex, bg_samp, uv + vec2<f32>(0.0,  delta.y)).rgb;
-	let c1y2 = textureSample(bg_tex, bg_samp, uv + vec2<f32>(0.0, -delta.y)).rgb;
+	for (var y: i32 = -3; y <= 3; y = y + 1) {
+		for (var x: i32 = -3; x <= 3; x = x + 1) {
+			let offset = vec2<f32>(f32(x), f32(y));
+			let d2 = dot(offset, offset);
+			let w = exp(-0.35 * d2);
+			sum += textureSample(bg_tex, bg_samp, uv + offset * delta).rgb * w;
+			weight_sum += w;
+		}
+	}
 
-	let c2x1 = textureSample(bg_tex, bg_samp, uv + vec2<f32>( 2.0 * delta.x, 0.0)).rgb;
-	let c2x2 = textureSample(bg_tex, bg_samp, uv + vec2<f32>(-2.0 * delta.x, 0.0)).rgb;
-	let c2y1 = textureSample(bg_tex, bg_samp, uv + vec2<f32>(0.0,  2.0 * delta.y)).rgb;
-	let c2y2 = textureSample(bg_tex, bg_samp, uv + vec2<f32>(0.0, -2.0 * delta.y)).rgb;
-
-	let c3x1 = textureSample(bg_tex, bg_samp, uv + vec2<f32>( 3.0 * delta.x, 0.0)).rgb;
-	let c3x2 = textureSample(bg_tex, bg_samp, uv + vec2<f32>(-3.0 * delta.x, 0.0)).rgb;
-	let c3y1 = textureSample(bg_tex, bg_samp, uv + vec2<f32>(0.0,  3.0 * delta.y)).rgb;
-	let c3y2 = textureSample(bg_tex, bg_samp, uv + vec2<f32>(0.0, -3.0 * delta.y)).rgb;
-
-	let w0 = 0.30;
-	let w1 = 0.14;
-	let w2 = 0.09;
-	let w3 = 0.06;
-	let sum =
-		(w0 * c0) +
-		(w1 * (c1x1 + c1x2 + c1y1 + c1y2)) +
-		(w2 * (c2x1 + c2x2 + c2y1 + c2y2)) +
-		(w3 * (c3x1 + c3x2 + c3y1 + c3y2));
-	let norm = w0 + 4.0 * (w1 + w2 + w3);
-	return sum / norm;
+	return sum / max(weight_sum, 1.0);
 }
 
 @fragment

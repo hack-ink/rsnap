@@ -11,7 +11,7 @@ use egui::FullOutput;
 use egui::Ui;
 use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, Pos2, Rect, Vec2, ViewportId};
 use egui_wgpu::{Renderer, ScreenDescriptor};
-use image::RgbaImage;
+use image::{RgbaImage, imageops::FilterType};
 use wgpu::Adapter;
 use wgpu::BindGroup;
 use wgpu::BindGroupLayout;
@@ -150,6 +150,8 @@ pub struct OverlaySession {
 	last_present_at: Instant,
 	last_rgb_request_at: Instant,
 	rgb_request_interval: Duration,
+	last_live_bg_request_at: Instant,
+	live_bg_request_interval: Duration,
 	last_loupe_request_at: Instant,
 	loupe_request_interval: Duration,
 	loupe_patch_width_px: u32,
@@ -165,6 +167,8 @@ impl OverlaySession {
 
 	#[must_use]
 	pub fn with_config(config: OverlayConfig) -> Self {
+		let live_bg_request_interval = Duration::from_millis(500);
+
 		Self {
 			config,
 			worker: None,
@@ -175,6 +179,8 @@ impl OverlaySession {
 			last_present_at: Instant::now(),
 			last_rgb_request_at: Instant::now(),
 			rgb_request_interval: Duration::from_millis(16),
+			last_live_bg_request_at: Instant::now() - live_bg_request_interval,
+			live_bg_request_interval,
 			last_loupe_request_at: Instant::now(),
 			loupe_request_interval: Duration::from_millis(33),
 			loupe_patch_width_px: 21,
@@ -182,6 +188,33 @@ impl OverlaySession {
 			pending_freeze_capture: None,
 			pending_encode_png: None,
 		}
+	}
+
+	pub fn set_config(&mut self, config: OverlayConfig) {
+		let prev_show_hud_blur = self.config.show_hud_blur;
+
+		self.config = config;
+
+		if !self.is_active() {
+			return;
+		}
+		if prev_show_hud_blur != self.config.show_hud_blur {
+			if self.config.show_hud_blur {
+				self.last_live_bg_request_at = Instant::now() - self.live_bg_request_interval;
+
+				if matches!(self.state.mode, OverlayMode::Live)
+					&& let Some(cursor) = self.state.cursor
+					&& let Some(monitor) = self.monitor_at(cursor)
+				{
+					self.maybe_request_live_bg(monitor);
+				}
+			} else {
+				self.state.live_bg_monitor = None;
+				self.state.live_bg_image = None;
+			}
+		}
+
+		self.request_redraw_all();
 	}
 
 	#[must_use]
@@ -327,6 +360,17 @@ impl OverlaySession {
 						{
 							self.state.finish_freeze(monitor, image);
 							self.request_redraw_for_monitor(monitor);
+						} else if matches!(self.state.mode, OverlayMode::Live)
+							&& self.config.show_hud_blur
+							&& self.state.cursor.and_then(|cursor| self.monitor_at(cursor))
+								== Some(monitor)
+						{
+							self.state.live_bg_monitor = Some(monitor);
+							self.state.live_bg_image = Some(image);
+							self.state.live_bg_generation =
+								self.state.live_bg_generation.wrapping_add(1);
+
+							self.request_redraw_for_monitor(monitor);
 						}
 					},
 					WorkerResponse::Error(message) => {
@@ -460,6 +504,14 @@ impl OverlaySession {
 
 		self.update_cursor_state(monitor, global);
 
+		if matches!(self.state.mode, OverlayMode::Live) && self.config.show_hud_blur {
+			if self.state.live_bg_monitor != Some(monitor) {
+				self.state.live_bg_monitor = None;
+				self.state.live_bg_image = None;
+			}
+
+			self.maybe_request_live_bg(monitor);
+		}
 		if matches!(self.state.mode, OverlayMode::Live)
 			&& self.last_rgb_request_at.elapsed() >= self.rgb_request_interval
 			&& let Some(worker) = &self.worker
@@ -510,7 +562,18 @@ impl OverlaySession {
 		self.state.clear_error();
 		self.state.begin_freeze(monitor);
 
-		self.pending_freeze_capture = Some(monitor);
+		if self.config.show_hud_blur
+			&& self.state.live_bg_monitor == Some(monitor)
+			&& let Some(image) = self.state.live_bg_image.take()
+		{
+			self.state.live_bg_monitor = None;
+
+			self.state.finish_freeze(monitor, image);
+
+			self.pending_freeze_capture = None;
+		} else {
+			self.pending_freeze_capture = Some(monitor);
+		}
 
 		self.request_redraw_for_monitor(monitor);
 
@@ -615,12 +678,36 @@ impl OverlaySession {
 
 		self.update_cursor_state(monitor, cursor);
 
-		if matches!(self.state.mode, OverlayMode::Live)
-			&& let Some(worker) = &self.worker
-		{
-			worker.try_sample_rgb(monitor, cursor);
+		if matches!(self.state.mode, OverlayMode::Live) {
+			if self.config.show_hud_blur {
+				self.maybe_request_live_bg(monitor);
+			}
 
-			self.last_rgb_request_at = Instant::now();
+			if let Some(worker) = &self.worker {
+				worker.try_sample_rgb(monitor, cursor);
+
+				self.last_rgb_request_at = Instant::now();
+			}
+		}
+	}
+
+	fn maybe_request_live_bg(&mut self, monitor: MonitorRect) {
+		if !matches!(self.state.mode, OverlayMode::Live) || !self.config.show_hud_blur {
+			return;
+		}
+		if self.state.live_bg_monitor == Some(monitor) && self.state.live_bg_image.is_some() {
+			return;
+		}
+		if self.last_live_bg_request_at.elapsed() < self.live_bg_request_interval {
+			return;
+		}
+
+		let Some(worker) = &self.worker else {
+			return;
+		};
+
+		if worker.request_freeze_capture(monitor) {
+			self.last_live_bg_request_at = Instant::now();
 		}
 	}
 
@@ -697,14 +784,12 @@ struct WindowRenderer {
 	needs_reconfigure: bool,
 	egui_ctx: egui::Context,
 	egui_renderer: Renderer,
-	bg_pipeline: RenderPipeline,
-	bg_bind_group_layout: BindGroupLayout,
 	bg_sampler: wgpu::Sampler,
 	hud_blur_pipeline: RenderPipeline,
 	hud_blur_bind_group_layout: BindGroupLayout,
 	hud_blur_uniform: wgpu::Buffer,
-	frozen_bg: Option<FrozenBg>,
-	frozen_bg_generation: u64,
+	hud_bg: Option<HudBg>,
+	hud_bg_generation: u64,
 	hud_pill: Option<HudPillGeometry>,
 }
 impl WindowRenderer {
@@ -761,78 +846,8 @@ impl WindowRenderer {
 		}
 	}
 
-	fn create_bg_pipeline(
-		gpu: &GpuContext,
-		surface_format: wgpu::TextureFormat,
-	) -> (RenderPipeline, BindGroupLayout, wgpu::Sampler) {
-		let bg_shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-			label: Some("rsnap-frozen-bg shader"),
-			source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-				"overlay_bg.wgsl"
-			))),
-		});
-		let bg_bind_group_layout =
-			gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-				label: Some("rsnap-frozen-bg bgl"),
-				entries: &[
-					wgpu::BindGroupLayoutEntry {
-						binding: 0,
-						visibility: wgpu::ShaderStages::FRAGMENT,
-						ty: wgpu::BindingType::Texture {
-							multisampled: false,
-							view_dimension: wgpu::TextureViewDimension::D2,
-							sample_type: wgpu::TextureSampleType::Float { filterable: true },
-						},
-						count: None,
-					},
-					wgpu::BindGroupLayoutEntry {
-						binding: 1,
-						visibility: wgpu::ShaderStages::FRAGMENT,
-						ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-						count: None,
-					},
-				],
-			});
-		let bg_pipeline_layout =
-			gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-				label: Some("rsnap-frozen-bg pipeline layout"),
-				bind_group_layouts: &[&bg_bind_group_layout],
-				push_constant_ranges: &[],
-			});
-		let bg_pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-			label: Some("rsnap-frozen-bg pipeline"),
-			layout: Some(&bg_pipeline_layout),
-			vertex: wgpu::VertexState {
-				module: &bg_shader,
-				entry_point: Some("vs_main"),
-				compilation_options: wgpu::PipelineCompilationOptions::default(),
-				buffers: &[],
-			},
-			primitive: wgpu::PrimitiveState {
-				topology: wgpu::PrimitiveTopology::TriangleList,
-				strip_index_format: None,
-				front_face: wgpu::FrontFace::Ccw,
-				cull_mode: None,
-				polygon_mode: wgpu::PolygonMode::Fill,
-				unclipped_depth: false,
-				conservative: false,
-			},
-			depth_stencil: None,
-			multisample: wgpu::MultisampleState::default(),
-			fragment: Some(wgpu::FragmentState {
-				module: &bg_shader,
-				entry_point: Some("fs_main"),
-				compilation_options: wgpu::PipelineCompilationOptions::default(),
-				targets: &[Some(wgpu::ColorTargetState {
-					format: surface_format,
-					blend: Some(wgpu::BlendState::REPLACE),
-					write_mask: wgpu::ColorWrites::ALL,
-				})],
-			}),
-			multiview: None,
-			cache: None,
-		});
-		let bg_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+	fn create_bg_sampler(gpu: &GpuContext) -> wgpu::Sampler {
+		gpu.device.create_sampler(&wgpu::SamplerDescriptor {
 			label: Some("rsnap-frozen-bg sampler"),
 			address_mode_u: wgpu::AddressMode::ClampToEdge,
 			address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -841,9 +856,7 @@ impl WindowRenderer {
 			min_filter: wgpu::FilterMode::Linear,
 			mipmap_filter: wgpu::FilterMode::Nearest,
 			..Default::default()
-		});
-
-		(bg_pipeline, bg_bind_group_layout, bg_sampler)
+		})
 	}
 
 	fn create_hud_blur_pipeline(
@@ -1417,9 +1430,7 @@ impl WindowRenderer {
 	fn render_frame(
 		&mut self,
 		gpu: &GpuContext,
-		state: &OverlayState,
-		monitor: MonitorRect,
-		show_hud_blur: bool,
+		hud_blur_active: bool,
 		frame: SurfaceTexture,
 		paint_jobs: &[ClippedPrimitive],
 		screen_descriptor: &ScreenDescriptor,
@@ -1453,19 +1464,9 @@ impl WindowRenderer {
 			};
 			let mut rpass = encoder.begin_render_pass(&rpass_desc).forget_lifetime();
 
-			if matches!(state.mode, OverlayMode::Frozen)
-				&& state.monitor == Some(monitor)
-				&& let Some(bg) = &self.frozen_bg
-			{
-				rpass.set_pipeline(&self.bg_pipeline);
-				rpass.set_bind_group(0, &bg.bind_group, &[]);
-				rpass.draw(0..3, 0..1);
-			}
-			if show_hud_blur
-				&& matches!(state.mode, OverlayMode::Frozen)
-				&& state.monitor == Some(monitor)
+			if hud_blur_active
 				&& self.hud_pill.is_some()
-				&& let Some(bg) = &self.frozen_bg
+				&& let Some(bg) = &self.hud_bg
 			{
 				rpass.set_pipeline(&self.hud_blur_pipeline);
 				rpass.set_bind_group(0, &bg.hud_blur_bind_group, &[]);
@@ -1496,8 +1497,7 @@ impl WindowRenderer {
 
 		let egui_ctx = egui::Context::default();
 		let egui_renderer = Renderer::new(&gpu.device, surface_format, None, 1, false);
-		let (bg_pipeline, bg_bind_group_layout, bg_sampler) =
-			Self::create_bg_pipeline(gpu, surface_format);
+		let bg_sampler = Self::create_bg_sampler(gpu);
 		let (hud_blur_pipeline, hud_blur_bind_group_layout) =
 			Self::create_hud_blur_pipeline(gpu, surface_format);
 		let hud_blur_uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1514,14 +1514,12 @@ impl WindowRenderer {
 			needs_reconfigure: false,
 			egui_ctx,
 			egui_renderer,
-			bg_pipeline,
-			bg_bind_group_layout,
 			bg_sampler,
 			hud_blur_pipeline,
 			hud_blur_bind_group_layout,
 			hud_blur_uniform,
-			frozen_bg: None,
-			frozen_bg_generation: 0,
+			hud_bg: None,
+			hud_bg_generation: 0,
 			hud_pill: None,
 		})
 	}
@@ -1551,12 +1549,14 @@ impl WindowRenderer {
 
 		let (size, pixels_per_point, raw_input) = self.prepare_egui_input(gpu);
 
-		self.sync_frozen_bg(gpu, state, monitor)?;
+		self.sync_hud_bg(gpu, state, monitor)?;
 
 		let hud_blur_active = show_hud_blur
-			&& matches!(state.mode, OverlayMode::Frozen)
-			&& state.monitor == Some(monitor)
-			&& self.frozen_bg.is_some();
+			&& self.hud_bg.is_some()
+			&& match state.mode {
+				OverlayMode::Live => state.live_bg_monitor == Some(monitor),
+				OverlayMode::Frozen => state.monitor == Some(monitor),
+			};
 		let (full_output, hud_pill) = self.run_egui(
 			raw_input,
 			state,
@@ -1568,7 +1568,10 @@ impl WindowRenderer {
 
 		self.hud_pill = hud_pill;
 
-		self.update_hud_blur_uniform(gpu, state, monitor, size, pixels_per_point, show_hud_blur);
+		if hud_blur_active && self.hud_bg.is_some() {
+			self.update_hud_blur_uniform(gpu, size, pixels_per_point);
+		}
+
 		self.sync_egui_textures(gpu, &full_output);
 
 		let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, pixels_per_point);
@@ -1576,15 +1579,7 @@ impl WindowRenderer {
 			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
 		let frame = self.acquire_frame(gpu)?;
 
-		self.render_frame(
-			gpu,
-			state,
-			monitor,
-			show_hud_blur,
-			frame,
-			&paint_jobs,
-			&screen_descriptor,
-		)?;
+		self.render_frame(gpu, hud_blur_active, frame, &paint_jobs, &screen_descriptor)?;
 
 		Ok(())
 	}
@@ -1592,19 +1587,10 @@ impl WindowRenderer {
 	fn update_hud_blur_uniform(
 		&mut self,
 		gpu: &GpuContext,
-		state: &OverlayState,
-		monitor: MonitorRect,
 		size: PhysicalSize<u32>,
 		pixels_per_point: f32,
-		show_hud_blur: bool,
 	) {
-		if !show_hud_blur {
-			return;
-		}
-		if !matches!(state.mode, OverlayMode::Frozen) || state.monitor != Some(monitor) {
-			return;
-		}
-		if self.frozen_bg.is_none() {
+		if self.hud_bg.is_none() {
 			return;
 		}
 
@@ -1622,7 +1608,7 @@ impl WindowRenderer {
 		let rect_min_px = [rect.min.x * pixels_per_point, rect.min.y * pixels_per_point];
 		let rect_size_px = [rect.width() * pixels_per_point, rect.height() * pixels_per_point];
 		let radius_px = hud_pill.radius_points * pixels_per_point;
-		let blur_radius_px = 10.0 * pixels_per_point;
+		let blur_radius_px = 6.0 * pixels_per_point;
 		let edge_softness_px = 1.0 * pixels_per_point;
 
 		fn srgb8_to_linear_f32(x: u8) -> f32 {
@@ -1648,46 +1634,56 @@ impl WindowRenderer {
 		gpu.queue.write_buffer(&self.hud_blur_uniform, 0, u.as_bytes());
 	}
 
-	fn sync_frozen_bg(
+	fn sync_hud_bg(
 		&mut self,
 		gpu: &GpuContext,
 		state: &OverlayState,
 		monitor: MonitorRect,
 	) -> Result<()> {
-		let is_frozen_target =
-			matches!(state.mode, OverlayMode::Frozen) && state.monitor == Some(monitor);
+		let (target_generation, target_image) = match state.mode {
+			OverlayMode::Live if state.live_bg_monitor == Some(monitor) => {
+				(state.live_bg_generation, state.live_bg_image.as_ref())
+			},
+			OverlayMode::Frozen if state.monitor == Some(monitor) => {
+				(state.frozen_generation, state.frozen_image.as_ref())
+			},
+			OverlayMode::Live => {
+				self.hud_bg = None;
+				self.hud_bg_generation = state.live_bg_generation;
 
-		if !is_frozen_target {
-			self.frozen_bg = None;
-			self.frozen_bg_generation = state.frozen_generation;
+				return Ok(());
+			},
+			OverlayMode::Frozen => {
+				self.hud_bg = None;
+				self.hud_bg_generation = state.frozen_generation;
 
-			return Ok(());
-		}
-		if self.frozen_bg.is_some() && self.frozen_bg_generation == state.frozen_generation {
-			// Keep displaying the already-uploaded frozen background even if the image bytes have
-			// been moved elsewhere (e.g. to encode PNG on a worker thread).
-			if state.frozen_image.is_none() {
+				return Ok(());
+			},
+		};
+
+		if self.hud_bg.is_some() && self.hud_bg_generation == target_generation {
+			if target_image.is_none() {
+				// Keep displaying the already-uploaded background even if the image bytes have
+				// been moved elsewhere (e.g. to encode PNG on a worker thread).
 				return Ok(());
 			}
 
 			return Ok(());
 		}
 
-		let Some(image) = state.frozen_image.as_ref() else {
+		let Some(image) = target_image else {
 			// We don't have an image yet for this generation (capture in progress).
-			self.frozen_bg = None;
-			self.frozen_bg_generation = state.frozen_generation;
+			self.hud_bg = None;
+			self.hud_bg_generation = target_generation;
 
 			return Ok(());
 		};
-		let (width, height) = image.dimensions();
+		let upload_image =
+			downscale_for_gpu_upload(image, gpu.device.limits().max_texture_dimension_2d);
+		let (width, height) = upload_image.dimensions();
 		let max_side = gpu.device.limits().max_texture_dimension_2d;
 
-		if width > max_side || height > max_side {
-			return Err(eyre::eyre!(
-				"Frozen background image is too large for this GPU: {width}x{height} (max {max_side})"
-			));
-		}
+		debug_assert!(width <= max_side && height <= max_side);
 
 		let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
 			label: Some("rsnap-frozen-bg texture"),
@@ -1700,15 +1696,16 @@ impl WindowRenderer {
 			view_formats: &[],
 		});
 		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let upload_bytes = upload_image.as_raw();
 		let bytes_per_pixel = 4_usize;
 		let unpadded_bytes_per_row = (width as usize) * bytes_per_pixel;
 		let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
 		let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
 		let rgba_padded;
 		let rgba_bytes: &[u8] = if padded_bytes_per_row == unpadded_bytes_per_row {
-			image.as_raw()
+			upload_bytes
 		} else {
-			let src = image.as_raw();
+			let src = upload_bytes;
 
 			rgba_padded =
 				pad_rows(src, unpadded_bytes_per_row, padded_bytes_per_row, height as usize);
@@ -1732,20 +1729,6 @@ impl WindowRenderer {
 			wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
 		);
 
-		let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-			label: Some("rsnap-frozen-bg bind group"),
-			layout: &self.bg_bind_group_layout,
-			entries: &[
-				wgpu::BindGroupEntry {
-					binding: 0,
-					resource: wgpu::BindingResource::TextureView(&view),
-				},
-				wgpu::BindGroupEntry {
-					binding: 1,
-					resource: wgpu::BindingResource::Sampler(&self.bg_sampler),
-				},
-			],
-		});
 		let hud_blur_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
 			label: Some("rsnap-hud-blur bind group"),
 			layout: &self.hud_blur_bind_group_layout,
@@ -1765,18 +1748,16 @@ impl WindowRenderer {
 			],
 		});
 
-		self.frozen_bg =
-			Some(FrozenBg { _texture: texture, _view: view, bind_group, hud_blur_bind_group });
-		self.frozen_bg_generation = state.frozen_generation;
+		self.hud_bg = Some(HudBg { _texture: texture, _view: view, hud_blur_bind_group });
+		self.hud_bg_generation = target_generation;
 
 		Ok(())
 	}
 }
 
-struct FrozenBg {
+struct HudBg {
 	_texture: wgpu::Texture,
 	_view: wgpu::TextureView,
-	bind_group: BindGroup,
 	hud_blur_bind_group: BindGroup,
 }
 
@@ -1891,6 +1872,24 @@ fn pad_rows(src: &[u8], src_row_bytes: usize, dst_row_bytes: usize, rows: usize)
 	}
 
 	out
+}
+
+fn downscale_for_gpu_upload(image: &RgbaImage, max_side: u32) -> std::borrow::Cow<'_, RgbaImage> {
+	if image.width() <= max_side && image.height() <= max_side {
+		return std::borrow::Cow::Borrowed(image);
+	}
+
+	let longest_side = image.width().max(image.height()) as f32;
+	let scale = (max_side as f32) / longest_side;
+	let width = ((image.width() as f32) * scale).round().max(1.0) as u32;
+	let height = ((image.height() as f32) * scale).round().max(1.0) as u32;
+
+	std::borrow::Cow::Owned(image::imageops::resize(
+		image,
+		width.min(max_side),
+		height.min(max_side),
+		FilterType::Triangle,
+	))
 }
 
 fn global_to_local(cursor: GlobalPoint, monitor: MonitorRect) -> Option<Pos2> {
