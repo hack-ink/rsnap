@@ -200,6 +200,7 @@ pub struct OverlaySession {
 	live_bg_request_interval: Duration,
 	last_loupe_request_at: Instant,
 	loupe_request_interval: Duration,
+	last_alt_press_at: Option<Instant>,
 	loupe_patch_width_px: u32,
 	loupe_patch_height_px: u32,
 	pending_freeze_capture: Option<MonitorRect>,
@@ -236,6 +237,7 @@ impl OverlaySession {
 			live_bg_request_interval,
 			last_loupe_request_at: Instant::now(),
 			loupe_request_interval: Duration::from_millis(33),
+			last_alt_press_at: None,
 			loupe_patch_width_px: 21,
 			loupe_patch_height_px: 21,
 			pending_freeze_capture: None,
@@ -675,17 +677,15 @@ impl OverlaySession {
 	}
 
 	fn handle_modifiers_changed(&mut self, modifiers: &Modifiers) -> OverlayControl {
-		let mut alt = modifiers.state().alt_key();
+		let alt = modifiers.state().alt_key();
+		let ignore_transient_alt_release = !alt
+			&& self.state.alt_held
+			&& self
+				.last_alt_press_at
+				.is_some_and(|press| press.elapsed() <= Duration::from_millis(120))
+			&& self.is_option_key_down();
 
-		// On macOS with multiple always-on-top windows, winit can transiently report
-		// `alt_key=false` even while the physical Option key is still held (e.g., when
-		// focus changes between overlay/HUD/loupe windows). Prefer the global key state
-		// to avoid flicker.
-		if !alt && self.is_option_key_down() {
-			alt = true;
-		}
-
-		self.set_alt_held(alt);
+		self.set_alt_held(if ignore_transient_alt_release { true } else { alt });
 
 		if let Some(monitor) = self.active_cursor_monitor() {
 			self.request_redraw_for_monitor(monitor);
@@ -706,9 +706,9 @@ impl OverlaySession {
 	}
 
 	fn sync_alt_held_from_global_keys(&mut self) {
-		let alt = self.is_option_key_down();
-
-		self.set_alt_held(alt);
+		if self.state.alt_held && !self.is_option_key_down() {
+			self.set_alt_held(false);
+		}
 	}
 
 	fn set_alt_held(&mut self, alt: bool) {
@@ -718,51 +718,58 @@ impl OverlaySession {
 
 		self.state.alt_held = alt;
 
-		if !alt {
-			self.state.loupe = None;
-			self.loupe_outer_pos = None;
+		if alt {
+			self.last_alt_press_at = Some(Instant::now());
+
+			if !matches!(self.state.mode, OverlayMode::Live) {
+				return;
+			}
+
+			let Some(cursor) = self.state.cursor else {
+				return;
+			};
+			let Some(monitor) = self.active_cursor_monitor() else {
+				return;
+			};
+			let visible = self.update_loupe_window_position(monitor);
 
 			if let Some(loupe_window) = self.loupe_window.as_ref() {
-				loupe_window.window.set_visible(false);
+				loupe_window.window.set_visible(visible);
 				loupe_window.window.request_redraw();
+			}
+
+			if self.use_fake_hud_blur() {
+				self.maybe_request_live_bg(monitor);
+			}
+
+			if let Some(worker) = &self.worker {
+				worker.try_sample_rgb(monitor, cursor);
+
+				self.last_rgb_request_at = Instant::now();
+
+				worker.try_sample_loupe(
+					monitor,
+					cursor,
+					self.loupe_patch_width_px,
+					self.loupe_patch_height_px,
+				);
+
+				self.last_loupe_request_at = Instant::now();
 			}
 
 			return;
 		}
-		if !matches!(self.state.mode, OverlayMode::Live) {
-			return;
-		}
 
-		let Some(cursor) = self.state.cursor else {
-			return;
-		};
-		let Some(monitor) = self.active_cursor_monitor() else {
-			return;
-		};
-		let visible = self.update_loupe_window_position(monitor);
+		self.last_alt_press_at = None;
+		self.state.loupe = None;
+		self.loupe_outer_pos = None;
 
 		if let Some(loupe_window) = self.loupe_window.as_ref() {
-			loupe_window.window.set_visible(visible);
+			loupe_window.window.set_visible(false);
 			loupe_window.window.request_redraw();
 		}
-
-		if self.use_fake_hud_blur() {
-			self.maybe_request_live_bg(monitor);
-		}
-
-		if let Some(worker) = &self.worker {
-			worker.try_sample_rgb(monitor, cursor);
-
-			self.last_rgb_request_at = Instant::now();
-
-			worker.try_sample_loupe(
-				monitor,
-				cursor,
-				self.loupe_patch_width_px,
-				self.loupe_patch_height_px,
-			);
-
-			self.last_loupe_request_at = Instant::now();
+		if let Some(monitor) = self.active_cursor_monitor() {
+			self.request_redraw_for_monitor(monitor);
 		}
 	}
 
@@ -1983,11 +1990,7 @@ impl WindowRenderer {
 			}
 		};
 		let inner = Frame {
-			fill: if hud_blur_active && !hud_opaque && !hud_compact {
-				Color32::TRANSPARENT
-			} else {
-				body_fill
-			},
+			fill: body_fill,
 			stroke: outer_stroke,
 			shadow: pill_shadow,
 			corner_radius: CornerRadius::same(pill_radius),
@@ -2676,6 +2679,7 @@ impl WindowRenderer {
 		Ok(())
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn draw_loupe_tile_window(
 		&mut self,
 		gpu: &GpuContext,
@@ -2754,6 +2758,7 @@ impl WindowRenderer {
 		Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], fill[3])
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn run_loupe_tile_egui(
 		&mut self,
 		raw_input: egui::RawInput,
@@ -2797,7 +2802,7 @@ impl WindowRenderer {
 			};
 			let tile_radius = 12_u8;
 			let frame = Frame {
-				fill: if hud_blur_active && !hud_opaque { Color32::TRANSPARENT } else { body_fill },
+				fill: body_fill,
 				stroke: outer_stroke,
 				shadow,
 				corner_radius: CornerRadius::same(tile_radius),
