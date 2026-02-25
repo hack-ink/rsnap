@@ -7,6 +7,42 @@ use serde::{Deserialize, Serialize};
 
 use rsnap_overlay::ThemeMode;
 
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AltActivationMode {
+	#[default]
+	Hold,
+	Toggle,
+}
+
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoupeSampleSize {
+	Small,
+	#[default]
+	Medium,
+	Large,
+}
+impl LoupeSampleSize {
+	#[must_use]
+	pub const fn side_px(self) -> u32 {
+		match self {
+			Self::Small => 15,
+			Self::Medium => 21,
+			Self::Large => 31,
+		}
+	}
+
+	#[must_use]
+	pub const fn sanitize(self) -> Self {
+		match self {
+			Self::Small => Self::Small,
+			Self::Medium => Self::Medium,
+			Self::Large => Self::Large,
+		}
+	}
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
 	#[serde(default)]
@@ -19,6 +55,10 @@ pub struct AppSettings {
 	pub hud_blur: f32,
 	#[serde(default = "default_hud_tint")]
 	pub hud_tint: f32,
+	#[serde(default)]
+	pub alt_activation: AltActivationMode,
+	#[serde(default)]
+	pub loupe_sample_size: LoupeSampleSize,
 	#[serde(default)]
 	pub theme_mode: ThemeMode,
 }
@@ -41,6 +81,7 @@ impl AppSettings {
 		settings.hud_opacity = settings.hud_opacity.clamp(0.0, 1.0);
 		settings.hud_blur = settings.hud_blur.clamp(0.0, 1.0);
 		settings.hud_tint = settings.hud_tint.clamp(0.0, 1.0);
+		settings.loupe_sample_size = settings.loupe_sample_size.sanitize();
 
 		settings
 	}
@@ -79,6 +120,8 @@ impl Default for AppSettings {
 			hud_opacity: default_hud_opacity(),
 			hud_blur: default_hud_blur(),
 			hud_tint: default_hud_tint(),
+			alt_activation: AltActivationMode::default(),
+			loupe_sample_size: LoupeSampleSize::default(),
 			theme_mode: ThemeMode::System,
 		}
 	}
@@ -117,6 +160,8 @@ impl LegacyAppSettings {
 				0.0
 			},
 			hud_tint: if self.hud_milk_enabled { self.hud_milk_amount } else { 0.0 },
+			alt_activation: AltActivationMode::default(),
+			loupe_sample_size: LoupeSampleSize::default(),
 			theme_mode: self.theme_mode,
 		}
 	}
