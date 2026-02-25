@@ -433,14 +433,28 @@ impl OverlaySession {
 		position: PhysicalPosition<f64>,
 	) -> OverlayControl {
 		let old_monitor = self.state.cursor.and_then(|cursor| self.monitor_at(cursor));
-		let Some((monitor, scale_factor)) =
+		let Some((window_monitor, scale_factor)) =
 			self.windows.get(&window_id).map(|w| (w.monitor, w.window.scale_factor()))
 		else {
 			return OverlayControl::Continue;
 		};
-		let local_x = (position.x / scale_factor).round() as i32;
-		let local_y = (position.y / scale_factor).round() as i32;
-		let global = GlobalPoint::new(monitor.origin.x + local_x, monitor.origin.y + local_y);
+		// Prefer the OS/global cursor coordinates for cross-monitor correctness. Window-local cursor
+		// events can be in a different coordinate space (logical vs physical), especially across
+		// monitors with different scale factors.
+		let mouse = self.cursor_device.get_mouse();
+		let global_os = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
+		let (monitor, global) = if let Some(monitor) = self.monitor_at(global_os) {
+			(monitor, global_os)
+		} else {
+			let local_x = (position.x / scale_factor).round() as i32;
+			let local_y = (position.y / scale_factor).round() as i32;
+			let global = GlobalPoint::new(
+				window_monitor.origin.x + local_x,
+				window_monitor.origin.y + local_y,
+			);
+
+			(window_monitor, global)
+		};
 
 		self.update_cursor_state(monitor, global);
 
@@ -930,10 +944,10 @@ impl WindowRenderer {
 		let outer_stroke =
 			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 40));
 		let pill_shadow = egui::epaint::Shadow {
-			offset: [0, 1],
-			blur: 8,
+			offset: [0, 0],
+			blur: 10,
 			spread: 0,
-			color: Color32::from_rgba_unmultiplied(0, 0, 0, 34),
+			color: Color32::from_rgba_unmultiplied(0, 0, 0, 28),
 		};
 		let inner = Frame {
 			fill: body_fill,
@@ -958,7 +972,7 @@ impl WindowRenderer {
 			}
 		});
 		let pill_rect = inner.response.rect;
-		let inner_stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 56));
+		let inner_stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 44));
 		let inner_rect = pill_rect.shrink(1.0);
 
 		ui.painter().rect_stroke(
