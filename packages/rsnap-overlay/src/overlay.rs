@@ -183,10 +183,14 @@ pub struct OverlaySession {
 	worker: Option<OverlayWorker>,
 	cursor_device: device_query::DeviceState,
 	state: OverlayState,
+	cursor_monitor: Option<MonitorRect>,
 	windows: HashMap<WindowId, OverlayWindow>,
 	hud_window: Option<HudOverlayWindow>,
+	loupe_window: Option<HudOverlayWindow>,
 	hud_outer_pos: Option<GlobalPoint>,
 	hud_inner_size_points: Option<(u32, u32)>,
+	loupe_outer_pos: Option<GlobalPoint>,
+	loupe_inner_size_points: Option<(u32, u32)>,
 	gpu: Option<GpuContext>,
 	last_present_at: Instant,
 	last_rgb_request_at: Instant,
@@ -215,10 +219,14 @@ impl OverlaySession {
 			worker: None,
 			cursor_device: device_query::DeviceState::new(),
 			state: OverlayState::new(),
+			cursor_monitor: None,
 			windows: HashMap::new(),
 			hud_window: None,
+			loupe_window: None,
 			hud_outer_pos: None,
 			hud_inner_size_points: None,
+			loupe_outer_pos: None,
+			loupe_inner_size_points: None,
 			gpu: None,
 			last_present_at: Instant::now(),
 			last_rgb_request_at: Instant::now(),
@@ -256,6 +264,19 @@ impl OverlaySession {
 			#[cfg(not(target_os = "macos"))]
 			hud_window.window.set_blur(self.config.show_hud_blur);
 		}
+		if let Some(loupe_window) = self.loupe_window.as_ref() {
+			loupe_window.window.set_transparent(true);
+
+			#[cfg(target_os = "macos")]
+			macos_configure_hud_window(
+				loupe_window.window.as_ref(),
+				self.config.show_hud_blur,
+				self.config.hud_fog_amount,
+			);
+
+			#[cfg(not(target_os = "macos"))]
+			loupe_window.window.set_blur(self.config.show_hud_blur);
+		}
 
 		let prev_fake_blur = prev.show_hud_blur && !cfg!(target_os = "macos");
 		let new_fake_blur = self.use_fake_hud_blur();
@@ -265,8 +286,8 @@ impl OverlaySession {
 				self.last_live_bg_request_at = Instant::now() - self.live_bg_request_interval;
 
 				if matches!(self.state.mode, OverlayMode::Live)
-					&& let Some(cursor) = self.state.cursor
-					&& let Some(monitor) = self.monitor_at(cursor)
+					&& let Some(_cursor) = self.state.cursor
+					&& let Some(monitor) = self.active_cursor_monitor()
 				{
 					self.maybe_request_live_bg(monitor);
 				}
@@ -293,8 +314,8 @@ impl OverlaySession {
 			return Ok(());
 		}
 
-		self.hud_inner_size_points = None;
-		self.state = OverlayState::new();
+		self.reset_for_start();
+
 		self.worker = Some(OverlayWorker::new(crate::backend::default_capture_backend()));
 
 		let monitors =
@@ -304,10 +325,31 @@ impl OverlaySession {
 			return Err(String::from("No monitors detected"));
 		}
 
-		let gpu = GpuContext::new().map_err(|err| format!("{err:#}"))?;
+		self.gpu = Some(GpuContext::new().map_err(|err| format!("{err:#}"))?);
 
-		self.gpu = Some(gpu);
+		self.create_overlay_windows(event_loop, &monitors)?;
+		self.create_hud_window(event_loop)?;
+		self.create_loupe_window(event_loop)?;
+		self.request_redraw_all();
+		self.initialize_cursor_state();
 
+		Ok(())
+	}
+
+	fn reset_for_start(&mut self) {
+		self.hud_inner_size_points = None;
+		self.hud_outer_pos = None;
+		self.loupe_inner_size_points = None;
+		self.loupe_outer_pos = None;
+		self.cursor_monitor = None;
+		self.state = OverlayState::new();
+	}
+
+	fn create_overlay_windows(
+		&mut self,
+		event_loop: &ActiveEventLoop,
+		monitors: &[xcap::Monitor],
+	) -> Result<(), String> {
 		for monitor in monitors {
 			let monitor_rect = MonitorRect {
 				id: monitor.id(),
@@ -350,42 +392,77 @@ impl OverlaySession {
 				.insert(window.id(), OverlayWindow { monitor: monitor_rect, window, renderer });
 		}
 
-		{
-			let attrs = winit::window::Window::default_attributes()
-				.with_title("rsnap-hud")
-				.with_decorations(false)
-				.with_resizable(false)
-				.with_transparent(true)
-				.with_window_level(WindowLevel::AlwaysOnTop)
-				.with_inner_size(LogicalSize::new(460.0, 52.0));
-			let window = event_loop
-				.create_window(attrs)
-				.map_err(|err| format!("Unable to create HUD window: {err}"))?;
-			let window = Arc::new(window);
-			let _ = window.set_cursor_hittest(false);
+		Ok(())
+	}
 
-			window.set_transparent(true);
+	fn create_hud_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+		let attrs = winit::window::Window::default_attributes()
+			.with_title("rsnap-hud")
+			.with_decorations(false)
+			.with_resizable(false)
+			.with_transparent(true)
+			.with_window_level(WindowLevel::AlwaysOnTop)
+			.with_inner_size(LogicalSize::new(460.0, 52.0));
+		let window = event_loop
+			.create_window(attrs)
+			.map_err(|err| format!("Unable to create HUD window: {err}"))?;
+		let window = Arc::new(window);
+		let _ = window.set_cursor_hittest(false);
 
-			#[cfg(target_os = "macos")]
-			macos_configure_hud_window(
-				window.as_ref(),
-				self.config.show_hud_blur,
-				self.config.hud_fog_amount,
-			);
+		window.set_transparent(true);
 
-			#[cfg(not(target_os = "macos"))]
-			window.set_blur(self.config.show_hud_blur);
-			window.request_redraw();
+		#[cfg(target_os = "macos")]
+		macos_configure_hud_window(
+			window.as_ref(),
+			self.config.show_hud_blur,
+			self.config.hud_fog_amount,
+		);
 
-			let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
-			let renderer = WindowRenderer::new(gpu, Arc::clone(&window))
-				.map_err(|err| format!("Failed to init HUD renderer: {err:#}"))?;
+		#[cfg(not(target_os = "macos"))]
+		window.set_blur(self.config.show_hud_blur);
+		window.request_redraw();
 
-			self.hud_window = Some(HudOverlayWindow { window, renderer });
-		}
+		let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
+		let renderer = WindowRenderer::new(gpu, Arc::clone(&window))
+			.map_err(|err| format!("Failed to init HUD renderer: {err:#}"))?;
 
-		self.request_redraw_all();
-		self.initialize_cursor_state();
+		self.hud_window = Some(HudOverlayWindow { window, renderer });
+
+		Ok(())
+	}
+
+	fn create_loupe_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+		let attrs = winit::window::Window::default_attributes()
+			.with_title("rsnap-loupe")
+			.with_decorations(false)
+			.with_resizable(false)
+			.with_transparent(true)
+			.with_visible(false)
+			.with_window_level(WindowLevel::AlwaysOnTop)
+			.with_inner_size(LogicalSize::new(260.0, 260.0));
+		let window = event_loop
+			.create_window(attrs)
+			.map_err(|err| format!("Unable to create loupe window: {err}"))?;
+		let window = Arc::new(window);
+		let _ = window.set_cursor_hittest(false);
+
+		window.set_transparent(true);
+
+		#[cfg(target_os = "macos")]
+		macos_configure_hud_window(
+			window.as_ref(),
+			self.config.show_hud_blur,
+			self.config.hud_fog_amount,
+		);
+
+		#[cfg(not(target_os = "macos"))]
+		window.set_blur(self.config.show_hud_blur);
+
+		let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
+		let renderer = WindowRenderer::new(gpu, Arc::clone(&window))
+			.map_err(|err| format!("Failed to init loupe renderer: {err:#}"))?;
+
+		self.loupe_window = Some(HudOverlayWindow { window, renderer });
 
 		Ok(())
 	}
@@ -397,6 +474,9 @@ impl OverlaySession {
 
 		if let Some(hud) = self.hud_window.as_ref() {
 			hud.window.request_redraw();
+		}
+		if let Some(loupe) = self.loupe_window.as_ref() {
+			loupe.window.request_redraw();
 		}
 	}
 
@@ -410,6 +490,9 @@ impl OverlaySession {
 		if let Some(hud) = self.hud_window.as_ref() {
 			hud.window.request_redraw();
 		}
+		if let Some(loupe) = self.loupe_window.as_ref() {
+			loupe.window.request_redraw();
+		}
 	}
 
 	pub fn about_to_wait(&mut self) -> OverlayControl {
@@ -419,7 +502,7 @@ impl OverlaySession {
 		}
 		if matches!(self.state.mode, OverlayMode::Live)
 			&& let Some(cursor) = self.state.cursor
-			&& let Some(monitor) = self.monitor_at(cursor)
+			&& let Some(monitor) = self.active_cursor_monitor()
 		{
 			if self.use_fake_hud_blur() {
 				self.maybe_request_live_bg(monitor);
@@ -461,8 +544,7 @@ impl OverlaySession {
 							self.state.loupe = patch
 								.map(|patch| crate::state::LoupeSample { center: point, patch });
 
-							let current_monitor =
-								self.state.cursor.and_then(|cursor| self.monitor_at(cursor));
+							let current_monitor = self.active_cursor_monitor();
 
 							if let Some(current_monitor) = current_monitor {
 								self.request_redraw_for_monitor(current_monitor);
@@ -479,8 +561,7 @@ impl OverlaySession {
 
 							self.state.rgb = rgb;
 
-							let current_monitor =
-								self.state.cursor.and_then(|cursor| self.monitor_at(cursor));
+							let current_monitor = self.active_cursor_monitor();
 
 							if let Some(current_monitor) = current_monitor {
 								self.request_redraw_for_monitor(current_monitor);
@@ -499,8 +580,7 @@ impl OverlaySession {
 							self.request_redraw_for_monitor(monitor);
 						} else if matches!(self.state.mode, OverlayMode::Live)
 							&& self.use_fake_hud_blur()
-							&& self.state.cursor.and_then(|cursor| self.monitor_at(cursor))
-								== Some(monitor)
+							&& self.active_cursor_monitor() == Some(monitor)
 						{
 							self.state.live_bg_monitor = Some(monitor);
 							self.state.live_bg_image = Some(image);
@@ -573,10 +653,22 @@ impl OverlaySession {
 
 		if !alt {
 			self.state.loupe = None;
+			self.loupe_outer_pos = None;
+
+			if let Some(loupe_window) = self.loupe_window.as_ref() {
+				loupe_window.window.set_visible(false);
+			}
 		} else if matches!(self.state.mode, OverlayMode::Live)
 			&& let Some(cursor) = self.state.cursor
-			&& let Some(monitor) = self.monitor_at(cursor)
+			&& let Some(monitor) = self.active_cursor_monitor()
 		{
+			let visible = self.update_loupe_window_position(monitor);
+
+			if let Some(loupe_window) = self.loupe_window.as_ref() {
+				loupe_window.window.set_visible(visible);
+				loupe_window.window.request_redraw();
+			}
+
 			if self.use_fake_hud_blur() {
 				self.maybe_request_live_bg(monitor);
 			}
@@ -597,7 +689,7 @@ impl OverlaySession {
 			}
 		}
 
-		if let Some(monitor) = self.state.cursor.and_then(|cursor| self.monitor_at(cursor)) {
+		if let Some(monitor) = self.active_cursor_monitor() {
 			self.request_redraw_for_monitor(monitor);
 		} else {
 			self.request_redraw_all();
@@ -615,6 +707,23 @@ impl OverlaySession {
 					#[cfg(target_os = "macos")]
 					macos_configure_hud_window(
 						hud_window.window.as_ref(),
+						self.config.show_hud_blur,
+						self.config.hud_fog_amount,
+					);
+
+					return OverlayControl::Continue;
+				},
+				Err(err) => return self.exit(OverlayExit::Error(format!("{err:#}"))),
+			}
+		}
+		if let Some(loupe_window) = self.loupe_window.as_mut()
+			&& loupe_window.window.id() == window_id
+		{
+			match loupe_window.renderer.resize(size) {
+				Ok(()) => {
+					#[cfg(target_os = "macos")]
+					macos_configure_hud_window(
+						loupe_window.window.as_ref(),
 						self.config.show_hud_blur,
 						self.config.hud_fog_amount,
 					);
@@ -655,6 +764,25 @@ impl OverlaySession {
 				Err(err) => return self.exit(OverlayExit::Error(format!("{err:#}"))),
 			}
 		}
+		if let Some(loupe_window) = self.loupe_window.as_mut()
+			&& loupe_window.window.id() == window_id
+		{
+			let size = loupe_window.window.inner_size();
+
+			match loupe_window.renderer.resize(size) {
+				Ok(()) => {
+					#[cfg(target_os = "macos")]
+					macos_configure_hud_window(
+						loupe_window.window.as_ref(),
+						self.config.show_hud_blur,
+						self.config.hud_fog_amount,
+					);
+
+					return OverlayControl::Continue;
+				},
+				Err(err) => return self.exit(OverlayExit::Error(format!("{err:#}"))),
+			}
+		}
 
 		let Some(overlay_window) = self.windows.get_mut(&window_id) else {
 			return OverlayControl::Continue;
@@ -672,7 +800,7 @@ impl OverlaySession {
 		window_id: WindowId,
 		position: PhysicalPosition<f64>,
 	) -> OverlayControl {
-		let old_monitor = self.state.cursor.and_then(|cursor| self.monitor_at(cursor));
+		let old_monitor = self.active_cursor_monitor();
 		let Some((window_monitor, scale_factor)) =
 			self.windows.get(&window_id).map(|w| (w.monitor, w.window.scale_factor()))
 		else {
@@ -819,66 +947,86 @@ impl OverlaySession {
 	}
 
 	fn handle_redraw_requested(&mut self, window_id: WindowId) -> OverlayControl {
+		if self.hud_window.as_ref().is_some_and(|hud_window| hud_window.window.id() == window_id) {
+			return self.handle_hud_redraw_requested();
+		}
+		if self
+			.loupe_window
+			.as_ref()
+			.is_some_and(|loupe_window| loupe_window.window.id() == window_id)
+		{
+			return self.handle_loupe_redraw_requested();
+		}
+
+		self.handle_overlay_window_redraw(window_id)
+	}
+
+	fn handle_hud_redraw_requested(&mut self) -> OverlayControl {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
-		let is_hud_window =
-			self.hud_window.as_ref().is_some_and(|hud_window| hud_window.window.id() == window_id);
+		let monitor =
+			self.monitor_for_mode().or_else(|| self.windows.values().next().map(|w| w.monitor));
 
-		if is_hud_window {
-			let monitor = match self.state.mode {
-				OverlayMode::Frozen => self
-					.state
-					.monitor
-					.or_else(|| self.state.cursor.and_then(|cursor| self.monitor_at(cursor))),
-				OverlayMode::Live => self.state.cursor.and_then(|cursor| self.monitor_at(cursor)),
+		if let (Some(monitor), Some(hud_window)) = (monitor, self.hud_window.as_mut()) {
+			if let Err(err) = hud_window.renderer.draw(
+				gpu,
+				&self.state,
+				monitor,
+				true,
+				Some(Pos2::new(-14.0, -14.0)),
+				true,
+				HudAnchor::Cursor,
+				self.config.show_alt_hint_keycap,
+				self.config.show_hud_blur,
+				self.config.hud_opaque,
+				self.config.hud_opacity,
+				self.config.hud_fog_amount,
+				self.config.hud_milk_amount,
+				self.config.theme_mode,
+			) {
+				return self.exit(OverlayExit::Error(format!("{err:#}")));
 			}
-			.or_else(|| self.windows.values().next().map(|w| w.monitor));
+			if let Some(hud_pill) = hud_window.renderer.hud_pill {
+				let desired_w = hud_pill.rect.width().ceil().max(1.0) as u32;
+				let desired_h = hud_pill.rect.height().ceil().max(1.0) as u32;
+				let desired = (desired_w, desired_h);
 
-			if let (Some(monitor), Some(hud_window)) = (monitor, self.hud_window.as_mut()) {
-				if let Err(err) = hud_window.renderer.draw(
-					gpu,
-					&self.state,
-					monitor,
-					true,
-					Some(Pos2::new(-14.0, -14.0)),
-					true,
-					HudAnchor::Cursor,
-					self.config.show_alt_hint_keycap,
-					self.config.show_hud_blur,
-					self.config.hud_opaque,
-					self.config.hud_opacity,
-					self.config.hud_fog_amount,
-					self.config.hud_milk_amount,
-					self.config.theme_mode,
-				) {
-					return self.exit(OverlayExit::Error(format!("{err:#}")));
-				}
-				if let Some(hud_pill) = hud_window.renderer.hud_pill {
-					let desired_w = hud_pill.rect.width().ceil().max(1.0) as u32;
-					let desired_h = hud_pill.rect.height().ceil().max(1.0) as u32;
-					let desired = (desired_w, desired_h);
+				if self.hud_inner_size_points != Some(desired) {
+					self.hud_inner_size_points = Some(desired);
 
-					if self.hud_inner_size_points != Some(desired) {
-						self.hud_inner_size_points = Some(desired);
+					let _ = hud_window.window.request_inner_size(LogicalSize::new(
+						f64::from(desired_w),
+						f64::from(desired_h),
+					));
 
-						let _ = hud_window.window.request_inner_size(LogicalSize::new(
-							f64::from(desired_w),
-							f64::from(desired_h),
-						));
+					#[cfg(target_os = "macos")]
+					macos_configure_hud_window(
+						hud_window.window.as_ref(),
+						self.config.show_hud_blur,
+						self.config.hud_fog_amount,
+					);
 
-						#[cfg(target_os = "macos")]
-						macos_configure_hud_window(
-							hud_window.window.as_ref(),
-							self.config.show_hud_blur,
-							self.config.hud_fog_amount,
-						);
-
-						if let Some(cursor) = self.state.cursor {
-							self.update_hud_window_position(monitor, cursor);
-						}
+					if let Some(cursor) = self.state.cursor {
+						self.update_hud_window_position(monitor, cursor);
 					}
 				}
+			}
+		}
+
+		self.last_present_at = Instant::now();
+
+		OverlayControl::Continue
+	}
+
+	fn handle_loupe_redraw_requested(&mut self) -> OverlayControl {
+		let Some(gpu) = self.gpu.as_ref() else {
+			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
+		};
+
+		if !self.state.alt_held {
+			if let Some(loupe_window) = self.loupe_window.as_ref() {
+				loupe_window.window.set_visible(false);
 			}
 
 			self.last_present_at = Instant::now();
@@ -886,6 +1034,76 @@ impl OverlaySession {
 			return OverlayControl::Continue;
 		}
 
+		let monitor =
+			self.monitor_for_mode().or_else(|| self.windows.values().next().map(|w| w.monitor));
+		let Some(monitor) = monitor else {
+			self.last_present_at = Instant::now();
+
+			return OverlayControl::Continue;
+		};
+		let Some(cursor) = self.state.cursor else {
+			self.last_present_at = Instant::now();
+
+			return OverlayControl::Continue;
+		};
+		let mut needs_reposition = false;
+
+		if let Some(loupe_window) = self.loupe_window.as_mut() {
+			if let Err(err) = loupe_window.renderer.draw_loupe_tile_window(
+				gpu,
+				&self.state,
+				monitor,
+				cursor,
+				self.config.show_hud_blur,
+				self.config.hud_opaque,
+				self.config.hud_opacity,
+				self.config.hud_milk_amount,
+				self.config.theme_mode,
+			) {
+				return self.exit(OverlayExit::Error(format!("{err:#}")));
+			}
+			if let Some(tile_rect) = loupe_window.renderer.loupe_tile {
+				let desired_w = tile_rect.max.x.ceil().max(1.0) as u32;
+				let desired_h = tile_rect.max.y.ceil().max(1.0) as u32;
+				let desired = (desired_w, desired_h);
+
+				if self.loupe_inner_size_points != Some(desired) {
+					self.loupe_inner_size_points = Some(desired);
+
+					let _ = loupe_window.window.request_inner_size(LogicalSize::new(
+						f64::from(desired_w),
+						f64::from(desired_h),
+					));
+
+					#[cfg(target_os = "macos")]
+					macos_configure_hud_window(
+						loupe_window.window.as_ref(),
+						self.config.show_hud_blur,
+						self.config.hud_fog_amount,
+					);
+
+					needs_reposition = true;
+				}
+			}
+		}
+
+		if needs_reposition {
+			let _ = self.update_loupe_window_position(monitor);
+		}
+
+		if let Some(loupe_window) = self.loupe_window.as_ref() {
+			loupe_window.window.set_visible(true);
+		}
+
+		self.last_present_at = Instant::now();
+
+		OverlayControl::Continue
+	}
+
+	fn handle_overlay_window_redraw(&mut self, window_id: WindowId) -> OverlayControl {
+		let Some(gpu) = self.gpu.as_ref() else {
+			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
+		};
 		let Some(overlay_window) = self.windows.get_mut(&window_id) else {
 			return OverlayControl::Continue;
 		};
@@ -929,6 +1147,11 @@ impl OverlaySession {
 
 		self.hud_window = None;
 		self.hud_inner_size_points = None;
+		self.hud_outer_pos = None;
+		self.loupe_window = None;
+		self.loupe_inner_size_points = None;
+		self.loupe_outer_pos = None;
+		self.cursor_monitor = None;
 		self.gpu = None;
 		self.worker = None;
 
@@ -941,6 +1164,7 @@ impl OverlaySession {
 		let Some(monitor) = self.monitor_at(cursor) else {
 			self.state.cursor = Some(cursor);
 			self.state.rgb = None;
+			self.cursor_monitor = None;
 
 			return;
 		};
@@ -991,6 +1215,17 @@ impl OverlaySession {
 			.map(|window| window.monitor)
 	}
 
+	fn active_cursor_monitor(&self) -> Option<MonitorRect> {
+		self.cursor_monitor.or_else(|| self.state.cursor.and_then(|cursor| self.monitor_at(cursor)))
+	}
+
+	fn monitor_for_mode(&self) -> Option<MonitorRect> {
+		match self.state.mode {
+			OverlayMode::Frozen => self.state.monitor.or_else(|| self.active_cursor_monitor()),
+			OverlayMode::Live => self.active_cursor_monitor(),
+		}
+	}
+
 	fn update_hud_window_position(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
 		let Some(hud_window) = self.hud_window.as_ref() else {
 			return;
@@ -1032,9 +1267,71 @@ impl OverlaySession {
 
 		hud_window.window.set_outer_position(LogicalPosition::new(x as f64, y as f64));
 		hud_window.window.request_redraw();
+
+		if self.state.alt_held {
+			let visible = self.update_loupe_window_position(monitor);
+
+			if let Some(loupe_window) = self.loupe_window.as_ref() {
+				loupe_window.window.set_visible(visible);
+				loupe_window.window.request_redraw();
+			}
+		}
 	}
 
-	fn update_cursor_state(&mut self, _monitor: MonitorRect, cursor: GlobalPoint) {
+	fn update_loupe_window_position(&mut self, monitor: MonitorRect) -> bool {
+		if !self.state.alt_held {
+			return false;
+		}
+
+		let Some(loupe_window) = self.loupe_window.as_ref() else {
+			return false;
+		};
+		let Some(hud_window) = self.hud_window.as_ref() else {
+			return false;
+		};
+		let Some(hud_outer) = self.hud_outer_pos else {
+			return false;
+		};
+		let hud_scale = hud_window.window.scale_factor().max(1.0);
+		let hud_size = hud_window.window.inner_size();
+		let hud_h_points = ((hud_size.height as f64) / hud_scale).ceil().max(1.0) as i32;
+		let loupe_scale = loupe_window.window.scale_factor().max(1.0);
+		let loupe_size = loupe_window.window.inner_size();
+		let loupe_w_points = ((loupe_size.width as f64) / loupe_scale).ceil().max(1.0) as i32;
+		let loupe_h_points = ((loupe_size.height as f64) / loupe_scale).ceil().max(1.0) as i32;
+		let gap = 10;
+		let monitor_right = monitor.origin.x.saturating_add_unsigned(monitor.width);
+		let monitor_bottom = monitor.origin.y.saturating_add_unsigned(monitor.height);
+		let below_y = hud_outer.y.saturating_add(hud_h_points + gap);
+		let above_y = hud_outer.y.saturating_sub(gap.saturating_add(loupe_h_points));
+		let max_x = monitor_right.saturating_sub(loupe_w_points).max(monitor.origin.x);
+		let max_y = monitor_bottom.saturating_sub(loupe_h_points).max(monitor.origin.y);
+		let mut x = hud_outer.x;
+		let mut y = if below_y.saturating_add(loupe_h_points) <= monitor_bottom {
+			below_y
+		} else {
+			above_y
+		};
+
+		x = x.clamp(monitor.origin.x, max_x);
+		y = y.clamp(monitor.origin.y, max_y);
+
+		let desired = GlobalPoint::new(x, y);
+
+		if self.loupe_outer_pos == Some(desired) {
+			return true;
+		}
+
+		self.loupe_outer_pos = Some(desired);
+
+		loupe_window.window.set_outer_position(LogicalPosition::new(x as f64, y as f64));
+		loupe_window.window.request_redraw();
+
+		true
+	}
+
+	fn update_cursor_state(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
+		self.cursor_monitor = Some(monitor);
 		self.state.cursor = Some(cursor);
 
 		match self.state.mode {
@@ -1114,6 +1411,7 @@ struct WindowRenderer {
 	hud_bg: Option<HudBg>,
 	hud_bg_generation: u64,
 	hud_pill: Option<HudPillGeometry>,
+	loupe_tile: Option<Rect>,
 	hud_theme: Option<HudTheme>,
 }
 impl WindowRenderer {
@@ -2189,6 +2487,7 @@ impl WindowRenderer {
 			hud_bg: None,
 			hud_bg_generation: 0,
 			hud_pill: None,
+			loupe_tile: None,
 			hud_theme: None,
 		})
 	}
@@ -2299,6 +2598,126 @@ impl WindowRenderer {
 		let frame = self.acquire_frame(gpu)?;
 
 		self.render_frame(gpu, hud_shader_blur_active, frame, &paint_jobs, &screen_descriptor)?;
+
+		Ok(())
+	}
+
+	fn draw_loupe_tile_window(
+		&mut self,
+		gpu: &GpuContext,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+		show_hud_blur: bool,
+		hud_opaque: bool,
+		hud_opacity: f32,
+		hud_milk_amount: f32,
+		theme_mode: ThemeMode,
+	) -> Result<()> {
+		self.apply_pending_reconfigure(gpu);
+
+		let theme = effective_hud_theme(theme_mode, self.window.theme());
+
+		self.sync_egui_theme(theme);
+
+		let (size, pixels_per_point, raw_input) = self.prepare_egui_input(gpu);
+
+		self.hud_bg = None;
+		self.hud_pill = None;
+		self.loupe_tile = None;
+
+		let hud_blur_active = show_hud_blur && !hud_opaque;
+		let opacity = if hud_opaque { 1.0 } else { hud_opacity.clamp(0.0, 1.0) };
+		let tint = hud_milk_amount.clamp(0.0, 1.0);
+		let tint_strength = match theme {
+			HudTheme::Dark => 0.22,
+			HudTheme::Light => 0.28,
+		};
+		let mix = (tint * tint_strength).clamp(0.0, 1.0);
+		let mut fill = hud_body_fill_srgba8(theme, false);
+
+		fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
+			((f32::from(a) + ((f32::from(b) - f32::from(a)) * t)).round().clamp(0.0, 255.0)) as u8
+		}
+
+		fill[0] = lerp_u8(fill[0], 255, mix);
+		fill[1] = lerp_u8(fill[1], 255, mix);
+		fill[2] = lerp_u8(fill[2], 255, mix);
+		fill[3] = (opacity * 255.0).round().clamp(0.0, 255.0) as u8;
+
+		let body_fill = Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], fill[3]);
+		let mut loupe_tile_rect = None;
+		let full_output = self.egui_ctx.run(raw_input, |ctx| {
+			if !state.alt_held {
+				return;
+			}
+
+			const CELL: f32 = 10.0;
+
+			let fallback_side_px = 21_u32;
+			let (w, h) = state
+				.loupe
+				.as_ref()
+				.map(|loupe| loupe.patch.dimensions())
+				.unwrap_or((fallback_side_px, fallback_side_px));
+			let side = (w.max(h) as f32) * CELL;
+			let tile_padding = Margin::same(10);
+			let outer_stroke_color = match theme {
+				HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 40),
+				HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
+			};
+			let outer_stroke = egui::Stroke::new(1.0, outer_stroke_color);
+			let shadow = egui::epaint::Shadow {
+				offset: [0, 0],
+				blur: 10,
+				spread: 0,
+				color: match theme {
+					HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 28),
+					HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 18),
+				},
+			};
+			let frame = Frame {
+				fill: if hud_blur_active && !hud_opaque { Color32::TRANSPARENT } else { body_fill },
+				stroke: outer_stroke,
+				shadow,
+				corner_radius: CornerRadius::same(18),
+				inner_margin: tile_padding,
+				..Frame::default()
+			};
+			let pad = 6.0;
+
+			egui::Area::new(egui::Id::new("rsnap-loupe-window"))
+				.order(egui::Order::Foreground)
+				.fixed_pos(Pos2::new(pad, pad))
+				.show(ctx, |ui| {
+					let inner = frame.show(ui, |ui| {
+						ui.set_min_size(Vec2::new(side, side));
+
+						Self::render_loupe(
+							ui,
+							state,
+							monitor,
+							cursor,
+							hud_blur_active,
+							hud_opaque,
+							theme,
+						);
+					});
+
+					loupe_tile_rect = Some(inner.response.rect);
+				});
+		});
+
+		self.loupe_tile = loupe_tile_rect;
+
+		self.sync_egui_textures(gpu, &full_output);
+
+		let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, pixels_per_point);
+		let screen_descriptor =
+			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
+		let frame = self.acquire_frame(gpu)?;
+
+		self.render_frame(gpu, false, frame, &paint_jobs, &screen_descriptor)?;
 
 		Ok(())
 	}
