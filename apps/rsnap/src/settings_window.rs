@@ -422,6 +422,14 @@ impl SettingsWindow {
 					.add(egui::Slider::new(amount, 0.0..=1.0).show_value(false).trailing_fill(true))
 					.changed();
 			});
+
+			let pct = (amount.clamp(0.0, 1.0) * 100.0).round() as i32;
+
+			ui.label(
+				egui::RichText::new(format!("{pct:>3}%"))
+					.monospace()
+					.color(ui.visuals().weak_text_color()),
+			);
 		});
 
 		changed

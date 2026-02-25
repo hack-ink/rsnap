@@ -1577,13 +1577,13 @@ impl WindowRenderer {
 			// When native blur is enabled, keep a subtle tint so the blur is actually visible.
 			// `hud_milk_amount` increases the tint strength without affecting blur radius.
 			let milk = hud_milk_amount.clamp(0.0, 1.0);
-			let (base, extra, cap) = match theme {
-				HudTheme::Dark => (72.0, 72.0, 170_u8),
-				HudTheme::Light => (86.0, 86.0, 190_u8),
+			let (min_a, max_a) = match theme {
+				HudTheme::Dark => (48.0, 196.0),
+				HudTheme::Light => (52.0, 210.0),
 			};
-			let a = (base + (extra * milk)).round().clamp(0.0, 255.0) as u8;
+			let a = (min_a + ((max_a - min_a) * milk)).round().clamp(0.0, 255.0) as u8;
 
-			fill[3] = a.min(cap);
+			fill[3] = a;
 		}
 
 		let body_fill = Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], fill[3]);
@@ -2702,8 +2702,13 @@ fn macos_configure_hud_window(
 
 			let amount = blur_amount.clamp(0.0, 1.0);
 			let radius = if blur_enabled {
-				// Match winit's default (~80) near the middle of the slider, allow a bit more range.
-				(amount * 120.0).round().clamp(0.0, 160.0) as i64
+				// Use an eased curve so small slider movements near 0 do not produce huge blur changes.
+				// Keep some baseline blur when enabled to avoid "it looks off unless I move it".
+				let eased = amount * amount;
+				let min_radius = 20.0;
+				let max_radius = 140.0;
+
+				(min_radius + (eased * (max_radius - min_radius))).round().clamp(0.0, 200.0) as i64
 			} else {
 				0
 			};
