@@ -19,7 +19,7 @@ Prototype / in active development.
 The app crate (`apps/rsnap`) runs the menubar and hotkey controller that drives the
 overlay crate (`packages/rsnap-overlay`).
 
-See `SPEC.md` for the normative v0 contract.
+See `docs/spec/v0.md` for the normative v0 contract.
 
 ### macOS permissions
 
