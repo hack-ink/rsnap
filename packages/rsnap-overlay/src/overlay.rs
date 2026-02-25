@@ -86,6 +86,8 @@ pub struct OverlayConfig {
 	pub show_alt_hint_keycap: bool,
 	pub show_hud_blur: bool,
 	pub hud_opaque: bool,
+	/// 0..=1. Controls HUD background alpha.
+	pub hud_opacity: f32,
 	/// 0..=1. 0 disables the effect.
 	pub hud_fog_amount: f32,
 	/// 0..=1. 0 disables the effect.
@@ -99,6 +101,7 @@ impl Default for OverlayConfig {
 			show_alt_hint_keycap: true,
 			show_hud_blur: true,
 			hud_opaque: false,
+			hud_opacity: 0.35,
 			hud_fog_amount: 0.16,
 			hud_milk_amount: 0.0,
 			theme_mode: ThemeMode::System,
@@ -844,6 +847,7 @@ impl OverlaySession {
 					self.config.show_alt_hint_keycap,
 					self.config.show_hud_blur,
 					self.config.hud_opaque,
+					self.config.hud_opacity,
 					self.config.hud_fog_amount,
 					self.config.hud_milk_amount,
 					self.config.theme_mode,
@@ -897,6 +901,7 @@ impl OverlaySession {
 			self.config.show_alt_hint_keycap,
 			self.config.show_hud_blur,
 			self.config.hud_opaque,
+			self.config.hud_opacity,
 			self.config.hud_fog_amount,
 			self.config.hud_milk_amount,
 			self.config.theme_mode,
@@ -1462,6 +1467,7 @@ impl WindowRenderer {
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
 		hud_opaque: bool,
+		hud_opacity: f32,
 		hud_milk_amount: f32,
 		theme: HudTheme,
 	) -> (FullOutput, Option<HudPillGeometry>) {
@@ -1491,6 +1497,7 @@ impl WindowRenderer {
 					show_alt_hint_keycap,
 					hud_blur_active,
 					hud_opaque,
+					hud_opacity,
 					hud_milk_amount,
 					theme,
 					&mut hud_pill,
@@ -1520,6 +1527,7 @@ impl WindowRenderer {
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
 		hud_opaque: bool,
+		hud_opacity: f32,
 		hud_milk_amount: f32,
 		theme: HudTheme,
 		hud_pill_out: &mut Option<HudPillGeometry>,
@@ -1541,6 +1549,7 @@ impl WindowRenderer {
 					show_alt_hint_keycap,
 					hud_blur_active,
 					hud_opaque,
+					hud_opacity,
 					hud_milk_amount,
 					theme,
 					hud_pill_out,
@@ -1558,33 +1567,29 @@ impl WindowRenderer {
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
 		hud_opaque: bool,
+		hud_opacity: f32,
 		hud_milk_amount: f32,
 		theme: HudTheme,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
 		let pill_radius = 18_u8;
-		let mut fill = hud_body_fill_srgba8(theme, hud_opaque);
+		let opacity = if hud_opaque { 1.0 } else { hud_opacity.clamp(0.0, 1.0) };
+		let tint = hud_milk_amount.clamp(0.0, 1.0);
+		let tint_strength = match theme {
+			HudTheme::Dark => 0.22,
+			HudTheme::Light => 0.28,
+		};
+		let mix = (tint * tint_strength).clamp(0.0, 1.0);
+		let mut fill = hud_body_fill_srgba8(theme, false);
 
-		if !hud_opaque && !hud_blur_active && hud_compact {
-			// In the standalone HUD window, keep the fill more translucent so the user can still
-			// see the sharp background when native blur is disabled.
-			fill[3] = match theme {
-				HudTheme::Dark => 44,
-				HudTheme::Light => 60,
-			};
+		fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
+			((f32::from(a) + ((f32::from(b) - f32::from(a)) * t)).round().clamp(0.0, 255.0)) as u8
 		}
-		if !hud_opaque && hud_blur_active && hud_compact {
-			// When native blur is enabled, keep a subtle tint so the blur is actually visible.
-			// `hud_milk_amount` increases the tint strength without affecting blur radius.
-			let milk = hud_milk_amount.clamp(0.0, 1.0);
-			let max_a = match theme {
-				HudTheme::Dark => 180.0,
-				HudTheme::Light => 200.0,
-			};
-			let a = (max_a * milk).round().clamp(0.0, 255.0) as u8;
 
-			fill[3] = a;
-		}
+		fill[0] = lerp_u8(fill[0], 255, mix);
+		fill[1] = lerp_u8(fill[1], 255, mix);
+		fill[2] = lerp_u8(fill[2], 255, mix);
+		fill[3] = (opacity * 255.0).round().clamp(0.0, 255.0) as u8;
 
 		let body_fill = Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], fill[3]);
 		let outer_stroke_color = match theme {
@@ -2226,6 +2231,7 @@ impl WindowRenderer {
 		show_alt_hint_keycap: bool,
 		show_hud_blur: bool,
 		hud_opaque: bool,
+		hud_opacity: f32,
 		hud_fog_amount: f32,
 		hud_milk_amount: f32,
 		theme_mode: ThemeMode,
@@ -2267,6 +2273,7 @@ impl WindowRenderer {
 			show_alt_hint_keycap,
 			hud_glass_active,
 			hud_opaque,
+			hud_opacity,
 			hud_milk_amount,
 			theme,
 		);
@@ -2705,7 +2712,7 @@ fn macos_configure_hud_window(
 				// Use an eased curve so small slider movements near 0 do not produce huge blur changes.
 				// Keep the upper bound conservative; CGS blur radius gets strong quickly.
 				let eased = amount.powi(4);
-				let max_radius = 60.0;
+				let max_radius = 40.0;
 
 				(eased * max_radius).round().clamp(0.0, 200.0) as i64
 			} else {
