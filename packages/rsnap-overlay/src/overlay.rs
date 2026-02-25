@@ -1818,9 +1818,36 @@ impl WindowRenderer {
 				&& self.hud_pill.is_some()
 				&& let Some(bg) = &self.hud_bg
 			{
+				if let Some(pill) = self.hud_pill {
+					let ppp = screen_descriptor.pixels_per_point;
+					let pad_px = (24.0 * ppp).ceil() as i32;
+					let surface_w = screen_descriptor.size_in_pixels[0].max(1) as i32;
+					let surface_h = screen_descriptor.size_in_pixels[1].max(1) as i32;
+					let min_x_bound = (surface_w - 1).max(0);
+					let min_y_bound = (surface_h - 1).max(0);
+					let min_x =
+						((pill.rect.min.x * ppp).floor() as i32 - pad_px).clamp(0, min_x_bound);
+					let min_y =
+						((pill.rect.min.y * ppp).floor() as i32 - pad_px).clamp(0, min_y_bound);
+					let max_x =
+						((pill.rect.max.x * ppp).ceil() as i32 + pad_px).clamp(0, surface_w);
+					let max_y =
+						((pill.rect.max.y * ppp).ceil() as i32 + pad_px).clamp(0, surface_h);
+					let w = (max_x - min_x).max(1) as u32;
+					let h = (max_y - min_y).max(1) as u32;
+
+					rpass.set_scissor_rect(min_x as u32, min_y as u32, w, h);
+				}
+
 				rpass.set_pipeline(&self.hud_blur_pipeline);
 				rpass.set_bind_group(0, &bg.hud_blur_bind_group, &[]);
 				rpass.draw(0..3, 0..1);
+				rpass.set_scissor_rect(
+					0,
+					0,
+					screen_descriptor.size_in_pixels[0].max(1),
+					screen_descriptor.size_in_pixels[1].max(1),
+				);
 			}
 
 			self.egui_renderer.render(&mut rpass, paint_jobs, screen_descriptor);
@@ -1999,7 +2026,7 @@ impl WindowRenderer {
 		let rect_min_px = [rect.min.x * pixels_per_point, rect.min.y * pixels_per_point];
 		let rect_size_px = [rect.width() * pixels_per_point, rect.height() * pixels_per_point];
 		let radius_px = hud_pill.radius_points * pixels_per_point;
-		let blur_radius_px = 5.5 * pixels_per_point;
+		let blur_radius_px = (0.9 + (hud_fog_amount.clamp(0.0, 1.0) * 3.2)) * pixels_per_point;
 		let edge_softness_px = 1.0 * pixels_per_point;
 
 		fn srgb8_to_linear_f32(x: u8) -> f32 {
