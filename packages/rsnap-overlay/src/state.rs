@@ -1,8 +1,4 @@
-use std::collections::VecDeque;
-
 use image::RgbaImage;
-
-pub(crate) const COLOR_HISTORY_CAP: usize = 5;
 
 #[derive(Debug)]
 pub struct LoupeSample {
@@ -104,7 +100,6 @@ pub(crate) struct OverlayState {
 	pub frozen_generation: u64,
 	pub error_message: Option<String>,
 	pub alt_held: bool,
-	pub color_history: VecDeque<Rgb>,
 	pub loupe: Option<LoupeSample>,
 }
 impl OverlayState {
@@ -118,7 +113,6 @@ impl OverlayState {
 			frozen_generation: 0,
 			error_message: None,
 			alt_held: false,
-			color_history: VecDeque::with_capacity(COLOR_HISTORY_CAP),
 			loupe: None,
 		}
 	}
@@ -129,22 +123,6 @@ impl OverlayState {
 
 	pub fn clear_error(&mut self) {
 		self.error_message = None;
-	}
-
-	pub fn push_color_history(&mut self, rgb: Rgb) {
-		if self.color_history.front().is_some_and(|c| *c == rgb) {
-			return;
-		}
-
-		if let Some(pos) = self.color_history.iter().position(|c| *c == rgb) {
-			self.color_history.remove(pos);
-		}
-
-		self.color_history.push_front(rgb);
-
-		while self.color_history.len() > COLOR_HISTORY_CAP {
-			self.color_history.pop_back();
-		}
 	}
 
 	pub fn begin_freeze(&mut self, monitor: MonitorRect) {
@@ -174,8 +152,6 @@ impl OverlayState {
 
 #[cfg(test)]
 mod tests {
-	use crate::state::{COLOR_HISTORY_CAP, OverlayState, Rgb};
-
 	use crate::state::{GlobalPoint, MonitorRect};
 
 	#[test]
@@ -195,35 +171,5 @@ mod tests {
 		assert_eq!(monitor.local_u32(GlobalPoint::new(-100, 50)), Some((0, 0)));
 		assert_eq!(monitor.local_u32(GlobalPoint::new(-1, 51)), Some((99, 1)));
 		assert_eq!(monitor.local_u32(GlobalPoint::new(100, 50)), None);
-	}
-
-	#[test]
-	fn color_history_dedupes_and_caps() {
-		let colors = [
-			Rgb::new(1, 2, 3),
-			Rgb::new(4, 5, 6),
-			Rgb::new(7, 8, 9),
-			Rgb::new(10, 11, 12),
-			Rgb::new(13, 14, 15),
-			Rgb::new(16, 17, 18),
-		];
-		let mut state = OverlayState::new();
-
-		for c in colors {
-			state.push_color_history(c);
-		}
-
-		assert_eq!(state.color_history.len(), COLOR_HISTORY_CAP);
-		assert_eq!(state.color_history.front(), Some(&Rgb::new(16, 17, 18)));
-
-		// Dedupe moves to front.
-		state.push_color_history(Rgb::new(10, 11, 12));
-
-		assert_eq!(state.color_history.front(), Some(&Rgb::new(10, 11, 12)));
-
-		// No-op if already at front.
-		state.push_color_history(Rgb::new(10, 11, 12));
-
-		assert_eq!(state.color_history.front(), Some(&Rgb::new(10, 11, 12)));
 	}
 }
