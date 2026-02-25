@@ -331,12 +331,8 @@ impl SettingsWindow {
 					.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD")
 					.changed();
 				changed |= ui.checkbox(&mut settings.hud_opaque, "Opaque HUD").changed();
-				ui.add_enabled_ui(!settings.hud_opaque, |ui| {
-					changed |=
-						ui.checkbox(&mut settings.show_hud_blur, "Enable HUD blur").changed();
-				});
 
-				let hud_blur_effective = settings.show_hud_blur && !settings.hud_opaque;
+				let hud_blur_effective = !settings.hud_opaque;
 
 				ui.add_space(6.0);
 
@@ -347,12 +343,14 @@ impl SettingsWindow {
 						&mut settings.hud_fog_amount,
 						"Blur",
 					);
-					changed |= Self::checkbox_slider_row(
-						ui,
-						&mut settings.hud_milk_enabled,
-						&mut settings.hud_milk_amount,
-						"Tint",
-					);
+					ui.add_enabled_ui(settings.hud_fog_enabled, |ui| {
+						changed |= Self::checkbox_slider_row(
+							ui,
+							&mut settings.hud_milk_enabled,
+							&mut settings.hud_milk_amount,
+							"Tint",
+						);
+					});
 				});
 
 				ui.add_space(8.0);

@@ -48,11 +48,11 @@ struct App {
 }
 impl App {
 	fn overlay_config(&self) -> OverlayConfig {
-		let show_hud_blur = self.settings.show_hud_blur && !self.settings.hud_opaque;
 		let hud_fog_amount =
 			if self.settings.hud_fog_enabled { self.settings.hud_fog_amount } else { 0.0 };
 		let hud_milk_amount =
 			if self.settings.hud_milk_enabled { self.settings.hud_milk_amount } else { 0.0 };
+		let show_hud_blur = self.settings.hud_fog_enabled && !self.settings.hud_opaque;
 
 		OverlayConfig {
 			hud_anchor: HudAnchor::Cursor,

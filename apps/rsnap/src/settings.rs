@@ -12,8 +12,6 @@ pub struct AppSettings {
 	#[serde(default)]
 	pub show_alt_hint_keycap: bool,
 	#[serde(default)]
-	pub show_hud_blur: bool,
-	#[serde(default)]
 	pub hud_opaque: bool,
 	#[serde(default)]
 	pub hud_fog_enabled: bool,
@@ -73,7 +71,6 @@ impl Default for AppSettings {
 	fn default() -> Self {
 		Self {
 			show_alt_hint_keycap: true,
-			show_hud_blur: true,
 			hud_opaque: false,
 			hud_fog_enabled: true,
 			hud_fog_amount: default_hud_fog_amount(),
