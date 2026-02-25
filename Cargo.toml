@@ -16,6 +16,7 @@ version     = "0.1.0"
 arboard            = { version = "3.6.1" }
 color-eyre         = { version = "0.6.5" }
 device_query       = { version = "2.1.0" }
+directories        = { version = "5.0.1" }
 egui               = { version = "0.31.1" }
 egui-wgpu          = { version = "0.31.1" }
 egui-winit         = { version = "0.31.1" }
@@ -23,6 +24,8 @@ global-hotkey      = { version = "0.7.0", features = ["tracing"] }
 image              = { version = "0.25.9", default-features = false, features = ["png"] }
 objc               = { version = "0.2.7" }
 pollster           = { version = "0.4.0" }
+serde              = { version = "1.0.197", features = ["derive"] }
+serde_json         = { version = "1.0.114" }
 thiserror          = { version = "1.0.57" }
 tracing            = { version = "0.1.44" }
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
