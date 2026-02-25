@@ -32,7 +32,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 tray-icon          = { version = "0.21.3" }
 wgpu               = { version = "24.0.1" }
 winit              = { version = "0.30.12", features = ["rwh_06"] }
-xcap               = { version = "0.0.12" }
+xcap               = { version = "0.8.2" }
 
 rsnap-overlay = { version = "0.1.0", path = "packages/rsnap-overlay" }
 
