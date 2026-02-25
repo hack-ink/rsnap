@@ -6,10 +6,8 @@ use std::{
 
 use color_eyre::eyre::{self, Result, WrapErr};
 use device_query::DeviceQuery;
-use egui::Align;
 use egui::ClippedPrimitive;
 use egui::FullOutput;
-use egui::Layout;
 use egui::Ui;
 use egui::{Color32, CornerRadius, Frame, Margin, Pos2, Rect, Vec2, ViewportId};
 use egui_wgpu::{Renderer, ScreenDescriptor};
@@ -948,7 +946,7 @@ impl WindowRenderer {
 			..Frame::default()
 		}
 		.show(ui, |ui| {
-			ui.set_min_width(340.0);
+			ui.set_min_width(260.0);
 
 			ui.spacing_mut().item_spacing = egui::vec2(10.0, 6.0);
 
@@ -981,10 +979,6 @@ impl WindowRenderer {
 	) {
 		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
 		let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
-		let hint = match state.mode {
-			OverlayMode::Live => "Click to freeze • Tab copies HEX • Hold Alt for loupe",
-			OverlayMode::Frozen => "Space copies PNG • Tab copies HEX • Hold Alt for loupe",
-		};
 		let pos_text = format!("x={}, y={}", cursor.x, cursor.y);
 		let rgb_text = match state.rgb {
 			Some(rgb) => format!("{}, {}, {}  {}", rgb.r, rgb.g, rgb.b, rgb.hex_upper()),
@@ -1011,9 +1005,6 @@ impl WindowRenderer {
 					egui::StrokeKind::Inside,
 				);
 				ui.label(egui::RichText::new(rgb_text).color(label_color).monospace());
-				ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-					ui.label(egui::RichText::new(hint).color(secondary_color));
-				});
 			});
 
 			if state.alt_held {
