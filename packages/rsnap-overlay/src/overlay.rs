@@ -37,7 +37,7 @@ use winit::{
 };
 
 use crate::{
-	state::{COLOR_HISTORY_CAP, GlobalPoint, MonitorRect, OverlayMode, OverlayState, Rgb},
+	state::{GlobalPoint, MonitorRect, OverlayMode, OverlayState, Rgb},
 	worker::{OverlayWorker, WorkerResponse},
 };
 
@@ -532,17 +532,7 @@ impl OverlaySession {
 				let hex = rgb.hex_upper();
 
 				match write_text_to_clipboard(&hex) {
-					Ok(()) => {
-						self.state.push_color_history(rgb);
-
-						if let Some(monitor) =
-							self.state.cursor.and_then(|cursor| self.monitor_at(cursor))
-						{
-							self.request_redraw_for_monitor(monitor);
-						} else {
-							self.request_redraw_all();
-						}
-					},
+					Ok(()) => {},
 					Err(err) => {
 						self.state.set_error(format!("{err:#}"));
 						self.request_redraw_all();
@@ -1027,42 +1017,7 @@ impl WindowRenderer {
 			});
 
 			if state.alt_held {
-				Self::render_recent_row(ui, state);
 				Self::render_loupe(ui, state, monitor, cursor);
-			}
-		});
-	}
-
-	fn render_recent_row(ui: &mut Ui, state: &OverlayState) {
-		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
-		let chips = COLOR_HISTORY_CAP;
-		let chip_size = Vec2::splat(12.0);
-		let gap = 6.0;
-		let total_w = (chips as f32) * chip_size.x + ((chips - 1) as f32) * gap;
-
-		ui.horizontal(|ui| {
-			ui.label(egui::RichText::new("Recent").color(label_color));
-
-			let (rect, _) =
-				ui.allocate_exact_size(Vec2::new(total_w, chip_size.y), egui::Sense::hover());
-
-			for i in 0..chips {
-				let min = Pos2::new(rect.min.x + (i as f32) * (chip_size.x + gap), rect.min.y);
-				let chip_rect = Rect::from_min_size(min, chip_size);
-				let chip_fill = state
-					.color_history
-					.get(i)
-					.copied()
-					.map(|rgb| Color32::from_rgb(rgb.r, rgb.g, rgb.b))
-					.unwrap_or(Color32::from_rgba_unmultiplied(255, 255, 255, 14));
-
-				ui.painter().rect_filled(chip_rect, 3.0, chip_fill);
-				ui.painter().rect_stroke(
-					chip_rect,
-					3.0,
-					egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
-					egui::StrokeKind::Inside,
-				);
 			}
 		});
 	}
