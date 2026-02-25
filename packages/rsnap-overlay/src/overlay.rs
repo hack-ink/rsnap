@@ -1608,7 +1608,7 @@ impl WindowRenderer {
 		let rect_min_px = [rect.min.x * pixels_per_point, rect.min.y * pixels_per_point];
 		let rect_size_px = [rect.width() * pixels_per_point, rect.height() * pixels_per_point];
 		let radius_px = hud_pill.radius_points * pixels_per_point;
-		let blur_radius_px = 4.0 * pixels_per_point;
+		let blur_radius_px = 5.5 * pixels_per_point;
 		let edge_softness_px = 1.0 * pixels_per_point;
 
 		fn srgb8_to_linear_f32(x: u8) -> f32 {

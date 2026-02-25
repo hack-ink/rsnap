@@ -80,13 +80,13 @@ fn sample_blur(uv: vec2<f32>, delta: vec2<f32>, seed: vec2<f32>) -> vec3<f32> {
 	for (var i: u32 = 0u; i < 16u; i = i + 1u) {
 		let o = rot(taps[i], angle);
 		let d2 = dot(o, o);
-		let w = exp(-3.0 * d2);
+		let w = exp(-2.2 * d2);
 		sum += textureSample(bg_tex, bg_samp, uv + o * delta).rgb * w;
 		weight_sum += w;
 	}
 
 	// Add the center tap with a higher weight for stability.
-	let center_w = 1.25;
+	let center_w = 1.10;
 	sum += textureSample(bg_tex, bg_samp, uv).rgb * center_w;
 	weight_sum += center_w;
 
@@ -116,9 +116,11 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 	let blur_radius_px = max(u.radius_blur_soft.y, 0.0);
 	let delta = vec2<f32>(blur_radius_px) / surface_size;
 	let blurred = sample_blur(uv, delta, pos.xy);
+	let luma = dot(blurred, vec3<f32>(0.2126, 0.7152, 0.0722));
+	let fogged = mix(blurred, vec3<f32>(luma), 0.16);
 
 	let tint = u.tint_rgba;
-	let color = mix(blurred, tint.rgb, tint.a);
+	let color = mix(fogged, tint.rgb, tint.a);
 
 	return vec4<f32>(color * alpha, alpha);
 }
