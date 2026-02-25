@@ -606,6 +606,14 @@ impl OverlaySession {
 		};
 
 		self.update_cursor_state(monitor, cursor);
+
+		if matches!(self.state.mode, OverlayMode::Live)
+			&& let Some(worker) = &self.worker
+		{
+			worker.try_sample_rgb(monitor, cursor);
+
+			self.last_rgb_request_at = Instant::now();
+		}
 	}
 
 	fn monitor_at(&self, cursor: GlobalPoint) -> Option<MonitorRect> {
@@ -987,16 +995,14 @@ impl WindowRenderer {
 	) {
 		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
 		let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
-		let hint = match (state.mode, state.rgb.is_some()) {
-			(OverlayMode::Live, true) => "Click to freeze • Tab copies HEX • Hold Alt for loupe",
-			(OverlayMode::Frozen, true) => "Space copies PNG • Tab copies HEX • Hold Alt for loupe",
-			(OverlayMode::Live, false) => "Click to freeze • Hold Alt for loupe",
-			(OverlayMode::Frozen, false) => "Space copies PNG • Hold Alt for loupe",
+		let hint = match state.mode {
+			OverlayMode::Live => "Click to freeze • Tab copies HEX • Hold Alt for loupe",
+			OverlayMode::Frozen => "Space copies PNG • Tab copies HEX • Hold Alt for loupe",
 		};
 		let pos_text = format!("x={}, y={}", cursor.x, cursor.y);
 		let rgb_text = match state.rgb {
 			Some(rgb) => format!("{}, {}, {}  {}", rgb.r, rgb.g, rgb.b, rgb.hex_upper()),
-			None => String::from("?, ?, ?  #??????"),
+			None => String::from("???, ???, ???  #??????"),
 		};
 		let swatch_size = egui::vec2(10.0, 10.0);
 
