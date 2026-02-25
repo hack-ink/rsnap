@@ -25,10 +25,10 @@ use wgpu::SurfaceCapabilities;
 use wgpu::SurfaceError;
 use wgpu::SurfaceTexture;
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalPosition;
+use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use winit::event::KeyEvent;
 use winit::{
-	dpi::{PhysicalSize},
+	dpi::PhysicalSize,
 	event::{ElementState, Modifiers, MouseButton, WindowEvent},
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
 	keyboard::{Key, NamedKey},
@@ -288,8 +288,14 @@ impl OverlaySession {
 				.with_resizable(false)
 				.with_transparent(true)
 				.with_window_level(WindowLevel::AlwaysOnTop)
-				.with_inner_size(PhysicalSize::new(monitor_rect.width, monitor_rect.height))
-				.with_position(PhysicalPosition::new(monitor_rect.origin.x, monitor_rect.origin.y));
+				.with_inner_size(LogicalSize::new(
+					monitor_rect.width as f64,
+					monitor_rect.height as f64,
+				))
+				.with_position(LogicalPosition::new(
+					monitor_rect.origin.x as f64,
+					monitor_rect.origin.y as f64,
+				));
 			let window = event_loop
 				.create_window(attrs)
 				.map_err(|err| format!("Unable to create overlay window: {err}"))?;
