@@ -83,6 +83,10 @@ We would like to extend our heartfelt gratitude to the following projects and co
 
 - The Rust community for their continuous support and development of the Rust ecosystem.
 
+## Additional Acknowledgements
+
+- TODO
+
 <div align="right">
 
 ### License
