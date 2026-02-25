@@ -24,6 +24,7 @@ egui-wgpu    = { workspace = true }
 egui-winit   = { workspace = true }
 image        = { workspace = true }
 pollster     = { workspace = true }
+serde        = { workspace = true }
 thiserror    = { workspace = true }
 wgpu         = { workspace = true }
 winit        = { workspace = true }
