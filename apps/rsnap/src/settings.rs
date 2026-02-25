@@ -1,5 +1,5 @@
 use std::fs;
-use std::io;
+use std::io::{self};
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
@@ -9,13 +9,6 @@ use serde::{Deserialize, Serialize};
 pub struct AppSettings {
 	pub show_alt_hint_keycap: bool,
 }
-
-impl Default for AppSettings {
-	fn default() -> Self {
-		Self { show_alt_hint_keycap: true }
-	}
-}
-
 impl AppSettings {
 	#[must_use]
 	pub fn load() -> Self {
@@ -25,6 +18,7 @@ impl AppSettings {
 		let Ok(bytes) = fs::read(&path) else {
 			return Self::default();
 		};
+
 		serde_json::from_slice(&bytes).unwrap_or_else(|_| Self::default())
 	}
 
@@ -35,6 +29,7 @@ impl AppSettings {
 		let Some(dir) = path.parent() else {
 			return Ok(());
 		};
+
 		fs::create_dir_all(dir)?;
 
 		let json = serde_json::to_vec_pretty(self)
@@ -53,8 +48,15 @@ impl AppSettings {
 	}
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+impl Default for AppSettings {
+	fn default() -> Self {
+		Self { show_alt_hint_keycap: true }
+	}
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 	let tmp = path.with_extension("json.tmp");
+
 	fs::write(&tmp, bytes)?;
 	fs::rename(&tmp, path)?;
 
