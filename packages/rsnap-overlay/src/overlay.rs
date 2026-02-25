@@ -782,7 +782,10 @@ impl OverlaySession {
 		if self.state.live_bg_monitor == Some(monitor) && self.state.live_bg_image.is_some() {
 			return;
 		}
-		if self.last_live_bg_request_at.elapsed() < self.live_bg_request_interval {
+
+		let force = self.state.alt_held && self.state.live_bg_image.is_none();
+
+		if !force && self.last_live_bg_request_at.elapsed() < self.live_bg_request_interval {
 			return;
 		}
 
@@ -1090,7 +1093,7 @@ impl WindowRenderer {
 			address_mode_w: wgpu::AddressMode::ClampToEdge,
 			mag_filter: wgpu::FilterMode::Linear,
 			min_filter: wgpu::FilterMode::Linear,
-			mipmap_filter: wgpu::FilterMode::Nearest,
+			mipmap_filter: wgpu::FilterMode::Linear,
 			..Default::default()
 		})
 	}
