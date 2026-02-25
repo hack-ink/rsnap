@@ -9,7 +9,7 @@ use device_query::DeviceQuery;
 use egui::ClippedPrimitive;
 use egui::FullOutput;
 use egui::Ui;
-use egui::{Color32, CornerRadius, Frame, Margin, Pos2, Rect, Vec2, ViewportId};
+use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, Pos2, Rect, Vec2, ViewportId};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use image::RgbaImage;
 use wgpu::Adapter;
@@ -988,7 +988,7 @@ impl WindowRenderer {
 		let swatch_size = egui::vec2(10.0, 10.0);
 
 		ui.vertical(|ui| {
-			ui.horizontal(|ui| {
+			ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
 				ui.label(egui::RichText::new(pos_text).color(label_color).monospace());
 				ui.label(egui::RichText::new("•").color(secondary_color).monospace());
 
@@ -1007,7 +1007,21 @@ impl WindowRenderer {
 				);
 				ui.label(egui::RichText::new(hex_text).color(label_color).monospace());
 				ui.label(egui::RichText::new(rgb_text).color(secondary_color).monospace());
-				ui.label(egui::RichText::new("⌥⌄").color(secondary_color).monospace());
+
+				let keycap_fill = Color32::from_rgba_unmultiplied(255, 255, 255, 18);
+				let keycap_stroke =
+					egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 30));
+
+				Frame {
+					fill: keycap_fill,
+					stroke: keycap_stroke,
+					corner_radius: CornerRadius::same(6),
+					inner_margin: Margin::symmetric(6, 2),
+					..Frame::default()
+				}
+				.show(ui, |ui| {
+					ui.label(egui::RichText::new("Alt").color(secondary_color).monospace());
+				});
 			});
 		});
 	}
