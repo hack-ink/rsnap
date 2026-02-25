@@ -946,8 +946,6 @@ impl WindowRenderer {
 			..Frame::default()
 		}
 		.show(ui, |ui| {
-			ui.set_min_width(260.0);
-
 			ui.spacing_mut().item_spacing = egui::vec2(10.0, 6.0);
 
 			if let Some(err) = &state.error_message {
@@ -980,10 +978,10 @@ impl WindowRenderer {
 	) {
 		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
 		let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
-		let pos_text = format!("({},{})", cursor.x, cursor.y);
+		let pos_text = format!("xy({}, {})", cursor.x, cursor.y);
 		let (hex_text, rgb_text) = match state.rgb {
-			Some(rgb) => (rgb.hex_upper(), format!("{}, {}, {}", rgb.r, rgb.g, rgb.b)),
-			None => (String::from("#??????"), String::from("???, ???, ???")),
+			Some(rgb) => (rgb.hex_upper(), format!("rgb({}, {}, {})", rgb.r, rgb.g, rgb.b)),
+			None => (String::from("?"), String::from("rgb(?)")),
 		};
 		let swatch_size = egui::vec2(10.0, 10.0);
 
