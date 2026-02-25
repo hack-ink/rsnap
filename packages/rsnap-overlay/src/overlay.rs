@@ -60,10 +60,11 @@ pub enum OverlayControl {
 #[derive(Clone, Debug)]
 pub struct OverlayConfig {
 	pub hud_anchor: HudAnchor,
+	pub show_alt_hint_keycap: bool,
 }
 impl Default for OverlayConfig {
 	fn default() -> Self {
-		Self { hud_anchor: HudAnchor::Cursor }
+		Self { hud_anchor: HudAnchor::Cursor, show_alt_hint_keycap: true }
 	}
 }
 
@@ -569,6 +570,7 @@ impl OverlaySession {
 			&self.state,
 			overlay_window.monitor,
 			self.config.hud_anchor,
+			self.config.show_alt_hint_keycap,
 		) {
 			return self.exit(OverlayExit::Error(format!("{err:#}")));
 		}
@@ -877,6 +879,7 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 		hud_anchor: HudAnchor,
+		show_alt_hint_keycap: bool,
 	) -> FullOutput {
 		let can_draw = Self::should_draw_hud(state, monitor);
 		let hud_data = if can_draw {
@@ -889,7 +892,15 @@ impl WindowRenderer {
 
 		self.egui_ctx.run(raw_input, |ctx| {
 			if let Some((cursor, local_cursor)) = hud_data {
-				Self::render_hud(ctx, state, monitor, cursor, local_cursor, hud_anchor);
+				Self::render_hud(
+					ctx,
+					state,
+					monitor,
+					cursor,
+					local_cursor,
+					hud_anchor,
+					show_alt_hint_keycap,
+				);
 			}
 		})
 	}
@@ -908,6 +919,7 @@ impl WindowRenderer {
 		cursor: GlobalPoint,
 		local_cursor: Pos2,
 		hud_anchor: HudAnchor,
+		show_alt_hint_keycap: bool,
 	) {
 		let (hud_x, hud_y) = match hud_anchor {
 			HudAnchor::Cursor => (local_cursor.x + 14.0, local_cursor.y + 14.0),
@@ -917,7 +929,7 @@ impl WindowRenderer {
 			.order(egui::Order::Foreground)
 			.fixed_pos(Pos2::new(hud_x, hud_y))
 			.show(ctx, |ui| {
-				Self::render_hud_frame(ui, state, monitor, cursor);
+				Self::render_hud_frame(ui, state, monitor, cursor, show_alt_hint_keycap);
 			});
 	}
 
@@ -926,6 +938,7 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
+		show_alt_hint_keycap: bool,
 	) {
 		let pill_radius = 18_u8;
 		let body_fill = Color32::from_rgba_unmultiplied(28, 28, 32, 156);
@@ -955,7 +968,7 @@ impl WindowRenderer {
 						.monospace(),
 				);
 			} else {
-				Self::render_hud_content(ui, state, monitor, cursor);
+				Self::render_hud_content(ui, state, monitor, cursor, show_alt_hint_keycap);
 			}
 		});
 		let pill_rect = inner.response.rect;
@@ -977,6 +990,7 @@ impl WindowRenderer {
 		state: &OverlayState,
 		_monitor: MonitorRect,
 		cursor: GlobalPoint,
+		show_alt_hint_keycap: bool,
 	) {
 		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
 		let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
@@ -1008,20 +1022,22 @@ impl WindowRenderer {
 				ui.label(egui::RichText::new(hex_text).color(label_color).monospace());
 				ui.label(egui::RichText::new(rgb_text).color(secondary_color).monospace());
 
-				let keycap_fill = Color32::from_rgba_unmultiplied(255, 255, 255, 18);
-				let keycap_stroke =
-					egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 30));
+				if show_alt_hint_keycap {
+					let keycap_fill = Color32::from_rgba_unmultiplied(255, 255, 255, 18);
+					let keycap_stroke =
+						egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 30));
 
-				Frame {
-					fill: keycap_fill,
-					stroke: keycap_stroke,
-					corner_radius: CornerRadius::same(6),
-					inner_margin: Margin::symmetric(6, 2),
-					..Frame::default()
+					Frame {
+						fill: keycap_fill,
+						stroke: keycap_stroke,
+						corner_radius: CornerRadius::same(6),
+						inner_margin: Margin::symmetric(6, 2),
+						..Frame::default()
+					}
+					.show(ui, |ui| {
+						ui.label(egui::RichText::new("Alt").color(secondary_color).monospace());
+					});
 				}
-				.show(ui, |ui| {
-					ui.label(egui::RichText::new("Alt").color(secondary_color).monospace());
-				});
 			});
 		});
 	}
@@ -1383,6 +1399,7 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 		hud_anchor: HudAnchor,
+		show_alt_hint_keycap: bool,
 	) -> Result<()> {
 		self.apply_pending_reconfigure(gpu);
 
@@ -1390,7 +1407,8 @@ impl WindowRenderer {
 
 		self.sync_frozen_bg(gpu, state, monitor)?;
 
-		let full_output = self.run_egui(raw_input, state, monitor, hud_anchor);
+		let full_output =
+			self.run_egui(raw_input, state, monitor, hud_anchor, show_alt_hint_keycap);
 
 		self.sync_egui_textures(gpu, &full_output);
 
