@@ -42,7 +42,7 @@ pub(crate) struct OverlayWorker {
 }
 impl OverlayWorker {
 	pub(crate) fn new(mut backend: Box<dyn CaptureBackend>) -> Self {
-		let (req_tx, req_rx) = std::sync::mpsc::sync_channel(8);
+		let (req_tx, req_rx) = std::sync::mpsc::sync_channel(64);
 		let (resp_tx, resp_rx) = std::sync::mpsc::channel();
 
 		std::thread::spawn(move || {
