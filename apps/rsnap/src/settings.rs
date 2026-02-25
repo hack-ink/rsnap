@@ -129,24 +129,24 @@ impl Default for LegacyAppSettings {
 			show_hud_blur: true,
 			hud_opaque: false,
 			hud_fog_enabled: true,
-			hud_fog_amount: 0.16,
+			hud_fog_amount: default_hud_blur(),
 			hud_milk_enabled: false,
-			hud_milk_amount: 0.22,
+			hud_milk_amount: default_hud_tint(),
 			theme_mode: ThemeMode::System,
 		}
 	}
 }
 
 fn default_hud_opacity() -> f32 {
-	0.35
+	0.75
 }
 
 fn default_hud_blur() -> f32 {
-	0.30
+	0.25
 }
 
 fn default_hud_tint() -> f32 {
-	0.12
+	0.0
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
