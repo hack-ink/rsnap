@@ -926,14 +926,14 @@ impl WindowRenderer {
 		cursor: GlobalPoint,
 	) {
 		let pill_radius = 18_u8;
-		let body_fill = Color32::from_rgba_unmultiplied(28, 28, 32, 168);
+		let body_fill = Color32::from_rgba_unmultiplied(28, 28, 32, 156);
 		let outer_stroke =
-			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 44));
+			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 40));
 		let pill_shadow = egui::epaint::Shadow {
 			offset: [0, 1],
-			blur: 10,
+			blur: 8,
 			spread: 0,
-			color: Color32::from_rgba_unmultiplied(0, 0, 0, 38),
+			color: Color32::from_rgba_unmultiplied(0, 0, 0, 34),
 		};
 		let inner = Frame {
 			fill: body_fill,
@@ -958,31 +958,7 @@ impl WindowRenderer {
 			}
 		});
 		let pill_rect = inner.response.rect;
-		let highlight_h = (pill_rect.height() * 0.44).max(1.0);
-		let shade_h = (pill_rect.height() * 0.44).max(1.0);
-		let highlight_rect = Rect::from_min_max(
-			pill_rect.min,
-			Pos2::new(pill_rect.max.x, pill_rect.min.y + highlight_h),
-		);
-		let shade_rect = Rect::from_min_max(
-			Pos2::new(pill_rect.min.x, pill_rect.max.y - shade_h),
-			pill_rect.max,
-		);
-		let highlight = Color32::from_rgba_unmultiplied(255, 255, 255, 18);
-		let shade = Color32::from_rgba_unmultiplied(0, 0, 0, 18);
-
-		ui.painter().rect_filled(
-			highlight_rect,
-			CornerRadius { nw: pill_radius, ne: pill_radius, sw: 0, se: 0 },
-			highlight,
-		);
-		ui.painter().rect_filled(
-			shade_rect,
-			CornerRadius { nw: 0, ne: 0, sw: pill_radius, se: pill_radius },
-			shade,
-		);
-
-		let inner_stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 70));
+		let inner_stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 56));
 		let inner_rect = pill_rect.shrink(1.0);
 
 		ui.painter().rect_stroke(
