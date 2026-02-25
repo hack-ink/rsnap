@@ -13,9 +13,11 @@ use winit::event::ElementState;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState};
+use winit::window::Theme;
 use winit::window::{Window, WindowId};
 
 use crate::settings::AppSettings;
+use rsnap_overlay::ThemeMode;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingsPane {
@@ -59,6 +61,8 @@ pub struct SettingsWindow {
 	search: String,
 	modifiers: ModifiersState,
 	last_redraw: Instant,
+	requested_theme: Option<Theme>,
+	effective_theme: Option<Theme>,
 }
 impl SettingsWindow {
 	pub fn open(event_loop: &ActiveEventLoop) -> Result<Self> {
@@ -71,9 +75,6 @@ impl SettingsWindow {
 		let window = Arc::new(window);
 		let (gpu, surface, surface_config) = GpuContext::new_with_surface(Arc::clone(&window))?;
 		let egui_ctx = egui::Context::default();
-
-		egui_ctx.set_visuals(egui::Visuals::dark());
-
 		let egui_state = egui_winit::State::new(
 			egui_ctx.clone(),
 			egui::ViewportId::ROOT,
@@ -96,6 +97,8 @@ impl SettingsWindow {
 			search: String::new(),
 			modifiers: ModifiersState::default(),
 			last_redraw: Instant::now(),
+			requested_theme: None,
+			effective_theme: None,
 		})
 	}
 
@@ -113,6 +116,10 @@ impl SettingsWindow {
 		match event {
 			WindowEvent::CloseRequested => return SettingsControl::CloseRequested,
 			WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+			WindowEvent::ThemeChanged(_) => {
+				// Follow system theme changes when ThemeMode::System is active.
+				self.window.request_redraw();
+			},
 			WindowEvent::KeyboardInput { event, .. } => {
 				if cfg!(target_os = "macos")
 					&& event.state == ElementState::Pressed
@@ -253,8 +260,14 @@ impl SettingsWindow {
 	}
 
 	fn ui(&mut self, ctx: &egui::Context, settings: &mut AppSettings) -> bool {
-		let mut changed = false;
+		self.sync_theme(ctx, settings.theme_mode);
+		self.render_top_panel(ctx);
+		self.render_sidebar(ctx);
 
+		self.render_central_panel(ctx, settings)
+	}
+
+	fn render_top_panel(&mut self, ctx: &egui::Context) {
 		egui::TopBottomPanel::top("settings_top").show(ctx, |ui| {
 			ui.add_space(6.0);
 			ui.horizontal(|ui| {
@@ -269,6 +282,9 @@ impl SettingsWindow {
 			});
 			ui.add_space(6.0);
 		});
+	}
+
+	fn render_sidebar(&mut self, ctx: &egui::Context) {
 		egui::SidePanel::left("settings_sidebar").resizable(false).default_width(170.0).show(
 			ctx,
 			|ui| {
@@ -283,6 +299,10 @@ impl SettingsWindow {
 				self.sidebar_row(ui, SettingsPane::About);
 			},
 		);
+	}
+
+	fn render_central_panel(&mut self, ctx: &egui::Context, settings: &mut AppSettings) -> bool {
+		let mut changed = false;
 
 		egui::CentralPanel::default().show(ctx, |ui| {
 			ui.add_space(12.0);
@@ -291,39 +311,165 @@ impl SettingsWindow {
 			ui.separator();
 			ui.add_space(10.0);
 
-			match self.pane {
-				SettingsPane::Overlay => {
-					changed |= ui
-						.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD")
-						.changed();
-					changed |=
-						ui.checkbox(&mut settings.show_hud_blur, "Enable HUD blur").changed();
-
-					ui.add_space(8.0);
-					ui.label("More overlay options will live here.");
-				},
-				SettingsPane::Hotkeys => {
-					ui.label("Hotkey customization is coming soon.");
-				},
-				SettingsPane::Capture => {
-					ui.label("Capture mode settings are coming soon.");
-				},
-				SettingsPane::Output => {
-					ui.label("Output settings are coming soon.");
-				},
-				SettingsPane::Advanced => {
-					ui.label("Advanced options are coming soon.");
-				},
-				SettingsPane::About => {
-					ui.label(format!("rsnap {}", env!("CARGO_PKG_VERSION")));
-				},
-				SettingsPane::General => {
-					ui.label("General preferences are coming soon.");
-				},
-			}
+			changed |= self.render_pane(ui, ctx, settings);
 		});
 
 		changed
+	}
+
+	fn render_pane(
+		&mut self,
+		ui: &mut Ui,
+		ctx: &egui::Context,
+		settings: &mut AppSettings,
+	) -> bool {
+		let mut changed = false;
+
+		match self.pane {
+			SettingsPane::Overlay => {
+				changed |= ui
+					.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD")
+					.changed();
+				changed |= ui.checkbox(&mut settings.hud_opaque, "Opaque HUD").changed();
+				ui.add_enabled_ui(!settings.hud_opaque, |ui| {
+					changed |=
+						ui.checkbox(&mut settings.show_hud_blur, "Enable HUD blur").changed();
+				});
+
+				let hud_blur_effective = settings.show_hud_blur && !settings.hud_opaque;
+
+				ui.add_space(6.0);
+
+				ui.add_enabled_ui(hud_blur_effective, |ui| {
+					changed |= Self::checkbox_slider_row(
+						ui,
+						&mut settings.hud_fog_enabled,
+						&mut settings.hud_fog_amount,
+						"Fog",
+					);
+					changed |= Self::checkbox_slider_row(
+						ui,
+						&mut settings.hud_milk_enabled,
+						&mut settings.hud_milk_amount,
+						"Milkiness",
+					);
+				});
+
+				ui.add_space(8.0);
+				ui.label("More overlay options will live here.");
+			},
+			SettingsPane::General => {
+				ui.horizontal(|ui| {
+					ui.label("Theme");
+
+					let before = settings.theme_mode;
+
+					egui::ComboBox::from_id_salt("theme_mode")
+						.selected_text(Self::theme_mode_label(settings.theme_mode))
+						.show_ui(ui, |ui| {
+							ui.selectable_value(
+								&mut settings.theme_mode,
+								ThemeMode::System,
+								"System",
+							);
+							ui.selectable_value(&mut settings.theme_mode, ThemeMode::Dark, "Dark");
+							ui.selectable_value(
+								&mut settings.theme_mode,
+								ThemeMode::Light,
+								"Light",
+							);
+						});
+
+					if settings.theme_mode != before {
+						self.sync_theme(ctx, settings.theme_mode);
+
+						changed = true;
+					}
+				});
+			},
+			SettingsPane::Hotkeys => {
+				ui.label("Hotkey customization is coming soon.");
+			},
+			SettingsPane::Capture => {
+				ui.label("Capture mode settings are coming soon.");
+			},
+			SettingsPane::Output => {
+				ui.label("Output settings are coming soon.");
+			},
+			SettingsPane::Advanced => {
+				ui.label("Advanced options are coming soon.");
+			},
+			SettingsPane::About => {
+				ui.label(format!("rsnap {}", env!("CARGO_PKG_VERSION")));
+			},
+		}
+
+		changed
+	}
+
+	fn checkbox_slider_row(
+		ui: &mut Ui,
+		enabled: &mut bool,
+		amount: &mut f32,
+		label: &'static str,
+	) -> bool {
+		let mut changed = false;
+
+		ui.horizontal(|ui| {
+			changed |= ui.checkbox(enabled, label).changed();
+			ui.add_enabled_ui(*enabled, |ui| {
+				changed |= ui
+					.add(egui::Slider::new(amount, 0.0..=1.0).show_value(false).trailing_fill(true))
+					.changed();
+			});
+		});
+
+		changed
+	}
+
+	fn theme_mode_label(mode: ThemeMode) -> &'static str {
+		match mode {
+			ThemeMode::System => "System",
+			ThemeMode::Dark => "Dark",
+			ThemeMode::Light => "Light",
+		}
+	}
+
+	fn requested_window_theme(mode: ThemeMode) -> Option<Theme> {
+		match mode {
+			ThemeMode::System => None,
+			ThemeMode::Dark => Some(Theme::Dark),
+			ThemeMode::Light => Some(Theme::Light),
+		}
+	}
+
+	fn effective_theme(&self, mode: ThemeMode) -> Theme {
+		match mode {
+			ThemeMode::System => self.window.theme().unwrap_or(Theme::Dark),
+			ThemeMode::Dark => Theme::Dark,
+			ThemeMode::Light => Theme::Light,
+		}
+	}
+
+	fn sync_theme(&mut self, ctx: &egui::Context, mode: ThemeMode) {
+		let requested = Self::requested_window_theme(mode);
+
+		if requested != self.requested_theme {
+			self.window.set_theme(requested);
+
+			self.requested_theme = requested;
+		}
+
+		let effective = self.effective_theme(mode);
+
+		if Some(effective) != self.effective_theme {
+			match effective {
+				Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
+				Theme::Light => ctx.set_visuals(egui::Visuals::light()),
+			}
+
+			self.effective_theme = Some(effective);
+		}
 	}
 
 	fn sidebar_row(&mut self, ui: &mut Ui, pane: SettingsPane) {

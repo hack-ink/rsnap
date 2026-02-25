@@ -12,6 +12,7 @@ use egui::Ui;
 use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, Pos2, Rect, Vec2, ViewportId};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use image::{RgbaImage, imageops::FilterType};
+use serde::{Deserialize, Serialize};
 use wgpu::Adapter;
 use wgpu::BindGroup;
 use wgpu::BindGroupLayout;
@@ -31,7 +32,7 @@ use winit::{
 	event::{ElementState, Modifiers, MouseButton, WindowEvent},
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
 	keyboard::{Key, NamedKey},
-	window::{CursorIcon, WindowId, WindowLevel},
+	window::{CursorIcon, Theme, WindowId, WindowLevel},
 };
 
 use crate::{
@@ -39,11 +40,23 @@ use crate::{
 	worker::{OverlayWorker, WorkerResponse},
 };
 
-const HUD_PILL_BODY_FILL_SRGBA8: [u8; 4] = [28, 28, 32, 156];
+const HUD_PILL_BODY_FILL_DARK_SRGBA8: [u8; 4] = [28, 28, 32, 156];
+const HUD_PILL_BODY_FILL_LIGHT_SRGBA8: [u8; 4] = [232, 236, 243, 176];
+const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
+const HUD_PILL_BLUR_TINT_ALPHA_LIGHT: f32 = 0.22;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
 	Cursor,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+	#[default]
+	System,
+	Dark,
+	Light,
 }
 
 #[derive(Debug)]
@@ -59,15 +72,35 @@ pub enum OverlayControl {
 	Exit(OverlayExit),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HudTheme {
+	Dark,
+	Light,
+}
+
 #[derive(Clone, Debug)]
 pub struct OverlayConfig {
 	pub hud_anchor: HudAnchor,
 	pub show_alt_hint_keycap: bool,
 	pub show_hud_blur: bool,
+	pub hud_opaque: bool,
+	/// 0..=1. 0 disables the effect.
+	pub hud_fog_amount: f32,
+	/// 0..=1. 0 disables the effect.
+	pub hud_milk_amount: f32,
+	pub theme_mode: ThemeMode,
 }
 impl Default for OverlayConfig {
 	fn default() -> Self {
-		Self { hud_anchor: HudAnchor::Cursor, show_alt_hint_keycap: true, show_hud_blur: true }
+		Self {
+			hud_anchor: HudAnchor::Cursor,
+			show_alt_hint_keycap: true,
+			show_hud_blur: true,
+			hud_opaque: false,
+			hud_fog_amount: 0.16,
+			hud_milk_amount: 0.0,
+			theme_mode: ThemeMode::System,
+		}
 	}
 }
 
@@ -408,6 +441,16 @@ impl OverlaySession {
 			WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
 				self.handle_left_mouse_input(window_id, *state)
 			},
+			WindowEvent::ThemeChanged(_) => {
+				// Keep the HUD palette in sync with system changes when ThemeMode::System is active.
+				if let Some(monitor) = self.windows.get(&window_id).map(|w| w.monitor) {
+					self.request_redraw_for_monitor(monitor);
+				} else {
+					self.request_redraw_all();
+				}
+
+				OverlayControl::Continue
+			},
 			WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(event),
 			WindowEvent::ModifiersChanged(modifiers) => self.handle_modifiers_changed(modifiers),
 			WindowEvent::RedrawRequested => self.handle_redraw_requested(window_id),
@@ -638,6 +681,10 @@ impl OverlaySession {
 			self.config.hud_anchor,
 			self.config.show_alt_hint_keycap,
 			self.config.show_hud_blur,
+			self.config.hud_opaque,
+			self.config.hud_fog_amount,
+			self.config.hud_milk_amount,
+			self.config.theme_mode,
 		) {
 			return self.exit(OverlayExit::Error(format!("{err:#}")));
 		}
@@ -791,6 +838,7 @@ struct WindowRenderer {
 	hud_bg: Option<HudBg>,
 	hud_bg_generation: u64,
 	hud_pill: Option<HudPillGeometry>,
+	hud_theme: Option<HudTheme>,
 }
 impl WindowRenderer {
 	fn pick_surface_format(caps: &SurfaceCapabilities) -> wgpu::TextureFormat {
@@ -980,6 +1028,7 @@ impl WindowRenderer {
 		(size, pixels_per_point, raw_input)
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn run_egui(
 		&mut self,
 		raw_input: egui::RawInput,
@@ -988,6 +1037,8 @@ impl WindowRenderer {
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
+		hud_opaque: bool,
+		theme: HudTheme,
 	) -> (FullOutput, Option<HudPillGeometry>) {
 		let can_draw = Self::should_draw_hud(state, monitor);
 		let hud_data = if can_draw {
@@ -1009,6 +1060,8 @@ impl WindowRenderer {
 					hud_anchor,
 					show_alt_hint_keycap,
 					hud_blur_active,
+					hud_opaque,
+					theme,
 					&mut hud_pill,
 				);
 			}
@@ -1034,6 +1087,8 @@ impl WindowRenderer {
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
+		hud_opaque: bool,
+		theme: HudTheme,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
 		let (hud_x, hud_y) = match hud_anchor {
@@ -1051,11 +1106,14 @@ impl WindowRenderer {
 					cursor,
 					show_alt_hint_keycap,
 					hud_blur_active,
+					hud_opaque,
+					theme,
 					hud_pill_out,
 				);
 			});
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn render_hud_frame(
 		ui: &mut Ui,
 		state: &OverlayState,
@@ -1063,25 +1121,29 @@ impl WindowRenderer {
 		cursor: GlobalPoint,
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
+		hud_opaque: bool,
+		theme: HudTheme,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
 		let pill_radius = 18_u8;
-		let body_fill = Color32::from_rgba_unmultiplied(
-			HUD_PILL_BODY_FILL_SRGBA8[0],
-			HUD_PILL_BODY_FILL_SRGBA8[1],
-			HUD_PILL_BODY_FILL_SRGBA8[2],
-			HUD_PILL_BODY_FILL_SRGBA8[3],
-		);
-		let outer_stroke =
-			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 40));
+		let fill = hud_body_fill_srgba8(theme, hud_opaque);
+		let body_fill = Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], fill[3]);
+		let outer_stroke_color = match theme {
+			HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 40),
+			HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
+		};
+		let outer_stroke = egui::Stroke::new(1.0, outer_stroke_color);
 		let pill_shadow = egui::epaint::Shadow {
 			offset: [0, 0],
 			blur: 10,
 			spread: 0,
-			color: Color32::from_rgba_unmultiplied(0, 0, 0, 28),
+			color: match theme {
+				HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 28),
+				HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 18),
+			},
 		};
 		let inner = Frame {
-			fill: if hud_blur_active { Color32::TRANSPARENT } else { body_fill },
+			fill: if hud_blur_active && !hud_opaque { Color32::TRANSPARENT } else { body_fill },
 			stroke: outer_stroke,
 			shadow: pill_shadow,
 			corner_radius: CornerRadius::same(pill_radius),
@@ -1092,13 +1154,14 @@ impl WindowRenderer {
 			ui.spacing_mut().item_spacing = egui::vec2(10.0, 6.0);
 
 			if let Some(err) = &state.error_message {
-				ui.label(
-					egui::RichText::new(err)
-						.color(Color32::from_rgba_unmultiplied(235, 235, 245, 235))
-						.monospace(),
-				);
+				let err_color = match theme {
+					HudTheme::Dark => Color32::from_rgba_unmultiplied(235, 235, 245, 235),
+					HudTheme::Light => Color32::from_rgba_unmultiplied(28, 28, 32, 235),
+				};
+
+				ui.label(egui::RichText::new(err).color(err_color).monospace());
 			} else {
-				Self::render_hud_content(ui, state, monitor, cursor, show_alt_hint_keycap);
+				Self::render_hud_content(ui, state, monitor, cursor, show_alt_hint_keycap, theme);
 			}
 		});
 		let pill_rect = inner.response.rect;
@@ -1106,7 +1169,11 @@ impl WindowRenderer {
 		*hud_pill_out =
 			Some(HudPillGeometry { rect: pill_rect, radius_points: f32::from(pill_radius) });
 
-		let inner_stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 44));
+		let inner_stroke_color = match theme {
+			HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
+			HudTheme::Light => Color32::from_rgba_unmultiplied(255, 255, 255, 140),
+		};
+		let inner_stroke = egui::Stroke::new(1.0, inner_stroke_color);
 		let inner_rect = pill_rect.shrink(1.0);
 
 		ui.painter().rect_stroke(
@@ -1125,9 +1192,18 @@ impl WindowRenderer {
 		_monitor: MonitorRect,
 		cursor: GlobalPoint,
 		show_alt_hint_keycap: bool,
+		theme: HudTheme,
 	) {
-		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
-		let secondary_color = Color32::from_rgba_unmultiplied(235, 235, 245, 150);
+		let (label_color, secondary_color) = match theme {
+			HudTheme::Dark => (
+				Color32::from_rgba_unmultiplied(235, 235, 245, 235),
+				Color32::from_rgba_unmultiplied(235, 235, 245, 150),
+			),
+			HudTheme::Light => (
+				Color32::from_rgba_unmultiplied(28, 28, 32, 235),
+				Color32::from_rgba_unmultiplied(28, 28, 32, 160),
+			),
+		};
 		let pos_text = format!("x={}, y={}", cursor.x, cursor.y);
 		let (hex_text, rgb_text) = match state.rgb {
 			Some(rgb) => (rgb.hex_upper(), format!("RGB({}, {}, {})", rgb.r, rgb.g, rgb.b)),
@@ -1150,16 +1226,32 @@ impl WindowRenderer {
 				ui.painter().rect_stroke(
 					rect,
 					3.0,
-					egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 36)),
+					egui::Stroke::new(
+						1.0,
+						match theme {
+							HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 36),
+							HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
+						},
+					),
 					egui::StrokeKind::Inside,
 				);
 				ui.label(egui::RichText::new(hex_text).color(label_color).monospace());
 				ui.label(egui::RichText::new(rgb_text).color(secondary_color).monospace());
 
 				if show_alt_hint_keycap {
-					let keycap_fill = Color32::from_rgba_unmultiplied(255, 255, 255, 18);
-					let keycap_stroke =
-						egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 30));
+					let (keycap_fill, keycap_stroke) = match theme {
+						HudTheme::Dark => (
+							Color32::from_rgba_unmultiplied(255, 255, 255, 18),
+							egui::Stroke::new(
+								1.0,
+								Color32::from_rgba_unmultiplied(255, 255, 255, 30),
+							),
+						),
+						HudTheme::Light => (
+							Color32::from_rgba_unmultiplied(0, 0, 0, 12),
+							egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 32)),
+						),
+					};
 
 					Frame {
 						fill: keycap_fill,
@@ -1521,6 +1613,7 @@ impl WindowRenderer {
 			hud_bg: None,
 			hud_bg_generation: 0,
 			hud_pill: None,
+			hud_theme: None,
 		})
 	}
 
@@ -1536,6 +1629,20 @@ impl WindowRenderer {
 		self.surface.configure(&gpu.device, &self.surface_config);
 	}
 
+	fn sync_egui_theme(&mut self, theme: HudTheme) {
+		if self.hud_theme == Some(theme) {
+			return;
+		}
+
+		match theme {
+			HudTheme::Dark => self.egui_ctx.set_visuals(egui::Visuals::dark()),
+			HudTheme::Light => self.egui_ctx.set_visuals(egui::Visuals::light()),
+		}
+
+		self.hud_theme = Some(theme);
+	}
+
+	#[allow(clippy::too_many_arguments)]
 	fn draw(
 		&mut self,
 		gpu: &GpuContext,
@@ -1544,14 +1651,23 @@ impl WindowRenderer {
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
 		show_hud_blur: bool,
+		hud_opaque: bool,
+		hud_fog_amount: f32,
+		hud_milk_amount: f32,
+		theme_mode: ThemeMode,
 	) -> Result<()> {
 		self.apply_pending_reconfigure(gpu);
+
+		let theme = effective_hud_theme(theme_mode, self.window.theme());
+
+		self.sync_egui_theme(theme);
 
 		let (size, pixels_per_point, raw_input) = self.prepare_egui_input(gpu);
 
 		self.sync_hud_bg(gpu, state, monitor)?;
 
-		let hud_blur_active = show_hud_blur
+		let hud_blur_enabled = show_hud_blur && !hud_opaque;
+		let hud_blur_active = hud_blur_enabled
 			&& self.hud_bg.is_some()
 			&& match state.mode {
 				OverlayMode::Live => state.live_bg_monitor == Some(monitor),
@@ -1564,12 +1680,21 @@ impl WindowRenderer {
 			hud_anchor,
 			show_alt_hint_keycap,
 			hud_blur_active,
+			hud_opaque,
+			theme,
 		);
 
 		self.hud_pill = hud_pill;
 
 		if hud_blur_active && self.hud_bg.is_some() {
-			self.update_hud_blur_uniform(gpu, size, pixels_per_point);
+			self.update_hud_blur_uniform(
+				gpu,
+				size,
+				pixels_per_point,
+				theme,
+				hud_fog_amount,
+				hud_milk_amount,
+			);
 		}
 
 		self.sync_egui_textures(gpu, &full_output);
@@ -1589,6 +1714,9 @@ impl WindowRenderer {
 		gpu: &GpuContext,
 		size: PhysicalSize<u32>,
 		pixels_per_point: f32,
+		theme: HudTheme,
+		hud_fog_amount: f32,
+		hud_milk_amount: f32,
 	) {
 		if self.hud_bg.is_none() {
 			return;
@@ -1617,18 +1745,21 @@ impl WindowRenderer {
 			if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 		}
 
-		let tint_a = (HUD_PILL_BODY_FILL_SRGBA8[3] as f32) / 255.0;
+		let fill = hud_body_fill_srgba8(theme, false);
+		let tint_a = hud_blur_tint_alpha(theme);
 		let tint_rgba = [
-			srgb8_to_linear_f32(HUD_PILL_BODY_FILL_SRGBA8[0]),
-			srgb8_to_linear_f32(HUD_PILL_BODY_FILL_SRGBA8[1]),
-			srgb8_to_linear_f32(HUD_PILL_BODY_FILL_SRGBA8[2]),
+			srgb8_to_linear_f32(fill[0]),
+			srgb8_to_linear_f32(fill[1]),
+			srgb8_to_linear_f32(fill[2]),
 			tint_a,
 		];
+		let effects = [hud_fog_amount.clamp(0.0, 1.0), hud_milk_amount.clamp(0.0, 1.0), 0.0, 0.0];
 		let u = HudBlurUniformRaw {
 			rect_min_size: [rect_min_px[0], rect_min_px[1], rect_size_px[0], rect_size_px[1]],
 			radius_blur_soft: [radius_px, blur_radius_px, edge_softness_px, 0.0],
 			surface_size_px: [surface_w, surface_h, 0.0, 0.0],
 			tint_rgba,
+			effects,
 		};
 
 		gpu.queue.write_buffer(&self.hud_blur_uniform, 0, u.as_bytes());
@@ -1774,6 +1905,7 @@ struct HudBlurUniformRaw {
 	radius_blur_soft: [f32; 4],
 	surface_size_px: [f32; 4],
 	tint_rgba: [f32; 4],
+	effects: [f32; 4],
 }
 impl HudBlurUniformRaw {
 	fn as_bytes(&self) -> &[u8] {
@@ -1783,6 +1915,39 @@ impl HudBlurUniformRaw {
 				std::mem::size_of::<Self>(),
 			)
 		}
+	}
+}
+
+fn effective_hud_theme(mode: ThemeMode, window_theme: Option<Theme>) -> HudTheme {
+	match mode {
+		ThemeMode::System => match window_theme.unwrap_or(Theme::Dark) {
+			Theme::Dark => HudTheme::Dark,
+			Theme::Light => HudTheme::Light,
+		},
+		ThemeMode::Dark => HudTheme::Dark,
+		ThemeMode::Light => HudTheme::Light,
+	}
+}
+
+fn hud_body_fill_srgba8(theme: HudTheme, opaque: bool) -> [u8; 4] {
+	let mut c = if matches!(theme, HudTheme::Light) {
+		HUD_PILL_BODY_FILL_LIGHT_SRGBA8
+	} else {
+		HUD_PILL_BODY_FILL_DARK_SRGBA8
+	};
+
+	if opaque {
+		c[3] = 255;
+	}
+
+	c
+}
+
+fn hud_blur_tint_alpha(theme: HudTheme) -> f32 {
+	if matches!(theme, HudTheme::Light) {
+		HUD_PILL_BLUR_TINT_ALPHA_LIGHT
+	} else {
+		HUD_PILL_BLUR_TINT_ALPHA_DARK
 	}
 }
 
