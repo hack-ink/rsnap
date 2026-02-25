@@ -118,9 +118,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 	let blurred = sample_blur(uv, delta, pos.xy);
 
 	let tint = u.tint_rgba;
-	let grain = (hash12(pos.xy * 0.75) - 0.5) * 0.02;
-	let frosted = clamp(blurred + vec3<f32>(grain), vec3<f32>(0.0), vec3<f32>(1.0));
-	let color = mix(frosted, tint.rgb, tint.a);
+	let color = mix(blurred, tint.rgb, tint.a);
 
 	return vec4<f32>(color * alpha, alpha);
 }
