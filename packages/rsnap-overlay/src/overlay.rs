@@ -75,10 +75,12 @@ pub enum OverlayControl {
 	Exit(OverlayExit),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HudTheme {
-	Dark,
-	Light,
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AltActivationMode {
+	#[default]
+	Hold,
+	Toggle,
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +95,8 @@ pub struct OverlayConfig {
 	pub hud_fog_amount: f32,
 	/// 0..=1. 0 disables the effect.
 	pub hud_milk_amount: f32,
+	pub alt_activation: AltActivationMode,
+	pub loupe_sample_side_px: u32,
 	pub theme_mode: ThemeMode,
 }
 impl Default for OverlayConfig {
@@ -105,9 +109,17 @@ impl Default for OverlayConfig {
 			hud_opacity: 0.35,
 			hud_fog_amount: 0.16,
 			hud_milk_amount: 0.0,
+			alt_activation: AltActivationMode::Hold,
+			loupe_sample_side_px: 21,
 			theme_mode: ThemeMode::System,
 		}
 	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HudTheme {
+	Dark,
+	Light,
 }
 
 #[allow(dead_code)]
@@ -201,6 +213,7 @@ pub struct OverlaySession {
 	last_loupe_request_at: Instant,
 	loupe_request_interval: Duration,
 	last_alt_press_at: Option<Instant>,
+	alt_modifier_down: bool,
 	loupe_patch_width_px: u32,
 	loupe_patch_height_px: u32,
 	pending_freeze_capture: Option<MonitorRect>,
@@ -215,6 +228,8 @@ impl OverlaySession {
 	#[must_use]
 	pub fn with_config(config: OverlayConfig) -> Self {
 		let live_bg_request_interval = Duration::from_millis(500);
+		let loupe_sample_side_px =
+			Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
 
 		Self {
 			config,
@@ -238,8 +253,9 @@ impl OverlaySession {
 			last_loupe_request_at: Instant::now(),
 			loupe_request_interval: Duration::from_millis(33),
 			last_alt_press_at: None,
-			loupe_patch_width_px: 21,
-			loupe_patch_height_px: 21,
+			alt_modifier_down: false,
+			loupe_patch_width_px: loupe_sample_side_px,
+			loupe_patch_height_px: loupe_sample_side_px,
 			pending_freeze_capture: None,
 			pending_encode_png: None,
 		}
@@ -247,9 +263,18 @@ impl OverlaySession {
 
 	pub fn set_config(&mut self, config: OverlayConfig) {
 		let prev = self.config.clone();
+		let previous_loupe_patch = self.loupe_patch_width_px;
+		let loupe_sample_side = Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
 
 		self.config = config;
+		self.loupe_patch_width_px = loupe_sample_side;
+		self.loupe_patch_height_px = loupe_sample_side;
 
+		let patch_changed = self.loupe_patch_width_px != previous_loupe_patch;
+
+		if patch_changed {
+			self.state.loupe = None;
+		}
 		if !self.is_active() {
 			return;
 		}
@@ -301,6 +326,22 @@ impl OverlaySession {
 				self.state.live_bg_image = None;
 			}
 		}
+		if patch_changed
+			&& matches!(self.state.mode, OverlayMode::Live)
+			&& self.state.alt_held
+			&& let Some(cursor) = self.state.cursor
+			&& let Some(worker) = &self.worker
+			&& let Some(monitor) = self.active_cursor_monitor()
+		{
+			worker.try_sample_loupe(
+				monitor,
+				cursor,
+				self.loupe_patch_width_px,
+				self.loupe_patch_height_px,
+			);
+
+			self.last_loupe_request_at = Instant::now();
+		}
 
 		self.request_redraw_all();
 	}
@@ -312,6 +353,12 @@ impl OverlaySession {
 
 	fn use_fake_hud_blur(&self) -> bool {
 		self.config.show_hud_blur && !cfg!(target_os = "macos")
+	}
+
+	fn normalized_loupe_sample_side_px(side_px: u32) -> u32 {
+		let side_px = side_px.max(3);
+
+		if side_px & 1 == 0 { side_px + 1 } else { side_px }
 	}
 
 	pub fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
@@ -677,15 +724,18 @@ impl OverlaySession {
 	}
 
 	fn handle_modifiers_changed(&mut self, modifiers: &Modifiers) -> OverlayControl {
-		let alt = modifiers.state().alt_key();
-		let ignore_transient_alt_release = !alt
-			&& self.state.alt_held
-			&& self
-				.last_alt_press_at
-				.is_some_and(|press| press.elapsed() <= Duration::from_millis(120))
-			&& self.is_option_key_down();
+		let alt = self.resolve_alt_modifier_state(modifiers.state().alt_key());
 
-		self.set_alt_held(if ignore_transient_alt_release { true } else { alt });
+		match self.config.alt_activation {
+			AltActivationMode::Hold => self.set_alt_held(alt),
+			AltActivationMode::Toggle => {
+				if alt && !self.alt_modifier_down {
+					self.set_alt_held(!self.state.alt_held);
+				}
+			},
+		}
+
+		self.alt_modifier_down = alt;
 
 		if let Some(monitor) = self.active_cursor_monitor() {
 			self.request_redraw_for_monitor(monitor);
@@ -694,6 +744,17 @@ impl OverlaySession {
 		}
 
 		OverlayControl::Continue
+	}
+
+	fn resolve_alt_modifier_state(&mut self, alt: bool) -> bool {
+		let transient_alt_release = !alt
+			&& self.state.alt_held
+			&& self
+				.last_alt_press_at
+				.is_some_and(|press| press.elapsed() <= Duration::from_millis(120))
+			&& self.is_option_key_down();
+
+		if transient_alt_release { true } else { alt }
 	}
 
 	fn is_option_key_down(&self) -> bool {
@@ -706,8 +767,14 @@ impl OverlaySession {
 	}
 
 	fn sync_alt_held_from_global_keys(&mut self) {
-		if self.state.alt_held && !self.is_option_key_down() {
+		if matches!(self.config.alt_activation, AltActivationMode::Hold)
+			&& self.state.alt_held
+			&& !self.is_option_key_down()
+		{
 			self.set_alt_held(false);
+		}
+		if !self.is_option_key_down() {
+			self.alt_modifier_down = false;
 		}
 	}
 
