@@ -39,6 +39,8 @@ use crate::{
 	worker::{OverlayWorker, WorkerResponse},
 };
 
+const HUD_PILL_BODY_FILL_SRGBA8: [u8; 4] = [28, 28, 32, 156];
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
 	Cursor,
@@ -972,6 +974,7 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
+		hud_blur_active: bool,
 	) -> (FullOutput, Option<HudPillGeometry>) {
 		let can_draw = Self::should_draw_hud(state, monitor);
 		let hud_data = if can_draw {
@@ -992,6 +995,7 @@ impl WindowRenderer {
 					local_cursor,
 					hud_anchor,
 					show_alt_hint_keycap,
+					hud_blur_active,
 					&mut hud_pill,
 				);
 			}
@@ -1016,6 +1020,7 @@ impl WindowRenderer {
 		local_cursor: Pos2,
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
+		hud_blur_active: bool,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
 		let (hud_x, hud_y) = match hud_anchor {
@@ -1032,6 +1037,7 @@ impl WindowRenderer {
 					monitor,
 					cursor,
 					show_alt_hint_keycap,
+					hud_blur_active,
 					hud_pill_out,
 				);
 			});
@@ -1043,10 +1049,16 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
 		show_alt_hint_keycap: bool,
+		hud_blur_active: bool,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
 		let pill_radius = 18_u8;
-		let body_fill = Color32::from_rgba_unmultiplied(28, 28, 32, 156);
+		let body_fill = Color32::from_rgba_unmultiplied(
+			HUD_PILL_BODY_FILL_SRGBA8[0],
+			HUD_PILL_BODY_FILL_SRGBA8[1],
+			HUD_PILL_BODY_FILL_SRGBA8[2],
+			HUD_PILL_BODY_FILL_SRGBA8[3],
+		);
 		let outer_stroke =
 			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 40));
 		let pill_shadow = egui::epaint::Shadow {
@@ -1056,7 +1068,7 @@ impl WindowRenderer {
 			color: Color32::from_rgba_unmultiplied(0, 0, 0, 28),
 		};
 		let inner = Frame {
-			fill: body_fill,
+			fill: if hud_blur_active { Color32::TRANSPARENT } else { body_fill },
 			stroke: outer_stroke,
 			shadow: pill_shadow,
 			corner_radius: CornerRadius::same(pill_radius),
@@ -1541,8 +1553,18 @@ impl WindowRenderer {
 
 		self.sync_frozen_bg(gpu, state, monitor)?;
 
-		let (full_output, hud_pill) =
-			self.run_egui(raw_input, state, monitor, hud_anchor, show_alt_hint_keycap);
+		let hud_blur_active = show_hud_blur
+			&& matches!(state.mode, OverlayMode::Frozen)
+			&& state.monitor == Some(monitor)
+			&& self.frozen_bg.is_some();
+		let (full_output, hud_pill) = self.run_egui(
+			raw_input,
+			state,
+			monitor,
+			hud_anchor,
+			show_alt_hint_keycap,
+			hud_blur_active,
+		);
 
 		self.hud_pill = hud_pill;
 
@@ -1602,10 +1624,25 @@ impl WindowRenderer {
 		let radius_px = hud_pill.radius_points * pixels_per_point;
 		let blur_radius_px = 10.0 * pixels_per_point;
 		let edge_softness_px = 1.0 * pixels_per_point;
+
+		fn srgb8_to_linear_f32(x: u8) -> f32 {
+			let c = (x as f32) / 255.0;
+
+			if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+		}
+
+		let tint_a = (HUD_PILL_BODY_FILL_SRGBA8[3] as f32) / 255.0;
+		let tint_rgba = [
+			srgb8_to_linear_f32(HUD_PILL_BODY_FILL_SRGBA8[0]),
+			srgb8_to_linear_f32(HUD_PILL_BODY_FILL_SRGBA8[1]),
+			srgb8_to_linear_f32(HUD_PILL_BODY_FILL_SRGBA8[2]),
+			tint_a,
+		];
 		let u = HudBlurUniformRaw {
 			rect_min_size: [rect_min_px[0], rect_min_px[1], rect_size_px[0], rect_size_px[1]],
 			radius_blur_soft: [radius_px, blur_radius_px, edge_softness_px, 0.0],
 			surface_size_px: [surface_w, surface_h, 0.0, 0.0],
+			tint_rgba,
 		};
 
 		gpu.queue.write_buffer(&self.hud_blur_uniform, 0, u.as_bytes());
@@ -1755,6 +1792,7 @@ struct HudBlurUniformRaw {
 	rect_min_size: [f32; 4],
 	radius_blur_soft: [f32; 4],
 	surface_size_px: [f32; 4],
+	tint_rgba: [f32; 4],
 }
 impl HudBlurUniformRaw {
 	fn as_bytes(&self) -> &[u8] {
