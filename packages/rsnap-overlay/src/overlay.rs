@@ -968,12 +968,14 @@ impl WindowRenderer {
 			inner_stroke,
 			egui::StrokeKind::Inside,
 		);
+
+		Self::render_loupe_tile(ui, state, monitor, cursor, pill_rect);
 	}
 
 	fn render_hud_content(
 		ui: &mut Ui,
 		state: &OverlayState,
-		monitor: MonitorRect,
+		_monitor: MonitorRect,
 		cursor: GlobalPoint,
 	) {
 		let label_color = Color32::from_rgba_unmultiplied(235, 235, 245, 235);
@@ -1007,11 +1009,81 @@ impl WindowRenderer {
 				ui.label(egui::RichText::new(rgb_text).color(secondary_color).monospace());
 				ui.label(egui::RichText::new("⌥⌄").color(secondary_color).monospace());
 			});
-
-			if state.alt_held {
-				Self::render_loupe(ui, state, monitor, cursor);
-			}
 		});
+	}
+
+	fn render_loupe_tile(
+		ui: &mut Ui,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+		pill_rect: Rect,
+	) {
+		let ctx = ui.ctx().clone();
+		let id = egui::Id::new("rsnap-loupe-tile-open");
+		let t = ctx.animate_bool(id, state.alt_held);
+
+		if t <= 0.001 {
+			return;
+		}
+
+		const CELL: f32 = 10.0;
+
+		let fallback_side_px = 21_u32;
+		let (w, h) = state
+			.loupe
+			.as_ref()
+			.map(|loupe| loupe.patch.dimensions())
+			.unwrap_or((fallback_side_px, fallback_side_px));
+		let side = (w.max(h) as f32) * CELL;
+		let tile_padding = Margin::same(10);
+		let tile_w = side + (tile_padding.left as f32) + (tile_padding.right as f32);
+		let tile_h = side + (tile_padding.top as f32) + (tile_padding.bottom as f32);
+		let screen = ctx.screen_rect();
+		let gap = 10.0;
+		let mut x = pill_rect.min.x;
+
+		x = x.clamp(screen.min.x + 6.0, (screen.max.x - tile_w - 6.0).max(screen.min.x + 6.0));
+
+		let below_y = pill_rect.max.y + gap;
+		let above_y = pill_rect.min.y - gap - tile_h;
+		let mut y = if below_y + tile_h <= screen.max.y { below_y } else { above_y };
+
+		y = y.clamp(screen.min.y + 6.0, (screen.max.y - tile_h - 6.0).max(screen.min.y + 6.0));
+
+		let slide_px = (1.0 - t) * 10.0;
+		let pos = Pos2::new(x, y - slide_px);
+
+		egui::Area::new(egui::Id::new("rsnap-loupe-tile"))
+			.order(egui::Order::Foreground)
+			.fixed_pos(pos)
+			.show(&ctx, |ui| {
+				ui.set_opacity(t);
+
+				let fill = Color32::from_rgba_unmultiplied(28, 28, 32, 156);
+				let outer_stroke =
+					egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 40));
+				let shadow = egui::epaint::Shadow {
+					offset: [0, 0],
+					blur: 10,
+					spread: 0,
+					color: Color32::from_rgba_unmultiplied(0, 0, 0, 28),
+				};
+				let frame = Frame {
+					fill,
+					stroke: outer_stroke,
+					shadow,
+					corner_radius: CornerRadius::same(18),
+					inner_margin: tile_padding,
+					..Frame::default()
+				};
+
+				frame.show(ui, |ui| {
+					ui.set_min_size(Vec2::new(side, side));
+
+					Self::render_loupe(ui, state, monitor, cursor);
+				});
+			});
 	}
 
 	fn render_loupe(ui: &mut Ui, state: &OverlayState, monitor: MonitorRect, cursor: GlobalPoint) {
