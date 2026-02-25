@@ -1005,6 +1005,7 @@ impl WindowRenderer {
 				);
 				ui.label(egui::RichText::new(hex_text).color(label_color).monospace());
 				ui.label(egui::RichText::new(rgb_text).color(secondary_color).monospace());
+				ui.label(egui::RichText::new("⌥⌄").color(secondary_color).monospace());
 			});
 
 			if state.alt_held {
