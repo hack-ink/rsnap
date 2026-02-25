@@ -9,8 +9,10 @@ use wgpu::SurfaceTexture;
 use wgpu::TextureFormat;
 use wgpu::{Adapter, CompositeAlphaMode, Device, Queue, Surface, SurfaceCapabilities};
 use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::event::ElementState;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
+use winit::keyboard::{Key, ModifiersState};
 use winit::window::{Window, WindowId};
 
 use crate::settings::AppSettings;
@@ -55,6 +57,7 @@ pub struct SettingsWindow {
 	renderer: Renderer,
 	pane: SettingsPane,
 	search: String,
+	modifiers: ModifiersState,
 	last_redraw: Instant,
 }
 impl SettingsWindow {
@@ -91,6 +94,7 @@ impl SettingsWindow {
 			renderer,
 			pane: SettingsPane::General,
 			search: String::new(),
+			modifiers: ModifiersState::default(),
 			last_redraw: Instant::now(),
 		})
 	}
@@ -108,6 +112,16 @@ impl SettingsWindow {
 	pub fn handle_window_event(&mut self, event: &WindowEvent) -> SettingsControl {
 		match event {
 			WindowEvent::CloseRequested => return SettingsControl::CloseRequested,
+			WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+			WindowEvent::KeyboardInput { event, .. } => {
+				if cfg!(target_os = "macos")
+					&& event.state == ElementState::Pressed
+					&& self.modifiers.super_key()
+					&& matches!(&event.logical_key, Key::Character(c) if c.as_str().eq_ignore_ascii_case("w"))
+				{
+					return SettingsControl::CloseRequested;
+				}
+			},
 			WindowEvent::Resized(size) => self.resize(*size),
 			WindowEvent::ScaleFactorChanged { .. } => self.resize(self.window.inner_size()),
 			_ => {},
