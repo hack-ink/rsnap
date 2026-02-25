@@ -61,26 +61,32 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 	}
 
 	let uv = pos.xy / surface_size;
+	// On macOS, CoreGraphics-captured images and the swapchain can disagree on Y origin depending
+	// on backend details. Allow the host to request a Y flip to keep blur sampling aligned.
+	var uv2 = uv;
+	if u.effects.w > 0.5 {
+		uv2.y = 1.0 - uv2.y;
+	}
 	let blur_amount = clamp(u.effects.x, 0.0, 1.0);
 	// Prevent over-blurring into a low-res "zoomed" look where the user can no longer correlate
 	// what is behind the HUD.
 	let max_lod = min(max(u.effects.z, 0.0), 7.0);
 	// Stronger curve so mid values feel like "frosted glass" instead of a mild reflection.
 	let lod = clamp(pow(blur_amount, 0.55) * max_lod, 0.0, max_lod);
-	var blurred = textureSampleLevel(bg_tex, bg_samp, uv, lod).rgb;
+	var blurred = textureSampleLevel(bg_tex, bg_samp, uv2, lod).rgb;
 	let blur_radius_px = max(u.radius_blur_soft.y, 0.0);
 	if blur_radius_px > 0.01 {
 		let off = vec2<f32>(blur_radius_px / surface_size.x, blur_radius_px / surface_size.y);
 
-		let c = textureSampleLevel(bg_tex, bg_samp, uv, lod).rgb * 4.0
-			+ textureSampleLevel(bg_tex, bg_samp, uv + vec2<f32>( off.x, 0.0), lod).rgb * 2.0
-			+ textureSampleLevel(bg_tex, bg_samp, uv + vec2<f32>(-off.x, 0.0), lod).rgb * 2.0
-			+ textureSampleLevel(bg_tex, bg_samp, uv + vec2<f32>(0.0,  off.y), lod).rgb * 2.0
-			+ textureSampleLevel(bg_tex, bg_samp, uv + vec2<f32>(0.0, -off.y), lod).rgb * 2.0
-			+ textureSampleLevel(bg_tex, bg_samp, uv + vec2<f32>( off.x,  off.y), lod).rgb
-			+ textureSampleLevel(bg_tex, bg_samp, uv + vec2<f32>(-off.x,  off.y), lod).rgb
-			+ textureSampleLevel(bg_tex, bg_samp, uv + vec2<f32>( off.x, -off.y), lod).rgb
-			+ textureSampleLevel(bg_tex, bg_samp, uv + vec2<f32>(-off.x, -off.y), lod).rgb;
+		let c = textureSampleLevel(bg_tex, bg_samp, uv2, lod).rgb * 4.0
+			+ textureSampleLevel(bg_tex, bg_samp, uv2 + vec2<f32>( off.x, 0.0), lod).rgb * 2.0
+			+ textureSampleLevel(bg_tex, bg_samp, uv2 + vec2<f32>(-off.x, 0.0), lod).rgb * 2.0
+			+ textureSampleLevel(bg_tex, bg_samp, uv2 + vec2<f32>(0.0,  off.y), lod).rgb * 2.0
+			+ textureSampleLevel(bg_tex, bg_samp, uv2 + vec2<f32>(0.0, -off.y), lod).rgb * 2.0
+			+ textureSampleLevel(bg_tex, bg_samp, uv2 + vec2<f32>( off.x,  off.y), lod).rgb
+			+ textureSampleLevel(bg_tex, bg_samp, uv2 + vec2<f32>(-off.x,  off.y), lod).rgb
+			+ textureSampleLevel(bg_tex, bg_samp, uv2 + vec2<f32>( off.x, -off.y), lod).rgb
+			+ textureSampleLevel(bg_tex, bg_samp, uv2 + vec2<f32>(-off.x, -off.y), lod).rgb;
 
 		blurred = c / 16.0;
 	}
