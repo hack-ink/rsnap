@@ -12,6 +12,8 @@ use egui::Ui;
 use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, Pos2, Rect, Vec2, ViewportId};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use image::{RgbaImage, imageops::FilterType};
+#[cfg(target_os = "macos")]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::{Deserialize, Serialize};
 use wgpu::Adapter;
 use wgpu::BindGroup;
@@ -238,6 +240,10 @@ impl OverlaySession {
 
 		if let Some(hud_window) = self.hud_window.as_ref() {
 			hud_window.window.set_blur(self.config.show_hud_blur);
+			hud_window.window.set_transparent(true);
+
+			#[cfg(target_os = "macos")]
+			macos_configure_hud_window(hud_window.window.as_ref());
 		}
 
 		let prev_fake_blur = prev.show_hud_blur && !cfg!(target_os = "macos");
@@ -339,7 +345,7 @@ impl OverlaySession {
 				.with_resizable(false)
 				.with_transparent(true)
 				.with_window_level(WindowLevel::AlwaysOnTop)
-				.with_inner_size(LogicalSize::new(560.0, 72.0));
+				.with_inner_size(LogicalSize::new(460.0, 52.0));
 			let window = event_loop
 				.create_window(attrs)
 				.map_err(|err| format!("Unable to create HUD window: {err}"))?;
@@ -347,6 +353,11 @@ impl OverlaySession {
 			let _ = window.set_cursor_hittest(false);
 
 			window.set_blur(self.config.show_hud_blur);
+			window.set_transparent(true);
+
+			#[cfg(target_os = "macos")]
+			macos_configure_hud_window(window.as_ref());
+
 			window.request_redraw();
 
 			let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
@@ -583,7 +594,12 @@ impl OverlaySession {
 			&& hud_window.window.id() == window_id
 		{
 			match hud_window.renderer.resize(size) {
-				Ok(()) => return OverlayControl::Continue,
+				Ok(()) => {
+					#[cfg(target_os = "macos")]
+					macos_configure_hud_window(hud_window.window.as_ref());
+
+					return OverlayControl::Continue;
+				},
 				Err(err) => return self.exit(OverlayExit::Error(format!("{err:#}"))),
 			}
 		}
@@ -605,7 +621,12 @@ impl OverlaySession {
 			let size = hud_window.window.inner_size();
 
 			match hud_window.renderer.resize(size) {
-				Ok(()) => return OverlayControl::Continue,
+				Ok(()) => {
+					#[cfg(target_os = "macos")]
+					macos_configure_hud_window(hud_window.window.as_ref());
+
+					return OverlayControl::Continue;
+				},
 				Err(err) => return self.exit(OverlayExit::Error(format!("{err:#}"))),
 			}
 		}
@@ -799,7 +820,7 @@ impl OverlaySession {
 					true,
 					HudAnchor::Cursor,
 					self.config.show_alt_hint_keycap,
-					false,
+					self.config.show_hud_blur,
 					self.config.hud_opaque,
 					self.config.hud_fog_amount,
 					self.config.hud_milk_amount,
@@ -1387,6 +1408,7 @@ impl WindowRenderer {
 		can_draw_hud: bool,
 		hud_local_cursor_override: Option<Pos2>,
 		hud_compact: bool,
+		show_hud_blur: bool,
 		hud_anchor: HudAnchor,
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
@@ -1406,24 +1428,102 @@ impl WindowRenderer {
 		let mut hud_pill = None;
 		let full_output = self.egui_ctx.run(raw_input, |ctx| {
 			if let Some((cursor, local_cursor)) = hud_data {
-				Self::render_hud(
-					ctx,
-					state,
-					monitor,
-					cursor,
-					local_cursor,
-					hud_compact,
-					hud_anchor,
-					show_alt_hint_keycap,
-					hud_blur_active,
-					hud_opaque,
-					theme,
-					&mut hud_pill,
-				);
+				if hud_compact {
+					Self::render_hud_window(
+						ctx,
+						state,
+						monitor,
+						cursor,
+						show_alt_hint_keycap,
+						hud_opaque,
+						theme,
+						// `show_hud_blur` means native window blur for the compact HUD window.
+						/* blur_enabled */
+						show_hud_blur,
+					);
+				} else {
+					Self::render_hud(
+						ctx,
+						state,
+						monitor,
+						cursor,
+						local_cursor,
+						hud_compact,
+						hud_anchor,
+						show_alt_hint_keycap,
+						hud_blur_active,
+						hud_opaque,
+						theme,
+						&mut hud_pill,
+					);
+				}
 			}
 		});
 
 		(full_output, hud_pill)
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn render_hud_window(
+		ctx: &egui::Context,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+		show_alt_hint_keycap: bool,
+		hud_opaque: bool,
+		theme: HudTheme,
+		blur_enabled: bool,
+	) {
+		egui::CentralPanel::default().frame(Frame::NONE.fill(Color32::TRANSPARENT)).show(
+			ctx,
+			|ui| {
+				let rect = ui.max_rect();
+				let radius = rect.height() * 0.5;
+				let fill = hud_body_fill_srgba8(theme, false);
+				let mut a = if blur_enabled {
+					match theme {
+						HudTheme::Dark => 72,
+						HudTheme::Light => 96,
+					}
+				} else {
+					match theme {
+						HudTheme::Dark => 120,
+						HudTheme::Light => 140,
+					}
+				};
+
+				if hud_opaque {
+					a = 255;
+				}
+
+				let bg = Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], a);
+				let stroke = egui::Stroke::new(
+					1.0,
+					match theme {
+						HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 36),
+						HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
+					},
+				);
+
+				ui.painter().rect_filled(rect, radius, bg);
+				ui.painter().rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
+
+				let content_rect = rect.shrink2(Vec2::new(14.0, 10.0));
+
+				ui.allocate_new_ui(egui::UiBuilder::new().max_rect(content_rect), |ui| {
+					ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+						Self::render_hud_content(
+							ui,
+							state,
+							monitor,
+							cursor,
+							show_alt_hint_keycap,
+							theme,
+						);
+					});
+				});
+			},
+		);
 	}
 
 	fn should_draw_hud(state: &OverlayState, monitor: MonitorRect) -> bool {
@@ -2147,6 +2247,7 @@ impl WindowRenderer {
 			can_draw_hud,
 			hud_local_cursor_override,
 			hud_compact,
+			show_hud_blur,
 			hud_anchor,
 			show_alt_hint_keycap,
 			hud_blur_active,
@@ -2540,4 +2641,51 @@ fn global_to_local(cursor: GlobalPoint, monitor: MonitorRect) -> Option<Pos2> {
 	let (x, y) = monitor.local_u32(cursor)?;
 
 	Some(Pos2::new(x as f32, y as f32))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_configure_hud_window(window: &winit::window::Window) {
+	use objc::runtime::{Object, YES};
+
+	use objc::{class, msg_send, sel, sel_impl};
+
+	let Ok(handle) = window.window_handle() else {
+		return;
+	};
+	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+		return;
+	};
+	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
+
+	unsafe {
+		let ns_window: *mut Object = msg_send![ns_view, window];
+
+		if ns_window.is_null() {
+			return;
+		}
+
+		let _: () = msg_send![ns_window, setOpaque: false];
+		let clear: *mut Object = msg_send![class!(NSColor), clearColor];
+		let _: () = msg_send![ns_window, setBackgroundColor: clear];
+		let content_view: *mut Object = msg_send![ns_window, contentView];
+
+		if content_view.is_null() {
+			return;
+		}
+
+		let _: () = msg_send![content_view, setWantsLayer: YES];
+		let layer: *mut Object = msg_send![content_view, layer];
+
+		if layer.is_null() {
+			return;
+		}
+
+		// Make the HUD window itself a pill, so native blur doesn't show a rectangular boundary.
+		let scale = window.scale_factor().max(1.0);
+		let size = window.inner_size();
+		let height_points = (size.height as f64) / scale;
+		let radius = height_points * 0.5;
+		let _: () = msg_send![layer, setCornerRadius: radius];
+		let _: () = msg_send![layer, setMasksToBounds: YES];
+	}
 }

@@ -3135,6 +3135,7 @@ dependencies = [
  "image",
  "objc",
  "pollster",
+ "raw-window-handle",
  "serde",
  "thiserror 1.0.69",
  "wgpu",
