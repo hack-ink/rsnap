@@ -48,19 +48,21 @@ struct App {
 }
 impl App {
 	fn overlay_config(&self) -> OverlayConfig {
-		let hud_fog_amount =
-			if self.settings.hud_fog_enabled { self.settings.hud_fog_amount } else { 0.0 };
-		let hud_milk_amount =
-			if self.settings.hud_milk_enabled { self.settings.hud_milk_amount } else { 0.0 };
-		let show_hud_blur = self.settings.hud_fog_enabled && !self.settings.hud_opaque;
+		let glass = self.settings.hud_glass_enabled;
+		let hud_opacity = self.settings.hud_opacity.clamp(0.0, 1.0);
+		let hud_blur = self.settings.hud_blur.clamp(0.0, 1.0);
+		let hud_tint = self.settings.hud_tint.clamp(0.0, 1.0);
+		let hud_opaque = !glass || hud_opacity >= 0.999;
+		let show_hud_blur = glass && hud_blur > 0.0 && !hud_opaque;
 
 		OverlayConfig {
 			hud_anchor: HudAnchor::Cursor,
 			show_alt_hint_keycap: self.settings.show_alt_hint_keycap,
 			show_hud_blur,
-			hud_opaque: self.settings.hud_opaque,
-			hud_fog_amount,
-			hud_milk_amount,
+			hud_opaque,
+			hud_opacity,
+			hud_fog_amount: hud_blur,
+			hud_milk_amount: hud_tint,
 			theme_mode: self.settings.theme_mode,
 		}
 	}

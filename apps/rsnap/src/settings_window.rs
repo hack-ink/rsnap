@@ -330,27 +330,14 @@ impl SettingsWindow {
 				changed |= ui
 					.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD")
 					.changed();
-				changed |= ui.checkbox(&mut settings.hud_opaque, "Opaque HUD").changed();
-
-				let hud_blur_effective = !settings.hud_opaque;
+				changed |= ui.checkbox(&mut settings.hud_glass_enabled, "Glass HUD").changed();
 
 				ui.add_space(6.0);
 
-				ui.add_enabled_ui(hud_blur_effective, |ui| {
-					changed |= Self::checkbox_slider_row(
-						ui,
-						&mut settings.hud_fog_enabled,
-						&mut settings.hud_fog_amount,
-						"Blur",
-					);
-					ui.add_enabled_ui(settings.hud_fog_enabled, |ui| {
-						changed |= Self::checkbox_slider_row(
-							ui,
-							&mut settings.hud_milk_enabled,
-							&mut settings.hud_milk_amount,
-							"Tint",
-						);
-					});
+				ui.add_enabled_ui(settings.hud_glass_enabled, |ui| {
+					changed |= Self::slider_row(ui, &mut settings.hud_opacity, "Opacity");
+					changed |= Self::slider_row(ui, &mut settings.hud_blur, "Blur");
+					changed |= Self::slider_row(ui, &mut settings.hud_tint, "Tint");
 				});
 
 				ui.add_space(8.0);
@@ -405,21 +392,15 @@ impl SettingsWindow {
 		changed
 	}
 
-	fn checkbox_slider_row(
-		ui: &mut Ui,
-		enabled: &mut bool,
-		amount: &mut f32,
-		label: &'static str,
-	) -> bool {
+	fn slider_row(ui: &mut Ui, amount: &mut f32, label: &'static str) -> bool {
 		let mut changed = false;
 
 		ui.horizontal(|ui| {
-			changed |= ui.checkbox(enabled, label).changed();
-			ui.add_enabled_ui(*enabled, |ui| {
-				changed |= ui
-					.add(egui::Slider::new(amount, 0.0..=1.0).show_value(false).trailing_fill(true))
-					.changed();
-			});
+			ui.label(label);
+
+			changed |= ui
+				.add(egui::Slider::new(amount, 0.0..=1.0).show_value(false).trailing_fill(true))
+				.changed();
 
 			let pct = (amount.clamp(0.0, 1.0) * 100.0).round() as i32;
 
