@@ -925,66 +925,72 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
 	) {
-		let accent_color = match state.rgb {
-			Some(rgb) => Color32::from_rgb(rgb.r, rgb.g, rgb.b),
-			None => Color32::from_rgba_unmultiplied(255, 255, 255, 26),
-		};
-		let body_fill = Color32::from_rgba_unmultiplied(18, 18, 20, 220);
-		let pill_stroke =
-			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
+		let pill_radius = 18_u8;
+		let body_fill = Color32::from_rgba_unmultiplied(28, 28, 32, 168);
+		let outer_stroke =
+			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 44));
 		let pill_shadow = egui::epaint::Shadow {
 			offset: [0, 1],
-			blur: 6,
+			blur: 10,
 			spread: 0,
-			color: Color32::from_rgba_unmultiplied(0, 0, 0, 42),
+			color: Color32::from_rgba_unmultiplied(0, 0, 0, 38),
 		};
-		let pill_radius = 18;
-		let accent_width = 3.0;
-
-		Frame {
-			fill: accent_color,
-			stroke: pill_stroke,
+		let inner = Frame {
+			fill: body_fill,
+			stroke: outer_stroke,
 			shadow: pill_shadow,
 			corner_radius: CornerRadius::same(pill_radius),
-			inner_margin: Margin::ZERO,
+			inner_margin: Margin::symmetric(12, 8),
 			..Frame::default()
 		}
 		.show(ui, |ui| {
-			ui.spacing_mut().item_spacing = Vec2::ZERO;
-			ui.horizontal(|ui| {
-				ui.spacing_mut().item_spacing = Vec2::ZERO;
+			ui.set_min_width(340.0);
 
-				ui.add_space(accent_width);
+			ui.spacing_mut().item_spacing = egui::vec2(10.0, 6.0);
 
-				Frame {
-					fill: body_fill,
-					stroke: egui::Stroke::new(0.0, Color32::TRANSPARENT),
-					shadow: egui::epaint::Shadow {
-						offset: [0, 0],
-						blur: 0,
-						spread: 0,
-						color: Color32::TRANSPARENT,
-					},
-					corner_radius: CornerRadius::same(pill_radius),
-					inner_margin: Margin::symmetric(12, 8),
-					..Frame::default()
-				}
-				.show(ui, |ui| {
-					ui.set_min_width(340.0);
-
-					ui.spacing_mut().item_spacing = egui::vec2(10.0, 6.0);
-
-					if let Some(err) = &state.error_message {
-						ui.label(
-							egui::RichText::new(err)
-								.color(Color32::from_rgba_unmultiplied(235, 235, 245, 235)),
-						);
-					} else {
-						Self::render_hud_content(ui, state, monitor, cursor);
-					}
-				});
-			});
+			if let Some(err) = &state.error_message {
+				ui.label(
+					egui::RichText::new(err)
+						.color(Color32::from_rgba_unmultiplied(235, 235, 245, 235)),
+				);
+			} else {
+				Self::render_hud_content(ui, state, monitor, cursor);
+			}
 		});
+		let pill_rect = inner.response.rect;
+		let highlight_h = (pill_rect.height() * 0.44).max(1.0);
+		let shade_h = (pill_rect.height() * 0.44).max(1.0);
+		let highlight_rect = Rect::from_min_max(
+			pill_rect.min,
+			Pos2::new(pill_rect.max.x, pill_rect.min.y + highlight_h),
+		);
+		let shade_rect = Rect::from_min_max(
+			Pos2::new(pill_rect.min.x, pill_rect.max.y - shade_h),
+			pill_rect.max,
+		);
+		let highlight = Color32::from_rgba_unmultiplied(255, 255, 255, 18);
+		let shade = Color32::from_rgba_unmultiplied(0, 0, 0, 18);
+
+		ui.painter().rect_filled(
+			highlight_rect,
+			CornerRadius { nw: pill_radius, ne: pill_radius, sw: 0, se: 0 },
+			highlight,
+		);
+		ui.painter().rect_filled(
+			shade_rect,
+			CornerRadius { nw: 0, ne: 0, sw: pill_radius, se: pill_radius },
+			shade,
+		);
+
+		let inner_stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 70));
+		let inner_rect = pill_rect.shrink(1.0);
+
+		ui.painter().rect_stroke(
+			inner_rect,
+			CornerRadius::same(pill_radius.saturating_sub(1)),
+			inner_stroke,
+			egui::StrokeKind::Inside,
+		);
 	}
 
 	fn render_hud_content(
