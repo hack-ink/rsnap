@@ -341,6 +341,34 @@ impl OverlaySession {
 		if self.is_active() && self.last_present_at.elapsed() > Duration::from_secs(30) {
 			self.request_redraw_all();
 		}
+		if matches!(self.state.mode, OverlayMode::Live)
+			&& let Some(cursor) = self.state.cursor
+			&& let Some(monitor) = self.monitor_at(cursor)
+		{
+			if self.config.show_hud_blur {
+				self.maybe_request_live_bg(monitor);
+			}
+
+			if let Some(worker) = &self.worker {
+				if self.last_rgb_request_at.elapsed() >= self.rgb_request_interval {
+					worker.try_sample_rgb(monitor, cursor);
+
+					self.last_rgb_request_at = Instant::now();
+				}
+				if self.state.alt_held
+					&& self.last_loupe_request_at.elapsed() >= self.loupe_request_interval
+				{
+					worker.try_sample_loupe(
+						monitor,
+						cursor,
+						self.loupe_patch_width_px,
+						self.loupe_patch_height_px,
+					);
+
+					self.last_loupe_request_at = Instant::now();
+				}
+			}
+		}
 
 		if let Some(worker) = &self.worker {
 			if let Some(image) = self.pending_encode_png.take()
@@ -472,16 +500,25 @@ impl OverlaySession {
 		} else if matches!(self.state.mode, OverlayMode::Live)
 			&& let Some(cursor) = self.state.cursor
 			&& let Some(monitor) = self.monitor_at(cursor)
-			&& let Some(worker) = &self.worker
 		{
-			worker.try_sample_loupe(
-				monitor,
-				cursor,
-				self.loupe_patch_width_px,
-				self.loupe_patch_height_px,
-			);
+			if self.config.show_hud_blur {
+				self.maybe_request_live_bg(monitor);
+			}
 
-			self.last_loupe_request_at = Instant::now();
+			if let Some(worker) = &self.worker {
+				worker.try_sample_rgb(monitor, cursor);
+
+				self.last_rgb_request_at = Instant::now();
+
+				worker.try_sample_loupe(
+					monitor,
+					cursor,
+					self.loupe_patch_width_px,
+					self.loupe_patch_height_px,
+				);
+
+				self.last_loupe_request_at = Instant::now();
+			}
 		}
 
 		if let Some(monitor) = self.state.cursor.and_then(|cursor| self.monitor_at(cursor)) {
@@ -832,6 +869,8 @@ struct WindowRenderer {
 	egui_ctx: egui::Context,
 	egui_renderer: Renderer,
 	bg_sampler: wgpu::Sampler,
+	mipgen_pipeline: RenderPipeline,
+	mipgen_bind_group_layout: BindGroupLayout,
 	hud_blur_pipeline: RenderPipeline,
 	hud_blur_bind_group_layout: BindGroupLayout,
 	hud_blur_uniform: wgpu::Buffer,
@@ -841,6 +880,155 @@ struct WindowRenderer {
 	hud_theme: Option<HudTheme>,
 }
 impl WindowRenderer {
+	fn mip_level_count(width: u32, height: u32) -> u32 {
+		let max_dim = width.max(height).max(1);
+
+		(32_u32.saturating_sub(max_dim.leading_zeros())).max(1)
+	}
+
+	fn create_mipgen_pipeline(
+		gpu: &GpuContext,
+		format: wgpu::TextureFormat,
+	) -> (RenderPipeline, BindGroupLayout) {
+		let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+			label: Some("rsnap-mipgen shader"),
+			source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+				"mipgen.wgsl"
+			))),
+		});
+		let bind_group_layout =
+			gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+				label: Some("rsnap-mipgen bgl"),
+				entries: &[
+					wgpu::BindGroupLayoutEntry {
+						binding: 0,
+						visibility: wgpu::ShaderStages::FRAGMENT,
+						ty: wgpu::BindingType::Texture {
+							multisampled: false,
+							view_dimension: wgpu::TextureViewDimension::D2,
+							sample_type: wgpu::TextureSampleType::Float { filterable: true },
+						},
+						count: None,
+					},
+					wgpu::BindGroupLayoutEntry {
+						binding: 1,
+						visibility: wgpu::ShaderStages::FRAGMENT,
+						ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+						count: None,
+					},
+				],
+			});
+		let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+			label: Some("rsnap-mipgen pipeline layout"),
+			bind_group_layouts: &[&bind_group_layout],
+			push_constant_ranges: &[],
+		});
+		let pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("rsnap-mipgen pipeline"),
+			layout: Some(&pipeline_layout),
+			vertex: wgpu::VertexState {
+				module: &shader,
+				entry_point: Some("vs_main"),
+				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				buffers: &[],
+			},
+			primitive: wgpu::PrimitiveState {
+				topology: wgpu::PrimitiveTopology::TriangleList,
+				strip_index_format: None,
+				front_face: wgpu::FrontFace::Ccw,
+				cull_mode: None,
+				polygon_mode: wgpu::PolygonMode::Fill,
+				unclipped_depth: false,
+				conservative: false,
+			},
+			depth_stencil: None,
+			multisample: wgpu::MultisampleState::default(),
+			fragment: Some(wgpu::FragmentState {
+				module: &shader,
+				entry_point: Some("fs_main"),
+				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				targets: &[Some(wgpu::ColorTargetState {
+					format,
+					blend: None,
+					write_mask: wgpu::ColorWrites::ALL,
+				})],
+			}),
+			multiview: None,
+			cache: None,
+		});
+
+		(pipeline, bind_group_layout)
+	}
+
+	fn generate_mipmaps(&self, gpu: &GpuContext, texture: &wgpu::Texture, mip_level_count: u32) {
+		if mip_level_count <= 1 {
+			return;
+		}
+
+		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: Some("rsnap-mipgen encoder"),
+		});
+
+		for level in 1..mip_level_count {
+			let src_view = texture.create_view(&wgpu::TextureViewDescriptor {
+				label: Some("rsnap-mipgen src view"),
+				format: None,
+				dimension: None,
+				usage: None,
+				aspect: wgpu::TextureAspect::All,
+				base_mip_level: level - 1,
+				mip_level_count: Some(1),
+				base_array_layer: 0,
+				array_layer_count: Some(1),
+			});
+			let dst_view = texture.create_view(&wgpu::TextureViewDescriptor {
+				label: Some("rsnap-mipgen dst view"),
+				format: None,
+				dimension: None,
+				usage: None,
+				aspect: wgpu::TextureAspect::All,
+				base_mip_level: level,
+				mip_level_count: Some(1),
+				base_array_layer: 0,
+				array_layer_count: Some(1),
+			});
+			let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+				label: Some("rsnap-mipgen bind group"),
+				layout: &self.mipgen_bind_group_layout,
+				entries: &[
+					wgpu::BindGroupEntry {
+						binding: 0,
+						resource: wgpu::BindingResource::TextureView(&src_view),
+					},
+					wgpu::BindGroupEntry {
+						binding: 1,
+						resource: wgpu::BindingResource::Sampler(&self.bg_sampler),
+					},
+				],
+			});
+			let rpass_desc = wgpu::RenderPassDescriptor {
+				label: Some("rsnap-mipgen pass"),
+				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+					view: &dst_view,
+					resolve_target: None,
+					ops: wgpu::Operations {
+						load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+						store: wgpu::StoreOp::Store,
+					},
+				})],
+				depth_stencil_attachment: None,
+				timestamp_writes: None,
+				occlusion_query_set: None,
+			};
+			let mut rpass = encoder.begin_render_pass(&rpass_desc).forget_lifetime();
+
+			rpass.set_pipeline(&self.mipgen_pipeline);
+			rpass.set_bind_group(0, &bind_group, &[]);
+			rpass.draw(0..3, 0..1);
+		}
+
+		gpu.queue.submit(Some(encoder.finish()));
+	}
 	fn pick_surface_format(caps: &SurfaceCapabilities) -> wgpu::TextureFormat {
 		caps.formats
 			.iter()
@@ -1183,7 +1371,16 @@ impl WindowRenderer {
 			egui::StrokeKind::Inside,
 		);
 
-		Self::render_loupe_tile(ui, state, monitor, cursor, pill_rect);
+		Self::render_loupe_tile(
+			ui,
+			state,
+			monitor,
+			cursor,
+			pill_rect,
+			hud_blur_active,
+			hud_opaque,
+			theme,
+		);
 	}
 
 	fn render_hud_content(
@@ -1239,17 +1436,33 @@ impl WindowRenderer {
 				ui.label(egui::RichText::new(rgb_text).color(secondary_color).monospace());
 
 				if show_alt_hint_keycap {
-					let (keycap_fill, keycap_stroke) = match theme {
+					let alt_active = state.alt_held;
+					let (keycap_fill, keycap_stroke, keycap_text) = match theme {
+						HudTheme::Dark if alt_active => (
+							Color32::from_rgba_unmultiplied(255, 255, 255, 40),
+							egui::Stroke::new(
+								1.0,
+								Color32::from_rgba_unmultiplied(255, 255, 255, 70),
+							),
+							label_color,
+						),
 						HudTheme::Dark => (
 							Color32::from_rgba_unmultiplied(255, 255, 255, 18),
 							egui::Stroke::new(
 								1.0,
 								Color32::from_rgba_unmultiplied(255, 255, 255, 30),
 							),
+							secondary_color,
+						),
+						HudTheme::Light if alt_active => (
+							Color32::from_rgba_unmultiplied(0, 0, 0, 22),
+							egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 64)),
+							label_color,
 						),
 						HudTheme::Light => (
 							Color32::from_rgba_unmultiplied(0, 0, 0, 12),
 							egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 32)),
+							secondary_color,
 						),
 					};
 
@@ -1261,19 +1474,23 @@ impl WindowRenderer {
 						..Frame::default()
 					}
 					.show(ui, |ui| {
-						ui.label(egui::RichText::new("Alt").color(secondary_color).monospace());
+						ui.label(egui::RichText::new("Alt").color(keycap_text).monospace());
 					});
 				}
 			});
 		});
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn render_loupe_tile(
 		ui: &mut Ui,
 		state: &OverlayState,
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
 		pill_rect: Rect,
+		hud_blur_active: bool,
+		hud_opaque: bool,
+		theme: HudTheme,
 	) {
 		let ctx = ui.ctx().clone();
 
@@ -1311,14 +1528,27 @@ impl WindowRenderer {
 			.order(egui::Order::Foreground)
 			.fixed_pos(pos)
 			.show(&ctx, |ui| {
-				let fill = Color32::from_rgba_unmultiplied(28, 28, 32, 156);
-				let outer_stroke =
-					egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 40));
+				let body_fill = hud_body_fill_srgba8(theme, hud_opaque);
+				let _ = hud_blur_active;
+				let fill = Color32::from_rgba_unmultiplied(
+					body_fill[0],
+					body_fill[1],
+					body_fill[2],
+					body_fill[3],
+				);
+				let outer_stroke_color = match theme {
+					HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 40),
+					HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
+				};
+				let outer_stroke = egui::Stroke::new(1.0, outer_stroke_color);
 				let shadow = egui::epaint::Shadow {
 					offset: [0, 0],
 					blur: 10,
 					spread: 0,
-					color: Color32::from_rgba_unmultiplied(0, 0, 0, 28),
+					color: match theme {
+						HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 28),
+						HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 18),
+					},
 				};
 				let frame = Frame {
 					fill,
@@ -1332,18 +1562,34 @@ impl WindowRenderer {
 				frame.show(ui, |ui| {
 					ui.set_min_size(Vec2::new(side, side));
 
-					Self::render_loupe(ui, state, monitor, cursor);
+					Self::render_loupe(
+						ui,
+						state,
+						monitor,
+						cursor,
+						hud_blur_active,
+						hud_opaque,
+						theme,
+					);
 				});
 			});
 	}
 
-	fn render_loupe(ui: &mut Ui, state: &OverlayState, monitor: MonitorRect, cursor: GlobalPoint) {
+	fn render_loupe(
+		ui: &mut Ui,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+		hud_blur_active: bool,
+		hud_opaque: bool,
+		theme: HudTheme,
+	) {
 		const CELL: f32 = 10.0;
 
 		let mode = state.mode;
 
 		if matches!(mode, OverlayMode::Live) {
-			Self::render_live_loupe(ui, state, CELL);
+			Self::render_live_loupe(ui, state, CELL, hud_blur_active, hud_opaque, theme);
 		} else if matches!(mode, OverlayMode::Frozen)
 			&& state.monitor == Some(monitor)
 			&& state.frozen_image.is_some()
@@ -1353,7 +1599,14 @@ impl WindowRenderer {
 		}
 	}
 
-	fn render_live_loupe(ui: &mut Ui, state: &OverlayState, cell: f32) {
+	fn render_live_loupe(
+		ui: &mut Ui,
+		state: &OverlayState,
+		cell: f32,
+		_hud_blur_active: bool,
+		hud_opaque: bool,
+		theme: HudTheme,
+	) {
 		let fallback_side_px = 21_u32;
 		let (w, h) = state
 			.loupe
@@ -1362,6 +1615,7 @@ impl WindowRenderer {
 			.unwrap_or((fallback_side_px, fallback_side_px));
 		let side = (w.max(h) as f32) * cell;
 		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), egui::Sense::hover());
+		let body_fill = hud_body_fill_srgba8(theme, hud_opaque);
 		let stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 140));
 		let grid_stroke =
 			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
@@ -1375,9 +1629,7 @@ impl WindowRenderer {
 						Pos2::new(rect.min.x + (x as f32) * cell, rect.min.y + (y as f32) * cell);
 					let cell_rect = Rect::from_min_size(cell_min, Vec2::splat(cell));
 					let pixel = loupe.patch.get_pixel_checked(x, y).expect("pixel bounds checked");
-					let fill = Color32::from_rgba_unmultiplied(
-						pixel.0[0], pixel.0[1], pixel.0[2], pixel.0[3],
-					);
+					let fill = Color32::from_rgb(pixel.0[0], pixel.0[1], pixel.0[2]);
 
 					ui.painter().rect_filled(cell_rect, 0.0, fill);
 				}
@@ -1399,7 +1651,10 @@ impl WindowRenderer {
 				);
 			}
 		} else {
-			ui.painter().rect_filled(rect, 3.0, Color32::from_rgba_unmultiplied(255, 255, 255, 10));
+			let placeholder_fill =
+				Color32::from_rgba_unmultiplied(body_fill[0], body_fill[1], body_fill[2], 255);
+
+			ui.painter().rect_filled(rect, 3.0, placeholder_fill);
 		}
 
 		ui.painter().rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Outside);
@@ -1590,6 +1845,8 @@ impl WindowRenderer {
 		let egui_ctx = egui::Context::default();
 		let egui_renderer = Renderer::new(&gpu.device, surface_format, None, 1, false);
 		let bg_sampler = Self::create_bg_sampler(gpu);
+		let (mipgen_pipeline, mipgen_bind_group_layout) =
+			Self::create_mipgen_pipeline(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
 		let (hud_blur_pipeline, hud_blur_bind_group_layout) =
 			Self::create_hud_blur_pipeline(gpu, surface_format);
 		let hud_blur_uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1607,6 +1864,8 @@ impl WindowRenderer {
 			egui_ctx,
 			egui_renderer,
 			bg_sampler,
+			mipgen_pipeline,
+			mipgen_bind_group_layout,
 			hud_blur_pipeline,
 			hud_blur_bind_group_layout,
 			hud_blur_uniform,
@@ -1725,6 +1984,7 @@ impl WindowRenderer {
 		let Some(hud_pill) = self.hud_pill else {
 			return;
 		};
+		let max_lod = self.hud_bg.as_ref().map(|bg| bg.max_lod).unwrap_or(0.0);
 		let surface_w = size.width as f32;
 		let surface_h = size.height as f32;
 
@@ -1753,7 +2013,8 @@ impl WindowRenderer {
 			srgb8_to_linear_f32(fill[2]),
 			tint_a,
 		];
-		let effects = [hud_fog_amount.clamp(0.0, 1.0), hud_milk_amount.clamp(0.0, 1.0), 0.0, 0.0];
+		let effects =
+			[hud_fog_amount.clamp(0.0, 1.0), hud_milk_amount.clamp(0.0, 1.0), max_lod, 0.0];
 		let u = HudBlurUniformRaw {
 			rect_min_size: [rect_min_px[0], rect_min_px[1], rect_size_px[0], rect_size_px[1]],
 			radius_blur_soft: [radius_px, blur_radius_px, edge_softness_px, 0.0],
@@ -1813,20 +2074,22 @@ impl WindowRenderer {
 			downscale_for_gpu_upload(image, gpu.device.limits().max_texture_dimension_2d);
 		let (width, height) = upload_image.dimensions();
 		let max_side = gpu.device.limits().max_texture_dimension_2d;
+		let mip_level_count = Self::mip_level_count(width, height).min(10);
 
 		debug_assert!(width <= max_side && height <= max_side);
 
 		let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
 			label: Some("rsnap-frozen-bg texture"),
 			size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-			mip_level_count: 1,
+			mip_level_count,
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
 			format: wgpu::TextureFormat::Rgba8UnormSrgb,
-			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+			usage: wgpu::TextureUsages::TEXTURE_BINDING
+				| wgpu::TextureUsages::COPY_DST
+				| wgpu::TextureUsages::RENDER_ATTACHMENT,
 			view_formats: &[],
 		});
-		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 		let upload_bytes = upload_image.as_raw();
 		let bytes_per_pixel = 4_usize;
 		let unpadded_bytes_per_row = (width as usize) * bytes_per_pixel;
@@ -1859,7 +2122,9 @@ impl WindowRenderer {
 			},
 			wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
 		);
+		self.generate_mipmaps(gpu, &texture, mip_level_count);
 
+		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 		let hud_blur_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
 			label: Some("rsnap-hud-blur bind group"),
 			layout: &self.hud_blur_bind_group_layout,
@@ -1878,8 +2143,9 @@ impl WindowRenderer {
 				},
 			],
 		});
+		let max_lod = (mip_level_count.saturating_sub(1)) as f32;
 
-		self.hud_bg = Some(HudBg { _texture: texture, _view: view, hud_blur_bind_group });
+		self.hud_bg = Some(HudBg { _texture: texture, _view: view, hud_blur_bind_group, max_lod });
 		self.hud_bg_generation = target_generation;
 
 		Ok(())
@@ -1890,6 +2156,7 @@ struct HudBg {
 	_texture: wgpu::Texture,
 	_view: wgpu::TextureView,
 	hud_blur_bind_group: BindGroup,
+	max_lod: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
