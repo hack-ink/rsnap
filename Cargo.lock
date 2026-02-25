@@ -3135,6 +3135,7 @@ dependencies = [
  "image",
  "objc",
  "pollster",
+ "serde",
  "thiserror 1.0.69",
  "wgpu",
  "winit",
