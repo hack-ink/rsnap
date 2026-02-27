@@ -241,7 +241,7 @@ fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
 	let monitors = xcap::Monitor::all().wrap_err("xcap Monitor::all failed")?;
 
 	for m in monitors {
-		if m.id() == monitor.id {
+		if m.id().wrap_err("Failed to read xcap monitor id")? == monitor.id {
 			return Ok(m);
 		}
 	}

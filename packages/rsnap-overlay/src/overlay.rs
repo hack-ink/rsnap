@@ -404,11 +404,38 @@ impl OverlaySession {
 	) -> Result<(), String> {
 		for monitor in monitors {
 			let monitor_rect = MonitorRect {
-				id: monitor.id(),
-				origin: GlobalPoint::new(monitor.x(), monitor.y()),
-				width: monitor.width(),
-				height: monitor.height(),
-				scale_factor_x1000: (monitor.scale_factor() * 1_000.0).round() as u32,
+				id: monitor.id().map_err(|err| {
+					format!(
+						"Failed to read xcap monitor id while creating overlay windows: {err:?}"
+					)
+				})?,
+				origin: GlobalPoint::new(
+					monitor.x().map_err(|err| {
+						format!(
+							"Failed to read monitor x position while creating overlay windows: {err:?}"
+						)
+					})?,
+					monitor.y().map_err(|err| {
+						format!(
+							"Failed to read monitor y position while creating overlay windows: {err:?}"
+						)
+					})?,
+				),
+				width: monitor.width().map_err(|err| {
+					format!("Failed to read monitor width while creating overlay windows: {err:?}")
+				})?,
+				height: monitor.height().map_err(|err| {
+					format!("Failed to read monitor height while creating overlay windows: {err:?}")
+				})?,
+				scale_factor_x1000: {
+					let scale_factor = monitor.scale_factor().map_err(|err| {
+						format!(
+							"Failed to read monitor scale factor while creating overlay windows: {err:?}"
+						)
+					})?;
+
+					(scale_factor * 1_000.0).round() as u32
+				},
 			};
 			let attrs = winit::window::Window::default_attributes()
 				.with_title("rsnap-overlay")
@@ -557,8 +584,37 @@ impl OverlaySession {
 		}
 
 		self.maybe_tick_live_sampling();
+		self.maybe_tick_frozen_cursor_tracking();
 
 		self.drain_worker_responses()
+	}
+
+	fn maybe_tick_frozen_cursor_tracking(&mut self) {
+		if !self.is_active() || !matches!(self.state.mode, OverlayMode::Frozen) {
+			return;
+		}
+
+		let mouse = self.cursor_device.get_mouse();
+		let global = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
+		let old_monitor = self.active_cursor_monitor();
+		let Some(monitor) = self.monitor_at(global) else {
+			return;
+		};
+
+		if self.state.cursor == Some(global) && old_monitor == Some(monitor) {
+			return;
+		}
+
+		self.update_cursor_state(monitor, global);
+		self.update_hud_window_position(monitor, global);
+
+		if let Some(old_monitor) = old_monitor
+			&& old_monitor != monitor
+		{
+			self.request_redraw_for_monitor(old_monitor);
+		}
+
+		self.request_redraw_for_monitor(monitor);
 	}
 
 	fn maybe_request_keepalive_redraw(&mut self) {
@@ -1524,19 +1580,18 @@ impl GpuContext {
 			compatible_surface: None,
 			force_fallback_adapter: false,
 		}))
-		.ok_or_else(|| eyre::eyre!("No suitable GPU adapters found"))?;
+		.map_err(|err| eyre::eyre!("Failed to request GPU adapter: {err}"))?;
 		let adapter_limits = adapter.limits();
-		let (device, queue) = pollster::block_on(adapter.request_device(
-			&wgpu::DeviceDescriptor {
-				label: Some("rsnap-overlay device"),
-				required_features: wgpu::Features::empty(),
-				// Use the adapter's actual limits. Using `downlevel_defaults()` caps max texture
-				// size to 2048, which breaks on common HiDPI displays.
-				required_limits: adapter_limits,
-				memory_hints: wgpu::MemoryHints::Performance,
-			},
-			None,
-		))
+		let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+			label: Some("rsnap-overlay device"),
+			required_features: wgpu::Features::empty(),
+			// Use the adapter's actual limits. Using `downlevel_defaults()` caps max texture
+			// size to 2048, which breaks on common HiDPI displays.
+			required_limits: adapter_limits,
+			experimental_features: wgpu::ExperimentalFeatures::default(),
+			memory_hints: wgpu::MemoryHints::Performance,
+			trace: wgpu::Trace::Off,
+		}))
 		.wrap_err("Failed to create wgpu device")?;
 
 		Ok(Self { instance, adapter, device, queue })
@@ -1693,6 +1748,7 @@ impl WindowRenderer {
 				label: Some("rsnap-mipgen pass"),
 				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
 					view: &dst_view,
+					depth_slice: None,
 					resolve_target: None,
 					ops: wgpu::Operations {
 						load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -2242,7 +2298,7 @@ impl WindowRenderer {
 		let tile_padding = Margin::same(10);
 		let tile_w = side + (tile_padding.left as f32) + (tile_padding.right as f32);
 		let tile_h = side + (tile_padding.top as f32) + (tile_padding.bottom as f32);
-		let screen = ctx.screen_rect();
+		let screen = ctx.content_rect();
 		let gap = 10.0;
 		let mut x = pill_rect.min.x;
 
@@ -2531,6 +2587,7 @@ impl WindowRenderer {
 				label: Some("rsnap-overlay renderpass"),
 				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
 					view: &view,
+					depth_slice: None,
 					resolve_target: None,
 					ops: wgpu::Operations {
 						load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
@@ -2602,7 +2659,16 @@ impl WindowRenderer {
 		surface.configure(&gpu.device, &surface_config);
 
 		let egui_ctx = egui::Context::default();
-		let egui_renderer = Renderer::new(&gpu.device, surface_format, None, 1, false);
+		let egui_renderer = Renderer::new(
+			&gpu.device,
+			surface_format,
+			egui_wgpu::RendererOptions {
+				msaa_samples: 1,
+				depth_stencil_format: None,
+				dithering: false,
+				predictable_texture_filtering: false,
+			},
+		);
 		let bg_sampler = Self::create_bg_sampler(gpu);
 		let (mipgen_pipeline, mipgen_bind_group_layout) =
 			Self::create_mipgen_pipeline(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
