@@ -2607,7 +2607,7 @@ impl WindowRenderer {
 			Self::render_live_loupe(ui, state, CELL, hud_blur_active, hud_opaque, theme);
 		} else if matches!(mode, OverlayMode::Frozen)
 			&& state.monitor == Some(monitor)
-			&& state.frozen_image.is_some()
+			&& (state.frozen_image.is_some() || state.loupe.is_some())
 			&& state.cursor.is_some()
 		{
 			Self::render_frozen_loupe(
