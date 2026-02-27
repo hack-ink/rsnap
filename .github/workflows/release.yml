@@ -65,7 +65,7 @@ jobs:
           tar -czvf vibe-mono-${{ matrix.target.name }}.tar.gz vibe-mono
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: vibe-mono-${{ matrix.target.name }}
           path: vibe-mono-${{ matrix.target.name }}.*
