@@ -722,8 +722,7 @@ impl OverlaySession {
 						&& self.state.monitor == Some(monitor)
 					{
 						self.state.finish_freeze(monitor, image);
-
-						self.capture_windows_hidden = false;
+						self.restore_capture_windows_visibility();
 
 						if let Some(cursor) = self.state.cursor {
 							self.state.rgb =
@@ -739,6 +738,7 @@ impl OverlaySession {
 						}
 
 						self.request_redraw_for_monitor(monitor);
+						self.raise_hud_windows();
 					} else if matches!(self.state.mode, OverlayMode::Live)
 						&& self.use_fake_hud_blur()
 						&& self.active_cursor_monitor() == Some(monitor)
@@ -752,10 +752,7 @@ impl OverlaySession {
 					}
 				},
 				WorkerResponse::Error(message) => {
-					if self.capture_windows_hidden {
-						self.capture_windows_hidden = false;
-					}
-
+					self.restore_capture_windows_visibility();
 					self.state.set_error(message);
 					self.request_redraw_all();
 				},
@@ -1094,6 +1091,7 @@ impl OverlaySession {
 		}
 
 		self.request_redraw_for_monitor(monitor);
+		self.raise_hud_windows();
 
 		OverlayControl::Continue
 	}
@@ -1214,10 +1212,26 @@ impl OverlaySession {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
+
+		if self.capture_windows_hidden {
+			#[cfg(not(target_os = "macos"))]
+			if let Some(hud_window) = self.hud_window.as_ref() {
+				hud_window.window.set_visible(false);
+			}
+
+			self.last_present_at = Instant::now();
+
+			#[cfg(not(target_os = "macos"))]
+			return OverlayControl::Continue;
+		}
+
 		let monitor =
 			self.monitor_for_mode().or_else(|| self.windows.values().next().map(|w| w.monitor));
 
 		if let (Some(monitor), Some(hud_window)) = (monitor, self.hud_window.as_mut()) {
+			#[cfg(not(target_os = "macos"))]
+			hud_window.window.set_visible(true);
+
 			if let Err(err) = hud_window.renderer.draw(
 				gpu,
 				&self.state,
@@ -1310,6 +1324,9 @@ impl OverlaySession {
 		let mut needs_reposition = false;
 
 		if let Some(loupe_window) = self.loupe_window.as_mut() {
+			#[cfg(not(target_os = "macos"))]
+			loupe_window.window.set_visible(true);
+
 			if let Err(err) = loupe_window.renderer.draw_loupe_tile_window(
 				gpu,
 				&self.state,
@@ -1407,7 +1424,6 @@ impl OverlaySession {
 				if worker.request_freeze_capture(overlay_monitor) {
 					self.pending_freeze_capture = None;
 					self.pending_freeze_capture_armed = false;
-					self.capture_windows_hidden = false;
 				} else {
 					self.request_redraw_for_monitor(overlay_monitor);
 				}
@@ -1650,6 +1666,35 @@ impl OverlaySession {
 		#[cfg(not(target_os = "macos"))]
 		if let Some(loupe_window) = &self.loupe_window {
 			loupe_window.window.set_visible(false);
+		}
+	}
+
+	fn restore_capture_windows_visibility(&mut self) {
+		if !self.capture_windows_hidden {
+			return;
+		}
+
+		self.capture_windows_hidden = false;
+
+		#[cfg(not(target_os = "macos"))]
+		if let Some(hud_window) = &self.hud_window {
+			hud_window.window.set_visible(true);
+		}
+		#[cfg(not(target_os = "macos"))]
+		if let Some(loupe_window) = &self.loupe_window {
+			loupe_window.window.set_visible(self.state.alt_held);
+		}
+	}
+
+	fn raise_hud_windows(&self) {
+		if let Some(hud_window) = self.hud_window.as_ref() {
+			hud_window.window.focus_window();
+		}
+
+		if self.state.alt_held
+			&& let Some(loupe_window) = self.loupe_window.as_ref()
+		{
+			loupe_window.window.focus_window();
 		}
 	}
 }
