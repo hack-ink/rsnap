@@ -217,6 +217,8 @@ pub struct OverlaySession {
 	loupe_patch_width_px: u32,
 	loupe_patch_height_px: u32,
 	pending_freeze_capture: Option<MonitorRect>,
+	pending_freeze_capture_armed: bool,
+	capture_windows_hidden: bool,
 	pending_encode_png: Option<RgbaImage>,
 }
 impl OverlaySession {
@@ -257,6 +259,8 @@ impl OverlaySession {
 			loupe_patch_width_px: loupe_sample_side_px,
 			loupe_patch_height_px: loupe_sample_side_px,
 			pending_freeze_capture: None,
+			pending_freeze_capture_armed: false,
+			capture_windows_hidden: false,
 			pending_encode_png: None,
 		}
 	}
@@ -395,6 +399,8 @@ impl OverlaySession {
 		self.loupe_outer_pos = None;
 		self.cursor_monitor = None;
 		self.state = OverlayState::new();
+		self.pending_freeze_capture = None;
+		self.pending_freeze_capture_armed = false;
 	}
 
 	fn create_overlay_windows(
@@ -664,17 +670,17 @@ impl OverlaySession {
 	}
 
 	fn drain_worker_responses(&mut self) -> OverlayControl {
-		let Some(worker) = &self.worker else {
+		if !self.worker.is_some() {
 			return OverlayControl::Continue;
-		};
+		}
 
 		if let Some(image) = self.pending_encode_png.take()
-			&& let Err(image) = worker.request_encode_png(image)
+			&& let Err(image) = self.worker.as_ref().unwrap().request_encode_png(image)
 		{
 			self.pending_encode_png = Some(image);
 		}
 
-		while let Some(resp) = worker.try_recv() {
+		while let Some(resp) = self.worker.as_ref().and_then(|worker| worker.try_recv()) {
 			match resp {
 				WorkerResponse::SampledLoupe { monitor, point, rgb, patch } => {
 					if matches!(self.state.mode, OverlayMode::Live) {
@@ -715,6 +721,19 @@ impl OverlaySession {
 						&& self.state.monitor == Some(monitor)
 					{
 						self.state.finish_freeze(monitor, image);
+						self.capture_windows_hidden = false;
+
+						if let Some(cursor) = self.state.cursor {
+							self.state.rgb = frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
+							self.state.loupe = frozen_loupe_patch(
+								&self.state.frozen_image,
+								Some(monitor),
+								cursor,
+								self.loupe_patch_width_px,
+								self.loupe_patch_height_px,
+							)
+							.map(|patch| crate::state::LoupeSample { center: cursor, patch });
+						}
 						self.request_redraw_for_monitor(monitor);
 					} else if matches!(self.state.mode, OverlayMode::Live)
 						&& self.use_fake_hud_blur()
@@ -729,6 +748,9 @@ impl OverlaySession {
 					}
 				},
 				WorkerResponse::Error(message) => {
+					if self.capture_windows_hidden {
+						self.capture_windows_hidden = false;
+					}
 					self.state.set_error(message);
 					self.request_redraw_all();
 				},
@@ -1083,21 +1105,36 @@ impl OverlaySession {
 		let Some(monitor) = self.windows.get(&window_id).map(|w| w.monitor) else {
 			return OverlayControl::Continue;
 		};
+		let frozen_rgb = self.state.rgb;
+		let frozen_loupe = self.state.loupe.as_ref().map(|loupe| crate::state::LoupeSample {
+			center: loupe.center,
+			patch: loupe.patch.clone(),
+		});
 
 		self.state.clear_error();
 		self.state.begin_freeze(monitor);
+		self.state.rgb = frozen_rgb;
+		self.state.loupe = frozen_loupe;
+		self.pending_freeze_capture = Some(monitor);
+		self.pending_freeze_capture_armed = false;
+		self.capture_windows_hidden = false;
 
 		if self.use_fake_hud_blur()
 			&& self.state.live_bg_monitor == Some(monitor)
 			&& let Some(image) = self.state.live_bg_image.take()
 		{
 			self.state.live_bg_monitor = None;
-
 			self.state.finish_freeze(monitor, image);
-
 			self.pending_freeze_capture = None;
+			self.pending_freeze_capture_armed = false;
+			if let Some(cursor) = self.state.cursor {
+				self.update_cursor_state(monitor, cursor);
+			}
 		} else {
-			self.pending_freeze_capture = Some(monitor);
+			self.state.live_bg_monitor = None;
+			self.state.live_bg_image = None;
+			self.capture_windows_hidden = true;
+			self.hide_capture_windows();
 		}
 
 		self.request_redraw_for_monitor(monitor);
@@ -1222,10 +1259,22 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
-	fn handle_loupe_redraw_requested(&mut self) -> OverlayControl {
+fn handle_loupe_redraw_requested(&mut self) -> OverlayControl {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
+
+		if self.capture_windows_hidden {
+			#[cfg(not(target_os = "macos"))]
+			if let Some(loupe_window) = self.loupe_window.as_ref() {
+				loupe_window.window.set_visible(false);
+			}
+
+			self.last_present_at = Instant::now();
+
+			#[cfg(not(target_os = "macos"))]
+			return OverlayControl::Continue;
+		}
 
 		if !self.state.alt_held {
 			if let Some(loupe_window) = self.loupe_window.as_ref() {
@@ -1308,39 +1357,56 @@ impl OverlaySession {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
-		let Some(overlay_window) = self.windows.get_mut(&window_id) else {
-			return OverlayControl::Continue;
+		let overlay_monitor = {
+			let Some(overlay_window) = self.windows.get_mut(&window_id) else {
+				return OverlayControl::Continue;
+			};
+			let overlay_monitor = overlay_window.monitor;
+
+			if let Err(err) = overlay_window.renderer.draw(
+				gpu,
+				&self.state,
+				overlay_monitor,
+				false,
+				None,
+				false,
+				self.config.hud_anchor,
+				self.config.show_alt_hint_keycap,
+				self.config.show_hud_blur,
+				self.config.hud_opaque,
+				self.config.hud_opacity,
+				self.config.hud_fog_amount,
+				self.config.hud_milk_amount,
+				self.config.theme_mode,
+			) {
+				return self.exit(OverlayExit::Error(format!("{err:#}")));
+			}
+
+			self.last_present_at = Instant::now();
+
+			overlay_monitor
 		};
 
-		if let Err(err) = overlay_window.renderer.draw(
-			gpu,
-			&self.state,
-			overlay_window.monitor,
-			false,
-			None,
-			false,
-			self.config.hud_anchor,
-			self.config.show_alt_hint_keycap,
-			self.config.show_hud_blur,
-			self.config.hud_opaque,
-			self.config.hud_opacity,
-			self.config.hud_fog_amount,
-			self.config.hud_milk_amount,
-			self.config.theme_mode,
-		) {
-			return self.exit(OverlayExit::Error(format!("{err:#}")));
-		}
-
-		self.last_present_at = Instant::now();
-
-		if self.pending_freeze_capture == Some(overlay_window.monitor)
+		if self.pending_freeze_capture == Some(overlay_monitor)
 			&& matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.state.monitor == Some(overlay_window.monitor)
+			&& self.state.monitor == Some(overlay_monitor)
 			&& self.state.frozen_image.is_none()
 			&& let Some(worker) = &self.worker
-			&& worker.request_freeze_capture(overlay_window.monitor)
 		{
-			self.pending_freeze_capture = None;
+			// Capture must happen on a post-hide redraw so the HUD/loupe are not included.
+			if self.pending_freeze_capture_armed {
+				if worker.request_freeze_capture(overlay_monitor) {
+					self.pending_freeze_capture = None;
+					self.pending_freeze_capture_armed = false;
+					self.capture_windows_hidden = false;
+				} else {
+					self.request_redraw_for_monitor(overlay_monitor);
+				}
+			} else {
+				self.pending_freeze_capture_armed = true;
+				self.hide_capture_windows();
+				self.request_redraw_for_monitor(overlay_monitor);
+			}
 		}
 
 		OverlayControl::Continue
@@ -1541,10 +1607,40 @@ impl OverlaySession {
 		match self.state.mode {
 			OverlayMode::Live => {},
 			OverlayMode::Frozen => {
+				if self.state.frozen_image.is_none() {
+					return;
+				}
+
 				let frozen_monitor = self.state.monitor;
 
 				self.state.rgb = frozen_rgb(&self.state.frozen_image, frozen_monitor, cursor);
+				self.state.loupe = if self.state.alt_held {
+					frozen_loupe_patch(
+						&self.state.frozen_image,
+						frozen_monitor,
+						cursor,
+						self.loupe_patch_width_px,
+						self.loupe_patch_height_px,
+					)
+					.map(|patch| crate::state::LoupeSample { center: cursor, patch })
+				} else {
+					None
+				};
 			},
+		}
+	}
+
+	fn hide_capture_windows(&mut self) {
+		self.capture_windows_hidden = true;
+
+		#[cfg(not(target_os = "macos"))]
+		if let Some(hud_window) = &self.hud_window {
+			hud_window.window.set_visible(false);
+		}
+
+		#[cfg(not(target_os = "macos"))]
+		if let Some(loupe_window) = &self.loupe_window {
+			loupe_window.window.set_visible(false);
 		}
 	}
 }
@@ -1607,6 +1703,7 @@ struct WindowRenderer {
 	egui_renderer: Renderer,
 	bg_sampler: wgpu::Sampler,
 	mipgen_pipeline: RenderPipeline,
+	mipgen_surface_pipeline: RenderPipeline,
 	mipgen_bind_group_layout: BindGroupLayout,
 	hud_blur_pipeline: RenderPipeline,
 	hud_blur_bind_group_layout: BindGroupLayout,
@@ -1696,6 +1793,62 @@ impl WindowRenderer {
 		});
 
 		(pipeline, bind_group_layout)
+	}
+
+	fn create_mipgen_surface_pipeline(
+		gpu: &GpuContext,
+		format: wgpu::TextureFormat,
+		bind_group_layout: &BindGroupLayout,
+	) -> RenderPipeline {
+		let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+			label: Some("rsnap-mipgen fullscreen shader"),
+			source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+				"mipgen.wgsl"
+			))),
+		});
+		let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+			label: Some("rsnap-mipgen fullscreen pipeline layout"),
+			bind_group_layouts: &[bind_group_layout],
+			push_constant_ranges: &[],
+		});
+		let surface_fragment_entry = if cfg!(target_os = "macos") {
+			"fs_main_macos_surface"
+		} else {
+			"fs_main"
+		};
+		gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("rsnap-mipgen fullscreen pipeline"),
+			layout: Some(&pipeline_layout),
+			vertex: wgpu::VertexState {
+				module: &shader,
+				entry_point: Some("vs_main"),
+				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				buffers: &[],
+			},
+			primitive: wgpu::PrimitiveState {
+				topology: wgpu::PrimitiveTopology::TriangleList,
+				strip_index_format: None,
+				front_face: wgpu::FrontFace::Ccw,
+				cull_mode: None,
+				polygon_mode: wgpu::PolygonMode::Fill,
+				unclipped_depth: false,
+				conservative: false,
+			},
+			depth_stencil: None,
+			multisample: wgpu::MultisampleState::default(),
+			fragment: Some(wgpu::FragmentState {
+				module: &shader,
+				entry_point: Some(surface_fragment_entry),
+				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				targets: &[Some(wgpu::ColorTargetState {
+					format,
+					blend: None,
+					write_mask: wgpu::ColorWrites::ALL,
+				})],
+			}),
+			multiview: None,
+			cache: None,
+		})
 	}
 
 	fn generate_mipmaps(&self, gpu: &GpuContext, texture: &wgpu::Texture, mip_level_count: u32) {
@@ -2011,6 +2164,10 @@ impl WindowRenderer {
 	}
 
 	fn should_draw_hud(state: &OverlayState, monitor: MonitorRect) -> bool {
+		if cfg!(target_os = "macos") && matches!(state.mode, OverlayMode::Frozen) {
+			return true;
+		}
+
 		!matches!(state.mode, OverlayMode::Frozen)
 			|| state.monitor != Some(monitor)
 			|| state.frozen_image.is_some()
@@ -2383,7 +2540,16 @@ impl WindowRenderer {
 			&& state.frozen_image.is_some()
 			&& state.cursor.is_some()
 		{
-			Self::render_frozen_loupe(ui, state, monitor, cursor, CELL);
+			Self::render_frozen_loupe(
+				ui,
+				state,
+				monitor,
+				cursor,
+				CELL,
+				hud_blur_active,
+				hud_opaque,
+				theme,
+			);
 		}
 	}
 
@@ -2466,9 +2632,24 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
 		cell: f32,
+		hud_blur_active: bool,
+		hud_opaque: bool,
+		theme: HudTheme,
 	) {
-		const LOUPE_RADIUS_PX: i32 = 5;
-		const LOUPE_SIDE_PX: i32 = (LOUPE_RADIUS_PX * 2) + 1;
+		if state.loupe.is_some() {
+			Self::render_live_loupe(
+				ui,
+				state,
+				cell,
+				hud_blur_active,
+				hud_opaque,
+				theme,
+			);
+			return;
+		}
+
+	const LOUPE_RADIUS_PX: i32 = 5;
+	const LOUPE_SIDE_PX: i32 = (LOUPE_RADIUS_PX * 2) + 1;
 
 		let side = (LOUPE_SIDE_PX as f32) * cell;
 		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), egui::Sense::hover());
@@ -2565,6 +2746,7 @@ impl WindowRenderer {
 	fn render_frame(
 		&mut self,
 		gpu: &GpuContext,
+		draw_frozen_bg: bool,
 		hud_blur_active: bool,
 		frame: SurfaceTexture,
 		paint_jobs: &[ClippedPrimitive],
@@ -2599,6 +2781,12 @@ impl WindowRenderer {
 				occlusion_query_set: None,
 			};
 			let mut rpass = encoder.begin_render_pass(&rpass_desc).forget_lifetime();
+
+			if draw_frozen_bg && let Some(bg) = &self.hud_bg {
+				rpass.set_pipeline(&self.mipgen_surface_pipeline);
+				rpass.set_bind_group(0, &bg.mipgen_bind_group, &[]);
+				rpass.draw(0..3, 0..1);
+			}
 
 			if hud_blur_active
 				&& self.hud_pill.is_some()
@@ -2672,6 +2860,8 @@ impl WindowRenderer {
 		let bg_sampler = Self::create_bg_sampler(gpu);
 		let (mipgen_pipeline, mipgen_bind_group_layout) =
 			Self::create_mipgen_pipeline(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
+		let mipgen_surface_pipeline =
+			Self::create_mipgen_surface_pipeline(gpu, surface_format, &mipgen_bind_group_layout);
 		let (hud_blur_pipeline, hud_blur_bind_group_layout) =
 			Self::create_hud_blur_pipeline(gpu, surface_format);
 		let hud_blur_uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
@@ -2690,6 +2880,7 @@ impl WindowRenderer {
 			egui_renderer,
 			bg_sampler,
 			mipgen_pipeline,
+			mipgen_surface_pipeline,
 			mipgen_bind_group_layout,
 			hud_blur_pipeline,
 			hud_blur_bind_group_layout,
@@ -2753,11 +2944,16 @@ impl WindowRenderer {
 
 		let (size, pixels_per_point, raw_input) = self.prepare_egui_input(gpu);
 		let can_draw_hud = draw_hud && Self::should_draw_hud(state, monitor);
+		let should_sync_bg = matches!(state.mode, OverlayMode::Frozen) || can_draw_hud;
 
-		if can_draw_hud {
+		if should_sync_bg {
 			self.sync_hud_bg(gpu, state, monitor)?;
 		} else {
 			self.hud_bg = None;
+			self.hud_bg_generation = match state.mode {
+				OverlayMode::Live => state.live_bg_generation,
+				OverlayMode::Frozen => state.frozen_generation,
+			};
 		}
 
 		// `show_hud_blur` is a UX toggle for "glass mode":
@@ -2806,8 +3002,18 @@ impl WindowRenderer {
 		let screen_descriptor =
 			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
 		let frame = self.acquire_frame(gpu)?;
+		let draw_frozen_bg = matches!(state.mode, OverlayMode::Frozen)
+			&& state.monitor == Some(monitor)
+			&& state.frozen_image.is_some();
 
-		self.render_frame(gpu, hud_shader_blur_active, frame, &paint_jobs, &screen_descriptor)?;
+		self.render_frame(
+			gpu,
+			draw_frozen_bg,
+			hud_shader_blur_active,
+			frame,
+			&paint_jobs,
+			&screen_descriptor,
+		)?;
 
 		Ok(())
 	}
@@ -2859,7 +3065,7 @@ impl WindowRenderer {
 			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
 		let frame = self.acquire_frame(gpu)?;
 
-		self.render_frame(gpu, false, frame, &paint_jobs, &screen_descriptor)?;
+		self.render_frame(gpu, false, false, frame, &paint_jobs, &screen_descriptor)?;
 
 		Ok(())
 	}
@@ -3160,9 +3366,29 @@ impl WindowRenderer {
 				},
 			],
 		});
+		let mipgen_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+			label: Some("rsnap-mipgen fullscreen bind group"),
+			layout: &self.mipgen_bind_group_layout,
+			entries: &[
+				wgpu::BindGroupEntry {
+					binding: 0,
+					resource: wgpu::BindingResource::TextureView(&view),
+				},
+				wgpu::BindGroupEntry {
+					binding: 1,
+					resource: wgpu::BindingResource::Sampler(&self.bg_sampler),
+				},
+			],
+		});
 		let max_lod = (mip_level_count.saturating_sub(1)) as f32;
 
-		self.hud_bg = Some(HudBg { _texture: texture, _view: view, hud_blur_bind_group, max_lod });
+		self.hud_bg = Some(HudBg {
+			_texture: texture,
+			_view: view,
+			hud_blur_bind_group,
+			mipgen_bind_group,
+			max_lod,
+		});
 		self.hud_bg_generation = target_generation;
 
 		Ok(())
@@ -3173,6 +3399,7 @@ struct HudBg {
 	_texture: wgpu::Texture,
 	_view: wgpu::TextureView,
 	hud_blur_bind_group: BindGroup,
+	mipgen_bind_group: BindGroup,
 	max_lod: f32,
 }
 
@@ -3248,6 +3475,49 @@ fn frozen_rgb(
 	let pixel = image.get_pixel_checked(x, y)?;
 
 	Some(Rgb::new(pixel.0[0], pixel.0[1], pixel.0[2]))
+}
+
+fn frozen_loupe_patch(
+	image: &Option<RgbaImage>,
+	monitor: Option<MonitorRect>,
+	point: GlobalPoint,
+	width_px: u32,
+	height_px: u32,
+) -> Option<RgbaImage> {
+	let Some(image) = image else {
+		return None;
+	};
+	let monitor = monitor?;
+	let (center_x, center_y) = monitor.local_u32_pixels(point)?;
+	let mut out = RgbaImage::new(width_px.max(1), height_px.max(1));
+	let out_width = out.width() as i32;
+	let out_height = out.height() as i32;
+	let half_width = out_width / 2;
+	let half_height = out_height / 2;
+	let center_x = center_x as i32;
+	let center_y = center_y as i32;
+	let image_width = image.width() as i32;
+	let image_height = image.height() as i32;
+
+	for out_y in 0..out.height() {
+		for out_x in 0..out.width() {
+			let image_x = center_x + (out_x as i32) - half_width;
+			let image_y = center_y + (out_y as i32) - half_height;
+			let color = if image_x >= 0
+				&& image_y >= 0
+				&& image_x < image_width
+				&& image_y < image_height
+			{
+				*image.get_pixel(image_x as u32, image_y as u32)
+			} else {
+				image::Rgba([0, 0, 0, 0])
+			};
+
+			out.put_pixel(out_x, out_y, color);
+		}
+	}
+
+	Some(out)
 }
 
 #[cfg(target_os = "macos")]
@@ -3405,6 +3675,8 @@ fn macos_configure_hud_window(
 
 		let _: () = msg_send![ns_window, setOpaque: false];
 		let _: () = msg_send![ns_window, setHasShadow: false];
+		let sharing_type_none = 0_u64;
+		let _: () = msg_send![ns_window, setSharingType: sharing_type_none];
 		let clear: *mut Object = msg_send![class!(NSColor), clearColor];
 		let _: () = msg_send![ns_window, setBackgroundColor: clear];
 		let content_view: *mut Object = msg_send![ns_window, contentView];
