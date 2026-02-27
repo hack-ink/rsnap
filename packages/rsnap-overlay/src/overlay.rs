@@ -83,6 +83,12 @@ pub enum AltActivationMode {
 	Toggle,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HudTheme {
+	Dark,
+	Light,
+}
+
 #[derive(Clone, Debug)]
 pub struct OverlayConfig {
 	pub hud_anchor: HudAnchor,
@@ -114,12 +120,6 @@ impl Default for OverlayConfig {
 			theme_mode: ThemeMode::System,
 		}
 	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HudTheme {
-	Dark,
-	Light,
 }
 
 #[allow(dead_code)]
@@ -1091,7 +1091,6 @@ impl OverlaySession {
 		}
 
 		self.request_redraw_for_monitor(monitor);
-		self.raise_hud_windows();
 
 		OverlayControl::Continue
 	}
@@ -1140,9 +1139,12 @@ impl OverlaySession {
 		} else {
 			self.state.live_bg_monitor = None;
 			self.state.live_bg_image = None;
-			self.capture_windows_hidden = true;
+			#[cfg(not(target_os = "macos"))]
+			{
+				self.capture_windows_hidden = true;
 
-			self.hide_capture_windows();
+				self.hide_capture_windows();
+			}
 		}
 
 		self.request_redraw_for_monitor(monitor);
@@ -1419,19 +1421,31 @@ impl OverlaySession {
 			&& self.state.frozen_image.is_none()
 			&& let Some(worker) = &self.worker
 		{
-			// Capture must happen on a post-hide redraw so the HUD/loupe are not included.
-			if self.pending_freeze_capture_armed {
+			#[cfg(target_os = "macos")]
+			{
 				if worker.request_freeze_capture(overlay_monitor) {
 					self.pending_freeze_capture = None;
 					self.pending_freeze_capture_armed = false;
 				} else {
 					self.request_redraw_for_monitor(overlay_monitor);
 				}
-			} else {
-				self.pending_freeze_capture_armed = true;
+			}
+			#[cfg(not(target_os = "macos"))]
+			{
+				// Capture must happen on a post-hide redraw so the HUD/loupe are not included.
+				if self.pending_freeze_capture_armed {
+					if worker.request_freeze_capture(overlay_monitor) {
+						self.pending_freeze_capture = None;
+						self.pending_freeze_capture_armed = false;
+					} else {
+						self.request_redraw_for_monitor(overlay_monitor);
+					}
+				} else {
+					self.pending_freeze_capture_armed = true;
 
-				self.hide_capture_windows();
-				self.request_redraw_for_monitor(overlay_monitor);
+					self.hide_capture_windows();
+					self.request_redraw_for_monitor(overlay_monitor);
+				}
 			}
 		}
 
@@ -1656,14 +1670,13 @@ impl OverlaySession {
 		}
 	}
 
+	#[cfg(not(target_os = "macos"))]
 	fn hide_capture_windows(&mut self) {
 		self.capture_windows_hidden = true;
 
-		#[cfg(not(target_os = "macos"))]
 		if let Some(hud_window) = &self.hud_window {
 			hud_window.window.set_visible(false);
 		}
-		#[cfg(not(target_os = "macos"))]
 		if let Some(loupe_window) = &self.loupe_window {
 			loupe_window.window.set_visible(false);
 		}
@@ -1688,13 +1701,27 @@ impl OverlaySession {
 
 	fn raise_hud_windows(&self) {
 		if let Some(hud_window) = self.hud_window.as_ref() {
-			hud_window.window.focus_window();
+			#[cfg(target_os = "macos")]
+			{
+				macos_order_front_regardless(hud_window.window.as_ref());
+			}
+			#[cfg(not(target_os = "macos"))]
+			{
+				hud_window.window.focus_window();
+			}
 		}
 
 		if self.state.alt_held
 			&& let Some(loupe_window) = self.loupe_window.as_ref()
 		{
-			loupe_window.window.focus_window();
+			#[cfg(target_os = "macos")]
+			{
+				macos_order_front_regardless(loupe_window.window.as_ref());
+			}
+			#[cfg(not(target_os = "macos"))]
+			{
+				loupe_window.window.focus_window();
+			}
 		}
 	}
 }
@@ -3481,6 +3508,35 @@ impl HudBlurUniformRaw {
 				std::mem::size_of::<Self>(),
 			)
 		}
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn macos_order_front_regardless(window: &winit::window::Window) {
+	use objc::runtime::Object;
+
+	use objc::{msg_send, sel, sel_impl};
+
+	let Ok(handle) = window.window_handle() else {
+		return;
+	};
+	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+		return;
+	};
+	let ns_view = appkit.ns_view.as_ptr() as *mut Object;
+
+	if ns_view.is_null() {
+		return;
+	}
+
+	unsafe {
+		let ns_window: *mut Object = msg_send![ns_view, window];
+
+		if ns_window.is_null() {
+			return;
+		}
+
+		let _: () = msg_send![ns_window, orderFrontRegardless];
 	}
 }
 
