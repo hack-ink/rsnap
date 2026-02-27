@@ -28,6 +28,7 @@ pollster          = { workspace = true }
 raw-window-handle = { workspace = true }
 serde             = { workspace = true }
 thiserror         = { workspace = true }
+tracing           = { workspace = true }
 wgpu              = { workspace = true }
 winit             = { workspace = true }
 xcap              = { workspace = true }
