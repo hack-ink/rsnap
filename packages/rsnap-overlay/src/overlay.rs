@@ -3017,7 +3017,13 @@ impl WindowRenderer {
 
 		let (size, pixels_per_point, raw_input) = self.prepare_egui_input(gpu);
 		let can_draw_hud = draw_hud && Self::should_draw_hud(state, monitor);
-		let should_sync_bg = matches!(state.mode, OverlayMode::Frozen) || can_draw_hud;
+		let needs_frozen_surface_bg = !draw_hud && matches!(state.mode, OverlayMode::Frozen);
+		// `show_hud_blur` is a UX toggle for "glass mode":
+		// - On macOS: native compositor blur (the HUD window itself is blurred).
+		// - On other platforms: implemented by a shader blur (requires `hud_bg`).
+		let hud_glass_active = can_draw_hud && show_hud_blur && !hud_opaque;
+		let needs_shader_blur_bg = hud_glass_active && !cfg!(target_os = "macos");
+		let should_sync_bg = needs_frozen_surface_bg || needs_shader_blur_bg;
 
 		if should_sync_bg {
 			self.sync_hud_bg(gpu, state, monitor)?;
@@ -3029,11 +3035,7 @@ impl WindowRenderer {
 			};
 		}
 
-		// `show_hud_blur` is a UX toggle for "glass mode":
-		// - On macOS: native compositor blur (the HUD window itself is blurred).
-		// - On other platforms: may be implemented by a shader blur (requires `hud_bg`).
-		let hud_glass_active = can_draw_hud && show_hud_blur && !hud_opaque;
-		let hud_shader_blur_active = hud_glass_active
+		let hud_shader_blur_active = needs_shader_blur_bg
 			&& self.hud_bg.is_some()
 			&& match state.mode {
 				OverlayMode::Live => state.live_bg_monitor == Some(monitor),
@@ -3075,7 +3077,7 @@ impl WindowRenderer {
 		let screen_descriptor =
 			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
 		let frame = self.acquire_frame(gpu)?;
-		let draw_frozen_bg = matches!(state.mode, OverlayMode::Frozen)
+		let draw_frozen_bg = needs_frozen_surface_bg
 			&& state.monitor == Some(monitor)
 			&& state.frozen_image.is_some();
 
