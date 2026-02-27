@@ -670,12 +670,13 @@ impl OverlaySession {
 	}
 
 	fn drain_worker_responses(&mut self) -> OverlayControl {
-		if !self.worker.is_some() {
+		if self.worker.is_none() {
 			return OverlayControl::Continue;
 		}
 
 		if let Some(image) = self.pending_encode_png.take()
-			&& let Err(image) = self.worker.as_ref().unwrap().request_encode_png(image)
+			&& let Some(worker) = self.worker.as_ref()
+			&& let Err(image) = worker.request_encode_png(image)
 		{
 			self.pending_encode_png = Some(image);
 		}
@@ -721,10 +722,12 @@ impl OverlaySession {
 						&& self.state.monitor == Some(monitor)
 					{
 						self.state.finish_freeze(monitor, image);
+
 						self.capture_windows_hidden = false;
 
 						if let Some(cursor) = self.state.cursor {
-							self.state.rgb = frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
+							self.state.rgb =
+								frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
 							self.state.loupe = frozen_loupe_patch(
 								&self.state.frozen_image,
 								Some(monitor),
@@ -734,6 +737,7 @@ impl OverlaySession {
 							)
 							.map(|patch| crate::state::LoupeSample { center: cursor, patch });
 						}
+
 						self.request_redraw_for_monitor(monitor);
 					} else if matches!(self.state.mode, OverlayMode::Live)
 						&& self.use_fake_hud_blur()
@@ -751,6 +755,7 @@ impl OverlaySession {
 					if self.capture_windows_hidden {
 						self.capture_windows_hidden = false;
 					}
+
 					self.state.set_error(message);
 					self.request_redraw_all();
 				},
@@ -1113,6 +1118,7 @@ impl OverlaySession {
 
 		self.state.clear_error();
 		self.state.begin_freeze(monitor);
+
 		self.state.rgb = frozen_rgb;
 		self.state.loupe = frozen_loupe;
 		self.pending_freeze_capture = Some(monitor);
@@ -1124,9 +1130,12 @@ impl OverlaySession {
 			&& let Some(image) = self.state.live_bg_image.take()
 		{
 			self.state.live_bg_monitor = None;
+
 			self.state.finish_freeze(monitor, image);
+
 			self.pending_freeze_capture = None;
 			self.pending_freeze_capture_armed = false;
+
 			if let Some(cursor) = self.state.cursor {
 				self.update_cursor_state(monitor, cursor);
 			}
@@ -1134,6 +1143,7 @@ impl OverlaySession {
 			self.state.live_bg_monitor = None;
 			self.state.live_bg_image = None;
 			self.capture_windows_hidden = true;
+
 			self.hide_capture_windows();
 		}
 
@@ -1259,7 +1269,7 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
-fn handle_loupe_redraw_requested(&mut self) -> OverlayControl {
+	fn handle_loupe_redraw_requested(&mut self) -> OverlayControl {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
@@ -1275,7 +1285,6 @@ fn handle_loupe_redraw_requested(&mut self) -> OverlayControl {
 			#[cfg(not(target_os = "macos"))]
 			return OverlayControl::Continue;
 		}
-
 		if !self.state.alt_held {
 			if let Some(loupe_window) = self.loupe_window.as_ref() {
 				loupe_window.window.set_visible(false);
@@ -1404,6 +1413,7 @@ fn handle_loupe_redraw_requested(&mut self) -> OverlayControl {
 				}
 			} else {
 				self.pending_freeze_capture_armed = true;
+
 				self.hide_capture_windows();
 				self.request_redraw_for_monitor(overlay_monitor);
 			}
@@ -1637,7 +1647,6 @@ fn handle_loupe_redraw_requested(&mut self) -> OverlayControl {
 		if let Some(hud_window) = &self.hud_window {
 			hud_window.window.set_visible(false);
 		}
-
 		#[cfg(not(target_os = "macos"))]
 		if let Some(loupe_window) = &self.loupe_window {
 			loupe_window.window.set_visible(false);
@@ -1811,11 +1820,9 @@ impl WindowRenderer {
 			bind_group_layouts: &[bind_group_layout],
 			push_constant_ranges: &[],
 		});
-		let surface_fragment_entry = if cfg!(target_os = "macos") {
-			"fs_main_macos_surface"
-		} else {
-			"fs_main"
-		};
+		let surface_fragment_entry =
+			if cfg!(target_os = "macos") { "fs_main_macos_surface" } else { "fs_main" };
+
 		gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
 			label: Some("rsnap-mipgen fullscreen pipeline"),
 			layout: Some(&pipeline_layout),
@@ -2626,6 +2633,7 @@ impl WindowRenderer {
 		);
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn render_frozen_loupe(
 		ui: &mut Ui,
 		state: &OverlayState,
@@ -2637,19 +2645,13 @@ impl WindowRenderer {
 		theme: HudTheme,
 	) {
 		if state.loupe.is_some() {
-			Self::render_live_loupe(
-				ui,
-				state,
-				cell,
-				hud_blur_active,
-				hud_opaque,
-				theme,
-			);
+			Self::render_live_loupe(ui, state, cell, hud_blur_active, hud_opaque, theme);
+
 			return;
 		}
 
-	const LOUPE_RADIUS_PX: i32 = 5;
-	const LOUPE_SIDE_PX: i32 = (LOUPE_RADIUS_PX * 2) + 1;
+		const LOUPE_RADIUS_PX: i32 = 5;
+		const LOUPE_SIDE_PX: i32 = (LOUPE_RADIUS_PX * 2) + 1;
 
 		let side = (LOUPE_SIDE_PX as f32) * cell;
 		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), egui::Sense::hover());
@@ -2787,7 +2789,6 @@ impl WindowRenderer {
 				rpass.set_bind_group(0, &bg.mipgen_bind_group, &[]);
 				rpass.draw(0..3, 0..1);
 			}
-
 			if hud_blur_active
 				&& self.hud_pill.is_some()
 				&& let Some(bg) = &self.hud_bg
@@ -3278,8 +3279,7 @@ impl WindowRenderer {
 
 		if self.hud_bg.is_some() && self.hud_bg_generation == target_generation {
 			if target_image.is_none() {
-				// Keep displaying the already-uploaded background even if the image bytes have
-				// been moved elsewhere (e.g. to encode PNG on a worker thread).
+				// Keep displaying the already-uploaded background even if image bytes moved.
 				return Ok(());
 			}
 
@@ -3287,12 +3287,22 @@ impl WindowRenderer {
 		}
 
 		let Some(image) = target_image else {
-			// We don't have an image yet for this generation (capture in progress).
+			// Capture is in progress and no image is available yet.
 			self.hud_bg = None;
 			self.hud_bg_generation = target_generation;
 
 			return Ok(());
 		};
+
+		self.render_frozen_bg_to_texture(gpu, image, target_generation)
+	}
+
+	fn render_frozen_bg_to_texture(
+		&mut self,
+		gpu: &GpuContext,
+		image: &RgbaImage,
+		target_generation: u64,
+	) -> Result<()> {
 		let upload_image =
 			downscale_for_gpu_upload(image, gpu.device.limits().max_texture_dimension_2d);
 		let (width, height) = upload_image.dimensions();
