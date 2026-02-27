@@ -1501,7 +1501,7 @@ impl OverlaySession {
 
 	fn monitor_for_mode(&self) -> Option<MonitorRect> {
 		match self.state.mode {
-			OverlayMode::Frozen => self.state.monitor.or_else(|| self.active_cursor_monitor()),
+			OverlayMode::Frozen => self.active_cursor_monitor().or(self.state.monitor),
 			OverlayMode::Live => self.active_cursor_monitor(),
 		}
 	}
