@@ -871,19 +871,16 @@ impl OverlaySession {
 
 		self.state.alt_held = alt;
 
+		let Some(cursor) = self.state.cursor else {
+			return;
+		};
+		let Some(monitor) = self.active_cursor_monitor() else {
+			return;
+		};
+
 		if alt {
 			self.last_alt_press_at = Some(Instant::now());
 
-			if !matches!(self.state.mode, OverlayMode::Live) {
-				return;
-			}
-
-			let Some(cursor) = self.state.cursor else {
-				return;
-			};
-			let Some(monitor) = self.active_cursor_monitor() else {
-				return;
-			};
 			let visible = self.update_loupe_window_position(monitor);
 
 			if let Some(loupe_window) = self.loupe_window.as_ref() {
@@ -895,19 +892,39 @@ impl OverlaySession {
 				self.maybe_request_live_bg(monitor);
 			}
 
-			if let Some(worker) = &self.worker {
-				worker.try_sample_rgb(monitor, cursor);
+			match self.state.mode {
+				OverlayMode::Live => {
+					if let Some(worker) = &self.worker {
+						worker.try_sample_rgb(monitor, cursor);
 
-				self.last_rgb_request_at = Instant::now();
+						self.last_rgb_request_at = Instant::now();
 
-				worker.try_sample_loupe(
-					monitor,
-					cursor,
-					self.loupe_patch_width_px,
-					self.loupe_patch_height_px,
-				);
+						worker.try_sample_loupe(
+							monitor,
+							cursor,
+							self.loupe_patch_width_px,
+							self.loupe_patch_height_px,
+						);
 
-				self.last_loupe_request_at = Instant::now();
+						self.last_loupe_request_at = Instant::now();
+					}
+				},
+				OverlayMode::Frozen => {
+					if let (Some(frozen_monitor), Some(_)) =
+						(self.state.monitor, self.state.frozen_image.as_ref())
+					{
+						self.state.loupe = frozen_loupe_patch(
+							&self.state.frozen_image,
+							Some(frozen_monitor),
+							cursor,
+							self.loupe_patch_width_px,
+							self.loupe_patch_height_px,
+						)
+						.map(|patch| crate::state::LoupeSample { center: cursor, patch });
+
+						self.request_redraw_for_monitor(frozen_monitor);
+					}
+				},
 			}
 
 			return;
