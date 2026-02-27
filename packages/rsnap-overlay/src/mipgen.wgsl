@@ -31,3 +31,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 	return textureSample(src_tex, src_samp, in.uv);
 }
 
+@fragment
+fn fs_main_macos_surface(in: VsOut) -> @location(0) vec4<f32> {
+	let flipped_uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
+
+	return textureSample(src_tex, src_samp, flipped_uv);
+}
