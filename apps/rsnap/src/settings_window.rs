@@ -500,13 +500,13 @@ impl SettingsWindow {
 			|ui| {
 				let before = settings.theme_mode;
 
-				// System / Dark / Light
+				// Render in reverse order for RTL layout so visible order is Light / Dark / System.
 				ui.selectable_value(
 					&mut settings.theme_mode,
-					ThemeMode::Light,
-					egui::RichText::new(&self.theme_icon_light).size(SETTINGS_THEME_ICON_SIZE),
+					ThemeMode::System,
+					egui::RichText::new(&self.theme_icon_system).size(SETTINGS_THEME_ICON_SIZE),
 				)
-				.on_hover_text("Light");
+				.on_hover_text("System");
 				ui.selectable_value(
 					&mut settings.theme_mode,
 					ThemeMode::Dark,
@@ -515,10 +515,10 @@ impl SettingsWindow {
 				.on_hover_text("Dark");
 				ui.selectable_value(
 					&mut settings.theme_mode,
-					ThemeMode::System,
-					egui::RichText::new(&self.theme_icon_system).size(SETTINGS_THEME_ICON_SIZE),
+					ThemeMode::Light,
+					egui::RichText::new(&self.theme_icon_light).size(SETTINGS_THEME_ICON_SIZE),
 				)
-				.on_hover_text("System");
+				.on_hover_text("Light");
 
 				if settings.theme_mode != before {
 					self.sync_theme(ctx, settings.theme_mode);

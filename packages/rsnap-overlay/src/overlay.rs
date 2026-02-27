@@ -1,6 +1,6 @@
 use std::{
 	collections::HashMap,
-	sync::Arc,
+	sync::{Arc, Mutex},
 	time::{Duration, Instant},
 };
 
@@ -9,7 +9,11 @@ use device_query::{DeviceQuery, Keycode};
 use egui::ClippedPrimitive;
 use egui::FullOutput;
 use egui::Ui;
-use egui::{Align, Color32, CornerRadius, Frame, Layout, Margin, Pos2, Rect, Vec2, ViewportId};
+use egui::{
+	Align, Align2, Color32, CornerRadius, Event, FontDefinitions, FontId, Frame, Id, Layout,
+	Margin, PointerButton, Pos2, Rect, Sense, Vec2, ViewportId,
+};
+use egui_phosphor::{Variant, regular};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use image::{RgbaImage, imageops::FilterType};
 #[cfg(target_os = "macos")]
@@ -31,7 +35,7 @@ use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use winit::event::KeyEvent;
 use winit::{
 	dpi::PhysicalSize,
-	event::{ElementState, Modifiers, MouseButton, WindowEvent},
+	event::{ElementState, MouseButton, WindowEvent},
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
 	keyboard::{Key, NamedKey},
 	window::{CursorIcon, Theme, WindowId, WindowLevel},
@@ -48,6 +52,12 @@ const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
 const HUD_PILL_BLUR_TINT_ALPHA_LIGHT: f32 = 0.22;
 const LOUPE_TILE_CORNER_RADIUS_POINTS: f64 = 12.0;
 const MACOS_HUD_WINDOW_LEVEL: isize = 25;
+const FROZEN_CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(16);
+const TOOLBAR_EXPANDED_WIDTH_PX: f32 = 460.0;
+const TOOLBAR_EXPANDED_HEIGHT_PX: f32 = 54.0;
+const TOOLBAR_CAPTURE_GAP_PX: f32 = 10.0;
+const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
+const HUD_PILL_CORNER_RADIUS_POINTS: u8 = 18;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
@@ -88,6 +98,48 @@ pub enum AltActivationMode {
 enum HudTheme {
 	Dark,
 	Light,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrozenToolbarTool {
+	Pointer,
+	Pen,
+	Text,
+	Mosaic,
+	Undo,
+	Redo,
+	Copy,
+	Save,
+	Done,
+}
+impl FrozenToolbarTool {
+	const fn label(self) -> &'static str {
+		match self {
+			Self::Pointer => "Pointer",
+			Self::Pen => "Pen",
+			Self::Text => "Text",
+			Self::Mosaic => "Mosaic",
+			Self::Undo => "Undo",
+			Self::Redo => "Redo",
+			Self::Copy => "Copy",
+			Self::Save => "Save",
+			Self::Done => "Done",
+		}
+	}
+
+	const fn icon(self) -> &'static str {
+		match self {
+			Self::Pointer => regular::CURSOR,
+			Self::Pen => regular::PENCIL_SIMPLE,
+			Self::Text => regular::TEXT_T,
+			Self::Mosaic => regular::CHECKERBOARD,
+			Self::Undo => regular::ARROW_COUNTER_CLOCKWISE,
+			Self::Redo => regular::ARROW_CLOCKWISE,
+			Self::Copy => regular::COPY,
+			Self::Save => regular::FLOPPY_DISK,
+			Self::Done => regular::CHECK,
+		}
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -173,12 +225,23 @@ impl OverlayBuilder {
 			}
 
 			fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-				event_loop.set_control_flow(ControlFlow::Wait);
-
 				if let OverlayControl::Exit(exit) = self.session.about_to_wait() {
 					self.exit = Some(exit);
 
 					event_loop.exit();
+
+					return;
+				}
+
+				let now = Instant::now();
+				let next_repaint = self.session.consume_egui_repaint_deadline(now);
+
+				match next_repaint {
+					Some(deadline) if deadline <= now => {
+						event_loop.set_control_flow(ControlFlow::Wait)
+					},
+					Some(deadline) => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
+					None => event_loop.set_control_flow(ControlFlow::Wait),
 				}
 			}
 		}
@@ -198,6 +261,7 @@ pub struct OverlaySession {
 	cursor_device: device_query::DeviceState,
 	state: OverlayState,
 	cursor_monitor: Option<MonitorRect>,
+	egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
 	windows: HashMap<WindowId, OverlayWindow>,
 	hud_window: Option<HudOverlayWindow>,
 	loupe_window: Option<HudOverlayWindow>,
@@ -221,6 +285,9 @@ pub struct OverlaySession {
 	pending_freeze_capture_armed: bool,
 	capture_windows_hidden: bool,
 	pending_encode_png: Option<RgbaImage>,
+	toolbar_state: FrozenToolbarState,
+	toolbar_left_button_down: bool,
+	toolbar_left_button_down_prev: bool,
 }
 impl OverlaySession {
 	#[must_use]
@@ -262,10 +329,14 @@ impl OverlaySession {
 			alt_modifier_down: false,
 			loupe_patch_width_px: loupe_sample_side_px,
 			loupe_patch_height_px: loupe_sample_side_px,
+			egui_repaint_deadline: Arc::new(Mutex::new(None)),
 			pending_freeze_capture: None,
 			pending_freeze_capture_armed: false,
 			capture_windows_hidden: false,
 			pending_encode_png: None,
+			toolbar_state: FrozenToolbarState::default(),
+			toolbar_left_button_down: false,
+			toolbar_left_button_down_prev: false,
 		}
 	}
 
@@ -407,6 +478,9 @@ impl OverlaySession {
 		self.state.loupe_patch_side_px = self.loupe_patch_width_px;
 		self.pending_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
+		self.toolbar_state = FrozenToolbarState::default();
+		self.toolbar_left_button_down = false;
+		self.toolbar_left_button_down_prev = false;
 	}
 
 	fn create_overlay_windows(
@@ -476,8 +550,12 @@ impl OverlaySession {
 			window.focus_window();
 
 			let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
-			let renderer = WindowRenderer::new(gpu, Arc::clone(&window))
-				.map_err(|err| format!("Failed to init renderer: {err:#}"))?;
+			let renderer = WindowRenderer::new(
+				gpu,
+				Arc::clone(&window),
+				Arc::clone(&self.egui_repaint_deadline),
+			)
+			.map_err(|err| format!("Failed to init renderer: {err:#}"))?;
 
 			self.windows
 				.insert(window.id(), OverlayWindow { monitor: monitor_rect, window, renderer });
@@ -515,8 +593,9 @@ impl OverlaySession {
 		window.request_redraw();
 
 		let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
-		let renderer = WindowRenderer::new(gpu, Arc::clone(&window))
-			.map_err(|err| format!("Failed to init HUD renderer: {err:#}"))?;
+		let renderer =
+			WindowRenderer::new(gpu, Arc::clone(&window), Arc::clone(&self.egui_repaint_deadline))
+				.map_err(|err| format!("Failed to init HUD renderer: {err:#}"))?;
 
 		self.hud_window = Some(HudOverlayWindow { window, renderer });
 
@@ -552,8 +631,9 @@ impl OverlaySession {
 		window.set_blur(self.config.show_hud_blur);
 
 		let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
-		let renderer = WindowRenderer::new(gpu, Arc::clone(&window))
-			.map_err(|err| format!("Failed to init loupe renderer: {err:#}"))?;
+		let renderer =
+			WindowRenderer::new(gpu, Arc::clone(&window), Arc::clone(&self.egui_repaint_deadline))
+				.map_err(|err| format!("Failed to init loupe renderer: {err:#}"))?;
 
 		self.loupe_window = Some(HudOverlayWindow { window, renderer });
 
@@ -595,10 +675,63 @@ impl OverlaySession {
 			self.sync_alt_held_from_global_keys();
 		}
 
+		self.maybe_keep_frozen_capture_redraw();
 		self.maybe_tick_live_sampling();
 		self.maybe_tick_frozen_cursor_tracking();
 
 		self.drain_worker_responses()
+	}
+
+	fn consume_egui_repaint_deadline(&self, now: Instant) -> Option<Instant> {
+		let mut next_repaint =
+			self.egui_repaint_deadline.lock().unwrap_or_else(|err| err.into_inner());
+
+		if let Some(deadline) = *next_repaint {
+			if deadline <= now {
+				*next_repaint = None;
+
+				drop(next_repaint);
+
+				self.request_redraw_all();
+
+				Some(deadline)
+			} else {
+				Some(deadline)
+			}
+		} else {
+			None
+		}
+	}
+
+	fn schedule_egui_repaint_after(&self, delay: Duration) {
+		let deadline = Instant::now() + delay;
+		let mut next_repaint =
+			self.egui_repaint_deadline.lock().unwrap_or_else(|err| err.into_inner());
+
+		if next_repaint.is_none_or(|next| deadline < next) {
+			*next_repaint = Some(deadline);
+		}
+	}
+
+	fn maybe_keep_frozen_capture_redraw(&self) {
+		if !matches!(self.state.mode, OverlayMode::Frozen) {
+			return;
+		}
+		if self.state.frozen_image.is_some() {
+			return;
+		}
+
+		// Keep producing redraw events while the frozen background is being captured.
+		// On some platforms the worker response won't wake the winit event loop, so we
+		// must ensure `handle_overlay_window_redraw` + `drain_worker_responses` keep
+		// running even with no input events.
+		if let Some(monitor) = self.state.monitor {
+			self.request_redraw_for_monitor(monitor);
+		} else {
+			self.request_redraw_all();
+		}
+
+		self.schedule_egui_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
 	}
 
 	fn maybe_tick_frozen_cursor_tracking(&mut self) {
@@ -809,7 +942,22 @@ impl OverlaySession {
 		}
 	}
 
-	fn handle_modifiers_changed(&mut self, modifiers: &Modifiers) -> OverlayControl {
+	fn desired_overlay_cursor_icon(&self) -> CursorIcon {
+		// While the overlay windows are active, always show a crosshair cursor.
+		// This keeps the cursor predictable across mode transitions (Live/Frozen) and avoids
+		// platform-dependent cursor resets.
+		CursorIcon::Crosshair
+	}
+
+	fn apply_overlay_cursor_icon(&self, window_id: WindowId) {
+		let Some(window) = self.windows.get(&window_id).map(|w| w.window.as_ref()) else {
+			return;
+		};
+
+		window.set_cursor(self.desired_overlay_cursor_icon());
+	}
+
+	fn handle_modifiers_changed(&mut self, modifiers: &winit::event::Modifiers) -> OverlayControl {
 		let alt = self.resolve_alt_modifier_state(modifiers.state().alt_key());
 
 		match self.config.alt_activation {
@@ -1049,6 +1197,8 @@ impl OverlaySession {
 		window_id: WindowId,
 		position: PhysicalPosition<f64>,
 	) -> OverlayControl {
+		self.apply_overlay_cursor_icon(window_id);
+
 		let old_monitor = self.active_cursor_monitor();
 		let Some((window_monitor, scale_factor)) =
 			self.windows.get(&window_id).map(|w| (w.monitor, w.window.scale_factor()))
@@ -1123,13 +1273,21 @@ impl OverlaySession {
 		window_id: WindowId,
 		state: ElementState,
 	) -> OverlayControl {
-		if state != ElementState::Pressed || !matches!(self.state.mode, OverlayMode::Live) {
-			return OverlayControl::Continue;
-		}
+		self.toolbar_left_button_down = matches!(state, ElementState::Pressed);
 
 		let Some(monitor) = self.windows.get(&window_id).map(|w| w.monitor) else {
 			return OverlayControl::Continue;
 		};
+
+		if matches!(self.state.mode, OverlayMode::Frozen) {
+			self.request_redraw_for_monitor(monitor);
+
+			return OverlayControl::Continue;
+		}
+		if state != ElementState::Pressed || !matches!(self.state.mode, OverlayMode::Live) {
+			return OverlayControl::Continue;
+		}
+
 		let frozen_rgb = self.state.rgb;
 		let frozen_loupe = self.state.loupe.as_ref().map(|loupe| crate::state::LoupeSample {
 			center: loupe.center,
@@ -1138,12 +1296,18 @@ impl OverlaySession {
 
 		self.state.clear_error();
 		self.state.begin_freeze(monitor);
+		self.apply_overlay_cursor_icon(window_id);
 
+		self.toolbar_state.floating_position = None;
+		self.toolbar_state.dragging = false;
 		self.state.rgb = frozen_rgb;
 		self.state.loupe = frozen_loupe;
 		self.pending_freeze_capture = Some(monitor);
 		self.pending_freeze_capture_armed = false;
 		self.capture_windows_hidden = false;
+
+		self.schedule_egui_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
+		self.request_redraw_for_monitor(monitor);
 
 		if self.use_fake_hud_blur()
 			&& self.state.live_bg_monitor == Some(monitor)
@@ -1175,6 +1339,34 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
+	fn toolbar_pointer_state(&self, monitor: MonitorRect) -> Option<FrozenToolbarPointerState> {
+		if !matches!(self.state.mode, OverlayMode::Frozen) {
+			return None;
+		}
+		if !self.toolbar_state.visible {
+			return None;
+		}
+		if self.state.monitor != Some(monitor) {
+			return None;
+		}
+		if self.active_cursor_monitor() != Some(monitor) {
+			return None;
+		}
+
+		let cursor_global = self.state.cursor?;
+		let cursor_local = global_to_local(cursor_global, monitor)?;
+		let left_button_down = self.toolbar_left_button_down;
+		let left_button_went_down = left_button_down && !self.toolbar_left_button_down_prev;
+		let left_button_went_up = !left_button_down && self.toolbar_left_button_down_prev;
+
+		Some(FrozenToolbarPointerState {
+			cursor_local,
+			left_button_down,
+			left_button_went_down,
+			left_button_went_up,
+		})
+	}
+
 	fn handle_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
 		if event.state != ElementState::Pressed {
 			return OverlayControl::Continue;
@@ -1183,7 +1375,7 @@ impl OverlaySession {
 			return OverlayControl::Continue;
 		}
 
-		match event.logical_key {
+		match &event.logical_key {
 			Key::Named(NamedKey::Escape) => self.exit(OverlayExit::Cancelled),
 			Key::Named(NamedKey::Tab) => {
 				let Some(rgb) = self.state.rgb else {
@@ -1198,6 +1390,13 @@ impl OverlaySession {
 						self.request_redraw_all();
 					},
 				}
+
+				OverlayControl::Continue
+			},
+			Key::Character(key_text) if key_text == "h" || key_text == "H" => {
+				self.toolbar_state.visible = !self.toolbar_state.visible;
+
+				self.request_redraw_all();
 
 				OverlayControl::Continue
 			},
@@ -1272,10 +1471,14 @@ impl OverlaySession {
 				self.config.hud_fog_amount,
 				self.config.hud_milk_amount,
 				self.config.theme_mode,
+				None,
+				None,
 			) {
 				return self.exit(OverlayExit::Error(format!("{err:#}")));
 			}
 			if let Some(hud_pill) = hud_window.renderer.hud_pill {
+				self.toolbar_state.pill_height_points = Some(hud_pill.rect.height());
+
 				let desired_w = hud_pill.rect.width().ceil().max(1.0) as u32;
 				let desired_h = hud_pill.rect.height().ceil().max(1.0) as u32;
 				let desired = (desired_w, desired_h);
@@ -1408,11 +1611,23 @@ impl OverlaySession {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
-		let overlay_monitor = {
+
+		self.apply_overlay_cursor_icon(window_id);
+
+		let Some(overlay_monitor) = self.windows.get(&window_id).map(|overlay| overlay.monitor)
+		else {
+			return OverlayControl::Continue;
+		};
+		let toolbar_input = self.toolbar_pointer_state(overlay_monitor);
+		let draw_toolbar = matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.toolbar_state.visible
+			&& self.state.monitor == Some(overlay_monitor);
+		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
+
+		{
 			let Some(overlay_window) = self.windows.get_mut(&window_id) else {
 				return OverlayControl::Continue;
 			};
-			let overlay_monitor = overlay_window.monitor;
 
 			if let Err(err) = overlay_window.renderer.draw(
 				gpu,
@@ -1429,14 +1644,14 @@ impl OverlaySession {
 				self.config.hud_fog_amount,
 				self.config.hud_milk_amount,
 				self.config.theme_mode,
+				toolbar_state,
+				toolbar_input,
 			) {
 				return self.exit(OverlayExit::Error(format!("{err:#}")));
 			}
-
-			self.last_present_at = Instant::now();
-
-			overlay_monitor
-		};
+		}
+		self.last_present_at = Instant::now();
+		self.toolbar_left_button_down_prev = self.toolbar_left_button_down;
 
 		if self.pending_freeze_capture == Some(overlay_monitor)
 			&& matches!(self.state.mode, OverlayMode::Frozen)
@@ -1470,6 +1685,11 @@ impl OverlaySession {
 					self.request_redraw_for_monitor(overlay_monitor);
 				}
 			}
+		}
+		if draw_toolbar && self.toolbar_state.needs_redraw {
+			self.toolbar_state.needs_redraw = false;
+
+			self.request_redraw_for_monitor(overlay_monitor);
 		}
 
 		OverlayControl::Continue
@@ -1743,6 +1963,38 @@ impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
 	}
+}
+
+#[derive(Debug)]
+struct FrozenToolbarState {
+	visible: bool,
+	dragging: bool,
+	selected_tool: FrozenToolbarTool,
+	needs_redraw: bool,
+	pill_height_points: Option<f32>,
+	floating_position: Option<Pos2>,
+	drag_offset: Vec2,
+}
+impl Default for FrozenToolbarState {
+	fn default() -> Self {
+		Self {
+			visible: true,
+			dragging: false,
+			selected_tool: FrozenToolbarTool::Pointer,
+			needs_redraw: false,
+			pill_height_points: None,
+			floating_position: None,
+			drag_offset: Vec2::ZERO,
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FrozenToolbarPointerState {
+	cursor_local: Pos2,
+	left_button_down: bool,
+	left_button_went_down: bool,
+	left_button_went_up: bool,
 }
 
 struct HudOverlayWindow {
@@ -2173,7 +2425,11 @@ impl WindowRenderer {
 		}
 	}
 
-	fn prepare_egui_input(&mut self, gpu: &GpuContext) -> (PhysicalSize<u32>, f32, egui::RawInput) {
+	fn prepare_egui_input(
+		&mut self,
+		gpu: &GpuContext,
+		pointer_state: Option<FrozenToolbarPointerState>,
+	) -> (PhysicalSize<u32>, f32, egui::RawInput) {
 		let size = PhysicalSize::new(self.surface_config.width, self.surface_config.height);
 		let pixels_per_point = self.window.scale_factor() as f32;
 		let screen_size_points =
@@ -2182,14 +2438,39 @@ impl WindowRenderer {
 
 		self.egui_ctx.input_mut(|i| i.max_texture_side = max_texture_side);
 
-		let raw_input = egui::RawInput {
+		let mut raw_input = egui::RawInput {
 			screen_rect: Some(Rect::from_min_size(Pos2::ZERO, screen_size_points)),
 			focused: true,
 			..Default::default()
 		};
-		let mut raw_input = raw_input;
+		let mut events = Vec::new();
 
 		raw_input.max_texture_side = Some(max_texture_side);
+
+		if let Some(pointer) = pointer_state {
+			events.push(Event::PointerMoved(pointer.cursor_local));
+
+			if pointer.left_button_went_down {
+				events.push(Event::PointerButton {
+					pos: pointer.cursor_local,
+					button: PointerButton::Primary,
+					pressed: true,
+					modifiers: egui::Modifiers::default(),
+				});
+			}
+			if pointer.left_button_went_up {
+				events.push(Event::PointerButton {
+					pos: pointer.cursor_local,
+					button: PointerButton::Primary,
+					pressed: false,
+					modifiers: egui::Modifiers::default(),
+				});
+			}
+		}
+
+		if !events.is_empty() {
+			raw_input.events = events;
+		}
 
 		if let Some(viewport) = raw_input.viewports.get_mut(&ViewportId::ROOT) {
 			viewport.native_pixels_per_point = Some(pixels_per_point);
@@ -2217,6 +2498,8 @@ impl WindowRenderer {
 		hud_opacity: f32,
 		hud_milk_amount: f32,
 		theme: HudTheme,
+		mut toolbar_state: Option<&mut FrozenToolbarState>,
+		toolbar_pointer: Option<FrozenToolbarPointerState>,
 	) -> (FullOutput, Option<HudPillGeometry>) {
 		let hud_data = if can_draw_hud {
 			state.cursor.and_then(|cursor| {
@@ -2230,6 +2513,19 @@ impl WindowRenderer {
 		};
 		let mut hud_pill = None;
 		let full_output = self.egui_ctx.run(raw_input, |ctx| {
+			Self::render_frozen_toolbar_ui(
+				ctx,
+				state,
+				monitor,
+				theme,
+				hud_opaque,
+				hud_opacity,
+				hud_milk_amount,
+				toolbar_state.as_deref_mut(),
+				toolbar_pointer,
+				&mut hud_pill,
+			);
+
 			if let Some((cursor, local_cursor)) = hud_data {
 				let _ = show_hud_blur;
 
@@ -2253,6 +2549,336 @@ impl WindowRenderer {
 		});
 
 		(full_output, hud_pill)
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn render_frozen_toolbar_ui(
+		ctx: &egui::Context,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		theme: HudTheme,
+		_hud_opaque: bool,
+		_hud_opacity: f32,
+		_hud_milk_amount: f32,
+		toolbar_state: Option<&mut FrozenToolbarState>,
+		pointer_state: Option<FrozenToolbarPointerState>,
+		hud_pill_out: &mut Option<HudPillGeometry>,
+	) {
+		let Some(toolbar_state) = toolbar_state else {
+			return;
+		};
+
+		if !matches!(state.mode, OverlayMode::Frozen) || !toolbar_state.visible {
+			return;
+		}
+		if state.monitor != Some(monitor) {
+			return;
+		}
+
+		let Some(pointer_state) = pointer_state else {
+			toolbar_state.dragging = false;
+
+			return;
+		};
+		let cursor = pointer_state.cursor_local;
+		let toolbar_size = Vec2::new(
+			TOOLBAR_EXPANDED_WIDTH_PX,
+			toolbar_state.pill_height_points.unwrap_or(TOOLBAR_EXPANDED_HEIGHT_PX),
+		);
+		let capture_rect = Self::frozen_toolbar_capture_rect(state, monitor);
+		let default_pos = Self::frozen_toolbar_default_pos(monitor, capture_rect, toolbar_size);
+		let toolbar_pos = toolbar_state.floating_position.unwrap_or(default_pos);
+
+		Self::draw_frozen_toolbar(
+			ctx,
+			toolbar_state,
+			monitor,
+			toolbar_pos,
+			toolbar_size,
+			theme,
+			_hud_opaque,
+			_hud_opacity,
+			_hud_milk_amount,
+			cursor,
+			pointer_state.left_button_down,
+			hud_pill_out,
+		);
+	}
+
+	fn frozen_toolbar_capture_rect(_state: &OverlayState, monitor: MonitorRect) -> Rect {
+		Rect::from_min_size(
+			Pos2::new(0.0, 0.0),
+			Vec2::new(monitor.width as f32, monitor.height as f32),
+		)
+	}
+
+	fn frozen_toolbar_default_pos(
+		monitor: MonitorRect,
+		capture_rect: Rect,
+		toolbar_size: Vec2,
+	) -> Pos2 {
+		let below_y = capture_rect.max.y + TOOLBAR_CAPTURE_GAP_PX;
+		let within_screen =
+			below_y + toolbar_size.y + TOOLBAR_SCREEN_MARGIN_PX <= monitor.height as f32;
+		let y = if within_screen {
+			below_y
+		} else {
+			capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y
+		};
+		let x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
+			TOOLBAR_SCREEN_MARGIN_PX,
+			(monitor.width as f32 - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX)
+				.max(TOOLBAR_SCREEN_MARGIN_PX),
+		);
+		let y = y.max(TOOLBAR_SCREEN_MARGIN_PX).min(
+			(monitor.height as f32 - toolbar_size.y - TOOLBAR_SCREEN_MARGIN_PX)
+				.max(TOOLBAR_SCREEN_MARGIN_PX),
+		);
+
+		Pos2::new(x, y)
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn draw_frozen_toolbar(
+		ctx: &egui::Context,
+		toolbar_state: &mut FrozenToolbarState,
+		monitor: MonitorRect,
+		toolbar_pos: Pos2,
+		toolbar_size: Vec2,
+		theme: HudTheme,
+		hud_opaque: bool,
+		hud_opacity: f32,
+		hud_milk_amount: f32,
+		cursor: Pos2,
+		left_button_down: bool,
+		hud_pill_out: &mut Option<HudPillGeometry>,
+	) {
+		egui::Area::new(Id::new(format!("frozen-toolbar-{}", monitor.id)))
+			.order(egui::Order::Foreground)
+			.fixed_pos(toolbar_pos)
+			.show(ctx, |ui| {
+				let (rect, response) =
+					ui.allocate_exact_size(toolbar_size, Sense::click_and_drag());
+				let toolbar_frame =
+					Self::hud_pill_frame(theme, hud_opaque, hud_opacity, hud_milk_amount, false);
+
+				if response.drag_started() {
+					toolbar_state.dragging = true;
+					toolbar_state.floating_position = Some(toolbar_pos);
+					toolbar_state.drag_offset = cursor - toolbar_pos;
+				}
+				if toolbar_state.dragging && left_button_down {
+					let desired_pos = cursor - toolbar_state.drag_offset;
+
+					toolbar_state.floating_position = Some(Self::clamp_toolbar_position(
+						monitor,
+						toolbar_size,
+						desired_pos,
+						TOOLBAR_SCREEN_MARGIN_PX,
+						TOOLBAR_SCREEN_MARGIN_PX,
+					));
+				} else if toolbar_state.dragging {
+					toolbar_state.dragging = false;
+				}
+
+				let toolbar_inner = ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+					toolbar_frame.show(ui, |ui| {
+						let _ = ui.horizontal_centered(|ui| {
+							ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+
+							Self::render_frozen_toolbar_controls(ui, toolbar_state, theme);
+						});
+					});
+				});
+
+				*hud_pill_out = Some(HudPillGeometry {
+					rect: toolbar_inner.response.rect,
+					radius_points: f32::from(HUD_PILL_CORNER_RADIUS_POINTS),
+				});
+			});
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn render_frozen_toolbar_controls(
+		ui: &mut Ui,
+		toolbar_state: &mut FrozenToolbarState,
+		theme: HudTheme,
+	) {
+		const TOOLS: [FrozenToolbarTool; 9] = [
+			FrozenToolbarTool::Pointer,
+			FrozenToolbarTool::Pen,
+			FrozenToolbarTool::Text,
+			FrozenToolbarTool::Mosaic,
+			FrozenToolbarTool::Undo,
+			FrozenToolbarTool::Redo,
+			FrozenToolbarTool::Copy,
+			FrozenToolbarTool::Save,
+			FrozenToolbarTool::Done,
+		];
+
+		let tools: &[FrozenToolbarTool] = &TOOLS;
+		let button_size = 24.0;
+		let button_font_size = 18.0;
+		let hover_anim_time = 0.2;
+		let item_spacing = 4.0;
+		let hit_area_inset = 5.0;
+		let (normal_color, hover_color, selected_color, hover_bg, selected_bg, selected_border) =
+			Self::frozen_toolbar_colors(theme);
+
+		ui.horizontal_centered(|ui| {
+			ui.spacing_mut().item_spacing.x = item_spacing;
+
+			for tool in tools {
+				let selected = *tool == toolbar_state.selected_tool;
+				let response =
+					ui.allocate_response(Vec2::new(button_size, button_size), Sense::click());
+				let hovered = response.hovered();
+				let response = response.on_hover_text(tool.label());
+				let hover_anim = ui.ctx().animate_bool_with_time(
+					response.id.with("hover"),
+					hovered,
+					hover_anim_time,
+				);
+				let selected_anim = ui.ctx().animate_bool_with_time(
+					response.id.with("selected"),
+					selected,
+					hover_anim_time,
+				);
+
+				Self::maybe_request_toolbar_animation_repaint(
+					ui.ctx(),
+					hovered,
+					selected,
+					hover_anim,
+					selected_anim,
+				);
+
+				let glow = hover_anim.max(selected_anim);
+				let mut icon_color = normal_color;
+				let mut bg_color = Color32::from_rgba_unmultiplied(255, 255, 255, 0);
+				let mut border_alpha = 0.0;
+
+				if selected_anim > 0.0 {
+					icon_color = Self::blend_color(icon_color, selected_color, selected_anim);
+					bg_color = Self::blend_color(bg_color, selected_bg, selected_anim);
+					border_alpha = selected_anim;
+				}
+				if hover_anim > 0.0 {
+					icon_color = Self::blend_color(icon_color, hover_color, hover_anim);
+					bg_color =
+						Self::blend_color(bg_color, hover_bg, hover_anim * (1.0 - selected_anim));
+				}
+				if glow > 0.0 {
+					let bg_rect = response.rect.shrink(hit_area_inset);
+
+					ui.painter().rect_filled(bg_rect, 8.0, bg_color);
+				}
+				if border_alpha > 0.0 {
+					let selected_border = Color32::from_rgba_unmultiplied(
+						selected_border.r(),
+						selected_border.g(),
+						selected_border.b(),
+						(selected_border.a() as f32 * border_alpha).round() as u8,
+					);
+
+					ui.painter().rect_stroke(
+						response.rect.shrink(hit_area_inset),
+						8.0,
+						egui::Stroke::new(1.0, selected_border),
+						egui::StrokeKind::Inside,
+					);
+				}
+
+				ui.painter().text(
+					response.rect.center(),
+					Align2::CENTER_CENTER,
+					tool.icon(),
+					FontId::proportional(button_font_size),
+					icon_color,
+				);
+
+				if response.clicked() {
+					let tool = *tool;
+
+					toolbar_state.selected_tool = tool;
+					toolbar_state.needs_redraw = true;
+				}
+			}
+		});
+	}
+
+	fn frozen_toolbar_colors(
+		theme: HudTheme,
+	) -> (Color32, Color32, Color32, Color32, Color32, Color32) {
+		let (normal_color, hover_color, selected_color) = match theme {
+			HudTheme::Dark => (
+				Color32::from_rgba_unmultiplied(255, 255, 255, 160),
+				Color32::from_rgba_unmultiplied(255, 255, 255, 222),
+				Color32::from_rgba_unmultiplied(255, 255, 255, 255),
+			),
+			HudTheme::Light => (
+				Color32::from_rgba_unmultiplied(28, 28, 32, 182),
+				Color32::from_rgba_unmultiplied(28, 28, 32, 220),
+				Color32::from_rgba_unmultiplied(28, 28, 32, 255),
+			),
+		};
+		let hover_bg = match theme {
+			HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 20),
+			HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 20),
+		};
+		let selected_bg = match theme {
+			HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 28),
+			HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 24),
+		};
+		let selected_border = match theme {
+			HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 82),
+			HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 72),
+		};
+
+		(normal_color, hover_color, selected_color, hover_bg, selected_bg, selected_border)
+	}
+
+	fn maybe_request_toolbar_animation_repaint(
+		ctx: &egui::Context,
+		hovered: bool,
+		selected: bool,
+		hover_anim: f32,
+		selected_anim: f32,
+	) {
+		let is_hover_animating = (hovered && hover_anim < 1.0) || (!hovered && hover_anim > 0.0);
+		let is_selected_animating =
+			(selected && selected_anim < 1.0) || (!selected && selected_anim > 0.0);
+
+		if is_hover_animating || is_selected_animating {
+			ctx.request_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
+		}
+	}
+
+	fn blend_color(a: Color32, b: Color32, t: f32) -> Color32 {
+		let t = t.clamp(0.0, 1.0);
+		let u = 1.0 - t;
+
+		Color32::from_rgba_unmultiplied(
+			((f32::from(a.r()) * u + f32::from(b.r()) * t).round().clamp(0.0, 255.0)) as u8,
+			((f32::from(a.g()) * u + f32::from(b.g()) * t).round().clamp(0.0, 255.0)) as u8,
+			((f32::from(a.b()) * u + f32::from(b.b()) * t).round().clamp(0.0, 255.0)) as u8,
+			((f32::from(a.a()) * u + f32::from(b.a()) * t).round().clamp(0.0, 255.0)) as u8,
+		)
+	}
+
+	fn clamp_toolbar_position(
+		monitor: MonitorRect,
+		toolbar_size: Vec2,
+		cursor: Pos2,
+		side_margin: f32,
+		top_margin: f32,
+	) -> Pos2 {
+		let min_x = side_margin;
+		let min_y = top_margin;
+		let max_x = monitor.width as f32 - toolbar_size.x - side_margin;
+		let max_y = monitor.height as f32 - toolbar_size.y - side_margin * 0.5;
+
+		Pos2::new(cursor.x.clamp(min_x, max_x.max(min_x)), cursor.y.clamp(min_y, max_y.max(min_y)))
 	}
 
 	fn should_draw_hud(state: &OverlayState, monitor: MonitorRect) -> bool {
@@ -2323,53 +2949,9 @@ impl WindowRenderer {
 		theme: HudTheme,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
-		let pill_radius = 18_u8;
-		let opacity = if hud_opaque { 1.0 } else { hud_opacity.clamp(0.0, 1.0) };
-		let tint = hud_milk_amount.clamp(0.0, 1.0);
-		let tint_strength = match theme {
-			HudTheme::Dark => 0.22,
-			HudTheme::Light => 0.28,
-		};
-		let mix = (tint * tint_strength).clamp(0.0, 1.0);
-		let mut fill = hud_body_fill_srgba8(theme, false);
-
-		fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
-			((f32::from(a) + ((f32::from(b) - f32::from(a)) * t)).round().clamp(0.0, 255.0)) as u8
-		}
-
-		fill[0] = lerp_u8(fill[0], 255, mix);
-		fill[1] = lerp_u8(fill[1], 255, mix);
-		fill[2] = lerp_u8(fill[2], 255, mix);
-		fill[3] = (opacity * 255.0).round().clamp(0.0, 255.0) as u8;
-
-		let body_fill = Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], fill[3]);
-		let outer_stroke_color = match theme {
-			HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 40),
-			HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
-		};
-		let outer_stroke = egui::Stroke::new(1.0, outer_stroke_color);
-		let pill_shadow = if hud_compact {
-			egui::epaint::Shadow::NONE
-		} else {
-			egui::epaint::Shadow {
-				offset: [0, 0],
-				blur: 10,
-				spread: 0,
-				color: match theme {
-					HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 28),
-					HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 18),
-				},
-			}
-		};
-		let inner = Frame {
-			fill: body_fill,
-			stroke: outer_stroke,
-			shadow: pill_shadow,
-			corner_radius: CornerRadius::same(pill_radius),
-			inner_margin: Margin::symmetric(12, 8),
-			..Frame::default()
-		}
-		.show(ui, |ui| {
+		let pill_frame =
+			Self::hud_pill_frame(theme, hud_opaque, hud_opacity, hud_milk_amount, !hud_compact);
+		let inner = pill_frame.show(ui, |ui| {
 			ui.spacing_mut().item_spacing = egui::vec2(10.0, 6.0);
 
 			if let Some(err) = &state.error_message {
@@ -2385,8 +2967,10 @@ impl WindowRenderer {
 		});
 		let pill_rect = inner.response.rect;
 
-		*hud_pill_out =
-			Some(HudPillGeometry { rect: pill_rect, radius_points: f32::from(pill_radius) });
+		*hud_pill_out = Some(HudPillGeometry {
+			rect: pill_rect,
+			radius_points: f32::from(HUD_PILL_CORNER_RADIUS_POINTS),
+		});
 
 		if hud_compact {
 			return;
@@ -2401,7 +2985,7 @@ impl WindowRenderer {
 
 		ui.painter().rect_stroke(
 			inner_rect,
-			CornerRadius::same(pill_radius.saturating_sub(1)),
+			CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS.saturating_sub(1)),
 			inner_stroke,
 			egui::StrokeKind::Inside,
 		);
@@ -2417,6 +3001,41 @@ impl WindowRenderer {
 				hud_opaque,
 				theme,
 			);
+		}
+	}
+
+	fn hud_pill_frame(
+		theme: HudTheme,
+		hud_opaque: bool,
+		hud_opacity: f32,
+		hud_milk_amount: f32,
+		with_shadow: bool,
+	) -> Frame {
+		let outer_stroke_color = match theme {
+			HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 40),
+			HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
+		};
+		let pill_shadow = if with_shadow {
+			egui::epaint::Shadow {
+				offset: [0, 0],
+				blur: 10,
+				spread: 0,
+				color: match theme {
+					HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 28),
+					HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 18),
+				},
+			}
+		} else {
+			egui::epaint::Shadow::NONE
+		};
+
+		Frame {
+			fill: Self::tinted_hud_body_fill(theme, hud_opaque, hud_opacity, hud_milk_amount),
+			stroke: egui::Stroke::new(1.0, outer_stroke_color),
+			shadow: pill_shadow,
+			corner_radius: CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS),
+			inner_margin: Margin::symmetric(12, 8),
+			..Frame::default()
 		}
 	}
 
@@ -2919,7 +3538,11 @@ impl WindowRenderer {
 		Ok(())
 	}
 
-	fn new(gpu: &GpuContext, window: Arc<winit::window::Window>) -> Result<Self> {
+	fn new(
+		gpu: &GpuContext,
+		window: Arc<winit::window::Window>,
+		egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
+	) -> Result<Self> {
 		let surface = gpu
 			.instance
 			.create_surface(Arc::clone(&window))
@@ -2933,6 +3556,12 @@ impl WindowRenderer {
 		surface.configure(&gpu.device, &surface_config);
 
 		let egui_ctx = egui::Context::default();
+		let mut fonts = FontDefinitions::default();
+
+		egui_phosphor::add_to_fonts(&mut fonts, Variant::Regular);
+
+		egui_ctx.set_fonts(fonts);
+
 		let egui_renderer = Renderer::new(
 			&gpu.device,
 			surface_format,
@@ -2943,6 +3572,18 @@ impl WindowRenderer {
 				predictable_texture_filtering: false,
 			},
 		);
+		let repaint_deadline = Arc::clone(&egui_repaint_deadline);
+
+		egui_ctx.set_request_repaint_callback(move |info| {
+			let deadline = Instant::now() + info.delay;
+			let mut next_repaint = repaint_deadline.lock().unwrap_or_else(|err| err.into_inner());
+			let needs_update = next_repaint.is_none_or(|previous| deadline < previous);
+
+			if needs_update {
+				*next_repaint = Some(deadline);
+			}
+		});
+
 		let bg_sampler = Self::create_bg_sampler(gpu);
 		let (mipgen_pipeline, mipgen_bind_group_layout) =
 			Self::create_mipgen_pipeline(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
@@ -3021,6 +3662,8 @@ impl WindowRenderer {
 		hud_fog_amount: f32,
 		hud_milk_amount: f32,
 		theme_mode: ThemeMode,
+		toolbar_state: Option<&mut FrozenToolbarState>,
+		toolbar_pointer: Option<FrozenToolbarPointerState>,
 	) -> Result<()> {
 		self.apply_pending_reconfigure(gpu);
 
@@ -3028,14 +3671,17 @@ impl WindowRenderer {
 
 		self.sync_egui_theme(theme);
 
-		let (size, pixels_per_point, raw_input) = self.prepare_egui_input(gpu);
+		let (size, pixels_per_point, raw_input) = self.prepare_egui_input(gpu, toolbar_pointer);
 		let can_draw_hud = draw_hud && Self::should_draw_hud(state, monitor);
 		let needs_frozen_surface_bg = !draw_hud && matches!(state.mode, OverlayMode::Frozen);
-		// `show_hud_blur` is a UX toggle for "glass mode":
-		// - On macOS: native compositor blur (the HUD window itself is blurred).
-		// - On other platforms: implemented by a shader blur (requires `hud_bg`).
+		let toolbar_active = toolbar_state.is_some();
+		// `show_hud_blur` is a UX toggle for "glass mode".
+		// - On macOS: HUD uses native compositor blur.
+		// - On non-macOS or for toolbar: shader blur in this overlay window (requires `hud_bg`).
 		let hud_glass_active = can_draw_hud && show_hud_blur && !hud_opaque;
-		let needs_shader_blur_bg = hud_glass_active && !cfg!(target_os = "macos");
+		let toolbar_glass_active = toolbar_active && show_hud_blur && !hud_opaque;
+		let needs_shader_blur_bg =
+			toolbar_glass_active || (!cfg!(target_os = "macos") && hud_glass_active);
 		let should_sync_bg = needs_frozen_surface_bg || needs_shader_blur_bg;
 
 		if should_sync_bg {
@@ -3069,6 +3715,8 @@ impl WindowRenderer {
 			hud_opacity,
 			hud_milk_amount,
 			theme,
+			toolbar_state,
+			toolbar_pointer,
 		);
 
 		self.hud_pill = hud_pill;
@@ -3125,7 +3773,7 @@ impl WindowRenderer {
 
 		self.sync_egui_theme(theme);
 
-		let (size, pixels_per_point, raw_input) = self.prepare_egui_input(gpu);
+		let (size, pixels_per_point, raw_input) = self.prepare_egui_input(gpu, None);
 
 		self.hud_bg = None;
 		self.hud_pill = None;
@@ -3797,5 +4445,81 @@ fn macos_configure_hud_window(
 		let radius = corner_radius_points.unwrap_or(height_points * 0.5);
 		let _: () = msg_send![layer, setCornerRadius: radius];
 		let _: () = msg_send![layer, setMasksToBounds: YES];
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::overlay::{
+		GlobalPoint, MonitorRect, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
+		Vec2, WindowRenderer,
+	};
+
+	#[test]
+	fn frozen_toolbar_default_position_fits_below_capture_rect() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(10, 20),
+			width: 800,
+			height: 600,
+			scale_factor_x1000: 1_000,
+		};
+		let capture_rect = Rect::from_min_size(Pos2::new(50.0, 100.0), Vec2::new(300.0, 200.0));
+		let toolbar_size = Vec2::new(460.0, 54.0);
+		let pos = WindowRenderer::frozen_toolbar_default_pos(monitor, capture_rect, toolbar_size);
+		let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
+			TOOLBAR_SCREEN_MARGIN_PX,
+			(monitor.width as f32 - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX)
+				.max(TOOLBAR_SCREEN_MARGIN_PX),
+		);
+
+		assert!((pos.x - expected_x).abs() < f32::EPSILON);
+		assert_eq!(pos.y, capture_rect.max.y + TOOLBAR_CAPTURE_GAP_PX);
+	}
+
+	#[test]
+	fn frozen_toolbar_default_position_falls_inside_when_no_space_below_capture_rect() {
+		let monitor = MonitorRect {
+			id: 2,
+			origin: GlobalPoint::new(-120, 80),
+			width: 500,
+			height: 600,
+			scale_factor_x1000: 1_000,
+		};
+		let toolbar_size = Vec2::new(460.0, 54.0);
+		let capture_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 560.0));
+		let pos = WindowRenderer::frozen_toolbar_default_pos(monitor, capture_rect, toolbar_size);
+		let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
+			TOOLBAR_SCREEN_MARGIN_PX,
+			(monitor.width as f32 - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX)
+				.max(TOOLBAR_SCREEN_MARGIN_PX),
+		);
+		let expected_y = capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y;
+
+		assert_eq!(pos.x, expected_x);
+		assert_eq!(pos.y, capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y);
+		assert_eq!(pos.y, expected_y);
+	}
+
+	#[test]
+	fn frozen_toolbar_clamps_floating_position() {
+		let monitor = MonitorRect {
+			id: 3,
+			origin: GlobalPoint::new(-200, -100),
+			width: 500,
+			height: 400,
+			scale_factor_x1000: 1_000,
+		};
+		let toolbar_size = Vec2::new(220.0, 42.0);
+		let clamped = WindowRenderer::clamp_toolbar_position(
+			monitor,
+			toolbar_size,
+			Pos2::new(-400.0, -240.0),
+			TOOLBAR_SCREEN_MARGIN_PX,
+			TOOLBAR_SCREEN_MARGIN_PX,
+		);
+
+		assert_eq!(clamped.x, TOOLBAR_SCREEN_MARGIN_PX);
+		assert_eq!(clamped.y, TOOLBAR_SCREEN_MARGIN_PX);
 	}
 }

@@ -3430,6 +3430,7 @@ dependencies = [
  "color-eyre",
  "device_query",
  "egui",
+ "egui-phosphor",
  "egui-wgpu",
  "egui-winit",
  "image",
