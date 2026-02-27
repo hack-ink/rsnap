@@ -20,6 +20,7 @@ arboard           = { workspace = true }
 color-eyre        = { workspace = true }
 device_query      = { workspace = true }
 egui              = { workspace = true }
+egui-phosphor     = { workspace = true }
 egui-wgpu         = { workspace = true }
 egui-winit        = { workspace = true }
 image             = { workspace = true }
