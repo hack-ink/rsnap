@@ -47,6 +47,7 @@ const HUD_PILL_BODY_FILL_LIGHT_SRGBA8: [u8; 4] = [232, 236, 243, 176];
 const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
 const HUD_PILL_BLUR_TINT_ALPHA_LIGHT: f32 = 0.22;
 const LOUPE_TILE_CORNER_RADIUS_POINTS: f64 = 12.0;
+const MACOS_HUD_WINDOW_LEVEL: isize = 25;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
@@ -1699,29 +1700,19 @@ impl OverlaySession {
 		}
 	}
 
+	#[cfg(target_os = "macos")]
+	fn raise_hud_windows(&self) {}
+
+	#[cfg(not(target_os = "macos"))]
 	fn raise_hud_windows(&self) {
 		if let Some(hud_window) = self.hud_window.as_ref() {
-			#[cfg(target_os = "macos")]
-			{
-				macos_order_front_regardless(hud_window.window.as_ref());
-			}
-			#[cfg(not(target_os = "macos"))]
-			{
-				hud_window.window.focus_window();
-			}
+			hud_window.window.focus_window();
 		}
 
 		if self.state.alt_held
 			&& let Some(loupe_window) = self.loupe_window.as_ref()
 		{
-			#[cfg(target_os = "macos")]
-			{
-				macos_order_front_regardless(loupe_window.window.as_ref());
-			}
-			#[cfg(not(target_os = "macos"))]
-			{
-				loupe_window.window.focus_window();
-			}
+			loupe_window.window.focus_window();
 		}
 	}
 }
@@ -3513,35 +3504,6 @@ impl HudBlurUniformRaw {
 	}
 }
 
-#[cfg(target_os = "macos")]
-fn macos_order_front_regardless(window: &winit::window::Window) {
-	use objc::runtime::Object;
-
-	use objc::{msg_send, sel, sel_impl};
-
-	let Ok(handle) = window.window_handle() else {
-		return;
-	};
-	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-		return;
-	};
-	let ns_view = appkit.ns_view.as_ptr() as *mut Object;
-
-	if ns_view.is_null() {
-		return;
-	}
-
-	unsafe {
-		let ns_window: *mut Object = msg_send![ns_view, window];
-
-		if ns_window.is_null() {
-			return;
-		}
-
-		let _: () = msg_send![ns_window, orderFrontRegardless];
-	}
-}
-
 fn effective_hud_theme(mode: ThemeMode, window_theme: Option<Theme>) -> HudTheme {
 	match mode {
 		ThemeMode::System => match window_theme.unwrap_or(Theme::Dark) {
@@ -3788,6 +3750,7 @@ fn macos_configure_hud_window(
 
 		let _: () = msg_send![ns_window, setOpaque: false];
 		let _: () = msg_send![ns_window, setHasShadow: false];
+		let _: () = msg_send![ns_window, setLevel: MACOS_HUD_WINDOW_LEVEL];
 		let sharing_type_none = 0_u64;
 		let _: () = msg_send![ns_window, setSharingType: sharing_type_none];
 		let clear: *mut Object = msg_send![class!(NSColor), clearColor];
