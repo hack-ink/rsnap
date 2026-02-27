@@ -12,9 +12,11 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
 		vec2<f32>(-1.0,  3.0),
 	);
 	var uv = array<vec2<f32>, 3>(
-		vec2<f32>(0.0, 0.0),
-		vec2<f32>(2.0, 0.0),
-		vec2<f32>(0.0, 2.0),
+		// WebGPU texture coordinates have (0,0) at the top-left, while NDC has +Y upwards.
+		// Use a vertically flipped mapping so the sampled image appears upright on the surface.
+		vec2<f32>(0.0,  1.0),
+		vec2<f32>(2.0,  1.0),
+		vec2<f32>(0.0, -1.0),
 	);
 
 	var out: VsOut;
@@ -29,11 +31,4 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 	return textureSample(src_tex, src_samp, in.uv);
-}
-
-@fragment
-fn fs_main_macos_surface(in: VsOut) -> @location(0) vec4<f32> {
-	let flipped_uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
-
-	return textureSample(src_tex, src_samp, flipped_uv);
 }
