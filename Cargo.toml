@@ -31,7 +31,7 @@ thiserror          = { version = "2.0" }
 tracing            = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tray-icon          = { version = "0.21" }
-wgpu               = { version = "27.0" }
+wgpu               = { version = "28.0" }
 winit              = { version = "0.30", features = ["rwh_06"] }
 xcap               = { version = "0.8" }
 
