@@ -1,5 +1,6 @@
 struct VsOut {
 	@builtin(position) pos: vec4<f32>,
+	@location(0) uv: vec2<f32>,
 }
 
 @vertex
@@ -10,9 +11,16 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
 		vec2<f32>( 3.0, -1.0),
 		vec2<f32>(-1.0,  3.0),
 	);
+	var uv = array<vec2<f32>, 3>(
+		// Match the fullscreen background path so blur samples the same orientation as what's shown.
+		vec2<f32>(0.0,  1.0),
+		vec2<f32>(2.0,  1.0),
+		vec2<f32>(0.0, -1.0),
+	);
 
 	var out: VsOut;
 	out.pos = vec4<f32>(pos[vertex_index], 0.0, 1.0);
+	out.uv = uv[vertex_index];
 	return out;
 }
 
@@ -42,12 +50,13 @@ fn sd_rounded_rect(p: vec2<f32>, center: vec2<f32>, half_size: vec2<f32>, radius
 }
 
 @fragment
-fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 	let surface_size = u.surface_size_px.xy;
 	if surface_size.x <= 0.0 || surface_size.y <= 0.0 {
 		return vec4<f32>(0.0);
 	}
 
+	let pos = in.pos;
 	let rect_min = u.rect_min_size.xy;
 	let rect_size = max(u.rect_min_size.zw, vec2<f32>(0.0));
 	let center = rect_min + (rect_size * 0.5);
@@ -60,13 +69,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 		return vec4<f32>(0.0);
 	}
 
-	let uv = pos.xy / surface_size;
-	// On macOS, CoreGraphics-captured images and the swapchain can disagree on Y origin depending
-	// on backend details. Allow the host to request a Y flip to keep blur sampling aligned.
-	var uv2 = uv;
-	if u.effects.w > 0.5 {
-		uv2.y = 1.0 - uv2.y;
-	}
+	let uv2 = in.uv;
 	let blur_amount = clamp(u.effects.x, 0.0, 1.0);
 	// Prevent over-blurring into a low-res "zoomed" look where the user can no longer correlate
 	// what is behind the HUD.
