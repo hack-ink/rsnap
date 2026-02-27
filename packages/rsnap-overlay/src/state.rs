@@ -104,6 +104,7 @@ pub(crate) struct OverlayState {
 	pub error_message: Option<String>,
 	pub alt_held: bool,
 	pub loupe: Option<LoupeSample>,
+	pub loupe_patch_side_px: u32,
 }
 impl OverlayState {
 	pub fn new() -> Self {
@@ -120,6 +121,7 @@ impl OverlayState {
 			error_message: None,
 			alt_held: false,
 			loupe: None,
+			loupe_patch_side_px: 21,
 		}
 	}
 

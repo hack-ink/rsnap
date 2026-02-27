@@ -233,12 +233,15 @@ impl OverlaySession {
 		let live_bg_request_interval = Duration::from_millis(500);
 		let loupe_sample_side_px =
 			Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
+		let mut state = OverlayState::new();
+
+		state.loupe_patch_side_px = loupe_sample_side_px;
 
 		Self {
 			config,
 			worker: None,
 			cursor_device: device_query::DeviceState::new(),
-			state: OverlayState::new(),
+			state,
 			cursor_monitor: None,
 			windows: HashMap::new(),
 			hud_window: None,
@@ -274,6 +277,7 @@ impl OverlaySession {
 		self.config = config;
 		self.loupe_patch_width_px = loupe_sample_side;
 		self.loupe_patch_height_px = loupe_sample_side;
+		self.state.loupe_patch_side_px = loupe_sample_side;
 
 		let patch_changed = self.loupe_patch_width_px != previous_loupe_patch;
 
@@ -400,6 +404,7 @@ impl OverlaySession {
 		self.loupe_outer_pos = None;
 		self.cursor_monitor = None;
 		self.state = OverlayState::new();
+		self.state.loupe_patch_side_px = self.loupe_patch_width_px;
 		self.pending_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
 	}
@@ -2515,7 +2520,7 @@ impl WindowRenderer {
 
 		const CELL: f32 = 10.0;
 
-		let fallback_side_px = 21_u32;
+		let fallback_side_px = state.loupe_patch_side_px.max(1);
 		let (w, h) = state
 			.loupe
 			.as_ref()
@@ -2631,7 +2636,7 @@ impl WindowRenderer {
 		hud_opaque: bool,
 		theme: HudTheme,
 	) {
-		let fallback_side_px = 21_u32;
+		let fallback_side_px = state.loupe_patch_side_px.max(1);
 		let (w, h) = state
 			.loupe
 			.as_ref()
@@ -3183,7 +3188,7 @@ impl WindowRenderer {
 
 			const CELL: f32 = 10.0;
 
-			let fallback_side_px = 21_u32;
+			let fallback_side_px = state.loupe_patch_side_px.max(1);
 			let (w, h) = state
 				.loupe
 				.as_ref()
