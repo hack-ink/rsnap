@@ -55,6 +55,8 @@ pub struct AppSettings {
 	pub hud_blur: f32,
 	#[serde(default = "default_hud_tint")]
 	pub hud_tint: f32,
+	#[serde(default = "default_hud_tint_hue")]
+	pub hud_tint_hue: f32,
 	#[serde(default)]
 	pub alt_activation: AltActivationMode,
 	#[serde(default)]
@@ -71,16 +73,12 @@ impl AppSettings {
 		let Ok(bytes) = fs::read(&path) else {
 			return Self::default();
 		};
-		let mut settings = serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-			let legacy: LegacyAppSettings =
-				serde_json::from_slice(&bytes).unwrap_or_else(|_| LegacyAppSettings::default());
-
-			legacy.into_current()
-		});
+		let mut settings: Self = serde_json::from_slice(&bytes).unwrap_or_default();
 
 		settings.hud_opacity = settings.hud_opacity.clamp(0.0, 1.0);
 		settings.hud_blur = settings.hud_blur.clamp(0.0, 1.0);
 		settings.hud_tint = settings.hud_tint.clamp(0.0, 1.0);
+		settings.hud_tint_hue = settings.hud_tint_hue.clamp(0.0, 1.0);
 		settings.loupe_sample_size = settings.loupe_sample_size.sanitize();
 
 		settings
@@ -120,63 +118,9 @@ impl Default for AppSettings {
 			hud_opacity: default_hud_opacity(),
 			hud_blur: default_hud_blur(),
 			hud_tint: default_hud_tint(),
+			hud_tint_hue: default_hud_tint_hue(),
 			alt_activation: AltActivationMode::default(),
 			loupe_sample_size: LoupeSampleSize::default(),
-			theme_mode: ThemeMode::System,
-		}
-	}
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct LegacyAppSettings {
-	#[serde(default)]
-	show_alt_hint_keycap: bool,
-	#[serde(default)]
-	show_hud_blur: bool,
-	#[serde(default)]
-	hud_opaque: bool,
-	#[serde(default)]
-	hud_fog_enabled: bool,
-	#[serde(default)]
-	hud_fog_amount: f32,
-	#[serde(default)]
-	hud_milk_enabled: bool,
-	#[serde(default)]
-	hud_milk_amount: f32,
-	#[serde(default)]
-	theme_mode: ThemeMode,
-}
-impl LegacyAppSettings {
-	fn into_current(self) -> AppSettings {
-		let glass = !self.hud_opaque;
-
-		AppSettings {
-			show_alt_hint_keycap: self.show_alt_hint_keycap,
-			hud_glass_enabled: glass,
-			hud_opacity: if glass { default_hud_opacity() } else { 1.0 },
-			hud_blur: if self.show_hud_blur && self.hud_fog_enabled {
-				self.hud_fog_amount
-			} else {
-				0.0
-			},
-			hud_tint: if self.hud_milk_enabled { self.hud_milk_amount } else { 0.0 },
-			alt_activation: AltActivationMode::default(),
-			loupe_sample_size: LoupeSampleSize::default(),
-			theme_mode: self.theme_mode,
-		}
-	}
-}
-
-impl Default for LegacyAppSettings {
-	fn default() -> Self {
-		Self {
-			show_alt_hint_keycap: true,
-			show_hud_blur: true,
-			hud_opaque: false,
-			hud_fog_enabled: true,
-			hud_fog_amount: default_hud_blur(),
-			hud_milk_enabled: false,
-			hud_milk_amount: default_hud_tint(),
 			theme_mode: ThemeMode::System,
 		}
 	}
@@ -192,6 +136,10 @@ fn default_hud_blur() -> f32 {
 
 fn default_hud_tint() -> f32 {
 	0.0
+}
+
+fn default_hud_tint_hue() -> f32 {
+	0.585
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {

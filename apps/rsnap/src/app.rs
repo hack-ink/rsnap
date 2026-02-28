@@ -52,6 +52,7 @@ impl App {
 		let hud_opacity = self.settings.hud_opacity.clamp(0.0, 1.0);
 		let hud_blur = self.settings.hud_blur.clamp(0.0, 1.0);
 		let hud_tint = self.settings.hud_tint.clamp(0.0, 1.0);
+		let hud_tint_hue = self.settings.hud_tint_hue;
 		let loupe_sample_side_px = self.settings.loupe_sample_size.side_px();
 		let hud_opaque = !glass || hud_opacity >= 0.999;
 		let show_hud_blur = glass && hud_blur > 0.0 && !hud_opaque;
@@ -64,6 +65,7 @@ impl App {
 			hud_opacity,
 			hud_fog_amount: hud_blur,
 			hud_milk_amount: hud_tint,
+			hud_tint_hue,
 			alt_activation: Self::map_alt_activation(self.settings.alt_activation),
 			loupe_sample_side_px,
 			theme_mode: self.settings.theme_mode,
