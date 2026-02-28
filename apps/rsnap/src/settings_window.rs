@@ -654,7 +654,16 @@ impl SettingsWindow {
 				.add_enabled_ui(enabled, |ui| {
 					ui.add_sized(
 						egui::vec2(SETTINGS_VALUE_BOX_WIDTH, ui.spacing().interact_size.y),
-						egui::DragValue::new(&mut percent).range(0..=100).speed(1.0),
+						egui::DragValue::new(&mut percent)
+							.range(0..=100)
+							.speed(1.0)
+							.suffix("%")
+							.custom_parser(|text| {
+								let text = text.trim();
+								let text = text.strip_suffix('%').unwrap_or(text).trim();
+
+								text.parse::<i32>().ok().map(f64::from)
+							}),
 					)
 				})
 				.inner
