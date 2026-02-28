@@ -1835,6 +1835,19 @@ impl OverlaySession {
 	}
 
 	fn exit(&mut self, exit: OverlayExit) -> OverlayControl {
+		// macOS cursor state can “stick” if we exit while a non-default cursor is active.
+		// Reset all overlay-related windows to the default cursor before dropping them.
+		for window in self.windows.values() {
+			window.window.set_cursor(CursorIcon::Default);
+		}
+
+		if let Some(hud_window) = &self.hud_window {
+			hud_window.window.set_cursor(CursorIcon::Default);
+		}
+		if let Some(loupe_window) = &self.loupe_window {
+			loupe_window.window.set_cursor(CursorIcon::Default);
+		}
+
 		self.windows.clear();
 
 		self.hud_window = None;
