@@ -71,7 +71,7 @@ const TOOLBAR_CAPTURE_GAP_PX: f32 = 10.0;
 const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
 const HUD_PILL_CORNER_RADIUS_POINTS: u8 = 18;
 const TOOLBAR_DRAG_START_THRESHOLD_PX: f32 = 6.0;
-const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 8;
+const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 30;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
@@ -814,6 +814,7 @@ impl OverlaySession {
 		}
 
 		self.maybe_keep_frozen_capture_redraw();
+		self.maybe_tick_toolbar_window_warmup_redraw();
 		self.maybe_tick_live_sampling();
 		self.maybe_tick_frozen_cursor_tracking();
 
@@ -869,6 +870,35 @@ impl OverlaySession {
 			self.request_redraw_all();
 		}
 
+		self.schedule_egui_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
+	}
+
+	fn maybe_tick_toolbar_window_warmup_redraw(&mut self) {
+		if self.toolbar_window_warmup_redraws_remaining == 0 {
+			return;
+		}
+
+		#[cfg(not(target_os = "macos"))]
+		{
+			self.toolbar_window_warmup_redraws_remaining = 0;
+
+			return;
+		}
+
+		if !matches!(self.state.mode, OverlayMode::Frozen)
+			|| !self.toolbar_state.visible
+			|| self.state.frozen_image.is_none()
+			|| self.state.monitor.is_none()
+		{
+			self.toolbar_window_warmup_redraws_remaining = 0;
+
+			return;
+		}
+
+		self.toolbar_window_warmup_redraws_remaining =
+			self.toolbar_window_warmup_redraws_remaining.saturating_sub(1);
+
+		self.request_redraw_toolbar_window();
 		self.schedule_egui_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
 	}
 
@@ -1378,12 +1408,6 @@ impl OverlaySession {
 
 		if self.toolbar_state.needs_redraw {
 			self.toolbar_state.needs_redraw = false;
-
-			self.request_redraw_toolbar_window();
-		}
-		if self.toolbar_window_warmup_redraws_remaining > 0 {
-			self.toolbar_window_warmup_redraws_remaining =
-				self.toolbar_window_warmup_redraws_remaining.saturating_sub(1);
 
 			self.request_redraw_toolbar_window();
 		}
