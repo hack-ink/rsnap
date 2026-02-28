@@ -629,8 +629,9 @@ impl SettingsWindow {
 	) -> bool {
 		let mut changed = false;
 		let mut value = (*amount).clamp(0.0, 1.0);
-		let mut percent = (value * 100.0).round().clamp(0.0, 100.0);
+		let mut percent = (value * 100.0).round() as i32;
 
+		percent = percent.clamp(0, 100);
 		ui.horizontal(|ui| {
 			let slider = egui::Slider::new(&mut value, 0.0..=1.0)
 				.handle_shape(egui::style::HandleShape::Circle)
@@ -653,35 +654,14 @@ impl SettingsWindow {
 				.add_enabled_ui(enabled, |ui| {
 					ui.add_sized(
 						egui::vec2(SETTINGS_VALUE_BOX_WIDTH, ui.spacing().interact_size.y),
-						egui::DragValue::new(&mut percent)
-							.range(0.0..=100.0)
-							.fixed_decimals(0)
-							.suffix("%")
-							.custom_parser(|text| {
-								let text = text.trim();
-								let (text, had_percent) = text
-									.strip_suffix('%')
-									.map(|text| (text, true))
-									.unwrap_or((text, false));
-								let text = text.trim();
-								let parsed = text.parse::<f64>().ok()?;
-								let percent = if had_percent {
-									parsed
-								} else if parsed <= 1.0 {
-									parsed * 100.0
-								} else {
-									parsed
-								};
-
-								Some(percent)
-							}),
+						egui::DragValue::new(&mut percent).range(0..=100).speed(1.0),
 					)
 				})
 				.inner
 				.changed();
 
 			if percent_changed {
-				value = (percent / 100.0).clamp(0.0, 1.0);
+				value = (percent as f32 / 100.0).clamp(0.0, 1.0);
 				changed = true;
 			}
 
