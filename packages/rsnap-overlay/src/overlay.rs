@@ -70,6 +70,8 @@ const TOOLBAR_EXPANDED_HEIGHT_PX: f32 = FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
 const TOOLBAR_CAPTURE_GAP_PX: f32 = 10.0;
 const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
 const HUD_PILL_CORNER_RADIUS_POINTS: u8 = 18;
+const TOOLBAR_DRAG_START_THRESHOLD_PX: f32 = 6.0;
+const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
@@ -277,10 +279,13 @@ pub struct OverlaySession {
 	windows: HashMap<WindowId, OverlayWindow>,
 	hud_window: Option<HudOverlayWindow>,
 	loupe_window: Option<HudOverlayWindow>,
+	toolbar_window: Option<HudOverlayWindow>,
 	hud_outer_pos: Option<GlobalPoint>,
 	hud_inner_size_points: Option<(u32, u32)>,
 	loupe_outer_pos: Option<GlobalPoint>,
 	loupe_inner_size_points: Option<(u32, u32)>,
+	toolbar_outer_pos: Option<GlobalPoint>,
+	toolbar_inner_size_points: Option<(u32, u32)>,
 	gpu: Option<GpuContext>,
 	last_present_at: Instant,
 	last_rgb_request_at: Instant,
@@ -300,6 +305,9 @@ pub struct OverlaySession {
 	toolbar_state: FrozenToolbarState,
 	toolbar_left_button_down: bool,
 	toolbar_left_button_down_prev: bool,
+	toolbar_pointer_local: Option<Pos2>,
+	toolbar_window_visible: bool,
+	toolbar_window_warmup_redraws_remaining: u8,
 }
 impl OverlaySession {
 	#[must_use]
@@ -325,10 +333,13 @@ impl OverlaySession {
 			windows: HashMap::new(),
 			hud_window: None,
 			loupe_window: None,
+			toolbar_window: None,
 			hud_outer_pos: None,
 			hud_inner_size_points: None,
 			loupe_outer_pos: None,
 			loupe_inner_size_points: None,
+			toolbar_outer_pos: None,
+			toolbar_inner_size_points: None,
 			gpu: None,
 			last_present_at: Instant::now(),
 			last_rgb_request_at: Instant::now(),
@@ -349,6 +360,9 @@ impl OverlaySession {
 			toolbar_state: FrozenToolbarState::default(),
 			toolbar_left_button_down: false,
 			toolbar_left_button_down_prev: false,
+			toolbar_pointer_local: None,
+			toolbar_window_visible: false,
+			toolbar_window_warmup_redraws_remaining: 0,
 		}
 	}
 
@@ -377,7 +391,7 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			macos_configure_hud_window(
 				hud_window.window.as_ref(),
-				self.config.show_hud_blur,
+				self.macos_hud_window_blur_enabled(),
 				self.config.hud_fog_amount,
 				None,
 			);
@@ -391,13 +405,27 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			macos_configure_hud_window(
 				loupe_window.window.as_ref(),
-				self.config.show_hud_blur,
+				self.macos_hud_window_blur_enabled(),
 				self.config.hud_fog_amount,
 				Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 			);
 
 			#[cfg(not(target_os = "macos"))]
 			loupe_window.window.set_blur(self.config.show_hud_blur);
+		}
+		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+			toolbar_window.window.set_transparent(true);
+
+			#[cfg(target_os = "macos")]
+			macos_configure_hud_window(
+				toolbar_window.window.as_ref(),
+				self.macos_hud_window_blur_enabled(),
+				self.config.hud_fog_amount,
+				Some(f64::from(HUD_PILL_CORNER_RADIUS_POINTS)),
+			);
+
+			#[cfg(not(target_os = "macos"))]
+			toolbar_window.window.set_blur(self.config.show_hud_blur);
 		}
 
 		let prev_fake_blur = prev.show_hud_blur && !cfg!(target_os = "macos");
@@ -447,6 +475,10 @@ impl OverlaySession {
 		self.config.show_hud_blur && !cfg!(target_os = "macos")
 	}
 
+	fn macos_hud_window_blur_enabled(&self) -> bool {
+		self.config.show_hud_blur
+	}
+
 	fn normalized_loupe_sample_side_px(side_px: u32) -> u32 {
 		let side_px = side_px.max(3);
 
@@ -474,6 +506,7 @@ impl OverlaySession {
 		self.create_overlay_windows(event_loop, &monitors)?;
 		self.create_hud_window(event_loop)?;
 		self.create_loupe_window(event_loop)?;
+		self.create_toolbar_window(event_loop)?;
 		self.request_redraw_all();
 		self.initialize_cursor_state();
 
@@ -485,6 +518,8 @@ impl OverlaySession {
 		self.hud_outer_pos = None;
 		self.loupe_inner_size_points = None;
 		self.loupe_outer_pos = None;
+		self.toolbar_inner_size_points = None;
+		self.toolbar_outer_pos = None;
 		self.cursor_monitor = None;
 		self.state = OverlayState::new();
 		self.state.loupe_patch_side_px = self.loupe_patch_width_px;
@@ -493,6 +528,7 @@ impl OverlaySession {
 		self.toolbar_state = FrozenToolbarState::default();
 		self.toolbar_left_button_down = false;
 		self.toolbar_left_button_down_prev = false;
+		self.toolbar_pointer_local = None;
 	}
 
 	fn create_overlay_windows(
@@ -612,7 +648,7 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		macos_configure_hud_window(
 			window.as_ref(),
-			self.config.show_hud_blur,
+			self.macos_hud_window_blur_enabled(),
 			self.config.hud_fog_amount,
 			None,
 		);
@@ -655,7 +691,7 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		macos_configure_hud_window(
 			window.as_ref(),
-			self.config.show_hud_blur,
+			self.macos_hud_window_blur_enabled(),
 			self.config.hud_fog_amount,
 			Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 		);
@@ -673,6 +709,52 @@ impl OverlaySession {
 		Ok(())
 	}
 
+	fn create_toolbar_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+		let attrs = winit::window::Window::default_attributes()
+			.with_title("rsnap-toolbar")
+			.with_decorations(false)
+			.with_resizable(false)
+			.with_inner_size(LogicalSize::new(
+				TOOLBAR_EXPANDED_WIDTH_PX as f64,
+				TOOLBAR_EXPANDED_HEIGHT_PX as f64,
+			))
+			.with_transparent(true)
+			.with_visible(false)
+			.with_window_level(WindowLevel::AlwaysOnTop);
+		let window = event_loop
+			.create_window(attrs)
+			.map_err(|err| format!("Unable to create toolbar window: {err}"))?;
+		let window = Arc::new(window);
+		#[cfg(target_os = "macos")]
+		let _ = window.set_cursor_hittest(true);
+		#[cfg(not(target_os = "macos"))]
+		let _ = window.set_cursor_hittest(false);
+
+		window.set_cursor(CursorIcon::Crosshair);
+		window.set_transparent(true);
+
+		#[cfg(target_os = "macos")]
+		macos_configure_hud_window(
+			window.as_ref(),
+			self.macos_hud_window_blur_enabled(),
+			self.config.hud_fog_amount,
+			Some(f64::from(HUD_PILL_CORNER_RADIUS_POINTS)),
+		);
+
+		#[cfg(not(target_os = "macos"))]
+		window.set_blur(self.config.show_hud_blur);
+		window.request_redraw();
+
+		let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
+		let renderer =
+			WindowRenderer::new(gpu, Arc::clone(&window), Arc::clone(&self.egui_repaint_deadline))
+				.map_err(|err| format!("Failed to init toolbar renderer: {err:#}"))?;
+
+		self.toolbar_window = Some(HudOverlayWindow { window, renderer });
+
+		Ok(())
+	}
+
 	pub fn request_redraw_all(&self) {
 		for w in self.windows.values() {
 			w.window.request_redraw();
@@ -683,6 +765,9 @@ impl OverlaySession {
 		}
 		if let Some(loupe) = self.loupe_window.as_ref() {
 			loupe.window.request_redraw();
+		}
+		if let Some(toolbar) = self.toolbar_window.as_ref() {
+			toolbar.window.request_redraw();
 		}
 	}
 
@@ -698,6 +783,26 @@ impl OverlaySession {
 		}
 		if let Some(loupe) = self.loupe_window.as_ref() {
 			loupe.window.request_redraw();
+		}
+
+		// macOS uses a native toolbar popup window with compositor blur; keep shader-viewport
+		// toolbar redraw on the fullscreen overlay path disabled for this platform.
+		// Future direction: if toolbar styling moves off native blur, add a dedicated capture
+		// pass feeding a toolbar-local shader-blur texture.
+		if cfg!(target_os = "macos")
+			&& matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.toolbar_state.visible
+			&& self.state.monitor == Some(monitor)
+			&& self.state.frozen_image.is_some()
+			&& self.pending_freeze_capture != Some(monitor)
+		{
+			self.request_redraw_toolbar_window();
+		}
+	}
+
+	fn request_redraw_toolbar_window(&self) {
+		if let Some(toolbar) = self.toolbar_window.as_ref() {
+			toolbar.window.request_redraw();
 		}
 	}
 
@@ -898,6 +1003,13 @@ impl OverlaySession {
 
 						self.toolbar_state.needs_redraw = true;
 
+						#[cfg(target_os = "macos")]
+						if self.toolbar_state.visible {
+							self.toolbar_window_warmup_redraws_remaining = self
+								.toolbar_window_warmup_redraws_remaining
+								.max(TOOLBAR_WINDOW_WARMUP_REDRAWS);
+						}
+
 						if let Some(cursor) = self.state.cursor {
 							self.state.rgb =
 								frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
@@ -950,15 +1062,37 @@ impl OverlaySession {
 		window_id: WindowId,
 		event: &WindowEvent,
 	) -> OverlayControl {
+		let toolbar_window_id = self
+			.toolbar_window
+			.as_ref()
+			.is_some_and(|toolbar_window| toolbar_window.window.id() == window_id);
+
 		match event {
 			WindowEvent::CloseRequested => self.exit(OverlayExit::Cancelled),
+			WindowEvent::Resized(size) if toolbar_window_id => {
+				self.handle_toolbar_window_resized(*size)
+			},
 			WindowEvent::Resized(size) => self.handle_resized(window_id, *size),
+			WindowEvent::ScaleFactorChanged { .. } if toolbar_window_id => {
+				self.handle_toolbar_window_scale_factor_changed(window_id)
+			},
 			WindowEvent::ScaleFactorChanged { .. } => self.handle_scale_factor_changed(window_id),
 			WindowEvent::CursorMoved { position, .. } => {
+				if toolbar_window_id {
+					return self.handle_toolbar_cursor_moved(window_id, *position);
+				}
+
 				self.handle_cursor_moved(window_id, *position)
 			},
 			WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
+				if toolbar_window_id {
+					return self.handle_toolbar_mouse_input(*state);
+				}
+
 				self.handle_left_mouse_input(window_id, *state)
+			},
+			WindowEvent::RedrawRequested if toolbar_window_id => {
+				self.handle_toolbar_window_redraw_requested()
 			},
 			WindowEvent::ThemeChanged(_) => {
 				// Keep the HUD palette in sync with system changes when ThemeMode::System is active.
@@ -975,6 +1109,286 @@ impl OverlaySession {
 			WindowEvent::RedrawRequested => self.handle_redraw_requested(window_id),
 			_ => OverlayControl::Continue,
 		}
+	}
+
+	fn handle_toolbar_mouse_input(&mut self, state: ElementState) -> OverlayControl {
+		let toolbar_left_button_down = matches!(state, ElementState::Pressed);
+
+		if toolbar_left_button_down == self.toolbar_left_button_down {
+			return OverlayControl::Continue;
+		}
+
+		self.toolbar_left_button_down = toolbar_left_button_down;
+
+		if !toolbar_left_button_down {
+			self.toolbar_pointer_local = None;
+			self.toolbar_state.dragging = false;
+			self.toolbar_state.drag_offset = Vec2::ZERO;
+			self.toolbar_state.drag_anchor = None;
+		} else {
+			self.toolbar_state.drag_offset = Vec2::ZERO;
+			self.toolbar_state.dragging = false;
+			self.toolbar_state.drag_anchor = None;
+		}
+
+		#[cfg(target_os = "macos")]
+		{
+			self.request_redraw_toolbar_window();
+		}
+
+		OverlayControl::Continue
+	}
+
+	fn reset_toolbar_pointer_state(&mut self) {
+		self.toolbar_left_button_down = false;
+		self.toolbar_left_button_down_prev = false;
+		self.toolbar_pointer_local = None;
+		self.toolbar_state.drag_anchor = None;
+	}
+
+	fn handle_toolbar_cursor_moved(
+		&mut self,
+		window_id: WindowId,
+		position: PhysicalPosition<f64>,
+	) -> OverlayControl {
+		let Some(toolbar_window) = self.toolbar_window.as_ref() else {
+			return OverlayControl::Continue;
+		};
+
+		if toolbar_window.window.id() != window_id
+			|| !matches!(self.state.mode, OverlayMode::Frozen)
+			|| !self.toolbar_state.visible
+		{
+			return OverlayControl::Continue;
+		}
+
+		let scale = toolbar_window.window.scale_factor().max(1.0);
+		let cursor_local = Pos2::new((position.x / scale) as f32, (position.y / scale) as f32);
+
+		self.toolbar_pointer_local = Some(cursor_local);
+
+		let monitor = match self.state.monitor.or_else(|| self.active_cursor_monitor()) {
+			Some(monitor) => monitor,
+			None => return OverlayControl::Continue,
+		};
+		let global_cursor = self.toolbar_cursor_global_position(toolbar_window, cursor_local);
+		let drag_monitor =
+			global_cursor.and_then(|cursor| self.monitor_at(cursor)).unwrap_or(monitor);
+		let mut mouse_drag = self.toolbar_left_button_down && self.toolbar_state.dragging;
+
+		if self.toolbar_left_button_down && self.toolbar_state.drag_anchor.is_none() {
+			self.toolbar_state.drag_anchor = Some(cursor_local);
+		}
+		if !mouse_drag && let Some(drag_anchor) = self.toolbar_state.drag_anchor {
+			let dx = cursor_local.x - drag_anchor.x;
+			let dy = cursor_local.y - drag_anchor.y;
+			let threshold_sq = TOOLBAR_DRAG_START_THRESHOLD_PX * TOOLBAR_DRAG_START_THRESHOLD_PX;
+
+			if dx * dx + dy * dy >= threshold_sq {
+				let toolbar_outer_pos = self.toolbar_outer_pos.or_else(|| {
+					self.toolbar_state.floating_position.map(|floating_position| {
+						GlobalPoint::new(
+							monitor.origin.x.saturating_add(floating_position.x.round() as i32),
+							monitor.origin.y.saturating_add(floating_position.y.round() as i32),
+						)
+					})
+				});
+
+				if let (Some(global_cursor), Some(toolbar_outer_pos)) =
+					(global_cursor, toolbar_outer_pos)
+				{
+					self.toolbar_state.drag_offset = Vec2::new(
+						global_cursor.x as f32 - toolbar_outer_pos.x as f32,
+						global_cursor.y as f32 - toolbar_outer_pos.y as f32,
+					);
+					self.toolbar_state.dragging = true;
+					self.toolbar_state.drag_anchor = None;
+					mouse_drag = true;
+				}
+			}
+		}
+		if mouse_drag && global_cursor.is_none() {
+			mouse_drag = false;
+		}
+		if mouse_drag && let Some(global_cursor) = global_cursor {
+			let desired_global = Pos2::new(
+				global_cursor.x as f32 - self.toolbar_state.drag_offset.x,
+				global_cursor.y as f32 - self.toolbar_state.drag_offset.y,
+			);
+			let desired_local = Pos2::new(
+				desired_global.x - drag_monitor.origin.x as f32,
+				desired_global.y - drag_monitor.origin.y as f32,
+			);
+			let _ = self.update_toolbar_outer_position(drag_monitor, desired_local);
+		}
+
+		self.request_redraw_toolbar_window();
+
+		OverlayControl::Continue
+	}
+
+	fn toolbar_cursor_global_position(
+		&self,
+		toolbar_window: &HudOverlayWindow,
+		cursor_local: Pos2,
+	) -> Option<GlobalPoint> {
+		let toolbar_scale = toolbar_window.window.scale_factor().max(1.0);
+		let outer_position = toolbar_window.window.outer_position().ok()?;
+		let global_cursor = Pos2::new(
+			(outer_position.x as f64 / toolbar_scale) as f32 + cursor_local.x,
+			(outer_position.y as f64 / toolbar_scale) as f32 + cursor_local.y,
+		);
+
+		Some(GlobalPoint::new(global_cursor.x.round() as i32, global_cursor.y.round() as i32))
+	}
+
+	fn handle_toolbar_window_resized(&mut self, size: PhysicalSize<u32>) -> OverlayControl {
+		let Some(toolbar_window) = self.toolbar_window.as_mut() else {
+			return OverlayControl::Continue;
+		};
+
+		match toolbar_window.renderer.resize(size) {
+			Ok(()) => OverlayControl::Continue,
+			Err(err) => self.exit(OverlayExit::Error(format!("{err:#}"))),
+		}
+	}
+
+	fn handle_toolbar_window_scale_factor_changed(
+		&mut self,
+		window_id: WindowId,
+	) -> OverlayControl {
+		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
+		let Some(toolbar_window) = self
+			.toolbar_window
+			.as_mut()
+			.filter(|toolbar_window| toolbar_window.window.id() == window_id)
+		else {
+			return OverlayControl::Continue;
+		};
+		let size = toolbar_window.window.inner_size();
+
+		match toolbar_window.renderer.resize(size) {
+			Ok(()) => {
+				#[cfg(target_os = "macos")]
+				macos_configure_hud_window(
+					toolbar_window.window.as_ref(),
+					macos_hud_window_blur_enabled,
+					self.config.hud_fog_amount,
+					Some(f64::from(HUD_PILL_CORNER_RADIUS_POINTS)),
+				);
+
+				OverlayControl::Continue
+			},
+			Err(err) => self.exit(OverlayExit::Error(format!("{err:#}"))),
+		}
+	}
+
+	fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
+		let Some(gpu) = self.gpu.as_ref() else {
+			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
+		};
+		let Some(monitor) = self.state.monitor else {
+			return OverlayControl::Continue;
+		};
+		let toolbar_input = self.toolbar_pointer_state(monitor, self.toolbar_pointer_local);
+		let Some(toolbar_window) = self.toolbar_window.as_mut() else {
+			return OverlayControl::Continue;
+		};
+
+		#[cfg(not(target_os = "macos"))]
+		{
+			toolbar_window.window.set_visible(false);
+
+			self.last_present_at = Instant::now();
+
+			return OverlayControl::Continue;
+		}
+
+		if !matches!(self.state.mode, OverlayMode::Frozen)
+			|| !self.toolbar_state.visible
+			|| self.state.frozen_image.is_none()
+			|| self.pending_freeze_capture == Some(monitor)
+		{
+			toolbar_window.window.set_visible(false);
+
+			self.toolbar_window_visible = false;
+			self.toolbar_window_warmup_redraws_remaining = 0;
+			self.last_present_at = Instant::now();
+
+			return OverlayControl::Continue;
+		}
+
+		toolbar_window.window.set_visible(true);
+
+		if !self.toolbar_window_visible {
+			self.toolbar_window_visible = true;
+			self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
+		}
+
+		let previous_floating_position = self.toolbar_state.floating_position;
+
+		self.toolbar_state.floating_position = Some(Pos2::ZERO);
+
+		let draw_result = toolbar_window.renderer.draw(
+			gpu,
+			&self.state,
+			monitor,
+			false,
+			Some(Pos2::ZERO),
+			false,
+			HudAnchor::Cursor,
+			self.config.show_alt_hint_keycap,
+			false,
+			self.config.hud_opaque,
+			self.config.hud_opacity,
+			self.config.hud_fog_amount,
+			self.config.hud_milk_amount,
+			self.config.theme_mode,
+			false,
+			Some(&mut self.toolbar_state),
+			toolbar_input,
+		);
+
+		self.toolbar_state.floating_position = previous_floating_position;
+
+		if let Err(err) = draw_result {
+			return self.exit(OverlayExit::Error(format!("{err:#}")));
+		}
+		if let Some(hud_pill) = toolbar_window.renderer.hud_pill {
+			let desired_w = hud_pill.rect.width().ceil().max(1.0) as u32;
+			let desired_h = hud_pill.rect.height().ceil().max(1.0) as u32;
+			let desired = (desired_w, desired_h);
+
+			if self.toolbar_inner_size_points != Some(desired) {
+				self.toolbar_inner_size_points = Some(desired);
+
+				let _ = toolbar_window.window.request_inner_size(LogicalSize::new(
+					f64::from(desired_w),
+					f64::from(desired_h),
+				));
+			}
+
+			if let Some(toolbar_pos) = self.toolbar_state.floating_position {
+				let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+			}
+		}
+
+		self.last_present_at = Instant::now();
+		self.toolbar_left_button_down_prev = self.toolbar_left_button_down;
+
+		if self.toolbar_state.needs_redraw {
+			self.toolbar_state.needs_redraw = false;
+
+			self.request_redraw_toolbar_window();
+		}
+		if self.toolbar_window_warmup_redraws_remaining > 0 {
+			self.toolbar_window_warmup_redraws_remaining =
+				self.toolbar_window_warmup_redraws_remaining.saturating_sub(1);
+
+			self.request_redraw_toolbar_window();
+		}
+
+		OverlayControl::Continue
 	}
 
 	fn handle_modifiers_changed(&mut self, modifiers: &winit::event::Modifiers) -> OverlayControl {
@@ -1112,6 +1526,7 @@ impl OverlaySession {
 	}
 
 	fn handle_resized(&mut self, window_id: WindowId, size: PhysicalSize<u32>) -> OverlayControl {
+		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
 		let window_scale_factor = self
 			.windows
 			.get(&window_id)
@@ -1129,7 +1544,7 @@ impl OverlaySession {
 					#[cfg(target_os = "macos")]
 					macos_configure_hud_window(
 						hud_window.window.as_ref(),
-						self.config.show_hud_blur,
+						macos_hud_window_blur_enabled,
 						self.config.hud_fog_amount,
 						None,
 					);
@@ -1147,7 +1562,7 @@ impl OverlaySession {
 					#[cfg(target_os = "macos")]
 					macos_configure_hud_window(
 						loupe_window.window.as_ref(),
-						self.config.show_hud_blur,
+						macos_hud_window_blur_enabled,
 						self.config.hud_fog_amount,
 						Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 					);
@@ -1169,6 +1584,7 @@ impl OverlaySession {
 	}
 
 	fn handle_scale_factor_changed(&mut self, window_id: WindowId) -> OverlayControl {
+		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
 		let window_scale_factor = self
 			.windows
 			.get(&window_id)
@@ -1188,7 +1604,7 @@ impl OverlaySession {
 					#[cfg(target_os = "macos")]
 					macos_configure_hud_window(
 						hud_window.window.as_ref(),
-						self.config.show_hud_blur,
+						macos_hud_window_blur_enabled,
 						self.config.hud_fog_amount,
 						None,
 					);
@@ -1208,7 +1624,7 @@ impl OverlaySession {
 					#[cfg(target_os = "macos")]
 					macos_configure_hud_window(
 						loupe_window.window.as_ref(),
-						self.config.show_hud_blur,
+						macos_hud_window_blur_enabled,
 						self.config.hud_fog_amount,
 						Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 					);
@@ -1329,8 +1745,6 @@ impl OverlaySession {
 		window_id: WindowId,
 		state: ElementState,
 	) -> OverlayControl {
-		self.toolbar_left_button_down = matches!(state, ElementState::Pressed);
-
 		let monitor = self
 			.windows
 			.get(&window_id)
@@ -1342,6 +1756,7 @@ impl OverlaySession {
 		};
 
 		if matches!(self.state.mode, OverlayMode::Frozen) {
+			self.reset_toolbar_pointer_state();
 			self.request_redraw_for_monitor(monitor);
 
 			return OverlayControl::Continue;
@@ -1349,6 +1764,8 @@ impl OverlaySession {
 		if state != ElementState::Pressed || !matches!(self.state.mode, OverlayMode::Live) {
 			return OverlayControl::Continue;
 		}
+
+		self.reset_toolbar_pointer_state();
 
 		let frozen_rgb = self.state.rgb;
 		let frozen_loupe = self.state.loupe.as_ref().map(|loupe| crate::state::LoupeSample {
@@ -1390,6 +1807,8 @@ impl OverlaySession {
 
 			self.toolbar_state.floating_position = Some(default_pos);
 
+			let _ = self.update_toolbar_outer_position(monitor, default_pos);
+
 			tracing::debug!(
 				monitor_id = monitor.id,
 				frozen_generation = self.state.frozen_generation,
@@ -1398,6 +1817,9 @@ impl OverlaySession {
 				"Frozen toolbar default position preseeded."
 			);
 		}
+
+		self.request_redraw_toolbar_window();
+
 		self.state.rgb = frozen_rgb;
 		self.state.loupe = frozen_loupe;
 		self.pending_freeze_capture = Some(monitor);
@@ -1437,7 +1859,11 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
-	fn toolbar_pointer_state(&self, monitor: MonitorRect) -> Option<FrozenToolbarPointerState> {
+	fn toolbar_pointer_state(
+		&self,
+		monitor: MonitorRect,
+		toolbar_cursor_local_override: Option<Pos2>,
+	) -> Option<FrozenToolbarPointerState> {
 		if !matches!(self.state.mode, OverlayMode::Frozen) {
 			return None;
 		}
@@ -1451,8 +1877,8 @@ impl OverlaySession {
 			return None;
 		}
 
-		let cursor_global = self.state.cursor?;
-		let cursor_local = global_to_local(cursor_global, monitor)?;
+		let cursor_local = toolbar_cursor_local_override
+			.or_else(|| self.state.cursor.and_then(|cursor| global_to_local(cursor, monitor)))?;
 		let left_button_down = self.toolbar_left_button_down;
 		let left_button_went_down = left_button_down && !self.toolbar_left_button_down_prev;
 		let left_button_went_up = !left_button_down && self.toolbar_left_button_down_prev;
@@ -1549,9 +1975,18 @@ impl OverlaySession {
 
 		let monitor =
 			self.monitor_for_mode().or_else(|| self.windows.values().next().map(|w| w.monitor));
+		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
 		let mut request_toolbar_redraw = None;
 
 		if let (Some(monitor), Some(hud_window)) = (monitor, self.hud_window.as_mut()) {
+			#[cfg(target_os = "macos")]
+			macos_configure_hud_window(
+				hud_window.window.as_ref(),
+				macos_hud_window_blur_enabled,
+				self.config.hud_fog_amount,
+				None,
+			);
+
 			#[cfg(not(target_os = "macos"))]
 			hud_window.window.set_visible(true);
 
@@ -1570,6 +2005,7 @@ impl OverlaySession {
 				self.config.hud_fog_amount,
 				self.config.hud_milk_amount,
 				self.config.theme_mode,
+				true,
 				None,
 				None,
 			) {
@@ -1608,14 +2044,6 @@ impl OverlaySession {
 						f64::from(desired_w),
 						f64::from(desired_h),
 					));
-
-					#[cfg(target_os = "macos")]
-					macos_configure_hud_window(
-						hud_window.window.as_ref(),
-						self.config.show_hud_blur,
-						self.config.hud_fog_amount,
-						None,
-					);
 
 					if let Some(cursor) = self.state.cursor {
 						self.update_hud_window_position(monitor, cursor);
@@ -1670,11 +2098,20 @@ impl OverlaySession {
 
 			return OverlayControl::Continue;
 		};
+		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
 		let mut needs_reposition = false;
 
 		if let Some(loupe_window) = self.loupe_window.as_mut() {
 			#[cfg(not(target_os = "macos"))]
 			loupe_window.window.set_visible(true);
+
+			#[cfg(target_os = "macos")]
+			macos_configure_hud_window(
+				loupe_window.window.as_ref(),
+				macos_hud_window_blur_enabled,
+				self.config.hud_fog_amount,
+				Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
+			);
 
 			if let Err(err) = loupe_window.renderer.draw_loupe_tile_window(
 				gpu,
@@ -1684,6 +2121,7 @@ impl OverlaySession {
 				self.config.show_hud_blur,
 				self.config.hud_opaque,
 				self.config.hud_opacity,
+				self.config.hud_fog_amount,
 				self.config.hud_milk_amount,
 				self.config.theme_mode,
 			) {
@@ -1701,14 +2139,6 @@ impl OverlaySession {
 						f64::from(desired_w),
 						f64::from(desired_h),
 					));
-
-					#[cfg(target_os = "macos")]
-					macos_configure_hud_window(
-						loupe_window.window.as_ref(),
-						self.config.show_hud_blur,
-						self.config.hud_fog_amount,
-						Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
-					);
 
 					needs_reposition = true;
 				}
@@ -1736,8 +2166,12 @@ impl OverlaySession {
 		else {
 			return OverlayControl::Continue;
 		};
-		let toolbar_input = self.toolbar_pointer_state(overlay_monitor);
-		let draw_toolbar = matches!(self.state.mode, OverlayMode::Frozen)
+		let toolbar_input = self.toolbar_pointer_state(overlay_monitor, None);
+		// On macOS the frozen toolbar is now rendered in its own native HUD window; keep this
+		// fullscreen overlay free of toolbar UI so shader-backed blur and monitor-aligned offsets
+		// do not conflict with native-window positioning.
+		let draw_toolbar = !cfg!(target_os = "macos")
+			&& matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.toolbar_state.visible
 			&& self.state.monitor == Some(overlay_monitor)
 			&& self.state.frozen_image.is_some()
@@ -1783,6 +2217,7 @@ impl OverlaySession {
 				self.config.hud_fog_amount,
 				self.config.hud_milk_amount,
 				self.config.theme_mode,
+				true,
 				toolbar_state,
 				toolbar_input,
 			) {
@@ -1847,6 +2282,9 @@ impl OverlaySession {
 		if let Some(loupe_window) = &self.loupe_window {
 			loupe_window.window.set_cursor(CursorIcon::Default);
 		}
+		if let Some(toolbar_window) = &self.toolbar_window {
+			toolbar_window.window.set_cursor(CursorIcon::Default);
+		}
 
 		self.windows.clear();
 
@@ -1856,9 +2294,17 @@ impl OverlaySession {
 		self.loupe_window = None;
 		self.loupe_inner_size_points = None;
 		self.loupe_outer_pos = None;
+		self.toolbar_window = None;
+		self.toolbar_inner_size_points = None;
+		self.toolbar_outer_pos = None;
+		self.toolbar_window_visible = false;
+		self.toolbar_window_warmup_redraws_remaining = 0;
 		self.cursor_monitor = None;
 		self.gpu = None;
 		self.worker = None;
+		self.toolbar_left_button_down = false;
+		self.toolbar_left_button_down_prev = false;
+		self.toolbar_pointer_local = None;
 
 		OverlayControl::Exit(exit)
 	}
@@ -2037,6 +2483,49 @@ impl OverlaySession {
 		true
 	}
 
+	fn update_toolbar_outer_position(&mut self, monitor: MonitorRect, local_pos: Pos2) -> bool {
+		let Some(toolbar_window) = self.toolbar_window.as_ref() else {
+			return false;
+		};
+		let toolbar_scale = toolbar_window.window.scale_factor().max(1.0);
+		let toolbar_size = if let Some((width, height)) = self.toolbar_inner_size_points {
+			Vec2::new(width as f32, height as f32)
+		} else {
+			let size = toolbar_window.window.inner_size();
+			let toolbar_w = ((size.width as f64) / toolbar_scale).ceil().max(1.0) as f32;
+			let toolbar_h = ((size.height as f64) / toolbar_scale).ceil().max(1.0) as f32;
+
+			Vec2::new(toolbar_w, toolbar_h)
+		};
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let clamped_local_pos = WindowRenderer::clamp_toolbar_position(
+			screen_rect,
+			toolbar_size,
+			local_pos,
+			TOOLBAR_SCREEN_MARGIN_PX,
+			TOOLBAR_SCREEN_MARGIN_PX,
+		);
+		let desired = GlobalPoint::new(
+			monitor.origin.x.saturating_add(clamped_local_pos.x.round() as i32),
+			monitor.origin.y.saturating_add(clamped_local_pos.y.round() as i32),
+		);
+
+		if self.toolbar_outer_pos == Some(desired) {
+			return false;
+		}
+
+		self.toolbar_outer_pos = Some(desired);
+		self.toolbar_state.floating_position = Some(clamped_local_pos);
+
+		toolbar_window
+			.window
+			.set_outer_position(LogicalPosition::new(desired.x as f64, desired.y as f64));
+		toolbar_window.window.request_redraw();
+
+		true
+	}
+
 	fn update_cursor_state(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
 		self.cursor_monitor = Some(monitor);
 		self.state.cursor = Some(cursor);
@@ -2138,6 +2627,7 @@ struct FrozenToolbarState {
 	layout_last_screen_size_points: Option<Vec2>,
 	layout_stable_frames: u8,
 	drag_offset: Vec2,
+	drag_anchor: Option<Pos2>,
 }
 impl Default for FrozenToolbarState {
 	fn default() -> Self {
@@ -2151,6 +2641,7 @@ impl Default for FrozenToolbarState {
 			layout_last_screen_size_points: None,
 			layout_stable_frames: 0,
 			drag_offset: Vec2::ZERO,
+			drag_anchor: None,
 		}
 	}
 }
@@ -2225,6 +2716,8 @@ struct WindowRenderer {
 	hud_pill: Option<HudPillGeometry>,
 	loupe_tile: Option<Rect>,
 	hud_theme: Option<HudTheme>,
+	egui_start_time: Instant,
+	egui_last_frame_time: Instant,
 }
 impl WindowRenderer {
 	fn mip_level_count(width: u32, height: u32) -> u32 {
@@ -2595,6 +3088,15 @@ impl WindowRenderer {
 		pointer_state: Option<FrozenToolbarPointerState>,
 		pixels_per_point_override: Option<f32>,
 	) -> (PhysicalSize<u32>, f32, egui::RawInput) {
+		// egui animations depend on a monotonic time base. Without this, animation state can appear
+		// to "snap" only after an input event (e.g. CursorMoved) triggers a new frame.
+		let now = Instant::now();
+		let elapsed = now.duration_since(self.egui_start_time).as_secs_f64().max(0.0);
+		let predicted_dt =
+			now.duration_since(self.egui_last_frame_time).as_secs_f32().clamp(0.0, 0.5);
+
+		self.egui_last_frame_time = now;
+
 		// Keep the wgpu surface configuration in sync with the OS-reported window size.
 		//
 		// On macOS we can observe transient mismatches where `surface_config` is smaller than the
@@ -2636,6 +3138,8 @@ impl WindowRenderer {
 		let mut raw_input = egui::RawInput {
 			screen_rect: Some(Rect::from_min_size(Pos2::ZERO, screen_size_points)),
 			focused: true,
+			time: Some(elapsed),
+			predicted_dt,
 			..Default::default()
 		};
 		let mut events = Vec::new();
@@ -3036,7 +3540,6 @@ impl WindowRenderer {
 		let tools: &[FrozenToolbarTool] = &TOOLS;
 		let button_size = FROZEN_TOOLBAR_BUTTON_SIZE_POINTS;
 		let button_font_size = 18.0;
-		let hover_anim_time = 0.2;
 		let item_spacing = FROZEN_TOOLBAR_ITEM_SPACING_POINTS;
 		let hit_area_inset = 5.0;
 		let (normal_color, hover_color, selected_color, hover_bg, selected_bg, selected_border) =
@@ -3051,25 +3554,8 @@ impl WindowRenderer {
 					ui.allocate_response(Vec2::new(button_size, button_size), Sense::click());
 				let hovered = response.hovered();
 				let response = response.on_hover_text(tool.label());
-				let hover_anim = ui.ctx().animate_bool_with_time(
-					response.id.with("hover"),
-					hovered,
-					hover_anim_time,
-				);
-				let selected_anim = ui.ctx().animate_bool_with_time(
-					response.id.with("selected"),
-					selected,
-					hover_anim_time,
-				);
-
-				Self::maybe_request_toolbar_animation_repaint(
-					ui.ctx(),
-					hovered,
-					selected,
-					hover_anim,
-					selected_anim,
-				);
-
+				let hover_anim: f32 = if hovered { 1.0 } else { 0.0 };
+				let selected_anim: f32 = if selected { 1.0 } else { 0.0 };
 				let glow = hover_anim.max(selected_anim);
 				let mut icon_color = normal_color;
 				let mut bg_color = Color32::from_rgba_unmultiplied(255, 255, 255, 0);
@@ -3153,22 +3639,6 @@ impl WindowRenderer {
 		};
 
 		(normal_color, hover_color, selected_color, hover_bg, selected_bg, selected_border)
-	}
-
-	fn maybe_request_toolbar_animation_repaint(
-		ctx: &egui::Context,
-		hovered: bool,
-		selected: bool,
-		hover_anim: f32,
-		selected_anim: f32,
-	) {
-		let is_hover_animating = (hovered && hover_anim < 1.0) || (!hovered && hover_anim > 0.0);
-		let is_selected_animating =
-			(selected && selected_anim < 1.0) || (!selected && selected_anim > 0.0);
-
-		if is_hover_animating || is_selected_animating {
-			ctx.request_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
-		}
 	}
 
 	fn blend_color(a: Color32, b: Color32, t: f32) -> Color32 {
@@ -3914,6 +4384,7 @@ impl WindowRenderer {
 			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 			mapped_at_creation: false,
 		});
+		let now = Instant::now();
 
 		Ok(Self {
 			window,
@@ -3934,6 +4405,8 @@ impl WindowRenderer {
 			hud_pill: None,
 			loupe_tile: None,
 			hud_theme: None,
+			egui_start_time: now,
+			egui_last_frame_time: now,
 		})
 	}
 
@@ -3979,6 +4452,7 @@ impl WindowRenderer {
 		hud_fog_amount: f32,
 		hud_milk_amount: f32,
 		theme_mode: ThemeMode,
+		allow_frozen_surface_bg: bool,
 		toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
 	) -> Result<()> {
@@ -3998,6 +4472,7 @@ impl WindowRenderer {
 			state,
 			monitor,
 			draw_hud,
+			allow_frozen_surface_bg,
 			toolbar_active,
 			show_hud_blur,
 			hud_opaque,
@@ -4095,19 +4570,23 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 		draw_hud: bool,
+		allow_frozen_surface_bg: bool,
 		toolbar_active: bool,
 		show_hud_blur: bool,
 		hud_opaque: bool,
 	) -> HudDrawConfig {
 		let can_draw_hud = draw_hud && Self::should_draw_hud(state, monitor);
-		let needs_frozen_surface_bg = !draw_hud && matches!(state.mode, OverlayMode::Frozen);
+		let needs_frozen_surface_bg =
+			allow_frozen_surface_bg && !draw_hud && matches!(state.mode, OverlayMode::Frozen);
 		// `show_hud_blur` is a UX toggle for "glass mode".
-		// - On macOS: HUD uses native compositor blur.
-		// - On non-macOS or for toolbar: shader blur in this overlay window (requires `hud_bg`).
+		// - On macOS: HUD uses native compositor blur; toolbar uses native HUD windowing, so shader
+		//   blur stays tied to monitor-aligned overlay windows.
+		// - On non-macOS: HUD and toolbar remain in overlay windows with shader blur paths.
 		let hud_glass_active = can_draw_hud && show_hud_blur && !hud_opaque;
 		let toolbar_glass_active = toolbar_active && show_hud_blur && !hud_opaque;
+		let use_shader_blur_for_hud = !cfg!(target_os = "macos");
 		let needs_shader_blur_bg =
-			toolbar_glass_active || (!cfg!(target_os = "macos") && hud_glass_active);
+			toolbar_glass_active || (hud_glass_active && use_shader_blur_for_hud);
 
 		HudDrawConfig {
 			can_draw_hud,
@@ -4161,6 +4640,7 @@ impl WindowRenderer {
 		show_hud_blur: bool,
 		hud_opaque: bool,
 		hud_opacity: f32,
+		hud_fog_amount: f32,
 		hud_milk_amount: f32,
 		theme_mode: ThemeMode,
 	) -> Result<()> {
@@ -4173,12 +4653,24 @@ impl WindowRenderer {
 		let (size, pixels_per_point, raw_input) =
 			self.prepare_egui_input(gpu, None, Some(monitor.scale_factor()));
 
-		self.hud_bg = None;
-		self.hud_pill = None;
 		self.loupe_tile = None;
 
-		let hud_blur_active = show_hud_blur && !hud_opaque;
+		let shader_blur_active = !cfg!(target_os = "macos")
+			&& matches!(state.mode, OverlayMode::Frozen)
+			&& show_hud_blur
+			&& !hud_opaque;
+		let hud_cfg = HudDrawConfig {
+			can_draw_hud: false,
+			needs_frozen_surface_bg: false,
+			needs_shader_blur_bg: shader_blur_active,
+			hud_glass_active: shader_blur_active,
+		};
+
+		self.sync_or_clear_hud_bg(gpu, state, monitor, hud_cfg)?;
+
+		let hud_shader_blur_active = self.hud_shader_blur_active(state, monitor, hud_cfg);
 		let body_fill = Self::tinted_hud_body_fill(theme, hud_opaque, hud_opacity, hud_milk_amount);
+		let hud_blur_active = show_hud_blur && !hud_opaque;
 		let (full_output, loupe_tile_rect) = self.run_loupe_tile_egui(
 			raw_input,
 			state,
@@ -4192,6 +4684,26 @@ impl WindowRenderer {
 
 		self.loupe_tile = loupe_tile_rect;
 
+		if hud_shader_blur_active {
+			self.hud_pill = loupe_tile_rect.map(|rect| HudPillGeometry {
+				rect,
+				radius_points: LOUPE_TILE_CORNER_RADIUS_POINTS as f32,
+			});
+
+			if self.hud_pill.is_some() {
+				self.update_hud_blur_uniform(
+					gpu,
+					size,
+					pixels_per_point,
+					theme,
+					hud_fog_amount,
+					hud_milk_amount,
+				);
+			}
+		} else {
+			self.hud_pill = None;
+		}
+
 		self.sync_egui_textures(gpu, &full_output);
 
 		let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, pixels_per_point);
@@ -4199,7 +4711,14 @@ impl WindowRenderer {
 			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
 		let frame = self.acquire_frame(gpu)?;
 
-		self.render_frame(gpu, false, false, frame, &paint_jobs, &screen_descriptor)?;
+		self.render_frame(
+			gpu,
+			false,
+			hud_shader_blur_active,
+			frame,
+			&paint_jobs,
+			&screen_descriptor,
+		)?;
 
 		Ok(())
 	}
@@ -4273,7 +4792,7 @@ impl WindowRenderer {
 					HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 18),
 				},
 			};
-			let tile_radius = 12_u8;
+			let tile_radius = LOUPE_TILE_CORNER_RADIUS_POINTS as u8;
 			let frame = Frame {
 				fill: body_fill,
 				stroke: outer_stroke,
