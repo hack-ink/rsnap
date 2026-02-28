@@ -758,13 +758,16 @@ impl SettingsWindow {
 			);
 
 			let value_changed = ui
-				.add_enabled(
-					enabled,
-					egui::DragValue::new(&mut hue_degrees)
-						.range(0.0..=360.0)
-						.fixed_decimals(0)
-						.suffix("°"),
-				)
+				.add_enabled_ui(enabled, |ui| {
+					ui.add_sized(
+						egui::vec2(SETTINGS_VALUE_BOX_WIDTH, ui.spacing().interact_size.y),
+						egui::DragValue::new(&mut hue_degrees)
+							.range(0.0..=360.0)
+							.fixed_decimals(0)
+							.suffix("°"),
+					)
+				})
+				.inner
 				.changed();
 
 			if value_changed {
