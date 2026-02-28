@@ -94,12 +94,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 		blurred = c / 16.0;
 	}
 
-	// effects.y: tint strength (0..1). Only affects tint mix strength.
-	let tint_amount = clamp(u.effects.y, 0.0, 1.0);
-
-	let tint = u.tint_rgba;
-	let tint_strength = clamp(tint.a + (tint_amount * 0.55), 0.0, 1.0);
-	let color = mix(blurred, tint.rgb, tint_strength);
-
-	return vec4<f32>(color * alpha, alpha);
+	// Match the native compositor blur more closely by avoiding an additional shader tint.
+	// The capsule fill color/opacity (drawn by egui) provides the intended tint.
+	return vec4<f32>(blurred * alpha, alpha);
 }
