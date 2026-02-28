@@ -2982,6 +2982,20 @@ impl WindowRenderer {
 					egui::StrokeKind::Inside,
 				);
 
+				let inner_stroke_color = match theme {
+					HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
+					HudTheme::Light => Color32::from_rgba_unmultiplied(255, 255, 255, 140),
+				};
+				let inner_stroke = egui::Stroke::new(1.0, inner_stroke_color);
+				let inner_rect = rect.shrink(1.0);
+
+				ui.painter().rect_stroke(
+					inner_rect,
+					CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS.saturating_sub(1)),
+					inner_stroke,
+					egui::StrokeKind::Inside,
+				);
+
 				let inner_rect = rect.shrink2(egui::vec2(
 					HUD_PILL_INNER_MARGIN_X_POINTS,
 					HUD_PILL_INNER_MARGIN_Y_POINTS,
