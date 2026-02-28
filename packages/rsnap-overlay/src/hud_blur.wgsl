@@ -6,6 +6,8 @@ struct VsOut {
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
 	// Fullscreen triangle.
+	// This blur path is monitor-surface aligned, so macOS toolbar uses native window blur
+	// instead of this shader for now.
 	var pos = array<vec2<f32>, 3>(
 		vec2<f32>(-1.0, -1.0),
 		vec2<f32>( 3.0, -1.0),
@@ -25,7 +27,9 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
 }
 
 struct HudBlurUniform {
-	// min.xy, size.xy in *physical pixels* (surface coordinates).
+	// min.xy, size.xy in *physical pixels* (monitor surface coordinates).
+	// Toolbar windows rendered with native macOS blur bypass this shader path today; if they are
+	// later switched to shader blur, this struct needs a per-window source texture.
 	rect_min_size: vec4<f32>,
 	// radius_px, blur_radius_px, edge_softness_px, _pad
 	radius_blur_soft: vec4<f32>,
