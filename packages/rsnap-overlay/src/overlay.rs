@@ -168,6 +168,8 @@ pub struct OverlayConfig {
 	pub hud_fog_amount: f32,
 	/// 0..=1. 0 disables the effect.
 	pub hud_milk_amount: f32,
+	/// Hue value for tint, 0..=1.
+	pub hud_tint_hue: f32,
 	pub alt_activation: AltActivationMode,
 	pub loupe_sample_side_px: u32,
 	pub theme_mode: ThemeMode,
@@ -182,6 +184,7 @@ impl Default for OverlayConfig {
 			hud_opacity: 0.35,
 			hud_fog_amount: 0.16,
 			hud_milk_amount: 0.0,
+			hud_tint_hue: 0.585,
 			alt_activation: AltActivationMode::Hold,
 			loupe_sample_side_px: 21,
 			theme_mode: ThemeMode::System,
@@ -1373,6 +1376,7 @@ impl OverlaySession {
 			self.config.hud_opacity,
 			self.config.hud_fog_amount,
 			self.config.hud_milk_amount,
+			self.config.hud_tint_hue,
 			self.config.theme_mode,
 			false,
 			Some(&mut self.toolbar_state),
@@ -2028,6 +2032,7 @@ impl OverlaySession {
 				self.config.hud_opacity,
 				self.config.hud_fog_amount,
 				self.config.hud_milk_amount,
+				self.config.hud_tint_hue,
 				self.config.theme_mode,
 				true,
 				None,
@@ -2147,6 +2152,7 @@ impl OverlaySession {
 				self.config.hud_opacity,
 				self.config.hud_fog_amount,
 				self.config.hud_milk_amount,
+				self.config.hud_tint_hue,
 				self.config.theme_mode,
 			) {
 				return self.exit(OverlayExit::Error(format!("{err:#}")));
@@ -2240,6 +2246,7 @@ impl OverlaySession {
 				self.config.hud_opacity,
 				self.config.hud_fog_amount,
 				self.config.hud_milk_amount,
+				self.config.hud_tint_hue,
 				self.config.theme_mode,
 				true,
 				toolbar_state,
@@ -3220,6 +3227,7 @@ impl WindowRenderer {
 		hud_opaque: bool,
 		hud_opacity: f32,
 		hud_milk_amount: f32,
+		hud_tint_hue: f32,
 		theme: HudTheme,
 		mut toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
@@ -3244,6 +3252,7 @@ impl WindowRenderer {
 				hud_opaque,
 				hud_opacity,
 				hud_milk_amount,
+				hud_tint_hue,
 				toolbar_state.as_deref_mut(),
 				toolbar_pointer,
 				&mut hud_pill,
@@ -3265,6 +3274,7 @@ impl WindowRenderer {
 					hud_opaque,
 					hud_opacity,
 					hud_milk_amount,
+					hud_tint_hue,
 					theme,
 					&mut hud_pill,
 				);
@@ -3280,9 +3290,10 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 		theme: HudTheme,
-		_hud_opaque: bool,
-		_hud_opacity: f32,
-		_hud_milk_amount: f32,
+		hud_opaque: bool,
+		hud_opacity: f32,
+		hud_milk_amount: f32,
+		hud_tint_hue: f32,
 		toolbar_state: Option<&mut FrozenToolbarState>,
 		pointer_state: Option<FrozenToolbarPointerState>,
 		hud_pill_out: &mut Option<HudPillGeometry>,
@@ -3331,9 +3342,10 @@ impl WindowRenderer {
 			toolbar_pos,
 			toolbar_size,
 			theme,
-			_hud_opaque,
-			_hud_opacity,
-			_hud_milk_amount,
+			hud_opaque,
+			hud_opacity,
+			hud_milk_amount,
+			hud_tint_hue,
 			cursor,
 			left_button_down,
 			hud_pill_out,
@@ -3464,6 +3476,7 @@ impl WindowRenderer {
 		hud_opaque: bool,
 		hud_opacity: f32,
 		hud_milk_amount: f32,
+		hud_tint_hue: f32,
 		cursor: Pos2,
 		left_button_down: bool,
 		hud_pill_out: &mut Option<HudPillGeometry>,
@@ -3474,8 +3487,15 @@ impl WindowRenderer {
 			.show(ctx, |ui| {
 				let (rect, response) =
 					ui.allocate_exact_size(toolbar_size, Sense::click_and_drag());
+				let body_fill = Self::tinted_hud_body_fill(
+					theme,
+					hud_opaque,
+					hud_opacity,
+					hud_milk_amount,
+					hud_tint_hue,
+				);
 				let toolbar_frame =
-					Self::hud_pill_frame(theme, hud_opaque, hud_opacity, hud_milk_amount, false);
+					Self::hud_pill_frame(theme, hud_opaque, hud_opacity, body_fill, false);
 
 				if response.drag_started() {
 					toolbar_state.dragging = true;
@@ -3717,6 +3737,7 @@ impl WindowRenderer {
 		hud_opaque: bool,
 		hud_opacity: f32,
 		hud_milk_amount: f32,
+		hud_tint_hue: f32,
 		theme: HudTheme,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
@@ -3739,6 +3760,7 @@ impl WindowRenderer {
 					hud_opaque,
 					hud_opacity,
 					hud_milk_amount,
+					hud_tint_hue,
 					theme,
 					hud_pill_out,
 				);
@@ -3757,11 +3779,19 @@ impl WindowRenderer {
 		hud_opaque: bool,
 		hud_opacity: f32,
 		hud_milk_amount: f32,
+		hud_tint_hue: f32,
 		theme: HudTheme,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
+		let body_fill = Self::tinted_hud_body_fill(
+			theme,
+			hud_opaque,
+			hud_opacity,
+			hud_milk_amount,
+			hud_tint_hue,
+		);
 		let pill_frame =
-			Self::hud_pill_frame(theme, hud_opaque, hud_opacity, hud_milk_amount, !hud_compact);
+			Self::hud_pill_frame(theme, hud_opaque, hud_opacity, body_fill, !hud_compact);
 		let inner = pill_frame.show(ui, |ui| {
 			ui.spacing_mut().item_spacing = egui::vec2(10.0, 6.0);
 
@@ -3810,6 +3840,7 @@ impl WindowRenderer {
 				pill_rect,
 				hud_blur_active,
 				hud_opaque,
+				body_fill,
 				theme,
 			);
 		}
@@ -3817,9 +3848,9 @@ impl WindowRenderer {
 
 	fn hud_pill_frame(
 		theme: HudTheme,
-		hud_opaque: bool,
-		hud_opacity: f32,
-		hud_milk_amount: f32,
+		_hud_opaque: bool,
+		_hud_opacity: f32,
+		body_fill: Color32,
 		with_shadow: bool,
 	) -> Frame {
 		let outer_stroke_color = match theme {
@@ -3841,7 +3872,7 @@ impl WindowRenderer {
 		};
 
 		Frame {
-			fill: Self::tinted_hud_body_fill(theme, hud_opaque, hud_opacity, hud_milk_amount),
+			fill: body_fill,
 			stroke: egui::Stroke::new(1.0, outer_stroke_color),
 			shadow: pill_shadow,
 			corner_radius: CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS),
@@ -3957,6 +3988,7 @@ impl WindowRenderer {
 		pill_rect: Rect,
 		hud_blur_active: bool,
 		hud_opaque: bool,
+		body_fill: Color32,
 		theme: HudTheme,
 	) {
 		let ctx = ui.ctx().clone();
@@ -3995,14 +4027,8 @@ impl WindowRenderer {
 			.order(egui::Order::Foreground)
 			.fixed_pos(pos)
 			.show(&ctx, |ui| {
-				let body_fill = hud_body_fill_srgba8(theme, hud_opaque);
 				let _ = hud_blur_active;
-				let fill = Color32::from_rgba_unmultiplied(
-					body_fill[0],
-					body_fill[1],
-					body_fill[2],
-					body_fill[3],
-				);
+				let fill = body_fill;
 				let outer_stroke_color = match theme {
 					HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 40),
 					HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
@@ -4475,6 +4501,7 @@ impl WindowRenderer {
 		hud_opacity: f32,
 		hud_fog_amount: f32,
 		hud_milk_amount: f32,
+		hud_tint_hue: f32,
 		theme_mode: ThemeMode,
 		allow_frozen_surface_bg: bool,
 		toolbar_state: Option<&mut FrozenToolbarState>,
@@ -4519,6 +4546,7 @@ impl WindowRenderer {
 			hud_opaque,
 			hud_opacity,
 			hud_milk_amount,
+			hud_tint_hue,
 			theme,
 			toolbar_state,
 			toolbar_pointer,
@@ -4534,6 +4562,7 @@ impl WindowRenderer {
 				theme,
 				hud_fog_amount,
 				hud_milk_amount,
+				hud_tint_hue,
 			);
 		}
 
@@ -4666,6 +4695,7 @@ impl WindowRenderer {
 		hud_opacity: f32,
 		hud_fog_amount: f32,
 		hud_milk_amount: f32,
+		hud_tint_hue: f32,
 		theme_mode: ThemeMode,
 	) -> Result<()> {
 		self.apply_pending_reconfigure(gpu);
@@ -4693,7 +4723,13 @@ impl WindowRenderer {
 		self.sync_or_clear_hud_bg(gpu, state, monitor, hud_cfg)?;
 
 		let hud_shader_blur_active = self.hud_shader_blur_active(state, monitor, hud_cfg);
-		let body_fill = Self::tinted_hud_body_fill(theme, hud_opaque, hud_opacity, hud_milk_amount);
+		let body_fill = Self::tinted_hud_body_fill(
+			theme,
+			hud_opaque,
+			hud_opacity,
+			hud_milk_amount,
+			hud_tint_hue,
+		);
 		let hud_blur_active = show_hud_blur && !hud_opaque;
 		let (full_output, loupe_tile_rect) = self.run_loupe_tile_egui(
 			raw_input,
@@ -4722,6 +4758,7 @@ impl WindowRenderer {
 					theme,
 					hud_fog_amount,
 					hud_milk_amount,
+					hud_tint_hue,
 				);
 			}
 		} else {
@@ -4752,23 +4789,23 @@ impl WindowRenderer {
 		hud_opaque: bool,
 		hud_opacity: f32,
 		hud_milk_amount: f32,
+		hud_tint_hue: f32,
 	) -> Color32 {
 		let opacity = if hud_opaque { 1.0 } else { hud_opacity.clamp(0.0, 1.0) };
 		let tint = hud_milk_amount.clamp(0.0, 1.0);
-		let tint_strength = match theme {
-			HudTheme::Dark => 0.22,
-			HudTheme::Light => 0.28,
-		};
-		let mix = (tint * tint_strength).clamp(0.0, 1.0);
 		let mut fill = hud_body_fill_srgba8(theme, false);
+		let tint_hue = hud_tint_hue.clamp(0.0, 1.0);
+		let tint_saturation = 1.0;
+		let (_, _, base_lightness) = rgb_to_hsl(Rgb::new(fill[0], fill[1], fill[2]));
+		let tinted_target = hsl_to_rgb(tint_hue, tint_saturation, base_lightness);
 
 		fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
 			((f32::from(a) + ((f32::from(b) - f32::from(a)) * t)).round().clamp(0.0, 255.0)) as u8
 		}
 
-		fill[0] = lerp_u8(fill[0], 255, mix);
-		fill[1] = lerp_u8(fill[1], 255, mix);
-		fill[2] = lerp_u8(fill[2], 255, mix);
+		fill[0] = lerp_u8(fill[0], tinted_target.r, tint);
+		fill[1] = lerp_u8(fill[1], tinted_target.g, tint);
+		fill[2] = lerp_u8(fill[2], tinted_target.b, tint);
 		fill[3] = (opacity * 255.0).round().clamp(0.0, 255.0) as u8;
 
 		Color32::from_rgba_unmultiplied(fill[0], fill[1], fill[2], fill[3])
@@ -4876,6 +4913,7 @@ impl WindowRenderer {
 		theme: HudTheme,
 		hud_fog_amount: f32,
 		hud_milk_amount: f32,
+		hud_tint_hue: f32,
 	) {
 		if self.hud_bg.is_none() {
 			return;
@@ -4897,7 +4935,7 @@ impl WindowRenderer {
 			[hud_pill.rect.width() * pixels_per_point, hud_pill.rect.height() * pixels_per_point];
 		let rect_min_size = [rect_min_px[0], rect_min_px[1], rect_size_px[0], rect_size_px[1]];
 		let max_lod = self.hud_bg.as_ref().map(|bg| bg.max_lod).unwrap_or(0.0);
-		let tint = hud_body_fill_srgba8(theme, false);
+		let tint = Self::tinted_hud_body_fill(theme, false, 1.0, hud_milk_amount, hud_tint_hue);
 		let tint_rgba = [
 			srgb8_to_linear_f32(tint[0]),
 			srgb8_to_linear_f32(tint[1]),
@@ -5115,6 +5153,83 @@ fn srgb8_to_linear_f32(x: u8) -> f32 {
 	let c = (x as f32) / 255.0;
 
 	if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+}
+
+fn rgb_to_hsl(rgb: Rgb) -> (f32, f32, f32) {
+	let red = f32::from(rgb.r) / 255.0;
+	let green = f32::from(rgb.g) / 255.0;
+	let blue = f32::from(rgb.b) / 255.0;
+	let max_channel = red.max(green).max(blue);
+	let min_channel = red.min(green).min(blue);
+	let delta = max_channel - min_channel;
+	let lightness = (max_channel + min_channel) / 2.0;
+
+	if delta <= f32::EPSILON {
+		return (0.0, 0.0, lightness);
+	}
+
+	let saturation = if lightness > 0.5 {
+		delta / (2.0 - max_channel - min_channel)
+	} else {
+		delta / (max_channel + min_channel)
+	};
+	let mut hue = if (max_channel - red).abs() <= f32::EPSILON {
+		(green - blue) / delta + if green < blue { 6.0 } else { 0.0 }
+	} else if (max_channel - green).abs() <= f32::EPSILON {
+		(blue - red) / delta + 2.0
+	} else {
+		(red - green) / delta + 4.0
+	};
+
+	hue /= 6.0;
+
+	(hue, saturation, lightness)
+}
+
+fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> Rgb {
+	let hue = hue.clamp(0.0, 1.0);
+	let saturation = saturation.clamp(0.0, 1.0);
+	let lightness = lightness.clamp(0.0, 1.0);
+
+	if saturation <= 0.0 {
+		let gray = (lightness * 255.0).round().clamp(0.0, 255.0) as u8;
+
+		return Rgb::new(gray, gray, gray);
+	}
+
+	let q = if lightness < 0.5 {
+		lightness * (1.0 + saturation)
+	} else {
+		lightness + saturation - lightness * saturation
+	};
+	let p = 2.0 * lightness - q;
+	let red = hue_to_rgb(p, q, hue + 1.0 / 3.0);
+	let green = hue_to_rgb(p, q, hue);
+	let blue = hue_to_rgb(p, q, hue - 1.0 / 3.0);
+
+	Rgb::new(
+		(red * 255.0).round().clamp(0.0, 255.0) as u8,
+		(green * 255.0).round().clamp(0.0, 255.0) as u8,
+		(blue * 255.0).round().clamp(0.0, 255.0) as u8,
+	)
+}
+
+fn hue_to_rgb(p: f32, q: f32, hue: f32) -> f32 {
+	let mut normalized_hue = hue;
+
+	normalized_hue = normalized_hue.rem_euclid(1.0);
+
+	if normalized_hue < 1.0 / 6.0 {
+		return p + (q - p) * 6.0 * normalized_hue;
+	}
+	if normalized_hue < 1.0 / 2.0 {
+		return q;
+	}
+	if normalized_hue < 2.0 / 3.0 {
+		return p + (q - p) * (2.0 / 3.0 - normalized_hue) * 6.0;
+	}
+
+	p
 }
 
 fn effective_hud_theme(mode: ThemeMode, window_theme: Option<Theme>) -> HudTheme {
@@ -5394,7 +5509,8 @@ fn macos_configure_hud_window(
 #[cfg(test)]
 mod tests {
 	use crate::overlay::{
-		Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, Vec2, WindowRenderer,
+		HudTheme, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, Vec2,
+		WindowRenderer, hud_body_fill_srgba8,
 	};
 
 	#[test]
@@ -5429,6 +5545,55 @@ mod tests {
 		assert_eq!(pos.x, expected_x);
 		assert_eq!(pos.y, capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y);
 		assert_eq!(pos.y, expected_y);
+	}
+
+	#[test]
+	fn tinted_hud_body_fill_amount_zero_keeps_base_fill() {
+		for theme in [HudTheme::Dark, HudTheme::Light] {
+			let base_fill = hud_body_fill_srgba8(theme, false);
+			let no_tint = WindowRenderer::tinted_hud_body_fill(theme, false, 1.0, 0.0, 0.585);
+
+			assert_eq!(no_tint.r(), base_fill[0]);
+			assert_eq!(no_tint.g(), base_fill[1]);
+			assert_eq!(no_tint.b(), base_fill[2]);
+			assert_eq!(no_tint.a(), 255);
+		}
+	}
+
+	#[test]
+	fn tinted_hud_body_fill_100pct_tint_is_visibly_blue() {
+		let dark_min_delta: u16 = 57;
+		let light_min_delta: u16 = 24;
+		let sky_tint = 0.585;
+
+		for theme in [HudTheme::Dark, HudTheme::Light] {
+			let base_fill = WindowRenderer::tinted_hud_body_fill(theme, false, 1.0, 0.0, sky_tint);
+			let tinted_fill =
+				WindowRenderer::tinted_hud_body_fill(theme, false, 1.0, 1.0, sky_tint);
+			let rgb_delta = u16::from(base_fill.r()).abs_diff(u16::from(tinted_fill.r()))
+				+ u16::from(base_fill.g()).abs_diff(u16::from(tinted_fill.g()))
+				+ u16::from(base_fill.b()).abs_diff(u16::from(tinted_fill.b()));
+			let min_delta =
+				if matches!(theme, HudTheme::Dark) { dark_min_delta } else { light_min_delta };
+
+			assert!(
+				rgb_delta >= min_delta,
+				"expected minimum tint delta >= {min_delta}, got {rgb_delta}"
+			);
+		}
+	}
+
+	#[test]
+	fn tinted_hud_body_fill_preserves_alpha() {
+		for theme in [HudTheme::Dark, HudTheme::Light] {
+			let tint_hue = 0.585;
+			let opaque = WindowRenderer::tinted_hud_body_fill(theme, true, 0.25, 1.0, tint_hue);
+			let translucent =
+				WindowRenderer::tinted_hud_body_fill(theme, false, 0.33, 1.0, tint_hue);
+
+			assert_eq!(opaque.a(), 255);
+			assert_eq!(translucent.a(), (0.33_f32 * 255.0).round().clamp(0.0, 255.0) as u8);
+		}
 	}
 
 	#[test]

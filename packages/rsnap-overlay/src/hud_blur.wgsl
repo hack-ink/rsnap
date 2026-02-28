@@ -35,7 +35,7 @@ struct HudBlurUniform {
 	radius_blur_soft: vec4<f32>,
 	// surface_size_px.xy, _pad
 	surface_size_px: vec4<f32>,
-	// tint_rgb (linear), tint_alpha
+	// Reserved tint payload, not used by this pass.
 	tint_rgba: vec4<f32>,
 	// blur_amount, tint_amount, max_lod, _pad
 	effects: vec4<f32>,
@@ -98,7 +98,5 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 		blurred = c / 16.0;
 	}
 
-	// Match the native compositor blur more closely by avoiding an additional shader tint.
-	// The capsule fill color/opacity (drawn by egui) provides the intended tint.
 	return vec4<f32>(blurred * alpha, alpha);
 }

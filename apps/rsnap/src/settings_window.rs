@@ -15,7 +15,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, ModifiersState};
 use winit::window::Theme;
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowId, WindowLevel};
 
 use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
 use rsnap_overlay::ThemeMode;
@@ -24,6 +24,14 @@ const SETTINGS_ROW_HEIGHT: f32 = 22.0;
 const SETTINGS_SECTION_GAP: f32 = 6.0;
 const SETTINGS_COMBO_WIDTH: f32 = 220.0;
 const SETTINGS_SLIDER_RAIL_HEIGHT: f32 = 4.0;
+const SETTINGS_HUE_SLIDER_HEIGHT: f32 = 12.0;
+// egui slider knob size is derived from widget height (`height / 2.5` radius).
+// Render the slider itself shorter so the knob matches the Hue handle (12px diameter).
+const SETTINGS_SLIDER_WIDGET_HEIGHT: f32 = 15.0;
+const SETTINGS_VALUE_BOX_WIDTH: f32 = 56.0;
+const SETTINGS_HUE_SLIDER_STEPS: usize = 64;
+const SETTINGS_HUE_SLIDER_SATURATION: f32 = 0.9;
+const SETTINGS_HUE_SLIDER_LIGHTNESS: f32 = 0.58;
 const SETTINGS_TITLEBAR_HEIGHT: f32 = 28.0;
 const SETTINGS_THEME_ICON_SIZE: f32 = 16.0;
 #[cfg(target_os = "macos")]
@@ -58,6 +66,7 @@ impl SettingsWindow {
 	pub fn open(event_loop: &ActiveEventLoop) -> Result<Self> {
 		let mut attrs = Window::default_attributes()
 			.with_title("Settings")
+			.with_window_level(WindowLevel::AlwaysOnTop)
 			.with_inner_size(LogicalSize::new(520.0, 360.0))
 			.with_resizable(false)
 			.with_visible(true);
@@ -70,7 +79,7 @@ impl SettingsWindow {
 				.with_titlebar_transparent(true)
 				.with_title_hidden(true)
 				.with_fullsize_content_view(true)
-				.with_movable_by_window_background(true);
+				.with_movable_by_window_background(false);
 		}
 
 		let window = event_loop.create_window(attrs).wrap_err("create settings window")?;
@@ -331,6 +340,7 @@ impl SettingsWindow {
 			spacing.button_padding = egui::vec2(4.0, 1.0);
 			spacing.interact_size.y = SETTINGS_ROW_HEIGHT;
 			spacing.combo_width = combo_width;
+			spacing.slider_width = combo_width;
 			spacing.slider_rail_height = SETTINGS_SLIDER_RAIL_HEIGHT;
 
 			add_contents(ui)
@@ -464,6 +474,19 @@ impl SettingsWindow {
 		let bar_width = ui.available_width();
 		let (_id, bar_rect) = ui.allocate_space(egui::vec2(bar_width, SETTINGS_TITLEBAR_HEIGHT));
 
+		#[cfg(target_os = "macos")]
+		{
+			let drag_response = ui.interact(
+				bar_rect,
+				ui.make_persistent_id("settings_titlebar_drag"),
+				egui::Sense::click_and_drag(),
+			);
+
+			if drag_response.drag_started() {
+				let _ = self.window.drag_window();
+			}
+		}
+
 		ui.painter().rect_filled(bar_rect, 0.0, ui.visuals().panel_fill);
 
 		let row_height = ui.spacing().interact_size.y;
@@ -592,6 +615,7 @@ impl SettingsWindow {
 		changed |= self.overlay_slider_row(ui, "Opacity", &mut settings.hud_opacity, enabled);
 		changed |= self.overlay_slider_row(ui, "Blur", &mut settings.hud_blur, enabled);
 		changed |= self.overlay_slider_row(ui, "Tint", &mut settings.hud_tint, enabled);
+		changed |= self.overlay_hue_slider_row(ui, "Hue", &mut settings.hud_tint_hue, enabled);
 
 		changed
 	}
@@ -603,11 +627,228 @@ impl SettingsWindow {
 		amount: &mut f32,
 		enabled: bool,
 	) -> bool {
-		let slider = egui::Slider::new(amount, 0.0..=1.0)
-			.text(label)
-			.custom_formatter(|value, _| format!("{:.0}%", value.clamp(0.0, 1.0) * 100.0));
+		let mut changed = false;
+		let mut value = (*amount).clamp(0.0, 1.0);
+		let mut percent = (value * 100.0).round().clamp(0.0, 100.0);
 
-		ui.add_enabled(enabled, slider).changed()
+		ui.horizontal(|ui| {
+			let slider = egui::Slider::new(&mut value, 0.0..=1.0)
+				.handle_shape(egui::style::HandleShape::Circle)
+				.show_value(false)
+				.text("");
+			let slider_response = ui
+				.add_enabled_ui(enabled, |ui| {
+					ui.scope(|ui| {
+						ui.spacing_mut().interact_size.y = SETTINGS_SLIDER_WIDGET_HEIGHT;
+
+						ui.add(slider)
+					})
+					.inner
+				})
+				.inner;
+
+			changed |= slider_response.changed();
+
+			let percent_changed = ui
+				.add_enabled_ui(enabled, |ui| {
+					ui.add_sized(
+						egui::vec2(SETTINGS_VALUE_BOX_WIDTH, ui.spacing().interact_size.y),
+						egui::DragValue::new(&mut percent)
+							.range(0.0..=100.0)
+							.fixed_decimals(0)
+							.suffix("%")
+							.custom_parser(|text| {
+								let text = text.trim();
+								let (text, had_percent) = text
+									.strip_suffix('%')
+									.map(|text| (text, true))
+									.unwrap_or((text, false));
+								let text = text.trim();
+								let parsed = text.parse::<f64>().ok()?;
+								let percent = if had_percent {
+									parsed
+								} else if parsed <= 1.0 {
+									parsed * 100.0
+								} else {
+									parsed
+								};
+
+								Some(percent)
+							}),
+					)
+				})
+				.inner
+				.changed();
+
+			if percent_changed {
+				value = (percent / 100.0).clamp(0.0, 1.0);
+				changed = true;
+			}
+
+			ui.label(label);
+		});
+
+		if (value - *amount).abs() > f32::EPSILON {
+			*amount = value;
+
+			true
+		} else {
+			changed
+		}
+	}
+
+	fn overlay_hue_slider_row(
+		&self,
+		ui: &mut Ui,
+		label: &str,
+		hue: &mut f32,
+		enabled: bool,
+	) -> bool {
+		let mut changed = false;
+		let mut current_hue = hue.clamp(0.0, 1.0);
+		let mut hue_degrees = (current_hue * 360.0).round().clamp(0.0, 360.0);
+
+		ui.horizontal(|ui| {
+			let bar_height = SETTINGS_HUE_SLIDER_HEIGHT.max(SETTINGS_SLIDER_RAIL_HEIGHT);
+			let bar_width = ui.spacing().slider_width;
+			let row_radius = bar_height / 2.0;
+			let (bar_rect, response) = ui.allocate_exact_size(
+				egui::vec2(bar_width, bar_height),
+				egui::Sense::click_and_drag(),
+			);
+
+			if enabled
+				&& (response.clicked() || response.dragged())
+				&& let Some(pointer) = response.interact_pointer_pos()
+			{
+				let ratio = (pointer.x - bar_rect.left()) / bar_rect.width();
+				let next_hue = ratio.clamp(0.0, 1.0);
+
+				if (next_hue - current_hue).abs() > f32::EPSILON {
+					current_hue = next_hue;
+					hue_degrees = (current_hue * 360.0).round();
+					changed = true;
+				}
+			}
+
+			let step_width = bar_rect.width() / SETTINGS_HUE_SLIDER_STEPS as f32;
+
+			for step in 0..SETTINGS_HUE_SLIDER_STEPS {
+				let left = bar_rect.left() + (step as f32 * step_width);
+				let right = (left + step_width).min(bar_rect.right());
+				let step_rect = egui::Rect::from_min_max(
+					egui::Pos2::new(left, bar_rect.top()),
+					egui::Pos2::new(right, bar_rect.bottom()),
+				);
+				let step_hue = if step == SETTINGS_HUE_SLIDER_STEPS - 1 {
+					1.0
+				} else {
+					step as f32 / SETTINGS_HUE_SLIDER_STEPS as f32
+				};
+				let color = Self::hsl_to_color32(
+					step_hue,
+					SETTINGS_HUE_SLIDER_SATURATION,
+					SETTINGS_HUE_SLIDER_LIGHTNESS,
+				);
+
+				ui.painter().rect_filled(step_rect, 0.0, color);
+			}
+
+			ui.painter().rect_stroke(
+				bar_rect,
+				row_radius,
+				egui::Stroke::new(1.0, egui::Color32::from_gray(102)),
+				egui::StrokeKind::Inside,
+			);
+
+			let handle_x = (bar_rect.left() + current_hue * bar_rect.width())
+				.clamp(bar_rect.left(), bar_rect.right());
+			let handle = egui::Pos2::new(handle_x, bar_rect.center().y);
+			let handle_color = Self::hsl_to_color32(
+				current_hue,
+				SETTINGS_HUE_SLIDER_SATURATION,
+				SETTINGS_HUE_SLIDER_LIGHTNESS,
+			);
+
+			ui.painter().circle_filled(handle, 6.0, handle_color);
+			ui.painter().circle_stroke(
+				handle,
+				6.0,
+				egui::Stroke::new(1.0, egui::Color32::from_gray(220)),
+			);
+
+			let value_changed = ui
+				.add_enabled(
+					enabled,
+					egui::DragValue::new(&mut hue_degrees)
+						.range(0.0..=360.0)
+						.fixed_decimals(0)
+						.suffix("°"),
+				)
+				.changed();
+
+			if value_changed {
+				let next_hue = (hue_degrees / 360.0).clamp(0.0, 1.0);
+
+				if (next_hue - current_hue).abs() > f32::EPSILON {
+					current_hue = next_hue;
+					changed = true;
+				}
+			}
+
+			ui.label(label);
+		});
+
+		if (*hue - current_hue).abs() > f32::EPSILON {
+			*hue = current_hue;
+
+			true
+		} else {
+			changed
+		}
+	}
+
+	fn hsl_to_color32(hue: f32, saturation: f32, lightness: f32) -> egui::Color32 {
+		let hue = hue.rem_euclid(1.0);
+		let saturation = saturation.clamp(0.0, 1.0);
+		let lightness = lightness.clamp(0.0, 1.0);
+
+		if saturation <= 0.0 {
+			let value = (lightness * 255.0).round().clamp(0.0, 255.0) as u8;
+
+			return egui::Color32::from_rgb(value, value, value);
+		}
+
+		let q = if lightness < 0.5 {
+			lightness * (1.0 + saturation)
+		} else {
+			lightness + saturation - lightness * saturation
+		};
+		let p = 2.0 * lightness - q;
+		let red = Self::hue_to_rgb(p, q, hue + 1.0 / 3.0);
+		let green = Self::hue_to_rgb(p, q, hue);
+		let blue = Self::hue_to_rgb(p, q, hue - 1.0 / 3.0);
+		let r = (red * 255.0).round().clamp(0.0, 255.0) as u8;
+		let g = (green * 255.0).round().clamp(0.0, 255.0) as u8;
+		let b = (blue * 255.0).round().clamp(0.0, 255.0) as u8;
+
+		egui::Color32::from_rgb(r, g, b)
+	}
+
+	fn hue_to_rgb(p: f32, q: f32, hue: f32) -> f32 {
+		let normalized_hue = hue.rem_euclid(1.0);
+
+		if normalized_hue < 1.0 / 6.0 {
+			return p + (q - p) * 6.0 * normalized_hue;
+		}
+		if normalized_hue < 1.0 / 2.0 {
+			return q;
+		}
+		if normalized_hue < 2.0 / 3.0 {
+			return p + (q - p) * (2.0 / 3.0 - normalized_hue) * 6.0;
+		}
+
+		p
 	}
 
 	fn alt_activation_label(mode: AltActivationMode) -> &'static str {
