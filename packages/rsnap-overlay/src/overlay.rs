@@ -38,7 +38,7 @@ use winit::{
 	event::{ElementState, MouseButton, WindowEvent},
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
 	keyboard::{Key, NamedKey},
-	window::{CursorIcon, Theme, WindowId, WindowLevel},
+	window::{Theme, WindowId, WindowLevel},
 };
 
 use crate::{
@@ -606,8 +606,6 @@ impl OverlaySession {
 				"Overlay window created."
 			);
 
-			window.set_cursor(CursorIcon::Crosshair);
-
 			let _ = window.set_cursor_hittest(true);
 
 			window.request_redraw();
@@ -645,7 +643,6 @@ impl OverlaySession {
 		#[cfg(not(target_os = "macos"))]
 		let _ = window.set_cursor_hittest(false);
 
-		window.set_cursor(CursorIcon::Crosshair);
 		window.set_transparent(true);
 
 		#[cfg(target_os = "macos")]
@@ -688,7 +685,6 @@ impl OverlaySession {
 		#[cfg(not(target_os = "macos"))]
 		let _ = window.set_cursor_hittest(false);
 
-		window.set_cursor(CursorIcon::Crosshair);
 		window.set_transparent(true);
 
 		#[cfg(target_os = "macos")]
@@ -733,7 +729,6 @@ impl OverlaySession {
 		#[cfg(not(target_os = "macos"))]
 		let _ = window.set_cursor_hittest(false);
 
-		window.set_cursor(CursorIcon::Crosshair);
 		window.set_transparent(true);
 
 		#[cfg(target_os = "macos")]
@@ -2301,22 +2296,6 @@ impl OverlaySession {
 	}
 
 	fn exit(&mut self, exit: OverlayExit) -> OverlayControl {
-		// macOS cursor state can “stick” if we exit while a non-default cursor is active.
-		// Reset all overlay-related windows to the default cursor before dropping them.
-		for window in self.windows.values() {
-			window.window.set_cursor(CursorIcon::Default);
-		}
-
-		if let Some(hud_window) = &self.hud_window {
-			hud_window.window.set_cursor(CursorIcon::Default);
-		}
-		if let Some(loupe_window) = &self.loupe_window {
-			loupe_window.window.set_cursor(CursorIcon::Default);
-		}
-		if let Some(toolbar_window) = &self.toolbar_window {
-			toolbar_window.window.set_cursor(CursorIcon::Default);
-		}
-
 		self.windows.clear();
 
 		self.hud_window = None;
