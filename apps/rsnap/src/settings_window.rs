@@ -700,7 +700,6 @@ impl SettingsWindow {
 		ui.horizontal(|ui| {
 			let bar_height = SETTINGS_HUE_SLIDER_HEIGHT.max(SETTINGS_SLIDER_RAIL_HEIGHT);
 			let bar_width = ui.spacing().slider_width;
-			let row_radius = bar_height / 2.0;
 			let (bar_rect, response) = ui.allocate_exact_size(
 				egui::vec2(bar_width, bar_height),
 				egui::Sense::click_and_drag(),
@@ -742,13 +741,6 @@ impl SettingsWindow {
 
 				ui.painter().rect_filled(step_rect, 0.0, color);
 			}
-
-			ui.painter().rect_stroke(
-				bar_rect,
-				row_radius,
-				egui::Stroke::new(1.0, egui::Color32::from_gray(102)),
-				egui::StrokeKind::Inside,
-			);
 
 			let handle_x = (bar_rect.left() + current_hue * bar_rect.width())
 				.clamp(bar_rect.left(), bar_rect.right());
