@@ -3249,6 +3249,7 @@ impl WindowRenderer {
 				state,
 				monitor,
 				theme,
+				hud_blur_active,
 				hud_opaque,
 				hud_opacity,
 				hud_milk_amount,
@@ -3290,6 +3291,7 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 		theme: HudTheme,
+		hud_blur_active: bool,
 		hud_opaque: bool,
 		hud_opacity: f32,
 		hud_milk_amount: f32,
@@ -3342,6 +3344,7 @@ impl WindowRenderer {
 			toolbar_pos,
 			toolbar_size,
 			theme,
+			hud_blur_active,
 			hud_opaque,
 			hud_opacity,
 			hud_milk_amount,
@@ -3473,6 +3476,7 @@ impl WindowRenderer {
 		toolbar_pos: Pos2,
 		toolbar_size: Vec2,
 		theme: HudTheme,
+		hud_blur_active: bool,
 		hud_opaque: bool,
 		hud_opacity: f32,
 		hud_milk_amount: f32,
@@ -3489,6 +3493,7 @@ impl WindowRenderer {
 					ui.allocate_exact_size(toolbar_size, Sense::click_and_drag());
 				let body_fill = Self::tinted_hud_body_fill(
 					theme,
+					hud_blur_active,
 					hud_opaque,
 					hud_opacity,
 					hud_milk_amount,
@@ -3785,6 +3790,7 @@ impl WindowRenderer {
 	) {
 		let body_fill = Self::tinted_hud_body_fill(
 			theme,
+			hud_blur_active,
 			hud_opaque,
 			hud_opacity,
 			hud_milk_amount,
@@ -4723,14 +4729,15 @@ impl WindowRenderer {
 		self.sync_or_clear_hud_bg(gpu, state, monitor, hud_cfg)?;
 
 		let hud_shader_blur_active = self.hud_shader_blur_active(state, monitor, hud_cfg);
+		let hud_blur_active = show_hud_blur && !hud_opaque;
 		let body_fill = Self::tinted_hud_body_fill(
 			theme,
+			hud_blur_active,
 			hud_opaque,
 			hud_opacity,
 			hud_milk_amount,
 			hud_tint_hue,
 		);
-		let hud_blur_active = show_hud_blur && !hud_opaque;
 		let (full_output, loupe_tile_rect) = self.run_loupe_tile_egui(
 			raw_input,
 			state,
@@ -4786,12 +4793,18 @@ impl WindowRenderer {
 
 	fn tinted_hud_body_fill(
 		theme: HudTheme,
+		hud_blur_active: bool,
 		hud_opaque: bool,
 		hud_opacity: f32,
 		hud_milk_amount: f32,
 		hud_tint_hue: f32,
 	) -> Color32 {
-		let opacity = if hud_opaque { 1.0 } else { hud_opacity.clamp(0.0, 1.0) };
+		let mut opacity = if hud_opaque { 1.0 } else { hud_opacity.clamp(0.0, 1.0) };
+
+		if hud_blur_active {
+			opacity = opacity.max(hud_blur_tint_alpha(theme));
+		}
+
 		let tint = hud_milk_amount.clamp(0.0, 1.0);
 		let mut fill = hud_body_fill_srgba8(theme, false);
 		let tint_hue = hud_tint_hue.clamp(0.0, 1.0);
@@ -4935,7 +4948,8 @@ impl WindowRenderer {
 			[hud_pill.rect.width() * pixels_per_point, hud_pill.rect.height() * pixels_per_point];
 		let rect_min_size = [rect_min_px[0], rect_min_px[1], rect_size_px[0], rect_size_px[1]];
 		let max_lod = self.hud_bg.as_ref().map(|bg| bg.max_lod).unwrap_or(0.0);
-		let tint = Self::tinted_hud_body_fill(theme, false, 1.0, hud_milk_amount, hud_tint_hue);
+		let tint =
+			Self::tinted_hud_body_fill(theme, false, false, 1.0, hud_milk_amount, hud_tint_hue);
 		let tint_rgba = [
 			srgb8_to_linear_f32(tint[0]),
 			srgb8_to_linear_f32(tint[1]),
@@ -5510,7 +5524,7 @@ fn macos_configure_hud_window(
 mod tests {
 	use crate::overlay::{
 		HudTheme, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, Vec2,
-		WindowRenderer, hud_body_fill_srgba8,
+		WindowRenderer, hud_blur_tint_alpha, hud_body_fill_srgba8,
 	};
 
 	#[test]
@@ -5551,7 +5565,8 @@ mod tests {
 	fn tinted_hud_body_fill_amount_zero_keeps_base_fill() {
 		for theme in [HudTheme::Dark, HudTheme::Light] {
 			let base_fill = hud_body_fill_srgba8(theme, false);
-			let no_tint = WindowRenderer::tinted_hud_body_fill(theme, false, 1.0, 0.0, 0.585);
+			let no_tint =
+				WindowRenderer::tinted_hud_body_fill(theme, false, false, 1.0, 0.0, 0.585);
 
 			assert_eq!(no_tint.r(), base_fill[0]);
 			assert_eq!(no_tint.g(), base_fill[1]);
@@ -5567,9 +5582,10 @@ mod tests {
 		let sky_tint = 0.585;
 
 		for theme in [HudTheme::Dark, HudTheme::Light] {
-			let base_fill = WindowRenderer::tinted_hud_body_fill(theme, false, 1.0, 0.0, sky_tint);
+			let base_fill =
+				WindowRenderer::tinted_hud_body_fill(theme, false, false, 1.0, 0.0, sky_tint);
 			let tinted_fill =
-				WindowRenderer::tinted_hud_body_fill(theme, false, 1.0, 1.0, sky_tint);
+				WindowRenderer::tinted_hud_body_fill(theme, false, false, 1.0, 1.0, sky_tint);
 			let rgb_delta = u16::from(base_fill.r()).abs_diff(u16::from(tinted_fill.r()))
 				+ u16::from(base_fill.g()).abs_diff(u16::from(tinted_fill.g()))
 				+ u16::from(base_fill.b()).abs_diff(u16::from(tinted_fill.b()));
@@ -5587,12 +5603,24 @@ mod tests {
 	fn tinted_hud_body_fill_preserves_alpha() {
 		for theme in [HudTheme::Dark, HudTheme::Light] {
 			let tint_hue = 0.585;
-			let opaque = WindowRenderer::tinted_hud_body_fill(theme, true, 0.25, 1.0, tint_hue);
+			let opaque =
+				WindowRenderer::tinted_hud_body_fill(theme, false, true, 0.25, 1.0, tint_hue);
 			let translucent =
-				WindowRenderer::tinted_hud_body_fill(theme, false, 0.33, 1.0, tint_hue);
+				WindowRenderer::tinted_hud_body_fill(theme, false, false, 0.33, 1.0, tint_hue);
 
 			assert_eq!(opaque.a(), 255);
 			assert_eq!(translucent.a(), (0.33_f32 * 255.0).round().clamp(0.0, 255.0) as u8);
+		}
+	}
+
+	#[test]
+	fn tinted_hud_body_fill_blur_active_enforces_min_opacity() {
+		for theme in [HudTheme::Dark, HudTheme::Light] {
+			let tint_hue = 0.585;
+			let fill = WindowRenderer::tinted_hud_body_fill(theme, true, false, 0.0, 0.0, tint_hue);
+			let expected = (hud_blur_tint_alpha(theme) * 255.0).round().clamp(0.0, 255.0) as u8;
+
+			assert_eq!(fill.a(), expected);
 		}
 	}
 
