@@ -1,14 +1,15 @@
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{Result, WrapErr};
-use device_query::{DeviceQuery, DeviceState};
 use image::RgbaImage;
 use thiserror::Error;
 
 use crate::state::{GlobalPoint, MonitorRect, Rgb};
 
 pub trait CaptureBackend: Send {
-	fn global_cursor_position(&mut self) -> Result<Option<GlobalPoint>>;
+	fn global_cursor_position(&mut self) -> Result<Option<GlobalPoint>> {
+		Ok(None)
+	}
 	fn capture_monitor(&mut self, monitor: MonitorRect) -> Result<RgbaImage>;
 	fn pixel_rgb_in_monitor(
 		&mut self,
@@ -33,13 +34,11 @@ pub enum CaptureBackendError {
 	MonitorNotFound { monitor: MonitorRect },
 }
 
-pub struct StubCaptureBackend {
-	device_state: DeviceState,
-}
+pub struct StubCaptureBackend {}
 impl StubCaptureBackend {
 	#[must_use]
 	pub fn new() -> Self {
-		Self { device_state: DeviceState::new() }
+		Self {}
 	}
 }
 
@@ -50,12 +49,6 @@ impl Default for StubCaptureBackend {
 }
 
 impl CaptureBackend for StubCaptureBackend {
-	fn global_cursor_position(&mut self) -> Result<Option<GlobalPoint>> {
-		let mouse = self.device_state.get_mouse();
-
-		Ok(Some(GlobalPoint::new(mouse.coords.0, mouse.coords.1)))
-	}
-
 	fn capture_monitor(&mut self, _monitor: MonitorRect) -> Result<RgbaImage> {
 		Err(CaptureBackendError::NotSupported { backend: "stub" }.into())
 	}
@@ -80,14 +73,13 @@ impl CaptureBackend for StubCaptureBackend {
 }
 
 pub struct XcapCaptureBackend {
-	device_state: DeviceState,
 	cache: Option<CaptureCache>,
 	cache_ttl: Duration,
 }
 impl XcapCaptureBackend {
 	#[must_use]
 	pub fn new() -> Self {
-		Self { device_state: DeviceState::new(), cache: None, cache_ttl: Duration::from_millis(80) }
+		Self { cache: None, cache_ttl: Duration::from_millis(80) }
 	}
 
 	fn cache_valid_for(&self, monitor: MonitorRect) -> bool {
@@ -119,12 +111,6 @@ impl Default for XcapCaptureBackend {
 }
 
 impl CaptureBackend for XcapCaptureBackend {
-	fn global_cursor_position(&mut self) -> Result<Option<GlobalPoint>> {
-		let mouse = self.device_state.get_mouse();
-
-		Ok(Some(GlobalPoint::new(mouse.coords.0, mouse.coords.1)))
-	}
-
 	fn capture_monitor(&mut self, monitor: MonitorRect) -> Result<RgbaImage> {
 		let image =
 			capture_monitor_image(monitor).wrap_err("failed to capture monitor screenshot")?;
@@ -260,6 +246,6 @@ mod tests {
 		let mut backend = StubCaptureBackend::new();
 		let pos = backend.global_cursor_position().unwrap();
 
-		assert!(pos.is_some());
+		assert!(pos.is_none());
 	}
 }
