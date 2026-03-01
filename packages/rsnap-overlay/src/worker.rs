@@ -140,8 +140,21 @@ impl OverlayWorker {
 		Self { req_tx, resp_rx }
 	}
 
-	pub(crate) fn try_sample_rgb(&self, monitor: MonitorRect, point: GlobalPoint) {
-		let _ = self.req_tx.try_send(WorkerRequest::SampleRgb { monitor, point });
+	fn map_try_send_error(err: TrySendError<WorkerRequest>) -> WorkerRequestSendError {
+		match err {
+			TrySendError::Full(_) => WorkerRequestSendError::Full,
+			TrySendError::Disconnected(_) => WorkerRequestSendError::Disconnected,
+		}
+	}
+
+	pub(crate) fn try_sample_rgb(
+		&self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+	) -> Result<(), WorkerRequestSendError> {
+		let request = WorkerRequest::SampleRgb { monitor, point };
+
+		self.req_tx.try_send(request).map_err(Self::map_try_send_error)
 	}
 
 	pub(crate) fn try_sample_loupe(
@@ -150,13 +163,10 @@ impl OverlayWorker {
 		point: GlobalPoint,
 		width_px: u32,
 		height_px: u32,
-	) {
-		let _ = self.req_tx.try_send(WorkerRequest::SampleLoupe {
-			monitor,
-			point,
-			width_px,
-			height_px,
-		});
+	) -> Result<(), WorkerRequestSendError> {
+		let request = WorkerRequest::SampleLoupe { monitor, point, width_px, height_px };
+
+		self.req_tx.try_send(request).map_err(Self::map_try_send_error)
 	}
 
 	pub(crate) fn request_freeze_capture(&self, monitor: MonitorRect) -> bool {
@@ -180,4 +190,10 @@ impl OverlayWorker {
 			Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,
 		}
 	}
+}
+
+#[derive(Debug)]
+pub(crate) enum WorkerRequestSendError {
+	Full,
+	Disconnected,
 }

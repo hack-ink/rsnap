@@ -42,8 +42,8 @@ use winit::{
 };
 
 use crate::{
-	state::{GlobalPoint, MonitorRect, OverlayMode, OverlayState, Rgb},
-	worker::{OverlayWorker, WorkerResponse},
+	state::{GlobalPoint, MonitorRect, OverlayMode, OverlayState},
+	worker::{OverlayWorker, WorkerRequestSendError, WorkerResponse},
 };
 
 const HUD_PILL_BODY_FILL_DARK_SRGBA8: [u8; 4] = [28, 28, 32, 156];
@@ -56,6 +56,7 @@ const FROZEN_CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const FROZEN_TOOLBAR_TOOL_COUNT: usize = 9;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
+const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
 const HUD_PILL_INNER_MARGIN_X_POINTS: f32 = 12.0;
 const HUD_PILL_INNER_MARGIN_Y_POINTS: f32 = 8.0;
 const HUD_PILL_STROKE_WIDTH_POINTS: f32 = 1.0;
@@ -152,6 +153,24 @@ impl FrozenToolbarTool {
 			Self::Copy => regular::COPY,
 			Self::Save => regular::FLOPPY_DISK,
 			Self::Done => regular::CHECK,
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeviceCursorPointSource {
+	DevicePoints,
+	DevicePixelsFallback,
+	EventRecentFallback,
+	Event,
+}
+impl DeviceCursorPointSource {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::DevicePoints => "device_points",
+			Self::DevicePixelsFallback => "device_pixels_fallback",
+			Self::EventRecentFallback => "event_recent_fallback",
+			Self::Event => "event",
 		}
 	}
 }
@@ -293,10 +312,25 @@ pub struct OverlaySession {
 	last_present_at: Instant,
 	last_rgb_request_at: Instant,
 	rgb_request_interval: Duration,
+	pending_rgb_request_at: Option<Instant>,
+	pending_rgb_request_id: Option<u64>,
+	rgb_send_sequence: u64,
+	rgb_send_full_count: u64,
+	rgb_send_disconnected_count: u64,
 	last_live_bg_request_at: Instant,
 	live_bg_request_interval: Duration,
 	last_loupe_request_at: Instant,
 	loupe_request_interval: Duration,
+	pending_loupe_request_at: Option<Instant>,
+	pending_loupe_request_id: Option<u64>,
+	loupe_send_sequence: u64,
+	loupe_send_full_count: u64,
+	loupe_send_disconnected_count: u64,
+	last_live_sample_cursor: Option<GlobalPoint>,
+	last_event_cursor: Option<(MonitorRect, GlobalPoint)>,
+	last_event_cursor_at: Option<Instant>,
+	live_sample_stall_started_at: Option<Instant>,
+	last_live_sample_stall_log_at: Option<Instant>,
 	last_alt_press_at: Option<Instant>,
 	alt_modifier_down: bool,
 	loupe_patch_width_px: u32,
@@ -347,10 +381,25 @@ impl OverlaySession {
 			last_present_at: Instant::now(),
 			last_rgb_request_at: Instant::now(),
 			rgb_request_interval: Duration::from_millis(16),
+			pending_rgb_request_at: None,
+			pending_rgb_request_id: None,
+			rgb_send_sequence: 0,
+			rgb_send_full_count: 0,
+			rgb_send_disconnected_count: 0,
 			last_live_bg_request_at: Instant::now() - live_bg_request_interval,
 			live_bg_request_interval,
 			last_loupe_request_at: Instant::now(),
 			loupe_request_interval: Duration::from_millis(33),
+			pending_loupe_request_at: None,
+			pending_loupe_request_id: None,
+			loupe_send_sequence: 0,
+			loupe_send_full_count: 0,
+			loupe_send_disconnected_count: 0,
+			last_live_sample_cursor: None,
+			last_event_cursor: None,
+			last_event_cursor_at: None,
+			live_sample_stall_started_at: None,
+			last_live_sample_stall_log_at: None,
 			last_alt_press_at: None,
 			alt_modifier_down: false,
 			loupe_patch_width_px: loupe_sample_side_px,
@@ -388,85 +437,102 @@ impl OverlaySession {
 			return;
 		}
 
-		if let Some(hud_window) = self.hud_window.as_ref() {
-			hud_window.window.set_transparent(true);
-
-			#[cfg(target_os = "macos")]
-			macos_configure_hud_window(
-				hud_window.window.as_ref(),
-				self.macos_hud_window_blur_enabled(),
-				self.config.hud_fog_amount,
-				None,
-			);
-
-			#[cfg(not(target_os = "macos"))]
-			hud_window.window.set_blur(self.config.show_hud_blur);
-		}
-		if let Some(loupe_window) = self.loupe_window.as_ref() {
-			loupe_window.window.set_transparent(true);
-
-			#[cfg(target_os = "macos")]
-			macos_configure_hud_window(
-				loupe_window.window.as_ref(),
-				self.macos_hud_window_blur_enabled(),
-				self.config.hud_fog_amount,
-				Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
-			);
-
-			#[cfg(not(target_os = "macos"))]
-			loupe_window.window.set_blur(self.config.show_hud_blur);
-		}
-		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-			toolbar_window.window.set_transparent(true);
-
-			#[cfg(target_os = "macos")]
-			macos_configure_hud_window(
-				toolbar_window.window.as_ref(),
-				self.macos_hud_window_blur_enabled(),
-				self.config.hud_fog_amount,
-				Some(f64::from(HUD_PILL_CORNER_RADIUS_POINTS)),
-			);
-
-			#[cfg(not(target_os = "macos"))]
-			toolbar_window.window.set_blur(self.config.show_hud_blur);
-		}
+		self.configure_hud_windows_for_config();
 
 		let prev_fake_blur = prev.show_hud_blur && !cfg!(target_os = "macos");
 		let new_fake_blur = self.use_fake_hud_blur();
 
-		if prev_fake_blur != new_fake_blur {
-			if new_fake_blur {
-				self.last_live_bg_request_at = Instant::now() - self.live_bg_request_interval;
+		self.handle_fake_hud_blur_toggle(prev_fake_blur, new_fake_blur);
 
-				if matches!(self.state.mode, OverlayMode::Live)
-					&& let Some(_cursor) = self.state.cursor
-					&& let Some(monitor) = self.active_cursor_monitor()
-				{
-					self.maybe_request_live_bg(monitor);
-				}
-			} else {
-				self.state.live_bg_monitor = None;
-				self.state.live_bg_image = None;
-			}
-		}
-		if patch_changed
-			&& matches!(self.state.mode, OverlayMode::Live)
-			&& self.state.alt_held
-			&& let Some(cursor) = self.state.cursor
-			&& let Some(worker) = &self.worker
-			&& let Some(monitor) = self.active_cursor_monitor()
-		{
-			worker.try_sample_loupe(
-				monitor,
-				cursor,
-				self.loupe_patch_width_px,
-				self.loupe_patch_height_px,
-			);
-
-			self.last_loupe_request_at = Instant::now();
+		if patch_changed {
+			self.request_loupe_sample_for_patch_change();
 		}
 
 		self.request_redraw_all();
+	}
+
+	fn configure_hud_windows_for_config(&mut self) {
+		if let Some(hud_window) = self.hud_window.as_ref() {
+			self.configure_hud_window_common(hud_window.window.as_ref(), None);
+		}
+		if let Some(loupe_window) = self.loupe_window.as_ref() {
+			self.configure_hud_window_common(
+				loupe_window.window.as_ref(),
+				Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
+			);
+		}
+		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+			self.configure_hud_window_common(
+				toolbar_window.window.as_ref(),
+				Some(f64::from(HUD_PILL_CORNER_RADIUS_POINTS)),
+			);
+		}
+	}
+
+	fn configure_hud_window_common(
+		&self,
+		window: &winit::window::Window,
+		corner_radius: Option<f64>,
+	) {
+		window.set_transparent(true);
+
+		#[cfg(target_os = "macos")]
+		macos_configure_hud_window(
+			window,
+			self.macos_hud_window_blur_enabled(),
+			self.config.hud_fog_amount,
+			corner_radius,
+		);
+
+		#[cfg(not(target_os = "macos"))]
+		window.set_blur(self.config.show_hud_blur);
+	}
+
+	fn handle_fake_hud_blur_toggle(&mut self, prev_fake_blur: bool, new_fake_blur: bool) {
+		if prev_fake_blur == new_fake_blur {
+			return;
+		}
+		if new_fake_blur {
+			self.last_live_bg_request_at = Instant::now() - self.live_bg_request_interval;
+
+			if matches!(self.state.mode, OverlayMode::Live)
+				&& let Some(_cursor) = self.state.cursor
+				&& let Some(monitor) = self.active_cursor_monitor()
+			{
+				self.maybe_request_live_bg(monitor);
+			}
+
+			return;
+		}
+
+		self.state.live_bg_monitor = None;
+		self.state.live_bg_image = None;
+	}
+
+	fn request_loupe_sample_for_patch_change(&mut self) {
+		if !matches!(self.state.mode, OverlayMode::Live)
+			|| !self.state.alt_held
+			|| self.state.cursor.is_none()
+			|| self.worker.is_none()
+			|| self.active_cursor_monitor().is_none()
+		{
+			return;
+		}
+
+		let Some(cursor) = self.state.cursor else {
+			return;
+		};
+		let Some(monitor) = self.active_cursor_monitor() else {
+			return;
+		};
+
+		self.send_loupe_sample_request(
+			monitor,
+			cursor,
+			self.loupe_patch_width_px,
+			self.loupe_patch_height_px,
+			false,
+		);
 	}
 
 	#[must_use]
@@ -528,6 +594,21 @@ impl OverlaySession {
 		self.state.loupe_patch_side_px = self.loupe_patch_width_px;
 		self.pending_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
+		self.pending_rgb_request_at = None;
+		self.pending_rgb_request_id = None;
+		self.rgb_send_sequence = 0;
+		self.rgb_send_full_count = 0;
+		self.rgb_send_disconnected_count = 0;
+		self.pending_loupe_request_at = None;
+		self.pending_loupe_request_id = None;
+		self.loupe_send_sequence = 0;
+		self.loupe_send_full_count = 0;
+		self.loupe_send_disconnected_count = 0;
+		self.last_event_cursor = None;
+		self.last_event_cursor_at = None;
+		self.last_live_sample_cursor = None;
+		self.live_sample_stall_started_at = None;
+		self.last_live_sample_stall_log_at = None;
 		self.toolbar_state = FrozenToolbarState::default();
 		self.toolbar_left_button_down = false;
 		self.toolbar_left_button_down_prev = false;
@@ -813,6 +894,7 @@ impl OverlaySession {
 
 		self.maybe_keep_frozen_capture_redraw();
 		self.maybe_tick_toolbar_window_warmup_redraw();
+		self.maybe_tick_live_cursor_tracking();
 		self.maybe_tick_live_sampling();
 		self.maybe_tick_frozen_cursor_tracking();
 
@@ -906,18 +988,74 @@ impl OverlaySession {
 		}
 
 		let mouse = self.cursor_device.get_mouse();
-		let global = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
+		let raw = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
 		let old_monitor = self.active_cursor_monitor();
-		let Some(monitor) = self.monitor_at(global) else {
+		let Some((monitor, global, source)) = self.resolve_device_cursor_point(raw) else {
 			return;
 		};
 
+		if tracing::enabled!(tracing::Level::TRACE) {
+			tracing::trace!(
+				mode = "frozen",
+				source = source.as_str(),
+				monitor_id = monitor.id,
+				"Resolved device cursor for frozen tick."
+			);
+		}
 		if self.state.cursor == Some(global) && old_monitor == Some(monitor) {
 			return;
 		}
 
 		self.update_cursor_state(monitor, global);
 		self.update_hud_window_position(monitor, global);
+
+		if let Some(old_monitor) = old_monitor
+			&& old_monitor != monitor
+		{
+			self.request_redraw_for_monitor(old_monitor);
+		}
+
+		self.request_redraw_for_monitor(monitor);
+	}
+
+	fn maybe_tick_live_cursor_tracking(&mut self) {
+		if !self.is_active() || !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
+
+		// Keep this loop alive even if CursorMoved events are sparse.
+		self.schedule_egui_repaint_after(Duration::from_millis(16));
+
+		let mouse = self.cursor_device.get_mouse();
+		let raw = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
+		let old_monitor = self.active_cursor_monitor();
+		let Some((monitor, global, source)) = self.resolve_live_cursor_point(raw) else {
+			return;
+		};
+
+		if tracing::enabled!(tracing::Level::TRACE) {
+			tracing::trace!(
+				mode = "live",
+				source = source.as_str(),
+				monitor_id = monitor.id,
+				"Resolved device cursor for live tick."
+			);
+		}
+		if self.state.cursor == Some(global) && old_monitor == Some(monitor) {
+			return;
+		}
+
+		self.update_cursor_state(monitor, global);
+		self.update_hud_window_position(monitor, global);
+
+		if self.use_fake_hud_blur() {
+			if self.state.live_bg_monitor != Some(monitor) {
+				self.state.live_bg_monitor = None;
+				self.state.live_bg_image = None;
+			}
+
+			self.maybe_request_live_bg(monitor);
+		}
 
 		if let Some(old_monitor) = old_monitor
 			&& old_monitor != monitor
@@ -947,31 +1085,17 @@ impl OverlaySession {
 			return;
 		};
 
+		self.record_live_sample_stall(cursor, monitor);
+
 		if self.use_fake_hud_blur() {
 			self.maybe_request_live_bg(monitor);
 		}
 
-		let Some(worker) = &self.worker else {
+		let Some(_worker) = &self.worker else {
 			return;
 		};
 
-		if self.last_rgb_request_at.elapsed() >= self.rgb_request_interval {
-			worker.try_sample_rgb(monitor, cursor);
-
-			self.last_rgb_request_at = Instant::now();
-		}
-		if self.state.alt_held
-			&& self.last_loupe_request_at.elapsed() >= self.loupe_request_interval
-		{
-			worker.try_sample_loupe(
-				monitor,
-				cursor,
-				self.loupe_patch_width_px,
-				self.loupe_patch_height_px,
-			);
-
-			self.last_loupe_request_at = Instant::now();
-		}
+		self.request_live_samples_for_cursor(monitor, cursor);
 	}
 
 	fn drain_worker_responses(&mut self) -> OverlayControl {
@@ -987,102 +1111,353 @@ impl OverlaySession {
 		}
 
 		while let Some(resp) = self.worker.as_ref().and_then(|worker| worker.try_recv()) {
-			match resp {
-				WorkerResponse::SampledLoupe { monitor, point, rgb, patch } => {
-					if matches!(self.state.mode, OverlayMode::Live) {
-						self.state.rgb = rgb;
-						self.state.loupe =
-							patch.map(|patch| crate::state::LoupeSample { center: point, patch });
+			let control = self.maybe_tick_worker_response_limiter(resp);
 
-						let current_monitor = self.active_cursor_monitor();
-
-						if let Some(current_monitor) = current_monitor {
-							self.request_redraw_for_monitor(current_monitor);
-						}
-
-						if current_monitor != Some(monitor) {
-							self.request_redraw_for_monitor(monitor);
-						}
-					}
-				},
-				WorkerResponse::SampledRgb { monitor, point, rgb } => {
-					if matches!(self.state.mode, OverlayMode::Live) {
-						let _ = point;
-
-						self.state.rgb = rgb;
-
-						let current_monitor = self.active_cursor_monitor();
-
-						if let Some(current_monitor) = current_monitor {
-							self.request_redraw_for_monitor(current_monitor);
-						}
-
-						if current_monitor != Some(monitor) {
-							self.request_redraw_for_monitor(monitor);
-						}
-					}
-				},
-				WorkerResponse::CapturedFreeze { monitor, image } => {
-					if matches!(self.state.mode, OverlayMode::Frozen)
-						&& self.state.monitor == Some(monitor)
-					{
-						self.state.finish_freeze(monitor, image);
-						self.restore_capture_windows_visibility();
-
-						self.toolbar_state.needs_redraw = true;
-
-						#[cfg(target_os = "macos")]
-						if self.toolbar_state.visible {
-							self.toolbar_window_warmup_redraws_remaining = self
-								.toolbar_window_warmup_redraws_remaining
-								.max(TOOLBAR_WINDOW_WARMUP_REDRAWS);
-						}
-
-						if let Some(cursor) = self.state.cursor {
-							self.state.rgb =
-								frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
-							self.state.loupe = frozen_loupe_patch(
-								&self.state.frozen_image,
-								Some(monitor),
-								cursor,
-								self.loupe_patch_width_px,
-								self.loupe_patch_height_px,
-							)
-							.map(|patch| crate::state::LoupeSample { center: cursor, patch });
-						}
-
-						self.request_redraw_for_monitor(monitor);
-						self.raise_hud_windows();
-					} else if matches!(self.state.mode, OverlayMode::Live)
-						&& self.use_fake_hud_blur()
-						&& self.active_cursor_monitor() == Some(monitor)
-					{
-						self.state.live_bg_monitor = Some(monitor);
-						self.state.live_bg_image = Some(image);
-						self.state.live_bg_generation =
-							self.state.live_bg_generation.wrapping_add(1);
-
-						self.request_redraw_for_monitor(monitor);
-					}
-				},
-				WorkerResponse::Error(message) => {
-					self.restore_capture_windows_visibility();
-					self.state.set_error(message);
-					self.request_redraw_all();
-				},
-				WorkerResponse::EncodedPng { png_bytes } => {
-					match write_png_bytes_to_clipboard(&png_bytes) {
-						Ok(()) => return self.exit(OverlayExit::PngBytes(png_bytes)),
-						Err(err) => {
-							self.state.set_error(format!("{err:#}"));
-							self.request_redraw_all();
-						},
-					}
-				},
+			if !matches!(control, OverlayControl::Continue) {
+				return control;
 			}
 		}
 
 		OverlayControl::Continue
+	}
+
+	fn request_live_samples_for_cursor(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
+		self.send_rgb_sample_request(monitor, cursor, true);
+
+		if self.state.alt_held {
+			self.send_loupe_sample_request(
+				monitor,
+				cursor,
+				self.loupe_patch_width_px,
+				self.loupe_patch_height_px,
+				true,
+			);
+		}
+	}
+
+	fn record_live_sample_stall(&mut self, cursor: GlobalPoint, monitor: MonitorRect) {
+		let now = Instant::now();
+
+		match self.last_live_sample_cursor {
+			Some(last_cursor) if last_cursor == cursor => {
+				let stall_started_at = self.live_sample_stall_started_at;
+
+				if self.live_sample_stall_started_at.is_none() {
+					self.live_sample_stall_started_at = Some(now);
+				} else if stall_started_at
+					.is_some_and(|start| now.duration_since(start) >= Duration::from_millis(100))
+					&& self.last_live_sample_stall_log_at.is_none_or(|last_log| {
+						now.duration_since(last_log) >= Duration::from_millis(250)
+					}) {
+					let Some(stall_started_at) = self.live_sample_stall_started_at else {
+						return;
+					};
+
+					tracing::debug!(
+						cursor = ?cursor,
+						monitor_id = monitor.id,
+						stall_duration_ms = now.duration_since(stall_started_at).as_millis(),
+						"Live sampling cursor unchanged while sampling ticks continue."
+					);
+
+					self.last_live_sample_stall_log_at = Some(now);
+				}
+			},
+			Some(_) => {
+				self.live_sample_stall_started_at = None;
+				self.last_live_sample_stall_log_at = None;
+			},
+			None => {
+				self.live_sample_stall_started_at = Some(now);
+			},
+		}
+
+		self.last_live_sample_cursor = Some(cursor);
+	}
+
+	fn send_rgb_sample_request(
+		&mut self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		respect_interval: bool,
+	) {
+		if respect_interval && self.last_rgb_request_at.elapsed() < self.rgb_request_interval {
+			return;
+		}
+
+		let request_id = self.rgb_send_sequence + 1;
+		let now = Instant::now();
+
+		self.rgb_send_sequence = request_id;
+
+		let Some(worker) = self.worker.as_ref() else {
+			return;
+		};
+
+		match worker.try_sample_rgb(monitor, point) {
+			Ok(()) => {
+				self.pending_rgb_request_id = Some(request_id);
+				self.pending_rgb_request_at = Some(now);
+
+				if tracing::enabled!(tracing::Level::TRACE) {
+					tracing::trace!(
+						request_id,
+						monitor_id = monitor.id,
+						point = ?point,
+						"RGB sample request sent."
+					);
+				}
+			},
+			Err(WorkerRequestSendError::Full) => {
+				self.rgb_send_full_count = self.rgb_send_full_count.saturating_add(1);
+
+				tracing::debug!(
+					request_id,
+					monitor_id = monitor.id,
+					point = ?point,
+					full_count = self.rgb_send_full_count,
+					"RGB sample request dropped: worker queue full."
+				);
+			},
+			Err(WorkerRequestSendError::Disconnected) => {
+				self.rgb_send_disconnected_count =
+					self.rgb_send_disconnected_count.saturating_add(1);
+
+				tracing::debug!(
+					request_id,
+					monitor_id = monitor.id,
+					point = ?point,
+					disconnected_count = self.rgb_send_disconnected_count,
+					"RGB sample request dropped: worker disconnected."
+				);
+			},
+		}
+
+		self.last_rgb_request_at = now;
+	}
+
+	fn send_loupe_sample_request(
+		&mut self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		width_px: u32,
+		height_px: u32,
+		respect_interval: bool,
+	) {
+		if respect_interval && self.last_loupe_request_at.elapsed() < self.loupe_request_interval {
+			return;
+		}
+
+		let request_id = self.loupe_send_sequence + 1;
+		let now = Instant::now();
+
+		self.loupe_send_sequence = request_id;
+
+		let Some(worker) = self.worker.as_ref() else {
+			return;
+		};
+
+		match worker.try_sample_loupe(monitor, point, width_px, height_px) {
+			Ok(()) => {
+				self.pending_loupe_request_id = Some(request_id);
+				self.pending_loupe_request_at = Some(now);
+
+				if tracing::enabled!(tracing::Level::TRACE) {
+					tracing::trace!(
+						request_id,
+						monitor_id = monitor.id,
+						point = ?point,
+						"Loupe sample request sent."
+					);
+				}
+			},
+			Err(WorkerRequestSendError::Full) => {
+				self.loupe_send_full_count = self.loupe_send_full_count.saturating_add(1);
+
+				tracing::debug!(
+					request_id,
+					monitor_id = monitor.id,
+					point = ?point,
+					full_count = self.loupe_send_full_count,
+					"Loupe sample request dropped: worker queue full."
+				);
+			},
+			Err(WorkerRequestSendError::Disconnected) => {
+				self.loupe_send_disconnected_count =
+					self.loupe_send_disconnected_count.saturating_add(1);
+
+				tracing::debug!(
+					request_id,
+					monitor_id = monitor.id,
+					point = ?point,
+					disconnected_count = self.loupe_send_disconnected_count,
+					"Loupe sample request dropped: worker disconnected."
+				);
+			},
+		}
+
+		self.last_loupe_request_at = now;
+	}
+
+	fn maybe_tick_worker_response_limiter(&mut self, resp: WorkerResponse) -> OverlayControl {
+		match resp {
+			WorkerResponse::SampledLoupe { monitor, point, rgb, patch } => {
+				self.handle_sampled_loupe_response(monitor, point, rgb, patch);
+
+				OverlayControl::Continue
+			},
+			WorkerResponse::SampledRgb { monitor, point, rgb } => {
+				let _ = point;
+
+				self.handle_sampled_rgb_response(monitor, rgb);
+
+				OverlayControl::Continue
+			},
+			WorkerResponse::CapturedFreeze { monitor, image } => {
+				self.handle_captured_freeze_response(monitor, image);
+
+				OverlayControl::Continue
+			},
+			WorkerResponse::Error(message) => {
+				self.restore_capture_windows_visibility();
+				self.state.set_error(message);
+				self.request_redraw_all();
+
+				OverlayControl::Continue
+			},
+			WorkerResponse::EncodedPng { png_bytes } => self.handle_encoded_png_response(png_bytes),
+		}
+	}
+
+	fn handle_sampled_loupe_response(
+		&mut self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		rgb: Option<crate::state::Rgb>,
+		patch: Option<RgbaImage>,
+	) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
+
+		self.state.rgb = rgb;
+		self.state.loupe = patch.map(|patch| crate::state::LoupeSample { center: point, patch });
+
+		if let Some(request_id) = self.pending_loupe_request_id.take()
+			&& let Some(sent_at) = self.pending_loupe_request_at
+		{
+			let latency = sent_at.elapsed().as_millis();
+
+			if tracing::enabled!(tracing::Level::TRACE) {
+				tracing::trace!(
+					request_id,
+					monitor_id = monitor.id,
+					lag_ms = latency,
+					"Loupe sample response latency."
+				);
+			}
+
+			self.pending_loupe_request_at = None;
+		}
+
+		self.redraw_for_monitor_and_current(monitor);
+	}
+
+	fn handle_sampled_rgb_response(
+		&mut self,
+		monitor: MonitorRect,
+		rgb: Option<crate::state::Rgb>,
+	) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
+
+		if let Some(request_id) = self.pending_rgb_request_id.take()
+			&& let Some(sent_at) = self.pending_rgb_request_at
+		{
+			let latency = sent_at.elapsed().as_millis();
+
+			if tracing::enabled!(tracing::Level::TRACE) {
+				tracing::trace!(
+					request_id,
+					monitor_id = monitor.id,
+					lag_ms = latency,
+					"RGB sample response latency."
+				);
+			}
+
+			self.pending_rgb_request_at = None;
+		}
+
+		self.state.rgb = rgb;
+
+		self.redraw_for_monitor_and_current(monitor);
+	}
+
+	fn redraw_for_monitor_and_current(&mut self, monitor: MonitorRect) {
+		let current_monitor = self.active_cursor_monitor();
+
+		if let Some(current_monitor) = current_monitor {
+			self.request_redraw_for_monitor(current_monitor);
+		}
+
+		if current_monitor != Some(monitor) {
+			self.request_redraw_for_monitor(monitor);
+		}
+	}
+
+	fn handle_captured_freeze_response(&mut self, monitor: MonitorRect, image: RgbaImage) {
+		if matches!(self.state.mode, OverlayMode::Frozen) && self.state.monitor == Some(monitor) {
+			self.state.finish_freeze(monitor, image);
+			self.restore_capture_windows_visibility();
+
+			self.toolbar_state.needs_redraw = true;
+
+			#[cfg(target_os = "macos")]
+			if self.toolbar_state.visible {
+				self.toolbar_window_warmup_redraws_remaining =
+					self.toolbar_window_warmup_redraws_remaining.max(TOOLBAR_WINDOW_WARMUP_REDRAWS);
+			}
+
+			if let Some(cursor) = self.state.cursor {
+				self.state.rgb = frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
+				self.state.loupe = frozen_loupe_patch(
+					&self.state.frozen_image,
+					Some(monitor),
+					cursor,
+					self.loupe_patch_width_px,
+					self.loupe_patch_height_px,
+				)
+				.map(|patch| crate::state::LoupeSample { center: cursor, patch });
+			}
+
+			self.request_redraw_for_monitor(monitor);
+			self.raise_hud_windows();
+
+			return;
+		}
+		if matches!(self.state.mode, OverlayMode::Live)
+			&& self.use_fake_hud_blur()
+			&& self.active_cursor_monitor() == Some(monitor)
+		{
+			self.state.live_bg_monitor = Some(monitor);
+			self.state.live_bg_image = Some(image);
+			self.state.live_bg_generation = self.state.live_bg_generation.wrapping_add(1);
+
+			self.request_redraw_for_monitor(monitor);
+		}
+	}
+
+	fn handle_encoded_png_response(&mut self, png_bytes: Vec<u8>) -> OverlayControl {
+		match write_png_bytes_to_clipboard(&png_bytes) {
+			Ok(()) => self.exit(OverlayExit::PngBytes(png_bytes)),
+			Err(err) => {
+				self.state.set_error(format!("{err:#}"));
+				self.request_redraw_all();
+
+				OverlayControl::Continue
+			},
+		}
 	}
 
 	pub fn handle_window_event(
@@ -1476,6 +1851,12 @@ impl OverlaySession {
 
 		self.state.alt_held = alt;
 
+		if !alt {
+			self.handle_alt_release();
+
+			return;
+		}
+
 		let Some(cursor) = self.state.cursor else {
 			return;
 		};
@@ -1483,9 +1864,37 @@ impl OverlaySession {
 			return;
 		};
 
-		if alt {
-			self.last_alt_press_at = Some(Instant::now());
+		self.last_alt_press_at = Some(Instant::now());
 
+		self.set_alt_loupe_window_visible(Some(monitor), true);
+
+		if self.use_fake_hud_blur() {
+			self.maybe_request_live_bg(monitor);
+		}
+
+		match self.state.mode {
+			OverlayMode::Live => self.request_live_alt_samples(monitor, cursor),
+			OverlayMode::Frozen => self.request_frozen_alt_samples(cursor),
+		}
+	}
+
+	fn handle_alt_release(&mut self) {
+		self.last_alt_press_at = None;
+		self.state.loupe = None;
+		self.loupe_outer_pos = None;
+
+		self.set_alt_loupe_window_visible(None, false);
+
+		if let Some(monitor) = self.active_cursor_monitor() {
+			self.request_redraw_for_monitor(monitor);
+		}
+	}
+
+	fn set_alt_loupe_window_visible(&mut self, monitor: Option<MonitorRect>, visible: bool) {
+		if visible {
+			let Some(monitor) = monitor else {
+				return;
+			};
 			let visible = self.update_loupe_window_position(monitor);
 
 			if let Some(loupe_window) = self.loupe_window.as_ref() {
@@ -1493,58 +1902,40 @@ impl OverlaySession {
 				loupe_window.window.request_redraw();
 			}
 
-			if self.use_fake_hud_blur() {
-				self.maybe_request_live_bg(monitor);
-			}
-
-			match self.state.mode {
-				OverlayMode::Live => {
-					if let Some(worker) = &self.worker {
-						worker.try_sample_rgb(monitor, cursor);
-
-						self.last_rgb_request_at = Instant::now();
-
-						worker.try_sample_loupe(
-							monitor,
-							cursor,
-							self.loupe_patch_width_px,
-							self.loupe_patch_height_px,
-						);
-
-						self.last_loupe_request_at = Instant::now();
-					}
-				},
-				OverlayMode::Frozen => {
-					if let (Some(frozen_monitor), Some(_)) =
-						(self.state.monitor, self.state.frozen_image.as_ref())
-					{
-						self.state.loupe = frozen_loupe_patch(
-							&self.state.frozen_image,
-							Some(frozen_monitor),
-							cursor,
-							self.loupe_patch_width_px,
-							self.loupe_patch_height_px,
-						)
-						.map(|patch| crate::state::LoupeSample { center: cursor, patch });
-
-						self.request_redraw_for_monitor(frozen_monitor);
-					}
-				},
-			}
-
 			return;
 		}
-
-		self.last_alt_press_at = None;
-		self.state.loupe = None;
-		self.loupe_outer_pos = None;
 
 		if let Some(loupe_window) = self.loupe_window.as_ref() {
 			loupe_window.window.set_visible(false);
 			loupe_window.window.request_redraw();
 		}
-		if let Some(monitor) = self.active_cursor_monitor() {
-			self.request_redraw_for_monitor(monitor);
+	}
+
+	fn request_live_alt_samples(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
+		self.send_rgb_sample_request(monitor, cursor, false);
+		self.send_loupe_sample_request(
+			monitor,
+			cursor,
+			self.loupe_patch_width_px,
+			self.loupe_patch_height_px,
+			false,
+		);
+	}
+
+	fn request_frozen_alt_samples(&mut self, cursor: GlobalPoint) {
+		if let (Some(frozen_monitor), Some(_)) =
+			(self.state.monitor, self.state.frozen_image.as_ref())
+		{
+			self.state.loupe = frozen_loupe_patch(
+				&self.state.frozen_image,
+				Some(frozen_monitor),
+				cursor,
+				self.loupe_patch_width_px,
+				self.loupe_patch_height_px,
+			)
+			.map(|patch| crate::state::LoupeSample { center: cursor, patch });
+
+			self.request_redraw_for_monitor(frozen_monitor);
 		}
 	}
 
@@ -1675,49 +2066,133 @@ impl OverlaySession {
 		position: PhysicalPosition<f64>,
 	) -> OverlayControl {
 		let old_monitor = self.active_cursor_monitor();
+		let now = Instant::now();
 		let Some((window_monitor, scale_factor)) =
 			self.windows.get(&window_id).map(|w| (w.monitor, w.window.scale_factor()))
 		else {
-			// Cursor events can be delivered to HUD/loupe windows on macOS. Fall back to the global
-			// cursor coordinates so tracking continues even when an auxiliary window is under the
-			// cursor.
-			let mouse = self.cursor_device.get_mouse();
-			let global = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
-			let Some(monitor) = self.monitor_at(global) else {
-				return OverlayControl::Continue;
-			};
+			return self.handle_cursor_moved_without_overlay_window(window_id, old_monitor);
+		};
+		// Prefer global OS coordinates and fall back to the event cursor when needed.
+		let local_x = (position.x / scale_factor).round() as i32;
+		let local_y = (position.y / scale_factor).round() as i32;
+		let event_global =
+			GlobalPoint::new(window_monitor.origin.x + local_x, window_monitor.origin.y + local_y);
+		let event_monitor = self.monitor_at(event_global);
 
-			self.update_cursor_state(monitor, global);
-			self.update_hud_window_position(monitor, global);
+		if let Some(event_monitor) = event_monitor {
+			self.last_event_cursor = Some((event_monitor, event_global));
+			self.last_event_cursor_at = Some(now);
+		}
 
-			if let Some(old_monitor) = old_monitor
-				&& old_monitor != monitor
-			{
-				self.request_redraw_for_monitor(old_monitor);
-			}
-
-			self.request_redraw_for_monitor(monitor);
-
+		let device_cursor = self.current_device_cursor();
+		let Some((monitor, global, source)) = self.resolve_live_cursor_point(device_cursor) else {
 			return OverlayControl::Continue;
 		};
-		// Prefer the OS/global cursor coordinates for cross-monitor correctness. Window-local cursor
-		// events can be in a different coordinate space (logical vs physical), especially across
-		// monitors with different scale factors.
+		let old_cursor = self.state.cursor;
+
+		self.trace_cursor_moved_with_mapping(
+			window_id,
+			position,
+			device_cursor,
+			event_global,
+			old_cursor,
+			monitor,
+			global,
+			source,
+		);
+		self.update_cursor_for_live_move(monitor, global);
+		self.request_cursor_move_samples(monitor, global);
+
+		if let Some(old_monitor) = old_monitor
+			&& old_monitor != monitor
+		{
+			self.request_redraw_for_monitor(old_monitor);
+		}
+
+		self.request_redraw_for_monitor(monitor);
+
+		OverlayControl::Continue
+	}
+
+	fn handle_cursor_moved_without_overlay_window(
+		&mut self,
+		window_id: WindowId,
+		old_monitor: Option<MonitorRect>,
+	) -> OverlayControl {
 		let mouse = self.cursor_device.get_mouse();
-		let global_os = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
-		let (monitor, global) = if let Some(monitor) = self.monitor_at(global_os) {
-			(monitor, global_os)
-		} else {
-			let local_x = (position.x / scale_factor).round() as i32;
-			let local_y = (position.y / scale_factor).round() as i32;
-			let global = GlobalPoint::new(
-				window_monitor.origin.x + local_x,
-				window_monitor.origin.y + local_y,
-			);
-
-			(window_monitor, global)
+		let raw = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
+		let Some((monitor, global, source)) = self.resolve_device_cursor_point(raw) else {
+			return OverlayControl::Continue;
 		};
+		let old_cursor = self.state.cursor;
 
+		if tracing::enabled!(tracing::Level::TRACE) {
+			tracing::trace!(
+				window_id = ?window_id,
+				window_known = false,
+				old_cursor = ?old_cursor,
+				device_cursor = ?global,
+				event_cursor = ?global,
+				source = source.as_str(),
+				"CursorMoved (no overlay window mapping)."
+			);
+		}
+
+		self.update_cursor_state(monitor, global);
+		self.update_hud_window_position(monitor, global);
+
+		if let Some(old_monitor) = old_monitor
+			&& old_monitor != monitor
+		{
+			self.request_redraw_for_monitor(old_monitor);
+		}
+
+		self.request_redraw_for_monitor(monitor);
+
+		OverlayControl::Continue
+	}
+
+	fn current_device_cursor(&self) -> GlobalPoint {
+		let mouse = self.cursor_device.get_mouse();
+
+		GlobalPoint::new(mouse.coords.0, mouse.coords.1)
+	}
+
+	fn trace_cursor_moved_with_mapping(
+		&self,
+		window_id: WindowId,
+		position: PhysicalPosition<f64>,
+		device_cursor: GlobalPoint,
+		event_global: GlobalPoint,
+		old_cursor: Option<GlobalPoint>,
+		monitor: MonitorRect,
+		global: GlobalPoint,
+		source: DeviceCursorPointSource,
+	) {
+		if !tracing::enabled!(tracing::Level::TRACE) {
+			return;
+		}
+
+		let delta_x = global.x.abs_diff(old_cursor.map_or(global.x, |point| point.x));
+		let delta_y = global.y.abs_diff(old_cursor.map_or(global.y, |point| point.y));
+
+		tracing::trace!(
+			window_id = ?window_id,
+			window_known = true,
+			window_position = ?position,
+			old_cursor = ?old_cursor,
+			device_cursor = ?device_cursor,
+			event_cursor = ?event_global,
+			source = source.as_str(),
+			monitor_id = monitor.id,
+			cursor_delta_x = delta_x,
+			cursor_delta_y = delta_y,
+			"CursorMoved coordinate source: {}.",
+			source.as_str()
+		);
+	}
+
+	fn update_cursor_for_live_move(&mut self, monitor: MonitorRect, global: GlobalPoint) {
 		self.update_cursor_state(monitor, global);
 		self.update_hud_window_position(monitor, global);
 
@@ -1729,38 +2204,14 @@ impl OverlaySession {
 
 			self.maybe_request_live_bg(monitor);
 		}
-		if matches!(self.state.mode, OverlayMode::Live)
-			&& self.last_rgb_request_at.elapsed() >= self.rgb_request_interval
-			&& let Some(worker) = &self.worker
-		{
-			worker.try_sample_rgb(monitor, global);
+	}
 
-			self.last_rgb_request_at = Instant::now();
-		}
-		if matches!(self.state.mode, OverlayMode::Live)
-			&& self.state.alt_held
-			&& self.last_loupe_request_at.elapsed() >= self.loupe_request_interval
-			&& let Some(worker) = &self.worker
-		{
-			worker.try_sample_loupe(
-				monitor,
-				global,
-				self.loupe_patch_width_px,
-				self.loupe_patch_height_px,
-			);
-
-			self.last_loupe_request_at = Instant::now();
+	fn request_cursor_move_samples(&mut self, monitor: MonitorRect, global: GlobalPoint) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
 		}
 
-		if let Some(old_monitor) = old_monitor
-			&& old_monitor != monitor
-		{
-			self.request_redraw_for_monitor(old_monitor);
-		}
-
-		self.request_redraw_for_monitor(monitor);
-
-		OverlayControl::Continue
+		self.request_live_samples_for_cursor(monitor, global);
 	}
 
 	fn handle_left_mouse_input(
@@ -2339,7 +2790,49 @@ impl OverlaySession {
 			}
 
 			if let Some(worker) = &self.worker {
-				worker.try_sample_rgb(monitor, cursor);
+				let request_id = self.rgb_send_sequence + 1;
+				let now = Instant::now();
+
+				self.rgb_send_sequence = request_id;
+
+				match worker.try_sample_rgb(monitor, cursor) {
+					Ok(()) => {
+						self.pending_rgb_request_id = Some(request_id);
+						self.pending_rgb_request_at = Some(now);
+
+						if tracing::enabled!(tracing::Level::TRACE) {
+							tracing::trace!(
+								request_id,
+								monitor_id = monitor.id,
+								point = ?cursor,
+								"RGB sample request sent."
+							);
+						}
+					},
+					Err(WorkerRequestSendError::Full) => {
+						self.rgb_send_full_count = self.rgb_send_full_count.saturating_add(1);
+
+						tracing::debug!(
+							request_id,
+							monitor_id = monitor.id,
+							point = ?cursor,
+							full_count = self.rgb_send_full_count,
+							"RGB sample request dropped: worker queue full."
+						);
+					},
+					Err(WorkerRequestSendError::Disconnected) => {
+						self.rgb_send_disconnected_count =
+							self.rgb_send_disconnected_count.saturating_add(1);
+
+						tracing::debug!(
+							request_id,
+							monitor_id = monitor.id,
+							point = ?cursor,
+							disconnected_count = self.rgb_send_disconnected_count,
+							"RGB sample request dropped: worker disconnected."
+						);
+					},
+				}
 
 				self.last_rgb_request_at = Instant::now();
 			}
@@ -2374,6 +2867,91 @@ impl OverlaySession {
 			.values()
 			.find(|window| window.monitor.contains(cursor))
 			.map(|window| window.monitor)
+	}
+
+	fn resolve_device_cursor_point(
+		&self,
+		raw: GlobalPoint,
+	) -> Option<(MonitorRect, GlobalPoint, DeviceCursorPointSource)> {
+		if let Some(monitor) = self.monitor_at(raw) {
+			return Some((monitor, raw, DeviceCursorPointSource::DevicePoints));
+		}
+
+		for monitor in self.windows.values().map(|window| window.monitor) {
+			let sf = f64::from(monitor.scale_factor()).max(1.0);
+			let origin_px_x = (monitor.origin.x as f64 * sf).round() as i64;
+			let origin_px_y = (monitor.origin.y as f64 * sf).round() as i64;
+			let size_px_x = (monitor.width as f64 * sf).round() as i64;
+			let size_px_y = (monitor.height as f64 * sf).round() as i64;
+			let local_px_x = (raw.x as i64).saturating_sub(origin_px_x);
+			let local_px_y = (raw.y as i64).saturating_sub(origin_px_y);
+
+			if local_px_x < 0
+				|| local_px_y < 0
+				|| local_px_x >= size_px_x
+				|| local_px_y >= size_px_y
+			{
+				continue;
+			}
+
+			let local_points_x = (local_px_x as f64 / sf).round() as i64;
+			let local_points_y = (local_px_y as f64 / sf).round() as i64;
+			let local_points_x = match i32::try_from(local_points_x) {
+				Ok(value) => value,
+				Err(_) => continue,
+			};
+			let local_points_y = match i32::try_from(local_points_y) {
+				Ok(value) => value,
+				Err(_) => continue,
+			};
+			let candidate = GlobalPoint::new(
+				monitor.origin.x.saturating_add(local_points_x),
+				monitor.origin.y.saturating_add(local_points_y),
+			);
+
+			if monitor.contains(candidate) {
+				return Some((monitor, candidate, DeviceCursorPointSource::DevicePixelsFallback));
+			}
+		}
+
+		None
+	}
+
+	fn resolve_live_cursor_point(
+		&self,
+		raw_device: GlobalPoint,
+	) -> Option<(MonitorRect, GlobalPoint, DeviceCursorPointSource)> {
+		let Some((device_monitor, device_global, device_source)) =
+			self.resolve_device_cursor_point(raw_device)
+		else {
+			let Some((monitor, global)) = self.last_event_cursor else {
+				return None;
+			};
+			let Some(event_cursor_at) = self.last_event_cursor_at else {
+				return None;
+			};
+
+			if event_cursor_at.elapsed() > LIVE_EVENT_CURSOR_CACHE_TTL {
+				return None;
+			}
+
+			return Some((monitor, global, DeviceCursorPointSource::EventRecentFallback));
+		};
+
+		if let (Some(event_cursor_at), Some((event_monitor, event_global))) =
+			(self.last_event_cursor_at, self.last_event_cursor)
+			&& self.state.cursor == Some(device_global)
+			&& event_global != device_global
+			&& event_cursor_at.elapsed() <= LIVE_EVENT_CURSOR_CACHE_TTL
+		{
+			return Some((
+				event_monitor,
+				event_global,
+				DeviceCursorPointSource::EventRecentFallback,
+			));
+		}
+
+		Some((device_monitor, device_global, device_source))
 	}
 
 	fn active_cursor_monitor(&self) -> Option<MonitorRect> {
@@ -4788,7 +5366,7 @@ impl WindowRenderer {
 		let mut fill = hud_body_fill_srgba8(theme, false);
 		let tint_hue = hud_tint_hue.clamp(0.0, 1.0);
 		let tint_saturation = 1.0;
-		let (_, _, base_lightness) = rgb_to_hsl(Rgb::new(fill[0], fill[1], fill[2]));
+		let (_, _, base_lightness) = rgb_to_hsl(crate::state::Rgb::new(fill[0], fill[1], fill[2]));
 		let tinted_target = hsl_to_rgb(tint_hue, tint_saturation, base_lightness);
 
 		fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
@@ -5148,7 +5726,7 @@ fn srgb8_to_linear_f32(x: u8) -> f32 {
 	if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 }
 
-fn rgb_to_hsl(rgb: Rgb) -> (f32, f32, f32) {
+fn rgb_to_hsl(rgb: crate::state::Rgb) -> (f32, f32, f32) {
 	let red = f32::from(rgb.r) / 255.0;
 	let green = f32::from(rgb.g) / 255.0;
 	let blue = f32::from(rgb.b) / 255.0;
@@ -5179,7 +5757,7 @@ fn rgb_to_hsl(rgb: Rgb) -> (f32, f32, f32) {
 	(hue, saturation, lightness)
 }
 
-fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> Rgb {
+fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> crate::state::Rgb {
 	let hue = hue.clamp(0.0, 1.0);
 	let saturation = saturation.clamp(0.0, 1.0);
 	let lightness = lightness.clamp(0.0, 1.0);
@@ -5187,7 +5765,7 @@ fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> Rgb {
 	if saturation <= 0.0 {
 		let gray = (lightness * 255.0).round().clamp(0.0, 255.0) as u8;
 
-		return Rgb::new(gray, gray, gray);
+		return crate::state::Rgb::new(gray, gray, gray);
 	}
 
 	let q = if lightness < 0.5 {
@@ -5200,7 +5778,7 @@ fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> Rgb {
 	let green = hue_to_rgb(p, q, hue);
 	let blue = hue_to_rgb(p, q, hue - 1.0 / 3.0);
 
-	Rgb::new(
+	crate::state::Rgb::new(
 		(red * 255.0).round().clamp(0.0, 255.0) as u8,
 		(green * 255.0).round().clamp(0.0, 255.0) as u8,
 		(blue * 255.0).round().clamp(0.0, 255.0) as u8,
@@ -5262,7 +5840,7 @@ fn frozen_rgb(
 	image: &Option<RgbaImage>,
 	monitor: Option<MonitorRect>,
 	point: GlobalPoint,
-) -> Option<Rgb> {
+) -> Option<crate::state::Rgb> {
 	let Some(image) = image else {
 		return None;
 	};
@@ -5270,7 +5848,7 @@ fn frozen_rgb(
 	let (x, y) = monitor.local_u32_pixels(point)?;
 	let pixel = image.get_pixel_checked(x, y)?;
 
-	Some(Rgb::new(pixel.0[0], pixel.0[1], pixel.0[2]))
+	Some(crate::state::Rgb::new(pixel.0[0], pixel.0[1], pixel.0[2]))
 }
 
 fn frozen_loupe_patch(
