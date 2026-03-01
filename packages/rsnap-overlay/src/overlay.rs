@@ -162,7 +162,6 @@ enum DeviceCursorPointSource {
 	DevicePoints,
 	DevicePixelsFallback,
 	EventRecentFallback,
-	Event,
 }
 impl DeviceCursorPointSource {
 	const fn as_str(self) -> &'static str {
@@ -170,7 +169,6 @@ impl DeviceCursorPointSource {
 			Self::DevicePoints => "device_points",
 			Self::DevicePixelsFallback => "device_pixels_fallback",
 			Self::EventRecentFallback => "event_recent_fallback",
-			Self::Event => "event",
 		}
 	}
 }
@@ -2095,17 +2093,18 @@ impl OverlaySession {
 			return OverlayControl::Continue;
 		};
 		let old_cursor = self.state.cursor;
-
-		self.trace_cursor_moved_with_mapping(
+		let trace = CursorMoveTrace {
 			window_id,
 			position,
+			old_cursor,
 			device_cursor,
 			event_global,
-			old_cursor,
 			monitor,
 			global,
 			source,
-		);
+		};
+
+		self.trace_cursor_moved_with_mapping(trace);
 		self.update_cursor_for_live_move(monitor, global);
 		self.request_cursor_move_samples(monitor, global);
 
@@ -2164,37 +2163,29 @@ impl OverlaySession {
 		GlobalPoint::new(mouse.coords.0, mouse.coords.1)
 	}
 
-	fn trace_cursor_moved_with_mapping(
-		&self,
-		window_id: WindowId,
-		position: PhysicalPosition<f64>,
-		device_cursor: GlobalPoint,
-		event_global: GlobalPoint,
-		old_cursor: Option<GlobalPoint>,
-		monitor: MonitorRect,
-		global: GlobalPoint,
-		source: DeviceCursorPointSource,
-	) {
+	fn trace_cursor_moved_with_mapping(&self, trace: CursorMoveTrace) {
 		if !tracing::enabled!(tracing::Level::TRACE) {
 			return;
 		}
 
-		let delta_x = global.x.abs_diff(old_cursor.map_or(global.x, |point| point.x));
-		let delta_y = global.y.abs_diff(old_cursor.map_or(global.y, |point| point.y));
+		let delta_x =
+			trace.global.x.abs_diff(trace.old_cursor.map_or(trace.global.x, |point| point.x));
+		let delta_y =
+			trace.global.y.abs_diff(trace.old_cursor.map_or(trace.global.y, |point| point.y));
 
 		tracing::trace!(
-			window_id = ?window_id,
+			window_id = ?trace.window_id,
 			window_known = true,
-			window_position = ?position,
-			old_cursor = ?old_cursor,
-			device_cursor = ?device_cursor,
-			event_cursor = ?event_global,
-			source = source.as_str(),
-			monitor_id = monitor.id,
+			window_position = ?trace.position,
+			old_cursor = ?trace.old_cursor,
+			device_cursor = ?trace.device_cursor,
+			event_cursor = ?trace.event_global,
+			source = trace.source.as_str(),
+			monitor_id = trace.monitor.id,
 			cursor_delta_x = delta_x,
 			cursor_delta_y = delta_y,
 			"CursorMoved coordinate source: {}.",
-			source.as_str()
+			trace.source.as_str()
 		);
 	}
 
@@ -2930,12 +2921,8 @@ impl OverlaySession {
 		let Some((device_monitor, device_global, device_source)) =
 			self.resolve_device_cursor_point(raw_device)
 		else {
-			let Some((monitor, global)) = self.last_event_cursor else {
-				return None;
-			};
-			let Some(event_cursor_at) = self.last_event_cursor_at else {
-				return None;
-			};
+			let (monitor, global) = self.last_event_cursor?;
+			let event_cursor_at = self.last_event_cursor_at?;
 
 			if event_cursor_at.elapsed() > LIVE_EVENT_CURSOR_CACHE_TTL {
 				return None;
@@ -3200,6 +3187,18 @@ impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
 	}
+}
+
+#[derive(Clone, Copy)]
+struct CursorMoveTrace {
+	window_id: WindowId,
+	position: PhysicalPosition<f64>,
+	old_cursor: Option<GlobalPoint>,
+	device_cursor: GlobalPoint,
+	event_global: GlobalPoint,
+	monitor: MonitorRect,
+	global: GlobalPoint,
+	source: DeviceCursorPointSource,
 }
 
 #[derive(Clone, Copy, Debug)]
