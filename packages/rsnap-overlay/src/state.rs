@@ -1,9 +1,76 @@
+use std::sync::Arc;
+use std::time::Instant;
+
 use image::RgbaImage;
 
 #[derive(Debug)]
 pub struct LoupeSample {
 	pub center: GlobalPoint,
 	pub patch: RgbaImage,
+}
+
+#[derive(Debug)]
+pub struct MonitorImageSnapshot {
+	pub captured_at: Instant,
+	pub monitor: MonitorRect,
+	pub image: Arc<RgbaImage>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowRect {
+	pub x: i64,
+	pub y: i64,
+	pub width: i64,
+	pub height: i64,
+}
+
+#[derive(Debug)]
+pub struct WindowListSnapshot {
+	pub captured_at: Instant,
+	pub windows: Arc<Vec<WindowRect>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RectPoints {
+	pub x: u32,
+	pub y: u32,
+	pub width: u32,
+	pub height: u32,
+}
+impl RectPoints {
+	#[must_use]
+	pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
+		Self { x, y, width, height }
+	}
+
+	#[must_use]
+	pub fn is_empty(&self) -> bool {
+		self.width == 0 || self.height == 0
+	}
+
+	#[must_use]
+	pub fn contains(&self, point: (u32, u32)) -> bool {
+		point.0 >= self.x
+			&& point.1 >= self.y
+			&& point.0 < self.x.saturating_add(self.width)
+			&& point.1 < self.y.saturating_add(self.height)
+	}
+
+	#[must_use]
+	pub fn scaled(self, scale_factor: f32) -> Self {
+		Self {
+			x: (self.x as f32 * scale_factor).round() as u32,
+			y: (self.y as f32 * scale_factor).round() as u32,
+			width: (self.width as f32 * scale_factor).round() as u32,
+			height: (self.height as f32 * scale_factor).round() as u32,
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MonitorRectPoints {
+	pub monitor_id: u32,
+	pub rect: RectPoints,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -82,6 +149,76 @@ impl MonitorRect {
 
 		Some((px, py))
 	}
+
+	#[must_use]
+	pub fn clip_global_rect_i64(
+		&self,
+		left: i64,
+		top: i64,
+		right: i64,
+		bottom: i64,
+	) -> Option<RectPoints> {
+		let monitor_left = i64::from(self.origin.x);
+		let monitor_top = i64::from(self.origin.y);
+		let monitor_right = monitor_left.saturating_add(i64::from(self.width));
+		let monitor_bottom = monitor_top.saturating_add(i64::from(self.height));
+		let clipped_left = left.max(monitor_left);
+		let clipped_top = top.max(monitor_top);
+		let clipped_right = right.min(monitor_right);
+		let clipped_bottom = bottom.min(monitor_bottom);
+
+		if clipped_left >= clipped_right || clipped_top >= clipped_bottom {
+			return None;
+		}
+
+		let rect = RectPoints::new(
+			u32::try_from(clipped_left - monitor_left).ok()?,
+			u32::try_from(clipped_top - monitor_top).ok()?,
+			u32::try_from(clipped_right - clipped_left).ok()?,
+			u32::try_from(clipped_bottom - clipped_top).ok()?,
+		);
+
+		if rect.is_empty() {
+			return None;
+		}
+
+		Some(rect)
+	}
+
+	#[must_use]
+	pub fn clip_global_rect(
+		&self,
+		left: i32,
+		top: i32,
+		right: i32,
+		bottom: i32,
+	) -> Option<RectPoints> {
+		self.clip_global_rect_i64(
+			i64::from(left),
+			i64::from(top),
+			i64::from(right),
+			i64::from(bottom),
+		)
+	}
+
+	#[must_use]
+	pub fn local_rect_from_points(
+		&self,
+		first: GlobalPoint,
+		second: GlobalPoint,
+	) -> Option<RectPoints> {
+		let left = first.x.min(second.x);
+		let top = first.y.min(second.y);
+		let right = first.x.max(second.x);
+		let bottom = first.y.max(second.y);
+
+		self.clip_global_rect(left, top, right, bottom)
+	}
+
+	#[must_use]
+	pub fn local_rect_to_pixels(&self, rect: RectPoints) -> RectPoints {
+		rect.scaled(self.scale_factor())
+	}
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -96,6 +233,9 @@ pub(crate) struct OverlayState {
 	pub cursor: Option<GlobalPoint>,
 	pub rgb: Option<Rgb>,
 	pub monitor: Option<MonitorRect>,
+	pub hovered_window_rect: Option<MonitorRectPoints>,
+	pub drag_rect: Option<MonitorRectPoints>,
+	pub frozen_capture_rect: Option<RectPoints>,
 	pub live_bg_monitor: Option<MonitorRect>,
 	pub live_bg_image: Option<RgbaImage>,
 	pub live_bg_generation: u64,
@@ -113,6 +253,9 @@ impl OverlayState {
 			cursor: None,
 			rgb: None,
 			monitor: None,
+			hovered_window_rect: None,
+			drag_rect: None,
+			frozen_capture_rect: None,
 			live_bg_monitor: None,
 			live_bg_image: None,
 			live_bg_generation: 0,
@@ -160,7 +303,7 @@ impl OverlayState {
 
 #[cfg(test)]
 mod tests {
-	use crate::state::{GlobalPoint, MonitorRect};
+	use crate::state::{GlobalPoint, MonitorRect, RectPoints};
 
 	#[test]
 	fn monitor_contains_and_local_coords() {
@@ -179,5 +322,24 @@ mod tests {
 		assert_eq!(monitor.local_u32(GlobalPoint::new(-100, 50)), Some((0, 0)));
 		assert_eq!(monitor.local_u32(GlobalPoint::new(-1, 51)), Some((99, 1)));
 		assert_eq!(monitor.local_u32(GlobalPoint::new(100, 50)), None);
+	}
+
+	#[test]
+	fn local_rect_and_pixels() {
+		let monitor = MonitorRect {
+			id: 0,
+			origin: GlobalPoint::new(-100, -100),
+			width: 300,
+			height: 200,
+			scale_factor_x1000: 2_000,
+		};
+		let rect = monitor.clip_global_rect(-90, -80, 40, 50).expect("clipped local rect");
+
+		assert_eq!(rect, RectPoints::new(10, 20, 130, 130));
+		assert!(rect.contains((20, 30)));
+
+		let pixel_rect = monitor.local_rect_to_pixels(rect);
+
+		assert_eq!(pixel_rect, RectPoints::new(20, 40, 260, 260));
 	}
 }

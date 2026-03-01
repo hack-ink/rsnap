@@ -2,6 +2,12 @@
 
 Menubar-only app (tray icon + menu) that triggers `rsnap-overlay` capture and writes the result to the clipboard.
 
+## Capture platform support
+
+- Live sampling: **macOS 12.3+** via ScreenCaptureKit (`SCStream`).
+- Freeze/export remains on `xcap` for now.
+- Windows is planned (minimum Windows 10) and is not implemented yet.
+
 ## Hotkey
 
 - Global hotkey: `Alt+X`
