@@ -13,27 +13,35 @@ repository  = "https://github.com/hack-ink/rsnap"
 version     = "0.1.0"
 
 [workspace.dependencies]
-arboard            = { version = "3.6" }
-color-eyre         = { version = "0.6" }
-device_query       = { version = "4.0" }
-directories        = { version = "6.0" }
-egui               = { version = "0.33" }
-egui-phosphor      = { version = "0.11" }
-egui-wgpu          = { version = "0.33" }
-egui-winit         = { version = "0.33" }
-global-hotkey      = { version = "0.7", features = ["tracing"] }
-image              = { version = "0.25", default-features = false, features = ["png"] }
-objc               = { version = "0.2" }
-pollster           = { version = "0.4" }
-serde              = { version = "1.0", features = ["derive"] }
-serde_json         = { version = "1.0" }
-thiserror          = { version = "2.0" }
-tracing            = { version = "0.1" }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tray-icon          = { version = "0.21" }
-wgpu               = { version = "27.0" }
-winit              = { version = "0.30", features = ["rwh_06"] }
-xcap               = { version = "0.8" }
+arboard                  = { version = "3.6" }
+block2                   = { version = "0.6.2" }
+color-eyre               = { version = "0.6" }
+device_query             = { version = "4.0" }
+directories              = { version = "6.0" }
+egui                     = { version = "0.33" }
+egui-phosphor            = { version = "0.11" }
+egui-wgpu                = { version = "0.33" }
+egui-winit               = { version = "0.33" }
+global-hotkey            = { version = "0.7", features = ["tracing"] }
+image                    = { version = "0.25", default-features = false, features = ["png"] }
+objc                     = { version = "0.2" }
+objc2                    = { version = "0.6.4" }
+objc2-core-foundation    = { version = "0.3.2" }
+objc2-core-graphics      = { version = "0.3.2" }
+objc2-core-media         = { version = "0.3.2" }
+objc2-core-video         = { version = "0.3.2" }
+objc2-foundation         = { version = "0.3.2" }
+objc2-screen-capture-kit = { version = "0.3.2" }
+pollster                 = { version = "0.4" }
+serde                    = { version = "1.0", features = ["derive"] }
+serde_json               = { version = "1.0" }
+thiserror                = { version = "2.0" }
+tracing                  = { version = "0.1" }
+tracing-subscriber       = { version = "0.3", features = ["env-filter"] }
+tray-icon                = { version = "0.21" }
+wgpu                     = { version = "27.0" }
+winit                    = { version = "0.30", features = ["rwh_06"] }
+xcap                     = { version = "0.8" }
 
 rsnap-overlay = { version = "0.1.0", path = "packages/rsnap-overlay" }
 

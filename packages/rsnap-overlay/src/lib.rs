@@ -1,4 +1,6 @@
 mod backend;
+#[cfg(target_os = "macos")]
+mod live_frame_stream_macos;
 mod overlay;
 mod png;
 mod state;
