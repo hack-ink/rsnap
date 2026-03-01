@@ -1023,8 +1023,11 @@ impl OverlaySession {
 			return;
 		}
 
-		// Keep this loop alive even if CursorMoved events are sparse.
-		self.schedule_egui_repaint_after(Duration::from_millis(16));
+		#[cfg(not(target_os = "macos"))]
+		{
+			// Keep this loop alive even if CursorMoved events are sparse on non-macOS.
+			self.schedule_egui_repaint_after(Duration::from_millis(16));
+		}
 
 		let mouse = self.cursor_device.get_mouse();
 		let raw = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
@@ -6049,6 +6052,7 @@ fn macos_configure_hud_window(
 
 		let _: () = msg_send![ns_window, setOpaque: false];
 		let _: () = msg_send![ns_window, setHasShadow: false];
+		let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
 		let _: () = msg_send![ns_window, setLevel: MACOS_HUD_WINDOW_LEVEL];
 		let sharing_type_none = 0_u64;
 		let _: () = msg_send![ns_window, setSharingType: sharing_type_none];
