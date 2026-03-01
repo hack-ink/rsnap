@@ -689,6 +689,9 @@ impl OverlaySession {
 
 			let _ = window.set_cursor_hittest(true);
 
+			#[cfg(target_os = "macos")]
+			macos_configure_overlay_window_mouse_moved_events(window.as_ref());
+
 			window.request_redraw();
 			window.focus_window();
 
@@ -5992,6 +5995,31 @@ fn global_to_local(cursor: GlobalPoint, monitor: MonitorRect) -> Option<Pos2> {
 	let (x, y) = monitor.local_u32(cursor)?;
 
 	Some(Pos2::new(x as f32, y as f32))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_configure_overlay_window_mouse_moved_events(window: &winit::window::Window) {
+	use objc::runtime::{Object, YES};
+
+	use objc::{msg_send, sel, sel_impl};
+
+	let Ok(handle) = window.window_handle() else {
+		return;
+	};
+	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+		return;
+	};
+	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
+
+	unsafe {
+		let ns_window: *mut Object = msg_send![ns_view, window];
+
+		if ns_window.is_null() {
+			return;
+		}
+
+		let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
+	}
 }
 
 #[cfg(target_os = "macos")]
