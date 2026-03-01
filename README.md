@@ -22,6 +22,8 @@ Pure-Rust menubar screenshot prototype (macOS-first).
 - Left click freezes the active monitor as a fullscreen screenshot.
 - Space copies the frozen screenshot PNG to the clipboard and exits.
 - Esc cancels and exits.
+- Glass HUD with configurable blur, tint, and hue controls.
+- Alt-triggered loupe sample and frozen-mode toolbar for quick action access.
 
 ## Status
 
@@ -43,10 +45,22 @@ cargo run -p rsnap
 
 ### macOS permissions
 
-`rsnap` requires **Screen Recording** permission to capture other apps/windows.
+`rsnap` currently relies on **Screen Recording** permission to capture other apps/windows.
 
 - Go to `System Settings` -> `Privacy & Security` -> `Screen Recording`.
 - Enable `rsnap` (the built `.app`), then relaunch the app.
+
+### HUD settings behavior
+
+- HUD controls are in Settings → Overlay:
+  - Opacity (`0..100`, default `75`)
+  - Blur (`0..100`, default `25`)
+  - Tint (`0..100`, default `0`)
+  - Hue (`0..360`, system-blue default)
+- Tint is applied as hue-shift intensity (0 = no tint, 100 = full tint), while Hue sets
+  target color.
+- Numeric entry accepts plain integers for percent/degree fields and updates immediately.
+- Same HUD style settings are used by main HUD, loupe, and frozen toolbar.
 
 ## Development
 
