@@ -73,6 +73,7 @@ const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
 const HUD_PILL_CORNER_RADIUS_POINTS: u8 = 18;
 const TOOLBAR_DRAG_START_THRESHOLD_PX: f32 = 6.0;
 const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 30;
+const LOUPE_WINDOW_WARMUP_REDRAWS: u8 = 30;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
@@ -343,6 +344,8 @@ pub struct OverlaySession {
 	toolbar_pointer_local: Option<Pos2>,
 	toolbar_window_visible: bool,
 	toolbar_window_warmup_redraws_remaining: u8,
+	loupe_window_visible: bool,
+	loupe_window_warmup_redraws_remaining: u8,
 }
 impl OverlaySession {
 	#[must_use]
@@ -413,6 +416,8 @@ impl OverlaySession {
 			toolbar_pointer_local: None,
 			toolbar_window_visible: false,
 			toolbar_window_warmup_redraws_remaining: 0,
+			loupe_window_visible: false,
+			loupe_window_warmup_redraws_remaining: 0,
 		}
 	}
 
@@ -611,6 +616,8 @@ impl OverlaySession {
 		self.toolbar_left_button_down = false;
 		self.toolbar_left_button_down_prev = false;
 		self.toolbar_pointer_local = None;
+		self.loupe_window_visible = false;
+		self.loupe_window_warmup_redraws_remaining = 0;
 	}
 
 	fn create_overlay_windows(
@@ -886,6 +893,53 @@ impl OverlaySession {
 		}
 	}
 
+	fn request_redraw_loupe_window(&self) {
+		if let Some(loupe) = self.loupe_window.as_ref() {
+			loupe.window.request_redraw();
+		}
+	}
+
+	fn maybe_tick_loupe_window_warmup_redraw(&mut self) {
+		if self.loupe_window_warmup_redraws_remaining == 0 {
+			return;
+		}
+		if !matches!(self.state.mode, OverlayMode::Frozen)
+			|| !self.loupe_window_visible
+			|| self.state.frozen_image.is_none()
+			|| self.state.monitor.is_none()
+		{
+			self.loupe_window_warmup_redraws_remaining = 0;
+
+			return;
+		}
+
+		self.loupe_window_warmup_redraws_remaining =
+			self.loupe_window_warmup_redraws_remaining.saturating_sub(1);
+
+		self.request_redraw_loupe_window();
+		self.schedule_egui_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
+	}
+
+	fn maybe_start_loupe_window_warmup_redraw(&mut self) {
+		if self.loupe_window_warmup_redraws_remaining > 0 {
+			return;
+		}
+		if !matches!(self.state.mode, OverlayMode::Frozen)
+			|| !self.state.alt_held
+			|| !self.loupe_window_visible
+			|| self.state.frozen_image.is_none()
+			|| self.state.monitor.is_none()
+		{
+			return;
+		}
+
+		self.loupe_window_warmup_redraws_remaining = LOUPE_WINDOW_WARMUP_REDRAWS;
+	}
+
+	fn reset_loupe_window_warmup_redraws(&mut self) {
+		self.loupe_window_warmup_redraws_remaining = 0;
+	}
+
 	pub fn about_to_wait(&mut self) -> OverlayControl {
 		self.maybe_request_keepalive_redraw();
 
@@ -895,6 +949,7 @@ impl OverlaySession {
 
 		self.maybe_keep_frozen_capture_redraw();
 		self.maybe_tick_toolbar_window_warmup_redraw();
+		self.maybe_tick_loupe_window_warmup_redraw();
 		self.maybe_tick_live_cursor_tracking();
 		self.maybe_tick_live_sampling();
 		self.maybe_tick_frozen_cursor_tracking();
@@ -1435,6 +1490,7 @@ impl OverlaySession {
 				.map(|patch| crate::state::LoupeSample { center: cursor, patch });
 			}
 
+			self.maybe_start_loupe_window_warmup_redraw();
 			self.request_redraw_for_monitor(monitor);
 			self.raise_hud_windows();
 
@@ -1900,6 +1956,17 @@ impl OverlaySession {
 				return;
 			};
 			let visible = self.update_loupe_window_position(monitor);
+			let was_visible = self.loupe_window_visible;
+
+			self.loupe_window_visible = visible;
+
+			if visible {
+				if !was_visible {
+					self.maybe_start_loupe_window_warmup_redraw();
+				}
+			} else {
+				self.reset_loupe_window_warmup_redraws();
+			}
 
 			if let Some(loupe_window) = self.loupe_window.as_ref() {
 				loupe_window.window.set_visible(visible);
@@ -1908,6 +1975,10 @@ impl OverlaySession {
 
 			return;
 		}
+
+		self.loupe_window_visible = false;
+
+		self.reset_loupe_window_warmup_redraws();
 
 		if let Some(loupe_window) = self.loupe_window.as_ref() {
 			loupe_window.window.set_visible(false);
@@ -2533,15 +2604,18 @@ impl OverlaySession {
 	}
 
 	fn handle_loupe_redraw_requested(&mut self) -> OverlayControl {
-		let Some(gpu) = self.gpu.as_ref() else {
+		if self.gpu.is_none() {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
-
 		if self.capture_windows_hidden {
 			#[cfg(not(target_os = "macos"))]
 			if let Some(loupe_window) = self.loupe_window.as_ref() {
 				loupe_window.window.set_visible(false);
 			}
+
+			self.loupe_window_visible = false;
+
+			self.reset_loupe_window_warmup_redraws();
 
 			self.last_present_at = Instant::now();
 
@@ -2552,6 +2626,10 @@ impl OverlaySession {
 			if let Some(loupe_window) = self.loupe_window.as_ref() {
 				loupe_window.window.set_visible(false);
 			}
+
+			self.loupe_window_visible = false;
+
+			self.reset_loupe_window_warmup_redraws();
 
 			self.last_present_at = Instant::now();
 
@@ -2570,6 +2648,7 @@ impl OverlaySession {
 
 			return OverlayControl::Continue;
 		};
+		let was_visible = self.loupe_window_visible;
 		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
 		let mut needs_reposition = false;
 
@@ -2584,6 +2663,10 @@ impl OverlaySession {
 				self.config.hud_fog_amount,
 				Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 			);
+
+			let Some(gpu) = self.gpu.as_ref() else {
+				return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
+			};
 
 			if let Err(err) = loupe_window.renderer.draw_loupe_tile_window(
 				gpu,
@@ -2624,6 +2707,12 @@ impl OverlaySession {
 
 		if let Some(loupe_window) = self.loupe_window.as_ref() {
 			loupe_window.window.set_visible(true);
+		}
+
+		self.loupe_window_visible = true;
+
+		if !was_visible {
+			self.maybe_start_loupe_window_warmup_redraw();
 		}
 
 		self.last_present_at = Instant::now();
@@ -2757,6 +2846,8 @@ impl OverlaySession {
 		self.toolbar_outer_pos = None;
 		self.toolbar_window_visible = false;
 		self.toolbar_window_warmup_redraws_remaining = 0;
+		self.loupe_window_visible = false;
+		self.loupe_window_warmup_redraws_remaining = 0;
 		self.cursor_monitor = None;
 		self.gpu = None;
 		self.worker = None;
