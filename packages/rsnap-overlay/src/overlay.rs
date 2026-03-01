@@ -52,6 +52,7 @@ const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
 const HUD_PILL_BLUR_TINT_ALPHA_LIGHT: f32 = 0.22;
 const LOUPE_TILE_CORNER_RADIUS_POINTS: f64 = 12.0;
 const MACOS_HUD_WINDOW_LEVEL: isize = 25;
+const MACOS_OVERLAY_WINDOW_LEVEL: isize = MACOS_HUD_WINDOW_LEVEL - 1;
 const FROZEN_CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const FROZEN_TOOLBAR_TOOL_COUNT: usize = 9;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
@@ -6108,6 +6109,7 @@ fn macos_configure_overlay_window_mouse_moved_events(window: &winit::window::Win
 			return;
 		}
 
+		let _: () = msg_send![ns_window, setLevel: MACOS_OVERLAY_WINDOW_LEVEL];
 		let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
 	}
 }
