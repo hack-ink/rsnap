@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self};
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
@@ -43,7 +43,7 @@ impl LoupeSampleSize {
 	}
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppSettings {
 	#[serde(default)]
 	pub show_alt_hint_keycap: bool,
@@ -69,13 +69,18 @@ pub struct AppSettings {
 impl AppSettings {
 	#[must_use]
 	pub fn load() -> Self {
+		Self::cleanup_legacy_json_settings();
+
 		let Some(path) = Self::path() else {
 			return Self::default();
 		};
 		let Ok(bytes) = fs::read(&path) else {
 			return Self::default();
 		};
-		let mut settings: Self = serde_json::from_slice(&bytes).unwrap_or_default();
+		let Ok(contents) = std::str::from_utf8(&bytes) else {
+			return Self::default();
+		};
+		let mut settings: Self = toml::from_str(contents).unwrap_or_default();
 
 		settings.hud_opacity = settings.hud_opacity.clamp(0.0, 1.0);
 		settings.hud_blur = settings.hud_blur.clamp(0.0, 1.0);
@@ -87,6 +92,8 @@ impl AppSettings {
 	}
 
 	pub fn save(&self) -> io::Result<()> {
+		Self::cleanup_legacy_json_settings();
+
 		let Some(path) = Self::path() else {
 			return Ok(());
 		};
@@ -96,10 +103,10 @@ impl AppSettings {
 
 		fs::create_dir_all(dir)?;
 
-		let json = serde_json::to_vec_pretty(self)
+		let content = toml::to_string_pretty(self)
 			.map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
-		write_atomic(&path, &json)?;
+		write_atomic(&path, content.as_bytes())?;
 
 		Ok(())
 	}
@@ -108,7 +115,16 @@ impl AppSettings {
 	fn path() -> Option<PathBuf> {
 		let dirs = ProjectDirs::from("ink", "hack", "rsnap")?;
 
-		Some(dirs.config_dir().join("settings.json"))
+		Some(dirs.config_dir().join("settings.toml"))
+	}
+
+	fn cleanup_legacy_json_settings() {
+		let Some(dirs) = ProjectDirs::from("ink", "hack", "rsnap") else {
+			return;
+		};
+		let config_dir = dirs.config_dir();
+		let _ = fs::remove_file(config_dir.join("settings.json"));
+		let _ = fs::remove_file(config_dir.join("settings.json.tmp"));
 	}
 }
 
@@ -146,10 +162,49 @@ fn default_hud_tint_hue() -> f32 {
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-	let tmp = path.with_extension("json.tmp");
+	let tmp = path.with_extension("toml.tmp");
+	let mut file = fs::File::create(&tmp)?;
 
-	fs::write(&tmp, bytes)?;
+	file.write_all(bytes)?;
+
 	fs::rename(&tmp, path)?;
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
+	use rsnap_overlay::{ThemeMode, ToolbarPlacement};
+
+	#[test]
+	fn toml_roundtrip() {
+		let settings = AppSettings::default();
+		let content = toml::to_string_pretty(&settings).unwrap();
+		let deserialized: AppSettings = toml::from_str(&content).unwrap();
+
+		assert_eq!(settings, deserialized);
+	}
+
+	#[test]
+	fn toml_parses_known_values() {
+		let input = r#"
+	show_alt_hint_keycap = true
+	hud_glass_enabled = true
+	hud_opacity = 0.5
+	hud_blur = 0.15
+	hud_tint = 0.25
+	hud_tint_hue = 0.4
+	alt_activation = "toggle"
+	toolbar_placement = "top"
+	loupe_sample_size = "large"
+	theme_mode = "dark"
+	"#;
+		let settings: AppSettings = toml::from_str(input).unwrap();
+
+		assert_eq!(settings.alt_activation, AltActivationMode::Toggle);
+		assert_eq!(settings.toolbar_placement, ToolbarPlacement::Top);
+		assert_eq!(settings.loupe_sample_size, LoupeSampleSize::Large);
+		assert_eq!(settings.theme_mode, ThemeMode::Dark);
+	}
 }
