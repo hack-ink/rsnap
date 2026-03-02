@@ -1953,6 +1953,20 @@ impl OverlaySession {
 				self.handle_toolbar_window_scale_factor_changed(window_id)
 			},
 			WindowEvent::ScaleFactorChanged { .. } => self.handle_scale_factor_changed(window_id),
+			WindowEvent::CursorEntered { .. } if toolbar_window_id => OverlayControl::Continue,
+			WindowEvent::CursorLeft { .. } if toolbar_window_id => {
+				self.toolbar_pointer_local = None;
+				self.toolbar_state.dragging = false;
+				self.toolbar_state.drag_offset = Vec2::ZERO;
+				self.toolbar_state.drag_anchor = None;
+
+				#[cfg(target_os = "macos")]
+				{
+					self.request_redraw_toolbar_window();
+				}
+
+				OverlayControl::Continue
+			},
 			WindowEvent::CursorMoved { position, .. } => {
 				if toolbar_window_id {
 					return self.handle_toolbar_cursor_moved(window_id, *position);
@@ -1997,7 +2011,6 @@ impl OverlaySession {
 		self.toolbar_left_button_down = toolbar_left_button_down;
 
 		if !toolbar_left_button_down {
-			self.toolbar_pointer_local = None;
 			self.toolbar_state.dragging = false;
 			self.toolbar_state.drag_offset = Vec2::ZERO;
 			self.toolbar_state.drag_anchor = None;
