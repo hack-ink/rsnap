@@ -891,6 +891,7 @@ unsafe extern "C" {
 	) -> CFStringRef;
 }
 
+#[cfg(not(target_os = "macos"))]
 fn capture_monitor_image(monitor: MonitorRect) -> Result<RgbaImage> {
 	let xcap_monitor = xcap_find_monitor(monitor)?;
 	let image = xcap_monitor.capture_image().wrap_err("xcap capture_image failed")?;
@@ -898,6 +899,7 @@ fn capture_monitor_image(monitor: MonitorRect) -> Result<RgbaImage> {
 	Ok(image)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
 	let monitors = xcap::Monitor::all().wrap_err("xcap Monitor::all failed")?;
 
