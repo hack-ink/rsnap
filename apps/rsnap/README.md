@@ -4,7 +4,9 @@ Menubar-only app (tray icon + menu) that triggers `rsnap-overlay` capture and wr
 
 ## Capture platform support
 
-- Live sampling: **macOS 12.3+** via ScreenCaptureKit (`SCStream`).
+- Live sampling: **macOS 12.3+** via ScreenCaptureKit (`SCStream`) stream samples.
+- Live mode is stream-first and does not take full-frame captures on cursor movement.
+- Menubar and Dock are excluded from live outline targeting.
 - Freeze/export remains on `xcap` for now.
 - Windows is planned (minimum Windows 10) and is not implemented yet.
 

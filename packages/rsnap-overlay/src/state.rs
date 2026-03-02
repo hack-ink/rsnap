@@ -16,6 +16,12 @@ pub struct MonitorImageSnapshot {
 	pub image: Arc<RgbaImage>,
 }
 
+#[derive(Debug)]
+pub struct LiveCursorSample {
+	pub rgb: Option<Rgb>,
+	pub patch: Option<RgbaImage>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WindowRect {
 	pub x: i64,

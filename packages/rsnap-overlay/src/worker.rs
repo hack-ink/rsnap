@@ -6,29 +6,45 @@ use std::sync::{
 use image::RgbaImage;
 
 use crate::backend::CaptureBackend;
-use crate::state::{
-	GlobalPoint, MonitorImageSnapshot, MonitorRect, RectPoints, WindowListSnapshot,
-};
+use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect, RectPoints, WindowListSnapshot};
 
 #[derive(Debug)]
 pub(crate) enum WorkerRequest {
-	HitTestWindow { monitor: MonitorRect, point: GlobalPoint, request_id: u64 },
-	RefreshMonitorImage { monitor: MonitorRect },
+	HitTestWindow {
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		request_id: u64,
+	},
+	SampleLiveCursor {
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		request_id: u64,
+		want_patch: bool,
+		patch_width_px: u32,
+		patch_height_px: u32,
+	},
 	RefreshWindowList,
-	FreezeCapture { monitor: MonitorRect },
-	EncodePng { image: RgbaImage },
+	FreezeCapture {
+		monitor: MonitorRect,
+	},
+	EncodePng {
+		image: RgbaImage,
+	},
 }
 
 #[derive(Debug)]
 pub(crate) enum WorkerResponse {
+	SampledLiveCursor {
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		request_id: u64,
+		sample: LiveCursorSample,
+	},
 	HitTestWindow {
 		monitor: MonitorRect,
 		point: GlobalPoint,
 		request_id: u64,
 		rect: Option<RectPoints>,
-	},
-	RefreshedMonitorImage {
-		snapshot: Arc<MonitorImageSnapshot>,
 	},
 	RefreshedWindowList {
 		snapshot: Arc<WindowListSnapshot>,
@@ -64,7 +80,8 @@ impl OverlayWorker {
 	) {
 		while let Ok(first) = req_rx.recv() {
 			let mut last_hit_test: Option<(MonitorRect, GlobalPoint, u64)> = None;
-			let mut last_refresh_monitor: Option<MonitorRect> = None;
+			let mut last_sample_cursor: Option<(MonitorRect, GlobalPoint, u64, bool, u32, u32)> =
+				None;
 			let mut last_refresh_window_list: bool = false;
 			let mut last_freeze: Option<MonitorRect> = None;
 			let mut last_encode: Option<RgbaImage> = None;
@@ -73,8 +90,22 @@ impl OverlayWorker {
 				WorkerRequest::HitTestWindow { monitor, point, request_id } => {
 					last_hit_test = Some((monitor, point, request_id))
 				},
-				WorkerRequest::RefreshMonitorImage { monitor } => {
-					last_refresh_monitor = Some(monitor)
+				WorkerRequest::SampleLiveCursor {
+					monitor,
+					point,
+					request_id,
+					want_patch,
+					patch_width_px,
+					patch_height_px,
+				} => {
+					last_sample_cursor = Some((
+						monitor,
+						point,
+						request_id,
+						want_patch,
+						patch_width_px,
+						patch_height_px,
+					));
 				},
 				WorkerRequest::RefreshWindowList => {
 					last_refresh_window_list = true;
@@ -88,8 +119,22 @@ impl OverlayWorker {
 					WorkerRequest::HitTestWindow { monitor, point, request_id } => {
 						last_hit_test = Some((monitor, point, request_id))
 					},
-					WorkerRequest::RefreshMonitorImage { monitor } => {
-						last_refresh_monitor = Some(monitor)
+					WorkerRequest::SampleLiveCursor {
+						monitor,
+						point,
+						request_id,
+						want_patch,
+						patch_width_px,
+						patch_height_px,
+					} => {
+						last_sample_cursor = Some((
+							monitor,
+							point,
+							request_id,
+							want_patch,
+							patch_width_px,
+							patch_height_px,
+						));
 					},
 					WorkerRequest::RefreshWindowList => {
 						last_refresh_window_list = true;
@@ -109,12 +154,19 @@ impl OverlayWorker {
 
 				continue;
 			}
-			if let Some(monitor) = last_refresh_monitor {
-				Self::handle_refresh_monitor_request(&mut *backend, &resp_tx, monitor);
-			}
 
 			if last_refresh_window_list {
 				Self::handle_refresh_window_list_request(&mut *backend, &resp_tx);
+			}
+
+			if let Some((monitor, point, request_id, want_patch, patch_width_px, patch_height_px)) =
+				last_sample_cursor
+			{
+				Self::handle_sample_cursor_request(
+					&mut *backend,
+					&resp_tx,
+					(monitor, point, request_id, want_patch, patch_width_px, patch_height_px),
+				);
 			}
 
 			Self::handle_hit_test_request(&mut *backend, &resp_tx, last_hit_test);
@@ -147,23 +199,6 @@ impl OverlayWorker {
 		}
 	}
 
-	fn handle_refresh_monitor_request(
-		backend: &mut dyn CaptureBackend,
-		resp_tx: &Sender<WorkerResponse>,
-		monitor: MonitorRect,
-	) {
-		let refresh_result = backend.refresh_monitor_cache(monitor);
-
-		match refresh_result {
-			Ok(snapshot) => {
-				let _ = resp_tx.send(WorkerResponse::RefreshedMonitorImage { snapshot });
-			},
-			Err(err) => {
-				let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
-			},
-		}
-	}
-
 	fn handle_refresh_window_list_request(
 		backend: &mut dyn CaptureBackend,
 		resp_tx: &Sender<WorkerResponse>,
@@ -176,6 +211,19 @@ impl OverlayWorker {
 				let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
 			},
 		}
+	}
+
+	fn handle_sample_cursor_request(
+		backend: &mut dyn CaptureBackend,
+		resp_tx: &Sender<WorkerResponse>,
+		sample_req: (MonitorRect, GlobalPoint, u64, bool, u32, u32),
+	) {
+		let (monitor, point, request_id, want_patch, patch_width_px, patch_height_px) = sample_req;
+		let sample = backend
+			.live_sample_cursor(monitor, point, want_patch, patch_width_px, patch_height_px)
+			.unwrap_or(LiveCursorSample { rgb: None, patch: None });
+		let _ =
+			resp_tx.send(WorkerResponse::SampledLiveCursor { monitor, point, request_id, sample });
 	}
 
 	fn handle_hit_test_request(
@@ -197,10 +245,6 @@ impl OverlayWorker {
 		}
 	}
 
-	pub(crate) fn request_refresh_monitor_image(&self, monitor: MonitorRect) -> bool {
-		self.req_tx.try_send(WorkerRequest::RefreshMonitorImage { monitor }).is_ok()
-	}
-
 	pub(crate) fn request_refresh_window_list(&self) -> bool {
 		self.req_tx.try_send(WorkerRequest::RefreshWindowList).is_ok()
 	}
@@ -216,6 +260,27 @@ impl OverlayWorker {
 		request_id: u64,
 	) -> Result<(), WorkerRequestSendError> {
 		let request = WorkerRequest::HitTestWindow { monitor, point, request_id };
+
+		self.req_tx.try_send(request).map_err(Self::map_try_send_error)
+	}
+
+	pub(crate) fn request_sample_live_cursor(
+		&self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		request_id: u64,
+		want_patch: bool,
+		patch_width_px: u32,
+		patch_height_px: u32,
+	) -> Result<(), WorkerRequestSendError> {
+		let request = WorkerRequest::SampleLiveCursor {
+			monitor,
+			point,
+			request_id,
+			want_patch,
+			patch_width_px,
+			patch_height_px,
+		};
 
 		self.req_tx.try_send(request).map_err(Self::map_try_send_error)
 	}
