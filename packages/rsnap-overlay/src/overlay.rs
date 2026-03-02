@@ -362,6 +362,7 @@ pub struct OverlaySession {
 	toolbar_window_warmup_redraws_remaining: u8,
 	loupe_window_visible: bool,
 	loupe_window_warmup_redraws_remaining: u8,
+	xcap_monitors: HashMap<u32, xcap::Monitor>,
 }
 impl OverlaySession {
 	#[must_use]
@@ -439,6 +440,7 @@ impl OverlaySession {
 			toolbar_window_warmup_redraws_remaining: 0,
 			loupe_window_visible: false,
 			loupe_window_warmup_redraws_remaining: 0,
+			xcap_monitors: HashMap::new(),
 		}
 	}
 
@@ -578,6 +580,11 @@ impl OverlaySession {
 		let monitors =
 			xcap::Monitor::all().map_err(|err| format!("xcap Monitor::all failed: {err:?}"))?;
 
+		for monitor in &monitors {
+			let Ok(id) = monitor.id() else { continue };
+			let _ = self.xcap_monitors.insert(id, monitor.clone());
+		}
+
 		if monitors.is_empty() {
 			return Err(String::from("No monitors detected"));
 		}
@@ -650,6 +657,8 @@ impl OverlaySession {
 		self.toolbar_pointer_local = None;
 		self.loupe_window_visible = false;
 		self.loupe_window_warmup_redraws_remaining = 0;
+
+		self.xcap_monitors.clear();
 	}
 
 	fn create_overlay_windows(
@@ -3274,12 +3283,52 @@ impl OverlaySession {
 		self.update_hud_window_position(monitor, cursor);
 
 		if matches!(self.state.mode, OverlayMode::Live) {
+			self.try_seed_live_rgb_from_xcap_region(monitor, cursor);
+
 			if self.use_fake_hud_blur() {
 				self.maybe_request_live_bg(monitor);
 			}
 
 			self.request_live_samples_for_cursor(monitor, cursor);
 		}
+	}
+
+	fn try_seed_live_rgb_from_xcap_region(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
+		let Some(xcap_monitor) = self.xcap_monitors.get(&monitor.id) else {
+			return;
+		};
+		let Some((mut x, mut y)) = monitor.local_u32_pixels(cursor) else {
+			return;
+		};
+		let Ok(width) = xcap_monitor.width() else {
+			return;
+		};
+		let Ok(height) = xcap_monitor.height() else {
+			return;
+		};
+
+		if width == 0 || height == 0 {
+			return;
+		}
+
+		x = x.min(width.saturating_sub(1));
+		y = y.min(height.saturating_sub(1));
+
+		let Ok(region) = xcap_monitor.capture_region(x, y, 1, 1) else {
+			return;
+		};
+		let raw = region.as_raw();
+		let Some(r) = raw.first() else {
+			return;
+		};
+		let Some(g) = raw.get(1) else {
+			return;
+		};
+		let Some(b) = raw.get(2) else {
+			return;
+		};
+
+		self.state.rgb = Some(crate::state::Rgb::new(*r, *g, *b));
 	}
 
 	fn maybe_request_live_bg(&mut self, monitor: MonitorRect) {
