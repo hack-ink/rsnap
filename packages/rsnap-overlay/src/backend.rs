@@ -11,7 +11,8 @@ use thiserror::Error;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::state::{
-	GlobalPoint, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb, WindowListSnapshot, WindowRect,
+	GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb,
+	WindowListSnapshot, WindowRect,
 };
 
 #[cfg(target_os = "macos")]
@@ -59,6 +60,23 @@ pub trait CaptureBackend: Send {
 		monitor: MonitorRect,
 		point: GlobalPoint,
 	) -> Result<Option<Rgb>>;
+	fn live_sample_cursor(
+		&mut self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		want_patch: bool,
+		patch_width_px: u32,
+		patch_height_px: u32,
+	) -> Result<LiveCursorSample> {
+		let rgb = self.pixel_rgb_in_monitor(monitor, point)?;
+		let patch = if want_patch {
+			self.rgba_patch_in_monitor(monitor, point, patch_width_px, patch_height_px)?
+		} else {
+			None
+		};
+
+		Ok(LiveCursorSample { rgb, patch })
+	}
 	fn hit_test_window_in_monitor(
 		&mut self,
 		_monitor: MonitorRect,
@@ -366,6 +384,44 @@ impl CaptureBackend for XcapCaptureBackend {
 		};
 
 		Ok(Some(Rgb::new(pixel.0[0], pixel.0[1], pixel.0[2])))
+	}
+
+	fn live_sample_cursor(
+		&mut self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		want_patch: bool,
+		patch_width_px: u32,
+		patch_height_px: u32,
+	) -> Result<LiveCursorSample> {
+		#[cfg(target_os = "macos")]
+		{
+			if let Some((x_px, y_px)) = monitor.local_u32_pixels(point) {
+				let sample = self.live_frame_stream.sample_cursor(
+					monitor,
+					x_px,
+					y_px,
+					want_patch,
+					patch_width_px,
+					patch_height_px,
+				);
+
+				Ok(sample.unwrap_or(LiveCursorSample { rgb: None, patch: None }))
+			} else {
+				Ok(LiveCursorSample { rgb: None, patch: None })
+			}
+		}
+		#[cfg(not(target_os = "macos"))]
+		{
+			let rgb = self.pixel_rgb_in_monitor(monitor, point)?;
+			let patch = if want_patch {
+				self.rgba_patch_in_monitor(monitor, point, patch_width_px, patch_height_px)?
+			} else {
+				None
+			};
+
+			Ok(LiveCursorSample { rgb, patch })
+		}
 	}
 
 	fn rgba_patch_in_monitor(

@@ -41,10 +41,11 @@ use winit::{
 	window::{Theme, WindowId, WindowLevel},
 };
 
+use crate::state::LiveCursorSample;
 use crate::{
 	state::{
-		GlobalPoint, MonitorImageSnapshot, MonitorRect, MonitorRectPoints, OverlayMode,
-		OverlayState, RectPoints, WindowListSnapshot,
+		GlobalPoint, MonitorRect, MonitorRectPoints, OverlayMode, OverlayState, RectPoints,
+		WindowListSnapshot,
 	},
 	worker::{OverlayWorker, WorkerRequestSendError, WorkerResponse},
 };
@@ -62,7 +63,6 @@ const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
 const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
 const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
-const LIVE_MONITOR_IMAGE_REFRESH_INTERVAL: Duration = Duration::from_millis(120);
 const LIVE_WINDOW_LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(120);
 const HUD_LOUPE_MOVE_INTERVAL: Duration = Duration::from_millis(16);
 const HUD_PILL_INNER_MARGIN_X_POINTS: f32 = 12.0;
@@ -326,9 +326,6 @@ pub struct OverlaySession {
 	last_hud_window_move_at: Instant,
 	last_loupe_window_move_at: Instant,
 	last_present_at: Instant,
-	monitor_image_snapshot: Option<Arc<MonitorImageSnapshot>>,
-	last_monitor_image_refresh_request_at: Instant,
-	monitor_image_refresh_interval: Duration,
 	window_list_snapshot: Option<Arc<WindowListSnapshot>>,
 	last_window_list_refresh_request_at: Instant,
 	window_list_refresh_interval: Duration,
@@ -337,6 +334,8 @@ pub struct OverlaySession {
 	hit_test_send_full_count: u64,
 	hit_test_send_disconnected_count: u64,
 	hit_test_request_id: u64,
+	live_cursor_sample_request_id: u64,
+	latest_live_cursor_sample_request_id: Option<u64>,
 	pending_click_hit_test_request_id: Option<u64>,
 	last_live_sample_cursor: Option<GlobalPoint>,
 	last_event_cursor: Option<(MonitorRect, GlobalPoint)>,
@@ -374,7 +373,6 @@ impl OverlaySession {
 		let live_bg_request_interval = Duration::from_millis(500);
 		let loupe_sample_side_px =
 			Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
-		let monitor_image_refresh_interval = LIVE_MONITOR_IMAGE_REFRESH_INTERVAL;
 		let window_list_refresh_interval = LIVE_WINDOW_LIST_REFRESH_INTERVAL;
 		let now = Instant::now();
 		let mut state = OverlayState::new();
@@ -403,9 +401,6 @@ impl OverlaySession {
 			last_hud_window_move_at: now - HUD_LOUPE_MOVE_INTERVAL,
 			last_loupe_window_move_at: now - HUD_LOUPE_MOVE_INTERVAL,
 			last_present_at: Instant::now(),
-			monitor_image_snapshot: None,
-			last_monitor_image_refresh_request_at: now - monitor_image_refresh_interval,
-			monitor_image_refresh_interval,
 			window_list_snapshot: None,
 			last_window_list_refresh_request_at: now - window_list_refresh_interval,
 			window_list_refresh_interval,
@@ -414,6 +409,8 @@ impl OverlaySession {
 			hit_test_send_full_count: 0,
 			hit_test_send_disconnected_count: 0,
 			hit_test_request_id: 0,
+			live_cursor_sample_request_id: 0,
+			latest_live_cursor_sample_request_id: None,
 			pending_click_hit_test_request_id: None,
 			last_live_sample_cursor: None,
 			last_event_cursor: None,
@@ -544,7 +541,8 @@ impl OverlaySession {
 			None => return,
 		};
 		let _ = self.apply_live_hover_cache_state(monitor, cursor);
-		let _ = self.request_live_cache_refreshes(monitor);
+		let _ = self.request_live_cursor_sample(monitor, cursor, true);
+		let _ = self.request_live_window_list_refresh_if_needed();
 	}
 
 	#[must_use]
@@ -612,6 +610,8 @@ impl OverlaySession {
 		self.pending_freeze_capture_armed = false;
 		self.hit_test_send_full_count = 0;
 		self.hit_test_send_disconnected_count = 0;
+		self.live_cursor_sample_request_id = 0;
+		self.latest_live_cursor_sample_request_id = None;
 		self.pending_click_hit_test_request_id = None;
 		self.last_event_cursor = None;
 		self.last_event_cursor_at = None;
@@ -620,8 +620,6 @@ impl OverlaySession {
 		self.last_live_sample_stall_log_at = None;
 		self.last_hud_window_move_at = now - HUD_LOUPE_MOVE_INTERVAL;
 		self.last_loupe_window_move_at = now - HUD_LOUPE_MOVE_INTERVAL;
-		self.monitor_image_snapshot = None;
-		self.last_monitor_image_refresh_request_at = now - self.monitor_image_refresh_interval;
 		self.window_list_snapshot = None;
 		self.last_window_list_refresh_request_at = now - self.window_list_refresh_interval;
 		self.toolbar_state = FrozenToolbarState::default();
@@ -1266,52 +1264,12 @@ impl OverlaySession {
 		}
 
 		let had_snapshot_update = self.apply_live_hover_cache_state(monitor, cursor);
-		let snapshot_refresh_requested = self.request_live_cache_refreshes(monitor);
+		let _ = self.request_live_cursor_sample(monitor, cursor, self.state.alt_held);
+		let _ = self.request_live_window_list_refresh_if_needed();
 
-		if had_snapshot_update || snapshot_refresh_requested {
+		if had_snapshot_update {
 			self.redraw_for_monitor_and_current(monitor);
 		}
-	}
-
-	fn request_live_cache_refreshes(&mut self, monitor: MonitorRect) -> bool {
-		let mut requested = false;
-
-		if self.request_live_monitor_image_refresh_if_needed(monitor) {
-			requested = true;
-		}
-		if self.request_live_window_list_refresh_if_needed() {
-			requested = true;
-		}
-
-		requested
-	}
-
-	fn request_live_monitor_image_refresh_if_needed(&mut self, monitor: MonitorRect) -> bool {
-		let now = Instant::now();
-		let needs_refresh = self.monitor_image_snapshot.as_ref().is_none_or(|snapshot| {
-			snapshot.monitor != monitor
-				|| now.duration_since(snapshot.captured_at) > self.monitor_image_refresh_interval
-				|| self.state.alt_held
-		});
-
-		if !needs_refresh
-			|| now.duration_since(self.last_monitor_image_refresh_request_at)
-				< self.monitor_image_refresh_interval
-		{
-			return false;
-		}
-
-		let Some(worker) = self.worker.as_ref() else {
-			return false;
-		};
-
-		if !worker.request_refresh_monitor_image(monitor) {
-			return false;
-		}
-
-		self.last_monitor_image_refresh_request_at = now;
-
-		true
 	}
 
 	fn request_live_window_list_refresh_if_needed(&mut self) -> bool {
@@ -1341,6 +1299,60 @@ impl OverlaySession {
 		true
 	}
 
+	fn request_live_cursor_sample(
+		&mut self,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+		want_patch: bool,
+	) -> bool {
+		if !monitor.contains(cursor) {
+			return false;
+		}
+
+		let Some(worker) = self.worker.as_ref() else {
+			return false;
+		};
+		let request_id = self.live_cursor_sample_request_id.wrapping_add(1);
+		let patch_width_px = if want_patch { self.loupe_patch_width_px } else { 0 };
+		let patch_height_px = if want_patch { self.loupe_patch_height_px } else { 0 };
+
+		match worker.request_sample_live_cursor(
+			monitor,
+			cursor,
+			request_id,
+			want_patch,
+			patch_width_px,
+			patch_height_px,
+		) {
+			Ok(()) => {
+				self.live_cursor_sample_request_id = request_id;
+				self.latest_live_cursor_sample_request_id = Some(request_id);
+
+				true
+			},
+			Err(WorkerRequestSendError::Full) => {
+				tracing::debug!(
+					request_id,
+					monitor_id = monitor.id,
+					point = ?cursor,
+					"Live cursor sample request dropped: worker queue full."
+				);
+
+				false
+			},
+			Err(WorkerRequestSendError::Disconnected) => {
+				tracing::debug!(
+					request_id,
+					monitor_id = monitor.id,
+					point = ?cursor,
+					"Live cursor sample request dropped: worker queue disconnected."
+				);
+
+				false
+			},
+		}
+	}
+
 	fn apply_live_hover_cache_state(&mut self, monitor: MonitorRect, cursor: GlobalPoint) -> bool {
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			return false;
@@ -1352,32 +1364,10 @@ impl OverlaySession {
 		let hovered_window_rect = self
 			.hovered_window_rect_from_window_list_snapshot(monitor, cursor)
 			.map(|rect| MonitorRectPoints { monitor_id: monitor.id, rect });
-		let rgb = self.rgb_from_monitor_snapshot(monitor, cursor);
-		let has_valid_rgb_snapshot = self
-			.monitor_image_snapshot
-			.as_ref()
-			.is_some_and(|snapshot| snapshot.monitor == monitor);
 		let mut updated = false;
 
 		if self.state.hovered_window_rect != hovered_window_rect {
 			self.state.hovered_window_rect = hovered_window_rect;
-			updated = true;
-		}
-		if has_valid_rgb_snapshot {
-			if self.state.rgb != rgb {
-				self.state.rgb = rgb;
-				updated = true;
-			}
-		} else if self.state.rgb.is_some() {
-			self.state.rgb = None;
-			updated = true;
-		}
-		if self.state.alt_held {
-			let loupe = self
-				.loupe_patch_from_monitor_snapshot(monitor, cursor, self.loupe_patch_width_px)
-				.map(|patch| crate::state::LoupeSample { center: cursor, patch });
-
-			self.state.loupe = loupe;
 			updated = true;
 		}
 
@@ -1406,66 +1396,6 @@ impl OverlaySession {
 
 			Some(window_rect)
 		})
-	}
-
-	fn rgb_from_monitor_snapshot(
-		&self,
-		monitor: MonitorRect,
-		cursor: GlobalPoint,
-	) -> Option<crate::state::Rgb> {
-		let snapshot = self.monitor_image_snapshot.as_ref()?;
-
-		if snapshot.monitor != monitor || !snapshot.monitor.contains(cursor) {
-			return None;
-		}
-
-		let (x, y) = monitor.local_u32_pixels(cursor)?;
-		let pixel = snapshot.image.get_pixel_checked(x, y)?;
-
-		Some(crate::state::Rgb::new(pixel.0[0], pixel.0[1], pixel.0[2]))
-	}
-
-	fn loupe_patch_from_monitor_snapshot(
-		&self,
-		monitor: MonitorRect,
-		cursor: GlobalPoint,
-		width_px: u32,
-	) -> Option<RgbaImage> {
-		let snapshot = self.monitor_image_snapshot.as_ref()?;
-
-		if snapshot.monitor != monitor || !snapshot.monitor.contains(cursor) {
-			return None;
-		}
-
-		let (center_x, center_y) = snapshot.monitor.local_u32_pixels(cursor)?;
-		let mut out = RgbaImage::new(width_px.max(1), self.loupe_patch_height_px.max(1));
-		let out_width = out.width() as i32;
-		let out_height = out.height() as i32;
-		let half_width = out_width / 2;
-		let half_height = out_height / 2;
-		let center_x = center_x as i32;
-		let center_y = center_y as i32;
-		let image_width = snapshot.image.width() as i32;
-		let image_height = snapshot.image.height() as i32;
-
-		for out_y in 0..out.height() {
-			for out_x in 0..out.width() {
-				let image_x = center_x + (out_x as i32) - half_width;
-				let image_y = center_y + (out_y as i32) - half_height;
-				let color = if image_x >= 0
-					&& image_y >= 0 && image_x < image_width
-					&& image_y < image_height
-				{
-					*snapshot.image.get_pixel(image_x as u32, image_y as u32)
-				} else {
-					image::Rgba([0, 0, 0, 0])
-				};
-
-				out.put_pixel(out_x, out_y, color);
-			}
-		}
-
-		Some(out)
 	}
 
 	fn record_live_sample_stall(&mut self, cursor: GlobalPoint, monitor: MonitorRect) {
@@ -1510,8 +1440,8 @@ impl OverlaySession {
 
 	fn maybe_tick_worker_response_limiter(&mut self, resp: WorkerResponse) -> OverlayControl {
 		match resp {
-			WorkerResponse::RefreshedMonitorImage { snapshot } => {
-				self.handle_refreshed_monitor_image(snapshot);
+			WorkerResponse::SampledLiveCursor { monitor, point, request_id, sample } => {
+				self.handle_sampled_live_cursor_response(monitor, point, request_id, sample);
 
 				OverlayControl::Continue
 			},
@@ -1541,18 +1471,36 @@ impl OverlaySession {
 		}
 	}
 
-	fn handle_refreshed_monitor_image(&mut self, snapshot: Arc<MonitorImageSnapshot>) {
-		let monitor = snapshot.monitor;
-
-		self.monitor_image_snapshot = Some(snapshot);
-
-		if matches!(self.state.mode, OverlayMode::Live)
-			&& let Some(cursor) = self.state.cursor
-			&& self.active_cursor_monitor() == Some(monitor)
-			&& self.apply_live_hover_cache_state(monitor, cursor)
-		{
-			self.redraw_for_monitor_and_current(monitor);
+	fn handle_sampled_live_cursor_response(
+		&mut self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		request_id: u64,
+		sample: LiveCursorSample,
+	) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
 		}
+		if self.active_cursor_monitor() != Some(monitor) {
+			return;
+		}
+		if self.latest_live_cursor_sample_request_id != Some(request_id) {
+			return;
+		}
+
+		let _ = self.apply_live_hover_cache_state(monitor, point);
+
+		if self.state.rgb != sample.rgb {
+			self.state.rgb = sample.rgb;
+		}
+		if self.state.alt_held {
+			self.state.loupe =
+				sample.patch.map(|patch| crate::state::LoupeSample { center: point, patch });
+		} else if self.state.loupe.is_some() {
+			self.state.loupe = None;
+		}
+
+		self.redraw_for_monitor_and_current(monitor);
 	}
 
 	fn handle_refreshed_window_list(&mut self, snapshot: Arc<WindowListSnapshot>) {
@@ -2338,7 +2286,8 @@ impl OverlaySession {
 
 	fn request_live_alt_samples(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
 		let _ = self.apply_live_hover_cache_state(monitor, cursor);
-		let _ = self.request_live_cache_refreshes(monitor);
+		let _ = self.request_live_cursor_sample(monitor, cursor, true);
+		let _ = self.request_live_window_list_refresh_if_needed();
 	}
 
 	fn request_frozen_alt_samples(&mut self, cursor: GlobalPoint) {
@@ -2634,21 +2583,13 @@ impl OverlaySession {
 		}
 
 		let had_snapshot_update = self.apply_live_hover_cache_state(monitor, global);
+		let sample_requested =
+			self.request_live_cursor_sample(monitor, global, self.state.alt_held);
+		let _ = self.request_live_window_list_refresh_if_needed();
 
-		if had_snapshot_update {
+		if had_snapshot_update || sample_requested {
 			self.redraw_for_monitor_and_current(monitor);
-
-			return;
 		}
-
-		let need_seed_refresh =
-			self.monitor_image_snapshot.is_none() || self.window_list_snapshot.is_none();
-
-		if !need_seed_refresh {
-			return;
-		}
-
-		let _ = self.request_live_cache_refreshes(monitor);
 	}
 
 	fn handle_left_mouse_input(
