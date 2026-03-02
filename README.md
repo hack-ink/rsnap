@@ -31,8 +31,10 @@ Prototype / in active development.
 
 ## Capture platform support
 
-- Live sampling path target: **macOS 12.3+** with ScreenCaptureKit (`SCStream`) where available.
-- Freeze/export currently still uses `xcap` in this implementation.
+- Live sampling path: **macOS 12.3+** via ScreenCaptureKit (`SCStream`) stream samples.
+- Live mode is stream-first and does not capture full display on cursor movement.
+- Freeze/export still uses `xcap` capture.
+- Menubar and Dock are not included in live window-outline targeting.
 - Windows support is planned (minimum Windows 10), but not implemented yet.
 
 ## Usage
