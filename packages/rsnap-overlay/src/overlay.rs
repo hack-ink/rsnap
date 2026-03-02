@@ -336,6 +336,7 @@ pub struct OverlaySession {
 	hit_test_request_id: u64,
 	live_cursor_sample_request_id: u64,
 	latest_live_cursor_sample_request_id: Option<u64>,
+	applied_live_cursor_sample_request_id: Option<u64>,
 	pending_click_hit_test_request_id: Option<u64>,
 	last_live_sample_cursor: Option<GlobalPoint>,
 	last_event_cursor: Option<(MonitorRect, GlobalPoint)>,
@@ -411,6 +412,7 @@ impl OverlaySession {
 			hit_test_request_id: 0,
 			live_cursor_sample_request_id: 0,
 			latest_live_cursor_sample_request_id: None,
+			applied_live_cursor_sample_request_id: None,
 			pending_click_hit_test_request_id: None,
 			last_live_sample_cursor: None,
 			last_event_cursor: None,
@@ -586,8 +588,8 @@ impl OverlaySession {
 		self.create_hud_window(event_loop)?;
 		self.create_loupe_window(event_loop)?;
 		self.create_toolbar_window(event_loop)?;
-		self.request_redraw_all();
 		self.initialize_cursor_state();
+		self.request_redraw_all();
 
 		Ok(())
 	}
@@ -612,6 +614,7 @@ impl OverlaySession {
 		self.hit_test_send_disconnected_count = 0;
 		self.live_cursor_sample_request_id = 0;
 		self.latest_live_cursor_sample_request_id = None;
+		self.applied_live_cursor_sample_request_id = None;
 		self.pending_click_hit_test_request_id = None;
 		self.last_event_cursor = None;
 		self.last_event_cursor_at = None;
@@ -964,8 +967,31 @@ impl OverlaySession {
 		self.maybe_tick_live_sampling();
 		self.maybe_tick_frozen_cursor_tracking();
 		self.maybe_apply_pending_hud_and_loupe_moves();
+		self.maybe_keep_live_cursor_sample_redraw();
 
 		self.drain_worker_responses()
+	}
+
+	fn maybe_keep_live_cursor_sample_redraw(&mut self) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
+
+		let Some(latest_request_id) = self.latest_live_cursor_sample_request_id else {
+			return;
+		};
+
+		if self.applied_live_cursor_sample_request_id == Some(latest_request_id) {
+			return;
+		}
+
+		if let Some(monitor) = self.active_cursor_monitor() {
+			self.request_redraw_for_monitor(monitor);
+		} else {
+			self.request_redraw_all();
+		}
+
+		self.schedule_egui_repaint_after(Duration::from_millis(16));
 	}
 
 	fn maybe_apply_pending_hud_and_loupe_moves(&mut self) {
@@ -1496,6 +1522,8 @@ impl OverlaySession {
 		if self.latest_live_cursor_sample_request_id != Some(request_id) {
 			return;
 		}
+
+		self.applied_live_cursor_sample_request_id = Some(request_id);
 
 		let is_dragging_window = self.left_mouse_button_down
 			&& self.left_mouse_button_down_monitor == Some(monitor)
