@@ -368,7 +368,8 @@ pub struct OverlaySession {
 	pending_encode_png: Option<RgbaImage>,
 	toolbar_state: FrozenToolbarState,
 	toolbar_left_button_down: bool,
-	toolbar_left_button_down_prev: bool,
+	toolbar_left_button_went_down: bool,
+	toolbar_left_button_went_up: bool,
 	toolbar_pointer_local: Option<Pos2>,
 	left_mouse_button_down: bool,
 	left_mouse_button_down_monitor: Option<MonitorRect>,
@@ -446,7 +447,8 @@ impl OverlaySession {
 			pending_encode_png: None,
 			toolbar_state: FrozenToolbarState::default(),
 			toolbar_left_button_down: false,
-			toolbar_left_button_down_prev: false,
+			toolbar_left_button_went_down: false,
+			toolbar_left_button_went_up: false,
 			toolbar_pointer_local: None,
 			left_mouse_button_down: false,
 			left_mouse_button_down_monitor: None,
@@ -668,7 +670,8 @@ impl OverlaySession {
 		self.last_window_list_refresh_request_at = now - self.window_list_refresh_interval;
 		self.toolbar_state = FrozenToolbarState::default();
 		self.toolbar_left_button_down = false;
-		self.toolbar_left_button_down_prev = false;
+		self.toolbar_left_button_went_down = false;
+		self.toolbar_left_button_went_up = false;
 		self.toolbar_pointer_local = None;
 		self.loupe_window_visible = false;
 		self.loupe_window_warmup_redraws_remaining = 0;
@@ -1956,6 +1959,9 @@ impl OverlaySession {
 			WindowEvent::CursorEntered { .. } if toolbar_window_id => OverlayControl::Continue,
 			WindowEvent::CursorLeft { .. } if toolbar_window_id => {
 				self.toolbar_pointer_local = None;
+				self.toolbar_left_button_down = false;
+				self.toolbar_left_button_went_down = false;
+				self.toolbar_left_button_went_up = false;
 				self.toolbar_state.dragging = false;
 				self.toolbar_state.drag_offset = Vec2::ZERO;
 				self.toolbar_state.drag_anchor = None;
@@ -2007,6 +2013,11 @@ impl OverlaySession {
 		if toolbar_left_button_down == self.toolbar_left_button_down {
 			return OverlayControl::Continue;
 		}
+		if toolbar_left_button_down {
+			self.toolbar_left_button_went_down = true;
+		} else {
+			self.toolbar_left_button_went_up = true;
+		}
 
 		self.toolbar_left_button_down = toolbar_left_button_down;
 
@@ -2030,7 +2041,8 @@ impl OverlaySession {
 
 	fn reset_toolbar_pointer_state(&mut self) {
 		self.toolbar_left_button_down = false;
-		self.toolbar_left_button_down_prev = false;
+		self.toolbar_left_button_went_down = false;
+		self.toolbar_left_button_went_up = false;
 		self.toolbar_pointer_local = None;
 		self.toolbar_state.drag_anchor = None;
 	}
@@ -2173,13 +2185,13 @@ impl OverlaySession {
 	}
 
 	fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
-		let Some(gpu) = self.gpu.as_ref() else {
-			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
-		};
 		let Some(monitor) = self.state.monitor else {
 			return OverlayControl::Continue;
 		};
 		let toolbar_input = self.toolbar_pointer_state(monitor, self.toolbar_pointer_local);
+		let Some(gpu) = self.gpu.as_ref() else {
+			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
+		};
 		let Some(toolbar_window) = self.toolbar_window.as_mut() else {
 			return OverlayControl::Continue;
 		};
@@ -2265,7 +2277,6 @@ impl OverlaySession {
 		}
 
 		self.last_present_at = Instant::now();
-		self.toolbar_left_button_down_prev = self.toolbar_left_button_down;
 
 		if self.toolbar_state.needs_redraw {
 			self.toolbar_state.needs_redraw = false;
@@ -2857,7 +2868,7 @@ impl OverlaySession {
 	}
 
 	fn toolbar_pointer_state(
-		&self,
+		&mut self,
 		monitor: MonitorRect,
 		toolbar_cursor_local_override: Option<Pos2>,
 	) -> Option<FrozenToolbarPointerState> {
@@ -2874,11 +2885,15 @@ impl OverlaySession {
 			return None;
 		}
 
+		let left_button_went_down = self.toolbar_left_button_went_down;
+		let left_button_went_up = self.toolbar_left_button_went_up;
+
+		self.toolbar_left_button_went_down = false;
+		self.toolbar_left_button_went_up = false;
+
 		let cursor_local = toolbar_cursor_local_override
 			.or_else(|| self.state.cursor.and_then(|cursor| global_to_local(cursor, monitor)))?;
 		let left_button_down = self.toolbar_left_button_down;
-		let left_button_went_down = left_button_down && !self.toolbar_left_button_down_prev;
-		let left_button_went_up = !left_button_down && self.toolbar_left_button_down_prev;
 
 		Some(FrozenToolbarPointerState {
 			cursor_local,
@@ -3183,14 +3198,14 @@ impl OverlaySession {
 	}
 
 	fn handle_overlay_window_redraw(&mut self, window_id: WindowId) -> OverlayControl {
-		let Some(gpu) = self.gpu.as_ref() else {
-			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
-		};
 		let Some(overlay_monitor) = self.windows.get(&window_id).map(|overlay| overlay.monitor)
 		else {
 			return OverlayControl::Continue;
 		};
 		let toolbar_input = self.toolbar_pointer_state(overlay_monitor, None);
+		let Some(gpu) = self.gpu.as_ref() else {
+			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
+		};
 		// On macOS the frozen toolbar is now rendered in its own native HUD window; keep this
 		// fullscreen overlay free of toolbar UI so shader-backed blur and monitor-aligned offsets
 		// do not conflict with native-window positioning.
@@ -3251,7 +3266,6 @@ impl OverlaySession {
 			}
 		}
 		self.last_present_at = Instant::now();
-		self.toolbar_left_button_down_prev = self.toolbar_left_button_down;
 
 		if self.pending_freeze_capture == Some(overlay_monitor)
 			&& matches!(self.state.mode, OverlayMode::Frozen)
@@ -3317,7 +3331,8 @@ impl OverlaySession {
 		self.gpu = None;
 		self.worker = None;
 		self.toolbar_left_button_down = false;
-		self.toolbar_left_button_down_prev = false;
+		self.toolbar_left_button_went_down = false;
+		self.toolbar_left_button_went_up = false;
 		self.toolbar_pointer_local = None;
 
 		OverlayControl::Exit(exit)
