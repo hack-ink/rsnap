@@ -11,7 +11,7 @@ pub use crate::backend::{
 };
 pub use crate::overlay::{
 	AltActivationMode, HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession,
-	ThemeMode,
+	ThemeMode, ToolbarPlacement,
 };
 pub use crate::state::{GlobalPoint, MonitorRect, Rgb};
 
