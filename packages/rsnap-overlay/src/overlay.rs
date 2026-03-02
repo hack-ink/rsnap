@@ -753,6 +753,7 @@ impl OverlaySession {
 			.with_decorations(false)
 			.with_resizable(false)
 			.with_transparent(true)
+			.with_visible(false)
 			.with_window_level(WindowLevel::AlwaysOnTop)
 			.with_inner_size(LogicalSize::new(460.0, 52.0));
 		let window = event_loop
@@ -776,7 +777,6 @@ impl OverlaySession {
 
 		#[cfg(not(target_os = "macos"))]
 		window.set_blur(self.config.show_hud_blur);
-		window.request_redraw();
 
 		let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
 		let renderer =
@@ -1561,7 +1561,7 @@ impl OverlaySession {
 		} else {
 			let _ = self.apply_live_hover_cache_state(monitor, point);
 		}
-		if self.state.rgb != sample.rgb {
+		if self.state.rgb != sample.rgb && sample.rgb.is_some() {
 			self.state.rgb = sample.rgb;
 		}
 		if self.state.alt_held {
@@ -2910,6 +2910,15 @@ impl OverlaySession {
 			#[cfg(not(target_os = "macos"))]
 			return OverlayControl::Continue;
 		}
+		if matches!(self.state.mode, OverlayMode::Live) && self.state.rgb.is_none() {
+			if let Some(hud_window) = self.hud_window.as_ref() {
+				hud_window.window.set_visible(false);
+			}
+
+			self.last_present_at = Instant::now();
+
+			return OverlayControl::Continue;
+		}
 
 		let monitor =
 			self.monitor_for_mode().or_else(|| self.windows.values().next().map(|w| w.monitor));
@@ -2925,7 +2934,6 @@ impl OverlaySession {
 				None,
 			);
 
-			#[cfg(not(target_os = "macos"))]
 			hud_window.window.set_visible(true);
 
 			if let Err(err) = hud_window.renderer.draw(
