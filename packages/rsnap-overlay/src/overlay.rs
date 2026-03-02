@@ -1263,10 +1263,19 @@ impl OverlaySession {
 			return;
 		}
 
-		let had_snapshot_update = self.apply_live_hover_cache_state(monitor, cursor);
+		let is_dragging_window = matches!(self.state.mode, OverlayMode::Live)
+			&& self.left_mouse_button_down
+			&& self.left_mouse_button_down_monitor == Some(monitor);
+		let had_snapshot_update = if is_dragging_window {
+			false
+		} else {
+			self.apply_live_hover_cache_state(monitor, cursor)
+		};
 		let _ = self.request_live_cursor_sample(monitor, cursor, self.state.alt_held);
-		let _ = self.request_live_window_list_refresh_if_needed();
 
+		if !is_dragging_window {
+			let _ = self.request_live_window_list_refresh_if_needed();
+		}
 		if had_snapshot_update {
 			self.redraw_for_monitor_and_current(monitor);
 		}
@@ -2582,11 +2591,20 @@ impl OverlaySession {
 			return;
 		}
 
-		let had_snapshot_update = self.apply_live_hover_cache_state(monitor, global);
+		let is_dragging_window = matches!(self.state.mode, OverlayMode::Live)
+			&& self.left_mouse_button_down
+			&& self.left_mouse_button_down_monitor == Some(monitor);
+		let had_snapshot_update = if is_dragging_window {
+			false
+		} else {
+			self.apply_live_hover_cache_state(monitor, global)
+		};
 		let sample_requested =
 			self.request_live_cursor_sample(monitor, global, self.state.alt_held);
-		let _ = self.request_live_window_list_refresh_if_needed();
 
+		if !is_dragging_window {
+			let _ = self.request_live_window_list_refresh_if_needed();
+		}
 		if had_snapshot_update || sample_requested {
 			self.redraw_for_monitor_and_current(monitor);
 		}
