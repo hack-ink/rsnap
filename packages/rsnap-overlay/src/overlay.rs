@@ -589,6 +589,25 @@ impl OverlaySession {
 		self.create_loupe_window(event_loop)?;
 		self.create_toolbar_window(event_loop)?;
 		self.initialize_cursor_state();
+
+		if matches!(self.state.mode, OverlayMode::Live) && self.state.rgb.is_none() {
+			let warmup_deadline = Instant::now() + Duration::from_millis(20);
+
+			while Instant::now() < warmup_deadline {
+				if let Some(worker) = self.worker.as_ref()
+					&& let Some(response) = worker.try_recv()
+				{
+					self.maybe_tick_worker_response_limiter(response);
+
+					if self.state.rgb.is_some() {
+						break;
+					}
+				}
+
+				std::thread::sleep(Duration::from_millis(1));
+			}
+		}
+
 		self.request_redraw_all();
 
 		Ok(())
