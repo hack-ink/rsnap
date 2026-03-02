@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::ffi::{CString, c_char, c_void};
 use std::process;
@@ -185,6 +186,8 @@ pub struct XcapCaptureBackend {
 	window_cache_ttl: Duration,
 	#[cfg(target_os = "macos")]
 	live_frame_stream: MacLiveFrameStream,
+	#[cfg(target_os = "macos")]
+	monitors: HashMap<u32, xcap::Monitor>,
 }
 impl XcapCaptureBackend {
 	#[must_use]
@@ -196,6 +199,8 @@ impl XcapCaptureBackend {
 			window_cache_ttl: Duration::from_millis(250),
 			#[cfg(target_os = "macos")]
 			live_frame_stream: MacLiveFrameStream::new(),
+			#[cfg(target_os = "macos")]
+			monitors: HashMap::new(),
 		}
 	}
 
@@ -228,7 +233,8 @@ impl XcapCaptureBackend {
 			return Ok(snapshot);
 		}
 
-		let image = capture_monitor_image(monitor)
+		let image = self
+			.capture_monitor_image(monitor)
 			.wrap_err_with(|| format!("failed to capture monitor for rgb sampling: {monitor:?}"))?;
 		let snapshot = Arc::new(MonitorImageSnapshot {
 			captured_at: Instant::now(),
@@ -243,6 +249,56 @@ impl XcapCaptureBackend {
 
 	pub(crate) fn latest_monitor_cache_snapshot(&self) -> Option<Arc<MonitorImageSnapshot>> {
 		self.cache.clone()
+	}
+
+	#[cfg(target_os = "macos")]
+	fn capture_monitor_image(&mut self, monitor: MonitorRect) -> Result<RgbaImage> {
+		let xcap_monitor = self.cached_xcap_monitor(monitor)?;
+		let image = xcap_monitor.capture_image().wrap_err("xcap capture_image failed")?;
+
+		Ok(image)
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn capture_monitor_image(&mut self, monitor: MonitorRect) -> Result<RgbaImage> {
+		capture_monitor_image(monitor)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn capture_monitor_region(
+		&mut self,
+		monitor: MonitorRect,
+		x: u32,
+		y: u32,
+		width: u32,
+		height: u32,
+	) -> Result<RgbaImage> {
+		let xcap_monitor = self.cached_xcap_monitor(monitor)?;
+		let image = xcap_monitor
+			.capture_region(x, y, width, height)
+			.wrap_err("xcap capture_region failed")?;
+
+		Ok(image)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn cached_xcap_monitor(&mut self, monitor: MonitorRect) -> Result<xcap::Monitor> {
+		if let Some(cached) = self.monitors.get(&monitor.id) {
+			return Ok(cached.clone());
+		}
+
+		let xcap_monitors = xcap::Monitor::all().wrap_err("xcap Monitor::all failed")?;
+
+		for xcap_monitor in xcap_monitors {
+			let xcap_monitor_id = xcap_monitor.id().wrap_err("Failed to read xcap monitor id")?;
+			let _ = self.monitors.insert(xcap_monitor_id, xcap_monitor.clone());
+
+			if xcap_monitor_id == monitor.id {
+				return Ok(xcap_monitor);
+			}
+		}
+
+		Err(CaptureBackendError::MonitorNotFound { monitor }.into())
 	}
 
 	fn window_cache_valid_for(&self) -> bool {
@@ -342,7 +398,7 @@ impl CaptureBackend for XcapCaptureBackend {
 	}
 
 	fn capture_monitor(&mut self, monitor: MonitorRect) -> Result<RgbaImage> {
-		let image = capture_monitor_image(monitor).wrap_err_with(|| {
+		let image = self.capture_monitor_image(monitor).wrap_err_with(|| {
 			format!("failed to capture monitor for freeze/export: {monitor:?}")
 		})?;
 
@@ -371,15 +427,27 @@ impl CaptureBackend for XcapCaptureBackend {
 			return Ok(Some(rgb));
 		}
 
-		self.ensure_cache(monitor)?;
-
-		let Some(cache) = self.cache.as_ref() else {
-			return Ok(None);
-		};
 		let Some((x, y)) = monitor.local_u32_pixels(point) else {
 			return Ok(None);
 		};
-		let Some(pixel) = cache.image.get_pixel_checked(x, y) else {
+		let patch = {
+			#[cfg(target_os = "macos")]
+			{
+				self.capture_monitor_region(monitor, x, y, 1, 1)?
+			}
+
+			#[cfg(not(target_os = "macos"))]
+			{
+				self.ensure_cache(monitor)?;
+
+				let Some(cache) = self.cache.as_ref() else {
+					return Ok(None);
+				};
+
+				copy_rgba_patch(&cache.image, x, y, 1, 1)
+			}
+		};
+		let Some(pixel) = patch.get_pixel_checked(0, 0) else {
 			return Ok(None);
 		};
 
@@ -453,16 +521,34 @@ impl CaptureBackend for XcapCaptureBackend {
 			return Ok(Some(patch));
 		}
 
-		self.ensure_cache(monitor)?;
-
-		let Some(cache) = self.cache.as_ref() else {
-			return Ok(None);
-		};
 		let Some((center_x, center_y)) = monitor.local_u32_pixels(point) else {
 			return Ok(None);
 		};
+		let patch = {
+			#[cfg(target_os = "macos")]
+			{
+				let width = width_px.max(1).min(monitor.width.max(1));
+				let height = height_px.max(1).min(monitor.height.max(1));
+				let region_x =
+					center_x.saturating_sub(width / 2).min(monitor.width.saturating_sub(width));
+				let region_y =
+					center_y.saturating_sub(height / 2).min(monitor.height.saturating_sub(height));
 
-		Ok(Some(copy_rgba_patch(&cache.image, center_x, center_y, width_px, height_px)))
+				self.capture_monitor_region(monitor, region_x, region_y, width, height)?
+			}
+			#[cfg(not(target_os = "macos"))]
+			{
+				self.ensure_cache(monitor)?;
+
+				let Some(cache) = self.cache.as_ref() else {
+					return Ok(None);
+				};
+
+				copy_rgba_patch(&cache.image, center_x, center_y, width_px, height_px)
+			}
+		};
+
+		Ok(Some(patch))
 	}
 }
 

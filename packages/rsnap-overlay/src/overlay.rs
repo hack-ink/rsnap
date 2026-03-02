@@ -753,7 +753,6 @@ impl OverlaySession {
 			.with_decorations(false)
 			.with_resizable(false)
 			.with_transparent(true)
-			.with_visible(false)
 			.with_window_level(WindowLevel::AlwaysOnTop)
 			.with_inner_size(LogicalSize::new(460.0, 52.0));
 		let window = event_loop
@@ -2908,15 +2907,6 @@ impl OverlaySession {
 			self.last_present_at = Instant::now();
 
 			#[cfg(not(target_os = "macos"))]
-			return OverlayControl::Continue;
-		}
-		if matches!(self.state.mode, OverlayMode::Live) && self.state.rgb.is_none() {
-			if let Some(hud_window) = self.hud_window.as_ref() {
-				hud_window.window.set_visible(false);
-			}
-
-			self.last_present_at = Instant::now();
-
 			return OverlayControl::Continue;
 		}
 
