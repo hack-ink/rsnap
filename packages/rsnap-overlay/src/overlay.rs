@@ -2879,6 +2879,11 @@ impl OverlaySession {
 	}
 
 	fn handle_redraw_requested(&mut self, window_id: WindowId) -> OverlayControl {
+		let control = self.drain_worker_responses();
+
+		if !matches!(control, OverlayControl::Continue) {
+			return control;
+		}
 		if self.hud_window.as_ref().is_some_and(|hud_window| hud_window.window.id() == window_id) {
 			return self.handle_hud_redraw_requested();
 		}
