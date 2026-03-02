@@ -1251,6 +1251,12 @@ impl OverlaySession {
 		{
 			return;
 		}
+		if self.latest_live_cursor_sample_request_id.is_some()
+			&& self.applied_live_cursor_sample_request_id
+				!= self.latest_live_cursor_sample_request_id
+		{
+			return;
+		}
 
 		self.record_live_sample_stall(cursor, monitor);
 
