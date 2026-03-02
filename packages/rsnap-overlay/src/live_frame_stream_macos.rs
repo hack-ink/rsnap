@@ -63,6 +63,8 @@ const STREAM_SETUP_BACKOFF: Duration = Duration::from_millis(300);
 const STREAM_ERROR_TIMEOUT_CODE: isize = 1;
 const STREAM_ERROR_NULL_CONTENT_CODE: isize = 2;
 const STREAM_ERROR_RETAIN_FAILED_CODE: isize = 3;
+const LIVE_SAMPLE_MAX_RETRIES: u32 = 12;
+const LIVE_SAMPLE_RETRY_DELAY: Duration = Duration::from_millis(16);
 
 pub(crate) struct MacLiveFrameStream {
 	request_tx: Sender<WorkerRequest>,
@@ -222,18 +224,31 @@ fn stream_worker_loop(request_rx: Receiver<WorkerRequest>) {
 					STREAM_SETUP_BACKOFF,
 					monitor,
 				)
-				.and(state.as_ref())
-				.and_then(|stream_state| {
-					let pixel_buffer = stream_state.output.latest_pixel_buffer()?;
+				.and_then(|_| {
+					let stream_state = state.as_ref()?;
+					let mut sample = None;
 
-					sample_cursor_from_pixel_buffer(
-						&pixel_buffer,
-						x_px,
-						y_px,
-						want_patch,
-						patch_width_px,
-						patch_height_px,
-					)
+					for _ in 0..LIVE_SAMPLE_MAX_RETRIES {
+						sample =
+							stream_state.output.latest_pixel_buffer().and_then(|pixel_buffer| {
+								sample_cursor_from_pixel_buffer(
+									&pixel_buffer,
+									x_px,
+									y_px,
+									want_patch,
+									patch_width_px,
+									patch_height_px,
+								)
+							});
+
+						if sample.is_some() {
+							break;
+						}
+
+						thread::sleep(LIVE_SAMPLE_RETRY_DELAY);
+					}
+
+					sample
 				});
 				let _ = reply_tx.send(rgb);
 			},
@@ -244,17 +259,35 @@ fn stream_worker_loop(request_rx: Receiver<WorkerRequest>) {
 					STREAM_SETUP_BACKOFF,
 					monitor,
 				)
-				.and(state.as_ref())
-				.and_then(|stream_state| {
-					let pixel_buffer = stream_state.output.latest_pixel_buffer()?;
-					let (width_px, height_px) = pixel_buffer_size_px(&pixel_buffer)?;
-					let image = rgba_image_from_pixel_buffer(&pixel_buffer, width_px, height_px)?;
+				.and_then(|_| {
+					let stream_state = state.as_ref()?;
+					let mut snapshot = None;
 
-					Some(Arc::new(MonitorImageSnapshot {
-						captured_at: Instant::now(),
-						monitor,
-						image: Arc::new(image),
-					}))
+					for _ in 0..LIVE_SAMPLE_MAX_RETRIES {
+						snapshot =
+							stream_state.output.latest_pixel_buffer().and_then(|pixel_buffer| {
+								let (width_px, height_px) = pixel_buffer_size_px(&pixel_buffer)?;
+								let image = rgba_image_from_pixel_buffer(
+									&pixel_buffer,
+									width_px,
+									height_px,
+								)?;
+
+								Some(Arc::new(MonitorImageSnapshot {
+									captured_at: Instant::now(),
+									monitor,
+									image: Arc::new(image),
+								}))
+							});
+
+						if snapshot.is_some() {
+							break;
+						}
+
+						thread::sleep(LIVE_SAMPLE_RETRY_DELAY);
+					}
+
+					snapshot
 				});
 				let _ = reply_tx.send(snapshot);
 			},
@@ -501,6 +534,11 @@ fn sample_cursor_from_pixel_buffer(
 			let b = unsafe { *base.add(offset) };
 			let g = unsafe { *base.add(offset + 1) };
 			let r = unsafe { *base.add(offset + 2) };
+			let a = unsafe { *base.add(offset + 3) };
+
+			if a == 0 {
+				return None;
+			}
 
 			Some(Rgb::new(r, g, b))
 		};
