@@ -67,6 +67,7 @@ impl App {
 			hud_milk_amount: hud_tint,
 			hud_tint_hue,
 			alt_activation: Self::map_alt_activation(self.settings.alt_activation),
+			toolbar_placement: self.settings.toolbar_placement,
 			loupe_sample_side_px,
 			theme_mode: self.settings.theme_mode,
 		}
