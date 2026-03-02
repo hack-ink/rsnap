@@ -1497,8 +1497,17 @@ impl OverlaySession {
 			return;
 		}
 
-		let _ = self.apply_live_hover_cache_state(monitor, point);
+		let is_dragging_window = self.left_mouse_button_down
+			&& self.left_mouse_button_down_monitor == Some(monitor)
+			&& matches!(self.state.mode, OverlayMode::Live);
 
+		if is_dragging_window {
+			if self.state.hovered_window_rect.is_some() {
+				self.state.hovered_window_rect = None;
+			}
+		} else {
+			let _ = self.apply_live_hover_cache_state(monitor, point);
+		}
 		if self.state.rgb != sample.rgb {
 			self.state.rgb = sample.rgb;
 		}
@@ -1525,7 +1534,17 @@ impl OverlaySession {
 		let Some(monitor) = self.active_cursor_monitor() else {
 			return;
 		};
+		let is_dragging_window = self.left_mouse_button_down
+			&& self.left_mouse_button_down_monitor == Some(monitor)
+			&& matches!(self.state.mode, OverlayMode::Live);
 
+		if is_dragging_window {
+			if self.state.hovered_window_rect.is_some() {
+				self.state.hovered_window_rect = None;
+			}
+
+			return;
+		}
 		if self.apply_live_hover_cache_state(monitor, cursor) {
 			self.redraw_for_monitor_and_current(monitor);
 		}
