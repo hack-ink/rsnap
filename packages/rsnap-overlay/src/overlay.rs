@@ -10,8 +10,8 @@ use egui::ClippedPrimitive;
 use egui::FullOutput;
 use egui::Ui;
 use egui::{
-	Align, Align2, Color32, CornerRadius, Event, FontDefinitions, FontId, Frame, Id, Layout,
-	Margin, PointerButton, Pos2, Rect, Sense, Vec2, ViewportId,
+	Align, Align2, Color32, CornerRadius, Event, FontDefinitions, FontFamily, FontId, Frame, Id,
+	Layout, Margin, PointerButton, Pos2, Rect, Sense, Vec2, ViewportId,
 };
 use egui_phosphor::{Variant, regular};
 use egui_wgpu::{Renderer, ScreenDescriptor};
@@ -177,6 +177,10 @@ impl FrozenToolbarTool {
 			Self::Save => regular::FLOPPY_DISK,
 			Self::Done => regular::CHECK,
 		}
+	}
+
+	const fn is_mode_tool(self) -> bool {
+		matches!(self, Self::Pointer | Self::Pen | Self::Text | Self::Mosaic)
 	}
 }
 
@@ -4819,14 +4823,28 @@ impl WindowRenderer {
 			ui.spacing_mut().item_spacing.x = item_spacing;
 
 			for tool in tools {
-				let selected = *tool == toolbar_state.selected_tool;
+				let is_mode_tool = tool.is_mode_tool();
 				let response =
 					ui.allocate_response(Vec2::new(button_size, button_size), Sense::click());
 				let hovered = response.hovered();
 				let response = response.on_hover_text(tool.label());
 				let hover_anim: f32 = if hovered { 1.0 } else { 0.0 };
+
+				if is_mode_tool && response.clicked() {
+					let tool = *tool;
+
+					toolbar_state.selected_tool = tool;
+					toolbar_state.needs_redraw = true;
+				}
+
+				let selected = is_mode_tool && *tool == toolbar_state.selected_tool;
 				let selected_anim: f32 = if selected { 1.0 } else { 0.0 };
 				let glow = hover_anim.max(selected_anim);
+				let icon_font = if selected {
+					FontFamily::Name("phosphor-fill".into())
+				} else {
+					FontFamily::Proportional
+				};
 				let mut icon_color = normal_color;
 				let mut bg_color = Color32::from_rgba_unmultiplied(255, 255, 255, 0);
 				let mut border_alpha = 0.0;
@@ -4866,16 +4884,9 @@ impl WindowRenderer {
 					response.rect.center(),
 					Align2::CENTER_CENTER,
 					tool.icon(),
-					FontId::proportional(button_font_size),
+					FontId::new(button_font_size, icon_font),
 					icon_color,
 				);
-
-				if response.clicked() {
-					let tool = *tool;
-
-					toolbar_state.selected_tool = tool;
-					toolbar_state.needs_redraw = true;
-				}
 			}
 		});
 	}
@@ -5624,6 +5635,12 @@ impl WindowRenderer {
 
 		egui_phosphor::add_to_fonts(&mut fonts, Variant::Regular);
 
+		fonts.font_data.insert("phosphor-fill".into(), Variant::Fill.font_data().into());
+		fonts
+			.families
+			.entry(FontFamily::Name("phosphor-fill".into()))
+			.or_default()
+			.insert(0, "phosphor-fill".into());
 		egui_ctx.set_fonts(fonts);
 
 		let egui_renderer = Renderer::new(
@@ -6773,8 +6790,8 @@ fn macos_configure_hud_window(
 #[cfg(test)]
 mod tests {
 	use crate::overlay::{
-		HudTheme, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
-		Vec2, WindowRenderer, hud_blur_tint_alpha, hud_body_fill_srgba8,
+		FrozenToolbarTool, HudTheme, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
+		ToolbarPlacement, Vec2, WindowRenderer, hud_blur_tint_alpha, hud_body_fill_srgba8,
 	};
 
 	#[test]
@@ -6861,6 +6878,23 @@ mod tests {
 
 		assert_eq!(pos.x, expected_x);
 		assert_eq!(pos.y, capture_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX);
+	}
+
+	#[test]
+	fn frozen_toolbar_mode_tools_are_identifiable() {
+		assert!(FrozenToolbarTool::Pointer.is_mode_tool());
+		assert!(FrozenToolbarTool::Pen.is_mode_tool());
+		assert!(FrozenToolbarTool::Text.is_mode_tool());
+		assert!(FrozenToolbarTool::Mosaic.is_mode_tool());
+	}
+
+	#[test]
+	fn frozen_toolbar_action_tools_are_not_mode_tools() {
+		assert!(!FrozenToolbarTool::Undo.is_mode_tool());
+		assert!(!FrozenToolbarTool::Redo.is_mode_tool());
+		assert!(!FrozenToolbarTool::Copy.is_mode_tool());
+		assert!(!FrozenToolbarTool::Save.is_mode_tool());
+		assert!(!FrozenToolbarTool::Done.is_mode_tool());
 	}
 
 	#[test]
