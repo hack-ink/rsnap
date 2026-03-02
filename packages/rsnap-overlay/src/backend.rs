@@ -397,16 +397,25 @@ impl CaptureBackend for XcapCaptureBackend {
 		#[cfg(target_os = "macos")]
 		{
 			if let Some((x_px, y_px)) = monitor.local_u32_pixels(point) {
-				let sample = self.live_frame_stream.sample_cursor(
+				if let Some(sample) = self.live_frame_stream.sample_cursor(
 					monitor,
 					x_px,
 					y_px,
 					want_patch,
 					patch_width_px,
 					patch_height_px,
-				);
+				) {
+					return Ok(sample);
+				}
 
-				Ok(sample.unwrap_or(LiveCursorSample { rgb: None, patch: None }))
+				let rgb = self.pixel_rgb_in_monitor(monitor, point)?;
+				let patch = if want_patch {
+					self.rgba_patch_in_monitor(monitor, point, patch_width_px, patch_height_px)?
+				} else {
+					None
+				};
+
+				Ok(LiveCursorSample { rgb, patch })
 			} else {
 				Ok(LiveCursorSample { rgb: None, patch: None })
 			}
