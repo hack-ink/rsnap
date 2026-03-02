@@ -62,6 +62,7 @@ const FROZEN_TOOLBAR_TOOL_COUNT: usize = 9;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
 const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
+const LIVE_DEVICE_CURSOR_POLL_BACKOFF: Duration = Duration::from_millis(24);
 const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
 const LIVE_WINDOW_LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(120);
 const HUD_LOUPE_MOVE_INTERVAL: Duration = Duration::from_millis(16);
@@ -769,7 +770,7 @@ impl OverlaySession {
 			.map_err(|err| format!("Unable to create HUD window: {err}"))?;
 		let window = Arc::new(window);
 		#[cfg(target_os = "macos")]
-		let _ = window.set_cursor_hittest(true);
+		let _ = window.set_cursor_hittest(false);
 		#[cfg(not(target_os = "macos"))]
 		let _ = window.set_cursor_hittest(false);
 
@@ -810,7 +811,7 @@ impl OverlaySession {
 			.map_err(|err| format!("Unable to create loupe window: {err}"))?;
 		let window = Arc::new(window);
 		#[cfg(target_os = "macos")]
-		let _ = window.set_cursor_hittest(true);
+		let _ = window.set_cursor_hittest(false);
 		#[cfg(not(target_os = "macos"))]
 		let _ = window.set_cursor_hittest(false);
 
@@ -1207,6 +1208,14 @@ impl OverlaySession {
 		{
 			// Keep this loop alive even if CursorMoved events are sparse on non-macOS.
 			self.schedule_egui_repaint_after(Duration::from_millis(16));
+		}
+
+		#[cfg(target_os = "macos")]
+		if self
+			.last_event_cursor_at
+			.is_some_and(|at| at.elapsed() <= LIVE_DEVICE_CURSOR_POLL_BACKOFF)
+		{
+			return;
 		}
 
 		let mouse = self.cursor_device.get_mouse();
@@ -2541,9 +2550,21 @@ impl OverlaySession {
 			self.last_event_cursor_at = Some(now);
 		}
 
-		let device_cursor = self.current_device_cursor();
-		let Some((monitor, global, source)) = self.resolve_live_cursor_point(device_cursor) else {
-			return OverlayControl::Continue;
+		let (monitor, global, source, device_cursor) = if let Some(event_monitor) = event_monitor {
+			(
+				event_monitor,
+				event_global,
+				DeviceCursorPointSource::EventRecentFallback,
+				event_global,
+			)
+		} else {
+			let device_cursor = self.current_device_cursor();
+			let Some((monitor, global, source)) = self.resolve_live_cursor_point(device_cursor)
+			else {
+				return OverlayControl::Continue;
+			};
+
+			(monitor, global, source, device_cursor)
 		};
 		let old_cursor = self.state.cursor;
 		let trace = CursorMoveTrace {
