@@ -18,7 +18,7 @@ use winit::window::Theme;
 use winit::window::{Window, WindowId, WindowLevel};
 
 use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
-use rsnap_overlay::ThemeMode;
+use rsnap_overlay::{ThemeMode, ToolbarPlacement};
 
 const SETTINGS_ROW_HEIGHT: f32 = 22.0;
 const SETTINGS_SECTION_GAP: f32 = 6.0;
@@ -610,6 +610,24 @@ impl SettingsWindow {
 			changed = true;
 		}
 
+		let before_toolbar_placement = settings.toolbar_placement;
+
+		egui::ComboBox::from_label("Toolbar placement")
+			.selected_text(Self::toolbar_placement_label(settings.toolbar_placement))
+			.width(self.combo_width)
+			.show_ui(ui, |ui| {
+				ui.selectable_value(
+					&mut settings.toolbar_placement,
+					ToolbarPlacement::Bottom,
+					"Bottom",
+				);
+				ui.selectable_value(&mut settings.toolbar_placement, ToolbarPlacement::Top, "Top");
+			});
+
+		if settings.toolbar_placement != before_toolbar_placement {
+			changed = true;
+		}
+
 		let enabled = settings.hud_glass_enabled;
 
 		changed |= self.overlay_slider_row(ui, "Opacity", &mut settings.hud_opacity, enabled);
@@ -847,6 +865,13 @@ impl SettingsWindow {
 			LoupeSampleSize::Small => "Small (15x15)",
 			LoupeSampleSize::Medium => "Medium (21x21)",
 			LoupeSampleSize::Large => "Large (31x31)",
+		}
+	}
+
+	fn toolbar_placement_label(placement: ToolbarPlacement) -> &'static str {
+		match placement {
+			ToolbarPlacement::Top => "Top",
+			ToolbarPlacement::Bottom => "Bottom",
 		}
 	}
 

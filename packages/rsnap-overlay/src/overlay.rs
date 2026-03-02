@@ -124,6 +124,14 @@ pub enum AltActivationMode {
 	Toggle,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolbarPlacement {
+	Top,
+	#[default]
+	Bottom,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HudTheme {
 	Dark,
@@ -203,6 +211,7 @@ pub struct OverlayConfig {
 	/// Hue value for tint, 0..=1.
 	pub hud_tint_hue: f32,
 	pub alt_activation: AltActivationMode,
+	pub toolbar_placement: ToolbarPlacement,
 	pub loupe_sample_side_px: u32,
 	pub theme_mode: ThemeMode,
 }
@@ -218,6 +227,7 @@ impl Default for OverlayConfig {
 			hud_milk_amount: 0.0,
 			hud_tint_hue: 0.585,
 			alt_activation: AltActivationMode::Hold,
+			toolbar_placement: ToolbarPlacement::Bottom,
 			loupe_sample_side_px: 21,
 			theme_mode: ThemeMode::System,
 		}
@@ -1738,8 +1748,12 @@ impl OverlaySession {
 				Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
 			);
 			let toolbar_size = Vec2::new(TOOLBAR_EXPANDED_WIDTH_PX, TOOLBAR_EXPANDED_HEIGHT_PX);
-			let default_pos =
-				WindowRenderer::frozen_toolbar_default_pos(screen_rect, capture_rect, toolbar_size);
+			let default_pos = WindowRenderer::frozen_toolbar_default_pos(
+				screen_rect,
+				capture_rect,
+				toolbar_size,
+				self.config.toolbar_placement,
+			);
 
 			self.toolbar_state.floating_position = Some(default_pos);
 
@@ -2195,6 +2209,7 @@ impl OverlaySession {
 			Some(Pos2::ZERO),
 			false,
 			HudAnchor::Cursor,
+			self.config.toolbar_placement,
 			self.config.show_alt_hint_keycap,
 			false,
 			self.config.hud_opaque,
@@ -2969,6 +2984,7 @@ impl OverlaySession {
 				Some(Pos2::new(-14.0, -14.0)),
 				true,
 				HudAnchor::Cursor,
+				self.config.toolbar_placement,
 				self.config.show_alt_hint_keycap,
 				self.config.show_hud_blur,
 				self.config.hud_opaque,
@@ -3201,6 +3217,7 @@ impl OverlaySession {
 				None,
 				false,
 				self.config.hud_anchor,
+				self.config.toolbar_placement,
 				self.config.show_alt_hint_keycap,
 				self.config.show_hud_blur,
 				self.config.hud_opaque,
@@ -4312,6 +4329,7 @@ impl WindowRenderer {
 		hud_compact: bool,
 		show_hud_blur: bool,
 		hud_anchor: HudAnchor,
+		toolbar_placement: ToolbarPlacement,
 		show_alt_hint_keycap: bool,
 		hud_blur_active: bool,
 		hud_opaque: bool,
@@ -4339,6 +4357,7 @@ impl WindowRenderer {
 				state,
 				monitor,
 				theme,
+				toolbar_placement,
 				hud_blur_active,
 				hud_opaque,
 				hud_opacity,
@@ -4452,6 +4471,7 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 		theme: HudTheme,
+		toolbar_placement: ToolbarPlacement,
 		hud_blur_active: bool,
 		hud_opaque: bool,
 		hud_opacity: f32,
@@ -4493,6 +4513,7 @@ impl WindowRenderer {
 			screen_rect,
 			capture_rect,
 			toolbar_size,
+			toolbar_placement,
 		) else {
 			return;
 		};
@@ -4516,6 +4537,7 @@ impl WindowRenderer {
 		);
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn resolve_frozen_toolbar_birth(
 		ctx: &egui::Context,
 		state: &OverlayState,
@@ -4524,6 +4546,7 @@ impl WindowRenderer {
 		screen_rect: Rect,
 		capture_rect: Rect,
 		toolbar_size: Vec2,
+		toolbar_placement: ToolbarPlacement,
 	) -> Option<Pos2> {
 		if let Some(pos) = toolbar_state.floating_position {
 			return Some(pos);
@@ -4586,7 +4609,12 @@ impl WindowRenderer {
 			return None;
 		}
 
-		let default_pos = Self::frozen_toolbar_default_pos(screen_rect, capture_rect, toolbar_size);
+		let default_pos = Self::frozen_toolbar_default_pos(
+			screen_rect,
+			capture_rect,
+			toolbar_size,
+			toolbar_placement,
+		);
 
 		tracing::debug!(
 			monitor_id = monitor.id,
@@ -4629,14 +4657,26 @@ impl WindowRenderer {
 		screen_rect: Rect,
 		capture_rect: Rect,
 		toolbar_size: Vec2,
+		toolbar_placement: ToolbarPlacement,
 	) -> Pos2 {
-		let below_y = capture_rect.max.y + TOOLBAR_CAPTURE_GAP_PX;
-		let within_screen =
-			below_y + toolbar_size.y + TOOLBAR_SCREEN_MARGIN_PX <= screen_rect.max.y;
-		let y = if within_screen {
-			below_y
-		} else {
-			capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y
+		let y = match toolbar_placement {
+			ToolbarPlacement::Bottom => {
+				let below_y = capture_rect.max.y + TOOLBAR_CAPTURE_GAP_PX;
+				let within_screen =
+					below_y + toolbar_size.y + TOOLBAR_SCREEN_MARGIN_PX <= screen_rect.max.y;
+
+				if within_screen {
+					below_y
+				} else {
+					capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y
+				}
+			},
+			ToolbarPlacement::Top => {
+				let above_y = capture_rect.min.y - TOOLBAR_CAPTURE_GAP_PX - toolbar_size.y;
+				let within_screen = above_y >= screen_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX;
+
+				if within_screen { above_y } else { capture_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX }
+			},
 		};
 		let min_x = screen_rect.min.x + TOOLBAR_SCREEN_MARGIN_PX;
 		let min_y = screen_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX;
@@ -5682,6 +5722,7 @@ impl WindowRenderer {
 		hud_local_cursor_override: Option<Pos2>,
 		hud_compact: bool,
 		hud_anchor: HudAnchor,
+		toolbar_placement: ToolbarPlacement,
 		show_alt_hint_keycap: bool,
 		show_hud_blur: bool,
 		hud_opaque: bool,
@@ -5728,6 +5769,7 @@ impl WindowRenderer {
 			hud_compact,
 			show_hud_blur,
 			hud_anchor,
+			toolbar_placement,
 			show_alt_hint_keycap,
 			hud_cfg.hud_glass_active,
 			hud_opaque,
@@ -6731,8 +6773,8 @@ fn macos_configure_hud_window(
 #[cfg(test)]
 mod tests {
 	use crate::overlay::{
-		HudTheme, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, Vec2,
-		WindowRenderer, hud_blur_tint_alpha, hud_body_fill_srgba8,
+		HudTheme, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
+		Vec2, WindowRenderer, hud_blur_tint_alpha, hud_body_fill_srgba8,
 	};
 
 	#[test]
@@ -6740,7 +6782,12 @@ mod tests {
 		let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 		let capture_rect = Rect::from_min_size(Pos2::new(50.0, 100.0), Vec2::new(300.0, 200.0));
 		let toolbar_size = Vec2::new(460.0, 54.0);
-		let pos = WindowRenderer::frozen_toolbar_default_pos(monitor, capture_rect, toolbar_size);
+		let pos = WindowRenderer::frozen_toolbar_default_pos(
+			monitor,
+			capture_rect,
+			toolbar_size,
+			ToolbarPlacement::Bottom,
+		);
 		let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
 			TOOLBAR_SCREEN_MARGIN_PX,
 			(monitor.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX)
@@ -6756,7 +6803,12 @@ mod tests {
 		let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 600.0));
 		let toolbar_size = Vec2::new(460.0, 54.0);
 		let capture_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 560.0));
-		let pos = WindowRenderer::frozen_toolbar_default_pos(monitor, capture_rect, toolbar_size);
+		let pos = WindowRenderer::frozen_toolbar_default_pos(
+			monitor,
+			capture_rect,
+			toolbar_size,
+			ToolbarPlacement::Bottom,
+		);
 		let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
 			TOOLBAR_SCREEN_MARGIN_PX,
 			(monitor.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX)
@@ -6767,6 +6819,48 @@ mod tests {
 		assert_eq!(pos.x, expected_x);
 		assert_eq!(pos.y, capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y);
 		assert_eq!(pos.y, expected_y);
+	}
+
+	#[test]
+	fn frozen_toolbar_top_default_position_fits_above_capture_rect() {
+		let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(50.0, 180.0), Vec2::new(300.0, 200.0));
+		let toolbar_size = Vec2::new(460.0, 54.0);
+		let pos = WindowRenderer::frozen_toolbar_default_pos(
+			monitor,
+			capture_rect,
+			toolbar_size,
+			ToolbarPlacement::Top,
+		);
+		let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
+			TOOLBAR_SCREEN_MARGIN_PX,
+			(monitor.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX)
+				.max(TOOLBAR_SCREEN_MARGIN_PX),
+		);
+
+		assert_eq!(pos.x, expected_x);
+		assert_eq!(pos.y, capture_rect.min.y - TOOLBAR_CAPTURE_GAP_PX - toolbar_size.y);
+	}
+
+	#[test]
+	fn frozen_toolbar_top_default_position_falls_inside_when_no_space_above_capture_rect() {
+		let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(0.0, 20.0), Vec2::new(500.0, 400.0));
+		let toolbar_size = Vec2::new(460.0, 54.0);
+		let pos = WindowRenderer::frozen_toolbar_default_pos(
+			monitor,
+			capture_rect,
+			toolbar_size,
+			ToolbarPlacement::Top,
+		);
+		let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
+			TOOLBAR_SCREEN_MARGIN_PX,
+			(monitor.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX)
+				.max(TOOLBAR_SCREEN_MARGIN_PX),
+		);
+
+		assert_eq!(pos.x, expected_x);
+		assert_eq!(pos.y, capture_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX);
 	}
 
 	#[test]

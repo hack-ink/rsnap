@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
-use rsnap_overlay::ThemeMode;
+use rsnap_overlay::{ThemeMode, ToolbarPlacement};
 
 #[derive(Clone, Copy, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -59,6 +59,8 @@ pub struct AppSettings {
 	pub hud_tint_hue: f32,
 	#[serde(default)]
 	pub alt_activation: AltActivationMode,
+	#[serde(default)]
+	pub toolbar_placement: ToolbarPlacement,
 	#[serde(default)]
 	pub loupe_sample_size: LoupeSampleSize,
 	#[serde(default)]
@@ -120,6 +122,7 @@ impl Default for AppSettings {
 			hud_tint: default_hud_tint(),
 			hud_tint_hue: default_hud_tint_hue(),
 			alt_activation: AltActivationMode::default(),
+			toolbar_placement: ToolbarPlacement::Bottom,
 			loupe_sample_size: LoupeSampleSize::default(),
 			theme_mode: ThemeMode::System,
 		}

@@ -66,6 +66,7 @@ cargo run -p rsnap
   - Blur (`0..100`, default `25`)
   - Tint (`0..100`, default `0`)
   - Hue (`0..360`, system-blue default)
+  - Toolbar placement (`bottom` / `top`, default `bottom`)
 - Tint is applied as hue-shift intensity (0 = no tint, 100 = full tint), while Hue sets
   target color.
 - Numeric entry accepts plain integers for percent/degree fields and updates immediately.
