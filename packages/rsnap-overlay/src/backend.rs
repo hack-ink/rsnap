@@ -274,11 +274,26 @@ impl XcapCaptureBackend {
 		height: u32,
 	) -> Result<RgbaImage> {
 		let xcap_monitor = self.cached_xcap_monitor(monitor)?;
+		let (monitor_width, monitor_height) = self
+			.xcap_monitor_pixel_size_cached(&xcap_monitor)
+			.wrap_err("Failed to read xcap monitor size")?;
+		let width = width.max(1).min(monitor_width.max(1));
+		let height = height.max(1).min(monitor_height.max(1));
+		let x = x.min(monitor_width.saturating_sub(width));
+		let y = y.min(monitor_height.saturating_sub(height));
 		let image = xcap_monitor
 			.capture_region(x, y, width, height)
 			.wrap_err("xcap capture_region failed")?;
 
 		Ok(image)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn xcap_monitor_pixel_size_cached(&self, xcap_monitor: &xcap::Monitor) -> Result<(u32, u32)> {
+		let width = xcap_monitor.width().wrap_err("Failed to read xcap monitor width")?;
+		let height = xcap_monitor.height().wrap_err("Failed to read xcap monitor height")?;
+
+		Ok((width, height))
 	}
 
 	#[cfg(target_os = "macos")]
@@ -433,9 +448,18 @@ impl CaptureBackend for XcapCaptureBackend {
 		let patch = {
 			#[cfg(target_os = "macos")]
 			{
-				self.capture_monitor_region(monitor, x, y, 1, 1)?
-			}
+				if let Ok(patch) = self.capture_monitor_region(monitor, x, y, 1, 1) {
+					patch
+				} else {
+					self.ensure_cache(monitor)?;
 
+					let Some(cache) = self.cache.as_ref() else {
+						return Ok(None);
+					};
+
+					copy_rgba_patch(&cache.image, x, y, 1, 1)
+				}
+			}
 			#[cfg(not(target_os = "macos"))]
 			{
 				self.ensure_cache(monitor)?;
@@ -527,14 +551,30 @@ impl CaptureBackend for XcapCaptureBackend {
 		let patch = {
 			#[cfg(target_os = "macos")]
 			{
-				let width = width_px.max(1).min(monitor.width.max(1));
-				let height = height_px.max(1).min(monitor.height.max(1));
+				let xcap_monitor = self.cached_xcap_monitor(monitor)?;
+				let (monitor_width, monitor_height) = self
+					.xcap_monitor_pixel_size_cached(&xcap_monitor)
+					.wrap_err("Failed to read xcap monitor size")?;
+				let width = width_px.max(1).min(monitor_width.max(1));
+				let height = height_px.max(1).min(monitor_height.max(1));
 				let region_x =
-					center_x.saturating_sub(width / 2).min(monitor.width.saturating_sub(width));
+					center_x.saturating_sub(width / 2).min(monitor_width.saturating_sub(width));
 				let region_y =
-					center_y.saturating_sub(height / 2).min(monitor.height.saturating_sub(height));
+					center_y.saturating_sub(height / 2).min(monitor_height.saturating_sub(height));
 
-				self.capture_monitor_region(monitor, region_x, region_y, width, height)?
+				if let Ok(patch) =
+					self.capture_monitor_region(monitor, region_x, region_y, width, height)
+				{
+					patch
+				} else {
+					self.ensure_cache(monitor)?;
+
+					let Some(cache) = self.cache.as_ref() else {
+						return Ok(None);
+					};
+
+					copy_rgba_patch(&cache.image, center_x, center_y, width, height)
+				}
 			}
 			#[cfg(not(target_os = "macos"))]
 			{
