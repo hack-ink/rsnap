@@ -1388,6 +1388,14 @@ impl OverlaySession {
 	}
 
 	fn maybe_apply_pending_loupe_window_move(&mut self, now: Instant) {
+		self.apply_pending_loupe_window_move(now, false);
+	}
+
+	fn force_apply_pending_loupe_window_move(&mut self) {
+		self.apply_pending_loupe_window_move(Instant::now(), true);
+	}
+
+	fn apply_pending_loupe_window_move(&mut self, now: Instant, force: bool) {
 		let Some(desired) = self.pending_loupe_outer_pos else {
 			return;
 		};
@@ -1396,7 +1404,7 @@ impl OverlaySession {
 			.repaint_interval_for_monitor(self.active_cursor_monitor())
 			.max(HUD_LOUPE_MOVE_INTERVAL_MIN);
 
-		if elapsed < interval {
+		if !force && elapsed < interval {
 			let delay = interval.saturating_sub(elapsed);
 
 			self.schedule_egui_repaint_after(delay);
@@ -2889,6 +2897,9 @@ impl OverlaySession {
 			self.loupe_window_visible = visible;
 
 			if visible {
+				self.force_apply_pending_loupe_window_move();
+			}
+			if visible {
 				if !was_visible {
 					self.maybe_start_loupe_window_warmup_redraw();
 				}
@@ -3051,39 +3062,29 @@ impl OverlaySession {
 	) -> OverlayControl {
 		let old_monitor = self.active_cursor_monitor();
 		let now = Instant::now();
-		let Some((window_monitor, scale_factor)) =
-			self.windows.get(&window_id).map(|w| (w.monitor, w.window.scale_factor()))
-		else {
+		let Some(overlay_window) = self.windows.get(&window_id) else {
 			return self.handle_cursor_moved_without_overlay_window(window_id, old_monitor);
 		};
-		// Prefer global OS coordinates and fall back to the event cursor when needed.
+		let window_monitor = overlay_window.monitor;
+		let scale_factor = overlay_window.window.scale_factor();
+		let window_size = overlay_window.window.inner_size();
+		// Clamp to overlay window bounds and map to monitor coordinates.
+		let max_local_x = ((window_size.width as f64) / scale_factor).max(1.0) as i32 - 1;
+		let max_local_y = ((window_size.height as f64) / scale_factor).max(1.0) as i32 - 1;
 		let local_x = (position.x / scale_factor).round() as i32;
 		let local_y = (position.y / scale_factor).round() as i32;
-		let event_global =
-			GlobalPoint::new(window_monitor.origin.x + local_x, window_monitor.origin.y + local_y);
-		let event_monitor = self.monitor_at(event_global);
+		let event_global = GlobalPoint::new(
+			window_monitor.origin.x + local_x.clamp(0, max_local_x),
+			window_monitor.origin.y + local_y.clamp(0, max_local_y),
+		);
+		let monitor = window_monitor;
+		let global = event_global;
+		let source = DeviceCursorPointSource::EventRecentFallback;
+		let device_cursor = event_global;
 
-		if let Some(event_monitor) = event_monitor {
-			self.last_event_cursor = Some((event_monitor, event_global));
-			self.last_event_cursor_at = Some(now);
-		}
+		self.last_event_cursor = Some((monitor, event_global));
+		self.last_event_cursor_at = Some(now);
 
-		let (monitor, global, source, device_cursor) = if let Some(event_monitor) = event_monitor {
-			(
-				event_monitor,
-				event_global,
-				DeviceCursorPointSource::EventRecentFallback,
-				event_global,
-			)
-		} else {
-			let device_cursor = self.current_device_cursor();
-			let Some((monitor, global, source)) = self.resolve_live_cursor_point(device_cursor)
-			else {
-				return OverlayControl::Continue;
-			};
-
-			(monitor, global, source, device_cursor)
-		};
 		let old_cursor = self.state.cursor;
 		let trace = CursorMoveTrace {
 			window_id,
@@ -3661,6 +3662,8 @@ impl OverlaySession {
 
 		if needs_reposition {
 			let _ = self.update_loupe_window_position(monitor);
+
+			self.force_apply_pending_loupe_window_move();
 		}
 
 		if let Some(loupe_window) = self.loupe_window.as_ref() {
