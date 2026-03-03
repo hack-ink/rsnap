@@ -430,6 +430,7 @@ impl SettingsWindow {
 		let max_label = [
 			"Show Alt hint in HUD",
 			"Glass HUD",
+			"Selection particles",
 			"Alt activation",
 			"Loupe sample size",
 			"Opacity",
@@ -560,6 +561,7 @@ impl SettingsWindow {
 		changed |=
 			ui.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD").changed();
 		changed |= ui.checkbox(&mut settings.hud_glass_enabled, "Glass HUD").changed();
+		changed |= ui.checkbox(&mut settings.selection_particles, "Selection particles").changed();
 
 		ui.add_space(SETTINGS_SECTION_GAP);
 		ui.separator();

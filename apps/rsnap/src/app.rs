@@ -60,6 +60,7 @@ impl App {
 		OverlayConfig {
 			hud_anchor: HudAnchor::Cursor,
 			show_alt_hint_keycap: self.settings.show_alt_hint_keycap,
+			selection_particles: self.settings.selection_particles,
 			show_hud_blur,
 			hud_opaque,
 			hud_opacity,
