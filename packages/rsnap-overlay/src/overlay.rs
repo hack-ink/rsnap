@@ -97,6 +97,8 @@ const SELECTION_FLOW_REPAINT_FPS_MIN: f32 = 30.0;
 const SELECTION_FLOW_REPAINT_FPS_MAX: f32 = 120.0;
 const SELECTION_FLOW_REPAINT_FPS_DEFAULT: f32 = 60.0;
 const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] = [(94, 200, 255), (165, 103, 255), (255, 150, 60)];
+const SELECTION_FLOW_FROZEN_ALPHA_SCALE: f32 = 0.70;
+const SELECTION_FLOW_FROZEN_INTENSITY: f32 = 1.25;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
@@ -3907,6 +3909,12 @@ struct FrozenToolbarPointerState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionFlowStyle {
+	Band,
+	FullBorder,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SelectionFlowGeometryCacheKey {
 	rect_min_x_bits: u32,
 	rect_min_y_bits: u32,
@@ -4610,6 +4618,7 @@ impl WindowRenderer {
 					rect,
 					ctx,
 					theme,
+					SelectionFlowStyle::Band,
 					selection_flow_geometry_cache,
 				);
 
@@ -4632,6 +4641,7 @@ impl WindowRenderer {
 				rect,
 				ctx,
 				theme,
+				SelectionFlowStyle::Band,
 				selection_flow_geometry_cache,
 			);
 
@@ -4678,7 +4688,14 @@ impl WindowRenderer {
 			return false;
 		}
 
-		Self::render_selection_flow_ring(&painter, rect, ctx, theme, selection_flow_geometry_cache);
+		Self::render_selection_flow_ring(
+			&painter,
+			rect,
+			ctx,
+			theme,
+			SelectionFlowStyle::FullBorder,
+			selection_flow_geometry_cache,
+		);
 
 		true
 	}
@@ -4688,6 +4705,7 @@ impl WindowRenderer {
 		rect: Rect,
 		ctx: &egui::Context,
 		theme: HudTheme,
+		style: SelectionFlowStyle,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 	) {
 		if rect.width() < LIVE_DRAG_START_THRESHOLD_PX
@@ -4725,17 +4743,30 @@ impl WindowRenderer {
 		}
 
 		let flow_time = time * SELECTION_FLOW_SPEED;
+		let phase = flow_time * 1.28 + 0.72;
 
-		Self::selection_flow_draw_layer(
-			painter,
-			samples,
-			normals,
-			SELECTION_FLOW_CORE_WIDTH_PX,
-			base_alpha_scale * 0.52,
-			flow_time * 1.28 + 0.72,
-			SELECTION_FLOW_CORE_FLOW_WIDTH,
-			theme,
-		);
+		match style {
+			SelectionFlowStyle::Band => Self::selection_flow_draw_layer(
+				painter,
+				samples,
+				normals,
+				SELECTION_FLOW_CORE_WIDTH_PX,
+				base_alpha_scale * 0.52,
+				phase,
+				SELECTION_FLOW_CORE_FLOW_WIDTH,
+				theme,
+			),
+			SelectionFlowStyle::FullBorder => Self::selection_flow_draw_layer_full_border(
+				painter,
+				samples,
+				normals,
+				SELECTION_FLOW_CORE_WIDTH_PX,
+				base_alpha_scale * SELECTION_FLOW_FROZEN_ALPHA_SCALE,
+				phase,
+				SELECTION_FLOW_FROZEN_INTENSITY,
+				theme,
+			),
+		}
 	}
 
 	fn selection_flow_cached_geometry(
@@ -4879,6 +4910,46 @@ impl WindowRenderer {
 			let (current_point, t) = samples[i];
 			let movement = Self::selection_flow_flow_band(t, phase, flow_band_width);
 			let intensity = SELECTION_FLOW_FLOW_BOOST * movement;
+			let color = Self::selection_flow_color(t + phase, theme, alpha_scale, intensity);
+			let normal = normals[i] * half;
+
+			mesh.colored_vertex(current_point + normal, color);
+			mesh.colored_vertex(current_point - normal, color);
+		}
+		for i in 0..n {
+			let i0 = (i * 2) as u32;
+			let i1 = ((i * 2) + 1) as u32;
+			let n0 = (((i + 1) % n) * 2) as u32;
+			let n1 = (((i + 1) % n) * 2 + 1) as u32;
+
+			mesh.add_triangle(i0, i1, n0);
+			mesh.add_triangle(i1, n1, n0);
+		}
+
+		painter.add(egui::Shape::Mesh(mesh.into()));
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn selection_flow_draw_layer_full_border(
+		painter: &Painter,
+		samples: &[(Pos2, f32)],
+		normals: &[Vec2],
+		line_width: f32,
+		alpha_scale: f32,
+		phase: f32,
+		intensity: f32,
+		theme: HudTheme,
+	) {
+		if samples.is_empty() || normals.is_empty() || samples.len() != normals.len() {
+			return;
+		}
+
+		let half = (line_width * 0.5).max(0.1);
+		let n = samples.len();
+		let mut mesh = egui::epaint::Mesh::default();
+
+		for i in 0..n {
+			let (current_point, t) = samples[i];
 			let color = Self::selection_flow_color(t + phase, theme, alpha_scale, intensity);
 			let normal = normals[i] * half;
 
