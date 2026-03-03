@@ -72,8 +72,6 @@ pub struct AppSettings {
 impl AppSettings {
 	#[must_use]
 	pub fn load() -> Self {
-		Self::cleanup_legacy_json_settings();
-
 		let Some(path) = Self::path() else {
 			return Self::default();
 		};
@@ -95,8 +93,6 @@ impl AppSettings {
 	}
 
 	pub fn save(&self) -> io::Result<()> {
-		Self::cleanup_legacy_json_settings();
-
 		let Some(path) = Self::path() else {
 			return Ok(());
 		};
@@ -119,15 +115,6 @@ impl AppSettings {
 		let dirs = ProjectDirs::from("ink", "hack", "rsnap")?;
 
 		Some(dirs.config_dir().join("settings.toml"))
-	}
-
-	fn cleanup_legacy_json_settings() {
-		let Some(dirs) = ProjectDirs::from("ink", "hack", "rsnap") else {
-			return;
-		};
-		let config_dir = dirs.config_dir();
-		let _ = fs::remove_file(config_dir.join("settings.json"));
-		let _ = fs::remove_file(config_dir.join("settings.json.tmp"));
 	}
 }
 

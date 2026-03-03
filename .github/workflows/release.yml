@@ -49,37 +49,27 @@ jobs:
       - name: Pack (macOS)
         if: matrix.target.os == 'macos-latest'
         run: |
-          mv target/${{ matrix.target.name }}/final-release/vibe-mono .
-          zip vibe-mono-${{ matrix.target.name }}.zip vibe-mono
+          mv target/${{ matrix.target.name }}/final-release/rsnap .
+          zip rsnap-${{ matrix.target.name }}.zip rsnap
 
       - name: Pack (Windows)
         if: matrix.target.os == 'windows-latest'
         run: |
-          mv target/${{ matrix.target.name }}/final-release/vibe-mono.exe .
-          Compress-Archive -Path vibe-mono.exe -DestinationPath vibe-mono-${{ matrix.target.name }}.zip
+          mv target/${{ matrix.target.name }}/final-release/rsnap.exe .
+          Compress-Archive -Path rsnap.exe -DestinationPath rsnap-${{ matrix.target.name }}.zip
 
       - name: Pack (Linux)
         if: matrix.target.os == 'ubuntu-latest'
         run: |
-          mv target/${{ matrix.target.name }}/final-release/vibe-mono .
-          tar -czvf vibe-mono-${{ matrix.target.name }}.tar.gz vibe-mono
+          mv target/${{ matrix.target.name }}/final-release/rsnap .
+          tar -czvf rsnap-${{ matrix.target.name }}.tar.gz rsnap
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: vibe-mono-${{ matrix.target.name }}
-          path: vibe-mono-${{ matrix.target.name }}.*
+          name: rsnap-${{ matrix.target.name }}
+          path: rsnap-${{ matrix.target.name }}.*
           retention-days: 1
-
-  # release:
-  #   name: Release
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Publish
-  #       uses: softprops/action-gh-release@v2
-  #       with:
-  #         discussion_category_name: Announcements
-  #         generate_release_notes: true
 
   release:
     name: Release
@@ -92,7 +82,7 @@ jobs:
       - name: Hash
         run: |
           mkdir -p artifacts
-          mv vibe-mono-*/* artifacts/
+          mv rsnap-*/* artifacts/
           cd artifacts
           sha256sum * | tee ../SHA256
           md5sum * | tee ../MD5
@@ -122,5 +112,22 @@ jobs:
       - name: Login
         run: cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Publish
-        run: cargo publish --locked
+      - name: Publish rsnap-overlay
+        run: |
+          cargo publish -p rsnap-overlay --locked
+
+      - name: Wait for rsnap-overlay publication
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for _ in $(seq 1 24); do
+            if curl -fsSL "https://crates.io/api/v1/crates/rsnap-overlay/${VERSION}" > /dev/null; then
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "Timed out waiting for rsnap-overlay ${VERSION} on crates.io"
+          exit 1
+
+      - name: Publish rsnap
+        run: |
+          cargo publish -p rsnap --locked

@@ -33,13 +33,12 @@ use wgpu::Surface;
 use wgpu::SurfaceCapabilities;
 use wgpu::SurfaceError;
 use wgpu::SurfaceTexture;
-use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use winit::event::KeyEvent;
 use winit::{
 	dpi::PhysicalSize,
 	event::{ElementState, MouseButton, WindowEvent},
-	event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+	event_loop::ActiveEventLoop,
 	keyboard::{Key, NamedKey},
 	window::{Theme, WindowId, WindowLevel},
 };
@@ -298,89 +297,6 @@ impl Default for OverlayConfig {
 			loupe_sample_side_px: 21,
 			theme_mode: ThemeMode::System,
 		}
-	}
-}
-
-#[allow(dead_code)]
-pub struct OverlayBuilder {
-	config: OverlayConfig,
-}
-#[allow(dead_code)]
-impl OverlayBuilder {
-	#[must_use]
-	pub fn new() -> Self {
-		Self { config: OverlayConfig::default() }
-	}
-
-	#[must_use]
-	pub fn with_config(mut self, config: OverlayConfig) -> Self {
-		self.config = config;
-
-		self
-	}
-
-	pub fn run(self) -> Result<OverlayExit> {
-		struct Runner {
-			session: OverlaySession,
-			exit: Option<OverlayExit>,
-		}
-
-		impl ApplicationHandler<()> for Runner {
-			fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-				if let Err(err) = self.session.start(event_loop) {
-					self.exit = Some(OverlayExit::Error(err));
-
-					event_loop.exit();
-				}
-			}
-
-			fn window_event(
-				&mut self,
-				event_loop: &ActiveEventLoop,
-				window_id: WindowId,
-				event: WindowEvent,
-			) {
-				match self.session.handle_window_event(window_id, &event) {
-					OverlayControl::Continue => {},
-					OverlayControl::Exit(exit) => {
-						self.exit = Some(exit);
-
-						event_loop.exit();
-					},
-				}
-			}
-
-			fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-				if let OverlayControl::Exit(exit) = self.session.about_to_wait() {
-					self.exit = Some(exit);
-
-					event_loop.exit();
-
-					return;
-				}
-
-				let now = Instant::now();
-				let next_repaint = self.session.consume_egui_repaint_deadline(now);
-
-				match next_repaint {
-					Some(deadline) if deadline <= now => {
-						// `request_redraw()` does not necessarily wake the event loop immediately
-						// (especially for passthrough overlay windows on macOS). Poll for one
-						// iteration so the queued RedrawRequested events are delivered.
-						event_loop.set_control_flow(ControlFlow::Poll)
-					},
-					Some(deadline) => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
-					None => event_loop.set_control_flow(ControlFlow::Wait),
-				}
-			}
-		}
-
-		let event_loop = EventLoop::new()?;
-		let mut runner = Runner { session: OverlaySession::with_config(self.config), exit: None };
-
-		event_loop.run_app(&mut runner)?;
-
-		Ok(runner.exit.unwrap_or(OverlayExit::Cancelled))
 	}
 }
 
@@ -1439,27 +1355,6 @@ impl OverlaySession {
 
 		self.pending_loupe_outer_pos = None;
 		self.last_loupe_window_move_at = now;
-	}
-
-	fn consume_egui_repaint_deadline(&self, now: Instant) -> Option<Instant> {
-		let mut next_repaint =
-			self.egui_repaint_deadline.lock().unwrap_or_else(|err| err.into_inner());
-
-		if let Some(deadline) = *next_repaint {
-			if deadline <= now {
-				*next_repaint = None;
-
-				drop(next_repaint);
-
-				self.request_redraw_all();
-
-				Some(deadline)
-			} else {
-				Some(deadline)
-			}
-		} else {
-			None
-		}
 	}
 
 	fn schedule_egui_repaint_after(&self, delay: Duration) {
