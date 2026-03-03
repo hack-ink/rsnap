@@ -55,6 +55,7 @@ cargo run -p rsnap
 
 `rsnap` currently relies on **Screen Recording** permission to capture other apps/windows.
 - ScreenCaptureKit live sampling on macOS requires macOS 12.3+ and Screen Recording permission.
+- Default cursor tracking and Option key detection on macOS do not require Accessibility or Input Monitoring permissions.
 
 - Go to `System Settings` -> `Privacy & Security` -> `Screen Recording`.
 - Enable `rsnap` (the built `.app`), then relaunch the app.
