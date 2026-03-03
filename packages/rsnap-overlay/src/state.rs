@@ -297,14 +297,6 @@ impl OverlayState {
 		self.frozen_image = Some(image);
 		self.mode = OverlayMode::Frozen;
 	}
-
-	#[allow(dead_code)]
-	pub fn unfreeze_to_live(&mut self) {
-		self.mode = OverlayMode::Live;
-		self.frozen_image = None;
-		self.loupe = None;
-		self.frozen_generation = self.frozen_generation.wrapping_add(1);
-	}
 }
 
 #[cfg(test)]
