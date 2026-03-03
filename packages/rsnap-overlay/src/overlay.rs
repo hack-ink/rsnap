@@ -4219,11 +4219,17 @@ impl WindowRenderer {
 			.iter()
 			.copied()
 			.find(|f| {
-				matches!(
-					f,
-					wgpu::TextureFormat::Bgra8UnormSrgb | wgpu::TextureFormat::Rgba8UnormSrgb
-				)
+				matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm)
 			})
+			.or_else(|| {
+				caps.formats.iter().copied().find(|f| {
+					matches!(
+						f,
+						wgpu::TextureFormat::Bgra8UnormSrgb | wgpu::TextureFormat::Rgba8UnormSrgb
+					)
+				})
+			})
+			.or_else(|| caps.formats.iter().copied().find(|f| !wgpu::TextureFormat::is_srgb(f)))
 			.or_else(|| caps.formats.iter().copied().find(wgpu::TextureFormat::is_srgb))
 			.unwrap_or(caps.formats[0])
 	}
