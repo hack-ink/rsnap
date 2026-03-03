@@ -406,11 +406,86 @@ impl SettingsWindow {
 		settings: &mut AppSettings,
 	) -> bool {
 		let _ = ctx;
-		let _ = settings;
+		let mut changed = false;
 
-		ui.label("General settings will live here.");
+		#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+		enum LogLevelPreset {
+			DefaultInfo,
+			Warn,
+			DebugRsn,
+			TraceRsn,
+			Custom,
+		}
 
-		false
+		let log_filter_current = settings.log_filter.clone();
+		let (current_preset, current_custom) = match log_filter_current.as_deref() {
+			None => (LogLevelPreset::DefaultInfo, None),
+			Some("warn") => (LogLevelPreset::Warn, None),
+			Some("rsnap=debug,rsnap_overlay=debug") => (LogLevelPreset::DebugRsn, None),
+			Some("rsnap=trace,rsnap_overlay=trace") => (LogLevelPreset::TraceRsn, None),
+			Some(other) => (LogLevelPreset::Custom, Some(other.to_owned())),
+		};
+		let mut selected_preset = current_preset;
+
+		egui::ComboBox::from_label("Log level")
+			.selected_text(match selected_preset {
+				LogLevelPreset::DefaultInfo => "Default (info)",
+				LogLevelPreset::Warn => "Warn",
+				LogLevelPreset::DebugRsn => "Debug (rsnap + overlay)",
+				LogLevelPreset::TraceRsn => "Trace (rsnap + overlay)",
+				LogLevelPreset::Custom => "Custom…",
+			})
+			.width(self.combo_width)
+			.show_ui(ui, |ui| {
+				ui.selectable_value(
+					&mut selected_preset,
+					LogLevelPreset::DefaultInfo,
+					"Default (info)",
+				);
+				ui.selectable_value(&mut selected_preset, LogLevelPreset::Warn, "Warn");
+				ui.selectable_value(
+					&mut selected_preset,
+					LogLevelPreset::DebugRsn,
+					"Debug (rsnap + overlay)",
+				);
+				ui.selectable_value(
+					&mut selected_preset,
+					LogLevelPreset::TraceRsn,
+					"Trace (rsnap + overlay)",
+				);
+				ui.selectable_value(&mut selected_preset, LogLevelPreset::Custom, "Custom…");
+			});
+
+		if selected_preset != current_preset {
+			settings.log_filter = match selected_preset {
+				LogLevelPreset::DefaultInfo => None,
+				LogLevelPreset::Warn => Some(String::from("warn")),
+				LogLevelPreset::DebugRsn => Some(String::from("rsnap=debug,rsnap_overlay=debug")),
+				LogLevelPreset::TraceRsn => Some(String::from("rsnap=trace,rsnap_overlay=trace")),
+				LogLevelPreset::Custom => {
+					settings.log_filter.clone().or_else(|| Some(String::new()))
+				},
+			};
+			changed = true;
+		}
+		if selected_preset == LogLevelPreset::Custom {
+			let mut custom = current_custom.unwrap_or_default();
+			let response = ui
+				.add(
+					egui::TextEdit::singleline(&mut custom)
+						.hint_text("rsnap=debug,rsnap_overlay=debug"),
+				)
+				.on_hover_text("Uses the same syntax as RUST_LOG (tracing-subscriber EnvFilter).");
+
+			if response.changed() {
+				settings.log_filter = Some(custom);
+				changed = true;
+			}
+		}
+
+		ui.small("Log level changes require restarting rsnap.");
+
+		changed
 	}
 
 	fn maybe_autosize_window(&mut self, ctx: &egui::Context) {
@@ -428,6 +503,7 @@ impl SettingsWindow {
 			})
 		};
 		let max_label = [
+			"Log level",
 			"Show Alt hint in HUD",
 			"Glass HUD",
 			"Selection particles",
@@ -442,6 +518,11 @@ impl SettingsWindow {
 		.map(measure)
 		.fold(0.0_f32, f32::max);
 		let max_combo_value = [
+			"Default (info)",
+			"Warn",
+			"Debug (rsnap + overlay)",
+			"Trace (rsnap + overlay)",
+			"Custom…",
 			"System",
 			"Dark",
 			"Light",

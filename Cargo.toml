@@ -37,6 +37,7 @@ serde                    = { version = "1.0", features = ["derive"] }
 thiserror                = { version = "2.0" }
 toml                     = { version = "0.8" }
 tracing                  = { version = "0.1" }
+tracing-appender         = { version = "0.2" }
 tracing-subscriber       = { version = "0.3", features = ["env-filter"] }
 tray-icon                = { version = "0.21" }
 wgpu                     = { version = "27.0" }

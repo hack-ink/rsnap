@@ -10,6 +10,13 @@ Menubar-only app (tray icon + menu) that triggers `rsnap-overlay` capture and wr
 - Freeze/export remains on `xcap` for now.
 - Windows is planned (minimum Windows 10) and is not implemented yet.
 
+## Logs
+
+- Runtime logs are written to `ProjectDirs` data directory under `logs/` (on macOS this maps to `~/Library/Application Support/ink.hack.rsnap/logs`).
+- Log files rotate daily and keep up to 15 files.
+- If file logging cannot start (for example directory permission issues), rsnap falls back to console logging.
+- Set `RUST_LOG` or set `log_filter` in `settings.toml` to increase verbosity, for example `rsnap=debug,rsnap_overlay=debug`.
+
 ## Hotkey
 
 - Global hotkey: `Alt+X`
