@@ -1,10 +1,12 @@
 use std::{
 	collections::HashMap,
+	ffi::c_void,
 	sync::{Arc, Mutex},
 	time::{Duration, Instant},
 };
 
 use color_eyre::eyre::{self, Result, WrapErr};
+#[cfg(not(target_os = "macos"))]
 use device_query::{DeviceQuery, Keycode};
 use egui::ClippedPrimitive;
 use egui::FullOutput;
@@ -51,6 +53,12 @@ use crate::{
 	worker::{OverlayWorker, WorkerRequestSendError, WorkerResponse},
 };
 
+#[cfg(target_os = "macos")]
+type CFTypeRef = *const c_void;
+
+#[cfg(target_os = "macos")]
+type CGEventRef = *mut c_void;
+
 const HUD_PILL_BODY_FILL_DARK_SRGBA8: [u8; 4] = [28, 28, 32, 156];
 const HUD_PILL_BODY_FILL_LIGHT_SRGBA8: [u8; 4] = [232, 236, 243, 176];
 const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
@@ -58,15 +66,22 @@ const HUD_PILL_BLUR_TINT_ALPHA_LIGHT: f32 = 0.22;
 const LOUPE_TILE_CORNER_RADIUS_POINTS: f64 = 12.0;
 const MACOS_HUD_WINDOW_LEVEL: isize = 26;
 const MACOS_OVERLAY_WINDOW_LEVEL: isize = 25;
-const FROZEN_CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const FROZEN_TOOLBAR_TOOL_COUNT: usize = 9;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
 const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
-const LIVE_DEVICE_CURSOR_POLL_BACKOFF: Duration = Duration::from_millis(24);
+const CURSOR_EVENT_TICK_TTL: Duration = Duration::from_millis(24);
 const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
 const LIVE_WINDOW_LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(120);
-const HUD_LOUPE_MOVE_INTERVAL: Duration = Duration::from_millis(16);
+const HUD_LOUPE_MOVE_INTERVAL_MIN: Duration = Duration::from_millis(16);
+const CURSOR_POLL_INTERVAL_MIN: Duration = Duration::from_millis(16);
+const OVERLAY_EVENT_LOOP_STALL_THRESHOLD: Duration = Duration::from_millis(250);
+const SLOW_OP_WARN_CURSOR_LOCATION: Duration = Duration::from_millis(8);
+const SLOW_OP_WARN_HUD_CONFIG: Duration = Duration::from_millis(40);
+const SLOW_OP_WARN_OUTER_POSITION: Duration = Duration::from_millis(24);
+const SLOW_OP_WARN_RENDER: Duration = Duration::from_millis(24);
+const SLOW_OP_WARN_WINDOW_EVENT: Duration = Duration::from_millis(40);
+const SLOW_OP_WARN_INTERVAL: Duration = Duration::from_secs(1);
 const HUD_PILL_INNER_MARGIN_X_POINTS: f32 = 12.0;
 const HUD_PILL_INNER_MARGIN_Y_POINTS: f32 = 8.0;
 const HUD_PILL_STROKE_WIDTH_POINTS: f32 = 1.0;
@@ -93,12 +108,15 @@ const SELECTION_FLOW_SPEED: f32 = 0.24;
 const SELECTION_FLOW_CORE_WIDTH_PX: f32 = 2.4;
 const SELECTION_FLOW_CORE_FLOW_WIDTH: f32 = 0.06;
 const SELECTION_FLOW_FLOW_BOOST: f32 = 2.8;
-const SELECTION_FLOW_REPAINT_FPS_MIN: f32 = 30.0;
+const SELECTION_FLOW_REPAINT_FPS_MIN: f32 = 60.0;
 const SELECTION_FLOW_REPAINT_FPS_MAX: f32 = 120.0;
-const SELECTION_FLOW_REPAINT_FPS_DEFAULT: f32 = 60.0;
 const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] = [(94, 200, 255), (165, 103, 255), (255, 150, 60)];
 const SELECTION_FLOW_FROZEN_ALPHA_SCALE: f32 = 0.70;
 const SELECTION_FLOW_FROZEN_INTENSITY: f32 = 1.25;
+#[cfg(target_os = "macos")]
+const KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE: u32 = 0;
+#[cfg(target_os = "macos")]
+const KCG_EVENT_FLAGS_MASK_ALTERNATE: u64 = 1_u64 << 19;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
@@ -141,6 +159,32 @@ pub enum ToolbarPlacement {
 	Top,
 	#[default]
 	Bottom,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OverlayEventLoopPhase {
+	Idle,
+	WindowEvent,
+	AboutToWait,
+	RedrawDispatch,
+	HudRedraw,
+	LoupeRedraw,
+	ToolbarRedraw,
+	OverlayRedraw,
+}
+impl OverlayEventLoopPhase {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Idle => "idle",
+			Self::WindowEvent => "window_event",
+			Self::AboutToWait => "about_to_wait",
+			Self::RedrawDispatch => "redraw_dispatch",
+			Self::HudRedraw => "hud_redraw",
+			Self::LoupeRedraw => "loupe_redraw",
+			Self::ToolbarRedraw => "toolbar_redraw",
+			Self::OverlayRedraw => "overlay_window_redraw",
+		}
+	}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -209,6 +253,12 @@ impl DeviceCursorPointSource {
 			Self::EventRecentFallback => "event_recent_fallback",
 		}
 	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionFlowStyle {
+	Band,
+	FullBorder,
 }
 
 #[derive(Clone, Debug)]
@@ -314,7 +364,10 @@ impl OverlayBuilder {
 
 				match next_repaint {
 					Some(deadline) if deadline <= now => {
-						event_loop.set_control_flow(ControlFlow::Wait)
+						// `request_redraw()` does not necessarily wake the event loop immediately
+						// (especially for passthrough overlay windows on macOS). Poll for one
+						// iteration so the queued RedrawRequested events are delivered.
+						event_loop.set_control_flow(ControlFlow::Poll)
 					},
 					Some(deadline) => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
 					None => event_loop.set_control_flow(ControlFlow::Wait),
@@ -334,6 +387,7 @@ impl OverlayBuilder {
 pub struct OverlaySession {
 	config: OverlayConfig,
 	worker: Option<OverlayWorker>,
+	#[cfg(not(target_os = "macos"))]
 	cursor_device: device_query::DeviceState,
 	state: OverlayState,
 	cursor_monitor: Option<MonitorRect>,
@@ -342,6 +396,8 @@ pub struct OverlaySession {
 	hud_window: Option<HudOverlayWindow>,
 	loupe_window: Option<HudOverlayWindow>,
 	toolbar_window: Option<HudOverlayWindow>,
+	#[cfg(target_os = "macos")]
+	macos_hud_window_config_cache: HashMap<WindowId, MacOSHudWindowConfigState>,
 	hud_outer_pos: Option<GlobalPoint>,
 	pending_hud_outer_pos: Option<GlobalPoint>,
 	hud_inner_size_points: Option<(u32, u32)>,
@@ -354,6 +410,8 @@ pub struct OverlaySession {
 	last_hud_window_move_at: Instant,
 	last_loupe_window_move_at: Instant,
 	last_present_at: Instant,
+	last_live_cursor_poll_at: Instant,
+	last_frozen_cursor_poll_at: Instant,
 	window_list_snapshot: Option<Arc<WindowListSnapshot>>,
 	last_window_list_refresh_request_at: Instant,
 	window_list_refresh_interval: Duration,
@@ -371,8 +429,16 @@ pub struct OverlaySession {
 	last_event_cursor_at: Option<Instant>,
 	live_sample_stall_started_at: Option<Instant>,
 	last_live_sample_stall_log_at: Option<Instant>,
+	slow_op_logger: SlowOperationLogger,
 	last_alt_press_at: Option<Instant>,
 	alt_modifier_down: bool,
+	event_loop_phase: OverlayEventLoopPhase,
+	event_loop_progress_seq: u64,
+	event_loop_last_progress_at: Instant,
+	event_loop_last_progress_window_id: Option<WindowId>,
+	event_loop_last_progress_monitor_id: Option<u32>,
+	event_loop_last_progress_detail: Option<&'static str>,
+	event_loop_last_stall_warn_at: Option<Instant>,
 	loupe_patch_width_px: u32,
 	loupe_patch_height_px: u32,
 	pending_freeze_capture: Option<MonitorRect>,
@@ -413,6 +479,7 @@ impl OverlaySession {
 		Self {
 			config,
 			worker: None,
+			#[cfg(not(target_os = "macos"))]
 			cursor_device: device_query::DeviceState::new(),
 			state,
 			cursor_monitor: None,
@@ -420,6 +487,8 @@ impl OverlaySession {
 			hud_window: None,
 			loupe_window: None,
 			toolbar_window: None,
+			#[cfg(target_os = "macos")]
+			macos_hud_window_config_cache: HashMap::new(),
 			hud_outer_pos: None,
 			pending_hud_outer_pos: None,
 			hud_inner_size_points: None,
@@ -429,9 +498,11 @@ impl OverlaySession {
 			toolbar_outer_pos: None,
 			toolbar_inner_size_points: None,
 			gpu: None,
-			last_hud_window_move_at: now - HUD_LOUPE_MOVE_INTERVAL,
-			last_loupe_window_move_at: now - HUD_LOUPE_MOVE_INTERVAL,
+			last_hud_window_move_at: now,
+			last_loupe_window_move_at: now,
 			last_present_at: Instant::now(),
+			last_live_cursor_poll_at: now - CURSOR_POLL_INTERVAL_MIN,
+			last_frozen_cursor_poll_at: now - CURSOR_POLL_INTERVAL_MIN,
 			window_list_snapshot: None,
 			last_window_list_refresh_request_at: now - window_list_refresh_interval,
 			window_list_refresh_interval,
@@ -449,8 +520,16 @@ impl OverlaySession {
 			last_event_cursor_at: None,
 			live_sample_stall_started_at: None,
 			last_live_sample_stall_log_at: None,
+			slow_op_logger: SlowOperationLogger::default(),
 			last_alt_press_at: None,
 			alt_modifier_down: false,
+			event_loop_phase: OverlayEventLoopPhase::Idle,
+			event_loop_progress_seq: 0,
+			event_loop_last_progress_at: now,
+			event_loop_last_progress_window_id: None,
+			event_loop_last_progress_monitor_id: None,
+			event_loop_last_progress_detail: None,
+			event_loop_last_stall_warn_at: None,
 			loupe_patch_width_px: loupe_sample_side_px,
 			loupe_patch_height_px: loupe_sample_side_px,
 			egui_repaint_deadline: Arc::new(Mutex::new(None)),
@@ -509,39 +588,96 @@ impl OverlaySession {
 
 	fn configure_hud_windows_for_config(&mut self) {
 		if let Some(hud_window) = self.hud_window.as_ref() {
-			self.configure_hud_window_common(hud_window.window.as_ref(), None);
+			let window = Arc::clone(&hud_window.window);
+
+			self.configure_hud_window_common(window.as_ref(), None);
 		}
 		if let Some(loupe_window) = self.loupe_window.as_ref() {
+			let window = Arc::clone(&loupe_window.window);
+
 			self.configure_hud_window_common(
-				loupe_window.window.as_ref(),
+				window.as_ref(),
 				Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 			);
 		}
 		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+			let window = Arc::clone(&toolbar_window.window);
+
 			self.configure_hud_window_common(
-				toolbar_window.window.as_ref(),
+				window.as_ref(),
 				Some(f64::from(HUD_PILL_CORNER_RADIUS_POINTS)),
 			);
 		}
 	}
 
 	fn configure_hud_window_common(
-		&self,
+		&mut self,
 		window: &winit::window::Window,
 		corner_radius: Option<f64>,
 	) {
 		window.set_transparent(true);
-
+		#[cfg(not(target_os = "macos"))]
+		window.set_blur(self.config.show_hud_blur);
 		#[cfg(target_os = "macos")]
-		macos_configure_hud_window(
+		self.configure_macos_hud_window_cached(
 			window,
 			self.macos_hud_window_blur_enabled(),
 			self.config.hud_fog_amount,
 			corner_radius,
 		);
+	}
 
-		#[cfg(not(target_os = "macos"))]
-		window.set_blur(self.config.show_hud_blur);
+	#[cfg(target_os = "macos")]
+	fn configure_macos_hud_window_cached(
+		&mut self,
+		window: &winit::window::Window,
+		blur_enabled: bool,
+		blur_amount: f32,
+		corner_radius: Option<f64>,
+	) {
+		let effective_corner_radius = corner_radius.unwrap_or_else(|| {
+			let scale = window.scale_factor().max(1.0);
+			let size = window.inner_size();
+
+			((size.height as f64) / scale) * 0.5
+		});
+		let desired =
+			MacOSHudWindowConfigState::new(blur_enabled, blur_amount, effective_corner_radius);
+
+		if self
+			.macos_hud_window_config_cache
+			.get(&window.id())
+			.is_some_and(|cached| cached.same(&desired))
+		{
+			return;
+		}
+
+		let started_at = Instant::now();
+
+		macos_configure_hud_window(
+			window,
+			blur_enabled,
+			blur_amount,
+			Some(effective_corner_radius),
+		);
+
+		let elapsed = started_at.elapsed();
+
+		self.slow_op_logger.warn_if_slow(
+			"overlay.macos_hud_window_configure",
+			elapsed,
+			SLOW_OP_WARN_HUD_CONFIG,
+			|| {
+				format!(
+					"window_id={:?} blur_enabled={} blur_amount={} corner_radius={effective_corner_radius}",
+					window.id(),
+					blur_enabled,
+					blur_amount,
+				)
+			},
+		);
+
+		let _ = self.macos_hud_window_config_cache.insert(window.id(), desired);
 	}
 
 	fn handle_fake_hud_blur_toggle(&mut self, prev_fake_blur: bool, new_fake_blur: bool) {
@@ -677,8 +813,19 @@ impl OverlaySession {
 		self.last_live_sample_cursor = None;
 		self.live_sample_stall_started_at = None;
 		self.last_live_sample_stall_log_at = None;
-		self.last_hud_window_move_at = now - HUD_LOUPE_MOVE_INTERVAL;
-		self.last_loupe_window_move_at = now - HUD_LOUPE_MOVE_INTERVAL;
+		self.slow_op_logger = SlowOperationLogger::default();
+		self.last_hud_window_move_at = now;
+		self.last_loupe_window_move_at = now;
+		self.event_loop_phase = OverlayEventLoopPhase::Idle;
+		self.event_loop_progress_seq = 0;
+		self.event_loop_last_progress_at = now;
+		self.event_loop_last_progress_window_id = None;
+		self.event_loop_last_progress_monitor_id = None;
+		self.event_loop_last_progress_detail = None;
+		self.event_loop_last_stall_warn_at = None;
+
+		self.clear_macos_hud_window_config_cache();
+
 		self.window_list_snapshot = None;
 		self.last_window_list_refresh_request_at = now - self.window_list_refresh_interval;
 		self.toolbar_state = FrozenToolbarState::default();
@@ -691,6 +838,14 @@ impl OverlaySession {
 
 		self.xcap_monitors.clear();
 	}
+
+	#[cfg(target_os = "macos")]
+	fn clear_macos_hud_window_config_cache(&mut self) {
+		self.macos_hud_window_config_cache.clear();
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn clear_macos_hud_window_config_cache(&mut self) {}
 
 	fn create_overlay_windows(
 		&mut self,
@@ -810,17 +965,7 @@ impl OverlaySession {
 		let _ = window.set_cursor_hittest(false);
 
 		window.set_transparent(true);
-
-		#[cfg(target_os = "macos")]
-		macos_configure_hud_window(
-			window.as_ref(),
-			self.macos_hud_window_blur_enabled(),
-			self.config.hud_fog_amount,
-			None,
-		);
-
-		#[cfg(not(target_os = "macos"))]
-		window.set_blur(self.config.show_hud_blur);
+		self.configure_hud_window_common(window.as_ref(), None);
 
 		let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
 		let renderer =
@@ -851,17 +996,7 @@ impl OverlaySession {
 		let _ = window.set_cursor_hittest(false);
 
 		window.set_transparent(true);
-
-		#[cfg(target_os = "macos")]
-		macos_configure_hud_window(
-			window.as_ref(),
-			self.macos_hud_window_blur_enabled(),
-			self.config.hud_fog_amount,
-			Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
-		);
-
-		#[cfg(not(target_os = "macos"))]
-		window.set_blur(self.config.show_hud_blur);
+		self.configure_hud_window_common(window.as_ref(), Some(LOUPE_TILE_CORNER_RADIUS_POINTS));
 
 		let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
 		let renderer =
@@ -895,17 +1030,10 @@ impl OverlaySession {
 		let _ = window.set_cursor_hittest(false);
 
 		window.set_transparent(true);
-
-		#[cfg(target_os = "macos")]
-		macos_configure_hud_window(
+		self.configure_hud_window_common(
 			window.as_ref(),
-			self.macos_hud_window_blur_enabled(),
-			self.config.hud_fog_amount,
 			Some(f64::from(HUD_PILL_CORNER_RADIUS_POINTS)),
 		);
-
-		#[cfg(not(target_os = "macos"))]
-		window.set_blur(self.config.show_hud_blur);
 		window.request_redraw();
 
 		let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
@@ -993,7 +1121,7 @@ impl OverlaySession {
 			self.loupe_window_warmup_redraws_remaining.saturating_sub(1);
 
 		self.request_redraw_loupe_window();
-		self.schedule_egui_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
+		self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(self.state.monitor));
 	}
 
 	fn maybe_start_loupe_window_warmup_redraw(&mut self) {
@@ -1017,6 +1145,10 @@ impl OverlaySession {
 	}
 
 	pub fn about_to_wait(&mut self) -> OverlayControl {
+		let now = Instant::now();
+
+		self.maybe_log_event_loop_stall(now);
+		self.mark_progress(OverlayEventLoopPhase::AboutToWait);
 		self.maybe_request_keepalive_redraw();
 		self.maybe_keep_selection_flow_repaint();
 
@@ -1034,6 +1166,80 @@ impl OverlaySession {
 		self.maybe_keep_live_cursor_sample_redraw();
 
 		self.drain_worker_responses()
+	}
+
+	fn mark_progress(&mut self, phase: OverlayEventLoopPhase) {
+		self.mark_progress_with_detail(phase, None);
+	}
+
+	fn mark_progress_with_detail(
+		&mut self,
+		phase: OverlayEventLoopPhase,
+		detail: Option<&'static str>,
+	) {
+		self.event_loop_phase = phase;
+		self.event_loop_last_progress_detail = detail;
+		self.event_loop_progress_seq = self.event_loop_progress_seq.saturating_add(1);
+		self.event_loop_last_progress_at = Instant::now();
+	}
+
+	fn maybe_log_event_loop_stall(&mut self, now: Instant) {
+		let stall = now.duration_since(self.event_loop_last_progress_at);
+
+		if stall < OVERLAY_EVENT_LOOP_STALL_THRESHOLD {
+			return;
+		}
+		if self
+			.event_loop_last_stall_warn_at
+			.is_none_or(|last| now.duration_since(last) >= SLOW_OP_WARN_INTERVAL)
+		{
+			let _ = self.event_loop_last_stall_warn_at.insert(now);
+
+			tracing::warn!(
+				op = "overlay.event_loop_stall",
+				stall_ms = stall.as_millis(),
+				phase = %self.event_loop_phase.as_str(),
+				progress_seq = self.event_loop_progress_seq,
+				mode = ?self.state.mode,
+				window_id = ?self.event_loop_last_progress_window_id,
+				monitor_id = ?self.event_loop_last_progress_monitor_id,
+				detail = ?self.event_loop_last_progress_detail,
+				"Event loop stalled"
+			);
+		}
+	}
+
+	fn window_event_kind(event: &WindowEvent) -> &'static str {
+		match event {
+			WindowEvent::ActivationTokenDone { .. } => "activation_token_done",
+			WindowEvent::CloseRequested => "close_requested",
+			WindowEvent::Destroyed => "destroyed",
+			WindowEvent::DroppedFile(_) => "dropped_file",
+			WindowEvent::HoveredFile(_) => "hovered_file",
+			WindowEvent::HoveredFileCancelled => "hovered_file_cancelled",
+			WindowEvent::Focused(_) => "focused",
+			WindowEvent::Moved(_) => "moved",
+			WindowEvent::Resized(_) => "resized",
+			WindowEvent::ScaleFactorChanged { .. } => "scale_factor_changed",
+			WindowEvent::Ime(_) => "ime",
+			WindowEvent::CursorEntered { .. } => "cursor_entered",
+			WindowEvent::CursorLeft { .. } => "cursor_left",
+			WindowEvent::CursorMoved { .. } => "cursor_moved",
+			WindowEvent::MouseWheel { .. } => "mouse_wheel",
+			WindowEvent::MouseInput { .. } => "mouse_input",
+			WindowEvent::PinchGesture { .. } => "pinch_gesture",
+			WindowEvent::PanGesture { .. } => "pan_gesture",
+			WindowEvent::DoubleTapGesture { .. } => "double_tap_gesture",
+			WindowEvent::RotationGesture { .. } => "rotation_gesture",
+			WindowEvent::TouchpadPressure { .. } => "touchpad_pressure",
+			WindowEvent::AxisMotion { .. } => "axis_motion",
+			WindowEvent::Touch(_) => "touch",
+			WindowEvent::ThemeChanged(_) => "theme_changed",
+			WindowEvent::KeyboardInput { .. } => "keyboard_input",
+			WindowEvent::ModifiersChanged(_) => "modifiers_changed",
+			WindowEvent::Occluded(_) => "occluded",
+			WindowEvent::RedrawRequested => "redraw_requested",
+		}
 	}
 
 	fn maybe_keep_live_cursor_sample_redraw(&mut self) {
@@ -1055,7 +1261,9 @@ impl OverlaySession {
 			self.request_redraw_all();
 		}
 
-		self.schedule_egui_repaint_after(Duration::from_millis(16));
+		self.schedule_egui_repaint_after(
+			self.repaint_interval_for_monitor(self.active_cursor_monitor()),
+		);
 	}
 
 	fn maybe_keep_selection_flow_repaint(&self) {
@@ -1096,8 +1304,8 @@ impl OverlaySession {
 		}
 	}
 
-	fn selection_flow_repaint_interval(&self, monitor: Option<MonitorRect>) -> Duration {
-		let fps = monitor
+	fn repaint_interval_for_monitor(&self, monitor: Option<MonitorRect>) -> Duration {
+		let monitor_fps = monitor
 			.and_then(|target| {
 				self.windows.values().find_map(|window| {
 					(target == window.monitor).then_some(window.refresh_rate_millihertz)
@@ -1108,11 +1316,29 @@ impl OverlaySession {
 				let fps = (hz as f32) / 1_000.0;
 
 				if fps.is_finite() && fps > 0.0 { Some(fps) } else { None }
+			});
+		let fallback_fps = self
+			.windows
+			.values()
+			.filter_map(|window| window.refresh_rate_millihertz)
+			.filter_map(|hz| {
+				let fps = (hz as f32) / 1_000.0;
+
+				if fps.is_finite() && fps > 0.0 { Some(fps) } else { None }
 			})
-			.unwrap_or(SELECTION_FLOW_REPAINT_FPS_DEFAULT);
+			.max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+		let fps = monitor_fps.or(fallback_fps).unwrap_or(SELECTION_FLOW_REPAINT_FPS_MAX);
 		let fps = fps.clamp(SELECTION_FLOW_REPAINT_FPS_MIN, SELECTION_FLOW_REPAINT_FPS_MAX);
 
 		Duration::from_secs_f32(1.0 / fps)
+	}
+
+	fn selection_flow_repaint_interval(&self, monitor: Option<MonitorRect>) -> Duration {
+		self.repaint_interval_for_monitor(monitor)
+	}
+
+	fn frozen_cursor_tracking_interval(&self, monitor: Option<MonitorRect>) -> Duration {
+		self.repaint_interval_for_monitor(monitor)
 	}
 
 	fn maybe_apply_pending_hud_and_loupe_moves(&mut self) {
@@ -1127,9 +1353,12 @@ impl OverlaySession {
 			return;
 		};
 		let elapsed = now.duration_since(self.last_hud_window_move_at);
+		let interval = self
+			.repaint_interval_for_monitor(self.active_cursor_monitor())
+			.max(HUD_LOUPE_MOVE_INTERVAL_MIN);
 
-		if elapsed < HUD_LOUPE_MOVE_INTERVAL {
-			let delay = HUD_LOUPE_MOVE_INTERVAL.saturating_sub(elapsed);
+		if elapsed < interval {
+			let delay = interval.saturating_sub(elapsed);
 
 			self.schedule_egui_repaint_after(delay);
 
@@ -1139,10 +1368,20 @@ impl OverlaySession {
 		let Some(hud_window) = self.hud_window.as_ref() else {
 			return;
 		};
+		let started_at = Instant::now();
 
 		hud_window
 			.window
 			.set_outer_position(LogicalPosition::new(desired.x as f64, desired.y as f64));
+
+		let elapsed = started_at.elapsed();
+
+		self.slow_op_logger.warn_if_slow(
+			"overlay.hud_window_set_outer_position",
+			elapsed,
+			SLOW_OP_WARN_OUTER_POSITION,
+			|| format!("window_id={:?} pos=({}, {})", hud_window.window.id(), desired.x, desired.y),
+		);
 
 		self.pending_hud_outer_pos = None;
 		self.last_hud_window_move_at = now;
@@ -1153,9 +1392,12 @@ impl OverlaySession {
 			return;
 		};
 		let elapsed = now.duration_since(self.last_loupe_window_move_at);
+		let interval = self
+			.repaint_interval_for_monitor(self.active_cursor_monitor())
+			.max(HUD_LOUPE_MOVE_INTERVAL_MIN);
 
-		if elapsed < HUD_LOUPE_MOVE_INTERVAL {
-			let delay = HUD_LOUPE_MOVE_INTERVAL.saturating_sub(elapsed);
+		if elapsed < interval {
+			let delay = interval.saturating_sub(elapsed);
 
 			self.schedule_egui_repaint_after(delay);
 
@@ -1165,10 +1407,27 @@ impl OverlaySession {
 		let Some(loupe_window) = self.loupe_window.as_ref() else {
 			return;
 		};
+		let started_at = Instant::now();
 
 		loupe_window
 			.window
 			.set_outer_position(LogicalPosition::new(desired.x as f64, desired.y as f64));
+
+		let elapsed = started_at.elapsed();
+
+		self.slow_op_logger.warn_if_slow(
+			"overlay.loupe_window_set_outer_position",
+			elapsed,
+			SLOW_OP_WARN_OUTER_POSITION,
+			|| {
+				format!(
+					"window_id={:?} pos=({}, {})",
+					loupe_window.window.id(),
+					desired.x,
+					desired.y
+				)
+			},
+		);
 
 		self.pending_loupe_outer_pos = None;
 		self.last_loupe_window_move_at = now;
@@ -1223,7 +1482,7 @@ impl OverlaySession {
 			self.request_redraw_all();
 		}
 
-		self.schedule_egui_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
+		self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(self.state.monitor));
 	}
 
 	fn maybe_tick_toolbar_window_warmup_redraw(&mut self) {
@@ -1252,7 +1511,7 @@ impl OverlaySession {
 			self.toolbar_window_warmup_redraws_remaining.saturating_sub(1);
 
 		self.request_redraw_toolbar_window();
-		self.schedule_egui_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
+		self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(self.state.monitor));
 	}
 
 	fn maybe_tick_frozen_cursor_tracking(&mut self) {
@@ -1260,8 +1519,49 @@ impl OverlaySession {
 			return;
 		}
 
-		let mouse = self.cursor_device.get_mouse();
-		let raw = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
+		let interval =
+			self.frozen_cursor_tracking_interval(self.state.monitor).max(CURSOR_POLL_INTERVAL_MIN);
+		let now = Instant::now();
+
+		self.schedule_egui_repaint_after(interval);
+
+		if let Some((monitor, global)) = self.last_fresh_event_cursor() {
+			let old_monitor = self.active_cursor_monitor();
+
+			if tracing::enabled!(tracing::Level::TRACE) {
+				tracing::trace!(
+					mode = "frozen",
+					source = DeviceCursorPointSource::EventRecentFallback.as_str(),
+					monitor_id = monitor.id,
+					"Resolved event cursor for frozen tick."
+				);
+			}
+			if self.state.cursor == Some(global) && old_monitor == Some(monitor) {
+				return;
+			}
+
+			self.update_cursor_state(monitor, global);
+			self.update_hud_window_position(monitor, global);
+			self.update_live_drag_rect(monitor, global);
+
+			if let Some(old_monitor) = old_monitor
+				&& old_monitor != monitor
+			{
+				self.request_redraw_for_monitor(old_monitor);
+			}
+
+			self.request_redraw_for_monitor(monitor);
+
+			return;
+		}
+
+		if now.duration_since(self.last_frozen_cursor_poll_at) < interval {
+			return;
+		}
+
+		self.last_frozen_cursor_poll_at = now;
+
+		let raw = self.sample_mouse_location();
 		let old_monitor = self.active_cursor_monitor();
 		let Some((monitor, global, source)) = self.resolve_device_cursor_point(raw) else {
 			return;
@@ -1297,22 +1597,62 @@ impl OverlaySession {
 			return;
 		}
 
-		#[cfg(not(target_os = "macos"))]
-		{
-			// Keep this loop alive even if CursorMoved events are sparse on non-macOS.
-			self.schedule_egui_repaint_after(Duration::from_millis(16));
-		}
+		let interval = self
+			.repaint_interval_for_monitor(self.active_cursor_monitor())
+			.max(CURSOR_POLL_INTERVAL_MIN);
+		let now = Instant::now();
 
-		#[cfg(target_os = "macos")]
-		if self
-			.last_event_cursor_at
-			.is_some_and(|at| at.elapsed() <= LIVE_DEVICE_CURSOR_POLL_BACKOFF)
-		{
+		// Keep this loop alive even if CursorMoved events are sparse or coalesced.
+		self.schedule_egui_repaint_after(interval);
+
+		if let Some((monitor, global)) = self.last_fresh_event_cursor() {
+			let old_monitor = self.active_cursor_monitor();
+
+			if tracing::enabled!(tracing::Level::TRACE) {
+				tracing::trace!(
+					mode = "live",
+					source = DeviceCursorPointSource::EventRecentFallback.as_str(),
+					monitor_id = monitor.id,
+					"Resolved event cursor for live tick."
+				);
+			}
+			if self.state.cursor == Some(global) && old_monitor == Some(monitor) {
+				return;
+			}
+
+			self.update_cursor_state(monitor, global);
+			self.update_hud_window_position(monitor, global);
+			self.update_live_drag_rect(monitor, global);
+
+			if self.use_fake_hud_blur() {
+				if self.state.live_bg_monitor != Some(monitor) {
+					self.state.live_bg_monitor = None;
+					self.state.live_bg_image = None;
+				}
+
+				self.maybe_request_live_bg(monitor);
+			}
+
+			if let Some(old_monitor) = old_monitor
+				&& old_monitor != monitor
+			{
+				self.request_redraw_for_monitor(old_monitor);
+			}
+
+			self.request_redraw_for_monitor(monitor);
+
 			return;
 		}
 
-		let mouse = self.cursor_device.get_mouse();
-		let raw = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
+		// If we're already repainting at a higher cadence (for example selection flow), avoid
+		// sampling the OS cursor position at that same cadence.
+		if now.duration_since(self.last_live_cursor_poll_at) < interval {
+			return;
+		}
+
+		self.last_live_cursor_poll_at = now;
+
+		let raw = self.sample_mouse_location();
 		let old_monitor = self.active_cursor_monitor();
 		let Some((monitor, global, source)) = self.resolve_live_cursor_point(raw) else {
 			return;
@@ -1332,6 +1672,7 @@ impl OverlaySession {
 
 		self.update_cursor_state(monitor, global);
 		self.update_hud_window_position(monitor, global);
+		self.update_live_drag_rect(monitor, global);
 
 		if self.use_fake_hud_blur() {
 			if self.state.live_bg_monitor != Some(monitor) {
@@ -1863,7 +2204,7 @@ impl OverlaySession {
 		self.left_mouse_button_down_monitor = None;
 		self.left_mouse_button_down_global = None;
 
-		self.schedule_egui_repaint_after(FROZEN_CAPTURE_POLL_INTERVAL);
+		self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(Some(monitor)));
 		self.request_redraw_for_monitor(monitor);
 
 		if self.use_fake_hud_blur()
@@ -2017,12 +2358,22 @@ impl OverlaySession {
 		window_id: WindowId,
 		event: &WindowEvent,
 	) -> OverlayControl {
+		let started_at = Instant::now();
+		let kind = Self::window_event_kind(event);
+		let now = Instant::now();
+
+		self.event_loop_last_progress_window_id = Some(window_id);
+		self.event_loop_last_progress_monitor_id =
+			self.windows.get(&window_id).map(|window| window.monitor.id);
+
+		self.maybe_log_event_loop_stall(now);
+		self.mark_progress_with_detail(OverlayEventLoopPhase::WindowEvent, Some(kind));
+
 		let toolbar_window_id = self
 			.toolbar_window
 			.as_ref()
 			.is_some_and(|toolbar_window| toolbar_window.window.id() == window_id);
-
-		match event {
+		let control = match event {
 			WindowEvent::CloseRequested => self.exit(OverlayExit::Cancelled),
 			WindowEvent::Resized(size) if toolbar_window_id => {
 				self.handle_toolbar_window_resized(*size)
@@ -2051,17 +2402,17 @@ impl OverlaySession {
 			},
 			WindowEvent::CursorMoved { position, .. } => {
 				if toolbar_window_id {
-					return self.handle_toolbar_cursor_moved(window_id, *position);
+					self.handle_toolbar_cursor_moved(window_id, *position)
+				} else {
+					self.handle_cursor_moved(window_id, *position)
 				}
-
-				self.handle_cursor_moved(window_id, *position)
 			},
 			WindowEvent::MouseInput { state, button: MouseButton::Left, .. } => {
 				if toolbar_window_id {
-					return self.handle_toolbar_mouse_input(*state);
+					self.handle_toolbar_mouse_input(*state)
+				} else {
+					self.handle_left_mouse_input(window_id, *state)
 				}
-
-				self.handle_left_mouse_input(window_id, *state)
 			},
 			WindowEvent::RedrawRequested if toolbar_window_id => {
 				self.handle_toolbar_window_redraw_requested()
@@ -2080,7 +2431,16 @@ impl OverlaySession {
 			WindowEvent::ModifiersChanged(modifiers) => self.handle_modifiers_changed(modifiers),
 			WindowEvent::RedrawRequested => self.handle_redraw_requested(window_id),
 			_ => OverlayControl::Continue,
-		}
+		};
+
+		self.slow_op_logger.warn_if_slow(
+			"overlay.window_event",
+			started_at.elapsed(),
+			SLOW_OP_WARN_WINDOW_EVENT,
+			|| format!("kind={kind} window_id={window_id:?} toolbar_window={toolbar_window_id}"),
+		);
+
+		control
 	}
 
 	fn handle_toolbar_mouse_input(&mut self, state: ElementState) -> OverlayControl {
@@ -2234,7 +2594,6 @@ impl OverlaySession {
 		&mut self,
 		window_id: WindowId,
 	) -> OverlayControl {
-		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
 		let Some(toolbar_window) = self
 			.toolbar_window
 			.as_mut()
@@ -2246,11 +2605,10 @@ impl OverlaySession {
 
 		match toolbar_window.renderer.resize(size) {
 			Ok(()) => {
-				#[cfg(target_os = "macos")]
-				macos_configure_hud_window(
-					toolbar_window.window.as_ref(),
-					macos_hud_window_blur_enabled,
-					self.config.hud_fog_amount,
+				let window = Arc::clone(&toolbar_window.window);
+
+				self.configure_hud_window_common(
+					window.as_ref(),
 					Some(f64::from(HUD_PILL_CORNER_RADIUS_POINTS)),
 				);
 
@@ -2261,6 +2619,13 @@ impl OverlaySession {
 	}
 
 	fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
+		self.event_loop_last_progress_window_id =
+			self.toolbar_window.as_ref().map(|toolbar_window| toolbar_window.window.id());
+		self.event_loop_last_progress_monitor_id = self.state.monitor.map(|monitor| monitor.id);
+
+		self.maybe_log_event_loop_stall(Instant::now());
+		self.mark_progress(OverlayEventLoopPhase::ToolbarRedraw);
+
 		let Some(monitor) = self.state.monitor else {
 			return OverlayControl::Continue;
 		};
@@ -2398,6 +2763,7 @@ impl OverlaySession {
 		if transient_alt_release { true } else { alt }
 	}
 
+	#[cfg(not(target_os = "macos"))]
 	fn is_option_key_down(&self) -> bool {
 		let keys = self.cursor_device.get_keys();
 
@@ -2405,6 +2771,52 @@ impl OverlaySession {
 			|| keys.contains(&Keycode::ROption)
 			|| keys.contains(&Keycode::LAlt)
 			|| keys.contains(&Keycode::RAlt)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn is_option_key_down(&self) -> bool {
+		macos_is_option_key_down()
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn sample_mouse_location(&mut self) -> GlobalPoint {
+		let mouse = self.cursor_device.get_mouse();
+
+		GlobalPoint::new(mouse.coords.0, mouse.coords.1)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn sample_mouse_location(&mut self) -> GlobalPoint {
+		let started_at = Instant::now();
+		let point = macos_mouse_location().unwrap_or(GlobalPoint::new(0, 0));
+		let elapsed = started_at.elapsed();
+
+		self.slow_op_logger.warn_if_slow(
+			"overlay.macos_cursor_location",
+			elapsed,
+			SLOW_OP_WARN_CURSOR_LOCATION,
+			|| format!("sample point=({}, {})", point.x, point.y),
+		);
+
+		point
+	}
+
+	fn last_fresh_event_cursor(&self) -> Option<(MonitorRect, GlobalPoint)> {
+		self.last_fresh_event_cursor_with_ttl(CURSOR_EVENT_TICK_TTL)
+	}
+
+	fn last_fresh_event_cursor_with_ttl(
+		&self,
+		ttl: Duration,
+	) -> Option<(MonitorRect, GlobalPoint)> {
+		let event_cursor_at = self.last_event_cursor_at?;
+		let event_cursor = self.last_event_cursor?;
+
+		if event_cursor_at.elapsed() > ttl {
+			return None;
+		}
+
+		Some(event_cursor)
 	}
 
 	fn sync_alt_held_from_global_keys(&mut self) {
@@ -2526,7 +2938,6 @@ impl OverlaySession {
 	}
 
 	fn handle_resized(&mut self, window_id: WindowId, size: PhysicalSize<u32>) -> OverlayControl {
-		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
 		let window_scale_factor = self
 			.windows
 			.get(&window_id)
@@ -2539,15 +2950,11 @@ impl OverlaySession {
 		if let Some(hud_window) = self.hud_window.as_mut()
 			&& hud_window.window.id() == window_id
 		{
+			let window = Arc::clone(&hud_window.window);
+
 			match hud_window.renderer.resize(size) {
 				Ok(()) => {
-					#[cfg(target_os = "macos")]
-					macos_configure_hud_window(
-						hud_window.window.as_ref(),
-						macos_hud_window_blur_enabled,
-						self.config.hud_fog_amount,
-						None,
-					);
+					self.configure_hud_window_common(window.as_ref(), None);
 
 					return OverlayControl::Continue;
 				},
@@ -2557,13 +2964,12 @@ impl OverlaySession {
 		if let Some(loupe_window) = self.loupe_window.as_mut()
 			&& loupe_window.window.id() == window_id
 		{
+			let window = Arc::clone(&loupe_window.window);
+
 			match loupe_window.renderer.resize(size) {
 				Ok(()) => {
-					#[cfg(target_os = "macos")]
-					macos_configure_hud_window(
-						loupe_window.window.as_ref(),
-						macos_hud_window_blur_enabled,
-						self.config.hud_fog_amount,
+					self.configure_hud_window_common(
+						window.as_ref(),
 						Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 					);
 
@@ -2584,7 +2990,6 @@ impl OverlaySession {
 	}
 
 	fn handle_scale_factor_changed(&mut self, window_id: WindowId) -> OverlayControl {
-		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
 		let window_scale_factor = self
 			.windows
 			.get(&window_id)
@@ -2598,16 +3003,11 @@ impl OverlaySession {
 			&& hud_window.window.id() == window_id
 		{
 			let size = hud_window.window.inner_size();
+			let window = Arc::clone(&hud_window.window);
 
 			match hud_window.renderer.resize(size) {
 				Ok(()) => {
-					#[cfg(target_os = "macos")]
-					macos_configure_hud_window(
-						hud_window.window.as_ref(),
-						macos_hud_window_blur_enabled,
-						self.config.hud_fog_amount,
-						None,
-					);
+					self.configure_hud_window_common(window.as_ref(), None);
 
 					return OverlayControl::Continue;
 				},
@@ -2618,14 +3018,12 @@ impl OverlaySession {
 			&& loupe_window.window.id() == window_id
 		{
 			let size = loupe_window.window.inner_size();
+			let window = Arc::clone(&loupe_window.window);
 
 			match loupe_window.renderer.resize(size) {
 				Ok(()) => {
-					#[cfg(target_os = "macos")]
-					macos_configure_hud_window(
-						loupe_window.window.as_ref(),
-						macos_hud_window_blur_enabled,
-						self.config.hud_fog_amount,
+					self.configure_hud_window_common(
+						window.as_ref(),
 						Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
 					);
 
@@ -2720,8 +3118,7 @@ impl OverlaySession {
 		old_monitor: Option<MonitorRect>,
 	) -> OverlayControl {
 		let now = Instant::now();
-		let mouse = self.cursor_device.get_mouse();
-		let raw = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
+		let raw = self.sample_mouse_location();
 		let Some((monitor, global, source)) = self.resolve_device_cursor_point(raw) else {
 			return OverlayControl::Continue;
 		};
@@ -2758,10 +3155,8 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
-	fn current_device_cursor(&self) -> GlobalPoint {
-		let mouse = self.cursor_device.get_mouse();
-
-		GlobalPoint::new(mouse.coords.0, mouse.coords.1)
+	fn current_device_cursor(&mut self) -> GlobalPoint {
+		self.sample_mouse_location()
 	}
 
 	fn trace_cursor_moved_with_mapping(&self, trace: CursorMoveTrace) {
@@ -2901,9 +3296,10 @@ impl OverlaySession {
 
 					return OverlayControl::Continue;
 				};
+				let raw_cursor = self.current_device_cursor();
 				let (release_monitor, release_global) =
 					if let Some((release_monitor, release_global, _)) =
-						self.resolve_live_cursor_point(self.current_device_cursor())
+						self.resolve_live_cursor_point(raw_cursor)
 					{
 						(release_monitor, release_global)
 					} else {
@@ -3033,6 +3429,15 @@ impl OverlaySession {
 	}
 
 	fn handle_redraw_requested(&mut self, window_id: WindowId) -> OverlayControl {
+		let now = Instant::now();
+
+		self.event_loop_last_progress_window_id = Some(window_id);
+		self.event_loop_last_progress_monitor_id =
+			self.windows.get(&window_id).map(|window| window.monitor.id);
+
+		self.maybe_log_event_loop_stall(now);
+		self.mark_progress(OverlayEventLoopPhase::RedrawDispatch);
+
 		let control = self.drain_worker_responses();
 
 		if !matches!(control, OverlayControl::Continue) {
@@ -3053,6 +3458,14 @@ impl OverlaySession {
 	}
 
 	fn handle_hud_redraw_requested(&mut self) -> OverlayControl {
+		self.event_loop_last_progress_window_id =
+			self.hud_window.as_ref().map(|hud_window| hud_window.window.id());
+		self.event_loop_last_progress_monitor_id =
+			self.monitor_for_mode().map(|monitor| monitor.id);
+
+		self.maybe_log_event_loop_stall(Instant::now());
+		self.mark_progress(OverlayEventLoopPhase::HudRedraw);
+
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
@@ -3071,18 +3484,9 @@ impl OverlaySession {
 
 		let monitor =
 			self.monitor_for_mode().or_else(|| self.windows.values().next().map(|w| w.monitor));
-		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
 		let mut request_toolbar_redraw = None;
 
 		if let (Some(monitor), Some(hud_window)) = (monitor, self.hud_window.as_mut()) {
-			#[cfg(target_os = "macos")]
-			macos_configure_hud_window(
-				hud_window.window.as_ref(),
-				macos_hud_window_blur_enabled,
-				self.config.hud_fog_amount,
-				None,
-			);
-
 			hud_window.window.set_visible(true);
 
 			if let Err(err) = hud_window.renderer.draw(
@@ -3159,6 +3563,14 @@ impl OverlaySession {
 	}
 
 	fn handle_loupe_redraw_requested(&mut self) -> OverlayControl {
+		self.event_loop_last_progress_window_id =
+			self.loupe_window.as_ref().map(|loupe_window| loupe_window.window.id());
+		self.event_loop_last_progress_monitor_id =
+			self.monitor_for_mode().map(|monitor| monitor.id);
+
+		self.maybe_log_event_loop_stall(Instant::now());
+		self.mark_progress(OverlayEventLoopPhase::LoupeRedraw);
+
 		if self.gpu.is_none() {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
@@ -3204,20 +3616,11 @@ impl OverlaySession {
 			return OverlayControl::Continue;
 		};
 		let was_visible = self.loupe_window_visible;
-		let macos_hud_window_blur_enabled = self.macos_hud_window_blur_enabled();
 		let mut needs_reposition = false;
 
 		if let Some(loupe_window) = self.loupe_window.as_mut() {
 			#[cfg(not(target_os = "macos"))]
 			loupe_window.window.set_visible(true);
-
-			#[cfg(target_os = "macos")]
-			macos_configure_hud_window(
-				loupe_window.window.as_ref(),
-				macos_hud_window_blur_enabled,
-				self.config.hud_fog_amount,
-				Some(LOUPE_TILE_CORNER_RADIUS_POINTS),
-			);
 
 			let Some(gpu) = self.gpu.as_ref() else {
 				return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
@@ -3280,6 +3683,13 @@ impl OverlaySession {
 		else {
 			return OverlayControl::Continue;
 		};
+
+		self.event_loop_last_progress_window_id = Some(window_id);
+		self.event_loop_last_progress_monitor_id = Some(overlay_monitor.id);
+
+		self.maybe_log_event_loop_stall(Instant::now());
+		self.mark_progress(OverlayEventLoopPhase::OverlayRedraw);
+
 		let toolbar_input = self.toolbar_pointer_state(overlay_monitor, None);
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
@@ -3351,6 +3761,14 @@ impl OverlaySession {
 		}
 		self.last_present_at = Instant::now();
 
+		self.handle_capture_and_toolbar_redraw_post(overlay_monitor, draw_toolbar)
+	}
+
+	fn handle_capture_and_toolbar_redraw_post(
+		&mut self,
+		overlay_monitor: MonitorRect,
+		draw_toolbar: bool,
+	) -> OverlayControl {
 		if self.pending_freeze_capture == Some(overlay_monitor)
 			&& matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.state.monitor == Some(overlay_monitor)
@@ -3414,6 +3832,13 @@ impl OverlaySession {
 		self.cursor_monitor = None;
 		self.gpu = None;
 		self.worker = None;
+		self.event_loop_phase = OverlayEventLoopPhase::Idle;
+		self.event_loop_progress_seq = 0;
+		self.event_loop_last_progress_at = Instant::now();
+		self.event_loop_last_progress_window_id = None;
+		self.event_loop_last_progress_monitor_id = None;
+		self.event_loop_last_progress_detail = None;
+		self.event_loop_last_stall_warn_at = None;
 		self.toolbar_left_button_down = false;
 		self.toolbar_left_button_went_down = false;
 		self.toolbar_left_button_went_up = false;
@@ -3423,8 +3848,7 @@ impl OverlaySession {
 	}
 
 	fn initialize_cursor_state(&mut self) {
-		let mouse = self.cursor_device.get_mouse();
-		let cursor = GlobalPoint::new(mouse.coords.0, mouse.coords.1);
+		let cursor = self.sample_mouse_location();
 		let Some(monitor) = self.monitor_at(cursor) else {
 			self.state.cursor = Some(cursor);
 			self.state.rgb = None;
@@ -3653,14 +4077,8 @@ impl OverlaySession {
 		self.hud_outer_pos = Some(desired);
 		self.pending_hud_outer_pos = Some(desired);
 
-		self.maybe_apply_pending_hud_window_move(Instant::now());
-
 		if self.state.alt_held {
-			let visible = self.update_loupe_window_position(monitor);
-
-			if let Some(loupe_window) = self.loupe_window.as_ref() {
-				loupe_window.window.set_visible(visible);
-			}
+			let _ = self.update_loupe_window_position(monitor);
 		}
 	}
 
@@ -3709,15 +4127,11 @@ impl OverlaySession {
 		if self.loupe_outer_pos == Some(desired) {
 			self.pending_loupe_outer_pos = Some(desired);
 
-			self.maybe_apply_pending_loupe_window_move(Instant::now());
-
 			return true;
 		}
 
 		self.loupe_outer_pos = Some(desired);
 		self.pending_loupe_outer_pos = Some(desired);
-
-		self.maybe_apply_pending_loupe_window_move(Instant::now());
 
 		true
 	}
@@ -3757,9 +4171,24 @@ impl OverlaySession {
 		self.toolbar_outer_pos = Some(desired);
 		self.toolbar_state.floating_position = Some(clamped_local_pos);
 
+		let started_at = Instant::now();
+
 		toolbar_window
 			.window
 			.set_outer_position(LogicalPosition::new(desired.x as f64, desired.y as f64));
+		self.slow_op_logger.warn_if_slow(
+			"overlay.toolbar_window_set_outer_position",
+			started_at.elapsed(),
+			SLOW_OP_WARN_OUTER_POSITION,
+			|| {
+				format!(
+					"window_id={:?} pos=({}, {})",
+					toolbar_window.window.id(),
+					desired.x,
+					desired.y
+				)
+			},
+		);
 		toolbar_window.window.request_redraw();
 
 		true
@@ -3850,6 +4279,66 @@ impl Default for OverlaySession {
 	}
 }
 
+#[derive(Default)]
+struct SlowOperationLogger {
+	last_warn_at: HashMap<&'static str, Instant>,
+}
+impl SlowOperationLogger {
+	fn warn_if_slow<F>(
+		&mut self,
+		op: &'static str,
+		elapsed: Duration,
+		threshold: Duration,
+		describe: F,
+	) where
+		F: FnOnce() -> String,
+	{
+		if elapsed < threshold {
+			return;
+		}
+
+		let now = Instant::now();
+		let should_log = self
+			.last_warn_at
+			.get(op)
+			.is_none_or(|last| now.duration_since(*last) >= SLOW_OP_WARN_INTERVAL);
+
+		if !should_log {
+			return;
+		}
+
+		let details = describe();
+
+		tracing::warn!(op = op, elapsed_ms = elapsed.as_millis(), details = %details, "Slow operation detected");
+
+		let _ = self.last_warn_at.insert(op, now);
+	}
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Default)]
+struct MacOSHudWindowConfigState {
+	blur_enabled: bool,
+	blur_amount_bits: u32,
+	corner_radius_bits: u64,
+}
+#[cfg(target_os = "macos")]
+impl MacOSHudWindowConfigState {
+	fn new(blur_enabled: bool, blur_amount: f32, corner_radius: f64) -> Self {
+		Self {
+			blur_enabled,
+			blur_amount_bits: blur_amount.to_bits(),
+			corner_radius_bits: corner_radius.to_bits(),
+		}
+	}
+
+	fn same(&self, other: &Self) -> bool {
+		self.blur_enabled == other.blur_enabled
+			&& self.blur_amount_bits == other.blur_amount_bits
+			&& self.corner_radius_bits == other.corner_radius_bits
+	}
+}
+
 #[derive(Clone, Copy)]
 struct CursorMoveTrace {
 	window_id: WindowId,
@@ -3909,12 +4398,6 @@ struct FrozenToolbarPointerState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SelectionFlowStyle {
-	Band,
-	FullBorder,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SelectionFlowGeometryCacheKey {
 	rect_min_x_bits: u32,
 	rect_min_y_bits: u32,
@@ -3937,6 +4420,7 @@ impl SelectionFlowGeometryCacheKey {
 		}
 	}
 }
+
 #[derive(Debug, Default)]
 struct SelectionFlowGeometryCache {
 	key: Option<SelectionFlowGeometryCacheKey>,
@@ -4010,6 +4494,7 @@ struct WindowRenderer {
 	egui_start_time: Instant,
 	egui_last_frame_time: Instant,
 	selection_flow_cache: SelectionFlowGeometryCache,
+	slow_op_logger: SlowOperationLogger,
 }
 impl WindowRenderer {
 	fn mip_level_count(width: u32, height: u32) -> u32 {
@@ -6197,7 +6682,8 @@ impl WindowRenderer {
 	}
 
 	fn acquire_frame(&mut self, gpu: &GpuContext) -> Result<SurfaceTexture> {
-		match self.surface.get_current_texture() {
+		let started_at = Instant::now();
+		let frame = match self.surface.get_current_texture() {
 			Ok(frame) => Ok(frame),
 			Err(SurfaceError::Outdated | SurfaceError::Lost) => {
 				self.reconfigure(gpu);
@@ -6209,7 +6695,17 @@ impl WindowRenderer {
 					.wrap_err("Surface was lost and could not be reacquired")
 			},
 			Err(err) => Err(err).wrap_err("Failed to acquire surface texture"),
-		}
+		};
+		let elapsed = started_at.elapsed();
+
+		self.slow_op_logger.warn_if_slow(
+			"overlay.window_renderer_acquire_frame",
+			elapsed,
+			SLOW_OP_WARN_RENDER,
+			|| format!("needs_reconfigure={}", self.needs_reconfigure),
+		);
+
+		frame
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -6222,6 +6718,7 @@ impl WindowRenderer {
 		paint_jobs: &[ClippedPrimitive],
 		screen_descriptor: &ScreenDescriptor,
 	) -> Result<()> {
+		let started_at = Instant::now();
 		let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("rsnap-overlay encoder"),
@@ -6298,6 +6795,19 @@ impl WindowRenderer {
 
 		gpu.queue.submit(Some(encoder.finish()));
 		frame.present();
+		self.slow_op_logger.warn_if_slow(
+			"overlay.window_renderer_render_frame",
+			started_at.elapsed(),
+			SLOW_OP_WARN_RENDER,
+			|| {
+				format!(
+					"draw_frozen_bg={} hud_blur_active={} paint_jobs={}",
+					draw_frozen_bg,
+					hud_blur_active,
+					paint_jobs.len()
+				)
+			},
+		);
 
 		Ok(())
 	}
@@ -6345,16 +6855,6 @@ impl WindowRenderer {
 
 		egui_ctx.set_fonts(fonts);
 
-		let egui_renderer = Renderer::new(
-			&gpu.device,
-			surface_format,
-			egui_wgpu::RendererOptions {
-				msaa_samples: 1,
-				depth_stencil_format: None,
-				dithering: false,
-				predictable_texture_filtering: false,
-			},
-		);
 		let repaint_deadline = Arc::clone(&egui_repaint_deadline);
 
 		egui_ctx.set_request_repaint_callback(move |info| {
@@ -6367,6 +6867,16 @@ impl WindowRenderer {
 			}
 		});
 
+		let egui_renderer = Renderer::new(
+			&gpu.device,
+			surface_format,
+			egui_wgpu::RendererOptions {
+				msaa_samples: 1,
+				depth_stencil_format: None,
+				dithering: false,
+				predictable_texture_filtering: false,
+			},
+		);
 		let bg_sampler = Self::create_bg_sampler(gpu);
 		let (mipgen_pipeline, mipgen_bind_group_layout) =
 			Self::create_mipgen_pipeline(gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
@@ -6404,6 +6914,7 @@ impl WindowRenderer {
 			egui_start_time: now,
 			egui_last_frame_time: now,
 			selection_flow_cache: SelectionFlowGeometryCache::default(),
+			slow_op_logger: SlowOperationLogger::default(),
 		})
 	}
 
@@ -7112,6 +7623,20 @@ impl HudBlurUniformRaw {
 	}
 }
 
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct MacOSCGPoint {
+	x: f64,
+	y: f64,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_is_option_key_down() -> bool {
+	let flags = unsafe { CGEventSourceFlagsState(KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE) };
+
+	flags & KCG_EVENT_FLAGS_MASK_ALTERNATE != 0
+}
+
 fn srgb8_to_linear_f32(x: u8) -> f32 {
 	let c = (x as f32) / 255.0;
 
@@ -7381,6 +7906,35 @@ fn global_to_local(cursor: GlobalPoint, monitor: MonitorRect) -> Option<Pos2> {
 	let (x, y) = monitor.local_u32(cursor)?;
 
 	Some(Pos2::new(x as f32, y as f32))
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+	fn CGEventGetLocation(event: CGEventRef) -> MacOSCGPoint;
+	fn CGEventCreate(source: *const c_void) -> CGEventRef;
+	fn CGEventSourceFlagsState(source_state_id: u32) -> u64;
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+	fn CFRelease(obj: CFTypeRef);
+}
+
+#[cfg(target_os = "macos")]
+fn macos_mouse_location() -> Option<GlobalPoint> {
+	let event = unsafe { CGEventCreate(std::ptr::null()) };
+
+	if event.is_null() {
+		return None;
+	}
+
+	let point = unsafe { CGEventGetLocation(event) };
+
+	unsafe { CFRelease(event) };
+
+	Some(GlobalPoint::new(point.x as i32, point.y as i32))
 }
 
 #[cfg(target_os = "macos")]
