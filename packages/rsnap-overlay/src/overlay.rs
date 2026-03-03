@@ -4492,6 +4492,7 @@ impl WindowRenderer {
 		hud_tint_hue: f32,
 		theme: HudTheme,
 		selection_particles: bool,
+		needs_frozen_surface_bg: bool,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 		mut toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
@@ -4567,6 +4568,7 @@ impl WindowRenderer {
 			}
 			if selection_particles
 				&& matches!(state.mode, OverlayMode::Frozen)
+				&& needs_frozen_surface_bg
 				&& state.monitor == Some(monitor)
 				&& state.frozen_capture_rect.is_some()
 			{
@@ -6498,6 +6500,7 @@ impl WindowRenderer {
 			hud_tint_hue,
 			theme,
 			selection_particles,
+			hud_cfg.needs_frozen_surface_bg,
 			&mut selection_flow_cache,
 			toolbar_state,
 			toolbar_pointer,
