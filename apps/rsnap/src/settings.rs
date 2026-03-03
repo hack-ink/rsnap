@@ -59,6 +59,8 @@ pub struct AppSettings {
 	pub hud_tint_hue: f32,
 	#[serde(default)]
 	pub alt_activation: AltActivationMode,
+	#[serde(default = "default_selection_particles")]
+	pub selection_particles: bool,
 	#[serde(default)]
 	pub toolbar_placement: ToolbarPlacement,
 	#[serde(default)]
@@ -138,6 +140,7 @@ impl Default for AppSettings {
 			hud_tint: default_hud_tint(),
 			hud_tint_hue: default_hud_tint_hue(),
 			alt_activation: AltActivationMode::default(),
+			selection_particles: default_selection_particles(),
 			toolbar_placement: ToolbarPlacement::Bottom,
 			loupe_sample_size: LoupeSampleSize::default(),
 			theme_mode: ThemeMode::System,
@@ -159,6 +162,10 @@ fn default_hud_tint() -> f32 {
 
 fn default_hud_tint_hue() -> f32 {
 	0.585
+}
+
+fn default_selection_particles() -> bool {
+	true
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -196,6 +203,7 @@ mod tests {
 	hud_tint = 0.25
 	hud_tint_hue = 0.4
 	alt_activation = "toggle"
+	selection_particles = true
 	toolbar_placement = "top"
 	loupe_sample_size = "large"
 	theme_mode = "dark"
@@ -203,6 +211,7 @@ mod tests {
 		let settings: AppSettings = toml::from_str(input).unwrap();
 
 		assert_eq!(settings.alt_activation, AltActivationMode::Toggle);
+		assert!(settings.selection_particles);
 		assert_eq!(settings.toolbar_placement, ToolbarPlacement::Top);
 		assert_eq!(settings.loupe_sample_size, LoupeSampleSize::Large);
 		assert_eq!(settings.theme_mode, ThemeMode::Dark);

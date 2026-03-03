@@ -8,6 +8,7 @@ use color_eyre::eyre::{self, Result, WrapErr};
 use device_query::{DeviceQuery, Keycode};
 use egui::ClippedPrimitive;
 use egui::FullOutput;
+use egui::Painter;
 use egui::Ui;
 use egui::{
 	Align, Align2, Color32, CornerRadius, Event, FontDefinitions, FontFamily, FontId, Frame, Id,
@@ -84,10 +85,18 @@ const TOOLBAR_DRAG_START_THRESHOLD_PX: f32 = 6.0;
 const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LOUPE_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LIVE_DRAG_START_THRESHOLD_PX: f32 = 6.0;
-const LIVE_DRAG_AFFORDANCE_STROKE_PX: f32 = 2.0;
-const LIVE_HOVER_AFFORDANCE_STROKE_PX: f32 = 2.0;
-const LIVE_DRAG_AFFORDANCE_COLOR: [u8; 4] = [84, 197, 255, 168];
-const LIVE_HOVER_AFFORDANCE_COLOR: [u8; 4] = [150, 240, 255, 172];
+const SELECTION_FLOW_CORNER_RADIUS_PX: f32 = 9.0;
+const SELECTION_FLOW_MIN_SEGMENTS: usize = 160;
+const SELECTION_FLOW_MAX_SEGMENTS: usize = 1_536;
+const SELECTION_FLOW_SAMPLE_STEP_PX: f32 = 3.2;
+const SELECTION_FLOW_SPEED: f32 = 0.24;
+const SELECTION_FLOW_CORE_WIDTH_PX: f32 = 2.4;
+const SELECTION_FLOW_CORE_FLOW_WIDTH: f32 = 0.06;
+const SELECTION_FLOW_FLOW_BOOST: f32 = 2.8;
+const SELECTION_FLOW_REPAINT_FPS_MIN: f32 = 30.0;
+const SELECTION_FLOW_REPAINT_FPS_MAX: f32 = 120.0;
+const SELECTION_FLOW_REPAINT_FPS_DEFAULT: f32 = 60.0;
+const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] = [(94, 200, 255), (165, 103, 255), (255, 150, 60)];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HudAnchor {
@@ -205,6 +214,7 @@ pub struct OverlayConfig {
 	pub hud_anchor: HudAnchor,
 	pub show_alt_hint_keycap: bool,
 	pub show_hud_blur: bool,
+	pub selection_particles: bool,
 	pub hud_opaque: bool,
 	/// 0..=1. Controls HUD background alpha.
 	pub hud_opacity: f32,
@@ -225,6 +235,7 @@ impl Default for OverlayConfig {
 			hud_anchor: HudAnchor::Cursor,
 			show_alt_hint_keycap: true,
 			show_hud_blur: true,
+			selection_particles: true,
 			hud_opaque: false,
 			hud_opacity: 0.35,
 			hud_fog_amount: 0.16,
@@ -756,6 +767,9 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			macos_configure_overlay_window_mouse_moved_events(window.as_ref());
 
+			let refresh_rate_millihertz =
+				window.current_monitor().and_then(|monitor| monitor.refresh_rate_millihertz());
+
 			window.request_redraw();
 			window.focus_window();
 
@@ -767,8 +781,10 @@ impl OverlaySession {
 			)
 			.map_err(|err| format!("Failed to init renderer: {err:#}"))?;
 
-			self.windows
-				.insert(window.id(), OverlayWindow { monitor: monitor_rect, window, renderer });
+			self.windows.insert(
+				window.id(),
+				OverlayWindow { monitor: monitor_rect, window, renderer, refresh_rate_millihertz },
+			);
 		}
 
 		Ok(())
@@ -1000,6 +1016,7 @@ impl OverlaySession {
 
 	pub fn about_to_wait(&mut self) -> OverlayControl {
 		self.maybe_request_keepalive_redraw();
+		self.maybe_keep_selection_flow_repaint();
 
 		if self.is_active() {
 			self.sync_alt_held_from_global_keys();
@@ -1037,6 +1054,63 @@ impl OverlaySession {
 		}
 
 		self.schedule_egui_repaint_after(Duration::from_millis(16));
+	}
+
+	fn maybe_keep_selection_flow_repaint(&self) {
+		if !self.is_active() || !self.config.selection_particles {
+			return;
+		}
+
+		let keep_repaint = match self.state.mode {
+			OverlayMode::Live => {
+				let has_drag_rect = self.state.drag_rect.is_some_and(|drag_rect| {
+					drag_rect.rect.width as f32 >= LIVE_DRAG_START_THRESHOLD_PX
+						&& drag_rect.rect.height as f32 >= LIVE_DRAG_START_THRESHOLD_PX
+				});
+				let has_hover_rect = self.state.hovered_window_rect.is_some_and(|hovered| {
+					hovered.rect.width as f32 >= LIVE_DRAG_START_THRESHOLD_PX
+						&& hovered.rect.height as f32 >= LIVE_DRAG_START_THRESHOLD_PX
+				});
+
+				has_drag_rect || has_hover_rect
+			},
+			OverlayMode::Frozen => self.state.frozen_capture_rect.is_some(),
+		};
+
+		if keep_repaint {
+			let monitor = match self.state.mode {
+				OverlayMode::Live => self.active_cursor_monitor(),
+				OverlayMode::Frozen => self.state.monitor,
+			};
+			let repaint_interval = self.selection_flow_repaint_interval(monitor);
+
+			if let Some(monitor) = monitor {
+				self.request_redraw_for_monitor(monitor);
+			} else {
+				self.request_redraw_all();
+			}
+
+			self.schedule_egui_repaint_after(repaint_interval);
+		}
+	}
+
+	fn selection_flow_repaint_interval(&self, monitor: Option<MonitorRect>) -> Duration {
+		let fps = monitor
+			.and_then(|target| {
+				self.windows.values().find_map(|window| {
+					(target == window.monitor).then_some(window.refresh_rate_millihertz)
+				})
+			})
+			.flatten()
+			.and_then(|hz| {
+				let fps = (hz as f32) / 1_000.0;
+
+				if fps.is_finite() && fps > 0.0 { Some(fps) } else { None }
+			})
+			.unwrap_or(SELECTION_FLOW_REPAINT_FPS_DEFAULT);
+		let fps = fps.clamp(SELECTION_FLOW_REPAINT_FPS_MIN, SELECTION_FLOW_REPAINT_FPS_MAX);
+
+		Duration::from_secs_f32(1.0 / fps)
 	}
 
 	fn maybe_apply_pending_hud_and_loupe_moves(&mut self) {
@@ -2247,6 +2321,7 @@ impl OverlaySession {
 			self.config.hud_milk_amount,
 			self.config.hud_tint_hue,
 			self.config.theme_mode,
+			self.config.selection_particles,
 			false,
 			Some(&mut self.toolbar_state),
 			toolbar_input,
@@ -3025,6 +3100,7 @@ impl OverlaySession {
 				self.config.hud_milk_amount,
 				self.config.hud_tint_hue,
 				self.config.theme_mode,
+				self.config.selection_particles,
 				true,
 				None,
 				None,
@@ -3235,6 +3311,11 @@ impl OverlaySession {
 		}
 
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
+		let capture_in_progress = self.pending_freeze_capture == Some(overlay_monitor)
+			&& matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.state.monitor == Some(overlay_monitor)
+			&& self.state.frozen_image.is_none();
+		let draw_selection_particles = self.config.selection_particles && !capture_in_progress;
 
 		{
 			let Some(overlay_window) = self.windows.get_mut(&window_id) else {
@@ -3258,6 +3339,7 @@ impl OverlaySession {
 				self.config.hud_milk_amount,
 				self.config.hud_tint_hue,
 				self.config.theme_mode,
+				draw_selection_particles,
 				true,
 				toolbar_state,
 				toolbar_input,
@@ -3824,6 +3906,36 @@ struct FrozenToolbarPointerState {
 	left_button_went_up: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SelectionFlowGeometryCacheKey {
+	rect_min_x_bits: u32,
+	rect_min_y_bits: u32,
+	rect_max_x_bits: u32,
+	rect_max_y_bits: u32,
+	corner_radius_bits: u32,
+	seam_offset_bits: u32,
+	sample_count: usize,
+}
+impl SelectionFlowGeometryCacheKey {
+	const fn new(rect: Rect, corner_radius: f32, seam_offset: f32, sample_count: usize) -> Self {
+		Self {
+			rect_min_x_bits: rect.min.x.to_bits(),
+			rect_min_y_bits: rect.min.y.to_bits(),
+			rect_max_x_bits: rect.max.x.to_bits(),
+			rect_max_y_bits: rect.max.y.to_bits(),
+			corner_radius_bits: corner_radius.to_bits(),
+			seam_offset_bits: seam_offset.to_bits(),
+			sample_count,
+		}
+	}
+}
+#[derive(Debug, Default)]
+struct SelectionFlowGeometryCache {
+	key: Option<SelectionFlowGeometryCacheKey>,
+	samples: Vec<(Pos2, f32)>,
+	normals: Vec<Vec2>,
+}
+
 struct HudOverlayWindow {
 	window: Arc<winit::window::Window>,
 	renderer: WindowRenderer,
@@ -3833,6 +3945,7 @@ struct OverlayWindow {
 	monitor: MonitorRect,
 	window: Arc<winit::window::Window>,
 	renderer: WindowRenderer,
+	refresh_rate_millihertz: Option<u32>,
 }
 
 struct GpuContext {
@@ -3888,6 +4001,7 @@ struct WindowRenderer {
 	hud_theme: Option<HudTheme>,
 	egui_start_time: Instant,
 	egui_last_frame_time: Instant,
+	selection_flow_cache: SelectionFlowGeometryCache,
 }
 impl WindowRenderer {
 	fn mip_level_count(width: u32, height: u32) -> u32 {
@@ -4369,6 +4483,8 @@ impl WindowRenderer {
 		hud_milk_amount: f32,
 		hud_tint_hue: f32,
 		theme: HudTheme,
+		selection_particles: bool,
+		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 		mut toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
 	) -> (FullOutput, Option<HudPillGeometry>) {
@@ -4383,6 +4499,7 @@ impl WindowRenderer {
 			None
 		};
 		let mut hud_pill = None;
+		let mut _show_selection_particles = false;
 		let full_output = self.egui_ctx.run(raw_input, |ctx| {
 			Self::render_frozen_toolbar_ui(
 				ctx,
@@ -4422,10 +4539,39 @@ impl WindowRenderer {
 				);
 			}
 
-			if matches!(state.mode, OverlayMode::Live) && !can_draw_hud {
+			if selection_particles && matches!(state.mode, OverlayMode::Live) && !can_draw_hud {
+				let screen_rect = ctx.input(|i| i.viewport_rect());
+				let layer = egui::LayerId::new(
+					egui::Order::Foreground,
+					Id::new(format!("live-capture-{}", monitor.id)),
+				);
+				let painter = ctx.layer_painter(layer);
+
+				_show_selection_particles |= Self::render_live_capture_affordances(
+					ctx,
+					&painter,
+					state,
+					monitor,
+					screen_rect,
+					theme,
+					selection_flow_geometry_cache,
+				);
+			}
+			if selection_particles
+				&& matches!(state.mode, OverlayMode::Frozen)
+				&& state.monitor == Some(monitor)
+				&& state.frozen_capture_rect.is_some()
+			{
 				let screen_rect = ctx.input(|i| i.viewport_rect());
 
-				Self::render_live_capture_affordances(ctx, state, monitor, screen_rect, theme);
+				_show_selection_particles |= Self::render_frozen_pending_affordance(
+					ctx,
+					state,
+					monitor,
+					screen_rect,
+					theme,
+					selection_flow_geometry_cache,
+				);
 			}
 		});
 
@@ -4434,20 +4580,18 @@ impl WindowRenderer {
 
 	fn render_live_capture_affordances(
 		ctx: &egui::Context,
+		painter: &Painter,
 		state: &OverlayState,
 		monitor: MonitorRect,
 		screen_rect: Rect,
-		_theme: HudTheme,
-	) {
-		if !matches!(state.mode, OverlayMode::Live) {
-			return;
-		}
+		theme: HudTheme,
+		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+	) -> bool {
+		let mut has_rect = false;
 
-		let layer = egui::LayerId::new(
-			egui::Order::Foreground,
-			Id::new(format!("live-capture-{}", monitor.id)),
-		);
-		let painter = ctx.layer_painter(layer);
+		if !matches!(state.mode, OverlayMode::Live) {
+			return false;
+		}
 
 		if let Some(hovered_window) = state.hovered_window_rect
 			&& hovered_window.monitor_id == monitor.id
@@ -4457,19 +4601,20 @@ impl WindowRenderer {
 				Vec2::new(hovered_window.rect.width as f32, hovered_window.rect.height as f32),
 			);
 			let rect = rect.intersect(screen_rect);
-			let hovered_color = Color32::from_rgba_unmultiplied(
-				LIVE_HOVER_AFFORDANCE_COLOR[0],
-				LIVE_HOVER_AFFORDANCE_COLOR[1],
-				LIVE_HOVER_AFFORDANCE_COLOR[2],
-				LIVE_HOVER_AFFORDANCE_COLOR[3],
-			);
 
-			painter.rect_stroke(
-				rect,
-				0.0,
-				egui::Stroke::new(LIVE_HOVER_AFFORDANCE_STROKE_PX, hovered_color),
-				egui::StrokeKind::Outside,
-			);
+			if rect.width() >= LIVE_DRAG_START_THRESHOLD_PX
+				&& rect.height() >= LIVE_DRAG_START_THRESHOLD_PX
+			{
+				Self::render_selection_flow_ring(
+					painter,
+					rect,
+					ctx,
+					theme,
+					selection_flow_geometry_cache,
+				);
+
+				has_rect = true;
+			}
 		}
 		if let Some(drag_rect) = state.drag_rect
 			&& drag_rect.monitor_id == monitor.id
@@ -4481,20 +4626,463 @@ impl WindowRenderer {
 				Vec2::new(drag_rect.rect.width as f32, drag_rect.rect.height as f32),
 			);
 			let rect = rect.intersect(screen_rect);
-			let drag_color = Color32::from_rgba_unmultiplied(
-				LIVE_DRAG_AFFORDANCE_COLOR[0],
-				LIVE_DRAG_AFFORDANCE_COLOR[1],
-				LIVE_DRAG_AFFORDANCE_COLOR[2],
-				LIVE_DRAG_AFFORDANCE_COLOR[3],
+
+			Self::render_selection_flow_ring(
+				painter,
+				rect,
+				ctx,
+				theme,
+				selection_flow_geometry_cache,
 			);
 
-			painter.rect_stroke(
-				rect,
-				0.0,
-				egui::Stroke::new(LIVE_DRAG_AFFORDANCE_STROKE_PX, drag_color),
-				egui::StrokeKind::Outside,
+			has_rect = true;
+		}
+
+		has_rect
+	}
+
+	fn render_frozen_pending_affordance(
+		ctx: &egui::Context,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		screen_rect: Rect,
+		theme: HudTheme,
+		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+	) -> bool {
+		let Some(capture_rect) = state.frozen_capture_rect else {
+			return false;
+		};
+		let capture_width = capture_rect.width as f32;
+		let capture_height = capture_rect.height as f32;
+
+		if capture_width < LIVE_DRAG_START_THRESHOLD_PX
+			|| capture_height < LIVE_DRAG_START_THRESHOLD_PX
+		{
+			return false;
+		}
+
+		let layer = egui::LayerId::new(
+			egui::Order::Foreground,
+			Id::new(format!("frozen-pending-{}", monitor.id)),
+		);
+		let painter = ctx.layer_painter(layer);
+		let rect = Rect::from_min_size(
+			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
+			Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
+		)
+		.intersect(screen_rect);
+
+		if rect.width() < LIVE_DRAG_START_THRESHOLD_PX
+			|| rect.height() < LIVE_DRAG_START_THRESHOLD_PX
+		{
+			return false;
+		}
+
+		Self::render_selection_flow_ring(&painter, rect, ctx, theme, selection_flow_geometry_cache);
+
+		true
+	}
+
+	fn render_selection_flow_ring(
+		painter: &Painter,
+		rect: Rect,
+		ctx: &egui::Context,
+		theme: HudTheme,
+		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+	) {
+		if rect.width() < LIVE_DRAG_START_THRESHOLD_PX
+			|| rect.height() < LIVE_DRAG_START_THRESHOLD_PX
+		{
+			return;
+		}
+
+		let corner_radius = SELECTION_FLOW_CORNER_RADIUS_PX
+			.min(rect.width() / 2.0 - 0.25)
+			.min(rect.height() / 2.0 - 0.25)
+			.max(0.0);
+		let perimeter = Self::selection_flow_perimeter(rect, corner_radius);
+		let time = ctx.input(|i| i.time) as f32;
+		let sample_count = Self::selection_flow_sample_count(perimeter);
+		let seam_offset = if rect.width() > corner_radius * 2.0 {
+			(rect.width() - corner_radius * 2.0) * 0.5
+		} else {
+			0.0
+		};
+		let (samples, normals) = Self::selection_flow_cached_geometry(
+			selection_flow_geometry_cache,
+			rect,
+			corner_radius,
+			sample_count,
+			seam_offset,
+		);
+		let base_alpha_scale = match theme {
+			HudTheme::Light => 0.86,
+			HudTheme::Dark => 1.0,
+		};
+
+		if samples.is_empty() {
+			return;
+		}
+
+		let flow_time = time * SELECTION_FLOW_SPEED;
+
+		Self::selection_flow_draw_layer(
+			painter,
+			samples,
+			normals,
+			SELECTION_FLOW_CORE_WIDTH_PX,
+			base_alpha_scale * 0.52,
+			flow_time * 1.28 + 0.72,
+			SELECTION_FLOW_CORE_FLOW_WIDTH,
+			theme,
+		);
+	}
+
+	fn selection_flow_cached_geometry(
+		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+		rect: Rect,
+		corner_radius: f32,
+		sample_count: usize,
+		seam_offset: f32,
+	) -> (&[(Pos2, f32)], &[Vec2]) {
+		let key =
+			SelectionFlowGeometryCacheKey::new(rect, corner_radius, seam_offset, sample_count);
+
+		if selection_flow_geometry_cache.key == Some(key)
+			&& !selection_flow_geometry_cache.samples.is_empty()
+		{
+			return (
+				&selection_flow_geometry_cache.samples,
+				&selection_flow_geometry_cache.normals,
 			);
 		}
+
+		let samples =
+			Self::selection_flow_path_samples(rect, corner_radius, sample_count, seam_offset);
+		let normals = Self::selection_flow_compute_normals(&samples);
+
+		selection_flow_geometry_cache.key = Some(key);
+		selection_flow_geometry_cache.samples = samples;
+		selection_flow_geometry_cache.normals = normals;
+
+		(&selection_flow_geometry_cache.samples, &selection_flow_geometry_cache.normals)
+	}
+
+	fn selection_flow_compute_normals(samples: &[(Pos2, f32)]) -> Vec<Vec2> {
+		let n = samples.len();
+
+		if n == 0 {
+			return Vec::new();
+		}
+
+		let mut normals = Vec::with_capacity(n);
+		let mut first_non_zero = None;
+
+		for i in 0..n {
+			let (current_point, _) = samples[i];
+			let (prev_point, _) = samples[(i + n - 1) % n];
+			let (next_point, _) = samples[(i + 1) % n];
+			let prev_tangent = current_point - prev_point;
+			let next_tangent = next_point - current_point;
+			let mut normal = Vec2::ZERO;
+
+			if prev_tangent.length_sq() > f32::EPSILON {
+				let prev_len = prev_tangent.length();
+
+				normal += Vec2::new(-prev_tangent.y / prev_len, prev_tangent.x / prev_len);
+			}
+			if next_tangent.length_sq() > f32::EPSILON {
+				let next_len = next_tangent.length();
+
+				normal += Vec2::new(-next_tangent.y / next_len, next_tangent.x / next_len);
+			}
+			if normal.length_sq() <= f32::EPSILON {
+				if next_tangent.length_sq() > f32::EPSILON {
+					let next_len = next_tangent.length();
+
+					normal = Vec2::new(-next_tangent.y / next_len, next_tangent.x / next_len);
+				} else if prev_tangent.length_sq() > f32::EPSILON {
+					let prev_len = prev_tangent.length();
+
+					normal = Vec2::new(-prev_tangent.y / prev_len, prev_tangent.x / prev_len);
+				}
+			}
+
+			let normal = if normal.length_sq() > f32::EPSILON {
+				let normalized = normal / normal.length();
+
+				if first_non_zero.is_none() && normalized.length_sq() > f32::EPSILON {
+					first_non_zero = Some(i);
+				}
+
+				normalized
+			} else {
+				Vec2::ZERO
+			};
+
+			normals.push(normal);
+		}
+
+		if let Some(first_idx) = first_non_zero {
+			let mut previous = normals[first_idx];
+
+			for normal in normals.iter_mut().skip(first_idx + 1) {
+				if normal.length_sq() > f32::EPSILON && normal.dot(previous) < 0.0 {
+					*normal = -*normal;
+				}
+				if normal.length_sq() > f32::EPSILON {
+					previous = *normal;
+				}
+			}
+			for normal in normals.iter_mut().take(first_idx).rev() {
+				if normal.length_sq() > f32::EPSILON && normal.dot(previous) < 0.0 {
+					*normal = -*normal;
+				}
+				if normal.length_sq() > f32::EPSILON {
+					previous = *normal;
+				}
+			}
+
+			if normals[first_idx].length_sq() > f32::EPSILON
+				&& normals[(first_idx + n - 1) % n].length_sq() > f32::EPSILON
+				&& normals[first_idx].dot(normals[(first_idx + n - 1) % n]) < 0.0
+			{
+				for normal in &mut normals {
+					*normal = -*normal;
+				}
+			}
+		}
+
+		normals
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn selection_flow_draw_layer(
+		painter: &Painter,
+		samples: &[(Pos2, f32)],
+		normals: &[Vec2],
+		line_width: f32,
+		alpha_scale: f32,
+		phase: f32,
+		flow_band_width: f32,
+		theme: HudTheme,
+	) {
+		if samples.is_empty() || normals.is_empty() || samples.len() != normals.len() {
+			return;
+		}
+
+		let half = (line_width * 0.5).max(0.1);
+		let n = samples.len();
+		let mut mesh = egui::epaint::Mesh::default();
+
+		for i in 0..n {
+			let (current_point, t) = samples[i];
+			let movement = Self::selection_flow_flow_band(t, phase, flow_band_width);
+			let intensity = SELECTION_FLOW_FLOW_BOOST * movement;
+			let color = Self::selection_flow_color(t + phase, theme, alpha_scale, intensity);
+			let normal = normals[i] * half;
+
+			mesh.colored_vertex(current_point + normal, color);
+			mesh.colored_vertex(current_point - normal, color);
+		}
+		for i in 0..n {
+			let i0 = (i * 2) as u32;
+			let i1 = ((i * 2) + 1) as u32;
+			let n0 = (((i + 1) % n) * 2) as u32;
+			let n1 = (((i + 1) % n) * 2 + 1) as u32;
+
+			mesh.add_triangle(i0, i1, n0);
+			mesh.add_triangle(i1, n1, n0);
+		}
+
+		painter.add(egui::Shape::Mesh(mesh.into()));
+	}
+
+	fn selection_flow_flow_band(progress: f32, phase: f32, band_width: f32) -> f32 {
+		let width = band_width.clamp(0.001, 0.5);
+		let distance = (progress - phase).rem_euclid(1.0);
+		let distance = distance.min(1.0 - distance);
+		let normalized = (distance / width).min(1.0);
+
+		(1.0 - normalized).powf(2.0)
+	}
+
+	fn selection_flow_sample_count(perimeter: f32) -> usize {
+		if perimeter <= 0.0 || !perimeter.is_finite() {
+			return SELECTION_FLOW_MIN_SEGMENTS;
+		}
+
+		let by_step = (perimeter / SELECTION_FLOW_SAMPLE_STEP_PX).ceil() as usize;
+
+		by_step.clamp(SELECTION_FLOW_MIN_SEGMENTS, SELECTION_FLOW_MAX_SEGMENTS)
+	}
+
+	fn selection_flow_path_samples(
+		rect: Rect,
+		corner_radius: f32,
+		sample_count: usize,
+		start_offset: f32,
+	) -> Vec<(Pos2, f32)> {
+		let perimeter = Self::selection_flow_perimeter(rect, corner_radius);
+
+		if perimeter <= 0.0 {
+			return Vec::new();
+		}
+
+		let start = (start_offset / perimeter).rem_euclid(1.0);
+
+		(0..sample_count)
+			.map(|index| {
+				let t = (index as f32 + 0.5) / sample_count as f32;
+				let progress = (t + start).rem_euclid(1.0);
+
+				(
+					Self::selection_flow_sample_at_distance(
+						rect,
+						corner_radius,
+						perimeter * progress,
+					),
+					t,
+				)
+			})
+			.collect()
+	}
+
+	fn selection_flow_sample_at_distance(rect: Rect, corner_radius: f32, distance: f32) -> Pos2 {
+		if corner_radius <= f32::EPSILON {
+			let perimeter = Self::selection_flow_perimeter(rect, 0.0);
+			let keep = distance.rem_euclid(perimeter);
+			let edge_top = rect.width();
+			let edge_right = rect.height();
+
+			if keep < edge_top {
+				return Pos2::new(rect.min.x + keep, rect.min.y);
+			}
+			if keep < edge_top + edge_right {
+				return Pos2::new(rect.max.x, rect.min.y + (keep - edge_top));
+			}
+			if keep < edge_top * 2.0 + edge_right {
+				return Pos2::new(rect.max.x - (keep - edge_top - edge_right), rect.max.y);
+			}
+
+			return Pos2::new(rect.min.x, rect.max.y - (keep - edge_top * 2.0 - edge_right));
+		}
+
+		let x0 = rect.min.x;
+		let x1 = rect.max.x;
+		let y0 = rect.min.y;
+		let y1 = rect.max.y;
+		let perimeter = Self::selection_flow_perimeter(rect, corner_radius);
+		let remain = distance.rem_euclid(perimeter);
+		let edge_top_len = (rect.width() - corner_radius * 2.0).max(0.0);
+		let edge_right_len = (rect.height() - corner_radius * 2.0).max(0.0);
+		let corner_len = std::f32::consts::FRAC_PI_2 * corner_radius;
+
+		if remain < edge_top_len {
+			return Pos2::new(x0 + corner_radius + remain, y0);
+		}
+
+		let mut offset = remain - edge_top_len;
+
+		if offset < corner_len {
+			let angle = -std::f32::consts::FRAC_PI_2 + offset / corner_radius;
+
+			return Pos2::new(
+				x1 - corner_radius + corner_radius * angle.cos(),
+				y0 + corner_radius + corner_radius * angle.sin(),
+			);
+		}
+
+		offset -= corner_len;
+
+		if offset < edge_right_len {
+			return Pos2::new(x1, y0 + corner_radius + offset);
+		}
+
+		offset -= edge_right_len;
+
+		if offset < corner_len {
+			let angle = offset / corner_radius;
+
+			return Pos2::new(
+				x1 - corner_radius + corner_radius * angle.cos(),
+				y1 - corner_radius + corner_radius * angle.sin(),
+			);
+		}
+
+		offset -= corner_len;
+
+		if offset < edge_top_len {
+			return Pos2::new(x1 - corner_radius - offset, y1);
+		}
+
+		offset -= edge_top_len;
+
+		if offset < corner_len {
+			let angle = std::f32::consts::FRAC_PI_2 + offset / corner_radius;
+
+			return Pos2::new(
+				x0 + corner_radius + corner_radius * angle.cos(),
+				y1 - corner_radius + corner_radius * angle.sin(),
+			);
+		}
+
+		offset -= corner_len;
+
+		if offset < edge_right_len {
+			return Pos2::new(x0, y1 - corner_radius - offset);
+		}
+
+		offset -= edge_right_len;
+
+		if offset < corner_len {
+			let angle = std::f32::consts::PI + offset / corner_radius;
+
+			return Pos2::new(
+				x0 + corner_radius + corner_radius * angle.cos(),
+				y0 + corner_radius + corner_radius * angle.sin(),
+			);
+		}
+
+		Pos2::new(x0 + corner_radius, y0)
+	}
+
+	fn selection_flow_perimeter(rect: Rect, corner_radius: f32) -> f32 {
+		let edge_top_len = (rect.width() - corner_radius * 2.0).max(0.0);
+		let edge_right_len = (rect.height() - corner_radius * 2.0).max(0.0);
+		let corner_len = std::f32::consts::FRAC_PI_2 * corner_radius;
+
+		2.0 * (edge_top_len + edge_right_len) + 4.0 * corner_len
+	}
+
+	fn selection_flow_color(
+		progress: f32,
+		theme: HudTheme,
+		alpha_scale: f32,
+		intensity: f32,
+	) -> Color32 {
+		let palette = SELECTION_FLOW_PALETTE;
+		let normalized = progress.rem_euclid(1.0);
+		let band_position = normalized * palette.len() as f32;
+		let band = band_position.floor() as usize % palette.len();
+		let local = band_position - band as f32;
+		let (r0, g0, b0) = palette[band];
+		let (r1, g1, b1) = palette[(band + 1) % palette.len()];
+		let blend = |a: u8, b: u8, ratio: f32| -> u8 {
+			(a as f32 + (b as f32 - a as f32) * ratio).clamp(0.0, 255.0).round() as u8
+		};
+		let theme_alpha = match theme {
+			HudTheme::Dark => 1.0,
+			HudTheme::Light => 0.82,
+		};
+		let alpha = (255.0 * alpha_scale * intensity * theme_alpha).clamp(0.0, 255.0);
+
+		Color32::from_rgba_unmultiplied(
+			blend(r0, r1, local),
+			blend(g0, g1, local),
+			blend(b0, b1, local),
+			alpha as u8,
+		)
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -5729,6 +6317,7 @@ impl WindowRenderer {
 			hud_theme: None,
 			egui_start_time: now,
 			egui_last_frame_time: now,
+			selection_flow_cache: SelectionFlowGeometryCache::default(),
 		})
 	}
 
@@ -5776,6 +6365,7 @@ impl WindowRenderer {
 		hud_milk_amount: f32,
 		hud_tint_hue: f32,
 		theme_mode: ThemeMode,
+		selection_particles: bool,
 		allow_frozen_surface_bg: bool,
 		toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
@@ -5805,6 +6395,7 @@ impl WindowRenderer {
 		self.sync_or_clear_hud_bg(gpu, state, monitor, hud_cfg)?;
 
 		let hud_shader_blur_active = self.hud_shader_blur_active(state, monitor, hud_cfg);
+		let mut selection_flow_cache = std::mem::take(&mut self.selection_flow_cache);
 		let (full_output, hud_pill) = self.run_egui(
 			raw_input,
 			state,
@@ -5822,10 +6413,13 @@ impl WindowRenderer {
 			hud_milk_amount,
 			hud_tint_hue,
 			theme,
+			selection_particles,
+			&mut selection_flow_cache,
 			toolbar_state,
 			toolbar_pointer,
 		);
 
+		self.selection_flow_cache = selection_flow_cache;
 		self.hud_pill = hud_pill;
 
 		if hud_shader_blur_active {
