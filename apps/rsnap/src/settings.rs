@@ -61,6 +61,7 @@ pub struct AppSettings {
 	pub alt_activation: AltActivationMode,
 	#[serde(default = "default_selection_particles")]
 	pub selection_particles: bool,
+	pub log_filter: Option<String>,
 	#[serde(default)]
 	pub toolbar_placement: ToolbarPlacement,
 	#[serde(default)]
@@ -141,6 +142,7 @@ impl Default for AppSettings {
 			hud_tint_hue: default_hud_tint_hue(),
 			alt_activation: AltActivationMode::default(),
 			selection_particles: default_selection_particles(),
+			log_filter: None,
 			toolbar_placement: ToolbarPlacement::Bottom,
 			loupe_sample_size: LoupeSampleSize::default(),
 			theme_mode: ThemeMode::System,
