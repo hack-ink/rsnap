@@ -4219,17 +4219,11 @@ impl WindowRenderer {
 			.iter()
 			.copied()
 			.find(|f| {
-				matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm)
+				matches!(
+					f,
+					wgpu::TextureFormat::Bgra8UnormSrgb | wgpu::TextureFormat::Rgba8UnormSrgb
+				)
 			})
-			.or_else(|| {
-				caps.formats.iter().copied().find(|f| {
-					matches!(
-						f,
-						wgpu::TextureFormat::Bgra8UnormSrgb | wgpu::TextureFormat::Rgba8UnormSrgb
-					)
-				})
-			})
-			.or_else(|| caps.formats.iter().copied().find(|f| !wgpu::TextureFormat::is_srgb(f)))
 			.or_else(|| caps.formats.iter().copied().find(wgpu::TextureFormat::is_srgb))
 			.unwrap_or(caps.formats[0])
 	}
@@ -6328,12 +6322,25 @@ impl WindowRenderer {
 
 		egui_phosphor::add_to_fonts(&mut fonts, Variant::Regular);
 
-		fonts.font_data.insert("phosphor-fill".into(), Variant::Fill.font_data().into());
-		fonts
-			.families
-			.entry(FontFamily::Name("phosphor-fill".into()))
-			.or_default()
-			.insert(0, "phosphor-fill".into());
+		let phosphor_fill = String::from("phosphor-fill");
+		let proportional_fallback =
+			fonts.families.get(&FontFamily::Proportional).and_then(|names| names.first()).cloned();
+
+		fonts.font_data.insert(phosphor_fill.clone(), Variant::Fill.font_data().into());
+
+		{
+			let family =
+				fonts.families.entry(FontFamily::Name(phosphor_fill.clone().into())).or_default();
+
+			family.insert(0, phosphor_fill.clone());
+
+			if let Some(fallback) = proportional_fallback
+				&& !family.contains(&fallback)
+			{
+				family.push(fallback);
+			}
+		}
+
 		egui_ctx.set_fonts(fonts);
 
 		let egui_renderer = Renderer::new(
