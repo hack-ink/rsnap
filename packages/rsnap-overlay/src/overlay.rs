@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use wgpu::Adapter;
 use wgpu::BindGroup;
 use wgpu::BindGroupLayout;
+use wgpu::CommandEncoder;
 use wgpu::CompositeAlphaMode;
 use wgpu::Device;
 use wgpu::Queue;
@@ -3984,6 +3985,7 @@ struct WindowRenderer {
 	window: Arc<winit::window::Window>,
 	surface: Surface<'static>,
 	surface_config: wgpu::SurfaceConfiguration,
+	egui_output_format: wgpu::TextureFormat,
 	needs_reconfigure: bool,
 	egui_ctx: egui::Context,
 	egui_renderer: Renderer,
@@ -4220,6 +4222,14 @@ impl WindowRenderer {
 			.unwrap_or(caps.formats[0])
 	}
 
+	fn egui_output_format(surface_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
+		match surface_format {
+			wgpu::TextureFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8Unorm,
+			wgpu::TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8Unorm,
+			format => format,
+		}
+	}
+
 	fn pick_surface_alpha(caps: &SurfaceCapabilities) -> CompositeAlphaMode {
 		caps.alpha_modes
 			.iter()
@@ -4244,8 +4254,14 @@ impl WindowRenderer {
 		window: &winit::window::Window,
 		format: wgpu::TextureFormat,
 		alpha_mode: CompositeAlphaMode,
+		egui_output_format: wgpu::TextureFormat,
 	) -> wgpu::SurfaceConfiguration {
 		let size = window.inner_size();
+		let mut view_formats = vec![format];
+
+		if !view_formats.contains(&egui_output_format) {
+			view_formats.push(egui_output_format);
+		}
 
 		wgpu::SurfaceConfiguration {
 			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -4254,7 +4270,7 @@ impl WindowRenderer {
 			height: size.height.max(1),
 			present_mode: wgpu::PresentMode::Fifo,
 			alpha_mode,
-			view_formats: vec![],
+			view_formats,
 			desired_maximum_frame_latency: 2,
 		}
 	}
@@ -6149,7 +6165,15 @@ impl WindowRenderer {
 		paint_jobs: &[ClippedPrimitive],
 		screen_descriptor: &ScreenDescriptor,
 	) -> Result<()> {
-		let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let surface_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let egui_view = if self.egui_output_format == self.surface_config.format {
+			None
+		} else {
+			Some(frame.texture.create_view(&wgpu::TextureViewDescriptor {
+				format: Some(self.egui_output_format),
+				..Default::default()
+			}))
+		};
 		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("rsnap-overlay encoder"),
 		});
@@ -6165,7 +6189,7 @@ impl WindowRenderer {
 			let rpass_desc = wgpu::RenderPassDescriptor {
 				label: Some("rsnap-overlay renderpass"),
 				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-					view: &view,
+					view: &surface_view,
 					depth_slice: None,
 					resolve_target: None,
 					ops: wgpu::Operations {
@@ -6219,14 +6243,42 @@ impl WindowRenderer {
 					screen_descriptor.size_in_pixels[1].max(1),
 				);
 			}
+		}
 
-			self.egui_renderer.render(&mut rpass, paint_jobs, screen_descriptor);
+		if self.egui_output_format == self.surface_config.format {
+			self.render_egui_pass(&mut encoder, &surface_view, paint_jobs, screen_descriptor);
+		} else if let Some(egui_view) = egui_view.as_ref() {
+			self.render_egui_pass(&mut encoder, egui_view, paint_jobs, screen_descriptor);
 		}
 
 		gpu.queue.submit(Some(encoder.finish()));
 		frame.present();
 
 		Ok(())
+	}
+
+	fn render_egui_pass(
+		&mut self,
+		encoder: &mut CommandEncoder,
+		view: &wgpu::TextureView,
+		paint_jobs: &[ClippedPrimitive],
+		screen_descriptor: &ScreenDescriptor,
+	) {
+		let rpass_desc = wgpu::RenderPassDescriptor {
+			label: Some("rsnap-overlay egui renderpass"),
+			color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+				view,
+				depth_slice: None,
+				resolve_target: None,
+				ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+			})],
+			depth_stencil_attachment: None,
+			timestamp_writes: None,
+			occlusion_query_set: None,
+		};
+		let mut rpass = encoder.begin_render_pass(&rpass_desc).forget_lifetime();
+
+		self.egui_renderer.render(&mut rpass, paint_jobs, screen_descriptor);
 	}
 
 	fn new(
@@ -6241,8 +6293,13 @@ impl WindowRenderer {
 		let caps = surface.get_capabilities(&gpu.adapter);
 		let surface_format = Self::pick_surface_format(&caps);
 		let surface_alpha = Self::pick_surface_alpha(&caps);
-		let surface_config =
-			Self::make_surface_config(window.as_ref(), surface_format, surface_alpha);
+		let egui_output_format = Self::egui_output_format(surface_format);
+		let surface_config = Self::make_surface_config(
+			window.as_ref(),
+			surface_format,
+			surface_alpha,
+			egui_output_format,
+		);
 
 		surface.configure(&gpu.device, &surface_config);
 
@@ -6261,7 +6318,7 @@ impl WindowRenderer {
 
 		let egui_renderer = Renderer::new(
 			&gpu.device,
-			surface_format,
+			egui_output_format,
 			egui_wgpu::RendererOptions {
 				msaa_samples: 1,
 				depth_stencil_format: None,
@@ -6300,6 +6357,7 @@ impl WindowRenderer {
 			window,
 			surface,
 			surface_config,
+			egui_output_format,
 			needs_reconfigure: false,
 			egui_ctx,
 			egui_renderer,

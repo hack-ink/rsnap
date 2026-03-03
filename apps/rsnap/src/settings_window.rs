@@ -7,7 +7,6 @@ use egui::{Align, Layout};
 use egui_phosphor::{Variant, regular};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use wgpu::SurfaceTexture;
-use wgpu::TextureFormat;
 use wgpu::{Adapter, CompositeAlphaMode, Device, Queue, Surface, SurfaceCapabilities};
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::ElementState;
@@ -49,6 +48,7 @@ pub struct SettingsWindow {
 	gpu: GpuContext,
 	surface: Surface<'static>,
 	surface_config: wgpu::SurfaceConfiguration,
+	egui_output_format: wgpu::TextureFormat,
 	egui_ctx: egui::Context,
 	egui_state: egui_winit::State,
 	renderer: Renderer,
@@ -85,6 +85,7 @@ impl SettingsWindow {
 		let window = event_loop.create_window(attrs).wrap_err("create settings window")?;
 		let window = Arc::new(window);
 		let (gpu, surface, surface_config) = GpuContext::new_with_surface(Arc::clone(&window))?;
+		let egui_output_format = egui_output_format(surface_config.format);
 		let egui_ctx = egui::Context::default();
 		let theme_icon_system = regular::MONITOR.to_owned();
 		let theme_icon_dark = regular::MOON.to_owned();
@@ -105,7 +106,7 @@ impl SettingsWindow {
 		);
 		let renderer = Renderer::new(
 			&gpu.device,
-			surface_config.format,
+			egui_output_format,
 			egui_wgpu::RendererOptions {
 				msaa_samples: 1,
 				depth_stencil_format: None,
@@ -119,6 +120,7 @@ impl SettingsWindow {
 			gpu,
 			surface,
 			surface_config,
+			egui_output_format,
 			egui_ctx,
 			egui_state,
 			renderer,
@@ -214,7 +216,14 @@ impl SettingsWindow {
 			pixels_per_point: self.window.scale_factor() as f32,
 		};
 		let frame = self.acquire_frame()?;
-		let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let view = if self.surface_config.format.is_srgb() {
+			frame.texture.create_view(&wgpu::TextureViewDescriptor {
+				format: Some(self.egui_output_format),
+				..Default::default()
+			})
+		} else {
+			frame.texture.create_view(&wgpu::TextureViewDescriptor::default())
+		};
 		let mut encoder = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("rsnap-settings encoder"),
 		});
@@ -945,8 +954,15 @@ impl GpuContext {
 		.wrap_err("request_device")?;
 		let caps = surface.get_capabilities(&adapter);
 		let format = pick_surface_format(&caps);
+		let egui_output_format = egui_output_format(format);
 		let alpha = pick_surface_alpha(&caps);
 		let size = window.inner_size();
+		let mut view_formats = vec![format];
+
+		if !view_formats.contains(&egui_output_format) {
+			view_formats.push(egui_output_format);
+		}
+
 		let surface_config = wgpu::SurfaceConfiguration {
 			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
 			format,
@@ -954,7 +970,7 @@ impl GpuContext {
 			height: size.height.max(1),
 			present_mode: caps.present_modes[0],
 			alpha_mode: alpha,
-			view_formats: vec![format],
+			view_formats,
 			desired_maximum_frame_latency: 2,
 		};
 
@@ -964,7 +980,15 @@ impl GpuContext {
 	}
 }
 
-fn pick_surface_format(caps: &SurfaceCapabilities) -> TextureFormat {
+fn egui_output_format(surface_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
+	match surface_format {
+		wgpu::TextureFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8Unorm,
+		wgpu::TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8Unorm,
+		format => format,
+	}
+}
+
+fn pick_surface_format(caps: &SurfaceCapabilities) -> wgpu::TextureFormat {
 	caps.formats
 		.iter()
 		.copied()
