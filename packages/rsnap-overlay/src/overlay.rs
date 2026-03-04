@@ -3261,7 +3261,8 @@ impl OverlaySession {
 		if self.state.monitor != Some(monitor) {
 			return None;
 		}
-		if self.active_cursor_monitor() != Some(monitor) {
+		if toolbar_cursor_local_override.is_none() && self.active_cursor_monitor() != Some(monitor)
+		{
 			return None;
 		}
 
@@ -3600,10 +3601,6 @@ impl OverlaySession {
 		self.maybe_log_event_loop_stall(Instant::now());
 		self.mark_progress(OverlayEventLoopPhase::OverlayRedraw);
 
-		let toolbar_input = self.toolbar_pointer_state(overlay_monitor, None);
-		let Some(gpu) = self.gpu.as_ref() else {
-			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
-		};
 		// On macOS the frozen toolbar is now rendered in its own native HUD window; keep this
 		// fullscreen overlay free of toolbar UI so shader-backed blur and monitor-aligned offsets
 		// do not conflict with native-window positioning.
@@ -3613,6 +3610,11 @@ impl OverlaySession {
 			&& self.state.monitor == Some(overlay_monitor)
 			&& self.state.frozen_image.is_some()
 			&& self.pending_freeze_capture != Some(overlay_monitor);
+		let toolbar_input =
+			if draw_toolbar { self.toolbar_pointer_state(overlay_monitor, None) } else { None };
+		let Some(gpu) = self.gpu.as_ref() else {
+			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
+		};
 
 		if matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.state.monitor == Some(overlay_monitor)
