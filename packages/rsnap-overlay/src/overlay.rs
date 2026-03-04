@@ -8313,7 +8313,7 @@ fn macos_mouse_location() -> Option<GlobalPoint> {
 fn macos_configure_overlay_window_mouse_moved_events(window: &winit::window::Window) {
 	use objc::runtime::{Object, YES};
 
-	use objc::{msg_send, sel, sel_impl};
+	use objc::{class, msg_send, sel, sel_impl};
 
 	let Ok(handle) = window.window_handle() else {
 		return;
@@ -8330,6 +8330,12 @@ fn macos_configure_overlay_window_mouse_moved_events(window: &winit::window::Win
 			return;
 		}
 
+		let _: () = msg_send![ns_window, setOpaque: false];
+		let _: () = msg_send![ns_window, setHasShadow: false];
+		let sharing_type_none = 0_u64;
+		let _: () = msg_send![ns_window, setSharingType: sharing_type_none];
+		let clear: *mut Object = msg_send![class!(NSColor), clearColor];
+		let _: () = msg_send![ns_window, setBackgroundColor: clear];
 		let _: () = msg_send![ns_window, setLevel: MACOS_OVERLAY_WINDOW_LEVEL];
 		let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
 	}
