@@ -266,6 +266,7 @@ pub struct OverlayConfig {
 	pub show_alt_hint_keycap: bool,
 	pub show_hud_blur: bool,
 	pub selection_particles: bool,
+	pub selection_flow_stroke_width_px: f32,
 	pub hud_opaque: bool,
 	/// 0..=1. Controls HUD background alpha.
 	pub hud_opacity: f32,
@@ -287,6 +288,7 @@ impl Default for OverlayConfig {
 			show_alt_hint_keycap: true,
 			show_hud_blur: true,
 			selection_particles: true,
+			selection_flow_stroke_width_px: SELECTION_FLOW_CORE_WIDTH_PX,
 			hud_opaque: false,
 			hud_opacity: 0.35,
 			hud_fog_amount: 0.16,
@@ -1197,8 +1199,14 @@ impl OverlaySession {
 					hovered.rect.width as f32 >= LIVE_DRAG_START_THRESHOLD_PX
 						&& hovered.rect.height as f32 >= LIVE_DRAG_START_THRESHOLD_PX
 				});
+				let has_fullscreen_preview = !self.left_mouse_button_down
+					&& self.state.hovered_window_rect.is_none()
+					&& self.state.drag_rect.is_none()
+					&& self.state.cursor.is_some_and(|cursor| {
+						self.active_cursor_monitor().is_some_and(|monitor| monitor.contains(cursor))
+					});
 
-				has_drag_rect || has_hover_rect
+				has_drag_rect || has_hover_rect || has_fullscreen_preview
 			},
 			OverlayMode::Frozen => self.state.frozen_capture_rect.is_some(),
 		};
@@ -2031,6 +2039,8 @@ impl OverlaySession {
 		rect: Option<RectPoints>,
 		cursor: Option<GlobalPoint>,
 	) {
+		self.state.frozen_capture_is_fullscreen_fallback = rect.is_none();
+
 		let capture_rect = rect.unwrap_or(RectPoints::new(0, 0, monitor.width, monitor.height));
 		let frozen_rgb = self.state.rgb;
 		let frozen_loupe = self.state.loupe.as_ref().map(|loupe| crate::state::LoupeSample {
@@ -2592,6 +2602,7 @@ impl OverlaySession {
 			self.config.hud_tint_hue,
 			self.config.theme_mode,
 			self.config.selection_particles,
+			self.config.selection_flow_stroke_width_px,
 			false,
 			Some(&mut self.toolbar_state),
 			toolbar_input,
@@ -3403,6 +3414,7 @@ impl OverlaySession {
 				self.config.hud_tint_hue,
 				self.config.theme_mode,
 				self.config.selection_particles,
+				self.config.selection_flow_stroke_width_px,
 				true,
 				None,
 				None,
@@ -3650,6 +3662,7 @@ impl OverlaySession {
 				self.config.hud_tint_hue,
 				self.config.theme_mode,
 				draw_selection_particles,
+				self.config.selection_flow_stroke_width_px,
 				true,
 				toolbar_state,
 				toolbar_input,
@@ -4875,6 +4888,7 @@ impl WindowRenderer {
 		hud_tint_hue: f32,
 		theme: HudTheme,
 		selection_particles: bool,
+		selection_flow_stroke_width_px: f32,
 		needs_frozen_surface_bg: bool,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 		mut toolbar_state: Option<&mut FrozenToolbarState>,
@@ -4946,6 +4960,7 @@ impl WindowRenderer {
 					monitor,
 					screen_rect,
 					theme,
+					selection_flow_stroke_width_px,
 					selection_flow_geometry_cache,
 				);
 			}
@@ -4963,6 +4978,7 @@ impl WindowRenderer {
 					monitor,
 					screen_rect,
 					theme,
+					selection_flow_stroke_width_px,
 					selection_flow_geometry_cache,
 				);
 			}
@@ -4971,6 +4987,7 @@ impl WindowRenderer {
 		(full_output, hud_pill)
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn render_live_capture_affordances(
 		ctx: &egui::Context,
 		painter: &Painter,
@@ -4978,6 +4995,7 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		screen_rect: Rect,
 		theme: HudTheme,
+		selection_flow_stroke_width_px: f32,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 	) -> bool {
 		let mut has_rect = false;
@@ -5004,6 +5022,7 @@ impl WindowRenderer {
 					ctx,
 					theme,
 					SelectionFlowStyle::Band,
+					selection_flow_stroke_width_px,
 					selection_flow_geometry_cache,
 				);
 
@@ -5026,7 +5045,33 @@ impl WindowRenderer {
 				rect,
 				ctx,
 				theme,
+				SelectionFlowStyle::FullBorder,
+				selection_flow_stroke_width_px,
+				selection_flow_geometry_cache,
+			);
+
+			has_rect = true;
+		}
+
+		let has_hovered_window_for_this_monitor =
+			state.hovered_window_rect.is_some_and(|hovered| hovered.monitor_id == monitor.id);
+		let has_drag_rect_for_this_monitor =
+			state.drag_rect.is_some_and(|drag_rect| drag_rect.monitor_id == monitor.id);
+		let cursor_on_monitor = state.cursor.is_some_and(|cursor| monitor.contains(cursor));
+		let primary_not_down = !ctx.input(|i| i.pointer.primary_down());
+
+		if !has_hovered_window_for_this_monitor
+			&& !has_drag_rect_for_this_monitor
+			&& cursor_on_monitor
+			&& primary_not_down
+		{
+			Self::render_selection_flow_ring(
+				painter,
+				screen_rect,
+				ctx,
+				theme,
 				SelectionFlowStyle::Band,
+				selection_flow_stroke_width_px,
 				selection_flow_geometry_cache,
 			);
 
@@ -5042,6 +5087,7 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		screen_rect: Rect,
 		theme: HudTheme,
+		selection_flow_stroke_width_px: f32,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 	) -> bool {
 		let Some(capture_rect) = state.frozen_capture_rect else {
@@ -5078,7 +5124,12 @@ impl WindowRenderer {
 			rect,
 			ctx,
 			theme,
-			SelectionFlowStyle::FullBorder,
+			if state.frozen_capture_is_fullscreen_fallback {
+				SelectionFlowStyle::Band
+			} else {
+				SelectionFlowStyle::FullBorder
+			},
+			selection_flow_stroke_width_px,
 			selection_flow_geometry_cache,
 		);
 
@@ -5091,6 +5142,7 @@ impl WindowRenderer {
 		ctx: &egui::Context,
 		theme: HudTheme,
 		style: SelectionFlowStyle,
+		selection_flow_stroke_width_px: f32,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 	) {
 		if rect.width() < LIVE_DRAG_START_THRESHOLD_PX
@@ -5122,6 +5174,7 @@ impl WindowRenderer {
 			HudTheme::Light => 0.86,
 			HudTheme::Dark => 1.0,
 		};
+		let stroke_width = selection_flow_stroke_width_px.clamp(1.0, 8.0);
 
 		if samples.is_empty() {
 			return;
@@ -5135,7 +5188,7 @@ impl WindowRenderer {
 				painter,
 				samples,
 				normals,
-				SELECTION_FLOW_CORE_WIDTH_PX,
+				stroke_width,
 				base_alpha_scale * 0.52,
 				phase,
 				SELECTION_FLOW_CORE_FLOW_WIDTH,
@@ -5145,7 +5198,7 @@ impl WindowRenderer {
 				painter,
 				samples,
 				normals,
-				SELECTION_FLOW_CORE_WIDTH_PX,
+				stroke_width,
 				base_alpha_scale * SELECTION_FLOW_FROZEN_ALPHA_SCALE,
 				phase,
 				SELECTION_FLOW_FROZEN_INTENSITY,
@@ -6861,6 +6914,7 @@ impl WindowRenderer {
 		hud_tint_hue: f32,
 		theme_mode: ThemeMode,
 		selection_particles: bool,
+		selection_flow_stroke_width_px: f32,
 		allow_frozen_surface_bg: bool,
 		toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
@@ -6909,6 +6963,7 @@ impl WindowRenderer {
 			hud_tint_hue,
 			theme,
 			selection_particles,
+			selection_flow_stroke_width_px,
 			hud_cfg.needs_frozen_surface_bg,
 			&mut selection_flow_cache,
 			toolbar_state,
