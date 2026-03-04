@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::ffi::{CString, c_char, c_void};
+#[cfg(not(target_os = "macos"))]
 use std::process;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -49,6 +50,8 @@ const KCF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 const KCG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: u32 = 1;
 #[cfg(target_os = "macos")]
 const KCG_WINDOW_LIST_OPTION_EXCLUDE_DESKTOP: u32 = 16;
+#[cfg(target_os = "macos")]
+const KCG_WINDOW_LAYER_MAX_FOR_TARGETING: u64 = 3;
 #[cfg(target_os = "macos")]
 const K_CF_NUMBER_FLOAT64_TYPE: u32 = 6;
 #[cfg(target_os = "macos")]
@@ -742,7 +745,6 @@ fn collect_window_geometries() -> Result<Vec<WindowRect>> {
 		return Ok(Vec::new());
 	}
 
-	let self_pid = process::id();
 	let mut windows = Vec::with_capacity(window_count as usize);
 	let mut i = 0_isize;
 
@@ -753,7 +755,7 @@ fn collect_window_geometries() -> Result<Vec<WindowRect>> {
 			continue;
 		};
 
-		if let Some(window_geometry) = window_geometry_from_dictionary(window_dict, self_pid) {
+		if let Some(window_geometry) = window_geometry_from_dictionary(window_dict) {
 			windows.push(window_geometry);
 		}
 
@@ -764,13 +766,9 @@ fn collect_window_geometries() -> Result<Vec<WindowRect>> {
 }
 
 #[cfg(target_os = "macos")]
-fn window_geometry_from_dictionary(
-	window_dictionary: CFDictionaryRef,
-	self_pid: u32,
-) -> Option<WindowRect> {
+fn window_geometry_from_dictionary(window_dictionary: CFDictionaryRef) -> Option<WindowRect> {
 	let is_on_screen = cf_bool_value(window_dictionary, "kCGWindowIsOnscreen")?;
 	let window_id = cf_number_to_u32(window_dictionary, "kCGWindowNumber");
-	let window_pid = cf_number_to_u32(window_dictionary, "kCGWindowOwnerPID")?;
 	let layer = cf_number_to_u64(window_dictionary, "kCGWindowLayer")?;
 	let bounds_dict = cf_dictionary_value(window_dictionary, "kCGWindowBounds")?;
 	let x = cf_number_to_i64(bounds_dict, "X")?;
@@ -778,7 +776,7 @@ fn window_geometry_from_dictionary(
 	let width = cf_number_to_i64(bounds_dict, "Width")?;
 	let height = cf_number_to_i64(bounds_dict, "Height")?;
 
-	if !is_on_screen || layer != 0 || window_pid == self_pid || width <= 0 || height <= 0 {
+	if !is_on_screen || layer > KCG_WINDOW_LAYER_MAX_FOR_TARGETING || width <= 0 || height <= 0 {
 		return None;
 	}
 

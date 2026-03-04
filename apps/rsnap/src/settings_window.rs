@@ -18,7 +18,7 @@ use winit::event::{KeyEvent, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, KeyCode, ModifiersState, PhysicalKey};
 use winit::window::Theme;
-use winit::window::{Window, WindowId, WindowLevel};
+use winit::window::{Window, WindowId};
 
 use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
 use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
@@ -105,7 +105,6 @@ impl SettingsWindow {
 	pub fn open(event_loop: &ActiveEventLoop) -> Result<Self> {
 		let mut attrs = Window::default_attributes()
 			.with_title("Settings")
-			.with_window_level(WindowLevel::AlwaysOnTop)
 			.with_inner_size(LogicalSize::new(520.0, 360.0))
 			.with_resizable(false)
 			.with_visible(true);
