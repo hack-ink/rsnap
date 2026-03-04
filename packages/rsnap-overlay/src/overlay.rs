@@ -49,9 +49,9 @@ use crate::state::LiveCursorSample;
 use crate::{
 	state::{
 		GlobalPoint, MonitorRect, MonitorRectPoints, OverlayMode, OverlayState, RectPoints,
-		WindowListSnapshot,
+		WindowHit, WindowListSnapshot,
 	},
-	worker::{OverlayWorker, WorkerRequestSendError, WorkerResponse},
+	worker::{FreezeCaptureTarget, OverlayWorker, WorkerRequestSendError, WorkerResponse},
 };
 
 #[cfg(target_os = "macos")]
@@ -114,6 +114,8 @@ const SELECTION_FLOW_REPAINT_FPS_MAX: f32 = 120.0;
 const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] = [(94, 200, 255), (165, 103, 255), (255, 150, 60)];
 const SELECTION_FLOW_FROZEN_ALPHA_SCALE: f32 = 0.70;
 const SELECTION_FLOW_FROZEN_INTENSITY: f32 = 1.25;
+const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: image::Rgba<u8> = image::Rgba([246, 246, 246, 255]);
+const WINDOW_CAPTURE_MATTE_DARK_RGBA: image::Rgba<u8> = image::Rgba([24, 24, 24, 255]);
 #[cfg(target_os = "macos")]
 const KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE: u32 = 0;
 #[cfg(target_os = "macos")]
@@ -169,6 +171,16 @@ pub enum OutputNaming {
 	#[default]
 	Timestamp,
 	Sequence,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowCaptureAlphaMode {
+	#[default]
+	#[serde(alias = "preserve")]
+	Background,
+	MatteLight,
+	MatteDark,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -254,6 +266,7 @@ enum PngAction {
 	Copy,
 	Save,
 }
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DeviceCursorPointSource {
 	DevicePoints,
@@ -299,6 +312,7 @@ pub struct OverlayConfig {
 	pub output_dir: PathBuf,
 	pub output_filename_prefix: String,
 	pub output_naming: OutputNaming,
+	pub window_capture_alpha_mode: WindowCaptureAlphaMode,
 }
 impl Default for OverlayConfig {
 	fn default() -> Self {
@@ -320,6 +334,7 @@ impl Default for OverlayConfig {
 			output_dir: PathBuf::from("."),
 			output_filename_prefix: String::from("rsnap"),
 			output_naming: OutputNaming::Timestamp,
+			window_capture_alpha_mode: WindowCaptureAlphaMode::Background,
 		}
 	}
 }
@@ -384,6 +399,9 @@ pub struct OverlaySession {
 	loupe_patch_height_px: u32,
 	pending_freeze_capture: Option<MonitorRect>,
 	pending_freeze_capture_armed: bool,
+	pending_window_freeze_capture: Option<WindowFreezeCaptureTarget>,
+	inflight_window_freeze_capture: Option<WindowFreezeCaptureTarget>,
+	frozen_window_image: Option<RgbaImage>,
 	capture_windows_hidden: bool,
 	pending_encode_png: Option<RgbaImage>,
 	pending_png_action: Option<PngAction>,
@@ -478,6 +496,9 @@ impl OverlaySession {
 			egui_repaint_deadline: Arc::new(Mutex::new(None)),
 			pending_freeze_capture: None,
 			pending_freeze_capture_armed: false,
+			pending_window_freeze_capture: None,
+			inflight_window_freeze_capture: None,
+			frozen_window_image: None,
 			capture_windows_hidden: false,
 			pending_encode_png: None,
 			pending_png_action: None,
@@ -746,6 +767,9 @@ impl OverlaySession {
 		self.state.loupe_patch_side_px = self.loupe_patch_width_px;
 		self.pending_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
+		self.pending_window_freeze_capture = None;
+		self.inflight_window_freeze_capture = None;
+		self.frozen_window_image = None;
 		self.hit_test_send_full_count = 0;
 		self.hit_test_send_disconnected_count = 0;
 		self.live_cursor_sample_request_id = 0;
@@ -1810,8 +1834,8 @@ impl OverlaySession {
 		}
 
 		let hovered_window_rect = self
-			.hovered_window_rect_from_window_list_snapshot(monitor, cursor)
-			.map(|rect| MonitorRectPoints { monitor_id: monitor.id, rect });
+			.hovered_window_hit_from_window_list_snapshot(monitor, cursor)
+			.map(|hit| MonitorRectPoints { monitor_id: monitor.id, rect: hit.rect });
 		let mut updated = false;
 
 		if self.state.hovered_window_rect != hovered_window_rect {
@@ -1822,27 +1846,27 @@ impl OverlaySession {
 		updated
 	}
 
-	fn hovered_window_rect_from_window_list_snapshot(
+	fn hovered_window_hit_from_window_list_snapshot(
 		&self,
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
-	) -> Option<RectPoints> {
+	) -> Option<WindowHit> {
 		let (local_x, local_y) = monitor.local_u32(cursor)?;
 		let window_list_snapshot = self.window_list_snapshot.as_ref()?;
 
 		window_list_snapshot.windows.iter().find_map(|window| {
-			let window_rect = monitor.clip_global_rect_i64(
+			let rect = monitor.clip_global_rect_i64(
 				window.x,
 				window.y,
 				window.x.saturating_add(window.width),
 				window.y.saturating_add(window.height),
 			)?;
 
-			if !window_rect.contains((local_x, local_y)) {
+			if !rect.contains((local_x, local_y)) {
 				return None;
 			}
 
-			Some(window_rect)
+			Some(WindowHit { window_id: window.window_id, rect })
 		})
 	}
 
@@ -1898,13 +1922,18 @@ impl OverlaySession {
 
 				OverlayControl::Continue
 			},
-			WorkerResponse::HitTestWindow { monitor, point, request_id, rect } => {
-				self.handle_hit_test_window_response(monitor, point, request_id, rect);
+			WorkerResponse::HitTestWindow { monitor, point, request_id, hit } => {
+				self.handle_hit_test_window_response(monitor, point, request_id, hit);
 
 				OverlayControl::Continue
 			},
-			WorkerResponse::CapturedFreeze { monitor, image } => {
-				self.handle_captured_freeze_response(monitor, image);
+			WorkerResponse::CapturedFreeze { monitor, image, window_image, captured_window_id } => {
+				self.handle_captured_freeze_response(
+					monitor,
+					image,
+					window_image,
+					captured_window_id,
+				);
 
 				OverlayControl::Continue
 			},
@@ -1996,7 +2025,7 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		point: GlobalPoint,
 		request_id: u64,
-		rect: Option<RectPoints>,
+		hit: Option<WindowHit>,
 	) {
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			return;
@@ -2005,7 +2034,16 @@ impl OverlaySession {
 			self.pending_click_hit_test_request_id = None;
 			self.state.hovered_window_rect = None;
 
-			self.begin_frozen_capture_with_rect(monitor, rect, Some(point));
+			let capture_rect = hit.map(|window_hit| window_hit.rect);
+			let window_target = hit.and_then(|window_hit| {
+				window_hit.window_id.map(|window_id| WindowFreezeCaptureTarget {
+					monitor,
+					window_id,
+					rect: window_hit.rect,
+				})
+			});
+
+			self.begin_frozen_capture_with_rect(monitor, capture_rect, window_target, Some(point));
 		}
 	}
 
@@ -2015,7 +2053,7 @@ impl OverlaySession {
 		if self.window_list_snapshot.is_none() {
 			let request_id = self.hit_test_request_id.wrapping_add(1);
 			let Some(worker) = self.worker.as_ref() else {
-				self.begin_frozen_capture_with_rect(monitor, None, Some(cursor));
+				self.begin_frozen_capture_with_rect(monitor, None, None, Some(cursor));
 
 				return;
 			};
@@ -2054,15 +2092,24 @@ impl OverlaySession {
 			}
 		}
 
-		let capture_rect = self.hovered_window_rect_from_window_list_snapshot(monitor, cursor);
+		let capture_hit = self.hovered_window_hit_from_window_list_snapshot(monitor, cursor);
+		let capture_rect = capture_hit.map(|window_hit| window_hit.rect);
+		let window_target = capture_hit.and_then(|window_hit| {
+			window_hit.window_id.map(|window_id| WindowFreezeCaptureTarget {
+				monitor,
+				window_id,
+				rect: window_hit.rect,
+			})
+		});
 
-		self.begin_frozen_capture_with_rect(monitor, capture_rect, Some(cursor));
+		self.begin_frozen_capture_with_rect(monitor, capture_rect, window_target, Some(cursor));
 	}
 
 	fn begin_frozen_capture_with_rect(
 		&mut self,
 		monitor: MonitorRect,
 		rect: Option<RectPoints>,
+		window_target: Option<WindowFreezeCaptureTarget>,
 		cursor: Option<GlobalPoint>,
 	) {
 		self.state.frozen_capture_is_fullscreen_fallback = rect.is_none();
@@ -2137,6 +2184,9 @@ impl OverlaySession {
 		self.state.loupe = frozen_loupe;
 		self.pending_freeze_capture = Some(monitor);
 		self.pending_freeze_capture_armed = false;
+		self.pending_window_freeze_capture = window_target;
+		self.inflight_window_freeze_capture = None;
+		self.frozen_window_image = None;
 		self.capture_windows_hidden = false;
 		self.pending_click_hit_test_request_id = None;
 		self.left_mouse_button_down = false;
@@ -2147,6 +2197,7 @@ impl OverlaySession {
 		self.request_redraw_for_monitor(monitor);
 
 		if self.use_fake_hud_blur()
+			&& window_target.is_none()
 			&& self.state.live_bg_monitor == Some(monitor)
 			&& let Some(image) = self.state.live_bg_image.take()
 		{
@@ -2202,6 +2253,26 @@ impl OverlaySession {
 	}
 
 	fn cropped_frozen_capture_image(&self) -> Option<RgbaImage> {
+		if !self.state.frozen_capture_is_fullscreen_fallback
+			&& let Some(window_image) = self.frozen_window_image.as_ref()
+		{
+			match self.config.window_capture_alpha_mode {
+				WindowCaptureAlphaMode::Background => {},
+				WindowCaptureAlphaMode::MatteLight => {
+					return Some(Self::flatten_window_image_with_matte(
+						window_image,
+						WINDOW_CAPTURE_MATTE_LIGHT_RGBA,
+					));
+				},
+				WindowCaptureAlphaMode::MatteDark => {
+					return Some(Self::flatten_window_image_with_matte(
+						window_image,
+						WINDOW_CAPTURE_MATTE_DARK_RGBA,
+					));
+				},
+			}
+		}
+
 		let frozen_image = self.state.frozen_image.as_ref()?;
 		let Some(monitor) = self.state.monitor else {
 			return Some(frozen_image.clone());
@@ -2225,6 +2296,66 @@ impl OverlaySession {
 		}
 	}
 
+	fn flatten_window_image_with_matte(image: &RgbaImage, matte: image::Rgba<u8>) -> RgbaImage {
+		let mut out = RgbaImage::from_pixel(image.width(), image.height(), matte);
+
+		image::imageops::overlay(&mut out, image, 0, 0);
+
+		out
+	}
+
+	fn compose_window_preview_layer(
+		window_image: &RgbaImage,
+		alpha_mode: WindowCaptureAlphaMode,
+	) -> RgbaImage {
+		match alpha_mode {
+			WindowCaptureAlphaMode::Background => window_image.clone(),
+			WindowCaptureAlphaMode::MatteLight => {
+				Self::flatten_window_image_with_matte(window_image, WINDOW_CAPTURE_MATTE_LIGHT_RGBA)
+			},
+			WindowCaptureAlphaMode::MatteDark => {
+				Self::flatten_window_image_with_matte(window_image, WINDOW_CAPTURE_MATTE_DARK_RGBA)
+			},
+		}
+	}
+
+	fn composite_window_capture_preview(
+		mut monitor_image: RgbaImage,
+		window_image: &RgbaImage,
+		monitor: MonitorRect,
+		capture_rect_points: RectPoints,
+		alpha_mode: WindowCaptureAlphaMode,
+	) -> RgbaImage {
+		let capture_rect_px = monitor.local_rect_to_pixels(capture_rect_points);
+
+		if capture_rect_px.width == 0 || capture_rect_px.height == 0 {
+			return monitor_image;
+		}
+
+		let window_overlay = if window_image.width() == capture_rect_px.width
+			&& window_image.height() == capture_rect_px.height
+		{
+			window_image.clone()
+		} else {
+			image::imageops::resize(
+				window_image,
+				capture_rect_px.width,
+				capture_rect_px.height,
+				FilterType::Triangle,
+			)
+		};
+		let preview_layer = Self::compose_window_preview_layer(&window_overlay, alpha_mode);
+
+		image::imageops::overlay(
+			&mut monitor_image,
+			&preview_layer,
+			i64::from(capture_rect_px.x),
+			i64::from(capture_rect_px.y),
+		);
+
+		monitor_image
+	}
+
 	fn redraw_for_monitor_and_current(&mut self, monitor: MonitorRect) {
 		let current_monitor = self.active_cursor_monitor();
 
@@ -2237,9 +2368,39 @@ impl OverlaySession {
 		}
 	}
 
-	fn handle_captured_freeze_response(&mut self, monitor: MonitorRect, image: RgbaImage) {
+	fn handle_captured_freeze_response(
+		&mut self,
+		monitor: MonitorRect,
+		image: RgbaImage,
+		window_image: Option<RgbaImage>,
+		captured_window_id: Option<u32>,
+	) {
 		if matches!(self.state.mode, OverlayMode::Frozen) && self.state.monitor == Some(monitor) {
-			self.state.finish_freeze(monitor, image);
+			let window_capture_target = self.inflight_window_freeze_capture.take();
+			let mut frozen_preview_image = image;
+
+			self.pending_window_freeze_capture = None;
+			self.frozen_window_image = None;
+
+			if let (Some(target), Some(window_capture_image), Some(window_id)) =
+				(window_capture_target, window_image, captured_window_id)
+				&& target.monitor == monitor
+				&& target.window_id == window_id
+			{
+				self.frozen_window_image = Some(window_capture_image);
+
+				if let Some(window_capture_image) = self.frozen_window_image.as_ref() {
+					frozen_preview_image = Self::composite_window_capture_preview(
+						frozen_preview_image,
+						window_capture_image,
+						monitor,
+						target.rect,
+						self.config.window_capture_alpha_mode,
+					);
+				}
+			}
+
+			self.state.finish_freeze(monitor, frozen_preview_image);
 			self.restore_capture_windows_visibility();
 
 			self.toolbar_state.needs_redraw = true;
@@ -2267,6 +2428,10 @@ impl OverlaySession {
 			self.raise_hud_windows();
 
 			return;
+		}
+		if self.inflight_window_freeze_capture.is_some_and(|inflight| inflight.monitor == monitor) {
+			self.inflight_window_freeze_capture = None;
+			self.pending_window_freeze_capture = None;
 		}
 		if matches!(self.state.mode, OverlayMode::Live)
 			&& self.use_fake_hud_blur()
@@ -3287,6 +3452,7 @@ impl OverlaySession {
 					self.begin_frozen_capture_with_rect(
 						release_monitor,
 						Some(rect.rect),
+						None,
 						Some(release_global),
 					);
 
@@ -3770,11 +3936,21 @@ impl OverlaySession {
 			&& self.state.frozen_image.is_none()
 			&& let Some(worker) = &self.worker
 		{
+			let pending_window_target = self
+				.pending_window_freeze_capture
+				.filter(|target| target.monitor == overlay_monitor);
+			let freeze_target = pending_window_target
+				.map_or(FreezeCaptureTarget::Monitor, |target| FreezeCaptureTarget::Window {
+					window_id: target.window_id,
+				});
+
 			#[cfg(target_os = "macos")]
 			{
-				if worker.request_freeze_capture(overlay_monitor) {
+				if worker.request_freeze_capture(overlay_monitor, freeze_target) {
 					self.pending_freeze_capture = None;
 					self.pending_freeze_capture_armed = false;
+					self.inflight_window_freeze_capture = pending_window_target;
+					self.pending_window_freeze_capture = None;
 				} else {
 					self.request_redraw_for_monitor(overlay_monitor);
 				}
@@ -3783,9 +3959,11 @@ impl OverlaySession {
 			{
 				// Capture must happen on a post-hide redraw so the HUD/loupe are not included.
 				if self.pending_freeze_capture_armed {
-					if worker.request_freeze_capture(overlay_monitor) {
+					if worker.request_freeze_capture(overlay_monitor, freeze_target) {
 						self.pending_freeze_capture = None;
 						self.pending_freeze_capture_armed = false;
+						self.inflight_window_freeze_capture = pending_window_target;
+						self.pending_window_freeze_capture = None;
 					} else {
 						self.request_redraw_for_monitor(overlay_monitor);
 					}
@@ -3948,7 +4126,7 @@ impl OverlaySession {
 			return;
 		};
 
-		if worker.request_freeze_capture(monitor) {
+		if worker.request_freeze_capture(monitor, FreezeCaptureTarget::Monitor) {
 			self.last_live_bg_request_at = Instant::now();
 		}
 	}
@@ -4298,6 +4476,13 @@ impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
 	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WindowFreezeCaptureTarget {
+	monitor: MonitorRect,
+	window_id: u32,
+	rect: RectPoints,
 }
 
 #[derive(Default)]
