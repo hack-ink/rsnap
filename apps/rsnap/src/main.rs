@@ -67,7 +67,7 @@ fn init_console_logging(filter: EnvFilter) {
 fn default_log_filter() -> EnvFilter {
 	EnvFilter::try_from_default_env()
 		.or_else(|_| load_log_filter_from_settings().ok_or(()))
-		.unwrap_or_else(|_| EnvFilter::new("info"))
+		.unwrap_or_else(|_| EnvFilter::new("warn,rsnap=info"))
 }
 
 fn resolve_log_dir() -> Option<PathBuf> {

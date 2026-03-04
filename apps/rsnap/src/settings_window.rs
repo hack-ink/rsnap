@@ -1,19 +1,21 @@
-use std::sync::Arc;
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{self, Result, WrapErr};
 use egui::Ui;
-use egui::{Align, Layout};
+use egui::{Align, Layout, Rect};
 use egui_phosphor::{Variant, regular};
 use egui_wgpu::{Renderer, ScreenDescriptor};
+use global_hotkey::hotkey::Code;
+use global_hotkey::hotkey::HotKey;
 use wgpu::SurfaceTexture;
 use wgpu::TextureFormat;
 use wgpu::{Adapter, CompositeAlphaMode, Device, Queue, Surface, SurfaceCapabilities};
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::ElementState;
-use winit::event::WindowEvent;
+use winit::event::{KeyEvent, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::{Key, ModifiersState};
+use winit::keyboard::{Key, KeyCode, ModifiersState, PhysicalKey};
 use winit::window::Theme;
 use winit::window::{Window, WindowId, WindowLevel};
 
@@ -38,14 +40,43 @@ const SETTINGS_THEME_ICON_SIZE: f32 = 16.0;
 const SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET: f32 = -3.0;
 #[cfg(not(target_os = "macos"))]
 const SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET: f32 = 0.0;
+const CAPTURE_HOTKEY_GUIDANCE_PRESS_NONMOD: &str =
+	"Press a non-modifier key to complete the shortcut.";
 
 pub enum SettingsControl {
 	Continue,
 	CloseRequested,
 }
 
+#[derive(Debug, Clone)]
+pub enum SettingsWindowAction {
+	BeginCaptureHotkey,
+	CancelCaptureHotkey,
+	ApplyCaptureHotkey(HotKey),
+}
+
+#[derive(Clone, Debug)]
+pub enum CaptureHotkeyNotice {
+	Error(String),
+	Hint(String),
+	Success(String),
+}
+impl CaptureHotkeyNotice {
+	fn as_rich_text(&self, visuals: &egui::Visuals) -> egui::RichText {
+		match self {
+			Self::Error(text) => {
+				egui::RichText::new(text).color(egui::Color32::from_rgb(255, 130, 130))
+			},
+			Self::Hint(text) => egui::RichText::new(text).color(visuals.weak_text_color()),
+			Self::Success(text) => {
+				egui::RichText::new(text).color(egui::Color32::from_rgb(120, 200, 120))
+			},
+		}
+	}
+}
+
 pub struct SettingsWindow {
-	window: Arc<Window>,
+	window: std::sync::Arc<Window>,
 	gpu: GpuContext,
 	surface: Surface<'static>,
 	surface_config: wgpu::SurfaceConfiguration,
@@ -61,6 +92,9 @@ pub struct SettingsWindow {
 	theme_icon_system: String,
 	theme_icon_dark: String,
 	theme_icon_light: String,
+	capture_hotkey_recording: bool,
+	capture_hotkey_notice: Option<CaptureHotkeyNotice>,
+	action_queue: VecDeque<SettingsWindowAction>,
 }
 impl SettingsWindow {
 	pub fn open(event_loop: &ActiveEventLoop) -> Result<Self> {
@@ -83,8 +117,9 @@ impl SettingsWindow {
 		}
 
 		let window = event_loop.create_window(attrs).wrap_err("create settings window")?;
-		let window = Arc::new(window);
-		let (gpu, surface, surface_config) = GpuContext::new_with_surface(Arc::clone(&window))?;
+		let window = std::sync::Arc::new(window);
+		let (gpu, surface, surface_config) =
+			GpuContext::new_with_surface(std::sync::Arc::clone(&window))?;
 		let egui_ctx = egui::Context::default();
 		let theme_icon_system = regular::MONITOR.to_owned();
 		let theme_icon_dark = regular::MOON.to_owned();
@@ -131,6 +166,9 @@ impl SettingsWindow {
 			theme_icon_system,
 			theme_icon_dark,
 			theme_icon_light,
+			capture_hotkey_recording: false,
+			capture_hotkey_notice: None,
+			action_queue: VecDeque::new(),
 		})
 	}
 
@@ -147,7 +185,47 @@ impl SettingsWindow {
 	pub fn handle_window_event(&mut self, event: &WindowEvent) -> SettingsControl {
 		match event {
 			WindowEvent::CloseRequested => return SettingsControl::CloseRequested,
-			WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
+			WindowEvent::ModifiersChanged(modifiers) => {
+				self.modifiers = modifiers.state();
+
+				if self.capture_hotkey_recording {
+					let has_any = self.modifiers.alt_key()
+						|| self.modifiers.shift_key()
+						|| self.modifiers.control_key()
+						|| self.modifiers.super_key();
+
+					if has_any && self.capture_hotkey_notice.is_none() {
+						self.capture_hotkey_notice = Some(CaptureHotkeyNotice::Hint(String::from(
+							CAPTURE_HOTKEY_GUIDANCE_PRESS_NONMOD,
+						)));
+					}
+					if !has_any
+						&& matches!(
+							self.capture_hotkey_notice.as_ref(),
+							Some(CaptureHotkeyNotice::Hint(text))
+								if text == CAPTURE_HOTKEY_GUIDANCE_PRESS_NONMOD
+						) {
+						self.capture_hotkey_notice = None;
+					}
+
+					self.window.request_redraw();
+				}
+			},
+			WindowEvent::Focused(false) if self.capture_hotkey_recording => {
+				self.cancel_recording_capture_hotkey();
+			},
+			WindowEvent::Ime(_) if self.capture_hotkey_recording => {
+				self.capture_hotkey_notice = Some(CaptureHotkeyNotice::Error(String::from(
+					"Unsupported key for hotkey binding.",
+				)));
+
+				self.window.request_redraw();
+			},
+			WindowEvent::KeyboardInput { event, .. } if self.capture_hotkey_recording => {
+				if event.state == ElementState::Pressed {
+					self.handle_capture_hotkey_recording_input(event);
+				}
+			},
 			WindowEvent::ThemeChanged(_) => {
 				// Follow system theme changes when ThemeMode::System is active.
 				self.window.request_redraw();
@@ -171,6 +249,144 @@ impl SettingsWindow {
 		self.window.request_redraw();
 
 		SettingsControl::Continue
+	}
+
+	pub fn drain_actions(&mut self) -> VecDeque<SettingsWindowAction> {
+		std::mem::take(&mut self.action_queue)
+	}
+
+	fn queue_action(&mut self, action: SettingsWindowAction) {
+		self.action_queue.push_back(action);
+	}
+
+	pub fn set_capture_hotkey_recording_active(&mut self, active: bool) {
+		if self.capture_hotkey_recording == active {
+			return;
+		}
+
+		self.capture_hotkey_recording = active;
+
+		self.window.request_redraw();
+	}
+
+	pub fn set_capture_hotkey_notice(&mut self, notice: Option<CaptureHotkeyNotice>) {
+		self.capture_hotkey_notice = notice;
+
+		self.window.request_redraw();
+	}
+
+	fn begin_recording_capture_hotkey(&mut self) {
+		self.capture_hotkey_recording = true;
+		self.capture_hotkey_notice = None;
+
+		self.queue_action(SettingsWindowAction::BeginCaptureHotkey);
+		self.window.request_redraw();
+	}
+
+	fn cancel_recording_capture_hotkey(&mut self) {
+		if !self.capture_hotkey_recording {
+			return;
+		}
+
+		self.capture_hotkey_recording = false;
+		self.capture_hotkey_notice = None;
+
+		self.queue_action(SettingsWindowAction::CancelCaptureHotkey);
+		self.window.request_redraw();
+	}
+
+	fn handle_capture_hotkey_recording_input(&mut self, event: &KeyEvent) {
+		let physical_key = event.physical_key;
+		let PhysicalKey::Code(physical_key) = physical_key else {
+			self.capture_hotkey_notice = Some(CaptureHotkeyNotice::Error(String::from(
+				"Unsupported key for hotkey binding.",
+			)));
+
+			self.window.request_redraw();
+
+			return;
+		};
+
+		if physical_key == KeyCode::Escape {
+			self.cancel_recording_capture_hotkey();
+
+			return;
+		}
+		if Self::is_modifier_keycode(physical_key) {
+			self.capture_hotkey_notice =
+				Some(CaptureHotkeyNotice::Hint(String::from(CAPTURE_HOTKEY_GUIDANCE_PRESS_NONMOD)));
+
+			self.window.request_redraw();
+
+			return;
+		}
+
+		let Some(code) = Self::to_global_hotkey_code(physical_key) else {
+			self.capture_hotkey_notice = Some(CaptureHotkeyNotice::Error(String::from(
+				"Unsupported key for hotkey binding.",
+			)));
+
+			self.window.request_redraw();
+
+			return;
+		};
+		let (modifiers, has_required) = Self::capture_modifiers(&self.modifiers);
+
+		if !has_required {
+			self.capture_hotkey_notice = Some(CaptureHotkeyNotice::Error(String::from(
+				"Please include Alt, Ctrl, or Super in the shortcut.",
+			)));
+
+			self.window.request_redraw();
+
+			return;
+		}
+
+		let hotkey = HotKey::new(Some(modifiers), code);
+
+		self.capture_hotkey_notice = None;
+
+		self.window.request_redraw();
+		self.queue_action(SettingsWindowAction::ApplyCaptureHotkey(hotkey));
+	}
+
+	fn is_modifier_keycode(physical_key: KeyCode) -> bool {
+		matches!(
+			physical_key,
+			KeyCode::ShiftLeft
+				| KeyCode::ShiftRight
+				| KeyCode::ControlLeft
+				| KeyCode::ControlRight
+				| KeyCode::AltLeft
+				| KeyCode::AltRight
+				| KeyCode::SuperLeft
+				| KeyCode::SuperRight,
+		)
+	}
+
+	fn capture_hotkey_modifiers_label(&self) -> String {
+		let mut parts = Vec::new();
+
+		if self.modifiers.super_key() {
+			parts.push(String::from("Cmd"));
+		}
+		if self.modifiers.control_key() {
+			parts.push(String::from("Ctrl"));
+		}
+		if self.modifiers.alt_key() {
+			parts.push(String::from("Opt"));
+		}
+		if self.modifiers.shift_key() {
+			parts.push(String::from("Shift"));
+		}
+
+		parts.join("+")
+	}
+
+	fn format_capture_hotkey_recording_label(&self) -> String {
+		let modifiers = self.capture_hotkey_modifiers_label();
+
+		if modifiers.is_empty() { String::from("…") } else { format!("{modifiers}+…") }
 	}
 
 	pub fn draw(&mut self, settings: &mut AppSettings) -> Result<bool> {
@@ -282,7 +498,7 @@ impl SettingsWindow {
 		let surface = self
 			.gpu
 			.instance
-			.create_surface(Arc::clone(&self.window))
+			.create_surface(std::sync::Arc::clone(&self.window))
 			.wrap_err("create_surface")?;
 
 		self.surface = surface;
@@ -369,7 +585,7 @@ impl SettingsWindow {
 		ui.add_space(SETTINGS_SECTION_GAP);
 
 		egui::CollapsingHeader::new("Hotkeys").default_open(false).show(ui, |ui| {
-			ui.label("Hotkey customization is coming soon.");
+			changed |= self.render_hotkeys_section(ui, settings);
 		});
 
 		ui.add_space(SETTINGS_SECTION_GAP);
@@ -397,6 +613,85 @@ impl SettingsWindow {
 		});
 
 		changed
+	}
+
+	fn render_hotkeys_section(&mut self, ui: &mut Ui, settings: &AppSettings) -> bool {
+		let row_height = ui.spacing().interact_size.y;
+		let value_width = ui.spacing().slider_width;
+		let button_width = SETTINGS_VALUE_BOX_WIDTH;
+		let row_label = "Capture hotkey";
+		let display_label = if self.capture_hotkey_recording {
+			self.format_capture_hotkey_recording_label()
+		} else {
+			Self::format_capture_hotkey(&settings.capture_hotkey)
+		};
+		let hover_text = if self.capture_hotkey_recording {
+			"Press a non-modifier key to capture hotkey."
+		} else {
+			"Click Record to change capture hotkey."
+		};
+		let mut field_rect = Rect::NOTHING;
+		let mut button_rect = Rect::NOTHING;
+
+		ui.horizontal(|ui| {
+			let (value_rect, value_response) =
+				ui.allocate_exact_size(egui::vec2(value_width, row_height), egui::Sense::click());
+			let visuals = ui.visuals().widgets.inactive;
+			let corner_radius = visuals.corner_radius;
+
+			ui.painter().rect_filled(value_rect, corner_radius, visuals.bg_fill);
+			ui.painter().rect_stroke(
+				value_rect,
+				corner_radius,
+				visuals.bg_stroke,
+				egui::StrokeKind::Inside,
+			);
+
+			let text_rect = value_rect.shrink2(egui::vec2(6.0, 0.0));
+			let font_id = egui::TextStyle::Body.resolve(ui.style());
+			let painter = ui.painter().with_clip_rect(text_rect);
+
+			painter.text(
+				text_rect.left_center(),
+				egui::Align2::LEFT_CENTER,
+				&display_label,
+				font_id,
+				ui.visuals().text_color(),
+			);
+
+			if value_response.clicked() && !self.capture_hotkey_recording {
+				self.begin_recording_capture_hotkey();
+			}
+
+			let button_response =
+				ui.add_sized(egui::vec2(button_width, row_height), egui::Button::new("Rec"));
+
+			field_rect = value_rect;
+			button_rect = button_response.rect;
+
+			if button_response.clicked() && !self.capture_hotkey_recording {
+				self.begin_recording_capture_hotkey();
+			}
+
+			ui.label(row_label);
+			value_response.on_hover_text(format!("{display_label}\n{hover_text}"));
+			button_response.on_hover_text("Record a new hotkey");
+		});
+
+		if self.capture_hotkey_recording
+			&& ui.ctx().input(|i| i.pointer.primary_clicked())
+			&& let Some(pointer_pos) = ui.ctx().input(|i| i.pointer.interact_pos())
+			&& !field_rect.contains(pointer_pos)
+			&& !button_rect.contains(pointer_pos)
+		{
+			self.cancel_recording_capture_hotkey();
+		}
+
+		if let Some(notice) = &self.capture_hotkey_notice {
+			ui.small(notice.as_rich_text(ui.visuals()));
+		}
+
+		false
 	}
 
 	fn render_general_section(
@@ -429,7 +724,7 @@ impl SettingsWindow {
 
 		egui::ComboBox::from_label("Log level")
 			.selected_text(match selected_preset {
-				LogLevelPreset::DefaultInfo => "Default (info)",
+				LogLevelPreset::DefaultInfo => "Default (rsnap info)",
 				LogLevelPreset::Warn => "Warn",
 				LogLevelPreset::DebugRsn => "Debug (rsnap + overlay)",
 				LogLevelPreset::TraceRsn => "Trace (rsnap + overlay)",
@@ -440,7 +735,7 @@ impl SettingsWindow {
 				ui.selectable_value(
 					&mut selected_preset,
 					LogLevelPreset::DefaultInfo,
-					"Default (info)",
+					"Default (rsnap info)",
 				);
 				ui.selectable_value(&mut selected_preset, LogLevelPreset::Warn, "Warn");
 				ui.selectable_value(
@@ -503,10 +798,12 @@ impl SettingsWindow {
 			})
 		};
 		let max_label = [
+			"Capture hotkey",
 			"Log level",
 			"Show Alt hint in HUD",
 			"Glass HUD",
 			"Selection particles",
+			"Flow thickness",
 			"Alt activation",
 			"Loupe sample size",
 			"Opacity",
@@ -518,7 +815,7 @@ impl SettingsWindow {
 		.map(measure)
 		.fold(0.0_f32, f32::max);
 		let max_combo_value = [
-			"Default (info)",
+			"Default (rsnap info)",
 			"Warn",
 			"Debug (rsnap + overlay)",
 			"Trace (rsnap + overlay)",
@@ -643,6 +940,12 @@ impl SettingsWindow {
 			ui.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD").changed();
 		changed |= ui.checkbox(&mut settings.hud_glass_enabled, "Glass HUD").changed();
 		changed |= ui.checkbox(&mut settings.selection_particles, "Selection particles").changed();
+		changed |= self.overlay_range_slider_row(
+			ui,
+			"Flow thickness",
+			&mut settings.selection_flow_stroke_width_px,
+			settings.selection_particles,
+		);
 
 		ui.add_space(SETTINGS_SECTION_GAP);
 		ui.separator();
@@ -787,6 +1090,67 @@ impl SettingsWindow {
 		}
 	}
 
+	fn overlay_range_slider_row(
+		&self,
+		ui: &mut Ui,
+		label: &str,
+		amount: &mut f32,
+		enabled: bool,
+	) -> bool {
+		let mut changed = false;
+		let mut value = (*amount).clamp(1.0, 8.0);
+
+		ui.horizontal(|ui| {
+			let slider_response = ui
+				.add_enabled_ui(enabled, |ui| {
+					ui.scope(|ui| {
+						ui.spacing_mut().interact_size.y = SETTINGS_SLIDER_WIDGET_HEIGHT;
+
+						ui.add(
+							egui::Slider::new(&mut value, 1.0..=8.0)
+								.step_by(0.1)
+								.handle_shape(egui::style::HandleShape::Circle)
+								.show_value(false)
+								.text(""),
+						)
+					})
+					.inner
+				})
+				.inner;
+
+			changed |= slider_response.changed();
+
+			let value_changed = ui
+				.add_enabled_ui(enabled, |ui| {
+					ui.add_sized(
+						egui::vec2(SETTINGS_VALUE_BOX_WIDTH, ui.spacing().interact_size.y),
+						egui::DragValue::new(&mut value)
+							.range(1.0..=8.0)
+							.speed(0.1)
+							.fixed_decimals(1),
+					)
+				})
+				.inner
+				.changed();
+
+			if value_changed {
+				changed = true;
+			}
+
+			ui.label(label);
+		});
+
+		let snapped = (value * 10.0).round() / 10.0;
+
+		if (snapped - *amount).abs() > f32::EPSILON {
+			*amount = snapped;
+
+			true
+		} else {
+			changed
+		}
+	}
+
 	fn overlay_hue_slider_row(
 		&self,
 		ui: &mut Ui,
@@ -891,6 +1255,152 @@ impl SettingsWindow {
 		} else {
 			changed
 		}
+	}
+
+	pub(crate) fn format_capture_hotkey(raw: &str) -> String {
+		let Ok(hotkey) = raw.parse::<HotKey>() else {
+			return raw.to_owned();
+		};
+		let (shift, control, alt, command) = {
+			(
+				hotkey.mods.contains(global_hotkey::hotkey::Modifiers::SHIFT),
+				hotkey.mods.contains(global_hotkey::hotkey::Modifiers::CONTROL),
+				hotkey.mods.contains(global_hotkey::hotkey::Modifiers::ALT),
+				hotkey.mods.contains(global_hotkey::hotkey::Modifiers::SUPER),
+			)
+		};
+
+		if cfg!(target_os = "macos") {
+			let mut parts = Vec::new();
+
+			if command {
+				parts.push(String::from("Cmd"));
+			}
+			if control {
+				parts.push(String::from("Ctrl"));
+			}
+			if alt {
+				parts.push(String::from("Opt"));
+			}
+			if shift {
+				parts.push(String::from("Shift"));
+			}
+
+			parts.push(Self::format_capture_key_code(hotkey.key));
+
+			return parts.join("+");
+		}
+
+		let mut parts = Vec::new();
+
+		if shift {
+			parts.push(String::from("Shift"));
+		}
+		if control {
+			parts.push(String::from("Ctrl"));
+		}
+		if alt {
+			parts.push(String::from("Alt"));
+		}
+		if command {
+			parts.push(String::from("Super"));
+		}
+
+		parts.push(Self::format_capture_key_code(hotkey.key));
+
+		parts.join("+")
+	}
+
+	fn format_capture_key_code(code: Code) -> String {
+		let raw = code.to_string();
+
+		if let Some(letter) = raw.strip_prefix("Key")
+			&& letter.len() == 1
+		{
+			return letter.to_string();
+		}
+		if let Some(digit) = raw.strip_prefix("Digit")
+			&& digit.len() == 1
+		{
+			return digit.to_string();
+		}
+
+		match raw.as_str() {
+			"Escape" => String::from("Esc"),
+			"Backquote" => String::from("`"),
+			"Backslash" => String::from("\\"),
+			"BracketLeft" => String::from("["),
+			"BracketRight" => String::from("]"),
+			"Comma" => String::from(","),
+			"Equal" => String::from("="),
+			"Minus" => String::from("-"),
+			"Period" => String::from("."),
+			"Quote" => String::from("'"),
+			"Semicolon" => String::from(";"),
+			"Slash" => String::from("/"),
+			"Backspace" => String::from("Backspace"),
+			"CapsLock" => String::from("CapsLock"),
+			"Enter" => String::from("Enter"),
+			"Space" => String::from("Space"),
+			"Tab" => String::from("Tab"),
+			"Delete" => String::from("Delete"),
+			"Home" => String::from("Home"),
+			"End" => String::from("End"),
+			"Insert" => String::from("Insert"),
+			"PageUp" => String::from("PageUp"),
+			"PageDown" => String::from("PageDown"),
+			"ArrowUp" => String::from("Up"),
+			"ArrowDown" => String::from("Down"),
+			"ArrowLeft" => String::from("Left"),
+			"ArrowRight" => String::from("Right"),
+			"NumpadAdd" => String::from("Num+"),
+			"NumpadSubtract" => String::from("Num-"),
+			"NumpadMultiply" => String::from("Num*"),
+			"NumpadDivide" => String::from("Num/"),
+			"NumpadDecimal" => String::from("Num."),
+			"NumpadEqual" => String::from("Num="),
+			"NumLock" => String::from("NumLock"),
+			"NumpadEnter" => String::from("NumEnter"),
+			_ => raw,
+		}
+	}
+
+	fn capture_modifiers(modifiers: &ModifiersState) -> (global_hotkey::hotkey::Modifiers, bool) {
+		let mut output = global_hotkey::hotkey::Modifiers::empty();
+		let mut has_required = false;
+
+		if modifiers.alt_key() {
+			output.insert(global_hotkey::hotkey::Modifiers::ALT);
+
+			has_required = true;
+		}
+		if modifiers.control_key() {
+			output.insert(global_hotkey::hotkey::Modifiers::CONTROL);
+
+			has_required = true;
+		}
+		if modifiers.super_key() {
+			output.insert(global_hotkey::hotkey::Modifiers::SUPER);
+
+			has_required = true;
+		}
+		if modifiers.shift_key() {
+			output.insert(global_hotkey::hotkey::Modifiers::SHIFT);
+		}
+
+		(output, has_required)
+	}
+
+	fn to_global_hotkey_code(key_code: KeyCode) -> Option<Code> {
+		let mut debug_name = format!("{key_code:?}");
+
+		if debug_name == "SuperLeft" {
+			debug_name = String::from("MetaLeft");
+		} else if debug_name == "SuperRight" {
+			debug_name = String::from("MetaRight");
+		}
+
+		debug_name.parse::<Code>().ok()
 	}
 
 	fn hsl_to_color32(hue: f32, saturation: f32, lightness: f32) -> egui::Color32 {
@@ -1004,10 +1514,11 @@ struct GpuContext {
 }
 impl GpuContext {
 	fn new_with_surface(
-		window: Arc<Window>,
+		window: std::sync::Arc<Window>,
 	) -> Result<(Self, Surface<'static>, wgpu::SurfaceConfiguration)> {
 		let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-		let surface = instance.create_surface(Arc::clone(&window)).wrap_err("create_surface")?;
+		let surface =
+			instance.create_surface(std::sync::Arc::clone(&window)).wrap_err("create_surface")?;
 		let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
 			power_preference: wgpu::PowerPreference::LowPower,
 			compatible_surface: Some(&surface),

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre;
@@ -17,7 +18,8 @@ use winit::{
 
 use crate::icon;
 use crate::settings::AppSettings;
-use crate::settings_window::{SettingsControl, SettingsWindow};
+use crate::settings_window::CaptureHotkeyNotice;
+use crate::settings_window::{SettingsControl, SettingsWindow, SettingsWindowAction};
 use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
 
 pub enum UserEvent {
@@ -32,6 +34,7 @@ struct App {
 	settings_hotkey: Option<HotKey>,
 	settings_hotkey_id: Option<u32>,
 	_hotkey_manager: Option<GlobalHotKeyManager>,
+	capture_hotkey_recording_suspended: bool,
 	tray_icon: Option<TrayIcon>,
 	#[cfg(target_os = "macos")]
 	menubar_menu: Option<Menu>,
@@ -61,6 +64,10 @@ impl App {
 			hud_anchor: HudAnchor::Cursor,
 			show_alt_hint_keycap: self.settings.show_alt_hint_keycap,
 			selection_particles: self.settings.selection_particles,
+			selection_flow_stroke_width_px: self
+				.settings
+				.selection_flow_stroke_width_px
+				.clamp(1.0, 8.0),
 			show_hud_blur,
 			hud_opaque,
 			hud_opacity,
@@ -94,6 +101,7 @@ impl App {
 
 	fn new(
 		capture_hotkey: HotKey,
+		settings: AppSettings,
 		settings_hotkey: Option<HotKey>,
 		hotkey_manager: Option<GlobalHotKeyManager>,
 	) -> Self {
@@ -102,6 +110,7 @@ impl App {
 			capture_hotkey,
 			settings_hotkey,
 			settings_hotkey_id: settings_hotkey.as_ref().map(HotKey::id),
+			capture_hotkey_recording_suspended: false,
 			_hotkey_manager: hotkey_manager,
 			tray_icon: None,
 			#[cfg(target_os = "macos")]
@@ -115,7 +124,7 @@ impl App {
 			menubar_quit_menu_id: None,
 			overlay_session: None,
 			settings_window: None,
-			settings: AppSettings::load(),
+			settings,
 		}
 	}
 
@@ -347,6 +356,139 @@ impl App {
 
 		self.end_overlay_session(exit);
 	}
+
+	fn suspend_capture_hotkey(&mut self) {
+		self.capture_hotkey_recording_suspended = true;
+
+		let Some(manager) = self._hotkey_manager.as_mut() else {
+			return;
+		};
+
+		if let Err(err) = manager.unregister(self.capture_hotkey) {
+			tracing::warn!(error = %err, "Failed to suspend current capture hotkey.");
+		}
+	}
+
+	fn resume_capture_hotkey(&mut self) {
+		if !self.capture_hotkey_recording_suspended {
+			return;
+		}
+
+		self.capture_hotkey_recording_suspended = false;
+
+		let Some(manager) = self._hotkey_manager.as_mut() else {
+			return;
+		};
+
+		if let Err(err) = manager.register(self.capture_hotkey) {
+			tracing::warn!(error = %err, "Failed to resume capture hotkey.");
+		}
+	}
+
+	fn apply_capture_hotkey(&mut self, hotkey: HotKey, suspended: bool) -> bool {
+		let old_hotkey = self.capture_hotkey;
+
+		if hotkey == old_hotkey {
+			self.settings.capture_hotkey = hotkey.to_string();
+
+			if !suspended {
+				return true;
+			}
+
+			let Some(manager) = self._hotkey_manager.as_mut() else {
+				return true;
+			};
+
+			if let Err(err) = manager.register(hotkey) {
+				tracing::warn!(
+					error = %err,
+					hotkey = %hotkey.to_string(),
+					"Failed to register capture hotkey; keeping existing binding state."
+				);
+
+				return false;
+			}
+
+			return true;
+		}
+
+		let Some(manager) = self._hotkey_manager.as_mut() else {
+			self.capture_hotkey = hotkey;
+			self.capture_hotkey_id = hotkey.id();
+			self.settings.capture_hotkey = hotkey.to_string();
+
+			return true;
+		};
+
+		if !suspended && let Err(err) = manager.unregister(old_hotkey) {
+			tracing::warn!(error = %err, "Failed to unregister capture hotkey before rebind.");
+		}
+
+		if let Err(err) = manager.register(hotkey) {
+			tracing::warn!(
+				error = %err,
+				old_hotkey = %old_hotkey.to_string(),
+				new_hotkey = %hotkey.to_string(),
+				"Failed to register new capture hotkey; restoring previous."
+			);
+
+			if !suspended && let Err(restore_error) = manager.register(old_hotkey) {
+				tracing::warn!(error = %restore_error, "Failed to restore previous capture hotkey.");
+			}
+
+			return false;
+		}
+
+		self.capture_hotkey = hotkey;
+		self.capture_hotkey_id = hotkey.id();
+		self.settings.capture_hotkey = hotkey.to_string();
+
+		true
+	}
+
+	fn apply_settings_window_action(
+		&mut self,
+		action: SettingsWindowAction,
+	) -> (bool, Option<bool>, Option<Option<CaptureHotkeyNotice>>) {
+		match action {
+			SettingsWindowAction::BeginCaptureHotkey => {
+				self.suspend_capture_hotkey();
+
+				(false, Some(true), Some(None))
+			},
+			SettingsWindowAction::CancelCaptureHotkey => {
+				self.resume_capture_hotkey();
+
+				(false, Some(false), Some(None))
+			},
+			SettingsWindowAction::ApplyCaptureHotkey(hotkey) => {
+				if self.apply_capture_hotkey(hotkey, self.capture_hotkey_recording_suspended) {
+					self.capture_hotkey_recording_suspended = false;
+
+					let display_hotkey =
+						SettingsWindow::format_capture_hotkey(&self.capture_hotkey.to_string());
+
+					(
+						true,
+						Some(false),
+						Some(Some(CaptureHotkeyNotice::Success(format!(
+							"Capture hotkey updated to {display_hotkey}."
+						)))),
+					)
+				} else {
+					tracing::warn!("Capture hotkey update rejected; keeping previous binding.");
+
+					(
+						false,
+						Some(true),
+						Some(Some(CaptureHotkeyNotice::Error(String::from(
+							"Capture hotkey unavailable. Try another shortcut.",
+						)))),
+					)
+				}
+			},
+		}
+	}
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -445,28 +587,79 @@ impl ApplicationHandler<UserEvent> for App {
 		window_id: WindowId,
 		event: WindowEvent,
 	) {
-		if let Some(settings_window) = self.settings_window.as_mut()
-			&& settings_window.window_id() == window_id
+		if let Some(existing_window) = self.settings_window.as_ref()
+			&& existing_window.window_id() == window_id
 		{
+			let Some(mut settings_window) = self.settings_window.take() else {
+				return;
+			};
+			let mut should_close = false;
+			let mut settings_changed = false;
+			let mut overlay_changed = false;
+			let mut action_queue = VecDeque::new();
+			let mut ui_updates: VecDeque<(Option<bool>, Option<Option<CaptureHotkeyNotice>>)> =
+				VecDeque::new();
+
 			match event {
 				WindowEvent::RedrawRequested => match settings_window.draw(&mut self.settings) {
 					Ok(changed) => {
-						if changed {
-							self.apply_overlay_settings();
-						}
-						if changed && let Err(err) = self.settings.save() {
-							tracing::warn!(error = ?err, "Failed to save settings.");
-						}
+						overlay_changed = changed;
+						settings_changed = changed;
 					},
 					Err(err) => tracing::warn!(error = %err, "Settings window draw failed."),
 				},
 				_ => match settings_window.handle_window_event(&event) {
 					SettingsControl::Continue => {},
 					SettingsControl::CloseRequested => {
-						self.settings_window = None;
+						should_close = true;
+
+						action_queue.push_back(SettingsWindowAction::CancelCaptureHotkey);
 					},
 				},
 			}
+
+			action_queue.extend(settings_window.drain_actions());
+
+			let mut action_changed = false;
+
+			for action in action_queue {
+				let (changed, recording_active, notice) = self.apply_settings_window_action(action);
+
+				if let Some(recording_active) = recording_active {
+					ui_updates.push_back((Some(recording_active), None));
+				}
+				if let Some(notice) = notice {
+					ui_updates.push_back((None, Some(notice)));
+				}
+
+				if changed {
+					action_changed = true;
+				}
+			}
+
+			while let Some((recording_active, notice)) = ui_updates.pop_front() {
+				if let Some(recording_active) = recording_active {
+					settings_window.set_capture_hotkey_recording_active(recording_active);
+				}
+				if let Some(notice) = notice {
+					settings_window.set_capture_hotkey_notice(notice);
+				}
+			}
+
+			if action_changed {
+				settings_changed = true;
+			}
+			if overlay_changed {
+				self.apply_overlay_settings();
+			}
+			if settings_changed && let Err(err) = self.settings.save() {
+				tracing::warn!(error = ?err, "Failed to save settings.");
+			}
+			if should_close {
+				return;
+			}
+
+			self.settings_window = Some(settings_window);
 
 			return;
 		}
@@ -497,8 +690,8 @@ impl ApplicationHandler<UserEvent> for App {
 }
 
 pub fn run() -> Result<()> {
-	let capture_hotkey =
-		HotKey::new(Some(global_hotkey::hotkey::Modifiers::ALT), global_hotkey::hotkey::Code::KeyX);
+	let settings = AppSettings::load();
+	let capture_hotkey = settings.capture_hotkey();
 	let capture_hotkey_id = capture_hotkey.id();
 	let settings_hotkey = if cfg!(target_os = "macos") {
 		None
@@ -557,7 +750,7 @@ pub fn run() -> Result<()> {
 
 	let event_loop = event_loop_builder.build()?;
 	let tray_proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
-	let mut app = App::new(capture_hotkey, settings_hotkey, hotkey_manager);
+	let mut app = App::new(capture_hotkey, settings, settings_hotkey, hotkey_manager);
 
 	TrayIconEvent::set_event_handler(Some(move |event| {
 		let _ = tray_proxy.send_event(UserEvent::TrayIcon(event));
