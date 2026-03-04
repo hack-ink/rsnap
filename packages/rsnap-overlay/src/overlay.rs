@@ -2387,16 +2387,21 @@ impl OverlaySession {
 				&& target.monitor == monitor
 				&& target.window_id == window_id
 			{
-				self.frozen_window_image = Some(window_capture_image);
+				match self.config.window_capture_alpha_mode {
+					WindowCaptureAlphaMode::Background => {},
+					WindowCaptureAlphaMode::MatteLight | WindowCaptureAlphaMode::MatteDark => {
+						self.frozen_window_image = Some(window_capture_image);
 
-				if let Some(window_capture_image) = self.frozen_window_image.as_ref() {
-					frozen_preview_image = Self::composite_window_capture_preview(
-						frozen_preview_image,
-						window_capture_image,
-						monitor,
-						target.rect,
-						self.config.window_capture_alpha_mode,
-					);
+						if let Some(window_capture_image) = self.frozen_window_image.as_ref() {
+							frozen_preview_image = Self::composite_window_capture_preview(
+								frozen_preview_image,
+								window_capture_image,
+								monitor,
+								target.rect,
+								self.config.window_capture_alpha_mode,
+							);
+						}
+					},
 				}
 			}
 
