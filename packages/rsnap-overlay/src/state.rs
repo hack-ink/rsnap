@@ -24,6 +24,7 @@ pub struct LiveCursorSample {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WindowRect {
+	pub window_id: Option<u32>,
 	pub x: i64,
 	pub y: i64,
 	pub width: i64,
@@ -34,6 +35,12 @@ pub struct WindowRect {
 pub struct WindowListSnapshot {
 	pub captured_at: Instant,
 	pub windows: Arc<Vec<WindowRect>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowHit {
+	pub window_id: Option<u32>,
+	pub rect: RectPoints,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

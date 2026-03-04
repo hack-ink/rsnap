@@ -6,7 +6,13 @@ use std::sync::{
 use image::RgbaImage;
 
 use crate::backend::CaptureBackend;
-use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect, RectPoints, WindowListSnapshot};
+use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect, WindowHit, WindowListSnapshot};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FreezeCaptureTarget {
+	Monitor,
+	Window { window_id: u32 },
+}
 
 #[derive(Debug)]
 pub(crate) enum WorkerRequest {
@@ -26,6 +32,7 @@ pub(crate) enum WorkerRequest {
 	RefreshWindowList,
 	FreezeCapture {
 		monitor: MonitorRect,
+		target: FreezeCaptureTarget,
 	},
 	EncodePng {
 		image: RgbaImage,
@@ -44,7 +51,7 @@ pub(crate) enum WorkerResponse {
 		monitor: MonitorRect,
 		point: GlobalPoint,
 		request_id: u64,
-		rect: Option<RectPoints>,
+		hit: Option<WindowHit>,
 	},
 	RefreshedWindowList {
 		snapshot: Arc<WindowListSnapshot>,
@@ -52,6 +59,8 @@ pub(crate) enum WorkerResponse {
 	CapturedFreeze {
 		monitor: MonitorRect,
 		image: RgbaImage,
+		window_image: Option<RgbaImage>,
+		captured_window_id: Option<u32>,
 	},
 	EncodedPng {
 		png_bytes: Vec<u8>,
@@ -83,7 +92,7 @@ impl OverlayWorker {
 			let mut last_sample_cursor: Option<(MonitorRect, GlobalPoint, u64, bool, u32, u32)> =
 				None;
 			let mut last_refresh_window_list: bool = false;
-			let mut last_freeze: Option<MonitorRect> = None;
+			let mut last_freeze: Option<(MonitorRect, FreezeCaptureTarget)> = None;
 			let mut last_encode: Option<RgbaImage> = None;
 
 			match first {
@@ -110,7 +119,9 @@ impl OverlayWorker {
 				WorkerRequest::RefreshWindowList => {
 					last_refresh_window_list = true;
 				},
-				WorkerRequest::FreezeCapture { monitor } => last_freeze = Some(monitor),
+				WorkerRequest::FreezeCapture { monitor, target } => {
+					last_freeze = Some((monitor, target))
+				},
 				WorkerRequest::EncodePng { image } => last_encode = Some(image),
 			}
 
@@ -139,7 +150,9 @@ impl OverlayWorker {
 					WorkerRequest::RefreshWindowList => {
 						last_refresh_window_list = true;
 					},
-					WorkerRequest::FreezeCapture { monitor } => last_freeze = Some(monitor),
+					WorkerRequest::FreezeCapture { monitor, target } => {
+						last_freeze = Some((monitor, target))
+					},
 					WorkerRequest::EncodePng { image } => last_encode = Some(image),
 				}
 			}
@@ -149,8 +162,8 @@ impl OverlayWorker {
 
 				continue;
 			}
-			if let Some(monitor) = last_freeze {
-				Self::handle_freeze_request(&mut *backend, &resp_tx, monitor);
+			if let Some((monitor, target)) = last_freeze {
+				Self::handle_freeze_request(&mut *backend, &resp_tx, monitor, target);
 
 				continue;
 			}
@@ -188,10 +201,26 @@ impl OverlayWorker {
 		backend: &mut dyn CaptureBackend,
 		resp_tx: &Sender<WorkerResponse>,
 		monitor: MonitorRect,
+		target: FreezeCaptureTarget,
 	) {
+		let mut captured_window_id = None;
+		let mut window_image = None;
+
+		if let FreezeCaptureTarget::Window { window_id } = target
+			&& let Ok(image) = backend.capture_window(window_id)
+		{
+			captured_window_id = Some(window_id);
+			window_image = Some(image);
+		}
+
 		match backend.capture_monitor(monitor) {
 			Ok(image) => {
-				let _ = resp_tx.send(WorkerResponse::CapturedFreeze { monitor, image });
+				let _ = resp_tx.send(WorkerResponse::CapturedFreeze {
+					monitor,
+					image,
+					window_image,
+					captured_window_id,
+				});
 			},
 			Err(err) => {
 				let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
@@ -232,9 +261,8 @@ impl OverlayWorker {
 		last_hit_test: Option<(MonitorRect, GlobalPoint, u64)>,
 	) {
 		if let Some((monitor, point, request_id)) = last_hit_test {
-			let rect = backend.hit_test_window_in_monitor(monitor, point).unwrap_or_default();
-			let _ =
-				resp_tx.send(WorkerResponse::HitTestWindow { monitor, point, request_id, rect });
+			let hit = backend.hit_test_window_in_monitor(monitor, point).unwrap_or_default();
+			let _ = resp_tx.send(WorkerResponse::HitTestWindow { monitor, point, request_id, hit });
 		}
 	}
 
@@ -249,8 +277,12 @@ impl OverlayWorker {
 		self.req_tx.try_send(WorkerRequest::RefreshWindowList).is_ok()
 	}
 
-	pub(crate) fn request_freeze_capture(&self, monitor: MonitorRect) -> bool {
-		self.req_tx.try_send(WorkerRequest::FreezeCapture { monitor }).is_ok()
+	pub(crate) fn request_freeze_capture(
+		&self,
+		monitor: MonitorRect,
+		target: FreezeCaptureTarget,
+	) -> bool {
+		self.req_tx.try_send(WorkerRequest::FreezeCapture { monitor, target }).is_ok()
 	}
 
 	pub(crate) fn request_hit_test_window(
