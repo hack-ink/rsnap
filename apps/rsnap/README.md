@@ -1,6 +1,6 @@
 # rsnap
 
-Menubar-only app (tray icon + menu) that triggers `rsnap-overlay` capture and writes the result to the clipboard.
+Menubar-only app (tray icon + menu) that triggers `rsnap-overlay` capture and writes the result to the clipboard (Space) or saves to disk (Cmd+S / Ctrl+S).
 
 ## Capture platform support
 

@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{self, Result, WrapErr};
@@ -20,7 +21,7 @@ use winit::window::Theme;
 use winit::window::{Window, WindowId, WindowLevel};
 
 use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
-use rsnap_overlay::{ThemeMode, ToolbarPlacement};
+use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement};
 
 const SETTINGS_ROW_HEIGHT: f32 = 22.0;
 const SETTINGS_SECTION_GAP: f32 = 6.0;
@@ -42,6 +43,10 @@ const SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET: f32 = -3.0;
 const SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET: f32 = 0.0;
 const CAPTURE_HOTKEY_GUIDANCE_PRESS_NONMOD: &str =
 	"Press a non-modifier key to complete the shortcut.";
+#[cfg(target_os = "macos")]
+const SAVE_SHORTCUT_LABEL: &str = "Cmd+S";
+#[cfg(not(target_os = "macos"))]
+const SAVE_SHORTCUT_LABEL: &str = "Ctrl+S";
 
 pub enum SettingsControl {
 	Continue,
@@ -597,7 +602,7 @@ impl SettingsWindow {
 		ui.add_space(SETTINGS_SECTION_GAP);
 
 		egui::CollapsingHeader::new("Output").default_open(false).show(ui, |ui| {
-			ui.label("Output settings are coming soon.");
+			changed |= self.render_output_section(ui, settings);
 		});
 
 		ui.add_space(SETTINGS_SECTION_GAP);
@@ -692,6 +697,83 @@ impl SettingsWindow {
 		}
 
 		false
+	}
+
+	fn render_output_section(&mut self, ui: &mut Ui, settings: &mut AppSettings) -> bool {
+		let row_height = ui.spacing().interact_size.y;
+		let value_width = ui.spacing().slider_width;
+		let mut changed = false;
+		let mut output_dir = settings.output_dir.to_string_lossy().to_string();
+
+		ui.horizontal(|ui| {
+			let dir_response = ui.add_sized(
+				egui::vec2(value_width, row_height),
+				egui::TextEdit::singleline(&mut output_dir).hint_text("~/Desktop"),
+			);
+
+			if dir_response.changed() {
+				let trimmed = output_dir.trim();
+
+				settings.output_dir = if trimmed.is_empty() {
+					AppSettings::default().output_dir
+				} else {
+					PathBuf::from(trimmed)
+				};
+				changed = true;
+			}
+
+			dir_response.on_hover_text("Directory where Save writes PNG files.");
+			ui.label("Output directory");
+		});
+
+		let mut prefix = settings.output_filename_prefix.clone();
+
+		ui.horizontal(|ui| {
+			let prefix_response = ui.add_sized(
+				egui::vec2(value_width, row_height),
+				egui::TextEdit::singleline(&mut prefix).hint_text("rsnap"),
+			);
+
+			if prefix_response.changed() {
+				settings.output_filename_prefix =
+					crate::settings::sanitize_output_filename_prefix(&prefix);
+				changed = true;
+			}
+
+			prefix_response.on_hover_text("Filename prefix used for saved captures.");
+			ui.label("Filename prefix");
+		});
+
+		let previous_naming = settings.output_naming;
+
+		egui::ComboBox::from_label("Filename naming")
+			.selected_text(match settings.output_naming {
+				OutputNaming::Timestamp => "Timestamp (unix ms)",
+				OutputNaming::Sequence => "Sequence (0001)",
+			})
+			.width(self.combo_width)
+			.show_ui(ui, |ui| {
+				ui.selectable_value(
+					&mut settings.output_naming,
+					OutputNaming::Timestamp,
+					"Timestamp (unix ms)",
+				);
+				ui.selectable_value(
+					&mut settings.output_naming,
+					OutputNaming::Sequence,
+					"Sequence (0001)",
+				);
+			});
+
+		if settings.output_naming != previous_naming {
+			changed = true;
+		}
+
+		ui.small(format!(
+			"Space/Copy -> clipboard. {SAVE_SHORTCUT_LABEL}/Save -> write PNG to output directory."
+		));
+
+		changed
 	}
 
 	fn render_general_section(
@@ -800,6 +882,9 @@ impl SettingsWindow {
 		let max_label = [
 			"Capture hotkey",
 			"Log level",
+			"Output directory",
+			"Filename prefix",
+			"Filename naming",
 			"Show Alt hint in HUD",
 			"Glass HUD",
 			"Selection particles",
@@ -828,6 +913,8 @@ impl SettingsWindow {
 			"Small (15x15)",
 			"Medium (21x21)",
 			"Large (31x31)",
+			"Timestamp (unix ms)",
+			"Sequence (0001)",
 		]
 		.into_iter()
 		.map(measure)

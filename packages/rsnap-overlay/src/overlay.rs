@@ -1,8 +1,10 @@
 use std::{
 	collections::HashMap,
 	ffi::c_void,
+	fs,
+	path::{Path, PathBuf},
 	sync::{Arc, Mutex},
-	time::{Duration, Instant},
+	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use color_eyre::eyre::{self, Result, WrapErr};
@@ -39,7 +41,7 @@ use winit::{
 	dpi::PhysicalSize,
 	event::{ElementState, MouseButton, WindowEvent},
 	event_loop::ActiveEventLoop,
-	keyboard::{Key, NamedKey},
+	keyboard::{Key, ModifiersState, NamedKey},
 	window::{Theme, WindowId, WindowLevel},
 };
 
@@ -135,6 +137,7 @@ pub enum ThemeMode {
 pub enum OverlayExit {
 	Cancelled,
 	PngBytes(Vec<u8>),
+	Saved(PathBuf),
 	Error(String),
 }
 
@@ -158,6 +161,14 @@ pub enum ToolbarPlacement {
 	Top,
 	#[default]
 	Bottom,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputNaming {
+	#[default]
+	Timestamp,
+	Sequence,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -239,6 +250,11 @@ impl FrozenToolbarTool {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PngAction {
+	Copy,
+	Save,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DeviceCursorPointSource {
 	DevicePoints,
 	DevicePixelsFallback,
@@ -280,6 +296,9 @@ pub struct OverlayConfig {
 	pub toolbar_placement: ToolbarPlacement,
 	pub loupe_sample_side_px: u32,
 	pub theme_mode: ThemeMode,
+	pub output_dir: PathBuf,
+	pub output_filename_prefix: String,
+	pub output_naming: OutputNaming,
 }
 impl Default for OverlayConfig {
 	fn default() -> Self {
@@ -298,6 +317,9 @@ impl Default for OverlayConfig {
 			toolbar_placement: ToolbarPlacement::Bottom,
 			loupe_sample_side_px: 21,
 			theme_mode: ThemeMode::System,
+			output_dir: PathBuf::from("."),
+			output_filename_prefix: String::from("rsnap"),
+			output_naming: OutputNaming::Timestamp,
 		}
 	}
 }
@@ -350,6 +372,7 @@ pub struct OverlaySession {
 	slow_op_logger: SlowOperationLogger,
 	last_alt_press_at: Option<Instant>,
 	alt_modifier_down: bool,
+	keyboard_modifiers: ModifiersState,
 	event_loop_phase: OverlayEventLoopPhase,
 	event_loop_progress_seq: u64,
 	event_loop_last_progress_at: Instant,
@@ -363,6 +386,7 @@ pub struct OverlaySession {
 	pending_freeze_capture_armed: bool,
 	capture_windows_hidden: bool,
 	pending_encode_png: Option<RgbaImage>,
+	pending_png_action: Option<PngAction>,
 	toolbar_state: FrozenToolbarState,
 	toolbar_left_button_down: bool,
 	toolbar_left_button_went_down: bool,
@@ -441,6 +465,7 @@ impl OverlaySession {
 			slow_op_logger: SlowOperationLogger::default(),
 			last_alt_press_at: None,
 			alt_modifier_down: false,
+			keyboard_modifiers: ModifiersState::default(),
 			event_loop_phase: OverlayEventLoopPhase::Idle,
 			event_loop_progress_seq: 0,
 			event_loop_last_progress_at: now,
@@ -455,6 +480,7 @@ impl OverlaySession {
 			pending_freeze_capture_armed: false,
 			capture_windows_hidden: false,
 			pending_encode_png: None,
+			pending_png_action: None,
 			toolbar_state: FrozenToolbarState::default(),
 			toolbar_left_button_down: false,
 			toolbar_left_button_went_down: false,
@@ -2255,13 +2281,26 @@ impl OverlaySession {
 	}
 
 	fn handle_encoded_png_response(&mut self, png_bytes: Vec<u8>) -> OverlayControl {
-		match write_png_bytes_to_clipboard(&png_bytes) {
-			Ok(()) => self.exit(OverlayExit::PngBytes(png_bytes)),
-			Err(err) => {
-				self.state.set_error(format!("{err:#}"));
-				self.request_redraw_all();
+		let action = self.pending_png_action.take().unwrap_or(PngAction::Copy);
 
-				OverlayControl::Continue
+		match action {
+			PngAction::Copy => match write_png_bytes_to_clipboard(&png_bytes) {
+				Ok(()) => self.exit(OverlayExit::PngBytes(png_bytes)),
+				Err(err) => {
+					self.state.set_error(format!("{err:#}"));
+					self.request_redraw_all();
+
+					OverlayControl::Continue
+				},
+			},
+			PngAction::Save => match save_png_bytes_to_configured_dir(&png_bytes, &self.config) {
+				Ok(path) => self.exit(OverlayExit::Saved(path)),
+				Err(err) => {
+					self.state.set_error(format!("{err:#}"));
+					self.request_redraw_all();
+
+					OverlayControl::Continue
+				},
 			},
 		}
 	}
@@ -2531,6 +2570,13 @@ impl OverlaySession {
 		}
 	}
 
+	fn should_hide_toolbar_window(&self, monitor: MonitorRect) -> bool {
+		!matches!(self.state.mode, OverlayMode::Frozen)
+			|| !self.toolbar_state.visible
+			|| self.state.frozen_image.is_none()
+			|| self.pending_freeze_capture == Some(monitor)
+	}
+
 	fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
 		self.event_loop_last_progress_window_id =
 			self.toolbar_window.as_ref().map(|toolbar_window| toolbar_window.window.id());
@@ -2546,89 +2592,96 @@ impl OverlaySession {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
-		let Some(toolbar_window) = self.toolbar_window.as_mut() else {
-			return OverlayControl::Continue;
-		};
+		let should_hide_toolbar_window = self.should_hide_toolbar_window(monitor);
 
-		#[cfg(not(target_os = "macos"))]
 		{
-			toolbar_window.window.set_visible(false);
+			let Some(toolbar_window) = self.toolbar_window.as_mut() else {
+				return OverlayControl::Continue;
+			};
 
-			self.last_present_at = Instant::now();
+			#[cfg(not(target_os = "macos"))]
+			{
+				toolbar_window.window.set_visible(false);
 
-			return OverlayControl::Continue;
-		}
+				self.last_present_at = Instant::now();
 
-		if !matches!(self.state.mode, OverlayMode::Frozen)
-			|| !self.toolbar_state.visible
-			|| self.state.frozen_image.is_none()
-			|| self.pending_freeze_capture == Some(monitor)
-		{
-			toolbar_window.window.set_visible(false);
-
-			self.toolbar_window_visible = false;
-			self.toolbar_window_warmup_redraws_remaining = 0;
-			self.last_present_at = Instant::now();
-
-			return OverlayControl::Continue;
-		}
-
-		toolbar_window.window.set_visible(true);
-
-		if !self.toolbar_window_visible {
-			self.toolbar_window_visible = true;
-			self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
-		}
-
-		let previous_floating_position = self.toolbar_state.floating_position;
-
-		self.toolbar_state.floating_position = Some(Pos2::ZERO);
-
-		let draw_result = toolbar_window.renderer.draw(
-			gpu,
-			&self.state,
-			monitor,
-			false,
-			Some(Pos2::ZERO),
-			false,
-			HudAnchor::Cursor,
-			self.config.toolbar_placement,
-			self.config.show_alt_hint_keycap,
-			false,
-			self.config.hud_opaque,
-			self.config.hud_opacity,
-			self.config.hud_fog_amount,
-			self.config.hud_milk_amount,
-			self.config.hud_tint_hue,
-			self.config.theme_mode,
-			self.config.selection_particles,
-			self.config.selection_flow_stroke_width_px,
-			false,
-			Some(&mut self.toolbar_state),
-			toolbar_input,
-		);
-
-		self.toolbar_state.floating_position = previous_floating_position;
-
-		if let Err(err) = draw_result {
-			return self.exit(OverlayExit::Error(format!("{err:#}")));
-		}
-		if let Some(hud_pill) = toolbar_window.renderer.hud_pill {
-			let desired_w = hud_pill.rect.width().ceil().max(1.0) as u32;
-			let desired_h = hud_pill.rect.height().ceil().max(1.0) as u32;
-			let desired = (desired_w, desired_h);
-
-			if self.toolbar_inner_size_points != Some(desired) {
-				self.toolbar_inner_size_points = Some(desired);
-
-				let _ = toolbar_window.window.request_inner_size(LogicalSize::new(
-					f64::from(desired_w),
-					f64::from(desired_h),
-				));
+				return OverlayControl::Continue;
 			}
 
-			if let Some(toolbar_pos) = self.toolbar_state.floating_position {
-				let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+			if should_hide_toolbar_window {
+				toolbar_window.window.set_visible(false);
+
+				self.toolbar_window_visible = false;
+				self.toolbar_window_warmup_redraws_remaining = 0;
+				self.last_present_at = Instant::now();
+
+				return OverlayControl::Continue;
+			}
+
+			toolbar_window.window.set_visible(true);
+
+			if !self.toolbar_window_visible {
+				self.toolbar_window_visible = true;
+				self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
+			}
+
+			let previous_floating_position = self.toolbar_state.floating_position;
+
+			self.toolbar_state.floating_position = Some(Pos2::ZERO);
+
+			let draw_result = toolbar_window.renderer.draw(
+				gpu,
+				&self.state,
+				monitor,
+				false,
+				Some(Pos2::ZERO),
+				false,
+				HudAnchor::Cursor,
+				self.config.toolbar_placement,
+				self.config.show_alt_hint_keycap,
+				false,
+				self.config.hud_opaque,
+				self.config.hud_opacity,
+				self.config.hud_fog_amount,
+				self.config.hud_milk_amount,
+				self.config.hud_tint_hue,
+				self.config.theme_mode,
+				self.config.selection_particles,
+				self.config.selection_flow_stroke_width_px,
+				false,
+				Some(&mut self.toolbar_state),
+				toolbar_input,
+			);
+
+			self.toolbar_state.floating_position = previous_floating_position;
+
+			if let Err(err) = draw_result {
+				return self.exit(OverlayExit::Error(format!("{err:#}")));
+			}
+			if let Some(hud_pill) = toolbar_window.renderer.hud_pill {
+				let desired_w = hud_pill.rect.width().ceil().max(1.0) as u32;
+				let desired_h = hud_pill.rect.height().ceil().max(1.0) as u32;
+				let desired = (desired_w, desired_h);
+
+				if self.toolbar_inner_size_points != Some(desired) {
+					self.toolbar_inner_size_points = Some(desired);
+
+					let _ = toolbar_window.window.request_inner_size(LogicalSize::new(
+						f64::from(desired_w),
+						f64::from(desired_h),
+					));
+				}
+			}
+		}
+
+		if let Some(toolbar_pos) = self.toolbar_state.floating_position {
+			let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+		}
+		if let Some(action) = self.toolbar_state.pending_action.take() {
+			let control = self.handle_toolbar_action(action);
+
+			if !matches!(control, OverlayControl::Continue) {
+				return control;
 			}
 		}
 
@@ -2644,7 +2697,9 @@ impl OverlaySession {
 	}
 
 	fn handle_modifiers_changed(&mut self, modifiers: &winit::event::Modifiers) -> OverlayControl {
-		let alt = self.resolve_alt_modifier_state(modifiers.state().alt_key());
+		self.keyboard_modifiers = modifiers.state();
+
+		let alt = self.resolve_alt_modifier_state(self.keyboard_modifiers.alt_key());
 
 		match self.config.alt_activation {
 			AltActivationMode::Hold => self.set_alt_held(alt),
@@ -3317,23 +3372,50 @@ impl OverlaySession {
 
 				OverlayControl::Continue
 			},
+			Key::Character(key_text)
+				if key_text.as_str().eq_ignore_ascii_case("s")
+					&& self.is_save_shortcut_pressed() =>
+			{
+				self.begin_png_action(PngAction::Save);
+
+				OverlayControl::Continue
+			},
 			Key::Named(NamedKey::Space) => {
-				if matches!(self.state.mode, OverlayMode::Frozen)
-					&& self.state.frozen_image.is_some()
-				{
-					self.state.set_error("Copying...");
-
-					self.pending_encode_png = self
-						.cropped_frozen_capture_image()
-						.or_else(|| self.state.frozen_image.take());
-
-					self.request_redraw_all();
-				}
+				self.begin_png_action(PngAction::Copy);
 
 				OverlayControl::Continue
 			},
 			_ => OverlayControl::Continue,
 		}
+	}
+
+	fn is_save_shortcut_pressed(&self) -> bool {
+		#[cfg(target_os = "macos")]
+		{
+			self.keyboard_modifiers.super_key()
+		}
+		#[cfg(not(target_os = "macos"))]
+		{
+			self.keyboard_modifiers.control_key()
+		}
+	}
+
+	fn begin_png_action(&mut self, action: PngAction) {
+		if !matches!(self.state.mode, OverlayMode::Frozen) || self.state.frozen_image.is_none() {
+			return;
+		}
+
+		self.pending_png_action = Some(action);
+
+		match action {
+			PngAction::Copy => self.state.set_error("Copying..."),
+			PngAction::Save => self.state.set_error("Saving..."),
+		}
+
+		self.pending_encode_png =
+			self.cropped_frozen_capture_image().or_else(|| self.state.frozen_image.take());
+
+		self.request_redraw_all();
 	}
 
 	fn handle_redraw_requested(&mut self, window_id: WindowId) -> OverlayControl {
@@ -3715,6 +3797,13 @@ impl OverlaySession {
 				}
 			}
 		}
+		if draw_toolbar && let Some(action) = self.toolbar_state.pending_action.take() {
+			let control = self.handle_toolbar_action(action);
+
+			if !matches!(control, OverlayControl::Continue) {
+				return control;
+			}
+		}
 		if draw_toolbar && self.toolbar_state.needs_redraw {
 			self.toolbar_state.needs_redraw = false;
 
@@ -3722,6 +3811,22 @@ impl OverlaySession {
 		}
 
 		OverlayControl::Continue
+	}
+
+	fn handle_toolbar_action(&mut self, action: FrozenToolbarTool) -> OverlayControl {
+		match action {
+			FrozenToolbarTool::Copy => {
+				self.begin_png_action(PngAction::Copy);
+
+				OverlayControl::Continue
+			},
+			FrozenToolbarTool::Save => {
+				self.begin_png_action(PngAction::Save);
+
+				OverlayControl::Continue
+			},
+			_ => OverlayControl::Continue,
+		}
 	}
 
 	fn exit(&mut self, exit: OverlayExit) -> OverlayControl {
@@ -3756,6 +3861,9 @@ impl OverlaySession {
 		self.toolbar_left_button_went_down = false;
 		self.toolbar_left_button_went_up = false;
 		self.toolbar_pointer_local = None;
+		self.pending_encode_png = None;
+		self.pending_png_action = None;
+		self.keyboard_modifiers = ModifiersState::default();
 
 		OverlayControl::Exit(exit)
 	}
@@ -4277,6 +4385,7 @@ struct FrozenToolbarState {
 	visible: bool,
 	dragging: bool,
 	selected_tool: FrozenToolbarTool,
+	pending_action: Option<FrozenToolbarTool>,
 	needs_redraw: bool,
 	pill_height_points: Option<f32>,
 	floating_position: Option<Pos2>,
@@ -4291,6 +4400,7 @@ impl Default for FrozenToolbarState {
 			visible: true,
 			dragging: false,
 			selected_tool: FrozenToolbarTool::Pointer,
+			pending_action: None,
 			needs_redraw: false,
 			pill_height_points: None,
 			floating_position: None,
@@ -5957,10 +6067,15 @@ impl WindowRenderer {
 				let response = response.on_hover_text(tool.label());
 				let hover_anim: f32 = if hovered { 1.0 } else { 0.0 };
 
-				if is_mode_tool && response.clicked() {
+				if response.clicked() {
 					let tool = *tool;
 
-					toolbar_state.selected_tool = tool;
+					if is_mode_tool {
+						toolbar_state.selected_tool = tool;
+					} else {
+						toolbar_state.pending_action = Some(tool);
+					}
+
 					toolbar_state.needs_redraw = true;
 				}
 
@@ -7764,6 +7879,118 @@ fn frozen_loupe_patch(
 	}
 
 	Some(out)
+}
+
+fn save_png_bytes_to_configured_dir(png_bytes: &[u8], config: &OverlayConfig) -> Result<PathBuf> {
+	let output_dir = if config.output_dir.as_os_str().is_empty() {
+		PathBuf::from(".")
+	} else {
+		config.output_dir.clone()
+	};
+
+	fs::create_dir_all(&output_dir)
+		.wrap_err_with(|| format!("Failed to create output directory: {}", output_dir.display()))?;
+
+	let prefix = sanitize_output_filename_prefix(&config.output_filename_prefix);
+	let target_path = next_output_png_path(&output_dir, &prefix, config.output_naming);
+
+	write_png_bytes_atomic(&target_path, png_bytes)?;
+
+	Ok(target_path)
+}
+
+fn sanitize_output_filename_prefix(raw: &str) -> String {
+	let trimmed = raw.trim();
+	let mut sanitized = String::with_capacity(trimmed.len());
+
+	for ch in trimmed.chars() {
+		if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+			sanitized.push(ch);
+		} else {
+			sanitized.push('_');
+		}
+	}
+
+	let sanitized = sanitized.trim_matches('_');
+
+	if sanitized.is_empty() { String::from("rsnap") } else { sanitized.to_owned() }
+}
+
+fn next_output_png_path(output_dir: &Path, prefix: &str, naming: OutputNaming) -> PathBuf {
+	let base = match naming {
+		OutputNaming::Timestamp => format!("{prefix}-{}", current_unix_millis()),
+		OutputNaming::Sequence => {
+			format!("{prefix}-{:04}", next_sequence_index(output_dir, prefix))
+		},
+	};
+
+	unique_png_path(output_dir, &base)
+}
+
+fn current_unix_millis() -> u128 {
+	SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |duration| duration.as_millis())
+}
+
+fn next_sequence_index(output_dir: &Path, prefix: &str) -> u32 {
+	let Ok(entries) = fs::read_dir(output_dir) else {
+		return 1;
+	};
+	let mut max_seen = 0_u32;
+
+	for entry in entries.flatten() {
+		let file_name = entry.file_name();
+		let Some(file_name) = file_name.to_str() else {
+			continue;
+		};
+		let Some(stem) = file_name.strip_suffix(".png") else {
+			continue;
+		};
+		let Some(number_text) = stem.strip_prefix(prefix).and_then(|rest| rest.strip_prefix('-'))
+		else {
+			continue;
+		};
+
+		if !number_text.chars().all(|ch| ch.is_ascii_digit()) {
+			continue;
+		}
+
+		if let Ok(value) = number_text.parse::<u32>() {
+			max_seen = max_seen.max(value);
+		}
+	}
+
+	max_seen.saturating_add(1).max(1)
+}
+
+fn unique_png_path(output_dir: &Path, base: &str) -> PathBuf {
+	let direct_path = output_dir.join(format!("{base}.png"));
+
+	if !direct_path.exists() {
+		return direct_path;
+	}
+
+	let mut suffix = 2_u32;
+
+	loop {
+		let candidate = output_dir.join(format!("{base}-{suffix}.png"));
+
+		if !candidate.exists() {
+			return candidate;
+		}
+
+		suffix = suffix.saturating_add(1);
+	}
+}
+
+fn write_png_bytes_atomic(target_path: &Path, png_bytes: &[u8]) -> Result<()> {
+	let tmp_path = target_path.with_extension("png.tmp");
+
+	fs::write(&tmp_path, png_bytes)
+		.wrap_err_with(|| format!("Failed to write temporary PNG file: {}", tmp_path.display()))?;
+	fs::rename(&tmp_path, target_path)
+		.wrap_err_with(|| format!("Failed to finalize PNG file: {}", target_path.display()))?;
+
+	Ok(())
 }
 
 #[cfg(target_os = "macos")]

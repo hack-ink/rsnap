@@ -78,6 +78,9 @@ impl App {
 			toolbar_placement: self.settings.toolbar_placement,
 			loupe_sample_side_px,
 			theme_mode: self.settings.theme_mode,
+			output_dir: self.settings.output_dir.clone(),
+			output_filename_prefix: self.settings.output_filename_prefix.clone(),
+			output_naming: self.settings.output_naming,
 		}
 	}
 
@@ -342,6 +345,9 @@ impl App {
 			OverlayExit::Cancelled => tracing::info!("Capture cancelled."),
 			OverlayExit::PngBytes(png_bytes) => {
 				tracing::info!(bytes = png_bytes.len(), "Capture copied to clipboard.");
+			},
+			OverlayExit::Saved(path) => {
+				tracing::info!(path = %path.display(), "Capture saved to file.");
 			},
 			OverlayExit::Error(message) => tracing::warn!(error = %message, "Capture failed."),
 		};
