@@ -81,6 +81,7 @@ impl App {
 			output_dir: self.settings.output_dir.clone(),
 			output_filename_prefix: self.settings.output_filename_prefix.clone(),
 			output_naming: self.settings.output_naming,
+			window_capture_alpha_mode: self.settings.window_capture_alpha_mode,
 		}
 	}
 

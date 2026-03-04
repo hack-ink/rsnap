@@ -5,14 +5,23 @@ use std::process;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{self, Result, WrapErr};
 use image::RgbaImage;
+#[cfg(target_os = "macos")]
+use objc2_core_foundation::CGRect;
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+use objc2_core_graphics::CGWindowListCreateImage;
+#[cfg(target_os = "macos")]
+use objc2_core_graphics::{
+	CGDataProvider, CGImage, CGRectNull, CGWindowID, CGWindowImageOption, CGWindowListOption,
+};
 use thiserror::Error;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::state::{
-	GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb,
+	GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, Rgb, WindowHit,
 	WindowListSnapshot, WindowRect,
 };
 
@@ -82,8 +91,11 @@ pub trait CaptureBackend: Send {
 		&mut self,
 		_monitor: MonitorRect,
 		_point: GlobalPoint,
-	) -> Result<Option<RectPoints>> {
+	) -> Result<Option<WindowHit>> {
 		Ok(None)
+	}
+	fn capture_window(&mut self, _window_id: u32) -> Result<RgbaImage> {
+		Err(CaptureBackendError::NotSupported { backend: "capture backend" }.into())
 	}
 	fn rgba_patch_in_monitor(
 		&mut self,
@@ -120,6 +132,9 @@ pub enum CaptureBackendError {
 
 	#[error("no monitor matched rect: {monitor:?}")]
 	MonitorNotFound { monitor: MonitorRect },
+
+	#[error("no window matched id: {window_id}")]
+	WindowNotFound { window_id: u32 },
 }
 
 pub struct StubCaptureBackend {}
@@ -157,6 +172,10 @@ impl CaptureBackend for StubCaptureBackend {
 		_height_px: u32,
 	) -> Result<Option<RgbaImage>> {
 		Ok(None)
+	}
+
+	fn capture_window(&mut self, _window_id: u32) -> Result<RgbaImage> {
+		Err(CaptureBackendError::NotSupported { backend: "stub" }.into())
 	}
 
 	fn refresh_monitor_cache(
@@ -262,6 +281,61 @@ impl XcapCaptureBackend {
 	#[cfg(not(target_os = "macos"))]
 	fn capture_monitor_image(&mut self, monitor: MonitorRect) -> Result<RgbaImage> {
 		capture_monitor_image(monitor)
+	}
+
+	#[cfg(target_os = "macos")]
+	#[allow(deprecated)]
+	fn capture_window_image(&mut self, window_id: u32) -> Result<RgbaImage> {
+		let cg_rect: CGRect = unsafe { CGRectNull };
+		let image_option =
+			CGWindowImageOption::BoundsIgnoreFraming | CGWindowImageOption::BestResolution;
+		let cg_image = CGWindowListCreateImage(
+			cg_rect,
+			CGWindowListOption::OptionIncludingWindow,
+			window_id as CGWindowID,
+			image_option,
+		);
+		let width = CGImage::width(cg_image.as_deref());
+		let height = CGImage::height(cg_image.as_deref());
+
+		if width == 0 || height == 0 {
+			return Err(CaptureBackendError::WindowNotFound { window_id }.into());
+		}
+
+		let data_provider = CGImage::data_provider(cg_image.as_deref()).ok_or_else(|| {
+			eyre::eyre!("Failed to get data provider for window capture: {window_id}")
+		})?;
+		let data = CGDataProvider::data(Some(data_provider.as_ref()))
+			.ok_or_else(|| eyre::eyre!("Failed to copy window capture bytes: {window_id}"))?;
+		let bytes_per_row = CGImage::bytes_per_row(cg_image.as_deref());
+		let mut buffer = Vec::with_capacity(width * height * 4);
+
+		for row in data.to_vec().chunks_exact(bytes_per_row) {
+			buffer.extend_from_slice(&row[..width * 4]);
+		}
+		for bgra in buffer.chunks_exact_mut(4) {
+			bgra.swap(0, 2);
+		}
+
+		RgbaImage::from_raw(width as u32, height as u32, buffer)
+			.ok_or_else(|| eyre::eyre!("RgbaImage::from_raw failed"))
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn capture_window_image(&mut self, window_id: u32) -> Result<RgbaImage> {
+		let windows = xcap::Window::all().wrap_err("xcap Window::all failed")?;
+
+		for window in windows {
+			let id = window.id().wrap_err("Failed to read xcap window id")?;
+
+			if id != window_id {
+				continue;
+			}
+
+			return window.capture_image().wrap_err("xcap window capture_image failed");
+		}
+
+		Err(CaptureBackendError::WindowNotFound { window_id }.into())
 	}
 
 	#[cfg(target_os = "macos")]
@@ -378,7 +452,7 @@ impl CaptureBackend for XcapCaptureBackend {
 		&mut self,
 		monitor: MonitorRect,
 		point: GlobalPoint,
-	) -> Result<Option<RectPoints>> {
+	) -> Result<Option<WindowHit>> {
 		if !monitor.contains(point) {
 			return Ok(None);
 		}
@@ -406,7 +480,7 @@ impl CaptureBackend for XcapCaptureBackend {
 				continue;
 			}
 
-			return Ok(Some(window_rect));
+			return Ok(Some(WindowHit { window_id: geometry.window_id, rect: window_rect }));
 		}
 
 		Ok(None)
@@ -424,6 +498,11 @@ impl CaptureBackend for XcapCaptureBackend {
 		}));
 
 		Ok(image)
+	}
+
+	fn capture_window(&mut self, window_id: u32) -> Result<RgbaImage> {
+		self.capture_window_image(window_id)
+			.wrap_err_with(|| format!("failed to capture window for freeze/export: {window_id}"))
 	}
 
 	fn pixel_rgb_in_monitor(
@@ -690,6 +769,7 @@ fn window_geometry_from_dictionary(
 	self_pid: u32,
 ) -> Option<WindowRect> {
 	let is_on_screen = cf_bool_value(window_dictionary, "kCGWindowIsOnscreen")?;
+	let window_id = cf_number_to_u32(window_dictionary, "kCGWindowNumber");
 	let window_pid = cf_number_to_u32(window_dictionary, "kCGWindowOwnerPID")?;
 	let layer = cf_number_to_u64(window_dictionary, "kCGWindowLayer")?;
 	let bounds_dict = cf_dictionary_value(window_dictionary, "kCGWindowBounds")?;
@@ -702,7 +782,7 @@ fn window_geometry_from_dictionary(
 		return None;
 	}
 
-	Some(WindowRect { x, y, width, height })
+	Some(WindowRect { window_id, x, y, width, height })
 }
 
 #[cfg(target_os = "macos")]
@@ -856,6 +936,7 @@ fn collect_window_geometries() -> Result<Vec<WindowRect>> {
 		let Ok(height) = window.height() else {
 			continue;
 		};
+		let window_id = window.id().ok();
 		let width = i64::from(width);
 		let height = i64::from(height);
 
@@ -863,7 +944,13 @@ fn collect_window_geometries() -> Result<Vec<WindowRect>> {
 			continue;
 		}
 
-		cached_windows.push(WindowRect { x: i64::from(x), y: i64::from(y), width, height });
+		cached_windows.push(WindowRect {
+			window_id,
+			x: i64::from(x),
+			y: i64::from(y),
+			width,
+			height,
+		});
 	}
 
 	Ok(cached_windows)

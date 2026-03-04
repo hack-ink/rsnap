@@ -7,7 +7,7 @@ use directories::{ProjectDirs, UserDirs};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use serde::{Deserialize, Serialize};
 
-use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement};
+use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
 
 #[derive(Clone, Copy, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,6 +74,8 @@ pub struct AppSettings {
 	pub output_filename_prefix: String,
 	#[serde(default)]
 	pub output_naming: OutputNaming,
+	#[serde(default)]
+	pub window_capture_alpha_mode: WindowCaptureAlphaMode,
 	#[serde(default)]
 	pub toolbar_placement: ToolbarPlacement,
 	#[serde(default)]
@@ -160,6 +162,7 @@ impl Default for AppSettings {
 			output_dir: default_output_dir(),
 			output_filename_prefix: default_output_filename_prefix(),
 			output_naming: OutputNaming::default(),
+			window_capture_alpha_mode: WindowCaptureAlphaMode::default(),
 			toolbar_placement: ToolbarPlacement::Bottom,
 			loupe_sample_size: LoupeSampleSize::default(),
 			theme_mode: ThemeMode::System,
@@ -306,7 +309,7 @@ mod tests {
 	use std::path::PathBuf;
 
 	use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
-	use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement};
+	use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
 
 	#[test]
 	fn toml_roundtrip() {
@@ -333,6 +336,7 @@ mod tests {
 	output_dir = "/tmp/rsnap-output"
 	output_filename_prefix = "shot"
 	output_naming = "sequence"
+	window_capture_alpha_mode = "matte_dark"
 	toolbar_placement = "top"
 	loupe_sample_size = "large"
 	theme_mode = "dark"
@@ -345,9 +349,20 @@ mod tests {
 		assert_eq!(settings.output_dir, PathBuf::from("/tmp/rsnap-output"));
 		assert_eq!(settings.output_filename_prefix, "shot");
 		assert_eq!(settings.output_naming, OutputNaming::Sequence);
+		assert_eq!(settings.window_capture_alpha_mode, WindowCaptureAlphaMode::MatteDark);
 		assert_eq!(settings.toolbar_placement, ToolbarPlacement::Top);
 		assert_eq!(settings.loupe_sample_size, LoupeSampleSize::Large);
 		assert_eq!(settings.theme_mode, ThemeMode::Dark);
+	}
+
+	#[test]
+	fn window_capture_alpha_mode_preserve_alias_maps_to_background() {
+		let input = r#"
+	window_capture_alpha_mode = "preserve"
+	"#;
+		let settings: AppSettings = toml::from_str(input).unwrap();
+
+		assert_eq!(settings.window_capture_alpha_mode, WindowCaptureAlphaMode::Background);
 	}
 
 	#[test]

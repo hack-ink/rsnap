@@ -21,7 +21,7 @@ use winit::window::Theme;
 use winit::window::{Window, WindowId, WindowLevel};
 
 use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
-use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement};
+use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
 
 const SETTINGS_ROW_HEIGHT: f32 = 22.0;
 const SETTINGS_SECTION_GAP: f32 = 6.0;
@@ -596,7 +596,7 @@ impl SettingsWindow {
 		ui.add_space(SETTINGS_SECTION_GAP);
 
 		egui::CollapsingHeader::new("Capture").default_open(false).show(ui, |ui| {
-			ui.label("Capture mode settings are coming soon.");
+			changed |= self.render_capture_section(ui, settings);
 		});
 
 		ui.add_space(SETTINGS_SECTION_GAP);
@@ -616,6 +616,46 @@ impl SettingsWindow {
 		egui::CollapsingHeader::new("About").default_open(false).show(ui, |ui| {
 			ui.label(format!("rsnap {}", env!("CARGO_PKG_VERSION")));
 		});
+
+		changed
+	}
+
+	fn render_capture_section(&mut self, ui: &mut Ui, settings: &mut AppSettings) -> bool {
+		let previous_alpha_mode = settings.window_capture_alpha_mode;
+		let mut changed = false;
+
+		egui::ComboBox::from_label("Window background")
+			.selected_text(match settings.window_capture_alpha_mode {
+				WindowCaptureAlphaMode::Background => "Background (match screen)",
+				WindowCaptureAlphaMode::MatteLight => "Matte light",
+				WindowCaptureAlphaMode::MatteDark => "Matte dark",
+			})
+			.width(self.combo_width)
+			.show_ui(ui, |ui| {
+				ui.selectable_value(
+					&mut settings.window_capture_alpha_mode,
+					WindowCaptureAlphaMode::Background,
+					"Background (match screen)",
+				);
+				ui.selectable_value(
+					&mut settings.window_capture_alpha_mode,
+					WindowCaptureAlphaMode::MatteLight,
+					"Matte light",
+				);
+				ui.selectable_value(
+					&mut settings.window_capture_alpha_mode,
+					WindowCaptureAlphaMode::MatteDark,
+					"Matte dark",
+				);
+			});
+
+		if settings.window_capture_alpha_mode != previous_alpha_mode {
+			changed = true;
+		}
+
+		ui.small("Applies to window-lock capture preview and export.");
+		ui.small("Background matches region-style capture inside the window bounds.");
+		ui.small("Matte modes flatten transparency onto a solid background.");
 
 		changed
 	}
