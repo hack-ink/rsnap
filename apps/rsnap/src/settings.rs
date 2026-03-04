@@ -1,8 +1,10 @@
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use directories::ProjectDirs;
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use serde::{Deserialize, Serialize};
 
 use rsnap_overlay::{ThemeMode, ToolbarPlacement};
@@ -49,6 +51,8 @@ pub struct AppSettings {
 	pub show_alt_hint_keycap: bool,
 	#[serde(default)]
 	pub hud_glass_enabled: bool,
+	#[serde(default = "default_capture_hotkey")]
+	pub capture_hotkey: String,
 	#[serde(default = "default_hud_opacity")]
 	pub hud_opacity: f32,
 	#[serde(default = "default_hud_blur")]
@@ -61,6 +65,8 @@ pub struct AppSettings {
 	pub alt_activation: AltActivationMode,
 	#[serde(default = "default_selection_particles")]
 	pub selection_particles: bool,
+	#[serde(default = "default_selection_flow_stroke_width_px")]
+	pub selection_flow_stroke_width_px: f32,
 	pub log_filter: Option<String>,
 	#[serde(default)]
 	pub toolbar_placement: ToolbarPlacement,
@@ -83,10 +89,14 @@ impl AppSettings {
 		};
 		let mut settings: Self = toml::from_str(contents).unwrap_or_default();
 
+		settings.capture_hotkey = sanitize_capture_hotkey(&settings.capture_hotkey)
+			.unwrap_or_else(default_capture_hotkey);
 		settings.hud_opacity = settings.hud_opacity.clamp(0.0, 1.0);
 		settings.hud_blur = settings.hud_blur.clamp(0.0, 1.0);
 		settings.hud_tint = settings.hud_tint.clamp(0.0, 1.0);
 		settings.hud_tint_hue = settings.hud_tint_hue.clamp(0.0, 1.0);
+		settings.selection_flow_stroke_width_px =
+			settings.selection_flow_stroke_width_px.clamp(1.0, 8.0);
 		settings.loupe_sample_size = settings.loupe_sample_size.sanitize();
 
 		settings
@@ -116,6 +126,12 @@ impl AppSettings {
 
 		Some(dirs.config_dir().join("settings.toml"))
 	}
+
+	#[must_use]
+	pub fn capture_hotkey(&self) -> HotKey {
+		parse_capture_hotkey(&self.capture_hotkey)
+			.unwrap_or_else(|| HotKey::new(Some(Modifiers::ALT), Code::KeyX))
+	}
 }
 
 impl Default for AppSettings {
@@ -123,12 +139,14 @@ impl Default for AppSettings {
 		Self {
 			show_alt_hint_keycap: true,
 			hud_glass_enabled: true,
+			capture_hotkey: default_capture_hotkey(),
 			hud_opacity: default_hud_opacity(),
 			hud_blur: default_hud_blur(),
 			hud_tint: default_hud_tint(),
 			hud_tint_hue: default_hud_tint_hue(),
 			alt_activation: AltActivationMode::default(),
 			selection_particles: default_selection_particles(),
+			selection_flow_stroke_width_px: default_selection_flow_stroke_width_px(),
 			log_filter: None,
 			toolbar_placement: ToolbarPlacement::Bottom,
 			loupe_sample_size: LoupeSampleSize::default(),
@@ -138,23 +156,85 @@ impl Default for AppSettings {
 }
 
 fn default_hud_opacity() -> f32 {
-	0.75
+	0.5
 }
 
 fn default_hud_blur() -> f32 {
-	0.25
+	0.5
 }
 
 fn default_hud_tint() -> f32 {
-	0.0
+	0.5
 }
 
 fn default_hud_tint_hue() -> f32 {
-	0.585
+	215.0 / 360.0
 }
 
 fn default_selection_particles() -> bool {
 	true
+}
+
+fn default_capture_hotkey() -> String {
+	HotKey::new(Some(Modifiers::ALT), Code::KeyX).to_string()
+}
+
+fn parse_capture_hotkey(raw: &str) -> Option<HotKey> {
+	let mut modifiers = Modifiers::empty();
+	let mut has_required_modifier = false;
+	let mut has_keycode = false;
+	let mut code = None;
+
+	for part in raw.split('+').map(str::trim).filter(|part| !part.is_empty()) {
+		let token = part;
+
+		match token.to_ascii_lowercase().as_str() {
+			"alt" | "option" => {
+				modifiers.insert(Modifiers::ALT);
+
+				has_required_modifier = true;
+			},
+			"ctrl" | "control" => {
+				modifiers.insert(Modifiers::CONTROL);
+
+				has_required_modifier = true;
+			},
+			"super" | "meta" | "cmd" | "win" | "command" => {
+				modifiers.insert(Modifiers::SUPER);
+
+				has_required_modifier = true;
+			},
+			"shift" => {
+				modifiers.insert(Modifiers::SHIFT);
+			},
+			other => {
+				if !other.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+					return None;
+				}
+				if has_keycode {
+					return None;
+				}
+
+				has_keycode = true;
+				code = Code::from_str(token).ok();
+			},
+		}
+	}
+
+	let code = code?;
+
+	if !has_required_modifier {
+		return None;
+	}
+
+	Some(HotKey::new(Some(modifiers), code))
+}
+
+fn sanitize_capture_hotkey(raw: &str) -> Option<String> {
+	parse_capture_hotkey(raw).map(|key| key.to_string())
+}
+fn default_selection_flow_stroke_width_px() -> f32 {
+	2.4
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -187,12 +267,14 @@ mod tests {
 		let input = r#"
 	show_alt_hint_keycap = true
 	hud_glass_enabled = true
+	capture_hotkey = "alt+KeyX"
 	hud_opacity = 0.5
 	hud_blur = 0.15
 	hud_tint = 0.25
 	hud_tint_hue = 0.4
 	alt_activation = "toggle"
 	selection_particles = true
+	selection_flow_stroke_width_px = 2.4
 	toolbar_placement = "top"
 	loupe_sample_size = "large"
 	theme_mode = "dark"
@@ -201,8 +283,22 @@ mod tests {
 
 		assert_eq!(settings.alt_activation, AltActivationMode::Toggle);
 		assert!(settings.selection_particles);
+		assert_eq!(settings.selection_flow_stroke_width_px, 2.4);
 		assert_eq!(settings.toolbar_placement, ToolbarPlacement::Top);
 		assert_eq!(settings.loupe_sample_size, LoupeSampleSize::Large);
 		assert_eq!(settings.theme_mode, ThemeMode::Dark);
+	}
+
+	#[test]
+	fn capture_hotkey_falls_back_to_default_on_invalid() {
+		let input = r#"
+	capture_hotkey = "bad_hotkey"
+	"#;
+		let settings: AppSettings =
+			toml::from_str(input).unwrap_or_else(|_| AppSettings::default());
+		let loaded = super::sanitize_capture_hotkey(&settings.capture_hotkey)
+			.unwrap_or_else(super::default_capture_hotkey);
+
+		assert_eq!(loaded, AppSettings::default().capture_hotkey);
 	}
 }
