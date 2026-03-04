@@ -21,6 +21,7 @@ Pure-Rust menubar screenshot prototype (macOS-first).
 - HUD near the cursor showing global `x,y` and `rgb(r,g,b)`.
 - Left click freezes the active monitor as a fullscreen screenshot.
 - Space copies the frozen screenshot PNG to the clipboard and exits.
+- Cmd+S (macOS) / Ctrl+S saves the frozen screenshot PNG to disk and exits.
 - Esc cancels and exits.
 - Glass HUD with configurable blur, tint, and hue controls.
 - Alt-triggered loupe sample and frozen-mode toolbar for quick action access.
@@ -72,6 +73,14 @@ cargo run -p rsnap
   target color.
 - Numeric entry accepts plain integers for percent/degree fields and updates immediately.
 - Same HUD style settings are used by main HUD, loupe, and frozen toolbar.
+
+### Output (save-to-disk)
+
+- In Frozen mode, use Cmd+S (macOS) / Ctrl+S to save a PNG to disk and exit.
+- Output is configured in `settings.toml`:
+  - `output_dir` (default: Desktop)
+  - `output_filename_prefix` (default: `rsnap`, sanitized to `[A-Za-z0-9_-]`)
+  - `output_naming` (`timestamp` (unix ms) or `sequence` (0001))
 
 ## Development
 
