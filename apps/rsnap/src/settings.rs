@@ -3,11 +3,11 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use directories::ProjectDirs;
+use directories::{ProjectDirs, UserDirs};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use serde::{Deserialize, Serialize};
 
-use rsnap_overlay::{ThemeMode, ToolbarPlacement};
+use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement};
 
 #[derive(Clone, Copy, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -68,6 +68,12 @@ pub struct AppSettings {
 	#[serde(default = "default_selection_flow_stroke_width_px")]
 	pub selection_flow_stroke_width_px: f32,
 	pub log_filter: Option<String>,
+	#[serde(default = "default_output_dir")]
+	pub output_dir: PathBuf,
+	#[serde(default = "default_output_filename_prefix")]
+	pub output_filename_prefix: String,
+	#[serde(default)]
+	pub output_naming: OutputNaming,
 	#[serde(default)]
 	pub toolbar_placement: ToolbarPlacement,
 	#[serde(default)]
@@ -98,6 +104,9 @@ impl AppSettings {
 		settings.selection_flow_stroke_width_px =
 			settings.selection_flow_stroke_width_px.clamp(1.0, 8.0);
 		settings.loupe_sample_size = settings.loupe_sample_size.sanitize();
+		settings.output_dir = sanitize_output_dir(&settings.output_dir);
+		settings.output_filename_prefix =
+			sanitize_output_filename_prefix(&settings.output_filename_prefix);
 
 		settings
 	}
@@ -148,11 +157,31 @@ impl Default for AppSettings {
 			selection_particles: default_selection_particles(),
 			selection_flow_stroke_width_px: default_selection_flow_stroke_width_px(),
 			log_filter: None,
+			output_dir: default_output_dir(),
+			output_filename_prefix: default_output_filename_prefix(),
+			output_naming: OutputNaming::default(),
 			toolbar_placement: ToolbarPlacement::Bottom,
 			loupe_sample_size: LoupeSampleSize::default(),
 			theme_mode: ThemeMode::System,
 		}
 	}
+}
+
+pub(crate) fn sanitize_output_filename_prefix(raw: &str) -> String {
+	let trimmed = raw.trim();
+	let mut sanitized = String::with_capacity(trimmed.len());
+
+	for ch in trimmed.chars() {
+		if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+			sanitized.push(ch);
+		} else {
+			sanitized.push('_');
+		}
+	}
+
+	let sanitized = sanitized.trim_matches('_');
+
+	if sanitized.is_empty() { default_output_filename_prefix() } else { sanitized.to_owned() }
 }
 
 fn default_hud_opacity() -> f32 {
@@ -173,6 +202,29 @@ fn default_hud_tint_hue() -> f32 {
 
 fn default_selection_particles() -> bool {
 	true
+}
+
+fn default_output_dir() -> PathBuf {
+	let Some(user_dirs) = UserDirs::new() else {
+		return PathBuf::from(".");
+	};
+
+	user_dirs
+		.desktop_dir()
+		.map(Path::to_path_buf)
+		.unwrap_or_else(|| user_dirs.home_dir().to_path_buf())
+}
+
+fn default_output_filename_prefix() -> String {
+	String::from("rsnap")
+}
+
+fn sanitize_output_dir(path: &Path) -> PathBuf {
+	if path.as_os_str().is_empty() {
+		return default_output_dir();
+	}
+
+	path.to_path_buf()
 }
 
 fn default_capture_hotkey() -> String {
@@ -233,6 +285,7 @@ fn parse_capture_hotkey(raw: &str) -> Option<HotKey> {
 fn sanitize_capture_hotkey(raw: &str) -> Option<String> {
 	parse_capture_hotkey(raw).map(|key| key.to_string())
 }
+
 fn default_selection_flow_stroke_width_px() -> f32 {
 	2.4
 }
@@ -250,8 +303,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+	use std::path::PathBuf;
+
 	use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
-	use rsnap_overlay::{ThemeMode, ToolbarPlacement};
+	use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement};
 
 	#[test]
 	fn toml_roundtrip() {
@@ -275,6 +330,9 @@ mod tests {
 	alt_activation = "toggle"
 	selection_particles = true
 	selection_flow_stroke_width_px = 2.4
+	output_dir = "/tmp/rsnap-output"
+	output_filename_prefix = "shot"
+	output_naming = "sequence"
 	toolbar_placement = "top"
 	loupe_sample_size = "large"
 	theme_mode = "dark"
@@ -284,6 +342,9 @@ mod tests {
 		assert_eq!(settings.alt_activation, AltActivationMode::Toggle);
 		assert!(settings.selection_particles);
 		assert_eq!(settings.selection_flow_stroke_width_px, 2.4);
+		assert_eq!(settings.output_dir, PathBuf::from("/tmp/rsnap-output"));
+		assert_eq!(settings.output_filename_prefix, "shot");
+		assert_eq!(settings.output_naming, OutputNaming::Sequence);
 		assert_eq!(settings.toolbar_placement, ToolbarPlacement::Top);
 		assert_eq!(settings.loupe_sample_size, LoupeSampleSize::Large);
 		assert_eq!(settings.theme_mode, ThemeMode::Dark);
@@ -300,5 +361,12 @@ mod tests {
 			.unwrap_or_else(super::default_capture_hotkey);
 
 		assert_eq!(loaded, AppSettings::default().capture_hotkey);
+	}
+
+	#[test]
+	fn output_filename_prefix_sanitizes_invalid_chars() {
+		let sanitized = super::sanitize_output_filename_prefix("  rsnap:/demo?  ");
+
+		assert_eq!(sanitized, "rsnap__demo");
 	}
 }
