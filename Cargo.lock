@@ -3502,6 +3502,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "global-hotkey",
+ "image",
  "pollster",
  "rsnap-overlay",
  "serde",

@@ -9,6 +9,11 @@ readme.workspace      = true
 repository.workspace  = true
 version.workspace     = true
 
+[package.metadata.bundle]
+icon       = ["apps/rsnap/assets/app-icon/generated/app-icon.icns", "assets/app-icon/generated/app-icon.icns"]
+identifier = "ink.hack.rsnap"
+name       = "Rsnap"
+
 [[bin]]
 name = "rsnap"
 path = "src/main.rs"
@@ -21,6 +26,7 @@ egui-phosphor      = { workspace = true }
 egui-wgpu          = { workspace = true }
 egui-winit         = { workspace = true }
 global-hotkey      = { workspace = true }
+image              = { workspace = true }
 pollster           = { workspace = true }
 rsnap-overlay      = { workspace = true }
 serde              = { workspace = true }

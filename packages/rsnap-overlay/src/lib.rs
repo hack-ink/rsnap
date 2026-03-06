@@ -3,6 +3,7 @@ mod backend;
 mod live_frame_stream_macos;
 mod overlay;
 mod png;
+mod scroll_capture;
 mod state;
 mod worker;
 
