@@ -319,6 +319,7 @@ impl App {
 			.with_tooltip("rsnap")
 			.with_menu(Box::new(tray_menu))
 			.with_icon(icon)
+			.with_icon_as_template(cfg!(target_os = "macos"))
 			.build()
 		{
 			Ok(icon) => icon,

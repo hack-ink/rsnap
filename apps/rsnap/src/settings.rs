@@ -82,6 +82,8 @@ pub struct AppSettings {
 	pub loupe_sample_size: LoupeSampleSize,
 	#[serde(default)]
 	pub theme_mode: ThemeMode,
+	#[serde(default, rename = "tray_icon_filled", alias = "tray_icon_inverted", skip_serializing)]
+	pub legacy_tray_icon_filled: bool,
 }
 impl AppSettings {
 	#[must_use]
@@ -166,6 +168,7 @@ impl Default for AppSettings {
 			toolbar_placement: ToolbarPlacement::Bottom,
 			loupe_sample_size: LoupeSampleSize::default(),
 			theme_mode: ThemeMode::System,
+			legacy_tray_icon_filled: false,
 		}
 	}
 }
@@ -353,6 +356,16 @@ mod tests {
 		assert_eq!(settings.toolbar_placement, ToolbarPlacement::Top);
 		assert_eq!(settings.loupe_sample_size, LoupeSampleSize::Large);
 		assert_eq!(settings.theme_mode, ThemeMode::Dark);
+	}
+
+	#[test]
+	fn toml_parses_tray_icon_filled_alias() {
+		let input = r#"
+	tray_icon_inverted = true
+	"#;
+		let settings: AppSettings = toml::from_str(input).unwrap();
+
+		assert!(settings.legacy_tray_icon_filled);
 	}
 
 	#[test]

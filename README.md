@@ -19,10 +19,12 @@ Pure-Rust menubar screenshot prototype (macOS-first).
 - Global hotkey: `Alt+X` (macOS: Option+X).
 - Transparent capture-session overlay that blocks desktop interaction.
 - HUD near the cursor showing global `x,y` and `rgb(r,g,b)`.
-- Left click freezes the active monitor as a fullscreen screenshot.
-- Space copies the frozen screenshot PNG to the clipboard and exits.
-- Cmd+S (macOS) / Ctrl+S saves the frozen screenshot PNG to disk and exits.
-- Esc cancels and exits.
+- Left click + drag freezes a selected region; a single left click freezes the hovered window or falls back to the active monitor fullscreen.
+- In Frozen mode, `Space` copies the current frozen PNG to the clipboard and exits.
+- In Frozen mode, Cmd+S (macOS) / Ctrl+S saves the current PNG to disk and exits.
+- After a dragged region freeze, press `s` or use the frozen toolbar `Scroll` action to enter scroll capture.
+- Scroll capture follows manual scrolling, appends stable samples into a side preview, and exports the stitched result with `Space` / Cmd+S / Ctrl+S.
+- `Esc` cancels capture; during scroll capture, `Esc` / `Back` returns to normal Frozen mode.
 - Glass HUD with configurable blur, tint, and hue controls.
 - Alt-triggered loupe sample and frozen-mode toolbar for quick action access.
 
@@ -77,6 +79,9 @@ cargo run -p rsnap
 ### Output (save-to-disk)
 
 - In Frozen mode, use Cmd+S (macOS) / Ctrl+S to save a PNG to disk and exit.
+- After entering scroll capture from a dragged region, manual scrolling appends into a side preview.
+  `Space` copies the stitched image, Cmd+S (macOS) / Ctrl+S saves it, and `Esc` / `Back`
+  returns to the original Frozen capture without exiting.
 - Output is configured in `settings.toml`:
   - `output_dir` (default: Desktop)
   - `output_filename_prefix` (default: `rsnap`, sanitized to `[A-Za-z0-9_-]`)

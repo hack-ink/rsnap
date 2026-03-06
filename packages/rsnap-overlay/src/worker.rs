@@ -6,7 +6,9 @@ use std::sync::{
 use image::RgbaImage;
 
 use crate::backend::CaptureBackend;
-use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect, WindowHit, WindowListSnapshot};
+use crate::state::{
+	GlobalPoint, LiveCursorSample, MonitorRect, RectPoints, WindowHit, WindowListSnapshot,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FreezeCaptureTarget {
@@ -33,6 +35,11 @@ pub(crate) enum WorkerRequest {
 	FreezeCapture {
 		monitor: MonitorRect,
 		target: FreezeCaptureTarget,
+	},
+	CaptureMonitorRegion {
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		request_id: u64,
 	},
 	EncodePng {
 		image: RgbaImage,
@@ -68,24 +75,37 @@ pub(crate) enum WorkerResponse {
 	Error(String),
 }
 
+#[derive(Debug)]
+pub(crate) struct CapturedMonitorRegionResponse {
+	pub(crate) monitor: MonitorRect,
+	pub(crate) rect_px: RectPoints,
+	pub(crate) request_id: u64,
+	pub(crate) image: RgbaImage,
+}
+
 pub(crate) struct OverlayWorker {
 	req_tx: SyncSender<WorkerRequest>,
 	resp_rx: Receiver<WorkerResponse>,
+	region_capture_resp_rx: Receiver<CapturedMonitorRegionResponse>,
 }
 impl OverlayWorker {
 	pub(crate) fn new(backend: Box<dyn CaptureBackend>) -> Self {
 		let (req_tx, req_rx) = std::sync::mpsc::sync_channel(64);
 		let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+		let (region_capture_resp_tx, region_capture_resp_rx) = std::sync::mpsc::channel();
 
-		std::thread::spawn(move || Self::run_worker_loop(backend, req_rx, resp_tx));
+		std::thread::spawn(move || {
+			Self::run_worker_loop(backend, req_rx, resp_tx, region_capture_resp_tx)
+		});
 
-		Self { req_tx, resp_rx }
+		Self { req_tx, resp_rx, region_capture_resp_rx }
 	}
 
 	fn run_worker_loop(
 		mut backend: Box<dyn CaptureBackend>,
 		req_rx: Receiver<WorkerRequest>,
 		resp_tx: Sender<WorkerResponse>,
+		region_capture_resp_tx: Sender<CapturedMonitorRegionResponse>,
 	) {
 		while let Ok(first) = req_rx.recv() {
 			let mut last_hit_test: Option<(MonitorRect, GlobalPoint, u64)> = None;
@@ -93,6 +113,7 @@ impl OverlayWorker {
 				None;
 			let mut last_refresh_window_list: bool = false;
 			let mut last_freeze: Option<(MonitorRect, FreezeCaptureTarget)> = None;
+			let mut last_capture_region: Option<(MonitorRect, RectPoints, u64)> = None;
 			let mut last_encode: Option<RgbaImage> = None;
 
 			match first {
@@ -121,6 +142,9 @@ impl OverlayWorker {
 				},
 				WorkerRequest::FreezeCapture { monitor, target } => {
 					last_freeze = Some((monitor, target))
+				},
+				WorkerRequest::CaptureMonitorRegion { monitor, rect_px, request_id } => {
+					last_capture_region = Some((monitor, rect_px, request_id))
 				},
 				WorkerRequest::EncodePng { image } => last_encode = Some(image),
 			}
@@ -153,6 +177,9 @@ impl OverlayWorker {
 					WorkerRequest::FreezeCapture { monitor, target } => {
 						last_freeze = Some((monitor, target))
 					},
+					WorkerRequest::CaptureMonitorRegion { monitor, rect_px, request_id } => {
+						last_capture_region = Some((monitor, rect_px, request_id))
+					},
 					WorkerRequest::EncodePng { image } => last_encode = Some(image),
 				}
 			}
@@ -164,6 +191,18 @@ impl OverlayWorker {
 			}
 			if let Some((monitor, target)) = last_freeze {
 				Self::handle_freeze_request(&mut *backend, &resp_tx, monitor, target);
+
+				continue;
+			}
+			if let Some((monitor, rect_px, request_id)) = last_capture_region {
+				Self::handle_capture_monitor_region_request(
+					&mut *backend,
+					&resp_tx,
+					&region_capture_resp_tx,
+					monitor,
+					rect_px,
+					request_id,
+				);
 
 				continue;
 			}
@@ -235,6 +274,29 @@ impl OverlayWorker {
 		match backend.refresh_window_cache() {
 			Ok(snapshot) => {
 				let _ = resp_tx.send(WorkerResponse::RefreshedWindowList { snapshot });
+			},
+			Err(err) => {
+				let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
+			},
+		}
+	}
+
+	fn handle_capture_monitor_region_request(
+		backend: &mut dyn CaptureBackend,
+		resp_tx: &Sender<WorkerResponse>,
+		region_capture_resp_tx: &Sender<CapturedMonitorRegionResponse>,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		request_id: u64,
+	) {
+		match backend.capture_monitor_region(monitor, rect_px) {
+			Ok(image) => {
+				let _ = region_capture_resp_tx.send(CapturedMonitorRegionResponse {
+					monitor,
+					rect_px,
+					request_id,
+					image,
+				});
 			},
 			Err(err) => {
 				let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
@@ -328,8 +390,26 @@ impl OverlayWorker {
 		}
 	}
 
+	pub(crate) fn request_capture_monitor_region(
+		&self,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		request_id: u64,
+	) -> Result<(), WorkerRequestSendError> {
+		let request = WorkerRequest::CaptureMonitorRegion { monitor, rect_px, request_id };
+
+		self.req_tx.try_send(request).map_err(Self::map_try_send_error)
+	}
+
 	pub(crate) fn try_recv(&self) -> Option<WorkerResponse> {
 		match self.resp_rx.try_recv() {
+			Ok(msg) => Some(msg),
+			Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,
+		}
+	}
+
+	pub(crate) fn try_recv_captured_monitor_region(&self) -> Option<CapturedMonitorRegionResponse> {
+		match self.region_capture_resp_rx.try_recv() {
 			Ok(msg) => Some(msg),
 			Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,
 		}
