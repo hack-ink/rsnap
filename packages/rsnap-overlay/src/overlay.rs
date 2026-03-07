@@ -589,99 +589,30 @@ impl OverlaySession {
 		gesture_ended: bool,
 	) {
 		if !self.scroll_capture.active || self.scroll_capture.paused {
-			tracing::debug!(
-				op = "scroll_capture.input_filtered",
-				reason = "inactive_or_paused",
-				active = self.scroll_capture.active,
-				paused = self.scroll_capture.paused,
-				global_x,
-				global_y,
-				delta_y,
-				gesture_active,
-				gesture_ended,
-				"Ignored external scroll input before scroll-capture direction update."
-			);
-
 			return;
 		}
 
 		let Some(scroll_monitor) = self.scroll_capture.monitor else {
-			tracing::debug!(
-				op = "scroll_capture.input_filtered",
-				reason = "missing_monitor",
-				global_x,
-				global_y,
-				delta_y,
-				gesture_active,
-				gesture_ended,
-				"Ignored external scroll input because scroll capture lost its monitor."
-			);
-
 			return;
 		};
 		let Some(capture_rect) = self.scroll_capture.capture_rect_pixels else {
-			tracing::debug!(
-				op = "scroll_capture.input_filtered",
-				reason = "missing_capture_rect",
-				monitor_id = scroll_monitor.id,
-				global_x,
-				global_y,
-				delta_y,
-				gesture_active,
-				gesture_ended,
-				"Ignored external scroll input because scroll capture lost its region."
-			);
-
 			return;
 		};
 		let cursor = GlobalPoint::new(global_x.round() as i32, global_y.round() as i32);
 		let Some(cursor_pixels) = scroll_monitor.local_u32_pixels(cursor) else {
-			tracing::debug!(
-				op = "scroll_capture.input_filtered",
-				reason = "off_monitor",
-				monitor_id = scroll_monitor.id,
-				monitor_origin = ?scroll_monitor.origin,
-				monitor_width_points = scroll_monitor.width,
-				monitor_height_points = scroll_monitor.height,
-				global_x,
-				global_y,
-				delta_y,
-				gesture_active,
-				gesture_ended,
-				"Ignored external scroll input because its global cursor was outside the capture monitor."
-			);
-
 			return;
 		};
 
 		if !capture_rect.contains(cursor_pixels) {
-			tracing::debug!(
-				op = "scroll_capture.input_filtered",
-				reason = "outside_capture_rect",
-				monitor_id = scroll_monitor.id,
-				capture_rect_px = ?capture_rect,
-				cursor_px = ?cursor_pixels,
-				global_x,
-				global_y,
-				delta_y,
-				gesture_active,
-				gesture_ended,
-				"Ignored external scroll input because its cursor was outside the scroll-capture region."
-			);
-
 			return;
 		}
 
 		if let Some(direction) = Self::scroll_capture_direction_from_delta_y(delta_y) {
-			self.record_scroll_capture_input_direction(
-				direction,
-				"external-monitor",
-				gesture_active,
-			);
+			self.record_scroll_capture_input_direction(direction, gesture_active);
 		}
 
 		if gesture_ended {
-			self.finish_scroll_capture_input_direction("external-monitor");
+			self.finish_scroll_capture_input_direction();
 		}
 	}
 
@@ -1984,16 +1915,6 @@ impl OverlaySession {
 			return true;
 		};
 
-		tracing::debug!(
-			op = "scroll_capture.stream_frame",
-			monitor_id = monitor.id,
-			rect_px = ?capture_rect,
-			frame_seq,
-			input_direction = ?self.scroll_capture.input_direction,
-			frame_px = ?image.dimensions(),
-			"Consumed latest scroll-capture stream frame."
-		);
-
 		self.scroll_capture.last_stream_frame_seq = frame_seq;
 
 		self.handle_scroll_capture_frame(image);
@@ -2025,18 +1946,6 @@ impl OverlaySession {
 		}
 
 		self.scroll_capture.last_external_scroll_input_seq = seq;
-
-		tracing::debug!(
-			op = "scroll_capture.snapshot_consumed",
-			snapshot_seq = seq,
-			global_x,
-			global_y,
-			delta_y,
-			gesture_active,
-			gesture_ended,
-			stream_frame_seq = self.scroll_capture.last_stream_frame_seq,
-			"Consumed a fresh shared native scroll-input snapshot before evaluating a scroll-capture frame."
-		);
 
 		self.handle_external_scroll_input_delta_y(
 			global_x,
@@ -2074,19 +1983,6 @@ impl OverlaySession {
 
 	fn handle_scroll_capture_frame(&mut self, frame: RgbaImage) {
 		if !self.scroll_capture_input_allows_growth() {
-			tracing::debug!(
-				op = "scroll_capture.frame_skipped_direction_gate",
-				input_direction = ?self.scroll_capture.input_direction,
-				input_gesture_active = self.scroll_capture.input_gesture_active,
-				input_direction_age_ms = self
-					.scroll_capture
-					.input_direction_at
-					.map(|instant| instant.elapsed().as_millis()),
-				stream_frame_seq = self.scroll_capture.last_stream_frame_seq,
-				frame_px = ?frame.dimensions(),
-				"Skipped scroll-capture frame because downward growth is not currently authorized."
-			);
-
 			return;
 		}
 
@@ -2095,15 +1991,6 @@ impl OverlaySession {
 
 			return;
 		};
-
-		tracing::debug!(
-			op = "scroll_capture.frame_evaluating",
-			input_direction = ?self.scroll_capture.input_direction,
-			input_gesture_active = self.scroll_capture.input_gesture_active,
-			stream_frame_seq = self.scroll_capture.last_stream_frame_seq,
-			frame_px = ?frame.dimensions(),
-			"Evaluating scroll-capture frame for downward growth."
-		);
 
 		match session.observe_downward_sample(frame) {
 			Ok(ScrollObserveOutcome::NoChange | ScrollObserveOutcome::PreviewUpdated) => {},
@@ -4049,49 +3936,21 @@ impl OverlaySession {
 		};
 
 		if overlay_monitor != scroll_monitor {
-			tracing::debug!(
-				op = "scroll_capture.wheel_swallowed_monitor_mismatch",
-				window_id = ?window_id,
-				overlay_monitor_id = overlay_monitor.id,
-				scroll_monitor_id = scroll_monitor.id,
-				delta = ?delta,
-				"Swallowed wheel outside the active scroll monitor."
-			);
-
 			return OverlayControl::Continue;
 		}
 
 		let cursor = self.current_device_cursor();
 		let cursor_pixels = scroll_monitor.local_u32_pixels(cursor);
 		let Some(cursor_pixels) = cursor_pixels else {
-			tracing::debug!(
-				op = "scroll_capture.wheel_swallowed_cursor_off_monitor",
-				monitor_id = scroll_monitor.id,
-				cursor = ?cursor,
-				capture_rect = ?capture_rect,
-				delta = ?delta,
-				"Swallowed wheel because the current cursor is outside the active monitor."
-			);
-
 			return OverlayControl::Continue;
 		};
 
 		if !capture_rect.contains(cursor_pixels) {
-			tracing::debug!(
-				op = "scroll_capture.wheel_swallowed_outside_rect",
-				monitor_id = scroll_monitor.id,
-				cursor = ?cursor,
-				cursor_pixels = ?cursor_pixels,
-				capture_rect = ?capture_rect,
-				delta = ?delta,
-				"Swallowed wheel because the cursor is outside the active capture rect."
-			);
-
 			return OverlayControl::Continue;
 		}
 
 		if let Some(direction) = Self::scroll_capture_direction_from_wheel_delta(delta) {
-			self.record_scroll_capture_input_direction(direction, "overlay-wheel", false);
+			self.record_scroll_capture_input_direction(direction, false);
 		}
 
 		let target_point = cursor;
@@ -4105,19 +3964,6 @@ impl OverlaySession {
 				capture_rect,
 				target_point,
 				delta,
-			);
-		}
-		#[cfg(not(target_os = "macos"))]
-		{
-			tracing::debug!(
-				op = "scroll_capture.wheel_swallowed_non_macos",
-				monitor_id = scroll_monitor.id,
-				cursor = ?cursor,
-				cursor_pixels = ?Some(cursor_pixels),
-				capture_rect = ?capture_rect,
-				target_point = ?target_point,
-				delta = ?delta,
-				"Swallowed wheel inside active rect because forwarding is only implemented on macOS."
 			);
 		}
 
@@ -4140,23 +3986,6 @@ impl OverlaySession {
 		);
 
 		if normalized.posted_x == 0 && normalized.posted_y == 0 {
-			tracing::trace!(
-				op = "scroll_capture.wheel_ignored_zero_delta",
-				monitor_id = scroll_monitor.id,
-				cursor = ?cursor,
-				cursor_pixels = ?cursor_pixels,
-				capture_rect = ?capture_rect,
-				target_point = ?target_point,
-				raw_delta = ?delta,
-				normalized_delta_x = normalized.normalized_x,
-				normalized_delta_y = normalized.normalized_y,
-				posted_delta_x = normalized.posted_x,
-				posted_delta_y = normalized.posted_y,
-				pixel_residual_x = normalized.residual.x,
-				pixel_residual_y = normalized.residual.y,
-				"Ignored scroll wheel event because the normalized delta rounded to zero."
-			);
-
 			return false;
 		}
 
@@ -4184,23 +4013,6 @@ impl OverlaySession {
 
 			return false;
 		}
-
-		tracing::debug!(
-			op = "scroll_capture.wheel_forwarded",
-			monitor_id = scroll_monitor.id,
-			cursor = ?cursor,
-			cursor_pixels = ?cursor_pixels,
-			capture_rect = ?capture_rect,
-			target_point = ?target_point,
-			raw_delta = ?delta,
-			normalized_delta_x = normalized.normalized_x,
-			normalized_delta_y = normalized.normalized_y,
-			posted_delta_x = normalized.posted_x,
-			posted_delta_y = normalized.posted_y,
-			pixel_residual_x = normalized.residual.x,
-			pixel_residual_y = normalized.residual.y,
-			"Forwarded scroll wheel event into the active capture region."
-		);
 
 		true
 	}
@@ -4296,53 +4108,21 @@ impl OverlaySession {
 	fn record_scroll_capture_input_direction(
 		&mut self,
 		direction: ScrollDirection,
-		source: &'static str,
 		gesture_active: bool,
 	) {
-		let previous_direction = self.scroll_capture.input_direction;
-
 		self.scroll_capture.input_direction = Some(direction);
 		self.scroll_capture.input_direction_at = Some(Instant::now());
 		self.scroll_capture.input_gesture_active = gesture_active;
-
-		tracing::debug!(
-			op = "scroll_capture.input_direction_updated",
-			source,
-			previous_direction = ?previous_direction,
-			next_direction = ?direction,
-			gesture_active,
-			stream_frame_seq = self.scroll_capture.last_stream_frame_seq,
-			"Updated scroll-capture input direction."
-		);
-
-		if direction == ScrollDirection::Up {
-			tracing::info!(
-				op = "scroll_capture.unsupported_direction",
-				source,
-				direction = ?direction,
-				"Scroll capture ignored an upward scroll input."
-			);
-		}
 	}
 
-	fn finish_scroll_capture_input_direction(&mut self, source: &'static str) {
-		let previous_direction = self.scroll_capture.input_direction;
-
-		if previous_direction.is_some() {
+	fn finish_scroll_capture_input_direction(&mut self) {
+		if self.scroll_capture.input_direction.is_some() {
 			self.scroll_capture.input_direction_at = Some(Instant::now());
 		} else {
 			self.scroll_capture.input_direction_at = None;
 		}
 
 		self.scroll_capture.input_gesture_active = false;
-
-		tracing::debug!(
-			op = "scroll_capture.input_direction_finished",
-			source,
-			previous_direction = ?previous_direction,
-			stream_frame_seq = self.scroll_capture.last_stream_frame_seq,
-			"Finished the active scroll-capture input gesture."
-		);
 	}
 
 	fn scroll_capture_input_allows_growth(&self) -> bool {

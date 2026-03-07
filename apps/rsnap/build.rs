@@ -3,6 +3,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+struct GitMetadata {
+	commit: String,
+	short_commit: String,
+	dirty: String,
+	source: String,
+}
+
 fn main() {
 	println!("cargo:rerun-if-changed=build.rs");
 
@@ -72,13 +79,6 @@ fn run_git<const N: usize>(repo_root: &Path, args: [&str; N]) -> Option<String> 
 	let trimmed = stdout.trim();
 
 	if trimmed.is_empty() { None } else { Some(trimmed.to_owned()) }
-}
-
-struct GitMetadata {
-	commit: String,
-	short_commit: String,
-	dirty: String,
-	source: String,
 }
 
 fn read_git_metadata(repo_root: &Path) -> GitMetadata {
