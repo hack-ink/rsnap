@@ -22,7 +22,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: long-capture-smoke-macos.sh [--self-check] [--help]
+Usage: scroll-capture-smoke-macos.sh [--self-check] [--help]
 
 Environment overrides:
   RSNAP_CMD           command used to launch rsnap (default: target/debug/rsnap
@@ -101,7 +101,7 @@ DRAG_SETTLE_S="${DRAG_SETTLE_S:-1.8}"
 SCROLL_MODE_SETTLE_S="${SCROLL_MODE_SETTLE_S:-1.6}"
 WAIT_STARTUP_S="${WAIT_STARTUP_S:-30}"
 WAIT_OVERLAY_S="${WAIT_OVERLAY_S:-10}"
-WAIT_SCROLL_CAPTURE_S="${WAIT_SCROLL_CAPTURE_S:-${WAIT_LONG_CAPTURE_S:-10}}"
+WAIT_SCROLL_CAPTURE_S="${WAIT_SCROLL_CAPTURE_S:-10}"
 WAIT_APPEND_S="${WAIT_APPEND_S:-10}"
 
 RSNAP_LOG=""
