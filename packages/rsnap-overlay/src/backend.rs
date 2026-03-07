@@ -515,6 +515,18 @@ impl CaptureBackend for XcapCaptureBackend {
 	) -> Result<RgbaImage> {
 		let rect_px = normalize_capture_rect(rect_px);
 
+		#[cfg(target_os = "macos")]
+		if let Some(image) = self.live_frame_stream.latest_rgba_region(monitor, rect_px) {
+			tracing::trace!(
+				op = "capture_backend.region_stream_hit",
+				monitor_id = monitor.id,
+				rect_px = ?rect_px,
+				frame_px = ?image.dimensions(),
+				"Captured monitor region from ScreenCaptureKit stream."
+			);
+
+			return Ok(image);
+		}
 		if let Ok(image) = self.capture_monitor_region_with_xcap(
 			monitor,
 			rect_px.x,
@@ -522,6 +534,15 @@ impl CaptureBackend for XcapCaptureBackend {
 			rect_px.width,
 			rect_px.height,
 		) {
+			#[cfg(target_os = "macos")]
+			tracing::trace!(
+				op = "capture_backend.region_stream_miss_xcap_fallback",
+				monitor_id = monitor.id,
+				rect_px = ?rect_px,
+				frame_px = ?image.dimensions(),
+				"ScreenCaptureKit region stream unavailable; fell back to xcap region capture."
+			);
+
 			return Ok(image);
 		}
 

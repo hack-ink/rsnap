@@ -19,6 +19,7 @@ name = "rsnap"
 path = "src/main.rs"
 
 [dependencies]
+block2             = { workspace = true }
 color-eyre         = { workspace = true }
 directories        = { workspace = true }
 egui               = { workspace = true }
@@ -27,6 +28,8 @@ egui-wgpu          = { workspace = true }
 egui-winit         = { workspace = true }
 global-hotkey      = { workspace = true }
 image              = { workspace = true }
+objc2              = { workspace = true }
+objc2-app-kit      = { workspace = true }
 pollster           = { workspace = true }
 rsnap-overlay      = { workspace = true }
 serde              = { workspace = true }

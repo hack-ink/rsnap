@@ -9,14 +9,32 @@ use tracing_subscriber::EnvFilter;
 
 use rsnap::settings::AppSettings;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StartupBuildInfo {
+	version: &'static str,
+	git_commit: &'static str,
+}
+
 fn main() -> Result<()> {
 	color_eyre::install()?;
 
 	let _guard = init_logging();
+	let build_info = startup_build_info();
 
-	tracing::info!("Starting rsnap.");
+	tracing::info!(
+		version = build_info.version,
+		git_commit = build_info.git_commit,
+		"Starting rsnap."
+	);
 
 	rsnap::app::run()
+}
+
+fn startup_build_info() -> StartupBuildInfo {
+	StartupBuildInfo {
+		version: env!("CARGO_PKG_VERSION"),
+		git_commit: option_env!("RSNAP_BUILD_GIT_COMMIT").unwrap_or("unknown"),
+	}
 }
 
 fn init_logging() -> Option<WorkerGuard> {
@@ -89,5 +107,18 @@ fn load_log_filter_from_settings() -> Option<EnvFilter> {
 
 			None
 		},
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::startup_build_info;
+
+	#[test]
+	fn startup_build_info_includes_version_and_git_commit() {
+		let info = startup_build_info();
+
+		assert!(!info.version.is_empty());
+		assert!(!info.git_commit.is_empty());
 	}
 }
