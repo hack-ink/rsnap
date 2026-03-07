@@ -1,5 +1,6 @@
 use std::sync::{
 	Arc, Mutex,
+	atomic::{AtomicU64, Ordering},
 	mpsc::{self, Receiver, Sender},
 };
 use std::thread::{self, JoinHandle};
@@ -11,7 +12,7 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass};
 use objc2_core_foundation::CFRetained;
-use objc2_core_media::CMSampleBuffer;
+use objc2_core_media::{CMSampleBuffer, kCMTimeZero};
 use objc2_core_video::{
 	CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
 	CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
@@ -23,7 +24,7 @@ use objc2_screen_capture_kit::{
 	SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
-use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, Rgb};
+use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb};
 
 objc2::define_class!(
 	#[unsafe(super = NSObject)]
@@ -54,6 +55,11 @@ objc2::define_class!(
 				Err(poisoned) => poisoned.into_inner(),
 			};
 			*latest = Some(image_buffer);
+			let _ = self.ivars().frame_seq.fetch_add(1, Ordering::AcqRel);
+
+			if let Some(frame_waker) = self.ivars().frame_waker.as_ref() {
+				frame_waker();
+			}
 		}
 	}
 );
@@ -70,8 +76,12 @@ pub(crate) struct MacLiveFrameStream {
 }
 impl MacLiveFrameStream {
 	pub(crate) fn new() -> Self {
+		Self::with_waker(None)
+	}
+
+	pub(crate) fn with_waker(frame_waker: Option<Arc<dyn Fn() + Send + Sync>>) -> Self {
 		let (request_tx, request_rx) = mpsc::channel();
-		let worker = thread::spawn(move || stream_worker_loop(request_rx));
+		let worker = thread::spawn(move || stream_worker_loop(request_rx, frame_waker));
 
 		Self { request_tx, worker: Some(worker) }
 	}
@@ -139,6 +149,31 @@ impl MacLiveFrameStream {
 		self.request(|reply_tx| WorkerRequest::LatestRgbaSnapshot { monitor, reply_tx }).flatten()
 	}
 
+	pub(crate) fn latest_rgba_region(
+		&mut self,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+	) -> Option<RgbaImage> {
+		self.request(|reply_tx| WorkerRequest::LatestRgbaRegion { monitor, rect_px, reply_tx })
+			.flatten()
+	}
+
+	pub(crate) fn latest_rgba_region_if_new(
+		&mut self,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		after_frame_seq: u64,
+	) -> Option<(u64, RgbaImage)> {
+		self.request(|reply_tx| WorkerRequest::LatestRgbaRegionIfNew {
+			monitor,
+			rect_px,
+			after_frame_seq,
+			reply_tx,
+		})
+		.flatten()
+		.map(|frame| (frame.frame_seq, frame.image))
+	}
+
 	fn request<T>(&self, build_request: impl FnOnce(Sender<T>) -> WorkerRequest) -> Option<T> {
 		let (reply_tx, reply_rx) = mpsc::channel();
 
@@ -158,9 +193,15 @@ impl Drop for MacLiveFrameStream {
 	}
 }
 
-#[derive(Debug, Default)]
 struct StreamOutputIvars {
 	latest: Mutex<Option<CFRetained<CVPixelBuffer>>>,
+	frame_seq: AtomicU64,
+	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+impl StreamOutputIvars {
+	fn new(frame_waker: Option<Arc<dyn Fn() + Send + Sync>>) -> Self {
+		Self { latest: Mutex::default(), frame_seq: AtomicU64::new(0), frame_waker }
+	}
 }
 
 struct StreamState {
@@ -169,9 +210,14 @@ struct StreamState {
 	output: Retained<StreamOutput>,
 }
 
+struct LatestRegionFrame {
+	frame_seq: u64,
+	image: RgbaImage,
+}
+
 impl StreamOutput {
-	fn new() -> Retained<Self> {
-		let this = Self::alloc().set_ivars(StreamOutputIvars::default());
+	fn new(frame_waker: Option<Arc<dyn Fn() + Send + Sync>>) -> Retained<Self> {
+		let this = Self::alloc().set_ivars(StreamOutputIvars::new(frame_waker));
 
 		unsafe { objc2::msg_send![super(this), init] }
 	}
@@ -181,6 +227,26 @@ impl StreamOutput {
 			Ok(guard) => guard.clone(),
 			Err(poisoned) => poisoned.into_inner().clone(),
 		}
+	}
+
+	fn latest_pixel_buffer_if_new(
+		&self,
+		after_frame_seq: u64,
+	) -> Option<(u64, CFRetained<CVPixelBuffer>)> {
+		let initial_frame_seq = self.ivars().frame_seq.load(Ordering::Acquire);
+
+		if initial_frame_seq <= after_frame_seq {
+			return None;
+		}
+
+		let pixel_buffer = self.latest_pixel_buffer()?;
+		let confirmed_frame_seq = self.ivars().frame_seq.load(Ordering::Acquire);
+
+		if confirmed_frame_seq <= after_frame_seq {
+			return None;
+		}
+
+		Some((confirmed_frame_seq, pixel_buffer))
 	}
 }
 
@@ -198,10 +264,24 @@ enum WorkerRequest {
 		monitor: MonitorRect,
 		reply_tx: Sender<Option<Arc<MonitorImageSnapshot>>>,
 	},
+	LatestRgbaRegion {
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		reply_tx: Sender<Option<RgbaImage>>,
+	},
+	LatestRgbaRegionIfNew {
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		after_frame_seq: u64,
+		reply_tx: Sender<Option<LatestRegionFrame>>,
+	},
 	Shutdown,
 }
 
-fn stream_worker_loop(request_rx: Receiver<WorkerRequest>) {
+fn stream_worker_loop(
+	request_rx: Receiver<WorkerRequest>,
+	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+) {
 	let mut state: Option<StreamState> = None;
 	let mut last_setup_attempt_at: Option<Instant> = None;
 
@@ -221,6 +301,7 @@ fn stream_worker_loop(request_rx: Receiver<WorkerRequest>) {
 					&mut last_setup_attempt_at,
 					STREAM_SETUP_BACKOFF,
 					monitor,
+					frame_waker.clone(),
 				)
 				.and_then(|_| {
 					let stream_state = state.as_ref()?;
@@ -244,6 +325,7 @@ fn stream_worker_loop(request_rx: Receiver<WorkerRequest>) {
 					&mut last_setup_attempt_at,
 					STREAM_SETUP_BACKOFF,
 					monitor,
+					frame_waker.clone(),
 				)
 				.and_then(|_| {
 					let stream_state = state.as_ref()?;
@@ -262,6 +344,46 @@ fn stream_worker_loop(request_rx: Receiver<WorkerRequest>) {
 				});
 				let _ = reply_tx.send(snapshot);
 			},
+			WorkerRequest::LatestRgbaRegion { monitor, rect_px, reply_tx } => {
+				let image = ensure_stream(
+					&mut state,
+					&mut last_setup_attempt_at,
+					STREAM_SETUP_BACKOFF,
+					monitor,
+					frame_waker.clone(),
+				)
+				.and_then(|_| {
+					let stream_state = state.as_ref()?;
+
+					stream_state.output.latest_pixel_buffer().and_then(|pixel_buffer| {
+						rgba_region_from_pixel_buffer(&pixel_buffer, rect_px)
+					})
+				});
+				let _ = reply_tx.send(image);
+			},
+			WorkerRequest::LatestRgbaRegionIfNew {
+				monitor,
+				rect_px,
+				after_frame_seq,
+				reply_tx,
+			} => {
+				let image = ensure_stream(
+					&mut state,
+					&mut last_setup_attempt_at,
+					STREAM_SETUP_BACKOFF,
+					monitor,
+					frame_waker.clone(),
+				)
+				.and_then(|_| {
+					let stream_state = state.as_ref()?;
+					let (frame_seq, pixel_buffer) =
+						stream_state.output.latest_pixel_buffer_if_new(after_frame_seq)?;
+					let image = rgba_region_from_pixel_buffer(&pixel_buffer, rect_px)?;
+
+					Some(LatestRegionFrame { frame_seq, image })
+				});
+				let _ = reply_tx.send(image);
+			},
 			WorkerRequest::Shutdown => break,
 		}
 	}
@@ -274,6 +396,7 @@ fn ensure_stream(
 	last_setup_attempt_at: &mut Option<Instant>,
 	setup_backoff: Duration,
 	monitor: MonitorRect,
+	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> Option<()> {
 	if state.as_ref().is_some_and(|current| current.monitor_id == monitor.id) {
 		return Some(());
@@ -289,7 +412,7 @@ fn ensure_stream(
 
 	teardown_stream(state);
 
-	*state = Some(setup_stream_for_monitor(monitor)?);
+	*state = Some(setup_stream_for_monitor(monitor, frame_waker)?);
 
 	Some(())
 }
@@ -303,7 +426,10 @@ fn teardown_stream(state: &mut Option<StreamState>) {
 	unsafe { state.stream.stopCaptureWithCompletionHandler(Some(&stop_block)) };
 }
 
-fn setup_stream_for_monitor(monitor: MonitorRect) -> Option<StreamState> {
+fn setup_stream_for_monitor(
+	monitor: MonitorRect,
+	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+) -> Option<StreamState> {
 	let content = get_shareable_content().ok()?;
 	let display = find_display(&content, monitor.id)?;
 	let excluded_windows: Retained<NSArray<SCWindow>> = NSArray::new();
@@ -318,7 +444,7 @@ fn setup_stream_for_monitor(monitor: MonitorRect) -> Option<StreamState> {
 	let stream = unsafe {
 		SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), &filter, &config, None)
 	};
-	let output = StreamOutput::new();
+	let output = StreamOutput::new(frame_waker);
 	let output_proto = ProtocolObject::from_ref(&*output);
 
 	if unsafe {
@@ -442,6 +568,7 @@ fn build_stream_config_for_monitor(monitor: MonitorRect) -> Retained<SCStreamCon
 	let bgra = u32::from_be_bytes(*b"BGRA");
 
 	unsafe { config.setPixelFormat(bgra) };
+	unsafe { config.setMinimumFrameInterval(kCMTimeZero) };
 	// Keep queue shallow while preserving enough buffering for rapid cursor updates.
 	unsafe { config.setQueueDepth(3) };
 
@@ -571,6 +698,59 @@ fn rgba_image_from_pixel_buffer(
 
 			for x in 0..out_w {
 				let idx = x * 4;
+				let b = row.get(idx).copied().unwrap_or(0);
+				let g = row.get(idx + 1).copied().unwrap_or(0);
+				let r = row.get(idx + 2).copied().unwrap_or(0);
+				let a = row.get(idx + 3).copied().unwrap_or(255);
+
+				out.put_pixel(x as u32, y as u32, image::Rgba([r, g, b, a]));
+			}
+		}
+
+		Some(out)
+	})();
+	let _ =
+		unsafe { CVPixelBufferUnlockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
+
+	out
+}
+
+fn rgba_region_from_pixel_buffer(
+	pixel_buffer: &CFRetained<CVPixelBuffer>,
+	rect_px: RectPoints,
+) -> Option<RgbaImage> {
+	let (buffer_width_px, buffer_height_px) = pixel_buffer_size_px(pixel_buffer)?;
+	let width_px = rect_px.width.max(1).min(buffer_width_px.max(1));
+	let height_px = rect_px.height.max(1).min(buffer_height_px.max(1));
+	let x_px = rect_px.x.min(buffer_width_px.saturating_sub(width_px));
+	let y_px = rect_px.y.min(buffer_height_px.saturating_sub(height_px));
+	let lock_result =
+		unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
+
+	if lock_result != kCVReturnSuccess {
+		return None;
+	}
+
+	let out = (|| {
+		let base = CVPixelBufferGetBaseAddress(pixel_buffer) as *const u8;
+
+		if base.is_null() {
+			return None;
+		}
+
+		let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
+		let mut out = RgbaImage::new(width_px.max(1), height_px.max(1));
+		let out_w = out.width() as usize;
+		let out_h = out.height() as usize;
+		let src_x = x_px as usize;
+		let src_y = y_px as usize;
+
+		for y in 0..out_h {
+			let row_offset = (src_y + y).saturating_mul(bytes_per_row);
+			let row = unsafe { std::slice::from_raw_parts(base.add(row_offset), bytes_per_row) };
+
+			for x in 0..out_w {
+				let idx = (src_x + x).saturating_mul(4);
 				let b = row.get(idx).copied().unwrap_or(0);
 				let g = row.get(idx + 1).copied().unwrap_or(0);
 				let r = row.get(idx + 2).copied().unwrap_or(0);

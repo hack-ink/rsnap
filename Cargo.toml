@@ -26,6 +26,7 @@ global-hotkey            = { version = "0.7", features = ["tracing"] }
 image                    = { version = "0.25", default-features = false, features = ["png"] }
 objc                     = { version = "0.2" }
 objc2                    = { version = "0.6.4" }
+objc2-app-kit            = { version = "0.3.2", features = ["NSEvent", "block2"] }
 objc2-core-foundation    = { version = "0.3.2" }
 objc2-core-graphics      = { version = "0.3.2" }
 objc2-core-media         = { version = "0.3.2" }
