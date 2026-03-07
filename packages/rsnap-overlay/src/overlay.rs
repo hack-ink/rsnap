@@ -4308,7 +4308,8 @@ impl OverlaySession {
 			return;
 		}
 		if !self.scroll_capture_is_available() {
-			self.state.set_error(String::from("Long capture requires a dragged region selection."));
+			self.state
+				.set_error(String::from("Scroll capture requires a dragged region selection."));
 			self.request_redraw_all();
 
 			return;
@@ -4324,7 +4325,8 @@ impl OverlaySession {
 		let Some(base_frame) =
 			self.cropped_monitor_frozen_region_image(monitor, capture_rect_pixels)
 		else {
-			self.state.set_error(String::from("Long capture could not read the selected region."));
+			self.state
+				.set_error(String::from("Scroll capture could not read the selected region."));
 			self.request_redraw_all();
 
 			return;
