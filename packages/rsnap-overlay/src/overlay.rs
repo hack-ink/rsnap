@@ -48,7 +48,9 @@ use winit::{
 	window::{Theme, WindowId, WindowLevel},
 };
 
-use crate::scroll_capture::{ScrollObserveOutcome, ScrollSession};
+#[cfg(target_os = "macos")]
+use crate::live_frame_stream_macos::MacLiveFrameStream;
+use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 use crate::state::LiveCursorSample;
 use crate::{
 	state::{
@@ -63,6 +65,9 @@ type CFTypeRef = *const c_void;
 
 #[cfg(target_os = "macos")]
 type CGEventRef = *mut c_void;
+
+#[cfg(target_os = "macos")]
+type ExternalScrollInputSnapshot = (u64, f64, f64, f64, bool, bool);
 
 #[cfg(target_os = "macos")]
 const KCG_HID_EVENT_TAP: u32 = 0;
@@ -99,6 +104,7 @@ const SLOW_OP_WARN_OUTER_POSITION: Duration = Duration::from_millis(24);
 const SLOW_OP_WARN_RENDER: Duration = Duration::from_millis(24);
 const SLOW_OP_WARN_WINDOW_EVENT: Duration = Duration::from_millis(40);
 const SLOW_OP_WARN_INTERVAL: Duration = Duration::from_secs(1);
+const SCROLL_CAPTURE_INPUT_FRESHNESS: Duration = Duration::from_millis(400);
 const HUD_PILL_INNER_MARGIN_X_POINTS: f32 = 12.0;
 const HUD_PILL_INNER_MARGIN_Y_POINTS: f32 = 8.0;
 const HUD_PILL_STROKE_WIDTH_POINTS: f32 = 1.0;
@@ -135,7 +141,10 @@ const WINDOW_CAPTURE_MATTE_DARK_RGBA: image::Rgba<u8> = image::Rgba([24, 24, 24,
 const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
 const SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS: f64 = 360.0;
 const SCROLL_PREVIEW_WINDOW_MARGIN_POINTS: i32 = 16;
-const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(120);
+#[cfg(target_os = "macos")]
+const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_nanos(8_333_333);
+#[cfg(not(target_os = "macos"))]
+const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
 const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
 #[cfg(target_os = "macos")]
 const KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE: u32 = 0;
@@ -257,7 +266,7 @@ impl FrozenToolbarTool {
 			Self::Mosaic => "Mosaic",
 			Self::Undo => "Undo",
 			Self::Redo => "Redo",
-			Self::Scroll => "Scroll",
+			Self::Scroll => "Scroll Capture ↓",
 			Self::Copy => "Copy",
 			Self::Save => "Save",
 		}
@@ -271,7 +280,7 @@ impl FrozenToolbarTool {
 			Self::Mosaic => regular::CHECKERBOARD,
 			Self::Undo => regular::ARROW_COUNTER_CLOCKWISE,
 			Self::Redo => regular::ARROW_CLOCKWISE,
-			Self::Scroll => regular::ARROWS_DOWN_UP,
+			Self::Scroll => "↓",
 			Self::Copy => regular::COPY,
 			Self::Save => regular::FLOPPY_DISK,
 		}
@@ -450,6 +459,8 @@ pub struct OverlaySession {
 	loupe_window_visible: bool,
 	loupe_window_warmup_redraws_remaining: u8,
 	scroll_capture: ScrollCaptureState,
+	#[cfg(target_os = "macos")]
+	scroll_frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	xcap_monitors: HashMap<u32, xcap::Monitor>,
 }
 impl OverlaySession {
@@ -550,7 +561,127 @@ impl OverlaySession {
 			loupe_window_visible: false,
 			loupe_window_warmup_redraws_remaining: 0,
 			scroll_capture: ScrollCaptureState::default(),
+			#[cfg(target_os = "macos")]
+			scroll_frame_waker: None,
 			xcap_monitors: HashMap::new(),
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	pub fn set_scroll_frame_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+		self.scroll_frame_waker = Some(waker);
+	}
+
+	#[cfg(target_os = "macos")]
+	pub fn set_external_scroll_input_snapshot_reader(
+		&mut self,
+		reader: Arc<dyn Fn() -> Option<ExternalScrollInputSnapshot> + Send + Sync>,
+	) {
+		self.scroll_capture.external_scroll_input_snapshot_reader = Some(reader);
+	}
+
+	pub fn handle_external_scroll_input_delta_y(
+		&mut self,
+		global_x: f64,
+		global_y: f64,
+		delta_y: f64,
+		gesture_active: bool,
+		gesture_ended: bool,
+	) {
+		if !self.scroll_capture.active || self.scroll_capture.paused {
+			tracing::debug!(
+				op = "scroll_capture.input_filtered",
+				reason = "inactive_or_paused",
+				active = self.scroll_capture.active,
+				paused = self.scroll_capture.paused,
+				global_x,
+				global_y,
+				delta_y,
+				gesture_active,
+				gesture_ended,
+				"Ignored external scroll input before scroll-capture direction update."
+			);
+
+			return;
+		}
+
+		let Some(scroll_monitor) = self.scroll_capture.monitor else {
+			tracing::debug!(
+				op = "scroll_capture.input_filtered",
+				reason = "missing_monitor",
+				global_x,
+				global_y,
+				delta_y,
+				gesture_active,
+				gesture_ended,
+				"Ignored external scroll input because scroll capture lost its monitor."
+			);
+
+			return;
+		};
+		let Some(capture_rect) = self.scroll_capture.capture_rect_pixels else {
+			tracing::debug!(
+				op = "scroll_capture.input_filtered",
+				reason = "missing_capture_rect",
+				monitor_id = scroll_monitor.id,
+				global_x,
+				global_y,
+				delta_y,
+				gesture_active,
+				gesture_ended,
+				"Ignored external scroll input because scroll capture lost its region."
+			);
+
+			return;
+		};
+		let cursor = GlobalPoint::new(global_x.round() as i32, global_y.round() as i32);
+		let Some(cursor_pixels) = scroll_monitor.local_u32_pixels(cursor) else {
+			tracing::debug!(
+				op = "scroll_capture.input_filtered",
+				reason = "off_monitor",
+				monitor_id = scroll_monitor.id,
+				monitor_origin = ?scroll_monitor.origin,
+				monitor_width_points = scroll_monitor.width,
+				monitor_height_points = scroll_monitor.height,
+				global_x,
+				global_y,
+				delta_y,
+				gesture_active,
+				gesture_ended,
+				"Ignored external scroll input because its global cursor was outside the capture monitor."
+			);
+
+			return;
+		};
+
+		if !capture_rect.contains(cursor_pixels) {
+			tracing::debug!(
+				op = "scroll_capture.input_filtered",
+				reason = "outside_capture_rect",
+				monitor_id = scroll_monitor.id,
+				capture_rect_px = ?capture_rect,
+				cursor_px = ?cursor_pixels,
+				global_x,
+				global_y,
+				delta_y,
+				gesture_active,
+				gesture_ended,
+				"Ignored external scroll input because its cursor was outside the scroll-capture region."
+			);
+
+			return;
+		}
+
+		if let Some(direction) = Self::scroll_capture_direction_from_delta_y(delta_y) {
+			self.record_scroll_capture_input_direction(
+				direction,
+				"external-monitor",
+				gesture_active,
+			);
+		}
+
+		if gesture_ended {
+			self.finish_scroll_capture_input_direction("external-monitor");
 		}
 	}
 
@@ -842,7 +973,17 @@ impl OverlaySession {
 		self.toolbar_pointer_local = None;
 		self.loupe_window_visible = false;
 		self.loupe_window_warmup_redraws_remaining = 0;
+
+		#[cfg(target_os = "macos")]
+		let external_scroll_input_snapshot_reader =
+			self.scroll_capture.external_scroll_input_snapshot_reader.clone();
+
 		self.scroll_capture = ScrollCaptureState::default();
+		#[cfg(target_os = "macos")]
+		{
+			self.scroll_capture.external_scroll_input_snapshot_reader =
+				external_scroll_input_snapshot_reader;
+		}
 
 		self.xcap_monitors.clear();
 	}
@@ -1763,6 +1904,14 @@ impl OverlaySession {
 		if !self.scroll_capture.active || self.scroll_capture.paused {
 			return;
 		}
+
+		#[cfg(target_os = "macos")]
+		{
+			if self.try_consume_scroll_stream_frame() {
+				return;
+			}
+		}
+
 		if self.scroll_capture.inflight_request_id.is_some() {
 			return;
 		}
@@ -1797,28 +1946,11 @@ impl OverlaySession {
 
 		match worker.request_capture_monitor_region(monitor, capture_rect, request_id) {
 			Ok(()) => {
-				tracing::debug!(
-					op = "scroll_capture.request_region",
-					request_id,
-					monitor_id = monitor.id,
-					rect_px = ?capture_rect,
-					next_sample_interval_ms = SCROLL_CAPTURE_SAMPLE_INTERVAL.as_millis(),
-					"Queued scroll capture region request."
-				);
-
 				self.scroll_capture.next_request_id = request_id;
 				self.scroll_capture.inflight_request_id = Some(request_id);
 				self.scroll_capture.next_sample_at = Some(now + SCROLL_CAPTURE_SAMPLE_INTERVAL);
 			},
 			Err(WorkerRequestSendError::Full) => {
-				tracing::debug!(
-					op = "scroll_capture.request_region_full",
-					request_id,
-					monitor_id = monitor.id,
-					rect_px = ?capture_rect,
-					"Scroll capture region request queue full; backing off."
-				);
-
 				self.scroll_capture.next_sample_at =
 					Some(now + SCROLL_CAPTURE_SAMPLE_INTERVAL.saturating_mul(2));
 			},
@@ -1826,6 +1958,93 @@ impl OverlaySession {
 				self.scroll_capture_set_error("Scroll capture worker disconnected.");
 			},
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn try_consume_scroll_stream_frame(&mut self) -> bool {
+		self.sync_external_scroll_input_snapshot();
+
+		let Some(monitor) = self.scroll_capture.monitor else {
+			self.scroll_capture_set_error("Scroll capture lost its monitor.");
+
+			return true;
+		};
+		let Some(capture_rect) = self.scroll_capture.capture_rect_pixels else {
+			self.scroll_capture_set_error("Scroll capture lost its region.");
+
+			return true;
+		};
+		let Some(live_stream) = self.scroll_capture.live_stream.as_mut() else {
+			return false;
+		};
+		let last_frame_seq = self.scroll_capture.last_stream_frame_seq;
+		let Some((frame_seq, image)) =
+			live_stream.latest_rgba_region_if_new(monitor, capture_rect, last_frame_seq)
+		else {
+			return true;
+		};
+
+		tracing::debug!(
+			op = "scroll_capture.stream_frame",
+			monitor_id = monitor.id,
+			rect_px = ?capture_rect,
+			frame_seq,
+			input_direction = ?self.scroll_capture.input_direction,
+			frame_px = ?image.dimensions(),
+			"Consumed latest scroll-capture stream frame."
+		);
+
+		self.scroll_capture.last_stream_frame_seq = frame_seq;
+
+		self.handle_scroll_capture_frame(image);
+
+		true
+	}
+
+	#[cfg(target_os = "macos")]
+	pub fn handle_scroll_stream_frame_ready(&mut self) -> OverlayControl {
+		if self.scroll_capture.active && !self.scroll_capture.paused {
+			let _ = self.try_consume_scroll_stream_frame();
+		}
+
+		OverlayControl::Continue
+	}
+
+	#[cfg(target_os = "macos")]
+	fn sync_external_scroll_input_snapshot(&mut self) {
+		let Some(reader) = self.scroll_capture.external_scroll_input_snapshot_reader.clone() else {
+			return;
+		};
+		let Some((seq, global_x, global_y, delta_y, gesture_active, gesture_ended)) = reader()
+		else {
+			return;
+		};
+
+		if seq == 0 || seq == self.scroll_capture.last_external_scroll_input_seq {
+			return;
+		}
+
+		self.scroll_capture.last_external_scroll_input_seq = seq;
+
+		tracing::debug!(
+			op = "scroll_capture.snapshot_consumed",
+			snapshot_seq = seq,
+			global_x,
+			global_y,
+			delta_y,
+			gesture_active,
+			gesture_ended,
+			stream_frame_seq = self.scroll_capture.last_stream_frame_seq,
+			"Consumed a fresh shared native scroll-input snapshot before evaluating a scroll-capture frame."
+		);
+
+		self.handle_external_scroll_input_delta_y(
+			global_x,
+			global_y,
+			delta_y,
+			gesture_active,
+			gesture_ended,
+		);
 	}
 
 	fn handle_captured_scroll_region(
@@ -1848,49 +2067,63 @@ impl OverlaySession {
 			return;
 		}
 
-		tracing::debug!(
-			op = "scroll_capture.region_response",
-			request_id,
-			monitor_id = monitor.id,
-			rect_px = ?rect_px,
-			frame_px = ?image.dimensions(),
-			"Received scroll capture region response."
-		);
-
 		self.scroll_capture.inflight_request_id = None;
 
 		self.handle_scroll_capture_frame(image);
 	}
 
 	fn handle_scroll_capture_frame(&mut self, frame: RgbaImage) {
+		if !self.scroll_capture_input_allows_growth() {
+			tracing::debug!(
+				op = "scroll_capture.frame_skipped_direction_gate",
+				input_direction = ?self.scroll_capture.input_direction,
+				input_gesture_active = self.scroll_capture.input_gesture_active,
+				input_direction_age_ms = self
+					.scroll_capture
+					.input_direction_at
+					.map(|instant| instant.elapsed().as_millis()),
+				stream_frame_seq = self.scroll_capture.last_stream_frame_seq,
+				frame_px = ?frame.dimensions(),
+				"Skipped scroll-capture frame because downward growth is not currently authorized."
+			);
+
+			return;
+		}
+
 		let Some(session) = self.scroll_capture.session.as_mut() else {
 			self.scroll_capture_set_error("Scroll capture session is unavailable.");
 
 			return;
 		};
 
-		match session.observe_sample(frame) {
-			Ok(ScrollObserveOutcome::NoChange) => {
-				tracing::trace!(
-					op = "scroll_capture.sample_no_change",
-					"Scroll sample produced no visible change."
-				);
-			},
-			Ok(ScrollObserveOutcome::PreviewUpdated) => {
-				tracing::debug!(
-					op = "scroll_capture.preview_updated",
+		tracing::debug!(
+			op = "scroll_capture.frame_evaluating",
+			input_direction = ?self.scroll_capture.input_direction,
+			input_gesture_active = self.scroll_capture.input_gesture_active,
+			stream_frame_seq = self.scroll_capture.last_stream_frame_seq,
+			frame_px = ?frame.dimensions(),
+			"Evaluating scroll-capture frame for downward growth."
+		);
+
+		match session.observe_downward_sample(frame) {
+			Ok(ScrollObserveOutcome::NoChange | ScrollObserveOutcome::PreviewUpdated) => {},
+			Ok(ScrollObserveOutcome::UnsupportedDirection { direction }) => {
+				tracing::info!(
+					op = "scroll_capture.unsupported_direction",
+					direction = ?direction,
 					export_px = ?session.export_image().dimensions(),
-					"Scroll sample changed live frame without changing stitched output."
+					"Scroll-capture sample moved in an unsupported direction."
 				);
 			},
-			Ok(ScrollObserveOutcome::Appended { appended_rows }) => {
+			Ok(ScrollObserveOutcome::Committed { direction, growth_rows }) => {
 				let export_size = session.export_image().dimensions();
 
 				tracing::info!(
 					op = "scroll_capture.appended",
-					appended_rows,
+					direction = ?direction,
+					growth_rows,
 					export_px = ?export_size,
-					"Scroll sample appended to stitched image."
+					"Scroll sample committed stitched growth."
 				);
 
 				self.sync_scroll_preview_segments();
@@ -1902,15 +2135,7 @@ impl OverlaySession {
 
 	fn sync_scroll_preview_segments(&mut self) {
 		if let Some(preview) = self.scroll_preview_window.as_mut() {
-			let image = self.scroll_capture.session.as_ref().map(ScrollSession::export_image);
-
-			if let Some(image) = image {
-				tracing::debug!(
-					op = "scroll_capture.preview_sync",
-					preview_px = ?image.dimensions(),
-					"Syncing scroll preview tile."
-				);
-			}
+			let image = self.scroll_capture.session.as_ref().map(ScrollSession::preview_image);
 
 			preview.sync_image(image);
 			preview.window.request_redraw();
@@ -3865,21 +4090,22 @@ impl OverlaySession {
 			return OverlayControl::Continue;
 		}
 
+		if let Some(direction) = Self::scroll_capture_direction_from_wheel_delta(delta) {
+			self.record_scroll_capture_input_direction(direction, "overlay-wheel", false);
+		}
+
 		let target_point = cursor;
 
 		#[cfg(target_os = "macos")]
 		{
-			if self.forward_macos_scroll_wheel_event(
+			let _ = self.forward_macos_scroll_wheel_event(
 				scroll_monitor,
 				cursor,
 				Some(cursor_pixels),
 				capture_rect,
 				target_point,
 				delta,
-			) {
-				self.scroll_capture.next_sample_at =
-					Some(Instant::now() + SCROLL_CAPTURE_SAMPLE_INTERVAL);
-			}
+			);
 		}
 		#[cfg(not(target_os = "macos"))]
 		{
@@ -4035,6 +4261,103 @@ impl OverlaySession {
 		};
 
 		normalized.clamp(-MACOS_SCROLL_PIXEL_DELTA_CLAMP, MACOS_SCROLL_PIXEL_DELTA_CLAMP)
+	}
+
+	fn scroll_capture_direction_from_wheel_delta(
+		delta: &MouseScrollDelta,
+	) -> Option<ScrollDirection> {
+		let vertical_delta = match delta {
+			MouseScrollDelta::LineDelta(_, y) => f64::from(*y),
+			MouseScrollDelta::PixelDelta(delta) => {
+				#[cfg(target_os = "macos")]
+				{
+					Self::normalize_macos_scroll_pixel_component(delta.y)
+				}
+				#[cfg(not(target_os = "macos"))]
+				{
+					delta.y
+				}
+			},
+		};
+
+		Self::scroll_capture_direction_from_delta_y(vertical_delta)
+	}
+
+	fn scroll_capture_direction_from_delta_y(vertical_delta: f64) -> Option<ScrollDirection> {
+		if vertical_delta < 0.0 {
+			Some(ScrollDirection::Down)
+		} else if vertical_delta > 0.0 {
+			Some(ScrollDirection::Up)
+		} else {
+			None
+		}
+	}
+
+	fn record_scroll_capture_input_direction(
+		&mut self,
+		direction: ScrollDirection,
+		source: &'static str,
+		gesture_active: bool,
+	) {
+		let previous_direction = self.scroll_capture.input_direction;
+
+		self.scroll_capture.input_direction = Some(direction);
+		self.scroll_capture.input_direction_at = Some(Instant::now());
+		self.scroll_capture.input_gesture_active = gesture_active;
+
+		tracing::debug!(
+			op = "scroll_capture.input_direction_updated",
+			source,
+			previous_direction = ?previous_direction,
+			next_direction = ?direction,
+			gesture_active,
+			stream_frame_seq = self.scroll_capture.last_stream_frame_seq,
+			"Updated scroll-capture input direction."
+		);
+
+		if direction == ScrollDirection::Up {
+			tracing::info!(
+				op = "scroll_capture.unsupported_direction",
+				source,
+				direction = ?direction,
+				"Scroll capture ignored an upward scroll input."
+			);
+		}
+	}
+
+	fn finish_scroll_capture_input_direction(&mut self, source: &'static str) {
+		let previous_direction = self.scroll_capture.input_direction;
+
+		if previous_direction.is_some() {
+			self.scroll_capture.input_direction_at = Some(Instant::now());
+		} else {
+			self.scroll_capture.input_direction_at = None;
+		}
+
+		self.scroll_capture.input_gesture_active = false;
+
+		tracing::debug!(
+			op = "scroll_capture.input_direction_finished",
+			source,
+			previous_direction = ?previous_direction,
+			stream_frame_seq = self.scroll_capture.last_stream_frame_seq,
+			"Finished the active scroll-capture input gesture."
+		);
+	}
+
+	fn scroll_capture_input_allows_growth(&self) -> bool {
+		if self.scroll_capture.input_direction != Some(ScrollDirection::Down) {
+			return false;
+		}
+		if self.scroll_capture.input_gesture_active {
+			return true;
+		}
+
+		let Some(input_direction_at) = self.scroll_capture.input_direction_at else {
+			return false;
+		};
+
+		input_direction_at.elapsed() <= SCROLL_CAPTURE_INPUT_FRESHNESS
 	}
 
 	fn toolbar_pointer_state(
@@ -4205,8 +4528,7 @@ impl OverlaySession {
 			return;
 		}
 		if !self.scroll_capture_is_available() {
-			self.state
-				.set_error(String::from("Scroll capture requires a dragged region selection."));
+			self.state.set_error(String::from("Long capture requires a dragged region selection."));
 			self.request_redraw_all();
 
 			return;
@@ -4222,8 +4544,7 @@ impl OverlaySession {
 		let Some(base_frame) =
 			self.cropped_monitor_frozen_region_image(monitor, capture_rect_pixels)
 		else {
-			self.state
-				.set_error(String::from("Scroll capture could not read the selected region."));
+			self.state.set_error(String::from("Long capture could not read the selected region."));
 			self.request_redraw_all();
 
 			return;
@@ -4235,12 +4556,29 @@ impl OverlaySession {
 			paused: false,
 			monitor: Some(monitor),
 			capture_rect_pixels: Some(capture_rect_pixels),
+			input_direction: None,
+			input_direction_at: None,
+			input_gesture_active: false,
+			#[cfg(target_os = "macos")]
+			external_scroll_input_snapshot_reader: self
+				.scroll_capture
+				.external_scroll_input_snapshot_reader
+				.clone(),
+			#[cfg(target_os = "macos")]
+			last_external_scroll_input_seq: 0,
 			#[cfg(target_os = "macos")]
 			pixel_delta_residual: MacOSScrollPixelResidual::default(),
+			#[cfg(target_os = "macos")]
+			live_stream: Some(MacLiveFrameStream::with_waker(self.scroll_frame_waker.clone())),
+			#[cfg(target_os = "macos")]
+			last_stream_frame_seq: 0,
+			#[cfg(not(target_os = "macos"))]
 			next_sample_at: Some(Instant::now() + SCROLL_CAPTURE_SAMPLE_INTERVAL),
+			#[cfg(target_os = "macos")]
+			next_sample_at: None,
 			next_request_id: 0,
 			inflight_request_id: None,
-			session: Some(match ScrollSession::new(base_frame) {
+			session: Some(match ScrollSession::new(base_frame, SCROLL_CAPTURE_PREVIEW_WIDTH_PX) {
 				Ok(session) => session,
 				Err(err) => {
 					self.state.set_error(format!("{err:#}"));
@@ -4261,7 +4599,7 @@ impl OverlaySession {
 			capture_rect_points = ?capture_rect_points,
 			capture_rect_pixels = ?capture_rect_pixels,
 			base_frame_px = ?base_frame_dimensions,
-			"Entered scroll capture mode."
+			"Entered scroll-capture mode."
 		);
 
 		self.sync_scroll_toolbar_state();
@@ -4276,6 +4614,11 @@ impl OverlaySession {
 			preview.window.request_redraw();
 		}
 
+		#[cfg(target_os = "macos")]
+		{
+			let _ = self.try_consume_scroll_stream_frame();
+		}
+
 		self.request_redraw_for_monitor(monitor);
 	}
 
@@ -4287,8 +4630,15 @@ impl OverlaySession {
 		self.scroll_capture.paused = !self.scroll_capture.paused;
 
 		if !self.scroll_capture.paused {
-			self.scroll_capture.next_sample_at =
-				Some(Instant::now() + SCROLL_CAPTURE_SAMPLE_INTERVAL);
+			#[cfg(target_os = "macos")]
+			{
+				let _ = self.try_consume_scroll_stream_frame();
+			}
+			#[cfg(not(target_os = "macos"))]
+			{
+				self.scroll_capture.next_sample_at =
+					Some(Instant::now() + SCROLL_CAPTURE_SAMPLE_INTERVAL);
+			}
 		}
 
 		self.request_redraw_scroll_preview_window();
@@ -4308,7 +4658,15 @@ impl OverlaySession {
 		}
 
 		self.scroll_capture.inflight_request_id = None;
-		self.scroll_capture.next_sample_at = Some(Instant::now() + SCROLL_CAPTURE_SAMPLE_INTERVAL);
+		#[cfg(target_os = "macos")]
+		{
+			let _ = self.try_consume_scroll_stream_frame();
+		}
+		#[cfg(not(target_os = "macos"))]
+		{
+			self.scroll_capture.next_sample_at =
+				Some(Instant::now() + SCROLL_CAPTURE_SAMPLE_INTERVAL);
+		}
 
 		self.sync_scroll_preview_segments();
 	}
@@ -5548,8 +5906,20 @@ struct ScrollCaptureState {
 	paused: bool,
 	monitor: Option<MonitorRect>,
 	capture_rect_pixels: Option<RectPoints>,
+	input_direction: Option<ScrollDirection>,
+	input_direction_at: Option<Instant>,
+	input_gesture_active: bool,
+	#[cfg(target_os = "macos")]
+	external_scroll_input_snapshot_reader:
+		Option<Arc<dyn Fn() -> Option<ExternalScrollInputSnapshot> + Send + Sync>>,
+	#[cfg(target_os = "macos")]
+	last_external_scroll_input_seq: u64,
 	#[cfg(target_os = "macos")]
 	pixel_delta_residual: MacOSScrollPixelResidual,
+	#[cfg(target_os = "macos")]
+	live_stream: Option<MacLiveFrameStream>,
+	#[cfg(target_os = "macos")]
+	last_stream_frame_seq: u64,
 	next_sample_at: Option<Instant>,
 	next_request_id: u64,
 	inflight_request_id: Option<u64>,
@@ -9879,9 +10249,14 @@ mod tests {
 	};
 	#[cfg(target_os = "macos")]
 	use crate::overlay::{KCG_SCROLL_EVENT_UNIT_PIXEL, MacOSScrollPixelResidual};
+	use crate::scroll_capture::ScrollDirection;
 	use crate::state::{GlobalPoint, MonitorRect, RectPoints};
 	#[cfg(target_os = "macos")]
-	use winit::{dpi::PhysicalPosition, event::MouseScrollDelta};
+	use std::sync::Arc;
+	use std::time::Instant;
+	#[cfg(target_os = "macos")]
+	use winit::dpi::PhysicalPosition;
+	use winit::event::MouseScrollDelta;
 
 	#[test]
 	fn frozen_toolbar_default_position_fits_below_capture_rect() {
@@ -10024,9 +10399,201 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	#[test]
+	fn reset_for_start_preserves_external_scroll_input_snapshot_reader() {
+		let mut session = OverlaySession::default();
+
+		session.set_external_scroll_input_snapshot_reader(Arc::new(|| {
+			Some((1, 10.0, 20.0, -4.0, true, false))
+		}));
+		session.reset_for_start();
+
+		assert!(session.scroll_capture.external_scroll_input_snapshot_reader.is_some());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
 	fn wrapped_pixel_delta_normalizes_back_to_signed_values() {
 		assert_eq!(OverlaySession::normalize_macos_scroll_pixel_component(4_294_967_294.0), -2.0);
 		assert_eq!(OverlaySession::normalize_macos_scroll_pixel_component(4_294_967_290.0), -6.0);
+	}
+
+	#[test]
+	fn negative_vertical_wheel_delta_maps_to_downward_scroll_capture() {
+		assert_eq!(
+			OverlaySession::scroll_capture_direction_from_wheel_delta(
+				&MouseScrollDelta::LineDelta(0.0, -1.0)
+			),
+			Some(ScrollDirection::Down)
+		);
+	}
+
+	#[test]
+	fn positive_vertical_wheel_delta_maps_to_upward_scroll_capture() {
+		assert_eq!(
+			OverlaySession::scroll_capture_direction_from_wheel_delta(
+				&MouseScrollDelta::LineDelta(0.0, 1.0)
+			),
+			Some(ScrollDirection::Up)
+		);
+	}
+
+	#[test]
+	fn external_scroll_input_inside_capture_rect_updates_direction() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		};
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
+
+		session.handle_external_scroll_input_delta_y(150.0, 160.0, -4.0, true, false);
+
+		assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Down));
+		assert!(session.scroll_capture.input_direction_at.is_some());
+		assert!(session.scroll_capture.input_gesture_active);
+	}
+
+	#[test]
+	fn external_scroll_input_outside_capture_rect_is_ignored() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		};
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
+
+		session.handle_external_scroll_input_delta_y(50.0, 50.0, -4.0, true, false);
+
+		assert_eq!(session.scroll_capture.input_direction, None);
+		assert!(session.scroll_capture.input_direction_at.is_none());
+	}
+
+	#[test]
+	fn external_scroll_input_terminal_event_preserves_last_direction_for_freshness() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		};
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
+		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+		session.scroll_capture.input_direction_at = Some(Instant::now());
+		session.scroll_capture.input_gesture_active = true;
+
+		session.handle_external_scroll_input_delta_y(150.0, 160.0, 0.0, false, true);
+
+		assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Down));
+		assert!(session.scroll_capture.input_direction_at.is_some());
+		assert!(!session.scroll_capture.input_gesture_active);
+		assert!(session.scroll_capture_input_allows_growth());
+	}
+
+	#[test]
+	fn terminal_downward_scroll_event_sets_direction_before_finishing() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		};
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
+
+		session.handle_external_scroll_input_delta_y(150.0, 160.0, -4.0, false, true);
+
+		assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Down));
+		assert!(session.scroll_capture.input_direction_at.is_some());
+		assert!(!session.scroll_capture.input_gesture_active);
+		assert!(session.scroll_capture_input_allows_growth());
+	}
+
+	#[test]
+	fn terminal_upward_scroll_event_does_not_allow_growth() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		};
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
+
+		session.handle_external_scroll_input_delta_y(150.0, 160.0, 4.0, false, true);
+
+		assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Up));
+		assert!(session.scroll_capture.input_direction_at.is_some());
+		assert!(!session.scroll_capture.input_gesture_active);
+		assert!(!session.scroll_capture_input_allows_growth());
+	}
+
+	#[test]
+	fn missing_scroll_direction_does_not_allow_growth() {
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+
+		assert!(!session.scroll_capture_input_allows_growth());
+	}
+
+	#[test]
+	fn fresh_downward_direction_allows_growth_without_active_gesture() {
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+		session.scroll_capture.input_direction_at = Some(Instant::now());
+		session.scroll_capture.input_gesture_active = false;
+
+		assert!(session.scroll_capture_input_allows_growth());
+	}
+
+	#[test]
+	fn upward_direction_never_allows_growth() {
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+		session.scroll_capture.input_direction = Some(ScrollDirection::Up);
+		session.scroll_capture.input_direction_at = Some(Instant::now());
+		session.scroll_capture.input_gesture_active = true;
+
+		assert!(!session.scroll_capture_input_allows_growth());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn positive_pixel_delta_maps_to_upward_scroll_capture() {
+		assert_eq!(
+			OverlaySession::scroll_capture_direction_from_wheel_delta(
+				&MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 2.0))
+			),
+			Some(ScrollDirection::Up)
+		);
 	}
 
 	#[cfg(target_os = "macos")]
