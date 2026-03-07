@@ -1215,24 +1215,13 @@ fn send_overlay_scroll_input(context: &ScrollInputTapContext, cg_event: CGEventR
 	let Some(decoded) = decode_scroll_input_from_cg_event(cg_event) else {
 		return;
 	};
-	let snapshot = context.shared_state.record(
+
+	context.shared_state.record(
 		decoded.delta_y,
 		decoded.global_x,
 		decoded.global_y,
 		decoded.gesture_active,
 		decoded.gesture_ended,
-	);
-
-	tracing::info!(
-		op = "scroll_input.tap_recorded",
-		seq = snapshot.seq,
-		raw_delta_y = decoded.raw_delta_y,
-		effective_delta_y = snapshot.delta_y,
-		global_x = snapshot.global_x,
-		global_y = snapshot.global_y,
-		gesture_active = snapshot.gesture_active,
-		gesture_ended = snapshot.gesture_ended,
-		"Recorded native scroll input for scroll capture."
 	);
 }
 
