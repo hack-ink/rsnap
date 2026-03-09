@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+use std::process;
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicU64, Ordering},
@@ -10,7 +12,7 @@ use block2::RcBlock;
 use image::RgbaImage;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2::{AnyThread, DefinedClass};
+use objc2::{AnyThread, DefinedClass, Message};
 use objc2_core_foundation::CFRetained;
 use objc2_core_media::{CMSampleBuffer, kCMTimeZero};
 use objc2_core_video::{
@@ -20,8 +22,8 @@ use objc2_core_video::{
 };
 use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
 use objc2_screen_capture_kit::{
-	SCContentFilter, SCDisplay, SCShareableContent, SCStream, SCStreamConfiguration,
-	SCStreamOutput, SCStreamOutputType, SCWindow,
+	SCContentFilter, SCDisplay, SCRunningApplication, SCShareableContent, SCStream,
+	SCStreamConfiguration, SCStreamDelegate, SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
 use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb};
@@ -33,6 +35,20 @@ objc2::define_class!(
 	struct StreamOutput;
 
 	unsafe impl NSObjectProtocol for StreamOutput {}
+
+	unsafe impl SCStreamDelegate for StreamOutput {
+		#[unsafe(method(stream:didStopWithError:))]
+		fn stream_did_stop_with_error(&self, _stream: &SCStream, error: &NSError) {
+			tracing::info!(
+				op = "live_frame_stream.stopped_with_error",
+				monitor_id = self.ivars().monitor_id,
+				error_code = error.code(),
+				error_domain = %error.domain(),
+				error_description = %error.localizedDescription(),
+				"ScreenCaptureKit stopped delivering frames for the live stream."
+			);
+		}
+	}
 
 	unsafe impl SCStreamOutput for StreamOutput {
 		#[unsafe(method(stream:didOutputSampleBuffer:ofType:))]
@@ -49,13 +65,22 @@ objc2::define_class!(
 			let Some(image_buffer) = (unsafe { sample_buffer.image_buffer() }) else {
 				return;
 			};
-
-			let mut latest = match self.ivars().latest.lock() {
+			let frame_seq =
+				self.ivars().frame_seq_counter.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+			let mut frames = match self.ivars().frames.lock() {
 				Ok(guard) => guard,
 				Err(poisoned) => poisoned.into_inner(),
 			};
-			*latest = Some(image_buffer);
-			let _ = self.ivars().frame_seq.fetch_add(1, Ordering::AcqRel);
+
+			if frames.len() >= STREAM_FRAME_QUEUE_CAPACITY {
+				frames.pop_front();
+			}
+			frames.push_back(QueuedPixelBufferFrame {
+				frame_seq,
+				captured_at: Instant::now(),
+				pixel_buffer: image_buffer,
+			});
+			drop(frames);
 
 			if let Some(frame_waker) = self.ivars().frame_waker.as_ref() {
 				frame_waker();
@@ -66,9 +91,53 @@ objc2::define_class!(
 
 const STREAM_RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const STREAM_SETUP_BACKOFF: Duration = Duration::from_millis(300);
+const STREAM_FRAME_QUEUE_CAPACITY: usize = 8;
+const STREAM_REGION_FRAME_MAX_AGE: Duration = Duration::from_millis(90);
+const STREAM_REGION_FRAME_REFRESH_TIMEOUT: Duration = Duration::from_millis(180);
+const STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(4);
 const STREAM_ERROR_TIMEOUT_CODE: isize = 1;
 const STREAM_ERROR_NULL_CONTENT_CODE: isize = 2;
 const STREAM_ERROR_RETAIN_FAILED_CODE: isize = 3;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamFilterMode {
+	ExcludeCurrentProcess,
+}
+
+enum WorkerRequest {
+	SampleCursor {
+		monitor: MonitorRect,
+		x_px: u32,
+		y_px: u32,
+		want_patch: bool,
+		patch_width_px: u32,
+		patch_height_px: u32,
+		reply_tx: Sender<Option<LiveCursorSample>>,
+	},
+	LatestRgbaSnapshot {
+		monitor: MonitorRect,
+		reply_tx: Sender<Option<Arc<MonitorImageSnapshot>>>,
+	},
+	LatestRgbaRegion {
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		reply_tx: Sender<Option<RgbaImage>>,
+	},
+	OrderedRgbaRegionsAfterSeq {
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		after_frame_seq: u64,
+		reply_tx: Sender<Option<Vec<OrderedRegionFrame>>>,
+	},
+	Shutdown,
+}
+
+#[allow(dead_code)]
+pub(crate) struct OrderedRegionFrame {
+	pub(crate) frame_seq: u64,
+	pub(crate) captured_at: Instant,
+	pub(crate) image: RgbaImage,
+}
 
 pub(crate) struct MacLiveFrameStream {
 	request_tx: Sender<WorkerRequest>,
@@ -164,14 +233,25 @@ impl MacLiveFrameStream {
 		rect_px: RectPoints,
 		after_frame_seq: u64,
 	) -> Option<(u64, RgbaImage)> {
-		self.request(|reply_tx| WorkerRequest::LatestRgbaRegionIfNew {
+		let mut frames = self.ordered_rgba_regions_after_seq(monitor, rect_px, after_frame_seq)?;
+		let frame = frames.pop()?;
+
+		Some((frame.frame_seq, frame.image))
+	}
+
+	pub(crate) fn ordered_rgba_regions_after_seq(
+		&mut self,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		after_frame_seq: u64,
+	) -> Option<Vec<OrderedRegionFrame>> {
+		self.request(|reply_tx| WorkerRequest::OrderedRgbaRegionsAfterSeq {
 			monitor,
 			rect_px,
 			after_frame_seq,
 			reply_tx,
 		})
 		.flatten()
-		.map(|frame| (frame.frame_seq, frame.image))
 	}
 
 	fn request<T>(&self, build_request: impl FnOnce(Sender<T>) -> WorkerRequest) -> Option<T> {
@@ -193,14 +273,31 @@ impl Drop for MacLiveFrameStream {
 	}
 }
 
+#[derive(Clone)]
+struct QueuedPixelBufferFrame {
+	frame_seq: u64,
+	captured_at: Instant,
+	pixel_buffer: CFRetained<CVPixelBuffer>,
+}
+
 struct StreamOutputIvars {
-	latest: Mutex<Option<CFRetained<CVPixelBuffer>>>,
-	frame_seq: AtomicU64,
+	monitor_id: u32,
+	frames: Mutex<VecDeque<QueuedPixelBufferFrame>>,
+	frame_seq_counter: Arc<AtomicU64>,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl StreamOutputIvars {
-	fn new(frame_waker: Option<Arc<dyn Fn() + Send + Sync>>) -> Self {
-		Self { latest: Mutex::default(), frame_seq: AtomicU64::new(0), frame_waker }
+	fn new(
+		monitor_id: u32,
+		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+		frame_seq_counter: Arc<AtomicU64>,
+	) -> Self {
+		Self {
+			monitor_id,
+			frames: Mutex::new(VecDeque::with_capacity(STREAM_FRAME_QUEUE_CAPACITY)),
+			frame_seq_counter,
+			frame_waker,
+		}
 	}
 }
 
@@ -210,78 +307,52 @@ struct StreamState {
 	output: Retained<StreamOutput>,
 }
 
-struct LatestRegionFrame {
-	frame_seq: u64,
-	image: RgbaImage,
-}
-
 impl StreamOutput {
-	fn new(frame_waker: Option<Arc<dyn Fn() + Send + Sync>>) -> Retained<Self> {
-		let this = Self::alloc().set_ivars(StreamOutputIvars::new(frame_waker));
+	fn new(
+		monitor_id: u32,
+		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+		frame_seq_counter: Arc<AtomicU64>,
+	) -> Retained<Self> {
+		let this = Self::alloc().set_ivars(StreamOutputIvars::new(
+			monitor_id,
+			frame_waker,
+			frame_seq_counter,
+		));
 
 		unsafe { objc2::msg_send![super(this), init] }
 	}
 
+	fn latest_frame(&self) -> Option<QueuedPixelBufferFrame> {
+		match self.ivars().frames.lock() {
+			Ok(guard) => guard.back().cloned(),
+			Err(poisoned) => poisoned.into_inner().back().cloned(),
+		}
+	}
+
 	fn latest_pixel_buffer(&self) -> Option<CFRetained<CVPixelBuffer>> {
-		match self.ivars().latest.lock() {
-			Ok(guard) => guard.clone(),
-			Err(poisoned) => poisoned.into_inner().clone(),
-		}
+		self.latest_frame().map(|frame| frame.pixel_buffer)
 	}
 
-	fn latest_pixel_buffer_if_new(
-		&self,
-		after_frame_seq: u64,
-	) -> Option<(u64, CFRetained<CVPixelBuffer>)> {
-		let initial_frame_seq = self.ivars().frame_seq.load(Ordering::Acquire);
-
-		if initial_frame_seq <= after_frame_seq {
-			return None;
+	fn queued_frames_after_seq(&self, after_frame_seq: u64) -> Vec<QueuedPixelBufferFrame> {
+		match self.ivars().frames.lock() {
+			Ok(guard) => {
+				guard.iter().filter(|frame| frame.frame_seq > after_frame_seq).cloned().collect()
+			},
+			Err(poisoned) => poisoned
+				.into_inner()
+				.iter()
+				.filter(|frame| frame.frame_seq > after_frame_seq)
+				.cloned()
+				.collect(),
 		}
-
-		let pixel_buffer = self.latest_pixel_buffer()?;
-		let confirmed_frame_seq = self.ivars().frame_seq.load(Ordering::Acquire);
-
-		if confirmed_frame_seq <= after_frame_seq {
-			return None;
-		}
-
-		Some((confirmed_frame_seq, pixel_buffer))
 	}
-}
-
-enum WorkerRequest {
-	SampleCursor {
-		monitor: MonitorRect,
-		x_px: u32,
-		y_px: u32,
-		want_patch: bool,
-		patch_width_px: u32,
-		patch_height_px: u32,
-		reply_tx: Sender<Option<LiveCursorSample>>,
-	},
-	LatestRgbaSnapshot {
-		monitor: MonitorRect,
-		reply_tx: Sender<Option<Arc<MonitorImageSnapshot>>>,
-	},
-	LatestRgbaRegion {
-		monitor: MonitorRect,
-		rect_px: RectPoints,
-		reply_tx: Sender<Option<RgbaImage>>,
-	},
-	LatestRgbaRegionIfNew {
-		monitor: MonitorRect,
-		rect_px: RectPoints,
-		after_frame_seq: u64,
-		reply_tx: Sender<Option<LatestRegionFrame>>,
-	},
-	Shutdown,
 }
 
 fn stream_worker_loop(
 	request_rx: Receiver<WorkerRequest>,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 ) {
+	let frame_seq_counter = Arc::new(AtomicU64::new(0));
 	let mut state: Option<StreamState> = None;
 	let mut last_setup_attempt_at: Option<Instant> = None;
 
@@ -302,6 +373,7 @@ fn stream_worker_loop(
 					STREAM_SETUP_BACKOFF,
 					monitor,
 					frame_waker.clone(),
+					frame_seq_counter.clone(),
 				)
 				.and_then(|_| {
 					let stream_state = state.as_ref()?;
@@ -326,63 +398,50 @@ fn stream_worker_loop(
 					STREAM_SETUP_BACKOFF,
 					monitor,
 					frame_waker.clone(),
+					frame_seq_counter.clone(),
 				)
 				.and_then(|_| {
 					let stream_state = state.as_ref()?;
+					let frame = stream_state.output.latest_frame()?;
+					let (width_px, height_px) = pixel_buffer_size_px(&frame.pixel_buffer)?;
+					let image =
+						rgba_image_from_pixel_buffer(&frame.pixel_buffer, width_px, height_px)?;
 
-					stream_state.output.latest_pixel_buffer().and_then(|pixel_buffer| {
-						let (width_px, height_px) = pixel_buffer_size_px(&pixel_buffer)?;
-						let image =
-							rgba_image_from_pixel_buffer(&pixel_buffer, width_px, height_px)?;
-
-						Some(Arc::new(MonitorImageSnapshot {
-							captured_at: Instant::now(),
-							monitor,
-							image: Arc::new(image),
-						}))
-					})
+					Some(Arc::new(MonitorImageSnapshot {
+						captured_at: frame.captured_at,
+						monitor,
+						image: Arc::new(image),
+					}))
 				});
 				let _ = reply_tx.send(snapshot);
 			},
 			WorkerRequest::LatestRgbaRegion { monitor, rect_px, reply_tx } => {
-				let image = ensure_stream(
+				let image = latest_fresh_rgba_region(
 					&mut state,
 					&mut last_setup_attempt_at,
-					STREAM_SETUP_BACKOFF,
 					monitor,
+					rect_px,
 					frame_waker.clone(),
-				)
-				.and_then(|_| {
-					let stream_state = state.as_ref()?;
-
-					stream_state.output.latest_pixel_buffer().and_then(|pixel_buffer| {
-						rgba_region_from_pixel_buffer(&pixel_buffer, rect_px)
-					})
-				});
+					frame_seq_counter.clone(),
+				);
 				let _ = reply_tx.send(image);
 			},
-			WorkerRequest::LatestRgbaRegionIfNew {
+			WorkerRequest::OrderedRgbaRegionsAfterSeq {
 				monitor,
 				rect_px,
 				after_frame_seq,
 				reply_tx,
 			} => {
-				let image = ensure_stream(
+				let frames = ordered_fresh_rgba_regions_after_seq(
 					&mut state,
 					&mut last_setup_attempt_at,
-					STREAM_SETUP_BACKOFF,
 					monitor,
+					rect_px,
+					after_frame_seq,
 					frame_waker.clone(),
-				)
-				.and_then(|_| {
-					let stream_state = state.as_ref()?;
-					let (frame_seq, pixel_buffer) =
-						stream_state.output.latest_pixel_buffer_if_new(after_frame_seq)?;
-					let image = rgba_region_from_pixel_buffer(&pixel_buffer, rect_px)?;
-
-					Some(LatestRegionFrame { frame_seq, image })
-				});
-				let _ = reply_tx.send(image);
+					frame_seq_counter.clone(),
+				);
+				let _ = reply_tx.send(frames);
 			},
 			WorkerRequest::Shutdown => break,
 		}
@@ -397,6 +456,7 @@ fn ensure_stream(
 	setup_backoff: Duration,
 	monitor: MonitorRect,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	frame_seq_counter: Arc<AtomicU64>,
 ) -> Option<()> {
 	if state.as_ref().is_some_and(|current| current.monitor_id == monitor.id) {
 		return Some(());
@@ -412,7 +472,126 @@ fn ensure_stream(
 
 	teardown_stream(state);
 
-	*state = Some(setup_stream_for_monitor(monitor, frame_waker)?);
+	*state = Some(setup_stream_for_monitor(monitor, frame_waker, frame_seq_counter)?);
+
+	Some(())
+}
+
+fn latest_fresh_rgba_region(
+	state: &mut Option<StreamState>,
+	last_setup_attempt_at: &mut Option<Instant>,
+	monitor: MonitorRect,
+	rect_px: RectPoints,
+	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	frame_seq_counter: Arc<AtomicU64>,
+) -> Option<RgbaImage> {
+	ensure_stream(
+		state,
+		last_setup_attempt_at,
+		STREAM_SETUP_BACKOFF,
+		monitor,
+		frame_waker.clone(),
+		frame_seq_counter.clone(),
+	)?;
+
+	let now = Instant::now();
+	let stream_state = state.as_ref()?;
+
+	if let Some(frame) = stream_state.output.latest_frame()
+		&& now.saturating_duration_since(frame.captured_at) <= STREAM_REGION_FRAME_MAX_AGE
+	{
+		return rgba_region_from_pixel_buffer(&frame.pixel_buffer, rect_px);
+	}
+
+	refresh_stream(state, last_setup_attempt_at, monitor, frame_waker, frame_seq_counter)?;
+
+	let min_captured_at = Instant::now();
+	let deadline = min_captured_at + STREAM_REGION_FRAME_REFRESH_TIMEOUT;
+
+	loop {
+		let stream_state = state.as_ref()?;
+
+		if let Some(frame) = stream_state.output.latest_frame()
+			&& frame.captured_at >= min_captured_at
+		{
+			return rgba_region_from_pixel_buffer(&frame.pixel_buffer, rect_px);
+		}
+
+		if Instant::now() >= deadline {
+			return None;
+		}
+
+		thread::sleep(STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL);
+	}
+}
+
+fn ordered_fresh_rgba_regions_after_seq(
+	state: &mut Option<StreamState>,
+	last_setup_attempt_at: &mut Option<Instant>,
+	monitor: MonitorRect,
+	rect_px: RectPoints,
+	after_frame_seq: u64,
+	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	frame_seq_counter: Arc<AtomicU64>,
+) -> Option<Vec<OrderedRegionFrame>> {
+	ensure_stream(
+		state,
+		last_setup_attempt_at,
+		STREAM_SETUP_BACKOFF,
+		monitor,
+		frame_waker.clone(),
+		frame_seq_counter.clone(),
+	)?;
+
+	let stream_state = state.as_ref()?;
+	let frames = stream_state.output.queued_frames_after_seq(after_frame_seq);
+	let frames = ordered_rgba_regions_from_frames(frames, rect_px);
+
+	if !frames.is_empty() {
+		return Some(frames);
+	}
+
+	let latest_frame = stream_state.output.latest_frame()?;
+
+	if Instant::now().saturating_duration_since(latest_frame.captured_at)
+		<= STREAM_REGION_FRAME_MAX_AGE
+	{
+		return None;
+	}
+
+	refresh_stream(state, last_setup_attempt_at, monitor, frame_waker, frame_seq_counter)?;
+
+	let min_captured_at = Instant::now();
+	let deadline = min_captured_at + STREAM_REGION_FRAME_REFRESH_TIMEOUT;
+
+	loop {
+		let stream_state = state.as_ref()?;
+		let frames = stream_state.output.queued_frames_after_seq(after_frame_seq);
+		let frames = ordered_rgba_regions_from_frames(frames, rect_px);
+
+		if !frames.is_empty() {
+			return Some(frames);
+		}
+		if Instant::now() >= deadline {
+			return None;
+		}
+
+		thread::sleep(STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL);
+	}
+}
+
+fn refresh_stream(
+	state: &mut Option<StreamState>,
+	last_setup_attempt_at: &mut Option<Instant>,
+	monitor: MonitorRect,
+	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	frame_seq_counter: Arc<AtomicU64>,
+) -> Option<()> {
+	*last_setup_attempt_at = Some(Instant::now());
+
+	teardown_stream(state);
+
+	*state = Some(setup_stream_for_monitor(monitor, frame_waker, frame_seq_counter)?);
 
 	Some(())
 }
@@ -429,22 +608,51 @@ fn teardown_stream(state: &mut Option<StreamState>) {
 fn setup_stream_for_monitor(
 	monitor: MonitorRect,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	frame_seq_counter: Arc<AtomicU64>,
 ) -> Option<StreamState> {
 	let content = get_shareable_content().ok()?;
 	let display = find_display(&content, monitor.id)?;
 	let excluded_windows: Retained<NSArray<SCWindow>> = NSArray::new();
+	let Some((StreamFilterMode::ExcludeCurrentProcess, current_process_application)) =
+		stream_filter_mode_for_current_process(find_current_process_application(&content))
+	else {
+		tracing::warn!(
+			op = "live_frame_stream.setup_filter_missing_current_process",
+			monitor_id = monitor.id,
+			pid = process::id(),
+			"Skipped ScreenCaptureKit stream setup because rsnap could not exclude its own windows from capture."
+		);
+
+		return None;
+	};
+	let excluded_applications = NSArray::from_retained_slice(&[current_process_application]);
+
+	tracing::trace!(
+		op = "live_frame_stream.setup_filter_excluding_current_process",
+		monitor_id = monitor.id,
+		pid = process::id(),
+		"Configured ScreenCaptureKit to exclude rsnap windows from the live stream."
+	);
+
 	let filter = unsafe {
-		SCContentFilter::initWithDisplay_excludingWindows(
+		SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
 			SCContentFilter::alloc(),
 			&display,
+			&excluded_applications,
 			&excluded_windows,
 		)
 	};
 	let config = build_stream_config_for_monitor(monitor);
+	let output = StreamOutput::new(monitor.id, frame_waker, frame_seq_counter);
+	let delegate_proto = ProtocolObject::from_ref(&*output);
 	let stream = unsafe {
-		SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), &filter, &config, None)
+		SCStream::initWithFilter_configuration_delegate(
+			SCStream::alloc(),
+			&filter,
+			&config,
+			Some(delegate_proto),
+		)
 	};
-	let output = StreamOutput::new(frame_waker);
 	let output_proto = ProtocolObject::from_ref(&*output);
 
 	if unsafe {
@@ -463,6 +671,32 @@ fn setup_stream_for_monitor(
 	}
 
 	Some(StreamState { monitor_id: monitor.id, stream, output })
+}
+
+fn find_current_process_application(
+	content: &SCShareableContent,
+) -> Option<Retained<SCRunningApplication>> {
+	let current_pid = process::id();
+	let applications = unsafe { content.applications() };
+
+	for application in applications.iter() {
+		let Ok(application_pid) = u32::try_from(unsafe { application.processID() }) else {
+			continue;
+		};
+
+		if application_pid == current_pid {
+			return Some(application.retain());
+		}
+	}
+
+	None
+}
+
+fn stream_filter_mode_for_current_process<T>(
+	current_process_application: Option<T>,
+) -> Option<(StreamFilterMode, T)> {
+	current_process_application
+		.map(|application| (StreamFilterMode::ExcludeCurrentProcess, application))
 }
 
 fn get_shareable_content() -> Result<Retained<SCShareableContent>, Retained<NSError>> {
@@ -766,4 +1000,38 @@ fn rgba_region_from_pixel_buffer(
 		unsafe { CVPixelBufferUnlockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
 
 	out
+}
+
+fn ordered_rgba_regions_from_frames(
+	frames: Vec<QueuedPixelBufferFrame>,
+	rect_px: RectPoints,
+) -> Vec<OrderedRegionFrame> {
+	frames
+		.into_iter()
+		.filter_map(|frame| {
+			let image = rgba_region_from_pixel_buffer(&frame.pixel_buffer, rect_px)?;
+
+			Some(OrderedRegionFrame {
+				frame_seq: frame.frame_seq,
+				captured_at: frame.captured_at,
+				image,
+			})
+		})
+		.collect()
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::live_frame_stream_macos::{
+		StreamFilterMode, stream_filter_mode_for_current_process,
+	};
+
+	#[test]
+	fn stream_filter_mode_requires_current_process_application() {
+		assert_eq!(
+			stream_filter_mode_for_current_process(Some(42_u32)),
+			Some((StreamFilterMode::ExcludeCurrentProcess, 42))
+		);
+		assert_eq!(stream_filter_mode_for_current_process::<u32>(None), None);
+	}
 }

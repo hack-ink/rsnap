@@ -37,6 +37,7 @@ xcap              = { workspace = true }
 block2                   = { workspace = true }
 objc                     = { workspace = true }
 objc2                    = { workspace = true }
+objc2-app-kit            = { workspace = true }
 objc2-core-foundation    = { workspace = true }
 objc2-core-graphics      = { workspace = true }
 objc2-core-media         = { workspace = true }
