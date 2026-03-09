@@ -76,11 +76,17 @@ pub(crate) enum WorkerResponse {
 }
 
 #[derive(Debug)]
+pub(crate) enum CapturedMonitorRegionResult {
+	Image(RgbaImage),
+	NoNewFrame,
+}
+
+#[derive(Debug)]
 pub(crate) struct CapturedMonitorRegionResponse {
 	pub(crate) monitor: MonitorRect,
 	pub(crate) rect_px: RectPoints,
 	pub(crate) request_id: u64,
-	pub(crate) image: RgbaImage,
+	pub(crate) result: CapturedMonitorRegionResult,
 }
 
 pub(crate) struct OverlayWorker {
@@ -289,13 +295,21 @@ impl OverlayWorker {
 		rect_px: RectPoints,
 		request_id: u64,
 	) {
-		match backend.capture_monitor_region(monitor, rect_px) {
-			Ok(image) => {
+		match backend.capture_monitor_region_for_scroll_capture(monitor, rect_px) {
+			Ok(Some(image)) => {
 				let _ = region_capture_resp_tx.send(CapturedMonitorRegionResponse {
 					monitor,
 					rect_px,
 					request_id,
-					image,
+					result: CapturedMonitorRegionResult::Image(image),
+				});
+			},
+			Ok(None) => {
+				let _ = region_capture_resp_tx.send(CapturedMonitorRegionResponse {
+					monitor,
+					rect_px,
+					request_id,
+					result: CapturedMonitorRegionResult::NoNewFrame,
 				});
 			},
 			Err(err) => {
@@ -420,4 +434,202 @@ impl OverlayWorker {
 pub(crate) enum WorkerRequestSendError {
 	Full,
 	Disconnected,
+}
+
+#[cfg(test)]
+mod tests {
+	use color_eyre::eyre::{Result, eyre};
+	use image::{Rgba, RgbaImage};
+
+	use crate::backend::CaptureBackend;
+	use crate::state::{
+		GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb,
+		WindowHit, WindowListSnapshot,
+	};
+	use crate::worker::{
+		CapturedMonitorRegionResponse, CapturedMonitorRegionResult, OverlayWorker, WorkerResponse,
+	};
+
+	enum MockScrollCaptureResult {
+		Image(RgbaImage),
+		NoNewFrame,
+		Error(String),
+	}
+
+	struct MockScrollCaptureBackend {
+		scroll_capture_result: MockScrollCaptureResult,
+	}
+
+	impl CaptureBackend for MockScrollCaptureBackend {
+		fn capture_monitor(&mut self, _monitor: MonitorRect) -> Result<RgbaImage> {
+			Err(eyre!("unused in this test"))
+		}
+
+		fn capture_monitor_region_for_scroll_capture(
+			&mut self,
+			_monitor: MonitorRect,
+			_rect_px: RectPoints,
+		) -> Result<Option<RgbaImage>> {
+			match &self.scroll_capture_result {
+				MockScrollCaptureResult::Image(image) => Ok(Some(image.clone())),
+				MockScrollCaptureResult::NoNewFrame => Ok(None),
+				MockScrollCaptureResult::Error(message) => Err(eyre!("{message}")),
+			}
+		}
+
+		fn pixel_rgb_in_monitor(
+			&mut self,
+			_monitor: MonitorRect,
+			_point: GlobalPoint,
+		) -> Result<Option<Rgb>> {
+			Ok(None)
+		}
+
+		fn live_sample_cursor(
+			&mut self,
+			_monitor: MonitorRect,
+			_point: GlobalPoint,
+			_want_patch: bool,
+			_patch_width_px: u32,
+			_patch_height_px: u32,
+		) -> Result<LiveCursorSample> {
+			Ok(LiveCursorSample { rgb: None, patch: None })
+		}
+
+		fn hit_test_window_in_monitor(
+			&mut self,
+			_monitor: MonitorRect,
+			_point: GlobalPoint,
+		) -> Result<Option<WindowHit>> {
+			Ok(None)
+		}
+
+		fn rgba_patch_in_monitor(
+			&mut self,
+			_monitor: MonitorRect,
+			_point: GlobalPoint,
+			_width_px: u32,
+			_height_px: u32,
+		) -> Result<Option<RgbaImage>> {
+			Ok(None)
+		}
+
+		fn refresh_monitor_cache(
+			&mut self,
+			_monitor: MonitorRect,
+		) -> Result<std::sync::Arc<MonitorImageSnapshot>> {
+			Err(eyre!("unused in this test"))
+		}
+
+		fn refresh_window_cache(&mut self) -> Result<std::sync::Arc<WindowListSnapshot>> {
+			Err(eyre!("unused in this test"))
+		}
+	}
+
+	fn sample_monitor() -> MonitorRect {
+		MonitorRect {
+			id: 7,
+			origin: GlobalPoint::new(0, 0),
+			width: 640,
+			height: 480,
+			scale_factor_x1000: 2_000,
+		}
+	}
+
+	fn sample_rect() -> RectPoints {
+		RectPoints::new(10, 20, 100, 80)
+	}
+
+	fn sample_image() -> RgbaImage {
+		RgbaImage::from_pixel(3, 2, Rgba([12, 34, 56, 255]))
+	}
+
+	#[test]
+	fn capture_monitor_region_request_emits_image_result() {
+		let (resp_tx, resp_rx) = std::sync::mpsc::channel::<WorkerResponse>();
+		let (region_tx, region_rx) = std::sync::mpsc::channel::<CapturedMonitorRegionResponse>();
+		let monitor = sample_monitor();
+		let rect_px = sample_rect();
+		let mut backend = MockScrollCaptureBackend {
+			scroll_capture_result: MockScrollCaptureResult::Image(sample_image()),
+		};
+
+		OverlayWorker::handle_capture_monitor_region_request(
+			&mut backend,
+			&resp_tx,
+			&region_tx,
+			monitor,
+			rect_px,
+			99,
+		);
+
+		assert!(resp_rx.try_recv().is_err());
+
+		let response = region_rx.try_recv().expect("region result");
+
+		assert_eq!(response.monitor, monitor);
+		assert_eq!(response.rect_px, rect_px);
+		assert_eq!(response.request_id, 99);
+
+		match response.result {
+			CapturedMonitorRegionResult::Image(image) => assert_eq!(image, sample_image()),
+			CapturedMonitorRegionResult::NoNewFrame => {
+				panic!("expected an image result for a fresh scroll-capture frame")
+			},
+		}
+	}
+
+	#[test]
+	fn capture_monitor_region_request_emits_no_new_frame_result() {
+		let (resp_tx, resp_rx) = std::sync::mpsc::channel::<WorkerResponse>();
+		let (region_tx, region_rx) = std::sync::mpsc::channel::<CapturedMonitorRegionResponse>();
+		let mut backend =
+			MockScrollCaptureBackend { scroll_capture_result: MockScrollCaptureResult::NoNewFrame };
+
+		OverlayWorker::handle_capture_monitor_region_request(
+			&mut backend,
+			&resp_tx,
+			&region_tx,
+			sample_monitor(),
+			sample_rect(),
+			100,
+		);
+
+		assert!(resp_rx.try_recv().is_err());
+
+		let response = region_rx.try_recv().expect("region result");
+
+		assert!(matches!(response.result, CapturedMonitorRegionResult::NoNewFrame));
+	}
+
+	#[test]
+	fn capture_monitor_region_request_routes_errors_to_worker_responses() {
+		let (resp_tx, resp_rx) = std::sync::mpsc::channel::<WorkerResponse>();
+		let (region_tx, region_rx) = std::sync::mpsc::channel::<CapturedMonitorRegionResponse>();
+		let mut backend = MockScrollCaptureBackend {
+			scroll_capture_result: MockScrollCaptureResult::Error(
+				"fresh frame unavailable".to_owned(),
+			),
+		};
+
+		OverlayWorker::handle_capture_monitor_region_request(
+			&mut backend,
+			&resp_tx,
+			&region_tx,
+			sample_monitor(),
+			sample_rect(),
+			101,
+		);
+
+		assert!(region_rx.try_recv().is_err());
+
+		let response = resp_rx.try_recv().expect("worker response");
+
+		match response {
+			WorkerResponse::Error(message) => {
+				assert!(message.contains("fresh frame unavailable"));
+			},
+			other => panic!("expected worker error, got {other:?}"),
+		}
+	}
 }

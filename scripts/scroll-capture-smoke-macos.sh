@@ -5,41 +5,47 @@ set -euo pipefail
 #
 # Assumptions:
 # - Runs inside a logged-in macOS GUI session.
-# - Accessibility and Screen Recording permissions are already granted for the
-#   invoking shell, `osascript`, `swift`, and the rsnap binary/build command.
+# - Screen Recording is already granted for the rsnap binary/build command so
+#   live capture frames are available.
+# - Accessibility is only needed for the smoke automation (`osascript`/`swift`)
+#   and optional scrollbar verification. It is not a runtime prerequisite for
+#   rsnap scroll-capture availability.
 # - The script intentionally launches a fresh rsnap process and closes open
 #   TextEdit windows so the run is reproducible.
-# - Small, explicit settle delays are used after overlay start, after drag
-#   selection, and after entering scroll capture mode; tune them with
-#   environment overrides if the local machine or window manager needs more
-#   time.
+# - Top-level settle delays default to zero on release builds; environment
+#   overrides remain available if a local GUI session needs extra slack.
 # - The content movement must come from synthetic scroll-wheel input. The
-#   script may read the TextEdit vertical scrollbar value for verification, but
-#   it never drives the scrollbar through Accessibility writes.
-# - The assertion surface is log-based plus scrollbar verification: startup,
-#   overlay start, scroll-capture start, at least one append, and a strictly
-#   increasing TextEdit vertical scrollbar value.
+#   script may read the TextEdit vertical scrollbar value for optional
+#   verification, but it never drives the scrollbar through Accessibility
+#   writes.
+# - The required assertion surface is log-based: startup, overlay start,
+#   scroll-capture start, and at least one append. The harness uses the rsnap
+#   tray `Capture` menu item instead of synthetic global-hotkey injection
+#   because the tray path is more stable in automated GUI sessions. Scrollbar
+#   verification is an optional stronger check when AX access is available.
 
 usage() {
   cat <<'EOF'
 Usage: scroll-capture-smoke-macos.sh [--self-check] [--help]
 
 Environment overrides:
-  RSNAP_CMD           command used to launch rsnap (default: target/debug/rsnap
-                      when present, else cargo run -p rsnap)
+  RSNAP_CMD           command used to launch rsnap (default: target/release/rsnap
+                      when present, else cargo run --release -p rsnap)
   TEXTEDIT_BOUNDS     "left,top,right,bottom" for the fixture window
   DRAG_START          "x,y" capture drag start point
   DRAG_END            "x,y" capture drag end point
   SCROLL_POINT        "x,y" point inside the capture rect for downward scrolls
   SCROLL_EVENTS       number of downward wheel events to emit
   SCROLL_DELTA        negative pixel delta for each wheel event
+  VERIFY_SCROLLBAR    set to 1 to require AX scrollbar verification, 0 to skip
+                      it, or auto to use it only when available (default: auto)
   OVERLAY_SETTLE_S    delay after overlay startup before drag selection
-                      (default: 0.6)
+                      (default: 0)
   DRAG_SETTLE_S       delay after drag selection before entering scroll capture
-                      mode (default: 1.8)
+                      mode (default: 0)
   SCROLL_MODE_SETTLE_S
                       delay after scroll capture start before emitting scroll
-                      events (default: 1.6)
+                      events (default: 0)
   WAIT_STARTUP_S      timeout for startup log marker
   WAIT_OVERLAY_S      timeout for overlay start log marker
   WAIT_SCROLL_CAPTURE_S
@@ -85,9 +91,9 @@ self_check
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$HOME/Library/Application Support/ink.hack.rsnap/logs"
-DEFAULT_RSNAP_CMD="cargo run -p rsnap"
-if [[ -x "$ROOT_DIR/target/debug/rsnap" ]]; then
-  DEFAULT_RSNAP_CMD="$ROOT_DIR/target/debug/rsnap"
+DEFAULT_RSNAP_CMD="cargo run --release -p rsnap"
+if [[ -x "$ROOT_DIR/target/release/rsnap" ]]; then
+  DEFAULT_RSNAP_CMD="$ROOT_DIR/target/release/rsnap"
 fi
 RSNAP_CMD="${RSNAP_CMD:-$DEFAULT_RSNAP_CMD}"
 TEXTEDIT_BOUNDS="${TEXTEDIT_BOUNDS:-120,120,1040,960}"
@@ -96,16 +102,19 @@ DRAG_END="${DRAG_END:-}"
 SCROLL_POINT="${SCROLL_POINT:-}"
 SCROLL_EVENTS="${SCROLL_EVENTS:-28}"
 SCROLL_DELTA="${SCROLL_DELTA:--32}"
-OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0.6}"
-DRAG_SETTLE_S="${DRAG_SETTLE_S:-1.8}"
-SCROLL_MODE_SETTLE_S="${SCROLL_MODE_SETTLE_S:-1.6}"
+OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0}"
+DRAG_SETTLE_S="${DRAG_SETTLE_S:-0}"
+SCROLL_MODE_SETTLE_S="${SCROLL_MODE_SETTLE_S:-0}"
 WAIT_STARTUP_S="${WAIT_STARTUP_S:-30}"
 WAIT_OVERLAY_S="${WAIT_OVERLAY_S:-10}"
 WAIT_SCROLL_CAPTURE_S="${WAIT_SCROLL_CAPTURE_S:-10}"
 WAIT_APPEND_S="${WAIT_APPEND_S:-10}"
+VERIFY_SCROLLBAR="${VERIFY_SCROLLBAR:-auto}"
 
 RSNAP_LOG=""
 RSNAP_PID=""
+SCROLLBAR_VERIFICATION_ACTIVE=0
+SCROLLBAR_AUTO_PROBE_PENDING=0
 FIXTURE_FILE_BASE="$(mktemp -t rsnap-scroll-capture-fixture)"
 FIXTURE_FILE="${FIXTURE_FILE_BASE}.txt"
 mv "$FIXTURE_FILE_BASE" "$FIXTURE_FILE"
@@ -189,6 +198,47 @@ wait_for_pattern() {
   return 1
 }
 
+configure_scrollbar_verification() {
+  case "$VERIFY_SCROLLBAR" in
+    1|true|yes|on)
+      SCROLLBAR_VERIFICATION_ACTIVE=1
+      ;;
+    0|false|no|off)
+      SCROLLBAR_VERIFICATION_ACTIVE=0
+      ;;
+    auto|"")
+      SCROLLBAR_VERIFICATION_ACTIVE=0
+      SCROLLBAR_AUTO_PROBE_PENDING=1
+      ;;
+    *)
+      fail "invalid VERIFY_SCROLLBAR value: $VERIFY_SCROLLBAR"
+      ;;
+  esac
+}
+
+maybe_capture_scrollbar_value() {
+  local value=""
+
+  if (( SCROLLBAR_VERIFICATION_ACTIVE )); then
+    value="$(read_textedit_scrollbar_value)"
+    printf '%s\n' "$value"
+    return 0
+  fi
+
+  if (( SCROLLBAR_AUTO_PROBE_PENDING )); then
+    SCROLLBAR_AUTO_PROBE_PENDING=0
+    if ! value="$(read_textedit_scrollbar_value 2>/dev/null)"; then
+      return 0
+    fi
+
+    SCROLLBAR_VERIFICATION_ACTIVE=1
+    printf '%s\n' "$value"
+    return 0
+  fi
+
+  return 0
+}
+
 scrollbar_value_increased() {
   local initial="$1"
   local final="$2"
@@ -218,11 +268,10 @@ open_fixture_in_textedit() {
   local left top right bottom
   IFS=, read -r left top right bottom <<<"$bounds"
   close_textedit_windows
+  open -a TextEdit "$FIXTURE_FILE"
   osascript <<APPLESCRIPT
-set fixturePath to POSIX file "$FIXTURE_FILE"
 tell application "TextEdit"
     activate
-    open fixturePath
     delay 0.8
     try
         set bounds of front window to {$left, $top, $right, $bottom}
@@ -315,11 +364,26 @@ resolve_capture_points() {
   fi
 }
 
-trigger_capture_hotkey() {
+trigger_capture_from_tray_menu() {
   osascript <<'APPLESCRIPT'
 tell application "System Events"
-    key code 7 using option down
+    tell process "rsnap"
+        click menu bar item 1 of menu bar 2
+        delay 0.2
+        click menu item "Capture" of menu 1 of menu bar item 1 of menu bar 2
+    end tell
 end tell
+APPLESCRIPT
+}
+
+focus_rsnap_frozen_ui() {
+  osascript <<'APPLESCRIPT'
+tell application "System Events"
+    tell process "rsnap"
+        set frontmost to true
+    end tell
+end tell
+delay 0.15
 APPLESCRIPT
 }
 
@@ -414,33 +478,41 @@ stop_existing_rsnap
 rm -f "$LOG_DIR"/rsnap*.log
 write_fixture
 launch_rsnap
+configure_scrollbar_verification
 wait_for_pattern 'Starting rsnap\.' "$WAIT_STARTUP_S" || fail "rsnap did not log startup"
 open_fixture_in_textedit "$TEXTEDIT_BOUNDS"
 ACTUAL_TEXTEDIT_BOUNDS="$(read_textedit_front_window_bounds | tr -d ' ')"
 resolve_capture_points "$ACTUAL_TEXTEDIT_BOUNDS"
-INITIAL_SCROLLBAR_VALUE="$(read_textedit_scrollbar_value | tr -d ' ')"
+INITIAL_SCROLLBAR_VALUE="$(maybe_capture_scrollbar_value | tr -d ' ')"
 echo "[smoke] textedit bounds: $ACTUAL_TEXTEDIT_BOUNDS"
 echo "[smoke] drag start: $DRAG_START"
 echo "[smoke] drag end: $DRAG_END"
 echo "[smoke] scroll point: $SCROLL_POINT"
-echo "[smoke] initial scrollbar value: $INITIAL_SCROLLBAR_VALUE"
-trigger_capture_hotkey
+if (( SCROLLBAR_VERIFICATION_ACTIVE )); then
+  echo "[smoke] initial scrollbar value: $INITIAL_SCROLLBAR_VALUE"
+else
+  echo "[smoke] scrollbar verification: skipped"
+fi
+trigger_capture_from_tray_menu
 wait_for_pattern 'Capture overlay started\.' "$WAIT_OVERLAY_S" || fail "capture overlay did not start"
 sleep "$OVERLAY_SETTLE_S"
 MODE=drag START_POINT="$DRAG_START" END_POINT="$DRAG_END" DRAG_STEPS=28 swift "$SWIFT_HELPER"
 sleep "$DRAG_SETTLE_S"
+focus_rsnap_frozen_ui
 press_s
-wait_for_pattern 'scroll_capture.start' "$WAIT_SCROLL_CAPTURE_S" || fail "scroll capture mode did not start"
+wait_for_pattern 'op="scroll_capture.start"' "$WAIT_SCROLL_CAPTURE_S" || fail "scroll capture mode did not start"
 sleep "$SCROLL_MODE_SETTLE_S"
 MODE=scroll SCROLL_POINT="$SCROLL_POINT" SCROLL_DELTA="$SCROLL_DELTA" SCROLL_EVENTS="$SCROLL_EVENTS" swift "$SWIFT_HELPER"
-FINAL_SCROLLBAR_VALUE="$(read_textedit_scrollbar_value | tr -d ' ')"
-echo "[smoke] final scrollbar value: $FINAL_SCROLLBAR_VALUE"
-scrollbar_value_increased "$INITIAL_SCROLLBAR_VALUE" "$FINAL_SCROLLBAR_VALUE" \
-  || fail "synthetic scroll input did not move the TextEdit vertical scrollbar"
-wait_for_pattern 'scroll_capture.appended' "$WAIT_APPEND_S" || fail "scroll capture did not append any rows"
+FINAL_SCROLLBAR_VALUE="$(maybe_capture_scrollbar_value | tr -d ' ')"
+if (( SCROLLBAR_VERIFICATION_ACTIVE )); then
+  echo "[smoke] final scrollbar value: $FINAL_SCROLLBAR_VALUE"
+  scrollbar_value_increased "$INITIAL_SCROLLBAR_VALUE" "$FINAL_SCROLLBAR_VALUE" \
+    || fail "synthetic scroll input did not move the TextEdit vertical scrollbar"
+fi
+wait_for_pattern 'op="scroll_capture.appended"' "$WAIT_APPEND_S" || fail "scroll capture did not append any rows"
 
 echo "[smoke] PASS"
 if [[ -n "$RSNAP_LOG" ]]; then
-  rg -n 'Starting rsnap\.|Capture overlay started\.|scroll_capture.start|scroll_capture.appended' "$RSNAP_LOG"
+  rg -n 'Starting rsnap\.|Capture overlay started\.|op="scroll_capture.start"|op="scroll_capture.appended"' "$RSNAP_LOG"
 fi
 press_escape >/dev/null 2>&1 || true
