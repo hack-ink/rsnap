@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use color_eyre::eyre::{self, Result, WrapErr};
 use image::RgbaImage;
 #[cfg(target_os = "macos")]
-use objc2_core_foundation::CGRect;
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
 use objc2_core_graphics::CGWindowListCreateImage;
@@ -62,6 +62,10 @@ const K_CF_NUMBER_SINT64_TYPE: u32 = 4;
 const K_CF_NUMBER_SINT32_TYPE: u32 = 3;
 #[cfg(target_os = "macos")]
 const K_CF_NUMBER_CG_FLOAT_TYPE: u32 = 16;
+#[cfg(target_os = "macos")]
+const MACOS_REGION_FRAME_WAIT_TIMEOUT: Duration = Duration::from_millis(120);
+#[cfg(target_os = "macos")]
+const MACOS_REGION_FRAME_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(8);
 
 pub trait CaptureBackend: Send {
 	fn global_cursor_position(&mut self) -> Result<Option<GlobalPoint>> {
@@ -74,6 +78,13 @@ pub trait CaptureBackend: Send {
 		_rect_px: RectPoints,
 	) -> Result<RgbaImage> {
 		Err(CaptureBackendError::NotSupported { backend: "capture backend" }.into())
+	}
+	fn capture_monitor_region_for_scroll_capture(
+		&mut self,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+	) -> Result<Option<RgbaImage>> {
+		self.capture_monitor_region(monitor, rect_px).map(Some)
 	}
 	fn pixel_rgb_in_monitor(
 		&mut self,
@@ -140,6 +151,7 @@ pub enum CaptureBackendError {
 	#[error("screen capture is not supported on this platform (backend: {backend})")]
 	NotSupported { backend: &'static str },
 
+	#[cfg(not(target_os = "macos"))]
 	#[error("no monitor matched rect: {monitor:?}")]
 	MonitorNotFound { monitor: MonitorRect },
 
@@ -224,7 +236,7 @@ pub struct XcapCaptureBackend {
 	#[cfg(target_os = "macos")]
 	live_frame_stream: MacLiveFrameStream,
 	#[cfg(target_os = "macos")]
-	monitors: HashMap<u32, xcap::Monitor>,
+	last_region_capture: HashMap<u32, MacosRegionCaptureState>,
 }
 impl XcapCaptureBackend {
 	#[must_use]
@@ -237,7 +249,7 @@ impl XcapCaptureBackend {
 			#[cfg(target_os = "macos")]
 			live_frame_stream: MacLiveFrameStream::new(),
 			#[cfg(target_os = "macos")]
-			monitors: HashMap::new(),
+			last_region_capture: HashMap::new(),
 		}
 	}
 
@@ -289,11 +301,13 @@ impl XcapCaptureBackend {
 	}
 
 	#[cfg(target_os = "macos")]
+	#[allow(deprecated)]
 	fn capture_monitor_image(&mut self, monitor: MonitorRect) -> Result<RgbaImage> {
-		let xcap_monitor = self.cached_xcap_monitor(monitor)?;
-		let image = xcap_monitor.capture_image().wrap_err("xcap capture_image failed")?;
+		let cg_image = objc2_core_graphics::CGDisplayCreateImage(monitor.id)
+			.ok_or_else(|| eyre::eyre!("CGDisplayCreateImage returned null"))?;
 
-		Ok(image)
+		rgba_image_from_cg_image(cg_image.as_ref())
+			.wrap_err_with(|| format!("failed to decode display image for monitor: {monitor:?}"))
 	}
 
 	#[cfg(not(target_os = "macos"))]
@@ -313,30 +327,12 @@ impl XcapCaptureBackend {
 			window_id as CGWindowID,
 			image_option,
 		);
-		let width = CGImage::width(cg_image.as_deref());
-		let height = CGImage::height(cg_image.as_deref());
-
-		if width == 0 || height == 0 {
+		let Some(cg_image) = cg_image.as_deref() else {
 			return Err(CaptureBackendError::WindowNotFound { window_id }.into());
-		}
+		};
 
-		let data_provider = CGImage::data_provider(cg_image.as_deref()).ok_or_else(|| {
-			eyre::eyre!("Failed to get data provider for window capture: {window_id}")
-		})?;
-		let data = CGDataProvider::data(Some(data_provider.as_ref()))
-			.ok_or_else(|| eyre::eyre!("Failed to copy window capture bytes: {window_id}"))?;
-		let bytes_per_row = CGImage::bytes_per_row(cg_image.as_deref());
-		let mut buffer = Vec::with_capacity(width * height * 4);
-
-		for row in data.to_vec().chunks_exact(bytes_per_row) {
-			buffer.extend_from_slice(&row[..width * 4]);
-		}
-		for bgra in buffer.chunks_exact_mut(4) {
-			bgra.swap(0, 2);
-		}
-
-		RgbaImage::from_raw(width as u32, height as u32, buffer)
-			.ok_or_else(|| eyre::eyre!("RgbaImage::from_raw failed"))
+		rgba_image_from_cg_image(cg_image)
+			.wrap_err_with(|| format!("Failed to decode window capture bytes: {window_id}"))
 	}
 
 	#[cfg(not(target_os = "macos"))]
@@ -354,50 +350,6 @@ impl XcapCaptureBackend {
 		}
 
 		Err(CaptureBackendError::WindowNotFound { window_id }.into())
-	}
-
-	#[cfg(target_os = "macos")]
-	fn capture_monitor_region_with_xcap(
-		&mut self,
-		monitor: MonitorRect,
-		x: u32,
-		y: u32,
-		width: u32,
-		height: u32,
-	) -> Result<RgbaImage> {
-		let xcap_monitor = self.cached_xcap_monitor(monitor)?;
-		let (monitor_width_px, monitor_height_px) = self
-			.xcap_monitor_pixel_size_cached(&xcap_monitor)
-			.wrap_err("Failed to read xcap monitor size")?;
-		let monitor_width_points =
-			xcap_monitor.width().wrap_err("Failed to read xcap monitor width")?;
-		let monitor_height_points =
-			xcap_monitor.height().wrap_err("Failed to read xcap monitor height")?;
-		let scale_factor =
-			xcap_monitor.scale_factor().wrap_err("Failed to read xcap monitor scale factor")?;
-		let width_px = width.max(1).min(monitor_width_px.max(1));
-		let height_px = height.max(1).min(monitor_height_px.max(1));
-		let x_px = x.min(monitor_width_px.saturating_sub(width_px));
-		let y_px = y.min(monitor_height_px.saturating_sub(height_px));
-		let width_points = pixel_extent_to_point_extent(width_px, scale_factor)
-			.max(1)
-			.min(monitor_width_points.max(1));
-		let height_points = pixel_extent_to_point_extent(height_px, scale_factor)
-			.max(1)
-			.min(monitor_height_points.max(1));
-		let x_points = pixel_offset_to_point_offset(x_px, scale_factor)
-			.min(monitor_width_points.saturating_sub(width_points));
-		let y_points = pixel_offset_to_point_offset(y_px, scale_factor)
-			.min(monitor_height_points.saturating_sub(height_points));
-		let image = xcap_monitor
-			.capture_region(x_points, y_points, width_points, height_points)
-			.wrap_err("xcap capture_region failed")?;
-		let capture_origin_x_px = point_offset_to_pixel_offset(x_points, scale_factor);
-		let capture_origin_y_px = point_offset_to_pixel_offset(y_points, scale_factor);
-		let crop_x = x_px.saturating_sub(capture_origin_x_px);
-		let crop_y = y_px.saturating_sub(capture_origin_y_px);
-
-		crop_monitor_image_region(&image, RectPoints::new(crop_x, crop_y, width_px, height_px))
 	}
 
 	#[cfg(not(target_os = "macos"))]
@@ -424,6 +376,7 @@ impl XcapCaptureBackend {
 		Ok(image)
 	}
 
+	#[cfg(not(target_os = "macos"))]
 	fn crop_monitor_region_fallback(
 		&mut self,
 		monitor: MonitorRect,
@@ -435,35 +388,134 @@ impl XcapCaptureBackend {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn xcap_monitor_pixel_size_cached(&self, xcap_monitor: &xcap::Monitor) -> Result<(u32, u32)> {
-		let width_points = xcap_monitor.width().wrap_err("Failed to read xcap monitor width")?;
-		let height_points = xcap_monitor.height().wrap_err("Failed to read xcap monitor height")?;
-		let scale_factor =
-			xcap_monitor.scale_factor().wrap_err("Failed to read xcap monitor scale factor")?;
-		let width = point_extent_to_pixel_extent(width_points, scale_factor);
-		let height = point_extent_to_pixel_extent(height_points, scale_factor);
+	fn capture_monitor_region_with_system_apis(
+		&mut self,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+	) -> Result<RgbaImage> {
+		let after_frame_seq = self.region_capture_after_seq(monitor, rect_px);
 
-		Ok((width, height))
+		if let Some((frame_seq, image)) =
+			self.wait_for_live_stream_region(monitor, rect_px, after_frame_seq)
+		{
+			self.record_region_capture(monitor, rect_px, frame_seq);
+
+			tracing::trace!(
+				op = "capture_backend.region_stream_hit",
+				monitor_id = monitor.id,
+				rect_px = ?rect_px,
+				frame_seq,
+				frame_px = ?image.dimensions(),
+				"Captured monitor region from ScreenCaptureKit stream."
+			);
+
+			return Ok(image);
+		}
+		if let Some(image) = self.live_frame_stream.latest_rgba_region(monitor, rect_px) {
+			tracing::trace!(
+				op = "capture_backend.region_stream_stale_reuse",
+				monitor_id = monitor.id,
+				rect_px = ?rect_px,
+				after_frame_seq,
+				frame_px = ?image.dimensions(),
+				"Reused the latest ScreenCaptureKit region frame after waiting for a fresher frame."
+			);
+
+			return Ok(image);
+		}
+		if let Some(snapshot) = self.live_frame_stream.latest_rgba_snapshot(monitor) {
+			let image = crop_monitor_image_region(&snapshot.image, rect_px)
+				.wrap_err("failed to crop ScreenCaptureKit snapshot for region capture")?;
+
+			tracing::trace!(
+				op = "capture_backend.region_snapshot_crop_fallback",
+				monitor_id = monitor.id,
+				rect_px = ?rect_px,
+				frame_px = ?image.dimensions(),
+				"Fell back to cropping the latest ScreenCaptureKit monitor snapshot."
+			);
+
+			return Ok(image);
+		}
+
+		Err(CaptureBackendError::NotSupported { backend: "ScreenCaptureKit region stream" }.into())
 	}
 
 	#[cfg(target_os = "macos")]
-	fn cached_xcap_monitor(&mut self, monitor: MonitorRect) -> Result<xcap::Monitor> {
-		if let Some(cached) = self.monitors.get(&monitor.id) {
-			return Ok(cached.clone());
+	fn capture_monitor_region_with_system_apis_for_scroll_capture(
+		&mut self,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+	) -> Result<Option<RgbaImage>> {
+		let after_frame_seq = self.region_capture_after_seq(monitor, rect_px);
+
+		if let Some((frame_seq, image)) =
+			self.wait_for_live_stream_region(monitor, rect_px, after_frame_seq)
+		{
+			self.record_region_capture(monitor, rect_px, frame_seq);
+
+			tracing::trace!(
+				op = "capture_backend.region_stream_hit",
+				monitor_id = monitor.id,
+				rect_px = ?rect_px,
+				frame_seq,
+				frame_px = ?image.dimensions(),
+				"Captured monitor region from ScreenCaptureKit stream."
+			);
+
+			return Ok(Some(image));
 		}
 
-		let xcap_monitors = xcap::Monitor::all().wrap_err("xcap Monitor::all failed")?;
+		tracing::trace!(
+			op = "capture_backend.region_stream_no_new_frame_for_scroll_capture",
+			monitor_id = monitor.id,
+			rect_px = ?rect_px,
+			after_frame_seq,
+			"Did not receive a fresh ScreenCaptureKit region frame for scroll capture."
+		);
 
-		for xcap_monitor in xcap_monitors {
-			let xcap_monitor_id = xcap_monitor.id().wrap_err("Failed to read xcap monitor id")?;
-			let _ = self.monitors.insert(xcap_monitor_id, xcap_monitor.clone());
+		Ok(None)
+	}
 
-			if xcap_monitor_id == monitor.id {
-				return Ok(xcap_monitor);
+	#[cfg(target_os = "macos")]
+	fn region_capture_after_seq(&self, monitor: MonitorRect, rect_px: RectPoints) -> u64 {
+		self.last_region_capture
+			.get(&monitor.id)
+			.filter(|state| state.rect_px == rect_px)
+			.map_or(0, |state| state.frame_seq)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn record_region_capture(&mut self, monitor: MonitorRect, rect_px: RectPoints, frame_seq: u64) {
+		let _ = self
+			.last_region_capture
+			.insert(monitor.id, MacosRegionCaptureState { rect_px, frame_seq });
+	}
+
+	#[cfg(target_os = "macos")]
+	fn wait_for_live_stream_region(
+		&mut self,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		after_frame_seq: u64,
+	) -> Option<(u64, RgbaImage)> {
+		let deadline = Instant::now() + MACOS_REGION_FRAME_WAIT_TIMEOUT;
+
+		loop {
+			if let Some(frame) =
+				self.live_frame_stream.latest_rgba_region_if_new(monitor, rect_px, after_frame_seq)
+			{
+				return Some(frame);
 			}
-		}
 
-		Err(CaptureBackendError::MonitorNotFound { monitor }.into())
+			let remaining = deadline.saturating_duration_since(Instant::now());
+
+			if remaining.is_zero() {
+				return None;
+			}
+
+			std::thread::sleep(remaining.min(MACOS_REGION_FRAME_WAIT_POLL_INTERVAL));
+		}
 	}
 
 	fn window_cache_valid_for(&self) -> bool {
@@ -516,17 +568,16 @@ impl CaptureBackend for XcapCaptureBackend {
 		let rect_px = normalize_capture_rect(rect_px);
 
 		#[cfg(target_os = "macos")]
-		if let Some(image) = self.live_frame_stream.latest_rgba_region(monitor, rect_px) {
-			tracing::trace!(
-				op = "capture_backend.region_stream_hit",
-				monitor_id = monitor.id,
-				rect_px = ?rect_px,
-				frame_px = ?image.dimensions(),
-				"Captured monitor region from ScreenCaptureKit stream."
-			);
-
-			return Ok(image);
+		{
+			self.capture_monitor_region_with_system_apis(monitor, rect_px).wrap_err_with(|| {
+				format!(
+					"failed to capture monitor region for freeze/export: {monitor:?} rect={rect_px:?}"
+				)
+			})
 		}
+
+		#[cfg(not(target_os = "macos"))]
+		// TODO(system-api): replace xcap-based monitor region capture with a native per-platform path.
 		if let Ok(image) = self.capture_monitor_region_with_xcap(
 			monitor,
 			rect_px.x,
@@ -546,11 +597,34 @@ impl CaptureBackend for XcapCaptureBackend {
 			return Ok(image);
 		}
 
+		#[cfg(not(target_os = "macos"))]
 		self.crop_monitor_region_fallback(monitor, rect_px).wrap_err_with(|| {
 			format!(
 				"failed to capture monitor region for freeze/export: {monitor:?} rect={rect_px:?}"
 			)
 		})
+	}
+
+	fn capture_monitor_region_for_scroll_capture(
+		&mut self,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+	) -> Result<Option<RgbaImage>> {
+		let rect_px = normalize_capture_rect(rect_px);
+
+		#[cfg(target_os = "macos")]
+		{
+			self.capture_monitor_region_with_system_apis_for_scroll_capture(monitor, rect_px)
+				.wrap_err_with(|| {
+					format!(
+						"failed to capture fresh monitor region for scroll capture: {monitor:?} rect={rect_px:?}"
+					)
+				})
+		}
+		#[cfg(not(target_os = "macos"))]
+		{
+			self.capture_monitor_region(monitor, rect_px).map(Some)
+		}
 	}
 
 	fn refresh_monitor_cache(&mut self, monitor: MonitorRect) -> Result<Arc<MonitorImageSnapshot>> {
@@ -752,29 +826,29 @@ impl CaptureBackend for XcapCaptureBackend {
 		let patch = {
 			#[cfg(target_os = "macos")]
 			{
-				let xcap_monitor = self.cached_xcap_monitor(monitor)?;
-				let (monitor_width, monitor_height) = self
-					.xcap_monitor_pixel_size_cached(&xcap_monitor)
-					.wrap_err("Failed to read xcap monitor size")?;
+				let monitor_width =
+					point_extent_to_pixel_extent(monitor.width, monitor.scale_factor());
+				let monitor_height =
+					point_extent_to_pixel_extent(monitor.height, monitor.scale_factor());
 				let width = width_px.max(1).min(monitor_width.max(1));
 				let height = height_px.max(1).min(monitor_height.max(1));
 				let region_x =
 					center_x.saturating_sub(width / 2).min(monitor_width.saturating_sub(width));
 				let region_y =
 					center_y.saturating_sub(height / 2).min(monitor_height.saturating_sub(height));
+				let rect_px = RectPoints::new(region_x, region_y, width, height);
 
-				if let Ok(patch) = self
-					.capture_monitor_region_with_xcap(monitor, region_x, region_y, width, height)
-				{
-					patch
-				} else {
-					self.ensure_cache(monitor)?;
+				match capture_monitor_region_with_core_graphics(monitor, rect_px) {
+					Ok(patch) => patch,
+					Err(_) => {
+						self.ensure_cache(monitor)?;
 
-					let Some(cache) = self.cache.as_ref() else {
-						return Ok(None);
-					};
+						let Some(cache) = self.cache.as_ref() else {
+							return Ok(None);
+						};
 
-					copy_rgba_patch(&cache.image, center_x, center_y, width, height)
+						copy_rgba_patch(&cache.image, center_x, center_y, width, height)
+					},
 				}
 			}
 			#[cfg(not(target_os = "macos"))]
@@ -794,6 +868,13 @@ impl CaptureBackend for XcapCaptureBackend {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MacosRegionCaptureState {
+	rect_px: RectPoints,
+	frame_seq: u64,
+}
+
+#[cfg(target_os = "macos")]
 struct MacWindowListRefGuard(CFArrayRef);
 #[cfg(target_os = "macos")]
 impl Drop for MacWindowListRefGuard {
@@ -807,6 +888,61 @@ impl Drop for MacWindowListRefGuard {
 #[must_use]
 pub fn default_capture_backend() -> Box<dyn CaptureBackend> {
 	Box::new(XcapCaptureBackend::new())
+}
+
+#[cfg(target_os = "macos")]
+fn rgba_image_from_cg_image(cg_image: &CGImage) -> Result<RgbaImage> {
+	let width = CGImage::width(Some(cg_image));
+	let height = CGImage::height(Some(cg_image));
+
+	if width == 0 || height == 0 {
+		return Err(eyre::eyre!("CGImage has zero dimensions"));
+	}
+
+	let data_provider = CGImage::data_provider(Some(cg_image))
+		.ok_or_else(|| eyre::eyre!("Failed to get CGImage data provider"))?;
+	let data = CGDataProvider::data(Some(data_provider.as_ref()))
+		.ok_or_else(|| eyre::eyre!("Failed to copy CGImage bytes"))?;
+	let bytes_per_row = CGImage::bytes_per_row(Some(cg_image));
+	let mut buffer = Vec::with_capacity(width * height * 4);
+
+	for row in data.to_vec().chunks_exact(bytes_per_row) {
+		buffer.extend_from_slice(&row[..width * 4]);
+	}
+	for bgra in buffer.chunks_exact_mut(4) {
+		bgra.swap(0, 2);
+	}
+
+	RgbaImage::from_raw(width as u32, height as u32, buffer)
+		.ok_or_else(|| eyre::eyre!("RgbaImage::from_raw failed"))
+}
+
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+fn capture_monitor_region_with_core_graphics(
+	monitor: MonitorRect,
+	rect_px: RectPoints,
+) -> Result<RgbaImage> {
+	let cg_rect = CGRect::new(
+		CGPoint::new(rect_px.x as f64, rect_px.y as f64),
+		CGSize::new(rect_px.width.max(1) as f64, rect_px.height.max(1) as f64),
+	);
+	let image = objc2_core_graphics::CGDisplayCreateImageForRect(monitor.id, cg_rect)
+		.ok_or_else(|| eyre::eyre!("CGDisplayCreateImageForRect returned null"))?;
+	let image = rgba_image_from_cg_image(image.as_ref())
+		.wrap_err("failed to decode CGDisplay rect capture")?;
+
+	if image.width() == rect_px.width.max(1) && image.height() == rect_px.height.max(1) {
+		return Ok(image);
+	}
+
+	let full_image = objc2_core_graphics::CGDisplayCreateImage(monitor.id)
+		.ok_or_else(|| eyre::eyre!("CGDisplayCreateImage returned null"))?;
+	let full_image = rgba_image_from_cg_image(full_image.as_ref())
+		.wrap_err("failed to decode CGDisplay full-monitor capture")?;
+
+	crop_monitor_image_region(&full_image, rect_px)
+		.wrap_err("failed to crop full-monitor fallback to requested rect")
 }
 
 fn copy_rgba_patch(
@@ -851,21 +987,6 @@ fn normalize_capture_rect(rect_px: RectPoints) -> RectPoints {
 #[cfg(target_os = "macos")]
 fn point_extent_to_pixel_extent(points: u32, scale_factor: f32) -> u32 {
 	((points as f32) * scale_factor.max(1.0)).round().max(1.0) as u32
-}
-
-#[cfg(target_os = "macos")]
-fn pixel_extent_to_point_extent(pixels: u32, scale_factor: f32) -> u32 {
-	((pixels as f32) / scale_factor.max(1.0)).ceil().max(1.0) as u32
-}
-
-#[cfg(target_os = "macos")]
-fn pixel_offset_to_point_offset(pixels: u32, scale_factor: f32) -> u32 {
-	((pixels as f32) / scale_factor.max(1.0)).floor().max(0.0) as u32
-}
-
-#[cfg(target_os = "macos")]
-fn point_offset_to_pixel_offset(points: u32, scale_factor: f32) -> u32 {
-	((points as f32) * scale_factor.max(1.0)).round().max(0.0) as u32
 }
 
 fn crop_monitor_image_region(image: &RgbaImage, rect_px: RectPoints) -> Result<RgbaImage> {
@@ -1156,9 +1277,8 @@ fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
 
 #[cfg(test)]
 mod tests {
-	use crate::backend::CaptureBackend;
-
-	use crate::backend::StubCaptureBackend;
+	use crate::backend::{CaptureBackend, StubCaptureBackend};
+	use crate::state::{GlobalPoint, MonitorRect, RectPoints};
 
 	#[test]
 	fn stub_backend_returns_cursor_position() {
@@ -1166,5 +1286,29 @@ mod tests {
 		let pos = backend.global_cursor_position().unwrap();
 
 		assert!(pos.is_none());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn region_capture_after_seq_only_reuses_matching_monitor_and_rect() {
+		let monitor = MonitorRect {
+			id: 11,
+			origin: GlobalPoint::new(0, 0),
+			width: 800,
+			height: 600,
+			scale_factor_x1000: 2_000,
+		};
+		let other_monitor = MonitorRect { id: 22, ..monitor };
+		let rect = RectPoints::new(10, 20, 300, 200);
+		let other_rect = RectPoints::new(10, 20, 320, 200);
+		let mut backend = crate::backend::XcapCaptureBackend::new();
+
+		assert_eq!(backend.region_capture_after_seq(monitor, rect), 0);
+
+		backend.record_region_capture(monitor, rect, 41);
+
+		assert_eq!(backend.region_capture_after_seq(monitor, rect), 41);
+		assert_eq!(backend.region_capture_after_seq(monitor, other_rect), 0);
+		assert_eq!(backend.region_capture_after_seq(other_monitor, rect), 0);
 	}
 }

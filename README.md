@@ -23,7 +23,8 @@ Pure-Rust menubar screenshot prototype (macOS-first).
 - In Frozen mode, `Space` copies the current frozen PNG to the clipboard and exits.
 - In Frozen mode, Cmd+S (macOS) / Ctrl+S saves the current PNG to disk and exits.
 - After a dragged region freeze, press `s` or use the frozen toolbar `Scroll Capture ↓` action to enter scroll capture.
-- Scroll capture follows manual downward scrolling, appends stable samples into a side preview, and exports the stitched result with `Space` / Cmd+S / Ctrl+S.
+- Scroll capture is currently implemented on macOS for dragged-region freezes and uses image-first downward stitching with a live side preview.
+- Upward scrolling may be observed for rewind/reacquire, but it never appends stitched rows.
 - `Esc` cancels capture; during scroll capture, `Esc` / `Back` returns to normal Frozen mode.
 - Glass HUD with configurable blur, tint, and hue controls.
 - Alt-triggered loupe sample and frozen-mode toolbar for quick action access.
@@ -36,7 +37,7 @@ Prototype / in active development.
 
 - Live sampling path: **macOS 12.3+** via ScreenCaptureKit (`SCStream`) stream samples.
 - Live mode is stream-first and does not capture full display on cursor movement.
-- Freeze/export still uses `xcap` capture.
+- Frozen capture and scroll-capture imagery on macOS use the native capture stack; `docs/spec/v0.md` is the current contract source of truth.
 - Menubar and Dock are not included in live window-outline targeting.
 - Windows support is planned (minimum Windows 10), but not implemented yet.
 
@@ -58,6 +59,7 @@ cargo run -p rsnap
 
 `rsnap` currently relies on **Screen Recording** permission to capture other apps/windows.
 - ScreenCaptureKit live sampling on macOS requires macOS 12.3+ and Screen Recording permission.
+- Scroll capture availability does not depend on an Accessibility-based scroll binding.
 - Default cursor tracking and Option key detection on macOS do not require Accessibility or Input Monitoring permissions.
 
 - Go to `System Settings` -> `Privacy & Security` -> `Screen Recording`.
@@ -79,7 +81,8 @@ cargo run -p rsnap
 ### Output (save-to-disk)
 
 - In Frozen mode, use Cmd+S (macOS) / Ctrl+S to save a PNG to disk and exit.
-- After entering scroll capture from a dragged region, manual downward scrolling appends into a side preview.
+- After entering scroll capture from a dragged region on macOS, downward scrolling may append newly proven rows into the side preview.
+  Upward scrolling never appends. Returning to already-stitched content should not grow the export; only newly proven content may be added.
   `Space` copies the stitched image, Cmd+S (macOS) / Ctrl+S saves it, and `Esc` / `Back`
   returns to the original Frozen capture without exiting.
 - Output is configured in `settings.toml`:
