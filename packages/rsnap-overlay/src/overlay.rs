@@ -440,7 +440,7 @@ pub struct OverlaySession {
 	#[cfg(target_os = "macos")]
 	live_sample_stream: Option<MacLiveFrameStream>,
 	#[cfg(not(target_os = "macos"))]
-	cursor_device: device_query::DeviceState,
+	cursor_device: Option<device_query::DeviceState>,
 	state: OverlayState,
 	cursor_monitor: Option<MonitorRect>,
 	egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
@@ -536,6 +536,18 @@ impl OverlaySession {
 			Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
 		let window_list_refresh_interval = LIVE_WINDOW_LIST_REFRESH_INTERVAL;
 		let now = Instant::now();
+		#[cfg(not(target_os = "macos"))]
+		let cursor_device = match std::panic::catch_unwind(device_query::DeviceState::new) {
+			Ok(cursor_device) => Some(cursor_device),
+			Err(_) => {
+				tracing::warn!(
+					op = "overlay.cursor_device_unavailable",
+					"Falling back to a headless-safe cursor device stub."
+				);
+
+				None
+			},
+		};
 		let mut state = OverlayState::new();
 
 		state.loupe_patch_side_px = loupe_sample_side_px;
@@ -548,7 +560,7 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			live_sample_stream: None,
 			#[cfg(not(target_os = "macos"))]
-			cursor_device: device_query::DeviceState::new(),
+			cursor_device,
 			state,
 			cursor_monitor: None,
 			windows: HashMap::new(),
@@ -4175,7 +4187,10 @@ impl OverlaySession {
 
 	#[cfg(not(target_os = "macos"))]
 	fn is_option_key_down(&self) -> bool {
-		let keys = self.cursor_device.get_keys();
+		let Some(cursor_device) = self.cursor_device.as_ref() else {
+			return false;
+		};
+		let keys = cursor_device.get_keys();
 
 		keys.contains(&Keycode::LOption)
 			|| keys.contains(&Keycode::ROption)
@@ -4190,7 +4205,10 @@ impl OverlaySession {
 
 	#[cfg(not(target_os = "macos"))]
 	fn sample_mouse_location(&mut self) -> GlobalPoint {
-		let mouse = self.cursor_device.get_mouse();
+		let Some(cursor_device) = self.cursor_device.as_ref() else {
+			return GlobalPoint::new(0, 0);
+		};
+		let mouse = cursor_device.get_mouse();
 
 		GlobalPoint::new(mouse.coords.0, mouse.coords.1)
 	}
