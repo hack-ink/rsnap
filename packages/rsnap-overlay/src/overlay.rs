@@ -144,6 +144,7 @@ const TOOLBAR_CAPTURE_GAP_PX: f32 = 10.0;
 const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
 const HUD_PILL_CORNER_RADIUS_POINTS: u8 = 18;
 const TOOLBAR_DRAG_START_THRESHOLD_PX: f32 = 6.0;
+#[cfg(target_os = "macos")]
 const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LOUPE_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LIVE_DRAG_START_THRESHOLD_PX: f32 = 6.0;
@@ -1740,8 +1741,6 @@ impl OverlaySession {
 		#[cfg(not(target_os = "macos"))]
 		{
 			self.toolbar_window_warmup_redraws_remaining = 0;
-
-			return;
 		}
 		#[cfg(target_os = "macos")]
 		{
@@ -3462,6 +3461,7 @@ impl OverlaySession {
 		}
 	}
 
+	#[cfg(target_os = "macos")]
 	fn cropped_monitor_frozen_region_image(
 		&self,
 		monitor: MonitorRect,
@@ -3988,7 +3988,7 @@ impl OverlaySession {
 
 			self.last_present_at = Instant::now();
 
-			return Ok(());
+			Ok(())
 		}
 		#[cfg(target_os = "macos")]
 		{
@@ -5360,6 +5360,7 @@ impl OverlaySession {
 		}
 	}
 
+	#[cfg(target_os = "macos")]
 	fn try_prepare_scroll_capture_start(
 		&mut self,
 	) -> Option<(MonitorRect, RectPoints, RectPoints, RgbaImage)> {
@@ -5421,6 +5422,7 @@ impl OverlaySession {
 		Some((monitor, capture_rect_points, capture_rect_pixels, base_frame))
 	}
 
+	#[cfg(target_os = "macos")]
 	fn build_scroll_capture_state(
 		&self,
 		monitor: MonitorRect,
@@ -5489,8 +5491,6 @@ impl OverlaySession {
 				reason = "unsupported_platform",
 				"Skipped starting scroll capture because the current platform is unsupported."
 			);
-
-			return;
 		}
 		#[cfg(target_os = "macos")]
 		{
@@ -6123,6 +6123,7 @@ impl OverlaySession {
 		}
 	}
 
+	#[cfg(target_os = "macos")]
 	fn position_scroll_preview_window(&self, monitor: MonitorRect) {
 		let Some(preview_window) = self.scroll_preview_window.as_ref() else {
 			return;
@@ -6195,9 +6196,6 @@ impl OverlaySession {
 			let _ = overlay_window.window.set_cursor_hittest(!passthrough);
 		}
 	}
-
-	#[cfg(not(target_os = "macos"))]
-	fn set_scroll_overlay_mouse_passthrough(&self, _passthrough: bool) {}
 
 	#[cfg(target_os = "macos")]
 	fn set_scroll_overlay_mouse_passthrough_state(
@@ -6311,9 +6309,6 @@ impl OverlaySession {
 		macos_make_window_key(target_window);
 	}
 
-	#[cfg(not(target_os = "macos"))]
-	fn focus_frozen_keyboard_window(&self) {}
-
 	#[cfg(target_os = "macos")]
 	fn focus_live_capture_window(&self) {
 		macos_activate_app();
@@ -6367,9 +6362,6 @@ impl OverlaySession {
 
 		macos_make_window_key(target_window);
 	}
-
-	#[cfg(not(target_os = "macos"))]
-	fn focus_scroll_keyboard_window(&self) {}
 
 	fn update_scroll_toolbar_default_position(&mut self, monitor: MonitorRect) {
 		if !self.scroll_capture.active || self.toolbar_state.dragging {
