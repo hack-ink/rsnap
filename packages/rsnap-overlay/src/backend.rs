@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::ffi::{CString, c_char, c_void};
@@ -1271,6 +1272,7 @@ fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
 #[cfg(test)]
 mod tests {
 	use crate::backend::{CaptureBackend, StubCaptureBackend};
+	#[cfg(target_os = "macos")]
 	use crate::state::{GlobalPoint, MonitorRect, RectPoints};
 
 	#[test]
