@@ -2,9 +2,10 @@ mod hud_helpers;
 mod image_helpers;
 mod output;
 
+#[cfg(target_os = "macos")]
+use std::ffi::c_void;
 use std::{
 	collections::HashMap,
-	ffi::c_void,
 	path::PathBuf,
 	sync::{Arc, Mutex},
 	time::{Duration, Instant},
@@ -101,7 +102,9 @@ const HUD_PILL_BODY_FILL_LIGHT_SRGBA8: [u8; 4] = [232, 236, 243, 176];
 const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
 const HUD_PILL_BLUR_TINT_ALPHA_LIGHT: f32 = 0.22;
 const LOUPE_TILE_CORNER_RADIUS_POINTS: f64 = 12.0;
+#[cfg(target_os = "macos")]
 const MACOS_HUD_WINDOW_LEVEL: isize = 26;
+#[cfg(target_os = "macos")]
 const MACOS_OVERLAY_WINDOW_LEVEL: isize = 25;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
@@ -114,7 +117,9 @@ const LIVE_PRESENT_INTERVAL_MIN: Duration = Duration::from_nanos(8_333_333);
 const HUD_LOUPE_MOVE_INTERVAL_MIN: Duration = LIVE_PRESENT_INTERVAL_MIN;
 const CURSOR_POLL_INTERVAL_MIN: Duration = LIVE_PRESENT_INTERVAL_MIN;
 const OVERLAY_EVENT_LOOP_STALL_THRESHOLD: Duration = Duration::from_millis(250);
+#[cfg(target_os = "macos")]
 const SLOW_OP_WARN_CURSOR_LOCATION: Duration = Duration::from_millis(8);
+#[cfg(target_os = "macos")]
 const SLOW_OP_WARN_HUD_CONFIG: Duration = Duration::from_millis(40);
 const SLOW_OP_WARN_OUTER_POSITION: Duration = Duration::from_millis(24);
 const SLOW_OP_WARN_RENDER: Duration = Duration::from_millis(24);
@@ -725,6 +730,10 @@ impl OverlaySession {
 		corner_radius: Option<f64>,
 	) {
 		window.set_transparent(true);
+
+		#[cfg(not(target_os = "macos"))]
+		let _ = corner_radius;
+
 		#[cfg(not(target_os = "macos"))]
 		window.set_blur(self.config.show_hud_blur);
 		#[cfg(target_os = "macos")]
@@ -833,6 +842,7 @@ impl OverlaySession {
 		self.config.show_hud_blur && !cfg!(target_os = "macos")
 	}
 
+	#[cfg(target_os = "macos")]
 	fn macos_hud_window_blur_enabled(&self) -> bool {
 		self.config.show_hud_blur
 	}
@@ -1733,22 +1743,24 @@ impl OverlaySession {
 
 			return;
 		}
-
-		if !matches!(self.state.mode, OverlayMode::Frozen)
-			|| !self.toolbar_state.visible
-			|| self.state.frozen_image.is_none()
-			|| self.state.monitor.is_none()
+		#[cfg(target_os = "macos")]
 		{
-			self.toolbar_window_warmup_redraws_remaining = 0;
+			if !matches!(self.state.mode, OverlayMode::Frozen)
+				|| !self.toolbar_state.visible
+				|| self.state.frozen_image.is_none()
+				|| self.state.monitor.is_none()
+			{
+				self.toolbar_window_warmup_redraws_remaining = 0;
 
-			return;
+				return;
+			}
+
+			self.toolbar_window_warmup_redraws_remaining =
+				self.toolbar_window_warmup_redraws_remaining.saturating_sub(1);
+
+			self.request_redraw_toolbar_window();
+			self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(self.state.monitor));
 		}
-
-		self.toolbar_window_warmup_redraws_remaining =
-			self.toolbar_window_warmup_redraws_remaining.saturating_sub(1);
-
-		self.request_redraw_toolbar_window();
-		self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(self.state.monitor));
 	}
 
 	fn maybe_tick_frozen_cursor_tracking(&mut self) {
@@ -2408,7 +2420,7 @@ impl OverlaySession {
 	) {
 		match outcome {
 			Ok(ScrollObserveOutcome::NoChange) => {
-				if let ScrollCaptureFrameSource::Worker { request_id } = source {
+				if let Some(request_id) = source.worker_request_id() {
 					tracing::info!(
 						op = "scroll_capture.worker_frame_processed",
 						request_id,
@@ -2420,7 +2432,7 @@ impl OverlaySession {
 				}
 			},
 			Ok(ScrollObserveOutcome::PreviewUpdated) => {
-				if let ScrollCaptureFrameSource::Worker { request_id } = source {
+				if let Some(request_id) = source.worker_request_id() {
 					tracing::info!(
 						op = "scroll_capture.worker_frame_processed",
 						request_id,
@@ -3965,15 +3977,9 @@ impl OverlaySession {
 	) -> eyre::Result<()> {
 		self.sync_scroll_toolbar_state();
 
-		let should_focus_frozen_keyboard = !self.toolbar_window_visible
-			&& matches!(self.state.mode, OverlayMode::Frozen)
-			&& !self.scroll_capture.active;
-		let Some(gpu) = self.gpu.as_ref() else {
-			return Ok(());
-		};
-
 		#[cfg(not(target_os = "macos"))]
 		{
+			let _ = (&monitor, &toolbar_input);
 			let Some(toolbar_window) = self.toolbar_window.as_ref() else {
 				return Ok(());
 			};
@@ -3984,75 +3990,85 @@ impl OverlaySession {
 
 			return Ok(());
 		}
-
-		let Some(toolbar_window) = self.toolbar_window.as_ref() else {
-			return Ok(());
-		};
-
-		toolbar_window.window.set_visible(true);
-
-		if !self.toolbar_window_visible {
-			self.toolbar_window_visible = true;
-			self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
-		}
-		if should_focus_frozen_keyboard {
-			self.focus_frozen_keyboard_window();
-		}
-
-		let previous_floating_position = self.toolbar_state.floating_position;
-
-		self.toolbar_state.floating_position = Some(Pos2::ZERO);
-
-		let Some(toolbar_window) = self.toolbar_window.as_mut() else {
-			return Ok(());
-		};
-		let draw_result = toolbar_window.renderer.draw(
-			gpu,
-			&self.state,
-			monitor,
-			false,
-			Some(Pos2::ZERO),
-			false,
-			HudAnchor::Cursor,
-			self.config.toolbar_placement,
-			self.config.show_alt_hint_keycap,
-			false,
-			self.config.hud_opaque,
-			self.config.hud_opacity,
-			self.config.hud_fog_amount,
-			self.config.hud_milk_amount,
-			self.config.hud_tint_hue,
-			self.config.theme_mode,
-			self.config.selection_particles,
-			self.config.selection_flow_stroke_width_px,
-			false,
-			false,
-			Some(&mut self.toolbar_state),
-			toolbar_input,
-		);
-
-		self.toolbar_state.floating_position = previous_floating_position;
-
-		draw_result?;
-
-		let desired_inner_size = toolbar_window.renderer.hud_pill.map(|hud_pill| {
-			(
-				hud_pill.rect.width().ceil().max(1.0) as u32,
-				hud_pill.rect.height().ceil().max(1.0) as u32,
-			)
-		});
-		let toolbar_window = Arc::clone(&toolbar_window.window);
-
-		if let Some(desired) = desired_inner_size
-			&& self.toolbar_inner_size_points != Some(desired)
+		#[cfg(target_os = "macos")]
 		{
-			self.toolbar_inner_size_points = Some(desired);
+			let should_focus_frozen_keyboard = !self.toolbar_window_visible
+				&& matches!(self.state.mode, OverlayMode::Frozen)
+				&& !self.scroll_capture.active;
+			let Some(gpu) = self.gpu.as_ref() else {
+				return Ok(());
+			};
+			let Some(toolbar_window) = self.toolbar_window.as_ref() else {
+				return Ok(());
+			};
 
-			let _ = toolbar_window
-				.request_inner_size(LogicalSize::new(f64::from(desired.0), f64::from(desired.1)));
+			toolbar_window.window.set_visible(true);
+
+			if !self.toolbar_window_visible {
+				self.toolbar_window_visible = true;
+				self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
+			}
+			if should_focus_frozen_keyboard {
+				self.focus_frozen_keyboard_window();
+			}
+
+			let previous_floating_position = self.toolbar_state.floating_position;
+
+			self.toolbar_state.floating_position = Some(Pos2::ZERO);
+
+			let Some(toolbar_window) = self.toolbar_window.as_mut() else {
+				return Ok(());
+			};
+			let draw_result = toolbar_window.renderer.draw(
+				gpu,
+				&self.state,
+				monitor,
+				false,
+				Some(Pos2::ZERO),
+				false,
+				HudAnchor::Cursor,
+				self.config.toolbar_placement,
+				self.config.show_alt_hint_keycap,
+				false,
+				self.config.hud_opaque,
+				self.config.hud_opacity,
+				self.config.hud_fog_amount,
+				self.config.hud_milk_amount,
+				self.config.hud_tint_hue,
+				self.config.theme_mode,
+				self.config.selection_particles,
+				self.config.selection_flow_stroke_width_px,
+				false,
+				false,
+				Some(&mut self.toolbar_state),
+				toolbar_input,
+			);
+
+			self.toolbar_state.floating_position = previous_floating_position;
+
+			draw_result?;
+
+			let desired_inner_size = toolbar_window.renderer.hud_pill.map(|hud_pill| {
+				(
+					hud_pill.rect.width().ceil().max(1.0) as u32,
+					hud_pill.rect.height().ceil().max(1.0) as u32,
+				)
+			});
+			let toolbar_window = Arc::clone(&toolbar_window.window);
+
+			if let Some(desired) = desired_inner_size
+				&& self.toolbar_inner_size_points != Some(desired)
+			{
+				self.toolbar_inner_size_points = Some(desired);
+
+				let _ = toolbar_window.request_inner_size(LogicalSize::new(
+					f64::from(desired.0),
+					f64::from(desired.1),
+				));
+			}
+
+			Ok(())
 		}
-
-		Ok(())
 	}
 
 	fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
@@ -4838,10 +4854,9 @@ impl OverlaySession {
 
 		self.record_scroll_capture_input_direction_from_overlay_wheel_at(delta, Instant::now());
 
-		let target_point = cursor;
-
 		#[cfg(target_os = "macos")]
 		{
+			let target_point = cursor;
 			let now = Instant::now();
 
 			self.arm_scroll_overlay_mouse_passthrough_window(now, "overlay_mouse_wheel");
@@ -5148,6 +5163,7 @@ impl OverlaySession {
 		None
 	}
 
+	#[cfg(target_os = "macos")]
 	fn scroll_capture_input_age_ms(&self) -> Option<u64> {
 		self.scroll_capture_input_age_ms_at(Instant::now())
 	}
@@ -5476,56 +5492,55 @@ impl OverlaySession {
 
 			return;
 		}
-
-		let Some((monitor, capture_rect_points, capture_rect_pixels, base_frame)) =
-			self.try_prepare_scroll_capture_start()
-		else {
-			return;
-		};
-		let base_frame_dimensions = base_frame.dimensions();
-
-		self.scroll_capture =
-			match self.build_scroll_capture_state(monitor, capture_rect_pixels, base_frame) {
-				Ok(scroll_capture) => scroll_capture,
-				Err(err) => {
-					self.state.set_error(format!("{err:#}"));
-					self.request_redraw_all();
-
-					return;
-				},
-			};
-
-		tracing::info!(
-			op = "scroll_capture.start",
-			frozen_capture_source = ?self.frozen_capture_source,
-			monitor_id = monitor.id,
-			monitor_origin = ?monitor.origin,
-			monitor_size_points = ?(monitor.width, monitor.height),
-			monitor_scale_factor = monitor.scale_factor(),
-			capture_rect_points = ?capture_rect_points,
-			capture_rect_pixels = ?capture_rect_pixels,
-			base_frame_px = ?base_frame_dimensions,
-			"Entered scroll-capture mode."
-		);
-
-		self.sync_scroll_toolbar_state();
-		self.sync_scroll_preview_segments();
-		self.position_scroll_preview_window(monitor);
-		self.update_scroll_toolbar_default_position(monitor);
-		self.set_scroll_overlay_mouse_passthrough(false);
-		self.focus_scroll_keyboard_window();
-
-		if let Some(preview) = self.scroll_preview_window.as_ref() {
-			preview.window.set_visible(true);
-			preview.window.request_redraw();
-		}
-
 		#[cfg(target_os = "macos")]
 		{
-			let _ = self.try_consume_scroll_stream_frame();
-		}
+			let Some((monitor, capture_rect_points, capture_rect_pixels, base_frame)) =
+				self.try_prepare_scroll_capture_start()
+			else {
+				return;
+			};
+			let base_frame_dimensions = base_frame.dimensions();
 
-		self.request_redraw_for_monitor(monitor);
+			self.scroll_capture =
+				match self.build_scroll_capture_state(monitor, capture_rect_pixels, base_frame) {
+					Ok(scroll_capture) => scroll_capture,
+					Err(err) => {
+						self.state.set_error(format!("{err:#}"));
+						self.request_redraw_all();
+
+						return;
+					},
+				};
+
+			tracing::info!(
+				op = "scroll_capture.start",
+				frozen_capture_source = ?self.frozen_capture_source,
+				monitor_id = monitor.id,
+				monitor_origin = ?monitor.origin,
+				monitor_size_points = ?(monitor.width, monitor.height),
+				monitor_scale_factor = monitor.scale_factor(),
+				capture_rect_points = ?capture_rect_points,
+				capture_rect_pixels = ?capture_rect_pixels,
+				base_frame_px = ?base_frame_dimensions,
+				"Entered scroll-capture mode."
+			);
+
+			self.sync_scroll_toolbar_state();
+			self.sync_scroll_preview_segments();
+			self.position_scroll_preview_window(monitor);
+			self.update_scroll_toolbar_default_position(monitor);
+			self.set_scroll_overlay_mouse_passthrough(false);
+			self.focus_scroll_keyboard_window();
+
+			if let Some(preview) = self.scroll_preview_window.as_ref() {
+				preview.window.set_visible(true);
+				preview.window.request_redraw();
+			}
+
+			let _ = self.try_consume_scroll_stream_frame();
+
+			self.request_redraw_for_monitor(monitor);
+		}
 	}
 
 	fn toggle_scroll_capture_paused(&mut self) {
@@ -6331,9 +6346,6 @@ impl OverlaySession {
 
 		macos_make_window_key(target_window);
 	}
-
-	#[cfg(not(target_os = "macos"))]
-	fn focus_live_capture_window(&self) {}
 
 	#[cfg(target_os = "macos")]
 	fn focus_scroll_keyboard_window(&self) {
@@ -11198,21 +11210,23 @@ mod tests {
 	#[cfg(not(target_os = "macos"))]
 	use crate::overlay::FrozenCaptureSource;
 	use crate::overlay::{
-		FrozenToolbarState, FrozenToolbarTool, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
-		HudTheme, InflightScrollCaptureObservation, OverlaySession, Pos2, Rect,
-		SCROLL_CAPTURE_INPUT_FRESHNESS, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
-		ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
+		FrozenToolbarState, FrozenToolbarTool, HudTheme, OverlaySession, Pos2, Rect,
+		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
+		hud_helpers,
 	};
 	#[cfg(target_os = "macos")]
 	use crate::overlay::{
+		HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, InflightScrollCaptureObservation,
 		KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult, LiveStreamStaleGrace,
-		MacOSScrollPixelResidual, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
-		SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource,
+		MacOSScrollPixelResidual, SCROLL_CAPTURE_INPUT_FRESHNESS,
+		SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
+		ScrollCaptureFrameSource,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
+	#[cfg(target_os = "macos")]
+	use crate::state::LiveCursorSample;
 	use crate::state::{
-		GlobalPoint, LiveCursorSample, LoupeSample, MonitorRect, MonitorRectPoints, OverlayMode,
-		RectPoints, Rgb,
+		GlobalPoint, LoupeSample, MonitorRect, MonitorRectPoints, OverlayMode, RectPoints, Rgb,
 	};
 	#[cfg(target_os = "macos")]
 	use std::sync::Arc;
