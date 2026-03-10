@@ -1,7 +1,7 @@
-#[cfg(target_os = "macos")]
 use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
+#[cfg(target_os = "macos")]
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, AtomicU64, Ordering},
