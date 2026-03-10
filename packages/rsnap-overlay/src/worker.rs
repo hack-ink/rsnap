@@ -2,6 +2,7 @@ use std::sync::{
 	Arc,
 	mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError},
 };
+#[cfg(not(target_os = "macos"))]
 use std::time::Instant;
 
 use image::RgbaImage;
@@ -24,6 +25,7 @@ pub(crate) enum WorkerRequest {
 		point: GlobalPoint,
 		request_id: u64,
 	},
+	#[cfg(not(target_os = "macos"))]
 	SampleLiveCursor {
 		monitor: MonitorRect,
 		point: GlobalPoint,
@@ -49,6 +51,7 @@ pub(crate) enum WorkerRequest {
 
 #[derive(Debug)]
 pub(crate) enum WorkerResponse {
+	#[cfg_attr(target_os = "macos", allow(dead_code))]
 	SampledLiveCursor {
 		monitor: MonitorRect,
 		point: GlobalPoint,
@@ -272,6 +275,7 @@ impl OverlayWorker {
 		}
 	}
 
+	#[cfg(not(target_os = "macos"))]
 	fn handle_sample_cursor_request(
 		backend: &mut dyn CaptureBackend,
 		resp_tx: &Sender<WorkerResponse>,
@@ -375,6 +379,7 @@ impl OverlayWorker {
 		self.req_tx.try_send(request).map_err(Self::map_try_send_error)
 	}
 
+	#[cfg(not(target_os = "macos"))]
 	pub(crate) fn request_sample_live_cursor(
 		&self,
 		monitor: MonitorRect,
@@ -436,6 +441,7 @@ impl OverlayWorker {
 #[derive(Default)]
 struct PendingWorkerRequests {
 	last_hit_test: Option<(MonitorRect, GlobalPoint, u64)>,
+	#[cfg(not(target_os = "macos"))]
 	last_sample_cursor: Option<(MonitorRect, GlobalPoint, u64, bool, u32, u32)>,
 	last_refresh_window_list: bool,
 	last_freeze: Option<(MonitorRect, FreezeCaptureTarget)>,
@@ -448,6 +454,7 @@ impl PendingWorkerRequests {
 			WorkerRequest::HitTestWindow { monitor, point, request_id } => {
 				self.last_hit_test = Some((monitor, point, request_id));
 			},
+			#[cfg(not(target_os = "macos"))]
 			WorkerRequest::SampleLiveCursor {
 				monitor,
 				point,
@@ -509,6 +516,7 @@ impl PendingWorkerRequests {
 			OverlayWorker::handle_refresh_window_list_request(backend, resp_tx, response_waker);
 		}
 
+		#[cfg(not(target_os = "macos"))]
 		if let Some((monitor, point, request_id, want_patch, patch_width_px, patch_height_px)) =
 			self.last_sample_cursor
 		{
