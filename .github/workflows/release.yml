@@ -171,7 +171,7 @@ jobs:
           tar -czvf rsnap-${{ matrix.target.name }}.tar.gz rsnap
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: rsnap-${{ matrix.target.name }}
           path: rsnap-${{ matrix.target.name }}.*
