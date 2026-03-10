@@ -2,11 +2,13 @@ version: 2
 updates:
   - package-ecosystem: 'cargo'
     directory: '/'
+    labels: []
     schedule:
       interval: 'daily'
       time: '00:00'
   - package-ecosystem: 'github-actions'
     directory: '/'
+    labels: []
     schedule:
       interval: 'daily'
       time: '00:00'
