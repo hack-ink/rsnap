@@ -103,23 +103,21 @@ pub struct SettingsWindow {
 }
 impl SettingsWindow {
 	pub fn open(event_loop: &ActiveEventLoop) -> Result<Self> {
-		let mut attrs = Window::default_attributes()
+		let attrs = Window::default_attributes()
 			.with_title("Settings")
 			.with_inner_size(LogicalSize::new(520.0, 360.0))
 			.with_resizable(false)
 			.with_visible(true);
-
 		#[cfg(target_os = "macos")]
-		{
+		let attrs = {
 			use winit::platform::macos::WindowAttributesExtMacOS;
 
-			attrs = attrs
+			attrs
 				.with_titlebar_transparent(true)
 				.with_title_hidden(true)
 				.with_fullsize_content_view(true)
-				.with_movable_by_window_background(false);
-		}
-
+				.with_movable_by_window_background(false)
+		};
 		let window = event_loop.create_window(attrs).wrap_err("create settings window")?;
 		let window = std::sync::Arc::new(window);
 		let (gpu, surface, surface_config) =
