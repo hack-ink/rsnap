@@ -92,6 +92,8 @@ pub enum UserEvent {
 	HotKey(GlobalHotKeyEvent),
 	#[cfg(target_os = "macos")]
 	OverlayStreamFrame,
+	#[cfg(target_os = "macos")]
+	OverlayWorkerResponse,
 }
 
 #[cfg(target_os = "macos")]
@@ -413,14 +415,20 @@ impl App {
 			let overlay_stream_event_pending = Arc::clone(&self.overlay_stream_event_pending);
 
 			move || {
-				if overlay_stream_event_pending
-					.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-					.is_err()
-				{
+				if !begin_coalesced_overlay_user_event_send(&overlay_stream_event_pending) {
 					return;
 				}
+				if overlay_proxy.send_event(UserEvent::OverlayStreamFrame).is_err() {
+					overlay_stream_event_pending.store(false, Ordering::Release);
+				}
+			}
+		}));
+		#[cfg(target_os = "macos")]
+		overlay_session.set_response_waker(Arc::new({
+			let overlay_proxy = self.overlay_proxy.clone();
 
-				let _ = overlay_proxy.send_event(UserEvent::OverlayStreamFrame);
+			move || {
+				let _ = overlay_proxy.send_event(UserEvent::OverlayWorkerResponse);
 			}
 		}));
 		#[cfg(target_os = "macos")]
@@ -910,6 +918,14 @@ impl ApplicationHandler<UserEvent> for App {
 					self.handle_overlay_control(control);
 				}
 			},
+			#[cfg(target_os = "macos")]
+			UserEvent::OverlayWorkerResponse => {
+				if let Some(session) = self.overlay_session.as_mut() {
+					let control = session.handle_worker_response_ready();
+
+					self.handle_overlay_control(control);
+				}
+			},
 		}
 	}
 
@@ -1126,6 +1142,11 @@ pub fn run() -> Result<()> {
 	event_loop.run_app(&mut app).map_err(|err: EventLoopError| eyre::eyre!(err))?;
 
 	Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn begin_coalesced_overlay_user_event_send(pending: &AtomicBool) -> bool {
+	pending.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -1404,9 +1425,12 @@ mod tests {
 	use crate::app::{
 		DecodedScrollInput, MacOSCGPoint, NSEVENT_PHASE_BEGAN, NSEVENT_PHASE_CANCELLED,
 		NSEVENT_PHASE_ENDED, NSEVENT_PHASE_MAY_BEGIN, SHARED_SCROLL_INPUT_QUEUE_CAPACITY,
-		SharedScrollInputState, decode_scroll_input_from_fields, scroll_phase_bits_are_active,
+		SharedScrollInputState, begin_coalesced_overlay_user_event_send,
+		decode_scroll_input_from_fields, scroll_phase_bits_are_active,
 		scroll_phase_bits_are_terminal,
 	};
+	#[cfg(target_os = "macos")]
+	use std::sync::atomic::AtomicBool;
 	#[cfg(target_os = "macos")]
 	use std::time::{Duration, Instant};
 
@@ -1535,5 +1559,14 @@ mod tests {
 			replay.last().map(|event| event.0),
 			Some((SHARED_SCROLL_INPUT_QUEUE_CAPACITY + 2) as u64)
 		);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn begin_coalesced_overlay_user_event_send_only_allows_first_sender_per_flag() {
+		let pending = AtomicBool::new(false);
+
+		assert!(begin_coalesced_overlay_user_event_send(&pending));
+		assert!(!begin_coalesced_overlay_user_event_send(&pending));
 	}
 }

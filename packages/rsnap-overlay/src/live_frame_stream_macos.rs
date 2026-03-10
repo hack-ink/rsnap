@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::ops::Deref;
 use std::process;
 use std::sync::{
 	Arc, Mutex,
@@ -67,6 +68,11 @@ objc2::define_class!(
 			};
 			let frame_seq =
 				self.ivars().frame_seq_counter.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+			let frame = QueuedPixelBufferFrame {
+				frame_seq,
+				captured_at: Instant::now(),
+				pixel_buffer: SharedPixelBuffer(image_buffer),
+			};
 			let mut frames = match self.ivars().frames.lock() {
 				Ok(guard) => guard,
 				Err(poisoned) => poisoned.into_inner(),
@@ -75,12 +81,9 @@ objc2::define_class!(
 			if frames.len() >= STREAM_FRAME_QUEUE_CAPACITY {
 				frames.pop_front();
 			}
-			frames.push_back(QueuedPixelBufferFrame {
-				frame_seq,
-				captured_at: Instant::now(),
-				pixel_buffer: image_buffer,
-			});
+			frames.push_back(frame.clone());
 			drop(frames);
+			self.ivars().shared_latest_frame.store(self.ivars().monitor_id, &frame);
 
 			if let Some(frame_waker) = self.ivars().frame_waker.as_ref() {
 				frame_waker();
@@ -105,6 +108,9 @@ enum StreamFilterMode {
 }
 
 enum WorkerRequest {
+	EnsureMonitor {
+		monitor: MonitorRect,
+	},
 	SampleCursor {
 		monitor: MonitorRect,
 		x_px: u32,
@@ -141,6 +147,7 @@ pub(crate) struct OrderedRegionFrame {
 
 pub(crate) struct MacLiveFrameStream {
 	request_tx: Sender<WorkerRequest>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
 	worker: Option<JoinHandle<()>>,
 }
 impl MacLiveFrameStream {
@@ -150,9 +157,13 @@ impl MacLiveFrameStream {
 
 	pub(crate) fn with_waker(frame_waker: Option<Arc<dyn Fn() + Send + Sync>>) -> Self {
 		let (request_tx, request_rx) = mpsc::channel();
-		let worker = thread::spawn(move || stream_worker_loop(request_rx, frame_waker));
+		let shared_latest_frame = Arc::new(SharedLatestFrame::default());
+		let worker_shared_latest_frame = shared_latest_frame.clone();
+		let worker = thread::spawn(move || {
+			stream_worker_loop(request_rx, frame_waker, worker_shared_latest_frame);
+		});
 
-		Self { request_tx, worker: Some(worker) }
+		Self { request_tx, shared_latest_frame, worker: Some(worker) }
 	}
 
 	pub(crate) fn sample_rgb(&mut self, monitor: MonitorRect, x_px: u32, y_px: u32) -> Option<Rgb> {
@@ -190,8 +201,8 @@ impl MacLiveFrameStream {
 		.and_then(|sample| sample.patch)
 	}
 
-	pub(crate) fn sample_cursor(
-		&mut self,
+	pub(crate) fn latest_cursor_sample(
+		&self,
 		monitor: MonitorRect,
 		x_px: u32,
 		y_px: u32,
@@ -199,16 +210,23 @@ impl MacLiveFrameStream {
 		patch_width_px: u32,
 		patch_height_px: u32,
 	) -> Option<LiveCursorSample> {
-		self.request(|reply_tx| WorkerRequest::SampleCursor {
-			monitor,
-			x_px,
-			y_px,
-			want_patch,
-			patch_width_px,
-			patch_height_px,
-			reply_tx,
-		})
-		.flatten()
+		let sample =
+			self.shared_latest_frame.latest_frame_for_monitor(monitor.id).and_then(|frame| {
+				sample_cursor_from_pixel_buffer(
+					&frame.pixel_buffer,
+					x_px,
+					y_px,
+					want_patch,
+					patch_width_px,
+					patch_height_px,
+				)
+			});
+
+		if sample.is_none() {
+			self.ensure_monitor_nonblocking(monitor);
+		}
+
+		sample
 	}
 
 	pub(crate) fn latest_rgba_snapshot(
@@ -261,6 +279,15 @@ impl MacLiveFrameStream {
 
 		reply_rx.recv_timeout(STREAM_RPC_TIMEOUT).ok()
 	}
+
+	fn ensure_monitor_nonblocking(&self, monitor: MonitorRect) {
+		if !self.shared_latest_frame.begin_ensure_monitor(monitor.id) {
+			return;
+		}
+		if self.request_tx.send(WorkerRequest::EnsureMonitor { monitor }).is_err() {
+			self.shared_latest_frame.finish_ensure_monitor(monitor.id);
+		}
+	}
 }
 
 impl Drop for MacLiveFrameStream {
@@ -274,10 +301,107 @@ impl Drop for MacLiveFrameStream {
 }
 
 #[derive(Clone)]
+struct SharedPixelBuffer(CFRetained<CVPixelBuffer>);
+// Safety: CoreVideo pixel buffers are retained CF objects. This wrapper only exposes
+// immutable queries plus read-only base-address locks, so sharing retained references
+// across threads does not permit unsynchronized mutation from Rust.
+unsafe impl Send for SharedPixelBuffer {}
+
+impl Deref for SharedPixelBuffer {
+	type Target = CFRetained<CVPixelBuffer>;
+
+	fn deref(&self) -> &Self::Target {
+		&self.0
+	}
+}
+
+unsafe impl Sync for SharedPixelBuffer {}
+
+#[derive(Clone)]
 struct QueuedPixelBufferFrame {
 	frame_seq: u64,
 	captured_at: Instant,
-	pixel_buffer: CFRetained<CVPixelBuffer>,
+	pixel_buffer: SharedPixelBuffer,
+}
+
+#[derive(Clone)]
+struct LatestQueuedPixelBufferFrame {
+	monitor_id: u32,
+	frame: QueuedPixelBufferFrame,
+}
+
+#[derive(Default)]
+struct SharedLatestFrame {
+	latest: Mutex<Option<LatestQueuedPixelBufferFrame>>,
+	pending_monitor: Mutex<Option<u32>>,
+}
+impl SharedLatestFrame {
+	fn store(&self, monitor_id: u32, frame: &QueuedPixelBufferFrame) {
+		match self.latest.lock() {
+			Ok(mut guard) => {
+				*guard = Some(LatestQueuedPixelBufferFrame { monitor_id, frame: frame.clone() });
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				*guard = Some(LatestQueuedPixelBufferFrame { monitor_id, frame: frame.clone() });
+			},
+		}
+
+		self.finish_ensure_monitor(monitor_id);
+	}
+
+	fn latest_frame_for_monitor(&self, monitor_id: u32) -> Option<QueuedPixelBufferFrame> {
+		match self.latest.lock() {
+			Ok(guard) => guard
+				.as_ref()
+				.and_then(|latest| (latest.monitor_id == monitor_id).then(|| latest.frame.clone())),
+			Err(poisoned) => poisoned
+				.into_inner()
+				.as_ref()
+				.and_then(|latest| (latest.monitor_id == monitor_id).then(|| latest.frame.clone())),
+		}
+	}
+
+	fn begin_ensure_monitor(&self, monitor_id: u32) -> bool {
+		match self.pending_monitor.lock() {
+			Ok(mut guard) => {
+				if guard.is_some_and(|pending_monitor_id| pending_monitor_id == monitor_id) {
+					return false;
+				}
+
+				*guard = Some(monitor_id);
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				if guard.is_some_and(|pending_monitor_id| pending_monitor_id == monitor_id) {
+					return false;
+				}
+
+				*guard = Some(monitor_id);
+			},
+		}
+
+		true
+	}
+
+	fn finish_ensure_monitor(&self, monitor_id: u32) {
+		match self.pending_monitor.lock() {
+			Ok(mut guard) => {
+				if guard.is_some_and(|pending_monitor_id| pending_monitor_id == monitor_id) {
+					*guard = None;
+				}
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				if guard.is_some_and(|pending_monitor_id| pending_monitor_id == monitor_id) {
+					*guard = None;
+				}
+			},
+		}
+	}
 }
 
 struct StreamOutputIvars {
@@ -285,18 +409,21 @@ struct StreamOutputIvars {
 	frames: Mutex<VecDeque<QueuedPixelBufferFrame>>,
 	frame_seq_counter: Arc<AtomicU64>,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
 }
 impl StreamOutputIvars {
 	fn new(
 		monitor_id: u32,
 		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 		frame_seq_counter: Arc<AtomicU64>,
+		shared_latest_frame: Arc<SharedLatestFrame>,
 	) -> Self {
 		Self {
 			monitor_id,
 			frames: Mutex::new(VecDeque::with_capacity(STREAM_FRAME_QUEUE_CAPACITY)),
 			frame_seq_counter,
 			frame_waker,
+			shared_latest_frame,
 		}
 	}
 }
@@ -312,11 +439,13 @@ impl StreamOutput {
 		monitor_id: u32,
 		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 		frame_seq_counter: Arc<AtomicU64>,
+		shared_latest_frame: Arc<SharedLatestFrame>,
 	) -> Retained<Self> {
 		let this = Self::alloc().set_ivars(StreamOutputIvars::new(
 			monitor_id,
 			frame_waker,
 			frame_seq_counter,
+			shared_latest_frame,
 		));
 
 		unsafe { objc2::msg_send![super(this), init] }
@@ -329,7 +458,7 @@ impl StreamOutput {
 		}
 	}
 
-	fn latest_pixel_buffer(&self) -> Option<CFRetained<CVPixelBuffer>> {
+	fn latest_pixel_buffer(&self) -> Option<SharedPixelBuffer> {
 		self.latest_frame().map(|frame| frame.pixel_buffer)
 	}
 
@@ -351,6 +480,7 @@ impl StreamOutput {
 fn stream_worker_loop(
 	request_rx: Receiver<WorkerRequest>,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
 ) {
 	let frame_seq_counter = Arc::new(AtomicU64::new(0));
 	let mut state: Option<StreamState> = None;
@@ -358,6 +488,19 @@ fn stream_worker_loop(
 
 	while let Ok(request) = request_rx.recv() {
 		match request {
+			WorkerRequest::EnsureMonitor { monitor } => {
+				let _ = ensure_stream(
+					&mut state,
+					&mut last_setup_attempt_at,
+					STREAM_SETUP_BACKOFF,
+					monitor,
+					frame_waker.clone(),
+					frame_seq_counter.clone(),
+					shared_latest_frame.clone(),
+				);
+
+				shared_latest_frame.finish_ensure_monitor(monitor.id);
+			},
 			WorkerRequest::SampleCursor {
 				monitor,
 				x_px,
@@ -374,6 +517,7 @@ fn stream_worker_loop(
 					monitor,
 					frame_waker.clone(),
 					frame_seq_counter.clone(),
+					shared_latest_frame.clone(),
 				)
 				.and_then(|_| {
 					let stream_state = state.as_ref()?;
@@ -399,6 +543,7 @@ fn stream_worker_loop(
 					monitor,
 					frame_waker.clone(),
 					frame_seq_counter.clone(),
+					shared_latest_frame.clone(),
 				)
 				.and_then(|_| {
 					let stream_state = state.as_ref()?;
@@ -423,6 +568,7 @@ fn stream_worker_loop(
 					rect_px,
 					frame_waker.clone(),
 					frame_seq_counter.clone(),
+					shared_latest_frame.clone(),
 				);
 				let _ = reply_tx.send(image);
 			},
@@ -440,6 +586,7 @@ fn stream_worker_loop(
 					after_frame_seq,
 					frame_waker.clone(),
 					frame_seq_counter.clone(),
+					shared_latest_frame.clone(),
 				);
 				let _ = reply_tx.send(frames);
 			},
@@ -457,6 +604,7 @@ fn ensure_stream(
 	monitor: MonitorRect,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	frame_seq_counter: Arc<AtomicU64>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<()> {
 	if state.as_ref().is_some_and(|current| current.monitor_id == monitor.id) {
 		return Some(());
@@ -472,7 +620,12 @@ fn ensure_stream(
 
 	teardown_stream(state);
 
-	*state = Some(setup_stream_for_monitor(monitor, frame_waker, frame_seq_counter)?);
+	*state = Some(setup_stream_for_monitor(
+		monitor,
+		frame_waker,
+		frame_seq_counter,
+		shared_latest_frame,
+	)?);
 
 	Some(())
 }
@@ -484,6 +637,7 @@ fn latest_fresh_rgba_region(
 	rect_px: RectPoints,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	frame_seq_counter: Arc<AtomicU64>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<RgbaImage> {
 	ensure_stream(
 		state,
@@ -492,6 +646,7 @@ fn latest_fresh_rgba_region(
 		monitor,
 		frame_waker.clone(),
 		frame_seq_counter.clone(),
+		shared_latest_frame.clone(),
 	)?;
 
 	let now = Instant::now();
@@ -503,7 +658,14 @@ fn latest_fresh_rgba_region(
 		return rgba_region_from_pixel_buffer(&frame.pixel_buffer, rect_px);
 	}
 
-	refresh_stream(state, last_setup_attempt_at, monitor, frame_waker, frame_seq_counter)?;
+	refresh_stream(
+		state,
+		last_setup_attempt_at,
+		monitor,
+		frame_waker,
+		frame_seq_counter,
+		shared_latest_frame,
+	)?;
 
 	let min_captured_at = Instant::now();
 	let deadline = min_captured_at + STREAM_REGION_FRAME_REFRESH_TIMEOUT;
@@ -533,6 +695,7 @@ fn ordered_fresh_rgba_regions_after_seq(
 	after_frame_seq: u64,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	frame_seq_counter: Arc<AtomicU64>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<Vec<OrderedRegionFrame>> {
 	ensure_stream(
 		state,
@@ -541,6 +704,7 @@ fn ordered_fresh_rgba_regions_after_seq(
 		monitor,
 		frame_waker.clone(),
 		frame_seq_counter.clone(),
+		shared_latest_frame.clone(),
 	)?;
 
 	let stream_state = state.as_ref()?;
@@ -559,7 +723,14 @@ fn ordered_fresh_rgba_regions_after_seq(
 		return None;
 	}
 
-	refresh_stream(state, last_setup_attempt_at, monitor, frame_waker, frame_seq_counter)?;
+	refresh_stream(
+		state,
+		last_setup_attempt_at,
+		monitor,
+		frame_waker,
+		frame_seq_counter,
+		shared_latest_frame,
+	)?;
 
 	let min_captured_at = Instant::now();
 	let deadline = min_captured_at + STREAM_REGION_FRAME_REFRESH_TIMEOUT;
@@ -586,12 +757,18 @@ fn refresh_stream(
 	monitor: MonitorRect,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	frame_seq_counter: Arc<AtomicU64>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<()> {
 	*last_setup_attempt_at = Some(Instant::now());
 
 	teardown_stream(state);
 
-	*state = Some(setup_stream_for_monitor(monitor, frame_waker, frame_seq_counter)?);
+	*state = Some(setup_stream_for_monitor(
+		monitor,
+		frame_waker,
+		frame_seq_counter,
+		shared_latest_frame,
+	)?);
 
 	Some(())
 }
@@ -609,6 +786,7 @@ fn setup_stream_for_monitor(
 	monitor: MonitorRect,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	frame_seq_counter: Arc<AtomicU64>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<StreamState> {
 	let content = get_shareable_content().ok()?;
 	let display = find_display(&content, monitor.id)?;
@@ -643,7 +821,7 @@ fn setup_stream_for_monitor(
 		)
 	};
 	let config = build_stream_config_for_monitor(monitor);
-	let output = StreamOutput::new(monitor.id, frame_waker, frame_seq_counter);
+	let output = StreamOutput::new(monitor.id, frame_waker, frame_seq_counter, shared_latest_frame);
 	let delegate_proto = ProtocolObject::from_ref(&*output);
 	let stream = unsafe {
 		SCStream::initWithFilter_configuration_delegate(
@@ -827,25 +1005,8 @@ fn sample_cursor_from_pixel_buffer(
 	patch_height_px: u32,
 ) -> Option<LiveCursorSample> {
 	let (width, height) = pixel_buffer_size_px(pixel_buffer)?;
-
-	if x_px >= width || y_px >= height {
-		return None;
-	}
-
-	let patch_width_px = if want_patch { patch_width_px } else { 0 };
-	let patch_height_px = if want_patch { patch_height_px } else { 0 };
-	let out_patch_w = patch_width_px.max(1);
-	let out_patch_h = patch_height_px.max(1);
-	let half_w = (out_patch_w as i32) / 2;
-	let half_h = (out_patch_h as i32) / 2;
-	let center_x = x_px as i32;
-	let center_y = y_px as i32;
-	let in_w = width as i32;
-	let in_h = height as i32;
 	let lock_result =
 		unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
-	let mut rgb = None;
-	let mut patch = None;
 
 	if lock_result != kCVReturnSuccess {
 		return None;
@@ -859,47 +1020,81 @@ fn sample_cursor_from_pixel_buffer(
 		}
 
 		let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
-		let offset =
-			(y_px as usize).saturating_mul(bytes_per_row).saturating_add((x_px as usize) * 4);
+		let byte_len = (height as usize).saturating_mul(bytes_per_row);
+		let bytes = unsafe { std::slice::from_raw_parts(base, byte_len) };
 
-		rgb = {
-			let b = unsafe { *base.add(offset) };
-			let g = unsafe { *base.add(offset + 1) };
-			let r = unsafe { *base.add(offset + 2) };
-			let _a = unsafe { *base.add(offset + 3) };
-
-			Some(Rgb::new(r, g, b))
-		};
-
-		if want_patch {
-			let mut out_patch = RgbaImage::new(out_patch_w, out_patch_h);
-
-			for oy in 0..(out_patch_h as i32) {
-				let iy = (center_y - half_h + oy).clamp(0, in_h.saturating_sub(1));
-
-				for ox in 0..(out_patch_w as i32) {
-					let ix = (center_x - half_w + ox).clamp(0, in_w.saturating_sub(1));
-					let offset = (iy as usize)
-						.saturating_mul(bytes_per_row)
-						.saturating_add((ix as usize) * 4);
-					let b = unsafe { *base.add(offset) };
-					let g = unsafe { *base.add(offset + 1) };
-					let r = unsafe { *base.add(offset + 2) };
-					let a = unsafe { *base.add(offset + 3) };
-
-					out_patch.put_pixel(ox as u32, oy as u32, image::Rgba([r, g, b, a]));
-				}
-			}
-
-			patch = Some(out_patch);
-		}
-
-		Some((rgb, patch))
+		sample_cursor_from_bgra_bytes(
+			bytes,
+			bytes_per_row,
+			width,
+			height,
+			x_px,
+			y_px,
+			want_patch,
+			patch_width_px,
+			patch_height_px,
+		)
 	})();
 	let _ =
 		unsafe { CVPixelBufferUnlockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
 
-	out.map(|(rgb, patch)| LiveCursorSample { rgb, patch })
+	out
+}
+
+fn sample_cursor_from_bgra_bytes(
+	bytes: &[u8],
+	bytes_per_row: usize,
+	width_px: u32,
+	height_px: u32,
+	x_px: u32,
+	y_px: u32,
+	want_patch: bool,
+	patch_width_px: u32,
+	patch_height_px: u32,
+) -> Option<LiveCursorSample> {
+	if x_px >= width_px || y_px >= height_px {
+		return None;
+	}
+
+	let offset = (y_px as usize).saturating_mul(bytes_per_row).saturating_add((x_px as usize) * 4);
+	let b = *bytes.get(offset)?;
+	let g = *bytes.get(offset + 1)?;
+	let r = *bytes.get(offset + 2)?;
+	let _a = *bytes.get(offset + 3)?;
+	let rgb = Some(Rgb::new(r, g, b));
+	let patch = if want_patch {
+		let out_patch_w = patch_width_px.max(1);
+		let out_patch_h = patch_height_px.max(1);
+		let half_w = (out_patch_w as i32) / 2;
+		let half_h = (out_patch_h as i32) / 2;
+		let center_x = x_px as i32;
+		let center_y = y_px as i32;
+		let in_w = width_px as i32;
+		let in_h = height_px as i32;
+		let mut out_patch = RgbaImage::new(out_patch_w, out_patch_h);
+
+		for oy in 0..(out_patch_h as i32) {
+			let iy = (center_y - half_h + oy).clamp(0, in_h.saturating_sub(1));
+
+			for ox in 0..(out_patch_w as i32) {
+				let ix = (center_x - half_w + ox).clamp(0, in_w.saturating_sub(1));
+				let offset =
+					(iy as usize).saturating_mul(bytes_per_row).saturating_add((ix as usize) * 4);
+				let b = *bytes.get(offset)?;
+				let g = *bytes.get(offset + 1)?;
+				let r = *bytes.get(offset + 2)?;
+				let a = *bytes.get(offset + 3)?;
+
+				out_patch.put_pixel(ox as u32, oy as u32, image::Rgba([r, g, b, a]));
+			}
+		}
+
+		Some(out_patch)
+	} else {
+		None
+	};
+
+	Some(LiveCursorSample { rgb, patch })
 }
 
 fn rgba_image_from_pixel_buffer(
@@ -1023,8 +1218,9 @@ fn ordered_rgba_regions_from_frames(
 #[cfg(test)]
 mod tests {
 	use crate::live_frame_stream_macos::{
-		StreamFilterMode, stream_filter_mode_for_current_process,
+		StreamFilterMode, sample_cursor_from_bgra_bytes, stream_filter_mode_for_current_process,
 	};
+	use crate::state::Rgb;
 
 	#[test]
 	fn stream_filter_mode_requires_current_process_application() {
@@ -1033,5 +1229,52 @@ mod tests {
 			Some((StreamFilterMode::ExcludeCurrentProcess, 42))
 		);
 		assert_eq!(stream_filter_mode_for_current_process::<u32>(None), None);
+	}
+
+	#[test]
+	fn sample_cursor_from_bgra_bytes_reads_rgb_without_patch() {
+		let sample = sample_cursor_from_bgra_bytes(
+			&[
+				1, 2, 3, 255, 11, 12, 13, 254, //
+				21, 22, 23, 253, 31, 32, 33, 252,
+			],
+			8,
+			2,
+			2,
+			1,
+			0,
+			false,
+			0,
+			0,
+		)
+		.expect("sample should exist inside bounds");
+
+		assert_eq!(sample.rgb, Some(Rgb::new(13, 12, 11)));
+		assert!(sample.patch.is_none());
+	}
+
+	#[test]
+	fn sample_cursor_from_bgra_bytes_clamps_patch_edges() {
+		let sample = sample_cursor_from_bgra_bytes(
+			&[
+				1, 2, 3, 255, 11, 12, 13, 254, //
+				21, 22, 23, 253, 31, 32, 33, 252,
+			],
+			8,
+			2,
+			2,
+			0,
+			0,
+			true,
+			3,
+			3,
+		)
+		.expect("sample should exist inside bounds");
+		let patch = sample.patch.expect("patch should be present");
+
+		assert_eq!(patch.dimensions(), (3, 3));
+		assert_eq!(patch.get_pixel(0, 0).0, [3, 2, 1, 255]);
+		assert_eq!(patch.get_pixel(1, 0).0, [3, 2, 1, 255]);
+		assert_eq!(patch.get_pixel(2, 2).0, [33, 32, 31, 252]);
 	}
 }

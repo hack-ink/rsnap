@@ -2,6 +2,7 @@ use std::sync::{
 	Arc,
 	mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError},
 };
+use std::time::Instant;
 
 use image::RgbaImage;
 
@@ -82,6 +83,12 @@ pub(crate) enum CapturedMonitorRegionResult {
 }
 
 #[derive(Debug)]
+pub(crate) enum WorkerRequestSendError {
+	Full,
+	Disconnected,
+}
+
+#[derive(Debug)]
 pub(crate) struct CapturedMonitorRegionResponse {
 	pub(crate) monitor: MonitorRect,
 	pub(crate) rect_px: RectPoints,
@@ -95,13 +102,16 @@ pub(crate) struct OverlayWorker {
 	region_capture_resp_rx: Receiver<CapturedMonitorRegionResponse>,
 }
 impl OverlayWorker {
-	pub(crate) fn new(backend: Box<dyn CaptureBackend>) -> Self {
+	pub(crate) fn new(
+		backend: Box<dyn CaptureBackend>,
+		response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	) -> Self {
 		let (req_tx, req_rx) = std::sync::mpsc::sync_channel(64);
 		let (resp_tx, resp_rx) = std::sync::mpsc::channel();
 		let (region_capture_resp_tx, region_capture_resp_rx) = std::sync::mpsc::channel();
 
 		std::thread::spawn(move || {
-			Self::run_worker_loop(backend, req_rx, resp_tx, region_capture_resp_tx)
+			Self::run_worker_loop(backend, req_rx, resp_tx, region_capture_resp_tx, response_waker)
 		});
 
 		Self { req_tx, resp_rx, region_capture_resp_rx }
@@ -112,132 +122,45 @@ impl OverlayWorker {
 		req_rx: Receiver<WorkerRequest>,
 		resp_tx: Sender<WorkerResponse>,
 		region_capture_resp_tx: Sender<CapturedMonitorRegionResponse>,
+		response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	) {
 		while let Ok(first) = req_rx.recv() {
-			let mut last_hit_test: Option<(MonitorRect, GlobalPoint, u64)> = None;
-			let mut last_sample_cursor: Option<(MonitorRect, GlobalPoint, u64, bool, u32, u32)> =
-				None;
-			let mut last_refresh_window_list: bool = false;
-			let mut last_freeze: Option<(MonitorRect, FreezeCaptureTarget)> = None;
-			let mut last_capture_region: Option<(MonitorRect, RectPoints, u64)> = None;
-			let mut last_encode: Option<RgbaImage> = None;
+			let mut pending = PendingWorkerRequests::default();
 
-			match first {
-				WorkerRequest::HitTestWindow { monitor, point, request_id } => {
-					last_hit_test = Some((monitor, point, request_id))
-				},
-				WorkerRequest::SampleLiveCursor {
-					monitor,
-					point,
-					request_id,
-					want_patch,
-					patch_width_px,
-					patch_height_px,
-				} => {
-					last_sample_cursor = Some((
-						monitor,
-						point,
-						request_id,
-						want_patch,
-						patch_width_px,
-						patch_height_px,
-					));
-				},
-				WorkerRequest::RefreshWindowList => {
-					last_refresh_window_list = true;
-				},
-				WorkerRequest::FreezeCapture { monitor, target } => {
-					last_freeze = Some((monitor, target))
-				},
-				WorkerRequest::CaptureMonitorRegion { monitor, rect_px, request_id } => {
-					last_capture_region = Some((monitor, rect_px, request_id))
-				},
-				WorkerRequest::EncodePng { image } => last_encode = Some(image),
-			}
+			pending.record(first);
 
 			while let Ok(next) = req_rx.try_recv() {
-				match next {
-					WorkerRequest::HitTestWindow { monitor, point, request_id } => {
-						last_hit_test = Some((monitor, point, request_id))
-					},
-					WorkerRequest::SampleLiveCursor {
-						monitor,
-						point,
-						request_id,
-						want_patch,
-						patch_width_px,
-						patch_height_px,
-					} => {
-						last_sample_cursor = Some((
-							monitor,
-							point,
-							request_id,
-							want_patch,
-							patch_width_px,
-							patch_height_px,
-						));
-					},
-					WorkerRequest::RefreshWindowList => {
-						last_refresh_window_list = true;
-					},
-					WorkerRequest::FreezeCapture { monitor, target } => {
-						last_freeze = Some((monitor, target))
-					},
-					WorkerRequest::CaptureMonitorRegion { monitor, rect_px, request_id } => {
-						last_capture_region = Some((monitor, rect_px, request_id))
-					},
-					WorkerRequest::EncodePng { image } => last_encode = Some(image),
-				}
+				pending.record(next);
 			}
 
-			if let Some(image) = last_encode {
-				Self::handle_encode_request(&resp_tx, image);
-
-				continue;
-			}
-			if let Some((monitor, target)) = last_freeze {
-				Self::handle_freeze_request(&mut *backend, &resp_tx, monitor, target);
-
-				continue;
-			}
-			if let Some((monitor, rect_px, request_id)) = last_capture_region {
-				Self::handle_capture_monitor_region_request(
-					&mut *backend,
-					&resp_tx,
-					&region_capture_resp_tx,
-					monitor,
-					rect_px,
-					request_id,
-				);
-
-				continue;
-			}
-
-			if last_refresh_window_list {
-				Self::handle_refresh_window_list_request(&mut *backend, &resp_tx);
-			}
-
-			if let Some((monitor, point, request_id, want_patch, patch_width_px, patch_height_px)) =
-				last_sample_cursor
-			{
-				Self::handle_sample_cursor_request(
-					&mut *backend,
-					&resp_tx,
-					(monitor, point, request_id, want_patch, patch_width_px, patch_height_px),
-				);
-			}
-
-			Self::handle_hit_test_request(&mut *backend, &resp_tx, last_hit_test);
+			pending.dispatch(
+				&mut *backend,
+				&resp_tx,
+				&region_capture_resp_tx,
+				response_waker.as_deref(),
+			);
 		}
 	}
 
-	fn handle_encode_request(resp_tx: &Sender<WorkerResponse>, image: RgbaImage) {
+	fn handle_encode_request(
+		resp_tx: &Sender<WorkerResponse>,
+		response_waker: Option<&(dyn Fn() + Send + Sync)>,
+		image: RgbaImage,
+	) {
 		match crate::png::rgba_image_to_png_bytes(&image) {
 			Ok(png_bytes) => {
-				let _ = resp_tx.send(WorkerResponse::EncodedPng { png_bytes });
+				Self::send_response(
+					resp_tx,
+					response_waker,
+					WorkerResponse::EncodedPng { png_bytes },
+				);
 			},
 			Err(err) => {
-				let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
+				Self::send_response(
+					resp_tx,
+					response_waker,
+					WorkerResponse::Error(format!("{err:#}")),
+				);
 			},
 		}
 	}
@@ -245,6 +168,7 @@ impl OverlayWorker {
 	fn handle_freeze_request(
 		backend: &mut dyn CaptureBackend,
 		resp_tx: &Sender<WorkerResponse>,
+		response_waker: Option<&(dyn Fn() + Send + Sync)>,
 		monitor: MonitorRect,
 		target: FreezeCaptureTarget,
 	) {
@@ -260,15 +184,23 @@ impl OverlayWorker {
 
 		match backend.capture_monitor(monitor) {
 			Ok(image) => {
-				let _ = resp_tx.send(WorkerResponse::CapturedFreeze {
-					monitor,
-					image,
-					window_image,
-					captured_window_id,
-				});
+				Self::send_response(
+					resp_tx,
+					response_waker,
+					WorkerResponse::CapturedFreeze {
+						monitor,
+						image,
+						window_image,
+						captured_window_id,
+					},
+				);
 			},
 			Err(err) => {
-				let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
+				Self::send_response(
+					resp_tx,
+					response_waker,
+					WorkerResponse::Error(format!("{err:#}")),
+				);
 			},
 		}
 	}
@@ -276,13 +208,22 @@ impl OverlayWorker {
 	fn handle_refresh_window_list_request(
 		backend: &mut dyn CaptureBackend,
 		resp_tx: &Sender<WorkerResponse>,
+		response_waker: Option<&(dyn Fn() + Send + Sync)>,
 	) {
 		match backend.refresh_window_cache() {
 			Ok(snapshot) => {
-				let _ = resp_tx.send(WorkerResponse::RefreshedWindowList { snapshot });
+				Self::send_response(
+					resp_tx,
+					response_waker,
+					WorkerResponse::RefreshedWindowList { snapshot },
+				);
 			},
 			Err(err) => {
-				let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
+				Self::send_response(
+					resp_tx,
+					response_waker,
+					WorkerResponse::Error(format!("{err:#}")),
+				);
 			},
 		}
 	}
@@ -291,29 +232,42 @@ impl OverlayWorker {
 		backend: &mut dyn CaptureBackend,
 		resp_tx: &Sender<WorkerResponse>,
 		region_capture_resp_tx: &Sender<CapturedMonitorRegionResponse>,
+		response_waker: Option<&(dyn Fn() + Send + Sync)>,
 		monitor: MonitorRect,
 		rect_px: RectPoints,
 		request_id: u64,
 	) {
 		match backend.capture_monitor_region_for_scroll_capture(monitor, rect_px) {
 			Ok(Some(image)) => {
-				let _ = region_capture_resp_tx.send(CapturedMonitorRegionResponse {
-					monitor,
-					rect_px,
-					request_id,
-					result: CapturedMonitorRegionResult::Image(image),
-				});
+				Self::send_region_capture_response(
+					region_capture_resp_tx,
+					response_waker,
+					CapturedMonitorRegionResponse {
+						monitor,
+						rect_px,
+						request_id,
+						result: CapturedMonitorRegionResult::Image(image),
+					},
+				);
 			},
 			Ok(None) => {
-				let _ = region_capture_resp_tx.send(CapturedMonitorRegionResponse {
-					monitor,
-					rect_px,
-					request_id,
-					result: CapturedMonitorRegionResult::NoNewFrame,
-				});
+				Self::send_region_capture_response(
+					region_capture_resp_tx,
+					response_waker,
+					CapturedMonitorRegionResponse {
+						monitor,
+						rect_px,
+						request_id,
+						result: CapturedMonitorRegionResult::NoNewFrame,
+					},
+				);
 			},
 			Err(err) => {
-				let _ = resp_tx.send(WorkerResponse::Error(format!("{err:#}")));
+				Self::send_response(
+					resp_tx,
+					response_waker,
+					WorkerResponse::Error(format!("{err:#}")),
+				);
 			},
 		}
 	}
@@ -321,24 +275,73 @@ impl OverlayWorker {
 	fn handle_sample_cursor_request(
 		backend: &mut dyn CaptureBackend,
 		resp_tx: &Sender<WorkerResponse>,
+		response_waker: Option<&(dyn Fn() + Send + Sync)>,
 		sample_req: (MonitorRect, GlobalPoint, u64, bool, u32, u32),
 	) {
 		let (monitor, point, request_id, want_patch, patch_width_px, patch_height_px) = sample_req;
+		let started_at = Instant::now();
 		let sample = backend
 			.live_sample_cursor(monitor, point, want_patch, patch_width_px, patch_height_px)
 			.unwrap_or(LiveCursorSample { rgb: None, patch: None });
-		let _ =
-			resp_tx.send(WorkerResponse::SampledLiveCursor { monitor, point, request_id, sample });
+		let elapsed = started_at.elapsed();
+
+		if elapsed >= std::time::Duration::from_millis(8) {
+			tracing::debug!(
+				op = "overlay.live_sample_backend_latency",
+				request_id,
+				monitor_id = monitor.id,
+				point = ?point,
+				want_patch,
+				elapsed_ms = elapsed.as_millis(),
+				"Live cursor sample backend handling exceeded the target frame budget."
+			);
+		}
+
+		Self::send_response(
+			resp_tx,
+			response_waker,
+			WorkerResponse::SampledLiveCursor { monitor, point, request_id, sample },
+		);
 	}
 
 	fn handle_hit_test_request(
 		backend: &mut dyn CaptureBackend,
 		resp_tx: &Sender<WorkerResponse>,
+		response_waker: Option<&(dyn Fn() + Send + Sync)>,
 		last_hit_test: Option<(MonitorRect, GlobalPoint, u64)>,
 	) {
 		if let Some((monitor, point, request_id)) = last_hit_test {
 			let hit = backend.hit_test_window_in_monitor(monitor, point).unwrap_or_default();
-			let _ = resp_tx.send(WorkerResponse::HitTestWindow { monitor, point, request_id, hit });
+
+			Self::send_response(
+				resp_tx,
+				response_waker,
+				WorkerResponse::HitTestWindow { monitor, point, request_id, hit },
+			);
+		}
+	}
+
+	fn send_response(
+		resp_tx: &Sender<WorkerResponse>,
+		response_waker: Option<&(dyn Fn() + Send + Sync)>,
+		resp: WorkerResponse,
+	) {
+		if resp_tx.send(resp).is_ok()
+			&& let Some(wake) = response_waker
+		{
+			wake();
+		}
+	}
+
+	fn send_region_capture_response(
+		resp_tx: &Sender<CapturedMonitorRegionResponse>,
+		response_waker: Option<&(dyn Fn() + Send + Sync)>,
+		resp: CapturedMonitorRegionResponse,
+	) {
+		if resp_tx.send(resp).is_ok()
+			&& let Some(wake) = response_waker
+		{
+			wake();
 		}
 	}
 
@@ -430,14 +433,109 @@ impl OverlayWorker {
 	}
 }
 
-#[derive(Debug)]
-pub(crate) enum WorkerRequestSendError {
-	Full,
-	Disconnected,
+#[derive(Default)]
+struct PendingWorkerRequests {
+	last_hit_test: Option<(MonitorRect, GlobalPoint, u64)>,
+	last_sample_cursor: Option<(MonitorRect, GlobalPoint, u64, bool, u32, u32)>,
+	last_refresh_window_list: bool,
+	last_freeze: Option<(MonitorRect, FreezeCaptureTarget)>,
+	last_capture_region: Option<(MonitorRect, RectPoints, u64)>,
+	last_encode: Option<RgbaImage>,
+}
+impl PendingWorkerRequests {
+	fn record(&mut self, request: WorkerRequest) {
+		match request {
+			WorkerRequest::HitTestWindow { monitor, point, request_id } => {
+				self.last_hit_test = Some((monitor, point, request_id));
+			},
+			WorkerRequest::SampleLiveCursor {
+				monitor,
+				point,
+				request_id,
+				want_patch,
+				patch_width_px,
+				patch_height_px,
+			} => {
+				self.last_sample_cursor =
+					Some((monitor, point, request_id, want_patch, patch_width_px, patch_height_px));
+			},
+			WorkerRequest::RefreshWindowList => {
+				self.last_refresh_window_list = true;
+			},
+			WorkerRequest::FreezeCapture { monitor, target } => {
+				self.last_freeze = Some((monitor, target));
+			},
+			WorkerRequest::CaptureMonitorRegion { monitor, rect_px, request_id } => {
+				self.last_capture_region = Some((monitor, rect_px, request_id));
+			},
+			WorkerRequest::EncodePng { image } => {
+				self.last_encode = Some(image);
+			},
+		}
+	}
+
+	fn dispatch(
+		self,
+		backend: &mut dyn CaptureBackend,
+		resp_tx: &Sender<WorkerResponse>,
+		region_capture_resp_tx: &Sender<CapturedMonitorRegionResponse>,
+		response_waker: Option<&(dyn Fn() + Send + Sync)>,
+	) {
+		if let Some(image) = self.last_encode {
+			OverlayWorker::handle_encode_request(resp_tx, response_waker, image);
+
+			return;
+		}
+		if let Some((monitor, target)) = self.last_freeze {
+			OverlayWorker::handle_freeze_request(backend, resp_tx, response_waker, monitor, target);
+
+			return;
+		}
+		if let Some((monitor, rect_px, request_id)) = self.last_capture_region {
+			OverlayWorker::handle_capture_monitor_region_request(
+				backend,
+				resp_tx,
+				region_capture_resp_tx,
+				response_waker,
+				monitor,
+				rect_px,
+				request_id,
+			);
+
+			return;
+		}
+
+		if self.last_refresh_window_list {
+			OverlayWorker::handle_refresh_window_list_request(backend, resp_tx, response_waker);
+		}
+
+		if let Some((monitor, point, request_id, want_patch, patch_width_px, patch_height_px)) =
+			self.last_sample_cursor
+		{
+			OverlayWorker::handle_sample_cursor_request(
+				backend,
+				resp_tx,
+				response_waker,
+				(monitor, point, request_id, want_patch, patch_width_px, patch_height_px),
+			);
+		}
+
+		OverlayWorker::handle_hit_test_request(
+			backend,
+			resp_tx,
+			response_waker,
+			self.last_hit_test,
+		);
+	}
 }
 
 #[cfg(test)]
 mod tests {
+	use std::sync::{
+		Arc,
+		atomic::{AtomicUsize, Ordering},
+	};
+
 	use color_eyre::eyre::{Result, eyre};
 	use image::{Rgba, RgbaImage};
 
@@ -545,6 +643,64 @@ mod tests {
 	}
 
 	#[test]
+	fn send_response_wakes_after_regular_worker_response() {
+		let (resp_tx, resp_rx) = std::sync::mpsc::channel::<WorkerResponse>();
+		let wake_count = Arc::new(AtomicUsize::new(0));
+		let wake = {
+			let wake_count = Arc::clone(&wake_count);
+
+			move || {
+				wake_count.fetch_add(1, Ordering::AcqRel);
+			}
+		};
+
+		OverlayWorker::send_response(
+			&resp_tx,
+			Some(&wake),
+			WorkerResponse::Error(String::from("wake me")),
+		);
+
+		let response = resp_rx.try_recv().expect("worker response");
+
+		assert!(matches!(response, WorkerResponse::Error(message) if message == "wake me"));
+		assert_eq!(wake_count.load(Ordering::Acquire), 1);
+	}
+
+	#[test]
+	fn send_region_capture_response_wakes_after_scroll_region_result() {
+		let (region_tx, region_rx) = std::sync::mpsc::channel::<CapturedMonitorRegionResponse>();
+		let wake_count = Arc::new(AtomicUsize::new(0));
+		let wake = {
+			let wake_count = Arc::clone(&wake_count);
+
+			move || {
+				wake_count.fetch_add(1, Ordering::AcqRel);
+			}
+		};
+		let monitor = sample_monitor();
+		let rect_px = sample_rect();
+
+		OverlayWorker::send_region_capture_response(
+			&region_tx,
+			Some(&wake),
+			CapturedMonitorRegionResponse {
+				monitor,
+				rect_px,
+				request_id: 42,
+				result: CapturedMonitorRegionResult::NoNewFrame,
+			},
+		);
+
+		let response = region_rx.try_recv().expect("region result");
+
+		assert_eq!(response.monitor, monitor);
+		assert_eq!(response.rect_px, rect_px);
+		assert_eq!(response.request_id, 42);
+		assert!(matches!(response.result, CapturedMonitorRegionResult::NoNewFrame));
+		assert_eq!(wake_count.load(Ordering::Acquire), 1);
+	}
+
+	#[test]
 	fn capture_monitor_region_request_emits_image_result() {
 		let (resp_tx, resp_rx) = std::sync::mpsc::channel::<WorkerResponse>();
 		let (region_tx, region_rx) = std::sync::mpsc::channel::<CapturedMonitorRegionResponse>();
@@ -558,6 +714,7 @@ mod tests {
 			&mut backend,
 			&resp_tx,
 			&region_tx,
+			None,
 			monitor,
 			rect_px,
 			99,
@@ -590,6 +747,7 @@ mod tests {
 			&mut backend,
 			&resp_tx,
 			&region_tx,
+			None,
 			sample_monitor(),
 			sample_rect(),
 			100,
@@ -616,6 +774,7 @@ mod tests {
 			&mut backend,
 			&resp_tx,
 			&region_tx,
+			None,
 			sample_monitor(),
 			sample_rect(),
 			101,
