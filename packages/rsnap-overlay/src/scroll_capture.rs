@@ -132,6 +132,7 @@ pub(crate) struct ScrollSession {
 	preview_width_px: u32,
 }
 impl ScrollSession {
+	#[cfg(any(test, target_os = "macos"))]
 	pub(crate) fn new(base_frame: RgbaImage, preview_width_px: u32) -> Result<Self> {
 		let fingerprint = scroll_capture_fingerprint(&base_frame);
 		let anchor_preview = resize_strip_to_preview_width(&base_frame, preview_width_px.max(1));
