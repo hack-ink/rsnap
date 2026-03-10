@@ -4,14 +4,14 @@ use std::{
 	time::{SystemTime, UNIX_EPOCH},
 };
 
-use color_eyre::eyre::{self, WrapErr};
+use color_eyre::eyre::{self, Result, WrapErr};
 
-use super::{OutputNaming, OverlayConfig};
+use crate::overlay::{OutputNaming, OverlayConfig};
 
 pub(super) fn save_png_bytes_to_configured_dir(
 	png_bytes: &[u8],
 	config: &OverlayConfig,
-) -> color_eyre::eyre::Result<PathBuf> {
+) -> Result<PathBuf> {
 	let output_dir = if config.output_dir.as_os_str().is_empty() {
 		PathBuf::from(".")
 	} else {
@@ -27,6 +27,64 @@ pub(super) fn save_png_bytes_to_configured_dir(
 	write_png_bytes_atomic(&target_path, png_bytes)?;
 
 	Ok(target_path)
+}
+
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
+pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
+	use std::ffi::CString;
+
+	use objc::runtime::{BOOL, Object, YES};
+
+	use objc::{class, msg_send, sel, sel_impl};
+
+	let pasteboard_type = CString::new("public.png").wrap_err("Invalid NSPasteboard type")?;
+
+	unsafe {
+		let data: *mut Object =
+			msg_send![class!(NSData), dataWithBytes: png_bytes.as_ptr() length: png_bytes.len()];
+		let pasteboard: *mut Object = msg_send![class!(NSPasteboard), generalPasteboard];
+		let _: i64 = msg_send![pasteboard, clearContents];
+		let ty: *mut Object =
+			msg_send![class!(NSString), stringWithUTF8String: pasteboard_type.as_ptr()];
+		let ok: BOOL = msg_send![pasteboard, setData: data forType: ty];
+
+		if ok != YES {
+			return Err(eyre::eyre!("NSPasteboard setData:forType failed"));
+		}
+	}
+
+	Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
+	use arboard::{Clipboard, ImageData};
+
+	let image = image::load_from_memory(png_bytes).wrap_err("Failed to decode PNG bytes")?;
+	let rgba = image.to_rgba8();
+	let (width, height) = rgba.dimensions();
+	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
+
+	clipboard
+		.set_image(ImageData {
+			width: width as usize,
+			height: height as usize,
+			bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+		})
+		.wrap_err("Failed to write image to clipboard")?;
+
+	Ok(())
+}
+
+pub(super) fn write_text_to_clipboard(text: &str) -> Result<()> {
+	use arboard::Clipboard;
+
+	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
+
+	clipboard.set_text(text.to_string()).wrap_err("Failed to write text to clipboard")?;
+
+	Ok(())
 }
 
 fn sanitize_output_filename_prefix(raw: &str) -> String {
@@ -112,71 +170,13 @@ fn unique_png_path(output_dir: &Path, base: &str) -> PathBuf {
 	}
 }
 
-fn write_png_bytes_atomic(target_path: &Path, png_bytes: &[u8]) -> color_eyre::eyre::Result<()> {
+fn write_png_bytes_atomic(target_path: &Path, png_bytes: &[u8]) -> Result<()> {
 	let tmp_path = target_path.with_extension("png.tmp");
 
 	fs::write(&tmp_path, png_bytes)
 		.wrap_err_with(|| format!("Failed to write temporary PNG file: {}", tmp_path.display()))?;
 	fs::rename(&tmp_path, target_path)
 		.wrap_err_with(|| format!("Failed to finalize PNG file: {}", target_path.display()))?;
-
-	Ok(())
-}
-
-#[cfg(target_os = "macos")]
-#[allow(unexpected_cfgs)]
-pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> color_eyre::eyre::Result<()> {
-	use std::ffi::CString;
-
-	use objc::runtime::{BOOL, Object, YES};
-
-	use objc::{class, msg_send, sel, sel_impl};
-
-	let pasteboard_type = CString::new("public.png").wrap_err("Invalid NSPasteboard type")?;
-
-	unsafe {
-		let data: *mut Object =
-			msg_send![class!(NSData), dataWithBytes: png_bytes.as_ptr() length: png_bytes.len()];
-		let pasteboard: *mut Object = msg_send![class!(NSPasteboard), generalPasteboard];
-		let _: i64 = msg_send![pasteboard, clearContents];
-		let ty: *mut Object =
-			msg_send![class!(NSString), stringWithUTF8String: pasteboard_type.as_ptr()];
-		let ok: BOOL = msg_send![pasteboard, setData: data forType: ty];
-
-		if ok != YES {
-			return Err(eyre::eyre!("NSPasteboard setData:forType failed"));
-		}
-	}
-
-	Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> color_eyre::eyre::Result<()> {
-	use arboard::{Clipboard, ImageData};
-
-	let image = image::load_from_memory(png_bytes).wrap_err("Failed to decode PNG bytes")?;
-	let rgba = image.to_rgba8();
-	let (width, height) = rgba.dimensions();
-	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
-
-	clipboard
-		.set_image(ImageData {
-			width: width as usize,
-			height: height as usize,
-			bytes: std::borrow::Cow::Owned(rgba.into_raw()),
-		})
-		.wrap_err("Failed to write image to clipboard")?;
-
-	Ok(())
-}
-
-pub(super) fn write_text_to_clipboard(text: &str) -> color_eyre::eyre::Result<()> {
-	use arboard::Clipboard;
-
-	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
-
-	clipboard.set_text(text.to_string()).wrap_err("Failed to write text to clipboard")?;
 
 	Ok(())
 }
