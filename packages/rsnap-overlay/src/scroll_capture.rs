@@ -364,7 +364,7 @@ impl ScrollSession {
 	fn observe_upward_input_while_rewind_active(
 		&mut self,
 		frame: &RgbaImage,
-		fingerprint: &Vec<u8>,
+		fingerprint: &[u8],
 		sample_motion: Option<MotionObservation>,
 		diagnostics: &UpwardInputDiagnostics,
 	) -> Option<ScrollObserveOutcome> {
@@ -385,7 +385,7 @@ impl ScrollSession {
 
 			return Some(self.arm_unconfirmed_upward_rewind(
 				frame,
-				fingerprint.clone(),
+				fingerprint.to_vec(),
 				sample_motion,
 				false,
 				"scroll_capture.rewind_armed_without_match",
@@ -413,7 +413,7 @@ impl ScrollSession {
 
 			self.arm_upward_rewind_with_match(
 				frame,
-				fingerprint.clone(),
+				fingerprint.to_vec(),
 				up_match,
 				from_committed,
 				op,
@@ -1213,14 +1213,12 @@ impl ScrollSession {
 			Some(context.motion_rows),
 		);
 
-		match (sample_down_match, sample_up_match) {
-			(Some(down), Some(up)) => {
-				down.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+		matches!(
+			(sample_down_match, sample_up_match),
+			(Some(down), Some(up))
+				if down.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
 					< up.mean_abs_diff_x100
-			},
-			(Some(_down), None) => true,
-			_ => false,
-		}
+		) || matches!((sample_down_match, sample_up_match), (Some(_), None))
 	}
 
 	fn resume_frontier_direct_match_hint_rows(
@@ -2022,16 +2020,13 @@ fn rewind_active_upward_motion_should_fail_closed(
 		return false;
 	}
 
-	match (sample_up_match, committed_down_match) {
+	matches!(
+		(sample_up_match, committed_down_match),
 		(Some(sample_up), Some(committed_down))
 			if committed_down.mean_abs_diff_x100
 				<= sample_up.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
-				&& committed_down.motion_rows >= sample_up.motion_rows =>
-		{
-			true
-		},
-		_ => false,
-	}
+				&& committed_down.motion_rows >= sample_up.motion_rows
+	)
 }
 
 fn max_directional_motion_rows(

@@ -1,10 +1,13 @@
+mod hud_helpers;
+mod image_helpers;
+mod output;
+
 use std::{
 	collections::HashMap,
 	ffi::c_void,
-	fs,
-	path::{Path, PathBuf},
+	path::PathBuf,
 	sync::{Arc, Mutex},
-	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+	time::{Duration, Instant},
 };
 
 use color_eyre::eyre::{self, WrapErr};
@@ -50,7 +53,7 @@ use winit::{
 	event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
 	event_loop::ActiveEventLoop,
 	keyboard::{Key, ModifiersState, NamedKey},
-	window::{Theme, WindowId, WindowLevel},
+	window::{WindowId, WindowLevel},
 };
 
 #[cfg(target_os = "macos")]
@@ -1162,7 +1165,7 @@ impl OverlaySession {
 
 	fn create_loupe_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
 		let desired_inner_size =
-			stable_live_loupe_window_inner_size_points(self.state.loupe_patch_side_px);
+			hud_helpers::stable_live_loupe_window_inner_size_points(self.state.loupe_patch_side_px);
 		let attrs = winit::window::Window::default_attributes()
 			.with_title("rsnap-loupe")
 			.with_decorations(false)
@@ -2564,6 +2567,7 @@ impl OverlaySession {
 		true
 	}
 
+	#[cfg(test)]
 	fn observe_scroll_capture_frame(
 		&mut self,
 		frame: RgbaImage,
@@ -3582,8 +3586,9 @@ impl OverlaySession {
 			}
 
 			if let Some(cursor) = self.state.cursor {
-				self.state.rgb = frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
-				self.state.loupe = frozen_loupe_patch(
+				self.state.rgb =
+					image_helpers::frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
+				self.state.loupe = image_helpers::frozen_loupe_patch(
 					&self.state.frozen_image,
 					Some(monitor),
 					cursor,
@@ -3619,7 +3624,7 @@ impl OverlaySession {
 		let action = self.pending_png_action.take().unwrap_or(PngAction::Copy);
 
 		match action {
-			PngAction::Copy => match write_png_bytes_to_clipboard(&png_bytes) {
+			PngAction::Copy => match output::write_png_bytes_to_clipboard(&png_bytes) {
 				Ok(()) => self.exit(OverlayExit::PngBytes(png_bytes)),
 				Err(err) => {
 					self.state.set_error(format!("{err:#}"));
@@ -3628,14 +3633,16 @@ impl OverlaySession {
 					OverlayControl::Continue
 				},
 			},
-			PngAction::Save => match save_png_bytes_to_configured_dir(&png_bytes, &self.config) {
-				Ok(path) => self.exit(OverlayExit::Saved(path)),
-				Err(err) => {
-					self.state.set_error(format!("{err:#}"));
-					self.request_redraw_all();
+			PngAction::Save => {
+				match output::save_png_bytes_to_configured_dir(&png_bytes, &self.config) {
+					Ok(path) => self.exit(OverlayExit::Saved(path)),
+					Err(err) => {
+						self.state.set_error(format!("{err:#}"));
+						self.request_redraw_all();
 
-					OverlayControl::Continue
-				},
+						OverlayControl::Continue
+					},
+				}
 			},
 		}
 	}
@@ -4334,7 +4341,7 @@ impl OverlaySession {
 		if let (Some(frozen_monitor), Some(_)) =
 			(self.state.monitor, self.state.frozen_image.as_ref())
 		{
-			self.state.loupe = frozen_loupe_patch(
+			self.state.loupe = image_helpers::frozen_loupe_patch(
 				&self.state.frozen_image,
 				Some(frozen_monitor),
 				cursor,
@@ -5208,7 +5215,7 @@ impl OverlaySession {
 				};
 				let hex = rgb.hex_upper();
 
-				match write_text_to_clipboard(&hex) {
+				match output::write_text_to_clipboard(&hex) {
 					Ok(()) => {},
 					Err(err) => {
 						self.state.set_error(format!("{err:#}"));
@@ -5913,7 +5920,7 @@ impl OverlaySession {
 	fn draw_loupe_window_frame(
 		&mut self,
 		monitor: MonitorRect,
-		cursor: GlobalPoint,
+		_cursor: GlobalPoint,
 	) -> eyre::Result<bool> {
 		let redraw_started_at = Instant::now();
 		let Some(loupe_window) = self.loupe_window.as_mut() else {
@@ -5933,7 +5940,6 @@ impl OverlaySession {
 			gpu,
 			&self.state,
 			monitor,
-			cursor,
 			self.config.show_hud_blur,
 			self.config.hud_opaque,
 			self.config.hud_opacity,
@@ -6089,7 +6095,8 @@ impl OverlaySession {
 			return OverlayControl::Continue;
 		}
 
-		let theme = effective_hud_theme(self.config.theme_mode, preview_window.window.theme());
+		let theme =
+			hud_helpers::effective_hud_theme(self.config.theme_mode, preview_window.window.theme());
 		let view = ScrollPreviewView { paused: self.scroll_capture.paused, theme };
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
@@ -6947,9 +6954,10 @@ impl OverlaySession {
 
 				let frozen_monitor = self.state.monitor;
 
-				self.state.rgb = frozen_rgb(&self.state.frozen_image, frozen_monitor, cursor);
+				self.state.rgb =
+					image_helpers::frozen_rgb(&self.state.frozen_image, frozen_monitor, cursor);
 				self.state.loupe = if self.state.alt_held {
-					frozen_loupe_patch(
+					image_helpers::frozen_loupe_patch(
 						&self.state.frozen_image,
 						frozen_monitor,
 						cursor,
@@ -7361,7 +7369,7 @@ impl ScrollPreviewWindow {
 
 	fn sync_image(&mut self, image: Option<&RgbaImage>) {
 		self.preview_image = image.map(|image| {
-			let preview_image = resize_scroll_preview_segment(image);
+			let preview_image = image_helpers::resize_scroll_preview_segment(image);
 			let color_image = ColorImage::from_rgba_unmultiplied(
 				[preview_image.width() as usize, preview_image.height() as usize],
 				preview_image.as_raw(),
@@ -9528,8 +9536,6 @@ impl WindowRenderer {
 			self.render_loupe_tile(
 				ui,
 				state,
-				monitor,
-				cursor,
 				pill_rect,
 				hud_blur_active,
 				hud_opaque,
@@ -9592,8 +9598,8 @@ impl WindowRenderer {
 				Color32::from_rgba_unmultiplied(28, 28, 32, 160),
 			),
 		};
-		let pos_text = format_live_hud_position_text(monitor, cursor);
-		let (hex_text, rgb_text) = format_live_hud_rgb_text(state.rgb);
+		let pos_text = hud_helpers::format_live_hud_position_text(monitor, cursor);
+		let (hex_text, rgb_text) = hud_helpers::format_live_hud_rgb_text(state.rgb);
 		let swatch_size = egui::vec2(10.0, 10.0);
 
 		ui.vertical(|ui| {
@@ -9674,8 +9680,6 @@ impl WindowRenderer {
 		&mut self,
 		ui: &mut Ui,
 		state: &OverlayState,
-		monitor: MonitorRect,
-		cursor: GlobalPoint,
 		pill_rect: Rect,
 		hud_blur_active: bool,
 		hud_opaque: bool,
@@ -9692,7 +9696,7 @@ impl WindowRenderer {
 
 		const CELL: f32 = 10.0;
 
-		let side = stable_live_loupe_side_points(state, CELL);
+		let side = hud_helpers::stable_live_loupe_side_points(state, CELL);
 		let tile_padding = Margin::same(10);
 		let tile_w = side + (tile_padding.left as f32) + (tile_padding.right as f32);
 		let tile_h = side + (tile_padding.top as f32) + (tile_padding.bottom as f32);
@@ -9740,15 +9744,7 @@ impl WindowRenderer {
 
 				frame.show(ui, |ui| {
 					ui.set_min_size(Vec2::new(side, side));
-					self.render_loupe(
-						ui,
-						state,
-						monitor,
-						cursor,
-						hud_blur_active,
-						hud_opaque,
-						theme,
-					);
+					self.render_loupe(ui, state, hud_blur_active, hud_opaque, theme);
 				});
 			});
 
@@ -9759,8 +9755,6 @@ impl WindowRenderer {
 		&mut self,
 		ui: &mut Ui,
 		state: &OverlayState,
-		monitor: MonitorRect,
-		cursor: GlobalPoint,
 		hud_blur_active: bool,
 		hud_opaque: bool,
 		theme: HudTheme,
@@ -9772,10 +9766,15 @@ impl WindowRenderer {
 		if matches!(mode, OverlayMode::Live) {
 			self.render_live_loupe(ui, state, CELL, hud_blur_active, hud_opaque, theme);
 		} else if matches!(mode, OverlayMode::Frozen)
-			&& state.monitor == Some(monitor)
 			&& (state.frozen_image.is_some() || state.loupe.is_some())
-			&& state.cursor.is_some()
 		{
+			let Some(monitor) = state.monitor else {
+				return;
+			};
+			let Some(cursor) = state.cursor else {
+				return;
+			};
+
 			self.render_frozen_loupe(
 				ui,
 				state,
@@ -9847,9 +9846,9 @@ impl WindowRenderer {
 			.as_ref()
 			.map(|loupe| loupe.patch.dimensions())
 			.unwrap_or((fallback_side_px, fallback_side_px));
-		let side = stable_live_loupe_side_points(state, cell);
+		let side = hud_helpers::stable_live_loupe_side_points(state, cell);
 		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), egui::Sense::hover());
-		let body_fill = hud_body_fill_srgba8(theme, hud_opaque);
+		let body_fill = hud_helpers::hud_body_fill_srgba8(theme, hud_opaque);
 		let stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 140));
 		let placeholder_fill =
 			Color32::from_rgba_unmultiplied(body_fill[0], body_fill[1], body_fill[2], 255);
@@ -10271,7 +10270,7 @@ impl WindowRenderer {
 	) -> eyre::Result<()> {
 		self.apply_pending_reconfigure(gpu);
 
-		let theme = effective_hud_theme(theme_mode, self.window.theme());
+		let theme = hud_helpers::effective_hud_theme(theme_mode, self.window.theme());
 
 		self.sync_egui_theme(theme);
 
@@ -10461,7 +10460,6 @@ impl WindowRenderer {
 		gpu: &GpuContext,
 		state: &OverlayState,
 		monitor: MonitorRect,
-		cursor: GlobalPoint,
 		show_hud_blur: bool,
 		hud_opaque: bool,
 		hud_opacity: f32,
@@ -10472,7 +10470,7 @@ impl WindowRenderer {
 	) -> eyre::Result<()> {
 		self.apply_pending_reconfigure(gpu);
 
-		let theme = effective_hud_theme(theme_mode, self.window.theme());
+		let theme = hud_helpers::effective_hud_theme(theme_mode, self.window.theme());
 
 		self.sync_egui_theme(theme);
 
@@ -10507,8 +10505,6 @@ impl WindowRenderer {
 		let (full_output, loupe_tile_rect) = self.run_loupe_tile_egui(
 			raw_input,
 			state,
-			monitor,
-			cursor,
 			theme,
 			hud_blur_active,
 			hud_opaque,
@@ -10568,15 +10564,16 @@ impl WindowRenderer {
 		let mut opacity = if hud_opaque { 1.0 } else { hud_opacity.clamp(0.0, 1.0) };
 
 		if hud_blur_active {
-			opacity = opacity.max(hud_blur_tint_alpha(theme));
+			opacity = opacity.max(hud_helpers::hud_blur_tint_alpha(theme));
 		}
 
 		let tint = hud_milk_amount.clamp(0.0, 1.0);
-		let mut fill = hud_body_fill_srgba8(theme, false);
+		let mut fill = hud_helpers::hud_body_fill_srgba8(theme, false);
 		let tint_hue = hud_tint_hue.clamp(0.0, 1.0);
 		let tint_saturation = 1.0;
-		let (_, _, base_lightness) = rgb_to_hsl(crate::state::Rgb::new(fill[0], fill[1], fill[2]));
-		let tinted_target = hsl_to_rgb(tint_hue, tint_saturation, base_lightness);
+		let (_, _, base_lightness) =
+			hud_helpers::rgb_to_hsl(crate::state::Rgb::new(fill[0], fill[1], fill[2]));
+		let tinted_target = hud_helpers::hsl_to_rgb(tint_hue, tint_saturation, base_lightness);
 
 		fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
 			((f32::from(a) + ((f32::from(b) - f32::from(a)) * t)).round().clamp(0.0, 255.0)) as u8
@@ -10595,8 +10592,6 @@ impl WindowRenderer {
 		&mut self,
 		raw_input: egui::RawInput,
 		state: &OverlayState,
-		monitor: MonitorRect,
-		cursor: GlobalPoint,
 		theme: HudTheme,
 		hud_blur_active: bool,
 		hud_opaque: bool,
@@ -10611,7 +10606,7 @@ impl WindowRenderer {
 
 			const CELL: f32 = 10.0;
 
-			let side = stable_live_loupe_side_points(state, CELL);
+			let side = hud_helpers::stable_live_loupe_side_points(state, CELL);
 			let tile_padding = Margin::same(10);
 			let outer_stroke_color = match theme {
 				HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 40),
@@ -10644,15 +10639,7 @@ impl WindowRenderer {
 				.show(ctx, |ui| {
 					let inner = frame.show(ui, |ui| {
 						ui.set_min_size(Vec2::new(side, side));
-						self.render_loupe(
-							ui,
-							state,
-							monitor,
-							cursor,
-							hud_blur_active,
-							hud_opaque,
-							theme,
-						);
+						self.render_loupe(ui, state, hud_blur_active, hud_opaque, theme);
 					});
 					let tile_rect = inner.response.rect;
 
@@ -10711,10 +10698,10 @@ impl WindowRenderer {
 		let tint =
 			Self::tinted_hud_body_fill(theme, false, false, 1.0, hud_milk_amount, hud_tint_hue);
 		let tint_rgba = [
-			srgb8_to_linear_f32(tint[0]),
-			srgb8_to_linear_f32(tint[1]),
-			srgb8_to_linear_f32(tint[2]),
-			hud_blur_tint_alpha(theme),
+			hud_helpers::srgb8_to_linear_f32(tint[0]),
+			hud_helpers::srgb8_to_linear_f32(tint[1]),
+			hud_helpers::srgb8_to_linear_f32(tint[2]),
+			hud_helpers::hud_blur_tint_alpha(theme),
 		];
 		let effects =
 			[hud_fog_amount.clamp(0.0, 1.0), hud_milk_amount.clamp(0.0, 1.0), max_lod, 0.0];
@@ -10787,8 +10774,10 @@ impl WindowRenderer {
 		image: &RgbaImage,
 		target_generation: u64,
 	) -> eyre::Result<()> {
-		let upload_image =
-			downscale_for_gpu_upload(image, gpu.device.limits().max_texture_dimension_2d);
+		let upload_image = image_helpers::downscale_for_gpu_upload(
+			image,
+			gpu.device.limits().max_texture_dimension_2d,
+		);
 		let (width, height) = upload_image.dimensions();
 		let max_side = gpu.device.limits().max_texture_dimension_2d;
 		let mip_level_count = Self::mip_level_count(width, height).min(10);
@@ -10818,8 +10807,12 @@ impl WindowRenderer {
 		} else {
 			let src = upload_bytes;
 
-			rgba_padded =
-				pad_rows(src, unpadded_bytes_per_row, padded_bytes_per_row, height as usize);
+			rgba_padded = image_helpers::pad_rows(
+				src,
+				unpadded_bytes_per_row,
+				padded_bytes_per_row,
+				height as usize,
+			);
 
 			&rgba_padded
 		};
@@ -10930,24 +10923,6 @@ struct MacOSCGPoint {
 	y: f64,
 }
 
-fn resize_scroll_preview_segment(segment: &RgbaImage) -> RgbaImage {
-	if segment.width() <= SCROLL_CAPTURE_PREVIEW_WIDTH_PX {
-		return segment.clone();
-	}
-
-	let preview_height = ((segment.height() as f32 / segment.width() as f32)
-		* SCROLL_CAPTURE_PREVIEW_WIDTH_PX as f32)
-		.round()
-		.max(1.0) as u32;
-
-	image::imageops::resize(
-		segment,
-		SCROLL_CAPTURE_PREVIEW_WIDTH_PX,
-		preview_height,
-		FilterType::Triangle,
-	)
-}
-
 #[cfg(target_os = "macos")]
 fn macos_is_option_key_down() -> bool {
 	let flags = unsafe { CGEventSourceFlagsState(macos_hid_event_source_state_id()) };
@@ -10958,420 +10933,6 @@ fn macos_is_option_key_down() -> bool {
 #[cfg(target_os = "macos")]
 fn macos_hid_event_source_state_id() -> u32 {
 	KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE
-}
-
-fn srgb8_to_linear_f32(x: u8) -> f32 {
-	let c = (x as f32) / 255.0;
-
-	if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
-}
-
-fn rgb_to_hsl(rgb: crate::state::Rgb) -> (f32, f32, f32) {
-	let red = f32::from(rgb.r) / 255.0;
-	let green = f32::from(rgb.g) / 255.0;
-	let blue = f32::from(rgb.b) / 255.0;
-	let max_channel = red.max(green).max(blue);
-	let min_channel = red.min(green).min(blue);
-	let delta = max_channel - min_channel;
-	let lightness = (max_channel + min_channel) / 2.0;
-
-	if delta <= f32::EPSILON {
-		return (0.0, 0.0, lightness);
-	}
-
-	let saturation = if lightness > 0.5 {
-		delta / (2.0 - max_channel - min_channel)
-	} else {
-		delta / (max_channel + min_channel)
-	};
-	let mut hue = if (max_channel - red).abs() <= f32::EPSILON {
-		(green - blue) / delta + if green < blue { 6.0 } else { 0.0 }
-	} else if (max_channel - green).abs() <= f32::EPSILON {
-		(blue - red) / delta + 2.0
-	} else {
-		(red - green) / delta + 4.0
-	};
-
-	hue /= 6.0;
-
-	(hue, saturation, lightness)
-}
-
-fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> crate::state::Rgb {
-	let hue = hue.clamp(0.0, 1.0);
-	let saturation = saturation.clamp(0.0, 1.0);
-	let lightness = lightness.clamp(0.0, 1.0);
-
-	if saturation <= 0.0 {
-		let gray = (lightness * 255.0).round().clamp(0.0, 255.0) as u8;
-
-		return crate::state::Rgb::new(gray, gray, gray);
-	}
-
-	let q = if lightness < 0.5 {
-		lightness * (1.0 + saturation)
-	} else {
-		lightness + saturation - lightness * saturation
-	};
-	let p = 2.0 * lightness - q;
-	let red = hue_to_rgb(p, q, hue + 1.0 / 3.0);
-	let green = hue_to_rgb(p, q, hue);
-	let blue = hue_to_rgb(p, q, hue - 1.0 / 3.0);
-
-	crate::state::Rgb::new(
-		(red * 255.0).round().clamp(0.0, 255.0) as u8,
-		(green * 255.0).round().clamp(0.0, 255.0) as u8,
-		(blue * 255.0).round().clamp(0.0, 255.0) as u8,
-	)
-}
-
-fn hue_to_rgb(p: f32, q: f32, hue: f32) -> f32 {
-	let mut normalized_hue = hue;
-
-	normalized_hue = normalized_hue.rem_euclid(1.0);
-
-	if normalized_hue < 1.0 / 6.0 {
-		return p + (q - p) * 6.0 * normalized_hue;
-	}
-	if normalized_hue < 1.0 / 2.0 {
-		return q;
-	}
-	if normalized_hue < 2.0 / 3.0 {
-		return p + (q - p) * (2.0 / 3.0 - normalized_hue) * 6.0;
-	}
-
-	p
-}
-
-fn effective_hud_theme(mode: ThemeMode, window_theme: Option<Theme>) -> HudTheme {
-	match mode {
-		ThemeMode::System => match window_theme.unwrap_or(Theme::Dark) {
-			Theme::Dark => HudTheme::Dark,
-			Theme::Light => HudTheme::Light,
-		},
-		ThemeMode::Dark => HudTheme::Dark,
-		ThemeMode::Light => HudTheme::Light,
-	}
-}
-
-fn live_hud_coordinate_text_width(min_value: i32, max_value: i32) -> usize {
-	min_value.to_string().len().max(max_value.to_string().len()).max(1)
-}
-
-fn format_live_hud_position_text(monitor: MonitorRect, cursor: GlobalPoint) -> String {
-	let max_x = monitor.origin.x.saturating_add_unsigned(monitor.width.saturating_sub(1));
-	let max_y = monitor.origin.y.saturating_add_unsigned(monitor.height.saturating_sub(1));
-	let x_width = live_hud_coordinate_text_width(monitor.origin.x, max_x);
-	let y_width = live_hud_coordinate_text_width(monitor.origin.y, max_y);
-
-	format!("x={:>x_width$}, y={:>y_width$}", cursor.x, cursor.y)
-}
-
-fn format_live_hud_rgb_text(rgb: Option<crate::state::Rgb>) -> (String, String) {
-	match rgb {
-		Some(rgb) => (rgb.hex_upper(), format!("RGB({:>3}, {:>3}, {:>3})", rgb.r, rgb.g, rgb.b)),
-		None => (String::from("#??????"), String::from("RGB(???, ???, ???)")),
-	}
-}
-
-fn stable_live_loupe_side_px(state: &OverlayState) -> u32 {
-	state.loupe_patch_side_px.max(1)
-}
-
-fn stable_live_loupe_side_points(state: &OverlayState, cell: f32) -> f32 {
-	(stable_live_loupe_side_px(state) as f32) * cell
-}
-
-fn stable_live_loupe_window_inner_size_points(side_px: u32) -> (u32, u32) {
-	let side_points = side_px.max(1).saturating_mul(10);
-
-	(side_points.saturating_add(22), side_points.saturating_add(22))
-}
-
-fn hud_body_fill_srgba8(theme: HudTheme, opaque: bool) -> [u8; 4] {
-	let mut c = if matches!(theme, HudTheme::Light) {
-		HUD_PILL_BODY_FILL_LIGHT_SRGBA8
-	} else {
-		HUD_PILL_BODY_FILL_DARK_SRGBA8
-	};
-
-	if opaque {
-		c[3] = 255;
-	}
-
-	c
-}
-
-fn hud_blur_tint_alpha(theme: HudTheme) -> f32 {
-	if matches!(theme, HudTheme::Light) {
-		HUD_PILL_BLUR_TINT_ALPHA_LIGHT
-	} else {
-		HUD_PILL_BLUR_TINT_ALPHA_DARK
-	}
-}
-
-fn frozen_rgb(
-	image: &Option<RgbaImage>,
-	monitor: Option<MonitorRect>,
-	point: GlobalPoint,
-) -> Option<crate::state::Rgb> {
-	let Some(image) = image else {
-		return None;
-	};
-	let monitor = monitor?;
-	let (x, y) = monitor.local_u32_pixels(point)?;
-	let pixel = image.get_pixel_checked(x, y)?;
-
-	Some(crate::state::Rgb::new(pixel.0[0], pixel.0[1], pixel.0[2]))
-}
-
-fn frozen_loupe_patch(
-	image: &Option<RgbaImage>,
-	monitor: Option<MonitorRect>,
-	point: GlobalPoint,
-	width_px: u32,
-	height_px: u32,
-) -> Option<RgbaImage> {
-	let Some(image) = image else {
-		return None;
-	};
-	let monitor = monitor?;
-	let (center_x, center_y) = monitor.local_u32_pixels(point)?;
-	let mut out = RgbaImage::new(width_px.max(1), height_px.max(1));
-	let out_width = out.width() as i32;
-	let out_height = out.height() as i32;
-	let half_width = out_width / 2;
-	let half_height = out_height / 2;
-	let center_x = center_x as i32;
-	let center_y = center_y as i32;
-	let image_width = image.width() as i32;
-	let image_height = image.height() as i32;
-
-	for out_y in 0..out.height() {
-		for out_x in 0..out.width() {
-			let image_x = center_x + (out_x as i32) - half_width;
-			let image_y = center_y + (out_y as i32) - half_height;
-			let color = if image_x >= 0
-				&& image_y >= 0
-				&& image_x < image_width
-				&& image_y < image_height
-			{
-				*image.get_pixel(image_x as u32, image_y as u32)
-			} else {
-				image::Rgba([0, 0, 0, 0])
-			};
-
-			out.put_pixel(out_x, out_y, color);
-		}
-	}
-
-	Some(out)
-}
-
-fn save_png_bytes_to_configured_dir(
-	png_bytes: &[u8],
-	config: &OverlayConfig,
-) -> color_eyre::eyre::Result<PathBuf> {
-	let output_dir = if config.output_dir.as_os_str().is_empty() {
-		PathBuf::from(".")
-	} else {
-		config.output_dir.clone()
-	};
-
-	fs::create_dir_all(&output_dir)
-		.wrap_err_with(|| format!("Failed to create output directory: {}", output_dir.display()))?;
-
-	let prefix = sanitize_output_filename_prefix(&config.output_filename_prefix);
-	let target_path = next_output_png_path(&output_dir, &prefix, config.output_naming);
-
-	write_png_bytes_atomic(&target_path, png_bytes)?;
-
-	Ok(target_path)
-}
-
-fn sanitize_output_filename_prefix(raw: &str) -> String {
-	let trimmed = raw.trim();
-	let mut sanitized = String::with_capacity(trimmed.len());
-
-	for ch in trimmed.chars() {
-		if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-			sanitized.push(ch);
-		} else {
-			sanitized.push('_');
-		}
-	}
-
-	let sanitized = sanitized.trim_matches('_');
-
-	if sanitized.is_empty() { String::from("rsnap") } else { sanitized.to_owned() }
-}
-
-fn next_output_png_path(output_dir: &Path, prefix: &str, naming: OutputNaming) -> PathBuf {
-	let base = match naming {
-		OutputNaming::Timestamp => format!("{prefix}-{}", current_unix_millis()),
-		OutputNaming::Sequence => {
-			format!("{prefix}-{:04}", next_sequence_index(output_dir, prefix))
-		},
-	};
-
-	unique_png_path(output_dir, &base)
-}
-
-fn current_unix_millis() -> u128 {
-	SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |duration| duration.as_millis())
-}
-
-fn next_sequence_index(output_dir: &Path, prefix: &str) -> u32 {
-	let Ok(entries) = fs::read_dir(output_dir) else {
-		return 1;
-	};
-	let mut max_seen = 0_u32;
-
-	for entry in entries.flatten() {
-		let file_name = entry.file_name();
-		let Some(file_name) = file_name.to_str() else {
-			continue;
-		};
-		let Some(stem) = file_name.strip_suffix(".png") else {
-			continue;
-		};
-		let Some(number_text) = stem.strip_prefix(prefix).and_then(|rest| rest.strip_prefix('-'))
-		else {
-			continue;
-		};
-
-		if !number_text.chars().all(|ch| ch.is_ascii_digit()) {
-			continue;
-		}
-
-		if let Ok(value) = number_text.parse::<u32>() {
-			max_seen = max_seen.max(value);
-		}
-	}
-
-	max_seen.saturating_add(1).max(1)
-}
-
-fn unique_png_path(output_dir: &Path, base: &str) -> PathBuf {
-	let direct_path = output_dir.join(format!("{base}.png"));
-
-	if !direct_path.exists() {
-		return direct_path;
-	}
-
-	let mut suffix = 2_u32;
-
-	loop {
-		let candidate = output_dir.join(format!("{base}-{suffix}.png"));
-
-		if !candidate.exists() {
-			return candidate;
-		}
-
-		suffix = suffix.saturating_add(1);
-	}
-}
-
-fn write_png_bytes_atomic(target_path: &Path, png_bytes: &[u8]) -> color_eyre::eyre::Result<()> {
-	let tmp_path = target_path.with_extension("png.tmp");
-
-	fs::write(&tmp_path, png_bytes)
-		.wrap_err_with(|| format!("Failed to write temporary PNG file: {}", tmp_path.display()))?;
-	fs::rename(&tmp_path, target_path)
-		.wrap_err_with(|| format!("Failed to finalize PNG file: {}", target_path.display()))?;
-
-	Ok(())
-}
-
-#[cfg(target_os = "macos")]
-#[allow(unexpected_cfgs)]
-fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> color_eyre::eyre::Result<()> {
-	use std::ffi::CString;
-
-	use objc::runtime::{BOOL, Object, YES};
-
-	use objc::{class, msg_send, sel, sel_impl};
-
-	let pasteboard_type = CString::new("public.png").wrap_err("Invalid NSPasteboard type")?;
-
-	unsafe {
-		let data: *mut Object =
-			msg_send![class!(NSData), dataWithBytes: png_bytes.as_ptr() length: png_bytes.len()];
-		let pasteboard: *mut Object = msg_send![class!(NSPasteboard), generalPasteboard];
-		let _: i64 = msg_send![pasteboard, clearContents];
-		let ty: *mut Object =
-			msg_send![class!(NSString), stringWithUTF8String: pasteboard_type.as_ptr()];
-		let ok: BOOL = msg_send![pasteboard, setData: data forType: ty];
-
-		if ok != YES {
-			return Err(eyre::eyre!("NSPasteboard setData:forType failed"));
-		}
-	}
-
-	Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> color_eyre::eyre::Result<()> {
-	use arboard::{Clipboard, ImageData};
-
-	let image = image::load_from_memory(png_bytes).wrap_err("Failed to decode PNG bytes")?;
-	let rgba = image.to_rgba8();
-	let (width, height) = rgba.dimensions();
-	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
-
-	clipboard
-		.set_image(ImageData {
-			width: width as usize,
-			height: height as usize,
-			bytes: std::borrow::Cow::Owned(rgba.into_raw()),
-		})
-		.wrap_err("Failed to write image to clipboard")?;
-
-	Ok(())
-}
-
-fn write_text_to_clipboard(text: &str) -> color_eyre::eyre::Result<()> {
-	use arboard::Clipboard;
-
-	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
-
-	clipboard.set_text(text.to_string()).wrap_err("Failed to write text to clipboard")?;
-
-	Ok(())
-}
-
-fn pad_rows(src: &[u8], src_row_bytes: usize, dst_row_bytes: usize, rows: usize) -> Vec<u8> {
-	debug_assert!(dst_row_bytes >= src_row_bytes);
-
-	let mut out = vec![0_u8; dst_row_bytes * rows];
-
-	for y in 0..rows {
-		let src_i = y * src_row_bytes;
-		let dst_i = y * dst_row_bytes;
-
-		out[dst_i..dst_i + src_row_bytes].copy_from_slice(&src[src_i..src_i + src_row_bytes]);
-	}
-
-	out
-}
-
-fn downscale_for_gpu_upload(image: &RgbaImage, max_side: u32) -> std::borrow::Cow<'_, RgbaImage> {
-	if image.width() <= max_side && image.height() <= max_side {
-		return std::borrow::Cow::Borrowed(image);
-	}
-
-	let longest_side = image.width().max(image.height()) as f32;
-	let scale = (max_side as f32) / longest_side;
-	let width = ((image.width() as f32) * scale).round().max(1.0) as u32;
-	let height = ((image.height() as f32) * scale).round().max(1.0) as u32;
-
-	std::borrow::Cow::Owned(image::imageops::resize(
-		image,
-		width.min(max_side),
-		height.min(max_side),
-		FilterType::Triangle,
-	))
 }
 
 fn global_to_local(cursor: GlobalPoint, monitor: MonitorRect) -> Option<Pos2> {
@@ -11640,9 +11201,7 @@ mod tests {
 		FrozenToolbarState, FrozenToolbarTool, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
 		HudTheme, InflightScrollCaptureObservation, OverlaySession, Pos2, Rect,
 		SCROLL_CAPTURE_INPUT_FRESHNESS, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
-		ToolbarPlacement, Vec2, WindowRenderer, format_live_hud_position_text,
-		format_live_hud_rgb_text, hud_blur_tint_alpha, hud_body_fill_srgba8,
-		stable_live_loupe_side_px, stable_live_loupe_window_inner_size_points,
+		ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 	};
 	#[cfg(target_os = "macos")]
 	use crate::overlay::{
@@ -12177,8 +11736,9 @@ mod tests {
 			height: 1_692,
 			scale_factor_x1000: 2_000,
 		};
-		let short = format_live_hud_position_text(monitor, GlobalPoint::new(842, 846));
-		let long = format_live_hud_position_text(monitor, GlobalPoint::new(1_504, 1_320));
+		let short = hud_helpers::format_live_hud_position_text(monitor, GlobalPoint::new(842, 846));
+		let long =
+			hud_helpers::format_live_hud_position_text(monitor, GlobalPoint::new(1_504, 1_320));
 
 		assert_eq!(short.len(), long.len());
 		assert_eq!(short, "x= 842, y= 846");
@@ -12187,8 +11747,8 @@ mod tests {
 
 	#[test]
 	fn live_hud_rgb_text_uses_fixed_width_placeholders() {
-		let (missing_hex, missing_rgb) = format_live_hud_rgb_text(None);
-		let (hex, rgb) = format_live_hud_rgb_text(Some(Rgb::new(7, 128, 255)));
+		let (missing_hex, missing_rgb) = hud_helpers::format_live_hud_rgb_text(None);
+		let (hex, rgb) = hud_helpers::format_live_hud_rgb_text(Some(Rgb::new(7, 128, 255)));
 
 		assert_eq!(missing_hex.len(), hex.len());
 		assert_eq!(missing_rgb.len(), rgb.len());
@@ -12207,7 +11767,7 @@ mod tests {
 			patch: RgbaImage::from_pixel(17, 19, image::Rgba([0, 0, 0, 255])),
 		});
 
-		assert_eq!(stable_live_loupe_side_px(&state), 21);
+		assert_eq!(hud_helpers::stable_live_loupe_side_px(&state), 21);
 	}
 
 	#[test]
@@ -12220,13 +11780,13 @@ mod tests {
 			patch: RgbaImage::from_pixel(25, 25, image::Rgba([0, 0, 0, 255])),
 		});
 
-		assert_eq!(stable_live_loupe_side_px(&state), 21);
+		assert_eq!(hud_helpers::stable_live_loupe_side_px(&state), 21);
 	}
 
 	#[test]
 	fn stable_live_loupe_window_inner_size_matches_runtime_target() {
-		assert_eq!(stable_live_loupe_window_inner_size_points(21), (232, 232));
-		assert_eq!(stable_live_loupe_window_inner_size_points(1), (32, 32));
+		assert_eq!(hud_helpers::stable_live_loupe_window_inner_size_points(21), (232, 232));
+		assert_eq!(hud_helpers::stable_live_loupe_window_inner_size_points(1), (32, 32));
 	}
 
 	#[cfg(target_os = "macos")]
@@ -13415,7 +12975,7 @@ mod tests {
 	#[test]
 	fn tinted_hud_body_fill_amount_zero_keeps_base_fill() {
 		for theme in [HudTheme::Dark, HudTheme::Light] {
-			let base_fill = hud_body_fill_srgba8(theme, false);
+			let base_fill = hud_helpers::hud_body_fill_srgba8(theme, false);
 			let no_tint =
 				WindowRenderer::tinted_hud_body_fill(theme, false, false, 1.0, 0.0, 0.585);
 
@@ -13469,7 +13029,8 @@ mod tests {
 		for theme in [HudTheme::Dark, HudTheme::Light] {
 			let tint_hue = 0.585;
 			let fill = WindowRenderer::tinted_hud_body_fill(theme, true, false, 0.0, 0.0, tint_hue);
-			let expected = (hud_blur_tint_alpha(theme) * 255.0).round().clamp(0.0, 255.0) as u8;
+			let expected =
+				(hud_helpers::hud_blur_tint_alpha(theme) * 255.0).round().clamp(0.0, 255.0) as u8;
 
 			assert_eq!(fill.a(), expected);
 		}

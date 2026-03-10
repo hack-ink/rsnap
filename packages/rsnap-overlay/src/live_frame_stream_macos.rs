@@ -687,6 +687,7 @@ fn latest_fresh_rgba_region(
 	}
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ordered_fresh_rgba_regions_after_seq(
 	state: &mut Option<StreamState>,
 	last_setup_attempt_at: &mut Option<Instant>,
@@ -1041,6 +1042,7 @@ fn sample_cursor_from_pixel_buffer(
 	out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sample_cursor_from_bgra_bytes(
 	bytes: &[u8],
 	bytes_per_row: usize,
