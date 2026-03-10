@@ -4,7 +4,9 @@ use std::{
 	time::{SystemTime, UNIX_EPOCH},
 };
 
-use color_eyre::eyre::{self, Result, WrapErr};
+#[cfg(target_os = "macos")]
+use color_eyre::eyre;
+use color_eyre::eyre::{Result, WrapErr};
 
 use crate::overlay::{OutputNaming, OverlayConfig};
 
