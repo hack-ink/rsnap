@@ -2,9 +2,8 @@ use std::borrow::Cow;
 
 use image::{RgbaImage, imageops::FilterType};
 
+use crate::overlay::SCROLL_CAPTURE_PREVIEW_WIDTH_PX;
 use crate::state::{GlobalPoint, MonitorRect, Rgb};
-
-use super::SCROLL_CAPTURE_PREVIEW_WIDTH_PX;
 
 pub(super) fn resize_scroll_preview_segment(segment: &RgbaImage) -> RgbaImage {
 	if segment.width() <= SCROLL_CAPTURE_PREVIEW_WIDTH_PX {

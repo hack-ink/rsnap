@@ -1,10 +1,10 @@
-use crate::state::{GlobalPoint, MonitorRect, OverlayState, Rgb};
 use winit::window::Theme;
 
-use super::{
+use crate::overlay::{
 	HUD_PILL_BLUR_TINT_ALPHA_DARK, HUD_PILL_BLUR_TINT_ALPHA_LIGHT, HUD_PILL_BODY_FILL_DARK_SRGBA8,
 	HUD_PILL_BODY_FILL_LIGHT_SRGBA8, HudTheme, ThemeMode,
 };
+use crate::state::{GlobalPoint, MonitorRect, OverlayState, Rgb};
 
 pub(super) fn srgb8_to_linear_f32(x: u8) -> f32 {
 	let c = (x as f32) / 255.0;
