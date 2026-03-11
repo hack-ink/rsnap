@@ -1,10 +1,11 @@
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
+use tray_icon::menu::MenuEvent;
 #[cfg(target_os = "macos")]
 use tray_icon::menu::Submenu;
 use tray_icon::menu::{MenuItem, PredefinedMenuItem, accelerator};
 use winit::event_loop::ActiveEventLoop;
 
-use super::App;
+use crate::app::App;
 use crate::icon;
 use rsnap_overlay::OverlayExit;
 
@@ -140,11 +141,7 @@ impl App {
 		self.tray_icon = Some(tray_icon);
 	}
 
-	pub(super) fn handle_menu_event(
-		&mut self,
-		event_loop: &ActiveEventLoop,
-		event: &tray_icon::menu::MenuEvent,
-	) {
+	pub(super) fn handle_menu_event(&mut self, event_loop: &ActiveEventLoop, event: &MenuEvent) {
 		let id = event.id();
 		let mut handled = false;
 
@@ -209,7 +206,6 @@ impl App {
 		if event.state() != HotKeyState::Pressed {
 			return;
 		}
-
 		if event.id() == self.capture_hotkey_id {
 			tracing::info!(
 				hotkey = %self.capture_key_label(),

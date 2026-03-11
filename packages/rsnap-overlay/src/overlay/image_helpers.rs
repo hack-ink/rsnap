@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
-use image::{RgbaImage, imageops::FilterType};
+use image::{
+	RgbaImage,
+	imageops::{self, FilterType},
+};
 
 use crate::overlay::SCROLL_CAPTURE_PREVIEW_WIDTH_PX;
 use crate::state::{GlobalPoint, MonitorRect, Rgb};
@@ -15,12 +18,7 @@ pub(super) fn resize_scroll_preview_segment(segment: &RgbaImage) -> RgbaImage {
 		.round()
 		.max(1.0) as u32;
 
-	image::imageops::resize(
-		segment,
-		SCROLL_CAPTURE_PREVIEW_WIDTH_PX,
-		preview_height,
-		FilterType::Triangle,
-	)
+	imageops::resize(segment, SCROLL_CAPTURE_PREVIEW_WIDTH_PX, preview_height, FilterType::Triangle)
 }
 
 pub(super) fn frozen_rgb(
@@ -111,7 +109,7 @@ pub(super) fn downscale_for_gpu_upload(image: &RgbaImage, max_side: u32) -> Cow<
 	let width = ((image.width() as f32) * scale).round().max(1.0) as u32;
 	let height = ((image.height() as f32) * scale).round().max(1.0) as u32;
 
-	Cow::Owned(image::imageops::resize(
+	Cow::Owned(imageops::resize(
 		image,
 		width.min(max_side),
 		height.min(max_side),

@@ -1,7 +1,10 @@
 use std::ops::RangeInclusive;
 
 use color_eyre::eyre::{self, Result};
-use image::{RgbaImage, imageops::FilterType};
+use image::{
+	RgbaImage,
+	imageops::{self, FilterType},
+};
 
 const FINGERPRINT_GRID_COLUMNS: u32 = 12;
 const FINGERPRINT_GRID_ROWS: u32 = 16;
@@ -2114,7 +2117,7 @@ fn resize_strip_to_preview_width(strip: &RgbaImage, preview_width_px: u32) -> Rg
 		.round()
 		.max(1.0) as u32;
 
-	image::imageops::resize(strip, preview_width_px, preview_height, FilterType::Triangle)
+	imageops::resize(strip, preview_width_px, preview_height, FilterType::Triangle)
 }
 
 fn crop_bottom_rows(frame: &RgbaImage, rows: u32) -> Option<RgbaImage> {
@@ -2126,7 +2129,7 @@ fn crop_bottom_rows(frame: &RgbaImage, rows: u32) -> Option<RgbaImage> {
 
 	let start_y = frame.height().saturating_sub(rows);
 
-	Some(image::imageops::crop_imm(frame, 0, start_y, frame.width(), rows).to_image())
+	Some(imageops::crop_imm(frame, 0, start_y, frame.width(), rows).to_image())
 }
 
 fn stack_vertical_images(images: &[&RgbaImage]) -> Result<RgbaImage> {
@@ -2330,11 +2333,8 @@ mod tests {
 	use image::Rgba;
 
 	use crate::scroll_capture::{
-		DirectionMatch, MotionObservation, OverlapSearchConfig, ScrollDirection,
-		ScrollFrameFingerprint, ScrollObserveOutcome, ScrollSession, detect_vertical_overlap,
-		preferred_upward_input_override_match, preferred_upward_override_match,
-		rewind_active_upward_motion_should_fail_closed, rewind_active_upward_override_match,
-		scroll_capture_fingerprint, upward_confirmation_match_for_downward_input,
+		self, DirectionMatch, MotionObservation, OverlapSearchConfig, ScrollDirection,
+		ScrollFrameFingerprint, ScrollObserveOutcome, ScrollSession,
 	};
 
 	fn make_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
@@ -2402,7 +2402,7 @@ mod tests {
 			5,
 			&[[40, 0, 0, 255], [50, 0, 0, 255], [60, 0, 0, 255], [70, 0, 0, 255], [80, 0, 0, 255]],
 		);
-		let overlap = detect_vertical_overlap(
+		let overlap = scroll_capture::detect_vertical_overlap(
 			&previous,
 			&next,
 			OverlapSearchConfig { min_overlap_rows: 1, ..Default::default() },
@@ -2415,10 +2415,10 @@ mod tests {
 	#[test]
 	fn fingerprint_wrapper_returns_zero_delta_for_identical_images() {
 		let image = image::RgbaImage::from_pixel(12, 12, Rgba([9, 8, 7, 255]));
-		let left = crate::scroll_capture::scroll_capture_fingerprint(&image);
-		let right = crate::scroll_capture::scroll_capture_fingerprint(&image);
+		let left = scroll_capture::scroll_capture_fingerprint(&image);
+		let right = scroll_capture::scroll_capture_fingerprint(&image);
 
-		assert_eq!(crate::scroll_capture::scroll_capture_fingerprint_delta(&left, &right), 0);
+		assert_eq!(scroll_capture::scroll_capture_fingerprint_delta(&left, &right), 0);
 	}
 
 	#[test]
@@ -3411,7 +3411,7 @@ mod tests {
 		session.observed_viewport_top_y = 36;
 		session.last_sample_frame = make_window(&document, width, 36, 48);
 		session.last_sample_fingerprint =
-			Some(scroll_capture_fingerprint(&session.last_sample_frame));
+			Some(scroll_capture::scroll_capture_fingerprint(&session.last_sample_frame));
 
 		let resume_frame = make_window(&document, width, 52, 48);
 
@@ -3638,10 +3638,21 @@ mod tests {
 		let committed = DirectionMatch { mean_abs_diff_x100: 0, motion_rows: 96 };
 
 		assert_eq!(
-			rewind_active_upward_override_match(Some(sample), Some(committed), true),
+			scroll_capture::rewind_active_upward_override_match(
+				Some(sample),
+				Some(committed),
+				true
+			),
 			Some((committed, true))
 		);
-		assert_eq!(rewind_active_upward_override_match(Some(sample), Some(committed), false), None);
+		assert_eq!(
+			scroll_capture::rewind_active_upward_override_match(
+				Some(sample),
+				Some(committed),
+				false
+			),
+			None
+		);
 	}
 
 	#[test]
@@ -3768,16 +3779,22 @@ mod tests {
 		let up = DirectionMatch { mean_abs_diff_x100: 120, motion_rows: 18 };
 		let down = DirectionMatch { mean_abs_diff_x100: 90, motion_rows: 18 };
 
-		assert_eq!(preferred_upward_override_match(Some(up), Some(down)), Some(up));
-		assert_eq!(preferred_upward_override_match(Some(up), None), Some(up));
+		assert_eq!(scroll_capture::preferred_upward_override_match(Some(up), Some(down)), Some(up));
+		assert_eq!(scroll_capture::preferred_upward_override_match(Some(up), None), Some(up));
 	}
 
 	#[test]
 	fn downward_input_requires_committed_growth_before_confirming_upward_match() {
 		let up = DirectionMatch { mean_abs_diff_x100: 120, motion_rows: 18 };
 
-		assert_eq!(upward_confirmation_match_for_downward_input(Some(up), None, false), None);
-		assert_eq!(upward_confirmation_match_for_downward_input(Some(up), None, true), Some(up));
+		assert_eq!(
+			scroll_capture::upward_confirmation_match_for_downward_input(Some(up), None, false),
+			None
+		);
+		assert_eq!(
+			scroll_capture::upward_confirmation_match_for_downward_input(Some(up), None, true),
+			Some(up)
+		);
 	}
 
 	#[test]
@@ -3788,11 +3805,19 @@ mod tests {
 		let weak_down = DirectionMatch { mean_abs_diff_x100: 160, motion_rows: 18 };
 
 		assert_eq!(
-			upward_confirmation_match_for_downward_input(Some(weak_up), Some(strong_down), true,),
+			scroll_capture::upward_confirmation_match_for_downward_input(
+				Some(weak_up),
+				Some(strong_down),
+				true,
+			),
 			None
 		);
 		assert_eq!(
-			upward_confirmation_match_for_downward_input(Some(strong_up), Some(weak_down), true,),
+			scroll_capture::upward_confirmation_match_for_downward_input(
+				Some(strong_up),
+				Some(weak_down),
+				true,
+			),
 			Some(strong_up)
 		);
 	}
@@ -3803,11 +3828,11 @@ mod tests {
 		let committed = DirectionMatch { mean_abs_diff_x100: 0, motion_rows: 48 };
 
 		assert_eq!(
-			preferred_upward_input_override_match(Some(sample), Some(committed)),
+			scroll_capture::preferred_upward_input_override_match(Some(sample), Some(committed)),
 			Some((committed, true))
 		);
 		assert_eq!(
-			preferred_upward_input_override_match(Some(committed), Some(sample)),
+			scroll_capture::preferred_upward_input_override_match(Some(committed), Some(sample)),
 			Some((committed, false))
 		);
 	}
@@ -3817,8 +3842,8 @@ mod tests {
 		let up = DirectionMatch { mean_abs_diff_x100: 500, motion_rows: 18 };
 		let down = DirectionMatch { mean_abs_diff_x100: 90, motion_rows: 18 };
 
-		assert_eq!(preferred_upward_override_match(Some(up), Some(down)), None);
-		assert_eq!(preferred_upward_override_match(Some(up), None), None);
+		assert_eq!(scroll_capture::preferred_upward_override_match(Some(up), Some(down)), None);
+		assert_eq!(scroll_capture::preferred_upward_override_match(Some(up), None), None);
 	}
 
 	#[test]
@@ -3827,19 +3852,19 @@ mod tests {
 		let committed_down = DirectionMatch { mean_abs_diff_x100: 80, motion_rows: 80 };
 		let committed_up = DirectionMatch { mean_abs_diff_x100: 70, motion_rows: 32 };
 
-		assert!(rewind_active_upward_motion_should_fail_closed(
+		assert!(scroll_capture::rewind_active_upward_motion_should_fail_closed(
 			Some(sample_up),
 			None,
 			Some(committed_down),
 			true,
 		));
-		assert!(!rewind_active_upward_motion_should_fail_closed(
+		assert!(!scroll_capture::rewind_active_upward_motion_should_fail_closed(
 			Some(sample_up),
 			Some(committed_up),
 			Some(committed_down),
 			true,
 		));
-		assert!(!rewind_active_upward_motion_should_fail_closed(
+		assert!(!scroll_capture::rewind_active_upward_motion_should_fail_closed(
 			Some(sample_up),
 			None,
 			Some(committed_down),

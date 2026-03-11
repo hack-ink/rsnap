@@ -2,7 +2,7 @@ use global_hotkey::hotkey::{Code, HotKey};
 use winit::event::KeyEvent;
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 
-use super::CaptureHotkeyNotice;
+use crate::settings_window::CaptureHotkeyNotice;
 
 const CAPTURE_HOTKEY_GUIDANCE_PRESS_NONMOD: &str =
 	"Press a non-modifier key to complete the shortcut.";
@@ -201,14 +201,17 @@ fn capture_modifiers(modifiers: &ModifiersState) -> (global_hotkey::hotkey::Modi
 
 	if modifiers.alt_key() {
 		output.insert(global_hotkey::hotkey::Modifiers::ALT);
+
 		has_required = true;
 	}
 	if modifiers.control_key() {
 		output.insert(global_hotkey::hotkey::Modifiers::CONTROL);
+
 		has_required = true;
 	}
 	if modifiers.super_key() {
 		output.insert(global_hotkey::hotkey::Modifiers::SUPER);
+
 		has_required = true;
 	}
 	if modifiers.shift_key() {

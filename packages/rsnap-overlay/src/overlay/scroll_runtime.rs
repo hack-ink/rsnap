@@ -1,4 +1,16 @@
-use super::*;
+use std::time::Instant;
+
+use color_eyre::Result;
+use image::RgbaImage;
+
+use crate::overlay::{
+	LiveStreamStaleGrace, MonitorRect, OverlayControl, OverlaySession, OverlayWorker, RectPoints,
+	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+	ScrollCaptureFrameSource, ScrollObserveOutcome, ScrollSession,
+};
+use crate::scroll_capture::ScrollDirection;
+#[cfg(not(target_os = "macos"))]
+use crate::worker::WorkerRequestSendError;
 
 impl OverlaySession {
 	pub(super) fn maybe_tick_scroll_capture(&mut self) {
@@ -409,7 +421,7 @@ impl OverlaySession {
 
 	fn handle_scroll_capture_frame_outcome(
 		&mut self,
-		outcome: color_eyre::Result<ScrollObserveOutcome>,
+		outcome: Result<ScrollObserveOutcome>,
 		source: ScrollCaptureFrameSource,
 		frame_px: (u32, u32),
 	) {

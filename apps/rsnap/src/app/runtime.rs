@@ -20,8 +20,8 @@ use winit::{
 };
 
 #[cfg(target_os = "macos")]
-use super::scroll_input_macos::SharedScrollInputState;
-use super::{App, UserEvent};
+use crate::app::scroll_input_macos::SharedScrollInputState;
+use crate::app::{App, UserEvent};
 use crate::settings::AppSettings;
 use crate::settings_window::{CaptureHotkeyNotice, SettingsControl, SettingsWindowAction};
 
