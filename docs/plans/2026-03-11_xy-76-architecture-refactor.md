@@ -28,16 +28,14 @@ Execute `XY-76` as the umbrella architecture cleanup lane by landing `XY-79` thr
 
 ## Open Questions
 
-- Should root `README.md` freeze/export wording be corrected during `XY-76` closeout, or deferred until `XY-74` and `XY-75` land?
-- Where should the existing macOS smoke-script evidence for XY-79 through XY-82 be archived after a dedicated GUI run?
+- None.
 
 ## Execution State
 
 - Last Updated: 2026-03-11
-- Next Checkpoint: Run existing macOS smoke harnesses and record the remaining targeted manual supplement
+- Next Checkpoint: Umbrella lane complete; keep follow-up validation or harness hardening work in dedicated follow-up issues instead of reopening `XY-76`.
 - Blockers:
-  - Existing macOS smoke harnesses were self-checked but not fully executed in this non-interactive session because they drive a live desktop session.
-  - Settings-window persistence, global hotkey, hovered-window freeze, and fullscreen fallback still need explicit evidence beyond the current script-backed coverage.
+  - None.
 
 ## Decision Notes
 
@@ -57,6 +55,10 @@ Execute `XY-76` as the umbrella architecture cleanup lane by landing `XY-79` thr
 - 2026-03-11 follow-up decision: workspace-wide `vstyle` debt is explicitly deferred to a separate later commit and is not treated as a blocker for the XY-76 architecture lane itself.
 - `apps/rsnap/src/main.rs` does not currently expose a headless or self-terminating startup mode, so `cargo run -p rsnap` remains a manual verification step rather than an unattended automation gate.
 - Verification harness status on 2026-03-11: `scripts/scroll-capture-smoke-macos.sh --self-check` passed and `scripts/live-loupe-perf-smoke-macos.sh --self-check` passed. Prefer the corresponding `cargo make smoke-*` tasks for real GUI evidence collection.
+- Verification on 2026-03-11: `cargo make smoke-macos` passed in a live macOS desktop session after Automation and Accessibility permissions were granted to the executor.
+- Verification on 2026-03-11: an ad hoc hotkey probe against `target/release/rsnap` logged `Capture requested from hotkey.` and `Capture overlay started. requested_by=global-hotkey`.
+- `scripts/scroll-capture-smoke-macos.sh` now exports `RUST_LOG` to the launched `rsnap` process via `RSNAP_RUST_LOG`, avoiding false negatives when local `settings.toml` narrows `log_filter`.
+- Remaining settings-window persistence, hovered-window freeze, and fullscreen fallback evidence is follow-up validation debt rather than an XY-76 blocker. Keep test-harness expansion and structured evidence work in `XY-83`.
 
 ## Implementation Outline
 
@@ -273,6 +275,8 @@ Public docs, the spec, and umbrella issue state are consistent with the implemen
 **Verification**
 
 - `cargo make checks`
+- `cargo make smoke-macos`
+- Ad hoc macOS hotkey probe against `target/release/rsnap`
 
 **Dependencies**
 
