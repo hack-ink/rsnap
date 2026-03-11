@@ -7,6 +7,10 @@ mod window_runtime;
 
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
+use std::mem;
+use std::panic;
+use std::ptr;
+use std::slice;
 use std::{
 	collections::HashMap,
 	path::PathBuf,
@@ -14,7 +18,7 @@ use std::{
 	time::{Duration, Instant},
 };
 
-use color_eyre::eyre::{self, WrapErr};
+use color_eyre::eyre::{self, Result, WrapErr};
 #[cfg(not(target_os = "macos"))]
 use device_query::{DeviceQuery, Keycode};
 use egui::ClippedPrimitive;
@@ -26,12 +30,17 @@ use egui::TextureId;
 use egui::TextureOptions;
 use egui::Ui;
 use egui::{
-	Align, Align2, Color32, CornerRadius, Event, FontDefinitions, FontFamily, FontId, Frame, Id,
-	Layout, Margin, PointerButton, Pos2, Rect, Sense, Vec2, ViewportId,
+	self, Align, Align2, Color32, CornerRadius, Event, FontDefinitions, FontFamily, FontId, Frame,
+	Layout, Margin, PointerButton, Pos2, Rect, Vec2,
 };
 use egui_phosphor::{Variant, regular};
 use egui_wgpu::{Renderer, ScreenDescriptor};
-use image::{RgbaImage, imageops::FilterType};
+use image::{
+	RgbaImage,
+	imageops::{self, FilterType},
+};
+#[cfg(target_os = "macos")]
+use objc::runtime::{Object, YES};
 #[cfg(target_os = "macos")]
 use objc2::MainThreadMarker;
 #[cfg(target_os = "macos")]
@@ -85,6 +94,20 @@ use crate::{
 		WorkerResponse,
 	},
 };
+
+#[cfg(target_os = "macos")]
+macro_rules! sel {
+	($($tt:tt)*) => {
+		objc::sel!($($tt)*)
+	};
+}
+
+#[cfg(target_os = "macos")]
+macro_rules! sel_impl {
+	($($tt:tt)*) => {
+		objc::sel_impl!($($tt)*)
+	};
+}
 
 #[cfg(target_os = "macos")]
 type CFTypeRef = *const c_void;
@@ -196,7 +219,7 @@ pub enum HudAnchor {
 	Cursor,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
 	#[default]
@@ -219,7 +242,7 @@ pub enum OverlayControl {
 	Exit(OverlayExit),
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AltActivationMode {
 	#[default]
@@ -227,7 +250,7 @@ pub enum AltActivationMode {
 	Toggle,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolbarPlacement {
 	Top,
@@ -235,7 +258,7 @@ pub enum ToolbarPlacement {
 	Bottom,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputNaming {
 	#[default]
@@ -243,7 +266,7 @@ pub enum OutputNaming {
 	Sequence,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowCaptureAlphaMode {
 	#[default]
@@ -551,7 +574,7 @@ impl OverlaySession {
 		let window_list_refresh_interval = LIVE_WINDOW_LIST_REFRESH_INTERVAL;
 		let now = Instant::now();
 		#[cfg(not(target_os = "macos"))]
-		let cursor_device = match std::panic::catch_unwind(device_query::DeviceState::new) {
+		let cursor_device = match panic::catch_unwind(device_query::DeviceState::new) {
 			Ok(cursor_device) => Some(cursor_device),
 			Err(_) => {
 				tracing::warn!(
@@ -1533,7 +1556,7 @@ impl OverlaySession {
 	fn observe_scroll_capture_frame(
 		&mut self,
 		frame: RgbaImage,
-	) -> Option<eyre::Result<ScrollObserveOutcome>> {
+	) -> Option<Result<ScrollObserveOutcome>> {
 		self.observe_scroll_capture_frame_at(frame, Instant::now())
 	}
 
@@ -1541,7 +1564,7 @@ impl OverlaySession {
 		&mut self,
 		frame: RgbaImage,
 		observation_at: Instant,
-	) -> Option<eyre::Result<ScrollObserveOutcome>> {
+	) -> Option<Result<ScrollObserveOutcome>> {
 		self.observe_scroll_capture_frame_with_gate(frame, false, observation_at)
 	}
 
@@ -1550,7 +1573,7 @@ impl OverlaySession {
 		frame: RgbaImage,
 		allow_stale_input: bool,
 		observation_at: Instant,
-	) -> Option<eyre::Result<ScrollObserveOutcome>> {
+	) -> Option<Result<ScrollObserveOutcome>> {
 		if let Some(reason) = self.scroll_capture_observation_block_reason_at(observation_at)
 			&& !(allow_stale_input && reason == "stale_input")
 		{
@@ -2408,7 +2431,7 @@ impl OverlaySession {
 		if width == 0 || height == 0 {
 			None
 		} else {
-			Some(image::imageops::crop_imm(frozen_image, x, y, width, height).to_image())
+			Some(imageops::crop_imm(frozen_image, x, y, width, height).to_image())
 		}
 	}
 
@@ -2436,14 +2459,14 @@ impl OverlaySession {
 
 			None
 		} else {
-			Some(image::imageops::crop_imm(frozen_image, x, y, width, height).to_image())
+			Some(imageops::crop_imm(frozen_image, x, y, width, height).to_image())
 		}
 	}
 
 	fn flatten_window_image_with_matte(image: &RgbaImage, matte: image::Rgba<u8>) -> RgbaImage {
 		let mut out = RgbaImage::from_pixel(image.width(), image.height(), matte);
 
-		image::imageops::overlay(&mut out, image, 0, 0);
+		imageops::overlay(&mut out, image, 0, 0);
 
 		out
 	}
@@ -2481,7 +2504,7 @@ impl OverlaySession {
 		{
 			window_image.clone()
 		} else {
-			image::imageops::resize(
+			imageops::resize(
 				window_image,
 				capture_rect_px.width,
 				capture_rect_px.height,
@@ -2490,7 +2513,7 @@ impl OverlaySession {
 		};
 		let preview_layer = Self::compose_window_preview_layer(&window_overlay, alpha_mode);
 
-		image::imageops::overlay(
+		imageops::overlay(
 			&mut monitor_image,
 			&preview_layer,
 			i64::from(capture_rect_px.x),
@@ -2925,7 +2948,7 @@ impl OverlaySession {
 		&mut self,
 		monitor: MonitorRect,
 		toolbar_input: Option<FrozenToolbarPointerState>,
-	) -> eyre::Result<()> {
+	) -> Result<()> {
 		self.sync_scroll_toolbar_state();
 
 		#[cfg(not(target_os = "macos"))]
@@ -4385,7 +4408,7 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		capture_rect_pixels: RectPoints,
 		base_frame: RgbaImage,
-	) -> eyre::Result<ScrollCaptureState> {
+	) -> Result<ScrollCaptureState> {
 		Ok(ScrollCaptureState {
 			active: true,
 			paused: false,
@@ -4665,7 +4688,7 @@ impl OverlaySession {
 		None
 	}
 
-	fn draw_hud_window_frame(&mut self, live_loupe_in_hud: bool) -> eyre::Result<HudRedrawSummary> {
+	fn draw_hud_window_frame(&mut self, live_loupe_in_hud: bool) -> Result<HudRedrawSummary> {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return Err(eyre::eyre!("Missing GPU context"));
 		};
@@ -4893,7 +4916,7 @@ impl OverlaySession {
 		&mut self,
 		monitor: MonitorRect,
 		_cursor: GlobalPoint,
-	) -> eyre::Result<bool> {
+	) -> Result<bool> {
 		let redraw_started_at = Instant::now();
 		let Some(loupe_window) = self.loupe_window.as_mut() else {
 			return Ok(false);
@@ -6160,11 +6183,7 @@ impl ScrollPreviewWindow {
 		})
 	}
 
-	fn render_preview_frame(
-		&mut self,
-		gpu: &GpuContext,
-		full_output: FullOutput,
-	) -> eyre::Result<()> {
+	fn render_preview_frame(&mut self, gpu: &GpuContext, full_output: FullOutput) -> Result<()> {
 		self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
 
 		for (id, delta) in &full_output.textures_delta.set {
@@ -6221,12 +6240,7 @@ impl ScrollPreviewWindow {
 		Ok(())
 	}
 
-	fn draw(
-		&mut self,
-		gpu: &GpuContext,
-		theme: HudTheme,
-		view: ScrollPreviewView,
-	) -> eyre::Result<()> {
+	fn draw(&mut self, gpu: &GpuContext, theme: HudTheme, view: ScrollPreviewView) -> Result<()> {
 		self.sync_surface_to_window(gpu);
 
 		if self.needs_reconfigure {
@@ -6243,7 +6257,7 @@ impl ScrollPreviewWindow {
 		self.render_preview_frame(gpu, full_output)
 	}
 
-	fn acquire_frame(&mut self, gpu: &GpuContext) -> eyre::Result<SurfaceTexture> {
+	fn acquire_frame(&mut self, gpu: &GpuContext) -> Result<SurfaceTexture> {
 		match self.surface.get_current_texture() {
 			Ok(frame) => Ok(frame),
 			Err(SurfaceError::Outdated) => {
@@ -6260,7 +6274,7 @@ impl ScrollPreviewWindow {
 		}
 	}
 
-	fn recreate_surface(&mut self, gpu: &GpuContext) -> eyre::Result<()> {
+	fn recreate_surface(&mut self, gpu: &GpuContext) -> Result<()> {
 		let surface = gpu
 			.instance
 			.create_surface(Arc::clone(&self.window))
@@ -6377,7 +6391,7 @@ struct GpuContext {
 	queue: Queue,
 }
 impl GpuContext {
-	fn new() -> eyre::Result<Self> {
+	fn new() -> Result<Self> {
 		let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
 		let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
 			power_preference: wgpu::PowerPreference::LowPower,
@@ -6732,9 +6746,9 @@ impl WindowRenderer {
 						ty: wgpu::BindingType::Buffer {
 							ty: wgpu::BufferBindingType::Uniform,
 							has_dynamic_offset: false,
-							min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
-								HudBlurUniformRaw,
-							>() as u64),
+							min_binding_size: wgpu::BufferSize::new(
+								mem::size_of::<HudBlurUniformRaw>() as u64,
+							),
 						},
 						count: None,
 					},
@@ -6879,7 +6893,7 @@ impl WindowRenderer {
 			raw_input.events = events;
 		}
 
-		if let Some(viewport) = raw_input.viewports.get_mut(&ViewportId::ROOT) {
+		if let Some(viewport) = raw_input.viewports.get_mut(&egui::ViewportId::ROOT) {
 			viewport.native_pixels_per_point = Some(pixels_per_point);
 			viewport.inner_rect = raw_input.screen_rect;
 			viewport.focused = Some(true);
@@ -6971,7 +6985,7 @@ impl WindowRenderer {
 				let screen_rect = ctx.input(|i| i.viewport_rect());
 				let layer = egui::LayerId::new(
 					egui::Order::Foreground,
-					Id::new(format!("live-capture-{}", monitor.id)),
+					egui::Id::new(format!("live-capture-{}", monitor.id)),
 				);
 				let painter = ctx.layer_painter(layer);
 
@@ -7126,7 +7140,7 @@ impl WindowRenderer {
 
 		let layer = egui::LayerId::new(
 			egui::Order::Foreground,
-			Id::new(format!("frozen-pending-{}", monitor.id)),
+			egui::Id::new(format!("frozen-pending-{}", monitor.id)),
 		);
 		let painter = ctx.layer_painter(layer);
 		let rect = Rect::from_min_size(
@@ -7900,12 +7914,12 @@ impl WindowRenderer {
 		left_button_down: bool,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
-		egui::Area::new(Id::new(format!("frozen-toolbar-{}", monitor.id)))
+		egui::Area::new(egui::Id::new(format!("frozen-toolbar-{}", monitor.id)))
 			.order(egui::Order::Foreground)
 			.fixed_pos(toolbar_pos)
 			.show(ctx, |ui| {
 				let (rect, response) =
-					ui.allocate_exact_size(toolbar_size, Sense::click_and_drag());
+					ui.allocate_exact_size(toolbar_size, egui::Sense::click_and_drag());
 				let body_fill = Self::tinted_hud_body_fill(
 					theme,
 					hud_blur_active,
@@ -8007,7 +8021,7 @@ impl WindowRenderer {
 			for tool in tools {
 				let is_mode_tool = tool.is_mode_tool();
 				let response =
-					ui.allocate_response(Vec2::new(button_size, button_size), Sense::click());
+					ui.allocate_response(Vec2::new(button_size, button_size), egui::Sense::click());
 				let hovered = response.hovered();
 				let response = response.on_hover_text(tool.label());
 				let hover_anim: f32 = if hovered { 1.0 } else { 0.0 };
@@ -8705,7 +8719,7 @@ impl WindowRenderer {
 		}
 	}
 
-	fn acquire_frame(&mut self, gpu: &GpuContext) -> eyre::Result<SurfaceTexture> {
+	fn acquire_frame(&mut self, gpu: &GpuContext) -> Result<SurfaceTexture> {
 		let started_at = Instant::now();
 		let frame = match self.surface.get_current_texture() {
 			Ok(frame) => Ok(frame),
@@ -8741,7 +8755,7 @@ impl WindowRenderer {
 		frame: SurfaceTexture,
 		paint_jobs: &[ClippedPrimitive],
 		screen_descriptor: &ScreenDescriptor,
-	) -> eyre::Result<()> {
+	) -> Result<()> {
 		let started_at = Instant::now();
 		let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -8840,7 +8854,7 @@ impl WindowRenderer {
 		gpu: &GpuContext,
 		window: Arc<winit::window::Window>,
 		egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
-	) -> eyre::Result<Self> {
+	) -> Result<Self> {
 		let surface = gpu
 			.instance
 			.create_surface(Arc::clone(&window))
@@ -8910,7 +8924,7 @@ impl WindowRenderer {
 			Self::create_hud_blur_pipeline(gpu, surface_format);
 		let hud_blur_uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("rsnap-hud-blur uniform"),
-			size: std::mem::size_of::<HudBlurUniformRaw>() as u64,
+			size: mem::size_of::<HudBlurUniformRaw>() as u64,
 			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 			mapped_at_creation: false,
 		});
@@ -8943,7 +8957,7 @@ impl WindowRenderer {
 		})
 	}
 
-	fn resize(&mut self, size: PhysicalSize<u32>) -> eyre::Result<()> {
+	fn resize(&mut self, size: PhysicalSize<u32>) -> Result<()> {
 		self.surface_config.width = size.width.max(1);
 		self.surface_config.height = size.height.max(1);
 		self.needs_reconfigure = true;
@@ -8993,7 +9007,7 @@ impl WindowRenderer {
 		show_frozen_capture_affordance: bool,
 		toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
-	) -> eyre::Result<()> {
+	) -> Result<()> {
 		self.apply_pending_reconfigure(gpu);
 
 		let theme = hud_helpers::effective_hud_theme(theme_mode, self.window.theme());
@@ -9021,7 +9035,7 @@ impl WindowRenderer {
 		self.sync_or_clear_hud_bg(gpu, state, monitor, hud_cfg)?;
 
 		let hud_shader_blur_active = self.hud_shader_blur_active(state, monitor, hud_cfg);
-		let mut selection_flow_cache = std::mem::take(&mut self.selection_flow_cache);
+		let mut selection_flow_cache = mem::take(&mut self.selection_flow_cache);
 		let (full_output, hud_pill) = self.run_egui(
 			raw_input,
 			state,
@@ -9152,7 +9166,7 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 		hud_cfg: HudDrawConfig,
-	) -> eyre::Result<()> {
+	) -> Result<()> {
 		if hud_cfg.needs_frozen_surface_bg || hud_cfg.needs_shader_blur_bg {
 			return self.sync_hud_bg(gpu, state, monitor);
 		}
@@ -9193,7 +9207,7 @@ impl WindowRenderer {
 		hud_milk_amount: f32,
 		hud_tint_hue: f32,
 		theme_mode: ThemeMode,
-	) -> eyre::Result<()> {
+	) -> Result<()> {
 		self.apply_pending_reconfigure(gpu);
 
 		let theme = hud_helpers::effective_hud_theme(theme_mode, self.window.theme());
@@ -9452,7 +9466,7 @@ impl WindowRenderer {
 		gpu: &GpuContext,
 		state: &OverlayState,
 		monitor: MonitorRect,
-	) -> eyre::Result<()> {
+	) -> Result<()> {
 		let (target_generation, target_image) = match state.mode {
 			OverlayMode::Live if state.live_bg_monitor == Some(monitor) => {
 				(state.live_bg_generation, state.live_bg_image.as_ref())
@@ -9499,7 +9513,7 @@ impl WindowRenderer {
 		gpu: &GpuContext,
 		image: &RgbaImage,
 		target_generation: u64,
-	) -> eyre::Result<()> {
+	) -> Result<()> {
 		let upload_image = image_helpers::downscale_for_gpu_upload(
 			image,
 			gpu.device.limits().max_texture_dimension_2d,
@@ -9633,12 +9647,7 @@ struct HudBlurUniformRaw {
 }
 impl HudBlurUniformRaw {
 	fn as_bytes(&self) -> &[u8] {
-		unsafe {
-			std::slice::from_raw_parts(
-				std::ptr::from_ref(self).cast::<u8>(),
-				std::mem::size_of::<Self>(),
-			)
-		}
+		unsafe { slice::from_raw_parts(ptr::from_ref(self).cast::<u8>(), mem::size_of::<Self>()) }
 	}
 }
 
@@ -9694,7 +9703,7 @@ unsafe extern "C" {
 
 #[cfg(target_os = "macos")]
 fn macos_mouse_location() -> Option<GlobalPoint> {
-	let event = unsafe { CGEventCreate(std::ptr::null()) };
+	let event = unsafe { CGEventCreate(ptr::null()) };
 
 	if event.is_null() {
 		return None;
@@ -9709,27 +9718,19 @@ fn macos_mouse_location() -> Option<GlobalPoint> {
 
 #[cfg(target_os = "macos")]
 fn macos_activate_app() {
-	use objc::runtime::{Object, YES};
-
-	use objc::{class, msg_send, sel, sel_impl};
-
 	unsafe {
-		let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+		let app: *mut Object = objc::msg_send![objc::class!(NSApplication), sharedApplication];
 
 		if app.is_null() {
 			return;
 		}
 
-		let _: () = msg_send![app, activateIgnoringOtherApps: YES];
+		let _: () = objc::msg_send![app, activateIgnoringOtherApps: YES];
 	}
 }
 
 #[cfg(target_os = "macos")]
 fn macos_make_window_key(window: &winit::window::Window) {
-	use objc::runtime::Object;
-
-	use objc::{msg_send, sel, sel_impl};
-
 	let Ok(handle) = window.window_handle() else {
 		return;
 	};
@@ -9739,14 +9740,14 @@ fn macos_make_window_key(window: &winit::window::Window) {
 	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
 
 	unsafe {
-		let ns_window: *mut Object = msg_send![ns_view, window];
+		let ns_window: *mut Object = objc::msg_send![ns_view, window];
 
 		if ns_window.is_null() {
 			return;
 		}
 
-		let nil: *mut Object = std::ptr::null_mut();
-		let _: () = msg_send![ns_window, makeKeyAndOrderFront: nil];
+		let nil: *mut Object = ptr::null_mut();
+		let _: () = objc::msg_send![ns_window, makeKeyAndOrderFront: nil];
 	}
 
 	window.focus_window();
@@ -9756,7 +9757,7 @@ fn macos_make_window_key(window: &winit::window::Window) {
 fn macos_post_scroll_wheel_event(
 	delta: MacOSScrollWheelEvent,
 	target_point: GlobalPoint,
-) -> eyre::Result<()> {
+) -> Result<()> {
 	let units = delta.units;
 	let wheel1 = delta.posted_y;
 	let wheel2 = delta.posted_x;
@@ -9798,10 +9799,6 @@ fn macos_post_scroll_wheel_event(
 
 #[cfg(target_os = "macos")]
 fn macos_configure_overlay_window_mouse_moved_events(window: &winit::window::Window) {
-	use objc::runtime::{Object, YES};
-
-	use objc::{class, msg_send, sel, sel_impl};
-
 	let Ok(handle) = window.window_handle() else {
 		return;
 	};
@@ -9811,20 +9808,20 @@ fn macos_configure_overlay_window_mouse_moved_events(window: &winit::window::Win
 	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
 
 	unsafe {
-		let ns_window: *mut Object = msg_send![ns_view, window];
+		let ns_window: *mut Object = objc::msg_send![ns_view, window];
 
 		if ns_window.is_null() {
 			return;
 		}
 
-		let _: () = msg_send![ns_window, setOpaque: false];
-		let _: () = msg_send![ns_window, setHasShadow: false];
+		let _: () = objc::msg_send![ns_window, setOpaque: false];
+		let _: () = objc::msg_send![ns_window, setHasShadow: false];
 		let sharing_type_none = 0_u64;
-		let _: () = msg_send![ns_window, setSharingType: sharing_type_none];
-		let clear: *mut Object = msg_send![class!(NSColor), clearColor];
-		let _: () = msg_send![ns_window, setBackgroundColor: clear];
-		let _: () = msg_send![ns_window, setLevel: MACOS_OVERLAY_WINDOW_LEVEL];
-		let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
+		let _: () = objc::msg_send![ns_window, setSharingType: sharing_type_none];
+		let clear: *mut Object = objc::msg_send![objc::class!(NSColor), clearColor];
+		let _: () = objc::msg_send![ns_window, setBackgroundColor: clear];
+		let _: () = objc::msg_send![ns_window, setLevel: MACOS_OVERLAY_WINDOW_LEVEL];
+		let _: () = objc::msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
 	}
 }
 
@@ -9835,10 +9832,6 @@ fn macos_configure_hud_window(
 	blur_amount: f32,
 	corner_radius_points: Option<f64>,
 ) {
-	use objc::runtime::{Object, YES};
-
-	use objc::{class, msg_send, sel, sel_impl};
-
 	let Ok(handle) = window.window_handle() else {
 		return;
 	};
@@ -9848,7 +9841,7 @@ fn macos_configure_hud_window(
 	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
 
 	unsafe {
-		let ns_window: *mut Object = msg_send![ns_view, window];
+		let ns_window: *mut Object = objc::msg_send![ns_view, window];
 
 		if ns_window.is_null() {
 			return;
@@ -9857,8 +9850,6 @@ fn macos_configure_hud_window(
 		// winit exposes blur as a boolean. We also set an explicit radius so we can drive it from
 		// settings (this uses the same private CGS API that winit uses internally).
 		{
-			use std::ffi::c_void;
-
 			#[link(name = "CoreGraphics", kind = "framework")]
 			unsafe extern "C" {
 				fn CGSMainConnectionID() -> *mut c_void;
@@ -9880,26 +9871,26 @@ fn macos_configure_hud_window(
 			} else {
 				0
 			};
-			let window_number: isize = msg_send![ns_window, windowNumber];
+			let window_number: isize = objc::msg_send![ns_window, windowNumber];
 			let _ = CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, radius);
 		}
 
-		let _: () = msg_send![ns_window, setOpaque: false];
-		let _: () = msg_send![ns_window, setHasShadow: false];
-		let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
-		let _: () = msg_send![ns_window, setLevel: MACOS_HUD_WINDOW_LEVEL];
+		let _: () = objc::msg_send![ns_window, setOpaque: false];
+		let _: () = objc::msg_send![ns_window, setHasShadow: false];
+		let _: () = objc::msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
+		let _: () = objc::msg_send![ns_window, setLevel: MACOS_HUD_WINDOW_LEVEL];
 		let sharing_type_none = 0_u64;
-		let _: () = msg_send![ns_window, setSharingType: sharing_type_none];
-		let clear: *mut Object = msg_send![class!(NSColor), clearColor];
-		let _: () = msg_send![ns_window, setBackgroundColor: clear];
-		let content_view: *mut Object = msg_send![ns_window, contentView];
+		let _: () = objc::msg_send![ns_window, setSharingType: sharing_type_none];
+		let clear: *mut Object = objc::msg_send![objc::class!(NSColor), clearColor];
+		let _: () = objc::msg_send![ns_window, setBackgroundColor: clear];
+		let content_view: *mut Object = objc::msg_send![ns_window, contentView];
 
 		if content_view.is_null() {
 			return;
 		}
 
-		let _: () = msg_send![content_view, setWantsLayer: YES];
-		let layer: *mut Object = msg_send![content_view, layer];
+		let _: () = objc::msg_send![content_view, setWantsLayer: YES];
+		let layer: *mut Object = objc::msg_send![content_view, layer];
 
 		if layer.is_null() {
 			return;
@@ -9910,14 +9901,23 @@ fn macos_configure_hud_window(
 		let size = window.inner_size();
 		let height_points = (size.height as f64) / scale;
 		let radius = corner_radius_points.unwrap_or(height_points * 0.5);
-		let _: () = msg_send![layer, setCornerRadius: radius];
-		let _: () = msg_send![layer, setMasksToBounds: YES];
+		let _: () = objc::msg_send![layer, setCornerRadius: radius];
+		let _: () = objc::msg_send![layer, setMasksToBounds: YES];
 	}
 }
 
 #[cfg(test)]
 mod tests {
+	#[cfg(target_os = "macos")]
+	use std::sync::Arc;
+	#[cfg(target_os = "macos")]
+	use std::time::Duration;
+	use std::time::Instant;
+
 	use image::{Rgba, RgbaImage};
+	#[cfg(target_os = "macos")]
+	use winit::dpi::PhysicalPosition;
+	use winit::event::MouseScrollDelta;
 
 	#[cfg(target_os = "macos")]
 	use crate::live_frame_stream_macos::MacLiveFrameStream;
@@ -9942,14 +9942,6 @@ mod tests {
 	use crate::state::{
 		GlobalPoint, LoupeSample, MonitorRect, MonitorRectPoints, OverlayMode, RectPoints, Rgb,
 	};
-	#[cfg(target_os = "macos")]
-	use std::sync::Arc;
-	#[cfg(target_os = "macos")]
-	use std::time::Duration;
-	use std::time::Instant;
-	#[cfg(target_os = "macos")]
-	use winit::dpi::PhysicalPosition;
-	use winit::event::MouseScrollDelta;
 
 	fn make_scroll_capture_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
 		let mut image = image::RgbaImage::new(width, rows.len() as u32);

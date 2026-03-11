@@ -2,12 +2,13 @@ mod hotkey;
 mod platform;
 
 use std::collections::VecDeque;
+use std::mem;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{self, Result, WrapErr};
 use egui::Ui;
-use egui::{Align, Layout, Rect};
+use egui::{self, Align, Layout};
 use egui_phosphor::{Variant, regular};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use global_hotkey::hotkey::HotKey;
@@ -22,7 +23,7 @@ use winit::keyboard::ModifiersState;
 use winit::window::Theme;
 use winit::window::{Window, WindowId};
 
-use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
+use crate::settings::{self, AltActivationMode, AppSettings, LoupeSampleSize};
 use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
 
 const SETTINGS_ROW_HEIGHT: f32 = 22.0;
@@ -47,7 +48,7 @@ pub enum SettingsControl {
 	CloseRequested,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum SettingsWindowAction {
 	BeginCaptureHotkey,
 	CancelCaptureHotkey,
@@ -213,6 +214,7 @@ impl SettingsWindow {
 				self.window.request_redraw();
 			},
 			WindowEvent::KeyboardInput { event, .. }
+
 				if platform::should_close_from_keyboard(self.modifiers, event) =>
 			{
 				return SettingsControl::CloseRequested;
@@ -230,7 +232,7 @@ impl SettingsWindow {
 	}
 
 	pub fn drain_actions(&mut self) -> VecDeque<SettingsWindowAction> {
-		std::mem::take(&mut self.action_queue)
+		mem::take(&mut self.action_queue)
 	}
 
 	fn queue_action(&mut self, action: SettingsWindowAction) {
@@ -278,10 +280,12 @@ impl SettingsWindow {
 			hotkey::CaptureHotkeyInput::Cancel => self.cancel_recording_capture_hotkey(),
 			hotkey::CaptureHotkeyInput::Notice(notice) => {
 				self.capture_hotkey_notice = Some(notice);
+
 				self.window.request_redraw();
 			},
 			hotkey::CaptureHotkeyInput::Apply(hotkey) => {
 				self.capture_hotkey_notice = None;
+
 				self.window.request_redraw();
 				self.queue_action(SettingsWindowAction::ApplyCaptureHotkey(hotkey));
 			},
@@ -569,8 +573,8 @@ impl SettingsWindow {
 		} else {
 			"Click Record to change capture hotkey."
 		};
-		let mut field_rect = Rect::NOTHING;
-		let mut button_rect = Rect::NOTHING;
+		let mut field_rect = egui::Rect::NOTHING;
+		let mut button_rect = egui::Rect::NOTHING;
 
 		ui.horizontal(|ui| {
 			let (value_rect, value_response) =
@@ -670,7 +674,7 @@ impl SettingsWindow {
 
 			if prefix_response.changed() {
 				settings.output_filename_prefix =
-					crate::settings::sanitize_output_filename_prefix(&prefix);
+					settings::sanitize_output_filename_prefix(&prefix);
 				changed = true;
 			}
 
@@ -874,6 +878,7 @@ impl SettingsWindow {
 	) -> bool {
 		let bar_width = ui.available_width();
 		let (_id, bar_rect) = ui.allocate_space(egui::vec2(bar_width, SETTINGS_TITLEBAR_HEIGHT));
+
 		platform::install_titlebar_drag(ui, bar_rect, self.window.as_ref());
 
 		ui.painter().rect_filled(bar_rect, 0.0, ui.visuals().panel_fill);

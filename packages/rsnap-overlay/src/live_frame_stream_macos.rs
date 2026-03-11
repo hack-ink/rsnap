@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::ops::Deref;
 use std::process;
+use std::slice;
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicU64, Ordering},
@@ -1022,7 +1023,7 @@ fn sample_cursor_from_pixel_buffer(
 
 		let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
 		let byte_len = (height as usize).saturating_mul(bytes_per_row);
-		let bytes = unsafe { std::slice::from_raw_parts(base, byte_len) };
+		let bytes = unsafe { slice::from_raw_parts(base, byte_len) };
 
 		sample_cursor_from_bgra_bytes(
 			bytes,
@@ -1124,8 +1125,7 @@ fn rgba_image_from_pixel_buffer(
 		let out_h = out.height() as usize;
 
 		for y in 0..out_h {
-			let row =
-				unsafe { std::slice::from_raw_parts(base.add(y * bytes_per_row), bytes_per_row) };
+			let row = unsafe { slice::from_raw_parts(base.add(y * bytes_per_row), bytes_per_row) };
 
 			for x in 0..out_w {
 				let idx = x * 4;
@@ -1178,7 +1178,7 @@ fn rgba_region_from_pixel_buffer(
 
 		for y in 0..out_h {
 			let row_offset = (src_y + y).saturating_mul(bytes_per_row);
-			let row = unsafe { std::slice::from_raw_parts(base.add(row_offset), bytes_per_row) };
+			let row = unsafe { slice::from_raw_parts(base.add(row_offset), bytes_per_row) };
 
 			for x in 0..out_w {
 				let idx = (src_x + x).saturating_mul(4);
@@ -1219,23 +1219,24 @@ fn ordered_rgba_regions_from_frames(
 
 #[cfg(test)]
 mod tests {
-	use crate::live_frame_stream_macos::{
-		StreamFilterMode, sample_cursor_from_bgra_bytes, stream_filter_mode_for_current_process,
-	};
+	use crate::live_frame_stream_macos::{self, StreamFilterMode};
 	use crate::state::Rgb;
 
 	#[test]
 	fn stream_filter_mode_requires_current_process_application() {
 		assert_eq!(
-			stream_filter_mode_for_current_process(Some(42_u32)),
+			live_frame_stream_macos::stream_filter_mode_for_current_process(Some(42_u32)),
 			Some((StreamFilterMode::ExcludeCurrentProcess, 42))
 		);
-		assert_eq!(stream_filter_mode_for_current_process::<u32>(None), None);
+		assert_eq!(
+			live_frame_stream_macos::stream_filter_mode_for_current_process::<u32>(None),
+			None
+		);
 	}
 
 	#[test]
 	fn sample_cursor_from_bgra_bytes_reads_rgb_without_patch() {
-		let sample = sample_cursor_from_bgra_bytes(
+		let sample = live_frame_stream_macos::sample_cursor_from_bgra_bytes(
 			&[
 				1, 2, 3, 255, 11, 12, 13, 254, //
 				21, 22, 23, 253, 31, 32, 33, 252,
@@ -1257,7 +1258,7 @@ mod tests {
 
 	#[test]
 	fn sample_cursor_from_bgra_bytes_clamps_patch_edges() {
-		let sample = sample_cursor_from_bgra_bytes(
+		let sample = live_frame_stream_macos::sample_cursor_from_bgra_bytes(
 			&[
 				1, 2, 3, 255, 11, 12, 13, 254, //
 				21, 22, 23, 253, 31, 32, 33, 252,

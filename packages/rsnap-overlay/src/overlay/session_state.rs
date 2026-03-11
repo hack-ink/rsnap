@@ -1,4 +1,14 @@
-use super::*;
+use std::{
+	collections::HashMap,
+	time::{Duration, Instant},
+};
+
+use crate::overlay::{
+	DeviceCursorPointSource, ExternalScrollInputDrainReader, FrozenToolbarTool, GlobalPoint,
+	LIVE_PRESENT_INTERVAL_MIN, MacLiveFrameStream, MonitorRect, PhysicalPosition, Pos2,
+	REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints, SLOW_OP_WARN_INTERVAL, ScrollDirection,
+	ScrollSession, Vec2, WindowId,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct WindowFreezeCaptureTarget {

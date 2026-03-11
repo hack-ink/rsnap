@@ -1,4 +1,7 @@
-use super::*;
+use std::{sync::Arc, time::Instant};
+
+use crate::backend;
+use crate::overlay::{self, ActiveEventLoop, FrozenCaptureSource, FrozenToolbarState, GlobalPoint, GpuContext, HUD_PILL_CORNER_RADIUS_POINTS, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS, LiveSampleApplyResult, LogicalPosition, LogicalSize, MacLiveFrameStream, MainThreadMarker, MonitorRect, NSScreen, OverlayEventLoopPhase, OverlayMode, OverlaySession, OverlayWindow, OverlayWorker, Result, ScrollCaptureState, ScrollPreviewWindow, SlowOperationLogger, TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_EXPANDED_WIDTH_PX, WindowLevel, WindowRenderer, hud_helpers};
 
 impl OverlaySession {
 	pub fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
@@ -9,7 +12,7 @@ impl OverlaySession {
 		self.reset_for_start();
 
 		self.worker = Some(OverlayWorker::new(
-			crate::backend::default_capture_backend(),
+			backend::default_capture_backend(),
 			self.response_waker.clone(),
 		));
 		#[cfg(target_os = "macos")]
@@ -59,7 +62,9 @@ impl OverlaySession {
 			self.live_sample_worker = None;
 			self.live_sample_stream = None;
 		}
+
 		self.state.reset_for_start(self.loupe_patch_width_px);
+
 		self.pending_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
 		self.pending_window_freeze_capture = None;
@@ -265,7 +270,7 @@ impl OverlaySession {
 			let _ = window.set_cursor_hittest(true);
 
 			#[cfg(target_os = "macos")]
-			macos_configure_overlay_window_mouse_moved_events(window.as_ref());
+			overlay::macos_configure_overlay_window_mouse_moved_events(window.as_ref());
 
 			let refresh_rate_millihertz =
 				window.current_monitor().and_then(|monitor| monitor.refresh_rate_millihertz());

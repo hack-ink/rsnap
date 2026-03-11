@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::ffi::c_void;
+use std::ptr;
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, AtomicU64, Ordering},
@@ -8,10 +9,15 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 type CFMachPortRef = *mut c_void;
+
 type CFRunLoopRef = *mut c_void;
+
 type CFRunLoopMode = *const c_void;
+
 type CFAllocatorRef = *const c_void;
+
 type CGEventRef = *const c_void;
+
 type CGEventTapProxy = *const c_void;
 
 const KCG_EVENT_SCROLL_WHEEL: u32 = 22;
@@ -32,58 +38,6 @@ const NSEVENT_PHASE_ENDED: u64 = 0x1 << 3;
 const NSEVENT_PHASE_CANCELLED: u64 = 0x1 << 4;
 const NSEVENT_PHASE_MAY_BEGIN: u64 = 0x1 << 5;
 const SHARED_SCROLL_INPUT_QUEUE_CAPACITY: usize = 64;
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct MacOSCGPoint {
-	x: f64,
-	y: f64,
-}
-
-struct ScrollInputTapContext {
-	shared_state: Arc<SharedScrollInputState>,
-	tap: std::sync::atomic::AtomicPtr<c_void>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct SharedScrollInputEvent {
-	seq: u64,
-	recorded_at: Instant,
-	delta_y: f64,
-	global_x: f64,
-	global_y: f64,
-	gesture_active: bool,
-	gesture_ended: bool,
-}
-impl SharedScrollInputEvent {
-	fn tuple(self) -> (u64, Instant, f64, f64, f64, bool, bool) {
-		(
-			self.seq,
-			self.recorded_at,
-			self.global_x,
-			self.global_y,
-			self.delta_y,
-			self.gesture_active,
-			self.gesture_ended,
-		)
-	}
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct DecodedScrollInput {
-	raw_delta_y: f64,
-	delta_y: f64,
-	global_x: f64,
-	global_y: f64,
-	gesture_active: bool,
-	gesture_ended: bool,
-}
-
-#[derive(Default)]
-struct SharedScrollInputQueueState {
-	queue: VecDeque<SharedScrollInputEvent>,
-	last_recorded: Option<SharedScrollInputEvent>,
-}
 
 #[derive(Default)]
 pub(super) struct SharedScrollInputState {
@@ -160,6 +114,7 @@ impl SharedScrollInputState {
 		}
 
 		queue_state.queue.push_back(event);
+
 		queue_state.last_recorded = Some(event);
 
 		event
@@ -185,6 +140,58 @@ impl SharedScrollInputState {
 	}
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MacOSCGPoint {
+	x: f64,
+	y: f64,
+}
+
+struct ScrollInputTapContext {
+	shared_state: Arc<SharedScrollInputState>,
+	tap: std::sync::atomic::AtomicPtr<c_void>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SharedScrollInputEvent {
+	seq: u64,
+	recorded_at: Instant,
+	delta_y: f64,
+	global_x: f64,
+	global_y: f64,
+	gesture_active: bool,
+	gesture_ended: bool,
+}
+impl SharedScrollInputEvent {
+	fn tuple(self) -> (u64, Instant, f64, f64, f64, bool, bool) {
+		(
+			self.seq,
+			self.recorded_at,
+			self.global_x,
+			self.global_y,
+			self.delta_y,
+			self.gesture_active,
+			self.gesture_ended,
+		)
+	}
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DecodedScrollInput {
+	raw_delta_y: f64,
+	delta_y: f64,
+	global_x: f64,
+	global_y: f64,
+	gesture_active: bool,
+	gesture_ended: bool,
+}
+
+#[derive(Default)]
+struct SharedScrollInputQueueState {
+	queue: VecDeque<SharedScrollInputEvent>,
+	last_recorded: Option<SharedScrollInputEvent>,
+}
+
 pub(super) fn spawn_scroll_input_observer(
 	shared_state: Arc<SharedScrollInputState>,
 ) -> JoinHandle<()> {
@@ -199,7 +206,7 @@ pub(super) fn spawn_scroll_input_observer(
 fn run_scroll_input_event_tap_thread(shared_state: Arc<SharedScrollInputState>) {
 	let context = Box::new(ScrollInputTapContext {
 		shared_state,
-		tap: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+		tap: std::sync::atomic::AtomicPtr::new(ptr::null_mut()),
 	});
 	let context_ptr = Box::into_raw(context);
 	let tap = unsafe {
@@ -454,18 +461,23 @@ unsafe extern "C" {
 
 #[cfg(test)]
 mod tests {
-	use super::{
-		DecodedScrollInput, MacOSCGPoint, NSEVENT_PHASE_BEGAN, NSEVENT_PHASE_CANCELLED,
-		NSEVENT_PHASE_ENDED, NSEVENT_PHASE_MAY_BEGIN, SHARED_SCROLL_INPUT_QUEUE_CAPACITY,
-		SharedScrollInputState, decode_scroll_input_from_fields, scroll_phase_bits_are_active,
-		scroll_phase_bits_are_terminal,
-	};
 	use std::time::{Duration, Instant};
+
+	use crate::app::scroll_input_macos::{
+		self, DecodedScrollInput, MacOSCGPoint, NSEVENT_PHASE_BEGAN, NSEVENT_PHASE_CANCELLED,
+		NSEVENT_PHASE_ENDED, NSEVENT_PHASE_MAY_BEGIN, SHARED_SCROLL_INPUT_QUEUE_CAPACITY,
+		SharedScrollInputState,
+	};
 
 	#[test]
 	fn decode_scroll_input_ignores_zero_non_terminal_delta() {
 		assert_eq!(
-			decode_scroll_input_from_fields(0.0, MacOSCGPoint { x: 10.0, y: 20.0 }, false, false),
+			scroll_input_macos::decode_scroll_input_from_fields(
+				0.0,
+				MacOSCGPoint { x: 10.0, y: 20.0 },
+				false,
+				false
+			),
 			None
 		);
 	}
@@ -473,7 +485,12 @@ mod tests {
 	#[test]
 	fn decode_scroll_input_preserves_terminal_zero_delta() {
 		assert_eq!(
-			decode_scroll_input_from_fields(0.0, MacOSCGPoint { x: 10.0, y: 20.0 }, false, true),
+			scroll_input_macos::decode_scroll_input_from_fields(
+				0.0,
+				MacOSCGPoint { x: 10.0, y: 20.0 },
+				false,
+				true
+			),
 			Some(DecodedScrollInput {
 				raw_delta_y: 0.0,
 				delta_y: 0.0,
@@ -487,11 +504,11 @@ mod tests {
 
 	#[test]
 	fn phase_bits_classify_active_and_terminal_states() {
-		assert!(scroll_phase_bits_are_active(NSEVENT_PHASE_BEGAN));
-		assert!(scroll_phase_bits_are_active(NSEVENT_PHASE_MAY_BEGIN));
-		assert!(scroll_phase_bits_are_terminal(NSEVENT_PHASE_ENDED));
-		assert!(scroll_phase_bits_are_terminal(NSEVENT_PHASE_CANCELLED));
-		assert!(!scroll_phase_bits_are_terminal(NSEVENT_PHASE_BEGAN));
+		assert!(scroll_input_macos::scroll_phase_bits_are_active(NSEVENT_PHASE_BEGAN));
+		assert!(scroll_input_macos::scroll_phase_bits_are_active(NSEVENT_PHASE_MAY_BEGIN));
+		assert!(scroll_input_macos::scroll_phase_bits_are_terminal(NSEVENT_PHASE_ENDED));
+		assert!(scroll_input_macos::scroll_phase_bits_are_terminal(NSEVENT_PHASE_CANCELLED));
+		assert!(!scroll_input_macos::scroll_phase_bits_are_terminal(NSEVENT_PHASE_BEGAN));
 	}
 
 	#[test]
