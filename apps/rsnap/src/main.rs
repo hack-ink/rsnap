@@ -7,9 +7,10 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::EnvFilter;
 
+use rsnap::app;
 use rsnap::settings::AppSettings;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct StartupBuildInfo {
 	version: &'static str,
 	git_commit: &'static str,
@@ -27,7 +28,7 @@ fn main() -> Result<()> {
 		"Starting rsnap."
 	);
 
-	rsnap::app::run()
+	app::run()
 }
 
 fn startup_build_info() -> StartupBuildInfo {
@@ -112,11 +113,10 @@ fn load_log_filter_from_settings() -> Option<EnvFilter> {
 
 #[cfg(test)]
 mod tests {
-	use crate::startup_build_info;
 
 	#[test]
 	fn startup_build_info_includes_version_and_git_commit() {
-		let info = startup_build_info();
+		let info = crate::startup_build_info();
 
 		assert!(!info.version.is_empty());
 		assert!(!info.git_commit.is_empty());

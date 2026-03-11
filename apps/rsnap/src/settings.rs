@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
 
-#[derive(Clone, Copy, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AltActivationMode {
 	#[default]
@@ -17,7 +17,7 @@ pub enum AltActivationMode {
 	Toggle,
 }
 
-#[derive(Clone, Copy, Default, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoupeSampleSize {
 	Small,
@@ -45,7 +45,7 @@ impl LoupeSampleSize {
 	}
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct AppSettings {
 	#[serde(default)]
 	pub show_alt_hint_keycap: bool,

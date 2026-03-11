@@ -11,8 +11,7 @@ use std::sync::{
 #[cfg(target_os = "macos")]
 use std::thread::JoinHandle;
 
-#[cfg(target_os = "macos")]
-use self::scroll_input_macos::SharedScrollInputState;
+use color_eyre::eyre::Result;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
 use tray_icon::{
 	TrayIcon, TrayIconEvent,
@@ -20,6 +19,8 @@ use tray_icon::{
 };
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 
+#[cfg(target_os = "macos")]
+use self::scroll_input_macos::SharedScrollInputState;
 use crate::settings::AppSettings;
 use crate::settings_window::CaptureHotkeyNotice;
 use crate::settings_window::{SettingsWindow, SettingsWindowAction};
@@ -456,7 +457,7 @@ impl App {
 	}
 }
 
-pub fn run() -> color_eyre::eyre::Result<()> {
+pub fn run() -> Result<()> {
 	runtime::run()
 }
 

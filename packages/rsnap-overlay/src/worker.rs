@@ -1,13 +1,15 @@
 use std::sync::{
 	Arc,
-	mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError},
+	mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError},
 };
+use std::thread;
 #[cfg(not(target_os = "macos"))]
 use std::time::Instant;
 
 use image::RgbaImage;
 
 use crate::backend::CaptureBackend;
+use crate::png;
 use crate::state::{
 	GlobalPoint, LiveCursorSample, MonitorRect, RectPoints, WindowHit, WindowListSnapshot,
 };
@@ -109,11 +111,11 @@ impl OverlayWorker {
 		backend: Box<dyn CaptureBackend>,
 		response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	) -> Self {
-		let (req_tx, req_rx) = std::sync::mpsc::sync_channel(64);
-		let (resp_tx, resp_rx) = std::sync::mpsc::channel();
-		let (region_capture_resp_tx, region_capture_resp_rx) = std::sync::mpsc::channel();
+		let (req_tx, req_rx) = mpsc::sync_channel(64);
+		let (resp_tx, resp_rx) = mpsc::channel();
+		let (region_capture_resp_tx, region_capture_resp_rx) = mpsc::channel();
 
-		std::thread::spawn(move || {
+		thread::spawn(move || {
 			Self::run_worker_loop(backend, req_rx, resp_tx, region_capture_resp_tx, response_waker)
 		});
 
@@ -150,7 +152,7 @@ impl OverlayWorker {
 		response_waker: Option<&(dyn Fn() + Send + Sync)>,
 		image: RgbaImage,
 	) {
-		match crate::png::rgba_image_to_png_bytes(&image) {
+		match png::rgba_image_to_png_bytes(&image) {
 			Ok(png_bytes) => {
 				Self::send_response(
 					resp_tx,
@@ -539,12 +541,13 @@ impl PendingWorkerRequests {
 
 #[cfg(test)]
 mod tests {
+	use std::sync::mpsc;
 	use std::sync::{
 		Arc,
 		atomic::{AtomicUsize, Ordering},
 	};
 
-	use color_eyre::eyre::{Result, eyre};
+	use color_eyre::eyre::{self, Result};
 	use image::{Rgba, RgbaImage};
 
 	use crate::backend::CaptureBackend;
@@ -568,7 +571,7 @@ mod tests {
 
 	impl CaptureBackend for MockScrollCaptureBackend {
 		fn capture_monitor(&mut self, _monitor: MonitorRect) -> Result<RgbaImage> {
-			Err(eyre!("unused in this test"))
+			Err(eyre::eyre!("unused in this test"))
 		}
 
 		fn capture_monitor_region_for_scroll_capture(
@@ -579,7 +582,7 @@ mod tests {
 			match &self.scroll_capture_result {
 				MockScrollCaptureResult::Image(image) => Ok(Some(image.clone())),
 				MockScrollCaptureResult::NoNewFrame => Ok(None),
-				MockScrollCaptureResult::Error(message) => Err(eyre!("{message}")),
+				MockScrollCaptureResult::Error(message) => Err(eyre::eyre!("{message}")),
 			}
 		}
 
@@ -624,11 +627,11 @@ mod tests {
 			&mut self,
 			_monitor: MonitorRect,
 		) -> Result<std::sync::Arc<MonitorImageSnapshot>> {
-			Err(eyre!("unused in this test"))
+			Err(eyre::eyre!("unused in this test"))
 		}
 
 		fn refresh_window_cache(&mut self) -> Result<std::sync::Arc<WindowListSnapshot>> {
-			Err(eyre!("unused in this test"))
+			Err(eyre::eyre!("unused in this test"))
 		}
 	}
 
@@ -652,7 +655,7 @@ mod tests {
 
 	#[test]
 	fn send_response_wakes_after_regular_worker_response() {
-		let (resp_tx, resp_rx) = std::sync::mpsc::channel::<WorkerResponse>();
+		let (resp_tx, resp_rx) = mpsc::channel::<WorkerResponse>();
 		let wake_count = Arc::new(AtomicUsize::new(0));
 		let wake = {
 			let wake_count = Arc::clone(&wake_count);
@@ -676,7 +679,7 @@ mod tests {
 
 	#[test]
 	fn send_region_capture_response_wakes_after_scroll_region_result() {
-		let (region_tx, region_rx) = std::sync::mpsc::channel::<CapturedMonitorRegionResponse>();
+		let (region_tx, region_rx) = mpsc::channel::<CapturedMonitorRegionResponse>();
 		let wake_count = Arc::new(AtomicUsize::new(0));
 		let wake = {
 			let wake_count = Arc::clone(&wake_count);
@@ -710,8 +713,8 @@ mod tests {
 
 	#[test]
 	fn capture_monitor_region_request_emits_image_result() {
-		let (resp_tx, resp_rx) = std::sync::mpsc::channel::<WorkerResponse>();
-		let (region_tx, region_rx) = std::sync::mpsc::channel::<CapturedMonitorRegionResponse>();
+		let (resp_tx, resp_rx) = mpsc::channel::<WorkerResponse>();
+		let (region_tx, region_rx) = mpsc::channel::<CapturedMonitorRegionResponse>();
 		let monitor = sample_monitor();
 		let rect_px = sample_rect();
 		let mut backend = MockScrollCaptureBackend {
@@ -746,8 +749,8 @@ mod tests {
 
 	#[test]
 	fn capture_monitor_region_request_emits_no_new_frame_result() {
-		let (resp_tx, resp_rx) = std::sync::mpsc::channel::<WorkerResponse>();
-		let (region_tx, region_rx) = std::sync::mpsc::channel::<CapturedMonitorRegionResponse>();
+		let (resp_tx, resp_rx) = mpsc::channel::<WorkerResponse>();
+		let (region_tx, region_rx) = mpsc::channel::<CapturedMonitorRegionResponse>();
 		let mut backend =
 			MockScrollCaptureBackend { scroll_capture_result: MockScrollCaptureResult::NoNewFrame };
 
@@ -770,8 +773,8 @@ mod tests {
 
 	#[test]
 	fn capture_monitor_region_request_routes_errors_to_worker_responses() {
-		let (resp_tx, resp_rx) = std::sync::mpsc::channel::<WorkerResponse>();
-		let (region_tx, region_rx) = std::sync::mpsc::channel::<CapturedMonitorRegionResponse>();
+		let (resp_tx, resp_rx) = mpsc::channel::<WorkerResponse>();
+		let (region_tx, region_rx) = mpsc::channel::<CapturedMonitorRegionResponse>();
 		let mut backend = MockScrollCaptureBackend {
 			scroll_capture_result: MockScrollCaptureResult::Error(
 				"fresh frame unavailable".to_owned(),

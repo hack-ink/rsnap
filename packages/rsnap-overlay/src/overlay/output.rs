@@ -1,14 +1,36 @@
 use std::{
+	ffi::CString,
 	fs,
 	path::{Path, PathBuf},
 	time::{SystemTime, UNIX_EPOCH},
 };
+#[cfg(not(target_os = "macos"))]
+use std::borrow::Cow;
 
+use arboard::Clipboard;
+#[cfg(not(target_os = "macos"))]
+use arboard::ImageData;
 #[cfg(target_os = "macos")]
 use color_eyre::eyre;
 use color_eyre::eyre::{Result, WrapErr};
+#[cfg(target_os = "macos")]
+use objc::runtime::{BOOL, Object, YES};
 
 use crate::overlay::{OutputNaming, OverlayConfig};
+
+#[cfg(target_os = "macos")]
+macro_rules! sel {
+	($($tt:tt)*) => {
+		objc::sel!($($tt)*)
+	};
+}
+
+#[cfg(target_os = "macos")]
+macro_rules! sel_impl {
+	($($tt:tt)*) => {
+		objc::sel_impl!($($tt)*)
+	};
+}
 
 pub(super) fn save_png_bytes_to_configured_dir(
 	png_bytes: &[u8],
@@ -34,22 +56,16 @@ pub(super) fn save_png_bytes_to_configured_dir(
 #[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
 pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
-	use std::ffi::CString;
-
-	use objc::runtime::{BOOL, Object, YES};
-
-	use objc::{class, msg_send, sel, sel_impl};
-
 	let pasteboard_type = CString::new("public.png").wrap_err("Invalid NSPasteboard type")?;
 
 	unsafe {
-		let data: *mut Object =
-			msg_send![class!(NSData), dataWithBytes: png_bytes.as_ptr() length: png_bytes.len()];
-		let pasteboard: *mut Object = msg_send![class!(NSPasteboard), generalPasteboard];
-		let _: i64 = msg_send![pasteboard, clearContents];
+		let data: *mut Object = objc::msg_send![objc::class!(NSData), dataWithBytes: png_bytes.as_ptr() length: png_bytes.len()];
+		let pasteboard: *mut Object =
+			objc::msg_send![objc::class!(NSPasteboard), generalPasteboard];
+		let _: i64 = objc::msg_send![pasteboard, clearContents];
 		let ty: *mut Object =
-			msg_send![class!(NSString), stringWithUTF8String: pasteboard_type.as_ptr()];
-		let ok: BOOL = msg_send![pasteboard, setData: data forType: ty];
+			objc::msg_send![objc::class!(NSString), stringWithUTF8String: pasteboard_type.as_ptr()];
+		let ok: BOOL = objc::msg_send![pasteboard, setData: data forType: ty];
 
 		if ok != YES {
 			return Err(eyre::eyre!("NSPasteboard setData:forType failed"));
@@ -61,8 +77,6 @@ pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
 
 #[cfg(not(target_os = "macos"))]
 pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
-	use arboard::{Clipboard, ImageData};
-
 	let image = image::load_from_memory(png_bytes).wrap_err("Failed to decode PNG bytes")?;
 	let rgba = image.to_rgba8();
 	let (width, height) = rgba.dimensions();
@@ -72,7 +86,7 @@ pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
 		.set_image(ImageData {
 			width: width as usize,
 			height: height as usize,
-			bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+			bytes: Cow::Owned(rgba.into_raw()),
 		})
 		.wrap_err("Failed to write image to clipboard")?;
 
@@ -80,8 +94,6 @@ pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
 }
 
 pub(super) fn write_text_to_clipboard(text: &str) -> Result<()> {
-	use arboard::Clipboard;
-
 	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
 
 	clipboard.set_text(text.to_string()).wrap_err("Failed to write text to clipboard")?;

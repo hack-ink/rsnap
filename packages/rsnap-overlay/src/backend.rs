@@ -4,11 +4,14 @@ use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_void};
 #[cfg(not(target_os = "macos"))]
 use std::process;
+use std::ptr;
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{self, Result, WrapErr};
 use image::RgbaImage;
+use image::imageops;
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 #[cfg(target_os = "macos")]
@@ -515,7 +518,7 @@ impl XcapCaptureBackend {
 				return None;
 			}
 
-			std::thread::sleep(remaining.min(MACOS_REGION_FRAME_WAIT_POLL_INTERVAL));
+			thread::sleep(remaining.min(MACOS_REGION_FRAME_WAIT_POLL_INTERVAL));
 		}
 	}
 
@@ -994,7 +997,7 @@ fn crop_monitor_image_region(image: &RgbaImage, rect_px: RectPoints) -> Result<R
 		return Err(eyre::eyre!("capture region is outside the monitor image bounds"));
 	}
 
-	Ok(image::imageops::crop_imm(image, x, y, width, height).to_image())
+	Ok(imageops::crop_imm(image, x, y, width, height).to_image())
 }
 
 #[cfg(target_os = "macos")]
@@ -1157,9 +1160,8 @@ fn cf_number_to_f64(number: CFNumberRef) -> Option<f64> {
 #[cfg(target_os = "macos")]
 fn cf_string_ref_for_key(key: &str) -> Option<CFStringRef> {
 	let key = CString::new(key).ok()?;
-	let value = unsafe {
-		CFStringCreateWithCString(std::ptr::null(), key.as_ptr(), KCF_STRING_ENCODING_UTF8)
-	};
+	let value =
+		unsafe { CFStringCreateWithCString(ptr::null(), key.as_ptr(), KCF_STRING_ENCODING_UTF8) };
 
 	if value.is_null() { None } else { Some(value) }
 }

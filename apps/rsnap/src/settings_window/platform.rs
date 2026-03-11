@@ -2,6 +2,7 @@ use egui::{Rect, Sense, Ui};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, ModifiersState};
+use winit::platform::macos::WindowAttributesExtMacOS;
 use winit::window::{Window, WindowAttributes};
 
 const SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET_MACOS: f32 = -3.0;
@@ -18,8 +19,6 @@ pub(super) fn settings_window_attributes() -> WindowAttributes {
 
 	#[cfg(target_os = "macos")]
 	{
-		use winit::platform::macos::WindowAttributesExtMacOS;
-
 		attrs
 			.with_titlebar_transparent(true)
 			.with_title_hidden(true)
