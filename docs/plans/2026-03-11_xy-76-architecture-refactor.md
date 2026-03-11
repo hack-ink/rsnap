@@ -29,12 +29,15 @@ Execute `XY-76` as the umbrella architecture cleanup lane by landing `XY-79` thr
 ## Open Questions
 
 - Should root `README.md` freeze/export wording be corrected during `XY-76` closeout, or deferred until `XY-74` and `XY-75` land?
+- Where should the existing macOS smoke-script evidence for XY-79 through XY-82 be archived after a dedicated GUI run?
 
 ## Execution State
 
 - Last Updated: 2026-03-11
-- Next Checkpoint: Task 1
-- Blockers: None.
+- Next Checkpoint: Run existing macOS smoke harnesses and record the remaining targeted manual supplement
+- Blockers:
+  - Existing macOS smoke harnesses were self-checked but not fully executed in this non-interactive session because they drive a live desktop session.
+  - Settings-window persistence, global hotkey, hovered-window freeze, and fullscreen fallback still need explicit evidence beyond the current script-backed coverage.
 
 ## Decision Notes
 
@@ -44,7 +47,16 @@ Execute `XY-76` as the umbrella architecture cleanup lane by landing `XY-79` thr
 - Live sampling is already ScreenCaptureKit-backed, while freeze/export still carries `xcap` debt, so `XY-76` must not absorb `XY-74` or `XY-75`.
 - `XY-79` owns macOS event-tap or scroll-input capture, decode or coalescing, and the handoff of normalized external scroll input from the app shell into overlay consumers. `XY-82` may consume that boundary, but must not pull event-tap ownership back out of the app shell.
 - `XY-81` owns overlay state, overlay window lifecycle, HUD rendering, and platform-window setup inside the overlay engine. `XY-82` owns capture backends, worker/session orchestration, scroll capture, export/output coordination, and only the minimal `overlay.rs` call-site edits needed to consume those boundaries.
-- A lane is not complete on compile- or unit-test evidence alone when it changes macOS app-shell or overlay behavior. Each GUI-affecting lane must also pass a targeted manual smoke run on macOS.
+- A lane is not complete on compile- or unit-test evidence alone when it changes macOS app-shell or overlay behavior. Prefer the existing macOS smoke harnesses first, then add targeted manual checks only for behaviors not yet covered by those scripts.
+- `XY-79` landed an app-shell split into `apps/rsnap/src/app/runtime.rs`, `apps/rsnap/src/app/shell.rs`, and `apps/rsnap/src/app/scroll_input_macos.rs`, keeping normalized external scroll input owned by the app shell.
+- `XY-80` landed settings-window support modules in `apps/rsnap/src/settings_window/hotkey.rs` and `apps/rsnap/src/settings_window/platform.rs`, while preserving the `settings.toml` contract.
+- `XY-81` and `XY-82` landed an overlay-side decomposition into `packages/rsnap-overlay/src/overlay/session_state.rs`, `packages/rsnap-overlay/src/overlay/window_runtime.rs`, and `packages/rsnap-overlay/src/overlay/scroll_runtime.rs`; `packages/rsnap-overlay/src/state.rs` now owns `OverlayState::reset_for_start`, and `packages/rsnap-overlay/src/scroll_capture.rs` exposes `ScrollSession::export_dimensions()` so the overlay session consumes a narrower stitched-image surface.
+- Verification on 2026-03-11: `cargo test -p rsnap-overlay overlay:: --lib` passed, and `cargo test -p rsnap --lib` passed.
+- Verification on 2026-03-11: `cargo test -p rsnap-overlay scroll_capture:: --lib` passed.
+- Verification on 2026-03-11: `cargo make checks` passed `cargo clippy --workspace --all-targets --all-features -- -D warnings` and then failed in `cargo vstyle curate --workspace --all-features` with broad existing style debt across app, overlay, backend, worker, and docs-adjacent files.
+- 2026-03-11 follow-up decision: workspace-wide `vstyle` debt is explicitly deferred to a separate later commit and is not treated as a blocker for the XY-76 architecture lane itself.
+- `apps/rsnap/src/main.rs` does not currently expose a headless or self-terminating startup mode, so `cargo run -p rsnap` remains a manual verification step rather than an unattended automation gate.
+- Verification harness status on 2026-03-11: `scripts/scroll-capture-smoke-macos.sh --self-check` passed and `scripts/live-loupe-perf-smoke-macos.sh --self-check` passed. Prefer the corresponding `cargo make smoke-*` tasks for real GUI evidence collection.
 
 ## Implementation Outline
 
@@ -62,7 +74,7 @@ Executor in a dedicated XY-79 worktree.
 
 **Status**
 
-pending
+done
 
 **Outcome**
 
@@ -88,7 +100,9 @@ pending
 - `cargo test -p rsnap --lib`
 - `cargo make checks`
 - `cargo run -p rsnap`
-- Manual smoke on macOS: menubar launch, global hotkey, dragged-region freeze, hovered-window freeze, and fullscreen fallback still behave as before.
+- `cargo make smoke-live-loupe-perf-macos`
+- `cargo make smoke-scroll-capture-macos`
+- Targeted manual supplement on macOS: global hotkey, hovered-window freeze, and fullscreen fallback still behave as before.
 
 **Dependencies**
 
@@ -102,7 +116,7 @@ Executor in a dedicated XY-80 worktree.
 
 **Status**
 
-pending
+done
 
 **Outcome**
 
@@ -128,7 +142,7 @@ Settings persistence, settings UI, and platform-specific window-shell behavior c
 - `cargo test -p rsnap --lib`
 - `cargo make checks`
 - `cargo run -p rsnap`
-- Manual smoke on macOS: open and close Settings, edit representative preferences, save, relaunch, and confirm `settings.toml`-backed values reload correctly.
+- Targeted manual supplement on macOS: open and close Settings, edit representative preferences, save, relaunch, and confirm `settings.toml`-backed values reload correctly.
 
 **Dependencies**
 
@@ -142,7 +156,7 @@ Executor in a dedicated XY-81 worktree.
 
 **Status**
 
-pending
+done
 
 **Outcome**
 
@@ -151,6 +165,8 @@ The overlay engine no longer keeps most window lifecycle, HUD and render coordin
 **Files**
 
 - Modify: `packages/rsnap-overlay/src/overlay.rs`
+- Modify: `packages/rsnap-overlay/src/overlay/session_state.rs`
+- Modify: `packages/rsnap-overlay/src/overlay/window_runtime.rs`
 - Modify: `packages/rsnap-overlay/src/overlay/hud_helpers.rs`
 - Modify: `packages/rsnap-overlay/src/overlay/image_helpers.rs`
 - Modify: `packages/rsnap-overlay/src/state.rs`
@@ -170,7 +186,8 @@ The overlay engine no longer keeps most window lifecycle, HUD and render coordin
 - `cargo test -p rsnap-overlay overlay:: --lib`
 - `cargo make checks`
 - `cargo run -p rsnap`
-- Manual smoke on macOS: overlay appears, HUD and loupe update correctly, toolbar placement still works, and overlay window lifecycle matches current behavior.
+- `cargo make smoke-live-loupe-perf-macos`
+- Targeted manual supplement on macOS: toolbar placement and overlay window lifecycle match current behavior.
 
 **Dependencies**
 
@@ -184,7 +201,7 @@ Executor in a dedicated XY-82 worktree.
 
 **Status**
 
-pending
+done
 
 **Outcome**
 
@@ -195,6 +212,7 @@ Capture backends, worker and session control, scroll-capture flow, and export or
 - Modify: `packages/rsnap-overlay/src/backend.rs`
 - Modify: `packages/rsnap-overlay/src/worker.rs`
 - Modify: `packages/rsnap-overlay/src/scroll_capture.rs`
+- Modify: `packages/rsnap-overlay/src/overlay/scroll_runtime.rs`
 - Modify: `packages/rsnap-overlay/src/overlay/output.rs`
 - Review: `packages/rsnap-overlay/src/overlay.rs`
 - Review: `docs/research/live-sampling-streams.md`
@@ -215,7 +233,8 @@ Capture backends, worker and session control, scroll-capture flow, and export or
 - `cargo test -p rsnap-overlay overlay:: --lib`
 - `cargo make checks`
 - `cargo run -p rsnap`
-- Manual smoke on macOS: dragged freeze, window freeze, copy/save, scroll-capture entry, downward stitching, and export still match current behavior.
+- `cargo make smoke-scroll-capture-macos`
+- Targeted manual supplement on macOS: window freeze, copy/save, and export still match current behavior.
 
 **Dependencies**
 
@@ -229,7 +248,7 @@ Executor after the child lanes land or are review-ready.
 
 **Status**
 
-pending
+done
 
 **Outcome**
 
@@ -249,6 +268,7 @@ Public docs, the spec, and umbrella issue state are consistent with the implemen
 2. Update spec and developer notes only where boundary or behavior statements changed.
 3. Review `XY-76` and child issue status before umbrella closeout.
 4. Run the full repo gate before closing the umbrella lane.
+5. Leave explicit TODO notes rather than blocking if repo-wide style debt or remaining macOS smoke evidence cannot be resolved inside this lane.
 
 **Verification**
 

@@ -291,6 +291,11 @@ impl OverlayState {
 		self.error_message = None;
 	}
 
+	pub fn reset_for_start(&mut self, loupe_patch_side_px: u32) {
+		*self = Self::new();
+		self.loupe_patch_side_px = loupe_patch_side_px;
+	}
+
 	pub fn begin_freeze(&mut self, monitor: MonitorRect) {
 		self.monitor = Some(monitor);
 		self.frozen_image = None;

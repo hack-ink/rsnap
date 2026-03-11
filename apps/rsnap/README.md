@@ -7,7 +7,7 @@ Menubar-only app (tray icon + menu) that triggers `rsnap-overlay` capture and wr
 - Live sampling: **macOS 12.3+** via ScreenCaptureKit (`SCStream`) stream samples.
 - Live mode is stream-first and does not take full-frame captures on cursor movement.
 - Menubar and Dock are excluded from live outline targeting.
-- Freeze/export remains on `xcap` for now.
+- Frozen capture and scroll-capture imagery on macOS use the native capture stack described in `docs/spec/v0.md`.
 - Windows is planned (minimum Windows 10) and is not implemented yet.
 
 ## Logs
@@ -55,3 +55,13 @@ The workflow builds `Rsnap.app`, signs it with hardened runtime, submits a zip t
 ## Run
 
 `cargo run -p rsnap`
+
+## Smoke verification
+
+On macOS, prefer the existing workspace smoke harnesses over ad-hoc manual launch checks:
+
+- `cargo make smoke-self-check-macos`
+- `cargo make smoke-macos`
+
+These scripts automate tray-triggered capture, live/loupe performance checks, and
+scroll-capture stitching assertions in a logged-in desktop session.
