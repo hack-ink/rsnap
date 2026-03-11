@@ -1385,6 +1385,10 @@ impl ScrollSession {
 		&self.export_image
 	}
 
+	pub(crate) fn export_dimensions(&self) -> (u32, u32) {
+		self.export_image.dimensions()
+	}
+
 	pub(crate) fn undo_last_append(&mut self) -> bool {
 		let Some(_commit) = self.growth_history.pop() else {
 			return false;
