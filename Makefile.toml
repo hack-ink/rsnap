@@ -94,6 +94,49 @@ args = [
 ]
 
 
+# Smoke
+# | task                         | type      | cwd |
+# | ---------------------------- | --------- | --- |
+# | smoke-macos                  | composite |     |
+# | smoke-self-check-macos       | composite |     |
+# | smoke-scroll-capture-macos   | command   |     |
+# | smoke-live-loupe-perf-macos  | command   |     |
+# | smoke-scroll-capture-self-check-macos | command | |
+# | smoke-live-loupe-self-check-macos     | command | |
+
+[tasks.smoke-macos]
+workspace = false
+dependencies = [
+	"smoke-live-loupe-perf-macos",
+	"smoke-scroll-capture-macos",
+]
+
+[tasks.smoke-self-check-macos]
+workspace = false
+dependencies = [
+	"smoke-live-loupe-self-check-macos",
+	"smoke-scroll-capture-self-check-macos",
+]
+
+[tasks.smoke-scroll-capture-macos]
+workspace = false
+command = "scripts/scroll-capture-smoke-macos.sh"
+
+[tasks.smoke-live-loupe-perf-macos]
+workspace = false
+command = "scripts/live-loupe-perf-smoke-macos.sh"
+
+[tasks.smoke-scroll-capture-self-check-macos]
+workspace = false
+command = "scripts/scroll-capture-smoke-macos.sh"
+args = ["--self-check"]
+
+[tasks.smoke-live-loupe-self-check-macos]
+workspace = false
+command = "scripts/live-loupe-perf-smoke-macos.sh"
+args = ["--self-check"]
+
+
 # Format
 # | task           | type      | cwd |
 # | -------------- | --------- | --- |

@@ -1,3 +1,6 @@
+mod hotkey;
+mod platform;
+
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -7,7 +10,6 @@ use egui::Ui;
 use egui::{Align, Layout, Rect};
 use egui_phosphor::{Variant, regular};
 use egui_wgpu::{Renderer, ScreenDescriptor};
-use global_hotkey::hotkey::Code;
 use global_hotkey::hotkey::HotKey;
 use wgpu::SurfaceTexture;
 use wgpu::TextureFormat;
@@ -16,7 +18,7 @@ use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::ElementState;
 use winit::event::{KeyEvent, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::{Key, KeyCode, ModifiersState, PhysicalKey};
+use winit::keyboard::ModifiersState;
 use winit::window::Theme;
 use winit::window::{Window, WindowId};
 
@@ -37,16 +39,8 @@ const SETTINGS_HUE_SLIDER_SATURATION: f32 = 0.9;
 const SETTINGS_HUE_SLIDER_LIGHTNESS: f32 = 0.58;
 const SETTINGS_TITLEBAR_HEIGHT: f32 = 28.0;
 const SETTINGS_THEME_ICON_SIZE: f32 = 16.0;
-#[cfg(target_os = "macos")]
-const SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET: f32 = -3.0;
-#[cfg(not(target_os = "macos"))]
-const SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET: f32 = 0.0;
 const CAPTURE_HOTKEY_GUIDANCE_PRESS_NONMOD: &str =
 	"Press a non-modifier key to complete the shortcut.";
-#[cfg(target_os = "macos")]
-const SAVE_SHORTCUT_LABEL: &str = "Cmd+S";
-#[cfg(not(target_os = "macos"))]
-const SAVE_SHORTCUT_LABEL: &str = "Ctrl+S";
 
 pub enum SettingsControl {
 	Continue,
@@ -103,21 +97,7 @@ pub struct SettingsWindow {
 }
 impl SettingsWindow {
 	pub fn open(event_loop: &ActiveEventLoop) -> Result<Self> {
-		let attrs = Window::default_attributes()
-			.with_title("Settings")
-			.with_inner_size(LogicalSize::new(520.0, 360.0))
-			.with_resizable(false)
-			.with_visible(true);
-		#[cfg(target_os = "macos")]
-		let attrs = {
-			use winit::platform::macos::WindowAttributesExtMacOS;
-
-			attrs
-				.with_titlebar_transparent(true)
-				.with_title_hidden(true)
-				.with_fullsize_content_view(true)
-				.with_movable_by_window_background(false)
-		};
+		let attrs = platform::settings_window_attributes();
 		let window = event_loop.create_window(attrs).wrap_err("create settings window")?;
 		let window = std::sync::Arc::new(window);
 		let (gpu, surface, surface_config) =
@@ -232,14 +212,10 @@ impl SettingsWindow {
 				// Follow system theme changes when ThemeMode::System is active.
 				self.window.request_redraw();
 			},
-			WindowEvent::KeyboardInput { event, .. } => {
-				if cfg!(target_os = "macos")
-					&& event.state == ElementState::Pressed
-					&& self.modifiers.super_key()
-					&& matches!(&event.logical_key, Key::Character(c) if c.as_str().eq_ignore_ascii_case("w"))
-				{
-					return SettingsControl::CloseRequested;
-				}
+			WindowEvent::KeyboardInput { event, .. }
+				if platform::should_close_from_keyboard(self.modifiers, event) =>
+			{
+				return SettingsControl::CloseRequested;
 			},
 			WindowEvent::Resized(size) => self.resize(*size),
 			WindowEvent::ScaleFactorChanged { .. } => self.resize(self.window.inner_size()),
@@ -298,97 +274,18 @@ impl SettingsWindow {
 	}
 
 	fn handle_capture_hotkey_recording_input(&mut self, event: &KeyEvent) {
-		let physical_key = event.physical_key;
-		let PhysicalKey::Code(physical_key) = physical_key else {
-			self.capture_hotkey_notice = Some(CaptureHotkeyNotice::Error(String::from(
-				"Unsupported key for hotkey binding.",
-			)));
-
-			self.window.request_redraw();
-
-			return;
-		};
-
-		if physical_key == KeyCode::Escape {
-			self.cancel_recording_capture_hotkey();
-
-			return;
+		match hotkey::handle_capture_hotkey_recording_input(&self.modifiers, event) {
+			hotkey::CaptureHotkeyInput::Cancel => self.cancel_recording_capture_hotkey(),
+			hotkey::CaptureHotkeyInput::Notice(notice) => {
+				self.capture_hotkey_notice = Some(notice);
+				self.window.request_redraw();
+			},
+			hotkey::CaptureHotkeyInput::Apply(hotkey) => {
+				self.capture_hotkey_notice = None;
+				self.window.request_redraw();
+				self.queue_action(SettingsWindowAction::ApplyCaptureHotkey(hotkey));
+			},
 		}
-		if Self::is_modifier_keycode(physical_key) {
-			self.capture_hotkey_notice =
-				Some(CaptureHotkeyNotice::Hint(String::from(CAPTURE_HOTKEY_GUIDANCE_PRESS_NONMOD)));
-
-			self.window.request_redraw();
-
-			return;
-		}
-
-		let Some(code) = Self::to_global_hotkey_code(physical_key) else {
-			self.capture_hotkey_notice = Some(CaptureHotkeyNotice::Error(String::from(
-				"Unsupported key for hotkey binding.",
-			)));
-
-			self.window.request_redraw();
-
-			return;
-		};
-		let (modifiers, has_required) = Self::capture_modifiers(&self.modifiers);
-
-		if !has_required {
-			self.capture_hotkey_notice = Some(CaptureHotkeyNotice::Error(String::from(
-				"Please include Alt, Ctrl, or Super in the shortcut.",
-			)));
-
-			self.window.request_redraw();
-
-			return;
-		}
-
-		let hotkey = HotKey::new(Some(modifiers), code);
-
-		self.capture_hotkey_notice = None;
-
-		self.window.request_redraw();
-		self.queue_action(SettingsWindowAction::ApplyCaptureHotkey(hotkey));
-	}
-
-	fn is_modifier_keycode(physical_key: KeyCode) -> bool {
-		matches!(
-			physical_key,
-			KeyCode::ShiftLeft
-				| KeyCode::ShiftRight
-				| KeyCode::ControlLeft
-				| KeyCode::ControlRight
-				| KeyCode::AltLeft
-				| KeyCode::AltRight
-				| KeyCode::SuperLeft
-				| KeyCode::SuperRight,
-		)
-	}
-
-	fn capture_hotkey_modifiers_label(&self) -> String {
-		let mut parts = Vec::new();
-
-		if self.modifiers.super_key() {
-			parts.push(String::from("Cmd"));
-		}
-		if self.modifiers.control_key() {
-			parts.push(String::from("Ctrl"));
-		}
-		if self.modifiers.alt_key() {
-			parts.push(String::from("Opt"));
-		}
-		if self.modifiers.shift_key() {
-			parts.push(String::from("Shift"));
-		}
-
-		parts.join("+")
-	}
-
-	fn format_capture_hotkey_recording_label(&self) -> String {
-		let modifiers = self.capture_hotkey_modifiers_label();
-
-		if modifiers.is_empty() { String::from("…") } else { format!("{modifiers}+…") }
 	}
 
 	pub fn draw(&mut self, settings: &mut AppSettings) -> Result<bool> {
@@ -663,7 +560,7 @@ impl SettingsWindow {
 		let button_width = SETTINGS_VALUE_BOX_WIDTH;
 		let row_label = "Capture hotkey";
 		let display_label = if self.capture_hotkey_recording {
-			self.format_capture_hotkey_recording_label()
+			hotkey::format_capture_hotkey_recording_label(&self.modifiers)
 		} else {
 			Self::format_capture_hotkey(&settings.capture_hotkey)
 		};
@@ -807,7 +704,8 @@ impl SettingsWindow {
 		}
 
 		ui.small(format!(
-			"Space/Copy -> clipboard. {SAVE_SHORTCUT_LABEL}/Save -> write PNG to output directory."
+			"Space/Copy -> clipboard. {}/Save -> write PNG to output directory.",
+			platform::save_shortcut_label()
 		));
 
 		changed
@@ -976,25 +874,13 @@ impl SettingsWindow {
 	) -> bool {
 		let bar_width = ui.available_width();
 		let (_id, bar_rect) = ui.allocate_space(egui::vec2(bar_width, SETTINGS_TITLEBAR_HEIGHT));
-
-		#[cfg(target_os = "macos")]
-		{
-			let drag_response = ui.interact(
-				bar_rect,
-				ui.make_persistent_id("settings_titlebar_drag"),
-				egui::Sense::click_and_drag(),
-			);
-
-			if drag_response.drag_started() {
-				let _ = self.window.drag_window();
-			}
-		}
+		platform::install_titlebar_drag(ui, bar_rect, self.window.as_ref());
 
 		ui.painter().rect_filled(bar_rect, 0.0, ui.visuals().panel_fill);
 
 		let row_height = ui.spacing().interact_size.y;
 		let y_pad = ((bar_rect.height() - row_height) * 0.5).round();
-		let theme_y = (bar_rect.min.y + y_pad + SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET)
+		let theme_y = (bar_rect.min.y + y_pad + platform::theme_buttons_y_offset())
 			.clamp(bar_rect.min.y, bar_rect.max.y - row_height);
 		let theme_rect = egui::Rect::from_min_size(
 			egui::pos2(bar_rect.min.x, theme_y),
@@ -1382,149 +1268,7 @@ impl SettingsWindow {
 	}
 
 	pub(crate) fn format_capture_hotkey(raw: &str) -> String {
-		let Ok(hotkey) = raw.parse::<HotKey>() else {
-			return raw.to_owned();
-		};
-		let (shift, control, alt, command) = {
-			(
-				hotkey.mods.contains(global_hotkey::hotkey::Modifiers::SHIFT),
-				hotkey.mods.contains(global_hotkey::hotkey::Modifiers::CONTROL),
-				hotkey.mods.contains(global_hotkey::hotkey::Modifiers::ALT),
-				hotkey.mods.contains(global_hotkey::hotkey::Modifiers::SUPER),
-			)
-		};
-
-		if cfg!(target_os = "macos") {
-			let mut parts = Vec::new();
-
-			if command {
-				parts.push(String::from("Cmd"));
-			}
-			if control {
-				parts.push(String::from("Ctrl"));
-			}
-			if alt {
-				parts.push(String::from("Opt"));
-			}
-			if shift {
-				parts.push(String::from("Shift"));
-			}
-
-			parts.push(Self::format_capture_key_code(hotkey.key));
-
-			return parts.join("+");
-		}
-
-		let mut parts = Vec::new();
-
-		if shift {
-			parts.push(String::from("Shift"));
-		}
-		if control {
-			parts.push(String::from("Ctrl"));
-		}
-		if alt {
-			parts.push(String::from("Alt"));
-		}
-		if command {
-			parts.push(String::from("Super"));
-		}
-
-		parts.push(Self::format_capture_key_code(hotkey.key));
-
-		parts.join("+")
-	}
-
-	fn format_capture_key_code(code: Code) -> String {
-		let raw = code.to_string();
-
-		if let Some(letter) = raw.strip_prefix("Key")
-			&& letter.len() == 1
-		{
-			return letter.to_string();
-		}
-		if let Some(digit) = raw.strip_prefix("Digit")
-			&& digit.len() == 1
-		{
-			return digit.to_string();
-		}
-
-		match raw.as_str() {
-			"Escape" => String::from("Esc"),
-			"Backquote" => String::from("`"),
-			"Backslash" => String::from("\\"),
-			"BracketLeft" => String::from("["),
-			"BracketRight" => String::from("]"),
-			"Comma" => String::from(","),
-			"Equal" => String::from("="),
-			"Minus" => String::from("-"),
-			"Period" => String::from("."),
-			"Quote" => String::from("'"),
-			"Semicolon" => String::from(";"),
-			"Slash" => String::from("/"),
-			"Backspace" => String::from("Backspace"),
-			"CapsLock" => String::from("CapsLock"),
-			"Enter" => String::from("Enter"),
-			"Space" => String::from("Space"),
-			"Tab" => String::from("Tab"),
-			"Delete" => String::from("Delete"),
-			"Home" => String::from("Home"),
-			"End" => String::from("End"),
-			"Insert" => String::from("Insert"),
-			"PageUp" => String::from("PageUp"),
-			"PageDown" => String::from("PageDown"),
-			"ArrowUp" => String::from("Up"),
-			"ArrowDown" => String::from("Down"),
-			"ArrowLeft" => String::from("Left"),
-			"ArrowRight" => String::from("Right"),
-			"NumpadAdd" => String::from("Num+"),
-			"NumpadSubtract" => String::from("Num-"),
-			"NumpadMultiply" => String::from("Num*"),
-			"NumpadDivide" => String::from("Num/"),
-			"NumpadDecimal" => String::from("Num."),
-			"NumpadEqual" => String::from("Num="),
-			"NumLock" => String::from("NumLock"),
-			"NumpadEnter" => String::from("NumEnter"),
-			_ => raw,
-		}
-	}
-
-	fn capture_modifiers(modifiers: &ModifiersState) -> (global_hotkey::hotkey::Modifiers, bool) {
-		let mut output = global_hotkey::hotkey::Modifiers::empty();
-		let mut has_required = false;
-
-		if modifiers.alt_key() {
-			output.insert(global_hotkey::hotkey::Modifiers::ALT);
-
-			has_required = true;
-		}
-		if modifiers.control_key() {
-			output.insert(global_hotkey::hotkey::Modifiers::CONTROL);
-
-			has_required = true;
-		}
-		if modifiers.super_key() {
-			output.insert(global_hotkey::hotkey::Modifiers::SUPER);
-
-			has_required = true;
-		}
-		if modifiers.shift_key() {
-			output.insert(global_hotkey::hotkey::Modifiers::SHIFT);
-		}
-
-		(output, has_required)
-	}
-
-	fn to_global_hotkey_code(key_code: KeyCode) -> Option<Code> {
-		let mut debug_name = format!("{key_code:?}");
-
-		if debug_name == "SuperLeft" {
-			debug_name = String::from("MetaLeft");
-		} else if debug_name == "SuperRight" {
-			debug_name = String::from("MetaRight");
-		}
-
-		debug_name.parse::<Code>().ok()
+		hotkey::format_capture_hotkey(raw)
 	}
 
 	fn hsl_to_color32(hue: f32, saturation: f32, lightness: f32) -> egui::Color32 {

@@ -98,6 +98,17 @@ cargo make lint
 cargo make test
 ```
 
+macOS GUI smoke harnesses are also available:
+
+```sh
+cargo make smoke-self-check-macos
+cargo make smoke-macos
+```
+
+These scripts drive a logged-in macOS desktop session, require the expected
+Screen Recording / automation permissions, and are intended for dedicated smoke
+verification runs rather than background CI on a shared desktop session.
+
 The v0 contract lives at `docs/spec/v0.md`.
 
 ## Support Me
