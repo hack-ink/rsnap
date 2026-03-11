@@ -31,6 +31,8 @@ Usage: scroll-capture-smoke-macos.sh [--self-check] [--help]
 Environment overrides:
   RSNAP_CMD           command used to launch rsnap (default: target/release/rsnap
                       when present, else cargo run --release -p rsnap)
+  RSNAP_RUST_LOG      log filter for the rsnap process
+                      (default: rsnap=info,rsnap_overlay=trace)
   TEXTEDIT_BOUNDS     "left,top,right,bottom" for the fixture window
   DRAG_START          "x,y" capture drag start point
   DRAG_END            "x,y" capture drag end point
@@ -96,6 +98,7 @@ if [[ -x "$ROOT_DIR/target/release/rsnap" ]]; then
   DEFAULT_RSNAP_CMD="$ROOT_DIR/target/release/rsnap"
 fi
 RSNAP_CMD="${RSNAP_CMD:-$DEFAULT_RSNAP_CMD}"
+RSNAP_RUST_LOG="${RSNAP_RUST_LOG:-rsnap=info,rsnap_overlay=trace}"
 TEXTEDIT_BOUNDS="${TEXTEDIT_BOUNDS:-120,120,1040,960}"
 DRAG_START="${DRAG_START:-}"
 DRAG_END="${DRAG_END:-}"
@@ -468,6 +471,7 @@ SWIFT
 launch_rsnap() {
   (
     cd "$ROOT_DIR"
+    export RUST_LOG="$RSNAP_RUST_LOG"
     exec zsh -lc "$RSNAP_CMD"
   ) >/tmp/rsnap-scroll-capture-smoke-rsnap.out 2>&1 &
   RSNAP_PID=$!
