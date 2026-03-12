@@ -4,8 +4,10 @@ use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_void};
 #[cfg(not(target_os = "macos"))]
 use std::process;
+#[cfg(target_os = "macos")]
 use std::ptr;
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
 use std::thread;
 use std::time::{Duration, Instant};
 
