@@ -214,7 +214,6 @@ impl SettingsWindow {
 				self.window.request_redraw();
 			},
 			WindowEvent::KeyboardInput { event, .. }
-
 				if platform::should_close_from_keyboard(self.modifiers, event) =>
 			{
 				return SettingsControl::CloseRequested;
