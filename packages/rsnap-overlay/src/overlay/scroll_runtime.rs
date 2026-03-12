@@ -3,11 +3,15 @@ use std::time::Instant;
 use color_eyre::Result;
 use image::RgbaImage;
 
+#[cfg(target_os = "macos")]
 use crate::overlay::{
-	LiveStreamStaleGrace, MonitorRect, OverlayControl, OverlaySession, OverlayWorker, RectPoints,
-	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+	LiveStreamStaleGrace, OverlayWorker, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
+};
+use crate::overlay::{
+	MonitorRect, OverlayControl, OverlaySession, RectPoints, SCROLL_CAPTURE_SAMPLE_INTERVAL,
 	ScrollCaptureFrameSource, ScrollObserveOutcome, ScrollSession,
 };
+#[cfg(target_os = "macos")]
 use crate::scroll_capture::ScrollDirection;
 #[cfg(not(target_os = "macos"))]
 use crate::worker::WorkerRequestSendError;
