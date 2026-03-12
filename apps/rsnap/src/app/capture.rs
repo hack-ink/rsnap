@@ -3,9 +3,11 @@ use std::sync::{Arc, atomic::Ordering};
 
 use winit::event_loop::ActiveEventLoop;
 
+use crate::app::App;
 #[cfg(target_os = "macos")]
 use crate::app::scroll_input_macos;
-use crate::app::{self, App, UserEvent};
+#[cfg(target_os = "macos")]
+use crate::app::{self, UserEvent};
 use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
 
 impl App {
