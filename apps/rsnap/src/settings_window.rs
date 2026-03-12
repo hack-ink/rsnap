@@ -196,7 +196,6 @@ impl SettingsWindow {
 				// Follow system theme changes when ThemeMode::System is active.
 				self.window.request_redraw();
 			},
-<<<<<<< HEAD
 			WindowEvent::KeyboardInput { event, .. } => {
 				if platform::should_close_from_keyboard(self.modifiers, event) {
 					return SettingsControl::CloseRequested;

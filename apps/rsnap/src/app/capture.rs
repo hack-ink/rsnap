@@ -1,13 +1,12 @@
 #[cfg(target_os = "macos")]
 use std::sync::{Arc, atomic::Ordering};
 
-use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
 use winit::event_loop::ActiveEventLoop;
 
 #[cfg(target_os = "macos")]
 use crate::app::scroll_input_macos;
-use crate::app::{App, UserEvent, begin_coalesced_overlay_user_event_send};
-use crate::settings::AltActivationMode;
+use crate::app::{self, App, UserEvent};
+use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
 
 impl App {
 	fn overlay_config(&self) -> OverlayConfig {
@@ -45,10 +44,12 @@ impl App {
 		}
 	}
 
-	fn map_alt_activation(mode: AltActivationMode) -> rsnap_overlay::AltActivationMode {
+	fn map_alt_activation(
+		mode: crate::settings::AltActivationMode,
+	) -> rsnap_overlay::AltActivationMode {
 		match mode {
-			AltActivationMode::Hold => rsnap_overlay::AltActivationMode::Hold,
-			AltActivationMode::Toggle => rsnap_overlay::AltActivationMode::Toggle,
+			crate::settings::AltActivationMode::Hold => rsnap_overlay::AltActivationMode::Hold,
+			crate::settings::AltActivationMode::Toggle => rsnap_overlay::AltActivationMode::Toggle,
 		}
 	}
 
@@ -88,7 +89,7 @@ impl App {
 			let overlay_stream_event_pending = Arc::clone(&self.overlay_stream_event_pending);
 
 			move || {
-				if !begin_coalesced_overlay_user_event_send(&overlay_stream_event_pending) {
+				if !app::begin_coalesced_overlay_user_event_send(&overlay_stream_event_pending) {
 					return;
 				}
 				if overlay_proxy.send_event(UserEvent::OverlayStreamFrame).is_err() {

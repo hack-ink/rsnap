@@ -13,7 +13,6 @@ pub(in crate::app) struct SharedScrollInputState {
 	queue_state: Mutex<SharedScrollInputQueueState>,
 	next_seq: AtomicU64,
 }
-
 impl SharedScrollInputState {
 	pub(in crate::app) fn set_enabled(&self, enabled: bool) {
 		self.enabled.store(enabled, Ordering::Release);
@@ -90,6 +89,7 @@ impl SharedScrollInputState {
 		}
 
 		queue_state.queue.push_back(event);
+
 		queue_state.last_recorded = Some(event);
 
 		event
@@ -125,7 +125,6 @@ struct SharedScrollInputEvent {
 	gesture_active: bool,
 	gesture_ended: bool,
 }
-
 impl SharedScrollInputEvent {
 	fn tuple(self) -> (u64, Instant, f64, f64, f64, bool, bool) {
 		(
@@ -150,7 +149,9 @@ struct SharedScrollInputQueueState {
 mod tests {
 	use std::time::{Duration, Instant};
 
-	use super::{SHARED_SCROLL_INPUT_QUEUE_CAPACITY, SharedScrollInputState};
+	use crate::app::scroll_input_macos::state::{
+		SHARED_SCROLL_INPUT_QUEUE_CAPACITY, SharedScrollInputState,
+	};
 
 	#[test]
 	fn terminal_scroll_event_preserves_last_effective_delta() {

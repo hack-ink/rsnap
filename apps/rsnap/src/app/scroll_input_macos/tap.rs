@@ -3,9 +3,9 @@ use std::ptr;
 use std::sync::{Arc, atomic::Ordering};
 use std::thread::{self, JoinHandle};
 
-use super::decode::decode_scroll_input_from_cg_event;
-use super::state::SharedScrollInputState;
-use super::{
+use crate::app::scroll_input_macos::decode;
+use crate::app::scroll_input_macos::state::SharedScrollInputState;
+use crate::app::scroll_input_macos::{
 	CFMachPortCreateRunLoopSource, CFMachPortInvalidate, CFRelease, CFRunLoopAddSource,
 	CFRunLoopGetCurrent, CFRunLoopRun, CGEventRef, CGEventTapCreate, CGEventTapEnable,
 	CGEventTapProxy, kCFAllocatorDefault, kCFRunLoopCommonModes,
@@ -163,7 +163,7 @@ fn send_overlay_scroll_input(context: &ScrollInputTapContext, cg_event: CGEventR
 		return;
 	}
 
-	let Some(decoded) = decode_scroll_input_from_cg_event(cg_event) else {
+	let Some(decoded) = decode::decode_scroll_input_from_cg_event(cg_event) else {
 		return;
 	};
 

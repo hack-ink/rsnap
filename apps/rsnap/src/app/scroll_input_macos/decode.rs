@@ -107,16 +107,20 @@ fn scroll_momentum_phase_bits_from_cg_event(cg_event: CGEventRef) -> u64 {
 
 #[cfg(test)]
 mod tests {
-	use super::{
-		DecodedScrollInput, MacOSCGPoint, NSEVENT_PHASE_BEGAN, NSEVENT_PHASE_CANCELLED,
-		NSEVENT_PHASE_ENDED, NSEVENT_PHASE_MAY_BEGIN, decode_scroll_input_from_fields,
-		scroll_phase_bits_are_active, scroll_phase_bits_are_terminal,
+	use crate::app::scroll_input_macos::decode::{
+		self, DecodedScrollInput, MacOSCGPoint, NSEVENT_PHASE_BEGAN, NSEVENT_PHASE_CANCELLED,
+		NSEVENT_PHASE_ENDED, NSEVENT_PHASE_MAY_BEGIN,
 	};
 
 	#[test]
 	fn decode_scroll_input_ignores_zero_non_terminal_delta() {
 		assert_eq!(
-			decode_scroll_input_from_fields(0.0, MacOSCGPoint { x: 10.0, y: 20.0 }, false, false),
+			decode::decode_scroll_input_from_fields(
+				0.0,
+				MacOSCGPoint { x: 10.0, y: 20.0 },
+				false,
+				false
+			),
 			None
 		);
 	}
@@ -124,7 +128,12 @@ mod tests {
 	#[test]
 	fn decode_scroll_input_preserves_terminal_zero_delta() {
 		assert_eq!(
-			decode_scroll_input_from_fields(0.0, MacOSCGPoint { x: 10.0, y: 20.0 }, false, true),
+			decode::decode_scroll_input_from_fields(
+				0.0,
+				MacOSCGPoint { x: 10.0, y: 20.0 },
+				false,
+				true
+			),
 			Some(DecodedScrollInput {
 				raw_delta_y: 0.0,
 				delta_y: 0.0,
@@ -138,10 +147,10 @@ mod tests {
 
 	#[test]
 	fn phase_bits_classify_active_and_terminal_states() {
-		assert!(scroll_phase_bits_are_active(NSEVENT_PHASE_BEGAN));
-		assert!(scroll_phase_bits_are_active(NSEVENT_PHASE_MAY_BEGIN));
-		assert!(scroll_phase_bits_are_terminal(NSEVENT_PHASE_ENDED));
-		assert!(scroll_phase_bits_are_terminal(NSEVENT_PHASE_CANCELLED));
-		assert!(!scroll_phase_bits_are_terminal(NSEVENT_PHASE_BEGAN));
+		assert!(decode::scroll_phase_bits_are_active(NSEVENT_PHASE_BEGAN));
+		assert!(decode::scroll_phase_bits_are_active(NSEVENT_PHASE_MAY_BEGIN));
+		assert!(decode::scroll_phase_bits_are_terminal(NSEVENT_PHASE_ENDED));
+		assert!(decode::scroll_phase_bits_are_terminal(NSEVENT_PHASE_CANCELLED));
+		assert!(!decode::scroll_phase_bits_are_terminal(NSEVENT_PHASE_BEGAN));
 	}
 }

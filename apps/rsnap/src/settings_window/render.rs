@@ -9,8 +9,7 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::settings::AppSettings;
-
-use super::SettingsWindow;
+use crate::settings_window::SettingsWindow;
 
 impl SettingsWindow {
 	pub fn draw(&mut self, settings: &mut AppSettings) -> Result<bool> {

@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 
+use egui::Context;
 use egui::Ui;
 
 use crate::settings::{self, AltActivationMode, AppSettings, LoupeSampleSize};
-use rsnap_overlay::{OutputNaming, ToolbarPlacement, WindowCaptureAlphaMode};
-
-use super::{
+use crate::settings_window::{
 	SETTINGS_HUE_SLIDER_HEIGHT, SETTINGS_HUE_SLIDER_LIGHTNESS, SETTINGS_HUE_SLIDER_SATURATION,
 	SETTINGS_HUE_SLIDER_STEPS, SETTINGS_ROW_HEIGHT, SETTINGS_SECTION_GAP,
 	SETTINGS_SLIDER_RAIL_HEIGHT, SETTINGS_SLIDER_WIDGET_HEIGHT, SETTINGS_VALUE_BOX_WIDTH,
 	SettingsWindow, platform,
 };
+use rsnap_overlay::{OutputNaming, ToolbarPlacement, WindowCaptureAlphaMode};
 
 impl SettingsWindow {
 	pub(super) fn with_settings_density<R>(
@@ -36,7 +36,7 @@ impl SettingsWindow {
 	pub(super) fn render_all_sections(
 		&mut self,
 		ui: &mut Ui,
-		ctx: &egui::Context,
+		ctx: &Context,
 		settings: &mut AppSettings,
 	) -> bool {
 		let mut changed = false;
@@ -205,7 +205,7 @@ impl SettingsWindow {
 	fn render_general_section(
 		&mut self,
 		ui: &mut Ui,
-		ctx: &egui::Context,
+		ctx: &Context,
 		settings: &mut AppSettings,
 	) -> bool {
 		let _ = ctx;

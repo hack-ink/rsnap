@@ -1,17 +1,16 @@
-use egui::{self, Align, Layout, Ui};
+use egui::{self, Align, Context, Layout, Ui};
 use winit::dpi::LogicalSize;
 use winit::window::Theme;
 
 use crate::settings::AppSettings;
-use rsnap_overlay::ThemeMode;
-
-use super::{
+use crate::settings_window::{
 	SETTINGS_SECTION_GAP, SETTINGS_THEME_ICON_SIZE, SETTINGS_TITLEBAR_HEIGHT, SettingsWindow,
 	platform,
 };
+use rsnap_overlay::ThemeMode;
 
 impl SettingsWindow {
-	pub(super) fn ui(&mut self, ctx: &egui::Context, settings: &mut AppSettings) -> bool {
+	pub(super) fn ui(&mut self, ctx: &Context, settings: &mut AppSettings) -> bool {
 		self.sync_theme(ctx, settings.theme_mode);
 		self.maybe_autosize_window(ctx);
 
@@ -31,7 +30,7 @@ impl SettingsWindow {
 		changed
 	}
 
-	fn maybe_autosize_window(&mut self, ctx: &egui::Context) {
+	fn maybe_autosize_window(&mut self, ctx: &Context) {
 		if self.did_autosize {
 			return;
 		}
@@ -100,7 +99,7 @@ impl SettingsWindow {
 	fn render_titlebar_controls(
 		&mut self,
 		ui: &mut Ui,
-		ctx: &egui::Context,
+		ctx: &Context,
 		settings: &mut AppSettings,
 	) -> bool {
 		let bar_width = ui.available_width();
@@ -132,7 +131,7 @@ impl SettingsWindow {
 	fn render_theme_mode_buttons(
 		&mut self,
 		ui: &mut Ui,
-		ctx: &egui::Context,
+		ctx: &Context,
 		settings: &mut AppSettings,
 	) -> bool {
 		let row_height = ui.spacing().interact_size.y;
@@ -191,7 +190,7 @@ impl SettingsWindow {
 		}
 	}
 
-	fn sync_theme(&mut self, ctx: &egui::Context, mode: ThemeMode) {
+	fn sync_theme(&mut self, ctx: &Context, mode: ThemeMode) {
 		let requested = Self::requested_window_theme(mode);
 
 		if requested != self.requested_theme {
