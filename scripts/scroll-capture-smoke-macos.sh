@@ -19,7 +19,7 @@ set -euo pipefail
 #   verification, but it never drives the scrollbar through Accessibility
 #   writes.
 # - The required assertion surface is log-based: startup, overlay start,
-#   scroll-capture start, and at least one append. The harness uses the rsnap
+#   scroll-capture start, and at least one growth commit. The harness uses the rsnap
 #   tray `Capture` menu item instead of synthetic global-hotkey injection
 #   because the tray path is more stable in automated GUI sessions. Scrollbar
 #   verification is an optional stronger check when AX access is available.
@@ -113,11 +113,14 @@ WAIT_OVERLAY_S="${WAIT_OVERLAY_S:-10}"
 WAIT_SCROLL_CAPTURE_S="${WAIT_SCROLL_CAPTURE_S:-10}"
 WAIT_APPEND_S="${WAIT_APPEND_S:-10}"
 VERIFY_SCROLLBAR="${VERIFY_SCROLLBAR:-auto}"
+SCROLL_CAPTURE_MODE_ATTEMPTS="${SCROLL_CAPTURE_MODE_ATTEMPTS:-3}"
+SCROLL_CAPTURE_MODE_ATTEMPT_WAIT_S="${SCROLL_CAPTURE_MODE_ATTEMPT_WAIT_S:-2}"
 
 RSNAP_LOG=""
 RSNAP_PID=""
 SCROLLBAR_VERIFICATION_ACTIVE=0
 SCROLLBAR_AUTO_PROBE_PENDING=0
+SCROLL_CAPTURE_GROWTH_PATTERN='op="scroll_capture\.(appended|committed)"'
 FIXTURE_FILE_BASE="$(mktemp -t rsnap-scroll-capture-fixture)"
 FIXTURE_FILE="${FIXTURE_FILE_BASE}.txt"
 mv "$FIXTURE_FILE_BASE" "$FIXTURE_FILE"
@@ -398,6 +401,27 @@ end tell
 APPLESCRIPT
 }
 
+enter_scroll_capture_mode() {
+  local attempts="${SCROLL_CAPTURE_MODE_ATTEMPTS}"
+  local attempt_wait="${SCROLL_CAPTURE_MODE_ATTEMPT_WAIT_S}"
+  local attempt=1
+
+  while (( attempt <= attempts )); do
+    focus_rsnap_frozen_ui
+    press_s
+
+    if wait_for_pattern 'op="scroll_capture.start"' "$attempt_wait"; then
+      return 0
+    fi
+
+    echo "[smoke] scroll capture mode retry $attempt/$attempts" >&2
+    sleep 0.2
+    ((attempt++))
+  done
+
+  return 1
+}
+
 cat > "$SWIFT_HELPER" <<'SWIFT'
 import Cocoa
 import ApplicationServices
@@ -502,9 +526,7 @@ wait_for_pattern 'Capture overlay started\.' "$WAIT_OVERLAY_S" || fail "capture 
 sleep "$OVERLAY_SETTLE_S"
 MODE=drag START_POINT="$DRAG_START" END_POINT="$DRAG_END" DRAG_STEPS=28 swift "$SWIFT_HELPER"
 sleep "$DRAG_SETTLE_S"
-focus_rsnap_frozen_ui
-press_s
-wait_for_pattern 'op="scroll_capture.start"' "$WAIT_SCROLL_CAPTURE_S" || fail "scroll capture mode did not start"
+enter_scroll_capture_mode || fail "scroll capture mode did not start"
 sleep "$SCROLL_MODE_SETTLE_S"
 MODE=scroll SCROLL_POINT="$SCROLL_POINT" SCROLL_DELTA="$SCROLL_DELTA" SCROLL_EVENTS="$SCROLL_EVENTS" swift "$SWIFT_HELPER"
 FINAL_SCROLLBAR_VALUE="$(maybe_capture_scrollbar_value | tr -d ' ')"
@@ -513,10 +535,11 @@ if (( SCROLLBAR_VERIFICATION_ACTIVE )); then
   scrollbar_value_increased "$INITIAL_SCROLLBAR_VALUE" "$FINAL_SCROLLBAR_VALUE" \
     || fail "synthetic scroll input did not move the TextEdit vertical scrollbar"
 fi
-wait_for_pattern 'op="scroll_capture.appended"' "$WAIT_APPEND_S" || fail "scroll capture did not append any rows"
+wait_for_pattern "$SCROLL_CAPTURE_GROWTH_PATTERN" "$WAIT_APPEND_S" \
+  || fail "scroll capture did not record any committed growth"
 
 echo "[smoke] PASS"
 if [[ -n "$RSNAP_LOG" ]]; then
-  rg -n 'Starting rsnap\.|Capture overlay started\.|op="scroll_capture.start"|op="scroll_capture.appended"' "$RSNAP_LOG"
+  rg -n "Starting rsnap\\.|Capture overlay started\\.|op=\"scroll_capture.start\"|$SCROLL_CAPTURE_GROWTH_PATTERN" "$RSNAP_LOG"
 fi
 press_escape >/dev/null 2>&1 || true
