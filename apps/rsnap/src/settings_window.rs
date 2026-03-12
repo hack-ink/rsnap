@@ -213,10 +213,10 @@ impl SettingsWindow {
 				// Follow system theme changes when ThemeMode::System is active.
 				self.window.request_redraw();
 			},
-			WindowEvent::KeyboardInput { event, .. }
-				if platform::should_close_from_keyboard(self.modifiers, event) =>
-			{
-				return SettingsControl::CloseRequested;
+			WindowEvent::KeyboardInput { event, .. } => {
+				if platform::should_close_from_keyboard(self.modifiers, event) {
+					return SettingsControl::CloseRequested;
+				}
 			},
 			WindowEvent::Resized(size) => self.resize(*size),
 			WindowEvent::ScaleFactorChanged { .. } => self.resize(self.window.inner_size()),
