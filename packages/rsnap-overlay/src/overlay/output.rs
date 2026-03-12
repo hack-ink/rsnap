@@ -1,11 +1,12 @@
+#[cfg(not(target_os = "macos"))]
+use std::borrow::Cow;
+#[cfg(target_os = "macos")]
+use std::ffi::CString;
 use std::{
-	ffi::CString,
 	fs,
 	path::{Path, PathBuf},
 	time::{SystemTime, UNIX_EPOCH},
 };
-#[cfg(not(target_os = "macos"))]
-use std::borrow::Cow;
 
 use arboard::Clipboard;
 #[cfg(not(target_os = "macos"))]
