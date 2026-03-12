@@ -11,7 +11,7 @@ use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlph
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AltActivationMode {
+pub(crate) enum AltActivationMode {
 	#[default]
 	Hold,
 	Toggle,
@@ -19,7 +19,7 @@ pub enum AltActivationMode {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum LoupeSampleSize {
+pub(crate) enum LoupeSampleSize {
 	Small,
 	#[default]
 	Medium,
@@ -46,7 +46,7 @@ impl LoupeSampleSize {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct AppSettings {
+pub(crate) struct AppSettings {
 	#[serde(default)]
 	pub show_alt_hint_keycap: bool,
 	#[serde(default)]

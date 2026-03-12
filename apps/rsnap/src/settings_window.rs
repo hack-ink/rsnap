@@ -39,26 +39,26 @@ const SETTINGS_HUE_SLIDER_LIGHTNESS: f32 = 0.58;
 const SETTINGS_TITLEBAR_HEIGHT: f32 = 28.0;
 const SETTINGS_THEME_ICON_SIZE: f32 = 16.0;
 
-pub enum SettingsControl {
+pub(crate) enum SettingsControl {
 	Continue,
 	CloseRequested,
 }
 
 #[derive(Clone, Debug)]
-pub enum SettingsWindowAction {
-	BeginCaptureHotkey,
-	CancelCaptureHotkey,
-	ApplyCaptureHotkey(HotKey),
+pub(crate) enum SettingsWindowAction {
+	Begin,
+	Cancel,
+	Apply(HotKey),
 }
 
 #[derive(Clone, Debug)]
-pub enum CaptureHotkeyNotice {
+pub(crate) enum CaptureHotkeyNotice {
 	Error(String),
 	Hint(String),
 	Success(String),
 }
 
-pub struct SettingsWindow {
+pub(crate) struct SettingsWindow {
 	window: std::sync::Arc<Window>,
 	gpu: GpuContext,
 	surface: Surface<'static>,
@@ -80,7 +80,7 @@ pub struct SettingsWindow {
 	action_queue: VecDeque<SettingsWindowAction>,
 }
 impl SettingsWindow {
-	pub fn open(event_loop: &ActiveEventLoop) -> Result<Self> {
+	pub(crate) fn open(event_loop: &ActiveEventLoop) -> Result<Self> {
 		let attrs = platform::settings_window_attributes();
 		let window = event_loop.create_window(attrs).wrap_err("create settings window")?;
 		let window = std::sync::Arc::new(window);

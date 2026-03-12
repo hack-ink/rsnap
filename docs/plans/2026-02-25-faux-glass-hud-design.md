@@ -1,5 +1,22 @@
 # Faux Glass HUD (A) — Design
 
+Goal: Capture the blur-free faux-glass HUD direction that was being explored on 2026-02-25.
+
+Scope: Historical design exploration for the HUD pill restyle only. This document is not a
+current spec or guide and may drift from the shipped implementation.
+
+Assumptions:
+- Overlay remains a transparent, always-on-top capture window.
+- HUD rendering stays inside egui and wgpu for this design slice.
+- Real backdrop blur was explicitly out of scope for this phase.
+
+Steps:
+- Record the design context and constraints.
+- Define the proposed faux-glass rendering approach.
+- Capture acceptance criteria and possible follow-up native-glass work.
+
+Status: Historical design note retained for context only; may drift from current code.
+
 Date: 2026-02-25
 
 ## Context
@@ -75,4 +92,3 @@ This is intended to approximate "liquid glass" without blur.
 If faux glass is insufficient, phase C will introduce a separate small HUD window on macOS using
 native vibrancy/blur (e.g. `NSVisualEffectView`). The fullscreen overlay window remains responsible
 for input capture and crosshair behavior; the HUD window is just the glass pill.
-

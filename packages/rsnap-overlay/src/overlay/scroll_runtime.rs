@@ -154,6 +154,7 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	/// Consumes any queued macOS live-stream frames for scroll capture.
 	pub fn handle_scroll_stream_frame_ready(&mut self) -> OverlayControl {
 		if self.scroll_capture.active && !self.scroll_capture.paused {
 			let _ = self.try_consume_scroll_stream_frame();
@@ -162,6 +163,7 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
+	/// Drains worker responses that were signaled through the response waker.
 	pub fn handle_worker_response_ready(&mut self) -> OverlayControl {
 		self.drain_worker_responses()
 	}

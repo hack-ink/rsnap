@@ -1,15 +1,26 @@
 # XY-76 Architecture Refactor Plan
 
-## Goal
+Goal: Execute `XY-76` as the umbrella architecture cleanup lane by landing `XY-79` through
+`XY-82` as separate refactor tracks without absorbing the concrete native-capture migration work
+in `XY-74` or `XY-75`.
 
-Execute `XY-76` as the umbrella architecture cleanup lane by landing `XY-79` through `XY-82` as separate refactor tracks without absorbing the concrete native-capture migration work in `XY-74` or `XY-75`.
-
-## Scope
-
+Scope:
 - Execute child issues `XY-79`, `XY-80`, `XY-81`, and `XY-82`.
 - Reduce hotspot concentration in `apps/rsnap/src/app.rs`, `apps/rsnap/src/settings_window.rs`, and `packages/rsnap-overlay/src/overlay.rs`.
 - Pull `cfg` and `target_os` conditionals toward explicit platform boundaries instead of leaving them scattered through shared flows.
 - Reconcile docs only where wording drift matters for the implemented boundary shape.
+
+Assumptions:
+- Child issues execute as separate refactor lanes and review boundaries.
+- `cargo make checks` is the decisive repo-native gate for closeout.
+- This document is retained as historical execution context and may drift from the current repo state.
+
+Steps:
+- Execute `XY-79` through `XY-82` as separate lanes.
+- Verify each lane and the umbrella closeout with repo-native checks and smoke evidence.
+- Reconcile docs only where wording drift affects the implemented boundaries.
+
+Status: Closed on 2026-03-11. Retained for historical context; may drift from current code.
 
 ## Non-goals
 
@@ -66,7 +77,7 @@ Start with app-shell and overlay boundaries first because they are the highest-l
 
 Treat each child issue as its own worktree and review boundary. That keeps refactor scope narrow, prevents unrelated architecture churn from piling up in one lane, and makes it easier to stop for review when a boundary decision turns out to be larger than expected.
 
-If a child issue becomes risky or turns into a multi-step refactor with uncertain ownership, route its execution through `multi-agent` inside that task-specific worktree instead of widening the current lane.
+If a child issue becomes risky or turns into a multi-step refactor with uncertain ownership, route its execution through the current task-specific orchestration workflow inside that worktree instead of widening the current lane.
 
 ## Task 1: XY-79 — App Shell Boundary Refactor
 
@@ -217,7 +228,7 @@ Capture backends, worker and session control, scroll-capture flow, and export or
 - Modify: `packages/rsnap-overlay/src/overlay/scroll_runtime.rs`
 - Modify: `packages/rsnap-overlay/src/overlay/output.rs`
 - Review: `packages/rsnap-overlay/src/overlay.rs`
-- Review: `docs/research/live-sampling-streams.md`
+- Review: `docs/guide/live-sampling-streams.md`
 - Review: `apps/rsnap/README.md`
 
 **Changes**
@@ -261,7 +272,7 @@ Public docs, the spec, and umbrella issue state are consistent with the implemen
 - Modify: `README.md`
 - Modify: `apps/rsnap/README.md`
 - Modify: `docs/spec/v0.md`
-- Review: `docs/research/live-sampling-streams.md`
+- Review: `docs/guide/live-sampling-streams.md`
 - Review: `docs/plans/2026-03-11_xy-76-architecture-refactor.md`
 
 **Changes**
@@ -287,7 +298,7 @@ Public docs, the spec, and umbrella issue state are consistent with the implemen
 - Each child issue should run in its own worktree using `git-worktrees`.
 - `pre-commit` is required before any `git commit` or `git push`.
 - Each child issue is a PR-sized review boundary.
-- Use `multi-agent` inside a task-specific worktree if a child lane becomes internally risky or multi-step.
+- Use the current task-specific orchestration workflow inside a dedicated worktree if a child lane becomes internally risky or multi-step.
 
 ## Suggested Execution
 
