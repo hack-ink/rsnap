@@ -215,64 +215,91 @@ const KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE: u32 = 0;
 const KCG_EVENT_FLAGS_MASK_ALTERNATE: u64 = 1_u64 << 19;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Selects how the live HUD should be positioned.
 pub enum HudAnchor {
+	/// Pin the HUD cluster to the current cursor position.
 	Cursor,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+/// Chooses the requested HUD and chrome theme.
 pub enum ThemeMode {
 	#[default]
+	/// Follow the host window or operating-system theme.
 	System,
+	/// Force the dark theme variant.
 	Dark,
+	/// Force the light theme variant.
 	Light,
 }
 
 #[derive(Debug)]
+/// Describes how an overlay session finished.
 pub enum OverlayExit {
+	/// The user cancelled the session without producing output.
 	Cancelled,
+	/// The session completed by copying PNG bytes to the caller.
 	PngBytes(Vec<u8>),
+	/// The session completed by saving a file to disk.
 	Saved(PathBuf),
+	/// The session failed with a user-visible error message.
 	Error(String),
 }
 
 #[derive(Debug)]
+/// Signals whether the caller should keep driving the overlay event loop.
 pub enum OverlayControl {
+	/// Keep the session alive and continue processing events.
 	Continue,
+	/// Exit the session with the provided terminal outcome.
 	Exit(OverlayExit),
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+/// Controls how the Alt-triggered loupe interaction is activated.
 pub enum AltActivationMode {
 	#[default]
+	/// Enable the loupe only while Alt is held.
 	Hold,
+	/// Toggle the loupe on and off with Alt presses.
 	Toggle,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+/// Chooses where the frozen toolbar is anchored relative to the capture.
 pub enum ToolbarPlacement {
+	/// Render the toolbar above the frozen capture.
 	Top,
 	#[default]
+	/// Render the toolbar below the frozen capture.
 	Bottom,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+/// Selects how saved captures are named on disk.
 pub enum OutputNaming {
 	#[default]
+	/// Use the current Unix timestamp in milliseconds.
 	Timestamp,
+	/// Use a zero-padded incrementing sequence number.
 	Sequence,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+/// Controls how transparent window captures are composited before export.
 pub enum WindowCaptureAlphaMode {
 	#[default]
 	#[serde(alias = "preserve")]
+	/// Preserve the observed screen background behind transparent pixels.
 	Background,
+	/// Composite transparency against a light matte color.
 	MatteLight,
+	/// Composite transparency against a dark matte color.
 	MatteDark,
 }
 
@@ -420,12 +447,19 @@ enum SelectionFlowStyle {
 }
 
 #[derive(Clone, Debug)]
+/// Runtime configuration applied to a capture overlay session.
 pub struct OverlayConfig {
+	/// Positions the live HUD relative to the cursor or another anchor point.
 	pub hud_anchor: HudAnchor,
+	/// Shows the Alt-key hint chip in the live HUD when enabled.
 	pub show_alt_hint_keycap: bool,
+	/// Enables blur or its platform fallback for HUD windows.
 	pub show_hud_blur: bool,
+	/// Enables animated particles around the live selection border.
 	pub selection_particles: bool,
+	/// Sets the core stroke width used for the animated selection border.
 	pub selection_flow_stroke_width_px: f32,
+	/// Forces an opaque HUD background instead of glass styling.
 	pub hud_opaque: bool,
 	/// 0..=1. Controls HUD background alpha.
 	pub hud_opacity: f32,
@@ -435,13 +469,21 @@ pub struct OverlayConfig {
 	pub hud_milk_amount: f32,
 	/// Hue value for tint, 0..=1.
 	pub hud_tint_hue: f32,
+	/// Selects whether Alt must be held or can toggle the loupe.
 	pub alt_activation: AltActivationMode,
+	/// Chooses where the frozen toolbar is placed.
 	pub toolbar_placement: ToolbarPlacement,
+	/// Sets the loupe sample size in source pixels.
 	pub loupe_sample_side_px: u32,
+	/// Requests the light, dark, or system theme.
 	pub theme_mode: ThemeMode,
+	/// Chooses the destination directory for saved captures.
 	pub output_dir: PathBuf,
+	/// Sets the filename prefix used for saved captures.
 	pub output_filename_prefix: String,
+	/// Selects the disk naming strategy for saved captures.
 	pub output_naming: OutputNaming,
+	/// Selects how transparent window captures are flattened.
 	pub window_capture_alpha_mode: WindowCaptureAlphaMode,
 }
 impl Default for OverlayConfig {
@@ -469,6 +511,7 @@ impl Default for OverlayConfig {
 	}
 }
 
+/// Stateful overlay controller that drives capture windows and session output.
 pub struct OverlaySession {
 	config: OverlayConfig,
 	worker: Option<OverlayWorker>,
@@ -562,11 +605,12 @@ pub struct OverlaySession {
 }
 impl OverlaySession {
 	#[must_use]
-	pub fn new() -> Self {
+	pub(crate) fn new() -> Self {
 		Self::with_config(OverlayConfig::default())
 	}
 
 	#[must_use]
+	/// Creates a new overlay session with the provided runtime configuration.
 	pub fn with_config(config: OverlayConfig) -> Self {
 		let live_bg_request_interval = Duration::from_millis(500);
 		let loupe_sample_side_px =
@@ -683,15 +727,18 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	/// Registers a wake callback for macOS live-stream frame notifications.
 	pub fn set_scroll_frame_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.scroll_frame_waker = Some(waker);
 	}
 
+	/// Registers a wake callback for worker-thread responses.
 	pub fn set_response_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.response_waker = Some(waker);
 	}
 
 	#[cfg(target_os = "macos")]
+	/// Supplies a reader that replays recorded external scroll input into the session.
 	pub fn set_external_scroll_input_drain_reader(
 		&mut self,
 		reader: ExternalScrollInputDrainReader,
@@ -699,6 +746,7 @@ impl OverlaySession {
 		self.scroll_capture.external_scroll_input_drain_reader = Some(reader);
 	}
 
+	/// Replays a single external scroll-input delta into the active scroll-capture session.
 	pub fn handle_external_scroll_input_delta_y(
 		&mut self,
 		global_x: f64,
@@ -717,6 +765,7 @@ impl OverlaySession {
 		);
 	}
 
+	/// Applies updated runtime configuration to an existing session.
 	pub fn set_config(&mut self, config: OverlayConfig) {
 		let prev = self.config.clone();
 		let previous_loupe_patch = self.loupe_patch_width_px;
@@ -884,7 +933,7 @@ impl OverlaySession {
 	}
 
 	#[must_use]
-	pub fn is_active(&self) -> bool {
+	pub(crate) fn is_active(&self) -> bool {
 		!self.windows.is_empty()
 	}
 
@@ -952,6 +1001,7 @@ impl OverlaySession {
 		self.loupe_window_warmup_redraws_remaining = 0;
 	}
 
+	/// Advances periodic session work before the event loop goes idle.
 	pub fn about_to_wait(&mut self) -> OverlayControl {
 		let now = Instant::now();
 
@@ -2633,6 +2683,7 @@ impl OverlaySession {
 		}
 	}
 
+	/// Handles a winit window event for one of the overlay-owned windows.
 	pub fn handle_window_event(
 		&mut self,
 		window_id: WindowId,

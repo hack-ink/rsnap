@@ -1,9 +1,26 @@
 # Settings V2 — Egui Geek Layout Design (2026-02-26)
 
-Date: 2026-02-26
-SSOT: `settings-native-rewrite-20260226-c`
+Goal: Document the dense Settings V2 egui layout that was being designed on 2026-02-26.
 
-## Goal
+Scope: Historical design note for the settings-window layout and interaction model. This document
+is not a current normative spec and may drift from shipped behavior.
+
+Assumptions:
+- The design snapshot was taken on 2026-02-26.
+- The original lane tag was `settings-native-rewrite-20260226-c`.
+- The note focuses on layout structure, not broader capture or overlay behavior.
+
+Steps:
+- Record the inspected settings UI surface.
+- Capture layout tokens and row or grid rules.
+- Record acceptance criteria and the resulting outcome.
+
+Status: Historical design note retained for context only; may drift from current code.
+
+Date: 2026-02-26
+Original lane tag: `settings-native-rewrite-20260226-c`
+
+## Design Objective
 
 Implement a dense Settings UI V2 layout built entirely from egui widgets, with deterministic row geometry, shared alignment, and no custom chrome.
 

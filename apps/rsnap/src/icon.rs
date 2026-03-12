@@ -4,7 +4,7 @@ use tray_icon::Icon;
 const TRAY_ICON_PNG_BYTES: &[u8] =
 	include_bytes!("../assets/tray-icon/generated/tray-icon-template.png");
 
-pub fn default_tray_icon() -> Result<Icon> {
+pub(crate) fn default_tray_icon() -> Result<Icon> {
 	let image = image::load_from_memory(TRAY_ICON_PNG_BYTES)
 		.wrap_err("Failed to decode tray icon PNG bytes")?;
 	let rgba = image.into_rgba8();

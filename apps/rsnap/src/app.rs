@@ -18,7 +18,7 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
 #[cfg(target_os = "macos")]
 use tray_icon::menu::Menu;
 use tray_icon::{
-	TrayIcon, TrayIconEvent,
+	TrayIcon,
 	menu::{MenuEvent, MenuId},
 };
 use winit::event_loop::ActiveEventLoop;
@@ -31,8 +31,8 @@ use crate::settings::AppSettings;
 use crate::settings_window::SettingsWindow;
 use rsnap_overlay::OverlaySession;
 
-pub enum UserEvent {
-	TrayIcon(TrayIconEvent),
+pub(crate) enum UserEvent {
+	TrayIcon,
 	Menu(MenuEvent),
 	HotKey(GlobalHotKeyEvent),
 	#[cfg(target_os = "macos")]
@@ -139,7 +139,7 @@ impl App {
 	}
 }
 
-pub fn run() -> Result<()> {
+pub(crate) fn run() -> Result<()> {
 	runtime::run()
 }
 

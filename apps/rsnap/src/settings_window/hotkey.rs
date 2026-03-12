@@ -47,7 +47,7 @@ impl SettingsWindow {
 		self.capture_hotkey_recording = true;
 		self.capture_hotkey_notice = None;
 
-		self.queue_action(SettingsWindowAction::BeginCaptureHotkey);
+		self.queue_action(SettingsWindowAction::Begin);
 		self.window.request_redraw();
 	}
 
@@ -59,7 +59,7 @@ impl SettingsWindow {
 		self.capture_hotkey_recording = false;
 		self.capture_hotkey_notice = None;
 
-		self.queue_action(SettingsWindowAction::CancelCaptureHotkey);
+		self.queue_action(SettingsWindowAction::Cancel);
 		self.window.request_redraw();
 	}
 
@@ -75,7 +75,7 @@ impl SettingsWindow {
 				self.capture_hotkey_notice = None;
 
 				self.window.request_redraw();
-				self.queue_action(SettingsWindowAction::ApplyCaptureHotkey(hotkey));
+				self.queue_action(SettingsWindowAction::Apply(hotkey));
 			},
 		}
 	}

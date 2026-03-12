@@ -3550,7 +3550,6 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 name = "rsnap"
 version = "0.1.0"
 dependencies = [
- "block2 0.6.2",
  "color-eyre",
  "directories",
  "egui",
@@ -3559,8 +3558,6 @@ dependencies = [
  "egui-winit",
  "global-hotkey",
  "image",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
  "pollster",
  "rsnap-overlay",
  "serde",

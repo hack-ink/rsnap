@@ -1,6 +1,21 @@
 # Faux Glass HUD (A) Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+Goal: Implement the blur-free faux-glass HUD restyle and remove the left-edge accent artifact.
+
+Scope: Historical implementation plan for the overlay HUD restyle and tuning pass. This document
+is not a standing execution guide and may drift from current code.
+
+Assumptions:
+- Rust, egui, wgpu, winit, cargo-make, and vstyle were the execution stack for this plan.
+- The plan targeted `packages/rsnap-overlay/src/overlay.rs`.
+- Commit and push steps in the body are historical plan context, not current routing policy.
+
+Steps:
+- Land the base faux-glass restyle.
+- Tune constants after manual review.
+- Re-run repo verification after each batch.
+
+Status: Historical implementation plan retained for context only; may drift from current code.
 
 **Goal:** Restyle the capture HUD pill to a blur-free "faux glass" look and remove the left-edge accent artifact.
 
@@ -63,4 +78,3 @@ Expected: success.
 
 - Use `cmsg/1` JSON commit message.
 - Push to `origin/main`.
-

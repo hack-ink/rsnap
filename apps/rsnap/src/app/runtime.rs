@@ -37,7 +37,7 @@ impl ApplicationHandler<UserEvent> for App {
 		match event {
 			UserEvent::Menu(event) => self.handle_menu_event(event_loop, &event),
 			UserEvent::HotKey(event) => self.handle_hotkey_event(event_loop, event),
-			UserEvent::TrayIcon(_) => {},
+			UserEvent::TrayIcon => {},
 			#[cfg(target_os = "macos")]
 			UserEvent::OverlayStreamFrame => {
 				self.overlay_stream_event_pending.store(false, Ordering::Release);
@@ -91,7 +91,7 @@ impl ApplicationHandler<UserEvent> for App {
 					SettingsControl::CloseRequested => {
 						should_close = true;
 
-						action_queue.push_back(SettingsWindowAction::CancelCaptureHotkey);
+						action_queue.push_back(SettingsWindowAction::Cancel);
 					},
 				},
 			}
@@ -246,7 +246,8 @@ pub(super) fn run() -> Result<()> {
 	);
 
 	TrayIconEvent::set_event_handler(Some(move |event| {
-		let _ = tray_proxy.send_event(UserEvent::TrayIcon(event));
+		let _ = event;
+		let _ = tray_proxy.send_event(UserEvent::TrayIcon);
 	}));
 
 	let menu_proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();

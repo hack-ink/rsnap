@@ -16,22 +16,23 @@ path = "src/lib.rs"
 cargo-clippy = []
 
 [dependencies]
-arboard           = { workspace = true }
-color-eyre        = { workspace = true }
-device_query      = { workspace = true }
-egui              = { workspace = true }
-egui-phosphor     = { workspace = true }
-egui-wgpu         = { workspace = true }
-egui-winit        = { workspace = true }
-image             = { workspace = true }
-pollster          = { workspace = true }
-raw-window-handle = { workspace = true }
-serde             = { workspace = true }
-thiserror         = { workspace = true }
-tracing           = { workspace = true }
-wgpu              = { workspace = true }
-winit             = { workspace = true }
-xcap              = { workspace = true }
+arboard       = { workspace = true }
+color-eyre    = { workspace = true }
+egui          = { workspace = true }
+egui-phosphor = { workspace = true }
+egui-wgpu     = { workspace = true }
+egui-winit    = { workspace = true }
+image         = { workspace = true }
+pollster      = { workspace = true }
+serde         = { workspace = true }
+thiserror     = { workspace = true }
+tracing       = { workspace = true }
+wgpu          = { workspace = true }
+winit         = { workspace = true }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+device_query = { workspace = true }
+xcap         = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2                   = { workspace = true }
@@ -44,3 +45,4 @@ objc2-core-media         = { workspace = true }
 objc2-core-video         = { workspace = true }
 objc2-foundation         = { workspace = true }
 objc2-screen-capture-kit = { workspace = true }
+raw-window-handle        = { workspace = true }

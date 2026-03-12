@@ -13,6 +13,7 @@ use crate::overlay::{
 };
 
 impl OverlaySession {
+	/// Starts the overlay session and creates the required capture windows.
 	pub fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
 		if self.is_active() {
 			return Ok(());
