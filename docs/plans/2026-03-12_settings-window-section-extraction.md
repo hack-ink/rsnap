@@ -1,11 +1,12 @@
 # Settings Window And App Capture Cleanup Plan
 
-## Goal
+Goal: Continue the post-`XY-80` cleanup by extracting the bulk of `SettingsWindow`
+section-rendering, chrome/theme UI, hotkey logic, render/surface plumbing, and adjacent app-level
+capture/session and macOS scroll-input helpers out of their hotspot roots into dedicated support
+modules, while preserving the existing `settings.toml` contract and visible settings-window
+behavior.
 
-Continue the post-`XY-80` cleanup by extracting the bulk of `SettingsWindow` section-rendering, chrome/theme UI, hotkey logic, render/surface plumbing, and adjacent app-level capture/session and macOS scroll-input helpers out of their hotspot roots into dedicated support modules, while preserving the existing `settings.toml` contract and visible settings-window behavior.
-
-## Scope
-
+Scope:
 - Reduce hotspot concentration inside `apps/rsnap/src/settings_window.rs`.
 - Extract section-rendering and shared widget/helper methods into `apps/rsnap/src/settings_window/sections.rs`.
 - Extract settings-window chrome/theme/autosize UI helpers into `apps/rsnap/src/settings_window/chrome.rs`.
@@ -15,6 +16,18 @@ Continue the post-`XY-80` cleanup by extracting the bulk of `SettingsWindow` sec
 - Extract `apps/rsnap/src/app/scroll_input_macos.rs` queue/replay state, CGEvent decoding, and event-tap lifecycle into flat support modules once the app root is no longer the primary hotspot.
 - Keep the existing isolated worktree lane at `x/settings-window-ui-split`.
 - Verify the refactor with repo-native Rust commands and targeted settings-window checks.
+
+Assumptions:
+- This cleanup continues after `XY-80` and depends on the existing settings and app support boundaries.
+- Repo-native Rust commands plus targeted macOS smoke checks are the intended verification surface.
+- This document is retained as historical execution context and may drift from the current repo state.
+
+Steps:
+- Extract settings-window support modules from the hotspot root.
+- Extract app capture-session and macOS scroll-input support modules once the settings hotspot is reduced.
+- Verify each extraction batch with targeted tests and smoke checks.
+
+Status: Closed on 2026-03-12. Retained for historical context; may drift from current code.
 
 ## Non-goals
 

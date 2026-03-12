@@ -109,17 +109,17 @@ impl App {
 		action: SettingsWindowAction,
 	) -> (bool, Option<bool>, Option<Option<CaptureHotkeyNotice>>) {
 		match action {
-			SettingsWindowAction::BeginCaptureHotkey => {
+			SettingsWindowAction::Begin => {
 				self.suspend_capture_hotkey();
 
 				(false, Some(true), Some(None))
 			},
-			SettingsWindowAction::CancelCaptureHotkey => {
+			SettingsWindowAction::Cancel => {
 				self.resume_capture_hotkey();
 
 				(false, Some(false), Some(None))
 			},
-			SettingsWindowAction::ApplyCaptureHotkey(hotkey) => {
+			SettingsWindowAction::Apply(hotkey) => {
 				if self.apply_capture_hotkey(hotkey, self.capture_hotkey_recording_suspended) {
 					self.capture_hotkey_recording_suspended = false;
 
