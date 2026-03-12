@@ -1,7 +1,10 @@
-use egui::{Rect, Sense, Ui};
+#[cfg(target_os = "macos")]
+use egui::Sense;
+use egui::{Rect, Ui};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, ModifiersState};
+#[cfg(target_os = "macos")]
 use winit::platform::macos::WindowAttributesExtMacOS;
 use winit::window::{Window, WindowAttributes};
 
