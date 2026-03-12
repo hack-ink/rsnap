@@ -34,6 +34,7 @@ pub(crate) fn init_logging() -> Option<WorkerGuard> {
 
 	if let Err(err) = fs::create_dir_all(&log_dir) {
 		eprintln!("Failed to create log directory {log_dir:?}: {err}");
+
 		init_console_logging(filter);
 
 		return None;
@@ -49,6 +50,7 @@ pub(crate) fn init_logging() -> Option<WorkerGuard> {
 		Ok(appender) => appender,
 		Err(err) => {
 			eprintln!("Failed to initialize rolling file appender: {err}");
+
 			init_console_logging(filter);
 
 			return None;
@@ -97,9 +99,11 @@ fn load_log_filter_from_settings() -> Option<EnvFilter> {
 
 #[cfg(test)]
 mod tests {
+	use crate::startup;
+
 	#[test]
 	fn startup_build_info_includes_version_and_git_commit() {
-		let info = crate::startup::startup_build_info();
+		let info = startup::startup_build_info();
 
 		assert!(!info.version.is_empty());
 		assert!(!info.git_commit.is_empty());
