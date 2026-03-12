@@ -1,7 +1,16 @@
 use std::{sync::Arc, time::Instant};
 
 use crate::backend;
-use crate::overlay::{self, ActiveEventLoop, FrozenCaptureSource, FrozenToolbarState, GlobalPoint, GpuContext, HUD_PILL_CORNER_RADIUS_POINTS, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS, LiveSampleApplyResult, LogicalPosition, LogicalSize, MacLiveFrameStream, MainThreadMarker, MonitorRect, NSScreen, OverlayEventLoopPhase, OverlayMode, OverlaySession, OverlayWindow, OverlayWorker, Result, ScrollCaptureState, ScrollPreviewWindow, SlowOperationLogger, TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_EXPANDED_WIDTH_PX, WindowLevel, WindowRenderer, hud_helpers};
+#[cfg(target_os = "macos")]
+use crate::overlay::{self, MacLiveFrameStream, MainThreadMarker, NSScreen};
+use crate::overlay::{
+	ActiveEventLoop, FrozenCaptureSource, FrozenToolbarState, GlobalPoint, GpuContext,
+	HUD_PILL_CORNER_RADIUS_POINTS, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS,
+	LiveSampleApplyResult, LogicalPosition, LogicalSize, MonitorRect, OverlayEventLoopPhase,
+	OverlayMode, OverlaySession, OverlayWindow, OverlayWorker, Result, ScrollCaptureState,
+	ScrollPreviewWindow, SlowOperationLogger, TOOLBAR_EXPANDED_HEIGHT_PX,
+	TOOLBAR_EXPANDED_WIDTH_PX, WindowLevel, WindowRenderer, hud_helpers,
+};
 
 impl OverlaySession {
 	pub fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {

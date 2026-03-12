@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+#[cfg(target_os = "macos")]
 use std::sync::{
 	Arc,
 	atomic::{AtomicBool, Ordering},

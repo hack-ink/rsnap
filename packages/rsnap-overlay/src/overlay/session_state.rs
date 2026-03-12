@@ -4,11 +4,12 @@ use std::{
 };
 
 use crate::overlay::{
-	DeviceCursorPointSource, ExternalScrollInputDrainReader, FrozenToolbarTool, GlobalPoint,
-	LIVE_PRESENT_INTERVAL_MIN, MacLiveFrameStream, MonitorRect, PhysicalPosition, Pos2,
-	REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints, SLOW_OP_WARN_INTERVAL, ScrollDirection,
-	ScrollSession, Vec2, WindowId,
+	DeviceCursorPointSource, FrozenToolbarTool, GlobalPoint, LIVE_PRESENT_INTERVAL_MIN,
+	MonitorRect, PhysicalPosition, Pos2, REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints,
+	SLOW_OP_WARN_INTERVAL, ScrollDirection, ScrollSession, Vec2, WindowId,
 };
+#[cfg(target_os = "macos")]
+use crate::overlay::{ExternalScrollInputDrainReader, MacLiveFrameStream};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct WindowFreezeCaptureTarget {

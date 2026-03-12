@@ -13,11 +13,15 @@ use std::thread::JoinHandle;
 
 use color_eyre::eyre::Result;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
+#[cfg(target_os = "macos")]
+use tray_icon::menu::Menu;
 use tray_icon::{
 	TrayIcon, TrayIconEvent,
-	menu::{Menu, MenuEvent, MenuId},
+	menu::{MenuEvent, MenuId},
 };
-use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+use winit::event_loop::ActiveEventLoop;
+#[cfg(target_os = "macos")]
+use winit::event_loop::EventLoopProxy;
 
 #[cfg(target_os = "macos")]
 use self::scroll_input_macos::SharedScrollInputState;
