@@ -55,7 +55,6 @@ pub(super) fn save_png_bytes_to_configured_dir(
 }
 
 #[cfg(target_os = "macos")]
-#[allow(unexpected_cfgs)]
 pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
 	let pasteboard_type = CString::new("public.png").wrap_err("Invalid NSPasteboard type")?;
 

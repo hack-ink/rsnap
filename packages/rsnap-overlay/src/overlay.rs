@@ -84,15 +84,14 @@ use self::session_state::{
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 use crate::state::LiveCursorSample;
+#[cfg(any(not(target_os = "macos"), test))]
+use crate::worker::CapturedMonitorRegionResult;
 use crate::{
 	state::{
 		GlobalPoint, MonitorRect, MonitorRectPoints, OverlayMode, OverlayState, RectPoints,
 		WindowHit, WindowListSnapshot,
 	},
-	worker::{
-		CapturedMonitorRegionResult, FreezeCaptureTarget, OverlayWorker, WorkerRequestSendError,
-		WorkerResponse,
-	},
+	worker::{FreezeCaptureTarget, OverlayWorker, WorkerRequestSendError, WorkerResponse},
 };
 
 #[cfg(target_os = "macos")]
@@ -202,8 +201,6 @@ const WINDOW_CAPTURE_MATTE_DARK_RGBA: image::Rgba<u8> = image::Rgba([24, 24, 24,
 const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
 const SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS: f64 = 360.0;
 const SCROLL_PREVIEW_WINDOW_MARGIN_POINTS: i32 = 16;
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_nanos(8_333_333);
 #[cfg(not(target_os = "macos"))]
 const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
 #[cfg(target_os = "macos")]
@@ -383,17 +380,15 @@ impl FrozenToolbarTool {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ScrollCaptureFrameSource {
-	Worker {
-		request_id: u64,
-	},
+	#[cfg(any(not(target_os = "macos"), test))]
+	Worker { request_id: u64 },
 	#[cfg(target_os = "macos")]
-	LiveStream {
-		frame_seq: u64,
-	},
+	LiveStream { frame_seq: u64 },
 }
 impl ScrollCaptureFrameSource {
 	const fn as_str(self) -> &'static str {
 		match self {
+			#[cfg(any(not(target_os = "macos"), test))]
 			Self::Worker { .. } => "worker",
 			#[cfg(target_os = "macos")]
 			Self::LiveStream { .. } => "live_stream",
@@ -402,6 +397,7 @@ impl ScrollCaptureFrameSource {
 
 	const fn worker_request_id(self) -> Option<u64> {
 		match self {
+			#[cfg(any(not(target_os = "macos"), test))]
 			Self::Worker { request_id } => Some(request_id),
 			#[cfg(target_os = "macos")]
 			Self::LiveStream { .. } => None,
@@ -1698,6 +1694,7 @@ impl OverlaySession {
 			self.pending_encode_png = Some(image);
 		}
 
+		#[cfg(any(not(target_os = "macos"), test))]
 		while let Some(resp) =
 			self.worker.as_ref().and_then(|worker| worker.try_recv_captured_monitor_region())
 		{
@@ -2076,6 +2073,7 @@ impl OverlaySession {
 
 	fn maybe_tick_worker_response_limiter(&mut self, resp: WorkerResponse) -> OverlayControl {
 		match resp {
+			#[cfg(not(target_os = "macos"))]
 			WorkerResponse::SampledLiveCursor { monitor, point, request_id, sample } => {
 				self.handle_sampled_live_cursor_response(monitor, point, request_id, sample);
 
@@ -2112,6 +2110,7 @@ impl OverlaySession {
 		}
 	}
 
+	#[cfg(not(target_os = "macos"))]
 	fn handle_sampled_live_cursor_response(
 		&mut self,
 		monitor: MonitorRect,
@@ -2291,7 +2290,6 @@ impl OverlaySession {
 		window_target: Option<WindowFreezeCaptureTarget>,
 		cursor: Option<GlobalPoint>,
 	) {
-		self.state.frozen_capture_is_fullscreen_fallback = rect.is_none();
 		self.frozen_capture_source = if rect.is_none() {
 			FrozenCaptureSource::FullscreenFallback
 		} else if window_target.is_some() {
@@ -2405,6 +2403,7 @@ impl OverlaySession {
 			self.state.live_bg_image = None;
 			self.capture_windows_hidden = true;
 
+			#[cfg(not(target_os = "macos"))]
 			self.hide_capture_windows();
 		}
 	}
@@ -2442,7 +2441,7 @@ impl OverlaySession {
 	}
 
 	fn cropped_frozen_capture_image(&self) -> Option<RgbaImage> {
-		if !self.state.frozen_capture_is_fullscreen_fallback
+		if self.frozen_capture_source != FrozenCaptureSource::FullscreenFallback
 			&& let Some(window_image) = self.frozen_window_image.as_ref()
 		{
 			match self.config.window_capture_alpha_mode {
@@ -2636,6 +2635,7 @@ impl OverlaySession {
 
 			self.maybe_start_loupe_window_warmup_redraw();
 			self.request_redraw_for_monitor(monitor);
+			#[cfg(not(target_os = "macos"))]
 			self.raise_hud_windows();
 
 			return;
@@ -3065,6 +3065,7 @@ impl OverlaySession {
 				self.config.selection_flow_stroke_width_px,
 				false,
 				false,
+				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				Some(&mut self.toolbar_state),
 				toolbar_input,
 			);
@@ -4153,11 +4154,12 @@ impl OverlaySession {
 		self.apply_scroll_capture_input_delta_y(delta_y, gesture_active, gesture_ended, at);
 	}
 
+	#[cfg(test)]
 	fn scroll_capture_input_allows_observation(&self) -> bool {
 		self.scroll_capture_observation_block_reason().is_none()
 	}
 
-	#[cfg_attr(not(test), allow(dead_code))]
+	#[cfg(test)]
 	fn scroll_capture_input_allows_growth(&self) -> bool {
 		if self.scroll_capture.input_direction != Some(ScrollDirection::Down) {
 			return false;
@@ -4166,6 +4168,7 @@ impl OverlaySession {
 		self.scroll_capture_input_allows_observation()
 	}
 
+	#[cfg(test)]
 	fn scroll_capture_observation_block_reason(&self) -> Option<&'static str> {
 		self.scroll_capture_observation_block_reason_at(Instant::now())
 	}
@@ -4776,6 +4779,7 @@ impl OverlaySession {
 				self.config.selection_flow_stroke_width_px,
 				true,
 				false,
+				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				None,
 				None,
 			)?;
@@ -5496,6 +5500,7 @@ impl OverlaySession {
 				self.config.selection_flow_stroke_width_px,
 				!self.scroll_capture.active,
 				self.scroll_capture.active,
+				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				toolbar_state,
 				toolbar_input,
 			) {
@@ -5552,6 +5557,7 @@ impl OverlaySession {
 				} else {
 					self.pending_freeze_capture_armed = true;
 
+					#[cfg(not(target_os = "macos"))]
 					self.hide_capture_windows();
 					self.request_redraw_for_monitor(overlay_monitor);
 				}
@@ -6007,9 +6013,6 @@ impl OverlaySession {
 		}
 	}
 
-	#[cfg(target_os = "macos")]
-	fn hide_capture_windows(&mut self) {}
-
 	#[cfg(not(target_os = "macos"))]
 	fn hide_capture_windows(&mut self) {
 		self.capture_windows_hidden = true;
@@ -6038,9 +6041,6 @@ impl OverlaySession {
 			loupe_window.window.set_visible(self.state.alt_held);
 		}
 	}
-
-	#[cfg(target_os = "macos")]
-	fn raise_hud_windows(&self) {}
 
 	#[cfg(not(target_os = "macos"))]
 	fn raise_hud_windows(&self) {
@@ -6976,6 +6976,7 @@ impl WindowRenderer {
 		selection_flow_stroke_width_px: f32,
 		needs_frozen_surface_bg: bool,
 		show_frozen_capture_affordance: bool,
+		frozen_capture_is_fullscreen_fallback: bool,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 		mut toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
@@ -7065,6 +7066,7 @@ impl WindowRenderer {
 					monitor,
 					screen_rect,
 					theme,
+					frozen_capture_is_fullscreen_fallback,
 					selection_flow_stroke_width_px,
 					selection_flow_geometry_cache,
 				);
@@ -7168,12 +7170,14 @@ impl WindowRenderer {
 		has_rect
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn render_frozen_pending_affordance(
 		ctx: &egui::Context,
 		state: &OverlayState,
 		monitor: MonitorRect,
 		screen_rect: Rect,
 		theme: HudTheme,
+		frozen_capture_is_fullscreen_fallback: bool,
 		selection_flow_stroke_width_px: f32,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 	) -> bool {
@@ -7211,7 +7215,7 @@ impl WindowRenderer {
 			rect,
 			ctx,
 			theme,
-			if state.frozen_capture_is_fullscreen_fallback {
+			if frozen_capture_is_fullscreen_fallback {
 				SelectionFlowStyle::Band
 			} else {
 				SelectionFlowStyle::FullBorder
@@ -9056,6 +9060,7 @@ impl WindowRenderer {
 		selection_flow_stroke_width_px: f32,
 		allow_frozen_surface_bg: bool,
 		show_frozen_capture_affordance: bool,
+		frozen_capture_is_fullscreen_fallback: bool,
 		toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
 	) -> Result<()> {
@@ -9108,6 +9113,7 @@ impl WindowRenderer {
 			selection_flow_stroke_width_px,
 			hud_cfg.needs_frozen_surface_bg,
 			show_frozen_capture_affordance,
+			frozen_capture_is_fullscreen_fallback,
 			&mut selection_flow_cache,
 			toolbar_state,
 			toolbar_pointer,

@@ -117,7 +117,7 @@ impl App {
 		match overlay_session.start(event_loop) {
 			Ok(()) => {
 				#[cfg(target_os = "macos")]
-				self.install_scroll_input_observer();
+				self.ensure_scroll_input_observer_started();
 
 				tracing::info!(
 					requested_by = %requested_by,
@@ -152,7 +152,6 @@ impl App {
 		{
 			self.scroll_input_shared_state.set_enabled(false);
 			self.scroll_input_shared_state.clear();
-			self.remove_scroll_input_observer();
 		}
 
 		match exit {
@@ -170,20 +169,17 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn install_scroll_input_observer(&mut self) {
-		if self.scroll_input_event_tap_thread.is_some() {
+	fn ensure_scroll_input_observer_started(&mut self) {
+		if self.scroll_input_observer_started {
 			return;
 		}
 
-		let handle = scroll_input_macos::spawn_scroll_input_observer(Arc::clone(
+		scroll_input_macos::spawn_scroll_input_observer(Arc::clone(
 			&self.scroll_input_shared_state,
 		));
 
-		self.scroll_input_event_tap_thread = Some(handle);
+		self.scroll_input_observer_started = true;
 	}
-
-	#[cfg(target_os = "macos")]
-	fn remove_scroll_input_observer(&mut self) {}
 
 	pub(super) fn handle_overlay_control(&mut self, control: OverlayControl) {
 		let OverlayControl::Exit(exit) = control else {

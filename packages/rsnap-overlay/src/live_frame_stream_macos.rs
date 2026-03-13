@@ -139,7 +139,6 @@ enum WorkerRequest {
 	Shutdown,
 }
 
-#[allow(dead_code)]
 pub(crate) struct OrderedRegionFrame {
 	pub(crate) frame_seq: u64,
 	pub(crate) captured_at: Instant,

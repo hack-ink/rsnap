@@ -10,8 +10,6 @@ use std::sync::{
 	Arc,
 	atomic::{AtomicBool, Ordering},
 };
-#[cfg(target_os = "macos")]
-use std::thread::JoinHandle;
 
 use color_eyre::eyre::Result;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
@@ -66,7 +64,7 @@ struct App {
 	#[cfg(target_os = "macos")]
 	overlay_stream_event_pending: Arc<AtomicBool>,
 	#[cfg(target_os = "macos")]
-	scroll_input_event_tap_thread: Option<JoinHandle<()>>,
+	scroll_input_observer_started: bool,
 	#[cfg(target_os = "macos")]
 	scroll_input_shared_state: Arc<SharedScrollInputState>,
 }
@@ -105,7 +103,7 @@ impl App {
 			#[cfg(target_os = "macos")]
 			overlay_stream_event_pending,
 			#[cfg(target_os = "macos")]
-			scroll_input_event_tap_thread: None,
+			scroll_input_observer_started: false,
 			#[cfg(target_os = "macos")]
 			scroll_input_shared_state,
 		}
