@@ -3,13 +3,14 @@ use std::time::Instant;
 use color_eyre::Result;
 use image::RgbaImage;
 
+#[cfg(not(target_os = "macos"))]
+use crate::overlay::SCROLL_CAPTURE_SAMPLE_INTERVAL;
 #[cfg(target_os = "macos")]
+use crate::overlay::{LiveStreamStaleGrace, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES};
+#[cfg(any(not(target_os = "macos"), test))]
+use crate::overlay::{MonitorRect, RectPoints};
 use crate::overlay::{
-	LiveStreamStaleGrace, OverlayWorker, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
-};
-use crate::overlay::{
-	MonitorRect, OverlayControl, OverlaySession, RectPoints, SCROLL_CAPTURE_SAMPLE_INTERVAL,
-	ScrollCaptureFrameSource, ScrollObserveOutcome, ScrollSession,
+	OverlayControl, OverlaySession, ScrollCaptureFrameSource, ScrollObserveOutcome, ScrollSession,
 };
 #[cfg(target_os = "macos")]
 use crate::scroll_capture::ScrollDirection;
@@ -24,7 +25,6 @@ impl OverlaySession {
 
 		#[cfg(target_os = "macos")]
 		{
-			self.keep_scroll_capture_worker_region_symbols_referenced();
 			self.sync_scroll_overlay_mouse_passthrough_window(Instant::now());
 
 			let _ = self.try_consume_scroll_stream_frame();
@@ -67,17 +67,6 @@ impl OverlaySession {
 				Ok(()) => {
 					self.scroll_capture.next_request_id = request_id;
 					self.scroll_capture.inflight_request_id = Some(request_id);
-					#[cfg(target_os = "macos")]
-					{
-						self.scroll_capture.inflight_request_observation =
-							Some(InflightScrollCaptureObservation {
-								input_direction: self.scroll_capture.input_direction,
-								was_observable: self.scroll_capture_input_allows_observation(),
-								external_input_seq: self
-									.scroll_capture
-									.last_external_scroll_input_seq,
-							});
-					}
 					self.scroll_capture.next_sample_at = Some(now + SCROLL_CAPTURE_SAMPLE_INTERVAL);
 				},
 				Err(WorkerRequestSendError::Full) => {
@@ -229,6 +218,7 @@ impl OverlaySession {
 		}
 	}
 
+	#[cfg(any(not(target_os = "macos"), test))]
 	pub(super) fn handle_captured_scroll_region(
 		&mut self,
 		monitor: MonitorRect,
@@ -307,6 +297,7 @@ impl OverlaySession {
 		);
 	}
 
+	#[cfg(any(not(target_os = "macos"), test))]
 	pub(super) fn handle_missing_scroll_region(
 		&mut self,
 		monitor: MonitorRect,
@@ -508,13 +499,7 @@ impl OverlaySession {
 		}
 	}
 
-	#[cfg(target_os = "macos")]
-	pub(super) fn keep_scroll_capture_worker_region_symbols_referenced(&self) {
-		let _ = SCROLL_CAPTURE_SAMPLE_INTERVAL;
-		let _ = OverlayWorker::request_capture_monitor_region;
-	}
-
-	#[cfg(target_os = "macos")]
+	#[cfg(all(target_os = "macos", test))]
 	pub(super) fn allow_worker_frame_with_latched_request_input(&self, request_id: u64) -> bool {
 		if self.scroll_capture.inflight_request_id != Some(request_id) {
 			return false;

@@ -17,9 +17,6 @@ use image::imageops;
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 #[cfg(target_os = "macos")]
-#[allow(deprecated)]
-use objc2_core_graphics::CGWindowListCreateImage;
-#[cfg(target_os = "macos")]
 use objc2_core_graphics::{
 	CGDataProvider, CGImage, CGRectNull, CGWindowID, CGWindowImageOption, CGWindowListOption,
 };
@@ -299,12 +296,12 @@ impl XcapCaptureBackend {
 			return Ok(());
 		}
 
-		self.refresh_monitor_cache(monitor)?;
+		self.refresh_monitor_cache_impl(monitor)?;
 
 		Ok(())
 	}
 
-	pub(crate) fn refresh_monitor_cache(
+	fn refresh_monitor_cache_impl(
 		&mut self,
 		monitor: MonitorRect,
 	) -> Result<Arc<MonitorImageSnapshot>> {
@@ -329,12 +326,15 @@ impl XcapCaptureBackend {
 		Ok(snapshot)
 	}
 
-	pub(crate) fn latest_monitor_cache_snapshot(&self) -> Option<Arc<MonitorImageSnapshot>> {
+	fn latest_monitor_cache_snapshot_impl(&self) -> Option<Arc<MonitorImageSnapshot>> {
 		self.cache.clone()
 	}
 
 	#[cfg(target_os = "macos")]
-	#[allow(deprecated)]
+	#[expect(
+		deprecated,
+		reason = "CoreGraphics monitor capture remains the verified macOS fallback until XY-74/XY-75 replace this path."
+	)]
 	fn capture_monitor_image(&mut self, monitor: MonitorRect) -> Result<RgbaImage> {
 		let cg_image = objc2_core_graphics::CGDisplayCreateImage(monitor.id)
 			.ok_or_else(|| eyre::eyre!("CGDisplayCreateImage returned null"))?;
@@ -349,12 +349,15 @@ impl XcapCaptureBackend {
 	}
 
 	#[cfg(target_os = "macos")]
-	#[allow(deprecated)]
+	#[expect(
+		deprecated,
+		reason = "CoreGraphics window capture remains the verified macOS fallback until XY-74/XY-75 replace this path."
+	)]
 	fn capture_window_image(&mut self, window_id: u32) -> Result<RgbaImage> {
 		let cg_rect: CGRect = unsafe { CGRectNull };
 		let image_option =
 			CGWindowImageOption::BoundsIgnoreFraming | CGWindowImageOption::BestResolution;
-		let cg_image = CGWindowListCreateImage(
+		let cg_image = objc2_core_graphics::CGWindowListCreateImage(
 			cg_rect,
 			CGWindowListOption::OptionIncludingWindow,
 			window_id as CGWindowID,
@@ -564,12 +567,12 @@ impl XcapCaptureBackend {
 			return Ok(());
 		}
 
-		self.refresh_window_cache()?;
+		self.refresh_window_cache_impl()?;
 
 		Ok(())
 	}
 
-	pub(crate) fn refresh_window_cache(&mut self) -> Result<Arc<WindowListSnapshot>> {
+	fn refresh_window_cache_impl(&mut self) -> Result<Arc<WindowListSnapshot>> {
 		let windows = collect_window_geometries().wrap_err("failed to refresh window cache")?;
 		let snapshot = Arc::new(WindowListSnapshot {
 			captured_at: Instant::now(),
@@ -581,7 +584,7 @@ impl XcapCaptureBackend {
 		Ok(snapshot)
 	}
 
-	pub(crate) fn latest_window_cache_snapshot(&self) -> Option<Arc<WindowListSnapshot>> {
+	fn latest_window_cache_snapshot_impl(&self) -> Option<Arc<WindowListSnapshot>> {
 		self.window_cache.clone()
 	}
 }
@@ -618,15 +621,6 @@ impl CaptureBackend for XcapCaptureBackend {
 			rect_px.width,
 			rect_px.height,
 		) {
-			#[cfg(target_os = "macos")]
-			tracing::trace!(
-				op = "capture_backend.region_stream_miss_xcap_fallback",
-				monitor_id = monitor.id,
-				rect_px = ?rect_px,
-				frame_px = ?image.dimensions(),
-				"ScreenCaptureKit region stream unavailable; fell back to xcap region capture."
-			);
-
 			return Ok(image);
 		}
 
@@ -661,19 +655,19 @@ impl CaptureBackend for XcapCaptureBackend {
 	}
 
 	fn refresh_monitor_cache(&mut self, monitor: MonitorRect) -> Result<Arc<MonitorImageSnapshot>> {
-		Self::refresh_monitor_cache(self, monitor)
+		self.refresh_monitor_cache_impl(monitor)
 	}
 
 	fn latest_monitor_cache_snapshot(&self) -> Option<Arc<MonitorImageSnapshot>> {
-		Self::latest_monitor_cache_snapshot(self)
+		self.latest_monitor_cache_snapshot_impl()
 	}
 
 	fn refresh_window_cache(&mut self) -> Result<Arc<WindowListSnapshot>> {
-		Self::refresh_window_cache(self)
+		self.refresh_window_cache_impl()
 	}
 
 	fn latest_window_cache_snapshot(&self) -> Option<Arc<WindowListSnapshot>> {
-		Self::latest_window_cache_snapshot(self)
+		self.latest_window_cache_snapshot_impl()
 	}
 
 	fn hit_test_window_in_monitor(
@@ -945,7 +939,10 @@ fn rgba_image_from_cg_image(cg_image: &CGImage) -> Result<RgbaImage> {
 }
 
 #[cfg(target_os = "macos")]
-#[allow(deprecated)]
+#[expect(
+	deprecated,
+	reason = "CoreGraphics region capture remains the verified macOS fallback until XY-74/XY-75 replace this path."
+)]
 fn capture_monitor_region_with_core_graphics(
 	monitor: MonitorRect,
 	rect_px: RectPoints,

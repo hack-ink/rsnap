@@ -105,6 +105,7 @@ impl OverlaySession {
 		self.event_loop_last_progress_detail = None;
 		self.event_loop_last_stall_warn_at = None;
 
+		#[cfg(target_os = "macos")]
 		self.clear_macos_hud_window_config_cache();
 
 		self.window_list_snapshot = None;
@@ -133,9 +134,6 @@ impl OverlaySession {
 	fn clear_macos_hud_window_config_cache(&mut self) {
 		self.macos_hud_window_config_cache.clear();
 	}
-
-	#[cfg(not(target_os = "macos"))]
-	fn clear_macos_hud_window_config_cache(&mut self) {}
 
 	fn available_overlay_monitors(&self) -> Result<Vec<MonitorRect>, String> {
 		#[cfg(target_os = "macos")]
