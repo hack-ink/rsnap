@@ -10,9 +10,11 @@ use image::RgbaImage;
 
 use crate::backend::CaptureBackend;
 use crate::png;
-use crate::state::{
-	GlobalPoint, LiveCursorSample, MonitorRect, RectPoints, WindowHit, WindowListSnapshot,
-};
+#[cfg(not(target_os = "macos"))]
+use crate::state::LiveCursorSample;
+#[cfg(any(not(target_os = "macos"), test))]
+use crate::state::RectPoints;
+use crate::state::{GlobalPoint, MonitorRect, WindowHit, WindowListSnapshot};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FreezeCaptureTarget {
@@ -41,6 +43,7 @@ pub(crate) enum WorkerRequest {
 		monitor: MonitorRect,
 		target: FreezeCaptureTarget,
 	},
+	#[cfg(not(target_os = "macos"))]
 	CaptureMonitorRegion {
 		monitor: MonitorRect,
 		rect_px: RectPoints,
@@ -53,7 +56,7 @@ pub(crate) enum WorkerRequest {
 
 #[derive(Debug)]
 pub(crate) enum WorkerResponse {
-	#[cfg_attr(target_os = "macos", allow(dead_code))]
+	#[cfg(not(target_os = "macos"))]
 	SampledLiveCursor {
 		monitor: MonitorRect,
 		point: GlobalPoint,
@@ -81,6 +84,7 @@ pub(crate) enum WorkerResponse {
 	Error(String),
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 #[derive(Debug)]
 pub(crate) enum CapturedMonitorRegionResult {
 	Image(RgbaImage),
@@ -93,6 +97,7 @@ pub(crate) enum WorkerRequestSendError {
 	Disconnected,
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 #[derive(Debug)]
 pub(crate) struct CapturedMonitorRegionResponse {
 	pub(crate) monitor: MonitorRect,
@@ -104,6 +109,7 @@ pub(crate) struct CapturedMonitorRegionResponse {
 pub(crate) struct OverlayWorker {
 	req_tx: SyncSender<WorkerRequest>,
 	resp_rx: Receiver<WorkerResponse>,
+	#[cfg(any(not(target_os = "macos"), test))]
 	region_capture_resp_rx: Receiver<CapturedMonitorRegionResponse>,
 }
 impl OverlayWorker {
@@ -113,20 +119,35 @@ impl OverlayWorker {
 	) -> Self {
 		let (req_tx, req_rx) = mpsc::sync_channel(64);
 		let (resp_tx, resp_rx) = mpsc::channel();
+		#[cfg(any(not(target_os = "macos"), test))]
 		let (region_capture_resp_tx, region_capture_resp_rx) = mpsc::channel();
 
 		thread::spawn(move || {
-			Self::run_worker_loop(backend, req_rx, resp_tx, region_capture_resp_tx, response_waker)
+			Self::run_worker_loop(
+				backend,
+				req_rx,
+				resp_tx,
+				#[cfg(any(not(target_os = "macos"), test))]
+				region_capture_resp_tx,
+				response_waker,
+			)
 		});
 
-		Self { req_tx, resp_rx, region_capture_resp_rx }
+		Self {
+			req_tx,
+			resp_rx,
+			#[cfg(any(not(target_os = "macos"), test))]
+			region_capture_resp_rx,
+		}
 	}
 
 	fn run_worker_loop(
 		mut backend: Box<dyn CaptureBackend>,
 		req_rx: Receiver<WorkerRequest>,
 		resp_tx: Sender<WorkerResponse>,
-		region_capture_resp_tx: Sender<CapturedMonitorRegionResponse>,
+		#[cfg(any(not(target_os = "macos"), test))] region_capture_resp_tx: Sender<
+			CapturedMonitorRegionResponse,
+		>,
 		response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	) {
 		while let Ok(first) = req_rx.recv() {
@@ -141,6 +162,7 @@ impl OverlayWorker {
 			pending.dispatch(
 				&mut *backend,
 				&resp_tx,
+				#[cfg(any(not(target_os = "macos"), test))]
 				&region_capture_resp_tx,
 				response_waker.as_deref(),
 			);
@@ -233,6 +255,7 @@ impl OverlayWorker {
 		}
 	}
 
+	#[cfg(any(not(target_os = "macos"), test))]
 	fn handle_capture_monitor_region_request(
 		backend: &mut dyn CaptureBackend,
 		resp_tx: &Sender<WorkerResponse>,
@@ -339,6 +362,7 @@ impl OverlayWorker {
 		}
 	}
 
+	#[cfg(any(not(target_os = "macos"), test))]
 	fn send_region_capture_response(
 		resp_tx: &Sender<CapturedMonitorRegionResponse>,
 		response_waker: Option<&(dyn Fn() + Send + Sync)>,
@@ -414,6 +438,7 @@ impl OverlayWorker {
 		}
 	}
 
+	#[cfg(not(target_os = "macos"))]
 	pub(crate) fn request_capture_monitor_region(
 		&self,
 		monitor: MonitorRect,
@@ -432,6 +457,7 @@ impl OverlayWorker {
 		}
 	}
 
+	#[cfg(any(not(target_os = "macos"), test))]
 	pub(crate) fn try_recv_captured_monitor_region(&self) -> Option<CapturedMonitorRegionResponse> {
 		match self.region_capture_resp_rx.try_recv() {
 			Ok(msg) => Some(msg),
@@ -447,6 +473,7 @@ struct PendingWorkerRequests {
 	last_sample_cursor: Option<(MonitorRect, GlobalPoint, u64, bool, u32, u32)>,
 	last_refresh_window_list: bool,
 	last_freeze: Option<(MonitorRect, FreezeCaptureTarget)>,
+	#[cfg(not(target_os = "macos"))]
 	last_capture_region: Option<(MonitorRect, RectPoints, u64)>,
 	last_encode: Option<RgbaImage>,
 }
@@ -474,6 +501,7 @@ impl PendingWorkerRequests {
 			WorkerRequest::FreezeCapture { monitor, target } => {
 				self.last_freeze = Some((monitor, target));
 			},
+			#[cfg(not(target_os = "macos"))]
 			WorkerRequest::CaptureMonitorRegion { monitor, rect_px, request_id } => {
 				self.last_capture_region = Some((monitor, rect_px, request_id));
 			},
@@ -487,7 +515,9 @@ impl PendingWorkerRequests {
 		self,
 		backend: &mut dyn CaptureBackend,
 		resp_tx: &Sender<WorkerResponse>,
-		region_capture_resp_tx: &Sender<CapturedMonitorRegionResponse>,
+		#[cfg(any(not(target_os = "macos"), test))] _region_capture_resp_tx: &Sender<
+			CapturedMonitorRegionResponse,
+		>,
 		response_waker: Option<&(dyn Fn() + Send + Sync)>,
 	) {
 		if let Some(image) = self.last_encode {
@@ -500,11 +530,12 @@ impl PendingWorkerRequests {
 
 			return;
 		}
+		#[cfg(not(target_os = "macos"))]
 		if let Some((monitor, rect_px, request_id)) = self.last_capture_region {
 			OverlayWorker::handle_capture_monitor_region_request(
 				backend,
 				resp_tx,
-				region_capture_resp_tx,
+				_region_capture_resp_tx,
 				response_waker,
 				monitor,
 				rect_px,
