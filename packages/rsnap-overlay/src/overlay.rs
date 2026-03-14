@@ -65,7 +65,6 @@ use wgpu::Buffer;
 use wgpu::BufferBindingType;
 use wgpu::BufferSize;
 use wgpu::BufferUsages;
-use wgpu::Color;
 use wgpu::ColorWrites;
 use wgpu::CompositeAlphaMode;
 use wgpu::Device;
@@ -103,6 +102,7 @@ use wgpu::TextureView;
 use wgpu::TextureViewDescriptor;
 use wgpu::TextureViewDimension;
 use wgpu::Trace;
+use wgpu::{self};
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use winit::event::KeyEvent;
 use winit::{
@@ -6675,7 +6675,7 @@ impl WindowRenderer {
 		});
 
 		for level in 1..mip_level_count {
-			let src_view = texture.create_view(&wgpu::TextureViewDescriptor {
+			let src_view = texture.create_view(&TextureViewDescriptor {
 				label: Some("rsnap-mipgen src view"),
 				format: None,
 				dimension: None,
@@ -6686,7 +6686,7 @@ impl WindowRenderer {
 				base_array_layer: 0,
 				array_layer_count: Some(1),
 			});
-			let dst_view = texture.create_view(&wgpu::TextureViewDescriptor {
+			let dst_view = texture.create_view(&TextureViewDescriptor {
 				label: Some("rsnap-mipgen dst view"),
 				format: None,
 				dimension: None,
@@ -6718,7 +6718,7 @@ impl WindowRenderer {
 					depth_slice: None,
 					resolve_target: None,
 					ops: wgpu::Operations {
-						load: LoadOp::Clear(Color::BLACK),
+						load: LoadOp::Clear(wgpu::Color::BLACK),
 						store: StoreOp::Store,
 					},
 				})],
