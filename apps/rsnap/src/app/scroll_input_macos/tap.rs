@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::{Arc, atomic::Ordering};
-use std::thread::{self, Builder};
+use std::thread::Builder;
 
 use crate::app::scroll_input_macos::decode;
 use crate::app::scroll_input_macos::state::SharedScrollInputState;
