@@ -1,3 +1,8 @@
+#![allow(
+	dead_code,
+	reason = "XY-113 narrows the public crate facade while leaving ScreenCaptureKit implementation cleanup to a separate follow-up lane."
+)]
+
 use std::collections::VecDeque;
 use std::ops::Deref;
 use std::process;
