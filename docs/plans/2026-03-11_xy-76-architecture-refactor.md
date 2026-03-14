@@ -32,7 +32,7 @@ Status: Closed on 2026-03-11. Retained for historical context; may drift from cu
 ## Constraints
 
 - `cargo make checks` is the final gate for every child lane and for umbrella closeout.
-- Each child issue should execute in a separate worktree.
+- Each child issue should execute in a separate workspace.
 - Run the `pre-commit` skill before any `git commit` or `git push`.
 - Preserve user-visible behavior unless a change is intentional and reviewed.
 - Any new or moved `cfg` / `target_os` branches introduced by `XY-76` must end up in explicit platform modules or platform entrypoints, not in shared runtime flows that already have a platform-agnostic owner.
@@ -75,15 +75,15 @@ Status: Closed on 2026-03-11. Retained for historical context; may drift from cu
 
 Start with app-shell and overlay boundaries first because they are the highest-leverage control surfaces. They shape how session ownership, platform hooks, and overlay state flow through the rest of the system, so stabilizing them first reduces the risk of pushing more incidental complexity into the current hotspots.
 
-Treat each child issue as its own worktree and review boundary. That keeps refactor scope narrow, prevents unrelated architecture churn from piling up in one lane, and makes it easier to stop for review when a boundary decision turns out to be larger than expected.
+Treat each child issue as its own workspace and review boundary. That keeps refactor scope narrow, prevents unrelated architecture churn from piling up in one lane, and makes it easier to stop for review when a boundary decision turns out to be larger than expected.
 
-If a child issue becomes risky or turns into a multi-step refactor with uncertain ownership, route its execution through the current task-specific orchestration workflow inside that worktree instead of widening the current lane.
+If a child issue becomes risky or turns into a multi-step refactor with uncertain ownership, route its execution through the current task-specific orchestration workflow inside that workspace instead of widening the current lane.
 
 ## Task 1: XY-79 — App Shell Boundary Refactor
 
 **Owner**
 
-Executor in a dedicated XY-79 worktree.
+Executor in a dedicated XY-79 workspace.
 
 **Status**
 
@@ -125,7 +125,7 @@ done
 
 **Owner**
 
-Executor in a dedicated XY-80 worktree.
+Executor in a dedicated XY-80 workspace.
 
 **Status**
 
@@ -165,7 +165,7 @@ Settings persistence, settings UI, and platform-specific window-shell behavior c
 
 **Owner**
 
-Executor in a dedicated XY-81 worktree.
+Executor in a dedicated XY-81 workspace.
 
 **Status**
 
@@ -210,7 +210,7 @@ The overlay engine no longer keeps most window lifecycle, HUD and render coordin
 
 **Owner**
 
-Executor in a dedicated XY-82 worktree.
+Executor in a dedicated XY-82 workspace.
 
 **Status**
 
@@ -295,13 +295,13 @@ Public docs, the spec, and umbrella issue state are consistent with the implemen
 
 ## Rollout Notes
 
-- Each child issue should run in its own worktree using `git-worktrees`.
+- Each child issue should run in its own workspace using `.workspaces`.
 - `pre-commit` is required before any `git commit` or `git push`.
 - Each child issue is a PR-sized review boundary.
-- Use the current task-specific orchestration workflow inside a dedicated worktree if a child lane becomes internally risky or multi-step.
+- Use the current task-specific orchestration workflow inside a dedicated workspace if a child lane becomes internally risky or multi-step.
 
 ## Suggested Execution
 
 - Sequential: Task 1 -> Task 3 -> Task 4 -> Task 5, because the outer app and overlay boundaries should stabilize before capture cleanup.
-- Parallelizable: Task 2 can run in a separate worktree after Task 1 stabilizes the settings-window launch and event surfaces.
-- Recommended next step: hand the saved plan to `plan-execution` and start with `XY-79` in a dedicated worktree.
+- Parallelizable: Task 2 can run in a separate workspace after Task 1 stabilizes the settings-window launch and event surfaces.
+- Recommended next step: hand the saved plan to `plan-execution` and start with `XY-79` in a dedicated workspace.
