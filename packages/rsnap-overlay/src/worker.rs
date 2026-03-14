@@ -3,9 +3,8 @@ use std::sync::{
 	mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError},
 };
 use std::thread;
-use std::time::Duration;
 #[cfg(not(target_os = "macos"))]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use image::RgbaImage;
 

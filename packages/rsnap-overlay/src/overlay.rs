@@ -5,7 +5,6 @@ mod scroll_runtime;
 mod session_state;
 mod window_runtime;
 
-use egui::Mesh;
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
 use std::mem;
@@ -13,6 +12,8 @@ use std::panic;
 use std::ptr;
 use std::slice;
 use std::{
+	borrow::Cow,
+	cmp::Ordering,
 	collections::HashMap,
 	path::PathBuf,
 	sync::{Arc, Mutex},
@@ -24,6 +25,7 @@ use color_eyre::eyre::{self, Result, WrapErr};
 use device_query::{DeviceQuery, Keycode};
 use egui::ColorImage;
 use egui::FullOutput;
+use egui::Mesh;
 use egui::Painter;
 use egui::TextureHandle;
 use egui::TextureId;
@@ -36,7 +38,6 @@ use egui::{
 use egui::{
 	Area, CentralPanel, ClippedPrimitive, Direction, Id, LayerId, Order, RichText, Sense, Shape,
 	Stroke, StrokeKind, UiBuilder, ViewportId, Visuals,
-	epaint::{self},
 };
 use egui_phosphor::{Variant, regular};
 use egui_wgpu::{Renderer, ScreenDescriptor};
@@ -54,16 +55,54 @@ use objc2_app_kit::NSScreen;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::{Deserialize, Serialize};
 use wgpu::Adapter;
+use wgpu::AddressMode;
 use wgpu::BindGroup;
 use wgpu::BindGroupLayout;
+use wgpu::BindingResource;
+use wgpu::BindingType;
+use wgpu::BlendState;
+use wgpu::Buffer;
+use wgpu::BufferBindingType;
+use wgpu::BufferSize;
+use wgpu::BufferUsages;
+use wgpu::Color;
+use wgpu::ColorWrites;
 use wgpu::CompositeAlphaMode;
 use wgpu::Device;
+use wgpu::ExperimentalFeatures;
+use wgpu::Features;
+use wgpu::FilterMode;
+use wgpu::FrontFace;
+use wgpu::InstanceDescriptor;
+use wgpu::LoadOp;
+use wgpu::MemoryHints;
+use wgpu::MultisampleState;
+use wgpu::Origin3d;
+use wgpu::PipelineCompilationOptions;
+use wgpu::PolygonMode;
+use wgpu::PowerPreference;
+use wgpu::PresentMode;
+use wgpu::PrimitiveTopology;
 use wgpu::Queue;
 use wgpu::RenderPipeline;
+use wgpu::Sampler;
+use wgpu::SamplerBindingType;
+use wgpu::ShaderSource;
+use wgpu::ShaderStages;
+use wgpu::StoreOp;
 use wgpu::Surface;
 use wgpu::SurfaceCapabilities;
 use wgpu::SurfaceError;
 use wgpu::SurfaceTexture;
+use wgpu::Texture;
+use wgpu::TextureAspect;
+use wgpu::TextureDimension;
+use wgpu::TextureSampleType;
+use wgpu::TextureUsages;
+use wgpu::TextureView;
+use wgpu::TextureViewDescriptor;
+use wgpu::TextureViewDimension;
+use wgpu::Trace;
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use winit::event::KeyEvent;
 use winit::{
@@ -93,56 +132,11 @@ use crate::state::LiveCursorSample;
 use crate::worker::CapturedMonitorRegionResult;
 use crate::{
 	state::{
-		GlobalPoint, MonitorRect, MonitorRectPoints, OverlayMode, OverlayState, RectPoints,
+		GlobalPoint, MonitorRect, MonitorRectPoints, OverlayMode, OverlayState, RectPoints, Rgb,
 		WindowHit, WindowListSnapshot,
 	},
 	worker::{FreezeCaptureTarget, OverlayWorker, WorkerRequestSendError, WorkerResponse},
 };
-
-use std::borrow::Cow;
-use std::cmp::Ordering;
-
-use wgpu::AddressMode;
-use wgpu::BindingResource;
-use wgpu::BindingType;
-use wgpu::BlendState;
-use wgpu::BufferBindingType;
-use wgpu::BufferSize;
-use wgpu::BufferUsages;
-use wgpu::ColorWrites;
-use wgpu::ExperimentalFeatures;
-use wgpu::Features;
-use wgpu::FilterMode;
-use wgpu::FrontFace;
-use wgpu::InstanceDescriptor;
-use wgpu::LoadOp;
-use wgpu::MemoryHints;
-use wgpu::MultisampleState;
-use wgpu::Origin3d;
-use wgpu::PipelineCompilationOptions;
-use wgpu::PolygonMode;
-use wgpu::PowerPreference;
-use wgpu::PresentMode;
-use wgpu::PrimitiveTopology;
-use wgpu::SamplerBindingType;
-use wgpu::ShaderSource;
-use wgpu::ShaderStages;
-use wgpu::StoreOp;
-use wgpu::TextureAspect;
-use wgpu::TextureDimension;
-use wgpu::TextureSampleType;
-use wgpu::TextureUsages;
-use wgpu::TextureViewDimension;
-use wgpu::Trace;
-use wgpu::{self};
-use wgpu::{self};
-
-use crate::state::Rgb;
-
-use wgpu::Buffer;
-use wgpu::Sampler;
-use wgpu::Texture;
-use wgpu::TextureView;
 
 #[cfg(target_os = "macos")]
 macro_rules! sel {
@@ -6724,7 +6718,7 @@ impl WindowRenderer {
 					depth_slice: None,
 					resolve_target: None,
 					ops: wgpu::Operations {
-						load: LoadOp::Clear(wgpu::Color::BLACK),
+						load: LoadOp::Clear(Color::BLACK),
 						store: StoreOp::Store,
 					},
 				})],
