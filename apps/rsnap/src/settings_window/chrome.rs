@@ -1,4 +1,7 @@
-use egui::{self, Align, Context, Layout, Ui};
+use egui::{
+	self, Align, CentralPanel, Color32, Context, Layout, Rect, RichText, ScrollArea, TextStyle, Ui,
+	UiBuilder, Visuals,
+};
 use winit::dpi::LogicalSize;
 use winit::window::Theme;
 
@@ -16,12 +19,12 @@ impl SettingsWindow {
 
 		let mut changed = false;
 
-		egui::CentralPanel::default().show(ctx, |ui| {
+		CentralPanel::default().show(ctx, |ui| {
 			let combo_width = self.combo_width;
 
 			Self::with_settings_density(ui, combo_width, |ui| {
 				changed |= self.render_titlebar_controls(ui, ctx, settings);
-				egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+				ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
 					changed |= self.render_all_sections(ui, ctx, settings);
 				});
 			});
@@ -35,13 +38,10 @@ impl SettingsWindow {
 			return;
 		}
 
-		let font_id = egui::TextStyle::Body.resolve(&ctx.style());
+		let font_id = TextStyle::Body.resolve(&ctx.style());
 		let measure = |text: &str| -> f32 {
 			ctx.fonts_mut(|fonts| {
-				fonts
-					.layout_no_wrap(text.to_owned(), font_id.clone(), egui::Color32::WHITE)
-					.size()
-					.x
+				fonts.layout_no_wrap(text.to_owned(), font_id.clone(), Color32::WHITE).size().x
 			})
 		};
 		let max_label = [
@@ -113,13 +113,13 @@ impl SettingsWindow {
 		let y_pad = ((bar_rect.height() - row_height) * 0.5).round();
 		let theme_y = (bar_rect.min.y + y_pad + platform::theme_buttons_y_offset())
 			.clamp(bar_rect.min.y, bar_rect.max.y - row_height);
-		let theme_rect = egui::Rect::from_min_size(
+		let theme_rect = Rect::from_min_size(
 			egui::pos2(bar_rect.min.x, theme_y),
 			egui::vec2(bar_rect.width(), row_height),
 		);
 		let mut changed = false;
 
-		ui.scope_builder(egui::UiBuilder::new().max_rect(theme_rect), |ui| {
+		ui.scope_builder(UiBuilder::new().max_rect(theme_rect), |ui| {
 			changed |= self.render_theme_mode_buttons(ui, ctx, settings);
 		});
 
@@ -147,19 +147,19 @@ impl SettingsWindow {
 				ui.selectable_value(
 					&mut settings.theme_mode,
 					ThemeMode::System,
-					egui::RichText::new(&self.theme_icon_system).size(SETTINGS_THEME_ICON_SIZE),
+					RichText::new(&self.theme_icon_system).size(SETTINGS_THEME_ICON_SIZE),
 				)
 				.on_hover_text("System");
 				ui.selectable_value(
 					&mut settings.theme_mode,
 					ThemeMode::Dark,
-					egui::RichText::new(&self.theme_icon_dark).size(SETTINGS_THEME_ICON_SIZE),
+					RichText::new(&self.theme_icon_dark).size(SETTINGS_THEME_ICON_SIZE),
 				)
 				.on_hover_text("Dark");
 				ui.selectable_value(
 					&mut settings.theme_mode,
 					ThemeMode::Light,
-					egui::RichText::new(&self.theme_icon_light).size(SETTINGS_THEME_ICON_SIZE),
+					RichText::new(&self.theme_icon_light).size(SETTINGS_THEME_ICON_SIZE),
 				)
 				.on_hover_text("Light");
 
@@ -203,8 +203,8 @@ impl SettingsWindow {
 
 		if Some(effective) != self.effective_theme {
 			match effective {
-				Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
-				Theme::Light => ctx.set_visuals(egui::Visuals::light()),
+				Theme::Dark => ctx.set_visuals(Visuals::dark()),
+				Theme::Light => ctx.set_visuals(Visuals::light()),
 			}
 
 			self.effective_theme = Some(effective);

@@ -1,8 +1,13 @@
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
+use tray_icon::TrayIconBuilder;
+use tray_icon::menu::Menu;
 use tray_icon::menu::MenuEvent;
 #[cfg(target_os = "macos")]
 use tray_icon::menu::Submenu;
-use tray_icon::menu::{MenuItem, PredefinedMenuItem, accelerator};
+use tray_icon::menu::{
+	MenuItem, PredefinedMenuItem,
+	accelerator::{self, Accelerator, Code, Modifiers},
+};
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
@@ -16,22 +21,16 @@ impl App {
 			return;
 		}
 
-		let menubar = tray_icon::menu::Menu::new();
+		let menubar = Menu::new();
 		let settings_item = MenuItem::new(
 			"Settings…",
 			true,
-			Some(accelerator::Accelerator::new(
-				Some(accelerator::Modifiers::SUPER),
-				accelerator::Code::Comma,
-			)),
+			Some(Accelerator::new(Some(Modifiers::SUPER), Code::Comma)),
 		);
 		let quit_item = MenuItem::new(
 			"Quit rsnap",
 			true,
-			Some(accelerator::Accelerator::new(
-				Some(accelerator::Modifiers::SUPER),
-				accelerator::Code::KeyQ,
-			)),
+			Some(Accelerator::new(Some(Modifiers::SUPER), Code::KeyQ)),
 		);
 		let app_menu = match Submenu::with_items(
 			"rsnap",
@@ -68,30 +67,21 @@ impl App {
 			return;
 		}
 
-		let tray_menu = tray_icon::menu::Menu::new();
+		let tray_menu = Menu::new();
 		let capture_item = MenuItem::new(
 			"Capture",
 			true,
-			Some(accelerator::Accelerator::new(
-				Some(accelerator::Modifiers::ALT),
-				accelerator::Code::KeyX,
-			)),
+			Some(Accelerator::new(Some(Modifiers::ALT), Code::KeyX)),
 		);
 		let settings_item = MenuItem::new(
 			"Settings…",
 			true,
-			Some(accelerator::Accelerator::new(
-				Some(accelerator::CMD_OR_CTRL),
-				accelerator::Code::Comma,
-			)),
+			Some(Accelerator::new(Some(accelerator::CMD_OR_CTRL), Code::Comma)),
 		);
 		let quit_item = MenuItem::new(
 			"Quit",
 			true,
-			Some(accelerator::Accelerator::new(
-				Some(accelerator::CMD_OR_CTRL),
-				accelerator::Code::KeyQ,
-			)),
+			Some(Accelerator::new(Some(accelerator::CMD_OR_CTRL), Code::KeyQ)),
 		);
 
 		if let Err(err) = tray_menu.append_items(&[
@@ -118,7 +108,7 @@ impl App {
 				return;
 			},
 		};
-		let tray_icon = match tray_icon::TrayIconBuilder::new()
+		let tray_icon = match TrayIconBuilder::new()
 			.with_tooltip("rsnap")
 			.with_menu(Box::new(tray_menu))
 			.with_icon(icon)

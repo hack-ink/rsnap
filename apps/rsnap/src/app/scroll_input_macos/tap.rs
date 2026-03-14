@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::{Arc, atomic::Ordering};
-use std::thread;
+use std::thread::{self, Builder};
 
 use crate::app::scroll_input_macos::decode;
 use crate::app::scroll_input_macos::state::SharedScrollInputState;
@@ -24,7 +24,7 @@ struct ScrollInputTapContext {
 }
 
 pub(in crate::app) fn spawn_scroll_input_observer(shared_state: Arc<SharedScrollInputState>) {
-	thread::Builder::new()
+	Builder::new()
 		.name(String::from("rsnap-scroll-input-tap"))
 		.spawn(move || {
 			run_scroll_input_event_tap_thread(shared_state);
