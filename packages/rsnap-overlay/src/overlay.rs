@@ -5,6 +5,7 @@ mod scroll_runtime;
 mod session_state;
 mod window_runtime;
 
+use egui::Mesh;
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
 use std::mem;
@@ -21,7 +22,6 @@ use std::{
 use color_eyre::eyre::{self, Result, WrapErr};
 #[cfg(not(target_os = "macos"))]
 use device_query::{DeviceQuery, Keycode};
-use egui::ClippedPrimitive;
 use egui::ColorImage;
 use egui::FullOutput;
 use egui::Painter;
@@ -32,6 +32,11 @@ use egui::Ui;
 use egui::{
 	self, Align, Align2, Color32, CornerRadius, Event, FontDefinitions, FontFamily, FontId, Frame,
 	Layout, Margin, PointerButton, Pos2, Rect, Vec2,
+};
+use egui::{
+	Area, CentralPanel, ClippedPrimitive, Direction, Id, LayerId, Order, RichText, Sense, Shape,
+	Stroke, StrokeKind, UiBuilder, ViewportId, Visuals,
+	epaint::{self},
 };
 use egui_phosphor::{Variant, regular};
 use egui_wgpu::{Renderer, ScreenDescriptor};
@@ -93,6 +98,51 @@ use crate::{
 	},
 	worker::{FreezeCaptureTarget, OverlayWorker, WorkerRequestSendError, WorkerResponse},
 };
+
+use std::borrow::Cow;
+use std::cmp::Ordering;
+
+use wgpu::AddressMode;
+use wgpu::BindingResource;
+use wgpu::BindingType;
+use wgpu::BlendState;
+use wgpu::BufferBindingType;
+use wgpu::BufferSize;
+use wgpu::BufferUsages;
+use wgpu::ColorWrites;
+use wgpu::ExperimentalFeatures;
+use wgpu::Features;
+use wgpu::FilterMode;
+use wgpu::FrontFace;
+use wgpu::InstanceDescriptor;
+use wgpu::LoadOp;
+use wgpu::MemoryHints;
+use wgpu::MultisampleState;
+use wgpu::Origin3d;
+use wgpu::PipelineCompilationOptions;
+use wgpu::PolygonMode;
+use wgpu::PowerPreference;
+use wgpu::PresentMode;
+use wgpu::PrimitiveTopology;
+use wgpu::SamplerBindingType;
+use wgpu::ShaderSource;
+use wgpu::ShaderStages;
+use wgpu::StoreOp;
+use wgpu::TextureAspect;
+use wgpu::TextureDimension;
+use wgpu::TextureSampleType;
+use wgpu::TextureUsages;
+use wgpu::TextureViewDimension;
+use wgpu::Trace;
+use wgpu::{self};
+use wgpu::{self};
+
+use crate::state::Rgb;
+
+use wgpu::Buffer;
+use wgpu::Sampler;
+use wgpu::Texture;
+use wgpu::TextureView;
 
 #[cfg(target_os = "macos")]
 macro_rules! sel {
@@ -1180,7 +1230,7 @@ impl OverlaySession {
 
 				if fps.is_finite() && fps > 0.0 { Some(fps) } else { None }
 			})
-			.max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+			.max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
 		let fps = monitor_fps.or(fallback_fps).unwrap_or(INTERACTIVE_REPAINT_FPS_FLOOR);
 		let fps = fps.max(INTERACTIVE_REPAINT_FPS_FLOOR);
 
@@ -6118,7 +6168,7 @@ impl ScrollPreviewWindow {
 
 		let egui_state = egui_winit::State::new(
 			egui_ctx.clone(),
-			egui::ViewportId::ROOT,
+			ViewportId::ROOT,
 			window.as_ref(),
 			None,
 			None,
@@ -6191,7 +6241,7 @@ impl ScrollPreviewWindow {
 		let raw_input = self.egui_state.take_egui_input(&self.window);
 
 		self.egui_ctx.run(raw_input, |ctx| {
-			egui::CentralPanel::default().frame(Frame::new().fill(Color32::TRANSPARENT)).show(
+			CentralPanel::default().frame(Frame::new().fill(Color32::TRANSPARENT)).show(
 				ctx,
 				|ui| {
 					let _ = view.paused;
@@ -6205,7 +6255,7 @@ impl ScrollPreviewWindow {
 					};
 					let tile_frame = Frame::new()
 						.fill(tile_fill)
-						.stroke(egui::Stroke::new(1.0, tile_stroke))
+						.stroke(Stroke::new(1.0, tile_stroke))
 						.corner_radius(CornerRadius::same(18))
 						.inner_margin(Margin::symmetric(14, 14));
 
@@ -6220,7 +6270,7 @@ impl ScrollPreviewWindow {
 							let draw_size = preview_image.size_points * scale;
 
 							ui.with_layout(
-								Layout::centered_and_justified(egui::Direction::TopDown),
+								Layout::centered_and_justified(Direction::TopDown),
 								|ui| {
 									ui.image((preview_image.texture.id(), draw_size));
 								},
@@ -6252,7 +6302,7 @@ impl ScrollPreviewWindow {
 			pixels_per_point,
 		};
 		let frame = self.acquire_frame(gpu)?;
-		let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let view = frame.texture.create_view(&TextureViewDescriptor::default());
 		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("rsnap-scroll-preview encoder"),
 		});
@@ -6272,8 +6322,8 @@ impl ScrollPreviewWindow {
 					depth_slice: None,
 					resolve_target: None,
 					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
-						store: wgpu::StoreOp::Store,
+						load: LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
+						store: StoreOp::Store,
 					},
 				})],
 				depth_stencil_attachment: None,
@@ -6299,8 +6349,8 @@ impl ScrollPreviewWindow {
 		}
 
 		match theme {
-			HudTheme::Dark => self.egui_ctx.set_visuals(egui::Visuals::dark()),
-			HudTheme::Light => self.egui_ctx.set_visuals(egui::Visuals::light()),
+			HudTheme::Dark => self.egui_ctx.set_visuals(Visuals::dark()),
+			HudTheme::Light => self.egui_ctx.set_visuals(Visuals::light()),
 		}
 
 		let full_output = self.render_preview_ui(view);
@@ -6443,9 +6493,9 @@ struct GpuContext {
 }
 impl GpuContext {
 	fn new() -> Result<Self> {
-		let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+		let instance = wgpu::Instance::new(&InstanceDescriptor::default());
 		let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-			power_preference: wgpu::PowerPreference::LowPower,
+			power_preference: PowerPreference::LowPower,
 			compatible_surface: None,
 			force_fallback_adapter: false,
 		}))
@@ -6453,13 +6503,13 @@ impl GpuContext {
 		let adapter_limits = adapter.limits();
 		let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
 			label: Some("rsnap-overlay device"),
-			required_features: wgpu::Features::empty(),
+			required_features: Features::empty(),
 			// Use the adapter's actual limits. Using `downlevel_defaults()` caps max texture
 			// size to 2048, which breaks on common HiDPI displays.
 			required_limits: adapter_limits,
-			experimental_features: wgpu::ExperimentalFeatures::default(),
-			memory_hints: wgpu::MemoryHints::Performance,
-			trace: wgpu::Trace::Off,
+			experimental_features: ExperimentalFeatures::default(),
+			memory_hints: MemoryHints::Performance,
+			trace: Trace::Off,
 		}))
 		.wrap_err("Failed to create wgpu device")?;
 
@@ -6474,13 +6524,13 @@ struct WindowRenderer {
 	needs_reconfigure: bool,
 	egui_ctx: egui::Context,
 	egui_renderer: Renderer,
-	bg_sampler: wgpu::Sampler,
+	bg_sampler: Sampler,
 	mipgen_pipeline: RenderPipeline,
 	mipgen_surface_pipeline: RenderPipeline,
 	mipgen_bind_group_layout: BindGroupLayout,
 	hud_blur_pipeline: RenderPipeline,
 	hud_blur_bind_group_layout: BindGroupLayout,
-	hud_blur_uniform: wgpu::Buffer,
+	hud_blur_uniform: Buffer,
 	hud_bg: Option<HudBg>,
 	hud_bg_generation: u64,
 	hud_pill: Option<HudPillGeometry>,
@@ -6505,9 +6555,7 @@ impl WindowRenderer {
 	) -> (RenderPipeline, BindGroupLayout) {
 		let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
 			label: Some("rsnap-mipgen shader"),
-			source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-				"mipgen.wgsl"
-			))),
+			source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("mipgen.wgsl"))),
 		});
 		let bind_group_layout =
 			gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -6515,18 +6563,18 @@ impl WindowRenderer {
 				entries: &[
 					wgpu::BindGroupLayoutEntry {
 						binding: 0,
-						visibility: wgpu::ShaderStages::FRAGMENT,
-						ty: wgpu::BindingType::Texture {
+						visibility: ShaderStages::FRAGMENT,
+						ty: BindingType::Texture {
 							multisampled: false,
-							view_dimension: wgpu::TextureViewDimension::D2,
-							sample_type: wgpu::TextureSampleType::Float { filterable: true },
+							view_dimension: TextureViewDimension::D2,
+							sample_type: TextureSampleType::Float { filterable: true },
 						},
 						count: None,
 					},
 					wgpu::BindGroupLayoutEntry {
 						binding: 1,
-						visibility: wgpu::ShaderStages::FRAGMENT,
-						ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+						visibility: ShaderStages::FRAGMENT,
+						ty: BindingType::Sampler(SamplerBindingType::Filtering),
 						count: None,
 					},
 				],
@@ -6542,28 +6590,28 @@ impl WindowRenderer {
 			vertex: wgpu::VertexState {
 				module: &shader,
 				entry_point: Some("vs_main"),
-				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				compilation_options: PipelineCompilationOptions::default(),
 				buffers: &[],
 			},
 			primitive: wgpu::PrimitiveState {
-				topology: wgpu::PrimitiveTopology::TriangleList,
+				topology: PrimitiveTopology::TriangleList,
 				strip_index_format: None,
-				front_face: wgpu::FrontFace::Ccw,
+				front_face: FrontFace::Ccw,
 				cull_mode: None,
-				polygon_mode: wgpu::PolygonMode::Fill,
+				polygon_mode: PolygonMode::Fill,
 				unclipped_depth: false,
 				conservative: false,
 			},
 			depth_stencil: None,
-			multisample: wgpu::MultisampleState::default(),
+			multisample: MultisampleState::default(),
 			fragment: Some(wgpu::FragmentState {
 				module: &shader,
 				entry_point: Some("fs_main"),
-				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				compilation_options: PipelineCompilationOptions::default(),
 				targets: &[Some(wgpu::ColorTargetState {
 					format,
 					blend: None,
-					write_mask: wgpu::ColorWrites::ALL,
+					write_mask: ColorWrites::ALL,
 				})],
 			}),
 			multiview: None,
@@ -6580,9 +6628,7 @@ impl WindowRenderer {
 	) -> RenderPipeline {
 		let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
 			label: Some("rsnap-mipgen fullscreen shader"),
-			source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-				"mipgen.wgsl"
-			))),
+			source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("mipgen.wgsl"))),
 		});
 		let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("rsnap-mipgen fullscreen pipeline layout"),
@@ -6596,28 +6642,28 @@ impl WindowRenderer {
 			vertex: wgpu::VertexState {
 				module: &shader,
 				entry_point: Some("vs_main"),
-				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				compilation_options: PipelineCompilationOptions::default(),
 				buffers: &[],
 			},
 			primitive: wgpu::PrimitiveState {
-				topology: wgpu::PrimitiveTopology::TriangleList,
+				topology: PrimitiveTopology::TriangleList,
 				strip_index_format: None,
-				front_face: wgpu::FrontFace::Ccw,
+				front_face: FrontFace::Ccw,
 				cull_mode: None,
-				polygon_mode: wgpu::PolygonMode::Fill,
+				polygon_mode: PolygonMode::Fill,
 				unclipped_depth: false,
 				conservative: false,
 			},
 			depth_stencil: None,
-			multisample: wgpu::MultisampleState::default(),
+			multisample: MultisampleState::default(),
 			fragment: Some(wgpu::FragmentState {
 				module: &shader,
 				entry_point: Some("fs_main"),
-				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				compilation_options: PipelineCompilationOptions::default(),
 				targets: &[Some(wgpu::ColorTargetState {
 					format,
 					blend: None,
-					write_mask: wgpu::ColorWrites::ALL,
+					write_mask: ColorWrites::ALL,
 				})],
 			}),
 			multiview: None,
@@ -6625,7 +6671,7 @@ impl WindowRenderer {
 		})
 	}
 
-	fn generate_mipmaps(&self, gpu: &GpuContext, texture: &wgpu::Texture, mip_level_count: u32) {
+	fn generate_mipmaps(&self, gpu: &GpuContext, texture: &Texture, mip_level_count: u32) {
 		if mip_level_count <= 1 {
 			return;
 		}
@@ -6640,7 +6686,7 @@ impl WindowRenderer {
 				format: None,
 				dimension: None,
 				usage: None,
-				aspect: wgpu::TextureAspect::All,
+				aspect: TextureAspect::All,
 				base_mip_level: level - 1,
 				mip_level_count: Some(1),
 				base_array_layer: 0,
@@ -6651,7 +6697,7 @@ impl WindowRenderer {
 				format: None,
 				dimension: None,
 				usage: None,
-				aspect: wgpu::TextureAspect::All,
+				aspect: TextureAspect::All,
 				base_mip_level: level,
 				mip_level_count: Some(1),
 				base_array_layer: 0,
@@ -6663,11 +6709,11 @@ impl WindowRenderer {
 				entries: &[
 					wgpu::BindGroupEntry {
 						binding: 0,
-						resource: wgpu::BindingResource::TextureView(&src_view),
+						resource: BindingResource::TextureView(&src_view),
 					},
 					wgpu::BindGroupEntry {
 						binding: 1,
-						resource: wgpu::BindingResource::Sampler(&self.bg_sampler),
+						resource: BindingResource::Sampler(&self.bg_sampler),
 					},
 				],
 			});
@@ -6678,8 +6724,8 @@ impl WindowRenderer {
 					depth_slice: None,
 					resolve_target: None,
 					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-						store: wgpu::StoreOp::Store,
+						load: LoadOp::Clear(wgpu::Color::BLACK),
+						store: StoreOp::Store,
 					},
 				})],
 				depth_stencil_attachment: None,
@@ -6737,26 +6783,26 @@ impl WindowRenderer {
 		let size = window.inner_size();
 
 		wgpu::SurfaceConfiguration {
-			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+			usage: TextureUsages::RENDER_ATTACHMENT,
 			format,
 			width: size.width.max(1),
 			height: size.height.max(1),
-			present_mode: wgpu::PresentMode::Fifo,
+			present_mode: PresentMode::Fifo,
 			alpha_mode,
 			view_formats: vec![],
 			desired_maximum_frame_latency: 2,
 		}
 	}
 
-	fn create_bg_sampler(gpu: &GpuContext) -> wgpu::Sampler {
+	fn create_bg_sampler(gpu: &GpuContext) -> Sampler {
 		gpu.device.create_sampler(&wgpu::SamplerDescriptor {
 			label: Some("rsnap-frozen-bg sampler"),
-			address_mode_u: wgpu::AddressMode::ClampToEdge,
-			address_mode_v: wgpu::AddressMode::ClampToEdge,
-			address_mode_w: wgpu::AddressMode::ClampToEdge,
-			mag_filter: wgpu::FilterMode::Linear,
-			min_filter: wgpu::FilterMode::Linear,
-			mipmap_filter: wgpu::FilterMode::Linear,
+			address_mode_u: AddressMode::ClampToEdge,
+			address_mode_v: AddressMode::ClampToEdge,
+			address_mode_w: AddressMode::ClampToEdge,
+			mag_filter: FilterMode::Linear,
+			min_filter: FilterMode::Linear,
+			mipmap_filter: FilterMode::Linear,
 			..Default::default()
 		})
 	}
@@ -6767,9 +6813,7 @@ impl WindowRenderer {
 	) -> (RenderPipeline, BindGroupLayout) {
 		let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
 			label: Some("rsnap-hud-blur shader"),
-			source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-				"hud_blur.wgsl"
-			))),
+			source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("hud_blur.wgsl"))),
 		});
 		let bind_group_layout =
 			gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -6777,28 +6821,28 @@ impl WindowRenderer {
 				entries: &[
 					wgpu::BindGroupLayoutEntry {
 						binding: 0,
-						visibility: wgpu::ShaderStages::FRAGMENT,
-						ty: wgpu::BindingType::Texture {
+						visibility: ShaderStages::FRAGMENT,
+						ty: BindingType::Texture {
 							multisampled: false,
-							view_dimension: wgpu::TextureViewDimension::D2,
-							sample_type: wgpu::TextureSampleType::Float { filterable: true },
+							view_dimension: TextureViewDimension::D2,
+							sample_type: TextureSampleType::Float { filterable: true },
 						},
 						count: None,
 					},
 					wgpu::BindGroupLayoutEntry {
 						binding: 1,
-						visibility: wgpu::ShaderStages::FRAGMENT,
-						ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+						visibility: ShaderStages::FRAGMENT,
+						ty: BindingType::Sampler(SamplerBindingType::Filtering),
 						count: None,
 					},
 					wgpu::BindGroupLayoutEntry {
 						binding: 2,
-						visibility: wgpu::ShaderStages::FRAGMENT,
-						ty: wgpu::BindingType::Buffer {
-							ty: wgpu::BufferBindingType::Uniform,
+						visibility: ShaderStages::FRAGMENT,
+						ty: BindingType::Buffer {
+							ty: BufferBindingType::Uniform,
 							has_dynamic_offset: false,
-							min_binding_size: wgpu::BufferSize::new(
-								mem::size_of::<HudBlurUniformRaw>() as u64,
+							min_binding_size: BufferSize::new(
+								mem::size_of::<HudBlurUniformRaw>() as u64
 							),
 						},
 						count: None,
@@ -6816,28 +6860,28 @@ impl WindowRenderer {
 			vertex: wgpu::VertexState {
 				module: &shader,
 				entry_point: Some("vs_main"),
-				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				compilation_options: PipelineCompilationOptions::default(),
 				buffers: &[],
 			},
 			primitive: wgpu::PrimitiveState {
-				topology: wgpu::PrimitiveTopology::TriangleList,
+				topology: PrimitiveTopology::TriangleList,
 				strip_index_format: None,
-				front_face: wgpu::FrontFace::Ccw,
+				front_face: FrontFace::Ccw,
 				cull_mode: None,
-				polygon_mode: wgpu::PolygonMode::Fill,
+				polygon_mode: PolygonMode::Fill,
 				unclipped_depth: false,
 				conservative: false,
 			},
 			depth_stencil: None,
-			multisample: wgpu::MultisampleState::default(),
+			multisample: MultisampleState::default(),
 			fragment: Some(wgpu::FragmentState {
 				module: &shader,
 				entry_point: Some("fs_main"),
-				compilation_options: wgpu::PipelineCompilationOptions::default(),
+				compilation_options: PipelineCompilationOptions::default(),
 				targets: &[Some(wgpu::ColorTargetState {
 					format: surface_format,
-					blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-					write_mask: wgpu::ColorWrites::ALL,
+					blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+					write_mask: ColorWrites::ALL,
 				})],
 			}),
 			multiview: None,
@@ -6944,7 +6988,7 @@ impl WindowRenderer {
 			raw_input.events = events;
 		}
 
-		if let Some(viewport) = raw_input.viewports.get_mut(&egui::ViewportId::ROOT) {
+		if let Some(viewport) = raw_input.viewports.get_mut(&ViewportId::ROOT) {
 			viewport.native_pixels_per_point = Some(pixels_per_point);
 			viewport.inner_rect = raw_input.screen_rect;
 			viewport.focused = Some(true);
@@ -7035,9 +7079,9 @@ impl WindowRenderer {
 
 			if selection_particles && matches!(state.mode, OverlayMode::Live) && !can_draw_hud {
 				let screen_rect = ctx.input(|i| i.viewport_rect());
-				let layer = egui::LayerId::new(
-					egui::Order::Foreground,
-					egui::Id::new(format!("live-capture-{}", monitor.id)),
+				let layer = LayerId::new(
+					Order::Foreground,
+					Id::new(format!("live-capture-{}", monitor.id)),
 				);
 				let painter = ctx.layer_painter(layer);
 
@@ -7193,10 +7237,8 @@ impl WindowRenderer {
 			return false;
 		}
 
-		let layer = egui::LayerId::new(
-			egui::Order::Foreground,
-			egui::Id::new(format!("frozen-pending-{}", monitor.id)),
-		);
+		let layer =
+			LayerId::new(Order::Foreground, Id::new(format!("frozen-pending-{}", monitor.id)));
 		let painter = ctx.layer_painter(layer);
 		let rect = Rect::from_min_size(
 			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
@@ -7433,7 +7475,7 @@ impl WindowRenderer {
 
 		let half = (line_width * 0.5).max(0.1);
 		let n = samples.len();
-		let mut mesh = egui::epaint::Mesh::default();
+		let mut mesh = Mesh::default();
 
 		for i in 0..n {
 			let (current_point, t) = samples[i];
@@ -7455,7 +7497,7 @@ impl WindowRenderer {
 			mesh.add_triangle(i1, n1, n0);
 		}
 
-		painter.add(egui::Shape::Mesh(mesh.into()));
+		painter.add(Shape::Mesh(mesh.into()));
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -7475,7 +7517,7 @@ impl WindowRenderer {
 
 		let half = (line_width * 0.5).max(0.1);
 		let n = samples.len();
-		let mut mesh = egui::epaint::Mesh::default();
+		let mut mesh = Mesh::default();
 
 		for i in 0..n {
 			let (current_point, t) = samples[i];
@@ -7495,7 +7537,7 @@ impl WindowRenderer {
 			mesh.add_triangle(i1, n1, n0);
 		}
 
-		painter.add(egui::Shape::Mesh(mesh.into()));
+		painter.add(Shape::Mesh(mesh.into()));
 	}
 
 	fn selection_flow_flow_band(progress: f32, phase: f32, band_width: f32) -> f32 {
@@ -7969,12 +8011,12 @@ impl WindowRenderer {
 		left_button_down: bool,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
-		egui::Area::new(egui::Id::new(format!("frozen-toolbar-{}", monitor.id)))
-			.order(egui::Order::Foreground)
+		Area::new(Id::new(format!("frozen-toolbar-{}", monitor.id)))
+			.order(Order::Foreground)
 			.fixed_pos(toolbar_pos)
 			.show(ctx, |ui| {
 				let (rect, response) =
-					ui.allocate_exact_size(toolbar_size, egui::Sense::click_and_drag());
+					ui.allocate_exact_size(toolbar_size, Sense::click_and_drag());
 				let body_fill = Self::tinted_hud_body_fill(
 					theme,
 					hud_blur_active,
@@ -8016,28 +8058,28 @@ impl WindowRenderer {
 					rect.shrink(0.5),
 					CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS),
 					toolbar_frame.stroke,
-					egui::StrokeKind::Inside,
+					StrokeKind::Inside,
 				);
 
 				let inner_stroke_color = match theme {
 					HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
 					HudTheme::Light => Color32::from_rgba_unmultiplied(255, 255, 255, 140),
 				};
-				let inner_stroke = egui::Stroke::new(1.0, inner_stroke_color);
+				let inner_stroke = Stroke::new(1.0, inner_stroke_color);
 				let inner_rect = rect.shrink(1.0);
 
 				ui.painter().rect_stroke(
 					inner_rect,
 					CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS.saturating_sub(1)),
 					inner_stroke,
-					egui::StrokeKind::Inside,
+					StrokeKind::Inside,
 				);
 
 				let inner_rect = rect.shrink2(egui::vec2(
 					HUD_PILL_INNER_MARGIN_X_POINTS,
 					HUD_PILL_INNER_MARGIN_Y_POINTS,
 				));
-				let _ = ui.scope_builder(egui::UiBuilder::new().max_rect(inner_rect), |ui| {
+				let _ = ui.scope_builder(UiBuilder::new().max_rect(inner_rect), |ui| {
 					ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
 						ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
 
@@ -8076,7 +8118,7 @@ impl WindowRenderer {
 			for tool in tools {
 				let is_mode_tool = tool.is_mode_tool();
 				let response =
-					ui.allocate_response(Vec2::new(button_size, button_size), egui::Sense::click());
+					ui.allocate_response(Vec2::new(button_size, button_size), Sense::click());
 				let hovered = response.hovered();
 				let response = response.on_hover_text(tool.label());
 				let hover_anim: f32 = if hovered { 1.0 } else { 0.0 };
@@ -8131,8 +8173,8 @@ impl WindowRenderer {
 					ui.painter().rect_stroke(
 						response.rect.shrink(hit_area_inset),
 						8.0,
-						egui::Stroke::new(1.0, selected_border),
-						egui::StrokeKind::Inside,
+						Stroke::new(1.0, selected_border),
+						StrokeKind::Inside,
 					);
 				}
 
@@ -8239,10 +8281,9 @@ impl WindowRenderer {
 			HudAnchor::Cursor => (local_cursor.x + 14.0, local_cursor.y + 14.0),
 		};
 
-		egui::Area::new("hud".into())
-			.order(egui::Order::Foreground)
-			.fixed_pos(Pos2::new(hud_x, hud_y))
-			.show(ctx, |ui| {
+		Area::new("hud".into()).order(Order::Foreground).fixed_pos(Pos2::new(hud_x, hud_y)).show(
+			ctx,
+			|ui| {
 				self.render_hud_frame(
 					ui,
 					state,
@@ -8258,7 +8299,8 @@ impl WindowRenderer {
 					theme,
 					hud_pill_out,
 				);
-			});
+			},
+		);
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -8297,7 +8339,7 @@ impl WindowRenderer {
 					HudTheme::Light => Color32::from_rgba_unmultiplied(28, 28, 32, 235),
 				};
 
-				ui.label(egui::RichText::new(err).color(err_color).monospace());
+				ui.label(RichText::new(err).color(err_color).monospace());
 			} else {
 				Self::render_hud_content(ui, state, monitor, cursor, show_alt_hint_keycap, theme);
 			}
@@ -8317,14 +8359,14 @@ impl WindowRenderer {
 			HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
 			HudTheme::Light => Color32::from_rgba_unmultiplied(255, 255, 255, 140),
 		};
-		let inner_stroke = egui::Stroke::new(1.0, inner_stroke_color);
+		let inner_stroke = Stroke::new(1.0, inner_stroke_color);
 		let inner_rect = pill_rect.shrink(1.0);
 
 		ui.painter().rect_stroke(
 			inner_rect,
 			CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS.saturating_sub(1)),
 			inner_stroke,
-			egui::StrokeKind::Inside,
+			StrokeKind::Inside,
 		);
 
 		if !hud_compact {
@@ -8362,12 +8404,12 @@ impl WindowRenderer {
 				},
 			}
 		} else {
-			egui::epaint::Shadow::NONE
+			egui::Shadow::NONE
 		};
 
 		Frame {
 			fill: body_fill,
-			stroke: egui::Stroke::new(1.0, outer_stroke_color),
+			stroke: Stroke::new(1.0, outer_stroke_color),
 			shadow: pill_shadow,
 			corner_radius: CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS),
 			inner_margin: Margin::symmetric(12, 8),
@@ -8399,10 +8441,10 @@ impl WindowRenderer {
 
 		ui.vertical(|ui| {
 			ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-				ui.label(egui::RichText::new(pos_text).color(label_color).monospace());
-				ui.label(egui::RichText::new("•").color(secondary_color).monospace());
+				ui.label(RichText::new(pos_text).color(label_color).monospace());
+				ui.label(RichText::new("•").color(secondary_color).monospace());
 
-				let (rect, _) = ui.allocate_exact_size(swatch_size, egui::Sense::hover());
+				let (rect, _) = ui.allocate_exact_size(swatch_size, Sense::hover());
 				let swatch_color = match state.rgb {
 					Some(rgb) => Color32::from_rgb(rgb.r, rgb.g, rgb.b),
 					None => Color32::from_rgba_unmultiplied(255, 255, 255, 26),
@@ -8412,45 +8454,39 @@ impl WindowRenderer {
 				ui.painter().rect_stroke(
 					rect,
 					3.0,
-					egui::Stroke::new(
+					Stroke::new(
 						1.0,
 						match theme {
 							HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 36),
 							HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
 						},
 					),
-					egui::StrokeKind::Inside,
+					StrokeKind::Inside,
 				);
-				ui.label(egui::RichText::new(hex_text).color(label_color).monospace());
-				ui.label(egui::RichText::new(rgb_text).color(secondary_color).monospace());
+				ui.label(RichText::new(hex_text).color(label_color).monospace());
+				ui.label(RichText::new(rgb_text).color(secondary_color).monospace());
 
 				if show_alt_hint_keycap {
 					let alt_active = state.alt_held;
 					let (keycap_fill, keycap_stroke, keycap_text) = match theme {
 						HudTheme::Dark if alt_active => (
 							Color32::from_rgba_unmultiplied(255, 255, 255, 40),
-							egui::Stroke::new(
-								1.0,
-								Color32::from_rgba_unmultiplied(255, 255, 255, 70),
-							),
+							Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 70)),
 							label_color,
 						),
 						HudTheme::Dark => (
 							Color32::from_rgba_unmultiplied(255, 255, 255, 18),
-							egui::Stroke::new(
-								1.0,
-								Color32::from_rgba_unmultiplied(255, 255, 255, 30),
-							),
+							Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 30)),
 							secondary_color,
 						),
 						HudTheme::Light if alt_active => (
 							Color32::from_rgba_unmultiplied(0, 0, 0, 22),
-							egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 64)),
+							Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 64)),
 							label_color,
 						),
 						HudTheme::Light => (
 							Color32::from_rgba_unmultiplied(0, 0, 0, 12),
-							egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 32)),
+							Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 32)),
 							secondary_color,
 						),
 					};
@@ -8463,7 +8499,7 @@ impl WindowRenderer {
 						..Frame::default()
 					}
 					.show(ui, |ui| {
-						ui.label(egui::RichText::new("Alt").color(keycap_text).monospace());
+						ui.label(RichText::new("Alt").color(keycap_text).monospace());
 					});
 				}
 			});
@@ -8508,8 +8544,8 @@ impl WindowRenderer {
 		y = y.clamp(screen.min.y + 6.0, (screen.max.y - tile_h - 6.0).max(screen.min.y + 6.0));
 
 		let pos = Pos2::new(x, y);
-		let tile = egui::Area::new(egui::Id::new("rsnap-loupe-tile"))
-			.order(egui::Order::Foreground)
+		let tile = Area::new(Id::new("rsnap-loupe-tile"))
+			.order(Order::Foreground)
 			.fixed_pos(pos)
 			.show(&ctx, |ui| {
 				let _ = hud_blur_active;
@@ -8518,7 +8554,7 @@ impl WindowRenderer {
 					HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 40),
 					HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
 				};
-				let outer_stroke = egui::Stroke::new(1.0, outer_stroke_color);
+				let outer_stroke = Stroke::new(1.0, outer_stroke_color);
 				let shadow = egui::epaint::Shadow {
 					offset: [0, 0],
 					blur: 10,
@@ -8642,9 +8678,9 @@ impl WindowRenderer {
 			.map(|loupe| loupe.patch.dimensions())
 			.unwrap_or((fallback_side_px, fallback_side_px));
 		let side = hud_helpers::stable_live_loupe_side_points(state, cell);
-		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), egui::Sense::hover());
+		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), Sense::hover());
 		let body_fill = hud_helpers::hud_body_fill_srgba8(theme, hud_opaque);
-		let stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 140));
+		let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 140));
 		let placeholder_fill =
 			Color32::from_rgba_unmultiplied(body_fill[0], body_fill[1], body_fill[2], 255);
 		let image_rect =
@@ -8662,7 +8698,7 @@ impl WindowRenderer {
 			ui.painter().rect_filled(rect, 3.0, placeholder_fill);
 		}
 
-		ui.painter().rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Outside);
+		ui.painter().rect_stroke(rect, 3.0, stroke, StrokeKind::Outside);
 
 		let center_x = (w / 2) as f32;
 		let center_y = (h / 2) as f32;
@@ -8673,8 +8709,8 @@ impl WindowRenderer {
 		ui.painter().rect_stroke(
 			center_rect,
 			0.0,
-			egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 180)),
-			egui::StrokeKind::Inside,
+			Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 180)),
+			StrokeKind::Inside,
 		);
 	}
 
@@ -8700,7 +8736,7 @@ impl WindowRenderer {
 		const LOUPE_SIDE_PX: i32 = (LOUPE_RADIUS_PX * 2) + 1;
 
 		let side = (LOUPE_SIDE_PX as f32) * cell;
-		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), egui::Sense::hover());
+		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), Sense::hover());
 		let Some(image) = state.frozen_image.as_ref() else {
 			return;
 		};
@@ -8712,9 +8748,8 @@ impl WindowRenderer {
 		let height = height as i32;
 		let center_x = center_x as i32;
 		let center_y = center_y as i32;
-		let stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 140));
-		let grid_stroke =
-			egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
+		let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 140));
+		let grid_stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
 
 		for dy in -LOUPE_RADIUS_PX..=LOUPE_RADIUS_PX {
 			for dx in -LOUPE_RADIUS_PX..=LOUPE_RADIUS_PX {
@@ -8749,7 +8784,7 @@ impl WindowRenderer {
 				.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], grid_stroke);
 		}
 
-		ui.painter().rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Outside);
+		ui.painter().rect_stroke(rect, 3.0, stroke, StrokeKind::Outside);
 
 		let center_min = Pos2::new(
 			rect.min.x + (LOUPE_RADIUS_PX as f32) * cell,
@@ -8760,8 +8795,8 @@ impl WindowRenderer {
 		ui.painter().rect_stroke(
 			center_rect,
 			0.0,
-			egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 180)),
-			egui::StrokeKind::Inside,
+			Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 180)),
+			StrokeKind::Inside,
 		);
 	}
 
@@ -8812,7 +8847,7 @@ impl WindowRenderer {
 		screen_descriptor: &ScreenDescriptor,
 	) -> Result<()> {
 		let started_at = Instant::now();
-		let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let view = frame.texture.create_view(&TextureViewDescriptor::default());
 		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("rsnap-overlay encoder"),
 		});
@@ -8832,8 +8867,8 @@ impl WindowRenderer {
 					depth_slice: None,
 					resolve_target: None,
 					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
-						store: wgpu::StoreOp::Store,
+						load: LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
+						store: StoreOp::Store,
 					},
 				})],
 				depth_stencil_attachment: None,
@@ -8980,7 +9015,7 @@ impl WindowRenderer {
 		let hud_blur_uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("rsnap-hud-blur uniform"),
 			size: mem::size_of::<HudBlurUniformRaw>() as u64,
-			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+			usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
 			mapped_at_creation: false,
 		});
 		let now = Instant::now();
@@ -9030,8 +9065,8 @@ impl WindowRenderer {
 		}
 
 		match theme {
-			HudTheme::Dark => self.egui_ctx.set_visuals(egui::Visuals::dark()),
-			HudTheme::Light => self.egui_ctx.set_visuals(egui::Visuals::light()),
+			HudTheme::Dark => self.egui_ctx.set_visuals(Visuals::dark()),
+			HudTheme::Light => self.egui_ctx.set_visuals(Visuals::light()),
 		}
 
 		self.hud_theme = Some(theme);
@@ -9368,8 +9403,7 @@ impl WindowRenderer {
 		let mut fill = hud_helpers::hud_body_fill_srgba8(theme, false);
 		let tint_hue = hud_tint_hue.clamp(0.0, 1.0);
 		let tint_saturation = 1.0;
-		let (_, _, base_lightness) =
-			hud_helpers::rgb_to_hsl(crate::state::Rgb::new(fill[0], fill[1], fill[2]));
+		let (_, _, base_lightness) = hud_helpers::rgb_to_hsl(Rgb::new(fill[0], fill[1], fill[2]));
 		let tinted_target = hud_helpers::hsl_to_rgb(tint_hue, tint_saturation, base_lightness);
 
 		fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
@@ -9409,7 +9443,7 @@ impl WindowRenderer {
 				HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 40),
 				HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
 			};
-			let outer_stroke = egui::Stroke::new(1.0, outer_stroke_color);
+			let outer_stroke = Stroke::new(1.0, outer_stroke_color);
 			let shadow = egui::epaint::Shadow {
 				offset: [0, 0],
 				blur: 10,
@@ -9430,8 +9464,8 @@ impl WindowRenderer {
 			};
 			let pad = 6.0;
 
-			egui::Area::new(egui::Id::new("rsnap-loupe-window"))
-				.order(egui::Order::Foreground)
+			Area::new(Id::new("rsnap-loupe-window"))
+				.order(Order::Foreground)
 				.fixed_pos(Pos2::new(pad, pad))
 				.show(ctx, |ui| {
 					let inner = frame.show(ui, |ui| {
@@ -9446,14 +9480,14 @@ impl WindowRenderer {
 						HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
 						HudTheme::Light => Color32::from_rgba_unmultiplied(255, 255, 255, 140),
 					};
-					let inner_stroke = egui::Stroke::new(1.0, inner_stroke_color);
+					let inner_stroke = Stroke::new(1.0, inner_stroke_color);
 					let inner_rect = tile_rect.shrink(1.0);
 
 					ui.painter().rect_stroke(
 						inner_rect,
 						CornerRadius::same(tile_radius.saturating_sub(1)),
 						inner_stroke,
-						egui::StrokeKind::Inside,
+						StrokeKind::Inside,
 					);
 				});
 		});
@@ -9586,11 +9620,11 @@ impl WindowRenderer {
 			size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
 			mip_level_count,
 			sample_count: 1,
-			dimension: wgpu::TextureDimension::D2,
+			dimension: TextureDimension::D2,
 			format: wgpu::TextureFormat::Rgba8UnormSrgb,
-			usage: wgpu::TextureUsages::TEXTURE_BINDING
-				| wgpu::TextureUsages::COPY_DST
-				| wgpu::TextureUsages::RENDER_ATTACHMENT,
+			usage: TextureUsages::TEXTURE_BINDING
+				| TextureUsages::COPY_DST
+				| TextureUsages::RENDER_ATTACHMENT,
 			view_formats: &[],
 		});
 		let upload_bytes = upload_image.as_raw();
@@ -9618,8 +9652,8 @@ impl WindowRenderer {
 			wgpu::TexelCopyTextureInfo {
 				texture: &texture,
 				mip_level: 0,
-				origin: wgpu::Origin3d::ZERO,
-				aspect: wgpu::TextureAspect::All,
+				origin: Origin3d::ZERO,
+				aspect: TextureAspect::All,
 			},
 			rgba_bytes,
 			wgpu::TexelCopyBufferLayout {
@@ -9631,18 +9665,15 @@ impl WindowRenderer {
 		);
 		self.generate_mipmaps(gpu, &texture, mip_level_count);
 
-		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let view = texture.create_view(&TextureViewDescriptor::default());
 		let hud_blur_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
 			label: Some("rsnap-hud-blur bind group"),
 			layout: &self.hud_blur_bind_group_layout,
 			entries: &[
-				wgpu::BindGroupEntry {
-					binding: 0,
-					resource: wgpu::BindingResource::TextureView(&view),
-				},
+				wgpu::BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&view) },
 				wgpu::BindGroupEntry {
 					binding: 1,
-					resource: wgpu::BindingResource::Sampler(&self.bg_sampler),
+					resource: BindingResource::Sampler(&self.bg_sampler),
 				},
 				wgpu::BindGroupEntry {
 					binding: 2,
@@ -9654,13 +9685,10 @@ impl WindowRenderer {
 			label: Some("rsnap-mipgen fullscreen bind group"),
 			layout: &self.mipgen_bind_group_layout,
 			entries: &[
-				wgpu::BindGroupEntry {
-					binding: 0,
-					resource: wgpu::BindingResource::TextureView(&view),
-				},
+				wgpu::BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&view) },
 				wgpu::BindGroupEntry {
 					binding: 1,
-					resource: wgpu::BindingResource::Sampler(&self.bg_sampler),
+					resource: BindingResource::Sampler(&self.bg_sampler),
 				},
 			],
 		});
@@ -9680,8 +9708,8 @@ impl WindowRenderer {
 }
 
 struct HudBg {
-	_texture: wgpu::Texture,
-	_view: wgpu::TextureView,
+	_texture: Texture,
+	_view: TextureView,
 	hud_blur_bind_group: BindGroup,
 	mipgen_bind_group: BindGroup,
 	max_lod: f32,

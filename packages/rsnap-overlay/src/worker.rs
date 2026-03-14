@@ -3,6 +3,7 @@ use std::sync::{
 	mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError},
 };
 use std::thread;
+use std::time::Duration;
 #[cfg(not(target_os = "macos"))]
 use std::time::Instant;
 
@@ -314,7 +315,7 @@ impl OverlayWorker {
 			.unwrap_or(LiveCursorSample { rgb: None, patch: None });
 		let elapsed = started_at.elapsed();
 
-		if elapsed >= std::time::Duration::from_millis(8) {
+		if elapsed >= Duration::from_millis(8) {
 			tracing::debug!(
 				op = "overlay.live_sample_backend_latency",
 				request_id,

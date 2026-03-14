@@ -9,7 +9,7 @@ use std::mem;
 use std::time::Instant;
 
 use color_eyre::eyre::{Result, WrapErr};
-use egui::{self};
+use egui::{self, FontDefinitions, ViewportId};
 use egui_phosphor::{Variant, regular};
 use egui_wgpu::Renderer;
 use global_hotkey::hotkey::HotKey;
@@ -90,7 +90,7 @@ impl SettingsWindow {
 		let theme_icon_system = regular::MONITOR.to_owned();
 		let theme_icon_dark = regular::MOON.to_owned();
 		let theme_icon_light = regular::SUN.to_owned();
-		let mut fonts = egui::FontDefinitions::default();
+		let mut fonts = FontDefinitions::default();
 
 		egui_phosphor::add_to_fonts(&mut fonts, Variant::Regular);
 
@@ -98,7 +98,7 @@ impl SettingsWindow {
 
 		let egui_state = egui_winit::State::new(
 			egui_ctx.clone(),
-			egui::ViewportId::ROOT,
+			ViewportId::ROOT,
 			window.as_ref(),
 			None,
 			None,

@@ -1,9 +1,22 @@
 use std::time::Duration;
+use std::time::Instant;
 
 use color_eyre::eyre::{self, Result, WrapErr};
+use egui::ViewportId;
 use egui_wgpu::ScreenDescriptor;
+use wgpu::ExperimentalFeatures;
+use wgpu::Features;
+use wgpu::InstanceDescriptor;
+use wgpu::LoadOp;
+use wgpu::MemoryHints;
+use wgpu::PowerPreference;
+use wgpu::StoreOp;
+use wgpu::SurfaceError;
 use wgpu::SurfaceTexture;
 use wgpu::TextureFormat;
+use wgpu::TextureUsages;
+use wgpu::TextureViewDescriptor;
+use wgpu::Trace;
 use wgpu::{Adapter, CompositeAlphaMode, Device, Queue, Surface, SurfaceCapabilities};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
@@ -17,7 +30,7 @@ impl SettingsWindow {
 			self.window.request_redraw();
 		}
 
-		self.last_redraw = std::time::Instant::now();
+		self.last_redraw = Instant::now();
 
 		let raw_input = self.egui_state.take_egui_input(&self.window);
 		let mut settings_changed = false;
@@ -28,7 +41,7 @@ impl SettingsWindow {
 
 		if let Some(repaint_delay) = full_output
 			.viewport_output
-			.get(&egui::ViewportId::ROOT)
+			.get(&ViewportId::ROOT)
 			.map(|viewport_output| viewport_output.repaint_delay)
 			&& repaint_delay < Duration::from_secs(1)
 			&& repaint_delay != Duration::MAX
@@ -53,7 +66,7 @@ impl SettingsWindow {
 			pixels_per_point: self.window.scale_factor() as f32,
 		};
 		let frame = self.acquire_frame()?;
-		let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let view = frame.texture.create_view(&TextureViewDescriptor::default());
 		let mut encoder = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("rsnap-settings encoder"),
 		});
@@ -80,10 +93,7 @@ impl SettingsWindow {
 					view: &view,
 					depth_slice: None,
 					resolve_target: None,
-					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Clear(clear),
-						store: wgpu::StoreOp::Store,
-					},
+					ops: wgpu::Operations { load: LoadOp::Clear(clear), store: StoreOp::Store },
 				})],
 				depth_stencil_attachment: None,
 				timestamp_writes: None,
@@ -103,12 +113,12 @@ impl SettingsWindow {
 	fn acquire_frame(&mut self) -> Result<SurfaceTexture> {
 		match self.surface.get_current_texture() {
 			Ok(frame) => Ok(frame),
-			Err(wgpu::SurfaceError::Outdated) => {
+			Err(SurfaceError::Outdated) => {
 				self.reconfigure_surface();
 
 				self.surface.get_current_texture().wrap_err("get_current_texture after reconfigure")
 			},
-			Err(wgpu::SurfaceError::Lost) => {
+			Err(SurfaceError::Lost) => {
 				self.recreate_surface().wrap_err("recreate surface")?;
 
 				self.surface.get_current_texture().wrap_err("get_current_texture after recreate")
@@ -158,11 +168,11 @@ impl GpuContext {
 	pub(super) fn new_with_surface(
 		window: std::sync::Arc<Window>,
 	) -> Result<(Self, Surface<'static>, wgpu::SurfaceConfiguration)> {
-		let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+		let instance = wgpu::Instance::new(&InstanceDescriptor::default());
 		let surface =
 			instance.create_surface(std::sync::Arc::clone(&window)).wrap_err("create_surface")?;
 		let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-			power_preference: wgpu::PowerPreference::LowPower,
+			power_preference: PowerPreference::LowPower,
 			compatible_surface: Some(&surface),
 			force_fallback_adapter: false,
 		}))
@@ -170,11 +180,11 @@ impl GpuContext {
 		let limits = adapter.limits();
 		let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
 			label: Some("rsnap-settings device"),
-			required_features: wgpu::Features::empty(),
+			required_features: Features::empty(),
 			required_limits: limits,
-			experimental_features: wgpu::ExperimentalFeatures::default(),
-			memory_hints: wgpu::MemoryHints::Performance,
-			trace: wgpu::Trace::Off,
+			experimental_features: ExperimentalFeatures::default(),
+			memory_hints: MemoryHints::Performance,
+			trace: Trace::Off,
 		}))
 		.wrap_err("request_device")?;
 		let caps = surface.get_capabilities(&adapter);
@@ -182,7 +192,7 @@ impl GpuContext {
 		let alpha = pick_surface_alpha(&caps);
 		let size = window.inner_size();
 		let surface_config = wgpu::SurfaceConfiguration {
-			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+			usage: TextureUsages::RENDER_ATTACHMENT,
 			format,
 			width: size.width.max(1),
 			height: size.height.max(1),

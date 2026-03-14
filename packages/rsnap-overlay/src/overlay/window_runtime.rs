@@ -1,5 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
+use winit::window::Window;
+
 use crate::backend;
 #[cfg(target_os = "macos")]
 use crate::overlay::{self, MacLiveFrameStream, MainThreadMarker, NSScreen};
@@ -243,7 +245,7 @@ impl OverlaySession {
 	) -> Result<(), String> {
 		for monitor in monitors {
 			let monitor_rect = *monitor;
-			let attrs = winit::window::Window::default_attributes()
+			let attrs = Window::default_attributes()
 				.with_title("rsnap-overlay")
 				.with_decorations(false)
 				.with_resizable(false)
@@ -304,7 +306,7 @@ impl OverlaySession {
 	}
 
 	fn create_hud_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-		let attrs = winit::window::Window::default_attributes()
+		let attrs = Window::default_attributes()
 			.with_title("rsnap-hud")
 			.with_decorations(false)
 			.with_resizable(false)
@@ -336,7 +338,7 @@ impl OverlaySession {
 	fn create_loupe_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
 		let desired_inner_size =
 			hud_helpers::stable_live_loupe_window_inner_size_points(self.state.loupe_patch_side_px);
-		let attrs = winit::window::Window::default_attributes()
+		let attrs = Window::default_attributes()
 			.with_title("rsnap-loupe")
 			.with_decorations(false)
 			.with_resizable(false)
@@ -371,7 +373,7 @@ impl OverlaySession {
 	}
 
 	fn create_toolbar_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-		let attrs = winit::window::Window::default_attributes()
+		let attrs = Window::default_attributes()
 			.with_title("rsnap-toolbar")
 			.with_decorations(false)
 			.with_resizable(false)

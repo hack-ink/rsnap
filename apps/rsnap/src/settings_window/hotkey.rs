@@ -1,3 +1,10 @@
+use egui::Align2;
+use egui::Button;
+use egui::Color32;
+use egui::Rect;
+use egui::Sense;
+use egui::StrokeKind;
+use egui::TextStyle;
 use egui::Ui;
 use egui::Visuals;
 use global_hotkey::hotkey::{Code, HotKey};
@@ -15,12 +22,10 @@ pub(super) const CAPTURE_HOTKEY_GUIDANCE_PRESS_NONMOD: &str =
 impl CaptureHotkeyNotice {
 	pub(super) fn as_rich_text(&self, visuals: &Visuals) -> egui::RichText {
 		match self {
-			Self::Error(text) => {
-				egui::RichText::new(text).color(egui::Color32::from_rgb(255, 130, 130))
-			},
+			Self::Error(text) => egui::RichText::new(text).color(Color32::from_rgb(255, 130, 130)),
 			Self::Hint(text) => egui::RichText::new(text).color(visuals.weak_text_color()),
 			Self::Success(text) => {
-				egui::RichText::new(text).color(egui::Color32::from_rgb(120, 200, 120))
+				egui::RichText::new(text).color(Color32::from_rgb(120, 200, 120))
 			},
 		}
 	}
@@ -99,12 +104,12 @@ impl SettingsWindow {
 		} else {
 			"Click Record to change capture hotkey."
 		};
-		let mut field_rect = egui::Rect::NOTHING;
-		let mut button_rect = egui::Rect::NOTHING;
+		let mut field_rect = Rect::NOTHING;
+		let mut button_rect = Rect::NOTHING;
 
 		ui.horizontal(|ui| {
 			let (value_rect, value_response) =
-				ui.allocate_exact_size(egui::vec2(value_width, row_height), egui::Sense::click());
+				ui.allocate_exact_size(egui::vec2(value_width, row_height), Sense::click());
 			let visuals = ui.visuals().widgets.inactive;
 			let corner_radius = visuals.corner_radius;
 
@@ -113,16 +118,16 @@ impl SettingsWindow {
 				value_rect,
 				corner_radius,
 				visuals.bg_stroke,
-				egui::StrokeKind::Inside,
+				StrokeKind::Inside,
 			);
 
 			let text_rect = value_rect.shrink2(egui::vec2(6.0, 0.0));
-			let font_id = egui::TextStyle::Body.resolve(ui.style());
+			let font_id = TextStyle::Body.resolve(ui.style());
 			let painter = ui.painter().with_clip_rect(text_rect);
 
 			painter.text(
 				text_rect.left_center(),
-				egui::Align2::LEFT_CENTER,
+				Align2::LEFT_CENTER,
 				&display_label,
 				font_id,
 				ui.visuals().text_color(),
@@ -133,7 +138,7 @@ impl SettingsWindow {
 			}
 
 			let button_response =
-				ui.add_sized(egui::vec2(button_width, row_height), egui::Button::new("Rec"));
+				ui.add_sized(egui::vec2(button_width, row_height), Button::new("Rec"));
 
 			field_rect = value_rect;
 			button_rect = button_response.rect;
