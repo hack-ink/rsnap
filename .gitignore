@@ -1,10 +1,20 @@
 # AI
 .codex
-.worktrees
 
 # Editor
 .vscode
 .zed
+
+# General Ignores
+*.bak
+*.log
+.env*
+.turbo
+model
+tmp
+
+# Kubernetes
+.kube
 
 # Language Specifics
 
@@ -40,24 +50,13 @@ __pycache__
 ## Rust
 target
 
-# Tauri sidecar staging
-src-tauri/bin/rsnap-overlay-*
-src-tauri/bin/rsnap-overlay
-
 ## Swift
 .build
 xcuserdata
 
-# General Ignores
-*.bak
-*.log
-.env*
-.turbo
-model
-tmp
-
-# Kubernetes
-.kube
-
 # System
 .DS_Store
+
+# Work Dirs
+.workspaces
+.worktrees
