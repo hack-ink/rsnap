@@ -1,5 +1,5 @@
-use std::fs;
-use std::io::{self, Write as _};
+use std::fs::{self, File};
+use std::io::{self, Error, ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -123,8 +123,8 @@ impl AppSettings {
 
 		fs::create_dir_all(dir)?;
 
-		let content = toml::to_string_pretty(self)
-			.map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+		let content =
+			toml::to_string_pretty(self).map_err(|err| Error::new(ErrorKind::InvalidData, err))?;
 
 		write_atomic(&path, content.as_bytes())?;
 
@@ -295,7 +295,7 @@ fn default_selection_flow_stroke_width_px() -> f32 {
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 	let tmp = path.with_extension("toml.tmp");
-	let mut file = fs::File::create(&tmp)?;
+	let mut file = File::create(&tmp)?;
 
 	file.write_all(bytes)?;
 

@@ -8,10 +8,12 @@ use std::time::{Duration, Instant};
 
 use color_eyre::eyre;
 use color_eyre::eyre::Result;
+use global_hotkey::hotkey::Code;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
 use tray_icon::{TrayIconEvent, menu::MenuEvent};
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
+use winit::event_loop::EventLoop;
 #[cfg(target_os = "macos")]
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 use winit::{
@@ -174,10 +176,7 @@ pub(super) fn run() -> Result<()> {
 	let settings_hotkey = if cfg!(target_os = "macos") {
 		None
 	} else {
-		Some(HotKey::new(
-			Some(global_hotkey::hotkey::CMD_OR_CTRL),
-			global_hotkey::hotkey::Code::Comma,
-		))
+		Some(HotKey::new(Some(global_hotkey::hotkey::CMD_OR_CTRL), Code::Comma))
 	};
 	let settings_hotkey_id = settings_hotkey.as_ref().map(HotKey::id);
 	let mut hotkey_manager = match GlobalHotKeyManager::new() {
@@ -215,7 +214,7 @@ pub(super) fn run() -> Result<()> {
 		}
 	}
 
-	let mut event_loop_builder = winit::event_loop::EventLoop::<UserEvent>::with_user_event();
+	let mut event_loop_builder = EventLoop::with_user_event();
 
 	#[cfg(target_os = "macos")]
 	{

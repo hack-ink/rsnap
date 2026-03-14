@@ -1,7 +1,17 @@
 use std::path::PathBuf;
 
+use egui::CollapsingHeader;
+use egui::ComboBox;
 use egui::Context;
+use egui::DragValue;
+use egui::Pos2;
+use egui::Rect;
+use egui::Sense;
+use egui::Slider;
+use egui::Stroke;
+use egui::TextEdit;
 use egui::Ui;
+use egui::style::HandleShape;
 
 use crate::settings::{self, AltActivationMode, AppSettings, LoupeSampleSize};
 use crate::settings_window::{
@@ -41,43 +51,43 @@ impl SettingsWindow {
 	) -> bool {
 		let mut changed = false;
 
-		egui::CollapsingHeader::new("General").default_open(true).show(ui, |ui| {
+		CollapsingHeader::new("General").default_open(true).show(ui, |ui| {
 			changed |= self.render_general_section(ui, ctx, settings);
 		});
 
 		ui.add_space(SETTINGS_SECTION_GAP);
 
-		egui::CollapsingHeader::new("Overlay").default_open(true).show(ui, |ui| {
+		CollapsingHeader::new("Overlay").default_open(true).show(ui, |ui| {
 			changed |= self.render_overlay_section(ui, settings);
 		});
 
 		ui.add_space(SETTINGS_SECTION_GAP);
 
-		egui::CollapsingHeader::new("Hotkeys").default_open(false).show(ui, |ui| {
+		CollapsingHeader::new("Hotkeys").default_open(false).show(ui, |ui| {
 			changed |= self.render_hotkeys_section(ui, settings);
 		});
 
 		ui.add_space(SETTINGS_SECTION_GAP);
 
-		egui::CollapsingHeader::new("Capture").default_open(false).show(ui, |ui| {
+		CollapsingHeader::new("Capture").default_open(false).show(ui, |ui| {
 			changed |= self.render_capture_section(ui, settings);
 		});
 
 		ui.add_space(SETTINGS_SECTION_GAP);
 
-		egui::CollapsingHeader::new("Output").default_open(false).show(ui, |ui| {
+		CollapsingHeader::new("Output").default_open(false).show(ui, |ui| {
 			changed |= self.render_output_section(ui, settings);
 		});
 
 		ui.add_space(SETTINGS_SECTION_GAP);
 
-		egui::CollapsingHeader::new("Advanced").default_open(false).show(ui, |ui| {
+		CollapsingHeader::new("Advanced").default_open(false).show(ui, |ui| {
 			ui.label("Advanced options are coming soon.");
 		});
 
 		ui.add_space(SETTINGS_SECTION_GAP);
 
-		egui::CollapsingHeader::new("About").default_open(false).show(ui, |ui| {
+		CollapsingHeader::new("About").default_open(false).show(ui, |ui| {
 			ui.label(format!("rsnap {}", env!("CARGO_PKG_VERSION")));
 		});
 
@@ -88,7 +98,7 @@ impl SettingsWindow {
 		let previous_alpha_mode = settings.window_capture_alpha_mode;
 		let mut changed = false;
 
-		egui::ComboBox::from_label("Window background")
+		ComboBox::from_label("Window background")
 			.selected_text(match settings.window_capture_alpha_mode {
 				WindowCaptureAlphaMode::Background => "Background (match screen)",
 				WindowCaptureAlphaMode::MatteLight => "Matte light",
@@ -133,7 +143,7 @@ impl SettingsWindow {
 		ui.horizontal(|ui| {
 			let dir_response = ui.add_sized(
 				egui::vec2(value_width, row_height),
-				egui::TextEdit::singleline(&mut output_dir).hint_text("~/Desktop"),
+				TextEdit::singleline(&mut output_dir).hint_text("~/Desktop"),
 			);
 
 			if dir_response.changed() {
@@ -156,7 +166,7 @@ impl SettingsWindow {
 		ui.horizontal(|ui| {
 			let prefix_response = ui.add_sized(
 				egui::vec2(value_width, row_height),
-				egui::TextEdit::singleline(&mut prefix).hint_text("rsnap"),
+				TextEdit::singleline(&mut prefix).hint_text("rsnap"),
 			);
 
 			if prefix_response.changed() {
@@ -171,7 +181,7 @@ impl SettingsWindow {
 
 		let previous_naming = settings.output_naming;
 
-		egui::ComboBox::from_label("Filename naming")
+		ComboBox::from_label("Filename naming")
 			.selected_text(match settings.output_naming {
 				OutputNaming::Timestamp => "Timestamp (unix ms)",
 				OutputNaming::Sequence => "Sequence (0001)",
@@ -230,7 +240,7 @@ impl SettingsWindow {
 		};
 		let mut selected_preset = current_preset;
 
-		egui::ComboBox::from_label("Log level")
+		ComboBox::from_label("Log level")
 			.selected_text(match selected_preset {
 				LogLevelPreset::DefaultInfo => "Default (rsnap info)",
 				LogLevelPreset::Warn => "Warn",
@@ -274,10 +284,7 @@ impl SettingsWindow {
 		if selected_preset == LogLevelPreset::Custom {
 			let mut custom = current_custom.unwrap_or_default();
 			let response = ui
-				.add(
-					egui::TextEdit::singleline(&mut custom)
-						.hint_text("rsnap=debug,rsnap_overlay=debug"),
-				)
+				.add(TextEdit::singleline(&mut custom).hint_text("rsnap=debug,rsnap_overlay=debug"))
 				.on_hover_text("Uses the same syntax as RUST_LOG (tracing-subscriber EnvFilter).");
 
 			if response.changed() {
@@ -311,7 +318,7 @@ impl SettingsWindow {
 
 		let before_alt = settings.alt_activation;
 
-		egui::ComboBox::from_label("Alt activation")
+		ComboBox::from_label("Alt activation")
 			.selected_text(Self::alt_activation_label(settings.alt_activation))
 			.width(self.combo_width)
 			.show_ui(ui, |ui| {
@@ -329,7 +336,7 @@ impl SettingsWindow {
 
 		let before_loupe = settings.loupe_sample_size;
 
-		egui::ComboBox::from_label("Loupe sample size")
+		ComboBox::from_label("Loupe sample size")
 			.selected_text(Self::loupe_sample_size_label(settings.loupe_sample_size))
 			.width(self.combo_width)
 			.show_ui(ui, |ui| {
@@ -356,7 +363,7 @@ impl SettingsWindow {
 
 		let before_toolbar_placement = settings.toolbar_placement;
 
-		egui::ComboBox::from_label("Toolbar placement")
+		ComboBox::from_label("Toolbar placement")
 			.selected_text(Self::toolbar_placement_label(settings.toolbar_placement))
 			.width(self.combo_width)
 			.show_ui(ui, |ui| {
@@ -395,8 +402,8 @@ impl SettingsWindow {
 
 		percent = percent.clamp(0, 100);
 		ui.horizontal(|ui| {
-			let slider = egui::Slider::new(&mut value, 0.0..=1.0)
-				.handle_shape(egui::style::HandleShape::Circle)
+			let slider = Slider::new(&mut value, 0.0..=1.0)
+				.handle_shape(HandleShape::Circle)
 				.show_value(false)
 				.text("");
 			let slider_response = ui
@@ -416,7 +423,7 @@ impl SettingsWindow {
 				.add_enabled_ui(enabled, |ui| {
 					ui.add_sized(
 						egui::vec2(SETTINGS_VALUE_BOX_WIDTH, ui.spacing().interact_size.y),
-						egui::DragValue::new(&mut percent)
+						DragValue::new(&mut percent)
 							.range(0..=100)
 							.speed(1.0)
 							.suffix("%")
@@ -465,9 +472,9 @@ impl SettingsWindow {
 						ui.spacing_mut().interact_size.y = SETTINGS_SLIDER_WIDGET_HEIGHT;
 
 						ui.add(
-							egui::Slider::new(&mut value, 1.0..=8.0)
+							Slider::new(&mut value, 1.0..=8.0)
 								.step_by(0.1)
-								.handle_shape(egui::style::HandleShape::Circle)
+								.handle_shape(HandleShape::Circle)
 								.show_value(false)
 								.text(""),
 						)
@@ -482,10 +489,7 @@ impl SettingsWindow {
 				.add_enabled_ui(enabled, |ui| {
 					ui.add_sized(
 						egui::vec2(SETTINGS_VALUE_BOX_WIDTH, ui.spacing().interact_size.y),
-						egui::DragValue::new(&mut value)
-							.range(1.0..=8.0)
-							.speed(0.1)
-							.fixed_decimals(1),
+						DragValue::new(&mut value).range(1.0..=8.0).speed(0.1).fixed_decimals(1),
 					)
 				})
 				.inner
@@ -523,10 +527,8 @@ impl SettingsWindow {
 		ui.horizontal(|ui| {
 			let bar_height = SETTINGS_HUE_SLIDER_HEIGHT.max(SETTINGS_SLIDER_RAIL_HEIGHT);
 			let bar_width = ui.spacing().slider_width;
-			let (bar_rect, response) = ui.allocate_exact_size(
-				egui::vec2(bar_width, bar_height),
-				egui::Sense::click_and_drag(),
-			);
+			let (bar_rect, response) =
+				ui.allocate_exact_size(egui::vec2(bar_width, bar_height), Sense::click_and_drag());
 
 			if enabled
 				&& (response.clicked() || response.dragged())
@@ -547,9 +549,9 @@ impl SettingsWindow {
 			for step in 0..SETTINGS_HUE_SLIDER_STEPS {
 				let left = bar_rect.left() + (step as f32 * step_width);
 				let right = (left + step_width).min(bar_rect.right());
-				let step_rect = egui::Rect::from_min_max(
-					egui::Pos2::new(left, bar_rect.top()),
-					egui::Pos2::new(right, bar_rect.bottom()),
+				let step_rect = Rect::from_min_max(
+					Pos2::new(left, bar_rect.top()),
+					Pos2::new(right, bar_rect.bottom()),
 				);
 				let step_hue = if step == SETTINGS_HUE_SLIDER_STEPS - 1 {
 					1.0
@@ -567,7 +569,7 @@ impl SettingsWindow {
 
 			let handle_x = (bar_rect.left() + current_hue * bar_rect.width())
 				.clamp(bar_rect.left(), bar_rect.right());
-			let handle = egui::Pos2::new(handle_x, bar_rect.center().y);
+			let handle = Pos2::new(handle_x, bar_rect.center().y);
 			let handle_color = Self::hsl_to_color32(
 				current_hue,
 				SETTINGS_HUE_SLIDER_SATURATION,
@@ -578,14 +580,14 @@ impl SettingsWindow {
 			ui.painter().circle_stroke(
 				handle,
 				6.0,
-				egui::Stroke::new(1.0, egui::Color32::from_gray(220)),
+				Stroke::new(1.0, egui::Color32::from_gray(220)),
 			);
 
 			let value_changed = ui
 				.add_enabled_ui(enabled, |ui| {
 					ui.add_sized(
 						egui::vec2(SETTINGS_VALUE_BOX_WIDTH, ui.spacing().interact_size.y),
-						egui::DragValue::new(&mut hue_degrees)
+						DragValue::new(&mut hue_degrees)
 							.range(0.0..=360.0)
 							.fixed_decimals(0)
 							.suffix("°"),
