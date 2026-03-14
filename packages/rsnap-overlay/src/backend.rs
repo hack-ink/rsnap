@@ -1,3 +1,8 @@
+#![allow(
+	dead_code,
+	reason = "XY-113 narrows the public crate facade while leaving backend implementation cleanup to a separate follow-up lane."
+)]
+
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
@@ -21,6 +26,8 @@ use objc2_core_graphics::{
 	CGDataProvider, CGImage, CGRectNull, CGWindowID, CGWindowImageOption, CGWindowListOption,
 };
 use thiserror::Error;
+#[cfg(not(target_os = "macos"))]
+use xcap::Window;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
@@ -373,7 +380,7 @@ impl XcapCaptureBackend {
 
 	#[cfg(not(target_os = "macos"))]
 	fn capture_window_image(&mut self, window_id: u32) -> Result<RgbaImage> {
-		let windows = xcap::Window::all().wrap_err("xcap Window::all failed")?;
+		let windows = Window::all().wrap_err("xcap Window::all failed")?;
 
 		for window in windows {
 			let id = window.id().wrap_err("Failed to read xcap window id")?;
@@ -1202,7 +1209,7 @@ fn cf_dictionary_at_index(array: CFArrayRef, index: isize) -> Option<CFDictionar
 
 #[cfg(not(target_os = "macos"))]
 fn collect_window_geometries() -> Result<Vec<WindowRect>> {
-	let windows = xcap::Window::all().wrap_err("xcap Window::all failed")?;
+	let windows = Window::all().wrap_err("xcap Window::all failed")?;
 	let self_pid = process::id();
 	let mut cached_windows = Vec::with_capacity(windows.len());
 
