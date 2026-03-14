@@ -14,7 +14,7 @@ Scope:
 - Extract the draw path and GPU/surface setup helpers into `apps/rsnap/src/settings_window/render.rs`.
 - Extract overlay-session wiring and capture-hotkey action plumbing out of `apps/rsnap/src/app.rs` into dedicated `app` support modules once `settings_window.rs` is no longer the primary hotspot.
 - Extract `apps/rsnap/src/app/scroll_input_macos.rs` queue/replay state, CGEvent decoding, and event-tap lifecycle into flat support modules once the app root is no longer the primary hotspot.
-- Keep the existing isolated worktree lane at `x/settings-window-ui-split`.
+- Keep the existing isolated workspace lane at `x/settings-window-ui-split`.
 - Verify the refactor with repo-native Rust commands and targeted settings-window checks.
 
 Assumptions:
@@ -40,7 +40,7 @@ Status: Closed on 2026-03-12. Retained for historical context; may drift from cu
 
 - Preserve user-visible settings-window behavior unless a change is intentional and reviewed.
 - Keep event-loop ownership and action queue ownership in `apps/rsnap/src/settings_window.rs`.
-- Keep edits scoped to the existing worktree lane plus the `settings_window` file family and directly related `apps/rsnap/src/app*` support modules.
+- Keep edits scoped to the existing workspace lane plus the `settings_window` file family and directly related `apps/rsnap/src/app*` support modules.
 - Run the repo's commit/push gate before any eventual `git commit` or `git push`.
 
 ## Open Questions
@@ -57,7 +57,7 @@ Status: Closed on 2026-03-12. Retained for historical context; may drift from cu
 ## Decision Notes
 
 - `docs/plans/2026-03-11_xy-76-architecture-refactor.md` is complete and does not currently cover this follow-up cleanup slice, so this lane needs its own execution artifact.
-- The current runtime repeatedly interrupted builder helper lanes before they touched the worktree, so this already-isolated lane will proceed directly in `x/settings-window-ui-split` instead of spending more time on blocked helper retries.
+- The current runtime repeatedly interrupted builder helper lanes before they touched the workspace, so this already-isolated lane will proceed directly in `x/settings-window-ui-split` instead of spending more time on blocked helper retries.
 - `apps/rsnap/src/settings_window/hotkey.rs` and `apps/rsnap/src/settings_window/platform.rs` already prove the support-module pattern for this file family.
 - Automated verification on 2026-03-12: `cargo test -p rsnap --lib` passed after extracting the section-rendering helpers into `apps/rsnap/src/settings_window/sections.rs`.
 - Automated verification on 2026-03-12: `cargo test -p rsnap --lib` passed again after extracting settings-window chrome/theme/autosize helpers into `apps/rsnap/src/settings_window/chrome.rs` and moving hotkey row rendering alongside hotkey parsing in `apps/rsnap/src/settings_window/hotkey.rs`.
@@ -84,7 +84,7 @@ The first checkpoint should stop at a compile- and test-verified module split. M
 
 **Owner**
 
-Executor in the `x/settings-window-ui-split` worktree.
+Executor in the `x/settings-window-ui-split` workspace.
 
 **Status**
 
@@ -119,7 +119,7 @@ done
 
 **Owner**
 
-Executor in the `x/settings-window-ui-split` worktree.
+Executor in the `x/settings-window-ui-split` workspace.
 
 **Status**
 
@@ -153,7 +153,7 @@ done
 
 **Owner**
 
-Executor in the `x/settings-window-ui-split` worktree.
+Executor in the `x/settings-window-ui-split` workspace.
 
 **Status**
 
@@ -187,7 +187,7 @@ done
 
 **Owner**
 
-Executor in the `x/settings-window-ui-split` worktree.
+Executor in the `x/settings-window-ui-split` workspace.
 
 **Status**
 
@@ -266,7 +266,7 @@ The lane has recorded both automated and targeted manual evidence, while the exi
 
 **Owner**
 
-Executor in the `x/settings-window-ui-split` worktree.
+Executor in the `x/settings-window-ui-split` workspace.
 
 **Status**
 
@@ -301,7 +301,7 @@ done
 
 **Owner**
 
-Executor in the `x/settings-window-ui-split` worktree.
+Executor in the `x/settings-window-ui-split` workspace.
 
 **Status**
 
@@ -335,7 +335,7 @@ done
 
 ## Rollout Notes
 
-- Stay in the existing isolated worktree lane for this change stream.
+- Stay in the existing isolated workspace lane for this change stream.
 - Run the local commit/push gate before any eventual commit or push.
 
 ## Suggested Execution
