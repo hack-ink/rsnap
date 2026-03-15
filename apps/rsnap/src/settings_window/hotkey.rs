@@ -19,6 +19,14 @@ use crate::settings_window::{SETTINGS_VALUE_BOX_WIDTH, SettingsWindowAction};
 pub(super) const CAPTURE_HOTKEY_GUIDANCE_PRESS_NONMOD: &str =
 	"Press a non-modifier key to complete the shortcut.";
 
+pub(super) trait SettingsUiHotkeyHost {
+	fn capture_hotkey_recording(&self) -> bool;
+	fn capture_hotkey_notice(&self) -> Option<&CaptureHotkeyNotice>;
+	fn modifiers(&self) -> &ModifiersState;
+	fn begin_recording_capture_hotkey(&mut self);
+	fn cancel_recording_capture_hotkey(&mut self);
+}
+
 impl CaptureHotkeyNotice {
 	pub(super) fn as_rich_text(&self, visuals: &Visuals) -> egui::RichText {
 		match self {
@@ -88,84 +96,27 @@ impl SettingsWindow {
 	pub(crate) fn format_capture_hotkey(raw: &str) -> String {
 		self::format_capture_hotkey(raw)
 	}
+}
 
-	pub(super) fn render_hotkeys_section(&mut self, ui: &mut Ui, settings: &AppSettings) -> bool {
-		let row_height = ui.spacing().interact_size.y;
-		let value_width = ui.spacing().slider_width;
-		let button_width = SETTINGS_VALUE_BOX_WIDTH;
-		let row_label = "Capture hotkey";
-		let display_label = if self.capture_hotkey_recording {
-			format_capture_hotkey_recording_label(&self.modifiers)
-		} else {
-			Self::format_capture_hotkey(&settings.capture_hotkey)
-		};
-		let hover_text = if self.capture_hotkey_recording {
-			"Press a non-modifier key to capture hotkey."
-		} else {
-			"Click Record to change capture hotkey."
-		};
-		let mut field_rect = Rect::NOTHING;
-		let mut button_rect = Rect::NOTHING;
+impl SettingsUiHotkeyHost for SettingsWindow {
+	fn capture_hotkey_recording(&self) -> bool {
+		self.capture_hotkey_recording
+	}
 
-		ui.horizontal(|ui| {
-			let (value_rect, value_response) =
-				ui.allocate_exact_size(egui::vec2(value_width, row_height), Sense::click());
-			let visuals = ui.visuals().widgets.inactive;
-			let corner_radius = visuals.corner_radius;
+	fn capture_hotkey_notice(&self) -> Option<&CaptureHotkeyNotice> {
+		self.capture_hotkey_notice.as_ref()
+	}
 
-			ui.painter().rect_filled(value_rect, corner_radius, visuals.bg_fill);
-			ui.painter().rect_stroke(
-				value_rect,
-				corner_radius,
-				visuals.bg_stroke,
-				StrokeKind::Inside,
-			);
+	fn modifiers(&self) -> &ModifiersState {
+		&self.modifiers
+	}
 
-			let text_rect = value_rect.shrink2(egui::vec2(6.0, 0.0));
-			let font_id = TextStyle::Body.resolve(ui.style());
-			let painter = ui.painter().with_clip_rect(text_rect);
+	fn begin_recording_capture_hotkey(&mut self) {
+		self.begin_recording_capture_hotkey();
+	}
 
-			painter.text(
-				text_rect.left_center(),
-				Align2::LEFT_CENTER,
-				&display_label,
-				font_id,
-				ui.visuals().text_color(),
-			);
-
-			if value_response.clicked() && !self.capture_hotkey_recording {
-				self.begin_recording_capture_hotkey();
-			}
-
-			let button_response =
-				ui.add_sized(egui::vec2(button_width, row_height), Button::new("Rec"));
-
-			field_rect = value_rect;
-			button_rect = button_response.rect;
-
-			if button_response.clicked() && !self.capture_hotkey_recording {
-				self.begin_recording_capture_hotkey();
-			}
-
-			ui.label(row_label);
-			value_response.on_hover_text(format!("{display_label}\n{hover_text}"));
-			button_response.on_hover_text("Record a new hotkey");
-		});
-
-		if self.capture_hotkey_recording
-			&& ui.ctx().input(|i| i.pointer.primary_clicked())
-			&& let Some(pointer_pos) = ui.ctx().input(|i| i.pointer.interact_pos())
-			&& !field_rect.contains(pointer_pos)
-			&& !button_rect.contains(pointer_pos)
-		{
-			self.cancel_recording_capture_hotkey();
-		}
-
-		if let Some(notice) = &self.capture_hotkey_notice {
-			ui.small(notice.as_rich_text(ui.visuals()));
-		}
-
-		false
+	fn cancel_recording_capture_hotkey(&mut self) {
+		self.cancel_recording_capture_hotkey();
 	}
 }
 
@@ -173,6 +124,84 @@ pub(super) enum CaptureHotkeyInput {
 	Cancel,
 	Notice(CaptureHotkeyNotice),
 	Apply(HotKey),
+}
+
+pub(super) fn render_hotkeys_section(
+	host: &mut impl SettingsUiHotkeyHost,
+	ui: &mut Ui,
+	settings: &AppSettings,
+) -> bool {
+	let row_height = ui.spacing().interact_size.y;
+	let value_width = ui.spacing().slider_width;
+	let button_width = SETTINGS_VALUE_BOX_WIDTH;
+	let row_label = "Capture hotkey";
+	let display_label = if host.capture_hotkey_recording() {
+		format_capture_hotkey_recording_label(host.modifiers())
+	} else {
+		format_capture_hotkey(&settings.capture_hotkey)
+	};
+	let hover_text = if host.capture_hotkey_recording() {
+		"Press a non-modifier key to capture hotkey."
+	} else {
+		"Click Record to change capture hotkey."
+	};
+	let mut field_rect = Rect::NOTHING;
+	let mut button_rect = Rect::NOTHING;
+
+	ui.horizontal(|ui| {
+		let (value_rect, value_response) =
+			ui.allocate_exact_size(egui::vec2(value_width, row_height), Sense::click());
+		let visuals = ui.visuals().widgets.inactive;
+		let corner_radius = visuals.corner_radius;
+
+		ui.painter().rect_filled(value_rect, corner_radius, visuals.bg_fill);
+		ui.painter().rect_stroke(value_rect, corner_radius, visuals.bg_stroke, StrokeKind::Inside);
+
+		let text_rect = value_rect.shrink2(egui::vec2(6.0, 0.0));
+		let font_id = TextStyle::Body.resolve(ui.style());
+		let painter = ui.painter().with_clip_rect(text_rect);
+
+		painter.text(
+			text_rect.left_center(),
+			Align2::LEFT_CENTER,
+			&display_label,
+			font_id,
+			ui.visuals().text_color(),
+		);
+
+		if value_response.clicked() && !host.capture_hotkey_recording() {
+			host.begin_recording_capture_hotkey();
+		}
+
+		let button_response =
+			ui.add_sized(egui::vec2(button_width, row_height), Button::new("Rec"));
+
+		field_rect = value_rect;
+		button_rect = button_response.rect;
+
+		if button_response.clicked() && !host.capture_hotkey_recording() {
+			host.begin_recording_capture_hotkey();
+		}
+
+		ui.label(row_label);
+		value_response.on_hover_text(format!("{display_label}\n{hover_text}"));
+		button_response.on_hover_text("Record a new hotkey");
+	});
+
+	if host.capture_hotkey_recording()
+		&& ui.ctx().input(|i| i.pointer.primary_clicked())
+		&& let Some(pointer_pos) = ui.ctx().input(|i| i.pointer.interact_pos())
+		&& !field_rect.contains(pointer_pos)
+		&& !button_rect.contains(pointer_pos)
+	{
+		host.cancel_recording_capture_hotkey();
+	}
+
+	if let Some(notice) = host.capture_hotkey_notice() {
+		ui.small(notice.as_rich_text(ui.visuals()));
+	}
+
+	false
 }
 
 pub(super) fn handle_capture_hotkey_recording_input(

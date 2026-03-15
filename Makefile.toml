@@ -168,6 +168,73 @@ command = "scripts/live-loupe-perf-smoke-macos.sh"
 args = ["--self-check"]
 
 
+# Performance
+# | task                          | type      | cwd |
+# | ----------------------------- | --------- | --- |
+# | perf-local                    | composite |     |
+# | perf-macos                    | composite |     |
+# | perf-self-check-macos         | composite |     |
+# | perf-bench-settings-window    | command   |     |
+# | perf-bench-scroll-capture     | command   |     |
+
+[tasks.perf-local]
+workspace = false
+dependencies = [
+	"perf-bench-settings-window",
+	"perf-bench-scroll-capture",
+]
+
+[tasks.perf-macos]
+workspace = false
+dependencies = [
+	"perf-local",
+	"smoke-macos",
+]
+
+[tasks.perf-self-check-macos]
+workspace = false
+dependencies = [
+	"perf-local",
+	"smoke-self-check-macos",
+]
+
+[tasks.perf-bench-settings-window]
+workspace = false
+command = "cargo"
+args = [
+	"bench",
+	"-p",
+	"rsnap",
+	"--bench",
+	"settings_window",
+	"--",
+	"--sample-size",
+	"10",
+	"--warm-up-time",
+	"0.1",
+	"--measurement-time",
+	"0.1",
+]
+
+[tasks.perf-bench-scroll-capture]
+workspace = false
+command = "cargo"
+args = [
+	"bench",
+	"-p",
+	"rsnap-overlay",
+	"--bench",
+	"scroll_capture",
+	"--",
+	"--sample-size",
+	"10",
+	"--warm-up-time",
+	"0.1",
+	"--measurement-time",
+	"0.1",
+]
+
+
 # Format
 # | task           | type      | cwd |
 # | -------------- | --------- | --- |
