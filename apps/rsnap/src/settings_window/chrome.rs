@@ -6,6 +6,7 @@ use winit::dpi::LogicalSize;
 use winit::window::Theme;
 
 use crate::settings::AppSettings;
+use crate::settings_window::sections;
 use crate::settings_window::{
 	SETTINGS_SECTION_GAP, SETTINGS_THEME_ICON_SIZE, SETTINGS_TITLEBAR_HEIGHT, SettingsWindow,
 	platform,
@@ -22,10 +23,10 @@ impl SettingsWindow {
 		CentralPanel::default().show(ctx, |ui| {
 			let combo_width = self.combo_width;
 
-			Self::with_settings_density(ui, combo_width, |ui| {
+			sections::with_settings_density(ui, combo_width, |ui| {
 				changed |= self.render_titlebar_controls(ui, ctx, settings);
 				ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-					changed |= self.render_all_sections(ui, ctx, settings);
+					changed |= sections::render_all_sections(self, ui, ctx, settings);
 				});
 			});
 		});

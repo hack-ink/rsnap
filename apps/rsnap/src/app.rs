@@ -137,7 +137,7 @@ impl App {
 	}
 }
 
-pub(crate) fn run() -> Result<()> {
+pub fn run() -> Result<()> {
 	runtime::run()
 }
 

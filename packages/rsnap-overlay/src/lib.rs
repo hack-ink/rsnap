@@ -3,6 +3,13 @@
 //! Backend implementations remain internal to this crate and are not part of the
 //! app-shell integration surface.
 
+pub mod bench_support {
+	pub use crate::scroll_capture::bench_support::{
+		ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
+		ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
+	};
+}
+
 mod backend;
 #[cfg(target_os = "macos")]
 mod live_frame_stream_macos;

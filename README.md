@@ -109,6 +109,23 @@ These scripts drive a logged-in macOS desktop session, require the expected
 Screen Recording / automation permissions, and are intended for dedicated smoke
 verification runs rather than background CI on a shared desktop session.
 
+Repo-native performance entrypoints are available for deterministic benches and
+dedicated smoke:
+
+```sh
+cargo make perf-local
+cargo make perf-self-check-macos
+cargo make perf-macos
+```
+
+Use `cargo make perf-local` for component-render and scroll-capture regressions
+that should stay comparable on a normal development machine. Use
+`cargo make perf-self-check-macos` to validate the dedicated macOS smoke
+environment, and `cargo make perf-macos` only on a logged-in desktop session
+when you need end-to-end GUI performance evidence. The durable runbook for
+command selection and baseline comparison lives at
+`docs/guide/performance-checks.md`.
+
 The v0 contract lives at `docs/spec/v0.md`.
 
 ## Support Me
