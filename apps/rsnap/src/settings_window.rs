@@ -1,3 +1,5 @@
+pub mod bench_support;
+
 mod chrome;
 mod hotkey;
 mod platform;
