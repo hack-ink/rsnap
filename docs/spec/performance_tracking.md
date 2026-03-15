@@ -12,6 +12,10 @@ live/loupe responsiveness, component render benchmarks, or scroll-capture perfor
 Not this document: Step-by-step benchmark procedures, smoke-run instructions, or saved execution
 plans. Use `docs/guide/` for procedures and `docs/plans/` only for tool-managed plan artifacts.
 
+Primary procedures:
+- `docs/guide/performance-checks.md` for repo-native performance command entrypoints
+- `docs/guide/scroll-capture-benchmarks.md` for scroll-capture benchmark fixtures and baseline use
+
 Defines:
 - the active render cadence contract for rsnap UI and overlay paths
 - the tracked performance scenarios and their primary metrics

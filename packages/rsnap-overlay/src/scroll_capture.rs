@@ -1,3 +1,237 @@
+pub mod bench_support {
+	use image::{Rgba, RgbaImage, imageops};
+
+	use crate::scroll_capture::{
+		OverlapSearchConfig, ScrollDirection, ScrollObserveOutcome, ScrollSession,
+		evaluate_overlap_direction, max_directional_motion_rows, scroll_capture_fingerprint,
+	};
+
+	#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+	pub enum ScrollCaptureBenchScenario {
+		Baseline,
+		Wide,
+	}
+
+	impl ScrollCaptureBenchScenario {
+		pub const ALL: [Self; 2] = [Self::Baseline, Self::Wide];
+
+		#[must_use]
+		pub const fn as_str(self) -> &'static str {
+			match self {
+				Self::Baseline => "baseline",
+				Self::Wide => "wide",
+			}
+		}
+
+		const fn spec(self) -> ScrollCaptureBenchFixtureSpec {
+			match self {
+				Self::Baseline => ScrollCaptureBenchFixtureSpec {
+					width: 192,
+					document_rows: 320,
+					window_rows: 128,
+					motion_rows: 12,
+					preview_width_px: 320,
+				},
+				Self::Wide => ScrollCaptureBenchFixtureSpec {
+					width: 320,
+					document_rows: 448,
+					window_rows: 160,
+					motion_rows: 20,
+					preview_width_px: 320,
+				},
+			}
+		}
+	}
+
+	#[derive(Clone, Copy, Debug, Default)]
+	pub struct ScrollCaptureFingerprintMetrics {
+		pub byte_len: usize,
+		pub checksum: u32,
+	}
+
+	#[derive(Clone, Copy, Debug, Default)]
+	pub struct ScrollCaptureOverlapMetrics {
+		pub matched: bool,
+		pub motion_rows: u32,
+		pub overlap_rows: u32,
+		pub mean_abs_diff_x100: u32,
+	}
+
+	#[derive(Clone, Copy, Debug, Default)]
+	pub struct ScrollCaptureSessionMetrics {
+		pub committed: bool,
+		pub growth_rows: u32,
+		pub export_height: u32,
+		pub preview_height: u32,
+	}
+
+	pub struct ScrollCaptureBenchHarness {
+		fixture: ScrollCaptureBenchFixture,
+		overlap_config: OverlapSearchConfig,
+	}
+
+	impl ScrollCaptureBenchHarness {
+		#[must_use]
+		pub fn new(scenario: ScrollCaptureBenchScenario) -> Self {
+			Self {
+				fixture: ScrollCaptureBenchFixture::new(scenario.spec()),
+				overlap_config: OverlapSearchConfig::default(),
+			}
+		}
+
+		#[must_use]
+		pub fn run_fingerprint(&self) -> ScrollCaptureFingerprintMetrics {
+			let bytes = scroll_capture_fingerprint(&self.fixture.fingerprint_frame);
+
+			ScrollCaptureFingerprintMetrics {
+				byte_len: bytes.len(),
+				checksum: checksum_bytes(&bytes),
+			}
+		}
+
+		#[must_use]
+		pub fn run_overlap_match(&self) -> ScrollCaptureOverlapMetrics {
+			let max_motion_rows = max_directional_motion_rows(
+				&self.fixture.base_frame,
+				&self.fixture.next_frame,
+				self.overlap_config,
+			);
+			let matched = evaluate_overlap_direction(
+				&self.fixture.base_frame,
+				&self.fixture.next_frame,
+				ScrollDirection::Down,
+				1..=max_motion_rows,
+				self.overlap_config,
+			);
+
+			matched.map_or(
+				ScrollCaptureOverlapMetrics {
+					matched: false,
+					motion_rows: 0,
+					overlap_rows: 0,
+					mean_abs_diff_x100: u32::MAX,
+				},
+				|matched| ScrollCaptureOverlapMetrics {
+					matched: true,
+					motion_rows: matched.motion_rows,
+					overlap_rows: self
+						.fixture
+						.window_rows
+						.min(self.fixture.base_frame.height())
+						.saturating_sub(matched.motion_rows),
+					mean_abs_diff_x100: matched.mean_abs_diff_x100,
+				},
+			)
+		}
+
+		#[must_use]
+		pub fn run_session_commit(&self) -> ScrollCaptureSessionMetrics {
+			let mut session = self.fixture.new_session();
+			let outcome = session
+				.observe_downward_sample(self.fixture.next_frame.clone())
+				.expect("scroll-capture benchmark fixture should observe successfully");
+			let (committed, growth_rows) = match outcome {
+				ScrollObserveOutcome::Committed { growth_rows, .. } => (true, growth_rows),
+				_ => (false, 0),
+			};
+
+			ScrollCaptureSessionMetrics {
+				committed,
+				growth_rows,
+				export_height: session.export_image().height(),
+				preview_height: session.preview_image().height(),
+			}
+		}
+	}
+
+	#[derive(Clone, Copy)]
+	struct ScrollCaptureBenchFixtureSpec {
+		width: u32,
+		document_rows: u32,
+		window_rows: u32,
+		motion_rows: u32,
+		preview_width_px: u32,
+	}
+
+	struct ScrollCaptureBenchFixture {
+		base_frame: RgbaImage,
+		next_frame: RgbaImage,
+		fingerprint_frame: RgbaImage,
+		window_rows: u32,
+		preview_width_px: u32,
+	}
+
+	impl ScrollCaptureBenchFixture {
+		fn new(spec: ScrollCaptureBenchFixtureSpec) -> Self {
+			let document = build_document(spec.width, spec.document_rows);
+			let base_frame = crop_window(&document, 24, spec.window_rows);
+			let next_frame = crop_window(&document, 24 + spec.motion_rows, spec.window_rows);
+			let fingerprint_frame =
+				crop_window(&document, 24 + spec.motion_rows.saturating_mul(2), spec.window_rows);
+
+			Self {
+				base_frame,
+				next_frame,
+				fingerprint_frame,
+				window_rows: spec.window_rows,
+				preview_width_px: spec.preview_width_px,
+			}
+		}
+
+		fn new_session(&self) -> ScrollSession {
+			ScrollSession::new(self.base_frame.clone(), self.preview_width_px)
+				.expect("scroll-capture benchmark fixture should build a valid session")
+		}
+	}
+
+	fn crop_window(document: &RgbaImage, start_row: u32, rows: u32) -> RgbaImage {
+		imageops::crop_imm(document, 0, start_row, document.width(), rows).to_image()
+	}
+
+	fn build_document(width: u32, rows: u32) -> RgbaImage {
+		let mut image = RgbaImage::new(width, rows);
+
+		for y in 0..rows {
+			for x in 0..width {
+				let stripe = (y / 8) % 6;
+				let lane = (x / 12) % 5;
+				let mut r = ((x.wrapping_mul(13) + y.wrapping_mul(17) + stripe.wrapping_mul(29))
+					% 251) as u8;
+				let mut g =
+					((x.wrapping_mul(7) + y.wrapping_mul(19) + lane.wrapping_mul(23)) % 251) as u8;
+				let mut b = (((x / 2).wrapping_mul(11)
+					+ y.wrapping_mul(5)
+					+ stripe.wrapping_mul(31)
+					+ lane.wrapping_mul(17))
+					% 251) as u8;
+
+				if x < 10 || x + 10 >= width {
+					r = 8;
+					g = 8;
+					b = 8;
+				}
+				if y % 32 == 0 {
+					r = r.saturating_add(21);
+					g = g.saturating_add(9);
+				}
+				if (x / 24 + y / 16).is_multiple_of(2) {
+					b = b.saturating_add(13);
+				}
+
+				image.put_pixel(x, y, Rgba([r, g, b, 255]));
+			}
+		}
+
+		image
+	}
+
+	fn checksum_bytes(bytes: &[u8]) -> u32 {
+		bytes.iter().fold(0_u32, |acc, byte| {
+			acc.wrapping_mul(16_777_619).wrapping_add(u32::from(*byte).wrapping_add(1))
+		})
+	}
+}
+
 use std::ops::RangeInclusive;
 
 use color_eyre::eyre::{self, Result};
@@ -135,7 +369,6 @@ pub(crate) struct ScrollSession {
 	preview_width_px: u32,
 }
 impl ScrollSession {
-	#[cfg(any(test, target_os = "macos"))]
 	pub(crate) fn new(base_frame: RgbaImage, preview_width_px: u32) -> Result<Self> {
 		let fingerprint = scroll_capture_fingerprint(&base_frame);
 		let anchor_preview = resize_strip_to_preview_width(&base_frame, preview_width_px.max(1));
@@ -1752,6 +1985,7 @@ impl OverlapSearchRange {
 		self.start..=self.end
 	}
 }
+
 impl From<RangeInclusive<u32>> for OverlapSearchRange {
 	fn from(range: RangeInclusive<u32>) -> Self {
 		Self { start: *range.start(), end: *range.end() }
@@ -1831,6 +2065,12 @@ struct GrowthCommit {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct InformativeSpan {
+	start_x: u32,
+	end_exclusive_x: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ScrollDirection {
 	Up,
 	Down,
@@ -1850,11 +2090,6 @@ enum OverlapOrientation {
 	PreviousTopToNextBottom,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct InformativeSpan {
-	start_x: u32,
-	end_exclusive_x: u32,
-}
 #[must_use]
 pub(crate) fn scroll_capture_fingerprint(image: &RgbaImage) -> Vec<u8> {
 	ScrollFrameFingerprint::from_image(image).into_bytes()

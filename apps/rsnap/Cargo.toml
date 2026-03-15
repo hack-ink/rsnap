@@ -37,3 +37,10 @@ tracing-subscriber = { workspace = true }
 tray-icon          = { workspace = true }
 wgpu               = { workspace = true }
 winit              = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.7", features = ["html_reports"] }
+
+[[bench]]
+harness = false
+name    = "settings_window"
