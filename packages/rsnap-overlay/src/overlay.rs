@@ -236,7 +236,7 @@ const SELECTION_FLOW_SPEED: f32 = 0.24;
 const SELECTION_FLOW_CORE_WIDTH_PX: f32 = 2.4;
 const SELECTION_FLOW_CORE_FLOW_WIDTH: f32 = 0.06;
 const SELECTION_FLOW_FLOW_BOOST: f32 = 2.8;
-const INTERACTIVE_REPAINT_FPS_FLOOR: f32 = 120.0;
+const INTERACTIVE_REPAINT_FPS_CAP: f32 = 120.0;
 const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] = [(94, 200, 255), (165, 103, 255), (255, 150, 60)];
 const SELECTION_FLOW_FROZEN_ALPHA_SCALE: f32 = 0.70;
 const SELECTION_FLOW_FROZEN_INTENSITY: f32 = 1.25;
@@ -1225,10 +1225,15 @@ impl OverlaySession {
 				if fps.is_finite() && fps > 0.0 { Some(fps) } else { None }
 			})
 			.max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-		let fps = monitor_fps.or(fallback_fps).unwrap_or(INTERACTIVE_REPAINT_FPS_FLOOR);
-		let fps = fps.max(INTERACTIVE_REPAINT_FPS_FLOOR);
+		let fps = Self::interactive_repaint_fps(monitor_fps, fallback_fps);
 
 		Duration::from_secs_f32(1.0 / fps)
+	}
+
+	fn interactive_repaint_fps(monitor_fps: Option<f32>, fallback_fps: Option<f32>) -> f32 {
+		monitor_fps
+			.or(fallback_fps)
+			.map_or(INTERACTIVE_REPAINT_FPS_CAP, |fps| fps.min(INTERACTIVE_REPAINT_FPS_CAP))
 	}
 
 	fn selection_flow_repaint_interval(&self, monitor: Option<MonitorRect>) -> Duration {
@@ -1830,6 +1835,46 @@ impl OverlaySession {
 		true
 	}
 
+	fn log_live_sample_apply_timing(
+		&self,
+		path: &'static str,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		request_id: u64,
+		elapsed: Duration,
+		apply: LiveSampleApplyResult,
+	) {
+		tracing::trace!(
+			op = "overlay.live_sample_apply_phase",
+			path,
+			request_id,
+			monitor_id = monitor.id,
+			point = ?point,
+			latency_us = elapsed.as_micros(),
+			alt_held = self.state.alt_held,
+			overlay_changed = apply.overlay_changed,
+			hud_changed = apply.hud_changed,
+			loupe_changed = apply.loupe_changed,
+			"Live sample apply phase timing."
+		);
+
+		if elapsed >= Duration::from_millis(12) {
+			tracing::debug!(
+				op = "overlay.live_sample_apply_latency",
+				path,
+				request_id,
+				monitor_id = monitor.id,
+				point = ?point,
+				latency_ms = elapsed.as_millis(),
+				alt_held = self.state.alt_held,
+				overlay_changed = apply.overlay_changed,
+				hud_changed = apply.hud_changed,
+				loupe_changed = apply.loupe_changed,
+				"Live cursor sample apply latency exceeded the target frame budget."
+			);
+		}
+	}
+
 	fn request_live_cursor_sample(
 		&mut self,
 		monitor: MonitorRect,
@@ -1870,23 +1915,20 @@ impl OverlaySession {
 
 			self.applied_live_cursor_sample_request_id = Some(request_id);
 
-			if let Some(requested_at) = self.latest_live_cursor_sample_requested_at.take() {
-				let sample_latency = requested_at.elapsed();
-
-				if sample_latency >= Duration::from_millis(12) {
-					tracing::debug!(
-						op = "overlay.live_sample_apply_latency",
-						request_id,
-						monitor_id = monitor.id,
-						point = ?cursor,
-						latency_ms = sample_latency.as_millis(),
-						alt_held = self.state.alt_held,
-						"Live cursor sample apply latency exceeded the target frame budget."
-					);
-				}
-			}
-
 			let apply = self.apply_live_cursor_sample_detail(monitor, cursor, sample);
+			let sample_latency = self
+				.latest_live_cursor_sample_requested_at
+				.take()
+				.map_or(Duration::ZERO, |requested_at| requested_at.elapsed());
+
+			self.log_live_sample_apply_timing(
+				"macos_stream",
+				monitor,
+				cursor,
+				request_id,
+				sample_latency,
+				apply,
+			);
 
 			if apply.any_changed() {
 				self.request_redraw_live_sample_targets(monitor, apply);
@@ -2174,23 +2216,20 @@ impl OverlaySession {
 
 		self.applied_live_cursor_sample_request_id = Some(request_id);
 
-		if let Some(requested_at) = self.latest_live_cursor_sample_requested_at.take() {
-			let sample_latency = requested_at.elapsed();
-
-			if sample_latency >= Duration::from_millis(12) {
-				tracing::debug!(
-					op = "overlay.live_sample_apply_latency",
-					request_id,
-					monitor_id = monitor.id,
-					point = ?point,
-					latency_ms = sample_latency.as_millis(),
-					alt_held = self.state.alt_held,
-					"Live cursor sample apply latency exceeded the target frame budget."
-				);
-			}
-		}
-
 		let apply = self.apply_live_cursor_sample_detail(monitor, point, sample);
+		let sample_latency = self
+			.latest_live_cursor_sample_requested_at
+			.take()
+			.map_or(Duration::ZERO, |requested_at| requested_at.elapsed());
+
+		self.log_live_sample_apply_timing(
+			"worker_response",
+			monitor,
+			point,
+			request_id,
+			sample_latency,
+			apply,
+		);
 
 		if apply.any_changed() {
 			self.request_redraw_live_sample_targets(monitor, apply);
@@ -4891,6 +4930,23 @@ impl OverlaySession {
 	}
 
 	fn log_hud_redraw_metrics(&mut self, redraw_elapsed: Duration, summary: &HudRedrawSummary) {
+		tracing::trace!(
+			op = "overlay.hud_redraw_phase_timing",
+			window_id = ?summary.redraw_window_id,
+			monitor_id = ?summary.redraw_monitor_id,
+			total_us = redraw_elapsed.as_micros(),
+			renderer_draw_us = summary.renderer_draw_elapsed.map_or(0, |elapsed| elapsed.as_micros()),
+			request_inner_size_us = summary
+				.request_inner_size_elapsed
+				.map_or(0, |elapsed| elapsed.as_micros()),
+			position_update_us = summary
+				.position_update_elapsed
+				.map_or(0, |elapsed| elapsed.as_micros()),
+			toolbar_followup = summary.request_toolbar_redraw.is_some(),
+			resize_target = ?summary.resize_target,
+			"HUD redraw phase timing."
+		);
+
 		if let Some(elapsed) = summary.renderer_draw_elapsed {
 			self.slow_op_logger.warn_if_redraw_substep_slow(
 				"overlay.hud_redraw.renderer_draw",
@@ -5162,6 +5218,29 @@ impl OverlaySession {
 				},
 			);
 		}
+
+		tracing::trace!(
+			op = "overlay.loupe_redraw_phase_timing",
+			window_id = ?redraw_window_id,
+			monitor_id = monitor.id,
+			total_us = redraw_elapsed.as_micros(),
+			reposition_us = reposition_elapsed.map_or(0, |elapsed| elapsed.as_micros()),
+			was_visible,
+			needs_reposition,
+			"Loupe redraw phase timing."
+		);
+
+		self.slow_op_logger.warn_if_slow(
+			"overlay.loupe_redraw.total",
+			redraw_elapsed,
+			LIVE_PRESENT_INTERVAL_MIN,
+			|| {
+				format!(
+					"window_id={redraw_window_id:?} monitor_id={} was_visible={} needs_reposition={}",
+					monitor.id, was_visible, needs_reposition
+				)
+			},
+		);
 
 		self.last_present_at = Instant::now();
 
@@ -6472,6 +6551,134 @@ struct HudRedrawSummary {
 	redraw_monitor_id: Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum WindowRendererPath {
+	Overlay,
+	LoupeTile,
+}
+impl WindowRendererPath {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Overlay => "overlay",
+			Self::LoupeTile => "loupe_tile",
+		}
+	}
+}
+
+#[derive(Debug, Default)]
+struct WindowRendererPhaseTimings {
+	prepare_input: Duration,
+	sync_hud_bg: Duration,
+	run_egui: Duration,
+	update_hud_blur_uniform: Duration,
+	sync_egui_textures: Duration,
+	tessellate: Duration,
+	acquire_frame: Duration,
+	render_frame: Duration,
+	total: Duration,
+}
+impl WindowRendererPhaseTimings {
+	fn trace(
+		&self,
+		path: WindowRendererPath,
+		window_id: WindowId,
+		monitor_id: u32,
+		mode: OverlayMode,
+		toolbar_active: bool,
+		paint_jobs: usize,
+	) {
+		tracing::trace!(
+			op = "overlay.window_renderer_phase_timing",
+			path = path.as_str(),
+			window_id = ?window_id,
+			monitor_id,
+			mode = ?mode,
+			toolbar_active,
+			paint_jobs,
+			total_us = self.total.as_micros(),
+			prepare_input_us = self.prepare_input.as_micros(),
+			sync_hud_bg_us = self.sync_hud_bg.as_micros(),
+			run_egui_us = self.run_egui.as_micros(),
+			update_hud_blur_uniform_us = self.update_hud_blur_uniform.as_micros(),
+			sync_egui_textures_us = self.sync_egui_textures.as_micros(),
+			tessellate_us = self.tessellate.as_micros(),
+			acquire_frame_us = self.acquire_frame.as_micros(),
+			render_frame_us = self.render_frame.as_micros(),
+			"Overlay window renderer phase timing."
+		);
+	}
+
+	fn warn_if_substeps_slow(
+		&self,
+		slow_op_logger: &mut SlowOperationLogger,
+		path: WindowRendererPath,
+		window_id: WindowId,
+		monitor_id: u32,
+		mode: OverlayMode,
+		paint_jobs: usize,
+	) {
+		let context = || {
+			format!(
+				"path={} window_id={window_id:?} monitor_id={monitor_id} mode={mode:?} paint_jobs={paint_jobs}",
+				path.as_str()
+			)
+		};
+
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.prepare_input",
+			self.prepare_input,
+			&context,
+		);
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.sync_hud_bg",
+			self.sync_hud_bg,
+			&context,
+		);
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.run_egui",
+			self.run_egui,
+			&context,
+		);
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.update_hud_blur_uniform",
+			self.update_hud_blur_uniform,
+			&context,
+		);
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.sync_egui_textures",
+			self.sync_egui_textures,
+			&context,
+		);
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.tessellate",
+			self.tessellate,
+			&context,
+		);
+	}
+
+	fn warn_phase_if_slow<F>(
+		&self,
+		slow_op_logger: &mut SlowOperationLogger,
+		op: &'static str,
+		elapsed: Duration,
+		describe: &F,
+	) where
+		F: Fn() -> String,
+	{
+		if elapsed.is_zero() {
+			return;
+		}
+
+		slow_op_logger.warn_if_redraw_substep_slow(op, elapsed, self.total, describe);
+	}
+}
+
 struct OverlayWindow {
 	monitor: MonitorRect,
 	window: Arc<winit::window::Window>,
@@ -6718,7 +6925,7 @@ impl WindowRenderer {
 					depth_slice: None,
 					resolve_target: None,
 					ops: wgpu::Operations {
-						load: LoadOp::Clear(wgpu::Color::BLACK),
+						load: LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
 						store: StoreOp::Store,
 					},
 				})],
@@ -9066,6 +9273,118 @@ impl WindowRenderer {
 		self.hud_theme = Some(theme);
 	}
 
+	fn prepare_window_renderer_input(
+		&mut self,
+		gpu: &GpuContext,
+		monitor: MonitorRect,
+		toolbar_pointer: Option<FrozenToolbarPointerState>,
+		theme_mode: ThemeMode,
+		phase_timings: &mut WindowRendererPhaseTimings,
+	) -> (HudTheme, PhysicalSize<u32>, f32, egui::RawInput) {
+		self.apply_pending_reconfigure(gpu);
+
+		let theme = hud_helpers::effective_hud_theme(theme_mode, self.window.theme());
+
+		self.sync_egui_theme(theme);
+
+		let prepare_input_started_at = Instant::now();
+		let (size, pixels_per_point, raw_input) =
+			self.prepare_egui_input(gpu, toolbar_pointer, Some(monitor.scale_factor()));
+
+		phase_timings.prepare_input = prepare_input_started_at.elapsed();
+
+		(theme, size, pixels_per_point, raw_input)
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn maybe_update_hud_blur_uniform(
+		&mut self,
+		gpu: &GpuContext,
+		size: PhysicalSize<u32>,
+		pixels_per_point: f32,
+		theme: HudTheme,
+		hud_shader_blur_active: bool,
+		hud_fog_amount: f32,
+		hud_milk_amount: f32,
+		hud_tint_hue: f32,
+		phase_timings: &mut WindowRendererPhaseTimings,
+	) {
+		if !hud_shader_blur_active {
+			return;
+		}
+
+		let update_hud_blur_uniform_started_at = Instant::now();
+
+		self.update_hud_blur_uniform(
+			gpu,
+			size,
+			pixels_per_point,
+			theme,
+			hud_fog_amount,
+			hud_milk_amount,
+			hud_tint_hue,
+		);
+
+		phase_timings.update_hud_blur_uniform = update_hud_blur_uniform_started_at.elapsed();
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn finish_window_renderer_draw(
+		&mut self,
+		gpu: &GpuContext,
+		state: &OverlayState,
+		path: WindowRendererPath,
+		monitor: MonitorRect,
+		size: PhysicalSize<u32>,
+		pixels_per_point: f32,
+		draw_started_at: Instant,
+		phase_timings: &mut WindowRendererPhaseTimings,
+		paint_jobs: Vec<ClippedPrimitive>,
+		draw_frozen_bg: bool,
+		hud_shader_blur_active: bool,
+		toolbar_active: bool,
+	) -> Result<()> {
+		let screen_descriptor =
+			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
+		let acquire_frame_started_at = Instant::now();
+		let frame = self.acquire_frame(gpu)?;
+
+		phase_timings.acquire_frame = acquire_frame_started_at.elapsed();
+
+		let render_frame_started_at = Instant::now();
+
+		self.render_frame(
+			gpu,
+			draw_frozen_bg,
+			hud_shader_blur_active,
+			frame,
+			&paint_jobs,
+			&screen_descriptor,
+		)?;
+
+		phase_timings.render_frame = render_frame_started_at.elapsed();
+		phase_timings.total = draw_started_at.elapsed();
+
+		phase_timings.warn_if_substeps_slow(
+			&mut self.slow_op_logger,
+			path,
+			self.window.id(),
+			monitor.id,
+			state.mode,
+			paint_jobs.len(),
+		);
+		phase_timings.trace(
+			path,
+			self.window.id(),
+			monitor.id,
+			state.mode,
+			toolbar_active,
+			paint_jobs.len(),
+		);
+
+		Ok(())
+	}
+
 	#[allow(clippy::too_many_arguments)]
 	fn draw(
 		&mut self,
@@ -9093,14 +9412,15 @@ impl WindowRenderer {
 		toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
 	) -> Result<()> {
-		self.apply_pending_reconfigure(gpu);
-
-		let theme = hud_helpers::effective_hud_theme(theme_mode, self.window.theme());
-
-		self.sync_egui_theme(theme);
-
-		let (size, pixels_per_point, raw_input) =
-			self.prepare_egui_input(gpu, toolbar_pointer, Some(monitor.scale_factor()));
+		let draw_started_at = Instant::now();
+		let mut phase_timings = WindowRendererPhaseTimings::default();
+		let (theme, size, pixels_per_point, raw_input) = self.prepare_window_renderer_input(
+			gpu,
+			monitor,
+			toolbar_pointer,
+			theme_mode,
+			&mut phase_timings,
+		);
 		let toolbar_active = toolbar_state.is_some();
 
 		self.trace_frozen_frame_metrics(state, monitor, size, pixels_per_point, toolbar_active);
@@ -9116,11 +9436,15 @@ impl WindowRenderer {
 			show_hud_blur,
 			hud_opaque,
 		);
+		let sync_hud_bg_started_at = Instant::now();
 
 		self.sync_or_clear_hud_bg(gpu, state, monitor, hud_cfg)?;
 
+		phase_timings.sync_hud_bg = sync_hud_bg_started_at.elapsed();
+
 		let hud_shader_blur_active = self.hud_shader_blur_active(state, monitor, hud_cfg);
 		let mut selection_flow_cache = mem::take(&mut self.selection_flow_cache);
+		let run_egui_started_at = Instant::now();
 		let (full_output, hud_pill) = self.run_egui(
 			raw_input,
 			state,
@@ -9148,41 +9472,51 @@ impl WindowRenderer {
 			toolbar_pointer,
 		);
 
+		phase_timings.run_egui = run_egui_started_at.elapsed();
 		self.selection_flow_cache = selection_flow_cache;
 		self.hud_pill = hud_pill;
 
-		if hud_shader_blur_active {
-			self.update_hud_blur_uniform(
-				gpu,
-				size,
-				pixels_per_point,
-				theme,
-				hud_fog_amount,
-				hud_milk_amount,
-				hud_tint_hue,
-			);
-		}
+		self.maybe_update_hud_blur_uniform(
+			gpu,
+			size,
+			pixels_per_point,
+			theme,
+			hud_shader_blur_active,
+			hud_fog_amount,
+			hud_milk_amount,
+			hud_tint_hue,
+			&mut phase_timings,
+		);
+
+		let sync_egui_textures_started_at = Instant::now();
 
 		self.sync_egui_textures(gpu, &full_output);
 
+		phase_timings.sync_egui_textures = sync_egui_textures_started_at.elapsed();
+
+		let tessellate_started_at = Instant::now();
 		let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, pixels_per_point);
-		let screen_descriptor =
-			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
-		let frame = self.acquire_frame(gpu)?;
+
+		phase_timings.tessellate = tessellate_started_at.elapsed();
+
 		let draw_frozen_bg = hud_cfg.needs_frozen_surface_bg
 			&& state.monitor == Some(monitor)
 			&& state.frozen_image.is_some();
 
-		self.render_frame(
+		self.finish_window_renderer_draw(
 			gpu,
+			state,
+			WindowRendererPath::Overlay,
+			monitor,
+			size,
+			pixels_per_point,
+			draw_started_at,
+			&mut phase_timings,
+			paint_jobs,
 			draw_frozen_bg,
 			hud_shader_blur_active,
-			frame,
-			&paint_jobs,
-			&screen_descriptor,
-		)?;
-
-		Ok(())
+			toolbar_active,
+		)
 	}
 
 	fn trace_frozen_frame_metrics(
@@ -9294,14 +9628,10 @@ impl WindowRenderer {
 		hud_tint_hue: f32,
 		theme_mode: ThemeMode,
 	) -> Result<()> {
-		self.apply_pending_reconfigure(gpu);
-
-		let theme = hud_helpers::effective_hud_theme(theme_mode, self.window.theme());
-
-		self.sync_egui_theme(theme);
-
-		let (size, pixels_per_point, raw_input) =
-			self.prepare_egui_input(gpu, None, Some(monitor.scale_factor()));
+		let draw_started_at = Instant::now();
+		let mut phase_timings = WindowRendererPhaseTimings::default();
+		let (theme, size, pixels_per_point, raw_input) =
+			self.prepare_window_renderer_input(gpu, monitor, None, theme_mode, &mut phase_timings);
 
 		self.loupe_tile = None;
 
@@ -9315,8 +9645,11 @@ impl WindowRenderer {
 			needs_shader_blur_bg: shader_blur_active,
 			hud_glass_active: shader_blur_active,
 		};
+		let sync_hud_bg_started_at = Instant::now();
 
 		self.sync_or_clear_hud_bg(gpu, state, monitor, hud_cfg)?;
+
+		phase_timings.sync_hud_bg = sync_hud_bg_started_at.elapsed();
 
 		let hud_shader_blur_active = self.hud_shader_blur_active(state, monitor, hud_cfg);
 		let hud_blur_active = show_hud_blur && !hud_opaque;
@@ -9328,6 +9661,7 @@ impl WindowRenderer {
 			hud_milk_amount,
 			hud_tint_hue,
 		);
+		let run_loupe_tile_egui_started_at = Instant::now();
 		let (full_output, loupe_tile_rect) = self.run_loupe_tile_egui(
 			raw_input,
 			state,
@@ -9337,6 +9671,7 @@ impl WindowRenderer {
 			body_fill,
 		);
 
+		phase_timings.run_egui = run_loupe_tile_egui_started_at.elapsed();
 		self.loupe_tile = loupe_tile_rect;
 
 		if hud_shader_blur_active {
@@ -9346,37 +9681,47 @@ impl WindowRenderer {
 			});
 
 			if self.hud_pill.is_some() {
-				self.update_hud_blur_uniform(
+				self.maybe_update_hud_blur_uniform(
 					gpu,
 					size,
 					pixels_per_point,
 					theme,
+					hud_shader_blur_active,
 					hud_fog_amount,
 					hud_milk_amount,
 					hud_tint_hue,
+					&mut phase_timings,
 				);
 			}
 		} else {
 			self.hud_pill = None;
 		}
 
+		let sync_egui_textures_started_at = Instant::now();
+
 		self.sync_egui_textures(gpu, &full_output);
 
-		let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, pixels_per_point);
-		let screen_descriptor =
-			ScreenDescriptor { size_in_pixels: [size.width, size.height], pixels_per_point };
-		let frame = self.acquire_frame(gpu)?;
+		phase_timings.sync_egui_textures = sync_egui_textures_started_at.elapsed();
 
-		self.render_frame(
+		let tessellate_started_at = Instant::now();
+		let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, pixels_per_point);
+
+		phase_timings.tessellate = tessellate_started_at.elapsed();
+
+		self.finish_window_renderer_draw(
 			gpu,
+			state,
+			WindowRendererPath::LoupeTile,
+			monitor,
+			size,
+			pixels_per_point,
+			draw_started_at,
+			&mut phase_timings,
+			paint_jobs,
 			false,
 			hud_shader_blur_active,
-			frame,
-			&paint_jobs,
-			&screen_descriptor,
-		)?;
-
-		Ok(())
+			false,
+		)
 	}
 
 	fn tinted_hud_body_fill(
@@ -11849,5 +12194,24 @@ mod tests {
 
 		assert_eq!(clamped.x, monitor.min.x + TOOLBAR_SCREEN_MARGIN_PX);
 		assert_eq!(clamped.y, monitor.min.y + TOOLBAR_SCREEN_MARGIN_PX);
+	}
+
+	#[test]
+	fn interactive_repaint_fps_uses_known_lower_monitor_refresh() {
+		assert_eq!(OverlaySession::interactive_repaint_fps(Some(60.0), Some(144.0)), 60.0);
+		assert_eq!(OverlaySession::interactive_repaint_fps(Some(75.0), Some(120.0)), 75.0);
+	}
+
+	#[test]
+	fn interactive_repaint_fps_caps_known_higher_refresh_to_contract_limit() {
+		assert_eq!(OverlaySession::interactive_repaint_fps(Some(144.0), Some(60.0)), 120.0);
+		assert_eq!(OverlaySession::interactive_repaint_fps(Some(240.0), None), 120.0);
+	}
+
+	#[test]
+	fn interactive_repaint_fps_falls_back_to_known_or_default_cap() {
+		assert_eq!(OverlaySession::interactive_repaint_fps(None, Some(90.0)), 90.0);
+		assert_eq!(OverlaySession::interactive_repaint_fps(None, Some(144.0)), 120.0);
+		assert_eq!(OverlaySession::interactive_repaint_fps(None, None), 120.0);
 	}
 }
