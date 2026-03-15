@@ -14,6 +14,8 @@ current support constraints.
 
 Spec boundary: `docs/spec/v0.md`
 
+Governing performance contract: `docs/spec/performance_tracking.md`
+
 Date: 2026-03-02
 
 ## Why this doc exists
