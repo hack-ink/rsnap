@@ -51,3 +51,9 @@ Then keep the body explicit:
 - Do not require fixed filename prefixes up front.
 - Choose names for topic clarity and retrieval quality, not visual uniformity.
 - If a guide depends on a spec, the guide links back to the governing spec.
+
+## Current specs
+
+- `docs/spec/v0.md` for the prototype capture-flow and scroll-capture behavior contract
+- `docs/spec/performance_tracking.md` for render cadence, performance scenarios, metrics,
+  thresholds, and known performance-contract gaps
