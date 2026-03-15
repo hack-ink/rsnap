@@ -17,14 +17,14 @@ pub struct StartupBuildInfo {
 	pub version: &'static str,
 }
 
-pub(crate) fn startup_build_info() -> StartupBuildInfo {
+pub fn startup_build_info() -> StartupBuildInfo {
 	StartupBuildInfo {
 		version: env!("CARGO_PKG_VERSION"),
 		git_commit: option_env!("RSNAP_BUILD_GIT_COMMIT").unwrap_or("unknown"),
 	}
 }
 
-pub(crate) fn init_logging() -> Option<WorkerGuard> {
+pub fn init_logging() -> Option<WorkerGuard> {
 	let filter = default_log_filter();
 	let Some(log_dir) = resolve_log_dir() else {
 		init_console_logging(filter);
