@@ -126,7 +126,7 @@ use self::session_state::{
 	MacOSScrollWheelEvent,
 };
 #[cfg(target_os = "macos")]
-use crate::live_frame_stream_macos::MacLiveFrameStream;
+use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 use crate::state::LiveCursorSample;
 #[cfg(any(not(target_os = "macos"), test))]
@@ -1936,11 +1936,13 @@ impl OverlaySession {
 			};
 			let sample = stream.latest_cursor_sample(
 				monitor,
-				x_px,
-				y_px,
-				want_patch,
-				patch_width_px,
-				patch_height_px,
+				CursorSampleRequest::with_optional_patch(
+					x_px,
+					y_px,
+					want_patch,
+					patch_width_px,
+					patch_height_px,
+				),
 			);
 
 			self.note_live_cursor_sample_request_started(request_id);
@@ -5919,9 +5921,11 @@ impl OverlaySession {
 		let deadline = Instant::now() + STARTUP_LIVE_SAMPLE_WAIT_TIMEOUT;
 
 		loop {
-			if let Some(sample) =
-				stream.latest_cursor_sample_after(monitor, x_px, y_px, false, 0, 0, min_captured_at)
-				&& let Some(rgb) = sample.rgb
+			if let Some(sample) = stream.latest_cursor_sample_after(
+				monitor,
+				CursorSampleRequest::rgb(x_px, y_px),
+				min_captured_at,
+			) && let Some(rgb) = sample.rgb
 			{
 				self.state.rgb = Some(rgb);
 
