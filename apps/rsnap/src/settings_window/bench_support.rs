@@ -1,3 +1,5 @@
+//! Deterministic settings-window fixtures and harnesses used by Criterion benches.
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -21,15 +23,21 @@ use crate::settings_window::sections::{self, SettingsUiHost, SettingsUiSectionDe
 use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Stable settings-window benchmark scenarios used by Criterion benches.
 pub enum SettingsUiBenchScenario {
+	/// Default settings presentation with standard section expansion.
 	Default,
+	/// All sections expanded to stress the full layout path.
 	ExpandedAll,
+	/// Hotkey recording flow with the focused recorder UI active.
 	HotkeyRecording,
 }
 impl SettingsUiBenchScenario {
+	/// All supported settings benchmark scenarios in stable iteration order.
 	pub const ALL: [Self; 3] = [Self::Default, Self::ExpandedAll, Self::HotkeyRecording];
 
 	#[must_use]
+	/// Returns the stable bench-function suffix for this scenario.
 	pub const fn as_str(self) -> &'static str {
 		match self {
 			Self::Default => "default",
@@ -48,27 +56,44 @@ impl SettingsUiBenchScenario {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+/// Layout-only benchmark output before tessellation.
 pub struct SettingsUiLayoutMetrics {
+	/// Number of high-level shapes emitted by egui.
 	pub shape_count: usize,
+	/// Number of textures uploaded in the frame.
 	pub texture_upload_count: usize,
+	/// Number of textures freed in the frame.
 	pub texture_free_count: usize,
+	/// Requested repaint delay in microseconds.
 	pub repaint_delay_micros: u128,
+	/// Whether the frame mutated persisted settings state.
 	pub settings_changed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+/// Full-frame benchmark output after tessellation.
 pub struct SettingsUiFrameMetrics {
+	/// Number of high-level shapes emitted by egui.
 	pub shape_count: usize,
+	/// Number of clipped primitives generated during tessellation.
 	pub clipped_primitive_count: usize,
+	/// Number of mesh primitives produced.
 	pub mesh_count: usize,
+	/// Number of callback primitives produced.
 	pub callback_primitive_count: usize,
+	/// Total vertex count across tessellated meshes.
 	pub vertex_count: usize,
+	/// Total index count across tessellated meshes.
 	pub index_count: usize,
+	/// Number of textures uploaded in the frame.
 	pub texture_upload_count: usize,
+	/// Number of textures freed in the frame.
 	pub texture_free_count: usize,
+	/// Whether the frame mutated persisted settings state.
 	pub settings_changed: bool,
 }
 
+/// Reusable settings-window benchmark harness backed by a deterministic egui fixture.
 pub struct SettingsUiBenchHarness {
 	ctx: Context,
 	frame_index: u64,
@@ -81,6 +106,7 @@ pub struct SettingsUiBenchHarness {
 }
 impl SettingsUiBenchHarness {
 	#[must_use]
+	/// Builds the benchmark harness for the selected settings scenario.
 	pub fn new(scenario: SettingsUiBenchScenario) -> Self {
 		let ctx = Context::default();
 
@@ -98,6 +124,7 @@ impl SettingsUiBenchHarness {
 	}
 
 	#[must_use]
+	/// Runs the layout path without tessellation and returns summary metrics.
 	pub fn run_layout(&mut self) -> SettingsUiLayoutMetrics {
 		let (full_output, shape_count, settings_changed) = self.run_full_output();
 		let repaint_delay_micros = full_output
@@ -116,6 +143,7 @@ impl SettingsUiBenchHarness {
 	}
 
 	#[must_use]
+	/// Runs the full frame including tessellation and returns summary metrics.
 	pub fn run_frame(&mut self) -> SettingsUiFrameMetrics {
 		let (full_output, shape_count, settings_changed) = self.run_full_output();
 		let texture_upload_count = full_output.textures_delta.set.len();

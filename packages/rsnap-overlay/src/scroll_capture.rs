@@ -1,3 +1,4 @@
+/// Deterministic scroll-capture fixtures and harnesses used by Criterion benches.
 pub mod bench_support {
 	use image::{Rgba, RgbaImage, imageops};
 
@@ -7,15 +8,20 @@ pub mod bench_support {
 	};
 
 	#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+	/// Benchmark fixture shapes that exercise the common and wide capture paths.
 	pub enum ScrollCaptureBenchScenario {
+		/// Standard-width capture data with modest scroll movement.
 		Baseline,
+		/// Wider capture data with a larger viewport and scroll delta.
 		Wide,
 	}
 
 	impl ScrollCaptureBenchScenario {
+		/// All supported benchmark scenarios in stable iteration order.
 		pub const ALL: [Self; 2] = [Self::Baseline, Self::Wide];
 
 		#[must_use]
+		/// Returns the stable bench-function suffix for this scenario.
 		pub const fn as_str(self) -> &'static str {
 			match self {
 				Self::Baseline => "baseline",
@@ -44,27 +50,41 @@ pub mod bench_support {
 	}
 
 	#[derive(Clone, Copy, Debug, Default)]
+	/// Fingerprint benchmark output used for deterministic performance checks.
 	pub struct ScrollCaptureFingerprintMetrics {
+		/// Total byte length of the generated fingerprint payload.
 		pub byte_len: usize,
+		/// Stable checksum of the generated fingerprint payload.
 		pub checksum: u32,
 	}
 
 	#[derive(Clone, Copy, Debug, Default)]
+	/// Overlap-match benchmark output for a single downward sample.
 	pub struct ScrollCaptureOverlapMetrics {
+		/// Whether the overlap search produced a valid match.
 		pub matched: bool,
+		/// Detected scroll motion in rows.
 		pub motion_rows: u32,
+		/// Rows that remained overlapped after applying the detected motion.
 		pub overlap_rows: u32,
+		/// Mean absolute difference metric for the matched overlap window.
 		pub mean_abs_diff_x100: u32,
 	}
 
 	#[derive(Clone, Copy, Debug, Default)]
+	/// Session-commit benchmark output for a single growth observation.
 	pub struct ScrollCaptureSessionMetrics {
+		/// Whether the sample committed new growth into the session.
 		pub committed: bool,
+		/// Number of rows added to the stitched export.
 		pub growth_rows: u32,
+		/// Export image height after the observation completes.
 		pub export_height: u32,
+		/// Preview image height after the observation completes.
 		pub preview_height: u32,
 	}
 
+	/// Reusable scroll-capture benchmark harness backed by deterministic image fixtures.
 	pub struct ScrollCaptureBenchHarness {
 		fixture: ScrollCaptureBenchFixture,
 		overlap_config: OverlapSearchConfig,
@@ -72,6 +92,7 @@ pub mod bench_support {
 
 	impl ScrollCaptureBenchHarness {
 		#[must_use]
+		/// Builds the benchmark harness for the selected fixture scenario.
 		pub fn new(scenario: ScrollCaptureBenchScenario) -> Self {
 			Self {
 				fixture: ScrollCaptureBenchFixture::new(scenario.spec()),
@@ -80,6 +101,7 @@ pub mod bench_support {
 		}
 
 		#[must_use]
+		/// Runs the fingerprint path and returns stable summary metrics.
 		pub fn run_fingerprint(&self) -> ScrollCaptureFingerprintMetrics {
 			let bytes = scroll_capture_fingerprint(&self.fixture.fingerprint_frame);
 
@@ -90,6 +112,7 @@ pub mod bench_support {
 		}
 
 		#[must_use]
+		/// Runs the overlap matcher and returns the resulting comparison metrics.
 		pub fn run_overlap_match(&self) -> ScrollCaptureOverlapMetrics {
 			let max_motion_rows = max_directional_motion_rows(
 				&self.fixture.base_frame,
@@ -125,6 +148,7 @@ pub mod bench_support {
 		}
 
 		#[must_use]
+		/// Runs one downward observation through the session-commit path.
 		pub fn run_session_commit(&self) -> ScrollCaptureSessionMetrics {
 			let mut session = self.fixture.new_session();
 			let outcome = session

@@ -3,6 +3,9 @@
 //! Backend implementations remain internal to this crate and are not part of the
 //! app-shell integration surface.
 
+#![allow(unused_crate_dependencies)]
+
+/// Benchmark harness exports used by Criterion benches.
 pub mod bench_support {
 	pub use crate::scroll_capture::bench_support::{
 		ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
