@@ -1202,6 +1202,15 @@ impl OverlaySession {
 		old_monitor != Some(monitor) || previous_drag_rect != next_drag_rect
 	}
 
+	fn live_hud_redraw_needed_for_cursor_update(
+		old_cursor: Option<GlobalPoint>,
+		cursor: GlobalPoint,
+		old_monitor: Option<MonitorRect>,
+		monitor: MonitorRect,
+	) -> bool {
+		old_cursor != Some(cursor) || old_monitor != Some(monitor)
+	}
+
 	fn repaint_interval_for_monitor(&self, monitor: Option<MonitorRect>) -> Duration {
 		let monitor_fps = monitor
 			.and_then(|target| {
@@ -1529,8 +1538,9 @@ impl OverlaySession {
 			}
 
 			let previous_drag_rect = self.state.drag_rect;
+			let old_cursor = self.state.cursor;
 
-			self.update_cursor_for_live_move(monitor, global);
+			self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global);
 			self.update_live_drag_rect(monitor, global);
 
 			if let Some(old_monitor) = old_monitor
@@ -1578,8 +1588,9 @@ impl OverlaySession {
 		}
 
 		let previous_drag_rect = self.state.drag_rect;
+		let old_cursor = self.state.cursor;
 
-		self.update_cursor_for_live_move(monitor, global);
+		self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global);
 		self.update_live_drag_rect(monitor, global);
 
 		if let Some(old_monitor) = old_monitor
@@ -3635,7 +3646,7 @@ impl OverlaySession {
 		};
 
 		self.trace_cursor_moved_with_mapping(trace);
-		self.update_cursor_for_live_move(monitor, global);
+		self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global);
 
 		let previous_drag_rect = self.state.drag_rect;
 
@@ -3691,7 +3702,7 @@ impl OverlaySession {
 			);
 		}
 
-		self.update_cursor_for_live_move(monitor, global);
+		self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global);
 
 		let previous_drag_rect = self.state.drag_rect;
 
@@ -3770,10 +3781,20 @@ impl OverlaySession {
 		);
 	}
 
-	fn update_cursor_for_live_move(&mut self, monitor: MonitorRect, global: GlobalPoint) {
+	fn update_cursor_for_live_move(
+		&mut self,
+		old_monitor: Option<MonitorRect>,
+		old_cursor: Option<GlobalPoint>,
+		monitor: MonitorRect,
+		global: GlobalPoint,
+	) {
 		self.update_cursor_state(monitor, global);
 		self.update_hud_window_position(monitor, global);
 
+		if Self::live_hud_redraw_needed_for_cursor_update(old_cursor, global, old_monitor, monitor)
+		{
+			self.request_redraw_hud_window();
+		}
 		if matches!(self.state.mode, OverlayMode::Live) && self.use_fake_hud_blur() {
 			if self.state.live_bg_monitor != Some(monitor) {
 				self.state.live_bg_monitor = None;
@@ -10791,6 +10812,48 @@ mod tests {
 			monitor_b,
 			None,
 			None,
+		));
+	}
+
+	#[test]
+	fn live_hud_redraw_needed_for_cursor_update_tracks_cursor_or_monitor_changes() {
+		let monitor_a = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		};
+		let monitor_b = MonitorRect {
+			id: 2,
+			origin: GlobalPoint::new(1_000, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		};
+		let cursor_a = GlobalPoint::new(120, 180);
+		let cursor_b = GlobalPoint::new(140, 200);
+
+		assert!(!OverlaySession::live_hud_redraw_needed_for_cursor_update(
+			Some(cursor_a),
+			cursor_a,
+			Some(monitor_a),
+			monitor_a,
+		));
+		assert!(OverlaySession::live_hud_redraw_needed_for_cursor_update(
+			Some(cursor_a),
+			cursor_b,
+			Some(monitor_a),
+			monitor_a,
+		));
+		assert!(OverlaySession::live_hud_redraw_needed_for_cursor_update(
+			Some(cursor_a),
+			cursor_a,
+			Some(monitor_a),
+			monitor_b,
+		));
+		assert!(OverlaySession::live_hud_redraw_needed_for_cursor_update(
+			None, cursor_a, None, monitor_a,
 		));
 	}
 
