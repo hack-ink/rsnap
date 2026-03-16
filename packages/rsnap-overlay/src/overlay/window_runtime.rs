@@ -38,6 +38,9 @@ impl OverlaySession {
 			return Err(String::from("No monitors detected"));
 		}
 
+		let startup_cursor = self.sample_mouse_location();
+		let startup_monitor = Self::monitor_for_cursor_in_rects(&monitors, startup_cursor);
+
 		self.gpu = Some(GpuContext::new().map_err(|err| format!("{err:#}"))?);
 
 		self.create_overlay_windows(event_loop, &monitors)?;
@@ -45,9 +48,25 @@ impl OverlaySession {
 		self.create_loupe_window(event_loop)?;
 		self.create_toolbar_window(event_loop)?;
 		self.create_scroll_preview_window(event_loop)?;
-		self.initialize_cursor_state();
+		self.prime_startup_cursor_context(startup_cursor, startup_monitor);
+
 		#[cfg(target_os = "macos")]
-		self.focus_live_capture_window();
+		let startup_live_sample_min_captured_at = {
+			self.focus_live_capture_window();
+
+			Instant::now()
+		};
+
+		#[cfg(target_os = "macos")]
+		if let Some(monitor) = startup_monitor {
+			self.seed_startup_live_cursor_rgb(
+				monitor,
+				startup_cursor,
+				startup_live_sample_min_captured_at,
+			);
+		}
+
+		self.initialize_cursor_state_for_cursor(startup_cursor, startup_monitor);
 		self.request_redraw_all();
 
 		Ok(())
@@ -311,6 +330,7 @@ impl OverlaySession {
 			.with_decorations(false)
 			.with_resizable(false)
 			.with_transparent(true)
+			.with_visible(false)
 			.with_window_level(WindowLevel::AlwaysOnTop)
 			.with_inner_size(LogicalSize::new(460.0, 52.0));
 		let window = event_loop

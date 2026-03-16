@@ -234,6 +234,39 @@ impl MacLiveFrameStream {
 		sample
 	}
 
+	pub(crate) fn latest_cursor_sample_after(
+		&self,
+		monitor: MonitorRect,
+		x_px: u32,
+		y_px: u32,
+		want_patch: bool,
+		patch_width_px: u32,
+		patch_height_px: u32,
+		min_captured_at: Instant,
+	) -> Option<LiveCursorSample> {
+		let sample =
+			self.shared_latest_frame.latest_frame_for_monitor(monitor.id).and_then(|frame| {
+				if !frame_captured_at_is_fresh(frame.captured_at, min_captured_at) {
+					return None;
+				}
+
+				sample_cursor_from_pixel_buffer(
+					&frame.pixel_buffer,
+					x_px,
+					y_px,
+					want_patch,
+					patch_width_px,
+					patch_height_px,
+				)
+			});
+
+		if sample.is_none() {
+			self.ensure_monitor_nonblocking(monitor);
+		}
+
+		sample
+	}
+
 	pub(crate) fn latest_rgba_snapshot(
 		&mut self,
 		monitor: MonitorRect,
@@ -1104,6 +1137,10 @@ fn sample_cursor_from_bgra_bytes(
 	Some(LiveCursorSample { rgb, patch })
 }
 
+fn frame_captured_at_is_fresh(frame_captured_at: Instant, min_captured_at: Instant) -> bool {
+	frame_captured_at >= min_captured_at
+}
+
 fn rgba_image_from_pixel_buffer(
 	pixel_buffer: &CFRetained<CVPixelBuffer>,
 	width_px: u32,
@@ -1283,5 +1320,19 @@ mod tests {
 		assert_eq!(patch.get_pixel(0, 0).0, [3, 2, 1, 255]);
 		assert_eq!(patch.get_pixel(1, 0).0, [3, 2, 1, 255]);
 		assert_eq!(patch.get_pixel(2, 2).0, [33, 32, 31, 252]);
+	}
+
+	#[test]
+	fn frame_captured_at_is_fresh_requires_post_threshold_frame() {
+		let min_captured_at = std::time::Instant::now();
+		let older = min_captured_at.checked_sub(std::time::Duration::from_millis(1)).unwrap();
+		let newer = min_captured_at + std::time::Duration::from_millis(1);
+
+		assert!(!live_frame_stream_macos::frame_captured_at_is_fresh(older, min_captured_at));
+		assert!(live_frame_stream_macos::frame_captured_at_is_fresh(
+			min_captured_at,
+			min_captured_at
+		));
+		assert!(live_frame_stream_macos::frame_captured_at_is_fresh(newer, min_captured_at));
 	}
 }

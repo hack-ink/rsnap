@@ -17,6 +17,7 @@ use std::{
 	collections::HashMap,
 	path::PathBuf,
 	sync::{Arc, Mutex},
+	thread,
 	time::{Duration, Instant},
 };
 
@@ -255,6 +256,10 @@ const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
 const KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE: u32 = 0;
 #[cfg(target_os = "macos")]
 const KCG_EVENT_FLAGS_MASK_ALTERNATE: u64 = 1_u64 << 19;
+#[cfg(target_os = "macos")]
+const STARTUP_LIVE_SAMPLE_WAIT_TIMEOUT: Duration = Duration::from_millis(120);
+#[cfg(target_os = "macos")]
+const STARTUP_LIVE_SAMPLE_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(4);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Selects how the live HUD should be positioned.
@@ -1146,12 +1151,10 @@ impl OverlaySession {
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			return;
 		}
-
-		let Some(latest_request_id) = self.latest_live_cursor_sample_request_id else {
+		if self.latest_live_cursor_sample_request_id.is_none() {
 			return;
-		};
-
-		if self.applied_live_cursor_sample_request_id == Some(latest_request_id) {
+		}
+		if !self.live_sample_request_pending() {
 			return;
 		}
 
@@ -1188,10 +1191,15 @@ impl OverlaySession {
 	}
 
 	fn live_overlay_selection_flow_repaint_active(&self) -> bool {
-		self.state.drag_rect.is_some_and(|drag_rect| {
+		let drag_active = self.state.drag_rect.is_some_and(|drag_rect| {
 			drag_rect.rect.width as f32 >= LIVE_DRAG_START_THRESHOLD_PX
 				&& drag_rect.rect.height as f32 >= LIVE_DRAG_START_THRESHOLD_PX
-		})
+		});
+		let hovered_window_active = self.state.hovered_window_rect.is_some_and(|hovered| {
+			self.active_cursor_monitor().is_some_and(|monitor| hovered.monitor_id == monitor.id)
+		});
+
+		drag_active || hovered_window_active
 	}
 
 	fn live_overlay_redraw_needed_for_cursor_update(
@@ -1252,6 +1260,27 @@ impl OverlaySession {
 
 	fn frozen_cursor_tracking_interval(&self, monitor: Option<MonitorRect>) -> Duration {
 		self.repaint_interval_for_monitor(monitor)
+	}
+
+	fn live_sample_request_pending(&self) -> bool {
+		self.latest_live_cursor_sample_request_id.is_some()
+			&& self.applied_live_cursor_sample_request_id
+				!= self.latest_live_cursor_sample_request_id
+	}
+
+	fn note_live_cursor_sample_request_started(&mut self, request_id: u64) {
+		self.live_cursor_sample_request_id = request_id;
+		self.latest_live_cursor_sample_request_id = Some(request_id);
+		self.latest_live_cursor_sample_requested_at = Some(Instant::now());
+	}
+
+	fn finish_sync_live_cursor_sample_attempt(&mut self, request_id: u64) {
+		// Synchronous latest-frame reads on the current thread either produce a sample now or miss
+		// now. They must not leave async-style "pending" bookkeeping behind.
+
+		debug_assert_eq!(self.latest_live_cursor_sample_request_id, Some(request_id));
+
+		self.applied_live_cursor_sample_request_id = Some(request_id);
 	}
 
 	fn maybe_apply_pending_hud_and_loupe_moves(&mut self) {
@@ -1639,10 +1668,7 @@ impl OverlaySession {
 		{
 			return;
 		}
-		if self.latest_live_cursor_sample_request_id.is_some()
-			&& self.applied_live_cursor_sample_request_id
-				!= self.latest_live_cursor_sample_request_id
-		{
+		if self.live_sample_request_pending() {
 			return;
 		}
 		if !self.idle_live_sampling_request_allowed(now, monitor) {
@@ -1917,15 +1943,15 @@ impl OverlaySession {
 				patch_height_px,
 			);
 
-			self.live_cursor_sample_request_id = request_id;
-			self.latest_live_cursor_sample_request_id = Some(request_id);
-			self.latest_live_cursor_sample_requested_at = Some(Instant::now());
+			self.note_live_cursor_sample_request_started(request_id);
 
 			let Some(sample) = sample else {
+				self.finish_sync_live_cursor_sample_attempt(request_id);
+
 				return false;
 			};
 
-			self.applied_live_cursor_sample_request_id = Some(request_id);
+			self.finish_sync_live_cursor_sample_attempt(request_id);
 
 			let apply = self.apply_live_cursor_sample_detail(monitor, cursor, sample);
 			let sample_latency = self
@@ -1950,10 +1976,7 @@ impl OverlaySession {
 		}
 		#[cfg(not(target_os = "macos"))]
 		{
-			if self.latest_live_cursor_sample_request_id.is_some()
-				&& self.applied_live_cursor_sample_request_id
-					!= self.latest_live_cursor_sample_request_id
-			{
+			if self.live_sample_request_pending() {
 				return false;
 			}
 
@@ -1973,9 +1996,7 @@ impl OverlaySession {
 				patch_height_px,
 			) {
 				Ok(()) => {
-					self.live_cursor_sample_request_id = request_id;
-					self.latest_live_cursor_sample_request_id = Some(request_id);
-					self.latest_live_cursor_sample_requested_at = Some(Instant::now());
+					self.note_live_cursor_sample_request_started(request_id);
 
 					true
 				},
@@ -5833,9 +5854,12 @@ impl OverlaySession {
 		OverlayControl::Exit(exit)
 	}
 
-	fn initialize_cursor_state(&mut self) {
-		let cursor = self.sample_mouse_location();
-		let Some(monitor) = self.monitor_at(cursor) else {
+	fn initialize_cursor_state_for_cursor(
+		&mut self,
+		cursor: GlobalPoint,
+		monitor: Option<MonitorRect>,
+	) {
+		let Some(monitor) = monitor else {
 			self.state.cursor = Some(cursor);
 			self.state.rgb = None;
 			self.cursor_monitor = None;
@@ -5852,6 +5876,63 @@ impl OverlaySession {
 			}
 
 			self.request_live_samples_for_cursor(monitor, cursor);
+		}
+	}
+
+	fn monitor_for_cursor_in_rects(
+		monitors: &[MonitorRect],
+		cursor: GlobalPoint,
+	) -> Option<MonitorRect> {
+		monitors.iter().copied().find(|monitor| monitor.contains(cursor))
+	}
+
+	fn prime_startup_cursor_context(&mut self, cursor: GlobalPoint, monitor: Option<MonitorRect>) {
+		let Some(monitor) = monitor else {
+			self.state.cursor = Some(cursor);
+			self.state.rgb = None;
+			self.cursor_monitor = None;
+
+			return;
+		};
+
+		self.update_cursor_state(monitor, cursor);
+		self.update_hud_window_position(monitor, cursor);
+	}
+
+	#[cfg(target_os = "macos")]
+	fn seed_startup_live_cursor_rgb(
+		&mut self,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+		min_captured_at: Instant,
+	) {
+		if !matches!(self.state.mode, OverlayMode::Live) || self.state.rgb.is_some() {
+			return;
+		}
+
+		let Some(stream) = self.live_sample_stream.as_ref() else {
+			return;
+		};
+		let Some((x_px, y_px)) = monitor.local_u32_pixels(cursor) else {
+			return;
+		};
+		let deadline = Instant::now() + STARTUP_LIVE_SAMPLE_WAIT_TIMEOUT;
+
+		loop {
+			if let Some(sample) =
+				stream.latest_cursor_sample_after(monitor, x_px, y_px, false, 0, 0, min_captured_at)
+				&& let Some(rgb) = sample.rgb
+			{
+				self.state.rgb = Some(rgb);
+
+				return;
+			}
+
+			if Instant::now() >= deadline {
+				return;
+			}
+
+			thread::sleep(STARTUP_LIVE_SAMPLE_WAIT_POLL_INTERVAL);
 		}
 	}
 
@@ -10949,7 +11030,7 @@ mod tests {
 	}
 
 	#[test]
-	fn live_overlay_selection_flow_repaint_active_requires_drag_rect() {
+	fn live_overlay_selection_flow_repaint_active_for_hovered_window_or_drag_rect() {
 		let monitor = MonitorRect {
 			id: 1,
 			origin: GlobalPoint::new(0, 0),
@@ -10970,6 +11051,13 @@ mod tests {
 			rect: RectPoints::new(100, 120, 240, 320),
 		});
 
+		assert!(session.live_overlay_selection_flow_repaint_active());
+
+		session.state.hovered_window_rect = Some(MonitorRectPoints {
+			monitor_id: monitor.id + 1,
+			rect: RectPoints::new(100, 120, 240, 320),
+		});
+
 		assert!(!session.live_overlay_selection_flow_repaint_active());
 
 		session.state.drag_rect = Some(MonitorRectPoints {
@@ -10978,6 +11066,98 @@ mod tests {
 		});
 
 		assert!(session.live_overlay_selection_flow_repaint_active());
+	}
+
+	#[test]
+	fn sync_live_sample_attempt_does_not_leave_pending_request() {
+		let mut session = OverlaySession::new();
+
+		session.note_live_cursor_sample_request_started(7);
+
+		assert!(session.live_sample_request_pending());
+
+		session.finish_sync_live_cursor_sample_attempt(7);
+
+		assert!(!session.live_sample_request_pending());
+		assert_eq!(session.latest_live_cursor_sample_request_id, Some(7));
+		assert_eq!(session.applied_live_cursor_sample_request_id, Some(7));
+	}
+
+	#[test]
+	fn monitor_for_cursor_in_rects_finds_matching_monitor_without_windows() {
+		let monitor_a = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		};
+		let monitor_b = MonitorRect {
+			id: 2,
+			origin: GlobalPoint::new(1_000, 0),
+			width: 1_200,
+			height: 900,
+			scale_factor_x1000: 2_000,
+		};
+
+		assert_eq!(
+			OverlaySession::monitor_for_cursor_in_rects(
+				&[monitor_a, monitor_b],
+				GlobalPoint::new(42, 88)
+			),
+			Some(monitor_a)
+		);
+		assert_eq!(
+			OverlaySession::monitor_for_cursor_in_rects(
+				&[monitor_a, monitor_b],
+				GlobalPoint::new(1_240, 120)
+			),
+			Some(monitor_b)
+		);
+		assert_eq!(
+			OverlaySession::monitor_for_cursor_in_rects(
+				&[monitor_a, monitor_b],
+				GlobalPoint::new(2_400, 1_200)
+			),
+			None
+		);
+	}
+
+	#[test]
+	fn initialize_cursor_state_for_cursor_preserves_preseeded_live_rgb() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		};
+		let cursor = GlobalPoint::new(120, 180);
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Live;
+		session.state.rgb = Some(Rgb::new(10, 20, 30));
+
+		session.initialize_cursor_state_for_cursor(cursor, Some(monitor));
+
+		assert_eq!(session.state.cursor, Some(cursor));
+		assert_eq!(session.cursor_monitor, Some(monitor));
+		assert_eq!(session.state.rgb, Some(Rgb::new(10, 20, 30)));
+	}
+
+	#[test]
+	fn initialize_cursor_state_for_cursor_clears_rgb_when_no_monitor_matches() {
+		let cursor = GlobalPoint::new(2_400, 1_200);
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Live;
+		session.state.rgb = Some(Rgb::new(10, 20, 30));
+
+		session.initialize_cursor_state_for_cursor(cursor, None);
+
+		assert_eq!(session.state.cursor, Some(cursor));
+		assert_eq!(session.cursor_monitor, None);
+		assert_eq!(session.state.rgb, None);
 	}
 
 	#[test]

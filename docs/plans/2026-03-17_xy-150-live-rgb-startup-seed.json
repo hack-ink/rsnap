@@ -1,0 +1,121 @@
+{
+  "spec": {
+    "schema": "plan/1",
+    "plan_id": "xy-150-live-rgb-startup-seed",
+    "goal": "Eliminate the remaining live-mode startup RGB placeholder flash by seeding the initial cursor color before the first HUD draw without turning steady-state live sampling into a blocking path.",
+    "success_criteria": [
+      "Entering screenshot mode no longer renders the HUD's RGB field as `???` on the normal startup path when synchronous startup seeding succeeds.",
+      "The startup seed stays scoped to first-paint/live warmup behavior and does not make steady-state cursor sampling blocking.",
+      "Startup sampling avoids capturing the HUD's own pixels during the one-shot seed path.",
+      "Focused regression coverage locks in the startup seed behavior and the hidden-before-first-draw HUD contract.",
+      "Fresh verification evidence covers the touched rsnap-overlay surface after the change."
+    ],
+    "constraints": [
+      "Keep the change scoped to macOS live startup sampling and first-paint HUD behavior in rsnap-overlay.",
+      "Do not add arbitrary fixed delays to hide the placeholder.",
+      "Do not broaden live steady-state sampling latency by replacing the existing nonblocking fast path."
+    ],
+      "defaults": {
+        "issue_id": "XY-150",
+        "overlay_files": [
+          "packages/rsnap-overlay/src/overlay.rs",
+          "packages/rsnap-overlay/src/overlay/window_runtime.rs",
+          "packages/rsnap-overlay/src/live_frame_stream_macos.rs"
+        ]
+      },
+    "tasks": [
+      {
+        "id": "task-1",
+        "title": "Shape the startup-only seed path",
+        "status": "done",
+        "objective": "Confirm where the one-shot startup RGB seed must run so it can populate state before first HUD draw without self-capturing the HUD window.",
+        "inputs": [
+          "packages/rsnap-overlay/src/overlay/window_runtime.rs",
+          "packages/rsnap-overlay/src/overlay.rs",
+          "packages/rsnap-overlay/src/backend.rs"
+        ],
+        "outputs": [
+          "A concrete startup seed insertion point and capture source."
+        ],
+        "verification": [
+          "Trace OverlaySession::start(), create_hud_window(), initialize_cursor_state(), and the HUD redraw visibility path."
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "task-2",
+        "title": "Implement startup RGB seeding before first HUD draw",
+        "status": "done",
+        "objective": "Add a startup-only synchronous RGB seed path, keep the HUD initially hidden until the first draw, and preserve the nonblocking steady-state live sampling path.",
+        "inputs": [
+          "Task-1 output"
+        ],
+        "outputs": [
+          "Updated startup flow and capture helper usage in rsnap-overlay."
+        ],
+        "verification": [
+          "The initial live HUD path can populate state.rgb before the first visible HUD draw when startup seeding succeeds.",
+          "steady-state live sampling still uses the existing nonblocking path."
+        ],
+        "depends_on": [
+          "task-1"
+        ]
+      },
+      {
+        "id": "task-3",
+        "title": "Add regression coverage and verify",
+        "status": "done",
+        "objective": "Lock in the startup seed behavior with focused tests and run fresh verification commands for the touched overlay surface.",
+        "inputs": [
+          "Updated implementation from task-2"
+        ],
+        "outputs": [
+          "Focused regression tests and recorded verification evidence."
+        ],
+        "verification": [
+          "cargo test -p rsnap-overlay overlay:: --lib",
+          "cargo make fmt-rust",
+          "git diff --check",
+          "python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-17_xy-150-live-rgb-startup-seed.json"
+        ],
+        "depends_on": [
+          "task-2"
+        ]
+      }
+    ],
+    "replan_policy": {
+      "owner": "plan-writing",
+      "triggers": [
+        "Avoiding startup self-capture requires a wider overlay-window lifecycle rewrite rather than a scoped startup seed.",
+        "The startup seed path needs a broader live-frame stream contract change that would affect steady-state sampling latency.",
+        "Verification shows the placeholder flash is caused by a different first-paint path than the current startup RGB state."
+      ]
+    }
+  },
+  "state": {
+    "phase": "done",
+    "current_task_id": null,
+    "next_task_id": null,
+    "blockers": [],
+    "evidence": [
+      "Task 1 evidence: the color jitter came from mixing two different startup sources. The first visible seed came from a pre-focus path, while the later steady-state sample came from post-focus ScreenCaptureKit frames after the overlay app had already taken focus and underlying UI state could change.",
+      "Task 2 outcome: the first post-fix implementation still allowed startup jitter because `seed_startup_live_cursor_rgb` accepted any cached `latest_cursor_sample()` frame from the live stream, including a stale frame captured before `focus_live_capture_window()` completed.",
+      "Task 2 outcome: OverlaySession::start now records a `min_captured_at` timestamp immediately after requesting overlay focus, and the startup seed waits briefly for a ScreenCaptureKit sample whose `captured_at` is newer than that focus request before the first visible HUD draw.",
+      "Task 2 outcome: the old pre-focus CoreGraphics startup seed path remains removed, and the startup live-stream seed now also rejects pre-focus cached ScreenCaptureKit frames so the first visible RGB matches the steady-state source and freshness contract.",
+      "Task 3 outcome: focused regression tests still cover monitor lookup without windows and preservation or clearing of pre-seeded live RGB during startup cursor-state initialization.",
+      "Task 3 verification: cargo make fmt-rust completed successfully.",
+      "Task 3 verification: cargo test -p rsnap-overlay --lib passed with 128 tests passing and 0 failures, including the fresh-frame threshold unit test for the startup seed gate.",
+      "Task 3 verification: git diff --check returned clean.",
+      "Task 3 verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-17_xy-150-live-rgb-startup-seed.json returned OK.",
+      "Task 3 verification: cargo make checks completed successfully, including workspace clippy, vstyle, nextest (156 tests), cargo test --all-features, and fmt-rust-check/taplo."
+    ],
+    "last_updated": "2026-03-16T20:49:50Z",
+    "replan_reason": null,
+    "context_snapshot": {
+      "issue_id": "XY-150",
+      "source_issue": "remaining startup RGB placeholder after XY-149 fix",
+      "user_requested_execution": true,
+      "automated_verification_completed": true
+    }
+  }
+}
