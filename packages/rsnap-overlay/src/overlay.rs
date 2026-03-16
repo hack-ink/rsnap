@@ -11,13 +11,14 @@ use std::mem;
 use std::panic;
 use std::ptr;
 use std::slice;
+#[cfg(target_os = "macos")]
+use std::thread;
 use std::{
 	borrow::Cow,
 	cmp::Ordering,
 	collections::HashMap,
 	path::PathBuf,
 	sync::{Arc, Mutex},
-	thread,
 	time::{Duration, Instant},
 };
 
@@ -1274,6 +1275,7 @@ impl OverlaySession {
 		self.latest_live_cursor_sample_requested_at = Some(Instant::now());
 	}
 
+	#[cfg(target_os = "macos")]
 	fn finish_sync_live_cursor_sample_attempt(&mut self, request_id: u64) {
 		// Synchronous latest-frame reads on the current thread either produce a sample now or miss
 		// now. They must not leave async-style "pending" bookkeeping behind.
@@ -11072,6 +11074,7 @@ mod tests {
 		assert!(session.live_overlay_selection_flow_repaint_active());
 	}
 
+	#[cfg(target_os = "macos")]
 	#[test]
 	fn sync_live_sample_attempt_does_not_leave_pending_request() {
 		let mut session = OverlaySession::new();
