@@ -150,6 +150,30 @@ pub(crate) struct OrderedRegionFrame {
 	pub(crate) image: RgbaImage,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct CursorSampleRequest {
+	pub(crate) x_px: u32,
+	pub(crate) y_px: u32,
+	pub(crate) want_patch: bool,
+	pub(crate) patch_width_px: u32,
+	pub(crate) patch_height_px: u32,
+}
+impl CursorSampleRequest {
+	pub(crate) fn rgb(x_px: u32, y_px: u32) -> Self {
+		Self { x_px, y_px, want_patch: false, patch_width_px: 0, patch_height_px: 0 }
+	}
+
+	pub(crate) fn with_optional_patch(
+		x_px: u32,
+		y_px: u32,
+		want_patch: bool,
+		patch_width_px: u32,
+		patch_height_px: u32,
+	) -> Self {
+		Self { x_px, y_px, want_patch, patch_width_px, patch_height_px }
+	}
+}
+
 pub(crate) struct MacLiveFrameStream {
 	request_tx: Sender<WorkerRequest>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
@@ -209,21 +233,17 @@ impl MacLiveFrameStream {
 	pub(crate) fn latest_cursor_sample(
 		&self,
 		monitor: MonitorRect,
-		x_px: u32,
-		y_px: u32,
-		want_patch: bool,
-		patch_width_px: u32,
-		patch_height_px: u32,
+		request: CursorSampleRequest,
 	) -> Option<LiveCursorSample> {
 		let sample =
 			self.shared_latest_frame.latest_frame_for_monitor(monitor.id).and_then(|frame| {
 				sample_cursor_from_pixel_buffer(
 					&frame.pixel_buffer,
-					x_px,
-					y_px,
-					want_patch,
-					patch_width_px,
-					patch_height_px,
+					request.x_px,
+					request.y_px,
+					request.want_patch,
+					request.patch_width_px,
+					request.patch_height_px,
 				)
 			});
 
@@ -237,11 +257,7 @@ impl MacLiveFrameStream {
 	pub(crate) fn latest_cursor_sample_after(
 		&self,
 		monitor: MonitorRect,
-		x_px: u32,
-		y_px: u32,
-		want_patch: bool,
-		patch_width_px: u32,
-		patch_height_px: u32,
+		request: CursorSampleRequest,
 		min_captured_at: Instant,
 	) -> Option<LiveCursorSample> {
 		let sample =
@@ -252,11 +268,11 @@ impl MacLiveFrameStream {
 
 				sample_cursor_from_pixel_buffer(
 					&frame.pixel_buffer,
-					x_px,
-					y_px,
-					want_patch,
-					patch_width_px,
-					patch_height_px,
+					request.x_px,
+					request.y_px,
+					request.want_patch,
+					request.patch_width_px,
+					request.patch_height_px,
 				)
 			});
 

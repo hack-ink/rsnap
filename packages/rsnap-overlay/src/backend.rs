@@ -30,7 +30,7 @@ use thiserror::Error;
 use xcap::Window;
 
 #[cfg(target_os = "macos")]
-use crate::live_frame_stream_macos::MacLiveFrameStream;
+use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::state::{
 	GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb, WindowHit,
 	WindowListSnapshot, WindowRect,
@@ -804,11 +804,13 @@ impl CaptureBackend for XcapCaptureBackend {
 				.live_frame_stream
 				.latest_cursor_sample(
 					monitor,
-					x_px,
-					y_px,
-					want_patch,
-					patch_width_px,
-					patch_height_px,
+					CursorSampleRequest::with_optional_patch(
+						x_px,
+						y_px,
+						want_patch,
+						patch_width_px,
+						patch_height_px,
+					),
 				)
 				.unwrap_or(LiveCursorSample { rgb: None, patch: None });
 
