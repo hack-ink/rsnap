@@ -137,6 +137,7 @@ impl App {
 	}
 }
 
+/// Runs the desktop application event loop until shutdown.
 pub fn run() -> Result<()> {
 	runtime::run()
 }

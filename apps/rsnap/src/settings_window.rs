@@ -1,3 +1,4 @@
+/// Deterministic settings-window benchmark helpers used by Criterion benches.
 pub mod bench_support;
 
 mod chrome;
