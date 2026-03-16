@@ -10466,16 +10466,16 @@ mod tests {
 	use crate::overlay::FrozenCaptureSource;
 	#[cfg(target_os = "macos")]
 	use crate::overlay::{
-		AltActivationMode, HUD_LOUPE_STRIP_GAP_POINTS, HUD_PILL_CORNER_RADIUS_POINTS,
-		HudPillGeometry, InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL,
-		LiveSampleApplyResult, LiveStreamStaleGrace, MacOSScrollPixelResidual,
-		SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
-		SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource,
+		AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
+		InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult,
+		LiveStreamStaleGrace, MacOSScrollPixelResidual, SCROLL_CAPTURE_INPUT_FRESHNESS,
+		SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
+		ScrollCaptureFrameSource,
 	};
 	use crate::overlay::{
-		FrozenToolbarState, FrozenToolbarTool, HudTheme, OverlaySession, Pos2, Rect,
-		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
-		hud_helpers,
+		FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme,
+		OverlaySession, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
+		ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
