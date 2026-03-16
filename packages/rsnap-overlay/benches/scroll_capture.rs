@@ -1,7 +1,19 @@
-use std::hint::black_box;
+#![allow(missing_docs, unused_crate_dependencies)]
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint;
+
+use criterion::{self, Criterion};
+
 use rsnap_overlay::bench_support::{ScrollCaptureBenchHarness, ScrollCaptureBenchScenario};
+
+criterion::criterion_group!(
+	benches,
+	bench_scroll_capture_fingerprint,
+	bench_scroll_capture_overlap_match,
+	bench_scroll_capture_session_commit,
+);
+
+criterion::criterion_main!(benches);
 
 fn bench_scroll_capture_fingerprint(c: &mut Criterion) {
 	let mut group = c.benchmark_group("scroll_capture_fingerprint");
@@ -10,7 +22,7 @@ fn bench_scroll_capture_fingerprint(c: &mut Criterion) {
 		let harness = ScrollCaptureBenchHarness::new(scenario);
 
 		group.bench_function(scenario.as_str(), |b| {
-			b.iter(|| black_box(harness.run_fingerprint()));
+			b.iter(|| hint::black_box(harness.run_fingerprint()));
 		});
 	}
 
@@ -24,7 +36,7 @@ fn bench_scroll_capture_overlap_match(c: &mut Criterion) {
 		let harness = ScrollCaptureBenchHarness::new(scenario);
 
 		group.bench_function(scenario.as_str(), |b| {
-			b.iter(|| black_box(harness.run_overlap_match()));
+			b.iter(|| hint::black_box(harness.run_overlap_match()));
 		});
 	}
 
@@ -38,17 +50,9 @@ fn bench_scroll_capture_session_commit(c: &mut Criterion) {
 		let harness = ScrollCaptureBenchHarness::new(scenario);
 
 		group.bench_function(scenario.as_str(), |b| {
-			b.iter(|| black_box(harness.run_session_commit()));
+			b.iter(|| hint::black_box(harness.run_session_commit()));
 		});
 	}
 
 	group.finish();
 }
-
-criterion_group!(
-	benches,
-	bench_scroll_capture_fingerprint,
-	bench_scroll_capture_overlap_match,
-	bench_scroll_capture_session_commit,
-);
-criterion_main!(benches);

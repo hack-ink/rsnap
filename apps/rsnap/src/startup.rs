@@ -17,6 +17,7 @@ pub struct StartupBuildInfo {
 	pub version: &'static str,
 }
 
+/// Returns the build metadata that should be logged during app startup.
 pub fn startup_build_info() -> StartupBuildInfo {
 	StartupBuildInfo {
 		version: env!("CARGO_PKG_VERSION"),
@@ -24,6 +25,7 @@ pub fn startup_build_info() -> StartupBuildInfo {
 	}
 }
 
+/// Initializes file logging when the settings and filesystem allow it.
 pub fn init_logging() -> Option<WorkerGuard> {
 	let filter = default_log_filter();
 	let Some(log_dir) = resolve_log_dir() else {
