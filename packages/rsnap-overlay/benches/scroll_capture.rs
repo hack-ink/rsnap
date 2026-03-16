@@ -1,3 +1,5 @@
+#![allow(missing_docs, unused_crate_dependencies)]
+
 use std::hint;
 
 use criterion::{self, Criterion};

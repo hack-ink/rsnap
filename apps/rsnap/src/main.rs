@@ -1,5 +1,7 @@
 //! Desktop binary entrypoint for the `rsnap` application.
 
+#![allow(unused_crate_dependencies)]
+
 use color_eyre::eyre::Result;
 
 fn main() -> Result<()> {
