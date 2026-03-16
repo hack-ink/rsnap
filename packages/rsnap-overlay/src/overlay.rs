@@ -182,6 +182,7 @@ const HUD_PILL_BODY_FILL_LIGHT_SRGBA8: [u8; 4] = [232, 236, 243, 176];
 const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
 const HUD_PILL_BLUR_TINT_ALPHA_LIGHT: f32 = 0.22;
 const LOUPE_TILE_CORNER_RADIUS_POINTS: f64 = 12.0;
+const HUD_LOUPE_STRIP_GAP_POINTS: i32 = 8;
 #[cfg(target_os = "macos")]
 const MACOS_HUD_WINDOW_LEVEL: isize = 26;
 #[cfg(target_os = "macos")]
@@ -993,7 +994,7 @@ impl OverlaySession {
 	}
 
 	fn live_loupe_uses_hud_window(&self) -> bool {
-		cfg!(target_os = "macos") && matches!(self.state.mode, OverlayMode::Live)
+		false
 	}
 
 	fn live_loupe_renders_in_hud_window(&self) -> bool {
@@ -3240,46 +3241,15 @@ impl OverlaySession {
 	}
 
 	fn handle_modifiers_changed(&mut self, modifiers: &winit::event::Modifiers) -> OverlayControl {
-		let previous_alt_held = self.state.alt_held;
-		let previous_alt_modifier_down = self.alt_modifier_down;
-
 		self.keyboard_modifiers = modifiers.state();
 
 		let alt = self.resolve_alt_modifier_state(self.keyboard_modifiers.alt_key());
 
-		match self.config.alt_activation {
-			AltActivationMode::Hold => self.set_alt_held(alt),
-			AltActivationMode::Toggle => {
-				if alt && !self.alt_modifier_down {
-					self.set_alt_held(!self.state.alt_held);
-				}
-			},
-		}
-
-		self.alt_modifier_down = alt;
-
-		if previous_alt_held == self.state.alt_held && previous_alt_modifier_down == alt {
-			return OverlayControl::Continue;
-		}
-		if matches!(self.state.mode, OverlayMode::Live) {
-			self.request_redraw_hud_window();
-
-			if !self.live_loupe_uses_hud_window()
-				&& (self.state.alt_held || self.loupe_window_visible)
-			{
-				self.request_redraw_loupe_window();
-			}
-
+		if !self.apply_alt_input_state(alt) {
 			return OverlayControl::Continue;
 		}
 
-		if let Some(monitor) = self.active_cursor_monitor() {
-			self.request_redraw_for_monitor(monitor);
-		} else {
-			self.request_redraw_all();
-		}
-
-		OverlayControl::Continue
+		self.request_redraw_for_alt_state_change()
 	}
 
 	fn resolve_alt_modifier_state(&mut self, alt: bool) -> bool {
@@ -3356,14 +3326,10 @@ impl OverlaySession {
 	}
 
 	fn sync_alt_held_from_global_keys(&mut self) {
-		if matches!(self.config.alt_activation, AltActivationMode::Hold)
-			&& self.state.alt_held
-			&& !self.is_option_key_down()
-		{
-			self.set_alt_held(false);
-		}
-		if !self.is_option_key_down() {
-			self.alt_modifier_down = false;
+		let alt = self.is_option_key_down();
+
+		if self.apply_alt_input_state(alt) {
+			let _ = self.request_redraw_for_alt_state_change();
 		}
 	}
 
@@ -3380,14 +3346,11 @@ impl OverlaySession {
 			return;
 		}
 
-		let Some(cursor) = self.state.cursor else {
-			return;
-		};
-		let Some(monitor) = self.active_cursor_monitor() else {
-			return;
-		};
-
 		self.last_alt_press_at = Some(Instant::now());
+
+		let Some((monitor, cursor)) = self.alt_activation_cursor_context() else {
+			return;
+		};
 
 		self.set_alt_loupe_window_visible(Some(monitor), true);
 
@@ -3398,6 +3361,82 @@ impl OverlaySession {
 		match self.state.mode {
 			OverlayMode::Live => self.request_live_alt_samples(monitor, cursor),
 			OverlayMode::Frozen => self.request_frozen_alt_samples(cursor),
+		}
+	}
+
+	fn apply_alt_input_state(&mut self, alt: bool) -> bool {
+		let previous_alt_held = self.state.alt_held;
+		let previous_alt_modifier_down = self.alt_modifier_down;
+
+		match self.config.alt_activation {
+			AltActivationMode::Hold => self.set_alt_held(alt),
+			AltActivationMode::Toggle => {
+				if alt && !self.alt_modifier_down {
+					self.set_alt_held(!self.state.alt_held);
+				}
+			},
+		}
+
+		self.alt_modifier_down = alt;
+
+		previous_alt_held != self.state.alt_held || previous_alt_modifier_down != alt
+	}
+
+	fn request_redraw_for_alt_state_change(&mut self) -> OverlayControl {
+		if matches!(self.state.mode, OverlayMode::Live) {
+			self.request_redraw_hud_window();
+
+			if !self.live_loupe_uses_hud_window()
+				&& (self.state.alt_held || self.loupe_window_visible)
+			{
+				self.request_redraw_loupe_window();
+			}
+
+			return OverlayControl::Continue;
+		}
+
+		if let Some(monitor) = self.active_cursor_monitor() {
+			self.request_redraw_for_monitor(monitor);
+		} else {
+			self.request_redraw_all();
+		}
+
+		OverlayControl::Continue
+	}
+
+	fn alt_activation_cursor_context(&mut self) -> Option<(MonitorRect, GlobalPoint)> {
+		if let Some((monitor, cursor)) = self.last_fresh_event_cursor() {
+			self.seed_alt_activation_cursor_context(monitor, cursor);
+
+			return Some((monitor, cursor));
+		}
+
+		let cursor = self.sample_mouse_location();
+		let Some(monitor) = self.monitor_at(cursor) else {
+			if self.state.cursor.is_none() {
+				self.state.cursor = Some(cursor);
+			}
+
+			return self.active_cursor_monitor().zip(self.state.cursor);
+		};
+
+		self.seed_alt_activation_cursor_context(monitor, cursor);
+
+		Some((monitor, cursor))
+	}
+
+	fn seed_alt_activation_cursor_context(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
+		let old_monitor = self.active_cursor_monitor();
+		let old_cursor = self.state.cursor;
+
+		match self.state.mode {
+			OverlayMode::Live => {
+				self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, cursor)
+			},
+			OverlayMode::Frozen => {
+				self.update_cursor_state(monitor, cursor);
+				self.update_hud_window_position(monitor, cursor);
+			},
 		}
 	}
 
@@ -3421,7 +3460,7 @@ impl OverlaySession {
 	}
 
 	fn set_alt_loupe_window_visible(&mut self, monitor: Option<MonitorRect>, visible: bool) {
-		if matches!(self.state.mode, OverlayMode::Live) {
+		if self.live_loupe_uses_hud_window() {
 			self.loupe_window_visible = false;
 
 			self.reset_loupe_window_warmup_redraws();
@@ -4351,6 +4390,11 @@ impl OverlaySession {
 	}
 
 	fn handle_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
+		if matches!(event.logical_key, Key::Named(NamedKey::Alt))
+			&& self.apply_alt_input_state(event.state == ElementState::Pressed)
+		{
+			return self.request_redraw_for_alt_state_change();
+		}
 		if event.state != ElementState::Pressed {
 			return OverlayControl::Continue;
 		}
@@ -4809,16 +4853,12 @@ impl OverlaySession {
 	}
 
 	fn hud_window_content_rect(
-		mode: OverlayMode,
-		alt_held: bool,
+		_mode: OverlayMode,
+		_live_loupe_in_hud: bool,
 		hud_pill: HudPillGeometry,
-		loupe_tile: Option<Rect>,
+		_loupe_tile: Option<Rect>,
 	) -> Rect {
-		if cfg!(target_os = "macos") && matches!(mode, OverlayMode::Live) && alt_held {
-			loupe_tile.map(|tile| hud_pill.rect.union(tile)).unwrap_or(hud_pill.rect)
-		} else {
-			hud_pill.rect
-		}
+		hud_pill.rect
 	}
 
 	fn maybe_skip_hud_redraw(&mut self) -> Option<OverlayControl> {
@@ -5077,7 +5117,7 @@ impl OverlaySession {
 		self.scroll_capture.active
 			|| self.capture_windows_hidden
 			|| !self.state.alt_held
-			|| matches!(self.state.mode, OverlayMode::Live)
+			|| (matches!(self.state.mode, OverlayMode::Live) && self.live_loupe_uses_hud_window())
 	}
 
 	fn current_loupe_draw_target(&self) -> Option<(MonitorRect, GlobalPoint)> {
@@ -5938,7 +5978,10 @@ impl OverlaySession {
 	}
 
 	fn update_hud_window_position(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
-		if matches!(self.state.mode, OverlayMode::Live) && self.state.alt_held {
+		if self.live_loupe_uses_hud_window()
+			&& matches!(self.state.mode, OverlayMode::Live)
+			&& self.state.alt_held
+		{
 			let _ = self.update_loupe_window_position(monitor);
 
 			return;
@@ -6012,24 +6055,26 @@ impl OverlaySession {
 		let monitor_bottom = monitor.origin.y.saturating_add_unsigned(monitor.height);
 		let max_x = monitor_right.saturating_sub(loupe_w_points).max(monitor.origin.x);
 		let max_y = monitor_bottom.saturating_sub(loupe_h_points).max(monitor.origin.y);
-		let gap = 10;
-		let mut x;
-		let mut y;
+		let gap = HUD_LOUPE_STRIP_GAP_POINTS;
+		let (mut x, mut y) = if matches!(self.state.mode, OverlayMode::Live) {
+			let hud_height_points = self.hud_window.as_ref().map(|hud_window| {
+				let hud_scale = hud_window.window.scale_factor().max(1.0);
+				let hud_size = hud_window.window.inner_size();
 
-		if matches!(self.state.mode, OverlayMode::Live) {
-			let Some(cursor) = self.state.cursor else {
+				((hud_size.height as f64) / hud_scale).ceil().max(1.0) as i32
+			});
+			let Some(desired) = Self::live_loupe_default_position(
+				monitor,
+				self.state.cursor,
+				self.hud_outer_pos,
+				hud_height_points,
+				loupe_w_points,
+				loupe_h_points,
+			) else {
 				return false;
 			};
 
-			x = cursor.x.saturating_add(48);
-			y = cursor.y.saturating_add(32);
-
-			if x.saturating_add(loupe_w_points) > monitor_right {
-				x = cursor.x.saturating_sub(48_i32.saturating_add(loupe_w_points));
-			}
-			if y.saturating_add(loupe_h_points) > monitor_bottom {
-				y = cursor.y.saturating_sub(32_i32.saturating_add(loupe_h_points));
-			}
+			(desired.x, desired.y)
 		} else {
 			let Some(hud_window) = self.hud_window.as_ref() else {
 				return false;
@@ -6043,13 +6088,15 @@ impl OverlaySession {
 			let below_y = hud_outer.y.saturating_add(hud_h_points + gap);
 			let above_y = hud_outer.y.saturating_sub(gap.saturating_add(loupe_h_points));
 
-			x = hud_outer.x;
-			y = if below_y.saturating_add(loupe_h_points) <= monitor_bottom {
-				below_y
-			} else {
-				above_y
-			};
-		}
+			(
+				hud_outer.x,
+				if below_y.saturating_add(loupe_h_points) <= monitor_bottom {
+					below_y
+				} else {
+					above_y
+				},
+			)
+		};
 
 		x = x.clamp(monitor.origin.x, max_x);
 		y = y.clamp(monitor.origin.y, max_y);
@@ -6066,6 +6113,55 @@ impl OverlaySession {
 		self.pending_loupe_outer_pos = Some(desired);
 
 		true
+	}
+
+	fn live_loupe_default_position(
+		monitor: MonitorRect,
+		cursor: Option<GlobalPoint>,
+		hud_outer: Option<GlobalPoint>,
+		hud_height_points: Option<i32>,
+		loupe_w_points: i32,
+		loupe_h_points: i32,
+	) -> Option<GlobalPoint> {
+		let monitor_right = monitor.origin.x.saturating_add_unsigned(monitor.width);
+		let monitor_bottom = monitor.origin.y.saturating_add_unsigned(monitor.height);
+		let max_x = monitor_right.saturating_sub(loupe_w_points).max(monitor.origin.x);
+		let max_y = monitor_bottom.saturating_sub(loupe_h_points).max(monitor.origin.y);
+		let gap = HUD_LOUPE_STRIP_GAP_POINTS;
+		let (mut x, mut y) =
+			if let (Some(hud_outer), Some(hud_height_points)) = (hud_outer, hud_height_points) {
+				let below_y = hud_outer.y.saturating_add(hud_height_points + gap);
+				let above_y = hud_outer.y.saturating_sub(gap.saturating_add(loupe_h_points));
+
+				(
+					hud_outer.x,
+					if below_y.saturating_add(loupe_h_points) <= monitor_bottom {
+						below_y
+					} else {
+						above_y
+					},
+				)
+			} else {
+				let cursor = cursor?;
+				let offset_x = 48;
+				let offset_y = 32;
+				let mut x = cursor.x.saturating_add(offset_x);
+				let mut y = cursor.y.saturating_add(offset_y);
+
+				if x.saturating_add(loupe_w_points) > monitor_right {
+					x = cursor.x.saturating_sub(offset_x.saturating_add(loupe_w_points));
+				}
+				if y.saturating_add(loupe_h_points) > monitor_bottom {
+					y = cursor.y.saturating_sub(offset_y.saturating_add(loupe_h_points));
+				}
+
+				(x, y)
+			};
+
+		x = x.clamp(monitor.origin.x, max_x);
+		y = y.clamp(monitor.origin.y, max_y);
+
+		Some(GlobalPoint::new(x, y))
 	}
 
 	fn update_toolbar_outer_position(&mut self, monitor: MonitorRect, local_pos: Pos2) -> bool {
@@ -8754,7 +8850,7 @@ impl WindowRenderer {
 		let tile_w = side + (tile_padding.left as f32) + (tile_padding.right as f32);
 		let tile_h = side + (tile_padding.top as f32) + (tile_padding.bottom as f32);
 		let screen = ctx.content_rect();
-		let gap = 10.0;
+		let gap = HUD_LOUPE_STRIP_GAP_POINTS as f32;
 		let mut x = pill_rect.min.x;
 
 		x = x.clamp(screen.min.x + 6.0, (screen.max.x - tile_w - 6.0).max(screen.min.x + 6.0));
@@ -10368,18 +10464,18 @@ mod tests {
 	use crate::live_frame_stream_macos::MacLiveFrameStream;
 	#[cfg(not(target_os = "macos"))]
 	use crate::overlay::FrozenCaptureSource;
+	#[cfg(target_os = "macos")]
+	use crate::overlay::{
+		AltActivationMode, HUD_LOUPE_STRIP_GAP_POINTS, HUD_PILL_CORNER_RADIUS_POINTS,
+		HudPillGeometry, InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL,
+		LiveSampleApplyResult, LiveStreamStaleGrace, MacOSScrollPixelResidual,
+		SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
+		SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource,
+	};
 	use crate::overlay::{
 		FrozenToolbarState, FrozenToolbarTool, HudTheme, OverlaySession, Pos2, Rect,
 		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
 		hud_helpers,
-	};
-	#[cfg(target_os = "macos")]
-	use crate::overlay::{
-		HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, InflightScrollCaptureObservation,
-		KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult, LiveStreamStaleGrace,
-		MacOSScrollPixelResidual, SCROLL_CAPTURE_INPUT_FRESHNESS,
-		SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
-		ScrollCaptureFrameSource,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
@@ -10510,6 +10606,54 @@ mod tests {
 
 		assert_eq!(pos.x, expected_x);
 		assert_eq!(pos.y, capture_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX);
+	}
+
+	#[test]
+	fn live_loupe_default_position_hangs_below_hud_strip_when_space_exists() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 800,
+			height: 600,
+			scale_factor_x1000: 1_000,
+		};
+		let hud_outer = GlobalPoint::new(220, 120);
+		let pos = OverlaySession::live_loupe_default_position(
+			monitor,
+			Some(GlobalPoint::new(100, 100)),
+			Some(hud_outer),
+			Some(52),
+			232,
+			232,
+		)
+		.unwrap();
+
+		assert_eq!(pos.x, hud_outer.x);
+		assert_eq!(pos.y, hud_outer.y + 52 + HUD_LOUPE_STRIP_GAP_POINTS);
+	}
+
+	#[test]
+	fn live_loupe_default_position_falls_above_hud_strip_when_below_overflows() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 800,
+			height: 500,
+			scale_factor_x1000: 1_000,
+		};
+		let hud_outer = GlobalPoint::new(220, 300);
+		let pos = OverlaySession::live_loupe_default_position(
+			monitor,
+			Some(GlobalPoint::new(100, 100)),
+			Some(hud_outer),
+			Some(52),
+			232,
+			232,
+		)
+		.unwrap();
+
+		assert_eq!(pos.x, hud_outer.x);
+		assert_eq!(pos.y, hud_outer.y - HUD_LOUPE_STRIP_GAP_POINTS - 232);
 	}
 
 	#[test]
@@ -10691,7 +10835,46 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	#[test]
-	fn live_loupe_renders_in_hud_window_only_for_live_alt() {
+	fn apply_alt_input_state_toggle_uses_press_edges_only() {
+		let mut session = OverlaySession::new();
+
+		session.config.alt_activation = AltActivationMode::Toggle;
+
+		assert!(session.apply_alt_input_state(true));
+		assert!(session.state.alt_held);
+		assert!(session.alt_modifier_down);
+		assert!(!session.apply_alt_input_state(true));
+		assert!(session.state.alt_held);
+		assert!(session.alt_modifier_down);
+		assert!(session.apply_alt_input_state(false));
+		assert!(session.state.alt_held);
+		assert!(!session.alt_modifier_down);
+		assert!(session.apply_alt_input_state(true));
+		assert!(!session.state.alt_held);
+		assert!(session.alt_modifier_down);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn apply_alt_input_state_hold_tracks_polled_key_state() {
+		let mut session = OverlaySession::new();
+
+		session.config.alt_activation = AltActivationMode::Hold;
+
+		assert!(session.apply_alt_input_state(true));
+		assert!(session.state.alt_held);
+		assert!(session.alt_modifier_down);
+		assert!(!session.apply_alt_input_state(true));
+		assert!(session.state.alt_held);
+		assert!(session.alt_modifier_down);
+		assert!(session.apply_alt_input_state(false));
+		assert!(!session.state.alt_held);
+		assert!(!session.alt_modifier_down);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn live_loupe_keeps_a_dedicated_window_during_live_alt() {
 		let mut session = OverlaySession::new();
 
 		session.state.mode = OverlayMode::Frozen;
@@ -10701,12 +10884,12 @@ mod tests {
 
 		session.state.mode = OverlayMode::Live;
 
-		assert!(session.live_loupe_uses_hud_window());
+		assert!(!session.live_loupe_uses_hud_window());
 		assert!(!session.live_loupe_renders_in_hud_window());
 
 		session.state.alt_held = true;
 
-		assert!(session.live_loupe_renders_in_hud_window());
+		assert!(!session.live_loupe_renders_in_hud_window());
 
 		session.state.mode = OverlayMode::Frozen;
 
@@ -10716,7 +10899,7 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	#[test]
-	fn hud_window_content_rect_includes_live_loupe_tile_bounds() {
+	fn hud_window_content_rect_stays_compact_for_live_alt() {
 		let hud_pill = HudPillGeometry {
 			rect: Rect::from_min_max(Pos2::new(14.0, 14.0), Pos2::new(200.0, 58.0)),
 			radius_points: f32::from(HUD_PILL_CORNER_RADIUS_POINTS),
@@ -10729,8 +10912,16 @@ mod tests {
 			Some(loupe_tile),
 		);
 
-		assert_eq!(live_rect.min, Pos2::new(14.0, 14.0));
-		assert_eq!(live_rect.max, Pos2::new(246.0, 300.0));
+		assert_eq!(live_rect, hud_pill.rect);
+
+		let live_rect_without_hud_loupe = OverlaySession::hud_window_content_rect(
+			OverlayMode::Live,
+			false,
+			hud_pill,
+			Some(loupe_tile),
+		);
+
+		assert_eq!(live_rect_without_hud_loupe, hud_pill.rect);
 
 		let frozen_rect = OverlaySession::hud_window_content_rect(
 			OverlayMode::Frozen,
@@ -10740,6 +10931,21 @@ mod tests {
 		);
 
 		assert_eq!(frozen_rect, hud_pill.rect);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn live_alt_loupe_window_redraw_is_not_skipped() {
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Live;
+		session.state.alt_held = true;
+
+		assert!(!session.should_skip_loupe_redraw());
+
+		session.state.alt_held = false;
+
+		assert!(session.should_skip_loupe_redraw());
 	}
 
 	#[test]

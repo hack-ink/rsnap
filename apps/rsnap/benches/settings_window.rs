@@ -1,7 +1,12 @@
-use std::hint::black_box;
+use std::hint;
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{self, Criterion};
+
 use rsnap::settings_window::bench_support::{SettingsUiBenchHarness, SettingsUiBenchScenario};
+
+criterion::criterion_group!(benches, bench_settings_layout, bench_settings_frame);
+
+criterion::criterion_main!(benches);
 
 fn bench_settings_layout(c: &mut Criterion) {
 	let mut group = c.benchmark_group("settings_window_layout");
@@ -10,7 +15,7 @@ fn bench_settings_layout(c: &mut Criterion) {
 		let mut harness = SettingsUiBenchHarness::new(scenario);
 
 		group.bench_function(scenario.as_str(), |b| {
-			b.iter(|| black_box(harness.run_layout()));
+			b.iter(|| hint::black_box(harness.run_layout()));
 		});
 	}
 
@@ -24,12 +29,9 @@ fn bench_settings_frame(c: &mut Criterion) {
 		let mut harness = SettingsUiBenchHarness::new(scenario);
 
 		group.bench_function(scenario.as_str(), |b| {
-			b.iter(|| black_box(harness.run_frame()));
+			b.iter(|| hint::black_box(harness.run_frame()));
 		});
 	}
 
 	group.finish();
 }
-
-criterion_group!(benches, bench_settings_layout, bench_settings_frame);
-criterion_main!(benches);

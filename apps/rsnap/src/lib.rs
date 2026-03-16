@@ -1,10 +1,13 @@
 //! Library surface for `rsnap` benchmark and test support.
 
+pub mod settings_window;
+
 mod app;
 mod icon;
 mod settings;
-pub mod settings_window;
 mod startup;
 
-pub use app::run;
-pub use startup::{StartupBuildInfo, init_logging, startup_build_info};
+pub use self::{
+	app::run,
+	startup::{StartupBuildInfo, init_logging, startup_build_info},
+};
