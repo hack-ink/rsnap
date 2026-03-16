@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use egui::CentralPanel;
 use egui::Context;
+use egui::FullOutput;
 use egui::Pos2;
 use egui::Rect;
 use egui::ScrollArea;
@@ -10,15 +11,14 @@ use egui::Vec2;
 use egui::ViewportId;
 use egui::Visuals;
 use egui::epaint::{ClippedPrimitive, Primitive};
-use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
 use winit::keyboard::ModifiersState;
 
 use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
-
-use super::CaptureHotkeyNotice;
-use super::SETTINGS_COMBO_WIDTH;
-use super::hotkey::SettingsUiHotkeyHost;
-use super::sections::{self, SettingsUiHost, SettingsUiSectionDefaults};
+use crate::settings_window::CaptureHotkeyNotice;
+use crate::settings_window::SETTINGS_COMBO_WIDTH;
+use crate::settings_window::hotkey::SettingsUiHotkeyHost;
+use crate::settings_window::sections::{self, SettingsUiHost, SettingsUiSectionDefaults};
+use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingsUiBenchScenario {
@@ -26,7 +26,6 @@ pub enum SettingsUiBenchScenario {
 	ExpandedAll,
 	HotkeyRecording,
 }
-
 impl SettingsUiBenchScenario {
 	pub const ALL: [Self; 3] = [Self::Default, Self::ExpandedAll, Self::HotkeyRecording];
 
@@ -80,14 +79,12 @@ pub struct SettingsUiBenchHarness {
 	pixels_per_point: f32,
 	max_texture_side: usize,
 }
-
 impl SettingsUiBenchHarness {
 	#[must_use]
 	pub fn new(scenario: SettingsUiBenchScenario) -> Self {
 		let ctx = Context::default();
 
 		ctx.set_visuals(Visuals::dark());
-
 		Self {
 			ctx,
 			frame_index: 0,
@@ -96,7 +93,7 @@ impl SettingsUiBenchHarness {
 			section_defaults: scenario.section_defaults(),
 			screen_size_points: egui::vec2(720.0, 720.0),
 			pixels_per_point: 2.0,
-			max_texture_side: 4096,
+			max_texture_side: 4_096,
 		}
 	}
 
@@ -160,7 +157,7 @@ impl SettingsUiBenchHarness {
 		raw_input
 	}
 
-	fn run_full_output(&mut self) -> (egui::FullOutput, usize, bool) {
+	fn run_full_output(&mut self) -> (FullOutput, usize, bool) {
 		self.frame_index += 1;
 		self.ctx.input_mut(|input| input.max_texture_side = self.max_texture_side);
 
@@ -197,7 +194,6 @@ struct BenchSettingsUiHost {
 	capture_hotkey_notice: Option<CaptureHotkeyNotice>,
 	modifiers: ModifiersState,
 }
-
 impl BenchSettingsUiHost {
 	fn for_scenario(scenario: SettingsUiBenchScenario) -> Self {
 		match scenario {
@@ -304,7 +300,7 @@ fn primitive_stats(primitives: &[ClippedPrimitive]) -> (usize, usize, usize, usi
 
 #[cfg(test)]
 mod tests {
-	use super::{SettingsUiBenchHarness, SettingsUiBenchScenario};
+	use crate::settings_window::bench_support::{SettingsUiBenchHarness, SettingsUiBenchScenario};
 
 	#[test]
 	fn expanded_settings_benchmark_harness_produces_tessellated_output() {
