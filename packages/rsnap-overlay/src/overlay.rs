@@ -3253,6 +3253,7 @@ impl OverlaySession {
 	fn should_hide_toolbar_window(&self, monitor: MonitorRect) -> bool {
 		!matches!(self.state.mode, OverlayMode::Frozen)
 			|| !self.toolbar_state.visible
+			|| self.state.frozen_image.is_none()
 			|| self.state.monitor != Some(monitor)
 	}
 
@@ -13096,6 +13097,25 @@ mod tests {
 		assert!(FrozenToolbarTool::Scroll.requires_final_capture());
 		assert!(FrozenToolbarTool::Copy.requires_final_capture());
 		assert!(FrozenToolbarTool::Save.requires_final_capture());
+	}
+
+	#[test]
+	fn toolbar_window_hides_until_frozen_pixels_exist() {
+		let monitor = test_monitor();
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+
+		assert!(session.should_hide_toolbar_window(monitor));
+
+		session.pending_freeze_capture = Some(monitor);
+
+		assert!(session.should_hide_toolbar_window(monitor));
+
+		session.pending_freeze_capture = None;
+		session.inflight_freeze_capture = Some(monitor);
+
+		assert!(session.should_hide_toolbar_window(monitor));
 	}
 
 	#[test]
