@@ -635,6 +635,7 @@ pub struct OverlaySession {
 	pending_freeze_capture: Option<MonitorRect>,
 	inflight_freeze_capture: Option<MonitorRect>,
 	pending_freeze_capture_armed: bool,
+	authoritative_frozen_capture_ready: bool,
 	pending_window_freeze_capture: Option<WindowFreezeCaptureTarget>,
 	inflight_window_freeze_capture: Option<WindowFreezeCaptureTarget>,
 	frozen_window_image: Option<RgbaImage>,
@@ -757,6 +758,7 @@ impl OverlaySession {
 			pending_freeze_capture: None,
 			inflight_freeze_capture: None,
 			pending_freeze_capture_armed: false,
+			authoritative_frozen_capture_ready: false,
 			pending_window_freeze_capture: None,
 			inflight_window_freeze_capture: None,
 			frozen_window_image: None,
@@ -2456,6 +2458,7 @@ impl OverlaySession {
 
 	fn frozen_final_capture_ready(&self) -> bool {
 		matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.authoritative_frozen_capture_ready
 			&& self.state.frozen_image.is_some()
 			&& self.pending_freeze_capture.is_none()
 			&& self.inflight_freeze_capture.is_none()
@@ -2609,6 +2612,7 @@ impl OverlaySession {
 		self.pending_freeze_capture = Some(monitor);
 		self.pending_freeze_capture_armed = false;
 		self.inflight_freeze_capture = None;
+		self.authoritative_frozen_capture_ready = false;
 		self.pending_window_freeze_capture = window_target;
 		self.inflight_window_freeze_capture = None;
 		self.frozen_window_image = None;
@@ -2647,6 +2651,7 @@ impl OverlaySession {
 
 				self.pending_freeze_capture = None;
 				self.pending_freeze_capture_armed = false;
+				self.authoritative_frozen_capture_ready = true;
 
 				if let Some(cursor) = cursor {
 					self.update_cursor_state(monitor, cursor);
@@ -2839,6 +2844,7 @@ impl OverlaySession {
 	) {
 		if matches!(self.state.mode, OverlayMode::Frozen) && self.state.monitor == Some(monitor) {
 			self.inflight_freeze_capture = None;
+			self.authoritative_frozen_capture_ready = true;
 
 			let window_capture_target = self.inflight_window_freeze_capture.take();
 			let mut frozen_preview_image = image;
@@ -5847,6 +5853,7 @@ impl OverlaySession {
 				window_id = ?window_id,
 				monitor_id = overlay_monitor.id,
 				frozen_generation = self.state.frozen_generation,
+				final_capture_ready = self.authoritative_frozen_capture_ready,
 				frozen_image_ready = self.state.frozen_image.is_some(),
 				pending_freeze_capture = self.pending_freeze_capture.map(|m| m.id),
 				draw_toolbar,
@@ -10967,6 +10974,8 @@ mod tests {
 
 		session.state.finish_freeze(monitor, test_frozen_image());
 
+		session.authoritative_frozen_capture_ready = true;
+
 		assert!(session.frozen_final_capture_ready());
 
 		session.pending_freeze_capture = Some(monitor);
@@ -10980,6 +10989,35 @@ mod tests {
 	}
 
 	#[test]
+	fn frozen_preview_does_not_become_final_ready_when_capture_tracking_clears_without_success() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(100, 120, 220, 180);
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.state.frozen_capture_rect = Some(capture_rect);
+		session.frozen_capture_source = super::FrozenCaptureSource::DragRegion;
+		session.inflight_freeze_capture = Some(monitor);
+
+		assert!(!session.frozen_final_capture_ready());
+		assert!(!session.scroll_capture_selection_is_ready());
+
+		// Emulate a preview-first failure where the authoritative capture tracking clears.
+		session.inflight_freeze_capture = None;
+
+		assert!(!session.frozen_final_capture_ready());
+		assert!(!session.scroll_capture_selection_is_ready());
+
+		session.begin_png_action(PngAction::Copy);
+
+		assert_eq!(session.pending_png_action, None);
+		assert!(session.pending_encode_png.is_none());
+		assert_eq!(session.state.error_message.as_deref(), Some("Preparing capture..."));
+	}
+
+	#[test]
 	fn scroll_capture_and_export_wait_for_authoritative_frozen_capture() {
 		let monitor = test_monitor();
 		let capture_rect = RectPoints::new(100, 120, 220, 180);
@@ -10988,6 +11026,7 @@ mod tests {
 		session.state.begin_freeze(monitor);
 		session.state.finish_freeze(monitor, test_frozen_image());
 
+		session.authoritative_frozen_capture_ready = true;
 		session.state.frozen_capture_rect = Some(capture_rect);
 		session.frozen_capture_source = super::FrozenCaptureSource::DragRegion;
 
@@ -11209,6 +11248,9 @@ mod tests {
 		assert!(pending_tools.contains(&FrozenToolbarTool::Scroll));
 
 		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.authoritative_frozen_capture_ready = true;
+
 		session.sync_scroll_toolbar_state();
 
 		let ready_toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
@@ -13150,6 +13192,8 @@ mod tests {
 		assert!(session.should_force_pending_hud_and_loupe_moves());
 
 		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.authoritative_frozen_capture_ready = true;
 
 		assert!(!session.should_force_pending_hud_and_loupe_moves());
 
