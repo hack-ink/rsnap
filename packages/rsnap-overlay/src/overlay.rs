@@ -243,6 +243,8 @@ const INTERACTIVE_REPAINT_FPS_CAP: f32 = 120.0;
 const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] = [(94, 200, 255), (165, 103, 255), (255, 150, 60)];
 const SELECTION_FLOW_FROZEN_ALPHA_SCALE: f32 = 0.70;
 const SELECTION_FLOW_FROZEN_INTENSITY: f32 = 1.25;
+const FROZEN_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 184;
+const FROZEN_SELECTION_SCRIM_ALPHA_DARK: u8 = 208;
 const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: image::Rgba<u8> = image::Rgba([246, 246, 246, 255]);
 const WINDOW_CAPTURE_MATTE_DARK_RGBA: image::Rgba<u8> = image::Rgba([24, 24, 24, 255]);
 const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
@@ -7506,21 +7508,21 @@ impl WindowRenderer {
 					selection_flow_geometry_cache,
 				);
 			}
-			if selection_particles
-				&& matches!(state.mode, OverlayMode::Frozen)
+			if matches!(state.mode, OverlayMode::Frozen)
 				&& (needs_frozen_surface_bg || show_frozen_capture_affordance)
 				&& state.monitor == Some(monitor)
 				&& state.frozen_capture_rect.is_some()
 			{
 				let screen_rect = ctx.input(|i| i.viewport_rect());
 
-				_show_selection_particles |= Self::render_frozen_pending_affordance(
+				_show_selection_particles |= Self::render_frozen_capture_affordance(
 					ctx,
 					state,
 					monitor,
 					screen_rect,
 					theme,
 					frozen_capture_is_fullscreen_fallback,
+					selection_particles,
 					selection_flow_stroke_width_px,
 					selection_flow_geometry_cache,
 				);
@@ -7625,40 +7627,28 @@ impl WindowRenderer {
 	}
 
 	#[allow(clippy::too_many_arguments)]
-	fn render_frozen_pending_affordance(
+	fn render_frozen_capture_affordance(
 		ctx: &egui::Context,
 		state: &OverlayState,
 		monitor: MonitorRect,
 		screen_rect: Rect,
 		theme: HudTheme,
 		frozen_capture_is_fullscreen_fallback: bool,
+		selection_particles: bool,
 		selection_flow_stroke_width_px: f32,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 	) -> bool {
-		let Some(capture_rect) = state.frozen_capture_rect else {
+		let Some(rect) = Self::frozen_capture_focus_rect(state, screen_rect) else {
 			return false;
 		};
-		let capture_width = capture_rect.width as f32;
-		let capture_height = capture_rect.height as f32;
-
-		if capture_width < LIVE_DRAG_START_THRESHOLD_PX
-			|| capture_height < LIVE_DRAG_START_THRESHOLD_PX
-		{
-			return false;
-		}
-
 		let layer =
 			LayerId::new(Order::Foreground, Id::new(format!("frozen-pending-{}", monitor.id)));
 		let painter = ctx.layer_painter(layer);
-		let rect = Rect::from_min_size(
-			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
-			Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
-		)
-		.intersect(screen_rect);
 
-		if rect.width() < LIVE_DRAG_START_THRESHOLD_PX
-			|| rect.height() < LIVE_DRAG_START_THRESHOLD_PX
-		{
+		if state.frozen_image.is_some() {
+			return Self::render_frozen_selection_scrim(&painter, rect, screen_rect, theme);
+		}
+		if !selection_particles {
 			return false;
 		}
 
@@ -7675,6 +7665,74 @@ impl WindowRenderer {
 			selection_flow_stroke_width_px,
 			selection_flow_geometry_cache,
 		);
+
+		true
+	}
+
+	fn frozen_capture_focus_rect(state: &OverlayState, screen_rect: Rect) -> Option<Rect> {
+		let capture_rect = state.frozen_capture_rect?;
+		let rect = Rect::from_min_size(
+			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
+			Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
+		)
+		.intersect(screen_rect);
+
+		if rect.width() < LIVE_DRAG_START_THRESHOLD_PX
+			|| rect.height() < LIVE_DRAG_START_THRESHOLD_PX
+		{
+			return None;
+		}
+
+		Some(rect)
+	}
+
+	fn frozen_selection_scrim_rects(screen_rect: Rect, focus_rect: Rect) -> [Rect; 4] {
+		[
+			Rect::from_min_max(screen_rect.min, Pos2::new(screen_rect.max.x, focus_rect.min.y)),
+			Rect::from_min_max(Pos2::new(screen_rect.min.x, focus_rect.max.y), screen_rect.max),
+			Rect::from_min_max(
+				Pos2::new(screen_rect.min.x, focus_rect.min.y),
+				Pos2::new(focus_rect.min.x, focus_rect.max.y),
+			),
+			Rect::from_min_max(
+				Pos2::new(focus_rect.max.x, focus_rect.min.y),
+				Pos2::new(screen_rect.max.x, focus_rect.max.y),
+			),
+		]
+	}
+
+	fn frozen_selection_scrim_color(theme: HudTheme) -> Color32 {
+		let alpha = match theme {
+			HudTheme::Light => FROZEN_SELECTION_SCRIM_ALPHA_LIGHT,
+			HudTheme::Dark => FROZEN_SELECTION_SCRIM_ALPHA_DARK,
+		};
+
+		Color32::from_rgba_unmultiplied(0, 0, 0, alpha)
+	}
+
+	fn render_frozen_selection_scrim(
+		painter: &Painter,
+		focus_rect: Rect,
+		screen_rect: Rect,
+		theme: HudTheme,
+	) -> bool {
+		let scrim_rects = Self::frozen_selection_scrim_rects(screen_rect, focus_rect);
+		let scrim_fill = Self::frozen_selection_scrim_color(theme);
+		let mut drew_scrim = false;
+
+		for rect in scrim_rects {
+			if rect.width() <= 0.0 || rect.height() <= 0.0 {
+				continue;
+			}
+
+			painter.rect_filled(rect, 0.0, scrim_fill);
+
+			drew_scrim = true;
+		}
+
+		if !drew_scrim {
+			return false;
+		}
 
 		true
 	}
@@ -10612,6 +10670,44 @@ mod tests {
 
 	fn scroll_capture_export_height(session: &OverlaySession) -> u32 {
 		session.scroll_capture.session.as_ref().unwrap().export_image().height()
+	}
+
+	#[test]
+	fn frozen_selection_scrim_rects_frame_focus_rect_without_covering_it() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 80.0));
+		let focus_rect = Rect::from_min_size(Pos2::new(20.0, 10.0), Vec2::new(40.0, 30.0));
+		let scrim_rects = WindowRenderer::frozen_selection_scrim_rects(screen_rect, focus_rect);
+
+		assert_eq!(
+			scrim_rects,
+			[
+				Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(100.0, 10.0)),
+				Rect::from_min_max(Pos2::new(0.0, 40.0), Pos2::new(100.0, 80.0)),
+				Rect::from_min_max(Pos2::new(0.0, 10.0), Pos2::new(20.0, 40.0)),
+				Rect::from_min_max(Pos2::new(60.0, 10.0), Pos2::new(100.0, 40.0)),
+			]
+		);
+		assert!(scrim_rects.into_iter().all(|rect| !rect.contains(focus_rect.center())));
+	}
+
+	#[test]
+	fn frozen_selection_scrim_rects_leave_zero_area_regions_at_screen_edges() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 80.0));
+		let focus_rect = Rect::from_min_size(Pos2::new(0.0, 10.0), Vec2::new(40.0, 30.0));
+		let scrim_rects = WindowRenderer::frozen_selection_scrim_rects(screen_rect, focus_rect);
+		let non_empty =
+			scrim_rects.iter().filter(|rect| rect.width() > 0.0 && rect.height() > 0.0).count();
+
+		assert_eq!(scrim_rects[2].width(), 0.0);
+		assert_eq!(non_empty, 3);
+	}
+
+	#[test]
+	fn frozen_selection_scrim_rects_are_empty_for_fullscreen_rect() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 80.0));
+		let scrim_rects = WindowRenderer::frozen_selection_scrim_rects(screen_rect, screen_rect);
+
+		assert!(scrim_rects.into_iter().all(|rect| rect.width() <= 0.0 || rect.height() <= 0.0));
 	}
 
 	#[test]
