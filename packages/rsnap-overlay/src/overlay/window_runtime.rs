@@ -94,6 +94,7 @@ impl OverlaySession {
 		self.state.reset_for_start(self.loupe_patch_width_px);
 
 		self.pending_freeze_capture = None;
+		self.inflight_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
 		self.pending_window_freeze_capture = None;
 		self.inflight_window_freeze_capture = None;
@@ -478,7 +479,6 @@ impl OverlaySession {
 			&& self.toolbar_state.visible
 			&& self.state.monitor == Some(monitor)
 			&& self.state.frozen_image.is_some()
-			&& self.pending_freeze_capture != Some(monitor)
 		{
 			self.request_redraw_toolbar_window();
 		}

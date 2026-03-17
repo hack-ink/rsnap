@@ -261,6 +261,25 @@ impl MacLiveFrameStream {
 		self.request(|reply_tx| WorkerRequest::LatestRgbaSnapshot { monitor, reply_tx }).flatten()
 	}
 
+	pub(crate) fn peek_latest_rgba_snapshot(
+		&self,
+		monitor: MonitorRect,
+	) -> Option<Arc<MonitorImageSnapshot>> {
+		let Some(frame) = self.shared_latest_frame.latest_frame_for_monitor(monitor.id) else {
+			self.ensure_monitor_nonblocking(monitor);
+
+			return None;
+		};
+		let (width_px, height_px) = pixel_buffer_size_px(&frame.pixel_buffer)?;
+		let image = rgba_image_from_pixel_buffer(&frame.pixel_buffer, width_px, height_px)?;
+
+		Some(Arc::new(MonitorImageSnapshot {
+			captured_at: frame.captured_at,
+			monitor,
+			image: Arc::new(image),
+		}))
+	}
+
 	pub(crate) fn latest_rgba_region(
 		&mut self,
 		monitor: MonitorRect,
