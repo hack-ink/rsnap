@@ -1493,13 +1493,11 @@ impl OverlaySession {
 			self.update_cursor_state(monitor, global);
 			self.update_hud_window_position(monitor, global);
 			self.update_live_drag_rect(monitor, global);
+			self.force_apply_pending_hud_and_loupe_moves();
 			self.request_redraw_hud_window();
 
 			if self.state.alt_held || self.loupe_window_visible {
 				self.request_redraw_loupe_window();
-			}
-			if self.should_force_pending_hud_and_loupe_moves() {
-				self.force_apply_pending_hud_and_loupe_moves();
 			}
 
 			if let Some(old_monitor) = old_monitor
@@ -1549,13 +1547,11 @@ impl OverlaySession {
 		self.update_cursor_state(monitor, global);
 		self.update_hud_window_position(monitor, global);
 		self.update_live_drag_rect(monitor, global);
+		self.force_apply_pending_hud_and_loupe_moves();
 		self.request_redraw_hud_window();
 
 		if self.state.alt_held || self.loupe_window_visible {
 			self.request_redraw_loupe_window();
-		}
-		if self.should_force_pending_hud_and_loupe_moves() {
-			self.force_apply_pending_hud_and_loupe_moves();
 		}
 
 		if let Some(old_monitor) = old_monitor
@@ -2537,20 +2533,20 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		cursor: Option<GlobalPoint>,
 	) {
-		self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(Some(monitor)));
-		self.request_redraw_for_monitor(monitor);
-		self.request_redraw_hud_window();
-
-		if self.state.alt_held || self.loupe_window_visible {
-			self.request_redraw_loupe_window();
-		}
-
 		if let Some(cursor) = cursor {
 			self.update_hud_window_position(monitor, cursor);
 		}
 
 		if self.should_force_pending_hud_and_loupe_moves() {
 			self.force_apply_pending_hud_and_loupe_moves();
+		}
+
+		self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(Some(monitor)));
+		self.request_redraw_for_monitor(monitor);
+		self.request_redraw_hud_window();
+
+		if self.state.alt_held || self.loupe_window_visible {
+			self.request_redraw_loupe_window();
 		}
 	}
 
@@ -4723,6 +4719,25 @@ impl OverlaySession {
 		}
 	}
 
+	fn toolbar_scroll_capture_slot_available(&self) -> bool {
+		if self.scroll_capture.active {
+			return true;
+		}
+
+		#[cfg(target_os = "macos")]
+		{
+			matches!(self.state.mode, OverlayMode::Frozen)
+				&& self.state.monitor.is_some()
+				&& self.state.frozen_capture_rect.is_some()
+				&& self.frozen_capture_source == FrozenCaptureSource::DragRegion
+		}
+
+		#[cfg(not(target_os = "macos"))]
+		{
+			false
+		}
+	}
+
 	#[cfg(target_os = "macos")]
 	fn try_prepare_scroll_capture_start(
 		&mut self,
@@ -4832,8 +4847,9 @@ impl OverlaySession {
 
 	fn sync_scroll_toolbar_state(&mut self) {
 		self.toolbar_state.scroll_capture_active = self.scroll_capture.active;
-		self.toolbar_state.scroll_capture_available =
-			if self.scroll_capture.active { true } else { self.scroll_capture_is_available() };
+		// Keep drag-region toolbar geometry stable across the authoritative frozen-capture handoff:
+		// show the Scroll slot immediately, but keep it disabled until final_capture_ready flips.
+		self.toolbar_state.scroll_capture_available = self.toolbar_scroll_capture_slot_available();
 		self.toolbar_state.final_capture_ready = self.frozen_final_capture_ready();
 	}
 
@@ -5275,6 +5291,10 @@ impl OverlaySession {
 			Ok(summary) => summary,
 			Err(err) => return self.exit(OverlayExit::Error(format!("{err:#}"))),
 		};
+
+		if summary.position_update_elapsed.is_some() {
+			self.force_apply_pending_hud_window_move();
+		}
 
 		if let Some(monitor) = summary.request_toolbar_redraw {
 			self.request_redraw_for_monitor(monitor);
@@ -10833,7 +10853,6 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	use crate::live_frame_stream_macos::MacLiveFrameStream;
-	#[cfg(not(target_os = "macos"))]
 	use crate::overlay::FrozenCaptureSource;
 	use crate::overlay::PngAction;
 	#[cfg(target_os = "macos")]
@@ -11167,6 +11186,36 @@ mod tests {
 
 		assert!(scroll_toolbar_size.x < frozen_toolbar_size.x);
 		assert_eq!(scroll_toolbar_size.y, frozen_toolbar_size.y);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn drag_region_toolbar_size_stays_stable_while_final_capture_readiness_changes() {
+		let monitor = test_monitor();
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+
+		session.state.frozen_capture_rect = Some(RectPoints::new(120, 160, 320, 240));
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+		session.sync_scroll_toolbar_state();
+
+		let pending_toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
+		let pending_tools = WindowRenderer::frozen_toolbar_tools(&session.toolbar_state);
+
+		assert!(!session.toolbar_state.final_capture_ready);
+		assert!(pending_tools.contains(&FrozenToolbarTool::Scroll));
+
+		session.state.finish_freeze(monitor, test_frozen_image());
+		session.sync_scroll_toolbar_state();
+
+		let ready_toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
+		let ready_tools = WindowRenderer::frozen_toolbar_tools(&session.toolbar_state);
+
+		assert!(session.toolbar_state.final_capture_ready);
+		assert!(ready_tools.contains(&FrozenToolbarTool::Scroll));
+		assert_eq!(pending_toolbar_size, ready_toolbar_size);
 	}
 
 	#[test]
