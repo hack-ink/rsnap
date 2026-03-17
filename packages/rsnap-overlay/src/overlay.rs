@@ -2485,6 +2485,7 @@ impl OverlaySession {
 			.map(|snapshot| snapshot.image.as_ref().clone())
 	}
 
+	#[cfg(target_os = "macos")]
 	fn commit_frozen_preview(
 		&mut self,
 		monitor: MonitorRect,
