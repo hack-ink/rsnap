@@ -159,6 +159,13 @@ impl Default for FrozenToolbarState {
 	}
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct FrozenSelectionDragState {
+	pub(super) active: bool,
+	pub(super) pointer_offset_x: u32,
+	pub(super) pointer_offset_y: u32,
+}
+
 #[derive(Default)]
 pub(super) struct ScrollCaptureState {
 	pub(super) active: bool,
