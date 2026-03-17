@@ -1,0 +1,154 @@
+{
+  "spec": {
+    "schema": "plan/1",
+    "plan_id": "2026-03-18-xy-161-frozen-auto-center",
+    "goal": "Add a frozen-only auto-center action that repositions drag-region frozen selections around detected content without changing selection size.",
+    "success_criteria": [
+      "After entering Frozen mode from a drag-region capture, the Frozen toolbar exposes an auto-center action and pressing `c` in Frozen mode triggers the same action.",
+      "Auto-center only repositions `state.frozen_capture_rect`; width and height remain unchanged for the whole action.",
+      "The auto-center heuristic uses the frozen image to estimate meaningful content and shifts the rect toward horizontal and vertical centering while staying clamped to the frozen monitor bounds.",
+      "If no reliable content target is detected, the action leaves the rect unchanged instead of jumping unpredictably.",
+      "Manual frozen dragging, export cropping, toolbar placement, and scroll-preview placement remain synchronized with the adjusted rect."
+    ],
+    "constraints": [
+      "The toolbar entry only exists in Frozen mode; do not introduce a live-mode control for this action.",
+      "Keep the feature scoped to the existing frozen drag-region flow unless broader support falls out naturally without extra branching.",
+      "Do not add resize behavior, multi-monitor movement, or new final-capture semantics.",
+      "Follow repo-native verification via cargo make tasks before claiming completion."
+    ],
+    "defaults": {
+      "authority_linear_issue": "XY-161",
+      "branch": "y/xy-161-frozen-auto-center",
+      "primary_files": [
+        "packages/rsnap-overlay/src/overlay.rs",
+        "packages/rsnap-overlay/src/overlay/session_state.rs"
+      ],
+      "verification_commands": [
+        "cargo make lint-fix",
+        "cargo make fmt",
+        "cargo make test"
+      ]
+    },
+    "tasks": [
+      {
+        "id": "task-1",
+        "title": "Add a frozen auto-center heuristic and rect adjustment helper",
+        "status": "done",
+        "objective": "Ground a deterministic auto-center action in the current frozen image so the session can shift the existing drag-region frozen rect without resizing it.",
+        "inputs": [
+          "XY-161 issue contract",
+          "Existing frozen rect move/clamp helpers in `OverlaySession`",
+          "Frozen image crop/export behavior keyed off `state.frozen_capture_rect`"
+        ],
+        "outputs": [
+          "A helper that inspects the frozen image and estimates a meaningful content target for the current drag-region selection",
+          "A rect-adjustment path that preserves width/height, clamps to the frozen monitor, and no-ops on weak detections"
+        ],
+        "verification": [
+          "The heuristic can produce a repositioned rect for asymmetric content while leaving size unchanged.",
+          "Missing image / unsupported frozen source / low-confidence detections resolve to no-op behavior instead of invalid rect changes."
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "task-2",
+        "title": "Wire the action into Frozen toolbar and keyboard handling",
+        "status": "done",
+        "objective": "Expose the new auto-center action only in Frozen mode through the existing toolbar action pipeline and a `c` shortcut.",
+        "inputs": [
+          "Frozen toolbar tool enumeration and action dispatch",
+          "Frozen keyboard event handling in `OverlaySession::handle_key_event()`",
+          "Toolbar placement update path used by frozen drag moves"
+        ],
+        "outputs": [
+          "A Frozen toolbar button for auto-center",
+          "A Frozen-mode `c` shortcut that triggers the same rect adjustment path",
+          "Toolbar/preview redraw updates that follow the adjusted rect"
+        ],
+        "verification": [
+          "Toolbar and keyboard trigger the same auto-center behavior.",
+          "The action remains unavailable outside Frozen mode and does not break existing `s`, `space`, or toolbar flows."
+        ],
+        "depends_on": [
+          "task-1"
+        ]
+      },
+      {
+        "id": "task-3",
+        "title": "Add focused regression coverage for auto-center and no-op boundaries",
+        "status": "done",
+        "objective": "Lock down the content-aware reposition behavior, clamping, and guardrails so future frozen UX changes do not regress XY-161.",
+        "inputs": [
+          "Overlay session unit-test surface in `packages/rsnap-overlay/src/overlay.rs`",
+          "New auto-center helper behavior from task-1",
+          "Toolbar tool visibility/dispatch behavior from task-2"
+        ],
+        "outputs": [
+          "Regression tests for asymmetric content centering, no-op fallback cases, rect clamping, and toolbar action exposure"
+        ],
+        "verification": [
+          "New tests fail when the action or heuristic is missing and pass on the final implementation."
+        ],
+        "depends_on": [
+          "task-2"
+        ]
+      },
+      {
+        "id": "task-4",
+        "title": "Run repo-native verification and record execution evidence",
+        "status": "done",
+        "objective": "Validate the finished XY-161 implementation with the repo-native gates and update the saved execution state with fresh evidence.",
+        "inputs": [
+          "Final XY-161 implementation diff"
+        ],
+        "outputs": [
+          "Fresh lint/format/test evidence",
+          "Updated plan runtime state reflecting the completed implementation"
+        ],
+        "verification": [
+          "cargo make lint-fix exits 0",
+          "cargo make fmt exits 0",
+          "cargo make test exits 0"
+        ],
+        "depends_on": [
+          "task-3"
+        ]
+      }
+    ],
+    "replan_policy": {
+      "owner": "plan-writing",
+      "triggers": [
+        "The frozen image does not provide enough signal for a deterministic content-centering heuristic without widening scope into OCR or external vision.",
+        "Toolbar exposure requires a broader frozen-tool taxonomy change instead of a local action addition.",
+        "Verification reveals that downstream frozen-rect consumers need architectural changes beyond the current overlay session ownership."
+      ]
+    }
+  },
+  "state": {
+    "phase": "done",
+    "current_task_id": null,
+    "next_task_id": null,
+    "blockers": [],
+    "evidence": [
+      "Task 1 outcome: `OverlaySession` now detects salient content bounds from the current frozen crop using edge-sampled background contrast and converts that content-centering delta back into a clamped point-space rect move without resizing.",
+      "Task 2 outcome: Frozen drag-region selections now expose an `AutoCenter` toolbar action with the `TARGET` icon, and pressing plain `c` / `C` in Frozen mode routes to the same rect-adjustment path.",
+      "Task 2 guardrail: the auto-center toolbar slot appears only when the current Frozen state is a drag-region selection with frozen pixels available; fullscreen/window frozen flows remain unchanged.",
+      "Task 3 outcome: added regression tests for scale-aware auto-centering, uniform-crop no-op behavior, toolbar action visibility, and toolbar-size stability while final frozen-capture readiness changes.",
+      "Task 4 verification: `cargo test -p rsnap-overlay --lib auto_center` passed with 3 tests passing and 0 failures.",
+      "Task 4 verification: `cargo test -p rsnap-overlay --lib drag_region_toolbar_size_stays_stable_while_final_capture_readiness_changes` passed with 1 test passing and 0 failures.",
+      "Task 4 verification: `cargo make lint-fix` completed successfully.",
+      "Task 4 verification: `cargo make fmt` completed successfully.",
+      "Task 4 verification: `cargo make test` completed successfully."
+    ],
+    "last_updated": "2026-03-17T18:53:40Z",
+    "replan_reason": null,
+    "context_snapshot": {
+      "branch": "y/xy-161-frozen-auto-center",
+      "frozen_drag_region_move_exists": true,
+      "frozen_toolbar_only_after_freeze": true,
+      "keyboard_shortcut": "c",
+      "linear_issue": "XY-161",
+      "verification_completed": true
+    }
+  }
+}
