@@ -2749,7 +2749,9 @@ impl OverlaySession {
 		let Some((monitor, capture_rect)) = self.frozen_selection_drag_target() else {
 			return false;
 		};
-		let (cursor_x, cursor_y) = Self::clamped_local_point_in_monitor(monitor, global);
+		let Some((cursor_x, cursor_y)) = monitor.local_u32(global) else {
+			return false;
+		};
 
 		if !capture_rect.contains((cursor_x, cursor_y)) {
 			return false;
@@ -11224,6 +11226,12 @@ mod tests {
 			session.frozen_selection_drag,
 			FrozenSelectionDragState { active: true, pointer_offset_x: 50, pointer_offset_y: 60 }
 		);
+
+		session.stop_frozen_selection_drag();
+
+		session.state.frozen_capture_rect = Some(RectPoints::new(0, 120, 200, 240));
+
+		assert!(!session.begin_frozen_selection_drag(GlobalPoint::new(-1, 180)));
 	}
 
 	#[test]
