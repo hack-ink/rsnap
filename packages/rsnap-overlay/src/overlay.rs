@@ -137,7 +137,10 @@ use crate::{
 		GlobalPoint, MonitorRect, MonitorRectPoints, OverlayMode, OverlayState, RectPoints, Rgb,
 		WindowHit, WindowListSnapshot,
 	},
-	worker::{FreezeCaptureTarget, OverlayWorker, WorkerRequestSendError, WorkerResponse},
+	worker::{
+		FreezeCaptureTarget, OverlayWorker, WorkerErrorSource, WorkerRequestSendError,
+		WorkerResponse,
+	},
 };
 
 #[cfg(target_os = "macos")]
@@ -2253,14 +2256,17 @@ impl OverlaySession {
 
 				OverlayControl::Continue
 			},
-			WorkerResponse::Error(message) => {
-				self.pending_freeze_capture = None;
-				self.inflight_freeze_capture = None;
-				self.pending_freeze_capture_armed = false;
-				self.pending_window_freeze_capture = None;
-				self.inflight_window_freeze_capture = None;
+			WorkerResponse::Error { source, message } => {
+				if source == WorkerErrorSource::FreezeCapture {
+					self.pending_freeze_capture = None;
+					self.inflight_freeze_capture = None;
+					self.pending_freeze_capture_armed = false;
+					self.pending_window_freeze_capture = None;
+					self.inflight_window_freeze_capture = None;
 
-				self.restore_capture_windows_visibility();
+					self.restore_capture_windows_visibility();
+				}
+
 				self.state.set_error(message);
 				self.request_redraw_all();
 
@@ -10882,6 +10888,7 @@ mod tests {
 	use crate::state::{
 		GlobalPoint, LoupeSample, MonitorRect, MonitorRectPoints, OverlayMode, RectPoints, Rgb,
 	};
+	use crate::worker::{WorkerErrorSource, WorkerResponse};
 
 	fn make_scroll_capture_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
 		let mut image = image::RgbaImage::new(width, rows.len() as u32);
@@ -11015,6 +11022,34 @@ mod tests {
 		assert_eq!(session.pending_png_action, None);
 		assert!(session.pending_encode_png.is_none());
 		assert_eq!(session.state.error_message.as_deref(), Some("Preparing capture..."));
+	}
+
+	#[test]
+	fn unrelated_worker_errors_do_not_clear_pending_freeze_capture_state() {
+		let monitor = test_monitor();
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+
+		session.pending_freeze_capture = Some(monitor);
+		session.pending_freeze_capture_armed = true;
+		session.pending_window_freeze_capture = Some(super::WindowFreezeCaptureTarget {
+			monitor,
+			window_id: 42,
+			rect: RectPoints::new(10, 20, 30, 40),
+		});
+
+		let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
+			source: WorkerErrorSource::RefreshWindowList,
+			message: String::from("window refresh failed"),
+		});
+
+		assert!(matches!(control, super::OverlayControl::Continue));
+		assert_eq!(session.pending_freeze_capture, Some(monitor));
+		assert!(session.pending_freeze_capture_armed);
+		assert!(session.inflight_freeze_capture.is_none());
+		assert!(session.pending_window_freeze_capture.is_some());
+		assert_eq!(session.state.error_message.as_deref(), Some("window refresh failed"));
 	}
 
 	#[test]
