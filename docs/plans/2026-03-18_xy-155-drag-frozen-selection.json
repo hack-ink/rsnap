@@ -1,0 +1,150 @@
+{
+  "spec": {
+    "schema": "plan/1",
+    "plan_id": "2026-03-18-xy-155-drag-frozen-selection",
+    "goal": "Allow dragged-region frozen selections to be repositioned by dragging the bright selection area without resizing it.",
+    "success_criteria": [
+      "In Frozen mode, a drag-region capture can be grabbed from inside the bright selected area and moved while keeping width and height unchanged.",
+      "The moved rect stays clamped to the frozen monitor bounds and the outside scrim updates continuously during the move.",
+      "Toolbar placement, scroll-preview placement, export cropping, and scroll-capture eligibility continue to key off the moved frozen capture rect without flashing or desynchronizing.",
+      "Clicks outside the bright region do not start a frozen move interaction and existing non-move frozen behavior remains unchanged."
+    ],
+    "constraints": [
+      "Do not add resize handles or any size-changing behavior in this issue.",
+      "Do not expand the interaction across monitors; keep the moved rect on the existing frozen monitor only.",
+      "Preserve existing final-capture gating and dragged-region-only scroll-capture eligibility.",
+      "Follow repo-native verification via cargo make tasks before claiming completion."
+    ],
+    "defaults": {
+      "authority_linear_issue": "XY-155",
+      "branch": "y/xy-155-drag-frozen-selection",
+      "primary_files": [
+        "packages/rsnap-overlay/src/overlay.rs",
+        "packages/rsnap-overlay/src/overlay/session_state.rs",
+        "packages/rsnap-overlay/src/state.rs"
+      ],
+      "verification_commands": [
+        "cargo make lint-fix",
+        "cargo make fmt",
+        "cargo make test"
+      ]
+    },
+    "tasks": [
+      {
+        "id": "task-1",
+        "title": "Add frozen move interaction state and clamp helpers",
+        "status": "done",
+        "objective": "Represent the drag-to-move interaction separately from live drag selection and provide a deterministic way to clamp a fixed-size frozen capture rect within the active frozen monitor.",
+        "inputs": [
+          "XY-155 issue contract",
+          "Existing frozen_capture_rect and drag_rect behavior",
+          "Monitor-local RectPoints helpers"
+        ],
+        "outputs": [
+          "Frozen selection move state in the overlay session/runtime state",
+          "Helper(s) to detect in-rect presses and clamp fixed-size moved rects to the frozen monitor bounds"
+        ],
+        "verification": [
+          "Move helpers compile cleanly and leave live drag behavior isolated from frozen move behavior."
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "task-2",
+        "title": "Route frozen pointer input to reposition the capture rect",
+        "status": "done",
+        "objective": "Start a move interaction only when pressing inside an eligible drag-region frozen selection, update the rect continuously while the pointer moves, and commit the new position on release.",
+        "inputs": [
+          "Frozen overlay pointer/mouse event handlers",
+          "Frozen cursor tracking path",
+          "Helper-window positioning logic"
+        ],
+        "outputs": [
+          "Frozen pointer input path that repositions state.frozen_capture_rect without resizing it",
+          "Live toolbar/preview position updates driven by the moved rect when the toolbar is not manually dragged"
+        ],
+        "verification": [
+          "Dragging inside the bright frozen region updates the rect continuously and keeps it within monitor bounds.",
+          "Pointer updates outside the bright region do not begin a move interaction."
+        ],
+        "depends_on": [
+          "task-1"
+        ]
+      },
+      {
+        "id": "task-3",
+        "title": "Cover the new interaction with focused regression tests",
+        "status": "done",
+        "objective": "Add tests that lock down frozen-region repositioning, clamping, and non-goal boundaries so future frozen-selection changes do not regress XY-155.",
+        "inputs": [
+          "OverlaySession unit-test surface in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "Regression tests for frozen move start gating, moved-rect updates, clamp behavior, and downstream rect consumers"
+        ],
+        "verification": [
+          "New XY-155 tests fail on missing behavior and pass once the implementation is in place."
+        ],
+        "depends_on": [
+          "task-2"
+        ]
+      },
+      {
+        "id": "task-4",
+        "title": "Run repo-native verification and close out execution state",
+        "status": "done",
+        "objective": "Run the required repo gates on the final implementation state and record enough evidence to prepare the branch for commit/push later.",
+        "inputs": [
+          "Final XY-155 implementation diff"
+        ],
+        "outputs": [
+          "Fresh lint/format/test evidence",
+          "Updated plan runtime state reflecting what was completed this turn"
+        ],
+        "verification": [
+          "cargo make lint-fix exits 0",
+          "cargo make fmt exits 0",
+          "cargo make test exits 0"
+        ],
+        "depends_on": [
+          "task-3"
+        ]
+      }
+    ],
+    "replan_policy": {
+      "owner": "plan-writing",
+      "triggers": [
+        "Frozen pointer routing requires a strategy change beyond dragged-region frozen selections.",
+        "Existing helper-window positioning semantics conflict with rect-driven updates in a way that cannot be resolved without widening XY-155 scope.",
+        "Verification exposes a regression in frozen export/scroll-capture behavior that requires changing the planned task graph."
+      ]
+    }
+  },
+  "state": {
+    "phase": "done",
+    "current_task_id": null,
+    "next_task_id": null,
+    "blockers": [],
+    "evidence": [
+      "Task 1 outcome: packages/rsnap-overlay/src/overlay/session_state.rs now defines FrozenSelectionDragState, and packages/rsnap-overlay/src/overlay.rs clamps fixed-size frozen capture rect moves to the active frozen monitor.",
+      "Task 2 outcome: frozen pointer presses inside an eligible drag-region capture now start a move interaction, pointer motion updates state.frozen_capture_rect continuously, and toolbar plus scroll-preview redraws follow the moved rect.",
+      "Task 2 guardrail: frozen move interaction stays disabled for clicks outside the bright region, non-drag-region frozen captures, scroll-capture-active state, and frozen states without a visible frozen image.",
+      "Task 3 outcome: added focused overlay tests for frozen move start gating, moved-rect updates, monitor clamping, and moved export cropping.",
+      "Task 4 verification: cargo test -p rsnap-overlay --lib passed with 146 tests passing and 0 failures.",
+      "Task 4 verification: cargo make lint-fix completed successfully.",
+      "Task 4 verification: cargo make fmt completed successfully.",
+      "Task 4 verification: cargo make test completed successfully.",
+      "Task 4 verification: git diff --check returned clean.",
+      "Task 4 verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-155-drag-frozen-selection.json returned OK."
+    ],
+    "last_updated": "2026-03-18T08:48:00Z",
+    "replan_reason": null,
+    "context_snapshot": {
+      "branch": "y/xy-155-drag-frozen-selection",
+      "frozen_capture_rect_drives_scrim": true,
+      "frozen_pointer_input_currently_noops": false,
+      "linear_issue": "XY-155",
+      "verification_completed": true
+    }
+  }
+}
