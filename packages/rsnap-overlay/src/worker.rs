@@ -81,7 +81,19 @@ pub(crate) enum WorkerResponse {
 	EncodedPng {
 		png_bytes: Vec<u8>,
 	},
-	Error(String),
+	Error {
+		source: WorkerErrorSource,
+		message: String,
+	},
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorkerErrorSource {
+	EncodePng,
+	FreezeCapture,
+	RefreshWindowList,
+	#[cfg(any(not(target_os = "macos"), test))]
+	CaptureMonitorRegion,
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
@@ -186,7 +198,10 @@ impl OverlayWorker {
 				Self::send_response(
 					resp_tx,
 					response_waker,
-					WorkerResponse::Error(format!("{err:#}")),
+					WorkerResponse::Error {
+						source: WorkerErrorSource::EncodePng,
+						message: format!("{err:#}"),
+					},
 				);
 			},
 		}
@@ -226,7 +241,10 @@ impl OverlayWorker {
 				Self::send_response(
 					resp_tx,
 					response_waker,
-					WorkerResponse::Error(format!("{err:#}")),
+					WorkerResponse::Error {
+						source: WorkerErrorSource::FreezeCapture,
+						message: format!("{err:#}"),
+					},
 				);
 			},
 		}
@@ -249,7 +267,10 @@ impl OverlayWorker {
 				Self::send_response(
 					resp_tx,
 					response_waker,
-					WorkerResponse::Error(format!("{err:#}")),
+					WorkerResponse::Error {
+						source: WorkerErrorSource::RefreshWindowList,
+						message: format!("{err:#}"),
+					},
 				);
 			},
 		}
@@ -294,7 +315,10 @@ impl OverlayWorker {
 				Self::send_response(
 					resp_tx,
 					response_waker,
-					WorkerResponse::Error(format!("{err:#}")),
+					WorkerResponse::Error {
+						source: WorkerErrorSource::CaptureMonitorRegion,
+						message: format!("{err:#}"),
+					},
 				);
 			},
 		}
@@ -587,7 +611,8 @@ mod tests {
 		WindowHit, WindowListSnapshot,
 	};
 	use crate::worker::{
-		CapturedMonitorRegionResponse, CapturedMonitorRegionResult, OverlayWorker, WorkerResponse,
+		CapturedMonitorRegionResponse, CapturedMonitorRegionResult, OverlayWorker,
+		WorkerErrorSource, WorkerResponse,
 	};
 
 	enum MockScrollCaptureResult {
@@ -699,12 +724,19 @@ mod tests {
 		OverlayWorker::send_response(
 			&resp_tx,
 			Some(&wake),
-			WorkerResponse::Error(String::from("wake me")),
+			WorkerResponse::Error {
+				source: WorkerErrorSource::EncodePng,
+				message: String::from("wake me"),
+			},
 		);
 
 		let response = resp_rx.try_recv().expect("worker response");
 
-		assert!(matches!(response, WorkerResponse::Error(message) if message == "wake me"));
+		assert!(matches!(
+			response,
+			WorkerResponse::Error { source: WorkerErrorSource::EncodePng, message }
+				if message == "wake me"
+		));
 		assert_eq!(wake_count.load(Ordering::Acquire), 1);
 	}
 
@@ -827,7 +859,8 @@ mod tests {
 		let response = resp_rx.try_recv().expect("worker response");
 
 		match response {
-			WorkerResponse::Error(message) => {
+			WorkerResponse::Error { source, message } => {
+				assert_eq!(source, WorkerErrorSource::CaptureMonitorRegion);
 				assert!(message.contains("fresh frame unavailable"));
 			},
 			other => panic!("expected worker error, got {other:?}"),
