@@ -98,18 +98,17 @@
     "next_task_id": null,
     "blockers": [],
     "evidence": [
-      "Task 1 evidence: the color jitter came from mixing two different startup sources. The first visible seed came from a pre-focus path, while the later steady-state sample came from post-focus ScreenCaptureKit frames after the overlay app had already taken focus and underlying UI state could change.",
-      "Task 2 outcome: the first post-fix implementation still allowed startup jitter because `seed_startup_live_cursor_rgb` accepted any cached `latest_cursor_sample()` frame from the live stream, including a stale frame captured before `focus_live_capture_window()` completed.",
-      "Task 2 outcome: OverlaySession::start now records a `min_captured_at` timestamp immediately after requesting overlay focus, and the startup seed waits briefly for a ScreenCaptureKit sample whose `captured_at` is newer than that focus request before the first visible HUD draw.",
-      "Task 2 outcome: the old pre-focus CoreGraphics startup seed path remains removed, and the startup live-stream seed now also rejects pre-focus cached ScreenCaptureKit frames so the first visible RGB matches the steady-state source and freshness contract.",
+      "Task 1 evidence: `OverlaySession::start()` still calls `reset_for_start()` and then creates a fresh `MacLiveFrameStream::new()` before any startup live RGB seed attempt, so the stream cache starts empty on every overlay entry.",
+      "Task 2 outcome: the stable startup path is simpler than the previous timestamp-gated version: request overlay focus, then wait briefly for the first `latest_cursor_sample()` from that fresh stream before the first visible HUD draw.",
+      "Task 2 outcome: the temporary `min_captured_at` bookkeeping and `latest_cursor_sample_after()` gate were removed because the startup seed already operates on a brand-new stream and does not need extra freshness state to reject cached pre-focus frames.",
       "Task 3 outcome: focused regression tests still cover monitor lookup without windows and preservation or clearing of pre-seeded live RGB during startup cursor-state initialization.",
       "Task 3 verification: cargo make fmt-rust completed successfully.",
-      "Task 3 verification: cargo test -p rsnap-overlay --lib passed with 128 tests passing and 0 failures, including the fresh-frame threshold unit test for the startup seed gate.",
+      "Task 3 verification: cargo make lint-fix-rust completed successfully.",
+      "Task 3 verification: cargo make test-rust passed with 155 tests passing and 0 failures.",
       "Task 3 verification: git diff --check returned clean.",
-      "Task 3 verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-17_xy-150-live-rgb-startup-seed.json returned OK.",
-      "Task 3 verification: cargo make checks completed successfully, including workspace clippy, vstyle, nextest (156 tests), cargo test --all-features, and fmt-rust-check/taplo."
+      "Task 3 verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-17_xy-150-live-rgb-startup-seed.json returned OK."
     ],
-    "last_updated": "2026-03-16T20:49:50Z",
+    "last_updated": "2026-03-17T02:10:58Z",
     "replan_reason": null,
     "context_snapshot": {
       "issue_id": "XY-150",

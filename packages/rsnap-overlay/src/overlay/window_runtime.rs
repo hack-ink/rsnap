@@ -51,19 +51,16 @@ impl OverlaySession {
 		self.prime_startup_cursor_context(startup_cursor, startup_monitor);
 
 		#[cfg(target_os = "macos")]
-		let startup_live_sample_min_captured_at = {
-			self.focus_live_capture_window();
+		{
+			let startup_live_rgb_plan = Self::startup_live_rgb_plan(startup_monitor);
 
-			Instant::now()
-		};
+			if startup_live_rgb_plan.focus_window {
+				self.focus_live_capture_window();
+			}
 
-		#[cfg(target_os = "macos")]
-		if let Some(monitor) = startup_monitor {
-			self.seed_startup_live_cursor_rgb(
-				monitor,
-				startup_cursor,
-				startup_live_sample_min_captured_at,
-			);
+			if let Some(monitor) = startup_live_rgb_plan.seed_monitor {
+				self.seed_startup_live_cursor_rgb(monitor, startup_cursor);
+			}
 		}
 
 		self.initialize_cursor_state_for_cursor(startup_cursor, startup_monitor);

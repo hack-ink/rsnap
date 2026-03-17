@@ -5904,12 +5904,12 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn seed_startup_live_cursor_rgb(
-		&mut self,
-		monitor: MonitorRect,
-		cursor: GlobalPoint,
-		min_captured_at: Instant,
-	) {
+	fn startup_live_rgb_plan(startup_monitor: Option<MonitorRect>) -> StartupLiveRgbPlan {
+		StartupLiveRgbPlan { focus_window: true, seed_monitor: startup_monitor }
+	}
+
+	#[cfg(target_os = "macos")]
+	fn seed_startup_live_cursor_rgb(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
 		if !matches!(self.state.mode, OverlayMode::Live) || self.state.rgb.is_some() {
 			return;
 		}
@@ -5923,11 +5923,9 @@ impl OverlaySession {
 		let deadline = Instant::now() + STARTUP_LIVE_SAMPLE_WAIT_TIMEOUT;
 
 		loop {
-			if let Some(sample) = stream.latest_cursor_sample_after(
-				monitor,
-				CursorSampleRequest::rgb(x_px, y_px),
-				min_captured_at,
-			) && let Some(rgb) = sample.rgb
+			if let Some(sample) =
+				stream.latest_cursor_sample(monitor, CursorSampleRequest::rgb(x_px, y_px))
+				&& let Some(rgb) = sample.rgb
 			{
 				self.state.rgb = Some(rgb);
 
@@ -6753,6 +6751,13 @@ struct HudRedrawSummary {
 	resize_target: Option<(u32, u32)>,
 	redraw_window_id: Option<WindowId>,
 	redraw_monitor_id: Option<u32>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StartupLiveRgbPlan {
+	focus_window: bool,
+	seed_monitor: Option<MonitorRect>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -10557,7 +10562,7 @@ mod tests {
 		InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult,
 		LiveStreamStaleGrace, MacOSScrollPixelResidual, SCROLL_CAPTURE_INPUT_FRESHNESS,
 		SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
-		ScrollCaptureFrameSource,
+		ScrollCaptureFrameSource, StartupLiveRgbPlan,
 	};
 	use crate::overlay::{
 		FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme,
@@ -11127,6 +11132,27 @@ mod tests {
 				GlobalPoint::new(2_400, 1_200)
 			),
 			None
+		);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn startup_live_rgb_plan_keeps_focus_independent_from_seed_monitor() {
+		let monitor = MonitorRect {
+			id: 2,
+			origin: GlobalPoint::new(1_000, 0),
+			width: 1_200,
+			height: 900,
+			scale_factor_x1000: 2_000,
+		};
+
+		assert_eq!(
+			OverlaySession::startup_live_rgb_plan(None),
+			StartupLiveRgbPlan { focus_window: true, seed_monitor: None }
+		);
+		assert_eq!(
+			OverlaySession::startup_live_rgb_plan(Some(monitor)),
+			StartupLiveRgbPlan { focus_window: true, seed_monitor: Some(monitor) }
 		);
 	}
 
