@@ -118,8 +118,9 @@ use winit::{
 #[cfg(all(target_os = "macos", test))]
 use self::session_state::InflightScrollCaptureObservation;
 use self::session_state::{
-	CursorMoveTrace, FrozenToolbarPointerState, FrozenToolbarState, HudDrawConfig,
-	LiveSampleApplyResult, ScrollCaptureState, SlowOperationLogger, WindowFreezeCaptureTarget,
+	CursorMoveTrace, FrozenSelectionDragState, FrozenToolbarPointerState, FrozenToolbarState,
+	HudDrawConfig, LiveSampleApplyResult, ScrollCaptureState, SlowOperationLogger,
+	WindowFreezeCaptureTarget,
 };
 #[cfg(target_os = "macos")]
 use self::session_state::{
@@ -654,6 +655,7 @@ pub struct OverlaySession {
 	left_mouse_button_down: bool,
 	left_mouse_button_down_monitor: Option<MonitorRect>,
 	left_mouse_button_down_global: Option<GlobalPoint>,
+	frozen_selection_drag: FrozenSelectionDragState,
 	toolbar_window_visible: bool,
 	toolbar_window_warmup_redraws_remaining: u8,
 	loupe_window_visible: bool,
@@ -777,6 +779,7 @@ impl OverlaySession {
 			left_mouse_button_down: false,
 			left_mouse_button_down_monitor: None,
 			left_mouse_button_down_global: None,
+			frozen_selection_drag: FrozenSelectionDragState::default(),
 			toolbar_window_visible: false,
 			toolbar_window_warmup_redraws_remaining: 0,
 			loupe_window_visible: false,
@@ -1498,6 +1501,7 @@ impl OverlaySession {
 			self.update_cursor_state(monitor, global);
 			self.update_hud_window_position(monitor, global);
 			self.update_live_drag_rect(monitor, global);
+			self.update_frozen_selection_drag_rect(global);
 			self.force_apply_pending_hud_and_loupe_moves();
 			self.request_redraw_hud_window();
 
@@ -1552,6 +1556,7 @@ impl OverlaySession {
 		self.update_cursor_state(monitor, global);
 		self.update_hud_window_position(monitor, global);
 		self.update_live_drag_rect(monitor, global);
+		self.update_frozen_selection_drag_rect(global);
 		self.force_apply_pending_hud_and_loupe_moves();
 		self.request_redraw_hud_window();
 
@@ -2510,19 +2515,8 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		capture_rect: RectPoints,
 	) {
-		let screen_rect =
-			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-		let capture_rect = Rect::from_min_size(
-			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
-			Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
-		);
-		let toolbar_size = WindowRenderer::frozen_toolbar_size(&self.toolbar_state);
-		let default_pos = WindowRenderer::frozen_toolbar_default_pos(
-			screen_rect,
-			capture_rect,
-			toolbar_size,
-			self.config.toolbar_placement,
-		);
+		let default_pos =
+			self.frozen_toolbar_default_position_for_capture_rect(monitor, capture_rect);
 
 		self.toolbar_state.floating_position = Some(default_pos);
 
@@ -2531,10 +2525,32 @@ impl OverlaySession {
 		tracing::debug!(
 			monitor_id = monitor.id,
 			frozen_generation = self.state.frozen_generation,
-			toolbar_size_points = ?toolbar_size,
+			toolbar_size_points =
+				?WindowRenderer::frozen_toolbar_size(&self.toolbar_state),
 			default_pos = ?default_pos,
 			"Frozen toolbar default position preseeded."
 		);
+	}
+
+	fn frozen_toolbar_default_position_for_capture_rect(
+		&self,
+		monitor: MonitorRect,
+		capture_rect: RectPoints,
+	) -> Pos2 {
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let capture_rect = Rect::from_min_size(
+			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
+			Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
+		);
+		let toolbar_size = WindowRenderer::frozen_toolbar_size(&self.toolbar_state);
+
+		WindowRenderer::frozen_toolbar_default_pos(
+			screen_rect,
+			capture_rect,
+			toolbar_size,
+			self.config.toolbar_placement,
+		)
 	}
 
 	fn refresh_frozen_helper_windows_for_transition(
@@ -2587,6 +2603,7 @@ impl OverlaySession {
 		self.state.frozen_capture_rect = Some(capture_rect);
 		self.state.drag_rect = None;
 		self.state.hovered_window_rect = None;
+		self.frozen_selection_drag = FrozenSelectionDragState::default();
 
 		tracing::debug!(
 			monitor_id = monitor.id,
@@ -2707,6 +2724,114 @@ impl OverlaySession {
 		}
 
 		self.state.drag_rect = Some(MonitorRectPoints { monitor_id: monitor.id, rect });
+	}
+
+	fn frozen_selection_drag_target(&self) -> Option<(MonitorRect, RectPoints)> {
+		if !matches!(self.state.mode, OverlayMode::Frozen)
+			|| self.frozen_capture_source != FrozenCaptureSource::DragRegion
+			|| self.scroll_capture.active
+			|| self.state.frozen_image.is_none()
+		{
+			return None;
+		}
+
+		let monitor = self.state.monitor?;
+		let capture_rect = self.state.frozen_capture_rect?;
+
+		if capture_rect.is_empty() {
+			return None;
+		}
+
+		Some((monitor, capture_rect))
+	}
+
+	fn begin_frozen_selection_drag(&mut self, global: GlobalPoint) -> bool {
+		let Some((monitor, capture_rect)) = self.frozen_selection_drag_target() else {
+			return false;
+		};
+		let (cursor_x, cursor_y) = Self::clamped_local_point_in_monitor(monitor, global);
+
+		if !capture_rect.contains((cursor_x, cursor_y)) {
+			return false;
+		}
+
+		self.frozen_selection_drag = FrozenSelectionDragState {
+			active: true,
+			pointer_offset_x: cursor_x.saturating_sub(capture_rect.x),
+			pointer_offset_y: cursor_y.saturating_sub(capture_rect.y),
+		};
+
+		true
+	}
+
+	fn stop_frozen_selection_drag(&mut self) {
+		self.frozen_selection_drag = FrozenSelectionDragState::default();
+	}
+
+	fn update_frozen_selection_drag_rect(&mut self, global: GlobalPoint) -> bool {
+		if !self.frozen_selection_drag.active {
+			return false;
+		}
+
+		let Some((monitor, capture_rect)) = self.frozen_selection_drag_target() else {
+			self.stop_frozen_selection_drag();
+
+			return false;
+		};
+		let (cursor_x, cursor_y) = Self::clamped_local_point_in_monitor(monitor, global);
+		let desired_x =
+			i64::from(cursor_x) - i64::from(self.frozen_selection_drag.pointer_offset_x);
+		let desired_y =
+			i64::from(cursor_y) - i64::from(self.frozen_selection_drag.pointer_offset_y);
+		let next_rect = Self::clamp_frozen_capture_rect_to_monitor(
+			monitor,
+			capture_rect.width,
+			capture_rect.height,
+			desired_x,
+			desired_y,
+		);
+
+		if self.state.frozen_capture_rect == Some(next_rect) {
+			return false;
+		}
+
+		self.state.frozen_capture_rect = Some(next_rect);
+
+		let toolbar_pos = self.frozen_toolbar_default_position_for_capture_rect(monitor, next_rect);
+
+		self.toolbar_state.floating_position = Some(toolbar_pos);
+
+		let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+
+		self.request_redraw_for_monitor(monitor);
+		self.request_redraw_toolbar_window();
+		self.request_redraw_scroll_preview_window();
+
+		true
+	}
+
+	fn clamped_local_point_in_monitor(monitor: MonitorRect, global: GlobalPoint) -> (u32, u32) {
+		let max_x = i64::from(monitor.width.saturating_sub(1));
+		let max_y = i64::from(monitor.height.saturating_sub(1));
+		let local_x = (i64::from(global.x) - i64::from(monitor.origin.x)).clamp(0, max_x) as u32;
+		let local_y = (i64::from(global.y) - i64::from(monitor.origin.y)).clamp(0, max_y) as u32;
+
+		(local_x, local_y)
+	}
+
+	fn clamp_frozen_capture_rect_to_monitor(
+		monitor: MonitorRect,
+		width: u32,
+		height: u32,
+		desired_x: i64,
+		desired_y: i64,
+	) -> RectPoints {
+		let max_x = i64::from(monitor.width.saturating_sub(width));
+		let max_y = i64::from(monitor.height.saturating_sub(height));
+		let x = desired_x.clamp(0, max_x) as u32;
+		let y = desired_y.clamp(0, max_y) as u32;
+
+		RectPoints::new(x, y, width, height)
 	}
 
 	fn cropped_frozen_capture_image(&self) -> Option<RgbaImage> {
@@ -3102,6 +3227,8 @@ impl OverlaySession {
 		self.toolbar_left_button_down = toolbar_left_button_down;
 
 		if !toolbar_left_button_down {
+			self.stop_frozen_selection_drag();
+
 			self.toolbar_state.dragging = false;
 			self.toolbar_state.drag_offset = Vec2::ZERO;
 			self.toolbar_state.drag_anchor = None;
@@ -3147,6 +3274,16 @@ impl OverlaySession {
 		let cursor_local = Pos2::new((position.x / scale) as f32, (position.y / scale) as f32);
 
 		self.toolbar_pointer_local = Some(cursor_local);
+
+		if self.frozen_selection_drag.active {
+			if let Some(global_cursor) =
+				self.toolbar_cursor_global_position(toolbar_window, cursor_local)
+			{
+				self.update_frozen_selection_drag_rect(global_cursor);
+			}
+
+			return OverlayControl::Continue;
+		}
 
 		let monitor = match self.state.monitor.or_else(|| self.active_cursor_monitor()) {
 			Some(monitor) => monitor,
@@ -3879,6 +4016,7 @@ impl OverlaySession {
 		let previous_drag_rect = self.state.drag_rect;
 
 		self.update_live_drag_rect(monitor, global);
+		self.update_frozen_selection_drag_rect(global);
 		self.request_cursor_move_samples(monitor, global);
 
 		if let Some(old_monitor) = old_monitor
@@ -3935,6 +4073,7 @@ impl OverlaySession {
 		let previous_drag_rect = self.state.drag_rect;
 
 		self.update_live_drag_rect(monitor, global);
+		self.update_frozen_selection_drag_rect(global);
 		self.request_cursor_move_samples(monitor, global);
 
 		if let Some(old_monitor) = old_monitor
@@ -4084,6 +4223,15 @@ impl OverlaySession {
 
 		if matches!(self.state.mode, OverlayMode::Frozen) {
 			self.reset_toolbar_pointer_state();
+
+			match state {
+				ElementState::Pressed => {
+					let cursor = self.current_device_cursor();
+					let _ = self.begin_frozen_selection_drag(cursor);
+				},
+				ElementState::Released => self.stop_frozen_selection_drag(),
+			}
+
 			self.request_redraw_for_monitor(monitor);
 
 			return OverlayControl::Continue;
@@ -6045,6 +6193,9 @@ impl OverlaySession {
 		self.toolbar_left_button_went_down = false;
 		self.toolbar_left_button_went_up = false;
 		self.toolbar_pointer_local = None;
+
+		self.stop_frozen_selection_drag();
+
 		self.pending_encode_png = None;
 		self.pending_png_action = None;
 		self.keyboard_modifiers = ModifiersState::default();
@@ -10878,9 +11029,9 @@ mod tests {
 		ScrollCaptureFrameSource, StartupLiveRgbPlan,
 	};
 	use crate::overlay::{
-		FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme,
-		OverlaySession, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
-		ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
+		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
+		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX,
+		TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
@@ -11050,6 +11201,102 @@ mod tests {
 		assert!(session.inflight_freeze_capture.is_none());
 		assert!(session.pending_window_freeze_capture.is_some());
 		assert_eq!(session.state.error_message.as_deref(), Some("window refresh failed"));
+	}
+
+	#[test]
+	fn frozen_selection_drag_starts_only_for_drag_region_inside_capture_rect() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(100, 120, 200, 240);
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.state.frozen_capture_rect = Some(capture_rect);
+
+		assert!(!session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+		assert!(!session.begin_frozen_selection_drag(GlobalPoint::new(50, 80)));
+		assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+		assert_eq!(
+			session.frozen_selection_drag,
+			FrozenSelectionDragState { active: true, pointer_offset_x: 50, pointer_offset_y: 60 }
+		);
+	}
+
+	#[test]
+	fn frozen_selection_drag_updates_capture_rect_and_toolbar_position() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(100, 120, 200, 240);
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.state.frozen_capture_rect = Some(capture_rect);
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+		session.seed_frozen_toolbar_default_position(monitor, capture_rect);
+
+		assert!(session.begin_frozen_selection_drag(GlobalPoint::new(110, 130)));
+		assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(260, 310)));
+
+		let expected_rect = RectPoints::new(250, 300, 200, 240);
+		let expected_toolbar_pos =
+			session.frozen_toolbar_default_position_for_capture_rect(monitor, expected_rect);
+
+		assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
+		assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
+	}
+
+	#[test]
+	fn frozen_selection_drag_clamps_capture_rect_to_monitor_bounds() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(100, 120, 200, 240);
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.state.frozen_capture_rect = Some(capture_rect);
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+		assert!(session.begin_frozen_selection_drag(GlobalPoint::new(110, 130)));
+		assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(-200, -300)));
+		assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(0, 0, 200, 240)));
+		assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(1_500, 1_400)));
+		assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(800, 560, 200, 240)));
+	}
+
+	#[test]
+	fn cropped_frozen_capture_image_uses_moved_capture_rect() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 4,
+			height: 3,
+			scale_factor_x1000: 1_000,
+		};
+		let image = RgbaImage::from_fn(4, 3, |x, y| Rgba([x as u8, y as u8, 0, 255]));
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, image);
+
+		session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 2, 1));
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+		assert!(session.begin_frozen_selection_drag(GlobalPoint::new(0, 0)));
+		assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(1, 1)));
+
+		let cropped = session.cropped_frozen_capture_image().expect("moved frozen crop");
+
+		assert_eq!(cropped.width(), 2);
+		assert_eq!(cropped.height(), 1);
+		assert_eq!(cropped.get_pixel(0, 0), &Rgba([1, 1, 0, 255]));
+		assert_eq!(cropped.get_pixel(1, 0), &Rgba([2, 1, 0, 255]));
 	}
 
 	#[test]
