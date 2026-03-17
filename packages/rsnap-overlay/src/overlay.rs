@@ -195,7 +195,7 @@ const MACOS_HUD_WINDOW_LEVEL: isize = 26;
 const MACOS_OVERLAY_WINDOW_LEVEL: isize = 25;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
-const TOOLBAR_MAX_TOOL_COUNT: usize = 9;
+const TOOLBAR_MAX_TOOL_COUNT: usize = 10;
 const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
 const CURSOR_EVENT_TICK_TTL: Duration = Duration::from_millis(24);
 const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
@@ -399,6 +399,7 @@ enum FrozenToolbarTool {
 	Mosaic,
 	Undo,
 	Redo,
+	AutoCenter,
 	Scroll,
 	Copy,
 	Save,
@@ -412,6 +413,7 @@ impl FrozenToolbarTool {
 			Self::Mosaic => "Mosaic",
 			Self::Undo => "Undo",
 			Self::Redo => "Redo",
+			Self::AutoCenter => "Auto-center (C)",
 			Self::Scroll => "Scroll Capture ↓",
 			Self::Copy => "Copy",
 			Self::Save => "Save",
@@ -426,6 +428,7 @@ impl FrozenToolbarTool {
 			Self::Mosaic => regular::CHECKERBOARD,
 			Self::Undo => regular::ARROW_COUNTER_CLOCKWISE,
 			Self::Redo => regular::ARROW_CLOCKWISE,
+			Self::AutoCenter => regular::TARGET,
 			Self::Scroll => "↓",
 			Self::Copy => regular::COPY,
 			Self::Save => regular::FLOPPY_DISK,
@@ -2623,7 +2626,7 @@ impl OverlaySession {
 		self.toolbar_state.layout_last_screen_size_points = None;
 		self.toolbar_state.layout_stable_frames = 0;
 
-		self.sync_scroll_toolbar_state();
+		self.sync_frozen_toolbar_state();
 		// Spawn the toolbar immediately at the default position (capture aware). This avoids any
 		// dependency on egui viewport stabilization or additional input events (mouse move) to
 		// finish the initial layout.
@@ -2745,6 +2748,10 @@ impl OverlaySession {
 		Some((monitor, capture_rect))
 	}
 
+	fn frozen_auto_center_available(&self) -> bool {
+		self.frozen_selection_drag_target().is_some()
+	}
+
 	fn begin_frozen_selection_drag(&mut self, global: GlobalPoint) -> bool {
 		let Some((monitor, capture_rect)) = self.frozen_selection_drag_target() else {
 			return false;
@@ -2793,23 +2800,7 @@ impl OverlaySession {
 			desired_y,
 		);
 
-		if self.state.frozen_capture_rect == Some(next_rect) {
-			return false;
-		}
-
-		self.state.frozen_capture_rect = Some(next_rect);
-
-		let toolbar_pos = self.frozen_toolbar_default_position_for_capture_rect(monitor, next_rect);
-
-		self.toolbar_state.floating_position = Some(toolbar_pos);
-
-		let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
-
-		self.request_redraw_for_monitor(monitor);
-		self.request_redraw_toolbar_window();
-		self.request_redraw_scroll_preview_window();
-
-		true
+		self.apply_frozen_capture_rect_update(monitor, next_rect)
 	}
 
 	fn clamped_local_point_in_monitor(monitor: MonitorRect, global: GlobalPoint) -> (u32, u32) {
@@ -2834,6 +2825,238 @@ impl OverlaySession {
 		let y = desired_y.clamp(0, max_y) as u32;
 
 		RectPoints::new(x, y, width, height)
+	}
+
+	fn apply_frozen_capture_rect_update(
+		&mut self,
+		monitor: MonitorRect,
+		next_rect: RectPoints,
+	) -> bool {
+		if self.state.frozen_capture_rect == Some(next_rect) {
+			return false;
+		}
+
+		self.state.frozen_capture_rect = Some(next_rect);
+
+		let toolbar_pos = self.frozen_toolbar_default_position_for_capture_rect(monitor, next_rect);
+
+		self.toolbar_state.floating_position = Some(toolbar_pos);
+
+		let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+
+		self.request_redraw_for_monitor(monitor);
+		self.request_redraw_toolbar_window();
+		self.request_redraw_scroll_preview_window();
+
+		true
+	}
+
+	fn auto_center_frozen_capture_rect(&mut self) -> bool {
+		let Some((monitor, capture_rect)) = self.frozen_selection_drag_target() else {
+			return false;
+		};
+		let Some(capture_image) = self.cropped_frozen_capture_image() else {
+			return false;
+		};
+		let Some(content_bounds) = Self::detect_auto_center_content_bounds(&capture_image) else {
+			return false;
+		};
+		let delta_x_points = Self::auto_center_shift_points(
+			content_bounds.x,
+			content_bounds.width,
+			capture_image.width(),
+			capture_rect.width,
+		);
+		let delta_y_points = Self::auto_center_shift_points(
+			content_bounds.y,
+			content_bounds.height,
+			capture_image.height(),
+			capture_rect.height,
+		);
+		let next_rect = Self::clamp_frozen_capture_rect_to_monitor(
+			monitor,
+			capture_rect.width,
+			capture_rect.height,
+			i64::from(capture_rect.x) + delta_x_points,
+			i64::from(capture_rect.y) + delta_y_points,
+		);
+
+		self.apply_frozen_capture_rect_update(monitor, next_rect)
+	}
+
+	fn auto_center_shift_points(
+		content_origin_px: u32,
+		content_size_px: u32,
+		crop_size_px: u32,
+		capture_size_points: u32,
+	) -> i64 {
+		if crop_size_px == 0 || capture_size_points == 0 {
+			return 0;
+		}
+
+		let content_center_px = content_origin_px as f32 + (content_size_px as f32 * 0.5);
+		let crop_center_px = crop_size_px as f32 * 0.5;
+		let delta_px = content_center_px - crop_center_px;
+
+		((delta_px * capture_size_points as f32) / crop_size_px as f32).round() as i64
+	}
+
+	fn detect_auto_center_content_bounds(image: &RgbaImage) -> Option<RectPoints> {
+		let width = image.width();
+		let height = image.height();
+
+		if width < 2 || height < 2 {
+			return None;
+		}
+
+		let edge_strip = Self::auto_center_edge_strip_extent(width.min(height));
+		let top_mean = Self::region_rgb_mean(image, 0, width, 0, edge_strip)?;
+		let bottom_mean =
+			Self::region_rgb_mean(image, 0, width, height.saturating_sub(edge_strip), height)?;
+		let left_mean = Self::region_rgb_mean(image, 0, edge_strip, 0, height)?;
+		let right_mean =
+			Self::region_rgb_mean(image, width.saturating_sub(edge_strip), width, 0, height)?;
+		let threshold = {
+			let edge_noise = [
+				Self::region_rgb_mean_distance(image, 0, width, 0, edge_strip, top_mean),
+				Self::region_rgb_mean_distance(
+					image,
+					0,
+					width,
+					height.saturating_sub(edge_strip),
+					height,
+					bottom_mean,
+				),
+				Self::region_rgb_mean_distance(image, 0, edge_strip, 0, height, left_mean),
+				Self::region_rgb_mean_distance(
+					image,
+					width.saturating_sub(edge_strip),
+					width,
+					0,
+					height,
+					right_mean,
+				),
+			]
+			.into_iter()
+			.fold(0.0, f32::max);
+
+			(edge_noise * 3.0).round().clamp(24.0, 96.0) as u32
+		};
+		let min_salient_per_row = (width / 64).max(1) as usize;
+		let min_salient_per_column = (height / 64).max(1) as usize;
+		let mut row_counts = vec![0_usize; height as usize];
+		let mut column_counts = vec![0_usize; width as usize];
+
+		for (x, y, pixel) in image.enumerate_pixels() {
+			let salient_distance = [
+				Self::rgb_distance_to_mean(pixel, top_mean),
+				Self::rgb_distance_to_mean(pixel, bottom_mean),
+				Self::rgb_distance_to_mean(pixel, left_mean),
+				Self::rgb_distance_to_mean(pixel, right_mean),
+			]
+			.into_iter()
+			.min()
+			.unwrap_or(0);
+
+			if salient_distance < threshold {
+				continue;
+			}
+
+			row_counts[y as usize] += 1;
+			column_counts[x as usize] += 1;
+		}
+
+		let top = row_counts.iter().position(|count| *count >= min_salient_per_row)?;
+		let bottom = row_counts.iter().rposition(|count| *count >= min_salient_per_row)?;
+		let left = column_counts.iter().position(|count| *count >= min_salient_per_column)?;
+		let right = column_counts.iter().rposition(|count| *count >= min_salient_per_column)?;
+
+		if left > right || top > bottom {
+			return None;
+		}
+
+		let bounds = RectPoints::new(
+			left as u32,
+			top as u32,
+			(right - left + 1) as u32,
+			(bottom - top + 1) as u32,
+		);
+		let fills_crop_width = bounds.width.saturating_mul(100) >= width.saturating_mul(92);
+		let fills_crop_height = bounds.height.saturating_mul(100) >= height.saturating_mul(92);
+
+		if fills_crop_width && fills_crop_height {
+			return None;
+		}
+
+		Some(bounds)
+	}
+
+	fn auto_center_edge_strip_extent(length: u32) -> u32 {
+		((length as f32) * 0.08).round().clamp(1.0, 24.0) as u32
+	}
+
+	fn region_rgb_mean(image: &RgbaImage, x0: u32, x1: u32, y0: u32, y1: u32) -> Option<[f32; 3]> {
+		if x0 >= x1 || y0 >= y1 {
+			return None;
+		}
+
+		let mut r_total = 0_u64;
+		let mut g_total = 0_u64;
+		let mut b_total = 0_u64;
+		let mut sample_count = 0_u64;
+
+		for y in y0..y1 {
+			for x in x0..x1 {
+				let pixel = image.get_pixel(x, y);
+
+				r_total += u64::from(pixel[0]);
+				g_total += u64::from(pixel[1]);
+				b_total += u64::from(pixel[2]);
+				sample_count += 1;
+			}
+		}
+
+		if sample_count == 0 {
+			return None;
+		}
+
+		Some([
+			r_total as f32 / sample_count as f32,
+			g_total as f32 / sample_count as f32,
+			b_total as f32 / sample_count as f32,
+		])
+	}
+
+	fn region_rgb_mean_distance(
+		image: &RgbaImage,
+		x0: u32,
+		x1: u32,
+		y0: u32,
+		y1: u32,
+		mean: [f32; 3],
+	) -> f32 {
+		if x0 >= x1 || y0 >= y1 {
+			return 0.0;
+		}
+
+		let mut total_distance = 0_u64;
+		let mut sample_count = 0_u64;
+
+		for y in y0..y1 {
+			for x in x0..x1 {
+				total_distance +=
+					u64::from(Self::rgb_distance_to_mean(image.get_pixel(x, y), mean));
+				sample_count += 1;
+			}
+		}
+
+		if sample_count == 0 { 0.0 } else { total_distance as f32 / sample_count as f32 }
+	}
+
+	fn rgb_distance_to_mean(pixel: &image::Rgba<u8>, mean: [f32; 3]) -> u32 {
+		(pixel[0] as f32 - mean[0]).abs().round() as u32
+			+ (pixel[1] as f32 - mean[1]).abs().round() as u32
+			+ (pixel[2] as f32 - mean[2]).abs().round() as u32
 	}
 
 	fn cropped_frozen_capture_image(&self) -> Option<RgbaImage> {
@@ -3437,7 +3660,7 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		toolbar_input: Option<FrozenToolbarPointerState>,
 	) -> Result<()> {
-		self.sync_scroll_toolbar_state();
+		self.sync_frozen_toolbar_state();
 
 		#[cfg(not(target_os = "macos"))]
 		{
@@ -4784,6 +5007,14 @@ impl OverlaySession {
 				OverlayControl::Continue
 			},
 			Key::Character(key_text)
+				if key_text.as_str().eq_ignore_ascii_case("c")
+					&& self.plain_character_shortcut_available() =>
+			{
+				self.auto_center_frozen_capture_rect();
+
+				OverlayControl::Continue
+			},
+			Key::Character(key_text)
 				if key_text.as_str().eq_ignore_ascii_case("s")
 					&& self.is_save_shortcut_pressed() =>
 			{
@@ -4829,6 +5060,12 @@ impl OverlaySession {
 		{
 			self.keyboard_modifiers.control_key()
 		}
+	}
+
+	fn plain_character_shortcut_available(&self) -> bool {
+		!self.keyboard_modifiers.alt_key()
+			&& !self.keyboard_modifiers.control_key()
+			&& !self.keyboard_modifiers.super_key()
 	}
 
 	fn handle_scroll_capture_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
@@ -5022,7 +5259,8 @@ impl OverlaySession {
 		})
 	}
 
-	fn sync_scroll_toolbar_state(&mut self) {
+	fn sync_frozen_toolbar_state(&mut self) {
+		self.toolbar_state.auto_center_available = self.frozen_auto_center_available();
 		self.toolbar_state.scroll_capture_active = self.scroll_capture.active;
 		// Keep drag-region toolbar geometry stable across the authoritative frozen-capture handoff:
 		// show the Scroll slot immediately, but keep it disabled until final_capture_ready flips.
@@ -5082,7 +5320,7 @@ impl OverlaySession {
 				"Entered scroll-capture mode."
 			);
 
-			self.sync_scroll_toolbar_state();
+			self.sync_frozen_toolbar_state();
 			self.sync_scroll_preview_segments();
 			self.position_scroll_preview_window(monitor);
 			self.update_scroll_toolbar_default_position(monitor);
@@ -5994,7 +6232,7 @@ impl OverlaySession {
 			return OverlayControl::Continue;
 		};
 
-		self.sync_scroll_toolbar_state();
+		self.sync_frozen_toolbar_state();
 
 		self.event_loop_last_progress_window_id = Some(window_id);
 		self.event_loop_last_progress_monitor_id = Some(overlay_monitor.id);
@@ -6148,6 +6386,11 @@ impl OverlaySession {
 
 	fn handle_toolbar_action(&mut self, action: FrozenToolbarTool) -> OverlayControl {
 		match action {
+			FrozenToolbarTool::AutoCenter => {
+				self.auto_center_frozen_capture_rect();
+
+				OverlayControl::Continue
+			},
 			FrozenToolbarTool::Copy => {
 				self.begin_png_action(PngAction::Copy);
 
@@ -8674,6 +8917,29 @@ impl WindowRenderer {
 	fn frozen_toolbar_tools(toolbar_state: &FrozenToolbarState) -> &'static [FrozenToolbarTool] {
 		const TOOLS_SCROLL_MODE: [FrozenToolbarTool; 2] =
 			[FrozenToolbarTool::Copy, FrozenToolbarTool::Save];
+		const TOOLS_WITH_SCROLL_AND_AUTO_CENTER: [FrozenToolbarTool; 10] = [
+			FrozenToolbarTool::Pointer,
+			FrozenToolbarTool::Pen,
+			FrozenToolbarTool::Text,
+			FrozenToolbarTool::Mosaic,
+			FrozenToolbarTool::Undo,
+			FrozenToolbarTool::Redo,
+			FrozenToolbarTool::AutoCenter,
+			FrozenToolbarTool::Scroll,
+			FrozenToolbarTool::Copy,
+			FrozenToolbarTool::Save,
+		];
+		const TOOLS_WITH_AUTO_CENTER: [FrozenToolbarTool; 9] = [
+			FrozenToolbarTool::Pointer,
+			FrozenToolbarTool::Pen,
+			FrozenToolbarTool::Text,
+			FrozenToolbarTool::Mosaic,
+			FrozenToolbarTool::Undo,
+			FrozenToolbarTool::Redo,
+			FrozenToolbarTool::AutoCenter,
+			FrozenToolbarTool::Copy,
+			FrozenToolbarTool::Save,
+		];
 		const TOOLS_WITH_SCROLL: [FrozenToolbarTool; 9] = [
 			FrozenToolbarTool::Pointer,
 			FrozenToolbarTool::Pen,
@@ -8698,6 +8964,10 @@ impl WindowRenderer {
 
 		if toolbar_state.scroll_capture_active {
 			&TOOLS_SCROLL_MODE
+		} else if toolbar_state.auto_center_available && toolbar_state.scroll_capture_available {
+			&TOOLS_WITH_SCROLL_AND_AUTO_CENTER
+		} else if toolbar_state.auto_center_available {
+			&TOOLS_WITH_AUTO_CENTER
 		} else if toolbar_state.scroll_capture_available {
 			&TOOLS_WITH_SCROLL
 		} else {
@@ -11105,6 +11375,10 @@ mod tests {
 		}
 	}
 
+	fn test_monitor_with_scale(width: u32, height: u32, scale_factor_x1000: u32) -> MonitorRect {
+		MonitorRect { id: 1, origin: GlobalPoint::new(0, 0), width, height, scale_factor_x1000 }
+	}
+
 	fn test_frozen_image() -> RgbaImage {
 		RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255]))
 	}
@@ -11319,6 +11593,55 @@ mod tests {
 		assert_eq!(cropped.height(), 1);
 		assert_eq!(cropped.get_pixel(0, 0), &Rgba([1, 1, 0, 255]));
 		assert_eq!(cropped.get_pixel(1, 0), &Rgba([2, 1, 0, 255]));
+	}
+
+	#[test]
+	fn auto_center_frozen_capture_rect_recenters_detected_content() {
+		let monitor = test_monitor_with_scale(80, 60, 2_000);
+		let capture_rect = RectPoints::new(20, 16, 40, 24);
+		let mut image = RgbaImage::from_pixel(160, 120, Rgba([14, 16, 20, 255]));
+		let mut session = OverlaySession::new();
+
+		for y in 40..52 {
+			for x in 52..68 {
+				image.put_pixel(x, y, Rgba([228, 232, 240, 255]));
+			}
+		}
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, image);
+
+		session.state.frozen_capture_rect = Some(capture_rect);
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+		session.seed_frozen_toolbar_default_position(monitor, capture_rect);
+
+		assert!(session.auto_center_frozen_capture_rect());
+
+		let expected_rect = RectPoints::new(10, 11, 40, 24);
+		let expected_toolbar_pos =
+			session.frozen_toolbar_default_position_for_capture_rect(monitor, expected_rect);
+
+		assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
+		assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
+	}
+
+	#[test]
+	fn auto_center_frozen_capture_rect_noops_for_uniform_crop() {
+		let monitor = test_monitor_with_scale(80, 60, 1_000);
+		let capture_rect = RectPoints::new(20, 16, 40, 24);
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+		session
+			.state
+			.finish_freeze(monitor, RgbaImage::from_pixel(80, 60, Rgba([24, 24, 28, 255])));
+
+		session.state.frozen_capture_rect = Some(capture_rect);
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+		assert!(!session.auto_center_frozen_capture_rect());
+		assert_eq!(session.state.frozen_capture_rect, Some(capture_rect));
 	}
 
 	#[test]
@@ -11568,30 +11891,43 @@ mod tests {
 		let mut session = OverlaySession::new();
 
 		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
 
 		session.state.frozen_capture_rect = Some(RectPoints::new(120, 160, 320, 240));
 		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 
-		session.sync_scroll_toolbar_state();
+		session.sync_frozen_toolbar_state();
 
 		let pending_toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
 		let pending_tools = WindowRenderer::frozen_toolbar_tools(&session.toolbar_state);
 
 		assert!(!session.toolbar_state.final_capture_ready);
+		assert!(pending_tools.contains(&FrozenToolbarTool::AutoCenter));
 		assert!(pending_tools.contains(&FrozenToolbarTool::Scroll));
-
-		session.state.finish_freeze(monitor, test_frozen_image());
 
 		session.authoritative_frozen_capture_ready = true;
 
-		session.sync_scroll_toolbar_state();
+		session.sync_frozen_toolbar_state();
 
 		let ready_toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
 		let ready_tools = WindowRenderer::frozen_toolbar_tools(&session.toolbar_state);
 
 		assert!(session.toolbar_state.final_capture_ready);
+		assert!(ready_tools.contains(&FrozenToolbarTool::AutoCenter));
 		assert!(ready_tools.contains(&FrozenToolbarTool::Scroll));
 		assert_eq!(pending_toolbar_size, ready_toolbar_size);
+	}
+
+	#[test]
+	fn auto_center_toolbar_tool_only_appears_when_available() {
+		let default_tools = WindowRenderer::frozen_toolbar_tools(&FrozenToolbarState::default());
+		let auto_center_tools = WindowRenderer::frozen_toolbar_tools(&FrozenToolbarState {
+			auto_center_available: true,
+			..FrozenToolbarState::default()
+		});
+
+		assert!(!default_tools.contains(&FrozenToolbarTool::AutoCenter));
+		assert!(auto_center_tools.contains(&FrozenToolbarTool::AutoCenter));
 	}
 
 	#[test]
@@ -13456,6 +13792,7 @@ mod tests {
 	fn frozen_toolbar_action_tools_are_not_mode_tools() {
 		assert!(!FrozenToolbarTool::Undo.is_mode_tool());
 		assert!(!FrozenToolbarTool::Redo.is_mode_tool());
+		assert!(!FrozenToolbarTool::AutoCenter.is_mode_tool());
 		assert!(!FrozenToolbarTool::Scroll.is_mode_tool());
 		assert!(!FrozenToolbarTool::Copy.is_mode_tool());
 		assert!(!FrozenToolbarTool::Save.is_mode_tool());
@@ -13469,6 +13806,7 @@ mod tests {
 		assert!(!FrozenToolbarTool::Mosaic.requires_final_capture());
 		assert!(!FrozenToolbarTool::Undo.requires_final_capture());
 		assert!(!FrozenToolbarTool::Redo.requires_final_capture());
+		assert!(!FrozenToolbarTool::AutoCenter.requires_final_capture());
 		assert!(FrozenToolbarTool::Scroll.requires_final_capture());
 		assert!(FrozenToolbarTool::Copy.requires_final_capture());
 		assert!(FrozenToolbarTool::Save.requires_final_capture());
