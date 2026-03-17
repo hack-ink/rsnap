@@ -1,0 +1,128 @@
+{
+  "spec": {
+    "schema": "plan/1",
+    "plan_id": "xy-152-freeze-dimmed-outside-selection",
+    "goal": "Execute XY-152 by replacing the frozen capture glow border with a conventional screenshot-selection treatment where the selected region stays bright and the non-selected area is dimmed.",
+    "success_criteria": [
+      "A valid saved plan/1 artifact exists for XY-152 and is used as the execution authority for this lane.",
+      "Frozen mode no longer relies on the animated selection-flow ring as the primary affordance for a captured region.",
+      "When a frozen capture rect exists, the selected capture region remains clear while the non-selected area is visibly dimmed.",
+      "The frozen capture boundary remains easy to read through the bright-versus-dim transition alone, without adding a separate static border.",
+      "Window-freeze and dragged-region freeze both use the new treatment without regressing fullscreen fallback behavior.",
+      "Focused verification covers the new frozen selection geometry behavior and the touched overlay test surface stays green."
+    ],
+    "constraints": [
+      "Keep the implementation scoped to frozen-mode overlay visuals and related tests unless execution proves a tighter dependency.",
+      "Do not widen live-mode hover or drag affordance behavior while replacing the frozen affordance.",
+      "Prefer a renderer-local implementation that avoids introducing new platform-specific masking pipelines unless the current renderer makes that necessary.",
+      "Use repo-native Rust verification for the touched overlay scope before claiming completion."
+    ],
+    "defaults": {
+      "issue_id": "XY-152",
+      "issue_url": "https://linear.app/hack-ink/issue/XY-152/replace-freeze-capture-glow-border-with-dimmed-outside-selection",
+      "project": "rsnap Overlay Visual Fidelity",
+      "overlay_file": "packages/rsnap-overlay/src/overlay.rs",
+      "recommended_approach": "draw four dimmed scrim rectangles around the frozen capture rect and rely on the bright-versus-dim contrast instead of an animated or static border"
+    },
+    "tasks": [
+      {
+        "id": "task-1",
+        "title": "Replace the frozen animated affordance with a conventional scrim treatment",
+        "status": "done",
+        "objective": "Update the frozen-mode overlay renderer so a frozen capture rect is emphasized by dimming the outside area instead of the current animated selection-flow ring, while leaving live-mode glow behavior untouched.",
+        "inputs": [
+          "packages/rsnap-overlay/src/overlay.rs",
+          "External UX research on screenshot selection scrims and crop overlays",
+          "XY-152"
+        ],
+        "outputs": [
+          "Updated frozen-mode affordance rendering in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "verification": [
+          "Frozen mode renders a clear selected region with a dimmed surrounding area when a capture rect exists.",
+          "The frozen affordance no longer depends on selection_particles being enabled once the frozen image is available."
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "task-2",
+        "title": "Handle fullscreen and monitor-boundary edge cases cleanly",
+        "status": "done",
+        "objective": "Make sure the new frozen treatment behaves correctly when the selected rect touches screen edges or represents a fullscreen fallback, without creating negative-size or zero-area mask geometry.",
+        "inputs": [
+          "Updated frozen affordance implementation from task-1"
+        ],
+        "outputs": [
+          "Edge-safe frozen selection geometry helpers"
+        ],
+        "verification": [
+          "No dim scrim is drawn for degenerate outside regions.",
+          "Fullscreen fallback remains visually sensible when there is no outside region to darken."
+        ],
+        "depends_on": [
+          "task-1"
+        ]
+      },
+      {
+        "id": "task-3",
+        "title": "Add focused tests and verify the overlay surface",
+        "status": "done",
+        "objective": "Add pure geometry-focused tests for the new frozen scrim treatment, then run targeted verification for the touched overlay surface and record the evidence.",
+        "inputs": [
+          "Updated overlay implementation from task-1 and task-2"
+        ],
+        "outputs": [
+          "New overlay unit tests and recorded verification evidence"
+        ],
+        "verification": [
+          "cargo test -p rsnap-overlay overlay:: --lib",
+          "cargo make fmt-rust",
+          "git diff --check",
+          "python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-17_xy-152-freeze-dimmed-outside-selection.json"
+        ],
+        "depends_on": [
+          "task-1",
+          "task-2"
+        ]
+      }
+    ],
+    "replan_policy": {
+      "owner": "plan-writing",
+      "triggers": [
+        "The current window renderer cannot express the frozen scrim treatment without a broader render-pipeline rewrite.",
+        "Replacing the frozen affordance reveals that live-mode and frozen-mode selection styling must be refactored together to stay coherent.",
+        "Targeted verification exposes renderer or freeze-capture regressions outside the intended frozen visual scope."
+      ]
+    }
+  },
+  "state": {
+    "phase": "done",
+    "current_task_id": null,
+    "next_task_id": null,
+    "blockers": [],
+    "evidence": [
+      "Task 1 outcome: packages/rsnap-overlay/src/overlay.rs now keeps the existing animated selection-flow ring for live mode and for the pre-image frozen pending path only, while frozen mode with a resolved frozen image switches to a conventional dimmed-outside scrim treatment.",
+      "Task 1 outcome: the frozen scrim path no longer depends on selection_particles being enabled, so the conventional frozen affordance still renders even when animated particles are disabled.",
+      "Task 2 outcome: frozen_selection_scrim_rects() computes four outside rectangles around the focus rect and render_frozen_selection_scrim() skips zero-area regions, which keeps edge-aligned selections and fullscreen fallback free of invalid outside geometry.",
+      "Task 2 outcome: the final frozen treatment does not add a separate static border; it relies on the bright selected region versus dimmed outside area, matching the user-requested traditional screenshot behavior.",
+      "Task 2 tune-up: post-implementation visual review increased the frozen outside scrim alpha again so the bright-versus-dim contrast is more obvious in real use without reintroducing any border treatment.",
+      "Task 3 outcome: added focused geometry tests covering framed selections, edge-flush zero-area outside regions, and fullscreen selections with no outside scrim area.",
+      "Task 3 verification: cargo test -p rsnap-overlay frozen_selection_scrim_rects --lib passed with 3 tests passing and 0 failures.",
+      "Task 3 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 76 tests passing and 0 failures.",
+      "Task 3 verification: cargo make fmt-rust completed successfully.",
+      "Task 3 verification: git diff --check returned clean.",
+      "Task 3 verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-17_xy-152-freeze-dimmed-outside-selection.json returned OK."
+    ],
+    "last_updated": "2026-03-17T06:27:14Z",
+    "replan_reason": null,
+    "context_snapshot": {
+      "issue_id": "XY-152",
+      "related_issue_ids": [
+        "XY-149"
+      ],
+      "user_requested_research_then_plan_and_impl": true,
+      "current_branch": "x/xy-152-freeze-dimmed-outside",
+      "recommended_visual_pattern": "bright selected region plus dimmed outside scrim without a separate static capture border"
+    }
+  }
+}
