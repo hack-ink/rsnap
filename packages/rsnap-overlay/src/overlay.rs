@@ -3094,6 +3094,16 @@ impl OverlaySession {
 		}
 	}
 
+	fn maybe_stop_frozen_selection_drag_for_mouse_input(
+		&mut self,
+		state: ElementState,
+		button: MouseButton,
+	) {
+		if state == ElementState::Released && button == MouseButton::Left {
+			self.stop_frozen_selection_drag();
+		}
+	}
+
 	/// Handles a winit window event for one of the overlay-owned windows.
 	pub fn handle_window_event(
 		&mut self,
@@ -3110,6 +3120,10 @@ impl OverlaySession {
 
 		self.maybe_log_event_loop_stall(now);
 		self.mark_progress_with_detail(OverlayEventLoopPhase::WindowEvent, Some(kind));
+
+		if let WindowEvent::MouseInput { state, button, .. } = event {
+			self.maybe_stop_frozen_selection_drag_for_mouse_input(*state, *button);
+		}
 
 		if self
 			.scroll_preview_window
@@ -11016,7 +11030,7 @@ mod tests {
 	use image::{Rgba, RgbaImage};
 	#[cfg(target_os = "macos")]
 	use winit::dpi::PhysicalPosition;
-	use winit::event::MouseScrollDelta;
+	use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 
 	#[cfg(target_os = "macos")]
 	use crate::live_frame_stream_macos::MacLiveFrameStream;
@@ -11305,6 +11319,35 @@ mod tests {
 		assert_eq!(cropped.height(), 1);
 		assert_eq!(cropped.get_pixel(0, 0), &Rgba([1, 1, 0, 255]));
 		assert_eq!(cropped.get_pixel(1, 0), &Rgba([2, 1, 0, 255]));
+	}
+
+	#[test]
+	fn global_left_release_stops_frozen_selection_drag() {
+		let mut session = OverlaySession::new();
+
+		session.frozen_selection_drag =
+			FrozenSelectionDragState { active: true, pointer_offset_x: 12, pointer_offset_y: 34 };
+
+		session.maybe_stop_frozen_selection_drag_for_mouse_input(
+			ElementState::Pressed,
+			MouseButton::Left,
+		);
+
+		assert!(session.frozen_selection_drag.active);
+
+		session.maybe_stop_frozen_selection_drag_for_mouse_input(
+			ElementState::Released,
+			MouseButton::Right,
+		);
+
+		assert!(session.frozen_selection_drag.active);
+
+		session.maybe_stop_frozen_selection_drag_for_mouse_input(
+			ElementState::Released,
+			MouseButton::Left,
+		);
+
+		assert_eq!(session.frozen_selection_drag, FrozenSelectionDragState::default());
 	}
 
 	#[test]
