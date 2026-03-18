@@ -181,18 +181,31 @@ pub(crate) struct MacLiveFrameStream {
 }
 impl MacLiveFrameStream {
 	pub(crate) fn new() -> Self {
-		Self::with_waker(None)
+		Self::with_self_capture_exception_window_ids(Vec::new())
 	}
 
-	pub(crate) fn with_waker(frame_waker: Option<Arc<dyn Fn() + Send + Sync>>) -> Self {
+	pub(crate) fn with_self_capture_exception_window_ids(
+		self_capture_exception_window_ids: Vec<u32>,
+	) -> Self {
+		Self::with_filter_and_waker(StreamFilterConfig { self_capture_exception_window_ids }, None)
+	}
+
+	fn with_filter_and_waker(
+		filter: StreamFilterConfig,
+		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	) -> Self {
 		let (request_tx, request_rx) = mpsc::channel();
 		let shared_latest_frame = Arc::new(SharedLatestFrame::default());
 		let worker_shared_latest_frame = shared_latest_frame.clone();
 		let worker = thread::spawn(move || {
-			stream_worker_loop(request_rx, frame_waker, worker_shared_latest_frame);
+			stream_worker_loop(request_rx, frame_waker, worker_shared_latest_frame, filter);
 		});
 
 		Self { request_tx, shared_latest_frame, worker: Some(worker) }
+	}
+
+	pub(crate) fn with_waker(frame_waker: Option<Arc<dyn Fn() + Send + Sync>>) -> Self {
+		Self::with_filter_and_waker(StreamFilterConfig::default(), frame_waker)
 	}
 
 	pub(crate) fn sample_rgb(&mut self, monitor: MonitorRect, x_px: u32, y_px: u32) -> Option<Rgb> {
@@ -342,6 +355,11 @@ impl Drop for MacLiveFrameStream {
 			let _ = worker.join();
 		}
 	}
+}
+
+#[derive(Clone, Debug, Default)]
+struct StreamFilterConfig {
+	self_capture_exception_window_ids: Vec<u32>,
 }
 
 #[derive(Clone)]
@@ -525,6 +543,7 @@ fn stream_worker_loop(
 	request_rx: Receiver<WorkerRequest>,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
+	filter: StreamFilterConfig,
 ) {
 	let frame_seq_counter = Arc::new(AtomicU64::new(0));
 	let mut state: Option<StreamState> = None;
@@ -538,6 +557,7 @@ fn stream_worker_loop(
 					&mut last_setup_attempt_at,
 					STREAM_SETUP_BACKOFF,
 					monitor,
+					&filter,
 					frame_waker.clone(),
 					frame_seq_counter.clone(),
 					shared_latest_frame.clone(),
@@ -559,6 +579,7 @@ fn stream_worker_loop(
 					&mut last_setup_attempt_at,
 					STREAM_SETUP_BACKOFF,
 					monitor,
+					&filter,
 					frame_waker.clone(),
 					frame_seq_counter.clone(),
 					shared_latest_frame.clone(),
@@ -585,6 +606,7 @@ fn stream_worker_loop(
 					&mut last_setup_attempt_at,
 					STREAM_SETUP_BACKOFF,
 					monitor,
+					&filter,
 					frame_waker.clone(),
 					frame_seq_counter.clone(),
 					shared_latest_frame.clone(),
@@ -610,6 +632,7 @@ fn stream_worker_loop(
 					&mut last_setup_attempt_at,
 					monitor,
 					rect_px,
+					&filter,
 					frame_waker.clone(),
 					frame_seq_counter.clone(),
 					shared_latest_frame.clone(),
@@ -628,6 +651,7 @@ fn stream_worker_loop(
 					monitor,
 					rect_px,
 					after_frame_seq,
+					&filter,
 					frame_waker.clone(),
 					frame_seq_counter.clone(),
 					shared_latest_frame.clone(),
@@ -641,11 +665,13 @@ fn stream_worker_loop(
 	teardown_stream(&mut state);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ensure_stream(
 	state: &mut Option<StreamState>,
 	last_setup_attempt_at: &mut Option<Instant>,
 	setup_backoff: Duration,
 	monitor: MonitorRect,
+	filter: &StreamFilterConfig,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	frame_seq_counter: Arc<AtomicU64>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
@@ -666,6 +692,7 @@ fn ensure_stream(
 
 	*state = Some(setup_stream_for_monitor(
 		monitor,
+		filter,
 		frame_waker,
 		frame_seq_counter,
 		shared_latest_frame,
@@ -674,11 +701,13 @@ fn ensure_stream(
 	Some(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn latest_fresh_rgba_region(
 	state: &mut Option<StreamState>,
 	last_setup_attempt_at: &mut Option<Instant>,
 	monitor: MonitorRect,
 	rect_px: RectPoints,
+	filter: &StreamFilterConfig,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	frame_seq_counter: Arc<AtomicU64>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
@@ -688,6 +717,7 @@ fn latest_fresh_rgba_region(
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
 		monitor,
+		filter,
 		frame_waker.clone(),
 		frame_seq_counter.clone(),
 		shared_latest_frame.clone(),
@@ -706,6 +736,7 @@ fn latest_fresh_rgba_region(
 		state,
 		last_setup_attempt_at,
 		monitor,
+		filter,
 		frame_waker,
 		frame_seq_counter,
 		shared_latest_frame,
@@ -738,6 +769,7 @@ fn ordered_fresh_rgba_regions_after_seq(
 	monitor: MonitorRect,
 	rect_px: RectPoints,
 	after_frame_seq: u64,
+	filter: &StreamFilterConfig,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	frame_seq_counter: Arc<AtomicU64>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
@@ -747,6 +779,7 @@ fn ordered_fresh_rgba_regions_after_seq(
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
 		monitor,
+		filter,
 		frame_waker.clone(),
 		frame_seq_counter.clone(),
 		shared_latest_frame.clone(),
@@ -772,6 +805,7 @@ fn ordered_fresh_rgba_regions_after_seq(
 		state,
 		last_setup_attempt_at,
 		monitor,
+		filter,
 		frame_waker,
 		frame_seq_counter,
 		shared_latest_frame,
@@ -800,6 +834,7 @@ fn refresh_stream(
 	state: &mut Option<StreamState>,
 	last_setup_attempt_at: &mut Option<Instant>,
 	monitor: MonitorRect,
+	filter: &StreamFilterConfig,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	frame_seq_counter: Arc<AtomicU64>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
@@ -810,6 +845,7 @@ fn refresh_stream(
 
 	*state = Some(setup_stream_for_monitor(
 		monitor,
+		filter,
 		frame_waker,
 		frame_seq_counter,
 		shared_latest_frame,
@@ -829,13 +865,17 @@ fn teardown_stream(state: &mut Option<StreamState>) {
 
 fn setup_stream_for_monitor(
 	monitor: MonitorRect,
+	filter: &StreamFilterConfig,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	frame_seq_counter: Arc<AtomicU64>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<StreamState> {
 	let content = get_shareable_content().ok()?;
 	let display = find_display(&content, monitor.id)?;
-	let excluded_windows: Retained<NSArray<SCWindow>> = NSArray::new();
+	let excepting_windows =
+		find_current_process_exception_windows(&content, &filter.self_capture_exception_window_ids);
+	let excluded_windows: Retained<NSArray<SCWindow>> =
+		NSArray::from_retained_slice(&excepting_windows);
 	let Some((StreamFilterMode::ExcludeCurrentProcess, current_process_application)) =
 		stream_filter_mode_for_current_process(find_current_process_application(&content))
 	else {
@@ -854,6 +894,7 @@ fn setup_stream_for_monitor(
 		op = "live_frame_stream.setup_filter_excluding_current_process",
 		monitor_id = monitor.id,
 		pid = process::id(),
+		excepting_window_count = excepting_windows.len(),
 		"Configured ScreenCaptureKit to exclude rsnap windows from the live stream."
 	);
 
@@ -894,6 +935,37 @@ fn setup_stream_for_monitor(
 	}
 
 	Some(StreamState { monitor_id: monitor.id, stream, output })
+}
+
+fn find_current_process_exception_windows(
+	content: &SCShareableContent,
+	self_capture_exception_window_ids: &[u32],
+) -> Vec<Retained<SCWindow>> {
+	if self_capture_exception_window_ids.is_empty() {
+		return Vec::new();
+	}
+
+	let windows = unsafe { content.windows() };
+	let mut matched = Vec::new();
+
+	for window in windows.iter() {
+		let window_id = unsafe { window.windowID() };
+
+		if self_capture_exception_window_ids.contains(&window_id) {
+			matched.push(window.retain());
+		}
+	}
+
+	if matched.len() != self_capture_exception_window_ids.len() {
+		tracing::debug!(
+			op = "live_frame_stream.self_capture_exception_window_ids_partial_match",
+			requested_window_ids = ?self_capture_exception_window_ids,
+			matched_window_count = matched.len(),
+			"ScreenCaptureKit did not expose every requested current-process exception window."
+		);
+	}
+
+	matched
 }
 
 fn find_current_process_application(

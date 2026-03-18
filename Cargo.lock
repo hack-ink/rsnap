@@ -3729,6 +3729,7 @@ dependencies = [
  "egui-winit",
  "global-hotkey",
  "image",
+ "objc2-app-kit 0.3.2",
  "pollster",
  "rsnap-overlay",
  "serde",
