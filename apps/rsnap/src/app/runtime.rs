@@ -23,7 +23,7 @@ use winit::{
 };
 
 #[cfg(target_os = "macos")]
-use crate::app::scroll_input_macos::SharedScrollInputState;
+use crate::app::scroll_input_macos::{ScrollInputObserverLifecycle, SharedScrollInputState};
 use crate::app::{App, UserEvent};
 use crate::settings::AppSettings;
 use crate::settings_window::{CaptureHotkeyNotice, SettingsControl, SettingsWindowAction};
@@ -33,6 +33,8 @@ impl ApplicationHandler<UserEvent> for App {
 		#[cfg(target_os = "macos")]
 		self.install_menubar(event_loop);
 		self.install_tray(event_loop);
+		#[cfg(target_os = "macos")]
+		self.maybe_present_startup_permissions(event_loop);
 	}
 
 	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
@@ -172,14 +174,21 @@ impl ApplicationHandler<UserEvent> for App {
 	}
 
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-		if self.overlay_session.is_some() || self.settings_window.is_some() {
+		if self.overlay_session.is_some() {
 			event_loop.set_control_flow(ControlFlow::WaitUntil(
 				Instant::now() + Duration::from_millis(16),
+			));
+		} else if self.settings_window.is_some() {
+			event_loop.set_control_flow(ControlFlow::WaitUntil(
+				Instant::now() + Duration::from_millis(250),
 			));
 		} else {
 			event_loop.set_control_flow(ControlFlow::Wait);
 		}
 
+		if let Some(settings_window) = self.settings_window.as_ref() {
+			settings_window.maybe_request_periodic_redraw(Duration::from_millis(500));
+		}
 		if let Some(session) = self.overlay_session.as_mut() {
 			let control = session.about_to_wait();
 
@@ -249,6 +258,8 @@ pub(super) fn run() -> Result<()> {
 	#[cfg(target_os = "macos")]
 	let overlay_stream_event_pending = Arc::new(AtomicBool::new(false));
 	#[cfg(target_os = "macos")]
+	let scroll_input_observer_lifecycle = Arc::new(ScrollInputObserverLifecycle::default());
+	#[cfg(target_os = "macos")]
 	let scroll_input_shared_state = Arc::new(SharedScrollInputState::default());
 	let mut app = App::new(
 		capture_hotkey,
@@ -259,6 +270,8 @@ pub(super) fn run() -> Result<()> {
 		overlay_proxy,
 		#[cfg(target_os = "macos")]
 		overlay_stream_event_pending,
+		#[cfg(target_os = "macos")]
+		scroll_input_observer_lifecycle,
 		#[cfg(target_os = "macos")]
 		scroll_input_shared_state,
 	);
