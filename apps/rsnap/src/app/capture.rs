@@ -131,11 +131,17 @@ impl App {
 		}));
 
 		#[cfg(target_os = "macos")]
-		overlay_session.set_scroll_capture_started_hook(Arc::new({
+		overlay_session.set_scroll_capture_starting_hook(Arc::new({
 			let shared_state = Arc::clone(&self.scroll_input_shared_state);
 			let observer_started = Arc::clone(&self.scroll_input_observer_started);
 
-			move || Self::enable_external_scroll_input(&shared_state, &observer_started)
+			move || Self::ensure_external_scroll_input_observer(&shared_state, &observer_started)
+		}));
+		#[cfg(target_os = "macos")]
+		overlay_session.set_scroll_capture_started_hook(Arc::new({
+			let shared_state = Arc::clone(&self.scroll_input_shared_state);
+
+			move || Self::enable_external_scroll_input(&shared_state)
 		}));
 
 		match overlay_session.start(event_loop) {
@@ -253,19 +259,22 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn enable_external_scroll_input(
+	fn ensure_external_scroll_input_observer(
 		shared_state: &Arc<SharedScrollInputState>,
 		observer_started: &Arc<AtomicBool>,
 	) {
-		shared_state.clear();
-		shared_state.set_enabled(true);
-
 		if observer_started
 			.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
 			.is_ok()
 		{
 			scroll_input_macos::spawn_scroll_input_observer(Arc::clone(shared_state));
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn enable_external_scroll_input(shared_state: &Arc<SharedScrollInputState>) {
+		shared_state.clear();
+		shared_state.set_enabled(true);
 	}
 
 	pub(super) fn handle_overlay_control(&mut self, control: OverlayControl) {
