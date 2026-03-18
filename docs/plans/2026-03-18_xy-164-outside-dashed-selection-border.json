@@ -147,9 +147,14 @@
       "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 5 tests passing and 0 failures.",
       "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 100 tests passing and 0 failures.",
       "Review follow-up verification: cargo make lint-rust completed successfully.",
+      "Review follow-up verification: git diff --check returned clean.",
+      "Review follow-up: selection_dashed_border now computes dash ranges over the full rectangular perimeter and renders explicit line segments, eliminating the open-path seam that could leave an uneven pattern at the top-left corner.",
+      "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 6 tests passing and 0 failures.",
+      "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 101 tests passing and 0 failures.",
+      "Review follow-up verification: cargo make lint-rust completed successfully.",
       "Review follow-up verification: git diff --check returned clean."
     ],
-    "last_updated": "2026-03-18T03:52:25Z",
+    "last_updated": "2026-03-18T04:17:10Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-164",
