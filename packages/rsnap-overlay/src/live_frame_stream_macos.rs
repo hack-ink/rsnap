@@ -100,6 +100,7 @@ objc2::define_class!(
 
 const STREAM_RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const STREAM_SETUP_BACKOFF: Duration = Duration::from_millis(300);
+const STREAM_INCOMPLETE_EXCEPTION_UPGRADE_BACKOFF: Duration = Duration::from_secs(3);
 const STREAM_FRAME_QUEUE_CAPACITY: usize = 8;
 const STREAM_REGION_FRAME_MAX_AGE: Duration = Duration::from_millis(90);
 const STREAM_REGION_FRAME_REFRESH_TIMEOUT: Duration = Duration::from_millis(180);
@@ -722,6 +723,7 @@ fn ensure_stream(
 		state.as_ref().is_some_and(|current| current.self_capture_exception_window_ids_complete),
 		monitor.id,
 	);
+	let setup_backoff = stream_setup_backoff(reuse_decision, setup_backoff);
 
 	if reuse_decision == StreamReuseDecision::ReuseCurrent {
 		return Some(());
@@ -1073,6 +1075,20 @@ fn stream_reuse_decision(
 			StreamReuseDecision::RetryUpgradeUsingCurrent
 		},
 		_ => StreamReuseDecision::SetupFresh,
+	}
+}
+
+fn stream_setup_backoff(
+	reuse_decision: StreamReuseDecision,
+	default_setup_backoff: Duration,
+) -> Duration {
+	match reuse_decision {
+		StreamReuseDecision::RetryUpgradeUsingCurrent => {
+			STREAM_INCOMPLETE_EXCEPTION_UPGRADE_BACKOFF
+		},
+		StreamReuseDecision::SetupFresh | StreamReuseDecision::ReuseCurrent => {
+			default_setup_backoff
+		},
 	}
 }
 
@@ -1442,6 +1458,8 @@ fn ordered_rgba_regions_from_frames(
 
 #[cfg(test)]
 mod tests {
+	use std::time::Duration;
+
 	use crate::live_frame_stream_macos::{self, StreamFilterMode};
 	use crate::state::Rgb;
 
@@ -1493,6 +1511,24 @@ mod tests {
 		assert_eq!(
 			live_frame_stream_macos::stream_reuse_decision(Some(7), true, 9),
 			live_frame_stream_macos::StreamReuseDecision::SetupFresh
+		);
+	}
+
+	#[test]
+	fn retry_upgrade_uses_slower_setup_backoff() {
+		assert_eq!(
+			live_frame_stream_macos::stream_setup_backoff(
+				live_frame_stream_macos::StreamReuseDecision::SetupFresh,
+				Duration::from_millis(300)
+			),
+			Duration::from_millis(300)
+		);
+		assert_eq!(
+			live_frame_stream_macos::stream_setup_backoff(
+				live_frame_stream_macos::StreamReuseDecision::RetryUpgradeUsingCurrent,
+				Duration::from_millis(300)
+			),
+			Duration::from_secs(3)
 		);
 	}
 
