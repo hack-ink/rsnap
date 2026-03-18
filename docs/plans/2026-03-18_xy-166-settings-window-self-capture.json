@@ -121,9 +121,15 @@
       "Post-PR CI diagnosis (2026-03-18): GitHub Rust checks on Linux failed because apps/rsnap/Cargo.toml added objc2-app-kit as an unconditional dependency and packages/rsnap-overlay/src/backend.rs left self_capture_exception_window_ids unused on non-macOS builds.",
       "Follow-up fix (2026-03-18): moved objc2-app-kit under a macOS-only target dependency block and explicitly consumed self_capture_exception_window_ids on non-macOS so cargo make lint matches the Linux CI warning policy.",
       "Verification: cargo make lint exited 0 after the CI follow-up fix.",
-      "Verification: cargo make test exited 0 after the CI follow-up fix."
+      "Verification: cargo make test exited 0 after the CI follow-up fix.",
+      "Review repair (2026-03-18): addressed GitHub review threads discussion_r2952145427 and discussion_r2952145436 by refreshing active overlay settings when the Settings window opens or closes, rebuilding active capture backends/live streams when self_capture_exception_window_ids changes, and carrying the exception list into scroll-capture streams created with a waker.",
+      "Verification: cargo test -p rsnap --lib exited 0 after the review-repair batch.",
+      "Verification: cargo test -p rsnap-overlay --lib exited 0 with 160 passed tests after the review-repair batch.",
+      "Verification: cargo make lint-fix exited 0 and applied 2 style fixes after the review-repair batch.",
+      "Verification: cargo make lint exited 0 after the review-repair batch.",
+      "Verification: cargo make test exited 0 after the review-repair batch."
     ],
-    "last_updated": "2026-03-18T09:46:05Z",
+    "last_updated": "2026-03-18T11:31:43Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",

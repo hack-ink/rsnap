@@ -128,6 +128,8 @@ use self::session_state::{
 	MacOSScrollWheelEvent,
 };
 #[cfg(target_os = "macos")]
+use crate::backend;
+#[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 use crate::state::LiveCursorSample;
@@ -845,6 +847,8 @@ impl OverlaySession {
 		let prev = self.config.clone();
 		let previous_loupe_patch = self.loupe_patch_width_px;
 		let loupe_sample_side = Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
+		let self_capture_exception_window_ids_changed =
+			prev.self_capture_exception_window_ids != config.self_capture_exception_window_ids;
 
 		self.config = config;
 		self.loupe_patch_width_px = loupe_sample_side;
@@ -870,8 +874,35 @@ impl OverlaySession {
 		if patch_changed {
 			self.request_loupe_sample_for_patch_change();
 		}
+		#[cfg(target_os = "macos")]
+		if self_capture_exception_window_ids_changed {
+			self.apply_self_capture_exception_window_ids_to_active_streams();
+		}
 
 		self.request_redraw_all();
+	}
+
+	#[cfg(target_os = "macos")]
+	fn apply_self_capture_exception_window_ids_to_active_streams(&mut self) {
+		self.worker = Some(OverlayWorker::new(
+			backend::default_capture_backend_with_self_capture_exception_window_ids(
+				self.config.self_capture_exception_window_ids.clone(),
+			),
+			self.response_waker.clone(),
+		));
+		self.live_sample_stream = Some(MacLiveFrameStream::with_self_capture_exception_window_ids(
+			self.config.self_capture_exception_window_ids.clone(),
+		));
+
+		if self.scroll_capture.active {
+			self.scroll_capture.live_stream =
+				Some(MacLiveFrameStream::with_self_capture_exception_window_ids_and_waker(
+					self.config.self_capture_exception_window_ids.clone(),
+					self.scroll_frame_waker.clone(),
+				));
+			self.scroll_capture.last_stream_frame_seq = 0;
+			self.scroll_capture.live_stream_stale_grace = None;
+		}
 	}
 
 	fn configure_hud_windows_for_config(&mut self) {
@@ -5250,7 +5281,12 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			pixel_delta_residual: MacOSScrollPixelResidual::default(),
 			#[cfg(target_os = "macos")]
-			live_stream: Some(MacLiveFrameStream::with_waker(self.scroll_frame_waker.clone())),
+			live_stream: Some(
+				MacLiveFrameStream::with_self_capture_exception_window_ids_and_waker(
+					self.config.self_capture_exception_window_ids.clone(),
+					self.scroll_frame_waker.clone(),
+				),
+			),
 			#[cfg(target_os = "macos")]
 			last_stream_frame_seq: 0,
 			#[cfg(target_os = "macos")]
@@ -11598,6 +11634,8 @@ mod tests {
 	use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 
 	#[cfg(target_os = "macos")]
+	use crate::backend;
+	#[cfg(target_os = "macos")]
 	use crate::live_frame_stream_macos::MacLiveFrameStream;
 	use crate::overlay::FrozenCaptureSource;
 	use crate::overlay::PngAction;
@@ -11623,6 +11661,8 @@ mod tests {
 	use crate::state::{
 		GlobalPoint, LoupeSample, MonitorRect, MonitorRectPoints, OverlayMode, RectPoints, Rgb,
 	};
+	#[cfg(target_os = "macos")]
+	use crate::worker::OverlayWorker;
 	use crate::worker::{WorkerErrorSource, WorkerResponse};
 
 	fn make_scroll_capture_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
@@ -14109,6 +14149,36 @@ mod tests {
 		assert!(!session.scroll_capture.paused);
 		assert!(session.state.error_message.is_none());
 		assert_eq!(session.scroll_capture.inflight_request_id, None);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn apply_self_capture_exception_window_ids_to_active_streams_updates_live_stream_filters() {
+		let mut session = OverlaySession::new();
+
+		session.worker = Some(OverlayWorker::new(backend::default_capture_backend(), None));
+		session.live_sample_stream = Some(MacLiveFrameStream::new());
+		session.scroll_capture.active = true;
+		session.scroll_capture.live_stream = Some(MacLiveFrameStream::with_waker(None));
+		session.config.self_capture_exception_window_ids = vec![17];
+
+		session.apply_self_capture_exception_window_ids_to_active_streams();
+
+		assert_eq!(
+			session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
+			&[17]
+		);
+		assert_eq!(
+			session
+				.scroll_capture
+				.live_stream
+				.as_ref()
+				.unwrap()
+				.debug_self_capture_exception_window_ids(),
+			&[17]
+		);
+		assert_eq!(session.scroll_capture.last_stream_frame_seq, 0);
+		assert_eq!(session.scroll_capture.live_stream_stale_grace, None);
 	}
 
 	#[test]

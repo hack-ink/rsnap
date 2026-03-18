@@ -178,6 +178,8 @@ pub(crate) struct MacLiveFrameStream {
 	request_tx: Sender<WorkerRequest>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
 	worker: Option<JoinHandle<()>>,
+	#[cfg(test)]
+	debug_filter: StreamFilterConfig,
 }
 impl MacLiveFrameStream {
 	pub(crate) fn new() -> Self {
@@ -187,13 +189,28 @@ impl MacLiveFrameStream {
 	pub(crate) fn with_self_capture_exception_window_ids(
 		self_capture_exception_window_ids: Vec<u32>,
 	) -> Self {
-		Self::with_filter_and_waker(StreamFilterConfig { self_capture_exception_window_ids }, None)
+		Self::with_self_capture_exception_window_ids_and_waker(
+			self_capture_exception_window_ids,
+			None,
+		)
+	}
+
+	pub(crate) fn with_self_capture_exception_window_ids_and_waker(
+		self_capture_exception_window_ids: Vec<u32>,
+		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	) -> Self {
+		Self::with_filter_and_waker(
+			StreamFilterConfig { self_capture_exception_window_ids },
+			frame_waker,
+		)
 	}
 
 	fn with_filter_and_waker(
 		filter: StreamFilterConfig,
 		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	) -> Self {
+		#[cfg(test)]
+		let debug_filter = filter.clone();
 		let (request_tx, request_rx) = mpsc::channel();
 		let shared_latest_frame = Arc::new(SharedLatestFrame::default());
 		let worker_shared_latest_frame = shared_latest_frame.clone();
@@ -201,11 +218,22 @@ impl MacLiveFrameStream {
 			stream_worker_loop(request_rx, frame_waker, worker_shared_latest_frame, filter);
 		});
 
-		Self { request_tx, shared_latest_frame, worker: Some(worker) }
+		Self {
+			request_tx,
+			shared_latest_frame,
+			worker: Some(worker),
+			#[cfg(test)]
+			debug_filter,
+		}
 	}
 
 	pub(crate) fn with_waker(frame_waker: Option<Arc<dyn Fn() + Send + Sync>>) -> Self {
-		Self::with_filter_and_waker(StreamFilterConfig::default(), frame_waker)
+		Self::with_self_capture_exception_window_ids_and_waker(Vec::new(), frame_waker)
+	}
+
+	#[cfg(test)]
+	pub(crate) fn debug_self_capture_exception_window_ids(&self) -> &[u32] {
+		&self.debug_filter.self_capture_exception_window_ids
 	}
 
 	pub(crate) fn sample_rgb(&mut self, monitor: MonitorRect, x_px: u32, y_px: u32) -> Option<Rgb> {
@@ -1347,6 +1375,16 @@ mod tests {
 			live_frame_stream_macos::stream_filter_mode_for_current_process::<u32>(None),
 			None
 		);
+	}
+
+	#[test]
+	fn with_waker_streams_preserve_self_capture_exception_window_ids() {
+		let stream = live_frame_stream_macos::MacLiveFrameStream::with_self_capture_exception_window_ids_and_waker(
+			vec![7, 11],
+			None,
+		);
+
+		assert_eq!(stream.debug_self_capture_exception_window_ids(), &[7, 11]);
 	}
 
 	#[test]

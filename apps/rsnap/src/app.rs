@@ -125,6 +125,8 @@ impl App {
 				window.focus();
 
 				self.settings_window = Some(window);
+
+				self.apply_overlay_settings();
 			},
 			Err(err) => {
 				tracing::warn!(

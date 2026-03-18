@@ -136,6 +136,8 @@ impl ApplicationHandler<UserEvent> for App {
 				tracing::warn!(error = ?err, "Failed to save settings.");
 			}
 			if should_close {
+				self.apply_overlay_settings();
+
 				return;
 			}
 
