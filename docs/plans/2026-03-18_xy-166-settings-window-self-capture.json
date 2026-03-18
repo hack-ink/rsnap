@@ -332,9 +332,16 @@
       "Verification: cargo make lint exited 0 after the latest CI/review repair batch.",
       "Verification: cargo make test exited 0 with 212 nextest tests plus cargo test --all-features after the latest CI/review repair batch.",
       "Verification: git diff --check exited 0 after the latest CI/review repair batch.",
-      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the latest CI/review repair batch."
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the latest CI/review repair batch.",
+      "Post-push CI diagnosis (2026-03-19): GitHub Rust checks on head d3ddada still failed on Linux because apps/rsnap/src/settings_window/platform.rs left the new window-server matching consts/types/helpers compiled for the non-macOS lib target even though only macOS runtime code and tests consume them.",
+      "Follow-up fix (2026-03-19): narrowed the window-server matching consts/types/helpers in apps/rsnap/src/settings_window/platform.rs to cfg(any(test, target_os = \"macos\")), preserving macOS runtime behavior and test coverage while removing the Linux dead-code lint failure.",
+      "Verification: cargo make fmt exited 0 after the final Linux CI follow-up.",
+      "Verification: cargo make lint exited 0 after the final Linux CI follow-up.",
+      "Verification: cargo make test exited 0 with 212 nextest tests plus cargo test --all-features after the final Linux CI follow-up.",
+      "Verification: git diff --check exited 0 after the final Linux CI follow-up.",
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the final Linux CI follow-up."
     ],
-    "last_updated": "2026-03-18T17:16:55Z",
+    "last_updated": "2026-03-18T17:20:54Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
