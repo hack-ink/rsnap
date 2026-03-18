@@ -11,6 +11,14 @@ use crate::app::{self, UserEvent};
 use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
 
 impl App {
+	fn self_capture_exception_window_ids(&self) -> Vec<u32> {
+		self.settings_window
+			.as_ref()
+			.and_then(|window| window.capture_window_id())
+			.into_iter()
+			.collect()
+	}
+
 	fn overlay_config(&self) -> OverlayConfig {
 		let glass = self.settings.hud_glass_enabled;
 		let hud_opacity = self.settings.hud_opacity.clamp(0.0, 1.0);
@@ -43,6 +51,7 @@ impl App {
 			output_filename_prefix: self.settings.output_filename_prefix.clone(),
 			output_naming: self.settings.output_naming,
 			window_capture_alpha_mode: self.settings.window_capture_alpha_mode,
+			self_capture_exception_window_ids: self.self_capture_exception_window_ids(),
 		}
 	}
 

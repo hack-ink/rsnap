@@ -278,13 +278,23 @@ impl XcapCaptureBackend {
 	#[must_use]
 	/// Creates a backend with the default cache and stream timings.
 	pub fn new() -> Self {
+		Self::with_self_capture_exception_window_ids(Vec::new())
+	}
+
+	#[must_use]
+	/// Creates a backend with an explicit allowlist of current-process windows that remain capturable.
+	pub fn with_self_capture_exception_window_ids(
+		self_capture_exception_window_ids: Vec<u32>,
+	) -> Self {
 		Self {
 			cache: None,
 			cache_ttl: Duration::from_millis(200),
 			window_cache: None,
 			window_cache_ttl: Duration::from_millis(250),
 			#[cfg(target_os = "macos")]
-			live_frame_stream: MacLiveFrameStream::new(),
+			live_frame_stream: MacLiveFrameStream::with_self_capture_exception_window_ids(
+				self_capture_exception_window_ids,
+			),
 			#[cfg(target_os = "macos")]
 			last_region_capture: HashMap::new(),
 		}
@@ -918,6 +928,16 @@ impl Drop for MacWindowListRefGuard {
 /// Builds the default capture backend used by overlay worker threads.
 pub fn default_capture_backend() -> Box<dyn CaptureBackend> {
 	Box::new(XcapCaptureBackend::new())
+}
+
+#[must_use]
+/// Builds the default capture backend with explicit current-process self-capture exceptions.
+pub fn default_capture_backend_with_self_capture_exception_window_ids(
+	self_capture_exception_window_ids: Vec<u32>,
+) -> Box<dyn CaptureBackend> {
+	Box::new(XcapCaptureBackend::with_self_capture_exception_window_ids(
+		self_capture_exception_window_ids,
+	))
 }
 
 #[cfg(target_os = "macos")]
