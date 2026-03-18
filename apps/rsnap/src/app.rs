@@ -58,6 +58,7 @@ struct App {
 	menubar_quit_menu_id: Option<MenuId>,
 	overlay_session: Option<OverlaySession>,
 	settings_window: Option<SettingsWindow>,
+	settings_window_capture_window_id: Option<u32>,
 	settings: AppSettings,
 	#[cfg(target_os = "macos")]
 	overlay_proxy: EventLoopProxy<UserEvent>,
@@ -97,6 +98,7 @@ impl App {
 			menubar_quit_menu_id: None,
 			overlay_session: None,
 			settings_window: None,
+			settings_window_capture_window_id: None,
 			settings,
 			#[cfg(target_os = "macos")]
 			overlay_proxy,
@@ -125,6 +127,8 @@ impl App {
 				window.focus();
 
 				self.settings_window = Some(window);
+				self.settings_window_capture_window_id =
+					self.settings_window.as_ref().and_then(|window| window.capture_window_id());
 
 				self.apply_overlay_settings();
 			},

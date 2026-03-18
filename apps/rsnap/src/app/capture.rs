@@ -12,11 +12,10 @@ use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, Overl
 
 impl App {
 	fn self_capture_exception_window_ids(&self) -> Vec<u32> {
-		self.settings_window
-			.as_ref()
-			.and_then(|window| window.capture_window_id())
-			.into_iter()
-			.collect()
+		self_capture_exception_window_ids_from_sources(
+			self.settings_window.as_ref().and_then(|window| window.capture_window_id()),
+			self.settings_window_capture_window_id,
+		)
 	}
 
 	fn overlay_config(&self) -> OverlayConfig {
@@ -196,5 +195,33 @@ impl App {
 		};
 
 		self.end_overlay_session(exit);
+	}
+}
+
+fn self_capture_exception_window_ids_from_sources(
+	current_window_id: Option<u32>,
+	cached_window_id: Option<u32>,
+) -> Vec<u32> {
+	current_window_id.or(cached_window_id).into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::app::capture;
+
+	#[test]
+	fn self_capture_exception_window_ids_fall_back_to_cached_settings_window_id() {
+		assert_eq!(
+			capture::self_capture_exception_window_ids_from_sources(None, Some(41)),
+			vec![41]
+		);
+	}
+
+	#[test]
+	fn self_capture_exception_window_ids_prefer_live_settings_window_id() {
+		assert_eq!(
+			capture::self_capture_exception_window_ids_from_sources(Some(7), Some(41)),
+			vec![7]
+		);
 	}
 }
