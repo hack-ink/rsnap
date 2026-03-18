@@ -117,9 +117,13 @@
       "Verification: cargo make test exited 0 across the workspace.",
       "Verification: git diff --check exited 0.",
       "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0.",
-      "Manual verification: the user confirmed on 2026-03-18 that Settings-window self-capture works in a local macOS smoke check."
+      "Manual verification: the user confirmed on 2026-03-18 that Settings-window self-capture works in a local macOS smoke check.",
+      "Post-PR CI diagnosis (2026-03-18): GitHub Rust checks on Linux failed because apps/rsnap/Cargo.toml added objc2-app-kit as an unconditional dependency and packages/rsnap-overlay/src/backend.rs left self_capture_exception_window_ids unused on non-macOS builds.",
+      "Follow-up fix (2026-03-18): moved objc2-app-kit under a macOS-only target dependency block and explicitly consumed self_capture_exception_window_ids on non-macOS so cargo make lint matches the Linux CI warning policy.",
+      "Verification: cargo make lint exited 0 after the CI follow-up fix.",
+      "Verification: cargo make test exited 0 after the CI follow-up fix."
     ],
-    "last_updated": "2026-03-18T09:37:13Z",
+    "last_updated": "2026-03-18T09:46:05Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
