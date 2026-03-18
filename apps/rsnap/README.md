@@ -27,15 +27,15 @@ This crate attempts to avoid showing a Dock icon at runtime by setting the app a
 
 For the most reliable “no Dock icon” behavior when distributing a bundled `.app`, also set `LSUIElement=1` in the app `Info.plist`.
 
-For packaging, `scripts/bundle-macos.sh` now post-processes the bundled app with Xcode's asset catalog toolchain (`actool`) and compiles the Dock icon directly from `apps/rsnap/assets/app-icon/composer/AppIcon.icon` into `Assets.car`.
+For packaging, `scripts/bundle-macos.sh` now post-processes the bundled app with Xcode's asset catalog toolchain (`actool`) and compiles the Dock icon directly from `assets/app-icon/composer/AppIcon.icon` into `Assets.car`.
 
 The current icon assets are organized as:
 
-- `apps/rsnap/assets/app-icon/source/dock-icon-original.png`: original Dock icon sketch/input
-- `apps/rsnap/assets/app-icon/composer/AppIcon.icon`: edited Icon Composer source-of-truth
-- `apps/rsnap/assets/app-icon/generated/app-icon.icns`: generated static fallback used by raw `cargo bundle`
-- `apps/rsnap/assets/tray-icon/source/tray-icon-original.png`: original tray icon sketch/input
-- `apps/rsnap/assets/tray-icon/generated/tray-icon-template.png`: generated macOS template tray icon used at runtime
+- `assets/app-icon/source/dock-icon-original.png`: original Dock icon sketch/input
+- `assets/app-icon/composer/AppIcon.icon`: edited Icon Composer source-of-truth
+- `assets/app-icon/generated/app-icon.icns`: generated static fallback used by raw `cargo bundle`
+- `assets/tray-icon/source/tray-icon-original.png`: original tray icon sketch/input
+- `assets/tray-icon/generated/tray-icon-template.png`: generated macOS template tray icon used at runtime
 
 The one-click macOS bundling script replaces the raw `cargo bundle` fallback with the compiled Icon Composer output.
 
