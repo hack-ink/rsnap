@@ -638,6 +638,8 @@ pub struct OverlaySession {
 	pending_click_hit_test_request_id: Option<u64>,
 	#[cfg(target_os = "macos")]
 	window_list_refresh_inflight: bool,
+	#[cfg(target_os = "macos")]
+	drop_next_window_list_refresh_snapshot: bool,
 	last_live_sample_cursor: Option<GlobalPoint>,
 	last_event_cursor: Option<(MonitorRect, GlobalPoint)>,
 	last_event_cursor_at: Option<Instant>,
@@ -776,6 +778,8 @@ impl OverlaySession {
 			pending_click_hit_test_request_id: None,
 			#[cfg(target_os = "macos")]
 			window_list_refresh_inflight: false,
+			#[cfg(target_os = "macos")]
+			drop_next_window_list_refresh_snapshot: false,
 			last_live_sample_cursor: None,
 			last_event_cursor: None,
 			last_event_cursor_at: None,
@@ -945,6 +949,8 @@ impl OverlaySession {
 
 	#[cfg(target_os = "macos")]
 	fn apply_self_capture_exception_window_ids_to_active_streams(&mut self) {
+		self.invalidate_window_list_snapshot_for_self_capture_exception_window_ids_change();
+
 		self.live_sample_stream = Some(MacLiveFrameStream::with_self_capture_exception_window_ids(
 			self.config.self_capture_exception_window_ids.clone(),
 		));
@@ -960,6 +966,14 @@ impl OverlaySession {
 		}
 
 		self.refresh_active_worker_for_self_capture_exception_window_ids_if_safe();
+	}
+
+	#[cfg(target_os = "macos")]
+	fn invalidate_window_list_snapshot_for_self_capture_exception_window_ids_change(&mut self) {
+		self.window_list_snapshot = None;
+		self.drop_next_window_list_refresh_snapshot = self.window_list_refresh_inflight;
+		self.last_window_list_refresh_request_at =
+			Instant::now() - self.window_list_refresh_interval;
 	}
 
 	#[cfg(target_os = "macos")]
@@ -2033,6 +2047,11 @@ impl OverlaySession {
 	}
 
 	fn request_live_window_list_refresh_if_needed(&mut self) -> bool {
+		#[cfg(target_os = "macos")]
+		if self.window_list_refresh_inflight {
+			return false;
+		}
+
 		let now = Instant::now();
 		let needs_refresh = self.window_list_snapshot.as_ref().is_none_or(|snapshot| {
 			now.duration_since(snapshot.captured_at) > self.window_list_refresh_interval
@@ -2396,7 +2415,14 @@ impl OverlaySession {
 					self.window_list_refresh_inflight = false;
 				}
 
-				self.handle_refreshed_window_list(snapshot);
+				#[cfg(target_os = "macos")]
+				let should_apply_snapshot = !mem::take(&mut self.drop_next_window_list_refresh_snapshot);
+				#[cfg(not(target_os = "macos"))]
+				let should_apply_snapshot = true;
+
+				if should_apply_snapshot {
+					self.handle_refreshed_window_list(snapshot);
+				}
 
 				OverlayControl::Continue
 			},
@@ -2430,6 +2456,7 @@ impl OverlaySession {
 						#[cfg(target_os = "macos")]
 						{
 							self.window_list_refresh_inflight = false;
+							self.drop_next_window_list_refresh_snapshot = false;
 						}
 					},
 					WorkerErrorSource::EncodePng => {
@@ -11903,6 +11930,7 @@ mod tests {
 		(session, worker_debug_id)
 	}
 
+	#[cfg(target_os = "macos")]
 	fn seed_ready_scroll_capture_selection(session: &mut OverlaySession) {
 		let monitor = test_monitor_with_scale(8, 8, 1_000);
 
@@ -14474,6 +14502,17 @@ mod tests {
 	fn apply_self_capture_exception_window_ids_to_active_streams_updates_live_stream_filters() {
 		let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
 
+		session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
+			captured_at: Instant::now(),
+			windows: Arc::new(vec![WindowRect {
+				window_id: Some(9),
+				x: 10,
+				y: 12,
+				width: 30,
+				height: 40,
+			}]),
+		}));
+
 		session.apply_self_capture_exception_window_ids_to_active_streams();
 
 		assert_eq!(
@@ -14491,6 +14530,11 @@ mod tests {
 		);
 		assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
 		assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+		assert!(session.window_list_snapshot.is_none());
+		assert!(
+			session.last_window_list_refresh_request_at.elapsed()
+				>= session.window_list_refresh_interval
+		);
 		assert_eq!(session.scroll_capture.last_stream_frame_seq, 0);
 		assert_eq!(session.scroll_capture.live_stream_stale_grace, None);
 	}
@@ -14623,6 +14667,50 @@ mod tests {
 		assert!(matches!(control, super::OverlayControl::Continue));
 		assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
 		assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn stale_window_list_refresh_response_is_dropped_after_self_capture_filter_change() {
+		let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+
+		session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
+			captured_at: Instant::now(),
+			windows: Arc::new(vec![WindowRect {
+				window_id: Some(4),
+				x: 1,
+				y: 2,
+				width: 3,
+				height: 4,
+			}]),
+		}));
+		session.window_list_refresh_inflight = true;
+
+		session.apply_self_capture_exception_window_ids_to_active_streams();
+
+		assert!(session.window_list_snapshot.is_none());
+		assert!(session.drop_next_window_list_refresh_snapshot);
+		assert!(session.pending_self_capture_exception_window_ids_worker_refresh);
+
+		let control =
+			session.maybe_tick_worker_response_limiter(WorkerResponse::RefreshedWindowList {
+				snapshot: Arc::new(WindowListSnapshot {
+					captured_at: Instant::now(),
+					windows: Arc::new(vec![WindowRect {
+						window_id: Some(9),
+						x: 10,
+						y: 12,
+						width: 30,
+						height: 40,
+					}]),
+				}),
+			});
+
+		assert!(matches!(control, super::OverlayControl::Continue));
+		assert!(session.window_list_snapshot.is_none());
+		assert!(!session.window_list_refresh_inflight);
+		assert!(!session.drop_next_window_list_refresh_snapshot);
+		assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
 	}
 
 	#[cfg(target_os = "macos")]
