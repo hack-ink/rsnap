@@ -22,6 +22,7 @@ impl App {
 		}
 
 		let menubar = Menu::new();
+		let permissions_item = MenuItem::new("Permissions…", true, None);
 		let settings_item = MenuItem::new(
 			"Settings…",
 			true,
@@ -35,7 +36,7 @@ impl App {
 		let app_menu = match Submenu::with_items(
 			"rsnap",
 			true,
-			&[&settings_item, &PredefinedMenuItem::separator(), &quit_item],
+			&[&permissions_item, &settings_item, &PredefinedMenuItem::separator(), &quit_item],
 		) {
 			Ok(menu) => menu,
 			Err(err) => {
@@ -57,6 +58,7 @@ impl App {
 
 		menubar.init_for_nsapp();
 
+		self.menubar_permissions_menu_id = Some(permissions_item.id().clone());
 		self.menubar_settings_menu_id = Some(settings_item.id().clone());
 		self.menubar_quit_menu_id = Some(quit_item.id().clone());
 		self.menubar_menu = Some(menubar);
@@ -73,6 +75,8 @@ impl App {
 			true,
 			Some(Accelerator::new(Some(Modifiers::ALT), Code::KeyX)),
 		);
+		#[cfg(target_os = "macos")]
+		let permissions_item = MenuItem::new("Permissions…", true, None);
 		let settings_item = MenuItem::new(
 			"Settings…",
 			true,
@@ -84,8 +88,22 @@ impl App {
 			Some(Accelerator::new(Some(accelerator::CMD_OR_CTRL), Code::KeyQ)),
 		);
 
+		if let Err(err) = tray_menu.append(&capture_item) {
+			tracing::warn!(error = ?err, "Failed to append capture tray item.");
+
+			event_loop.exit();
+
+			return;
+		}
+		#[cfg(target_os = "macos")]
+		if let Err(err) = tray_menu.append(&permissions_item) {
+			tracing::warn!(error = ?err, "Failed to append permissions tray item.");
+
+			event_loop.exit();
+
+			return;
+		}
 		if let Err(err) = tray_menu.append_items(&[
-			&capture_item,
 			&PredefinedMenuItem::separator(),
 			&settings_item,
 			&PredefinedMenuItem::separator(),
@@ -126,6 +144,10 @@ impl App {
 		};
 
 		self.settings_menu_id = Some(settings_item.id().clone());
+		#[cfg(target_os = "macos")]
+		{
+			self.permissions_menu_id = Some(permissions_item.id().clone());
+		}
 		self.capture_menu_id = Some(capture_item.id().clone());
 		self.quit_menu_id = Some(quit_item.id().clone());
 		self.tray_icon = Some(tray_icon);
@@ -141,6 +163,14 @@ impl App {
 			tracing::info!("Settings requested from tray menu.");
 
 			self.open_settings_window(event_loop, "tray-menu");
+		}
+		#[cfg(target_os = "macos")]
+		if Some(id) == self.permissions_menu_id.as_ref() {
+			handled = true;
+
+			tracing::info!("Permissions requested from tray menu.");
+
+			self.open_settings_window(event_loop, "tray-permissions-menu");
 		}
 		if Some(id) == self.capture_menu_id.as_ref() {
 			handled = true;
@@ -163,6 +193,13 @@ impl App {
 
 		#[cfg(target_os = "macos")]
 		{
+			if Some(id) == self.menubar_permissions_menu_id.as_ref() {
+				handled = true;
+
+				tracing::info!("Permissions requested from menubar menu.");
+
+				self.open_settings_window(event_loop, "menubar-permissions-menu");
+			}
 			if Some(id) == self.menubar_settings_menu_id.as_ref() {
 				handled = true;
 

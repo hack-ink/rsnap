@@ -1,0 +1,158 @@
+{
+  "spec": {
+    "schema": "plan/1",
+    "plan_id": "2026-03-18-screen-recording-permission-gate",
+    "goal": "Align rsnap's macOS permission flow with the real product contract: Screen Recording for all capture, plus Accessibility and Input Monitoring only when scroll capture actually starts, with clear in-app recovery paths for one-shot system prompts.",
+    "success_criteria": [
+      "When Screen Recording access is missing on macOS, tray or hotkey capture attempts do not fail silently.",
+      "Normal capture entry points request only Screen Recording just in time and continue only when access is already granted or becomes granted.",
+      "Scroll capture defers Accessibility and Input Monitoring checks until the user explicitly enters scroll capture, and then explains why each permission is needed.",
+      "Users have a persistent in-app permissions surface that explains current status, one-shot system prompt behavior, and recovery steps without requiring a startup onboarding flow.",
+      "Fresh repo-native verification covers the final implementation state, and the packaged .app is rebuilt for local smoke use."
+    ],
+    "constraints": [
+      "Keep the change scoped to the current macOS permission contract for rsnap's existing capture and scroll-capture surfaces.",
+      "Do not introduce a forced first-launch onboarding sequence before the user attempts capture.",
+      "Do not require Accessibility or Input Monitoring for normal region, window, or monitor capture.",
+      "Preserve the existing menubar, tray, and hotkey entry points and keep non-macOS behavior unchanged.",
+      "Use repo-native cargo make tasks from the repository root before claiming completion."
+    ],
+    "defaults": {
+      "authority_linear_issue": "XY-167",
+      "issue_url": "https://linear.app/hack-ink/issue/XY-167/clarify-and-gate-macos-capture-permissions-in-app",
+      "primary_files": [
+        "apps/rsnap/src/permissions_macos.rs",
+        "apps/rsnap/src/app.rs",
+        "apps/rsnap/src/app/capture.rs",
+        "apps/rsnap/src/app/runtime.rs",
+        "apps/rsnap/src/app/shell.rs",
+        "apps/rsnap/src/settings_window.rs",
+        "apps/rsnap/src/settings_window/sections.rs",
+        "packages/rsnap-overlay/src/overlay.rs",
+        "README.md",
+        "docs/spec/v0.md"
+      ],
+      "verification_commands": [
+        "cargo make checks",
+        "python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_screen-recording-permission-gate.json",
+        "RSNAP_BUNDLE_OPEN_APP=0 scripts/bundle-macos.sh"
+      ]
+    },
+    "tasks": [
+      {
+        "id": "task-1",
+        "title": "Map the real macOS permission contract to rsnap's capture flows",
+        "status": "done",
+        "objective": "Audit the observed packaged-app prompts, current code paths, and relevant macOS APIs to determine which permissions actually belong to normal capture versus scroll capture.",
+        "inputs": [
+          "Observed packaged-app prompts from local user testing",
+          "Current rsnap capture and scroll-capture code paths",
+          "Apple SDK/API references for Screen Recording, Accessibility, and listen-event access"
+        ],
+        "outputs": [
+          "A concrete mapping from each prompt to the feature path that triggers it",
+          "A confirmed product contract separating normal capture from scroll capture permissions"
+        ],
+        "verification": [
+          "Local code paths and the selected macOS permission APIs agree on why each permission appears."
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "task-2",
+        "title": "Implement just-in-time gating and persistent recovery paths",
+        "status": "done",
+        "objective": "Gate Screen Recording at capture start, defer Accessibility and Input Monitoring to scroll-capture entry, and provide a stable request-then-open fallback when macOS no longer shows the one-shot consent sheet.",
+        "inputs": [
+          "Task-1 permission mapping",
+          "Existing App::start_capture_session flow",
+          "Existing settings window and tray/menubar shell"
+        ],
+        "outputs": [
+          "A macOS permission helper module covering Screen Recording, Accessibility, and Input Monitoring",
+          "Just-in-time gating in the shared capture entry point and scroll-capture entry point",
+          "A persistent in-app Permissions surface and menu entrypoints"
+        ],
+        "verification": [
+          "Normal capture reaches OverlaySession::start only when Screen Recording access is available, and scroll capture enables external input only after its extra permissions succeed."
+        ],
+        "depends_on": [
+          "task-1"
+        ]
+      },
+      {
+        "id": "task-3",
+        "title": "Update durable docs and startup recovery behavior",
+        "status": "done",
+        "objective": "Document the real permission contract and keep the menubar-only app visibly recoverable by opening Settings when Screen Recording is missing at startup.",
+        "inputs": [
+          "Task-2 permission helper surface",
+          "Current README and v0 spec text"
+        ],
+        "outputs": [
+          "Updated README and spec text matching the actual permission contract",
+          "Startup behavior that opens rsnap Settings when Screen Recording is still missing"
+        ],
+        "verification": [
+          "The in-app UI and docs explicitly distinguish normal capture from scroll capture requirements."
+        ],
+        "depends_on": [
+          "task-2"
+        ]
+      },
+      {
+        "id": "task-4",
+        "title": "Run repo-native verification and rebuild the packaged app",
+        "status": "done",
+        "objective": "Run the required verification commands against the final implementation, validate the saved plan artifact, and rebuild the macOS app for local smoke testing.",
+        "inputs": [
+          "Final implementation diff"
+        ],
+        "outputs": [
+          "Fresh repo-native checks, plan-validation evidence, and bundle-build evidence"
+        ],
+        "verification": [
+          "cargo make checks exits 0",
+          "The saved plan validates as plan/1 JSON",
+          "The packaged app rebuilds successfully"
+        ],
+        "depends_on": [
+          "task-3"
+        ]
+      }
+    ],
+    "replan_policy": {
+      "owner": "plan-writing",
+      "triggers": [
+        "A new macOS release changes which permission category or system prompt is used for screen capture or listen-event access.",
+        "rsnap changes scroll capture to stop observing global scroll input or stop reposting scroll into the target app, which would change the required permission set.",
+        "Verification shows the selected delayed-gating approach breaks the existing capture lifecycle in a way that requires broader architecture changes."
+      ]
+    }
+  },
+  "state": {
+    "phase": "done",
+    "current_task_id": null,
+    "next_task_id": null,
+    "blockers": [],
+    "evidence": [
+      "Task 1 local audit: normal capture depends on Screen Recording, while scroll capture additionally depends on Accessibility because rsnap forwards scroll into the target app and on Input Monitoring because rsnap installs a native CoreGraphics listen-event tap for global scroll-wheel input.",
+      "Task 2 outcome: apps/rsnap/src/permissions_macos.rs now preflights and requests Screen Recording, Accessibility, and Input Monitoring, and can open the corresponding macOS settings panes.",
+      "Task 2 outcome: apps/rsnap/src/app/capture.rs now blocks silent overlay startup when Screen Recording access is missing, opens Screen Recording settings when the one-shot prompt no longer appears, and defers scroll-capture-only permissions until the user explicitly enters scroll capture.",
+      "Task 2 outcome: apps/rsnap/src/settings_window/sections.rs and apps/rsnap/src/app/shell.rs now expose a persistent Permissions surface with one permission button per row plus tray/menubar recovery entrypoints.",
+      "Task 3 outcome: apps/rsnap/src/app.rs and apps/rsnap/src/app/runtime.rs now open the Settings window at startup when Screen Recording is still missing and refresh the Settings UI while it is visible.",
+      "Task 3 outcome: README.md and docs/spec/v0.md now describe the actual macOS permission contract instead of claiming Accessibility or Input Monitoring are never needed.",
+      "Task 4 verification: cargo make checks exited 0 in .workspaces/xy-167-permission-gate.",
+      "Task 4 verification: RSNAP_BUNDLE_OPEN_APP=0 scripts/bundle-macos.sh rebuilt target/release/bundle/osx/Rsnap.app in .workspaces/xy-167-permission-gate.",
+      "Task 4 verification: the current permission-gate lane also passes cargo check -p rsnap before the full repo-native gate."
+    ],
+    "last_updated": "2026-03-18T09:49:00Z",
+    "replan_reason": null,
+    "context_snapshot": {
+      "linear_issue": "XY-167",
+      "workspace_path": ".workspaces/xy-167-permission-gate",
+      "platform": "macOS",
+      "user_requested_execution": true
+    }
+  }
+}
