@@ -167,6 +167,22 @@ pub(super) fn capture_window_id(window: &Window) -> Option<u32> {
 	}
 }
 
+pub(super) fn is_capture_window_id_on_screen(capture_window_id: u32) -> bool {
+	#[cfg(target_os = "macos")]
+	{
+		current_process_window_server_windows()
+			.ok()
+			.is_some_and(|windows| window_server_windows_contain_id(&windows, capture_window_id))
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	{
+		let _ = capture_window_id;
+
+		false
+	}
+}
+
 #[cfg(any(test, target_os = "macos"))]
 fn select_window_server_window_id(
 	target_owner_pid: u32,
@@ -190,6 +206,11 @@ fn select_window_server_window_id(
 	}
 
 	bounds_match
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn window_server_windows_contain_id(windows: &[WindowServerWindowInfo], window_id: u32) -> bool {
+	windows.iter().any(|window| window.window_id == window_id)
 }
 
 #[cfg(any(test, target_os = "macos"))]
@@ -464,6 +485,25 @@ mod tests {
 			),
 			Some(17)
 		);
+	}
+
+	#[test]
+	fn window_server_windows_contain_id_detects_present_window_ids() {
+		let windows = [
+			WindowServerWindowInfo {
+				window_id: 11,
+				owner_pid: 7,
+				bounds: WindowServerBounds { x: 10, y: 20, width: 520, height: 360 },
+			},
+			WindowServerWindowInfo {
+				window_id: 17,
+				owner_pid: 7,
+				bounds: WindowServerBounds { x: 11, y: 19, width: 520, height: 360 },
+			},
+		];
+
+		assert!(platform::window_server_windows_contain_id(&windows, 17));
+		assert!(!platform::window_server_windows_contain_id(&windows, 41));
 	}
 
 	#[test]
