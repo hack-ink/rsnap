@@ -208,7 +208,7 @@ fn approx_equal_i64(lhs: i64, rhs: i64) -> bool {
 #[cfg(target_os = "macos")]
 fn window_server_bounds_from_ns_window(ns_window: &NSWindow) -> Option<WindowServerBounds> {
 	let frame = ns_window.frame();
-	let primary_screen_height = primary_screen_height_points()?;
+	let main_display_height = main_display_height_points()?;
 	let appkit_bounds = WindowServerBounds {
 		x: frame.origin.x.round() as i64,
 		y: frame.origin.y.round() as i64,
@@ -216,11 +216,11 @@ fn window_server_bounds_from_ns_window(ns_window: &NSWindow) -> Option<WindowSer
 		height: frame.size.height.round() as i64,
 	};
 
-	Some(window_server_bounds_from_appkit_bounds(appkit_bounds, primary_screen_height))
+	Some(window_server_bounds_from_appkit_bounds(appkit_bounds, main_display_height))
 }
 
 #[cfg(target_os = "macos")]
-fn primary_screen_height_points() -> Option<i64> {
+fn main_display_height_points() -> Option<i64> {
 	let mtm = MainThreadMarker::new()?;
 	let screens = NSScreen::screens(mtm);
 
@@ -239,11 +239,15 @@ fn primary_screen_height_points() -> Option<i64> {
 #[cfg(any(test, target_os = "macos"))]
 fn window_server_bounds_from_appkit_bounds(
 	appkit_bounds: WindowServerBounds,
-	primary_screen_height: i64,
+	main_display_height: i64,
 ) -> WindowServerBounds {
+	// AppKit screen coordinates are rooted at the main display's lower-left corner, while
+	// Quartz global display coordinates are rooted at the main display's upper-left corner.
+	// Secondary-display offsets are already encoded in `appkit_bounds.y`, so only the main
+	// display height participates in the y-axis flip into WindowServer space.
 	WindowServerBounds {
 		x: appkit_bounds.x,
-		y: primary_screen_height - (appkit_bounds.y + appkit_bounds.height),
+		y: main_display_height - (appkit_bounds.y + appkit_bounds.height),
 		width: appkit_bounds.width,
 		height: appkit_bounds.height,
 	}
@@ -470,6 +474,29 @@ mod tests {
 				900,
 			),
 			WindowServerBounds { x: 10, y: 420, width: 520, height: 360 }
+		);
+	}
+
+	#[test]
+	fn window_server_bounds_from_appkit_bounds_maps_display_above_main_into_negative_window_server_y()
+	 {
+		assert_eq!(
+			platform::window_server_bounds_from_appkit_bounds(
+				WindowServerBounds { x: -300, y: 1_120, width: 520, height: 360 },
+				900,
+			),
+			WindowServerBounds { x: -300, y: -580, width: 520, height: 360 }
+		);
+	}
+
+	#[test]
+	fn window_server_bounds_from_appkit_bounds_maps_display_below_main_below_main_display_height() {
+		assert_eq!(
+			platform::window_server_bounds_from_appkit_bounds(
+				WindowServerBounds { x: 40, y: -760, width: 520, height: 360 },
+				900,
+			),
+			WindowServerBounds { x: 40, y: 1_300, width: 520, height: 360 }
 		);
 	}
 }
