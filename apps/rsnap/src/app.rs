@@ -24,6 +24,8 @@ use winit::event_loop::ActiveEventLoop;
 use winit::event_loop::EventLoopProxy;
 
 #[cfg(target_os = "macos")]
+use self::scroll_input_macos::ScrollInputObserverLifecycle;
+#[cfg(target_os = "macos")]
 use self::scroll_input_macos::SharedScrollInputState;
 #[cfg(target_os = "macos")]
 use crate::permissions_macos;
@@ -70,13 +72,14 @@ struct App {
 	#[cfg(target_os = "macos")]
 	overlay_stream_event_pending: Arc<AtomicBool>,
 	#[cfg(target_os = "macos")]
-	scroll_input_observer_started: Arc<AtomicBool>,
+	scroll_input_observer_lifecycle: Arc<ScrollInputObserverLifecycle>,
 	#[cfg(target_os = "macos")]
 	scroll_input_shared_state: Arc<SharedScrollInputState>,
 	#[cfg(target_os = "macos")]
 	startup_permissions_checked: bool,
 }
 impl App {
+	#[allow(clippy::too_many_arguments)]
 	fn new(
 		capture_hotkey: HotKey,
 		settings: AppSettings,
@@ -84,6 +87,9 @@ impl App {
 		hotkey_manager: Option<GlobalHotKeyManager>,
 		#[cfg(target_os = "macos")] overlay_proxy: EventLoopProxy<UserEvent>,
 		#[cfg(target_os = "macos")] overlay_stream_event_pending: Arc<AtomicBool>,
+		#[cfg(target_os = "macos")] scroll_input_observer_lifecycle: Arc<
+			ScrollInputObserverLifecycle,
+		>,
 		#[cfg(target_os = "macos")] scroll_input_shared_state: Arc<SharedScrollInputState>,
 	) -> Self {
 		Self {
@@ -115,7 +121,7 @@ impl App {
 			#[cfg(target_os = "macos")]
 			overlay_stream_event_pending,
 			#[cfg(target_os = "macos")]
-			scroll_input_observer_started: Arc::new(AtomicBool::new(false)),
+			scroll_input_observer_lifecycle,
 			#[cfg(target_os = "macos")]
 			scroll_input_shared_state,
 			#[cfg(target_os = "macos")]
