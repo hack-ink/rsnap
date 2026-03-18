@@ -143,9 +143,14 @@
       "Follow-up fix (2026-03-18): packages/rsnap-overlay/src/live_frame_stream_macos.rs now keeps ScreenCaptureKit stream setup on the best-effort path by continuing with the shareable subset of self-capture exception windows, while logging the missing requested window ids for diagnostics instead of returning None.",
       "Verification: cargo test -p rsnap-overlay --lib exited 0 with 161 passed tests after the partial-match follow-up fix.",
       "Verification: cargo make lint exited 0 after the partial-match follow-up fix.",
-      "Verification: cargo make test exited 0 after the partial-match follow-up fix."
+      "Verification: cargo make test exited 0 after the partial-match follow-up fix.",
+      "Review repair (2026-03-18): addressed GitHub review threads discussion_r2953149809 and discussion_r2953149817 by reapplying overlay settings when the Settings window capture id first resolves and by letting incomplete ScreenCaptureKit streams stay active while retrying upgrades to a complete exception-window filter on the normal setup backoff.",
+      "Verification: cargo test -p rsnap --lib exited 0 with 19 passed tests after the late-allowlist refresh follow-up fix.",
+      "Verification: cargo test -p rsnap-overlay --lib exited 0 with 162 passed tests after the late-allowlist refresh follow-up fix.",
+      "Verification: cargo make lint-fix exited 0 and applied 6 fixes after the late-allowlist refresh follow-up fix.",
+      "Verification: cargo make test exited 0 after the late-allowlist refresh follow-up fix."
     ],
-    "last_updated": "2026-03-18T12:24:21Z",
+    "last_updated": "2026-03-18T15:15:42Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",

@@ -146,7 +146,18 @@ impl ApplicationHandler<UserEvent> for App {
 				return;
 			}
 
-			self.settings_window_capture_window_id = settings_window.capture_window_id();
+			let next_capture_window_id = settings_window.capture_window_id();
+			let capture_window_id_changed = settings_window_capture_window_id_changed(
+				self.settings_window_capture_window_id,
+				next_capture_window_id,
+			);
+
+			self.settings_window_capture_window_id = next_capture_window_id;
+
+			if capture_window_id_changed {
+				self.apply_overlay_settings();
+			}
+
 			self.settings_window = Some(settings_window);
 
 			return;
@@ -278,4 +289,23 @@ pub(super) fn run() -> Result<()> {
 	event_loop.run_app(&mut app).map_err(|err: EventLoopError| eyre::eyre!(err))?;
 
 	Ok(())
+}
+
+fn settings_window_capture_window_id_changed(
+	previous_capture_window_id: Option<u32>,
+	next_capture_window_id: Option<u32>,
+) -> bool {
+	previous_capture_window_id != next_capture_window_id
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::app::runtime;
+
+	#[test]
+	fn settings_window_capture_window_id_change_requires_overlay_refresh() {
+		assert!(runtime::settings_window_capture_window_id_changed(None, Some(41)));
+		assert!(runtime::settings_window_capture_window_id_changed(Some(7), Some(41)));
+		assert!(!runtime::settings_window_capture_window_id_changed(Some(41), Some(41)));
+	}
 }
