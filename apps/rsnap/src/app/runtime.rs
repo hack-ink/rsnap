@@ -33,6 +33,8 @@ impl ApplicationHandler<UserEvent> for App {
 		#[cfg(target_os = "macos")]
 		self.install_menubar(event_loop);
 		self.install_tray(event_loop);
+		#[cfg(target_os = "macos")]
+		self.maybe_present_startup_permissions(event_loop);
 	}
 
 	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
@@ -153,14 +155,21 @@ impl ApplicationHandler<UserEvent> for App {
 	}
 
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-		if self.overlay_session.is_some() || self.settings_window.is_some() {
+		if self.overlay_session.is_some() {
 			event_loop.set_control_flow(ControlFlow::WaitUntil(
 				Instant::now() + Duration::from_millis(16),
+			));
+		} else if self.settings_window.is_some() {
+			event_loop.set_control_flow(ControlFlow::WaitUntil(
+				Instant::now() + Duration::from_millis(250),
 			));
 		} else {
 			event_loop.set_control_flow(ControlFlow::Wait);
 		}
 
+		if let Some(settings_window) = self.settings_window.as_ref() {
+			settings_window.maybe_request_periodic_redraw(Duration::from_millis(500));
+		}
 		if let Some(session) = self.overlay_session.as_mut() {
 			let control = session.about_to_wait();
 
