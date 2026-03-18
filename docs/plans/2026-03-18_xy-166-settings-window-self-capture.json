@@ -375,9 +375,21 @@
       "Verification: cargo make fmt exited 0 after the incomplete-exception upgrade backoff repair.",
       "Verification: cargo make lint exited 0 after the incomplete-exception upgrade backoff repair.",
       "Verification: cargo make test exited 0 with 220 nextest tests plus cargo test --all-features after the incomplete-exception upgrade backoff repair.",
-      "Verification: git diff --check exited 0 after the incomplete-exception upgrade backoff repair."
+      "Verification: git diff --check exited 0 after the incomplete-exception upgrade backoff repair.",
+      "Review repair diagnosis (2026-03-19): PR thread PRRT_kwDORWN8nM51Qs34 asserted that packages/rsnap-overlay/src/overlay/window_runtime.rs should stop converting monitor origins into WindowServer space before calling winit window-position APIs, but the local winit 0.30.13 macOS backend shows that creation, set_outer_position, and outer_position all translate top-left desktop coordinates through flip_window_screen_coordinates, so the existing WindowServer-space MonitorRect origins already match the overlay/input coordinate system.",
+      "Review repair note (2026-03-19): packages/rsnap-overlay/src/overlay/window_runtime.rs now documents that winit's macOS window positioning APIs accept top-left desktop coordinates and perform the AppKit flip internally, which preserves alignment between overlay placement, CGWindow bounds, and CGEvent cursor coordinates.",
+      "Review repair diagnosis (2026-03-19): PR thread PRRT_kwDORWN8nM51Qs39 correctly identified that packages/rsnap-overlay/src/live_frame_stream_macos.rs still hid the Settings window whenever SCShareableContent omitted its SCWindow, because the partial-match path kept excluding the entire current process instead of degrading to a capturable fallback.",
+      "Review repair fix (2026-03-19): packages/rsnap-overlay/src/live_frame_stream_macos.rs now falls back to SCContentFilter::initWithDisplay_excludingWindows using only rsnap's currently shareable windows whenever any requested self-capture exception id is missing, so live-sample, region, and freeze-preview paths keep the Settings window capturable while retaining the slower retry-upgrade path toward the stricter current-process exclusion filter once ScreenCaptureKit exposes the missing window.",
+      "Verification: cargo test -p rsnap-overlay --lib live_frame_stream_macos exited 0 with 7 passed tests after the capturable shareable-window fallback repair.",
+      "Verification: cargo test -p rsnap --lib exited 0 with 29 passed tests after the capturable shareable-window fallback repair.",
+      "Verification: cargo test -p rsnap-overlay --lib exited 0 with 179 passed tests after the capturable shareable-window fallback repair.",
+      "Verification: cargo make fmt exited 0 after the capturable shareable-window fallback repair.",
+      "Verification: cargo make lint exited 0 after the capturable shareable-window fallback repair.",
+      "Verification: cargo make test exited 0 with 220 nextest tests plus cargo test --all-features after the capturable shareable-window fallback repair.",
+      "Verification: git diff --check exited 0 after the capturable shareable-window fallback repair.",
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the capturable shareable-window fallback repair."
     ],
-    "last_updated": "2026-03-18T18:45:20Z",
+    "last_updated": "2026-03-18T19:12:57Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
@@ -385,7 +397,7 @@
       "platform": "macOS",
       "linear_issue_state": "In Review",
       "manual_gui_smoke_ran": true,
-      "follow_up_scope": "keep the published XY-166 PR branch review-clean by throttling incomplete exception-window upgrades so non-shareable Settings windows do not drive repeated ScreenCaptureKit restart loops"
+      "follow_up_scope": "keep the published XY-166 PR branch review-clean by preserving WindowServer-space overlay placement semantics and falling back to excluding only shareable rsnap windows when ScreenCaptureKit omits the requested Settings exception window"
     }
   }
 }
