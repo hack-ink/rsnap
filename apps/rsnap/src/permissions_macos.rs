@@ -1,6 +1,7 @@
 use std::process::Command;
 
-use color_eyre::eyre::{Result, WrapErr, eyre};
+use color_eyre::eyre;
+use color_eyre::eyre::{Result, WrapErr};
 use core_foundation::base::TCFType;
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
@@ -71,7 +72,7 @@ fn open_settings_url(settings_url: &str, description: &str) -> Result<()> {
 	if status.success() {
 		Ok(())
 	} else {
-		Err(eyre!("`open` exited with status {status} while opening macOS {description}"))
+		Err(eyre::eyre!("`open` exited with status {status} while opening macOS {description}"))
 	}
 }
 
