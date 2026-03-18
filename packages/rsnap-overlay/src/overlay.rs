@@ -8402,9 +8402,13 @@ impl WindowRenderer {
 		else {
 			return false;
 		};
-		let path = Self::selection_dashed_border_path(border_rect);
+		let segments = Self::selection_dashed_border_segments(
+			border_rect,
+			SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+			SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		);
 
-		if path.len() < 2 {
+		if segments.is_empty() {
 			return false;
 		}
 
@@ -8413,13 +8417,8 @@ impl WindowRenderer {
 			Color32::from_rgba_unmultiplied(255, 255, 255, SELECTION_DASHED_BORDER_ALPHA),
 		);
 
-		for shape in Shape::dashed_line(
-			&path,
-			stroke,
-			SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
-			SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
-		) {
-			painter.add(shape);
+		for segment in segments {
+			painter.add(Shape::line_segment(segment, stroke));
 		}
 
 		true
@@ -8448,18 +8447,135 @@ impl WindowRenderer {
 			.any(|rect| rect.width() > 0.0 && rect.height() > 0.0)
 	}
 
-	fn selection_dashed_border_path(rect: Rect) -> Vec<Pos2> {
-		if rect.width() <= 0.0 || rect.height() <= 0.0 {
+	fn selection_dashed_border_segments(
+		rect: Rect,
+		target_dash_length: f32,
+		target_gap_length: f32,
+	) -> Vec<[Pos2; 2]> {
+		let perimeter = Self::selection_dashed_border_perimeter(rect);
+
+		if perimeter <= 0.0 {
 			return Vec::new();
 		}
 
-		vec![
-			Pos2::new(rect.min.x, rect.min.y),
-			Pos2::new(rect.max.x, rect.min.y),
-			Pos2::new(rect.max.x, rect.max.y),
-			Pos2::new(rect.min.x, rect.max.y),
-			Pos2::new(rect.min.x, rect.min.y),
-		]
+		let mut segments = Vec::new();
+
+		for (dash_start, dash_end) in Self::selection_dashed_border_dash_ranges(
+			perimeter,
+			target_dash_length,
+			target_gap_length,
+		) {
+			Self::append_selection_dashed_border_dash_segments(
+				rect,
+				dash_start,
+				dash_end,
+				&mut segments,
+			);
+		}
+
+		segments
+	}
+
+	fn selection_dashed_border_dash_ranges(
+		perimeter: f32,
+		target_dash_length: f32,
+		target_gap_length: f32,
+	) -> Vec<(f32, f32)> {
+		if perimeter <= 0.0 {
+			return Vec::new();
+		}
+
+		let target_cycle = (target_dash_length + target_gap_length).max(f32::MIN_POSITIVE);
+		let cycle_count = (perimeter / target_cycle).round().max(1.0) as usize;
+		let cycle_span = perimeter / cycle_count as f32;
+		let dash_length = target_dash_length.min(cycle_span);
+
+		(0..cycle_count)
+			.map(|index| {
+				let dash_start = index as f32 * cycle_span;
+
+				(dash_start, dash_start + dash_length)
+			})
+			.collect()
+	}
+
+	fn append_selection_dashed_border_dash_segments(
+		rect: Rect,
+		dash_start: f32,
+		dash_end: f32,
+		segments: &mut Vec<[Pos2; 2]>,
+	) {
+		let mut segment_start = dash_start;
+
+		for corner_distance in Self::selection_dashed_border_corner_distances(rect) {
+			if segment_start >= dash_end {
+				break;
+			}
+			if corner_distance <= segment_start || corner_distance >= dash_end {
+				continue;
+			}
+
+			Self::push_selection_dashed_border_segment(
+				rect,
+				segment_start,
+				corner_distance,
+				segments,
+			);
+
+			segment_start = corner_distance;
+		}
+
+		if segment_start < dash_end {
+			Self::push_selection_dashed_border_segment(rect, segment_start, dash_end, segments);
+		}
+	}
+
+	fn push_selection_dashed_border_segment(
+		rect: Rect,
+		start_distance: f32,
+		end_distance: f32,
+		segments: &mut Vec<[Pos2; 2]>,
+	) {
+		let start = Self::selection_dashed_border_point_at(rect, start_distance);
+		let end = Self::selection_dashed_border_point_at(rect, end_distance);
+
+		if start != end {
+			segments.push([start, end]);
+		}
+	}
+
+	fn selection_dashed_border_point_at(rect: Rect, distance: f32) -> Pos2 {
+		let width = rect.width();
+		let height = rect.height();
+		let perimeter = Self::selection_dashed_border_perimeter(rect);
+		let distance = distance.rem_euclid(perimeter);
+
+		if distance < width {
+			return Pos2::new(rect.min.x + distance, rect.min.y);
+		}
+		if distance < width + height {
+			return Pos2::new(rect.max.x, rect.min.y + (distance - width));
+		}
+		if distance < width * 2.0 + height {
+			return Pos2::new(rect.max.x - (distance - width - height), rect.max.y);
+		}
+
+		Pos2::new(rect.min.x, rect.max.y - (distance - width * 2.0 - height))
+	}
+
+	fn selection_dashed_border_corner_distances(rect: Rect) -> [f32; 4] {
+		let width = rect.width();
+		let height = rect.height();
+
+		[width, width + height, width * 2.0 + height, Self::selection_dashed_border_perimeter(rect)]
+	}
+
+	fn selection_dashed_border_perimeter(rect: Rect) -> f32 {
+		if rect.width() <= 0.0 || rect.height() <= 0.0 {
+			return 0.0;
+		}
+
+		(rect.width() + rect.height()) * 2.0
 	}
 
 	fn render_selection_flow_ring(
@@ -11392,6 +11508,7 @@ mod tests {
 	use crate::overlay::{
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
 		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect,
+		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
 		SELECTION_DASHED_BORDER_WIDTH_PX, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
 		ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 	};
@@ -11852,17 +11969,48 @@ mod tests {
 	}
 
 	#[test]
-	fn selection_dashed_border_path_uses_square_corners() {
+	fn selection_dashed_border_dash_ranges_distribute_remainder_evenly() {
+		const EPSILON: f32 = 1e-4;
+
 		let rect = Rect::from_min_max(Pos2::new(18.5, 8.5), Pos2::new(61.5, 41.5));
+		let perimeter = WindowRenderer::selection_dashed_border_perimeter(rect);
+		let ranges = WindowRenderer::selection_dashed_border_dash_ranges(
+			perimeter,
+			SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+			SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		);
+
+		assert_eq!(ranges.len(), 15);
+
+		let dash_length = ranges[0].1 - ranges[0].0;
+		let gap_length = ranges[1].0 - ranges[0].1;
+
+		assert!((dash_length - SELECTION_DASHED_BORDER_DASH_LENGTH_PX).abs() < EPSILON);
+
+		for window in ranges.windows(2) {
+			let current_dash_length = window[0].1 - window[0].0;
+			let current_gap_length = window[1].0 - window[0].1;
+
+			assert!((current_dash_length - dash_length).abs() < EPSILON);
+			assert!((current_gap_length - gap_length).abs() < EPSILON);
+		}
+
+		let seam_gap_length = perimeter - ranges.last().unwrap().1 + ranges[0].0;
+
+		assert!((seam_gap_length - gap_length).abs() < EPSILON);
+	}
+
+	#[test]
+	fn selection_dashed_border_segments_split_at_square_corners() {
+		let rect = Rect::from_min_max(Pos2::new(18.5, 8.5), Pos2::new(38.5, 18.5));
 
 		assert_eq!(
-			WindowRenderer::selection_dashed_border_path(rect),
+			WindowRenderer::selection_dashed_border_segments(rect, 25.0, 5.0),
 			vec![
-				Pos2::new(18.5, 8.5),
-				Pos2::new(61.5, 8.5),
-				Pos2::new(61.5, 41.5),
-				Pos2::new(18.5, 41.5),
-				Pos2::new(18.5, 8.5),
+				[Pos2::new(18.5, 8.5), Pos2::new(38.5, 8.5)],
+				[Pos2::new(38.5, 8.5), Pos2::new(38.5, 13.5)],
+				[Pos2::new(38.5, 18.5), Pos2::new(18.5, 18.5)],
+				[Pos2::new(18.5, 18.5), Pos2::new(18.5, 13.5)],
 			]
 		);
 	}
