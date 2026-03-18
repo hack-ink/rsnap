@@ -2,7 +2,9 @@ mod decode;
 mod state;
 mod tap;
 
-pub(super) use self::state::SharedScrollInputState;
+pub(super) use self::state::{
+	ScrollInputObserverLifecycle, ScrollInputObserverWaitOutcome, SharedScrollInputState,
+};
 pub(super) use self::tap::spawn_scroll_input_observer;
 
 use std::ffi::c_void;

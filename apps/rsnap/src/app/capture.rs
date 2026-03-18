@@ -1,8 +1,7 @@
 #[cfg(target_os = "macos")]
-use std::sync::{
-	Arc,
-	atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, atomic::Ordering};
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 use color_eyre::eyre;
@@ -12,12 +11,17 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
 #[cfg(target_os = "macos")]
-use crate::app::scroll_input_macos::{self, SharedScrollInputState};
+use crate::app::scroll_input_macos::{
+	self, ScrollInputObserverLifecycle, ScrollInputObserverWaitOutcome, SharedScrollInputState,
+};
 #[cfg(target_os = "macos")]
 use crate::app::{self, UserEvent};
 #[cfg(target_os = "macos")]
 use crate::permissions_macos;
 use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
+
+#[cfg(target_os = "macos")]
+const SCROLL_INPUT_OBSERVER_READY_TIMEOUT: Duration = Duration::from_millis(250);
 
 impl App {
 	fn overlay_config(&self) -> OverlayConfig {
@@ -133,9 +137,9 @@ impl App {
 		#[cfg(target_os = "macos")]
 		overlay_session.set_scroll_capture_starting_hook(Arc::new({
 			let shared_state = Arc::clone(&self.scroll_input_shared_state);
-			let observer_started = Arc::clone(&self.scroll_input_observer_started);
+			let observer_lifecycle = Arc::clone(&self.scroll_input_observer_lifecycle);
 
-			move || Self::ensure_external_scroll_input_observer(&shared_state, &observer_started)
+			move || Self::prepare_external_scroll_input(&shared_state, &observer_lifecycle)
 		}));
 		#[cfg(target_os = "macos")]
 		overlay_session.set_scroll_capture_started_hook(Arc::new({
@@ -259,15 +263,30 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn ensure_external_scroll_input_observer(
+	fn prepare_external_scroll_input(
 		shared_state: &Arc<SharedScrollInputState>,
-		observer_started: &Arc<AtomicBool>,
-	) {
-		if observer_started
-			.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-			.is_ok()
-		{
-			scroll_input_macos::spawn_scroll_input_observer(Arc::clone(shared_state));
+		observer_lifecycle: &Arc<ScrollInputObserverLifecycle>,
+	) -> Result<()> {
+		if observer_lifecycle.begin_start_if_needed()
+			&& let Err(err) = scroll_input_macos::spawn_scroll_input_observer(
+				Arc::clone(shared_state),
+				Arc::clone(observer_lifecycle),
+			) {
+			observer_lifecycle.mark_failed();
+
+			return Err(eyre::eyre!(
+				"Scroll capture could not start the native scroll observer: {err}"
+			));
+		}
+
+		match observer_lifecycle.wait_until_ready(SCROLL_INPUT_OBSERVER_READY_TIMEOUT) {
+			ScrollInputObserverWaitOutcome::Ready => Ok(()),
+			ScrollInputObserverWaitOutcome::TimedOut => Err(eyre::eyre!(
+				"Scroll capture is still starting the native scroll observer. Retry once."
+			)),
+			ScrollInputObserverWaitOutcome::Failed => Err(eyre::eyre!(
+				"Scroll capture could not activate the native scroll observer. Retry once. If Input Monitoring was just enabled, reopen the Permissions menu and try again."
+			)),
 		}
 	}
 
