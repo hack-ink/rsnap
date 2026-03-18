@@ -843,7 +843,7 @@ impl OverlaySession {
 	fn overlay_state_with_loupe_patch(loupe_sample_side_px: u32) -> OverlayState {
 		let mut state = OverlayState::new();
 
-		state.loupe_patch_side_px = loupe_sample_side_px;
+		state.reset_for_start(loupe_sample_side_px);
 
 		state
 	}
@@ -11824,6 +11824,7 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	use winit::dpi::PhysicalPosition;
 	use winit::event::{ElementState, MouseButton, MouseScrollDelta};
+	use winit::keyboard::ModifiersState;
 
 	#[cfg(target_os = "macos")]
 	use crate::backend;
@@ -12839,6 +12840,45 @@ mod tests {
 		session.reset_for_start();
 
 		assert!(session.scroll_capture.external_scroll_input_drain_reader.is_some());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn reset_for_start_clears_reused_session_transient_flags() {
+		let mut session = OverlaySession {
+			window_list_refresh_inflight: true,
+			drop_next_window_list_refresh_snapshot: true,
+			png_encode_inflight: true,
+			pending_self_capture_exception_window_ids_worker_refresh: true,
+			authoritative_frozen_capture_ready: true,
+			capture_windows_hidden: true,
+			last_alt_press_at: Some(Instant::now()),
+			alt_modifier_down: true,
+			keyboard_modifiers: ModifiersState::SHIFT,
+			left_mouse_button_down: true,
+			left_mouse_button_down_monitor: Some(test_monitor()),
+			left_mouse_button_down_global: Some(GlobalPoint::new(12, 34)),
+			toolbar_window_visible: true,
+			toolbar_window_warmup_redraws_remaining: 3,
+			..OverlaySession::default()
+		};
+
+		session.reset_for_start();
+
+		assert!(!session.window_list_refresh_inflight);
+		assert!(!session.drop_next_window_list_refresh_snapshot);
+		assert!(!session.png_encode_inflight);
+		assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+		assert!(!session.authoritative_frozen_capture_ready);
+		assert!(!session.capture_windows_hidden);
+		assert!(session.last_alt_press_at.is_none());
+		assert!(!session.alt_modifier_down);
+		assert_eq!(session.keyboard_modifiers, ModifiersState::default());
+		assert!(!session.left_mouse_button_down);
+		assert!(session.left_mouse_button_down_monitor.is_none());
+		assert!(session.left_mouse_button_down_global.is_none());
+		assert!(!session.toolbar_window_visible);
+		assert_eq!(session.toolbar_window_warmup_redraws_remaining, 0);
 	}
 
 	#[cfg(target_os = "macos")]

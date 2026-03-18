@@ -1469,10 +1469,13 @@ mod tests {
 
 	#[test]
 	fn missing_exception_window_ids_reports_unshareable_requested_windows() {
-		assert_eq!(live_frame_stream_macos::missing_exception_window_ids(&[], &[]), vec![]);
+		assert_eq!(
+			live_frame_stream_macos::missing_exception_window_ids(&[], &[]),
+			Vec::<u32>::new()
+		);
 		assert_eq!(
 			live_frame_stream_macos::missing_exception_window_ids(&[7, 11], &[7, 11]),
-			vec![]
+			Vec::<u32>::new()
 		);
 		assert_eq!(live_frame_stream_macos::missing_exception_window_ids(&[7, 11], &[11]), vec![7]);
 	}

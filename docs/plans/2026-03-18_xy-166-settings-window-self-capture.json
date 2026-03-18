@@ -346,9 +346,18 @@
       "Verification: cargo make lint exited 0 after the AppKit-to-WindowServer coordinate repair.",
       "Verification: cargo make test exited 0 with 213 nextest tests plus cargo test --all-features after the AppKit-to-WindowServer coordinate repair.",
       "Verification: git diff --check exited 0 after the AppKit-to-WindowServer coordinate repair.",
-      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the AppKit-to-WindowServer coordinate repair."
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the AppKit-to-WindowServer coordinate repair.",
+      "Replan (2026-03-19): reopened the saved plan again after head 78aaf68 picked up two new unresolved review threads, and intentionally shifted from thread-by-thread patching to a broader convergence pass over macOS coordinate-space consistency and reused-session startup state.",
+      "Review repair diagnosis (2026-03-19): the new review threads exposed two coupled risks instead of isolated line fixes: apps/rsnap/src/settings_window/platform.rs and packages/rsnap-overlay/src/overlay/window_runtime.rs were still reasoning about display geometry in mixed AppKit-vs-WindowServer coordinates, and packages/rsnap-overlay/src/overlay/window_runtime.rs let OverlaySession::start() reuse a session without fully clearing transient macOS refresh state.",
+      "Review repair fix (2026-03-19): apps/rsnap/src/settings_window/platform.rs kept the explicit AppKit-to-WindowServer conversion for Settings-window matching, while packages/rsnap-overlay/src/overlay/window_runtime.rs now converts NSScreen frame origins into the same WindowServer desktop space that backend window bounds and CGEvent cursor coordinates already use, adding regression coverage for displays positioned above and below the main display.",
+      "Review repair fix (2026-03-19): packages/rsnap-overlay/src/overlay/window_runtime.rs now resets reused OverlaySession instances from a fresh with_config baseline while preserving only the long-lived response waker and macOS scroll-capture hooks/readers, and packages/rsnap-overlay/src/overlay.rs adds regression coverage that proves transient refresh/export/input flags are cleared across reset_for_start().",
+      "Verification: cargo make fmt exited 0 after the coordinate-space plus fresh-baseline repair batch.",
+      "Verification: cargo make lint exited 0 after the coordinate-space plus fresh-baseline repair batch.",
+      "Verification: cargo make test exited 0 with 218 nextest tests plus cargo test --all-features after the coordinate-space plus fresh-baseline repair batch.",
+      "Verification: git diff --check exited 0 after the coordinate-space plus fresh-baseline repair batch.",
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the coordinate-space plus fresh-baseline repair batch."
     ],
-    "last_updated": "2026-03-19T00:00:00Z",
+    "last_updated": "2026-03-19T12:30:00Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
@@ -356,7 +365,7 @@
       "platform": "macOS",
       "linear_issue_state": "In Review",
       "manual_gui_smoke_ran": true,
-      "follow_up_scope": "repair head 9122e22 Linux dead-code plus review feedback around cached Settings-window ids, self-capture window-list invalidation, and macOS window-server id sourcing"
+      "follow_up_scope": "repair the latest review feedback by converging WindowServer coordinate-space handling and reused-session startup state on top of the published XY-166 PR branch"
     }
   }
 }
