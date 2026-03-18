@@ -170,10 +170,13 @@ type ExternalScrollInputEvent = (u64, Instant, f64, f64, f64, bool, bool);
 #[cfg(target_os = "macos")]
 type ExternalScrollInputDrainReader =
 	Arc<dyn Fn(u64, Instant) -> Vec<ExternalScrollInputEvent> + Send + Sync>;
+
 #[cfg(target_os = "macos")]
 type ScrollCaptureStartGuard = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+
 #[cfg(target_os = "macos")]
 type ScrollCaptureStartingHook = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+
 #[cfg(target_os = "macos")]
 type ScrollCaptureStartedHook = Arc<dyn Fn() + Send + Sync>;
 
@@ -516,6 +519,20 @@ impl DeviceCursorPointSource {
 enum SelectionFlowStyle {
 	Band,
 	FullBorder,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum WindowRendererPath {
+	Overlay,
+	LoupeTile,
+}
+impl WindowRendererPath {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Overlay => "overlay",
+			Self::LoupeTile => "loupe_tile",
+		}
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -7065,6 +7082,13 @@ impl Default for OverlaySession {
 	}
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FrozenToolbarButtonStyle {
+	icon_color: Color32,
+	bg_color: Color32,
+	border_color: Option<Color32>,
+}
+
 struct ScrollPreviewStrip {
 	texture: TextureHandle,
 	size_points: Vec2,
@@ -7471,20 +7495,6 @@ struct HudRedrawSummary {
 struct StartupLiveRgbPlan {
 	focus_window: bool,
 	seed_monitor: Option<MonitorRect>,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum WindowRendererPath {
-	Overlay,
-	LoupeTile,
-}
-impl WindowRendererPath {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Overlay => "overlay",
-			Self::LoupeTile => "loupe_tile",
-		}
-	}
 }
 
 #[derive(Debug, Default)]
@@ -9612,8 +9622,6 @@ impl WindowRenderer {
 		let button_font_size = 18.0;
 		let item_spacing = FROZEN_TOOLBAR_ITEM_SPACING_POINTS;
 		let hit_area_inset = 5.0;
-		let (normal_color, hover_color, selected_color, hover_bg, selected_bg, selected_border) =
-			Self::frozen_toolbar_colors(theme);
 
 		ui.horizontal_centered(|ui| {
 			ui.spacing_mut().item_spacing.x = item_spacing;
@@ -9652,46 +9660,20 @@ impl WindowRenderer {
 				} else {
 					FontFamily::Proportional
 				};
-				let mut icon_color = if action_ready {
-					normal_color
-				} else {
-					Color32::from_rgba_unmultiplied(
-						normal_color.r(),
-						normal_color.g(),
-						normal_color.b(),
-						(normal_color.a() as f32 * 0.45).round() as u8,
-					)
-				};
-				let mut bg_color = Color32::from_rgba_unmultiplied(255, 255, 255, 0);
-				let mut border_alpha = 0.0;
+				let style =
+					Self::frozen_toolbar_button_style(theme, action_ready, hovered, selected);
 
-				if selected_anim > 0.0 {
-					icon_color = Self::blend_color(icon_color, selected_color, selected_anim);
-					bg_color = Self::blend_color(bg_color, selected_bg, selected_anim);
-					border_alpha = selected_anim;
-				}
-				if hover_anim > 0.0 {
-					icon_color = Self::blend_color(icon_color, hover_color, hover_anim);
-					bg_color =
-						Self::blend_color(bg_color, hover_bg, hover_anim * (1.0 - selected_anim));
-				}
 				if glow > 0.0 {
 					let bg_rect = response.rect.shrink(hit_area_inset);
 
-					ui.painter().rect_filled(bg_rect, 8.0, bg_color);
+					ui.painter().rect_filled(bg_rect, 8.0, style.bg_color);
 				}
-				if border_alpha > 0.0 {
-					let selected_border = Color32::from_rgba_unmultiplied(
-						selected_border.r(),
-						selected_border.g(),
-						selected_border.b(),
-						(selected_border.a() as f32 * border_alpha).round() as u8,
-					);
 
+				if let Some(border_color) = style.border_color {
 					ui.painter().rect_stroke(
 						response.rect.shrink(hit_area_inset),
 						8.0,
-						Stroke::new(1.0, selected_border),
+						Stroke::new(1.0, border_color),
 						StrokeKind::Inside,
 					);
 				}
@@ -9701,15 +9683,47 @@ impl WindowRenderer {
 					Align2::CENTER_CENTER,
 					tool.icon(),
 					FontId::new(button_font_size, icon_font),
-					icon_color,
+					style.icon_color,
 				);
 			}
 		});
 	}
 
-	fn frozen_toolbar_colors(
+	fn frozen_toolbar_button_style(
 		theme: HudTheme,
-	) -> (Color32, Color32, Color32, Color32, Color32, Color32) {
+		action_ready: bool,
+		hovered: bool,
+		selected: bool,
+	) -> FrozenToolbarButtonStyle {
+		let hover_anim = if hovered { 1.0 } else { 0.0 };
+		let selected_anim = if selected { 1.0 } else { 0.0 };
+		let (normal_color, hover_color, selected_color, hover_bg, selected_bg) =
+			Self::frozen_toolbar_colors(theme);
+		let mut icon_color = if action_ready {
+			normal_color
+		} else {
+			Color32::from_rgba_unmultiplied(
+				normal_color.r(),
+				normal_color.g(),
+				normal_color.b(),
+				(normal_color.a() as f32 * 0.45).round() as u8,
+			)
+		};
+		let mut bg_color = Color32::from_rgba_unmultiplied(255, 255, 255, 0);
+
+		if selected_anim > 0.0 {
+			icon_color = Self::blend_color(icon_color, selected_color, selected_anim);
+			bg_color = Self::blend_color(bg_color, selected_bg, selected_anim);
+		}
+		if hover_anim > 0.0 {
+			icon_color = Self::blend_color(icon_color, hover_color, hover_anim);
+			bg_color = Self::blend_color(bg_color, hover_bg, hover_anim * (1.0 - selected_anim));
+		}
+
+		FrozenToolbarButtonStyle { icon_color, bg_color, border_color: None }
+	}
+
+	fn frozen_toolbar_colors(theme: HudTheme) -> (Color32, Color32, Color32, Color32, Color32) {
 		let (normal_color, hover_color, selected_color) = match theme {
 			HudTheme::Dark => (
 				Color32::from_rgba_unmultiplied(255, 255, 255, 160),
@@ -9730,12 +9744,8 @@ impl WindowRenderer {
 			HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 28),
 			HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 24),
 		};
-		let selected_border = match theme {
-			HudTheme::Dark => Color32::from_rgba_unmultiplied(255, 255, 255, 82),
-			HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 72),
-		};
 
-		(normal_color, hover_color, selected_color, hover_bg, selected_bg, selected_border)
+		(normal_color, hover_color, selected_color, hover_bg, selected_bg)
 	}
 
 	fn blend_color(a: Color32, b: Color32, t: f32) -> Color32 {
@@ -14466,6 +14476,16 @@ mod tests {
 		assert!(FrozenToolbarTool::Scroll.requires_final_capture());
 		assert!(FrozenToolbarTool::Copy.requires_final_capture());
 		assert!(FrozenToolbarTool::Save.requires_final_capture());
+	}
+
+	#[test]
+	fn frozen_toolbar_selected_mode_uses_fill_without_border() {
+		for theme in [HudTheme::Dark, HudTheme::Light] {
+			let style = WindowRenderer::frozen_toolbar_button_style(theme, true, false, true);
+
+			assert!(style.bg_color.a() > 0);
+			assert_eq!(style.border_color, None);
+		}
 	}
 
 	#[test]

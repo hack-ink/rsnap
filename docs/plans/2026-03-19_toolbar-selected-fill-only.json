@@ -1,0 +1,125 @@
+{
+  "spec": {
+    "schema": "plan/1",
+    "plan_id": "2026-03-19-toolbar-selected-fill-only",
+    "goal": "Make the frozen toolbar selected-state affordance use fill only, removing the extra ring-like decoration while preserving the existing selected behavior.",
+    "success_criteria": [
+      "The frozen toolbar selected mode tool no longer draws an extra selected outline or ring-like decoration beyond the filled selected background.",
+      "The selected state still reads clearly through the existing fill treatment and icon emphasis.",
+      "Hover behavior, action dispatch, and non-selected toolbar visuals remain unchanged outside the selected-ring removal."
+    ],
+    "constraints": [
+      "Keep the change scoped to the frozen toolbar selected-state rendering path.",
+      "Do not widen the task into unrelated HUD, blur, or toolbar-layout changes.",
+      "Follow repo-native verification via cargo make tasks before claiming completion."
+    ],
+    "defaults": {
+      "authority_linear_issue": null,
+      "branch": "y/toolbar-selected-fill-only",
+      "primary_files": [
+        "packages/rsnap-overlay/src/overlay.rs"
+      ],
+      "verification_commands": [
+        "cargo test -p rsnap-overlay --lib frozen_toolbar_mode_tools_are_identifiable",
+        "cargo make fmt",
+        "cargo make lint-rust",
+        "cargo make test"
+      ]
+    },
+    "tasks": [
+      {
+        "id": "task-1",
+        "title": "Confirm the selected-state extra decoration source",
+        "status": "done",
+        "objective": "Verify whether the frozen toolbar selected mode state adds an explicit outline or ring in addition to the filled selection treatment.",
+        "inputs": [
+          "Current frozen toolbar rendering code in `packages/rsnap-overlay/src/overlay.rs`",
+          "User report that the selected button appears to add a small circular decoration"
+        ],
+        "outputs": [
+          "A confirmed source for the extra selected decoration",
+          "A scoped decision about which render path to change"
+        ],
+        "verification": [
+          "The selected-state render path identifies whether the extra decoration comes from a border/stroke versus the icon glyph or hover fill."
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "task-2",
+        "title": "Remove the extra selected decoration while keeping fill-only emphasis",
+        "status": "done",
+        "objective": "Adjust the frozen toolbar selected-state visuals so selected mode tools rely on fill and icon emphasis without drawing an extra ring.",
+        "inputs": [
+          "Confirmed selected-state source from task-1"
+        ],
+        "outputs": [
+          "A localized toolbar rendering change that removes the extra selected ring/outline",
+          "Focused regression coverage or equivalent evidence for the selected-state rendering contract"
+        ],
+        "verification": [
+          "Selected mode tools keep the fill treatment but no longer request a separate selected outline.",
+          "Hover and click behavior for toolbar tools remain intact."
+        ],
+        "depends_on": [
+          "task-1"
+        ]
+      },
+      {
+        "id": "task-3",
+        "title": "Run verification and record evidence",
+        "status": "done",
+        "objective": "Validate the final toolbar visual change with focused and repo-native verification, then update the saved execution state with the result.",
+        "inputs": [
+          "Final frozen toolbar diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the final diff",
+          "Updated plan runtime state"
+        ],
+        "verification": [
+          "The targeted toolbar regression test passes.",
+          "cargo make fmt exits 0.",
+          "cargo make lint-rust exits 0.",
+          "cargo make test exits 0."
+        ],
+        "depends_on": [
+          "task-2"
+        ]
+      }
+    ],
+    "replan_policy": {
+      "owner": "plan-writing",
+      "triggers": [
+        "The apparent extra decoration comes from icon assets or a shared font/rendering primitive rather than the local frozen-toolbar control code.",
+        "Removing the selected outline makes the selected state ambiguous enough that the scope must widen into a broader visual redesign.",
+        "Verification shows the selected-state fix requires a shared toolbar abstraction change outside the current overlay file."
+      ]
+    }
+  },
+  "state": {
+    "phase": "done",
+    "current_task_id": null,
+    "next_task_id": null,
+    "blockers": [],
+    "evidence": [
+      "Task 1 evidence: `render_frozen_toolbar_controls` in `packages/rsnap-overlay/src/overlay.rs` was drawing both `selected_bg` fill and a separate `selected_border` stroke for selected mode tools, confirming the extra ring-like decoration came from the local render path rather than the icon glyph alone.",
+      "Task 2 outcome: the frozen toolbar selected-mode visuals now route through `frozen_toolbar_button_style`, keep the existing fill treatment, and no longer request a selected border stroke.",
+      "Task 2 outcome: added `frozen_toolbar_selected_mode_uses_fill_without_border` to lock the selected-style contract at the helper level across dark and light themes.",
+      "Task 3 verification: `cargo test -p rsnap-overlay --lib frozen_toolbar_selected_mode_uses_fill_without_border` passed with 1 test passing and 0 failures.",
+      "Task 3 verification: `cargo make fmt` completed successfully.",
+      "Task 3 verification: `cargo make lint-rust` completed successfully.",
+      "Task 3 verification: `cargo make test` completed successfully, including 194 nextest cases passing and 0 failures."
+    ],
+    "last_updated": "2026-03-18T17:27:53Z",
+    "replan_reason": null,
+    "context_snapshot": {
+      "branch": "y/toolbar-selected-fill-only",
+      "confirmed_source": "selected_border stroke in render_frozen_toolbar_controls",
+      "selected_border_removed": true,
+      "user_report": "Frozen toolbar selected button seems to add a small circular decoration beyond the existing fill.",
+      "verification_completed": true,
+      "workspace": ".workspaces/y-toolbar-selected-fill-only"
+    }
+  }
+}
