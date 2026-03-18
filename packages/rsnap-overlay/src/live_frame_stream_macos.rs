@@ -520,8 +520,21 @@ impl StreamOutputIvars {
 
 struct StreamState {
 	monitor_id: u32,
+	self_capture_exception_window_ids_complete: bool,
 	stream: Retained<SCStream>,
 	output: Retained<StreamOutput>,
+}
+
+struct CurrentProcessExceptionWindows {
+	windows: Vec<Retained<SCWindow>>,
+	complete: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamReuseDecision {
+	SetupFresh,
+	ReuseCurrent,
+	RetryUpgradeUsingCurrent,
 }
 
 impl StreamOutput {
@@ -704,27 +717,53 @@ fn ensure_stream(
 	frame_seq_counter: Arc<AtomicU64>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<()> {
-	if state.as_ref().is_some_and(|current| current.monitor_id == monitor.id) {
+	let reuse_decision = stream_reuse_decision(
+		state.as_ref().map(|current| current.monitor_id),
+		state.as_ref().is_some_and(|current| current.self_capture_exception_window_ids_complete),
+		monitor.id,
+	);
+
+	if reuse_decision == StreamReuseDecision::ReuseCurrent {
 		return Some(());
 	}
 
 	let now = Instant::now();
 
 	if last_setup_attempt_at.is_some_and(|t| now.duration_since(t) < setup_backoff) {
-		return None;
+		return (reuse_decision == StreamReuseDecision::RetryUpgradeUsingCurrent).then_some(());
 	}
 
 	*last_setup_attempt_at = Some(now);
 
-	teardown_stream(state);
-
-	*state = Some(setup_stream_for_monitor(
+	let Some(next_state) = setup_stream_for_monitor(
 		monitor,
 		filter,
 		frame_waker,
 		frame_seq_counter,
 		shared_latest_frame,
-	)?);
+	) else {
+		return (reuse_decision == StreamReuseDecision::RetryUpgradeUsingCurrent).then_some(());
+	};
+
+	if reuse_decision == StreamReuseDecision::RetryUpgradeUsingCurrent {
+		if !next_state.self_capture_exception_window_ids_complete {
+			let mut next_state = Some(next_state);
+
+			teardown_stream(&mut next_state);
+
+			return Some(());
+		}
+
+		let mut previous_state = state.replace(next_state);
+
+		teardown_stream(&mut previous_state);
+
+		return Some(());
+	}
+
+	teardown_stream(state);
+
+	*state = Some(next_state);
 
 	Some(())
 }
@@ -903,7 +942,7 @@ fn setup_stream_for_monitor(
 	let excepting_windows =
 		find_current_process_exception_windows(&content, &filter.self_capture_exception_window_ids);
 	let excluded_windows: Retained<NSArray<SCWindow>> =
-		NSArray::from_retained_slice(&excepting_windows);
+		NSArray::from_retained_slice(&excepting_windows.windows);
 	let Some((StreamFilterMode::ExcludeCurrentProcess, current_process_application)) =
 		stream_filter_mode_for_current_process(find_current_process_application(&content))
 	else {
@@ -922,7 +961,7 @@ fn setup_stream_for_monitor(
 		op = "live_frame_stream.setup_filter_excluding_current_process",
 		monitor_id = monitor.id,
 		pid = process::id(),
-		excepting_window_count = excepting_windows.len(),
+		excepting_window_count = excepting_windows.windows.len(),
 		"Configured ScreenCaptureKit to exclude rsnap windows from the live stream."
 	);
 
@@ -962,15 +1001,20 @@ fn setup_stream_for_monitor(
 		return None;
 	}
 
-	Some(StreamState { monitor_id: monitor.id, stream, output })
+	Some(StreamState {
+		monitor_id: monitor.id,
+		self_capture_exception_window_ids_complete: excepting_windows.complete,
+		stream,
+		output,
+	})
 }
 
 fn find_current_process_exception_windows(
 	content: &SCShareableContent,
 	self_capture_exception_window_ids: &[u32],
-) -> Vec<Retained<SCWindow>> {
+) -> CurrentProcessExceptionWindows {
 	if self_capture_exception_window_ids.is_empty() {
-		return Vec::new();
+		return CurrentProcessExceptionWindows { windows: Vec::new(), complete: true };
 	}
 
 	let windows = unsafe { content.windows() };
@@ -999,7 +1043,7 @@ fn find_current_process_exception_windows(
 		);
 	}
 
-	matched
+	CurrentProcessExceptionWindows { windows: matched, complete: missing_window_ids.is_empty() }
 }
 
 fn missing_exception_window_ids(
@@ -1011,6 +1055,25 @@ fn missing_exception_window_ids(
 		.copied()
 		.filter(|window_id| !matched_window_ids.contains(window_id))
 		.collect()
+}
+
+fn stream_reuse_decision(
+	current_monitor_id: Option<u32>,
+	self_capture_exception_window_ids_complete: bool,
+	requested_monitor_id: u32,
+) -> StreamReuseDecision {
+	match current_monitor_id {
+		Some(current_monitor_id)
+			if current_monitor_id == requested_monitor_id
+				&& self_capture_exception_window_ids_complete =>
+		{
+			StreamReuseDecision::ReuseCurrent
+		},
+		Some(current_monitor_id) if current_monitor_id == requested_monitor_id => {
+			StreamReuseDecision::RetryUpgradeUsingCurrent
+		},
+		_ => StreamReuseDecision::SetupFresh,
+	}
 }
 
 fn find_current_process_application(
@@ -1412,6 +1475,22 @@ mod tests {
 			vec![]
 		);
 		assert_eq!(live_frame_stream_macos::missing_exception_window_ids(&[7, 11], &[11]), vec![7]);
+	}
+
+	#[test]
+	fn stream_reuse_decision_retries_incomplete_same_monitor_streams() {
+		assert_eq!(
+			live_frame_stream_macos::stream_reuse_decision(Some(7), true, 7),
+			live_frame_stream_macos::StreamReuseDecision::ReuseCurrent
+		);
+		assert_eq!(
+			live_frame_stream_macos::stream_reuse_decision(Some(7), false, 7),
+			live_frame_stream_macos::StreamReuseDecision::RetryUpgradeUsingCurrent
+		);
+		assert_eq!(
+			live_frame_stream_macos::stream_reuse_decision(Some(7), true, 9),
+			live_frame_stream_macos::StreamReuseDecision::SetupFresh
+		);
 	}
 
 	#[test]
