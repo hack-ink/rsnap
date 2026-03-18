@@ -7,6 +7,7 @@
       "Starting a capture while the Settings window is open allows the Settings window to appear in the live/frozen capture flow.",
       "rsnap keeps excluding overlay, HUD, loupe, toolbar, and similar auxiliary capture windows from ScreenCaptureKit-based capture paths.",
       "The app-shell to overlay contract exposes a narrow, explicit self-capture exception surface instead of removing the current-process exclusion entirely.",
+      "Changing the Settings-window allowlist while overlay worker responses are in flight does not wedge freeze/export flows or strand pending worker responses.",
       "Fresh verification covers the changed Rust crates and the saved plan/runtime state."
     ],
     "constraints": [
@@ -87,6 +88,26 @@
           "The saved plan validates as plan/1 JSON"
         ],
         "depends_on": [
+          "task-4"
+        ]
+      },
+      {
+        "id": "task-4",
+        "title": "Harden active-session worker reconfiguration against in-flight response loss",
+        "status": "done",
+        "objective": "Preserve outstanding overlay worker responses while Settings-window allowlist changes trigger live-session self-capture reconfiguration.",
+        "inputs": [
+          "Active-session allowlist refresh path in packages/rsnap-overlay/src/overlay.rs",
+          "Overlay worker response handling for freeze, hit test, window-list refresh, and PNG export"
+        ],
+        "outputs": [
+          "A coherent reconfiguration path that updates live streams immediately without dropping in-flight worker responses or wedging active capture state"
+        ],
+        "verification": [
+          "Automated coverage proves active-session allowlist changes do not replace the worker until pending responses are safely handled.",
+          "Automated coverage proves the deferred worker refresh is applied once the matching in-flight response clears."
+        ],
+        "depends_on": [
           "task-2"
         ]
       }
@@ -148,9 +169,16 @@
       "Verification: cargo test -p rsnap --lib exited 0 with 19 passed tests after the late-allowlist refresh follow-up fix.",
       "Verification: cargo test -p rsnap-overlay --lib exited 0 with 162 passed tests after the late-allowlist refresh follow-up fix.",
       "Verification: cargo make lint-fix exited 0 and applied 6 fixes after the late-allowlist refresh follow-up fix.",
-      "Verification: cargo make test exited 0 after the late-allowlist refresh follow-up fix."
+      "Verification: cargo make test exited 0 after the late-allowlist refresh follow-up fix.",
+      "Review repair (2026-03-18): addressed GitHub review thread discussion_r2954275405 by deferring active-session worker/backend replacement while freeze, hit-test, window-list refresh, or PNG export responses are still in flight, while still refreshing the live-stream allowlist immediately for Settings-window self-capture.",
+      "Implementation detail (2026-03-18): packages/rsnap-overlay/src/overlay.rs now tracks in-flight worker response classes and applies any deferred self_capture_exception_window_ids worker refresh only after the matching response clears, and packages/rsnap-overlay/src/worker.rs exposes a test-only worker debug id so the reconfiguration tests can prove replacement boundaries explicitly.",
+      "Verification: cargo test -p rsnap-overlay --lib exited 0 with 170 passed tests after the in-flight worker reconfiguration repair.",
+      "Verification: cargo test -p rsnap --lib exited 0 with 19 passed tests after the in-flight worker reconfiguration repair.",
+      "Verification: cargo make lint-fix exited 0 and applied 0 fixes after the in-flight worker reconfiguration repair.",
+      "Verification: cargo make lint exited 0 after the in-flight worker reconfiguration repair.",
+      "Verification: cargo make test exited 0 with 201 nextest tests plus cargo test --all-features after the in-flight worker reconfiguration repair."
     ],
-    "last_updated": "2026-03-18T15:15:42Z",
+    "last_updated": "2026-03-18T15:53:29Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
