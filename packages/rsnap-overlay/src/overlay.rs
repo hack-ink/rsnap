@@ -5061,17 +5061,17 @@ impl OverlaySession {
 				let selection_ready = self.scroll_capture_selection_is_ready();
 
 				tracing::info!(
-					op = "scroll_capture.frozen_s_pressed",
-					available,
-					scroll_capture_active = self.scroll_capture.active,
-					selection_ready,
-					frozen_capture_source = ?self.frozen_capture_source,
-					state_mode = ?self.state.mode,
-					"Received `s` while frozen."
+				op = "scroll_capture.frozen_s_pressed",
+				available,
+				scroll_capture_active = self.scroll_capture.active,
+				selection_ready,
+				frozen_capture_source = ?self.frozen_capture_source,
+				state_mode = ?self.state.mode,
+				"Received `s` while frozen."
 				);
 
 				if selection_ready {
-					self.start_scroll_capture();
+					return self.start_scroll_capture();
 				}
 
 				OverlayControl::Continue
@@ -5302,7 +5302,7 @@ impl OverlaySession {
 		self.toolbar_state.final_capture_ready = self.frozen_final_capture_ready();
 	}
 
-	fn start_scroll_capture(&mut self) {
+	fn start_scroll_capture(&mut self) -> OverlayControl {
 		if self.scroll_capture.active {
 			tracing::info!(
 				op = "scroll_capture.start_rejected",
@@ -5310,7 +5310,7 @@ impl OverlaySession {
 				"Skipped starting scroll capture because a session is already active."
 			);
 
-			return;
+			return OverlayControl::Continue;
 		}
 
 		#[cfg(not(target_os = "macos"))]
@@ -5320,22 +5320,21 @@ impl OverlaySession {
 				reason = "unsupported_platform",
 				"Skipped starting scroll capture because the current platform is unsupported."
 			);
+
+			OverlayControl::Continue
 		}
 		#[cfg(target_os = "macos")]
 		{
 			if let Some(guard) = self.scroll_capture_start_guard.clone()
 				&& let Err(err) = guard()
 			{
-				self.state.set_error(format!("{err:#}"));
-				self.request_redraw_all();
-
-				return;
+				return self.exit(OverlayExit::Error(format!("{err:#}")));
 			}
 
 			let Some((monitor, capture_rect_points, capture_rect_pixels, base_frame)) =
 				self.try_prepare_scroll_capture_start()
 			else {
-				return;
+				return OverlayControl::Continue;
 			};
 			let base_frame_dimensions = base_frame.dimensions();
 
@@ -5346,7 +5345,7 @@ impl OverlaySession {
 						self.state.set_error(format!("{err:#}"));
 						self.request_redraw_all();
 
-						return;
+						return OverlayControl::Continue;
 					},
 				};
 
@@ -5382,6 +5381,8 @@ impl OverlaySession {
 			let _ = self.try_consume_scroll_stream_frame();
 
 			self.request_redraw_for_monitor(monitor);
+
+			OverlayControl::Continue
 		}
 	}
 
@@ -6448,11 +6449,7 @@ impl OverlaySession {
 
 				OverlayControl::Continue
 			},
-			FrozenToolbarTool::Scroll => {
-				self.start_scroll_capture();
-
-				OverlayControl::Continue
-			},
+			FrozenToolbarTool::Scroll => self.start_scroll_capture(),
 			_ => OverlayControl::Continue,
 		}
 	}
@@ -11651,8 +11648,8 @@ mod tests {
 	};
 	use crate::overlay::{
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
-		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect,
-		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlayControl, OverlayExit, OverlaySession, Pos2,
+		Rect, SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
 		SELECTION_DASHED_BORDER_WIDTH_PX, SelectionDashedBorderCache, SelectionDashedBorderMetrics,
 		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
 		hud_helpers,
@@ -12480,6 +12477,24 @@ mod tests {
 		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 
 		assert!(!session.scroll_capture_is_available());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn scroll_capture_guard_error_exits_overlay() {
+		let mut session = OverlaySession::new();
+
+		session.set_scroll_capture_start_guard(Arc::new(|| {
+			Err(color_eyre::eyre::eyre!("Open System Settings and retry."))
+		}));
+
+		let control = session.start_scroll_capture();
+
+		assert!(matches!(
+			control,
+			OverlayControl::Exit(OverlayExit::Error(message))
+			if message.contains("Open System Settings and retry.")
+		));
 	}
 
 	#[cfg(target_os = "macos")]
