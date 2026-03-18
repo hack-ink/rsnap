@@ -551,6 +551,8 @@ pub struct OverlayConfig {
 	pub output_naming: OutputNaming,
 	/// Selects how transparent window captures are flattened.
 	pub window_capture_alpha_mode: WindowCaptureAlphaMode,
+	/// Current-process windows that should remain capturable while the rest of rsnap stays excluded.
+	pub self_capture_exception_window_ids: Vec<u32>,
 }
 impl Default for OverlayConfig {
 	fn default() -> Self {
@@ -573,6 +575,7 @@ impl Default for OverlayConfig {
 			output_filename_prefix: String::from("rsnap"),
 			output_naming: OutputNaming::Timestamp,
 			window_capture_alpha_mode: WindowCaptureAlphaMode::Background,
+			self_capture_exception_window_ids: Vec::new(),
 		}
 	}
 }

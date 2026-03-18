@@ -151,6 +151,11 @@ impl SettingsWindow {
 		self.window.request_redraw();
 	}
 
+	#[must_use]
+	pub fn capture_window_id(&self) -> Option<u32> {
+		platform::capture_window_id(self.window.as_ref())
+	}
+
 	pub fn handle_window_event(&mut self, event: &WindowEvent) -> SettingsControl {
 		match event {
 			WindowEvent::CloseRequested => return SettingsControl::CloseRequested,

@@ -1,11 +1,15 @@
 #[cfg(target_os = "macos")]
 use egui::Sense;
 use egui::{Rect, Ui};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::NSView;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, ModifiersState};
 #[cfg(target_os = "macos")]
 use winit::platform::macos::WindowAttributesExtMacOS;
+#[cfg(target_os = "macos")]
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::{Window, WindowAttributes};
 
 const SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET_MACOS: f32 = -3.0;
@@ -70,4 +74,24 @@ pub(super) fn install_titlebar_drag(ui: &mut Ui, bar_rect: Rect, window: &Window
 
 	#[cfg(not(target_os = "macos"))]
 	let _ = (ui, bar_rect, window);
+}
+
+pub(super) fn capture_window_id(window: &Window) -> Option<u32> {
+	#[cfg(target_os = "macos")]
+	{
+		let handle = window.window_handle().ok()?;
+		let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+			return None;
+		};
+		let ns_view = unsafe { handle.ns_view.as_ptr().cast::<NSView>().as_ref() }?;
+		let ns_window = ns_view.window()?;
+
+		u32::try_from(ns_window.windowNumber()).ok()
+	}
+	#[cfg(not(target_os = "macos"))]
+	{
+		let _ = window;
+
+		None
+	}
 }

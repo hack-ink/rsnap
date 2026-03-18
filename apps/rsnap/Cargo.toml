@@ -27,6 +27,7 @@ egui-wgpu          = { workspace = true }
 egui-winit         = { workspace = true }
 global-hotkey      = { workspace = true }
 image              = { workspace = true }
+objc2-app-kit      = { workspace = true, features = ["NSView", "NSWindow"] }
 pollster           = { workspace = true }
 rsnap-overlay      = { workspace = true }
 serde              = { workspace = true }

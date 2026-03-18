@@ -24,12 +24,17 @@ impl OverlaySession {
 		self.reset_for_start();
 
 		self.worker = Some(OverlayWorker::new(
-			backend::default_capture_backend(),
+			backend::default_capture_backend_with_self_capture_exception_window_ids(
+				self.config.self_capture_exception_window_ids.clone(),
+			),
 			self.response_waker.clone(),
 		));
 		#[cfg(target_os = "macos")]
 		{
-			self.live_sample_stream = Some(MacLiveFrameStream::new());
+			self.live_sample_stream =
+				Some(MacLiveFrameStream::with_self_capture_exception_window_ids(
+					self.config.self_capture_exception_window_ids.clone(),
+				));
 		}
 
 		let monitors = self.available_overlay_monitors()?;
