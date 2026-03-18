@@ -232,12 +232,8 @@ impl App {
 				|| permissions_macos::accessibility_access_granted();
 
 			if !granted_after {
-				if let Err(err) = permissions_macos::open_accessibility_settings() {
-					tracing::warn!(error = %err, "Failed to open Accessibility settings.");
-				}
-
 				return Err(eyre::eyre!(
-					"Scroll capture needs Accessibility. Enable rsnap in {} and retry.",
+					"Scroll capture needs Accessibility. Enable rsnap in {} and retry. Use the Permissions menu after you finish this capture if macOS does not show a prompt.",
 					permissions_macos::ACCESSIBILITY_SETTINGS_PATH
 				));
 			}
@@ -246,12 +242,8 @@ impl App {
 			let requested = permissions_macos::request_input_monitoring_access();
 
 			if !requested && !permissions_macos::input_monitoring_access_granted() {
-				if let Err(err) = permissions_macos::open_input_monitoring_settings() {
-					tracing::warn!(error = %err, "Failed to open Input Monitoring settings.");
-				}
-
 				return Err(eyre::eyre!(
-					"Scroll capture needs Input Monitoring. Enable rsnap in {} and retry.",
+					"Scroll capture needs Input Monitoring. Enable rsnap in {} and retry. Use the Permissions menu after you finish this capture if macOS does not show a prompt.",
 					permissions_macos::INPUT_MONITORING_SETTINGS_PATH
 				));
 			}
