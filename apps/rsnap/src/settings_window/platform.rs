@@ -9,7 +9,9 @@ use std::ptr;
 use egui::Sense;
 use egui::{Rect, Ui};
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSView, NSWindow};
+use objc2::MainThreadMarker;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSScreen, NSView, NSWindow};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent};
 use winit::keyboard::{Key, ModifiersState};
@@ -146,7 +148,7 @@ pub(super) fn capture_window_id(window: &Window) -> Option<u32> {
 		};
 		let ns_view = unsafe { handle.ns_view.as_ptr().cast::<NSView>().as_ref() }?;
 		let ns_window = ns_view.window()?;
-		let target_bounds = window_server_bounds_from_ns_window(&ns_window);
+		let target_bounds = window_server_bounds_from_ns_window(&ns_window)?;
 		let appkit_window_number = u32::try_from(ns_window.windowNumber()).ok();
 		let window_server_windows = current_process_window_server_windows().ok()?;
 
@@ -204,14 +206,46 @@ fn approx_equal_i64(lhs: i64, rhs: i64) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn window_server_bounds_from_ns_window(ns_window: &NSWindow) -> WindowServerBounds {
+fn window_server_bounds_from_ns_window(ns_window: &NSWindow) -> Option<WindowServerBounds> {
 	let frame = ns_window.frame();
-
-	WindowServerBounds {
+	let primary_screen_height = primary_screen_height_points()?;
+	let appkit_bounds = WindowServerBounds {
 		x: frame.origin.x.round() as i64,
 		y: frame.origin.y.round() as i64,
 		width: frame.size.width.round() as i64,
 		height: frame.size.height.round() as i64,
+	};
+
+	Some(window_server_bounds_from_appkit_bounds(appkit_bounds, primary_screen_height))
+}
+
+#[cfg(target_os = "macos")]
+fn primary_screen_height_points() -> Option<i64> {
+	let mtm = MainThreadMarker::new()?;
+	let screens = NSScreen::screens(mtm);
+
+	screens
+		.iter()
+		.find_map(|screen| {
+			let frame = screen.frame();
+			let origin_x = frame.origin.x.round() as i64;
+			let origin_y = frame.origin.y.round() as i64;
+
+			(origin_x == 0 && origin_y == 0).then(|| frame.size.height.round() as i64)
+		})
+		.or_else(|| screens.iter().next().map(|screen| screen.frame().size.height.round() as i64))
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn window_server_bounds_from_appkit_bounds(
+	appkit_bounds: WindowServerBounds,
+	primary_screen_height: i64,
+) -> WindowServerBounds {
+	WindowServerBounds {
+		x: appkit_bounds.x,
+		y: primary_screen_height - (appkit_bounds.y + appkit_bounds.height),
+		width: appkit_bounds.width,
+		height: appkit_bounds.height,
 	}
 }
 
@@ -425,6 +459,17 @@ mod tests {
 				&windows,
 			),
 			Some(17)
+		);
+	}
+
+	#[test]
+	fn window_server_bounds_from_appkit_bounds_flips_y_into_window_server_space() {
+		assert_eq!(
+			platform::window_server_bounds_from_appkit_bounds(
+				WindowServerBounds { x: 10, y: 120, width: 520, height: 360 },
+				900,
+			),
+			WindowServerBounds { x: 10, y: 420, width: 520, height: 360 }
 		);
 	}
 }
