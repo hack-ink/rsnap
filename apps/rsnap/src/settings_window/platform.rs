@@ -35,6 +35,7 @@ const SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET_MACOS: f32 = -3.0;
 const SETTINGS_TITLEBAR_THEME_BUTTONS_Y_OFFSET_DEFAULT: f32 = 0.0;
 const SAVE_SHORTCUT_LABEL_MACOS: &str = "Cmd+S";
 const SAVE_SHORTCUT_LABEL_DEFAULT: &str = "Ctrl+S";
+#[cfg(any(test, target_os = "macos"))]
 const WINDOW_SERVER_BOUNDS_MATCH_TOLERANCE_POINTS: i64 = 2;
 #[cfg(target_os = "macos")]
 const KCF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
@@ -49,6 +50,7 @@ const K_CF_NUMBER_SINT64_TYPE: u32 = 4;
 #[cfg(target_os = "macos")]
 const K_CF_NUMBER_SINT32_TYPE: u32 = 3;
 
+#[cfg(any(test, target_os = "macos"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct WindowServerBounds {
 	x: i64,
@@ -57,6 +59,7 @@ struct WindowServerBounds {
 	height: i64,
 }
 
+#[cfg(any(test, target_os = "macos"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct WindowServerWindowInfo {
 	window_id: u32,
@@ -162,6 +165,7 @@ pub(super) fn capture_window_id(window: &Window) -> Option<u32> {
 	}
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn select_window_server_window_id(
 	target_owner_pid: u32,
 	target_bounds: WindowServerBounds,
@@ -186,6 +190,7 @@ fn select_window_server_window_id(
 	bounds_match
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn window_server_bounds_match(lhs: WindowServerBounds, rhs: WindowServerBounds) -> bool {
 	approx_equal_i64(lhs.x, rhs.x)
 		&& approx_equal_i64(lhs.y, rhs.y)
@@ -193,6 +198,7 @@ fn window_server_bounds_match(lhs: WindowServerBounds, rhs: WindowServerBounds) 
 		&& approx_equal_i64(lhs.height, rhs.height)
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn approx_equal_i64(lhs: i64, rhs: i64) -> bool {
 	(lhs - rhs).abs() <= WINDOW_SERVER_BOUNDS_MATCH_TOLERANCE_POINTS
 }
