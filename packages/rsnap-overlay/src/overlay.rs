@@ -251,6 +251,10 @@ const LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 96;
 const LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK: u8 = 148;
 const FROZEN_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 224;
 const FROZEN_SELECTION_SCRIM_ALPHA_DARK: u8 = 208;
+const SELECTION_DASHED_BORDER_WIDTH_PX: f32 = 2.0;
+const SELECTION_DASHED_BORDER_DASH_LENGTH_PX: f32 = 6.0;
+const SELECTION_DASHED_BORDER_GAP_LENGTH_PX: f32 = 4.0;
+const SELECTION_DASHED_BORDER_ALPHA: u8 = 224;
 const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: image::Rgba<u8> = image::Rgba([246, 246, 246, 255]);
 const WINDOW_CAPTURE_MATTE_DARK_RGBA: image::Rgba<u8> = image::Rgba([24, 24, 24, 255]);
 const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
@@ -8380,11 +8384,72 @@ impl WindowRenderer {
 			drew_scrim = true;
 		}
 
-		if !drew_scrim {
+		let drew_border = Self::render_selection_dashed_border(painter, focus_rect, screen_rect);
+
+		drew_scrim || drew_border
+	}
+
+	fn render_selection_dashed_border(
+		painter: &Painter,
+		focus_rect: Rect,
+		screen_rect: Rect,
+	) -> bool {
+		let stroke_width = SELECTION_DASHED_BORDER_WIDTH_PX;
+		let Some(border_rect) =
+			Self::selection_dashed_border_rect(screen_rect, focus_rect, stroke_width)
+		else {
+			return false;
+		};
+		let path = Self::selection_dashed_border_path(border_rect);
+
+		if path.len() < 2 {
 			return false;
 		}
 
+		let stroke = Stroke::new(
+			stroke_width,
+			Color32::from_rgba_unmultiplied(255, 255, 255, SELECTION_DASHED_BORDER_ALPHA),
+		);
+
+		for shape in Shape::dashed_line(
+			&path,
+			stroke,
+			SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+			SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		) {
+			painter.add(shape);
+		}
+
 		true
+	}
+
+	fn selection_dashed_border_rect(
+		screen_rect: Rect,
+		focus_rect: Rect,
+		stroke_width: f32,
+	) -> Option<Rect> {
+		Self::selection_has_outside_region(screen_rect, focus_rect)
+			.then_some(focus_rect.expand(stroke_width * 0.5))
+	}
+
+	fn selection_has_outside_region(screen_rect: Rect, focus_rect: Rect) -> bool {
+		Self::frozen_selection_scrim_rects(screen_rect, focus_rect)
+			.into_iter()
+			.any(|rect| rect.width() > 0.0 && rect.height() > 0.0)
+	}
+
+	fn selection_dashed_border_path(rect: Rect) -> Vec<Pos2> {
+		if rect.width() <= 0.0 || rect.height() <= 0.0 {
+			return Vec::new();
+		}
+
+		vec![
+			Pos2::new(rect.min.x, rect.min.y),
+			Pos2::new(rect.max.x, rect.min.y),
+			Pos2::new(rect.max.x, rect.max.y),
+			Pos2::new(rect.min.x, rect.max.y),
+			Pos2::new(rect.min.x, rect.min.y),
+		]
 	}
 
 	fn render_selection_flow_ring(
@@ -11316,8 +11381,9 @@ mod tests {
 	};
 	use crate::overlay::{
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
-		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect, TOOLBAR_CAPTURE_GAP_PX,
-		TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
+		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect,
+		SELECTION_DASHED_BORDER_WIDTH_PX, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
+		ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
@@ -11735,6 +11801,66 @@ mod tests {
 		let scrim_rects = WindowRenderer::frozen_selection_scrim_rects(screen_rect, screen_rect);
 
 		assert!(scrim_rects.into_iter().all(|rect| rect.width() <= 0.0 || rect.height() <= 0.0));
+	}
+
+	#[test]
+	fn selection_dashed_border_rect_is_absent_for_fullscreen_rect() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 80.0));
+
+		assert_eq!(
+			WindowRenderer::selection_dashed_border_rect(
+				screen_rect,
+				screen_rect,
+				SELECTION_DASHED_BORDER_WIDTH_PX,
+			),
+			None
+		);
+	}
+
+	#[test]
+	fn selection_dashed_border_rect_expands_focus_rect_outward() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 80.0));
+		let focus_rect = Rect::from_min_size(Pos2::new(20.0, 10.0), Vec2::new(40.0, 30.0));
+
+		assert_eq!(
+			WindowRenderer::selection_dashed_border_rect(
+				screen_rect,
+				focus_rect,
+				SELECTION_DASHED_BORDER_WIDTH_PX,
+			),
+			Some(Rect::from_min_max(Pos2::new(19.0, 9.0), Pos2::new(61.0, 41.0),))
+		);
+	}
+
+	#[test]
+	fn selection_dashed_border_rect_can_extend_beyond_screen_edge() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 80.0));
+		let focus_rect = Rect::from_min_size(Pos2::new(0.0, 10.0), Vec2::new(40.0, 30.0));
+
+		assert_eq!(
+			WindowRenderer::selection_dashed_border_rect(
+				screen_rect,
+				focus_rect,
+				SELECTION_DASHED_BORDER_WIDTH_PX,
+			),
+			Some(Rect::from_min_max(Pos2::new(-1.0, 9.0), Pos2::new(41.0, 41.0),))
+		);
+	}
+
+	#[test]
+	fn selection_dashed_border_path_uses_square_corners() {
+		let rect = Rect::from_min_max(Pos2::new(19.0, 9.0), Pos2::new(61.0, 41.0));
+
+		assert_eq!(
+			WindowRenderer::selection_dashed_border_path(rect),
+			vec![
+				Pos2::new(19.0, 9.0),
+				Pos2::new(61.0, 9.0),
+				Pos2::new(61.0, 41.0),
+				Pos2::new(19.0, 41.0),
+				Pos2::new(19.0, 9.0),
+			]
+		);
 	}
 
 	#[test]
