@@ -142,9 +142,14 @@
       "Refinement verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 4 tests passing and 0 failures.",
       "Refinement verification: cargo test -p rsnap-overlay overlay:: --lib passed with 99 tests passing and 0 failures.",
       "Refinement verification: cargo make lint-rust completed successfully.",
-      "Refinement verification: git diff --check returned clean."
+      "Refinement verification: git diff --check returned clean.",
+      "Review follow-up: selection_dashed_border_rect() now expands by the dashed stroke outer radius, including anti-alias feathering, so the keyline remains fully outside the focus rect instead of leaving an inner fringe.",
+      "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 5 tests passing and 0 failures.",
+      "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 100 tests passing and 0 failures.",
+      "Review follow-up verification: cargo make lint-rust completed successfully.",
+      "Review follow-up verification: git diff --check returned clean."
     ],
-    "last_updated": "2026-03-18T03:34:22Z",
+    "last_updated": "2026-03-18T03:52:25Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-164",
