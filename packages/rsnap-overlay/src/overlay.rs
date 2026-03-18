@@ -170,6 +170,10 @@ type ExternalScrollInputEvent = (u64, Instant, f64, f64, f64, bool, bool);
 #[cfg(target_os = "macos")]
 type ExternalScrollInputDrainReader =
 	Arc<dyn Fn(u64, Instant) -> Vec<ExternalScrollInputEvent> + Send + Sync>;
+#[cfg(target_os = "macos")]
+type ScrollCaptureStartGuard = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+#[cfg(target_os = "macos")]
+type ScrollCaptureStartedHook = Arc<dyn Fn() + Send + Sync>;
 
 #[cfg(target_os = "macos")]
 const KCG_HID_EVENT_TAP: u32 = 0;
@@ -670,6 +674,10 @@ pub struct OverlaySession {
 	scroll_capture: ScrollCaptureState,
 	#[cfg(target_os = "macos")]
 	scroll_frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	#[cfg(target_os = "macos")]
+	scroll_capture_start_guard: Option<ScrollCaptureStartGuard>,
+	#[cfg(target_os = "macos")]
+	scroll_capture_started_hook: Option<ScrollCaptureStartedHook>,
 	response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl OverlaySession {
@@ -684,8 +692,8 @@ impl OverlaySession {
 		let live_bg_request_interval = Duration::from_millis(500);
 		let loupe_sample_side_px =
 			Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
-		let window_list_refresh_interval = LIVE_WINDOW_LIST_REFRESH_INTERVAL;
-		let now = Instant::now();
+		let (window_list_refresh_interval, now) =
+			(LIVE_WINDOW_LIST_REFRESH_INTERVAL, Instant::now());
 		#[cfg(not(target_os = "macos"))]
 		let cursor_device = match panic::catch_unwind(device_query::DeviceState::new) {
 			Ok(cursor_device) => Some(cursor_device),
@@ -698,9 +706,7 @@ impl OverlaySession {
 				None
 			},
 		};
-		let mut state = OverlayState::new();
-
-		state.loupe_patch_side_px = loupe_sample_side_px;
+		let state = Self::overlay_state_with_loupe_patch(loupe_sample_side_px);
 
 		Self {
 			config,
@@ -794,14 +800,38 @@ impl OverlaySession {
 			scroll_capture: ScrollCaptureState::default(),
 			#[cfg(target_os = "macos")]
 			scroll_frame_waker: None,
+			#[cfg(target_os = "macos")]
+			scroll_capture_start_guard: None,
+			#[cfg(target_os = "macos")]
+			scroll_capture_started_hook: None,
 			response_waker: None,
 		}
+	}
+
+	fn overlay_state_with_loupe_patch(loupe_sample_side_px: u32) -> OverlayState {
+		let mut state = OverlayState::new();
+
+		state.loupe_patch_side_px = loupe_sample_side_px;
+
+		state
 	}
 
 	#[cfg(target_os = "macos")]
 	/// Registers a wake callback for macOS live-stream frame notifications.
 	pub fn set_scroll_frame_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.scroll_frame_waker = Some(waker);
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Supplies a host-owned guard that must succeed before scroll capture can start.
+	pub fn set_scroll_capture_start_guard(&mut self, guard: ScrollCaptureStartGuard) {
+		self.scroll_capture_start_guard = Some(guard);
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Registers a host-owned callback that fires only after scroll capture actually starts.
+	pub fn set_scroll_capture_started_hook(&mut self, hook: ScrollCaptureStartedHook) {
+		self.scroll_capture_started_hook = Some(hook);
 	}
 
 	/// Registers a wake callback for worker-thread responses.
@@ -5293,6 +5323,15 @@ impl OverlaySession {
 		}
 		#[cfg(target_os = "macos")]
 		{
+			if let Some(guard) = self.scroll_capture_start_guard.clone()
+				&& let Err(err) = guard()
+			{
+				self.state.set_error(format!("{err:#}"));
+				self.request_redraw_all();
+
+				return;
+			}
+
 			let Some((monitor, capture_rect_points, capture_rect_pixels, base_frame)) =
 				self.try_prepare_scroll_capture_start()
 			else {
@@ -5310,6 +5349,10 @@ impl OverlaySession {
 						return;
 					},
 				};
+
+			if let Some(hook) = self.scroll_capture_started_hook.clone() {
+				hook();
+			}
 
 			tracing::info!(
 				op = "scroll_capture.start",
