@@ -23,7 +23,7 @@ use winit::{
 };
 
 #[cfg(target_os = "macos")]
-use crate::app::scroll_input_macos::SharedScrollInputState;
+use crate::app::scroll_input_macos::{ScrollInputObserverLifecycle, SharedScrollInputState};
 use crate::app::{App, UserEvent};
 use crate::settings::AppSettings;
 use crate::settings_window::{CaptureHotkeyNotice, SettingsControl, SettingsWindowAction};
@@ -239,6 +239,8 @@ pub(super) fn run() -> Result<()> {
 	#[cfg(target_os = "macos")]
 	let overlay_stream_event_pending = Arc::new(AtomicBool::new(false));
 	#[cfg(target_os = "macos")]
+	let scroll_input_observer_lifecycle = Arc::new(ScrollInputObserverLifecycle::default());
+	#[cfg(target_os = "macos")]
 	let scroll_input_shared_state = Arc::new(SharedScrollInputState::default());
 	let mut app = App::new(
 		capture_hotkey,
@@ -249,6 +251,8 @@ pub(super) fn run() -> Result<()> {
 		overlay_proxy,
 		#[cfg(target_os = "macos")]
 		overlay_stream_event_pending,
+		#[cfg(target_os = "macos")]
+		scroll_input_observer_lifecycle,
 		#[cfg(target_os = "macos")]
 		scroll_input_shared_state,
 	);
