@@ -157,9 +157,14 @@
       "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 7 tests passing and 0 failures.",
       "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 102 tests passing and 0 failures.",
       "Review follow-up verification: cargo make lint-rust completed successfully.",
+      "Review follow-up verification: git diff --check returned clean.",
+      "Review follow-up: dashed-border stroke width and dash/gap lengths now normalize by pixels_per_point so the promised 2px/6px/4px treatment stays visually consistent on Retina and scaled displays instead of inflating in logical-point space.",
+      "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 8 tests passing and 0 failures.",
+      "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 103 tests passing and 0 failures.",
+      "Review follow-up verification: cargo make lint-rust completed successfully.",
       "Review follow-up verification: git diff --check returned clean."
     ],
-    "last_updated": "2026-03-18T05:14:45Z",
+    "last_updated": "2026-03-18T05:31:28Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-164",
