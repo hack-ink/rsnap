@@ -1,0 +1,132 @@
+{
+  "spec": {
+    "schema": "plan/1",
+    "plan_id": "2026-03-18-xy-166-settings-window-self-capture",
+    "goal": "Allow rsnap to capture its own Settings window on macOS without regressing the existing exclusion of overlay, HUD, loupe, toolbar, and other auxiliary rsnap capture windows.",
+    "success_criteria": [
+      "Starting a capture while the Settings window is open allows the Settings window to appear in the live/frozen capture flow.",
+      "rsnap keeps excluding overlay, HUD, loupe, toolbar, and similar auxiliary capture windows from ScreenCaptureKit-based capture paths.",
+      "The app-shell to overlay contract exposes a narrow, explicit self-capture exception surface instead of removing the current-process exclusion entirely.",
+      "Fresh verification covers the changed Rust crates and the saved plan/runtime state."
+    ],
+    "constraints": [
+      "Keep the change scoped to the macOS self-capture behavior for the Settings window.",
+      "Do not broadly relax rsnap's self-exclusion policy for auxiliary capture windows.",
+      "Preserve the current uncommitted Screen Recording permission-gate work in the primary checkout; do not discard or reset unrelated in-flight edits.",
+      "Use repo-native cargo make tasks where an equivalent task exists."
+    ],
+    "defaults": {
+      "authority_linear_issue": "XY-166",
+      "issue_url": "https://linear.app/hack-ink/issue/XY-166/allow-capturing-rsnaps-own-settings-window-while-keeping-overlay",
+      "primary_files": [
+        "apps/rsnap/src/settings_window.rs",
+        "apps/rsnap/src/app/capture.rs",
+        "packages/rsnap-overlay/src/overlay.rs",
+        "packages/rsnap-overlay/src/live_frame_stream_macos.rs",
+        "packages/rsnap-overlay/src/backend.rs"
+      ],
+      "verification_commands": [
+        "cargo test -p rsnap --lib",
+        "cargo test -p rsnap-overlay overlay:: --lib",
+        "cargo make lint-rust",
+        "python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json"
+      ]
+    },
+    "tasks": [
+      {
+        "id": "task-1",
+        "title": "Expose a stable Settings window self-capture identity from the app shell",
+        "status": "done",
+        "objective": "Teach the Settings window and app shell to surface a native macOS window identifier that can be used as an explicit self-capture exception.",
+        "inputs": [
+          "Current Settings window creation path in apps/rsnap/src/settings_window.rs",
+          "Current app-shell capture startup flow in apps/rsnap/src/app/capture.rs"
+        ],
+        "outputs": [
+          "A narrow app-shell surface that can provide the Settings window capture identity when present"
+        ],
+        "verification": [
+          "The Settings window can expose an optional native capture-window identifier on macOS without changing non-macOS behavior."
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "task-2",
+        "title": "Parameterize ScreenCaptureKit self-exclusion to allow explicit exception windows",
+        "status": "done",
+        "objective": "Replace the hard-coded 'exclude current process with no exceptions' stream filter with an explicit allowlist of self-capture exception windows, and wire the Settings window through that path.",
+        "inputs": [
+          "Task 1 window identity surface",
+          "Current ScreenCaptureKit filter setup in packages/rsnap-overlay/src/live_frame_stream_macos.rs"
+        ],
+        "outputs": [
+          "Overlay/session/backend configuration that can except only the Settings window from the current-process exclusion"
+        ],
+        "verification": [
+          "The ScreenCaptureKit filter continues excluding the current process by default and only includes windows explicitly provided by the host app."
+        ],
+        "depends_on": [
+          "task-1"
+        ]
+      },
+      {
+        "id": "task-3",
+        "title": "Run verification and close the execution state",
+        "status": "done",
+        "objective": "Run focused Rust verification on the final diff, validate the saved plan artifact, and capture the resulting evidence for XY-166.",
+        "inputs": [
+          "Final implementation diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence in the plan runtime state"
+        ],
+        "verification": [
+          "cargo test -p rsnap --lib exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make lint-rust exits 0",
+          "The saved plan validates as plan/1 JSON"
+        ],
+        "depends_on": [
+          "task-2"
+        ]
+      }
+    ],
+    "replan_policy": {
+      "owner": "plan-writing",
+      "triggers": [
+        "Accessing a stable native Settings window identifier requires a broader window-platform abstraction than the current task allows.",
+        "Allowing the Settings window through the ScreenCaptureKit filter also unintentionally reintroduces other rsnap auxiliary windows into capture.",
+        "Verification shows the self-capture exception must be generalized beyond the Settings window or must change the broader capture architecture."
+      ]
+    }
+  },
+  "state": {
+    "phase": "done",
+    "current_task_id": null,
+    "next_task_id": null,
+    "blockers": [],
+    "evidence": [
+      "Main checkout audit (2026-03-18): the original implementation was developed on the primary checkout and mixed with unrelated uncommitted macOS permission-gate changes, so PR closeout proceeded from a dedicated .workspaces lane with a feature-only diff.",
+      "Task 1 outcome: apps/rsnap/src/settings_window.rs and apps/rsnap/src/settings_window/platform.rs now expose the native macOS Settings window capture id, and apps/rsnap/src/app/capture.rs threads that id into OverlayConfig as an explicit self-capture exception list.",
+      "Task 2 outcome: packages/rsnap-overlay/src/overlay.rs, packages/rsnap-overlay/src/overlay/window_runtime.rs, packages/rsnap-overlay/src/backend.rs, and packages/rsnap-overlay/src/live_frame_stream_macos.rs now carry self_capture_exception_window_ids through the session/backend stack and map them to ScreenCaptureKit exceptingWindows while still excluding the rest of the current process by default.",
+      "Verification: cargo test -p rsnap --lib exited 0 with 16 passed tests.",
+      "Verification: cargo test -p rsnap-overlay overlay:: --lib exited 0 with 103 passed tests.",
+      "Verification: cargo make lint-rust exited 0.",
+      "Verification: cargo make lint-fix exited 0 and applied 0 fixes.",
+      "Verification: cargo make fmt exited 0.",
+      "Verification: cargo make test exited 0 across the workspace.",
+      "Verification: git diff --check exited 0.",
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0.",
+      "Manual verification: the user confirmed on 2026-03-18 that Settings-window self-capture works in a local macOS smoke check."
+    ],
+    "last_updated": "2026-03-18T09:37:13Z",
+    "replan_reason": null,
+    "context_snapshot": {
+      "linear_issue": "XY-166",
+      "workspace_strategy": "dedicated clone-backed workspace lane .workspaces/xy-166-settings-self-capture on branch y/xy-166-settings-self-capture",
+      "platform": "macOS",
+      "linear_issue_state": "In Review",
+      "manual_gui_smoke_ran": true
+    }
+  }
+}
