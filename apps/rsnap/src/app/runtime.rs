@@ -75,6 +75,7 @@ impl ApplicationHandler<UserEvent> for App {
 			let Some(mut settings_window) = self.settings_window.take() else {
 				return;
 			};
+			let previous_capture_window_id = self.settings_window_capture_window_id;
 			let mut should_close = false;
 			let mut settings_changed = false;
 			let mut overlay_changed = false;
@@ -131,14 +132,34 @@ impl ApplicationHandler<UserEvent> for App {
 			if action_changed {
 				settings_changed = true;
 			}
-			if overlay_changed {
+			if should_close {
+				self.settings_window_capture_window_id = None;
+
+				self.apply_overlay_settings();
+
+				return;
+			}
+
+			let live_capture_window_id = settings_window.capture_window_id();
+			let previous_capture_window_id_still_on_screen = previous_capture_window_id
+				.is_some_and(|window_id| settings_window.is_capture_window_id_on_screen(window_id));
+			let next_capture_window_id = effective_settings_window_capture_window_id(
+				previous_capture_window_id,
+				live_capture_window_id,
+				previous_capture_window_id_still_on_screen,
+			);
+			let capture_window_id_changed = settings_window_capture_window_id_changed(
+				previous_capture_window_id,
+				next_capture_window_id,
+			);
+
+			self.settings_window_capture_window_id = next_capture_window_id;
+
+			if overlay_changed || capture_window_id_changed {
 				self.apply_overlay_settings();
 			}
 			if settings_changed && let Err(err) = self.settings.save() {
 				tracing::warn!(error = ?err, "Failed to save settings.");
-			}
-			if should_close {
-				return;
 			}
 
 			self.settings_window = Some(settings_window);
@@ -283,4 +304,49 @@ pub(super) fn run() -> Result<()> {
 	event_loop.run_app(&mut app).map_err(|err: EventLoopError| eyre::eyre!(err))?;
 
 	Ok(())
+}
+
+fn effective_settings_window_capture_window_id(
+	previous_capture_window_id: Option<u32>,
+	live_capture_window_id: Option<u32>,
+	previous_capture_window_id_still_on_screen: bool,
+) -> Option<u32> {
+	live_capture_window_id
+		.or(previous_capture_window_id.filter(|_| previous_capture_window_id_still_on_screen))
+}
+
+fn settings_window_capture_window_id_changed(
+	previous_capture_window_id: Option<u32>,
+	next_capture_window_id: Option<u32>,
+) -> bool {
+	previous_capture_window_id != next_capture_window_id
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::app::runtime;
+
+	#[test]
+	fn settings_window_capture_window_id_change_requires_overlay_refresh() {
+		assert!(runtime::settings_window_capture_window_id_changed(None, Some(41)));
+		assert!(runtime::settings_window_capture_window_id_changed(Some(7), Some(41)));
+		assert!(!runtime::settings_window_capture_window_id_changed(Some(41), Some(41)));
+	}
+
+	#[test]
+	fn effective_settings_window_capture_window_id_preserves_cached_id_until_live_id_resolves() {
+		assert_eq!(runtime::effective_settings_window_capture_window_id(None, None, false), None);
+		assert_eq!(
+			runtime::effective_settings_window_capture_window_id(Some(41), None, true),
+			Some(41)
+		);
+		assert_eq!(
+			runtime::effective_settings_window_capture_window_id(Some(41), None, false),
+			None
+		);
+		assert_eq!(
+			runtime::effective_settings_window_capture_window_id(Some(7), Some(41), false),
+			Some(41)
+		);
+	}
 }

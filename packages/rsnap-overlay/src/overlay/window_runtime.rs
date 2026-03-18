@@ -1,17 +1,18 @@
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSArray;
 use winit::window::Window;
 
 use crate::backend;
 #[cfg(target_os = "macos")]
 use crate::overlay::{self, MacLiveFrameStream, MainThreadMarker, NSScreen};
 use crate::overlay::{
-	ActiveEventLoop, FrozenCaptureSource, FrozenToolbarState, GlobalPoint, GpuContext,
-	HUD_PILL_CORNER_RADIUS_POINTS, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS,
-	LiveSampleApplyResult, LogicalPosition, LogicalSize, MonitorRect, OverlayEventLoopPhase,
-	OverlayMode, OverlaySession, OverlayWindow, OverlayWorker, Result, ScrollCaptureState,
-	ScrollPreviewWindow, SlowOperationLogger, TOOLBAR_EXPANDED_HEIGHT_PX,
-	TOOLBAR_EXPANDED_WIDTH_PX, WindowLevel, WindowRenderer, hud_helpers,
+	ActiveEventLoop, GlobalPoint, GpuContext, HUD_PILL_CORNER_RADIUS_POINTS, HudOverlayWindow,
+	LOUPE_TILE_CORNER_RADIUS_POINTS, LiveSampleApplyResult, LogicalPosition, LogicalSize,
+	MonitorRect, OverlayMode, OverlaySession, OverlayWindow, OverlayWorker, Result,
+	ScrollPreviewWindow, TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_EXPANDED_WIDTH_PX, WindowLevel,
+	WindowRenderer, hud_helpers,
 };
 
 impl OverlaySession {
@@ -24,12 +25,17 @@ impl OverlaySession {
 		self.reset_for_start();
 
 		self.worker = Some(OverlayWorker::new(
-			backend::default_capture_backend(),
+			backend::default_capture_backend_with_self_capture_exception_window_ids(
+				self.config.self_capture_exception_window_ids.clone(),
+			),
 			self.response_waker.clone(),
 		));
 		#[cfg(target_os = "macos")]
 		{
-			self.live_sample_stream = Some(MacLiveFrameStream::new());
+			self.live_sample_stream =
+				Some(MacLiveFrameStream::with_self_capture_exception_window_ids(
+					self.config.self_capture_exception_window_ids.clone(),
+				));
 		}
 
 		let monitors = self.available_overlay_monitors()?;
@@ -70,88 +76,34 @@ impl OverlaySession {
 	}
 
 	pub(super) fn reset_for_start(&mut self) {
-		let now = Instant::now();
-
 		#[cfg(target_os = "macos")]
 		self.set_scroll_overlay_mouse_passthrough(false);
 
-		self.hud_inner_size_points = None;
-		self.hud_outer_pos = None;
-		self.pending_hud_outer_pos = None;
-		self.loupe_inner_size_points = None;
-		self.loupe_outer_pos = None;
-		self.pending_loupe_outer_pos = None;
-		self.toolbar_inner_size_points = None;
-		self.toolbar_outer_pos = None;
-		self.scroll_preview_window = None;
-		self.cursor_monitor = None;
+		let config = self.config.clone();
+		let response_waker = self.response_waker.clone();
 		#[cfg(target_os = "macos")]
-		{
-			self.live_sample_worker = None;
-			self.live_sample_stream = None;
-		}
-
-		self.state.reset_for_start(self.loupe_patch_width_px);
-
-		self.pending_freeze_capture = None;
-		self.inflight_freeze_capture = None;
-		self.pending_freeze_capture_armed = false;
-		self.pending_window_freeze_capture = None;
-		self.inflight_window_freeze_capture = None;
-		self.frozen_window_image = None;
-		self.frozen_capture_source = FrozenCaptureSource::None;
-		self.hit_test_send_full_count = 0;
-		self.hit_test_send_disconnected_count = 0;
-		self.live_cursor_sample_request_id = 0;
-		self.latest_live_cursor_sample_request_id = None;
-		self.applied_live_cursor_sample_request_id = None;
-		self.latest_live_cursor_sample_requested_at = None;
-		self.last_idle_live_sample_request_at = None;
-		self.pending_click_hit_test_request_id = None;
-		self.last_event_cursor = None;
-		self.last_event_cursor_at = None;
-		self.last_live_sample_cursor = None;
-		self.live_sample_stall_started_at = None;
-		self.last_live_sample_stall_log_at = None;
-		self.slow_op_logger = SlowOperationLogger::default();
-		self.last_hud_window_move_at = now;
-		self.last_loupe_window_move_at = now;
-		self.event_loop_phase = OverlayEventLoopPhase::Idle;
-		self.event_loop_progress_seq = 0;
-		self.event_loop_last_progress_at = now;
-		self.event_loop_last_progress_window_id = None;
-		self.event_loop_last_progress_monitor_id = None;
-		self.event_loop_last_progress_detail = None;
-		self.event_loop_last_stall_warn_at = None;
-
+		let scroll_frame_waker = self.scroll_frame_waker.clone();
 		#[cfg(target_os = "macos")]
-		self.clear_macos_hud_window_config_cache();
-
-		self.window_list_snapshot = None;
-		self.last_window_list_refresh_request_at = now - self.window_list_refresh_interval;
-		self.toolbar_state = FrozenToolbarState::default();
-		self.toolbar_left_button_down = false;
-		self.toolbar_left_button_went_down = false;
-		self.toolbar_left_button_went_up = false;
-		self.toolbar_pointer_local = None;
-		self.loupe_window_visible = false;
-		self.loupe_window_warmup_redraws_remaining = 0;
-
+		let scroll_capture_start_guard = self.scroll_capture_start_guard.clone();
+		#[cfg(target_os = "macos")]
+		let scroll_capture_starting_hook = self.scroll_capture_starting_hook.clone();
+		#[cfg(target_os = "macos")]
+		let scroll_capture_started_hook = self.scroll_capture_started_hook.clone();
 		#[cfg(target_os = "macos")]
 		let external_scroll_input_drain_reader =
 			self.scroll_capture.external_scroll_input_drain_reader.clone();
 
-		self.scroll_capture = ScrollCaptureState::default();
+		*self = Self::with_config(config);
+		self.response_waker = response_waker;
 		#[cfg(target_os = "macos")]
 		{
+			self.scroll_frame_waker = scroll_frame_waker;
+			self.scroll_capture_start_guard = scroll_capture_start_guard;
+			self.scroll_capture_starting_hook = scroll_capture_starting_hook;
+			self.scroll_capture_started_hook = scroll_capture_started_hook;
 			self.scroll_capture.external_scroll_input_drain_reader =
 				external_scroll_input_drain_reader;
 		}
-	}
-
-	#[cfg(target_os = "macos")]
-	fn clear_macos_hud_window_config_cache(&mut self) {
-		self.macos_hud_window_config_cache.clear();
 	}
 
 	fn available_overlay_monitors(&self) -> Result<Vec<MonitorRect>, String> {
@@ -179,6 +131,8 @@ impl OverlaySession {
 		let mtm = MainThreadMarker::new()
 			.ok_or_else(|| String::from("Overlay startup requires the macOS main thread."))?;
 		let screens = NSScreen::screens(mtm);
+		let main_display_height = Self::main_display_height_points_from_screens(&screens)
+			.ok_or_else(|| String::from("Overlay startup could not determine the main display."))?;
 		let mut monitor_rects = Vec::with_capacity(screens.len());
 
 		for screen in screens.iter() {
@@ -196,7 +150,11 @@ impl OverlaySession {
 				id: screen.CGDirectDisplayID(),
 				origin: GlobalPoint::new(
 					frame.origin.x.round() as i32,
-					frame.origin.y.round() as i32,
+					Self::window_server_top_from_appkit_bounds(
+						frame.origin.y.round() as i64,
+						height.into(),
+						main_display_height,
+					) as i32,
 				),
 				width,
 				height,
@@ -211,6 +169,35 @@ impl OverlaySession {
 		}
 
 		Ok(monitor_rects)
+	}
+
+	#[cfg(any(test, target_os = "macos"))]
+	fn window_server_top_from_appkit_bounds(
+		appkit_origin_y: i64,
+		frame_height: i64,
+		main_display_height: i64,
+	) -> i64 {
+		// AppKit screen coordinates are rooted at the main display's lower-left corner, while
+		// Quartz global display coordinates are rooted at the main display's upper-left corner.
+		// Secondary-display offsets are already encoded in `appkit_origin_y`, so only the main
+		// display height participates in the y-axis flip into WindowServer space.
+		main_display_height - (appkit_origin_y + frame_height)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn main_display_height_points_from_screens(screens: &NSArray<NSScreen>) -> Option<i64> {
+		screens
+			.iter()
+			.find_map(|screen| {
+				let frame = screen.frame();
+				let origin_x = frame.origin.x.round() as i64;
+				let origin_y = frame.origin.y.round() as i64;
+
+				(origin_x == 0 && origin_y == 0).then(|| frame.size.height.round() as i64)
+			})
+			.or_else(|| {
+				screens.iter().next().map(|screen| screen.frame().size.height.round() as i64)
+			})
 	}
 
 	#[cfg(not(target_os = "macos"))]
@@ -272,6 +259,9 @@ impl OverlaySession {
 					monitor_rect.width as f64,
 					monitor_rect.height as f64,
 				))
+				// On macOS, winit window positions use top-left desktop coordinates and flip
+				// back into AppKit space internally, so the WindowServer-space monitor origin
+				// remains the correct placement/input coordinate system here.
 				.with_position(LogicalPosition::new(
 					monitor_rect.origin.x as f64,
 					monitor_rect.origin.y as f64,
@@ -532,5 +522,20 @@ impl OverlaySession {
 				self.request_redraw_loupe_window();
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::overlay::OverlaySession;
+
+	#[test]
+	fn window_server_top_from_appkit_bounds_maps_display_above_main_into_negative_y() {
+		assert_eq!(OverlaySession::window_server_top_from_appkit_bounds(1_120, 360, 900), -580);
+	}
+
+	#[test]
+	fn window_server_top_from_appkit_bounds_maps_display_below_main_below_main_display_height() {
+		assert_eq!(OverlaySession::window_server_top_from_appkit_bounds(-760, 360, 900), 1_300);
 	}
 }
