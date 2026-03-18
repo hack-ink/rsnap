@@ -11642,14 +11642,14 @@ mod tests {
 	use crate::overlay::{
 		AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
 		InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult,
-		LiveStreamStaleGrace, MacOSScrollPixelResidual, SCROLL_CAPTURE_INPUT_FRESHNESS,
-		SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
-		ScrollCaptureFrameSource, StartupLiveRgbPlan,
+		LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl, OverlayExit,
+		SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
+		SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource, StartupLiveRgbPlan,
 	};
 	use crate::overlay::{
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
-		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlayControl, OverlayExit, OverlaySession, Pos2,
-		Rect, SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect,
+		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
 		SELECTION_DASHED_BORDER_WIDTH_PX, SelectionDashedBorderCache, SelectionDashedBorderMetrics,
 		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
 		hud_helpers,
