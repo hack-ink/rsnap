@@ -3721,6 +3721,7 @@ name = "rsnap"
 version = "0.1.0"
 dependencies = [
  "color-eyre",
+ "core-foundation 0.10.1",
  "criterion",
  "directories",
  "egui",

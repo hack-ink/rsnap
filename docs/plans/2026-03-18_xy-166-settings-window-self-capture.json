@@ -8,12 +8,15 @@
       "rsnap keeps excluding overlay, HUD, loupe, toolbar, and similar auxiliary capture windows from ScreenCaptureKit-based capture paths.",
       "The app-shell to overlay contract exposes a narrow, explicit self-capture exception surface instead of removing the current-process exclusion entirely.",
       "Changing the Settings-window allowlist while overlay worker responses are in flight does not wedge freeze/export flows or strand pending worker responses.",
+      "The branch integrates the newer main-branch permission-gate and app-shell changes without regressing XY-166 self-capture behavior.",
+      "Linux CI lint/test paths stay green after the in-flight worker reconfiguration follow-up and the merge-conflict resolution.",
       "Fresh verification covers the changed Rust crates and the saved plan/runtime state."
     ],
     "constraints": [
       "Keep the change scoped to the macOS self-capture behavior for the Settings window.",
       "Do not broadly relax rsnap's self-exclusion policy for auxiliary capture windows.",
       "Preserve the current uncommitted Screen Recording permission-gate work in the primary checkout; do not discard or reset unrelated in-flight edits.",
+      "Resolve the published PR branch against origin/main without rewriting published history unless explicitly approved.",
       "Use repo-native cargo make tasks where an equivalent task exists."
     ],
     "defaults": {
@@ -110,6 +113,67 @@
         "depends_on": [
           "task-2"
         ]
+      },
+      {
+        "id": "task-5",
+        "title": "Repair the Linux CI warning regression from the worker debug helper",
+        "status": "done",
+        "objective": "Remove the dead-code lint failure introduced by the test-only worker debug helper without weakening the active-session reconfiguration coverage that relies on it.",
+        "inputs": [
+          "GitHub Rust checks failure on Ubuntu for packages/rsnap-overlay/src/worker.rs",
+          "Existing in-flight worker reconfiguration tests in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A narrow worker/debug-helper change that keeps Linux cargo make lint green"
+        ],
+        "verification": [
+          "cargo make lint exits 0 after the worker debug-helper follow-up."
+        ],
+        "depends_on": [
+          "task-4"
+        ]
+      },
+      {
+        "id": "task-6",
+        "title": "Merge origin/main permission-gate changes into the XY-166 lane",
+        "status": "done",
+        "objective": "Integrate the latest main-branch app-shell and permission-gate changes into this published PR branch while preserving the Settings-window self-capture behavior and worker-reconfiguration hardening.",
+        "inputs": [
+          "Current XY-166 branch head",
+          "origin/main conflict set across apps/rsnap and packages/rsnap-overlay"
+        ],
+        "outputs": [
+          "A clean merge commit or equivalent integrated branch state with resolved conflicts"
+        ],
+        "verification": [
+          "git status is clean after the merge resolution.",
+          "The merged sources retain both the permission-gate path and XY-166 self-capture wiring."
+        ],
+        "depends_on": [
+          "task-5"
+        ]
+      },
+      {
+        "id": "task-7",
+        "title": "Re-run verification and record the CI-plus-conflict follow-up evidence",
+        "status": "done",
+        "objective": "Run fresh repo-native verification on the integrated branch, validate the saved plan again, and capture the resulting evidence for the reopened PR follow-up.",
+        "inputs": [
+          "Resolved post-merge implementation diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the current PR head and updated plan runtime state"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check exits 0",
+          "The saved plan validates as plan/1 JSON"
+        ],
+        "depends_on": [
+          "task-6"
+        ]
       }
     ],
     "replan_policy": {
@@ -117,7 +181,8 @@
       "triggers": [
         "Accessing a stable native Settings window identifier requires a broader window-platform abstraction than the current task allows.",
         "Allowing the Settings window through the ScreenCaptureKit filter also unintentionally reintroduces other rsnap auxiliary windows into capture.",
-        "Verification shows the self-capture exception must be generalized beyond the Settings window or must change the broader capture architecture."
+        "Verification shows the self-capture exception must be generalized beyond the Settings window or must change the broader capture architecture.",
+        "Resolving origin/main conflicts requires redesigning the app-shell or permission-gate flow instead of a bounded integration."
       ]
     }
   },
@@ -176,16 +241,28 @@
       "Verification: cargo test -p rsnap --lib exited 0 with 19 passed tests after the in-flight worker reconfiguration repair.",
       "Verification: cargo make lint-fix exited 0 and applied 0 fixes after the in-flight worker reconfiguration repair.",
       "Verification: cargo make lint exited 0 after the in-flight worker reconfiguration repair.",
-      "Verification: cargo make test exited 0 with 201 nextest tests plus cargo test --all-features after the in-flight worker reconfiguration repair."
+      "Verification: cargo make test exited 0 with 201 nextest tests plus cargo test --all-features after the in-flight worker reconfiguration repair.",
+      "Replan (2026-03-19): reopened the saved plan after PR #37 turned red again and became merge-conflicting with origin/main; the follow-up scope is now a bounded Linux CI repair plus integration of main-branch permission-gate changes into the published XY-166 lane.",
+      "Post-PR CI diagnosis (2026-03-19): GitHub Rust checks failed on Linux because packages/rsnap-overlay/src/worker.rs compiled a macOS-only test helper (debug_id) for all test targets, so Ubuntu clippy treated the field and accessor as dead code.",
+      "Follow-up fix (2026-03-19): narrowed OverlayWorker debug_id and next_worker_debug_id to #[cfg(all(test, target_os = \"macos\"))], preserving the macOS worker-reconfiguration tests while removing the Linux dead-code lint failure.",
+      "Conflict resolution (2026-03-19): merged origin/main into y/xy-166-settings-self-capture and resolved the remaining manual conflicts in apps/rsnap/src/settings_window.rs and packages/rsnap-overlay/src/overlay.rs by preserving the Settings-window capture id path, the new periodic redraw helper, main's overlay_state_with_loupe_patch test helper, and the macOS worker-refresh test helpers.",
+      "Integration result (2026-03-19): the branch now carries main's screen-recording permission-gate/app-shell updates alongside XY-166 self-capture wiring and deferred worker-refresh hardening in the same workspace lane.",
+      "Verification: cargo make lint-fix exited 0 after the CI-plus-conflict follow-up and applied 0 fixes.",
+      "Verification: cargo make fmt exited 0 after the CI-plus-conflict follow-up.",
+      "Verification: cargo make lint exited 0 after the CI-plus-conflict follow-up.",
+      "Verification: cargo make test exited 0 with 208 nextest tests plus cargo test --all-features after the CI-plus-conflict follow-up.",
+      "Verification: git diff --check exited 0 after the CI-plus-conflict follow-up.",
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the CI-plus-conflict follow-up."
     ],
-    "last_updated": "2026-03-18T15:53:29Z",
+    "last_updated": "2026-03-18T16:12:56Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
       "workspace_strategy": "dedicated clone-backed workspace lane .workspaces/xy-166-settings-self-capture on branch y/xy-166-settings-self-capture",
       "platform": "macOS",
       "linear_issue_state": "In Review",
-      "manual_gui_smoke_ran": true
+      "manual_gui_smoke_ran": true,
+      "follow_up_scope": "repair Linux CI dead-code regression and resolve origin/main conflicts after permission-gate landed on main"
     }
   }
 }
