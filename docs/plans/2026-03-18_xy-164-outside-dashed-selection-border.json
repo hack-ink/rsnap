@@ -1,0 +1,177 @@
+{
+  "spec": {
+    "schema": "plan/1",
+    "plan_id": "2026-03-18-xy-164-outside-dashed-selection-border",
+    "goal": "Add a restrained outside-only white dashed border for drag and Frozen selections so the boundary stays readable on very dark content without reintroducing the old glow-heavy frozen treatment.",
+    "success_criteria": [
+      "Live drag selection renders a static white dashed border outside the focus rect while preserving the existing bright-inside plus dimmed-outside treatment.",
+      "Frozen selection renders the same outside-only dashed border whenever a non-fullscreen frozen capture rect is visible.",
+      "Fullscreen fallback renders no extra border, and edge-aligned selections clip naturally instead of pushing the border into captured pixels.",
+      "The new border stays visually lightweight and does not restore the previous animated frozen border language.",
+      "Focused overlay tests cover the fullscreen skip behavior and the outside-border geometry path."
+    ],
+    "constraints": [
+      "Keep the implementation scoped to overlay affordance rendering; do not modify capture/export pixel data paths.",
+      "Do not reintroduce animated Frozen border effects.",
+      "Do not draw the dashed border inside the capture rect except where screen-edge clipping naturally removes outside space.",
+      "Use repo-native Rust verification before claiming completion."
+    ],
+    "defaults": {
+      "authority_linear_issue": "XY-164",
+      "issue_url": "https://linear.app/hack-ink/issue/XY-164/add-a-contrast-keyline-around-drag-and-frozen-selection-regions-so-the",
+      "branch": "yvette/xy-164-add-a-contrast-keyline-around-drag-and-frozen-selection",
+      "primary_files": [
+        "packages/rsnap-overlay/src/overlay.rs"
+      ],
+      "verification_commands": [
+        "cargo make fmt",
+        "cargo make lint-rust",
+        "cargo test -p rsnap-overlay overlay:: --lib",
+        "cargo make smoke-macos",
+        "git diff --check"
+      ]
+    },
+    "tasks": [
+      {
+        "id": "task-1",
+        "title": "Define outside dashed-border rendering rules",
+        "status": "done",
+        "objective": "Encode the agreed dashed-border treatment as renderer-local rules for live drag and Frozen focus rects, including fullscreen and edge-clipping behavior.",
+        "inputs": [
+          "XY-164 discussion outcome",
+          "Existing live drag and Frozen scrim render paths in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "Static dashed-border constants and helper(s) with fullscreen skip logic"
+        ],
+        "verification": [
+          "Renderer-local helpers compile cleanly and keep the border outside the focus rect when outside space exists."
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "task-2",
+        "title": "Apply the dashed border to drag and Frozen affordances",
+        "status": "done",
+        "objective": "Render the shared outside-only dashed border on top of the existing scrim treatment for live drag and Frozen selection states without affecting hover-flow behavior.",
+        "inputs": [
+          "Task 1 helper(s)",
+          "Existing render_selection_scrim call sites"
+        ],
+        "outputs": [
+          "Updated scrim render path that draws the agreed border only for non-fullscreen selection rects"
+        ],
+        "verification": [
+          "Live drag and Frozen selection both use the same dashed border treatment.",
+          "Fullscreen fallback still draws no border."
+        ],
+        "depends_on": [
+          "task-1"
+        ]
+      },
+      {
+        "id": "task-3",
+        "title": "Add focused regression coverage",
+        "status": "done",
+        "objective": "Cover the border geometry and gating rules with focused overlay tests so future affordance changes do not regress XY-164.",
+        "inputs": [
+          "Updated affordance renderer from task 2"
+        ],
+        "outputs": [
+          "Overlay tests for fullscreen skip and outside-border geometry"
+        ],
+        "verification": [
+          "New tests fail without the intended behavior and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-2"
+        ]
+      },
+      {
+        "id": "task-4",
+        "title": "Run verification and close execution state",
+        "status": "done",
+        "objective": "Run the agreed verification commands on the final implementation and capture evidence in the saved plan state.",
+        "inputs": [
+          "Final XY-164 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence and updated plan runtime state"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint-rust exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make smoke-macos exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-3"
+        ]
+      }
+    ],
+    "replan_policy": {
+      "owner": "plan-writing",
+      "triggers": [
+        "The renderer cannot express an outside-only dashed border without a broader path-stroking rewrite.",
+        "Shared live drag and Frozen affordance rendering proves insufficient and requires diverging UX rules.",
+        "Verification exposes regressions outside overlay affordance rendering that widen the task beyond XY-164."
+      ]
+    }
+  },
+  "state": {
+    "phase": "done",
+    "current_task_id": null,
+    "next_task_id": null,
+    "blockers": [],
+    "evidence": [
+      "Task 1 outcome: packages/rsnap-overlay/src/overlay.rs now defines renderer-local constants and helpers for a static outside-only white dashed border, including fullscreen skip logic via selection_has_outside_region().",
+      "Task 2 outcome: the shared render_selection_scrim() path now layers the same dashed border onto both live drag and Frozen focus rects while leaving hover-flow and pending-frozen animated behavior unchanged.",
+      "Task 2 constraint kept: fullscreen selections still render no border, and edge-aligned selections allow the outside-only border geometry to clip at the screen edge instead of moving inward.",
+      "Task 3 outcome: added focused overlay tests for fullscreen border suppression, outward expansion of the dashed border rect, and edge-aligned outside-border extension.",
+      "Task 4 verification: cargo test -p rsnap-overlay selection_dashed_border_rect --lib passed with 3 tests passing and 0 failures.",
+      "Task 4 verification: cargo test -p rsnap-overlay frozen_selection_scrim_rects --lib passed with 3 tests passing and 0 failures.",
+      "Task 4 verification: cargo make fmt completed successfully.",
+      "Task 4 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 98 tests passing and 0 failures.",
+      "Task 4 verification: cargo make lint-rust completed successfully.",
+      "Task 4 verification: git diff --check returned clean.",
+      "Task 4 verification: cargo make smoke-macos completed successfully, including PASS from live loupe and scroll-capture smoke scripts.",
+      "Task 4 verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-164-outside-dashed-selection-border.json returned OK.",
+      "Task 4 verification: python3 /Users/xavier/.codex/skills/plan-execution/scripts/read_plan_contract.py --path docs/plans/2026-03-18_xy-164-outside-dashed-selection-border.json returned ok=true with no execution errors.",
+      "Refinement outcome: selection_dashed_border_path() now uses an explicit rectangular polyline so the dashed border corners stay at 90 degrees instead of inheriting the rounded selection-flow geometry.",
+      "Refinement verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 4 tests passing and 0 failures.",
+      "Refinement verification: cargo test -p rsnap-overlay overlay:: --lib passed with 99 tests passing and 0 failures.",
+      "Refinement verification: cargo make lint-rust completed successfully.",
+      "Refinement verification: git diff --check returned clean.",
+      "Review follow-up: selection_dashed_border_rect() now expands by the dashed stroke outer radius, including anti-alias feathering, so the keyline remains fully outside the focus rect instead of leaving an inner fringe.",
+      "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 5 tests passing and 0 failures.",
+      "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 100 tests passing and 0 failures.",
+      "Review follow-up verification: cargo make lint-rust completed successfully.",
+      "Review follow-up verification: git diff --check returned clean.",
+      "Review follow-up: selection_dashed_border now computes dash ranges over the full rectangular perimeter and renders explicit line segments, eliminating the open-path seam that could leave an uneven pattern at the top-left corner.",
+      "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 6 tests passing and 0 failures.",
+      "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 101 tests passing and 0 failures.",
+      "Review follow-up verification: cargo make lint-rust completed successfully.",
+      "Review follow-up verification: git diff --check returned clean.",
+      "Review follow-up: dashed-border geometry is now cached per rect and dash settings inside the window renderer so repeated drag/frozen repaints reuse the same line-segment buffer instead of rebuilding it every frame.",
+      "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 7 tests passing and 0 failures.",
+      "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 102 tests passing and 0 failures.",
+      "Review follow-up verification: cargo make lint-rust completed successfully.",
+      "Review follow-up verification: git diff --check returned clean.",
+      "Review follow-up: dashed-border stroke width and dash/gap lengths now normalize by pixels_per_point so the promised 2px/6px/4px treatment stays visually consistent on Retina and scaled displays instead of inflating in logical-point space.",
+      "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 8 tests passing and 0 failures.",
+      "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 103 tests passing and 0 failures.",
+      "Review follow-up verification: cargo make lint-rust completed successfully.",
+      "Review follow-up verification: git diff --check returned clean."
+    ],
+    "last_updated": "2026-03-18T05:31:28Z",
+    "replan_reason": null,
+    "context_snapshot": {
+      "linear_issue": "XY-164",
+      "discussion_locked": true,
+      "fullscreen_border": "disabled",
+      "border_style": "outside_only_static_white_dashed",
+      "verification_completed": true
+    }
+  }
+}
