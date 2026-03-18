@@ -6,6 +6,7 @@ use egui::Context;
 use egui::DragValue;
 use egui::Pos2;
 use egui::Rect;
+use egui::RichText;
 use egui::Sense;
 use egui::Slider;
 use egui::Stroke;
@@ -13,6 +14,8 @@ use egui::TextEdit;
 use egui::Ui;
 use egui::style::HandleShape;
 
+#[cfg(target_os = "macos")]
+use crate::permissions_macos;
 use crate::settings::{self, AltActivationMode, AppSettings, LoupeSampleSize};
 use crate::settings_window::hotkey;
 use crate::settings_window::hotkey::SettingsUiHotkeyHost;
@@ -30,6 +33,7 @@ pub(super) trait SettingsUiHost: SettingsUiHotkeyHost {
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SettingsUiSectionDefaults {
+	permissions: bool,
 	general: bool,
 	overlay: bool,
 	hotkeys: bool,
@@ -41,6 +45,7 @@ pub(super) struct SettingsUiSectionDefaults {
 impl SettingsUiSectionDefaults {
 	pub(super) const fn standard() -> Self {
 		Self {
+			permissions: true,
 			general: true,
 			overlay: true,
 			hotkeys: false,
@@ -53,6 +58,7 @@ impl SettingsUiSectionDefaults {
 
 	pub(super) const fn all_open() -> Self {
 		Self {
+			permissions: true,
 			general: true,
 			overlay: true,
 			hotkeys: true,
@@ -65,6 +71,7 @@ impl SettingsUiSectionDefaults {
 
 	pub(super) const fn hotkeys_expanded() -> Self {
 		Self {
+			permissions: true,
 			general: true,
 			overlay: true,
 			hotkeys: true,
@@ -127,6 +134,12 @@ pub(super) fn render_all_sections_with_defaults(
 	let combo_width = host.combo_width();
 	let mut changed = false;
 
+	CollapsingHeader::new("Permissions").default_open(defaults.permissions).show(ui, |ui| {
+		changed |= render_permissions_section(ui);
+	});
+
+	ui.add_space(SETTINGS_SECTION_GAP);
+
 	CollapsingHeader::new("General").default_open(defaults.general).show(ui, |ui| {
 		changed |= render_general_section(combo_width, ui, ctx, settings);
 	});
@@ -168,6 +181,171 @@ pub(super) fn render_all_sections_with_defaults(
 	});
 
 	changed
+}
+
+#[cfg(target_os = "macos")]
+fn render_permission_action_row(
+	ui: &mut Ui,
+	button_label: &str,
+	status_text: &str,
+	granted: bool,
+	on_click: impl FnOnce(),
+) {
+	let status_color =
+		if granted { ui.visuals().strong_text_color() } else { ui.visuals().warn_fg_color };
+
+	ui.horizontal(|ui| {
+		if ui.button(button_label).clicked() {
+			on_click();
+		}
+
+		ui.label(RichText::new(status_text).color(status_color).strong());
+	});
+}
+
+#[cfg(target_os = "macos")]
+fn open_screen_recording_from_settings() {
+	let granted_before = permissions_macos::screen_recording_access_granted();
+	let granted_after = if granted_before {
+		true
+	} else {
+		permissions_macos::request_screen_recording_access()
+			|| permissions_macos::screen_recording_access_granted()
+	};
+
+	if !granted_after && let Err(err) = permissions_macos::open_screen_recording_settings() {
+		tracing::warn!(error = %err, "Failed to open Screen Recording settings.");
+	}
+
+	tracing::info!(
+		permission = "screen_recording",
+		source = "settings_window",
+		granted_before,
+		granted_after,
+		"Opened the macOS Screen Recording permission flow."
+	);
+}
+
+#[cfg(target_os = "macos")]
+fn open_accessibility_from_settings() {
+	let granted_before = permissions_macos::accessibility_access_granted();
+	let granted_after = if granted_before {
+		true
+	} else {
+		permissions_macos::request_accessibility_access()
+			|| permissions_macos::accessibility_access_granted()
+	};
+
+	if !granted_after && let Err(err) = permissions_macos::open_accessibility_settings() {
+		tracing::warn!(error = %err, "Failed to open Accessibility settings.");
+	}
+
+	tracing::info!(
+		permission = "accessibility",
+		source = "settings_window",
+		granted_before,
+		granted_after,
+		"Opened the macOS Accessibility permission flow."
+	);
+}
+
+#[cfg(target_os = "macos")]
+fn open_input_monitoring_from_settings() {
+	let granted_before = permissions_macos::input_monitoring_access_granted();
+	let granted_after = if granted_before {
+		true
+	} else {
+		permissions_macos::request_input_monitoring_access()
+			|| permissions_macos::input_monitoring_access_granted()
+	};
+
+	if !granted_after && let Err(err) = permissions_macos::open_input_monitoring_settings() {
+		tracing::warn!(error = %err, "Failed to open Input Monitoring settings.");
+	}
+
+	tracing::info!(
+		permission = "input_monitoring",
+		source = "settings_window",
+		granted_before,
+		granted_after,
+		"Opened the macOS Input Monitoring permission flow."
+	);
+}
+
+fn render_permissions_section(ui: &mut Ui) -> bool {
+	#[cfg(target_os = "macos")]
+	{
+		let screen_recording_granted = permissions_macos::screen_recording_access_granted();
+		let accessibility_granted = permissions_macos::accessibility_access_granted();
+		let input_monitoring_granted = permissions_macos::input_monitoring_access_granted();
+
+		ui.small("Each permission button first asks macOS for access when possible, then opens the matching System Settings pane if access is still missing.");
+
+		render_permission_action_row(
+			ui,
+			"Screen Recording",
+			if screen_recording_granted { "Enabled" } else { "Not enabled" },
+			screen_recording_granted,
+			open_screen_recording_from_settings,
+		);
+
+		ui.small("Required for all region, window, and monitor capture on macOS.");
+		ui.small(
+			"macOS may describe this as Screen & System Audio Recording or direct screen/audio access.",
+		);
+		ui.small("macOS usually shows the Screen Recording consent sheet only once. If no alert appears, use System Settings.");
+		ui.small(
+			"If this still stays disabled after you enable it in System Settings, retry capture or relaunch rsnap so macOS re-evaluates the current process.",
+		);
+		ui.small(format!("Path: {}", permissions_macos::SCREEN_RECORDING_SETTINGS_PATH));
+		ui.add_space(8.0);
+
+		render_permission_action_row(
+			ui,
+			"Accessibility",
+			if accessibility_granted { "Enabled" } else { "Not enabled" },
+			accessibility_granted,
+			open_accessibility_from_settings,
+		);
+
+		ui.small(
+			"Required only for scroll capture because rsnap forwards scroll into the target app.",
+		);
+		ui.small(format!("Path: {}", permissions_macos::ACCESSIBILITY_SETTINGS_PATH));
+		ui.small("Scroll capture checks Accessibility first, then Input Monitoring.");
+		ui.add_space(8.0);
+
+		render_permission_action_row(
+			ui,
+			"Input Monitoring",
+			if input_monitoring_granted { "Enabled" } else { "Not enabled" },
+			input_monitoring_granted,
+			open_input_monitoring_from_settings,
+		);
+
+		ui.small(
+			"Required only for scroll capture because rsnap listens for global scroll-wheel input.",
+		);
+		ui.small("macOS may phrase this as receiving keystrokes from any application even though rsnap only listens for scroll input here.");
+		ui.small("The Input Monitoring sheet may also only appear once. After that, enable rsnap in System Settings.");
+		ui.small(
+			"If this still stays disabled after you enable it in System Settings, relaunch rsnap so macOS re-evaluates the current process.",
+		);
+		ui.small(
+			"rsnap checks this with the same CoreGraphics listen-event permission family used by its native scroll event tap.",
+		);
+		ui.small(format!("Path: {}", permissions_macos::INPUT_MONITORING_SETTINGS_PATH));
+		ui.small("Normal capture does not need Accessibility or Input Monitoring.");
+
+		false
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	{
+		ui.small("This permissions panel is reserved for the macOS Screen Recording flow.");
+
+		false
+	}
 }
 
 fn render_capture_section(combo_width: f32, ui: &mut Ui, settings: &mut AppSettings) -> bool {
