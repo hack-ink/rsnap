@@ -6,6 +6,7 @@ use egui::Context;
 use egui::DragValue;
 use egui::Pos2;
 use egui::Rect;
+#[cfg(target_os = "macos")]
 use egui::RichText;
 use egui::Sense;
 use egui::Slider;
