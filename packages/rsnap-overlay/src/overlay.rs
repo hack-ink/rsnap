@@ -5328,7 +5328,10 @@ impl OverlaySession {
 			if let Some(guard) = self.scroll_capture_start_guard.clone()
 				&& let Err(err) = guard()
 			{
-				return self.exit(OverlayExit::Error(format!("{err:#}")));
+				self.state.set_error(format!("{err:#}"));
+				self.request_redraw_all();
+
+				return OverlayControl::Continue;
 			}
 
 			let Some((monitor, capture_rect_points, capture_rect_pixels, base_frame)) =
@@ -11642,7 +11645,7 @@ mod tests {
 	use crate::overlay::{
 		AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
 		InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult,
-		LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl, OverlayExit,
+		LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl,
 		SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
 		SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource, StartupLiveRgbPlan,
 	};
@@ -12481,8 +12484,10 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	#[test]
-	fn scroll_capture_guard_error_exits_overlay() {
+	fn scroll_capture_guard_error_keeps_frozen_capture_available() {
 		let mut session = OverlaySession::new();
+
+		session.state.frozen_image = Some(RgbaImage::new(1, 1));
 
 		session.set_scroll_capture_start_guard(Arc::new(|| {
 			Err(color_eyre::eyre::eyre!("Open System Settings and retry."))
@@ -12490,11 +12495,15 @@ mod tests {
 
 		let control = session.start_scroll_capture();
 
-		assert!(matches!(
-			control,
-			OverlayControl::Exit(OverlayExit::Error(message))
-			if message.contains("Open System Settings and retry.")
-		));
+		assert!(matches!(control, OverlayControl::Continue));
+		assert!(session.state.frozen_image.is_some());
+		assert!(
+			session
+				.state
+				.error_message
+				.as_deref()
+				.is_some_and(|message| message.contains("Open System Settings and retry."))
+		);
 	}
 
 	#[cfg(target_os = "macos")]
