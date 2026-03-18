@@ -75,9 +75,7 @@ impl ApplicationHandler<UserEvent> for App {
 			let Some(mut settings_window) = self.settings_window.take() else {
 				return;
 			};
-
-			self.settings_window_capture_window_id = settings_window.capture_window_id();
-
+			let previous_capture_window_id = self.settings_window_capture_window_id;
 			let mut should_close = false;
 			let mut settings_changed = false;
 			let mut overlay_changed = false;
@@ -134,12 +132,6 @@ impl ApplicationHandler<UserEvent> for App {
 			if action_changed {
 				settings_changed = true;
 			}
-			if overlay_changed {
-				self.apply_overlay_settings();
-			}
-			if settings_changed && let Err(err) = self.settings.save() {
-				tracing::warn!(error = ?err, "Failed to save settings.");
-			}
 			if should_close {
 				self.settings_window_capture_window_id = None;
 
@@ -148,16 +140,22 @@ impl ApplicationHandler<UserEvent> for App {
 				return;
 			}
 
-			let next_capture_window_id = settings_window.capture_window_id();
+			let next_capture_window_id = effective_settings_window_capture_window_id(
+				previous_capture_window_id,
+				settings_window.capture_window_id(),
+			);
 			let capture_window_id_changed = settings_window_capture_window_id_changed(
-				self.settings_window_capture_window_id,
+				previous_capture_window_id,
 				next_capture_window_id,
 			);
 
 			self.settings_window_capture_window_id = next_capture_window_id;
 
-			if capture_window_id_changed {
+			if overlay_changed || capture_window_id_changed {
 				self.apply_overlay_settings();
+			}
+			if settings_changed && let Err(err) = self.settings.save() {
+				tracing::warn!(error = ?err, "Failed to save settings.");
 			}
 
 			self.settings_window = Some(settings_window);
@@ -304,6 +302,13 @@ pub(super) fn run() -> Result<()> {
 	Ok(())
 }
 
+fn effective_settings_window_capture_window_id(
+	previous_capture_window_id: Option<u32>,
+	live_capture_window_id: Option<u32>,
+) -> Option<u32> {
+	live_capture_window_id.or(previous_capture_window_id)
+}
+
 fn settings_window_capture_window_id_changed(
 	previous_capture_window_id: Option<u32>,
 	next_capture_window_id: Option<u32>,
@@ -320,5 +325,15 @@ mod tests {
 		assert!(runtime::settings_window_capture_window_id_changed(None, Some(41)));
 		assert!(runtime::settings_window_capture_window_id_changed(Some(7), Some(41)));
 		assert!(!runtime::settings_window_capture_window_id_changed(Some(41), Some(41)));
+	}
+
+	#[test]
+	fn effective_settings_window_capture_window_id_preserves_cached_id_until_live_id_resolves() {
+		assert_eq!(runtime::effective_settings_window_capture_window_id(None, None), None);
+		assert_eq!(runtime::effective_settings_window_capture_window_id(Some(41), None), Some(41));
+		assert_eq!(
+			runtime::effective_settings_window_capture_window_id(Some(7), Some(41)),
+			Some(41)
+		);
 	}
 }
