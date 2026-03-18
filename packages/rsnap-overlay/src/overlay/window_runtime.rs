@@ -259,6 +259,9 @@ impl OverlaySession {
 					monitor_rect.width as f64,
 					monitor_rect.height as f64,
 				))
+				// On macOS, winit window positions use top-left desktop coordinates and flip
+				// back into AppKit space internally, so the WindowServer-space monitor origin
+				// remains the correct placement/input coordinate system here.
 				.with_position(LogicalPosition::new(
 					monitor_rect.origin.x as f64,
 					monitor_rect.origin.y as f64,
