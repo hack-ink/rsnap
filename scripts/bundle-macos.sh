@@ -39,7 +39,7 @@ fi
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
-icon_composer_asset="${repo_root}/apps/rsnap/assets/app-icon/composer/AppIcon.icon"
+icon_composer_asset="${repo_root}/assets/app-icon/composer/AppIcon.icon"
 if [[ ! -d "${icon_composer_asset}" ]]; then
 	echo "error: missing Icon Composer asset at ${icon_composer_asset}" >&2
 	exit 1
