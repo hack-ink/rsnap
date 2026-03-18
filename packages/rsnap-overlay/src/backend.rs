@@ -286,6 +286,9 @@ impl XcapCaptureBackend {
 	pub fn with_self_capture_exception_window_ids(
 		self_capture_exception_window_ids: Vec<u32>,
 	) -> Self {
+		#[cfg(not(target_os = "macos"))]
+		let _ = self_capture_exception_window_ids;
+
 		Self {
 			cache: None,
 			cache_ttl: Duration::from_millis(200),
