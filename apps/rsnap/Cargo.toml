@@ -42,6 +42,10 @@ winit              = { workspace = true }
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2         = { workspace = true }
+objc2-app-kit = { workspace = true, features = ["NSScreen", "NSView", "NSWindow"] }
+
 [[bench]]
 harness = false
 name    = "settings_window"
