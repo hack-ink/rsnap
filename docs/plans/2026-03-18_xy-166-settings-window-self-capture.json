@@ -132,9 +132,15 @@
       "Follow-up fix (2026-03-18): gated self_capture_exception_window_ids_changed behind #[cfg(target_os = \"macos\")] so Linux clippy no longer reports an unused variable while preserving the macOS runtime refresh behavior.",
       "Verification: cargo make lint exited 0 after the post-review CI follow-up fix.",
       "Verification: cargo test -p rsnap-overlay --lib exited 0 with 160 passed tests after the post-review CI follow-up fix.",
-      "Verification: cargo make test exited 0 after the post-review CI follow-up fix."
+      "Verification: cargo make test exited 0 after the post-review CI follow-up fix.",
+      "Review repair (2026-03-18): addressed GitHub review threads discussion_r2952918476 and discussion_r2952918482 by caching the Settings window capture id across settings-event handling and deferring ScreenCaptureKit live-stream setup until every requested self-capture exception window resolves from SCShareableContent.",
+      "Verification: cargo test -p rsnap --lib exited 0 with 18 passed tests after the second review-repair batch.",
+      "Verification: cargo test -p rsnap-overlay --lib exited 0 with 161 passed tests after the second review-repair batch.",
+      "Verification: cargo make lint-fix exited 0 and applied 7 style fixes after the second review-repair batch.",
+      "Verification: cargo make lint exited 0 after the second review-repair batch.",
+      "Verification: cargo make test exited 0 after the second review-repair batch."
     ],
-    "last_updated": "2026-03-18T11:36:33Z",
+    "last_updated": "2026-03-18T12:03:42Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
