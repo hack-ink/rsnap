@@ -73,6 +73,9 @@ impl ApplicationHandler<UserEvent> for App {
 			let Some(mut settings_window) = self.settings_window.take() else {
 				return;
 			};
+
+			self.settings_window_capture_window_id = settings_window.capture_window_id();
+
 			let mut should_close = false;
 			let mut settings_changed = false;
 			let mut overlay_changed = false;
@@ -136,11 +139,14 @@ impl ApplicationHandler<UserEvent> for App {
 				tracing::warn!(error = ?err, "Failed to save settings.");
 			}
 			if should_close {
+				self.settings_window_capture_window_id = None;
+
 				self.apply_overlay_settings();
 
 				return;
 			}
 
+			self.settings_window_capture_window_id = settings_window.capture_window_id();
 			self.settings_window = Some(settings_window);
 
 			return;
