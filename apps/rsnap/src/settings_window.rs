@@ -156,6 +156,13 @@ impl SettingsWindow {
 		platform::capture_window_id(self.window.as_ref())
 	}
 
+	#[must_use]
+	pub fn is_capture_window_id_on_screen(&self, capture_window_id: u32) -> bool {
+		let _ = self;
+
+		platform::is_capture_window_id_on_screen(capture_window_id)
+	}
+
 	pub fn maybe_request_periodic_redraw(&self, interval: Duration) {
 		if self.last_redraw.elapsed() >= interval {
 			self.window.request_redraw();
