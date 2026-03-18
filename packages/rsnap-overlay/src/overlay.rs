@@ -8395,8 +8395,10 @@ impl WindowRenderer {
 		screen_rect: Rect,
 	) -> bool {
 		let stroke_width = SELECTION_DASHED_BORDER_WIDTH_PX;
+		let border_outset =
+			Self::selection_dashed_border_outset(stroke_width, painter.pixels_per_point());
 		let Some(border_rect) =
-			Self::selection_dashed_border_rect(screen_rect, focus_rect, stroke_width)
+			Self::selection_dashed_border_rect(screen_rect, focus_rect, border_outset)
 		else {
 			return false;
 		};
@@ -8426,10 +8428,18 @@ impl WindowRenderer {
 	fn selection_dashed_border_rect(
 		screen_rect: Rect,
 		focus_rect: Rect,
-		stroke_width: f32,
+		border_outset: f32,
 	) -> Option<Rect> {
 		Self::selection_has_outside_region(screen_rect, focus_rect)
-			.then_some(focus_rect.expand(stroke_width * 0.5))
+			.then_some(focus_rect.expand(border_outset))
+	}
+
+	fn selection_dashed_border_outset(stroke_width: f32, pixels_per_point: f32) -> f32 {
+		let feathering = 1.0 / pixels_per_point.max(f32::MIN_POSITIVE);
+
+		// Match epaint's outer stroke radius so the anti-aliased dashed keyline
+		// stays fully in the scrim instead of bleeding into the capture rect.
+		(stroke_width + feathering) * 0.5
 	}
 
 	fn selection_has_outside_region(screen_rect: Rect, focus_rect: Rect) -> bool {
@@ -11806,13 +11816,11 @@ mod tests {
 	#[test]
 	fn selection_dashed_border_rect_is_absent_for_fullscreen_rect() {
 		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 80.0));
+		let border_outset =
+			WindowRenderer::selection_dashed_border_outset(SELECTION_DASHED_BORDER_WIDTH_PX, 1.0);
 
 		assert_eq!(
-			WindowRenderer::selection_dashed_border_rect(
-				screen_rect,
-				screen_rect,
-				SELECTION_DASHED_BORDER_WIDTH_PX,
-			),
+			WindowRenderer::selection_dashed_border_rect(screen_rect, screen_rect, border_outset,),
 			None
 		);
 	}
@@ -11821,14 +11829,12 @@ mod tests {
 	fn selection_dashed_border_rect_expands_focus_rect_outward() {
 		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 80.0));
 		let focus_rect = Rect::from_min_size(Pos2::new(20.0, 10.0), Vec2::new(40.0, 30.0));
+		let border_outset =
+			WindowRenderer::selection_dashed_border_outset(SELECTION_DASHED_BORDER_WIDTH_PX, 1.0);
 
 		assert_eq!(
-			WindowRenderer::selection_dashed_border_rect(
-				screen_rect,
-				focus_rect,
-				SELECTION_DASHED_BORDER_WIDTH_PX,
-			),
-			Some(Rect::from_min_max(Pos2::new(19.0, 9.0), Pos2::new(61.0, 41.0),))
+			WindowRenderer::selection_dashed_border_rect(screen_rect, focus_rect, border_outset,),
+			Some(Rect::from_min_max(Pos2::new(18.5, 8.5), Pos2::new(61.5, 41.5),))
 		);
 	}
 
@@ -11836,30 +11842,40 @@ mod tests {
 	fn selection_dashed_border_rect_can_extend_beyond_screen_edge() {
 		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 80.0));
 		let focus_rect = Rect::from_min_size(Pos2::new(0.0, 10.0), Vec2::new(40.0, 30.0));
+		let border_outset =
+			WindowRenderer::selection_dashed_border_outset(SELECTION_DASHED_BORDER_WIDTH_PX, 1.0);
 
 		assert_eq!(
-			WindowRenderer::selection_dashed_border_rect(
-				screen_rect,
-				focus_rect,
-				SELECTION_DASHED_BORDER_WIDTH_PX,
-			),
-			Some(Rect::from_min_max(Pos2::new(-1.0, 9.0), Pos2::new(41.0, 41.0),))
+			WindowRenderer::selection_dashed_border_rect(screen_rect, focus_rect, border_outset,),
+			Some(Rect::from_min_max(Pos2::new(-1.5, 8.5), Pos2::new(41.5, 41.5),))
 		);
 	}
 
 	#[test]
 	fn selection_dashed_border_path_uses_square_corners() {
-		let rect = Rect::from_min_max(Pos2::new(19.0, 9.0), Pos2::new(61.0, 41.0));
+		let rect = Rect::from_min_max(Pos2::new(18.5, 8.5), Pos2::new(61.5, 41.5));
 
 		assert_eq!(
 			WindowRenderer::selection_dashed_border_path(rect),
 			vec![
-				Pos2::new(19.0, 9.0),
-				Pos2::new(61.0, 9.0),
-				Pos2::new(61.0, 41.0),
-				Pos2::new(19.0, 41.0),
-				Pos2::new(19.0, 9.0),
+				Pos2::new(18.5, 8.5),
+				Pos2::new(61.5, 8.5),
+				Pos2::new(61.5, 41.5),
+				Pos2::new(18.5, 41.5),
+				Pos2::new(18.5, 8.5),
 			]
+		);
+	}
+
+	#[test]
+	fn selection_dashed_border_outset_accounts_for_feathering() {
+		assert_eq!(
+			WindowRenderer::selection_dashed_border_outset(SELECTION_DASHED_BORDER_WIDTH_PX, 1.0),
+			1.5
+		);
+		assert_eq!(
+			WindowRenderer::selection_dashed_border_outset(SELECTION_DASHED_BORDER_WIDTH_PX, 2.0),
+			1.25
 		);
 	}
 
