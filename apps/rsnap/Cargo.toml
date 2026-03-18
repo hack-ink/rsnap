@@ -20,6 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 color-eyre         = { workspace = true }
+core-foundation    = "0.10"
 directories        = { workspace = true }
 egui               = { workspace = true }
 egui-phosphor      = { workspace = true }

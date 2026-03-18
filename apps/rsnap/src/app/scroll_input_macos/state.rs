@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 use std::sync::{
-	Mutex,
+	Condvar, Mutex,
 	atomic::{AtomicBool, AtomicU64, Ordering},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const SHARED_SCROLL_INPUT_QUEUE_CAPACITY: usize = 64;
 
@@ -115,6 +115,114 @@ impl SharedScrollInputState {
 	}
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::app) enum ScrollInputObserverStatus {
+	#[default]
+	Idle,
+	Starting,
+	Ready,
+	Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::app) enum ScrollInputObserverWaitOutcome {
+	Ready,
+	TimedOut,
+	Failed,
+}
+
+#[derive(Default)]
+pub(in crate::app) struct ScrollInputObserverLifecycle {
+	status: Mutex<ScrollInputObserverStatus>,
+	status_changed: Condvar,
+}
+impl ScrollInputObserverLifecycle {
+	pub(in crate::app) fn begin_start_if_needed(&self) -> bool {
+		let mut status = match self.status.lock() {
+			Ok(status) => status,
+			Err(poisoned) => poisoned.into_inner(),
+		};
+
+		match *status {
+			ScrollInputObserverStatus::Idle | ScrollInputObserverStatus::Failed => {
+				*status = ScrollInputObserverStatus::Starting;
+
+				self.status_changed.notify_all();
+
+				true
+			},
+			ScrollInputObserverStatus::Starting | ScrollInputObserverStatus::Ready => false,
+		}
+	}
+
+	pub(in crate::app) fn wait_until_ready(
+		&self,
+		timeout: Duration,
+	) -> ScrollInputObserverWaitOutcome {
+		let mut status = match self.status.lock() {
+			Ok(status) => status,
+			Err(poisoned) => poisoned.into_inner(),
+		};
+
+		if *status == ScrollInputObserverStatus::Ready {
+			return ScrollInputObserverWaitOutcome::Ready;
+		}
+		if *status == ScrollInputObserverStatus::Failed {
+			return ScrollInputObserverWaitOutcome::Failed;
+		}
+
+		let wait_result = self.status_changed.wait_timeout_while(status, timeout, |status| {
+			*status == ScrollInputObserverStatus::Starting
+		});
+		let (status_after_wait, timeout_result) = match wait_result {
+			Ok(wait_result) => wait_result,
+			Err(poisoned) => poisoned.into_inner(),
+		};
+
+		status = status_after_wait;
+
+		match *status {
+			ScrollInputObserverStatus::Ready => ScrollInputObserverWaitOutcome::Ready,
+			ScrollInputObserverStatus::Failed | ScrollInputObserverStatus::Idle => {
+				ScrollInputObserverWaitOutcome::Failed
+			},
+			ScrollInputObserverStatus::Starting if timeout_result.timed_out() => {
+				ScrollInputObserverWaitOutcome::TimedOut
+			},
+			ScrollInputObserverStatus::Starting => ScrollInputObserverWaitOutcome::TimedOut,
+		}
+	}
+
+	pub(in crate::app) fn mark_ready(&self) {
+		self.set_status(ScrollInputObserverStatus::Ready);
+	}
+
+	pub(in crate::app) fn mark_failed(&self) {
+		self.set_status(ScrollInputObserverStatus::Failed);
+	}
+
+	#[cfg(test)]
+	pub(in crate::app) fn status(&self) -> ScrollInputObserverStatus {
+		let status = match self.status.lock() {
+			Ok(status) => status,
+			Err(poisoned) => poisoned.into_inner(),
+		};
+
+		*status
+	}
+
+	fn set_status(&self, new_status: ScrollInputObserverStatus) {
+		let mut status = match self.status.lock() {
+			Ok(status) => status,
+			Err(poisoned) => poisoned.into_inner(),
+		};
+
+		*status = new_status;
+
+		self.status_changed.notify_all();
+	}
+}
+
 #[derive(Clone, Copy, Debug)]
 struct SharedScrollInputEvent {
 	seq: u64,
@@ -147,10 +255,12 @@ struct SharedScrollInputQueueState {
 
 #[cfg(test)]
 mod tests {
+	use std::thread;
 	use std::time::{Duration, Instant};
 
 	use crate::app::scroll_input_macos::state::{
-		SHARED_SCROLL_INPUT_QUEUE_CAPACITY, SharedScrollInputState,
+		SHARED_SCROLL_INPUT_QUEUE_CAPACITY, ScrollInputObserverLifecycle,
+		ScrollInputObserverStatus, ScrollInputObserverWaitOutcome, SharedScrollInputState,
 	};
 
 	#[test]
@@ -239,5 +349,56 @@ mod tests {
 			replay.last().map(|event| event.0),
 			Some((SHARED_SCROLL_INPUT_QUEUE_CAPACITY + 2) as u64)
 		);
+	}
+
+	#[test]
+	fn observer_lifecycle_waits_for_ready() {
+		let lifecycle = std::sync::Arc::new(ScrollInputObserverLifecycle::default());
+
+		assert!(lifecycle.begin_start_if_needed());
+
+		thread::spawn({
+			let lifecycle = std::sync::Arc::clone(&lifecycle);
+
+			move || {
+				thread::sleep(Duration::from_millis(10));
+
+				lifecycle.mark_ready();
+			}
+		});
+
+		assert_eq!(
+			lifecycle.wait_until_ready(Duration::from_millis(100)),
+			ScrollInputObserverWaitOutcome::Ready
+		);
+		assert_eq!(lifecycle.status(), ScrollInputObserverStatus::Ready);
+	}
+
+	#[test]
+	fn observer_lifecycle_times_out_while_starting() {
+		let lifecycle = ScrollInputObserverLifecycle::default();
+
+		assert!(lifecycle.begin_start_if_needed());
+		assert_eq!(
+			lifecycle.wait_until_ready(Duration::from_millis(1)),
+			ScrollInputObserverWaitOutcome::TimedOut
+		);
+		assert_eq!(lifecycle.status(), ScrollInputObserverStatus::Starting);
+	}
+
+	#[test]
+	fn observer_lifecycle_restarts_after_failure() {
+		let lifecycle = ScrollInputObserverLifecycle::default();
+
+		assert!(lifecycle.begin_start_if_needed());
+
+		lifecycle.mark_failed();
+
+		assert_eq!(
+			lifecycle.wait_until_ready(Duration::from_millis(1)),
+			ScrollInputObserverWaitOutcome::Failed
+		);
+		assert!(lifecycle.begin_start_if_needed());
+		assert_eq!(lifecycle.status(), ScrollInputObserverStatus::Starting);
 	}
 }

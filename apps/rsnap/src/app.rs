@@ -24,7 +24,11 @@ use winit::event_loop::ActiveEventLoop;
 use winit::event_loop::EventLoopProxy;
 
 #[cfg(target_os = "macos")]
+use self::scroll_input_macos::ScrollInputObserverLifecycle;
+#[cfg(target_os = "macos")]
 use self::scroll_input_macos::SharedScrollInputState;
+#[cfg(target_os = "macos")]
+use crate::permissions_macos;
 use crate::settings::AppSettings;
 use crate::settings_window::SettingsWindow;
 use rsnap_overlay::OverlaySession;
@@ -50,8 +54,12 @@ struct App {
 	#[cfg(target_os = "macos")]
 	menubar_menu: Option<Menu>,
 	settings_menu_id: Option<MenuId>,
+	#[cfg(target_os = "macos")]
+	permissions_menu_id: Option<MenuId>,
 	capture_menu_id: Option<MenuId>,
 	quit_menu_id: Option<MenuId>,
+	#[cfg(target_os = "macos")]
+	menubar_permissions_menu_id: Option<MenuId>,
 	#[cfg(target_os = "macos")]
 	menubar_settings_menu_id: Option<MenuId>,
 	#[cfg(target_os = "macos")]
@@ -65,11 +73,14 @@ struct App {
 	#[cfg(target_os = "macos")]
 	overlay_stream_event_pending: Arc<AtomicBool>,
 	#[cfg(target_os = "macos")]
-	scroll_input_observer_started: bool,
+	scroll_input_observer_lifecycle: Arc<ScrollInputObserverLifecycle>,
 	#[cfg(target_os = "macos")]
 	scroll_input_shared_state: Arc<SharedScrollInputState>,
+	#[cfg(target_os = "macos")]
+	startup_permissions_checked: bool,
 }
 impl App {
+	#[allow(clippy::too_many_arguments)]
 	fn new(
 		capture_hotkey: HotKey,
 		settings: AppSettings,
@@ -77,6 +88,9 @@ impl App {
 		hotkey_manager: Option<GlobalHotKeyManager>,
 		#[cfg(target_os = "macos")] overlay_proxy: EventLoopProxy<UserEvent>,
 		#[cfg(target_os = "macos")] overlay_stream_event_pending: Arc<AtomicBool>,
+		#[cfg(target_os = "macos")] scroll_input_observer_lifecycle: Arc<
+			ScrollInputObserverLifecycle,
+		>,
 		#[cfg(target_os = "macos")] scroll_input_shared_state: Arc<SharedScrollInputState>,
 	) -> Self {
 		Self {
@@ -90,8 +104,12 @@ impl App {
 			#[cfg(target_os = "macos")]
 			menubar_menu: None,
 			settings_menu_id: None,
+			#[cfg(target_os = "macos")]
+			permissions_menu_id: None,
 			capture_menu_id: None,
 			quit_menu_id: None,
+			#[cfg(target_os = "macos")]
+			menubar_permissions_menu_id: None,
 			#[cfg(target_os = "macos")]
 			menubar_settings_menu_id: None,
 			#[cfg(target_os = "macos")]
@@ -105,9 +123,11 @@ impl App {
 			#[cfg(target_os = "macos")]
 			overlay_stream_event_pending,
 			#[cfg(target_os = "macos")]
-			scroll_input_observer_started: false,
+			scroll_input_observer_lifecycle,
 			#[cfg(target_os = "macos")]
 			scroll_input_shared_state,
+			#[cfg(target_os = "macos")]
+			startup_permissions_checked: false,
 		}
 	}
 
@@ -140,6 +160,26 @@ impl App {
 				);
 			},
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn maybe_present_startup_permissions(&mut self, event_loop: &ActiveEventLoop) {
+		if self.startup_permissions_checked {
+			return;
+		}
+
+		self.startup_permissions_checked = true;
+
+		if permissions_macos::screen_recording_access_granted() {
+			return;
+		}
+
+		tracing::info!(
+			settings_path = %permissions_macos::SCREEN_RECORDING_SETTINGS_PATH,
+			"Screen Recording is missing at startup; opening the Settings window."
+		);
+
+		self.open_settings_window(event_loop, "startup-screen-recording-check");
 	}
 }
 

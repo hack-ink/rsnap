@@ -172,6 +172,12 @@ type ExternalScrollInputEvent = (u64, Instant, f64, f64, f64, bool, bool);
 #[cfg(target_os = "macos")]
 type ExternalScrollInputDrainReader =
 	Arc<dyn Fn(u64, Instant) -> Vec<ExternalScrollInputEvent> + Send + Sync>;
+#[cfg(target_os = "macos")]
+type ScrollCaptureStartGuard = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+#[cfg(target_os = "macos")]
+type ScrollCaptureStartingHook = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+#[cfg(target_os = "macos")]
+type ScrollCaptureStartedHook = Arc<dyn Fn() + Send + Sync>;
 
 #[cfg(target_os = "macos")]
 const KCG_HID_EVENT_TAP: u32 = 0;
@@ -681,9 +687,30 @@ pub struct OverlaySession {
 	scroll_capture: ScrollCaptureState,
 	#[cfg(target_os = "macos")]
 	scroll_frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	#[cfg(target_os = "macos")]
+	scroll_capture_start_guard: Option<ScrollCaptureStartGuard>,
+	#[cfg(target_os = "macos")]
+	scroll_capture_starting_hook: Option<ScrollCaptureStartingHook>,
+	#[cfg(target_os = "macos")]
+	scroll_capture_started_hook: Option<ScrollCaptureStartedHook>,
 	response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl OverlaySession {
+	#[cfg(not(target_os = "macos"))]
+	fn try_create_cursor_device() -> Option<device_query::DeviceState> {
+		match panic::catch_unwind(device_query::DeviceState::new) {
+			Ok(cursor_device) => Some(cursor_device),
+			Err(_) => {
+				tracing::warn!(
+					op = "overlay.cursor_device_unavailable",
+					"Falling back to a headless-safe cursor device stub."
+				);
+
+				None
+			},
+		}
+	}
+
 	#[must_use]
 	pub(crate) fn new() -> Self {
 		Self::with_config(OverlayConfig::default())
@@ -695,13 +722,11 @@ impl OverlaySession {
 		let live_bg_request_interval = Duration::from_millis(500);
 		let loupe_sample_side_px =
 			Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
-		let window_list_refresh_interval = LIVE_WINDOW_LIST_REFRESH_INTERVAL;
-		let now = Instant::now();
+		let (window_list_refresh_interval, now) =
+			(LIVE_WINDOW_LIST_REFRESH_INTERVAL, Instant::now());
 		#[cfg(not(target_os = "macos"))]
-		let cursor_device = Self::cursor_device_for_overlay_session();
-		let mut state = OverlayState::new();
-
-		state.loupe_patch_side_px = loupe_sample_side_px;
+		let cursor_device = Self::try_create_cursor_device();
+		let state = Self::overlay_state_with_loupe_patch(loupe_sample_side_px);
 
 		Self {
 			config,
@@ -801,29 +826,47 @@ impl OverlaySession {
 			scroll_capture: ScrollCaptureState::default(),
 			#[cfg(target_os = "macos")]
 			scroll_frame_waker: None,
+			#[cfg(target_os = "macos")]
+			scroll_capture_start_guard: None,
+			#[cfg(target_os = "macos")]
+			scroll_capture_starting_hook: None,
+			#[cfg(target_os = "macos")]
+			scroll_capture_started_hook: None,
 			response_waker: None,
 		}
 	}
 
-	#[cfg(not(target_os = "macos"))]
-	fn cursor_device_for_overlay_session() -> Option<device_query::DeviceState> {
-		match panic::catch_unwind(device_query::DeviceState::new) {
-			Ok(cursor_device) => Some(cursor_device),
-			Err(_) => {
-				tracing::warn!(
-					op = "overlay.cursor_device_unavailable",
-					"Falling back to a headless-safe cursor device stub."
-				);
+	fn overlay_state_with_loupe_patch(loupe_sample_side_px: u32) -> OverlayState {
+		let mut state = OverlayState::new();
 
-				None
-			},
-		}
+		state.loupe_patch_side_px = loupe_sample_side_px;
+
+		state
 	}
 
 	#[cfg(target_os = "macos")]
 	/// Registers a wake callback for macOS live-stream frame notifications.
 	pub fn set_scroll_frame_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.scroll_frame_waker = Some(waker);
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Supplies a host-owned guard that must succeed before scroll capture can start.
+	pub fn set_scroll_capture_start_guard(&mut self, guard: ScrollCaptureStartGuard) {
+		self.scroll_capture_start_guard = Some(guard);
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Registers a host-owned callback that fires after preflight succeeds but before
+	/// scroll capture becomes active.
+	pub fn set_scroll_capture_starting_hook(&mut self, hook: ScrollCaptureStartingHook) {
+		self.scroll_capture_starting_hook = Some(hook);
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Registers a host-owned callback that fires only after scroll capture actually starts.
+	pub fn set_scroll_capture_started_hook(&mut self, hook: ScrollCaptureStartedHook) {
+		self.scroll_capture_started_hook = Some(hook);
 	}
 
 	/// Registers a wake callback for worker-thread responses.
@@ -5165,17 +5208,17 @@ impl OverlaySession {
 				let selection_ready = self.scroll_capture_selection_is_ready();
 
 				tracing::info!(
-					op = "scroll_capture.frozen_s_pressed",
-					available,
-					scroll_capture_active = self.scroll_capture.active,
-					selection_ready,
-					frozen_capture_source = ?self.frozen_capture_source,
-					state_mode = ?self.state.mode,
-					"Received `s` while frozen."
+				op = "scroll_capture.frozen_s_pressed",
+				available,
+				scroll_capture_active = self.scroll_capture.active,
+				selection_ready,
+				frozen_capture_source = ?self.frozen_capture_source,
+				state_mode = ?self.state.mode,
+				"Received `s` while frozen."
 				);
 
 				if selection_ready {
-					self.start_scroll_capture();
+					return self.start_scroll_capture();
 				}
 
 				OverlayControl::Continue
@@ -5411,7 +5454,7 @@ impl OverlaySession {
 		self.toolbar_state.final_capture_ready = self.frozen_final_capture_ready();
 	}
 
-	fn start_scroll_capture(&mut self) {
+	fn start_scroll_capture(&mut self) -> OverlayControl {
 		if self.scroll_capture.active {
 			tracing::info!(
 				op = "scroll_capture.start_rejected",
@@ -5419,7 +5462,7 @@ impl OverlaySession {
 				"Skipped starting scroll capture because a session is already active."
 			);
 
-			return;
+			return OverlayControl::Continue;
 		}
 
 		#[cfg(not(target_os = "macos"))]
@@ -5429,14 +5472,34 @@ impl OverlaySession {
 				reason = "unsupported_platform",
 				"Skipped starting scroll capture because the current platform is unsupported."
 			);
+
+			OverlayControl::Continue
 		}
 		#[cfg(target_os = "macos")]
 		{
 			let Some((monitor, capture_rect_points, capture_rect_pixels, base_frame)) =
 				self.try_prepare_scroll_capture_start()
 			else {
-				return;
+				return OverlayControl::Continue;
 			};
+
+			if let Some(guard) = self.scroll_capture_start_guard.clone()
+				&& let Err(err) = guard()
+			{
+				self.state.set_error(format!("{err:#}"));
+				self.request_redraw_all();
+
+				return OverlayControl::Continue;
+			}
+			if let Some(hook) = self.scroll_capture_starting_hook.clone()
+				&& let Err(err) = hook()
+			{
+				self.state.set_error(format!("{err:#}"));
+				self.request_redraw_all();
+
+				return OverlayControl::Continue;
+			}
+
 			let base_frame_dimensions = base_frame.dimensions();
 
 			self.scroll_capture =
@@ -5446,9 +5509,13 @@ impl OverlaySession {
 						self.state.set_error(format!("{err:#}"));
 						self.request_redraw_all();
 
-						return;
+						return OverlayControl::Continue;
 					},
 				};
+
+			if let Some(hook) = self.scroll_capture_started_hook.clone() {
+				hook();
+			}
 
 			tracing::info!(
 				op = "scroll_capture.start",
@@ -5478,6 +5545,8 @@ impl OverlaySession {
 			let _ = self.try_consume_scroll_stream_frame();
 
 			self.request_redraw_for_monitor(monitor);
+
+			OverlayControl::Continue
 		}
 	}
 
@@ -6544,11 +6613,7 @@ impl OverlaySession {
 
 				OverlayControl::Continue
 			},
-			FrozenToolbarTool::Scroll => {
-				self.start_scroll_capture();
-
-				OverlayControl::Continue
-			},
+			FrozenToolbarTool::Scroll => self.start_scroll_capture(),
 			_ => OverlayControl::Continue,
 		}
 	}
@@ -11743,9 +11808,9 @@ mod tests {
 	use crate::overlay::{
 		AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
 		InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult,
-		LiveStreamStaleGrace, MacOSScrollPixelResidual, SCROLL_CAPTURE_INPUT_FRESHNESS,
-		SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
-		ScrollCaptureFrameSource, StartupLiveRgbPlan,
+		LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl,
+		SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
+		SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource, StartupLiveRgbPlan,
 	};
 	use crate::overlay::{
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
@@ -11836,6 +11901,17 @@ mod tests {
 		session.config.self_capture_exception_window_ids = vec![17];
 
 		(session, worker_debug_id)
+	}
+
+	fn seed_ready_scroll_capture_selection(session: &mut OverlaySession) {
+		let monitor = test_monitor_with_scale(8, 8, 1_000);
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.state.frozen_capture_rect = Some(RectPoints::new(1, 1, 4, 4));
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+		session.authoritative_frozen_capture_ready = true;
 	}
 
 	#[cfg(target_os = "macos")]
@@ -12597,6 +12673,131 @@ mod tests {
 		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 
 		assert!(!session.scroll_capture_is_available());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn scroll_capture_guard_error_keeps_frozen_capture_available() {
+		let mut session = OverlaySession::new();
+
+		seed_ready_scroll_capture_selection(&mut session);
+
+		session.set_scroll_capture_start_guard(Arc::new(|| {
+			Err(color_eyre::eyre::eyre!("Open System Settings and retry."))
+		}));
+
+		let control = session.start_scroll_capture();
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert!(session.state.frozen_image.is_some());
+		assert!(
+			session
+				.state
+				.error_message
+				.as_deref()
+				.is_some_and(|message| message.contains("Open System Settings and retry."))
+		);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn scroll_capture_starting_hook_error_keeps_frozen_capture_available() {
+		let mut session = OverlaySession::new();
+
+		seed_ready_scroll_capture_selection(&mut session);
+
+		session.set_scroll_capture_start_guard(Arc::new(|| Ok(())));
+		session.set_scroll_capture_starting_hook(Arc::new(|| {
+			Err(color_eyre::eyre::eyre!("Observer was not ready."))
+		}));
+
+		let control = session.start_scroll_capture();
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert!(session.state.frozen_image.is_some());
+		assert!(
+			session
+				.state
+				.error_message
+				.as_deref()
+				.is_some_and(|message| message.contains("Observer was not ready."))
+		);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn scroll_capture_preflight_runs_before_permission_guard() {
+		let guard_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+		let mut session = OverlaySession::new();
+
+		session.set_scroll_capture_start_guard(Arc::new({
+			let guard_calls = Arc::clone(&guard_calls);
+
+			move || {
+				guard_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+				Ok(())
+			}
+		}));
+
+		let control = session.start_scroll_capture();
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert_eq!(guard_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+		assert_eq!(
+			session.state.error_message.as_deref(),
+			Some("Scroll capture requires a dragged region selection.")
+		);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn scroll_capture_starting_hook_runs_before_started_hook() {
+		let hook_order = Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+		let mut session = OverlaySession::new();
+
+		seed_ready_scroll_capture_selection(&mut session);
+
+		session.set_scroll_capture_start_guard(Arc::new(|| Ok(())));
+
+		session.set_scroll_capture_starting_hook(Arc::new({
+			let hook_order = Arc::clone(&hook_order);
+
+			move || {
+				let mut hook_order = match hook_order.lock() {
+					Ok(hook_order) => hook_order,
+					Err(poisoned) => poisoned.into_inner(),
+				};
+
+				hook_order.push("starting");
+
+				Ok(())
+			}
+		}));
+		session.set_scroll_capture_started_hook(Arc::new({
+			let hook_order = Arc::clone(&hook_order);
+
+			move || {
+				let mut hook_order = match hook_order.lock() {
+					Ok(hook_order) => hook_order,
+					Err(poisoned) => poisoned.into_inner(),
+				};
+
+				hook_order.push("started");
+			}
+		}));
+
+		let control = session.start_scroll_capture();
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert!(session.scroll_capture.active);
+
+		let hook_order = match hook_order.lock() {
+			Ok(hook_order) => hook_order,
+			Err(poisoned) => poisoned.into_inner(),
+		};
+
+		assert_eq!(*hook_order, vec!["starting", "started"]);
 	}
 
 	#[cfg(target_os = "macos")]

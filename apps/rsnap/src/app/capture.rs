@@ -1,14 +1,27 @@
 #[cfg(target_os = "macos")]
 use std::sync::{Arc, atomic::Ordering};
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+use color_eyre::eyre;
+#[cfg(target_os = "macos")]
+use color_eyre::eyre::Result;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
 #[cfg(target_os = "macos")]
-use crate::app::scroll_input_macos;
+use crate::app::scroll_input_macos::{
+	self, ScrollInputObserverLifecycle, ScrollInputObserverWaitOutcome, SharedScrollInputState,
+};
 #[cfg(target_os = "macos")]
 use crate::app::{self, UserEvent};
+#[cfg(target_os = "macos")]
+use crate::permissions_macos;
 use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
+
+#[cfg(target_os = "macos")]
+const SCROLL_INPUT_OBSERVER_READY_TIMEOUT: Duration = Duration::from_millis(250);
 
 impl App {
 	fn self_capture_exception_window_ids(&self) -> Vec<u32> {
@@ -85,13 +98,15 @@ impl App {
 
 			return;
 		}
+		#[cfg(target_os = "macos")]
+		if !self.ensure_screen_recording_access(event_loop, requested_by) {
+			return;
+		}
 
 		let mut overlay_session = OverlaySession::with_config(self.overlay_config());
 
 		#[cfg(target_os = "macos")]
 		self.scroll_input_shared_state.clear();
-		#[cfg(target_os = "macos")]
-		self.scroll_input_shared_state.set_enabled(true);
 
 		#[cfg(target_os = "macos")]
 		overlay_session.set_scroll_frame_waker(Arc::new({
@@ -122,11 +137,27 @@ impl App {
 			move |after_seq, through| shared_state.replay_after_seq_through(after_seq, through)
 		}));
 
+		#[cfg(target_os = "macos")]
+		overlay_session.set_scroll_capture_start_guard(Arc::new({
+			move || Self::ensure_scroll_capture_permissions()
+		}));
+
+		#[cfg(target_os = "macos")]
+		overlay_session.set_scroll_capture_starting_hook(Arc::new({
+			let shared_state = Arc::clone(&self.scroll_input_shared_state);
+			let observer_lifecycle = Arc::clone(&self.scroll_input_observer_lifecycle);
+
+			move || Self::prepare_external_scroll_input(&shared_state, &observer_lifecycle)
+		}));
+		#[cfg(target_os = "macos")]
+		overlay_session.set_scroll_capture_started_hook(Arc::new({
+			let shared_state = Arc::clone(&self.scroll_input_shared_state);
+
+			move || Self::enable_external_scroll_input(&shared_state)
+		}));
+
 		match overlay_session.start(event_loop) {
 			Ok(()) => {
-				#[cfg(target_os = "macos")]
-				self.ensure_scroll_input_observer_started();
-
 				tracing::info!(
 					requested_by = %requested_by,
 					hotkey = %self.capture_key_label(),
@@ -149,6 +180,42 @@ impl App {
 				)
 			},
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn ensure_screen_recording_access(
+		&mut self,
+		event_loop: &ActiveEventLoop,
+		requested_by: &'static str,
+	) -> bool {
+		if permissions_macos::screen_recording_access_granted() {
+			return true;
+		}
+
+		let requested = permissions_macos::request_screen_recording_access();
+
+		if requested || permissions_macos::screen_recording_access_granted() {
+			tracing::info!(
+				requested_by = %requested_by,
+				"Screen Recording access is available after a just-in-time permission check."
+			);
+
+			return true;
+		}
+
+		if let Err(err) = permissions_macos::open_screen_recording_settings() {
+			tracing::warn!(error = %err, "Failed to open Screen Recording settings.");
+		}
+
+		tracing::warn!(
+			requested_by = %requested_by,
+			settings_path = %permissions_macos::SCREEN_RECORDING_SETTINGS_PATH,
+			"Screen Recording access is missing; redirecting the user to the in-app recovery path."
+		);
+
+		self.open_settings_window(event_loop, "screen-recording-permission");
+
+		false
 	}
 
 	pub(super) fn end_overlay_session(&mut self, exit: OverlayExit) {
@@ -177,16 +244,64 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn ensure_scroll_input_observer_started(&mut self) {
-		if self.scroll_input_observer_started {
-			return;
+	fn ensure_scroll_capture_permissions() -> Result<()> {
+		if !permissions_macos::accessibility_access_granted() {
+			let granted_after = permissions_macos::request_accessibility_access()
+				|| permissions_macos::accessibility_access_granted();
+
+			if !granted_after {
+				return Err(eyre::eyre!(
+					"Scroll capture needs Accessibility. Enable rsnap in {} and retry. Use the Permissions menu after you finish this capture if macOS does not show a prompt.",
+					permissions_macos::ACCESSIBILITY_SETTINGS_PATH
+				));
+			}
+		}
+		if !permissions_macos::input_monitoring_access_granted() {
+			let requested = permissions_macos::request_input_monitoring_access();
+
+			if !requested && !permissions_macos::input_monitoring_access_granted() {
+				return Err(eyre::eyre!(
+					"Scroll capture needs Input Monitoring. Enable rsnap in {} and retry. Use the Permissions menu after you finish this capture if macOS does not show a prompt.",
+					permissions_macos::INPUT_MONITORING_SETTINGS_PATH
+				));
+			}
 		}
 
-		scroll_input_macos::spawn_scroll_input_observer(Arc::clone(
-			&self.scroll_input_shared_state,
-		));
+		Ok(())
+	}
 
-		self.scroll_input_observer_started = true;
+	#[cfg(target_os = "macos")]
+	fn prepare_external_scroll_input(
+		shared_state: &Arc<SharedScrollInputState>,
+		observer_lifecycle: &Arc<ScrollInputObserverLifecycle>,
+	) -> Result<()> {
+		if observer_lifecycle.begin_start_if_needed()
+			&& let Err(err) = scroll_input_macos::spawn_scroll_input_observer(
+				Arc::clone(shared_state),
+				Arc::clone(observer_lifecycle),
+			) {
+			observer_lifecycle.mark_failed();
+
+			return Err(eyre::eyre!(
+				"Scroll capture could not start the native scroll observer: {err}"
+			));
+		}
+
+		match observer_lifecycle.wait_until_ready(SCROLL_INPUT_OBSERVER_READY_TIMEOUT) {
+			ScrollInputObserverWaitOutcome::Ready => Ok(()),
+			ScrollInputObserverWaitOutcome::TimedOut => Err(eyre::eyre!(
+				"Scroll capture is still starting the native scroll observer. Retry once."
+			)),
+			ScrollInputObserverWaitOutcome::Failed => Err(eyre::eyre!(
+				"Scroll capture could not activate the native scroll observer. Retry once. If Input Monitoring was just enabled, reopen the Permissions menu and try again."
+			)),
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn enable_external_scroll_input(shared_state: &Arc<SharedScrollInputState>) {
+		shared_state.clear();
+		shared_state.set_enabled(true);
 	}
 
 	pub(super) fn handle_overlay_control(&mut self, control: OverlayControl) {

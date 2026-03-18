@@ -1,10 +1,11 @@
 use std::ffi::c_void;
+use std::io::Result;
 use std::ptr;
 use std::sync::{Arc, atomic::Ordering};
 use std::thread::Builder;
 
 use crate::app::scroll_input_macos::decode;
-use crate::app::scroll_input_macos::state::SharedScrollInputState;
+use crate::app::scroll_input_macos::state::{ScrollInputObserverLifecycle, SharedScrollInputState};
 use crate::app::scroll_input_macos::{
 	CFMachPortCreateRunLoopSource, CFMachPortInvalidate, CFRelease, CFRunLoopAddSource,
 	CFRunLoopGetCurrent, CFRunLoopRun, CGEventRef, CGEventTapCreate, CGEventTapEnable,
@@ -23,16 +24,22 @@ struct ScrollInputTapContext {
 	tap: std::sync::atomic::AtomicPtr<c_void>,
 }
 
-pub(in crate::app) fn spawn_scroll_input_observer(shared_state: Arc<SharedScrollInputState>) {
+pub(in crate::app) fn spawn_scroll_input_observer(
+	shared_state: Arc<SharedScrollInputState>,
+	lifecycle: Arc<ScrollInputObserverLifecycle>,
+) -> Result<()> {
 	Builder::new()
 		.name(String::from("rsnap-scroll-input-tap"))
 		.spawn(move || {
-			run_scroll_input_event_tap_thread(shared_state);
+			run_scroll_input_event_tap_thread(shared_state, lifecycle);
 		})
-		.unwrap_or_else(|error| panic!("failed to spawn rsnap scroll-input tap thread: {error}"));
+		.map(|_| ())
 }
 
-fn run_scroll_input_event_tap_thread(shared_state: Arc<SharedScrollInputState>) {
+fn run_scroll_input_event_tap_thread(
+	shared_state: Arc<SharedScrollInputState>,
+	lifecycle: Arc<ScrollInputObserverLifecycle>,
+) {
 	let context = Box::new(ScrollInputTapContext {
 		shared_state,
 		tap: std::sync::atomic::AtomicPtr::new(ptr::null_mut()),
@@ -54,6 +61,8 @@ fn run_scroll_input_event_tap_thread(shared_state: Arc<SharedScrollInputState>) 
 			drop(Box::from_raw(context_ptr));
 		}
 
+		lifecycle.mark_failed();
+
 		tracing::warn!("Failed to create scroll input event tap.");
 
 		return;
@@ -72,6 +81,8 @@ fn run_scroll_input_event_tap_thread(shared_state: Arc<SharedScrollInputState>) 
 			drop(Box::from_raw(context_ptr));
 		}
 
+		lifecycle.mark_failed();
+
 		tracing::warn!("Failed to create run-loop source for scroll input event tap.");
 
 		return;
@@ -83,6 +94,8 @@ fn run_scroll_input_event_tap_thread(shared_state: Arc<SharedScrollInputState>) 
 		CFRunLoopAddSource(run_loop, loop_source, kCFRunLoopCommonModes);
 		CGEventTapEnable(tap, true);
 	}
+
+	lifecycle.mark_ready();
 
 	tracing::info!(
 		op = "scroll_input.tap_installed",
@@ -98,6 +111,8 @@ fn run_scroll_input_event_tap_thread(shared_state: Arc<SharedScrollInputState>) 
 		CFRelease(tap.cast());
 		drop(Box::from_raw(context_ptr));
 	}
+
+	lifecycle.mark_failed();
 }
 
 fn reenable_scroll_input_event_tap(context: &ScrollInputTapContext, event_type: u32) {

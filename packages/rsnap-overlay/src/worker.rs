@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{
 	Arc,
@@ -123,7 +123,7 @@ pub(crate) struct CapturedMonitorRegionResponse {
 pub(crate) struct OverlayWorker {
 	req_tx: SyncSender<WorkerRequest>,
 	resp_rx: Receiver<WorkerResponse>,
-	#[cfg(test)]
+	#[cfg(all(test, target_os = "macos"))]
 	debug_id: u64,
 	#[cfg(any(not(target_os = "macos"), test))]
 	region_capture_resp_rx: Receiver<CapturedMonitorRegionResponse>,
@@ -152,7 +152,7 @@ impl OverlayWorker {
 		Self {
 			req_tx,
 			resp_rx,
-			#[cfg(test)]
+			#[cfg(all(test, target_os = "macos"))]
 			debug_id: next_worker_debug_id(),
 			#[cfg(any(not(target_os = "macos"), test))]
 			region_capture_resp_rx,
@@ -487,7 +487,7 @@ impl OverlayWorker {
 		}
 	}
 
-	#[cfg(test)]
+	#[cfg(all(test, target_os = "macos"))]
 	pub(crate) fn debug_id(&self) -> u64 {
 		self.debug_id
 	}
@@ -605,7 +605,7 @@ impl PendingWorkerRequests {
 	}
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 fn next_worker_debug_id() -> u64 {
 	static NEXT_WORKER_DEBUG_ID: AtomicU64 = AtomicU64::new(1);
 
