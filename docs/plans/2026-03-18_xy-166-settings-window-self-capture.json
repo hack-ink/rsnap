@@ -355,9 +355,16 @@
       "Verification: cargo make lint exited 0 after the coordinate-space plus fresh-baseline repair batch.",
       "Verification: cargo make test exited 0 with 218 nextest tests plus cargo test --all-features after the coordinate-space plus fresh-baseline repair batch.",
       "Verification: git diff --check exited 0 after the coordinate-space plus fresh-baseline repair batch.",
-      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the coordinate-space plus fresh-baseline repair batch."
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the coordinate-space plus fresh-baseline repair batch.",
+      "Post-push CI diagnosis (2026-03-19): GitHub Rust checks on head fba3a51 still failed on Linux because packages/rsnap-overlay/src/overlay.rs imported winit::keyboard::ModifiersState unconditionally inside the test module even though only macOS-only tests consume that symbol.",
+      "Follow-up fix (2026-03-19): narrowed the test-module ModifiersState import in packages/rsnap-overlay/src/overlay.rs to #[cfg(target_os = \"macos\")], keeping the macOS reset_for_start regression coverage while removing the Ubuntu unused-import lint failure.",
+      "Verification: cargo make fmt exited 0 after the final overlay-test-import CI follow-up.",
+      "Verification: cargo make lint exited 0 after the final overlay-test-import CI follow-up.",
+      "Verification: cargo make test exited 0 with 218 nextest tests plus cargo test --all-features after the final overlay-test-import CI follow-up.",
+      "Verification: git diff --check exited 0 after the final overlay-test-import CI follow-up.",
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the final overlay-test-import CI follow-up."
     ],
-    "last_updated": "2026-03-19T12:30:00Z",
+    "last_updated": "2026-03-19T13:05:00Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
@@ -365,7 +372,7 @@
       "platform": "macOS",
       "linear_issue_state": "In Review",
       "manual_gui_smoke_ran": true,
-      "follow_up_scope": "repair the latest review feedback by converging WindowServer coordinate-space handling and reused-session startup state on top of the published XY-166 PR branch"
+      "follow_up_scope": "keep the published XY-166 PR branch green on Linux CI after the coordinate-space and fresh-baseline repair batch"
     }
   }
 }

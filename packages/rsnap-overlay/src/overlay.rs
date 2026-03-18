@@ -11824,6 +11824,7 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	use winit::dpi::PhysicalPosition;
 	use winit::event::{ElementState, MouseButton, MouseScrollDelta};
+	#[cfg(target_os = "macos")]
 	use winit::keyboard::ModifiersState;
 
 	#[cfg(target_os = "macos")]
