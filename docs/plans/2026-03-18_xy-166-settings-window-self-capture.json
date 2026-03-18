@@ -339,9 +339,16 @@
       "Verification: cargo make lint exited 0 after the final Linux CI follow-up.",
       "Verification: cargo make test exited 0 with 212 nextest tests plus cargo test --all-features after the final Linux CI follow-up.",
       "Verification: git diff --check exited 0 after the final Linux CI follow-up.",
-      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the final Linux CI follow-up."
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the final Linux CI follow-up.",
+      "Review repair diagnosis (2026-03-19): PR thread PRRT_kwDORWN8nM51PNaG correctly identified that apps/rsnap/src/settings_window/platform.rs was comparing raw NSWindow::frame() Y coordinates against kCGWindowBounds without converting from Cocoa lower-left screen coordinates into WindowServer upper-left coordinates.",
+      "Review repair fix (2026-03-19): apps/rsnap/src/settings_window/platform.rs now converts AppKit bounds into WindowServer coordinates using the primary screen height before matching CG window bounds, and adds a regression test that locks the Y-axis flip behavior.",
+      "Verification: cargo make fmt exited 0 after the AppKit-to-WindowServer coordinate repair.",
+      "Verification: cargo make lint exited 0 after the AppKit-to-WindowServer coordinate repair.",
+      "Verification: cargo make test exited 0 with 213 nextest tests plus cargo test --all-features after the AppKit-to-WindowServer coordinate repair.",
+      "Verification: git diff --check exited 0 after the AppKit-to-WindowServer coordinate repair.",
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the AppKit-to-WindowServer coordinate repair."
     ],
-    "last_updated": "2026-03-18T17:20:54Z",
+    "last_updated": "2026-03-19T00:00:00Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
