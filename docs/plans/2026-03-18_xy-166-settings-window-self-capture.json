@@ -127,9 +127,14 @@
       "Verification: cargo test -p rsnap-overlay --lib exited 0 with 160 passed tests after the review-repair batch.",
       "Verification: cargo make lint-fix exited 0 and applied 2 style fixes after the review-repair batch.",
       "Verification: cargo make lint exited 0 after the review-repair batch.",
-      "Verification: cargo make test exited 0 after the review-repair batch."
+      "Verification: cargo make test exited 0 after the review-repair batch.",
+      "Post-review CI diagnosis (2026-03-18): GitHub Rust checks still failed on Linux because packages/rsnap-overlay/src/overlay.rs defined self_capture_exception_window_ids_changed unconditionally even though only the macOS-only stream-refresh path consumed it.",
+      "Follow-up fix (2026-03-18): gated self_capture_exception_window_ids_changed behind #[cfg(target_os = \"macos\")] so Linux clippy no longer reports an unused variable while preserving the macOS runtime refresh behavior.",
+      "Verification: cargo make lint exited 0 after the post-review CI follow-up fix.",
+      "Verification: cargo test -p rsnap-overlay --lib exited 0 with 160 passed tests after the post-review CI follow-up fix.",
+      "Verification: cargo make test exited 0 after the post-review CI follow-up fix."
     ],
-    "last_updated": "2026-03-18T11:31:43Z",
+    "last_updated": "2026-03-18T11:36:33Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",

@@ -847,6 +847,7 @@ impl OverlaySession {
 		let prev = self.config.clone();
 		let previous_loupe_patch = self.loupe_patch_width_px;
 		let loupe_sample_side = Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
+		#[cfg(target_os = "macos")]
 		let self_capture_exception_window_ids_changed =
 			prev.self_capture_exception_window_ids != config.self_capture_exception_window_ids;
 
