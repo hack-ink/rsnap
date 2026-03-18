@@ -4,7 +4,9 @@ use std::sync::{
 	atomic::{AtomicBool, Ordering},
 };
 
+#[cfg(target_os = "macos")]
 use color_eyre::eyre;
+#[cfg(target_os = "macos")]
 use color_eyre::eyre::Result;
 use winit::event_loop::ActiveEventLoop;
 
