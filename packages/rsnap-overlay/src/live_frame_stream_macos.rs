@@ -900,10 +900,8 @@ fn setup_stream_for_monitor(
 ) -> Option<StreamState> {
 	let content = get_shareable_content().ok()?;
 	let display = find_display(&content, monitor.id)?;
-	let excepting_windows = find_current_process_exception_windows(
-		&content,
-		&filter.self_capture_exception_window_ids,
-	)?;
+	let excepting_windows =
+		find_current_process_exception_windows(&content, &filter.self_capture_exception_window_ids);
 	let excluded_windows: Retained<NSArray<SCWindow>> =
 		NSArray::from_retained_slice(&excepting_windows);
 	let Some((StreamFilterMode::ExcludeCurrentProcess, current_process_application)) =
@@ -970,41 +968,49 @@ fn setup_stream_for_monitor(
 fn find_current_process_exception_windows(
 	content: &SCShareableContent,
 	self_capture_exception_window_ids: &[u32],
-) -> Option<Vec<Retained<SCWindow>>> {
+) -> Vec<Retained<SCWindow>> {
 	if self_capture_exception_window_ids.is_empty() {
-		return Some(Vec::new());
+		return Vec::new();
 	}
 
 	let windows = unsafe { content.windows() };
 	let mut matched = Vec::new();
+	let mut matched_window_ids = Vec::new();
 
 	for window in windows.iter() {
 		let window_id = unsafe { window.windowID() };
 
 		if self_capture_exception_window_ids.contains(&window_id) {
+			matched_window_ids.push(window_id);
 			matched.push(window.retain());
 		}
 	}
 
-	if !exception_window_match_is_complete(self_capture_exception_window_ids, matched.len()) {
+	let missing_window_ids =
+		missing_exception_window_ids(self_capture_exception_window_ids, &matched_window_ids);
+
+	if !missing_window_ids.is_empty() {
 		tracing::debug!(
 			op = "live_frame_stream.self_capture_exception_window_ids_partial_match",
 			requested_window_ids = ?self_capture_exception_window_ids,
+			missing_window_ids = ?missing_window_ids,
 			matched_window_count = matched.len(),
-			"Deferring ScreenCaptureKit stream setup until every requested current-process exception window is shareable."
+			"ScreenCaptureKit did not expose every requested current-process exception window; continuing stream setup with the shareable subset."
 		);
-
-		return None;
 	}
 
-	Some(matched)
+	matched
 }
 
-fn exception_window_match_is_complete(
+fn missing_exception_window_ids(
 	self_capture_exception_window_ids: &[u32],
-	matched_window_count: usize,
-) -> bool {
-	self_capture_exception_window_ids.len() == matched_window_count
+	matched_window_ids: &[u32],
+) -> Vec<u32> {
+	self_capture_exception_window_ids
+		.iter()
+		.copied()
+		.filter(|window_id| !matched_window_ids.contains(window_id))
+		.collect()
 }
 
 fn find_current_process_application(
@@ -1399,10 +1405,13 @@ mod tests {
 	}
 
 	#[test]
-	fn exception_window_match_requires_all_requested_window_ids() {
-		assert!(live_frame_stream_macos::exception_window_match_is_complete(&[], 0));
-		assert!(live_frame_stream_macos::exception_window_match_is_complete(&[7, 11], 2));
-		assert!(!live_frame_stream_macos::exception_window_match_is_complete(&[7, 11], 1));
+	fn missing_exception_window_ids_reports_unshareable_requested_windows() {
+		assert_eq!(live_frame_stream_macos::missing_exception_window_ids(&[], &[]), vec![]);
+		assert_eq!(
+			live_frame_stream_macos::missing_exception_window_ids(&[7, 11], &[7, 11]),
+			vec![]
+		);
+		assert_eq!(live_frame_stream_macos::missing_exception_window_ids(&[7, 11], &[11]), vec![7]);
 	}
 
 	#[test]
