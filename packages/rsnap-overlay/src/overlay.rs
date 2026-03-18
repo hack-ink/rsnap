@@ -7373,6 +7373,13 @@ struct SelectionDashedBorderCache {
 	segments: Vec<[Pos2; 2]>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SelectionDashedBorderMetrics {
+	stroke_width: f32,
+	dash_length: f32,
+	gap_length: f32,
+}
+
 struct HudOverlayWindow {
 	window: Arc<winit::window::Window>,
 	renderer: WindowRenderer,
@@ -8451,9 +8458,9 @@ impl WindowRenderer {
 		screen_rect: Rect,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
-		let stroke_width = SELECTION_DASHED_BORDER_WIDTH_PX;
+		let metrics = Self::selection_dashed_border_metrics(painter.pixels_per_point());
 		let border_outset =
-			Self::selection_dashed_border_outset(stroke_width, painter.pixels_per_point());
+			Self::selection_dashed_border_outset(metrics.stroke_width, painter.pixels_per_point());
 		let Some(border_rect) =
 			Self::selection_dashed_border_rect(screen_rect, focus_rect, border_outset)
 		else {
@@ -8462,8 +8469,8 @@ impl WindowRenderer {
 		let segments = Self::selection_dashed_border_cached_segments(
 			selection_dashed_border_cache,
 			border_rect,
-			SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
-			SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+			metrics.dash_length,
+			metrics.gap_length,
 		);
 
 		if segments.is_empty() {
@@ -8471,7 +8478,7 @@ impl WindowRenderer {
 		}
 
 		let stroke = Stroke::new(
-			stroke_width,
+			metrics.stroke_width,
 			Color32::from_rgba_unmultiplied(255, 255, 255, SELECTION_DASHED_BORDER_ALPHA),
 		);
 
@@ -8480,6 +8487,16 @@ impl WindowRenderer {
 		}
 
 		true
+	}
+
+	fn selection_dashed_border_metrics(pixels_per_point: f32) -> SelectionDashedBorderMetrics {
+		let points_per_pixel = 1.0 / pixels_per_point.max(f32::MIN_POSITIVE);
+
+		SelectionDashedBorderMetrics {
+			stroke_width: SELECTION_DASHED_BORDER_WIDTH_PX * points_per_pixel,
+			dash_length: SELECTION_DASHED_BORDER_DASH_LENGTH_PX * points_per_pixel,
+			gap_length: SELECTION_DASHED_BORDER_GAP_LENGTH_PX * points_per_pixel,
+		}
 	}
 
 	fn selection_dashed_border_rect(
@@ -11593,8 +11610,9 @@ mod tests {
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
 		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect,
 		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
-		SELECTION_DASHED_BORDER_WIDTH_PX, SelectionDashedBorderCache, TOOLBAR_CAPTURE_GAP_PX,
-		TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
+		SELECTION_DASHED_BORDER_WIDTH_PX, SelectionDashedBorderCache, SelectionDashedBorderMetrics,
+		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
+		hud_helpers,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
@@ -12145,6 +12163,26 @@ mod tests {
 		assert_eq!(
 			WindowRenderer::selection_dashed_border_outset(SELECTION_DASHED_BORDER_WIDTH_PX, 2.0),
 			1.25
+		);
+	}
+
+	#[test]
+	fn selection_dashed_border_metrics_track_physical_pixels() {
+		assert_eq!(
+			WindowRenderer::selection_dashed_border_metrics(1.0),
+			SelectionDashedBorderMetrics { stroke_width: 2.0, dash_length: 6.0, gap_length: 4.0 }
+		);
+		assert_eq!(
+			WindowRenderer::selection_dashed_border_metrics(2.0),
+			SelectionDashedBorderMetrics { stroke_width: 1.0, dash_length: 3.0, gap_length: 2.0 }
+		);
+		assert_eq!(
+			WindowRenderer::selection_dashed_border_metrics(1.5),
+			SelectionDashedBorderMetrics {
+				stroke_width: 2.0 / 1.5,
+				dash_length: 6.0 / 1.5,
+				gap_length: 4.0 / 1.5,
+			}
 		);
 	}
 
