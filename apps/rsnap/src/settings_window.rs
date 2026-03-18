@@ -9,7 +9,7 @@ mod sections;
 
 use std::collections::VecDeque;
 use std::mem;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use color_eyre::eyre::{Result, WrapErr};
 use egui::{self, FontDefinitions, ViewportId};
@@ -151,9 +151,18 @@ impl SettingsWindow {
 		self.window.request_redraw();
 	}
 
+	pub fn maybe_request_periodic_redraw(&self, interval: Duration) {
+		if self.last_redraw.elapsed() >= interval {
+			self.window.request_redraw();
+		}
+	}
+
 	pub fn handle_window_event(&mut self, event: &WindowEvent) -> SettingsControl {
 		match event {
 			WindowEvent::CloseRequested => return SettingsControl::CloseRequested,
+			WindowEvent::Focused(true) => {
+				self.window.request_redraw();
+			},
 			WindowEvent::ModifiersChanged(modifiers) => {
 				self.modifiers = modifiers.state();
 
