@@ -369,9 +369,15 @@
       "Verification: cargo make lint exited 0 after the stale Settings-window cache repair.",
       "Verification: cargo make test exited 0 with 219 nextest tests plus cargo test --all-features after the stale Settings-window cache repair.",
       "Verification: git diff --check exited 0 after the stale Settings-window cache repair.",
-      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the stale Settings-window cache repair."
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the stale Settings-window cache repair.",
+      "Review repair diagnosis (2026-03-19): PR thread PRRT_kwDORWN8nM51QR-m correctly identified that packages/rsnap-overlay/src/live_frame_stream_macos.rs still retried an incomplete self-capture exception-window upgrade on the regular 300ms setup backoff, so repeated cursor-sample and region requests could keep driving ScreenCaptureKit setup/teardown loops when a requested Settings window never became shareable.",
+      "Review repair fix (2026-03-19): packages/rsnap-overlay/src/live_frame_stream_macos.rs now routes RetryUpgradeUsingCurrent through a dedicated slower incomplete-exception upgrade backoff, so the current stream keeps serving frames while periodic upgrade attempts continue in the background instead of re-running full setup/teardown on the request path every short sample interval.",
+      "Verification: cargo make fmt exited 0 after the incomplete-exception upgrade backoff repair.",
+      "Verification: cargo make lint exited 0 after the incomplete-exception upgrade backoff repair.",
+      "Verification: cargo make test exited 0 with 220 nextest tests plus cargo test --all-features after the incomplete-exception upgrade backoff repair.",
+      "Verification: git diff --check exited 0 after the incomplete-exception upgrade backoff repair."
     ],
-    "last_updated": "2026-03-18T18:21:27Z",
+    "last_updated": "2026-03-18T18:45:20Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
@@ -379,7 +385,7 @@
       "platform": "macOS",
       "linear_issue_state": "In Review",
       "manual_gui_smoke_ran": true,
-      "follow_up_scope": "keep the published XY-166 PR branch review-clean by clearing stale cached Settings-window ids after the window leaves the current on-screen WindowServer list"
+      "follow_up_scope": "keep the published XY-166 PR branch review-clean by throttling incomplete exception-window upgrades so non-shareable Settings windows do not drive repeated ScreenCaptureKit restart loops"
     }
   }
 }
