@@ -900,8 +900,10 @@ fn setup_stream_for_monitor(
 ) -> Option<StreamState> {
 	let content = get_shareable_content().ok()?;
 	let display = find_display(&content, monitor.id)?;
-	let excepting_windows =
-		find_current_process_exception_windows(&content, &filter.self_capture_exception_window_ids);
+	let excepting_windows = find_current_process_exception_windows(
+		&content,
+		&filter.self_capture_exception_window_ids,
+	)?;
 	let excluded_windows: Retained<NSArray<SCWindow>> =
 		NSArray::from_retained_slice(&excepting_windows);
 	let Some((StreamFilterMode::ExcludeCurrentProcess, current_process_application)) =
@@ -968,9 +970,9 @@ fn setup_stream_for_monitor(
 fn find_current_process_exception_windows(
 	content: &SCShareableContent,
 	self_capture_exception_window_ids: &[u32],
-) -> Vec<Retained<SCWindow>> {
+) -> Option<Vec<Retained<SCWindow>>> {
 	if self_capture_exception_window_ids.is_empty() {
-		return Vec::new();
+		return Some(Vec::new());
 	}
 
 	let windows = unsafe { content.windows() };
@@ -984,16 +986,25 @@ fn find_current_process_exception_windows(
 		}
 	}
 
-	if matched.len() != self_capture_exception_window_ids.len() {
+	if !exception_window_match_is_complete(self_capture_exception_window_ids, matched.len()) {
 		tracing::debug!(
 			op = "live_frame_stream.self_capture_exception_window_ids_partial_match",
 			requested_window_ids = ?self_capture_exception_window_ids,
 			matched_window_count = matched.len(),
-			"ScreenCaptureKit did not expose every requested current-process exception window."
+			"Deferring ScreenCaptureKit stream setup until every requested current-process exception window is shareable."
 		);
+
+		return None;
 	}
 
-	matched
+	Some(matched)
+}
+
+fn exception_window_match_is_complete(
+	self_capture_exception_window_ids: &[u32],
+	matched_window_count: usize,
+) -> bool {
+	self_capture_exception_window_ids.len() == matched_window_count
 }
 
 fn find_current_process_application(
@@ -1385,6 +1396,13 @@ mod tests {
 		);
 
 		assert_eq!(stream.debug_self_capture_exception_window_ids(), &[7, 11]);
+	}
+
+	#[test]
+	fn exception_window_match_requires_all_requested_window_ids() {
+		assert!(live_frame_stream_macos::exception_window_match_is_complete(&[], 0));
+		assert!(live_frame_stream_macos::exception_window_match_is_complete(&[7, 11], 2));
+		assert!(!live_frame_stream_macos::exception_window_match_is_complete(&[7, 11], 1));
 	}
 
 	#[test]
