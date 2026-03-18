@@ -152,9 +152,14 @@
       "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 6 tests passing and 0 failures.",
       "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 101 tests passing and 0 failures.",
       "Review follow-up verification: cargo make lint-rust completed successfully.",
+      "Review follow-up verification: git diff --check returned clean.",
+      "Review follow-up: dashed-border geometry is now cached per rect and dash settings inside the window renderer so repeated drag/frozen repaints reuse the same line-segment buffer instead of rebuilding it every frame.",
+      "Review follow-up verification: cargo test -p rsnap-overlay selection_dashed_border --lib passed with 7 tests passing and 0 failures.",
+      "Review follow-up verification: cargo test -p rsnap-overlay overlay:: --lib passed with 102 tests passing and 0 failures.",
+      "Review follow-up verification: cargo make lint-rust completed successfully.",
       "Review follow-up verification: git diff --check returned clean."
     ],
-    "last_updated": "2026-03-18T04:17:10Z",
+    "last_updated": "2026-03-18T05:14:45Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-164",

@@ -7345,6 +7345,34 @@ struct SelectionFlowGeometryCache {
 	normals: Vec<Vec2>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SelectionDashedBorderCacheKey {
+	rect_min_x_bits: u32,
+	rect_min_y_bits: u32,
+	rect_max_x_bits: u32,
+	rect_max_y_bits: u32,
+	dash_length_bits: u32,
+	gap_length_bits: u32,
+}
+impl SelectionDashedBorderCacheKey {
+	const fn new(rect: Rect, dash_length: f32, gap_length: f32) -> Self {
+		Self {
+			rect_min_x_bits: rect.min.x.to_bits(),
+			rect_min_y_bits: rect.min.y.to_bits(),
+			rect_max_x_bits: rect.max.x.to_bits(),
+			rect_max_y_bits: rect.max.y.to_bits(),
+			dash_length_bits: dash_length.to_bits(),
+			gap_length_bits: gap_length.to_bits(),
+		}
+	}
+}
+
+#[derive(Debug, Default)]
+struct SelectionDashedBorderCache {
+	key: Option<SelectionDashedBorderCacheKey>,
+	segments: Vec<[Pos2; 2]>,
+}
+
 struct HudOverlayWindow {
 	window: Arc<winit::window::Window>,
 	renderer: WindowRenderer,
@@ -7558,6 +7586,7 @@ struct WindowRenderer {
 	egui_start_time: Instant,
 	egui_last_frame_time: Instant,
 	selection_flow_cache: SelectionFlowGeometryCache,
+	selection_dashed_border_cache: SelectionDashedBorderCache,
 	slow_op_logger: SlowOperationLogger,
 }
 impl WindowRenderer {
@@ -8040,6 +8069,7 @@ impl WindowRenderer {
 		show_frozen_capture_affordance: bool,
 		frozen_capture_is_fullscreen_fallback: bool,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 		mut toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
 	) -> (FullOutput, Option<HudPillGeometry>) {
@@ -8113,6 +8143,7 @@ impl WindowRenderer {
 					selection_particles,
 					selection_flow_stroke_width_px,
 					selection_flow_geometry_cache,
+					selection_dashed_border_cache,
 				);
 			}
 			if matches!(state.mode, OverlayMode::Frozen)
@@ -8132,6 +8163,7 @@ impl WindowRenderer {
 					selection_particles,
 					selection_flow_stroke_width_px,
 					selection_flow_geometry_cache,
+					selection_dashed_border_cache,
 				);
 			}
 		});
@@ -8150,6 +8182,7 @@ impl WindowRenderer {
 		selection_particles: bool,
 		selection_flow_stroke_width_px: f32,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		let mut has_rect = false;
 
@@ -8184,7 +8217,13 @@ impl WindowRenderer {
 		}
 
 		if let Some(rect) = Self::live_drag_focus_rect(state, monitor, screen_rect) {
-			Self::render_live_drag_selection_scrim(painter, rect, screen_rect, theme);
+			Self::render_live_drag_selection_scrim(
+				painter,
+				rect,
+				screen_rect,
+				theme,
+				selection_dashed_border_cache,
+			);
 
 			has_rect = true;
 		}
@@ -8229,6 +8268,7 @@ impl WindowRenderer {
 		selection_particles: bool,
 		selection_flow_stroke_width_px: f32,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		let Some(rect) = Self::frozen_capture_focus_rect(state, screen_rect) else {
 			return false;
@@ -8238,7 +8278,13 @@ impl WindowRenderer {
 		let painter = ctx.layer_painter(layer);
 
 		if state.frozen_image.is_some() {
-			return Self::render_frozen_selection_scrim(&painter, rect, screen_rect, theme);
+			return Self::render_frozen_selection_scrim(
+				&painter,
+				rect,
+				screen_rect,
+				theme,
+				selection_dashed_border_cache,
+			);
 		}
 		if !selection_particles {
 			return false;
@@ -8342,12 +8388,14 @@ impl WindowRenderer {
 		focus_rect: Rect,
 		screen_rect: Rect,
 		theme: HudTheme,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		Self::render_selection_scrim(
 			painter,
 			focus_rect,
 			screen_rect,
 			Self::frozen_selection_scrim_color(theme),
+			selection_dashed_border_cache,
 		)
 	}
 
@@ -8356,12 +8404,14 @@ impl WindowRenderer {
 		focus_rect: Rect,
 		screen_rect: Rect,
 		theme: HudTheme,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		Self::render_selection_scrim(
 			painter,
 			focus_rect,
 			screen_rect,
 			Self::live_drag_selection_scrim_color(theme),
+			selection_dashed_border_cache,
 		)
 	}
 
@@ -8370,6 +8420,7 @@ impl WindowRenderer {
 		focus_rect: Rect,
 		screen_rect: Rect,
 		scrim_fill: Color32,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		let scrim_rects = Self::frozen_selection_scrim_rects(screen_rect, focus_rect);
 		let mut drew_scrim = false;
@@ -8384,7 +8435,12 @@ impl WindowRenderer {
 			drew_scrim = true;
 		}
 
-		let drew_border = Self::render_selection_dashed_border(painter, focus_rect, screen_rect);
+		let drew_border = Self::render_selection_dashed_border(
+			painter,
+			focus_rect,
+			screen_rect,
+			selection_dashed_border_cache,
+		);
 
 		drew_scrim || drew_border
 	}
@@ -8393,6 +8449,7 @@ impl WindowRenderer {
 		painter: &Painter,
 		focus_rect: Rect,
 		screen_rect: Rect,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		let stroke_width = SELECTION_DASHED_BORDER_WIDTH_PX;
 		let border_outset =
@@ -8402,7 +8459,8 @@ impl WindowRenderer {
 		else {
 			return false;
 		};
-		let segments = Self::selection_dashed_border_segments(
+		let segments = Self::selection_dashed_border_cached_segments(
+			selection_dashed_border_cache,
 			border_rect,
 			SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
 			SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
@@ -8418,7 +8476,7 @@ impl WindowRenderer {
 		);
 
 		for segment in segments {
-			painter.add(Shape::line_segment(segment, stroke));
+			painter.add(Shape::line_segment(*segment, stroke));
 		}
 
 		true
@@ -8474,6 +8532,28 @@ impl WindowRenderer {
 		}
 
 		segments
+	}
+
+	fn selection_dashed_border_cached_segments(
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
+		rect: Rect,
+		target_dash_length: f32,
+		target_gap_length: f32,
+	) -> &[[Pos2; 2]] {
+		let key = SelectionDashedBorderCacheKey::new(rect, target_dash_length, target_gap_length);
+
+		if selection_dashed_border_cache.key != Some(key) {
+			selection_dashed_border_cache.segments.clear();
+			selection_dashed_border_cache.segments.extend(Self::selection_dashed_border_segments(
+				rect,
+				target_dash_length,
+				target_gap_length,
+			));
+
+			selection_dashed_border_cache.key = Some(key);
+		}
+
+		selection_dashed_border_cache.segments.as_slice()
 	}
 
 	fn selection_dashed_border_dash_ranges(
@@ -10394,6 +10474,7 @@ impl WindowRenderer {
 			egui_start_time: now,
 			egui_last_frame_time: now,
 			selection_flow_cache: SelectionFlowGeometryCache::default(),
+			selection_dashed_border_cache: SelectionDashedBorderCache::default(),
 			slow_op_logger: SlowOperationLogger::default(),
 		})
 	}
@@ -10594,6 +10675,7 @@ impl WindowRenderer {
 
 		let hud_shader_blur_active = self.hud_shader_blur_active(state, monitor, hud_cfg);
 		let mut selection_flow_cache = mem::take(&mut self.selection_flow_cache);
+		let mut selection_dashed_border_cache = mem::take(&mut self.selection_dashed_border_cache);
 		let run_egui_started_at = Instant::now();
 		let (full_output, hud_pill) = self.run_egui(
 			raw_input,
@@ -10618,12 +10700,14 @@ impl WindowRenderer {
 			show_frozen_capture_affordance,
 			frozen_capture_is_fullscreen_fallback,
 			&mut selection_flow_cache,
+			&mut selection_dashed_border_cache,
 			toolbar_state,
 			toolbar_pointer,
 		);
 
 		phase_timings.run_egui = run_egui_started_at.elapsed();
 		self.selection_flow_cache = selection_flow_cache;
+		self.selection_dashed_border_cache = selection_dashed_border_cache;
 		self.hud_pill = hud_pill;
 
 		self.maybe_update_hud_blur_uniform(
@@ -11509,8 +11593,8 @@ mod tests {
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
 		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect,
 		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
-		SELECTION_DASHED_BORDER_WIDTH_PX, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
-		ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
+		SELECTION_DASHED_BORDER_WIDTH_PX, SelectionDashedBorderCache, TOOLBAR_CAPTURE_GAP_PX,
+		TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
@@ -12013,6 +12097,43 @@ mod tests {
 				[Pos2::new(18.5, 18.5), Pos2::new(18.5, 13.5)],
 			]
 		);
+	}
+
+	#[test]
+	fn selection_dashed_border_cache_reuses_geometry_for_same_rect() {
+		let rect = Rect::from_min_max(Pos2::new(18.5, 8.5), Pos2::new(61.5, 41.5));
+		let other_rect = Rect::from_min_max(Pos2::new(18.5, 8.5), Pos2::new(41.5, 41.5));
+		let sentinel = [Pos2::new(-1.0, -1.0), Pos2::new(-2.0, -2.0)];
+		let mut cache = SelectionDashedBorderCache::default();
+		let initial = WindowRenderer::selection_dashed_border_cached_segments(
+			&mut cache,
+			rect,
+			SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+			SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		)
+		.to_vec();
+
+		assert!(!initial.is_empty());
+
+		cache.segments[0] = sentinel;
+
+		let cached = WindowRenderer::selection_dashed_border_cached_segments(
+			&mut cache,
+			rect,
+			SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+			SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		);
+
+		assert_eq!(cached[0], sentinel);
+
+		let rebuilt = WindowRenderer::selection_dashed_border_cached_segments(
+			&mut cache,
+			other_rect,
+			SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+			SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		);
+
+		assert_ne!(rebuilt[0], sentinel);
 	}
 
 	#[test]
