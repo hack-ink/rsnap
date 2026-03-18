@@ -173,6 +173,8 @@ type ExternalScrollInputDrainReader =
 #[cfg(target_os = "macos")]
 type ScrollCaptureStartGuard = Arc<dyn Fn() -> Result<()> + Send + Sync>;
 #[cfg(target_os = "macos")]
+type ScrollCaptureStartingHook = Arc<dyn Fn() + Send + Sync>;
+#[cfg(target_os = "macos")]
 type ScrollCaptureStartedHook = Arc<dyn Fn() + Send + Sync>;
 
 #[cfg(target_os = "macos")]
@@ -677,10 +679,27 @@ pub struct OverlaySession {
 	#[cfg(target_os = "macos")]
 	scroll_capture_start_guard: Option<ScrollCaptureStartGuard>,
 	#[cfg(target_os = "macos")]
+	scroll_capture_starting_hook: Option<ScrollCaptureStartingHook>,
+	#[cfg(target_os = "macos")]
 	scroll_capture_started_hook: Option<ScrollCaptureStartedHook>,
 	response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl OverlaySession {
+	#[cfg(not(target_os = "macos"))]
+	fn try_create_cursor_device() -> Option<device_query::DeviceState> {
+		match panic::catch_unwind(device_query::DeviceState::new) {
+			Ok(cursor_device) => Some(cursor_device),
+			Err(_) => {
+				tracing::warn!(
+					op = "overlay.cursor_device_unavailable",
+					"Falling back to a headless-safe cursor device stub."
+				);
+
+				None
+			},
+		}
+	}
+
 	#[must_use]
 	pub(crate) fn new() -> Self {
 		Self::with_config(OverlayConfig::default())
@@ -695,17 +714,7 @@ impl OverlaySession {
 		let (window_list_refresh_interval, now) =
 			(LIVE_WINDOW_LIST_REFRESH_INTERVAL, Instant::now());
 		#[cfg(not(target_os = "macos"))]
-		let cursor_device = match panic::catch_unwind(device_query::DeviceState::new) {
-			Ok(cursor_device) => Some(cursor_device),
-			Err(_) => {
-				tracing::warn!(
-					op = "overlay.cursor_device_unavailable",
-					"Falling back to a headless-safe cursor device stub."
-				);
-
-				None
-			},
-		};
+		let cursor_device = Self::try_create_cursor_device();
 		let state = Self::overlay_state_with_loupe_patch(loupe_sample_side_px);
 
 		Self {
@@ -803,6 +812,8 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			scroll_capture_start_guard: None,
 			#[cfg(target_os = "macos")]
+			scroll_capture_starting_hook: None,
+			#[cfg(target_os = "macos")]
 			scroll_capture_started_hook: None,
 			response_waker: None,
 		}
@@ -826,6 +837,13 @@ impl OverlaySession {
 	/// Supplies a host-owned guard that must succeed before scroll capture can start.
 	pub fn set_scroll_capture_start_guard(&mut self, guard: ScrollCaptureStartGuard) {
 		self.scroll_capture_start_guard = Some(guard);
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Registers a host-owned callback that fires after preflight succeeds but before
+	/// scroll capture becomes active.
+	pub fn set_scroll_capture_starting_hook(&mut self, hook: ScrollCaptureStartingHook) {
+		self.scroll_capture_starting_hook = Some(hook);
 	}
 
 	#[cfg(target_os = "macos")]
@@ -5325,6 +5343,12 @@ impl OverlaySession {
 		}
 		#[cfg(target_os = "macos")]
 		{
+			let Some((monitor, capture_rect_points, capture_rect_pixels, base_frame)) =
+				self.try_prepare_scroll_capture_start()
+			else {
+				return OverlayControl::Continue;
+			};
+
 			if let Some(guard) = self.scroll_capture_start_guard.clone()
 				&& let Err(err) = guard()
 			{
@@ -5333,12 +5357,10 @@ impl OverlaySession {
 
 				return OverlayControl::Continue;
 			}
+			if let Some(hook) = self.scroll_capture_starting_hook.clone() {
+				hook();
+			}
 
-			let Some((monitor, capture_rect_points, capture_rect_pixels, base_frame)) =
-				self.try_prepare_scroll_capture_start()
-			else {
-				return OverlayControl::Continue;
-			};
 			let base_frame_dimensions = base_frame.dimensions();
 
 			self.scroll_capture =
@@ -11722,6 +11744,18 @@ mod tests {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn seed_ready_scroll_capture_selection(session: &mut OverlaySession) {
+		let monitor = test_monitor_with_scale(8, 8, 1_000);
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.state.frozen_capture_rect = Some(RectPoints::new(1, 1, 4, 4));
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+		session.authoritative_frozen_capture_ready = true;
+	}
+
+	#[cfg(target_os = "macos")]
 	#[test]
 	fn pending_freeze_capture_dispatches_even_with_seeded_preview() {
 		let monitor = test_monitor();
@@ -12487,7 +12521,7 @@ mod tests {
 	fn scroll_capture_guard_error_keeps_frozen_capture_available() {
 		let mut session = OverlaySession::new();
 
-		session.state.frozen_image = Some(RgbaImage::new(1, 1));
+		seed_ready_scroll_capture_selection(&mut session);
 
 		session.set_scroll_capture_start_guard(Arc::new(|| {
 			Err(color_eyre::eyre::eyre!("Open System Settings and retry."))
@@ -12504,6 +12538,80 @@ mod tests {
 				.as_deref()
 				.is_some_and(|message| message.contains("Open System Settings and retry."))
 		);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn scroll_capture_preflight_runs_before_permission_guard() {
+		let guard_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+		let mut session = OverlaySession::new();
+
+		session.set_scroll_capture_start_guard(Arc::new({
+			let guard_calls = Arc::clone(&guard_calls);
+
+			move || {
+				guard_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+				Ok(())
+			}
+		}));
+
+		let control = session.start_scroll_capture();
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert_eq!(guard_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+		assert_eq!(
+			session.state.error_message.as_deref(),
+			Some("Scroll capture requires a dragged region selection.")
+		);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn scroll_capture_starting_hook_runs_before_started_hook() {
+		let hook_order = Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+		let mut session = OverlaySession::new();
+
+		seed_ready_scroll_capture_selection(&mut session);
+
+		session.set_scroll_capture_start_guard(Arc::new(|| Ok(())));
+
+		session.set_scroll_capture_starting_hook(Arc::new({
+			let hook_order = Arc::clone(&hook_order);
+
+			move || {
+				let mut hook_order = match hook_order.lock() {
+					Ok(hook_order) => hook_order,
+					Err(poisoned) => poisoned.into_inner(),
+				};
+
+				hook_order.push("starting");
+			}
+		}));
+		session.set_scroll_capture_started_hook(Arc::new({
+			let hook_order = Arc::clone(&hook_order);
+
+			move || {
+				let mut hook_order = match hook_order.lock() {
+					Ok(hook_order) => hook_order,
+					Err(poisoned) => poisoned.into_inner(),
+				};
+
+				hook_order.push("started");
+			}
+		}));
+
+		let control = session.start_scroll_capture();
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert!(session.scroll_capture.active);
+
+		let hook_order = match hook_order.lock() {
+			Ok(hook_order) => hook_order,
+			Err(poisoned) => poisoned.into_inner(),
+		};
+
+		assert_eq!(*hook_order, vec!["starting", "started"]);
 	}
 
 	#[cfg(target_os = "macos")]
