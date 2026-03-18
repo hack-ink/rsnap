@@ -10,7 +10,7 @@ repository.workspace  = true
 version.workspace     = true
 
 [package.metadata.bundle]
-icon       = ["apps/rsnap/assets/app-icon/generated/app-icon.icns", "assets/app-icon/generated/app-icon.icns"]
+icon       = ["../../assets/app-icon/generated/app-icon.icns", "assets/app-icon/generated/app-icon.icns"]
 identifier = "ink.hack.rsnap"
 name       = "Rsnap"
 

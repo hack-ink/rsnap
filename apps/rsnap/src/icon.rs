@@ -1,8 +1,10 @@
 use color_eyre::eyre::{Result, WrapErr};
 use tray_icon::Icon;
 
-const TRAY_ICON_PNG_BYTES: &[u8] =
-	include_bytes!("../assets/tray-icon/generated/tray-icon-template.png");
+const TRAY_ICON_PNG_BYTES: &[u8] = include_bytes!(concat!(
+	env!("CARGO_MANIFEST_DIR"),
+	"/../../assets/tray-icon/generated/tray-icon-template.png"
+));
 
 pub(crate) fn default_tray_icon() -> Result<Icon> {
 	let image = image::load_from_memory(TRAY_ICON_PNG_BYTES)
