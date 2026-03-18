@@ -140,9 +140,13 @@ impl ApplicationHandler<UserEvent> for App {
 				return;
 			}
 
+			let live_capture_window_id = settings_window.capture_window_id();
+			let previous_capture_window_id_still_on_screen = previous_capture_window_id
+				.is_some_and(|window_id| settings_window.is_capture_window_id_on_screen(window_id));
 			let next_capture_window_id = effective_settings_window_capture_window_id(
 				previous_capture_window_id,
-				settings_window.capture_window_id(),
+				live_capture_window_id,
+				previous_capture_window_id_still_on_screen,
 			);
 			let capture_window_id_changed = settings_window_capture_window_id_changed(
 				previous_capture_window_id,
@@ -305,8 +309,10 @@ pub(super) fn run() -> Result<()> {
 fn effective_settings_window_capture_window_id(
 	previous_capture_window_id: Option<u32>,
 	live_capture_window_id: Option<u32>,
+	previous_capture_window_id_still_on_screen: bool,
 ) -> Option<u32> {
-	live_capture_window_id.or(previous_capture_window_id)
+	live_capture_window_id
+		.or(previous_capture_window_id.filter(|_| previous_capture_window_id_still_on_screen))
 }
 
 fn settings_window_capture_window_id_changed(
@@ -329,10 +335,17 @@ mod tests {
 
 	#[test]
 	fn effective_settings_window_capture_window_id_preserves_cached_id_until_live_id_resolves() {
-		assert_eq!(runtime::effective_settings_window_capture_window_id(None, None), None);
-		assert_eq!(runtime::effective_settings_window_capture_window_id(Some(41), None), Some(41));
+		assert_eq!(runtime::effective_settings_window_capture_window_id(None, None, false), None);
 		assert_eq!(
-			runtime::effective_settings_window_capture_window_id(Some(7), Some(41)),
+			runtime::effective_settings_window_capture_window_id(Some(41), None, true),
+			Some(41)
+		);
+		assert_eq!(
+			runtime::effective_settings_window_capture_window_id(Some(41), None, false),
+			None
+		);
+		assert_eq!(
+			runtime::effective_settings_window_capture_window_id(Some(7), Some(41), false),
 			Some(41)
 		);
 	}

@@ -362,9 +362,16 @@
       "Verification: cargo make lint exited 0 after the final overlay-test-import CI follow-up.",
       "Verification: cargo make test exited 0 with 218 nextest tests plus cargo test --all-features after the final overlay-test-import CI follow-up.",
       "Verification: git diff --check exited 0 after the final overlay-test-import CI follow-up.",
-      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the final overlay-test-import CI follow-up."
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the final overlay-test-import CI follow-up.",
+      "Review repair diagnosis (2026-03-19): PR thread PRRT_kwDORWN8nM51P4l1 correctly identified that apps/rsnap/src/app/runtime.rs kept the last cached Settings-window CGWindow id even after apps/rsnap/src/settings_window/platform.rs stopped finding that window in the current on-screen WindowServer list, so minimized or off-Space Settings windows could leave a stale self-capture exception id behind.",
+      "Review repair fix (2026-03-19): apps/rsnap/src/app/runtime.rs now preserves a cached Settings-window capture id only while that exact WindowServer id is still present in the current on-screen window list, and apps/rsnap/src/settings_window/platform.rs exposes the on-screen membership check plus regression coverage for window-id presence detection.",
+      "Verification: cargo make fmt exited 0 after the stale Settings-window cache repair.",
+      "Verification: cargo make lint exited 0 after the stale Settings-window cache repair.",
+      "Verification: cargo make test exited 0 with 219 nextest tests plus cargo test --all-features after the stale Settings-window cache repair.",
+      "Verification: git diff --check exited 0 after the stale Settings-window cache repair.",
+      "Verification: python3 /Users/xavier/.codex/skills/plan-writing/scripts/validate_plan_contract.py --path docs/plans/2026-03-18_xy-166-settings-window-self-capture.json exited 0 after the stale Settings-window cache repair."
     ],
-    "last_updated": "2026-03-19T13:05:00Z",
+    "last_updated": "2026-03-18T18:21:27Z",
     "replan_reason": null,
     "context_snapshot": {
       "linear_issue": "XY-166",
@@ -372,7 +379,7 @@
       "platform": "macOS",
       "linear_issue_state": "In Review",
       "manual_gui_smoke_ran": true,
-      "follow_up_scope": "keep the published XY-166 PR branch green on Linux CI after the coordinate-space and fresh-baseline repair batch"
+      "follow_up_scope": "keep the published XY-166 PR branch review-clean by clearing stale cached Settings-window ids after the window leaves the current on-screen WindowServer list"
     }
   }
 }
