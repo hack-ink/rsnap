@@ -1,0 +1,190 @@
+{
+  "spec": {
+    "schema": "plan/1",
+    "plan_id": "2026-03-19-xy-184-frozen-toolbar-centering",
+    "goal": "Make the Frozen toolbar obey the exact XY-184 contract that the toolbar's horizontal midpoint matches the frozen capture region's horizontal midpoint.",
+    "success_criteria": [
+      "For Frozen captures, the toolbar's horizontal midpoint equals the frozen capture region's horizontal midpoint whenever the default slot is used.",
+      "The default horizontal position no longer depends on detected content bounds or other visual heuristics.",
+      "Frozen entry and later frozen-rect updates continue to keep toolbar placement synchronized with the current frozen capture rect.",
+      "Focused regression tests lock in exact midpoint equality rather than heuristic content bias."
+    ],
+    "constraints": [
+      "Keep the change scoped to Frozen toolbar placement in rsnap-overlay.",
+      "Do not change the frozen capture rect, export crop, or screenshot pixels as part of this fix.",
+      "Do not widen the task into a badge-placement redesign or broader toolbar visual restyling.",
+      "Preserve manual toolbar dragging semantics once the user has moved the toolbar away from its default slot.",
+      "Use repo-native verification commands before claiming completion."
+    ],
+    "defaults": {
+      "authority_linear_issue": "XY-184",
+      "branch": "y/xy-184-frozen-toolbar-centering",
+      "issue_url": "https://linear.app/hack-ink/issue/XY-184/investigate-perceived-horizontal-mis-centering-of-the-frozen-toolbar",
+      "primary_files": [
+        "packages/rsnap-overlay/src/overlay.rs"
+      ],
+      "verification_commands": [
+        "cargo test -p rsnap-overlay --lib frozen_toolbar",
+        "cargo test -p rsnap-overlay --lib auto_center",
+        "cargo make fmt",
+        "cargo make lint-rust",
+        "git diff --check"
+      ]
+    },
+    "tasks": [
+      {
+        "id": "task-1",
+        "title": "Restore exact geometric midpoint anchoring for the Frozen toolbar",
+        "status": "done",
+        "objective": "Remove the content-aware Frozen toolbar x-anchor path and make the default toolbar x position depend only on the frozen capture rect midpoint.",
+        "inputs": [
+          "Current Frozen toolbar default position helpers in packages/rsnap-overlay/src/overlay.rs",
+          "User clarification that toolbar midpoint must exactly match capture midpoint",
+          "XY-184 issue scope"
+        ],
+        "outputs": [
+          "A Frozen toolbar default-position path that uses only the frozen capture rect midpoint for x anchoring"
+        ],
+        "verification": [
+          "The toolbar default x midpoint equals the frozen capture rect midpoint.",
+          "No content-detection heuristic participates in toolbar x anchoring."
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "task-2",
+        "title": "Update regression coverage to assert exact midpoint equality",
+        "status": "done",
+        "objective": "Replace the previous content-bias tests with focused regression coverage that asserts exact toolbar midpoint equality against the frozen capture rect.",
+        "inputs": [
+          "Task 1 implementation"
+        ],
+        "outputs": [
+          "Regression tests for exact frozen toolbar midpoint anchoring"
+        ],
+        "verification": [
+          "The regression suite fails if toolbar midpoint equality is broken."
+        ],
+        "depends_on": [
+          "task-1"
+        ]
+      },
+      {
+        "id": "task-3",
+        "title": "Run repo-native verification and record execution evidence",
+        "status": "done",
+        "objective": "Run the agreed verification commands on the revised XY-184 diff and update the saved plan runtime state with the resulting evidence.",
+        "inputs": [
+          "Final XY-184 implementation"
+        ],
+        "outputs": [
+          "Fresh verification evidence and updated runtime state"
+        ],
+        "verification": [
+          "cargo test -p rsnap-overlay --lib frozen_toolbar exits 0",
+          "cargo test -p rsnap-overlay --lib auto_center exits 0",
+          "cargo make fmt exits 0",
+          "cargo make lint-rust exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-2"
+        ]
+      },
+      {
+        "id": "task-4",
+        "title": "Recenter the default Frozen toolbar when late-appearing tools change its width",
+        "status": "done",
+        "objective": "Keep the toolbar midpoint aligned with the frozen capture midpoint when the toolbar is still in its default slot and the available Frozen tool set changes after the initial seed.",
+        "inputs": [
+          "Current Frozen toolbar birth and redraw flow in packages/rsnap-overlay/src/overlay.rs",
+          "Evidence that drag-region captures seed before frozen_image is ready, so Auto Center appears later and widens the toolbar"
+        ],
+        "outputs": [
+          "A default-slot recenter path that preserves exact midpoint equality across Frozen readiness transitions without breaking manual dragging"
+        ],
+        "verification": [
+          "Drag-region Frozen captures remain centered after Auto Center becomes available.",
+          "Manual toolbar dragging still prevents automatic repositioning."
+        ],
+        "depends_on": [
+          "task-3"
+        ]
+      },
+      {
+        "id": "task-5",
+        "title": "Add a regression for post-seed width changes and rerun verification",
+        "status": "done",
+        "objective": "Cover the late-tool-availability centering regression with a focused test and rerun the repo-native verification commands on the updated fix.",
+        "inputs": [
+          "Task 4 implementation"
+        ],
+        "outputs": [
+          "Regression coverage for width-change recentering and fresh verification evidence"
+        ],
+        "verification": [
+          "A focused regression fails if the toolbar width changes without preserving capture-midpoint alignment.",
+          "cargo test -p rsnap-overlay --lib frozen_toolbar exits 0",
+          "cargo test -p rsnap-overlay --lib auto_center exits 0",
+          "cargo make fmt exits 0",
+          "cargo make lint-rust exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-4"
+        ]
+      }
+    ],
+    "replan_policy": {
+      "owner": "plan-writing",
+      "triggers": [
+        "The exact midpoint-equality contract still feels wrong in the product and the issue turns out to require a broader UX change rather than strict geometric centering.",
+        "A correct fix requires changing the saved XY-171 badge-alignment contract or broader Frozen toolbar visual language."
+      ]
+    }
+  },
+  "state": {
+    "phase": "done",
+    "current_task_id": null,
+    "next_task_id": null,
+    "blockers": [],
+    "evidence": [
+      "Implemented content-aware Frozen toolbar x-anchor selection in packages/rsnap-overlay/src/overlay.rs with geometric fallback via WindowRenderer::frozen_toolbar_default_x().",
+      "Updated Frozen-ready handling so handle_captured_freeze_response() recomputes the preseeded toolbar position once final frozen pixels are available.",
+      "Added focused regression tests for asymmetric content anchoring, geometric fallback, and post-freeze toolbar repositioning.",
+      "Verified with cargo test -p rsnap-overlay --lib frozen_toolbar (exit 0).",
+      "Verified with cargo test -p rsnap-overlay --lib auto_center (exit 0).",
+      "Verified with cargo test -p rsnap-overlay --lib captured_freeze_response_repositions_preseeded_toolbar_to_content_anchor (exit 0).",
+      "Verified with cargo make fmt (exit 0).",
+      "Verified with cargo make lint-rust (exit 0).",
+      "Verified with git diff --check (clean).",
+      "Replan evidence: user clarified that XY-184 requires exact midpoint equality between the toolbar and frozen capture rect, which invalidates the prior content-aware anchor strategy.",
+      "Task 1 outcome: packages/rsnap-overlay/src/overlay.rs now uses only the frozen capture rect midpoint for the default toolbar x anchor and no longer recomputes a content-aware x anchor from final frozen pixels.",
+      "Task 2 outcome: replaced the prior content-bias regressions with a focused midpoint-equality test for the Frozen toolbar default position.",
+      "Task 3 verification: cargo test -p rsnap-overlay --lib frozen_toolbar exited 0 after restoring exact midpoint anchoring.",
+      "Task 3 verification: cargo test -p rsnap-overlay --lib auto_center exited 0 after removing the content-aware toolbar path.",
+      "Task 3 verification: cargo make fmt exited 0 after the midpoint-anchor rollback.",
+      "Task 3 verification: cargo make lint-rust exited 0 after the midpoint-anchor rollback.",
+      "Task 3 verification: git diff --check returned clean after the midpoint-anchor rollback.",
+      "Replan evidence: drag-region Frozen captures seed the toolbar before state.finish_freeze() publishes frozen_image, so frozen_auto_center_available() is false at seed time and true later.",
+      "Replan evidence: when the Auto Center tool appears later, the toolbar width grows but the stored floating_position continues to be reused as the left edge, which shifts the toolbar midpoint to the right of the capture midpoint.",
+      "Task 4 outcome: the Frozen toolbar now records its last default-slot position and recenters only when it still matches that default slot after a late tool-set width change.",
+      "Task 4 verification: cargo test -p rsnap-overlay --lib drag_region_toolbar_recenters_when_auto_center_appears_after_preview_commit exited 0.",
+      "Task 4 verification: cargo test -p rsnap-overlay --lib late_toolbar_width_change_preserves_manual_toolbar_move exited 0.",
+      "Task 5 verification: cargo test -p rsnap-overlay --lib frozen_toolbar exited 0 after the late-width recenter fix.",
+      "Task 5 verification: cargo test -p rsnap-overlay --lib auto_center exited 0 after the late-width recenter fix.",
+      "Task 5 verification: cargo make fmt exited 0 after the late-width recenter fix.",
+      "Task 5 verification: cargo make lint-rust exited 0 after the late-width recenter fix.",
+      "Task 5 verification: git diff --check returned clean after the late-width recenter fix.",
+      "Task 5 verification: cargo make build-release exited 0 after the late-width recenter fix."
+    ],
+    "last_updated": "2026-03-20T03:34:00Z",
+    "replan_reason": null,
+    "context_snapshot": {
+      "branch": "y/xy-184-frozen-toolbar-centering",
+      "current_theory": "The right-bias was caused by seeding drag-region Frozen toolbar position before frozen_image existed; Auto Center then appeared later, widened the toolbar, and reused the old left edge until we taught the default slot to recenter across that width transition.",
+      "issue": "XY-184",
+      "workspace": ".workspaces/xy-184-frozen-toolbar-centering"
+    }
+  }
+}
