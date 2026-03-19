@@ -6474,25 +6474,7 @@ impl OverlaySession {
 
 	#[cfg(any(target_os = "macos", test))]
 	fn advance_frozen_toolbar_readiness_sample(&mut self, screen_rect: Rect) -> bool {
-		let screen_size_points = screen_rect.size();
-
-		if frozen_toolbar_needs_new_sample(
-			self.toolbar_state.layout_last_screen_size_points,
-			screen_size_points,
-		) {
-			self.toolbar_state.layout_last_screen_size_points = Some(screen_size_points);
-			self.toolbar_state.layout_stable_frames = 0;
-
-			return false;
-		}
-		if self.toolbar_state.layout_stable_frames < 1 {
-			self.toolbar_state.layout_stable_frames =
-				self.toolbar_state.layout_stable_frames.saturating_add(1);
-
-			return false;
-		}
-
-		true
+		advance_frozen_toolbar_readiness_sample_state(&mut self.toolbar_state, screen_rect)
 	}
 
 	#[cfg(any(not(target_os = "macos"), test))]
@@ -8594,15 +8576,8 @@ impl WindowRenderer {
 
 	fn frozen_capture_focus_rect(state: &OverlayState, screen_rect: Rect) -> Option<Rect> {
 		let capture_rect = state.frozen_capture_rect?;
-		let rect = Self::selection_focus_rect(capture_rect, screen_rect);
 
-		if rect.width() < LIVE_DRAG_START_THRESHOLD_PX
-			|| rect.height() < LIVE_DRAG_START_THRESHOLD_PX
-		{
-			return None;
-		}
-
-		Some(rect)
+		Some(Self::selection_focus_rect(capture_rect, screen_rect))
 	}
 
 	fn live_drag_focus_rect(
@@ -9816,7 +9791,9 @@ impl WindowRenderer {
 
 		#[cfg(not(target_os = "macos"))]
 		{
-			toolbar_state.layout_last_screen_size_points = Some(screen_rect.size());
+			if !advance_frozen_toolbar_readiness_sample_state(toolbar_state, screen_rect) {
+				ctx.request_repaint();
+			}
 		}
 
 		Self::draw_frozen_toolbar(
@@ -11985,6 +11962,30 @@ fn frozen_toolbar_needs_new_sample(
 	}
 }
 
+fn advance_frozen_toolbar_readiness_sample_state(
+	toolbar_state: &mut FrozenToolbarState,
+	screen_rect: Rect,
+) -> bool {
+	let screen_size_points = screen_rect.size();
+
+	if frozen_toolbar_needs_new_sample(
+		toolbar_state.layout_last_screen_size_points,
+		screen_size_points,
+	) {
+		toolbar_state.layout_last_screen_size_points = Some(screen_size_points);
+		toolbar_state.layout_stable_frames = 0;
+
+		return false;
+	}
+	if toolbar_state.layout_stable_frames < 1 {
+		toolbar_state.layout_stable_frames = toolbar_state.layout_stable_frames.saturating_add(1);
+
+		return false;
+	}
+
+	true
+}
+
 #[cfg(target_os = "macos")]
 fn macos_is_option_key_down() -> bool {
 	let flags = unsafe { CGEventSourceFlagsState(macos_hid_event_source_state_id()) };
@@ -12264,9 +12265,9 @@ mod tests {
 		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
 		SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
 		SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
-		SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionSizeBadgeTarget,
-		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
-		hud_helpers,
+		SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
+		SelectionSizeBadgeTarget, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
+		ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
@@ -13290,6 +13291,25 @@ mod tests {
 	}
 
 	#[test]
+	fn frozen_toolbar_ready_for_draw_recovers_after_preseeded_position_is_sampled() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(200, 180, 200, 300);
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+
+		session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+		assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+		assert_eq!(session.toolbar_state.layout_last_screen_size_points, Some(screen_rect.size()));
+		assert_eq!(session.toolbar_state.layout_stable_frames, 0);
+		assert!(!session.frozen_toolbar_ready_for_draw(screen_rect));
+		assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+		assert_eq!(session.toolbar_state.layout_stable_frames, 1);
+		assert!(session.frozen_toolbar_ready_for_draw(screen_rect));
+	}
+
+	#[test]
 	fn frozen_toolbar_overlay_viewport_sample_recovers_from_toolbar_window_pollution() {
 		let monitor = test_monitor();
 		let overlay_screen_rect =
@@ -13566,6 +13586,35 @@ mod tests {
 				size_points: RectPoints::new(140, 180, 2, 1),
 			})
 		);
+	}
+
+	#[test]
+	fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
+		let ctx = test_egui_context();
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut state = OverlayState::new();
+		let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+		let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+
+		state.mode = OverlayMode::Frozen;
+		state.monitor = Some(monitor);
+		state.frozen_capture_rect = Some(RectPoints::new(140, 180, 2, 1));
+
+		assert!(WindowRenderer::render_frozen_capture_affordance(
+			&ctx,
+			&state,
+			monitor,
+			screen_rect,
+			HudTheme::Dark,
+			None,
+			false,
+			false,
+			1.0,
+			&mut selection_flow_geometry_cache,
+			&mut selection_dashed_border_cache,
+		));
 	}
 
 	#[test]
