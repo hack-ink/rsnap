@@ -6431,8 +6431,11 @@ impl OverlaySession {
 			return None;
 		}
 
-		let screen_rect =
-			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let screen_size_points = self
+			.toolbar_state
+			.layout_last_screen_size_points
+			.unwrap_or(Vec2::new(monitor.width as f32, monitor.height as f32));
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, screen_size_points);
 
 		WindowRenderer::frozen_toolbar_reserved_rect(
 			&self.state,
@@ -8703,22 +8706,17 @@ impl WindowRenderer {
 		reserved_rect: Option<Rect>,
 	) -> Rect {
 		// Geometry priority contract:
-		// 1. Keep the badge right-aligned to the capture rect.
-		// 2. Prefer the below-capture slot when it fits and does not hit a reserved rect.
-		// 3. Otherwise stay inside the capture while avoiding the reserved rect when a
+		// 1. Keep the badge fully visible inside the viewport whenever the viewport can fit it.
+		// 2. Keep the badge right-aligned to the capture rect whenever that still satisfies (1).
+		// 3. Prefer the below-capture slot when it fits and does not hit a reserved rect.
+		// 4. Otherwise stay inside the capture while avoiding the reserved rect when a
 		//    non-overlapping inside band exists.
-		// 4. If the reserved rect exhausts the in-capture space, try a right-aligned
+		// 5. If the reserved rect exhausts the in-capture space, try a right-aligned
 		//    above-capture slot before accepting overlap.
-		// 5. For captures narrower than the badge at the left screen edge, preserve
-		//    right-edge alignment even if that means partial left overflow.
 		let min_x = screen_rect.min.x;
 		let max_x = (screen_rect.max.x - badge_size.x).max(min_x);
 		let aligned_x = capture_rect.max.x - badge_size.x;
-		let x = if aligned_x < min_x && capture_rect.width() < badge_size.x {
-			aligned_x
-		} else {
-			aligned_x.clamp(min_x, max_x)
-		};
+		let x = aligned_x.clamp(min_x, max_x);
 		let below_y = capture_rect.max.y + SELECTION_SIZE_BADGE_GAP_PX;
 		let below_rect = Rect::from_min_size(Pos2::new(x, below_y), badge_size);
 		let fits_below = below_rect.max.y
@@ -8767,7 +8765,7 @@ impl WindowRenderer {
 
 			let above_y = capture_rect.min.y - SELECTION_SIZE_BADGE_GAP_PX - badge_size.y;
 
-			if above_y >= screen_rect.min.y + SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX {
+			if above_y >= screen_rect.min.y {
 				let above_rect = Rect::from_min_size(Pos2::new(x, above_y), badge_size);
 
 				if !above_rect.intersects(reserved_rect) {
@@ -9735,6 +9733,8 @@ impl WindowRenderer {
 		) else {
 			return;
 		};
+
+		toolbar_state.layout_last_screen_size_points = Some(screen_rect.size());
 
 		Self::draw_frozen_toolbar(
 			ctx,
@@ -12886,7 +12886,7 @@ mod tests {
 	}
 
 	#[test]
-	fn selection_size_badge_rect_keeps_right_edge_for_narrow_left_capture() {
+	fn selection_size_badge_rect_clamps_narrow_left_capture_into_viewport() {
 		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 		let capture_rect = Rect::from_min_size(Pos2::new(0.0, 160.0), Vec2::new(40.0, 120.0));
 		let badge_rect = WindowRenderer::selection_size_badge_rect(
@@ -12895,8 +12895,22 @@ mod tests {
 			Vec2::new(92.0, 26.0),
 		);
 
-		assert_eq!(badge_rect.max.x, capture_rect.max.x);
-		assert!(badge_rect.min.x < screen_rect.min.x);
+		assert_eq!(badge_rect.min.x, screen_rect.min.x);
+		assert!(badge_rect.max.x > capture_rect.max.x);
+	}
+
+	#[test]
+	fn selection_size_badge_rect_clamps_near_left_narrow_capture_into_viewport() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(20.0, 160.0), Vec2::new(40.0, 120.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+		);
+
+		assert_eq!(badge_rect.min.x, screen_rect.min.x);
+		assert!(badge_rect.max.x > capture_rect.max.x);
 	}
 
 	#[test]
@@ -13055,6 +13069,55 @@ mod tests {
 	}
 
 	#[test]
+	fn frozen_toolbar_reserved_rect_uses_sampled_viewport_size() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 400,
+			height: 260,
+			scale_factor_x1000: 1_000,
+		};
+		let sampled_screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 120.0));
+		let monitor_screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let capture_rect_points = RectPoints::new(60, 40, 220, 60);
+		let capture_rect = Rect::from_min_size(
+			Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
+			Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
+		);
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.state.monitor = Some(monitor);
+		session.state.frozen_capture_rect = Some(capture_rect_points);
+		session.toolbar_state.layout_last_screen_size_points = Some(sampled_screen_rect.size());
+
+		let toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
+		let sampled_default_pos = WindowRenderer::frozen_toolbar_default_pos(
+			sampled_screen_rect,
+			capture_rect.intersect(sampled_screen_rect),
+			toolbar_size,
+			session.config.toolbar_placement,
+		);
+		let monitor_default_pos = WindowRenderer::frozen_toolbar_default_pos(
+			monitor_screen_rect,
+			capture_rect.intersect(monitor_screen_rect),
+			toolbar_size,
+			session.config.toolbar_placement,
+		);
+
+		session.toolbar_state.floating_position = Some(sampled_default_pos);
+
+		let reserved_rect = session
+			.frozen_size_badge_toolbar_reserved_rect(monitor)
+			.expect("sampled viewport-aligned toolbar slot should still be reserved");
+
+		assert_ne!(sampled_default_pos, monitor_default_pos);
+		assert_eq!(reserved_rect.min, sampled_default_pos);
+		assert_eq!(reserved_rect.size(), toolbar_size);
+	}
+
+	#[test]
 	fn selection_size_badge_reserved_rect_prefers_upper_band_when_bottom_space_is_reserved() {
 		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 220.0));
 		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 40.0), Vec2::new(200.0, 150.0));
@@ -13102,6 +13165,23 @@ mod tests {
 		);
 
 		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.max.y, capture_rect.min.y - SELECTION_SIZE_BADGE_GAP_PX);
+		assert!(!badge_rect.intersects(reserved_rect));
+	}
+
+	#[test]
+	fn selection_size_badge_reserved_rect_uses_above_slot_at_top_edge_when_visible() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 112.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 34.0), Vec2::new(120.0, 50.0));
+		let reserved_rect = Rect::from_min_size(Pos2::new(40.0, 42.0), Vec2::new(120.0, 40.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+		assert_eq!(badge_rect.min.y, screen_rect.min.y);
 		assert_eq!(badge_rect.max.y, capture_rect.min.y - SELECTION_SIZE_BADGE_GAP_PX);
 		assert!(!badge_rect.intersects(reserved_rect));
 	}
