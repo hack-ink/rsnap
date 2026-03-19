@@ -11,6 +11,7 @@
       "Frozen toolbar reservation begins only once the toolbar birth logic is ready to draw for the current viewport, so early frozen frames do not reserve phantom toolbar space.",
       "Preseeded Frozen toolbar floating positions do not count as draw readiness until the current overlay viewport has been sampled and confirmed stable, so early frozen frames cannot reserve toolbar space from a stale preseed.",
       "Frozen toolbar draw-readiness sampling on macOS uses the overlay viewport basis for the active monitor and is not overwritten by the dedicated toolbar window viewport.",
+      "The Frozen toolbar readiness repair remains compilable on non-macOS targets, including the Linux CI lint path.",
       "Badge placement defaults below the capture rect, stays right-aligned to the rect when that fits inside the viewport, clamps fully inside the visible screen when strict alignment would force clipping, and falls back inside the rect when there is not enough room below.",
       "Tiny valid capture rects still produce a size badge target instead of being filtered out by the live drag-init threshold.",
       "Focused overlay tests cover badge geometry and placement fallback for representative live and Frozen scenarios.",
@@ -25,6 +26,7 @@
       "Do not reserve Frozen toolbar space before the toolbar birth logic is actually ready to draw for the current viewport.",
       "Do not treat a preseeded Frozen toolbar floating_position by itself as proof that the toolbar can already draw for the current viewport.",
       "Do not let the dedicated toolbar window viewport overwrite the overlay-viewport sample that Frozen badge reservation uses for draw readiness.",
+      "Do not break the non-macOS Frozen badge reservation compile path while repairing the macOS toolbar readiness logic.",
       "Do not suppress badge rendering for tiny valid Frozen or drag capture rects solely because the live drag-init threshold is unmet.",
       "Use repo-native verification commands before claiming completion."
     ],
@@ -824,6 +826,66 @@
         "depends_on": [
           "task-37"
         ]
+      },
+      {
+        "id": "task-39",
+        "title": "Capture the Linux CI regression in the saved contract",
+        "status": "done",
+        "objective": "Reopen the saved XY-171 contract for the post-8073609 Linux CI failure so the follow-up repair is tracked before more implementation happens.",
+        "inputs": [
+          "Rust checks failure on PR #41 for head 8073609",
+          "Linux CI log showing non-macOS compilation still calls frozen_toolbar_ready_for_draw"
+        ],
+        "outputs": [
+          "An updated saved contract that explicitly covers the non-macOS compile-path repair"
+        ],
+        "verification": [
+          "The saved contract records the Linux CI failure as current execution authority for the next repair batch."
+        ],
+        "depends_on": [
+          "task-38"
+        ]
+      },
+      {
+        "id": "task-40",
+        "title": "Repair the non-macOS Frozen toolbar readiness compile path",
+        "status": "done",
+        "objective": "Restore the non-macOS Frozen badge reservation helper so Linux CI can compile the lint path while keeping the macOS overlay-viewport sampling repair intact.",
+        "inputs": [
+          "Task 39 contract update",
+          "packages/rsnap-overlay/src/overlay.rs Frozen toolbar readiness helper definitions and callers"
+        ],
+        "outputs": [
+          "A minimal cross-platform cfg repair for frozen_toolbar_ready_for_draw plus any focused regression coverage needed"
+        ],
+        "verification": [
+          "The non-macOS compile path resolves frozen_toolbar_ready_for_draw again.",
+          "The macOS toolbar-window pollution repair remains unchanged in behavior."
+        ],
+        "depends_on": [
+          "task-39"
+        ]
+      },
+      {
+        "id": "task-41",
+        "title": "Re-verify the Linux CI compile-path repair batch",
+        "status": "done",
+        "objective": "Run the repo-native checks after the cross-platform cfg repair so the refreshed PR head is ready to replace the CI-red state.",
+        "inputs": [
+          "Task 40 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the Linux CI compile-path repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-40"
+        ]
       }
     ],
     "replan_policy": {
@@ -837,7 +899,8 @@
         "Review feedback reveals that Frozen toolbar reservation is still using the wrong viewport basis or still reserving a hidden toolbar slot.",
         "Review feedback reveals that Frozen toolbar reservation is still active before toolbar birth is actually drawable or that tiny valid capture rects still lose the size badge.",
         "Review feedback reveals that a preseeded Frozen toolbar position is still being treated as draw readiness before the current viewport is stable.",
-        "Review feedback reveals that Frozen toolbar draw readiness is still sampling the dedicated toolbar window viewport instead of the overlay viewport on macOS."
+        "Review feedback reveals that Frozen toolbar draw readiness is still sampling the dedicated toolbar window viewport instead of the overlay viewport on macOS.",
+        "Linux CI reveals that a platform cfg change in the Frozen toolbar readiness helper broke the non-macOS compile path."
       ]
     }
   },
@@ -974,9 +1037,18 @@
       "Task 38 verification: cargo make fmt-rust-check completed successfully after the overlay-viewport readiness sampling repair batch.",
       "Task 38 verification: cargo make lint completed successfully after the overlay-viewport readiness sampling repair batch.",
       "Task 38 verification: cargo make test completed successfully with 221 nextest cases and 190 rsnap-overlay unit tests passing after the overlay-viewport readiness sampling repair batch.",
-      "Task 38 verification: git diff --check returned clean after the overlay-viewport readiness sampling repair batch."
+      "Task 38 verification: git diff --check returned clean after the overlay-viewport readiness sampling repair batch.",
+      "Replan evidence: on 2026-03-19 Linux CI for head 8073609 failed in Rust checks because the non-macOS lint path still calls frozen_toolbar_ready_for_draw while the helper had been narrowed to cfg(test), so the latest macOS readiness repair regressed cross-platform compilation.",
+      "Task 39 outcome: the saved contract now explicitly tracks the Linux CI compile regression as a follow-up repair batch on top of the macOS toolbar readiness fix.",
+      "Task 40 outcome: packages/rsnap-overlay/src/overlay.rs now exposes frozen_toolbar_ready_for_draw on non-macOS targets and in tests, restoring the Linux lint compile path without changing the macOS overlay-viewport sampling behavior.",
+      "Task 41 verification: cargo make fmt completed successfully after the Linux CI compile-path repair batch.",
+      "Task 41 verification: cargo make fmt-rust-check completed successfully after the Linux CI compile-path repair batch.",
+      "Task 41 verification: cargo make lint completed successfully after the Linux CI compile-path repair batch.",
+      "Task 41 verification: cargo make test completed successfully with 221 nextest cases and 190 rsnap-overlay unit tests passing after the Linux CI compile-path repair batch.",
+      "Task 41 verification: git diff --check returned clean after the Linux CI compile-path repair batch.",
+      "Task 41 verification: cargo check -p rsnap-overlay --all-features --all-targets --target x86_64-unknown-linux-gnu progressed past the prior missing-method failure and then stopped at local cross-pkg-config setup for khronos-egl, which is a host-environment limitation rather than the original compile regression."
     ],
-    "last_updated": "2026-03-19T07:12:44Z",
+    "last_updated": "2026-03-19T07:23:25Z",
     "replan_reason": null,
     "context_snapshot": {
       "blur_experiment_rollback_requested": true,
@@ -1008,6 +1080,8 @@
       "toolbar_overlay_viewport_followup_requested": true,
       "toolbar_overlay_viewport_sampling_followup_completed": true,
       "toolbar_overlay_viewport_sampling_followup_requested": false,
+      "linux_ci_compile_followup_completed": true,
+      "linux_ci_compile_followup_requested": false,
       "toolbar_preseeded_position_followup_completed": true,
       "toolbar_preseeded_position_followup_requested": true,
       "toolbar_birth_readiness_followup_requested": true,
