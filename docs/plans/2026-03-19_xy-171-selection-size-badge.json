@@ -886,6 +886,68 @@
         "depends_on": [
           "task-40"
         ]
+      },
+      {
+        "id": "task-42",
+        "title": "Capture the Linux lint dead-code regression in the saved contract",
+        "status": "done",
+        "objective": "Reopen the saved XY-171 contract for the post-33e7279 Linux CI failure so the follow-up repair stays tracked before another PR head refresh.",
+        "inputs": [
+          "Rust checks failure on PR #41 for head 33e7279",
+          "Linux CI log showing advance_frozen_toolbar_readiness_sample is dead code on non-macOS lint builds"
+        ],
+        "outputs": [
+          "An updated saved contract that explicitly covers the Linux dead-code follow-up batch"
+        ],
+        "verification": [
+          "The saved contract records the latest Linux CI dead-code failure as the current execution authority for the next repair batch."
+        ],
+        "depends_on": [
+          "task-41"
+        ]
+      },
+      {
+        "id": "task-43",
+        "title": "Repair macOS-only readiness-sampler visibility for Linux lint",
+        "status": "done",
+        "objective": "Narrow advance_frozen_toolbar_readiness_sample to the macOS runtime and tests so Linux lint no longer sees dead code while the macOS Frozen readiness path and focused tests remain intact.",
+        "inputs": [
+          "Task 42 contract update",
+          "packages/rsnap-overlay/src/overlay.rs Frozen toolbar readiness helper definitions and test callers"
+        ],
+        "outputs": [
+          "A minimal cfg repair for advance_frozen_toolbar_readiness_sample that preserves macOS runtime behavior and test coverage"
+        ],
+        "verification": [
+          "Linux lint no longer reports advance_frozen_toolbar_readiness_sample as dead code.",
+          "The macOS overlay-viewport readiness sampling behavior remains unchanged.",
+          "Focused tests that call the helper still compile and pass."
+        ],
+        "depends_on": [
+          "task-42"
+        ]
+      },
+      {
+        "id": "task-44",
+        "title": "Re-verify the Linux dead-code repair batch",
+        "status": "done",
+        "objective": "Run the repo-native checks after the readiness-sampler cfg repair so the refreshed PR head can replace the latest CI-red state.",
+        "inputs": [
+          "Task 43 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the Linux dead-code repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make fmt-rust-check exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-43"
+        ]
       }
     ],
     "replan_policy": {
@@ -900,7 +962,8 @@
         "Review feedback reveals that Frozen toolbar reservation is still active before toolbar birth is actually drawable or that tiny valid capture rects still lose the size badge.",
         "Review feedback reveals that a preseeded Frozen toolbar position is still being treated as draw readiness before the current viewport is stable.",
         "Review feedback reveals that Frozen toolbar draw readiness is still sampling the dedicated toolbar window viewport instead of the overlay viewport on macOS.",
-        "Linux CI reveals that a platform cfg change in the Frozen toolbar readiness helper broke the non-macOS compile path."
+        "Linux CI reveals that a platform cfg change in the Frozen toolbar readiness helper broke the non-macOS compile path.",
+        "Linux CI reveals that a macOS-only Frozen toolbar readiness sampler is still compiled into non-macOS lint paths and trips dead-code denial."
       ]
     }
   },
@@ -1046,9 +1109,17 @@
       "Task 41 verification: cargo make lint completed successfully after the Linux CI compile-path repair batch.",
       "Task 41 verification: cargo make test completed successfully with 221 nextest cases and 190 rsnap-overlay unit tests passing after the Linux CI compile-path repair batch.",
       "Task 41 verification: git diff --check returned clean after the Linux CI compile-path repair batch.",
-      "Task 41 verification: cargo check -p rsnap-overlay --all-features --all-targets --target x86_64-unknown-linux-gnu progressed past the prior missing-method failure and then stopped at local cross-pkg-config setup for khronos-egl, which is a host-environment limitation rather than the original compile regression."
+      "Task 41 verification: cargo check -p rsnap-overlay --all-features --all-targets --target x86_64-unknown-linux-gnu progressed past the prior missing-method failure and then stopped at local cross-pkg-config setup for khronos-egl, which is a host-environment limitation rather than the original compile regression.",
+      "Replan evidence: on 2026-03-19 Linux CI for head 33e7279 failed in Rust checks because advance_frozen_toolbar_readiness_sample remained visible to non-macOS lint builds and tripped dead-code denial.",
+      "Task 42 outcome: the saved contract now explicitly tracks the Linux dead-code regression as a narrow follow-up batch on top of the earlier non-macOS compile-path repair.",
+      "Task 43 outcome: packages/rsnap-overlay/src/overlay.rs now narrows advance_frozen_toolbar_readiness_sample to macOS runtime builds and tests, so Linux lint no longer sees the helper while focused tests can still call it.",
+      "Task 44 verification: cargo make fmt completed successfully after the Linux dead-code repair batch.",
+      "Task 44 verification: cargo make fmt-rust-check completed successfully after the Linux dead-code repair batch.",
+      "Task 44 verification: cargo make lint completed successfully after the Linux dead-code repair batch.",
+      "Task 44 verification: cargo make test completed successfully with 221 nextest cases and 190 rsnap-overlay unit tests passing after the Linux dead-code repair batch.",
+      "Task 44 verification: git diff --check returned clean after the Linux dead-code repair batch."
     ],
-    "last_updated": "2026-03-19T07:23:25Z",
+    "last_updated": "2026-03-19T07:32:22Z",
     "replan_reason": null,
     "context_snapshot": {
       "blur_experiment_rollback_requested": true,
@@ -1082,6 +1153,8 @@
       "toolbar_overlay_viewport_sampling_followup_requested": false,
       "linux_ci_compile_followup_completed": true,
       "linux_ci_compile_followup_requested": false,
+      "linux_ci_dead_code_followup_completed": true,
+      "linux_ci_dead_code_followup_requested": false,
       "toolbar_preseeded_position_followup_completed": true,
       "toolbar_preseeded_position_followup_requested": true,
       "toolbar_birth_readiness_followup_requested": true,
