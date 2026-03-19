@@ -7,6 +7,7 @@
       "Live drag selection shows a visible size badge derived from the drag focus rect.",
       "Live hovered-window and fullscreen fallback affordances show the same size badge for the active capture target.",
       "Frozen selection shows the same size badge anchored to the frozen capture rect after entering Frozen mode.",
+      "Frozen toolbar reservation for badge placement is based on the overlay viewport for the active monitor, not the dedicated toolbar window viewport.",
       "Badge placement defaults below the capture rect, stays right-aligned to the rect when that fits inside the viewport, clamps fully inside the visible screen when strict alignment would force clipping, and falls back inside the rect when there is not enough room below.",
       "Focused overlay tests cover badge geometry and placement fallback for representative live and Frozen scenarios.",
       "The size badge is rendered as pure text with a fixed high-contrast style plus a light outline or shadow instead of introducing a new blur or glass surface.",
@@ -16,6 +17,7 @@
       "Keep the implementation scoped to overlay rendering and layout helpers in rsnap-overlay; do not change capture/export pixel data paths.",
       "Preserve the existing visual language of the HUD, selection frame, loupe, and Frozen toolbar, and do not regress their existing blur treatment.",
       "Do not allow the badge to clip outside the visible screen region; keep the badge right-aligned to the selection when that fits without forcing viewport clipping.",
+      "Reserve the Frozen toolbar slot only while that toolbar is actually visible for the current platform/render path; do not avoid a phantom toolbar rectangle during preview-only frames.",
       "Use repo-native verification commands before claiming completion."
     ],
     "defaults": {
@@ -566,6 +568,68 @@
         "depends_on": [
           "task-25"
         ]
+      },
+      {
+        "id": "task-27",
+        "title": "Re-scope frozen toolbar reservation visibility and viewport basis",
+        "status": "done",
+        "objective": "Update the saved XY-171 contract so Frozen toolbar reservation is driven by the overlay viewport for the active monitor and only applies while the toolbar is actually visible in the current platform-specific render path.",
+        "inputs": [
+          "New PR #41 review feedback after head 6966d55 on frozen_size_badge_toolbar_reserved_rect() and handle_overlay_window_redraw()",
+          "Current Frozen toolbar window runtime and overlay redraw flow in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A corrected reservation contract for overlay-viewport sizing and visible-toolbar-only reservation"
+        ],
+        "verification": [
+          "The saved contract no longer depends on toolbar-window viewport sampling for badge reservation.",
+          "The saved contract no longer reserves a toolbar slot while the toolbar is hidden in preview-only frames."
+        ],
+        "depends_on": [
+          "task-26"
+        ]
+      },
+      {
+        "id": "task-28",
+        "title": "Implement the overlay-viewport reservation repair batch",
+        "status": "done",
+        "objective": "Repair overlay.rs so Frozen badge reservation uses the overlay viewport for the active monitor, skips reservation while the toolbar is hidden for the current platform path, and expands regression coverage for both review findings.",
+        "inputs": [
+          "Task 27 contract update",
+          "Current overlay.rs Frozen toolbar reservation helpers and tests"
+        ],
+        "outputs": [
+          "A repaired Frozen toolbar reservation path plus focused tests for overlay-viewport sizing and hidden-toolbar gating"
+        ],
+        "verification": [
+          "macOS Frozen badge reservation still reserves the default toolbar slot when the toolbar is visible, even if the dedicated toolbar window has a different viewport size.",
+          "Frozen preview frames do not reserve a phantom toolbar slot while the toolbar is hidden.",
+          "New focused tests fail without the repair batch and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-27"
+        ]
+      },
+      {
+        "id": "task-29",
+        "title": "Re-verify the toolbar reservation repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the Frozen toolbar reservation repair so the refreshed PR head is ready for review-repair closeout.",
+        "inputs": [
+          "Task 28 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the toolbar reservation repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-28"
+        ]
       }
     ],
     "replan_policy": {
@@ -575,7 +639,8 @@
         "The placement rules conflict with Frozen toolbar or loupe geometry in a way that needs a product decision rather than a local layout fix.",
         "Verification exposes regressions outside overlay rendering that widen the task beyond XY-171.",
         "Badge styling requires touching the existing HUD blur pipeline again instead of staying as local text rendering.",
-        "Review feedback reveals another badge geometry priority conflict that is not already encoded in the saved edge-case matrix."
+        "Review feedback reveals another badge geometry priority conflict that is not already encoded in the saved edge-case matrix.",
+        "Review feedback reveals that Frozen toolbar reservation is still using the wrong viewport basis or still reserving a hidden toolbar slot."
       ]
     }
   },
@@ -682,9 +747,16 @@
       "Task 26 verification: cargo make fmt completed successfully after the post-hardening review repair batch.",
       "Task 26 verification: cargo make lint completed successfully after the post-hardening review repair batch.",
       "Task 26 verification: cargo make test completed successfully with 214 nextest cases and 183 rsnap-overlay unit tests passing after the post-hardening review repair batch.",
-      "Task 26 verification: git diff --check returned clean after the post-hardening review repair batch."
+      "Task 26 verification: git diff --check returned clean after the post-hardening review repair batch.",
+      "Replan evidence: on 2026-03-19 a new review after head 6966d55 surfaced two more issues in Frozen toolbar reservation: the helper was still using toolbar-window screen sizing on macOS and it still reserved a hidden toolbar slot during preview-only frames.",
+      "Task 27 outcome: the saved contract now requires Frozen toolbar reservation to use the overlay viewport for the active monitor and to reserve space only while the toolbar is actually visible for the current platform path.",
+      "Task 28 outcome: packages/rsnap-overlay/src/overlay.rs now computes Frozen badge reservation from the overlay window viewport, gates the reservation on the toolbar's actual visible path, and covers both the overlay-viewport and hidden-toolbar cases with focused tests.",
+      "Task 29 verification: cargo make fmt completed successfully after the toolbar reservation repair batch.",
+      "Task 29 verification: cargo make lint completed successfully after the toolbar reservation repair batch.",
+      "Task 29 verification: cargo make test completed successfully with 216 nextest cases and 185 rsnap-overlay unit tests passing after the toolbar reservation repair batch.",
+      "Task 29 verification: git diff --check returned clean after the toolbar reservation repair batch."
     ],
-    "last_updated": "2026-03-19T03:46:00Z",
+    "last_updated": "2026-03-19T05:46:29Z",
     "replan_reason": null,
     "context_snapshot": {
       "blur_experiment_rollback_requested": true,
@@ -695,6 +767,8 @@
       "geometry_contract_hardening_requested": true,
       "geometry_visibility_reprioritization_completed": true,
       "geometry_visibility_reprioritization_requested": true,
+      "hidden_toolbar_reservation_followup_completed": true,
+      "hidden_toolbar_reservation_followup_requested": true,
       "light_theme_readability_followup_completed": true,
       "light_theme_readability_followup_requested": true,
       "linear_issue": "XY-171",
@@ -707,6 +781,8 @@
       "style_polish_completed": true,
       "style_polish_requested": true,
       "text_only_badge_requested": true,
+      "toolbar_overlay_viewport_followup_completed": true,
+      "toolbar_overlay_viewport_followup_requested": true,
       "toolbar_viewport_basis_followup_completed": true,
       "toolbar_viewport_basis_followup_requested": true,
       "verification_completed": true,
