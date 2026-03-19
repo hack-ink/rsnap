@@ -240,7 +240,16 @@ const TOOLBAR_EXPANDED_HEIGHT_PX: f32 = FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
 	+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
 const TOOLBAR_CAPTURE_GAP_PX: f32 = 10.0;
 const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
+const TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS: f32 = 1.0;
 const HUD_PILL_CORNER_RADIUS_POINTS: u8 = 18;
+const SELECTION_SIZE_BADGE_FONT_SIZE_POINTS: f32 = 13.0;
+const SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS: f32 = 2.0;
+const SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX: f32 = 1.0;
+const SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX: f32 = 1.0;
+const SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX: f32 = 2.0;
+const SELECTION_SIZE_BADGE_GAP_PX: f32 = 8.0;
+const SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX: f32 = 8.0;
+const SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX: f32 = 8.0;
 const TOOLBAR_DRAG_START_THRESHOLD_PX: f32 = 6.0;
 #[cfg(target_os = "macos")]
 const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 30;
@@ -3951,6 +3960,7 @@ impl OverlaySession {
 				false,
 				false,
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
+				None,
 				Some(&mut self.toolbar_state),
 				toolbar_input,
 			);
@@ -5801,6 +5811,7 @@ impl OverlaySession {
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				None,
 				None,
+				None,
 			)?;
 
 			summary.renderer_draw_elapsed = Some(draw_started_at.elapsed());
@@ -6506,9 +6517,6 @@ impl OverlaySession {
 			&& self.frozen_final_capture_ready();
 		let toolbar_input =
 			if draw_toolbar { self.toolbar_pointer_state(overlay_monitor, None) } else { None };
-		let Some(gpu) = self.gpu.as_ref() else {
-			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
-		};
 
 		if matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.state.monitor == Some(overlay_monitor)
@@ -6534,6 +6542,35 @@ impl OverlaySession {
 			&& !self.frozen_final_capture_ready();
 		let draw_selection_particles =
 			(self.config.selection_particles || self.scroll_capture.active) && !capture_in_progress;
+		let overlay_screen_rect = self.overlay_window_screen_rect(window_id, overlay_monitor);
+		let toolbar_visible_for_badge = if cfg!(target_os = "macos") {
+			!self.should_hide_toolbar_window(overlay_monitor)
+		} else {
+			draw_toolbar
+		};
+		#[cfg(target_os = "macos")]
+		let toolbar_ready_for_badge = if toolbar_visible_for_badge {
+			let ready = self.advance_frozen_toolbar_readiness_sample(overlay_screen_rect);
+
+			if !ready {
+				self.request_redraw_for_monitor(overlay_monitor);
+			}
+
+			ready
+		} else {
+			false
+		};
+		#[cfg(not(target_os = "macos"))]
+		let toolbar_ready_for_badge =
+			toolbar_visible_for_badge && self.frozen_toolbar_ready_for_draw(overlay_screen_rect);
+		let frozen_toolbar_reserved_rect = self.frozen_size_badge_toolbar_reserved_rect(
+			overlay_monitor,
+			overlay_screen_rect,
+			toolbar_ready_for_badge,
+		);
+		let Some(gpu) = self.gpu.as_ref() else {
+			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
+		};
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
 		{
@@ -6563,6 +6600,7 @@ impl OverlaySession {
 				!self.scroll_capture.active,
 				self.scroll_capture.active,
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
+				frozen_toolbar_reserved_rect,
 				toolbar_state,
 				toolbar_input,
 			) {
@@ -6572,6 +6610,66 @@ impl OverlaySession {
 		self.last_present_at = Instant::now();
 
 		self.handle_capture_and_toolbar_redraw_post(overlay_monitor, draw_toolbar)
+	}
+
+	fn overlay_window_screen_rect(&self, window_id: WindowId, monitor: MonitorRect) -> Rect {
+		let fallback_size = Vec2::new(monitor.width as f32, monitor.height as f32);
+
+		self.windows
+			.get(&window_id)
+			.map(|overlay_window| {
+				let scale_factor = overlay_window.window.scale_factor().max(1.0) as f32;
+				let size = overlay_window.window.inner_size();
+				let size_points = if size.width == 0 || size.height == 0 {
+					fallback_size
+				} else {
+					Vec2::new(
+						(size.width as f32 / scale_factor).max(1.0),
+						(size.height as f32 / scale_factor).max(1.0),
+					)
+				};
+
+				Rect::from_min_size(Pos2::ZERO, size_points)
+			})
+			.unwrap_or_else(|| Rect::from_min_size(Pos2::ZERO, fallback_size))
+	}
+
+	#[cfg(any(target_os = "macos", test))]
+	fn advance_frozen_toolbar_readiness_sample(&mut self, screen_rect: Rect) -> bool {
+		advance_frozen_toolbar_readiness_sample_state(&mut self.toolbar_state, screen_rect)
+	}
+
+	#[cfg(any(not(target_os = "macos"), test))]
+	fn frozen_toolbar_ready_for_draw(&self, screen_rect: Rect) -> bool {
+		let screen_size_points = screen_rect.size();
+		let needs_new_sample = frozen_toolbar_needs_new_sample(
+			self.toolbar_state.layout_last_screen_size_points,
+			screen_size_points,
+		);
+
+		!needs_new_sample && self.toolbar_state.layout_stable_frames >= 1
+	}
+
+	fn frozen_size_badge_toolbar_reserved_rect(
+		&self,
+		monitor: MonitorRect,
+		screen_rect: Rect,
+		toolbar_ready: bool,
+	) -> Option<Rect> {
+		if !toolbar_ready
+			|| !matches!(self.state.mode, OverlayMode::Frozen)
+			|| self.state.monitor != Some(monitor)
+		{
+			return None;
+		}
+
+		WindowRenderer::frozen_toolbar_reserved_rect(
+			&self.state,
+			monitor,
+			screen_rect,
+			self.config.toolbar_placement,
+			&self.toolbar_state,
+		)
 	}
 
 	fn handle_capture_and_toolbar_redraw_post(
@@ -7635,6 +7733,27 @@ struct SelectionDashedBorderMetrics {
 	gap_length: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SelectionSizeBadgePadding {
+	left: f32,
+	right: f32,
+	top: f32,
+	bottom: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SelectionSizeBadgeLayout {
+	text_size: Vec2,
+	badge_size: Vec2,
+	padding: SelectionSizeBadgePadding,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SelectionSizeBadgeTarget {
+	rect: Rect,
+	size_points: RectPoints,
+}
+
 struct HudOverlayWindow {
 	window: Arc<winit::window::Window>,
 	renderer: WindowRenderer,
@@ -8316,6 +8435,7 @@ impl WindowRenderer {
 		needs_frozen_surface_bg: bool,
 		show_frozen_capture_affordance: bool,
 		frozen_capture_is_fullscreen_fallback: bool,
+		frozen_toolbar_reserved_rect: Option<Rect>,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 		mut toolbar_state: Option<&mut FrozenToolbarState>,
@@ -8407,6 +8527,7 @@ impl WindowRenderer {
 					monitor,
 					screen_rect,
 					theme,
+					frozen_toolbar_reserved_rect,
 					frozen_capture_is_fullscreen_fallback,
 					selection_particles,
 					selection_flow_stroke_width_px,
@@ -8437,6 +8558,9 @@ impl WindowRenderer {
 		if !matches!(state.mode, OverlayMode::Live) {
 			return false;
 		}
+
+		let primary_not_down = !ctx.input(|i| i.pointer.primary_down());
+
 		if selection_particles
 			&& let Some(hovered_window) = state.hovered_window_rect
 			&& hovered_window.monitor_id == monitor.id
@@ -8475,13 +8599,27 @@ impl WindowRenderer {
 
 			has_rect = true;
 		}
+		if let Some(target) =
+			Self::live_capture_size_badge_target(state, monitor, screen_rect, primary_not_down)
+		{
+			Self::render_selection_size_badge(
+				ctx,
+				painter,
+				monitor,
+				screen_rect,
+				target,
+				None,
+				theme,
+			);
+
+			has_rect = true;
+		}
 
 		let has_hovered_window_for_this_monitor =
 			state.hovered_window_rect.is_some_and(|hovered| hovered.monitor_id == monitor.id);
 		let has_drag_rect_for_this_monitor =
 			state.drag_rect.is_some_and(|drag_rect| drag_rect.monitor_id == monitor.id);
 		let cursor_on_monitor = state.cursor.is_some_and(|cursor| monitor.contains(cursor));
-		let primary_not_down = !ctx.input(|i| i.pointer.primary_down());
 
 		if selection_particles
 			&& !has_hovered_window_for_this_monitor
@@ -8512,6 +8650,7 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		screen_rect: Rect,
 		theme: HudTheme,
+		frozen_toolbar_reserved_rect: Option<Rect>,
 		frozen_capture_is_fullscreen_fallback: bool,
 		selection_particles: bool,
 		selection_flow_stroke_width_px: f32,
@@ -8526,15 +8665,45 @@ impl WindowRenderer {
 		let painter = ctx.layer_painter(layer);
 
 		if state.frozen_image.is_some() {
-			return Self::render_frozen_selection_scrim(
+			let mut has_affordance = Self::render_frozen_selection_scrim(
 				&painter,
 				rect,
 				screen_rect,
 				theme,
 				selection_dashed_border_cache,
 			);
+
+			if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
+				Self::render_selection_size_badge(
+					ctx,
+					&painter,
+					monitor,
+					screen_rect,
+					target,
+					frozen_toolbar_reserved_rect,
+					theme,
+				);
+
+				has_affordance = true;
+			}
+
+			return has_affordance;
 		}
 		if !selection_particles {
+			if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
+				Self::render_selection_size_badge(
+					ctx,
+					&painter,
+					monitor,
+					screen_rect,
+					target,
+					frozen_toolbar_reserved_rect,
+					theme,
+				);
+
+				return true;
+			}
+
 			return false;
 		}
 
@@ -8552,20 +8721,25 @@ impl WindowRenderer {
 			selection_flow_geometry_cache,
 		);
 
+		if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
+			Self::render_selection_size_badge(
+				ctx,
+				&painter,
+				monitor,
+				screen_rect,
+				target,
+				frozen_toolbar_reserved_rect,
+				theme,
+			);
+		}
+
 		true
 	}
 
 	fn frozen_capture_focus_rect(state: &OverlayState, screen_rect: Rect) -> Option<Rect> {
 		let capture_rect = state.frozen_capture_rect?;
-		let rect = Self::selection_focus_rect(capture_rect, screen_rect);
 
-		if rect.width() < LIVE_DRAG_START_THRESHOLD_PX
-			|| rect.height() < LIVE_DRAG_START_THRESHOLD_PX
-		{
-			return None;
-		}
-
-		Some(rect)
+		Some(Self::selection_focus_rect(capture_rect, screen_rect))
 	}
 
 	fn live_drag_focus_rect(
@@ -8596,6 +8770,359 @@ impl WindowRenderer {
 			Vec2::new(rect.width as f32, rect.height as f32),
 		)
 		.intersect(screen_rect)
+	}
+
+	fn selection_size_badge_target_from_rect(
+		rect_points: RectPoints,
+		screen_rect: Rect,
+	) -> Option<SelectionSizeBadgeTarget> {
+		let rect = Self::selection_focus_rect(rect_points, screen_rect);
+
+		if rect.width() <= 0.0 || rect.height() <= 0.0 {
+			return None;
+		}
+
+		Some(SelectionSizeBadgeTarget { rect, size_points: rect_points })
+	}
+
+	fn live_capture_size_badge_target(
+		state: &OverlayState,
+		monitor: MonitorRect,
+		screen_rect: Rect,
+		primary_not_down: bool,
+	) -> Option<SelectionSizeBadgeTarget> {
+		if let Some(drag_rect) = state.drag_rect
+			&& drag_rect.monitor_id == monitor.id
+			&& let Some(target) =
+				Self::selection_size_badge_target_from_rect(drag_rect.rect, screen_rect)
+		{
+			return Some(target);
+		}
+		if let Some(hovered_window) = state.hovered_window_rect
+			&& hovered_window.monitor_id == monitor.id
+			&& let Some(target) =
+				Self::selection_size_badge_target_from_rect(hovered_window.rect, screen_rect)
+		{
+			return Some(target);
+		}
+
+		if primary_not_down && state.cursor.is_some_and(|cursor| monitor.contains(cursor)) {
+			return Some(SelectionSizeBadgeTarget {
+				rect: screen_rect,
+				size_points: RectPoints::new(0, 0, monitor.width, monitor.height),
+			});
+		}
+
+		None
+	}
+
+	fn frozen_capture_size_badge_target(
+		state: &OverlayState,
+		screen_rect: Rect,
+	) -> Option<SelectionSizeBadgeTarget> {
+		let capture_rect = state.frozen_capture_rect?;
+
+		Self::selection_size_badge_target_from_rect(capture_rect, screen_rect)
+	}
+
+	fn frozen_toolbar_reserved_rect(
+		state: &OverlayState,
+		monitor: MonitorRect,
+		screen_rect: Rect,
+		toolbar_placement: ToolbarPlacement,
+		toolbar_state: &FrozenToolbarState,
+	) -> Option<Rect> {
+		if !toolbar_state.visible
+			|| !matches!(state.mode, OverlayMode::Frozen)
+			|| state.monitor != Some(monitor)
+		{
+			return None;
+		}
+
+		let capture_rect = Self::frozen_toolbar_capture_rect(state, monitor, screen_rect);
+		let toolbar_size = Self::frozen_toolbar_size(toolbar_state);
+		let default_pos = Self::frozen_toolbar_default_pos(
+			screen_rect,
+			capture_rect,
+			toolbar_size,
+			toolbar_placement,
+		);
+		let toolbar_pos = toolbar_state.floating_position.unwrap_or(default_pos);
+
+		if !frozen_toolbar_matches_default_slot(toolbar_pos, default_pos) {
+			return None;
+		}
+
+		Some(Rect::from_min_size(toolbar_pos, toolbar_size))
+	}
+
+	fn selection_size_badge_text(monitor: MonitorRect, size_points: RectPoints) -> String {
+		let size_pixels = monitor.local_rect_to_pixels(size_points);
+
+		format!("{}x{}", size_pixels.width, size_pixels.height)
+	}
+
+	fn selection_size_badge_visual_overflow(pixels_per_point: f32) -> SelectionSizeBadgePadding {
+		let points_per_pixel = 1.0 / pixels_per_point.max(f32::MIN_POSITIVE);
+		let outline_offset = SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX * points_per_pixel;
+		let near_shadow_offset = SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX * points_per_pixel;
+		let far_shadow_offset = SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX * points_per_pixel;
+
+		SelectionSizeBadgePadding {
+			left: outline_offset,
+			right: outline_offset.max(near_shadow_offset),
+			top: outline_offset,
+			bottom: outline_offset.max(near_shadow_offset).max(far_shadow_offset),
+		}
+	}
+
+	fn selection_size_badge_layout(
+		ctx: &egui::Context,
+		text: &str,
+		theme: HudTheme,
+		pixels_per_point: f32,
+	) -> SelectionSizeBadgeLayout {
+		let text_color = Self::hud_text_colors(theme).0;
+		let font_id = FontId::new(SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, FontFamily::Monospace);
+		let galley = ctx
+			.fonts_mut(|fonts| fonts.layout_no_wrap(text.to_owned(), font_id.clone(), text_color));
+		let text_size = galley.size();
+		let visual_overflow = Self::selection_size_badge_visual_overflow(pixels_per_point);
+		let base_padding = SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS * 0.5;
+		let padding = SelectionSizeBadgePadding {
+			left: base_padding + visual_overflow.left,
+			right: base_padding + visual_overflow.right,
+			top: base_padding + visual_overflow.top,
+			bottom: base_padding + visual_overflow.bottom,
+		};
+
+		SelectionSizeBadgeLayout {
+			text_size,
+			badge_size: Vec2::new(
+				(text_size.x + padding.left + padding.right).ceil(),
+				(text_size.y + padding.top + padding.bottom).ceil(),
+			),
+			padding,
+		}
+	}
+
+	#[cfg(test)]
+	fn selection_size_badge_rect(screen_rect: Rect, capture_rect: Rect, badge_size: Vec2) -> Rect {
+		Self::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			badge_size,
+			None,
+		)
+	}
+
+	fn selection_size_badge_rect_with_reserved_rect(
+		screen_rect: Rect,
+		capture_rect: Rect,
+		badge_size: Vec2,
+		reserved_rect: Option<Rect>,
+	) -> Rect {
+		// Geometry priority contract:
+		// 1. Keep the badge fully visible inside the viewport whenever the viewport can fit it.
+		// 2. Keep the badge right-aligned to the capture rect whenever that still satisfies (1).
+		// 3. Prefer the below-capture slot when it fits and does not hit a reserved rect.
+		// 4. Otherwise stay inside the capture while avoiding the reserved rect when a
+		//    non-overlapping inside band exists.
+		// 5. If the reserved rect exhausts the in-capture space, try a right-aligned
+		//    above-capture slot before accepting overlap.
+		let min_x = screen_rect.min.x;
+		let max_x = (screen_rect.max.x - badge_size.x).max(min_x);
+		let aligned_x = capture_rect.max.x - badge_size.x;
+		let x = aligned_x.clamp(min_x, max_x);
+		let below_y = capture_rect.max.y + SELECTION_SIZE_BADGE_GAP_PX;
+		let below_rect = Rect::from_min_size(Pos2::new(x, below_y), badge_size);
+		let fits_below = below_rect.max.y
+			<= screen_rect.max.y - SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX
+			&& reserved_rect.is_none_or(|rect| !below_rect.intersects(rect));
+
+		if fits_below {
+			return below_rect;
+		}
+
+		let screen_max_y = (screen_rect.max.y - badge_size.y).max(screen_rect.min.y);
+		let max_inside_y =
+			(capture_rect.max.y - badge_size.y).min(screen_max_y).max(screen_rect.min.y);
+		let min_inside_y = capture_rect.min.y.min(max_inside_y).max(screen_rect.min.y);
+		let preferred_inside_y =
+			(capture_rect.max.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX - badge_size.y)
+				.clamp(min_inside_y, max_inside_y);
+		let preferred_inside_rect =
+			Rect::from_min_size(Pos2::new(x, preferred_inside_y), badge_size);
+
+		if reserved_rect.is_none_or(|rect| !preferred_inside_rect.intersects(rect)) {
+			return preferred_inside_rect;
+		}
+
+		if let Some(reserved_rect) = reserved_rect {
+			let upper_y =
+				reserved_rect.min.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX - badge_size.y;
+			let lower_y = reserved_rect.max.y + SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX;
+			let candidate_ys = if reserved_rect.center().y <= capture_rect.center().y {
+				[Some(lower_y), Some(upper_y)]
+			} else {
+				[Some(upper_y), Some(lower_y)]
+			};
+
+			for candidate_y in candidate_ys.into_iter().flatten() {
+				if candidate_y < min_inside_y || candidate_y > max_inside_y {
+					continue;
+				}
+
+				let candidate_rect = Rect::from_min_size(Pos2::new(x, candidate_y), badge_size);
+
+				if !candidate_rect.intersects(reserved_rect) {
+					return candidate_rect;
+				}
+			}
+
+			let above_y = capture_rect.min.y - SELECTION_SIZE_BADGE_GAP_PX - badge_size.y;
+
+			if above_y >= screen_rect.min.y {
+				let above_rect = Rect::from_min_size(Pos2::new(x, above_y), badge_size);
+
+				if !above_rect.intersects(reserved_rect) {
+					return above_rect;
+				}
+			}
+		}
+
+		preferred_inside_rect
+	}
+
+	fn snap_points_to_pixel_grid(value: f32, pixels_per_point: f32) -> f32 {
+		let pixels_per_point = pixels_per_point.max(f32::MIN_POSITIVE);
+
+		(value * pixels_per_point).round() / pixels_per_point
+	}
+
+	fn snap_pos_to_pixel_grid(pos: Pos2, pixels_per_point: f32) -> Pos2 {
+		Pos2::new(
+			Self::snap_points_to_pixel_grid(pos.x, pixels_per_point),
+			Self::snap_points_to_pixel_grid(pos.y, pixels_per_point),
+		)
+	}
+
+	fn selection_size_badge_text_anchor(
+		badge_rect: Rect,
+		layout: SelectionSizeBadgeLayout,
+		pixels_per_point: f32,
+	) -> Pos2 {
+		Self::snap_pos_to_pixel_grid(
+			Pos2::new(
+				badge_rect.max.x - layout.padding.right,
+				badge_rect.min.y + layout.padding.top + layout.text_size.y * 0.5,
+			),
+			pixels_per_point,
+		)
+	}
+
+	#[cfg(test)]
+	fn selection_size_badge_visual_bounds(
+		text_anchor: Pos2,
+		text_size: Vec2,
+		pixels_per_point: f32,
+	) -> Rect {
+		let visual_overflow = Self::selection_size_badge_visual_overflow(pixels_per_point);
+
+		Rect::from_min_max(
+			Pos2::new(
+				text_anchor.x - text_size.x - visual_overflow.left,
+				text_anchor.y - text_size.y * 0.5 - visual_overflow.top,
+			),
+			Pos2::new(
+				text_anchor.x + visual_overflow.right,
+				text_anchor.y + text_size.y * 0.5 + visual_overflow.bottom,
+			),
+		)
+	}
+
+	fn selection_size_badge_text_colors(theme: HudTheme) -> (Color32, Color32, Color32, Color32) {
+		match theme {
+			HudTheme::Dark => (
+				Color32::from_rgba_unmultiplied(255, 255, 255, 248),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 108),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 154),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 72),
+			),
+			HudTheme::Light => (
+				Color32::from_rgba_unmultiplied(255, 255, 255, 252),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 156),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 196),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 96),
+			),
+		}
+	}
+
+	fn render_selection_size_badge(
+		ctx: &egui::Context,
+		painter: &Painter,
+		monitor: MonitorRect,
+		screen_rect: Rect,
+		target: SelectionSizeBadgeTarget,
+		reserved_rect: Option<Rect>,
+		theme: HudTheme,
+	) {
+		let text = Self::selection_size_badge_text(monitor, target.size_points);
+		let pixels_per_point = painter.pixels_per_point();
+		let layout = Self::selection_size_badge_layout(ctx, &text, theme, pixels_per_point);
+		let badge_rect = Self::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			target.rect,
+			layout.badge_size,
+			reserved_rect,
+		);
+		let font_id = FontId::new(SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, FontFamily::Monospace);
+		let points_per_pixel = 1.0 / pixels_per_point.max(f32::MIN_POSITIVE);
+		let outline_offset = SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX * points_per_pixel;
+		let near_shadow_offset = SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX * points_per_pixel;
+		let far_shadow_offset = SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX * points_per_pixel;
+		let text_anchor =
+			Self::selection_size_badge_text_anchor(badge_rect, layout, pixels_per_point);
+		let (text_color, outline_color, near_shadow_color, far_shadow_color) =
+			Self::selection_size_badge_text_colors(theme);
+
+		painter.text(
+			Self::snap_pos_to_pixel_grid(
+				text_anchor + Vec2::new(0.0, far_shadow_offset),
+				pixels_per_point,
+			),
+			Align2::RIGHT_CENTER,
+			text.clone(),
+			font_id.clone(),
+			far_shadow_color,
+		);
+
+		for offset in [
+			Vec2::new(-outline_offset, 0.0),
+			Vec2::new(outline_offset, 0.0),
+			Vec2::new(0.0, -outline_offset),
+			Vec2::new(0.0, outline_offset),
+		] {
+			painter.text(
+				Self::snap_pos_to_pixel_grid(text_anchor + offset, pixels_per_point),
+				Align2::RIGHT_CENTER,
+				text.clone(),
+				font_id.clone(),
+				outline_color,
+			);
+		}
+
+		painter.text(
+			Self::snap_pos_to_pixel_grid(
+				text_anchor + Vec2::new(near_shadow_offset, near_shadow_offset),
+				pixels_per_point,
+			),
+			Align2::RIGHT_CENTER,
+			text.clone(),
+			font_id.clone(),
+			near_shadow_color,
+		);
+		painter.text(text_anchor, Align2::RIGHT_CENTER, text, font_id, text_color);
 	}
 
 	fn frozen_selection_scrim_rects(screen_rect: Rect, focus_rect: Rect) -> [Rect; 4] {
@@ -9424,6 +9951,15 @@ impl WindowRenderer {
 			return;
 		};
 
+		#[cfg(any(not(target_os = "macos"), test))]
+		{
+			if !advance_frozen_toolbar_readiness_sample_state(toolbar_state, screen_rect) {
+				ctx.request_repaint();
+
+				return;
+			}
+		}
+
 		Self::draw_frozen_toolbar(
 			ctx,
 			toolbar_state,
@@ -9544,15 +10080,10 @@ impl WindowRenderer {
 			"Frozen toolbar birth attempt."
 		);
 
-		let needs_new_sample = match toolbar_state.layout_last_screen_size_points {
-			None => true,
-			Some(last) => {
-				let dx = (last.x - screen_size_points.x).abs();
-				let dy = (last.y - screen_size_points.y).abs();
-
-				dx > 0.5 || dy > 0.5
-			},
-		};
+		let needs_new_sample = frozen_toolbar_needs_new_sample(
+			toolbar_state.layout_last_screen_size_points,
+			screen_size_points,
+		);
 
 		if needs_new_sample {
 			toolbar_state.layout_last_screen_size_points = Some(screen_size_points);
@@ -10114,16 +10645,7 @@ impl WindowRenderer {
 		show_alt_hint_keycap: bool,
 		theme: HudTheme,
 	) {
-		let (label_color, secondary_color) = match theme {
-			HudTheme::Dark => (
-				Color32::from_rgba_unmultiplied(235, 235, 245, 235),
-				Color32::from_rgba_unmultiplied(235, 235, 245, 150),
-			),
-			HudTheme::Light => (
-				Color32::from_rgba_unmultiplied(28, 28, 32, 235),
-				Color32::from_rgba_unmultiplied(28, 28, 32, 160),
-			),
-		};
+		let (label_color, secondary_color) = Self::hud_text_colors(theme);
 		let pos_text = hud_helpers::format_live_hud_position_text(monitor, cursor);
 		let (hex_text, rgb_text) = hud_helpers::format_live_hud_rgb_text(state.rgb);
 		let swatch_size = egui::vec2(10.0, 10.0);
@@ -10193,6 +10715,19 @@ impl WindowRenderer {
 				}
 			});
 		});
+	}
+
+	fn hud_text_colors(theme: HudTheme) -> (Color32, Color32) {
+		match theme {
+			HudTheme::Dark => (
+				Color32::from_rgba_unmultiplied(235, 235, 245, 235),
+				Color32::from_rgba_unmultiplied(235, 235, 245, 150),
+			),
+			HudTheme::Light => (
+				Color32::from_rgba_unmultiplied(28, 28, 32, 235),
+				Color32::from_rgba_unmultiplied(28, 28, 32, 160),
+			),
+		}
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -10898,6 +11433,7 @@ impl WindowRenderer {
 		allow_frozen_surface_bg: bool,
 		show_frozen_capture_affordance: bool,
 		frozen_capture_is_fullscreen_fallback: bool,
+		frozen_toolbar_reserved_rect: Option<Rect>,
 		toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
 	) -> Result<()> {
@@ -10957,6 +11493,7 @@ impl WindowRenderer {
 			hud_cfg.needs_frozen_surface_bg,
 			show_frozen_capture_affordance,
 			frozen_capture_is_fullscreen_fallback,
+			frozen_toolbar_reserved_rect,
 			&mut selection_flow_cache,
 			&mut selection_dashed_border_cache,
 			toolbar_state,
@@ -11351,12 +11888,12 @@ impl WindowRenderer {
 			return;
 		}
 
+		let max_lod = self.hud_bg.as_ref().map(|bg| bg.max_lod).unwrap_or(0.0);
 		let rect_min_px =
 			[hud_pill.rect.min.x * pixels_per_point, hud_pill.rect.min.y * pixels_per_point];
 		let rect_size_px =
 			[hud_pill.rect.width() * pixels_per_point, hud_pill.rect.height() * pixels_per_point];
 		let rect_min_size = [rect_min_px[0], rect_min_px[1], rect_size_px[0], rect_size_px[1]];
-		let max_lod = self.hud_bg.as_ref().map(|bg| bg.max_lod).unwrap_or(0.0);
 		let tint =
 			Self::tinted_hud_body_fill(theme, false, false, 1.0, hud_milk_amount, hud_tint_hue);
 		let tint_rgba = [
@@ -11546,7 +12083,7 @@ struct HudBg {
 	max_lod: f32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct HudPillGeometry {
 	rect: Rect,
 	radius_points: f32,
@@ -11572,6 +12109,53 @@ impl HudBlurUniformRaw {
 struct MacOSCGPoint {
 	x: f64,
 	y: f64,
+}
+
+fn frozen_toolbar_needs_new_sample(
+	last_screen_size_points: Option<Vec2>,
+	screen_size_points: Vec2,
+) -> bool {
+	match last_screen_size_points {
+		None => true,
+		Some(last) => {
+			let dx = (last.x - screen_size_points.x).abs();
+			let dy = (last.y - screen_size_points.y).abs();
+
+			dx > 0.5 || dy > 0.5
+		},
+	}
+}
+
+fn advance_frozen_toolbar_readiness_sample_state(
+	toolbar_state: &mut FrozenToolbarState,
+	screen_rect: Rect,
+) -> bool {
+	let screen_size_points = screen_rect.size();
+
+	if frozen_toolbar_needs_new_sample(
+		toolbar_state.layout_last_screen_size_points,
+		screen_size_points,
+	) {
+		toolbar_state.layout_last_screen_size_points = Some(screen_size_points);
+		toolbar_state.layout_stable_frames = 0;
+
+		return false;
+	}
+	if toolbar_state.layout_stable_frames < 1 {
+		toolbar_state.layout_stable_frames = toolbar_state.layout_stable_frames.saturating_add(1);
+
+		return false;
+	}
+
+	true
+}
+
+fn frozen_toolbar_matches_default_slot(toolbar_pos: Pos2, default_pos: Pos2) -> bool {
+	let dx = (toolbar_pos.x - default_pos.x).abs();
+	let dy = (toolbar_pos.y - default_pos.y).abs();
+
+	dx <= TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS
+		&& dy <= TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS
 }
 
 #[cfg(target_os = "macos")]
@@ -11855,15 +12439,18 @@ mod tests {
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
 		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect,
 		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
-		SELECTION_DASHED_BORDER_WIDTH_PX, SelectionDashedBorderCache, SelectionDashedBorderMetrics,
-		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
-		hud_helpers,
+		SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
+		SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+		SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
+		SelectionSizeBadgeTarget, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
+		ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
 	use crate::state::LiveCursorSample;
 	use crate::state::{
-		GlobalPoint, LoupeSample, MonitorRect, MonitorRectPoints, OverlayMode, RectPoints, Rgb,
+		GlobalPoint, LoupeSample, MonitorRect, MonitorRectPoints, OverlayMode, OverlayState,
+		RectPoints, Rgb,
 	};
 	#[cfg(target_os = "macos")]
 	use crate::state::{WindowListSnapshot, WindowRect};
@@ -11925,6 +12512,43 @@ mod tests {
 
 	fn test_frozen_image() -> RgbaImage {
 		RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255]))
+	}
+
+	fn test_egui_context() -> egui::Context {
+		let ctx = egui::Context::default();
+		let mut fonts = egui::FontDefinitions::default();
+		let phosphor_fill = String::from("phosphor-fill");
+		let proportional_fallback = fonts
+			.families
+			.get(&egui::FontFamily::Proportional)
+			.and_then(|names| names.first())
+			.cloned();
+
+		egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+
+		fonts
+			.font_data
+			.insert(phosphor_fill.clone(), egui_phosphor::Variant::Fill.font_data().into());
+		fonts
+			.families
+			.entry(egui::FontFamily::Name(phosphor_fill.clone().into()))
+			.or_default()
+			.extend([phosphor_fill]);
+
+		if let Some(fallback) = proportional_fallback {
+			let family =
+				fonts.families.entry(egui::FontFamily::Name("phosphor-fill".into())).or_default();
+
+			if !family.contains(&fallback) {
+				family.push(fallback);
+			}
+		}
+
+		ctx.set_fonts(fonts);
+
+		let _ = ctx.run(egui::RawInput::default(), |_: &egui::Context| {});
+
+		ctx
 	}
 
 	#[cfg(target_os = "macos")]
@@ -12546,6 +13170,804 @@ mod tests {
 
 		assert_eq!(pos.x, expected_x);
 		assert_eq!(pos.y, capture_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX);
+	}
+
+	#[test]
+	fn selection_size_badge_rect_fits_below_capture_rect() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(120.0, 160.0), Vec2::new(320.0, 240.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+		);
+
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.min.y, capture_rect.max.y + SELECTION_SIZE_BADGE_GAP_PX);
+	}
+
+	#[test]
+	fn selection_size_badge_rect_falls_inside_when_no_space_below() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(120.0, 420.0), Vec2::new(320.0, 160.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+		);
+
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.max.y, capture_rect.max.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX);
+		assert!(badge_rect.max.y <= screen_rect.max.y - SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX);
+	}
+
+	#[test]
+	fn selection_size_badge_rect_clamps_narrow_left_capture_into_viewport() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(0.0, 160.0), Vec2::new(40.0, 120.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+		);
+
+		assert_eq!(badge_rect.min.x, screen_rect.min.x);
+		assert!(badge_rect.max.x > capture_rect.max.x);
+	}
+
+	#[test]
+	fn selection_size_badge_rect_clamps_near_left_narrow_capture_into_viewport() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(20.0, 160.0), Vec2::new(40.0, 120.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+		);
+
+		assert_eq!(badge_rect.min.x, screen_rect.min.x);
+		assert!(badge_rect.max.x > capture_rect.max.x);
+	}
+
+	#[test]
+	fn selection_size_badge_rect_keeps_tiny_bottom_capture_visible() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(120.0, 588.0), Vec2::new(140.0, 12.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+		);
+
+		assert_eq!(badge_rect.max.y, screen_rect.max.y);
+		assert!(badge_rect.min.y < capture_rect.min.y);
+		assert!(badge_rect.min.y >= screen_rect.min.y);
+	}
+
+	#[test]
+	fn frozen_selection_size_badge_falls_inside_when_default_bottom_toolbar_slot_overlaps() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let capture_rect_points = RectPoints::new(200, 180, 200, 300);
+		let capture_rect = Rect::from_min_size(
+			Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
+			Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
+		);
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Frozen;
+		state.monitor = Some(monitor);
+		state.frozen_capture_rect = Some(capture_rect_points);
+
+		let toolbar_state = FrozenToolbarState { visible: true, ..FrozenToolbarState::default() };
+		let reserved_rect = WindowRenderer::frozen_toolbar_reserved_rect(
+			&state,
+			monitor,
+			screen_rect,
+			ToolbarPlacement::Bottom,
+			&toolbar_state,
+		)
+		.expect("default bottom toolbar slot should be reserved");
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+		assert_eq!(reserved_rect.min.y, capture_rect.max.y + TOOLBAR_CAPTURE_GAP_PX);
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.max.y, capture_rect.max.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX);
+		assert!(!badge_rect.intersects(reserved_rect));
+	}
+
+	#[test]
+	fn frozen_selection_size_badge_keeps_below_placement_after_toolbar_leaves_default_slot() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let capture_rect_points = RectPoints::new(200, 180, 200, 300);
+		let capture_rect = Rect::from_min_size(
+			Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
+			Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
+		);
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Frozen;
+		state.monitor = Some(monitor);
+		state.frozen_capture_rect = Some(capture_rect_points);
+
+		let default_toolbar_pos = WindowRenderer::frozen_toolbar_default_pos(
+			screen_rect,
+			capture_rect,
+			WindowRenderer::frozen_toolbar_size(&FrozenToolbarState::default()),
+			ToolbarPlacement::Bottom,
+		);
+		let toolbar_state = FrozenToolbarState {
+			visible: true,
+			floating_position: Some(default_toolbar_pos + Vec2::new(0.0, 24.0)),
+			..FrozenToolbarState::default()
+		};
+		let reserved_rect = WindowRenderer::frozen_toolbar_reserved_rect(
+			&state,
+			monitor,
+			screen_rect,
+			ToolbarPlacement::Bottom,
+			&toolbar_state,
+		);
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			reserved_rect,
+		);
+
+		assert!(reserved_rect.is_none());
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.min.y, capture_rect.max.y + SELECTION_SIZE_BADGE_GAP_PX);
+	}
+
+	#[test]
+	fn frozen_top_toolbar_reserved_rect_uses_inside_fallback_slot() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 400,
+			height: 160,
+			scale_factor_x1000: 1_000,
+		};
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let capture_rect_points = RectPoints::new(40, 20, 240, 110);
+		let capture_rect = Rect::from_min_size(
+			Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
+			Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
+		);
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Frozen;
+		state.monitor = Some(monitor);
+		state.frozen_capture_rect = Some(capture_rect_points);
+
+		let toolbar_state = FrozenToolbarState::default();
+		let reserved_rect = WindowRenderer::frozen_toolbar_reserved_rect(
+			&state,
+			monitor,
+			screen_rect,
+			ToolbarPlacement::Top,
+			&toolbar_state,
+		)
+		.expect("top fallback slot should still be reserved");
+
+		assert_eq!(reserved_rect.min.y, capture_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX);
+		assert_eq!(reserved_rect.height(), WindowRenderer::frozen_toolbar_size(&toolbar_state).y);
+	}
+
+	#[test]
+	fn overlay_session_computes_frozen_toolbar_reserved_rect_without_inline_toolbar_state() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.state.monitor = Some(monitor);
+		session.state.frozen_capture_rect = Some(RectPoints::new(200, 180, 200, 300));
+
+		let reserved_rect = session
+			.frozen_size_badge_toolbar_reserved_rect(monitor, screen_rect, true)
+			.expect("overlay redraw should reserve the default toolbar slot");
+
+		assert_eq!(reserved_rect.min.y, 480.0 + TOOLBAR_CAPTURE_GAP_PX);
+		assert_eq!(
+			reserved_rect.height(),
+			WindowRenderer::frozen_toolbar_size(&session.toolbar_state).y
+		);
+	}
+
+	#[test]
+	fn frozen_toolbar_reserved_rect_uses_overlay_viewport_size() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 400,
+			height: 260,
+			scale_factor_x1000: 1_000,
+		};
+		let overlay_screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 120.0));
+		let toolbar_window_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(92.0, 26.0));
+		let capture_rect_points = RectPoints::new(60, 40, 220, 60);
+		let capture_rect = Rect::from_min_size(
+			Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
+			Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
+		);
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.state.monitor = Some(monitor);
+		session.state.frozen_capture_rect = Some(capture_rect_points);
+		session.toolbar_state.layout_last_screen_size_points = Some(toolbar_window_rect.size());
+
+		let toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
+		let overlay_default_pos = WindowRenderer::frozen_toolbar_default_pos(
+			overlay_screen_rect,
+			capture_rect.intersect(overlay_screen_rect),
+			toolbar_size,
+			session.config.toolbar_placement,
+		);
+		let toolbar_window_default_pos = WindowRenderer::frozen_toolbar_default_pos(
+			toolbar_window_rect,
+			capture_rect.intersect(toolbar_window_rect),
+			toolbar_size,
+			session.config.toolbar_placement,
+		);
+
+		session.toolbar_state.floating_position = Some(overlay_default_pos);
+
+		let reserved_rect = session
+			.frozen_size_badge_toolbar_reserved_rect(monitor, overlay_screen_rect, true)
+			.expect("overlay viewport-aligned toolbar slot should still be reserved");
+
+		assert_ne!(overlay_default_pos, toolbar_window_default_pos);
+		assert_eq!(reserved_rect.min, overlay_default_pos);
+		assert_eq!(reserved_rect.size(), toolbar_size);
+	}
+
+	#[test]
+	fn frozen_toolbar_reserved_rect_skips_hidden_toolbar_slot() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.state.monitor = Some(monitor);
+		session.state.frozen_capture_rect = Some(RectPoints::new(200, 180, 200, 300));
+
+		assert_eq!(
+			session.frozen_size_badge_toolbar_reserved_rect(monitor, screen_rect, false),
+			None
+		);
+	}
+
+	#[test]
+	fn frozen_toolbar_reserved_rect_waits_for_toolbar_birth_readiness() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.state.monitor = Some(monitor);
+		session.state.frozen_capture_rect = Some(RectPoints::new(200, 180, 200, 300));
+		session.toolbar_state.layout_last_screen_size_points = Some(screen_rect.size());
+		session.toolbar_state.layout_stable_frames = 0;
+
+		assert!(!session.frozen_toolbar_ready_for_draw(screen_rect));
+		assert_eq!(
+			session.frozen_size_badge_toolbar_reserved_rect(
+				monitor,
+				screen_rect,
+				session.frozen_toolbar_ready_for_draw(screen_rect)
+			),
+			None
+		);
+
+		session.toolbar_state.layout_stable_frames = 1;
+
+		assert!(session.frozen_toolbar_ready_for_draw(screen_rect));
+		assert!(
+			session
+				.frozen_size_badge_toolbar_reserved_rect(
+					monitor,
+					screen_rect,
+					session.frozen_toolbar_ready_for_draw(screen_rect)
+				)
+				.is_some()
+		);
+	}
+
+	#[test]
+	fn frozen_toolbar_ready_for_draw_ignores_preseeded_position_until_viewport_stabilizes() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(200, 180, 200, 300);
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+
+		session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+		assert!(session.toolbar_state.floating_position.is_some());
+		assert_eq!(session.toolbar_state.layout_last_screen_size_points, None);
+		assert_eq!(session.toolbar_state.layout_stable_frames, 0);
+		assert!(!session.frozen_toolbar_ready_for_draw(screen_rect));
+		assert_eq!(
+			session.frozen_size_badge_toolbar_reserved_rect(
+				monitor,
+				screen_rect,
+				session.frozen_toolbar_ready_for_draw(screen_rect)
+			),
+			None
+		);
+	}
+
+	#[test]
+	fn frozen_toolbar_ready_for_draw_recovers_after_preseeded_position_is_sampled() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(200, 180, 200, 300);
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+
+		session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+		assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+		assert_eq!(session.toolbar_state.layout_last_screen_size_points, Some(screen_rect.size()));
+		assert_eq!(session.toolbar_state.layout_stable_frames, 0);
+		assert!(!session.frozen_toolbar_ready_for_draw(screen_rect));
+		assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+		assert_eq!(session.toolbar_state.layout_stable_frames, 1);
+		assert!(session.frozen_toolbar_ready_for_draw(screen_rect));
+	}
+
+	#[test]
+	fn render_frozen_toolbar_ui_waits_for_readiness_before_first_visible_frame() {
+		let ctx = test_egui_context();
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(200, 180, 200, 300);
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+		let toolbar_placement = session.config.toolbar_placement;
+
+		session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+		assert!(session.toolbar_state.visible);
+		assert_eq!(session.toolbar_state.layout_last_screen_size_points, None);
+		assert_eq!(session.toolbar_state.layout_stable_frames, 0);
+
+		for frame in 0..2 {
+			let state = &session.state;
+			let toolbar_state = &mut session.toolbar_state;
+			let mut hud_pill = None;
+			let _ = ctx.run(
+				egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+				|ctx| {
+					WindowRenderer::render_frozen_toolbar_ui(
+						ctx,
+						state,
+						monitor,
+						HudTheme::Dark,
+						toolbar_placement,
+						false,
+						false,
+						1.0,
+						0.0,
+						0.0,
+						Some(toolbar_state),
+						None,
+						&mut hud_pill,
+					);
+				},
+			);
+
+			assert!(
+				hud_pill.is_none(),
+				"frame {frame} should not draw the toolbar before readiness stabilizes"
+			);
+		}
+
+		let state = &session.state;
+		let toolbar_state = &mut session.toolbar_state;
+		let mut hud_pill = None;
+		let _ = ctx.run(
+			egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+			|ctx| {
+				WindowRenderer::render_frozen_toolbar_ui(
+					ctx,
+					state,
+					monitor,
+					HudTheme::Dark,
+					toolbar_placement,
+					false,
+					false,
+					1.0,
+					0.0,
+					0.0,
+					Some(toolbar_state),
+					None,
+					&mut hud_pill,
+				);
+			},
+		);
+
+		assert!(hud_pill.is_some(), "third frame should draw the stabilized toolbar");
+	}
+
+	#[test]
+	fn frozen_toolbar_reserved_rect_restores_near_default_slot() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let capture_rect = Rect::from_min_size(Pos2::new(200.0, 180.0), Vec2::new(200.0, 300.0));
+		let mut state = OverlayState::new();
+		let mut toolbar_state = FrozenToolbarState::default();
+		let toolbar_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+		let default_pos = WindowRenderer::frozen_toolbar_default_pos(
+			screen_rect,
+			capture_rect,
+			toolbar_size,
+			ToolbarPlacement::Bottom,
+		);
+		let restored_pos = default_pos + Vec2::new(0.4, -0.35);
+
+		state.mode = OverlayMode::Frozen;
+		state.monitor = Some(monitor);
+		state.frozen_capture_rect = Some(RectPoints::new(200, 180, 200, 300));
+		toolbar_state.visible = true;
+		toolbar_state.floating_position = Some(restored_pos);
+
+		assert_eq!(
+			WindowRenderer::frozen_toolbar_reserved_rect(
+				&state,
+				monitor,
+				screen_rect,
+				ToolbarPlacement::Bottom,
+				&toolbar_state,
+			),
+			Some(Rect::from_min_size(restored_pos, toolbar_size))
+		);
+	}
+
+	#[test]
+	fn frozen_toolbar_overlay_viewport_sample_recovers_from_toolbar_window_pollution() {
+		let monitor = test_monitor();
+		let overlay_screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let toolbar_window_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(92.0, 26.0));
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.state.monitor = Some(monitor);
+		session.state.frozen_capture_rect = Some(RectPoints::new(200, 180, 200, 300));
+		session.toolbar_state.layout_last_screen_size_points = Some(toolbar_window_rect.size());
+		session.toolbar_state.layout_stable_frames = 1;
+
+		assert!(!session.frozen_toolbar_ready_for_draw(overlay_screen_rect));
+		assert!(!session.advance_frozen_toolbar_readiness_sample(overlay_screen_rect));
+		assert_eq!(
+			session.toolbar_state.layout_last_screen_size_points,
+			Some(overlay_screen_rect.size())
+		);
+		assert_eq!(session.toolbar_state.layout_stable_frames, 0);
+		assert_eq!(
+			session.frozen_size_badge_toolbar_reserved_rect(
+				monitor,
+				overlay_screen_rect,
+				session.frozen_toolbar_ready_for_draw(overlay_screen_rect)
+			),
+			None
+		);
+		assert!(!session.advance_frozen_toolbar_readiness_sample(overlay_screen_rect));
+		assert_eq!(session.toolbar_state.layout_stable_frames, 1);
+		assert_eq!(
+			session.frozen_size_badge_toolbar_reserved_rect(
+				monitor,
+				overlay_screen_rect,
+				session.frozen_toolbar_ready_for_draw(overlay_screen_rect)
+			),
+			Some(
+				WindowRenderer::frozen_toolbar_reserved_rect(
+					&session.state,
+					monitor,
+					overlay_screen_rect,
+					session.config.toolbar_placement,
+					&session.toolbar_state,
+				)
+				.expect("reserved rect after overlay viewport stabilization")
+			)
+		);
+	}
+
+	#[test]
+	fn selection_size_badge_reserved_rect_prefers_upper_band_when_bottom_space_is_reserved() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 220.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 40.0), Vec2::new(200.0, 150.0));
+		let reserved_rect = Rect::from_min_size(Pos2::new(80.0, 140.0), Vec2::new(120.0, 40.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+		assert_eq!(
+			badge_rect.min.y,
+			reserved_rect.min.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX - 26.0
+		);
+		assert!(!badge_rect.intersects(reserved_rect));
+	}
+
+	#[test]
+	fn selection_size_badge_reserved_rect_keeps_preferred_inside_when_top_space_is_clear() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 200.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 20.0), Vec2::new(200.0, 150.0));
+		let reserved_rect = Rect::from_min_size(Pos2::new(80.0, 28.0), Vec2::new(120.0, 40.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+		assert_eq!(badge_rect.max.y, capture_rect.max.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX);
+		assert!(!badge_rect.intersects(reserved_rect));
+	}
+
+	#[test]
+	fn selection_size_badge_reserved_rect_falls_above_capture_when_inside_space_is_exhausted() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 220.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 170.0), Vec2::new(120.0, 50.0));
+		let reserved_rect = Rect::from_min_size(Pos2::new(40.0, 178.0), Vec2::new(120.0, 40.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.max.y, capture_rect.min.y - SELECTION_SIZE_BADGE_GAP_PX);
+		assert!(!badge_rect.intersects(reserved_rect));
+	}
+
+	#[test]
+	fn selection_size_badge_reserved_rect_uses_above_slot_at_top_edge_when_visible() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 112.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 34.0), Vec2::new(120.0, 50.0));
+		let reserved_rect = Rect::from_min_size(Pos2::new(40.0, 42.0), Vec2::new(120.0, 40.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+		assert_eq!(badge_rect.min.y, screen_rect.min.y);
+		assert_eq!(badge_rect.max.y, capture_rect.min.y - SELECTION_SIZE_BADGE_GAP_PX);
+		assert!(!badge_rect.intersects(reserved_rect));
+	}
+
+	#[test]
+	fn selection_size_badge_reserved_rect_accepts_overlap_when_no_non_overlapping_slot_exists() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 52.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 20.0), Vec2::new(120.0, 32.0));
+		let reserved_rect = Rect::from_min_size(Pos2::new(40.0, 22.0), Vec2::new(120.0, 24.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.min.y, capture_rect.min.y);
+		assert!(badge_rect.intersects(reserved_rect));
+	}
+
+	#[test]
+	fn selection_size_badge_text_uses_monitor_pixel_dimensions() {
+		let monitor = test_monitor_with_scale(1_000, 800, 2_000);
+
+		assert_eq!(
+			WindowRenderer::selection_size_badge_text(monitor, RectPoints::new(10, 20, 120, 80)),
+			"240x160"
+		);
+	}
+
+	#[test]
+	fn selection_size_badge_layout_keeps_visual_bounds_within_right_edge_rect() {
+		let ctx = test_egui_context();
+		let layout =
+			WindowRenderer::selection_size_badge_layout(&ctx, "240x160", HudTheme::Light, 1.0);
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(760.0, 160.0), Vec2::new(40.0, 120.0));
+		let badge_rect =
+			WindowRenderer::selection_size_badge_rect(screen_rect, capture_rect, layout.badge_size);
+		let text_anchor = WindowRenderer::selection_size_badge_text_anchor(badge_rect, layout, 1.0);
+		let visual_bounds =
+			WindowRenderer::selection_size_badge_visual_bounds(text_anchor, layout.text_size, 1.0);
+
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert!(visual_bounds.min.x >= badge_rect.min.x);
+		assert!(visual_bounds.max.x <= badge_rect.max.x);
+	}
+
+	#[test]
+	fn selection_size_badge_layout_keeps_visual_bounds_within_bottom_fallback_rect() {
+		let ctx = test_egui_context();
+		let layout =
+			WindowRenderer::selection_size_badge_layout(&ctx, "240x160", HudTheme::Light, 1.0);
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(120.0, 588.0), Vec2::new(140.0, 12.0));
+		let badge_rect =
+			WindowRenderer::selection_size_badge_rect(screen_rect, capture_rect, layout.badge_size);
+		let text_anchor = WindowRenderer::selection_size_badge_text_anchor(badge_rect, layout, 1.0);
+		let visual_bounds =
+			WindowRenderer::selection_size_badge_visual_bounds(text_anchor, layout.text_size, 1.0);
+
+		assert_eq!(badge_rect.max.y, screen_rect.max.y);
+		assert!(visual_bounds.min.y >= badge_rect.min.y);
+		assert!(visual_bounds.max.y <= badge_rect.max.y);
+	}
+
+	#[test]
+	fn live_capture_size_badge_target_prefers_drag_then_hover_then_fullscreen() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Live;
+		state.cursor = Some(GlobalPoint::new(320, 260));
+		state.hovered_window_rect = Some(MonitorRectPoints {
+			monitor_id: monitor.id,
+			rect: RectPoints::new(120, 140, 300, 220),
+		});
+
+		assert_eq!(
+			WindowRenderer::live_capture_size_badge_target(&state, monitor, screen_rect, true),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(Pos2::new(120.0, 140.0), Vec2::new(300.0, 220.0)),
+				size_points: RectPoints::new(120, 140, 300, 220),
+			})
+		);
+
+		state.drag_rect = Some(MonitorRectPoints {
+			monitor_id: monitor.id,
+			rect: RectPoints::new(180, 200, 260, 180),
+		});
+
+		assert_eq!(
+			WindowRenderer::live_capture_size_badge_target(&state, monitor, screen_rect, true),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(Pos2::new(180.0, 200.0), Vec2::new(260.0, 180.0)),
+				size_points: RectPoints::new(180, 200, 260, 180),
+			})
+		);
+
+		state.drag_rect = None;
+		state.hovered_window_rect = None;
+
+		assert_eq!(
+			WindowRenderer::live_capture_size_badge_target(&state, monitor, screen_rect, true),
+			Some(SelectionSizeBadgeTarget {
+				rect: screen_rect,
+				size_points: RectPoints::new(0, 0, monitor.width, monitor.height),
+			})
+		);
+	}
+
+	#[test]
+	fn live_capture_size_badge_target_skips_fullscreen_fallback_while_primary_down() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Live;
+		state.cursor = Some(GlobalPoint::new(320, 260));
+
+		assert_eq!(
+			WindowRenderer::live_capture_size_badge_target(&state, monitor, screen_rect, false),
+			None
+		);
+	}
+
+	#[test]
+	fn frozen_capture_size_badge_target_uses_frozen_rect() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(1_000.0, 800.0));
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Frozen;
+		state.frozen_capture_rect = Some(RectPoints::new(140, 180, 320, 240));
+
+		assert_eq!(
+			WindowRenderer::frozen_capture_size_badge_target(&state, screen_rect),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(Pos2::new(140.0, 180.0), Vec2::new(320.0, 240.0)),
+				size_points: RectPoints::new(140, 180, 320, 240),
+			})
+		);
+	}
+
+	#[test]
+	fn frozen_capture_size_badge_target_keeps_tiny_frozen_rect() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(1_000.0, 800.0));
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Frozen;
+		state.frozen_capture_rect = Some(RectPoints::new(140, 180, 2, 1));
+
+		assert_eq!(
+			WindowRenderer::frozen_capture_size_badge_target(&state, screen_rect),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(Pos2::new(140.0, 180.0), Vec2::new(2.0, 1.0)),
+				size_points: RectPoints::new(140, 180, 2, 1),
+			})
+		);
+	}
+
+	#[test]
+	fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
+		let ctx = test_egui_context();
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut state = OverlayState::new();
+		let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+		let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+
+		state.mode = OverlayMode::Frozen;
+		state.monitor = Some(monitor);
+		state.frozen_capture_rect = Some(RectPoints::new(140, 180, 2, 1));
+
+		assert!(WindowRenderer::render_frozen_capture_affordance(
+			&ctx,
+			&state,
+			monitor,
+			screen_rect,
+			HudTheme::Dark,
+			None,
+			false,
+			false,
+			1.0,
+			&mut selection_flow_geometry_cache,
+			&mut selection_dashed_border_cache,
+		));
+	}
+
+	#[test]
+	fn live_capture_size_badge_target_keeps_tiny_drag_rect() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Live;
+		state.drag_rect = Some(MonitorRectPoints {
+			monitor_id: monitor.id,
+			rect: RectPoints::new(180, 200, 2, 1),
+		});
+
+		assert_eq!(
+			WindowRenderer::live_capture_size_badge_target(&state, monitor, screen_rect, false),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(Pos2::new(180.0, 200.0), Vec2::new(2.0, 1.0)),
+				size_points: RectPoints::new(180, 200, 2, 1),
+			})
+		);
 	}
 
 	#[test]
