@@ -3,15 +3,15 @@
     "schema": "plan/1",
     "plan_id": "2026-03-19-xy-171-selection-size-badge",
     "goal": "Show a harmonious `XxY` size badge for rsnap capture regions across drag, hovered-window, fullscreen fallback, and Frozen states while keeping the badge aligned to the selection's right edge and fully visible near screen edges.",
-      "success_criteria": [
-        "Live drag selection shows a visible size badge derived from the drag focus rect.",
-        "Live hovered-window and fullscreen fallback affordances show the same size badge for the active capture target.",
-        "Frozen selection shows the same size badge anchored to the frozen capture rect after entering Frozen mode.",
-        "Badge placement defaults below the capture rect, stays right-aligned to the rect, never extends past the rect's right edge, and falls back inside the rect when there is not enough room below.",
+    "success_criteria": [
+      "Live drag selection shows a visible size badge derived from the drag focus rect.",
+      "Live hovered-window and fullscreen fallback affordances show the same size badge for the active capture target.",
+      "Frozen selection shows the same size badge anchored to the frozen capture rect after entering Frozen mode.",
+      "Badge placement defaults below the capture rect, stays right-aligned to the rect, never extends past the rect's right edge, and falls back inside the rect when there is not enough room below.",
       "Focused overlay tests cover badge geometry and placement fallback for representative live and Frozen scenarios.",
       "The size badge is rendered as pure text with a fixed high-contrast style plus a light outline or shadow instead of introducing a new blur or glass surface.",
       "Existing HUD, pos/rgb, loupe, and toolbar blur treatment stays on the pre-XY-171 path and is not widened by the size badge implementation."
-      ],
+    ],
     "constraints": [
       "Keep the implementation scoped to overlay rendering and layout helpers in rsnap-overlay; do not change capture/export pixel data paths.",
       "Preserve the existing visual language of the HUD, selection frame, loupe, and Frozen toolbar, and do not regress their existing blur treatment.",
@@ -20,8 +20,8 @@
     ],
     "defaults": {
       "authority_linear_issue": "XY-171",
-      "issue_url": "https://linear.app/hack-ink/issue/XY-171/show-aligned-capture-size-badge-across-drag-window-fullscreen-and",
       "branch": "yvette/xy-171-show-aligned-capture-size-badge-across-drag-window",
+      "issue_url": "https://linear.app/hack-ink/issue/XY-171/show-aligned-capture-size-badge-across-drag-window-fullscreen-and",
       "primary_files": [
         "packages/rsnap-overlay/src/overlay.rs"
       ],
@@ -442,6 +442,68 @@
         "depends_on": [
           "task-19"
         ]
+      },
+      {
+        "id": "task-21",
+        "title": "Formalize the size-badge geometry contract and edge-case matrix",
+        "status": "done",
+        "objective": "Turn the badge placement rules into an explicit contract that orders right-edge alignment, screen visibility, and reserved-toolbar avoidance, and define the edge-case matrix that must be covered before trusting further review rounds.",
+        "inputs": [
+          "Current selection_size_badge_rect_with_reserved_rect() behavior in packages/rsnap-overlay/src/overlay.rs",
+          "Accumulated PR #41 review feedback about left-edge, bottom-edge, and reserved-toolbar collisions"
+        ],
+        "outputs": [
+          "Explicit geometry-priority rules recorded in code/tests and a concrete badge layout edge-case matrix"
+        ],
+        "verification": [
+          "The geometry contract distinguishes narrow-capture alignment tradeoffs from ordinary screen clamping.",
+          "The matrix covers below-placement, inside fallback, above-capture fallback, reserved-toolbar avoidance, and narrow left-edge behavior without contradictory expectations."
+        ],
+        "depends_on": [
+          "task-20"
+        ]
+      },
+      {
+        "id": "task-22",
+        "title": "Implement the hardened geometry rules and matrix coverage",
+        "status": "done",
+        "objective": "Refactor the badge layout helper to satisfy the explicit geometry contract and add focused regression tests for the remaining edge-case matrix so review feedback does not keep finding unencoded combinations.",
+        "inputs": [
+          "Task 21 geometry contract",
+          "Current overlay.rs badge layout helper and XY-171 regression tests"
+        ],
+        "outputs": [
+          "A hardened selection_size_badge_rect_with_reserved_rect() implementation and expanded focused regression coverage"
+        ],
+        "verification": [
+          "The badge does not overlap a reserved toolbar rect when an alternate non-overlapping placement exists.",
+          "Narrow left-edge captures keep the badge aligned to the capture's right edge instead of drifting right for full-screen visibility.",
+          "New tests fail without the hardened geometry rules and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-21"
+        ]
+      },
+      {
+        "id": "task-23",
+        "title": "Re-verify the hardened geometry contract",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the geometry-contract hardening so the expanded badge matrix is validated against the current repaired head.",
+        "inputs": [
+          "Task 22 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the hardened XY-171 badge geometry contract"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-22"
+        ]
       }
     ],
     "replan_policy": {
@@ -450,7 +512,8 @@
         "The badge cannot be shared cleanly across live and Frozen affordances without widening the task into broader HUD/window layering changes.",
         "The placement rules conflict with Frozen toolbar or loupe geometry in a way that needs a product decision rather than a local layout fix.",
         "Verification exposes regressions outside overlay rendering that widen the task beyond XY-171.",
-        "Badge styling requires touching the existing HUD blur pipeline again instead of staying as local text rendering."
+        "Badge styling requires touching the existing HUD blur pipeline again instead of staying as local text rendering.",
+        "Review feedback reveals another badge geometry priority conflict that is not already encoded in the saved edge-case matrix."
       ]
     }
   },
@@ -541,29 +604,39 @@
       "Task 20 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 114 tests passing and 0 failures after the light-theme readability fix.",
       "Task 20 verification: cargo make lint-rust completed successfully after the light-theme readability fix.",
       "Task 20 verification: git diff --check returned clean after the light-theme readability fix.",
-      "Task 20 verification: cargo run --release -p rsnap launched successfully and remained running in session 62239 after the light-theme readability fix."
+      "Task 20 verification: cargo run --release -p rsnap launched successfully and remained running in session 62239 after the light-theme readability fix.",
+      "Replan evidence: on 2026-03-19 the user explicitly requested a geometry-contract hardening pass because repeated PR review rounds kept exposing unencoded badge placement edge cases.",
+      "Task 21 outcome: selection_size_badge_rect_with_reserved_rect() now documents an explicit geometry priority contract in code, ordering right-edge alignment, below-placement preference, reserved-rect avoidance, above-capture fallback, and the narrow-left overflow exception.",
+      "Task 21 outcome: the focused badge matrix now covers bottom-reserved upper-band fallback, top-reserved preferred-inside retention, above-capture fallback when inside space is exhausted, unavoidable reserved-rect overlap, and narrow left-edge alignment preservation.",
+      "Task 22 outcome: the helper logic remained stable; the hardening pass encoded the intentional geometry tradeoffs directly in code comments and focused regression tests instead of continuing to patch review comments one by one.",
+      "Task 23 verification: cargo make fmt completed successfully after the geometry-contract hardening pass.",
+      "Task 23 verification: cargo make lint completed successfully after the geometry-contract hardening pass.",
+      "Task 23 verification: cargo make test completed successfully with 212 nextest cases and 181 rsnap-overlay unit tests passing after the geometry-contract hardening pass.",
+      "Task 23 verification: git diff --check returned clean after the geometry-contract hardening pass."
     ],
-    "last_updated": "2026-03-18T19:46:35Z",
+    "last_updated": "2026-03-19T03:05:00Z",
     "replan_reason": null,
     "context_snapshot": {
-      "linear_issue": "XY-171",
-      "workspace": ".workspaces/xy-171-size-badge",
-      "primary_surface": "overlay size badge",
-      "verification_completed": true,
-      "style_followup_requested": true,
-      "blur_followup_requested": true,
-      "runtime_shader_fix_requested": true,
-      "live_bg_gating_fix_requested": true,
-      "text_only_badge_requested": true,
       "blur_experiment_rollback_requested": true,
-      "style_polish_requested": true,
-      "style_polish_completed": true,
-      "crispness_followup_requested": true,
+      "blur_followup_requested": true,
       "crispness_followup_completed": true,
-      "premium_shadow_followup_requested": true,
-      "premium_shadow_followup_completed": true,
+      "crispness_followup_requested": true,
+      "geometry_contract_hardening_completed": true,
+      "geometry_contract_hardening_requested": true,
+      "light_theme_readability_followup_completed": true,
       "light_theme_readability_followup_requested": true,
-      "light_theme_readability_followup_completed": true
+      "linear_issue": "XY-171",
+      "live_bg_gating_fix_requested": true,
+      "premium_shadow_followup_completed": true,
+      "premium_shadow_followup_requested": true,
+      "primary_surface": "overlay size badge",
+      "runtime_shader_fix_requested": true,
+      "style_followup_requested": true,
+      "style_polish_completed": true,
+      "style_polish_requested": true,
+      "text_only_badge_requested": true,
+      "verification_completed": true,
+      "workspace": ".workspaces/xy-171-size-badge"
     }
   }
 }

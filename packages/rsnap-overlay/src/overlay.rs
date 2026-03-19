@@ -8702,6 +8702,15 @@ impl WindowRenderer {
 		badge_size: Vec2,
 		reserved_rect: Option<Rect>,
 	) -> Rect {
+		// Geometry priority contract:
+		// 1. Keep the badge right-aligned to the capture rect.
+		// 2. Prefer the below-capture slot when it fits and does not hit a reserved rect.
+		// 3. Otherwise stay inside the capture while avoiding the reserved rect when a
+		//    non-overlapping inside band exists.
+		// 4. If the reserved rect exhausts the in-capture space, try a right-aligned
+		//    above-capture slot before accepting overlap.
+		// 5. For captures narrower than the badge at the left screen edge, preserve
+		//    right-edge alignment even if that means partial left overflow.
 		let min_x = screen_rect.min.x;
 		let max_x = (screen_rect.max.x - badge_size.x).max(min_x);
 		let aligned_x = capture_rect.max.x - badge_size.x;
@@ -13065,6 +13074,22 @@ mod tests {
 	}
 
 	#[test]
+	fn selection_size_badge_reserved_rect_keeps_preferred_inside_when_top_space_is_clear() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 200.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 20.0), Vec2::new(200.0, 150.0));
+		let reserved_rect = Rect::from_min_size(Pos2::new(80.0, 28.0), Vec2::new(120.0, 40.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+		assert_eq!(badge_rect.max.y, capture_rect.max.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX);
+		assert!(!badge_rect.intersects(reserved_rect));
+	}
+
+	#[test]
 	fn selection_size_badge_reserved_rect_falls_above_capture_when_inside_space_is_exhausted() {
 		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 220.0));
 		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 170.0), Vec2::new(120.0, 50.0));
@@ -13079,6 +13104,23 @@ mod tests {
 		assert_eq!(badge_rect.max.x, capture_rect.max.x);
 		assert_eq!(badge_rect.max.y, capture_rect.min.y - SELECTION_SIZE_BADGE_GAP_PX);
 		assert!(!badge_rect.intersects(reserved_rect));
+	}
+
+	#[test]
+	fn selection_size_badge_reserved_rect_accepts_overlap_when_no_non_overlapping_slot_exists() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 52.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 20.0), Vec2::new(120.0, 32.0));
+		let reserved_rect = Rect::from_min_size(Pos2::new(40.0, 22.0), Vec2::new(120.0, 24.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.min.y, capture_rect.min.y);
+		assert!(badge_rect.intersects(reserved_rect));
 	}
 
 	#[test]
