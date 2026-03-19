@@ -7483,6 +7483,21 @@ struct SelectionDashedBorderMetrics {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+struct SelectionSizeBadgePadding {
+	left: f32,
+	right: f32,
+	top: f32,
+	bottom: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SelectionSizeBadgeLayout {
+	text_size: Vec2,
+	badge_size: Vec2,
+	padding: SelectionSizeBadgePadding,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct SelectionSizeBadgeTarget {
 	rect: Rect,
 	size_points: RectPoints,
@@ -8553,17 +8568,48 @@ impl WindowRenderer {
 		format!("{}x{}", size_pixels.width, size_pixels.height)
 	}
 
-	fn selection_size_badge_size(ctx: &egui::Context, text: &str, theme: HudTheme) -> Vec2 {
+	fn selection_size_badge_visual_overflow(pixels_per_point: f32) -> SelectionSizeBadgePadding {
+		let points_per_pixel = 1.0 / pixels_per_point.max(f32::MIN_POSITIVE);
+		let outline_offset = SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX * points_per_pixel;
+		let near_shadow_offset = SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX * points_per_pixel;
+		let far_shadow_offset = SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX * points_per_pixel;
+
+		SelectionSizeBadgePadding {
+			left: outline_offset,
+			right: outline_offset.max(near_shadow_offset),
+			top: outline_offset,
+			bottom: outline_offset.max(near_shadow_offset).max(far_shadow_offset),
+		}
+	}
+
+	fn selection_size_badge_layout(
+		ctx: &egui::Context,
+		text: &str,
+		theme: HudTheme,
+		pixels_per_point: f32,
+	) -> SelectionSizeBadgeLayout {
 		let text_color = Self::hud_text_colors(theme).0;
 		let font_id = FontId::new(SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, FontFamily::Monospace);
 		let galley = ctx
 			.fonts_mut(|fonts| fonts.layout_no_wrap(text.to_owned(), font_id.clone(), text_color));
 		let text_size = galley.size();
+		let visual_overflow = Self::selection_size_badge_visual_overflow(pixels_per_point);
+		let base_padding = SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS * 0.5;
+		let padding = SelectionSizeBadgePadding {
+			left: base_padding + visual_overflow.left,
+			right: base_padding + visual_overflow.right,
+			top: base_padding + visual_overflow.top,
+			bottom: base_padding + visual_overflow.bottom,
+		};
 
-		Vec2::new(
-			(text_size.x + SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS).ceil(),
-			(text_size.y + SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS).ceil(),
-		)
+		SelectionSizeBadgeLayout {
+			text_size,
+			badge_size: Vec2::new(
+				(text_size.x + padding.left + padding.right).ceil(),
+				(text_size.y + padding.top + padding.bottom).ceil(),
+			),
+			padding,
+		}
 	}
 
 	fn selection_size_badge_rect(screen_rect: Rect, capture_rect: Rect, badge_size: Vec2) -> Rect {
@@ -8601,6 +8647,40 @@ impl WindowRenderer {
 		)
 	}
 
+	fn selection_size_badge_text_anchor(
+		badge_rect: Rect,
+		layout: SelectionSizeBadgeLayout,
+		pixels_per_point: f32,
+	) -> Pos2 {
+		Self::snap_pos_to_pixel_grid(
+			Pos2::new(
+				badge_rect.max.x - layout.padding.right,
+				badge_rect.min.y + layout.padding.top + layout.text_size.y * 0.5,
+			),
+			pixels_per_point,
+		)
+	}
+
+	#[cfg(test)]
+	fn selection_size_badge_visual_bounds(
+		text_anchor: Pos2,
+		text_size: Vec2,
+		pixels_per_point: f32,
+	) -> Rect {
+		let visual_overflow = Self::selection_size_badge_visual_overflow(pixels_per_point);
+
+		Rect::from_min_max(
+			Pos2::new(
+				text_anchor.x - text_size.x - visual_overflow.left,
+				text_anchor.y - text_size.y * 0.5 - visual_overflow.top,
+			),
+			Pos2::new(
+				text_anchor.x + visual_overflow.right,
+				text_anchor.y + text_size.y * 0.5 + visual_overflow.bottom,
+			),
+		)
+	}
+
 	fn selection_size_badge_text_colors(theme: HudTheme) -> (Color32, Color32, Color32, Color32) {
 		match theme {
 			HudTheme::Dark => (
@@ -8627,18 +8707,17 @@ impl WindowRenderer {
 		theme: HudTheme,
 	) {
 		let text = Self::selection_size_badge_text(monitor, target.size_points);
-		let badge_size = Self::selection_size_badge_size(ctx, &text, theme);
-		let badge_rect = Self::selection_size_badge_rect(screen_rect, target.rect, badge_size);
-		let font_id = FontId::new(SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, FontFamily::Monospace);
 		let pixels_per_point = painter.pixels_per_point();
+		let layout = Self::selection_size_badge_layout(ctx, &text, theme, pixels_per_point);
+		let badge_rect =
+			Self::selection_size_badge_rect(screen_rect, target.rect, layout.badge_size);
+		let font_id = FontId::new(SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, FontFamily::Monospace);
 		let points_per_pixel = 1.0 / pixels_per_point.max(f32::MIN_POSITIVE);
 		let outline_offset = SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX * points_per_pixel;
 		let near_shadow_offset = SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX * points_per_pixel;
 		let far_shadow_offset = SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX * points_per_pixel;
-		let text_anchor = Self::snap_pos_to_pixel_grid(
-			Pos2::new(badge_rect.max.x, badge_rect.center().y),
-			pixels_per_point,
-		);
+		let text_anchor =
+			Self::selection_size_badge_text_anchor(badge_rect, layout, pixels_per_point);
 		let (text_color, outline_color, near_shadow_color, far_shadow_color) =
 			Self::selection_size_badge_text_colors(theme);
 
@@ -12009,6 +12088,16 @@ mod tests {
 		RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255]))
 	}
 
+	fn test_egui_context() -> egui::Context {
+		let ctx = egui::Context::default();
+
+		ctx.set_fonts(egui::FontDefinitions::default());
+
+		let _ = ctx.run(egui::RawInput::default(), |_: &egui::Context| {});
+
+		ctx
+	}
+
 	#[cfg(target_os = "macos")]
 	fn seed_ready_scroll_capture_selection(session: &mut OverlaySession) {
 		let monitor = test_monitor_with_scale(8, 8, 1_000);
@@ -12681,6 +12770,42 @@ mod tests {
 			WindowRenderer::selection_size_badge_text(monitor, RectPoints::new(10, 20, 120, 80)),
 			"240x160"
 		);
+	}
+
+	#[test]
+	fn selection_size_badge_layout_keeps_visual_bounds_within_right_edge_rect() {
+		let ctx = test_egui_context();
+		let layout =
+			WindowRenderer::selection_size_badge_layout(&ctx, "240x160", HudTheme::Light, 1.0);
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(760.0, 160.0), Vec2::new(40.0, 120.0));
+		let badge_rect =
+			WindowRenderer::selection_size_badge_rect(screen_rect, capture_rect, layout.badge_size);
+		let text_anchor = WindowRenderer::selection_size_badge_text_anchor(badge_rect, layout, 1.0);
+		let visual_bounds =
+			WindowRenderer::selection_size_badge_visual_bounds(text_anchor, layout.text_size, 1.0);
+
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert!(visual_bounds.min.x >= badge_rect.min.x);
+		assert!(visual_bounds.max.x <= badge_rect.max.x);
+	}
+
+	#[test]
+	fn selection_size_badge_layout_keeps_visual_bounds_within_bottom_fallback_rect() {
+		let ctx = test_egui_context();
+		let layout =
+			WindowRenderer::selection_size_badge_layout(&ctx, "240x160", HudTheme::Light, 1.0);
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(120.0, 588.0), Vec2::new(140.0, 12.0));
+		let badge_rect =
+			WindowRenderer::selection_size_badge_rect(screen_rect, capture_rect, layout.badge_size);
+		let text_anchor = WindowRenderer::selection_size_badge_text_anchor(badge_rect, layout, 1.0);
+		let visual_bounds =
+			WindowRenderer::selection_size_badge_visual_bounds(text_anchor, layout.text_size, 1.0);
+
+		assert_eq!(badge_rect.max.y, screen_rect.max.y);
+		assert!(visual_bounds.min.y >= badge_rect.min.y);
+		assert!(visual_bounds.max.y <= badge_rect.max.y);
 	}
 
 	#[test]
