@@ -6472,6 +6472,7 @@ impl OverlaySession {
 			.unwrap_or_else(|| Rect::from_min_size(Pos2::ZERO, fallback_size))
 	}
 
+	#[cfg(any(target_os = "macos", test))]
 	fn advance_frozen_toolbar_readiness_sample(&mut self, screen_rect: Rect) -> bool {
 		let screen_size_points = screen_rect.size();
 
