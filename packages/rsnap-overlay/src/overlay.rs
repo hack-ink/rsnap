@@ -6460,10 +6460,6 @@ impl OverlaySession {
 	}
 
 	fn frozen_toolbar_ready_for_draw(&self, screen_rect: Rect) -> bool {
-		if self.toolbar_state.floating_position.is_some() {
-			return true;
-		}
-
 		let screen_size_points = screen_rect.size();
 		let needs_new_sample = match self.toolbar_state.layout_last_screen_size_points {
 			None => true,
@@ -13221,6 +13217,30 @@ mod tests {
 					session.frozen_toolbar_ready_for_draw(screen_rect)
 				)
 				.is_some()
+		);
+	}
+
+	#[test]
+	fn frozen_toolbar_ready_for_draw_ignores_preseeded_position_until_viewport_stabilizes() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(200, 180, 200, 300);
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+
+		session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+		assert!(session.toolbar_state.floating_position.is_some());
+		assert_eq!(session.toolbar_state.layout_last_screen_size_points, None);
+		assert_eq!(session.toolbar_state.layout_stable_frames, 0);
+		assert!(!session.frozen_toolbar_ready_for_draw(screen_rect));
+		assert_eq!(
+			session.frozen_size_badge_toolbar_reserved_rect(
+				monitor,
+				screen_rect,
+				session.frozen_toolbar_ready_for_draw(screen_rect)
+			),
+			None
 		);
 	}
 
