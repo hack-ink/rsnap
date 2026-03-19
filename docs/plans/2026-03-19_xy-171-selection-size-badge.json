@@ -9,6 +9,7 @@
       "Frozen selection shows the same size badge anchored to the frozen capture rect after entering Frozen mode.",
       "Frozen toolbar reservation for badge placement is based on the overlay viewport for the active monitor, not the dedicated toolbar window viewport.",
       "Frozen toolbar reservation begins only once the toolbar birth logic is ready to draw for the current viewport, so early frozen frames do not reserve phantom toolbar space.",
+      "Preseeded Frozen toolbar floating positions do not count as draw readiness until the current overlay viewport has been sampled and confirmed stable, so early frozen frames cannot reserve toolbar space from a stale preseed.",
       "Badge placement defaults below the capture rect, stays right-aligned to the rect when that fits inside the viewport, clamps fully inside the visible screen when strict alignment would force clipping, and falls back inside the rect when there is not enough room below.",
       "Tiny valid capture rects still produce a size badge target instead of being filtered out by the live drag-init threshold.",
       "Focused overlay tests cover badge geometry and placement fallback for representative live and Frozen scenarios.",
@@ -21,6 +22,7 @@
       "Do not allow the badge to clip outside the visible screen region; keep the badge right-aligned to the selection when that fits without forcing viewport clipping.",
       "Reserve the Frozen toolbar slot only while that toolbar is actually visible for the current platform/render path; do not avoid a phantom toolbar rectangle during preview-only frames.",
       "Do not reserve Frozen toolbar space before the toolbar birth logic is actually ready to draw for the current viewport.",
+      "Do not treat a preseeded Frozen toolbar floating_position by itself as proof that the toolbar can already draw for the current viewport.",
       "Do not suppress badge rendering for tiny valid Frozen or drag capture rects solely because the live drag-init threshold is unmet.",
       "Use repo-native verification commands before claiming completion."
     ],
@@ -696,6 +698,68 @@
         "depends_on": [
           "task-31"
         ]
+      },
+      {
+        "id": "task-33",
+        "title": "Re-scope preseeded toolbar readiness in the Frozen badge contract",
+        "status": "done",
+        "objective": "Update the saved XY-171 contract so a preseeded Frozen toolbar floating position does not count as draw readiness until the current overlay viewport has been sampled and confirmed stable.",
+        "inputs": [
+          "New PR #41 review feedback after head df6bd3b on preseeded Frozen toolbar floating positions",
+          "Current begin_frozen_capture_with_rect, seed_frozen_toolbar_default_position, and frozen_toolbar_ready_for_draw logic in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A corrected Frozen toolbar readiness contract that distinguishes preseeded placement from verified draw readiness"
+        ],
+        "verification": [
+          "The saved contract no longer treats a preseeded floating toolbar position as sufficient readiness for toolbar-slot reservation.",
+          "The saved contract still allows the Frozen toolbar to spawn immediately once the current viewport has been sampled and confirmed stable."
+        ],
+        "depends_on": [
+          "task-32"
+        ]
+      },
+      {
+        "id": "task-34",
+        "title": "Implement the preseeded-toolbar readiness repair batch",
+        "status": "done",
+        "objective": "Repair overlay.rs so Frozen badge reservation ignores preseeded toolbar positions until the viewport-stability path confirms the current overlay viewport, and add focused regression coverage for that startup timing.",
+        "inputs": [
+          "Task 33 contract update",
+          "Current overlay.rs Frozen toolbar birth and reservation tests"
+        ],
+        "outputs": [
+          "A repaired Frozen toolbar readiness helper plus focused tests for the preseeded-position review finding"
+        ],
+        "verification": [
+          "Early Frozen frames with a preseeded toolbar position do not reserve badge toolbar space before viewport stabilization.",
+          "Once the current viewport has been sampled and confirmed stable, the Frozen toolbar reservation becomes available without regressing existing startup behavior.",
+          "New focused tests fail without the repair batch and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-33"
+        ]
+      },
+      {
+        "id": "task-35",
+        "title": "Re-verify the preseeded-toolbar readiness repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the latest XY-171 review-repair batch so the refreshed PR head is ready for another review pass.",
+        "inputs": [
+          "Task 34 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the preseeded-toolbar readiness repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-34"
+        ]
       }
     ],
     "replan_policy": {
@@ -707,7 +771,8 @@
         "Badge styling requires touching the existing HUD blur pipeline again instead of staying as local text rendering.",
         "Review feedback reveals another badge geometry priority conflict that is not already encoded in the saved edge-case matrix.",
         "Review feedback reveals that Frozen toolbar reservation is still using the wrong viewport basis or still reserving a hidden toolbar slot.",
-        "Review feedback reveals that Frozen toolbar reservation is still active before toolbar birth is actually drawable or that tiny valid capture rects still lose the size badge."
+        "Review feedback reveals that Frozen toolbar reservation is still active before toolbar birth is actually drawable or that tiny valid capture rects still lose the size badge.",
+        "Review feedback reveals that a preseeded Frozen toolbar position is still being treated as draw readiness before the current viewport is stable."
       ]
     }
   },
@@ -828,9 +893,17 @@
       "Task 32 verification: cargo make fmt completed successfully after the toolbar-birth and tiny-target repair batch.",
       "Task 32 verification: cargo make lint completed successfully after the toolbar-birth and tiny-target repair batch.",
       "Task 32 verification: cargo make test completed successfully with 219 nextest cases and 188 rsnap-overlay unit tests passing after the toolbar-birth and tiny-target repair batch.",
-      "Task 32 verification: git diff --check returned clean after the toolbar-birth and tiny-target repair batch."
+      "Task 32 verification: git diff --check returned clean after the toolbar-birth and tiny-target repair batch.",
+      "Replan evidence: on 2026-03-19 a new review after head df6bd3b surfaced another Frozen-toolbar timing hole: begin_frozen_capture_with_rect preseeds toolbar_state.floating_position before viewport stabilization, so the readiness helper must not treat that preseed alone as proof that the toolbar can already draw.",
+      "Task 33 outcome: the saved contract now explicitly distinguishes a preseeded Frozen toolbar position from verified draw readiness, requiring current-viewport sampling and stability confirmation before toolbar-slot reservation can start.",
+      "Task 34 outcome: packages/rsnap-overlay/src/overlay.rs no longer treats toolbar_state.floating_position as a readiness shortcut for Frozen badge reservation, so preseeded toolbar positions stay non-ready until the current viewport has been sampled and confirmed stable.",
+      "Task 34 outcome: added frozen_toolbar_ready_for_draw_ignores_preseeded_position_until_viewport_stabilizes to cover begin_frozen_capture_with_rect preseed startup directly.",
+      "Task 35 verification: cargo make fmt completed successfully after the preseeded-toolbar readiness repair batch.",
+      "Task 35 verification: cargo make lint completed successfully after the preseeded-toolbar readiness repair batch.",
+      "Task 35 verification: cargo make test completed successfully with 220 nextest cases and 189 rsnap-overlay unit tests passing after the preseeded-toolbar readiness repair batch.",
+      "Task 35 verification: git diff --check returned clean after the preseeded-toolbar readiness repair batch."
     ],
-    "last_updated": "2026-03-19T06:14:00Z",
+    "last_updated": "2026-03-19T06:30:26Z",
     "replan_reason": null,
     "context_snapshot": {
       "blur_experiment_rollback_requested": true,
@@ -860,6 +933,8 @@
       "toolbar_birth_readiness_followup_completed": true,
       "toolbar_overlay_viewport_followup_completed": true,
       "toolbar_overlay_viewport_followup_requested": true,
+      "toolbar_preseeded_position_followup_completed": true,
+      "toolbar_preseeded_position_followup_requested": true,
       "toolbar_birth_readiness_followup_requested": true,
       "toolbar_viewport_basis_followup_completed": true,
       "toolbar_viewport_basis_followup_requested": true,
