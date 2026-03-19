@@ -1010,6 +1010,68 @@
         "depends_on": [
           "task-46"
         ]
+      },
+      {
+        "id": "task-48",
+        "title": "Capture the latest first-visible-toolbar and default-slot review findings",
+        "status": "done",
+        "objective": "Reopen the saved XY-171 contract for the next PR #41 review batch so first-visible non-macOS toolbar overlap and dragged-back default-slot reservation are tracked before another repair commit.",
+        "inputs": [
+          "Current unresolved PR #41 review threads at overlay.rs:6406 and overlay.rs:8691 on head 92f94e4",
+          "Code inspection showing non-macOS toolbar reservation is still computed before the first visible toolbar draw and frozen_toolbar_reserved_rect still keys default-slot reservation on exact Pos2 equality"
+        ],
+        "outputs": [
+          "An updated saved contract that explicitly covers the latest first-visible-toolbar and default-slot reservation review batch"
+        ],
+        "verification": [
+          "The saved contract records both current review findings as the next execution authority before more implementation happens."
+        ],
+        "depends_on": [
+          "task-47"
+        ]
+      },
+      {
+        "id": "task-49",
+        "title": "Repair first-visible toolbar reservation timing and default-slot restoration",
+        "status": "done",
+        "objective": "Update overlay.rs so the Frozen badge never overlaps the first visible non-macOS toolbar frame and the default-slot reservation still activates when the toolbar is dragged back to its default lane with minor float drift, with focused regression coverage for both.",
+        "inputs": [
+          "Task 48 contract update",
+          "packages/rsnap-overlay/src/overlay.rs Frozen toolbar reservation timing, draw gating, and default-slot matching helpers"
+        ],
+        "outputs": [
+          "A coherent repair batch covering first-visible non-macOS toolbar reservation timing, default-slot restoration tolerance, and focused tests"
+        ],
+        "verification": [
+          "The Frozen size badge does not miss the first visible non-macOS toolbar frame because the toolbar is not drawn before the reservation gate is active.",
+          "Dragging the Frozen toolbar back to its default slot still reactivates badge reservation even when floating_position differs by a small float offset.",
+          "Focused tests fail without the repair and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-48"
+        ]
+      },
+      {
+        "id": "task-50",
+        "title": "Re-verify the latest toolbar-timing and default-slot repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the latest review-repair batch so the refreshed PR head is ready for another review pass.",
+        "inputs": [
+          "Task 49 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the latest toolbar-timing and default-slot repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make fmt-rust-check exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-49"
+        ]
       }
     ],
     "replan_policy": {
@@ -1027,7 +1089,9 @@
         "Linux CI reveals that a platform cfg change in the Frozen toolbar readiness helper broke the non-macOS compile path.",
         "Linux CI reveals that a macOS-only Frozen toolbar readiness sampler is still compiled into non-macOS lint paths and trips dead-code denial.",
         "Review feedback reveals that non-macOS Frozen toolbar reservation still never reaches a ready state after preseeded toolbar positions.",
-        "Review feedback reveals that tiny Frozen capture rects still fail to reach the shared size-badge render path."
+        "Review feedback reveals that tiny Frozen capture rects still fail to reach the shared size-badge render path.",
+        "Review feedback reveals that non-macOS Frozen toolbar reservation still misses the first visible toolbar frame because reservation is computed before draw-phase readiness advancement.",
+        "Review feedback reveals that Frozen toolbar default-slot reservation still depends on exact floating-position equality after the toolbar is dragged back near its default slot."
       ]
     }
   },
@@ -1190,9 +1254,19 @@
       "Task 47 verification: cargo make fmt-rust-check completed successfully after the latest toolbar-readiness and tiny-Frozen repair batch.",
       "Task 47 verification: cargo make lint completed successfully after the latest toolbar-readiness and tiny-Frozen repair batch.",
       "Task 47 verification: cargo make test completed successfully with 223 nextest cases and 192 rsnap-overlay unit tests passing after the latest toolbar-readiness and tiny-Frozen repair batch.",
-      "Task 47 verification: git diff --check returned clean after the latest toolbar-readiness and tiny-Frozen repair batch."
+      "Task 47 verification: git diff --check returned clean after the latest toolbar-readiness and tiny-Frozen repair batch.",
+      "Replan evidence: on 2026-03-19 current PR #41 review threads at overlay.rs:6406 and overlay.rs:8691 remained unresolved because non-macOS Frozen toolbar reservation still missed the first visible toolbar frame and default-slot reservation still depended on exact floating-position equality after dragging back near the default lane.",
+      "Task 48 outcome: the saved contract now explicitly tracks the latest review batch covering first-visible non-macOS toolbar reservation timing and dragged-back default-slot reservation.",
+      "Task 49 outcome: packages/rsnap-overlay/src/overlay.rs now delays non-macOS Frozen toolbar drawing until advance_frozen_toolbar_readiness_sample_state reaches the first ready frame, so the badge reservation is active before the toolbar ever becomes visible.",
+      "Task 49 outcome: frozen_toolbar_reserved_rect now treats floating positions within 1.0 point of the default slot as restored and reserves the actual near-default toolbar rect instead of requiring exact Pos2 equality.",
+      "Task 49 outcome: focused regressions now cover the first visible Frozen toolbar frame and dragged-back default-slot restoration.",
+      "Task 50 verification: cargo make fmt completed successfully after the first-visible-toolbar and default-slot restoration repair batch.",
+      "Task 50 verification: cargo make fmt-rust-check completed successfully after the first-visible-toolbar and default-slot restoration repair batch.",
+      "Task 50 verification: cargo make lint completed successfully after the first-visible-toolbar and default-slot restoration repair batch.",
+      "Task 50 verification: cargo make test completed successfully with 225 nextest cases and 194 rsnap-overlay unit tests passing after the first-visible-toolbar and default-slot restoration repair batch.",
+      "Task 50 verification: git diff --check returned clean after the first-visible-toolbar and default-slot restoration repair batch."
     ],
-    "last_updated": "2026-03-19T07:47:31Z",
+    "last_updated": "2026-03-19T08:46:41Z",
     "replan_reason": null,
     "context_snapshot": {
       "blur_experiment_rollback_requested": true,
@@ -1230,9 +1304,13 @@
       "linux_ci_dead_code_followup_requested": false,
       "non_macos_toolbar_readiness_review_followup_completed": true,
       "non_macos_toolbar_readiness_review_followup_requested": false,
+      "non_macos_toolbar_visible_frame_followup_completed": true,
+      "non_macos_toolbar_visible_frame_followup_requested": false,
       "toolbar_preseeded_position_followup_completed": true,
       "toolbar_preseeded_position_followup_requested": true,
       "toolbar_birth_readiness_followup_requested": true,
+      "toolbar_default_slot_restore_followup_completed": true,
+      "toolbar_default_slot_restore_followup_requested": false,
       "toolbar_viewport_basis_followup_completed": true,
       "toolbar_viewport_basis_followup_requested": true,
       "tiny_frozen_render_followup_completed": true,
