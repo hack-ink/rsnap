@@ -6383,8 +6383,17 @@ impl OverlaySession {
 			&& !self.frozen_final_capture_ready();
 		let draw_selection_particles =
 			(self.config.selection_particles || self.scroll_capture.active) && !capture_in_progress;
-		let frozen_toolbar_reserved_rect =
-			self.frozen_size_badge_toolbar_reserved_rect(overlay_monitor);
+		let overlay_screen_rect = self.overlay_window_screen_rect(window_id, overlay_monitor);
+		let toolbar_visible_for_badge = if cfg!(target_os = "macos") {
+			!self.should_hide_toolbar_window(overlay_monitor)
+		} else {
+			draw_toolbar
+		};
+		let frozen_toolbar_reserved_rect = self.frozen_size_badge_toolbar_reserved_rect(
+			overlay_monitor,
+			overlay_screen_rect,
+			toolbar_visible_for_badge,
+		);
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
 		{
@@ -6426,16 +6435,40 @@ impl OverlaySession {
 		self.handle_capture_and_toolbar_redraw_post(overlay_monitor, draw_toolbar)
 	}
 
-	fn frozen_size_badge_toolbar_reserved_rect(&self, monitor: MonitorRect) -> Option<Rect> {
-		if !matches!(self.state.mode, OverlayMode::Frozen) || self.state.monitor != Some(monitor) {
+	fn overlay_window_screen_rect(&self, window_id: WindowId, monitor: MonitorRect) -> Rect {
+		let fallback_size = Vec2::new(monitor.width as f32, monitor.height as f32);
+
+		self.windows
+			.get(&window_id)
+			.map(|overlay_window| {
+				let scale_factor = overlay_window.window.scale_factor().max(1.0) as f32;
+				let size = overlay_window.window.inner_size();
+				let size_points = if size.width == 0 || size.height == 0 {
+					fallback_size
+				} else {
+					Vec2::new(
+						(size.width as f32 / scale_factor).max(1.0),
+						(size.height as f32 / scale_factor).max(1.0),
+					)
+				};
+
+				Rect::from_min_size(Pos2::ZERO, size_points)
+			})
+			.unwrap_or_else(|| Rect::from_min_size(Pos2::ZERO, fallback_size))
+	}
+
+	fn frozen_size_badge_toolbar_reserved_rect(
+		&self,
+		monitor: MonitorRect,
+		screen_rect: Rect,
+		toolbar_visible: bool,
+	) -> Option<Rect> {
+		if !toolbar_visible
+			|| !matches!(self.state.mode, OverlayMode::Frozen)
+			|| self.state.monitor != Some(monitor)
+		{
 			return None;
 		}
-
-		let screen_size_points = self
-			.toolbar_state
-			.layout_last_screen_size_points
-			.unwrap_or(Vec2::new(monitor.width as f32, monitor.height as f32));
-		let screen_rect = Rect::from_min_size(Pos2::ZERO, screen_size_points);
 
 		WindowRenderer::frozen_toolbar_reserved_rect(
 			&self.state,
@@ -13051,6 +13084,8 @@ mod tests {
 	#[test]
 	fn overlay_session_computes_frozen_toolbar_reserved_rect_without_inline_toolbar_state() {
 		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 		let mut session = OverlaySession::new();
 
 		session.state.mode = OverlayMode::Frozen;
@@ -13058,7 +13093,7 @@ mod tests {
 		session.state.frozen_capture_rect = Some(RectPoints::new(200, 180, 200, 300));
 
 		let reserved_rect = session
-			.frozen_size_badge_toolbar_reserved_rect(monitor)
+			.frozen_size_badge_toolbar_reserved_rect(monitor, screen_rect, true)
 			.expect("overlay redraw should reserve the default toolbar slot");
 
 		assert_eq!(reserved_rect.min.y, 480.0 + TOOLBAR_CAPTURE_GAP_PX);
@@ -13069,7 +13104,7 @@ mod tests {
 	}
 
 	#[test]
-	fn frozen_toolbar_reserved_rect_uses_sampled_viewport_size() {
+	fn frozen_toolbar_reserved_rect_uses_overlay_viewport_size() {
 		let monitor = MonitorRect {
 			id: 1,
 			origin: GlobalPoint::new(0, 0),
@@ -13077,9 +13112,8 @@ mod tests {
 			height: 260,
 			scale_factor_x1000: 1_000,
 		};
-		let sampled_screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 120.0));
-		let monitor_screen_rect =
-			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let overlay_screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 120.0));
+		let toolbar_window_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(92.0, 26.0));
 		let capture_rect_points = RectPoints::new(60, 40, 220, 60);
 		let capture_rect = Rect::from_min_size(
 			Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
@@ -13090,31 +13124,48 @@ mod tests {
 		session.state.mode = OverlayMode::Frozen;
 		session.state.monitor = Some(monitor);
 		session.state.frozen_capture_rect = Some(capture_rect_points);
-		session.toolbar_state.layout_last_screen_size_points = Some(sampled_screen_rect.size());
+		session.toolbar_state.layout_last_screen_size_points = Some(toolbar_window_rect.size());
 
 		let toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
-		let sampled_default_pos = WindowRenderer::frozen_toolbar_default_pos(
-			sampled_screen_rect,
-			capture_rect.intersect(sampled_screen_rect),
+		let overlay_default_pos = WindowRenderer::frozen_toolbar_default_pos(
+			overlay_screen_rect,
+			capture_rect.intersect(overlay_screen_rect),
 			toolbar_size,
 			session.config.toolbar_placement,
 		);
-		let monitor_default_pos = WindowRenderer::frozen_toolbar_default_pos(
-			monitor_screen_rect,
-			capture_rect.intersect(monitor_screen_rect),
+		let toolbar_window_default_pos = WindowRenderer::frozen_toolbar_default_pos(
+			toolbar_window_rect,
+			capture_rect.intersect(toolbar_window_rect),
 			toolbar_size,
 			session.config.toolbar_placement,
 		);
 
-		session.toolbar_state.floating_position = Some(sampled_default_pos);
+		session.toolbar_state.floating_position = Some(overlay_default_pos);
 
 		let reserved_rect = session
-			.frozen_size_badge_toolbar_reserved_rect(monitor)
-			.expect("sampled viewport-aligned toolbar slot should still be reserved");
+			.frozen_size_badge_toolbar_reserved_rect(monitor, overlay_screen_rect, true)
+			.expect("overlay viewport-aligned toolbar slot should still be reserved");
 
-		assert_ne!(sampled_default_pos, monitor_default_pos);
-		assert_eq!(reserved_rect.min, sampled_default_pos);
+		assert_ne!(overlay_default_pos, toolbar_window_default_pos);
+		assert_eq!(reserved_rect.min, overlay_default_pos);
 		assert_eq!(reserved_rect.size(), toolbar_size);
+	}
+
+	#[test]
+	fn frozen_toolbar_reserved_rect_skips_hidden_toolbar_slot() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.state.monitor = Some(monitor);
+		session.state.frozen_capture_rect = Some(RectPoints::new(200, 180, 200, 300));
+
+		assert_eq!(
+			session.frozen_size_badge_toolbar_reserved_rect(monitor, screen_rect, false),
+			None
+		);
 	}
 
 	#[test]
