@@ -6494,7 +6494,7 @@ impl OverlaySession {
 		true
 	}
 
-	#[cfg(test)]
+	#[cfg(any(not(target_os = "macos"), test))]
 	fn frozen_toolbar_ready_for_draw(&self, screen_rect: Rect) -> bool {
 		let screen_size_points = screen_rect.size();
 		let needs_new_sample = frozen_toolbar_needs_new_sample(
