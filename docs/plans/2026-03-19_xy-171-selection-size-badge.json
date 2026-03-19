@@ -10,6 +10,7 @@
       "Frozen toolbar reservation for badge placement is based on the overlay viewport for the active monitor, not the dedicated toolbar window viewport.",
       "Frozen toolbar reservation begins only once the toolbar birth logic is ready to draw for the current viewport, so early frozen frames do not reserve phantom toolbar space.",
       "Preseeded Frozen toolbar floating positions do not count as draw readiness until the current overlay viewport has been sampled and confirmed stable, so early frozen frames cannot reserve toolbar space from a stale preseed.",
+      "Frozen toolbar draw-readiness sampling on macOS uses the overlay viewport basis for the active monitor and is not overwritten by the dedicated toolbar window viewport.",
       "Badge placement defaults below the capture rect, stays right-aligned to the rect when that fits inside the viewport, clamps fully inside the visible screen when strict alignment would force clipping, and falls back inside the rect when there is not enough room below.",
       "Tiny valid capture rects still produce a size badge target instead of being filtered out by the live drag-init threshold.",
       "Focused overlay tests cover badge geometry and placement fallback for representative live and Frozen scenarios.",
@@ -23,6 +24,7 @@
       "Reserve the Frozen toolbar slot only while that toolbar is actually visible for the current platform/render path; do not avoid a phantom toolbar rectangle during preview-only frames.",
       "Do not reserve Frozen toolbar space before the toolbar birth logic is actually ready to draw for the current viewport.",
       "Do not treat a preseeded Frozen toolbar floating_position by itself as proof that the toolbar can already draw for the current viewport.",
+      "Do not let the dedicated toolbar window viewport overwrite the overlay-viewport sample that Frozen badge reservation uses for draw readiness.",
       "Do not suppress badge rendering for tiny valid Frozen or drag capture rects solely because the live drag-init threshold is unmet.",
       "Use repo-native verification commands before claiming completion."
     ],
@@ -760,6 +762,68 @@
         "depends_on": [
           "task-34"
         ]
+      },
+      {
+        "id": "task-36",
+        "title": "Re-scope overlay-viewport readiness sampling for the Frozen badge",
+        "status": "done",
+        "objective": "Update the saved XY-171 contract so Frozen toolbar draw readiness samples the overlay viewport on macOS split-toolbar paths instead of inheriting the dedicated toolbar window viewport.",
+        "inputs": [
+          "New PR #41 review feedback after head 0e73577 on dedicated toolbar window viewport pollution",
+          "Current handle_overlay_window_redraw, render_frozen_toolbar_ui, and frozen_toolbar_ready_for_draw logic in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A corrected Frozen toolbar readiness contract that keeps overlay-viewport sampling separate from toolbar-window rendering"
+        ],
+        "verification": [
+          "The saved contract no longer allows toolbar-window viewport samples to keep Frozen badge reservation permanently non-ready on macOS.",
+          "The saved contract still preserves the existing non-macOS frozen toolbar readiness behavior."
+        ],
+        "depends_on": [
+          "task-35"
+        ]
+      },
+      {
+        "id": "task-37",
+        "title": "Implement the overlay-viewport readiness sampling repair batch",
+        "status": "done",
+        "objective": "Repair overlay.rs so Frozen badge reservation samples readiness from the overlay viewport basis on macOS, prevents toolbar-window viewport pollution, and adds focused regression coverage for the split-toolbar-window path.",
+        "inputs": [
+          "Task 36 contract update",
+          "Current overlay.rs Frozen toolbar readiness tests and macOS toolbar-window handling"
+        ],
+        "outputs": [
+          "A repaired Frozen toolbar readiness sampling path plus focused tests for overlay-vs-toolbar viewport separation"
+        ],
+        "verification": [
+          "On macOS split-toolbar paths, Frozen badge reservation becomes ready after the overlay viewport stabilizes even if the toolbar window viewport is smaller.",
+          "Toolbar-window rendering no longer overwrites the overlay-viewport sample used by Frozen badge reservation.",
+          "New focused tests fail without the repair batch and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-36"
+        ]
+      },
+      {
+        "id": "task-38",
+        "title": "Re-verify the overlay-viewport readiness sampling repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the latest XY-171 review-repair batch so the refreshed PR head is ready for another review pass.",
+        "inputs": [
+          "Task 37 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the overlay-viewport readiness sampling repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-37"
+        ]
       }
     ],
     "replan_policy": {
@@ -772,7 +836,8 @@
         "Review feedback reveals another badge geometry priority conflict that is not already encoded in the saved edge-case matrix.",
         "Review feedback reveals that Frozen toolbar reservation is still using the wrong viewport basis or still reserving a hidden toolbar slot.",
         "Review feedback reveals that Frozen toolbar reservation is still active before toolbar birth is actually drawable or that tiny valid capture rects still lose the size badge.",
-        "Review feedback reveals that a preseeded Frozen toolbar position is still being treated as draw readiness before the current viewport is stable."
+        "Review feedback reveals that a preseeded Frozen toolbar position is still being treated as draw readiness before the current viewport is stable.",
+        "Review feedback reveals that Frozen toolbar draw readiness is still sampling the dedicated toolbar window viewport instead of the overlay viewport on macOS."
       ]
     }
   },
@@ -901,9 +966,17 @@
       "Task 35 verification: cargo make fmt completed successfully after the preseeded-toolbar readiness repair batch.",
       "Task 35 verification: cargo make lint completed successfully after the preseeded-toolbar readiness repair batch.",
       "Task 35 verification: cargo make test completed successfully with 220 nextest cases and 189 rsnap-overlay unit tests passing after the preseeded-toolbar readiness repair batch.",
-      "Task 35 verification: git diff --check returned clean after the preseeded-toolbar readiness repair batch."
+      "Task 35 verification: git diff --check returned clean after the preseeded-toolbar readiness repair batch.",
+      "Replan evidence: on 2026-03-19 a new review after head 0e73577 surfaced another Frozen-toolbar readiness bug on macOS: render_frozen_toolbar_ui records layout_last_screen_size_points from the dedicated toolbar window viewport, so the badge reservation path can compare the wrong basis against the overlay viewport and remain permanently non-ready.",
+      "Task 36 outcome: the saved contract now explicitly requires Frozen badge reservation readiness on macOS to sample the active overlay viewport instead of inheriting the dedicated toolbar window viewport.",
+      "Task 37 outcome: packages/rsnap-overlay/src/overlay.rs now advances Frozen toolbar readiness from handle_overlay_window_redraw using the overlay viewport on macOS, keeps toolbar-window rendering from overwriting that sample, and adds frozen_toolbar_overlay_viewport_sample_recovers_from_toolbar_window_pollution to cover the split-toolbar-window regression directly.",
+      "Task 38 verification: cargo make fmt completed successfully after the overlay-viewport readiness sampling repair batch.",
+      "Task 38 verification: cargo make fmt-rust-check completed successfully after the overlay-viewport readiness sampling repair batch.",
+      "Task 38 verification: cargo make lint completed successfully after the overlay-viewport readiness sampling repair batch.",
+      "Task 38 verification: cargo make test completed successfully with 221 nextest cases and 190 rsnap-overlay unit tests passing after the overlay-viewport readiness sampling repair batch.",
+      "Task 38 verification: git diff --check returned clean after the overlay-viewport readiness sampling repair batch."
     ],
-    "last_updated": "2026-03-19T06:30:26Z",
+    "last_updated": "2026-03-19T07:12:44Z",
     "replan_reason": null,
     "context_snapshot": {
       "blur_experiment_rollback_requested": true,
@@ -933,6 +1006,8 @@
       "toolbar_birth_readiness_followup_completed": true,
       "toolbar_overlay_viewport_followup_completed": true,
       "toolbar_overlay_viewport_followup_requested": true,
+      "toolbar_overlay_viewport_sampling_followup_completed": true,
+      "toolbar_overlay_viewport_sampling_followup_requested": false,
       "toolbar_preseeded_position_followup_completed": true,
       "toolbar_preseeded_position_followup_requested": true,
       "toolbar_birth_readiness_followup_requested": true,
