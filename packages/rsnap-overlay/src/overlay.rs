@@ -8704,7 +8704,12 @@ impl WindowRenderer {
 	) -> Rect {
 		let min_x = screen_rect.min.x;
 		let max_x = (screen_rect.max.x - badge_size.x).max(min_x);
-		let x = (capture_rect.max.x - badge_size.x).clamp(min_x, max_x);
+		let aligned_x = capture_rect.max.x - badge_size.x;
+		let x = if aligned_x < min_x && capture_rect.width() < badge_size.x {
+			aligned_x
+		} else {
+			aligned_x.clamp(min_x, max_x)
+		};
 		let below_y = capture_rect.max.y + SELECTION_SIZE_BADGE_GAP_PX;
 		let below_rect = Rect::from_min_size(Pos2::new(x, below_y), badge_size);
 		let fits_below = below_rect.max.y
@@ -8748,6 +8753,16 @@ impl WindowRenderer {
 
 				if !candidate_rect.intersects(reserved_rect) {
 					return candidate_rect;
+				}
+			}
+
+			let above_y = capture_rect.min.y - SELECTION_SIZE_BADGE_GAP_PX - badge_size.y;
+
+			if above_y >= screen_rect.min.y + SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX {
+				let above_rect = Rect::from_min_size(Pos2::new(x, above_y), badge_size);
+
+				if !above_rect.intersects(reserved_rect) {
+					return above_rect;
 				}
 			}
 		}
@@ -12862,7 +12877,7 @@ mod tests {
 	}
 
 	#[test]
-	fn selection_size_badge_rect_clamps_left_edge_to_screen() {
+	fn selection_size_badge_rect_keeps_right_edge_for_narrow_left_capture() {
 		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 		let capture_rect = Rect::from_min_size(Pos2::new(0.0, 160.0), Vec2::new(40.0, 120.0));
 		let badge_rect = WindowRenderer::selection_size_badge_rect(
@@ -12871,8 +12886,8 @@ mod tests {
 			Vec2::new(92.0, 26.0),
 		);
 
-		assert_eq!(badge_rect.min.x, screen_rect.min.x);
-		assert_eq!(badge_rect.max.x, screen_rect.min.x + 92.0);
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert!(badge_rect.min.x < screen_rect.min.x);
 	}
 
 	#[test]
@@ -13046,6 +13061,23 @@ mod tests {
 			badge_rect.min.y,
 			reserved_rect.min.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX - 26.0
 		);
+		assert!(!badge_rect.intersects(reserved_rect));
+	}
+
+	#[test]
+	fn selection_size_badge_reserved_rect_falls_above_capture_when_inside_space_is_exhausted() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 220.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 170.0), Vec2::new(120.0, 50.0));
+		let reserved_rect = Rect::from_min_size(Pos2::new(40.0, 178.0), Vec2::new(120.0, 40.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.max.y, capture_rect.min.y - SELECTION_SIZE_BADGE_GAP_PX);
 		assert!(!badge_rect.intersects(reserved_rect));
 	}
 
