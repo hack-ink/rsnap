@@ -8,7 +8,9 @@
       "Live hovered-window and fullscreen fallback affordances show the same size badge for the active capture target.",
       "Frozen selection shows the same size badge anchored to the frozen capture rect after entering Frozen mode.",
       "Frozen toolbar reservation for badge placement is based on the overlay viewport for the active monitor, not the dedicated toolbar window viewport.",
+      "Frozen toolbar reservation begins only once the toolbar birth logic is ready to draw for the current viewport, so early frozen frames do not reserve phantom toolbar space.",
       "Badge placement defaults below the capture rect, stays right-aligned to the rect when that fits inside the viewport, clamps fully inside the visible screen when strict alignment would force clipping, and falls back inside the rect when there is not enough room below.",
+      "Tiny valid capture rects still produce a size badge target instead of being filtered out by the live drag-init threshold.",
       "Focused overlay tests cover badge geometry and placement fallback for representative live and Frozen scenarios.",
       "The size badge is rendered as pure text with a fixed high-contrast style plus a light outline or shadow instead of introducing a new blur or glass surface.",
       "Existing HUD, pos/rgb, loupe, and toolbar blur treatment stays on the pre-XY-171 path and is not widened by the size badge implementation."
@@ -18,6 +20,8 @@
       "Preserve the existing visual language of the HUD, selection frame, loupe, and Frozen toolbar, and do not regress their existing blur treatment.",
       "Do not allow the badge to clip outside the visible screen region; keep the badge right-aligned to the selection when that fits without forcing viewport clipping.",
       "Reserve the Frozen toolbar slot only while that toolbar is actually visible for the current platform/render path; do not avoid a phantom toolbar rectangle during preview-only frames.",
+      "Do not reserve Frozen toolbar space before the toolbar birth logic is actually ready to draw for the current viewport.",
+      "Do not suppress badge rendering for tiny valid Frozen or drag capture rects solely because the live drag-init threshold is unmet.",
       "Use repo-native verification commands before claiming completion."
     ],
     "defaults": {
@@ -630,6 +634,68 @@
         "depends_on": [
           "task-28"
         ]
+      },
+      {
+        "id": "task-30",
+        "title": "Re-scope toolbar birth readiness and tiny-rect badge targeting",
+        "status": "done",
+        "objective": "Update the saved XY-171 contract so Frozen toolbar reservation begins only when the toolbar birth logic is ready to draw, and tiny valid capture rects are still eligible for size-badge targeting.",
+        "inputs": [
+          "New PR #41 review feedback after head 149ba71 on toolbar birth readiness and tiny-rect badge suppression",
+          "Current toolbar birth logic and shared size-badge target helpers in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A corrected reservation and badge-target contract for toolbar birth timing and tiny capture rects"
+        ],
+        "verification": [
+          "The saved contract no longer reserves toolbar space before the toolbar can actually draw for the current viewport.",
+          "The saved contract no longer applies the live drag-init threshold to all badge target paths."
+        ],
+        "depends_on": [
+          "task-29"
+        ]
+      },
+      {
+        "id": "task-31",
+        "title": "Implement the toolbar-birth and tiny-target repair batch",
+        "status": "done",
+        "objective": "Repair overlay.rs so Frozen badge reservation waits for toolbar birth readiness, tiny valid capture rects still produce badge targets, and focused regression coverage expands for both review findings.",
+        "inputs": [
+          "Task 30 contract update",
+          "Current overlay.rs toolbar reservation timing and badge target tests"
+        ],
+        "outputs": [
+          "A repaired toolbar-birth reservation path and badge-target helpers plus focused tests for both review findings"
+        ],
+        "verification": [
+          "Frozen preview frames before toolbar birth no longer reserve phantom toolbar space.",
+          "Tiny valid Frozen and live drag capture rects still produce size-badge targets.",
+          "New focused tests fail without the repair batch and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-30"
+        ]
+      },
+      {
+        "id": "task-32",
+        "title": "Re-verify the toolbar-birth and tiny-target repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the latest XY-171 review-repair batch so the refreshed PR head is ready for another review pass.",
+        "inputs": [
+          "Task 31 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the toolbar-birth and tiny-target repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-31"
+        ]
       }
     ],
     "replan_policy": {
@@ -640,7 +706,8 @@
         "Verification exposes regressions outside overlay rendering that widen the task beyond XY-171.",
         "Badge styling requires touching the existing HUD blur pipeline again instead of staying as local text rendering.",
         "Review feedback reveals another badge geometry priority conflict that is not already encoded in the saved edge-case matrix.",
-        "Review feedback reveals that Frozen toolbar reservation is still using the wrong viewport basis or still reserving a hidden toolbar slot."
+        "Review feedback reveals that Frozen toolbar reservation is still using the wrong viewport basis or still reserving a hidden toolbar slot.",
+        "Review feedback reveals that Frozen toolbar reservation is still active before toolbar birth is actually drawable or that tiny valid capture rects still lose the size badge."
       ]
     }
   },
@@ -754,9 +821,16 @@
       "Task 29 verification: cargo make fmt completed successfully after the toolbar reservation repair batch.",
       "Task 29 verification: cargo make lint completed successfully after the toolbar reservation repair batch.",
       "Task 29 verification: cargo make test completed successfully with 216 nextest cases and 185 rsnap-overlay unit tests passing after the toolbar reservation repair batch.",
-      "Task 29 verification: git diff --check returned clean after the toolbar reservation repair batch."
+      "Task 29 verification: git diff --check returned clean after the toolbar reservation repair batch.",
+      "Replan evidence: on 2026-03-19 a new review after head 149ba71 surfaced two more issues: the Frozen toolbar reservation still starts before toolbar birth can actually draw, and the shared badge target helper still filters out tiny valid capture rects with the live drag-init threshold.",
+      "Task 30 outcome: the saved contract now requires Frozen toolbar reservation to wait for toolbar birth readiness and tiny valid capture rects to remain eligible for size-badge targeting.",
+      "Task 31 outcome: packages/rsnap-overlay/src/overlay.rs now gates Frozen badge reservation on toolbar birth readiness for the current viewport and splits tiny valid badge-target selection from the live drag-init threshold, with focused tests for both review findings.",
+      "Task 32 verification: cargo make fmt completed successfully after the toolbar-birth and tiny-target repair batch.",
+      "Task 32 verification: cargo make lint completed successfully after the toolbar-birth and tiny-target repair batch.",
+      "Task 32 verification: cargo make test completed successfully with 219 nextest cases and 188 rsnap-overlay unit tests passing after the toolbar-birth and tiny-target repair batch.",
+      "Task 32 verification: git diff --check returned clean after the toolbar-birth and tiny-target repair batch."
     ],
-    "last_updated": "2026-03-19T05:46:29Z",
+    "last_updated": "2026-03-19T06:14:00Z",
     "replan_reason": null,
     "context_snapshot": {
       "blur_experiment_rollback_requested": true,
@@ -781,8 +855,12 @@
       "style_polish_completed": true,
       "style_polish_requested": true,
       "text_only_badge_requested": true,
+      "tiny_badge_target_followup_completed": true,
+      "tiny_badge_target_followup_requested": true,
+      "toolbar_birth_readiness_followup_completed": true,
       "toolbar_overlay_viewport_followup_completed": true,
       "toolbar_overlay_viewport_followup_requested": true,
+      "toolbar_birth_readiness_followup_requested": true,
       "toolbar_viewport_basis_followup_completed": true,
       "toolbar_viewport_basis_followup_requested": true,
       "verification_completed": true,

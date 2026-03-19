@@ -6389,10 +6389,12 @@ impl OverlaySession {
 		} else {
 			draw_toolbar
 		};
+		let toolbar_ready_for_badge =
+			toolbar_visible_for_badge && self.frozen_toolbar_ready_for_draw(overlay_screen_rect);
 		let frozen_toolbar_reserved_rect = self.frozen_size_badge_toolbar_reserved_rect(
 			overlay_monitor,
 			overlay_screen_rect,
-			toolbar_visible_for_badge,
+			toolbar_ready_for_badge,
 		);
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
@@ -6457,13 +6459,32 @@ impl OverlaySession {
 			.unwrap_or_else(|| Rect::from_min_size(Pos2::ZERO, fallback_size))
 	}
 
+	fn frozen_toolbar_ready_for_draw(&self, screen_rect: Rect) -> bool {
+		if self.toolbar_state.floating_position.is_some() {
+			return true;
+		}
+
+		let screen_size_points = screen_rect.size();
+		let needs_new_sample = match self.toolbar_state.layout_last_screen_size_points {
+			None => true,
+			Some(last) => {
+				let dx = (last.x - screen_size_points.x).abs();
+				let dy = (last.y - screen_size_points.y).abs();
+
+				dx > 0.5 || dy > 0.5
+			},
+		};
+
+		!needs_new_sample && self.toolbar_state.layout_stable_frames >= 1
+	}
+
 	fn frozen_size_badge_toolbar_reserved_rect(
 		&self,
 		monitor: MonitorRect,
 		screen_rect: Rect,
-		toolbar_visible: bool,
+		toolbar_ready: bool,
 	) -> Option<Rect> {
-		if !toolbar_visible
+		if !toolbar_ready
 			|| !matches!(self.state.mode, OverlayMode::Frozen)
 			|| self.state.monitor != Some(monitor)
 		{
@@ -8592,9 +8613,7 @@ impl WindowRenderer {
 	) -> Option<SelectionSizeBadgeTarget> {
 		let rect = Self::selection_focus_rect(rect_points, screen_rect);
 
-		if rect.width() < LIVE_DRAG_START_THRESHOLD_PX
-			|| rect.height() < LIVE_DRAG_START_THRESHOLD_PX
-		{
+		if rect.width() <= 0.0 || rect.height() <= 0.0 {
 			return None;
 		}
 
@@ -13169,6 +13188,43 @@ mod tests {
 	}
 
 	#[test]
+	fn frozen_toolbar_reserved_rect_waits_for_toolbar_birth_readiness() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.state.monitor = Some(monitor);
+		session.state.frozen_capture_rect = Some(RectPoints::new(200, 180, 200, 300));
+		session.toolbar_state.layout_last_screen_size_points = Some(screen_rect.size());
+		session.toolbar_state.layout_stable_frames = 0;
+
+		assert!(!session.frozen_toolbar_ready_for_draw(screen_rect));
+		assert_eq!(
+			session.frozen_size_badge_toolbar_reserved_rect(
+				monitor,
+				screen_rect,
+				session.frozen_toolbar_ready_for_draw(screen_rect)
+			),
+			None
+		);
+
+		session.toolbar_state.layout_stable_frames = 1;
+
+		assert!(session.frozen_toolbar_ready_for_draw(screen_rect));
+		assert!(
+			session
+				.frozen_size_badge_toolbar_reserved_rect(
+					monitor,
+					screen_rect,
+					session.frozen_toolbar_ready_for_draw(screen_rect)
+				)
+				.is_some()
+		);
+	}
+
+	#[test]
 	fn selection_size_badge_reserved_rect_prefers_upper_band_when_bottom_space_is_reserved() {
 		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 220.0));
 		let capture_rect = Rect::from_min_size(Pos2::new(40.0, 40.0), Vec2::new(200.0, 150.0));
@@ -13376,6 +13432,45 @@ mod tests {
 			Some(SelectionSizeBadgeTarget {
 				rect: Rect::from_min_size(Pos2::new(140.0, 180.0), Vec2::new(320.0, 240.0)),
 				size_points: RectPoints::new(140, 180, 320, 240),
+			})
+		);
+	}
+
+	#[test]
+	fn frozen_capture_size_badge_target_keeps_tiny_frozen_rect() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(1_000.0, 800.0));
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Frozen;
+		state.frozen_capture_rect = Some(RectPoints::new(140, 180, 2, 1));
+
+		assert_eq!(
+			WindowRenderer::frozen_capture_size_badge_target(&state, screen_rect),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(Pos2::new(140.0, 180.0), Vec2::new(2.0, 1.0)),
+				size_points: RectPoints::new(140, 180, 2, 1),
+			})
+		);
+	}
+
+	#[test]
+	fn live_capture_size_badge_target_keeps_tiny_drag_rect() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Live;
+		state.drag_rect = Some(MonitorRectPoints {
+			monitor_id: monitor.id,
+			rect: RectPoints::new(180, 200, 2, 1),
+		});
+
+		assert_eq!(
+			WindowRenderer::live_capture_size_badge_target(&state, monitor, screen_rect, false),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(Pos2::new(180.0, 200.0), Vec2::new(2.0, 1.0)),
+				size_points: RectPoints::new(180, 200, 2, 1),
 			})
 		);
 	}
