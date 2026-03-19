@@ -3898,7 +3898,10 @@ impl OverlaySession {
 		toolbar_input: Option<FrozenToolbarPointerState>,
 	) -> Result<()> {
 		self.sync_frozen_toolbar_state();
-		self.maybe_recenter_frozen_toolbar_default_slot(monitor);
+
+		if self.maybe_recenter_frozen_toolbar_default_slot(monitor) {
+			self.request_redraw_for_monitor(monitor);
+		}
 
 		#[cfg(not(target_os = "macos"))]
 		{
@@ -6498,22 +6501,22 @@ impl OverlaySession {
 		let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
 	}
 
-	fn maybe_recenter_frozen_toolbar_default_slot(&mut self, monitor: MonitorRect) {
+	fn maybe_recenter_frozen_toolbar_default_slot(&mut self, monitor: MonitorRect) -> bool {
 		if !matches!(self.state.mode, OverlayMode::Frozen) || self.state.monitor != Some(monitor) {
-			return;
+			return false;
 		}
 		if self.scroll_capture.active || self.toolbar_state.dragging {
-			return;
+			return false;
 		}
 
 		let Some(capture_rect) = self.state.frozen_capture_rect else {
-			return;
+			return false;
 		};
 		let Some(toolbar_pos) = self.toolbar_state.floating_position else {
-			return;
+			return false;
 		};
 		let Some(previous_default_pos) = self.toolbar_state.default_slot_position else {
-			return;
+			return false;
 		};
 		let current_default_pos =
 			self.frozen_toolbar_default_position_for_capture_rect(monitor, capture_rect);
@@ -6522,7 +6525,11 @@ impl OverlaySession {
 
 		if frozen_toolbar_matches_default_slot(toolbar_pos, previous_default_pos) {
 			self.toolbar_state.floating_position = Some(current_default_pos);
+
+			return !frozen_toolbar_matches_default_slot(toolbar_pos, current_default_pos);
 		}
+
+		false
 	}
 
 	fn handle_overlay_window_redraw(&mut self, window_id: WindowId) -> OverlayControl {
@@ -14147,8 +14154,7 @@ mod tests {
 
 		assert!(session.toolbar_state.auto_center_available);
 		assert!(ready_size.x > seeded_size.x);
-
-		session.maybe_recenter_frozen_toolbar_default_slot(monitor);
+		assert!(session.maybe_recenter_frozen_toolbar_default_slot(monitor));
 
 		let recentered_pos = session
 			.toolbar_state
@@ -14178,8 +14184,8 @@ mod tests {
 
 		session.commit_frozen_preview(monitor, test_frozen_image(), None);
 		session.sync_frozen_toolbar_state();
-		session.maybe_recenter_frozen_toolbar_default_slot(monitor);
 
+		assert!(!session.maybe_recenter_frozen_toolbar_default_slot(monitor));
 		assert_eq!(session.toolbar_state.floating_position, Some(moved_pos));
 		assert_eq!(
 			session.toolbar_state.default_slot_position,
