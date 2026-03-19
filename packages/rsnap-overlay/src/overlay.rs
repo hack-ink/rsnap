@@ -239,6 +239,14 @@ const TOOLBAR_EXPANDED_HEIGHT_PX: f32 = FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
 const TOOLBAR_CAPTURE_GAP_PX: f32 = 10.0;
 const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
 const HUD_PILL_CORNER_RADIUS_POINTS: u8 = 18;
+const SELECTION_SIZE_BADGE_FONT_SIZE_POINTS: f32 = 13.0;
+const SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS: f32 = 2.0;
+const SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX: f32 = 1.0;
+const SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX: f32 = 1.0;
+const SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX: f32 = 2.0;
+const SELECTION_SIZE_BADGE_GAP_PX: f32 = 8.0;
+const SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX: f32 = 8.0;
+const SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX: f32 = 8.0;
 const TOOLBAR_DRAG_START_THRESHOLD_PX: f32 = 6.0;
 #[cfg(target_os = "macos")]
 const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 30;
@@ -7474,6 +7482,12 @@ struct SelectionDashedBorderMetrics {
 	gap_length: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SelectionSizeBadgeTarget {
+	rect: Rect,
+	size_points: RectPoints,
+}
+
 struct HudOverlayWindow {
 	window: Arc<winit::window::Window>,
 	renderer: WindowRenderer,
@@ -8276,6 +8290,9 @@ impl WindowRenderer {
 		if !matches!(state.mode, OverlayMode::Live) {
 			return false;
 		}
+
+		let primary_not_down = !ctx.input(|i| i.pointer.primary_down());
+
 		if selection_particles
 			&& let Some(hovered_window) = state.hovered_window_rect
 			&& hovered_window.monitor_id == monitor.id
@@ -8314,13 +8331,19 @@ impl WindowRenderer {
 
 			has_rect = true;
 		}
+		if let Some(target) =
+			Self::live_capture_size_badge_target(state, monitor, screen_rect, primary_not_down)
+		{
+			Self::render_selection_size_badge(ctx, painter, monitor, screen_rect, target, theme);
+
+			has_rect = true;
+		}
 
 		let has_hovered_window_for_this_monitor =
 			state.hovered_window_rect.is_some_and(|hovered| hovered.monitor_id == monitor.id);
 		let has_drag_rect_for_this_monitor =
 			state.drag_rect.is_some_and(|drag_rect| drag_rect.monitor_id == monitor.id);
 		let cursor_on_monitor = state.cursor.is_some_and(|cursor| monitor.contains(cursor));
-		let primary_not_down = !ctx.input(|i| i.pointer.primary_down());
 
 		if selection_particles
 			&& !has_hovered_window_for_this_monitor
@@ -8365,15 +8388,43 @@ impl WindowRenderer {
 		let painter = ctx.layer_painter(layer);
 
 		if state.frozen_image.is_some() {
-			return Self::render_frozen_selection_scrim(
+			let mut has_affordance = Self::render_frozen_selection_scrim(
 				&painter,
 				rect,
 				screen_rect,
 				theme,
 				selection_dashed_border_cache,
 			);
+
+			if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
+				Self::render_selection_size_badge(
+					ctx,
+					&painter,
+					monitor,
+					screen_rect,
+					target,
+					theme,
+				);
+
+				has_affordance = true;
+			}
+
+			return has_affordance;
 		}
 		if !selection_particles {
+			if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
+				Self::render_selection_size_badge(
+					ctx,
+					&painter,
+					monitor,
+					screen_rect,
+					target,
+					theme,
+				);
+
+				return true;
+			}
+
 			return false;
 		}
 
@@ -8390,6 +8441,10 @@ impl WindowRenderer {
 			selection_flow_stroke_width_px,
 			selection_flow_geometry_cache,
 		);
+
+		if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
+			Self::render_selection_size_badge(ctx, &painter, monitor, screen_rect, target, theme);
+		}
 
 		true
 	}
@@ -8435,6 +8490,191 @@ impl WindowRenderer {
 			Vec2::new(rect.width as f32, rect.height as f32),
 		)
 		.intersect(screen_rect)
+	}
+
+	fn selection_size_badge_target_from_rect(
+		rect_points: RectPoints,
+		screen_rect: Rect,
+	) -> Option<SelectionSizeBadgeTarget> {
+		let rect = Self::selection_focus_rect(rect_points, screen_rect);
+
+		if rect.width() < LIVE_DRAG_START_THRESHOLD_PX
+			|| rect.height() < LIVE_DRAG_START_THRESHOLD_PX
+		{
+			return None;
+		}
+
+		Some(SelectionSizeBadgeTarget { rect, size_points: rect_points })
+	}
+
+	fn live_capture_size_badge_target(
+		state: &OverlayState,
+		monitor: MonitorRect,
+		screen_rect: Rect,
+		primary_not_down: bool,
+	) -> Option<SelectionSizeBadgeTarget> {
+		if let Some(drag_rect) = state.drag_rect
+			&& drag_rect.monitor_id == monitor.id
+			&& let Some(target) =
+				Self::selection_size_badge_target_from_rect(drag_rect.rect, screen_rect)
+		{
+			return Some(target);
+		}
+		if let Some(hovered_window) = state.hovered_window_rect
+			&& hovered_window.monitor_id == monitor.id
+			&& let Some(target) =
+				Self::selection_size_badge_target_from_rect(hovered_window.rect, screen_rect)
+		{
+			return Some(target);
+		}
+
+		if primary_not_down && state.cursor.is_some_and(|cursor| monitor.contains(cursor)) {
+			return Some(SelectionSizeBadgeTarget {
+				rect: screen_rect,
+				size_points: RectPoints::new(0, 0, monitor.width, monitor.height),
+			});
+		}
+
+		None
+	}
+
+	fn frozen_capture_size_badge_target(
+		state: &OverlayState,
+		screen_rect: Rect,
+	) -> Option<SelectionSizeBadgeTarget> {
+		let capture_rect = state.frozen_capture_rect?;
+
+		Self::selection_size_badge_target_from_rect(capture_rect, screen_rect)
+	}
+
+	fn selection_size_badge_text(monitor: MonitorRect, size_points: RectPoints) -> String {
+		let size_pixels = monitor.local_rect_to_pixels(size_points);
+
+		format!("{}x{}", size_pixels.width, size_pixels.height)
+	}
+
+	fn selection_size_badge_size(ctx: &egui::Context, text: &str, theme: HudTheme) -> Vec2 {
+		let text_color = Self::hud_text_colors(theme).0;
+		let font_id = FontId::new(SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, FontFamily::Monospace);
+		let galley = ctx
+			.fonts_mut(|fonts| fonts.layout_no_wrap(text.to_owned(), font_id.clone(), text_color));
+		let text_size = galley.size();
+
+		Vec2::new(
+			(text_size.x + SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS).ceil(),
+			(text_size.y + SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS).ceil(),
+		)
+	}
+
+	fn selection_size_badge_rect(screen_rect: Rect, capture_rect: Rect, badge_size: Vec2) -> Rect {
+		let x = capture_rect.max.x - badge_size.x;
+		let below_y = capture_rect.max.y + SELECTION_SIZE_BADGE_GAP_PX;
+		let fits_below =
+			below_y + badge_size.y <= screen_rect.max.y - SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX;
+		let y = if fits_below {
+			below_y
+		} else {
+			let min_inside_y = capture_rect.min.y;
+			let max_inside_y = (capture_rect.max.y - badge_size.y).max(min_inside_y);
+
+			(capture_rect.max.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX - badge_size.y)
+				.clamp(min_inside_y, max_inside_y)
+		};
+
+		Rect::from_min_size(Pos2::new(x, y), badge_size)
+	}
+
+	fn snap_points_to_pixel_grid(value: f32, pixels_per_point: f32) -> f32 {
+		let pixels_per_point = pixels_per_point.max(f32::MIN_POSITIVE);
+
+		(value * pixels_per_point).round() / pixels_per_point
+	}
+
+	fn snap_pos_to_pixel_grid(pos: Pos2, pixels_per_point: f32) -> Pos2 {
+		Pos2::new(
+			Self::snap_points_to_pixel_grid(pos.x, pixels_per_point),
+			Self::snap_points_to_pixel_grid(pos.y, pixels_per_point),
+		)
+	}
+
+	fn selection_size_badge_text_colors(theme: HudTheme) -> (Color32, Color32, Color32, Color32) {
+		match theme {
+			HudTheme::Dark => (
+				Color32::from_rgba_unmultiplied(255, 255, 255, 248),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 108),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 154),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 72),
+			),
+			HudTheme::Light => (
+				Color32::from_rgba_unmultiplied(255, 255, 255, 252),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 156),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 196),
+				Color32::from_rgba_unmultiplied(0, 0, 0, 96),
+			),
+		}
+	}
+
+	fn render_selection_size_badge(
+		ctx: &egui::Context,
+		painter: &Painter,
+		monitor: MonitorRect,
+		screen_rect: Rect,
+		target: SelectionSizeBadgeTarget,
+		theme: HudTheme,
+	) {
+		let text = Self::selection_size_badge_text(monitor, target.size_points);
+		let badge_size = Self::selection_size_badge_size(ctx, &text, theme);
+		let badge_rect = Self::selection_size_badge_rect(screen_rect, target.rect, badge_size);
+		let font_id = FontId::new(SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, FontFamily::Monospace);
+		let pixels_per_point = painter.pixels_per_point();
+		let points_per_pixel = 1.0 / pixels_per_point.max(f32::MIN_POSITIVE);
+		let outline_offset = SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX * points_per_pixel;
+		let near_shadow_offset = SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX * points_per_pixel;
+		let far_shadow_offset = SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX * points_per_pixel;
+		let text_anchor = Self::snap_pos_to_pixel_grid(
+			Pos2::new(badge_rect.max.x, badge_rect.center().y),
+			pixels_per_point,
+		);
+		let (text_color, outline_color, near_shadow_color, far_shadow_color) =
+			Self::selection_size_badge_text_colors(theme);
+
+		painter.text(
+			Self::snap_pos_to_pixel_grid(
+				text_anchor + Vec2::new(0.0, far_shadow_offset),
+				pixels_per_point,
+			),
+			Align2::RIGHT_CENTER,
+			text.clone(),
+			font_id.clone(),
+			far_shadow_color,
+		);
+
+		for offset in [
+			Vec2::new(-outline_offset, 0.0),
+			Vec2::new(outline_offset, 0.0),
+			Vec2::new(0.0, -outline_offset),
+			Vec2::new(0.0, outline_offset),
+		] {
+			painter.text(
+				Self::snap_pos_to_pixel_grid(text_anchor + offset, pixels_per_point),
+				Align2::RIGHT_CENTER,
+				text.clone(),
+				font_id.clone(),
+				outline_color,
+			);
+		}
+
+		painter.text(
+			Self::snap_pos_to_pixel_grid(
+				text_anchor + Vec2::new(near_shadow_offset, near_shadow_offset),
+				pixels_per_point,
+			),
+			Align2::RIGHT_CENTER,
+			text.clone(),
+			font_id.clone(),
+			near_shadow_color,
+		);
+		painter.text(text_anchor, Align2::RIGHT_CENTER, text, font_id, text_color);
 	}
 
 	fn frozen_selection_scrim_rects(screen_rect: Rect, focus_rect: Rect) -> [Rect; 4] {
@@ -9953,16 +10193,7 @@ impl WindowRenderer {
 		show_alt_hint_keycap: bool,
 		theme: HudTheme,
 	) {
-		let (label_color, secondary_color) = match theme {
-			HudTheme::Dark => (
-				Color32::from_rgba_unmultiplied(235, 235, 245, 235),
-				Color32::from_rgba_unmultiplied(235, 235, 245, 150),
-			),
-			HudTheme::Light => (
-				Color32::from_rgba_unmultiplied(28, 28, 32, 235),
-				Color32::from_rgba_unmultiplied(28, 28, 32, 160),
-			),
-		};
+		let (label_color, secondary_color) = Self::hud_text_colors(theme);
 		let pos_text = hud_helpers::format_live_hud_position_text(monitor, cursor);
 		let (hex_text, rgb_text) = hud_helpers::format_live_hud_rgb_text(state.rgb);
 		let swatch_size = egui::vec2(10.0, 10.0);
@@ -10032,6 +10263,19 @@ impl WindowRenderer {
 				}
 			});
 		});
+	}
+
+	fn hud_text_colors(theme: HudTheme) -> (Color32, Color32) {
+		match theme {
+			HudTheme::Dark => (
+				Color32::from_rgba_unmultiplied(235, 235, 245, 235),
+				Color32::from_rgba_unmultiplied(235, 235, 245, 150),
+			),
+			HudTheme::Light => (
+				Color32::from_rgba_unmultiplied(28, 28, 32, 235),
+				Color32::from_rgba_unmultiplied(28, 28, 32, 160),
+			),
+		}
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -11190,12 +11434,12 @@ impl WindowRenderer {
 			return;
 		}
 
+		let max_lod = self.hud_bg.as_ref().map(|bg| bg.max_lod).unwrap_or(0.0);
 		let rect_min_px =
 			[hud_pill.rect.min.x * pixels_per_point, hud_pill.rect.min.y * pixels_per_point];
 		let rect_size_px =
 			[hud_pill.rect.width() * pixels_per_point, hud_pill.rect.height() * pixels_per_point];
 		let rect_min_size = [rect_min_px[0], rect_min_px[1], rect_size_px[0], rect_size_px[1]];
-		let max_lod = self.hud_bg.as_ref().map(|bg| bg.max_lod).unwrap_or(0.0);
 		let tint =
 			Self::tinted_hud_body_fill(theme, false, false, 1.0, hud_milk_amount, hud_tint_hue);
 		let tint_rgba = [
@@ -11385,7 +11629,7 @@ struct HudBg {
 	max_lod: f32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct HudPillGeometry {
 	rect: Rect,
 	radius_points: f32,
@@ -11690,7 +11934,9 @@ mod tests {
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
 		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect,
 		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
-		SELECTION_DASHED_BORDER_WIDTH_PX, SelectionDashedBorderCache, SelectionDashedBorderMetrics,
+		SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
+		SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+		SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionSizeBadgeTarget,
 		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
 		hud_helpers,
 	};
@@ -11698,7 +11944,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	use crate::state::LiveCursorSample;
 	use crate::state::{
-		GlobalPoint, LoupeSample, MonitorRect, MonitorRectPoints, OverlayMode, RectPoints, Rgb,
+		GlobalPoint, LoupeSample, MonitorRect, MonitorRectPoints, OverlayMode, OverlayState,
+		RectPoints, Rgb,
 	};
 	use crate::worker::{WorkerErrorSource, WorkerResponse};
 
@@ -12362,6 +12609,125 @@ mod tests {
 
 		assert_eq!(pos.x, expected_x);
 		assert_eq!(pos.y, capture_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX);
+	}
+
+	#[test]
+	fn selection_size_badge_rect_fits_below_capture_rect() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(120.0, 160.0), Vec2::new(320.0, 240.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+		);
+
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.min.y, capture_rect.max.y + SELECTION_SIZE_BADGE_GAP_PX);
+	}
+
+	#[test]
+	fn selection_size_badge_rect_falls_inside_when_no_space_below() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+		let capture_rect = Rect::from_min_size(Pos2::new(120.0, 420.0), Vec2::new(320.0, 160.0));
+		let badge_rect = WindowRenderer::selection_size_badge_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+		);
+
+		assert_eq!(badge_rect.max.x, capture_rect.max.x);
+		assert_eq!(badge_rect.max.y, capture_rect.max.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX);
+		assert!(badge_rect.max.y <= screen_rect.max.y - SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX);
+	}
+
+	#[test]
+	fn selection_size_badge_text_uses_monitor_pixel_dimensions() {
+		let monitor = test_monitor_with_scale(1_000, 800, 2_000);
+
+		assert_eq!(
+			WindowRenderer::selection_size_badge_text(monitor, RectPoints::new(10, 20, 120, 80)),
+			"240x160"
+		);
+	}
+
+	#[test]
+	fn live_capture_size_badge_target_prefers_drag_then_hover_then_fullscreen() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Live;
+		state.cursor = Some(GlobalPoint::new(320, 260));
+		state.hovered_window_rect = Some(MonitorRectPoints {
+			monitor_id: monitor.id,
+			rect: RectPoints::new(120, 140, 300, 220),
+		});
+
+		assert_eq!(
+			WindowRenderer::live_capture_size_badge_target(&state, monitor, screen_rect, true),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(Pos2::new(120.0, 140.0), Vec2::new(300.0, 220.0)),
+				size_points: RectPoints::new(120, 140, 300, 220),
+			})
+		);
+
+		state.drag_rect = Some(MonitorRectPoints {
+			monitor_id: monitor.id,
+			rect: RectPoints::new(180, 200, 260, 180),
+		});
+
+		assert_eq!(
+			WindowRenderer::live_capture_size_badge_target(&state, monitor, screen_rect, true),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(Pos2::new(180.0, 200.0), Vec2::new(260.0, 180.0)),
+				size_points: RectPoints::new(180, 200, 260, 180),
+			})
+		);
+
+		state.drag_rect = None;
+		state.hovered_window_rect = None;
+
+		assert_eq!(
+			WindowRenderer::live_capture_size_badge_target(&state, monitor, screen_rect, true),
+			Some(SelectionSizeBadgeTarget {
+				rect: screen_rect,
+				size_points: RectPoints::new(0, 0, monitor.width, monitor.height),
+			})
+		);
+	}
+
+	#[test]
+	fn live_capture_size_badge_target_skips_fullscreen_fallback_while_primary_down() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Live;
+		state.cursor = Some(GlobalPoint::new(320, 260));
+
+		assert_eq!(
+			WindowRenderer::live_capture_size_badge_target(&state, monitor, screen_rect, false),
+			None
+		);
+	}
+
+	#[test]
+	fn frozen_capture_size_badge_target_uses_frozen_rect() {
+		let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(1_000.0, 800.0));
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Frozen;
+		state.frozen_capture_rect = Some(RectPoints::new(140, 180, 320, 240));
+
+		assert_eq!(
+			WindowRenderer::frozen_capture_size_badge_target(&state, screen_rect),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(Pos2::new(140.0, 180.0), Vec2::new(320.0, 240.0)),
+				size_points: RectPoints::new(140, 180, 320, 240),
+			})
+		);
 	}
 
 	#[test]
