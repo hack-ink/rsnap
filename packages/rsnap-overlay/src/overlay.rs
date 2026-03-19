@@ -2755,6 +2755,7 @@ impl OverlaySession {
 		let default_pos =
 			self.frozen_toolbar_default_position_for_capture_rect(monitor, capture_rect);
 
+		self.toolbar_state.default_slot_position = Some(default_pos);
 		self.toolbar_state.floating_position = Some(default_pos);
 
 		let _ = self.update_toolbar_outer_position(monitor, default_pos);
@@ -2772,13 +2773,13 @@ impl OverlaySession {
 	fn frozen_toolbar_default_position_for_capture_rect(
 		&self,
 		monitor: MonitorRect,
-		capture_rect: RectPoints,
+		capture_rect_points: RectPoints,
 	) -> Pos2 {
 		let screen_rect =
 			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 		let capture_rect = Rect::from_min_size(
-			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
-			Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
+			Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
+			Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
 		);
 		let toolbar_size = WindowRenderer::frozen_toolbar_size(&self.toolbar_state);
 
@@ -2854,6 +2855,7 @@ impl OverlaySession {
 		);
 
 		self.toolbar_state.floating_position = None;
+		self.toolbar_state.default_slot_position = None;
 		self.toolbar_state.dragging = false;
 		self.toolbar_state.needs_redraw = true;
 		self.toolbar_state.pill_height_points = None;
@@ -3074,6 +3076,7 @@ impl OverlaySession {
 
 		let toolbar_pos = self.frozen_toolbar_default_position_for_capture_rect(monitor, next_rect);
 
+		self.toolbar_state.default_slot_position = Some(toolbar_pos);
 		self.toolbar_state.floating_position = Some(toolbar_pos);
 
 		let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
@@ -3895,6 +3898,7 @@ impl OverlaySession {
 		toolbar_input: Option<FrozenToolbarPointerState>,
 	) -> Result<()> {
 		self.sync_frozen_toolbar_state();
+		self.maybe_recenter_frozen_toolbar_default_slot(monitor);
 
 		#[cfg(not(target_os = "macos"))]
 		{
@@ -6488,9 +6492,37 @@ impl OverlaySession {
 			self.config.toolbar_placement,
 		);
 
+		self.toolbar_state.default_slot_position = Some(toolbar_pos);
 		self.toolbar_state.floating_position = Some(toolbar_pos);
 
 		let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+	}
+
+	fn maybe_recenter_frozen_toolbar_default_slot(&mut self, monitor: MonitorRect) {
+		if !matches!(self.state.mode, OverlayMode::Frozen) || self.state.monitor != Some(monitor) {
+			return;
+		}
+		if self.scroll_capture.active || self.toolbar_state.dragging {
+			return;
+		}
+
+		let Some(capture_rect) = self.state.frozen_capture_rect else {
+			return;
+		};
+		let Some(toolbar_pos) = self.toolbar_state.floating_position else {
+			return;
+		};
+		let Some(previous_default_pos) = self.toolbar_state.default_slot_position else {
+			return;
+		};
+		let current_default_pos =
+			self.frozen_toolbar_default_position_for_capture_rect(monitor, capture_rect);
+
+		self.toolbar_state.default_slot_position = Some(current_default_pos);
+
+		if frozen_toolbar_matches_default_slot(toolbar_pos, previous_default_pos) {
+			self.toolbar_state.floating_position = Some(current_default_pos);
+		}
 	}
 
 	fn handle_overlay_window_redraw(&mut self, window_id: WindowId) -> OverlayControl {
@@ -10134,6 +10166,7 @@ impl WindowRenderer {
 			"Frozen toolbar birth resolved."
 		);
 
+		toolbar_state.default_slot_position = Some(default_pos);
 		toolbar_state.floating_position = Some(default_pos);
 
 		Some(default_pos)
@@ -10188,14 +10221,23 @@ impl WindowRenderer {
 				if within_screen { above_y } else { capture_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX }
 			},
 		};
-		let min_x = screen_rect.min.x + TOOLBAR_SCREEN_MARGIN_PX;
 		let min_y = screen_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX;
-		let max_x = (screen_rect.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX).max(min_x);
 		let max_y = (screen_rect.max.y - toolbar_size.y - TOOLBAR_SCREEN_MARGIN_PX).max(min_y);
-		let x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(min_x, max_x);
+		let x = Self::frozen_toolbar_default_x(screen_rect, toolbar_size, capture_rect.center().x);
 		let y = y.max(min_y).min(max_y);
 
 		Pos2::new(x, y)
+	}
+
+	fn frozen_toolbar_default_x(
+		screen_rect: Rect,
+		toolbar_size: Vec2,
+		anchor_center_x: f32,
+	) -> f32 {
+		let min_x = screen_rect.min.x + TOOLBAR_SCREEN_MARGIN_PX;
+		let max_x = (screen_rect.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX).max(min_x);
+
+		(anchor_center_x - toolbar_size.x / 2.0).clamp(min_x, max_x)
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -12822,6 +12864,20 @@ mod tests {
 	}
 
 	#[test]
+	fn frozen_toolbar_default_position_centers_on_capture_rect_midpoint() {
+		let monitor = test_monitor_with_scale(400, 300, 2_000);
+		let capture_rect = RectPoints::new(150, 100, 100, 60);
+		let session = OverlaySession::new();
+		let toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
+		let toolbar_pos =
+			session.frozen_toolbar_default_position_for_capture_rect(monitor, capture_rect);
+		let toolbar_midpoint_x = toolbar_pos.x + toolbar_size.x * 0.5;
+		let capture_midpoint_x = capture_rect.x as f32 + capture_rect.width as f32 * 0.5;
+
+		assert_eq!(toolbar_midpoint_x, capture_midpoint_x);
+	}
+
+	#[test]
 	fn auto_center_frozen_capture_rect_noops_for_uniform_crop() {
 		let monitor = test_monitor_with_scale(80, 60, 1_000);
 		let capture_rect = RectPoints::new(20, 16, 40, 24);
@@ -14063,6 +14119,72 @@ mod tests {
 		assert!(ready_tools.contains(&FrozenToolbarTool::AutoCenter));
 		assert!(ready_tools.contains(&FrozenToolbarTool::Scroll));
 		assert_eq!(pending_toolbar_size, ready_toolbar_size);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn drag_region_toolbar_recenters_when_auto_center_appears_after_preview_commit() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(120, 160, 320, 240);
+		let mut session = OverlaySession::new();
+
+		session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+		let seeded_pos = session
+			.toolbar_state
+			.floating_position
+			.expect("toolbar should seed before frozen preview is ready");
+		let seeded_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
+		let capture_midpoint_x = capture_rect.x as f32 + capture_rect.width as f32 * 0.5;
+
+		assert!(!session.toolbar_state.auto_center_available);
+		assert_eq!(seeded_pos.x + seeded_size.x * 0.5, capture_midpoint_x);
+
+		session.commit_frozen_preview(monitor, test_frozen_image(), None);
+		session.sync_frozen_toolbar_state();
+
+		let ready_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
+
+		assert!(session.toolbar_state.auto_center_available);
+		assert!(ready_size.x > seeded_size.x);
+
+		session.maybe_recenter_frozen_toolbar_default_slot(monitor);
+
+		let recentered_pos = session
+			.toolbar_state
+			.floating_position
+			.expect("toolbar should keep a default position");
+
+		assert_eq!(recentered_pos.x + ready_size.x * 0.5, capture_midpoint_x);
+		assert_eq!(session.toolbar_state.default_slot_position, Some(recentered_pos));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn late_toolbar_width_change_preserves_manual_toolbar_move() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(120, 160, 320, 240);
+		let mut session = OverlaySession::new();
+
+		session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+		let seeded_default_pos = session
+			.toolbar_state
+			.floating_position
+			.expect("toolbar should seed before frozen preview is ready");
+		let moved_pos = seeded_default_pos + Vec2::new(24.0, 0.0);
+
+		session.toolbar_state.floating_position = Some(moved_pos);
+
+		session.commit_frozen_preview(monitor, test_frozen_image(), None);
+		session.sync_frozen_toolbar_state();
+		session.maybe_recenter_frozen_toolbar_default_slot(monitor);
+
+		assert_eq!(session.toolbar_state.floating_position, Some(moved_pos));
+		assert_eq!(
+			session.toolbar_state.default_slot_position,
+			Some(session.frozen_toolbar_default_position_for_capture_rect(monitor, capture_rect))
+		);
 	}
 
 	#[test]
