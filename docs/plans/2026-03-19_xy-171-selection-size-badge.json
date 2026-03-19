@@ -7,7 +7,7 @@
       "Live drag selection shows a visible size badge derived from the drag focus rect.",
       "Live hovered-window and fullscreen fallback affordances show the same size badge for the active capture target.",
       "Frozen selection shows the same size badge anchored to the frozen capture rect after entering Frozen mode.",
-      "Badge placement defaults below the capture rect, stays right-aligned to the rect, never extends past the rect's right edge, and falls back inside the rect when there is not enough room below.",
+      "Badge placement defaults below the capture rect, stays right-aligned to the rect when that fits inside the viewport, clamps fully inside the visible screen when strict alignment would force clipping, and falls back inside the rect when there is not enough room below.",
       "Focused overlay tests cover badge geometry and placement fallback for representative live and Frozen scenarios.",
       "The size badge is rendered as pure text with a fixed high-contrast style plus a light outline or shadow instead of introducing a new blur or glass surface.",
       "Existing HUD, pos/rgb, loupe, and toolbar blur treatment stays on the pre-XY-171 path and is not widened by the size badge implementation."
@@ -15,7 +15,7 @@
     "constraints": [
       "Keep the implementation scoped to overlay rendering and layout helpers in rsnap-overlay; do not change capture/export pixel data paths.",
       "Preserve the existing visual language of the HUD, selection frame, loupe, and Frozen toolbar, and do not regress their existing blur treatment.",
-      "Do not allow the badge to clip outside the visible screen region or overflow beyond the selection's right edge.",
+      "Do not allow the badge to clip outside the visible screen region; keep the badge right-aligned to the selection when that fits without forcing viewport clipping.",
       "Use repo-native verification commands before claiming completion."
     ],
     "defaults": {
@@ -504,6 +504,68 @@
         "depends_on": [
           "task-22"
         ]
+      },
+      {
+        "id": "task-24",
+        "title": "Reprioritize impossible left-edge geometry and toolbar screen basis",
+        "status": "done",
+        "objective": "Resolve the new post-hardening review conflicts by making full viewport visibility win over strict right-edge alignment when a badge cannot satisfy both, and by aligning Frozen toolbar reservation with the same screen-rect basis used by the toolbar window runtime.",
+        "inputs": [
+          "New PR #41 review feedback on selection_size_badge_rect_with_reserved_rect() and frozen_size_badge_toolbar_reserved_rect()",
+          "Current XY-171 geometry contract and toolbar reservation helpers in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "An updated geometry contract that removes the narrow-left overflow exception and a single screen-rect basis for Frozen toolbar reservation"
+        ],
+        "verification": [
+          "The saved contract no longer allows badge clipping outside the visible viewport for impossible narrow-left captures.",
+          "Frozen toolbar reservation uses the same effective screen basis as the toolbar window runtime instead of reconstructing it independently from monitor dimensions."
+        ],
+        "depends_on": [
+          "task-23"
+        ]
+      },
+      {
+        "id": "task-25",
+        "title": "Implement the post-hardening review repair batch",
+        "status": "done",
+        "objective": "Update overlay.rs to clamp impossible left-edge badges back inside the viewport, unify the Frozen toolbar reserved-rect screen basis with the toolbar runtime, and expand the regression matrix so those combinations stop reappearing in review.",
+        "inputs": [
+          "Task 24 contract update",
+          "Current overlay.rs badge layout tests and Frozen toolbar reservation tests"
+        ],
+        "outputs": [
+          "A repaired selection_size_badge_rect_with_reserved_rect() helper, an updated Frozen toolbar reservation path, and focused regression coverage for both review findings"
+        ],
+        "verification": [
+          "Impossible narrow-left captures keep the badge fully visible inside the screen.",
+          "Frozen toolbar reservation still blocks badge overlap when the toolbar stays in its default slot even after viewport-basis differences are introduced.",
+          "New focused tests fail without the repair batch and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-24"
+        ]
+      },
+      {
+        "id": "task-26",
+        "title": "Re-verify the repaired review batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the repaired geometry and toolbar-basis changes so the refreshed PR head is ready for review-repair closeout.",
+        "inputs": [
+          "Task 25 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the repaired post-hardening review batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-25"
+        ]
       }
     ],
     "replan_policy": {
@@ -612,9 +674,17 @@
       "Task 23 verification: cargo make fmt completed successfully after the geometry-contract hardening pass.",
       "Task 23 verification: cargo make lint completed successfully after the geometry-contract hardening pass.",
       "Task 23 verification: cargo make test completed successfully with 212 nextest cases and 181 rsnap-overlay unit tests passing after the geometry-contract hardening pass.",
-      "Task 23 verification: git diff --check returned clean after the geometry-contract hardening pass."
+      "Task 23 verification: git diff --check returned clean after the geometry-contract hardening pass.",
+      "Replan evidence: on 2026-03-19 a new review after head 1cb7afe surfaced two more issues: the hardening pass still allowed the impossible narrow-left case to clip outside the viewport, and Frozen toolbar reservation was still reconstructing its screen basis independently from the toolbar runtime.",
+      "Task 24 outcome: the saved geometry contract now makes viewport visibility win over strict right-edge alignment for impossible narrow-left captures, and the Frozen toolbar reservation path now consumes the last sampled toolbar viewport size instead of rebuilding screen geometry only from monitor dimensions.",
+      "Task 25 outcome: packages/rsnap-overlay/src/overlay.rs now always clamps impossible narrow-left badge X placement back inside the screen, records the toolbar viewport size after runtime layout, uses that sampled basis when reserving the Frozen toolbar slot, and allows the above-capture fallback whenever the badge still fits fully on-screen.",
+      "Task 25 outcome: the focused regression matrix now includes impossible narrow-left clamping, near-left narrow-capture clamping, sampled-viewport toolbar reservation, and top-edge above-fallback visibility coverage so these review combinations are encoded directly in tests.",
+      "Task 26 verification: cargo make fmt completed successfully after the post-hardening review repair batch.",
+      "Task 26 verification: cargo make lint completed successfully after the post-hardening review repair batch.",
+      "Task 26 verification: cargo make test completed successfully with 214 nextest cases and 183 rsnap-overlay unit tests passing after the post-hardening review repair batch.",
+      "Task 26 verification: git diff --check returned clean after the post-hardening review repair batch."
     ],
-    "last_updated": "2026-03-19T03:05:00Z",
+    "last_updated": "2026-03-19T03:46:00Z",
     "replan_reason": null,
     "context_snapshot": {
       "blur_experiment_rollback_requested": true,
@@ -623,6 +693,8 @@
       "crispness_followup_requested": true,
       "geometry_contract_hardening_completed": true,
       "geometry_contract_hardening_requested": true,
+      "geometry_visibility_reprioritization_completed": true,
+      "geometry_visibility_reprioritization_requested": true,
       "light_theme_readability_followup_completed": true,
       "light_theme_readability_followup_requested": true,
       "linear_issue": "XY-171",
@@ -635,6 +707,8 @@
       "style_polish_completed": true,
       "style_polish_requested": true,
       "text_only_badge_requested": true,
+      "toolbar_viewport_basis_followup_completed": true,
+      "toolbar_viewport_basis_followup_requested": true,
       "verification_completed": true,
       "workspace": ".workspaces/xy-171-size-badge"
     }
