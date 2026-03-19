@@ -238,6 +238,7 @@ const TOOLBAR_EXPANDED_HEIGHT_PX: f32 = FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
 	+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
 const TOOLBAR_CAPTURE_GAP_PX: f32 = 10.0;
 const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
+const TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS: f32 = 1.0;
 const HUD_PILL_CORNER_RADIUS_POINTS: u8 = 18;
 const SELECTION_SIZE_BADGE_FONT_SIZE_POINTS: f32 = 13.0;
 const SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS: f32 = 2.0;
@@ -8687,11 +8688,11 @@ impl WindowRenderer {
 		);
 		let toolbar_pos = toolbar_state.floating_position.unwrap_or(default_pos);
 
-		if toolbar_pos != default_pos {
+		if !frozen_toolbar_matches_default_slot(toolbar_pos, default_pos) {
 			return None;
 		}
 
-		Some(Rect::from_min_size(default_pos, toolbar_size))
+		Some(Rect::from_min_size(toolbar_pos, toolbar_size))
 	}
 
 	fn selection_size_badge_text(monitor: MonitorRect, size_points: RectPoints) -> String {
@@ -9789,10 +9790,12 @@ impl WindowRenderer {
 			return;
 		};
 
-		#[cfg(not(target_os = "macos"))]
+		#[cfg(any(not(target_os = "macos"), test))]
 		{
 			if !advance_frozen_toolbar_readiness_sample_state(toolbar_state, screen_rect) {
 				ctx.request_repaint();
+
+				return;
 			}
 		}
 
@@ -11986,6 +11989,14 @@ fn advance_frozen_toolbar_readiness_sample_state(
 	true
 }
 
+fn frozen_toolbar_matches_default_slot(toolbar_pos: Pos2, default_pos: Pos2) -> bool {
+	let dx = (toolbar_pos.x - default_pos.x).abs();
+	let dy = (toolbar_pos.y - default_pos.y).abs();
+
+	dx <= TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS
+		&& dy <= TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS
+}
+
 #[cfg(target_os = "macos")]
 fn macos_is_option_key_down() -> bool {
 	let flags = unsafe { CGEventSourceFlagsState(macos_hid_event_source_state_id()) };
@@ -12336,8 +12347,35 @@ mod tests {
 
 	fn test_egui_context() -> egui::Context {
 		let ctx = egui::Context::default();
+		let mut fonts = egui::FontDefinitions::default();
+		let phosphor_fill = String::from("phosphor-fill");
+		let proportional_fallback = fonts
+			.families
+			.get(&egui::FontFamily::Proportional)
+			.and_then(|names| names.first())
+			.cloned();
 
-		ctx.set_fonts(egui::FontDefinitions::default());
+		egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+
+		fonts
+			.font_data
+			.insert(phosphor_fill.clone(), egui_phosphor::Variant::Fill.font_data().into());
+		fonts
+			.families
+			.entry(egui::FontFamily::Name(phosphor_fill.clone().into()))
+			.or_default()
+			.extend([phosphor_fill]);
+
+		if let Some(fallback) = proportional_fallback {
+			let family =
+				fonts.families.entry(egui::FontFamily::Name("phosphor-fill".into())).or_default();
+
+			if !family.contains(&fallback) {
+				family.push(fallback);
+			}
+		}
+
+		ctx.set_fonts(fonts);
 
 		let _ = ctx.run(egui::RawInput::default(), |_: &egui::Context| {});
 
@@ -13307,6 +13345,115 @@ mod tests {
 		assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
 		assert_eq!(session.toolbar_state.layout_stable_frames, 1);
 		assert!(session.frozen_toolbar_ready_for_draw(screen_rect));
+	}
+
+	#[test]
+	fn render_frozen_toolbar_ui_waits_for_readiness_before_first_visible_frame() {
+		let ctx = test_egui_context();
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(200, 180, 200, 300);
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let mut session = OverlaySession::new();
+		let toolbar_placement = session.config.toolbar_placement;
+
+		session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+		assert!(session.toolbar_state.visible);
+		assert_eq!(session.toolbar_state.layout_last_screen_size_points, None);
+		assert_eq!(session.toolbar_state.layout_stable_frames, 0);
+
+		for frame in 0..2 {
+			let state = &session.state;
+			let toolbar_state = &mut session.toolbar_state;
+			let mut hud_pill = None;
+			let _ = ctx.run(
+				egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+				|ctx| {
+					WindowRenderer::render_frozen_toolbar_ui(
+						ctx,
+						state,
+						monitor,
+						HudTheme::Dark,
+						toolbar_placement,
+						false,
+						false,
+						1.0,
+						0.0,
+						0.0,
+						Some(toolbar_state),
+						None,
+						&mut hud_pill,
+					);
+				},
+			);
+
+			assert!(
+				hud_pill.is_none(),
+				"frame {frame} should not draw the toolbar before readiness stabilizes"
+			);
+		}
+
+		let state = &session.state;
+		let toolbar_state = &mut session.toolbar_state;
+		let mut hud_pill = None;
+		let _ = ctx.run(
+			egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+			|ctx| {
+				WindowRenderer::render_frozen_toolbar_ui(
+					ctx,
+					state,
+					monitor,
+					HudTheme::Dark,
+					toolbar_placement,
+					false,
+					false,
+					1.0,
+					0.0,
+					0.0,
+					Some(toolbar_state),
+					None,
+					&mut hud_pill,
+				);
+			},
+		);
+
+		assert!(hud_pill.is_some(), "third frame should draw the stabilized toolbar");
+	}
+
+	#[test]
+	fn frozen_toolbar_reserved_rect_restores_near_default_slot() {
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let capture_rect = Rect::from_min_size(Pos2::new(200.0, 180.0), Vec2::new(200.0, 300.0));
+		let mut state = OverlayState::new();
+		let mut toolbar_state = FrozenToolbarState::default();
+		let toolbar_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+		let default_pos = WindowRenderer::frozen_toolbar_default_pos(
+			screen_rect,
+			capture_rect,
+			toolbar_size,
+			ToolbarPlacement::Bottom,
+		);
+		let restored_pos = default_pos + Vec2::new(0.4, -0.35);
+
+		state.mode = OverlayMode::Frozen;
+		state.monitor = Some(monitor);
+		state.frozen_capture_rect = Some(RectPoints::new(200, 180, 200, 300));
+		toolbar_state.visible = true;
+		toolbar_state.floating_position = Some(restored_pos);
+
+		assert_eq!(
+			WindowRenderer::frozen_toolbar_reserved_rect(
+				&state,
+				monitor,
+				screen_rect,
+				ToolbarPlacement::Bottom,
+				&toolbar_state,
+			),
+			Some(Rect::from_min_size(restored_pos, toolbar_size))
+		);
 	}
 
 	#[test]
