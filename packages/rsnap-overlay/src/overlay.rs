@@ -6355,9 +6355,6 @@ impl OverlaySession {
 			&& self.frozen_final_capture_ready();
 		let toolbar_input =
 			if draw_toolbar { self.toolbar_pointer_state(overlay_monitor, None) } else { None };
-		let Some(gpu) = self.gpu.as_ref() else {
-			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
-		};
 
 		if matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.state.monitor == Some(overlay_monitor)
@@ -6389,6 +6386,19 @@ impl OverlaySession {
 		} else {
 			draw_toolbar
 		};
+		#[cfg(target_os = "macos")]
+		let toolbar_ready_for_badge = if toolbar_visible_for_badge {
+			let ready = self.advance_frozen_toolbar_readiness_sample(overlay_screen_rect);
+
+			if !ready {
+				self.request_redraw_for_monitor(overlay_monitor);
+			}
+
+			ready
+		} else {
+			false
+		};
+		#[cfg(not(target_os = "macos"))]
 		let toolbar_ready_for_badge =
 			toolbar_visible_for_badge && self.frozen_toolbar_ready_for_draw(overlay_screen_rect);
 		let frozen_toolbar_reserved_rect = self.frozen_size_badge_toolbar_reserved_rect(
@@ -6396,6 +6406,9 @@ impl OverlaySession {
 			overlay_screen_rect,
 			toolbar_ready_for_badge,
 		);
+		let Some(gpu) = self.gpu.as_ref() else {
+			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
+		};
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
 		{
@@ -6459,17 +6472,35 @@ impl OverlaySession {
 			.unwrap_or_else(|| Rect::from_min_size(Pos2::ZERO, fallback_size))
 	}
 
+	fn advance_frozen_toolbar_readiness_sample(&mut self, screen_rect: Rect) -> bool {
+		let screen_size_points = screen_rect.size();
+
+		if frozen_toolbar_needs_new_sample(
+			self.toolbar_state.layout_last_screen_size_points,
+			screen_size_points,
+		) {
+			self.toolbar_state.layout_last_screen_size_points = Some(screen_size_points);
+			self.toolbar_state.layout_stable_frames = 0;
+
+			return false;
+		}
+		if self.toolbar_state.layout_stable_frames < 1 {
+			self.toolbar_state.layout_stable_frames =
+				self.toolbar_state.layout_stable_frames.saturating_add(1);
+
+			return false;
+		}
+
+		true
+	}
+
+	#[cfg(test)]
 	fn frozen_toolbar_ready_for_draw(&self, screen_rect: Rect) -> bool {
 		let screen_size_points = screen_rect.size();
-		let needs_new_sample = match self.toolbar_state.layout_last_screen_size_points {
-			None => true,
-			Some(last) => {
-				let dx = (last.x - screen_size_points.x).abs();
-				let dy = (last.y - screen_size_points.y).abs();
-
-				dx > 0.5 || dy > 0.5
-			},
-		};
+		let needs_new_sample = frozen_toolbar_needs_new_sample(
+			self.toolbar_state.layout_last_screen_size_points,
+			screen_size_points,
+		);
 
 		!needs_new_sample && self.toolbar_state.layout_stable_frames >= 1
 	}
@@ -9782,7 +9813,10 @@ impl WindowRenderer {
 			return;
 		};
 
-		toolbar_state.layout_last_screen_size_points = Some(screen_rect.size());
+		#[cfg(not(target_os = "macos"))]
+		{
+			toolbar_state.layout_last_screen_size_points = Some(screen_rect.size());
+		}
 
 		Self::draw_frozen_toolbar(
 			ctx,
@@ -9904,15 +9938,10 @@ impl WindowRenderer {
 			"Frozen toolbar birth attempt."
 		);
 
-		let needs_new_sample = match toolbar_state.layout_last_screen_size_points {
-			None => true,
-			Some(last) => {
-				let dx = (last.x - screen_size_points.x).abs();
-				let dy = (last.y - screen_size_points.y).abs();
-
-				dx > 0.5 || dy > 0.5
-			},
-		};
+		let needs_new_sample = frozen_toolbar_needs_new_sample(
+			toolbar_state.layout_last_screen_size_points,
+			screen_size_points,
+		);
 
 		if needs_new_sample {
 			toolbar_state.layout_last_screen_size_points = Some(screen_size_points);
@@ -11940,6 +11969,21 @@ struct MacOSCGPoint {
 	y: f64,
 }
 
+fn frozen_toolbar_needs_new_sample(
+	last_screen_size_points: Option<Vec2>,
+	screen_size_points: Vec2,
+) -> bool {
+	match last_screen_size_points {
+		None => true,
+		Some(last) => {
+			let dx = (last.x - screen_size_points.x).abs();
+			let dy = (last.y - screen_size_points.y).abs();
+
+			dx > 0.5 || dy > 0.5
+		},
+	}
+}
+
 #[cfg(target_os = "macos")]
 fn macos_is_option_key_down() -> bool {
 	let flags = unsafe { CGEventSourceFlagsState(macos_hid_event_source_state_id()) };
@@ -13241,6 +13285,56 @@ mod tests {
 				session.frozen_toolbar_ready_for_draw(screen_rect)
 			),
 			None
+		);
+	}
+
+	#[test]
+	fn frozen_toolbar_overlay_viewport_sample_recovers_from_toolbar_window_pollution() {
+		let monitor = test_monitor();
+		let overlay_screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let toolbar_window_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(92.0, 26.0));
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.state.monitor = Some(monitor);
+		session.state.frozen_capture_rect = Some(RectPoints::new(200, 180, 200, 300));
+		session.toolbar_state.layout_last_screen_size_points = Some(toolbar_window_rect.size());
+		session.toolbar_state.layout_stable_frames = 1;
+
+		assert!(!session.frozen_toolbar_ready_for_draw(overlay_screen_rect));
+		assert!(!session.advance_frozen_toolbar_readiness_sample(overlay_screen_rect));
+		assert_eq!(
+			session.toolbar_state.layout_last_screen_size_points,
+			Some(overlay_screen_rect.size())
+		);
+		assert_eq!(session.toolbar_state.layout_stable_frames, 0);
+		assert_eq!(
+			session.frozen_size_badge_toolbar_reserved_rect(
+				monitor,
+				overlay_screen_rect,
+				session.frozen_toolbar_ready_for_draw(overlay_screen_rect)
+			),
+			None
+		);
+		assert!(!session.advance_frozen_toolbar_readiness_sample(overlay_screen_rect));
+		assert_eq!(session.toolbar_state.layout_stable_frames, 1);
+		assert_eq!(
+			session.frozen_size_badge_toolbar_reserved_rect(
+				monitor,
+				overlay_screen_rect,
+				session.frozen_toolbar_ready_for_draw(overlay_screen_rect)
+			),
+			Some(
+				WindowRenderer::frozen_toolbar_reserved_rect(
+					&session.state,
+					monitor,
+					overlay_screen_rect,
+					session.config.toolbar_placement,
+					&session.toolbar_state,
+				)
+				.expect("reserved rect after overlay viewport stabilization")
+			)
 		);
 	}
 
