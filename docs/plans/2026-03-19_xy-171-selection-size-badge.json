@@ -948,6 +948,68 @@
         "depends_on": [
           "task-43"
         ]
+      },
+      {
+        "id": "task-45",
+        "title": "Capture the latest toolbar-readiness and tiny-frozen review findings",
+        "status": "done",
+        "objective": "Reopen the saved XY-171 contract for the latest PR #41 review batch so the non-macOS toolbar-readiness regression and tiny-frozen badge regression are tracked before another repair commit.",
+        "inputs": [
+          "Current unresolved PR #41 review threads at overlay.rs:9820 and overlay.rs:8533 on head 9949dce",
+          "Code inspection showing non-macOS render_frozen_toolbar_ui does not advance layout_stable_frames after a preseeded toolbar position and frozen_capture_focus_rect still rejects tiny Frozen rects"
+        ],
+        "outputs": [
+          "An updated saved contract that explicitly covers the latest toolbar-readiness and tiny-frozen review batch"
+        ],
+        "verification": [
+          "The saved contract records both current review findings as the next execution authority before more implementation happens."
+        ],
+        "depends_on": [
+          "task-44"
+        ]
+      },
+      {
+        "id": "task-46",
+        "title": "Repair non-macOS toolbar readiness and tiny Frozen badge rendering",
+        "status": "done",
+        "objective": "Update overlay.rs so non-macOS Frozen toolbar readiness can stabilize even after preseeded toolbar positions and tiny Frozen capture rects can still reach the shared size-badge render path, with focused regression coverage for both.",
+        "inputs": [
+          "Task 45 contract update",
+          "packages/rsnap-overlay/src/overlay.rs Frozen toolbar birth/readiness helpers and Frozen affordance rendering"
+        ],
+        "outputs": [
+          "A coherent repair batch covering non-macOS toolbar readiness progression, tiny Frozen badge rendering, and focused tests"
+        ],
+        "verification": [
+          "Non-macOS Frozen toolbar readiness no longer stays permanently non-ready after begin_frozen_capture_with_rect preseeds floating_position.",
+          "Tiny valid Frozen capture rects still reach the shared size-badge render path.",
+          "Focused tests fail without the repair and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-45"
+        ]
+      },
+      {
+        "id": "task-47",
+        "title": "Re-verify the latest review-repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the latest review-repair batch so the refreshed PR head is ready for another review pass.",
+        "inputs": [
+          "Task 46 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the latest toolbar-readiness and tiny-frozen repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make fmt-rust-check exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-46"
+        ]
       }
     ],
     "replan_policy": {
@@ -963,7 +1025,9 @@
         "Review feedback reveals that a preseeded Frozen toolbar position is still being treated as draw readiness before the current viewport is stable.",
         "Review feedback reveals that Frozen toolbar draw readiness is still sampling the dedicated toolbar window viewport instead of the overlay viewport on macOS.",
         "Linux CI reveals that a platform cfg change in the Frozen toolbar readiness helper broke the non-macOS compile path.",
-        "Linux CI reveals that a macOS-only Frozen toolbar readiness sampler is still compiled into non-macOS lint paths and trips dead-code denial."
+        "Linux CI reveals that a macOS-only Frozen toolbar readiness sampler is still compiled into non-macOS lint paths and trips dead-code denial.",
+        "Review feedback reveals that non-macOS Frozen toolbar reservation still never reaches a ready state after preseeded toolbar positions.",
+        "Review feedback reveals that tiny Frozen capture rects still fail to reach the shared size-badge render path."
       ]
     }
   },
@@ -1117,9 +1181,18 @@
       "Task 44 verification: cargo make fmt-rust-check completed successfully after the Linux dead-code repair batch.",
       "Task 44 verification: cargo make lint completed successfully after the Linux dead-code repair batch.",
       "Task 44 verification: cargo make test completed successfully with 221 nextest cases and 190 rsnap-overlay unit tests passing after the Linux dead-code repair batch.",
-      "Task 44 verification: git diff --check returned clean after the Linux dead-code repair batch."
+      "Task 44 verification: git diff --check returned clean after the Linux dead-code repair batch.",
+      "Replan evidence: on 2026-03-19 current PR #41 review threads at overlay.rs:9820 and overlay.rs:8533 remained unresolved because non-macOS Frozen toolbar readiness still did not advance after a preseeded position and tiny Frozen rects still failed to reach the shared badge render path.",
+      "Task 45 outcome: the saved contract now explicitly tracks the latest review batch covering non-macOS toolbar-readiness progression and tiny Frozen badge rendering.",
+      "Task 46 outcome: packages/rsnap-overlay/src/overlay.rs now shares advance_frozen_toolbar_readiness_sample_state between the macOS overlay-viewport readiness sampler and the non-macOS frozen toolbar draw path, so preseeded Frozen toolbar positions can still advance to a ready reserved-slot state on non-macOS.",
+      "Task 46 outcome: frozen_capture_focus_rect no longer filters out tiny Frozen rects with LIVE_DRAG_START_THRESHOLD_PX, and focused regressions now lock both the non-macOS readiness recovery path and the tiny Frozen affordance path.",
+      "Task 47 verification: cargo make fmt completed successfully after the latest toolbar-readiness and tiny-Frozen repair batch.",
+      "Task 47 verification: cargo make fmt-rust-check completed successfully after the latest toolbar-readiness and tiny-Frozen repair batch.",
+      "Task 47 verification: cargo make lint completed successfully after the latest toolbar-readiness and tiny-Frozen repair batch.",
+      "Task 47 verification: cargo make test completed successfully with 223 nextest cases and 192 rsnap-overlay unit tests passing after the latest toolbar-readiness and tiny-Frozen repair batch.",
+      "Task 47 verification: git diff --check returned clean after the latest toolbar-readiness and tiny-Frozen repair batch."
     ],
-    "last_updated": "2026-03-19T07:32:22Z",
+    "last_updated": "2026-03-19T07:47:31Z",
     "replan_reason": null,
     "context_snapshot": {
       "blur_experiment_rollback_requested": true,
@@ -1155,11 +1228,15 @@
       "linux_ci_compile_followup_requested": false,
       "linux_ci_dead_code_followup_completed": true,
       "linux_ci_dead_code_followup_requested": false,
+      "non_macos_toolbar_readiness_review_followup_completed": true,
+      "non_macos_toolbar_readiness_review_followup_requested": false,
       "toolbar_preseeded_position_followup_completed": true,
       "toolbar_preseeded_position_followup_requested": true,
       "toolbar_birth_readiness_followup_requested": true,
       "toolbar_viewport_basis_followup_completed": true,
       "toolbar_viewport_basis_followup_requested": true,
+      "tiny_frozen_render_followup_completed": true,
+      "tiny_frozen_render_followup_requested": false,
       "verification_completed": true,
       "workspace": ".workspaces/xy-171-size-badge"
     }
