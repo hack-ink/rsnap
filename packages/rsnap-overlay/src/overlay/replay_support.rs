@@ -1,20 +1,25 @@
+use std::path::PathBuf;
 use std::{
 	path::Path,
 	time::{Duration, Instant},
 };
 
-use color_eyre::eyre::{Result, WrapErr, eyre};
-use image::RgbaImage;
+use color_eyre::eyre::{self, Result, WrapErr};
+use image::{self, RgbaImage};
 use serde::Serialize;
 
-use super::{
+use crate::overlay::trace_recording::ScrollCaptureTraceDirection;
+use crate::overlay::trace_recording::ScrollCaptureTraceFrameEntry;
+use crate::overlay::trace_recording::ScrollCaptureTraceInputEntry;
+use crate::overlay::{
 	GlobalPoint, MonitorRect, OverlaySession, RectPoints, ScrollCaptureFrameSource,
 	ScrollDirection, ScrollObserveOutcome, ScrollSession,
 	trace_recording::{
-		LoadedScrollCaptureLiveTrace, ScrollCaptureLiveTraceEntry, ScrollCaptureTraceFrameSource,
+		LoadedScrollCaptureLiveTrace, ScrollCaptureLiveTraceEntry,
 		ScrollCaptureTraceRecordedOutcome,
 	},
 };
+use crate::scroll_capture::ScrollCommitTelemetry;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 /// Public replay outcome surface that does not leak private scroll-capture internals.
@@ -31,7 +36,6 @@ pub enum ScrollCaptureReplayOutcome {
 		growth_rows: u32,
 	},
 }
-
 impl From<ScrollObserveOutcome> for ScrollCaptureReplayOutcome {
 	fn from(value: ScrollObserveOutcome) -> Self {
 		match value {
@@ -58,23 +62,87 @@ pub enum RecordedScrollCaptureReplayMode {
 	ForceWorkerPairwise,
 }
 
-fn classify_replayed_outcome(
-	outcome: ScrollObserveOutcome,
-	previous_replayed_export_height: Option<u32>,
-	replayed_export_height: u32,
-	previous_replayed_preview_height: Option<u32>,
-	replayed_preview_height: u32,
-) -> ScrollCaptureReplayOutcome {
-	let replayed_outcome: ScrollCaptureReplayOutcome = outcome.into();
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+/// Semantic failure classes inferred from recorded frame-to-frame motion.
+pub enum RecordedScrollCaptureSemanticIssue {
+	/// Recorded frames moved downward but the recorded outcome did not convert that into growth.
+	MissedDownwardMotion,
+	/// Recorded frames moved downward significantly more than the recorded committed growth.
+	UnderconsumedDownwardMotion,
+	/// Recorded committed growth exceeded the visible recorded frame-to-frame shift by a large margin.
+	GrowthExceedsRecordedShift,
+}
 
-	if replayed_outcome == ScrollCaptureReplayOutcome::NoChange
-		&& previous_replayed_export_height == Some(replayed_export_height)
-		&& previous_replayed_preview_height
-			.is_some_and(|previous| replayed_preview_height > previous)
-	{
-		ScrollCaptureReplayOutcome::PreviewUpdated
-	} else {
-		replayed_outcome
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+/// Public frame-source surface for one replayed live-trace step.
+pub enum RecordedScrollCaptureReplayFrameSource {
+	Worker { request_id: u64 },
+	LiveStream { frame_seq: u64 },
+}
+impl From<super::trace_recording::ScrollCaptureTraceFrameSource>
+	for RecordedScrollCaptureReplayFrameSource
+{
+	fn from(value: super::trace_recording::ScrollCaptureTraceFrameSource) -> Self {
+		match value {
+			super::trace_recording::ScrollCaptureTraceFrameSource::Worker { request_id } => {
+				Self::Worker { request_id }
+			},
+			super::trace_recording::ScrollCaptureTraceFrameSource::LiveStream { frame_seq } => {
+				Self::LiveStream { frame_seq }
+			},
+		}
+	}
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+/// Public recorded-outcome surface for one frame in a replayed live trace.
+pub enum RecordedScrollCaptureReplayRecordedOutcome {
+	/// The live frame did not change preview or export state.
+	NoChange,
+	/// The live frame updated preview state without committing growth.
+	PreviewUpdated,
+	/// The live frame detected unsupported motion.
+	Unsupported {
+		/// Direction recorded during the live session.
+		direction: &'static str,
+	},
+	/// The live frame committed stitched growth.
+	Committed {
+		/// Direction recorded during the live session.
+		direction: &'static str,
+		/// Newly appended rows recorded during the live session.
+		growth_rows: u32,
+	},
+	/// The live frame recorded an observation error.
+	Error {
+		/// Error string captured during the live session.
+		message: String,
+	},
+}
+impl From<ScrollCaptureTraceRecordedOutcome> for RecordedScrollCaptureReplayRecordedOutcome {
+	fn from(value: ScrollCaptureTraceRecordedOutcome) -> Self {
+		match value {
+			ScrollCaptureTraceRecordedOutcome::NoChange => Self::NoChange,
+			ScrollCaptureTraceRecordedOutcome::PreviewUpdated => Self::PreviewUpdated,
+			ScrollCaptureTraceRecordedOutcome::UnsupportedDirection { direction } => {
+				Self::Unsupported {
+					direction: match direction {
+						ScrollCaptureTraceDirection::Up => "up",
+						ScrollCaptureTraceDirection::Down => "down",
+					},
+				}
+			},
+			ScrollCaptureTraceRecordedOutcome::Committed { direction, growth_rows } => {
+				Self::Committed {
+					direction: match direction {
+						ScrollCaptureTraceDirection::Up => "up",
+						ScrollCaptureTraceDirection::Down => "down",
+					},
+					growth_rows,
+				}
+			},
+			ScrollCaptureTraceRecordedOutcome::Error { message } => Self::Error { message },
+		}
 	}
 }
 
@@ -86,7 +154,7 @@ pub struct RecordedScrollCaptureReplaySummary {
 	/// Stable trace id from the manifest.
 	pub trace_id: String,
 	/// Manifest path used to load the trace.
-	pub manifest_path: std::path::PathBuf,
+	pub manifest_path: PathBuf,
 	/// Final stitched export height after replaying the recorded trace.
 	pub final_export_height: u32,
 	/// Final preview height after replaying the recorded trace.
@@ -98,9 +166,9 @@ pub struct RecordedScrollCaptureReplaySummary {
 	/// Final preview height recorded during the live session, when present.
 	pub recorded_final_preview_height: Option<u32>,
 	/// Final recorded live-trace preview artifact, when present.
-	pub final_preview_path: Option<std::path::PathBuf>,
+	pub final_preview_path: Option<PathBuf>,
 	/// Final recorded live-trace export artifact, when present.
-	pub final_export_path: Option<std::path::PathBuf>,
+	pub final_export_path: Option<PathBuf>,
 	/// First frame where recorded and replayed outcomes diverged.
 	pub first_outcome_divergence_frame: Option<usize>,
 	/// First frame where replayed export height drifted from the recorded live trace.
@@ -252,90 +320,21 @@ pub struct RecordedScrollCaptureReplayStepResult {
 	pub semantic_issue: Option<RecordedScrollCaptureSemanticIssue>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-/// Semantic failure classes inferred from recorded frame-to-frame motion.
-pub enum RecordedScrollCaptureSemanticIssue {
-	/// Recorded frames moved downward but the recorded outcome did not convert that into growth.
-	MissedDownwardMotion,
-	/// Recorded frames moved downward significantly more than the recorded committed growth.
-	UnderconsumedDownwardMotion,
-	/// Recorded committed growth exceeded the visible recorded frame-to-frame shift by a large margin.
-	GrowthExceedsRecordedShift,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-/// Public frame-source surface for one replayed live-trace step.
-pub enum RecordedScrollCaptureReplayFrameSource {
-	Worker { request_id: u64 },
-	LiveStream { frame_seq: u64 },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-/// Public recorded-outcome surface for one frame in a replayed live trace.
-pub enum RecordedScrollCaptureReplayRecordedOutcome {
-	/// The live frame did not change preview or export state.
-	NoChange,
-	/// The live frame updated preview state without committing growth.
-	PreviewUpdated,
-	/// The live frame detected unsupported motion.
-	Unsupported {
-		/// Direction recorded during the live session.
-		direction: &'static str,
-	},
-	/// The live frame committed stitched growth.
-	Committed {
-		/// Direction recorded during the live session.
-		direction: &'static str,
-		/// Newly appended rows recorded during the live session.
-		growth_rows: u32,
-	},
-	/// The live frame recorded an observation error.
-	Error {
-		/// Error string captured during the live session.
-		message: String,
-	},
-}
-
-impl From<ScrollCaptureTraceRecordedOutcome> for RecordedScrollCaptureReplayRecordedOutcome {
-	fn from(value: ScrollCaptureTraceRecordedOutcome) -> Self {
-		match value {
-			ScrollCaptureTraceRecordedOutcome::NoChange => Self::NoChange,
-			ScrollCaptureTraceRecordedOutcome::PreviewUpdated => Self::PreviewUpdated,
-			ScrollCaptureTraceRecordedOutcome::UnsupportedDirection { direction } => {
-				Self::Unsupported {
-					direction: match direction {
-						super::trace_recording::ScrollCaptureTraceDirection::Up => "up",
-						super::trace_recording::ScrollCaptureTraceDirection::Down => "down",
-					},
-				}
-			},
-			ScrollCaptureTraceRecordedOutcome::Committed { direction, growth_rows } => {
-				Self::Committed {
-					direction: match direction {
-						super::trace_recording::ScrollCaptureTraceDirection::Up => "up",
-						super::trace_recording::ScrollCaptureTraceDirection::Down => "down",
-					},
-					growth_rows,
-				}
-			},
-			ScrollCaptureTraceRecordedOutcome::Error { message } => Self::Error { message },
-		}
-	}
-}
-
-impl From<super::trace_recording::ScrollCaptureTraceFrameSource>
-	for RecordedScrollCaptureReplayFrameSource
-{
-	fn from(value: super::trace_recording::ScrollCaptureTraceFrameSource) -> Self {
-		match value {
-			super::trace_recording::ScrollCaptureTraceFrameSource::Worker { request_id } => {
-				Self::Worker { request_id }
-			},
-			super::trace_recording::ScrollCaptureTraceFrameSource::LiveStream { frame_seq } => {
-				Self::LiveStream { frame_seq }
-			},
-		}
-	}
+#[derive(Default)]
+struct ReplayStats {
+	step_results: Vec<RecordedScrollCaptureReplayStepResult>,
+	previous_recorded_export_height: Option<u32>,
+	previous_recorded_preview_height: Option<u32>,
+	previous_replayed_export_height: Option<u32>,
+	previous_replayed_preview_height: Option<u32>,
+	previous_live_frame_seq: Option<u64>,
+	previous_recorded_frame: Option<RgbaImage>,
+	max_recorded_export_jump: u32,
+	max_recorded_preview_jump: u32,
+	max_replayed_export_jump: u32,
+	max_replayed_preview_jump: u32,
+	max_recorded_committed_growth_rows: u32,
+	max_replayed_committed_growth_rows: u32,
 }
 
 /// Replays one recorded live trace through shipping overlay logic.
@@ -360,36 +359,42 @@ pub fn replay_recorded_scroll_capture_trace_with_mode(
 	finalize_replay_summary(trace, &session, replay_stats, replay_mode)
 }
 
-#[derive(Default)]
-struct ReplayStats {
-	step_results: Vec<RecordedScrollCaptureReplayStepResult>,
-	previous_recorded_export_height: Option<u32>,
-	previous_recorded_preview_height: Option<u32>,
+fn classify_replayed_outcome(
+	outcome: ScrollObserveOutcome,
 	previous_replayed_export_height: Option<u32>,
+	replayed_export_height: u32,
 	previous_replayed_preview_height: Option<u32>,
-	previous_live_frame_seq: Option<u64>,
-	previous_recorded_frame: Option<RgbaImage>,
-	max_recorded_export_jump: u32,
-	max_recorded_preview_jump: u32,
-	max_replayed_export_jump: u32,
-	max_replayed_preview_jump: u32,
-	max_recorded_committed_growth_rows: u32,
-	max_replayed_committed_growth_rows: u32,
+	replayed_preview_height: u32,
+) -> ScrollCaptureReplayOutcome {
+	let replayed_outcome: ScrollCaptureReplayOutcome = outcome.into();
+
+	if replayed_outcome == ScrollCaptureReplayOutcome::NoChange
+		&& previous_replayed_export_height == Some(replayed_export_height)
+		&& previous_replayed_preview_height
+			.is_some_and(|previous| replayed_preview_height > previous)
+	{
+		ScrollCaptureReplayOutcome::PreviewUpdated
+	} else {
+		replayed_outcome
+	}
 }
 
 fn initialize_replay_session(
 	trace: &LoadedScrollCaptureLiveTrace,
 ) -> Result<(OverlaySession, Instant)> {
-	let mut session = OverlaySession::new();
 	let started_at = Instant::now();
+	let mut session = OverlaySession::new();
 
 	session.scroll_capture.active = true;
 	session.scroll_capture.monitor = Some(replay_monitor_from_trace(trace));
 	session.scroll_capture.capture_rect_pixels = Some(replay_capture_rect_from_trace(trace));
 	session.scroll_capture.session =
 		Some(ScrollSession::new(trace.base_frame.clone(), trace.manifest.preview_width_px)?);
+
 	session.refresh_scroll_preview_committed_image();
+
 	session.scroll_capture.preview_latest_frame = Some(trace.base_frame.clone());
+
 	session.refresh_scroll_preview_display_image();
 
 	Ok((session, started_at))
@@ -426,7 +431,7 @@ fn replay_trace_entries(
 
 fn apply_replayed_input(
 	session: &mut OverlaySession,
-	input: &super::trace_recording::ScrollCaptureTraceInputEntry,
+	input: &ScrollCaptureTraceInputEntry,
 	started_at: Instant,
 ) {
 	session.apply_external_scroll_input_delta_y(
@@ -440,10 +445,11 @@ fn apply_replayed_input(
 	session.refresh_scroll_preview_display_image();
 }
 
+#[allow(clippy::too_many_lines)]
 fn replay_frame_entry(
 	trace: &LoadedScrollCaptureLiveTrace,
 	session: &mut OverlaySession,
-	frame: &super::trace_recording::ScrollCaptureTraceFrameEntry,
+	frame: &ScrollCaptureTraceFrameEntry,
 	started_at: Instant,
 	replay_mode: RecordedScrollCaptureReplayMode,
 	replay_stats: &mut ReplayStats,
@@ -452,6 +458,7 @@ fn replay_frame_entry(
 		frame.snapshot_after.export_dimensions.map(|dimensions| dimensions[1]);
 	let recorded_preview_height =
 		frame.snapshot_after.preview_dimensions.map(|dimensions| dimensions[1]);
+
 	update_recorded_height_jumps(replay_stats, recorded_export_height, recorded_preview_height);
 
 	let image = image::open(trace.resolve_frame_path(&frame.frame_path))
@@ -464,19 +471,22 @@ fn replay_frame_entry(
 	let observed_at = started_at + Duration::from_millis(frame.observed_at_ms);
 	let outcome = match replay_mode {
 		RecordedScrollCaptureReplayMode::RecordedSource => match frame.frame_source {
-			ScrollCaptureTraceFrameSource::LiveStream { frame_seq } => session
-				.replay_recorded_live_stream_frame(
-					image.clone(),
-					frame_seq,
-					observed_at,
-					frame.allow_stale_input,
-				),
-			ScrollCaptureTraceFrameSource::Worker { .. } => session.handle_scroll_capture_frame(
+			crate::overlay::trace_recording::ScrollCaptureTraceFrameSource::LiveStream {
+				frame_seq,
+			} => session.replay_recorded_live_stream_frame(
 				image.clone(),
-				replay_frame_source(frame.frame_source),
-				frame.allow_stale_input,
+				frame_seq,
 				observed_at,
+				frame.allow_stale_input,
 			),
+			crate::overlay::trace_recording::ScrollCaptureTraceFrameSource::Worker { .. } => {
+				session.handle_scroll_capture_frame(
+					image.clone(),
+					replay_frame_source(frame.frame_source),
+					frame.allow_stale_input,
+					observed_at,
+				)
+			},
 		},
 		RecordedScrollCaptureReplayMode::ForceWorkerPairwise => session
 			.handle_scroll_capture_frame(
@@ -490,13 +500,16 @@ fn replay_frame_entry(
 	}
 	.transpose()?
 	.ok_or_else(|| {
-		eyre!(
+		eyre::eyre!(
 			"recorded trace frame {} did not observe because the session vanished",
 			frame.frame_path
 		)
 	})?;
 	let active_session = session.scroll_capture.session.as_ref().ok_or_else(|| {
-		eyre!("scroll-capture session missing after replaying recorded frame {}", frame.frame_path)
+		eyre::eyre!(
+			"scroll-capture session missing after replaying recorded frame {}",
+			frame.frame_path
+		)
 	})?;
 	let telemetry = active_session.commit_telemetry();
 	let frame_source: RecordedScrollCaptureReplayFrameSource = frame.frame_source.into();
@@ -527,8 +540,51 @@ fn replay_frame_entry(
 		replay_stats.max_replayed_committed_growth_rows =
 			replay_stats.max_replayed_committed_growth_rows.max(growth_rows);
 	}
-	update_replayed_height_jumps(replay_stats, replayed_export_height, replayed_preview_height);
 
+	update_replayed_height_jumps(replay_stats, replayed_export_height, replayed_preview_height);
+	push_replay_step_result(
+		replay_stats,
+		session,
+		active_session,
+		&telemetry,
+		frame,
+		frame_source,
+		live_frame_gap,
+		recorded_outcome,
+		replayed_outcome,
+		recorded_export_height,
+		recorded_preview_height,
+		replayed_export_height,
+		replayed_preview_height,
+		replayed_session_preview_height,
+		recorded_estimated_downward_shift_rows,
+		semantic_issue,
+	);
+
+	replay_stats.previous_recorded_frame = Some(image);
+
+	Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_replay_step_result(
+	replay_stats: &mut ReplayStats,
+	session: &OverlaySession,
+	active_session: &ScrollSession,
+	telemetry: &ScrollCommitTelemetry,
+	frame: &ScrollCaptureTraceFrameEntry,
+	frame_source: RecordedScrollCaptureReplayFrameSource,
+	live_frame_gap: Option<u64>,
+	recorded_outcome: RecordedScrollCaptureReplayRecordedOutcome,
+	replayed_outcome: ScrollCaptureReplayOutcome,
+	recorded_export_height: Option<u32>,
+	recorded_preview_height: Option<u32>,
+	replayed_export_height: u32,
+	replayed_preview_height: u32,
+	replayed_session_preview_height: u32,
+	recorded_estimated_downward_shift_rows: Option<u32>,
+	semantic_issue: Option<RecordedScrollCaptureSemanticIssue>,
+) {
 	replay_stats.step_results.push(RecordedScrollCaptureReplayStepResult {
 		frame_index: replay_stats.step_results.len(),
 		frame_path: frame.frame_path.clone(),
@@ -571,9 +627,11 @@ fn replay_frame_entry(
 		replayed_downward_viewport_candidate_count: telemetry
 			.last_downward_viewport_candidate_count,
 		replayed_downward_viewport_candidates_before_prune: telemetry
-			.last_downward_viewport_candidates_before_prune,
+			.last_downward_viewport_candidates_before_prune
+			.clone(),
 		replayed_downward_viewport_candidates_after_prune: telemetry
-			.last_downward_viewport_candidates_after_prune,
+			.last_downward_viewport_candidates_after_prune
+			.clone(),
 		replayed_sample_eval_last_motion_rows_hint: telemetry.sample_eval_last_motion_rows_hint,
 		replayed_sample_eval_transient_motion_rows_hint: telemetry
 			.sample_eval_transient_motion_rows_hint,
@@ -621,7 +679,7 @@ fn replay_frame_entry(
 			.scroll_capture
 			.retained_overlay_preview_image
 			.as_ref()
-			.map(image::RgbaImage::height),
+			.map(RgbaImage::height),
 		replayed_retained_overlay_preview_motion_rows_hint: session
 			.scroll_capture
 			.retained_overlay_preview_motion_rows_hint,
@@ -637,9 +695,6 @@ fn replay_frame_entry(
 		recorded_estimated_downward_shift_rows,
 		semantic_issue,
 	});
-	replay_stats.previous_recorded_frame = Some(image);
-
-	Ok(())
 }
 
 fn update_recorded_height_jumps(
@@ -653,15 +708,16 @@ fn update_recorded_height_jumps(
 				.max_recorded_export_jump
 				.max(recorded_export_height.saturating_sub(previous));
 		}
+
 		replay_stats.previous_recorded_export_height = Some(recorded_export_height);
 	}
-
 	if let Some(recorded_preview_height) = recorded_preview_height {
 		if let Some(previous) = replay_stats.previous_recorded_preview_height {
 			replay_stats.max_recorded_preview_jump = replay_stats
 				.max_recorded_preview_jump
 				.max(recorded_preview_height.saturating_sub(previous));
 		}
+
 		replay_stats.previous_recorded_preview_height = Some(recorded_preview_height);
 	}
 }
@@ -676,6 +732,7 @@ fn update_replayed_height_jumps(
 			.max_replayed_export_jump
 			.max(replayed_export_height.saturating_sub(previous));
 	}
+
 	replay_stats.previous_replayed_export_height = Some(replayed_export_height);
 
 	if let Some(previous) = replay_stats.previous_replayed_preview_height {
@@ -683,6 +740,7 @@ fn update_replayed_height_jumps(
 			.max_replayed_preview_jump
 			.max(replayed_preview_height.saturating_sub(previous));
 	}
+
 	replay_stats.previous_replayed_preview_height = Some(replayed_preview_height);
 }
 
@@ -696,7 +754,9 @@ fn update_live_frame_gap(
 				.previous_live_frame_seq
 				.map(|previous| frame_seq.saturating_sub(previous))
 				.unwrap_or(1);
+
 			replay_stats.previous_live_frame_seq = Some(frame_seq);
+
 			Some(gap)
 		},
 		RecordedScrollCaptureReplayFrameSource::Worker { .. } => None,
@@ -710,7 +770,7 @@ fn finalize_replay_summary(
 	replay_mode: RecordedScrollCaptureReplayMode,
 ) -> Result<RecordedScrollCaptureReplaySummary> {
 	let final_session = session.scroll_capture.session.as_ref().ok_or_else(|| {
-		eyre!("scroll-capture session missing after replaying recorded live trace")
+		eyre::eyre!("scroll-capture session missing after replaying recorded live trace")
 	})?;
 	let first_outcome_divergence_frame = replay_stats
 		.step_results
@@ -819,7 +879,9 @@ fn estimate_recorded_downward_shift_rows(previous: &RgbaImage, current: &RgbaIma
 	if previous.dimensions() != current.dimensions() {
 		return None;
 	}
+
 	let (width, height) = previous.dimensions();
+
 	if width < 2 || height < 3 {
 		return None;
 	}
@@ -830,7 +892,6 @@ fn estimate_recorded_downward_shift_rows(previous: &RgbaImage, current: &RgbaIma
 	let x_step = ((end_x.saturating_sub(start_x)) / 48).max(1);
 	let y_step = 2_u32;
 	let max_shift = height.saturating_sub(1).min(96);
-
 	let mut best_shift = 0_u32;
 	let mut best_score = overlap_abs_diff(previous, current, 0, start_x, end_x, x_step, y_step)?;
 
@@ -840,6 +901,7 @@ fn estimate_recorded_downward_shift_rows(previous: &RgbaImage, current: &RgbaIma
 		else {
 			continue;
 		};
+
 		if score < best_score {
 			best_score = score;
 			best_shift = shift;
@@ -859,10 +921,13 @@ fn overlap_abs_diff(
 	y_step: u32,
 ) -> Option<u64> {
 	let height = previous.height();
+
 	if shift >= height {
 		return None;
 	}
+
 	let overlap_height = height - shift;
+
 	if overlap_height < 2 {
 		return None;
 	}
@@ -870,17 +935,21 @@ fn overlap_abs_diff(
 	let mut sum = 0_u64;
 	let mut samples = 0_u64;
 	let mut y = 0_u32;
+
 	while y < overlap_height {
 		let mut x = start_x;
+
 		while x < end_x {
 			let prev = previous.get_pixel(x, y + shift);
 			let curr = current.get_pixel(x, y);
 			let prev_luma = u16::from(prev[0]) + u16::from(prev[1]) + u16::from(prev[2]);
 			let curr_luma = u16::from(curr[0]) + u16::from(curr[1]) + u16::from(curr[2]);
+
 			sum += u64::from(prev_luma.abs_diff(curr_luma));
 			samples += 1;
 			x = x.saturating_add(x_step);
 		}
+
 		y = y.saturating_add(y_step);
 	}
 
@@ -896,6 +965,7 @@ fn classify_recorded_semantic_issue(
 	recorded_estimated_downward_shift_rows: Option<u32>,
 ) -> Option<RecordedScrollCaptureSemanticIssue> {
 	let shift = recorded_estimated_downward_shift_rows?;
+
 	if shift < 4 {
 		return None;
 	}
@@ -922,25 +992,32 @@ fn classify_recorded_semantic_issue(
 }
 
 #[cfg(target_os = "macos")]
-fn replay_frame_source(frame_source: ScrollCaptureTraceFrameSource) -> ScrollCaptureFrameSource {
+fn replay_frame_source(
+	frame_source: crate::overlay::trace_recording::ScrollCaptureTraceFrameSource,
+) -> ScrollCaptureFrameSource {
 	match frame_source {
-		ScrollCaptureTraceFrameSource::Worker { .. } => {
+		crate::overlay::trace_recording::ScrollCaptureTraceFrameSource::Worker { .. } => {
 			unreachable!("macOS live traces should not contain worker-backed scroll frames")
 		},
-		ScrollCaptureTraceFrameSource::LiveStream { frame_seq } => {
-			ScrollCaptureFrameSource::LiveStream { frame_seq }
-		},
+		crate::overlay::trace_recording::ScrollCaptureTraceFrameSource::LiveStream {
+			frame_seq,
+		} => ScrollCaptureFrameSource::LiveStream { frame_seq },
 	}
 }
 
 #[cfg(not(target_os = "macos"))]
-fn replay_frame_source(frame_source: ScrollCaptureTraceFrameSource) -> ScrollCaptureFrameSource {
+fn replay_frame_source(
+	frame_source: crate::overlay::trace_recording::ScrollCaptureTraceFrameSource,
+) -> ScrollCaptureFrameSource {
 	match frame_source {
-		ScrollCaptureTraceFrameSource::Worker { request_id } => {
+		crate::overlay::trace_recording::ScrollCaptureTraceFrameSource::Worker { request_id } => {
 			ScrollCaptureFrameSource::Worker { request_id }
 		},
-		ScrollCaptureTraceFrameSource::LiveStream { frame_seq } => {
+		crate::overlay::trace_recording::ScrollCaptureTraceFrameSource::LiveStream {
+			frame_seq,
+		} => {
 			let _ = frame_seq;
+
 			unreachable!("non-macOS replay should not receive live-stream scroll frames")
 		},
 	}
@@ -1011,6 +1088,7 @@ fn replay_capture_rect_from_trace(trace: &LoadedScrollCaptureLiveTrace) -> RectP
 
 #[cfg(test)]
 mod tests {
+	use std::env;
 	use std::{
 		fs,
 		path::PathBuf,
@@ -1020,10 +1098,7 @@ mod tests {
 
 	use image::{Rgba, RgbaImage};
 
-	use super::{
-		RecordedScrollCaptureReplayMode, replay_recorded_scroll_capture_trace,
-		replay_recorded_scroll_capture_trace_with_mode,
-	};
+	use crate::overlay::replay_support::{self, RecordedScrollCaptureReplayMode};
 	use crate::overlay::{
 		GlobalPoint, MonitorRect, OverlaySession, RectPoints, ScrollCaptureFrameSource,
 		trace_recording::{
@@ -1034,7 +1109,7 @@ mod tests {
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 
 	fn temp_trace_root() -> PathBuf {
-		let root = std::env::temp_dir().join(format!(
+		let root = env::temp_dir().join(format!(
 			"rsnap-recorded-trace-replay-test-{}-{}",
 			std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
 			process::id()
@@ -1155,6 +1230,7 @@ mod tests {
 				Some(2),
 			),
 		});
+
 		let outcome = session
 			.observe_scroll_capture_frame_at(
 				next_frame.clone(),
@@ -1163,6 +1239,7 @@ mod tests {
 			.transpose()
 			.unwrap()
 			.unwrap();
+
 		recorder.record_frame_observation(ScrollCaptureTraceFrameRecord {
 			frame: &next_frame,
 			source: ScrollCaptureFrameSource::LiveStream { frame_seq: 9 },
@@ -1187,7 +1264,7 @@ mod tests {
 
 		drop(recorder);
 
-		let summary = replay_recorded_scroll_capture_trace(&manifest_path).unwrap();
+		let summary = replay_support::replay_recorded_scroll_capture_trace(&manifest_path).unwrap();
 
 		assert_eq!(summary.step_results.len(), 1);
 		assert_eq!(
@@ -1258,6 +1335,7 @@ mod tests {
 				Some(2),
 			),
 		});
+
 		let outcome = session
 			.observe_scroll_capture_frame_at(
 				next_frame.clone(),
@@ -1266,6 +1344,7 @@ mod tests {
 			.transpose()
 			.unwrap()
 			.unwrap();
+
 		recorder.record_frame_observation(ScrollCaptureTraceFrameRecord {
 			frame: &next_frame,
 			source: ScrollCaptureFrameSource::LiveStream { frame_seq: 9 },
@@ -1295,8 +1374,7 @@ mod tests {
 		else {
 			panic!("expected recorded-source setup to commit one downward growth step");
 		};
-
-		let summary = replay_recorded_scroll_capture_trace_with_mode(
+		let summary = replay_support::replay_recorded_scroll_capture_trace_with_mode(
 			&manifest_path,
 			RecordedScrollCaptureReplayMode::ForceWorkerPairwise,
 		)

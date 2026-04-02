@@ -124,58 +124,6 @@ const STREAM_ERROR_TIMEOUT_CODE: isize = 1;
 const STREAM_ERROR_NULL_CONTENT_CODE: isize = 2;
 const STREAM_ERROR_RETAIN_FAILED_CODE: isize = 3;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct StreamCaptureRegion {
-	rect_points: RectPoints,
-	rect_pixels: RectPoints,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StreamCaptureTarget {
-	FullMonitor,
-	Region(StreamCaptureRegion),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StreamFilterMode {
-	ExcludeCurrentProcess,
-	ExcludeCurrentProcessShareableWindows,
-}
-
-enum WorkerRequest {
-	EnsureMonitor {
-		monitor: MonitorRect,
-	},
-	RefreshMonitor {
-		monitor: MonitorRect,
-	},
-	SampleCursor {
-		monitor: MonitorRect,
-		x_px: u32,
-		y_px: u32,
-		want_patch: bool,
-		patch_width_px: u32,
-		patch_height_px: u32,
-		reply_tx: Sender<Option<LiveCursorSample>>,
-	},
-	LatestRgbaSnapshot {
-		monitor: MonitorRect,
-		reply_tx: Sender<Option<Arc<MonitorImageSnapshot>>>,
-	},
-	LatestRgbaRegion {
-		monitor: MonitorRect,
-		rect_px: RectPoints,
-		reply_tx: Sender<Option<RgbaImage>>,
-	},
-	OrderedRgbaRegionsAfterSeq {
-		monitor: MonitorRect,
-		rect_px: RectPoints,
-		after_frame_seq: u64,
-		reply_tx: Sender<Option<Vec<OrderedRegionFrame>>>,
-	},
-	Shutdown,
-}
-
 pub(crate) struct OrderedRegionFrame {
 	pub(crate) frame_seq: u64,
 	pub(crate) captured_at: Instant,
@@ -330,6 +278,7 @@ impl MacLiveFrameStream {
 			},
 			Err(poisoned) => {
 				let mut guard = poisoned.into_inner();
+
 				*guard = Some(kind);
 			},
 		}
@@ -476,6 +425,7 @@ impl MacLiveFrameStream {
 
 		let frames =
 			self.shared_latest_frame.frames_after_seq_for_monitor(monitor.id, after_frame_seq);
+
 		if frames.is_empty() {
 			if self.shared_latest_frame.latest_frame_for_monitor(monitor.id).is_none() {
 				self.prime_monitor_nonblocking(monitor);
@@ -486,6 +436,7 @@ impl MacLiveFrameStream {
 
 		let stream_rect_px = self.stream_rect_for_requested_region(rect_px)?;
 		let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
+
 		(!frames.is_empty()).then_some(frames)
 	}
 
@@ -527,6 +478,7 @@ impl MacLiveFrameStream {
 		if self.shared_latest_frame.waiting_for_frame_after_setup(monitor.id) {
 			return false;
 		}
+
 		let Some(latest_frame) = self.shared_latest_frame.latest_frame_for_monitor(monitor.id)
 		else {
 			self.prime_monitor_nonblocking(monitor);
@@ -556,52 +508,6 @@ impl MacLiveFrameStream {
 	}
 }
 
-fn stream_rect_for_requested_region(
-	capture_target: StreamCaptureTarget,
-	requested_rect_px: RectPoints,
-) -> Option<RectPoints> {
-	match capture_target {
-		StreamCaptureTarget::FullMonitor => Some(requested_rect_px),
-		StreamCaptureTarget::Region(region) => {
-			let relative_x = requested_rect_px.x.checked_sub(region.rect_pixels.x)?;
-			let relative_y = requested_rect_px.y.checked_sub(region.rect_pixels.y)?;
-			let requested_right = requested_rect_px.x.checked_add(requested_rect_px.width)?;
-			let requested_bottom = requested_rect_px.y.checked_add(requested_rect_px.height)?;
-			let region_right = region.rect_pixels.x.checked_add(region.rect_pixels.width)?;
-			let region_bottom = region.rect_pixels.y.checked_add(region.rect_pixels.height)?;
-
-			if requested_right > region_right || requested_bottom > region_bottom {
-				return None;
-			}
-
-			Some(RectPoints::new(
-				relative_x,
-				relative_y,
-				requested_rect_px.width,
-				requested_rect_px.height,
-			))
-		},
-	}
-}
-
-fn should_refresh_monitor_frame(
-	latest_frame_seq: u64,
-	after_frame_seq: u64,
-	frame_age: Duration,
-	force_refresh: bool,
-) -> bool {
-	if latest_frame_seq > after_frame_seq {
-		return false;
-	}
-
-	if force_refresh {
-		let _ = frame_age;
-		return true;
-	}
-
-	frame_age > STREAM_REGION_FRAME_MAX_AGE
-}
-
 impl Drop for MacLiveFrameStream {
 	fn drop(&mut self) {
 		let _ = self.request_tx.send(WorkerRequest::Shutdown);
@@ -610,6 +516,12 @@ impl Drop for MacLiveFrameStream {
 			let _ = worker.join();
 		}
 	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StreamCaptureRegion {
+	rect_points: RectPoints,
+	rect_pixels: RectPoints,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -654,25 +566,6 @@ struct SharedLatestFrame {
 	pending_refresh_monitor: Mutex<Option<PendingMonitorRequest>>,
 	waiting_for_frame_until: Mutex<Option<(u32, Instant)>>,
 }
-
-#[derive(Clone, Copy)]
-struct PendingMonitorRequest {
-	monitor_id: u32,
-	stalled_after_frame_seq: u64,
-	started_at: Instant,
-}
-
-struct StoreFrameOutcome {
-	completed_ensure: bool,
-	completed_refresh: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StreamRequestProgress {
-	AwaitingFirstFrame,
-	Settled,
-}
-
 impl SharedLatestFrame {
 	fn store(&self, monitor_id: u32, frame: &QueuedPixelBufferFrame) -> StoreFrameOutcome {
 		match self.frames.lock() {
@@ -681,13 +574,16 @@ impl SharedLatestFrame {
 					monitor_id,
 					frames: VecDeque::with_capacity(STREAM_FRAME_QUEUE_CAPACITY),
 				});
+
 				if shared.monitor_id != monitor_id {
 					shared.monitor_id = monitor_id;
+
 					shared.frames.clear();
 				}
 				if shared.frames.len() >= STREAM_FRAME_QUEUE_CAPACITY {
 					shared.frames.pop_front();
 				}
+
 				shared.frames.push_back(frame.clone());
 			},
 			Err(poisoned) => {
@@ -696,13 +592,16 @@ impl SharedLatestFrame {
 					monitor_id,
 					frames: VecDeque::with_capacity(STREAM_FRAME_QUEUE_CAPACITY),
 				});
+
 				if shared.monitor_id != monitor_id {
 					shared.monitor_id = monitor_id;
+
 					shared.frames.clear();
 				}
 				if shared.frames.len() >= STREAM_FRAME_QUEUE_CAPACITY {
 					shared.frames.pop_front();
 				}
+
 				shared.frames.push_back(frame.clone());
 			},
 		}
@@ -712,7 +611,6 @@ impl SharedLatestFrame {
 
 	fn complete_pending_requests_for_stored_frame(&self, monitor_id: u32) -> StoreFrameOutcome {
 		self.clear_waiting_for_frame(monitor_id);
-
 		StoreFrameOutcome {
 			completed_ensure: self.finish_ensure_monitor(monitor_id),
 			completed_refresh: self.finish_refresh_monitor(monitor_id),
@@ -843,6 +741,7 @@ impl SharedLatestFrame {
 					{
 						return false;
 					}
+
 					tracing::info!(
 						op = "live_frame_stream.stale_pending_refresh_recovered",
 						monitor_id,
@@ -888,6 +787,7 @@ impl SharedLatestFrame {
 					{
 						return false;
 					}
+
 					tracing::info!(
 						op = "live_frame_stream.stale_pending_refresh_recovered",
 						monitor_id,
@@ -947,12 +847,14 @@ impl SharedLatestFrame {
 				let Some((pending_monitor_id, until)) = *guard else {
 					return false;
 				};
+
 				if pending_monitor_id != monitor_id {
 					return false;
 				}
 				if now < until {
 					return true;
 				}
+
 				*guard = None;
 			},
 			Err(poisoned) => {
@@ -960,12 +862,14 @@ impl SharedLatestFrame {
 				let Some((pending_monitor_id, until)) = *guard else {
 					return false;
 				};
+
 				if pending_monitor_id != monitor_id {
 					return false;
 				}
 				if now < until {
 					return true;
 				}
+
 				*guard = None;
 			},
 		}
@@ -1014,6 +918,18 @@ impl SharedLatestFrame {
 	}
 }
 
+#[derive(Clone, Copy)]
+struct PendingMonitorRequest {
+	monitor_id: u32,
+	stalled_after_frame_seq: u64,
+	started_at: Instant,
+}
+
+struct StoreFrameOutcome {
+	completed_ensure: bool,
+	completed_refresh: bool,
+}
+
 struct StreamOutputIvars {
 	monitor_id: u32,
 	frames: Mutex<VecDeque<QueuedPixelBufferFrame>>,
@@ -1055,6 +971,69 @@ impl CurrentProcessExceptionWindows {
 	fn complete(&self) -> bool {
 		self.missing_window_ids.is_empty()
 	}
+}
+
+struct RefreshStreamArgs<'a> {
+	state: &'a mut Option<StreamState>,
+	last_setup_attempt_at: &'a mut Option<Instant>,
+	monitor: MonitorRect,
+	filter: &'a StreamFilterConfig,
+	capture_target: StreamCaptureTarget,
+	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	frame_seq_counter: Arc<AtomicU64>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamCaptureTarget {
+	FullMonitor,
+	Region(StreamCaptureRegion),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamFilterMode {
+	ExcludeCurrentProcess,
+	ExcludeCurrentProcessShareableWindows,
+}
+
+enum WorkerRequest {
+	EnsureMonitor {
+		monitor: MonitorRect,
+	},
+	RefreshMonitor {
+		monitor: MonitorRect,
+	},
+	SampleCursor {
+		monitor: MonitorRect,
+		x_px: u32,
+		y_px: u32,
+		want_patch: bool,
+		patch_width_px: u32,
+		patch_height_px: u32,
+		reply_tx: Sender<Option<LiveCursorSample>>,
+	},
+	LatestRgbaSnapshot {
+		monitor: MonitorRect,
+		reply_tx: Sender<Option<Arc<MonitorImageSnapshot>>>,
+	},
+	LatestRgbaRegion {
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		reply_tx: Sender<Option<RgbaImage>>,
+	},
+	OrderedRgbaRegionsAfterSeq {
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		after_frame_seq: u64,
+		reply_tx: Sender<Option<Vec<OrderedRegionFrame>>>,
+	},
+	Shutdown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamRequestProgress {
+	AwaitingFirstFrame,
+	Settled,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1105,6 +1084,52 @@ impl StreamOutput {
 				.collect(),
 		}
 	}
+}
+
+fn stream_rect_for_requested_region(
+	capture_target: StreamCaptureTarget,
+	requested_rect_px: RectPoints,
+) -> Option<RectPoints> {
+	match capture_target {
+		StreamCaptureTarget::FullMonitor => Some(requested_rect_px),
+		StreamCaptureTarget::Region(region) => {
+			let relative_x = requested_rect_px.x.checked_sub(region.rect_pixels.x)?;
+			let relative_y = requested_rect_px.y.checked_sub(region.rect_pixels.y)?;
+			let requested_right = requested_rect_px.x.checked_add(requested_rect_px.width)?;
+			let requested_bottom = requested_rect_px.y.checked_add(requested_rect_px.height)?;
+			let region_right = region.rect_pixels.x.checked_add(region.rect_pixels.width)?;
+			let region_bottom = region.rect_pixels.y.checked_add(region.rect_pixels.height)?;
+
+			if requested_right > region_right || requested_bottom > region_bottom {
+				return None;
+			}
+
+			Some(RectPoints::new(
+				relative_x,
+				relative_y,
+				requested_rect_px.width,
+				requested_rect_px.height,
+			))
+		},
+	}
+}
+
+fn should_refresh_monitor_frame(
+	latest_frame_seq: u64,
+	after_frame_seq: u64,
+	frame_age: Duration,
+	force_refresh: bool,
+) -> bool {
+	if latest_frame_seq > after_frame_seq {
+		return false;
+	}
+	if force_refresh {
+		let _ = frame_age;
+
+		return true;
+	}
+
+	frame_age > STREAM_REGION_FRAME_MAX_AGE
 }
 
 fn stream_worker_loop(
@@ -1193,6 +1218,7 @@ fn handle_stream_worker_request(
 				patch_height_px,
 				reply_tx,
 			);
+
 			true
 		},
 		WorkerRequest::LatestRgbaSnapshot { monitor, reply_tx } => {
@@ -1207,6 +1233,7 @@ fn handle_stream_worker_request(
 				shared_latest_frame,
 				reply_tx,
 			);
+
 			true
 		},
 		WorkerRequest::LatestRgbaRegion { monitor, rect_px, reply_tx } => {
@@ -1222,6 +1249,7 @@ fn handle_stream_worker_request(
 				shared_latest_frame,
 				reply_tx,
 			);
+
 			true
 		},
 		WorkerRequest::OrderedRgbaRegionsAfterSeq {
@@ -1244,6 +1272,7 @@ fn handle_stream_worker_request(
 				reply_tx,
 				false,
 			);
+
 			true
 		},
 		WorkerRequest::Shutdown => false,
@@ -1267,6 +1296,7 @@ fn handle_ensure_monitor_request(
 		current_monitor_id = state.as_ref().map(|current| current.monitor_id),
 		"Handling an asynchronous ScreenCaptureKit ensure request."
 	);
+
 	let progress = ensure_stream(
 		state,
 		last_setup_attempt_at,
@@ -1278,6 +1308,7 @@ fn handle_ensure_monitor_request(
 		frame_seq_counter,
 		shared_latest_frame.clone(),
 	);
+
 	if progress == StreamRequestProgress::Settled {
 		shared_latest_frame.finish_ensure_monitor(monitor.id);
 	}
@@ -1314,6 +1345,7 @@ fn handle_refresh_monitor_request(
 		current_monitor_id = state.as_ref().map(|current| current.monitor_id),
 		"Handling an asynchronous ScreenCaptureKit refresh request."
 	);
+
 	let progress = refresh_stream_nonblocking(
 		state,
 		last_setup_attempt_at,
@@ -1324,6 +1356,7 @@ fn handle_refresh_monitor_request(
 		frame_seq_counter,
 		shared_latest_frame.clone(),
 	);
+
 	if progress == StreamRequestProgress::Settled {
 		shared_latest_frame.finish_refresh_monitor(monitor.id);
 	}
@@ -1506,6 +1539,7 @@ fn refresh_stream_nonblocking(
 			backoff_ms = STREAM_SETUP_BACKOFF.as_millis(),
 			"Skipped ScreenCaptureKit refresh because setup backoff is still active."
 		);
+
 		return StreamRequestProgress::Settled;
 	}
 
@@ -1516,6 +1550,7 @@ fn refresh_stream_nonblocking(
 			current_monitor_id = state.as_ref().map(|current| current.monitor_id),
 			"Refresh request found no matching live stream and is falling back to ensure."
 		);
+
 		return ensure_stream(
 			state,
 			last_setup_attempt_at,
@@ -1577,6 +1612,7 @@ fn ensure_stream(
 			backoff_ms = setup_backoff.as_millis(),
 			"Skipped ScreenCaptureKit setup because the current setup backoff window is still active."
 		);
+
 		return StreamRequestProgress::Settled;
 	}
 
@@ -1597,6 +1633,7 @@ fn ensure_stream(
 			had_existing_state = state.is_some(),
 			"ScreenCaptureKit setup did not produce a usable live stream."
 		);
+
 		return StreamRequestProgress::Settled;
 	};
 
@@ -1607,6 +1644,7 @@ fn ensure_stream(
 				monitor_id = monitor.id,
 				"Retained the current live stream because the replacement setup still lacked complete self-capture exception windows."
 			);
+
 			let mut next_state = Some(next_state);
 
 			teardown_stream(&mut next_state);
@@ -1617,7 +1655,9 @@ fn ensure_stream(
 		let mut previous_state = state.replace(next_state);
 
 		teardown_stream(&mut previous_state);
+
 		shared_latest_frame.mark_waiting_for_frame(monitor.id);
+
 		tracing::info!(
 			op = "live_frame_stream.ensure_stream_ready",
 			monitor_id = monitor.id,
@@ -1633,8 +1673,11 @@ fn ensure_stream(
 	teardown_stream(state);
 
 	let exceptions_complete = next_state.self_capture_exception_window_ids_complete;
+
 	*state = Some(next_state);
+
 	shared_latest_frame.mark_waiting_for_frame(monitor.id);
+
 	tracing::info!(
 		op = "live_frame_stream.ensure_stream_ready",
 		monitor_id = monitor.id,
@@ -1671,7 +1714,6 @@ fn latest_fresh_rgba_region(
 		frame_seq_counter.clone(),
 		shared_latest_frame.clone(),
 	);
-
 	let now = Instant::now();
 	let stream_state = state.as_ref()?;
 
@@ -1691,7 +1733,6 @@ fn latest_fresh_rgba_region(
 		frame_seq_counter,
 		shared_latest_frame,
 	});
-
 	let min_captured_at = Instant::now();
 	let deadline = min_captured_at + STREAM_REGION_FRAME_REFRESH_TIMEOUT;
 
@@ -1737,7 +1778,6 @@ fn ordered_queued_rgba_regions_after_seq_nonblocking(
 		frame_seq_counter,
 		shared_latest_frame,
 	);
-
 	let stream_state = state.as_ref()?;
 	let frames = stream_state.output.queued_frames_after_seq(after_frame_seq);
 	let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
@@ -1770,7 +1810,6 @@ fn ordered_fresh_rgba_regions_after_seq(
 		frame_seq_counter.clone(),
 		shared_latest_frame.clone(),
 	);
-
 	let stream_state = state.as_ref()?;
 	let frames = stream_state.output.queued_frames_after_seq(after_frame_seq);
 	let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
@@ -1797,7 +1836,6 @@ fn ordered_fresh_rgba_regions_after_seq(
 		frame_seq_counter,
 		shared_latest_frame,
 	});
-
 	let min_captured_at = Instant::now();
 	let deadline = min_captured_at + STREAM_REGION_FRAME_REFRESH_TIMEOUT;
 
@@ -1828,12 +1866,14 @@ fn refresh_stream(args: RefreshStreamArgs<'_>) -> StreamRequestProgress {
 		frame_seq_counter,
 		shared_latest_frame,
 	} = args;
+
 	tracing::info!(
 		op = "live_frame_stream.refresh_stream_begin",
 		monitor_id = monitor.id,
 		current_monitor_id = state.as_ref().map(|current| current.monitor_id),
 		"Refreshing the ScreenCaptureKit live stream."
 	);
+
 	*last_setup_attempt_at = Some(Instant::now());
 
 	let Some(next_state) = setup_stream_for_monitor(
@@ -1851,7 +1891,9 @@ fn refresh_stream(args: RefreshStreamArgs<'_>) -> StreamRequestProgress {
 	let mut previous_state = state.replace(next_state);
 
 	teardown_stream(&mut previous_state);
+
 	shared_latest_frame.mark_waiting_for_frame(monitor.id);
+
 	tracing::info!(
 		op = "live_frame_stream.refresh_stream_ready",
 		monitor_id = monitor.id,
@@ -1863,26 +1905,17 @@ fn refresh_stream(args: RefreshStreamArgs<'_>) -> StreamRequestProgress {
 	StreamRequestProgress::AwaitingFirstFrame
 }
 
-struct RefreshStreamArgs<'a> {
-	state: &'a mut Option<StreamState>,
-	last_setup_attempt_at: &'a mut Option<Instant>,
-	monitor: MonitorRect,
-	filter: &'a StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-}
-
 fn teardown_stream(state: &mut Option<StreamState>) {
 	let Some(state) = state.take() else {
 		return;
 	};
+
 	tracing::info!(
 		op = "live_frame_stream.teardown_stream",
 		monitor_id = state.monitor_id,
 		"Stopping the current ScreenCaptureKit live stream."
 	);
+
 	let stop_block = RcBlock::new(|_err: *mut NSError| {});
 
 	unsafe { state.stream.stopCaptureWithCompletionHandler(Some(&stop_block)) };
@@ -1983,12 +2016,16 @@ fn setup_stream_for_monitor(
 	.is_err()
 	{
 		log_add_stream_output_failed(monitor.id, filter_mode);
+
 		return None;
 	}
+
 	if let Err(error) = start_capture_blocking(&stream) {
 		log_start_capture_failed(monitor.id, filter_mode, &error);
+
 		return None;
 	}
+
 	tracing::info!(
 		op = "live_frame_stream.setup_stream_ready",
 		monitor_id = monitor.id,
@@ -2563,9 +2600,9 @@ fn ordered_rgba_regions_from_frames(
 
 #[cfg(test)]
 mod tests {
+	use std::ptr::{self, NonNull};
 	use std::sync::{Arc, atomic::AtomicU64};
 	use std::time::Duration;
-	use std::{ptr, ptr::NonNull};
 
 	use objc2_core_foundation::CFRetained;
 	use objc2_core_video::{CVPixelBufferCreate, kCVPixelFormatType_32BGRA, kCVReturnSuccess};
@@ -2585,6 +2622,7 @@ mod tests {
 				NonNull::from(&mut buffer),
 			)
 		};
+
 		assert_eq!(res, kCVReturnSuccess);
 
 		live_frame_stream_macos::SharedPixelBuffer(unsafe {
@@ -2680,6 +2718,7 @@ mod tests {
 		let now = std::time::Instant::now();
 
 		assert!(shared.begin_ensure_monitor(7));
+
 		shared.mark_waiting_for_frame_until(7, now + Duration::from_secs(1));
 
 		let outcome = shared.complete_pending_requests_for_stored_frame(7);
@@ -2696,6 +2735,7 @@ mod tests {
 		let now = std::time::Instant::now();
 
 		assert!(shared.begin_refresh_monitor(7, 11, now));
+
 		shared.mark_waiting_for_frame_until(7, now + Duration::from_secs(1));
 
 		let outcome = shared.complete_pending_requests_for_stored_frame(9);
@@ -2712,6 +2752,7 @@ mod tests {
 		let now = std::time::Instant::now();
 
 		assert!(shared.begin_refresh_monitor(7, 11, now));
+
 		shared.mark_waiting_for_frame_until(7, now + Duration::from_secs(1));
 
 		let outcome = shared.complete_pending_requests_for_stored_frame(7);
@@ -2771,7 +2812,7 @@ mod tests {
 		let monitor = crate::state::MonitorRect {
 			id: 7,
 			origin: crate::state::GlobalPoint::new(0, 0),
-			width: 1440,
+			width: 1_440,
 			height: 900,
 			scale_factor_x1000: 2_000,
 		};
@@ -2779,6 +2820,7 @@ mod tests {
 		let mut last_setup_attempt_at = None;
 
 		assert!(shared.begin_refresh_monitor(monitor.id, 11, now));
+
 		shared.mark_waiting_for_frame_until(monitor.id, now + Duration::from_secs(1));
 
 		assert!(live_frame_stream_macos::handle_refresh_monitor_request(
@@ -2823,7 +2865,7 @@ mod tests {
 		let monitor = crate::state::MonitorRect {
 			id: 7,
 			origin: crate::state::GlobalPoint::new(0, 0),
-			width: 1440,
+			width: 1_440,
 			height: 900,
 			scale_factor_x1000: 2_000,
 		};
@@ -2833,7 +2875,6 @@ mod tests {
 			captured_at: std::time::Instant::now(),
 			pixel_buffer: test_pixel_buffer(),
 		};
-
 		let _ = stream.shared_latest_frame.store(monitor.id, &frame);
 
 		assert!(stream.ordered_rgba_regions_after_seq_nonblocking(monitor, rect, 4).is_none());
@@ -2878,7 +2919,7 @@ mod tests {
 		let monitor = crate::state::MonitorRect {
 			id: 7,
 			origin: crate::state::GlobalPoint::new(0, 0),
-			width: 1440,
+			width: 1_440,
 			height: 900,
 			scale_factor_x1000: 2_000,
 		};
@@ -2898,7 +2939,7 @@ mod tests {
 		let monitor = crate::state::MonitorRect {
 			id: 7,
 			origin: crate::state::GlobalPoint::new(0, 0),
-			width: 1440,
+			width: 1_440,
 			height: 900,
 			scale_factor_x1000: 2_000,
 		};

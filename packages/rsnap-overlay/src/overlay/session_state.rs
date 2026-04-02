@@ -1,7 +1,10 @@
+use std::collections::VecDeque;
 use std::{
 	collections::HashMap,
 	time::{Duration, Instant},
 };
+
+use image::RgbaImage;
 
 use crate::overlay::{
 	DeviceCursorPointSource, FrozenToolbarTool, GlobalPoint, LIVE_PRESENT_INTERVAL_MIN,
@@ -195,7 +198,7 @@ pub(super) struct ScrollCaptureState {
 	#[cfg(target_os = "macos")]
 	pub(super) live_stream: Option<MacLiveFrameStream>,
 	#[cfg(target_os = "macos")]
-	pub(super) live_stream_backlog: std::collections::VecDeque<ScrollCaptureLiveFrame>,
+	pub(super) live_stream_backlog: VecDeque<ScrollCaptureLiveFrame>,
 	#[cfg(target_os = "macos")]
 	pub(super) last_stream_frame_seq: u64,
 	#[cfg(target_os = "macos")]
@@ -222,10 +225,10 @@ pub(super) struct ScrollCaptureState {
 	#[cfg(all(test, target_os = "macos"))]
 	pub(super) force_worker_sampling_in_tests: bool,
 	pub(super) session: Option<ScrollSession>,
-	pub(super) preview_committed_image: Option<image::RgbaImage>,
-	pub(super) preview_latest_frame: Option<image::RgbaImage>,
-	pub(super) preview_display_image: Option<image::RgbaImage>,
-	pub(super) retained_overlay_preview_image: Option<image::RgbaImage>,
+	pub(super) preview_committed_image: Option<RgbaImage>,
+	pub(super) preview_latest_frame: Option<RgbaImage>,
+	pub(super) preview_display_image: Option<RgbaImage>,
+	pub(super) retained_overlay_preview_image: Option<RgbaImage>,
 	pub(super) retained_overlay_preview_motion_rows_hint: Option<u32>,
 	pub(super) last_overlay_preview_motion_rows_hint: Option<u32>,
 	pub(super) last_overlay_preview_provisional_motion_rows_hint: Option<u32>,
@@ -248,7 +251,7 @@ pub(super) struct ScrollCaptureState {
 pub(super) struct ScrollCaptureLiveFrame {
 	pub(super) frame_seq: u64,
 	pub(super) captured_at: Instant,
-	pub(super) image: image::RgbaImage,
+	pub(super) image: RgbaImage,
 }
 
 #[cfg(target_os = "macos")]
