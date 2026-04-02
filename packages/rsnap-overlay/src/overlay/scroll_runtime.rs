@@ -1,4 +1,6 @@
-use std::time::{Duration, Instant};
+#[cfg(target_os = "macos")]
+use std::time::Duration;
+use std::time::Instant;
 
 use color_eyre::Result;
 use image::RgbaImage;
