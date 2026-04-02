@@ -1,12 +1,14 @@
+pub(crate) mod replay_support;
+
 mod hud_helpers;
 mod image_helpers;
 mod output;
-pub(crate) mod replay_support;
 mod scroll_runtime;
 mod session_state;
 mod trace_recording;
 mod window_runtime;
 
+use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
 use std::mem;
@@ -27,7 +29,6 @@ use std::{
 use color_eyre::eyre::{self, Result, WrapErr};
 #[cfg(not(target_os = "macos"))]
 use device_query::{DeviceQuery, Keycode};
-use egui::ColorImage;
 use egui::FullOutput;
 use egui::Mesh;
 use egui::Painter;
@@ -36,9 +37,10 @@ use egui::TextureId;
 use egui::TextureOptions;
 use egui::Ui;
 use egui::{
-	self, Align, Align2, Color32, CornerRadius, Event, FontDefinitions, FontFamily, FontId, Frame,
-	Layout, Margin, PointerButton, Pos2, Rect, Vec2,
+	self, Align2, Color32, CornerRadius, Event, FontDefinitions, FontFamily, FontId, Frame, Layout,
+	Margin, PointerButton, Pos2, Rect, Vec2,
 };
+use egui::{Align, ColorImage};
 use egui::{
 	Area, CentralPanel, ClippedPrimitive, Id, LayerId, Order, RichText, Sense, Shape, Stroke,
 	StrokeKind, UiBuilder, ViewportId, Visuals,
@@ -137,7 +139,7 @@ use self::trace_recording::{
 use crate::backend;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
-use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
+use crate::scroll_capture::{self, ScrollDirection, ScrollObserveOutcome, ScrollSession};
 use crate::state::LiveCursorSample;
 use crate::worker::CapturedMonitorRegionResult;
 use crate::{
@@ -303,8 +305,7 @@ const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
 const SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS: f64 = 360.0;
 const SCROLL_PREVIEW_WINDOW_MARGIN_POINTS: i32 = 16;
 const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
-const SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL: Duration =
-	Duration::from_millis(60);
+const SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL: Duration = Duration::from_millis(60);
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE: Duration = Duration::from_millis(180);
 const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
@@ -1988,9 +1989,11 @@ impl OverlaySession {
 		let consumed_live_stream_stale_grace = false;
 		let allow_gate_bypass = allow_stale_input || consumed_live_stream_stale_grace;
 		let motion_rows_hint = self.scroll_capture_commit_motion_rows_hint_at(observation_at);
+
 		if !allow_gate_bypass && prior_block_reason.is_some() {
 			return Some(Ok(ScrollObserveOutcome::NoChange));
 		}
+
 		let result = {
 			let Some(session) = self.scroll_capture.session.as_mut() else {
 				self.scroll_capture_set_error("Scroll capture session is unavailable.");
@@ -2004,6 +2007,7 @@ impl OverlaySession {
 				allow_post_stall_burst_search,
 			)
 		};
+
 		if let Ok(outcome) = &result {
 			self.consume_scroll_capture_downward_motion_rows_for_outcome(outcome);
 		}
@@ -2016,9 +2020,8 @@ impl OverlaySession {
 			return None;
 		}
 
-		let Some(input_direction_at) = self.scroll_capture.input_direction_at else {
-			return None;
-		};
+		let input_direction_at = self.scroll_capture.input_direction_at?;
+
 		if !self.scroll_capture.input_gesture_active
 			&& observation_at.saturating_duration_since(input_direction_at)
 				> SCROLL_CAPTURE_INPUT_FRESHNESS
@@ -2036,6 +2039,7 @@ impl OverlaySession {
 
 	fn sync_scroll_preview_segments(&mut self) {
 		let image = self.current_scroll_preview_render_image();
+
 		{
 			let Some(preview) = self.scroll_preview_window.as_mut() else {
 				return;
@@ -2057,6 +2061,7 @@ impl OverlaySession {
 
 	fn refresh_scroll_preview_display_image(&mut self) {
 		let motion_rows_hint = None;
+
 		self.scroll_capture.last_overlay_preview_motion_rows_hint = motion_rows_hint;
 		self.scroll_capture.last_overlay_preview_provisional_motion_rows_hint = None;
 		self.scroll_capture.last_overlay_preview_existing_candidate_height = None;
@@ -2071,6 +2076,7 @@ impl OverlaySession {
 		self.scroll_capture.last_overlay_preview_latest_frame_present =
 			self.scroll_capture.preview_latest_frame.is_some();
 		self.scroll_capture.last_overlay_preview_used_provisional = false;
+
 		if let Some(session) = self.scroll_capture.session.as_mut() {
 			self.scroll_capture.preview_committed_image = Some(session.export_image().clone());
 			self.scroll_capture.preview_display_image =
@@ -2081,7 +2087,7 @@ impl OverlaySession {
 
 		self.scroll_capture.preview_display_image =
 			self.scroll_capture.preview_committed_image.as_ref().map(|base_preview| {
-				crate::scroll_capture::compose_provisional_preview_image(
+				scroll_capture::compose_provisional_preview_image(
 					base_preview,
 					self.scroll_capture.preview_latest_frame.as_ref(),
 					motion_rows_hint,
@@ -2098,6 +2104,7 @@ impl OverlaySession {
 
 	fn scroll_preview_display_size_points(&self) -> Option<Vec2> {
 		let [width_px, height_px] = self.scroll_capture_preview_dimensions()?;
+
 		if width_px == 0 || height_px == 0 {
 			return None;
 		}
@@ -5216,6 +5223,7 @@ impl OverlaySession {
 		}
 
 		let remaining = self.scroll_capture.downward_motion_rows_pending - f64::from(consumed_rows);
+
 		self.scroll_capture.downward_motion_rows_pending = remaining.max(0.0);
 	}
 
@@ -5352,6 +5360,7 @@ impl OverlaySession {
 
 		#[cfg(target_os = "macos")]
 		let _cursor_inside_capture_rect = capture_rect.contains(cursor_pixels);
+
 		#[cfg(target_os = "macos")]
 		if delta_y != 0.0
 			&& !gesture_ended
@@ -5436,7 +5445,6 @@ impl OverlaySession {
 		if !self.scroll_capture_has_fresh_downward_backlog_at(now) {
 			return false;
 		}
-
 		if self.scroll_capture.input_gesture_active {
 			return false;
 		}
@@ -5847,7 +5855,7 @@ impl OverlaySession {
 				self.scroll_frame_waker.clone(),
 			)),
 			#[cfg(target_os = "macos")]
-			live_stream_backlog: std::collections::VecDeque::new(),
+			live_stream_backlog: VecDeque::new(),
 			#[cfg(target_os = "macos")]
 			last_stream_frame_seq: 0,
 			#[cfg(target_os = "macos")]
@@ -5952,6 +5960,7 @@ impl OverlaySession {
 			}
 
 			let base_frame_dimensions = base_frame.dimensions();
+
 			self.scroll_capture = match self.build_scroll_capture_state(
 				monitor,
 				capture_rect_points,
@@ -5970,7 +5979,6 @@ impl OverlaySession {
 			if let Some(hook) = self.scroll_capture_started_hook.clone() {
 				hook();
 			}
-
 			if let Some(trace_recorder) = self.scroll_capture.trace_recorder.as_ref() {
 				tracing::info!(
 					op = "scroll_capture.trace_recording_enabled",
@@ -6005,7 +6013,6 @@ impl OverlaySession {
 				preview.window.set_visible(true);
 				preview.window.request_redraw();
 			}
-
 			if let (Some(monitor), Some(live_stream)) =
 				(self.scroll_capture.monitor, self.scroll_capture.live_stream.as_ref())
 			{
@@ -6062,8 +6069,8 @@ impl OverlaySession {
 		if !session.undo_last_append() {
 			return;
 		}
-		self.refresh_scroll_preview_committed_image();
 
+		self.refresh_scroll_preview_committed_image();
 		self.clear_scroll_capture_inflight_request();
 
 		#[cfg(target_os = "macos")]
@@ -6094,7 +6101,6 @@ impl OverlaySession {
 
 			return;
 		}
-
 		if self.scroll_capture.active {
 			self.maybe_tick_scroll_capture();
 			self.refresh_scroll_preview_committed_image();
@@ -6837,7 +6843,6 @@ impl OverlaySession {
 		if self.scroll_capture.overlay_mouse_passthrough_persistent {
 			return;
 		}
-
 		if !self.scroll_capture.overlay_mouse_passthrough_active {
 			return;
 		}
@@ -7255,6 +7260,7 @@ impl OverlaySession {
 			OverlayExit::Saved(path) => ("saved", None, Some(path.display().to_string()), None),
 			OverlayExit::Error(message) => ("error", None, None, Some(message.as_str())),
 		};
+
 		tracing::info!(
 			op = "overlay.exit_begin",
 			exit_kind,
@@ -7270,25 +7276,30 @@ impl OverlaySession {
 			last_event_detail = ?self.event_loop_last_progress_detail,
 			"Beginning overlay exit cleanup."
 		);
+
 		if self.scroll_capture.active {
 			self.maybe_tick_scroll_capture();
 			self.refresh_scroll_preview_committed_image();
 			self.refresh_scroll_preview_display_image();
 			self.sync_scroll_preview_segments();
 		}
+
 		let scroll_capture_final_snapshot = self.scroll_capture_trace_snapshot_at(Instant::now());
 		let final_preview_image = self.current_scroll_preview_render_image();
+
 		if let (Some(trace_recorder), Some(session)) =
 			(self.scroll_capture.trace_recorder.as_mut(), self.scroll_capture.session.as_ref())
 		{
 			let final_preview_image =
 				final_preview_image.unwrap_or_else(|| session.preview_image().clone());
+
 			trace_recorder.finalize_session(
 				session,
 				&final_preview_image,
 				scroll_capture_final_snapshot,
 			);
 		}
+
 		#[cfg(target_os = "macos")]
 		self.set_scroll_overlay_mouse_passthrough(false);
 		self.windows.clear();
@@ -8009,6 +8020,7 @@ impl ScrollPreviewWindow {
 		match self.preview_image.as_mut() {
 			Some(strip) if strip.pixel_size == pixel_size => {
 				strip.texture.set(color_image, TextureOptions::LINEAR);
+
 				strip.pixel_size = pixel_size;
 				strip.rgba = rgba;
 				strip.size_points = size_points;
@@ -8057,7 +8069,7 @@ impl ScrollPreviewWindow {
 								(available.x / preview_image.size_points.x).clamp(0.05, 1.0);
 							let draw_size = preview_image.size_points * scale;
 
-							ui.with_layout(Layout::top_down(egui::Align::Center), |ui| {
+							ui.with_layout(Layout::top_down(Align::Center), |ui| {
 								ui.image((preview_image.texture.id(), draw_size));
 							});
 						} else {
@@ -12961,6 +12973,7 @@ mod tests {
 	use std::collections::VecDeque;
 	#[cfg(target_os = "macos")]
 	use std::sync::Arc;
+	use std::thread;
 	#[cfg(target_os = "macos")]
 	use std::time::Duration;
 	use std::time::Instant;
@@ -13119,12 +13132,12 @@ mod tests {
 		height: u32,
 		start_row: u32,
 	) -> image::RgbaImage {
-		let mut image = make_sparse_worker_capture_window(width, height, start_row);
 		let scrollbar_left = width.saturating_sub(18);
 		let content_left = 56_u32;
 		let content_right = width.saturating_sub(48);
 		let heading_width = 220_u32;
 		let paragraph_width = content_right.saturating_sub(content_left);
+		let mut image = make_sparse_worker_capture_window(width, height, start_row);
 
 		for y in 0..height {
 			let document_row = start_row.saturating_add(y);
@@ -13136,19 +13149,19 @@ mod tests {
 			} else if document_row % 420 >= 54 && document_row % 420 < 220 {
 				if document_row % 24 < 3 {
 					let trim = ((document_row / 24) % 5) * 18;
+
 					for x in content_left
 						..content_left.saturating_add(paragraph_width.saturating_sub(trim))
 					{
 						image.put_pixel(x, y, Rgba([72, 72, 72, 255]));
 					}
 				}
-			} else if document_row % 420 >= 270 && document_row % 420 < 360 {
-				if document_row % 20 < 2 {
-					for x in content_left.saturating_add(20)
-						..content_left.saturating_add(paragraph_width.saturating_sub(70))
-					{
-						image.put_pixel(x, y, Rgba([98, 98, 98, 255]));
-					}
+			} else if document_row % 420 >= 270 && document_row % 420 < 360 && document_row % 20 < 2
+			{
+				for x in content_left.saturating_add(20)
+					..content_left.saturating_add(paragraph_width.saturating_sub(70))
+				{
+					image.put_pixel(x, y, Rgba([98, 98, 98, 255]));
 				}
 			}
 
@@ -13160,6 +13173,7 @@ mod tests {
 		let thumb_height = (height / 5).max(16);
 		let thumb_top = (start_row / 3) % height.max(thumb_height + 1);
 		let thumb_top = thumb_top.min(height.saturating_sub(thumb_height));
+
 		for y in thumb_top..thumb_top.saturating_add(thumb_height) {
 			for x in scrollbar_left.saturating_add(3)..width.saturating_sub(4) {
 				image.put_pixel(x, y, Rgba([96, 96, 96, 255]));
@@ -13184,10 +13198,12 @@ mod tests {
 	fn drain_scroll_capture_worker_until_idle(session: &mut OverlaySession) {
 		for _ in 0..64 {
 			let _ = session.drain_worker_responses();
+
 			if session.scroll_capture.inflight_request_id.is_none() {
 				return;
 			}
-			std::thread::sleep(Duration::from_millis(5));
+
+			thread::sleep(Duration::from_millis(5));
 		}
 
 		panic!(
@@ -14855,9 +14871,9 @@ mod tests {
 		let grown = make_scroll_capture_test_image(3, &[[20, 0, 0, 255]; 12]);
 		let mismatched_preview = RgbaImage::from_pixel(320, 40, Rgba([99, 0, 0, 255]));
 		let mut scroll_session = ScrollSession::new(base, 320).expect("scroll session");
-
 		let _ = scroll_session.observe_downward_sample(grown).expect("observe");
 		let expected_export = scroll_session.export_image().clone();
+
 		session.scroll_capture.active = true;
 		session.scroll_capture.session = Some(scroll_session);
 		session.scroll_capture.preview_display_image = Some(mismatched_preview.clone());
@@ -14867,8 +14883,8 @@ mod tests {
 
 	#[test]
 	fn current_scroll_preview_render_image_uses_preview_display_when_scroll_capture_is_inactive() {
-		let mut session = OverlaySession::new();
 		let preview = RgbaImage::from_pixel(320, 64, Rgba([42, 0, 0, 255]));
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.preview_display_image = Some(preview.clone());
 
@@ -14882,9 +14898,9 @@ mod tests {
 		let grown = make_scroll_capture_test_image(3, &[[20, 0, 0, 255]; 12]);
 		let mismatched_preview = RgbaImage::from_pixel(320, 40, Rgba([99, 0, 0, 255]));
 		let mut scroll_session = ScrollSession::new(base, 320).expect("scroll session");
-
 		let _ = scroll_session.observe_downward_sample(grown).expect("observe");
 		let expected_export = scroll_session.export_image().clone();
+
 		session.scroll_capture.active = true;
 		session.scroll_capture.session = Some(scroll_session);
 		session.scroll_capture.preview_display_image = Some(mismatched_preview.clone());
@@ -14902,13 +14918,13 @@ mod tests {
 		let base = make_scroll_capture_test_image(3, &[[10, 0, 0, 255]; 8]);
 		let grown = make_scroll_capture_test_image(3, &[[20, 0, 0, 255]; 12]);
 		let mut scroll_session = ScrollSession::new(base, 320).expect("scroll session");
-
 		let _ = scroll_session.observe_downward_sample(grown).expect("observe");
 		let expected_committed = scroll_session.export_image().clone();
 		let expected_render = scroll_session.export_image().clone();
 
 		session.scroll_capture.active = true;
 		session.scroll_capture.session = Some(scroll_session);
+
 		session.refresh_scroll_preview_committed_image();
 		session.refresh_scroll_preview_display_image();
 
@@ -14952,11 +14968,11 @@ mod tests {
 		let mut scroll_session = ScrollSession::new(base, 320).expect("scroll session");
 		let _ = scroll_session.observe_downward_sample(grown).expect("observe");
 		let expected_export = scroll_session.export_image().clone();
-
 		let monitor = test_monitor();
 
 		session.state.begin_freeze(monitor);
 		session.state.finish_freeze(monitor, test_frozen_image());
+
 		session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 		session.authoritative_frozen_capture_ready = true;
@@ -15173,6 +15189,7 @@ mod tests {
 		let mut session = OverlaySession::new();
 
 		seed_ready_scroll_capture_selection(&mut session);
+
 		session.live_sample_stream = Some(MacLiveFrameStream::new());
 
 		let control = session.start_scroll_capture();
@@ -16419,6 +16436,7 @@ mod tests {
 		let mut session = OverlaySession::new();
 
 		seed_ready_scroll_capture_selection(&mut session);
+
 		let _ = session.start_scroll_capture();
 
 		session.toggle_scroll_capture_paused();
@@ -16785,9 +16803,9 @@ mod tests {
 			scale_factor_x1000: 1_000,
 		};
 		let capture_rect = RectPoints::new(100, 120, 200, 240);
-		let mut session = OverlaySession::new();
 		let base = make_sparse_worker_capture_window(512, 640, 0);
 		let next = make_sparse_worker_capture_window(512, 640, 90);
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.active = true;
 		session.scroll_capture.monitor = Some(monitor);
@@ -16828,9 +16846,9 @@ mod tests {
 	fn stale_same_direction_worker_frame_keeps_latched_worker_observation_context() {
 		let monitor = test_monitor();
 		let capture_rect = RectPoints::new(100, 120, 512, 640);
-		let mut session = OverlaySession::new();
 		let base = make_sparse_worker_capture_window(512, 640, 0);
 		let next = make_sparse_worker_capture_window(512, 640, 90);
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.active = true;
 		session.scroll_capture.monitor = Some(monitor);
@@ -17195,9 +17213,9 @@ mod tests {
 		let events = Arc::new([(1, event_at, 150.0, 160.0, -4.0, true, false)]);
 		let base_frame = make_scroll_capture_window(&document, 3, 0, 5);
 		let latest_frame = make_scroll_capture_window(&document, 3, 1, 5);
-		let mut session = OverlaySession::new();
 		let scroll_session = ScrollSession::new(base_frame.clone(), 320).unwrap();
 		let committed_preview = scroll_session.preview_image().clone();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.active = true;
 		session.scroll_capture.monitor = Some(monitor);
@@ -17251,10 +17269,12 @@ mod tests {
 		let moved_frame = make_scroll_capture_window(&document, 3, 1, 5);
 		let mut session = OverlaySession::new();
 		let mut scroll_session = ScrollSession::new(base_frame, 320).unwrap();
+
 		assert!(matches!(
 			scroll_session.observe_downward_sample(moved_frame.clone()).unwrap(),
 			ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 1 }
 		));
+
 		let committed_preview = scroll_session.preview_image().clone();
 
 		session.scroll_capture.active = true;
@@ -17307,21 +17327,31 @@ mod tests {
 		session.scroll_capture.monitor = Some(monitor);
 		session.scroll_capture.capture_rect_pixels = Some(rect);
 		session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
+
 		enable_test_worker_scroll_capture_path(&mut session);
 		set_scroll_capture_input(&mut session, ScrollDirection::Down);
+
 		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
 
 		session.maybe_tick_scroll_capture();
+
 		assert!(session.scroll_capture.inflight_request_id.is_some());
+
 		drain_scroll_capture_worker_until_idle(&mut session);
+
 		assert_eq!(scroll_capture_export_height(&session), 640);
 		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 0);
 
 		set_scroll_capture_input(&mut session, ScrollDirection::Down);
+
 		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
+
 		session.maybe_tick_scroll_capture();
+
 		assert!(session.scroll_capture.inflight_request_id.is_some());
+
 		drain_scroll_capture_worker_until_idle(&mut session);
+
 		assert_eq!(scroll_capture_export_height(&session), 724);
 		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
 	}
@@ -17345,20 +17375,26 @@ mod tests {
 		session.scroll_capture.monitor = Some(monitor);
 		session.scroll_capture.capture_rect_pixels = Some(rect);
 		session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
+
 		enable_test_worker_scroll_capture_path(&mut session);
 		set_scroll_capture_input(&mut session, ScrollDirection::Down);
+
 		session.scroll_capture.last_external_scroll_input_seq = 1;
 		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
 
 		session.maybe_tick_scroll_capture();
+
 		assert!(session.scroll_capture.inflight_request_id.is_some());
+
 		drain_scroll_capture_worker_until_idle(&mut session);
+
 		assert_eq!(scroll_capture_export_height(&session), 640);
 
 		session.scroll_capture.last_external_scroll_input_seq = 2;
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 		session.scroll_capture.input_direction_at = Some(Instant::now());
 		session.scroll_capture.input_gesture_active = true;
+
 		session.maybe_tick_scroll_capture();
 
 		assert!(
@@ -17367,6 +17403,7 @@ mod tests {
 		);
 
 		drain_scroll_capture_worker_until_idle(&mut session);
+
 		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
 		assert_eq!(scroll_capture_export_height(&session), 724);
 	}
@@ -17396,26 +17433,31 @@ mod tests {
 		session.scroll_capture.session = Some(
 			ScrollSession::new(make_browser_like_worker_capture_window(512, 640, 0), 320).unwrap(),
 		);
+
 		enable_test_worker_scroll_capture_path(&mut session);
 
 		for expected_top_y in [84_i32, 168, 252] {
 			let mut attempts = 0_u8;
+
 			while session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y()
 				< expected_top_y
 			{
 				attempts = attempts.saturating_add(1);
+
 				assert!(
 					attempts <= 4,
 					"worker path failed to recover to expected_top_y={expected_top_y}"
 				);
 
 				set_scroll_capture_input(&mut session, ScrollDirection::Down);
+
 				session.scroll_capture.last_external_scroll_input_seq =
 					session.scroll_capture.last_external_scroll_input_seq.saturating_add(1);
 				session.scroll_capture.next_sample_at =
 					Some(Instant::now() - Duration::from_millis(1));
 
 				session.maybe_tick_scroll_capture();
+
 				assert!(session.scroll_capture.inflight_request_id.is_some());
 
 				session.scroll_capture.last_external_scroll_input_seq =
@@ -17423,6 +17465,7 @@ mod tests {
 				session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 				session.scroll_capture.input_direction_at = Some(Instant::now());
 				session.scroll_capture.input_gesture_active = true;
+
 				drain_scroll_capture_worker_until_idle(&mut session);
 			}
 
@@ -17451,15 +17494,20 @@ mod tests {
 		session.scroll_capture.monitor = Some(monitor);
 		session.scroll_capture.capture_rect_pixels = Some(rect);
 		session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
+
 		enable_test_worker_scroll_capture_path(&mut session);
 		set_scroll_capture_input(&mut session, ScrollDirection::Down);
+
 		session.scroll_capture.last_external_scroll_input_seq = 1;
 		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
 
 		session.maybe_tick_scroll_capture();
+
 		assert!(session.scroll_capture.inflight_request_id.is_some());
+
 		session.scroll_capture.last_external_scroll_input_seq = 2;
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+
 		drain_scroll_capture_worker_until_idle(&mut session);
 
 		assert_eq!(scroll_capture_export_height(&session), 820);
@@ -17488,18 +17536,22 @@ mod tests {
 		session.scroll_capture.session = Some(
 			ScrollSession::new(make_browser_like_worker_capture_window(512, 640, 0), 320).unwrap(),
 		);
+
 		enable_test_worker_scroll_capture_path(&mut session);
 
 		for (step, expected_top_y) in [84_i32, 168, 252].into_iter().enumerate() {
 			set_scroll_capture_input(&mut session, ScrollDirection::Down);
+
 			session.scroll_capture.last_external_scroll_input_seq = (step as u64) + 1;
 			session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
 
 			session.maybe_tick_scroll_capture();
+
 			assert!(session.scroll_capture.inflight_request_id.is_some());
 
 			session.scroll_capture.last_external_scroll_input_seq = (step as u64) + 2;
 			session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+
 			drain_scroll_capture_worker_until_idle(&mut session);
 
 			assert_eq!(session.scroll_capture.inflight_request_id, None);
@@ -17531,15 +17583,20 @@ mod tests {
 		session.scroll_capture.monitor = Some(monitor);
 		session.scroll_capture.capture_rect_pixels = Some(rect);
 		session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
+
 		enable_test_worker_scroll_capture_path(&mut session);
 		set_scroll_capture_input(&mut session, ScrollDirection::Down);
+
 		session.scroll_capture.last_external_scroll_input_seq = 1;
 		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
 
 		session.maybe_tick_scroll_capture();
+
 		assert!(session.scroll_capture.inflight_request_id.is_some());
+
 		session.scroll_capture.last_external_scroll_input_seq = 2;
 		session.scroll_capture.input_direction = Some(ScrollDirection::Up);
+
 		drain_scroll_capture_worker_until_idle(&mut session);
 
 		assert_eq!(scroll_capture_export_height(&session), 640);
@@ -17564,14 +17621,19 @@ mod tests {
 		session.scroll_capture.monitor = Some(monitor);
 		session.scroll_capture.capture_rect_pixels = Some(rect);
 		session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
+
 		enable_test_worker_scroll_capture_path(&mut session);
 		set_scroll_capture_input(&mut session, ScrollDirection::Down);
+
 		session.scroll_capture.last_external_scroll_input_seq = 1;
 		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
 
 		session.maybe_tick_scroll_capture();
+
 		assert!(session.scroll_capture.inflight_request_id.is_some());
+
 		drain_scroll_capture_worker_until_idle(&mut session);
+
 		assert_eq!(session.scroll_capture.inflight_request_id, None);
 		assert_eq!(scroll_capture_export_height(&session), 640);
 
@@ -17579,6 +17641,7 @@ mod tests {
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 		session.scroll_capture.input_direction_at = Some(Instant::now());
 		session.scroll_capture.input_gesture_active = true;
+
 		session.maybe_tick_scroll_capture();
 
 		assert!(
@@ -17587,6 +17650,7 @@ mod tests {
 		);
 
 		drain_scroll_capture_worker_until_idle(&mut session);
+
 		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
 		assert_eq!(scroll_capture_export_height(&session), 724);
 	}
@@ -17613,14 +17677,19 @@ mod tests {
 		session.scroll_capture.monitor = Some(monitor);
 		session.scroll_capture.capture_rect_pixels = Some(rect);
 		session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
-		enable_test_worker_scroll_capture_path(&mut session);
 
+		enable_test_worker_scroll_capture_path(&mut session);
 		set_scroll_capture_input(&mut session, ScrollDirection::Down);
+
 		session.scroll_capture.last_external_scroll_input_seq = 1;
 		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
+
 		session.maybe_tick_scroll_capture();
+
 		assert!(session.scroll_capture.inflight_request_id.is_some());
+
 		drain_scroll_capture_worker_until_idle(&mut session);
+
 		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
 		assert_eq!(scroll_capture_export_height(&session), 724);
 
@@ -17629,14 +17698,19 @@ mod tests {
 		session.scroll_capture.input_direction_at = Some(Instant::now());
 		session.scroll_capture.input_gesture_active = true;
 		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
+
 		session.maybe_tick_scroll_capture();
+
 		assert!(session.scroll_capture.inflight_request_id.is_some());
+
 		drain_scroll_capture_worker_until_idle(&mut session);
+
 		assert_eq!(session.scroll_capture.inflight_request_id, None);
 		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
 		assert_eq!(scroll_capture_export_height(&session), 724);
 
 		session.maybe_tick_scroll_capture();
+
 		assert!(
 			session.scroll_capture.inflight_request_id.is_none(),
 			"duplicate committed worker frame should back off instead of immediately re-requesting"
@@ -17647,9 +17721,13 @@ mod tests {
 		session.scroll_capture.input_direction_at = Some(Instant::now());
 		session.scroll_capture.input_gesture_active = true;
 		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
+
 		session.maybe_tick_scroll_capture();
+
 		assert!(session.scroll_capture.inflight_request_id.is_some());
+
 		drain_scroll_capture_worker_until_idle(&mut session);
+
 		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 168);
 		assert_eq!(scroll_capture_export_height(&session), 808);
 	}
@@ -17711,7 +17789,9 @@ mod tests {
 		session.scroll_capture.monitor = Some(monitor);
 		session.scroll_capture.capture_rect_pixels = Some(rect);
 		session.scroll_capture.live_stream = Some(MacLiveFrameStream::new());
+
 		enable_test_worker_scroll_capture_path(&mut session);
+
 		session.set_external_scroll_input_drain_reader(Arc::new({
 			let events = Arc::clone(&events);
 
@@ -17735,8 +17815,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn force_stream_refresh_stays_disabled_while_downward_gesture_is_still_active() {
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 		session.scroll_capture.input_direction_at = Some(now);
@@ -17749,8 +17829,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn stale_stream_refresh_stays_disabled_while_gesture_is_still_active() {
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.input_gesture_active = true;
 		session.scroll_capture.last_stream_event_at = Some(
@@ -17764,8 +17844,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn stale_stream_refresh_reenables_after_gesture_ends() {
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.input_gesture_active = false;
 
@@ -17775,8 +17855,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn stale_stream_refresh_reenables_during_gesture_after_stream_goes_dead() {
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.input_gesture_active = true;
 		session.scroll_capture.last_stream_event_at = Some(
@@ -17791,8 +17871,8 @@ mod tests {
 	#[test]
 	fn post_stall_burst_search_stays_enabled_during_active_gesture_when_downward_backlog_is_fresh()
 	{
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.pending_post_stall_burst_after_seq = Some(80);
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
@@ -17806,8 +17886,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn force_stream_refresh_stays_enabled_for_fresh_pending_downward_motion_after_gesture_end() {
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 		session.scroll_capture.input_direction_at =
@@ -17821,8 +17901,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn force_stream_refresh_stops_after_downward_input_becomes_stale() {
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 		session.scroll_capture.input_direction_at =
@@ -17836,8 +17916,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn post_stall_burst_search_stays_enabled_while_fresh_downward_backlog_remains() {
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.pending_post_stall_burst_after_seq = Some(80);
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
@@ -17855,8 +17935,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn post_stall_burst_search_arms_for_large_capture_time_gap_even_when_frame_seq_is_contiguous() {
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 		session.scroll_capture.input_direction_at = Some(now);
@@ -17915,12 +17995,12 @@ mod tests {
 					.collect()
 			}
 		}));
+
 		session.test_push_scroll_capture_live_frame(ScrollCaptureLiveFrame {
 			frame_seq: 9,
 			captured_at,
 			image: make_scroll_capture_window(&document, 3, 0, 5),
 		});
-
 		session.test_consume_scroll_capture_backlog(1);
 
 		assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Down));
@@ -17931,8 +18011,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn post_stall_burst_search_does_not_arm_for_small_capture_time_gap() {
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 		session.scroll_capture.input_direction_at = Some(now);
@@ -17949,8 +18029,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn post_stall_burst_search_stops_after_downward_backlog_goes_stale() {
-		let mut session = OverlaySession::new();
 		let now = Instant::now();
+		let mut session = OverlaySession::new();
 
 		session.scroll_capture.pending_post_stall_burst_after_seq = Some(80);
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
@@ -18244,7 +18324,6 @@ mod tests {
 				growth_rows: 1,
 			})
 		);
-
 		assert_eq!(
 			session.scroll_capture.session.as_ref().unwrap().export_image().height(),
 			height_after_first_append + 1

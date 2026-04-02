@@ -961,6 +961,7 @@ fn rgba_image_from_cg_image(cg_image: &CGImage) -> Result<RgbaImage> {
 	let data = CGDataProvider::data(Some(data_provider.as_ref()))
 		.ok_or_else(|| eyre::eyre!("Failed to copy CGImage bytes"))?;
 	let bytes_per_row = CGImage::bytes_per_row(Some(cg_image));
+
 	rgba_image_from_bgra_rows(width, height, bytes_per_row, &data.to_vec())
 }
 
@@ -992,6 +993,7 @@ fn rgba_image_from_bgra_rows(
 	}
 
 	let mut buffer = Vec::with_capacity(width * height * 4);
+
 	for row in data[..required_len].chunks_exact(bytes_per_row) {
 		buffer.extend_from_slice(&row[..expected_row_bytes]);
 	}
@@ -1435,7 +1437,7 @@ fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
 
 #[cfg(test)]
 mod tests {
-	use crate::backend::{CaptureBackend, StubCaptureBackend};
+	use crate::backend::{self, CaptureBackend, StubCaptureBackend};
 	#[cfg(target_os = "macos")]
 	use crate::state::{GlobalPoint, MonitorRect, RectPoints};
 
@@ -1483,8 +1485,7 @@ mod tests {
 			130, 140, 150, 255, 160, 170, 180, 255, // extra row 2
 			190, 200, 210, 255, 220, 230, 240, 255, // extra row 3
 		];
-
-		let image = crate::backend::rgba_image_from_bgra_rows(width, height, bytes_per_row, &data)
+		let image = backend::rgba_image_from_bgra_rows(width, height, bytes_per_row, &data)
 			.expect("image should decode");
 
 		assert_eq!(image.dimensions(), (2, 2));
@@ -1496,7 +1497,7 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn rgba_image_from_bgra_rows_rejects_short_backing_store() {
-		let err = crate::backend::rgba_image_from_bgra_rows(
+		let err = backend::rgba_image_from_bgra_rows(
 			2,
 			2,
 			8,

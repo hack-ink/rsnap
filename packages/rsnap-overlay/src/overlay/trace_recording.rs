@@ -5,17 +5,16 @@ use std::{
 	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{self, Result, WrapErr};
 use directories::ProjectDirs;
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 
-use super::{MonitorRect, RectPoints, ScrollCaptureFrameSource};
+use crate::overlay::{MonitorRect, RectPoints, ScrollCaptureFrameSource};
+use crate::scroll_capture;
 use crate::{
 	png,
-	scroll_capture::{
-		scroll_capture_fingerprint, ScrollDirection, ScrollObserveOutcome, ScrollSession,
-	},
+	scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession},
 };
 
 const SCROLL_CAPTURE_TRACE_ENV: &str = "RSNAP_SCROLL_CAPTURE_TRACE";
@@ -23,7 +22,7 @@ const SCROLL_CAPTURE_TRACE_DIR_ENV: &str = "RSNAP_SCROLL_CAPTURE_TRACE_DIR";
 const SCROLL_CAPTURE_TRACE_SCHEMA: &str = "scroll_capture_live_trace/1";
 const SCROLL_CAPTURE_TRACE_MANIFEST_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ScrollCaptureLiveTraceManifest {
 	pub(crate) schema: String,
 	pub(crate) trace_id: String,
@@ -40,7 +39,7 @@ pub(crate) struct ScrollCaptureLiveTraceManifest {
 	pub(crate) finalized: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ScrollCaptureTraceMonitor {
 	pub(crate) id: u32,
 	pub(crate) origin_x: i32,
@@ -49,7 +48,6 @@ pub(crate) struct ScrollCaptureTraceMonitor {
 	pub(crate) height: u32,
 	pub(crate) scale_factor_x1000: u32,
 }
-
 impl From<MonitorRect> for ScrollCaptureTraceMonitor {
 	fn from(value: MonitorRect) -> Self {
 		Self {
@@ -63,28 +61,27 @@ impl From<MonitorRect> for ScrollCaptureTraceMonitor {
 	}
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ScrollCaptureTraceRect {
 	pub(crate) x: u32,
 	pub(crate) y: u32,
 	pub(crate) width: u32,
 	pub(crate) height: u32,
 }
-
 impl From<RectPoints> for ScrollCaptureTraceRect {
 	fn from(value: RectPoints) -> Self {
 		Self { x: value.x, y: value.y, width: value.width, height: value.height }
 	}
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "entry_type", rename_all = "snake_case")]
 pub(crate) enum ScrollCaptureLiveTraceEntry {
 	Input(ScrollCaptureTraceInputEntry),
 	Frame(ScrollCaptureTraceFrameEntry),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ScrollCaptureTraceInputEntry {
 	pub(crate) applied_at_ms: u64,
 	pub(crate) seq: u64,
@@ -97,7 +94,7 @@ pub(crate) struct ScrollCaptureTraceInputEntry {
 	pub(crate) snapshot_after: ScrollCaptureTraceSessionSnapshot,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ScrollCaptureTraceFrameEntry {
 	pub(crate) observed_at_ms: u64,
 	pub(crate) allow_stale_input: bool,
@@ -109,13 +106,12 @@ pub(crate) struct ScrollCaptureTraceFrameEntry {
 	pub(crate) outcome: ScrollCaptureTraceRecordedOutcome,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ScrollCaptureTraceFrameSource {
 	Worker { request_id: u64 },
 	LiveStream { frame_seq: u64 },
 }
-
 impl From<ScrollCaptureFrameSource> for ScrollCaptureTraceFrameSource {
 	fn from(value: ScrollCaptureFrameSource) -> Self {
 		match value {
@@ -126,13 +122,12 @@ impl From<ScrollCaptureFrameSource> for ScrollCaptureTraceFrameSource {
 	}
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ScrollCaptureTraceDirection {
 	Up,
 	Down,
 }
-
 impl From<ScrollDirection> for ScrollCaptureTraceDirection {
 	fn from(value: ScrollDirection) -> Self {
 		match value {
@@ -142,7 +137,7 @@ impl From<ScrollDirection> for ScrollCaptureTraceDirection {
 	}
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ScrollCaptureTraceRecordedOutcome {
 	NoChange,
@@ -151,7 +146,6 @@ pub(crate) enum ScrollCaptureTraceRecordedOutcome {
 	Committed { direction: ScrollCaptureTraceDirection, growth_rows: u32 },
 	Error { message: String },
 }
-
 impl From<ScrollObserveOutcome> for ScrollCaptureTraceRecordedOutcome {
 	fn from(value: ScrollObserveOutcome) -> Self {
 		match value {
@@ -167,7 +161,7 @@ impl From<ScrollObserveOutcome> for ScrollCaptureTraceRecordedOutcome {
 	}
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ScrollCaptureTraceSessionSnapshot {
 	pub(crate) input_direction: Option<ScrollCaptureTraceDirection>,
 	pub(crate) input_gesture_active: bool,
@@ -186,7 +180,6 @@ pub(crate) struct ScrollCaptureTraceSessionSnapshot {
 	pub(crate) last_preview_segment_height_px: Option<u32>,
 	pub(crate) last_export_segment_height_px: Option<u32>,
 }
-
 impl ScrollCaptureTraceSessionSnapshot {
 	pub(crate) fn capture(
 		session: Option<&ScrollSession>,
@@ -242,28 +235,6 @@ pub(crate) struct ScrollCaptureTraceRecorder {
 	last_recorded_frame_path: Option<String>,
 	manifest: ScrollCaptureLiveTraceManifest,
 }
-
-pub(crate) struct ScrollCaptureTraceInputRecord {
-	pub(crate) seq: u64,
-	pub(crate) cursor_global: (f64, f64),
-	pub(crate) delta_y: f64,
-	pub(crate) gesture_active: bool,
-	pub(crate) gesture_ended: bool,
-	pub(crate) recorded_age: Duration,
-	pub(crate) applied_at: Instant,
-	pub(crate) snapshot_after: ScrollCaptureTraceSessionSnapshot,
-}
-
-pub(crate) struct ScrollCaptureTraceFrameRecord<'a> {
-	pub(crate) frame: &'a RgbaImage,
-	pub(crate) source: ScrollCaptureFrameSource,
-	pub(crate) allow_stale_input: bool,
-	pub(crate) prior_block_reason: Option<&'static str>,
-	pub(crate) observed_at: Instant,
-	pub(crate) snapshot_after: ScrollCaptureTraceSessionSnapshot,
-	pub(crate) outcome: &'a Result<ScrollObserveOutcome>,
-}
-
 impl ScrollCaptureTraceRecorder {
 	pub(crate) fn from_env(
 		monitor: MonitorRect,
@@ -311,7 +282,7 @@ impl ScrollCaptureTraceRecorder {
 	}
 
 	pub(crate) fn record_frame_observation(&mut self, record: ScrollCaptureTraceFrameRecord<'_>) {
-		let frame_fingerprint = scroll_capture_fingerprint(record.frame);
+		let frame_fingerprint = scroll_capture::scroll_capture_fingerprint(record.frame);
 		let frame_path = if self
 			.last_recorded_frame_fingerprint
 			.as_ref()
@@ -319,12 +290,16 @@ impl ScrollCaptureTraceRecorder {
 		{
 			self.last_recorded_frame_path.clone().unwrap_or_else(|| {
 				let frame_index = self.next_frame_index;
+
 				self.next_frame_index = self.next_frame_index.saturating_add(1);
+
 				format!("frames/frame-{frame_index:06}.png")
 			})
 		} else {
 			let frame_index = self.next_frame_index;
+
 			self.next_frame_index = self.next_frame_index.saturating_add(1);
+
 			let frame_path = format!("frames/frame-{frame_index:06}.png");
 
 			if let Err(err) = self.write_frame(record.frame, &frame_path) {
@@ -335,12 +310,12 @@ impl ScrollCaptureTraceRecorder {
 					"Failed to persist scroll-capture trace frame."
 				);
 			}
+
 			self.last_recorded_frame_fingerprint = Some(frame_fingerprint);
 			self.last_recorded_frame_path = Some(frame_path.clone());
 
 			frame_path
 		};
-
 		let outcome = match record.outcome {
 			Ok(value) => ScrollCaptureTraceRecordedOutcome::from(*value),
 			Err(err) => ScrollCaptureTraceRecordedOutcome::Error { message: format!("{err:#}") },
@@ -363,6 +338,7 @@ impl ScrollCaptureTraceRecorder {
 
 	pub(crate) fn record_error(&mut self, message: &str) {
 		self.manifest.final_error = Some(message.to_owned());
+
 		self.flush_manifest_best_effort("record_error");
 	}
 
@@ -385,7 +361,6 @@ impl ScrollCaptureTraceRecorder {
 		} else {
 			self.manifest.final_preview_path = Some(final_preview_path);
 		}
-
 		if let Err(err) = self.write_frame(session.export_image(), &final_export_path) {
 			tracing::warn!(
 				op = "scroll_capture.trace_write_final_export_failed",
@@ -398,6 +373,7 @@ impl ScrollCaptureTraceRecorder {
 		}
 
 		self.manifest.final_snapshot = Some(final_snapshot);
+
 		self.flush_manifest_best_effort("finalize_session");
 	}
 
@@ -450,8 +426,11 @@ impl ScrollCaptureTraceRecorder {
 		};
 
 		recorder.write_frame(base_frame, &recorder.manifest.base_frame_path)?;
-		recorder.last_recorded_frame_fingerprint = Some(scroll_capture_fingerprint(base_frame));
+
+		recorder.last_recorded_frame_fingerprint =
+			Some(scroll_capture::scroll_capture_fingerprint(base_frame));
 		recorder.last_recorded_frame_path = Some(recorder.manifest.base_frame_path.clone());
+
 		recorder.flush_manifest_best_effort("init");
 
 		Ok(recorder)
@@ -484,6 +463,7 @@ impl ScrollCaptureTraceRecorder {
 
 	fn flush_manifest_if_due_best_effort(&mut self, op: &'static str) {
 		let now = Instant::now();
+
 		if now.saturating_duration_since(self.last_manifest_flush_at)
 			< SCROLL_CAPTURE_TRACE_MANIFEST_FLUSH_INTERVAL
 		{
@@ -491,6 +471,7 @@ impl ScrollCaptureTraceRecorder {
 		}
 
 		self.last_manifest_flush_at = now;
+
 		self.flush_manifest_best_effort(op);
 	}
 
@@ -502,6 +483,7 @@ impl ScrollCaptureTraceRecorder {
 		fs::write(&tmp_path, bytes).wrap_err_with(|| {
 			format!("failed to write temporary trace manifest {}", tmp_path.display())
 		})?;
+
 		fs::rename(&tmp_path, &self.manifest_path).wrap_err_with(|| {
 			format!(
 				"failed to publish scroll-capture trace manifest {}",
@@ -514,8 +496,30 @@ impl ScrollCaptureTraceRecorder {
 impl Drop for ScrollCaptureTraceRecorder {
 	fn drop(&mut self) {
 		self.manifest.finalized = true;
+
 		self.flush_manifest_best_effort("drop");
 	}
+}
+
+pub(crate) struct ScrollCaptureTraceInputRecord {
+	pub(crate) seq: u64,
+	pub(crate) cursor_global: (f64, f64),
+	pub(crate) delta_y: f64,
+	pub(crate) gesture_active: bool,
+	pub(crate) gesture_ended: bool,
+	pub(crate) recorded_age: Duration,
+	pub(crate) applied_at: Instant,
+	pub(crate) snapshot_after: ScrollCaptureTraceSessionSnapshot,
+}
+
+pub(crate) struct ScrollCaptureTraceFrameRecord<'a> {
+	pub(crate) frame: &'a RgbaImage,
+	pub(crate) source: ScrollCaptureFrameSource,
+	pub(crate) allow_stale_input: bool,
+	pub(crate) prior_block_reason: Option<&'static str>,
+	pub(crate) observed_at: Instant,
+	pub(crate) snapshot_after: ScrollCaptureTraceSessionSnapshot,
+	pub(crate) outcome: &'a Result<ScrollObserveOutcome>,
 }
 
 #[derive(Clone, Debug)]
@@ -524,7 +528,6 @@ pub(crate) struct LoadedScrollCaptureLiveTrace {
 	pub(crate) manifest: ScrollCaptureLiveTraceManifest,
 	pub(crate) base_frame: RgbaImage,
 }
-
 impl LoadedScrollCaptureLiveTrace {
 	pub(crate) fn load(manifest_path: impl AsRef<Path>) -> Result<Self> {
 		let manifest_path = manifest_path.as_ref().to_path_buf();
@@ -534,10 +537,7 @@ impl LoadedScrollCaptureLiveTrace {
 		let manifest: ScrollCaptureLiveTraceManifest = serde_json::from_slice(&manifest_bytes)
 			.wrap_err("failed to decode scroll-capture trace manifest")?;
 		let base_dir = manifest_path.parent().ok_or_else(|| {
-			color_eyre::eyre::eyre!(
-				"trace manifest path {} has no parent directory",
-				manifest_path.display()
-			)
+			eyre::eyre!("trace manifest path {} has no parent directory", manifest_path.display())
 		})?;
 		let base_frame_path = base_dir.join(&manifest.base_frame_path);
 		let base_frame = image::open(&base_frame_path)
@@ -564,8 +564,10 @@ impl LoadedScrollCaptureLiveTrace {
 fn resolve_trace_root_dir() -> Option<PathBuf> {
 	let override_dir = env::var_os(SCROLL_CAPTURE_TRACE_DIR_ENV).and_then(|value| {
 		let trimmed = value.to_string_lossy().trim().to_owned();
+
 		if trimmed.is_empty() { None } else { Some(PathBuf::from(trimmed)) }
 	});
+
 	if let Some(dir) = override_dir {
 		return Some(dir);
 	}
@@ -604,10 +606,19 @@ fn now_unix_ms() -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+	use std::process;
 	use std::sync::atomic::{AtomicU64, Ordering};
 
-	use super::*;
 	use crate::GlobalPoint;
+	use crate::overlay::trace_recording;
+	use crate::overlay::trace_recording::SCROLL_CAPTURE_TRACE_SCHEMA;
+	use crate::overlay::trace_recording::{
+		Duration, Instant, LoadedScrollCaptureLiveTrace, MonitorRect, PathBuf, RectPoints,
+		RgbaImage, ScrollCaptureLiveTraceEntry, ScrollCaptureTraceFrameRecord,
+		ScrollCaptureTraceInputRecord, ScrollCaptureTraceRecorder,
+		ScrollCaptureTraceSessionSnapshot, ScrollDirection, ScrollObserveOutcome, ScrollSession,
+		env, fs,
+	};
 	use crate::overlay::{OverlaySession, ScrollCaptureFrameSource};
 
 	static TRACE_TEST_ROOT_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -640,9 +651,9 @@ mod tests {
 
 	fn temp_trace_root() -> PathBuf {
 		let counter = TRACE_TEST_ROOT_COUNTER.fetch_add(1, Ordering::Relaxed);
-		let root = std::env::temp_dir().join(format!(
+		let root = env::temp_dir().join(format!(
 			"rsnap-scroll-trace-test-{}-{}-{}",
-			now_unix_ms().unwrap_or(0),
+			trace_recording::now_unix_ms().unwrap_or(0),
 			process::id(),
 			counter
 		));
@@ -664,6 +675,7 @@ mod tests {
 		let base_frame = make_window(&rows, 0);
 		let next_frame = make_window(&rows, 1);
 		let root = temp_trace_root();
+		let start = Instant::now();
 		let mut recorder = ScrollCaptureTraceRecorder::new_for_root_dir(
 			root,
 			test_monitor(),
@@ -672,7 +684,6 @@ mod tests {
 			&base_frame,
 		)
 		.unwrap();
-		let start = Instant::now();
 		let mut session = OverlaySession::new();
 
 		session.scroll_capture.active = true;
@@ -723,6 +734,7 @@ mod tests {
 			),
 			outcome: &Ok(ScrollObserveOutcome::PreviewUpdated),
 		});
+
 		let manifest_path = recorder.manifest_path().to_path_buf();
 
 		drop(recorder);
@@ -762,6 +774,7 @@ mod tests {
 			Some(&session),
 			Some({
 				let image = session.preview_display_image();
+
 				[image.width(), image.height()]
 			}),
 			Some(ScrollDirection::Down),
@@ -769,9 +782,10 @@ mod tests {
 			0.0,
 			Some(0),
 		);
-
 		let final_preview_image = session.preview_display_image();
+
 		recorder.finalize_session(&session, &final_preview_image, final_snapshot);
+
 		drop(recorder);
 
 		let loaded = LoadedScrollCaptureLiveTrace::load(&manifest_path).unwrap();
@@ -834,6 +848,7 @@ mod tests {
 			snapshot_after: snapshot,
 			outcome: &Ok(ScrollObserveOutcome::NoChange),
 		});
+
 		drop(recorder);
 
 		let loaded = LoadedScrollCaptureLiveTrace::load(&manifest_path).unwrap();

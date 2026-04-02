@@ -257,6 +257,7 @@ pub mod bench_support {
 }
 
 use std::ops::RangeInclusive;
+use std::ptr;
 
 use color_eyre::eyre::{self, Result};
 use image::{
@@ -267,6 +268,7 @@ use image::{
 use objc2::{AnyThread, runtime::AnyObject};
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::CFData;
+use objc2_core_foundation::CFRetained;
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{
 	CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
@@ -276,6 +278,10 @@ use objc2_core_graphics::{
 use objc2_foundation::{NSArray, NSDictionary};
 #[cfg(target_os = "macos")]
 use objc2_vision::{VNImageOption, VNImageRequestHandler, VNTranslationalImageRegistrationRequest};
+
+pub(crate) const PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS: u32 = 24;
+pub(crate) const PREVIEW_ONLY_LOCAL_RECOVERY_MAX_TOLERANCE_ROWS: u32 = 12;
+pub(crate) const UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS: u32 = 8;
 
 const FINGERPRINT_GRID_COLUMNS: u32 = 12;
 const FINGERPRINT_GRID_ROWS: u32 = 16;
@@ -290,15 +296,12 @@ const DOWNWARD_REGISTRATION_MIN_OVERLAP_DIVISOR: u32 = 3;
 const DOWNWARD_KEYFRAME_SEARCH_LIMIT: usize = 4;
 const DOWNWARD_KEYFRAME_MIN_OVERLAP_DIVISOR: u32 = 5;
 const INITIAL_DOWNWARD_MAX_MOTION_ROWS: u32 = 256;
-pub(crate) const PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS: u32 = 24;
-pub(crate) const PREVIEW_ONLY_LOCAL_RECOVERY_MAX_TOLERANCE_ROWS: u32 = 12;
 const PREVIEW_ONLY_LOCAL_NEAR_CONTINUITY_ROWS: u32 = 4;
 const EXTREME_TRANSIENT_PREVIEW_LOCAL_TAIL_MULTIPLIER: u32 = 12;
 const REPEATED_PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS: u32 = 4;
 const TINY_OBSERVED_BURST_RECOVERY_MAX_MOTION_ROWS: u32 = 2;
 const TINY_PREVIEW_ONLY_LOCAL_BURST_RECOVERY_MAX_MOTION_ROWS: u32 = 1;
 const TINY_PREVIEW_ONLY_LOCAL_BURST_RECOVERY_MIN_LAST_HINT_ROWS: u32 = 7;
-pub(crate) const UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS: u32 = 8;
 const BOOTSTRAP_HINTED_INITIAL_GROWTH_MAX_ROWS: u32 = 40;
 const DOWNWARD_COMMITTED_KEYFRAME_LOCAL_OVERRUN_MAX_ROWS: u32 = 24;
 const FALLBACK_DOWNWARD_GROWTH_MIN_ROWS: u32 = 8;
@@ -446,21 +449,6 @@ impl Default for OverlapSearchConfig {
 			max_mean_abs_diff_x100: 850,
 		}
 	}
-}
-
-fn worker_pairwise_overlap_search_config() -> OverlapSearchConfig {
-	OverlapSearchConfig {
-		min_overlap_rows: 24,
-		max_column_samples: 96,
-		max_row_samples: 96,
-		max_mean_abs_diff_x100: 850,
-	}
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PreviewOnlyDownwardLocalSample {
-	frame: RgbaImage,
-	viewport_top_y: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -642,10 +630,7 @@ impl ScrollSession {
 		let previous_worker_frame = self.worker_pairwise_previous_frame.clone();
 
 		if frame == previous_worker_frame {
-			self.record_last_sample(&frame, fingerprint.clone());
-			self.record_last_downward_observed_sample(&frame, fingerprint);
-			self.worker_pairwise_previous_frame = frame;
-			self.clear_preview_only_downward_recovery_carryover();
+			self.update_worker_pairwise_reference_frame(frame, fingerprint);
 			self.log_decision(
 				"scroll_capture.worker_pairwise_no_change",
 				ScrollDirection::Down,
@@ -661,10 +646,7 @@ impl ScrollSession {
 		let Some(matched) =
 			classify_vision_downward_sample_motion_against(&previous_worker_frame, &frame)
 		else {
-			self.record_last_sample(&frame, fingerprint.clone());
-			self.record_last_downward_observed_sample(&frame, fingerprint);
-			self.worker_pairwise_previous_frame = frame;
-			self.clear_preview_only_downward_recovery_carryover();
+			self.update_worker_pairwise_reference_frame(frame, fingerprint);
 			self.log_decision(
 				"scroll_capture.worker_pairwise_no_change",
 				ScrollDirection::Down,
@@ -678,16 +660,14 @@ impl ScrollSession {
 		};
 		let corroborated_shift_rows =
 			estimate_pairwise_downward_shift_rows(&previous_worker_frame, &frame);
+
 		if matched.motion_rows >= WORKER_PAIRWISE_CORROBORATION_MIN_ROWS
 			&& corroborated_shift_rows.is_none_or(|estimated| {
 				estimated == 0
 					|| matched.motion_rows.abs_diff(estimated)
 						> WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS
 			}) {
-			self.record_last_sample(&frame, fingerprint.clone());
-			self.record_last_downward_observed_sample(&frame, fingerprint);
-			self.worker_pairwise_previous_frame = frame;
-			self.clear_preview_only_downward_recovery_carryover();
+			self.update_worker_pairwise_reference_frame(frame, fingerprint);
 			self.log_decision(
 				"scroll_capture.worker_pairwise_growth_blocked",
 				ScrollDirection::Down,
@@ -710,10 +690,7 @@ impl ScrollSession {
 		let frame_max_growth_rows = frame.height().saturating_sub(1).max(1);
 
 		if growth_rows == 0 || growth_rows > frame_max_growth_rows {
-			self.record_last_sample(&frame, fingerprint.clone());
-			self.record_last_downward_observed_sample(&frame, fingerprint);
-			self.worker_pairwise_previous_frame = frame;
-			self.clear_preview_only_downward_recovery_carryover();
+			self.update_worker_pairwise_reference_frame(frame, fingerprint);
 			self.log_decision(
 				"scroll_capture.worker_pairwise_growth_blocked",
 				ScrollDirection::Down,
@@ -740,7 +717,9 @@ impl ScrollSession {
 			Some(growth_rows),
 			Some("worker_pairwise_vision"),
 		);
+
 		self.worker_pairwise_previous_frame = frame.clone();
+
 		self.clear_preview_only_downward_recovery_carryover();
 
 		self.apply_growth(
@@ -754,6 +733,15 @@ impl ScrollSession {
 		)
 	}
 
+	fn update_worker_pairwise_reference_frame(&mut self, frame: RgbaImage, fingerprint: Vec<u8>) {
+		self.record_last_sample(&frame, fingerprint.clone());
+		self.record_last_downward_observed_sample(&frame, fingerprint);
+
+		self.worker_pairwise_previous_frame = frame;
+
+		self.clear_preview_only_downward_recovery_carryover();
+	}
+
 	fn observe_sample_with_motion_context(
 		&mut self,
 		frame: RgbaImage,
@@ -763,12 +751,17 @@ impl ScrollSession {
 	) -> Result<ScrollObserveOutcome> {
 		let previous_hint = self.transient_motion_rows_hint;
 		let previous_burst = self.transient_burst_search_enabled;
+
 		self.transient_motion_rows_hint = motion_rows_hint;
 		self.transient_burst_search_enabled = allow_burst_search;
+
 		self.record_last_sample_eval_context();
+
 		let result = self.observe_sample(frame, input_direction);
+
 		self.transient_motion_rows_hint = previous_hint;
 		self.transient_burst_search_enabled = previous_burst;
+
 		result
 	}
 
@@ -786,6 +779,7 @@ impl ScrollSession {
 				frame.width()
 			));
 		}
+
 		let use_resume_local_sample = matches!(input_direction, ScrollDirection::Down)
 			&& self.resume_frontier_top_y.is_some();
 
@@ -798,6 +792,7 @@ impl ScrollSession {
 				Some(0),
 				Some("frame_matches_last_downward_observed_frame"),
 			);
+
 			return Ok(ScrollObserveOutcome::NoChange);
 		}
 
@@ -815,6 +810,7 @@ impl ScrollSession {
 				Some(0),
 				Some("frame_matches_last_unconfirmed_upward_fingerprint"),
 			);
+
 			return Ok(ScrollObserveOutcome::NoChange);
 		}
 
@@ -863,6 +859,7 @@ impl ScrollSession {
 				Some(0),
 				Some("sample_delta_and_motion_both_absent"),
 			);
+
 			return Ok(ScrollObserveOutcome::NoChange);
 		}
 		if matches!(input_direction, ScrollDirection::Up) {
@@ -941,6 +938,7 @@ impl ScrollSession {
 					Some(matched.source),
 					Some(matched.matched.motion_rows),
 				);
+
 				(
 					Some(MotionObservation {
 						direction: ScrollDirection::Down,
@@ -971,6 +969,7 @@ impl ScrollSession {
 			},
 			DownwardRegistrationWithSource::NoMatch => {
 				self.record_last_downward_sample_registration("no_match", None, None);
+
 				(None, None)
 			},
 		}
@@ -1420,6 +1419,7 @@ impl ScrollSession {
 		block_reason: Option<&'static str>,
 	) {
 		self.last_block_reason = block_reason;
+
 		tracing::debug!(
 			op,
 			input_direction = ?input_direction,
@@ -1581,6 +1581,7 @@ impl ScrollSession {
 
 	fn clear_preview_only_downward_recovery_carryover(&mut self) {
 		self.clear_preview_only_downward_local_sample();
+
 		self.pending_suppressed_huge_preview_only_local_followup = None;
 		self.pending_suppressed_huge_preview_only_local_followup_remaining_blocks = 0;
 		self.pending_extreme_preview_only_local_tail_followup = None;
@@ -1639,7 +1640,9 @@ impl ScrollSession {
 		frontier_top_y: i32,
 	) {
 		self.last_motion_rows_hint = None;
+
 		self.clear_preview_only_downward_local_sample();
+
 		self.resume_frontier_requires_reacquire = true;
 
 		self.resume_frontier_top_y.get_or_insert(frontier_top_y);
@@ -1649,6 +1652,7 @@ impl ScrollSession {
 
 	fn observe_unconfirmed_upward_rewind(&mut self) {
 		self.last_motion_rows_hint = None;
+
 		self.clear_preview_only_downward_local_sample();
 
 		let frontier_top_y = self.current_viewport_top_y;
@@ -1660,6 +1664,7 @@ impl ScrollSession {
 			self.observed_viewport_top_y.min(frontier_top_y.saturating_sub(1));
 	}
 
+	#[allow(clippy::too_many_lines)]
 	fn observe_downward_motion(
 		&mut self,
 		frame: RgbaImage,
@@ -1678,83 +1683,17 @@ impl ScrollSession {
 
 		let candidate = match self.resolve_downward_viewport_candidate(&frame, observed_match) {
 			DownwardViewportResolution::NoMatch => {
-				let reset_preview_only_local_baseline =
-					self.should_reset_preview_only_local_baseline_after_huge_far_committed_block();
-				let preview_only_local_viewport_top_y = if self
-					.blocked_underconsumed_observed_recovery_in_burst
-					|| self.blocked_lagging_exactly_corroborated_preview_local_tail_in_burst
-					|| self.blocked_followup_after_suppressed_huge_preview_local_jump
-					|| self.blocked_followup_after_extreme_preview_local_tail
-					|| self.blocked_far_committed_only_recovery_after_corroborated_huge_local_jump
-				{
-					self.stable_preview_only_downward_local_viewport_top_y()
-				} else {
-					self.preview_only_downward_local_viewport_top_y_for_sample_match(observed_match)
-				};
-				let block_reason = if self.blocked_underconsumed_observed_recovery_in_burst {
-					"underconsumed_observed_recovery_under_transient_burst"
-				} else if self.blocked_lagging_exactly_corroborated_preview_local_tail_in_burst {
-					"lagging_exactly_corroborated_preview_local_tail_under_transient_burst"
-				} else if self.blocked_followup_after_suppressed_huge_preview_local_jump {
-					"followup_after_suppressed_huge_preview_local_jump_under_transient_burst"
-				} else if self.blocked_followup_after_extreme_preview_local_tail {
-					"followup_after_extreme_preview_local_tail_under_transient_burst"
-				} else if self
-					.blocked_far_committed_only_recovery_after_corroborated_huge_local_jump
-				{
-					"far_committed_only_recovery_after_corroborated_huge_local_jump_under_transient_burst"
-				} else {
-					"no_downward_viewport_candidate_resolved"
-				};
-				self.pending_unresolved_burst_registered_growth_viewport_top_y = if block_reason
-					== "no_downward_viewport_candidate_resolved"
-					&& self.last_downward_sample_registration_result == Some("matched")
-				{
-					self.last_downward_sample_registration_provisional_viewport_top_y.filter(
-						|viewport_top_y| {
-							self.transient_burst_growth_matches_pending_hint_band(*viewport_top_y)
-						},
-					)
-				} else {
-					None
-				};
-				self.consecutive_transient_burst_missing_downward_candidate_frames = if self
-					.transient_burst_search_enabled
-					&& preview_only_local_viewport_top_y.is_some()
-				{
-					self.consecutive_transient_burst_missing_downward_candidate_frames
-						.saturating_add(1)
-				} else {
-					0
-				};
-				self.refresh_local_downward_sample(&frame);
-				if self.should_refresh_downward_observed_baseline_after_huge_suppressed_jump() {
-					self.record_last_downward_observed_sample(
-						&frame,
-						scroll_capture_fingerprint(&frame),
-					);
-				}
-				if reset_preview_only_local_baseline {
-					self.clear_preview_only_downward_local_sample();
-				} else {
-					self.refresh_preview_only_downward_local_sample(
-						&frame,
-						preview_only_local_viewport_top_y,
-					);
-				}
-				self.log_decision(
-					"scroll_capture.downward_viewport_authority_missing",
-					ScrollDirection::Down,
-					Some(MotionObservation { direction: ScrollDirection::Down, motion_rows }),
-					None,
-					Some(0),
-					Some(block_reason),
+				return self.handle_missing_downward_viewport_authority(
+					&frame,
+					observed_match,
+					motion_rows,
+					preview_changed,
 				);
-				return Ok(preview_update_outcome(preview_changed));
 			},
 			DownwardViewportResolution::Selected(candidate) => candidate,
 			DownwardViewportResolution::Ambiguous { preferred, competing } => {
 				self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
+
 				self.refresh_local_downward_sample(&frame);
 				self.refresh_preview_only_downward_local_sample(
 					&frame,
@@ -1779,112 +1718,65 @@ impl ScrollSession {
 		};
 
 		if self.should_fail_closed_tiny_observed_recovery_in_burst(candidate) {
-			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
-			self.refresh_local_downward_sample(&frame);
-			self.refresh_preview_only_downward_local_sample(
+			return self.block_downward_growth_candidate(
 				&frame,
-				self.stable_preview_only_downward_local_viewport_top_y(),
+				motion_rows,
+				candidate,
+				preview_changed,
+				"tiny_observed_recovery_under_transient_burst",
 			);
-			self.log_decision(
-				"scroll_capture.downward_growth_blocked",
-				ScrollDirection::Down,
-				Some(MotionObservation { direction: ScrollDirection::Down, motion_rows }),
-				Some(candidate.viewport_top_y),
-				Some(candidate.motion_rows),
-				Some("tiny_observed_recovery_under_transient_burst"),
-			);
-			return Ok(preview_update_outcome(preview_changed));
 		}
 		if self.should_fail_closed_outsized_observed_recovery_after_one_pixel_preview_local_commit(
 			candidate,
 		) {
-			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
-			self.refresh_local_downward_sample(&frame);
-			self.refresh_preview_only_downward_local_sample(
+			return self.block_downward_growth_candidate(
 				&frame,
-				self.stable_preview_only_downward_local_viewport_top_y(),
+				motion_rows,
+				candidate,
+				preview_changed,
+				"outsized_observed_recovery_after_one_pixel_preview_local_commit",
 			);
-			self.log_decision(
-				"scroll_capture.downward_growth_blocked",
-				ScrollDirection::Down,
-				Some(MotionObservation { direction: ScrollDirection::Down, motion_rows }),
-				Some(candidate.viewport_top_y),
-				Some(candidate.motion_rows),
-				Some("outsized_observed_recovery_after_one_pixel_preview_local_commit"),
-			);
-			return Ok(preview_update_outcome(preview_changed));
 		}
 		if self.should_fail_closed_tiny_preview_only_local_recovery_in_burst(candidate) {
-			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
-			self.refresh_local_downward_sample(&frame);
-			self.refresh_preview_only_downward_local_sample(
+			return self.block_downward_growth_candidate(
 				&frame,
-				self.stable_preview_only_downward_local_viewport_top_y(),
+				motion_rows,
+				candidate,
+				preview_changed,
+				"tiny_preview_only_local_recovery_under_transient_burst",
 			);
-			self.log_decision(
-				"scroll_capture.downward_growth_blocked",
-				ScrollDirection::Down,
-				Some(MotionObservation { direction: ScrollDirection::Down, motion_rows }),
-				Some(candidate.viewport_top_y),
-				Some(candidate.motion_rows),
-				Some("tiny_preview_only_local_recovery_under_transient_burst"),
-			);
-			return Ok(preview_update_outcome(preview_changed));
 		}
 		if self
 			.should_fail_closed_exactly_corroborated_preview_local_tail_in_extreme_burst(candidate)
 		{
 			self.pending_extreme_preview_only_local_tail_followup = Some(candidate);
 			self.pending_extreme_preview_only_local_tail_followup_remaining_blocks = 1;
-			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
-			self.refresh_local_downward_sample(&frame);
-			self.refresh_preview_only_downward_local_sample(
+
+			return self.block_downward_growth_candidate(
 				&frame,
-				self.stable_preview_only_downward_local_viewport_top_y(),
+				motion_rows,
+				candidate,
+				preview_changed,
+				"exactly_corroborated_preview_local_tail_under_extreme_transient_burst",
 			);
-			self.log_decision(
-				"scroll_capture.downward_growth_blocked",
-				ScrollDirection::Down,
-				Some(MotionObservation { direction: ScrollDirection::Down, motion_rows }),
-				Some(candidate.viewport_top_y),
-				Some(candidate.motion_rows),
-				Some("exactly_corroborated_preview_local_tail_under_extreme_transient_burst"),
-			);
-			return Ok(preview_update_outcome(preview_changed));
 		}
 		if self.should_fail_closed_preview_only_local_tail_after_unresolved_burst(candidate) {
-			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
-			self.refresh_local_downward_sample(&frame);
-			self.refresh_preview_only_downward_local_sample(
+			return self.block_downward_growth_candidate(
 				&frame,
-				self.stable_preview_only_downward_local_viewport_top_y(),
+				motion_rows,
+				candidate,
+				preview_changed,
+				"preview_only_local_tail_after_unresolved_transient_burst",
 			);
-			self.log_decision(
-				"scroll_capture.downward_growth_blocked",
-				ScrollDirection::Down,
-				Some(MotionObservation { direction: ScrollDirection::Down, motion_rows }),
-				Some(candidate.viewport_top_y),
-				Some(candidate.motion_rows),
-				Some("preview_only_local_tail_after_unresolved_transient_burst"),
-			);
-			return Ok(preview_update_outcome(preview_changed));
 		}
 		if self.should_fail_closed_tiny_committed_keyframe_recovery_in_burst(candidate) {
-			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
-			self.refresh_local_downward_sample(&frame);
-			self.refresh_preview_only_downward_local_sample(
+			return self.block_downward_growth_candidate(
 				&frame,
-				self.stable_preview_only_downward_local_viewport_top_y(),
+				motion_rows,
+				candidate,
+				preview_changed,
+				"tiny_committed_keyframe_recovery_under_transient_burst",
 			);
-			self.log_decision(
-				"scroll_capture.downward_growth_blocked",
-				ScrollDirection::Down,
-				Some(MotionObservation { direction: ScrollDirection::Down, motion_rows }),
-				Some(candidate.viewport_top_y),
-				Some(candidate.motion_rows),
-				Some("tiny_committed_keyframe_recovery_under_transient_burst"),
-			);
-			return Ok(preview_update_outcome(preview_changed));
 		}
 
 		self.observe_downward_growth_to_viewport(
@@ -1897,6 +1789,112 @@ impl ScrollSession {
 			}),
 			candidate.source.decision_source(),
 		)
+	}
+
+	fn handle_missing_downward_viewport_authority(
+		&mut self,
+		frame: &RgbaImage,
+		observed_match: DownwardSampleMatch,
+		motion_rows: u32,
+		preview_changed: bool,
+	) -> Result<ScrollObserveOutcome> {
+		let reset_preview_only_local_baseline =
+			self.should_reset_preview_only_local_baseline_after_huge_far_committed_block();
+		let preview_only_local_viewport_top_y = if self
+			.blocked_underconsumed_observed_recovery_in_burst
+			|| self.blocked_lagging_exactly_corroborated_preview_local_tail_in_burst
+			|| self.blocked_followup_after_suppressed_huge_preview_local_jump
+			|| self.blocked_followup_after_extreme_preview_local_tail
+			|| self.blocked_far_committed_only_recovery_after_corroborated_huge_local_jump
+		{
+			self.stable_preview_only_downward_local_viewport_top_y()
+		} else {
+			self.preview_only_downward_local_viewport_top_y_for_sample_match(observed_match)
+		};
+		let block_reason = if self.blocked_underconsumed_observed_recovery_in_burst {
+			"underconsumed_observed_recovery_under_transient_burst"
+		} else if self.blocked_lagging_exactly_corroborated_preview_local_tail_in_burst {
+			"lagging_exactly_corroborated_preview_local_tail_under_transient_burst"
+		} else if self.blocked_followup_after_suppressed_huge_preview_local_jump {
+			"followup_after_suppressed_huge_preview_local_jump_under_transient_burst"
+		} else if self.blocked_followup_after_extreme_preview_local_tail {
+			"followup_after_extreme_preview_local_tail_under_transient_burst"
+		} else if self.blocked_far_committed_only_recovery_after_corroborated_huge_local_jump {
+			"far_committed_only_recovery_after_corroborated_huge_local_jump_under_transient_burst"
+		} else {
+			"no_downward_viewport_candidate_resolved"
+		};
+
+		self.pending_unresolved_burst_registered_growth_viewport_top_y = if block_reason
+			== "no_downward_viewport_candidate_resolved"
+			&& self.last_downward_sample_registration_result == Some("matched")
+		{
+			self.last_downward_sample_registration_provisional_viewport_top_y.filter(
+				|viewport_top_y| {
+					self.transient_burst_growth_matches_pending_hint_band(*viewport_top_y)
+				},
+			)
+		} else {
+			None
+		};
+		self.consecutive_transient_burst_missing_downward_candidate_frames =
+			if self.transient_burst_search_enabled && preview_only_local_viewport_top_y.is_some() {
+				self.consecutive_transient_burst_missing_downward_candidate_frames.saturating_add(1)
+			} else {
+				0
+			};
+
+		self.refresh_local_downward_sample(frame);
+
+		if self.should_refresh_downward_observed_baseline_after_huge_suppressed_jump() {
+			self.record_last_downward_observed_sample(frame, scroll_capture_fingerprint(frame));
+		}
+		if reset_preview_only_local_baseline {
+			self.clear_preview_only_downward_local_sample();
+		} else {
+			self.refresh_preview_only_downward_local_sample(
+				frame,
+				preview_only_local_viewport_top_y,
+			);
+		}
+
+		self.log_decision(
+			"scroll_capture.downward_viewport_authority_missing",
+			ScrollDirection::Down,
+			Some(MotionObservation { direction: ScrollDirection::Down, motion_rows }),
+			None,
+			Some(0),
+			Some(block_reason),
+		);
+
+		Ok(preview_update_outcome(preview_changed))
+	}
+
+	fn block_downward_growth_candidate(
+		&mut self,
+		frame: &RgbaImage,
+		motion_rows: u32,
+		candidate: DownwardViewportCandidate,
+		preview_changed: bool,
+		block_reason: &'static str,
+	) -> Result<ScrollObserveOutcome> {
+		self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
+
+		self.refresh_local_downward_sample(frame);
+		self.refresh_preview_only_downward_local_sample(
+			frame,
+			self.stable_preview_only_downward_local_viewport_top_y(),
+		);
+		self.log_decision(
+			"scroll_capture.downward_growth_blocked",
+			ScrollDirection::Down,
+			Some(MotionObservation { direction: ScrollDirection::Down, motion_rows }),
+			Some(candidate.viewport_top_y),
+			Some(candidate.motion_rows),
+			Some(block_reason),
+		);
+
+		Ok(preview_update_outcome(preview_changed))
 	}
 
 	fn should_fail_closed_tiny_observed_recovery_in_burst(
@@ -1934,6 +1932,7 @@ impl ScrollSession {
 		if self.seeded_preview_only_local_catch_up_candidate_can_commit(candidate) {
 			return false;
 		}
+
 		let small_recovery_lags_recent_continuity =
 			self.last_motion_rows_hint.is_some_and(|last_hint| {
 				last_hint >= PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS
@@ -1982,6 +1981,7 @@ impl ScrollSession {
 				"CommittedKeyframe@{}/{}:",
 				candidate.viewport_top_y, candidate.motion_rows
 			);
+
 			value.contains(&exact_committed)
 		})
 	}
@@ -2461,10 +2461,12 @@ impl ScrollSession {
 	) -> Result<ScrollObserveOutcome> {
 		let growth_rows = self.growth_rows_for_candidate_viewport_top_y(candidate_viewport_top_y);
 		let effective_motion_rows_hint = self.effective_motion_rows_hint();
+
 		self.pending_unresolved_burst_registered_growth_viewport_top_y = None;
 
 		if self.bootstrap_initial_growth_cap_rows().is_some_and(|cap| growth_rows > cap) {
 			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
+
 			self.log_decision(
 				"scroll_capture.downward_growth_blocked",
 				ScrollDirection::Down,
@@ -2476,9 +2478,9 @@ impl ScrollSession {
 
 			return Ok(preview_update_outcome(preview_changed));
 		}
-
 		if growth_rows == 0 {
 			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
+
 			let block_reason = if self.resume_frontier_top_y.is_some() {
 				Some("candidate_viewport_did_not_pass_resume_frontier")
 			} else {
@@ -2496,10 +2498,12 @@ impl ScrollSession {
 
 			return Ok(preview_update_outcome(preview_changed));
 		}
+
 		let max_growth_rows = self.max_downward_growth_rows_for_frame(&frame);
 
 		if growth_rows > max_growth_rows {
 			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
+
 			self.log_decision(
 				"scroll_capture.downward_growth_blocked",
 				ScrollDirection::Down,
@@ -2511,6 +2515,7 @@ impl ScrollSession {
 
 			return Ok(preview_update_outcome(preview_changed));
 		}
+
 		self.log_decision(
 			"scroll_capture.downward_growth_candidate",
 			ScrollDirection::Down,
@@ -2519,8 +2524,11 @@ impl ScrollSession {
 			Some(growth_rows),
 			Some(decision_source),
 		);
+
 		self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
+
 		let previous_motion_rows_hint = self.last_motion_rows_hint;
+
 		self.last_motion_rows_hint = Some(growth_rows);
 
 		self.apply_growth(
@@ -2621,18 +2629,20 @@ impl ScrollSession {
 	) -> DownwardRegistrationWithSource {
 		let (primary_raw, primary_reason) = self.classify_downward_sample_motion(frame);
 		let primary = primary_raw.map_source(DownwardSampleMatchSource::ObservedSample);
+
 		self.record_registration_diagnostics(
 			DownwardSampleMatchSource::ObservedSample,
 			primary,
 			primary_reason,
 		);
+
 		let Some(previous_local) = self.last_preview_only_downward_local_sample.as_ref() else {
 			return primary;
 		};
-
 		let (local_raw, local_reason) =
 			self.classify_preview_only_local_recovery_motion_against(&previous_local.frame, frame);
 		let local = local_raw.map_source(DownwardSampleMatchSource::PreviewOnlyLocalSample);
+
 		self.record_registration_diagnostics(
 			DownwardSampleMatchSource::PreviewOnlyLocalSample,
 			local,
@@ -2644,19 +2654,18 @@ impl ScrollSession {
 				DownwardRegistrationWithSource::Matched(primary),
 				DownwardRegistrationWithSource::Matched(local),
 			) => {
-				if self.should_prefer_preview_only_local_recovery_after_extreme_tail_block(
-					primary, local,
-				) {
-					DownwardRegistrationWithSource::Matched(local)
-				} else if self
-					.should_prefer_observed_sample_over_preview_only_local_recovery(primary, local)
-				{
-					DownwardRegistrationWithSource::Matched(primary)
-				} else if self
-					.should_prefer_preview_only_local_recovery_over_observed_sample(primary, local)
-				{
-					DownwardRegistrationWithSource::Matched(local)
-				} else if local.matched.mean_abs_diff_x100 <= primary.matched.mean_abs_diff_x100 {
+				let prefer_local =
+					self.should_prefer_preview_only_local_recovery_after_extreme_tail_block(
+						primary, local,
+					) || (!self.should_prefer_observed_sample_over_preview_only_local_recovery(
+						primary, local,
+					) && (self
+						.should_prefer_preview_only_local_recovery_over_observed_sample(
+							primary, local,
+						) || local.matched.mean_abs_diff_x100
+						<= primary.matched.mean_abs_diff_x100));
+
+				if prefer_local {
 					DownwardRegistrationWithSource::Matched(local)
 				} else {
 					DownwardRegistrationWithSource::Matched(primary)
@@ -2827,7 +2836,6 @@ impl ScrollSession {
 	) -> (DownwardRegistration, Option<&'static str>) {
 		let config = OverlapSearchConfig::default();
 		let preferred_ranges = self.sequential_downward_motion_ranges(previous, frame, config);
-
 		let (registration, reason) = self
 			.evaluate_reference_downward_registration_with_preferred_ranges(
 				previous,
@@ -2858,7 +2866,6 @@ impl ScrollSession {
 		let preferred_ranges = preferred_range.into_iter().collect::<Vec<_>>();
 		let motion_rows_hint =
 			self.last_motion_rows_hint.or(self.normalized_transient_motion_rows_hint());
-
 		let (registration, reason) = self
 			.evaluate_reference_downward_registration_with_preferred_ranges(
 				previous,
@@ -2891,6 +2898,7 @@ impl ScrollSession {
 
 	fn normalized_transient_motion_rows_hint(&self) -> Option<u32> {
 		let transient = self.transient_motion_rows_hint?;
+
 		if self.transient_burst_search_enabled {
 			return Some(transient);
 		}
@@ -2940,7 +2948,6 @@ impl ScrollSession {
 		if max_motion_rows == 0 {
 			return None;
 		}
-
 		if self.initial_downward_bootstrap_active() && self.last_motion_rows_hint.is_none() {
 			if let Some(hint) = self.normalized_transient_motion_rows_hint()
 				&& hint <= PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS
@@ -3005,7 +3012,9 @@ impl ScrollSession {
 		}
 
 		self.last_unconfirmed_upward_fingerprint = None;
+
 		let fingerprint = scroll_capture_fingerprint(frame);
+
 		self.record_last_sample(frame, fingerprint);
 	}
 
@@ -3016,12 +3025,16 @@ impl ScrollSession {
 	) {
 		let Some(provisional_viewport_top_y) = provisional_viewport_top_y else {
 			self.clear_preview_only_downward_local_sample();
+
 			return;
 		};
+
 		if !self.should_refresh_preview_only_downward_local_sample(frame) {
 			return;
 		}
+
 		self.last_unconfirmed_upward_fingerprint = None;
+
 		self.record_preview_only_downward_local_sample(frame, provisional_viewport_top_y);
 	}
 
@@ -3254,7 +3267,9 @@ impl ScrollSession {
 			self.last_downward_observed_frame = previous.frame.clone();
 			self.last_downward_observed_fingerprint =
 				Some(scroll_capture_fingerprint(&previous.frame));
+
 			self.clear_preview_only_downward_local_sample();
+
 			self.last_unconfirmed_upward_fingerprint = None;
 			self.resume_frontier_top_y = None;
 			self.resume_frontier_requires_reacquire = false;
@@ -3266,7 +3281,9 @@ impl ScrollSession {
 			self.last_downward_observed_frame = self.anchor_frame.clone();
 			self.last_downward_observed_fingerprint =
 				Some(scroll_capture_fingerprint(&self.anchor_frame));
+
 			self.clear_preview_only_downward_local_sample();
+
 			self.last_unconfirmed_upward_fingerprint = None;
 			self.last_motion_rows_hint = None;
 			self.current_viewport_top_y = 0;
@@ -3349,9 +3366,11 @@ impl ScrollSession {
 			);
 			no_match_reason = if candidates.is_empty() { Some("no_candidates") } else { None };
 		}
+
 		candidates.retain(|matched| {
 			downward_registration_has_meaningful_overlap(*matched, max_overlap, config)
 		});
+
 		if candidates.is_empty() {
 			no_match_reason.get_or_insert("insufficient_overlap");
 		}
@@ -3411,9 +3430,11 @@ impl ScrollSession {
 			);
 			no_match_reason = if candidates.is_empty() { Some("no_candidates") } else { None };
 		}
+
 		candidates.retain(|matched| {
 			downward_registration_has_meaningful_overlap(*matched, max_overlap, config)
 		});
+
 		if candidates.is_empty() {
 			no_match_reason.get_or_insert("insufficient_overlap");
 		}
@@ -3435,6 +3456,7 @@ impl ScrollSession {
 			},
 			(DownwardRegistration::NoMatch, _) => {
 				let _ = no_match_reason;
+
 				DownwardRegistration::NoMatch
 			},
 			(other, _) => other,
@@ -3447,8 +3469,9 @@ impl ScrollSession {
 		next: &RgbaImage,
 		config: OverlapSearchConfig,
 	) -> Vec<RangeInclusive<u32>> {
-		let mut ranges = Vec::new();
 		let local_motion_rows_hint = self.last_motion_rows_hint;
+		let mut ranges = Vec::new();
+
 		if let Some(local_range) = self.preferred_local_downward_motion_range_from_hint(
 			previous,
 			next,
@@ -3457,9 +3480,11 @@ impl ScrollSession {
 		) {
 			ranges.push(local_range);
 		}
+
 		if self.initial_downward_bootstrap_active() && self.last_motion_rows_hint.is_none() {
 			return ranges;
 		}
+
 		if let Some(transient_range) = self.transient_downward_motion_range(previous, next, config)
 			&& !ranges.contains(&transient_range)
 		{
@@ -3682,18 +3707,22 @@ impl ScrollSession {
 			self.pending_suppressed_huge_preview_only_local_followup.take();
 		let pending_suppressed_huge_preview_only_local_followup_remaining_blocks =
 			self.pending_suppressed_huge_preview_only_local_followup_remaining_blocks;
+
 		self.pending_suppressed_huge_preview_only_local_followup_remaining_blocks = 0;
+
 		let pending_extreme_preview_only_local_tail_followup =
 			self.pending_extreme_preview_only_local_tail_followup.take();
 		let pending_extreme_preview_only_local_tail_followup_remaining_blocks =
 			self.pending_extreme_preview_only_local_tail_followup_remaining_blocks;
+
 		self.pending_extreme_preview_only_local_tail_followup_remaining_blocks = 0;
+
+		let provisional_viewport_top_y =
+			self.provisional_viewport_top_y_for_downward_sample_match(observed_match);
 		let mut candidates = Vec::with_capacity(DOWNWARD_KEYFRAME_SEARCH_LIMIT.saturating_add(1));
 		let mut suppressed_observed_candidate = None;
 		let mut suppressed_preview_only_local_candidate = None;
 
-		let provisional_viewport_top_y =
-			self.provisional_viewport_top_y_for_downward_sample_match(observed_match);
 		self.last_downward_sample_registration_provisional_viewport_top_y =
 			provisional_viewport_top_y;
 
@@ -3720,11 +3749,73 @@ impl ScrollSession {
 				suppressed_preview_only_local_candidate = Some(candidate);
 			}
 		}
+
 		self.collect_committed_downward_viewport_candidates(frame, &mut candidates);
+		self.apply_pending_preview_local_followup_blocks(
+			suppressed_preview_only_local_candidate,
+			pending_suppressed_huge_preview_only_local_followup,
+			pending_suppressed_huge_preview_only_local_followup_remaining_blocks,
+			pending_extreme_preview_only_local_tail_followup,
+			pending_extreme_preview_only_local_tail_followup_remaining_blocks,
+			&mut candidates,
+		);
+		self.restore_corroborated_observed_candidate(
+			suppressed_observed_candidate,
+			&mut candidates,
+		);
+
+		let preview_only_local_candidate_before_prune =
+			candidates.iter().copied().find(|candidate| {
+				candidate.source == DownwardViewportCandidateSource::PreviewOnlyLocalSample
+			});
+		let candidates_before_prune = candidates.clone();
+
+		self.last_downward_viewport_candidates_before_prune =
+			Some(format_downward_viewport_candidates(&candidates));
+
+		self.prune_committed_keyframe_candidates_outside_local_continuity(&mut candidates);
+		self.restore_repeated_small_preview_only_local_candidate_after_empty_prune(
+			preview_only_local_candidate_before_prune,
+			&mut candidates,
+		);
+
+		if self.should_fail_closed_lagging_exactly_corroborated_preview_local_tail_in_burst(
+			&candidates,
+		) {
+			self.blocked_lagging_exactly_corroborated_preview_local_tail_in_burst = true;
+
+			candidates.clear();
+		}
+		if self.should_fail_closed_underconsumed_observed_recovery_in_burst(
+			&candidates_before_prune,
+			&candidates,
+		) {
+			self.blocked_underconsumed_observed_recovery_in_burst = true;
+
+			candidates.clear();
+		}
+
+		self.last_downward_viewport_candidate_count = Some(candidates.len());
+		self.last_downward_viewport_candidates_after_prune =
+			Some(format_downward_viewport_candidates(&candidates));
+
+		select_downward_viewport_candidate(&mut candidates)
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn apply_pending_preview_local_followup_blocks(
+		&mut self,
+		suppressed_preview_only_local_candidate: Option<DownwardViewportCandidate>,
+		pending_suppressed_huge_preview_only_local_followup: Option<DownwardViewportCandidate>,
+		pending_suppressed_huge_preview_only_local_followup_remaining_blocks: u8,
+		pending_extreme_preview_only_local_tail_followup: Option<DownwardViewportCandidate>,
+		pending_extreme_preview_only_local_tail_followup_remaining_blocks: u8,
+		candidates: &mut Vec<DownwardViewportCandidate>,
+	) {
 		if self
 			.should_fail_closed_suppressed_huge_preview_local_jump_corroborated_by_observed_and_committed(
 				suppressed_preview_only_local_candidate,
-				&candidates,
+				candidates,
 			) {
 			self.pending_suppressed_huge_preview_only_local_followup =
 				suppressed_preview_only_local_candidate;
@@ -3732,26 +3823,28 @@ impl ScrollSession {
 				.suppressed_huge_preview_only_local_followup_block_budget(
 					suppressed_preview_only_local_candidate,
 				);
+
 			candidates.clear();
 		}
 		if self.should_fail_closed_committed_followup_after_suppressed_huge_preview_local_jump(
 			pending_suppressed_huge_preview_only_local_followup,
-			&candidates,
+			candidates,
 		) {
-			if let Some(pending_candidate) = pending_suppressed_huge_preview_only_local_followup {
-				if pending_suppressed_huge_preview_only_local_followup_remaining_blocks > 1 {
-					self.pending_suppressed_huge_preview_only_local_followup =
-						Some(pending_candidate);
-					self.pending_suppressed_huge_preview_only_local_followup_remaining_blocks =
-						pending_suppressed_huge_preview_only_local_followup_remaining_blocks - 1;
-				}
+			if let Some(pending_candidate) = pending_suppressed_huge_preview_only_local_followup
+				&& pending_suppressed_huge_preview_only_local_followup_remaining_blocks > 1
+			{
+				self.pending_suppressed_huge_preview_only_local_followup = Some(pending_candidate);
+				self.pending_suppressed_huge_preview_only_local_followup_remaining_blocks =
+					pending_suppressed_huge_preview_only_local_followup_remaining_blocks - 1;
 			}
+
 			self.blocked_followup_after_suppressed_huge_preview_local_jump = true;
+
 			candidates.clear();
 		}
 		if self.should_fail_closed_committed_followup_after_extreme_preview_local_tail_block(
 			pending_extreme_preview_only_local_tail_followup,
-			&candidates,
+			candidates,
 		) {
 			if let Some(pending_candidate) = pending_extreme_preview_only_local_tail_followup
 				&& pending_extreme_preview_only_local_tail_followup_remaining_blocks > 1
@@ -3760,42 +3853,11 @@ impl ScrollSession {
 				self.pending_extreme_preview_only_local_tail_followup_remaining_blocks =
 					pending_extreme_preview_only_local_tail_followup_remaining_blocks - 1;
 			}
+
 			self.blocked_followup_after_extreme_preview_local_tail = true;
+
 			candidates.clear();
 		}
-		self.restore_corroborated_observed_candidate(
-			suppressed_observed_candidate,
-			&mut candidates,
-		);
-		let preview_only_local_candidate_before_prune =
-			candidates.iter().copied().find(|candidate| {
-				candidate.source == DownwardViewportCandidateSource::PreviewOnlyLocalSample
-			});
-		let candidates_before_prune = candidates.clone();
-		self.last_downward_viewport_candidates_before_prune =
-			Some(format_downward_viewport_candidates(&candidates));
-		self.prune_committed_keyframe_candidates_outside_local_continuity(&mut candidates);
-		self.restore_repeated_small_preview_only_local_candidate_after_empty_prune(
-			preview_only_local_candidate_before_prune,
-			&mut candidates,
-		);
-		if self.should_fail_closed_lagging_exactly_corroborated_preview_local_tail_in_burst(
-			&candidates,
-		) {
-			self.blocked_lagging_exactly_corroborated_preview_local_tail_in_burst = true;
-			candidates.clear();
-		}
-		if self.should_fail_closed_underconsumed_observed_recovery_in_burst(
-			&candidates_before_prune,
-			&candidates,
-		) {
-			self.blocked_underconsumed_observed_recovery_in_burst = true;
-			candidates.clear();
-		}
-		self.last_downward_viewport_candidate_count = Some(candidates.len());
-		self.last_downward_viewport_candidates_after_prune =
-			Some(format_downward_viewport_candidates(&candidates));
-		select_downward_viewport_candidate(&mut candidates)
 	}
 
 	fn should_fail_closed_suppressed_huge_preview_local_jump_corroborated_by_observed_and_committed(
@@ -3809,6 +3871,7 @@ impl ScrollSession {
 		let Some(last_motion_rows_hint) = self.last_motion_rows_hint else {
 			return false;
 		};
+
 		if candidate.source != DownwardViewportCandidateSource::PreviewOnlyLocalSample {
 			return false;
 		}
@@ -3842,6 +3905,7 @@ impl ScrollSession {
 		let Some(pending_candidate) = pending_suppressed_preview_only_local_candidate else {
 			return false;
 		};
+
 		if pending_candidate.source != DownwardViewportCandidateSource::PreviewOnlyLocalSample {
 			return false;
 		}
@@ -3867,6 +3931,7 @@ impl ScrollSession {
 		let Some(pending_candidate) = pending_preview_only_local_candidate else {
 			return false;
 		};
+
 		if pending_candidate.source != DownwardViewportCandidateSource::PreviewOnlyLocalSample {
 			return false;
 		}
@@ -3890,6 +3955,7 @@ impl ScrollSession {
 		let Some(last_motion_rows_hint) = self.last_motion_rows_hint else {
 			return 3;
 		};
+
 		if candidate.source != DownwardViewportCandidateSource::PreviewOnlyLocalSample {
 			return 3;
 		}
@@ -3910,6 +3976,7 @@ impl ScrollSession {
 		let Some(candidate) = suppressed_observed_candidate else {
 			return;
 		};
+
 		if !self.observed_candidate_can_recover_from_committed_corroboration(candidate) {
 			return;
 		}
@@ -3946,13 +4013,16 @@ impl ScrollSession {
 	) {
 		let Some(candidate) = preview_only_local_candidate_before_prune else {
 			self.last_blocked_preview_only_local_candidate = None;
+
 			return;
 		};
+
 		if candidate.source != DownwardViewportCandidateSource::PreviewOnlyLocalSample
 			|| !candidates_after_prune.is_empty()
 			|| !self.repeated_preview_only_local_candidate_can_restore_after_empty_prune(candidate)
 		{
 			self.last_blocked_preview_only_local_candidate = None;
+
 			return;
 		}
 
@@ -3960,11 +4030,13 @@ impl ScrollSession {
 			Some(previous) if previous.candidate == candidate => previous.repeats.saturating_add(1),
 			_ => 1,
 		};
+
 		self.last_blocked_preview_only_local_candidate =
 			Some(BlockedPreviewOnlyLocalCandidate { candidate, repeats });
 
 		if repeats >= 2 {
 			candidates_after_prune.push(candidate);
+
 			self.last_blocked_preview_only_local_candidate = None;
 		}
 	}
@@ -3986,6 +4058,7 @@ impl ScrollSession {
 		if !self.transient_burst_search_enabled {
 			return false;
 		}
+
 		let Some(last_motion_rows_hint) = self.last_motion_rows_hint else {
 			return false;
 		};
@@ -4025,7 +4098,6 @@ impl ScrollSession {
 		else {
 			return false;
 		};
-
 		let Some(last_motion_rows_hint) = self.last_motion_rows_hint else {
 			return false;
 		};
@@ -4047,6 +4119,7 @@ impl ScrollSession {
 					&& candidate.viewport_top_y == observed_candidate.viewport_top_y
 					&& candidate.motion_rows == observed_candidate.motion_rows
 			});
+
 		if !has_same_motion_committed_corroboration {
 			return false;
 		}
@@ -4073,6 +4146,7 @@ impl ScrollSession {
 			candidate.source == DownwardViewportCandidateSource::CommittedKeyframe
 		});
 		let mut local_anchor = best_local_downward_viewport_candidate(candidates);
+
 		if local_anchor.is_some_and(|anchor| {
 			has_committed_candidate
 				&& anchor.source == DownwardViewportCandidateSource::PreviewOnlyLocalSample
@@ -4092,6 +4166,7 @@ impl ScrollSession {
 			candidates.retain(|candidate| {
 				candidate.source != DownwardViewportCandidateSource::PreviewOnlyLocalSample
 			});
+
 			local_anchor = best_local_downward_viewport_candidate(candidates);
 		}
 
@@ -4115,7 +4190,9 @@ impl ScrollSession {
 							<= max_bootstrap_growth_rows
 				});
 			}
+
 			self.prune_committed_keyframe_candidates_without_local_anchor(candidates);
+
 			return;
 		};
 		let allowed_overrun_rows = self
@@ -4182,6 +4259,7 @@ impl ScrollSession {
 		}) else {
 			return;
 		};
+
 		if self.should_fail_closed_far_committed_only_recovery_without_local_anchor(
 			preferred, candidates,
 		) {
@@ -4192,7 +4270,9 @@ impl ScrollSession {
 				) {
 				self.blocked_far_committed_only_recovery_after_corroborated_huge_local_jump = true;
 			}
+
 			candidates.clear();
+
 			return;
 		}
 
@@ -4207,11 +4287,14 @@ impl ScrollSession {
 		let Some(last_motion_rows_hint) = self.last_motion_rows_hint else {
 			return false;
 		};
+
 		if !self.transient_burst_search_enabled {
 			return false;
 		}
+
 		let preferred_growth_rows =
 			self.growth_rows_for_candidate_viewport_top_y(preferred.viewport_top_y);
+
 		if self
 			.should_fail_closed_underconsumed_committed_only_recovery_after_suppressed_preview_local_match(
 				preferred,
@@ -4282,6 +4365,7 @@ impl ScrollSession {
 		let Some(last_motion_rows_hint) = self.last_motion_rows_hint else {
 			return false;
 		};
+
 		if preferred.source != DownwardViewportCandidateSource::CommittedKeyframe {
 			return false;
 		}
@@ -4357,7 +4441,6 @@ impl ScrollSession {
 		let Some(local_motion_rows) = self.last_preview_only_local_registration_motion_rows else {
 			return false;
 		};
-
 		let corroborated_motion_floor =
 			last_motion_rows_hint.saturating_add(DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS);
 		let corroborated_motion_ceiling = observed_motion_rows
@@ -4388,7 +4471,6 @@ impl ScrollSession {
 		let Some(observed_motion_rows) = self.last_observed_sample_registration_motion_rows else {
 			return false;
 		};
-
 		let recent_preview_local_commit = self.growth_history.last().is_some_and(|commit| {
 			commit.decision_source
 				== DownwardViewportCandidateSource::PreviewOnlyLocalSample.decision_source()
@@ -4439,6 +4521,7 @@ impl ScrollSession {
 		}
 
 		let growth_rows = self.growth_rows_for_candidate_viewport_top_y(candidate.viewport_top_y);
+
 		self.transient_burst_motion_hint_exceeds_local_authority(candidate.motion_rows)
 			&& self.last_motion_rows_hint.is_some_and(|last_hint| {
 				candidate.motion_rows.saturating_add(UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS)
@@ -4458,6 +4541,7 @@ impl ScrollSession {
 		candidate.source == DownwardViewportCandidateSource::PreviewOnlyLocalSample && {
 			let growth_rows =
 				self.growth_rows_for_candidate_viewport_top_y(candidate.viewport_top_y);
+
 			growth_rows >= PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS
 				|| self.last_motion_rows_hint.is_some_and(|last_hint| {
 					last_hint >= PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS
@@ -4519,7 +4603,6 @@ impl ScrollSession {
 		else {
 			return;
 		};
-
 		let Some(previous_growth_rows) = self.last_motion_rows_hint else {
 			return;
 		};
@@ -4601,9 +4684,11 @@ impl ScrollSession {
 		let Some(transient_growth_cap_rows) = self.transient_pending_growth_cap_rows() else {
 			return false;
 		};
+
 		if committed_candidate.source != DownwardViewportCandidateSource::CommittedKeyframe {
 			return false;
 		}
+
 		let local_growth_rows =
 			self.growth_rows_for_candidate_viewport_top_y(local_anchor.viewport_top_y);
 		let committed_growth_rows =
@@ -4757,6 +4842,7 @@ impl ScrollSession {
 					None,
 					true,
 				);
+
 			registration = self.prefer_full_range_committed_keyframe_registration(
 				registration,
 				full_range_registration,
@@ -4805,7 +4891,6 @@ impl ScrollSession {
 		let Some(last_motion_rows_hint) = self.last_motion_rows_hint else {
 			return false;
 		};
-
 		let low_confidence_match =
 			matched.mean_abs_diff_x100 > DIRECTION_WARNING_MARGIN_X100.saturating_mul(4);
 		let tiny_underconsumed_match = self
@@ -4991,6 +5076,7 @@ impl ScrollSession {
 		}
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	fn apply_growth(
 		&mut self,
 		frame: RgbaImage,
@@ -5014,14 +5100,17 @@ impl ScrollSession {
 
 		self.current_viewport_top_y = viewport_top_y;
 		self.observed_viewport_top_y = viewport_top_y;
+
 		self.record_last_sample(&frame, fingerprint);
 		self.record_last_downward_observed_sample(&frame, scroll_capture_fingerprint(&frame));
+
 		if self.should_seed_preview_only_local_after_observed_burst_commit(
 			decision_source,
 			growth_rows,
 			previous_motion_rows_hint,
 		) {
 			self.record_preview_only_downward_local_sample(&frame, viewport_top_y);
+
 			self.seeded_preview_only_local_after_observed_burst_commit = true;
 		} else if self.should_preserve_preview_only_local_after_preview_only_burst_commit(
 			decision_source,
@@ -5029,11 +5118,13 @@ impl ScrollSession {
 			previous_motion_rows_hint,
 		) {
 			self.record_preview_only_downward_local_sample(&frame, viewport_top_y);
+
 			self.seeded_preview_only_local_after_observed_burst_commit = false;
 			self.last_blocked_preview_only_local_candidate = None;
 		} else {
 			self.clear_preview_only_downward_local_sample();
 		}
+
 		self.last_unconfirmed_upward_fingerprint = None;
 		self.last_committed_frame = frame.clone();
 		self.resume_frontier_top_y = None;
@@ -5112,150 +5203,16 @@ impl ScrollSession {
 	}
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreviewOnlyDownwardLocalSample {
+	frame: RgbaImage,
+	viewport_top_y: i32,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DirectionMatch {
 	mean_abs_diff_x100: u32,
 	motion_rows: u32,
-}
-
-#[cfg(target_os = "macos")]
-fn classify_vision_downward_sample_motion_against(
-	previous: &RgbaImage,
-	next: &RgbaImage,
-) -> Option<DirectionMatch> {
-	let previous_cg = cg_image_from_rgba_image(previous).ok()?;
-	let next_cg = cg_image_from_rgba_image(next).ok()?;
-	let options = NSDictionary::<VNImageOption, AnyObject>::new();
-	let request = unsafe {
-		VNTranslationalImageRegistrationRequest::initWithTargetedCGImage_options(
-			VNTranslationalImageRegistrationRequest::alloc(),
-			previous_cg.as_ref(),
-			options.as_ref(),
-		)
-	};
-	let request_array = NSArray::from_retained_slice(&[request
-		.clone()
-		.into_super()
-		.into_super()
-		.into_super()
-		.into_super()]);
-	let handler = unsafe {
-		VNImageRequestHandler::initWithCGImage_options(
-			VNImageRequestHandler::alloc(),
-			next_cg.as_ref(),
-			options.as_ref(),
-		)
-	};
-
-	handler.performRequests_error(request_array.as_ref()).ok()?;
-
-	let results = unsafe { request.results() }?;
-	if results.count() == 0 {
-		return None;
-	}
-
-	let translation = unsafe { results.objectAtIndex(0).alignmentTransform() };
-	let motion_rows = translation.ty.round();
-	if !motion_rows.is_finite() || motion_rows <= 0.0 {
-		return None;
-	}
-	let motion_rows = motion_rows as u32;
-	let config = OverlapSearchConfig::default();
-	let matched = evaluate_overlap_direction(
-		previous,
-		next,
-		ScrollDirection::Down,
-		motion_rows..=motion_rows,
-		config,
-	)?;
-	let max_overlap = previous.height().min(next.height());
-
-	downward_registration_has_meaningful_overlap(matched, max_overlap, config).then_some(matched)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn classify_vision_downward_sample_motion_against(
-	_previous: &RgbaImage,
-	_next: &RgbaImage,
-) -> Option<DirectionMatch> {
-	None
-}
-
-fn estimate_pairwise_downward_shift_rows(previous: &RgbaImage, current: &RgbaImage) -> Option<u32> {
-	if previous.dimensions() != current.dimensions() {
-		return None;
-	}
-	let (_width, height) = previous.dimensions();
-	if height < 3 {
-		return None;
-	}
-	let max_shift = height.saturating_sub(1);
-
-	evaluate_overlap_direction(
-		previous,
-		current,
-		ScrollDirection::Down,
-		1..=max_shift,
-		worker_pairwise_overlap_search_config(),
-	)
-	.map(|matched| matched.motion_rows)
-}
-
-#[cfg(target_os = "macos")]
-fn cg_image_from_rgba_image(
-	image: &RgbaImage,
-) -> Result<objc2_core_foundation::CFRetained<CGImage>> {
-	let width = image.width() as usize;
-	let height = image.height() as usize;
-	if width == 0 || height == 0 {
-		return Err(eyre::eyre!("vision registration image has zero dimensions"));
-	}
-
-	let bytes = CFData::from_bytes(image.as_raw());
-	let provider = CGDataProvider::with_cf_data(Some(bytes.as_ref()))
-		.ok_or_else(|| eyre::eyre!("failed to create CGDataProvider for Vision registration"))?;
-	let color_space = CGColorSpace::new_device_rgb()
-		.ok_or_else(|| eyre::eyre!("failed to create RGB colorspace for Vision registration"))?;
-	let bitmap_info = CGBitmapInfo(CGImageAlphaInfo::Last.0 | CGImageByteOrderInfo::Order32Big.0);
-
-	unsafe {
-		CGImage::new(
-			width,
-			height,
-			8,
-			32,
-			width.saturating_mul(4),
-			Some(color_space.as_ref()),
-			bitmap_info,
-			Some(provider.as_ref()),
-			std::ptr::null(),
-			false,
-			CGColorRenderingIntent::RenderingIntentDefault,
-		)
-	}
-	.ok_or_else(|| eyre::eyre!("failed to create CGImage for Vision registration"))
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DownwardRegistration {
-	NoMatch,
-	Matched(DirectionMatch),
-	Ambiguous { best: DirectionMatch, competing: DirectionMatch },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DownwardSampleMatchSource {
-	ObservedSample,
-	PreviewOnlyLocalSample,
-}
-
-impl DownwardSampleMatchSource {
-	const fn label(self) -> &'static str {
-		match self {
-			Self::ObservedSample => "observed_sample",
-			Self::PreviewOnlyLocalSample => "preview_only_local_sample",
-		}
-	}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -5265,93 +5222,12 @@ struct DownwardSampleMatch {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DownwardRegistrationWithSource {
-	NoMatch,
-	Matched(DownwardSampleMatch),
-	Ambiguous { best: DownwardSampleMatch, competing: DownwardSampleMatch },
-}
-
-impl DownwardRegistration {
-	fn map_source(self, source: DownwardSampleMatchSource) -> DownwardRegistrationWithSource {
-		match self {
-			Self::NoMatch => DownwardRegistrationWithSource::NoMatch,
-			Self::Matched(matched) => {
-				DownwardRegistrationWithSource::Matched(DownwardSampleMatch { matched, source })
-			},
-			Self::Ambiguous { best, competing } => DownwardRegistrationWithSource::Ambiguous {
-				best: DownwardSampleMatch { matched: best, source },
-				competing: DownwardSampleMatch { matched: competing, source },
-			},
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DownwardViewportCandidateSource {
-	ObservedSample,
-	PreviewOnlyLocalSample,
-	CommittedKeyframe,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CommittedDownwardViewportCandidateMode {
-	LastCommittedOnly,
-	IncludeRecentHistory,
-}
-
-impl DownwardViewportCandidateSource {
-	const fn priority(self) -> u8 {
-		match self {
-			Self::CommittedKeyframe => 0,
-			Self::ObservedSample => 1,
-			Self::PreviewOnlyLocalSample => 2,
-		}
-	}
-
-	const fn decision_source(self) -> &'static str {
-		match self {
-			Self::ObservedSample => "sample_motion_downward_growth_from_observed_keyframe",
-			Self::PreviewOnlyLocalSample => {
-				"sample_motion_downward_growth_from_preview_only_local_sample"
-			},
-			Self::CommittedKeyframe => "sample_motion_downward_growth_from_committed_keyframe",
-		}
-	}
-
-	const fn fallback_decision_source(self) -> &'static str {
-		match self {
-			Self::ObservedSample => "fallback_downward_registration_from_observed_keyframe",
-			Self::PreviewOnlyLocalSample => {
-				"fallback_downward_registration_from_preview_only_local_sample"
-			},
-			Self::CommittedKeyframe => "fallback_downward_registration_from_committed_keyframe",
-		}
-	}
-}
-
-impl From<DownwardSampleMatchSource> for DownwardViewportCandidateSource {
-	fn from(value: DownwardSampleMatchSource) -> Self {
-		match value {
-			DownwardSampleMatchSource::ObservedSample => Self::ObservedSample,
-			DownwardSampleMatchSource::PreviewOnlyLocalSample => Self::PreviewOnlyLocalSample,
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DownwardViewportCandidate {
 	source: DownwardViewportCandidateSource,
 	viewport_top_y: i32,
 	motion_rows: u32,
 	mean_abs_diff_x100: u32,
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct BlockedPreviewOnlyLocalCandidate {
-	candidate: DownwardViewportCandidate,
-	repeats: u8,
-}
-
 impl DownwardViewportCandidate {
 	fn competing_block_reason(self, competing: Self) -> &'static str {
 		match (self.source, competing.source) {
@@ -5365,115 +5241,9 @@ impl DownwardViewportCandidate {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DownwardViewportResolution {
-	NoMatch,
-	Selected(DownwardViewportCandidate),
-	Ambiguous { preferred: DownwardViewportCandidate, competing: DownwardViewportCandidate },
-}
-
-fn select_downward_viewport_candidate(
-	candidates: &mut [DownwardViewportCandidate],
-) -> DownwardViewportResolution {
-	if candidates.is_empty() {
-		return DownwardViewportResolution::NoMatch;
-	}
-
-	if let Some(preferred_local) = prefer_local_downward_viewport_candidate(candidates) {
-		let competing = candidates.iter().copied().find(|candidate| {
-			candidate != &preferred_local
-				&& candidate.viewport_top_y.abs_diff(preferred_local.viewport_top_y)
-					>= DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS
-				&& candidate.mean_abs_diff_x100
-					<= preferred_local
-						.mean_abs_diff_x100
-						.saturating_add(DIRECTION_WARNING_MARGIN_X100)
-		});
-
-		return match competing {
-			Some(competing) => {
-				DownwardViewportResolution::Ambiguous { preferred: preferred_local, competing }
-			},
-			None => DownwardViewportResolution::Selected(preferred_local),
-		};
-	}
-
-	candidates.sort_by(|left, right| {
-		left.mean_abs_diff_x100
-			.cmp(&right.mean_abs_diff_x100)
-			.then(left.source.priority().cmp(&right.source.priority()))
-			.then(left.motion_rows.cmp(&right.motion_rows))
-	});
-
-	let preferred = candidates[0];
-	let competing = candidates.iter().copied().skip(1).find(|candidate| {
-		candidate.viewport_top_y.abs_diff(preferred.viewport_top_y)
-			>= DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS
-			&& candidate.mean_abs_diff_x100
-				<= preferred.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
-	});
-
-	match competing {
-		Some(competing) => DownwardViewportResolution::Ambiguous { preferred, competing },
-		None => DownwardViewportResolution::Selected(preferred),
-	}
-}
-
-fn format_downward_viewport_candidates(candidates: &[DownwardViewportCandidate]) -> String {
-	candidates
-		.iter()
-		.map(|candidate| {
-			format!(
-				"{:?}@{}/{}:{}",
-				candidate.source,
-				candidate.viewport_top_y,
-				candidate.motion_rows,
-				candidate.mean_abs_diff_x100
-			)
-		})
-		.collect::<Vec<_>>()
-		.join(",")
-}
-
-fn prefer_local_downward_viewport_candidate(
-	candidates: &[DownwardViewportCandidate],
-) -> Option<DownwardViewportCandidate> {
-	let local = best_local_downward_viewport_candidate(candidates)?;
-	let committed = candidates
-		.iter()
-		.copied()
-		.filter(|candidate| candidate.source == DownwardViewportCandidateSource::CommittedKeyframe)
-		.min_by(|left, right| {
-			left.mean_abs_diff_x100
-				.cmp(&right.mean_abs_diff_x100)
-				.then(left.motion_rows.cmp(&right.motion_rows))
-		});
-
-	let Some(committed) = committed else {
-		return Some(local);
-	};
-
-	let committed_is_nearby = committed.viewport_top_y.abs_diff(local.viewport_top_y)
-		< DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS;
-	let committed_is_only_modestly_better =
-		committed.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
-			>= local.mean_abs_diff_x100;
-
-	if committed_is_nearby && committed_is_only_modestly_better { Some(local) } else { None }
-}
-
-fn best_local_downward_viewport_candidate(
-	candidates: &[DownwardViewportCandidate],
-) -> Option<DownwardViewportCandidate> {
-	candidates
-		.iter()
-		.copied()
-		.filter(|candidate| candidate.source != DownwardViewportCandidateSource::CommittedKeyframe)
-		.min_by(|left, right| {
-			left.mean_abs_diff_x100
-				.cmp(&right.mean_abs_diff_x100)
-				.then(left.source.priority().cmp(&right.source.priority()))
-				.then(left.motion_rows.cmp(&right.motion_rows))
-		})
+struct BlockedPreviewOnlyLocalCandidate {
+	candidate: DownwardViewportCandidate,
+	repeats: u8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -5589,6 +5359,106 @@ pub(crate) enum ScrollObserveOutcome {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DownwardRegistration {
+	NoMatch,
+	Matched(DirectionMatch),
+	Ambiguous { best: DirectionMatch, competing: DirectionMatch },
+}
+impl DownwardRegistration {
+	fn map_source(self, source: DownwardSampleMatchSource) -> DownwardRegistrationWithSource {
+		match self {
+			Self::NoMatch => DownwardRegistrationWithSource::NoMatch,
+			Self::Matched(matched) => {
+				DownwardRegistrationWithSource::Matched(DownwardSampleMatch { matched, source })
+			},
+			Self::Ambiguous { best, competing } => DownwardRegistrationWithSource::Ambiguous {
+				best: DownwardSampleMatch { matched: best, source },
+				competing: DownwardSampleMatch { matched: competing, source },
+			},
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DownwardSampleMatchSource {
+	ObservedSample,
+	PreviewOnlyLocalSample,
+}
+impl DownwardSampleMatchSource {
+	const fn label(self) -> &'static str {
+		match self {
+			Self::ObservedSample => "observed_sample",
+			Self::PreviewOnlyLocalSample => "preview_only_local_sample",
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DownwardRegistrationWithSource {
+	NoMatch,
+	Matched(DownwardSampleMatch),
+	Ambiguous { best: DownwardSampleMatch, competing: DownwardSampleMatch },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DownwardViewportCandidateSource {
+	ObservedSample,
+	PreviewOnlyLocalSample,
+	CommittedKeyframe,
+}
+impl DownwardViewportCandidateSource {
+	const fn priority(self) -> u8 {
+		match self {
+			Self::CommittedKeyframe => 0,
+			Self::ObservedSample => 1,
+			Self::PreviewOnlyLocalSample => 2,
+		}
+	}
+
+	const fn decision_source(self) -> &'static str {
+		match self {
+			Self::ObservedSample => "sample_motion_downward_growth_from_observed_keyframe",
+			Self::PreviewOnlyLocalSample => {
+				"sample_motion_downward_growth_from_preview_only_local_sample"
+			},
+			Self::CommittedKeyframe => "sample_motion_downward_growth_from_committed_keyframe",
+		}
+	}
+
+	const fn fallback_decision_source(self) -> &'static str {
+		match self {
+			Self::ObservedSample => "fallback_downward_registration_from_observed_keyframe",
+			Self::PreviewOnlyLocalSample => {
+				"fallback_downward_registration_from_preview_only_local_sample"
+			},
+			Self::CommittedKeyframe => "fallback_downward_registration_from_committed_keyframe",
+		}
+	}
+}
+
+impl From<DownwardSampleMatchSource> for DownwardViewportCandidateSource {
+	fn from(value: DownwardSampleMatchSource) -> Self {
+		match value {
+			DownwardSampleMatchSource::ObservedSample => Self::ObservedSample,
+			DownwardSampleMatchSource::PreviewOnlyLocalSample => Self::PreviewOnlyLocalSample,
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommittedDownwardViewportCandidateMode {
+	LastCommittedOnly,
+	IncludeRecentHistory,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DownwardViewportResolution {
+	NoMatch,
+	Selected(DownwardViewportCandidate),
+	Ambiguous { preferred: DownwardViewportCandidate, competing: DownwardViewportCandidate },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OverlapOrientation {
 	PreviousBottomToNextTop,
 	PreviousTopToNextBottom,
@@ -5637,6 +5507,267 @@ pub(crate) fn detect_vertical_overlap(
 	)
 }
 
+pub(crate) fn compose_provisional_preview_image(
+	base_preview: &RgbaImage,
+	latest_frame: Option<&RgbaImage>,
+	motion_rows_hint: Option<u32>,
+	preview_width_px: u32,
+) -> RgbaImage {
+	let Some(frame) = latest_frame else {
+		return base_preview.clone();
+	};
+	let Some(motion_rows_hint) = motion_rows_hint else {
+		return base_preview.clone();
+	};
+	let hinted_growth_rows = motion_rows_hint.min(frame.height());
+
+	if hinted_growth_rows == 0 {
+		return base_preview.clone();
+	}
+
+	let Some(strip) = crop_bottom_rows(frame, hinted_growth_rows) else {
+		return base_preview.clone();
+	};
+	let preview_strip = resize_strip_to_preview_width(&strip, preview_width_px);
+
+	append_vertical_image(base_preview, &preview_strip).unwrap_or_else(|_| base_preview.clone())
+}
+
+fn worker_pairwise_overlap_search_config() -> OverlapSearchConfig {
+	OverlapSearchConfig {
+		min_overlap_rows: 24,
+		max_column_samples: 96,
+		max_row_samples: 96,
+		max_mean_abs_diff_x100: 850,
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn classify_vision_downward_sample_motion_against(
+	previous: &RgbaImage,
+	next: &RgbaImage,
+) -> Option<DirectionMatch> {
+	let previous_cg = cg_image_from_rgba_image(previous).ok()?;
+	let next_cg = cg_image_from_rgba_image(next).ok()?;
+	let options = NSDictionary::<VNImageOption, AnyObject>::new();
+	let request = unsafe {
+		VNTranslationalImageRegistrationRequest::initWithTargetedCGImage_options(
+			VNTranslationalImageRegistrationRequest::alloc(),
+			previous_cg.as_ref(),
+			options.as_ref(),
+		)
+	};
+	let request_array = NSArray::from_retained_slice(&[request
+		.clone()
+		.into_super()
+		.into_super()
+		.into_super()
+		.into_super()]);
+	let handler = unsafe {
+		VNImageRequestHandler::initWithCGImage_options(
+			VNImageRequestHandler::alloc(),
+			next_cg.as_ref(),
+			options.as_ref(),
+		)
+	};
+
+	handler.performRequests_error(request_array.as_ref()).ok()?;
+
+	let results = unsafe { request.results() }?;
+
+	if results.count() == 0 {
+		return None;
+	}
+
+	let translation = unsafe { results.objectAtIndex(0).alignmentTransform() };
+	let motion_rows = translation.ty.round();
+
+	if !motion_rows.is_finite() || motion_rows <= 0.0 {
+		return None;
+	}
+
+	let motion_rows = motion_rows as u32;
+	let config = OverlapSearchConfig::default();
+	let matched = evaluate_overlap_direction(
+		previous,
+		next,
+		ScrollDirection::Down,
+		motion_rows..=motion_rows,
+		config,
+	)?;
+	let max_overlap = previous.height().min(next.height());
+
+	downward_registration_has_meaningful_overlap(matched, max_overlap, config).then_some(matched)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn classify_vision_downward_sample_motion_against(
+	_previous: &RgbaImage,
+	_next: &RgbaImage,
+) -> Option<DirectionMatch> {
+	None
+}
+
+fn estimate_pairwise_downward_shift_rows(previous: &RgbaImage, current: &RgbaImage) -> Option<u32> {
+	if previous.dimensions() != current.dimensions() {
+		return None;
+	}
+
+	let (_width, height) = previous.dimensions();
+
+	if height < 3 {
+		return None;
+	}
+
+	let max_shift = height.saturating_sub(1);
+
+	evaluate_overlap_direction(
+		previous,
+		current,
+		ScrollDirection::Down,
+		1..=max_shift,
+		worker_pairwise_overlap_search_config(),
+	)
+	.map(|matched| matched.motion_rows)
+}
+
+#[cfg(target_os = "macos")]
+fn cg_image_from_rgba_image(image: &RgbaImage) -> Result<CFRetained<CGImage>> {
+	let width = image.width() as usize;
+	let height = image.height() as usize;
+
+	if width == 0 || height == 0 {
+		return Err(eyre::eyre!("vision registration image has zero dimensions"));
+	}
+
+	let bytes = CFData::from_bytes(image.as_raw());
+	let provider = CGDataProvider::with_cf_data(Some(bytes.as_ref()))
+		.ok_or_else(|| eyre::eyre!("failed to create CGDataProvider for Vision registration"))?;
+	let color_space = CGColorSpace::new_device_rgb()
+		.ok_or_else(|| eyre::eyre!("failed to create RGB colorspace for Vision registration"))?;
+	let bitmap_info = CGBitmapInfo(CGImageAlphaInfo::Last.0 | CGImageByteOrderInfo::Order32Big.0);
+
+	unsafe {
+		CGImage::new(
+			width,
+			height,
+			8,
+			32,
+			width.saturating_mul(4),
+			Some(color_space.as_ref()),
+			bitmap_info,
+			Some(provider.as_ref()),
+			ptr::null(),
+			false,
+			CGColorRenderingIntent::RenderingIntentDefault,
+		)
+	}
+	.ok_or_else(|| eyre::eyre!("failed to create CGImage for Vision registration"))
+}
+
+fn select_downward_viewport_candidate(
+	candidates: &mut [DownwardViewportCandidate],
+) -> DownwardViewportResolution {
+	if candidates.is_empty() {
+		return DownwardViewportResolution::NoMatch;
+	}
+
+	if let Some(preferred_local) = prefer_local_downward_viewport_candidate(candidates) {
+		let competing = candidates.iter().copied().find(|candidate| {
+			candidate != &preferred_local
+				&& candidate.viewport_top_y.abs_diff(preferred_local.viewport_top_y)
+					>= DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS
+				&& candidate.mean_abs_diff_x100
+					<= preferred_local
+						.mean_abs_diff_x100
+						.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+		});
+
+		return match competing {
+			Some(competing) => {
+				DownwardViewportResolution::Ambiguous { preferred: preferred_local, competing }
+			},
+			None => DownwardViewportResolution::Selected(preferred_local),
+		};
+	}
+
+	candidates.sort_by(|left, right| {
+		left.mean_abs_diff_x100
+			.cmp(&right.mean_abs_diff_x100)
+			.then(left.source.priority().cmp(&right.source.priority()))
+			.then(left.motion_rows.cmp(&right.motion_rows))
+	});
+
+	let preferred = candidates[0];
+	let competing = candidates.iter().copied().skip(1).find(|candidate| {
+		candidate.viewport_top_y.abs_diff(preferred.viewport_top_y)
+			>= DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS
+			&& candidate.mean_abs_diff_x100
+				<= preferred.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+	});
+
+	match competing {
+		Some(competing) => DownwardViewportResolution::Ambiguous { preferred, competing },
+		None => DownwardViewportResolution::Selected(preferred),
+	}
+}
+
+fn format_downward_viewport_candidates(candidates: &[DownwardViewportCandidate]) -> String {
+	candidates
+		.iter()
+		.map(|candidate| {
+			format!(
+				"{:?}@{}/{}:{}",
+				candidate.source,
+				candidate.viewport_top_y,
+				candidate.motion_rows,
+				candidate.mean_abs_diff_x100
+			)
+		})
+		.collect::<Vec<_>>()
+		.join(",")
+}
+
+fn prefer_local_downward_viewport_candidate(
+	candidates: &[DownwardViewportCandidate],
+) -> Option<DownwardViewportCandidate> {
+	let local = best_local_downward_viewport_candidate(candidates)?;
+	let committed = candidates
+		.iter()
+		.copied()
+		.filter(|candidate| candidate.source == DownwardViewportCandidateSource::CommittedKeyframe)
+		.min_by(|left, right| {
+			left.mean_abs_diff_x100
+				.cmp(&right.mean_abs_diff_x100)
+				.then(left.motion_rows.cmp(&right.motion_rows))
+		});
+	let Some(committed) = committed else {
+		return Some(local);
+	};
+	let committed_is_nearby = committed.viewport_top_y.abs_diff(local.viewport_top_y)
+		< DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS;
+	let committed_is_only_modestly_better =
+		committed.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+			>= local.mean_abs_diff_x100;
+
+	if committed_is_nearby && committed_is_only_modestly_better { Some(local) } else { None }
+}
+
+fn best_local_downward_viewport_candidate(
+	candidates: &[DownwardViewportCandidate],
+) -> Option<DownwardViewportCandidate> {
+	candidates
+		.iter()
+		.copied()
+		.filter(|candidate| candidate.source != DownwardViewportCandidateSource::CommittedKeyframe)
+		.min_by(|left, right| {
+			left.mean_abs_diff_x100
+				.cmp(&right.mean_abs_diff_x100)
+				.then(left.source.priority().cmp(&right.source.priority()))
+				.then(left.motion_rows.cmp(&right.motion_rows))
+		})
+}
+
 fn evaluate_overlap_direction(
 	previous: &RgbaImage,
 	next: &RgbaImage,
@@ -5657,7 +5788,6 @@ fn collect_overlap_direction_matches(
 	let Some(informative_span) = overlap_global_informative_span(previous, next) else {
 		return Vec::new();
 	};
-
 	let max_overlap = previous.height().min(next.height());
 	let effective_min_overlap =
 		if max_overlap <= config.min_overlap_rows { 1 } else { config.min_overlap_rows.max(1) };
@@ -5698,6 +5828,7 @@ fn collect_overlap_direction_matches(
 			.cmp(&right.mean_abs_diff_x100)
 			.then(left.motion_rows.cmp(&right.motion_rows))
 	});
+
 	matches
 }
 
@@ -5739,6 +5870,7 @@ fn collect_overlap_direction_matches_in_ranges(
 			if matched.mean_abs_diff_x100 < previous.mean_abs_diff_x100 {
 				*previous = matched;
 			}
+
 			continue;
 		}
 
@@ -5980,31 +6112,6 @@ fn resize_strip_to_preview_width(strip: &RgbaImage, preview_width_px: u32) -> Rg
 	imageops::resize(strip, preview_width_px, preview_height, FilterType::Triangle)
 }
 
-pub(crate) fn compose_provisional_preview_image(
-	base_preview: &RgbaImage,
-	latest_frame: Option<&RgbaImage>,
-	motion_rows_hint: Option<u32>,
-	preview_width_px: u32,
-) -> RgbaImage {
-	let Some(frame) = latest_frame else {
-		return base_preview.clone();
-	};
-	let Some(motion_rows_hint) = motion_rows_hint else {
-		return base_preview.clone();
-	};
-	let hinted_growth_rows = motion_rows_hint.min(frame.height());
-	if hinted_growth_rows == 0 {
-		return base_preview.clone();
-	}
-
-	let Some(strip) = crop_bottom_rows(frame, hinted_growth_rows) else {
-		return base_preview.clone();
-	};
-	let preview_strip = resize_strip_to_preview_width(&strip, preview_width_px);
-
-	append_vertical_image(base_preview, &preview_strip).unwrap_or_else(|_| base_preview.clone())
-}
-
 fn crop_bottom_rows(frame: &RgbaImage, rows: u32) -> Option<RgbaImage> {
 	let rows = rows.min(frame.height());
 
@@ -6220,8 +6327,6 @@ mod tests {
 		DownwardViewportCandidate, DownwardViewportCandidateSource, DownwardViewportResolution,
 		GrowthCommit, MotionObservation, OverlapSearchConfig, PreviewOnlyDownwardLocalSample,
 		ScrollDirection, ScrollFrameFingerprint, ScrollObserveOutcome, ScrollSession,
-		classify_vision_downward_sample_motion_against, estimate_pairwise_downward_shift_rows,
-		select_downward_viewport_candidate,
 	};
 
 	fn make_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
@@ -6272,18 +6377,17 @@ mod tests {
 		start_row: u32,
 		thumb_top: u32,
 	) -> image::RgbaImage {
-		let mut image = make_sparse_textlike_window(width, height, start_row);
 		let track_left = width.saturating_sub(18);
 		let thumb_height = (height / 4).max(12).min(height.max(1));
 		let thumb_top = thumb_top.min(height.saturating_sub(thumb_height));
 		let thumb_right = width.saturating_sub(3).max(track_left.saturating_add(4));
+		let mut image = make_sparse_textlike_window(width, height, start_row);
 
 		for y in 0..height {
 			for x in track_left..width {
 				image.put_pixel(x, y, Rgba([224, 224, 224, 255]));
 			}
 		}
-
 		for y in thumb_top..thumb_top.saturating_add(thumb_height) {
 			for x in track_left.saturating_add(3)..thumb_right {
 				image.put_pixel(x, y, Rgba([28, 28, 28, 255]));
@@ -6294,12 +6398,12 @@ mod tests {
 	}
 
 	fn make_browser_like_window(width: u32, height: u32, start_row: u32) -> image::RgbaImage {
-		let mut image = make_sparse_textlike_window(width, height, start_row);
 		let scrollbar_left = width.saturating_sub(18);
 		let content_left = 56_u32;
 		let content_right = width.saturating_sub(48);
 		let heading_width = 220_u32;
 		let paragraph_width = content_right.saturating_sub(content_left);
+		let mut image = make_sparse_textlike_window(width, height, start_row);
 
 		for y in 0..height {
 			let document_row = start_row.saturating_add(y);
@@ -6311,19 +6415,19 @@ mod tests {
 			} else if document_row % 420 >= 54 && document_row % 420 < 220 {
 				if document_row % 24 < 3 {
 					let trim = ((document_row / 24) % 5) * 18;
+
 					for x in content_left
 						..content_left.saturating_add(paragraph_width.saturating_sub(trim))
 					{
 						image.put_pixel(x, y, Rgba([72, 72, 72, 255]));
 					}
 				}
-			} else if document_row % 420 >= 270 && document_row % 420 < 360 {
-				if document_row % 20 < 2 {
-					for x in content_left.saturating_add(20)
-						..content_left.saturating_add(paragraph_width.saturating_sub(70))
-					{
-						image.put_pixel(x, y, Rgba([98, 98, 98, 255]));
-					}
+			} else if document_row % 420 >= 270 && document_row % 420 < 360 && document_row % 20 < 2
+			{
+				for x in content_left.saturating_add(20)
+					..content_left.saturating_add(paragraph_width.saturating_sub(70))
+				{
+					image.put_pixel(x, y, Rgba([98, 98, 98, 255]));
 				}
 			}
 
@@ -6335,6 +6439,7 @@ mod tests {
 		let thumb_height = (height / 5).max(16);
 		let thumb_top = (start_row / 3) % height.max(thumb_height + 1);
 		let thumb_top = thumb_top.min(height.saturating_sub(thumb_height));
+
 		for y in thumb_top..thumb_top.saturating_add(thumb_height) {
 			for x in scrollbar_left.saturating_add(3)..width.saturating_sub(4) {
 				image.put_pixel(x, y, Rgba([96, 96, 96, 255]));
@@ -6416,7 +6521,7 @@ mod tests {
 	fn worker_pairwise_vision_commits_substantial_downward_growth_with_corroboration() {
 		let base = make_sparse_textlike_window(512, 640, 0);
 		let moved = make_sparse_textlike_window(512, 640, 90);
-		let matched = classify_vision_downward_sample_motion_against(&base, &moved)
+		let matched = scroll_capture::classify_vision_downward_sample_motion_against(&base, &moved)
 			.expect("vision registration should detect the substantial downward motion");
 		let mut session = ScrollSession::new(base, 320).unwrap();
 		let outcome = session.observe_worker_pairwise_vision_frame(moved).unwrap();
@@ -6438,7 +6543,7 @@ mod tests {
 		let base = make_sparse_textlike_window(512, 640, 0);
 		let moved = make_sparse_textlike_window(512, 640, 58);
 
-		assert_eq!(estimate_pairwise_downward_shift_rows(&base, &moved), Some(58));
+		assert_eq!(scroll_capture::estimate_pairwise_downward_shift_rows(&base, &moved), Some(58));
 	}
 
 	#[test]
@@ -6446,7 +6551,7 @@ mod tests {
 		let base = make_browser_like_window(512, 640, 0);
 		let moved = make_browser_like_window(512, 640, 320);
 
-		assert_eq!(estimate_pairwise_downward_shift_rows(&base, &moved), Some(320));
+		assert_eq!(scroll_capture::estimate_pairwise_downward_shift_rows(&base, &moved), Some(320));
 	}
 
 	#[test]
@@ -6457,7 +6562,10 @@ mod tests {
 			.collect::<Vec<_>>();
 
 		for window in frames.windows(2) {
-			assert_eq!(estimate_pairwise_downward_shift_rows(&window[0], &window[1]), Some(180));
+			assert_eq!(
+				scroll_capture::estimate_pairwise_downward_shift_rows(&window[0], &window[1]),
+				Some(180)
+			);
 		}
 	}
 
@@ -6467,10 +6575,12 @@ mod tests {
 		let base = make_sparse_textlike_window(512, 640, 0);
 		let step_one = make_sparse_textlike_window(512, 640, 180);
 		let step_two = make_sparse_textlike_window(512, 640, 360);
-		let first_match = classify_vision_downward_sample_motion_against(&base, &step_one)
-			.expect("first pairwise registration should detect downward motion");
-		let followup_match = classify_vision_downward_sample_motion_against(&step_one, &step_two)
-			.expect("followup pairwise registration should detect downward motion");
+		let first_match =
+			scroll_capture::classify_vision_downward_sample_motion_against(&base, &step_one)
+				.expect("first pairwise registration should detect downward motion");
+		let followup_match =
+			scroll_capture::classify_vision_downward_sample_motion_against(&step_one, &step_two)
+				.expect("followup pairwise registration should detect downward motion");
 		let mut session = ScrollSession::new(base, 320).unwrap();
 
 		assert_eq!(
@@ -6503,10 +6613,12 @@ mod tests {
 		let base = make_sparse_textlike_window(512, 640, 0);
 		let step_one = make_sparse_textlike_window(512, 640, 180);
 		let step_two = make_sparse_textlike_window(512, 640, 360);
-		let first_match = classify_vision_downward_sample_motion_against(&base, &step_one)
-			.expect("first pairwise registration should detect downward motion");
-		let followup_match = classify_vision_downward_sample_motion_against(&step_one, &step_two)
-			.expect("followup pairwise registration should detect downward motion");
+		let first_match =
+			scroll_capture::classify_vision_downward_sample_motion_against(&base, &step_one)
+				.expect("first pairwise registration should detect downward motion");
+		let followup_match =
+			scroll_capture::classify_vision_downward_sample_motion_against(&step_one, &step_two)
+				.expect("followup pairwise registration should detect downward motion");
 		let mut session = ScrollSession::new(base, 320).unwrap();
 
 		assert_eq!(
@@ -6539,9 +6651,11 @@ mod tests {
 		let base = make_browser_like_window(512, 640, 0);
 		let blocked = make_browser_like_window(512, 640, 760);
 		let followup = make_browser_like_window(512, 640, 844);
-		let matched = classify_vision_downward_sample_motion_against(&blocked, &followup).expect(
-			"pairwise registration should detect the followup step after the blocked overshot",
-		);
+		let matched =
+			scroll_capture::classify_vision_downward_sample_motion_against(&blocked, &followup)
+				.expect(
+					"pairwise registration should detect the followup step after the blocked overshot",
+				);
 		let mut session = ScrollSession::new(base, 320).unwrap();
 
 		assert_eq!(
@@ -6566,7 +6680,9 @@ mod tests {
 	fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_no_change() {
 		let base = make_sparse_textlike_window(512, 640, 0);
 		let mut session = ScrollSession::new(base.clone(), 320).unwrap();
+
 		session.record_preview_only_downward_local_sample(&base, 123);
+
 		session.pending_suppressed_huge_preview_only_local_followup =
 			Some(DownwardViewportCandidate {
 				source: DownwardViewportCandidateSource::PreviewOnlyLocalSample,
@@ -6600,10 +6716,12 @@ mod tests {
 	fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_commit() {
 		let base = make_sparse_textlike_window(512, 640, 0);
 		let moved = make_sparse_textlike_window(512, 640, 180);
-		let matched = classify_vision_downward_sample_motion_against(&base, &moved)
+		let matched = scroll_capture::classify_vision_downward_sample_motion_against(&base, &moved)
 			.expect("pairwise registration should detect downward motion");
 		let mut session = ScrollSession::new(base, 320).unwrap();
+
 		session.record_preview_only_downward_local_sample(&moved, 180);
+
 		session.pending_suppressed_huge_preview_only_local_followup =
 			Some(DownwardViewportCandidate {
 				source: DownwardViewportCandidateSource::PreviewOnlyLocalSample,
@@ -6649,8 +6767,9 @@ mod tests {
 		for window in frames.windows(2) {
 			let previous = &window[0];
 			let next = window[1].clone();
-			let matched = classify_vision_downward_sample_motion_against(previous, &next)
-				.expect("pairwise registration should detect each slowdown step");
+			let matched =
+				scroll_capture::classify_vision_downward_sample_motion_against(previous, &next)
+					.expect("pairwise registration should detect each slowdown step");
 
 			assert_eq!(
 				session.observe_worker_pairwise_vision_frame(next).unwrap(),
@@ -6673,7 +6792,7 @@ mod tests {
 	fn worker_pairwise_vision_commits_browser_like_growth_above_legacy_cap() {
 		let base = make_browser_like_window(512, 640, 0);
 		let moved = make_browser_like_window(512, 640, 320);
-		let matched = classify_vision_downward_sample_motion_against(&base, &moved)
+		let matched = scroll_capture::classify_vision_downward_sample_motion_against(&base, &moved)
 			.expect("vision registration should detect the browser-like downward motion");
 		let mut session = ScrollSession::new(base, 320).unwrap();
 
@@ -6703,8 +6822,9 @@ mod tests {
 		for window in frames.windows(2) {
 			let previous = &window[0];
 			let next = window[1].clone();
-			let matched = classify_vision_downward_sample_motion_against(previous, &next)
-				.expect("pairwise registration should detect each browser-like step");
+			let matched =
+				scroll_capture::classify_vision_downward_sample_motion_against(previous, &next)
+					.expect("pairwise registration should detect each browser-like step");
 
 			assert_eq!(
 				session.observe_worker_pairwise_vision_frame(next).unwrap(),
@@ -6728,10 +6848,12 @@ mod tests {
 		let base = make_browser_like_window(512, 640, 0);
 		let step_one = make_browser_like_window(512, 640, 180);
 		let step_two = make_browser_like_window(512, 640, 360);
-		let first_match = classify_vision_downward_sample_motion_against(&base, &step_one)
-			.expect("first browser-like step should register downward motion");
-		let followup_match = classify_vision_downward_sample_motion_against(&step_one, &step_two)
-			.expect("followup browser-like step should register downward motion");
+		let first_match =
+			scroll_capture::classify_vision_downward_sample_motion_against(&base, &step_one)
+				.expect("first browser-like step should register downward motion");
+		let followup_match =
+			scroll_capture::classify_vision_downward_sample_motion_against(&step_one, &step_two)
+				.expect("followup browser-like step should register downward motion");
 		let mut session = ScrollSession::new(base, 320).unwrap();
 
 		assert_eq!(
@@ -6764,9 +6886,11 @@ mod tests {
 		let base = make_browser_like_window(512, 640, 0);
 		let blocked = make_browser_like_window(512, 640, 700);
 		let followup = make_browser_like_window(512, 640, 784);
-		let matched = classify_vision_downward_sample_motion_against(&blocked, &followup).expect(
-			"browser-like pairwise registration should use the immediately previous worker frame",
-		);
+		let matched =
+			scroll_capture::classify_vision_downward_sample_motion_against(&blocked, &followup)
+				.expect(
+					"browser-like pairwise registration should use the immediately previous worker frame",
+				);
 		let mut session = ScrollSession::new(base, 320).unwrap();
 
 		assert_eq!(
@@ -7151,8 +7275,10 @@ mod tests {
 				| ScrollObserveOutcome::PreviewUpdated
 				| ScrollObserveOutcome::NoChange
 		));
+
 		let resume_outcome =
 			session.observe_downward_sample(make_window(&document, 3, 1, 5)).unwrap();
+
 		assert!(matches!(
 			resume_outcome,
 			ScrollObserveOutcome::NoChange
@@ -7247,8 +7373,10 @@ mod tests {
 				| ScrollObserveOutcome::UnsupportedDirection { direction: ScrollDirection::Up }
 		));
 		assert_eq!(session.export_image().height(), height_after_upward_rewind);
+
 		let partial_resume_outcome =
 			session.observe_downward_sample(make_window(&document, 3, 2, 5)).unwrap();
+
 		assert!(matches!(
 			partial_resume_outcome,
 			ScrollObserveOutcome::NoChange
@@ -7293,8 +7421,10 @@ mod tests {
 				| ScrollObserveOutcome::PreviewUpdated
 				| ScrollObserveOutcome::NoChange
 		));
+
 		let return_outcome =
 			session.observe_downward_sample(make_window(&document, 3, 2, 5)).unwrap();
+
 		assert!(matches!(
 			return_outcome,
 			ScrollObserveOutcome::NoChange
@@ -7370,7 +7500,7 @@ mod tests {
 		let mut candidates = [observed, committed];
 
 		assert_eq!(
-			select_downward_viewport_candidate(&mut candidates),
+			scroll_capture::select_downward_viewport_candidate(&mut candidates),
 			DownwardViewportResolution::Ambiguous { preferred: committed, competing: observed }
 		);
 	}
@@ -7412,6 +7542,7 @@ mod tests {
 
 		session.last_committed_frame =
 			image::RgbaImage::from_pixel(256, 120, Rgba([255, 255, 255, 255]));
+
 		let target = make_sparse_textlike_window(256, 120, 39);
 		let mut candidates = Vec::new();
 
@@ -7439,6 +7570,7 @@ mod tests {
 
 		session.last_committed_frame =
 			image::RgbaImage::from_pixel(256, 120, Rgba([255, 255, 255, 255]));
+
 		let target = make_sparse_textlike_window(256, 120, 39);
 		let mut candidates = Vec::new();
 
@@ -7488,7 +7620,7 @@ mod tests {
 		let mut candidates = [observed, committed];
 
 		assert_eq!(
-			select_downward_viewport_candidate(&mut candidates),
+			scroll_capture::select_downward_viewport_candidate(&mut candidates),
 			DownwardViewportResolution::Selected(observed)
 		);
 	}
@@ -7646,6 +7778,7 @@ mod tests {
 		session.last_motion_rows_hint = Some(1);
 		session.transient_motion_rows_hint = Some(277);
 		session.transient_burst_search_enabled = true;
+
 		session.growth_history.push(super::GrowthCommit {
 			frame: make_sparse_textlike_window(256, 120, 74),
 			growth_rows: 1,
@@ -7840,6 +7973,7 @@ mod tests {
 		session.last_observed_sample_registration_motion_rows = Some(20);
 		session.last_downward_viewport_candidates_before_prune =
 			Some("PreviewOnlyLocalSample@472/20:0,CommittedKeyframe@472/20:0".to_string());
+
 		for (viewport_top_y, growth_rows) in [(442_i32, 8_u32), (452_i32, 10_u32)] {
 			session.growth_history.push(super::GrowthCommit {
 				frame: make_sparse_textlike_window(
@@ -7880,6 +8014,7 @@ mod tests {
 		session.last_observed_sample_registration_motion_rows = Some(24);
 		session.last_downward_viewport_candidates_before_prune =
 			Some("PreviewOnlyLocalSample@261/24:329,CommittedKeyframe@512/275:460".to_string());
+
 		session.growth_history.push(super::GrowthCommit {
 			frame: make_sparse_textlike_window(256, 120, 237),
 			growth_rows: 20,
@@ -8061,6 +8196,7 @@ mod tests {
 		session.transient_burst_search_enabled = true;
 		session.last_preview_only_downward_local_sample =
 			Some(PreviewOnlyDownwardLocalSample { frame: previous.clone(), viewport_top_y: 145 });
+
 		session.growth_history.push(GrowthCommit {
 			frame: previous,
 			growth_rows: 4,
@@ -8096,6 +8232,7 @@ mod tests {
 		session.transient_burst_search_enabled = true;
 		session.last_preview_only_downward_local_sample =
 			Some(PreviewOnlyDownwardLocalSample { frame: previous.clone(), viewport_top_y: 416 });
+
 		session.growth_history.push(GrowthCommit {
 			frame: previous,
 			growth_rows: 10,
@@ -8131,6 +8268,7 @@ mod tests {
 		session.transient_burst_search_enabled = true;
 		session.last_preview_only_downward_local_sample =
 			Some(PreviewOnlyDownwardLocalSample { frame: previous.clone(), viewport_top_y: 145 });
+
 		session.growth_history.push(GrowthCommit {
 			frame: previous,
 			growth_rows: 12,
@@ -8266,6 +8404,7 @@ mod tests {
 		session.last_observed_sample_registration_motion_rows = Some(164);
 		session.last_preview_only_local_registration_result = Some("matched");
 		session.last_preview_only_local_registration_motion_rows = Some(164);
+
 		session.growth_history.push(super::GrowthCommit {
 			frame: make_sparse_textlike_window(256, 120, 230),
 			growth_rows: 18,
@@ -8303,6 +8442,7 @@ mod tests {
 		session.last_observed_sample_registration_motion_rows = Some(112);
 		session.last_preview_only_local_registration_result = Some("matched");
 		session.last_preview_only_local_registration_motion_rows = Some(276);
+
 		session.growth_history.push(super::GrowthCommit {
 			frame: make_sparse_textlike_window(256, 120, 230),
 			growth_rows: 18,
@@ -8340,6 +8480,7 @@ mod tests {
 		session.last_observed_sample_registration_motion_rows = Some(38);
 		session.last_preview_only_local_registration_result = Some("matched");
 		session.last_preview_only_local_registration_motion_rows = Some(38);
+
 		session.growth_history.push(super::GrowthCommit {
 			frame: make_sparse_textlike_window(256, 120, 230),
 			growth_rows: 18,
@@ -8375,6 +8516,7 @@ mod tests {
 		session.transient_burst_search_enabled = true;
 		session.last_observed_sample_registration_result = Some("matched");
 		session.last_observed_sample_registration_motion_rows = Some(164);
+
 		session.growth_history.push(super::GrowthCommit {
 			frame: make_sparse_textlike_window(256, 120, 230),
 			growth_rows: 18,
@@ -8415,6 +8557,7 @@ mod tests {
 		session.transient_burst_search_enabled = true;
 		session.last_observed_sample_registration_result = Some("matched");
 		session.last_observed_sample_registration_motion_rows = Some(164);
+
 		session.growth_history.push(super::GrowthCommit {
 			frame: make_sparse_textlike_window(256, 120, 230),
 			growth_rows: 18,
@@ -8566,6 +8709,7 @@ mod tests {
 	fn suppressed_huge_preview_local_followup_block_budget_scales_with_far_recovery_ratio() {
 		let mut session =
 			ScrollSession::new(make_sparse_textlike_window(256, 120, 0), 320).unwrap();
+
 		session.last_motion_rows_hint = Some(18);
 
 		assert_eq!(
@@ -8606,14 +8750,17 @@ mod tests {
 				motion_rows: 164,
 				mean_abs_diff_x100: 0,
 			});
+
 		assert!(session.should_refresh_downward_observed_baseline_after_huge_suppressed_jump());
 
 		session.pending_suppressed_huge_preview_only_local_followup = None;
 		session.blocked_followup_after_suppressed_huge_preview_local_jump = true;
+
 		assert!(session.should_refresh_downward_observed_baseline_after_huge_suppressed_jump());
 
 		session.blocked_followup_after_suppressed_huge_preview_local_jump = false;
 		session.blocked_far_committed_only_recovery_after_corroborated_huge_local_jump = true;
+
 		assert!(session.should_refresh_downward_observed_baseline_after_huge_suppressed_jump());
 	}
 
@@ -8626,10 +8773,12 @@ mod tests {
 			&make_sparse_textlike_window(256, 120, 32),
 			Some(32),
 		);
+
 		assert!(session.last_preview_only_downward_local_sample.is_some());
 		assert!(!session.should_reset_preview_only_local_baseline_after_huge_far_committed_block());
 
 		session.blocked_far_committed_only_recovery_after_corroborated_huge_local_jump = true;
+
 		assert!(session.should_reset_preview_only_local_baseline_after_huge_far_committed_block());
 	}
 
@@ -8721,6 +8870,7 @@ mod tests {
 		session.transient_burst_search_enabled = true;
 		session.last_preview_only_downward_local_sample =
 			Some(PreviewOnlyDownwardLocalSample { frame: previous.clone(), viewport_top_y: 145 });
+
 		session.growth_history.push(GrowthCommit {
 			frame: previous.clone(),
 			growth_rows: 4,
@@ -8755,6 +8905,7 @@ mod tests {
 		session.transient_burst_search_enabled = true;
 		session.last_preview_only_downward_local_sample =
 			Some(PreviewOnlyDownwardLocalSample { frame: previous.clone(), viewport_top_y: 145 });
+
 		session.growth_history.push(GrowthCommit {
 			frame: previous.clone(),
 			growth_rows: 12,
@@ -8989,7 +9140,7 @@ mod tests {
 		session.last_preview_only_local_registration_result = Some("matched");
 		session.last_preview_only_local_registration_motion_rows = Some(272);
 
-		let candidates = vec![DownwardViewportCandidate {
+		let candidates = [DownwardViewportCandidate {
 			source: DownwardViewportCandidateSource::CommittedKeyframe,
 			viewport_top_y: 220,
 			motion_rows: 32,
@@ -9081,6 +9232,7 @@ mod tests {
 		session.last_observed_sample_registration_result = Some("matched");
 		session.last_observed_sample_registration_motion_rows = Some(135);
 		session.last_preview_only_local_registration_result = Some("no_match");
+
 		session.growth_history.push(super::GrowthCommit {
 			frame: make_sparse_textlike_window(256, 120, 237),
 			growth_rows: 20,
@@ -9121,7 +9273,7 @@ mod tests {
 		session.last_preview_only_local_registration_result = Some("matched");
 		session.last_preview_only_local_registration_motion_rows = Some(272);
 
-		let candidates = vec![DownwardViewportCandidate {
+		let candidates = [DownwardViewportCandidate {
 			source: DownwardViewportCandidateSource::CommittedKeyframe,
 			viewport_top_y: 500,
 			motion_rows: 310,
