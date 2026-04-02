@@ -1017,27 +1017,38 @@ impl OverlaySession {
 		));
 
 		if self.scroll_capture.active {
-			self.scroll_capture.live_stream = match (
-				self.scroll_capture.capture_rect_points,
-				self.scroll_capture.capture_rect_pixels,
-			) {
-				(Some(capture_rect_points), Some(capture_rect_pixels)) => {
-					Some(MacLiveFrameStream::with_scroll_capture_region_and_waker(
-						self.config.self_capture_exception_window_ids.clone(),
-						capture_rect_points,
-						capture_rect_pixels,
-						self.scroll_frame_waker.clone(),
-					))
-				},
-				_ => Some(MacLiveFrameStream::with_self_capture_exception_window_ids_and_waker(
-					self.config.self_capture_exception_window_ids.clone(),
-					self.scroll_frame_waker.clone(),
-				)),
+			self.scroll_capture.live_stream = if self.should_use_scroll_capture_worker_sampling() {
+				None
+			} else {
+				match (
+					self.scroll_capture.capture_rect_points,
+					self.scroll_capture.capture_rect_pixels,
+				) {
+					(Some(capture_rect_points), Some(capture_rect_pixels)) => {
+						Some(MacLiveFrameStream::with_scroll_capture_region_and_waker(
+							self.config.self_capture_exception_window_ids.clone(),
+							capture_rect_points,
+							capture_rect_pixels,
+							self.scroll_frame_waker.clone(),
+						))
+					},
+					_ => {
+						Some(MacLiveFrameStream::with_self_capture_exception_window_ids_and_waker(
+							self.config.self_capture_exception_window_ids.clone(),
+							self.scroll_frame_waker.clone(),
+						))
+					},
+				}
 			};
+
+			self.scroll_capture.live_stream_backlog.clear();
+
 			self.scroll_capture.last_stream_frame_seq = 0;
 			self.scroll_capture.last_stream_frame_fingerprint = None;
 			self.scroll_capture.consecutive_identical_stream_frames = 0;
 			self.scroll_capture.last_consumed_stream_frame_captured_at = None;
+			self.scroll_capture.last_stream_event_at = None;
+			self.scroll_capture.last_stream_poll_at = None;
 			self.scroll_capture.pending_post_stall_burst_after_seq = None;
 			self.scroll_capture.live_stream_stale_grace = None;
 			self.scroll_capture.last_duplicate_stream_refresh_at = None;
@@ -5827,6 +5838,7 @@ impl OverlaySession {
 		capture_rect_pixels: RectPoints,
 		base_frame: RgbaImage,
 	) -> Result<ScrollCaptureState> {
+		let use_worker_sampling = self.should_use_scroll_capture_worker_sampling();
 		let trace_recorder = ScrollCaptureTraceRecorder::from_env(
 			monitor,
 			capture_rect_pixels,
@@ -5864,12 +5876,14 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			pixel_delta_residual: MacOSScrollPixelResidual::default(),
 			#[cfg(target_os = "macos")]
-			live_stream: Some(MacLiveFrameStream::with_scroll_capture_region_and_waker(
-				self.config.self_capture_exception_window_ids.clone(),
-				capture_rect_points,
-				capture_rect_pixels,
-				self.scroll_frame_waker.clone(),
-			)),
+			live_stream: (!use_worker_sampling).then(|| {
+				MacLiveFrameStream::with_scroll_capture_region_and_waker(
+					self.config.self_capture_exception_window_ids.clone(),
+					capture_rect_points,
+					capture_rect_pixels,
+					self.scroll_frame_waker.clone(),
+				)
+			}),
 			#[cfg(target_os = "macos")]
 			live_stream_backlog: VecDeque::new(),
 			last_stream_frame_seq: 0,
@@ -15225,6 +15239,22 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	#[test]
+	fn scroll_capture_start_skips_scroll_live_stream_when_worker_sampling_is_forced() {
+		let mut session = OverlaySession::new();
+
+		seed_ready_scroll_capture_selection(&mut session);
+		enable_test_worker_scroll_capture_path(&mut session);
+
+		let control = session.start_scroll_capture();
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert!(session.scroll_capture.active);
+		assert!(session.scroll_capture.live_stream.is_none());
+		assert!(session.scroll_capture.live_stream_backlog.is_empty());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
 	fn reset_for_start_preserves_external_scroll_input_drain_reader() {
 		let mut session = OverlaySession::default();
 
@@ -18105,6 +18135,37 @@ mod tests {
 		);
 		assert_eq!(session.scroll_capture.last_stream_frame_seq, 0);
 		assert_eq!(session.scroll_capture.live_stream_stale_grace, None);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn apply_self_capture_exception_window_ids_to_active_streams_keeps_scroll_live_stream_disabled_in_worker_mode()
+	 {
+		let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+
+		enable_test_worker_scroll_capture_path(&mut session);
+
+		session.test_push_scroll_capture_live_frame(ScrollCaptureLiveFrame {
+			frame_seq: 9,
+			captured_at: Instant::now(),
+			image: test_frozen_image(),
+		});
+
+		session.scroll_capture.last_stream_event_at = Some(Instant::now());
+		session.scroll_capture.last_stream_poll_at = Some(Instant::now());
+
+		session.apply_self_capture_exception_window_ids_to_active_streams();
+
+		assert_eq!(
+			session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
+			&[17]
+		);
+		assert!(session.scroll_capture.live_stream.is_none());
+		assert!(session.scroll_capture.live_stream_backlog.is_empty());
+		assert!(session.scroll_capture.last_stream_event_at.is_none());
+		assert!(session.scroll_capture.last_stream_poll_at.is_none());
+		assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+		assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
 	}
 
 	#[cfg(target_os = "macos")]
