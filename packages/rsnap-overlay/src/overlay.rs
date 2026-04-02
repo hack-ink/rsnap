@@ -14,7 +14,6 @@ use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::mem;
 use std::panic;
-#[cfg(target_os = "macos")]
 use std::ptr;
 use std::slice;
 #[cfg(target_os = "macos")]
@@ -133,9 +132,10 @@ use self::session_state::{
 	LiveStreamStaleGrace, MacOSHudWindowConfigState, MacOSScrollPixelResidual,
 	MacOSScrollWheelEvent,
 };
+#[cfg(target_os = "macos")]
+use self::trace_recording::ScrollCaptureTraceInputRecord;
 use self::trace_recording::{
-	ScrollCaptureTraceFrameRecord, ScrollCaptureTraceInputRecord, ScrollCaptureTraceRecorder,
-	ScrollCaptureTraceSessionSnapshot,
+	ScrollCaptureTraceFrameRecord, ScrollCaptureTraceRecorder, ScrollCaptureTraceSessionSnapshot,
 };
 #[cfg(target_os = "macos")]
 use crate::backend;
