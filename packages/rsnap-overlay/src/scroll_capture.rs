@@ -257,6 +257,7 @@ pub mod bench_support {
 }
 
 use std::ops::RangeInclusive;
+#[cfg(target_os = "macos")]
 use std::ptr;
 
 use color_eyre::eyre::{self, Result};
@@ -268,6 +269,7 @@ use image::{
 use objc2::{AnyThread, runtime::AnyObject};
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::CFData;
+#[cfg(target_os = "macos")]
 use objc2_core_foundation::CFRetained;
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{

@@ -5,8 +5,11 @@ use image::RgbaImage;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
+#[cfg(target_os = "macos")]
 use crate::overlay::SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL;
 use crate::overlay::SCROLL_CAPTURE_SAMPLE_INTERVAL;
+#[cfg(target_os = "macos")]
+use crate::overlay::ScrollCaptureTraceInputRecord;
 #[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 #[cfg(target_os = "macos")]
@@ -19,7 +22,7 @@ use crate::overlay::{
 use crate::overlay::{MonitorRect, RectPoints};
 use crate::overlay::{
 	OverlayControl, OverlaySession, ScrollCaptureFrameSource, ScrollCaptureTraceFrameRecord,
-	ScrollCaptureTraceInputRecord, ScrollObserveOutcome, ScrollSession,
+	ScrollObserveOutcome, ScrollSession,
 };
 use crate::scroll_capture::ScrollDirection;
 #[cfg(target_os = "macos")]
@@ -630,7 +633,6 @@ impl OverlaySession {
 		self.consume_scroll_capture_backlog(max_frames);
 	}
 
-	#[cfg(target_os = "macos")]
 	pub(super) fn replay_recorded_live_stream_frame(
 		&mut self,
 		frame: RgbaImage,
@@ -638,13 +640,16 @@ impl OverlaySession {
 		observed_at: Instant,
 		allow_stale_input: bool,
 	) -> Option<Result<ScrollObserveOutcome>> {
+		#[cfg(target_os = "macos")]
 		if self.scroll_capture_should_arm_post_stall_burst_for_time_gap_at(observed_at) {
 			self.scroll_capture.pending_post_stall_burst_after_seq =
 				Some(frame_seq.saturating_sub(1));
 		}
 
+		#[cfg(target_os = "macos")]
 		let frame_for_activity =
 			ScrollCaptureLiveFrame { frame_seq, captured_at: observed_at, image: frame.clone() };
+		#[cfg(target_os = "macos")]
 		let _ = self.note_scroll_capture_live_stream_frame_activity(&frame_for_activity);
 
 		self.scroll_capture.last_stream_frame_seq = frame_seq;
@@ -656,9 +661,12 @@ impl OverlaySession {
 			observed_at,
 		);
 
-		self.scroll_capture.last_consumed_stream_frame_captured_at = Some(observed_at);
+		#[cfg(target_os = "macos")]
+		{
+			self.scroll_capture.last_consumed_stream_frame_captured_at = Some(observed_at);
 
-		self.maybe_schedule_duplicate_stream_refresh(frame_seq, observed_at);
+			self.maybe_schedule_duplicate_stream_refresh(frame_seq, observed_at);
+		}
 
 		outcome
 	}
