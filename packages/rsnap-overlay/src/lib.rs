@@ -5,15 +5,17 @@
 
 #![allow(unused_crate_dependencies)]
 
-/// Benchmark harness exports used by Criterion benches.
 pub mod bench_support {
+	//! Benchmark harness exports used by Criterion benches.
+
 	pub use crate::scroll_capture::bench_support::{
 		ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
 		ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
 	};
 }
-/// Deterministic replay harness exports for scroll-capture verification.
 pub mod replay_support {
+	//! Deterministic replay harness exports for scroll-capture verification.
+
 	pub use crate::overlay::replay_support::{
 		RecordedScrollCaptureReplayMode, RecordedScrollCaptureReplayRecordedOutcome,
 		RecordedScrollCaptureReplayStepResult, RecordedScrollCaptureReplaySummary,

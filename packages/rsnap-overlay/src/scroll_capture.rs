@@ -1,5 +1,6 @@
-/// Deterministic scroll-capture fixtures and harnesses used by Criterion benches.
 pub mod bench_support {
+	//! Deterministic scroll-capture fixtures and harnesses used by Criterion benches.
+
 	use image::{Rgba, RgbaImage, imageops};
 
 	use crate::scroll_capture::{
