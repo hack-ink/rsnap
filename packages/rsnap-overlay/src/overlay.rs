@@ -2681,7 +2681,12 @@ impl OverlaySession {
 							self.png_encode_inflight = false;
 						}
 					},
-					WorkerErrorSource::CaptureMonitorRegion => {},
+					WorkerErrorSource::CaptureMonitorRegion => {
+						self.clear_scroll_capture_inflight_request();
+						self.scroll_capture_set_error(message);
+
+						return OverlayControl::Continue;
+					},
 				}
 
 				self.state.set_error(message);
@@ -18358,6 +18363,32 @@ mod tests {
 		assert!(matches!(control, super::OverlayControl::Continue));
 		assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
 		assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn capture_monitor_region_error_clears_scroll_capture_inflight_and_pauses_session() {
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+		session.scroll_capture.inflight_request_id = Some(41);
+		session.scroll_capture.inflight_request_observation =
+			Some(InflightScrollCaptureObservation {
+				was_observable: true,
+				external_input_seq: 9,
+				input_direction: Some(ScrollDirection::Down),
+			});
+
+		let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
+			source: WorkerErrorSource::CaptureMonitorRegion,
+			message: String::from("capture timed out"),
+		});
+
+		assert!(matches!(control, super::OverlayControl::Continue));
+		assert_eq!(session.scroll_capture.inflight_request_id, None);
+		assert_eq!(session.scroll_capture.inflight_request_observation, None);
+		assert!(session.scroll_capture.paused);
+		assert_eq!(session.state.error_message.as_deref(), Some("capture timed out"));
 	}
 
 	#[test]
