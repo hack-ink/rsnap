@@ -8,11 +8,13 @@ mod session_state;
 mod trace_recording;
 mod window_runtime;
 
+#[cfg(target_os = "macos")]
 use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
 use std::mem;
 use std::panic;
+#[cfg(target_os = "macos")]
 use std::ptr;
 use std::slice;
 #[cfg(target_os = "macos")]
@@ -494,19 +496,13 @@ impl FrozenToolbarTool {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ScrollCaptureFrameSource {
-	Worker {
-		request_id: u64,
-	},
-	#[cfg(target_os = "macos")]
-	LiveStream {
-		frame_seq: u64,
-	},
+	Worker { request_id: u64 },
+	LiveStream { frame_seq: u64 },
 }
 impl ScrollCaptureFrameSource {
 	const fn as_str(self) -> &'static str {
 		match self {
 			Self::Worker { .. } => "worker",
-			#[cfg(target_os = "macos")]
 			Self::LiveStream { .. } => "live_stream",
 		}
 	}
@@ -514,7 +510,6 @@ impl ScrollCaptureFrameSource {
 	const fn worker_request_id(self) -> Option<u64> {
 		match self {
 			Self::Worker { request_id } => Some(request_id),
-			#[cfg(target_os = "macos")]
 			Self::LiveStream { .. } => None,
 		}
 	}
@@ -2050,7 +2045,15 @@ impl OverlaySession {
 		}
 
 		if let Some(monitor) = self.scroll_capture.monitor.or(self.state.monitor) {
-			self.position_scroll_preview_window(monitor);
+			#[cfg(target_os = "macos")]
+			{
+				self.position_scroll_preview_window(monitor);
+			}
+
+			#[cfg(not(target_os = "macos"))]
+			{
+				let _ = monitor;
+			}
 		}
 	}
 
@@ -5456,7 +5459,6 @@ impl OverlaySession {
 		now.saturating_duration_since(input_direction_at) <= SCROLL_CAPTURE_INPUT_FRESHNESS
 	}
 
-	#[cfg(target_os = "macos")]
 	fn scroll_capture_has_fresh_downward_backlog_at(&self, now: Instant) -> bool {
 		if self.scroll_capture.input_direction != Some(ScrollDirection::Down)
 			|| self.scroll_capture.downward_motion_rows_pending <= 0.0
@@ -5483,7 +5485,6 @@ impl OverlaySession {
 		})
 	}
 
-	#[cfg(target_os = "macos")]
 	fn scroll_capture_should_allow_post_stall_burst_search_at(
 		&self,
 		frame_seq: u64,
@@ -5843,7 +5844,6 @@ impl OverlaySession {
 				.scroll_capture
 				.external_scroll_input_drain_reader
 				.clone(),
-			#[cfg(target_os = "macos")]
 			last_external_scroll_input_seq: 0,
 			#[cfg(target_os = "macos")]
 			pixel_delta_residual: MacOSScrollPixelResidual::default(),
@@ -5856,7 +5856,6 @@ impl OverlaySession {
 			)),
 			#[cfg(target_os = "macos")]
 			live_stream_backlog: VecDeque::new(),
-			#[cfg(target_os = "macos")]
 			last_stream_frame_seq: 0,
 			#[cfg(target_os = "macos")]
 			last_stream_frame_fingerprint: None,
@@ -5870,7 +5869,6 @@ impl OverlaySession {
 			last_stream_poll_at: None,
 			#[cfg(target_os = "macos")]
 			last_duplicate_stream_refresh_at: None,
-			#[cfg(target_os = "macos")]
 			pending_post_stall_burst_after_seq: None,
 			#[cfg(target_os = "macos")]
 			live_stream_stale_grace: None,
@@ -7260,6 +7258,14 @@ impl OverlaySession {
 			OverlayExit::Saved(path) => ("saved", None, Some(path.display().to_string()), None),
 			OverlayExit::Error(message) => ("error", None, None, Some(message.as_str())),
 		};
+		#[cfg(target_os = "macos")]
+		let scroll_capture_has_live_stream = self.scroll_capture.live_stream.is_some();
+		#[cfg(not(target_os = "macos"))]
+		let scroll_capture_has_live_stream = false;
+		#[cfg(target_os = "macos")]
+		let live_sample_stream_present = self.live_sample_stream.is_some();
+		#[cfg(not(target_os = "macos"))]
+		let live_sample_stream_present = false;
 
 		tracing::info!(
 			op = "overlay.exit_begin",
@@ -7268,8 +7274,8 @@ impl OverlaySession {
 			saved_path,
 			error_message,
 			scroll_capture_active = self.scroll_capture.active,
-			scroll_capture_has_live_stream = self.scroll_capture.live_stream.is_some(),
-			live_sample_stream_present = self.live_sample_stream.is_some(),
+			scroll_capture_has_live_stream,
+			live_sample_stream_present,
 			last_event_phase = %self.event_loop_phase.as_str(),
 			last_event_window_id = ?self.event_loop_last_progress_window_id,
 			last_event_monitor_id = ?self.event_loop_last_progress_monitor_id,
@@ -12973,6 +12979,7 @@ mod tests {
 	use std::collections::VecDeque;
 	#[cfg(target_os = "macos")]
 	use std::sync::Arc;
+	#[cfg(target_os = "macos")]
 	use std::thread;
 	#[cfg(target_os = "macos")]
 	use std::time::Duration;
