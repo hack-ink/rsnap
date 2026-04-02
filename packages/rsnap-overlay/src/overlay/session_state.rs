@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 use std::collections::VecDeque;
 use std::{
 	collections::HashMap,
@@ -191,7 +192,6 @@ pub(super) struct ScrollCaptureState {
 	pub(super) overlay_mouse_passthrough_until: Option<Instant>,
 	#[cfg(target_os = "macos")]
 	pub(super) external_scroll_input_drain_reader: Option<ExternalScrollInputDrainReader>,
-	#[cfg(target_os = "macos")]
 	pub(super) last_external_scroll_input_seq: u64,
 	#[cfg(target_os = "macos")]
 	pub(super) pixel_delta_residual: MacOSScrollPixelResidual,
@@ -199,7 +199,6 @@ pub(super) struct ScrollCaptureState {
 	pub(super) live_stream: Option<MacLiveFrameStream>,
 	#[cfg(target_os = "macos")]
 	pub(super) live_stream_backlog: VecDeque<ScrollCaptureLiveFrame>,
-	#[cfg(target_os = "macos")]
 	pub(super) last_stream_frame_seq: u64,
 	#[cfg(target_os = "macos")]
 	pub(super) last_stream_frame_fingerprint: Option<Vec<u8>>,
@@ -213,7 +212,6 @@ pub(super) struct ScrollCaptureState {
 	pub(super) last_stream_poll_at: Option<Instant>,
 	#[cfg(target_os = "macos")]
 	pub(super) last_duplicate_stream_refresh_at: Option<Instant>,
-	#[cfg(target_os = "macos")]
 	pub(super) pending_post_stall_burst_after_seq: Option<u64>,
 	#[cfg(target_os = "macos")]
 	pub(super) live_stream_stale_grace: Option<LiveStreamStaleGrace>,
