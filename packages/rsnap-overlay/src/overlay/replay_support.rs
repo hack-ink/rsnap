@@ -1129,6 +1129,7 @@ mod tests {
 		}
 	}
 
+	#[cfg(target_os = "macos")]
 	fn capture_rect() -> RectPoints {
 		RectPoints::new(100, 120, 3, 5)
 	}
