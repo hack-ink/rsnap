@@ -33,7 +33,7 @@ use crate::worker::WorkerRequestSendError;
 
 impl OverlaySession {
 	#[cfg(target_os = "macos")]
-	fn should_use_scroll_capture_worker_sampling(&self) -> bool {
+	pub(super) fn should_use_scroll_capture_worker_sampling(&self) -> bool {
 		if !cfg!(test) {
 			return true;
 		}
