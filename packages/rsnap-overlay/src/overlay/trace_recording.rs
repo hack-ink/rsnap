@@ -10,7 +10,7 @@ use std::{
 };
 
 use color_eyre::eyre::{self, Result, WrapErr};
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 use directories::ProjectDirs;
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
