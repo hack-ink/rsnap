@@ -2,15 +2,18 @@
 
 #![allow(unused_crate_dependencies)]
 
+use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use color_eyre::eyre::WrapErr;
+use color_eyre::Result;
+use color_eyre::eyre::{self, WrapErr};
 use directories::ProjectDirs;
-use rsnap_overlay::replay_support::{
-	RecordedScrollCaptureReplayMode, replay_recorded_scroll_capture_trace_with_mode,
-};
-use tracing_subscriber::{EnvFilter, fmt};
+use tracing_subscriber::{self, EnvFilter};
+
+use rsnap_overlay::replay_support::RecordedScrollCaptureReplaySummary;
+use rsnap_overlay::replay_support::{self, RecordedScrollCaptureReplayMode};
 
 fn main() -> ExitCode {
 	if let Err(err) = run() {
@@ -22,9 +25,10 @@ fn main() -> ExitCode {
 	ExitCode::SUCCESS
 }
 
-fn run() -> color_eyre::Result<()> {
+fn run() -> Result<()> {
 	color_eyre::install()?;
-	let _ = fmt()
+
+	let _ = tracing_subscriber::fmt()
 		.with_env_filter(
 			EnvFilter::try_from_default_env()
 				.unwrap_or_else(|_| EnvFilter::new("warn,rsnap_overlay=info")),
@@ -32,8 +36,7 @@ fn run() -> color_eyre::Result<()> {
 		.with_target(false)
 		.with_level(true)
 		.try_init();
-
-	let mut args = std::env::args().skip(1);
+	let mut args = env::args().skip(1);
 	let mut trace_manifest_path = None;
 	let mut list_only = false;
 	let mut emit_json = false;
@@ -58,6 +61,7 @@ fn run() -> color_eyre::Result<()> {
 				let Some(value) = args.next() else {
 					color_eyre::eyre::bail!("--trace requires a manifest path");
 				};
+
 				trace_manifest_path = Some(value);
 			},
 			other => {
@@ -82,8 +86,11 @@ fn run() -> color_eyre::Result<()> {
 	} else {
 		RecordedScrollCaptureReplayMode::RecordedSource
 	};
-	let mut summary =
-		replay_recorded_scroll_capture_trace_with_mode(&trace_manifest_path, replay_mode)?;
+	let mut summary = replay_support::replay_recorded_scroll_capture_trace_with_mode(
+		&trace_manifest_path,
+		replay_mode,
+	)?;
+
 	if summary_only {
 		summary.step_results.clear();
 	}
@@ -96,9 +103,7 @@ fn run() -> color_eyre::Result<()> {
 	Ok(())
 }
 
-fn print_recorded_trace_summary(
-	summary: &rsnap_overlay::replay_support::RecordedScrollCaptureReplaySummary,
-) {
+fn print_recorded_trace_summary(summary: &RecordedScrollCaptureReplaySummary) {
 	println!(
 		"[replay] mode={:?} trace={} manifest={} final_export_height={} final_preview_height={} final_viewport_top_y={} recorded_final_export_height={:?} recorded_final_preview_height={:?} first_outcome_divergence_frame={:?} first_export_height_drift_frame={:?} first_preview_height_drift_frame={:?} first_semantic_issue_frame={:?} first_missed_downward_motion_frame={:?} first_underconsumed_downward_motion_frame={:?} first_growth_overshoot_frame={:?} max_recorded_committed_growth_rows={} max_replayed_committed_growth_rows={} max_recorded_export_jump={} max_recorded_preview_jump={} max_replayed_export_jump={} max_replayed_preview_jump={} final_preview_path={:?} final_export_path={:?}",
 		summary.replay_mode,
@@ -160,11 +165,11 @@ fn print_recorded_trace_summary(
 	}
 }
 
-fn latest_recorded_trace_manifest() -> color_eyre::Result<PathBuf> {
+fn latest_recorded_trace_manifest() -> Result<PathBuf> {
 	let project_dirs = ProjectDirs::from("ink", "hack", "rsnap")
 		.expect("rsnap project directories should be available");
 	let trace_root = project_dirs.data_local_dir().join("scroll-capture-traces");
-	let mut manifests: Vec<PathBuf> = std::fs::read_dir(&trace_root)
+	let mut manifests: Vec<PathBuf> = fs::read_dir(&trace_root)
 		.wrap_err_with(|| format!("failed to read {}", trace_root.display()))?
 		.filter_map(Result::ok)
 		.map(|entry| entry.path().join("manifest.json"))
@@ -172,8 +177,9 @@ fn latest_recorded_trace_manifest() -> color_eyre::Result<PathBuf> {
 		.collect();
 
 	manifests.sort();
+
 	manifests.pop().ok_or_else(|| {
-		color_eyre::eyre::eyre!(
+		eyre::eyre!(
 			"no recorded scroll-capture trace manifests found under {}; record a fresh live trace first or pass --trace <manifest-path>",
 			trace_root.display()
 		)
