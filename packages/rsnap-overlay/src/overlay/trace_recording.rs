@@ -116,7 +116,6 @@ impl From<ScrollCaptureFrameSource> for ScrollCaptureTraceFrameSource {
 	fn from(value: ScrollCaptureFrameSource) -> Self {
 		match value {
 			ScrollCaptureFrameSource::Worker { request_id } => Self::Worker { request_id },
-			#[cfg(target_os = "macos")]
 			ScrollCaptureFrameSource::LiveStream { frame_seq } => Self::LiveStream { frame_seq },
 		}
 	}
