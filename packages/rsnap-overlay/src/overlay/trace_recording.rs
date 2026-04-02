@@ -13,12 +13,15 @@ use serde::{Deserialize, Serialize};
 use super::{MonitorRect, RectPoints, ScrollCaptureFrameSource};
 use crate::{
 	png,
-	scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession},
+	scroll_capture::{
+		scroll_capture_fingerprint, ScrollDirection, ScrollObserveOutcome, ScrollSession,
+	},
 };
 
 const SCROLL_CAPTURE_TRACE_ENV: &str = "RSNAP_SCROLL_CAPTURE_TRACE";
 const SCROLL_CAPTURE_TRACE_DIR_ENV: &str = "RSNAP_SCROLL_CAPTURE_TRACE_DIR";
 const SCROLL_CAPTURE_TRACE_SCHEMA: &str = "scroll_capture_live_trace/1";
+const SCROLL_CAPTURE_TRACE_MANIFEST_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ScrollCaptureLiveTraceManifest {
@@ -233,7 +236,10 @@ pub(crate) struct ScrollCaptureTraceRecorder {
 	trace_dir: PathBuf,
 	manifest_path: PathBuf,
 	started_at: Instant,
+	last_manifest_flush_at: Instant,
 	next_frame_index: u64,
+	last_recorded_frame_fingerprint: Option<Vec<u8>>,
+	last_recorded_frame_path: Option<String>,
 	manifest: ScrollCaptureLiveTraceManifest,
 }
 
@@ -301,22 +307,39 @@ impl ScrollCaptureTraceRecorder {
 				snapshot_after: record.snapshot_after,
 			},
 		));
-		self.flush_manifest_best_effort("record_input");
+		self.flush_manifest_if_due_best_effort("record_input");
 	}
 
 	pub(crate) fn record_frame_observation(&mut self, record: ScrollCaptureTraceFrameRecord<'_>) {
-		let frame_index = self.next_frame_index;
-		self.next_frame_index = self.next_frame_index.saturating_add(1);
-		let frame_path = format!("frames/frame-{frame_index:06}.png");
+		let frame_fingerprint = scroll_capture_fingerprint(record.frame);
+		let frame_path = if self
+			.last_recorded_frame_fingerprint
+			.as_ref()
+			.is_some_and(|previous| previous == &frame_fingerprint)
+		{
+			self.last_recorded_frame_path.clone().unwrap_or_else(|| {
+				let frame_index = self.next_frame_index;
+				self.next_frame_index = self.next_frame_index.saturating_add(1);
+				format!("frames/frame-{frame_index:06}.png")
+			})
+		} else {
+			let frame_index = self.next_frame_index;
+			self.next_frame_index = self.next_frame_index.saturating_add(1);
+			let frame_path = format!("frames/frame-{frame_index:06}.png");
 
-		if let Err(err) = self.write_frame(record.frame, &frame_path) {
-			tracing::warn!(
-				op = "scroll_capture.trace_write_frame_failed",
-				error = %err,
-				frame_index,
-				"Failed to persist scroll-capture trace frame."
-			);
-		}
+			if let Err(err) = self.write_frame(record.frame, &frame_path) {
+				tracing::warn!(
+					op = "scroll_capture.trace_write_frame_failed",
+					error = %err,
+					frame_index,
+					"Failed to persist scroll-capture trace frame."
+				);
+			}
+			self.last_recorded_frame_fingerprint = Some(frame_fingerprint);
+			self.last_recorded_frame_path = Some(frame_path.clone());
+
+			frame_path
+		};
 
 		let outcome = match record.outcome {
 			Ok(value) => ScrollCaptureTraceRecordedOutcome::from(*value),
@@ -335,7 +358,7 @@ impl ScrollCaptureTraceRecorder {
 				outcome,
 			},
 		));
-		self.flush_manifest_best_effort("record_frame");
+		self.flush_manifest_if_due_best_effort("record_frame");
 	}
 
 	pub(crate) fn record_error(&mut self, message: &str) {
@@ -415,9 +438,20 @@ impl ScrollCaptureTraceRecorder {
 			final_error: None,
 			finalized: false,
 		};
-		let recorder = Self { trace_dir, manifest_path, started_at, next_frame_index: 0, manifest };
+		let mut recorder = Self {
+			trace_dir,
+			manifest_path,
+			started_at,
+			last_manifest_flush_at: started_at,
+			next_frame_index: 0,
+			last_recorded_frame_fingerprint: None,
+			last_recorded_frame_path: None,
+			manifest,
+		};
 
 		recorder.write_frame(base_frame, &recorder.manifest.base_frame_path)?;
+		recorder.last_recorded_frame_fingerprint = Some(scroll_capture_fingerprint(base_frame));
+		recorder.last_recorded_frame_path = Some(recorder.manifest.base_frame_path.clone());
 		recorder.flush_manifest_best_effort("init");
 
 		Ok(recorder)
@@ -446,6 +480,18 @@ impl ScrollCaptureTraceRecorder {
 				"Failed to flush scroll-capture trace manifest."
 			);
 		}
+	}
+
+	fn flush_manifest_if_due_best_effort(&mut self, op: &'static str) {
+		let now = Instant::now();
+		if now.saturating_duration_since(self.last_manifest_flush_at)
+			< SCROLL_CAPTURE_TRACE_MANIFEST_FLUSH_INTERVAL
+		{
+			return;
+		}
+
+		self.last_manifest_flush_at = now;
+		self.flush_manifest_best_effort(op);
 	}
 
 	fn flush_manifest(&self) -> Result<()> {
@@ -735,5 +781,75 @@ mod tests {
 		assert!(loaded.resolve_frame_path("frames/final-preview.png").exists());
 		assert!(loaded.resolve_frame_path("frames/final-export.png").exists());
 		assert!(loaded.manifest.final_snapshot.is_some());
+	}
+
+	#[test]
+	fn trace_recorder_reuses_png_path_for_consecutive_identical_frames() {
+		let rows = [
+			[10, 0, 0, 255],
+			[20, 0, 0, 255],
+			[30, 0, 0, 255],
+			[40, 0, 0, 255],
+			[50, 0, 0, 255],
+			[60, 0, 0, 255],
+			[70, 0, 0, 255],
+		];
+		let base_frame = make_window(&rows, 0);
+		let next_frame = make_window(&rows, 1);
+		let root = temp_trace_root();
+		let mut recorder = ScrollCaptureTraceRecorder::new_for_root_dir(
+			root,
+			test_monitor(),
+			test_rect(),
+			320,
+			&base_frame,
+		)
+		.unwrap();
+		let start = Instant::now();
+		let manifest_path = recorder.manifest_path().to_path_buf();
+		let snapshot = ScrollCaptureTraceSessionSnapshot::capture(
+			None,
+			Some([next_frame.width(), next_frame.height()]),
+			Some(ScrollDirection::Down),
+			true,
+			32.0,
+			Some(1),
+		);
+
+		recorder.record_frame_observation(ScrollCaptureTraceFrameRecord {
+			frame: &next_frame,
+			source: ScrollCaptureFrameSource::Worker { request_id: 1 },
+			allow_stale_input: false,
+			prior_block_reason: None,
+			observed_at: start + Duration::from_millis(10),
+			snapshot_after: snapshot.clone(),
+			outcome: &Ok(ScrollObserveOutcome::PreviewUpdated),
+		});
+		recorder.record_frame_observation(ScrollCaptureTraceFrameRecord {
+			frame: &next_frame,
+			source: ScrollCaptureFrameSource::Worker { request_id: 2 },
+			allow_stale_input: false,
+			prior_block_reason: Some("frame_matches_last_committed_frame"),
+			observed_at: start + Duration::from_millis(20),
+			snapshot_after: snapshot,
+			outcome: &Ok(ScrollObserveOutcome::NoChange),
+		});
+		drop(recorder);
+
+		let loaded = LoadedScrollCaptureLiveTrace::load(&manifest_path).unwrap();
+		let entries = loaded
+			.manifest
+			.entries
+			.iter()
+			.filter_map(|entry| match entry {
+				ScrollCaptureLiveTraceEntry::Frame(frame) => Some(frame),
+				ScrollCaptureLiveTraceEntry::Input(_) => None,
+			})
+			.collect::<Vec<_>>();
+
+		assert_eq!(entries.len(), 2);
+		assert_eq!(entries[0].frame_path, entries[1].frame_path);
+		assert!(loaded.resolve_frame_path(&entries[0].frame_path).exists());
+		assert!(!loaded.resolve_frame_path("frames/frame-000001.png").exists());
 	}
 }
