@@ -178,6 +178,7 @@ pub(super) struct ScrollCaptureState {
 	pub(super) active: bool,
 	pub(super) paused: bool,
 	pub(super) monitor: Option<MonitorRect>,
+	#[cfg(target_os = "macos")]
 	pub(super) capture_rect_points: Option<RectPoints>,
 	pub(super) capture_rect_pixels: Option<RectPoints>,
 	pub(super) input_direction: Option<ScrollDirection>,
