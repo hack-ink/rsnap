@@ -303,6 +303,8 @@ const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
 const SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS: f64 = 360.0;
 const SCROLL_PREVIEW_WINDOW_MARGIN_POINTS: i32 = 16;
 const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
+const SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL: Duration =
+	Duration::from_millis(60);
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE: Duration = Duration::from_millis(180);
 const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
@@ -17587,6 +17589,69 @@ mod tests {
 		drain_scroll_capture_worker_until_idle(&mut session);
 		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
 		assert_eq!(scroll_capture_export_height(&session), 724);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn maybe_tick_scroll_capture_worker_path_backs_off_after_duplicate_committed_frame() {
+		let monitor = test_monitor();
+		let rect = RectPoints::new(100, 120, 512, 640);
+		let base = make_browser_like_worker_capture_window(512, 640, 0);
+		let step_one = make_browser_like_worker_capture_window(512, 640, 84);
+		let step_two = make_browser_like_worker_capture_window(512, 640, 168);
+		let mut session = OverlaySession::new();
+
+		session.worker = Some(OverlayWorker::new(
+			Box::new(SequenceScrollCaptureBackend::new([
+				Some(step_one.clone()),
+				Some(step_one),
+				Some(step_two),
+			])),
+			None,
+		));
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(rect);
+		session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
+		enable_test_worker_scroll_capture_path(&mut session);
+
+		set_scroll_capture_input(&mut session, ScrollDirection::Down);
+		session.scroll_capture.last_external_scroll_input_seq = 1;
+		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
+		session.maybe_tick_scroll_capture();
+		assert!(session.scroll_capture.inflight_request_id.is_some());
+		drain_scroll_capture_worker_until_idle(&mut session);
+		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
+		assert_eq!(scroll_capture_export_height(&session), 724);
+
+		session.scroll_capture.last_external_scroll_input_seq = 2;
+		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+		session.scroll_capture.input_direction_at = Some(Instant::now());
+		session.scroll_capture.input_gesture_active = true;
+		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
+		session.maybe_tick_scroll_capture();
+		assert!(session.scroll_capture.inflight_request_id.is_some());
+		drain_scroll_capture_worker_until_idle(&mut session);
+		assert_eq!(session.scroll_capture.inflight_request_id, None);
+		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
+		assert_eq!(scroll_capture_export_height(&session), 724);
+
+		session.maybe_tick_scroll_capture();
+		assert!(
+			session.scroll_capture.inflight_request_id.is_none(),
+			"duplicate committed worker frame should back off instead of immediately re-requesting"
+		);
+
+		session.scroll_capture.last_external_scroll_input_seq = 3;
+		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+		session.scroll_capture.input_direction_at = Some(Instant::now());
+		session.scroll_capture.input_gesture_active = true;
+		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
+		session.maybe_tick_scroll_capture();
+		assert!(session.scroll_capture.inflight_request_id.is_some());
+		drain_scroll_capture_worker_until_idle(&mut session);
+		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 168);
+		assert_eq!(scroll_capture_export_height(&session), 808);
 	}
 
 	#[cfg(target_os = "macos")]

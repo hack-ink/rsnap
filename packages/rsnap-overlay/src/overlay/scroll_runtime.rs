@@ -1,9 +1,10 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use color_eyre::Result;
 use image::RgbaImage;
 
 use crate::overlay::SCROLL_CAPTURE_SAMPLE_INTERVAL;
+use crate::overlay::SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL;
 #[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 #[cfg(target_os = "macos")]
@@ -152,6 +153,33 @@ impl OverlaySession {
 			last_external_scroll_input_seq = self.scroll_capture.last_external_scroll_input_seq,
 			downward_motion_rows_pending = self.scroll_capture.downward_motion_rows_pending,
 			"Scheduled an immediate worker retry because fresh downward input was still active."
+		);
+	}
+
+	#[cfg(target_os = "macos")]
+	fn schedule_backoff_scroll_capture_worker_retry_if_fresh_downward_input(
+		&mut self,
+		now: Instant,
+		why: &'static str,
+		delay: Duration,
+	) {
+		let fresh_downward_input = self.scroll_capture.input_direction
+			== Some(ScrollDirection::Down)
+			&& self.scroll_capture.input_direction_at.is_some_and(|input_direction_at| {
+				now.saturating_duration_since(input_direction_at) <= SCROLL_CAPTURE_INPUT_FRESHNESS
+			});
+		if !fresh_downward_input {
+			return;
+		}
+
+		self.scroll_capture.next_sample_at = Some(now + delay);
+		tracing::info!(
+			op = "scroll_capture.worker_retry_scheduled_with_backoff",
+			reason = why,
+			delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+			last_external_scroll_input_seq = self.scroll_capture.last_external_scroll_input_seq,
+			downward_motion_rows_pending = self.scroll_capture.downward_motion_rows_pending,
+			"Scheduled a delayed worker retry because fresh downward input was still active but the latest worker frame repeated the committed content."
 		);
 	}
 
@@ -345,7 +373,7 @@ impl OverlaySession {
 			let prior_direction = self.scroll_capture.input_direction;
 			let prior_gesture_active = self.scroll_capture.input_gesture_active;
 
-			tracing::info!(
+			tracing::debug!(
 				op = "scroll_capture.replayed_input",
 				seq,
 				prior_seq = self.scroll_capture.last_external_scroll_input_seq,
@@ -391,7 +419,7 @@ impl OverlaySession {
 				self.request_redraw_scroll_preview_window();
 			}
 
-			tracing::info!(
+			tracing::debug!(
 				op = "scroll_capture.replayed_input_result",
 				seq,
 				recorded_at_ms_behind_pairing = u64::try_from(
@@ -855,6 +883,8 @@ impl OverlaySession {
 	) {
 		match outcome {
 			Ok(ScrollObserveOutcome::NoChange) => {
+				let last_block_reason =
+					self.scroll_capture.session.as_ref().and_then(ScrollSession::last_block_reason);
 				tracing::info!(
 					op = "scroll_capture.frame_observed",
 					frame_source = source.as_str(),
@@ -863,21 +893,35 @@ impl OverlaySession {
 					frame_px = ?frame_px,
 					input_direction = ?self.scroll_capture.input_direction,
 					input_gesture_active = self.scroll_capture.input_gesture_active,
+					last_block_reason = ?last_block_reason,
 					export_px = ?self.scroll_capture.session.as_ref().map(ScrollSession::export_dimensions),
 					"Scroll-capture observed a frame but kept session state unchanged."
 				);
 				if let Some(request_id) = source.worker_request_id() {
 					#[cfg(target_os = "macos")]
-					self.schedule_immediate_scroll_capture_worker_retry_if_fresh_downward_input(
-						Instant::now(),
-						"worker_no_change",
-					);
+					{
+						let now = Instant::now();
+						match last_block_reason {
+							Some("frame_matches_last_committed_frame") => self
+								.schedule_backoff_scroll_capture_worker_retry_if_fresh_downward_input(
+									now,
+									"worker_duplicate_committed_frame",
+									SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL,
+								),
+							_ => self
+								.schedule_immediate_scroll_capture_worker_retry_if_fresh_downward_input(
+									now,
+									"worker_no_change",
+								),
+						}
+					}
 					tracing::info!(
 						op = "scroll_capture.worker_frame_processed",
 						request_id,
 						outcome = "no_change",
 						frame_px = ?frame_px,
 						input_direction = ?self.scroll_capture.input_direction,
+						last_block_reason = ?last_block_reason,
 						"Worker-fed scroll-capture frame reached the session without changing preview or export state."
 					);
 				}
