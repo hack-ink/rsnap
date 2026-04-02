@@ -10,6 +10,8 @@ mod window_runtime;
 
 #[cfg(target_os = "macos")]
 use std::collections::VecDeque;
+#[cfg(not(target_os = "macos"))]
+use std::env;
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
 use std::mem;
@@ -747,6 +749,18 @@ pub struct OverlaySession {
 impl OverlaySession {
 	#[cfg(not(target_os = "macos"))]
 	fn try_create_cursor_device() -> Option<device_query::DeviceState> {
+		let has_display =
+			env::var_os("DISPLAY").is_some() || env::var_os("WAYLAND_DISPLAY").is_some();
+
+		if !has_display {
+			tracing::warn!(
+				op = "overlay.cursor_device_unavailable",
+				"Skipping cursor-device initialization because no display server is available."
+			);
+
+			return None;
+		}
+
 		match panic::catch_unwind(device_query::DeviceState::new) {
 			Ok(cursor_device) => Some(cursor_device),
 			Err(_) => {
