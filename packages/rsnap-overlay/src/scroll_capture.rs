@@ -1420,7 +1420,7 @@ impl ScrollSession {
 		block_reason: Option<&'static str>,
 	) {
 		self.last_block_reason = block_reason;
-		tracing::info!(
+		tracing::debug!(
 			op,
 			input_direction = ?input_direction,
 			detected_direction = ?detected_motion.map(|motion| motion.direction),
@@ -3156,6 +3156,10 @@ impl ScrollSession {
 
 	pub(crate) fn export_dimensions(&self) -> (u32, u32) {
 		self.export_image.dimensions()
+	}
+
+	pub(crate) fn last_block_reason(&self) -> Option<&'static str> {
+		self.last_block_reason
 	}
 
 	pub(crate) fn commit_telemetry(&self) -> ScrollCommitTelemetry {
