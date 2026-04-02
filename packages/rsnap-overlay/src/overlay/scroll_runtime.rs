@@ -864,13 +864,20 @@ impl OverlaySession {
 		let preview_frame = frame.clone();
 		let frame_px = frame.dimensions();
 		let prior_block_reason = self.scroll_capture_observation_block_reason_at(observation_at);
-		#[cfg(target_os = "macos")]
-		let allow_stale_input = allow_stale_input
-			|| prior_block_reason == Some("stale_input")
-				&& matches!(source, ScrollCaptureFrameSource::LiveStream { .. })
-				&& self.consume_live_stream_stale_grace_if_current();
-		#[cfg(not(target_os = "macos"))]
-		let allow_stale_input = allow_stale_input;
+		let allow_stale_input = {
+			#[cfg(target_os = "macos")]
+			{
+				allow_stale_input
+					|| prior_block_reason == Some("stale_input")
+						&& matches!(source, ScrollCaptureFrameSource::LiveStream { .. })
+						&& self.consume_live_stream_stale_grace_if_current()
+			}
+
+			#[cfg(not(target_os = "macos"))]
+			{
+				allow_stale_input
+			}
+		};
 
 		if let Some(reason) = prior_block_reason {
 			let input_age_ms = self.scroll_capture_input_age_ms_at(observation_at);

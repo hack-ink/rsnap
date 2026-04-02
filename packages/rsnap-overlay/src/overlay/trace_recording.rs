@@ -1,11 +1,18 @@
+#[cfg(any(target_os = "macos", test))]
 use std::{
-	env, fs,
-	path::{Path, PathBuf},
+	env,
+	path::Path,
 	process,
-	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+	time::{SystemTime, UNIX_EPOCH},
+};
+use std::{
+	fs,
+	path::PathBuf,
+	time::{Duration, Instant},
 };
 
 use color_eyre::eyre::{self, Result, WrapErr};
+#[cfg(any(target_os = "macos", test))]
 use directories::ProjectDirs;
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
@@ -17,8 +24,11 @@ use crate::{
 	scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession},
 };
 
+#[cfg(any(target_os = "macos", test))]
 const SCROLL_CAPTURE_TRACE_ENV: &str = "RSNAP_SCROLL_CAPTURE_TRACE";
+#[cfg(any(target_os = "macos", test))]
 const SCROLL_CAPTURE_TRACE_DIR_ENV: &str = "RSNAP_SCROLL_CAPTURE_TRACE_DIR";
+#[cfg(any(target_os = "macos", test))]
 const SCROLL_CAPTURE_TRACE_SCHEMA: &str = "scroll_capture_live_trace/1";
 const SCROLL_CAPTURE_TRACE_MANIFEST_FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -235,6 +245,7 @@ pub(crate) struct ScrollCaptureTraceRecorder {
 	manifest: ScrollCaptureLiveTraceManifest,
 }
 impl ScrollCaptureTraceRecorder {
+	#[cfg(any(target_os = "macos", test))]
 	pub(crate) fn from_env(
 		monitor: MonitorRect,
 		capture_rect_pixels: RectPoints,
@@ -263,6 +274,7 @@ impl ScrollCaptureTraceRecorder {
 		}
 	}
 
+	#[cfg(any(target_os = "macos", test))]
 	pub(crate) fn record_replayed_input(&mut self, record: ScrollCaptureTraceInputRecord) {
 		self.manifest.entries.push(ScrollCaptureLiveTraceEntry::Input(
 			ScrollCaptureTraceInputEntry {
@@ -376,10 +388,12 @@ impl ScrollCaptureTraceRecorder {
 		self.flush_manifest_best_effort("finalize_session");
 	}
 
+	#[cfg(any(target_os = "macos", test))]
 	pub(crate) fn manifest_path(&self) -> &Path {
 		&self.manifest_path
 	}
 
+	#[cfg(any(target_os = "macos", test))]
 	pub(crate) fn new_for_root_dir(
 		trace_root: PathBuf,
 		monitor: MonitorRect,
@@ -500,6 +514,7 @@ impl Drop for ScrollCaptureTraceRecorder {
 	}
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) struct ScrollCaptureTraceInputRecord {
 	pub(crate) seq: u64,
 	pub(crate) cursor_global: (f64, f64),
@@ -560,6 +575,7 @@ impl LoadedScrollCaptureLiveTrace {
 	}
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn resolve_trace_root_dir() -> Option<PathBuf> {
 	let override_dir = env::var_os(SCROLL_CAPTURE_TRACE_DIR_ENV).and_then(|value| {
 		let trimmed = value.to_string_lossy().trim().to_owned();
@@ -583,6 +599,7 @@ fn resolve_trace_root_dir() -> Option<PathBuf> {
 		.map(|dirs| dirs.data_dir().join("scroll-capture-traces"))
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn parse_truthy_flag(value: &str) -> bool {
 	let normalized = value.trim().to_ascii_lowercase();
 
@@ -593,6 +610,7 @@ fn duration_to_ms(duration: Duration) -> u64 {
 	u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn now_unix_ms() -> Result<u64> {
 	Ok(u64::try_from(
 		SystemTime::now()
