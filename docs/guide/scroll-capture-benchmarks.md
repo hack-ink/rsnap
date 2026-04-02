@@ -14,6 +14,31 @@ Depends on: `docs/spec/performance_tracking.md`
 Outputs: A repeatable local benchmark run, an optional saved Criterion baseline, and a clear
 understanding of what the synthetic fixture is intended to cover.
 
+If you are debugging correctness rather than hot-path speed, start with:
+
+```bash
+cargo make replay-scroll-capture
+cargo make replay-scroll-capture-self-check
+```
+
+That replay runner exercises shipping overlay and session logic against the latest recorded live
+trace and should be treated as the primary non-live correctness surface. The repo-native replay
+tasks force the worker-pairwise mode so they match current macOS production scroll-capture
+authority. It requires a recorded manifest under `~/Library/Application Support/ink.hack.rsnap/scroll-capture-traces/`
+unless you invoke the example with `--trace <manifest-path>`. Use the direct example without
+`--force-worker-pairwise` only when you intentionally want to compare the legacy recorded-source
+replay path. `cargo make replay-scroll-capture-self-check` is the deterministic fallback when you
+want to validate the replay harness without depending on a user-recorded trace. For semantic analysis
+(first bad frame, under-consumption, overshoot), use:
+
+```bash
+cargo make analyze-scroll-capture-trace
+```
+
+Use the benchmark target below only when you specifically need performance numbers. A clean
+benchmark run does not replace replay, trace analysis, or the final fresh live touchpad
+acceptance run.
+
 ## Fixture contract
 
 The committed benchmark fixture is code-generated inside `scroll_capture::bench_support`; it does
