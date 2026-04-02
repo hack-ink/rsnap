@@ -307,6 +307,7 @@ const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
 const SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS: f64 = 360.0;
 const SCROLL_PREVIEW_WINDOW_MARGIN_POINTS: i32 = 16;
 const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
+#[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL: Duration = Duration::from_millis(60);
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE: Duration = Duration::from_millis(180);
@@ -5827,6 +5828,7 @@ impl OverlaySession {
 			active: true,
 			paused: false,
 			monitor: Some(monitor),
+			#[cfg(target_os = "macos")]
 			capture_rect_points: Some(capture_rect_points),
 			capture_rect_pixels: Some(capture_rect_pixels),
 			input_direction: None,
