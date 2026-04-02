@@ -36,7 +36,9 @@ Prototype / in active development.
 
 ## Capture platform support
 
-- Live sampling path: **macOS 12.3+** via ScreenCaptureKit (`SCStream`) stream samples.
+- Live sampling path: **macOS 12.3+** via ScreenCaptureKit. Live loupe/window
+  sampling uses `SCStream`; downward scroll capture uses discrete
+  `SCScreenshotManager` region screenshots plus pairwise registration.
 - Live mode is stream-first and does not capture full display on cursor movement.
 - Frozen capture and scroll-capture imagery on macOS use the native capture stack; `docs/spec/v0.md` is the current contract source of truth.
 - Menubar and Dock are not included in live window-outline targeting.
@@ -93,6 +95,7 @@ cargo run -p rsnap
 - In Frozen mode, use Cmd+S (macOS) / Ctrl+S to save a PNG to disk and exit.
 - After entering scroll capture from a dragged region on macOS, downward scrolling may append newly proven rows into the side preview.
   Upward scrolling never appends. Returning to already-stitched content should not grow the export; only newly proven content may be added.
+  The scroll-capture commit path uses discrete region screenshots plus pairwise image registration; clipboard and save must match the committed preview the user sees.
   `Space` copies the stitched image, Cmd+S (macOS) / Ctrl+S saves it, and `Esc` / `Back`
   returns to the original Frozen capture without exiting.
 - Output is configured in `settings.toml`:
@@ -108,16 +111,47 @@ cargo make lint
 cargo make test
 ```
 
-macOS GUI smoke harnesses are also available:
+Scroll-capture verification now starts with deterministic replay instead of the old GUI smoke:
+
+```sh
+cargo make replay-scroll-capture
+cargo make replay-scroll-capture-self-check
+```
+
+For semantic trace analysis (first bad frame, under-consumption, overshoot), use:
+
+```sh
+cargo make analyze-scroll-capture-trace
+```
+
+The remaining macOS GUI smoke harnesses are still available for live-loupe and
+desktop-session checks:
 
 ```sh
 cargo make smoke-self-check-macos
 cargo make smoke-macos
 ```
 
-These scripts drive a logged-in macOS desktop session, require the expected
-Screen Recording / automation permissions, and are intended for dedicated smoke
-verification runs rather than background CI on a shared desktop session.
+`cargo make replay-scroll-capture` and `cargo make analyze-scroll-capture-trace`
+now force the latest recorded live trace through the same worker-pairwise
+commit path that current macOS production scroll capture uses. They are
+trace-driven rather than scenario-driven, so they expect at least one recorded
+trace under `~/Library/Application Support/ink.hack.rsnap/scroll-capture-traces/`
+unless you pass `--trace <manifest-path>` directly to the example. Use the
+direct example without `--force-worker-pairwise` only when you intentionally
+want to compare the legacy recorded-source replay mode. `cargo make
+replay-scroll-capture-self-check` is the repo-local fallback when you want to
+verify the replay harness itself without relying on a user-recorded trace.
+`cargo make smoke-self-check-macos` and `cargo make smoke-macos` still drive
+the logged-in macOS live-loupe smoke path and require the expected Screen
+Recording / automation permissions.
+
+For `XY-185` style downward scroll-capture work, treat the verification order as:
+
+1. deterministic tests and `cargo make check`
+2. `cargo make replay-scroll-capture`
+3. `cargo make analyze-scroll-capture-trace`
+4. one fresh release live touchpad run with a newly recorded trace
 
 Repo-native performance entrypoints are available for deterministic benches and
 dedicated smoke:

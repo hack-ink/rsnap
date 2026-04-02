@@ -13,6 +13,15 @@ pub mod bench_support {
 	};
 }
 
+/// Deterministic replay harness exports for scroll-capture verification.
+pub mod replay_support {
+	pub use crate::overlay::replay_support::{
+		RecordedScrollCaptureReplayMode, RecordedScrollCaptureReplayRecordedOutcome,
+		RecordedScrollCaptureReplayStepResult, RecordedScrollCaptureReplaySummary,
+		replay_recorded_scroll_capture_trace, replay_recorded_scroll_capture_trace_with_mode,
+	};
+}
+
 mod backend;
 #[cfg(target_os = "macos")]
 mod live_frame_stream_macos;
