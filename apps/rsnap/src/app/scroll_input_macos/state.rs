@@ -5,6 +5,8 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+type SharedScrollInputEventWaker = Arc<dyn Fn() + Send + Sync>;
+
 const SHARED_SCROLL_INPUT_QUEUE_CAPACITY: usize = 512;
 
 #[derive(Default)]
@@ -115,7 +117,7 @@ impl SharedScrollInputState {
 
 		queue_state.last_recorded = Some(event);
 
-		tracing::info!(
+		tracing::debug!(
 			op = "scroll_input.queued",
 			seq,
 			delta_y = event.delta_y,
@@ -131,6 +133,7 @@ impl SharedScrollInputState {
 			Ok(waker_slot) => waker_slot.clone(),
 			Err(poisoned) => poisoned.into_inner().clone(),
 		};
+
 		if let Some(event_waker) = event_waker {
 			event_waker();
 		}
@@ -151,6 +154,7 @@ impl SharedScrollInputState {
 
 		while queue_state.queue.front().is_some_and(|event| event.seq <= after_seq) {
 			let _ = queue_state.queue.pop_front();
+
 			pruned_events = pruned_events.saturating_add(1);
 		}
 
@@ -168,7 +172,7 @@ impl SharedScrollInputState {
 		if !replay.is_empty() || future_events > 0 || pruned_events > 0 {
 			let newest_seq = queue_state.queue.back().map(|event| event.seq).unwrap_or(0);
 
-			tracing::info!(
+			tracing::debug!(
 				op = "scroll_input.replay_window",
 				after_seq,
 				pruned_events,
@@ -182,24 +186,6 @@ impl SharedScrollInputState {
 
 		replay
 	}
-}
-
-type SharedScrollInputEventWaker = Arc<dyn Fn() + Send + Sync>;
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(in crate::app) enum ScrollInputObserverStatus {
-	#[default]
-	Idle,
-	Starting,
-	Ready,
-	Failed,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::app) enum ScrollInputObserverWaitOutcome {
-	Ready,
-	TimedOut,
-	Failed,
 }
 
 #[derive(Default)]
@@ -323,6 +309,22 @@ struct SharedScrollInputQueueState {
 	last_recorded: Option<SharedScrollInputEvent>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::app) enum ScrollInputObserverStatus {
+	#[default]
+	Idle,
+	Starting,
+	Ready,
+	Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::app) enum ScrollInputObserverWaitOutcome {
+	Ready,
+	TimedOut,
+	Failed,
+}
+
 #[cfg(test)]
 mod tests {
 	use std::sync::{
@@ -437,7 +439,6 @@ mod tests {
 
 		let _ = state.replay_after_seq_through(0, start + Duration::from_millis(2));
 		let _ = state.replay_after_seq_through(2, start + Duration::from_millis(2));
-
 		let queue_state = state.queue_state.lock().unwrap();
 		let queued_seqs = queue_state.queue.iter().map(|event| event.seq).collect::<Vec<_>>();
 

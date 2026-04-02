@@ -41,6 +41,8 @@ impl ApplicationHandler<UserEvent> for App {
 			UserEvent::TrayIcon => {},
 			#[cfg(target_os = "macos")]
 			UserEvent::OverlayStreamFrame => {
+				self.finish_coalesced_overlay_stream_frame_send();
+
 				if let Some(session) = self.overlay_session.as_mut() {
 					let control = session.handle_scroll_stream_frame_ready();
 

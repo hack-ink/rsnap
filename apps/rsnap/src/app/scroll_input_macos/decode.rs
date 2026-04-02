@@ -43,7 +43,7 @@ pub(super) fn decode_scroll_input_from_cg_event(
 	let gesture_ended = scroll_phase_bits_are_terminal(scroll_phase)
 		|| scroll_phase_bits_are_terminal(momentum_phase);
 
-	tracing::info!(
+	tracing::debug!(
 		op = "scroll_input.tap_decoded",
 		raw_delta_y,
 		global_x = location.x,

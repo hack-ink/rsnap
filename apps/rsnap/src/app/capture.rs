@@ -1,5 +1,6 @@
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 
@@ -106,7 +107,10 @@ impl App {
 		let mut overlay_session = OverlaySession::with_config(self.overlay_config());
 
 		#[cfg(target_os = "macos")]
+		self.finish_coalesced_overlay_stream_frame_send();
+		#[cfg(target_os = "macos")]
 		self.scroll_input_shared_state.clear();
+
 		#[cfg(target_os = "macos")]
 		self.scroll_input_shared_state.set_event_waker(Some(Arc::new({
 			let overlay_proxy = self.overlay_proxy.clone();
@@ -115,13 +119,18 @@ impl App {
 				let _ = overlay_proxy.send_event(UserEvent::OverlayScrollInput);
 			}
 		})));
-
 		#[cfg(target_os = "macos")]
 		overlay_session.set_scroll_frame_waker(Arc::new({
 			let overlay_proxy = self.overlay_proxy.clone();
+			let overlay_stream_event_pending = Arc::clone(&self.overlay_stream_event_pending);
 
 			move || {
-				let _ = overlay_proxy.send_event(UserEvent::OverlayStreamFrame);
+				if overlay_stream_event_pending
+					.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+					.is_ok() && overlay_proxy.send_event(UserEvent::OverlayStreamFrame).is_err()
+				{
+					overlay_stream_event_pending.store(false, Ordering::Release);
+				}
 			}
 		}));
 		#[cfg(target_os = "macos")]

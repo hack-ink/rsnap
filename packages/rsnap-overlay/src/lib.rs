@@ -12,7 +12,6 @@ pub mod bench_support {
 		ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
 	};
 }
-
 /// Deterministic replay harness exports for scroll-capture verification.
 pub mod replay_support {
 	pub use crate::overlay::replay_support::{

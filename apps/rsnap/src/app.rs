@@ -6,7 +6,10 @@ mod scroll_input_macos;
 mod shell;
 
 #[cfg(target_os = "macos")]
-use std::sync::Arc;
+use std::sync::{
+	Arc,
+	atomic::{AtomicBool, Ordering},
+};
 
 use color_eyre::eyre::Result;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
@@ -74,6 +77,8 @@ struct App {
 	#[cfg(target_os = "macos")]
 	scroll_input_shared_state: Arc<SharedScrollInputState>,
 	#[cfg(target_os = "macos")]
+	overlay_stream_event_pending: Arc<AtomicBool>,
+	#[cfg(target_os = "macos")]
 	startup_permissions_checked: bool,
 }
 impl App {
@@ -121,8 +126,15 @@ impl App {
 			#[cfg(target_os = "macos")]
 			scroll_input_shared_state,
 			#[cfg(target_os = "macos")]
+			overlay_stream_event_pending: Arc::new(AtomicBool::new(false)),
+			#[cfg(target_os = "macos")]
 			startup_permissions_checked: false,
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn finish_coalesced_overlay_stream_frame_send(&self) {
+		self.overlay_stream_event_pending.store(false, Ordering::Release);
 	}
 
 	fn open_settings_window(&mut self, event_loop: &ActiveEventLoop, requested_by: &'static str) {

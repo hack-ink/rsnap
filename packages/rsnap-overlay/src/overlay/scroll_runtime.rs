@@ -3,8 +3,10 @@ use std::time::{Duration, Instant};
 use color_eyre::Result;
 use image::RgbaImage;
 
-use crate::overlay::SCROLL_CAPTURE_SAMPLE_INTERVAL;
+#[cfg(target_os = "macos")]
+use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL;
+use crate::overlay::SCROLL_CAPTURE_SAMPLE_INTERVAL;
 #[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 #[cfg(target_os = "macos")]
@@ -19,10 +21,9 @@ use crate::overlay::{
 	OverlayControl, OverlaySession, ScrollCaptureFrameSource, ScrollCaptureTraceFrameRecord,
 	ScrollCaptureTraceInputRecord, ScrollObserveOutcome, ScrollSession,
 };
-#[cfg(target_os = "macos")]
 use crate::scroll_capture::ScrollDirection;
 #[cfg(target_os = "macos")]
-use crate::scroll_capture::{scroll_capture_fingerprint, scroll_capture_fingerprint_delta};
+use crate::scroll_capture::{self};
 use crate::worker::WorkerRequestSendError;
 
 impl OverlaySession {
@@ -52,20 +53,25 @@ impl OverlaySession {
 
 			self.sync_scroll_overlay_mouse_passthrough_window(now);
 			self.drain_external_scroll_input_events_through(now);
+
 			if self.should_use_scroll_capture_worker_sampling() {
 				self.request_scroll_capture_worker_sample_at(now);
 
 				return;
 			}
+
 			self.poll_scroll_stream_fallback_if_due(now);
+
 			if self.scroll_capture.live_stream.is_some()
-				&& self.scroll_capture.last_stream_poll_at.map_or(true, |last| {
+				&& self.scroll_capture.last_stream_poll_at.is_none_or(|last| {
 					now.saturating_duration_since(last) >= SCROLL_CAPTURE_STREAM_POLL_INTERVAL
 				}) {
 				self.scroll_capture.last_stream_poll_at = Some(now);
+
 				let _ = self.try_consume_scroll_stream_frame();
 			}
 		}
+
 		#[cfg(not(target_os = "macos"))]
 		{
 			self.request_scroll_capture_worker_sample_at(Instant::now());
@@ -142,11 +148,13 @@ impl OverlaySession {
 			&& self.scroll_capture.input_direction_at.is_some_and(|input_direction_at| {
 				now.saturating_duration_since(input_direction_at) <= SCROLL_CAPTURE_INPUT_FRESHNESS
 			});
+
 		if !fresh_downward_input {
 			return;
 		}
 
 		self.scroll_capture.next_sample_at = Some(now);
+
 		tracing::info!(
 			op = "scroll_capture.worker_retry_scheduled_immediately",
 			reason = why,
@@ -168,11 +176,13 @@ impl OverlaySession {
 			&& self.scroll_capture.input_direction_at.is_some_and(|input_direction_at| {
 				now.saturating_duration_since(input_direction_at) <= SCROLL_CAPTURE_INPUT_FRESHNESS
 			});
+
 		if !fresh_downward_input {
 			return;
 		}
 
 		self.scroll_capture.next_sample_at = Some(now + delay);
+
 		tracing::info!(
 			op = "scroll_capture.worker_retry_scheduled_with_backoff",
 			reason = why,
@@ -205,70 +215,57 @@ impl OverlaySession {
 			return false;
 		};
 		let last_frame_seq = self.scroll_capture.last_stream_frame_seq;
-		let log_stream_frame_empty = |query_ms: u64, refresh_scheduled: bool| {
-			if query_ms >= 16 {
-				tracing::warn!(
-					op = "scroll_capture.stream_frame_query_slow",
-					last_frame_seq,
-					query_ms,
-					refresh_scheduled,
-					stale_refresh_suppressed = !allow_stale_refresh,
-					force_refresh,
-					result = "empty",
-					"Slow nonblocking live-stream query delayed scroll-capture observation."
-				);
-			}
-			tracing::info!(
-				op = "scroll_capture.stream_frame_empty",
-				last_frame_seq,
-				query_ms,
-				refresh_scheduled,
-				stale_refresh_suppressed = !allow_stale_refresh,
-				force_refresh,
-				"Did not receive a newer live-stream frame for scroll-capture observation."
-			);
-		};
 		let Some(frames) = live_stream.ordered_rgba_regions_after_seq_nonblocking(
 			monitor,
 			capture_rect,
 			last_frame_seq,
 		) else {
-			let query_ms =
-				u64::try_from(query_started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
-			let refresh_scheduled = if allow_stale_refresh {
-				live_stream.refresh_monitor_nonblocking_if_stale(
-					monitor,
-					last_frame_seq,
-					force_refresh,
-				)
-			} else {
-				false
-			};
+			let (query_ms, refresh_scheduled) = Self::query_empty_scroll_stream_result(
+				live_stream,
+				monitor,
+				last_frame_seq,
+				query_started_at,
+				allow_stale_refresh,
+				force_refresh,
+			);
+			let _ = live_stream;
+
 			if refresh_scheduled && fresh_downward_backlog {
 				self.scroll_capture.pending_post_stall_burst_after_seq = Some(last_frame_seq);
 			}
 
-			log_stream_frame_empty(query_ms, refresh_scheduled);
+			self.log_empty_scroll_stream_query(
+				last_frame_seq,
+				query_ms,
+				refresh_scheduled,
+				allow_stale_refresh,
+				force_refresh,
+			);
 
 			return false;
 		};
 		let Some(newest_frame_seq) = frames.last().map(|frame| frame.frame_seq) else {
-			let query_ms =
-				u64::try_from(query_started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
-			let refresh_scheduled = if allow_stale_refresh {
-				live_stream.refresh_monitor_nonblocking_if_stale(
-					monitor,
-					last_frame_seq,
-					force_refresh,
-				)
-			} else {
-				false
-			};
+			let (query_ms, refresh_scheduled) = Self::query_empty_scroll_stream_result(
+				live_stream,
+				monitor,
+				last_frame_seq,
+				query_started_at,
+				allow_stale_refresh,
+				force_refresh,
+			);
+			let _ = live_stream;
+
 			if refresh_scheduled && fresh_downward_backlog {
 				self.scroll_capture.pending_post_stall_burst_after_seq = Some(last_frame_seq);
 			}
 
-			log_stream_frame_empty(query_ms, refresh_scheduled);
+			self.log_empty_scroll_stream_query(
+				last_frame_seq,
+				query_ms,
+				refresh_scheduled,
+				allow_stale_refresh,
+				force_refresh,
+			);
 
 			return false;
 		};
@@ -310,17 +307,71 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	#[allow(clippy::too_many_arguments)]
+	fn query_empty_scroll_stream_result(
+		live_stream: &mut MacLiveFrameStream,
+		monitor: MonitorRect,
+		last_frame_seq: u64,
+		query_started_at: Instant,
+		allow_stale_refresh: bool,
+		force_refresh: bool,
+	) -> (u64, bool) {
+		let query_ms = u64::try_from(query_started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+		let refresh_scheduled = if allow_stale_refresh {
+			live_stream.refresh_monitor_nonblocking_if_stale(monitor, last_frame_seq, force_refresh)
+		} else {
+			false
+		};
+
+		(query_ms, refresh_scheduled)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn log_empty_scroll_stream_query(
+		&self,
+		last_frame_seq: u64,
+		query_ms: u64,
+		refresh_scheduled: bool,
+		allow_stale_refresh: bool,
+		force_refresh: bool,
+	) {
+		if query_ms >= 16 {
+			tracing::warn!(
+				op = "scroll_capture.stream_frame_query_slow",
+				last_frame_seq,
+				query_ms,
+				refresh_scheduled,
+				stale_refresh_suppressed = !allow_stale_refresh,
+				force_refresh,
+				result = "empty",
+				"Slow nonblocking live-stream query delayed scroll-capture observation."
+			);
+		}
+
+		tracing::info!(
+			op = "scroll_capture.stream_frame_empty",
+			last_frame_seq,
+			query_ms,
+			refresh_scheduled,
+			stale_refresh_suppressed = !allow_stale_refresh,
+			force_refresh,
+			"Did not receive a newer live-stream frame for scroll-capture observation."
+		);
+	}
+
+	#[cfg(target_os = "macos")]
 	/// Consumes any queued macOS live-stream frames for scroll capture.
 	pub fn handle_scroll_stream_frame_ready(&mut self) -> OverlayControl {
 		if !cfg!(test) {
 			return OverlayControl::Continue;
 		}
-
 		if self.scroll_capture.active && !self.scroll_capture.paused {
 			if self.should_use_scroll_capture_worker_sampling() {
 				return OverlayControl::Continue;
 			}
+
 			let _ = self.try_consume_scroll_stream_frame();
+
 			self.consume_scroll_capture_backlog(usize::MAX);
 		}
 
@@ -335,11 +386,13 @@ impl OverlaySession {
 
 			self.sync_scroll_overlay_mouse_passthrough_window(now);
 			self.drain_external_scroll_input_events_through(now);
+
 			if self.should_use_scroll_capture_worker_sampling() {
 				self.request_scroll_capture_worker_sample_at(now);
 
 				return OverlayControl::Continue;
 			}
+
 			self.poll_scroll_stream_fallback_if_due(now);
 			self.consume_scroll_capture_backlog(usize::MAX);
 		}
@@ -397,7 +450,9 @@ impl OverlaySession {
 				gesture_ended,
 				through,
 			);
+
 			let snapshot_after = self.scroll_capture_trace_snapshot_at(through);
+
 			if let Some(trace_recorder) = self.scroll_capture.trace_recorder.as_mut() {
 				trace_recorder.record_replayed_input(ScrollCaptureTraceInputRecord {
 					seq,
@@ -410,6 +465,7 @@ impl OverlaySession {
 					snapshot_after,
 				});
 			}
+
 			if !self.should_use_scroll_capture_worker_sampling() {
 				self.refresh_live_stream_stale_grace_for_external_input(seq);
 			}
@@ -440,13 +496,14 @@ impl OverlaySession {
 		&mut self,
 		frame: &ScrollCaptureLiveFrame,
 	) -> bool {
-		let fingerprint = scroll_capture_fingerprint(&frame.image);
+		let fingerprint = scroll_capture::scroll_capture_fingerprint(&frame.image);
 		let is_distinct =
-			self.scroll_capture.last_stream_frame_fingerprint.as_ref().map_or(true, |previous| {
-				scroll_capture_fingerprint_delta(previous, &fingerprint) > 0
+			self.scroll_capture.last_stream_frame_fingerprint.as_ref().is_none_or(|previous| {
+				scroll_capture::scroll_capture_fingerprint_delta(previous, &fingerprint) > 0
 			});
 
 		self.scroll_capture.last_stream_frame_fingerprint = Some(fingerprint);
+
 		if is_distinct {
 			self.scroll_capture.last_stream_event_at = Some(frame.captured_at);
 			self.scroll_capture.consecutive_identical_stream_frames = 0;
@@ -486,7 +543,6 @@ impl OverlaySession {
 		let Some(live_stream) = self.scroll_capture.live_stream.as_ref() else {
 			return;
 		};
-
 		let refresh_scheduled =
 			live_stream.refresh_monitor_nonblocking_if_stale(monitor, frame_seq, true);
 
@@ -496,6 +552,7 @@ impl OverlaySession {
 
 		self.scroll_capture.last_duplicate_stream_refresh_at = Some(observation_at);
 		self.scroll_capture.pending_post_stall_burst_after_seq = Some(frame_seq);
+
 		tracing::info!(
 			op = "scroll_capture.duplicate_frame_refresh_scheduled",
 			frame_seq,
@@ -508,9 +565,11 @@ impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	fn push_scroll_capture_live_frame(&mut self, frame: ScrollCaptureLiveFrame) {
 		let backlog = &mut self.scroll_capture.live_stream_backlog;
+
 		if backlog.len() >= super::SCROLL_CAPTURE_STREAM_BACKLOG_MAX_FRAMES {
 			backlog.pop_front();
 		}
+
 		backlog.push_back(frame);
 	}
 
@@ -522,16 +581,21 @@ impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	fn consume_scroll_capture_backlog(&mut self, max_frames: usize) {
 		let mut consumed = 0;
+
 		while consumed < max_frames {
 			let Some(frame) = self.scroll_capture.live_stream_backlog.pop_front() else {
 				break;
 			};
+
 			self.drain_external_scroll_input_events_through(frame.captured_at);
+
 			let arm_time_gap_burst =
 				self.scroll_capture_should_arm_post_stall_burst_for_time_gap_at(frame.captured_at);
+
 			if arm_time_gap_burst {
 				self.scroll_capture.pending_post_stall_burst_after_seq =
 					Some(frame.frame_seq.saturating_sub(1));
+
 				tracing::info!(
 					op = "scroll_capture.post_stall_burst_search_armed_for_time_gap",
 					frame_seq = frame.frame_seq,
@@ -541,7 +605,9 @@ impl OverlaySession {
 					"Armed a burst registration window because the next live-stream frame arrived after a large capture-time gap while fresh downward backlog remained."
 				);
 			}
+
 			let _is_distinct = self.note_scroll_capture_live_stream_frame_activity(&frame);
+
 			self.scroll_capture.last_stream_frame_seq = frame.frame_seq;
 
 			let _ = self.handle_scroll_capture_frame(
@@ -550,7 +616,9 @@ impl OverlaySession {
 				false,
 				frame.captured_at,
 			);
+
 			self.scroll_capture.last_consumed_stream_frame_captured_at = Some(frame.captured_at);
+
 			self.maybe_schedule_duplicate_stream_refresh(frame.frame_seq, frame.captured_at);
 
 			consumed += 1;
@@ -578,14 +646,18 @@ impl OverlaySession {
 		let frame_for_activity =
 			ScrollCaptureLiveFrame { frame_seq, captured_at: observed_at, image: frame.clone() };
 		let _ = self.note_scroll_capture_live_stream_frame_activity(&frame_for_activity);
+
 		self.scroll_capture.last_stream_frame_seq = frame_seq;
+
 		let outcome = self.handle_scroll_capture_frame(
 			frame,
 			ScrollCaptureFrameSource::LiveStream { frame_seq },
 			allow_stale_input,
 			observed_at,
 		);
+
 		self.scroll_capture.last_consumed_stream_frame_captured_at = Some(observed_at);
+
 		self.maybe_schedule_duplicate_stream_refresh(frame_seq, observed_at);
 
 		outcome
@@ -686,11 +758,14 @@ impl OverlaySession {
 				last_external_scroll_input_seq = self.scroll_capture.last_external_scroll_input_seq,
 				"Dropped worker-fed scroll-capture frame because newer external input superseded the request context."
 			);
+
 			self.clear_scroll_capture_inflight_request();
+
 			return;
 		}
 
 		self.clear_scroll_capture_inflight_request();
+
 		let _ = self.handle_scroll_capture_frame(
 			image,
 			ScrollCaptureFrameSource::Worker { request_id },
@@ -781,10 +856,9 @@ impl OverlaySession {
 		let prior_block_reason = self.scroll_capture_observation_block_reason_at(observation_at);
 		#[cfg(target_os = "macos")]
 		let allow_stale_input = allow_stale_input
-			|| (!allow_stale_input
-				&& prior_block_reason == Some("stale_input")
+			|| prior_block_reason == Some("stale_input")
 				&& matches!(source, ScrollCaptureFrameSource::LiveStream { .. })
-				&& self.consume_live_stream_stale_grace_if_current());
+				&& self.consume_live_stream_stale_grace_if_current();
 		#[cfg(not(target_os = "macos"))]
 		let allow_stale_input = allow_stale_input;
 
@@ -840,10 +914,9 @@ impl OverlaySession {
 				allow_post_stall_burst_search,
 			)?
 		};
-		if worker_pairwise_path {
-			if let Ok(outcome) = &outcome {
-				self.consume_scroll_capture_downward_motion_rows_for_outcome(outcome);
-			}
+
+		if worker_pairwise_path && let Ok(outcome) = &outcome {
+			self.consume_scroll_capture_downward_motion_rows_for_outcome(outcome);
 		}
 		if matches!(source, ScrollCaptureFrameSource::LiveStream { .. })
 			&& !allow_post_stall_burst_search
@@ -852,10 +925,12 @@ impl OverlaySession {
 		}
 
 		self.scroll_capture.preview_latest_frame = Some(preview_frame);
+
 		self.refresh_scroll_preview_display_image();
 		self.sync_scroll_preview_segments();
 		self.request_redraw_scroll_preview_window();
 		self.handle_scroll_capture_frame_outcome(&outcome, source, frame_px);
+
 		let snapshot_after = self.scroll_capture_trace_snapshot_at(observation_at);
 
 		if let (Some(trace_recorder), Some(trace_frame)) =
@@ -875,6 +950,7 @@ impl OverlaySession {
 		Some(outcome)
 	}
 
+	#[allow(clippy::too_many_lines)]
 	fn handle_scroll_capture_frame_outcome(
 		&mut self,
 		outcome: &Result<ScrollObserveOutcome>,
@@ -883,72 +959,10 @@ impl OverlaySession {
 	) {
 		match outcome {
 			Ok(ScrollObserveOutcome::NoChange) => {
-				let last_block_reason =
-					self.scroll_capture.session.as_ref().and_then(ScrollSession::last_block_reason);
-				tracing::info!(
-					op = "scroll_capture.frame_observed",
-					frame_source = source.as_str(),
-					worker_request_id = ?source.worker_request_id(),
-					outcome = "no_change",
-					frame_px = ?frame_px,
-					input_direction = ?self.scroll_capture.input_direction,
-					input_gesture_active = self.scroll_capture.input_gesture_active,
-					last_block_reason = ?last_block_reason,
-					export_px = ?self.scroll_capture.session.as_ref().map(ScrollSession::export_dimensions),
-					"Scroll-capture observed a frame but kept session state unchanged."
-				);
-				if let Some(request_id) = source.worker_request_id() {
-					#[cfg(target_os = "macos")]
-					{
-						let now = Instant::now();
-						match last_block_reason {
-							Some("frame_matches_last_committed_frame") => self
-								.schedule_backoff_scroll_capture_worker_retry_if_fresh_downward_input(
-									now,
-									"worker_duplicate_committed_frame",
-									SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL,
-								),
-							_ => self
-								.schedule_immediate_scroll_capture_worker_retry_if_fresh_downward_input(
-									now,
-									"worker_no_change",
-								),
-						}
-					}
-					tracing::info!(
-						op = "scroll_capture.worker_frame_processed",
-						request_id,
-						outcome = "no_change",
-						frame_px = ?frame_px,
-						input_direction = ?self.scroll_capture.input_direction,
-						last_block_reason = ?last_block_reason,
-						"Worker-fed scroll-capture frame reached the session without changing preview or export state."
-					);
-				}
+				self.log_scroll_capture_no_change(source, frame_px)
 			},
 			Ok(ScrollObserveOutcome::PreviewUpdated) => {
-				tracing::info!(
-					op = "scroll_capture.frame_observed",
-				frame_source = source.as_str(),
-				worker_request_id = ?source.worker_request_id(),
-				outcome = "preview_updated",
-				frame_px = ?frame_px,
-				input_direction = ?self.scroll_capture.input_direction,
-				input_gesture_active = self.scroll_capture.input_gesture_active,
-				export_px = ?self.scroll_capture.session.as_ref().map(ScrollSession::export_dimensions),
-				preview_px = ?self.scroll_capture_preview_dimensions().map(|[w, h]| (w, h)),
-					"Scroll-capture observed a frame and advanced session sampling state without committing stitched growth."
-				);
-				if let Some(request_id) = source.worker_request_id() {
-					tracing::info!(
-							op = "scroll_capture.worker_frame_processed",
-						request_id,
-						outcome = "preview_updated",
-						frame_px = ?frame_px,
-						input_direction = ?self.scroll_capture.input_direction,
-						"Worker-fed scroll-capture frame refreshed preview state without committing stitched growth."
-					);
-				}
+				self.log_scroll_capture_preview_updated(source, frame_px);
 			},
 			Ok(ScrollObserveOutcome::UnsupportedDirection { direction }) => {
 				let export_size = self
@@ -968,51 +982,136 @@ impl OverlaySession {
 				);
 			},
 			Ok(ScrollObserveOutcome::Committed { direction, growth_rows }) => {
-				self.refresh_scroll_preview_committed_image();
-				self.refresh_scroll_preview_display_image();
-				self.sync_scroll_preview_segments();
-				self.request_redraw_scroll_preview_window();
-
-				let telemetry =
-					self.scroll_capture.session.as_ref().map(ScrollSession::commit_telemetry);
-				let export_size =
-					telemetry.as_ref().map_or((0, 0), |telemetry| telemetry.export_dimensions);
-				let preview_size =
-					telemetry.as_ref().map_or((0, 0), |telemetry| telemetry.preview_dimensions);
-
-				tracing::info!(
-					op = "scroll_capture.committed",
-					frame_source = source.as_str(),
-					worker_request_id = ?source.worker_request_id(),
-					direction = ?direction,
-					growth_rows = *growth_rows,
-					frame_px = ?frame_px,
-					export_px = ?export_size,
-					preview_px = ?preview_size,
-					current_viewport_top_y = ?telemetry.as_ref().map(|telemetry| telemetry.current_viewport_top_y),
-					growth_commit_count = ?telemetry.as_ref().map(|telemetry| telemetry.growth_commit_count),
-					preview_segment_count = ?telemetry.as_ref().map(|telemetry| telemetry.preview_segment_count),
-					export_segment_count = ?telemetry.as_ref().map(|telemetry| telemetry.export_segment_count),
-					last_commit_decision_source =
-						?telemetry.as_ref().map(|telemetry| telemetry.last_commit_decision_source),
-					last_commit_detected_motion_rows =
-						?telemetry.as_ref().map(|telemetry| telemetry.last_commit_detected_motion_rows),
-					last_commit_effective_motion_rows_hint = ?telemetry
-						.as_ref()
-						.map(|telemetry| telemetry.last_commit_effective_motion_rows_hint),
-					last_preview_segment_height_px =
-						?telemetry.as_ref().map(|telemetry| telemetry.last_preview_segment_height_px),
-					last_export_segment_height_px =
-						?telemetry.as_ref().map(|telemetry| telemetry.last_export_segment_height_px),
-					preview_export_segments_aligned =
-						?telemetry.as_ref().map(|telemetry| telemetry.preview_export_segments_aligned),
-					"Scroll sample committed stitched growth."
-				);
+				self.log_scroll_capture_committed(source, frame_px, *direction, *growth_rows);
 			},
 			Err(err) => {
 				self.scroll_capture_set_error(format!("{err:#}"));
 			},
 		}
+	}
+
+	fn log_scroll_capture_no_change(
+		&mut self,
+		source: ScrollCaptureFrameSource,
+		frame_px: (u32, u32),
+	) {
+		let last_block_reason =
+			self.scroll_capture.session.as_ref().and_then(ScrollSession::last_block_reason);
+
+		tracing::info!(
+			op = "scroll_capture.frame_observed",
+			frame_source = source.as_str(),
+			worker_request_id = ?source.worker_request_id(),
+			outcome = "no_change",
+			frame_px = ?frame_px,
+			input_direction = ?self.scroll_capture.input_direction,
+			input_gesture_active = self.scroll_capture.input_gesture_active,
+			last_block_reason = ?last_block_reason,
+			export_px = ?self.scroll_capture.session.as_ref().map(ScrollSession::export_dimensions),
+			"Scroll-capture observed a frame but kept session state unchanged."
+		);
+
+		if let Some(request_id) = source.worker_request_id() {
+			#[cfg(target_os = "macos")]
+			{
+				let now = Instant::now();
+
+				match last_block_reason {
+					Some("frame_matches_last_committed_frame") => self
+						.schedule_backoff_scroll_capture_worker_retry_if_fresh_downward_input(
+							now,
+							"worker_duplicate_committed_frame",
+							SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL,
+						),
+					_ => self
+						.schedule_immediate_scroll_capture_worker_retry_if_fresh_downward_input(
+							now,
+							"worker_no_change",
+						),
+				}
+			}
+
+			tracing::info!(
+				op = "scroll_capture.worker_frame_processed",
+				request_id,
+				outcome = "no_change",
+				frame_px = ?frame_px,
+				input_direction = ?self.scroll_capture.input_direction,
+				last_block_reason = ?last_block_reason,
+				"Worker-fed scroll-capture frame reached the session without changing preview or export state."
+			);
+		}
+	}
+
+	fn log_scroll_capture_preview_updated(
+		&self,
+		source: ScrollCaptureFrameSource,
+		frame_px: (u32, u32),
+	) {
+		tracing::info!(
+			op = "scroll_capture.frame_observed",
+			frame_source = source.as_str(),
+			worker_request_id = ?source.worker_request_id(),
+			outcome = "preview_updated",
+			frame_px = ?frame_px,
+			input_direction = ?self.scroll_capture.input_direction,
+			input_gesture_active = self.scroll_capture.input_gesture_active,
+			export_px = ?self.scroll_capture.session.as_ref().map(ScrollSession::export_dimensions),
+			preview_px = ?self.scroll_capture_preview_dimensions().map(|[w, h]| (w, h)),
+			"Scroll-capture observed a frame and advanced session sampling state without committing stitched growth."
+		);
+
+		if let Some(request_id) = source.worker_request_id() {
+			tracing::info!(
+				op = "scroll_capture.worker_frame_processed",
+				request_id,
+				outcome = "preview_updated",
+				frame_px = ?frame_px,
+				input_direction = ?self.scroll_capture.input_direction,
+				"Worker-fed scroll-capture frame refreshed preview state without committing stitched growth."
+			);
+		}
+	}
+
+	fn log_scroll_capture_committed(
+		&mut self,
+		source: ScrollCaptureFrameSource,
+		frame_px: (u32, u32),
+		direction: ScrollDirection,
+		growth_rows: u32,
+	) {
+		self.refresh_scroll_preview_committed_image();
+		self.refresh_scroll_preview_display_image();
+		self.sync_scroll_preview_segments();
+		self.request_redraw_scroll_preview_window();
+
+		let telemetry = self.scroll_capture.session.as_ref().map(ScrollSession::commit_telemetry);
+		let export_size =
+			telemetry.as_ref().map_or((0, 0), |telemetry| telemetry.export_dimensions);
+		let preview_size =
+			telemetry.as_ref().map_or((0, 0), |telemetry| telemetry.preview_dimensions);
+
+		tracing::info!(
+			op = "scroll_capture.committed",
+			frame_source = source.as_str(),
+			worker_request_id = ?source.worker_request_id(),
+			direction = ?direction,
+			growth_rows,
+			frame_px = ?frame_px,
+			export_px = ?export_size,
+			preview_px = ?preview_size,
+			current_viewport_top_y = ?telemetry.as_ref().map(|telemetry| telemetry.current_viewport_top_y),
+			growth_commit_count = ?telemetry.as_ref().map(|telemetry| telemetry.growth_commit_count),
+			preview_segment_count = ?telemetry.as_ref().map(|telemetry| telemetry.preview_segment_count),
+			export_segment_count = ?telemetry.as_ref().map(|telemetry| telemetry.export_segment_count),
+			last_commit_decision_source = ?telemetry.as_ref().map(|telemetry| telemetry.last_commit_decision_source),
+			last_commit_detected_motion_rows = ?telemetry.as_ref().map(|telemetry| telemetry.last_commit_detected_motion_rows),
+			last_commit_effective_motion_rows_hint = ?telemetry.as_ref().map(|telemetry| telemetry.last_commit_effective_motion_rows_hint),
+			last_preview_segment_height_px = ?telemetry.as_ref().map(|telemetry| telemetry.last_preview_segment_height_px),
+			last_export_segment_height_px = ?telemetry.as_ref().map(|telemetry| telemetry.last_export_segment_height_px),
+			preview_export_segments_aligned = ?telemetry.as_ref().map(|telemetry| telemetry.preview_export_segments_aligned),
+			"Scroll sample committed stitched growth."
+		);
 	}
 
 	pub(super) fn clear_scroll_capture_inflight_request(&mut self) {
@@ -1053,6 +1152,7 @@ impl OverlaySession {
 		let Some(observation) = self.scroll_capture.inflight_request_observation else {
 			return false;
 		};
+
 		if !observation.was_observable
 			|| observation.external_input_seq == self.scroll_capture.last_external_scroll_input_seq
 		{
