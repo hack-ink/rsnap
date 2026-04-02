@@ -1,13 +1,11 @@
 #[cfg(any(target_os = "macos", test))]
 use std::{
-	env,
-	path::Path,
-	process,
+	env, process,
 	time::{SystemTime, UNIX_EPOCH},
 };
 use std::{
 	fs,
-	path::PathBuf,
+	path::{Path, PathBuf},
 	time::{Duration, Instant},
 };
 
@@ -24,9 +22,9 @@ use crate::{
 	scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession},
 };
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_TRACE_ENV: &str = "RSNAP_SCROLL_CAPTURE_TRACE";
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_TRACE_DIR_ENV: &str = "RSNAP_SCROLL_CAPTURE_TRACE_DIR";
 #[cfg(any(target_os = "macos", test))]
 const SCROLL_CAPTURE_TRACE_SCHEMA: &str = "scroll_capture_live_trace/1";
@@ -245,7 +243,7 @@ pub(crate) struct ScrollCaptureTraceRecorder {
 	manifest: ScrollCaptureLiveTraceManifest,
 }
 impl ScrollCaptureTraceRecorder {
-	#[cfg(any(target_os = "macos", test))]
+	#[cfg(target_os = "macos")]
 	pub(crate) fn from_env(
 		monitor: MonitorRect,
 		capture_rect_pixels: RectPoints,
@@ -575,7 +573,7 @@ impl LoadedScrollCaptureLiveTrace {
 	}
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn resolve_trace_root_dir() -> Option<PathBuf> {
 	let override_dir = env::var_os(SCROLL_CAPTURE_TRACE_DIR_ENV).and_then(|value| {
 		let trimmed = value.to_string_lossy().trim().to_owned();
@@ -599,7 +597,7 @@ fn resolve_trace_root_dir() -> Option<PathBuf> {
 		.map(|dirs| dirs.data_dir().join("scroll-capture-traces"))
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn parse_truthy_flag(value: &str) -> bool {
 	let normalized = value.trim().to_ascii_lowercase();
 
