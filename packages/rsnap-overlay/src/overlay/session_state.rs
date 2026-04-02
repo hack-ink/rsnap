@@ -6,7 +6,8 @@ use std::{
 use crate::overlay::{
 	DeviceCursorPointSource, FrozenToolbarTool, GlobalPoint, LIVE_PRESENT_INTERVAL_MIN,
 	MonitorRect, PhysicalPosition, Pos2, REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints,
-	SLOW_OP_WARN_INTERVAL, ScrollDirection, ScrollSession, Vec2, WindowId,
+	SLOW_OP_WARN_INTERVAL, ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2,
+	WindowId,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{ExternalScrollInputDrainReader, MacLiveFrameStream};
@@ -173,12 +174,16 @@ pub(super) struct ScrollCaptureState {
 	pub(super) active: bool,
 	pub(super) paused: bool,
 	pub(super) monitor: Option<MonitorRect>,
+	pub(super) capture_rect_points: Option<RectPoints>,
 	pub(super) capture_rect_pixels: Option<RectPoints>,
 	pub(super) input_direction: Option<ScrollDirection>,
 	pub(super) input_direction_at: Option<Instant>,
 	pub(super) input_gesture_active: bool,
+	pub(super) downward_motion_rows_pending: f64,
 	#[cfg(target_os = "macos")]
 	pub(super) overlay_mouse_passthrough_active: bool,
+	#[cfg(target_os = "macos")]
+	pub(super) overlay_mouse_passthrough_persistent: bool,
 	#[cfg(target_os = "macos")]
 	pub(super) overlay_mouse_passthrough_until: Option<Instant>,
 	#[cfg(target_os = "macos")]
@@ -190,32 +195,74 @@ pub(super) struct ScrollCaptureState {
 	#[cfg(target_os = "macos")]
 	pub(super) live_stream: Option<MacLiveFrameStream>,
 	#[cfg(target_os = "macos")]
+	pub(super) live_stream_backlog: std::collections::VecDeque<ScrollCaptureLiveFrame>,
+	#[cfg(target_os = "macos")]
 	pub(super) last_stream_frame_seq: u64,
 	#[cfg(target_os = "macos")]
+	pub(super) last_stream_frame_fingerprint: Option<Vec<u8>>,
+	#[cfg(target_os = "macos")]
+	pub(super) consecutive_identical_stream_frames: u8,
+	#[cfg(target_os = "macos")]
+	pub(super) last_consumed_stream_frame_captured_at: Option<Instant>,
+	#[cfg(target_os = "macos")]
+	pub(super) last_stream_event_at: Option<Instant>,
+	#[cfg(target_os = "macos")]
+	pub(super) last_stream_poll_at: Option<Instant>,
+	#[cfg(target_os = "macos")]
+	pub(super) last_duplicate_stream_refresh_at: Option<Instant>,
+	#[cfg(target_os = "macos")]
+	pub(super) pending_post_stall_burst_after_seq: Option<u64>,
+	#[cfg(target_os = "macos")]
 	pub(super) live_stream_stale_grace: Option<LiveStreamStaleGrace>,
-	#[cfg(not(target_os = "macos"))]
 	pub(super) next_sample_at: Option<Instant>,
-	#[cfg(not(target_os = "macos"))]
 	pub(super) next_request_id: u64,
 	pub(super) inflight_request_id: Option<u64>,
 	#[cfg(target_os = "macos")]
 	pub(super) inflight_request_observation: Option<InflightScrollCaptureObservation>,
+	#[cfg(all(test, target_os = "macos"))]
+	pub(super) force_worker_sampling_in_tests: bool,
 	pub(super) session: Option<ScrollSession>,
+	pub(super) preview_committed_image: Option<image::RgbaImage>,
+	pub(super) preview_latest_frame: Option<image::RgbaImage>,
+	pub(super) preview_display_image: Option<image::RgbaImage>,
+	pub(super) retained_overlay_preview_image: Option<image::RgbaImage>,
+	pub(super) retained_overlay_preview_motion_rows_hint: Option<u32>,
+	pub(super) last_overlay_preview_motion_rows_hint: Option<u32>,
+	pub(super) last_overlay_preview_provisional_motion_rows_hint: Option<u32>,
+	pub(super) last_overlay_preview_existing_candidate_height: Option<u32>,
+	pub(super) last_overlay_preview_existing_candidate_motion_rows_hint: Option<u32>,
+	pub(super) last_overlay_preview_ledger_candidate_height: Option<u32>,
+	pub(super) last_overlay_preview_ledger_candidate_motion_rows_hint: Option<u32>,
+	pub(super) last_overlay_preview_retained_candidate_height: Option<u32>,
+	pub(super) last_overlay_preview_retained_candidate_motion_rows_hint: Option<u32>,
+	pub(super) last_overlay_preview_retained_hint_matches_motion_rows: bool,
+	pub(super) last_overlay_preview_fresh_latest_frame_can_drive: bool,
+	pub(super) last_overlay_preview_strong_unresolved_registration: bool,
+	pub(super) last_overlay_preview_latest_frame_present: bool,
+	pub(super) last_overlay_preview_used_provisional: bool,
+	pub(super) trace_recorder: Option<ScrollCaptureTraceRecorder>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug)]
+pub(super) struct ScrollCaptureLiveFrame {
+	pub(super) frame_seq: u64,
+	pub(super) captured_at: Instant,
+	pub(super) image: image::RgbaImage,
 }
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct InflightScrollCaptureObservation {
-	pub(super) input_direction: Option<ScrollDirection>,
 	pub(super) was_observable: bool,
 	pub(super) external_input_seq: u64,
+	pub(super) input_direction: Option<ScrollDirection>,
 }
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct LiveStreamStaleGrace {
 	pub(super) external_input_seq: u64,
-	pub(super) input_direction: ScrollDirection,
 	pub(super) remaining_stale_frames: u8,
 }
 

@@ -43,6 +43,18 @@ pub(super) fn decode_scroll_input_from_cg_event(
 	let gesture_ended = scroll_phase_bits_are_terminal(scroll_phase)
 		|| scroll_phase_bits_are_terminal(momentum_phase);
 
+	tracing::info!(
+		op = "scroll_input.tap_decoded",
+		raw_delta_y,
+		global_x = location.x,
+		global_y = location.y,
+		scroll_phase,
+		momentum_phase,
+		gesture_active,
+		gesture_ended,
+		"Decoded native macOS scroll input event."
+	);
+
 	decode_scroll_input_from_fields(raw_delta_y, location, gesture_active, gesture_ended)
 }
 

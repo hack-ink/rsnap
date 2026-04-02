@@ -6,10 +6,7 @@ mod scroll_input_macos;
 mod shell;
 
 #[cfg(target_os = "macos")]
-use std::sync::{
-	Arc,
-	atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 use color_eyre::eyre::Result;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
@@ -39,6 +36,8 @@ pub(crate) enum UserEvent {
 	HotKey(GlobalHotKeyEvent),
 	#[cfg(target_os = "macos")]
 	OverlayStreamFrame,
+	#[cfg(target_os = "macos")]
+	OverlayScrollInput,
 	#[cfg(target_os = "macos")]
 	OverlayWorkerResponse,
 }
@@ -71,8 +70,6 @@ struct App {
 	#[cfg(target_os = "macos")]
 	overlay_proxy: EventLoopProxy<UserEvent>,
 	#[cfg(target_os = "macos")]
-	overlay_stream_event_pending: Arc<AtomicBool>,
-	#[cfg(target_os = "macos")]
 	scroll_input_observer_lifecycle: Arc<ScrollInputObserverLifecycle>,
 	#[cfg(target_os = "macos")]
 	scroll_input_shared_state: Arc<SharedScrollInputState>,
@@ -87,7 +84,6 @@ impl App {
 		settings_hotkey: Option<HotKey>,
 		hotkey_manager: Option<GlobalHotKeyManager>,
 		#[cfg(target_os = "macos")] overlay_proxy: EventLoopProxy<UserEvent>,
-		#[cfg(target_os = "macos")] overlay_stream_event_pending: Arc<AtomicBool>,
 		#[cfg(target_os = "macos")] scroll_input_observer_lifecycle: Arc<
 			ScrollInputObserverLifecycle,
 		>,
@@ -120,8 +116,6 @@ impl App {
 			settings,
 			#[cfg(target_os = "macos")]
 			overlay_proxy,
-			#[cfg(target_os = "macos")]
-			overlay_stream_event_pending,
 			#[cfg(target_os = "macos")]
 			scroll_input_observer_lifecycle,
 			#[cfg(target_os = "macos")]
@@ -186,24 +180,4 @@ impl App {
 /// Runs the desktop application event loop until shutdown.
 pub fn run() -> Result<()> {
 	runtime::run()
-}
-
-#[cfg(target_os = "macos")]
-fn begin_coalesced_overlay_user_event_send(pending: &AtomicBool) -> bool {
-	pending.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok()
-}
-
-#[cfg(test)]
-mod tests {
-	#[cfg(target_os = "macos")]
-	use std::sync::atomic::AtomicBool;
-
-	#[cfg(target_os = "macos")]
-	#[test]
-	fn begin_coalesced_overlay_user_event_send_only_allows_first_sender_per_flag() {
-		let pending = AtomicBool::new(false);
-
-		assert!(super::begin_coalesced_overlay_user_event_send(&pending));
-		assert!(!super::begin_coalesced_overlay_user_event_send(&pending));
-	}
 }
