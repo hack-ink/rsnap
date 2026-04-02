@@ -1170,6 +1170,7 @@ mod tests {
 		image
 	}
 
+	#[cfg(target_os = "macos")]
 	#[test]
 	fn replay_recorded_live_trace_round_trips_one_commit() {
 		let rows = [
