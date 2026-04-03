@@ -1502,8 +1502,7 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	use objc2_foundation::NSOperatingSystemVersion;
 
-	#[cfg(target_os = "macos")]
-	use crate::backend::{self};
+	use crate::backend;
 	use crate::backend::{CaptureBackend, StubCaptureBackend};
 	#[cfg(target_os = "macos")]
 	use crate::state::{GlobalPoint, MonitorRect, RectPoints};
