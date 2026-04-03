@@ -557,12 +557,12 @@ fn render_overlay_section(combo_width: f32, ui: &mut Ui, settings: &mut AppSetti
 
 	changed |= ui.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD").changed();
 	changed |= ui.checkbox(&mut settings.hud_glass_enabled, "Glass HUD").changed();
-	changed |= ui.checkbox(&mut settings.selection_particles, "Selection particles").changed();
+	changed |= ui.checkbox(&mut settings.selection_flow_enabled, "Selection flow").changed();
 	changed |= overlay_range_slider_row(
 		ui,
 		"Flow thickness",
 		&mut settings.selection_flow_stroke_width_px,
-		settings.selection_particles,
+		settings.selection_flow_enabled,
 	);
 
 	ui.add_space(SETTINGS_SECTION_GAP);
