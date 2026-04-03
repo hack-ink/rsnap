@@ -76,14 +76,15 @@ use wgpu::BufferSize;
 use wgpu::BufferUsages;
 use wgpu::ColorWrites;
 use wgpu::CompositeAlphaMode;
+use wgpu::CurrentSurfaceTexture;
 use wgpu::Device;
 use wgpu::ExperimentalFeatures;
 use wgpu::Features;
 use wgpu::FilterMode;
 use wgpu::FrontFace;
-use wgpu::InstanceDescriptor;
 use wgpu::LoadOp;
 use wgpu::MemoryHints;
+use wgpu::MipmapFilterMode;
 use wgpu::MultisampleState;
 use wgpu::Origin3d;
 use wgpu::PipelineCompilationOptions;
@@ -100,7 +101,6 @@ use wgpu::ShaderStages;
 use wgpu::StoreOp;
 use wgpu::Surface;
 use wgpu::SurfaceCapabilities;
-use wgpu::SurfaceError;
 use wgpu::SurfaceTexture;
 use wgpu::Texture;
 use wgpu::TextureAspect;
@@ -8212,6 +8212,29 @@ impl WindowRendererPath {
 	}
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SurfaceFrameSkipReason {
+	Timeout,
+	Occluded,
+}
+impl SurfaceFrameSkipReason {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Timeout => "timeout",
+			Self::Occluded => "occluded",
+		}
+	}
+
+	const fn should_request_redraw(self) -> bool {
+		matches!(self, Self::Timeout)
+	}
+}
+
+enum AcquiredSurfaceFrame {
+	Ready(SurfaceTexture),
+	Skipped(SurfaceFrameSkipReason),
+}
+
 #[cfg(target_os = "macos")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingRecognizeTextRequest {
@@ -8379,9 +8402,9 @@ impl ScrollPreviewWindow {
 	fn render_preview_ui(&mut self, view: ScrollPreviewView) -> FullOutput {
 		let raw_input = self.egui_state.take_egui_input(&self.window);
 
-		self.egui_ctx.run(raw_input, |ctx| {
-			CentralPanel::default().frame(Frame::new().fill(Color32::TRANSPARENT)).show(
-				ctx,
+		self.egui_ctx.run_ui(raw_input, |ui| {
+			CentralPanel::default().frame(Frame::new().fill(Color32::TRANSPARENT)).show_inside(
+				ui,
 				|ui| {
 					let _ = view.paused;
 					let tile_fill = match view.theme {
@@ -8436,7 +8459,22 @@ impl ScrollPreviewWindow {
 			size_in_pixels: [size.width.max(1), size.height.max(1)],
 			pixels_per_point,
 		};
-		let frame = self.acquire_frame(gpu)?;
+		let frame = match self.acquire_frame(gpu)? {
+			AcquiredSurfaceFrame::Ready(frame) => frame,
+			AcquiredSurfaceFrame::Skipped(reason) => {
+				tracing::trace!(
+					window_id = ?self.window.id(),
+					reason = reason.as_str(),
+					"Skipped scroll preview frame acquisition."
+				);
+
+				if reason.should_request_redraw() {
+					self.window.request_redraw();
+				}
+
+				return Ok(());
+			},
+		};
 		let view = frame.texture.create_view(&TextureViewDescriptor::default());
 		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("rsnap-scroll-preview encoder"),
@@ -8464,6 +8502,7 @@ impl ScrollPreviewWindow {
 				depth_stencil_attachment: None,
 				timestamp_writes: None,
 				occlusion_query_set: None,
+				multiview_mask: None,
 			};
 			let mut rpass = encoder.begin_render_pass(&rpass_desc).forget_lifetime();
 
@@ -8493,21 +8532,46 @@ impl ScrollPreviewWindow {
 		self.render_preview_frame(gpu, full_output)
 	}
 
-	fn acquire_frame(&mut self, gpu: &GpuContext) -> Result<SurfaceTexture> {
-		match self.surface.get_current_texture() {
-			Ok(frame) => Ok(frame),
-			Err(SurfaceError::Outdated) => {
-				self.reconfigure_surface(gpu);
+	fn acquire_frame(&mut self, gpu: &GpuContext) -> Result<AcquiredSurfaceFrame> {
+		for attempt in 0..2 {
+			match self.surface.get_current_texture() {
+				CurrentSurfaceTexture::Success(frame) => {
+					return Ok(AcquiredSurfaceFrame::Ready(frame));
+				},
+				CurrentSurfaceTexture::Suboptimal(frame) => {
+					self.needs_reconfigure = true;
 
-				self.surface.get_current_texture().wrap_err("get_current_texture after reconfigure")
-			},
-			Err(SurfaceError::Lost) => {
-				self.recreate_surface(gpu).wrap_err("recreate scroll preview surface")?;
-
-				self.surface.get_current_texture().wrap_err("get_current_texture after recreate")
-			},
-			Err(err) => Err(eyre::eyre!("scroll preview get_current_texture failed: {err:?}")),
+					return Ok(AcquiredSurfaceFrame::Ready(frame));
+				},
+				CurrentSurfaceTexture::Outdated if attempt == 0 => {
+					self.reconfigure_surface(gpu);
+				},
+				CurrentSurfaceTexture::Lost if attempt == 0 => {
+					self.recreate_surface(gpu).wrap_err("recreate scroll preview surface")?;
+				},
+				CurrentSurfaceTexture::Outdated => {
+					return Err(eyre::eyre!(
+						"scroll preview get_current_texture stayed outdated after reconfigure"
+					));
+				},
+				CurrentSurfaceTexture::Lost => {
+					return Err(eyre::eyre!(
+						"scroll preview get_current_texture stayed lost after recreate"
+					));
+				},
+				CurrentSurfaceTexture::Timeout => {
+					return Ok(AcquiredSurfaceFrame::Skipped(SurfaceFrameSkipReason::Timeout));
+				},
+				CurrentSurfaceTexture::Occluded => {
+					return Ok(AcquiredSurfaceFrame::Skipped(SurfaceFrameSkipReason::Occluded));
+				},
+				CurrentSurfaceTexture::Validation => {
+					return Err(eyre::eyre!("scroll preview get_current_texture hit validation"));
+				},
+			}
 		}
+
+		unreachable!("surface acquisition attempts are bounded")
 	}
 
 	fn recreate_surface(&mut self, gpu: &GpuContext) -> Result<()> {
@@ -8805,7 +8869,7 @@ struct GpuContext {
 }
 impl GpuContext {
 	fn new() -> Result<Self> {
-		let instance = wgpu::Instance::new(&InstanceDescriptor::default());
+		let instance = wgpu::Instance::default();
 		let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
 			power_preference: PowerPreference::LowPower,
 			compatible_surface: None,
@@ -8894,8 +8958,8 @@ impl WindowRenderer {
 			});
 		let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("rsnap-mipgen pipeline layout"),
-			bind_group_layouts: &[&bind_group_layout],
-			push_constant_ranges: &[],
+			bind_group_layouts: &[Some(&bind_group_layout)],
+			immediate_size: 0,
 		});
 		let pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
 			label: Some("rsnap-mipgen pipeline"),
@@ -8927,7 +8991,7 @@ impl WindowRenderer {
 					write_mask: ColorWrites::ALL,
 				})],
 			}),
-			multiview: None,
+			multiview_mask: None,
 			cache: None,
 		});
 
@@ -8945,8 +9009,8 @@ impl WindowRenderer {
 		});
 		let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("rsnap-mipgen fullscreen pipeline layout"),
-			bind_group_layouts: &[bind_group_layout],
-			push_constant_ranges: &[],
+			bind_group_layouts: &[Some(bind_group_layout)],
+			immediate_size: 0,
 		});
 
 		gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -8979,7 +9043,7 @@ impl WindowRenderer {
 					write_mask: ColorWrites::ALL,
 				})],
 			}),
-			multiview: None,
+			multiview_mask: None,
 			cache: None,
 		})
 	}
@@ -9044,6 +9108,7 @@ impl WindowRenderer {
 				depth_stencil_attachment: None,
 				timestamp_writes: None,
 				occlusion_query_set: None,
+				multiview_mask: None,
 			};
 			let mut rpass = encoder.begin_render_pass(&rpass_desc).forget_lifetime();
 
@@ -9115,7 +9180,7 @@ impl WindowRenderer {
 			address_mode_w: AddressMode::ClampToEdge,
 			mag_filter: FilterMode::Linear,
 			min_filter: FilterMode::Linear,
-			mipmap_filter: FilterMode::Linear,
+			mipmap_filter: MipmapFilterMode::Linear,
 			..Default::default()
 		})
 	}
@@ -9164,8 +9229,8 @@ impl WindowRenderer {
 			});
 		let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("rsnap-hud-blur pipeline layout"),
-			bind_group_layouts: &[&bind_group_layout],
-			push_constant_ranges: &[],
+			bind_group_layouts: &[Some(&bind_group_layout)],
+			immediate_size: 0,
 		});
 		let pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
 			label: Some("rsnap-hud-blur pipeline"),
@@ -9197,7 +9262,7 @@ impl WindowRenderer {
 					write_mask: ColorWrites::ALL,
 				})],
 			}),
-			multiview: None,
+			multiview_mask: None,
 			cache: None,
 		});
 
@@ -9353,9 +9418,11 @@ impl WindowRenderer {
 		let mut hud_pill = None;
 		let mut _show_selection_particles = false;
 		let egui_ctx = self.egui_ctx.clone();
-		let full_output = egui_ctx.run(raw_input, |ctx| {
+		let full_output = egui_ctx.run_ui(raw_input, |ui| {
+			let ctx = ui.ctx();
+
 			Self::render_frozen_toolbar_ui(
-				ctx,
+				ui.ctx(),
 				state,
 				monitor,
 				theme,
@@ -12002,20 +12069,84 @@ impl WindowRenderer {
 		}
 	}
 
-	fn acquire_frame(&mut self, gpu: &GpuContext) -> Result<SurfaceTexture> {
+	fn acquire_frame(&mut self, gpu: &GpuContext) -> Result<AcquiredSurfaceFrame> {
 		let started_at = Instant::now();
-		let frame = match self.surface.get_current_texture() {
-			Ok(frame) => Ok(frame),
-			Err(SurfaceError::Outdated | SurfaceError::Lost) => {
-				self.reconfigure(gpu);
+		let frame = {
+			let mut acquired = None;
 
-				self.needs_reconfigure = false;
+			for attempt in 0..2 {
+				match self.surface.get_current_texture() {
+					CurrentSurfaceTexture::Success(frame) => {
+						acquired = Some(Ok(AcquiredSurfaceFrame::Ready(frame)));
 
-				self.surface
-					.get_current_texture()
-					.wrap_err("Surface was lost and could not be reacquired")
-			},
-			Err(err) => Err(err).wrap_err("Failed to acquire surface texture"),
+						break;
+					},
+					CurrentSurfaceTexture::Suboptimal(frame) => {
+						self.needs_reconfigure = true;
+						acquired = Some(Ok(AcquiredSurfaceFrame::Ready(frame)));
+
+						break;
+					},
+					CurrentSurfaceTexture::Outdated if attempt == 0 => {
+						self.reconfigure(gpu);
+
+						self.needs_reconfigure = false;
+					},
+					CurrentSurfaceTexture::Lost if attempt == 0 => {
+						let surface = gpu
+							.instance
+							.create_surface(Arc::clone(&self.window))
+							.wrap_err("Failed to recreate lost surface")?;
+
+						self.surface = surface;
+
+						self.reconfigure(gpu);
+
+						self.needs_reconfigure = false;
+					},
+					CurrentSurfaceTexture::Outdated => {
+						acquired = Some(Err(eyre::eyre!(
+							"Failed to acquire surface texture after reconfigure: surface stayed outdated"
+						)));
+
+						break;
+					},
+					CurrentSurfaceTexture::Lost => {
+						acquired = Some(Err(eyre::eyre!(
+							"Failed to acquire surface texture after recreate: surface stayed lost"
+						)));
+
+						break;
+					},
+					CurrentSurfaceTexture::Timeout => {
+						acquired = Some(Ok(AcquiredSurfaceFrame::Skipped(
+							SurfaceFrameSkipReason::Timeout,
+						)));
+
+						break;
+					},
+					CurrentSurfaceTexture::Occluded => {
+						acquired = Some(Ok(AcquiredSurfaceFrame::Skipped(
+							SurfaceFrameSkipReason::Occluded,
+						)));
+
+						break;
+					},
+					CurrentSurfaceTexture::Validation => {
+						acquired = Some(Err(eyre::eyre!(
+							"Failed to acquire surface texture: validation error"
+						)));
+
+						break;
+					},
+				}
+			}
+
+			acquired.unwrap_or_else(|| {
+				Err(eyre::eyre!(
+					"Failed to acquire surface texture: bounded retries exhausted unexpectedly"
+				))
+			})
 		};
 		let elapsed = started_at.elapsed();
 
@@ -12067,6 +12198,7 @@ impl WindowRenderer {
 				depth_stencil_attachment: None,
 				timestamp_writes: None,
 				occlusion_query_set: None,
+				multiview_mask: None,
 			};
 			let mut rpass = encoder.begin_render_pass(&rpass_desc).forget_lifetime();
 
@@ -12344,6 +12476,43 @@ impl WindowRenderer {
 
 		phase_timings.acquire_frame = acquire_frame_started_at.elapsed();
 
+		let frame = match frame {
+			AcquiredSurfaceFrame::Ready(frame) => frame,
+			AcquiredSurfaceFrame::Skipped(reason) => {
+				phase_timings.total = draw_started_at.elapsed();
+
+				phase_timings.warn_if_substeps_slow(
+					&mut self.slow_op_logger,
+					path,
+					self.window.id(),
+					monitor.id,
+					state.mode,
+					paint_jobs.len(),
+				);
+				phase_timings.trace(
+					path,
+					self.window.id(),
+					monitor.id,
+					state.mode,
+					toolbar_active,
+					paint_jobs.len(),
+				);
+
+				tracing::trace!(
+					path = path.as_str(),
+					window_id = ?self.window.id(),
+					monitor_id = monitor.id,
+					reason = reason.as_str(),
+					"Skipped overlay window frame acquisition."
+				);
+
+				if reason.should_request_redraw() {
+					self.window.request_redraw();
+				}
+
+				return Ok(());
+			},
+		};
 		let render_frame_started_at = Instant::now();
 
 		self.render_frame(
@@ -12767,7 +12936,9 @@ impl WindowRenderer {
 	) -> (FullOutput, Option<Rect>) {
 		let mut loupe_tile_rect = None;
 		let egui_ctx = self.egui_ctx.clone();
-		let full_output = egui_ctx.run(raw_input, |ctx| {
+		let full_output = egui_ctx.run_ui(raw_input, |ui| {
+			let ctx = ui.ctx();
+
 			if !state.alt_held {
 				return;
 			}
@@ -13682,7 +13853,7 @@ mod tests {
 
 		ctx.set_fonts(fonts);
 
-		let _ = ctx.run(egui::RawInput::default(), |_: &egui::Context| {});
+		let _ = ctx.run_ui(egui::RawInput::default(), |_ui| {});
 
 		ctx
 	}
@@ -14701,11 +14872,11 @@ mod tests {
 			let state = &session.state;
 			let toolbar_state = &mut session.toolbar_state;
 			let mut hud_pill = None;
-			let _ = ctx.run(
+			let _ = ctx.run_ui(
 				egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
-				|ctx| {
+				|ui| {
 					WindowRenderer::render_frozen_toolbar_ui(
-						ctx,
+						ui.ctx(),
 						state,
 						monitor,
 						HudTheme::Dark,
@@ -14731,11 +14902,11 @@ mod tests {
 		let state = &session.state;
 		let toolbar_state = &mut session.toolbar_state;
 		let mut hud_pill = None;
-		let _ = ctx.run(
+		let _ = ctx.run_ui(
 			egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
-			|ctx| {
+			|ui| {
 				WindowRenderer::render_frozen_toolbar_ui(
-					ctx,
+					ui.ctx(),
 					state,
 					monitor,
 					HudTheme::Dark,
