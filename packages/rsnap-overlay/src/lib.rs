@@ -26,6 +26,8 @@ pub mod replay_support {
 mod backend;
 #[cfg(target_os = "macos")]
 mod live_frame_stream_macos;
+#[cfg(target_os = "macos")]
+mod ocr_macos;
 mod overlay;
 mod png;
 mod scroll_capture;
