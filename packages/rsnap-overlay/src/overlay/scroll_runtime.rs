@@ -926,7 +926,7 @@ impl OverlaySession {
 		} else {
 			self.observe_scroll_capture_frame_with_gate(
 				frame,
-				false,
+				allow_stale_input,
 				observation_at,
 				allow_post_stall_burst_search,
 			)?
