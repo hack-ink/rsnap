@@ -23,6 +23,7 @@ Pure-Rust menubar screenshot prototype (macOS-first).
 - In Frozen mode, a dragged-region capture can be dragged from inside the bright selection area to reposition it without resizing.
 - In Frozen mode, `Space` copies the current frozen PNG to the clipboard and exits.
 - In Frozen mode, Cmd+S (macOS) / Ctrl+S saves the current PNG to disk and exits.
+- On macOS, Frozen mode can recognize text from the current capture and copy the result to the clipboard from the toolbar.
 - After a dragged region freeze, press `s` or use the frozen toolbar `Scroll Capture ↓` action to enter scroll capture.
 - Scroll capture is currently implemented on macOS for dragged-region freezes and uses image-first downward stitching with a live side preview.
 - Upward scrolling may be observed for rewind/reacquire, but it never appends stitched rows.
@@ -93,6 +94,7 @@ cargo run -p rsnap
 ### Output (save-to-disk)
 
 - In Frozen mode, use Cmd+S (macOS) / Ctrl+S to save a PNG to disk and exit.
+- On macOS, use the frozen toolbar `Recognize Text` action to copy recognized text from the current frozen capture and exit.
 - After entering scroll capture from a dragged region on macOS, downward scrolling may append newly proven rows into the side preview.
   Upward scrolling never appends. Returning to already-stitched content should not grow the export; only newly proven content may be added.
   The scroll-capture commit path uses discrete region screenshots plus pairwise image registration; clipboard and save must match the committed preview the user sees.

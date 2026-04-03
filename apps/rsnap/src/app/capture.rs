@@ -248,6 +248,12 @@ impl App {
 			OverlayExit::PngBytes(png_bytes) => {
 				tracing::info!(bytes = png_bytes.len(), "Capture copied to clipboard.");
 			},
+			OverlayExit::TextCopied(character_count) => {
+				tracing::info!(
+					characters = character_count,
+					"Recognized text copied to clipboard."
+				);
+			},
 			OverlayExit::Saved(path) => {
 				tracing::info!(path = %path.display(), "Capture saved to file.");
 			},
