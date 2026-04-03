@@ -308,7 +308,10 @@ const WINDOW_CAPTURE_MATTE_DARK_RGBA: image::Rgba<u8> = image::Rgba([24, 24, 24,
 const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
 const SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS: f64 = 360.0;
 const SCROLL_PREVIEW_WINDOW_MARGIN_POINTS: i32 = 16;
+#[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
+#[cfg(not(target_os = "macos"))]
+const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL: Duration = Duration::from_millis(60);
 #[cfg(target_os = "macos")]
@@ -13016,7 +13019,6 @@ mod tests {
 	use std::sync::Arc;
 	#[cfg(target_os = "macos")]
 	use std::thread;
-	#[cfg(target_os = "macos")]
 	use std::time::Duration;
 	use std::time::Instant;
 
@@ -13049,12 +13051,13 @@ mod tests {
 	use crate::overlay::{
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
 		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect,
-		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
-		SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
-		SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
-		SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
-		SelectionSizeBadgeTarget, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX,
-		ToolbarPlacement, Vec2, WindowRenderer, hud_helpers, regular,
+		SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+		SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
+		SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
+		SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache,
+		SelectionDashedBorderMetrics, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
+		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
+		hud_helpers, regular,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
@@ -17802,6 +17805,14 @@ mod tests {
 
 		assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
 		assert_eq!(scroll_capture_export_height(&session), 724);
+	}
+
+	#[test]
+	fn scroll_capture_sample_interval_matches_platform_worker_sampling_strategy() {
+		#[cfg(target_os = "macos")]
+		assert_eq!(SCROLL_CAPTURE_SAMPLE_INTERVAL, Duration::from_millis(250));
+		#[cfg(not(target_os = "macos"))]
+		assert_eq!(SCROLL_CAPTURE_SAMPLE_INTERVAL, Duration::from_millis(50));
 	}
 
 	#[cfg(target_os = "macos")]
