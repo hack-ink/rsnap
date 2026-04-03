@@ -90,13 +90,31 @@ impl AppSettings {
 		let Some(path) = Self::path() else {
 			return Self::default();
 		};
-		let Ok(bytes) = fs::read(&path) else {
+
+		Self::load_from_path(&path)
+	}
+
+	#[must_use]
+	fn load_from_path(path: &Path) -> Self {
+		let Ok(bytes) = fs::read(path) else {
 			return Self::default();
 		};
 		let Ok(contents) = std::str::from_utf8(&bytes) else {
+			quarantine_invalid_settings_file(path, "Settings file is not valid UTF-8");
+
 			return Self::default();
 		};
-		let mut settings: Self = toml::from_str(contents).unwrap_or_default();
+		let mut settings: Self = match toml::from_str(contents) {
+			Ok(settings) => settings,
+			Err(err) => {
+				quarantine_invalid_settings_file(
+					path,
+					&format!("Failed to parse settings TOML: {err}"),
+				);
+
+				return Self::default();
+			},
+		};
 
 		settings.capture_hotkey = sanitize_capture_hotkey(&settings.capture_hotkey)
 			.unwrap_or_else(default_capture_hotkey);
@@ -305,9 +323,51 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 	Ok(())
 }
 
+fn quarantine_invalid_settings_file(path: &Path, message: &str) {
+	let backup_path = invalid_settings_backup_path(path);
+
+	match fs::rename(path, &backup_path) {
+		Ok(()) => eprintln!(
+			"{message}. Moved invalid settings file from {:?} to {:?}.",
+			path, backup_path
+		),
+		Err(err) => eprintln!(
+			"{message}. Failed to move invalid settings file {:?} to {:?}: {err}",
+			path, backup_path
+		),
+	}
+}
+
+fn invalid_settings_backup_path(path: &Path) -> PathBuf {
+	let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+	let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("settings");
+	let ext = path.extension().and_then(|ext| ext.to_str());
+
+	for suffix in 0_u32.. {
+		let candidate_name = match (ext, suffix) {
+			(Some(ext), 0) => format!("{stem}.invalid.{ext}"),
+			(Some(ext), suffix) => format!("{stem}.invalid-{suffix}.{ext}"),
+			(None, 0) => format!("{stem}.invalid"),
+			(None, suffix) => format!("{stem}.invalid-{suffix}"),
+		};
+		let candidate = parent.join(candidate_name);
+
+		if !candidate.exists() {
+			return candidate;
+		}
+	}
+
+	unreachable!("u32 suffix space exhausted for invalid settings backups")
+}
+
 #[cfg(test)]
 mod tests {
-	use std::path::PathBuf;
+	use std::{
+		env, fs,
+		path::PathBuf,
+		process,
+		time::{SystemTime, UNIX_EPOCH},
+	};
 
 	use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
 	use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
@@ -405,5 +465,34 @@ mod tests {
 		let sanitized = super::sanitize_output_filename_prefix("  rsnap:/demo?  ");
 
 		assert_eq!(sanitized, "rsnap__demo");
+	}
+
+	#[test]
+	fn load_quarantines_invalid_settings_instead_of_silently_dropping_them() {
+		let root = env::temp_dir().join(format!(
+			"rsnap-settings-test-{}-{}",
+			process::id(),
+			SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+		));
+
+		fs::create_dir_all(&root).unwrap();
+
+		let settings_path = root.join("settings.toml");
+		let original = r#"
+show_alt_hint_keycap = false
+selection_particles = false
+"#;
+
+		fs::write(&settings_path, original).unwrap();
+
+		let settings = AppSettings::load_from_path(&settings_path);
+		let backup_path = root.join("settings.invalid.toml");
+
+		assert_eq!(settings, AppSettings::default());
+		assert!(!settings_path.exists());
+		assert_eq!(fs::read_to_string(&backup_path).unwrap(), original);
+
+		fs::remove_file(&backup_path).unwrap();
+		fs::remove_dir(&root).unwrap();
 	}
 }
