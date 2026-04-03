@@ -173,12 +173,32 @@ unsafe extern "C" fn scroll_input_event_tap_callback(
 
 fn send_overlay_scroll_input(context: &ScrollInputTapContext, cg_event: CGEventRef) {
 	if !context.shared_state.is_enabled() {
+		tracing::debug!(
+			op = "scroll_input.tap_ignored_disabled",
+			"Discarded native scroll input event because scroll capture replay is disabled."
+		);
+
 		return;
 	}
 
 	let Some(decoded) = decode::decode_scroll_input_from_cg_event(cg_event) else {
+		tracing::debug!(
+			op = "scroll_input.tap_ignored_decode_none",
+			"Discarded native scroll input event because it decoded to no usable delta."
+		);
+
 		return;
 	};
+
+	tracing::debug!(
+		op = "scroll_input.tap_forwarding",
+		delta_y = decoded.delta_y,
+		global_x = decoded.global_x,
+		global_y = decoded.global_y,
+		gesture_active = decoded.gesture_active,
+		gesture_ended = decoded.gesture_ended,
+		"Forwarding decoded native scroll input event into shared replay state."
+	);
 
 	context.shared_state.record(
 		decoded.delta_y,

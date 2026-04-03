@@ -13,18 +13,28 @@ use std::process;
 use std::ptr;
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
+use std::sync::{Mutex, mpsc};
+#[cfg(target_os = "macos")]
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+use block2::RcBlock;
 use color_eyre::eyre::{self, Result, WrapErr};
 use image::RgbaImage;
 use image::imageops;
+#[cfg(target_os = "macos")]
+use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{
 	CGDataProvider, CGImage, CGRectNull, CGWindowID, CGWindowImageOption, CGWindowListOption,
 };
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSError, NSOperatingSystemVersion, NSProcessInfo};
+#[cfg(target_os = "macos")]
+use objc2_screen_capture_kit::SCScreenshotManager;
 use thiserror::Error;
 #[cfg(not(target_os = "macos"))]
 use xcap::Window;
@@ -76,6 +86,14 @@ const K_CF_NUMBER_CG_FLOAT_TYPE: u32 = 16;
 const MACOS_REGION_FRAME_WAIT_TIMEOUT: Duration = Duration::from_millis(120);
 #[cfg(target_os = "macos")]
 const MACOS_REGION_FRAME_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(8);
+#[cfg(target_os = "macos")]
+const MACOS_SCREENSHOT_CAPTURE_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(target_os = "macos")]
+const MACOS_SCREENSHOT_ERROR_TIMEOUT_CODE: isize = 10;
+#[cfg(target_os = "macos")]
+const MACOS_SCREENSHOT_ERROR_NULL_IMAGE_CODE: isize = 11;
+#[cfg(target_os = "macos")]
+const MACOS_SCREENSHOT_ERROR_RETAIN_FAILED_CODE: isize = 12;
 
 /// Capture backend contract used by the overlay worker.
 pub trait CaptureBackend: Send {
@@ -503,34 +521,49 @@ impl XcapCaptureBackend {
 		monitor: MonitorRect,
 		rect_px: RectPoints,
 	) -> Result<Option<RgbaImage>> {
-		let after_frame_seq = self.region_capture_after_seq(monitor, rect_px);
-
-		if let Some((frame_seq, image)) =
-			self.wait_for_live_stream_region(monitor, rect_px, after_frame_seq)
-		{
-			self.record_region_capture(monitor, rect_px, frame_seq);
+		if !Self::macos_supports_scroll_capture_screenshot_api() {
+			let image = capture_monitor_region_with_core_graphics(monitor, rect_px).wrap_err_with(
+				|| {
+					format!(
+						"failed to capture monitor region via CoreGraphics fallback: {monitor:?}"
+					)
+				},
+			)?;
 
 			tracing::trace!(
-				op = "capture_backend.region_stream_hit",
+				op = "capture_backend.region_core_graphics_fallback",
 				monitor_id = monitor.id,
 				rect_px = ?rect_px,
-				frame_seq,
 				frame_px = ?image.dimensions(),
-				"Captured monitor region from ScreenCaptureKit stream."
+				"Captured monitor region from the CoreGraphics fallback because the screenshot API is unavailable."
 			);
 
 			return Ok(Some(image));
 		}
 
+		let image = capture_monitor_region_image_with_screenshot_manager(monitor, rect_px)
+			.wrap_err_with(|| {
+				format!("failed to capture monitor region via SCScreenshotManager: {monitor:?}")
+			})?;
+
 		tracing::trace!(
-			op = "capture_backend.region_stream_no_new_frame_for_scroll_capture",
+			op = "capture_backend.region_screenshot_hit",
 			monitor_id = monitor.id,
 			rect_px = ?rect_px,
-			after_frame_seq,
-			"Did not receive a fresh ScreenCaptureKit region frame for scroll capture."
+			frame_px = ?image.dimensions(),
+			"Captured monitor region from ScreenCaptureKit screenshot API."
 		);
 
-		Ok(None)
+		Ok(Some(image))
+	}
+
+	#[cfg(target_os = "macos")]
+	fn macos_supports_scroll_capture_screenshot_api() -> bool {
+		let process_info = NSProcessInfo::processInfo();
+
+		macos_supports_scroll_capture_screenshot_api_with_version(
+			process_info.operatingSystemVersion(),
+		)
 	}
 
 	#[cfg(target_os = "macos")]
@@ -957,10 +990,41 @@ fn rgba_image_from_cg_image(cg_image: &CGImage) -> Result<RgbaImage> {
 	let data = CGDataProvider::data(Some(data_provider.as_ref()))
 		.ok_or_else(|| eyre::eyre!("Failed to copy CGImage bytes"))?;
 	let bytes_per_row = CGImage::bytes_per_row(Some(cg_image));
+
+	rgba_image_from_bgra_rows(width, height, bytes_per_row, &data.to_vec())
+}
+
+#[cfg(target_os = "macos")]
+fn rgba_image_from_bgra_rows(
+	width: usize,
+	height: usize,
+	bytes_per_row: usize,
+	data: &[u8],
+) -> Result<RgbaImage> {
+	let expected_row_bytes =
+		width.checked_mul(4).ok_or_else(|| eyre::eyre!("row byte count overflowed"))?;
+
+	if bytes_per_row < expected_row_bytes {
+		return Err(eyre::eyre!(
+			"CGImage bytes_per_row {bytes_per_row} is smaller than the required RGBA row width {expected_row_bytes}"
+		));
+	}
+
+	let required_len = height
+		.checked_mul(bytes_per_row)
+		.ok_or_else(|| eyre::eyre!("CGImage backing store length overflowed"))?;
+
+	if data.len() < required_len {
+		return Err(eyre::eyre!(
+			"CGImage backing store is shorter than the declared image size: expected at least {required_len} bytes, got {}",
+			data.len()
+		));
+	}
+
 	let mut buffer = Vec::with_capacity(width * height * 4);
 
-	for row in data.to_vec().chunks_exact(bytes_per_row) {
-		buffer.extend_from_slice(&row[..width * 4]);
+	for row in data[..required_len].chunks_exact(bytes_per_row) {
+		buffer.extend_from_slice(&row[..expected_row_bytes]);
 	}
 	for bgra in buffer.chunks_exact_mut(4) {
 		bgra.swap(0, 2);
@@ -1036,6 +1100,13 @@ fn copy_rgba_patch(
 	out
 }
 
+#[cfg(target_os = "macos")]
+fn macos_supports_scroll_capture_screenshot_api_with_version(
+	version: NSOperatingSystemVersion,
+) -> bool {
+	version.majorVersion >= 14
+}
+
 fn normalize_capture_rect(rect_px: RectPoints) -> RectPoints {
 	RectPoints::new(rect_px.x, rect_px.y, rect_px.width.max(1), rect_px.height.max(1))
 }
@@ -1057,6 +1128,96 @@ fn crop_monitor_image_region(image: &RgbaImage, rect_px: RectPoints) -> Result<R
 	}
 
 	Ok(imageops::crop_imm(image, x, y, width, height).to_image())
+}
+
+fn normalize_capture_image_extent(image: &RgbaImage, width: u32, height: u32) -> RgbaImage {
+	let width = width.max(1);
+	let height = height.max(1);
+
+	if image.dimensions() == (width, height) {
+		return image.clone();
+	}
+
+	let source_max_x = image.width().saturating_sub(1);
+	let source_max_y = image.height().saturating_sub(1);
+	let mut out = RgbaImage::new(width, height);
+
+	for out_y in 0..height {
+		let sample_y = out_y.min(source_max_y);
+
+		for out_x in 0..width {
+			let sample_x = out_x.min(source_max_x);
+
+			out.put_pixel(out_x, out_y, *image.get_pixel(sample_x, sample_y));
+		}
+	}
+
+	out
+}
+
+#[cfg(target_os = "macos")]
+fn capture_monitor_region_image_with_screenshot_manager(
+	monitor: MonitorRect,
+	rect_px: RectPoints,
+) -> Result<RgbaImage> {
+	let rect_px = normalize_capture_rect(rect_px);
+	let sf = f64::from(monitor.scale_factor()).max(1.0);
+	let cg_rect = CGRect::new(
+		CGPoint::new(
+			f64::from(monitor.origin.x) + f64::from(rect_px.x) / sf,
+			f64::from(monitor.origin.y) + f64::from(rect_px.y) / sf,
+		),
+		CGSize::new(f64::from(rect_px.width) / sf, f64::from(rect_px.height) / sf),
+	);
+	let cg_image = capture_screenshot_cg_image(cg_rect)?;
+	let image = rgba_image_from_cg_image(cg_image.as_ref())?;
+
+	// ScreenCaptureKit may round point-space captures by one pixel at non-integer scale edges.
+	// Clamp or extend back to the requested region so the stitcher sees stable dimensions.
+	if image.dimensions() == (rect_px.width, rect_px.height) {
+		Ok(image)
+	} else {
+		Ok(normalize_capture_image_extent(&image, rect_px.width, rect_px.height))
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn capture_screenshot_cg_image(rect: CGRect) -> Result<Retained<CGImage>> {
+	let (tx, rx) = mpsc::sync_channel::<Result<Retained<CGImage>, Retained<NSError>>>(1);
+	let tx = Mutex::new(Some(tx));
+	let block = RcBlock::new(move |image: *mut CGImage, err: *mut NSError| {
+		let mut maybe_tx = match tx.lock() {
+			Ok(guard) => guard,
+			Err(poisoned) => poisoned.into_inner(),
+		};
+		let Some(tx) = maybe_tx.take() else {
+			return;
+		};
+
+		if !err.is_null() {
+			let Some(err) = (unsafe { Retained::retain(err) }) else {
+				let _ = tx.send(Err(screenshot_error(MACOS_SCREENSHOT_ERROR_RETAIN_FAILED_CODE)));
+
+				return;
+			};
+			let _ = tx.send(Err(err));
+
+			return;
+		}
+
+		let Some(image) = (unsafe { Retained::retain(image) }) else {
+			let _ = tx.send(Err(screenshot_error(MACOS_SCREENSHOT_ERROR_NULL_IMAGE_CODE)));
+
+			return;
+		};
+		let _ = tx.send(Ok(image));
+	});
+
+	unsafe { SCScreenshotManager::captureImageInRect_completionHandler(rect, Some(&block)) };
+
+	rx.recv_timeout(MACOS_SCREENSHOT_CAPTURE_TIMEOUT)
+		.map_err(|_| screenshot_error(MACOS_SCREENSHOT_ERROR_TIMEOUT_CODE))?
+		.map_err(|err| eyre::eyre!("{}", err.localizedDescription()))
 }
 
 #[cfg(target_os = "macos")]
@@ -1232,6 +1393,11 @@ fn cf_dictionary_at_index(array: CFArrayRef, index: isize) -> Option<CFDictionar
 	if value.is_null() { None } else { Some(value) }
 }
 
+#[cfg(target_os = "macos")]
+fn screenshot_error(code: isize) -> Retained<NSError> {
+	NSError::new(code, objc2_foundation::ns_string!("io.hackink.rsnap.screenshot_capture"))
+}
+
 #[cfg(not(target_os = "macos"))]
 fn collect_window_geometries() -> Result<Vec<WindowRect>> {
 	let windows = Window::all().wrap_err("xcap Window::all failed")?;
@@ -1332,6 +1498,11 @@ fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
 
 #[cfg(test)]
 mod tests {
+	use image::RgbaImage;
+	#[cfg(target_os = "macos")]
+	use objc2_foundation::NSOperatingSystemVersion;
+
+	use crate::backend;
 	use crate::backend::{CaptureBackend, StubCaptureBackend};
 	#[cfg(target_os = "macos")]
 	use crate::state::{GlobalPoint, MonitorRect, RectPoints};
@@ -1366,5 +1537,76 @@ mod tests {
 		assert_eq!(backend.region_capture_after_seq(monitor, rect), 41);
 		assert_eq!(backend.region_capture_after_seq(monitor, other_rect), 0);
 		assert_eq!(backend.region_capture_after_seq(other_monitor, rect), 0);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn rgba_image_from_bgra_rows_truncates_trailing_rows_beyond_declared_height() {
+		let width = 2_usize;
+		let height = 2_usize;
+		let bytes_per_row = width * 4;
+		let data = vec![
+			10, 20, 30, 255, 40, 50, 60, 255, // row 0
+			70, 80, 90, 255, 100, 110, 120, 255, // row 1
+			130, 140, 150, 255, 160, 170, 180, 255, // extra row 2
+			190, 200, 210, 255, 220, 230, 240, 255, // extra row 3
+		];
+		let image = backend::rgba_image_from_bgra_rows(width, height, bytes_per_row, &data)
+			.expect("image should decode");
+
+		assert_eq!(image.dimensions(), (2, 2));
+		assert_eq!(image.as_raw().len(), width * height * 4);
+		assert_eq!(image.get_pixel(0, 0).0, [30, 20, 10, 255]);
+		assert_eq!(image.get_pixel(1, 1).0, [120, 110, 100, 255]);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn rgba_image_from_bgra_rows_rejects_short_backing_store() {
+		let err = backend::rgba_image_from_bgra_rows(
+			2,
+			2,
+			8,
+			&[
+				10, 20, 30, 255, 40, 50, 60, 255, // row 0
+			],
+		)
+		.expect_err("short backing store should fail");
+
+		assert!(format!("{err:#}").contains("shorter than the declared image size"));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn screenshot_api_scroll_capture_gate_requires_macos_14_or_newer() {
+		assert!(!backend::macos_supports_scroll_capture_screenshot_api_with_version(
+			NSOperatingSystemVersion { majorVersion: 13, minorVersion: 6, patchVersion: 0 }
+		));
+		assert!(backend::macos_supports_scroll_capture_screenshot_api_with_version(
+			NSOperatingSystemVersion { majorVersion: 14, minorVersion: 0, patchVersion: 0 }
+		));
+		assert!(backend::macos_supports_scroll_capture_screenshot_api_with_version(
+			NSOperatingSystemVersion { majorVersion: 15, minorVersion: 0, patchVersion: 0 }
+		));
+	}
+
+	#[test]
+	fn normalize_capture_image_extent_pads_inward_rounded_edges_with_border_pixels() {
+		let image = RgbaImage::from_vec(
+			2,
+			2,
+			vec![
+				10, 0, 0, 255, 20, 0, 0, 255, //
+				30, 0, 0, 255, 40, 0, 0, 255,
+			],
+		)
+		.expect("valid rgba image");
+		let normalized = backend::normalize_capture_image_extent(&image, 3, 3);
+
+		assert_eq!(normalized.dimensions(), (3, 3));
+		assert_eq!(normalized.get_pixel(0, 0).0, [10, 0, 0, 255]);
+		assert_eq!(normalized.get_pixel(2, 0).0, [20, 0, 0, 255]);
+		assert_eq!(normalized.get_pixel(0, 2).0, [30, 0, 0, 255]);
+		assert_eq!(normalized.get_pixel(2, 2).0, [40, 0, 0, 255]);
 	}
 }
