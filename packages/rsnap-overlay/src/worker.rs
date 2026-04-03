@@ -672,8 +672,10 @@ mod tests {
 	};
 	use crate::worker::{
 		CapturedMonitorRegionResponse, CapturedMonitorRegionResult, OverlayWorker,
-		PendingWorkerRequests, WorkerErrorSource, WorkerRequest, WorkerResponse,
+		WorkerErrorSource, WorkerResponse,
 	};
+	#[cfg(target_os = "macos")]
+	use crate::worker::{PendingWorkerRequests, WorkerRequest};
 
 	enum MockScrollCaptureResult {
 		Image(RgbaImage),
