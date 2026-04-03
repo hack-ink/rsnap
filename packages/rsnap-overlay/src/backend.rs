@@ -1130,6 +1130,31 @@ fn crop_monitor_image_region(image: &RgbaImage, rect_px: RectPoints) -> Result<R
 	Ok(imageops::crop_imm(image, x, y, width, height).to_image())
 }
 
+fn normalize_capture_image_extent(image: &RgbaImage, width: u32, height: u32) -> RgbaImage {
+	let width = width.max(1);
+	let height = height.max(1);
+
+	if image.dimensions() == (width, height) {
+		return image.clone();
+	}
+
+	let source_max_x = image.width().saturating_sub(1);
+	let source_max_y = image.height().saturating_sub(1);
+	let mut out = RgbaImage::new(width, height);
+
+	for out_y in 0..height {
+		let sample_y = out_y.min(source_max_y);
+
+		for out_x in 0..width {
+			let sample_x = out_x.min(source_max_x);
+
+			out.put_pixel(out_x, out_y, *image.get_pixel(sample_x, sample_y));
+		}
+	}
+
+	out
+}
+
 #[cfg(target_os = "macos")]
 fn capture_monitor_region_image_with_screenshot_manager(
 	monitor: MonitorRect,
@@ -1148,11 +1173,11 @@ fn capture_monitor_region_image_with_screenshot_manager(
 	let image = rgba_image_from_cg_image(cg_image.as_ref())?;
 
 	// ScreenCaptureKit may round point-space captures by one pixel at non-integer scale edges.
-	// Clamp back to the requested region so the stitcher sees stable dimensions.
+	// Clamp or extend back to the requested region so the stitcher sees stable dimensions.
 	if image.dimensions() == (rect_px.width, rect_px.height) {
 		Ok(image)
 	} else {
-		crop_monitor_image_region(&image, RectPoints::new(0, 0, rect_px.width, rect_px.height))
+		Ok(normalize_capture_image_extent(&image, rect_px.width, rect_px.height))
 	}
 }
 
@@ -1473,6 +1498,7 @@ fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
 
 #[cfg(test)]
 mod tests {
+	use image::RgbaImage;
 	#[cfg(target_os = "macos")]
 	use objc2_foundation::NSOperatingSystemVersion;
 
@@ -1563,5 +1589,25 @@ mod tests {
 		assert!(backend::macos_supports_scroll_capture_screenshot_api_with_version(
 			NSOperatingSystemVersion { majorVersion: 15, minorVersion: 0, patchVersion: 0 }
 		));
+	}
+
+	#[test]
+	fn normalize_capture_image_extent_pads_inward_rounded_edges_with_border_pixels() {
+		let image = RgbaImage::from_vec(
+			2,
+			2,
+			vec![
+				10, 0, 0, 255, 20, 0, 0, 255, //
+				30, 0, 0, 255, 40, 0, 0, 255,
+			],
+		)
+		.expect("valid rgba image");
+		let normalized = backend::normalize_capture_image_extent(&image, 3, 3);
+
+		assert_eq!(normalized.dimensions(), (3, 3));
+		assert_eq!(normalized.get_pixel(0, 0).0, [10, 0, 0, 255]);
+		assert_eq!(normalized.get_pixel(2, 0).0, [20, 0, 0, 255]);
+		assert_eq!(normalized.get_pixel(0, 2).0, [30, 0, 0, 255]);
+		assert_eq!(normalized.get_pixel(2, 2).0, [40, 0, 0, 255]);
 	}
 }
