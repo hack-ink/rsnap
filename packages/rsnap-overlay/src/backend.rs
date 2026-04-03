@@ -1528,6 +1528,7 @@ fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
 
 #[cfg(test)]
 mod tests {
+	#[cfg(target_os = "macos")]
 	use std::process;
 
 	use image::RgbaImage;
