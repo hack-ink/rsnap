@@ -3783,7 +3783,9 @@ impl OverlaySession {
 	}
 
 	fn handle_encoded_png_response(&mut self, png_bytes: Vec<u8>) -> OverlayControl {
-		let action = self.pending_png_action.take().unwrap_or(PngAction::Copy);
+		let Some(action) = self.pending_png_action.take() else {
+			return OverlayControl::Continue;
+		};
 
 		match action {
 			PngAction::Copy => match output::write_png_bytes_to_clipboard(&png_bytes) {
@@ -6266,16 +6268,13 @@ impl OverlaySession {
 			return;
 		};
 
+		self.pending_png_action = None;
+		self.pending_encode_png = None;
+
 		self.state.set_error("Recognizing text...");
 
 		self.pending_recognize_text = Some(export_image);
 
-		self.request_redraw_all();
-	}
-
-	#[cfg(not(target_os = "macos"))]
-	fn begin_ocr_action(&mut self) {
-		self.state.set_error(String::from("OCR is only available on macOS."));
 		self.request_redraw_all();
 	}
 
@@ -15347,6 +15346,56 @@ mod tests {
 		assert_eq!(session.pending_png_action, Some(PngAction::Copy));
 		assert_eq!(session.pending_encode_png.as_ref(), Some(&expected_export));
 		assert_eq!(session.state.error_message.as_deref(), Some("Copying..."));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn begin_ocr_action_clears_stale_png_output_intent() {
+		let monitor = test_monitor();
+		let expected_export = test_frozen_image();
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, expected_export.clone());
+
+		session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+		session.authoritative_frozen_capture_ready = true;
+
+		session.begin_png_action(PngAction::Copy);
+
+		assert_eq!(session.pending_png_action, Some(PngAction::Copy));
+		assert_eq!(session.pending_encode_png.as_ref(), Some(&expected_export));
+
+		session.begin_ocr_action();
+
+		assert_eq!(session.pending_png_action, None);
+		assert!(session.pending_encode_png.is_none());
+		assert_eq!(session.pending_recognize_text.as_ref(), Some(&expected_export));
+		assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn stale_png_response_is_ignored_after_ocr_supersedes_export() {
+		let monitor = test_monitor();
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+		session.authoritative_frozen_capture_ready = true;
+
+		session.begin_png_action(PngAction::Copy);
+		session.begin_ocr_action();
+
+		let control = session.handle_encoded_png_response(Vec::new());
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert_eq!(session.pending_png_action, None);
+		assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
 	}
 
 	#[cfg(target_os = "macos")]
