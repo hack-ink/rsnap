@@ -32,7 +32,7 @@ use objc2_core_graphics::{
 	CGDataProvider, CGImage, CGRectNull, CGWindowID, CGWindowImageOption, CGWindowListOption,
 };
 #[cfg(target_os = "macos")]
-use objc2_foundation::NSError;
+use objc2_foundation::{NSError, NSOperatingSystemVersion, NSProcessInfo};
 #[cfg(target_os = "macos")]
 use objc2_screen_capture_kit::SCScreenshotManager;
 use thiserror::Error;
@@ -521,6 +521,26 @@ impl XcapCaptureBackend {
 		monitor: MonitorRect,
 		rect_px: RectPoints,
 	) -> Result<Option<RgbaImage>> {
+		if !Self::macos_supports_scroll_capture_screenshot_api() {
+			let image = capture_monitor_region_with_core_graphics(monitor, rect_px).wrap_err_with(
+				|| {
+					format!(
+						"failed to capture monitor region via CoreGraphics fallback: {monitor:?}"
+					)
+				},
+			)?;
+
+			tracing::trace!(
+				op = "capture_backend.region_core_graphics_fallback",
+				monitor_id = monitor.id,
+				rect_px = ?rect_px,
+				frame_px = ?image.dimensions(),
+				"Captured monitor region from the CoreGraphics fallback because the screenshot API is unavailable."
+			);
+
+			return Ok(Some(image));
+		}
+
 		let image = capture_monitor_region_image_with_screenshot_manager(monitor, rect_px)
 			.wrap_err_with(|| {
 				format!("failed to capture monitor region via SCScreenshotManager: {monitor:?}")
@@ -535,6 +555,15 @@ impl XcapCaptureBackend {
 		);
 
 		Ok(Some(image))
+	}
+
+	#[cfg(target_os = "macos")]
+	fn macos_supports_scroll_capture_screenshot_api() -> bool {
+		let process_info = NSProcessInfo::processInfo();
+
+		macos_supports_scroll_capture_screenshot_api_with_version(
+			process_info.operatingSystemVersion(),
+		)
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1071,6 +1100,13 @@ fn copy_rgba_patch(
 	out
 }
 
+#[cfg(target_os = "macos")]
+fn macos_supports_scroll_capture_screenshot_api_with_version(
+	version: NSOperatingSystemVersion,
+) -> bool {
+	version.majorVersion >= 14
+}
+
 fn normalize_capture_rect(rect_px: RectPoints) -> RectPoints {
 	RectPoints::new(rect_px.x, rect_px.y, rect_px.width.max(1), rect_px.height.max(1))
 }
@@ -1438,6 +1474,9 @@ fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
 #[cfg(test)]
 mod tests {
 	#[cfg(target_os = "macos")]
+	use objc2_foundation::NSOperatingSystemVersion;
+
+	#[cfg(target_os = "macos")]
 	use crate::backend::{self};
 	use crate::backend::{CaptureBackend, StubCaptureBackend};
 	#[cfg(target_os = "macos")]
@@ -1510,5 +1549,19 @@ mod tests {
 		.expect_err("short backing store should fail");
 
 		assert!(format!("{err:#}").contains("shorter than the declared image size"));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn screenshot_api_scroll_capture_gate_requires_macos_14_or_newer() {
+		assert!(!backend::macos_supports_scroll_capture_screenshot_api_with_version(
+			NSOperatingSystemVersion { majorVersion: 13, minorVersion: 6, patchVersion: 0 }
+		));
+		assert!(backend::macos_supports_scroll_capture_screenshot_api_with_version(
+			NSOperatingSystemVersion { majorVersion: 14, minorVersion: 0, patchVersion: 0 }
+		));
+		assert!(backend::macos_supports_scroll_capture_screenshot_api_with_version(
+			NSOperatingSystemVersion { majorVersion: 15, minorVersion: 0, patchVersion: 0 }
+		));
 	}
 }
