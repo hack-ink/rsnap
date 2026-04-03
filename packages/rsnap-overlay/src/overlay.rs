@@ -3980,28 +3980,16 @@ impl OverlaySession {
 		self.maybe_log_event_loop_stall(now);
 		self.mark_progress_with_detail(OverlayEventLoopPhase::WindowEvent, Some(kind));
 
-		if let WindowEvent::MouseInput { state, button, .. } = event {
-			self.maybe_stop_frozen_selection_drag_for_mouse_input(*state, *button);
+		match event {
+			WindowEvent::MouseInput { state, button, .. } => {
+				self.maybe_stop_frozen_selection_drag_for_mouse_input(*state, *button);
+			},
+			WindowEvent::Focused(false) => self.clear_loupe_activation_on_focus_loss(),
+			_ => {},
 		}
 
-		if self
-			.scroll_preview_window
-			.as_ref()
-			.is_some_and(|preview_window| preview_window.window.id() == window_id)
-		{
-			return match event {
-				WindowEvent::RedrawRequested => self.handle_scroll_preview_redraw_requested(),
-				WindowEvent::MouseInput {
-					state: ElementState::Pressed,
-					button: MouseButton::Right,
-					..
-				} => self.cancel_overlay("scroll_preview_right_click"),
-				WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(event),
-				WindowEvent::ModifiersChanged(modifiers) => {
-					self.handle_modifiers_changed(modifiers)
-				},
-				_ => self.handle_scroll_preview_window_event(event),
-			};
+		if let Some(control) = self.handle_scroll_preview_event(window_id, event) {
+			return control;
 		}
 
 		let toolbar_window_id = self
@@ -4085,6 +4073,32 @@ impl OverlaySession {
 		);
 
 		control
+	}
+
+	fn handle_scroll_preview_event(
+		&mut self,
+		window_id: WindowId,
+		event: &WindowEvent,
+	) -> Option<OverlayControl> {
+		if self
+			.scroll_preview_window
+			.as_ref()
+			.is_none_or(|preview_window| preview_window.window.id() != window_id)
+		{
+			return None;
+		}
+
+		Some(match event {
+			WindowEvent::RedrawRequested => self.handle_scroll_preview_redraw_requested(),
+			WindowEvent::MouseInput {
+				state: ElementState::Pressed,
+				button: MouseButton::Right,
+				..
+			} => self.cancel_overlay("scroll_preview_right_click"),
+			WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(event),
+			WindowEvent::ModifiersChanged(modifiers) => self.handle_modifiers_changed(modifiers),
+			_ => self.handle_scroll_preview_window_event(event),
+		})
 	}
 
 	fn handle_toolbar_mouse_input(&mut self, state: ElementState) -> OverlayControl {
@@ -4540,6 +4554,19 @@ impl OverlaySession {
 		}
 
 		previous_alt_held != self.state.alt_held
+	}
+
+	fn clear_loupe_activation_on_focus_loss(&mut self) {
+		let should_reset = self.loupe_activation_key_down
+			|| (matches!(self.config.alt_activation, AltActivationMode::Hold)
+				&& self.state.alt_held);
+
+		if !should_reset {
+			return;
+		}
+		if self.apply_loupe_activation_input(false, false) {
+			let _ = self.request_redraw_for_alt_state_change();
+		}
 	}
 
 	fn request_redraw_for_alt_state_change(&mut self) -> OverlayControl {
@@ -16355,6 +16382,42 @@ mod tests {
 		assert!(!session.plain_character_shortcut_available());
 		assert!(!session.apply_loupe_activation_input(false, false));
 		assert!(session.state.alt_held);
+		assert!(session.plain_character_shortcut_available());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn clear_loupe_activation_on_focus_loss_releases_hold_mode_state() {
+		let mut session = OverlaySession::new();
+
+		session.config.alt_activation = AltActivationMode::Hold;
+
+		assert!(session.apply_loupe_activation_input(true, false));
+		assert!(session.state.alt_held);
+		assert!(session.loupe_activation_key_down);
+
+		session.clear_loupe_activation_on_focus_loss();
+
+		assert!(!session.state.alt_held);
+		assert!(!session.loupe_activation_key_down);
+		assert!(session.plain_character_shortcut_available());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn clear_loupe_activation_on_focus_loss_releases_toggle_press_without_toggling_off() {
+		let mut session = OverlaySession::new();
+
+		session.config.alt_activation = AltActivationMode::Toggle;
+
+		assert!(session.apply_loupe_activation_input(true, false));
+		assert!(session.state.alt_held);
+		assert!(session.loupe_activation_key_down);
+
+		session.clear_loupe_activation_on_focus_loss();
+
+		assert!(session.state.alt_held);
+		assert!(!session.loupe_activation_key_down);
 		assert!(session.plain_character_shortcut_available());
 	}
 
