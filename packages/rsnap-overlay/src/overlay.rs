@@ -574,6 +574,49 @@ impl DeviceCursorPointSource {
 	}
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionFlowStyle {
+	Band,
+	FullBorder,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum WindowRendererPath {
+	Overlay,
+	LoupeTile,
+}
+impl WindowRendererPath {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Overlay => "overlay",
+			Self::LoupeTile => "loupe_tile",
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SurfaceFrameSkipReason {
+	Timeout,
+	Occluded,
+}
+impl SurfaceFrameSkipReason {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Timeout => "timeout",
+			Self::Occluded => "occluded",
+		}
+	}
+
+	const fn should_request_redraw(self) -> bool {
+		matches!(self, Self::Timeout)
+	}
+}
+
+enum AcquiredSurfaceFrame {
+	Ready(SurfaceTexture),
+	Skipped(SurfaceFrameSkipReason),
+}
+
 #[derive(Clone, Debug)]
 /// Runtime configuration applied to a capture overlay session.
 pub struct OverlayConfig {
@@ -1358,6 +1401,7 @@ impl OverlaySession {
 		self.mark_progress(OverlayEventLoopPhase::AboutToWait);
 		self.maybe_request_keepalive_redraw();
 		self.maybe_keep_selection_flow_repaint();
+
 		if self.is_active() {
 			self.sync_alt_held_from_global_keys();
 		}
@@ -2313,6 +2357,7 @@ impl OverlaySession {
 			self.apply_live_hover_cache_state(monitor, cursor)
 		};
 		let sample_updated = self.request_live_cursor_sample(monitor, cursor, self.state.alt_held);
+
 		if !is_dragging_window && !self.state.alt_held {
 			let _ = self.request_live_window_list_refresh_if_needed();
 		}
@@ -2341,9 +2386,9 @@ impl OverlaySession {
 			now.duration_since(snapshot.captured_at) > self.window_list_refresh_interval
 				|| self.state.alt_held
 		});
-
 		let throttled = now.duration_since(self.last_window_list_refresh_request_at)
 			< self.window_list_refresh_interval;
+
 		if !needs_refresh || throttled {
 			return false;
 		}
@@ -8236,70 +8281,6 @@ impl Default for OverlaySession {
 	}
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SelectionFlowStyle {
-	Band,
-	FullBorder,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum WindowRendererPath {
-	Overlay,
-	LoupeTile,
-}
-impl WindowRendererPath {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Overlay => "overlay",
-			Self::LoupeTile => "loupe_tile",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SurfaceFrameSkipReason {
-	Timeout,
-	Occluded,
-}
-impl SurfaceFrameSkipReason {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Timeout => "timeout",
-			Self::Occluded => "occluded",
-		}
-	}
-
-	const fn should_request_redraw(self) -> bool {
-		matches!(self, Self::Timeout)
-	}
-}
-
-fn should_request_overlay_redraw_after_surface_skip(
-	reason: SurfaceFrameSkipReason,
-	now: Instant,
-	occluded_redraw_retry_until: &mut Option<Instant>,
-) -> bool {
-	match reason {
-		SurfaceFrameSkipReason::Timeout => true,
-		SurfaceFrameSkipReason::Occluded => match occluded_redraw_retry_until {
-			Some(deadline) if now >= *deadline => {
-				*occluded_redraw_retry_until = None;
-				false
-			},
-			Some(_) => true,
-			None => {
-				*occluded_redraw_retry_until = Some(now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW);
-				true
-			},
-		},
-	}
-}
-
-enum AcquiredSurfaceFrame {
-	Ready(SurfaceTexture),
-	Skipped(SurfaceFrameSkipReason),
-}
-
 #[cfg(target_os = "macos")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingRecognizeTextRequest {
@@ -9624,7 +9605,6 @@ impl WindowRenderer {
 				has_rect = true;
 			}
 		}
-
 		if let Some(rect) = Self::live_drag_focus_rect(state, monitor, screen_rect) {
 			Self::render_live_drag_selection_scrim(painter, rect, screen_rect, theme);
 
@@ -13344,6 +13324,29 @@ struct MacOSCGPoint {
 	y: f64,
 }
 
+fn should_request_overlay_redraw_after_surface_skip(
+	reason: SurfaceFrameSkipReason,
+	now: Instant,
+	occluded_redraw_retry_until: &mut Option<Instant>,
+) -> bool {
+	match reason {
+		SurfaceFrameSkipReason::Timeout => true,
+		SurfaceFrameSkipReason::Occluded => match occluded_redraw_retry_until {
+			Some(deadline) if now >= *deadline => {
+				*occluded_redraw_retry_until = None;
+
+				false
+			},
+			Some(_) => true,
+			None => {
+				*occluded_redraw_retry_until = Some(now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW);
+
+				true
+			},
+		},
+	}
+}
+
 fn frozen_toolbar_needs_new_sample(
 	last_screen_size_points: Option<Vec2>,
 	screen_size_points: Vec2,
@@ -13667,6 +13670,17 @@ mod tests {
 	use crate::overlay::PngAction;
 	#[cfg(target_os = "macos")]
 	use crate::overlay::session_state::ScrollCaptureLiveFrame;
+	use crate::overlay::{
+		self, FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
+		HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
+		OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
+		SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+		SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
+		SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
+		TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers, regular,
+	};
 	#[cfg(target_os = "macos")]
 	use crate::overlay::{
 		AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
@@ -13676,25 +13690,15 @@ mod tests {
 		SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
 		ScrollCaptureFrameSource, StartupLiveRgbPlan,
 	};
-	use crate::overlay::{
-		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
-		HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
-		OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
-		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
-		SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
-		SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
-		SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
-		SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
-		TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers, regular,
-		should_request_overlay_redraw_after_surface_skip,
-	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
 	use crate::state::LiveCursorSample;
 	use crate::state::{
 		GlobalPoint, LoupeSample, MonitorRect, MonitorRectPoints, OverlayMode, OverlayState,
-		RectPoints, Rgb, WindowListSnapshot, WindowRect,
+		RectPoints, Rgb,
 	};
+	#[cfg(target_os = "macos")]
+	use crate::state::{WindowListSnapshot, WindowRect};
 	#[cfg(target_os = "macos")]
 	use crate::worker::OverlayWorker;
 	use crate::worker::{WorkerErrorSource, WorkerResponse};
@@ -15399,9 +15403,9 @@ mod tests {
 		let monitor = test_monitor();
 		let screen_rect =
 			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let selection_dashed_border_cache = SelectionDashedBorderCache::default();
 		let mut state = OverlayState::new();
 		let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
-		let selection_dashed_border_cache = SelectionDashedBorderCache::default();
 
 		state.mode = OverlayMode::Live;
 		state.hovered_window_rect = Some(MonitorRectPoints {
@@ -16512,7 +16516,6 @@ mod tests {
 		assert!(!session.live_overlay_selection_flow_repaint_active());
 
 		session.config.selection_flow_enabled = true;
-
 		session.state.hovered_window_rect = Some(MonitorRectPoints {
 			monitor_id: monitor.id + 1,
 			rect: RectPoints::new(100, 120, 240, 320),
@@ -19837,18 +19840,18 @@ mod tests {
 		let now = Instant::now();
 		let mut retry_until = None;
 
-		assert!(should_request_overlay_redraw_after_surface_skip(
+		assert!(overlay::should_request_overlay_redraw_after_surface_skip(
 			SurfaceFrameSkipReason::Occluded,
 			now,
 			&mut retry_until,
 		));
 		assert_eq!(retry_until, Some(now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW));
-		assert!(should_request_overlay_redraw_after_surface_skip(
+		assert!(overlay::should_request_overlay_redraw_after_surface_skip(
 			SurfaceFrameSkipReason::Occluded,
 			now + Duration::from_millis(500),
 			&mut retry_until,
 		));
-		assert!(!should_request_overlay_redraw_after_surface_skip(
+		assert!(!overlay::should_request_overlay_redraw_after_surface_skip(
 			SurfaceFrameSkipReason::Occluded,
 			now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
 			&mut retry_until,
@@ -19862,7 +19865,7 @@ mod tests {
 		let retry_deadline = now + Duration::from_millis(250);
 		let mut retry_until = Some(retry_deadline);
 
-		assert!(should_request_overlay_redraw_after_surface_skip(
+		assert!(overlay::should_request_overlay_redraw_after_surface_skip(
 			SurfaceFrameSkipReason::Timeout,
 			now,
 			&mut retry_until,

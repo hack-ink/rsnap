@@ -1528,6 +1528,8 @@ fn xcap_find_monitor(monitor: MonitorRect) -> Result<xcap::Monitor> {
 
 #[cfg(test)]
 mod tests {
+	use std::process;
+
 	use image::RgbaImage;
 	#[cfg(target_os = "macos")]
 	use objc2_foundation::NSOperatingSystemVersion;
@@ -1623,7 +1625,7 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn current_process_windows_are_excluded_from_window_targeting_unless_excepted() {
-		let self_pid = std::process::id();
+		let self_pid = process::id();
 
 		assert!(backend::should_exclude_current_process_window(Some(41), Some(self_pid), &[]));
 		assert!(!backend::should_exclude_current_process_window(Some(41), Some(self_pid), &[41],));
