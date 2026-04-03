@@ -571,26 +571,6 @@ impl DeviceCursorPointSource {
 	}
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SelectionFlowStyle {
-	Band,
-	FullBorder,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum WindowRendererPath {
-	Overlay,
-	LoupeTile,
-}
-impl WindowRendererPath {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Overlay => "overlay",
-			Self::LoupeTile => "loupe_tile",
-		}
-	}
-}
-
 #[derive(Clone, Debug)]
 /// Runtime configuration applied to a capture overlay session.
 pub struct OverlayConfig {
@@ -738,7 +718,12 @@ pub struct OverlaySession {
 	frozen_window_image: Option<RgbaImage>,
 	frozen_capture_source: FrozenCaptureSource,
 	capture_windows_hidden: bool,
-	pending_recognize_text: Option<RgbaImage>,
+	#[cfg(target_os = "macos")]
+	next_ocr_request_id: u64,
+	#[cfg(target_os = "macos")]
+	active_ocr_request_id: Option<u64>,
+	#[cfg(target_os = "macos")]
+	pending_recognize_text: Option<PendingRecognizeTextRequest>,
 	pending_encode_png: Option<RgbaImage>,
 	pending_png_action: Option<PngAction>,
 	#[cfg(target_os = "macos")]
@@ -811,13 +796,23 @@ impl OverlaySession {
 	#[must_use]
 	/// Creates a new overlay session with the provided runtime configuration.
 	pub fn with_config(config: OverlayConfig) -> Self {
-		let (live_bg_request_interval, window_list_refresh_interval, now) = Self::initial_timing();
-		let loupe_sample_side_px =
-			Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
+		let runtime = Self::initial_session_runtime(&config);
 		#[cfg(not(target_os = "macos"))]
 		let cursor_device = Self::try_create_cursor_device();
-		let state = Self::overlay_state_with_loupe_patch(loupe_sample_side_px);
 
+		Self::build_with_config(
+			config,
+			runtime,
+			#[cfg(not(target_os = "macos"))]
+			cursor_device,
+		)
+	}
+
+	fn build_with_config(
+		config: OverlayConfig,
+		runtime: InitialSessionRuntime,
+		#[cfg(not(target_os = "macos"))] cursor_device: Option<device_query::DeviceState>,
+	) -> Self {
 		Self {
 			config,
 			worker: None,
@@ -827,7 +822,7 @@ impl OverlaySession {
 			live_sample_stream: None,
 			#[cfg(not(target_os = "macos"))]
 			cursor_device,
-			state,
+			state: runtime.state,
 			cursor_monitor: None,
 			windows: HashMap::new(),
 			hud_window: None,
@@ -845,16 +840,16 @@ impl OverlaySession {
 			toolbar_outer_pos: None,
 			toolbar_inner_size_points: None,
 			gpu: None,
-			last_hud_window_move_at: now,
-			last_loupe_window_move_at: now,
-			last_present_at: now,
-			last_live_cursor_poll_at: now - CURSOR_POLL_INTERVAL_MIN,
-			last_frozen_cursor_poll_at: now - CURSOR_POLL_INTERVAL_MIN,
+			last_hud_window_move_at: runtime.now,
+			last_loupe_window_move_at: runtime.now,
+			last_present_at: runtime.now,
+			last_live_cursor_poll_at: runtime.now - CURSOR_POLL_INTERVAL_MIN,
+			last_frozen_cursor_poll_at: runtime.now - CURSOR_POLL_INTERVAL_MIN,
 			window_list_snapshot: None,
-			last_window_list_refresh_request_at: now - window_list_refresh_interval,
-			window_list_refresh_interval,
-			last_live_bg_request_at: Instant::now() - live_bg_request_interval,
-			live_bg_request_interval,
+			last_window_list_refresh_request_at: runtime.now - runtime.window_list_refresh_interval,
+			window_list_refresh_interval: runtime.window_list_refresh_interval,
+			last_live_bg_request_at: runtime.now - runtime.live_bg_request_interval,
+			live_bg_request_interval: runtime.live_bg_request_interval,
 			hit_test_send_full_count: 0,
 			hit_test_send_disconnected_count: 0,
 			hit_test_request_id: 0,
@@ -879,13 +874,13 @@ impl OverlaySession {
 			keyboard_modifiers: ModifiersState::default(),
 			event_loop_phase: OverlayEventLoopPhase::Idle,
 			event_loop_progress_seq: 0,
-			event_loop_last_progress_at: now,
+			event_loop_last_progress_at: runtime.now,
 			event_loop_last_progress_window_id: None,
 			event_loop_last_progress_monitor_id: None,
 			event_loop_last_progress_detail: None,
 			event_loop_last_stall_warn_at: None,
-			loupe_patch_width_px: loupe_sample_side_px,
-			loupe_patch_height_px: loupe_sample_side_px,
+			loupe_patch_width_px: runtime.loupe_sample_side_px,
+			loupe_patch_height_px: runtime.loupe_sample_side_px,
 			egui_repaint_deadline: Arc::new(Mutex::new(None)),
 			pending_freeze_capture: None,
 			inflight_freeze_capture: None,
@@ -896,6 +891,11 @@ impl OverlaySession {
 			frozen_window_image: None,
 			frozen_capture_source: FrozenCaptureSource::None,
 			capture_windows_hidden: false,
+			#[cfg(target_os = "macos")]
+			next_ocr_request_id: 0,
+			#[cfg(target_os = "macos")]
+			active_ocr_request_id: None,
+			#[cfg(target_os = "macos")]
 			pending_recognize_text: None,
 			pending_encode_png: None,
 			pending_png_action: None,
@@ -937,6 +937,13 @@ impl OverlaySession {
 		state.reset_for_start(loupe_sample_side_px);
 
 		state
+	}
+
+	fn overlay_state_with_config(config: &OverlayConfig) -> (u32, OverlayState) {
+		let loupe_sample_side_px =
+			Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
+
+		(loupe_sample_side_px, Self::overlay_state_with_loupe_patch(loupe_sample_side_px))
 	}
 
 	#[cfg(target_os = "macos")]
@@ -2217,23 +2224,25 @@ impl OverlaySession {
 		#[cfg(not(target_os = "macos"))]
 		let queued_recognize_text = false;
 		#[cfg(target_os = "macos")]
-		let mut queued_recognize_text = false;
+		let queued_recognize_text = self.pending_recognize_text.is_some();
 
 		#[cfg(target_os = "macos")]
-		if let Some(image) = self.pending_recognize_text.take() {
-			queued_recognize_text = true;
-
+		if !self.ocr_inflight
+			&& let Some(request) = self.pending_recognize_text.take()
+		{
 			if let Some(worker) = self.worker.as_ref() {
-				if let Err(image) = worker.request_recognize_text(image) {
-					self.pending_recognize_text = Some(image);
+				if let Err((request_id, image)) =
+					worker.request_recognize_text(request.request_id, request.image)
+				{
+					self.pending_recognize_text =
+						Some(PendingRecognizeTextRequest { request_id, image });
 				} else {
 					self.ocr_inflight = true;
 				}
 			} else {
-				self.pending_recognize_text = Some(image);
+				self.pending_recognize_text = Some(request);
 			}
 		}
-
 		if !queued_recognize_text && let Some(image) = self.pending_encode_png.take() {
 			if let Some(worker) = self.worker.as_ref() {
 				if let Err(image) = worker.request_encode_png(image) {
@@ -2709,10 +2718,8 @@ impl OverlaySession {
 				OverlayControl::Continue
 			},
 			#[cfg(target_os = "macos")]
-			WorkerResponse::RecognizedText { text } => {
-				self.ocr_inflight = false;
-
-				self.handle_recognized_text_response(text)
+			WorkerResponse::RecognizedText { request_id, text } => {
+				self.handle_recognized_text_worker_response(request_id, text)
 			},
 			WorkerResponse::Error { source, message } => {
 				match source {
@@ -2740,7 +2747,9 @@ impl OverlaySession {
 					},
 					#[cfg(target_os = "macos")]
 					WorkerErrorSource::RecognizeText => {
-						self.ocr_inflight = false;
+						if self.handle_recognized_text_worker_error() {
+							return OverlayControl::Continue;
+						}
 					},
 					WorkerErrorSource::CaptureMonitorRegion => {
 						self.clear_scroll_capture_inflight_request();
@@ -2767,6 +2776,7 @@ impl OverlaySession {
 
 		#[cfg(target_os = "macos")]
 		if matches!(control, OverlayControl::Continue) {
+			self.maybe_request_redraw_for_pending_output();
 			self.maybe_apply_pending_self_capture_exception_window_ids_worker_refresh();
 		}
 
@@ -3044,6 +3054,19 @@ impl OverlaySession {
 			toolbar_size,
 			self.config.toolbar_placement,
 		)
+	}
+
+	fn initial_session_runtime(config: &OverlayConfig) -> InitialSessionRuntime {
+		let (live_bg_request_interval, window_list_refresh_interval, now) = Self::initial_timing();
+		let (loupe_sample_side_px, state) = Self::overlay_state_with_config(config);
+
+		InitialSessionRuntime {
+			live_bg_request_interval,
+			window_list_refresh_interval,
+			now,
+			loupe_sample_side_px,
+			state,
+		}
 	}
 
 	fn refresh_frozen_helper_windows_for_transition(
@@ -3829,6 +3852,62 @@ impl OverlaySession {
 				OverlayControl::Continue
 			},
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn next_ocr_request_id(&mut self) -> u64 {
+		let request_id = self.next_ocr_request_id;
+
+		self.next_ocr_request_id = self.next_ocr_request_id.wrapping_add(1);
+
+		request_id
+	}
+
+	#[cfg(target_os = "macos")]
+	fn cancel_ocr_output_intent(&mut self) {
+		self.active_ocr_request_id = None;
+		self.pending_recognize_text = None;
+	}
+
+	#[cfg(target_os = "macos")]
+	fn maybe_request_redraw_for_pending_output(&mut self) {
+		if !self.ocr_inflight
+			&& (self.pending_recognize_text.is_some() || self.pending_encode_png.is_some())
+		{
+			self.request_redraw_all();
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn handle_recognized_text_worker_response(
+		&mut self,
+		request_id: u64,
+		text: String,
+	) -> OverlayControl {
+		self.ocr_inflight = false;
+
+		if self.active_ocr_request_id != Some(request_id) {
+			return OverlayControl::Continue;
+		}
+
+		self.active_ocr_request_id = None;
+
+		self.handle_recognized_text_response(text)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn handle_recognized_text_worker_error(&mut self) -> bool {
+		self.ocr_inflight = false;
+
+		if self.active_ocr_request_id.is_none() || self.pending_recognize_text.is_some() {
+			self.maybe_request_redraw_for_pending_output();
+
+			return true;
+		}
+
+		self.active_ocr_request_id = None;
+
+		false
 	}
 
 	fn maybe_stop_frozen_selection_drag_for_mouse_input(
@@ -6240,6 +6319,9 @@ impl OverlaySession {
 			return;
 		};
 
+		#[cfg(target_os = "macos")]
+		self.cancel_ocr_output_intent();
+
 		self.pending_png_action = Some(action);
 
 		match action {
@@ -6267,13 +6349,16 @@ impl OverlaySession {
 		let Some(export_image) = self.current_export_image() else {
 			return;
 		};
+		let request_id = self.next_ocr_request_id();
 
 		self.pending_png_action = None;
 		self.pending_encode_png = None;
+		self.active_ocr_request_id = Some(request_id);
 
 		self.state.set_error("Recognizing text...");
 
-		self.pending_recognize_text = Some(export_image);
+		self.pending_recognize_text =
+			Some(PendingRecognizeTextRequest { request_id, image: export_image });
 
 		self.request_redraw_all();
 	}
@@ -7554,7 +7639,11 @@ impl OverlaySession {
 	}
 
 	fn clear_pending_output_actions(&mut self) {
-		self.pending_recognize_text = None;
+		#[cfg(target_os = "macos")]
+		{
+			self.active_ocr_request_id = None;
+			self.pending_recognize_text = None;
+		}
 		self.pending_encode_png = None;
 		self.pending_png_action = None;
 		#[cfg(target_os = "macos")]
@@ -8092,6 +8181,41 @@ impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
 	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionFlowStyle {
+	Band,
+	FullBorder,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum WindowRendererPath {
+	Overlay,
+	LoupeTile,
+}
+impl WindowRendererPath {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Overlay => "overlay",
+			Self::LoupeTile => "loupe_tile",
+		}
+	}
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingRecognizeTextRequest {
+	request_id: u64,
+	image: RgbaImage,
+}
+
+struct InitialSessionRuntime {
+	live_bg_request_interval: Duration,
+	window_list_refresh_interval: Duration,
+	now: Instant,
+	loupe_sample_side_px: u32,
+	state: OverlayState,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15371,7 +15495,11 @@ mod tests {
 
 		assert_eq!(session.pending_png_action, None);
 		assert!(session.pending_encode_png.is_none());
-		assert_eq!(session.pending_recognize_text.as_ref(), Some(&expected_export));
+		assert_eq!(
+			session.pending_recognize_text.as_ref().map(|request| &request.image),
+			Some(&expected_export)
+		);
+		assert_eq!(session.active_ocr_request_id, Some(0));
 		assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
 	}
 
@@ -15395,6 +15523,82 @@ mod tests {
 
 		assert!(matches!(control, OverlayControl::Continue));
 		assert_eq!(session.pending_png_action, None);
+		assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn stale_ocr_response_is_ignored_after_copy_supersedes_ocr() {
+		let monitor = test_monitor();
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+		session.authoritative_frozen_capture_ready = true;
+
+		session.begin_ocr_action();
+
+		let request_id = session.active_ocr_request_id.expect("ocr request id");
+
+		session.pending_recognize_text = None;
+		session.ocr_inflight = true;
+
+		session.begin_png_action(PngAction::Copy);
+
+		let control = session.maybe_tick_worker_response_limiter(WorkerResponse::RecognizedText {
+			request_id,
+			text: String::from("stale text"),
+		});
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert_eq!(session.active_ocr_request_id, None);
+		assert!(!session.ocr_inflight);
+		assert_eq!(session.pending_png_action, Some(PngAction::Copy));
+		assert_eq!(session.state.error_message.as_deref(), Some("Copying..."));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn stale_ocr_error_is_ignored_while_newer_ocr_request_is_pending() {
+		let monitor = test_monitor();
+		let mut session = OverlaySession::new();
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+		session.authoritative_frozen_capture_ready = true;
+
+		session.begin_ocr_action();
+
+		let first_request_id = session.active_ocr_request_id.expect("first ocr request id");
+
+		session.pending_recognize_text = None;
+		session.ocr_inflight = true;
+
+		session.begin_ocr_action();
+
+		let second_request_id =
+			session.pending_recognize_text.as_ref().expect("newer pending ocr request").request_id;
+
+		assert_ne!(first_request_id, second_request_id);
+
+		let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
+			source: WorkerErrorSource::RecognizeText,
+			message: String::from("stale OCR failure"),
+		});
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert_eq!(session.active_ocr_request_id, Some(second_request_id));
+		assert_eq!(
+			session.pending_recognize_text.as_ref().map(|request| request.request_id),
+			Some(second_request_id)
+		);
+		assert!(!session.ocr_inflight);
 		assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
 	}
 
