@@ -353,6 +353,8 @@ pub enum OverlayExit {
 	Cancelled,
 	/// The session completed by copying PNG bytes to the caller.
 	PngBytes(Vec<u8>),
+	/// The session completed by copying recognized text to the clipboard.
+	TextCopied(usize),
 	/// The session completed by saving a file to disk.
 	Saved(PathBuf),
 	/// The session failed with a user-visible error message.
@@ -457,6 +459,7 @@ enum FrozenToolbarTool {
 	Redo,
 	AutoCenter,
 	Scroll,
+	Ocr,
 	Copy,
 	Save,
 }
@@ -471,6 +474,7 @@ impl FrozenToolbarTool {
 			Self::Redo => "Redo",
 			Self::AutoCenter => "Auto-center (C)",
 			Self::Scroll => "Scroll Capture",
+			Self::Ocr => "Recognize Text",
 			Self::Copy => "Copy",
 			Self::Save => "Save",
 		}
@@ -486,6 +490,7 @@ impl FrozenToolbarTool {
 			Self::Redo => regular::ARROW_CLOCKWISE,
 			Self::AutoCenter => regular::TARGET,
 			Self::Scroll => regular::MOUSE_SCROLL,
+			Self::Ocr => regular::SCAN,
 			Self::Copy => regular::COPY,
 			Self::Save => regular::FLOPPY_DISK,
 		}
@@ -496,7 +501,7 @@ impl FrozenToolbarTool {
 	}
 
 	const fn requires_final_capture(self) -> bool {
-		matches!(self, Self::Scroll | Self::Copy | Self::Save)
+		matches!(self, Self::Scroll | Self::Ocr | Self::Copy | Self::Save)
 	}
 }
 
@@ -719,8 +724,11 @@ pub struct OverlaySession {
 	frozen_window_image: Option<RgbaImage>,
 	frozen_capture_source: FrozenCaptureSource,
 	capture_windows_hidden: bool,
+	pending_recognize_text: Option<RgbaImage>,
 	pending_encode_png: Option<RgbaImage>,
 	pending_png_action: Option<PngAction>,
+	#[cfg(target_os = "macos")]
+	ocr_inflight: bool,
 	#[cfg(target_os = "macos")]
 	png_encode_inflight: bool,
 	#[cfg(target_os = "macos")]
@@ -782,14 +790,16 @@ impl OverlaySession {
 		Self::with_config(OverlayConfig::default())
 	}
 
+	fn initial_timing() -> (Duration, Duration, Instant) {
+		(Duration::from_millis(500), LIVE_WINDOW_LIST_REFRESH_INTERVAL, Instant::now())
+	}
+
 	#[must_use]
 	/// Creates a new overlay session with the provided runtime configuration.
 	pub fn with_config(config: OverlayConfig) -> Self {
-		let live_bg_request_interval = Duration::from_millis(500);
+		let (live_bg_request_interval, window_list_refresh_interval, now) = Self::initial_timing();
 		let loupe_sample_side_px =
 			Self::normalized_loupe_sample_side_px(config.loupe_sample_side_px);
-		let (window_list_refresh_interval, now) =
-			(LIVE_WINDOW_LIST_REFRESH_INTERVAL, Instant::now());
 		#[cfg(not(target_os = "macos"))]
 		let cursor_device = Self::try_create_cursor_device();
 		let state = Self::overlay_state_with_loupe_patch(loupe_sample_side_px);
@@ -823,7 +833,7 @@ impl OverlaySession {
 			gpu: None,
 			last_hud_window_move_at: now,
 			last_loupe_window_move_at: now,
-			last_present_at: Instant::now(),
+			last_present_at: now,
 			last_live_cursor_poll_at: now - CURSOR_POLL_INTERVAL_MIN,
 			last_frozen_cursor_poll_at: now - CURSOR_POLL_INTERVAL_MIN,
 			window_list_snapshot: None,
@@ -872,8 +882,11 @@ impl OverlaySession {
 			frozen_window_image: None,
 			frozen_capture_source: FrozenCaptureSource::None,
 			capture_windows_hidden: false,
+			pending_recognize_text: None,
 			pending_encode_png: None,
 			pending_png_action: None,
+			#[cfg(target_os = "macos")]
+			ocr_inflight: false,
 			#[cfg(target_os = "macos")]
 			png_encode_inflight: false,
 			#[cfg(target_os = "macos")]
@@ -1104,6 +1117,7 @@ impl OverlaySession {
 		self.inflight_freeze_capture.is_some()
 			|| self.pending_click_hit_test_request_id.is_some()
 			|| self.window_list_refresh_inflight
+			|| self.ocr_inflight
 			|| self.png_encode_inflight
 	}
 
@@ -2186,7 +2200,24 @@ impl OverlaySession {
 			}
 		}
 
-		if let Some(image) = self.pending_encode_png.take() {
+		let mut queued_recognize_text = false;
+
+		#[cfg(target_os = "macos")]
+		if let Some(image) = self.pending_recognize_text.take() {
+			queued_recognize_text = true;
+
+			if let Some(worker) = self.worker.as_ref() {
+				if let Err(image) = worker.request_recognize_text(image) {
+					self.pending_recognize_text = Some(image);
+				} else {
+					self.ocr_inflight = true;
+				}
+			} else {
+				self.pending_recognize_text = Some(image);
+			}
+		}
+
+		if !queued_recognize_text && let Some(image) = self.pending_encode_png.take() {
 			if let Some(worker) = self.worker.as_ref() {
 				if let Err(image) = worker.request_encode_png(image) {
 					self.pending_encode_png = Some(image);
@@ -2660,6 +2691,12 @@ impl OverlaySession {
 
 				OverlayControl::Continue
 			},
+			#[cfg(target_os = "macos")]
+			WorkerResponse::RecognizedText { text } => {
+				self.ocr_inflight = false;
+
+				self.handle_recognized_text_response(text)
+			},
 			WorkerResponse::Error { source, message } => {
 				match source {
 					WorkerErrorSource::FreezeCapture => {
@@ -2683,6 +2720,10 @@ impl OverlaySession {
 						{
 							self.png_encode_inflight = false;
 						}
+					},
+					#[cfg(target_os = "macos")]
+					WorkerErrorSource::RecognizeText => {
+						self.ocr_inflight = false;
 					},
 					WorkerErrorSource::CaptureMonitorRegion => {
 						self.clear_scroll_capture_inflight_request();
@@ -3747,6 +3788,26 @@ impl OverlaySession {
 						OverlayControl::Continue
 					},
 				}
+			},
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn handle_recognized_text_response(&mut self, text: String) -> OverlayControl {
+		if text.trim().is_empty() {
+			self.state.set_error(String::from("No text recognized."));
+			self.request_redraw_all();
+
+			return OverlayControl::Continue;
+		}
+
+		match output::write_text_to_clipboard(&text) {
+			Ok(()) => self.exit(OverlayExit::TextCopied(text.chars().count())),
+			Err(err) => {
+				self.state.set_error(format!("{err:#}"));
+				self.request_redraw_all();
+
+				OverlayControl::Continue
 			},
 		}
 	}
@@ -6172,6 +6233,36 @@ impl OverlaySession {
 		self.request_redraw_all();
 	}
 
+	fn begin_ocr_action(&mut self) {
+		#[cfg(not(target_os = "macos"))]
+		{
+			self.state.set_error(String::from("OCR is only available on macOS."));
+			self.request_redraw_all();
+
+			return;
+		}
+
+		if !matches!(self.state.mode, OverlayMode::Frozen) {
+			return;
+		}
+		if !self.frozen_final_capture_ready() {
+			self.state.set_error("Preparing capture...");
+			self.request_redraw_all();
+
+			return;
+		}
+
+		let Some(export_image) = self.current_export_image() else {
+			return;
+		};
+
+		self.state.set_error("Recognizing text...");
+
+		self.pending_recognize_text = Some(export_image);
+
+		self.request_redraw_all();
+	}
+
 	fn handle_redraw_requested(&mut self, window_id: WindowId) -> OverlayControl {
 		let now = Instant::now();
 
@@ -7308,6 +7399,11 @@ impl OverlaySession {
 				OverlayControl::Continue
 			},
 			FrozenToolbarTool::Scroll => self.start_scroll_capture(),
+			FrozenToolbarTool::Ocr => {
+				self.begin_ocr_action();
+
+				OverlayControl::Continue
+			},
 			_ => OverlayControl::Continue,
 		}
 	}
@@ -7332,6 +7428,7 @@ impl OverlaySession {
 		let (exit_kind, png_bytes_len, saved_path, error_message) = match &exit {
 			OverlayExit::Cancelled => ("cancelled", None, None, None),
 			OverlayExit::PngBytes(png_bytes) => ("png_bytes", Some(png_bytes.len()), None, None),
+			OverlayExit::TextCopied(_) => ("text_copied", None, None, None),
 			OverlayExit::Saved(path) => ("saved", None, Some(path.display().to_string()), None),
 			OverlayExit::Error(message) => ("error", None, None, Some(message.as_str())),
 		};
@@ -7426,10 +7523,7 @@ impl OverlaySession {
 		self.toolbar_pointer_local = None;
 
 		self.stop_frozen_selection_drag();
-
-		self.pending_encode_png = None;
-		self.pending_png_action = None;
-		self.keyboard_modifiers = ModifiersState::default();
+		self.clear_pending_output_actions();
 
 		tracing::info!(
 			op = "overlay.exit_end",
@@ -7441,6 +7535,18 @@ impl OverlaySession {
 		);
 
 		OverlayControl::Exit(exit)
+	}
+
+	fn clear_pending_output_actions(&mut self) {
+		self.pending_recognize_text = None;
+		self.pending_encode_png = None;
+		self.pending_png_action = None;
+		#[cfg(target_os = "macos")]
+		{
+			self.ocr_inflight = false;
+			self.png_encode_inflight = false;
+		}
+		self.keyboard_modifiers = ModifiersState::default();
 	}
 
 	fn initialize_cursor_state_for_cursor(
@@ -10624,8 +10730,27 @@ impl WindowRenderer {
 	}
 
 	fn frozen_toolbar_tools(toolbar_state: &FrozenToolbarState) -> &'static [FrozenToolbarTool] {
+		#[cfg(target_os = "macos")]
+		const TOOLS_SCROLL_MODE: [FrozenToolbarTool; 3] =
+			[FrozenToolbarTool::Ocr, FrozenToolbarTool::Copy, FrozenToolbarTool::Save];
+		#[cfg(not(target_os = "macos"))]
 		const TOOLS_SCROLL_MODE: [FrozenToolbarTool; 2] =
 			[FrozenToolbarTool::Copy, FrozenToolbarTool::Save];
+		#[cfg(target_os = "macos")]
+		const TOOLS_WITH_SCROLL_AND_AUTO_CENTER: [FrozenToolbarTool; 11] = [
+			FrozenToolbarTool::Pointer,
+			FrozenToolbarTool::Pen,
+			FrozenToolbarTool::Text,
+			FrozenToolbarTool::Mosaic,
+			FrozenToolbarTool::Undo,
+			FrozenToolbarTool::Redo,
+			FrozenToolbarTool::AutoCenter,
+			FrozenToolbarTool::Scroll,
+			FrozenToolbarTool::Ocr,
+			FrozenToolbarTool::Copy,
+			FrozenToolbarTool::Save,
+		];
+		#[cfg(not(target_os = "macos"))]
 		const TOOLS_WITH_SCROLL_AND_AUTO_CENTER: [FrozenToolbarTool; 10] = [
 			FrozenToolbarTool::Pointer,
 			FrozenToolbarTool::Pen,
@@ -10638,6 +10763,20 @@ impl WindowRenderer {
 			FrozenToolbarTool::Copy,
 			FrozenToolbarTool::Save,
 		];
+		#[cfg(target_os = "macos")]
+		const TOOLS_WITH_AUTO_CENTER: [FrozenToolbarTool; 10] = [
+			FrozenToolbarTool::Pointer,
+			FrozenToolbarTool::Pen,
+			FrozenToolbarTool::Text,
+			FrozenToolbarTool::Mosaic,
+			FrozenToolbarTool::Undo,
+			FrozenToolbarTool::Redo,
+			FrozenToolbarTool::AutoCenter,
+			FrozenToolbarTool::Ocr,
+			FrozenToolbarTool::Copy,
+			FrozenToolbarTool::Save,
+		];
+		#[cfg(not(target_os = "macos"))]
 		const TOOLS_WITH_AUTO_CENTER: [FrozenToolbarTool; 9] = [
 			FrozenToolbarTool::Pointer,
 			FrozenToolbarTool::Pen,
@@ -10649,6 +10788,20 @@ impl WindowRenderer {
 			FrozenToolbarTool::Copy,
 			FrozenToolbarTool::Save,
 		];
+		#[cfg(target_os = "macos")]
+		const TOOLS_WITH_SCROLL: [FrozenToolbarTool; 10] = [
+			FrozenToolbarTool::Pointer,
+			FrozenToolbarTool::Pen,
+			FrozenToolbarTool::Text,
+			FrozenToolbarTool::Mosaic,
+			FrozenToolbarTool::Undo,
+			FrozenToolbarTool::Redo,
+			FrozenToolbarTool::Scroll,
+			FrozenToolbarTool::Ocr,
+			FrozenToolbarTool::Copy,
+			FrozenToolbarTool::Save,
+		];
+		#[cfg(not(target_os = "macos"))]
 		const TOOLS_WITH_SCROLL: [FrozenToolbarTool; 9] = [
 			FrozenToolbarTool::Pointer,
 			FrozenToolbarTool::Pen,
@@ -10660,6 +10813,19 @@ impl WindowRenderer {
 			FrozenToolbarTool::Copy,
 			FrozenToolbarTool::Save,
 		];
+		#[cfg(target_os = "macos")]
+		const TOOLS_WITHOUT_SCROLL: [FrozenToolbarTool; 9] = [
+			FrozenToolbarTool::Pointer,
+			FrozenToolbarTool::Pen,
+			FrozenToolbarTool::Text,
+			FrozenToolbarTool::Mosaic,
+			FrozenToolbarTool::Undo,
+			FrozenToolbarTool::Redo,
+			FrozenToolbarTool::Ocr,
+			FrozenToolbarTool::Copy,
+			FrozenToolbarTool::Save,
+		];
+		#[cfg(not(target_os = "macos"))]
 		const TOOLS_WITHOUT_SCROLL: [FrozenToolbarTool; 8] = [
 			FrozenToolbarTool::Pointer,
 			FrozenToolbarTool::Pen,
@@ -14964,7 +15130,6 @@ mod tests {
 			Some(session.frozen_toolbar_default_position_for_capture_rect(monitor, capture_rect))
 		);
 	}
-
 	#[test]
 	fn auto_center_toolbar_tool_only_appears_when_available() {
 		let default_tools = WindowRenderer::frozen_toolbar_tools(&FrozenToolbarState::default());
@@ -14973,7 +15138,9 @@ mod tests {
 			..FrozenToolbarState::default()
 		});
 
+		assert!(default_tools.contains(&FrozenToolbarTool::Ocr));
 		assert!(!default_tools.contains(&FrozenToolbarTool::AutoCenter));
+		assert!(auto_center_tools.contains(&FrozenToolbarTool::Ocr));
 		assert!(auto_center_tools.contains(&FrozenToolbarTool::AutoCenter));
 	}
 
@@ -15408,6 +15575,7 @@ mod tests {
 		let mut session = OverlaySession {
 			window_list_refresh_inflight: true,
 			drop_next_window_list_refresh_snapshot: true,
+			ocr_inflight: true,
 			png_encode_inflight: true,
 			pending_self_capture_exception_window_ids_worker_refresh: true,
 			authoritative_frozen_capture_ready: true,
@@ -15427,6 +15595,7 @@ mod tests {
 
 		assert!(!session.window_list_refresh_inflight);
 		assert!(!session.drop_next_window_list_refresh_snapshot);
+		assert!(!session.ocr_inflight);
 		assert!(!session.png_encode_inflight);
 		assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
 		assert!(!session.authoritative_frozen_capture_ready);
@@ -18733,6 +18902,7 @@ mod tests {
 		assert!(!FrozenToolbarTool::Redo.is_mode_tool());
 		assert!(!FrozenToolbarTool::AutoCenter.is_mode_tool());
 		assert!(!FrozenToolbarTool::Scroll.is_mode_tool());
+		assert!(!FrozenToolbarTool::Ocr.is_mode_tool());
 		assert!(!FrozenToolbarTool::Copy.is_mode_tool());
 		assert!(!FrozenToolbarTool::Save.is_mode_tool());
 	}
@@ -18753,6 +18923,7 @@ mod tests {
 		assert!(!FrozenToolbarTool::Redo.requires_final_capture());
 		assert!(!FrozenToolbarTool::AutoCenter.requires_final_capture());
 		assert!(FrozenToolbarTool::Scroll.requires_final_capture());
+		assert!(FrozenToolbarTool::Ocr.requires_final_capture());
 		assert!(FrozenToolbarTool::Copy.requires_final_capture());
 		assert!(FrozenToolbarTool::Save.requires_final_capture());
 	}
