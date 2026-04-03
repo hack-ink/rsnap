@@ -185,9 +185,9 @@ impl App {
 		}
 
 		tracing::info!(
-			screen_recording_granted,
-			accessibility_granted,
-			input_monitoring_granted,
+			screen_recording_granted = screen_recording_granted,
+			accessibility_granted = accessibility_granted,
+			input_monitoring_granted = input_monitoring_granted,
 			"One or more macOS permissions are missing at startup; opening the Settings window."
 		);
 

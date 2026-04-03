@@ -69,7 +69,7 @@ cargo run -p rsnap
 - macOS may phrase the Input Monitoring prompt as receiving keystrokes from any application even though rsnap only listens for scroll-wheel input in this path.
 - macOS may describe Screen Recording as `Screen & System Audio Recording` or as direct screen/audio access when rsnap bypasses the system picker.
 - On startup, `rsnap` checks Screen Recording, Accessibility, and Input Monitoring together and opens its own Settings window if any of them are missing.
-- In the app, the Permissions section shows Screen Recording, Accessibility, and Input Monitoring status and can open the relevant macOS settings panes for you.
+- In the app, the Permissions section shows Screen Recording, Accessibility, and Input Monitoring status. Each permission button can still issue the matching macOS request when the system allows it, then open the relevant macOS settings pane if access is still missing.
 - Normal capture does not issue a just-in-time permission request or reopen Settings when Screen Recording is missing.
 - Scroll capture does not issue a just-in-time permission request or show a HUD permission message when Accessibility or Input Monitoring is missing.
 - You can reopen `Permissions…` from the tray or menubar menu at any time.

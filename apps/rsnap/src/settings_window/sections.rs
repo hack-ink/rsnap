@@ -206,49 +206,70 @@ fn render_permission_action_row(
 
 #[cfg(target_os = "macos")]
 fn open_screen_recording_from_settings() {
-	let granted = permissions_macos::screen_recording_access_granted();
+	let granted_before = permissions_macos::screen_recording_access_granted();
+	let granted_after = if granted_before {
+		true
+	} else {
+		permissions_macos::request_screen_recording_access()
+			|| permissions_macos::screen_recording_access_granted()
+	};
 
-	if let Err(err) = permissions_macos::open_screen_recording_settings() {
+	if !granted_after && let Err(err) = permissions_macos::open_screen_recording_settings() {
 		tracing::warn!(error = %err, "Failed to open Screen Recording settings.");
 	}
 
 	tracing::info!(
 		permission = "screen_recording",
 		source = "settings_window",
-		granted,
-		"Opened the macOS Screen Recording settings page."
+		granted_before = granted_before,
+		granted_after = granted_after,
+		"Opened the macOS Screen Recording permission flow from Settings."
 	);
 }
 
 #[cfg(target_os = "macos")]
 fn open_accessibility_from_settings() {
-	let granted = permissions_macos::accessibility_access_granted();
+	let granted_before = permissions_macos::accessibility_access_granted();
+	let granted_after = if granted_before {
+		true
+	} else {
+		permissions_macos::request_accessibility_access()
+			|| permissions_macos::accessibility_access_granted()
+	};
 
-	if let Err(err) = permissions_macos::open_accessibility_settings() {
+	if !granted_after && let Err(err) = permissions_macos::open_accessibility_settings() {
 		tracing::warn!(error = %err, "Failed to open Accessibility settings.");
 	}
 
 	tracing::info!(
 		permission = "accessibility",
 		source = "settings_window",
-		granted,
-		"Opened the macOS Accessibility settings page."
+		granted_before = granted_before,
+		granted_after = granted_after,
+		"Opened the macOS Accessibility permission flow from Settings."
 	);
 }
 
 #[cfg(target_os = "macos")]
 fn open_input_monitoring_from_settings() {
-	let granted = permissions_macos::input_monitoring_access_granted();
+	let granted_before = permissions_macos::input_monitoring_access_granted();
+	let granted_after = if granted_before {
+		true
+	} else {
+		permissions_macos::request_input_monitoring_access()
+			|| permissions_macos::input_monitoring_access_granted()
+	};
 
-	if let Err(err) = permissions_macos::open_input_monitoring_settings() {
+	if !granted_after && let Err(err) = permissions_macos::open_input_monitoring_settings() {
 		tracing::warn!(error = %err, "Failed to open Input Monitoring settings.");
 	}
 
 	tracing::info!(
 		permission = "input_monitoring",
 		source = "settings_window",
-		granted,
-		"Opened the macOS Input Monitoring settings page."
+		granted_before = granted_before,
+		granted_after = granted_after,
+		"Opened the macOS Input Monitoring permission flow from Settings."
 	);
 }
 
@@ -270,7 +291,7 @@ fn render_permissions_section(ui: &mut Ui) -> bool {
 		);
 
 		ui.small("Required for all region, window, and monitor capture on macOS.");
-		ui.small("Use the button to open the matching System Settings pane.");
+		ui.small("Use the button to ask macOS for access. If no consent sheet appears, rsnap opens the matching System Settings pane.");
 		ui.small(
 			"macOS may describe this as Screen & System Audio Recording or direct screen/audio access.",
 		);
@@ -291,7 +312,7 @@ fn render_permissions_section(ui: &mut Ui) -> bool {
 		ui.small(
 			"Required only for scroll capture because rsnap forwards scroll into the target app.",
 		);
-		ui.small("Use the button to open the matching System Settings pane.");
+		ui.small("Use the button to ask macOS for access. If no consent sheet appears, rsnap opens the matching System Settings pane.");
 		ui.small(format!("Path: {}", permissions_macos::ACCESSIBILITY_SETTINGS_PATH));
 		ui.small(
 			"Scroll capture only starts when both this and Input Monitoring are already enabled.",
@@ -309,7 +330,7 @@ fn render_permissions_section(ui: &mut Ui) -> bool {
 		ui.small(
 			"Required only for scroll capture because rsnap listens for global scroll-wheel input.",
 		);
-		ui.small("Use the button to open the matching System Settings pane.");
+		ui.small("Use the button to ask macOS for access. If no consent sheet appears, rsnap opens the matching System Settings pane.");
 		ui.small("macOS may phrase this as receiving keystrokes from any application even though rsnap only listens for scroll input here.");
 		ui.small(
 			"If this still stays disabled after you enable it in System Settings, relaunch rsnap so macOS re-evaluates the current process.",

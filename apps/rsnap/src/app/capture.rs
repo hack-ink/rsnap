@@ -249,8 +249,8 @@ impl App {
 
 		if !accessibility_granted || !input_monitoring_granted {
 			tracing::info!(
-				accessibility_granted,
-				input_monitoring_granted,
+				accessibility_granted = accessibility_granted,
+				input_monitoring_granted = input_monitoring_granted,
 				"Scroll capture prerequisites are missing; rejecting the start request without a HUD permission message."
 			);
 
