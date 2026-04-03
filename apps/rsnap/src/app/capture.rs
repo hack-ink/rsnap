@@ -46,7 +46,7 @@ impl App {
 		OverlayConfig {
 			hud_anchor: HudAnchor::Cursor,
 			show_alt_hint_keycap: self.settings.show_alt_hint_keycap,
-			selection_particles: self.settings.selection_particles,
+			selection_flow_enabled: self.settings.selection_flow_enabled,
 			selection_flow_stroke_width_px: self
 				.settings
 				.selection_flow_stroke_width_px

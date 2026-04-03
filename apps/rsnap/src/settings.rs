@@ -46,6 +46,7 @@ impl LoupeSampleSize {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AppSettings {
 	#[serde(default)]
 	pub show_alt_hint_keycap: bool,
@@ -63,8 +64,8 @@ pub(crate) struct AppSettings {
 	pub hud_tint_hue: f32,
 	#[serde(default)]
 	pub alt_activation: AltActivationMode,
-	#[serde(default = "default_selection_particles")]
-	pub selection_particles: bool,
+	#[serde(default = "default_selection_flow_enabled")]
+	pub selection_flow_enabled: bool,
 	#[serde(default = "default_selection_flow_stroke_width_px")]
 	pub selection_flow_stroke_width_px: f32,
 	pub log_filter: Option<String>,
@@ -89,13 +90,31 @@ impl AppSettings {
 		let Some(path) = Self::path() else {
 			return Self::default();
 		};
-		let Ok(bytes) = fs::read(&path) else {
+
+		Self::load_from_path(&path)
+	}
+
+	#[must_use]
+	fn load_from_path(path: &Path) -> Self {
+		let Ok(bytes) = fs::read(path) else {
 			return Self::default();
 		};
 		let Ok(contents) = std::str::from_utf8(&bytes) else {
+			quarantine_invalid_settings_file(path, "Settings file is not valid UTF-8");
+
 			return Self::default();
 		};
-		let mut settings: Self = toml::from_str(contents).unwrap_or_default();
+		let mut settings: Self = match toml::from_str(contents) {
+			Ok(settings) => settings,
+			Err(err) => {
+				quarantine_invalid_settings_file(
+					path,
+					&format!("Failed to parse settings TOML: {err}"),
+				);
+
+				return Self::default();
+			},
+		};
 
 		settings.capture_hotkey = sanitize_capture_hotkey(&settings.capture_hotkey)
 			.unwrap_or_else(default_capture_hotkey);
@@ -156,7 +175,7 @@ impl Default for AppSettings {
 			hud_tint: default_hud_tint(),
 			hud_tint_hue: default_hud_tint_hue(),
 			alt_activation: AltActivationMode::default(),
-			selection_particles: default_selection_particles(),
+			selection_flow_enabled: default_selection_flow_enabled(),
 			selection_flow_stroke_width_px: default_selection_flow_stroke_width_px(),
 			log_filter: None,
 			output_dir: default_output_dir(),
@@ -203,7 +222,7 @@ fn default_hud_tint_hue() -> f32 {
 	215.0 / 360.0
 }
 
-fn default_selection_particles() -> bool {
+fn default_selection_flow_enabled() -> bool {
 	true
 }
 
@@ -304,9 +323,51 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 	Ok(())
 }
 
+fn quarantine_invalid_settings_file(path: &Path, message: &str) {
+	let backup_path = invalid_settings_backup_path(path);
+
+	match fs::rename(path, &backup_path) {
+		Ok(()) => eprintln!(
+			"{message}. Moved invalid settings file from {:?} to {:?}.",
+			path, backup_path
+		),
+		Err(err) => eprintln!(
+			"{message}. Failed to move invalid settings file {:?} to {:?}: {err}",
+			path, backup_path
+		),
+	}
+}
+
+fn invalid_settings_backup_path(path: &Path) -> PathBuf {
+	let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+	let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("settings");
+	let ext = path.extension().and_then(|ext| ext.to_str());
+
+	for suffix in 0_u32.. {
+		let candidate_name = match (ext, suffix) {
+			(Some(ext), 0) => format!("{stem}.invalid.{ext}"),
+			(Some(ext), suffix) => format!("{stem}.invalid-{suffix}.{ext}"),
+			(None, 0) => format!("{stem}.invalid"),
+			(None, suffix) => format!("{stem}.invalid-{suffix}"),
+		};
+		let candidate = parent.join(candidate_name);
+
+		if !candidate.exists() {
+			return candidate;
+		}
+	}
+
+	unreachable!("u32 suffix space exhausted for invalid settings backups")
+}
+
 #[cfg(test)]
 mod tests {
-	use std::path::PathBuf;
+	use std::{
+		env, fs,
+		path::PathBuf,
+		process,
+		time::{SystemTime, UNIX_EPOCH},
+	};
 
 	use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
 	use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
@@ -331,7 +392,7 @@ mod tests {
 	hud_tint = 0.25
 	hud_tint_hue = 0.4
 	alt_activation = "toggle"
-	selection_particles = true
+	selection_flow_enabled = false
 	selection_flow_stroke_width_px = 2.4
 	output_dir = "/tmp/rsnap-output"
 	output_filename_prefix = "shot"
@@ -344,7 +405,7 @@ mod tests {
 		let settings: AppSettings = toml::from_str(input).unwrap();
 
 		assert_eq!(settings.alt_activation, AltActivationMode::Toggle);
-		assert!(settings.selection_particles);
+		assert!(!settings.selection_flow_enabled);
 		assert_eq!(settings.selection_flow_stroke_width_px, 2.4);
 		assert_eq!(settings.output_dir, PathBuf::from("/tmp/rsnap-output"));
 		assert_eq!(settings.output_filename_prefix, "shot");
@@ -356,23 +417,34 @@ mod tests {
 	}
 
 	#[test]
-	fn toml_ignores_legacy_tray_icon_keys() {
-		let baseline: AppSettings = toml::from_str("").unwrap();
-		let tray_icon_inverted: AppSettings = toml::from_str("tray_icon_inverted = true").unwrap();
-		let tray_icon_filled: AppSettings = toml::from_str("tray_icon_filled = true").unwrap();
-
-		assert_eq!(tray_icon_inverted, baseline);
-		assert_eq!(tray_icon_filled, baseline);
+	fn toml_rejects_legacy_tray_icon_keys() {
+		assert!(toml::from_str::<AppSettings>("tray_icon_inverted = true").is_err());
+		assert!(toml::from_str::<AppSettings>("tray_icon_filled = true").is_err());
 	}
 
 	#[test]
-	fn window_capture_alpha_mode_preserve_alias_maps_to_background() {
+	fn selection_flow_defaults_to_enabled_when_missing() {
+		let settings: AppSettings = toml::from_str("").unwrap();
+
+		assert!(settings.selection_flow_enabled);
+	}
+
+	#[test]
+	fn selection_flow_rejects_legacy_key() {
+		let input = r#"
+	selection_particles = false
+	"#;
+
+		assert!(toml::from_str::<AppSettings>(input).is_err());
+	}
+
+	#[test]
+	fn window_capture_alpha_mode_rejects_legacy_preserve_value() {
 		let input = r#"
 	window_capture_alpha_mode = "preserve"
 	"#;
-		let settings: AppSettings = toml::from_str(input).unwrap();
 
-		assert_eq!(settings.window_capture_alpha_mode, WindowCaptureAlphaMode::Background);
+		assert!(toml::from_str::<AppSettings>(input).is_err());
 	}
 
 	#[test]
@@ -393,5 +465,34 @@ mod tests {
 		let sanitized = super::sanitize_output_filename_prefix("  rsnap:/demo?  ");
 
 		assert_eq!(sanitized, "rsnap__demo");
+	}
+
+	#[test]
+	fn load_quarantines_invalid_settings_instead_of_silently_dropping_them() {
+		let root = env::temp_dir().join(format!(
+			"rsnap-settings-test-{}-{}",
+			process::id(),
+			SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+		));
+
+		fs::create_dir_all(&root).unwrap();
+
+		let settings_path = root.join("settings.toml");
+		let original = r#"
+show_alt_hint_keycap = false
+selection_particles = false
+"#;
+
+		fs::write(&settings_path, original).unwrap();
+
+		let settings = AppSettings::load_from_path(&settings_path);
+		let backup_path = root.join("settings.invalid.toml");
+
+		assert_eq!(settings, AppSettings::default());
+		assert!(!settings_path.exists());
+		assert_eq!(fs::read_to_string(&backup_path).unwrap(), original);
+
+		fs::remove_file(&backup_path).unwrap();
+		fs::remove_dir(&root).unwrap();
 	}
 }
