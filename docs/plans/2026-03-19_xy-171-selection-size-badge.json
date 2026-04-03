@@ -1,0 +1,1322 @@
+{
+  "spec": {
+    "schema": "plan/1",
+    "plan_id": "2026-03-19-xy-171-selection-size-badge",
+    "goal": "Show a harmonious `XxY` size badge for rsnap capture regions across drag, hovered-window, fullscreen fallback, and Frozen states while keeping the badge aligned to the selection's right edge and fully visible near screen edges.",
+    "success_criteria": [
+      "Live drag selection shows a visible size badge derived from the drag focus rect.",
+      "Live hovered-window and fullscreen fallback affordances show the same size badge for the active capture target.",
+      "Frozen selection shows the same size badge anchored to the frozen capture rect after entering Frozen mode.",
+      "Frozen toolbar reservation for badge placement is based on the overlay viewport for the active monitor, not the dedicated toolbar window viewport.",
+      "Frozen toolbar reservation begins only once the toolbar birth logic is ready to draw for the current viewport, so early frozen frames do not reserve phantom toolbar space.",
+      "Preseeded Frozen toolbar floating positions do not count as draw readiness until the current overlay viewport has been sampled and confirmed stable, so early frozen frames cannot reserve toolbar space from a stale preseed.",
+      "Frozen toolbar draw-readiness sampling on macOS uses the overlay viewport basis for the active monitor and is not overwritten by the dedicated toolbar window viewport.",
+      "The Frozen toolbar readiness repair remains compilable on non-macOS targets, including the Linux CI lint path.",
+      "Badge placement defaults below the capture rect, stays right-aligned to the rect when that fits inside the viewport, clamps fully inside the visible screen when strict alignment would force clipping, and falls back inside the rect when there is not enough room below.",
+      "Tiny valid capture rects still produce a size badge target instead of being filtered out by the live drag-init threshold.",
+      "Focused overlay tests cover badge geometry and placement fallback for representative live and Frozen scenarios.",
+      "The size badge is rendered as pure text with a fixed high-contrast style plus a light outline or shadow instead of introducing a new blur or glass surface.",
+      "Existing HUD, pos/rgb, loupe, and toolbar blur treatment stays on the pre-XY-171 path and is not widened by the size badge implementation."
+    ],
+    "constraints": [
+      "Keep the implementation scoped to overlay rendering and layout helpers in rsnap-overlay; do not change capture/export pixel data paths.",
+      "Preserve the existing visual language of the HUD, selection frame, loupe, and Frozen toolbar, and do not regress their existing blur treatment.",
+      "Do not allow the badge to clip outside the visible screen region; keep the badge right-aligned to the selection when that fits without forcing viewport clipping.",
+      "Reserve the Frozen toolbar slot only while that toolbar is actually visible for the current platform/render path; do not avoid a phantom toolbar rectangle during preview-only frames.",
+      "Do not reserve Frozen toolbar space before the toolbar birth logic is actually ready to draw for the current viewport.",
+      "Do not treat a preseeded Frozen toolbar floating_position by itself as proof that the toolbar can already draw for the current viewport.",
+      "Do not let the dedicated toolbar window viewport overwrite the overlay-viewport sample that Frozen badge reservation uses for draw readiness.",
+      "Do not break the non-macOS Frozen badge reservation compile path while repairing the macOS toolbar readiness logic.",
+      "Do not suppress badge rendering for tiny valid Frozen or drag capture rects solely because the live drag-init threshold is unmet.",
+      "Use repo-native verification commands before claiming completion."
+    ],
+    "defaults": {
+      "authority_linear_issue": "XY-171",
+      "branch": "yvette/xy-171-show-aligned-capture-size-badge-across-drag-window",
+      "issue_url": "https://linear.app/hack-ink/issue/XY-171/show-aligned-capture-size-badge-across-drag-window-fullscreen-and",
+      "primary_files": [
+        "packages/rsnap-overlay/src/overlay.rs"
+      ],
+      "verification_commands": [
+        "cargo make fmt",
+        "cargo make lint-rust",
+        "cargo test -p rsnap-overlay overlay:: --lib",
+        "git diff --check"
+      ]
+    },
+    "tasks": [
+      {
+        "id": "task-1",
+        "title": "Define shared size-badge geometry and style",
+        "status": "done",
+        "objective": "Create renderer-local helpers that compute the badge text, visual treatment, and placement for a capture rect with the XY-171 alignment and fallback rules.",
+        "inputs": [
+          "XY-171 placement requirements",
+          "Existing selection focus rect and HUD styling helpers in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "Shared badge geometry/style helpers for live and Frozen capture affordances"
+        ],
+        "verification": [
+          "Helpers encode below-first placement, right-edge alignment, screen clamping, and inside-rect fallback without contradicting current overlay geometry."
+        ],
+        "depends_on": []
+      },
+      {
+        "id": "task-2",
+        "title": "Wire the badge into live and Frozen affordance rendering",
+        "status": "done",
+        "objective": "Render the new size badge for drag, hovered-window, fullscreen fallback, and Frozen capture paths using a single helper layer.",
+        "inputs": [
+          "Task 1 helpers",
+          "Existing live and Frozen focus-rect render paths"
+        ],
+        "outputs": [
+          "Overlay rendering that shows the size badge in all XY-171 scenarios"
+        ],
+        "verification": [
+          "All requested live and Frozen capture affordances use the shared badge rendering path.",
+          "Badge placement remains visually harmonious with the selection frame and Frozen toolbar."
+        ],
+        "depends_on": [
+          "task-1"
+        ]
+      },
+      {
+        "id": "task-3",
+        "title": "Add focused regression coverage for badge placement",
+        "status": "done",
+        "objective": "Cover the badge placement and sizing rules with focused overlay tests so later affordance changes do not regress XY-171.",
+        "inputs": [
+          "Updated badge helper and render integration from task 2"
+        ],
+        "outputs": [
+          "Overlay tests for default below placement and inside-rect fallback"
+        ],
+        "verification": [
+          "New tests fail without the intended geometry and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-2"
+        ]
+      },
+      {
+        "id": "task-4",
+        "title": "Run verification and close plan execution state",
+        "status": "done",
+        "objective": "Run the agreed verification commands on the final XY-171 diff and capture the evidence in the saved plan state.",
+        "inputs": [
+          "Final XY-171 implementation"
+        ],
+        "outputs": [
+          "Fresh verification evidence and updated plan runtime state"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint-rust exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-3"
+        ]
+      },
+      {
+        "id": "task-5",
+        "title": "Unify the size badge with the shared HUD style path",
+        "status": "done",
+        "objective": "Remove the badge's partial style implementation and feed it through the same shared HUD opacity, tint, and blur-aware fill path that the existing overlay UI uses.",
+        "inputs": [
+          "Current XY-171 badge renderer",
+          "Existing HUD and loupe style helpers in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "Badge rendering wired to the shared HUD style parameters with no standalone fill tuning path"
+        ],
+        "verification": [
+          "Badge visuals follow the same global HUD/tint/opacity knobs as the rest of the overlay."
+        ],
+        "depends_on": [
+          "task-4"
+        ]
+      },
+      {
+        "id": "task-6",
+        "title": "Re-verify the simplified style path",
+        "status": "done",
+        "objective": "Re-run focused verification after the style unification so the simpler path is still geometrically correct and visually stable.",
+        "inputs": [
+          "Task 5 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence covering the simplified style path"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make lint-rust exits 0",
+          "cargo make smoke-self-check-macos exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-5"
+        ]
+      },
+      {
+        "id": "task-7",
+        "title": "Extend selection badge glass styling into blur activation and geometry",
+        "status": "done",
+        "objective": "Carry the size badge through the same blur-capable styling path as HUD and toolbar surfaces by activating overlay shader blur when the badge is visible in glass mode and by including badge geometry in the blur mask.",
+        "inputs": [
+          "Current XY-171 badge renderer",
+          "Existing HUD blur activation and HudPillGeometry pipeline in packages/rsnap-overlay/src/overlay.rs and packages/rsnap-overlay/src/hud_blur.wgsl"
+        ],
+        "outputs": [
+          "Badge rendering that shares blur activation and blur geometry with existing HUD glass-mode surfaces"
+        ],
+        "verification": [
+          "Selection badge blur uses the same glass-mode toggle path as HUD styling instead of only reusing tinted fill colors.",
+          "Blur masking covers badge geometry without regressing existing HUD or toolbar blur regions."
+        ],
+        "depends_on": [
+          "task-6"
+        ]
+      },
+      {
+        "id": "task-8",
+        "title": "Re-verify badge blur parity",
+        "status": "done",
+        "objective": "Run focused verification after blur-path integration so the badge remains correct in geometry and now tracks glass-mode blur behavior without regressions.",
+        "inputs": [
+          "Task 7 blur-path diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for badge blur parity"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make lint-rust exits 0",
+          "cargo make smoke-self-check-macos exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-7"
+        ]
+      },
+      {
+        "id": "task-9",
+        "title": "Repair the runtime hud blur shader validation crash",
+        "status": "done",
+        "objective": "Fix the live runtime panic in the shared HUD blur shader path so entering screenshot/frozen flow no longer crashes at shader module creation.",
+        "inputs": [
+          "User repro showing rsnap panics during screenshot flow",
+          "wgpu validation error pointing at packages/rsnap-overlay/src/hud_blur.wgsl"
+        ],
+        "outputs": [
+          "Runtime-valid hud blur shader and fresh verification evidence that rsnap relaunches cleanly"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make lint-rust exits 0",
+          "git diff --check returns clean",
+          "cargo run -p rsnap launches without a shader-module validation panic"
+        ],
+        "depends_on": [
+          "task-8"
+        ]
+      },
+      {
+        "id": "task-10",
+        "title": "Restore live background capture for macOS badge blur",
+        "status": "done",
+        "objective": "Make the macOS live badge blur path request and retain the same live background texture source that the shader blur needs, instead of gating it behind the non-macOS fake HUD blur helper.",
+        "inputs": [
+          "User report that the size badge still shows no visible blur effect",
+          "Code inspection showing live background capture is still gated by use_fake_hud_blur() on macOS"
+        ],
+        "outputs": [
+          "Live macOS badge blur path with background texture input available when glass mode is enabled"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make lint-rust exits 0",
+          "git diff --check returns clean",
+          "cargo run -p rsnap launches successfully with the macOS live badge blur path able to request background input"
+        ],
+        "depends_on": [
+          "task-9"
+        ]
+      },
+      {
+        "id": "task-11",
+        "title": "Replace the badge blur experiment with a text-only size widget",
+        "status": "done",
+        "objective": "Remove the badge-specific blur and live-background changes that widened the existing HUD blur path, and render the XY-171 size badge as pure high-contrast text with a light outline or shadow.",
+        "inputs": [
+          "User report that the blur experiment regressed existing pos/rgb widget rendering",
+          "Current XY-171 badge geometry and placement helpers in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A text-only XY-171 size badge that keeps the requested placement behavior without touching the existing HUD blur pipeline"
+        ],
+        "verification": [
+          "The size badge no longer contributes any extra blur region or live background capture requirement.",
+          "Existing HUD, pos/rgb, loupe, and toolbar blur logic is restored to the pre-experiment path."
+        ],
+        "depends_on": [
+          "task-10"
+        ]
+      },
+      {
+        "id": "task-12",
+        "title": "Re-verify the simplified text-only badge path",
+        "status": "done",
+        "objective": "Run the agreed verification commands after reverting the blur experiment so the simplified XY-171 badge path is geometrically correct and does not regress the existing HUD rendering pipeline.",
+        "inputs": [
+          "Task 11 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the simplified text-only badge path"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make lint-rust exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-11"
+        ]
+      },
+      {
+        "id": "task-13",
+        "title": "Polish the text-only size badge styling",
+        "status": "done",
+        "objective": "Refine the text-only XY-171 size badge so it feels lighter and more deliberate without reintroducing any pill, blur, or live-background dependency.",
+        "inputs": [
+          "Current text-only size badge rendering in packages/rsnap-overlay/src/overlay.rs",
+          "User feedback that the current pure-text badge still feels visually rough"
+        ],
+        "outputs": [
+          "A softened text-only badge treatment with better hierarchy and readability that remains fully local to overlay.rs"
+        ],
+        "verification": [
+          "The style change stays within the pure-text rendering path and does not widen any existing HUD blur or widget pipeline.",
+          "The badge remains readable over representative capture backgrounds while preserving the existing placement behavior."
+        ],
+        "depends_on": [
+          "task-12"
+        ]
+      },
+      {
+        "id": "task-14",
+        "title": "Re-verify the polished text-only badge path",
+        "status": "done",
+        "objective": "Run the agreed verification commands after the local styling polish so the refined XY-171 badge remains correct and isolated from the existing HUD rendering pipeline.",
+        "inputs": [
+          "Task 13 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the refined text-only badge path"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make lint-rust exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-13"
+        ]
+      },
+      {
+        "id": "task-15",
+        "title": "Make the text-only badge render on a crisp pixel grid",
+        "status": "done",
+        "objective": "Remove the fractional-offset multi-pass text treatment that can make the badge look noisy on some backgrounds, and replace it with a sharper pixel-aligned rendering path.",
+        "inputs": [
+          "User report that the current badge can look mosaic-like instead of crisp on some backgrounds",
+          "Current text-only badge renderer in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A text-only badge renderer that uses fewer text passes and snaps anchor and offsets to the physical pixel grid"
+        ],
+        "verification": [
+          "The badge text path stays local to overlay.rs and does not reintroduce any blur, glass, or background sampling dependency.",
+          "Badge text uses pixel-aligned placement so it remains crisp across common macOS scale factors."
+        ],
+        "depends_on": [
+          "task-14"
+        ]
+      },
+      {
+        "id": "task-16",
+        "title": "Re-verify the crisp text-only badge path",
+        "status": "done",
+        "objective": "Run the agreed verification commands after the pixel-alignment cleanup so the refined badge remains correct and isolated from the existing HUD pipeline.",
+        "inputs": [
+          "Task 15 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the crisp text-only badge path"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make lint-rust exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-15"
+        ]
+      },
+      {
+        "id": "task-17",
+        "title": "Add a richer macOS-like shadow stack to the crisp text badge",
+        "status": "done",
+        "objective": "Keep the badge text crisp on the pixel grid while introducing a more premium layered shadow treatment inspired by the existing macOS HUD surfaces.",
+        "inputs": [
+          "Current pixel-aligned text-only badge renderer in packages/rsnap-overlay/src/overlay.rs",
+          "Existing HUD/loupe shadow parameters in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A badge text renderer with a small number of pixel-aligned shadow layers that feels deeper without reintroducing blurry subpixel artifacts"
+        ],
+        "verification": [
+          "The badge still renders through the text-only path in overlay.rs with no blur, glass, or background sampling dependency.",
+          "Any additional shadow passes stay snapped to the physical pixel grid so the text remains crisp."
+        ],
+        "depends_on": [
+          "task-16"
+        ]
+      },
+      {
+        "id": "task-18",
+        "title": "Re-verify the richer text-shadow treatment",
+        "status": "done",
+        "objective": "Run the agreed verification commands after the richer shadow treatment so the premium text-only badge remains correct and isolated from the existing HUD pipeline.",
+        "inputs": [
+          "Task 17 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the richer pixel-aligned text-shadow path"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make lint-rust exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-17"
+        ]
+      },
+      {
+        "id": "task-19",
+        "title": "Improve text-only badge readability in light theme",
+        "status": "done",
+        "objective": "Fix the pure-text badge so it remains readable in light theme by moving away from theme-tied dark glyphs and using a more stable high-contrast text and shadow treatment.",
+        "inputs": [
+          "User report that the current pure-number badge has very poor readability in light theme",
+          "Current pixel-aligned badge text renderer in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A text-only badge renderer with stronger cross-background readability, especially for light theme captures"
+        ],
+        "verification": [
+          "The badge remains in the text-only overlay.rs path with no blur, glass, or background-sampling dependency.",
+          "The light-theme badge no longer depends on a dark primary glyph color alone for contrast."
+        ],
+        "depends_on": [
+          "task-18"
+        ]
+      },
+      {
+        "id": "task-20",
+        "title": "Re-verify the light-theme readability fix",
+        "status": "done",
+        "objective": "Run the agreed verification commands after the light-theme readability fix so the updated pure-text badge remains correct and isolated from the existing HUD pipeline.",
+        "inputs": [
+          "Task 19 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the improved light-theme pure-text badge path"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo test -p rsnap-overlay overlay:: --lib exits 0",
+          "cargo make lint-rust exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-19"
+        ]
+      },
+      {
+        "id": "task-21",
+        "title": "Formalize the size-badge geometry contract and edge-case matrix",
+        "status": "done",
+        "objective": "Turn the badge placement rules into an explicit contract that orders right-edge alignment, screen visibility, and reserved-toolbar avoidance, and define the edge-case matrix that must be covered before trusting further review rounds.",
+        "inputs": [
+          "Current selection_size_badge_rect_with_reserved_rect() behavior in packages/rsnap-overlay/src/overlay.rs",
+          "Accumulated PR #41 review feedback about left-edge, bottom-edge, and reserved-toolbar collisions"
+        ],
+        "outputs": [
+          "Explicit geometry-priority rules recorded in code/tests and a concrete badge layout edge-case matrix"
+        ],
+        "verification": [
+          "The geometry contract distinguishes narrow-capture alignment tradeoffs from ordinary screen clamping.",
+          "The matrix covers below-placement, inside fallback, above-capture fallback, reserved-toolbar avoidance, and narrow left-edge behavior without contradictory expectations."
+        ],
+        "depends_on": [
+          "task-20"
+        ]
+      },
+      {
+        "id": "task-22",
+        "title": "Implement the hardened geometry rules and matrix coverage",
+        "status": "done",
+        "objective": "Refactor the badge layout helper to satisfy the explicit geometry contract and add focused regression tests for the remaining edge-case matrix so review feedback does not keep finding unencoded combinations.",
+        "inputs": [
+          "Task 21 geometry contract",
+          "Current overlay.rs badge layout helper and XY-171 regression tests"
+        ],
+        "outputs": [
+          "A hardened selection_size_badge_rect_with_reserved_rect() implementation and expanded focused regression coverage"
+        ],
+        "verification": [
+          "The badge does not overlap a reserved toolbar rect when an alternate non-overlapping placement exists.",
+          "Narrow left-edge captures keep the badge aligned to the capture's right edge instead of drifting right for full-screen visibility.",
+          "New tests fail without the hardened geometry rules and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-21"
+        ]
+      },
+      {
+        "id": "task-23",
+        "title": "Re-verify the hardened geometry contract",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the geometry-contract hardening so the expanded badge matrix is validated against the current repaired head.",
+        "inputs": [
+          "Task 22 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the hardened XY-171 badge geometry contract"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-22"
+        ]
+      },
+      {
+        "id": "task-24",
+        "title": "Reprioritize impossible left-edge geometry and toolbar screen basis",
+        "status": "done",
+        "objective": "Resolve the new post-hardening review conflicts by making full viewport visibility win over strict right-edge alignment when a badge cannot satisfy both, and by aligning Frozen toolbar reservation with the same screen-rect basis used by the toolbar window runtime.",
+        "inputs": [
+          "New PR #41 review feedback on selection_size_badge_rect_with_reserved_rect() and frozen_size_badge_toolbar_reserved_rect()",
+          "Current XY-171 geometry contract and toolbar reservation helpers in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "An updated geometry contract that removes the narrow-left overflow exception and a single screen-rect basis for Frozen toolbar reservation"
+        ],
+        "verification": [
+          "The saved contract no longer allows badge clipping outside the visible viewport for impossible narrow-left captures.",
+          "Frozen toolbar reservation uses the same effective screen basis as the toolbar window runtime instead of reconstructing it independently from monitor dimensions."
+        ],
+        "depends_on": [
+          "task-23"
+        ]
+      },
+      {
+        "id": "task-25",
+        "title": "Implement the post-hardening review repair batch",
+        "status": "done",
+        "objective": "Update overlay.rs to clamp impossible left-edge badges back inside the viewport, unify the Frozen toolbar reserved-rect screen basis with the toolbar runtime, and expand the regression matrix so those combinations stop reappearing in review.",
+        "inputs": [
+          "Task 24 contract update",
+          "Current overlay.rs badge layout tests and Frozen toolbar reservation tests"
+        ],
+        "outputs": [
+          "A repaired selection_size_badge_rect_with_reserved_rect() helper, an updated Frozen toolbar reservation path, and focused regression coverage for both review findings"
+        ],
+        "verification": [
+          "Impossible narrow-left captures keep the badge fully visible inside the screen.",
+          "Frozen toolbar reservation still blocks badge overlap when the toolbar stays in its default slot even after viewport-basis differences are introduced.",
+          "New focused tests fail without the repair batch and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-24"
+        ]
+      },
+      {
+        "id": "task-26",
+        "title": "Re-verify the repaired review batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the repaired geometry and toolbar-basis changes so the refreshed PR head is ready for review-repair closeout.",
+        "inputs": [
+          "Task 25 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the repaired post-hardening review batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-25"
+        ]
+      },
+      {
+        "id": "task-27",
+        "title": "Re-scope frozen toolbar reservation visibility and viewport basis",
+        "status": "done",
+        "objective": "Update the saved XY-171 contract so Frozen toolbar reservation is driven by the overlay viewport for the active monitor and only applies while the toolbar is actually visible in the current platform-specific render path.",
+        "inputs": [
+          "New PR #41 review feedback after head 6966d55 on frozen_size_badge_toolbar_reserved_rect() and handle_overlay_window_redraw()",
+          "Current Frozen toolbar window runtime and overlay redraw flow in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A corrected reservation contract for overlay-viewport sizing and visible-toolbar-only reservation"
+        ],
+        "verification": [
+          "The saved contract no longer depends on toolbar-window viewport sampling for badge reservation.",
+          "The saved contract no longer reserves a toolbar slot while the toolbar is hidden in preview-only frames."
+        ],
+        "depends_on": [
+          "task-26"
+        ]
+      },
+      {
+        "id": "task-28",
+        "title": "Implement the overlay-viewport reservation repair batch",
+        "status": "done",
+        "objective": "Repair overlay.rs so Frozen badge reservation uses the overlay viewport for the active monitor, skips reservation while the toolbar is hidden for the current platform path, and expands regression coverage for both review findings.",
+        "inputs": [
+          "Task 27 contract update",
+          "Current overlay.rs Frozen toolbar reservation helpers and tests"
+        ],
+        "outputs": [
+          "A repaired Frozen toolbar reservation path plus focused tests for overlay-viewport sizing and hidden-toolbar gating"
+        ],
+        "verification": [
+          "macOS Frozen badge reservation still reserves the default toolbar slot when the toolbar is visible, even if the dedicated toolbar window has a different viewport size.",
+          "Frozen preview frames do not reserve a phantom toolbar slot while the toolbar is hidden.",
+          "New focused tests fail without the repair batch and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-27"
+        ]
+      },
+      {
+        "id": "task-29",
+        "title": "Re-verify the toolbar reservation repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the Frozen toolbar reservation repair so the refreshed PR head is ready for review-repair closeout.",
+        "inputs": [
+          "Task 28 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the toolbar reservation repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-28"
+        ]
+      },
+      {
+        "id": "task-30",
+        "title": "Re-scope toolbar birth readiness and tiny-rect badge targeting",
+        "status": "done",
+        "objective": "Update the saved XY-171 contract so Frozen toolbar reservation begins only when the toolbar birth logic is ready to draw, and tiny valid capture rects are still eligible for size-badge targeting.",
+        "inputs": [
+          "New PR #41 review feedback after head 149ba71 on toolbar birth readiness and tiny-rect badge suppression",
+          "Current toolbar birth logic and shared size-badge target helpers in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A corrected reservation and badge-target contract for toolbar birth timing and tiny capture rects"
+        ],
+        "verification": [
+          "The saved contract no longer reserves toolbar space before the toolbar can actually draw for the current viewport.",
+          "The saved contract no longer applies the live drag-init threshold to all badge target paths."
+        ],
+        "depends_on": [
+          "task-29"
+        ]
+      },
+      {
+        "id": "task-31",
+        "title": "Implement the toolbar-birth and tiny-target repair batch",
+        "status": "done",
+        "objective": "Repair overlay.rs so Frozen badge reservation waits for toolbar birth readiness, tiny valid capture rects still produce badge targets, and focused regression coverage expands for both review findings.",
+        "inputs": [
+          "Task 30 contract update",
+          "Current overlay.rs toolbar reservation timing and badge target tests"
+        ],
+        "outputs": [
+          "A repaired toolbar-birth reservation path and badge-target helpers plus focused tests for both review findings"
+        ],
+        "verification": [
+          "Frozen preview frames before toolbar birth no longer reserve phantom toolbar space.",
+          "Tiny valid Frozen and live drag capture rects still produce size-badge targets.",
+          "New focused tests fail without the repair batch and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-30"
+        ]
+      },
+      {
+        "id": "task-32",
+        "title": "Re-verify the toolbar-birth and tiny-target repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the latest XY-171 review-repair batch so the refreshed PR head is ready for another review pass.",
+        "inputs": [
+          "Task 31 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the toolbar-birth and tiny-target repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-31"
+        ]
+      },
+      {
+        "id": "task-33",
+        "title": "Re-scope preseeded toolbar readiness in the Frozen badge contract",
+        "status": "done",
+        "objective": "Update the saved XY-171 contract so a preseeded Frozen toolbar floating position does not count as draw readiness until the current overlay viewport has been sampled and confirmed stable.",
+        "inputs": [
+          "New PR #41 review feedback after head df6bd3b on preseeded Frozen toolbar floating positions",
+          "Current begin_frozen_capture_with_rect, seed_frozen_toolbar_default_position, and frozen_toolbar_ready_for_draw logic in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A corrected Frozen toolbar readiness contract that distinguishes preseeded placement from verified draw readiness"
+        ],
+        "verification": [
+          "The saved contract no longer treats a preseeded floating toolbar position as sufficient readiness for toolbar-slot reservation.",
+          "The saved contract still allows the Frozen toolbar to spawn immediately once the current viewport has been sampled and confirmed stable."
+        ],
+        "depends_on": [
+          "task-32"
+        ]
+      },
+      {
+        "id": "task-34",
+        "title": "Implement the preseeded-toolbar readiness repair batch",
+        "status": "done",
+        "objective": "Repair overlay.rs so Frozen badge reservation ignores preseeded toolbar positions until the viewport-stability path confirms the current overlay viewport, and add focused regression coverage for that startup timing.",
+        "inputs": [
+          "Task 33 contract update",
+          "Current overlay.rs Frozen toolbar birth and reservation tests"
+        ],
+        "outputs": [
+          "A repaired Frozen toolbar readiness helper plus focused tests for the preseeded-position review finding"
+        ],
+        "verification": [
+          "Early Frozen frames with a preseeded toolbar position do not reserve badge toolbar space before viewport stabilization.",
+          "Once the current viewport has been sampled and confirmed stable, the Frozen toolbar reservation becomes available without regressing existing startup behavior.",
+          "New focused tests fail without the repair batch and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-33"
+        ]
+      },
+      {
+        "id": "task-35",
+        "title": "Re-verify the preseeded-toolbar readiness repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the latest XY-171 review-repair batch so the refreshed PR head is ready for another review pass.",
+        "inputs": [
+          "Task 34 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the preseeded-toolbar readiness repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-34"
+        ]
+      },
+      {
+        "id": "task-36",
+        "title": "Re-scope overlay-viewport readiness sampling for the Frozen badge",
+        "status": "done",
+        "objective": "Update the saved XY-171 contract so Frozen toolbar draw readiness samples the overlay viewport on macOS split-toolbar paths instead of inheriting the dedicated toolbar window viewport.",
+        "inputs": [
+          "New PR #41 review feedback after head 0e73577 on dedicated toolbar window viewport pollution",
+          "Current handle_overlay_window_redraw, render_frozen_toolbar_ui, and frozen_toolbar_ready_for_draw logic in packages/rsnap-overlay/src/overlay.rs"
+        ],
+        "outputs": [
+          "A corrected Frozen toolbar readiness contract that keeps overlay-viewport sampling separate from toolbar-window rendering"
+        ],
+        "verification": [
+          "The saved contract no longer allows toolbar-window viewport samples to keep Frozen badge reservation permanently non-ready on macOS.",
+          "The saved contract still preserves the existing non-macOS frozen toolbar readiness behavior."
+        ],
+        "depends_on": [
+          "task-35"
+        ]
+      },
+      {
+        "id": "task-37",
+        "title": "Implement the overlay-viewport readiness sampling repair batch",
+        "status": "done",
+        "objective": "Repair overlay.rs so Frozen badge reservation samples readiness from the overlay viewport basis on macOS, prevents toolbar-window viewport pollution, and adds focused regression coverage for the split-toolbar-window path.",
+        "inputs": [
+          "Task 36 contract update",
+          "Current overlay.rs Frozen toolbar readiness tests and macOS toolbar-window handling"
+        ],
+        "outputs": [
+          "A repaired Frozen toolbar readiness sampling path plus focused tests for overlay-vs-toolbar viewport separation"
+        ],
+        "verification": [
+          "On macOS split-toolbar paths, Frozen badge reservation becomes ready after the overlay viewport stabilizes even if the toolbar window viewport is smaller.",
+          "Toolbar-window rendering no longer overwrites the overlay-viewport sample used by Frozen badge reservation.",
+          "New focused tests fail without the repair batch and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-36"
+        ]
+      },
+      {
+        "id": "task-38",
+        "title": "Re-verify the overlay-viewport readiness sampling repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the latest XY-171 review-repair batch so the refreshed PR head is ready for another review pass.",
+        "inputs": [
+          "Task 37 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the overlay-viewport readiness sampling repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-37"
+        ]
+      },
+      {
+        "id": "task-39",
+        "title": "Capture the Linux CI regression in the saved contract",
+        "status": "done",
+        "objective": "Reopen the saved XY-171 contract for the post-8073609 Linux CI failure so the follow-up repair is tracked before more implementation happens.",
+        "inputs": [
+          "Rust checks failure on PR #41 for head 8073609",
+          "Linux CI log showing non-macOS compilation still calls frozen_toolbar_ready_for_draw"
+        ],
+        "outputs": [
+          "An updated saved contract that explicitly covers the non-macOS compile-path repair"
+        ],
+        "verification": [
+          "The saved contract records the Linux CI failure as current execution authority for the next repair batch."
+        ],
+        "depends_on": [
+          "task-38"
+        ]
+      },
+      {
+        "id": "task-40",
+        "title": "Repair the non-macOS Frozen toolbar readiness compile path",
+        "status": "done",
+        "objective": "Restore the non-macOS Frozen badge reservation helper so Linux CI can compile the lint path while keeping the macOS overlay-viewport sampling repair intact.",
+        "inputs": [
+          "Task 39 contract update",
+          "packages/rsnap-overlay/src/overlay.rs Frozen toolbar readiness helper definitions and callers"
+        ],
+        "outputs": [
+          "A minimal cross-platform cfg repair for frozen_toolbar_ready_for_draw plus any focused regression coverage needed"
+        ],
+        "verification": [
+          "The non-macOS compile path resolves frozen_toolbar_ready_for_draw again.",
+          "The macOS toolbar-window pollution repair remains unchanged in behavior."
+        ],
+        "depends_on": [
+          "task-39"
+        ]
+      },
+      {
+        "id": "task-41",
+        "title": "Re-verify the Linux CI compile-path repair batch",
+        "status": "done",
+        "objective": "Run the repo-native checks after the cross-platform cfg repair so the refreshed PR head is ready to replace the CI-red state.",
+        "inputs": [
+          "Task 40 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the Linux CI compile-path repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-40"
+        ]
+      },
+      {
+        "id": "task-42",
+        "title": "Capture the Linux lint dead-code regression in the saved contract",
+        "status": "done",
+        "objective": "Reopen the saved XY-171 contract for the post-33e7279 Linux CI failure so the follow-up repair stays tracked before another PR head refresh.",
+        "inputs": [
+          "Rust checks failure on PR #41 for head 33e7279",
+          "Linux CI log showing advance_frozen_toolbar_readiness_sample is dead code on non-macOS lint builds"
+        ],
+        "outputs": [
+          "An updated saved contract that explicitly covers the Linux dead-code follow-up batch"
+        ],
+        "verification": [
+          "The saved contract records the latest Linux CI dead-code failure as the current execution authority for the next repair batch."
+        ],
+        "depends_on": [
+          "task-41"
+        ]
+      },
+      {
+        "id": "task-43",
+        "title": "Repair macOS-only readiness-sampler visibility for Linux lint",
+        "status": "done",
+        "objective": "Narrow advance_frozen_toolbar_readiness_sample to the macOS runtime and tests so Linux lint no longer sees dead code while the macOS Frozen readiness path and focused tests remain intact.",
+        "inputs": [
+          "Task 42 contract update",
+          "packages/rsnap-overlay/src/overlay.rs Frozen toolbar readiness helper definitions and test callers"
+        ],
+        "outputs": [
+          "A minimal cfg repair for advance_frozen_toolbar_readiness_sample that preserves macOS runtime behavior and test coverage"
+        ],
+        "verification": [
+          "Linux lint no longer reports advance_frozen_toolbar_readiness_sample as dead code.",
+          "The macOS overlay-viewport readiness sampling behavior remains unchanged.",
+          "Focused tests that call the helper still compile and pass."
+        ],
+        "depends_on": [
+          "task-42"
+        ]
+      },
+      {
+        "id": "task-44",
+        "title": "Re-verify the Linux dead-code repair batch",
+        "status": "done",
+        "objective": "Run the repo-native checks after the readiness-sampler cfg repair so the refreshed PR head can replace the latest CI-red state.",
+        "inputs": [
+          "Task 43 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the Linux dead-code repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make fmt-rust-check exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-43"
+        ]
+      },
+      {
+        "id": "task-45",
+        "title": "Capture the latest toolbar-readiness and tiny-frozen review findings",
+        "status": "done",
+        "objective": "Reopen the saved XY-171 contract for the latest PR #41 review batch so the non-macOS toolbar-readiness regression and tiny-frozen badge regression are tracked before another repair commit.",
+        "inputs": [
+          "Current unresolved PR #41 review threads at overlay.rs:9820 and overlay.rs:8533 on head 9949dce",
+          "Code inspection showing non-macOS render_frozen_toolbar_ui does not advance layout_stable_frames after a preseeded toolbar position and frozen_capture_focus_rect still rejects tiny Frozen rects"
+        ],
+        "outputs": [
+          "An updated saved contract that explicitly covers the latest toolbar-readiness and tiny-frozen review batch"
+        ],
+        "verification": [
+          "The saved contract records both current review findings as the next execution authority before more implementation happens."
+        ],
+        "depends_on": [
+          "task-44"
+        ]
+      },
+      {
+        "id": "task-46",
+        "title": "Repair non-macOS toolbar readiness and tiny Frozen badge rendering",
+        "status": "done",
+        "objective": "Update overlay.rs so non-macOS Frozen toolbar readiness can stabilize even after preseeded toolbar positions and tiny Frozen capture rects can still reach the shared size-badge render path, with focused regression coverage for both.",
+        "inputs": [
+          "Task 45 contract update",
+          "packages/rsnap-overlay/src/overlay.rs Frozen toolbar birth/readiness helpers and Frozen affordance rendering"
+        ],
+        "outputs": [
+          "A coherent repair batch covering non-macOS toolbar readiness progression, tiny Frozen badge rendering, and focused tests"
+        ],
+        "verification": [
+          "Non-macOS Frozen toolbar readiness no longer stays permanently non-ready after begin_frozen_capture_with_rect preseeds floating_position.",
+          "Tiny valid Frozen capture rects still reach the shared size-badge render path.",
+          "Focused tests fail without the repair and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-45"
+        ]
+      },
+      {
+        "id": "task-47",
+        "title": "Re-verify the latest review-repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the latest review-repair batch so the refreshed PR head is ready for another review pass.",
+        "inputs": [
+          "Task 46 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the latest toolbar-readiness and tiny-frozen repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make fmt-rust-check exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-46"
+        ]
+      },
+      {
+        "id": "task-48",
+        "title": "Capture the latest first-visible-toolbar and default-slot review findings",
+        "status": "done",
+        "objective": "Reopen the saved XY-171 contract for the next PR #41 review batch so first-visible non-macOS toolbar overlap and dragged-back default-slot reservation are tracked before another repair commit.",
+        "inputs": [
+          "Current unresolved PR #41 review threads at overlay.rs:6406 and overlay.rs:8691 on head 92f94e4",
+          "Code inspection showing non-macOS toolbar reservation is still computed before the first visible toolbar draw and frozen_toolbar_reserved_rect still keys default-slot reservation on exact Pos2 equality"
+        ],
+        "outputs": [
+          "An updated saved contract that explicitly covers the latest first-visible-toolbar and default-slot reservation review batch"
+        ],
+        "verification": [
+          "The saved contract records both current review findings as the next execution authority before more implementation happens."
+        ],
+        "depends_on": [
+          "task-47"
+        ]
+      },
+      {
+        "id": "task-49",
+        "title": "Repair first-visible toolbar reservation timing and default-slot restoration",
+        "status": "done",
+        "objective": "Update overlay.rs so the Frozen badge never overlaps the first visible non-macOS toolbar frame and the default-slot reservation still activates when the toolbar is dragged back to its default lane with minor float drift, with focused regression coverage for both.",
+        "inputs": [
+          "Task 48 contract update",
+          "packages/rsnap-overlay/src/overlay.rs Frozen toolbar reservation timing, draw gating, and default-slot matching helpers"
+        ],
+        "outputs": [
+          "A coherent repair batch covering first-visible non-macOS toolbar reservation timing, default-slot restoration tolerance, and focused tests"
+        ],
+        "verification": [
+          "The Frozen size badge does not miss the first visible non-macOS toolbar frame because the toolbar is not drawn before the reservation gate is active.",
+          "Dragging the Frozen toolbar back to its default slot still reactivates badge reservation even when floating_position differs by a small float offset.",
+          "Focused tests fail without the repair and pass with the final implementation."
+        ],
+        "depends_on": [
+          "task-48"
+        ]
+      },
+      {
+        "id": "task-50",
+        "title": "Re-verify the latest toolbar-timing and default-slot repair batch",
+        "status": "done",
+        "objective": "Run the repo-native verification commands after the latest review-repair batch so the refreshed PR head is ready for another review pass.",
+        "inputs": [
+          "Task 49 diff"
+        ],
+        "outputs": [
+          "Fresh verification evidence for the latest toolbar-timing and default-slot repair batch"
+        ],
+        "verification": [
+          "cargo make fmt exits 0",
+          "cargo make fmt-rust-check exits 0",
+          "cargo make lint exits 0",
+          "cargo make test exits 0",
+          "git diff --check returns clean"
+        ],
+        "depends_on": [
+          "task-49"
+        ]
+      }
+    ],
+    "replan_policy": {
+      "owner": "plan-writing",
+      "triggers": [
+        "The badge cannot be shared cleanly across live and Frozen affordances without widening the task into broader HUD/window layering changes.",
+        "The placement rules conflict with Frozen toolbar or loupe geometry in a way that needs a product decision rather than a local layout fix.",
+        "Verification exposes regressions outside overlay rendering that widen the task beyond XY-171.",
+        "Badge styling requires touching the existing HUD blur pipeline again instead of staying as local text rendering.",
+        "Review feedback reveals another badge geometry priority conflict that is not already encoded in the saved edge-case matrix.",
+        "Review feedback reveals that Frozen toolbar reservation is still using the wrong viewport basis or still reserving a hidden toolbar slot.",
+        "Review feedback reveals that Frozen toolbar reservation is still active before toolbar birth is actually drawable or that tiny valid capture rects still lose the size badge.",
+        "Review feedback reveals that a preseeded Frozen toolbar position is still being treated as draw readiness before the current viewport is stable.",
+        "Review feedback reveals that Frozen toolbar draw readiness is still sampling the dedicated toolbar window viewport instead of the overlay viewport on macOS.",
+        "Linux CI reveals that a platform cfg change in the Frozen toolbar readiness helper broke the non-macOS compile path.",
+        "Linux CI reveals that a macOS-only Frozen toolbar readiness sampler is still compiled into non-macOS lint paths and trips dead-code denial.",
+        "Review feedback reveals that non-macOS Frozen toolbar reservation still never reaches a ready state after preseeded toolbar positions.",
+        "Review feedback reveals that tiny Frozen capture rects still fail to reach the shared size-badge render path.",
+        "Review feedback reveals that non-macOS Frozen toolbar reservation still misses the first visible toolbar frame because reservation is computed before draw-phase readiness advancement.",
+        "Review feedback reveals that Frozen toolbar default-slot reservation still depends on exact floating-position equality after the toolbar is dragged back near its default slot."
+      ]
+    }
+  },
+  "state": {
+    "phase": "done",
+    "current_task_id": null,
+    "next_task_id": null,
+    "blockers": [],
+    "evidence": [
+      "Task 1 outcome: packages/rsnap-overlay/src/overlay.rs now defines shared size-badge helpers for source selection, pixel-dimension text formatting, below-first placement, and inside-rect fallback while keeping the badge right-aligned to the capture rect.",
+      "Task 2 outcome: live drag, hovered-window, fullscreen fallback, and Frozen capture affordances now all render the same badge style through WindowRenderer::render_selection_size_badge().",
+      "Task 2 style constraint kept: the badge reuses the existing HUD pill fill/stroke language and monospace text colors so it stays visually aligned with the current overlay HUD and Frozen toolbar.",
+      "Task 3 outcome: added focused overlay tests for below placement, inside fallback, Retina pixel text scaling, live source precedence, primary-down fullscreen suppression, and Frozen capture targeting.",
+      "Task 4 verification: cargo make fmt completed successfully.",
+      "Task 4 verification: cargo test -p rsnap-overlay selection_size_badge --lib passed with 3 tests passing and 0 failures.",
+      "Task 4 verification: cargo test -p rsnap-overlay live_capture_size_badge_target --lib passed with 2 tests passing and 0 failures.",
+      "Task 4 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 114 tests passing and 0 failures.",
+      "Task 4 verification: cargo make lint-rust completed successfully.",
+      "Task 4 verification: cargo make smoke-self-check-macos completed successfully with both self-check smoke scripts reporting ok.",
+      "Task 4 verification: git diff --check returned clean.",
+      "Task 5 outcome: live and Frozen badge rendering now compute the body fill through WindowRenderer::tinted_hud_body_fill() before calling WindowRenderer::render_selection_size_badge(), removing the badge's separate partial fill path.",
+      "Task 5 outcome: WindowRenderer::render_selection_size_badge() now consumes the shared HUD body fill directly while still reusing the existing HUD pill frame and text color helpers for geometry-local drawing only.",
+      "Task 6 verification: cargo make fmt completed successfully after the HUD style-path simplification.",
+      "Task 6 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 114 tests passing and 0 failures after the HUD style-path simplification.",
+      "Task 6 verification: cargo make lint-rust completed successfully after the HUD style-path simplification.",
+      "Task 6 verification: cargo make smoke-self-check-macos completed successfully with both self-check smoke scripts reporting ok after the HUD style-path simplification.",
+      "Task 6 verification: git diff --check returned clean after the HUD style-path simplification.",
+      "Task 7 outcome: badge glass-mode fill now uses the same show_hud_blur + hud_opaque activation rule as the rest of the HUD surfaces instead of depending on whether a native HUD window is active on that path.",
+      "Task 7 outcome: blur geometry is now collected through the shared RunEguiGeometry blur-pills contract, and HudBlurUniformRaw plus hud_blur.wgsl now support two rounded-rect blur regions so toolbar/HUD and size badge can share one blur implementation without a badge-only path.",
+      "Task 7 outcome: overlay blur activation now syncs HUD background for badge-only glass surfaces on overlay windows, including macOS live and Frozen selection affordances where the badge previously stayed flat.",
+      "Task 8 verification: cargo make fmt completed successfully after the shared blur-contract update.",
+      "Task 8 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 116 tests passing and 0 failures after adding blur-region coverage.",
+      "Task 8 verification: cargo make lint-rust completed successfully after the shared blur-contract update.",
+      "Task 8 verification: cargo make smoke-self-check-macos completed successfully with both self-check smoke scripts reporting ok after the shared blur-contract update.",
+      "Task 8 verification: git diff --check returned clean after the shared blur-contract update.",
+      "Task 8 verification: cargo run -p rsnap launched successfully after the hud_blur.wgsl array-access fix, confirming the updated shared blur shader validates at runtime.",
+      "Replan evidence: a fresh user-driven repro on 2026-03-19 showed cargo run -p rsnap still panics at runtime with a wgpu shader validation error in packages/rsnap-overlay/src/hud_blur.wgsl (`expected ';', found region_count`), so the saved plan was reopened for a narrow runtime shader fix.",
+      "Task 9 outcome: packages/rsnap-overlay/src/hud_blur.wgsl now uses WGSL-valid control flow for blur_radius_px instead of an invalid if-expression, keeping the shared blur logic unchanged while allowing shader-module creation to succeed at runtime.",
+      "Task 9 verification: cargo make fmt completed successfully after the runtime shader syntax fix.",
+      "Task 9 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 116 tests passing and 0 failures after the runtime shader syntax fix.",
+      "Task 9 verification: cargo make lint-rust completed successfully after the runtime shader syntax fix.",
+      "Task 9 verification: git diff --check returned clean after the runtime shader syntax fix.",
+      "Task 9 verification: cargo run -p rsnap launched successfully and remained running without a hud blur shader-module validation panic after the runtime shader syntax fix.",
+      "Replan evidence: on 2026-03-19 the user still reported no visible blur effect, and code inspection traced the macOS live badge blur path back to live background capture still being gated by use_fake_hud_blur(), which is false on macOS.",
+      "Task 10 outcome: packages/rsnap-overlay/src/overlay.rs now distinguishes live background texture needs from the non-macOS fake HUD blur helper, so macOS live glass mode requests and retains live background images for the badge blur shader path.",
+      "Task 10 outcome: added a macOS-only regression test proving handle_captured_freeze_response() updates live_bg_image/live_bg_generation for live glass mode instead of dropping the captured monitor image.",
+      "Task 10 verification: cargo make fmt completed successfully after the live background gating fix.",
+      "Task 10 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 117 tests passing and 0 failures after the live background gating fix.",
+      "Task 10 verification: cargo make lint-rust completed successfully after the live background gating fix.",
+      "Task 10 verification: git diff --check returned clean after the live background gating fix.",
+      "Task 10 verification: cargo run -p rsnap launched successfully after the live background gating fix, and the new session remained running while the macOS live badge blur path had background-source coverage from the added regression test.",
+      "Replan evidence: after the live badge blur experiment landed, the user reported a major visual regression where existing pos/rgb HUD blur looked wrong, so the saved plan was reopened on 2026-03-19 to remove the badge-specific blur path and simplify the XY-171 widget back to text-only rendering.",
+      "Task 11 outcome: packages/rsnap-overlay/src/overlay.rs and packages/rsnap-overlay/src/hud_blur.wgsl now drop the badge-specific blur-region and live-background experiment, restoring the existing HUD/loupe/toolbar blur path to the pre-experiment single-pill behavior.",
+      "Task 11 outcome: the XY-171 size widget now renders as pure monospace text with a fixed high-contrast primary color plus a light outline, while keeping the same placement and target-selection helpers for drag, hovered-window, fullscreen fallback, and Frozen paths.",
+      "Task 12 verification: cargo make fmt completed successfully after the blur rollback and text-only badge rewrite.",
+      "Task 12 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 114 tests passing and 0 failures after the blur rollback and text-only badge rewrite.",
+      "Task 12 verification: cargo make lint-rust completed successfully after the blur rollback and text-only badge rewrite.",
+      "Task 12 verification: git diff --check returned clean after the blur rollback and text-only badge rewrite.",
+      "Task 12 verification: cargo run -p rsnap launched successfully and remained running after the blur rollback and text-only badge rewrite.",
+      "Replan evidence: on 2026-03-19 the user asked for a more polished look while keeping the simplified text-only badge path and not touching the existing blur widgets again.",
+      "Task 13 outcome: packages/rsnap-overlay/src/overlay.rs now renders the text-only XY-171 badge with a softer diagonal ambient halo, a single directional shadow, and a subtle top sheen instead of the harsher four-way cross outline.",
+      "Task 13 outcome: the style polish stays fully local to the text-only badge renderer and constants, without reintroducing any pill, blur, or live-background dependency into the existing HUD pipeline.",
+      "Task 14 verification: cargo make fmt completed successfully after the text-only badge style polish.",
+      "Task 14 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 114 tests passing and 0 failures after the text-only badge style polish.",
+      "Task 14 verification: cargo make lint-rust completed successfully after the text-only badge style polish.",
+      "Task 14 verification: git diff --check returned clean after the text-only badge style polish.",
+      "Task 14 verification: cargo run -p rsnap launched successfully and remained running in session 1676 after the text-only badge style polish.",
+      "Replan evidence: on 2026-03-19 the user reported that the polished text-only badge could still look mosaic-like on some backgrounds and asked for a crisper treatment.",
+      "Task 15 outcome: packages/rsnap-overlay/src/overlay.rs now snaps the size-badge text anchor to the physical pixel grid and reduces the text treatment to a single pixel-aligned shadow plus the main glyph pass.",
+      "Task 15 outcome: the previous fractional ambient halo and sheen passes were removed, so the badge no longer relies on multi-pass subpixel offsets that can make the text look dirty on some backgrounds.",
+      "Task 16 verification: cargo make fmt completed successfully after the crisp text rendering cleanup.",
+      "Task 16 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 114 tests passing and 0 failures after the crisp text rendering cleanup.",
+      "Task 16 verification: cargo make lint-rust completed successfully after the crisp text rendering cleanup.",
+      "Task 16 verification: git diff --check returned clean after the crisp text rendering cleanup.",
+      "Task 16 verification: cargo run -p rsnap launched successfully and remained running in session 8538 after the crisp text rendering cleanup.",
+      "Replan evidence: on 2026-03-19 the user asked for a more premium, macOS-like shadow treatment while keeping the badge in the text-only path.",
+      "Task 17 outcome: packages/rsnap-overlay/src/overlay.rs now renders the size badge with a small pixel-aligned shadow stack: a soft lower shadow, a tighter diagonal edge shadow, and a near shadow before the main text glyph.",
+      "Task 17 outcome: the richer shadow treatment borrows the same general depth direction as the existing HUD/loupe surfaces while staying in integer-pixel text passes to avoid bringing back subpixel blur artifacts.",
+      "Task 18 verification: cargo make fmt completed successfully after the richer text-shadow treatment.",
+      "Task 18 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 114 tests passing and 0 failures after the richer text-shadow treatment.",
+      "Task 18 verification: cargo make lint-rust completed successfully after the richer text-shadow treatment.",
+      "Task 18 verification: git diff --check returned clean after the richer text-shadow treatment.",
+      "Task 18 verification: cargo run --release -p rsnap launched successfully and remained running in session 13382 after the richer text-shadow treatment.",
+      "Replan evidence: on 2026-03-19 the user reported that the pure-number badge was still very hard to read in light theme and asked for a readability fix.",
+      "Task 19 outcome: packages/rsnap-overlay/src/overlay.rs now gives the size badge its own high-contrast text palette instead of reusing the general HUD text color, with light theme shifting to a bright glyph plus stronger dark outline and shadow support.",
+      "Task 19 outcome: the badge now draws a crisp 1px outline around the white glyph before the near shadow and main text pass, improving readability over bright backgrounds while staying in the text-only path.",
+      "Task 20 verification: cargo make fmt completed successfully after the light-theme readability fix.",
+      "Task 20 verification: cargo test -p rsnap-overlay overlay:: --lib passed with 114 tests passing and 0 failures after the light-theme readability fix.",
+      "Task 20 verification: cargo make lint-rust completed successfully after the light-theme readability fix.",
+      "Task 20 verification: git diff --check returned clean after the light-theme readability fix.",
+      "Task 20 verification: cargo run --release -p rsnap launched successfully and remained running in session 62239 after the light-theme readability fix.",
+      "Replan evidence: on 2026-03-19 the user explicitly requested a geometry-contract hardening pass because repeated PR review rounds kept exposing unencoded badge placement edge cases.",
+      "Task 21 outcome: selection_size_badge_rect_with_reserved_rect() now documents an explicit geometry priority contract in code, ordering right-edge alignment, below-placement preference, reserved-rect avoidance, above-capture fallback, and the narrow-left overflow exception.",
+      "Task 21 outcome: the focused badge matrix now covers bottom-reserved upper-band fallback, top-reserved preferred-inside retention, above-capture fallback when inside space is exhausted, unavoidable reserved-rect overlap, and narrow left-edge alignment preservation.",
+      "Task 22 outcome: the helper logic remained stable; the hardening pass encoded the intentional geometry tradeoffs directly in code comments and focused regression tests instead of continuing to patch review comments one by one.",
+      "Task 23 verification: cargo make fmt completed successfully after the geometry-contract hardening pass.",
+      "Task 23 verification: cargo make lint completed successfully after the geometry-contract hardening pass.",
+      "Task 23 verification: cargo make test completed successfully with 212 nextest cases and 181 rsnap-overlay unit tests passing after the geometry-contract hardening pass.",
+      "Task 23 verification: git diff --check returned clean after the geometry-contract hardening pass.",
+      "Replan evidence: on 2026-03-19 a new review after head 1cb7afe surfaced two more issues: the hardening pass still allowed the impossible narrow-left case to clip outside the viewport, and Frozen toolbar reservation was still reconstructing its screen basis independently from the toolbar runtime.",
+      "Task 24 outcome: the saved geometry contract now makes viewport visibility win over strict right-edge alignment for impossible narrow-left captures, and the Frozen toolbar reservation path now consumes the last sampled toolbar viewport size instead of rebuilding screen geometry only from monitor dimensions.",
+      "Task 25 outcome: packages/rsnap-overlay/src/overlay.rs now always clamps impossible narrow-left badge X placement back inside the screen, records the toolbar viewport size after runtime layout, uses that sampled basis when reserving the Frozen toolbar slot, and allows the above-capture fallback whenever the badge still fits fully on-screen.",
+      "Task 25 outcome: the focused regression matrix now includes impossible narrow-left clamping, near-left narrow-capture clamping, sampled-viewport toolbar reservation, and top-edge above-fallback visibility coverage so these review combinations are encoded directly in tests.",
+      "Task 26 verification: cargo make fmt completed successfully after the post-hardening review repair batch.",
+      "Task 26 verification: cargo make lint completed successfully after the post-hardening review repair batch.",
+      "Task 26 verification: cargo make test completed successfully with 214 nextest cases and 183 rsnap-overlay unit tests passing after the post-hardening review repair batch.",
+      "Task 26 verification: git diff --check returned clean after the post-hardening review repair batch.",
+      "Replan evidence: on 2026-03-19 a new review after head 6966d55 surfaced two more issues in Frozen toolbar reservation: the helper was still using toolbar-window screen sizing on macOS and it still reserved a hidden toolbar slot during preview-only frames.",
+      "Task 27 outcome: the saved contract now requires Frozen toolbar reservation to use the overlay viewport for the active monitor and to reserve space only while the toolbar is actually visible for the current platform path.",
+      "Task 28 outcome: packages/rsnap-overlay/src/overlay.rs now computes Frozen badge reservation from the overlay window viewport, gates the reservation on the toolbar's actual visible path, and covers both the overlay-viewport and hidden-toolbar cases with focused tests.",
+      "Task 29 verification: cargo make fmt completed successfully after the toolbar reservation repair batch.",
+      "Task 29 verification: cargo make lint completed successfully after the toolbar reservation repair batch.",
+      "Task 29 verification: cargo make test completed successfully with 216 nextest cases and 185 rsnap-overlay unit tests passing after the toolbar reservation repair batch.",
+      "Task 29 verification: git diff --check returned clean after the toolbar reservation repair batch.",
+      "Replan evidence: on 2026-03-19 a new review after head 149ba71 surfaced two more issues: the Frozen toolbar reservation still starts before toolbar birth can actually draw, and the shared badge target helper still filters out tiny valid capture rects with the live drag-init threshold.",
+      "Task 30 outcome: the saved contract now requires Frozen toolbar reservation to wait for toolbar birth readiness and tiny valid capture rects to remain eligible for size-badge targeting.",
+      "Task 31 outcome: packages/rsnap-overlay/src/overlay.rs now gates Frozen badge reservation on toolbar birth readiness for the current viewport and splits tiny valid badge-target selection from the live drag-init threshold, with focused tests for both review findings.",
+      "Task 32 verification: cargo make fmt completed successfully after the toolbar-birth and tiny-target repair batch.",
+      "Task 32 verification: cargo make lint completed successfully after the toolbar-birth and tiny-target repair batch.",
+      "Task 32 verification: cargo make test completed successfully with 219 nextest cases and 188 rsnap-overlay unit tests passing after the toolbar-birth and tiny-target repair batch.",
+      "Task 32 verification: git diff --check returned clean after the toolbar-birth and tiny-target repair batch.",
+      "Replan evidence: on 2026-03-19 a new review after head df6bd3b surfaced another Frozen-toolbar timing hole: begin_frozen_capture_with_rect preseeds toolbar_state.floating_position before viewport stabilization, so the readiness helper must not treat that preseed alone as proof that the toolbar can already draw.",
+      "Task 33 outcome: the saved contract now explicitly distinguishes a preseeded Frozen toolbar position from verified draw readiness, requiring current-viewport sampling and stability confirmation before toolbar-slot reservation can start.",
+      "Task 34 outcome: packages/rsnap-overlay/src/overlay.rs no longer treats toolbar_state.floating_position as a readiness shortcut for Frozen badge reservation, so preseeded toolbar positions stay non-ready until the current viewport has been sampled and confirmed stable.",
+      "Task 34 outcome: added frozen_toolbar_ready_for_draw_ignores_preseeded_position_until_viewport_stabilizes to cover begin_frozen_capture_with_rect preseed startup directly.",
+      "Task 35 verification: cargo make fmt completed successfully after the preseeded-toolbar readiness repair batch.",
+      "Task 35 verification: cargo make lint completed successfully after the preseeded-toolbar readiness repair batch.",
+      "Task 35 verification: cargo make test completed successfully with 220 nextest cases and 189 rsnap-overlay unit tests passing after the preseeded-toolbar readiness repair batch.",
+      "Task 35 verification: git diff --check returned clean after the preseeded-toolbar readiness repair batch.",
+      "Replan evidence: on 2026-03-19 a new review after head 0e73577 surfaced another Frozen-toolbar readiness bug on macOS: render_frozen_toolbar_ui records layout_last_screen_size_points from the dedicated toolbar window viewport, so the badge reservation path can compare the wrong basis against the overlay viewport and remain permanently non-ready.",
+      "Task 36 outcome: the saved contract now explicitly requires Frozen badge reservation readiness on macOS to sample the active overlay viewport instead of inheriting the dedicated toolbar window viewport.",
+      "Task 37 outcome: packages/rsnap-overlay/src/overlay.rs now advances Frozen toolbar readiness from handle_overlay_window_redraw using the overlay viewport on macOS, keeps toolbar-window rendering from overwriting that sample, and adds frozen_toolbar_overlay_viewport_sample_recovers_from_toolbar_window_pollution to cover the split-toolbar-window regression directly.",
+      "Task 38 verification: cargo make fmt completed successfully after the overlay-viewport readiness sampling repair batch.",
+      "Task 38 verification: cargo make fmt-rust-check completed successfully after the overlay-viewport readiness sampling repair batch.",
+      "Task 38 verification: cargo make lint completed successfully after the overlay-viewport readiness sampling repair batch.",
+      "Task 38 verification: cargo make test completed successfully with 221 nextest cases and 190 rsnap-overlay unit tests passing after the overlay-viewport readiness sampling repair batch.",
+      "Task 38 verification: git diff --check returned clean after the overlay-viewport readiness sampling repair batch.",
+      "Replan evidence: on 2026-03-19 Linux CI for head 8073609 failed in Rust checks because the non-macOS lint path still calls frozen_toolbar_ready_for_draw while the helper had been narrowed to cfg(test), so the latest macOS readiness repair regressed cross-platform compilation.",
+      "Task 39 outcome: the saved contract now explicitly tracks the Linux CI compile regression as a follow-up repair batch on top of the macOS toolbar readiness fix.",
+      "Task 40 outcome: packages/rsnap-overlay/src/overlay.rs now exposes frozen_toolbar_ready_for_draw on non-macOS targets and in tests, restoring the Linux lint compile path without changing the macOS overlay-viewport sampling behavior.",
+      "Task 41 verification: cargo make fmt completed successfully after the Linux CI compile-path repair batch.",
+      "Task 41 verification: cargo make fmt-rust-check completed successfully after the Linux CI compile-path repair batch.",
+      "Task 41 verification: cargo make lint completed successfully after the Linux CI compile-path repair batch.",
+      "Task 41 verification: cargo make test completed successfully with 221 nextest cases and 190 rsnap-overlay unit tests passing after the Linux CI compile-path repair batch.",
+      "Task 41 verification: git diff --check returned clean after the Linux CI compile-path repair batch.",
+      "Task 41 verification: cargo check -p rsnap-overlay --all-features --all-targets --target x86_64-unknown-linux-gnu progressed past the prior missing-method failure and then stopped at local cross-pkg-config setup for khronos-egl, which is a host-environment limitation rather than the original compile regression.",
+      "Replan evidence: on 2026-03-19 Linux CI for head 33e7279 failed in Rust checks because advance_frozen_toolbar_readiness_sample remained visible to non-macOS lint builds and tripped dead-code denial.",
+      "Task 42 outcome: the saved contract now explicitly tracks the Linux dead-code regression as a narrow follow-up batch on top of the earlier non-macOS compile-path repair.",
+      "Task 43 outcome: packages/rsnap-overlay/src/overlay.rs now narrows advance_frozen_toolbar_readiness_sample to macOS runtime builds and tests, so Linux lint no longer sees the helper while focused tests can still call it.",
+      "Task 44 verification: cargo make fmt completed successfully after the Linux dead-code repair batch.",
+      "Task 44 verification: cargo make fmt-rust-check completed successfully after the Linux dead-code repair batch.",
+      "Task 44 verification: cargo make lint completed successfully after the Linux dead-code repair batch.",
+      "Task 44 verification: cargo make test completed successfully with 221 nextest cases and 190 rsnap-overlay unit tests passing after the Linux dead-code repair batch.",
+      "Task 44 verification: git diff --check returned clean after the Linux dead-code repair batch.",
+      "Replan evidence: on 2026-03-19 current PR #41 review threads at overlay.rs:9820 and overlay.rs:8533 remained unresolved because non-macOS Frozen toolbar readiness still did not advance after a preseeded position and tiny Frozen rects still failed to reach the shared badge render path.",
+      "Task 45 outcome: the saved contract now explicitly tracks the latest review batch covering non-macOS toolbar-readiness progression and tiny Frozen badge rendering.",
+      "Task 46 outcome: packages/rsnap-overlay/src/overlay.rs now shares advance_frozen_toolbar_readiness_sample_state between the macOS overlay-viewport readiness sampler and the non-macOS frozen toolbar draw path, so preseeded Frozen toolbar positions can still advance to a ready reserved-slot state on non-macOS.",
+      "Task 46 outcome: frozen_capture_focus_rect no longer filters out tiny Frozen rects with LIVE_DRAG_START_THRESHOLD_PX, and focused regressions now lock both the non-macOS readiness recovery path and the tiny Frozen affordance path.",
+      "Task 47 verification: cargo make fmt completed successfully after the latest toolbar-readiness and tiny-Frozen repair batch.",
+      "Task 47 verification: cargo make fmt-rust-check completed successfully after the latest toolbar-readiness and tiny-Frozen repair batch.",
+      "Task 47 verification: cargo make lint completed successfully after the latest toolbar-readiness and tiny-Frozen repair batch.",
+      "Task 47 verification: cargo make test completed successfully with 223 nextest cases and 192 rsnap-overlay unit tests passing after the latest toolbar-readiness and tiny-Frozen repair batch.",
+      "Task 47 verification: git diff --check returned clean after the latest toolbar-readiness and tiny-Frozen repair batch.",
+      "Replan evidence: on 2026-03-19 current PR #41 review threads at overlay.rs:6406 and overlay.rs:8691 remained unresolved because non-macOS Frozen toolbar reservation still missed the first visible toolbar frame and default-slot reservation still depended on exact floating-position equality after dragging back near the default lane.",
+      "Task 48 outcome: the saved contract now explicitly tracks the latest review batch covering first-visible non-macOS toolbar reservation timing and dragged-back default-slot reservation.",
+      "Task 49 outcome: packages/rsnap-overlay/src/overlay.rs now delays non-macOS Frozen toolbar drawing until advance_frozen_toolbar_readiness_sample_state reaches the first ready frame, so the badge reservation is active before the toolbar ever becomes visible.",
+      "Task 49 outcome: frozen_toolbar_reserved_rect now treats floating positions within 1.0 point of the default slot as restored and reserves the actual near-default toolbar rect instead of requiring exact Pos2 equality.",
+      "Task 49 outcome: focused regressions now cover the first visible Frozen toolbar frame and dragged-back default-slot restoration.",
+      "Task 50 verification: cargo make fmt completed successfully after the first-visible-toolbar and default-slot restoration repair batch.",
+      "Task 50 verification: cargo make fmt-rust-check completed successfully after the first-visible-toolbar and default-slot restoration repair batch.",
+      "Task 50 verification: cargo make lint completed successfully after the first-visible-toolbar and default-slot restoration repair batch.",
+      "Task 50 verification: cargo make test completed successfully with 225 nextest cases and 194 rsnap-overlay unit tests passing after the first-visible-toolbar and default-slot restoration repair batch.",
+      "Task 50 verification: git diff --check returned clean after the first-visible-toolbar and default-slot restoration repair batch."
+    ],
+    "last_updated": "2026-03-19T08:46:41Z",
+    "replan_reason": null,
+    "context_snapshot": {
+      "blur_experiment_rollback_requested": true,
+      "blur_followup_requested": true,
+      "crispness_followup_completed": true,
+      "crispness_followup_requested": true,
+      "geometry_contract_hardening_completed": true,
+      "geometry_contract_hardening_requested": true,
+      "geometry_visibility_reprioritization_completed": true,
+      "geometry_visibility_reprioritization_requested": true,
+      "hidden_toolbar_reservation_followup_completed": true,
+      "hidden_toolbar_reservation_followup_requested": true,
+      "light_theme_readability_followup_completed": true,
+      "light_theme_readability_followup_requested": true,
+      "linear_issue": "XY-171",
+      "live_bg_gating_fix_requested": true,
+      "premium_shadow_followup_completed": true,
+      "premium_shadow_followup_requested": true,
+      "primary_surface": "overlay size badge",
+      "runtime_shader_fix_requested": true,
+      "style_followup_requested": true,
+      "style_polish_completed": true,
+      "style_polish_requested": true,
+      "text_only_badge_requested": true,
+      "tiny_badge_target_followup_completed": true,
+      "tiny_badge_target_followup_requested": true,
+      "toolbar_birth_readiness_followup_completed": true,
+      "toolbar_overlay_viewport_followup_completed": true,
+      "toolbar_overlay_viewport_followup_requested": true,
+      "toolbar_overlay_viewport_sampling_followup_completed": true,
+      "toolbar_overlay_viewport_sampling_followup_requested": false,
+      "linux_ci_compile_followup_completed": true,
+      "linux_ci_compile_followup_requested": false,
+      "linux_ci_dead_code_followup_completed": true,
+      "linux_ci_dead_code_followup_requested": false,
+      "non_macos_toolbar_readiness_review_followup_completed": true,
+      "non_macos_toolbar_readiness_review_followup_requested": false,
+      "non_macos_toolbar_visible_frame_followup_completed": true,
+      "non_macos_toolbar_visible_frame_followup_requested": false,
+      "toolbar_preseeded_position_followup_completed": true,
+      "toolbar_preseeded_position_followup_requested": true,
+      "toolbar_birth_readiness_followup_requested": true,
+      "toolbar_default_slot_restore_followup_completed": true,
+      "toolbar_default_slot_restore_followup_requested": false,
+      "toolbar_viewport_basis_followup_completed": true,
+      "toolbar_viewport_basis_followup_requested": true,
+      "tiny_frozen_render_followup_completed": true,
+      "tiny_frozen_render_followup_requested": false,
+      "verification_completed": true,
+      "workspace": ".workspaces/xy-171-size-badge"
+    }
+  }
+}
