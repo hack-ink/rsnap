@@ -1093,6 +1093,7 @@ mod tests {
 		fs,
 		path::PathBuf,
 		process,
+		sync::atomic::{AtomicU64, Ordering},
 		time::{Duration, Instant},
 	};
 
@@ -1108,11 +1109,15 @@ mod tests {
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 
+	static TRACE_TEST_ROOT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 	fn temp_trace_root() -> PathBuf {
+		let counter = TRACE_TEST_ROOT_COUNTER.fetch_add(1, Ordering::Relaxed);
 		let root = env::temp_dir().join(format!(
-			"rsnap-recorded-trace-replay-test-{}-{}",
+			"rsnap-recorded-trace-replay-test-{}-{}-{}",
 			std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-			process::id()
+			process::id(),
+			counter
 		));
 		let _ = fs::remove_dir_all(&root);
 
