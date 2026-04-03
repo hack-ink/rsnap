@@ -459,6 +459,7 @@ enum FrozenToolbarTool {
 	Redo,
 	AutoCenter,
 	Scroll,
+	#[cfg(target_os = "macos")]
 	Ocr,
 	Copy,
 	Save,
@@ -474,6 +475,7 @@ impl FrozenToolbarTool {
 			Self::Redo => "Redo",
 			Self::AutoCenter => "Auto-center (C)",
 			Self::Scroll => "Scroll Capture",
+			#[cfg(target_os = "macos")]
 			Self::Ocr => "Recognize Text",
 			Self::Copy => "Copy",
 			Self::Save => "Save",
@@ -490,6 +492,7 @@ impl FrozenToolbarTool {
 			Self::Redo => regular::ARROW_CLOCKWISE,
 			Self::AutoCenter => regular::TARGET,
 			Self::Scroll => regular::MOUSE_SCROLL,
+			#[cfg(target_os = "macos")]
 			Self::Ocr => regular::SCAN,
 			Self::Copy => regular::COPY,
 			Self::Save => regular::FLOPPY_DISK,
@@ -501,7 +504,18 @@ impl FrozenToolbarTool {
 	}
 
 	const fn requires_final_capture(self) -> bool {
-		matches!(self, Self::Scroll | Self::Ocr | Self::Copy | Self::Save)
+		match self {
+			Self::Pointer
+			| Self::Pen
+			| Self::Text
+			| Self::Mosaic
+			| Self::Undo
+			| Self::Redo
+			| Self::AutoCenter => false,
+			Self::Scroll | Self::Copy | Self::Save => true,
+			#[cfg(target_os = "macos")]
+			Self::Ocr => true,
+		}
 	}
 }
 
@@ -2200,6 +2214,9 @@ impl OverlaySession {
 			}
 		}
 
+		#[cfg(not(target_os = "macos"))]
+		let queued_recognize_text = false;
+		#[cfg(target_os = "macos")]
 		let mut queued_recognize_text = false;
 
 		#[cfg(target_os = "macos")]
@@ -6233,15 +6250,8 @@ impl OverlaySession {
 		self.request_redraw_all();
 	}
 
+	#[cfg(target_os = "macos")]
 	fn begin_ocr_action(&mut self) {
-		#[cfg(not(target_os = "macos"))]
-		{
-			self.state.set_error(String::from("OCR is only available on macOS."));
-			self.request_redraw_all();
-
-			return;
-		}
-
 		if !matches!(self.state.mode, OverlayMode::Frozen) {
 			return;
 		}
@@ -6260,6 +6270,12 @@ impl OverlaySession {
 
 		self.pending_recognize_text = Some(export_image);
 
+		self.request_redraw_all();
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn begin_ocr_action(&mut self) {
+		self.state.set_error(String::from("OCR is only available on macOS."));
 		self.request_redraw_all();
 	}
 
@@ -7399,6 +7415,7 @@ impl OverlaySession {
 				OverlayControl::Continue
 			},
 			FrozenToolbarTool::Scroll => self.start_scroll_capture(),
+			#[cfg(target_os = "macos")]
 			FrozenToolbarTool::Ocr => {
 				self.begin_ocr_action();
 
@@ -15138,10 +15155,14 @@ mod tests {
 			..FrozenToolbarState::default()
 		});
 
-		assert!(default_tools.contains(&FrozenToolbarTool::Ocr));
 		assert!(!default_tools.contains(&FrozenToolbarTool::AutoCenter));
-		assert!(auto_center_tools.contains(&FrozenToolbarTool::Ocr));
 		assert!(auto_center_tools.contains(&FrozenToolbarTool::AutoCenter));
+
+		#[cfg(target_os = "macos")]
+		{
+			assert!(default_tools.contains(&FrozenToolbarTool::Ocr));
+			assert!(auto_center_tools.contains(&FrozenToolbarTool::Ocr));
+		}
 	}
 
 	#[test]
@@ -18902,9 +18923,10 @@ mod tests {
 		assert!(!FrozenToolbarTool::Redo.is_mode_tool());
 		assert!(!FrozenToolbarTool::AutoCenter.is_mode_tool());
 		assert!(!FrozenToolbarTool::Scroll.is_mode_tool());
-		assert!(!FrozenToolbarTool::Ocr.is_mode_tool());
 		assert!(!FrozenToolbarTool::Copy.is_mode_tool());
 		assert!(!FrozenToolbarTool::Save.is_mode_tool());
+		#[cfg(target_os = "macos")]
+		assert!(!FrozenToolbarTool::Ocr.is_mode_tool());
 	}
 
 	#[test]
@@ -18923,9 +18945,10 @@ mod tests {
 		assert!(!FrozenToolbarTool::Redo.requires_final_capture());
 		assert!(!FrozenToolbarTool::AutoCenter.requires_final_capture());
 		assert!(FrozenToolbarTool::Scroll.requires_final_capture());
-		assert!(FrozenToolbarTool::Ocr.requires_final_capture());
 		assert!(FrozenToolbarTool::Copy.requires_final_capture());
 		assert!(FrozenToolbarTool::Save.requires_final_capture());
+		#[cfg(target_os = "macos")]
+		assert!(FrozenToolbarTool::Ocr.requires_final_capture());
 	}
 
 	#[test]
