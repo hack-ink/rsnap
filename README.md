@@ -29,7 +29,7 @@ Pure-Rust menubar screenshot prototype (macOS-first).
 - Upward scrolling may be observed for rewind/reacquire, but it never appends stitched rows.
 - `Esc` cancels capture; during scroll capture, `Esc` / `Back` returns to normal Frozen mode.
 - Glass HUD with configurable blur, tint, and hue controls.
-- Alt-triggered loupe sample and frozen-mode toolbar for quick action access.
+- Tab-triggered loupe sample and frozen-mode toolbar for quick action access.
 
 ## Status
 

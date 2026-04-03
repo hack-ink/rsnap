@@ -31,7 +31,7 @@ use std::{
 
 use color_eyre::eyre::{self, Result, WrapErr};
 #[cfg(not(target_os = "macos"))]
-use device_query::{DeviceQuery, Keycode};
+use device_query::DeviceQuery;
 use egui::FullOutput;
 use egui::Mesh;
 use egui::Painter;
@@ -324,8 +324,6 @@ const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
 #[cfg(target_os = "macos")]
 const KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE: u32 = 0;
 #[cfg(target_os = "macos")]
-const KCG_EVENT_FLAGS_MASK_ALTERNATE: u64 = 1_u64 << 19;
-#[cfg(target_os = "macos")]
 const STARTUP_LIVE_SAMPLE_WAIT_TIMEOUT: Duration = Duration::from_millis(120);
 #[cfg(target_os = "macos")]
 const STARTUP_LIVE_SAMPLE_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(4);
@@ -376,12 +374,12 @@ pub enum OverlayControl {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-/// Controls how the Alt-triggered loupe interaction is activated.
+/// Controls how the Tab-triggered loupe interaction is activated.
 pub enum AltActivationMode {
 	#[default]
-	/// Enable the loupe only while Alt is held.
+	/// Enable the loupe only while Tab is held.
 	Hold,
-	/// Toggle the loupe on and off with Alt presses.
+	/// Toggle the loupe on and off with Tab presses.
 	Toggle,
 }
 
@@ -622,7 +620,7 @@ enum AcquiredSurfaceFrame {
 pub struct OverlayConfig {
 	/// Positions the live HUD relative to the cursor or another anchor point.
 	pub hud_anchor: HudAnchor,
-	/// Shows the Alt-key hint chip in the live HUD when enabled.
+	/// Shows the Tab-key hint chip in the live HUD when enabled.
 	pub show_alt_hint_keycap: bool,
 	/// Enables blur or its platform fallback for HUD windows.
 	pub show_hud_blur: bool,
@@ -640,7 +638,7 @@ pub struct OverlayConfig {
 	pub hud_milk_amount: f32,
 	/// Hue value for tint, 0..=1.
 	pub hud_tint_hue: f32,
-	/// Selects whether Alt must be held or can toggle the loupe.
+	/// Selects whether Tab must be held or can toggle the loupe.
 	pub alt_activation: AltActivationMode,
 	/// Chooses where the frozen toolbar is placed.
 	pub toolbar_placement: ToolbarPlacement,
@@ -743,8 +741,7 @@ pub struct OverlaySession {
 	live_sample_stall_started_at: Option<Instant>,
 	last_live_sample_stall_log_at: Option<Instant>,
 	slow_op_logger: SlowOperationLogger,
-	last_alt_press_at: Option<Instant>,
-	alt_modifier_down: bool,
+	loupe_activation_key_down: bool,
 	keyboard_modifiers: ModifiersState,
 	event_loop_phase: OverlayEventLoopPhase,
 	event_loop_progress_seq: u64,
@@ -916,8 +913,7 @@ impl OverlaySession {
 			live_sample_stall_started_at: None,
 			last_live_sample_stall_log_at: None,
 			slow_op_logger: SlowOperationLogger::default(),
-			last_alt_press_at: None,
-			alt_modifier_down: false,
+			loupe_activation_key_down: false,
 			keyboard_modifiers: ModifiersState::default(),
 			event_loop_phase: OverlayEventLoopPhase::Idle,
 			event_loop_progress_seq: 0,
@@ -1401,11 +1397,6 @@ impl OverlaySession {
 		self.mark_progress(OverlayEventLoopPhase::AboutToWait);
 		self.maybe_request_keepalive_redraw();
 		self.maybe_keep_selection_flow_repaint();
-
-		if self.is_active() {
-			self.sync_alt_held_from_global_keys();
-		}
-
 		self.maybe_keep_frozen_capture_redraw();
 		self.maybe_tick_toolbar_window_warmup_redraw();
 		self.maybe_tick_loupe_window_warmup_redraw();
@@ -4458,42 +4449,7 @@ impl OverlaySession {
 	fn handle_modifiers_changed(&mut self, modifiers: &winit::event::Modifiers) -> OverlayControl {
 		self.keyboard_modifiers = modifiers.state();
 
-		let alt = self.resolve_alt_modifier_state(self.keyboard_modifiers.alt_key());
-
-		if !self.apply_alt_input_state(alt) {
-			return OverlayControl::Continue;
-		}
-
-		self.request_redraw_for_alt_state_change()
-	}
-
-	fn resolve_alt_modifier_state(&mut self, alt: bool) -> bool {
-		let transient_alt_release = !alt
-			&& self.state.alt_held
-			&& self
-				.last_alt_press_at
-				.is_some_and(|press| press.elapsed() <= Duration::from_millis(120))
-			&& self.is_option_key_down();
-
-		if transient_alt_release { true } else { alt }
-	}
-
-	#[cfg(not(target_os = "macos"))]
-	fn is_option_key_down(&self) -> bool {
-		let Some(cursor_device) = self.cursor_device.as_ref() else {
-			return false;
-		};
-		let keys = cursor_device.get_keys();
-
-		keys.contains(&Keycode::LOption)
-			|| keys.contains(&Keycode::ROption)
-			|| keys.contains(&Keycode::LAlt)
-			|| keys.contains(&Keycode::RAlt)
-	}
-
-	#[cfg(target_os = "macos")]
-	fn is_option_key_down(&self) -> bool {
-		macos_is_option_key_down()
+		OverlayControl::Continue
 	}
 
 	#[cfg(not(target_os = "macos"))]
@@ -4540,14 +4496,6 @@ impl OverlaySession {
 		Some(event_cursor)
 	}
 
-	fn sync_alt_held_from_global_keys(&mut self) {
-		let alt = self.is_option_key_down();
-
-		if self.apply_alt_input_state(alt) {
-			let _ = self.request_redraw_for_alt_state_change();
-		}
-	}
-
 	fn set_alt_held(&mut self, alt: bool) {
 		if self.state.alt_held == alt {
 			return;
@@ -4560,8 +4508,6 @@ impl OverlaySession {
 
 			return;
 		}
-
-		self.last_alt_press_at = Some(Instant::now());
 
 		let Some((monitor, cursor)) = self.alt_activation_cursor_context() else {
 			return;
@@ -4579,22 +4525,21 @@ impl OverlaySession {
 		}
 	}
 
-	fn apply_alt_input_state(&mut self, alt: bool) -> bool {
+	fn apply_loupe_activation_input(&mut self, pressed: bool, repeat: bool) -> bool {
 		let previous_alt_held = self.state.alt_held;
-		let previous_alt_modifier_down = self.alt_modifier_down;
+
+		self.loupe_activation_key_down = pressed;
 
 		match self.config.alt_activation {
-			AltActivationMode::Hold => self.set_alt_held(alt),
+			AltActivationMode::Hold => self.set_alt_held(pressed),
 			AltActivationMode::Toggle => {
-				if alt && !self.alt_modifier_down {
+				if pressed && !repeat {
 					self.set_alt_held(!self.state.alt_held);
 				}
 			},
 		}
 
-		self.alt_modifier_down = alt;
-
-		previous_alt_held != self.state.alt_held || previous_alt_modifier_down != alt
+		previous_alt_held != self.state.alt_held
 	}
 
 	fn request_redraw_for_alt_state_change(&mut self) -> OverlayControl {
@@ -4656,7 +4601,6 @@ impl OverlaySession {
 	}
 
 	fn handle_alt_release(&mut self) {
-		self.last_alt_press_at = None;
 		self.state.loupe = None;
 		self.loupe_outer_pos = None;
 		self.pending_loupe_outer_pos = None;
@@ -5803,10 +5747,16 @@ impl OverlaySession {
 	}
 
 	fn handle_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
-		if matches!(event.logical_key, Key::Named(NamedKey::Alt))
-			&& self.apply_alt_input_state(event.state == ElementState::Pressed)
-		{
-			return self.request_redraw_for_alt_state_change();
+		if matches!(event.logical_key, Key::Named(NamedKey::Tab)) {
+			let pressed = event.state == ElementState::Pressed;
+			let loupe_activation_event = (pressed && self.loupe_activation_shortcut_available())
+				|| (!pressed && self.loupe_activation_key_down);
+
+			if loupe_activation_event && self.apply_loupe_activation_input(pressed, event.repeat) {
+				return self.request_redraw_for_alt_state_change();
+			}
+
+			return OverlayControl::Continue;
 		}
 		if event.state != ElementState::Pressed {
 			return OverlayControl::Continue;
@@ -5820,23 +5770,10 @@ impl OverlaySession {
 
 		match &event.logical_key {
 			Key::Named(NamedKey::Escape) => self.cancel_overlay("escape_key"),
-			Key::Named(NamedKey::Tab) => {
-				let Some(rgb) = self.state.rgb else {
-					return OverlayControl::Continue;
-				};
-				let hex = rgb.hex_upper();
-
-				match output::write_text_to_clipboard(&hex) {
-					Ok(()) => {},
-					Err(err) => {
-						self.state.set_error(format!("{err:#}"));
-						self.request_redraw_all();
-					},
-				}
-
-				OverlayControl::Continue
-			},
-			Key::Character(key_text) if key_text == "h" || key_text == "H" => {
+			Key::Character(key_text)
+				if (key_text == "h" || key_text == "H")
+					&& self.plain_character_shortcut_available() =>
+			{
 				self.toolbar_state.visible = !self.toolbar_state.visible;
 
 				self.request_redraw_all();
@@ -5859,7 +5796,10 @@ impl OverlaySession {
 
 				OverlayControl::Continue
 			},
-			Key::Character(key_text) if key_text.as_str().eq_ignore_ascii_case("s") => {
+			Key::Character(key_text)
+				if key_text.as_str().eq_ignore_ascii_case("s")
+					&& self.plain_character_shortcut_available() =>
+			{
 				let available = self.scroll_capture_is_available();
 				let selection_ready = self.scroll_capture_selection_is_ready();
 
@@ -5899,8 +5839,16 @@ impl OverlaySession {
 		}
 	}
 
+	fn loupe_activation_shortcut_available(&self) -> bool {
+		!self.keyboard_modifiers.shift_key()
+			&& !self.keyboard_modifiers.alt_key()
+			&& !self.keyboard_modifiers.control_key()
+			&& !self.keyboard_modifiers.super_key()
+	}
+
 	fn plain_character_shortcut_available(&self) -> bool {
-		!self.keyboard_modifiers.alt_key()
+		!self.loupe_activation_key_down
+			&& !self.keyboard_modifiers.alt_key()
 			&& !self.keyboard_modifiers.control_key()
 			&& !self.keyboard_modifiers.super_key()
 	}
@@ -7742,6 +7690,7 @@ impl OverlaySession {
 			self.ocr_inflight = false;
 			self.png_encode_inflight = false;
 		}
+		self.loupe_activation_key_down = false;
 		self.keyboard_modifiers = ModifiersState::default();
 	}
 
@@ -11813,7 +11762,7 @@ impl WindowRenderer {
 						..Frame::default()
 					}
 					.show(ui, |ui| {
-						ui.label(RichText::new("Alt").color(keycap_text).monospace());
+						ui.label(RichText::new("Tab").color(keycap_text).monospace());
 					});
 				}
 			});
@@ -13395,13 +13344,6 @@ fn frozen_toolbar_matches_default_slot(toolbar_pos: Pos2, default_pos: Pos2) -> 
 }
 
 #[cfg(target_os = "macos")]
-fn macos_is_option_key_down() -> bool {
-	let flags = unsafe { CGEventSourceFlagsState(macos_hid_event_source_state_id()) };
-
-	flags & KCG_EVENT_FLAGS_MASK_ALTERNATE != 0
-}
-
-#[cfg(target_os = "macos")]
 fn macos_hid_event_source_state_id() -> u32 {
 	KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE
 }
@@ -13428,7 +13370,6 @@ unsafe extern "C" {
 	) -> CGEventRef;
 	fn CGEventPost(tap_location: u32, event: CGEventRef);
 	fn CGEventSetLocation(event: CGEventRef, location: MacOSCGPoint);
-	fn CGEventSourceFlagsState(source_state_id: u32) -> u64;
 }
 
 #[cfg(target_os = "macos")]
@@ -16249,8 +16190,7 @@ mod tests {
 			pending_self_capture_exception_window_ids_worker_refresh: true,
 			authoritative_frozen_capture_ready: true,
 			capture_windows_hidden: true,
-			last_alt_press_at: Some(Instant::now()),
-			alt_modifier_down: true,
+			loupe_activation_key_down: true,
 			keyboard_modifiers: ModifiersState::SHIFT,
 			left_mouse_button_down: true,
 			left_mouse_button_down_monitor: Some(test_monitor()),
@@ -16270,8 +16210,7 @@ mod tests {
 		assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
 		assert!(!session.authoritative_frozen_capture_ready);
 		assert!(!session.capture_windows_hidden);
-		assert!(session.last_alt_press_at.is_none());
-		assert!(!session.alt_modifier_down);
+		assert!(!session.loupe_activation_key_down);
 		assert_eq!(session.keyboard_modifiers, ModifiersState::default());
 		assert!(!session.left_mouse_button_down);
 		assert!(session.left_mouse_button_down_monitor.is_none());
@@ -16374,41 +16313,73 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	#[test]
-	fn apply_alt_input_state_toggle_uses_press_edges_only() {
+	fn apply_loupe_activation_input_toggle_ignores_release_and_repeat() {
 		let mut session = OverlaySession::new();
 
 		session.config.alt_activation = AltActivationMode::Toggle;
 
-		assert!(session.apply_alt_input_state(true));
+		assert!(session.apply_loupe_activation_input(true, false));
 		assert!(session.state.alt_held);
-		assert!(session.alt_modifier_down);
-		assert!(!session.apply_alt_input_state(true));
+		assert!(!session.apply_loupe_activation_input(true, true));
 		assert!(session.state.alt_held);
-		assert!(session.alt_modifier_down);
-		assert!(session.apply_alt_input_state(false));
+		assert!(!session.apply_loupe_activation_input(false, false));
 		assert!(session.state.alt_held);
-		assert!(!session.alt_modifier_down);
-		assert!(session.apply_alt_input_state(true));
+		assert!(session.apply_loupe_activation_input(true, false));
 		assert!(!session.state.alt_held);
-		assert!(session.alt_modifier_down);
 	}
 
 	#[cfg(target_os = "macos")]
 	#[test]
-	fn apply_alt_input_state_hold_tracks_polled_key_state() {
+	fn apply_loupe_activation_input_hold_tracks_pressed_state() {
 		let mut session = OverlaySession::new();
 
 		session.config.alt_activation = AltActivationMode::Hold;
 
-		assert!(session.apply_alt_input_state(true));
+		assert!(session.apply_loupe_activation_input(true, false));
 		assert!(session.state.alt_held);
-		assert!(session.alt_modifier_down);
-		assert!(!session.apply_alt_input_state(true));
+		assert!(!session.apply_loupe_activation_input(true, false));
 		assert!(session.state.alt_held);
-		assert!(session.alt_modifier_down);
-		assert!(session.apply_alt_input_state(false));
+		assert!(session.apply_loupe_activation_input(false, false));
 		assert!(!session.state.alt_held);
-		assert!(!session.alt_modifier_down);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn plain_character_shortcut_available_blocks_loupe_activation_key_while_pressed() {
+		let mut session = OverlaySession::new();
+
+		session.config.alt_activation = AltActivationMode::Toggle;
+
+		assert!(session.plain_character_shortcut_available());
+		assert!(session.apply_loupe_activation_input(true, false));
+		assert!(!session.plain_character_shortcut_available());
+		assert!(!session.apply_loupe_activation_input(false, false));
+		assert!(session.state.alt_held);
+		assert!(session.plain_character_shortcut_available());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn loupe_activation_shortcut_available_requires_plain_tab() {
+		let mut session = OverlaySession::new();
+
+		assert!(session.loupe_activation_shortcut_available());
+
+		session.keyboard_modifiers = ModifiersState::SHIFT;
+
+		assert!(!session.loupe_activation_shortcut_available());
+
+		session.keyboard_modifiers = ModifiersState::ALT;
+
+		assert!(!session.loupe_activation_shortcut_available());
+
+		session.keyboard_modifiers = ModifiersState::CONTROL;
+
+		assert!(!session.loupe_activation_shortcut_available());
+
+		session.keyboard_modifiers = ModifiersState::SUPER;
+
+		assert!(!session.loupe_activation_shortcut_available());
 	}
 
 	#[cfg(target_os = "macos")]
