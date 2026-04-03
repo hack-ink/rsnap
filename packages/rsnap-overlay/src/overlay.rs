@@ -6445,13 +6445,13 @@ impl OverlaySession {
 
 	fn maybe_skip_hud_redraw(&mut self) -> Option<OverlayControl> {
 		if self.scroll_capture.active {
-			if let Some(hud_window) = self.hud_window.as_ref() {
-				if self.hud_window_visible {
-					hud_window.window.set_visible(false);
-				}
+			if let Some(hud_window) = self.hud_window.as_ref()
+				&& self.hud_window_visible
+			{
+				hud_window.window.set_visible(false);
 			}
-			self.hud_window_visible = false;
 
+			self.hud_window_visible = false;
 			self.last_present_at = Instant::now();
 
 			return Some(OverlayControl::Continue);
@@ -6464,14 +6464,14 @@ impl OverlaySession {
 				{
 					hud_window.window.set_visible(false);
 				}
+
 				self.hud_window_visible = false;
+				}
+				self.last_present_at = Instant::now();
+
+				#[cfg(not(target_os = "macos"))]
+				return Some(OverlayControl::Continue);
 			}
-
-			self.last_present_at = Instant::now();
-
-			#[cfg(not(target_os = "macos"))]
-			return Some(OverlayControl::Continue);
-		}
 
 		None
 	}
@@ -6490,6 +6490,7 @@ impl OverlaySession {
 
 			if !self.hud_window_visible {
 				hud_window.window.set_visible(true);
+
 				self.hud_window_visible = true;
 			}
 
@@ -6865,10 +6866,10 @@ impl OverlaySession {
 			reposition_elapsed = Some(reposition_started_at.elapsed());
 		}
 
-		if let Some(loupe_window) = self.loupe_window.as_ref() {
-			if !was_visible {
-				loupe_window.window.set_visible(true);
-			}
+		if let Some(loupe_window) = self.loupe_window.as_ref()
+			&& !was_visible
+		{
+			loupe_window.window.set_visible(true);
 		}
 
 		self.loupe_window_visible = true;
@@ -8187,7 +8188,9 @@ impl OverlaySession {
 		if let Some(hud_window) = &self.hud_window {
 			hud_window.window.set_visible(false);
 		}
+
 		self.hud_window_visible = false;
+
 		if let Some(loupe_window) = &self.loupe_window {
 			loupe_window.window.set_visible(false);
 		}
@@ -8199,14 +8202,15 @@ impl OverlaySession {
 		}
 
 		self.capture_windows_hidden = false;
-
 		#[cfg(not(target_os = "macos"))]
 		{
 			if let Some(hud_window) = &self.hud_window {
 				hud_window.window.set_visible(true);
 			}
+
 			self.hud_window_visible = true;
 		}
+
 		#[cfg(not(target_os = "macos"))]
 		if let Some(loupe_window) = &self.loupe_window {
 			loupe_window.window.set_visible(self.state.alt_held);
@@ -16667,13 +16671,16 @@ mod tests {
 		let mut session = OverlaySession::new();
 
 		session.state.mode = OverlayMode::Live;
+
 		assert!(!session.should_try_pending_follow_window_move_on_live_cursor_update());
 
 		session.pending_hud_outer_pos = Some(GlobalPoint::new(120, 180));
+
 		assert!(session.should_try_pending_follow_window_move_on_live_cursor_update());
 
 		session.pending_hud_outer_pos = None;
 		session.pending_loupe_outer_pos = Some(GlobalPoint::new(140, 220));
+
 		assert!(session.should_try_pending_follow_window_move_on_live_cursor_update());
 	}
 
