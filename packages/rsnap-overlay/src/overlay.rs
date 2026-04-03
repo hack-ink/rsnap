@@ -6466,12 +6466,12 @@ impl OverlaySession {
 				}
 
 				self.hud_window_visible = false;
-				}
 				self.last_present_at = Instant::now();
 
 				#[cfg(not(target_os = "macos"))]
 				return Some(OverlayControl::Continue);
 			}
+		}
 
 		None
 	}
