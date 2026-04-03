@@ -130,37 +130,68 @@ args = [
 # | ---------------------------- | --------- | --- |
 # | smoke-macos                  | composite |     |
 # | smoke-self-check-macos       | composite |     |
-# | smoke-scroll-capture-macos   | command   |     |
+# | replay-scroll-capture        | command   |     |
+# | replay-scroll-capture-self-check | command |   |
 # | smoke-live-loupe-perf-macos  | command   |     |
-# | smoke-scroll-capture-self-check-macos | command | |
 # | smoke-live-loupe-self-check-macos     | command | |
+# | analyze-scroll-capture-trace | command   |     |
 
 [tasks.smoke-macos]
 workspace = false
 dependencies = [
 	"smoke-live-loupe-perf-macos",
-	"smoke-scroll-capture-macos",
+	"replay-scroll-capture",
 ]
 
 [tasks.smoke-self-check-macos]
 workspace = false
 dependencies = [
 	"smoke-live-loupe-self-check-macos",
-	"smoke-scroll-capture-self-check-macos",
+	"replay-scroll-capture-self-check",
 ]
 
-[tasks.smoke-scroll-capture-macos]
+[tasks.replay-scroll-capture]
 workspace = false
-command = "scripts/scroll-capture-smoke-macos.sh"
+command = "cargo"
+args = [
+	"run",
+	"-p",
+	"rsnap-overlay",
+	"--example",
+	"scroll_capture_replay",
+	"--",
+	"--force-worker-pairwise",
+]
+
+[tasks.analyze-scroll-capture-trace]
+workspace = false
+command = "cargo"
+args = [
+	"run",
+	"-p",
+	"rsnap-overlay",
+	"--example",
+	"scroll_capture_replay",
+	"--",
+	"--force-worker-pairwise",
+	"--json",
+	"--summary-only",
+]
 
 [tasks.smoke-live-loupe-perf-macos]
 workspace = false
 command = "scripts/live-loupe-perf-smoke-macos.sh"
 
-[tasks.smoke-scroll-capture-self-check-macos]
+[tasks.replay-scroll-capture-self-check]
 workspace = false
-command = "scripts/scroll-capture-smoke-macos.sh"
-args = ["--self-check"]
+command = "cargo"
+args = [
+	"test",
+	"-p",
+	"rsnap-overlay",
+	"replay_recorded_live_trace_round_trips_one_commit",
+	"--lib",
+]
 
 [tasks.smoke-live-loupe-self-check-macos]
 workspace = false

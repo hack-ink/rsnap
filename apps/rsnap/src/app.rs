@@ -40,6 +40,8 @@ pub(crate) enum UserEvent {
 	#[cfg(target_os = "macos")]
 	OverlayStreamFrame,
 	#[cfg(target_os = "macos")]
+	OverlayScrollInput,
+	#[cfg(target_os = "macos")]
 	OverlayWorkerResponse,
 }
 
@@ -71,11 +73,11 @@ struct App {
 	#[cfg(target_os = "macos")]
 	overlay_proxy: EventLoopProxy<UserEvent>,
 	#[cfg(target_os = "macos")]
-	overlay_stream_event_pending: Arc<AtomicBool>,
-	#[cfg(target_os = "macos")]
 	scroll_input_observer_lifecycle: Arc<ScrollInputObserverLifecycle>,
 	#[cfg(target_os = "macos")]
 	scroll_input_shared_state: Arc<SharedScrollInputState>,
+	#[cfg(target_os = "macos")]
+	overlay_stream_event_pending: Arc<AtomicBool>,
 	#[cfg(target_os = "macos")]
 	startup_permissions_checked: bool,
 }
@@ -87,7 +89,6 @@ impl App {
 		settings_hotkey: Option<HotKey>,
 		hotkey_manager: Option<GlobalHotKeyManager>,
 		#[cfg(target_os = "macos")] overlay_proxy: EventLoopProxy<UserEvent>,
-		#[cfg(target_os = "macos")] overlay_stream_event_pending: Arc<AtomicBool>,
 		#[cfg(target_os = "macos")] scroll_input_observer_lifecycle: Arc<
 			ScrollInputObserverLifecycle,
 		>,
@@ -121,14 +122,19 @@ impl App {
 			#[cfg(target_os = "macos")]
 			overlay_proxy,
 			#[cfg(target_os = "macos")]
-			overlay_stream_event_pending,
-			#[cfg(target_os = "macos")]
 			scroll_input_observer_lifecycle,
 			#[cfg(target_os = "macos")]
 			scroll_input_shared_state,
 			#[cfg(target_os = "macos")]
+			overlay_stream_event_pending: Arc::new(AtomicBool::new(false)),
+			#[cfg(target_os = "macos")]
 			startup_permissions_checked: false,
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn finish_coalesced_overlay_stream_frame_send(&self) {
+		self.overlay_stream_event_pending.store(false, Ordering::Release);
 	}
 
 	fn open_settings_window(&mut self, event_loop: &ActiveEventLoop, requested_by: &'static str) {
@@ -186,24 +192,4 @@ impl App {
 /// Runs the desktop application event loop until shutdown.
 pub fn run() -> Result<()> {
 	runtime::run()
-}
-
-#[cfg(target_os = "macos")]
-fn begin_coalesced_overlay_user_event_send(pending: &AtomicBool) -> bool {
-	pending.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok()
-}
-
-#[cfg(test)]
-mod tests {
-	#[cfg(target_os = "macos")]
-	use std::sync::atomic::AtomicBool;
-
-	#[cfg(target_os = "macos")]
-	#[test]
-	fn begin_coalesced_overlay_user_event_send_only_allows_first_sender_per_flag() {
-		let pending = AtomicBool::new(false);
-
-		assert!(super::begin_coalesced_overlay_user_event_send(&pending));
-		assert!(!super::begin_coalesced_overlay_user_event_send(&pending));
-	}
 }

@@ -16,19 +16,22 @@ path = "src/lib.rs"
 cargo-clippy = []
 
 [dependencies]
-arboard       = { workspace = true }
-color-eyre    = { workspace = true }
-egui          = { workspace = true }
-egui-phosphor = { workspace = true }
-egui-wgpu     = { workspace = true }
-egui-winit    = { workspace = true }
-image         = { workspace = true }
-pollster      = { workspace = true }
-serde         = { workspace = true }
-thiserror     = { workspace = true }
-tracing       = { workspace = true }
-wgpu          = { workspace = true }
-winit         = { workspace = true }
+arboard            = { workspace = true }
+color-eyre         = { workspace = true }
+directories        = { workspace = true }
+egui               = { workspace = true }
+egui-phosphor      = { workspace = true }
+egui-wgpu          = { workspace = true }
+egui-winit         = { workspace = true }
+image              = { workspace = true }
+pollster           = { workspace = true }
+serde              = { workspace = true }
+serde_json         = "1.0"
+thiserror          = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+wgpu               = { workspace = true }
+winit              = { workspace = true }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 device_query = { workspace = true }
@@ -36,6 +39,7 @@ xcap         = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2                   = { workspace = true }
+dispatch2                = "0.3"
 objc                     = { workspace = true }
 objc2                    = { workspace = true }
 objc2-app-kit            = { workspace = true }
@@ -45,6 +49,7 @@ objc2-core-media         = { workspace = true }
 objc2-core-video         = { workspace = true }
 objc2-foundation         = { workspace = true }
 objc2-screen-capture-kit = { workspace = true }
+objc2-vision             = "0.3.2"
 raw-window-handle        = { workspace = true }
 
 [dev-dependencies]

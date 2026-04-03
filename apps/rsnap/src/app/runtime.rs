@@ -1,9 +1,6 @@
 use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
-use std::sync::{
-	Arc,
-	atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre;
@@ -44,10 +41,18 @@ impl ApplicationHandler<UserEvent> for App {
 			UserEvent::TrayIcon => {},
 			#[cfg(target_os = "macos")]
 			UserEvent::OverlayStreamFrame => {
-				self.overlay_stream_event_pending.store(false, Ordering::Release);
+				self.finish_coalesced_overlay_stream_frame_send();
 
 				if let Some(session) = self.overlay_session.as_mut() {
 					let control = session.handle_scroll_stream_frame_ready();
+
+					self.handle_overlay_control(control);
+				}
+			},
+			#[cfg(target_os = "macos")]
+			UserEvent::OverlayScrollInput => {
+				if let Some(session) = self.overlay_session.as_mut() {
+					let control = session.handle_scroll_input_ready();
 
 					self.handle_overlay_control(control);
 				}
@@ -177,9 +182,13 @@ impl ApplicationHandler<UserEvent> for App {
 
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
 		if self.overlay_session.is_some() {
-			event_loop.set_control_flow(ControlFlow::WaitUntil(
-				Instant::now() + Duration::from_millis(16),
-			));
+			let wait_interval = self
+				.overlay_session
+				.as_ref()
+				.map(|session| session.interactive_wait_interval())
+				.unwrap_or_else(|| Duration::from_millis(16));
+
+			event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + wait_interval));
 		} else if self.settings_window.is_some() {
 			event_loop.set_control_flow(ControlFlow::WaitUntil(
 				Instant::now() + Duration::from_millis(250),
@@ -258,8 +267,6 @@ pub(super) fn run() -> Result<()> {
 	#[cfg(target_os = "macos")]
 	let overlay_proxy: EventLoopProxy<UserEvent> = event_loop.create_proxy();
 	#[cfg(target_os = "macos")]
-	let overlay_stream_event_pending = Arc::new(AtomicBool::new(false));
-	#[cfg(target_os = "macos")]
 	let scroll_input_observer_lifecycle = Arc::new(ScrollInputObserverLifecycle::default());
 	#[cfg(target_os = "macos")]
 	let scroll_input_shared_state = Arc::new(SharedScrollInputState::default());
@@ -270,8 +277,6 @@ pub(super) fn run() -> Result<()> {
 		hotkey_manager,
 		#[cfg(target_os = "macos")]
 		overlay_proxy,
-		#[cfg(target_os = "macos")]
-		overlay_stream_event_pending,
 		#[cfg(target_os = "macos")]
 		scroll_input_observer_lifecycle,
 		#[cfg(target_os = "macos")]

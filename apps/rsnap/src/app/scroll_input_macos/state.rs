@@ -1,21 +1,30 @@
 use std::collections::VecDeque;
 use std::sync::{
-	Condvar, Mutex,
+	Arc, Condvar, Mutex,
 	atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
 
-const SHARED_SCROLL_INPUT_QUEUE_CAPACITY: usize = 64;
+type SharedScrollInputEventWaker = Arc<dyn Fn() + Send + Sync>;
+
+const SHARED_SCROLL_INPUT_QUEUE_CAPACITY: usize = 512;
 
 #[derive(Default)]
 pub(in crate::app) struct SharedScrollInputState {
 	enabled: AtomicBool,
 	queue_state: Mutex<SharedScrollInputQueueState>,
+	event_waker: Mutex<Option<SharedScrollInputEventWaker>>,
 	next_seq: AtomicU64,
 }
 impl SharedScrollInputState {
 	pub(in crate::app) fn set_enabled(&self, enabled: bool) {
 		self.enabled.store(enabled, Ordering::Release);
+
+		tracing::info!(
+			op = "scroll_input.enabled_state_changed",
+			enabled,
+			"Updated native scroll input enabled state."
+		);
 	}
 
 	pub(in crate::app) fn is_enabled(&self) -> bool {
@@ -27,8 +36,24 @@ impl SharedScrollInputState {
 			Ok(queue_state) => queue_state,
 			Err(poisoned) => poisoned.into_inner(),
 		};
+		let cleared_events = queue_state.queue.len();
 
 		*queue_state = SharedScrollInputQueueState::default();
+
+		tracing::info!(
+			op = "scroll_input.queue_cleared",
+			cleared_events,
+			"Cleared queued native scroll input events."
+		);
+	}
+
+	pub(in crate::app) fn set_event_waker(&self, event_waker: Option<SharedScrollInputEventWaker>) {
+		let mut waker_slot = match self.event_waker.lock() {
+			Ok(waker_slot) => waker_slot,
+			Err(poisoned) => poisoned.into_inner(),
+		};
+
+		*waker_slot = event_waker;
 	}
 
 	pub(in crate::app) fn record(
@@ -92,6 +117,27 @@ impl SharedScrollInputState {
 
 		queue_state.last_recorded = Some(event);
 
+		tracing::debug!(
+			op = "scroll_input.queued",
+			seq,
+			delta_y = event.delta_y,
+			global_x = event.global_x,
+			global_y = event.global_y,
+			gesture_active = event.gesture_active,
+			gesture_ended = event.gesture_ended,
+			queue_len = queue_state.queue.len(),
+			"Queued native scroll input event for later overlay replay."
+		);
+
+		let event_waker = match self.event_waker.lock() {
+			Ok(waker_slot) => waker_slot.clone(),
+			Err(poisoned) => poisoned.into_inner().clone(),
+		};
+
+		if let Some(event_waker) = event_waker {
+			event_waker();
+		}
+
 		event
 	}
 
@@ -100,35 +146,46 @@ impl SharedScrollInputState {
 		after_seq: u64,
 		through: Instant,
 	) -> Vec<(u64, Instant, f64, f64, f64, bool, bool)> {
-		let queue_state = match self.queue_state.lock() {
+		let mut queue_state = match self.queue_state.lock() {
 			Ok(queue_state) => queue_state,
 			Err(poisoned) => poisoned.into_inner(),
 		};
+		let mut pruned_events = 0_usize;
 
-		queue_state
+		while queue_state.queue.front().is_some_and(|event| event.seq <= after_seq) {
+			let _ = queue_state.queue.pop_front();
+
+			pruned_events = pruned_events.saturating_add(1);
+		}
+
+		let queued_after_seq = queue_state.queue.len();
+		let future_events =
+			queue_state.queue.iter().filter(|event| event.recorded_at > through).count();
+		let replay = queue_state
 			.queue
 			.iter()
 			.copied()
-			.filter(|event| event.seq > after_seq && event.recorded_at <= through)
+			.filter(|event| event.recorded_at <= through)
 			.map(SharedScrollInputEvent::tuple)
-			.collect()
+			.collect::<Vec<_>>();
+
+		if !replay.is_empty() || future_events > 0 || pruned_events > 0 {
+			let newest_seq = queue_state.queue.back().map(|event| event.seq).unwrap_or(0);
+
+			tracing::debug!(
+				op = "scroll_input.replay_window",
+				after_seq,
+				pruned_events,
+				queued_after_seq,
+				replay_count = replay.len(),
+				future_events,
+				newest_seq,
+				"Evaluated queued native scroll input events for overlay replay."
+			);
+		}
+
+		replay
 	}
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(in crate::app) enum ScrollInputObserverStatus {
-	#[default]
-	Idle,
-	Starting,
-	Ready,
-	Failed,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::app) enum ScrollInputObserverWaitOutcome {
-	Ready,
-	TimedOut,
-	Failed,
 }
 
 #[derive(Default)]
@@ -201,7 +258,6 @@ impl ScrollInputObserverLifecycle {
 		self.set_status(ScrollInputObserverStatus::Failed);
 	}
 
-	#[cfg(test)]
 	pub(in crate::app) fn status(&self) -> ScrollInputObserverStatus {
 		let status = match self.status.lock() {
 			Ok(status) => status,
@@ -253,8 +309,28 @@ struct SharedScrollInputQueueState {
 	last_recorded: Option<SharedScrollInputEvent>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::app) enum ScrollInputObserverStatus {
+	#[default]
+	Idle,
+	Starting,
+	Ready,
+	Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::app) enum ScrollInputObserverWaitOutcome {
+	Ready,
+	TimedOut,
+	Failed,
+}
+
 #[cfg(test)]
 mod tests {
+	use std::sync::{
+		Arc,
+		atomic::{AtomicUsize, Ordering},
+	};
 	use std::thread;
 	use std::time::{Duration, Instant};
 
@@ -349,6 +425,42 @@ mod tests {
 			replay.last().map(|event| event.0),
 			Some((SHARED_SCROLL_INPUT_QUEUE_CAPACITY + 2) as u64)
 		);
+	}
+
+	#[test]
+	fn replay_after_seq_through_prunes_consumed_prefix_before_future_polls() {
+		let state = SharedScrollInputState::default();
+		let start = Instant::now();
+
+		state.record_at(start, -4.0, 120.0, 140.0, true, false);
+		state.record_at(start + Duration::from_millis(1), -3.0, 120.0, 140.0, true, false);
+		state.record_at(start + Duration::from_millis(2), -2.0, 120.0, 140.0, true, false);
+		state.record_at(start + Duration::from_millis(3), -1.0, 120.0, 140.0, false, true);
+
+		let _ = state.replay_after_seq_through(0, start + Duration::from_millis(2));
+		let _ = state.replay_after_seq_through(2, start + Duration::from_millis(2));
+		let queue_state = state.queue_state.lock().unwrap();
+		let queued_seqs = queue_state.queue.iter().map(|event| event.seq).collect::<Vec<_>>();
+
+		assert_eq!(queued_seqs, vec![3, 4]);
+	}
+
+	#[test]
+	fn record_invokes_event_waker() {
+		let state = SharedScrollInputState::default();
+		let wake_count = Arc::new(AtomicUsize::new(0));
+
+		state.set_event_waker(Some(Arc::new({
+			let wake_count = Arc::clone(&wake_count);
+
+			move || {
+				wake_count.fetch_add(1, Ordering::AcqRel);
+			}
+		})));
+
+		state.record(-4.0, 120.0, 140.0, true, false);
+
+		assert_eq!(wake_count.load(Ordering::Acquire), 1);
 	}
 
 	#[test]
