@@ -555,7 +555,7 @@ fn render_general_section(
 fn render_overlay_section(combo_width: f32, ui: &mut Ui, settings: &mut AppSettings) -> bool {
 	let mut changed = false;
 
-	changed |= ui.checkbox(&mut settings.show_alt_hint_keycap, "Show Alt hint in HUD").changed();
+	changed |= ui.checkbox(&mut settings.show_alt_hint_keycap, "Show Tab hint in HUD").changed();
 	changed |= ui.checkbox(&mut settings.hud_glass_enabled, "Glass HUD").changed();
 	changed |= ui.checkbox(&mut settings.selection_flow_enabled, "Selection flow").changed();
 	changed |= overlay_range_slider_row(
@@ -571,7 +571,7 @@ fn render_overlay_section(combo_width: f32, ui: &mut Ui, settings: &mut AppSetti
 
 	let before_alt = settings.alt_activation;
 
-	ComboBox::from_label("Alt activation")
+	ComboBox::from_label("Loupe activation")
 		.selected_text(alt_activation_label(settings.alt_activation))
 		.width(combo_width)
 		.show_ui(ui, |ui| {
