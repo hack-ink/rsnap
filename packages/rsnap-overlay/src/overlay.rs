@@ -185,7 +185,7 @@ type ExternalScrollInputDrainReader =
 	Arc<dyn Fn(u64, Instant) -> Vec<ExternalScrollInputEvent> + Send + Sync>;
 
 #[cfg(target_os = "macos")]
-type ScrollCaptureStartGuard = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+type ScrollCaptureStartGuard = Arc<dyn Fn() -> Result<bool> + Send + Sync>;
 
 #[cfg(target_os = "macos")]
 type ScrollCaptureStartingHook = Arc<dyn Fn() -> Result<()> + Send + Sync>;
@@ -953,7 +953,8 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	/// Supplies a host-owned guard that must succeed before scroll capture can start.
+	/// Supplies a host-owned guard that must approve scroll capture before it can start.
+	/// Return `Ok(false)` to reject the attempt without surfacing a HUD error.
 	pub fn set_scroll_capture_start_guard(&mut self, guard: ScrollCaptureStartGuard) {
 		self.scroll_capture_start_guard = Some(guard);
 	}
@@ -6144,13 +6145,17 @@ impl OverlaySession {
 				return OverlayControl::Continue;
 			};
 
-			if let Some(guard) = self.scroll_capture_start_guard.clone()
-				&& let Err(err) = guard()
-			{
-				self.state.set_error(format!("{err:#}"));
-				self.request_redraw_all();
+			if let Some(guard) = self.scroll_capture_start_guard.clone() {
+				match guard() {
+					Ok(true) => {},
+					Ok(false) => return OverlayControl::Continue,
+					Err(err) => {
+						self.state.set_error(format!("{err:#}"));
+						self.request_redraw_all();
 
-				return OverlayControl::Continue;
+						return OverlayControl::Continue;
+					},
+				}
 			}
 			if let Some(hook) = self.scroll_capture_starting_hook.clone()
 				&& let Err(err) = hook()
@@ -15919,12 +15924,28 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	#[test]
+	fn scroll_capture_guard_silent_reject_keeps_frozen_capture_available_without_error() {
+		let mut session = OverlaySession::new();
+
+		seed_ready_scroll_capture_selection(&mut session);
+
+		session.set_scroll_capture_start_guard(Arc::new(|| Ok(false)));
+
+		let control = session.start_scroll_capture();
+
+		assert!(matches!(control, OverlayControl::Continue));
+		assert!(session.state.frozen_image.is_some());
+		assert!(session.state.error_message.is_none());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
 	fn scroll_capture_starting_hook_error_keeps_frozen_capture_available() {
 		let mut session = OverlaySession::new();
 
 		seed_ready_scroll_capture_selection(&mut session);
 
-		session.set_scroll_capture_start_guard(Arc::new(|| Ok(())));
+		session.set_scroll_capture_start_guard(Arc::new(|| Ok(true)));
 		session.set_scroll_capture_starting_hook(Arc::new(|| {
 			Err(color_eyre::eyre::eyre!("Observer was not ready."))
 		}));
@@ -15954,7 +15975,7 @@ mod tests {
 			move || {
 				guard_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-				Ok(())
+				Ok(true)
 			}
 		}));
 
@@ -15976,7 +15997,7 @@ mod tests {
 
 		seed_ready_scroll_capture_selection(&mut session);
 
-		session.set_scroll_capture_start_guard(Arc::new(|| Ok(())));
+		session.set_scroll_capture_start_guard(Arc::new(|| Ok(true)));
 
 		session.set_scroll_capture_starting_hook(Arc::new({
 			let hook_order = Arc::clone(&hook_order);
