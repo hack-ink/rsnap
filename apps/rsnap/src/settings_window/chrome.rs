@@ -14,19 +14,22 @@ use crate::settings_window::{
 use rsnap_overlay::ThemeMode;
 
 impl SettingsWindow {
-	pub(super) fn ui(&mut self, ctx: &Context, settings: &mut AppSettings) -> bool {
-		self.sync_theme(ctx, settings.theme_mode);
-		self.maybe_autosize_window(ctx);
+	pub(super) fn ui(&mut self, root_ui: &mut Ui, settings: &mut AppSettings) -> bool {
+		let ctx = root_ui.ctx().clone();
+
+		self.sync_theme(&ctx, settings.theme_mode);
+		self.maybe_autosize_window(&ctx);
 
 		let mut changed = false;
 
-		CentralPanel::default().show(ctx, |ui| {
+		CentralPanel::default().show_inside(root_ui, |ui| {
+			let ctx = ui.ctx().clone();
 			let combo_width = self.combo_width;
 
 			sections::with_settings_density(ui, combo_width, |ui| {
-				changed |= self.render_titlebar_controls(ui, ctx, settings);
+				changed |= self.render_titlebar_controls(ui, &ctx, settings);
 				ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-					changed |= sections::render_all_sections(self, ui, ctx, settings);
+					changed |= sections::render_all_sections(self, ui, &ctx, settings);
 				});
 			});
 		});
@@ -39,7 +42,7 @@ impl SettingsWindow {
 			return;
 		}
 
-		let font_id = TextStyle::Body.resolve(&ctx.style());
+		let font_id = TextStyle::Body.resolve(&ctx.global_style());
 		let measure = |text: &str| -> f32 {
 			ctx.fonts_mut(|fonts| {
 				fonts.layout_no_wrap(text.to_owned(), font_id.clone(), Color32::WHITE).size().x

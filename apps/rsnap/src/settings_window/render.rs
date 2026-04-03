@@ -4,14 +4,13 @@ use std::time::Instant;
 use color_eyre::eyre::{self, Result, WrapErr};
 use egui::ViewportId;
 use egui_wgpu::ScreenDescriptor;
+use wgpu::CurrentSurfaceTexture;
 use wgpu::ExperimentalFeatures;
 use wgpu::Features;
-use wgpu::InstanceDescriptor;
 use wgpu::LoadOp;
 use wgpu::MemoryHints;
 use wgpu::PowerPreference;
 use wgpu::StoreOp;
-use wgpu::SurfaceError;
 use wgpu::SurfaceTexture;
 use wgpu::TextureFormat;
 use wgpu::TextureUsages;
@@ -24,6 +23,29 @@ use winit::window::Window;
 use crate::settings::AppSettings;
 use crate::settings_window::SettingsWindow;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SurfaceFrameSkipReason {
+	Timeout,
+	Occluded,
+}
+impl SurfaceFrameSkipReason {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Timeout => "timeout",
+			Self::Occluded => "occluded",
+		}
+	}
+
+	const fn should_request_redraw(self) -> bool {
+		matches!(self, Self::Timeout)
+	}
+}
+
+enum AcquiredSurfaceFrame {
+	Ready(SurfaceTexture),
+	Skipped(SurfaceFrameSkipReason),
+}
+
 impl SettingsWindow {
 	pub fn draw(&mut self, settings: &mut AppSettings) -> Result<bool> {
 		if self.last_redraw.elapsed().as_millis() > 1_500 {
@@ -35,8 +57,8 @@ impl SettingsWindow {
 		let raw_input = self.egui_state.take_egui_input(&self.window);
 		let mut settings_changed = false;
 		let egui_ctx = self.egui_ctx.clone();
-		let full_output = egui_ctx.run(raw_input, |ctx| {
-			settings_changed = self.ui(ctx, settings);
+		let full_output = egui_ctx.run_ui(raw_input, |ui| {
+			settings_changed = self.ui(ui, settings);
 		});
 
 		if let Some(repaint_delay) = full_output
@@ -65,7 +87,22 @@ impl SettingsWindow {
 			size_in_pixels: [size.width.max(1), size.height.max(1)],
 			pixels_per_point: self.window.scale_factor() as f32,
 		};
-		let frame = self.acquire_frame()?;
+		let frame = match self.acquire_frame()? {
+			AcquiredSurfaceFrame::Ready(frame) => frame,
+			AcquiredSurfaceFrame::Skipped(reason) => {
+				tracing::trace!(
+					window_id = ?self.window.id(),
+					reason = reason.as_str(),
+					"Skipped settings window frame acquisition."
+				);
+
+				if reason.should_request_redraw() {
+					self.window.request_redraw();
+				}
+
+				return Ok(settings_changed);
+			},
+		};
 		let view = frame.texture.create_view(&TextureViewDescriptor::default());
 		let mut encoder = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("rsnap-settings encoder"),
@@ -80,7 +117,7 @@ impl SettingsWindow {
 		);
 
 		{
-			let panel_fill = self.egui_ctx.style().visuals.panel_fill;
+			let panel_fill = self.egui_ctx.global_style().visuals.panel_fill;
 			let clear = wgpu::Color {
 				r: f64::from(panel_fill.r()) / 255.0,
 				g: f64::from(panel_fill.g()) / 255.0,
@@ -98,6 +135,7 @@ impl SettingsWindow {
 				depth_stencil_attachment: None,
 				timestamp_writes: None,
 				occlusion_query_set: None,
+				multiview_mask: None,
 			};
 			let mut rpass = encoder.begin_render_pass(&rpass_desc).forget_lifetime();
 
@@ -110,21 +148,42 @@ impl SettingsWindow {
 		Ok(settings_changed)
 	}
 
-	fn acquire_frame(&mut self) -> Result<SurfaceTexture> {
-		match self.surface.get_current_texture() {
-			Ok(frame) => Ok(frame),
-			Err(SurfaceError::Outdated) => {
-				self.reconfigure_surface();
-
-				self.surface.get_current_texture().wrap_err("get_current_texture after reconfigure")
-			},
-			Err(SurfaceError::Lost) => {
-				self.recreate_surface().wrap_err("recreate surface")?;
-
-				self.surface.get_current_texture().wrap_err("get_current_texture after recreate")
-			},
-			Err(err) => Err(eyre::eyre!("get_current_texture failed: {err:?}")),
+	fn acquire_frame(&mut self) -> Result<AcquiredSurfaceFrame> {
+		for attempt in 0..2 {
+			match self.surface.get_current_texture() {
+				CurrentSurfaceTexture::Success(frame) => {
+					return Ok(AcquiredSurfaceFrame::Ready(frame));
+				},
+				CurrentSurfaceTexture::Suboptimal(frame) => {
+					return Ok(AcquiredSurfaceFrame::Ready(frame));
+				},
+				CurrentSurfaceTexture::Outdated if attempt == 0 => {
+					self.reconfigure_surface();
+				},
+				CurrentSurfaceTexture::Lost if attempt == 0 => {
+					self.recreate_surface().wrap_err("recreate surface")?;
+				},
+				CurrentSurfaceTexture::Outdated => {
+					return Err(eyre::eyre!(
+						"get_current_texture stayed outdated after reconfigure"
+					));
+				},
+				CurrentSurfaceTexture::Lost => {
+					return Err(eyre::eyre!("get_current_texture stayed lost after recreate"));
+				},
+				CurrentSurfaceTexture::Timeout => {
+					return Ok(AcquiredSurfaceFrame::Skipped(SurfaceFrameSkipReason::Timeout));
+				},
+				CurrentSurfaceTexture::Occluded => {
+					return Ok(AcquiredSurfaceFrame::Skipped(SurfaceFrameSkipReason::Occluded));
+				},
+				CurrentSurfaceTexture::Validation => {
+					return Err(eyre::eyre!("get_current_texture hit a validation error"));
+				},
+			}
 		}
+
+		unreachable!("surface acquisition attempts are bounded")
 	}
 
 	fn recreate_surface(&mut self) -> Result<()> {
@@ -168,7 +227,7 @@ impl GpuContext {
 	pub(super) fn new_with_surface(
 		window: std::sync::Arc<Window>,
 	) -> Result<(Self, Surface<'static>, wgpu::SurfaceConfiguration)> {
-		let instance = wgpu::Instance::new(&InstanceDescriptor::default());
+		let instance = wgpu::Instance::default();
 		let surface =
 			instance.create_surface(std::sync::Arc::clone(&window)).wrap_err("create_surface")?;
 		let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
