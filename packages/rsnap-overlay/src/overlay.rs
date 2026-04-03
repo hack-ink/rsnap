@@ -16217,6 +16217,57 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	#[test]
+	fn handle_scroll_capture_frame_passes_allow_stale_input_into_live_stream_gate() {
+		let document = [
+			[10, 0, 0, 255],
+			[20, 0, 0, 255],
+			[30, 0, 0, 255],
+			[40, 0, 0, 255],
+			[50, 0, 0, 255],
+			[60, 0, 0, 255],
+			[70, 0, 0, 255],
+			[80, 0, 0, 255],
+		];
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		};
+		let capture_rect = RectPoints::new(100, 120, 200, 240);
+		let observed_at = Instant::now();
+		let input_at = observed_at - SCROLL_CAPTURE_INPUT_FRESHNESS - Duration::from_millis(1);
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(capture_rect);
+		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+		session.scroll_capture.input_direction_at = Some(input_at);
+		session.scroll_capture.session =
+			Some(ScrollSession::new(make_scroll_capture_window(&document, 3, 0, 5), 320).unwrap());
+
+		assert_eq!(
+			session
+				.handle_scroll_capture_frame(
+					make_scroll_capture_window(&document, 3, 1, 5),
+					ScrollCaptureFrameSource::LiveStream { frame_seq: 143 },
+					true,
+					observed_at,
+				)
+				.transpose()
+				.unwrap(),
+			Some(ScrollObserveOutcome::Committed {
+				direction: ScrollDirection::Down,
+				growth_rows: 1,
+			})
+		);
+		assert_eq!(scroll_capture_export_height(&session), 6);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
 	fn fresh_live_stream_frame_without_direction_metadata_fails_closed_as_no_change() {
 		let document = [
 			[10, 0, 0, 255],
