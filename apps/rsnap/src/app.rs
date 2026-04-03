@@ -176,16 +176,22 @@ impl App {
 
 		self.startup_permissions_checked = true;
 
-		if permissions_macos::screen_recording_access_granted() {
+		let screen_recording_granted = permissions_macos::screen_recording_access_granted();
+		let accessibility_granted = permissions_macos::accessibility_access_granted();
+		let input_monitoring_granted = permissions_macos::input_monitoring_access_granted();
+
+		if screen_recording_granted && accessibility_granted && input_monitoring_granted {
 			return;
 		}
 
 		tracing::info!(
-			settings_path = %permissions_macos::SCREEN_RECORDING_SETTINGS_PATH,
-			"Screen Recording is missing at startup; opening the Settings window."
+			screen_recording_granted,
+			accessibility_granted,
+			input_monitoring_granted,
+			"One or more macOS permissions are missing at startup; opening the Settings window."
 		);
 
-		self.open_settings_window(event_loop, "startup-screen-recording-check");
+		self.open_settings_window(event_loop, "startup-permission-check");
 	}
 }
 

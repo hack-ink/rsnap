@@ -101,7 +101,7 @@ impl App {
 			return;
 		}
 		#[cfg(target_os = "macos")]
-		if !self.ensure_screen_recording_access(event_loop, requested_by) {
+		if !self.ensure_screen_recording_access(requested_by) {
 			return;
 		}
 
@@ -196,37 +196,16 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn ensure_screen_recording_access(
-		&mut self,
-		event_loop: &ActiveEventLoop,
-		requested_by: &'static str,
-	) -> bool {
+	fn ensure_screen_recording_access(&self, requested_by: &'static str) -> bool {
 		if permissions_macos::screen_recording_access_granted() {
 			return true;
 		}
 
-		let requested = permissions_macos::request_screen_recording_access();
-
-		if requested || permissions_macos::screen_recording_access_granted() {
-			tracing::info!(
-				requested_by = %requested_by,
-				"Screen Recording access is available after a just-in-time permission check."
-			);
-
-			return true;
-		}
-
-		if let Err(err) = permissions_macos::open_screen_recording_settings() {
-			tracing::warn!(error = %err, "Failed to open Screen Recording settings.");
-		}
-
-		tracing::warn!(
+		tracing::info!(
 			requested_by = %requested_by,
 			settings_path = %permissions_macos::SCREEN_RECORDING_SETTINGS_PATH,
-			"Screen Recording access is missing; redirecting the user to the in-app recovery path."
+			"Screen Recording access is missing; capture stays unavailable until it is enabled from Settings."
 		);
-
-		self.open_settings_window(event_loop, "screen-recording-permission");
 
 		false
 	}
@@ -264,30 +243,21 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn ensure_scroll_capture_permissions() -> Result<()> {
-		if !permissions_macos::accessibility_access_granted() {
-			let granted_after = permissions_macos::request_accessibility_access()
-				|| permissions_macos::accessibility_access_granted();
+	fn ensure_scroll_capture_permissions() -> Result<bool> {
+		let accessibility_granted = permissions_macos::accessibility_access_granted();
+		let input_monitoring_granted = permissions_macos::input_monitoring_access_granted();
 
-			if !granted_after {
-				return Err(eyre::eyre!(
-					"Scroll capture needs Accessibility. Enable rsnap in {} and retry. Use the Permissions menu after you finish this capture if macOS does not show a prompt.",
-					permissions_macos::ACCESSIBILITY_SETTINGS_PATH
-				));
-			}
-		}
-		if !permissions_macos::input_monitoring_access_granted() {
-			let requested = permissions_macos::request_input_monitoring_access();
+		if !accessibility_granted || !input_monitoring_granted {
+			tracing::info!(
+				accessibility_granted,
+				input_monitoring_granted,
+				"Scroll capture prerequisites are missing; rejecting the start request without a HUD permission message."
+			);
 
-			if !requested && !permissions_macos::input_monitoring_access_granted() {
-				return Err(eyre::eyre!(
-					"Scroll capture needs Input Monitoring. Enable rsnap in {} and retry. Use the Permissions menu after you finish this capture if macOS does not show a prompt.",
-					permissions_macos::INPUT_MONITORING_SETTINGS_PATH
-				));
-			}
+			return Ok(false);
 		}
 
-		Ok(())
+		Ok(true)
 	}
 
 	#[cfg(target_os = "macos")]
@@ -329,7 +299,7 @@ impl App {
 				"Scroll capture is still starting the native scroll observer. Retry once."
 			)),
 			ScrollInputObserverWaitOutcome::Failed => Err(eyre::eyre!(
-				"Scroll capture could not activate the native scroll observer. Retry once. If Input Monitoring was just enabled, reopen the Permissions menu and try again."
+				"Scroll capture could not activate the native scroll observer. Retry once."
 			)),
 		}
 	}
