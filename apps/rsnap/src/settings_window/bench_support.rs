@@ -195,14 +195,16 @@ impl SettingsUiBenchHarness {
 		let mut settings_changed = false;
 		let host = &mut self.host;
 		let settings = &mut self.settings;
-		let full_output = self.ctx.run(raw_input, |ctx| {
-			CentralPanel::default().show(ctx, |ui| {
+		let full_output = self.ctx.run_ui(raw_input, |ui| {
+			let ctx = ui.ctx().clone();
+
+			CentralPanel::default().show_inside(ui, |ui| {
 				sections::with_settings_density(ui, combo_width, |ui| {
 					ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
 						settings_changed |= sections::render_all_sections_with_defaults(
 							host,
 							ui,
-							ctx,
+							&ctx,
 							settings,
 							section_defaults,
 						);
