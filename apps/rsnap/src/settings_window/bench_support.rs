@@ -290,7 +290,7 @@ fn settings_for_scenario(scenario: SettingsUiBenchScenario) -> AppSettings {
 		settings.hud_tint = 0.68;
 		settings.hud_tint_hue = 0.88;
 		settings.alt_activation = AltActivationMode::Toggle;
-		settings.selection_particles = true;
+		settings.selection_flow_enabled = true;
 		settings.selection_flow_stroke_width_px = 6.4;
 		settings.log_filter = Some(String::from("rsnap=trace,rsnap_overlay=trace"));
 		settings.output_dir =

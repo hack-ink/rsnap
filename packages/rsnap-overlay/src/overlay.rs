@@ -243,6 +243,7 @@ const SLOW_OP_WARN_OUTER_POSITION: Duration = Duration::from_millis(24);
 const SLOW_OP_WARN_RENDER: Duration = Duration::from_millis(24);
 const SLOW_OP_WARN_WINDOW_EVENT: Duration = Duration::from_millis(40);
 const SLOW_OP_WARN_INTERVAL: Duration = Duration::from_secs(1);
+const OCCLUDED_FRAME_REDRAW_RETRY_WINDOW: Duration = Duration::from_secs(2);
 const REDRAW_SUBSTEP_CONTRIBUTION_FLOOR: Duration = Duration::from_millis(4);
 // macOS trackpad/wheel sequences can keep delivering usable follow-up frames after the
 // initiating input event. Keep the observation window wide enough for the capture pipeline
@@ -292,7 +293,10 @@ const SELECTION_FLOW_CORE_WIDTH_PX: f32 = 2.4;
 const SELECTION_FLOW_CORE_FLOW_WIDTH: f32 = 0.06;
 const SELECTION_FLOW_FLOW_BOOST: f32 = 2.8;
 const INTERACTIVE_REPAINT_FPS_CAP: f32 = 120.0;
-const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] = [(94, 200, 255), (165, 103, 255), (255, 150, 60)];
+const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] =
+	[(196, 226, 255), (228, 198, 255), (176, 244, 224)];
+const SELECTION_FLOW_LIGHT_PALETTE: [(u8, u8, u8); 3] =
+	[(196, 226, 255), (228, 198, 255), (176, 244, 224)];
 const SELECTION_FLOW_FROZEN_ALPHA_SCALE: f32 = 0.70;
 const SELECTION_FLOW_FROZEN_INTENSITY: f32 = 1.25;
 const LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 96;
@@ -408,7 +412,6 @@ pub enum OutputNaming {
 /// Controls how transparent window captures are composited before export.
 pub enum WindowCaptureAlphaMode {
 	#[default]
-	#[serde(alias = "preserve")]
 	/// Preserve the observed screen background behind transparent pixels.
 	Background,
 	/// Composite transparency against a light matte color.
@@ -571,6 +574,49 @@ impl DeviceCursorPointSource {
 	}
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionFlowStyle {
+	Band,
+	FullBorder,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum WindowRendererPath {
+	Overlay,
+	LoupeTile,
+}
+impl WindowRendererPath {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Overlay => "overlay",
+			Self::LoupeTile => "loupe_tile",
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SurfaceFrameSkipReason {
+	Timeout,
+	Occluded,
+}
+impl SurfaceFrameSkipReason {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Timeout => "timeout",
+			Self::Occluded => "occluded",
+		}
+	}
+
+	const fn should_request_redraw(self) -> bool {
+		matches!(self, Self::Timeout)
+	}
+}
+
+enum AcquiredSurfaceFrame {
+	Ready(SurfaceTexture),
+	Skipped(SurfaceFrameSkipReason),
+}
+
 #[derive(Clone, Debug)]
 /// Runtime configuration applied to a capture overlay session.
 pub struct OverlayConfig {
@@ -580,8 +626,8 @@ pub struct OverlayConfig {
 	pub show_alt_hint_keycap: bool,
 	/// Enables blur or its platform fallback for HUD windows.
 	pub show_hud_blur: bool,
-	/// Enables animated particles around the live selection border.
-	pub selection_particles: bool,
+	/// Enables the animated flow ring drawn around live and pending selections.
+	pub selection_flow_enabled: bool,
 	/// Sets the core stroke width used for the animated selection border.
 	pub selection_flow_stroke_width_px: f32,
 	/// Forces an opaque HUD background instead of glass styling.
@@ -619,7 +665,7 @@ impl Default for OverlayConfig {
 			hud_anchor: HudAnchor::Cursor,
 			show_alt_hint_keycap: true,
 			show_hud_blur: true,
-			selection_particles: true,
+			selection_flow_enabled: true,
 			selection_flow_stroke_width_px: SELECTION_FLOW_CORE_WIDTH_PX,
 			hud_opaque: false,
 			hud_opacity: 0.35,
@@ -1464,7 +1510,7 @@ impl OverlaySession {
 	}
 
 	fn maybe_keep_selection_flow_repaint(&self) {
-		if !self.is_active() || !self.config.selection_particles {
+		if !self.is_active() || !self.config.selection_flow_enabled {
 			return;
 		}
 
@@ -1491,6 +1537,10 @@ impl OverlaySession {
 	}
 
 	fn live_overlay_selection_flow_repaint_active(&self) -> bool {
+		if !self.config.selection_flow_enabled {
+			return false;
+		}
+
 		self.state.hovered_window_rect.is_some_and(|hovered| {
 			self.active_cursor_monitor().is_some_and(|monitor| hovered.monitor_id == monitor.id)
 		})
@@ -2336,11 +2386,10 @@ impl OverlaySession {
 			now.duration_since(snapshot.captured_at) > self.window_list_refresh_interval
 				|| self.state.alt_held
 		});
+		let throttled = now.duration_since(self.last_window_list_refresh_request_at)
+			< self.window_list_refresh_interval;
 
-		if !needs_refresh
-			|| now.duration_since(self.last_window_list_refresh_request_at)
-				< self.window_list_refresh_interval
-		{
+		if !needs_refresh || throttled {
 			return false;
 		}
 
@@ -4321,7 +4370,7 @@ impl OverlaySession {
 				self.config.hud_milk_amount,
 				self.config.hud_tint_hue,
 				self.config.theme_mode,
-				self.config.selection_particles,
+				self.config.selection_flow_enabled,
 				self.config.selection_flow_stroke_width_px,
 				false,
 				false,
@@ -6513,7 +6562,7 @@ impl OverlaySession {
 				self.config.hud_milk_amount,
 				self.config.hud_tint_hue,
 				self.config.theme_mode,
-				self.config.selection_particles,
+				self.config.selection_flow_enabled,
 				self.config.selection_flow_stroke_width_px,
 				true,
 				false,
@@ -7326,11 +7375,6 @@ impl OverlaySession {
 			);
 		}
 
-		let capture_in_progress = matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.state.monitor == Some(overlay_monitor)
-			&& !self.frozen_final_capture_ready();
-		let draw_selection_particles =
-			(self.config.selection_particles || self.scroll_capture.active) && !capture_in_progress;
 		let overlay_screen_rect = self.overlay_window_screen_rect(window_id, overlay_monitor);
 		let toolbar_visible_for_badge = if cfg!(target_os = "macos") {
 			!self.should_hide_toolbar_window(overlay_monitor)
@@ -7384,7 +7428,7 @@ impl OverlaySession {
 				self.config.hud_milk_amount,
 				self.config.hud_tint_hue,
 				self.config.theme_mode,
-				draw_selection_particles,
+				self.config.selection_flow_enabled,
 				self.config.selection_flow_stroke_width_px,
 				!self.scroll_capture.active,
 				self.scroll_capture.active,
@@ -8237,49 +8281,6 @@ impl Default for OverlaySession {
 	}
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SelectionFlowStyle {
-	Band,
-	FullBorder,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum WindowRendererPath {
-	Overlay,
-	LoupeTile,
-}
-impl WindowRendererPath {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Overlay => "overlay",
-			Self::LoupeTile => "loupe_tile",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SurfaceFrameSkipReason {
-	Timeout,
-	Occluded,
-}
-impl SurfaceFrameSkipReason {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Timeout => "timeout",
-			Self::Occluded => "occluded",
-		}
-	}
-
-	const fn should_request_redraw(self) -> bool {
-		matches!(self, Self::Timeout)
-	}
-}
-
-enum AcquiredSurfaceFrame {
-	Ready(SurfaceTexture),
-	Skipped(SurfaceFrameSkipReason),
-}
-
 #[cfg(target_os = "macos")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingRecognizeTextRequest {
@@ -8963,8 +8964,13 @@ struct WindowRenderer {
 	selection_flow_cache: SelectionFlowGeometryCache,
 	selection_dashed_border_cache: SelectionDashedBorderCache,
 	slow_op_logger: SlowOperationLogger,
+	occluded_redraw_retry_until: Option<Instant>,
 }
 impl WindowRenderer {
+	fn note_successful_frame_presented(&mut self) {
+		self.occluded_redraw_retry_until = None;
+	}
+
 	fn mip_level_count(width: u32, height: u32) -> u32 {
 		let max_dim = width.max(height).max(1);
 
@@ -9439,7 +9445,7 @@ impl WindowRenderer {
 		hud_milk_amount: f32,
 		hud_tint_hue: f32,
 		theme: HudTheme,
-		selection_particles: bool,
+		selection_flow_enabled: bool,
 		selection_flow_stroke_width_px: f32,
 		needs_frozen_surface_bg: bool,
 		show_frozen_capture_affordance: bool,
@@ -9461,7 +9467,7 @@ impl WindowRenderer {
 			None
 		};
 		let mut hud_pill = None;
-		let mut _show_selection_particles = false;
+		let mut _show_selection_affordance = false;
 		let egui_ctx = self.egui_ctx.clone();
 		let full_output = egui_ctx.run_ui(raw_input, |ui| {
 			let ctx = ui.ctx();
@@ -9512,17 +9518,16 @@ impl WindowRenderer {
 				);
 				let painter = ctx.layer_painter(layer);
 
-				_show_selection_particles |= Self::render_live_capture_affordances(
+				_show_selection_affordance |= Self::render_live_capture_affordances(
 					ctx,
 					&painter,
 					state,
 					monitor,
 					screen_rect,
 					theme,
-					selection_particles,
+					selection_flow_enabled,
 					selection_flow_stroke_width_px,
 					selection_flow_geometry_cache,
-					selection_dashed_border_cache,
 				);
 			}
 			if matches!(state.mode, OverlayMode::Frozen)
@@ -9532,7 +9537,7 @@ impl WindowRenderer {
 			{
 				let screen_rect = ctx.input(|i| i.viewport_rect());
 
-				_show_selection_particles |= Self::render_frozen_capture_affordance(
+				_show_selection_affordance |= Self::render_frozen_capture_affordance(
 					ctx,
 					state,
 					monitor,
@@ -9540,7 +9545,7 @@ impl WindowRenderer {
 					theme,
 					frozen_toolbar_reserved_rect,
 					frozen_capture_is_fullscreen_fallback,
-					selection_particles,
+					selection_flow_enabled,
 					selection_flow_stroke_width_px,
 					selection_flow_geometry_cache,
 					selection_dashed_border_cache,
@@ -9559,10 +9564,9 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		screen_rect: Rect,
 		theme: HudTheme,
-		selection_particles: bool,
+		selection_flow_enabled: bool,
 		selection_flow_stroke_width_px: f32,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
-		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		let mut has_rect = false;
 
@@ -9572,8 +9576,7 @@ impl WindowRenderer {
 
 		let primary_not_down = !ctx.input(|i| i.pointer.primary_down());
 
-		if selection_particles
-			&& let Some(hovered_window) = state.hovered_window_rect
+		if let Some(hovered_window) = state.hovered_window_rect
 			&& hovered_window.monitor_id == monitor.id
 		{
 			let rect = Rect::from_min_size(
@@ -9585,28 +9588,25 @@ impl WindowRenderer {
 			if rect.width() >= LIVE_DRAG_START_THRESHOLD_PX
 				&& rect.height() >= LIVE_DRAG_START_THRESHOLD_PX
 			{
-				Self::render_selection_flow_ring(
-					painter,
-					rect,
-					ctx,
-					theme,
-					SelectionFlowStyle::Band,
-					selection_flow_stroke_width_px,
-					selection_flow_geometry_cache,
-				);
+				Self::render_live_drag_selection_scrim(painter, rect, screen_rect, theme);
+
+				if selection_flow_enabled {
+					Self::render_selection_flow_ring(
+						painter,
+						rect,
+						ctx,
+						theme,
+						SelectionFlowStyle::Band,
+						selection_flow_stroke_width_px,
+						selection_flow_geometry_cache,
+					);
+				}
 
 				has_rect = true;
 			}
 		}
-
 		if let Some(rect) = Self::live_drag_focus_rect(state, monitor, screen_rect) {
-			Self::render_live_drag_selection_scrim(
-				painter,
-				rect,
-				screen_rect,
-				theme,
-				selection_dashed_border_cache,
-			);
+			Self::render_live_drag_selection_scrim(painter, rect, screen_rect, theme);
 
 			has_rect = true;
 		}
@@ -9632,7 +9632,7 @@ impl WindowRenderer {
 			state.drag_rect.is_some_and(|drag_rect| drag_rect.monitor_id == monitor.id);
 		let cursor_on_monitor = state.cursor.is_some_and(|cursor| monitor.contains(cursor));
 
-		if selection_particles
+		if selection_flow_enabled
 			&& !has_hovered_window_for_this_monitor
 			&& !has_drag_rect_for_this_monitor
 			&& cursor_on_monitor
@@ -9663,7 +9663,7 @@ impl WindowRenderer {
 		theme: HudTheme,
 		frozen_toolbar_reserved_rect: Option<Rect>,
 		frozen_capture_is_fullscreen_fallback: bool,
-		selection_particles: bool,
+		selection_flow_enabled: bool,
 		selection_flow_stroke_width_px: f32,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
@@ -9700,7 +9700,15 @@ impl WindowRenderer {
 
 			return has_affordance;
 		}
-		if !selection_particles {
+		if !selection_flow_enabled {
+			let mut has_affordance = Self::render_frozen_selection_scrim(
+				&painter,
+				rect,
+				screen_rect,
+				theme,
+				selection_dashed_border_cache,
+			);
+
 			if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
 				Self::render_selection_size_badge(
 					ctx,
@@ -9712,10 +9720,10 @@ impl WindowRenderer {
 					theme,
 				);
 
-				return true;
+				has_affordance = true;
 			}
 
-			return false;
+			return has_affordance;
 		}
 
 		Self::render_selection_flow_ring(
@@ -10190,14 +10198,12 @@ impl WindowRenderer {
 		focus_rect: Rect,
 		screen_rect: Rect,
 		theme: HudTheme,
-		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
-		Self::render_selection_scrim(
+		Self::render_selection_scrim_fill(
 			painter,
 			focus_rect,
 			screen_rect,
 			Self::live_drag_selection_scrim_color(theme),
-			selection_dashed_border_cache,
 		)
 	}
 
@@ -10207,6 +10213,24 @@ impl WindowRenderer {
 		screen_rect: Rect,
 		scrim_fill: Color32,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
+	) -> bool {
+		let drew_scrim =
+			Self::render_selection_scrim_fill(painter, focus_rect, screen_rect, scrim_fill);
+		let drew_border = Self::render_selection_dashed_border(
+			painter,
+			focus_rect,
+			screen_rect,
+			selection_dashed_border_cache,
+		);
+
+		drew_scrim || drew_border
+	}
+
+	fn render_selection_scrim_fill(
+		painter: &Painter,
+		focus_rect: Rect,
+		screen_rect: Rect,
+		scrim_fill: Color32,
 	) -> bool {
 		let scrim_rects = Self::frozen_selection_scrim_rects(screen_rect, focus_rect);
 		let mut drew_scrim = false;
@@ -10221,14 +10245,7 @@ impl WindowRenderer {
 			drew_scrim = true;
 		}
 
-		let drew_border = Self::render_selection_dashed_border(
-			painter,
-			focus_rect,
-			screen_rect,
-			selection_dashed_border_cache,
-		);
-
-		drew_scrim || drew_border
+		drew_scrim
 	}
 
 	fn render_selection_dashed_border(
@@ -10469,10 +10486,7 @@ impl WindowRenderer {
 			return;
 		}
 
-		let corner_radius = SELECTION_FLOW_CORNER_RADIUS_PX
-			.min(rect.width() / 2.0 - 0.25)
-			.min(rect.height() / 2.0 - 0.25)
-			.max(0.0);
+		let corner_radius = Self::selection_flow_corner_radius(rect);
 		let perimeter = Self::selection_flow_perimeter(rect, corner_radius);
 		let time = ctx.input(|i| i.time) as f32;
 		let sample_count = Self::selection_flow_sample_count(perimeter);
@@ -10488,10 +10502,7 @@ impl WindowRenderer {
 			sample_count,
 			seam_offset,
 		);
-		let base_alpha_scale = match theme {
-			HudTheme::Light => 0.86,
-			HudTheme::Dark => 1.0,
-		};
+		let base_alpha_scale = 1.0;
 		let stroke_width = selection_flow_stroke_width_px.clamp(1.0, 8.0);
 
 		if samples.is_empty() {
@@ -10522,6 +10533,20 @@ impl WindowRenderer {
 				SELECTION_FLOW_FROZEN_INTENSITY,
 				theme,
 			),
+		}
+	}
+
+	fn selection_flow_corner_radius(rect: Rect) -> f32 {
+		SELECTION_FLOW_CORNER_RADIUS_PX
+			.min(rect.width() / 2.0 - 0.25)
+			.min(rect.height() / 2.0 - 0.25)
+			.max(0.0)
+	}
+
+	fn selection_flow_palette(theme: HudTheme) -> &'static [(u8, u8, u8); 3] {
+		match theme {
+			HudTheme::Dark => &SELECTION_FLOW_PALETTE,
+			HudTheme::Light => &SELECTION_FLOW_LIGHT_PALETTE,
 		}
 	}
 
@@ -10888,7 +10913,7 @@ impl WindowRenderer {
 		alpha_scale: f32,
 		intensity: f32,
 	) -> Color32 {
-		let palette = SELECTION_FLOW_PALETTE;
+		let palette = Self::selection_flow_palette(theme);
 		let normalized = progress.rem_euclid(1.0);
 		let band_position = normalized * palette.len() as f32;
 		let band = band_position.floor() as usize % palette.len();
@@ -10898,10 +10923,7 @@ impl WindowRenderer {
 		let blend = |a: u8, b: u8, ratio: f32| -> u8 {
 			(a as f32 + (b as f32 - a as f32) * ratio).clamp(0.0, 255.0).round() as u8
 		};
-		let theme_alpha = match theme {
-			HudTheme::Dark => 1.0,
-			HudTheme::Light => 0.82,
-		};
+		let theme_alpha = 1.0;
 		let alpha = (255.0 * alpha_scale * intensity * theme_alpha).clamp(0.0, 255.0);
 
 		Color32::from_rgba_unmultiplied(
@@ -12415,6 +12437,7 @@ impl WindowRenderer {
 			selection_flow_cache: SelectionFlowGeometryCache::default(),
 			selection_dashed_border_cache: SelectionDashedBorderCache::default(),
 			slow_op_logger: SlowOperationLogger::default(),
+			occluded_redraw_retry_until: None,
 		})
 	}
 
@@ -12551,7 +12574,11 @@ impl WindowRenderer {
 					"Skipped overlay window frame acquisition."
 				);
 
-				if reason.should_request_redraw() {
+				if should_request_overlay_redraw_after_surface_skip(
+					reason,
+					Instant::now(),
+					&mut self.occluded_redraw_retry_until,
+				) {
 					self.window.request_redraw();
 				}
 
@@ -12568,6 +12595,7 @@ impl WindowRenderer {
 			&paint_jobs,
 			&screen_descriptor,
 		)?;
+		self.note_successful_frame_presented();
 
 		phase_timings.render_frame = render_frame_started_at.elapsed();
 		phase_timings.total = draw_started_at.elapsed();
@@ -12611,7 +12639,7 @@ impl WindowRenderer {
 		hud_milk_amount: f32,
 		hud_tint_hue: f32,
 		theme_mode: ThemeMode,
-		selection_particles: bool,
+		selection_flow_enabled: bool,
 		selection_flow_stroke_width_px: f32,
 		allow_frozen_surface_bg: bool,
 		show_frozen_capture_affordance: bool,
@@ -12671,7 +12699,7 @@ impl WindowRenderer {
 			hud_milk_amount,
 			hud_tint_hue,
 			theme,
-			selection_particles,
+			selection_flow_enabled,
 			selection_flow_stroke_width_px,
 			hud_cfg.needs_frozen_surface_bg,
 			show_frozen_capture_affordance,
@@ -13296,6 +13324,29 @@ struct MacOSCGPoint {
 	y: f64,
 }
 
+fn should_request_overlay_redraw_after_surface_skip(
+	reason: SurfaceFrameSkipReason,
+	now: Instant,
+	occluded_redraw_retry_until: &mut Option<Instant>,
+) -> bool {
+	match reason {
+		SurfaceFrameSkipReason::Timeout => true,
+		SurfaceFrameSkipReason::Occluded => match occluded_redraw_retry_until {
+			Some(deadline) if now >= *deadline => {
+				*occluded_redraw_retry_until = None;
+
+				false
+			},
+			Some(_) => true,
+			None => {
+				*occluded_redraw_retry_until = Some(now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW);
+
+				true
+			},
+		},
+	}
+}
+
 fn frozen_toolbar_needs_new_sample(
 	last_screen_size_points: Option<Vec2>,
 	screen_size_points: Vec2,
@@ -13619,6 +13670,17 @@ mod tests {
 	use crate::overlay::PngAction;
 	#[cfg(target_os = "macos")]
 	use crate::overlay::session_state::ScrollCaptureLiveFrame;
+	use crate::overlay::{
+		self, FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
+		HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
+		OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+		SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
+		SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+		SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
+		SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
+		TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers, regular,
+	};
 	#[cfg(target_os = "macos")]
 	use crate::overlay::{
 		AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
@@ -13627,17 +13689,6 @@ mod tests {
 		SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
 		SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
 		ScrollCaptureFrameSource, StartupLiveRgbPlan,
-	};
-	use crate::overlay::{
-		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
-		HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OverlaySession, Pos2, Rect,
-		SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
-		SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
-		SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
-		SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache,
-		SelectionDashedBorderMetrics, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
-		TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
-		hud_helpers, regular,
 	};
 	use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 	#[cfg(target_os = "macos")]
@@ -14450,6 +14501,35 @@ mod tests {
 				gap_length: 4.0 / 1.5,
 			}
 		);
+	}
+
+	#[test]
+	fn frozen_selection_scrim_is_stronger_than_live_drag_scrim_in_light_theme() {
+		let frozen_scrim = WindowRenderer::frozen_selection_scrim_color(HudTheme::Light);
+		let drag_scrim = WindowRenderer::live_drag_selection_scrim_color(HudTheme::Light);
+
+		assert!(frozen_scrim.a() > drag_scrim.a());
+	}
+
+	#[test]
+	fn selection_flow_palette_tracks_hud_theme() {
+		assert_eq!(
+			WindowRenderer::selection_flow_palette(HudTheme::Dark),
+			&super::SELECTION_FLOW_PALETTE
+		);
+		assert_eq!(
+			WindowRenderer::selection_flow_palette(HudTheme::Light),
+			&super::SELECTION_FLOW_LIGHT_PALETTE
+		);
+	}
+
+	#[test]
+	fn selection_flow_color_can_share_theme_rgb() {
+		let dark = WindowRenderer::selection_flow_color(0.17, HudTheme::Dark, 0.4, 1.0);
+		let light = WindowRenderer::selection_flow_color(0.17, HudTheme::Light, 0.4, 1.0);
+
+		assert_eq!((dark.r(), dark.g(), dark.b()), (light.r(), light.g(), light.b()));
+		assert_eq!(dark.a(), light.a());
 	}
 
 	#[test]
@@ -15307,11 +15387,44 @@ mod tests {
 			HudTheme::Dark,
 			None,
 			false,
-			false,
+			true,
 			1.0,
 			&mut selection_flow_geometry_cache,
 			&mut selection_dashed_border_cache,
 		));
+	}
+
+	#[test]
+	fn render_live_capture_affordances_keep_hover_scrim_when_flow_disabled() {
+		let ctx = test_egui_context();
+		let layer =
+			egui::LayerId::new(egui::Order::Foreground, egui::Id::new("live-hover-flow-disabled"));
+		let painter = ctx.layer_painter(layer);
+		let monitor = test_monitor();
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let selection_dashed_border_cache = SelectionDashedBorderCache::default();
+		let mut state = OverlayState::new();
+		let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+		state.mode = OverlayMode::Live;
+		state.hovered_window_rect = Some(MonitorRectPoints {
+			monitor_id: monitor.id,
+			rect: RectPoints::new(100, 120, 240, 320),
+		});
+
+		assert!(WindowRenderer::render_live_capture_affordances(
+			&ctx,
+			&painter,
+			&state,
+			monitor,
+			screen_rect,
+			HudTheme::Light,
+			false,
+			1.0,
+			&mut selection_flow_geometry_cache,
+		));
+		assert_eq!(selection_dashed_border_cache.key, None);
 	}
 
 	#[test]
@@ -16398,6 +16511,11 @@ mod tests {
 
 		assert!(session.live_overlay_selection_flow_repaint_active());
 
+		session.config.selection_flow_enabled = false;
+
+		assert!(!session.live_overlay_selection_flow_repaint_active());
+
+		session.config.selection_flow_enabled = true;
 		session.state.hovered_window_rect = Some(MonitorRectPoints {
 			monitor_id: monitor.id + 1,
 			rect: RectPoints::new(100, 120, 240, 320),
@@ -19715,5 +19833,43 @@ mod tests {
 		assert_eq!(OverlaySession::interactive_repaint_fps(None, Some(90.0)), 90.0);
 		assert_eq!(OverlaySession::interactive_repaint_fps(None, Some(144.0)), 120.0);
 		assert_eq!(OverlaySession::interactive_repaint_fps(None, None), 120.0);
+	}
+
+	#[test]
+	fn occluded_surface_skip_requests_redraw_until_retry_window_expires() {
+		let now = Instant::now();
+		let mut retry_until = None;
+
+		assert!(overlay::should_request_overlay_redraw_after_surface_skip(
+			SurfaceFrameSkipReason::Occluded,
+			now,
+			&mut retry_until,
+		));
+		assert_eq!(retry_until, Some(now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW));
+		assert!(overlay::should_request_overlay_redraw_after_surface_skip(
+			SurfaceFrameSkipReason::Occluded,
+			now + Duration::from_millis(500),
+			&mut retry_until,
+		));
+		assert!(!overlay::should_request_overlay_redraw_after_surface_skip(
+			SurfaceFrameSkipReason::Occluded,
+			now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
+			&mut retry_until,
+		));
+		assert_eq!(retry_until, None);
+	}
+
+	#[test]
+	fn timeout_surface_skip_always_requests_redraw_without_touching_occluded_retry_window() {
+		let now = Instant::now();
+		let retry_deadline = now + Duration::from_millis(250);
+		let mut retry_until = Some(retry_deadline);
+
+		assert!(overlay::should_request_overlay_redraw_after_surface_skip(
+			SurfaceFrameSkipReason::Timeout,
+			now,
+			&mut retry_until,
+		));
+		assert_eq!(retry_until, Some(retry_deadline));
 	}
 }
