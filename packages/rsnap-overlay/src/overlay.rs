@@ -6259,6 +6259,17 @@ impl OverlaySession {
 		self.request_redraw_scroll_preview_window();
 	}
 
+	fn prepare_active_scroll_capture_output(&mut self) {
+		if !self.scroll_capture.active {
+			return;
+		}
+
+		self.maybe_tick_scroll_capture();
+		self.refresh_scroll_preview_committed_image();
+		self.refresh_scroll_preview_display_image();
+		self.sync_scroll_preview_segments();
+	}
+
 	fn undo_scroll_capture_append(&mut self) {
 		if !self.scroll_capture.active {
 			return;
@@ -6303,12 +6314,8 @@ impl OverlaySession {
 
 			return;
 		}
-		if self.scroll_capture.active {
-			self.maybe_tick_scroll_capture();
-			self.refresh_scroll_preview_committed_image();
-			self.refresh_scroll_preview_display_image();
-			self.sync_scroll_preview_segments();
-		}
+
+		self.prepare_active_scroll_capture_output();
 
 		let image = if self.scroll_capture.active {
 			self.current_scroll_preview_render_image()
@@ -6345,6 +6352,8 @@ impl OverlaySession {
 
 			return;
 		}
+
+		self.prepare_active_scroll_capture_output();
 
 		let Some(export_image) = self.current_export_image() else {
 			return;
@@ -15500,6 +15509,47 @@ mod tests {
 			Some(&expected_export)
 		);
 		assert_eq!(session.active_ocr_request_id, Some(0));
+		assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn begin_ocr_action_ticks_active_scroll_capture_before_queueing_recognition() {
+		let monitor = test_monitor();
+		let rect = RectPoints::new(100, 120, 512, 640);
+		let base = make_browser_like_worker_capture_window(512, 640, 0);
+		let mut session = OverlaySession::new();
+
+		session.worker = Some(OverlayWorker::new(
+			Box::new(SequenceScrollCaptureBackend::new([Some(
+				make_browser_like_worker_capture_window(512, 640, 84),
+			)])),
+			None,
+		));
+
+		session.state.begin_freeze(monitor);
+		session.state.finish_freeze(monitor, test_frozen_image());
+
+		session.state.frozen_capture_rect = Some(rect);
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+		session.authoritative_frozen_capture_ready = true;
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(rect);
+		session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
+
+		enable_test_worker_scroll_capture_path(&mut session);
+		set_scroll_capture_input(&mut session, ScrollDirection::Down);
+
+		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
+
+		session.begin_ocr_action();
+
+		assert!(
+			session.scroll_capture.inflight_request_id.is_some(),
+			"OCR should flush active scroll capture by kicking the same worker sample path as PNG export"
+		);
+		assert!(session.pending_recognize_text.is_some());
 		assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
 	}
 
