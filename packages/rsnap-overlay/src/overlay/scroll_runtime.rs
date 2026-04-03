@@ -916,13 +916,17 @@ impl OverlaySession {
 		let worker_pairwise_path =
 			cfg!(target_os = "macos") && matches!(source, ScrollCaptureFrameSource::Worker { .. });
 		let outcome = if worker_pairwise_path {
-			let Some(session) = self.scroll_capture.session.as_mut() else {
-				self.scroll_capture_set_error("Scroll capture session is unavailable.");
+			if !allow_stale_input && prior_block_reason.is_some() {
+				Ok(ScrollObserveOutcome::NoChange)
+			} else {
+				let Some(session) = self.scroll_capture.session.as_mut() else {
+					self.scroll_capture_set_error("Scroll capture session is unavailable.");
 
-				return None;
-			};
+					return None;
+				};
 
-			session.observe_worker_pairwise_vision_frame(frame)
+				session.observe_worker_pairwise_vision_frame(frame)
+			}
 		} else {
 			self.observe_scroll_capture_frame_with_gate(
 				frame,

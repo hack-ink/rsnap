@@ -16986,6 +16986,46 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	#[test]
+	fn worker_frame_without_fresh_or_latched_input_fails_closed_without_appending_growth() {
+		let monitor = test_monitor();
+		let capture_rect = RectPoints::new(100, 120, 512, 640);
+		let base = make_sparse_worker_capture_window(512, 640, 0);
+		let next = make_sparse_worker_capture_window(512, 640, 90);
+		let mut session = OverlaySession::new();
+
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(capture_rect);
+		session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
+		session.scroll_capture.inflight_request_id = Some(41);
+		session.scroll_capture.inflight_request_observation =
+			Some(InflightScrollCaptureObservation {
+				was_observable: false,
+				external_input_seq: 7,
+				input_direction: Some(ScrollDirection::Down),
+			});
+
+		let export_height_before =
+			session.scroll_capture.session.as_ref().unwrap().export_image().height();
+		let viewport_top_before =
+			session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y();
+
+		session.handle_captured_scroll_region(monitor, capture_rect, 41, next);
+
+		assert_eq!(session.scroll_capture.inflight_request_id, None);
+		assert_eq!(session.scroll_capture.inflight_request_observation, None);
+		assert_eq!(
+			session.scroll_capture.session.as_ref().unwrap().export_image().height(),
+			export_height_before
+		);
+		assert_eq!(
+			session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(),
+			viewport_top_before
+		);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
 	fn newer_opposite_direction_supersedes_latched_worker_observation_context() {
 		let document = [
 			[10, 0, 0, 255],
