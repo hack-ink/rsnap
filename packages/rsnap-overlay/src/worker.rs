@@ -585,17 +585,24 @@ impl PendingWorkerRequests {
 		_region_capture_resp_tx: &Sender<CapturedMonitorRegionResponse>,
 		response_waker: Option<&(dyn Fn() + Send + Sync)>,
 	) {
+		let mut handled_high_priority = false;
+
 		if let Some(image) = self.last_encode {
 			OverlayWorker::handle_encode_request(resp_tx, response_waker, image);
 
-			return;
+			handled_high_priority = true;
 		}
 		#[cfg(target_os = "macos")]
 		if let Some(image) = self.last_recognize_text {
 			OverlayWorker::handle_recognize_text_request(resp_tx, response_waker, image);
 
+			handled_high_priority = true;
+		}
+
+		if handled_high_priority {
 			return;
 		}
+
 		if let Some((monitor, target)) = self.last_freeze {
 			OverlayWorker::handle_freeze_request(backend, resp_tx, response_waker, monitor, target);
 
@@ -665,7 +672,7 @@ mod tests {
 	};
 	use crate::worker::{
 		CapturedMonitorRegionResponse, CapturedMonitorRegionResult, OverlayWorker,
-		WorkerErrorSource, WorkerResponse,
+		PendingWorkerRequests, WorkerErrorSource, WorkerRequest, WorkerResponse,
 	};
 
 	enum MockScrollCaptureResult {
@@ -918,5 +925,31 @@ mod tests {
 			},
 			other => panic!("expected worker error, got {other:?}"),
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn dispatch_processes_encode_and_recognize_requests_from_same_batch() {
+		let (resp_tx, resp_rx) = mpsc::channel::<WorkerResponse>();
+		let (region_tx, region_rx) = mpsc::channel::<CapturedMonitorRegionResponse>();
+		let mut backend =
+			MockScrollCaptureBackend { scroll_capture_result: MockScrollCaptureResult::NoNewFrame };
+		let mut pending = PendingWorkerRequests::default();
+
+		pending.record(WorkerRequest::EncodePng { image: sample_image() });
+		pending.record(WorkerRequest::RecognizeText { image: sample_image() });
+		pending.dispatch(&mut backend, &resp_tx, &region_tx, None);
+
+		let first = resp_rx.try_recv().expect("png response");
+		let second = resp_rx.try_recv().expect("ocr response");
+
+		assert!(matches!(first, WorkerResponse::EncodedPng { .. }));
+		assert!(matches!(
+			second,
+			WorkerResponse::RecognizedText { .. }
+				| WorkerResponse::Error { source: WorkerErrorSource::RecognizeText, .. }
+		));
+		assert!(resp_rx.try_recv().is_err());
+		assert!(region_rx.try_recv().is_err());
 	}
 }
