@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::ffi::{CString, c_char, c_void};
-#[cfg(not(target_os = "macos"))]
 use std::process;
 #[cfg(target_os = "macos")]
 use std::ptr;
@@ -288,6 +287,8 @@ pub struct XcapCaptureBackend {
 	window_cache: Option<Arc<WindowListSnapshot>>,
 	window_cache_ttl: Duration,
 	#[cfg(target_os = "macos")]
+	self_capture_exception_window_ids: Vec<u32>,
+	#[cfg(target_os = "macos")]
 	live_frame_stream: MacLiveFrameStream,
 	#[cfg(target_os = "macos")]
 	last_region_capture: HashMap<u32, MacosRegionCaptureState>,
@@ -312,6 +313,8 @@ impl XcapCaptureBackend {
 			cache_ttl: Duration::from_millis(200),
 			window_cache: None,
 			window_cache_ttl: Duration::from_millis(250),
+			#[cfg(target_os = "macos")]
+			self_capture_exception_window_ids: self_capture_exception_window_ids.clone(),
 			#[cfg(target_os = "macos")]
 			live_frame_stream: MacLiveFrameStream::with_self_capture_exception_window_ids(
 				self_capture_exception_window_ids,
@@ -626,7 +629,11 @@ impl XcapCaptureBackend {
 	}
 
 	fn refresh_window_cache_impl(&mut self) -> Result<Arc<WindowListSnapshot>> {
-		let windows = collect_window_geometries().wrap_err("failed to refresh window cache")?;
+		let windows = collect_window_geometries(
+			#[cfg(target_os = "macos")]
+			&self.self_capture_exception_window_ids,
+		)
+		.wrap_err("failed to refresh window cache")?;
 		let snapshot = Arc::new(WindowListSnapshot {
 			captured_at: Instant::now(),
 			windows: Arc::new(windows),
@@ -1221,7 +1228,7 @@ fn capture_screenshot_cg_image(rect: CGRect) -> Result<Retained<CGImage>> {
 }
 
 #[cfg(target_os = "macos")]
-fn collect_window_geometries() -> Result<Vec<WindowRect>> {
+fn collect_window_geometries(self_capture_exception_window_ids: &[u32]) -> Result<Vec<WindowRect>> {
 	let window_list_ref = unsafe {
 		CGWindowListCopyWindowInfo(
 			KCG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY | KCG_WINDOW_LIST_OPTION_EXCLUDE_DESKTOP,
@@ -1250,7 +1257,9 @@ fn collect_window_geometries() -> Result<Vec<WindowRect>> {
 			continue;
 		};
 
-		if let Some(window_geometry) = window_geometry_from_dictionary(window_dict) {
+		if let Some(window_geometry) =
+			window_geometry_from_dictionary(window_dict, self_capture_exception_window_ids)
+		{
 			windows.push(window_geometry);
 		}
 
@@ -1261,9 +1270,13 @@ fn collect_window_geometries() -> Result<Vec<WindowRect>> {
 }
 
 #[cfg(target_os = "macos")]
-fn window_geometry_from_dictionary(window_dictionary: CFDictionaryRef) -> Option<WindowRect> {
+fn window_geometry_from_dictionary(
+	window_dictionary: CFDictionaryRef,
+	self_capture_exception_window_ids: &[u32],
+) -> Option<WindowRect> {
 	let is_on_screen = cf_bool_value(window_dictionary, "kCGWindowIsOnscreen")?;
 	let window_id = cf_number_to_u32(window_dictionary, "kCGWindowNumber");
+	let owner_pid = cf_number_to_u32(window_dictionary, "kCGWindowOwnerPID");
 	let layer = cf_number_to_u64(window_dictionary, "kCGWindowLayer")?;
 	let bounds_dict = cf_dictionary_value(window_dictionary, "kCGWindowBounds")?;
 	let x = cf_number_to_i64(bounds_dict, "X")?;
@@ -1274,8 +1287,25 @@ fn window_geometry_from_dictionary(window_dictionary: CFDictionaryRef) -> Option
 	if !is_on_screen || layer > KCG_WINDOW_LAYER_MAX_FOR_TARGETING || width <= 0 || height <= 0 {
 		return None;
 	}
+	if should_exclude_current_process_window(
+		window_id,
+		owner_pid,
+		self_capture_exception_window_ids,
+	) {
+		return None;
+	}
 
 	Some(WindowRect { window_id, x, y, width, height })
+}
+
+#[cfg(target_os = "macos")]
+fn should_exclude_current_process_window(
+	window_id: Option<u32>,
+	owner_pid: Option<u32>,
+	self_capture_exception_window_ids: &[u32],
+) -> bool {
+	owner_pid.is_some_and(|pid| pid == process::id())
+		&& !window_id.is_some_and(|id| self_capture_exception_window_ids.contains(&id))
 }
 
 #[cfg(target_os = "macos")]
@@ -1588,6 +1618,17 @@ mod tests {
 		assert!(backend::macos_supports_scroll_capture_screenshot_api_with_version(
 			NSOperatingSystemVersion { majorVersion: 15, minorVersion: 0, patchVersion: 0 }
 		));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn current_process_windows_are_excluded_from_window_targeting_unless_excepted() {
+		let self_pid = std::process::id();
+
+		assert!(backend::should_exclude_current_process_window(Some(41), Some(self_pid), &[]));
+		assert!(!backend::should_exclude_current_process_window(Some(41), Some(self_pid), &[41],));
+		assert!(!backend::should_exclude_current_process_window(Some(41), Some(self_pid + 1), &[]));
+		assert!(!backend::should_exclude_current_process_window(None, None, &[]));
 	}
 
 	#[test]

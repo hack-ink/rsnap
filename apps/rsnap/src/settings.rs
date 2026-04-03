@@ -46,6 +46,7 @@ impl LoupeSampleSize {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AppSettings {
 	#[serde(default)]
 	pub show_alt_hint_keycap: bool,
@@ -63,8 +64,8 @@ pub(crate) struct AppSettings {
 	pub hud_tint_hue: f32,
 	#[serde(default)]
 	pub alt_activation: AltActivationMode,
-	#[serde(default = "default_selection_particles")]
-	pub selection_particles: bool,
+	#[serde(default = "default_selection_flow_enabled")]
+	pub selection_flow_enabled: bool,
 	#[serde(default = "default_selection_flow_stroke_width_px")]
 	pub selection_flow_stroke_width_px: f32,
 	pub log_filter: Option<String>,
@@ -156,7 +157,7 @@ impl Default for AppSettings {
 			hud_tint: default_hud_tint(),
 			hud_tint_hue: default_hud_tint_hue(),
 			alt_activation: AltActivationMode::default(),
-			selection_particles: default_selection_particles(),
+			selection_flow_enabled: default_selection_flow_enabled(),
 			selection_flow_stroke_width_px: default_selection_flow_stroke_width_px(),
 			log_filter: None,
 			output_dir: default_output_dir(),
@@ -203,7 +204,7 @@ fn default_hud_tint_hue() -> f32 {
 	215.0 / 360.0
 }
 
-fn default_selection_particles() -> bool {
+fn default_selection_flow_enabled() -> bool {
 	true
 }
 
@@ -331,7 +332,7 @@ mod tests {
 	hud_tint = 0.25
 	hud_tint_hue = 0.4
 	alt_activation = "toggle"
-	selection_particles = true
+	selection_flow_enabled = false
 	selection_flow_stroke_width_px = 2.4
 	output_dir = "/tmp/rsnap-output"
 	output_filename_prefix = "shot"
@@ -344,7 +345,7 @@ mod tests {
 		let settings: AppSettings = toml::from_str(input).unwrap();
 
 		assert_eq!(settings.alt_activation, AltActivationMode::Toggle);
-		assert!(settings.selection_particles);
+		assert!(!settings.selection_flow_enabled);
 		assert_eq!(settings.selection_flow_stroke_width_px, 2.4);
 		assert_eq!(settings.output_dir, PathBuf::from("/tmp/rsnap-output"));
 		assert_eq!(settings.output_filename_prefix, "shot");
@@ -356,23 +357,34 @@ mod tests {
 	}
 
 	#[test]
-	fn toml_ignores_legacy_tray_icon_keys() {
-		let baseline: AppSettings = toml::from_str("").unwrap();
-		let tray_icon_inverted: AppSettings = toml::from_str("tray_icon_inverted = true").unwrap();
-		let tray_icon_filled: AppSettings = toml::from_str("tray_icon_filled = true").unwrap();
-
-		assert_eq!(tray_icon_inverted, baseline);
-		assert_eq!(tray_icon_filled, baseline);
+	fn toml_rejects_legacy_tray_icon_keys() {
+		assert!(toml::from_str::<AppSettings>("tray_icon_inverted = true").is_err());
+		assert!(toml::from_str::<AppSettings>("tray_icon_filled = true").is_err());
 	}
 
 	#[test]
-	fn window_capture_alpha_mode_preserve_alias_maps_to_background() {
+	fn selection_flow_defaults_to_enabled_when_missing() {
+		let settings: AppSettings = toml::from_str("").unwrap();
+
+		assert!(settings.selection_flow_enabled);
+	}
+
+	#[test]
+	fn selection_flow_rejects_legacy_key() {
+		let input = r#"
+	selection_particles = false
+	"#;
+
+		assert!(toml::from_str::<AppSettings>(input).is_err());
+	}
+
+	#[test]
+	fn window_capture_alpha_mode_rejects_legacy_preserve_value() {
 		let input = r#"
 	window_capture_alpha_mode = "preserve"
 	"#;
-		let settings: AppSettings = toml::from_str(input).unwrap();
 
-		assert_eq!(settings.window_capture_alpha_mode, WindowCaptureAlphaMode::Background);
+		assert!(toml::from_str::<AppSettings>(input).is_err());
 	}
 
 	#[test]
