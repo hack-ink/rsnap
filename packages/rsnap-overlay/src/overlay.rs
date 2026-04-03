@@ -741,6 +741,7 @@ pub struct OverlaySession {
 	left_mouse_button_down_monitor: Option<MonitorRect>,
 	left_mouse_button_down_global: Option<GlobalPoint>,
 	frozen_selection_drag: FrozenSelectionDragState,
+	hud_window_visible: bool,
 	toolbar_window_visible: bool,
 	toolbar_window_warmup_redraws_remaining: u8,
 	loupe_window_visible: bool,
@@ -914,6 +915,7 @@ impl OverlaySession {
 			left_mouse_button_down_monitor: None,
 			left_mouse_button_down_global: None,
 			frozen_selection_drag: FrozenSelectionDragState::default(),
+			hud_window_visible: false,
 			toolbar_window_visible: false,
 			toolbar_window_warmup_redraws_remaining: 0,
 			loupe_window_visible: false,
@@ -5000,6 +5002,9 @@ impl OverlaySession {
 		{
 			self.request_redraw_hud_window();
 		}
+		if self.should_try_pending_follow_window_move_on_live_cursor_update() {
+			self.maybe_apply_pending_hud_and_loupe_moves();
+		}
 		if matches!(self.state.mode, OverlayMode::Live) && self.use_fake_hud_blur() {
 			if self.state.live_bg_monitor != Some(monitor) {
 				self.state.live_bg_monitor = None;
@@ -6441,8 +6446,11 @@ impl OverlaySession {
 	fn maybe_skip_hud_redraw(&mut self) -> Option<OverlayControl> {
 		if self.scroll_capture.active {
 			if let Some(hud_window) = self.hud_window.as_ref() {
-				hud_window.window.set_visible(false);
+				if self.hud_window_visible {
+					hud_window.window.set_visible(false);
+				}
 			}
+			self.hud_window_visible = false;
 
 			self.last_present_at = Instant::now();
 
@@ -6450,8 +6458,13 @@ impl OverlaySession {
 		}
 		if self.capture_windows_hidden {
 			#[cfg(not(target_os = "macos"))]
-			if let Some(hud_window) = self.hud_window.as_ref() {
-				hud_window.window.set_visible(false);
+			{
+				if let Some(hud_window) = self.hud_window.as_ref()
+					&& self.hud_window_visible
+				{
+					hud_window.window.set_visible(false);
+				}
+				self.hud_window_visible = false;
 			}
 
 			self.last_present_at = Instant::now();
@@ -6475,7 +6488,10 @@ impl OverlaySession {
 			summary.redraw_window_id = Some(hud_window.window.id());
 			summary.redraw_monitor_id = Some(monitor.id);
 
-			hud_window.window.set_visible(true);
+			if !self.hud_window_visible {
+				hud_window.window.set_visible(true);
+				self.hud_window_visible = true;
+			}
 
 			let draw_started_at = Instant::now();
 
@@ -6566,6 +6582,17 @@ impl OverlaySession {
 		}
 
 		Ok(summary)
+	}
+
+	fn should_try_pending_hud_window_move_on_redraw(&self, summary: &HudRedrawSummary) -> bool {
+		summary.position_update_elapsed.is_some()
+			|| (matches!(self.state.mode, OverlayMode::Live)
+				&& self.pending_hud_outer_pos.is_some())
+	}
+
+	fn should_try_pending_follow_window_move_on_live_cursor_update(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Live)
+			&& (self.pending_hud_outer_pos.is_some() || self.pending_loupe_outer_pos.is_some())
 	}
 
 	fn log_hud_redraw_metrics(&mut self, redraw_elapsed: Duration, summary: &HudRedrawSummary) {
@@ -6668,6 +6695,8 @@ impl OverlaySession {
 
 		if summary.position_update_elapsed.is_some() {
 			self.force_apply_pending_hud_window_move();
+		} else if self.should_try_pending_hud_window_move_on_redraw(&summary) {
+			self.maybe_apply_pending_hud_window_move(Instant::now());
 		}
 
 		if let Some(monitor) = summary.request_toolbar_redraw {
@@ -6837,7 +6866,9 @@ impl OverlaySession {
 		}
 
 		if let Some(loupe_window) = self.loupe_window.as_ref() {
-			loupe_window.window.set_visible(true);
+			if !was_visible {
+				loupe_window.window.set_visible(true);
+			}
 		}
 
 		self.loupe_window_visible = true;
@@ -7611,6 +7642,7 @@ impl OverlaySession {
 		self.scroll_preview_window = None;
 		self.toolbar_inner_size_points = None;
 		self.toolbar_outer_pos = None;
+		self.hud_window_visible = false;
 		self.toolbar_window_visible = false;
 		self.toolbar_window_warmup_redraws_remaining = 0;
 		self.loupe_window_visible = false;
@@ -8155,6 +8187,7 @@ impl OverlaySession {
 		if let Some(hud_window) = &self.hud_window {
 			hud_window.window.set_visible(false);
 		}
+		self.hud_window_visible = false;
 		if let Some(loupe_window) = &self.loupe_window {
 			loupe_window.window.set_visible(false);
 		}
@@ -8168,8 +8201,11 @@ impl OverlaySession {
 		self.capture_windows_hidden = false;
 
 		#[cfg(not(target_os = "macos"))]
-		if let Some(hud_window) = &self.hud_window {
-			hud_window.window.set_visible(true);
+		{
+			if let Some(hud_window) = &self.hud_window {
+				hud_window.window.set_visible(true);
+			}
+			self.hud_window_visible = true;
 		}
 		#[cfg(not(target_os = "macos"))]
 		if let Some(loupe_window) = &self.loupe_window {
@@ -13590,7 +13626,7 @@ mod tests {
 	};
 	use crate::overlay::{
 		FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool,
-		HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, OverlaySession, Pos2, Rect,
+		HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OverlaySession, Pos2, Rect,
 		SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
 		SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
 		SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
@@ -16102,6 +16138,7 @@ mod tests {
 			left_mouse_button_down: true,
 			left_mouse_button_down_monitor: Some(test_monitor()),
 			left_mouse_button_down_global: Some(GlobalPoint::new(12, 34)),
+			hud_window_visible: true,
 			toolbar_window_visible: true,
 			toolbar_window_warmup_redraws_remaining: 3,
 			..OverlaySession::default()
@@ -16122,6 +16159,7 @@ mod tests {
 		assert!(!session.left_mouse_button_down);
 		assert!(session.left_mouse_button_down_monitor.is_none());
 		assert!(session.left_mouse_button_down_global.is_none());
+		assert!(!session.hud_window_visible);
 		assert!(!session.toolbar_window_visible);
 		assert_eq!(session.toolbar_window_warmup_redraws_remaining, 0);
 	}
@@ -16596,6 +16634,58 @@ mod tests {
 		assert!(OverlaySession::live_hud_redraw_needed_for_cursor_update(
 			None, cursor_a, None, monitor_a,
 		));
+	}
+
+	#[test]
+	fn live_hud_redraw_consumes_pending_move_without_size_change() {
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Live;
+		session.pending_hud_outer_pos = Some(GlobalPoint::new(120, 180));
+
+		assert!(session.should_try_pending_hud_window_move_on_redraw(&HudRedrawSummary::default()));
+	}
+
+	#[test]
+	fn frozen_hud_redraw_does_not_consume_pending_move_without_size_change() {
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.pending_hud_outer_pos = Some(GlobalPoint::new(120, 180));
+
+		assert!(
+			!session.should_try_pending_hud_window_move_on_redraw(&HudRedrawSummary::default())
+		);
+		assert!(session.should_try_pending_hud_window_move_on_redraw(&HudRedrawSummary {
+			position_update_elapsed: Some(Duration::from_micros(1)),
+			..HudRedrawSummary::default()
+		}));
+	}
+
+	#[test]
+	fn live_cursor_update_tries_pending_follow_window_moves() {
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Live;
+		assert!(!session.should_try_pending_follow_window_move_on_live_cursor_update());
+
+		session.pending_hud_outer_pos = Some(GlobalPoint::new(120, 180));
+		assert!(session.should_try_pending_follow_window_move_on_live_cursor_update());
+
+		session.pending_hud_outer_pos = None;
+		session.pending_loupe_outer_pos = Some(GlobalPoint::new(140, 220));
+		assert!(session.should_try_pending_follow_window_move_on_live_cursor_update());
+	}
+
+	#[test]
+	fn frozen_cursor_update_does_not_try_pending_follow_window_moves() {
+		let mut session = OverlaySession::new();
+
+		session.state.mode = OverlayMode::Frozen;
+		session.pending_hud_outer_pos = Some(GlobalPoint::new(120, 180));
+		session.pending_loupe_outer_pos = Some(GlobalPoint::new(140, 220));
+
+		assert!(!session.should_try_pending_follow_window_move_on_live_cursor_update());
 	}
 
 	#[cfg(target_os = "macos")]
