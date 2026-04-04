@@ -85,14 +85,6 @@ struct App {
 	#[cfg(target_os = "macos")]
 	startup_permissions_checked: bool,
 }
-
-fn settings_window_entry(requested_by: &'static str) -> SettingsWindowEntry {
-	match requested_by {
-		"startup-permission-check" => SettingsWindowEntry::Permissions,
-		_ => SettingsWindowEntry::Standard,
-	}
-}
-
 impl App {
 	#[allow(clippy::too_many_arguments)]
 	fn new(
@@ -216,25 +208,35 @@ pub fn run() -> Result<()> {
 	runtime::run()
 }
 
+fn settings_window_entry(requested_by: &'static str) -> SettingsWindowEntry {
+	match requested_by {
+		"startup-permission-check" => SettingsWindowEntry::Permissions,
+		_ => SettingsWindowEntry::Standard,
+	}
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{SettingsWindowEntry, settings_window_entry};
+	use crate::app::{self, SettingsWindowEntry};
 
 	#[test]
 	fn startup_permission_check_uses_permissions_entry() {
 		assert_eq!(
-			settings_window_entry("startup-permission-check"),
+			app::settings_window_entry("startup-permission-check"),
 			SettingsWindowEntry::Permissions
 		);
 	}
 
 	#[test]
 	fn non_startup_settings_entries_use_standard_entry() {
-		assert_eq!(settings_window_entry("tray-permissions-menu"), SettingsWindowEntry::Standard);
 		assert_eq!(
-			settings_window_entry("menubar-permissions-menu"),
+			app::settings_window_entry("tray-permissions-menu"),
 			SettingsWindowEntry::Standard
 		);
-		assert_eq!(settings_window_entry("tray-settings-menu"), SettingsWindowEntry::Standard);
+		assert_eq!(
+			app::settings_window_entry("menubar-permissions-menu"),
+			SettingsWindowEntry::Standard
+		);
+		assert_eq!(app::settings_window_entry("tray-settings-menu"), SettingsWindowEntry::Standard);
 	}
 }

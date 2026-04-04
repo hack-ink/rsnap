@@ -6,14 +6,15 @@ use egui::Context;
 use egui::DragValue;
 use egui::Pos2;
 use egui::Rect;
-#[cfg(target_os = "macos")]
-use egui::RichText;
 use egui::Sense;
 use egui::Slider;
 use egui::Stroke;
 use egui::TextEdit;
+use egui::TextStyle;
 use egui::Ui;
 use egui::style::HandleShape;
+#[cfg(target_os = "macos")]
+use egui::{self, RichText};
 
 #[cfg(target_os = "macos")]
 use crate::permissions_macos;
@@ -465,16 +466,19 @@ fn render_output_section(combo_width: f32, ui: &mut Ui, settings: &mut AppSettin
 fn render_about_section(ui: &mut Ui) {
 	ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
 	ui.small("Fast screenshots for macOS, built in Rust.");
+
 	ui.scope(|ui| {
-		ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
+		ui.style_mut().override_text_style = Some(TextStyle::Small);
+
 		ui.hyperlink_to("Repository: github.com/hack-ink/rsnap", env!("CARGO_PKG_REPOSITORY"));
 		ui.hyperlink_to("X: @YvetteCipher", "https://x.com/YvetteCipher");
 	});
+
 	ui.small(
 		"Star the repo, follow Yvette on X, or reach out there if you want to sponsor development.",
 	);
 	ui.label(
-		egui::RichText::new("Following on X also helps Yvette qualify for X revenue share.")
+		RichText::new("Following on X also helps Yvette qualify for X revenue share.")
 			.small()
 			.strong()
 			.color(ui.visuals().warn_fg_color),
@@ -923,7 +927,7 @@ fn toolbar_placement_label(placement: ToolbarPlacement) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-	use super::SettingsUiSectionDefaults;
+	use crate::settings_window::sections::SettingsUiSectionDefaults;
 
 	#[test]
 	fn standard_defaults_focus_regular_capture_sections() {
