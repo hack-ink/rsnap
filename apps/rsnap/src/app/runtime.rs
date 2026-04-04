@@ -24,6 +24,7 @@ use crate::app::scroll_input_macos::{ScrollInputObserverLifecycle, SharedScrollI
 use crate::app::{App, UserEvent};
 use crate::settings::AppSettings;
 use crate::settings_window::{CaptureHotkeyNotice, SettingsControl, SettingsWindowAction};
+#[cfg(target_os = "macos")]
 use rsnap_overlay::OverlayExit;
 
 impl ApplicationHandler<UserEvent> for App {
