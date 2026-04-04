@@ -1,5 +1,6 @@
 #![allow(clippy::wildcard_imports)]
 
+#[cfg(target_os = "macos")]
 use super::*;
 
 #[cfg(target_os = "macos")]

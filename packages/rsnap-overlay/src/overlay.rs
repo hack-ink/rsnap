@@ -133,9 +133,11 @@ use winit::{
 	window::{WindowId, WindowLevel},
 };
 
+#[cfg(target_os = "macos")]
+use self::rendering::StartupLiveRgbPlan;
 use self::rendering::{
 	GpuContext, HudOverlayWindow, HudPillGeometry, HudRedrawSummary, OverlayWindow,
-	ScrollPreviewView, ScrollPreviewWindow, StartupLiveRgbPlan, WindowRenderer,
+	ScrollPreviewView, ScrollPreviewWindow, WindowRenderer,
 };
 #[cfg(test)]
 use self::rendering::{
