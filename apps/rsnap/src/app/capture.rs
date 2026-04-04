@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use color_eyre::eyre;
@@ -92,6 +93,8 @@ impl App {
 		event_loop: &ActiveEventLoop,
 		requested_by: &'static str,
 	) {
+		let capture_start_started_at = Instant::now();
+
 		if self.overlay_session.is_some() {
 			tracing::info!(
 				requested_by = %requested_by,
@@ -100,76 +103,49 @@ impl App {
 
 			return;
 		}
-		#[cfg(target_os = "macos")]
-		if !self.ensure_screen_recording_access(requested_by) {
+
+		let Some(screen_recording_preflight_ms) =
+			self.capture_screen_recording_preflight(requested_by, capture_start_started_at)
+		else {
 			return;
+		};
+		let (overlay_session_build_ms, mut overlay_session) = {
+			let overlay_session_build_started_at = Instant::now();
+			let overlay_session = OverlaySession::with_config(self.overlay_config());
+
+			(overlay_session_build_started_at.elapsed().as_millis(), overlay_session)
+		};
+
+		#[cfg(target_os = "macos")]
+		{
+			self.overlay_session_generation = self.overlay_session_generation.wrapping_add(1);
 		}
 
-		let mut overlay_session = OverlaySession::with_config(self.overlay_config());
+		let scroll_input_reset_ms = self.reset_scroll_input_for_capture_start();
+		let hook_wiring_started_at = Instant::now();
 
-		#[cfg(target_os = "macos")]
-		self.finish_coalesced_overlay_stream_frame_send();
-		#[cfg(target_os = "macos")]
-		self.scroll_input_shared_state.clear();
+		self.wire_capture_session_hooks(&mut overlay_session);
 
-		#[cfg(target_os = "macos")]
-		self.scroll_input_shared_state.set_event_waker(Some(Arc::new({
-			let overlay_proxy = self.overlay_proxy.clone();
-
-			move || {
-				let _ = overlay_proxy.send_event(UserEvent::OverlayScrollInput);
-			}
-		})));
-		#[cfg(target_os = "macos")]
-		overlay_session.set_scroll_frame_waker(Arc::new({
-			let overlay_proxy = self.overlay_proxy.clone();
-			let overlay_stream_event_pending = Arc::clone(&self.overlay_stream_event_pending);
-
-			move || {
-				if overlay_stream_event_pending
-					.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-					.is_ok() && overlay_proxy.send_event(UserEvent::OverlayStreamFrame).is_err()
-				{
-					overlay_stream_event_pending.store(false, Ordering::Release);
-				}
-			}
-		}));
-		#[cfg(target_os = "macos")]
-		overlay_session.set_response_waker(Arc::new({
-			let overlay_proxy = self.overlay_proxy.clone();
-
-			move || {
-				let _ = overlay_proxy.send_event(UserEvent::OverlayWorkerResponse);
-			}
-		}));
-		#[cfg(target_os = "macos")]
-		overlay_session.set_external_scroll_input_drain_reader(Arc::new({
-			let shared_state = Arc::clone(&self.scroll_input_shared_state);
-
-			move |after_seq, through| shared_state.replay_after_seq_through(after_seq, through)
-		}));
-
-		#[cfg(target_os = "macos")]
-		overlay_session.set_scroll_capture_start_guard(Arc::new({
-			move || Self::ensure_scroll_capture_permissions()
-		}));
-
-		#[cfg(target_os = "macos")]
-		overlay_session.set_scroll_capture_starting_hook(Arc::new({
-			let shared_state = Arc::clone(&self.scroll_input_shared_state);
-			let observer_lifecycle = Arc::clone(&self.scroll_input_observer_lifecycle);
-
-			move || Self::prepare_external_scroll_input(&shared_state, &observer_lifecycle)
-		}));
-		#[cfg(target_os = "macos")]
-		overlay_session.set_scroll_capture_started_hook(Arc::new({
-			let shared_state = Arc::clone(&self.scroll_input_shared_state);
-
-			move || Self::enable_external_scroll_input(&shared_state)
-		}));
+		let hook_wiring_ms = hook_wiring_started_at.elapsed().as_millis();
+		let overlay_start_started_at = Instant::now();
 
 		match overlay_session.start(event_loop) {
 			Ok(()) => {
+				let overlay_start_ms = overlay_start_started_at.elapsed().as_millis();
+
+				tracing::info!(
+				op = "capture.start_phase_timing",
+				requested_by = %requested_by,
+				result = "started",
+				hotkey = %self.capture_key_label(),
+				overlay_session_build_ms,
+				hook_wiring_ms,
+				overlay_start_ms,
+				total_ms = capture_start_started_at.elapsed().as_millis(),
+				screen_recording_preflight_ms,
+					scroll_input_reset_ms,
+					"Capture startup phase timing."
+				);
 				tracing::info!(
 					requested_by = %requested_by,
 					hotkey = %self.capture_key_label(),
@@ -179,6 +155,8 @@ impl App {
 				self.overlay_session = Some(overlay_session);
 			},
 			Err(err) => {
+				let overlay_start_ms = overlay_start_started_at.elapsed().as_millis();
+
 				#[cfg(target_os = "macos")]
 				{
 					self.scroll_input_shared_state.set_enabled(false);
@@ -187,11 +165,138 @@ impl App {
 				}
 
 				tracing::warn!(
+					op = "capture.start_phase_timing",
 					error = %err,
 					requested_by = %requested_by,
+					result = "error",
+					overlay_session_build_ms,
+					hook_wiring_ms,
+					overlay_start_ms,
+					total_ms = capture_start_started_at.elapsed().as_millis(),
+					screen_recording_preflight_ms,
+					scroll_input_reset_ms,
 					"Failed to start overlay session."
 				)
 			},
+		}
+	}
+
+	fn capture_screen_recording_preflight(
+		&self,
+		requested_by: &'static str,
+		capture_start_started_at: Instant,
+	) -> Option<u128> {
+		#[cfg(target_os = "macos")]
+		{
+			let preflight_started_at = Instant::now();
+			let screen_recording_granted = self.ensure_screen_recording_access(requested_by);
+			let preflight_ms = preflight_started_at.elapsed().as_millis();
+
+			if !screen_recording_granted {
+				tracing::info!(
+					op = "capture.start_phase_timing",
+					requested_by = %requested_by,
+					result = "blocked_missing_screen_recording",
+					screen_recording_preflight_ms = preflight_ms,
+					total_ms = capture_start_started_at.elapsed().as_millis(),
+					"Capture startup phase timing."
+				);
+
+				return None;
+			}
+
+			Some(preflight_ms)
+		}
+		#[cfg(not(target_os = "macos"))]
+		{
+			let _ = requested_by;
+			let _ = capture_start_started_at;
+
+			Some(0)
+		}
+	}
+
+	fn reset_scroll_input_for_capture_start(&mut self) -> u128 {
+		#[cfg(target_os = "macos")]
+		{
+			let reset_started_at = Instant::now();
+
+			self.finish_coalesced_overlay_stream_frame_send();
+			self.scroll_input_shared_state.clear();
+
+			reset_started_at.elapsed().as_millis()
+		}
+
+		#[cfg(not(target_os = "macos"))]
+		{
+			0
+		}
+	}
+
+	fn wire_capture_session_hooks(&mut self, overlay_session: &mut OverlaySession) {
+		#[cfg(target_os = "macos")]
+		{
+			self.scroll_input_shared_state.set_event_waker(Some(Arc::new({
+				let overlay_proxy = self.overlay_proxy.clone();
+
+				move || {
+					let _ = overlay_proxy.send_event(UserEvent::OverlayScrollInput);
+				}
+			})));
+			overlay_session.set_scroll_frame_waker(Arc::new({
+				let overlay_proxy = self.overlay_proxy.clone();
+				let overlay_stream_event_pending = Arc::clone(&self.overlay_stream_event_pending);
+
+				move || {
+					if overlay_stream_event_pending
+						.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+						.is_ok() && overlay_proxy.send_event(UserEvent::OverlayStreamFrame).is_err()
+					{
+						overlay_stream_event_pending.store(false, Ordering::Release);
+					}
+				}
+			}));
+			overlay_session.set_startup_aux_window_waker(Arc::new({
+				let overlay_proxy = self.overlay_proxy.clone();
+				let overlay_session_generation = self.overlay_session_generation;
+
+				move || {
+					let _ = overlay_proxy.send_event(UserEvent::OverlayStartupAuxWindows(
+						overlay_session_generation,
+					));
+				}
+			}));
+			overlay_session.set_response_waker(Arc::new({
+				let overlay_proxy = self.overlay_proxy.clone();
+
+				move || {
+					let _ = overlay_proxy.send_event(UserEvent::OverlayWorkerResponse);
+				}
+			}));
+			overlay_session.set_external_scroll_input_drain_reader(Arc::new({
+				let shared_state = Arc::clone(&self.scroll_input_shared_state);
+
+				move |after_seq, through| shared_state.replay_after_seq_through(after_seq, through)
+			}));
+
+			overlay_session
+				.set_scroll_capture_start_guard(Arc::new(Self::ensure_scroll_capture_permissions));
+
+			overlay_session.set_scroll_capture_starting_hook(Arc::new({
+				let shared_state = Arc::clone(&self.scroll_input_shared_state);
+				let observer_lifecycle = Arc::clone(&self.scroll_input_observer_lifecycle);
+
+				move || Self::prepare_external_scroll_input(&shared_state, &observer_lifecycle)
+			}));
+			overlay_session.set_scroll_capture_started_hook(Arc::new({
+				let shared_state = Arc::clone(&self.scroll_input_shared_state);
+
+				move || Self::enable_external_scroll_input(&shared_state)
+			}));
+		}
+		#[cfg(not(target_os = "macos"))]
+		{
+			let _ = overlay_session;
 		}
 	}
 

@@ -956,7 +956,7 @@ impl StreamOutputIvars {
 
 struct StreamState {
 	monitor_id: u32,
-	self_capture_exception_window_ids_complete: bool,
+	self_capture_filter_complete: bool,
 	stream: Retained<SCStream>,
 	output: Retained<StreamOutput>,
 	sample_handler_queue: DispatchRetained<DispatchQueue>,
@@ -994,6 +994,32 @@ enum StreamCaptureTarget {
 enum StreamFilterMode {
 	ExcludeCurrentProcess,
 	ExcludeCurrentProcessShareableWindows,
+}
+
+struct PreparedStreamFilter {
+	filter_mode: StreamFilterMode,
+	filter: Retained<SCContentFilter>,
+	self_capture_filter_complete: bool,
+	self_capture_exception_window_ids_complete: bool,
+	excepting_window_count: usize,
+	fallback_excluded_window_count: usize,
+	missing_window_ids: Vec<u32>,
+	shareable_content_ms: u128,
+	find_display_ms: u128,
+	exception_windows_ms: u128,
+	filter_build_ms: u128,
+}
+
+struct StartedStreamArtifacts {
+	stream: Retained<SCStream>,
+	output: Retained<StreamOutput>,
+	sample_handler_queue: DispatchRetained<DispatchQueue>,
+	config_build_ms: u128,
+	queue_build_ms: u128,
+	output_build_ms: u128,
+	stream_init_ms: u128,
+	add_output_ms: u128,
+	start_capture_ms: u128,
 }
 
 enum WorkerRequest {
@@ -1590,7 +1616,7 @@ fn ensure_stream(
 ) -> StreamRequestProgress {
 	let reuse_decision = stream_reuse_decision(
 		state.as_ref().map(|current| current.monitor_id),
-		state.as_ref().is_some_and(|current| current.self_capture_exception_window_ids_complete),
+		state.as_ref().is_some_and(|current| current.self_capture_filter_complete),
 		monitor.id,
 	);
 	let setup_backoff = stream_setup_backoff(reuse_decision, setup_backoff);
@@ -1638,11 +1664,11 @@ fn ensure_stream(
 	};
 
 	if reuse_decision == StreamReuseDecision::RetryUpgradeUsingCurrent {
-		if !next_state.self_capture_exception_window_ids_complete {
+		if !next_state.self_capture_filter_complete {
 			tracing::info!(
 				op = "live_frame_stream.ensure_stream_upgrade_deferred",
 				monitor_id = monitor.id,
-				"Retained the current live stream because the replacement setup still lacked complete self-capture exception windows."
+				"Retained the current live stream because the replacement setup still lacked complete self-capture exclusions."
 			);
 
 			let mut next_state = Some(next_state);
@@ -1658,11 +1684,11 @@ fn ensure_stream(
 
 		shared_latest_frame.mark_waiting_for_frame(monitor.id);
 
-		tracing::info!(
+		tracing::debug!(
 			op = "live_frame_stream.ensure_stream_ready",
 			monitor_id = monitor.id,
 			reuse_decision = ?reuse_decision,
-			self_capture_exception_window_ids_complete = true,
+			self_capture_filter_complete = true,
 			replaced_existing_state = true,
 			"ScreenCaptureKit setup replaced the existing live stream."
 		);
@@ -1672,17 +1698,17 @@ fn ensure_stream(
 
 	teardown_stream(state);
 
-	let exceptions_complete = next_state.self_capture_exception_window_ids_complete;
+	let self_capture_filter_complete = next_state.self_capture_filter_complete;
 
 	*state = Some(next_state);
 
 	shared_latest_frame.mark_waiting_for_frame(monitor.id);
 
-	tracing::info!(
+	tracing::debug!(
 		op = "live_frame_stream.ensure_stream_ready",
 		monitor_id = monitor.id,
 		reuse_decision = ?reuse_decision,
-		self_capture_exception_window_ids_complete = exceptions_complete,
+		self_capture_filter_complete,
 		replaced_existing_state = false,
 		"ScreenCaptureKit setup produced a live stream."
 	);
@@ -1886,7 +1912,7 @@ fn refresh_stream(args: RefreshStreamArgs<'_>) -> StreamRequestProgress {
 	) else {
 		return StreamRequestProgress::Settled;
 	};
-	let exceptions_complete = next_state.self_capture_exception_window_ids_complete;
+	let self_capture_filter_complete = next_state.self_capture_filter_complete;
 	let replaced_existing_state = state.is_some();
 	let mut previous_state = state.replace(next_state);
 
@@ -1894,10 +1920,10 @@ fn refresh_stream(args: RefreshStreamArgs<'_>) -> StreamRequestProgress {
 
 	shared_latest_frame.mark_waiting_for_frame(monitor.id);
 
-	tracing::info!(
+	tracing::debug!(
 		op = "live_frame_stream.refresh_stream_ready",
 		monitor_id = monitor.id,
-		self_capture_exception_window_ids_complete = exceptions_complete,
+		self_capture_filter_complete,
 		replaced_existing_state,
 		"Refresh completed and installed a new ScreenCaptureKit live stream."
 	);
@@ -1929,72 +1955,246 @@ fn setup_stream_for_monitor(
 	frame_seq_counter: Arc<AtomicU64>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<StreamState> {
+	let setup_started_at = Instant::now();
+	let prepared_filter =
+		prepare_stream_filter_for_monitor(monitor, &filter.self_capture_exception_window_ids)?;
+	let started_stream = build_and_start_stream_artifacts(
+		monitor,
+		capture_target,
+		frame_waker,
+		frame_seq_counter,
+		shared_latest_frame,
+		prepared_filter.filter_mode,
+		prepared_filter.filter,
+	)?;
+
+	tracing::debug!(
+			op = "live_frame_stream.setup_stream_ready",
+			monitor_id = monitor.id,
+			shareable_content_mode = "on_screen_windows_only",
+			filter_mode = ?prepared_filter.filter_mode,
+			self_capture_filter_complete = prepared_filter.self_capture_filter_complete,
+			self_capture_exception_window_ids_complete =
+				prepared_filter.self_capture_exception_window_ids_complete,
+			excepting_window_count = prepared_filter.excepting_window_count,
+			fallback_excluded_window_count = prepared_filter.fallback_excluded_window_count,
+		missing_window_ids = ?prepared_filter.missing_window_ids,
+		shareable_content_ms = prepared_filter.shareable_content_ms,
+		find_display_ms = prepared_filter.find_display_ms,
+		exception_windows_ms = prepared_filter.exception_windows_ms,
+		filter_build_ms = prepared_filter.filter_build_ms,
+		config_build_ms = started_stream.config_build_ms,
+		queue_build_ms = started_stream.queue_build_ms,
+		output_build_ms = started_stream.output_build_ms,
+		stream_init_ms = started_stream.stream_init_ms,
+		add_output_ms = started_stream.add_output_ms,
+		start_capture_ms = started_stream.start_capture_ms,
+		total_setup_ms = setup_started_at.elapsed().as_millis(),
+		"ScreenCaptureKit setup created a live stream for the requested monitor."
+	);
+
+	Some(StreamState {
+		monitor_id: monitor.id,
+		self_capture_filter_complete: prepared_filter.self_capture_filter_complete,
+		stream: started_stream.stream,
+		output: started_stream.output,
+		sample_handler_queue: started_stream.sample_handler_queue,
+	})
+}
+
+fn prepare_stream_filter_for_monitor(
+	monitor: MonitorRect,
+	self_capture_exception_window_ids: &[u32],
+) -> Option<PreparedStreamFilter> {
+	let shareable_content_started_at = Instant::now();
 	let content = load_shareable_content_for_monitor(monitor.id)?;
+	let shareable_content_ms = shareable_content_started_at.elapsed().as_millis();
+	let find_display_started_at = Instant::now();
 	let display = find_display_for_monitor(&content, monitor.id)?;
+	let find_display_ms = find_display_started_at.elapsed().as_millis();
+	let exception_windows_started_at = Instant::now();
 	let excepting_windows =
-		find_current_process_exception_windows(&content, &filter.self_capture_exception_window_ids);
-	let filter_mode = stream_filter_mode_for_current_process(excepting_windows.complete());
-	let filter = match filter_mode {
+		find_current_process_exception_windows(&content, self_capture_exception_window_ids);
+	let exception_windows_ms = exception_windows_started_at.elapsed().as_millis();
+	let self_capture_exception_window_ids_complete = excepting_windows.complete();
+	let filter_build_started_at = Instant::now();
+	let prepared_filter =
+		build_stream_content_filter(monitor.id, &display, &content, excepting_windows);
+	let filter_build_ms = filter_build_started_at.elapsed().as_millis();
+
+	Some(PreparedStreamFilter {
+		filter_mode: prepared_filter.filter_mode,
+		filter: prepared_filter.filter,
+		self_capture_filter_complete: prepared_filter.self_capture_filter_complete,
+		self_capture_exception_window_ids_complete,
+		excepting_window_count: prepared_filter.excepting_window_count,
+		fallback_excluded_window_count: prepared_filter.fallback_excluded_window_count,
+		missing_window_ids: prepared_filter.missing_window_ids,
+		shareable_content_ms,
+		find_display_ms,
+		exception_windows_ms,
+		filter_build_ms,
+	})
+}
+
+fn build_stream_content_filter(
+	monitor_id: u32,
+	display: &SCDisplay,
+	content: &SCShareableContent,
+	excepting_windows: CurrentProcessExceptionWindows,
+) -> PreparedStreamFilter {
+	let excepting_window_count = excepting_windows.windows.len();
+	let fallback_excluded_window_count = excepting_windows.fallback_excluded_windows.len();
+	let missing_window_ids = excepting_windows.missing_window_ids;
+	let preferred_filter_mode =
+		stream_filter_mode_for_current_process(missing_window_ids.is_empty());
+
+	match preferred_filter_mode {
 		StreamFilterMode::ExcludeCurrentProcess => {
 			let excluded_windows: Retained<NSArray<SCWindow>> =
 				NSArray::from_retained_slice(&excepting_windows.windows);
-			let Some(current_process_application) = find_current_process_application(&content)
-			else {
-				tracing::warn!(
-					op = "live_frame_stream.setup_filter_missing_current_process",
-					monitor_id = monitor.id,
+
+			if let Some(current_process_application) = find_current_process_application(content) {
+				let excluded_applications =
+					NSArray::from_retained_slice(&[current_process_application]);
+
+				tracing::trace!(
+					op = "live_frame_stream.setup_filter_excluding_current_process",
+					monitor_id,
 					pid = process::id(),
-					"Skipped ScreenCaptureKit stream setup because rsnap could not exclude its own windows from capture."
+					excepting_window_count,
+					"Configured ScreenCaptureKit to exclude rsnap windows from the live stream."
 				);
 
-				return None;
-			};
-			let excluded_applications =
-				NSArray::from_retained_slice(&[current_process_application]);
+				PreparedStreamFilter {
+					filter_mode: StreamFilterMode::ExcludeCurrentProcess,
+					filter: unsafe {
+						SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
+							SCContentFilter::alloc(),
+							display,
+							&excluded_applications,
+							&excluded_windows,
+						)
+					},
+					self_capture_filter_complete: true,
+					self_capture_exception_window_ids_complete: true,
+					excepting_window_count,
+					fallback_excluded_window_count,
+					missing_window_ids,
+					shareable_content_ms: 0,
+					find_display_ms: 0,
+					exception_windows_ms: 0,
+					filter_build_ms: 0,
+				}
+			} else {
+				log_missing_current_process_fallback(
+					monitor_id,
+					excepting_window_count,
+					fallback_excluded_window_count,
+				);
 
-			tracing::trace!(
-				op = "live_frame_stream.setup_filter_excluding_current_process",
-				monitor_id = monitor.id,
-				pid = process::id(),
-				excepting_window_count = excepting_windows.windows.len(),
-				"Configured ScreenCaptureKit to exclude rsnap windows from the live stream."
-			);
-
-			unsafe {
-				SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
-					SCContentFilter::alloc(),
-					&display,
-					&excluded_applications,
-					&excluded_windows,
+				build_shareable_window_filter(
+					monitor_id,
+					display,
+					excepting_windows.fallback_excluded_windows,
+					excepting_window_count,
+					fallback_excluded_window_count,
+					missing_window_ids,
+					false,
 				)
 			}
 		},
-		StreamFilterMode::ExcludeCurrentProcessShareableWindows => {
-			let excluded_windows: Retained<NSArray<SCWindow>> =
-				NSArray::from_retained_slice(&excepting_windows.fallback_excluded_windows);
+		StreamFilterMode::ExcludeCurrentProcessShareableWindows => build_shareable_window_filter(
+			monitor_id,
+			display,
+			excepting_windows.fallback_excluded_windows,
+			excepting_window_count,
+			fallback_excluded_window_count,
+			missing_window_ids,
+			true,
+		),
+	}
+}
 
-			tracing::debug!(
-				op = "live_frame_stream.setup_filter_fallback_excluding_shareable_windows",
-				monitor_id = monitor.id,
-				pid = process::id(),
-				excepting_window_count = excepting_windows.windows.len(),
-				fallback_excluded_window_count = excepting_windows.fallback_excluded_windows.len(),
-				missing_window_ids = ?excepting_windows.missing_window_ids,
-				"ScreenCaptureKit omitted at least one requested self-capture exception window; falling back to excluding only rsnap's currently shareable windows."
-			);
+fn build_shareable_window_filter(
+	monitor_id: u32,
+	display: &SCDisplay,
+	fallback_excluded_windows: Vec<Retained<SCWindow>>,
+	excepting_window_count: usize,
+	fallback_excluded_window_count: usize,
+	missing_window_ids: Vec<u32>,
+	log_partial_match: bool,
+) -> PreparedStreamFilter {
+	let excluded_windows: Retained<NSArray<SCWindow>> =
+		NSArray::from_retained_slice(&fallback_excluded_windows);
 
-			unsafe {
-				SCContentFilter::initWithDisplay_excludingWindows(
-					SCContentFilter::alloc(),
-					&display,
-					&excluded_windows,
-				)
-			}
+	if log_partial_match {
+		tracing::debug!(
+			op = "live_frame_stream.setup_filter_fallback_excluding_shareable_windows",
+			monitor_id,
+			pid = process::id(),
+			excepting_window_count,
+			fallback_excluded_window_count,
+			missing_window_ids = ?missing_window_ids,
+			"ScreenCaptureKit omitted at least one requested self-capture exception window; falling back to excluding only rsnap's currently shareable windows."
+		);
+	}
+
+	PreparedStreamFilter {
+		filter_mode: StreamFilterMode::ExcludeCurrentProcessShareableWindows,
+		filter: unsafe {
+			SCContentFilter::initWithDisplay_excludingWindows(
+				SCContentFilter::alloc(),
+				display,
+				&excluded_windows,
+			)
 		},
-	};
+		self_capture_filter_complete: false,
+		self_capture_exception_window_ids_complete: missing_window_ids.is_empty(),
+		excepting_window_count,
+		fallback_excluded_window_count,
+		missing_window_ids,
+		shareable_content_ms: 0,
+		find_display_ms: 0,
+		exception_windows_ms: 0,
+		filter_build_ms: 0,
+	}
+}
+
+fn log_missing_current_process_fallback(
+	monitor_id: u32,
+	excepting_window_count: usize,
+	fallback_excluded_window_count: usize,
+) {
+	tracing::info!(
+		op = "live_frame_stream.setup_filter_fallback_missing_current_process",
+		monitor_id,
+		pid = process::id(),
+		excepting_window_count,
+		fallback_excluded_window_count,
+		"ScreenCaptureKit omitted rsnap's running application during stream setup; falling back to excluding only rsnap's currently shareable windows."
+	);
+}
+
+fn build_and_start_stream_artifacts(
+	monitor: MonitorRect,
+	capture_target: StreamCaptureTarget,
+	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	frame_seq_counter: Arc<AtomicU64>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
+	filter_mode: StreamFilterMode,
+	filter: Retained<SCContentFilter>,
+) -> Option<StartedStreamArtifacts> {
+	let config_build_started_at = Instant::now();
 	let config = build_stream_config_for_monitor(monitor, capture_target);
+	let config_build_ms = config_build_started_at.elapsed().as_millis();
+	let queue_build_started_at = Instant::now();
 	let sample_handler_queue = build_sample_handler_queue_for_monitor(monitor.id);
+	let queue_build_ms = queue_build_started_at.elapsed().as_millis();
+	let output_build_started_at = Instant::now();
 	let output = StreamOutput::new(monitor.id, frame_waker, frame_seq_counter, shared_latest_frame);
+	let output_build_ms = output_build_started_at.elapsed().as_millis();
+	let stream_init_started_at = Instant::now();
 	let delegate_proto = ProtocolObject::from_ref(&*output);
 	let stream = unsafe {
 		SCStream::initWithFilter_configuration_delegate(
@@ -2004,6 +2204,8 @@ fn setup_stream_for_monitor(
 			Some(delegate_proto),
 		)
 	};
+	let stream_init_ms = stream_init_started_at.elapsed().as_millis();
+	let add_output_started_at = Instant::now();
 	let output_proto = ProtocolObject::from_ref(&*output);
 
 	if unsafe {
@@ -2020,29 +2222,25 @@ fn setup_stream_for_monitor(
 		return None;
 	}
 
+	let add_output_ms = add_output_started_at.elapsed().as_millis();
+	let start_capture_started_at = Instant::now();
+
 	if let Err(error) = start_capture_blocking(&stream) {
 		log_start_capture_failed(monitor.id, filter_mode, &error);
 
 		return None;
 	}
 
-	tracing::info!(
-		op = "live_frame_stream.setup_stream_ready",
-		monitor_id = monitor.id,
-		filter_mode = ?filter_mode,
-		self_capture_exception_window_ids_complete = excepting_windows.complete(),
-		excepting_window_count = excepting_windows.windows.len(),
-		fallback_excluded_window_count = excepting_windows.fallback_excluded_windows.len(),
-		missing_window_ids = ?excepting_windows.missing_window_ids,
-		"ScreenCaptureKit setup created a live stream for the requested monitor."
-	);
-
-	Some(StreamState {
-		monitor_id: monitor.id,
-		self_capture_exception_window_ids_complete: excepting_windows.complete(),
+	Some(StartedStreamArtifacts {
 		stream,
 		output,
 		sample_handler_queue,
+		config_build_ms,
+		queue_build_ms,
+		output_build_ms,
+		stream_init_ms,
+		add_output_ms,
+		start_capture_ms: start_capture_started_at.elapsed().as_millis(),
 	})
 }
 
@@ -2167,13 +2365,12 @@ fn missing_exception_window_ids(
 
 fn stream_reuse_decision(
 	current_monitor_id: Option<u32>,
-	self_capture_exception_window_ids_complete: bool,
+	self_capture_filter_complete: bool,
 	requested_monitor_id: u32,
 ) -> StreamReuseDecision {
 	match current_monitor_id {
 		Some(current_monitor_id)
-			if current_monitor_id == requested_monitor_id
-				&& self_capture_exception_window_ids_complete =>
+			if current_monitor_id == requested_monitor_id && self_capture_filter_complete =>
 		{
 			StreamReuseDecision::ReuseCurrent
 		},
@@ -2265,7 +2462,13 @@ fn get_shareable_content() -> Result<Retained<SCShareableContent>, Retained<NSEr
 		let _ = tx.send(Ok(content));
 	});
 
-	unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&block) };
+	unsafe {
+		SCShareableContent::getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler(
+			false,
+			true,
+			&block,
+		)
+	};
 
 	rx.recv_timeout(Duration::from_secs(2)).map_err(|_| stream_error(STREAM_ERROR_TIMEOUT_CODE))?
 }

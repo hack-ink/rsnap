@@ -1,4 +1,7 @@
 use std::sync::Arc;
+#[cfg(not(target_os = "macos"))]
+use std::time::Duration;
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSArray;
@@ -18,11 +21,80 @@ use crate::overlay::{
 impl OverlaySession {
 	/// Starts the overlay session and creates the required capture windows.
 	pub fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+		let startup_started_at = Instant::now();
+
 		if self.is_active() {
 			return Ok(());
 		}
 
+		let reset_started_at = Instant::now();
+
 		self.reset_for_start();
+
+		let reset_ms = reset_started_at.elapsed().as_millis();
+		let worker_setup_ms = self.setup_startup_worker();
+		let monitor_enum_started_at = Instant::now();
+		let monitors = self.available_overlay_monitors()?;
+		let monitor_enum_ms = monitor_enum_started_at.elapsed().as_millis();
+
+		if monitors.is_empty() {
+			return Err(String::from("No monitors detected"));
+		}
+
+		let startup_cursor = self.sample_mouse_location();
+		let startup_monitor = Self::monitor_for_cursor_in_rects(&monitors, startup_cursor);
+		let gpu_init_started_at = Instant::now();
+
+		self.gpu = Some(GpuContext::new().map_err(|err| format!("{err:#}"))?);
+
+		let gpu_init_ms = gpu_init_started_at.elapsed().as_millis();
+		let window_creation = self.create_startup_windows(event_loop, &monitors)?;
+		let prime_cursor_started_at = Instant::now();
+
+		self.prime_startup_cursor_context(startup_cursor, startup_monitor);
+
+		let prime_cursor_ms = prime_cursor_started_at.elapsed().as_millis();
+		let startup_seed_ms = self.seed_startup_live_cursor(startup_monitor, startup_cursor);
+		let initialize_cursor_started_at = Instant::now();
+
+		self.initialize_cursor_state_for_cursor(startup_cursor, startup_monitor);
+
+		let initialize_cursor_ms = initialize_cursor_started_at.elapsed().as_millis();
+		let request_redraw_started_at = Instant::now();
+
+		self.request_redraw_all();
+
+		let request_redraw_ms = request_redraw_started_at.elapsed().as_millis();
+
+		tracing::info!(
+			op = "overlay.start_phase_timing",
+			mode = ?self.state.mode,
+			monitor_count = monitors.len(),
+			window_count = self.windows.len(),
+			startup_monitor_id = ?startup_monitor.map(|monitor| monitor.id),
+			reset_ms,
+			worker_setup_ms,
+			monitor_enum_ms,
+			gpu_init_ms,
+			overlay_windows_ms = window_creation.overlay_windows_ms,
+			hud_window_ms = window_creation.hud_window_ms,
+			loupe_window_ms = window_creation.loupe_window_ms,
+			toolbar_window_ms = window_creation.toolbar_window_ms,
+			scroll_preview_window_ms = window_creation.scroll_preview_window_ms,
+			startup_aux_windows_deferred = cfg!(target_os = "macos"),
+			prime_cursor_ms,
+			startup_seed_ms,
+			initialize_cursor_ms,
+			request_redraw_ms,
+			total_ms = startup_started_at.elapsed().as_millis(),
+			"Overlay start phase timing."
+		);
+
+		Ok(())
+	}
+
+	fn setup_startup_worker(&mut self) -> u128 {
+		let worker_setup_started_at = Instant::now();
 
 		self.worker = Some(OverlayWorker::new(
 			backend::default_capture_backend_with_self_capture_exception_window_ids(
@@ -38,26 +110,74 @@ impl OverlaySession {
 				));
 		}
 
-		let monitors = self.available_overlay_monitors()?;
+		worker_setup_started_at.elapsed().as_millis()
+	}
 
-		if monitors.is_empty() {
-			return Err(String::from("No monitors detected"));
-		}
+	fn create_startup_windows(
+		&mut self,
+		event_loop: &ActiveEventLoop,
+		monitors: &[MonitorRect],
+	) -> Result<StartupWindowCreationMetrics, String> {
+		let overlay_windows_started_at = Instant::now();
 
-		let startup_cursor = self.sample_mouse_location();
-		let startup_monitor = Self::monitor_for_cursor_in_rects(&monitors, startup_cursor);
+		self.create_overlay_windows(event_loop, monitors)?;
 
-		self.gpu = Some(GpuContext::new().map_err(|err| format!("{err:#}"))?);
+		let overlay_windows_ms = overlay_windows_started_at.elapsed().as_millis();
+		let hud_window_started_at = Instant::now();
 
-		self.create_overlay_windows(event_loop, &monitors)?;
 		self.create_hud_window(event_loop)?;
-		self.create_loupe_window(event_loop)?;
-		self.create_toolbar_window(event_loop)?;
-		self.create_scroll_preview_window(event_loop)?;
-		self.prime_startup_cursor_context(startup_cursor, startup_monitor);
+
+		let hud_window_ms = hud_window_started_at.elapsed().as_millis();
 
 		#[cfg(target_os = "macos")]
 		{
+			self.startup_aux_window_creation_pending = true;
+			self.startup_aux_window_creation_scheduled = false;
+
+			Ok(StartupWindowCreationMetrics {
+				overlay_windows_ms,
+				hud_window_ms,
+				loupe_window_ms: 0,
+				toolbar_window_ms: 0,
+				scroll_preview_window_ms: 0,
+			})
+		}
+		#[cfg(not(target_os = "macos"))]
+		{
+			let loupe_window_started_at = Instant::now();
+
+			self.create_loupe_window(event_loop)?;
+
+			let loupe_window_ms = loupe_window_started_at.elapsed().as_millis();
+			let toolbar_window_started_at = Instant::now();
+
+			self.create_toolbar_window(event_loop)?;
+
+			let toolbar_window_ms = toolbar_window_started_at.elapsed().as_millis();
+			let scroll_preview_window_started_at = Instant::now();
+
+			self.create_scroll_preview_window(event_loop)?;
+
+			let scroll_preview_window_ms = scroll_preview_window_started_at.elapsed().as_millis();
+
+			Ok(StartupWindowCreationMetrics {
+				overlay_windows_ms,
+				hud_window_ms,
+				loupe_window_ms,
+				toolbar_window_ms,
+				scroll_preview_window_ms,
+			})
+		}
+	}
+
+	fn seed_startup_live_cursor(
+		&mut self,
+		startup_monitor: Option<MonitorRect>,
+		startup_cursor: GlobalPoint,
+	) -> u128 {
+		#[cfg(target_os = "macos")]
+		{
+			let startup_seed_started_at = Instant::now();
 			let startup_live_rgb_plan = Self::startup_live_rgb_plan(startup_monitor);
 
 			if startup_live_rgb_plan.focus_window {
@@ -67,12 +187,73 @@ impl OverlaySession {
 			if let Some(monitor) = startup_live_rgb_plan.seed_monitor {
 				self.seed_startup_live_cursor_rgb(monitor, startup_cursor);
 			}
+
+			startup_seed_started_at.elapsed().as_millis()
+		}
+		#[cfg(not(target_os = "macos"))]
+		{
+			let _ = startup_monitor;
+			let _ = startup_cursor;
+
+			Duration::ZERO.as_millis()
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Completes creation of non-critical auxiliary windows after the first overlay frame.
+	pub fn finish_startup_aux_window_creation(
+		&mut self,
+		event_loop: &ActiveEventLoop,
+	) -> Result<(), String> {
+		if !self.startup_aux_window_creation_pending {
+			return Ok(());
 		}
 
-		self.initialize_cursor_state_for_cursor(startup_cursor, startup_monitor);
-		self.request_redraw_all();
+		self.startup_aux_window_creation_scheduled = false;
+
+		let mut created_aux_windows = false;
+
+		if self.loupe_window.is_none() {
+			self.create_loupe_window(event_loop)?;
+
+			created_aux_windows = true;
+		}
+		if self.toolbar_window.is_none() {
+			self.create_toolbar_window(event_loop)?;
+
+			created_aux_windows = true;
+		}
+		if self.scroll_preview_window.is_none() {
+			self.create_scroll_preview_window(event_loop)?;
+
+			created_aux_windows = true;
+		}
+
+		self.complete_startup_aux_window_creation(created_aux_windows);
+
+		if self.state.alt_held {
+			self.set_alt_loupe_window_visible(self.active_cursor_monitor(), true);
+		}
+		if self.toolbar_state.visible {
+			self.request_redraw_toolbar_window();
+		}
+		if self.scroll_capture.active {
+			self.request_redraw_scroll_preview_window();
+		}
 
 		Ok(())
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn complete_startup_aux_window_creation(&mut self, created_aux_windows: bool) {
+		self.startup_aux_window_creation_pending = false;
+
+		if created_aux_windows {
+			// When ScreenCaptureKit falls back to excluding only currently shareable
+			// rsnap windows, deferred aux windows must exist before we rebuild the
+			// active filters or they can remain visible in the live stream.
+			self.apply_self_capture_exception_window_ids_to_active_streams();
+		}
 	}
 
 	pub(super) fn reset_for_start(&mut self) {
@@ -90,6 +271,8 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		let scroll_capture_started_hook = self.scroll_capture_started_hook.clone();
 		#[cfg(target_os = "macos")]
+		let startup_aux_window_waker = self.startup_aux_window_waker.clone();
+		#[cfg(target_os = "macos")]
 		let external_scroll_input_drain_reader =
 			self.scroll_capture.external_scroll_input_drain_reader.clone();
 
@@ -101,6 +284,7 @@ impl OverlaySession {
 			self.scroll_capture_start_guard = scroll_capture_start_guard;
 			self.scroll_capture_starting_hook = scroll_capture_starting_hook;
 			self.scroll_capture_started_hook = scroll_capture_started_hook;
+			self.startup_aux_window_waker = startup_aux_window_waker;
 			self.scroll_capture.external_scroll_input_drain_reader =
 				external_scroll_input_drain_reader;
 		}
@@ -523,6 +707,14 @@ impl OverlaySession {
 			}
 		}
 	}
+}
+
+struct StartupWindowCreationMetrics {
+	overlay_windows_ms: u128,
+	hud_window_ms: u128,
+	loupe_window_ms: u128,
+	toolbar_window_ms: u128,
+	scroll_preview_window_ms: u128,
 }
 
 #[cfg(test)]
