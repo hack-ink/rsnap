@@ -1,6 +1,7 @@
 #![allow(clippy::wildcard_imports)]
 
 use super::*;
+use crate::OverlayControl;
 
 #[test]
 fn pending_freeze_capture_dispatches_even_with_seeded_preview() {
