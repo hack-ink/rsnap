@@ -55,6 +55,47 @@ fn apply_self_capture_exception_window_ids_to_active_streams_updates_live_stream
 
 #[cfg(target_os = "macos")]
 #[test]
+fn complete_startup_aux_window_creation_refreshes_live_stream_filters() {
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.startup_aux_window_creation_pending = true;
+	session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
+		captured_at: Instant::now(),
+		windows: Arc::new(vec![WindowRect {
+			window_id: Some(9),
+			x: 10,
+			y: 12,
+			width: 30,
+			height: 40,
+		}]),
+	}));
+
+	session.complete_startup_aux_window_creation(true);
+
+	assert!(!session.startup_aux_window_creation_pending);
+	assert_eq!(
+		session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
+		&[17]
+	);
+	assert_eq!(
+		session
+			.scroll_capture
+			.live_stream
+			.as_ref()
+			.unwrap()
+			.debug_self_capture_exception_window_ids(),
+		&[17]
+	);
+	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(session.window_list_snapshot.is_none());
+	assert!(
+		session.last_window_list_refresh_request_at.elapsed()
+			>= session.window_list_refresh_interval
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn apply_self_capture_exception_window_ids_to_active_streams_keeps_scroll_live_stream_disabled_in_worker_mode()
  {
 	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();

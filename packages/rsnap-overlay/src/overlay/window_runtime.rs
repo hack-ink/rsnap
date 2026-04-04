@@ -211,17 +211,25 @@ impl OverlaySession {
 
 		self.startup_aux_window_creation_scheduled = false;
 
+		let mut created_aux_windows = false;
+
 		if self.loupe_window.is_none() {
 			self.create_loupe_window(event_loop)?;
+
+			created_aux_windows = true;
 		}
 		if self.toolbar_window.is_none() {
 			self.create_toolbar_window(event_loop)?;
+
+			created_aux_windows = true;
 		}
 		if self.scroll_preview_window.is_none() {
 			self.create_scroll_preview_window(event_loop)?;
+
+			created_aux_windows = true;
 		}
 
-		self.startup_aux_window_creation_pending = false;
+		self.complete_startup_aux_window_creation(created_aux_windows);
 
 		if self.state.alt_held {
 			self.set_alt_loupe_window_visible(self.active_cursor_monitor(), true);
@@ -234,6 +242,18 @@ impl OverlaySession {
 		}
 
 		Ok(())
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn complete_startup_aux_window_creation(&mut self, created_aux_windows: bool) {
+		self.startup_aux_window_creation_pending = false;
+
+		if created_aux_windows {
+			// When ScreenCaptureKit falls back to excluding only currently shareable
+			// rsnap windows, deferred aux windows must exist before we rebuild the
+			// active filters or they can remain visible in the live stream.
+			self.apply_self_capture_exception_window_ids_to_active_streams();
+		}
 	}
 
 	pub(super) fn reset_for_start(&mut self) {
