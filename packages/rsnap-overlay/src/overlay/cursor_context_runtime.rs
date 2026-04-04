@@ -1,9 +1,6 @@
 #[cfg(target_os = "macos")]
 #[allow(unused_imports)]
-use crate::overlay::{
-	CursorSampleRequest, STARTUP_LIVE_SAMPLE_WAIT_POLL_INTERVAL, STARTUP_LIVE_SAMPLE_WAIT_TIMEOUT,
-	StartupLiveRgbPlan, thread,
-};
+use crate::overlay::{CursorSampleRequest, StartupLiveRgbPlan};
 #[allow(unused_imports)]
 use crate::overlay::{
 	DeviceCursorPointSource, FreezeCaptureTarget, GlobalPoint, Instant,
@@ -83,23 +80,12 @@ impl OverlaySession {
 		let Some((x_px, y_px)) = monitor.local_u32_pixels(cursor) else {
 			return;
 		};
-		let deadline = Instant::now() + STARTUP_LIVE_SAMPLE_WAIT_TIMEOUT;
 
-		loop {
-			if let Some(sample) =
-				stream.latest_cursor_sample(monitor, CursorSampleRequest::rgb(x_px, y_px))
-				&& let Some(rgb) = sample.rgb
-			{
-				self.state.rgb = Some(rgb);
-
-				return;
-			}
-
-			if Instant::now() >= deadline {
-				return;
-			}
-
-			thread::sleep(STARTUP_LIVE_SAMPLE_WAIT_POLL_INTERVAL);
+		if let Some(sample) =
+			stream.latest_cursor_sample(monitor, CursorSampleRequest::rgb(x_px, y_px))
+			&& let Some(rgb) = sample.rgb
+		{
+			self.state.rgb = Some(rgb);
 		}
 	}
 
