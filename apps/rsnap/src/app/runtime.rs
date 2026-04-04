@@ -40,6 +40,17 @@ impl ApplicationHandler<UserEvent> for App {
 			UserEvent::HotKey(event) => self.handle_hotkey_event(event_loop, event),
 			UserEvent::TrayIcon => {},
 			#[cfg(target_os = "macos")]
+			UserEvent::OverlayStartupAuxWindows(generation) => {
+				if generation != self.overlay_session_generation {
+					return;
+				}
+				if let Some(session) = self.overlay_session.as_mut()
+					&& let Err(err) = session.finish_startup_aux_window_creation(event_loop)
+				{
+					self.end_overlay_session(rsnap_overlay::OverlayExit::Error(err));
+				}
+			},
+			#[cfg(target_os = "macos")]
 			UserEvent::OverlayStreamFrame => {
 				self.finish_coalesced_overlay_stream_frame_send();
 

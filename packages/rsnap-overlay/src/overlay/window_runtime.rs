@@ -18,12 +18,17 @@ use crate::overlay::{
 impl OverlaySession {
 	/// Starts the overlay session and creates the required capture windows.
 	pub fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+		let startup_started_at = std::time::Instant::now();
+
 		if self.is_active() {
 			return Ok(());
 		}
 
+		let reset_started_at = std::time::Instant::now();
 		self.reset_for_start();
+		let reset_ms = reset_started_at.elapsed().as_millis();
 
+		let worker_setup_started_at = std::time::Instant::now();
 		self.worker = Some(OverlayWorker::new(
 			backend::default_capture_backend_with_self_capture_exception_window_ids(
 				self.config.self_capture_exception_window_ids.clone(),
@@ -37,8 +42,11 @@ impl OverlaySession {
 					self.config.self_capture_exception_window_ids.clone(),
 				));
 		}
+		let worker_setup_ms = worker_setup_started_at.elapsed().as_millis();
 
+		let monitor_enum_started_at = std::time::Instant::now();
 		let monitors = self.available_overlay_monitors()?;
+		let monitor_enum_ms = monitor_enum_started_at.elapsed().as_millis();
 
 		if monitors.is_empty() {
 			return Err(String::from("No monitors detected"));
@@ -47,30 +55,138 @@ impl OverlaySession {
 		let startup_cursor = self.sample_mouse_location();
 		let startup_monitor = Self::monitor_for_cursor_in_rects(&monitors, startup_cursor);
 
+		let gpu_init_started_at = std::time::Instant::now();
 		self.gpu = Some(GpuContext::new().map_err(|err| format!("{err:#}"))?);
+		let gpu_init_ms = gpu_init_started_at.elapsed().as_millis();
 
+		let overlay_windows_started_at = std::time::Instant::now();
 		self.create_overlay_windows(event_loop, &monitors)?;
+		let overlay_windows_ms = overlay_windows_started_at.elapsed().as_millis();
+		let hud_window_started_at = std::time::Instant::now();
 		self.create_hud_window(event_loop)?;
-		self.create_loupe_window(event_loop)?;
-		self.create_toolbar_window(event_loop)?;
-		self.create_scroll_preview_window(event_loop)?;
-		self.prime_startup_cursor_context(startup_cursor, startup_monitor);
-
+		let hud_window_ms = hud_window_started_at.elapsed().as_millis();
 		#[cfg(target_os = "macos")]
 		{
-			let startup_live_rgb_plan = Self::startup_live_rgb_plan(startup_monitor);
+			self.startup_aux_window_creation_pending = true;
+			self.startup_aux_window_creation_scheduled = false;
+		}
+		#[cfg(target_os = "macos")]
+		let loupe_window_ms = 0;
+		#[cfg(target_os = "macos")]
+		let toolbar_window_ms = 0;
+		#[cfg(target_os = "macos")]
+		let scroll_preview_window_ms = 0;
+		#[cfg(not(target_os = "macos"))]
+		let loupe_window_started_at = std::time::Instant::now();
+		#[cfg(not(target_os = "macos"))]
+		self.create_loupe_window(event_loop)?;
+		#[cfg(not(target_os = "macos"))]
+		let loupe_window_ms = loupe_window_started_at.elapsed().as_millis();
+		#[cfg(not(target_os = "macos"))]
+		let toolbar_window_started_at = std::time::Instant::now();
+		#[cfg(not(target_os = "macos"))]
+		self.create_toolbar_window(event_loop)?;
+		#[cfg(not(target_os = "macos"))]
+		let toolbar_window_ms = toolbar_window_started_at.elapsed().as_millis();
+		#[cfg(not(target_os = "macos"))]
+		let scroll_preview_window_started_at = std::time::Instant::now();
+		#[cfg(not(target_os = "macos"))]
+		self.create_scroll_preview_window(event_loop)?;
+		#[cfg(not(target_os = "macos"))]
+		let scroll_preview_window_ms = scroll_preview_window_started_at.elapsed().as_millis();
+		let prime_cursor_started_at = std::time::Instant::now();
+		self.prime_startup_cursor_context(startup_cursor, startup_monitor);
+		let prime_cursor_ms = prime_cursor_started_at.elapsed().as_millis();
 
-			if startup_live_rgb_plan.focus_window {
-				self.focus_live_capture_window();
-			}
+		let startup_seed_ms = {
+			#[cfg(target_os = "macos")]
+			{
+				let startup_seed_started_at = std::time::Instant::now();
+				let startup_live_rgb_plan = Self::startup_live_rgb_plan(startup_monitor);
 
-			if let Some(monitor) = startup_live_rgb_plan.seed_monitor {
-				self.seed_startup_live_cursor_rgb(monitor, startup_cursor);
+				if startup_live_rgb_plan.focus_window {
+					self.focus_live_capture_window();
+				}
+
+				if let Some(monitor) = startup_live_rgb_plan.seed_monitor {
+					self.seed_startup_live_cursor_rgb(monitor, startup_cursor);
+				}
+				startup_seed_started_at.elapsed().as_millis()
 			}
+			#[cfg(not(target_os = "macos"))]
+			{
+				std::time::Duration::ZERO.as_millis()
+			}
+		};
+
+		let initialize_cursor_started_at = std::time::Instant::now();
+		self.initialize_cursor_state_for_cursor(startup_cursor, startup_monitor);
+		let initialize_cursor_ms = initialize_cursor_started_at.elapsed().as_millis();
+		let request_redraw_started_at = std::time::Instant::now();
+		self.request_redraw_all();
+		let request_redraw_ms = request_redraw_started_at.elapsed().as_millis();
+
+		tracing::info!(
+			op = "overlay.start_phase_timing",
+			mode = ?self.state.mode,
+			monitor_count = monitors.len(),
+			window_count = self.windows.len(),
+			startup_monitor_id = ?startup_monitor.map(|monitor| monitor.id),
+			reset_ms,
+			worker_setup_ms,
+			monitor_enum_ms,
+			gpu_init_ms,
+			overlay_windows_ms,
+			hud_window_ms,
+			loupe_window_ms,
+			toolbar_window_ms,
+			scroll_preview_window_ms,
+			startup_aux_windows_deferred = cfg!(target_os = "macos"),
+			prime_cursor_ms,
+			startup_seed_ms,
+			initialize_cursor_ms,
+			request_redraw_ms,
+			total_ms = startup_started_at.elapsed().as_millis(),
+			"Overlay start phase timing."
+		);
+
+		Ok(())
+	}
+
+	#[cfg(target_os = "macos")]
+	pub fn finish_startup_aux_window_creation(
+		&mut self,
+		event_loop: &ActiveEventLoop,
+	) -> Result<(), String> {
+		if !self.startup_aux_window_creation_pending {
+			return Ok(());
 		}
 
-		self.initialize_cursor_state_for_cursor(startup_cursor, startup_monitor);
-		self.request_redraw_all();
+		self.startup_aux_window_creation_scheduled = false;
+
+		if self.loupe_window.is_none() {
+			self.create_loupe_window(event_loop)?;
+		}
+
+		if self.toolbar_window.is_none() {
+			self.create_toolbar_window(event_loop)?;
+		}
+
+		if self.scroll_preview_window.is_none() {
+			self.create_scroll_preview_window(event_loop)?;
+		}
+
+		self.startup_aux_window_creation_pending = false;
+
+		if self.state.alt_held {
+			self.set_alt_loupe_window_visible(self.active_cursor_monitor(), true);
+		}
+		if self.toolbar_state.visible {
+			self.request_redraw_toolbar_window();
+		}
+		if self.scroll_capture.active {
+			self.request_redraw_scroll_preview_window();
+		}
 
 		Ok(())
 	}
@@ -90,6 +206,8 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		let scroll_capture_started_hook = self.scroll_capture_started_hook.clone();
 		#[cfg(target_os = "macos")]
+		let startup_aux_window_waker = self.startup_aux_window_waker.clone();
+		#[cfg(target_os = "macos")]
 		let external_scroll_input_drain_reader =
 			self.scroll_capture.external_scroll_input_drain_reader.clone();
 
@@ -101,6 +219,7 @@ impl OverlaySession {
 			self.scroll_capture_start_guard = scroll_capture_start_guard;
 			self.scroll_capture_starting_hook = scroll_capture_starting_hook;
 			self.scroll_capture_started_hook = scroll_capture_started_hook;
+			self.startup_aux_window_waker = startup_aux_window_waker;
 			self.scroll_capture.external_scroll_input_drain_reader =
 				external_scroll_input_drain_reader;
 		}

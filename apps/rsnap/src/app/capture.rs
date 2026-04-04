@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use color_eyre::eyre;
@@ -92,6 +93,8 @@ impl App {
 		event_loop: &ActiveEventLoop,
 		requested_by: &'static str,
 	) {
+		let capture_start_started_at = Instant::now();
+
 		if self.overlay_session.is_some() {
 			tracing::info!(
 				requested_by = %requested_by,
@@ -101,17 +104,47 @@ impl App {
 			return;
 		}
 		#[cfg(target_os = "macos")]
-		if !self.ensure_screen_recording_access(requested_by) {
+		let screen_recording_preflight_started_at = Instant::now();
+		#[cfg(target_os = "macos")]
+		let screen_recording_granted = self.ensure_screen_recording_access(requested_by);
+		#[cfg(target_os = "macos")]
+		let screen_recording_preflight_ms = screen_recording_preflight_started_at.elapsed().as_millis();
+		#[cfg(not(target_os = "macos"))]
+		let screen_recording_preflight_ms = 0;
+		#[cfg(target_os = "macos")]
+		if !screen_recording_granted {
+			tracing::info!(
+				op = "capture.start_phase_timing",
+				requested_by = %requested_by,
+				result = "blocked_missing_screen_recording",
+				screen_recording_preflight_ms,
+				total_ms = capture_start_started_at.elapsed().as_millis(),
+				"Capture startup phase timing."
+			);
+
 			return;
 		}
 
+		let overlay_session_build_started_at = Instant::now();
 		let mut overlay_session = OverlaySession::with_config(self.overlay_config());
+		let overlay_session_build_ms = overlay_session_build_started_at.elapsed().as_millis();
+		#[cfg(target_os = "macos")]
+		{
+			self.overlay_session_generation = self.overlay_session_generation.wrapping_add(1);
+		}
 
+		#[cfg(target_os = "macos")]
+		let scroll_input_reset_started_at = Instant::now();
 		#[cfg(target_os = "macos")]
 		self.finish_coalesced_overlay_stream_frame_send();
 		#[cfg(target_os = "macos")]
 		self.scroll_input_shared_state.clear();
+		#[cfg(target_os = "macos")]
+		let scroll_input_reset_ms = scroll_input_reset_started_at.elapsed().as_millis();
+		#[cfg(not(target_os = "macos"))]
+		let scroll_input_reset_ms = 0;
 
+		let hook_wiring_started_at = Instant::now();
 		#[cfg(target_os = "macos")]
 		self.scroll_input_shared_state.set_event_waker(Some(Arc::new({
 			let overlay_proxy = self.overlay_proxy.clone();
@@ -132,6 +165,16 @@ impl App {
 				{
 					overlay_stream_event_pending.store(false, Ordering::Release);
 				}
+			}
+		}));
+		#[cfg(target_os = "macos")]
+		overlay_session.set_startup_aux_window_waker(Arc::new({
+			let overlay_proxy = self.overlay_proxy.clone();
+			let overlay_session_generation = self.overlay_session_generation;
+
+			move || {
+				let _ = overlay_proxy
+					.send_event(UserEvent::OverlayStartupAuxWindows(overlay_session_generation));
 			}
 		}));
 		#[cfg(target_os = "macos")]
@@ -167,9 +210,27 @@ impl App {
 
 			move || Self::enable_external_scroll_input(&shared_state)
 		}));
+		let hook_wiring_ms = hook_wiring_started_at.elapsed().as_millis();
 
+		let overlay_start_started_at = Instant::now();
 		match overlay_session.start(event_loop) {
 			Ok(()) => {
+				let overlay_start_ms = overlay_start_started_at.elapsed().as_millis();
+
+				tracing::info!(
+					op = "capture.start_phase_timing",
+					requested_by = %requested_by,
+					result = "started",
+					hotkey = %self.capture_key_label(),
+					overlay_session_build_ms,
+					hook_wiring_ms,
+					overlay_start_ms,
+					total_ms = capture_start_started_at.elapsed().as_millis(),
+					screen_recording_preflight_ms,
+					scroll_input_reset_ms,
+					"Capture startup phase timing."
+				);
+
 				tracing::info!(
 					requested_by = %requested_by,
 					hotkey = %self.capture_key_label(),
@@ -179,6 +240,8 @@ impl App {
 				self.overlay_session = Some(overlay_session);
 			},
 			Err(err) => {
+				let overlay_start_ms = overlay_start_started_at.elapsed().as_millis();
+
 				#[cfg(target_os = "macos")]
 				{
 					self.scroll_input_shared_state.set_enabled(false);
@@ -187,8 +250,16 @@ impl App {
 				}
 
 				tracing::warn!(
+					op = "capture.start_phase_timing",
 					error = %err,
 					requested_by = %requested_by,
+					result = "error",
+					overlay_session_build_ms,
+					hook_wiring_ms,
+					overlay_start_ms,
+					total_ms = capture_start_started_at.elapsed().as_millis(),
+					screen_recording_preflight_ms,
+					scroll_input_reset_ms,
 					"Failed to start overlay session."
 				)
 			},

@@ -38,6 +38,8 @@ pub(crate) enum UserEvent {
 	Menu(MenuEvent),
 	HotKey(GlobalHotKeyEvent),
 	#[cfg(target_os = "macos")]
+	OverlayStartupAuxWindows(u64),
+	#[cfg(target_os = "macos")]
 	OverlayStreamFrame,
 	#[cfg(target_os = "macos")]
 	OverlayScrollInput,
@@ -78,6 +80,8 @@ struct App {
 	scroll_input_shared_state: Arc<SharedScrollInputState>,
 	#[cfg(target_os = "macos")]
 	overlay_stream_event_pending: Arc<AtomicBool>,
+	#[cfg(target_os = "macos")]
+	overlay_session_generation: u64,
 	#[cfg(target_os = "macos")]
 	startup_permissions_checked: bool,
 }
@@ -127,6 +131,8 @@ impl App {
 			scroll_input_shared_state,
 			#[cfg(target_os = "macos")]
 			overlay_stream_event_pending: Arc::new(AtomicBool::new(false)),
+			#[cfg(target_os = "macos")]
+			overlay_session_generation: 0,
 			#[cfg(target_os = "macos")]
 			startup_permissions_checked: false,
 		}

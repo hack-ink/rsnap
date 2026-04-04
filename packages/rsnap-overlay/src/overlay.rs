@@ -29,8 +29,6 @@ use std::mem;
 use std::panic;
 use std::ptr;
 use std::slice;
-#[cfg(target_os = "macos")]
-use std::thread;
 use std::{
 	borrow::Cow,
 	cmp::Ordering,
@@ -345,10 +343,6 @@ const SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE: Duration = Duration::from_mil
 const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
 #[cfg(target_os = "macos")]
 const KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE: u32 = 0;
-#[cfg(target_os = "macos")]
-const STARTUP_LIVE_SAMPLE_WAIT_TIMEOUT: Duration = Duration::from_millis(120);
-#[cfg(target_os = "macos")]
-const STARTUP_LIVE_SAMPLE_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(4);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Selects how the live HUD should be positioned.
@@ -822,6 +816,12 @@ pub struct OverlaySession {
 	scroll_capture_starting_hook: Option<ScrollCaptureStartingHook>,
 	#[cfg(target_os = "macos")]
 	scroll_capture_started_hook: Option<ScrollCaptureStartedHook>,
+	#[cfg(target_os = "macos")]
+	startup_aux_window_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	#[cfg(target_os = "macos")]
+	startup_aux_window_creation_pending: bool,
+	#[cfg(target_os = "macos")]
+	startup_aux_window_creation_scheduled: bool,
 	response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl OverlaySession {
@@ -997,6 +997,12 @@ impl OverlaySession {
 			scroll_capture_starting_hook: None,
 			#[cfg(target_os = "macos")]
 			scroll_capture_started_hook: None,
+			#[cfg(target_os = "macos")]
+			startup_aux_window_waker: None,
+			#[cfg(target_os = "macos")]
+			startup_aux_window_creation_pending: false,
+			#[cfg(target_os = "macos")]
+			startup_aux_window_creation_scheduled: false,
 			response_waker: None,
 		}
 	}
@@ -1016,10 +1022,21 @@ impl OverlaySession {
 		(loupe_sample_side_px, Self::overlay_state_with_loupe_patch(loupe_sample_side_px))
 	}
 
+	fn note_startup_overlay_frame_presented(&mut self) {
+		#[cfg(target_os = "macos")]
+		self.maybe_schedule_startup_aux_window_creation();
+	}
+
 	#[cfg(target_os = "macos")]
 	/// Registers a wake callback for macOS live-stream frame notifications.
 	pub fn set_scroll_frame_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.scroll_frame_waker = Some(waker);
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Registers a wake callback that creates non-critical startup windows after first paint.
+	pub fn set_startup_aux_window_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+		self.startup_aux_window_waker = Some(waker);
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1045,6 +1062,21 @@ impl OverlaySession {
 	/// Registers a wake callback for worker-thread responses.
 	pub fn set_response_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.response_waker = Some(waker);
+	}
+
+	#[cfg(target_os = "macos")]
+	fn maybe_schedule_startup_aux_window_creation(&mut self) {
+		if !self.startup_aux_window_creation_pending || self.startup_aux_window_creation_scheduled {
+			return;
+		}
+
+		let Some(waker) = self.startup_aux_window_waker.as_ref().cloned() else {
+			return;
+		};
+
+		self.startup_aux_window_creation_scheduled = true;
+
+		waker();
 	}
 
 	#[cfg(target_os = "macos")]
@@ -4739,6 +4771,7 @@ impl OverlaySession {
 			}
 		}
 		self.last_present_at = Instant::now();
+		self.note_startup_overlay_frame_presented();
 
 		self.handle_capture_and_toolbar_redraw_post(overlay_monitor, draw_toolbar)
 	}
