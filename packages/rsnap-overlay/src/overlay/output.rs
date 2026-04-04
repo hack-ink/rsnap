@@ -93,6 +93,7 @@ pub(super) fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
 	Ok(())
 }
 
+#[cfg(target_os = "macos")]
 pub(super) fn write_text_to_clipboard(text: &str) -> Result<()> {
 	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
 
