@@ -744,6 +744,51 @@ fn frozen_selection_size_badge_falls_inside_when_default_bottom_toolbar_slot_ove
 }
 
 #[test]
+fn frozen_drag_region_selection_size_badge_uses_above_slot_when_bottom_toolbar_slot_overlaps() {
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let capture_rect = Rect::from_min_size(Pos2::new(200.0, 180.0), Vec2::new(200.0, 300.0));
+	let reserved_rect = Rect::from_min_size(
+		Pos2::new(200.0, 180.0 + 300.0 + TOOLBAR_CAPTURE_GAP_PX),
+		WindowRenderer::frozen_toolbar_size(&FrozenToolbarState::default()),
+	);
+	let badge_rect =
+		WindowRenderer::selection_size_badge_rect_preferring_outside_with_reserved_rect(
+			screen_rect,
+			capture_rect,
+			Vec2::new(92.0, 26.0),
+			Some(reserved_rect),
+		);
+
+	assert_eq!(badge_rect.max.x, capture_rect.max.x);
+	assert_eq!(badge_rect.max.y, capture_rect.min.y - SELECTION_SIZE_BADGE_GAP_PX);
+	assert!(!badge_rect.intersects(reserved_rect));
+}
+
+#[test]
+fn frozen_window_selection_size_badge_keeps_inside_fallback_when_bottom_toolbar_slot_overlaps() {
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let capture_rect = Rect::from_min_size(Pos2::new(200.0, 180.0), Vec2::new(200.0, 300.0));
+	let reserved_rect = Rect::from_min_size(
+		Pos2::new(200.0, 180.0 + 300.0 + TOOLBAR_CAPTURE_GAP_PX),
+		WindowRenderer::frozen_toolbar_size(&FrozenToolbarState::default()),
+	);
+	let badge_rect = WindowRenderer::selection_size_badge_rect_with_reserved_rect(
+		screen_rect,
+		capture_rect,
+		Vec2::new(92.0, 26.0),
+		Some(reserved_rect),
+	);
+
+	assert_eq!(badge_rect.max.x, capture_rect.max.x);
+	assert_eq!(badge_rect.max.y, capture_rect.max.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX);
+	assert!(!badge_rect.intersects(reserved_rect));
+}
+
+#[test]
 fn frozen_selection_size_badge_keeps_below_placement_after_toolbar_leaves_default_slot() {
 	let monitor = tests::test_monitor();
 	let screen_rect =
@@ -1395,6 +1440,7 @@ fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
 		monitor,
 		screen_rect,
 		HudTheme::Dark,
+		FrozenCaptureSource::None,
 		None,
 		false,
 		true,
