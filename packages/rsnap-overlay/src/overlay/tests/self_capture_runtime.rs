@@ -1,0 +1,294 @@
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	self, Arc, InflightScrollCaptureObservation, OverlayControl, ScrollCaptureLiveFrame,
+	WindowListSnapshot, WindowRect,
+};
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	GlobalPoint, Instant, OverlaySession, ScrollDirection, WorkerErrorSource, WorkerResponse,
+	overlay,
+};
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apply_self_capture_exception_window_ids_to_active_streams_updates_live_stream_filters() {
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
+		captured_at: Instant::now(),
+		windows: Arc::new(vec![WindowRect {
+			window_id: Some(9),
+			x: 10,
+			y: 12,
+			width: 30,
+			height: 40,
+		}]),
+	}));
+
+	session.apply_self_capture_exception_window_ids_to_active_streams();
+
+	assert_eq!(
+		session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
+		&[17]
+	);
+	assert_eq!(
+		session
+			.scroll_capture
+			.live_stream
+			.as_ref()
+			.unwrap()
+			.debug_self_capture_exception_window_ids(),
+		&[17]
+	);
+	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+	assert!(session.window_list_snapshot.is_none());
+	assert!(
+		session.last_window_list_refresh_request_at.elapsed()
+			>= session.window_list_refresh_interval
+	);
+	assert_eq!(session.scroll_capture.last_stream_frame_seq, 0);
+	assert_eq!(session.scroll_capture.live_stream_stale_grace, None);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apply_self_capture_exception_window_ids_to_active_streams_keeps_scroll_live_stream_disabled_in_worker_mode()
+ {
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	tests::enable_test_worker_scroll_capture_path(&mut session);
+
+	session.test_push_scroll_capture_live_frame(ScrollCaptureLiveFrame {
+		frame_seq: 9,
+		captured_at: Instant::now(),
+		image: tests::test_frozen_image(),
+	});
+
+	session.scroll_capture.last_stream_event_at = Some(Instant::now());
+	session.scroll_capture.last_stream_poll_at = Some(Instant::now());
+
+	session.apply_self_capture_exception_window_ids_to_active_streams();
+
+	assert_eq!(
+		session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
+		&[17]
+	);
+	assert!(session.scroll_capture.live_stream.is_none());
+	assert!(session.scroll_capture.live_stream_backlog.is_empty());
+	assert!(session.scroll_capture.last_stream_event_at.is_none());
+	assert!(session.scroll_capture.last_stream_poll_at.is_none());
+	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_freeze_is_inflight()
+ {
+	let monitor = tests::test_monitor();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.inflight_freeze_capture = Some(monitor);
+
+	session.apply_self_capture_exception_window_ids_to_active_streams();
+
+	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(session.pending_self_capture_exception_window_ids_worker_refresh);
+	assert_eq!(
+		session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
+		&[17]
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_hit_test_is_inflight()
+ {
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.pending_click_hit_test_request_id = Some(7);
+
+	session.apply_self_capture_exception_window_ids_to_active_streams();
+
+	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(session.pending_self_capture_exception_window_ids_worker_refresh);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_window_list_refresh_is_inflight()
+ {
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.window_list_refresh_inflight = true;
+
+	session.apply_self_capture_exception_window_ids_to_active_streams();
+
+	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(session.pending_self_capture_exception_window_ids_worker_refresh);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_png_encode_is_inflight()
+ {
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.png_encode_inflight = true;
+
+	session.apply_self_capture_exception_window_ids_to_active_streams();
+
+	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(session.pending_self_capture_exception_window_ids_worker_refresh);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn captured_freeze_response_applies_deferred_worker_refresh() {
+	let monitor = tests::test_monitor();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.inflight_freeze_capture = Some(monitor);
+	session.pending_self_capture_exception_window_ids_worker_refresh = true;
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::CapturedFreeze {
+		monitor,
+		image: tests::test_frozen_image(),
+		window_image: None,
+		captured_window_id: None,
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn hit_test_response_applies_deferred_worker_refresh() {
+	let monitor = tests::test_monitor();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.pending_click_hit_test_request_id = Some(11);
+	session.pending_self_capture_exception_window_ids_worker_refresh = true;
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::HitTestWindow {
+		monitor,
+		point: GlobalPoint::new(24, 36),
+		request_id: 11,
+		hit: None,
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn window_list_refresh_response_applies_deferred_worker_refresh() {
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.window_list_refresh_inflight = true;
+	session.pending_self_capture_exception_window_ids_worker_refresh = true;
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::RefreshedWindowList {
+		snapshot: Arc::new(WindowListSnapshot {
+			captured_at: Instant::now(),
+			windows: Arc::new(vec![WindowRect {
+				window_id: Some(9),
+				x: 10,
+				y: 12,
+				width: 30,
+				height: 40,
+			}]),
+		}),
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn stale_window_list_refresh_response_is_dropped_after_self_capture_filter_change() {
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
+		captured_at: Instant::now(),
+		windows: Arc::new(vec![WindowRect { window_id: Some(4), x: 1, y: 2, width: 3, height: 4 }]),
+	}));
+	session.window_list_refresh_inflight = true;
+
+	session.apply_self_capture_exception_window_ids_to_active_streams();
+
+	assert!(session.window_list_snapshot.is_none());
+	assert!(session.drop_next_window_list_refresh_snapshot);
+	assert!(session.pending_self_capture_exception_window_ids_worker_refresh);
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::RefreshedWindowList {
+		snapshot: Arc::new(WindowListSnapshot {
+			captured_at: Instant::now(),
+			windows: Arc::new(vec![WindowRect {
+				window_id: Some(9),
+				x: 10,
+				y: 12,
+				width: 30,
+				height: 40,
+			}]),
+		}),
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert!(session.window_list_snapshot.is_none());
+	assert!(!session.window_list_refresh_inflight);
+	assert!(!session.drop_next_window_list_refresh_snapshot);
+	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn png_error_response_applies_deferred_worker_refresh() {
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.png_encode_inflight = true;
+	session.pending_self_capture_exception_window_ids_worker_refresh = true;
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
+		source: WorkerErrorSource::EncodePng,
+		message: String::from("encode failed"),
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn capture_monitor_region_error_clears_scroll_capture_inflight_and_pauses_session() {
+	let mut session = OverlaySession::new();
+
+	session.scroll_capture.active = true;
+	session.scroll_capture.inflight_request_id = Some(41);
+	session.scroll_capture.inflight_request_observation = Some(InflightScrollCaptureObservation {
+		was_observable: true,
+		external_input_seq: 9,
+		input_direction: Some(ScrollDirection::Down),
+	});
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
+		source: WorkerErrorSource::CaptureMonitorRegion,
+		message: String::from("capture timed out"),
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert_eq!(session.scroll_capture.inflight_request_id, None);
+	assert_eq!(session.scroll_capture.inflight_request_observation, None);
+	assert!(session.scroll_capture.paused);
+	assert_eq!(session.state.error_message.as_deref(), Some("capture timed out"));
+}
