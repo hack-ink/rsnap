@@ -1,6 +1,11 @@
-#![allow(clippy::wildcard_imports)]
-
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	self, Duration, GlobalPoint, Instant, MonitorRect, OverlaySession, RectPoints,
+	SCROLL_CAPTURE_SAMPLE_INTERVAL, ScrollDirection, ScrollObserveOutcome, ScrollSession, overlay,
+};
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::tests::{Arc, MacLiveFrameStream, OverlayWorker, SequenceScrollCaptureBackend};
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -96,8 +101,8 @@ fn maybe_tick_scroll_capture_does_not_synthesize_preview_growth_from_input_witho
 	let tick_at = Instant::now();
 	let event_at = tick_at - Duration::from_millis(1);
 	let events = Arc::new([(1, event_at, 150.0, 160.0, -4.0, true, false)]);
-	let base_frame = make_scroll_capture_window(&document, 3, 0, 5);
-	let latest_frame = make_scroll_capture_window(&document, 3, 1, 5);
+	let base_frame = tests::make_scroll_capture_window(&document, 3, 0, 5);
+	let latest_frame = tests::make_scroll_capture_window(&document, 3, 1, 5);
 	let scroll_session = ScrollSession::new(base_frame.clone(), 320).unwrap();
 	let committed_preview = scroll_session.preview_image().clone();
 	let mut session = OverlaySession::new();
@@ -125,7 +130,7 @@ fn maybe_tick_scroll_capture_does_not_synthesize_preview_growth_from_input_witho
 	session.maybe_tick_scroll_capture();
 
 	assert_eq!(session.scroll_capture.preview_display_image.as_ref(), Some(&committed_preview));
-	assert_eq!(scroll_capture_export_height(&session), base_frame.height());
+	assert_eq!(tests::scroll_capture_export_height(&session), base_frame.height());
 }
 
 #[cfg(target_os = "macos")]
@@ -150,8 +155,8 @@ fn maybe_tick_scroll_capture_does_not_double_count_preview_growth_from_same_late
 	let tick_at = Instant::now();
 	let event_at = tick_at - Duration::from_millis(1);
 	let events = Arc::new([(1, event_at, 150.0, 160.0, -4.0, true, false)]);
-	let base_frame = make_scroll_capture_window(&document, 3, 0, 5);
-	let moved_frame = make_scroll_capture_window(&document, 3, 1, 5);
+	let base_frame = tests::make_scroll_capture_window(&document, 3, 0, 5);
+	let moved_frame = tests::make_scroll_capture_window(&document, 3, 1, 5);
 	let mut session = OverlaySession::new();
 	let mut scroll_session = ScrollSession::new(base_frame, 320).unwrap();
 
@@ -185,7 +190,7 @@ fn maybe_tick_scroll_capture_does_not_double_count_preview_growth_from_same_late
 	session.maybe_tick_scroll_capture();
 
 	assert_eq!(session.scroll_capture.preview_display_image.as_ref(), Some(&committed_preview));
-	assert_eq!(scroll_capture_export_height(&session), committed_preview.height());
+	assert_eq!(tests::scroll_capture_export_height(&session), committed_preview.height());
 }
 
 #[cfg(target_os = "macos")]
@@ -199,9 +204,9 @@ fn maybe_tick_scroll_capture_worker_path_recovers_after_blocked_overshot_frame()
 		scale_factor_x1000: 1_000,
 	};
 	let rect = RectPoints::new(100, 120, 512, 640);
-	let base = make_browser_like_worker_capture_window(512, 640, 0);
-	let blocked = make_browser_like_worker_capture_window(512, 640, 760);
-	let followup = make_browser_like_worker_capture_window(512, 640, 844);
+	let base = tests::make_browser_like_worker_capture_window(512, 640, 0);
+	let blocked = tests::make_browser_like_worker_capture_window(512, 640, 760);
+	let followup = tests::make_browser_like_worker_capture_window(512, 640, 844);
 	let mut session = OverlaySession::new();
 
 	session.worker = Some(OverlayWorker::new(
@@ -213,8 +218,8 @@ fn maybe_tick_scroll_capture_worker_path_recovers_after_blocked_overshot_frame()
 	session.scroll_capture.capture_rect_pixels = Some(rect);
 	session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
 
-	enable_test_worker_scroll_capture_path(&mut session);
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	tests::enable_test_worker_scroll_capture_path(&mut session);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 	session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
 
@@ -222,12 +227,12 @@ fn maybe_tick_scroll_capture_worker_path_recovers_after_blocked_overshot_frame()
 
 	assert!(session.scroll_capture.inflight_request_id.is_some());
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
-	assert_eq!(scroll_capture_export_height(&session), 640);
+	assert_eq!(tests::scroll_capture_export_height(&session), 640);
 	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 0);
 
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 	session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
 
@@ -235,9 +240,9 @@ fn maybe_tick_scroll_capture_worker_path_recovers_after_blocked_overshot_frame()
 
 	assert!(session.scroll_capture.inflight_request_id.is_some());
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
-	assert_eq!(scroll_capture_export_height(&session), 724);
+	assert_eq!(tests::scroll_capture_export_height(&session), 724);
 	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
 }
 
@@ -245,11 +250,11 @@ fn maybe_tick_scroll_capture_worker_path_recovers_after_blocked_overshot_frame()
 #[test]
 fn maybe_tick_scroll_capture_worker_path_retries_immediately_after_blocked_overshot_frame_during_fresh_downward_input()
  {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let rect = RectPoints::new(100, 120, 512, 640);
-	let base = make_browser_like_worker_capture_window(512, 640, 0);
-	let blocked = make_browser_like_worker_capture_window(512, 640, 760);
-	let followup = make_browser_like_worker_capture_window(512, 640, 844);
+	let base = tests::make_browser_like_worker_capture_window(512, 640, 0);
+	let blocked = tests::make_browser_like_worker_capture_window(512, 640, 760);
+	let followup = tests::make_browser_like_worker_capture_window(512, 640, 844);
 	let mut session = OverlaySession::new();
 
 	session.worker = Some(OverlayWorker::new(
@@ -261,8 +266,8 @@ fn maybe_tick_scroll_capture_worker_path_retries_immediately_after_blocked_overs
 	session.scroll_capture.capture_rect_pixels = Some(rect);
 	session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
 
-	enable_test_worker_scroll_capture_path(&mut session);
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	tests::enable_test_worker_scroll_capture_path(&mut session);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 	session.scroll_capture.last_external_scroll_input_seq = 1;
 	session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
@@ -271,9 +276,9 @@ fn maybe_tick_scroll_capture_worker_path_retries_immediately_after_blocked_overs
 
 	assert!(session.scroll_capture.inflight_request_id.is_some());
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
-	assert_eq!(scroll_capture_export_height(&session), 640);
+	assert_eq!(tests::scroll_capture_export_height(&session), 640);
 
 	session.scroll_capture.last_external_scroll_input_seq = 2;
 	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
@@ -287,28 +292,28 @@ fn maybe_tick_scroll_capture_worker_path_retries_immediately_after_blocked_overs
 		"fresh downward input after a blocked worker frame should retry immediately"
 	);
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
 	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
-	assert_eq!(scroll_capture_export_height(&session), 724);
+	assert_eq!(tests::scroll_capture_export_height(&session), 724);
 }
 
 #[cfg(target_os = "macos")]
 #[test]
 fn maybe_tick_scroll_capture_worker_path_recovers_across_interleaved_no_frame_and_blocked_browser_steps()
  {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let rect = RectPoints::new(100, 120, 512, 640);
 	let mut session = OverlaySession::new();
 
 	session.worker = Some(OverlayWorker::new(
 		Box::new(SequenceScrollCaptureBackend::new([
 			None,
-			Some(make_browser_like_worker_capture_window(512, 640, 84)),
-			Some(make_browser_like_worker_capture_window(512, 640, 700)),
-			Some(make_browser_like_worker_capture_window(512, 640, 784)),
+			Some(tests::make_browser_like_worker_capture_window(512, 640, 84)),
+			Some(tests::make_browser_like_worker_capture_window(512, 640, 700)),
+			Some(tests::make_browser_like_worker_capture_window(512, 640, 784)),
 			None,
-			Some(make_browser_like_worker_capture_window(512, 640, 868)),
+			Some(tests::make_browser_like_worker_capture_window(512, 640, 868)),
 		])),
 		None,
 	));
@@ -316,10 +321,11 @@ fn maybe_tick_scroll_capture_worker_path_recovers_across_interleaved_no_frame_an
 	session.scroll_capture.monitor = Some(monitor);
 	session.scroll_capture.capture_rect_pixels = Some(rect);
 	session.scroll_capture.session = Some(
-		ScrollSession::new(make_browser_like_worker_capture_window(512, 640, 0), 320).unwrap(),
+		ScrollSession::new(tests::make_browser_like_worker_capture_window(512, 640, 0), 320)
+			.unwrap(),
 	);
 
-	enable_test_worker_scroll_capture_path(&mut session);
+	tests::enable_test_worker_scroll_capture_path(&mut session);
 
 	for expected_top_y in [84_i32, 168, 252] {
 		let mut attempts = 0_u8;
@@ -334,7 +340,7 @@ fn maybe_tick_scroll_capture_worker_path_recovers_across_interleaved_no_frame_an
 				"worker path failed to recover to expected_top_y={expected_top_y}"
 			);
 
-			set_scroll_capture_input(&mut session, ScrollDirection::Down);
+			tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 			session.scroll_capture.last_external_scroll_input_seq =
 				session.scroll_capture.last_external_scroll_input_seq.saturating_add(1);
@@ -350,24 +356,24 @@ fn maybe_tick_scroll_capture_worker_path_recovers_across_interleaved_no_frame_an
 			session.scroll_capture.input_direction_at = Some(Instant::now());
 			session.scroll_capture.input_gesture_active = true;
 
-			drain_scroll_capture_worker_until_idle(&mut session);
+			tests::drain_scroll_capture_worker_until_idle(&mut session);
 		}
 
 		assert_eq!(
 			session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(),
 			expected_top_y
 		);
-		assert_eq!(scroll_capture_export_height(&session), 640 + expected_top_y as u32);
+		assert_eq!(tests::scroll_capture_export_height(&session), 640 + expected_top_y as u32);
 	}
 }
 
 #[cfg(target_os = "macos")]
 #[test]
 fn maybe_tick_scroll_capture_worker_path_keeps_same_direction_superseded_response() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let rect = RectPoints::new(100, 120, 512, 640);
-	let base = make_sparse_worker_capture_window(512, 640, 0);
-	let moved = make_sparse_worker_capture_window(512, 640, 180);
+	let base = tests::make_sparse_worker_capture_window(512, 640, 0);
+	let moved = tests::make_sparse_worker_capture_window(512, 640, 180);
 	let mut session = OverlaySession::new();
 
 	session.worker =
@@ -377,8 +383,8 @@ fn maybe_tick_scroll_capture_worker_path_keeps_same_direction_superseded_respons
 	session.scroll_capture.capture_rect_pixels = Some(rect);
 	session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
 
-	enable_test_worker_scroll_capture_path(&mut session);
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	tests::enable_test_worker_scroll_capture_path(&mut session);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 	session.scroll_capture.last_external_scroll_input_seq = 1;
 	session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
@@ -390,9 +396,9 @@ fn maybe_tick_scroll_capture_worker_path_keeps_same_direction_superseded_respons
 	session.scroll_capture.last_external_scroll_input_seq = 2;
 	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
-	assert_eq!(scroll_capture_export_height(&session), 820);
+	assert_eq!(tests::scroll_capture_export_height(&session), 820);
 	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 180);
 }
 
@@ -400,15 +406,15 @@ fn maybe_tick_scroll_capture_worker_path_keeps_same_direction_superseded_respons
 #[test]
 fn maybe_tick_scroll_capture_worker_path_commits_successive_browser_like_frames_after_newer_same_direction_input()
  {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let rect = RectPoints::new(100, 120, 512, 640);
 	let mut session = OverlaySession::new();
 
 	session.worker = Some(OverlayWorker::new(
 		Box::new(SequenceScrollCaptureBackend::new([
-			Some(make_browser_like_worker_capture_window(512, 640, 84)),
-			Some(make_browser_like_worker_capture_window(512, 640, 168)),
-			Some(make_browser_like_worker_capture_window(512, 640, 252)),
+			Some(tests::make_browser_like_worker_capture_window(512, 640, 84)),
+			Some(tests::make_browser_like_worker_capture_window(512, 640, 168)),
+			Some(tests::make_browser_like_worker_capture_window(512, 640, 252)),
 		])),
 		None,
 	));
@@ -416,13 +422,14 @@ fn maybe_tick_scroll_capture_worker_path_commits_successive_browser_like_frames_
 	session.scroll_capture.monitor = Some(monitor);
 	session.scroll_capture.capture_rect_pixels = Some(rect);
 	session.scroll_capture.session = Some(
-		ScrollSession::new(make_browser_like_worker_capture_window(512, 640, 0), 320).unwrap(),
+		ScrollSession::new(tests::make_browser_like_worker_capture_window(512, 640, 0), 320)
+			.unwrap(),
 	);
 
-	enable_test_worker_scroll_capture_path(&mut session);
+	tests::enable_test_worker_scroll_capture_path(&mut session);
 
 	for (step, expected_top_y) in [84_i32, 168, 252].into_iter().enumerate() {
-		set_scroll_capture_input(&mut session, ScrollDirection::Down);
+		tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 		session.scroll_capture.last_external_scroll_input_seq = (step as u64) + 1;
 		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
@@ -434,7 +441,7 @@ fn maybe_tick_scroll_capture_worker_path_commits_successive_browser_like_frames_
 		session.scroll_capture.last_external_scroll_input_seq = (step as u64) + 2;
 		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 
-		drain_scroll_capture_worker_until_idle(&mut session);
+		tests::drain_scroll_capture_worker_until_idle(&mut session);
 
 		assert_eq!(session.scroll_capture.inflight_request_id, None);
 		assert_eq!(
@@ -451,10 +458,10 @@ fn maybe_tick_scroll_capture_worker_path_commits_successive_browser_like_frames_
 #[cfg(target_os = "macos")]
 #[test]
 fn maybe_tick_scroll_capture_worker_path_drops_opposite_direction_superseded_response() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let rect = RectPoints::new(100, 120, 512, 640);
-	let base = make_sparse_worker_capture_window(512, 640, 0);
-	let moved = make_sparse_worker_capture_window(512, 640, 180);
+	let base = tests::make_sparse_worker_capture_window(512, 640, 0);
+	let moved = tests::make_sparse_worker_capture_window(512, 640, 180);
 	let mut session = OverlaySession::new();
 
 	session.worker =
@@ -464,8 +471,8 @@ fn maybe_tick_scroll_capture_worker_path_drops_opposite_direction_superseded_res
 	session.scroll_capture.capture_rect_pixels = Some(rect);
 	session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
 
-	enable_test_worker_scroll_capture_path(&mut session);
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	tests::enable_test_worker_scroll_capture_path(&mut session);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 	session.scroll_capture.last_external_scroll_input_seq = 1;
 	session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
@@ -477,9 +484,9 @@ fn maybe_tick_scroll_capture_worker_path_drops_opposite_direction_superseded_res
 	session.scroll_capture.last_external_scroll_input_seq = 2;
 	session.scroll_capture.input_direction = Some(ScrollDirection::Up);
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
-	assert_eq!(scroll_capture_export_height(&session), 640);
+	assert_eq!(tests::scroll_capture_export_height(&session), 640);
 	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 0);
 }
 
@@ -487,10 +494,10 @@ fn maybe_tick_scroll_capture_worker_path_drops_opposite_direction_superseded_res
 #[test]
 fn maybe_tick_scroll_capture_worker_path_retries_immediately_after_no_new_frame_during_fresh_downward_input()
  {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let rect = RectPoints::new(100, 120, 512, 640);
-	let base = make_browser_like_worker_capture_window(512, 640, 0);
-	let moved = make_browser_like_worker_capture_window(512, 640, 84);
+	let base = tests::make_browser_like_worker_capture_window(512, 640, 0);
+	let moved = tests::make_browser_like_worker_capture_window(512, 640, 84);
 	let mut session = OverlaySession::new();
 
 	session.worker = Some(OverlayWorker::new(
@@ -502,8 +509,8 @@ fn maybe_tick_scroll_capture_worker_path_retries_immediately_after_no_new_frame_
 	session.scroll_capture.capture_rect_pixels = Some(rect);
 	session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
 
-	enable_test_worker_scroll_capture_path(&mut session);
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	tests::enable_test_worker_scroll_capture_path(&mut session);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 	session.scroll_capture.last_external_scroll_input_seq = 1;
 	session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
@@ -512,10 +519,10 @@ fn maybe_tick_scroll_capture_worker_path_retries_immediately_after_no_new_frame_
 
 	assert!(session.scroll_capture.inflight_request_id.is_some());
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
 	assert_eq!(session.scroll_capture.inflight_request_id, None);
-	assert_eq!(scroll_capture_export_height(&session), 640);
+	assert_eq!(tests::scroll_capture_export_height(&session), 640);
 
 	session.scroll_capture.last_external_scroll_input_seq = 2;
 	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
@@ -529,10 +536,10 @@ fn maybe_tick_scroll_capture_worker_path_retries_immediately_after_no_new_frame_
 		"fresh downward input after a worker no-frame response should retry immediately"
 	);
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
 	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
-	assert_eq!(scroll_capture_export_height(&session), 724);
+	assert_eq!(tests::scroll_capture_export_height(&session), 724);
 }
 
 #[test]
@@ -546,11 +553,11 @@ fn scroll_capture_sample_interval_matches_platform_worker_sampling_strategy() {
 #[cfg(target_os = "macos")]
 #[test]
 fn maybe_tick_scroll_capture_worker_path_backs_off_after_duplicate_committed_frame() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let rect = RectPoints::new(100, 120, 512, 640);
-	let base = make_browser_like_worker_capture_window(512, 640, 0);
-	let step_one = make_browser_like_worker_capture_window(512, 640, 84);
-	let step_two = make_browser_like_worker_capture_window(512, 640, 168);
+	let base = tests::make_browser_like_worker_capture_window(512, 640, 0);
+	let step_one = tests::make_browser_like_worker_capture_window(512, 640, 84);
+	let step_two = tests::make_browser_like_worker_capture_window(512, 640, 168);
 	let mut session = OverlaySession::new();
 
 	session.worker = Some(OverlayWorker::new(
@@ -566,8 +573,8 @@ fn maybe_tick_scroll_capture_worker_path_backs_off_after_duplicate_committed_fra
 	session.scroll_capture.capture_rect_pixels = Some(rect);
 	session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
 
-	enable_test_worker_scroll_capture_path(&mut session);
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	tests::enable_test_worker_scroll_capture_path(&mut session);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 	session.scroll_capture.last_external_scroll_input_seq = 1;
 	session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
@@ -576,10 +583,10 @@ fn maybe_tick_scroll_capture_worker_path_backs_off_after_duplicate_committed_fra
 
 	assert!(session.scroll_capture.inflight_request_id.is_some());
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
 	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
-	assert_eq!(scroll_capture_export_height(&session), 724);
+	assert_eq!(tests::scroll_capture_export_height(&session), 724);
 
 	session.scroll_capture.last_external_scroll_input_seq = 2;
 	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
@@ -591,11 +598,11 @@ fn maybe_tick_scroll_capture_worker_path_backs_off_after_duplicate_committed_fra
 
 	assert!(session.scroll_capture.inflight_request_id.is_some());
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
 	assert_eq!(session.scroll_capture.inflight_request_id, None);
 	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
-	assert_eq!(scroll_capture_export_height(&session), 724);
+	assert_eq!(tests::scroll_capture_export_height(&session), 724);
 
 	session.maybe_tick_scroll_capture();
 
@@ -614,8 +621,8 @@ fn maybe_tick_scroll_capture_worker_path_backs_off_after_duplicate_committed_fra
 
 	assert!(session.scroll_capture.inflight_request_id.is_some());
 
-	drain_scroll_capture_worker_until_idle(&mut session);
+	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
 	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 168);
-	assert_eq!(scroll_capture_export_height(&session), 808);
+	assert_eq!(tests::scroll_capture_export_height(&session), 808);
 }

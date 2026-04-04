@@ -1,6 +1,9 @@
-#![allow(clippy::wildcard_imports)]
-
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::{
+	GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, Instant, LogicalPosition, MonitorRect, OverlayMode,
+	OverlaySession, Pos2, Rect, SLOW_OP_WARN_OUTER_POSITION, TOOLBAR_SCREEN_MARGIN_PX, Vec2,
+	WindowRenderer,
+};
 
 impl OverlaySession {
 	pub(super) fn update_hud_window_position(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {

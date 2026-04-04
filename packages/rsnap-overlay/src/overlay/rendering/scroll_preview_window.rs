@@ -1,18 +1,22 @@
-#![allow(clippy::wildcard_imports)]
+use wgpu::SurfaceConfiguration;
 
-use super::*;
-
-struct ScrollPreviewStrip {
-	texture: TextureHandle,
-	pixel_size: [usize; 2],
-	rgba: Vec<u8>,
-	size_points: Vec2,
-}
+#[allow(unused_imports)]
+use crate::overlay::rendering::{GpuContext, ScrollPreviewView, WindowRenderer};
+#[allow(unused_imports)]
+use crate::overlay::{
+	self, AcquiredSurfaceFrame, ActiveEventLoop, Align, Arc, CentralPanel, Color32, ColorImage,
+	CornerRadius, CurrentSurfaceTexture, FontDefinitions, Frame, FullOutput, HudTheme, Layout,
+	LoadOp, LogicalSize, Margin, PhysicalSize, Renderer, Result, RgbaImage,
+	SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS, SCROLL_PREVIEW_WINDOW_WIDTH_POINTS, ScreenDescriptor,
+	StoreOp, Stroke, Surface, SurfaceFrameSkipReason, TextureHandle, TextureOptions,
+	TextureViewDescriptor, Variant, Vec2, ViewportId, Visuals, WindowEvent, WindowLevel, WrapErr,
+	eyre, image_helpers,
+};
 
 pub(in crate::overlay) struct ScrollPreviewWindow {
 	pub(in crate::overlay) window: Arc<winit::window::Window>,
 	surface: Surface<'static>,
-	surface_config: wgpu::SurfaceConfiguration,
+	surface_config: SurfaceConfiguration,
 	needs_reconfigure: bool,
 	egui_ctx: egui::Context,
 	egui_state: egui_winit::State,
@@ -79,7 +83,7 @@ impl ScrollPreviewWindow {
 		let _ = window.set_cursor_hittest(false);
 
 		#[cfg(target_os = "macos")]
-		macos_configure_hud_window(window.as_ref(), false, 0.0, Some(18.0));
+		overlay::macos_configure_hud_window(window.as_ref(), false, 0.0, Some(18.0));
 
 		Ok(Self {
 			window,
@@ -370,4 +374,11 @@ impl ScrollPreviewWindow {
 		self.surface_config.height = size.height.max(1);
 		self.needs_reconfigure = true;
 	}
+}
+
+struct ScrollPreviewStrip {
+	texture: TextureHandle,
+	pixel_size: [usize; 2],
+	rgba: Vec<u8>,
+	size_points: Vec2,
 }

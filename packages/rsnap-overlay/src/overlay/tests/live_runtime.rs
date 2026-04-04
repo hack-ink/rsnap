@@ -1,6 +1,17 @@
-#![allow(clippy::wildcard_imports)]
+use image::RgbaImage;
 
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	self, Duration, GlobalPoint, HudRedrawSummary, LoupeSample, MonitorRect, MonitorRectPoints,
+	OverlayMode, OverlaySession, OverlayState, Pos2, Rect, RectPoints, Rgb, Vec2, WindowRenderer,
+	hud_helpers, overlay,
+};
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, LiveCursorSample,
+	LiveSampleApplyResult, ModifiersState, StartupLiveRgbPlan, WindowId,
+};
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -13,7 +24,7 @@ fn apply_live_cursor_sample_updates_rgb_and_loupe_state() {
 		scale_factor_x1000: 1_000,
 	};
 	let cursor = GlobalPoint::new(120, 180);
-	let patch = image::RgbaImage::from_pixel(3, 3, Rgba([10, 20, 30, 255]));
+	let patch = RgbaImage::from_pixel(3, 3, crate::overlay::tests::Rgba([10, 20, 30, 255]));
 	let mut session = OverlaySession::new();
 
 	session.cursor_monitor = Some(monitor);
@@ -48,7 +59,7 @@ fn apply_live_cursor_sample_detail_keeps_overlay_redraw_narrow_for_rgb_and_loupe
 		scale_factor_x1000: 1_000,
 	};
 	let cursor = GlobalPoint::new(120, 180);
-	let patch = image::RgbaImage::from_pixel(3, 3, Rgba([10, 20, 30, 255]));
+	let patch = RgbaImage::from_pixel(3, 3, crate::overlay::tests::Rgba([10, 20, 30, 255]));
 	let mut session = OverlaySession::new();
 
 	session.cursor_monitor = Some(monitor);
@@ -382,7 +393,7 @@ fn live_drag_focus_rect_uses_large_drag_on_active_monitor() {
 		scale_factor_x1000: 1_000,
 	};
 	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(1_000.0, 800.0));
-	let mut state = crate::state::OverlayState::new();
+	let mut state = OverlayState::new();
 
 	state.drag_rect = Some(MonitorRectPoints {
 		monitor_id: monitor.id,
@@ -674,7 +685,11 @@ fn apply_live_cursor_sample_clears_existing_loupe_when_alt_is_released() {
 		cursor,
 		LiveCursorSample {
 			rgb: Some(Rgb::new(10, 20, 30)),
-			patch: Some(image::RgbaImage::from_pixel(3, 3, Rgba([10, 20, 30, 255]))),
+			patch: Some(RgbaImage::from_pixel(
+				3,
+				3,
+				crate::overlay::tests::Rgba([10, 20, 30, 255]),
+			)),
 		},
 	);
 
@@ -760,7 +775,7 @@ fn live_hud_rgb_text_uses_fixed_width_placeholders() {
 
 #[test]
 fn stable_live_loupe_side_prefers_configured_patch_side() {
-	let mut state = crate::state::OverlayState::new();
+	let mut state = OverlayState::new();
 
 	state.loupe_patch_side_px = 21;
 	state.loupe = Some(LoupeSample {
@@ -773,7 +788,7 @@ fn stable_live_loupe_side_prefers_configured_patch_side() {
 
 #[test]
 fn stable_live_loupe_side_ignores_larger_runtime_patch() {
-	let mut state = crate::state::OverlayState::new();
+	let mut state = OverlayState::new();
 
 	state.loupe_patch_side_px = 21;
 	state.loupe = Some(LoupeSample {

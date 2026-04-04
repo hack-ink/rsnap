@@ -1,7 +1,16 @@
-#![allow(clippy::wildcard_imports)]
-
 #[cfg(target_os = "macos")]
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	self, Arc, MacLiveFrameStream, OverlayControl,
+	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
+	ScrollCaptureLiveFrame,
+};
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	Duration, GlobalPoint, Instant, MonitorRect, OverlaySession, RectPoints, ScrollDirection,
+	ScrollSession, overlay,
+};
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -49,7 +58,7 @@ fn handle_scroll_input_ready_drains_input_and_polls_stream_fallback() {
 #[cfg(target_os = "macos")]
 #[test]
 fn drain_external_scroll_input_worker_path_does_not_arm_live_stream_stale_grace() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let rect = RectPoints::new(100, 120, 512, 640);
 	let through = Instant::now();
 	let recorded_at = through - Duration::from_millis(1);
@@ -61,7 +70,7 @@ fn drain_external_scroll_input_worker_path_does_not_arm_live_stream_stale_grace(
 	session.scroll_capture.capture_rect_pixels = Some(rect);
 	session.scroll_capture.live_stream = Some(MacLiveFrameStream::new());
 
-	enable_test_worker_scroll_capture_path(&mut session);
+	tests::enable_test_worker_scroll_capture_path(&mut session);
 
 	session.set_external_scroll_input_drain_reader(Arc::new({
 		let events = Arc::clone(&events);
@@ -244,8 +253,9 @@ fn consuming_live_frame_backlog_arms_time_gap_burst_after_draining_fresh_input()
 	session.scroll_capture.active = true;
 	session.scroll_capture.monitor = Some(monitor);
 	session.scroll_capture.capture_rect_pixels = Some(rect);
-	session.scroll_capture.session =
-		Some(ScrollSession::new(make_scroll_capture_window(&document, 3, 0, 5), 320).unwrap());
+	session.scroll_capture.session = Some(
+		ScrollSession::new(tests::make_scroll_capture_window(&document, 3, 0, 5), 320).unwrap(),
+	);
 	session.scroll_capture.last_consumed_stream_frame_captured_at = Some(
 		captured_at
 			- SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW
@@ -266,7 +276,7 @@ fn consuming_live_frame_backlog_arms_time_gap_burst_after_draining_fresh_input()
 	session.test_push_scroll_capture_live_frame(ScrollCaptureLiveFrame {
 		frame_seq: 9,
 		captured_at,
-		image: make_scroll_capture_window(&document, 3, 0, 5),
+		image: tests::make_scroll_capture_window(&document, 3, 0, 5),
 	});
 	session.test_consume_scroll_capture_backlog(1);
 

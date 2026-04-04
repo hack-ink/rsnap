@@ -24,8 +24,8 @@ use objc2_foundation::{NSArray, NSDictionary};
 use objc2_vision::{VNImageOption, VNImageRequestHandler, VNTranslationalImageRegistrationRequest};
 
 #[cfg(test)]
-use super::OverlapMatch;
-use super::{
+use crate::scroll_capture::OverlapMatch;
+use crate::scroll_capture::{
 	DIRECTION_WARNING_MARGIN_X100, DOWNWARD_REGISTRATION_AMBIGUOUS_GAP_ROWS,
 	DOWNWARD_REGISTRATION_MIN_OVERLAP_DIVISOR, DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS,
 	DirectionMatch, DownwardRegistration, DownwardViewportCandidate,
@@ -109,15 +109,6 @@ pub(crate) fn compose_provisional_preview_image(
 	let preview_strip = resize_strip_to_preview_width(&strip, preview_width_px);
 
 	append_vertical_image(base_preview, &preview_strip).unwrap_or_else(|_| base_preview.clone())
-}
-
-fn worker_pairwise_overlap_search_config() -> OverlapSearchConfig {
-	OverlapSearchConfig {
-		min_overlap_rows: 24,
-		max_column_samples: 96,
-		max_row_samples: 96,
-		max_mean_abs_diff_x100: 850,
-	}
 }
 
 #[cfg(target_os = "macos")]
@@ -212,40 +203,6 @@ pub(super) fn estimate_pairwise_downward_shift_rows(
 	.map(|matched| matched.motion_rows)
 }
 
-#[cfg(target_os = "macos")]
-fn cg_image_from_rgba_image(image: &RgbaImage) -> Result<CFRetained<CGImage>> {
-	let width = image.width() as usize;
-	let height = image.height() as usize;
-
-	if width == 0 || height == 0 {
-		return Err(eyre::eyre!("vision registration image has zero dimensions"));
-	}
-
-	let bytes = CFData::from_bytes(image.as_raw());
-	let provider = CGDataProvider::with_cf_data(Some(bytes.as_ref()))
-		.ok_or_else(|| eyre::eyre!("failed to create CGDataProvider for Vision registration"))?;
-	let color_space = CGColorSpace::new_device_rgb()
-		.ok_or_else(|| eyre::eyre!("failed to create RGB colorspace for Vision registration"))?;
-	let bitmap_info = CGBitmapInfo(CGImageAlphaInfo::Last.0 | CGImageByteOrderInfo::Order32Big.0);
-
-	unsafe {
-		CGImage::new(
-			width,
-			height,
-			8,
-			32,
-			width.saturating_mul(4),
-			Some(color_space.as_ref()),
-			bitmap_info,
-			Some(provider.as_ref()),
-			ptr::null(),
-			false,
-			CGColorRenderingIntent::RenderingIntentDefault,
-		)
-	}
-	.ok_or_else(|| eyre::eyre!("failed to create CGImage for Vision registration"))
-}
-
 pub(super) fn select_downward_viewport_candidate(
 	candidates: &mut [DownwardViewportCandidate],
 ) -> DownwardViewportResolution {
@@ -309,31 +266,6 @@ pub(super) fn format_downward_viewport_candidates(
 		})
 		.collect::<Vec<_>>()
 		.join(",")
-}
-
-fn prefer_local_downward_viewport_candidate(
-	candidates: &[DownwardViewportCandidate],
-) -> Option<DownwardViewportCandidate> {
-	let local = best_local_downward_viewport_candidate(candidates)?;
-	let committed = candidates
-		.iter()
-		.copied()
-		.filter(|candidate| candidate.source == DownwardViewportCandidateSource::CommittedKeyframe)
-		.min_by(|left, right| {
-			left.mean_abs_diff_x100
-				.cmp(&right.mean_abs_diff_x100)
-				.then(left.motion_rows.cmp(&right.motion_rows))
-		});
-	let Some(committed) = committed else {
-		return Some(local);
-	};
-	let committed_is_nearby = committed.viewport_top_y.abs_diff(local.viewport_top_y)
-		< DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS;
-	let committed_is_only_modestly_better =
-		committed.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
-			>= local.mean_abs_diff_x100;
-
-	if committed_is_nearby && committed_is_only_modestly_better { Some(local) } else { None }
 }
 
 pub(super) fn best_local_downward_viewport_candidate(
@@ -625,64 +557,6 @@ pub(super) fn max_directional_motion_rows(
 	max_overlap.saturating_sub(effective_min_overlap).max(1)
 }
 
-#[cfg(test)]
-fn detect_vertical_overlap_in_range(
-	previous: &RgbaImage,
-	next: &RgbaImage,
-	range: RangeInclusive<u32>,
-	direction: ScrollDirection,
-	config: OverlapSearchConfig,
-	informative_span: Option<InformativeSpan>,
-) -> OverlapMatch {
-	if previous.width() == 0 || next.width() == 0 || previous.height() == 0 || next.height() == 0 {
-		return OverlapMatch { rows: 0, matched: false, mean_abs_diff_x100: u32::MAX };
-	}
-
-	let Some(informative_span) = informative_span else {
-		return OverlapMatch { rows: 0, matched: false, mean_abs_diff_x100: u32::MAX };
-	};
-	let max_overlap = previous.height().min(next.height());
-	let effective_min_overlap =
-		if max_overlap <= config.min_overlap_rows { 1 } else { config.min_overlap_rows.max(1) };
-	let max_motion_rows = max_overlap.saturating_sub(effective_min_overlap).max(1);
-	let search_start = (*range.start()).max(1).min(max_motion_rows);
-	let search_end = (*range.end()).max(search_start).min(max_motion_rows);
-	let orientation = match direction {
-		ScrollDirection::Down => OverlapOrientation::PreviousBottomToNextTop,
-		ScrollDirection::Up => OverlapOrientation::PreviousTopToNextBottom,
-	};
-	let mut best = OverlapMatch { rows: 0, matched: false, mean_abs_diff_x100: u32::MAX };
-
-	for motion_rows in search_start..=search_end {
-		let overlap_rows = max_overlap.saturating_sub(motion_rows);
-
-		if overlap_rows < effective_min_overlap {
-			continue;
-		}
-
-		let diff = motion_mean_abs_diff_x100(
-			previous,
-			next,
-			motion_rows,
-			config,
-			orientation,
-			informative_span,
-		);
-
-		if diff > config.max_mean_abs_diff_x100 {
-			continue;
-		}
-		if !best.matched
-			|| diff < best.mean_abs_diff_x100
-			|| (diff == best.mean_abs_diff_x100 && overlap_rows > best.rows)
-		{
-			best = OverlapMatch { rows: overlap_rows, matched: true, mean_abs_diff_x100: diff };
-		}
-	}
-
-	best
-}
-
 pub(super) fn resize_strip_to_preview_width(strip: &RgbaImage, preview_width_px: u32) -> RgbaImage {
 	if strip.width() <= preview_width_px {
 		return strip.clone();
@@ -747,6 +621,204 @@ pub(super) fn append_vertical_image(base: &RgbaImage, strip: &RgbaImage) -> Resu
 	}
 
 	stack_vertical_images(&[base, strip])
+}
+
+pub(super) fn informative_column_span(
+	image: &RgbaImage,
+	start_y: u32,
+	rows: u32,
+) -> Option<InformativeSpan> {
+	if image.width() == 0 || image.height() == 0 || rows == 0 {
+		return None;
+	}
+
+	let clamped_rows = rows.min(image.height().saturating_sub(start_y)).max(1);
+	let row_samples = clamped_rows.min(INFORMATIVE_SPAN_ROW_SAMPLES.max(2)).max(2);
+	let mut scores = vec![0_u32; image.width() as usize];
+	let mut max_score = 0_u32;
+
+	for row in 0..row_samples.saturating_sub(1) {
+		let local_y = evenly_spaced_sample(0, clamped_rows, row, row_samples);
+		let next_local_y = (local_y.saturating_add(1)).min(clamped_rows.saturating_sub(1));
+		let y = start_y.saturating_add(local_y).min(image.height().saturating_sub(1));
+		let next_y = start_y.saturating_add(next_local_y).min(image.height().saturating_sub(1));
+
+		for x in 0..image.width() {
+			let pixel = image.get_pixel(x, y).0;
+			let next_pixel = image.get_pixel(x, next_y).0;
+			let score = u32::from(pixel[0].abs_diff(next_pixel[0]))
+				.saturating_add(u32::from(pixel[1].abs_diff(next_pixel[1])))
+				.saturating_add(u32::from(pixel[2].abs_diff(next_pixel[2])));
+			let slot = &mut scores[x as usize];
+
+			*slot = slot.saturating_add(score);
+			max_score = max_score.max(*slot);
+		}
+	}
+
+	if max_score == 0 {
+		return None;
+	}
+
+	let threshold = (max_score / 6).max(INFORMATIVE_SPAN_SCORE_FLOOR_X100);
+	let mut start_x = None;
+	let mut end_x = None;
+
+	for (x, score) in scores.iter().enumerate() {
+		if *score >= threshold {
+			start_x.get_or_insert(x as u32);
+
+			end_x = Some((x as u32).saturating_add(1));
+		}
+	}
+
+	let start_x = start_x?;
+	let end_exclusive_x = end_x?;
+	let padding = INFORMATIVE_SPAN_HORIZONTAL_PADDING_PX.min(image.width() / 8);
+	let start_x = start_x.saturating_sub(padding);
+	let end_exclusive_x =
+		end_exclusive_x.saturating_add(padding).min(image.width()).max(start_x.saturating_add(1));
+
+	Some(InformativeSpan { start_x, end_exclusive_x })
+}
+
+pub(super) fn evenly_spaced_sample(start: u32, end_exclusive: u32, index: u32, count: u32) -> u32 {
+	let span = end_exclusive.saturating_sub(start).max(1);
+
+	if count <= 1 {
+		return start.min(end_exclusive.saturating_sub(1));
+	}
+
+	let numerator =
+		(u64::from(index) * u64::from(span.saturating_sub(1))) / u64::from(count.saturating_sub(1));
+
+	start.saturating_add(numerator as u32).min(end_exclusive.saturating_sub(1))
+}
+
+fn worker_pairwise_overlap_search_config() -> OverlapSearchConfig {
+	OverlapSearchConfig {
+		min_overlap_rows: 24,
+		max_column_samples: 96,
+		max_row_samples: 96,
+		max_mean_abs_diff_x100: 850,
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn cg_image_from_rgba_image(image: &RgbaImage) -> Result<CFRetained<CGImage>> {
+	let width = image.width() as usize;
+	let height = image.height() as usize;
+
+	if width == 0 || height == 0 {
+		return Err(eyre::eyre!("vision registration image has zero dimensions"));
+	}
+
+	let bytes = CFData::from_bytes(image.as_raw());
+	let provider = CGDataProvider::with_cf_data(Some(bytes.as_ref()))
+		.ok_or_else(|| eyre::eyre!("failed to create CGDataProvider for Vision registration"))?;
+	let color_space = CGColorSpace::new_device_rgb()
+		.ok_or_else(|| eyre::eyre!("failed to create RGB colorspace for Vision registration"))?;
+	let bitmap_info = CGBitmapInfo(CGImageAlphaInfo::Last.0 | CGImageByteOrderInfo::Order32Big.0);
+
+	unsafe {
+		CGImage::new(
+			width,
+			height,
+			8,
+			32,
+			width.saturating_mul(4),
+			Some(color_space.as_ref()),
+			bitmap_info,
+			Some(provider.as_ref()),
+			ptr::null(),
+			false,
+			CGColorRenderingIntent::RenderingIntentDefault,
+		)
+	}
+	.ok_or_else(|| eyre::eyre!("failed to create CGImage for Vision registration"))
+}
+
+fn prefer_local_downward_viewport_candidate(
+	candidates: &[DownwardViewportCandidate],
+) -> Option<DownwardViewportCandidate> {
+	let local = best_local_downward_viewport_candidate(candidates)?;
+	let committed = candidates
+		.iter()
+		.copied()
+		.filter(|candidate| candidate.source == DownwardViewportCandidateSource::CommittedKeyframe)
+		.min_by(|left, right| {
+			left.mean_abs_diff_x100
+				.cmp(&right.mean_abs_diff_x100)
+				.then(left.motion_rows.cmp(&right.motion_rows))
+		});
+	let Some(committed) = committed else {
+		return Some(local);
+	};
+	let committed_is_nearby = committed.viewport_top_y.abs_diff(local.viewport_top_y)
+		< DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS;
+	let committed_is_only_modestly_better =
+		committed.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+			>= local.mean_abs_diff_x100;
+
+	if committed_is_nearby && committed_is_only_modestly_better { Some(local) } else { None }
+}
+
+#[cfg(test)]
+fn detect_vertical_overlap_in_range(
+	previous: &RgbaImage,
+	next: &RgbaImage,
+	range: RangeInclusive<u32>,
+	direction: ScrollDirection,
+	config: OverlapSearchConfig,
+	informative_span: Option<InformativeSpan>,
+) -> OverlapMatch {
+	if previous.width() == 0 || next.width() == 0 || previous.height() == 0 || next.height() == 0 {
+		return OverlapMatch { rows: 0, matched: false, mean_abs_diff_x100: u32::MAX };
+	}
+
+	let Some(informative_span) = informative_span else {
+		return OverlapMatch { rows: 0, matched: false, mean_abs_diff_x100: u32::MAX };
+	};
+	let max_overlap = previous.height().min(next.height());
+	let effective_min_overlap =
+		if max_overlap <= config.min_overlap_rows { 1 } else { config.min_overlap_rows.max(1) };
+	let max_motion_rows = max_overlap.saturating_sub(effective_min_overlap).max(1);
+	let search_start = (*range.start()).max(1).min(max_motion_rows);
+	let search_end = (*range.end()).max(search_start).min(max_motion_rows);
+	let orientation = match direction {
+		ScrollDirection::Down => OverlapOrientation::PreviousBottomToNextTop,
+		ScrollDirection::Up => OverlapOrientation::PreviousTopToNextBottom,
+	};
+	let mut best = OverlapMatch { rows: 0, matched: false, mean_abs_diff_x100: u32::MAX };
+
+	for motion_rows in search_start..=search_end {
+		let overlap_rows = max_overlap.saturating_sub(motion_rows);
+
+		if overlap_rows < effective_min_overlap {
+			continue;
+		}
+
+		let diff = motion_mean_abs_diff_x100(
+			previous,
+			next,
+			motion_rows,
+			config,
+			orientation,
+			informative_span,
+		);
+
+		if diff > config.max_mean_abs_diff_x100 {
+			continue;
+		}
+		if !best.matched
+			|| diff < best.mean_abs_diff_x100
+			|| (diff == best.mean_abs_diff_x100 && overlap_rows > best.rows)
+		{
+			best = OverlapMatch { rows: overlap_rows, matched: true, mean_abs_diff_x100: diff };
+		}
+	}
+
+	best
 }
 
 fn motion_mean_abs_diff_x100(
@@ -831,76 +903,4 @@ fn overlap_global_informative_span(left: &RgbaImage, right: &RgbaImage) -> Optio
 		},
 		(None, None) => None,
 	}
-}
-
-pub(super) fn informative_column_span(
-	image: &RgbaImage,
-	start_y: u32,
-	rows: u32,
-) -> Option<InformativeSpan> {
-	if image.width() == 0 || image.height() == 0 || rows == 0 {
-		return None;
-	}
-
-	let clamped_rows = rows.min(image.height().saturating_sub(start_y)).max(1);
-	let row_samples = clamped_rows.min(INFORMATIVE_SPAN_ROW_SAMPLES.max(2)).max(2);
-	let mut scores = vec![0_u32; image.width() as usize];
-	let mut max_score = 0_u32;
-
-	for row in 0..row_samples.saturating_sub(1) {
-		let local_y = evenly_spaced_sample(0, clamped_rows, row, row_samples);
-		let next_local_y = (local_y.saturating_add(1)).min(clamped_rows.saturating_sub(1));
-		let y = start_y.saturating_add(local_y).min(image.height().saturating_sub(1));
-		let next_y = start_y.saturating_add(next_local_y).min(image.height().saturating_sub(1));
-
-		for x in 0..image.width() {
-			let pixel = image.get_pixel(x, y).0;
-			let next_pixel = image.get_pixel(x, next_y).0;
-			let score = u32::from(pixel[0].abs_diff(next_pixel[0]))
-				.saturating_add(u32::from(pixel[1].abs_diff(next_pixel[1])))
-				.saturating_add(u32::from(pixel[2].abs_diff(next_pixel[2])));
-			let slot = &mut scores[x as usize];
-
-			*slot = slot.saturating_add(score);
-			max_score = max_score.max(*slot);
-		}
-	}
-
-	if max_score == 0 {
-		return None;
-	}
-
-	let threshold = (max_score / 6).max(INFORMATIVE_SPAN_SCORE_FLOOR_X100);
-	let mut start_x = None;
-	let mut end_x = None;
-
-	for (x, score) in scores.iter().enumerate() {
-		if *score >= threshold {
-			start_x.get_or_insert(x as u32);
-
-			end_x = Some((x as u32).saturating_add(1));
-		}
-	}
-
-	let start_x = start_x?;
-	let end_exclusive_x = end_x?;
-	let padding = INFORMATIVE_SPAN_HORIZONTAL_PADDING_PX.min(image.width() / 8);
-	let start_x = start_x.saturating_sub(padding);
-	let end_exclusive_x =
-		end_exclusive_x.saturating_add(padding).min(image.width()).max(start_x.saturating_add(1));
-
-	Some(InformativeSpan { start_x, end_exclusive_x })
-}
-
-pub(super) fn evenly_spaced_sample(start: u32, end_exclusive: u32, index: u32, count: u32) -> u32 {
-	let span = end_exclusive.saturating_sub(start).max(1);
-
-	if count <= 1 {
-		return start.min(end_exclusive.saturating_sub(1));
-	}
-
-	let numerator =
-		(u64::from(index) * u64::from(span.saturating_sub(1))) / u64::from(count.saturating_sub(1));
-
-	start.saturating_add(numerator as u32).min(end_exclusive.saturating_sub(1))
 }

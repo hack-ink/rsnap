@@ -1,12 +1,20 @@
-#![allow(clippy::wildcard_imports)]
-
 #[cfg(target_os = "macos")]
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	self, Arc, InflightScrollCaptureObservation, OverlayControl, ScrollCaptureLiveFrame,
+	WindowListSnapshot, WindowRect,
+};
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	GlobalPoint, Instant, OverlaySession, ScrollDirection, WorkerErrorSource, WorkerResponse,
+	overlay,
+};
 
 #[cfg(target_os = "macos")]
 #[test]
 fn apply_self_capture_exception_window_ids_to_active_streams_updates_live_stream_filters() {
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
 		captured_at: Instant::now(),
@@ -49,14 +57,14 @@ fn apply_self_capture_exception_window_ids_to_active_streams_updates_live_stream
 #[test]
 fn apply_self_capture_exception_window_ids_to_active_streams_keeps_scroll_live_stream_disabled_in_worker_mode()
  {
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
-	enable_test_worker_scroll_capture_path(&mut session);
+	tests::enable_test_worker_scroll_capture_path(&mut session);
 
 	session.test_push_scroll_capture_live_frame(ScrollCaptureLiveFrame {
 		frame_seq: 9,
 		captured_at: Instant::now(),
-		image: test_frozen_image(),
+		image: tests::test_frozen_image(),
 	});
 
 	session.scroll_capture.last_stream_event_at = Some(Instant::now());
@@ -80,8 +88,8 @@ fn apply_self_capture_exception_window_ids_to_active_streams_keeps_scroll_live_s
 #[test]
 fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_freeze_is_inflight()
  {
-	let monitor = test_monitor();
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let monitor = tests::test_monitor();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.inflight_freeze_capture = Some(monitor);
 
@@ -99,7 +107,7 @@ fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refre
 #[test]
 fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_hit_test_is_inflight()
  {
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.pending_click_hit_test_request_id = Some(7);
 
@@ -113,7 +121,7 @@ fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refre
 #[test]
 fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_window_list_refresh_is_inflight()
  {
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.window_list_refresh_inflight = true;
 
@@ -127,7 +135,7 @@ fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refre
 #[test]
 fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_png_encode_is_inflight()
  {
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.png_encode_inflight = true;
 
@@ -140,15 +148,15 @@ fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refre
 #[cfg(target_os = "macos")]
 #[test]
 fn captured_freeze_response_applies_deferred_worker_refresh() {
-	let monitor = test_monitor();
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let monitor = tests::test_monitor();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.inflight_freeze_capture = Some(monitor);
 	session.pending_self_capture_exception_window_ids_worker_refresh = true;
 
 	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::CapturedFreeze {
 		monitor,
-		image: test_frozen_image(),
+		image: tests::test_frozen_image(),
 		window_image: None,
 		captured_window_id: None,
 	});
@@ -161,8 +169,8 @@ fn captured_freeze_response_applies_deferred_worker_refresh() {
 #[cfg(target_os = "macos")]
 #[test]
 fn hit_test_response_applies_deferred_worker_refresh() {
-	let monitor = test_monitor();
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let monitor = tests::test_monitor();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.pending_click_hit_test_request_id = Some(11);
 	session.pending_self_capture_exception_window_ids_worker_refresh = true;
@@ -182,7 +190,7 @@ fn hit_test_response_applies_deferred_worker_refresh() {
 #[cfg(target_os = "macos")]
 #[test]
 fn window_list_refresh_response_applies_deferred_worker_refresh() {
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.window_list_refresh_inflight = true;
 	session.pending_self_capture_exception_window_ids_worker_refresh = true;
@@ -208,7 +216,7 @@ fn window_list_refresh_response_applies_deferred_worker_refresh() {
 #[cfg(target_os = "macos")]
 #[test]
 fn stale_window_list_refresh_response_is_dropped_after_self_capture_filter_change() {
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
 		captured_at: Instant::now(),
@@ -245,7 +253,7 @@ fn stale_window_list_refresh_response_is_dropped_after_self_capture_filter_chang
 #[cfg(target_os = "macos")]
 #[test]
 fn png_error_response_applies_deferred_worker_refresh() {
-	let (mut session, original_worker_debug_id) = configured_session_with_macos_worker();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.png_encode_inflight = true;
 	session.pending_self_capture_exception_window_ids_worker_refresh = true;

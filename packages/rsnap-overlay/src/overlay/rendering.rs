@@ -1,16 +1,32 @@
-#![allow(clippy::wildcard_imports)]
-
-use super::*;
-
 mod affordances;
 mod hud_rendering;
 mod hud_surface;
 mod scroll_preview_window;
 
+pub(super) use self::{hud_surface::HudPillGeometry, scroll_preview_window::ScrollPreviewWindow};
+
+use egui::Modifiers;
+use winit::window::Window;
+
 use self::hud_rendering::LiveLoupeTexture;
 use self::hud_surface::{HudBg, HudBlurUniformRaw};
-pub(super) use hud_surface::HudPillGeometry;
-pub(super) use scroll_preview_window::ScrollPreviewWindow;
+#[allow(unused_imports)]
+use crate::overlay::{
+	self, AcquiredSurfaceFrame, Adapter, AddressMode, Arc, BindGroupLayout, BindingResource,
+	BindingType, BlendState, Buffer, BufferBindingType, BufferSize, BufferUsages, ClippedPrimitive,
+	Color32, ColorWrites, CompositeAlphaMode, Cow, CurrentSurfaceTexture, Device, Duration, Event,
+	ExperimentalFeatures, Features, FilterMode, FontDefinitions, FontFamily, FrontFace,
+	FrozenToolbarPointerState, FrozenToolbarState, FullOutput, HudAnchor, HudTheme, Id, Instant,
+	LayerId, LoadOp, MemoryHints, MipmapFilterMode, MonitorRect, MultisampleState, Mutex, Order,
+	OverlayMode, OverlaySession, OverlayState, PhysicalSize, PipelineCompilationOptions,
+	PointerButton, PolygonMode, Pos2, PowerPreference, PresentMode, PrimitiveTopology, Queue, Rect,
+	RectPoints, RenderPipeline, Renderer, Result, SLOW_OP_WARN_RENDER, Sampler, SamplerBindingType,
+	ScreenDescriptor, ShaderSource, ShaderStages, SlowOperationLogger, StoreOp, Surface,
+	SurfaceCapabilities, SurfaceFrameSkipReason, SurfaceTexture, Texture, TextureAspect,
+	TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
+	ThemeMode, ToolbarPlacement, Trace, Variant, Vec2, ViewportId, Visuals, WindowId,
+	WindowRendererPath, WrapErr, eyre, hud_helpers, mem,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct FrozenToolbarButtonStyle {
@@ -22,30 +38,6 @@ pub(super) struct FrozenToolbarButtonStyle {
 pub(super) struct ScrollPreviewView {
 	pub(super) paused: bool,
 	pub(super) theme: HudTheme,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SelectionFlowGeometryCacheKey {
-	rect_min_x_bits: u32,
-	rect_min_y_bits: u32,
-	rect_max_x_bits: u32,
-	rect_max_y_bits: u32,
-	corner_radius_bits: u32,
-	seam_offset_bits: u32,
-	sample_count: usize,
-}
-impl SelectionFlowGeometryCacheKey {
-	const fn new(rect: Rect, corner_radius: f32, seam_offset: f32, sample_count: usize) -> Self {
-		Self {
-			rect_min_x_bits: rect.min.x.to_bits(),
-			rect_min_y_bits: rect.min.y.to_bits(),
-			rect_max_x_bits: rect.max.x.to_bits(),
-			rect_max_y_bits: rect.max.y.to_bits(),
-			corner_radius_bits: corner_radius.to_bits(),
-			seam_offset_bits: seam_offset.to_bits(),
-			sample_count,
-		}
-	}
 }
 
 #[derive(Debug, Default)]
@@ -91,14 +83,6 @@ pub(super) struct SelectionDashedBorderMetrics {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct SelectionSizeBadgePadding {
-	left: f32,
-	right: f32,
-	top: f32,
-	bottom: f32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct SelectionSizeBadgeLayout {
 	pub(super) text_size: Vec2,
 	pub(super) badge_size: Vec2,
@@ -112,7 +96,7 @@ pub(super) struct SelectionSizeBadgeTarget {
 }
 
 pub(super) struct HudOverlayWindow {
-	pub(super) window: Arc<winit::window::Window>,
+	pub(super) window: Arc<Window>,
 	pub(super) renderer: WindowRenderer,
 }
 
@@ -134,123 +118,9 @@ pub(super) struct StartupLiveRgbPlan {
 	pub(super) seed_monitor: Option<MonitorRect>,
 }
 
-#[derive(Debug, Default)]
-struct WindowRendererPhaseTimings {
-	prepare_input: Duration,
-	sync_hud_bg: Duration,
-	run_egui: Duration,
-	update_hud_blur_uniform: Duration,
-	sync_egui_textures: Duration,
-	tessellate: Duration,
-	acquire_frame: Duration,
-	render_frame: Duration,
-	total: Duration,
-}
-impl WindowRendererPhaseTimings {
-	fn trace(
-		&self,
-		path: WindowRendererPath,
-		window_id: WindowId,
-		monitor_id: u32,
-		mode: OverlayMode,
-		toolbar_active: bool,
-		paint_jobs: usize,
-	) {
-		tracing::trace!(
-			op = "overlay.window_renderer_phase_timing",
-			path = path.as_str(),
-			window_id = ?window_id,
-			monitor_id,
-			mode = ?mode,
-			toolbar_active,
-			paint_jobs,
-			total_us = self.total.as_micros(),
-			prepare_input_us = self.prepare_input.as_micros(),
-			sync_hud_bg_us = self.sync_hud_bg.as_micros(),
-			run_egui_us = self.run_egui.as_micros(),
-			update_hud_blur_uniform_us = self.update_hud_blur_uniform.as_micros(),
-			sync_egui_textures_us = self.sync_egui_textures.as_micros(),
-			tessellate_us = self.tessellate.as_micros(),
-			acquire_frame_us = self.acquire_frame.as_micros(),
-			render_frame_us = self.render_frame.as_micros(),
-			"Overlay window renderer phase timing."
-		);
-	}
-
-	fn warn_if_substeps_slow(
-		&self,
-		slow_op_logger: &mut SlowOperationLogger,
-		path: WindowRendererPath,
-		window_id: WindowId,
-		monitor_id: u32,
-		mode: OverlayMode,
-		paint_jobs: usize,
-	) {
-		let context = || {
-			format!(
-				"path={} window_id={window_id:?} monitor_id={monitor_id} mode={mode:?} paint_jobs={paint_jobs}",
-				path.as_str()
-			)
-		};
-
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.prepare_input",
-			self.prepare_input,
-			&context,
-		);
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.sync_hud_bg",
-			self.sync_hud_bg,
-			&context,
-		);
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.run_egui",
-			self.run_egui,
-			&context,
-		);
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.update_hud_blur_uniform",
-			self.update_hud_blur_uniform,
-			&context,
-		);
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.sync_egui_textures",
-			self.sync_egui_textures,
-			&context,
-		);
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.tessellate",
-			self.tessellate,
-			&context,
-		);
-	}
-
-	fn warn_phase_if_slow<F>(
-		&self,
-		slow_op_logger: &mut SlowOperationLogger,
-		op: &'static str,
-		elapsed: Duration,
-		describe: &F,
-	) where
-		F: Fn() -> String,
-	{
-		if elapsed.is_zero() {
-			return;
-		}
-
-		slow_op_logger.warn_if_redraw_substep_slow(op, elapsed, self.total, describe);
-	}
-}
-
 pub(super) struct OverlayWindow {
 	pub(super) monitor: MonitorRect,
-	pub(super) window: Arc<winit::window::Window>,
+	pub(super) window: Arc<Window>,
 	pub(super) renderer: WindowRenderer,
 	pub(super) refresh_rate_millihertz: Option<u32>,
 }
@@ -288,7 +158,7 @@ impl GpuContext {
 }
 
 pub(super) struct WindowRenderer {
-	window: Arc<winit::window::Window>,
+	window: Arc<Window>,
 	surface: Surface<'static>,
 	surface_config: wgpu::SurfaceConfiguration,
 	needs_reconfigure: bool,
@@ -553,7 +423,7 @@ impl WindowRenderer {
 	}
 
 	fn make_surface_config(
-		window: &winit::window::Window,
+		window: &Window,
 		format: wgpu::TextureFormat,
 		alpha_mode: CompositeAlphaMode,
 	) -> wgpu::SurfaceConfiguration {
@@ -748,7 +618,7 @@ impl WindowRenderer {
 					pos: pointer.cursor_local,
 					button: PointerButton::Primary,
 					pressed: true,
-					modifiers: egui::Modifiers::default(),
+					modifiers: Modifiers::default(),
 				});
 			}
 			if pointer.left_button_went_up {
@@ -756,7 +626,7 @@ impl WindowRenderer {
 					pos: pointer.cursor_local,
 					button: PointerButton::Primary,
 					pressed: false,
-					modifiers: egui::Modifiers::default(),
+					modifiers: Modifiers::default(),
 				});
 			}
 		}
@@ -806,8 +676,8 @@ impl WindowRenderer {
 	) -> (FullOutput, Option<HudPillGeometry>) {
 		let hud_data = if can_draw_hud {
 			state.cursor.and_then(|cursor| {
-				let local_cursor =
-					hud_local_cursor_override.or_else(|| global_to_local(cursor, monitor))?;
+				let local_cursor = hud_local_cursor_override
+					.or_else(|| overlay::global_to_local(cursor, monitor))?;
 
 				Some((cursor, local_cursor))
 			})
@@ -1111,7 +981,7 @@ impl WindowRenderer {
 
 	pub(super) fn new(
 		gpu: &GpuContext,
-		window: Arc<winit::window::Window>,
+		window: Arc<Window>,
 		egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
 	) -> Result<Self> {
 		let surface = gpu
@@ -1351,7 +1221,7 @@ impl WindowRenderer {
 					"Skipped overlay window frame acquisition."
 				);
 
-				if should_request_overlay_redraw_after_surface_skip(
+				if overlay::should_request_overlay_redraw_after_surface_skip(
 					reason,
 					Instant::now(),
 					&mut self.occluded_redraw_retry_until,
@@ -1534,5 +1404,151 @@ impl WindowRenderer {
 			hud_shader_blur_active,
 			toolbar_active,
 		)
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SelectionFlowGeometryCacheKey {
+	rect_min_x_bits: u32,
+	rect_min_y_bits: u32,
+	rect_max_x_bits: u32,
+	rect_max_y_bits: u32,
+	corner_radius_bits: u32,
+	seam_offset_bits: u32,
+	sample_count: usize,
+}
+impl SelectionFlowGeometryCacheKey {
+	const fn new(rect: Rect, corner_radius: f32, seam_offset: f32, sample_count: usize) -> Self {
+		Self {
+			rect_min_x_bits: rect.min.x.to_bits(),
+			rect_min_y_bits: rect.min.y.to_bits(),
+			rect_max_x_bits: rect.max.x.to_bits(),
+			rect_max_y_bits: rect.max.y.to_bits(),
+			corner_radius_bits: corner_radius.to_bits(),
+			seam_offset_bits: seam_offset.to_bits(),
+			sample_count,
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SelectionSizeBadgePadding {
+	left: f32,
+	right: f32,
+	top: f32,
+	bottom: f32,
+}
+
+#[derive(Debug, Default)]
+struct WindowRendererPhaseTimings {
+	prepare_input: Duration,
+	sync_hud_bg: Duration,
+	run_egui: Duration,
+	update_hud_blur_uniform: Duration,
+	sync_egui_textures: Duration,
+	tessellate: Duration,
+	acquire_frame: Duration,
+	render_frame: Duration,
+	total: Duration,
+}
+impl WindowRendererPhaseTimings {
+	fn trace(
+		&self,
+		path: WindowRendererPath,
+		window_id: WindowId,
+		monitor_id: u32,
+		mode: OverlayMode,
+		toolbar_active: bool,
+		paint_jobs: usize,
+	) {
+		tracing::trace!(
+			op = "overlay.window_renderer_phase_timing",
+			path = path.as_str(),
+			window_id = ?window_id,
+			monitor_id,
+			mode = ?mode,
+			toolbar_active,
+			paint_jobs,
+			total_us = self.total.as_micros(),
+			prepare_input_us = self.prepare_input.as_micros(),
+			sync_hud_bg_us = self.sync_hud_bg.as_micros(),
+			run_egui_us = self.run_egui.as_micros(),
+			update_hud_blur_uniform_us = self.update_hud_blur_uniform.as_micros(),
+			sync_egui_textures_us = self.sync_egui_textures.as_micros(),
+			tessellate_us = self.tessellate.as_micros(),
+			acquire_frame_us = self.acquire_frame.as_micros(),
+			render_frame_us = self.render_frame.as_micros(),
+			"Overlay window renderer phase timing."
+		);
+	}
+
+	fn warn_if_substeps_slow(
+		&self,
+		slow_op_logger: &mut SlowOperationLogger,
+		path: WindowRendererPath,
+		window_id: WindowId,
+		monitor_id: u32,
+		mode: OverlayMode,
+		paint_jobs: usize,
+	) {
+		let context = || {
+			format!(
+				"path={} window_id={window_id:?} monitor_id={monitor_id} mode={mode:?} paint_jobs={paint_jobs}",
+				path.as_str()
+			)
+		};
+
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.prepare_input",
+			self.prepare_input,
+			&context,
+		);
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.sync_hud_bg",
+			self.sync_hud_bg,
+			&context,
+		);
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.run_egui",
+			self.run_egui,
+			&context,
+		);
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.update_hud_blur_uniform",
+			self.update_hud_blur_uniform,
+			&context,
+		);
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.sync_egui_textures",
+			self.sync_egui_textures,
+			&context,
+		);
+		self.warn_phase_if_slow(
+			slow_op_logger,
+			"overlay.window_renderer.tessellate",
+			self.tessellate,
+			&context,
+		);
+	}
+
+	fn warn_phase_if_slow<F>(
+		&self,
+		slow_op_logger: &mut SlowOperationLogger,
+		op: &'static str,
+		elapsed: Duration,
+		describe: &F,
+	) where
+		F: Fn() -> String,
+	{
+		if elapsed.is_zero() {
+			return;
+		}
+
+		slow_op_logger.warn_if_redraw_substep_slow(op, elapsed, self.total, describe);
 	}
 }
