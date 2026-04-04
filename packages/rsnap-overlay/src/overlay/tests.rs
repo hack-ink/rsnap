@@ -10,15 +10,20 @@ mod worker_tick_runtime;
 use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
 use std::sync::Mutex;
+#[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicUsize;
+#[cfg(target_os = "macos")]
 use std::sync::atomic::Ordering;
 #[cfg(target_os = "macos")]
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
+#[cfg(target_os = "macos")]
 use color_eyre::eyre;
+#[cfg(target_os = "macos")]
 use color_eyre::eyre::Result;
 use egui::FontDefinitions;
 use egui::FontFamily;

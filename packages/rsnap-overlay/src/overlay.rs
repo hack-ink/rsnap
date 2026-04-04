@@ -125,6 +125,7 @@ use wgpu::{self};
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use winit::event::KeyEvent;
 use winit::event::Modifiers;
+#[cfg(target_os = "macos")]
 use winit::window::Window;
 use winit::{
 	dpi::PhysicalSize,
