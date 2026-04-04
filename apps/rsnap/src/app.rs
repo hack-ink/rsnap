@@ -30,7 +30,7 @@ use self::scroll_input_macos::SharedScrollInputState;
 #[cfg(target_os = "macos")]
 use crate::permissions_macos;
 use crate::settings::AppSettings;
-use crate::settings_window::SettingsWindow;
+use crate::settings_window::{SettingsWindow, SettingsWindowEntry};
 use rsnap_overlay::OverlaySession;
 
 pub(crate) enum UserEvent {
@@ -152,7 +152,9 @@ impl App {
 			return;
 		}
 
-		match SettingsWindow::open(event_loop) {
+		let entry = settings_window_entry(requested_by);
+
+		match SettingsWindow::open(event_loop, entry) {
 			Ok(window) => {
 				tracing::info!(requested_by = %requested_by, "Settings window opened.");
 
@@ -204,4 +206,37 @@ impl App {
 /// Runs the desktop application event loop until shutdown.
 pub fn run() -> Result<()> {
 	runtime::run()
+}
+
+fn settings_window_entry(requested_by: &'static str) -> SettingsWindowEntry {
+	match requested_by {
+		"startup-permission-check" => SettingsWindowEntry::Permissions,
+		_ => SettingsWindowEntry::Standard,
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::app::{self, SettingsWindowEntry};
+
+	#[test]
+	fn startup_permission_check_uses_permissions_entry() {
+		assert_eq!(
+			app::settings_window_entry("startup-permission-check"),
+			SettingsWindowEntry::Permissions
+		);
+	}
+
+	#[test]
+	fn non_startup_settings_entries_use_standard_entry() {
+		assert_eq!(
+			app::settings_window_entry("tray-permissions-menu"),
+			SettingsWindowEntry::Standard
+		);
+		assert_eq!(
+			app::settings_window_entry("menubar-permissions-menu"),
+			SettingsWindowEntry::Standard
+		);
+		assert_eq!(app::settings_window_entry("tray-settings-menu"), SettingsWindowEntry::Standard);
+	}
 }

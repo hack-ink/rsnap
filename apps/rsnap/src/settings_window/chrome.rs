@@ -29,7 +29,13 @@ impl SettingsWindow {
 			sections::with_settings_density(ui, combo_width, |ui| {
 				changed |= self.render_titlebar_controls(ui, &ctx, settings);
 				ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-					changed |= sections::render_all_sections(self, ui, &ctx, settings);
+					changed |= sections::render_all_sections_with_defaults(
+						self,
+						ui,
+						&ctx,
+						settings,
+						self.section_defaults,
+					);
 				});
 			});
 		});
