@@ -4799,6 +4799,7 @@ impl OverlaySession {
 				self.config.selection_flow_stroke_width_px,
 				!self.scroll_capture.active,
 				self.scroll_capture.active,
+				self.frozen_capture_source,
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				frozen_toolbar_reserved_rect,
 				toolbar_state,
