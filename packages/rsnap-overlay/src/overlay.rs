@@ -23,7 +23,7 @@ use std::thread;
 use std::{
 	borrow::Cow,
 	cmp::Ordering,
-	collections::HashMap,
+	collections::{HashMap, HashSet},
 	path::PathBuf,
 	sync::{Arc, Mutex},
 	time::{Duration, Instant},
@@ -697,6 +697,8 @@ pub struct OverlaySession {
 	cursor_monitor: Option<MonitorRect>,
 	egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
 	windows: HashMap<WindowId, OverlayWindow>,
+	focused_window_ids: HashSet<WindowId>,
+	pending_focus_loss_cleanup: bool,
 	hud_window: Option<HudOverlayWindow>,
 	loupe_window: Option<HudOverlayWindow>,
 	toolbar_window: Option<HudOverlayWindow>,
@@ -869,6 +871,8 @@ impl OverlaySession {
 			state: runtime.state,
 			cursor_monitor: None,
 			windows: HashMap::new(),
+			focused_window_ids: HashSet::new(),
+			pending_focus_loss_cleanup: false,
 			hud_window: None,
 			loupe_window: None,
 			toolbar_window: None,
@@ -1395,6 +1399,7 @@ impl OverlaySession {
 
 		self.maybe_log_event_loop_stall(now);
 		self.mark_progress(OverlayEventLoopPhase::AboutToWait);
+		self.maybe_clear_loupe_activation_after_focus_loss();
 		self.maybe_request_keepalive_redraw();
 		self.maybe_keep_selection_flow_repaint();
 		self.maybe_keep_frozen_capture_redraw();
@@ -3984,7 +3989,9 @@ impl OverlaySession {
 			WindowEvent::MouseInput { state, button, .. } => {
 				self.maybe_stop_frozen_selection_drag_for_mouse_input(*state, *button);
 			},
-			WindowEvent::Focused(false) => self.clear_loupe_activation_on_focus_loss(),
+			WindowEvent::Focused(focused) => {
+				self.note_window_focus_change(window_id, *focused);
+			},
 			_ => {},
 		}
 
@@ -4099,6 +4106,22 @@ impl OverlaySession {
 			WindowEvent::ModifiersChanged(modifiers) => self.handle_modifiers_changed(modifiers),
 			_ => self.handle_scroll_preview_window_event(event),
 		})
+	}
+
+	fn note_window_focus_change(&mut self, window_id: WindowId, focused: bool) {
+		if focused {
+			self.focused_window_ids.insert(window_id);
+
+			self.pending_focus_loss_cleanup = false;
+
+			return;
+		}
+
+		self.focused_window_ids.remove(&window_id);
+
+		if self.focused_window_ids.is_empty() {
+			self.pending_focus_loss_cleanup = true;
+		}
 	}
 
 	fn handle_toolbar_mouse_input(&mut self, state: ElementState) -> OverlayControl {
@@ -4542,8 +4565,6 @@ impl OverlaySession {
 	fn apply_loupe_activation_input(&mut self, pressed: bool, repeat: bool) -> bool {
 		let previous_alt_held = self.state.alt_held;
 
-		self.loupe_activation_key_down = pressed;
-
 		match self.config.alt_activation {
 			AltActivationMode::Hold => self.set_alt_held(pressed),
 			AltActivationMode::Toggle => {
@@ -4556,6 +4577,19 @@ impl OverlaySession {
 		previous_alt_held != self.state.alt_held
 	}
 
+	fn apply_loupe_activation_key_event(&mut self, pressed: bool, repeat: bool) -> bool {
+		self.loupe_activation_key_down = pressed;
+
+		if !pressed && !self.state.alt_held {
+			return false;
+		}
+		if pressed && !self.loupe_activation_shortcut_available() {
+			return false;
+		}
+
+		self.apply_loupe_activation_input(pressed, repeat)
+	}
+
 	fn clear_loupe_activation_on_focus_loss(&mut self) {
 		let should_reset = self.loupe_activation_key_down
 			|| (matches!(self.config.alt_activation, AltActivationMode::Hold)
@@ -4564,9 +4598,22 @@ impl OverlaySession {
 		if !should_reset {
 			return;
 		}
+
+		self.loupe_activation_key_down = false;
+
 		if self.apply_loupe_activation_input(false, false) {
 			let _ = self.request_redraw_for_alt_state_change();
 		}
+	}
+
+	fn maybe_clear_loupe_activation_after_focus_loss(&mut self) {
+		if !self.pending_focus_loss_cleanup || !self.focused_window_ids.is_empty() {
+			return;
+		}
+
+		self.pending_focus_loss_cleanup = false;
+
+		self.clear_loupe_activation_on_focus_loss();
 	}
 
 	fn request_redraw_for_alt_state_change(&mut self) -> OverlayControl {
@@ -5776,10 +5823,8 @@ impl OverlaySession {
 	fn handle_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
 		if matches!(event.logical_key, Key::Named(NamedKey::Tab)) {
 			let pressed = event.state == ElementState::Pressed;
-			let loupe_activation_event = (pressed && self.loupe_activation_shortcut_available())
-				|| (!pressed && self.loupe_activation_key_down);
 
-			if loupe_activation_event && self.apply_loupe_activation_input(pressed, event.repeat) {
+			if self.apply_loupe_activation_key_event(pressed, event.repeat) {
 				return self.request_redraw_for_alt_state_change();
 			}
 
@@ -7717,6 +7762,10 @@ impl OverlaySession {
 			self.ocr_inflight = false;
 			self.png_encode_inflight = false;
 		}
+
+		self.focused_window_ids.clear();
+
+		self.pending_focus_loss_cleanup = false;
 		self.loupe_activation_key_down = false;
 		self.keyboard_modifiers = ModifiersState::default();
 	}
@@ -13627,6 +13676,8 @@ mod tests {
 	use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 	#[cfg(target_os = "macos")]
 	use winit::keyboard::ModifiersState;
+	#[cfg(target_os = "macos")]
+	use winit::window::WindowId;
 
 	#[cfg(target_os = "macos")]
 	use crate::backend;
@@ -16378,9 +16429,9 @@ mod tests {
 		session.config.alt_activation = AltActivationMode::Toggle;
 
 		assert!(session.plain_character_shortcut_available());
-		assert!(session.apply_loupe_activation_input(true, false));
+		assert!(session.apply_loupe_activation_key_event(true, false));
 		assert!(!session.plain_character_shortcut_available());
-		assert!(!session.apply_loupe_activation_input(false, false));
+		assert!(!session.apply_loupe_activation_key_event(false, false));
 		assert!(session.state.alt_held);
 		assert!(session.plain_character_shortcut_available());
 	}
@@ -16392,7 +16443,7 @@ mod tests {
 
 		session.config.alt_activation = AltActivationMode::Hold;
 
-		assert!(session.apply_loupe_activation_input(true, false));
+		assert!(session.apply_loupe_activation_key_event(true, false));
 		assert!(session.state.alt_held);
 		assert!(session.loupe_activation_key_down);
 
@@ -16410,7 +16461,7 @@ mod tests {
 
 		session.config.alt_activation = AltActivationMode::Toggle;
 
-		assert!(session.apply_loupe_activation_input(true, false));
+		assert!(session.apply_loupe_activation_key_event(true, false));
 		assert!(session.state.alt_held);
 		assert!(session.loupe_activation_key_down);
 
@@ -16443,6 +16494,69 @@ mod tests {
 		session.keyboard_modifiers = ModifiersState::SUPER;
 
 		assert!(!session.loupe_activation_shortcut_available());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn apply_loupe_activation_key_event_tracks_modified_tab_without_activating_loupe() {
+		let mut session = OverlaySession::new();
+
+		session.keyboard_modifiers = ModifiersState::SHIFT;
+
+		assert!(!session.apply_loupe_activation_key_event(true, false));
+		assert!(session.loupe_activation_key_down);
+		assert!(!session.state.alt_held);
+		assert!(!session.plain_character_shortcut_available());
+
+		session.keyboard_modifiers = ModifiersState::default();
+
+		assert!(!session.plain_character_shortcut_available());
+		assert!(!session.apply_loupe_activation_key_event(false, false));
+		assert!(!session.loupe_activation_key_down);
+		assert!(session.plain_character_shortcut_available());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn pending_focus_loss_cleanup_does_not_clear_loupe_during_internal_focus_transfer() {
+		let overlay_window_id = WindowId::from(1);
+		let toolbar_window_id = WindowId::from(2);
+		let mut session = OverlaySession::new();
+
+		session.config.alt_activation = AltActivationMode::Hold;
+
+		session.note_window_focus_change(overlay_window_id, true);
+
+		assert!(session.apply_loupe_activation_key_event(true, false));
+		assert!(session.state.alt_held);
+
+		session.note_window_focus_change(overlay_window_id, false);
+		session.note_window_focus_change(toolbar_window_id, true);
+		session.maybe_clear_loupe_activation_after_focus_loss();
+
+		assert!(session.state.alt_held);
+		assert!(session.loupe_activation_key_down);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn pending_focus_loss_cleanup_clears_loupe_after_all_overlay_windows_blur() {
+		let overlay_window_id = WindowId::from(1);
+		let mut session = OverlaySession::new();
+
+		session.config.alt_activation = AltActivationMode::Hold;
+
+		session.note_window_focus_change(overlay_window_id, true);
+
+		assert!(session.apply_loupe_activation_key_event(true, false));
+		assert!(session.state.alt_held);
+
+		session.note_window_focus_change(overlay_window_id, false);
+		session.maybe_clear_loupe_activation_after_focus_loss();
+
+		assert!(!session.state.alt_held);
+		assert!(!session.loupe_activation_key_down);
+		assert!(session.plain_character_shortcut_available());
 	}
 
 	#[cfg(target_os = "macos")]
