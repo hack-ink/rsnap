@@ -109,6 +109,7 @@ impl OverlaySession {
 				self.config.selection_flow_stroke_width_px,
 				true,
 				false,
+				self.frozen_capture_source,
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				None,
 				None,
