@@ -10,11 +10,10 @@ use egui::Sense;
 use egui::Slider;
 use egui::Stroke;
 use egui::TextEdit;
+use egui::RichText;
 use egui::TextStyle;
 use egui::Ui;
 use egui::style::HandleShape;
-#[cfg(target_os = "macos")]
-use egui::{self, RichText};
 
 #[cfg(target_os = "macos")]
 use crate::permissions_macos;
