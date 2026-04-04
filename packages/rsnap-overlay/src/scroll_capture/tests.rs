@@ -1,10 +1,11 @@
 use image::Rgba;
 
+use crate::scroll_capture::support;
 use crate::scroll_capture::{
 	self, DirectionMatch, DownwardRegistration, DownwardSampleMatch, DownwardSampleMatchSource,
 	DownwardViewportCandidate, DownwardViewportCandidateSource, DownwardViewportResolution,
-	GrowthCommit, MotionObservation, OverlapSearchConfig, PreviewOnlyDownwardLocalSample,
-	ScrollDirection, ScrollFrameFingerprint, ScrollObserveOutcome, ScrollSession,
+	MotionObservation, OverlapSearchConfig, PreviewOnlyDownwardLocalSample, ScrollDirection,
+	ScrollFrameFingerprint, ScrollObserveOutcome, ScrollSession,
 };
 
 fn make_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
@@ -198,7 +199,7 @@ fn session_commits_downward_growth_on_first_matching_sample() {
 fn worker_pairwise_vision_commits_substantial_downward_growth_with_corroboration() {
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let moved = make_sparse_textlike_window(512, 640, 90);
-	let matched = scroll_capture::classify_vision_downward_sample_motion_against(&base, &moved)
+	let matched = support::classify_vision_downward_sample_motion_against(&base, &moved)
 		.expect("vision registration should detect the substantial downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 	let outcome = session.observe_worker_pairwise_vision_frame(moved).unwrap();
@@ -220,7 +221,7 @@ fn pairwise_downward_shift_estimate_matches_sparse_textlike_motion() {
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let moved = make_sparse_textlike_window(512, 640, 58);
 
-	assert_eq!(scroll_capture::estimate_pairwise_downward_shift_rows(&base, &moved), Some(58));
+	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &moved), Some(58));
 }
 
 #[test]
@@ -228,7 +229,7 @@ fn pairwise_downward_shift_estimate_matches_browser_like_motion_above_legacy_cap
 	let base = make_browser_like_window(512, 640, 0);
 	let moved = make_browser_like_window(512, 640, 320);
 
-	assert_eq!(scroll_capture::estimate_pairwise_downward_shift_rows(&base, &moved), Some(320));
+	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &moved), Some(320));
 }
 
 #[test]
@@ -240,7 +241,7 @@ fn pairwise_downward_shift_estimate_tracks_successive_browser_like_steps() {
 
 	for window in frames.windows(2) {
 		assert_eq!(
-			scroll_capture::estimate_pairwise_downward_shift_rows(&window[0], &window[1]),
+			support::estimate_pairwise_downward_shift_rows(&window[0], &window[1]),
 			Some(180)
 		);
 	}
@@ -252,11 +253,10 @@ fn worker_pairwise_vision_uses_latest_committed_live_frame_for_followup_growth()
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let step_one = make_sparse_textlike_window(512, 640, 180);
 	let step_two = make_sparse_textlike_window(512, 640, 360);
-	let first_match =
-		scroll_capture::classify_vision_downward_sample_motion_against(&base, &step_one)
-			.expect("first pairwise registration should detect downward motion");
+	let first_match = support::classify_vision_downward_sample_motion_against(&base, &step_one)
+		.expect("first pairwise registration should detect downward motion");
 	let followup_match =
-		scroll_capture::classify_vision_downward_sample_motion_against(&step_one, &step_two)
+		support::classify_vision_downward_sample_motion_against(&step_one, &step_two)
 			.expect("followup pairwise registration should detect downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
@@ -290,11 +290,10 @@ fn worker_pairwise_vision_handles_repeated_frame_between_growth_steps() {
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let step_one = make_sparse_textlike_window(512, 640, 180);
 	let step_two = make_sparse_textlike_window(512, 640, 360);
-	let first_match =
-		scroll_capture::classify_vision_downward_sample_motion_against(&base, &step_one)
-			.expect("first pairwise registration should detect downward motion");
+	let first_match = support::classify_vision_downward_sample_motion_against(&base, &step_one)
+		.expect("first pairwise registration should detect downward motion");
 	let followup_match =
-		scroll_capture::classify_vision_downward_sample_motion_against(&step_one, &step_two)
+		support::classify_vision_downward_sample_motion_against(&step_one, &step_two)
 			.expect("followup pairwise registration should detect downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
@@ -328,10 +327,8 @@ fn worker_pairwise_vision_recovers_after_blocked_overshot_frame() {
 	let base = make_browser_like_window(512, 640, 0);
 	let blocked = make_browser_like_window(512, 640, 760);
 	let followup = make_browser_like_window(512, 640, 844);
-	let matched = scroll_capture::classify_vision_downward_sample_motion_against(
-		&blocked, &followup,
-	)
-	.expect("pairwise registration should detect the followup step after the blocked overshot");
+	let matched = support::classify_vision_downward_sample_motion_against(&blocked, &followup)
+		.expect("pairwise registration should detect the followup step after the blocked overshot");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
 	assert_eq!(
@@ -390,7 +387,7 @@ fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_no_change()
 fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_commit() {
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let moved = make_sparse_textlike_window(512, 640, 180);
-	let matched = scroll_capture::classify_vision_downward_sample_motion_against(&base, &moved)
+	let matched = support::classify_vision_downward_sample_motion_against(&base, &moved)
 		.expect("pairwise registration should detect downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
@@ -439,9 +436,8 @@ fn worker_pairwise_vision_commits_successive_slowdown_steps() {
 	for window in frames.windows(2) {
 		let previous = &window[0];
 		let next = window[1].clone();
-		let matched =
-			scroll_capture::classify_vision_downward_sample_motion_against(previous, &next)
-				.expect("pairwise registration should detect each slowdown step");
+		let matched = support::classify_vision_downward_sample_motion_against(previous, &next)
+			.expect("pairwise registration should detect each slowdown step");
 
 		assert_eq!(
 			session.observe_worker_pairwise_vision_frame(next).unwrap(),
@@ -464,7 +460,7 @@ fn worker_pairwise_vision_commits_successive_slowdown_steps() {
 fn worker_pairwise_vision_commits_browser_like_growth_above_legacy_cap() {
 	let base = make_browser_like_window(512, 640, 0);
 	let moved = make_browser_like_window(512, 640, 320);
-	let matched = scroll_capture::classify_vision_downward_sample_motion_against(&base, &moved)
+	let matched = support::classify_vision_downward_sample_motion_against(&base, &moved)
 		.expect("vision registration should detect the browser-like downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
@@ -494,9 +490,8 @@ fn worker_pairwise_vision_commits_successive_browser_like_steps() {
 	for window in frames.windows(2) {
 		let previous = &window[0];
 		let next = window[1].clone();
-		let matched =
-			scroll_capture::classify_vision_downward_sample_motion_against(previous, &next)
-				.expect("pairwise registration should detect each browser-like step");
+		let matched = support::classify_vision_downward_sample_motion_against(previous, &next)
+			.expect("pairwise registration should detect each browser-like step");
 
 		assert_eq!(
 			session.observe_worker_pairwise_vision_frame(next).unwrap(),
@@ -520,11 +515,10 @@ fn worker_pairwise_vision_handles_repeated_browser_like_frame_between_growth_ste
 	let base = make_browser_like_window(512, 640, 0);
 	let step_one = make_browser_like_window(512, 640, 180);
 	let step_two = make_browser_like_window(512, 640, 360);
-	let first_match =
-		scroll_capture::classify_vision_downward_sample_motion_against(&base, &step_one)
-			.expect("first browser-like step should register downward motion");
+	let first_match = support::classify_vision_downward_sample_motion_against(&base, &step_one)
+		.expect("first browser-like step should register downward motion");
 	let followup_match =
-		scroll_capture::classify_vision_downward_sample_motion_against(&step_one, &step_two)
+		support::classify_vision_downward_sample_motion_against(&step_one, &step_two)
 			.expect("followup browser-like step should register downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
@@ -558,10 +552,10 @@ fn worker_pairwise_vision_browser_like_followup_uses_adjacent_worker_frame() {
 	let base = make_browser_like_window(512, 640, 0);
 	let blocked = make_browser_like_window(512, 640, 700);
 	let followup = make_browser_like_window(512, 640, 784);
-	let matched = scroll_capture::classify_vision_downward_sample_motion_against(
-		&blocked, &followup,
-	)
-	.expect("browser-like pairwise registration should use the immediately previous worker frame");
+	let matched = support::classify_vision_downward_sample_motion_against(&blocked, &followup)
+		.expect(
+			"browser-like pairwise registration should use the immediately previous worker frame",
+		);
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
 	assert_eq!(
@@ -1169,7 +1163,7 @@ fn viewport_selection_fails_closed_when_observed_and_committed_authority_conflic
 	let mut candidates = [observed, committed];
 
 	assert_eq!(
-		scroll_capture::select_downward_viewport_candidate(&mut candidates),
+		support::select_downward_viewport_candidate(&mut candidates),
 		DownwardViewportResolution::Ambiguous { preferred: committed, competing: observed }
 	);
 }
@@ -1287,7 +1281,7 @@ fn nearby_local_candidate_wins_when_committed_is_only_modestly_better() {
 	let mut candidates = [observed, committed];
 
 	assert_eq!(
-		scroll_capture::select_downward_viewport_candidate(&mut candidates),
+		support::select_downward_viewport_candidate(&mut candidates),
 		DownwardViewportResolution::Selected(observed)
 	);
 }
@@ -1820,7 +1814,7 @@ fn preview_local_slowdown_followup_can_prefer_one_pixel_preview_local_recovery()
 	session.last_preview_only_downward_local_sample =
 		Some(PreviewOnlyDownwardLocalSample { frame: previous.clone(), viewport_top_y: 145 });
 
-	session.growth_history.push(GrowthCommit {
+	session.growth_history.push(crate::scroll_capture::GrowthCommit {
 		frame: previous,
 		growth_rows: 4,
 		viewport_top_y: 145,
@@ -1852,7 +1846,7 @@ fn preview_local_slowdown_followup_can_prefer_near_continuity_preview_local_reco
 	session.last_preview_only_downward_local_sample =
 		Some(PreviewOnlyDownwardLocalSample { frame: previous.clone(), viewport_top_y: 416 });
 
-	session.growth_history.push(GrowthCommit {
+	session.growth_history.push(crate::scroll_capture::GrowthCommit {
 		frame: previous,
 		growth_rows: 10,
 		viewport_top_y: 416,
@@ -1884,7 +1878,7 @@ fn preview_local_slowdown_followup_without_recent_small_preview_commit_does_not_
 	session.last_preview_only_downward_local_sample =
 		Some(PreviewOnlyDownwardLocalSample { frame: previous.clone(), viewport_top_y: 145 });
 
-	session.growth_history.push(GrowthCommit {
+	session.growth_history.push(crate::scroll_capture::GrowthCommit {
 		frame: previous,
 		growth_rows: 12,
 		viewport_top_y: 145,
@@ -2443,7 +2437,7 @@ fn preview_local_slowdown_followup_range_allows_one_pixel_tail_in_burst() {
 	session.last_preview_only_downward_local_sample =
 		Some(PreviewOnlyDownwardLocalSample { frame: previous.clone(), viewport_top_y: 145 });
 
-	session.growth_history.push(GrowthCommit {
+	session.growth_history.push(crate::scroll_capture::GrowthCommit {
 		frame: previous.clone(),
 		growth_rows: 4,
 		viewport_top_y: 145,
@@ -2472,7 +2466,7 @@ fn preview_local_followup_without_recent_small_preview_commit_keeps_hint_floor_i
 	session.last_preview_only_downward_local_sample =
 		Some(PreviewOnlyDownwardLocalSample { frame: previous.clone(), viewport_top_y: 145 });
 
-	session.growth_history.push(GrowthCommit {
+	session.growth_history.push(crate::scroll_capture::GrowthCommit {
 		frame: previous.clone(),
 		growth_rows: 12,
 		viewport_top_y: 145,

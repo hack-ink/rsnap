@@ -1,6 +1,13 @@
-#![allow(clippy::wildcard_imports)]
-
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::{
+	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, GlobalPoint, Instant,
+	LiveCursorSample, LiveSampleApplyResult, MonitorRect, MonitorRectPoints, OverlayControl,
+	OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit, WindowListSnapshot,
+	WorkerErrorSource, WorkerRequestSendError, WorkerResponse, mem,
+};
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::{CursorSampleRequest, PendingRecognizeTextRequest};
 
 impl OverlaySession {
 	pub(super) fn drain_worker_responses(&mut self) -> OverlayControl {

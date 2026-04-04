@@ -1,6 +1,11 @@
-#![allow(clippy::wildcard_imports)]
-
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	self, Duration, GlobalPoint, Instant, MonitorRect, MouseScrollDelta, OverlaySession,
+	RectPoints, ScrollDirection, ScrollObserveOutcome, ScrollSession, overlay,
+};
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::tests::{Arc, OverlayControl, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE};
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -225,7 +230,7 @@ fn scroll_overlay_mouse_passthrough_window_arms_and_expires() {
 fn scroll_capture_start_enables_persistent_passthrough() {
 	let mut session = OverlaySession::new();
 
-	seed_ready_scroll_capture_selection(&mut session);
+	tests::seed_ready_scroll_capture_selection(&mut session);
 
 	let control = session.start_scroll_capture();
 
@@ -241,7 +246,7 @@ fn scroll_capture_start_enables_persistent_passthrough() {
 fn scroll_capture_pause_and_resume_toggle_persistent_passthrough() {
 	let mut session = OverlaySession::new();
 
-	seed_ready_scroll_capture_selection(&mut session);
+	tests::seed_ready_scroll_capture_selection(&mut session);
 
 	let _ = session.start_scroll_capture();
 
@@ -412,62 +417,84 @@ fn upward_input_does_not_dirty_later_downward_growth() {
 	let mut session = OverlaySession::new();
 
 	session.scroll_capture.active = true;
-	session.scroll_capture.session =
-		Some(ScrollSession::new(make_scroll_capture_window(&document, 3, 0, 5), 320).unwrap());
+	session.scroll_capture.session = Some(
+		ScrollSession::new(tests::make_scroll_capture_window(&document, 3, 0, 5), 320).unwrap(),
+	);
 
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 	assert_eq!(
-		observe_scroll_capture_frame(&mut session, make_scroll_capture_window(&document, 3, 1, 5),),
+		tests::observe_scroll_capture_frame(
+			&mut session,
+			tests::make_scroll_capture_window(&document, 3, 1, 5),
+		),
 		Some(ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 1 })
 	);
 	assert_eq!(
-		observe_scroll_capture_frame(&mut session, make_scroll_capture_window(&document, 3, 2, 5),),
+		tests::observe_scroll_capture_frame(
+			&mut session,
+			tests::make_scroll_capture_window(&document, 3, 2, 5),
+		),
 		Some(ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 1 })
 	);
 
-	let height_after_second_append = scroll_capture_export_height(&session);
+	let height_after_second_append = tests::scroll_capture_export_height(&session);
 
-	set_scroll_capture_input(&mut session, ScrollDirection::Up);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Up);
 
 	assert!(matches!(
-		observe_scroll_capture_frame(&mut session, make_scroll_capture_window(&document, 3, 0, 5),),
+		tests::observe_scroll_capture_frame(
+			&mut session,
+			tests::make_scroll_capture_window(&document, 3, 0, 5),
+		),
 		Some(
 			ScrollObserveOutcome::UnsupportedDirection { direction: ScrollDirection::Up }
 				| ScrollObserveOutcome::PreviewUpdated
 		)
 	));
-	assert_eq!(scroll_capture_export_height(&session), height_after_second_append);
+	assert_eq!(tests::scroll_capture_export_height(&session), height_after_second_append);
 
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 	assert_eq!(
-		observe_scroll_capture_frame(&mut session, make_scroll_capture_window(&document, 3, 2, 5),),
+		tests::observe_scroll_capture_frame(
+			&mut session,
+			tests::make_scroll_capture_window(&document, 3, 2, 5),
+		),
 		Some(ScrollObserveOutcome::NoChange)
 	);
-	assert_eq!(scroll_capture_export_height(&session), height_after_second_append);
+	assert_eq!(tests::scroll_capture_export_height(&session), height_after_second_append);
 
-	set_scroll_capture_input(&mut session, ScrollDirection::Up);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Up);
 
 	assert!(matches!(
-		observe_scroll_capture_frame(&mut session, make_scroll_capture_window(&document, 3, 1, 5),),
+		tests::observe_scroll_capture_frame(
+			&mut session,
+			tests::make_scroll_capture_window(&document, 3, 1, 5),
+		),
 		Some(
 			ScrollObserveOutcome::UnsupportedDirection { direction: ScrollDirection::Up }
 				| ScrollObserveOutcome::PreviewUpdated
 				| ScrollObserveOutcome::NoChange
 		)
 	));
-	assert_eq!(scroll_capture_export_height(&session), height_after_second_append);
+	assert_eq!(tests::scroll_capture_export_height(&session), height_after_second_append);
 
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
 	assert_eq!(
-		observe_scroll_capture_frame(&mut session, make_scroll_capture_window(&document, 3, 2, 5),),
+		tests::observe_scroll_capture_frame(
+			&mut session,
+			tests::make_scroll_capture_window(&document, 3, 2, 5),
+		),
 		Some(ScrollObserveOutcome::NoChange)
 	);
-	assert_eq!(scroll_capture_export_height(&session), height_after_second_append);
+	assert_eq!(tests::scroll_capture_export_height(&session), height_after_second_append);
 	assert_eq!(
-		observe_scroll_capture_frame(&mut session, make_scroll_capture_window(&document, 3, 3, 5),),
+		tests::observe_scroll_capture_frame(
+			&mut session,
+			tests::make_scroll_capture_window(&document, 3, 3, 5),
+		),
 		Some(ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 1 })
 	);
 }

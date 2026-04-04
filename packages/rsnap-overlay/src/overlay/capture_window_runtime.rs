@@ -1,6 +1,5 @@
-#![allow(clippy::wildcard_imports)]
-
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::{GlobalPoint, MonitorRect, OverlayMode, OverlaySession, image_helpers};
 
 impl OverlaySession {
 	pub(super) fn update_cursor_state(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {

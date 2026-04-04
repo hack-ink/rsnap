@@ -1,11 +1,40 @@
-#![allow(clippy::wildcard_imports)]
+use egui::Context;
 
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::rendering::{
+	FrozenToolbarButtonStyle, SelectionDashedBorderCache, SelectionDashedBorderCacheKey,
+	SelectionDashedBorderMetrics, SelectionFlowGeometryCache, SelectionFlowGeometryCacheKey,
+	SelectionSizeBadgeLayout, SelectionSizeBadgePadding, SelectionSizeBadgeTarget, WindowRenderer,
+};
+#[allow(unused_imports)]
+use crate::overlay::{
+	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_SELECTION_SCRIM_ALPHA_DARK,
+	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TOOLBAR_BUTTON_SIZE_POINTS,
+	FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId, FrozenToolbarPointerState,
+	FrozenToolbarState, FrozenToolbarTool, HUD_PILL_CORNER_RADIUS_POINTS,
+	HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_INNER_MARGIN_Y_POINTS, HUD_PILL_STROKE_WIDTH_POINTS,
+	HudPillGeometry, HudTheme, Id, LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK,
+	LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT, LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh,
+	MonitorRect, Order, OverlayMode, OverlayState, Painter, Pos2, Rect, RectPoints,
+	SELECTION_DASHED_BORDER_ALPHA, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
+	SELECTION_FLOW_CORE_FLOW_WIDTH, SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST,
+	SELECTION_FLOW_FROZEN_ALPHA_SCALE, SELECTION_FLOW_FROZEN_INTENSITY,
+	SELECTION_FLOW_LIGHT_PALETTE, SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS,
+	SELECTION_FLOW_PALETTE, SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED,
+	SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX, SELECTION_SIZE_BADGE_FONT_SIZE_POINTS,
+	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
+	SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX, SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX,
+	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS,
+	SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind, TOOLBAR_CAPTURE_GAP_PX,
+	TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder, Vec2,
+	regular,
+};
 
 impl WindowRenderer {
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay) fn render_live_capture_affordances(
-		ctx: &egui::Context,
+		ctx: &Context,
 		painter: &Painter,
 		state: &OverlayState,
 		monitor: MonitorRect,
@@ -103,7 +132,7 @@ impl WindowRenderer {
 
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay) fn render_frozen_capture_affordance(
-		ctx: &egui::Context,
+		ctx: &Context,
 		state: &OverlayState,
 		monitor: MonitorRect,
 		screen_rect: Rect,
@@ -318,7 +347,7 @@ impl WindowRenderer {
 		);
 		let toolbar_pos = toolbar_state.floating_position.unwrap_or(default_pos);
 
-		if !frozen_toolbar_matches_default_slot(toolbar_pos, default_pos) {
+		if !overlay::frozen_toolbar_matches_default_slot(toolbar_pos, default_pos) {
 			return None;
 		}
 
@@ -349,7 +378,7 @@ impl WindowRenderer {
 	}
 
 	pub(in crate::overlay) fn selection_size_badge_layout(
-		ctx: &egui::Context,
+		ctx: &Context,
 		text: &str,
 		theme: HudTheme,
 		pixels_per_point: f32,
@@ -537,7 +566,7 @@ impl WindowRenderer {
 	}
 
 	pub(in crate::overlay) fn render_selection_size_badge(
-		ctx: &egui::Context,
+		ctx: &Context,
 		painter: &Painter,
 		monitor: MonitorRect,
 		screen_rect: Rect,
@@ -944,7 +973,7 @@ impl WindowRenderer {
 	pub(in crate::overlay) fn render_selection_flow_ring(
 		painter: &Painter,
 		rect: Rect,
-		ctx: &egui::Context,
+		ctx: &Context,
 		theme: HudTheme,
 		style: SelectionFlowStyle,
 		selection_flow_stroke_width_px: f32,
@@ -1416,7 +1445,7 @@ impl WindowRenderer {
 
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay) fn render_frozen_toolbar_ui(
-		ctx: &egui::Context,
+		ctx: &Context,
 		state: &OverlayState,
 		monitor: MonitorRect,
 		theme: HudTheme,
@@ -1466,7 +1495,7 @@ impl WindowRenderer {
 
 		#[cfg(any(not(target_os = "macos"), test))]
 		{
-			if !advance_frozen_toolbar_readiness_sample_state(toolbar_state, screen_rect) {
+			if !overlay::advance_frozen_toolbar_readiness_sample_state(toolbar_state, screen_rect) {
 				ctx.request_repaint();
 
 				return;
@@ -1629,7 +1658,7 @@ impl WindowRenderer {
 
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay) fn resolve_frozen_toolbar_birth(
-		ctx: &egui::Context,
+		ctx: &Context,
 		state: &OverlayState,
 		monitor: MonitorRect,
 		toolbar_state: &mut FrozenToolbarState,
@@ -1655,7 +1684,7 @@ impl WindowRenderer {
 			"Frozen toolbar birth attempt."
 		);
 
-		let needs_new_sample = frozen_toolbar_needs_new_sample(
+		let needs_new_sample = overlay::frozen_toolbar_needs_new_sample(
 			toolbar_state.layout_last_screen_size_points,
 			screen_size_points,
 		);
@@ -1785,7 +1814,7 @@ impl WindowRenderer {
 
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay) fn draw_frozen_toolbar(
-		ctx: &egui::Context,
+		ctx: &Context,
 		toolbar_state: &mut FrozenToolbarState,
 		monitor: MonitorRect,
 		screen_rect: Rect,

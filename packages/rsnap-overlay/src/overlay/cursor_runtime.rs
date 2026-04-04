@@ -1,6 +1,8 @@
-#![allow(clippy::wildcard_imports)]
-
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::{
+	CURSOR_POLL_INTERVAL_MIN, DeviceCursorPointSource, Duration, Instant,
+	LIVE_HOVER_HIT_TEST_INTERVAL, OverlayMode, OverlaySession,
+};
 
 impl OverlaySession {
 	pub(super) fn maybe_tick_frozen_cursor_tracking(&mut self) {

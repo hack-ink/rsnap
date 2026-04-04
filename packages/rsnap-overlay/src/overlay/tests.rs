@@ -1,13 +1,30 @@
+mod live_runtime;
+mod rendering_behaviors;
+mod scroll_input_runtime;
+mod self_capture_runtime;
+mod stream_refresh_runtime;
+mod worker_observation_runtime;
+mod worker_tick_runtime;
+
 #[cfg(target_os = "macos")]
 use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 #[cfg(target_os = "macos")]
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
-use image::{Rgba, RgbaImage};
+use color_eyre::eyre;
+use color_eyre::eyre::Result;
+use egui::FontDefinitions;
+use egui::FontFamily;
+use egui::RawInput;
+use egui_phosphor::Variant;
+use image::Rgba;
 #[cfg(target_os = "macos")]
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
@@ -59,37 +76,28 @@ use crate::state::{WindowListSnapshot, WindowRect};
 use crate::worker::OverlayWorker;
 use crate::worker::{WorkerErrorSource, WorkerResponse};
 
-mod live_runtime;
-mod rendering_behaviors;
-mod scroll_input_runtime;
-mod self_capture_runtime;
-mod stream_refresh_runtime;
-mod worker_observation_runtime;
-mod worker_tick_runtime;
-
 #[cfg(target_os = "macos")]
 struct SequenceScrollCaptureBackend {
-	frames: VecDeque<Option<RgbaImage>>,
+	frames: VecDeque<Option<image::RgbaImage>>,
 }
-
 #[cfg(target_os = "macos")]
 impl SequenceScrollCaptureBackend {
-	fn new(frames: impl IntoIterator<Item = Option<RgbaImage>>) -> Self {
+	fn new(frames: impl IntoIterator<Item = Option<image::RgbaImage>>) -> Self {
 		Self { frames: frames.into_iter().collect() }
 	}
 }
 
 #[cfg(target_os = "macos")]
 impl CaptureBackend for SequenceScrollCaptureBackend {
-	fn capture_monitor(&mut self, _monitor: MonitorRect) -> color_eyre::eyre::Result<RgbaImage> {
-		Err(color_eyre::eyre::eyre!("unused in this test"))
+	fn capture_monitor(&mut self, _monitor: MonitorRect) -> Result<image::RgbaImage> {
+		Err(eyre::eyre!("unused in this test"))
 	}
 
 	fn capture_monitor_region_for_scroll_capture(
 		&mut self,
 		_monitor: MonitorRect,
 		_rect_px: RectPoints,
-	) -> color_eyre::eyre::Result<Option<RgbaImage>> {
+	) -> Result<Option<image::RgbaImage>> {
 		Ok(self.frames.pop_front().unwrap_or(None))
 	}
 
@@ -97,7 +105,7 @@ impl CaptureBackend for SequenceScrollCaptureBackend {
 		&mut self,
 		_monitor: MonitorRect,
 		_point: GlobalPoint,
-	) -> color_eyre::eyre::Result<Option<Rgb>> {
+	) -> Result<Option<Rgb>> {
 		Ok(None)
 	}
 
@@ -107,12 +115,12 @@ impl CaptureBackend for SequenceScrollCaptureBackend {
 		_point: GlobalPoint,
 		_width_px: u32,
 		_height_px: u32,
-	) -> color_eyre::eyre::Result<Option<RgbaImage>> {
+	) -> Result<Option<image::RgbaImage>> {
 		Ok(None)
 	}
 
-	fn refresh_window_cache(&mut self) -> color_eyre::eyre::Result<Arc<WindowListSnapshot>> {
-		Err(color_eyre::eyre::eyre!("unused in this test"))
+	fn refresh_window_cache(&mut self) -> Result<Arc<WindowListSnapshot>> {
+		Err(eyre::eyre!("unused in this test"))
 	}
 }
 
@@ -248,11 +256,17 @@ fn observe_scroll_capture_frame(
 	session: &mut OverlaySession,
 	frame: image::RgbaImage,
 ) -> Option<ScrollObserveOutcome> {
-	session.observe_scroll_capture_frame(frame).transpose().unwrap()
+	match session.observe_scroll_capture_frame(frame).transpose() {
+		Ok(outcome) => outcome,
+		Err(err) => panic!("observe_scroll_capture_frame failed: {err:#}"),
+	}
 }
 
 fn scroll_capture_export_height(session: &OverlaySession) -> u32 {
-	session.scroll_capture.session.as_ref().unwrap().export_image().height()
+	match session.scroll_capture.session.as_ref() {
+		Some(scroll_session) => scroll_session.export_image().height(),
+		None => panic!("scroll_capture_export_height requires an active scroll session"),
+	}
 }
 
 fn test_monitor() -> MonitorRect {
@@ -269,32 +283,28 @@ fn test_monitor_with_scale(width: u32, height: u32, scale_factor_x1000: u32) -> 
 	MonitorRect { id: 1, origin: GlobalPoint::new(0, 0), width, height, scale_factor_x1000 }
 }
 
-fn test_frozen_image() -> RgbaImage {
-	RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255]))
+fn test_frozen_image() -> image::RgbaImage {
+	image::RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255]))
 }
 
 fn test_egui_context() -> egui::Context {
 	let ctx = egui::Context::default();
-	let mut fonts = egui::FontDefinitions::default();
+	let mut fonts = FontDefinitions::default();
 	let phosphor_fill = String::from("phosphor-fill");
-	let proportional_fallback = fonts
-		.families
-		.get(&egui::FontFamily::Proportional)
-		.and_then(|names| names.first())
-		.cloned();
+	let proportional_fallback =
+		fonts.families.get(&FontFamily::Proportional).and_then(|names| names.first()).cloned();
 
-	egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+	egui_phosphor::add_to_fonts(&mut fonts, Variant::Regular);
 
-	fonts.font_data.insert(phosphor_fill.clone(), egui_phosphor::Variant::Fill.font_data().into());
+	fonts.font_data.insert(phosphor_fill.clone(), Variant::Fill.font_data().into());
 	fonts
 		.families
-		.entry(egui::FontFamily::Name(phosphor_fill.clone().into()))
+		.entry(FontFamily::Name(phosphor_fill.clone().into()))
 		.or_default()
 		.extend([phosphor_fill]);
 
 	if let Some(fallback) = proportional_fallback {
-		let family =
-			fonts.families.entry(egui::FontFamily::Name("phosphor-fill".into())).or_default();
+		let family = fonts.families.entry(FontFamily::Name("phosphor-fill".into())).or_default();
 
 		if !family.contains(&fallback) {
 			family.push(fallback);
@@ -303,7 +313,7 @@ fn test_egui_context() -> egui::Context {
 
 	ctx.set_fonts(fonts);
 
-	let _ = ctx.run_ui(egui::RawInput::default(), |_ui| {});
+	let _ = ctx.run_ui(RawInput::default(), |_ui| {});
 
 	ctx
 }
@@ -354,7 +364,7 @@ fn begin_png_action_copies_preview_render_image_during_active_scroll_capture() {
 	session.scroll_capture.active = true;
 	session.scroll_capture.session = Some(scroll_session);
 	session.scroll_capture.preview_display_image =
-		Some(RgbaImage::from_pixel(320, 64, Rgba([77, 0, 0, 255])));
+		Some(image::RgbaImage::from_pixel(320, 64, Rgba([77, 0, 0, 255])));
 
 	session.begin_png_action(PngAction::Copy);
 
@@ -549,7 +559,7 @@ fn duplicate_live_frames_schedule_forced_refresh_when_downward_backlog_is_fresh(
 	let frame = ScrollCaptureLiveFrame {
 		frame_seq: 7,
 		captured_at: observed_at,
-		image: RgbaImage::from_pixel(16, 16, Rgba([7, 8, 9, 255])),
+		image: image::RgbaImage::from_pixel(16, 16, Rgba([7, 8, 9, 255])),
 	};
 	let mut session = OverlaySession::new();
 
@@ -609,7 +619,7 @@ fn scroll_capture_guard_error_keeps_frozen_capture_available() {
 	seed_ready_scroll_capture_selection(&mut session);
 
 	session.set_scroll_capture_start_guard(Arc::new(|| {
-		Err(color_eyre::eyre::eyre!("Open System Settings and retry."))
+		Err(eyre::eyre!("Open System Settings and retry."))
 	}));
 
 	let control = session.start_scroll_capture();
@@ -649,9 +659,8 @@ fn scroll_capture_starting_hook_error_keeps_frozen_capture_available() {
 	seed_ready_scroll_capture_selection(&mut session);
 
 	session.set_scroll_capture_start_guard(Arc::new(|| Ok(true)));
-	session.set_scroll_capture_starting_hook(Arc::new(|| {
-		Err(color_eyre::eyre::eyre!("Observer was not ready."))
-	}));
+	session
+		.set_scroll_capture_starting_hook(Arc::new(|| Err(eyre::eyre!("Observer was not ready."))));
 
 	let control = session.start_scroll_capture();
 
@@ -669,14 +678,14 @@ fn scroll_capture_starting_hook_error_keeps_frozen_capture_available() {
 #[cfg(target_os = "macos")]
 #[test]
 fn scroll_capture_preflight_runs_before_permission_guard() {
-	let guard_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+	let guard_calls = Arc::new(AtomicUsize::new(0));
 	let mut session = OverlaySession::new();
 
 	session.set_scroll_capture_start_guard(Arc::new({
 		let guard_calls = Arc::clone(&guard_calls);
 
 		move || {
-			guard_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+			guard_calls.fetch_add(1, Ordering::SeqCst);
 
 			Ok(true)
 		}
@@ -695,7 +704,7 @@ fn scroll_capture_preflight_runs_before_permission_guard() {
 #[cfg(target_os = "macos")]
 #[test]
 fn scroll_capture_starting_hook_runs_before_started_hook() {
-	let hook_order = Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+	let hook_order = Arc::new(Mutex::new(Vec::<&'static str>::new()));
 	let mut session = OverlaySession::new();
 
 	seed_ready_scroll_capture_selection(&mut session);

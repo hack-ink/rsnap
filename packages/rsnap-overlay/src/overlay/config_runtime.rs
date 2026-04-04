@@ -1,6 +1,15 @@
-#![allow(clippy::wildcard_imports)]
+use winit::window::Window;
 
-use super::*;
+#[cfg(target_os = "macos")]
+use crate::backend;
+#[allow(unused_imports)]
+use crate::overlay::{
+	self, Arc, HUD_PILL_CORNER_RADIUS_POINTS, Instant, LOUPE_TILE_CORNER_RADIUS_POINTS,
+	OverlayConfig, OverlayMode, OverlaySession, OverlayWorker, scroll_capture,
+};
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::{MacLiveFrameStream, MacOSHudWindowConfigState, SLOW_OP_WARN_HUD_CONFIG};
 
 impl OverlaySession {
 	/// Applies updated runtime configuration to an existing session.
@@ -167,7 +176,7 @@ impl OverlaySession {
 
 	pub(super) fn configure_hud_window_common(
 		&mut self,
-		window: &winit::window::Window,
+		window: &Window,
 		corner_radius: Option<f64>,
 	) {
 		window.set_transparent(true);
@@ -189,7 +198,7 @@ impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	fn configure_macos_hud_window_cached(
 		&mut self,
-		window: &winit::window::Window,
+		window: &Window,
 		blur_enabled: bool,
 		blur_amount: f32,
 		corner_radius: Option<f64>,
@@ -213,7 +222,7 @@ impl OverlaySession {
 
 		let started_at = Instant::now();
 
-		macos_configure_hud_window(
+		overlay::macos_configure_hud_window(
 			window,
 			blur_enabled,
 			blur_amount,

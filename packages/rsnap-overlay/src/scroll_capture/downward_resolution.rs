@@ -1,6 +1,23 @@
-#![allow(clippy::wildcard_imports)]
-
-use super::*;
+use crate::scroll_capture::support;
+#[allow(unused_imports)]
+use crate::scroll_capture::{
+	BlockedPreviewOnlyLocalCandidate, CommittedDownwardViewportCandidateMode,
+	DIRECTION_WARNING_MARGIN_X100, DOWNWARD_COMMITTED_KEYFRAME_LOCAL_OVERRUN_MAX_ROWS,
+	DOWNWARD_KEYFRAME_MIN_OVERLAP_DIVISOR, DOWNWARD_KEYFRAME_SEARCH_LIMIT,
+	DOWNWARD_KEYFRAME_SEARCH_MAX_TOLERANCE_ROWS, DOWNWARD_KEYFRAME_SEARCH_MOTION_TOLERANCE_ROWS,
+	DOWNWARD_SEARCH_MOTION_TOLERANCE_ROWS, DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS, DirectionMatch,
+	DirectionMatchEval, DownwardRegistration, DownwardSampleMatch, DownwardSampleMatchSource,
+	DownwardViewportCandidate, DownwardViewportCandidateSource, DownwardViewportResolution,
+	FALLBACK_DOWNWARD_GROWTH_MAX_ROWS, FALLBACK_DOWNWARD_GROWTH_MIN_ROWS, GrowthCommit,
+	INITIAL_DOWNWARD_MAX_MOTION_ROWS, LOCAL_DOWNWARD_SEARCH_MAX_TOLERANCE_ROWS,
+	LOCAL_DOWNWARD_SEARCH_MOTION_TOLERANCE_ROWS, MotionObservation, OverlapSearchConfig,
+	OverlapSearchRange, PREVIEW_ONLY_LOCAL_NEAR_CONTINUITY_ROWS,
+	PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS, PREVIEW_ONLY_LOCAL_RECOVERY_MAX_TOLERANCE_ROWS,
+	REPEATED_PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS, RangeInclusive, Result, RgbaImage,
+	ScrollDirection, ScrollObserveOutcome, ScrollSession,
+	TINY_PREVIEW_ONLY_LOCAL_BURST_RECOVERY_MAX_MOTION_ROWS,
+	UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS, eyre,
+};
 
 impl ScrollSession {
 	pub(super) fn evaluate_reference_overlap_direction(
@@ -14,7 +31,7 @@ impl ScrollSession {
 		let preferred_range =
 			self.preferred_motion_range_from_hint(previous, next, motion_rows_hint, config)?;
 
-		evaluate_overlap_direction(previous, next, direction, preferred_range, config)
+		support::evaluate_overlap_direction(previous, next, direction, preferred_range, config)
 	}
 
 	pub(super) fn evaluate_reference_downward_registration(
@@ -51,8 +68,8 @@ impl ScrollSession {
 	) -> (DownwardRegistration, Option<&'static str>) {
 		let config = OverlapSearchConfig::default();
 		let max_overlap = previous.height().min(next.height());
-		let max_motion_rows = max_directional_motion_rows(previous, next, config);
-		let mut candidates = collect_overlap_direction_matches_in_ranges(
+		let max_motion_rows = support::max_directional_motion_rows(previous, next, config);
+		let mut candidates = support::collect_overlap_direction_matches_in_ranges(
 			previous,
 			next,
 			ScrollDirection::Down,
@@ -65,7 +82,7 @@ impl ScrollSession {
 			&& allow_full_range_fallback
 			&& (motion_rows_hint.is_none() || self.transient_burst_search_enabled)
 		{
-			candidates = collect_overlap_direction_matches(
+			candidates = support::collect_overlap_direction_matches(
 				previous,
 				next,
 				ScrollDirection::Down,
@@ -76,14 +93,14 @@ impl ScrollSession {
 		}
 
 		candidates.retain(|matched| {
-			downward_registration_has_meaningful_overlap(*matched, max_overlap, config)
+			support::downward_registration_has_meaningful_overlap(*matched, max_overlap, config)
 		});
 
 		if candidates.is_empty() {
 			no_match_reason.get_or_insert("insufficient_overlap");
 		}
 
-		let classification = classify_downward_registration_candidates(&candidates);
+		let classification = support::classify_downward_registration_candidates(&candidates);
 		let upward_veto = self.evaluate_reference_overlap_direction(
 			previous,
 			next,
@@ -113,9 +130,9 @@ impl ScrollSession {
 	) -> DownwardRegistration {
 		let config = OverlapSearchConfig::default();
 		let max_overlap = previous.height().min(next.height());
-		let max_motion_rows = max_directional_motion_rows(previous, next, config);
+		let max_motion_rows = support::max_directional_motion_rows(previous, next, config);
 		let mut candidates = preferred_range.as_ref().map_or_else(Vec::new, |range| {
-			collect_overlap_direction_matches(
+			support::collect_overlap_direction_matches(
 				previous,
 				next,
 				ScrollDirection::Down,
@@ -129,7 +146,7 @@ impl ScrollSession {
 			&& allow_full_range_fallback
 			&& (motion_rows_hint.is_none() || self.transient_burst_search_enabled)
 		{
-			candidates = collect_overlap_direction_matches(
+			candidates = support::collect_overlap_direction_matches(
 				previous,
 				next,
 				ScrollDirection::Down,
@@ -140,14 +157,14 @@ impl ScrollSession {
 		}
 
 		candidates.retain(|matched| {
-			downward_registration_has_meaningful_overlap(*matched, max_overlap, config)
+			support::downward_registration_has_meaningful_overlap(*matched, max_overlap, config)
 		});
 
 		if candidates.is_empty() {
 			no_match_reason.get_or_insert("insufficient_overlap");
 		}
 
-		let classification = classify_downward_registration_candidates(&candidates);
+		let classification = support::classify_downward_registration_candidates(&candidates);
 		let upward_veto = self.evaluate_reference_overlap_direction(
 			previous,
 			next,
@@ -251,7 +268,7 @@ impl ScrollSession {
 		config: OverlapSearchConfig,
 	) -> Option<RangeInclusive<u32>> {
 		let transient_motion_rows_hint = self.normalized_transient_motion_rows_hint()?;
-		let max_motion_rows = max_directional_motion_rows(previous, next, config);
+		let max_motion_rows = support::max_directional_motion_rows(previous, next, config);
 
 		if transient_motion_rows_hint == 0 || transient_motion_rows_hint > max_motion_rows {
 			return None;
@@ -277,7 +294,7 @@ impl ScrollSession {
 		motion_rows_hint: Option<u32>,
 		config: OverlapSearchConfig,
 	) -> Option<RangeInclusive<u32>> {
-		let max_motion_rows = max_directional_motion_rows(previous, next, config);
+		let max_motion_rows = support::max_directional_motion_rows(previous, next, config);
 
 		if let Some(last_growth_rows) = motion_rows_hint {
 			let tolerance = (last_growth_rows / 2)
@@ -325,16 +342,21 @@ impl ScrollSession {
 		allow_downward_full_range_fallback: bool,
 	) -> DirectionMatchEval {
 		let config = OverlapSearchConfig::default();
-		let max_motion_rows = max_directional_motion_rows(previous, next, config);
+		let max_motion_rows = support::max_directional_motion_rows(previous, next, config);
 		let preferred_only_match = preferred_range.and_then(|range| {
-			evaluate_overlap_direction(previous, next, direction, range.as_range(), config)
+			support::evaluate_overlap_direction(previous, next, direction, range.as_range(), config)
 		});
 		let mut final_match = preferred_only_match;
 		let mut used_full_range_fallback = false;
 
 		if final_match.is_none() && allow_downward_full_range_fallback {
-			final_match =
-				evaluate_overlap_direction(previous, next, direction, 1..=max_motion_rows, config);
+			final_match = support::evaluate_overlap_direction(
+				previous,
+				next,
+				direction,
+				1..=max_motion_rows,
+				config,
+			);
 			used_full_range_fallback = final_match.is_some();
 		}
 
@@ -358,7 +380,7 @@ impl ScrollSession {
 		let preferred_range =
 			self.preferred_motion_range_from_hint(previous, next, motion_rows_hint, config)?;
 
-		evaluate_overlap_direction(previous, next, direction, preferred_range, config)
+		support::evaluate_overlap_direction(previous, next, direction, preferred_range, config)
 	}
 
 	pub(super) fn preferred_motion_range_from_hint(
@@ -368,7 +390,7 @@ impl ScrollSession {
 		motion_rows_hint: Option<u32>,
 		config: OverlapSearchConfig,
 	) -> Option<RangeInclusive<u32>> {
-		let max_motion_rows = max_directional_motion_rows(previous, next, config);
+		let max_motion_rows = support::max_directional_motion_rows(previous, next, config);
 
 		if let Some(last_growth_rows) = motion_rows_hint {
 			let tolerance = DOWNWARD_SEARCH_MOTION_TOLERANCE_ROWS.min(max_motion_rows);
@@ -388,7 +410,7 @@ impl ScrollSession {
 		motion_rows_hint: Option<u32>,
 		config: OverlapSearchConfig,
 	) -> Option<RangeInclusive<u32>> {
-		let max_motion_rows = max_directional_motion_rows(previous, next, config);
+		let max_motion_rows = support::max_directional_motion_rows(previous, next, config);
 
 		if let Some(last_growth_rows) = motion_rows_hint {
 			let tolerance = (last_growth_rows / 2)
@@ -479,7 +501,7 @@ impl ScrollSession {
 		let candidates_before_prune = candidates.clone();
 
 		self.last_downward_viewport_candidates_before_prune =
-			Some(format_downward_viewport_candidates(&candidates));
+			Some(support::format_downward_viewport_candidates(&candidates));
 
 		self.prune_committed_keyframe_candidates_outside_local_continuity(&mut candidates);
 		self.restore_repeated_small_preview_only_local_candidate_after_empty_prune(
@@ -505,9 +527,9 @@ impl ScrollSession {
 
 		self.last_downward_viewport_candidate_count = Some(candidates.len());
 		self.last_downward_viewport_candidates_after_prune =
-			Some(format_downward_viewport_candidates(&candidates));
+			Some(support::format_downward_viewport_candidates(&candidates));
 
-		select_downward_viewport_candidate(&mut candidates)
+		support::select_downward_viewport_candidate(&mut candidates)
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -853,7 +875,7 @@ impl ScrollSession {
 		let has_committed_candidate = candidates.iter().any(|candidate| {
 			candidate.source == DownwardViewportCandidateSource::CommittedKeyframe
 		});
-		let mut local_anchor = best_local_downward_viewport_candidate(candidates);
+		let mut local_anchor = support::best_local_downward_viewport_candidate(candidates);
 
 		if local_anchor.is_some_and(|anchor| {
 			has_committed_candidate
@@ -875,7 +897,7 @@ impl ScrollSession {
 				candidate.source != DownwardViewportCandidateSource::PreviewOnlyLocalSample
 			});
 
-			local_anchor = best_local_downward_viewport_candidate(candidates);
+			local_anchor = support::best_local_downward_viewport_candidate(candidates);
 		}
 
 		let Some(local_anchor) = local_anchor else {
@@ -1668,7 +1690,7 @@ impl ScrollSession {
 			Some(decision_source),
 		);
 
-		Some(preview_update_outcome(preview_changed))
+		Some(support::preview_update_outcome(preview_changed))
 	}
 
 	pub(super) fn fallback_downward_growth_exceeds_continuity_budget(
@@ -1706,7 +1728,7 @@ impl ScrollSession {
 
 		self.collect_fallback_downward_viewport_candidates(&frame, &mut candidates);
 
-		match select_downward_viewport_candidate(&mut candidates) {
+		match support::select_downward_viewport_candidate(&mut candidates) {
 			DownwardViewportResolution::NoMatch => {
 				self.refresh_preview_only_downward_local_sample(
 					&frame,
@@ -1721,7 +1743,7 @@ impl ScrollSession {
 					Some("no_committed_keyframe_match"),
 				);
 
-				Ok(preview_update_outcome(preview_changed))
+				Ok(support::preview_update_outcome(preview_changed))
 			},
 			DownwardViewportResolution::Selected(candidate) => {
 				if self.fallback_downward_growth_exceeds_continuity_budget(candidate.viewport_top_y)
@@ -1744,7 +1766,7 @@ impl ScrollSession {
 						Some("fallback_committed_candidate_exceeded_local_continuity_budget"),
 					);
 
-					return Ok(preview_update_outcome(preview_changed));
+					return Ok(support::preview_update_outcome(preview_changed));
 				}
 
 				if let Some(outcome) = self
@@ -1785,7 +1807,7 @@ impl ScrollSession {
 					Some(preferred.competing_block_reason(competing)),
 				);
 
-				Ok(preview_update_outcome(preview_changed))
+				Ok(support::preview_update_outcome(preview_changed))
 			},
 		}
 	}
@@ -1801,13 +1823,13 @@ impl ScrollSession {
 		effective_motion_rows_hint: Option<u32>,
 		previous_motion_rows_hint: Option<u32>,
 	) -> Result<ScrollObserveOutcome> {
-		let fingerprint = scroll_capture_fingerprint(&frame);
-		let strip = crop_bottom_rows(&frame, growth_rows)
+		let fingerprint = support::scroll_capture_fingerprint(&frame);
+		let strip = support::crop_bottom_rows(&frame, growth_rows)
 			.ok_or_else(|| eyre::eyre!("failed to extract growth strip"))?;
-		let preview_strip = resize_strip_to_preview_width(&strip, self.preview_width_px);
+		let preview_strip = support::resize_strip_to_preview_width(&strip, self.preview_width_px);
 
-		self.export_image = append_vertical_image(&self.export_image, &strip)?;
-		self.preview_image = append_vertical_image(&self.preview_image, &preview_strip)?;
+		self.export_image = support::append_vertical_image(&self.export_image, &strip)?;
+		self.preview_image = support::append_vertical_image(&self.preview_image, &preview_strip)?;
 
 		self.bottom_segments.push(strip);
 		self.bottom_preview_segments.push(preview_strip);
@@ -1816,7 +1838,10 @@ impl ScrollSession {
 		self.observed_viewport_top_y = viewport_top_y;
 
 		self.record_last_sample(&frame, fingerprint);
-		self.record_last_downward_observed_sample(&frame, scroll_capture_fingerprint(&frame));
+		self.record_last_downward_observed_sample(
+			&frame,
+			support::scroll_capture_fingerprint(&frame),
+		);
 
 		if self.should_seed_preview_only_local_after_observed_burst_commit(
 			decision_source,
@@ -1901,7 +1926,7 @@ impl ScrollSession {
 			ordered.push(strip);
 		}
 
-		stack_vertical_images(&ordered)
+		support::stack_vertical_images(&ordered)
 	}
 
 	pub(super) fn rebuild_preview_image(&self) -> Result<RgbaImage> {
@@ -1913,6 +1938,6 @@ impl ScrollSession {
 			ordered.push(strip);
 		}
 
-		stack_vertical_images(&ordered)
+		support::stack_vertical_images(&ordered)
 	}
 }

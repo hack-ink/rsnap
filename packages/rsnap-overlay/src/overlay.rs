@@ -76,7 +76,6 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::{Deserialize, Serialize};
 use wgpu::Adapter;
 use wgpu::AddressMode;
-use wgpu::BindGroup;
 use wgpu::BindGroupLayout;
 use wgpu::BindingResource;
 use wgpu::BindingType;
@@ -125,6 +124,8 @@ use wgpu::Trace;
 use wgpu::{self};
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use winit::event::KeyEvent;
+use winit::event::Modifiers;
+use winit::window::Window;
 use winit::{
 	dpi::PhysicalSize,
 	event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
@@ -161,8 +162,6 @@ use self::trace_recording::ScrollCaptureTraceInputRecord;
 use self::trace_recording::{
 	ScrollCaptureTraceFrameRecord, ScrollCaptureTraceRecorder, ScrollCaptureTraceSessionSnapshot,
 };
-#[cfg(target_os = "macos")]
-use crate::backend;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::scroll_capture::{self, ScrollDirection, ScrollObserveOutcome, ScrollSession};
@@ -2384,7 +2383,7 @@ impl OverlaySession {
 		self.toolbar_state.drag_anchor = None;
 	}
 
-	fn handle_modifiers_changed(&mut self, modifiers: &winit::event::Modifiers) -> OverlayControl {
+	fn handle_modifiers_changed(&mut self, modifiers: &Modifiers) -> OverlayControl {
 		self.keyboard_modifiers = modifiers.state();
 
 		OverlayControl::Continue
@@ -5211,7 +5210,7 @@ fn macos_activate_app() {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_make_window_key(window: &winit::window::Window) {
+fn macos_make_window_key(window: &Window) {
 	let Ok(handle) = window.window_handle() else {
 		return;
 	};
@@ -5279,7 +5278,7 @@ fn macos_post_scroll_wheel_event(
 }
 
 #[cfg(target_os = "macos")]
-fn macos_configure_overlay_window_mouse_moved_events(window: &winit::window::Window) {
+fn macos_configure_overlay_window_mouse_moved_events(window: &Window) {
 	let Ok(handle) = window.window_handle() else {
 		return;
 	};
@@ -5308,7 +5307,7 @@ fn macos_configure_overlay_window_mouse_moved_events(window: &winit::window::Win
 
 #[cfg(target_os = "macos")]
 fn macos_configure_hud_window(
-	window: &winit::window::Window,
+	window: &Window,
 	blur_enabled: bool,
 	blur_amount: f32,
 	corner_radius_points: Option<f64>,
