@@ -40,20 +40,30 @@ pub(super) struct SettingsUiSectionDefaults {
 	hotkeys: bool,
 	capture: bool,
 	output: bool,
-	advanced: bool,
 	about: bool,
 }
 impl SettingsUiSectionDefaults {
 	pub(super) const fn standard() -> Self {
 		Self {
+			permissions: false,
+			general: true,
+			overlay: true,
+			hotkeys: true,
+			capture: true,
+			output: true,
+			about: true,
+		}
+	}
+
+	pub(super) const fn permissions_focused() -> Self {
+		Self {
 			permissions: true,
 			general: true,
 			overlay: true,
-			hotkeys: false,
-			capture: false,
-			output: false,
-			advanced: false,
-			about: false,
+			hotkeys: true,
+			capture: true,
+			output: true,
+			about: true,
 		}
 	}
 
@@ -65,20 +75,18 @@ impl SettingsUiSectionDefaults {
 			hotkeys: true,
 			capture: true,
 			output: true,
-			advanced: true,
 			about: true,
 		}
 	}
 
 	pub(super) const fn hotkeys_expanded() -> Self {
 		Self {
-			permissions: true,
-			general: true,
-			overlay: true,
+			permissions: false,
+			general: false,
+			overlay: false,
 			hotkeys: true,
 			capture: false,
 			output: false,
-			advanced: false,
 			about: false,
 		}
 	}
@@ -114,15 +122,6 @@ pub(super) fn with_settings_density<R>(
 		add_contents(ui)
 	})
 	.inner
-}
-
-pub(super) fn render_all_sections(
-	host: &mut impl SettingsUiHost,
-	ui: &mut Ui,
-	ctx: &Context,
-	settings: &mut AppSettings,
-) -> bool {
-	render_all_sections_with_defaults(host, ui, ctx, settings, SettingsUiSectionDefaults::default())
 }
 
 pub(super) fn render_all_sections_with_defaults(
@@ -171,14 +170,8 @@ pub(super) fn render_all_sections_with_defaults(
 
 	ui.add_space(SETTINGS_SECTION_GAP);
 
-	CollapsingHeader::new("Advanced").default_open(defaults.advanced).show(ui, |ui| {
-		ui.label("Advanced options are coming soon.");
-	});
-
-	ui.add_space(SETTINGS_SECTION_GAP);
-
 	CollapsingHeader::new("About").default_open(defaults.about).show(ui, |ui| {
-		ui.label(format!("rsnap {}", env!("CARGO_PKG_VERSION")));
+		render_about_section(ui);
 	});
 
 	changed
@@ -467,6 +460,25 @@ fn render_output_section(combo_width: f32, ui: &mut Ui, settings: &mut AppSettin
 	));
 
 	changed
+}
+
+fn render_about_section(ui: &mut Ui) {
+	ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+	ui.small("Fast screenshots for macOS, built in Rust.");
+	ui.scope(|ui| {
+		ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
+		ui.hyperlink_to("Repository: github.com/hack-ink/rsnap", env!("CARGO_PKG_REPOSITORY"));
+		ui.hyperlink_to("X: @YvetteCipher", "https://x.com/YvetteCipher");
+	});
+	ui.small(
+		"Star the repo, follow Yvette on X, or reach out there if you want to sponsor development.",
+	);
+	ui.label(
+		egui::RichText::new("Following on X also helps Yvette qualify for X revenue share.")
+			.small()
+			.strong()
+			.color(ui.visuals().warn_fg_color),
+	);
 }
 
 fn render_general_section(
@@ -906,5 +918,36 @@ fn toolbar_placement_label(placement: ToolbarPlacement) -> &'static str {
 	match placement {
 		ToolbarPlacement::Top => "Top",
 		ToolbarPlacement::Bottom => "Bottom",
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::SettingsUiSectionDefaults;
+
+	#[test]
+	fn standard_defaults_focus_regular_capture_sections() {
+		let defaults = SettingsUiSectionDefaults::standard();
+
+		assert!(!defaults.permissions);
+		assert!(defaults.general);
+		assert!(defaults.overlay);
+		assert!(defaults.hotkeys);
+		assert!(defaults.capture);
+		assert!(defaults.output);
+		assert!(defaults.about);
+	}
+
+	#[test]
+	fn permissions_focused_defaults_expand_permissions_without_collapsing_other_sections() {
+		let defaults = SettingsUiSectionDefaults::permissions_focused();
+
+		assert!(defaults.permissions);
+		assert!(defaults.general);
+		assert!(defaults.overlay);
+		assert!(defaults.hotkeys);
+		assert!(defaults.capture);
+		assert!(defaults.output);
+		assert!(defaults.about);
 	}
 }
