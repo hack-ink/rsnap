@@ -1,6 +1,11 @@
 pub mod bench_support;
+
 mod downward_resolution;
 mod support;
+
+pub(crate) use self::support::{
+	compose_provisional_preview_image, scroll_capture_fingerprint, scroll_capture_fingerprint_delta,
+};
 
 use std::ops::RangeInclusive;
 
@@ -9,22 +14,6 @@ use image::RgbaImage;
 
 #[cfg(test)]
 use self::support::detect_vertical_overlap;
-use self::support::{
-	append_vertical_image, best_local_downward_viewport_candidate,
-	classify_downward_registration_candidates, classify_vision_downward_sample_motion_against,
-	collect_overlap_direction_matches, collect_overlap_direction_matches_in_ranges,
-	crop_bottom_rows, downward_registration_has_meaningful_overlap,
-	estimate_pairwise_downward_shift_rows, evaluate_overlap_direction, evenly_spaced_sample,
-	format_downward_viewport_candidates, informative_column_span, max_directional_motion_rows,
-	preferred_upward_input_override_match, preferred_upward_override_match, preview_update_outcome,
-	resize_strip_to_preview_width, resume_direct_match_is_trustworthy,
-	rewind_active_upward_motion_should_fail_closed, rewind_active_upward_override_match,
-	select_downward_viewport_candidate, stack_vertical_images,
-	upward_confirmation_match_for_downward_input,
-};
-pub(crate) use self::support::{
-	compose_provisional_preview_image, scroll_capture_fingerprint, scroll_capture_fingerprint_delta,
-};
 
 pub(crate) const PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS: u32 = 24;
 pub(crate) const PREVIEW_ONLY_LOCAL_RECOVERY_MAX_TOLERANCE_ROWS: u32 = 12;
@@ -74,7 +63,7 @@ impl ScrollFrameFingerprint {
 	pub(crate) fn from_image(image: &RgbaImage) -> Self {
 		let width = image.width().max(1);
 		let height = image.height().max(1);
-		let informative_span = informative_column_span(image, 0, height);
+		let informative_span = self::support::informative_column_span(image, 0, height);
 		let informative_left =
 			informative_span.map_or(0, |span| span.start_x.min(width.saturating_sub(1)));
 		let informative_right = informative_span
@@ -91,10 +80,15 @@ impl ScrollFrameFingerprint {
 			Vec::with_capacity((FINGERPRINT_GRID_COLUMNS * FINGERPRINT_GRID_ROWS) as usize);
 
 		for row in 0..FINGERPRINT_GRID_ROWS {
-			let y = evenly_spaced_sample(top, bottom, row, FINGERPRINT_GRID_ROWS);
+			let y = self::support::evenly_spaced_sample(top, bottom, row, FINGERPRINT_GRID_ROWS);
 
 			for column in 0..FINGERPRINT_GRID_COLUMNS {
-				let x = evenly_spaced_sample(left, right, column, FINGERPRINT_GRID_COLUMNS);
+				let x = self::support::evenly_spaced_sample(
+					left,
+					right,
+					column,
+					FINGERPRINT_GRID_COLUMNS,
+				);
 				let pixel = image.get_pixel(x, y).0;
 
 				samples.push(pixel);
@@ -260,7 +254,8 @@ pub(crate) struct ScrollSession {
 impl ScrollSession {
 	pub(crate) fn new(base_frame: RgbaImage, preview_width_px: u32) -> Result<Self> {
 		let fingerprint = scroll_capture_fingerprint(&base_frame);
-		let anchor_preview = resize_strip_to_preview_width(&base_frame, preview_width_px.max(1));
+		let anchor_preview =
+			self::support::resize_strip_to_preview_width(&base_frame, preview_width_px.max(1));
 
 		Ok(Self {
 			anchor_frame: base_frame.clone(),
@@ -390,9 +385,10 @@ impl ScrollSession {
 			return Ok(ScrollObserveOutcome::NoChange);
 		}
 
-		let Some(matched) =
-			classify_vision_downward_sample_motion_against(&previous_worker_frame, &frame)
-		else {
+		let Some(matched) = self::support::classify_vision_downward_sample_motion_against(
+			&previous_worker_frame,
+			&frame,
+		) else {
 			self.update_worker_pairwise_reference_frame(frame, fingerprint);
 			self.log_decision(
 				"scroll_capture.worker_pairwise_no_change",
@@ -406,7 +402,7 @@ impl ScrollSession {
 			return Ok(ScrollObserveOutcome::NoChange);
 		};
 		let corroborated_shift_rows =
-			estimate_pairwise_downward_shift_rows(&previous_worker_frame, &frame);
+			self::support::estimate_pairwise_downward_shift_rows(&previous_worker_frame, &frame);
 
 		if matched.motion_rows >= WORKER_PAIRWISE_CORROBORATION_MIN_ROWS
 			&& corroborated_shift_rows.is_none_or(|estimated| {
@@ -747,11 +743,12 @@ impl ScrollSession {
 						self.effective_motion_rows_hint(),
 					);
 
-					if let Some(up_match) = upward_confirmation_match_for_downward_input(
-						committed_up_match,
-						committed_down_match,
-						self.current_viewport_top_y > 0,
-					) {
+					if let Some(up_match) =
+						self::support::upward_confirmation_match_for_downward_input(
+							committed_up_match,
+							committed_down_match,
+							self.current_viewport_top_y > 0,
+						) {
 						return Ok(self.fail_closed_downward_non_monotonic_frame(
 							preview_changed,
 							self.last_sample_frame.clone(),
@@ -821,10 +818,11 @@ impl ScrollSession {
 				&diagnostics,
 			));
 		}
-		if let Some((up_match, from_committed)) = preferred_upward_input_override_match(
-			diagnostics.sample_override_match,
-			diagnostics.committed_override_match,
-		) {
+		if let Some((up_match, from_committed)) =
+			self::support::preferred_upward_input_override_match(
+				diagnostics.sample_override_match,
+				diagnostics.committed_override_match,
+			) {
 			let (op, block_reason) = if from_committed {
 				(
 					"scroll_capture.rewind_armed_from_committed_match",
@@ -870,7 +868,7 @@ impl ScrollSession {
 		sample_motion: Option<MotionObservation>,
 		diagnostics: &UpwardInputDiagnostics,
 	) -> Option<ScrollObserveOutcome> {
-		if rewind_active_upward_motion_should_fail_closed(
+		if self::support::rewind_active_upward_motion_should_fail_closed(
 			diagnostics.sample_override_match,
 			diagnostics.committed_override_match,
 			diagnostics.committed_down_match_eval.final_match,
@@ -895,7 +893,7 @@ impl ScrollSession {
 			));
 		}
 
-		rewind_active_upward_override_match(
+		self::support::rewind_active_upward_override_match(
 			diagnostics.sample_override_match,
 			diagnostics.committed_override_match,
 			self.resume_frontier_top_y.is_some(),
@@ -946,10 +944,11 @@ impl ScrollSession {
 			return ScrollObserveOutcome::UnsupportedDirection { direction: ScrollDirection::Up };
 		}
 
-		if let Some((up_match, from_committed)) = preferred_upward_input_override_match(
-			diagnostics.sample_override_match,
-			diagnostics.committed_override_match,
-		) {
+		if let Some((up_match, from_committed)) =
+			self::support::preferred_upward_input_override_match(
+				diagnostics.sample_override_match,
+				diagnostics.committed_override_match,
+			) {
 			let (op, block_reason) = if from_committed {
 				(
 					"scroll_capture.rewind_armed_from_committed_match",
@@ -1017,11 +1016,11 @@ impl ScrollSession {
 		);
 
 		UpwardInputDiagnostics {
-			sample_override_match: preferred_upward_override_match(
+			sample_override_match: self::support::preferred_upward_override_match(
 				sample_up_match_eval.final_match,
 				sample_down_match_eval.final_match,
 			),
-			committed_override_match: preferred_upward_override_match(
+			committed_override_match: self::support::preferred_upward_override_match(
 				committed_up_match_eval.final_match,
 				committed_down_match_eval.final_match,
 			),
@@ -1050,7 +1049,7 @@ impl ScrollSession {
 		}
 
 		let config = OverlapSearchConfig::default();
-		let max_motion_rows = max_directional_motion_rows(previous, next, config);
+		let max_motion_rows = self::support::max_directional_motion_rows(previous, next, config);
 		let fallback_range = Some(OverlapSearchRange { start: 1, end: max_motion_rows });
 		let fallback_eval = self.diagnose_reference_overlap_direction_with_preferred_range(
 			previous,
@@ -1360,7 +1359,7 @@ impl ScrollSession {
 			Some(block_reason),
 		);
 
-		preview_update_outcome(preview_changed)
+		self::support::preview_update_outcome(preview_changed)
 	}
 
 	fn observe_upward_rewind(&mut self, motion_rows: u32) {
@@ -1460,7 +1459,7 @@ impl ScrollSession {
 					Some(preferred.competing_block_reason(competing)),
 				);
 
-				return Ok(preview_update_outcome(preview_changed));
+				return Ok(self::support::preview_update_outcome(preview_changed));
 			},
 		};
 
@@ -1614,7 +1613,7 @@ impl ScrollSession {
 			Some(block_reason),
 		);
 
-		Ok(preview_update_outcome(preview_changed))
+		Ok(self::support::preview_update_outcome(preview_changed))
 	}
 
 	fn block_downward_growth_candidate(
@@ -1641,7 +1640,7 @@ impl ScrollSession {
 			Some(block_reason),
 		);
 
-		Ok(preview_update_outcome(preview_changed))
+		Ok(self::support::preview_update_outcome(preview_changed))
 	}
 
 	fn should_fail_closed_tiny_observed_recovery_in_burst(
@@ -1796,7 +1795,7 @@ impl ScrollSession {
 			.observed_viewport_top_y
 			.saturating_add(i32::try_from(motion_rows).unwrap_or_default());
 		let Some(resume_frontier_top_y) = self.resume_frontier_top_y else {
-			return Ok(preview_update_outcome(preview_changed));
+			return Ok(self::support::preview_update_outcome(preview_changed));
 		};
 		let frame_reacquires_last_committed_viewport =
 			self.frame_reacquires_last_committed_viewport(&frame);
@@ -1858,7 +1857,7 @@ impl ScrollSession {
 				Some("resume_active_candidate_reached_frontier_without_residual_growth"),
 			);
 
-			return Ok(preview_update_outcome(preview_changed));
+			return Ok(self::support::preview_update_outcome(preview_changed));
 		}
 
 		self.resolve_resume_frontier_direct_match(
@@ -1895,7 +1894,7 @@ impl ScrollSession {
 			Some("resume_active_reacquired_last_committed_frame"),
 		);
 
-		Some(preview_update_outcome(preview_changed))
+		Some(self::support::preview_update_outcome(preview_changed))
 	}
 
 	fn block_resume_frontier_before_growth(
@@ -1918,7 +1917,7 @@ impl ScrollSession {
 				Some("resume_active_frame_matches_last_committed_frame"),
 			);
 
-			return Some(preview_update_outcome(preview_changed));
+			return Some(self::support::preview_update_outcome(preview_changed));
 		}
 		if self.resume_frontier_requires_reacquire {
 			return None;
@@ -1935,7 +1934,7 @@ impl ScrollSession {
 				Some("resume_active_candidate_observed_viewport_still_below_frontier"),
 			);
 
-			return Some(preview_update_outcome(preview_changed));
+			return Some(self::support::preview_update_outcome(preview_changed));
 		}
 
 		None
@@ -1972,8 +1971,8 @@ impl ScrollSession {
 			ScrollDirection::Down,
 			direct_match_hint_rows,
 		);
-		let trusted_committed_down_match =
-			raw_committed_down_match.filter(|matched| resume_direct_match_is_trustworthy(*matched));
+		let trusted_committed_down_match = raw_committed_down_match
+			.filter(|matched| self::support::resume_direct_match_is_trustworthy(*matched));
 		let committed_up_match = self.evaluate_reference_overlap_direction_preferred_only(
 			&self.last_committed_frame,
 			&frame,
@@ -2070,7 +2069,7 @@ impl ScrollSession {
 			Some(block_reason),
 		);
 
-		preview_update_outcome(preview_changed)
+		self::support::preview_update_outcome(preview_changed)
 	}
 
 	fn block_resume_frontier_without_direct_match(
@@ -2223,7 +2222,7 @@ impl ScrollSession {
 				Some("bootstrap_growth_exceeded_initial_growth_cap"),
 			);
 
-			return Ok(preview_update_outcome(preview_changed));
+			return Ok(self::support::preview_update_outcome(preview_changed));
 		}
 		if growth_rows == 0 {
 			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
@@ -2243,7 +2242,7 @@ impl ScrollSession {
 				block_reason,
 			);
 
-			return Ok(preview_update_outcome(preview_changed));
+			return Ok(self::support::preview_update_outcome(preview_changed));
 		}
 
 		let max_growth_rows = self.max_downward_growth_rows_for_frame(&frame);
@@ -2260,7 +2259,7 @@ impl ScrollSession {
 				Some("candidate_viewport_growth_exceeded_monotonic_cap"),
 			);
 
-			return Ok(preview_update_outcome(preview_changed));
+			return Ok(self::support::preview_update_outcome(preview_changed));
 		}
 
 		self.log_decision(
@@ -2690,7 +2689,7 @@ impl ScrollSession {
 		next: &RgbaImage,
 		config: OverlapSearchConfig,
 	) -> Option<RangeInclusive<u32>> {
-		let max_motion_rows = max_directional_motion_rows(previous, next, config);
+		let max_motion_rows = self::support::max_directional_motion_rows(previous, next, config);
 
 		if max_motion_rows == 0 {
 			return None;

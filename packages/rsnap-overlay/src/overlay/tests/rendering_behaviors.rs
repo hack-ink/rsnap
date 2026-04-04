@@ -1,15 +1,31 @@
-#![allow(clippy::wildcard_imports)]
+use egui::Id;
+use egui::LayerId;
+use egui::Order;
+use egui::Ui;
+use image::RgbaImage;
 
-use super::*;
 use crate::OverlayControl;
+#[allow(unused_imports)]
+use crate::overlay::tests::{
+	self, ElementState, FrozenCaptureSource, FrozenSelectionDragState, FrozenToolbarState,
+	FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, MonitorRect,
+	MonitorRectPoints, MouseButton, OverlayMode, OverlaySession, OverlayState, PngAction, Pos2,
+	RawInput, Rect, RectPoints, Rgba, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
+	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
+	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, ScrollSession, SelectionDashedBorderCache,
+	SelectionDashedBorderMetrics, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
+	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
+	WorkerErrorSource, WorkerResponse, overlay,
+};
 
 #[test]
 fn pending_freeze_capture_dispatches_even_with_seeded_preview() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
 
 	session.pending_freeze_capture = Some(monitor);
 
@@ -19,11 +35,11 @@ fn pending_freeze_capture_dispatches_even_with_seeded_preview() {
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn pending_freeze_capture_waits_for_empty_frozen_image_off_macos() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
 
 	session.pending_freeze_capture = Some(monitor);
 
@@ -32,14 +48,14 @@ fn pending_freeze_capture_waits_for_empty_frozen_image_off_macos() {
 
 #[test]
 fn frozen_final_capture_ready_requires_no_pending_or_inflight_capture() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
 
 	assert!(!session.frozen_final_capture_ready());
 
-	session.state.finish_freeze(monitor, test_frozen_image());
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
 
 	session.authoritative_frozen_capture_ready = true;
 
@@ -57,12 +73,12 @@ fn frozen_final_capture_ready_requires_no_pending_or_inflight_capture() {
 
 #[test]
 fn frozen_preview_does_not_become_final_ready_when_capture_tracking_clears_without_success() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 220, 180);
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
@@ -86,7 +102,7 @@ fn frozen_preview_does_not_become_final_ready_when_capture_tracking_clears_witho
 
 #[test]
 fn unrelated_worker_errors_do_not_clear_pending_freeze_capture_state() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
@@ -114,12 +130,12 @@ fn unrelated_worker_errors_do_not_clear_pending_freeze_capture_state() {
 
 #[test]
 fn frozen_selection_drag_starts_only_for_drag_region_inside_capture_rect() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(capture_rect);
 
@@ -143,12 +159,12 @@ fn frozen_selection_drag_starts_only_for_drag_region_inside_capture_rect() {
 
 #[test]
 fn frozen_selection_drag_updates_capture_rect_and_toolbar_position() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
@@ -168,12 +184,12 @@ fn frozen_selection_drag_updates_capture_rect_and_toolbar_position() {
 
 #[test]
 fn frozen_selection_drag_clamps_capture_rect_to_monitor_bounds() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
@@ -216,7 +232,7 @@ fn cropped_frozen_capture_image_uses_moved_capture_rect() {
 
 #[test]
 fn auto_center_frozen_capture_rect_recenters_detected_content() {
-	let monitor = test_monitor_with_scale(80, 60, 2_000);
+	let monitor = tests::test_monitor_with_scale(80, 60, 2_000);
 	let capture_rect = RectPoints::new(20, 16, 40, 24);
 	let mut image = RgbaImage::from_pixel(160, 120, Rgba([14, 16, 20, 255]));
 	let mut session = OverlaySession::new();
@@ -247,7 +263,7 @@ fn auto_center_frozen_capture_rect_recenters_detected_content() {
 
 #[test]
 fn frozen_toolbar_default_position_centers_on_capture_rect_midpoint() {
-	let monitor = test_monitor_with_scale(400, 300, 2_000);
+	let monitor = tests::test_monitor_with_scale(400, 300, 2_000);
 	let capture_rect = RectPoints::new(150, 100, 100, 60);
 	let session = OverlaySession::new();
 	let toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
@@ -261,7 +277,7 @@ fn frozen_toolbar_default_position_centers_on_capture_rect_midpoint() {
 
 #[test]
 fn auto_center_frozen_capture_rect_noops_for_uniform_crop() {
-	let monitor = test_monitor_with_scale(80, 60, 1_000);
+	let monitor = tests::test_monitor_with_scale(80, 60, 1_000);
 	let capture_rect = RectPoints::new(20, 16, 40, 24);
 	let mut session = OverlaySession::new();
 
@@ -304,12 +320,12 @@ fn global_left_release_stops_frozen_selection_drag() {
 
 #[test]
 fn scroll_capture_and_export_wait_for_authoritative_frozen_capture() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 220, 180);
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
 
 	session.authoritative_frozen_capture_ready = true;
 	session.state.frozen_capture_rect = Some(capture_rect);
@@ -690,7 +706,7 @@ fn selection_size_badge_rect_keeps_tiny_bottom_capture_visible() {
 
 #[test]
 fn frozen_selection_size_badge_falls_inside_when_default_bottom_toolbar_slot_overlaps() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let capture_rect_points = RectPoints::new(200, 180, 200, 300);
@@ -728,7 +744,7 @@ fn frozen_selection_size_badge_falls_inside_when_default_bottom_toolbar_slot_ove
 
 #[test]
 fn frozen_selection_size_badge_keeps_below_placement_after_toolbar_leaves_default_slot() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let capture_rect_points = RectPoints::new(200, 180, 200, 300);
@@ -810,7 +826,7 @@ fn frozen_top_toolbar_reserved_rect_uses_inside_fallback_slot() {
 
 #[test]
 fn overlay_session_computes_frozen_toolbar_reserved_rect_without_inline_toolbar_state() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let mut session = OverlaySession::new();
@@ -880,7 +896,7 @@ fn frozen_toolbar_reserved_rect_uses_overlay_viewport_size() {
 
 #[test]
 fn frozen_toolbar_reserved_rect_skips_hidden_toolbar_slot() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let mut session = OverlaySession::new();
@@ -894,7 +910,7 @@ fn frozen_toolbar_reserved_rect_skips_hidden_toolbar_slot() {
 
 #[test]
 fn frozen_toolbar_reserved_rect_waits_for_toolbar_birth_readiness() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let mut session = OverlaySession::new();
@@ -931,7 +947,7 @@ fn frozen_toolbar_reserved_rect_waits_for_toolbar_birth_readiness() {
 
 #[test]
 fn frozen_toolbar_ready_for_draw_ignores_preseeded_position_until_viewport_stabilizes() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(200, 180, 200, 300);
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
@@ -955,7 +971,7 @@ fn frozen_toolbar_ready_for_draw_ignores_preseeded_position_until_viewport_stabi
 
 #[test]
 fn frozen_toolbar_ready_for_draw_recovers_after_preseeded_position_is_sampled() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(200, 180, 200, 300);
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
@@ -974,8 +990,8 @@ fn frozen_toolbar_ready_for_draw_recovers_after_preseeded_position_is_sampled() 
 
 #[test]
 fn render_frozen_toolbar_ui_waits_for_readiness_before_first_visible_frame() {
-	let ctx = test_egui_context();
-	let monitor = test_monitor();
+	let ctx = tests::test_egui_context();
+	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(200, 180, 200, 300);
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
@@ -994,7 +1010,7 @@ fn render_frozen_toolbar_ui_waits_for_readiness_before_first_visible_frame() {
 		let mut hud_pill = None;
 		let _ = ctx.run_ui(
 			egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
-			|ui| {
+			|ui: &mut Ui| {
 				WindowRenderer::render_frozen_toolbar_ui(
 					ui.ctx(),
 					state,
@@ -1022,8 +1038,9 @@ fn render_frozen_toolbar_ui_waits_for_readiness_before_first_visible_frame() {
 	let state = &session.state;
 	let toolbar_state = &mut session.toolbar_state;
 	let mut hud_pill = None;
-	let _ =
-		ctx.run_ui(egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() }, |ui| {
+	let _ = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|ui: &mut Ui| {
 			WindowRenderer::render_frozen_toolbar_ui(
 				ui.ctx(),
 				state,
@@ -1039,14 +1056,15 @@ fn render_frozen_toolbar_ui_waits_for_readiness_before_first_visible_frame() {
 				None,
 				&mut hud_pill,
 			);
-		});
+		},
+	);
 
 	assert!(hud_pill.is_some(), "third frame should draw the stabilized toolbar");
 }
 
 #[test]
 fn frozen_toolbar_reserved_rect_restores_near_default_slot() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let capture_rect = Rect::from_min_size(Pos2::new(200.0, 180.0), Vec2::new(200.0, 300.0));
@@ -1081,7 +1099,7 @@ fn frozen_toolbar_reserved_rect_restores_near_default_slot() {
 
 #[test]
 fn frozen_toolbar_overlay_viewport_sample_recovers_from_toolbar_window_pollution() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let overlay_screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let toolbar_window_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(92.0, 26.0));
@@ -1217,7 +1235,7 @@ fn selection_size_badge_reserved_rect_accepts_overlap_when_no_non_overlapping_sl
 
 #[test]
 fn selection_size_badge_text_uses_monitor_pixel_dimensions() {
-	let monitor = test_monitor_with_scale(1_000, 800, 2_000);
+	let monitor = tests::test_monitor_with_scale(1_000, 800, 2_000);
 
 	assert_eq!(
 		WindowRenderer::selection_size_badge_text(monitor, RectPoints::new(10, 20, 120, 80)),
@@ -1227,7 +1245,7 @@ fn selection_size_badge_text_uses_monitor_pixel_dimensions() {
 
 #[test]
 fn selection_size_badge_layout_keeps_visual_bounds_within_right_edge_rect() {
-	let ctx = test_egui_context();
+	let ctx = tests::test_egui_context();
 	let layout = WindowRenderer::selection_size_badge_layout(&ctx, "240x160", HudTheme::Light, 1.0);
 	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 	let capture_rect = Rect::from_min_size(Pos2::new(760.0, 160.0), Vec2::new(40.0, 120.0));
@@ -1244,7 +1262,7 @@ fn selection_size_badge_layout_keeps_visual_bounds_within_right_edge_rect() {
 
 #[test]
 fn selection_size_badge_layout_keeps_visual_bounds_within_bottom_fallback_rect() {
-	let ctx = test_egui_context();
+	let ctx = tests::test_egui_context();
 	let layout = WindowRenderer::selection_size_badge_layout(&ctx, "240x160", HudTheme::Light, 1.0);
 	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 	let capture_rect = Rect::from_min_size(Pos2::new(120.0, 588.0), Vec2::new(140.0, 12.0));
@@ -1261,7 +1279,7 @@ fn selection_size_badge_layout_keeps_visual_bounds_within_bottom_fallback_rect()
 
 #[test]
 fn live_capture_size_badge_target_prefers_drag_then_hover_then_fullscreen() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let mut state = OverlayState::new();
@@ -1308,7 +1326,7 @@ fn live_capture_size_badge_target_prefers_drag_then_hover_then_fullscreen() {
 
 #[test]
 fn live_capture_size_badge_target_skips_fullscreen_fallback_while_primary_down() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let mut state = OverlayState::new();
@@ -1358,8 +1376,8 @@ fn frozen_capture_size_badge_target_keeps_tiny_frozen_rect() {
 
 #[test]
 fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
-	let ctx = test_egui_context();
-	let monitor = test_monitor();
+	let ctx = tests::test_egui_context();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let mut state = OverlayState::new();
@@ -1387,11 +1405,10 @@ fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
 
 #[test]
 fn render_live_capture_affordances_keep_hover_scrim_when_flow_disabled() {
-	let ctx = test_egui_context();
-	let layer =
-		egui::LayerId::new(egui::Order::Foreground, egui::Id::new("live-hover-flow-disabled"));
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("live-hover-flow-disabled"));
 	let painter = ctx.layer_painter(layer);
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let selection_dashed_border_cache = SelectionDashedBorderCache::default();
@@ -1420,7 +1437,7 @@ fn render_live_capture_affordances_keep_hover_scrim_when_flow_disabled() {
 
 #[test]
 fn live_capture_size_badge_target_keeps_tiny_drag_rect() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let mut state = OverlayState::new();
@@ -1501,11 +1518,11 @@ fn scroll_toolbar_compacts_to_two_buttons() {
 #[cfg(target_os = "macos")]
 #[test]
 fn drag_region_toolbar_size_stays_stable_while_final_capture_readiness_changes() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(120, 160, 320, 240));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
@@ -1535,7 +1552,7 @@ fn drag_region_toolbar_size_stays_stable_while_final_capture_readiness_changes()
 #[cfg(target_os = "macos")]
 #[test]
 fn drag_region_toolbar_recenters_when_auto_center_appears_after_preview_commit() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(120, 160, 320, 240);
 	let mut session = OverlaySession::new();
 
@@ -1551,7 +1568,7 @@ fn drag_region_toolbar_recenters_when_auto_center_appears_after_preview_commit()
 	assert!(!session.toolbar_state.auto_center_available);
 	assert_eq!(seeded_pos.x + seeded_size.x * 0.5, capture_midpoint_x);
 
-	session.commit_frozen_preview(monitor, test_frozen_image(), None);
+	session.commit_frozen_preview(monitor, tests::test_frozen_image(), None);
 	session.sync_frozen_toolbar_state();
 
 	let ready_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
@@ -1570,7 +1587,7 @@ fn drag_region_toolbar_recenters_when_auto_center_appears_after_preview_commit()
 #[cfg(target_os = "macos")]
 #[test]
 fn late_toolbar_width_change_preserves_manual_toolbar_move() {
-	let monitor = test_monitor();
+	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(120, 160, 320, 240);
 	let mut session = OverlaySession::new();
 
@@ -1584,7 +1601,7 @@ fn late_toolbar_width_change_preserves_manual_toolbar_move() {
 
 	session.toolbar_state.floating_position = Some(moved_pos);
 
-	session.commit_frozen_preview(monitor, test_frozen_image(), None);
+	session.commit_frozen_preview(monitor, tests::test_frozen_image(), None);
 	session.sync_frozen_toolbar_state();
 
 	assert!(!session.maybe_recenter_frozen_toolbar_default_slot(monitor));
@@ -1675,8 +1692,8 @@ fn scroll_preview_grows_with_render_height_until_monitor_limit() {
 #[test]
 fn current_scroll_preview_render_image_prefers_committed_export_during_scroll_capture() {
 	let mut session = OverlaySession::new();
-	let base = make_scroll_capture_test_image(3, &[[10, 0, 0, 255]; 8]);
-	let grown = make_scroll_capture_test_image(3, &[[20, 0, 0, 255]; 12]);
+	let base = tests::make_scroll_capture_test_image(3, &[[10, 0, 0, 255]; 8]);
+	let grown = tests::make_scroll_capture_test_image(3, &[[20, 0, 0, 255]; 12]);
 	let mismatched_preview = RgbaImage::from_pixel(320, 40, Rgba([99, 0, 0, 255]));
 	let mut scroll_session = ScrollSession::new(base, 320).expect("scroll session");
 	let _ = scroll_session.observe_downward_sample(grown).expect("observe");
@@ -1702,8 +1719,8 @@ fn current_scroll_preview_render_image_uses_preview_display_when_scroll_capture_
 #[test]
 fn scroll_capture_preview_dimensions_follow_render_authority_during_scroll_capture() {
 	let mut session = OverlaySession::new();
-	let base = make_scroll_capture_test_image(3, &[[10, 0, 0, 255]; 8]);
-	let grown = make_scroll_capture_test_image(3, &[[20, 0, 0, 255]; 12]);
+	let base = tests::make_scroll_capture_test_image(3, &[[10, 0, 0, 255]; 8]);
+	let grown = tests::make_scroll_capture_test_image(3, &[[20, 0, 0, 255]; 12]);
 	let mismatched_preview = RgbaImage::from_pixel(320, 40, Rgba([99, 0, 0, 255]));
 	let mut scroll_session = ScrollSession::new(base, 320).expect("scroll session");
 	let _ = scroll_session.observe_downward_sample(grown).expect("observe");
@@ -1722,8 +1739,8 @@ fn scroll_capture_preview_dimensions_follow_render_authority_during_scroll_captu
 #[test]
 fn refresh_scroll_preview_display_image_uses_export_sized_render_buffer_during_active_capture() {
 	let mut session = OverlaySession::new();
-	let base = make_scroll_capture_test_image(3, &[[10, 0, 0, 255]; 8]);
-	let grown = make_scroll_capture_test_image(3, &[[20, 0, 0, 255]; 12]);
+	let base = tests::make_scroll_capture_test_image(3, &[[10, 0, 0, 255]; 8]);
+	let grown = tests::make_scroll_capture_test_image(3, &[[20, 0, 0, 255]; 12]);
 	let mut scroll_session = ScrollSession::new(base, 320).expect("scroll session");
 	let _ = scroll_session.observe_downward_sample(grown).expect("observe");
 	let expected_committed = scroll_session.export_image().clone();

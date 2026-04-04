@@ -1,6 +1,14 @@
-#![allow(clippy::wildcard_imports)]
-
-use super::*;
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::{
+	CursorSampleRequest, STARTUP_LIVE_SAMPLE_WAIT_POLL_INTERVAL, STARTUP_LIVE_SAMPLE_WAIT_TIMEOUT,
+	StartupLiveRgbPlan, thread,
+};
+#[allow(unused_imports)]
+use crate::overlay::{
+	DeviceCursorPointSource, FreezeCaptureTarget, GlobalPoint, Instant,
+	LIVE_EVENT_CURSOR_CACHE_TTL, MonitorRect, OverlayMode, OverlaySession,
+};
 
 impl OverlaySession {
 	pub(super) fn initialize_cursor_state_for_cursor(

@@ -1,6 +1,15 @@
-#![allow(clippy::wildcard_imports)]
+use egui::Context;
 
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::rendering::WindowRenderer;
+#[allow(unused_imports)]
+use crate::overlay::{
+	Align, Area, Color32, ColorImage, CornerRadius, Frame, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS,
+	HUD_PILL_CORNER_RADIUS_POINTS, HudAnchor, HudPillGeometry, HudTheme, Id, Layout, Margin,
+	MonitorRect, Order, OverlayMode, OverlayState, Pos2, Rect, RichText, Sense, Stroke, StrokeKind,
+	TextureHandle, TextureId, TextureOptions, Ui, Vec2, hud_helpers,
+};
+use crate::state::LoupeSample;
 
 pub(super) struct LiveLoupeTexture {
 	texture: TextureHandle,
@@ -26,7 +35,7 @@ impl WindowRenderer {
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay::rendering) fn render_hud(
 		&mut self,
-		ctx: &egui::Context,
+		ctx: &Context,
 		state: &OverlayState,
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
@@ -388,10 +397,7 @@ impl WindowRenderer {
 		}
 	}
 
-	fn sync_live_loupe_texture(
-		&mut self,
-		loupe: Option<&crate::state::LoupeSample>,
-	) -> Option<TextureId> {
+	fn sync_live_loupe_texture(&mut self, loupe: Option<&LoupeSample>) -> Option<TextureId> {
 		let Some(loupe) = loupe else {
 			self.live_loupe_texture = None;
 

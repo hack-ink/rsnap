@@ -2,9 +2,9 @@
 
 use image::{Rgba, RgbaImage, imageops};
 
+use crate::scroll_capture::support::{self};
 use crate::scroll_capture::{
-	OverlapSearchConfig, ScrollDirection, ScrollObserveOutcome, ScrollSession,
-	evaluate_overlap_direction, max_directional_motion_rows, scroll_capture_fingerprint,
+	self, OverlapSearchConfig, ScrollDirection, ScrollObserveOutcome, ScrollSession,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15,7 +15,6 @@ pub enum ScrollCaptureBenchScenario {
 	/// Wider capture data with a larger viewport and scroll delta.
 	Wide,
 }
-
 impl ScrollCaptureBenchScenario {
 	/// All supported benchmark scenarios in stable iteration order.
 	pub const ALL: [Self; 2] = [Self::Baseline, Self::Wide];
@@ -89,7 +88,6 @@ pub struct ScrollCaptureBenchHarness {
 	fixture: ScrollCaptureBenchFixture,
 	overlap_config: OverlapSearchConfig,
 }
-
 impl ScrollCaptureBenchHarness {
 	#[must_use]
 	/// Builds the benchmark harness for the selected fixture scenario.
@@ -103,7 +101,7 @@ impl ScrollCaptureBenchHarness {
 	#[must_use]
 	/// Runs the fingerprint path and returns stable summary metrics.
 	pub fn run_fingerprint(&self) -> ScrollCaptureFingerprintMetrics {
-		let bytes = scroll_capture_fingerprint(&self.fixture.fingerprint_frame);
+		let bytes = scroll_capture::scroll_capture_fingerprint(&self.fixture.fingerprint_frame);
 
 		ScrollCaptureFingerprintMetrics { byte_len: bytes.len(), checksum: checksum_bytes(&bytes) }
 	}
@@ -111,12 +109,12 @@ impl ScrollCaptureBenchHarness {
 	#[must_use]
 	/// Runs the overlap matcher and returns the resulting comparison metrics.
 	pub fn run_overlap_match(&self) -> ScrollCaptureOverlapMetrics {
-		let max_motion_rows = max_directional_motion_rows(
+		let max_motion_rows = support::max_directional_motion_rows(
 			&self.fixture.base_frame,
 			&self.fixture.next_frame,
 			self.overlap_config,
 		);
-		let matched = evaluate_overlap_direction(
+		let matched = support::evaluate_overlap_direction(
 			&self.fixture.base_frame,
 			&self.fixture.next_frame,
 			ScrollDirection::Down,
@@ -181,7 +179,6 @@ struct ScrollCaptureBenchFixture {
 	window_rows: u32,
 	preview_width_px: u32,
 }
-
 impl ScrollCaptureBenchFixture {
 	fn new(spec: ScrollCaptureBenchFixtureSpec) -> Self {
 		let document = build_document(spec.width, spec.document_rows);

@@ -1,6 +1,17 @@
-#![allow(clippy::wildcard_imports)]
+use egui::RawInput;
+use wgpu::{BindGroup, TextureFormat};
 
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::rendering::{GpuContext, WindowRenderer, WindowRendererPhaseTimings};
+#[allow(unused_imports)]
+use crate::overlay::{
+	Area, BindingResource, Color32, CornerRadius, Frame, FullOutput, HudDrawConfig, HudTheme, Id,
+	Instant, LOUPE_TILE_CORNER_RADIUS_POINTS, Margin, MonitorRect, Order, Origin3d, OverlayMode,
+	OverlayState, PhysicalSize, Pos2, Rect, Result, Rgb, RgbaImage, Sampler, StoreOp, Stroke,
+	StrokeKind, Texture, TextureAspect, TextureDimension, TextureUsages, TextureView,
+	TextureViewDescriptor, ThemeMode, Vec2, WindowRendererPath, hud_helpers, image_helpers, mem,
+	ptr, slice,
+};
 
 impl WindowRenderer {
 	pub(in crate::overlay::rendering) fn trace_frozen_frame_metrics(
@@ -244,7 +255,7 @@ impl WindowRenderer {
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay::rendering) fn run_loupe_tile_egui(
 		&mut self,
-		raw_input: egui::RawInput,
+		raw_input: RawInput,
 		state: &OverlayState,
 		theme: HudTheme,
 		hud_blur_active: bool,
@@ -446,7 +457,7 @@ impl WindowRenderer {
 			mip_level_count,
 			sample_count: 1,
 			dimension: TextureDimension::D2,
-			format: wgpu::TextureFormat::Rgba8UnormSrgb,
+			format: TextureFormat::Rgba8UnormSrgb,
 			usage: TextureUsages::TEXTURE_BINDING
 				| TextureUsages::COPY_DST
 				| TextureUsages::RENDER_ATTACHMENT,
@@ -540,12 +551,6 @@ pub(super) struct HudBg {
 	max_lod: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(in crate::overlay) struct HudPillGeometry {
-	pub(in crate::overlay) rect: Rect,
-	pub(in crate::overlay) radius_points: f32,
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub(super) struct HudBlurUniformRaw {
@@ -559,4 +564,10 @@ impl HudBlurUniformRaw {
 	fn as_bytes(&self) -> &[u8] {
 		unsafe { slice::from_raw_parts(ptr::from_ref(self).cast::<u8>(), mem::size_of::<Self>()) }
 	}
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::overlay) struct HudPillGeometry {
+	pub(in crate::overlay) rect: Rect,
+	pub(in crate::overlay) radius_points: f32,
 }

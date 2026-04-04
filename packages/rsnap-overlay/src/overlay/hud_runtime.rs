@@ -1,6 +1,10 @@
-#![allow(clippy::wildcard_imports)]
-
-use super::*;
+#[allow(unused_imports)]
+use crate::overlay::{
+	Duration, FrozenCaptureSource, GlobalPoint, HudAnchor, HudPillGeometry, HudRedrawSummary,
+	Instant, LIVE_PRESENT_INTERVAL_MIN, LogicalSize, MonitorRect, OverlayControl,
+	OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession, Pos2, Rect, Result, eyre,
+	scroll_capture,
+};
 
 impl OverlaySession {
 	pub(super) fn stabilized_live_hud_inner_size(
