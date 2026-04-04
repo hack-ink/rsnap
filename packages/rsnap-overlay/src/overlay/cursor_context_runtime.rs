@@ -80,6 +80,7 @@ impl OverlaySession {
 		let Some((x_px, y_px)) = monitor.local_u32_pixels(cursor) else {
 			return;
 		};
+
 		if let Some(sample) =
 			stream.latest_cursor_sample(monitor, CursorSampleRequest::rgb(x_px, y_px))
 			&& let Some(rgb) = sample.rgb

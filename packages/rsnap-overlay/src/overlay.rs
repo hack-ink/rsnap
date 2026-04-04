@@ -881,45 +881,78 @@ impl OverlaySession {
 		runtime: InitialSessionRuntime,
 		#[cfg(not(target_os = "macos"))] cursor_device: Option<device_query::DeviceState>,
 	) -> Self {
+		let mut session = Self::build_base_session(
+			config,
+			#[cfg(not(target_os = "macos"))]
+			cursor_device,
+		);
+
+		session.apply_initial_session_runtime(runtime);
+
+		session
+	}
+
+	fn build_base_session(
+		config: OverlayConfig,
+		#[cfg(not(target_os = "macos"))] cursor_device: Option<device_query::DeviceState>,
+	) -> Self {
+		let now = Instant::now();
+
 		Self {
 			config,
+			#[cfg(not(target_os = "macos"))]
+			cursor_device,
+			state: OverlayState::new(),
+			last_hud_window_move_at: now,
+			last_loupe_window_move_at: now,
+			last_present_at: now,
+			last_live_cursor_poll_at: now - CURSOR_POLL_INTERVAL_MIN,
+			last_frozen_cursor_poll_at: now - CURSOR_POLL_INTERVAL_MIN,
+			last_window_list_refresh_request_at: now,
+			window_list_refresh_interval: Duration::ZERO,
+			last_live_bg_request_at: now,
+			live_bg_request_interval: Duration::ZERO,
+			event_loop_last_progress_at: now,
+			loupe_patch_width_px: 0,
+			loupe_patch_height_px: 0,
+			..Self::build_base_session_defaults()
+		}
+	}
+
+	#[rustfmt::skip]
+	fn build_base_session_defaults() -> Self {
+		Self {
+			config: OverlayConfig::default(),
 			worker: None,
 			#[cfg(target_os = "macos")]
 			live_sample_worker: None,
 			#[cfg(target_os = "macos")]
 			live_sample_stream: None,
 			#[cfg(not(target_os = "macos"))]
-			cursor_device,
-			state: runtime.state,
+			cursor_device: None,
+			state: OverlayState::new(),
 			cursor_monitor: None,
 			windows: HashMap::new(),
 			focused_window_ids: HashSet::new(),
 			pending_focus_loss_cleanup: false,
-			hud_window: None,
-			loupe_window: None,
-			toolbar_window: None,
-			scroll_preview_window: None,
+			hud_window: None, loupe_window: None, toolbar_window: None, scroll_preview_window: None,
 			#[cfg(target_os = "macos")]
 			macos_hud_window_config_cache: HashMap::new(),
-			hud_outer_pos: None,
-			pending_hud_outer_pos: None,
-			hud_inner_size_points: None,
-			loupe_outer_pos: None,
-			pending_loupe_outer_pos: None,
-			loupe_inner_size_points: None,
+			hud_outer_pos: None, pending_hud_outer_pos: None, hud_inner_size_points: None,
+			loupe_outer_pos: None, pending_loupe_outer_pos: None, loupe_inner_size_points: None,
 			toolbar_outer_pos: None,
 			toolbar_inner_size_points: None,
 			gpu: None,
-			last_hud_window_move_at: runtime.now,
-			last_loupe_window_move_at: runtime.now,
-			last_present_at: runtime.now,
-			last_live_cursor_poll_at: runtime.now - CURSOR_POLL_INTERVAL_MIN,
-			last_frozen_cursor_poll_at: runtime.now - CURSOR_POLL_INTERVAL_MIN,
+			last_hud_window_move_at: Instant::now(),
+			last_loupe_window_move_at: Instant::now(),
+			last_present_at: Instant::now(),
+			last_live_cursor_poll_at: Instant::now(),
+			last_frozen_cursor_poll_at: Instant::now(),
 			window_list_snapshot: None,
-			last_window_list_refresh_request_at: runtime.now - runtime.window_list_refresh_interval,
-			window_list_refresh_interval: runtime.window_list_refresh_interval,
-			last_live_bg_request_at: runtime.now - runtime.live_bg_request_interval,
-			live_bg_request_interval: runtime.live_bg_request_interval,
+			last_window_list_refresh_request_at: Instant::now(),
+			window_list_refresh_interval: Duration::ZERO,
+			last_live_bg_request_at: Instant::now(),
+			live_bg_request_interval: Duration::ZERO,
 			hit_test_send_full_count: 0,
 			hit_test_send_disconnected_count: 0,
 			hit_test_request_id: 0,
@@ -933,9 +966,7 @@ impl OverlaySession {
 			window_list_refresh_inflight: false,
 			#[cfg(target_os = "macos")]
 			drop_next_window_list_refresh_snapshot: false,
-			last_live_sample_cursor: None,
-			last_event_cursor: None,
-			last_event_cursor_at: None,
+			last_live_sample_cursor: None, last_event_cursor: None, last_event_cursor_at: None,
 			live_sample_stall_started_at: None,
 			last_live_sample_stall_log_at: None,
 			slow_op_logger: SlowOperationLogger::default(),
@@ -943,21 +974,16 @@ impl OverlaySession {
 			keyboard_modifiers: ModifiersState::default(),
 			event_loop_phase: OverlayEventLoopPhase::Idle,
 			event_loop_progress_seq: 0,
-			event_loop_last_progress_at: runtime.now,
-			event_loop_last_progress_window_id: None,
-			event_loop_last_progress_monitor_id: None,
+			event_loop_last_progress_at: Instant::now(),
+			event_loop_last_progress_window_id: None, event_loop_last_progress_monitor_id: None,
 			event_loop_last_progress_detail: None,
 			event_loop_last_stall_warn_at: None,
-			loupe_patch_width_px: runtime.loupe_sample_side_px,
-			loupe_patch_height_px: runtime.loupe_sample_side_px,
+			loupe_patch_width_px: 0,
+			loupe_patch_height_px: 0,
 			egui_repaint_deadline: Arc::new(Mutex::new(None)),
-			pending_freeze_capture: None,
-			inflight_freeze_capture: None,
-			pending_freeze_capture_armed: false,
+			pending_freeze_capture: None, inflight_freeze_capture: None, pending_freeze_capture_armed: false,
 			authoritative_frozen_capture_ready: false,
-			pending_window_freeze_capture: None,
-			inflight_window_freeze_capture: None,
-			frozen_window_image: None,
+			pending_window_freeze_capture: None, inflight_window_freeze_capture: None, frozen_window_image: None,
 			frozen_capture_source: FrozenCaptureSource::None,
 			capture_windows_hidden: false,
 			#[cfg(target_os = "macos")]
@@ -975,17 +1001,11 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			pending_self_capture_exception_window_ids_worker_refresh: false,
 			toolbar_state: FrozenToolbarState::default(),
-			toolbar_left_button_down: false,
-			toolbar_left_button_went_down: false,
-			toolbar_left_button_went_up: false,
+			toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
 			toolbar_pointer_local: None,
-			left_mouse_button_down: false,
-			left_mouse_button_down_monitor: None,
-			left_mouse_button_down_global: None,
+			left_mouse_button_down: false, left_mouse_button_down_monitor: None, left_mouse_button_down_global: None,
 			frozen_selection_drag: FrozenSelectionDragState::default(),
-			hud_window_visible: false,
-			toolbar_window_visible: false,
-			toolbar_window_warmup_redraws_remaining: 0,
+			hud_window_visible: false, toolbar_window_visible: false, toolbar_window_warmup_redraws_remaining: 0,
 			loupe_window_visible: false,
 			loupe_window_warmup_redraws_remaining: 0,
 			scroll_capture: ScrollCaptureState::default(),
@@ -1005,6 +1025,23 @@ impl OverlaySession {
 			startup_aux_window_creation_scheduled: false,
 			response_waker: None,
 		}
+	}
+
+	fn apply_initial_session_runtime(&mut self, runtime: InitialSessionRuntime) {
+		self.state = runtime.state;
+		self.last_hud_window_move_at = runtime.now;
+		self.last_loupe_window_move_at = runtime.now;
+		self.last_present_at = runtime.now;
+		self.last_live_cursor_poll_at = runtime.now - CURSOR_POLL_INTERVAL_MIN;
+		self.last_frozen_cursor_poll_at = runtime.now - CURSOR_POLL_INTERVAL_MIN;
+		self.last_window_list_refresh_request_at =
+			runtime.now - runtime.window_list_refresh_interval;
+		self.window_list_refresh_interval = runtime.window_list_refresh_interval;
+		self.last_live_bg_request_at = runtime.now - runtime.live_bg_request_interval;
+		self.live_bg_request_interval = runtime.live_bg_request_interval;
+		self.event_loop_last_progress_at = runtime.now;
+		self.loupe_patch_width_px = runtime.loupe_sample_side_px;
+		self.loupe_patch_height_px = runtime.loupe_sample_side_px;
 	}
 
 	fn overlay_state_with_loupe_patch(loupe_sample_side_px: u32) -> OverlayState {
@@ -4771,6 +4808,7 @@ impl OverlaySession {
 			}
 		}
 		self.last_present_at = Instant::now();
+
 		self.note_startup_overlay_frame_presented();
 
 		self.handle_capture_and_toolbar_redraw_post(overlay_monitor, draw_toolbar)
