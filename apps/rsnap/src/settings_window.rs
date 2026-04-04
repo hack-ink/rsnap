@@ -48,6 +48,20 @@ pub(crate) enum SettingsControl {
 	CloseRequested,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SettingsWindowEntry {
+	Standard,
+	Permissions,
+}
+impl SettingsWindowEntry {
+	const fn section_defaults(self) -> sections::SettingsUiSectionDefaults {
+		match self {
+			Self::Standard => sections::SettingsUiSectionDefaults::standard(),
+			Self::Permissions => sections::SettingsUiSectionDefaults::permissions_focused(),
+		}
+	}
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum SettingsWindowAction {
 	Begin,
@@ -74,6 +88,7 @@ pub(crate) struct SettingsWindow {
 	last_redraw: Instant,
 	did_autosize: bool,
 	combo_width: f32,
+	section_defaults: sections::SettingsUiSectionDefaults,
 	requested_theme: Option<Theme>,
 	effective_theme: Option<Theme>,
 	theme_icon_system: String,
@@ -84,7 +99,7 @@ pub(crate) struct SettingsWindow {
 	action_queue: VecDeque<SettingsWindowAction>,
 }
 impl SettingsWindow {
-	pub(crate) fn open(event_loop: &ActiveEventLoop) -> Result<Self> {
+	pub(crate) fn open(event_loop: &ActiveEventLoop, entry: SettingsWindowEntry) -> Result<Self> {
 		let attrs = platform::settings_window_attributes();
 		let window = event_loop.create_window(attrs).wrap_err("create settings window")?;
 		let window = std::sync::Arc::new(window);
@@ -131,6 +146,7 @@ impl SettingsWindow {
 			last_redraw: Instant::now(),
 			did_autosize: false,
 			combo_width: SETTINGS_COMBO_WIDTH,
+			section_defaults: entry.section_defaults(),
 			requested_theme: None,
 			effective_theme: None,
 			theme_icon_system,
