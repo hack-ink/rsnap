@@ -19,6 +19,7 @@ use crate::overlay::tests::{
 	WorkerErrorSource, WorkerResponse, overlay,
 };
 
+#[cfg(target_os = "macos")]
 #[test]
 fn pending_freeze_capture_dispatches_even_with_seeded_preview() {
 	let monitor = tests::test_monitor();
