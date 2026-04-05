@@ -2,16 +2,23 @@ use egui::Context;
 
 #[allow(unused_imports)]
 use crate::overlay::rendering::{
-	FrozenToolbarButtonStyle, SelectionDashedBorderCache, SelectionDashedBorderCacheKey,
-	SelectionDashedBorderMetrics, SelectionFlowGeometryCache, SelectionFlowGeometryCacheKey,
-	SelectionSizeBadgeLayout, SelectionSizeBadgePadding, SelectionSizeBadgeTarget, WindowRenderer,
+	FrozenSelectionResizeHandleGeometry, FrozenToolbarButtonStyle, SelectionDashedBorderCache,
+	SelectionDashedBorderCacheKey, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
+	SelectionFlowGeometryCacheKey, SelectionSizeBadgeLayout, SelectionSizeBadgePadding,
+	SelectionSizeBadgeTarget, WindowRenderer,
 };
 #[allow(unused_imports)]
 use crate::overlay::{
-	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_SELECTION_SCRIM_ALPHA_DARK,
+	self, Align, Align2, Area, Color32, CornerRadius,
+	FROZEN_SELECTION_RESIZE_HANDLE_ARM_LENGTH_POINTS,
+	FROZEN_SELECTION_RESIZE_HANDLE_BORDER_GAP_POINTS,
+	FROZEN_SELECTION_RESIZE_HANDLE_HIT_OFFSET_POINTS,
+	FROZEN_SELECTION_RESIZE_HANDLE_HIT_SIZE_POINTS,
+	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS,
+	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FROZEN_SELECTION_SCRIM_ALPHA_DARK,
 	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TOOLBAR_BUTTON_SIZE_POINTS,
 	FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId, FrozenCaptureSource,
-	FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool,
+	FrozenSelectionCorner, FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool,
 	HUD_PILL_CORNER_RADIUS_POINTS, HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_INNER_MARGIN_Y_POINTS,
 	HUD_PILL_STROKE_WIDTH_POINTS, HudPillGeometry, HudTheme, Id,
 	LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK, LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT,
@@ -31,6 +38,13 @@ use crate::overlay::{
 	Ui, UiBuilder, Vec2, regular,
 };
 
+#[derive(Clone, Copy)]
+pub(in crate::overlay) struct SelectionScrimStyle {
+	pub(in crate::overlay) scrim_fill: Color32,
+	pub(in crate::overlay) stroke_width_override: Option<f32>,
+	pub(in crate::overlay) exclude_resize_handle_corners: bool,
+}
+
 impl WindowRenderer {
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay) fn render_live_capture_affordances(
@@ -43,6 +57,7 @@ impl WindowRenderer {
 		selection_flow_enabled: bool,
 		selection_flow_stroke_width_px: f32,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		let mut has_rect = false;
 
@@ -82,7 +97,13 @@ impl WindowRenderer {
 			}
 		}
 		if let Some(rect) = Self::live_drag_focus_rect(state, monitor, screen_rect) {
-			Self::render_live_drag_selection_scrim(painter, rect, screen_rect, theme);
+			Self::render_live_drag_selection_affordance(
+				painter,
+				rect,
+				screen_rect,
+				theme,
+				selection_dashed_border_cache,
+			);
 
 			has_rect = true;
 		}
@@ -138,6 +159,7 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		screen_rect: Rect,
 		theme: HudTheme,
+		frozen_selection_resize_handles_enabled: bool,
 		frozen_capture_source: FrozenCaptureSource,
 		frozen_toolbar_reserved_rect: Option<Rect>,
 		frozen_capture_is_fullscreen_fallback: bool,
@@ -152,6 +174,8 @@ impl WindowRenderer {
 		let layer =
 			LayerId::new(Order::Foreground, Id::new(format!("frozen-pending-{}", monitor.id)));
 		let painter = ctx.layer_painter(layer);
+		let show_resize_handles = frozen_selection_resize_handles_enabled
+			&& frozen_capture_source == FrozenCaptureSource::DragRegion;
 
 		if state.frozen_image.is_some() {
 			let mut has_affordance = Self::render_frozen_selection_scrim(
@@ -159,6 +183,7 @@ impl WindowRenderer {
 				rect,
 				screen_rect,
 				theme,
+				show_resize_handles,
 				selection_dashed_border_cache,
 			);
 
@@ -176,6 +201,10 @@ impl WindowRenderer {
 
 				has_affordance = true;
 			}
+			if show_resize_handles && let Some(capture_rect) = state.frozen_capture_rect {
+				has_affordance |=
+					Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
+			}
 
 			return has_affordance;
 		}
@@ -185,6 +214,7 @@ impl WindowRenderer {
 				rect,
 				screen_rect,
 				theme,
+				show_resize_handles,
 				selection_dashed_border_cache,
 			);
 
@@ -201,6 +231,10 @@ impl WindowRenderer {
 				);
 
 				has_affordance = true;
+			}
+			if show_resize_handles && let Some(capture_rect) = state.frozen_capture_rect {
+				has_affordance |=
+					Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
 			}
 
 			return has_affordance;
@@ -231,6 +265,9 @@ impl WindowRenderer {
 				frozen_capture_source == FrozenCaptureSource::DragRegion,
 				theme,
 			);
+		}
+		if show_resize_handles && let Some(capture_rect) = state.frozen_capture_rect {
+			Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
 		}
 
 		true
@@ -326,6 +363,121 @@ impl WindowRenderer {
 		let capture_rect = state.frozen_capture_rect?;
 
 		Self::selection_size_badge_target_from_rect(capture_rect, screen_rect)
+	}
+
+	pub(in crate::overlay) fn frozen_selection_resize_handles(
+		capture_rect: RectPoints,
+	) -> [FrozenSelectionResizeHandleGeometry; 4] {
+		let rect = Rect::from_min_size(
+			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
+			Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
+		);
+
+		[
+			Self::frozen_selection_resize_handle(FrozenSelectionCorner::TopLeft, rect.min),
+			Self::frozen_selection_resize_handle(
+				FrozenSelectionCorner::TopRight,
+				Pos2::new(rect.max.x, rect.min.y),
+			),
+			Self::frozen_selection_resize_handle(
+				FrozenSelectionCorner::BottomLeft,
+				Pos2::new(rect.min.x, rect.max.y),
+			),
+			Self::frozen_selection_resize_handle(FrozenSelectionCorner::BottomRight, rect.max),
+		]
+	}
+
+	fn frozen_selection_resize_handle(
+		corner: FrozenSelectionCorner,
+		anchor: Pos2,
+	) -> FrozenSelectionResizeHandleGeometry {
+		let hit_size = Vec2::splat(FROZEN_SELECTION_RESIZE_HANDLE_HIT_SIZE_POINTS);
+		let hit_offset = FROZEN_SELECTION_RESIZE_HANDLE_HIT_OFFSET_POINTS;
+		let hit_center = match corner {
+			FrozenSelectionCorner::TopLeft => {
+				Pos2::new(anchor.x - hit_offset, anchor.y - hit_offset)
+			},
+			FrozenSelectionCorner::TopRight => {
+				Pos2::new(anchor.x + hit_offset, anchor.y - hit_offset)
+			},
+			FrozenSelectionCorner::BottomLeft => {
+				Pos2::new(anchor.x - hit_offset, anchor.y + hit_offset)
+			},
+			FrozenSelectionCorner::BottomRight => {
+				Pos2::new(anchor.x + hit_offset, anchor.y + hit_offset)
+			},
+		};
+
+		FrozenSelectionResizeHandleGeometry {
+			corner,
+			anchor,
+			hit_rect: Rect::from_center_size(hit_center, hit_size),
+		}
+	}
+
+	pub(in crate::overlay) fn frozen_selection_resize_hit_test(
+		capture_rect: RectPoints,
+		cursor_local: Pos2,
+	) -> Option<FrozenSelectionCorner> {
+		let rect = Rect::from_min_size(
+			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
+			Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
+		);
+		let mut best_corner = None;
+		let mut best_distance_sq = f32::MAX;
+
+		for handle in Self::frozen_selection_resize_handles(capture_rect) {
+			if !handle.hit_rect.contains(cursor_local) {
+				continue;
+			}
+			if rect.contains(cursor_local)
+				&& !Self::frozen_selection_resize_handle_interior_hit(
+					handle.corner,
+					rect,
+					cursor_local,
+				) {
+				continue;
+			}
+
+			let distance_sq = handle.anchor.distance_sq(cursor_local);
+
+			if distance_sq < best_distance_sq {
+				best_corner = Some(handle.corner);
+				best_distance_sq = distance_sq;
+			}
+		}
+
+		best_corner
+	}
+
+	fn frozen_selection_resize_handle_interior_hit(
+		corner: FrozenSelectionCorner,
+		rect: Rect,
+		cursor_local: Pos2,
+	) -> bool {
+		let interior_reach_x =
+			(rect.width() * 0.35).min(FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS);
+		let interior_reach_y =
+			(rect.height() * 0.35).min(FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS);
+
+		match corner {
+			FrozenSelectionCorner::TopLeft => {
+				cursor_local.x <= rect.min.x + interior_reach_x
+					&& cursor_local.y <= rect.min.y + interior_reach_y
+			},
+			FrozenSelectionCorner::TopRight => {
+				cursor_local.x >= rect.max.x - interior_reach_x
+					&& cursor_local.y <= rect.min.y + interior_reach_y
+			},
+			FrozenSelectionCorner::BottomLeft => {
+				cursor_local.x <= rect.min.x + interior_reach_x
+					&& cursor_local.y >= rect.max.y - interior_reach_y
+			},
+			FrozenSelectionCorner::BottomRight => {
+				cursor_local.x >= rect.max.x - interior_reach_x
+					&& cursor_local.y >= rect.max.y - interior_reach_y
+			},
+		}
 	}
 
 	pub(in crate::overlay) fn frozen_toolbar_reserved_rect(
@@ -726,13 +878,19 @@ impl WindowRenderer {
 		focus_rect: Rect,
 		screen_rect: Rect,
 		theme: HudTheme,
+		exclude_resize_handle_corners: bool,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		Self::render_selection_scrim(
 			painter,
 			focus_rect,
 			screen_rect,
-			Self::frozen_selection_scrim_color(theme),
+			theme,
+			SelectionScrimStyle {
+				scrim_fill: Self::frozen_selection_scrim_color(theme),
+				stroke_width_override: Some(FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS),
+				exclude_resize_handle_corners,
+			},
 			selection_dashed_border_cache,
 		)
 	}
@@ -751,19 +909,44 @@ impl WindowRenderer {
 		)
 	}
 
+	pub(in crate::overlay) fn render_live_drag_selection_affordance(
+		painter: &Painter,
+		focus_rect: Rect,
+		screen_rect: Rect,
+		theme: HudTheme,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
+	) -> bool {
+		Self::render_selection_scrim(
+			painter,
+			focus_rect,
+			screen_rect,
+			theme,
+			SelectionScrimStyle {
+				scrim_fill: Self::live_drag_selection_scrim_color(theme),
+				stroke_width_override: None,
+				exclude_resize_handle_corners: false,
+			},
+			selection_dashed_border_cache,
+		)
+	}
+
 	pub(in crate::overlay) fn render_selection_scrim(
 		painter: &Painter,
 		focus_rect: Rect,
 		screen_rect: Rect,
-		scrim_fill: Color32,
+		theme: HudTheme,
+		style: SelectionScrimStyle,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		let drew_scrim =
-			Self::render_selection_scrim_fill(painter, focus_rect, screen_rect, scrim_fill);
+			Self::render_selection_scrim_fill(painter, focus_rect, screen_rect, style.scrim_fill);
 		let drew_border = Self::render_selection_dashed_border(
 			painter,
 			focus_rect,
 			screen_rect,
+			theme,
+			style.stroke_width_override,
+			style.exclude_resize_handle_corners,
 			selection_dashed_border_cache,
 		);
 
@@ -796,9 +979,16 @@ impl WindowRenderer {
 		painter: &Painter,
 		focus_rect: Rect,
 		screen_rect: Rect,
+		theme: HudTheme,
+		stroke_width_override: Option<f32>,
+		exclude_resize_handle_corners: bool,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
-		let metrics = Self::selection_dashed_border_metrics(painter.pixels_per_point());
+		let mut metrics = Self::selection_dashed_border_metrics(painter.pixels_per_point());
+
+		if let Some(stroke_width) = stroke_width_override {
+			metrics.stroke_width = stroke_width;
+		}
 		let border_outset =
 			Self::selection_dashed_border_outset(metrics.stroke_width, painter.pixels_per_point());
 		let Some(border_rect) =
@@ -806,27 +996,45 @@ impl WindowRenderer {
 		else {
 			return false;
 		};
+		let corner_keepout = exclude_resize_handle_corners
+			.then_some(FROZEN_SELECTION_RESIZE_HANDLE_ARM_LENGTH_POINTS + metrics.gap_length);
 		let segments = Self::selection_dashed_border_cached_segments(
 			selection_dashed_border_cache,
 			border_rect,
 			metrics.dash_length,
 			metrics.gap_length,
+			corner_keepout.unwrap_or(0.0),
 		);
 
 		if segments.is_empty() {
 			return false;
 		}
 
-		let stroke = Stroke::new(
-			metrics.stroke_width,
-			Color32::from_rgba_unmultiplied(255, 255, 255, SELECTION_DASHED_BORDER_ALPHA),
-		);
+		let (outline_stroke, stroke) = Self::selection_dashed_border_strokes(metrics, theme);
 
 		for segment in segments {
+			painter.add(Shape::line_segment(*segment, outline_stroke));
 			painter.add(Shape::line_segment(*segment, stroke));
 		}
 
 		true
+	}
+
+	fn selection_dashed_border_strokes(
+		metrics: SelectionDashedBorderMetrics,
+		theme: HudTheme,
+	) -> (Stroke, Stroke) {
+		let _ = theme;
+		let outline = Stroke::new(
+			metrics.stroke_width + 1.15,
+			Color32::from_rgba_unmultiplied(229, 247, 255, 116),
+		);
+		let stroke = Stroke::new(
+			metrics.stroke_width,
+			Color32::from_rgba_unmultiplied(167, 223, 255, SELECTION_DASHED_BORDER_ALPHA),
+		);
+
+		(outline, stroke)
 	}
 
 	pub(in crate::overlay) fn selection_dashed_border_metrics(
@@ -839,6 +1047,78 @@ impl WindowRenderer {
 			dash_length: SELECTION_DASHED_BORDER_DASH_LENGTH_PX * points_per_pixel,
 			gap_length: SELECTION_DASHED_BORDER_GAP_LENGTH_PX * points_per_pixel,
 		}
+	}
+
+	fn frozen_selection_resize_handle_outline_stroke(theme: HudTheme) -> Stroke {
+		let _ = theme;
+		let color = Color32::from_rgba_unmultiplied(229, 247, 255, 124);
+
+		Stroke::new(FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS + 0.95, color)
+	}
+
+	fn frozen_selection_resize_handle_stroke(theme: HudTheme) -> Stroke {
+		let _ = theme;
+
+		Stroke::new(
+			FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS,
+			Color32::from_rgba_unmultiplied(167, 223, 255, 246),
+		)
+	}
+
+	fn frozen_selection_resize_handle_points(
+		handle: FrozenSelectionResizeHandleGeometry,
+		border_outset: f32,
+	) -> [Pos2; 3] {
+		let elbow_offset = border_outset + FROZEN_SELECTION_RESIZE_HANDLE_BORDER_GAP_POINTS;
+		let arm = FROZEN_SELECTION_RESIZE_HANDLE_ARM_LENGTH_POINTS;
+
+		match handle.corner {
+			FrozenSelectionCorner::TopLeft => {
+				let elbow =
+					Pos2::new(handle.anchor.x - elbow_offset, handle.anchor.y - elbow_offset);
+
+				[Pos2::new(elbow.x + arm, elbow.y), elbow, Pos2::new(elbow.x, elbow.y + arm)]
+			},
+			FrozenSelectionCorner::TopRight => {
+				let elbow =
+					Pos2::new(handle.anchor.x + elbow_offset, handle.anchor.y - elbow_offset);
+
+				[Pos2::new(elbow.x - arm, elbow.y), elbow, Pos2::new(elbow.x, elbow.y + arm)]
+			},
+			FrozenSelectionCorner::BottomLeft => {
+				let elbow =
+					Pos2::new(handle.anchor.x - elbow_offset, handle.anchor.y + elbow_offset);
+
+				[Pos2::new(elbow.x + arm, elbow.y), elbow, Pos2::new(elbow.x, elbow.y - arm)]
+			},
+			FrozenSelectionCorner::BottomRight => {
+				let elbow =
+					Pos2::new(handle.anchor.x + elbow_offset, handle.anchor.y + elbow_offset);
+
+				[Pos2::new(elbow.x - arm, elbow.y), elbow, Pos2::new(elbow.x, elbow.y - arm)]
+			},
+		}
+	}
+
+	pub(in crate::overlay) fn render_frozen_selection_resize_handles(
+		painter: &Painter,
+		capture_rect: RectPoints,
+		theme: HudTheme,
+	) -> bool {
+		let border_outset = Self::selection_dashed_border_outset(
+			FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS,
+			painter.pixels_per_point(),
+		);
+		let outline_stroke = Self::frozen_selection_resize_handle_outline_stroke(theme);
+		let stroke = Self::frozen_selection_resize_handle_stroke(theme);
+
+		for handle in Self::frozen_selection_resize_handles(capture_rect) {
+			let points = Self::frozen_selection_resize_handle_points(handle, border_outset);
+			painter.add(Shape::line(points.to_vec(), outline_stroke));
+			painter.add(Shape::line(points.to_vec(), stroke));
+		}
+
+		true
 	}
 
 	pub(in crate::overlay) fn selection_dashed_border_rect(
@@ -899,26 +1179,133 @@ impl WindowRenderer {
 		segments
 	}
 
+	pub(in crate::overlay) fn selection_dashed_border_segments_with_corner_keepout(
+		rect: Rect,
+		target_dash_length: f32,
+		target_gap_length: f32,
+		corner_keepout: f32,
+	) -> Vec<[Pos2; 2]> {
+		if corner_keepout <= 0.0 {
+			return Self::selection_dashed_border_segments(
+				rect,
+				target_dash_length,
+				target_gap_length,
+			);
+		}
+
+		let mut segments = Vec::new();
+		let horizontal_ranges = Self::selection_dashed_border_edge_dash_ranges(
+			rect.width(),
+			corner_keepout,
+			target_dash_length,
+			target_gap_length,
+		);
+		let vertical_ranges = Self::selection_dashed_border_edge_dash_ranges(
+			rect.height(),
+			corner_keepout,
+			target_dash_length,
+			target_gap_length,
+		);
+
+		for (start, end) in &horizontal_ranges {
+			segments.push([
+				Pos2::new(rect.min.x + *start, rect.min.y),
+				Pos2::new(rect.min.x + *end, rect.min.y),
+			]);
+		}
+		for (start, end) in &vertical_ranges {
+			segments.push([
+				Pos2::new(rect.max.x, rect.min.y + *start),
+				Pos2::new(rect.max.x, rect.min.y + *end),
+			]);
+		}
+		for (start, end) in &horizontal_ranges {
+			segments.push([
+				Pos2::new(rect.min.x + *start, rect.max.y),
+				Pos2::new(rect.min.x + *end, rect.max.y),
+			]);
+		}
+		for (start, end) in &vertical_ranges {
+			segments.push([
+				Pos2::new(rect.min.x, rect.min.y + *start),
+				Pos2::new(rect.min.x, rect.min.y + *end),
+			]);
+		}
+
+		segments
+	}
+
 	pub(in crate::overlay) fn selection_dashed_border_cached_segments(
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 		rect: Rect,
 		target_dash_length: f32,
 		target_gap_length: f32,
+		corner_keepout: f32,
 	) -> &[[Pos2; 2]] {
-		let key = SelectionDashedBorderCacheKey::new(rect, target_dash_length, target_gap_length);
+		let key = SelectionDashedBorderCacheKey::new(
+			rect,
+			target_dash_length,
+			target_gap_length,
+			corner_keepout,
+		);
 
 		if selection_dashed_border_cache.key != Some(key) {
 			selection_dashed_border_cache.segments.clear();
-			selection_dashed_border_cache.segments.extend(Self::selection_dashed_border_segments(
-				rect,
-				target_dash_length,
-				target_gap_length,
-			));
+			selection_dashed_border_cache.segments.extend(
+				Self::selection_dashed_border_segments_with_corner_keepout(
+					rect,
+					target_dash_length,
+					target_gap_length,
+					corner_keepout,
+				),
+			);
 
 			selection_dashed_border_cache.key = Some(key);
 		}
 
 		selection_dashed_border_cache.segments.as_slice()
+	}
+
+	pub(in crate::overlay) fn selection_dashed_border_edge_dash_ranges(
+		edge_length: f32,
+		corner_keepout: f32,
+		target_dash_length: f32,
+		target_gap_length: f32,
+	) -> Vec<(f32, f32)> {
+		let usable_length = edge_length - corner_keepout * 2.0;
+
+		if usable_length <= 0.0 {
+			return Vec::new();
+		}
+
+		if usable_length <= target_dash_length {
+			return vec![(corner_keepout, edge_length - corner_keepout)];
+		}
+
+		let dash_length = target_dash_length.min(usable_length);
+
+		let cycle_span = (target_dash_length + target_gap_length).max(f32::MIN_POSITIVE);
+		let dash_count =
+			(((usable_length + target_gap_length) / cycle_span).floor() as usize).max(1);
+		if dash_count == 1 {
+			return vec![(corner_keepout, edge_length - corner_keepout)];
+		}
+		let occupied_length = dash_count as f32 * dash_length
+			+ dash_count.saturating_sub(1) as f32 * target_gap_length;
+		let gap_count = dash_count.saturating_sub(1);
+		let gap_length = if gap_count == 0 {
+			target_gap_length
+		} else {
+			target_gap_length + (usable_length - occupied_length).max(0.0) / gap_count as f32
+		};
+
+		(0..dash_count)
+			.map(|index| {
+				let start = corner_keepout + index as f32 * (dash_length + gap_length);
+
+				(start, start + dash_length)
+			})
+			.collect()
 	}
 
 	pub(in crate::overlay) fn selection_dashed_border_dash_ranges(
