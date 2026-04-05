@@ -29,6 +29,7 @@ impl OverlaySession {
 				return control;
 			}
 		}
+
 		if let Some(image) = self.pending_encode_png.take() {
 			if let Some(worker) = self.worker.as_ref() {
 				if let Err(image) = worker.request_encode_png(image) {
