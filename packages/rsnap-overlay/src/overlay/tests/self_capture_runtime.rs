@@ -1,4 +1,7 @@
 #[cfg(target_os = "macos")]
+use std::ptr;
+
+#[cfg(target_os = "macos")]
 #[allow(unused_imports)]
 use crate::overlay::tests::{
 	self, Arc, InflightScrollCaptureObservation, OverlayControl, ScrollCaptureLiveFrame,
@@ -55,10 +58,14 @@ fn apply_self_capture_exception_window_ids_to_active_streams_updates_live_stream
 
 #[cfg(target_os = "macos")]
 #[test]
-fn complete_startup_aux_window_creation_refreshes_live_stream_filters() {
+fn complete_startup_aux_window_creation_kicks_first_live_sample_before_refresh_is_needed() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
 	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
 	session.startup_aux_window_creation_pending = true;
+	session.cursor_monitor = Some(monitor);
+	session.state.cursor = Some(cursor);
 	session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
 		captured_at: Instant::now(),
 		windows: Arc::new(vec![WindowRect {
@@ -73,25 +80,84 @@ fn complete_startup_aux_window_creation_refreshes_live_stream_filters() {
 	session.complete_startup_aux_window_creation(true);
 
 	assert!(!session.startup_aux_window_creation_pending);
+	assert_eq!(session.latest_live_cursor_sample_request_id, Some(1));
+	assert_eq!(session.applied_live_cursor_sample_request_id, Some(1));
+	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(session.window_list_snapshot.is_some());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn complete_startup_aux_window_creation_defers_live_stream_upgrade_until_aux_window_use() {
+	let monitor = tests::test_monitor();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+	let original_live_sample_stream = ptr::from_ref(session.live_sample_stream.as_ref().unwrap());
+	let original_scroll_live_stream =
+		ptr::from_ref(session.scroll_capture.live_stream.as_ref().unwrap());
+
+	session.startup_aux_window_creation_pending = true;
+	session.cursor_monitor = Some(monitor);
+
+	session.note_live_cursor_sample_request_started(7);
+	session.finish_sync_live_cursor_sample_attempt(7);
+
+	session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
+		captured_at: Instant::now(),
+		windows: Arc::new(vec![WindowRect {
+			window_id: Some(9),
+			x: 10,
+			y: 12,
+			width: 30,
+			height: 40,
+		}]),
+	}));
+
+	session.complete_startup_aux_window_creation(true);
+
+	assert!(!session.startup_aux_window_creation_pending);
+	assert!(session.pending_startup_aux_live_stream_filter_upgrade);
+	assert_eq!(session.latest_live_cursor_sample_request_id, Some(7));
+	assert_eq!(session.applied_live_cursor_sample_request_id, Some(7));
 	assert_eq!(
-		session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
-		&[17]
+		ptr::from_ref(session.live_sample_stream.as_ref().unwrap()),
+		original_live_sample_stream
 	);
 	assert_eq!(
-		session
-			.scroll_capture
-			.live_stream
-			.as_ref()
-			.unwrap()
-			.debug_self_capture_exception_window_ids(),
-		&[17]
+		ptr::from_ref(session.scroll_capture.live_stream.as_ref().unwrap()),
+		original_scroll_live_stream
 	);
-	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-	assert!(session.window_list_snapshot.is_none());
-	assert!(
-		session.last_window_list_refresh_request_at.elapsed()
-			>= session.window_list_refresh_interval
+	assert_eq!(session.live_sample_stream.as_ref().unwrap().debug_last_request_kind(), None);
+	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(session.window_list_snapshot.is_some());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn showing_loupe_window_applies_pending_startup_live_stream_upgrade() {
+	let monitor = tests::test_monitor();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+	let original_live_sample_stream = ptr::from_ref(session.live_sample_stream.as_ref().unwrap());
+	let original_scroll_live_stream =
+		ptr::from_ref(session.scroll_capture.live_stream.as_ref().unwrap());
+
+	session.pending_startup_aux_live_stream_filter_upgrade = true;
+
+	session.set_alt_loupe_window_visible(Some(monitor), true);
+
+	assert!(!session.pending_startup_aux_live_stream_filter_upgrade);
+	assert_eq!(
+		ptr::from_ref(session.live_sample_stream.as_ref().unwrap()),
+		original_live_sample_stream
 	);
+	assert_eq!(
+		ptr::from_ref(session.scroll_capture.live_stream.as_ref().unwrap()),
+		original_scroll_live_stream
+	);
+	assert_eq!(
+		session.live_sample_stream.as_ref().unwrap().debug_last_request_kind(),
+		Some("upgrade_monitor_nonblocking")
+	);
+	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
 }
 
 #[cfg(target_os = "macos")]

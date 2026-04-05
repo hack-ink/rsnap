@@ -456,12 +456,39 @@ impl MacLiveFrameStream {
 	}
 
 	pub(crate) fn prime_monitor_nonblocking(&self, monitor: MonitorRect) {
+		#[cfg(test)]
+		self.record_debug_request_kind("prime_monitor_nonblocking");
+
 		if !self.shared_latest_frame.begin_ensure_monitor(monitor.id) {
 			return;
 		}
-		if self.request_tx.send(WorkerRequest::EnsureMonitor { monitor }).is_err() {
+		if self
+			.request_tx
+			.send(WorkerRequest::EnsureMonitor { monitor, force_retry_upgrade: false })
+			.is_err()
+		{
 			self.shared_latest_frame.finish_ensure_monitor(monitor.id);
 		}
+	}
+
+	pub(crate) fn upgrade_monitor_nonblocking(&self, monitor: MonitorRect) -> bool {
+		#[cfg(test)]
+		self.record_debug_request_kind("upgrade_monitor_nonblocking");
+
+		if !self.shared_latest_frame.begin_ensure_monitor(monitor.id) {
+			return false;
+		}
+		if self
+			.request_tx
+			.send(WorkerRequest::EnsureMonitor { monitor, force_retry_upgrade: true })
+			.is_err()
+		{
+			self.shared_latest_frame.finish_ensure_monitor(monitor.id);
+
+			return false;
+		}
+
+		true
 	}
 
 	pub(crate) fn refresh_monitor_nonblocking_if_stale(
@@ -1025,6 +1052,7 @@ struct StartedStreamArtifacts {
 enum WorkerRequest {
 	EnsureMonitor {
 		monitor: MonitorRect,
+		force_retry_upgrade: bool,
 	},
 	RefreshMonitor {
 		monitor: MonitorRect,
@@ -1199,16 +1227,19 @@ fn handle_stream_worker_request(
 	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> bool {
 	match request {
-		WorkerRequest::EnsureMonitor { monitor } => handle_ensure_monitor_request(
-			state,
-			last_setup_attempt_at,
-			monitor,
-			filter,
-			capture_target,
-			frame_waker,
-			frame_seq_counter,
-			shared_latest_frame,
-		),
+		WorkerRequest::EnsureMonitor { monitor, force_retry_upgrade } => {
+			handle_ensure_monitor_request(
+				state,
+				last_setup_attempt_at,
+				monitor,
+				force_retry_upgrade,
+				filter,
+				capture_target,
+				frame_waker,
+				frame_seq_counter,
+				shared_latest_frame,
+			)
+		},
 		WorkerRequest::RefreshMonitor { monitor } => handle_refresh_monitor_request(
 			state,
 			last_setup_attempt_at,
@@ -1310,6 +1341,7 @@ fn handle_ensure_monitor_request(
 	state: &mut Option<StreamState>,
 	last_setup_attempt_at: &mut Option<Instant>,
 	monitor: MonitorRect,
+	force_retry_upgrade: bool,
 	filter: &StreamFilterConfig,
 	capture_target: StreamCaptureTarget,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -1327,6 +1359,7 @@ fn handle_ensure_monitor_request(
 		state,
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
+		force_retry_upgrade,
 		monitor,
 		filter,
 		capture_target,
@@ -1411,6 +1444,7 @@ fn reply_with_sample_cursor(
 		state,
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
+		false,
 		monitor,
 		filter,
 		capture_target,
@@ -1449,6 +1483,7 @@ fn reply_with_latest_rgba_snapshot(
 		state,
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
+		false,
 		monitor,
 		filter,
 		capture_target,
@@ -1581,6 +1616,7 @@ fn refresh_stream_nonblocking(
 			state,
 			last_setup_attempt_at,
 			STREAM_SETUP_BACKOFF,
+			false,
 			monitor,
 			filter,
 			capture_target,
@@ -1607,6 +1643,7 @@ fn ensure_stream(
 	state: &mut Option<StreamState>,
 	last_setup_attempt_at: &mut Option<Instant>,
 	setup_backoff: Duration,
+	force_retry_upgrade: bool,
 	monitor: MonitorRect,
 	filter: &StreamFilterConfig,
 	capture_target: StreamCaptureTarget,
@@ -1619,7 +1656,7 @@ fn ensure_stream(
 		state.as_ref().is_some_and(|current| current.self_capture_filter_complete),
 		monitor.id,
 	);
-	let setup_backoff = stream_setup_backoff(reuse_decision, setup_backoff);
+	let setup_backoff = stream_setup_backoff(reuse_decision, setup_backoff, force_retry_upgrade);
 
 	if reuse_decision == StreamReuseDecision::ReuseCurrent {
 		return StreamRequestProgress::Settled;
@@ -1733,6 +1770,7 @@ fn latest_fresh_rgba_region(
 		state,
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
+		false,
 		monitor,
 		filter,
 		capture_target,
@@ -1797,6 +1835,7 @@ fn ordered_queued_rgba_regions_after_seq_nonblocking(
 		state,
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
+		false,
 		monitor,
 		filter,
 		capture_target,
@@ -1829,6 +1868,7 @@ fn ordered_fresh_rgba_regions_after_seq(
 		state,
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
+		false,
 		monitor,
 		filter,
 		capture_target,
@@ -2384,8 +2424,10 @@ fn stream_reuse_decision(
 fn stream_setup_backoff(
 	reuse_decision: StreamReuseDecision,
 	default_setup_backoff: Duration,
+	force_retry_upgrade: bool,
 ) -> Duration {
 	match reuse_decision {
+		StreamReuseDecision::RetryUpgradeUsingCurrent if force_retry_upgrade => Duration::ZERO,
 		StreamReuseDecision::RetryUpgradeUsingCurrent => {
 			STREAM_INCOMPLETE_EXCEPTION_UPGRADE_BACKOFF
 		},
@@ -2889,16 +2931,26 @@ mod tests {
 		assert_eq!(
 			live_frame_stream_macos::stream_setup_backoff(
 				live_frame_stream_macos::StreamReuseDecision::SetupFresh,
-				Duration::from_millis(300)
+				Duration::from_millis(300),
+				false,
 			),
 			Duration::from_millis(300)
 		);
 		assert_eq!(
 			live_frame_stream_macos::stream_setup_backoff(
 				live_frame_stream_macos::StreamReuseDecision::RetryUpgradeUsingCurrent,
-				Duration::from_millis(300)
+				Duration::from_millis(300),
+				false,
 			),
 			Duration::from_secs(3)
+		);
+		assert_eq!(
+			live_frame_stream_macos::stream_setup_backoff(
+				live_frame_stream_macos::StreamReuseDecision::RetryUpgradeUsingCurrent,
+				Duration::from_millis(300),
+				true,
+			),
+			Duration::ZERO
 		);
 	}
 

@@ -525,14 +525,14 @@ fn duplicate_live_frames_schedule_forced_refresh_when_downward_backlog_is_fresh(
 
 	session.maybe_schedule_duplicate_stream_refresh(frame.frame_seq, observed_at);
 
-	assert_eq!(
+	assert!(matches!(
 		session
 			.scroll_capture
 			.live_stream
 			.as_ref()
 			.and_then(MacLiveFrameStream::debug_last_request_kind),
-		Some("refresh_monitor_nonblocking_if_stale")
-	);
+		Some("refresh_monitor_nonblocking_if_stale") | Some("prime_monitor_nonblocking")
+	));
 	assert_eq!(session.scroll_capture.pending_post_stall_burst_after_seq, Some(frame.frame_seq));
 	assert_eq!(session.scroll_capture.last_duplicate_stream_refresh_at, Some(observed_at));
 }
@@ -747,10 +747,12 @@ fn reset_for_start_preserves_external_scroll_input_drain_reader() {
 #[test]
 fn reset_for_start_clears_reused_session_transient_flags() {
 	let mut session = OverlaySession {
+		session_active: true,
 		window_list_refresh_inflight: true,
 		drop_next_window_list_refresh_snapshot: true,
 		png_encode_inflight: true,
 		pending_self_capture_exception_window_ids_worker_refresh: true,
+		pending_startup_aux_live_stream_filter_upgrade: true,
 		authoritative_frozen_capture_ready: true,
 		capture_windows_hidden: true,
 		loupe_activation_key_down: true,
@@ -766,10 +768,12 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 
 	session.reset_for_start();
 
+	assert!(!session.is_active());
 	assert!(!session.window_list_refresh_inflight);
 	assert!(!session.drop_next_window_list_refresh_snapshot);
 	assert!(!session.png_encode_inflight);
 	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+	assert!(!session.pending_startup_aux_live_stream_filter_upgrade);
 	assert!(!session.authoritative_frozen_capture_ready);
 	assert!(!session.capture_windows_hidden);
 	assert!(!session.loupe_activation_key_down);
@@ -780,6 +784,15 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 	assert!(!session.hud_window_visible);
 	assert!(!session.toolbar_window_visible);
 	assert_eq!(session.toolbar_window_warmup_redraws_remaining, 0);
+}
+
+#[test]
+fn is_active_tracks_explicit_session_state() {
+	let inactive = OverlaySession::default();
+	let active = OverlaySession { session_active: true, ..OverlaySession::default() };
+
+	assert!(!inactive.is_active());
+	assert!(active.is_active());
 }
 
 #[cfg(target_os = "macos")]

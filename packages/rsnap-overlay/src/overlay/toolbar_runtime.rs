@@ -205,6 +205,11 @@ impl OverlaySession {
 			let should_focus_frozen_keyboard = !self.toolbar_window_visible
 				&& matches!(self.state.mode, OverlayMode::Frozen)
 				&& !self.scroll_capture.active;
+
+			if !self.toolbar_window_visible {
+				self.maybe_apply_pending_startup_aux_live_stream_filter_upgrade(monitor);
+			}
+
 			let Some(gpu) = self.gpu.as_ref() else {
 				return Ok(());
 			};

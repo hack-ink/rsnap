@@ -1,13 +1,17 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::mem;
+use std::sync::{Arc, Mutex};
 #[cfg(not(target_os = "macos"))]
 use std::time::Duration;
 use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSArray;
-use winit::window::Window;
+use winit::window::{Window, WindowId};
 
 use crate::backend;
+#[cfg(target_os = "macos")]
+use crate::overlay::MacOSHudWindowConfigState;
 #[cfg(target_os = "macos")]
 use crate::overlay::{self, MacLiveFrameStream, MainThreadMarker, NSScreen};
 use crate::overlay::{
@@ -43,9 +47,16 @@ impl OverlaySession {
 
 		let startup_cursor = self.sample_mouse_location();
 		let startup_monitor = Self::monitor_for_cursor_in_rects(&monitors, startup_cursor);
+		let startup_stream_prime_started_at = Instant::now();
+
+		self.prime_startup_live_stream_nonblocking(startup_monitor);
+
+		let startup_stream_prime_ms = startup_stream_prime_started_at.elapsed().as_millis();
 		let gpu_init_started_at = Instant::now();
 
-		self.gpu = Some(GpuContext::new().map_err(|err| format!("{err:#}"))?);
+		if self.gpu.is_none() {
+			self.gpu = Some(GpuContext::new().map_err(|err| format!("{err:#}"))?);
+		}
 
 		let gpu_init_ms = gpu_init_started_at.elapsed().as_millis();
 		let window_creation = self.create_startup_windows(event_loop, &monitors)?;
@@ -62,6 +73,8 @@ impl OverlaySession {
 		let initialize_cursor_ms = initialize_cursor_started_at.elapsed().as_millis();
 		let request_redraw_started_at = Instant::now();
 
+		self.session_active = true;
+
 		self.request_redraw_all();
 
 		let request_redraw_ms = request_redraw_started_at.elapsed().as_millis();
@@ -75,12 +88,14 @@ impl OverlaySession {
 			reset_ms,
 			worker_setup_ms,
 			monitor_enum_ms,
+			startup_stream_prime_ms,
 			gpu_init_ms,
 			overlay_windows_ms = window_creation.overlay_windows_ms,
 			hud_window_ms = window_creation.hud_window_ms,
 			loupe_window_ms = window_creation.loupe_window_ms,
 			toolbar_window_ms = window_creation.toolbar_window_ms,
 			scroll_preview_window_ms = window_creation.scroll_preview_window_ms,
+			startup_windows_source = window_creation.startup_windows_source,
 			startup_aux_windows_deferred = cfg!(target_os = "macos"),
 			prime_cursor_ms,
 			startup_seed_ms,
@@ -88,6 +103,60 @@ impl OverlaySession {
 			request_redraw_ms,
 			total_ms = startup_started_at.elapsed().as_millis(),
 			"Overlay start phase timing."
+		);
+
+		Ok(())
+	}
+
+	/// Pre-creates the GPU context plus hidden overlay/HUD windows so the first capture can
+	/// reuse them instead of paying the full cold-start cost on demand.
+	pub fn prewarm(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+		if self.is_active() || self.has_prewarmed_startup_resources() {
+			return Ok(());
+		}
+
+		let prewarm_started_at = Instant::now();
+		let monitor_enum_started_at = Instant::now();
+		let monitors = self.available_overlay_monitors()?;
+		let monitor_enum_ms = monitor_enum_started_at.elapsed().as_millis();
+
+		if monitors.is_empty() {
+			return Err(String::from("No monitors detected"));
+		}
+
+		let gpu_init_started_at = Instant::now();
+
+		if self.gpu.is_none() {
+			self.gpu = Some(GpuContext::new().map_err(|err| format!("{err:#}"))?);
+		}
+
+		let gpu_init_ms = gpu_init_started_at.elapsed().as_millis();
+
+		if !self.windows.is_empty() || self.hud_window.is_some() {
+			self.discard_prewarmed_startup_resources();
+		}
+
+		let overlay_windows_started_at = Instant::now();
+
+		self.create_overlay_windows(event_loop, &monitors, false)?;
+
+		let overlay_windows_ms = overlay_windows_started_at.elapsed().as_millis();
+		let hud_window_started_at = Instant::now();
+
+		self.create_hud_window(event_loop)?;
+
+		let hud_window_ms = hud_window_started_at.elapsed().as_millis();
+
+		tracing::info!(
+			op = "overlay.prewarm_phase_timing",
+			monitor_count = monitors.len(),
+			window_count = self.windows.len(),
+			monitor_enum_ms,
+			gpu_init_ms,
+			overlay_windows_ms,
+			hud_window_ms,
+			total_ms = prewarm_started_at.elapsed().as_millis(),
+			"Overlay startup resources prewarmed."
 		);
 
 		Ok(())
@@ -119,15 +188,26 @@ impl OverlaySession {
 		monitors: &[MonitorRect],
 	) -> Result<StartupWindowCreationMetrics, String> {
 		let overlay_windows_started_at = Instant::now();
+		let reused_prewarmed_windows = self.has_matching_prewarmed_startup_resources(monitors);
 
-		self.create_overlay_windows(event_loop, monitors)?;
+		if reused_prewarmed_windows {
+			self.activate_prewarmed_overlay_windows();
+		} else {
+			self.discard_prewarmed_startup_resources();
+			self.create_overlay_windows(event_loop, monitors, true)?;
+		}
 
 		let overlay_windows_ms = overlay_windows_started_at.elapsed().as_millis();
 		let hud_window_started_at = Instant::now();
 
-		self.create_hud_window(event_loop)?;
+		if reused_prewarmed_windows {
+			self.configure_hud_windows_for_config();
+		} else {
+			self.create_hud_window(event_loop)?;
+		}
 
 		let hud_window_ms = hud_window_started_at.elapsed().as_millis();
+		let startup_windows_source = if reused_prewarmed_windows { "prewarmed" } else { "fresh" };
 
 		#[cfg(target_os = "macos")]
 		{
@@ -140,6 +220,7 @@ impl OverlaySession {
 				loupe_window_ms: 0,
 				toolbar_window_ms: 0,
 				scroll_preview_window_ms: 0,
+				startup_windows_source,
 			})
 		}
 		#[cfg(not(target_os = "macos"))]
@@ -166,6 +247,7 @@ impl OverlaySession {
 				loupe_window_ms,
 				toolbar_window_ms,
 				scroll_preview_window_ms,
+				startup_windows_source,
 			})
 		}
 	}
@@ -249,10 +331,34 @@ impl OverlaySession {
 		self.startup_aux_window_creation_pending = false;
 
 		if created_aux_windows {
-			// When ScreenCaptureKit falls back to excluding only currently shareable
-			// rsnap windows, deferred aux windows must exist before we rebuild the
-			// active filters or they can remain visible in the live stream.
-			self.apply_self_capture_exception_window_ids_to_active_streams();
+			if self.latest_live_cursor_sample_request_id.is_some() {
+				// If startup already primed live sampling, keep the existing stream alive
+				// and defer the narrow ScreenCaptureKit upgrade until an auxiliary window
+				// is actually shown.
+				self.pending_startup_aux_live_stream_filter_upgrade = true;
+			} else {
+				// Delay the first live-stream ensure until after the aux windows exist so
+				// startup can begin with the full self-capture exclusion set.
+				self.kick_startup_live_sampling();
+			}
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn maybe_apply_pending_startup_aux_live_stream_filter_upgrade(
+		&mut self,
+		monitor: MonitorRect,
+	) {
+		if !self.pending_startup_aux_live_stream_filter_upgrade {
+			return;
+		}
+
+		let Some(stream) = self.live_sample_stream.as_ref() else {
+			return;
+		};
+
+		if stream.upgrade_monitor_nonblocking(monitor) {
+			self.pending_startup_aux_live_stream_filter_upgrade = false;
 		}
 	}
 
@@ -261,6 +367,7 @@ impl OverlaySession {
 		self.set_scroll_overlay_mouse_passthrough(false);
 
 		let config = self.config.clone();
+		let prewarmed_startup_resources = self.take_prewarmed_startup_resources();
 		let response_waker = self.response_waker.clone();
 		#[cfg(target_os = "macos")]
 		let scroll_frame_waker = self.scroll_frame_waker.clone();
@@ -277,6 +384,9 @@ impl OverlaySession {
 			self.scroll_capture.external_scroll_input_drain_reader.clone();
 
 		*self = Self::with_config(config);
+
+		self.restore_prewarmed_startup_resources(prewarmed_startup_resources);
+
 		self.response_waker = response_waker;
 		#[cfg(target_os = "macos")]
 		{
@@ -285,6 +395,7 @@ impl OverlaySession {
 			self.scroll_capture_starting_hook = scroll_capture_starting_hook;
 			self.scroll_capture_started_hook = scroll_capture_started_hook;
 			self.startup_aux_window_waker = startup_aux_window_waker;
+			self.pending_startup_aux_live_stream_filter_upgrade = false;
 			self.scroll_capture.external_scroll_input_drain_reader =
 				external_scroll_input_drain_reader;
 		}
@@ -430,10 +541,11 @@ impl OverlaySession {
 		&mut self,
 		event_loop: &ActiveEventLoop,
 		monitors: &[MonitorRect],
+		visible: bool,
 	) -> Result<(), String> {
 		for monitor in monitors {
 			let monitor_rect = *monitor;
-			let attrs = Window::default_attributes()
+			let mut attrs = Window::default_attributes()
 				.with_title("rsnap-overlay")
 				.with_decorations(false)
 				.with_resizable(false)
@@ -450,6 +562,11 @@ impl OverlaySession {
 					monitor_rect.origin.x as f64,
 					monitor_rect.origin.y as f64,
 				));
+
+			if !visible {
+				attrs = attrs.with_visible(false);
+			}
+
 			let window = event_loop
 				.create_window(attrs)
 				.map_err(|err| format!("Unable to create overlay window: {err}"))?;
@@ -476,8 +593,10 @@ impl OverlaySession {
 			let refresh_rate_millihertz =
 				window.current_monitor().and_then(|monitor| monitor.refresh_rate_millihertz());
 
-			window.request_redraw();
-			window.focus_window();
+			if visible {
+				window.request_redraw();
+				window.focus_window();
+			}
 
 			let gpu = self.gpu.as_ref().ok_or_else(|| String::from("Missing GPU context"))?;
 			let renderer = WindowRenderer::new(
@@ -494,6 +613,65 @@ impl OverlaySession {
 		}
 
 		Ok(())
+	}
+
+	fn activate_prewarmed_overlay_windows(&self) {
+		for window in self.windows.values() {
+			window.window.set_visible(true);
+		}
+	}
+
+	fn has_matching_prewarmed_startup_resources(&self, monitors: &[MonitorRect]) -> bool {
+		self.has_prewarmed_startup_resources()
+			&& self.windows.len() == monitors.len()
+			&& monitors
+				.iter()
+				.all(|monitor| self.windows.values().any(|window| window.monitor == *monitor))
+	}
+
+	fn discard_prewarmed_startup_resources(&mut self) {
+		self.windows.clear();
+
+		self.hud_window = None;
+		self.hud_inner_size_points = None;
+		self.hud_outer_pos = None;
+		self.pending_hud_outer_pos = None;
+
+		#[cfg(target_os = "macos")]
+		self.macos_hud_window_config_cache.clear();
+	}
+
+	fn take_prewarmed_startup_resources(&mut self) -> Option<PrewarmedStartupResources> {
+		if !self.has_prewarmed_startup_resources() {
+			return None;
+		}
+
+		Some(PrewarmedStartupResources {
+			egui_repaint_deadline: Arc::clone(&self.egui_repaint_deadline),
+			gpu: self.gpu.take(),
+			windows: mem::take(&mut self.windows),
+			hud_window: self.hud_window.take(),
+			#[cfg(target_os = "macos")]
+			macos_hud_window_config_cache: mem::take(&mut self.macos_hud_window_config_cache),
+		})
+	}
+
+	fn restore_prewarmed_startup_resources(
+		&mut self,
+		resources: Option<PrewarmedStartupResources>,
+	) {
+		let Some(resources) = resources else {
+			return;
+		};
+
+		self.egui_repaint_deadline = resources.egui_repaint_deadline;
+		self.gpu = resources.gpu;
+		self.windows = resources.windows;
+		self.hud_window = resources.hud_window;
+		#[cfg(target_os = "macos")]
+		{
+			self.macos_hud_window_config_cache = resources.macos_hud_window_config_cache;
+		}
 	}
 
 	fn create_hud_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
@@ -715,6 +893,16 @@ struct StartupWindowCreationMetrics {
 	loupe_window_ms: u128,
 	toolbar_window_ms: u128,
 	scroll_preview_window_ms: u128,
+	startup_windows_source: &'static str,
+}
+
+struct PrewarmedStartupResources {
+	egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
+	gpu: Option<GpuContext>,
+	windows: HashMap<WindowId, OverlayWindow>,
+	hud_window: Option<HudOverlayWindow>,
+	#[cfg(target_os = "macos")]
+	macos_hud_window_config_cache: HashMap<WindowId, MacOSHudWindowConfigState>,
 }
 
 #[cfg(test)]

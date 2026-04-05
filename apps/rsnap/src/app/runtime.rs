@@ -34,6 +34,8 @@ impl ApplicationHandler<UserEvent> for App {
 		self.install_tray(event_loop);
 		#[cfg(target_os = "macos")]
 		self.maybe_present_startup_permissions(event_loop);
+		#[cfg(target_os = "macos")]
+		self.maybe_prewarm_overlay_session(event_loop);
 	}
 
 	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
@@ -219,6 +221,9 @@ impl ApplicationHandler<UserEvent> for App {
 
 			self.handle_overlay_control(control);
 		}
+
+		#[cfg(target_os = "macos")]
+		self.maybe_prewarm_overlay_session(event_loop);
 	}
 }
 

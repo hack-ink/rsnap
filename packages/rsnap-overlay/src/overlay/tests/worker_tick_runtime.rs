@@ -33,6 +33,7 @@ fn maybe_tick_scroll_capture_stays_on_stream_path_without_worker_fallback() {
 		session.scroll_capture.live_stream.as_ref().unwrap().debug_last_request_kind(),
 		Some("ordered_rgba_regions_after_seq_nonblocking")
 			| Some("refresh_monitor_nonblocking_if_stale")
+			| Some("prime_monitor_nonblocking")
 	));
 }
 

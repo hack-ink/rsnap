@@ -1,5 +1,7 @@
 use image::RgbaImage;
 
+#[cfg(target_os = "macos")]
+use crate::live_frame_stream_macos::MacLiveFrameStream;
 #[allow(unused_imports)]
 use crate::overlay::tests::{
 	self, Duration, GlobalPoint, HudRedrawSummary, LoupeSample, MonitorRect, MonitorRectPoints,
@@ -427,6 +429,41 @@ fn sync_live_sample_attempt_does_not_leave_pending_request() {
 	assert!(!session.live_sample_request_pending());
 	assert_eq!(session.latest_live_cursor_sample_request_id, Some(7));
 	assert_eq!(session.applied_live_cursor_sample_request_id, Some(7));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn request_live_samples_for_cursor_primes_stream_setup_while_startup_aux_windows_pending() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let mut session = OverlaySession::new();
+
+	session.live_sample_stream = Some(MacLiveFrameStream::new());
+	session.startup_aux_window_creation_pending = true;
+
+	assert!(!session.request_live_samples_for_cursor(monitor, cursor));
+	assert_eq!(session.latest_live_cursor_sample_request_id, Some(1));
+	assert_eq!(session.applied_live_cursor_sample_request_id, Some(1));
+	assert_eq!(
+		session.live_sample_stream.as_ref().and_then(MacLiveFrameStream::debug_last_request_kind),
+		Some("prime_monitor_nonblocking")
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn prime_startup_live_stream_nonblocking_primes_stream_for_live_mode() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.live_sample_stream = Some(MacLiveFrameStream::new());
+
+	session.prime_startup_live_stream_nonblocking(Some(monitor));
+
+	assert_eq!(
+		session.live_sample_stream.as_ref().and_then(MacLiveFrameStream::debug_last_request_kind),
+		Some("prime_monitor_nonblocking")
+	);
 }
 
 #[test]
