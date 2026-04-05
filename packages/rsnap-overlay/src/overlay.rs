@@ -321,8 +321,6 @@ const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] =
 	[(196, 226, 255), (228, 198, 255), (176, 244, 224)];
 const SELECTION_FLOW_LIGHT_PALETTE: [(u8, u8, u8); 3] =
 	[(196, 226, 255), (228, 198, 255), (176, 244, 224)];
-const SELECTION_FLOW_FROZEN_ALPHA_SCALE: f32 = 0.70;
-const SELECTION_FLOW_FROZEN_INTENSITY: f32 = 1.25;
 const LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 96;
 const LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK: u8 = 148;
 const FROZEN_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 224;
@@ -619,7 +617,6 @@ impl DeviceCursorPointSource {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SelectionFlowStyle {
 	Band,
-	FullBorder,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -668,7 +665,7 @@ pub struct OverlayConfig {
 	pub show_alt_hint_keycap: bool,
 	/// Enables blur or its platform fallback for HUD windows.
 	pub show_hud_blur: bool,
-	/// Enables the animated flow ring drawn around live and pending selections.
+	/// Enables the animated flow ring drawn around live auto-detected windows.
 	pub selection_flow_enabled: bool,
 	/// Sets the core stroke width used for the animated selection border.
 	pub selection_flow_stroke_width_px: f32,

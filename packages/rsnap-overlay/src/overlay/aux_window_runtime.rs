@@ -173,27 +173,22 @@ impl OverlaySession {
 		if !self.is_active() || !self.config.selection_flow_enabled {
 			return;
 		}
-
-		let keep_repaint = match self.state.mode {
-			OverlayMode::Live => self.live_overlay_selection_flow_repaint_active(),
-			OverlayMode::Frozen => self.state.frozen_capture_rect.is_some(),
-		};
-
-		if keep_repaint {
-			let monitor = match self.state.mode {
-				OverlayMode::Live => self.active_cursor_monitor(),
-				OverlayMode::Frozen => self.state.monitor,
-			};
-			let repaint_interval = self.selection_flow_repaint_interval(monitor);
-
-			if let Some(monitor) = monitor {
-				self.request_redraw_for_monitor(monitor);
-			} else {
-				self.request_redraw_all();
-			}
-
-			self.schedule_egui_repaint_after(repaint_interval);
+		if !matches!(self.state.mode, OverlayMode::Live)
+			|| !self.live_overlay_selection_flow_repaint_active()
+		{
+			return;
 		}
+
+		let monitor = self.active_cursor_monitor();
+		let repaint_interval = self.selection_flow_repaint_interval(monitor);
+
+		if let Some(monitor) = monitor {
+			self.request_redraw_for_monitor(monitor);
+		} else {
+			self.request_redraw_all();
+		}
+
+		self.schedule_egui_repaint_after(repaint_interval);
 	}
 
 	pub(super) fn live_overlay_selection_flow_repaint_active(&self) -> bool {
