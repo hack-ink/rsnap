@@ -6,6 +6,7 @@ use std::{
 		Arc,
 		atomic::{AtomicU64, Ordering},
 	},
+	thread,
 	time::{Duration, Instant},
 };
 
@@ -23,6 +24,8 @@ use crate::{
 const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: Rgba<u8> = Rgba([246, 246, 246, 255]);
 #[cfg(target_os = "macos")]
 const WINDOW_CAPTURE_MATTE_DARK_RGBA: Rgba<u8> = Rgba([24, 24, 24, 255]);
+#[cfg(target_os = "macos")]
+const PUBLISH_GATE_PENDING_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -194,13 +197,34 @@ impl DeferredTextRecognitionContext {
 #[derive(Debug)]
 struct DeferredTextRecognitionPublishGate {
 	latest_generation: Arc<AtomicU64>,
+	pending_generation: Arc<AtomicU64>,
 	request_generation: u64,
 }
 #[cfg(target_os = "macos")]
 impl DeferredTextRecognitionPublishGate {
-	fn allows_publish(&self) -> bool {
-		self.latest_generation.load(Ordering::Acquire) == self.request_generation
+	fn publish_decision(&self) -> DeferredTextRecognitionPublishDecision {
+		loop {
+			let pending_generation = self.pending_generation.load(Ordering::Acquire);
+
+			if pending_generation > self.request_generation {
+				thread::sleep(PUBLISH_GATE_PENDING_POLL_INTERVAL);
+
+				continue;
+			}
+			if self.latest_generation.load(Ordering::Acquire) == self.request_generation {
+				return DeferredTextRecognitionPublishDecision::Allow;
+			}
+
+			return DeferredTextRecognitionPublishDecision::SuppressStale;
+		}
 	}
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeferredTextRecognitionPublishDecision {
+	Allow,
+	SuppressStale,
 }
 
 #[cfg(target_os = "macos")]
@@ -218,11 +242,16 @@ pub fn process_deferred_text_recognition(
 pub fn process_deferred_text_recognition_for_latest_capture(
 	request: DeferredTextRecognitionRequest,
 	latest_generation: Arc<AtomicU64>,
+	pending_generation: Arc<AtomicU64>,
 	request_generation: u64,
 ) -> DeferredTextRecognitionOutcome {
 	process_deferred_text_recognition_with_gate(
 		request,
-		Some(DeferredTextRecognitionPublishGate { latest_generation, request_generation }),
+		Some(DeferredTextRecognitionPublishGate {
+			latest_generation,
+			pending_generation,
+			request_generation,
+		}),
 	)
 }
 
@@ -412,7 +441,9 @@ fn recognized_text_outcome(
 
 #[cfg(target_os = "macos")]
 fn publish_gate_allows_publish(publish_gate: Option<&DeferredTextRecognitionPublishGate>) -> bool {
-	publish_gate.is_none_or(DeferredTextRecognitionPublishGate::allows_publish)
+	publish_gate.is_none_or(|publish_gate| {
+		publish_gate.publish_decision() == DeferredTextRecognitionPublishDecision::Allow
+	})
 }
 
 #[cfg(target_os = "macos")]
@@ -575,6 +606,8 @@ mod tests {
 		atomic::{AtomicU64, Ordering},
 	};
 	use std::time::Instant;
+	#[cfg(target_os = "macos")]
+	use std::{thread, time::Duration};
 
 	use image::Rgba;
 	use image::RgbaImage;
@@ -626,12 +659,15 @@ mod tests {
 	#[test]
 	fn publish_gate_only_allows_latest_capture_generation() {
 		let latest_generation = Arc::new(AtomicU64::new(7));
+		let pending_generation = Arc::new(AtomicU64::new(0));
 		let matching_gate = DeferredTextRecognitionPublishGate {
 			latest_generation: Arc::clone(&latest_generation),
+			pending_generation: Arc::clone(&pending_generation),
 			request_generation: 7,
 		};
 		let stale_gate = DeferredTextRecognitionPublishGate {
 			latest_generation: Arc::clone(&latest_generation),
+			pending_generation: Arc::clone(&pending_generation),
 			request_generation: 6,
 		};
 
@@ -642,5 +678,55 @@ mod tests {
 		assert!(!deferred_text_recognition::publish_gate_allows_publish(Some(&stale_gate,)));
 		assert!(!deferred_text_recognition::publish_gate_allows_publish(Some(&matching_gate,)));
 		assert!(deferred_text_recognition::publish_gate_allows_publish(None));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn publish_gate_waits_for_newer_capture_start_to_finish_before_suppressing_publish() {
+		let latest_generation = Arc::new(AtomicU64::new(7));
+		let pending_generation = Arc::new(AtomicU64::new(8));
+		let stale_gate = DeferredTextRecognitionPublishGate {
+			latest_generation: Arc::clone(&latest_generation),
+			pending_generation: Arc::clone(&pending_generation),
+			request_generation: 7,
+		};
+		let latest_generation_writer = Arc::clone(&latest_generation);
+		let pending_generation_writer = Arc::clone(&pending_generation);
+		let wait_started_at = Instant::now();
+		let resolver = thread::spawn(move || {
+			thread::sleep(Duration::from_millis(15));
+
+			latest_generation_writer.store(8, Ordering::Release);
+			pending_generation_writer.store(0, Ordering::Release);
+		});
+
+		assert!(!deferred_text_recognition::publish_gate_allows_publish(Some(&stale_gate)));
+		assert!(wait_started_at.elapsed() >= Duration::from_millis(10));
+
+		resolver.join().expect("resolver thread should finish");
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn publish_gate_waits_for_failed_newer_capture_start_before_allowing_publish() {
+		let latest_generation = Arc::new(AtomicU64::new(7));
+		let pending_generation = Arc::new(AtomicU64::new(8));
+		let matching_gate = DeferredTextRecognitionPublishGate {
+			latest_generation: Arc::clone(&latest_generation),
+			pending_generation: Arc::clone(&pending_generation),
+			request_generation: 7,
+		};
+		let pending_generation_writer = Arc::clone(&pending_generation);
+		let wait_started_at = Instant::now();
+		let resolver = thread::spawn(move || {
+			thread::sleep(Duration::from_millis(15));
+
+			pending_generation_writer.store(0, Ordering::Release);
+		});
+
+		assert!(deferred_text_recognition::publish_gate_allows_publish(Some(&matching_gate)));
+		assert!(wait_started_at.elapsed() >= Duration::from_millis(10));
+
+		resolver.join().expect("resolver thread should finish");
 	}
 }

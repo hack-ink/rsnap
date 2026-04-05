@@ -83,6 +83,8 @@ struct App {
 	#[cfg(target_os = "macos")]
 	latest_deferred_ocr_generation: Arc<AtomicU64>,
 	#[cfg(target_os = "macos")]
+	pending_deferred_ocr_generation: Arc<AtomicU64>,
+	#[cfg(target_os = "macos")]
 	overlay_session_generation: u64,
 	#[cfg(target_os = "macos")]
 	startup_permissions_checked: bool,
@@ -135,6 +137,8 @@ impl App {
 			overlay_stream_event_pending: Arc::new(AtomicBool::new(false)),
 			#[cfg(target_os = "macos")]
 			latest_deferred_ocr_generation: Arc::new(AtomicU64::new(0)),
+			#[cfg(target_os = "macos")]
+			pending_deferred_ocr_generation: Arc::new(AtomicU64::new(0)),
 			#[cfg(target_os = "macos")]
 			overlay_session_generation: 0,
 			#[cfg(target_os = "macos")]
