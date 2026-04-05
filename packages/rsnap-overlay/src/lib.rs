@@ -22,9 +22,9 @@ pub mod replay_support {
 		replay_recorded_scroll_capture_trace, replay_recorded_scroll_capture_trace_with_mode,
 	};
 }
+
 #[cfg(target_os = "macos")]
 mod deferred_text_recognition;
-
 mod backend;
 #[cfg(target_os = "macos")]
 mod live_frame_stream_macos;

@@ -57,15 +57,15 @@ pub(crate) fn recognize_text_from_image(image: &RgbaImage) -> Result<RecognizedT
 
 		let requests: Retained<NSArray<VNRequest>> =
 			NSArray::from_slice(&[request.as_super().as_super()]);
-
 		let vision_request_started_at = Instant::now();
+
 		request_handler
 			.performRequests_error(&requests)
 			.wrap_err("Vision text recognition request failed")?;
-		let vision_request_elapsed = vision_request_started_at.elapsed();
 
-		let mut lines = Vec::new();
+		let vision_request_elapsed = vision_request_started_at.elapsed();
 		let extract_results_started_at = Instant::now();
+		let mut lines = Vec::new();
 
 		if let Some(results) = request.results() {
 			for index in 0..results.count() {
@@ -136,13 +136,13 @@ mod tests {
 	use image::Rgba;
 	use objc2_core_graphics::CGImage;
 
-	use super::cg_image_from_rgba_image;
+	use crate::ocr_macos;
 	use crate::ocr_macos::RgbaImage;
 
 	#[test]
 	fn cg_image_bridge_preserves_dimensions() {
 		let image = RgbaImage::from_pixel(7, 5, Rgba([1, 2, 3, 255]));
-		let cg_image = cg_image_from_rgba_image(&image).expect("cg image");
+		let cg_image = ocr_macos::cg_image_from_rgba_image(&image).expect("cg image");
 
 		assert_eq!(CGImage::width(Some(cg_image.as_ref())), 7);
 		assert_eq!(CGImage::height(Some(cg_image.as_ref())), 5);

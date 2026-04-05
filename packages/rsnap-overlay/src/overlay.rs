@@ -1,4 +1,5 @@
 pub(crate) mod replay_support;
+pub(crate) mod output;
 
 mod aux_window_runtime;
 mod capture_window_runtime;
@@ -8,7 +9,6 @@ mod cursor_runtime;
 mod hud_helpers;
 mod hud_runtime;
 mod image_helpers;
-pub(crate) mod output;
 mod rendering;
 mod scroll_preview_runtime;
 mod scroll_runtime;
@@ -3884,7 +3884,6 @@ impl OverlaySession {
 
 			return Some(DeferredTextRecognitionRequest::prepared(request_id, requested_at, image));
 		}
-
 		if self.frozen_capture_source == FrozenCaptureSource::Window {
 			match self.config.window_capture_alpha_mode {
 				WindowCaptureAlphaMode::Background => {},
@@ -4414,6 +4413,7 @@ impl OverlaySession {
 
 		self.pending_png_action = None;
 		self.pending_encode_png = None;
+
 		self.state.clear_error();
 
 		tracing::info!(
@@ -4999,21 +4999,38 @@ impl OverlaySession {
 	}
 
 	fn exit(&mut self, exit: OverlayExit) -> OverlayControl {
-		let (exit_kind, png_bytes_len, saved_path, error_message, ocr_request_id) = match &exit {
-			OverlayExit::Cancelled => ("cancelled", None, None, None, None),
+		let exit_metadata = Self::exit_metadata(&exit);
+
+		self.log_exit_begin(&exit_metadata);
+		self.finalize_scroll_capture_for_exit();
+		self.reset_runtime_for_exit();
+		self.log_exit_end(&exit_metadata);
+
+		OverlayControl::Exit(exit)
+	}
+
+	fn exit_metadata(exit: &OverlayExit) -> OverlayExitMetadata<'_> {
+		match exit {
+			OverlayExit::Cancelled => OverlayExitMetadata::new("cancelled"),
 			OverlayExit::PngBytes(png_bytes) => {
-				("png_bytes", Some(png_bytes.len()), None, None, None)
+				OverlayExitMetadata::new("png_bytes").with_png_bytes_len(png_bytes.len())
 			},
-			OverlayExit::TextCopied(_) => ("text_copied", None, None, None, None),
+			OverlayExit::TextCopied(_) => OverlayExitMetadata::new("text_copied"),
 			#[cfg(target_os = "macos")]
 			OverlayExit::DeferredTextRecognition(request) => {
-				("deferred_text_recognition", None, None, None, Some(request.request_id))
+				OverlayExitMetadata::new("deferred_text_recognition")
+					.with_ocr_request_id(request.request_id)
 			},
 			OverlayExit::Saved(path) => {
-				("saved", None, Some(path.display().to_string()), None, None)
+				OverlayExitMetadata::new("saved").with_saved_path(path.display().to_string())
 			},
-			OverlayExit::Error(message) => ("error", None, None, Some(message.as_str()), None),
-		};
+			OverlayExit::Error(message) => {
+				OverlayExitMetadata::new("error").with_error_message(message.as_str())
+			},
+		}
+	}
+
+	fn log_exit_begin(&self, exit_metadata: &OverlayExitMetadata<'_>) {
 		#[cfg(target_os = "macos")]
 		let scroll_capture_has_live_stream = self.scroll_capture.live_stream.is_some();
 		#[cfg(not(target_os = "macos"))]
@@ -5025,11 +5042,11 @@ impl OverlaySession {
 
 		tracing::info!(
 			op = "overlay.exit_begin",
-			exit_kind,
-			png_bytes_len,
-			saved_path,
-			error_message,
-			ocr_request_id,
+			exit_kind = exit_metadata.exit_kind,
+			png_bytes_len = exit_metadata.png_bytes_len,
+			saved_path = exit_metadata.saved_path,
+			error_message = exit_metadata.error_message,
+			ocr_request_id = exit_metadata.ocr_request_id,
 			scroll_capture_active = self.scroll_capture.active,
 			scroll_capture_has_live_stream,
 			live_sample_stream_present,
@@ -5039,7 +5056,9 @@ impl OverlaySession {
 			last_event_detail = ?self.event_loop_last_progress_detail,
 			"Beginning overlay exit cleanup."
 		);
+	}
 
+	fn finalize_scroll_capture_for_exit(&mut self) {
 		if self.scroll_capture.active {
 			self.maybe_tick_scroll_capture();
 			self.refresh_scroll_preview_committed_image();
@@ -5062,7 +5081,9 @@ impl OverlaySession {
 				scroll_capture_final_snapshot,
 			);
 		}
+	}
 
+	fn reset_runtime_for_exit(&mut self) {
 		#[cfg(target_os = "macos")]
 		self.set_scroll_overlay_mouse_passthrough(false);
 		self.windows.clear();
@@ -5108,18 +5129,18 @@ impl OverlaySession {
 
 		self.stop_frozen_selection_drag();
 		self.clear_pending_output_actions();
+	}
 
+	fn log_exit_end(&self, exit_metadata: &OverlayExitMetadata<'_>) {
 		tracing::info!(
 			op = "overlay.exit_end",
-			exit_kind,
-			png_bytes_len,
-			saved_path,
-			error_message,
-			ocr_request_id,
+			exit_kind = exit_metadata.exit_kind,
+			png_bytes_len = exit_metadata.png_bytes_len,
+			saved_path = exit_metadata.saved_path,
+			error_message = exit_metadata.error_message,
+			ocr_request_id = exit_metadata.ocr_request_id,
 			"Finished overlay exit cleanup."
 		);
-
-		OverlayControl::Exit(exit)
 	}
 
 	fn clear_pending_output_actions(&mut self) {
@@ -5141,6 +5162,50 @@ impl OverlaySession {
 impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
+	}
+}
+
+#[derive(Debug)]
+struct OverlayExitMetadata<'a> {
+	exit_kind: &'static str,
+	png_bytes_len: Option<usize>,
+	saved_path: Option<String>,
+	error_message: Option<&'a str>,
+	ocr_request_id: Option<u64>,
+}
+impl<'a> OverlayExitMetadata<'a> {
+	fn new(exit_kind: &'static str) -> Self {
+		Self {
+			exit_kind,
+			png_bytes_len: None,
+			saved_path: None,
+			error_message: None,
+			ocr_request_id: None,
+		}
+	}
+
+	fn with_png_bytes_len(mut self, png_bytes_len: usize) -> Self {
+		self.png_bytes_len = Some(png_bytes_len);
+
+		self
+	}
+
+	fn with_saved_path(mut self, saved_path: String) -> Self {
+		self.saved_path = Some(saved_path);
+
+		self
+	}
+
+	fn with_error_message(mut self, error_message: &'a str) -> Self {
+		self.error_message = Some(error_message);
+
+		self
+	}
+
+	fn with_ocr_request_id(mut self, ocr_request_id: u64) -> Self {
+		self.ocr_request_id = Some(ocr_request_id);
+
+		self
 	}
 }
 
