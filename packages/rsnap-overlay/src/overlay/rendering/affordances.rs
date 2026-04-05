@@ -26,10 +26,9 @@ use crate::overlay::{
 	OverlayState, Painter, Pos2, Rect, RectPoints, SELECTION_DASHED_BORDER_ALPHA,
 	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
 	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_FLOW_CORE_FLOW_WIDTH,
-	SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST, SELECTION_FLOW_FROZEN_ALPHA_SCALE,
-	SELECTION_FLOW_FROZEN_INTENSITY, SELECTION_FLOW_LIGHT_PALETTE, SELECTION_FLOW_MAX_SEGMENTS,
-	SELECTION_FLOW_MIN_SEGMENTS, SELECTION_FLOW_PALETTE, SELECTION_FLOW_SAMPLE_STEP_PX,
-	SELECTION_FLOW_SPEED, SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX,
+	SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST, SELECTION_FLOW_LIGHT_PALETTE,
+	SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS, SELECTION_FLOW_PALETTE,
+	SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED, SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX,
 	SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, SELECTION_SIZE_BADGE_GAP_PX,
 	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX,
 	SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
@@ -124,31 +123,6 @@ impl WindowRenderer {
 			has_rect = true;
 		}
 
-		let has_hovered_window_for_this_monitor =
-			state.hovered_window_rect.is_some_and(|hovered| hovered.monitor_id == monitor.id);
-		let has_drag_rect_for_this_monitor =
-			state.drag_rect.is_some_and(|drag_rect| drag_rect.monitor_id == monitor.id);
-		let cursor_on_monitor = state.cursor.is_some_and(|cursor| monitor.contains(cursor));
-
-		if selection_flow_enabled
-			&& !has_hovered_window_for_this_monitor
-			&& !has_drag_rect_for_this_monitor
-			&& cursor_on_monitor
-			&& primary_not_down
-		{
-			Self::render_selection_flow_ring(
-				painter,
-				screen_rect,
-				ctx,
-				theme,
-				SelectionFlowStyle::Band,
-				selection_flow_stroke_width_px,
-				selection_flow_geometry_cache,
-			);
-
-			has_rect = true;
-		}
-
 		has_rect
 	}
 
@@ -162,10 +136,10 @@ impl WindowRenderer {
 		frozen_selection_resize_handles_enabled: bool,
 		frozen_capture_source: FrozenCaptureSource,
 		frozen_toolbar_reserved_rect: Option<Rect>,
-		frozen_capture_is_fullscreen_fallback: bool,
-		selection_flow_enabled: bool,
-		selection_flow_stroke_width_px: f32,
-		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+		_frozen_capture_is_fullscreen_fallback: bool,
+		_selection_flow_enabled: bool,
+		_selection_flow_stroke_width_px: f32,
+		_selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
 		let Some(rect) = Self::frozen_capture_focus_rect(state, screen_rect) else {
@@ -176,84 +150,13 @@ impl WindowRenderer {
 		let painter = ctx.layer_painter(layer);
 		let show_resize_handles = frozen_selection_resize_handles_enabled
 			&& frozen_capture_source == FrozenCaptureSource::DragRegion;
-
-		if state.frozen_image.is_some() {
-			let mut has_affordance = Self::render_frozen_selection_scrim(
-				&painter,
-				rect,
-				screen_rect,
-				theme,
-				show_resize_handles,
-				selection_dashed_border_cache,
-			);
-
-			if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
-				Self::render_selection_size_badge(
-					ctx,
-					&painter,
-					monitor,
-					screen_rect,
-					target,
-					frozen_toolbar_reserved_rect,
-					frozen_capture_source == FrozenCaptureSource::DragRegion,
-					theme,
-				);
-
-				has_affordance = true;
-			}
-
-			if show_resize_handles && let Some(capture_rect) = state.frozen_capture_rect {
-				has_affordance |=
-					Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
-			}
-
-			return has_affordance;
-		}
-		if !selection_flow_enabled {
-			let mut has_affordance = Self::render_frozen_selection_scrim(
-				&painter,
-				rect,
-				screen_rect,
-				theme,
-				show_resize_handles,
-				selection_dashed_border_cache,
-			);
-
-			if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
-				Self::render_selection_size_badge(
-					ctx,
-					&painter,
-					monitor,
-					screen_rect,
-					target,
-					frozen_toolbar_reserved_rect,
-					frozen_capture_source == FrozenCaptureSource::DragRegion,
-					theme,
-				);
-
-				has_affordance = true;
-			}
-
-			if show_resize_handles && let Some(capture_rect) = state.frozen_capture_rect {
-				has_affordance |=
-					Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
-			}
-
-			return has_affordance;
-		}
-
-		Self::render_selection_flow_ring(
+		let mut has_affordance = Self::render_frozen_selection_scrim(
 			&painter,
 			rect,
-			ctx,
+			screen_rect,
 			theme,
-			if frozen_capture_is_fullscreen_fallback {
-				SelectionFlowStyle::Band
-			} else {
-				SelectionFlowStyle::FullBorder
-			},
-			selection_flow_stroke_width_px,
-			selection_flow_geometry_cache,
+			show_resize_handles,
+			selection_dashed_border_cache,
 		);
 
 		if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
@@ -267,13 +170,16 @@ impl WindowRenderer {
 				frozen_capture_source == FrozenCaptureSource::DragRegion,
 				theme,
 			);
+
+			has_affordance = true;
 		}
 
 		if show_resize_handles && let Some(capture_rect) = state.frozen_capture_rect {
-			Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
+			has_affordance |=
+				Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
 		}
 
-		true
+		has_affordance
 	}
 
 	pub(in crate::overlay) fn frozen_capture_focus_rect(
@@ -1467,16 +1373,6 @@ impl WindowRenderer {
 				SELECTION_FLOW_CORE_FLOW_WIDTH,
 				theme,
 			),
-			SelectionFlowStyle::FullBorder => Self::selection_flow_draw_layer_full_border(
-				painter,
-				samples,
-				normals,
-				stroke_width,
-				base_alpha_scale * SELECTION_FLOW_FROZEN_ALPHA_SCALE,
-				phase,
-				SELECTION_FLOW_FROZEN_INTENSITY,
-				theme,
-			),
 		}
 	}
 
@@ -1637,46 +1533,6 @@ impl WindowRenderer {
 			let (current_point, t) = samples[i];
 			let movement = Self::selection_flow_flow_band(t, phase, flow_band_width);
 			let intensity = SELECTION_FLOW_FLOW_BOOST * movement;
-			let color = Self::selection_flow_color(t + phase, theme, alpha_scale, intensity);
-			let normal = normals[i] * half;
-
-			mesh.colored_vertex(current_point + normal, color);
-			mesh.colored_vertex(current_point - normal, color);
-		}
-		for i in 0..n {
-			let i0 = (i * 2) as u32;
-			let i1 = ((i * 2) + 1) as u32;
-			let n0 = (((i + 1) % n) * 2) as u32;
-			let n1 = (((i + 1) % n) * 2 + 1) as u32;
-
-			mesh.add_triangle(i0, i1, n0);
-			mesh.add_triangle(i1, n1, n0);
-		}
-
-		painter.add(Shape::Mesh(mesh.into()));
-	}
-
-	#[allow(clippy::too_many_arguments)]
-	pub(in crate::overlay) fn selection_flow_draw_layer_full_border(
-		painter: &Painter,
-		samples: &[(Pos2, f32)],
-		normals: &[Vec2],
-		line_width: f32,
-		alpha_scale: f32,
-		phase: f32,
-		intensity: f32,
-		theme: HudTheme,
-	) {
-		if samples.is_empty() || normals.is_empty() || samples.len() != normals.len() {
-			return;
-		}
-
-		let half = (line_width * 0.5).max(0.1);
-		let n = samples.len();
-		let mut mesh = Mesh::default();
-
-		for i in 0..n {
-			let (current_point, t) = samples[i];
 			let color = Self::selection_flow_color(t + phase, theme, alpha_scale, intensity);
 			let normal = normals[i] * half;
 

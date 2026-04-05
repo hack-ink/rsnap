@@ -1743,6 +1743,7 @@ fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
 		&mut selection_flow_geometry_cache,
 		&mut selection_dashed_border_cache,
 	));
+	assert!(selection_flow_geometry_cache.is_empty());
 }
 
 #[test]
@@ -1809,6 +1810,37 @@ fn render_live_capture_affordances_draw_drag_border_when_flow_disabled() {
 		&mut selection_dashed_border_cache,
 	));
 	assert!(selection_dashed_border_cache.key.is_some());
+}
+
+#[test]
+fn render_live_capture_affordances_skips_fullscreen_flow_without_hover_or_drag() {
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("live-idle-no-flow"));
+	let painter = ctx.layer_painter(layer);
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+	state.mode = OverlayMode::Live;
+	state.cursor = Some(GlobalPoint::new(240, 260));
+
+	assert!(WindowRenderer::render_live_capture_affordances(
+		&ctx,
+		&painter,
+		&state,
+		monitor,
+		screen_rect,
+		HudTheme::Dark,
+		true,
+		1.0,
+		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
+	));
+	assert!(selection_flow_geometry_cache.is_empty());
+	assert_eq!(selection_dashed_border_cache.key, None);
 }
 
 #[test]
