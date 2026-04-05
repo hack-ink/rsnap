@@ -83,6 +83,14 @@ impl OverlaySession {
 		stream.prime_monitor_nonblocking(monitor);
 	}
 
+	#[cfg(not(target_os = "macos"))]
+	pub(super) fn prime_startup_live_stream_nonblocking(
+		&self,
+		startup_monitor: Option<MonitorRect>,
+	) {
+		let _ = startup_monitor;
+	}
+
 	#[cfg(target_os = "macos")]
 	pub(super) fn seed_startup_live_cursor_rgb(
 		&mut self,

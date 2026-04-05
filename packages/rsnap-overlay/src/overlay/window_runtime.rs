@@ -362,6 +362,14 @@ impl OverlaySession {
 		}
 	}
 
+	#[cfg(not(target_os = "macos"))]
+	pub(super) fn maybe_apply_pending_startup_aux_live_stream_filter_upgrade(
+		&mut self,
+		monitor: MonitorRect,
+	) {
+		let _ = monitor;
+	}
+
 	pub(super) fn reset_for_start(&mut self) {
 		#[cfg(target_os = "macos")]
 		self.set_scroll_overlay_mouse_passthrough(false);
