@@ -1697,10 +1697,10 @@ impl OverlaySession {
 		let Some((target_monitor, capture_rect)) = self.frozen_selection_drag_target() else {
 			return CursorIcon::Default;
 		};
+
 		if target_monitor != monitor {
 			return CursorIcon::Default;
 		}
-
 		if self.frozen_selection_drag.active {
 			return match self.frozen_selection_drag.interaction {
 				FrozenSelectionInteractionKind::Resize(corner) => {
@@ -1773,6 +1773,7 @@ impl OverlaySession {
 			},
 			FrozenSelectionInteractionKind::Resize(corner) => {
 				let (cursor_x, cursor_y) = Self::local_point_in_monitor_space(monitor, global);
+
 				Self::resize_frozen_capture_rect_from_corner(
 					monitor,
 					anchor_rect,
@@ -3244,23 +3245,7 @@ impl OverlaySession {
 		};
 
 		if matches!(self.state.mode, OverlayMode::Frozen) {
-			self.reset_toolbar_pointer_state();
-
-			match state {
-				ElementState::Pressed => {
-					let cursor = self.current_device_cursor();
-					let _ = self.begin_frozen_selection_drag(cursor);
-					self.sync_overlay_cursor_icons();
-				},
-				ElementState::Released => {
-					self.stop_frozen_selection_drag();
-					self.sync_overlay_cursor_icons();
-				},
-			}
-
-			self.request_redraw_for_monitor(monitor);
-
-			return OverlayControl::Continue;
+			return self.handle_frozen_left_mouse_input(monitor, state);
 		}
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			return OverlayControl::Continue;
@@ -3354,6 +3339,31 @@ impl OverlaySession {
 				OverlayControl::Continue
 			},
 		}
+	}
+
+	fn handle_frozen_left_mouse_input(
+		&mut self,
+		monitor: MonitorRect,
+		state: ElementState,
+	) -> OverlayControl {
+		self.reset_toolbar_pointer_state();
+
+		match state {
+			ElementState::Pressed => {
+				let cursor = self.current_device_cursor();
+				let _ = self.begin_frozen_selection_drag(cursor);
+
+				self.sync_overlay_cursor_icons();
+			},
+			ElementState::Released => {
+				self.stop_frozen_selection_drag();
+				self.sync_overlay_cursor_icons();
+			},
+		}
+
+		self.request_redraw_for_monitor(monitor);
+
+		OverlayControl::Continue
 	}
 
 	fn handle_scroll_mouse_wheel(
