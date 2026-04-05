@@ -57,13 +57,14 @@ use crate::overlay::{
 	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
 	SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
 	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
-	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers, regular,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowCaptureAlphaMode, WindowRenderer,
+	hud_helpers, regular,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
 	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
 	InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult,
-	LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl,
+	LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl, OverlayExit,
 	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
 	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
 	ScrollCaptureFrameSource, StartupLiveRgbPlan,
@@ -380,7 +381,7 @@ fn begin_png_action_copies_preview_render_image_during_active_scroll_capture() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn begin_ocr_action_clears_stale_png_output_intent() {
+fn begin_ocr_action_exits_with_deferred_request_and_clears_stale_png_output_intent() {
 	let monitor = test_monitor();
 	let expected_export = test_frozen_image();
 	let mut session = OverlaySession::new();
@@ -397,156 +398,72 @@ fn begin_ocr_action_clears_stale_png_output_intent() {
 	assert_eq!(session.pending_png_action, Some(PngAction::Copy));
 	assert_eq!(session.pending_encode_png.as_ref(), Some(&expected_export));
 
-	session.begin_ocr_action();
+	let control = session.begin_ocr_action();
+	let OverlayControl::Exit(OverlayExit::DeferredTextRecognition(request)) = control else {
+		panic!("expected deferred OCR exit");
+	};
 
 	assert_eq!(session.pending_png_action, None);
 	assert!(session.pending_encode_png.is_none());
-	assert_eq!(
-		session.pending_recognize_text.as_ref().map(|request| &request.image),
-		Some(&expected_export)
-	);
-	assert_eq!(session.active_ocr_request_id, Some(0));
-	assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
+	assert_eq!(request.export_image().as_ref(), Some(&expected_export));
+	assert_eq!(request.request_id, 0);
+	assert!(session.state.error_message.is_none());
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn begin_ocr_action_ticks_active_scroll_capture_before_queueing_recognition() {
+fn begin_ocr_action_drag_region_still_uses_frozen_image_under_matte_mode() {
 	let monitor = test_monitor();
-	let rect = RectPoints::new(100, 120, 512, 640);
-	let base = make_browser_like_worker_capture_window(512, 640, 0);
+	let expected_export = test_frozen_image();
 	let mut session = OverlaySession::new();
 
-	session.worker = Some(OverlayWorker::new(
-		Box::new(SequenceScrollCaptureBackend::new([Some(
-			make_browser_like_worker_capture_window(512, 640, 84),
-		)])),
-		None,
-	));
+	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteLight;
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, expected_export.clone());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.authoritative_frozen_capture_ready = true;
+
+	let control = session.begin_ocr_action();
+	let OverlayControl::Exit(OverlayExit::DeferredTextRecognition(request)) = control else {
+		panic!("expected deferred OCR exit");
+	};
+
+	assert_eq!(request.export_image().as_ref(), Some(&expected_export));
+	assert!(session.frozen_window_image.is_none());
+	assert!(session.state.error_message.is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn begin_ocr_action_uses_scroll_capture_export_image_in_deferred_request() {
+	let monitor = test_monitor();
+	let base = make_scroll_capture_test_image(3, &[[10, 0, 0, 255]; 8]);
+	let grown = make_scroll_capture_test_image(3, &[[20, 0, 0, 255]; 12]);
+	let mut scroll_session = ScrollSession::new(base, 320).expect("scroll session");
+	let _ = scroll_session.observe_downward_sample(grown).expect("observe");
+	let expected_export = scroll_session.export_image().clone();
+	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, test_frozen_image());
 
-	session.state.frozen_capture_rect = Some(rect);
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 	session.authoritative_frozen_capture_ready = true;
 	session.scroll_capture.active = true;
-	session.scroll_capture.monitor = Some(monitor);
-	session.scroll_capture.capture_rect_pixels = Some(rect);
-	session.scroll_capture.session = Some(ScrollSession::new(base, 320).unwrap());
+	session.scroll_capture.session = Some(scroll_session);
+	session.scroll_capture.preview_display_image =
+		Some(image::RgbaImage::from_pixel(320, 64, Rgba([77, 0, 0, 255])));
 
-	enable_test_worker_scroll_capture_path(&mut session);
-	set_scroll_capture_input(&mut session, ScrollDirection::Down);
+	let control = session.begin_ocr_action();
+	let OverlayControl::Exit(OverlayExit::DeferredTextRecognition(request)) = control else {
+		panic!("expected deferred OCR exit");
+	};
 
-	session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
-
-	session.begin_ocr_action();
-
-	assert!(
-		session.scroll_capture.inflight_request_id.is_some(),
-		"OCR should flush active scroll capture by kicking the same worker sample path as PNG export"
-	);
-	assert!(session.pending_recognize_text.is_some());
-	assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn stale_png_response_is_ignored_after_ocr_supersedes_export() {
-	let monitor = test_monitor();
-	let mut session = OverlaySession::new();
-
-	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
-
-	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
-	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-	session.authoritative_frozen_capture_ready = true;
-
-	session.begin_png_action(PngAction::Copy);
-	session.begin_ocr_action();
-
-	let control = session.handle_encoded_png_response(Vec::new());
-
-	assert!(matches!(control, OverlayControl::Continue));
-	assert_eq!(session.pending_png_action, None);
-	assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn stale_ocr_response_is_ignored_after_copy_supersedes_ocr() {
-	let monitor = test_monitor();
-	let mut session = OverlaySession::new();
-
-	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
-
-	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
-	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-	session.authoritative_frozen_capture_ready = true;
-
-	session.begin_ocr_action();
-
-	let request_id = session.active_ocr_request_id.expect("ocr request id");
-
-	session.pending_recognize_text = None;
-	session.ocr_inflight = true;
-
-	session.begin_png_action(PngAction::Copy);
-
-	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::RecognizedText {
-		request_id,
-		text: String::from("stale text"),
-	});
-
-	assert!(matches!(control, OverlayControl::Continue));
-	assert_eq!(session.active_ocr_request_id, None);
-	assert!(!session.ocr_inflight);
-	assert_eq!(session.pending_png_action, Some(PngAction::Copy));
-	assert_eq!(session.state.error_message.as_deref(), Some("Copying..."));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn stale_ocr_error_is_ignored_while_newer_ocr_request_is_pending() {
-	let monitor = test_monitor();
-	let mut session = OverlaySession::new();
-
-	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
-
-	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
-	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-	session.authoritative_frozen_capture_ready = true;
-
-	session.begin_ocr_action();
-
-	let first_request_id = session.active_ocr_request_id.expect("first ocr request id");
-
-	session.pending_recognize_text = None;
-	session.ocr_inflight = true;
-
-	session.begin_ocr_action();
-
-	let second_request_id =
-		session.pending_recognize_text.as_ref().expect("newer pending ocr request").request_id;
-
-	assert_ne!(first_request_id, second_request_id);
-
-	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
-		source: WorkerErrorSource::RecognizeText,
-		message: String::from("stale OCR failure"),
-	});
-
-	assert!(matches!(control, OverlayControl::Continue));
-	assert_eq!(session.active_ocr_request_id, Some(second_request_id));
-	assert_eq!(
-		session.pending_recognize_text.as_ref().map(|request| request.request_id),
-		Some(second_request_id)
-	);
-	assert!(!session.ocr_inflight);
-	assert_eq!(session.state.error_message.as_deref(), Some("Recognizing text..."));
+	assert_eq!(request.export_image().as_ref(), Some(&expected_export));
+	assert!(session.state.error_message.is_none());
 }
 
 #[cfg(target_os = "macos")]
@@ -808,7 +725,6 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 	let mut session = OverlaySession {
 		window_list_refresh_inflight: true,
 		drop_next_window_list_refresh_snapshot: true,
-		ocr_inflight: true,
 		png_encode_inflight: true,
 		pending_self_capture_exception_window_ids_worker_refresh: true,
 		authoritative_frozen_capture_ready: true,
@@ -828,7 +744,6 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 
 	assert!(!session.window_list_refresh_inflight);
 	assert!(!session.drop_next_window_list_refresh_snapshot);
-	assert!(!session.ocr_inflight);
 	assert!(!session.png_encode_inflight);
 	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
 	assert!(!session.authoritative_frozen_capture_ready);
