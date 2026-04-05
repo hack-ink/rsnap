@@ -16,11 +16,11 @@ use crate::overlay::{
 	BindingType, BlendState, Buffer, BufferBindingType, BufferSize, BufferUsages, ClippedPrimitive,
 	Color32, ColorWrites, CompositeAlphaMode, Cow, CurrentSurfaceTexture, Device, Duration, Event,
 	ExperimentalFeatures, Features, FilterMode, FontDefinitions, FontFamily, FrontFace,
-	FrozenCaptureSource, FrozenToolbarPointerState, FrozenToolbarState, FullOutput, HudAnchor,
-	HudTheme, Id, Instant, LayerId, LoadOp, MemoryHints, MipmapFilterMode, MonitorRect,
-	MultisampleState, Mutex, Order, OverlayMode, OverlaySession, OverlayState, PhysicalSize,
-	PipelineCompilationOptions, PointerButton, PolygonMode, Pos2, PowerPreference, PresentMode,
-	PrimitiveTopology, Queue, Rect, RectPoints, RenderPipeline, Renderer, Result,
+	FrozenCaptureSource, FrozenSelectionCorner, FrozenToolbarPointerState, FrozenToolbarState,
+	FullOutput, HudAnchor, HudTheme, Id, Instant, LayerId, LoadOp, MemoryHints, MipmapFilterMode,
+	MonitorRect, MultisampleState, Mutex, Order, OverlayMode, OverlaySession, OverlayState,
+	PhysicalSize, PipelineCompilationOptions, PointerButton, PolygonMode, Pos2, PowerPreference,
+	PresentMode, PrimitiveTopology, Queue, Rect, RectPoints, RenderPipeline, Renderer, Result,
 	SLOW_OP_WARN_RENDER, Sampler, SamplerBindingType, ScreenDescriptor, ShaderSource, ShaderStages,
 	SlowOperationLogger, StoreOp, Surface, SurfaceCapabilities, SurfaceFrameSkipReason,
 	SurfaceTexture, Texture, TextureAspect, TextureSampleType, TextureUsages, TextureView,
@@ -55,9 +55,10 @@ pub(super) struct SelectionDashedBorderCacheKey {
 	rect_max_y_bits: u32,
 	dash_length_bits: u32,
 	gap_length_bits: u32,
+	corner_keepout_bits: u32,
 }
 impl SelectionDashedBorderCacheKey {
-	const fn new(rect: Rect, dash_length: f32, gap_length: f32) -> Self {
+	const fn new(rect: Rect, dash_length: f32, gap_length: f32, corner_keepout: f32) -> Self {
 		Self {
 			rect_min_x_bits: rect.min.x.to_bits(),
 			rect_min_y_bits: rect.min.y.to_bits(),
@@ -65,6 +66,7 @@ impl SelectionDashedBorderCacheKey {
 			rect_max_y_bits: rect.max.y.to_bits(),
 			dash_length_bits: dash_length.to_bits(),
 			gap_length_bits: gap_length.to_bits(),
+			corner_keepout_bits: corner_keepout.to_bits(),
 		}
 	}
 }
@@ -93,6 +95,13 @@ pub(super) struct SelectionSizeBadgeLayout {
 pub(super) struct SelectionSizeBadgeTarget {
 	pub(super) rect: Rect,
 	pub(super) size_points: RectPoints,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct FrozenSelectionResizeHandleGeometry {
+	pub(super) corner: FrozenSelectionCorner,
+	pub(super) anchor: Pos2,
+	pub(super) hit_rect: Rect,
 }
 
 pub(super) struct HudOverlayWindow {
@@ -667,6 +676,7 @@ impl WindowRenderer {
 		selection_flow_stroke_width_px: f32,
 		needs_frozen_surface_bg: bool,
 		show_frozen_capture_affordance: bool,
+		frozen_selection_resize_handles_enabled: bool,
 		frozen_capture_source: FrozenCaptureSource,
 		frozen_capture_is_fullscreen_fallback: bool,
 		frozen_toolbar_reserved_rect: Option<Rect>,
@@ -747,6 +757,7 @@ impl WindowRenderer {
 					selection_flow_enabled,
 					selection_flow_stroke_width_px,
 					selection_flow_geometry_cache,
+					selection_dashed_border_cache,
 				);
 			}
 			if matches!(state.mode, OverlayMode::Frozen)
@@ -762,6 +773,7 @@ impl WindowRenderer {
 					monitor,
 					screen_rect,
 					theme,
+					frozen_selection_resize_handles_enabled,
 					frozen_capture_source,
 					frozen_toolbar_reserved_rect,
 					frozen_capture_is_fullscreen_fallback,
@@ -1292,6 +1304,7 @@ impl WindowRenderer {
 		selection_flow_stroke_width_px: f32,
 		allow_frozen_surface_bg: bool,
 		show_frozen_capture_affordance: bool,
+		frozen_selection_resize_handles_enabled: bool,
 		frozen_capture_source: FrozenCaptureSource,
 		frozen_capture_is_fullscreen_fallback: bool,
 		frozen_toolbar_reserved_rect: Option<Rect>,
@@ -1353,6 +1366,7 @@ impl WindowRenderer {
 			selection_flow_stroke_width_px,
 			hud_cfg.needs_frozen_surface_bg,
 			show_frozen_capture_affordance,
+			frozen_selection_resize_handles_enabled,
 			frozen_capture_source,
 			frozen_capture_is_fullscreen_fallback,
 			frozen_toolbar_reserved_rect,

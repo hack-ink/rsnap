@@ -130,7 +130,7 @@ use winit::{
 	event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
 	event_loop::ActiveEventLoop,
 	keyboard::{Key, ModifiersState, NamedKey},
-	window::{WindowId, WindowLevel},
+	window::{CursorIcon, WindowId, WindowLevel},
 };
 
 #[cfg(target_os = "macos")]
@@ -327,10 +327,16 @@ const LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 96;
 const LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK: u8 = 148;
 const FROZEN_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 224;
 const FROZEN_SELECTION_SCRIM_ALPHA_DARK: u8 = 208;
-const SELECTION_DASHED_BORDER_WIDTH_PX: f32 = 2.0;
-const SELECTION_DASHED_BORDER_DASH_LENGTH_PX: f32 = 6.0;
-const SELECTION_DASHED_BORDER_GAP_LENGTH_PX: f32 = 4.0;
-const SELECTION_DASHED_BORDER_ALPHA: u8 = 224;
+const SELECTION_DASHED_BORDER_WIDTH_PX: f32 = 3.1;
+const SELECTION_DASHED_BORDER_DASH_LENGTH_PX: f32 = 12.0;
+const SELECTION_DASHED_BORDER_GAP_LENGTH_PX: f32 = 7.8;
+const SELECTION_DASHED_BORDER_ALPHA: u8 = 248;
+const FROZEN_SELECTION_RESIZE_HANDLE_HIT_SIZE_POINTS: f32 = 24.0;
+const FROZEN_SELECTION_RESIZE_HANDLE_HIT_OFFSET_POINTS: f32 = 4.0;
+const FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS: f32 = 8.0;
+const FROZEN_SELECTION_RESIZE_HANDLE_ARM_LENGTH_POINTS: f32 = 12.0;
+const FROZEN_SELECTION_RESIZE_HANDLE_BORDER_GAP_POINTS: f32 = 0.0;
+const FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS: f32 = 2.55;
 const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: image::Rgba<u8> = image::Rgba([246, 246, 246, 255]);
 const WINDOW_CAPTURE_MATTE_DARK_RGBA: image::Rgba<u8> = image::Rgba([24, 24, 24, 255]);
 const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
@@ -577,6 +583,21 @@ enum FrozenCaptureSource {
 	DragRegion,
 	Window,
 	FullscreenFallback,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrozenSelectionCorner {
+	TopLeft,
+	TopRight,
+	BottomLeft,
+	BottomRight,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum FrozenSelectionInteractionKind {
+	#[default]
+	Move,
+	Resize(FrozenSelectionCorner),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1629,18 +1650,94 @@ impl OverlaySession {
 		let Some((cursor_x, cursor_y)) = monitor.local_u32(global) else {
 			return false;
 		};
-
-		if !capture_rect.contains((cursor_x, cursor_y)) {
+		let Some(interaction) =
+			Self::frozen_selection_interaction_kind(capture_rect, cursor_x, cursor_y)
+		else {
 			return false;
-		}
+		};
 
 		self.frozen_selection_drag = FrozenSelectionDragState {
 			active: true,
+			interaction,
+			anchor_rect: capture_rect,
 			pointer_offset_x: cursor_x.saturating_sub(capture_rect.x),
 			pointer_offset_y: cursor_y.saturating_sub(capture_rect.y),
+			press_cursor_x: cursor_x,
+			press_cursor_y: cursor_y,
 		};
 
 		true
+	}
+
+	fn frozen_selection_interaction_kind(
+		capture_rect: RectPoints,
+		cursor_x: u32,
+		cursor_y: u32,
+	) -> Option<FrozenSelectionInteractionKind> {
+		if let Some(corner) = WindowRenderer::frozen_selection_resize_hit_test(
+			capture_rect,
+			Pos2::new(cursor_x as f32, cursor_y as f32),
+		) {
+			return Some(FrozenSelectionInteractionKind::Resize(corner));
+		}
+
+		capture_rect.contains((cursor_x, cursor_y)).then_some(FrozenSelectionInteractionKind::Move)
+	}
+
+	fn frozen_selection_resize_cursor_icon(corner: FrozenSelectionCorner) -> CursorIcon {
+		match corner {
+			FrozenSelectionCorner::TopLeft => CursorIcon::NwResize,
+			FrozenSelectionCorner::TopRight => CursorIcon::NeResize,
+			FrozenSelectionCorner::BottomLeft => CursorIcon::SwResize,
+			FrozenSelectionCorner::BottomRight => CursorIcon::SeResize,
+		}
+	}
+
+	fn frozen_selection_cursor_icon_for_monitor(&self, monitor: MonitorRect) -> CursorIcon {
+		let Some((target_monitor, capture_rect)) = self.frozen_selection_drag_target() else {
+			return CursorIcon::Default;
+		};
+		if target_monitor != monitor {
+			return CursorIcon::Default;
+		}
+
+		if self.frozen_selection_drag.active {
+			return match self.frozen_selection_drag.interaction {
+				FrozenSelectionInteractionKind::Resize(corner) => {
+					Self::frozen_selection_resize_cursor_icon(corner)
+				},
+				FrozenSelectionInteractionKind::Move => CursorIcon::Default,
+			};
+		}
+
+		let Some(cursor) = self.state.cursor else {
+			return CursorIcon::Default;
+		};
+		let Some((cursor_x, cursor_y)) = monitor.local_u32(cursor) else {
+			return CursorIcon::Default;
+		};
+
+		match Self::frozen_selection_interaction_kind(capture_rect, cursor_x, cursor_y) {
+			Some(FrozenSelectionInteractionKind::Resize(corner)) => {
+				Self::frozen_selection_resize_cursor_icon(corner)
+			},
+			_ => CursorIcon::Default,
+		}
+	}
+
+	fn overlay_cursor_icon_for_monitor(&self, monitor: MonitorRect) -> CursorIcon {
+		match self.state.mode {
+			OverlayMode::Frozen => self.frozen_selection_cursor_icon_for_monitor(monitor),
+			OverlayMode::Live => CursorIcon::Default,
+		}
+	}
+
+	fn sync_overlay_cursor_icons(&self) {
+		for overlay_window in self.windows.values() {
+			overlay_window
+				.window
+				.set_cursor(self.overlay_cursor_icon_for_monitor(overlay_window.monitor));
+		}
 	}
 
 	fn stop_frozen_selection_drag(&mut self) {
@@ -1652,23 +1749,41 @@ impl OverlaySession {
 			return false;
 		}
 
-		let Some((monitor, capture_rect)) = self.frozen_selection_drag_target() else {
+		let Some((monitor, _capture_rect)) = self.frozen_selection_drag_target() else {
 			self.stop_frozen_selection_drag();
 
 			return false;
 		};
-		let (cursor_x, cursor_y) = Self::clamped_local_point_in_monitor(monitor, global);
-		let desired_x =
-			i64::from(cursor_x) - i64::from(self.frozen_selection_drag.pointer_offset_x);
-		let desired_y =
-			i64::from(cursor_y) - i64::from(self.frozen_selection_drag.pointer_offset_y);
-		let next_rect = Self::clamp_frozen_capture_rect_to_monitor(
-			monitor,
-			capture_rect.width,
-			capture_rect.height,
-			desired_x,
-			desired_y,
-		);
+		let anchor_rect = self.frozen_selection_drag.anchor_rect;
+		let next_rect = match self.frozen_selection_drag.interaction {
+			FrozenSelectionInteractionKind::Move => {
+				let (cursor_x, cursor_y) = Self::clamped_local_point_in_monitor(monitor, global);
+				let desired_x =
+					i64::from(cursor_x) - i64::from(self.frozen_selection_drag.pointer_offset_x);
+				let desired_y =
+					i64::from(cursor_y) - i64::from(self.frozen_selection_drag.pointer_offset_y);
+
+				Self::clamp_frozen_capture_rect_to_monitor(
+					monitor,
+					anchor_rect.width,
+					anchor_rect.height,
+					desired_x,
+					desired_y,
+				)
+			},
+			FrozenSelectionInteractionKind::Resize(corner) => {
+				let (cursor_x, cursor_y) = Self::local_point_in_monitor_space(monitor, global);
+				Self::resize_frozen_capture_rect_from_corner(
+					monitor,
+					anchor_rect,
+					corner,
+					self.frozen_selection_drag.press_cursor_x,
+					self.frozen_selection_drag.press_cursor_y,
+					cursor_x,
+					cursor_y,
+				)
+			},
+		};
 
 		self.apply_frozen_capture_rect_update(monitor, next_rect)
 	}
@@ -1680,6 +1795,13 @@ impl OverlaySession {
 		let local_y = (i64::from(global.y) - i64::from(monitor.origin.y)).clamp(0, max_y) as u32;
 
 		(local_x, local_y)
+	}
+
+	fn local_point_in_monitor_space(monitor: MonitorRect, global: GlobalPoint) -> (i64, i64) {
+		(
+			i64::from(global.x) - i64::from(monitor.origin.x),
+			i64::from(global.y) - i64::from(monitor.origin.y),
+		)
 	}
 
 	fn clamp_frozen_capture_rect_to_monitor(
@@ -1697,6 +1819,76 @@ impl OverlaySession {
 		RectPoints::new(x, y, width, height)
 	}
 
+	fn resize_frozen_capture_rect_from_corner(
+		monitor: MonitorRect,
+		anchor_rect: RectPoints,
+		corner: FrozenSelectionCorner,
+		press_cursor_x: u32,
+		press_cursor_y: u32,
+		cursor_x: i64,
+		cursor_y: i64,
+	) -> RectPoints {
+		let left = i64::from(anchor_rect.x);
+		let top = i64::from(anchor_rect.y);
+		let right = i64::from(anchor_rect.x.saturating_add(anchor_rect.width));
+		let bottom = i64::from(anchor_rect.y.saturating_add(anchor_rect.height));
+		let delta_x = cursor_x - i64::from(press_cursor_x);
+		let delta_y = cursor_y - i64::from(press_cursor_y);
+		let monitor_width = i64::from(monitor.width);
+		let monitor_height = i64::from(monitor.height);
+
+		match corner {
+			FrozenSelectionCorner::TopLeft => {
+				let next_left = (left + delta_x).clamp(0, right.saturating_sub(1)) as u32;
+				let next_top = (top + delta_y).clamp(0, bottom.saturating_sub(1)) as u32;
+
+				RectPoints::new(
+					next_left,
+					next_top,
+					(right as u32).saturating_sub(next_left),
+					(bottom as u32).saturating_sub(next_top),
+				)
+			},
+			FrozenSelectionCorner::TopRight => {
+				let next_right =
+					(right + delta_x).clamp(left.saturating_add(1), monitor_width) as u32;
+				let next_top = (top + delta_y).clamp(0, bottom.saturating_sub(1)) as u32;
+
+				RectPoints::new(
+					left as u32,
+					next_top,
+					next_right.saturating_sub(left as u32),
+					(bottom as u32).saturating_sub(next_top),
+				)
+			},
+			FrozenSelectionCorner::BottomLeft => {
+				let next_left = (left + delta_x).clamp(0, right.saturating_sub(1)) as u32;
+				let next_bottom =
+					(bottom + delta_y).clamp(top.saturating_add(1), monitor_height) as u32;
+
+				RectPoints::new(
+					next_left,
+					top as u32,
+					(right as u32).saturating_sub(next_left),
+					next_bottom.saturating_sub(top as u32),
+				)
+			},
+			FrozenSelectionCorner::BottomRight => {
+				let next_right =
+					(right + delta_x).clamp(left.saturating_add(1), monitor_width) as u32;
+				let next_bottom =
+					(bottom + delta_y).clamp(top.saturating_add(1), monitor_height) as u32;
+
+				RectPoints::new(
+					left as u32,
+					top as u32,
+					next_right.saturating_sub(left as u32),
+					next_bottom.saturating_sub(top as u32),
+				)
+			},
+		}
+	}
+
 	fn apply_frozen_capture_rect_update(
 		&mut self,
 		monitor: MonitorRect,
@@ -1708,9 +1900,21 @@ impl OverlaySession {
 
 		self.state.frozen_capture_rect = Some(next_rect);
 
-		let toolbar_pos = self.frozen_toolbar_default_position_for_capture_rect(monitor, next_rect);
+		let toolbar_default_pos =
+			self.frozen_toolbar_default_position_for_capture_rect(monitor, next_rect);
+		let toolbar_pos = match (
+			self.toolbar_state.floating_position,
+			self.toolbar_state.default_slot_position,
+		) {
+			(Some(floating_pos), Some(default_pos))
+				if !frozen_toolbar_matches_default_slot(floating_pos, default_pos) =>
+			{
+				floating_pos
+			},
+			_ => toolbar_default_pos,
+		};
 
-		self.toolbar_state.default_slot_position = Some(toolbar_pos);
+		self.toolbar_state.default_slot_position = Some(toolbar_default_pos);
 		self.toolbar_state.floating_position = Some(toolbar_pos);
 
 		let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
@@ -2213,6 +2417,7 @@ impl OverlaySession {
 	) {
 		if state == ElementState::Released && button == MouseButton::Left {
 			self.stop_frozen_selection_drag();
+			self.sync_overlay_cursor_icons();
 		}
 	}
 
@@ -2829,6 +3034,7 @@ impl OverlaySession {
 
 		self.update_live_drag_rect(monitor, global);
 		self.update_frozen_selection_drag_rect(global);
+		self.sync_overlay_cursor_icons();
 		self.request_cursor_move_samples(monitor, global);
 
 		if let Some(old_monitor) = old_monitor
@@ -2886,6 +3092,7 @@ impl OverlaySession {
 
 		self.update_live_drag_rect(monitor, global);
 		self.update_frozen_selection_drag_rect(global);
+		self.sync_overlay_cursor_icons();
 		self.request_cursor_move_samples(monitor, global);
 
 		if let Some(old_monitor) = old_monitor
@@ -3043,8 +3250,12 @@ impl OverlaySession {
 				ElementState::Pressed => {
 					let cursor = self.current_device_cursor();
 					let _ = self.begin_frozen_selection_drag(cursor);
+					self.sync_overlay_cursor_icons();
 				},
-				ElementState::Released => self.stop_frozen_selection_drag(),
+				ElementState::Released => {
+					self.stop_frozen_selection_drag();
+					self.sync_overlay_cursor_icons();
+				},
 			}
 
 			self.request_redraw_for_monitor(monitor);
@@ -4721,6 +4932,7 @@ impl OverlaySession {
 			return OverlayControl::Continue;
 		};
 
+		self.sync_overlay_cursor_icons();
 		self.sync_frozen_toolbar_state();
 
 		self.event_loop_last_progress_window_id = Some(window_id);
@@ -4785,6 +4997,7 @@ impl OverlaySession {
 			overlay_screen_rect,
 			toolbar_ready_for_badge,
 		);
+		let frozen_selection_resize_handles_enabled = self.frozen_selection_drag_target().is_some();
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
@@ -4816,6 +5029,7 @@ impl OverlaySession {
 				self.config.selection_flow_stroke_width_px,
 				!self.scroll_capture.active,
 				self.scroll_capture.active,
+				frozen_selection_resize_handles_enabled,
 				self.frozen_capture_source,
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				frozen_toolbar_reserved_rect,
