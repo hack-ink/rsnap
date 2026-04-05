@@ -46,6 +46,12 @@ pub(super) struct SelectionFlowGeometryCache {
 	samples: Vec<(Pos2, f32)>,
 	normals: Vec<Vec2>,
 }
+impl SelectionFlowGeometryCache {
+	#[cfg(test)]
+	pub(super) fn is_empty(&self) -> bool {
+		self.key.is_none() && self.samples.is_empty() && self.normals.is_empty()
+	}
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct SelectionDashedBorderCacheKey {
