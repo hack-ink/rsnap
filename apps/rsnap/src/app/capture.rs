@@ -121,6 +121,9 @@ impl App {
 		#[cfg(target_os = "macos")]
 		{
 			self.overlay_session_generation = self.overlay_session_generation.wrapping_add(1);
+
+			self.latest_deferred_ocr_generation
+				.store(self.overlay_session_generation, Ordering::Release);
 		}
 
 		let scroll_input_reset_ms = self.reset_scroll_input_for_capture_start();
@@ -343,9 +346,16 @@ impl App {
 			#[cfg(target_os = "macos")]
 			OverlayExit::DeferredTextRecognition(request) => {
 				let request_id = request.request_id;
+				let request_generation = self.overlay_session_generation;
+				let latest_deferred_ocr_generation =
+					Arc::clone(&self.latest_deferred_ocr_generation);
 
 				match Builder::new().name(format!("rsnap-ocr-{request_id}")).spawn(move || {
-					let _ = rsnap_overlay::process_deferred_text_recognition(request);
+					let _ = rsnap_overlay::process_deferred_text_recognition_for_latest_capture(
+						request,
+						latest_deferred_ocr_generation,
+						request_generation,
+					);
 				}) {
 					Ok(_handle) => {
 						tracing::info!(
