@@ -7,7 +7,7 @@ Read this when: You are deciding where a change belongs, checking whether the cu
 structure still matches the implementation, or routing a docs/code question to the right crate or
 folder.
 
-Inputs: `Cargo.toml`; `README.md`; `apps/rsnap/README.md`; `docs/spec/capture-session.md`
+Inputs: `Cargo.toml`; `README.md`; `docs/spec/capture-session.md`
 
 Depends on: `docs/spec/capture-session.md`
 
@@ -76,7 +76,6 @@ Key paths:
 ## Documentation placement
 
 - `README.md`: user-facing product and development overview for the whole workspace
-- `apps/rsnap/README.md`: crate-local ownership and file-map note for the app shell
 - `docs/spec/`: normative behavior and performance contracts
 - `docs/runbook/`: procedural and maintenance runbooks
 - `docs/reference/`: descriptive layout, ownership, and implementation references
@@ -105,7 +104,7 @@ The current directory structure is mostly sound:
 
 The main source of confusion was documentation, not code layout:
 
-- root and crate-local docs did not clearly separate product overview from crate ownership
+- root docs did not clearly separate product overview from internal ownership notes
 - the docs router did not answer basic "where does this live?" questions
 - old terminology blurred runbooks, references, and durable rationale
 
