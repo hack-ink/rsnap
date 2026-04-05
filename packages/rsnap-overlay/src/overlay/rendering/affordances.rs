@@ -201,6 +201,7 @@ impl WindowRenderer {
 
 				has_affordance = true;
 			}
+
 			if show_resize_handles && let Some(capture_rect) = state.frozen_capture_rect {
 				has_affordance |=
 					Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
@@ -232,6 +233,7 @@ impl WindowRenderer {
 
 				has_affordance = true;
 			}
+
 			if show_resize_handles && let Some(capture_rect) = state.frozen_capture_rect {
 				has_affordance |=
 					Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
@@ -266,6 +268,7 @@ impl WindowRenderer {
 				theme,
 			);
 		}
+
 		if show_resize_handles && let Some(capture_rect) = state.frozen_capture_rect {
 			Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
 		}
@@ -989,6 +992,7 @@ impl WindowRenderer {
 		if let Some(stroke_width) = stroke_width_override {
 			metrics.stroke_width = stroke_width;
 		}
+
 		let border_outset =
 			Self::selection_dashed_border_outset(metrics.stroke_width, painter.pixels_per_point());
 		let Some(border_rect) =
@@ -1114,6 +1118,7 @@ impl WindowRenderer {
 
 		for handle in Self::frozen_selection_resize_handles(capture_rect) {
 			let points = Self::frozen_selection_resize_handle_points(handle, border_outset);
+
 			painter.add(Shape::line(points.to_vec(), outline_stroke));
 			painter.add(Shape::line(points.to_vec(), stroke));
 		}
@@ -1193,7 +1198,6 @@ impl WindowRenderer {
 			);
 		}
 
-		let mut segments = Vec::new();
 		let horizontal_ranges = Self::selection_dashed_border_edge_dash_ranges(
 			rect.width(),
 			corner_keepout,
@@ -1206,6 +1210,7 @@ impl WindowRenderer {
 			target_dash_length,
 			target_gap_length,
 		);
+		let mut segments = Vec::new();
 
 		for (start, end) in &horizontal_ranges {
 			segments.push([
@@ -1277,19 +1282,19 @@ impl WindowRenderer {
 		if usable_length <= 0.0 {
 			return Vec::new();
 		}
-
 		if usable_length <= target_dash_length {
 			return vec![(corner_keepout, edge_length - corner_keepout)];
 		}
 
 		let dash_length = target_dash_length.min(usable_length);
-
 		let cycle_span = (target_dash_length + target_gap_length).max(f32::MIN_POSITIVE);
 		let dash_count =
 			(((usable_length + target_gap_length) / cycle_span).floor() as usize).max(1);
+
 		if dash_count == 1 {
 			return vec![(corner_keepout, edge_length - corner_keepout)];
 		}
+
 		let occupied_length = dash_count as f32 * dash_length
 			+ dash_count.saturating_sub(1) as f32 * target_gap_length;
 		let gap_count = dash_count.saturating_sub(1);
