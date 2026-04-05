@@ -23,8 +23,6 @@ use crate::app::scroll_input_macos::{
 };
 #[cfg(target_os = "macos")]
 use crate::permissions_macos;
-#[cfg(target_os = "macos")]
-use rsnap_overlay::process_deferred_text_recognition;
 use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
 
 #[cfg(target_os = "macos")]
@@ -343,18 +341,18 @@ impl App {
 				);
 			},
 			#[cfg(target_os = "macos")]
-			OverlayExit::DeferredTextRecognition(request) => {
-				let request_id = request.request_id;
+				OverlayExit::DeferredTextRecognition(request) => {
+					let request_id = request.request_id;
 
-				match Builder::new().name(format!("rsnap-ocr-{request_id}")).spawn(move || {
-					let _ = process_deferred_text_recognition(request);
-				}) {
-					Ok(_handle) => {
-						tracing::info!(
-							request_id,
-							"Capture handed OCR work to the background worker."
-						);
-					},
+					match Builder::new().name(format!("rsnap-ocr-{request_id}")).spawn(move || {
+						let _ = rsnap_overlay::process_deferred_text_recognition(request);
+					}) {
+						Ok(_handle) => {
+							tracing::info!(
+								request_id = request_id,
+								"Capture handed OCR work to the background worker."
+							);
+						},
 					Err(err) => {
 						tracing::warn!(
 							request_id,

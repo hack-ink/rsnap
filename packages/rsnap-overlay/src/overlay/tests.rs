@@ -57,8 +57,7 @@ use crate::overlay::{
 	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
 	SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
 	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
-	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowCaptureAlphaMode, WindowRenderer,
-	hud_helpers, regular,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers, regular,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -67,7 +66,7 @@ use crate::overlay::{
 	LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl, OverlayExit,
 	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
 	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
-	ScrollCaptureFrameSource, StartupLiveRgbPlan,
+	ScrollCaptureFrameSource, StartupLiveRgbPlan, WindowCaptureAlphaMode,
 };
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 #[cfg(target_os = "macos")]
@@ -418,6 +417,7 @@ fn begin_ocr_action_drag_region_still_uses_frozen_image_under_matte_mode() {
 	let mut session = OverlaySession::new();
 
 	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteLight;
+
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, expected_export.clone());
 
