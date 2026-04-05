@@ -79,6 +79,7 @@ use crate::state::{
 use crate::state::{WindowListSnapshot, WindowRect};
 #[cfg(target_os = "macos")]
 use crate::worker::OverlayWorker;
+#[cfg(target_os = "macos")]
 use crate::worker::{WorkerErrorSource, WorkerResponse};
 
 #[cfg(target_os = "macos")]

@@ -260,7 +260,6 @@ fn frozen_selection_resize_preserves_handle_press_offset() {
 
 	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(95, 115)));
 	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(96, 116)));
-
 	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(101, 121, 199, 239)));
 }
 
@@ -313,6 +312,7 @@ fn frozen_selection_rect_update_preserves_manual_toolbar_move() {
 
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
 	session.seed_frozen_toolbar_default_position(monitor, capture_rect);
 
 	let moved_pos =
@@ -429,6 +429,7 @@ fn frozen_selection_cursor_icon_uses_corner_resize_hover() {
 
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 	session.state.cursor = Some(GlobalPoint::new(95, 115));
@@ -448,6 +449,7 @@ fn frozen_selection_cursor_icon_tracks_active_resize_drag() {
 
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 	session.frozen_selection_drag = FrozenSelectionDragState {
@@ -640,7 +642,6 @@ fn selection_dashed_border_dash_ranges_distribute_remainder_evenly() {
 		SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
 		SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
 	);
-
 	let expected_cycle_count = (perimeter
 		/ (SELECTION_DASHED_BORDER_DASH_LENGTH_PX + SELECTION_DASHED_BORDER_GAP_LENGTH_PX))
 		.round()
@@ -726,7 +727,6 @@ fn selection_dashed_border_cache_rebuilds_when_corner_keepout_changes() {
 	let rect = Rect::from_min_max(Pos2::new(18.5, 8.5), Pos2::new(61.5, 41.5));
 	let sentinel = [Pos2::new(-1.0, -1.0), Pos2::new(-2.0, -2.0)];
 	let mut cache = SelectionDashedBorderCache::default();
-
 	let initial = WindowRenderer::selection_dashed_border_cached_segments(
 		&mut cache,
 		rect,
