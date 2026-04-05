@@ -377,43 +377,13 @@ fn recognized_text_outcome(
 		);
 	}
 	if !publish_gate_allows_publish(publish_gate) {
-		log_ocr_request_completed(
-			context.request_id,
-			context.requested_at,
-			"stale_request_suppressed",
-			recognized_lines,
-			recognized_chars,
-			None,
-			None,
-		);
-
-		return outcome(
-			context.request_id,
-			DeferredTextRecognitionOutcomeKind::StaleRequestSuppressed,
-			recognized_lines,
-			recognized_chars,
-		);
+		return stale_recognized_text_outcome(context, recognized_lines, recognized_chars);
 	}
 
 	let clipboard_write_started_at = Instant::now();
 
 	if !publish_gate_allows_publish(publish_gate) {
-		log_ocr_request_completed(
-			context.request_id,
-			context.requested_at,
-			"stale_request_suppressed",
-			recognized_lines,
-			recognized_chars,
-			None,
-			None,
-		);
-
-		return outcome(
-			context.request_id,
-			DeferredTextRecognitionOutcomeKind::StaleRequestSuppressed,
-			recognized_lines,
-			recognized_chars,
-		);
+		return stale_recognized_text_outcome(context, recognized_lines, recognized_chars);
 	}
 
 	match output::write_text_to_clipboard(&output.text) {
@@ -463,6 +433,30 @@ fn publish_gate_allows_publish(publish_gate: Option<&DeferredTextRecognitionPubl
 	publish_gate.is_none_or(|publish_gate| {
 		publish_gate.publish_decision() == DeferredTextRecognitionPublishDecision::Allow
 	})
+}
+
+#[cfg(target_os = "macos")]
+fn stale_recognized_text_outcome(
+	context: &DeferredTextRecognitionContext,
+	recognized_lines: usize,
+	recognized_chars: usize,
+) -> DeferredTextRecognitionOutcome {
+	log_ocr_request_completed(
+		context.request_id,
+		context.requested_at,
+		"stale_request_suppressed",
+		recognized_lines,
+		recognized_chars,
+		None,
+		None,
+	);
+
+	outcome(
+		context.request_id,
+		DeferredTextRecognitionOutcomeKind::StaleRequestSuppressed,
+		recognized_lines,
+		recognized_chars,
+	)
 }
 
 #[cfg(target_os = "macos")]
