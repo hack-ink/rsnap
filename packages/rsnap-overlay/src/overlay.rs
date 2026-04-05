@@ -735,6 +735,7 @@ pub struct OverlaySession {
 	#[cfg(not(target_os = "macos"))]
 	cursor_device: Option<device_query::DeviceState>,
 	state: OverlayState,
+	session_active: bool,
 	cursor_monitor: Option<MonitorRect>,
 	egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
 	windows: HashMap<WindowId, OverlayWindow>,
@@ -841,6 +842,8 @@ pub struct OverlaySession {
 	startup_aux_window_creation_pending: bool,
 	#[cfg(target_os = "macos")]
 	startup_aux_window_creation_scheduled: bool,
+	#[cfg(target_os = "macos")]
+	pending_startup_aux_live_stream_filter_upgrade: bool,
 	response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl OverlaySession {
@@ -950,6 +953,7 @@ impl OverlaySession {
 			#[cfg(not(target_os = "macos"))]
 			cursor_device: None,
 			state: OverlayState::new(),
+			session_active: false,
 			cursor_monitor: None,
 			windows: HashMap::new(),
 			focused_window_ids: HashSet::new(),
@@ -1036,6 +1040,8 @@ impl OverlaySession {
 			startup_aux_window_creation_pending: false,
 			#[cfg(target_os = "macos")]
 			startup_aux_window_creation_scheduled: false,
+			#[cfg(target_os = "macos")]
+			pending_startup_aux_live_stream_filter_upgrade: false,
 			response_waker: None,
 		}
 	}
@@ -1159,7 +1165,14 @@ impl OverlaySession {
 
 	#[must_use]
 	pub(crate) fn is_active(&self) -> bool {
-		!self.windows.is_empty()
+		self.session_active
+	}
+
+	fn has_prewarmed_startup_resources(&self) -> bool {
+		!self.session_active
+			&& self.gpu.is_some()
+			&& !self.windows.is_empty()
+			&& self.hud_window.is_some()
 	}
 
 	fn use_fake_hud_blur(&self) -> bool {
@@ -2816,6 +2829,9 @@ impl OverlaySession {
 			let Some(monitor) = monitor else {
 				return;
 			};
+
+			self.maybe_apply_pending_startup_aux_live_stream_filter_upgrade(monitor);
+
 			let visible = self.update_loupe_window_position(monitor);
 			let was_visible = self.loupe_window_visible;
 
@@ -4481,6 +4497,7 @@ impl OverlaySession {
 			self.update_scroll_toolbar_default_position(monitor);
 			self.set_scroll_overlay_mouse_passthrough_persistent(true, "scroll_capture_started");
 			self.focus_scroll_keyboard_window();
+			self.maybe_apply_pending_startup_aux_live_stream_filter_upgrade(monitor);
 
 			if let Some(preview) = self.scroll_preview_window.as_ref() {
 				preview.window.set_visible(true);
@@ -5307,6 +5324,9 @@ impl OverlaySession {
 	fn reset_runtime_for_exit(&mut self) {
 		#[cfg(target_os = "macos")]
 		self.set_scroll_overlay_mouse_passthrough(false);
+
+		self.session_active = false;
+
 		self.windows.clear();
 
 		self.hud_window = None;

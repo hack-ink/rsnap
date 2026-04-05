@@ -32,6 +32,10 @@ impl OverlaySession {
 			self.state.loupe = None;
 		}
 		if !self.is_active() {
+			if self.has_prewarmed_startup_resources() {
+				self.configure_hud_windows_for_config();
+			}
+
 			return;
 		}
 
@@ -149,7 +153,7 @@ impl OverlaySession {
 			|| self.png_encode_inflight
 	}
 
-	fn configure_hud_windows_for_config(&mut self) {
+	pub(super) fn configure_hud_windows_for_config(&mut self) {
 		if let Some(hud_window) = self.hud_window.as_ref() {
 			let window = Arc::clone(&hud_window.window);
 

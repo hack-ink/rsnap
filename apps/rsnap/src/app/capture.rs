@@ -31,6 +31,8 @@ use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, Overl
 
 #[cfg(target_os = "macos")]
 const SCROLL_INPUT_OBSERVER_READY_TIMEOUT: Duration = Duration::from_millis(250);
+#[cfg(target_os = "macos")]
+const OVERLAY_SESSION_PREWARM_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 impl App {
 	fn self_capture_exception_window_ids(&self) -> Vec<u32> {
@@ -87,11 +89,14 @@ impl App {
 
 	pub(super) fn apply_overlay_settings(&mut self) {
 		let config = self.overlay_config();
-		let Some(session) = self.overlay_session.as_mut() else {
-			return;
-		};
 
-		session.set_config(config);
+		if let Some(session) = self.overlay_session.as_mut() {
+			session.set_config(config.clone());
+		}
+		#[cfg(target_os = "macos")]
+		if let Some(session) = self.prewarmed_overlay_session.as_mut() {
+			session.set_config(config);
+		}
 	}
 
 	pub(super) fn start_capture_session(
@@ -115,15 +120,22 @@ impl App {
 		else {
 			return;
 		};
-		let (overlay_session_build_ms, mut overlay_session) = {
+		let (overlay_session_source, overlay_session_build_ms, mut overlay_session) = {
 			let overlay_session_build_started_at = Instant::now();
-			let overlay_session = OverlaySession::with_config(self.overlay_config());
+			let (overlay_session_source, overlay_session) =
+				self.take_overlay_session_for_capture_start();
 
-			(overlay_session_build_started_at.elapsed().as_millis(), overlay_session)
+			(
+				overlay_session_source,
+				overlay_session_build_started_at.elapsed().as_millis(),
+				overlay_session,
+			)
 		};
 
 		#[cfg(target_os = "macos")]
 		{
+			self.overlay_session_prewarm_requested = false;
+			self.overlay_session_prewarm_retry_not_before = None;
 			self.overlay_session_generation = self.overlay_session_generation.wrapping_add(1);
 
 			self.pending_deferred_ocr_generation
@@ -153,6 +165,7 @@ impl App {
 				op = "capture.start_phase_timing",
 				requested_by = %requested_by,
 				result = "started",
+				overlay_session_source,
 				hotkey = %self.capture_key_label(),
 				overlay_session_build_ms,
 				hook_wiring_ms,
@@ -187,6 +200,7 @@ impl App {
 					error = %err,
 					requested_by = %requested_by,
 					result = "error",
+					overlay_session_source,
 					overlay_session_build_ms,
 					hook_wiring_ms,
 					overlay_start_ms,
@@ -194,7 +208,74 @@ impl App {
 					screen_recording_preflight_ms,
 					scroll_input_reset_ms,
 					"Failed to start overlay session."
-				)
+				);
+
+				#[cfg(target_os = "macos")]
+				{
+					self.overlay_session_prewarm_requested = true;
+				}
+			},
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn take_overlay_session_for_capture_start(&mut self) -> (&'static str, OverlaySession) {
+		if let Some(overlay_session) = self.prewarmed_overlay_session.take() {
+			("prewarmed", overlay_session)
+		} else {
+			("fresh", OverlaySession::with_config(self.overlay_config()))
+		}
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn take_overlay_session_for_capture_start(&mut self) -> (&'static str, OverlaySession) {
+		("fresh", OverlaySession::with_config(self.overlay_config()))
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn maybe_prewarm_overlay_session(&mut self, event_loop: &ActiveEventLoop) {
+		if !self.overlay_session_prewarm_requested
+			|| self.overlay_session.is_some()
+			|| self.prewarmed_overlay_session.is_some()
+		{
+			return;
+		}
+		if self
+			.overlay_session_prewarm_retry_not_before
+			.is_some_and(|not_before| Instant::now() < not_before)
+		{
+			return;
+		}
+
+		let prewarm_started_at = Instant::now();
+		let mut overlay_session = OverlaySession::with_config(self.overlay_config());
+
+		match overlay_session.prewarm(event_loop) {
+			Ok(()) => {
+				self.prewarmed_overlay_session = Some(overlay_session);
+				self.overlay_session_prewarm_requested = false;
+				self.overlay_session_prewarm_retry_not_before = None;
+
+				tracing::info!(
+					op = "capture.prewarm_phase_timing",
+					result = "prewarmed",
+					total_ms = prewarm_started_at.elapsed().as_millis(),
+					"Capture startup resources prewarmed."
+				);
+			},
+			Err(err) => {
+				self.overlay_session_prewarm_requested = true;
+				self.overlay_session_prewarm_retry_not_before =
+					Some(Instant::now() + OVERLAY_SESSION_PREWARM_RETRY_BACKOFF);
+
+				tracing::warn!(
+					op = "capture.prewarm_phase_timing",
+					error = %err,
+					result = "error",
+					retry_backoff_ms = OVERLAY_SESSION_PREWARM_RETRY_BACKOFF.as_millis(),
+					total_ms = prewarm_started_at.elapsed().as_millis(),
+					"Failed to prewarm capture startup resources."
+				);
 			},
 		}
 	}
@@ -340,6 +421,10 @@ impl App {
 
 		#[cfg(target_os = "macos")]
 		{
+			self.prewarmed_overlay_session = None;
+			self.overlay_session_prewarm_requested = true;
+			self.overlay_session_prewarm_retry_not_before = None;
+
 			self.scroll_input_shared_state.set_enabled(false);
 			self.scroll_input_shared_state.set_event_waker(None);
 			self.scroll_input_shared_state.clear();

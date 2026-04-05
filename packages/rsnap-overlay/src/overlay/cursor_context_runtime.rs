@@ -65,12 +65,34 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	pub(super) fn prime_startup_live_stream_nonblocking(
+		&self,
+		startup_monitor: Option<MonitorRect>,
+	) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
+
+		let Some(monitor) = startup_monitor else {
+			return;
+		};
+		let Some(stream) = self.live_sample_stream.as_ref() else {
+			return;
+		};
+
+		stream.prime_monitor_nonblocking(monitor);
+	}
+
+	#[cfg(target_os = "macos")]
 	pub(super) fn seed_startup_live_cursor_rgb(
 		&mut self,
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
 	) {
 		if !matches!(self.state.mode, OverlayMode::Live) || self.state.rgb.is_some() {
+			return;
+		}
+		if self.startup_aux_window_creation_pending {
 			return;
 		}
 
@@ -87,6 +109,26 @@ impl OverlaySession {
 		{
 			self.state.rgb = Some(rgb);
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn kick_startup_live_sampling(&mut self) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
+
+		let Some(cursor) = self.state.cursor else {
+			return;
+		};
+		let Some(monitor) = self.active_cursor_monitor() else {
+			return;
+		};
+
+		if self.use_fake_hud_blur() {
+			self.maybe_request_live_bg(monitor);
+		}
+
+		let _ = self.request_live_samples_for_cursor(monitor, cursor);
 	}
 
 	pub(super) fn maybe_request_live_bg(&mut self, monitor: MonitorRect) {

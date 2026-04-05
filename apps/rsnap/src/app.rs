@@ -10,6 +10,8 @@ use std::sync::{
 	Arc,
 	atomic::{AtomicBool, AtomicU64, Ordering},
 };
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 use color_eyre::eyre::Result;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
@@ -69,6 +71,8 @@ struct App {
 	#[cfg(target_os = "macos")]
 	menubar_quit_menu_id: Option<MenuId>,
 	overlay_session: Option<OverlaySession>,
+	#[cfg(target_os = "macos")]
+	prewarmed_overlay_session: Option<OverlaySession>,
 	settings_window: Option<SettingsWindow>,
 	settings_window_capture_window_id: Option<u32>,
 	settings: AppSettings,
@@ -86,6 +90,10 @@ struct App {
 	pending_deferred_ocr_generation: Arc<AtomicU64>,
 	#[cfg(target_os = "macos")]
 	overlay_session_generation: u64,
+	#[cfg(target_os = "macos")]
+	overlay_session_prewarm_requested: bool,
+	#[cfg(target_os = "macos")]
+	overlay_session_prewarm_retry_not_before: Option<Instant>,
 	#[cfg(target_os = "macos")]
 	startup_permissions_checked: bool,
 }
@@ -124,6 +132,8 @@ impl App {
 			#[cfg(target_os = "macos")]
 			menubar_quit_menu_id: None,
 			overlay_session: None,
+			#[cfg(target_os = "macos")]
+			prewarmed_overlay_session: None,
 			settings_window: None,
 			settings_window_capture_window_id: None,
 			settings,
@@ -141,6 +151,10 @@ impl App {
 			pending_deferred_ocr_generation: Arc::new(AtomicU64::new(0)),
 			#[cfg(target_os = "macos")]
 			overlay_session_generation: 0,
+			#[cfg(target_os = "macos")]
+			overlay_session_prewarm_requested: true,
+			#[cfg(target_os = "macos")]
+			overlay_session_prewarm_retry_not_before: None,
 			#[cfg(target_os = "macos")]
 			startup_permissions_checked: false,
 		}
