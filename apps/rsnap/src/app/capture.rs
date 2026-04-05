@@ -1,7 +1,9 @@
 #[cfg(target_os = "macos")]
-use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::Ordering;
+#[cfg(target_os = "macos")]
+use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use std::thread::Builder;
 #[cfg(target_os = "macos")]
@@ -23,6 +25,8 @@ use crate::app::scroll_input_macos::{
 };
 #[cfg(target_os = "macos")]
 use crate::permissions_macos;
+#[cfg(target_os = "macos")]
+use rsnap_overlay::DeferredTextRecognitionRequest;
 use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
 
 #[cfg(target_os = "macos")]
@@ -360,12 +364,29 @@ impl App {
 					Arc::clone(&self.latest_deferred_ocr_generation);
 				let pending_deferred_ocr_generation =
 					Arc::clone(&self.pending_deferred_ocr_generation);
+				let request_slot = Arc::new(Mutex::new(Some(request)));
+				let request_slot_for_worker = Arc::clone(&request_slot);
+				let latest_deferred_ocr_generation_for_worker =
+					Arc::clone(&latest_deferred_ocr_generation);
+				let pending_deferred_ocr_generation_for_worker =
+					Arc::clone(&pending_deferred_ocr_generation);
 
 				match Builder::new().name(format!("rsnap-ocr-{request_id}")).spawn(move || {
-					let _ = rsnap_overlay::process_deferred_text_recognition_for_latest_capture(
+					let Some(request) =
+						Self::take_deferred_text_recognition_request(&request_slot_for_worker)
+					else {
+						tracing::warn!(
+							request_id = request_id,
+							"Deferred OCR request was unavailable when the background worker started."
+						);
+
+						return;
+					};
+
+					Self::process_deferred_text_recognition_request(
 						request,
-						latest_deferred_ocr_generation,
-						pending_deferred_ocr_generation,
+						latest_deferred_ocr_generation_for_worker,
+						pending_deferred_ocr_generation_for_worker,
 						request_generation,
 					);
 				}) {
@@ -379,7 +400,25 @@ impl App {
 						tracing::warn!(
 							request_id,
 							error = %err,
-							"Failed to start the background OCR worker."
+							"Failed to start the background OCR worker; running deferred OCR inline."
+						);
+
+						let Some(request) =
+							Self::take_deferred_text_recognition_request(&request_slot)
+						else {
+							tracing::warn!(
+								request_id = request_id,
+								"Deferred OCR request was unavailable after background worker startup failed."
+							);
+
+							return;
+						};
+
+						Self::process_deferred_text_recognition_request(
+							request,
+							latest_deferred_ocr_generation,
+							pending_deferred_ocr_generation,
+							request_generation,
 						);
 					},
 				}
@@ -409,6 +448,37 @@ impl App {
 		}
 
 		Ok(true)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn process_deferred_text_recognition_request(
+		request: DeferredTextRecognitionRequest,
+		latest_deferred_ocr_generation: Arc<AtomicU64>,
+		pending_deferred_ocr_generation: Arc<AtomicU64>,
+		request_generation: u64,
+	) {
+		let _ = rsnap_overlay::process_deferred_text_recognition_for_latest_capture(
+			request,
+			latest_deferred_ocr_generation,
+			pending_deferred_ocr_generation,
+			request_generation,
+		);
+	}
+
+	#[cfg(target_os = "macos")]
+	fn take_deferred_text_recognition_request(
+		request_slot: &Mutex<Option<DeferredTextRecognitionRequest>>,
+	) -> Option<DeferredTextRecognitionRequest> {
+		match request_slot.lock() {
+			Ok(mut guard) => guard.take(),
+			Err(poisoned) => {
+				tracing::warn!(
+					"Deferred OCR request slot was poisoned while recovering the request."
+				);
+
+				poisoned.into_inner().take()
+			},
+		}
 	}
 
 	#[cfg(target_os = "macos")]
