@@ -1,20 +1,21 @@
-# rsnap v0 Spec (Prototype)
+# rsnap Capture Session Contract
 
-Purpose: Define the current normative v0 runtime contract for rsnap capture flow, HUD behavior,
-and macOS scroll capture.
+Purpose: Define the current normative capture-session contract for rsnap capture flow, HUD
+behavior, and macOS scroll capture.
 
 Status: normative
 
 Read this when: You are implementing, reviewing, or validating capture behavior, live-mode
 feedback, export flow, or the macOS scroll-capture path.
 
-Not this document: Procedural runbooks, troubleshooting steps, or historical execution context.
-Use `docs/guide/` for procedures and `docs/plans/` for temporary or historical plan context.
+Not this document: Procedural runbooks, troubleshooting steps, or descriptive implementation
+notes. Use `docs/runbook/` for procedures and `docs/reference/` for current implementation
+context.
 
 Defines:
 - capture-session entry, live-mode, frozen-mode, and export invariants
 - hovered-window, region-selection, and fullscreen fallback behavior
-- the current macOS v1 scroll-capture contract
+- the current macOS scroll-capture contract
 
 This repository contains a pure-Rust screenshot prototype targeting macOS first, with a
 cross-platform architecture.
@@ -39,10 +40,10 @@ cross-platform architecture.
 - In Frozen mode, a dragged-region capture may be repositioned by dragging inside the
   bright selected area; width and height remain fixed and the moved rect stays on the
   current monitor.
-- In Frozen mode, scroll capture follows the active macOS v1 contract in Goal 9.
+- In Frozen mode, scroll capture follows the active macOS scroll-capture contract in Goal 9.
   Older image-only resume heuristics are out of spec.
 
-## v0 goals (must-have)
+## Required behavior
 
 1. Menubar-only app (no Dock icon) on macOS.
 2. Global hotkey starts capture session (default `Alt+X`, macOS: Option+X) and can be customized from Settings.
@@ -72,8 +73,8 @@ cross-platform architecture.
      the cursor.
    - Cross-monitor capture (including spanning-window and cross-monitor region selection) is deferred
      and tracked as future work.
-9. Frozen-mode scroll capture (`macOS v1`, SSOT for implementation/review):
-   - Scroll capture v1 is macOS-only. Other platforms must treat this flow as unsupported
+9. Frozen-mode scroll capture (macOS, SSOT for implementation/review):
+   - Scroll capture is macOS-only. Other platforms must treat this flow as unsupported
      until they have their own native contract.
    - It requires Screen Recording permission for live capture imagery.
    - Entering scroll capture additionally requires Accessibility because rsnap forwards
@@ -162,7 +163,7 @@ All three are styled using the same HUD styling pipeline.
   and previous monitor when crossing monitor boundaries.
 - Frozen mode keeps toolbar/loupe/frozen-surface behavior stable and redraw-safe after capture.
 - Render cadence, performance scenarios, and tracking requirements are governed by
-  `docs/spec/performance_tracking.md`.
+  `docs/spec/performance.md`.
 
 ## Live sampling performance notes
 
@@ -172,7 +173,7 @@ high-frequency cursor movement.
 
 Research and cross-platform notes live in:
 
-- `docs/guide/live-sampling-streams.md`
+- `docs/reference/live-sampling.md`
 
 ## Implementation ownership notes
 
@@ -192,7 +193,7 @@ Research and cross-platform notes live in:
 - In Frozen mode, loupe/toolbar visibility follows Tab + current mode state and
   `show_frozen_capture` state.
 
-## Non-goals (v0)
+## Current non-goals
 
 - Annotation/editor UI, pinning, and advanced editing tools.
 - Cross-monitor selection and cross-monitor window capture behavior.

@@ -1,26 +1,27 @@
-# Live RGB/Loupe Sampling Guide
+# Live Sampling Reference
 
-Goal: Explain the current stream-first live RGB/loupe sampling path and why rsnap uses it.
+Purpose: Describe the current stream-first live RGB/loupe sampling path and why rsnap uses it.
 
 Read this when: You are working on live HUD updates, loupe behavior, cursor-path performance, or
 hovered-window outline responsiveness.
 
-Inputs: `docs/spec/v0.md`; current focus is the macOS live path rather than freeze/export.
+Inputs: `docs/spec/capture-session.md`; current focus is the macOS live path rather than
+freeze/export.
 
-Depends on: `docs/spec/v0.md`
+Depends on: `docs/spec/capture-session.md`
 
-Outputs: Understanding of the stream-only sampling model, cache usage, fallback behavior, and the
-current support constraints.
+Covers: The stream-only sampling model, cache usage, fallback behavior, and the current support
+constraints.
 
-Spec boundary: `docs/spec/v0.md`
+Spec boundary: `docs/spec/capture-session.md`
 
-Governing performance contract: `docs/spec/performance_tracking.md`
+Governing performance contract: `docs/spec/performance.md`
 
 Date: 2026-03-02
 
 ## Why this doc exists
 
-rsnap v0 UX requires instant updates on cursor movement:
+rsnap current UX requires instant updates on cursor movement:
 
 - RGB under cursor
 - Loupe patch under cursor
@@ -29,7 +30,7 @@ rsnap v0 UX requires instant updates on cursor movement:
 In practice, mature tools stay smooth because they avoid taking a screenshot on every cursor
 move. They keep a continuous frame stream and sample pixels from the latest frame.
 
-This guide records the current stream-first implementation and why it is used.
+This reference records the current stream-first implementation and why it is used.
 
 ## Symptom recap (macOS)
 

@@ -1,4 +1,4 @@
-# rsnap Performance Tracking Contract
+# rsnap Performance Contract
 
 Purpose: Define the normative performance-tracking contract for rsnap so render cadence,
 measurement surfaces, thresholds, and known contract gaps are explicit and shared across code,
@@ -9,12 +9,14 @@ Status: normative
 Read this when: You are implementing, reviewing, or validating render scheduling, overlay redraw,
 live/loupe responsiveness, component render benchmarks, or scroll-capture performance tracking.
 
-Not this document: Step-by-step benchmark procedures, smoke-run instructions, or saved execution
-plans. Use `docs/guide/` for procedures and `docs/plans/` only for tool-managed plan artifacts.
+Not this document: Step-by-step benchmark procedures, smoke-run instructions, or descriptive
+implementation notes. Use `docs/runbook/` for procedures and `docs/reference/` for current
+implementation context.
 
 Primary procedures:
-- `docs/guide/performance-checks.md` for repo-native performance command entrypoints
-- `docs/guide/scroll-capture-benchmarks.md` for scroll-capture benchmark fixtures and baseline use
+- `docs/runbook/performance-validation.md` for repo-native performance command entrypoints
+- `docs/runbook/scroll-capture-benchmarks.md` for scroll-capture benchmark fixtures and baseline
+  use
 
 Defines:
 - the active render cadence contract for rsnap UI and overlay paths

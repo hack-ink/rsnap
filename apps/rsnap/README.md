@@ -1,67 +1,68 @@
-# rsnap
+# rsnap App Shell
 
-Menubar-only app (tray icon + menu) that triggers `rsnap-overlay` capture and writes the result to the clipboard (Space) or saves to disk (Cmd+S / Ctrl+S).
+This file is the crate-local directory guide for `apps/rsnap/`.
+Cargo package metadata for `rsnap` still points at the workspace-root `README.md`, so this file
+exists only as a local maintenance and ownership note for this crate directory.
 
-## Capture platform support
+Read the workspace `README.md` for product usage and end-user feature overview. Read
+`docs/reference/workspace-layout.md` when you need the wider workspace map.
 
-- Live sampling: **macOS 12.3+** via ScreenCaptureKit (`SCStream`) stream samples.
-- Live mode is stream-first and does not take full-frame captures on cursor movement.
-- Menubar and Dock are excluded from live outline targeting.
-- Frozen capture and scroll-capture imagery on macOS use the native capture stack described in `docs/spec/v0.md`.
-- Windows is planned (minimum Windows 10) and is not implemented yet.
+## What this crate owns
 
-## Logs
+`apps/rsnap/` is the desktop app shell that wraps the overlay engine exported by
+`rsnap-overlay`.
 
-- Runtime logs are written to `ProjectDirs` data directory under `logs/` (on macOS this maps to `~/Library/Application Support/ink.hack.rsnap/logs`).
-- Log files rotate daily and keep up to 15 files.
-- If file logging cannot start (for example directory permission issues), rsnap falls back to console logging.
-- Set `RUST_LOG` or set `log_filter` in `settings.toml` to increase verbosity, for example `rsnap=debug,rsnap_overlay=debug`.
+It owns:
 
-## Hotkey
+- tray and menubar lifecycle
+- capture and settings hotkeys
+- startup logging/bootstrap
+- settings-window lifecycle and UI entry points
+- macOS permission checks and permission-window routing
+- app-level handling for overlay exits such as deferred OCR follow-up
+- macOS external scroll-input normalization before those events are handed to the overlay session
 
-- Global hotkey: `Alt+X`
+It does not own the capture-session runtime itself. Overlay windows, capture backends, worker
+flow, OCR request processing, and scroll-capture stitching live in `packages/rsnap-overlay/`.
 
-## macOS Dock icon
+## Key source paths
 
-This crate attempts to avoid showing a Dock icon at runtime by setting the app activation policy to `Accessory` and hiding Dock visibility.
+- `src/main.rs`: binary entrypoint
+- `src/lib.rs`: shared library surface for benches and tests
+- `src/app.rs`: app-shell root and event routing
+- `src/app/`: focused support modules for capture, hotkeys, runtime, shell/menu wiring, and
+  macOS scroll input
+- `src/settings_window/`: settings-window chrome, render path, platform glue, sections, and
+  benchmark helpers
+- `src/startup.rs`: startup/build metadata and logging bootstrap
+- `src/settings.rs`: app settings model and parsing
 
-For the most reliable “no Dock icon” behavior when distributing a bundled `.app`, also set `LSUIElement=1` in the app `Info.plist`.
+## Runtime notes
 
-For packaging, `scripts/bundle-macos.sh` now post-processes the bundled app with Xcode's asset catalog toolchain (`actool`) and compiles the Dock icon directly from `assets/app-icon/composer/AppIcon.icon` into `Assets.car`.
+- Runtime logs are written to the app `ProjectDirs` data directory under `logs/`
+  (on macOS: `~/Library/Application Support/ink.hack.rsnap/logs`).
+- If file logging cannot start, rsnap falls back to console logging.
+- The default global capture hotkey is `Alt+X` (`Option+X` on macOS) and can be customized from
+  Settings.
 
-The current icon assets are organized as:
+## Packaging notes
 
-- `assets/app-icon/source/dock-icon-original.png`: original Dock icon sketch/input
-- `assets/app-icon/composer/AppIcon.icon`: edited Icon Composer source-of-truth
-- `assets/app-icon/generated/app-icon.icns`: generated static fallback used by raw `cargo bundle`
-- `assets/tray-icon/source/tray-icon-original.png`: original tray icon sketch/input
-- `assets/tray-icon/generated/tray-icon-template.png`: generated macOS template tray icon used at runtime
+- The bundled macOS app uses shared assets from the workspace-root `assets/` tree.
+- `scripts/bundle-macos.sh` post-processes the bundled app and compiles the Dock icon from the
+  shared Icon Composer source.
+- The release workflow signs, notarizes, and staples the macOS `.app` before publishing the
+  release artifact.
 
-The one-click macOS bundling script replaces the raw `cargo bundle` fallback with the compiled Icon Composer output.
+## Verification entrypoints
 
-## macOS CI signing
+- Run the app locally: `cargo run -p rsnap`
+- Repo-native smoke on macOS:
+  - `cargo make smoke-self-check-macos`
+  - `cargo make smoke-macos`
 
-The tag release workflow signs, notarizes, and staples the macOS `.app` before publishing the zip artifact. Configure these GitHub Actions secrets first:
+## Related docs
 
-- `APPLE_CERTIFICATE_P12_BASE64`: base64-encoded `Developer ID Application` certificate export (`.p12`)
-- `APPLE_CERTIFICATE_PASSWORD`: password used when exporting the `.p12`
-- `APPLE_SIGNING_IDENTITY`: codesign identity, for example `Developer ID Application: Your Name (TEAMID)`
-- `APPLE_NOTARY_KEY_ID`: App Store Connect API key ID used by `notarytool`
-- `APPLE_NOTARY_KEY_P8`: private key contents (`.p8`) for the App Store Connect API key
-- `APPLE_NOTARY_ISSUER`: App Store Connect issuer UUID for team keys; leave unset for individual keys
-
-The workflow builds `Rsnap.app`, signs it with hardened runtime, submits a zip to `notarytool`, staples the notarization ticket back onto the app, and then republishes the stapled `.app` as the macOS release artifact.
-
-## Run
-
-`cargo run -p rsnap`
-
-## Smoke verification
-
-On macOS, prefer the existing workspace smoke harnesses over ad-hoc manual launch checks:
-
-- `cargo make smoke-self-check-macos`
-- `cargo make smoke-macos`
-
-These scripts automate tray-triggered capture, live/loupe performance checks, and
-scroll-capture stitching assertions in a logged-in desktop session.
+- Workspace overview: `README.md`
+- Workspace layout and crate boundaries: `docs/reference/workspace-layout.md`
+- Runtime behavior contract: `docs/spec/capture-session.md`
+- Performance contract and smoke routing: `docs/spec/performance.md`

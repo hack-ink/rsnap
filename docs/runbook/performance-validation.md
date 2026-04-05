@@ -1,4 +1,4 @@
-# Performance Checks Guide
+# Performance Validation Runbook
 
 Goal: Explain which repo-native command to run for deterministic replay, local performance
 benchmarks, or the remaining dedicated macOS GUI smoke, and how to save or compare local
@@ -8,9 +8,9 @@ Read this when: You are investigating a scroll-capture correctness or performanc
 refreshing local benchmark baselines, or deciding whether a change needs deterministic replay,
 deterministic benches, dedicated desktop smoke, or some combination of those surfaces.
 
-Inputs: `Makefile.toml`; `docs/spec/performance_tracking.md`; `docs/guide/scroll-capture-benchmarks.md`
+Inputs: `Makefile.toml`; `docs/spec/performance.md`; `docs/runbook/scroll-capture-benchmarks.md`
 
-Depends on: `docs/spec/performance_tracking.md`
+Depends on: `docs/spec/performance.md`
 
 Outputs: A clear command choice for the regression class you are testing, plus a repeatable local
 baseline workflow for the committed Criterion benchmark targets.
@@ -135,9 +135,9 @@ Dedicated macOS smoke:
 - `perf-macos` failures with healthy local benches:
   suspect live overlay cadence, desktop-session conditions, or smoke-harness environment drift.
 
-## Related guides
+## Related docs
 
-- `docs/guide/scroll-capture-benchmarks.md` for the scroll-capture fixture contract and per-target
-  baseline commands.
-- `docs/guide/live-sampling-streams.md` for the stream-first live cursor and loupe path that the
-  dedicated macOS smoke validates.
+- `docs/runbook/scroll-capture-benchmarks.md` for the scroll-capture fixture contract and
+  per-target baseline commands.
+- `docs/reference/live-sampling.md` for the stream-first live cursor and loupe path that
+  the dedicated macOS smoke validates.
