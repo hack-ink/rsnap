@@ -397,6 +397,25 @@ fn recognized_text_outcome(
 
 	let clipboard_write_started_at = Instant::now();
 
+	if !publish_gate_allows_publish(publish_gate) {
+		log_ocr_request_completed(
+			context.request_id,
+			context.requested_at,
+			"stale_request_suppressed",
+			recognized_lines,
+			recognized_chars,
+			None,
+			None,
+		);
+
+		return outcome(
+			context.request_id,
+			DeferredTextRecognitionOutcomeKind::StaleRequestSuppressed,
+			recognized_lines,
+			recognized_chars,
+		);
+	}
+
 	match output::write_text_to_clipboard(&output.text) {
 		Ok(()) => {
 			log_ocr_request_completed(
