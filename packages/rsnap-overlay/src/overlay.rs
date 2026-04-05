@@ -5202,6 +5202,7 @@ impl<'a> OverlayExitMetadata<'a> {
 		self
 	}
 
+	#[cfg(target_os = "macos")]
 	fn with_ocr_request_id(mut self, ocr_request_id: u64) -> Self {
 		self.ocr_request_id = Some(ocr_request_id);
 
