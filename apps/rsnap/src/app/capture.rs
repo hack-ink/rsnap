@@ -121,9 +121,6 @@ impl App {
 		#[cfg(target_os = "macos")]
 		{
 			self.overlay_session_generation = self.overlay_session_generation.wrapping_add(1);
-
-			self.latest_deferred_ocr_generation
-				.store(self.overlay_session_generation, Ordering::Release);
 		}
 
 		let scroll_input_reset_ms = self.reset_scroll_input_for_capture_start();
@@ -137,6 +134,10 @@ impl App {
 		match overlay_session.start(event_loop) {
 			Ok(()) => {
 				let overlay_start_ms = overlay_start_started_at.elapsed().as_millis();
+
+				#[cfg(target_os = "macos")]
+				self.latest_deferred_ocr_generation
+					.store(self.overlay_session_generation, Ordering::Release);
 
 				tracing::info!(
 				op = "capture.start_phase_timing",

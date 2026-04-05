@@ -232,6 +232,11 @@ fn process_deferred_text_recognition_with_gate(
 	publish_gate: Option<DeferredTextRecognitionPublishGate>,
 ) -> DeferredTextRecognitionOutcome {
 	let context = DeferredTextRecognitionContext::new(request.request_id, request.requested_at);
+
+	if !publish_gate_allows_publish(publish_gate.as_ref()) {
+		return stale_request_outcome(&context, Duration::ZERO);
+	}
+
 	let export_prepare_started_at = Instant::now();
 	let Some(export_image) = request.image_source.into_export_image() else {
 		return empty_export_outcome(&context, export_prepare_started_at.elapsed());
@@ -239,6 +244,10 @@ fn process_deferred_text_recognition_with_gate(
 	let export_prepare_elapsed = export_prepare_started_at.elapsed();
 	let image_width_px = export_image.width();
 	let image_height_px = export_image.height();
+
+	if !publish_gate_allows_publish(publish_gate.as_ref()) {
+		return stale_request_outcome(&context, export_prepare_elapsed);
+	}
 
 	match ocr_macos::recognize_text_from_image(&export_image) {
 		Ok(output) => recognized_text_outcome(
@@ -404,6 +413,34 @@ fn recognized_text_outcome(
 #[cfg(target_os = "macos")]
 fn publish_gate_allows_publish(publish_gate: Option<&DeferredTextRecognitionPublishGate>) -> bool {
 	publish_gate.is_none_or(DeferredTextRecognitionPublishGate::allows_publish)
+}
+
+#[cfg(target_os = "macos")]
+fn stale_request_outcome(
+	context: &DeferredTextRecognitionContext,
+	export_prepare_elapsed: Duration,
+) -> DeferredTextRecognitionOutcome {
+	tracing::info!(
+		target: "rsnap",
+		op = "overlay.ocr_phase_timing",
+		request_id = context.request_id,
+		queue_delay_ms = context.queue_delay.as_millis(),
+		export_prepare_ms = export_prepare_elapsed.as_millis(),
+		total_ms = context.worker_started_at.elapsed().as_millis(),
+		"OCR request was suppressed because a newer capture superseded it before publish."
+	);
+
+	log_ocr_request_completed(
+		context.request_id,
+		context.requested_at,
+		"stale_request_suppressed",
+		0,
+		0,
+		None,
+		None,
+	);
+
+	outcome(context.request_id, DeferredTextRecognitionOutcomeKind::StaleRequestSuppressed, 0, 0)
 }
 
 #[cfg(target_os = "macos")]
