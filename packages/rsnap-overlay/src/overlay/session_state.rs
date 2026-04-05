@@ -8,10 +8,10 @@ use std::{
 use image::RgbaImage;
 
 use crate::overlay::{
-	DeviceCursorPointSource, FrozenToolbarTool, GlobalPoint, LIVE_PRESENT_INTERVAL_MIN,
-	MonitorRect, PhysicalPosition, Pos2, REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints,
-	SLOW_OP_WARN_INTERVAL, ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2,
-	WindowId,
+	DeviceCursorPointSource, FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint,
+	LIVE_PRESENT_INTERVAL_MIN, MonitorRect, PhysicalPosition, Pos2,
+	REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints, SLOW_OP_WARN_INTERVAL,
+	ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2, WindowId,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{ExternalScrollInputDrainReader, MacLiveFrameStream};
@@ -168,11 +168,28 @@ impl Default for FrozenToolbarState {
 	}
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct FrozenSelectionDragState {
 	pub(super) active: bool,
+	pub(super) interaction: FrozenSelectionInteractionKind,
+	pub(super) anchor_rect: RectPoints,
 	pub(super) pointer_offset_x: u32,
 	pub(super) pointer_offset_y: u32,
+	pub(super) press_cursor_x: u32,
+	pub(super) press_cursor_y: u32,
+}
+impl Default for FrozenSelectionDragState {
+	fn default() -> Self {
+		Self {
+			active: false,
+			interaction: FrozenSelectionInteractionKind::Move,
+			anchor_rect: RectPoints::new(0, 0, 0, 0),
+			pointer_offset_x: 0,
+			pointer_offset_y: 0,
+			press_cursor_x: 0,
+			press_cursor_y: 0,
+		}
+	}
 }
 
 #[derive(Default)]

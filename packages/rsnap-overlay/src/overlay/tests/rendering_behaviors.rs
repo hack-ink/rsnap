@@ -3,6 +3,7 @@ use egui::LayerId;
 use egui::Order;
 use egui::Ui;
 use image::RgbaImage;
+use winit::window::CursorIcon;
 
 use crate::OverlayControl;
 #[allow(unused_imports)]
@@ -16,8 +17,10 @@ use crate::overlay::tests::{
 	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, ScrollSession, SelectionDashedBorderCache,
 	SelectionDashedBorderMetrics, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
 	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
-	WorkerErrorSource, WorkerResponse, overlay,
+	overlay,
 };
+use crate::overlay::{FrozenSelectionCorner, FrozenSelectionInteractionKind};
+use crate::worker::{WorkerErrorSource, WorkerResponse};
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -148,7 +151,15 @@ fn frozen_selection_drag_starts_only_for_drag_region_inside_capture_rect() {
 	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
 	assert_eq!(
 		session.frozen_selection_drag,
-		FrozenSelectionDragState { active: true, pointer_offset_x: 50, pointer_offset_y: 60 }
+		FrozenSelectionDragState {
+			active: true,
+			interaction: FrozenSelectionInteractionKind::Move,
+			anchor_rect: capture_rect,
+			pointer_offset_x: 50,
+			pointer_offset_y: 60,
+			press_cursor_x: 150,
+			press_cursor_y: 180,
+		}
 	);
 
 	session.stop_frozen_selection_drag();
@@ -156,6 +167,33 @@ fn frozen_selection_drag_starts_only_for_drag_region_inside_capture_rect() {
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 120, 200, 240));
 
 	assert!(!session.begin_frozen_selection_drag(GlobalPoint::new(-1, 180)));
+}
+
+#[test]
+fn frozen_selection_drag_starts_corner_resize_from_handle_hit_zone() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(95, 115)));
+	assert_eq!(
+		session.frozen_selection_drag,
+		FrozenSelectionDragState {
+			active: true,
+			interaction: FrozenSelectionInteractionKind::Resize(FrozenSelectionCorner::TopLeft),
+			anchor_rect: capture_rect,
+			pointer_offset_x: 0,
+			pointer_offset_y: 0,
+			press_cursor_x: 95,
+			press_cursor_y: 115,
+		}
+	);
 }
 
 #[test]
@@ -172,8 +210,8 @@ fn frozen_selection_drag_updates_capture_rect_and_toolbar_position() {
 
 	session.seed_frozen_toolbar_default_position(monitor, capture_rect);
 
-	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(110, 130)));
-	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(260, 310)));
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(300, 360)));
 
 	let expected_rect = RectPoints::new(250, 300, 200, 240);
 	let expected_toolbar_pos =
@@ -181,6 +219,49 @@ fn frozen_selection_drag_updates_capture_rect_and_toolbar_position() {
 
 	assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
 	assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
+}
+
+#[test]
+fn frozen_selection_resize_updates_capture_rect_and_toolbar_position() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	session.seed_frozen_toolbar_default_position(monitor, capture_rect);
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(95, 115)));
+	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(160, 190)));
+
+	let expected_rect = RectPoints::new(165, 195, 135, 165);
+	let expected_toolbar_pos =
+		session.frozen_toolbar_default_position_for_capture_rect(monitor, expected_rect);
+
+	assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
+	assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
+}
+
+#[test]
+fn frozen_selection_resize_preserves_handle_press_offset() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(95, 115)));
+	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(96, 116)));
+
+	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(101, 121, 199, 239)));
 }
 
 #[test]
@@ -195,7 +276,7 @@ fn frozen_selection_drag_clamps_capture_rect_to_monitor_bounds() {
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 
-	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(110, 130)));
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
 	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(-200, -300)));
 	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(0, 0, 200, 240)));
 	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(1_500, 1_400)));
@@ -203,32 +284,82 @@ fn frozen_selection_drag_clamps_capture_rect_to_monitor_bounds() {
 }
 
 #[test]
+fn frozen_selection_resize_clamps_to_minimum_size_and_monitor_bounds() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(305, 365)));
+	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(-200, -300)));
+	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(100, 120, 1, 1)));
+	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(1_500, 1_400)));
+	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(100, 120, 900, 680)));
+}
+
+#[test]
+fn frozen_selection_rect_update_preserves_manual_toolbar_move() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.seed_frozen_toolbar_default_position(monitor, capture_rect);
+
+	let moved_pos =
+		session.toolbar_state.floating_position.expect("toolbar default position should be seeded")
+			+ Vec2::new(18.0, 22.0);
+
+	session.toolbar_state.floating_position = Some(moved_pos);
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(305, 365)));
+	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(360, 420)));
+
+	let expected_rect = RectPoints::new(100, 120, 255, 295);
+	let expected_default_pos =
+		session.frozen_toolbar_default_position_for_capture_rect(monitor, expected_rect);
+
+	assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
+	assert_eq!(session.toolbar_state.floating_position, Some(moved_pos));
+	assert_eq!(session.toolbar_state.default_slot_position, Some(expected_default_pos));
+}
+
+#[test]
 fn cropped_frozen_capture_image_uses_moved_capture_rect() {
 	let monitor = MonitorRect {
 		id: 1,
 		origin: GlobalPoint::new(0, 0),
-		width: 4,
-		height: 3,
+		width: 64,
+		height: 48,
 		scale_factor_x1000: 1_000,
 	};
-	let image = RgbaImage::from_fn(4, 3, |x, y| Rgba([x as u8, y as u8, 0, 255]));
+	let image = RgbaImage::from_fn(64, 48, |x, y| Rgba([x as u8, y as u8, 0, 255]));
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, image);
 
-	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 2, 1));
+	session.state.frozen_capture_rect = Some(RectPoints::new(8, 6, 40, 32));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 
-	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(0, 0)));
-	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(1, 1)));
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(28, 22)));
+	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(32, 28)));
 
 	let cropped = session.cropped_frozen_capture_image().expect("moved frozen crop");
 
-	assert_eq!(cropped.width(), 2);
-	assert_eq!(cropped.height(), 1);
-	assert_eq!(cropped.get_pixel(0, 0), &Rgba([1, 1, 0, 255]));
-	assert_eq!(cropped.get_pixel(1, 0), &Rgba([2, 1, 0, 255]));
+	assert_eq!(cropped.width(), 40);
+	assert_eq!(cropped.height(), 32);
+	assert_eq!(cropped.get_pixel(0, 0), &Rgba([12, 12, 0, 255]));
+	assert_eq!(cropped.get_pixel(39, 31), &Rgba([51, 43, 0, 255]));
 }
 
 #[test]
@@ -260,6 +391,76 @@ fn auto_center_frozen_capture_rect_recenters_detected_content() {
 
 	assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
 	assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
+}
+
+#[test]
+fn frozen_selection_resize_hit_test_prefers_corner_handles() {
+	let capture_rect = RectPoints::new(100, 120, 8, 8);
+
+	assert_eq!(
+		WindowRenderer::frozen_selection_resize_hit_test(capture_rect, Pos2::new(100.0, 120.0)),
+		Some(FrozenSelectionCorner::TopLeft)
+	);
+	assert_eq!(
+		WindowRenderer::frozen_selection_resize_hit_test(capture_rect, Pos2::new(108.0, 128.0)),
+		Some(FrozenSelectionCorner::BottomRight)
+	);
+	assert_eq!(
+		WindowRenderer::frozen_selection_resize_hit_test(capture_rect, Pos2::new(104.0, 124.0)),
+		None
+	);
+}
+
+#[test]
+fn frozen_selection_interaction_keeps_move_in_tiny_selection_center() {
+	let capture_rect = RectPoints::new(100, 120, 8, 8);
+
+	assert_eq!(
+		OverlaySession::frozen_selection_interaction_kind(capture_rect, 104, 124),
+		Some(FrozenSelectionInteractionKind::Move)
+	);
+}
+
+#[test]
+fn frozen_selection_cursor_icon_uses_corner_resize_hover() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.state.cursor = Some(GlobalPoint::new(95, 115));
+
+	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::NwResize);
+
+	session.state.cursor = Some(GlobalPoint::new(150, 180));
+
+	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::Default);
+}
+
+#[test]
+fn frozen_selection_cursor_icon_tracks_active_resize_drag() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.frozen_selection_drag = FrozenSelectionDragState {
+		active: true,
+		interaction: FrozenSelectionInteractionKind::Resize(FrozenSelectionCorner::BottomRight),
+		anchor_rect: capture_rect,
+		pointer_offset_x: 0,
+		pointer_offset_y: 0,
+		press_cursor_x: 300,
+		press_cursor_y: 360,
+	};
+
+	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::SeResize);
 }
 
 #[test]
@@ -296,8 +497,15 @@ fn auto_center_frozen_capture_rect_noops_for_uniform_crop() {
 fn global_left_release_stops_frozen_selection_drag() {
 	let mut session = OverlaySession::new();
 
-	session.frozen_selection_drag =
-		FrozenSelectionDragState { active: true, pointer_offset_x: 12, pointer_offset_y: 34 };
+	session.frozen_selection_drag = FrozenSelectionDragState {
+		active: true,
+		interaction: FrozenSelectionInteractionKind::Move,
+		anchor_rect: RectPoints::new(10, 20, 30, 40),
+		pointer_offset_x: 12,
+		pointer_offset_y: 34,
+		press_cursor_x: 22,
+		press_cursor_y: 54,
+	};
 
 	session
 		.maybe_stop_frozen_selection_drag_for_mouse_input(ElementState::Pressed, MouseButton::Left);
@@ -404,7 +612,7 @@ fn selection_dashed_border_rect_expands_focus_rect_outward() {
 
 	assert_eq!(
 		WindowRenderer::selection_dashed_border_rect(screen_rect, focus_rect, border_outset,),
-		Some(Rect::from_min_max(Pos2::new(18.5, 8.5), Pos2::new(61.5, 41.5),))
+		Some(focus_rect.expand(border_outset))
 	);
 }
 
@@ -417,7 +625,7 @@ fn selection_dashed_border_rect_can_extend_beyond_screen_edge() {
 
 	assert_eq!(
 		WindowRenderer::selection_dashed_border_rect(screen_rect, focus_rect, border_outset,),
-		Some(Rect::from_min_max(Pos2::new(-1.5, 8.5), Pos2::new(41.5, 41.5),))
+		Some(focus_rect.expand(border_outset))
 	);
 }
 
@@ -433,7 +641,12 @@ fn selection_dashed_border_dash_ranges_distribute_remainder_evenly() {
 		SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
 	);
 
-	assert_eq!(ranges.len(), 15);
+	let expected_cycle_count = (perimeter
+		/ (SELECTION_DASHED_BORDER_DASH_LENGTH_PX + SELECTION_DASHED_BORDER_GAP_LENGTH_PX))
+		.round()
+		.max(1.0) as usize;
+
+	assert_eq!(ranges.len(), expected_cycle_count);
 
 	let dash_length = ranges[0].1 - ranges[0].0;
 	let gap_length = ranges[1].0 - ranges[0].1;
@@ -479,6 +692,7 @@ fn selection_dashed_border_cache_reuses_geometry_for_same_rect() {
 		rect,
 		SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
 		SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		0.0,
 	)
 	.to_vec();
 
@@ -491,6 +705,7 @@ fn selection_dashed_border_cache_reuses_geometry_for_same_rect() {
 		rect,
 		SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
 		SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		0.0,
 	);
 
 	assert_eq!(cached[0], sentinel);
@@ -500,20 +715,91 @@ fn selection_dashed_border_cache_reuses_geometry_for_same_rect() {
 		other_rect,
 		SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
 		SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		0.0,
 	);
 
 	assert_ne!(rebuilt[0], sentinel);
 }
 
 #[test]
+fn selection_dashed_border_cache_rebuilds_when_corner_keepout_changes() {
+	let rect = Rect::from_min_max(Pos2::new(18.5, 8.5), Pos2::new(61.5, 41.5));
+	let sentinel = [Pos2::new(-1.0, -1.0), Pos2::new(-2.0, -2.0)];
+	let mut cache = SelectionDashedBorderCache::default();
+
+	let initial = WindowRenderer::selection_dashed_border_cached_segments(
+		&mut cache,
+		rect,
+		SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+		SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		0.0,
+	)
+	.to_vec();
+
+	assert!(!initial.is_empty());
+
+	cache.segments[0] = sentinel;
+
+	let rebuilt = WindowRenderer::selection_dashed_border_cached_segments(
+		&mut cache,
+		rect,
+		SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+		SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		8.0,
+	);
+
+	assert_ne!(rebuilt[0], sentinel);
+}
+
+#[test]
+fn selection_dashed_border_segments_with_corner_keepout_pin_edge_clearance() {
+	const EPSILON: f32 = 1e-4;
+
+	let rect = Rect::from_min_max(Pos2::new(10.0, 20.0), Pos2::new(70.0, 52.0));
+	let keepout = 10.0;
+	let dash = 8.0;
+	let gap = 4.0;
+	let segments = WindowRenderer::selection_dashed_border_segments_with_corner_keepout(
+		rect, dash, gap, keepout,
+	);
+	let top_segments: Vec<_> = segments
+		.iter()
+		.copied()
+		.filter(|segment| segment[0].y == rect.min.y && segment[1].y == rect.min.y)
+		.collect();
+
+	assert!(!top_segments.is_empty());
+
+	let first = top_segments.first().unwrap();
+	let last = top_segments.last().unwrap();
+	let left_padding = first[0].x - rect.min.x - keepout;
+	let right_padding = rect.max.x - keepout - last[1].x;
+
+	assert!(left_padding.abs() < EPSILON);
+	assert!(right_padding.abs() < EPSILON);
+}
+
+#[test]
+fn selection_dashed_border_edge_dash_ranges_expand_single_dash_to_keepouts() {
+	assert_eq!(
+		WindowRenderer::selection_dashed_border_edge_dash_ranges(28.0, 10.0, 12.0, 4.0),
+		vec![(10.0, 18.0)]
+	);
+	assert_eq!(
+		WindowRenderer::selection_dashed_border_edge_dash_ranges(34.0, 10.0, 12.0, 4.0),
+		vec![(10.0, 24.0)]
+	);
+}
+
+#[test]
 fn selection_dashed_border_outset_accounts_for_feathering() {
 	assert_eq!(
 		WindowRenderer::selection_dashed_border_outset(SELECTION_DASHED_BORDER_WIDTH_PX, 1.0),
-		1.5
+		(SELECTION_DASHED_BORDER_WIDTH_PX + 1.0) * 0.5
 	);
 	assert_eq!(
 		WindowRenderer::selection_dashed_border_outset(SELECTION_DASHED_BORDER_WIDTH_PX, 2.0),
-		1.25
+		(SELECTION_DASHED_BORDER_WIDTH_PX + 0.5) * 0.5
 	);
 }
 
@@ -521,18 +807,26 @@ fn selection_dashed_border_outset_accounts_for_feathering() {
 fn selection_dashed_border_metrics_track_physical_pixels() {
 	assert_eq!(
 		WindowRenderer::selection_dashed_border_metrics(1.0),
-		SelectionDashedBorderMetrics { stroke_width: 2.0, dash_length: 6.0, gap_length: 4.0 }
+		SelectionDashedBorderMetrics {
+			stroke_width: SELECTION_DASHED_BORDER_WIDTH_PX,
+			dash_length: SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+			gap_length: SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+		}
 	);
 	assert_eq!(
 		WindowRenderer::selection_dashed_border_metrics(2.0),
-		SelectionDashedBorderMetrics { stroke_width: 1.0, dash_length: 3.0, gap_length: 2.0 }
+		SelectionDashedBorderMetrics {
+			stroke_width: SELECTION_DASHED_BORDER_WIDTH_PX / 2.0,
+			dash_length: SELECTION_DASHED_BORDER_DASH_LENGTH_PX / 2.0,
+			gap_length: SELECTION_DASHED_BORDER_GAP_LENGTH_PX / 2.0,
+		}
 	);
 	assert_eq!(
 		WindowRenderer::selection_dashed_border_metrics(1.5),
 		SelectionDashedBorderMetrics {
-			stroke_width: 2.0 / 1.5,
-			dash_length: 6.0 / 1.5,
-			gap_length: 4.0 / 1.5,
+			stroke_width: SELECTION_DASHED_BORDER_WIDTH_PX / 1.5,
+			dash_length: SELECTION_DASHED_BORDER_DASH_LENGTH_PX / 1.5,
+			gap_length: SELECTION_DASHED_BORDER_GAP_LENGTH_PX / 1.5,
 		}
 	);
 }
@@ -1440,6 +1734,7 @@ fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
 		monitor,
 		screen_rect,
 		HudTheme::Dark,
+		false,
 		FrozenCaptureSource::None,
 		None,
 		false,
@@ -1458,7 +1753,7 @@ fn render_live_capture_affordances_keep_hover_scrim_when_flow_disabled() {
 	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-	let selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
 	let mut state = OverlayState::new();
 	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
 
@@ -1478,8 +1773,42 @@ fn render_live_capture_affordances_keep_hover_scrim_when_flow_disabled() {
 		false,
 		1.0,
 		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
 	));
 	assert_eq!(selection_dashed_border_cache.key, None);
+}
+
+#[test]
+fn render_live_capture_affordances_draw_drag_border_when_flow_disabled() {
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("live-drag-flow-disabled"));
+	let painter = ctx.layer_painter(layer);
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+	state.mode = OverlayMode::Live;
+	state.drag_rect = Some(MonitorRectPoints {
+		monitor_id: monitor.id,
+		rect: RectPoints::new(100, 120, 240, 320),
+	});
+
+	assert!(WindowRenderer::render_live_capture_affordances(
+		&ctx,
+		&painter,
+		&state,
+		monitor,
+		screen_rect,
+		HudTheme::Light,
+		false,
+		1.0,
+		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
+	));
+	assert!(selection_dashed_border_cache.key.is_some());
 }
 
 #[test]
