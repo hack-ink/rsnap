@@ -174,34 +174,6 @@ command selection and baseline comparison lives at
 
 The capture-session contract lives at `docs/spec/capture-session.md`.
 
-## Workspace Layout
-
-The tracked workspace is intentionally small:
-
-- `apps/rsnap/`: desktop app shell, tray/menubar lifecycle, hotkeys, settings window, logging,
-  permissions, and session handoff into `rsnap-overlay`
-- `packages/rsnap-overlay/`: overlay session crate, capture/runtime internals, rendering, worker
-  flow, OCR, and scroll capture
-- `docs/`: repository docs split into `spec`, `runbook`, `reference`, and `decisions`
-- `assets/`: shared app and tray icon sources plus generated runtime/bundle assets
-- `scripts/`: packaging and dedicated macOS smoke helpers
-
-Generated or local-only directories such as `target/`, `.worktrees/`, and `.workspaces/` are not
-part of the tracked repository structure.
-
-For code-ownership and directory-routing details, read `docs/reference/workspace-layout.md`.
-
-## Documentation
-
-- Product and development overview: this `README.md`
-- Workspace layout and crate boundaries: `docs/reference/workspace-layout.md`
-- Runtime behavior contract: `docs/spec/capture-session.md`
-- Performance contract: `docs/spec/performance.md`
-- Procedural runbooks: `docs/runbook/`
-- Current implementation references: `docs/reference/`
-- Durable design rationale: `docs/decisions/`
-- Documentation policy and placement rules: `docs/policy.md`
-
 ## Support Me
 
 If you find this project helpful and would like to support its development, you can buy me a coffee!
@@ -226,6 +198,10 @@ Thank you for your support!
 We would like to extend our heartfelt gratitude to the following projects and contributors:
 
 - The Rust community for their continuous support and development of the Rust ecosystem.
+
+## Additional Acknowledgements
+
+- TODO
 
 <div align="right">
 
