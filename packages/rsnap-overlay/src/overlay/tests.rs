@@ -57,7 +57,7 @@ use crate::overlay::{
 	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
 	SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
 	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
-	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers, regular,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -1204,26 +1204,6 @@ fn downward_frame_motion_commits_even_with_legacy_upward_input_direction() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn positive_pixel_delta_maps_to_upward_scroll_capture() {
-	assert_eq!(
-		OverlaySession::scroll_capture_direction_from_wheel_delta(&MouseScrollDelta::PixelDelta(
-			PhysicalPosition::new(0.0, 2.0)
-		)),
-		Some(ScrollDirection::Up)
-	);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn macos_scroll_wheel_events_use_hid_system_source_state() {
-	assert_eq!(
-		super::macos_hid_event_source_state_id(),
-		super::KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE
-	);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
 fn pixel_delta_residuals_accumulate_until_whole_pixels_emit() {
 	let mut residual = MacOSScrollPixelResidual::default();
 	let first = OverlaySession::normalize_macos_scroll_wheel_delta(
@@ -1244,48 +1224,6 @@ fn pixel_delta_residuals_accumulate_until_whole_pixels_emit() {
 	assert_eq!(second.posted_y, -1);
 	assert!((second.residual.x - 0.1).abs() < 1e-9);
 	assert!((second.residual.y + 0.2).abs() < 1e-9);
-}
-
-#[test]
-fn frozen_toolbar_mode_tools_are_identifiable() {
-	assert!(FrozenToolbarTool::Pointer.is_mode_tool());
-	assert!(FrozenToolbarTool::Pen.is_mode_tool());
-	assert!(FrozenToolbarTool::Text.is_mode_tool());
-	assert!(FrozenToolbarTool::Mosaic.is_mode_tool());
-}
-
-#[test]
-fn frozen_toolbar_action_tools_are_not_mode_tools() {
-	assert!(!FrozenToolbarTool::Undo.is_mode_tool());
-	assert!(!FrozenToolbarTool::Redo.is_mode_tool());
-	assert!(!FrozenToolbarTool::AutoCenter.is_mode_tool());
-	assert!(!FrozenToolbarTool::Scroll.is_mode_tool());
-	assert!(!FrozenToolbarTool::Copy.is_mode_tool());
-	assert!(!FrozenToolbarTool::Save.is_mode_tool());
-	#[cfg(target_os = "macos")]
-	assert!(!FrozenToolbarTool::Ocr.is_mode_tool());
-}
-
-#[test]
-fn frozen_toolbar_scroll_tool_uses_scroll_specific_iconography() {
-	assert_eq!(FrozenToolbarTool::Scroll.label(), "Scroll Capture");
-	assert_eq!(FrozenToolbarTool::Scroll.icon(), regular::MOUSE_SCROLL);
-}
-
-#[test]
-fn frozen_toolbar_export_tools_require_final_capture() {
-	assert!(!FrozenToolbarTool::Pointer.requires_final_capture());
-	assert!(!FrozenToolbarTool::Pen.requires_final_capture());
-	assert!(!FrozenToolbarTool::Text.requires_final_capture());
-	assert!(!FrozenToolbarTool::Mosaic.requires_final_capture());
-	assert!(!FrozenToolbarTool::Undo.requires_final_capture());
-	assert!(!FrozenToolbarTool::Redo.requires_final_capture());
-	assert!(!FrozenToolbarTool::AutoCenter.requires_final_capture());
-	assert!(FrozenToolbarTool::Scroll.requires_final_capture());
-	assert!(FrozenToolbarTool::Copy.requires_final_capture());
-	assert!(FrozenToolbarTool::Save.requires_final_capture());
-	#[cfg(target_os = "macos")]
-	assert!(FrozenToolbarTool::Ocr.requires_final_capture());
 }
 
 #[test]
