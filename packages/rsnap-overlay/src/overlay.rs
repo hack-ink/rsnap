@@ -3940,7 +3940,7 @@ impl OverlaySession {
 		let height = capture_rect.height.min(max_height);
 
 		if width == 0 || height == 0 {
-			return Some(None);
+			return None;
 		}
 		if x == 0 && y == 0 && width == frozen_image.width() && height == frozen_image.height() {
 			return Some(None);
