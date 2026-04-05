@@ -41,7 +41,8 @@ Prototype / in active development.
   sampling uses `SCStream`; downward scroll capture uses discrete
   `SCScreenshotManager` region screenshots plus pairwise registration.
 - Live mode is stream-first and does not capture full display on cursor movement.
-- Frozen capture and scroll-capture imagery on macOS use the native capture stack; `docs/spec/v0.md` is the current contract source of truth.
+- Frozen capture and scroll-capture imagery on macOS use the native capture stack;
+  `docs/spec/capture-session.md` is the current contract source of truth.
 - Menubar and Dock are not included in live window-outline targeting.
 - Windows support is planned (minimum Windows 10), but not implemented yet.
 
@@ -169,9 +170,37 @@ that should stay comparable on a normal development machine. Use
 environment, and `cargo make perf-macos` only on a logged-in desktop session
 when you need end-to-end GUI performance evidence. The durable runbook for
 command selection and baseline comparison lives at
-`docs/guide/performance-checks.md`.
+`docs/runbook/performance-validation.md`.
 
-The v0 contract lives at `docs/spec/v0.md`.
+The capture-session contract lives at `docs/spec/capture-session.md`.
+
+## Workspace Layout
+
+The tracked workspace is intentionally small:
+
+- `apps/rsnap/`: desktop app shell, tray/menubar lifecycle, hotkeys, settings window, logging,
+  permissions, and session handoff into `rsnap-overlay`
+- `packages/rsnap-overlay/`: overlay session crate, capture/runtime internals, rendering, worker
+  flow, OCR, and scroll capture
+- `docs/`: repository docs split into `spec`, `runbook`, `reference`, and `decisions`
+- `assets/`: shared app and tray icon sources plus generated runtime/bundle assets
+- `scripts/`: packaging and dedicated macOS smoke helpers
+
+Generated or local-only directories such as `target/`, `.worktrees/`, and `.workspaces/` are not
+part of the tracked repository structure.
+
+For code-ownership and directory-routing details, read `docs/reference/workspace-layout.md`.
+
+## Documentation
+
+- Product and development overview: this `README.md`
+- Workspace layout and crate boundaries: `docs/reference/workspace-layout.md`
+- Runtime behavior contract: `docs/spec/capture-session.md`
+- Performance contract: `docs/spec/performance.md`
+- Procedural runbooks: `docs/runbook/`
+- Current implementation references: `docs/reference/`
+- Durable design rationale: `docs/decisions/`
+- Documentation policy and placement rules: `docs/policy.md`
 
 ## Support Me
 
@@ -197,10 +226,6 @@ Thank you for your support!
 We would like to extend our heartfelt gratitude to the following projects and contributors:
 
 - The Rust community for their continuous support and development of the Rust ecosystem.
-
-## Additional Acknowledgements
-
-- TODO
 
 <div align="right">
 

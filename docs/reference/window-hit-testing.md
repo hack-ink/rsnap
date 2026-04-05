@@ -1,23 +1,25 @@
-# Window Hit-Testing Guide
+# Window Hit-Testing Reference
 
-Goal: Describe the current live-mode window hit-testing strategy and the default choice used by
+Purpose: Describe the current live-mode window hit-testing strategy and the default choice used by
 rsnap.
 
 Read this when: You are changing hovered-window outline behavior, evaluating live hit-test
 latency, or comparing candidate hit-testing strategies.
 
-Inputs: `docs/spec/v0.md`; current focus is the macOS live path and its current default strategy.
+Inputs: `docs/spec/capture-session.md`; current focus is the macOS live path and its current
+default strategy.
 
-Depends on: `docs/spec/v0.md`
+Depends on: `docs/spec/capture-session.md`
 
-Outputs: Understanding of the snapshot-based default strategy, the researched alternative, and the
-planned rule for current live mode.
+Covers: The snapshot-based default strategy, the researched alternative, and the planned rule for
+current live mode.
 
-Spec boundary: `docs/spec/v0.md`
+Spec boundary: `docs/spec/capture-session.md`
 
 ## Current Strategy Scope
 
-This guide defines the current window-outline strategy used by rsnap live mode as of March 2026.
+This reference describes the current window-outline strategy used by rsnap live mode as of March
+2026.
 
 ## Strategy A (current, default)
 

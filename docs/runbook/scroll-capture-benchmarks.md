@@ -1,4 +1,4 @@
-# Scroll-Capture Benchmark Guide
+# Scroll-Capture Benchmark Runbook
 
 Goal: Run the deterministic `rsnap-overlay` scroll-capture benchmarks, understand the committed
 fixture shape, and save or compare local baselines without touching a desktop session.
@@ -6,10 +6,10 @@ fixture shape, and save or compare local baselines without touching a desktop se
 Read this when: You are validating scroll-capture performance, comparing image-processing changes,
 or refreshing the local baseline for `XY-111` style non-GUI benchmarks.
 
-Inputs: `docs/spec/performance_tracking.md`; `packages/rsnap-overlay/benches/scroll_capture.rs`;
+Inputs: `docs/spec/performance.md`; `packages/rsnap-overlay/benches/scroll_capture.rs`;
 `packages/rsnap-overlay/src/scroll_capture.rs`
 
-Depends on: `docs/spec/performance_tracking.md`
+Depends on: `docs/spec/performance.md`
 
 Outputs: A repeatable local benchmark run, an optional saved Criterion baseline, and a clear
 understanding of what the synthetic fixture is intended to cover.
@@ -97,7 +97,7 @@ session-commit groups before escalating to live desktop smoke.
 ## When to use a different surface
 
 - If the regression is in live overlay cadence, HUD movement, or loupe timing, use the overlay
-  instrumentation and desktop smoke surfaces instead of this guide.
+  instrumentation and desktop smoke surfaces instead of this runbook.
 - If the fixture itself needs to change because the scroll-capture algorithm contract changed,
   update the code-generated fixture in `scroll_capture::bench_support` and keep the scenario names
   explicit in the commit so baseline history remains interpretable.
