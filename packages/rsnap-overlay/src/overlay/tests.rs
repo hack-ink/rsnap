@@ -388,7 +388,8 @@ fn begin_ocr_action_exits_with_deferred_request_and_clears_stale_png_output_inte
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, expected_export.clone());
 
-	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.state.frozen_capture_rect =
+		Some(RectPoints::new(0, 0, expected_export.width(), expected_export.height()));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 	session.authoritative_frozen_capture_ready = true;
 
@@ -421,7 +422,8 @@ fn begin_ocr_action_drag_region_still_uses_frozen_image_under_matte_mode() {
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, expected_export.clone());
 
-	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.state.frozen_capture_rect =
+		Some(RectPoints::new(0, 0, expected_export.width(), expected_export.height()));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 	session.authoritative_frozen_capture_ready = true;
 
@@ -432,6 +434,27 @@ fn begin_ocr_action_drag_region_still_uses_frozen_image_under_matte_mode() {
 
 	assert_eq!(request.export_image().as_ref(), Some(&expected_export));
 	assert!(session.frozen_window_image.is_none());
+	assert!(session.state.error_message.is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn begin_ocr_action_skips_deferred_request_when_drag_region_crop_is_out_of_bounds() {
+	let monitor = test_monitor();
+	let frozen_image = test_frozen_image();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, frozen_image.clone());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(monitor.width + 10, 20, 100, 80));
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.authoritative_frozen_capture_ready = true;
+
+	let control = session.begin_ocr_action();
+
+	assert!(matches!(control, OverlayControl::Continue));
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&frozen_image));
 	assert!(session.state.error_message.is_none());
 }
 
