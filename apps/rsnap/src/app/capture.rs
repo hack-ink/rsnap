@@ -121,6 +121,9 @@ impl App {
 		#[cfg(target_os = "macos")]
 		{
 			self.overlay_session_generation = self.overlay_session_generation.wrapping_add(1);
+
+			self.pending_deferred_ocr_generation
+				.store(self.overlay_session_generation, Ordering::Release);
 		}
 
 		let scroll_input_reset_ms = self.reset_scroll_input_for_capture_start();
@@ -136,8 +139,11 @@ impl App {
 				let overlay_start_ms = overlay_start_started_at.elapsed().as_millis();
 
 				#[cfg(target_os = "macos")]
-				self.latest_deferred_ocr_generation
-					.store(self.overlay_session_generation, Ordering::Release);
+				{
+					self.latest_deferred_ocr_generation
+						.store(self.overlay_session_generation, Ordering::Release);
+					self.pending_deferred_ocr_generation.store(0, Ordering::Release);
+				}
 
 				tracing::info!(
 				op = "capture.start_phase_timing",
@@ -163,6 +169,8 @@ impl App {
 			Err(err) => {
 				let overlay_start_ms = overlay_start_started_at.elapsed().as_millis();
 
+				#[cfg(target_os = "macos")]
+				self.pending_deferred_ocr_generation.store(0, Ordering::Release);
 				#[cfg(target_os = "macos")]
 				{
 					self.scroll_input_shared_state.set_enabled(false);
@@ -350,11 +358,14 @@ impl App {
 				let request_generation = self.overlay_session_generation;
 				let latest_deferred_ocr_generation =
 					Arc::clone(&self.latest_deferred_ocr_generation);
+				let pending_deferred_ocr_generation =
+					Arc::clone(&self.pending_deferred_ocr_generation);
 
 				match Builder::new().name(format!("rsnap-ocr-{request_id}")).spawn(move || {
 					let _ = rsnap_overlay::process_deferred_text_recognition_for_latest_capture(
 						request,
 						latest_deferred_ocr_generation,
+						pending_deferred_ocr_generation,
 						request_generation,
 					);
 				}) {
