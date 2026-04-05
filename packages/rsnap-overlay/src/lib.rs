@@ -23,9 +23,9 @@ pub mod replay_support {
 	};
 }
 
+mod backend;
 #[cfg(target_os = "macos")]
 mod deferred_text_recognition;
-mod backend;
 #[cfg(target_os = "macos")]
 mod live_frame_stream_macos;
 #[cfg(target_os = "macos")]

@@ -8,7 +8,10 @@ use image::{Rgba, RgbaImage, imageops};
 
 #[cfg(target_os = "macos")]
 use crate::state::RectPoints;
-use crate::{ocr_macos::{self, RecognizedTextOutput}, overlay::output};
+use crate::{
+	ocr_macos::{self, RecognizedTextOutput},
+	overlay::output,
+};
 
 #[cfg(target_os = "macos")]
 const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: Rgba<u8> = Rgba([246, 246, 246, 255]);
@@ -466,7 +469,10 @@ mod tests {
 	use image::Rgba;
 	use image::RgbaImage;
 
-	use crate::deferred_text_recognition::{DeferredTextRecognitionImageSource,DeferredTextRecognitionRequest,DeferredTextRecognitionWindowMatte,};
+	use crate::deferred_text_recognition::{
+		DeferredTextRecognitionImageSource, DeferredTextRecognitionRequest,
+		DeferredTextRecognitionWindowMatte,
+	};
 	use crate::state::RectPoints;
 
 	#[test]
