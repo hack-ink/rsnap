@@ -1,7 +1,13 @@
 //! Deferred OCR processing that runs after the overlay has already exited.
 
 #[cfg(target_os = "macos")]
-use std::time::{Duration, Instant};
+use std::{
+	sync::{
+		Arc,
+		atomic::{AtomicU64, Ordering},
+	},
+	time::{Duration, Instant},
+};
 
 #[cfg(target_os = "macos")]
 use image::{Rgba, RgbaImage, imageops};
@@ -78,6 +84,8 @@ pub enum DeferredTextRecognitionOutcomeKind {
 	TextCopied,
 	/// OCR completed successfully but did not return any non-whitespace text.
 	NoText,
+	/// OCR finished, but a newer capture superseded this request before publish.
+	StaleRequestSuppressed,
 	/// OCR completed successfully but writing the recognized text to the clipboard failed.
 	ClipboardError,
 	/// OCR could not prepare the export image or Vision failed to recognize text.
@@ -183,10 +191,45 @@ impl DeferredTextRecognitionContext {
 }
 
 #[cfg(target_os = "macos")]
-/// Runs a deferred OCR request, writes recognized text to the clipboard when
-/// available, and records structured timing logs for each phase.
+#[derive(Debug)]
+struct DeferredTextRecognitionPublishGate {
+	latest_generation: Arc<AtomicU64>,
+	request_generation: u64,
+}
+#[cfg(target_os = "macos")]
+impl DeferredTextRecognitionPublishGate {
+	fn allows_publish(&self) -> bool {
+		self.latest_generation.load(Ordering::Acquire) == self.request_generation
+	}
+}
+
+#[cfg(target_os = "macos")]
+/// Runs a deferred OCR request and records structured timing logs for each
+/// phase.
 pub fn process_deferred_text_recognition(
 	request: DeferredTextRecognitionRequest,
+) -> DeferredTextRecognitionOutcome {
+	process_deferred_text_recognition_with_gate(request, None)
+}
+
+#[cfg(target_os = "macos")]
+/// Runs a deferred OCR request and only publishes recognized text if the
+/// associated capture generation is still the latest one when OCR completes.
+pub fn process_deferred_text_recognition_for_latest_capture(
+	request: DeferredTextRecognitionRequest,
+	latest_generation: Arc<AtomicU64>,
+	request_generation: u64,
+) -> DeferredTextRecognitionOutcome {
+	process_deferred_text_recognition_with_gate(
+		request,
+		Some(DeferredTextRecognitionPublishGate { latest_generation, request_generation }),
+	)
+}
+
+#[cfg(target_os = "macos")]
+fn process_deferred_text_recognition_with_gate(
+	request: DeferredTextRecognitionRequest,
+	publish_gate: Option<DeferredTextRecognitionPublishGate>,
 ) -> DeferredTextRecognitionOutcome {
 	let context = DeferredTextRecognitionContext::new(request.request_id, request.requested_at);
 	let export_prepare_started_at = Instant::now();
@@ -204,6 +247,7 @@ pub fn process_deferred_text_recognition(
 			image_height_px,
 			export_prepare_elapsed,
 			output,
+			publish_gate.as_ref(),
 		),
 		Err(err) => recognize_error_outcome(
 			&context,
@@ -253,6 +297,7 @@ fn recognized_text_outcome(
 	image_height_px: u32,
 	export_prepare_elapsed: Duration,
 	output: RecognizedTextOutput,
+	publish_gate: Option<&DeferredTextRecognitionPublishGate>,
 ) -> DeferredTextRecognitionOutcome {
 	let recognized_lines = output.line_count;
 	let recognized_chars = output.text.chars().count();
@@ -289,6 +334,24 @@ fn recognized_text_outcome(
 		return outcome(
 			context.request_id,
 			DeferredTextRecognitionOutcomeKind::NoText,
+			recognized_lines,
+			recognized_chars,
+		);
+	}
+	if !publish_gate_allows_publish(publish_gate) {
+		log_ocr_request_completed(
+			context.request_id,
+			context.requested_at,
+			"stale_request_suppressed",
+			recognized_lines,
+			recognized_chars,
+			None,
+			None,
+		);
+
+		return outcome(
+			context.request_id,
+			DeferredTextRecognitionOutcomeKind::StaleRequestSuppressed,
 			recognized_lines,
 			recognized_chars,
 		);
@@ -336,6 +399,11 @@ fn recognized_text_outcome(
 			)
 		},
 	}
+}
+
+#[cfg(target_os = "macos")]
+fn publish_gate_allows_publish(publish_gate: Option<&DeferredTextRecognitionPublishGate>) -> bool {
+	publish_gate.is_none_or(DeferredTextRecognitionPublishGate::allows_publish)
 }
 
 #[cfg(target_os = "macos")]
@@ -464,14 +532,19 @@ fn log_ocr_request_completed(
 
 #[cfg(test)]
 mod tests {
+	#[cfg(target_os = "macos")]
+	use std::sync::{
+		Arc,
+		atomic::{AtomicU64, Ordering},
+	};
 	use std::time::Instant;
 
 	use image::Rgba;
 	use image::RgbaImage;
 
 	use crate::deferred_text_recognition::{
-		DeferredTextRecognitionImageSource, DeferredTextRecognitionRequest,
-		DeferredTextRecognitionWindowMatte,
+		self, DeferredTextRecognitionImageSource, DeferredTextRecognitionPublishGate,
+		DeferredTextRecognitionRequest, DeferredTextRecognitionWindowMatte,
 	};
 	use crate::state::RectPoints;
 
@@ -510,5 +583,27 @@ mod tests {
 		let export = request.export_image().expect("export image");
 
 		assert_eq!(*export.get_pixel(0, 0), Rgba([123, 123, 123, 255]));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn publish_gate_only_allows_latest_capture_generation() {
+		let latest_generation = Arc::new(AtomicU64::new(7));
+		let matching_gate = DeferredTextRecognitionPublishGate {
+			latest_generation: Arc::clone(&latest_generation),
+			request_generation: 7,
+		};
+		let stale_gate = DeferredTextRecognitionPublishGate {
+			latest_generation: Arc::clone(&latest_generation),
+			request_generation: 6,
+		};
+
+		assert!(deferred_text_recognition::publish_gate_allows_publish(Some(&matching_gate,)));
+
+		latest_generation.store(8, Ordering::Release);
+
+		assert!(!deferred_text_recognition::publish_gate_allows_publish(Some(&stale_gate,)));
+		assert!(!deferred_text_recognition::publish_gate_allows_publish(Some(&matching_gate,)));
+		assert!(deferred_text_recognition::publish_gate_allows_publish(None));
 	}
 }

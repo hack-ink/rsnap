@@ -8,7 +8,7 @@ mod shell;
 #[cfg(target_os = "macos")]
 use std::sync::{
 	Arc,
-	atomic::{AtomicBool, Ordering},
+	atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use color_eyre::eyre::Result;
@@ -81,6 +81,8 @@ struct App {
 	#[cfg(target_os = "macos")]
 	overlay_stream_event_pending: Arc<AtomicBool>,
 	#[cfg(target_os = "macos")]
+	latest_deferred_ocr_generation: Arc<AtomicU64>,
+	#[cfg(target_os = "macos")]
 	overlay_session_generation: u64,
 	#[cfg(target_os = "macos")]
 	startup_permissions_checked: bool,
@@ -131,6 +133,8 @@ impl App {
 			scroll_input_shared_state,
 			#[cfg(target_os = "macos")]
 			overlay_stream_event_pending: Arc::new(AtomicBool::new(false)),
+			#[cfg(target_os = "macos")]
+			latest_deferred_ocr_generation: Arc::new(AtomicU64::new(0)),
 			#[cfg(target_os = "macos")]
 			overlay_session_generation: 0,
 			#[cfg(target_os = "macos")]

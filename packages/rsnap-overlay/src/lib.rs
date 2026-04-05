@@ -40,6 +40,7 @@ mod worker;
 pub use crate::deferred_text_recognition::{
 	DeferredTextRecognitionOutcome, DeferredTextRecognitionOutcomeKind,
 	DeferredTextRecognitionRequest, process_deferred_text_recognition,
+	process_deferred_text_recognition_for_latest_capture,
 };
 pub use crate::overlay::{
 	AltActivationMode, HudAnchor, OutputNaming, OverlayConfig, OverlayControl, OverlayExit,
