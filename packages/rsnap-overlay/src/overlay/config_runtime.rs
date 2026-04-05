@@ -146,7 +146,6 @@ impl OverlaySession {
 		self.inflight_freeze_capture.is_some()
 			|| self.pending_click_hit_test_request_id.is_some()
 			|| self.window_list_refresh_inflight
-			|| self.ocr_inflight
 			|| self.png_encode_inflight
 	}
 

@@ -8,7 +8,7 @@ mod cursor_runtime;
 mod hud_helpers;
 mod hud_runtime;
 mod image_helpers;
-mod output;
+pub(crate) mod output;
 mod rendering;
 mod scroll_preview_runtime;
 mod scroll_runtime;
@@ -160,6 +160,10 @@ use self::session_state::{
 use self::trace_recording::ScrollCaptureTraceInputRecord;
 use self::trace_recording::{
 	ScrollCaptureTraceFrameRecord, ScrollCaptureTraceRecorder, ScrollCaptureTraceSessionSnapshot,
+};
+#[cfg(target_os = "macos")]
+use crate::deferred_text_recognition::{
+	DeferredTextRecognitionRequest, DeferredTextRecognitionWindowMatte,
 };
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
@@ -373,6 +377,9 @@ pub enum OverlayExit {
 	PngBytes(Vec<u8>),
 	/// The session completed by copying recognized text to the clipboard.
 	TextCopied(usize),
+	/// The session completed by handing OCR work to a background task.
+	#[cfg(target_os = "macos")]
+	DeferredTextRecognition(DeferredTextRecognitionRequest),
 	/// The session completed by saving a file to disk.
 	Saved(PathBuf),
 	/// The session failed with a user-visible error message.
@@ -781,14 +788,8 @@ pub struct OverlaySession {
 	capture_windows_hidden: bool,
 	#[cfg(target_os = "macos")]
 	next_ocr_request_id: u64,
-	#[cfg(target_os = "macos")]
-	active_ocr_request_id: Option<u64>,
-	#[cfg(target_os = "macos")]
-	pending_recognize_text: Option<PendingRecognizeTextRequest>,
 	pending_encode_png: Option<RgbaImage>,
 	pending_png_action: Option<PngAction>,
-	#[cfg(target_os = "macos")]
-	ocr_inflight: bool,
 	#[cfg(target_os = "macos")]
 	png_encode_inflight: bool,
 	#[cfg(target_os = "macos")]
@@ -988,14 +989,8 @@ impl OverlaySession {
 			capture_windows_hidden: false,
 			#[cfg(target_os = "macos")]
 			next_ocr_request_id: 0,
-			#[cfg(target_os = "macos")]
-			active_ocr_request_id: None,
-			#[cfg(target_os = "macos")]
-			pending_recognize_text: None,
 			pending_encode_png: None,
 			pending_png_action: None,
-			#[cfg(target_os = "macos")]
-			ocr_inflight: false,
 			#[cfg(target_os = "macos")]
 			png_encode_inflight: false,
 			#[cfg(target_os = "macos")]
@@ -2196,26 +2191,6 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn handle_recognized_text_response(&mut self, text: String) -> OverlayControl {
-		if text.trim().is_empty() {
-			self.state.set_error(String::from("No text recognized."));
-			self.request_redraw_all();
-
-			return OverlayControl::Continue;
-		}
-
-		match output::write_text_to_clipboard(&text) {
-			Ok(()) => self.exit(OverlayExit::TextCopied(text.chars().count())),
-			Err(err) => {
-				self.state.set_error(format!("{err:#}"));
-				self.request_redraw_all();
-
-				OverlayControl::Continue
-			},
-		}
-	}
-
-	#[cfg(target_os = "macos")]
 	fn next_ocr_request_id(&mut self) -> u64 {
 		let request_id = self.next_ocr_request_id;
 
@@ -2225,50 +2200,10 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn cancel_ocr_output_intent(&mut self) {
-		self.active_ocr_request_id = None;
-		self.pending_recognize_text = None;
-	}
-
-	#[cfg(target_os = "macos")]
 	fn maybe_request_redraw_for_pending_output(&mut self) {
-		if !self.ocr_inflight
-			&& (self.pending_recognize_text.is_some() || self.pending_encode_png.is_some())
-		{
+		if self.pending_encode_png.is_some() {
 			self.request_redraw_all();
 		}
-	}
-
-	#[cfg(target_os = "macos")]
-	fn handle_recognized_text_worker_response(
-		&mut self,
-		request_id: u64,
-		text: String,
-	) -> OverlayControl {
-		self.ocr_inflight = false;
-
-		if self.active_ocr_request_id != Some(request_id) {
-			return OverlayControl::Continue;
-		}
-
-		self.active_ocr_request_id = None;
-
-		self.handle_recognized_text_response(text)
-	}
-
-	#[cfg(target_os = "macos")]
-	fn handle_recognized_text_worker_error(&mut self) -> bool {
-		self.ocr_inflight = false;
-
-		if self.active_ocr_request_id.is_none() || self.pending_recognize_text.is_some() {
-			self.maybe_request_redraw_for_pending_output();
-
-			return true;
-		}
-
-		self.active_ocr_request_id = None;
-
-		false
 	}
 
 	fn maybe_stop_frozen_selection_drag_for_mouse_input(
@@ -3937,6 +3872,84 @@ impl OverlaySession {
 		self.cropped_frozen_capture_image().or_else(|| self.state.frozen_image.clone())
 	}
 
+	#[cfg(target_os = "macos")]
+	fn current_deferred_text_recognition_request(
+		&mut self,
+		request_id: u64,
+	) -> Option<DeferredTextRecognitionRequest> {
+		let requested_at = Instant::now();
+
+		if self.scroll_capture.active {
+			let image = self.scroll_capture.session.as_ref()?.export_image().clone();
+
+			return Some(DeferredTextRecognitionRequest::prepared(request_id, requested_at, image));
+		}
+
+		if self.frozen_capture_source == FrozenCaptureSource::Window {
+			match self.config.window_capture_alpha_mode {
+				WindowCaptureAlphaMode::Background => {},
+				WindowCaptureAlphaMode::MatteLight => {
+					if let Some(window_image) = self.frozen_window_image.take() {
+						return Some(DeferredTextRecognitionRequest::window_image_with_matte(
+							request_id,
+							requested_at,
+							window_image,
+							DeferredTextRecognitionWindowMatte::Light,
+						));
+					}
+				},
+				WindowCaptureAlphaMode::MatteDark => {
+					if let Some(window_image) = self.frozen_window_image.take() {
+						return Some(DeferredTextRecognitionRequest::window_image_with_matte(
+							request_id,
+							requested_at,
+							window_image,
+							DeferredTextRecognitionWindowMatte::Dark,
+						));
+					}
+				},
+			}
+		}
+
+		let crop_rect = self.deferred_text_recognition_crop_rect_pixels()?;
+		let frozen_image = self.state.frozen_image.take()?;
+
+		Some(DeferredTextRecognitionRequest::frozen_crop(
+			request_id,
+			requested_at,
+			frozen_image,
+			crop_rect,
+		))
+	}
+
+	#[cfg(target_os = "macos")]
+	fn deferred_text_recognition_crop_rect_pixels(&self) -> Option<Option<RectPoints>> {
+		let frozen_image = self.state.frozen_image.as_ref()?;
+		let Some(monitor) = self.state.monitor else {
+			return Some(None);
+		};
+		let capture_rect = self
+			.state
+			.frozen_capture_rect
+			.unwrap_or_else(|| RectPoints::new(0, 0, monitor.width, monitor.height));
+		let capture_rect = monitor.local_rect_to_pixels(capture_rect);
+		let x = capture_rect.x.min(frozen_image.width());
+		let y = capture_rect.y.min(frozen_image.height());
+		let max_width = frozen_image.width().saturating_sub(x);
+		let max_height = frozen_image.height().saturating_sub(y);
+		let width = capture_rect.width.min(max_width);
+		let height = capture_rect.height.min(max_height);
+
+		if width == 0 || height == 0 {
+			return Some(None);
+		}
+		if x == 0 && y == 0 && width == frozen_image.width() && height == frozen_image.height() {
+			return Some(None);
+		}
+
+		Some(Some(RectPoints::new(x, y, width, height)))
+	}
+
 	fn scroll_capture_selection_is_ready(&self) -> bool {
 		matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.state.monitor.is_some()
@@ -4367,9 +4380,6 @@ impl OverlaySession {
 			return;
 		};
 
-		#[cfg(target_os = "macos")]
-		self.cancel_ocr_output_intent();
-
 		self.pending_png_action = Some(action);
 
 		match action {
@@ -4383,34 +4393,41 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn begin_ocr_action(&mut self) {
+	fn begin_ocr_action(&mut self) -> OverlayControl {
 		if !matches!(self.state.mode, OverlayMode::Frozen) {
-			return;
+			return OverlayControl::Continue;
 		}
 		if !self.frozen_final_capture_ready() {
 			self.state.set_error("Preparing capture...");
 			self.request_redraw_all();
 
-			return;
+			return OverlayControl::Continue;
 		}
 
 		self.prepare_active_scroll_capture_output();
 
-		let Some(export_image) = self.current_export_image() else {
-			return;
-		};
 		let request_id = self.next_ocr_request_id();
+		let Some(request) = self.current_deferred_text_recognition_request(request_id) else {
+			return OverlayControl::Continue;
+		};
+		let (image_width_px, image_height_px) = request.image_dimensions();
 
 		self.pending_png_action = None;
 		self.pending_encode_png = None;
-		self.active_ocr_request_id = Some(request_id);
+		self.state.clear_error();
 
-		self.state.set_error("Recognizing text...");
+		tracing::info!(
+			target: "rsnap",
+			op = "overlay.ocr_request_started",
+			request_id,
+			image_width_px,
+			image_height_px,
+			image_pixels = u64::from(image_width_px) * u64::from(image_height_px),
+			scroll_capture_active = self.scroll_capture.active,
+			"Queued OCR request."
+		);
 
-		self.pending_recognize_text =
-			Some(PendingRecognizeTextRequest { request_id, image: export_image });
-
-		self.request_redraw_all();
+		self.exit(OverlayExit::DeferredTextRecognition(request))
 	}
 
 	fn handle_redraw_requested(&mut self, window_id: WindowId) -> OverlayControl {
@@ -4960,11 +4977,7 @@ impl OverlaySession {
 			},
 			FrozenToolbarTool::Scroll => self.start_scroll_capture(),
 			#[cfg(target_os = "macos")]
-			FrozenToolbarTool::Ocr => {
-				self.begin_ocr_action();
-
-				OverlayControl::Continue
-			},
+			FrozenToolbarTool::Ocr => self.begin_ocr_action(),
 			_ => OverlayControl::Continue,
 		}
 	}
@@ -4986,12 +4999,20 @@ impl OverlaySession {
 	}
 
 	fn exit(&mut self, exit: OverlayExit) -> OverlayControl {
-		let (exit_kind, png_bytes_len, saved_path, error_message) = match &exit {
-			OverlayExit::Cancelled => ("cancelled", None, None, None),
-			OverlayExit::PngBytes(png_bytes) => ("png_bytes", Some(png_bytes.len()), None, None),
-			OverlayExit::TextCopied(_) => ("text_copied", None, None, None),
-			OverlayExit::Saved(path) => ("saved", None, Some(path.display().to_string()), None),
-			OverlayExit::Error(message) => ("error", None, None, Some(message.as_str())),
+		let (exit_kind, png_bytes_len, saved_path, error_message, ocr_request_id) = match &exit {
+			OverlayExit::Cancelled => ("cancelled", None, None, None, None),
+			OverlayExit::PngBytes(png_bytes) => {
+				("png_bytes", Some(png_bytes.len()), None, None, None)
+			},
+			OverlayExit::TextCopied(_) => ("text_copied", None, None, None, None),
+			#[cfg(target_os = "macos")]
+			OverlayExit::DeferredTextRecognition(request) => {
+				("deferred_text_recognition", None, None, None, Some(request.request_id))
+			},
+			OverlayExit::Saved(path) => {
+				("saved", None, Some(path.display().to_string()), None, None)
+			},
+			OverlayExit::Error(message) => ("error", None, None, Some(message.as_str()), None),
 		};
 		#[cfg(target_os = "macos")]
 		let scroll_capture_has_live_stream = self.scroll_capture.live_stream.is_some();
@@ -5008,6 +5029,7 @@ impl OverlaySession {
 			png_bytes_len,
 			saved_path,
 			error_message,
+			ocr_request_id,
 			scroll_capture_active = self.scroll_capture.active,
 			scroll_capture_has_live_stream,
 			live_sample_stream_present,
@@ -5093,6 +5115,7 @@ impl OverlaySession {
 			png_bytes_len,
 			saved_path,
 			error_message,
+			ocr_request_id,
 			"Finished overlay exit cleanup."
 		);
 
@@ -5100,16 +5123,10 @@ impl OverlaySession {
 	}
 
 	fn clear_pending_output_actions(&mut self) {
-		#[cfg(target_os = "macos")]
-		{
-			self.active_ocr_request_id = None;
-			self.pending_recognize_text = None;
-		}
 		self.pending_encode_png = None;
 		self.pending_png_action = None;
 		#[cfg(target_os = "macos")]
 		{
-			self.ocr_inflight = false;
 			self.png_encode_inflight = false;
 		}
 
@@ -5125,13 +5142,6 @@ impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
 	}
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PendingRecognizeTextRequest {
-	request_id: u64,
-	image: RgbaImage,
 }
 
 struct InitialSessionRuntime {

@@ -1,3 +1,6 @@
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::CursorSampleRequest;
 #[allow(unused_imports)]
 use crate::overlay::{
 	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, GlobalPoint, Instant,
@@ -5,9 +8,6 @@ use crate::overlay::{
 	OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit, WindowListSnapshot,
 	WorkerErrorSource, WorkerRequestSendError, WorkerResponse, mem,
 };
-#[cfg(target_os = "macos")]
-#[allow(unused_imports)]
-use crate::overlay::{CursorSampleRequest, PendingRecognizeTextRequest};
 
 impl OverlaySession {
 	pub(super) fn drain_worker_responses(&mut self) -> OverlayControl {
@@ -29,30 +29,7 @@ impl OverlaySession {
 				return control;
 			}
 		}
-
-		#[cfg(not(target_os = "macos"))]
-		let queued_recognize_text = false;
-		#[cfg(target_os = "macos")]
-		let queued_recognize_text = self.pending_recognize_text.is_some();
-
-		#[cfg(target_os = "macos")]
-		if !self.ocr_inflight
-			&& let Some(request) = self.pending_recognize_text.take()
-		{
-			if let Some(worker) = self.worker.as_ref() {
-				if let Err((request_id, image)) =
-					worker.request_recognize_text(request.request_id, request.image)
-				{
-					self.pending_recognize_text =
-						Some(PendingRecognizeTextRequest { request_id, image });
-				} else {
-					self.ocr_inflight = true;
-				}
-			} else {
-				self.pending_recognize_text = Some(request);
-			}
-		}
-		if !queued_recognize_text && let Some(image) = self.pending_encode_png.take() {
+		if let Some(image) = self.pending_encode_png.take() {
 			if let Some(worker) = self.worker.as_ref() {
 				if let Err(image) = worker.request_encode_png(image) {
 					self.pending_encode_png = Some(image);
@@ -536,10 +513,6 @@ impl OverlaySession {
 
 				OverlayControl::Continue
 			},
-			#[cfg(target_os = "macos")]
-			WorkerResponse::RecognizedText { request_id, text } => {
-				self.handle_recognized_text_worker_response(request_id, text)
-			},
 			WorkerResponse::Error { source, message } => {
 				match source {
 					WorkerErrorSource::FreezeCapture => {
@@ -562,12 +535,6 @@ impl OverlaySession {
 						#[cfg(target_os = "macos")]
 						{
 							self.png_encode_inflight = false;
-						}
-					},
-					#[cfg(target_os = "macos")]
-					WorkerErrorSource::RecognizeText => {
-						if self.handle_recognized_text_worker_error() {
-							return OverlayControl::Continue;
 						}
 					},
 					WorkerErrorSource::CaptureMonitorRegion => {

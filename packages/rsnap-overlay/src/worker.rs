@@ -11,8 +11,6 @@ use std::time::{Duration, Instant};
 use image::RgbaImage;
 
 use crate::backend::CaptureBackend;
-#[cfg(target_os = "macos")]
-use crate::ocr_macos;
 use crate::png;
 #[cfg(not(target_os = "macos"))]
 use crate::state::LiveCursorSample;
@@ -45,11 +43,6 @@ pub(crate) enum WorkerRequest {
 	FreezeCapture {
 		monitor: MonitorRect,
 		target: FreezeCaptureTarget,
-	},
-	#[cfg(target_os = "macos")]
-	RecognizeText {
-		request_id: u64,
-		image: RgbaImage,
 	},
 	CaptureMonitorRegion {
 		monitor: MonitorRect,
@@ -85,11 +78,6 @@ pub(crate) enum WorkerResponse {
 		window_image: Option<RgbaImage>,
 		captured_window_id: Option<u32>,
 	},
-	#[cfg(target_os = "macos")]
-	RecognizedText {
-		request_id: u64,
-		text: String,
-	},
 	EncodedPng {
 		png_bytes: Vec<u8>,
 	},
@@ -103,8 +91,6 @@ pub(crate) enum WorkerResponse {
 pub(crate) enum WorkerErrorSource {
 	EncodePng,
 	FreezeCapture,
-	#[cfg(target_os = "macos")]
-	RecognizeText,
 	RefreshWindowList,
 	CaptureMonitorRegion,
 }
@@ -245,34 +231,6 @@ impl OverlayWorker {
 					response_waker,
 					WorkerResponse::Error {
 						source: WorkerErrorSource::FreezeCapture,
-						message: format!("{err:#}"),
-					},
-				);
-			},
-		}
-	}
-
-	#[cfg(target_os = "macos")]
-	fn handle_recognize_text_request(
-		resp_tx: &Sender<WorkerResponse>,
-		response_waker: Option<&(dyn Fn() + Send + Sync)>,
-		request_id: u64,
-		image: RgbaImage,
-	) {
-		match ocr_macos::recognize_text_from_image(&image) {
-			Ok(text) => {
-				Self::send_response(
-					resp_tx,
-					response_waker,
-					WorkerResponse::RecognizedText { request_id, text },
-				);
-			},
-			Err(err) => {
-				Self::send_response(
-					resp_tx,
-					response_waker,
-					WorkerResponse::Error {
-						source: WorkerErrorSource::RecognizeText,
 						message: format!("{err:#}"),
 					},
 				);
@@ -490,23 +448,6 @@ impl OverlayWorker {
 		}
 	}
 
-	#[cfg(target_os = "macos")]
-	pub(crate) fn request_recognize_text(
-		&self,
-		request_id: u64,
-		image: RgbaImage,
-	) -> Result<(), (u64, RgbaImage)> {
-		match self.req_tx.try_send(WorkerRequest::RecognizeText { request_id, image }) {
-			Ok(()) => Ok(()),
-			Err(TrySendError::Full(WorkerRequest::RecognizeText { request_id, image }))
-			| Err(TrySendError::Disconnected(WorkerRequest::RecognizeText { request_id, image })) => {
-				Err((request_id, image))
-			},
-			Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
-				unreachable!("request_recognize_text only sends WorkerRequest::RecognizeText")
-			},
-		}
-	}
 	pub(crate) fn request_capture_monitor_region(
 		&self,
 		monitor: MonitorRect,
@@ -545,8 +486,6 @@ struct PendingWorkerRequests {
 	last_sample_cursor: Option<(MonitorRect, GlobalPoint, u64, bool, u32, u32)>,
 	last_refresh_window_list: bool,
 	last_freeze: Option<(MonitorRect, FreezeCaptureTarget)>,
-	#[cfg(target_os = "macos")]
-	last_recognize_text: Option<(u64, RgbaImage)>,
 	last_capture_region: Option<(MonitorRect, RectPoints, u64)>,
 	last_encode: Option<RgbaImage>,
 }
@@ -574,10 +513,6 @@ impl PendingWorkerRequests {
 			WorkerRequest::FreezeCapture { monitor, target } => {
 				self.last_freeze = Some((monitor, target));
 			},
-			#[cfg(target_os = "macos")]
-			WorkerRequest::RecognizeText { request_id, image } => {
-				self.last_recognize_text = Some((request_id, image));
-			},
 			WorkerRequest::CaptureMonitorRegion { monitor, rect_px, request_id } => {
 				self.last_capture_region = Some((monitor, rect_px, request_id));
 			},
@@ -598,17 +533,6 @@ impl PendingWorkerRequests {
 
 		if let Some(image) = self.last_encode {
 			OverlayWorker::handle_encode_request(resp_tx, response_waker, image);
-
-			handled_high_priority = true;
-		}
-		#[cfg(target_os = "macos")]
-		if let Some((request_id, image)) = self.last_recognize_text {
-			OverlayWorker::handle_recognize_text_request(
-				resp_tx,
-				response_waker,
-				request_id,
-				image,
-			);
 
 			handled_high_priority = true;
 		}
@@ -688,8 +612,6 @@ mod tests {
 		CapturedMonitorRegionResponse, CapturedMonitorRegionResult, OverlayWorker,
 		WorkerErrorSource, WorkerResponse,
 	};
-	#[cfg(target_os = "macos")]
-	use crate::worker::{PendingWorkerRequests, WorkerRequest};
 
 	enum MockScrollCaptureResult {
 		Image(RgbaImage),
@@ -941,31 +863,5 @@ mod tests {
 			},
 			other => panic!("expected worker error, got {other:?}"),
 		}
-	}
-
-	#[cfg(target_os = "macos")]
-	#[test]
-	fn dispatch_processes_encode_and_recognize_requests_from_same_batch() {
-		let (resp_tx, resp_rx) = mpsc::channel::<WorkerResponse>();
-		let (region_tx, region_rx) = mpsc::channel::<CapturedMonitorRegionResponse>();
-		let mut backend =
-			MockScrollCaptureBackend { scroll_capture_result: MockScrollCaptureResult::NoNewFrame };
-		let mut pending = PendingWorkerRequests::default();
-
-		pending.record(WorkerRequest::EncodePng { image: sample_image() });
-		pending.record(WorkerRequest::RecognizeText { request_id: 7, image: sample_image() });
-		pending.dispatch(&mut backend, &resp_tx, &region_tx, None);
-
-		let first = resp_rx.try_recv().expect("png response");
-		let second = resp_rx.try_recv().expect("ocr response");
-
-		assert!(matches!(first, WorkerResponse::EncodedPng { .. }));
-		assert!(matches!(
-			second,
-			WorkerResponse::RecognizedText { .. }
-				| WorkerResponse::Error { source: WorkerErrorSource::RecognizeText, .. }
-		));
-		assert!(resp_rx.try_recv().is_err());
-		assert!(region_rx.try_recv().is_err());
 	}
 }

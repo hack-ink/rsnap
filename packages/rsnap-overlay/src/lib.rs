@@ -22,6 +22,8 @@ pub mod replay_support {
 		replay_recorded_scroll_capture_trace, replay_recorded_scroll_capture_trace_with_mode,
 	};
 }
+#[cfg(target_os = "macos")]
+mod deferred_text_recognition;
 
 mod backend;
 #[cfg(target_os = "macos")]
@@ -34,6 +36,11 @@ mod scroll_capture;
 mod state;
 mod worker;
 
+#[cfg(target_os = "macos")]
+pub use crate::deferred_text_recognition::{
+	DeferredTextRecognitionOutcome, DeferredTextRecognitionOutcomeKind,
+	DeferredTextRecognitionRequest, process_deferred_text_recognition,
+};
 pub use crate::overlay::{
 	AltActivationMode, HudAnchor, OutputNaming, OverlayConfig, OverlayControl, OverlayExit,
 	OverlaySession, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode,
