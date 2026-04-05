@@ -1,5 +1,5 @@
-pub(crate) mod replay_support;
 pub(crate) mod output;
+pub(crate) mod replay_support;
 
 mod aux_window_runtime;
 mod capture_window_runtime;
