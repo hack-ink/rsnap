@@ -156,9 +156,9 @@ use self::rendering::{
 #[cfg(all(target_os = "macos", test))]
 use self::session_state::InflightScrollCaptureObservation;
 use self::session_state::{
-	CursorMoveTrace, FrozenSelectionDragState, FrozenToolbarPointerState, FrozenToolbarState,
-	HudDrawConfig, LiveSampleApplyResult, ScrollCaptureState, SlowOperationLogger,
-	WindowFreezeCaptureTarget,
+	CursorMoveTrace, FrozenMosaicDragState, FrozenSelectionDragCursorMoveTiming,
+	FrozenSelectionDragState, FrozenToolbarPointerState, FrozenToolbarState, HudDrawConfig,
+	LiveSampleApplyResult, ScrollCaptureState, SlowOperationLogger, WindowFreezeCaptureTarget,
 };
 #[cfg(target_os = "macos")]
 use self::session_state::{
@@ -171,9 +171,7 @@ use self::trace_recording::{
 	ScrollCaptureTraceFrameRecord, ScrollCaptureTraceRecorder, ScrollCaptureTraceSessionSnapshot,
 };
 #[cfg(target_os = "macos")]
-use crate::deferred_text_recognition::{
-	DeferredTextRecognitionRequest, DeferredTextRecognitionWindowMatte,
-};
+use crate::deferred_text_recognition::DeferredTextRecognitionRequest;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::scroll_capture::{self, ScrollDirection, ScrollObserveOutcome, ScrollSession};
@@ -348,6 +346,8 @@ const FROZEN_SELECTION_RESIZE_HANDLE_CORNER_KEEPOUT_POINTS: f32 = 4.25;
 const FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS: f32 = 4.25;
 const FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS: f32 = 1.15;
 const FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS: f32 = 1.3;
+const FROZEN_MOSAIC_BLOCK_SIZE_PX: u32 = 12;
+const FROZEN_EDIT_HISTORY_LIMIT: usize = 24;
 const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: image::Rgba<u8> = image::Rgba([246, 246, 246, 255]);
 const WINDOW_CAPTURE_MATTE_DARK_RGBA: image::Rgba<u8> = image::Rgba([24, 24, 24, 255]);
 const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
@@ -546,16 +546,31 @@ impl FrozenToolbarTool {
 
 	const fn requires_final_capture(self) -> bool {
 		match self {
-			Self::Pointer
-			| Self::Pen
-			| Self::Text
-			| Self::Mosaic
-			| Self::Undo
-			| Self::Redo
-			| Self::AutoCenter => false,
+			Self::Pointer | Self::Pen | Self::Text | Self::AutoCenter => false,
+			Self::Mosaic | Self::Undo | Self::Redo => true,
 			Self::Scroll | Self::Copy | Self::Save => true,
 			#[cfg(target_os = "macos")]
 			Self::Ocr => true,
+		}
+	}
+
+	fn is_available(self, toolbar_state: &FrozenToolbarState) -> bool {
+		match self {
+			Self::Undo => toolbar_state.undo_available,
+			Self::Redo => toolbar_state.redo_available,
+			_ => true,
+		}
+	}
+
+	fn unavailable_label(self, toolbar_state: &FrozenToolbarState) -> &'static str {
+		if self.requires_final_capture() && !toolbar_state.final_capture_ready {
+			return "Preparing capture...";
+		}
+
+		match self {
+			Self::Undo => "Nothing to undo",
+			Self::Redo => "Nothing to redo",
+			_ => "Preparing capture...",
 		}
 	}
 }
@@ -806,10 +821,12 @@ pub struct OverlaySession {
 	pending_loupe_outer_pos: Option<GlobalPoint>,
 	loupe_inner_size_points: Option<(u32, u32)>,
 	toolbar_outer_pos: Option<GlobalPoint>,
+	pending_toolbar_outer_pos: Option<GlobalPoint>,
 	toolbar_inner_size_points: Option<(u32, u32)>,
 	gpu: Option<GpuContext>,
 	last_hud_window_move_at: Instant,
 	last_loupe_window_move_at: Instant,
+	last_toolbar_window_move_at: Instant,
 	last_present_at: Instant,
 	last_live_cursor_poll_at: Instant,
 	last_frozen_cursor_poll_at: Instant,
@@ -874,8 +891,12 @@ pub struct OverlaySession {
 	left_mouse_button_down_monitor: Option<MonitorRect>,
 	left_mouse_button_down_global: Option<GlobalPoint>,
 	frozen_selection_drag: FrozenSelectionDragState,
+	frozen_mosaic_drag: FrozenMosaicDragState,
+	frozen_mosaic_undo_stack: Vec<FrozenMosaicEdit>,
+	frozen_mosaic_redo_stack: Vec<FrozenMosaicEdit>,
 	hud_window_visible: bool,
 	toolbar_window_visible: bool,
+	skip_toolbar_focus_on_next_show: bool,
 	toolbar_window_warmup_redraws_remaining: u8,
 	loupe_window_visible: bool,
 	loupe_window_warmup_redraws_remaining: u8,
@@ -1015,11 +1036,12 @@ impl OverlaySession {
 			macos_hud_window_config_cache: HashMap::new(),
 			hud_outer_pos: None, pending_hud_outer_pos: None, hud_inner_size_points: None,
 			loupe_outer_pos: None, pending_loupe_outer_pos: None, loupe_inner_size_points: None,
-			toolbar_outer_pos: None,
+			toolbar_outer_pos: None, pending_toolbar_outer_pos: None,
 			toolbar_inner_size_points: None,
 			gpu: None,
 			last_hud_window_move_at: Instant::now(),
 			last_loupe_window_move_at: Instant::now(),
+			last_toolbar_window_move_at: Instant::now(),
 			last_present_at: Instant::now(),
 			last_live_cursor_poll_at: Instant::now(),
 			last_frozen_cursor_poll_at: Instant::now(),
@@ -1074,7 +1096,11 @@ impl OverlaySession {
 			toolbar_pointer_local: None,
 			left_mouse_button_down: false, left_mouse_button_down_monitor: None, left_mouse_button_down_global: None,
 			frozen_selection_drag: FrozenSelectionDragState::default(),
-			hud_window_visible: false, toolbar_window_visible: false, toolbar_window_warmup_redraws_remaining: 0,
+			frozen_mosaic_drag: FrozenMosaicDragState::default(),
+			frozen_mosaic_undo_stack: Vec::new(),
+			frozen_mosaic_redo_stack: Vec::new(),
+			hud_window_visible: false, toolbar_window_visible: false,
+			skip_toolbar_focus_on_next_show: false, toolbar_window_warmup_redraws_remaining: 0,
 			loupe_window_visible: false,
 			loupe_window_warmup_redraws_remaining: 0,
 			scroll_capture: ScrollCaptureState::default(),
@@ -1102,6 +1128,7 @@ impl OverlaySession {
 		self.state = runtime.state;
 		self.last_hud_window_move_at = runtime.now;
 		self.last_loupe_window_move_at = runtime.now;
+		self.last_toolbar_window_move_at = runtime.now;
 		self.last_present_at = runtime.now;
 		self.last_live_cursor_poll_at = runtime.now - CURSOR_POLL_INTERVAL_MIN;
 		self.last_frozen_cursor_poll_at = runtime.now - CURSOR_POLL_INTERVAL_MIN;
@@ -1556,9 +1583,14 @@ impl OverlaySession {
 		self.state.begin_freeze(monitor);
 
 		self.state.frozen_capture_rect = Some(capture_rect);
+		self.state.frozen_mosaic_preview_rect = None;
 		self.state.drag_rect = None;
 		self.state.hovered_window_rect = None;
 		self.frozen_selection_drag = FrozenSelectionDragState::default();
+		self.frozen_mosaic_drag = FrozenMosaicDragState::default();
+
+		self.frozen_mosaic_undo_stack.clear();
+		self.frozen_mosaic_redo_stack.clear();
 
 		tracing::debug!(
 			monitor_id = monitor.id,
@@ -1682,7 +1714,7 @@ impl OverlaySession {
 		self.state.drag_rect = Some(MonitorRectPoints { monitor_id: monitor.id, rect });
 	}
 
-	fn frozen_selection_drag_target(&self) -> Option<(MonitorRect, RectPoints)> {
+	fn frozen_capture_rect_drag_target(&self) -> Option<(MonitorRect, RectPoints)> {
 		if !matches!(self.state.mode, OverlayMode::Frozen)
 			|| self.frozen_capture_source != FrozenCaptureSource::DragRegion
 			|| self.scroll_capture.active
@@ -1701,8 +1733,34 @@ impl OverlaySession {
 		Some((monitor, capture_rect))
 	}
 
+	fn frozen_selection_drag_target(&self) -> Option<(MonitorRect, RectPoints)> {
+		(self.toolbar_state.selected_tool == FrozenToolbarTool::Pointer)
+			.then(|| self.frozen_capture_rect_drag_target())
+			.flatten()
+	}
+
 	fn frozen_auto_center_available(&self) -> bool {
-		self.frozen_selection_drag_target().is_some()
+		self.frozen_capture_rect_drag_target().is_some()
+	}
+
+	fn frozen_mosaic_drag_target(&self) -> Option<(MonitorRect, RectPoints)> {
+		if !matches!(self.state.mode, OverlayMode::Frozen)
+			|| self.scroll_capture.active
+			|| self.state.frozen_image.is_none()
+			|| !self.frozen_final_capture_ready()
+			|| self.toolbar_state.selected_tool != FrozenToolbarTool::Mosaic
+		{
+			return None;
+		}
+
+		let monitor = self.state.monitor?;
+		let capture_rect = self.state.frozen_capture_rect?;
+
+		if capture_rect.is_empty() {
+			return None;
+		}
+
+		Some((monitor, capture_rect))
 	}
 
 	fn begin_frozen_selection_drag(&mut self, global: GlobalPoint) -> bool {
@@ -1727,6 +1785,27 @@ impl OverlaySession {
 			press_cursor_x: cursor_x,
 			press_cursor_y: cursor_y,
 		};
+
+		self.hide_auxiliary_windows_for_frozen_selection_drag();
+
+		true
+	}
+
+	fn begin_frozen_mosaic_drag(&mut self, global: GlobalPoint) -> bool {
+		let Some((monitor, capture_rect)) = self.frozen_mosaic_drag_target() else {
+			return false;
+		};
+		let Some((cursor_x, cursor_y)) = monitor.local_u32(global) else {
+			return false;
+		};
+
+		if !capture_rect.contains((cursor_x, cursor_y)) {
+			return false;
+		}
+
+		self.frozen_mosaic_drag =
+			FrozenMosaicDragState { active: true, anchor_x: cursor_x, anchor_y: cursor_y };
+		self.state.frozen_mosaic_preview_rect = Some(RectPoints::new(cursor_x, cursor_y, 1, 1));
 
 		true
 	}
@@ -1759,6 +1838,28 @@ impl OverlaySession {
 
 	#[cfg_attr(target_os = "macos", allow(dead_code))]
 	fn frozen_selection_cursor_icon_for_monitor(&self, monitor: MonitorRect) -> CursorIcon {
+		if let Some((target_monitor, capture_rect)) = self.frozen_mosaic_drag_target() {
+			if target_monitor != monitor {
+				return CursorIcon::Default;
+			}
+			if self.frozen_mosaic_drag.active {
+				return CursorIcon::Crosshair;
+			}
+
+			let Some(cursor) = self.state.cursor else {
+				return CursorIcon::Default;
+			};
+			let Some((cursor_x, cursor_y)) = monitor.local_u32(cursor) else {
+				return CursorIcon::Default;
+			};
+
+			return if capture_rect.contains((cursor_x, cursor_y)) {
+				CursorIcon::Crosshair
+			} else {
+				CursorIcon::Default
+			};
+		}
+
 		let Some((target_monitor, capture_rect)) = self.frozen_selection_drag_target() else {
 			return CursorIcon::Default;
 		};
@@ -1771,7 +1872,7 @@ impl OverlaySession {
 				FrozenSelectionInteractionKind::Resize(corner) => {
 					Self::frozen_selection_resize_cursor_icon(corner)
 				},
-				FrozenSelectionInteractionKind::Move => CursorIcon::Default,
+				FrozenSelectionInteractionKind::Move => CursorIcon::Grabbing,
 			};
 		}
 
@@ -1786,7 +1887,8 @@ impl OverlaySession {
 			Some(FrozenSelectionInteractionKind::Resize(corner)) => {
 				Self::frozen_selection_resize_cursor_icon(corner)
 			},
-			_ => CursorIcon::Default,
+			Some(FrozenSelectionInteractionKind::Move) => CursorIcon::Grab,
+			None => CursorIcon::Default,
 		}
 	}
 
@@ -1897,10 +1999,45 @@ impl OverlaySession {
 				else {
 					continue;
 				};
+				let icon = Self::frozen_selection_resize_cursor_icon(corner);
+				let mut adjusted_min = rect.min;
+				let mut adjusted_max = rect.max;
+
+				if WindowRenderer::frozen_selection_resize_hit_test(
+					capture_rect,
+					Pos2::new(rect.min.x, point.y),
+				) != Some(corner)
+				{
+					adjusted_min.x = trim_rect_min_edge(adjusted_min.x, adjusted_max.x);
+				}
+				if WindowRenderer::frozen_selection_resize_hit_test(
+					capture_rect,
+					Pos2::new(rect.max.x, point.y),
+				) != Some(corner)
+				{
+					adjusted_max.x = trim_rect_max_edge(adjusted_max.x, adjusted_min.x);
+				}
+				if WindowRenderer::frozen_selection_resize_hit_test(
+					capture_rect,
+					Pos2::new(point.x, rect.min.y),
+				) != Some(corner)
+				{
+					adjusted_min.y = trim_rect_min_edge(adjusted_min.y, adjusted_max.y);
+				}
+				if WindowRenderer::frozen_selection_resize_hit_test(
+					capture_rect,
+					Pos2::new(point.x, rect.max.y),
+				) != Some(corner)
+				{
+					adjusted_max.y = trim_rect_max_edge(adjusted_max.y, adjusted_min.y);
+				}
+				if adjusted_max.x <= adjusted_min.x || adjusted_max.y <= adjusted_min.y {
+					continue;
+				}
 
 				rects.push(OverlayCursorRect::new(
-					rect,
-					Self::frozen_selection_resize_cursor_icon(corner),
+					Rect::from_min_max(adjusted_min, adjusted_max),
+					icon,
 				));
 			}
 		}
@@ -1923,8 +2060,53 @@ impl OverlaySession {
 		}
 	}
 
+	pub(super) fn frozen_selection_drag_hides_auxiliary_windows(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Frozen) && self.frozen_selection_drag.active
+	}
+
+	fn hide_auxiliary_windows_for_frozen_selection_drag(&mut self) {
+		if let Some(hud_window) = self.hud_window.as_ref() {
+			hud_window.window.set_visible(false);
+		}
+
+		self.hud_window_visible = false;
+
+		if let Some(loupe_window) = self.loupe_window.as_ref() {
+			loupe_window.window.set_visible(false);
+		}
+
+		self.loupe_window_visible = false;
+
+		self.reset_loupe_window_warmup_redraws();
+
+		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+			toolbar_window.window.set_visible(false);
+		}
+
+		self.skip_toolbar_focus_on_next_show = true;
+		self.toolbar_window_visible = false;
+		self.toolbar_window_warmup_redraws_remaining = 0;
+
+		if let Some(preview_window) = self.scroll_preview_window.as_ref() {
+			preview_window.window.set_visible(false);
+		}
+
+		self.last_present_at = Instant::now();
+	}
+
 	fn stop_frozen_selection_drag(&mut self) {
+		let was_active = self.frozen_selection_drag.active;
+
 		self.frozen_selection_drag = FrozenSelectionDragState::default();
+
+		if was_active && let Some(monitor) = self.state.monitor {
+			self.request_redraw_for_monitor(monitor);
+		}
+	}
+
+	fn stop_frozen_mosaic_drag(&mut self) {
+		self.frozen_mosaic_drag = FrozenMosaicDragState::default();
+		self.state.frozen_mosaic_preview_rect = None;
 	}
 
 	fn update_frozen_selection_drag_rect(&mut self, global: GlobalPoint) -> bool {
@@ -1972,6 +2154,35 @@ impl OverlaySession {
 		self.apply_frozen_capture_rect_update(monitor, next_rect)
 	}
 
+	fn update_frozen_mosaic_drag_rect(&mut self, global: GlobalPoint) -> bool {
+		if !self.frozen_mosaic_drag.active {
+			return false;
+		}
+
+		let Some((monitor, capture_rect)) = self.frozen_mosaic_drag_target() else {
+			self.stop_frozen_mosaic_drag();
+
+			return false;
+		};
+		let (cursor_x, cursor_y) = Self::clamped_local_point_in_rect(monitor, capture_rect, global);
+		let next_rect = Self::rect_from_drag_points(
+			self.frozen_mosaic_drag.anchor_x,
+			self.frozen_mosaic_drag.anchor_y,
+			cursor_x,
+			cursor_y,
+		);
+
+		if self.state.frozen_mosaic_preview_rect == Some(next_rect) {
+			return false;
+		}
+
+		self.state.frozen_mosaic_preview_rect = Some(next_rect);
+
+		self.request_redraw_for_monitor(monitor);
+
+		true
+	}
+
 	fn clamped_local_point_in_monitor(monitor: MonitorRect, global: GlobalPoint) -> (u32, u32) {
 		let max_x = i64::from(monitor.width.saturating_sub(1));
 		let max_y = i64::from(monitor.height.saturating_sub(1));
@@ -1979,6 +2190,32 @@ impl OverlaySession {
 		let local_y = (i64::from(global.y) - i64::from(monitor.origin.y)).clamp(0, max_y) as u32;
 
 		(local_x, local_y)
+	}
+
+	fn clamped_local_point_in_rect(
+		monitor: MonitorRect,
+		capture_rect: RectPoints,
+		global: GlobalPoint,
+	) -> (u32, u32) {
+		let (local_x, local_y) = Self::clamped_local_point_in_monitor(monitor, global);
+		let max_x = capture_rect.x.saturating_add(capture_rect.width.saturating_sub(1));
+		let max_y = capture_rect.y.saturating_add(capture_rect.height.saturating_sub(1));
+
+		(local_x.clamp(capture_rect.x, max_x), local_y.clamp(capture_rect.y, max_y))
+	}
+
+	fn rect_from_drag_points(
+		anchor_x: u32,
+		anchor_y: u32,
+		cursor_x: u32,
+		cursor_y: u32,
+	) -> RectPoints {
+		let left = anchor_x.min(cursor_x);
+		let top = anchor_y.min(cursor_y);
+		let right = anchor_x.max(cursor_x).saturating_add(1);
+		let bottom = anchor_y.max(cursor_y).saturating_add(1);
+
+		RectPoints::new(left, top, right.saturating_sub(left), bottom.saturating_sub(top))
 	}
 
 	fn local_point_in_monitor_space(monitor: MonitorRect, global: GlobalPoint) -> (i64, i64) {
@@ -2101,17 +2338,63 @@ impl OverlaySession {
 		self.toolbar_state.default_slot_position = Some(toolbar_default_pos);
 		self.toolbar_state.floating_position = Some(toolbar_pos);
 
-		let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+		let should_trace_frozen_selection_drag_timing =
+			self.should_trace_frozen_selection_drag_timing();
+		let toolbar_position_elapsed = if should_trace_frozen_selection_drag_timing {
+			let toolbar_position_started_at = Instant::now();
+			let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
 
-		self.request_redraw_for_monitor(monitor);
-		self.request_redraw_toolbar_window();
-		self.request_redraw_scroll_preview_window();
+			Some(toolbar_position_started_at.elapsed())
+		} else {
+			let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+
+			None
+		};
+		let redraw_request_elapsed = if should_trace_frozen_selection_drag_timing {
+			let redraw_request_started_at = Instant::now();
+
+			self.request_redraw_for_monitor(monitor);
+			self.request_redraw_toolbar_window();
+
+			if self.scroll_capture.active {
+				self.request_redraw_scroll_preview_window();
+			}
+
+			Some(redraw_request_started_at.elapsed())
+		} else {
+			self.request_redraw_for_monitor(monitor);
+			self.request_redraw_toolbar_window();
+
+			if self.scroll_capture.active {
+				self.request_redraw_scroll_preview_window();
+			}
+
+			None
+		};
+
+		if should_trace_frozen_selection_drag_timing {
+			tracing::trace!(
+				op = "overlay.frozen_selection_drag.rect_update",
+				monitor_id = monitor.id,
+				rect_x = next_rect.x,
+				rect_y = next_rect.y,
+				rect_width = next_rect.width,
+				rect_height = next_rect.height,
+				toolbar_position_us =
+					toolbar_position_elapsed.map_or(0, |elapsed| elapsed.as_micros()),
+				redraw_request_us = redraw_request_elapsed.map_or(0, |elapsed| elapsed.as_micros()),
+				scroll_capture_active = self.scroll_capture.active,
+				toolbar_outer_pos = ?self.toolbar_outer_pos,
+				toolbar_floating_position = ?self.toolbar_state.floating_position,
+				"Applied frozen selection rect update."
+			);
+		}
 
 		true
 	}
 
 	fn auto_center_frozen_capture_rect(&mut self) -> bool {
-		let Some((monitor, capture_rect)) = self.frozen_selection_drag_target() else {
+		let Some((monitor, capture_rect)) = self.frozen_capture_rect_drag_target() else {
 			return false;
 		};
 		let Some(capture_image) = self.cropped_frozen_capture_image() else {
@@ -2325,16 +2608,10 @@ impl OverlaySession {
 			match self.config.window_capture_alpha_mode {
 				WindowCaptureAlphaMode::Background => {},
 				WindowCaptureAlphaMode::MatteLight => {
-					return Some(Self::flatten_window_image_with_matte(
-						window_image,
-						WINDOW_CAPTURE_MATTE_LIGHT_RGBA,
-					));
+					return Some(window_image.clone());
 				},
 				WindowCaptureAlphaMode::MatteDark => {
-					return Some(Self::flatten_window_image_with_matte(
-						window_image,
-						WINDOW_CAPTURE_MATTE_DARK_RGBA,
-					));
+					return Some(window_image.clone());
 				},
 			}
 		}
@@ -2390,10 +2667,295 @@ impl OverlaySession {
 		}
 	}
 
-	fn flatten_window_image_with_matte(image: &RgbaImage, matte: image::Rgba<u8>) -> RgbaImage {
-		let mut out = RgbaImage::from_pixel(image.width(), image.height(), matte);
+	fn intersect_rect_points(left: RectPoints, right: RectPoints) -> Option<RectPoints> {
+		let x = left.x.max(right.x);
+		let y = left.y.max(right.y);
+		let right_edge = left.x.saturating_add(left.width).min(right.x.saturating_add(right.width));
+		let bottom_edge =
+			left.y.saturating_add(left.height).min(right.y.saturating_add(right.height));
 
-		imageops::overlay(&mut out, image, 0, 0);
+		(right_edge > x && bottom_edge > y).then(|| {
+			RectPoints::new(x, y, right_edge.saturating_sub(x), bottom_edge.saturating_sub(y))
+		})
+	}
+
+	fn build_frozen_image_patch(image: &RgbaImage, rect: RectPoints) -> Option<FrozenImagePatch> {
+		let x = rect.x.min(image.width());
+		let y = rect.y.min(image.height());
+		let max_width = image.width().saturating_sub(x);
+		let max_height = image.height().saturating_sub(y);
+		let width = rect.width.min(max_width);
+		let height = rect.height.min(max_height);
+
+		if width == 0 || height == 0 {
+			return None;
+		}
+
+		let rect = RectPoints::new(x, y, width, height);
+		let before = imageops::crop_imm(image, x, y, width, height).to_image();
+		let after = Self::mosaic_patch(&before);
+
+		Some(FrozenImagePatch { rect, before, after })
+	}
+
+	fn mosaic_patch(region: &RgbaImage) -> RgbaImage {
+		let mut out = region.clone();
+
+		for block_y in (0..region.height()).step_by(FROZEN_MOSAIC_BLOCK_SIZE_PX as usize) {
+			for block_x in (0..region.width()).step_by(FROZEN_MOSAIC_BLOCK_SIZE_PX as usize) {
+				let block_width = FROZEN_MOSAIC_BLOCK_SIZE_PX.min(region.width() - block_x);
+				let block_height = FROZEN_MOSAIC_BLOCK_SIZE_PX.min(region.height() - block_y);
+				let mut sum = [0_u64; 4];
+				let mut samples = 0_u64;
+
+				for y in block_y..block_y.saturating_add(block_height) {
+					for x in block_x..block_x.saturating_add(block_width) {
+						let pixel = region.get_pixel(x, y);
+
+						sum[0] = sum[0].saturating_add(u64::from(pixel[0]));
+						sum[1] = sum[1].saturating_add(u64::from(pixel[1]));
+						sum[2] = sum[2].saturating_add(u64::from(pixel[2]));
+						sum[3] = sum[3].saturating_add(u64::from(pixel[3]));
+						samples = samples.saturating_add(1);
+					}
+				}
+
+				if samples == 0 {
+					continue;
+				}
+
+				let fill = image::Rgba([
+					(sum[0] / samples) as u8,
+					(sum[1] / samples) as u8,
+					(sum[2] / samples) as u8,
+					(sum[3] / samples) as u8,
+				]);
+
+				for y in block_y..block_y.saturating_add(block_height) {
+					for x in block_x..block_x.saturating_add(block_width) {
+						out.put_pixel(x, y, fill);
+					}
+				}
+			}
+		}
+
+		out
+	}
+
+	fn apply_frozen_image_patch(image: &mut RgbaImage, patch: &FrozenImagePatch, use_after: bool) {
+		let source = if use_after { &patch.after } else { &patch.before };
+
+		imageops::replace(image, source, i64::from(patch.rect.x), i64::from(patch.rect.y));
+	}
+
+	fn map_rect_into_window_image(
+		monitor: MonitorRect,
+		capture_rect_points: RectPoints,
+		window_image: &RgbaImage,
+		selection_rect_points: RectPoints,
+	) -> Option<RectPoints> {
+		let capture_rect_px = monitor.local_rect_to_pixels(capture_rect_points);
+		let selection_rect_px = monitor.local_rect_to_pixels(selection_rect_points);
+		let selection_rect_px = Self::intersect_rect_points(selection_rect_px, capture_rect_px)?;
+
+		if capture_rect_px.is_empty() || window_image.width() == 0 || window_image.height() == 0 {
+			return None;
+		}
+
+		let rel_left = selection_rect_px.x.saturating_sub(capture_rect_px.x);
+		let rel_top = selection_rect_px.y.saturating_sub(capture_rect_px.y);
+		let rel_right = rel_left.saturating_add(selection_rect_px.width);
+		let rel_bottom = rel_top.saturating_add(selection_rect_px.height);
+		let capture_width = u64::from(capture_rect_px.width.max(1));
+		let capture_height = u64::from(capture_rect_px.height.max(1));
+		let target_width = u64::from(window_image.width());
+		let target_height = u64::from(window_image.height());
+		let left = (u64::from(rel_left) * target_width) / capture_width;
+		let top = (u64::from(rel_top) * target_height) / capture_height;
+		let right = (u64::from(rel_right) * target_width).div_ceil(capture_width);
+		let bottom = (u64::from(rel_bottom) * target_height).div_ceil(capture_height);
+		let width = right.saturating_sub(left) as u32;
+		let height = bottom.saturating_sub(top) as u32;
+
+		(width > 0 && height > 0).then(|| {
+			RectPoints::new(
+				left.min(target_width) as u32,
+				top.min(target_height) as u32,
+				width,
+				height,
+			)
+		})
+	}
+
+	fn refresh_frozen_cursor_samples(&mut self, monitor: MonitorRect) {
+		if let Some(cursor) = self.state.cursor {
+			self.state.rgb =
+				image_helpers::frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
+			self.state.loupe = image_helpers::frozen_loupe_patch(
+				&self.state.frozen_image,
+				Some(monitor),
+				cursor,
+				self.loupe_patch_width_px,
+				self.loupe_patch_height_px,
+			)
+			.map(|patch| crate::state::LoupeSample { center: cursor, patch });
+		}
+	}
+
+	fn note_frozen_image_mutated(&mut self, monitor: MonitorRect) {
+		self.state.frozen_generation = self.state.frozen_generation.wrapping_add(1);
+
+		self.refresh_frozen_cursor_samples(monitor);
+		self.sync_frozen_toolbar_state();
+		self.request_redraw_for_monitor(monitor);
+		self.request_redraw_hud_window();
+		self.request_redraw_toolbar_window();
+
+		if self.state.alt_held || self.loupe_window_visible {
+			self.request_redraw_loupe_window();
+		}
+	}
+
+	fn push_frozen_mosaic_edit(&mut self, edit: FrozenMosaicEdit) {
+		self.frozen_mosaic_undo_stack.push(edit);
+
+		if self.frozen_mosaic_undo_stack.len() > FROZEN_EDIT_HISTORY_LIMIT {
+			self.frozen_mosaic_undo_stack.remove(0);
+		}
+
+		self.frozen_mosaic_redo_stack.clear();
+	}
+
+	fn apply_frozen_mosaic_edit(&mut self, rect_points: RectPoints) -> bool {
+		let Some(monitor) = self.state.monitor else {
+			return false;
+		};
+
+		if !self.frozen_final_capture_ready() {
+			return false;
+		}
+
+		let preview_rect_px = monitor.local_rect_to_pixels(rect_points);
+		let Some(preview_patch) = self
+			.state
+			.frozen_image
+			.as_ref()
+			.and_then(|image| Self::build_frozen_image_patch(image, preview_rect_px))
+		else {
+			return false;
+		};
+		let window_patch = match (self.frozen_window_image.as_ref(), self.state.frozen_capture_rect)
+		{
+			(Some(window_image), Some(capture_rect_points)) => Self::map_rect_into_window_image(
+				monitor,
+				capture_rect_points,
+				window_image,
+				rect_points,
+			)
+			.and_then(|rect| Self::build_frozen_image_patch(window_image, rect)),
+			_ => None,
+		};
+
+		if let Some(image) = self.state.frozen_image.as_mut() {
+			Self::apply_frozen_image_patch(image, &preview_patch, true);
+		}
+		if let (Some(window_image), Some(window_patch)) =
+			(self.frozen_window_image.as_mut(), window_patch.as_ref())
+		{
+			Self::apply_frozen_image_patch(window_image, window_patch, true);
+		}
+
+		self.push_frozen_mosaic_edit(FrozenMosaicEdit { preview_patch, window_patch });
+		self.note_frozen_image_mutated(monitor);
+
+		true
+	}
+
+	fn replay_frozen_mosaic_edit(&mut self, edit: &FrozenMosaicEdit, use_after: bool) -> bool {
+		let Some(monitor) = self.state.monitor else {
+			return false;
+		};
+
+		if let Some(image) = self.state.frozen_image.as_mut() {
+			Self::apply_frozen_image_patch(image, &edit.preview_patch, use_after);
+		}
+		if let (Some(window_image), Some(window_patch)) =
+			(self.frozen_window_image.as_mut(), edit.window_patch.as_ref())
+		{
+			Self::apply_frozen_image_patch(window_image, window_patch, use_after);
+		}
+
+		self.note_frozen_image_mutated(monitor);
+
+		true
+	}
+
+	fn undo_frozen_mosaic_edit(&mut self) -> bool {
+		if !self.frozen_final_capture_ready() {
+			return false;
+		}
+
+		let Some(edit) = self.frozen_mosaic_undo_stack.pop() else {
+			return false;
+		};
+		let reapplied = self.replay_frozen_mosaic_edit(&edit, false);
+
+		self.frozen_mosaic_redo_stack.push(edit);
+		self.sync_frozen_toolbar_state();
+
+		reapplied
+	}
+
+	fn redo_frozen_mosaic_edit(&mut self) -> bool {
+		if !self.frozen_final_capture_ready() {
+			return false;
+		}
+
+		let Some(edit) = self.frozen_mosaic_redo_stack.pop() else {
+			return false;
+		};
+		let reapplied = self.replay_frozen_mosaic_edit(&edit, true);
+
+		self.frozen_mosaic_undo_stack.push(edit);
+		self.sync_frozen_toolbar_state();
+
+		reapplied
+	}
+
+	fn commit_frozen_mosaic_drag(&mut self) -> bool {
+		let preview_rect = self.state.frozen_mosaic_preview_rect;
+
+		self.stop_frozen_mosaic_drag();
+
+		let Some(preview_rect) = preview_rect else {
+			return false;
+		};
+
+		if preview_rect.width <= 1 && preview_rect.height <= 1 {
+			return false;
+		}
+
+		self.apply_frozen_mosaic_edit(preview_rect)
+	}
+
+	fn flatten_window_image_with_matte(image: &RgbaImage, matte: image::Rgba<u8>) -> RgbaImage {
+		let mut out = image.clone();
+
+		for pixel in out.pixels_mut() {
+			let alpha = u16::from(pixel[3]);
+			let inv_alpha = 255_u16.saturating_sub(alpha);
+
+			for channel in 0..3 {
+				let src = u16::from(pixel[channel]);
+				let bg = u16::from(matte[channel]);
+				let blended =
+					(src.saturating_mul(alpha) + bg.saturating_mul(inv_alpha) + 127) / 255;
+
+				pixel[channel] = blended as u8;
+			}
+
+			pixel[3] = 255;
+		}
 
 		out
 	}
@@ -2475,17 +3037,19 @@ impl OverlaySession {
 				match self.config.window_capture_alpha_mode {
 					WindowCaptureAlphaMode::Background => {},
 					WindowCaptureAlphaMode::MatteLight | WindowCaptureAlphaMode::MatteDark => {
-						self.frozen_window_image = Some(window_capture_image);
+						let window_capture_image = Self::compose_window_preview_layer(
+							&window_capture_image,
+							self.config.window_capture_alpha_mode,
+						);
 
-						if let Some(window_capture_image) = self.frozen_window_image.as_ref() {
-							frozen_preview_image = Self::composite_window_capture_preview(
-								frozen_preview_image,
-								window_capture_image,
-								monitor,
-								target.rect,
-								self.config.window_capture_alpha_mode,
-							);
-						}
+						frozen_preview_image = Self::composite_window_capture_preview(
+							frozen_preview_image,
+							&window_capture_image,
+							monitor,
+							target.rect,
+							WindowCaptureAlphaMode::Background,
+						);
+						self.frozen_window_image = Some(window_capture_image);
 					},
 				}
 			}
@@ -2600,6 +3164,7 @@ impl OverlaySession {
 		button: MouseButton,
 	) {
 		if state == ElementState::Released && button == MouseButton::Left {
+			self.commit_frozen_mosaic_drag();
 			self.stop_frozen_selection_drag();
 			self.sync_overlay_cursor_icons();
 		}
@@ -2751,6 +3316,7 @@ impl OverlaySession {
 
 		if !toolbar_left_button_down {
 			self.stop_frozen_selection_drag();
+			self.stop_frozen_mosaic_drag();
 
 			self.toolbar_state.dragging = false;
 			self.toolbar_state.drag_offset = Vec2::ZERO;
@@ -3177,6 +3743,9 @@ impl OverlaySession {
 		window_id: WindowId,
 		position: PhysicalPosition<f64>,
 	) -> OverlayControl {
+		let should_trace_frozen_selection_drag_timing =
+			self.should_trace_frozen_selection_drag_timing();
+		let cursor_move_started_at = should_trace_frozen_selection_drag_timing.then(Instant::now);
 		let old_monitor = self.active_cursor_monitor();
 		let now = Instant::now();
 		let Some(overlay_window) = self.windows.get(&window_id) else {
@@ -3215,28 +3784,18 @@ impl OverlaySession {
 		};
 
 		self.trace_cursor_moved_with_mapping(trace);
-		self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global);
 
-		let previous_drag_rect = self.state.drag_rect;
-
-		self.update_live_drag_rect(monitor, global);
-		self.update_frozen_selection_drag_rect(global);
-		self.sync_overlay_cursor_icons();
-		self.request_cursor_move_samples(monitor, global);
-
-		if let Some(old_monitor) = old_monitor
-			&& old_monitor != monitor
-		{
-			self.request_redraw_for_monitor(old_monitor);
-		}
-
-		if Self::live_overlay_redraw_needed_for_cursor_update(
+		let timing = self.run_cursor_move_updates(
+			should_trace_frozen_selection_drag_timing,
+			cursor_move_started_at,
 			old_monitor,
+			old_cursor,
 			monitor,
-			previous_drag_rect,
-			self.state.drag_rect,
-		) {
-			self.request_redraw_for_monitor(monitor);
+			global,
+		);
+
+		if should_trace_frozen_selection_drag_timing {
+			self.trace_frozen_selection_drag_cursor_move(monitor, old_monitor, old_cursor, timing);
 		}
 
 		OverlayControl::Continue
@@ -3247,6 +3806,10 @@ impl OverlaySession {
 		window_id: WindowId,
 		old_monitor: Option<MonitorRect>,
 	) -> OverlayControl {
+		let should_trace_frozen_selection_drag_timing =
+			self.should_trace_frozen_selection_drag_timing();
+		let cursor_move_started_at = should_trace_frozen_selection_drag_timing.then(Instant::now);
+
 		if self.should_ignore_live_auxiliary_cursor_event(window_id) {
 			return OverlayControl::Continue;
 		}
@@ -3273,14 +3836,63 @@ impl OverlaySession {
 			);
 		}
 
-		self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global);
+		let timing = self.run_cursor_move_updates(
+			should_trace_frozen_selection_drag_timing,
+			cursor_move_started_at,
+			old_monitor,
+			old_cursor,
+			monitor,
+			global,
+		);
 
+		if should_trace_frozen_selection_drag_timing {
+			self.trace_frozen_selection_drag_cursor_move(monitor, old_monitor, old_cursor, timing);
+		}
+
+		OverlayControl::Continue
+	}
+
+	fn run_cursor_move_updates(
+		&mut self,
+		should_trace_frozen_selection_drag_timing: bool,
+		cursor_move_started_at: Option<Instant>,
+		old_monitor: Option<MonitorRect>,
+		old_cursor: Option<GlobalPoint>,
+		monitor: MonitorRect,
+		global: GlobalPoint,
+	) -> FrozenSelectionDragCursorMoveTiming {
+		let cursor_update_elapsed =
+			Self::measure_duration_if(should_trace_frozen_selection_drag_timing, || {
+				self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global)
+			});
 		let previous_drag_rect = self.state.drag_rect;
+		let live_drag_update_elapsed =
+			Self::measure_duration_if(should_trace_frozen_selection_drag_timing, || {
+				self.update_live_drag_rect(monitor, global);
+			});
+		let (frozen_rect_changed, frozen_drag_update_elapsed) =
+			if should_trace_frozen_selection_drag_timing {
+				let frozen_drag_update_started_at = Instant::now();
+				let frozen_rect_changed = self.update_frozen_selection_drag_rect(global);
 
-		self.update_live_drag_rect(monitor, global);
-		self.update_frozen_selection_drag_rect(global);
-		self.sync_overlay_cursor_icons();
-		self.request_cursor_move_samples(monitor, global);
+				self.update_frozen_mosaic_drag_rect(global);
+
+				(frozen_rect_changed, Some(frozen_drag_update_started_at.elapsed()))
+			} else {
+				let frozen_rect_changed = self.update_frozen_selection_drag_rect(global);
+
+				self.update_frozen_mosaic_drag_rect(global);
+
+				(frozen_rect_changed, None)
+			};
+		let sync_cursor_icons_elapsed =
+			Self::measure_duration_if(should_trace_frozen_selection_drag_timing, || {
+				self.sync_overlay_cursor_icons();
+			});
+		let request_samples_elapsed =
+			Self::measure_duration_if(should_trace_frozen_selection_drag_timing, || {
+				self.request_cursor_move_samples(monitor, global);
+			});
 
 		if let Some(old_monitor) = old_monitor
 			&& old_monitor != monitor
@@ -3297,7 +3909,30 @@ impl OverlaySession {
 			self.request_redraw_for_monitor(monitor);
 		}
 
-		OverlayControl::Continue
+		FrozenSelectionDragCursorMoveTiming {
+			cursor_update_elapsed: cursor_update_elapsed.unwrap_or_default(),
+			live_drag_update_elapsed: live_drag_update_elapsed.unwrap_or_default(),
+			frozen_drag_update_elapsed: frozen_drag_update_elapsed.unwrap_or_default(),
+			frozen_rect_changed,
+			sync_cursor_icons_elapsed: sync_cursor_icons_elapsed.unwrap_or_default(),
+			request_samples_elapsed: request_samples_elapsed.unwrap_or_default(),
+			total_elapsed: cursor_move_started_at
+				.map_or(Duration::ZERO, |started_at| started_at.elapsed()),
+		}
+	}
+
+	fn measure_duration_if(enabled: bool, operation: impl FnOnce()) -> Option<Duration> {
+		if enabled {
+			let started_at = Instant::now();
+
+			operation();
+
+			Some(started_at.elapsed())
+		} else {
+			operation();
+
+			None
+		}
 	}
 
 	fn should_ignore_live_auxiliary_cursor_event(&self, window_id: WindowId) -> bool {
@@ -3365,6 +4000,42 @@ impl OverlaySession {
 			"CursorMoved coordinate source: {}.",
 			trace.source.as_str()
 		);
+	}
+
+	fn trace_frozen_selection_drag_cursor_move(
+		&self,
+		monitor: MonitorRect,
+		old_monitor: Option<MonitorRect>,
+		old_cursor: Option<GlobalPoint>,
+		timing: FrozenSelectionDragCursorMoveTiming,
+	) {
+		if !self.should_trace_frozen_selection_drag_timing() {
+			return;
+		}
+
+		tracing::trace!(
+			op = "overlay.frozen_selection_drag.cursor_move_timing",
+			monitor_id = monitor.id,
+			old_monitor_id = old_monitor.map(|target| target.id),
+			old_cursor = ?old_cursor,
+			cursor = ?self.state.cursor,
+			interaction = ?self.frozen_selection_drag.interaction,
+			frozen_rect_changed = timing.frozen_rect_changed,
+			cursor_update_us = timing.cursor_update_elapsed.as_micros(),
+			live_drag_update_us = timing.live_drag_update_elapsed.as_micros(),
+			frozen_drag_update_us = timing.frozen_drag_update_elapsed.as_micros(),
+			sync_cursor_icons_us = timing.sync_cursor_icons_elapsed.as_micros(),
+			request_samples_us = timing.request_samples_elapsed.as_micros(),
+			total_us = timing.total_elapsed.as_micros(),
+			overlay_window_count = self.windows.len(),
+			"Frozen selection drag cursor move timing."
+		);
+	}
+
+	fn should_trace_frozen_selection_drag_timing(&self) -> bool {
+		tracing::enabled!(tracing::Level::TRACE)
+			&& matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.frozen_selection_drag.active
 	}
 
 	fn update_cursor_for_live_move(
@@ -3547,15 +4218,19 @@ impl OverlaySession {
 	) -> OverlayControl {
 		self.reset_toolbar_pointer_state();
 
-		match state {
-			ElementState::Pressed => {
-				let cursor = self.current_frozen_interaction_cursor();
-				let _ = self.begin_frozen_selection_drag(cursor);
+			match state {
+				ElementState::Pressed => {
+					let cursor = self.current_frozen_interaction_cursor();
+
+					if !self.begin_frozen_selection_drag(cursor) {
+						let _ = self.begin_frozen_mosaic_drag(cursor);
+					}
 
 				self.sync_overlay_cursor_icons();
 			},
 			ElementState::Released => {
 				self.stop_frozen_selection_drag();
+				self.stop_frozen_mosaic_drag();
 				self.sync_overlay_cursor_icons();
 			},
 		}
@@ -4309,21 +4984,19 @@ impl OverlaySession {
 				WindowCaptureAlphaMode::Background => {},
 				WindowCaptureAlphaMode::MatteLight => {
 					if let Some(window_image) = self.frozen_window_image.take() {
-						return Some(DeferredTextRecognitionRequest::window_image_with_matte(
+						return Some(DeferredTextRecognitionRequest::prepared(
 							request_id,
 							requested_at,
 							window_image,
-							DeferredTextRecognitionWindowMatte::Light,
 						));
 					}
 				},
 				WindowCaptureAlphaMode::MatteDark => {
 					if let Some(window_image) = self.frozen_window_image.take() {
-						return Some(DeferredTextRecognitionRequest::window_image_with_matte(
+						return Some(DeferredTextRecognitionRequest::prepared(
 							request_id,
 							requested_at,
 							window_image,
-							DeferredTextRecognitionWindowMatte::Dark,
 						));
 					}
 				},
@@ -4577,6 +5250,8 @@ impl OverlaySession {
 
 	fn sync_frozen_toolbar_state(&mut self) {
 		self.toolbar_state.auto_center_available = self.frozen_auto_center_available();
+		self.toolbar_state.undo_available = !self.frozen_mosaic_undo_stack.is_empty();
+		self.toolbar_state.redo_available = !self.frozen_mosaic_redo_stack.is_empty();
 		self.toolbar_state.scroll_capture_active = self.scroll_capture.active;
 		// Keep drag-region toolbar geometry stable across the authoritative frozen-capture handoff:
 		// show the Scroll slot immediately, but keep it disabled until final_capture_ready flips.
@@ -5389,6 +6064,16 @@ impl OverlaySession {
 
 				OverlayControl::Continue
 			},
+			FrozenToolbarTool::Undo => {
+				self.undo_frozen_mosaic_edit();
+
+				OverlayControl::Continue
+			},
+			FrozenToolbarTool::Redo => {
+				self.redo_frozen_mosaic_edit();
+
+				OverlayControl::Continue
+			},
 			FrozenToolbarTool::Copy => {
 				self.begin_png_action(PngAction::Copy);
 
@@ -5527,8 +6212,10 @@ impl OverlaySession {
 		self.scroll_preview_window = None;
 		self.toolbar_inner_size_points = None;
 		self.toolbar_outer_pos = None;
+		self.pending_toolbar_outer_pos = None;
 		self.hud_window_visible = false;
 		self.toolbar_window_visible = false;
+		self.skip_toolbar_focus_on_next_show = false;
 		self.toolbar_window_warmup_redraws_remaining = 0;
 		self.loupe_window_visible = false;
 		self.loupe_window_warmup_redraws_remaining = 0;
@@ -5555,6 +6242,9 @@ impl OverlaySession {
 		self.toolbar_pointer_local = None;
 
 		self.stop_frozen_selection_drag();
+		self.stop_frozen_mosaic_drag();
+		self.frozen_mosaic_undo_stack.clear();
+		self.frozen_mosaic_redo_stack.clear();
 		self.clear_pending_output_actions();
 	}
 
@@ -5603,6 +6293,19 @@ impl OverlayCursorRect {
 	const fn new(rect: Rect, icon: CursorIcon) -> Self {
 		Self { rect, icon }
 	}
+}
+
+#[derive(Clone, Debug)]
+struct FrozenImagePatch {
+	rect: RectPoints,
+	before: RgbaImage,
+	after: RgbaImage,
+}
+
+#[derive(Clone, Debug)]
+struct FrozenMosaicEdit {
+	preview_patch: FrozenImagePatch,
+	window_patch: Option<FrozenImagePatch>,
 }
 
 #[derive(Debug)]
@@ -5691,6 +6394,20 @@ fn overlay_cursor_rect_icon_at_point(
 fn sort_unique_axis_values(values: &mut Vec<f32>) {
 	values.sort_by(f32::total_cmp);
 	values.dedup_by(|a, b| (*a - *b).abs() <= f32::EPSILON);
+}
+
+#[cfg(target_os = "macos")]
+fn trim_rect_min_edge(min: f32, max: f32) -> f32 {
+	let trimmed = min.next_up();
+
+	if trimmed < max { trimmed } else { max }
+}
+
+#[cfg(target_os = "macos")]
+fn trim_rect_max_edge(max: f32, min: f32) -> f32 {
+	let trimmed = max.next_down();
+
+	if trimmed > min { trimmed } else { min }
 }
 
 fn should_request_overlay_redraw_after_surface_skip(

@@ -8,10 +8,10 @@ use winit::window::CursorIcon;
 use crate::OverlayControl;
 #[allow(unused_imports)]
 use crate::overlay::tests::{
-	self, ElementState, FrozenCaptureSource, FrozenSelectionDragState, FrozenToolbarState,
-	FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, MonitorRect,
-	MonitorRectPoints, MouseButton, OverlayMode, OverlaySession, OverlayState, PngAction, Pos2,
-	RawInput, Rect, RectPoints, Rgba, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+	self, Duration, ElementState, FrozenCaptureSource, FrozenSelectionDragState,
+	FrozenToolbarState, FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme,
+	MonitorRect, MonitorRectPoints, MouseButton, OverlayMode, OverlaySession, OverlayState,
+	PngAction, Pos2, RawInput, Rect, RectPoints, Rgba, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
 	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
 	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
 	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, ScrollSession, SelectionDashedBorderCache,
@@ -21,6 +21,36 @@ use crate::overlay::tests::{
 };
 use crate::overlay::{FrozenSelectionCorner, FrozenSelectionInteractionKind};
 use crate::worker::{WorkerErrorSource, WorkerResponse};
+
+fn test_mosaic_source_image() -> RgbaImage {
+	RgbaImage::from_fn(8, 8, |x, y| {
+		Rgba([(x * 17) as u8, (y * 23) as u8, ((x + y) * 11) as u8, 255])
+	})
+}
+
+fn average_patch_color(image: &RgbaImage, x: u32, y: u32, width: u32, height: u32) -> Rgba<u8> {
+	let mut sum = [0_u64; 4];
+	let mut samples = 0_u64;
+
+	for py in y..y.saturating_add(height) {
+		for px in x..x.saturating_add(width) {
+			let pixel = image.get_pixel(px, py);
+
+			sum[0] += u64::from(pixel[0]);
+			sum[1] += u64::from(pixel[1]);
+			sum[2] += u64::from(pixel[2]);
+			sum[3] += u64::from(pixel[3]);
+			samples += 1;
+		}
+	}
+
+	Rgba([
+		(sum[0] / samples) as u8,
+		(sum[1] / samples) as u8,
+		(sum[2] / samples) as u8,
+		(sum[3] / samples) as u8,
+	])
+}
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -197,6 +227,85 @@ fn frozen_selection_drag_starts_corner_resize_from_handle_hit_zone() {
 }
 
 #[test]
+fn frozen_mosaic_drag_waits_for_final_capture_ready() {
+	let monitor = tests::test_monitor_with_scale(8, 8, 1_000);
+	let original = test_mosaic_source_image();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, original.clone());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+
+	assert!(!session.frozen_final_capture_ready());
+	assert!(!session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
+	assert!(!session.commit_frozen_mosaic_drag());
+	assert!(!session.undo_frozen_mosaic_edit());
+	assert!(!session.redo_frozen_mosaic_edit());
+	assert_eq!(session.state.frozen_mosaic_preview_rect, None);
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
+
+	session.authoritative_frozen_capture_ready = true;
+
+	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
+}
+
+#[test]
+fn frozen_mosaic_drag_updates_preview_rect_inside_capture_bounds() {
+	let monitor = tests::test_monitor_with_scale(8, 8, 1_000);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_mosaic_source_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(2, 2, 4, 4));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+	session.authoritative_frozen_capture_ready = true;
+
+	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(3, 3)));
+	assert!(session.update_frozen_mosaic_drag_rect(GlobalPoint::new(30, 30)));
+	assert_eq!(session.state.frozen_mosaic_preview_rect, Some(RectPoints::new(3, 3, 3, 3)));
+}
+
+#[test]
+fn frozen_mosaic_commit_round_trips_through_undo_and_redo() {
+	let monitor = tests::test_monitor_with_scale(8, 8, 1_000);
+	let original = test_mosaic_source_image();
+	let expected_fill = average_patch_color(&original, 1, 1, 4, 4);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, original.clone());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+	session.authoritative_frozen_capture_ready = true;
+
+	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
+	assert!(session.update_frozen_mosaic_drag_rect(GlobalPoint::new(4, 4)));
+	assert!(session.commit_frozen_mosaic_drag());
+
+	let edited =
+		session.state.frozen_image.clone().expect("mosaic commit should retain the frozen image");
+
+	assert_eq!(edited.get_pixel(2, 2), &expected_fill);
+	assert_eq!(edited.get_pixel(4, 4), &expected_fill);
+	assert_ne!(edited, original);
+	assert_eq!(session.state.frozen_mosaic_preview_rect, None);
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
+	assert!(session.undo_frozen_mosaic_edit());
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
+	assert!(!session.toolbar_state.undo_available);
+	assert!(session.toolbar_state.redo_available);
+	assert!(session.redo_frozen_mosaic_edit());
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&edited));
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
+}
+
+#[test]
 fn frozen_selection_drag_updates_capture_rect_and_toolbar_position() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
@@ -222,6 +331,114 @@ fn frozen_selection_drag_updates_capture_rect_and_toolbar_position() {
 }
 
 #[test]
+fn frozen_selection_drag_hides_auxiliary_windows_while_active() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.toolbar_state.visible = true;
+	session.hud_window_visible = true;
+	session.loupe_window_visible = true;
+	session.toolbar_window_visible = true;
+
+	assert!(!session.frozen_selection_drag_hides_auxiliary_windows());
+	assert!(!session.should_hide_toolbar_window(monitor));
+	assert!(session.should_hide_scroll_preview_window());
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+	assert!(session.frozen_selection_drag_hides_auxiliary_windows());
+	assert!(!session.hud_window_visible);
+	assert!(!session.loupe_window_visible);
+	assert!(!session.toolbar_window_visible);
+	assert!(session.skip_toolbar_focus_on_next_show);
+	assert!(session.should_hide_toolbar_window(monitor));
+	assert!(!session.should_focus_frozen_toolbar_window_on_show());
+
+	session.stop_frozen_selection_drag();
+
+	assert!(!session.frozen_selection_drag_hides_auxiliary_windows());
+	assert!(!session.should_hide_toolbar_window(monitor));
+	assert!(!session.should_focus_frozen_toolbar_window_on_show());
+}
+
+#[test]
+fn frozen_selection_drag_releases_scroll_preview_hide_after_drag_stops() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+
+	session.scroll_capture.active = true;
+
+	assert!(session.should_hide_scroll_preview_window());
+
+	session.stop_frozen_selection_drag();
+
+	assert!(!session.should_hide_scroll_preview_window());
+}
+
+#[test]
+fn frozen_selection_drag_defers_pending_toolbar_window_move() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+
+	let last_move_at = session.last_toolbar_window_move_at;
+
+	session.pending_toolbar_outer_pos = Some(GlobalPoint::new(220, 260));
+
+	session.maybe_apply_pending_toolbar_window_move(last_move_at + Duration::from_millis(32));
+
+	assert_eq!(session.pending_toolbar_outer_pos, Some(GlobalPoint::new(220, 260)));
+	assert_eq!(session.last_toolbar_window_move_at, last_move_at);
+}
+
+#[test]
+fn frozen_selection_drag_skips_toolbar_focus_even_before_first_show() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.toolbar_state.visible = true;
+
+	assert!(!session.toolbar_window_visible);
+	assert!(!session.skip_toolbar_focus_on_next_show);
+	assert!(session.should_focus_frozen_toolbar_window_on_show());
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+	assert!(session.skip_toolbar_focus_on_next_show);
+	assert!(!session.should_focus_frozen_toolbar_window_on_show());
+
+	session.stop_frozen_selection_drag();
+
+	assert!(session.skip_toolbar_focus_on_next_show);
+	assert!(!session.should_focus_frozen_toolbar_window_on_show());
+}
+
+#[test]
 fn frozen_selection_resize_updates_capture_rect_and_toolbar_position() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
@@ -244,6 +461,19 @@ fn frozen_selection_resize_updates_capture_rect_and_toolbar_position() {
 
 	assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
 	assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
+}
+
+#[test]
+fn toolbar_position_update_queues_pending_move_without_window() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.toolbar_inner_size_points = Some((460, 54));
+
+	assert!(session.update_toolbar_outer_position(monitor, Pos2::new(120.0, 160.0)));
+	assert_eq!(session.toolbar_state.floating_position, Some(Pos2::new(120.0, 160.0)));
+	assert_eq!(session.toolbar_outer_pos, Some(GlobalPoint::new(120, 160)));
+	assert_eq!(session.pending_toolbar_outer_pos, Some(GlobalPoint::new(120, 160)));
 }
 
 #[test]
@@ -394,6 +624,31 @@ fn auto_center_frozen_capture_rect_recenters_detected_content() {
 }
 
 #[test]
+fn auto_center_frozen_capture_rect_works_outside_pointer_mode() {
+	let monitor = tests::test_monitor_with_scale(80, 60, 2_000);
+	let capture_rect = RectPoints::new(20, 16, 40, 24);
+	let mut image = RgbaImage::from_pixel(160, 120, Rgba([14, 16, 20, 255]));
+	let mut session = OverlaySession::new();
+
+	for y in 40..52 {
+		for x in 52..68 {
+			image.put_pixel(x, y, Rgba([228, 232, 240, 255]));
+		}
+	}
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, image);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+
+	assert!(session.frozen_auto_center_available());
+	assert!(session.auto_center_frozen_capture_rect());
+	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(10, 11, 40, 24)));
+}
+
+#[test]
 fn frozen_selection_resize_hit_test_prefers_corner_handles() {
 	let capture_rect = RectPoints::new(100, 120, 8, 8);
 
@@ -438,7 +693,7 @@ fn frozen_selection_cursor_icon_uses_corner_resize_hover() {
 
 	session.state.cursor = Some(GlobalPoint::new(150, 180));
 
-	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::Default);
+	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::Grab);
 }
 
 #[test]
@@ -522,6 +777,7 @@ fn frozen_selection_cursor_rects_match_resize_hit_test_for_tiny_overlapping_hand
 
 	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
 	let top_overlap = Pos2::new(107.0, 117.0);
+	let top_overlap_midline_tie = Pos2::new(104.0, 117.0);
 	let center_inside = Pos2::new(104.0, 124.0);
 
 	assert_eq!(
@@ -532,8 +788,40 @@ fn frozen_selection_cursor_rects_match_resize_hit_test_for_tiny_overlapping_hand
 		overlay::overlay_cursor_rect_icon_at_point(&rects, top_overlap),
 		Some(CursorIcon::NeswResize)
 	);
+	assert_eq!(
+		WindowRenderer::frozen_selection_resize_hit_test(capture_rect, top_overlap_midline_tie),
+		Some(FrozenSelectionCorner::TopLeft)
+	);
+	assert_eq!(
+		overlay::overlay_cursor_rect_icon_at_point(&rects, top_overlap_midline_tie),
+		Some(CursorIcon::NwseResize)
+	);
 	assert_eq!(WindowRenderer::frozen_selection_resize_hit_test(capture_rect, center_inside), None);
 	assert_eq!(overlay::overlay_cursor_rect_icon_at_point(&rects, center_inside), None);
+}
+
+#[test]
+fn frozen_selection_cursor_icon_tracks_active_move_drag() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.frozen_selection_drag = FrozenSelectionDragState {
+		active: true,
+		interaction: FrozenSelectionInteractionKind::Move,
+		anchor_rect: capture_rect,
+		pointer_offset_x: 50,
+		pointer_offset_y: 60,
+		press_cursor_x: 150,
+		press_cursor_y: 180,
+	};
+
+	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::Grabbing);
 }
 
 #[test]

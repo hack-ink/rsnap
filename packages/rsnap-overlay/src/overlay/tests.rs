@@ -31,6 +31,8 @@ use egui::RawInput;
 use egui_phosphor::Variant;
 use image::Rgba;
 #[cfg(target_os = "macos")]
+use image::imageops;
+#[cfg(target_os = "macos")]
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 #[cfg(target_os = "macos")]
@@ -435,6 +437,73 @@ fn begin_ocr_action_drag_region_still_uses_frozen_image_under_matte_mode() {
 
 	assert_eq!(request.export_image().as_ref(), Some(&expected_export));
 	assert!(session.frozen_window_image.is_none());
+	assert!(session.state.error_message.is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn window_matte_mosaic_export_and_ocr_match_preview_pixels() {
+	let monitor = test_monitor_with_scale(8, 8, 1_000);
+	let capture_rect = RectPoints::new(2, 1, 4, 4);
+	let window_id = 7;
+	let background = image::RgbaImage::from_pixel(8, 8, Rgba([18, 24, 32, 255]));
+	let window_image = image::RgbaImage::from_fn(4, 4, |x, y| {
+		let alpha = match (x + y) % 4 {
+			0 => 64,
+			1 => 112,
+			2 => 176,
+			_ => 224,
+		};
+
+		Rgba([
+			40_u8.saturating_add((x * 37) as u8),
+			28_u8.saturating_add((y * 41) as u8),
+			52_u8.saturating_add(((x + y) * 23) as u8),
+			alpha,
+		])
+	});
+	let mut session = OverlaySession::new();
+
+	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteLight;
+
+	session.state.begin_freeze(monitor);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::Window;
+	session.inflight_window_freeze_capture =
+		Some(crate::overlay::WindowFreezeCaptureTarget { monitor, window_id, rect: capture_rect });
+
+	session.handle_captured_freeze_response(
+		monitor,
+		background,
+		Some(window_image),
+		Some(window_id),
+	);
+
+	assert!(session.authoritative_frozen_capture_ready);
+	assert!(session.apply_frozen_mosaic_edit(capture_rect));
+
+	let expected_export = imageops::crop_imm(
+		session
+			.state
+			.frozen_image
+			.as_ref()
+			.expect("window matte preview should populate the frozen image"),
+		capture_rect.x,
+		capture_rect.y,
+		capture_rect.width,
+		capture_rect.height,
+	)
+	.to_image();
+
+	assert_eq!(session.current_export_image().as_ref(), Some(&expected_export));
+
+	let control = session.begin_ocr_action();
+	let OverlayControl::Exit(OverlayExit::DeferredTextRecognition(request)) = control else {
+		panic!("expected deferred OCR exit");
+	};
+
+	assert_eq!(request.export_image().as_ref(), Some(&expected_export));
 	assert!(session.state.error_message.is_none());
 }
 

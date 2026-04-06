@@ -142,15 +142,18 @@ impl OverlaySession {
 	}
 
 	pub(super) fn handle_scroll_preview_redraw_requested(&mut self) -> OverlayControl {
+		let should_hide_preview = self.should_hide_scroll_preview_window();
 		let Some(preview_window) = self.scroll_preview_window.as_mut() else {
 			return OverlayControl::Continue;
 		};
 
-		if !self.scroll_capture.active {
+		if should_hide_preview {
 			preview_window.window.set_visible(false);
 
 			return OverlayControl::Continue;
 		}
+
+		preview_window.window.set_visible(true);
 
 		let theme =
 			hud_helpers::effective_hud_theme(self.config.theme_mode, preview_window.window.theme());
@@ -163,6 +166,10 @@ impl OverlaySession {
 			Ok(()) => OverlayControl::Continue,
 			Err(err) => self.exit(OverlayExit::Error(format!("{err:#}"))),
 		}
+	}
+
+	pub(super) fn should_hide_scroll_preview_window(&self) -> bool {
+		self.frozen_selection_drag_hides_auxiliary_windows() || !self.scroll_capture.active
 	}
 
 	#[cfg(target_os = "macos")]
