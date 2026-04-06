@@ -10,6 +10,8 @@ use winit::window::Window;
 
 use self::hud_rendering::LiveLoupeTexture;
 use self::hud_surface::{HudBg, HudBlurUniformRaw};
+#[cfg(target_os = "macos")]
+use crate::overlay::MacOSOverlayCursorRectSupport;
 #[allow(unused_imports)]
 use crate::overlay::{
 	self, AcquiredSurfaceFrame, Adapter, AddressMode, Arc, BindGroupLayout, BindingResource,
@@ -138,6 +140,8 @@ pub(super) struct OverlayWindow {
 	pub(super) window: Arc<Window>,
 	pub(super) renderer: WindowRenderer,
 	pub(super) refresh_rate_millihertz: Option<u32>,
+	#[cfg(target_os = "macos")]
+	pub(super) cursor_rects: MacOSOverlayCursorRectSupport,
 }
 
 pub(super) struct GpuContext {

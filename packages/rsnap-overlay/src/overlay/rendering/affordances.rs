@@ -9,12 +9,13 @@ use crate::overlay::rendering::{
 };
 #[allow(unused_imports)]
 use crate::overlay::{
-	self, Align, Align2, Area, Color32, CornerRadius,
-	FROZEN_SELECTION_RESIZE_HANDLE_ARM_LENGTH_POINTS,
-	FROZEN_SELECTION_RESIZE_HANDLE_BORDER_GAP_POINTS,
+	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX,
+	FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
+	FROZEN_SELECTION_RESIZE_HANDLE_CORNER_KEEPOUT_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_HIT_OFFSET_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_HIT_SIZE_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS,
+	FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FROZEN_SELECTION_SCRIM_ALPHA_DARK,
 	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TOOLBAR_BUTTON_SIZE_POINTS,
 	FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId, FrozenCaptureSource,
@@ -797,7 +798,7 @@ impl WindowRenderer {
 			theme,
 			SelectionScrimStyle {
 				scrim_fill: Self::frozen_selection_scrim_color(theme),
-				stroke_width_override: Some(FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS),
+				stroke_width_override: Some(FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX),
 				exclude_resize_handle_corners,
 			},
 			selection_dashed_border_cache,
@@ -907,7 +908,7 @@ impl WindowRenderer {
 			return false;
 		};
 		let corner_keepout = exclude_resize_handle_corners
-			.then_some(FROZEN_SELECTION_RESIZE_HANDLE_ARM_LENGTH_POINTS + metrics.gap_length);
+			.then_some(FROZEN_SELECTION_RESIZE_HANDLE_CORNER_KEEPOUT_POINTS);
 		let segments = Self::selection_dashed_border_cached_segments(
 			selection_dashed_border_cache,
 			border_rect,
@@ -936,7 +937,7 @@ impl WindowRenderer {
 	) -> (Stroke, Stroke) {
 		let _ = theme;
 		let outline = Stroke::new(
-			metrics.stroke_width + 1.15,
+			metrics.stroke_width + 0.75,
 			Color32::from_rgba_unmultiplied(229, 247, 255, 116),
 		);
 		let stroke = Stroke::new(
@@ -963,7 +964,7 @@ impl WindowRenderer {
 		let _ = theme;
 		let color = Color32::from_rgba_unmultiplied(229, 247, 255, 124);
 
-		Stroke::new(FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS + 0.95, color)
+		Stroke::new(FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS + 0.6, color)
 	}
 
 	fn frozen_selection_resize_handle_stroke(theme: HudTheme) -> Stroke {
@@ -975,39 +976,14 @@ impl WindowRenderer {
 		)
 	}
 
-	fn frozen_selection_resize_handle_points(
-		handle: FrozenSelectionResizeHandleGeometry,
-		border_outset: f32,
-	) -> [Pos2; 3] {
-		let elbow_offset = border_outset + FROZEN_SELECTION_RESIZE_HANDLE_BORDER_GAP_POINTS;
-		let arm = FROZEN_SELECTION_RESIZE_HANDLE_ARM_LENGTH_POINTS;
+	fn frozen_selection_resize_handle_center(handle: FrozenSelectionResizeHandleGeometry) -> Pos2 {
+		handle.hit_rect.center()
+	}
 
-		match handle.corner {
-			FrozenSelectionCorner::TopLeft => {
-				let elbow =
-					Pos2::new(handle.anchor.x - elbow_offset, handle.anchor.y - elbow_offset);
+	fn frozen_selection_resize_handle_center_dot_color(theme: HudTheme) -> Color32 {
+		let _ = theme;
 
-				[Pos2::new(elbow.x + arm, elbow.y), elbow, Pos2::new(elbow.x, elbow.y + arm)]
-			},
-			FrozenSelectionCorner::TopRight => {
-				let elbow =
-					Pos2::new(handle.anchor.x + elbow_offset, handle.anchor.y - elbow_offset);
-
-				[Pos2::new(elbow.x - arm, elbow.y), elbow, Pos2::new(elbow.x, elbow.y + arm)]
-			},
-			FrozenSelectionCorner::BottomLeft => {
-				let elbow =
-					Pos2::new(handle.anchor.x - elbow_offset, handle.anchor.y + elbow_offset);
-
-				[Pos2::new(elbow.x + arm, elbow.y), elbow, Pos2::new(elbow.x, elbow.y - arm)]
-			},
-			FrozenSelectionCorner::BottomRight => {
-				let elbow =
-					Pos2::new(handle.anchor.x + elbow_offset, handle.anchor.y + elbow_offset);
-
-				[Pos2::new(elbow.x - arm, elbow.y), elbow, Pos2::new(elbow.x, elbow.y - arm)]
-			},
-		}
+		Color32::from_rgba_unmultiplied(167, 223, 255, 252)
 	}
 
 	pub(in crate::overlay) fn render_frozen_selection_resize_handles(
@@ -1015,18 +991,28 @@ impl WindowRenderer {
 		capture_rect: RectPoints,
 		theme: HudTheme,
 	) -> bool {
-		let border_outset = Self::selection_dashed_border_outset(
-			FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS,
-			painter.pixels_per_point(),
-		);
 		let outline_stroke = Self::frozen_selection_resize_handle_outline_stroke(theme);
 		let stroke = Self::frozen_selection_resize_handle_stroke(theme);
+		let center_dot_color = Self::frozen_selection_resize_handle_center_dot_color(theme);
 
 		for handle in Self::frozen_selection_resize_handles(capture_rect) {
-			let points = Self::frozen_selection_resize_handle_points(handle, border_outset);
+			let center = Self::frozen_selection_resize_handle_center(handle);
 
-			painter.add(Shape::line(points.to_vec(), outline_stroke));
-			painter.add(Shape::line(points.to_vec(), stroke));
+			painter.circle_stroke(
+				center,
+				FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
+				outline_stroke,
+			);
+			painter.circle_stroke(
+				center,
+				FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
+				stroke,
+			);
+			painter.circle_filled(
+				center,
+				FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
+				center_dot_color,
+			);
 		}
 
 		true

@@ -2,6 +2,8 @@ use image::RgbaImage;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
+#[cfg(target_os = "macos")]
+use crate::overlay::DeviceCursorPointSource;
 #[allow(unused_imports)]
 use crate::overlay::tests::{
 	self, Duration, GlobalPoint, HudRedrawSummary, LoupeSample, MonitorRect, MonitorRectPoints,
@@ -503,6 +505,38 @@ fn monitor_for_cursor_in_rects_finds_matching_monitor_without_windows() {
 			GlobalPoint::new(2_400, 1_200)
 		),
 		None
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn resolve_device_cursor_point_prefers_recent_cursor_when_scaled_coordinates_are_ambiguous() {
+	let monitor = tests::test_monitor_with_scale(1_000, 800, 2_000);
+	let raw = GlobalPoint::new(190, 230);
+
+	assert_eq!(
+		OverlaySession::resolve_device_cursor_point_for_monitors(
+			&[monitor],
+			raw,
+			Some(GlobalPoint::new(95, 115)),
+		),
+		Some((monitor, GlobalPoint::new(95, 115), DeviceCursorPointSource::DevicePixelsFallback))
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn resolve_device_cursor_point_keeps_direct_points_when_they_match_recent_cursor() {
+	let monitor = tests::test_monitor_with_scale(1_000, 800, 2_000);
+	let raw = GlobalPoint::new(190, 230);
+
+	assert_eq!(
+		OverlaySession::resolve_device_cursor_point_for_monitors(
+			&[monitor],
+			raw,
+			Some(GlobalPoint::new(190, 230)),
+		),
+		Some((monitor, GlobalPoint::new(190, 230), DeviceCursorPointSource::DevicePoints))
 	);
 }
 
