@@ -2740,7 +2740,8 @@ impl OverlaySession {
 			for channel in 0..3 {
 				let src = u16::from(pixel[channel]);
 				let bg = u16::from(matte[channel]);
-				let blended = (src.saturating_mul(alpha) + bg.saturating_mul(inv_alpha) + 127) / 255;
+				let blended =
+					(src.saturating_mul(alpha) + bg.saturating_mul(inv_alpha) + 127) / 255;
 
 				pixel[channel] = blended as u8;
 			}

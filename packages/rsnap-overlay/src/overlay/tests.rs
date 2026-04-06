@@ -29,9 +29,9 @@ use egui::FontDefinitions;
 use egui::FontFamily;
 use egui::RawInput;
 use egui_phosphor::Variant;
+use image::Rgba;
 #[cfg(target_os = "macos")]
 use image::imageops;
-use image::Rgba;
 #[cfg(target_os = "macos")]
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
@@ -473,7 +473,12 @@ fn window_matte_mosaic_export_and_ocr_match_preview_pixels() {
 	session.inflight_window_freeze_capture =
 		Some(crate::overlay::WindowFreezeCaptureTarget { monitor, window_id, rect: capture_rect });
 
-	session.handle_captured_freeze_response(monitor, background, Some(window_image), Some(window_id));
+	session.handle_captured_freeze_response(
+		monitor,
+		background,
+		Some(window_image),
+		Some(window_id),
+	);
 
 	assert!(session.authoritative_frozen_capture_ready);
 	assert!(session.apply_frozen_mosaic_edit(capture_rect));
