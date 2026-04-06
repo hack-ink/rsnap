@@ -239,6 +239,7 @@ fn frozen_selection_drag_hides_auxiliary_windows_while_active() {
 
 	assert!(!session.frozen_selection_drag_hides_auxiliary_windows());
 	assert!(!session.should_hide_toolbar_window(monitor));
+	assert!(session.should_hide_scroll_preview_window());
 	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
 	assert!(session.frozen_selection_drag_hides_auxiliary_windows());
 	assert!(!session.hud_window_visible);
@@ -253,6 +254,29 @@ fn frozen_selection_drag_hides_auxiliary_windows_while_active() {
 	assert!(!session.frozen_selection_drag_hides_auxiliary_windows());
 	assert!(!session.should_hide_toolbar_window(monitor));
 	assert!(!session.should_focus_frozen_toolbar_window_on_show());
+}
+
+#[test]
+fn frozen_selection_drag_releases_scroll_preview_hide_after_drag_stops() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+
+	session.scroll_capture.active = true;
+
+	assert!(session.should_hide_scroll_preview_window());
+
+	session.stop_frozen_selection_drag();
+
+	assert!(!session.should_hide_scroll_preview_window());
 }
 
 #[test]
