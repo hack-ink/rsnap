@@ -8,10 +8,10 @@ use winit::window::CursorIcon;
 use crate::OverlayControl;
 #[allow(unused_imports)]
 use crate::overlay::tests::{
-	self, ElementState, FrozenCaptureSource, FrozenSelectionDragState, FrozenToolbarState,
-	FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, MonitorRect,
-	MonitorRectPoints, MouseButton, OverlayMode, OverlaySession, OverlayState, PngAction, Pos2,
-	RawInput, Rect, RectPoints, Rgba, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+	self, Duration, ElementState, FrozenCaptureSource, FrozenSelectionDragState,
+	FrozenToolbarState, FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme,
+	MonitorRect, MonitorRectPoints, MouseButton, OverlayMode, OverlaySession, OverlayState,
+	PngAction, Pos2, RawInput, Rect, RectPoints, Rgba, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
 	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
 	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
 	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, ScrollSession, SelectionDashedBorderCache,
@@ -222,6 +222,90 @@ fn frozen_selection_drag_updates_capture_rect_and_toolbar_position() {
 }
 
 #[test]
+fn frozen_selection_drag_hides_auxiliary_windows_while_active() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.toolbar_state.visible = true;
+	session.hud_window_visible = true;
+	session.loupe_window_visible = true;
+	session.toolbar_window_visible = true;
+
+	assert!(!session.frozen_selection_drag_hides_auxiliary_windows());
+	assert!(!session.should_hide_toolbar_window(monitor));
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+
+	assert!(session.frozen_selection_drag_hides_auxiliary_windows());
+	assert!(!session.hud_window_visible);
+	assert!(!session.loupe_window_visible);
+	assert!(!session.toolbar_window_visible);
+	assert!(session.skip_toolbar_focus_on_next_show);
+	assert!(session.should_hide_toolbar_window(monitor));
+	assert!(!session.should_focus_frozen_toolbar_window_on_show());
+
+	session.stop_frozen_selection_drag();
+
+	assert!(!session.frozen_selection_drag_hides_auxiliary_windows());
+	assert!(!session.should_hide_toolbar_window(monitor));
+	assert!(!session.should_focus_frozen_toolbar_window_on_show());
+}
+
+#[test]
+fn frozen_selection_drag_defers_pending_toolbar_window_move() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+
+	let last_move_at = session.last_toolbar_window_move_at;
+	session.pending_toolbar_outer_pos = Some(GlobalPoint::new(220, 260));
+
+	session.maybe_apply_pending_toolbar_window_move(last_move_at + Duration::from_millis(32));
+
+	assert_eq!(session.pending_toolbar_outer_pos, Some(GlobalPoint::new(220, 260)));
+	assert_eq!(session.last_toolbar_window_move_at, last_move_at);
+}
+
+#[test]
+fn frozen_selection_drag_skips_toolbar_focus_even_before_first_show() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.toolbar_state.visible = true;
+
+	assert!(!session.toolbar_window_visible);
+	assert!(!session.skip_toolbar_focus_on_next_show);
+	assert!(session.should_focus_frozen_toolbar_window_on_show());
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+
+	assert!(session.skip_toolbar_focus_on_next_show);
+	assert!(!session.should_focus_frozen_toolbar_window_on_show());
+
+	session.stop_frozen_selection_drag();
+
+	assert!(session.skip_toolbar_focus_on_next_show);
+	assert!(!session.should_focus_frozen_toolbar_window_on_show());
+}
+
+#[test]
 fn frozen_selection_resize_updates_capture_rect_and_toolbar_position() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
@@ -244,6 +328,19 @@ fn frozen_selection_resize_updates_capture_rect_and_toolbar_position() {
 
 	assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
 	assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
+}
+
+#[test]
+fn toolbar_position_update_queues_pending_move_without_window() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.toolbar_inner_size_points = Some((460, 54));
+
+	assert!(session.update_toolbar_outer_position(monitor, Pos2::new(120.0, 160.0)));
+	assert_eq!(session.toolbar_state.floating_position, Some(Pos2::new(120.0, 160.0)));
+	assert_eq!(session.toolbar_outer_pos, Some(GlobalPoint::new(120, 160)));
+	assert_eq!(session.pending_toolbar_outer_pos, Some(GlobalPoint::new(120, 160)));
 }
 
 #[test]
@@ -438,7 +535,7 @@ fn frozen_selection_cursor_icon_uses_corner_resize_hover() {
 
 	session.state.cursor = Some(GlobalPoint::new(150, 180));
 
-	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::Default);
+	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::Grab);
 }
 
 #[test]
@@ -463,6 +560,30 @@ fn frozen_selection_cursor_icon_tracks_active_resize_drag() {
 	};
 
 	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::SeResize);
+}
+
+#[test]
+fn frozen_selection_cursor_icon_tracks_active_move_drag() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.frozen_selection_drag = FrozenSelectionDragState {
+		active: true,
+		interaction: FrozenSelectionInteractionKind::Move,
+		anchor_rect: capture_rect,
+		pointer_offset_x: 50,
+		pointer_offset_y: 60,
+		press_cursor_x: 150,
+		press_cursor_y: 180,
+	};
+
+	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::Grabbing);
 }
 
 #[test]
