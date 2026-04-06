@@ -29,6 +29,7 @@ use egui::FontDefinitions;
 use egui::FontFamily;
 use egui::RawInput;
 use egui_phosphor::Variant;
+#[cfg(target_os = "macos")]
 use image::imageops;
 use image::Rgba;
 #[cfg(target_os = "macos")]
