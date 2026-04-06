@@ -823,15 +823,17 @@ impl OverlaySession {
 			}
 		}
 
-		if self.frozen_selection_drag_hides_auxiliary_windows() {
-			return;
-		}
-
-		let request_toolbar_window = cfg!(target_os = "macos")
+		let hide_auxiliary_windows = self.frozen_selection_drag_hides_auxiliary_windows();
+		let request_hud_window = !hide_auxiliary_windows && self.hud_window.is_some();
+		let request_loupe_window = !hide_auxiliary_windows && self.loupe_window.is_some();
+		let request_toolbar_window = !hide_auxiliary_windows
+			&& cfg!(target_os = "macos")
 			&& matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.toolbar_state.visible
 			&& self.state.monitor == Some(monitor)
 			&& self.state.frozen_image.is_some();
+		let request_scroll_preview_window =
+			!hide_auxiliary_windows && self.scroll_preview_window.is_some();
 
 		if tracing::enabled!(tracing::Level::TRACE)
 			&& matches!(self.state.mode, OverlayMode::Frozen)
@@ -845,23 +847,25 @@ impl OverlaySession {
 				op = "overlay.frozen_selection_drag.redraw_fanout",
 				monitor_id = monitor.id,
 				overlay_window_count = overlay_windows,
-				request_hud_window = self.hud_window.is_some(),
-				request_loupe_window = self.loupe_window.is_some(),
+				request_hud_window,
+				request_loupe_window,
 				request_toolbar_window,
-				request_scroll_preview_window = self.scroll_preview_window.is_some(),
+				request_scroll_preview_window,
+				hide_auxiliary_windows,
 				scroll_capture_active = self.scroll_capture.active,
 				alt_held = self.state.alt_held,
 				"Requested redraw fan-out for frozen selection drag."
 			);
 		}
-
-		if let Some(hud) = self.hud_window.as_ref() {
+		if hide_auxiliary_windows {
+			return;
+		}
+		if request_hud_window && let Some(hud) = self.hud_window.as_ref() {
 			hud.window.request_redraw();
 		}
-		if let Some(loupe) = self.loupe_window.as_ref() {
+		if request_loupe_window && let Some(loupe) = self.loupe_window.as_ref() {
 			loupe.window.request_redraw();
 		}
-
 		// macOS uses a native toolbar popup window with compositor blur; keep shader-viewport
 		// toolbar redraw on the fullscreen overlay path disabled for this platform.
 		// Future direction: if toolbar styling moves off native blur, add a dedicated capture
@@ -869,8 +873,9 @@ impl OverlaySession {
 		if request_toolbar_window {
 			self.request_redraw_toolbar_window();
 		}
-
-		self.request_redraw_scroll_preview_window();
+		if request_scroll_preview_window {
+			self.request_redraw_scroll_preview_window();
+		}
 	}
 
 	pub(super) fn request_redraw_hud_window(&self) {
