@@ -142,11 +142,13 @@ impl OverlaySession {
 	}
 
 	pub(super) fn handle_scroll_preview_redraw_requested(&mut self) -> OverlayControl {
+		let should_hide_preview =
+			self.frozen_selection_drag_hides_auxiliary_windows() || !self.scroll_capture.active;
 		let Some(preview_window) = self.scroll_preview_window.as_mut() else {
 			return OverlayControl::Continue;
 		};
 
-		if !self.scroll_capture.active {
+		if should_hide_preview {
 			preview_window.window.set_visible(false);
 
 			return OverlayControl::Continue;

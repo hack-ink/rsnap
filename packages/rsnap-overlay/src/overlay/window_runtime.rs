@@ -823,6 +823,38 @@ impl OverlaySession {
 			}
 		}
 
+		if self.frozen_selection_drag_hides_auxiliary_windows() {
+			return;
+		}
+
+		let request_toolbar_window = cfg!(target_os = "macos")
+			&& matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.toolbar_state.visible
+			&& self.state.monitor == Some(monitor)
+			&& self.state.frozen_image.is_some();
+
+		if tracing::enabled!(tracing::Level::TRACE)
+			&& matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.frozen_selection_drag.active
+			&& self.state.monitor == Some(monitor)
+		{
+			let overlay_windows =
+				self.windows.values().filter(|window| window.monitor == monitor).count();
+
+			tracing::trace!(
+				op = "overlay.frozen_selection_drag.redraw_fanout",
+				monitor_id = monitor.id,
+				overlay_window_count = overlay_windows,
+				request_hud_window = self.hud_window.is_some(),
+				request_loupe_window = self.loupe_window.is_some(),
+				request_toolbar_window,
+				request_scroll_preview_window = self.scroll_preview_window.is_some(),
+				scroll_capture_active = self.scroll_capture.active,
+				alt_held = self.state.alt_held,
+				"Requested redraw fan-out for frozen selection drag."
+			);
+		}
+
 		if let Some(hud) = self.hud_window.as_ref() {
 			hud.window.request_redraw();
 		}
@@ -834,12 +866,7 @@ impl OverlaySession {
 		// toolbar redraw on the fullscreen overlay path disabled for this platform.
 		// Future direction: if toolbar styling moves off native blur, add a dedicated capture
 		// pass feeding a toolbar-local shader-blur texture.
-		if cfg!(target_os = "macos")
-			&& matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.toolbar_state.visible
-			&& self.state.monitor == Some(monitor)
-			&& self.state.frozen_image.is_some()
-		{
+		if request_toolbar_window {
 			self.request_redraw_toolbar_window();
 		}
 
@@ -847,24 +874,40 @@ impl OverlaySession {
 	}
 
 	pub(super) fn request_redraw_hud_window(&self) {
+		if self.frozen_selection_drag_hides_auxiliary_windows() {
+			return;
+		}
+
 		if let Some(hud) = self.hud_window.as_ref() {
 			hud.window.request_redraw();
 		}
 	}
 
 	pub(super) fn request_redraw_toolbar_window(&self) {
+		if self.frozen_selection_drag_hides_auxiliary_windows() {
+			return;
+		}
+
 		if let Some(toolbar) = self.toolbar_window.as_ref() {
 			toolbar.window.request_redraw();
 		}
 	}
 
 	pub(super) fn request_redraw_loupe_window(&self) {
+		if self.frozen_selection_drag_hides_auxiliary_windows() {
+			return;
+		}
+
 		if let Some(loupe) = self.loupe_window.as_ref() {
 			loupe.window.request_redraw();
 		}
 	}
 
 	pub(super) fn request_redraw_scroll_preview_window(&self) {
+		if self.frozen_selection_drag_hides_auxiliary_windows() {
+			return;
+		}
+
 		if let Some(preview) = self.scroll_preview_window.as_ref() {
 			preview.window.request_redraw();
 		}

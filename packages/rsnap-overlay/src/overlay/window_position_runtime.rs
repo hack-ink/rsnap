@@ -1,8 +1,7 @@
 #[allow(unused_imports)]
 use crate::overlay::{
-	GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, Instant, LogicalPosition, MonitorRect, OverlayMode,
-	OverlaySession, Pos2, Rect, SLOW_OP_WARN_OUTER_POSITION, TOOLBAR_SCREEN_MARGIN_PX, Vec2,
-	WindowRenderer,
+	GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, MonitorRect, OverlayMode, OverlaySession, Pos2, Rect,
+	TOOLBAR_SCREEN_MARGIN_PX, Vec2, WindowRenderer,
 };
 
 impl OverlaySession {
@@ -196,18 +195,17 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		local_pos: Pos2,
 	) -> bool {
-		let Some(toolbar_window) = self.toolbar_window.as_ref() else {
-			return false;
-		};
-		let toolbar_scale = toolbar_window.window.scale_factor().max(1.0);
 		let toolbar_size = if let Some((width, height)) = self.toolbar_inner_size_points {
 			Vec2::new(width as f32, height as f32)
-		} else {
+		} else if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+			let toolbar_scale = toolbar_window.window.scale_factor().max(1.0);
 			let size = toolbar_window.window.inner_size();
 			let toolbar_w = ((size.width as f64) / toolbar_scale).ceil().max(1.0) as f32;
 			let toolbar_h = ((size.height as f64) / toolbar_scale).ceil().max(1.0) as f32;
 
 			Vec2::new(toolbar_w, toolbar_h)
+		} else {
+			WindowRenderer::frozen_toolbar_size(&self.toolbar_state)
 		};
 		let screen_rect =
 			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
@@ -228,27 +226,8 @@ impl OverlaySession {
 		}
 
 		self.toolbar_outer_pos = Some(desired);
+		self.pending_toolbar_outer_pos = Some(desired);
 		self.toolbar_state.floating_position = Some(clamped_local_pos);
-
-		let started_at = Instant::now();
-
-		toolbar_window
-			.window
-			.set_outer_position(LogicalPosition::new(desired.x as f64, desired.y as f64));
-		self.slow_op_logger.warn_if_slow(
-			"overlay.toolbar_window_set_outer_position",
-			started_at.elapsed(),
-			SLOW_OP_WARN_OUTER_POSITION,
-			|| {
-				format!(
-					"window_id={:?} pos=({}, {})",
-					toolbar_window.window.id(),
-					desired.x,
-					desired.y
-				)
-			},
-		);
-		toolbar_window.window.request_redraw();
 
 		true
 	}
