@@ -3,6 +3,8 @@ use egui::LayerId;
 use egui::Order;
 use egui::Ui;
 use image::RgbaImage;
+#[cfg(target_os = "macos")]
+use objc::runtime::Object;
 use winit::window::CursorIcon;
 
 use crate::OverlayControl;
@@ -764,6 +766,36 @@ fn frozen_selection_cursor_rects_use_native_handle_hover_and_full_window_resize_
 
 #[cfg(target_os = "macos")]
 #[test]
+fn frozen_selection_cursor_rects_preserve_grabbing_cursor_during_move_drag() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.frozen_selection_drag = FrozenSelectionDragState {
+		active: true,
+		interaction: FrozenSelectionInteractionKind::Move,
+		anchor_rect: capture_rect,
+		pointer_offset_x: 50,
+		pointer_offset_y: 60,
+		press_cursor_x: 150,
+		press_cursor_y: 180,
+	};
+
+	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
+
+	assert_eq!(rects.len(), 1);
+	assert_eq!(rects[0].icon, CursorIcon::Grabbing);
+	assert_eq!(rects[0].rect.min, Pos2::ZERO);
+	assert_eq!(rects[0].rect.max, Pos2::new(monitor.width as f32, monitor.height as f32));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn frozen_mosaic_cursor_rects_preserve_crosshair_hover_and_drag() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
@@ -793,6 +825,15 @@ fn frozen_mosaic_cursor_rects_preserve_crosshair_hover_and_drag() {
 	assert_eq!(rects[0].icon, CursorIcon::Crosshair);
 	assert_eq!(rects[0].rect.min, Pos2::ZERO);
 	assert_eq!(rects[0].rect.max, Pos2::new(monitor.width as f32, monitor.height as f32));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_cursor_object_maps_crosshair_icon() {
+	let actual = overlay::macos_cursor_object_for_icon(CursorIcon::Crosshair) as usize;
+	let expected: *mut Object = unsafe { objc::msg_send![objc::class!(NSCursor), crosshairCursor] };
+
+	assert_eq!(actual, expected as usize);
 }
 
 #[cfg(target_os = "macos")]
