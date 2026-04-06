@@ -2186,7 +2186,7 @@ impl OverlaySession {
 	}
 
 	fn auto_center_frozen_capture_rect(&mut self) -> bool {
-		let Some((monitor, capture_rect)) = self.frozen_selection_drag_target() else {
+		let Some((monitor, capture_rect)) = self.frozen_capture_rect_drag_target() else {
 			return false;
 		};
 		let Some(capture_image) = self.cropped_frozen_capture_image() else {
