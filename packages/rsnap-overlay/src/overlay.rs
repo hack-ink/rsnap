@@ -162,9 +162,7 @@ use self::trace_recording::{
 	ScrollCaptureTraceFrameRecord, ScrollCaptureTraceRecorder, ScrollCaptureTraceSessionSnapshot,
 };
 #[cfg(target_os = "macos")]
-use crate::deferred_text_recognition::{
-	DeferredTextRecognitionRequest, DeferredTextRecognitionWindowMatte,
-};
+use crate::deferred_text_recognition::DeferredTextRecognitionRequest;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::scroll_capture::{self, ScrollDirection, ScrollObserveOutcome, ScrollSession};
@@ -2402,16 +2400,10 @@ impl OverlaySession {
 			match self.config.window_capture_alpha_mode {
 				WindowCaptureAlphaMode::Background => {},
 				WindowCaptureAlphaMode::MatteLight => {
-					return Some(Self::flatten_window_image_with_matte(
-						window_image,
-						WINDOW_CAPTURE_MATTE_LIGHT_RGBA,
-					));
+					return Some(window_image.clone());
 				},
 				WindowCaptureAlphaMode::MatteDark => {
-					return Some(Self::flatten_window_image_with_matte(
-						window_image,
-						WINDOW_CAPTURE_MATTE_DARK_RGBA,
-					));
+					return Some(window_image.clone());
 				},
 			}
 		}
@@ -2739,9 +2731,22 @@ impl OverlaySession {
 	}
 
 	fn flatten_window_image_with_matte(image: &RgbaImage, matte: image::Rgba<u8>) -> RgbaImage {
-		let mut out = RgbaImage::from_pixel(image.width(), image.height(), matte);
+		let mut out = image.clone();
 
-		imageops::overlay(&mut out, image, 0, 0);
+		for pixel in out.pixels_mut() {
+			let alpha = u16::from(pixel[3]);
+			let inv_alpha = 255_u16.saturating_sub(alpha);
+
+			for channel in 0..3 {
+				let src = u16::from(pixel[channel]);
+				let bg = u16::from(matte[channel]);
+				let blended = (src.saturating_mul(alpha) + bg.saturating_mul(inv_alpha) + 127) / 255;
+
+				pixel[channel] = blended as u8;
+			}
+
+			pixel[3] = 255;
+		}
 
 		out
 	}
@@ -2823,17 +2828,19 @@ impl OverlaySession {
 				match self.config.window_capture_alpha_mode {
 					WindowCaptureAlphaMode::Background => {},
 					WindowCaptureAlphaMode::MatteLight | WindowCaptureAlphaMode::MatteDark => {
-						self.frozen_window_image = Some(window_capture_image);
+						let window_capture_image = Self::compose_window_preview_layer(
+							&window_capture_image,
+							self.config.window_capture_alpha_mode,
+						);
 
-						if let Some(window_capture_image) = self.frozen_window_image.as_ref() {
-							frozen_preview_image = Self::composite_window_capture_preview(
-								frozen_preview_image,
-								window_capture_image,
-								monitor,
-								target.rect,
-								self.config.window_capture_alpha_mode,
-							);
-						}
+						frozen_preview_image = Self::composite_window_capture_preview(
+							frozen_preview_image,
+							&window_capture_image,
+							monitor,
+							target.rect,
+							WindowCaptureAlphaMode::Background,
+						);
+						self.frozen_window_image = Some(window_capture_image);
 					},
 				}
 			}
@@ -4755,21 +4762,19 @@ impl OverlaySession {
 				WindowCaptureAlphaMode::Background => {},
 				WindowCaptureAlphaMode::MatteLight => {
 					if let Some(window_image) = self.frozen_window_image.take() {
-						return Some(DeferredTextRecognitionRequest::window_image_with_matte(
+						return Some(DeferredTextRecognitionRequest::prepared(
 							request_id,
 							requested_at,
 							window_image,
-							DeferredTextRecognitionWindowMatte::Light,
 						));
 					}
 				},
 				WindowCaptureAlphaMode::MatteDark => {
 					if let Some(window_image) = self.frozen_window_image.take() {
-						return Some(DeferredTextRecognitionRequest::window_image_with_matte(
+						return Some(DeferredTextRecognitionRequest::prepared(
 							request_id,
 							requested_at,
 							window_image,
-							DeferredTextRecognitionWindowMatte::Dark,
 						));
 					}
 				},
