@@ -179,6 +179,26 @@ impl WindowRenderer {
 				Self::render_frozen_selection_resize_handles(&painter, capture_rect, theme);
 		}
 
+		if let Some(mosaic_preview_rect) = state.frozen_mosaic_preview_rect {
+			let preview_rect = Self::selection_focus_rect(mosaic_preview_rect, screen_rect);
+			let preview_fill = match theme {
+				HudTheme::Dark => Color32::from_rgba_unmultiplied(110, 196, 255, 38),
+				HudTheme::Light => Color32::from_rgba_unmultiplied(34, 132, 214, 30),
+			};
+
+			painter.rect_filled(preview_rect, 10.0, preview_fill);
+
+			has_affordance |= Self::render_selection_dashed_border(
+				&painter,
+				preview_rect,
+				screen_rect,
+				theme,
+				Some(2.1),
+				false,
+				selection_dashed_border_cache,
+			);
+		}
+
 		has_affordance
 	}
 
@@ -2235,15 +2255,15 @@ impl WindowRenderer {
 
 			for tool in tools {
 				let is_mode_tool = tool.is_mode_tool();
-				let action_ready =
-					!tool.requires_final_capture() || toolbar_state.final_capture_ready;
+				let action_ready = tool.is_available(toolbar_state)
+					&& (!tool.requires_final_capture() || toolbar_state.final_capture_ready);
 				let response =
 					ui.allocate_response(Vec2::new(button_size, button_size), Sense::click());
 				let hovered = action_ready && response.hovered();
 				let response = if action_ready {
 					response.on_hover_text(tool.label())
 				} else {
-					response.on_hover_text("Preparing capture...")
+					response.on_hover_text(tool.unavailable_label())
 				};
 				let hover_anim: f32 = if hovered { 1.0 } else { 0.0 };
 
