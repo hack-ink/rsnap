@@ -518,10 +518,10 @@ impl FrozenToolbarTool {
 			Self::Mosaic => regular::CHECKERBOARD,
 			Self::Undo => regular::ARROW_COUNTER_CLOCKWISE,
 			Self::Redo => regular::ARROW_CLOCKWISE,
-			Self::AutoCenter => regular::TARGET,
-			Self::Scroll => regular::MOUSE_SCROLL,
+			Self::AutoCenter => regular::ARROWS_IN_CARDINAL,
+			Self::Scroll => regular::ARROWS_DOWN_UP,
 			#[cfg(target_os = "macos")]
-			Self::Ocr => regular::SCAN,
+			Self::Ocr => regular::FILE_TEXT,
 			Self::Copy => regular::COPY,
 			Self::Save => regular::FLOPPY_DISK,
 		}
