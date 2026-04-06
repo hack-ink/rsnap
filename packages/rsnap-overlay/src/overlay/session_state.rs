@@ -118,6 +118,17 @@ pub(super) struct CursorMoveTrace {
 	pub(super) source: DeviceCursorPointSource,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct FrozenSelectionDragCursorMoveTiming {
+	pub(super) cursor_update_elapsed: Duration,
+	pub(super) live_drag_update_elapsed: Duration,
+	pub(super) frozen_drag_update_elapsed: Duration,
+	pub(super) frozen_rect_changed: bool,
+	pub(super) sync_cursor_icons_elapsed: Duration,
+	pub(super) request_samples_elapsed: Duration,
+	pub(super) total_elapsed: Duration,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct HudDrawConfig {
 	pub(super) can_draw_hud: bool,
