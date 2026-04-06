@@ -33,6 +33,18 @@ impl OverlaySession {
 	}
 
 	pub(super) fn maybe_skip_hud_redraw(&mut self) -> Option<OverlayControl> {
+		if self.frozen_selection_drag_hides_auxiliary_windows() {
+			if let Some(hud_window) = self.hud_window.as_ref()
+				&& self.hud_window_visible
+			{
+				hud_window.window.set_visible(false);
+			}
+
+			self.hud_window_visible = false;
+			self.last_present_at = Instant::now();
+
+			return Some(OverlayControl::Continue);
+		}
 		if self.scroll_capture.active {
 			if let Some(hud_window) = self.hud_window.as_ref()
 				&& self.hud_window_visible
@@ -327,7 +339,8 @@ impl OverlaySession {
 	}
 
 	pub(super) fn should_skip_loupe_redraw(&self) -> bool {
-		self.scroll_capture.active
+		self.frozen_selection_drag_hides_auxiliary_windows()
+			|| self.scroll_capture.active
 			|| self.capture_windows_hidden
 			|| !self.state.alt_held
 			|| (matches!(self.state.mode, OverlayMode::Live) && self.live_loupe_uses_hud_window())
