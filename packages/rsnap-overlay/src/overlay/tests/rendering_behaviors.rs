@@ -764,6 +764,39 @@ fn frozen_selection_cursor_rects_use_native_handle_hover_and_full_window_resize_
 
 #[cfg(target_os = "macos")]
 #[test]
+fn frozen_mosaic_cursor_rects_preserve_crosshair_hover_and_drag() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.authoritative_frozen_capture_ready = true;
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+
+	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
+
+	assert_eq!(
+		overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(150.0, 180.0)),
+		Some(CursorIcon::Crosshair)
+	);
+	assert_eq!(overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(80.0, 100.0)), None);
+
+	session.frozen_mosaic_drag.active = true;
+
+	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
+
+	assert_eq!(rects.len(), 1);
+	assert_eq!(rects[0].icon, CursorIcon::Crosshair);
+	assert_eq!(rects[0].rect.min, Pos2::ZERO);
+	assert_eq!(rects[0].rect.max, Pos2::new(monitor.width as f32, monitor.height as f32));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn frozen_selection_cursor_rects_match_resize_hit_test_for_tiny_overlapping_handles() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 8, 8);
