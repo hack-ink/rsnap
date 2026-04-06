@@ -67,6 +67,7 @@ use image::{
 };
 #[cfg(target_os = "macos")]
 use objc::declare::ClassDecl;
+#[cfg(target_os = "macos")]
 use objc::runtime::Sel;
 #[cfg(target_os = "macos")]
 use objc::runtime::{BOOL, Class, Object, YES};
@@ -1909,6 +1910,28 @@ impl OverlaySession {
 			return Vec::new();
 		}
 
+		let overlay_bounds =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+
+		if let Some((target_monitor, capture_rect)) = self.frozen_mosaic_drag_target() {
+			if target_monitor != monitor {
+				return Vec::new();
+			}
+			if self.frozen_mosaic_drag.active {
+				return vec![OverlayCursorRect::new(overlay_bounds, CursorIcon::Crosshair)];
+			}
+
+			let capture_rect = Rect::from_min_size(
+				Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
+				Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
+			)
+			.intersect(overlay_bounds);
+
+			return (capture_rect.width() > 0.0 && capture_rect.height() > 0.0)
+				.then_some(vec![OverlayCursorRect::new(capture_rect, CursorIcon::Crosshair)])
+				.unwrap_or_default();
+		}
+
 		let Some((target_monitor, capture_rect)) = self.frozen_selection_drag_target() else {
 			return Vec::new();
 		};
@@ -1916,10 +1939,6 @@ impl OverlaySession {
 		if target_monitor != monitor {
 			return Vec::new();
 		}
-
-		let overlay_bounds =
-			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-
 		if self.frozen_selection_drag.active {
 			return match self.frozen_selection_drag.interaction {
 				FrozenSelectionInteractionKind::Resize(corner) => vec![OverlayCursorRect::new(
@@ -4218,13 +4237,13 @@ impl OverlaySession {
 	) -> OverlayControl {
 		self.reset_toolbar_pointer_state();
 
-			match state {
-				ElementState::Pressed => {
-					let cursor = self.current_frozen_interaction_cursor();
+		match state {
+			ElementState::Pressed => {
+				let cursor = self.current_frozen_interaction_cursor();
 
-					if !self.begin_frozen_selection_drag(cursor) {
-						let _ = self.begin_frozen_mosaic_drag(cursor);
-					}
+				if !self.begin_frozen_selection_drag(cursor) {
+					let _ = self.begin_frozen_mosaic_drag(cursor);
+				}
 
 				self.sync_overlay_cursor_icons();
 			},
@@ -6543,6 +6562,7 @@ fn macos_install_overlay_cursor_rect_support(
 
 		let _: () = objc::msg_send![overlay_view, setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE];
 		let _: () = objc::msg_send![host_view, addSubview: overlay_view];
+		let _: () = objc::msg_send![overlay_view, release];
 	}
 
 	Ok(MacOSOverlayCursorRectSupport::new(overlay_view as usize))
