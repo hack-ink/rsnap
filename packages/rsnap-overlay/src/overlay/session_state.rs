@@ -143,6 +143,8 @@ pub(super) struct FrozenToolbarState {
 	pub(super) dragging: bool,
 	pub(super) selected_tool: FrozenToolbarTool,
 	pub(super) auto_center_available: bool,
+	pub(super) undo_available: bool,
+	pub(super) redo_available: bool,
 	pub(super) scroll_capture_active: bool,
 	pub(super) scroll_capture_available: bool,
 	pub(super) final_capture_ready: bool,
@@ -163,6 +165,8 @@ impl Default for FrozenToolbarState {
 			dragging: false,
 			selected_tool: FrozenToolbarTool::Pointer,
 			auto_center_available: false,
+			undo_available: false,
+			redo_available: false,
 			scroll_capture_active: false,
 			scroll_capture_available: false,
 			final_capture_ready: false,
@@ -201,6 +205,13 @@ impl Default for FrozenSelectionDragState {
 			press_cursor_y: 0,
 		}
 	}
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct FrozenMosaicDragState {
+	pub(super) active: bool,
+	pub(super) anchor_x: u32,
+	pub(super) anchor_y: u32,
 }
 
 #[derive(Default)]

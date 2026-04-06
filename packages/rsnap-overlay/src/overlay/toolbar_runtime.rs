@@ -37,6 +37,16 @@ impl OverlaySession {
 				self.toolbar_cursor_global_position(toolbar_window, cursor_local)
 			{
 				self.update_frozen_selection_drag_rect(global_cursor);
+				self.update_frozen_mosaic_drag_rect(global_cursor);
+			}
+
+			return OverlayControl::Continue;
+		}
+		if self.frozen_mosaic_drag.active {
+			if let Some(global_cursor) =
+				self.toolbar_cursor_global_position(toolbar_window, cursor_local)
+			{
+				self.update_frozen_mosaic_drag_rect(global_cursor);
 			}
 
 			return OverlayControl::Continue;
@@ -352,6 +362,7 @@ impl OverlaySession {
 		if self.toolbar_state.needs_redraw {
 			self.toolbar_state.needs_redraw = false;
 
+			self.request_redraw_for_monitor(monitor);
 			self.request_redraw_toolbar_window();
 		}
 		if tracing::enabled!(tracing::Level::TRACE)
