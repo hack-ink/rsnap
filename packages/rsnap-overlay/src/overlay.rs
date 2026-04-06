@@ -535,13 +535,8 @@ impl FrozenToolbarTool {
 
 	const fn requires_final_capture(self) -> bool {
 		match self {
-			Self::Pointer
-			| Self::Pen
-			| Self::Text
-			| Self::Mosaic
-			| Self::Undo
-			| Self::Redo
-			| Self::AutoCenter => false,
+			Self::Pointer | Self::Pen | Self::Text | Self::AutoCenter => false,
+			Self::Mosaic | Self::Undo | Self::Redo => true,
 			Self::Scroll | Self::Copy | Self::Save => true,
 			#[cfg(target_os = "macos")]
 			Self::Ocr => true,
@@ -556,7 +551,11 @@ impl FrozenToolbarTool {
 		}
 	}
 
-	const fn unavailable_label(self) -> &'static str {
+	fn unavailable_label(self, toolbar_state: &FrozenToolbarState) -> &'static str {
+		if self.requires_final_capture() && !toolbar_state.final_capture_ready {
+			return "Preparing capture...";
+		}
+
 		match self {
 			Self::Undo => "Nothing to undo",
 			Self::Redo => "Nothing to redo",
@@ -1698,6 +1697,7 @@ impl OverlaySession {
 		if !matches!(self.state.mode, OverlayMode::Frozen)
 			|| self.scroll_capture.active
 			|| self.state.frozen_image.is_none()
+			|| !self.frozen_final_capture_ready()
 			|| self.toolbar_state.selected_tool != FrozenToolbarTool::Mosaic
 		{
 			return None;
@@ -2630,6 +2630,11 @@ impl OverlaySession {
 		let Some(monitor) = self.state.monitor else {
 			return false;
 		};
+
+		if !self.frozen_final_capture_ready() {
+			return false;
+		}
+
 		let preview_rect_px = monitor.local_rect_to_pixels(rect_points);
 		let Some(preview_patch) = self
 			.state
@@ -2686,6 +2691,10 @@ impl OverlaySession {
 	}
 
 	fn undo_frozen_mosaic_edit(&mut self) -> bool {
+		if !self.frozen_final_capture_ready() {
+			return false;
+		}
+
 		let Some(edit) = self.frozen_mosaic_undo_stack.pop() else {
 			return false;
 		};
@@ -2698,6 +2707,10 @@ impl OverlaySession {
 	}
 
 	fn redo_frozen_mosaic_edit(&mut self) -> bool {
+		if !self.frozen_final_capture_ready() {
+			return false;
+		}
+
 		let Some(edit) = self.frozen_mosaic_redo_stack.pop() else {
 			return false;
 		};
