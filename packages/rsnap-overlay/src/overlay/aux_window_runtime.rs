@@ -302,6 +302,7 @@ impl OverlaySession {
 
 		self.maybe_apply_pending_hud_window_move(now);
 		self.maybe_apply_pending_loupe_window_move(now);
+		self.maybe_apply_pending_toolbar_window_move(now);
 	}
 
 	pub(super) fn maybe_apply_pending_hud_window_move(&mut self, now: Instant) {
@@ -354,6 +355,7 @@ impl OverlaySession {
 	pub(super) fn force_apply_pending_hud_and_loupe_moves(&mut self) {
 		self.force_apply_pending_hud_window_move();
 		self.force_apply_pending_loupe_window_move();
+		self.force_apply_pending_toolbar_window_move();
 	}
 
 	pub(super) fn maybe_apply_pending_loupe_window_move(&mut self, now: Instant) {
@@ -408,6 +410,63 @@ impl OverlaySession {
 
 		self.pending_loupe_outer_pos = None;
 		self.last_loupe_window_move_at = now;
+	}
+
+	pub(super) fn maybe_apply_pending_toolbar_window_move(&mut self, now: Instant) {
+		self.apply_pending_toolbar_window_move(now, false);
+	}
+
+	pub(super) fn force_apply_pending_toolbar_window_move(&mut self) {
+		self.apply_pending_toolbar_window_move(Instant::now(), true);
+	}
+
+	pub(super) fn apply_pending_toolbar_window_move(&mut self, now: Instant, force: bool) {
+		let Some(desired) = self.pending_toolbar_outer_pos else {
+			return;
+		};
+		if self.frozen_selection_drag_hides_auxiliary_windows() {
+			return;
+		}
+		let elapsed = now.duration_since(self.last_toolbar_window_move_at);
+		let interval = self
+			.repaint_interval_for_monitor(self.state.monitor.or(self.active_cursor_monitor()))
+			.max(HUD_LOUPE_MOVE_INTERVAL_MIN);
+
+		if !force && elapsed < interval {
+			let delay = interval.saturating_sub(elapsed);
+
+			self.schedule_egui_repaint_after(delay);
+
+			return;
+		}
+
+		let Some(toolbar_window) = self.toolbar_window.as_ref() else {
+			return;
+		};
+		let started_at = Instant::now();
+
+		toolbar_window
+			.window
+			.set_outer_position(LogicalPosition::new(desired.x as f64, desired.y as f64));
+
+		let elapsed = started_at.elapsed();
+
+		self.slow_op_logger.warn_if_slow(
+			"overlay.toolbar_window_set_outer_position",
+			elapsed,
+			SLOW_OP_WARN_OUTER_POSITION,
+			|| {
+				format!(
+					"window_id={:?} pos=({}, {})",
+					toolbar_window.window.id(),
+					desired.x,
+					desired.y
+				)
+			},
+		);
+
+		self.pending_toolbar_outer_pos = None;
+		self.last_toolbar_window_move_at = now;
 	}
 
 	pub(super) fn schedule_egui_repaint_after(&self, delay: Duration) {
