@@ -300,6 +300,7 @@ impl OverlaySession {
 
 	pub(super) fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
 		let redraw_started_at = Instant::now();
+
 		self.event_loop_last_progress_window_id =
 			self.toolbar_window.as_ref().map(|toolbar_window| toolbar_window.window.id());
 		self.event_loop_last_progress_monitor_id = self.state.monitor.map(|monitor| monitor.id);
@@ -321,9 +322,11 @@ impl OverlaySession {
 		}
 
 		let draw_frame_started_at = Instant::now();
+
 		if let Err(err) = self.draw_toolbar_window_frame(monitor, toolbar_input) {
 			return self.exit(OverlayExit::Error(format!("{err:#}")));
 		}
+
 		let draw_frame_elapsed = draw_frame_started_at.elapsed();
 
 		self.update_scroll_toolbar_default_position(monitor);
@@ -331,7 +334,9 @@ impl OverlaySession {
 		if let Some(toolbar_pos) = self.toolbar_state.floating_position {
 			let position_update_started_at = Instant::now();
 			let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+
 			self.force_apply_pending_toolbar_window_move();
+
 			position_update_elapsed = Some(position_update_started_at.elapsed());
 		}
 		if let Some(action) = self.toolbar_state.pending_action.take() {
@@ -349,7 +354,6 @@ impl OverlaySession {
 
 			self.request_redraw_toolbar_window();
 		}
-
 		if tracing::enabled!(tracing::Level::TRACE)
 			&& matches!(self.state.mode, OverlayMode::Frozen)
 		{

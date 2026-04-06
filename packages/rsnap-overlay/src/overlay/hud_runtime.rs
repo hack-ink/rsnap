@@ -45,7 +45,6 @@ impl OverlaySession {
 
 			return Some(OverlayControl::Continue);
 		}
-
 		if self.scroll_capture.active {
 			if let Some(hud_window) = self.hud_window.as_ref()
 				&& self.hud_window_visible
