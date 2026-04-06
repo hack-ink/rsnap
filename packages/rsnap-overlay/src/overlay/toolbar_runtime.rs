@@ -167,6 +167,7 @@ impl OverlaySession {
 			|| self.state.monitor != Some(monitor)
 	}
 
+	#[cfg(target_os = "macos")]
 	pub(super) fn should_focus_frozen_toolbar_window_on_show(&self) -> bool {
 		!self.toolbar_window_visible
 			&& !self.skip_toolbar_focus_on_next_show
