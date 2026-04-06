@@ -1681,6 +1681,7 @@ impl OverlaySession {
 			press_cursor_x: cursor_x,
 			press_cursor_y: cursor_y,
 		};
+
 		self.hide_auxiliary_windows_for_frozen_selection_drag();
 
 		true
@@ -1766,17 +1767,21 @@ impl OverlaySession {
 		if let Some(hud_window) = self.hud_window.as_ref() {
 			hud_window.window.set_visible(false);
 		}
+
 		self.hud_window_visible = false;
 
 		if let Some(loupe_window) = self.loupe_window.as_ref() {
 			loupe_window.window.set_visible(false);
 		}
+
 		self.loupe_window_visible = false;
+
 		self.reset_loupe_window_warmup_redraws();
 
 		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
 			toolbar_window.window.set_visible(false);
 		}
+
 		self.skip_toolbar_focus_on_next_show = true;
 		self.toolbar_window_visible = false;
 		self.toolbar_window_warmup_redraws_remaining = 0;
@@ -1984,12 +1989,12 @@ impl OverlaySession {
 
 			None
 		};
-
 		let redraw_request_elapsed = if should_trace_frozen_selection_drag_timing {
 			let redraw_request_started_at = Instant::now();
 
 			self.request_redraw_for_monitor(monitor);
 			self.request_redraw_toolbar_window();
+
 			if self.scroll_capture.active {
 				self.request_redraw_scroll_preview_window();
 			}
@@ -1998,6 +2003,7 @@ impl OverlaySession {
 		} else {
 			self.request_redraw_for_monitor(monitor);
 			self.request_redraw_toolbar_window();
+
 			if self.scroll_capture.active {
 				self.request_redraw_scroll_preview_window();
 			}
@@ -3095,8 +3101,7 @@ impl OverlaySession {
 	) -> OverlayControl {
 		let should_trace_frozen_selection_drag_timing =
 			self.should_trace_frozen_selection_drag_timing();
-		let cursor_move_started_at =
-			should_trace_frozen_selection_drag_timing.then(Instant::now);
+		let cursor_move_started_at = should_trace_frozen_selection_drag_timing.then(Instant::now);
 		let old_monitor = self.active_cursor_monitor();
 		let now = Instant::now();
 		let Some(overlay_window) = self.windows.get(&window_id) else {
@@ -3135,91 +3140,18 @@ impl OverlaySession {
 		};
 
 		self.trace_cursor_moved_with_mapping(trace);
-		let cursor_update_elapsed = if should_trace_frozen_selection_drag_timing {
-			let cursor_update_started_at = Instant::now();
-			self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global);
 
-			Some(cursor_update_started_at.elapsed())
-		} else {
-			self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global);
-
-			None
-		};
-
-		let previous_drag_rect = self.state.drag_rect;
-
-		let live_drag_update_elapsed = if should_trace_frozen_selection_drag_timing {
-			let live_drag_update_started_at = Instant::now();
-			self.update_live_drag_rect(monitor, global);
-
-			Some(live_drag_update_started_at.elapsed())
-		} else {
-			self.update_live_drag_rect(monitor, global);
-
-			None
-		};
-		let (frozen_rect_changed, frozen_drag_update_elapsed) =
-			if should_trace_frozen_selection_drag_timing {
-				let frozen_drag_update_started_at = Instant::now();
-				let frozen_rect_changed = self.update_frozen_selection_drag_rect(global);
-
-				(frozen_rect_changed, Some(frozen_drag_update_started_at.elapsed()))
-			} else {
-				(self.update_frozen_selection_drag_rect(global), None)
-			};
-		let sync_cursor_icons_elapsed = if should_trace_frozen_selection_drag_timing {
-			let sync_cursor_icons_started_at = Instant::now();
-			self.sync_overlay_cursor_icons();
-
-			Some(sync_cursor_icons_started_at.elapsed())
-		} else {
-			self.sync_overlay_cursor_icons();
-
-			None
-		};
-		let request_samples_elapsed = if should_trace_frozen_selection_drag_timing {
-			let request_samples_started_at = Instant::now();
-			self.request_cursor_move_samples(monitor, global);
-
-			Some(request_samples_started_at.elapsed())
-		} else {
-			self.request_cursor_move_samples(monitor, global);
-
-			None
-		};
-
-		if let Some(old_monitor) = old_monitor
-			&& old_monitor != monitor
-		{
-			self.request_redraw_for_monitor(old_monitor);
-		}
-
-		if Self::live_overlay_redraw_needed_for_cursor_update(
+		let timing = self.run_cursor_move_updates(
+			should_trace_frozen_selection_drag_timing,
+			cursor_move_started_at,
 			old_monitor,
+			old_cursor,
 			monitor,
-			previous_drag_rect,
-			self.state.drag_rect,
-		) {
-			self.request_redraw_for_monitor(monitor);
-		}
+			global,
+		);
 
 		if should_trace_frozen_selection_drag_timing {
-			self.trace_frozen_selection_drag_cursor_move(
-				monitor,
-				old_monitor,
-				old_cursor,
-				FrozenSelectionDragCursorMoveTiming {
-					cursor_update_elapsed: cursor_update_elapsed.unwrap_or_default(),
-					live_drag_update_elapsed: live_drag_update_elapsed.unwrap_or_default(),
-					frozen_drag_update_elapsed: frozen_drag_update_elapsed.unwrap_or_default(),
-					frozen_rect_changed,
-					sync_cursor_icons_elapsed: sync_cursor_icons_elapsed.unwrap_or_default(),
-					request_samples_elapsed: request_samples_elapsed.unwrap_or_default(),
-					total_elapsed: cursor_move_started_at.map_or(Duration::ZERO, |started_at| {
-						started_at.elapsed()
-					}),
-				},
-			);
+			self.trace_frozen_selection_drag_cursor_move(monitor, old_monitor, old_cursor, timing);
 		}
 
 		OverlayControl::Continue
@@ -3232,8 +3164,8 @@ impl OverlaySession {
 	) -> OverlayControl {
 		let should_trace_frozen_selection_drag_timing =
 			self.should_trace_frozen_selection_drag_timing();
-		let cursor_move_started_at =
-			should_trace_frozen_selection_drag_timing.then(Instant::now);
+		let cursor_move_started_at = should_trace_frozen_selection_drag_timing.then(Instant::now);
+
 		if self.should_ignore_live_auxiliary_cursor_event(window_id) {
 			return OverlayControl::Continue;
 		}
@@ -3260,29 +3192,40 @@ impl OverlaySession {
 			);
 		}
 
-		let cursor_update_elapsed = if should_trace_frozen_selection_drag_timing {
-			let cursor_update_started_at = Instant::now();
-			self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global);
+		let timing = self.run_cursor_move_updates(
+			should_trace_frozen_selection_drag_timing,
+			cursor_move_started_at,
+			old_monitor,
+			old_cursor,
+			monitor,
+			global,
+		);
 
-			Some(cursor_update_started_at.elapsed())
-		} else {
-			self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global);
+		if should_trace_frozen_selection_drag_timing {
+			self.trace_frozen_selection_drag_cursor_move(monitor, old_monitor, old_cursor, timing);
+		}
 
-			None
-		};
+		OverlayControl::Continue
+	}
 
+	fn run_cursor_move_updates(
+		&mut self,
+		should_trace_frozen_selection_drag_timing: bool,
+		cursor_move_started_at: Option<Instant>,
+		old_monitor: Option<MonitorRect>,
+		old_cursor: Option<GlobalPoint>,
+		monitor: MonitorRect,
+		global: GlobalPoint,
+	) -> FrozenSelectionDragCursorMoveTiming {
+		let cursor_update_elapsed =
+			Self::measure_duration_if(should_trace_frozen_selection_drag_timing, || {
+				self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global)
+			});
 		let previous_drag_rect = self.state.drag_rect;
-
-		let live_drag_update_elapsed = if should_trace_frozen_selection_drag_timing {
-			let live_drag_update_started_at = Instant::now();
-			self.update_live_drag_rect(monitor, global);
-
-			Some(live_drag_update_started_at.elapsed())
-		} else {
-			self.update_live_drag_rect(monitor, global);
-
-			None
-		};
+		let live_drag_update_elapsed =
+			Self::measure_duration_if(should_trace_frozen_selection_drag_timing, || {
+				self.update_live_drag_rect(monitor, global);
+			});
 		let (frozen_rect_changed, frozen_drag_update_elapsed) =
 			if should_trace_frozen_selection_drag_timing {
 				let frozen_drag_update_started_at = Instant::now();
@@ -3292,26 +3235,14 @@ impl OverlaySession {
 			} else {
 				(self.update_frozen_selection_drag_rect(global), None)
 			};
-		let sync_cursor_icons_elapsed = if should_trace_frozen_selection_drag_timing {
-			let sync_cursor_icons_started_at = Instant::now();
-			self.sync_overlay_cursor_icons();
-
-			Some(sync_cursor_icons_started_at.elapsed())
-		} else {
-			self.sync_overlay_cursor_icons();
-
-			None
-		};
-		let request_samples_elapsed = if should_trace_frozen_selection_drag_timing {
-			let request_samples_started_at = Instant::now();
-			self.request_cursor_move_samples(monitor, global);
-
-			Some(request_samples_started_at.elapsed())
-		} else {
-			self.request_cursor_move_samples(monitor, global);
-
-			None
-		};
+		let sync_cursor_icons_elapsed =
+			Self::measure_duration_if(should_trace_frozen_selection_drag_timing, || {
+				self.sync_overlay_cursor_icons();
+			});
+		let request_samples_elapsed =
+			Self::measure_duration_if(should_trace_frozen_selection_drag_timing, || {
+				self.request_cursor_move_samples(monitor, global);
+			});
 
 		if let Some(old_monitor) = old_monitor
 			&& old_monitor != monitor
@@ -3328,26 +3259,30 @@ impl OverlaySession {
 			self.request_redraw_for_monitor(monitor);
 		}
 
-		if should_trace_frozen_selection_drag_timing {
-			self.trace_frozen_selection_drag_cursor_move(
-				monitor,
-				old_monitor,
-				old_cursor,
-				FrozenSelectionDragCursorMoveTiming {
-					cursor_update_elapsed: cursor_update_elapsed.unwrap_or_default(),
-					live_drag_update_elapsed: live_drag_update_elapsed.unwrap_or_default(),
-					frozen_drag_update_elapsed: frozen_drag_update_elapsed.unwrap_or_default(),
-					frozen_rect_changed,
-					sync_cursor_icons_elapsed: sync_cursor_icons_elapsed.unwrap_or_default(),
-					request_samples_elapsed: request_samples_elapsed.unwrap_or_default(),
-					total_elapsed: cursor_move_started_at.map_or(Duration::ZERO, |started_at| {
-						started_at.elapsed()
-					}),
-				},
-			);
+		FrozenSelectionDragCursorMoveTiming {
+			cursor_update_elapsed: cursor_update_elapsed.unwrap_or_default(),
+			live_drag_update_elapsed: live_drag_update_elapsed.unwrap_or_default(),
+			frozen_drag_update_elapsed: frozen_drag_update_elapsed.unwrap_or_default(),
+			frozen_rect_changed,
+			sync_cursor_icons_elapsed: sync_cursor_icons_elapsed.unwrap_or_default(),
+			request_samples_elapsed: request_samples_elapsed.unwrap_or_default(),
+			total_elapsed: cursor_move_started_at
+				.map_or(Duration::ZERO, |started_at| started_at.elapsed()),
 		}
+	}
 
-		OverlayControl::Continue
+	fn measure_duration_if(enabled: bool, operation: impl FnOnce()) -> Option<Duration> {
+		if enabled {
+			let started_at = Instant::now();
+
+			operation();
+
+			Some(started_at.elapsed())
+		} else {
+			operation();
+
+			None
+		}
 	}
 
 	fn should_ignore_live_auxiliary_cursor_event(&self, window_id: WindowId) -> bool {

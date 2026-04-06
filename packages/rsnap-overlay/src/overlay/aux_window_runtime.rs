@@ -424,9 +424,11 @@ impl OverlaySession {
 		let Some(desired) = self.pending_toolbar_outer_pos else {
 			return;
 		};
+
 		if self.frozen_selection_drag_hides_auxiliary_windows() {
 			return;
 		}
+
 		let elapsed = now.duration_since(self.last_toolbar_window_move_at);
 		let interval = self
 			.repaint_interval_for_monitor(self.state.monitor.or(self.active_cursor_monitor()))

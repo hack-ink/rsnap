@@ -229,6 +229,7 @@ fn frozen_selection_drag_hides_auxiliary_windows_while_active() {
 
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 	session.toolbar_state.visible = true;
@@ -238,9 +239,7 @@ fn frozen_selection_drag_hides_auxiliary_windows_while_active() {
 
 	assert!(!session.frozen_selection_drag_hides_auxiliary_windows());
 	assert!(!session.should_hide_toolbar_window(monitor));
-
 	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
-
 	assert!(session.frozen_selection_drag_hides_auxiliary_windows());
 	assert!(!session.hud_window_visible);
 	assert!(!session.loupe_window_visible);
@@ -264,12 +263,14 @@ fn frozen_selection_drag_defers_pending_toolbar_window_move() {
 
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 
 	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
 
 	let last_move_at = session.last_toolbar_window_move_at;
+
 	session.pending_toolbar_outer_pos = Some(GlobalPoint::new(220, 260));
 
 	session.maybe_apply_pending_toolbar_window_move(last_move_at + Duration::from_millis(32));
@@ -286,6 +287,7 @@ fn frozen_selection_drag_skips_toolbar_focus_even_before_first_show() {
 
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 	session.toolbar_state.visible = true;
@@ -293,9 +295,7 @@ fn frozen_selection_drag_skips_toolbar_focus_even_before_first_show() {
 	assert!(!session.toolbar_window_visible);
 	assert!(!session.skip_toolbar_focus_on_next_show);
 	assert!(session.should_focus_frozen_toolbar_window_on_show());
-
 	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
-
 	assert!(session.skip_toolbar_focus_on_next_show);
 	assert!(!session.should_focus_frozen_toolbar_window_on_show());
 
