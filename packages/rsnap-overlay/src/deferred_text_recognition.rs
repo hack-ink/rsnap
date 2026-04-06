@@ -11,7 +11,7 @@ use std::{
 };
 
 #[cfg(target_os = "macos")]
-use image::{Rgba, RgbaImage, imageops};
+use image::{RgbaImage, imageops};
 
 #[cfg(target_os = "macos")]
 use crate::state::RectPoints;
@@ -21,25 +21,13 @@ use crate::{
 };
 
 #[cfg(target_os = "macos")]
-const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: Rgba<u8> = Rgba([246, 246, 246, 255]);
-#[cfg(target_os = "macos")]
-const WINDOW_CAPTURE_MATTE_DARK_RGBA: Rgba<u8> = Rgba([24, 24, 24, 255]);
-#[cfg(target_os = "macos")]
 const PUBLISH_GATE_PENDING_POLL_INTERVAL: Duration = Duration::from_millis(5);
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum DeferredTextRecognitionWindowMatte {
-	Light,
-	Dark,
-}
 
 #[cfg(target_os = "macos")]
 #[derive(Debug)]
 pub(crate) enum DeferredTextRecognitionImageSource {
 	Prepared { image: RgbaImage },
 	FrozenCrop { frozen_image: RgbaImage, crop_rect: Option<RectPoints> },
-	WindowImageWithMatte { window_image: RgbaImage, matte: DeferredTextRecognitionWindowMatte },
 }
 #[cfg(target_os = "macos")]
 impl DeferredTextRecognitionImageSource {
@@ -49,7 +37,6 @@ impl DeferredTextRecognitionImageSource {
 			Self::FrozenCrop { frozen_image, crop_rect } => crop_rect
 				.map(|crop_rect| (crop_rect.width, crop_rect.height))
 				.unwrap_or_else(|| frozen_image.dimensions()),
-			Self::WindowImageWithMatte { window_image, .. } => window_image.dimensions(),
 		}
 	}
 
@@ -60,9 +47,6 @@ impl DeferredTextRecognitionImageSource {
 			Self::FrozenCrop { frozen_image, crop_rect } => {
 				export_image_from_frozen_crop(frozen_image, *crop_rect)
 			},
-			Self::WindowImageWithMatte { window_image, matte } => {
-				Some(flatten_window_image_with_matte(window_image, *matte))
-			},
 		}
 	}
 
@@ -71,9 +55,6 @@ impl DeferredTextRecognitionImageSource {
 			Self::Prepared { image } => Some(image),
 			Self::FrozenCrop { frozen_image, crop_rect } => {
 				export_image_from_frozen_crop(&frozen_image, crop_rect)
-			},
-			Self::WindowImageWithMatte { window_image, matte } => {
-				Some(flatten_window_image_with_matte(&window_image, matte))
 			},
 		}
 	}
@@ -127,22 +108,6 @@ impl DeferredTextRecognitionRequest {
 			image_source: DeferredTextRecognitionImageSource::FrozenCrop {
 				frozen_image,
 				crop_rect,
-			},
-		}
-	}
-
-	pub(crate) fn window_image_with_matte(
-		request_id: u64,
-		requested_at: Instant,
-		window_image: RgbaImage,
-		matte: DeferredTextRecognitionWindowMatte,
-	) -> Self {
-		Self {
-			request_id,
-			requested_at,
-			image_source: DeferredTextRecognitionImageSource::WindowImageWithMatte {
-				window_image,
-				matte,
 			},
 		}
 	}
@@ -559,35 +524,6 @@ fn export_image_from_frozen_crop(
 }
 
 #[cfg(target_os = "macos")]
-fn flatten_window_image_with_matte(
-	window_image: &RgbaImage,
-	matte: DeferredTextRecognitionWindowMatte,
-) -> RgbaImage {
-	let matte = match matte {
-		DeferredTextRecognitionWindowMatte::Light => WINDOW_CAPTURE_MATTE_LIGHT_RGBA,
-		DeferredTextRecognitionWindowMatte::Dark => WINDOW_CAPTURE_MATTE_DARK_RGBA,
-	};
-	let mut flattened = window_image.clone();
-
-	for pixel in flattened.pixels_mut() {
-		let alpha = u16::from(pixel[3]);
-		let inv_alpha = 255_u16.saturating_sub(alpha);
-
-		for channel in 0..3 {
-			let src = u16::from(pixel[channel]);
-			let bg = u16::from(matte[channel]);
-			let blended = (src.saturating_mul(alpha) + bg.saturating_mul(inv_alpha) + 127) / 255;
-
-			pixel[channel] = blended as u8;
-		}
-
-		pixel[3] = 255;
-	}
-
-	flattened
-}
-
-#[cfg(target_os = "macos")]
 fn log_ocr_request_completed(
 	request_id: u64,
 	requested_at: Instant,
@@ -627,7 +563,7 @@ mod tests {
 
 	use crate::deferred_text_recognition::{
 		self, DeferredTextRecognitionImageSource, DeferredTextRecognitionPublishGate,
-		DeferredTextRecognitionRequest, DeferredTextRecognitionWindowMatte,
+		DeferredTextRecognitionRequest,
 	};
 	use crate::state::RectPoints;
 
@@ -651,21 +587,6 @@ mod tests {
 		assert_eq!(export.dimensions(), (2, 2));
 		assert_eq!(*export.get_pixel(0, 0), Rgba([10, 20, 30, 255]));
 		assert_eq!(*export.get_pixel(1, 1), Rgba([40, 50, 60, 255]));
-	}
-
-	#[test]
-	fn window_matte_source_flattens_alpha_before_ocr() {
-		let request = DeferredTextRecognitionRequest {
-			request_id: 11,
-			requested_at: Instant::now(),
-			image_source: DeferredTextRecognitionImageSource::WindowImageWithMatte {
-				window_image: RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 128])),
-				matte: DeferredTextRecognitionWindowMatte::Light,
-			},
-		};
-		let export = request.export_image().expect("export image");
-
-		assert_eq!(*export.get_pixel(0, 0), Rgba([123, 123, 123, 255]));
 	}
 
 	#[cfg(target_os = "macos")]
