@@ -305,6 +305,7 @@ pub struct OverlayState {
 	pub hovered_window_rect: Option<MonitorRectPoints>,
 	pub drag_rect: Option<MonitorRectPoints>,
 	pub frozen_capture_rect: Option<RectPoints>,
+	pub frozen_mosaic_preview_rect: Option<RectPoints>,
 	pub live_bg_monitor: Option<MonitorRect>,
 	pub live_bg_image: Option<RgbaImage>,
 	pub live_bg_generation: u64,
@@ -325,6 +326,7 @@ impl OverlayState {
 			hovered_window_rect: None,
 			drag_rect: None,
 			frozen_capture_rect: None,
+			frozen_mosaic_preview_rect: None,
 			live_bg_monitor: None,
 			live_bg_image: None,
 			live_bg_generation: 0,
@@ -353,6 +355,7 @@ impl OverlayState {
 	pub fn begin_freeze(&mut self, monitor: MonitorRect) {
 		self.monitor = Some(monitor);
 		self.frozen_image = None;
+		self.frozen_mosaic_preview_rect = None;
 		self.loupe = None;
 		self.mode = OverlayMode::Frozen;
 		self.frozen_generation = self.frozen_generation.wrapping_add(1);

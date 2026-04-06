@@ -22,6 +22,36 @@ use crate::overlay::tests::{
 use crate::overlay::{FrozenSelectionCorner, FrozenSelectionInteractionKind};
 use crate::worker::{WorkerErrorSource, WorkerResponse};
 
+fn test_mosaic_source_image() -> RgbaImage {
+	RgbaImage::from_fn(8, 8, |x, y| {
+		Rgba([(x * 17) as u8, (y * 23) as u8, ((x + y) * 11) as u8, 255])
+	})
+}
+
+fn average_patch_color(image: &RgbaImage, x: u32, y: u32, width: u32, height: u32) -> Rgba<u8> {
+	let mut sum = [0_u64; 4];
+	let mut samples = 0_u64;
+
+	for py in y..y.saturating_add(height) {
+		for px in x..x.saturating_add(width) {
+			let pixel = image.get_pixel(px, py);
+
+			sum[0] += u64::from(pixel[0]);
+			sum[1] += u64::from(pixel[1]);
+			sum[2] += u64::from(pixel[2]);
+			sum[3] += u64::from(pixel[3]);
+			samples += 1;
+		}
+	}
+
+	Rgba([
+		(sum[0] / samples) as u8,
+		(sum[1] / samples) as u8,
+		(sum[2] / samples) as u8,
+		(sum[3] / samples) as u8,
+	])
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn pending_freeze_capture_dispatches_even_with_seeded_preview() {
@@ -194,6 +224,85 @@ fn frozen_selection_drag_starts_corner_resize_from_handle_hit_zone() {
 			press_cursor_y: 115,
 		}
 	);
+}
+
+#[test]
+fn frozen_mosaic_drag_waits_for_final_capture_ready() {
+	let monitor = tests::test_monitor_with_scale(8, 8, 1_000);
+	let original = test_mosaic_source_image();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, original.clone());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+
+	assert!(!session.frozen_final_capture_ready());
+	assert!(!session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
+	assert!(!session.commit_frozen_mosaic_drag());
+	assert!(!session.undo_frozen_mosaic_edit());
+	assert!(!session.redo_frozen_mosaic_edit());
+	assert_eq!(session.state.frozen_mosaic_preview_rect, None);
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
+
+	session.authoritative_frozen_capture_ready = true;
+
+	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
+}
+
+#[test]
+fn frozen_mosaic_drag_updates_preview_rect_inside_capture_bounds() {
+	let monitor = tests::test_monitor_with_scale(8, 8, 1_000);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_mosaic_source_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(2, 2, 4, 4));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+	session.authoritative_frozen_capture_ready = true;
+
+	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(3, 3)));
+	assert!(session.update_frozen_mosaic_drag_rect(GlobalPoint::new(30, 30)));
+	assert_eq!(session.state.frozen_mosaic_preview_rect, Some(RectPoints::new(3, 3, 3, 3)));
+}
+
+#[test]
+fn frozen_mosaic_commit_round_trips_through_undo_and_redo() {
+	let monitor = tests::test_monitor_with_scale(8, 8, 1_000);
+	let original = test_mosaic_source_image();
+	let expected_fill = average_patch_color(&original, 1, 1, 4, 4);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, original.clone());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+	session.authoritative_frozen_capture_ready = true;
+
+	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
+	assert!(session.update_frozen_mosaic_drag_rect(GlobalPoint::new(4, 4)));
+	assert!(session.commit_frozen_mosaic_drag());
+
+	let edited =
+		session.state.frozen_image.clone().expect("mosaic commit should retain the frozen image");
+
+	assert_eq!(edited.get_pixel(2, 2), &expected_fill);
+	assert_eq!(edited.get_pixel(4, 4), &expected_fill);
+	assert_ne!(edited, original);
+	assert_eq!(session.state.frozen_mosaic_preview_rect, None);
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
+	assert!(session.undo_frozen_mosaic_edit());
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
+	assert!(!session.toolbar_state.undo_available);
+	assert!(session.toolbar_state.redo_available);
+	assert!(session.redo_frozen_mosaic_edit());
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&edited));
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
 }
 
 #[test]
@@ -512,6 +621,31 @@ fn auto_center_frozen_capture_rect_recenters_detected_content() {
 
 	assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
 	assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
+}
+
+#[test]
+fn auto_center_frozen_capture_rect_works_outside_pointer_mode() {
+	let monitor = tests::test_monitor_with_scale(80, 60, 2_000);
+	let capture_rect = RectPoints::new(20, 16, 40, 24);
+	let mut image = RgbaImage::from_pixel(160, 120, Rgba([14, 16, 20, 255]));
+	let mut session = OverlaySession::new();
+
+	for y in 40..52 {
+		for x in 52..68 {
+			image.put_pixel(x, y, Rgba([228, 232, 240, 255]));
+		}
+	}
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, image);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+
+	assert!(session.frozen_auto_center_available());
+	assert!(session.auto_center_frozen_capture_rect());
+	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(10, 11, 40, 24)));
 }
 
 #[test]

@@ -37,6 +37,7 @@ impl OverlaySession {
 			self.update_hud_window_position(monitor, global);
 			self.update_live_drag_rect(monitor, global);
 			self.update_frozen_selection_drag_rect(global);
+			self.update_frozen_mosaic_drag_rect(global);
 			self.sync_overlay_cursor_icons();
 			self.force_apply_pending_hud_and_loupe_moves();
 			self.request_redraw_hud_window();
@@ -93,6 +94,7 @@ impl OverlaySession {
 		self.update_hud_window_position(monitor, global);
 		self.update_live_drag_rect(monitor, global);
 		self.update_frozen_selection_drag_rect(global);
+		self.update_frozen_mosaic_drag_rect(global);
 		self.sync_overlay_cursor_icons();
 		self.force_apply_pending_hud_and_loupe_moves();
 		self.request_redraw_hud_window();
