@@ -2263,7 +2263,7 @@ impl WindowRenderer {
 				let response = if action_ready {
 					response.on_hover_text(tool.label())
 				} else {
-					response.on_hover_text(tool.unavailable_label())
+					response.on_hover_text(tool.unavailable_label(toolbar_state))
 				};
 				let hover_anim: f32 = if hovered { 1.0 } else { 0.0 };
 

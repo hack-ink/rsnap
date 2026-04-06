@@ -227,6 +227,31 @@ fn frozen_selection_drag_starts_corner_resize_from_handle_hit_zone() {
 }
 
 #[test]
+fn frozen_mosaic_drag_waits_for_final_capture_ready() {
+	let monitor = tests::test_monitor_with_scale(8, 8, 1_000);
+	let original = test_mosaic_source_image();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, original.clone());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+
+	assert!(!session.frozen_final_capture_ready());
+	assert!(!session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
+	assert!(!session.commit_frozen_mosaic_drag());
+	assert!(!session.undo_frozen_mosaic_edit());
+	assert!(!session.redo_frozen_mosaic_edit());
+	assert_eq!(session.state.frozen_mosaic_preview_rect, None);
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
+
+	session.authoritative_frozen_capture_ready = true;
+
+	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
+}
+
+#[test]
 fn frozen_mosaic_drag_updates_preview_rect_inside_capture_bounds() {
 	let monitor = tests::test_monitor_with_scale(8, 8, 1_000);
 	let mut session = OverlaySession::new();
@@ -236,6 +261,7 @@ fn frozen_mosaic_drag_updates_preview_rect_inside_capture_bounds() {
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(2, 2, 4, 4));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+	session.authoritative_frozen_capture_ready = true;
 
 	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(3, 3)));
 	assert!(session.update_frozen_mosaic_drag_rect(GlobalPoint::new(30, 30)));
@@ -254,6 +280,7 @@ fn frozen_mosaic_commit_round_trips_through_undo_and_redo() {
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+	session.authoritative_frozen_capture_ready = true;
 
 	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
 	assert!(session.update_frozen_mosaic_drag_rect(GlobalPoint::new(4, 4)));
