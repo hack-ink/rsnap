@@ -29,16 +29,18 @@ use std::mem;
 use std::panic;
 use std::ptr;
 use std::slice;
+#[cfg(target_os = "macos")]
+use std::sync::OnceLock;
 use std::{
 	borrow::Cow,
 	cmp::Ordering,
 	collections::{HashMap, HashSet},
 	path::PathBuf,
-	sync::{Arc, Mutex, OnceLock},
+	sync::{Arc, Mutex},
 	time::{Duration, Instant},
 };
 
-use color_eyre::eyre::{self, Result, WrapErr};
+use color_eyre::eyre::{self, Report, WrapErr};
 #[cfg(not(target_os = "macos"))]
 use device_query::DeviceQuery;
 use egui::FullOutput;
@@ -65,6 +67,7 @@ use image::{
 };
 #[cfg(target_os = "macos")]
 use objc::declare::ClassDecl;
+use objc::runtime::Sel;
 #[cfg(target_os = "macos")]
 use objc::runtime::{BOOL, Class, Object, YES};
 #[cfg(target_os = "macos")]
@@ -215,13 +218,15 @@ type ExternalScrollInputDrainReader =
 	Arc<dyn Fn(u64, Instant) -> Vec<ExternalScrollInputEvent> + Send + Sync>;
 
 #[cfg(target_os = "macos")]
-type ScrollCaptureStartGuard = Arc<dyn Fn() -> Result<bool> + Send + Sync>;
+type ScrollCaptureStartGuard = Arc<dyn Fn() -> color_eyre::eyre::Result<bool> + Send + Sync>;
 
 #[cfg(target_os = "macos")]
-type ScrollCaptureStartingHook = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+type ScrollCaptureStartingHook = Arc<dyn Fn() -> color_eyre::eyre::Result<()> + Send + Sync>;
 
 #[cfg(target_os = "macos")]
 type ScrollCaptureStartedHook = Arc<dyn Fn() + Send + Sync>;
+
+type Result<T, E = Report> = std::result::Result<T, E>;
 
 #[cfg(target_os = "macos")]
 const KCG_HID_EVENT_TAP: u32 = 0;
@@ -664,29 +669,6 @@ enum AcquiredSurfaceFrame {
 	Skipped(SurfaceFrameSkipReason),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct OverlayCursorRect {
-	rect: Rect,
-	icon: CursorIcon,
-}
-impl OverlayCursorRect {
-	const fn new(rect: Rect, icon: CursorIcon) -> Self {
-		Self { rect, icon }
-	}
-}
-
-fn overlay_cursor_rect_icon_at_point(
-	rects: &[OverlayCursorRect],
-	point: Pos2,
-) -> Option<CursorIcon> {
-	rects.iter().find(|entry| entry.rect.contains(point)).map(|entry| entry.icon)
-}
-
-fn sort_unique_axis_values(values: &mut Vec<f32>) {
-	values.sort_by(f32::total_cmp);
-	values.dedup_by(|a, b| (*a - *b).abs() <= f32::EPSILON);
-}
-
 #[cfg(target_os = "macos")]
 pub(super) struct MacOSOverlayCursorRectSupport {
 	view_key: usize,
@@ -699,9 +681,11 @@ impl MacOSOverlayCursorRectSupport {
 
 	fn sync_cursor_rects(&self, window: &Window, rects: &[OverlayCursorRect]) {
 		macos_resize_overlay_cursor_view(window, self.view_key);
+
 		if macos_set_overlay_view_cursor_rects(self.view_key, rects) {
 			macos_invalidate_overlay_cursor_rects(self.view_key);
 		}
+
 		macos_apply_overlay_cursor_for_current_pointer(self.view_key);
 	}
 }
@@ -1814,6 +1798,7 @@ impl OverlaySession {
 		}
 	}
 
+	#[cfg(target_os = "macos")]
 	fn frozen_selection_cursor_rects_for_monitor(
 		&self,
 		monitor: MonitorRect,
@@ -1854,6 +1839,7 @@ impl OverlaySession {
 			.collect()
 	}
 
+	#[cfg(target_os = "macos")]
 	fn frozen_selection_hover_cursor_rects(capture_rect: RectPoints) -> Vec<OverlayCursorRect> {
 		let selection_rect = Rect::from_min_size(
 			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
@@ -1892,12 +1878,14 @@ impl OverlaySession {
 
 		for x_pair in x_edges.windows(2) {
 			let [min_x, max_x] = [x_pair[0], x_pair[1]];
+
 			if max_x <= min_x {
 				continue;
 			}
 
 			for y_pair in y_edges.windows(2) {
 				let [min_y, max_y] = [y_pair[0], y_pair[1]];
+
 				if max_y <= min_y {
 					continue;
 				}
@@ -1927,7 +1915,6 @@ impl OverlaySession {
 
 			#[cfg(not(target_os = "macos"))]
 			overlay_window.window.set_cursor(icon);
-
 			#[cfg(target_os = "macos")]
 			overlay_window.cursor_rects.sync_cursor_rects(
 				overlay_window.window.as_ref(),
@@ -5605,6 +5592,19 @@ impl Default for OverlaySession {
 	}
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct OverlayCursorRect {
+	rect: Rect,
+	icon: CursorIcon,
+}
+#[cfg(target_os = "macos")]
+impl OverlayCursorRect {
+	const fn new(rect: Rect, icon: CursorIcon) -> Self {
+		Self { rect, icon }
+	}
+}
+
 #[derive(Debug)]
 struct OverlayExitMetadata<'a> {
 	exit_kind: &'static str,
@@ -5663,6 +5663,34 @@ struct InitialSessionRuntime {
 struct MacOSCGPoint {
 	x: f64,
 	y: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MacOSOverlayPoint {
+	x: f64,
+	y: f64,
+}
+#[cfg(target_os = "macos")]
+unsafe impl Encode for MacOSOverlayPoint {
+	fn encode() -> Encoding {
+		unsafe { Encoding::from_str("{CGPoint=dd}") }
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn overlay_cursor_rect_icon_at_point(
+	rects: &[OverlayCursorRect],
+	point: Pos2,
+) -> Option<CursorIcon> {
+	rects.iter().find(|entry| entry.rect.contains(point)).map(|entry| entry.icon)
+}
+
+#[cfg(target_os = "macos")]
+fn sort_unique_axis_values(values: &mut Vec<f32>) {
+	values.sort_by(f32::total_cmp);
+	values.dedup_by(|a, b| (*a - *b).abs() <= f32::EPSILON);
 }
 
 fn should_request_overlay_redraw_after_surface_skip(
@@ -5771,6 +5799,39 @@ unsafe extern "C" {
 }
 
 #[cfg(target_os = "macos")]
+fn macos_install_overlay_cursor_rect_support(
+	window: &Window,
+) -> std::result::Result<MacOSOverlayCursorRectSupport, String> {
+	let _ = MainThreadMarker::new().ok_or_else(|| {
+		String::from("Installing macOS overlay cursor rect support requires the main thread.")
+	})?;
+	let Some(host_view) = macos_overlay_window_ns_view(window) else {
+		return Err(String::from("Overlay cursor rect support requires an AppKit window handle."));
+	};
+	let bounds: NSRect = unsafe { objc::msg_send![host_view, bounds] };
+	let overlay_class = macos_overlay_cursor_view_class();
+	let overlay_view: *mut Object = unsafe {
+		let overlay_view: *mut Object = objc::msg_send![overlay_class, alloc];
+
+		objc::msg_send![overlay_view, initWithFrame: bounds]
+	};
+
+	if overlay_view.is_null() {
+		return Err(String::from("Failed to create macOS overlay cursor view."));
+	}
+
+	unsafe {
+		const NS_VIEW_WIDTH_SIZABLE: usize = 2;
+		const NS_VIEW_HEIGHT_SIZABLE: usize = 16;
+
+		let _: () = objc::msg_send![overlay_view, setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE];
+		let _: () = objc::msg_send![host_view, addSubview: overlay_view];
+	}
+
+	Ok(MacOSOverlayCursorRectSupport::new(overlay_view as usize))
+}
+
+#[cfg(target_os = "macos")]
 fn macos_mouse_location() -> Option<GlobalPoint> {
 	let event = unsafe { CGEventCreate(ptr::null()) };
 
@@ -5800,10 +5861,10 @@ fn macos_set_overlay_view_cursor_rects(view_key: usize, rects: &[OverlayCursorRe
 		Ok(mut guard) => {
 			let unchanged =
 				guard.get(&view_key).is_some_and(|existing| existing.as_slice() == rects);
+
 			if unchanged || (rects.is_empty() && !guard.contains_key(&view_key)) {
 				return false;
 			}
-
 			if rects.is_empty() {
 				guard.remove(&view_key);
 			} else {
@@ -5814,10 +5875,10 @@ fn macos_set_overlay_view_cursor_rects(view_key: usize, rects: &[OverlayCursorRe
 			let mut guard = poisoned.into_inner();
 			let unchanged =
 				guard.get(&view_key).is_some_and(|existing| existing.as_slice() == rects);
+
 			if unchanged || (rects.is_empty() && !guard.contains_key(&view_key)) {
 				return false;
 			}
-
 			if rects.is_empty() {
 				guard.remove(&view_key);
 			} else {
@@ -5848,6 +5909,7 @@ fn macos_cursor_object_for_icon(icon: CursorIcon) -> *mut Object {
 		CursorIcon::Grabbing => unsafe { objc::msg_send![cursor_class, closedHandCursor] },
 		CursorIcon::NeswResize => unsafe {
 			let responds: bool = objc::msg_send![cursor_class, respondsToSelector: objc::sel!(_windowResizeNorthEastSouthWestCursor)];
+
 			if responds {
 				objc::msg_send![cursor_class, performSelector: objc::sel!(_windowResizeNorthEastSouthWestCursor)]
 			} else {
@@ -5856,6 +5918,7 @@ fn macos_cursor_object_for_icon(icon: CursorIcon) -> *mut Object {
 		},
 		CursorIcon::NwseResize => unsafe {
 			let responds: bool = objc::msg_send![cursor_class, respondsToSelector: objc::sel!(_windowResizeNorthWestSouthEastCursor)];
+
 			if responds {
 				objc::msg_send![cursor_class, performSelector: objc::sel!(_windowResizeNorthWestSouthEastCursor)]
 			} else {
@@ -5867,44 +5930,25 @@ fn macos_cursor_object_for_icon(icon: CursorIcon) -> *mut Object {
 }
 
 #[cfg(target_os = "macos")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct MacOSOverlayPoint {
-	x: f64,
-	y: f64,
-}
-
-#[cfg(target_os = "macos")]
-unsafe impl Encode for MacOSOverlayPoint {
-	fn encode() -> Encoding {
-		unsafe { Encoding::from_str("{CGPoint=dd}") }
-	}
-}
-
-#[cfg(target_os = "macos")]
-extern "C" fn macos_overlay_cursor_view_is_flipped(
-	_this: &Object,
-	_cmd: objc::runtime::Sel,
-) -> BOOL {
+extern "C" fn macos_overlay_cursor_view_is_flipped(_this: &Object, _cmd: Sel) -> BOOL {
 	let _ = _cmd;
+
 	YES
 }
 
 #[cfg(target_os = "macos")]
 extern "C" fn macos_overlay_cursor_view_hit_test(
 	_this: &Object,
-	_cmd: objc::runtime::Sel,
+	_cmd: Sel,
 	_point: MacOSOverlayPoint,
 ) -> *mut Object {
 	let _ = (_cmd, _point);
+
 	ptr::null_mut()
 }
 
 #[cfg(target_os = "macos")]
-extern "C" fn macos_overlay_cursor_view_reset_cursor_rects(
-	this: &Object,
-	_cmd: objc::runtime::Sel,
-) {
+extern "C" fn macos_overlay_cursor_view_reset_cursor_rects(this: &Object, _cmd: Sel) {
 	let _ = _cmd;
 	let view_key = (this as *const Object) as usize;
 	let Some(entries) = macos_overlay_view_cursor_rect_entries(view_key) else {
@@ -5913,6 +5957,7 @@ extern "C" fn macos_overlay_cursor_view_reset_cursor_rects(
 
 	for entry in entries {
 		let cursor = macos_cursor_object_for_icon(entry.icon);
+
 		if cursor.is_null() {
 			continue;
 		}
@@ -5944,18 +5989,16 @@ fn macos_overlay_cursor_view_class() -> *const Class {
 		unsafe {
 			decl.add_method(
 				objc::sel!(isFlipped),
-				macos_overlay_cursor_view_is_flipped
-					as extern "C" fn(&Object, objc::runtime::Sel) -> BOOL,
+				macos_overlay_cursor_view_is_flipped as extern "C" fn(&Object, Sel) -> BOOL,
 			);
 			decl.add_method(
 				objc::sel!(hitTest:),
 				macos_overlay_cursor_view_hit_test
-					as extern "C" fn(&Object, objc::runtime::Sel, MacOSOverlayPoint) -> *mut Object,
+					as extern "C" fn(&Object, Sel, MacOSOverlayPoint) -> *mut Object,
 			);
 			decl.add_method(
 				objc::sel!(resetCursorRects),
-				macos_overlay_cursor_view_reset_cursor_rects
-					as extern "C" fn(&Object, objc::runtime::Sel),
+				macos_overlay_cursor_view_reset_cursor_rects as extern "C" fn(&Object, Sel),
 			);
 		}
 
@@ -5981,6 +6024,7 @@ fn macos_resize_overlay_cursor_view(window: &Window, overlay_view_key: usize) {
 		return;
 	};
 	let overlay_view = overlay_view_key as *mut Object;
+
 	if overlay_view.is_null() {
 		return;
 	}
@@ -5995,12 +6039,14 @@ fn macos_resize_overlay_cursor_view(window: &Window, overlay_view_key: usize) {
 #[cfg(target_os = "macos")]
 fn macos_invalidate_overlay_cursor_rects(overlay_view_key: usize) {
 	let overlay_view = overlay_view_key as *mut Object;
+
 	if overlay_view.is_null() {
 		return;
 	}
 
 	unsafe {
 		let ns_window: *mut Object = objc::msg_send![overlay_view, window];
+
 		if ns_window.is_null() {
 			return;
 		}
@@ -6012,12 +6058,14 @@ fn macos_invalidate_overlay_cursor_rects(overlay_view_key: usize) {
 #[cfg(target_os = "macos")]
 fn macos_overlay_view_current_local_point(overlay_view_key: usize) -> Option<Pos2> {
 	let overlay_view = overlay_view_key as *mut Object;
+
 	if overlay_view.is_null() {
 		return None;
 	}
 
 	unsafe {
 		let ns_window: *mut Object = objc::msg_send![overlay_view, window];
+
 		if ns_window.is_null() {
 			return None;
 		}
@@ -6037,10 +6085,10 @@ fn macos_apply_overlay_cursor_for_current_pointer(overlay_view_key: usize) {
 	let Some(local_point) = macos_overlay_view_current_local_point(overlay_view_key) else {
 		return;
 	};
-
 	let icon =
 		overlay_cursor_rect_icon_at_point(&entries, local_point).unwrap_or(CursorIcon::Default);
 	let cursor = macos_cursor_object_for_icon(icon);
+
 	if cursor.is_null() {
 		return;
 	}
@@ -6053,47 +6101,18 @@ fn macos_apply_overlay_cursor_for_current_pointer(overlay_view_key: usize) {
 #[cfg(target_os = "macos")]
 fn macos_remove_overlay_cursor_view(overlay_view_key: usize) {
 	let overlay_view = overlay_view_key as *mut Object;
+
 	if overlay_view.is_null() {
 		return;
 	}
 
 	unsafe {
 		let superview: *mut Object = objc::msg_send![overlay_view, superview];
+
 		if !superview.is_null() {
 			let _: () = objc::msg_send![overlay_view, removeFromSuperview];
 		}
 	}
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn macos_install_overlay_cursor_rect_support(
-	window: &Window,
-) -> std::result::Result<MacOSOverlayCursorRectSupport, String> {
-	let _ = MainThreadMarker::new().ok_or_else(|| {
-		String::from("Installing macOS overlay cursor rect support requires the main thread.")
-	})?;
-	let Some(host_view) = macos_overlay_window_ns_view(window) else {
-		return Err(String::from("Overlay cursor rect support requires an AppKit window handle."));
-	};
-	let bounds: NSRect = unsafe { objc::msg_send![host_view, bounds] };
-	let overlay_class = macos_overlay_cursor_view_class();
-
-	let overlay_view: *mut Object = unsafe {
-		let overlay_view: *mut Object = objc::msg_send![overlay_class, alloc];
-		objc::msg_send![overlay_view, initWithFrame: bounds]
-	};
-	if overlay_view.is_null() {
-		return Err(String::from("Failed to create macOS overlay cursor view."));
-	}
-
-	unsafe {
-		const NS_VIEW_WIDTH_SIZABLE: usize = 2;
-		const NS_VIEW_HEIGHT_SIZABLE: usize = 16;
-		let _: () = objc::msg_send![overlay_view, setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE];
-		let _: () = objc::msg_send![host_view, addSubview: overlay_view];
-	}
-
-	Ok(MacOSOverlayCursorRectSupport::new(overlay_view as usize))
 }
 
 #[cfg(target_os = "macos")]
@@ -6137,7 +6156,7 @@ fn macos_make_window_key(window: &Window) {
 fn macos_post_scroll_wheel_event(
 	delta: MacOSScrollWheelEvent,
 	target_point: GlobalPoint,
-) -> Result<()> {
+) -> color_eyre::eyre::Result<()> {
 	let units = delta.units;
 	let wheel1 = delta.posted_y;
 	let wheel2 = delta.posted_x;

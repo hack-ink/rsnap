@@ -597,9 +597,9 @@ impl OverlaySession {
 
 			#[cfg(target_os = "macos")]
 			overlay::macos_configure_overlay_window_mouse_moved_events(window.as_ref());
+
 			#[cfg(target_os = "macos")]
 			let cursor_rects = overlay::macos_install_overlay_cursor_rect_support(window.as_ref())?;
-
 			let refresh_rate_millihertz =
 				window.current_monitor().and_then(|monitor| monitor.refresh_rate_millihertz());
 

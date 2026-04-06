@@ -479,6 +479,7 @@ fn frozen_selection_cursor_rects_use_native_handle_hover_and_full_window_resize_
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 
 	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
+
 	assert_eq!(
 		overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(95.0, 115.0)),
 		Some(CursorIcon::NwseResize)
@@ -499,6 +500,7 @@ fn frozen_selection_cursor_rects_use_native_handle_hover_and_full_window_resize_
 	};
 
 	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
+
 	assert_eq!(rects.len(), 1);
 	assert_eq!(rects[0].icon, CursorIcon::NwseResize);
 	assert_eq!(rects[0].rect.min, Pos2::ZERO);
