@@ -1945,7 +1945,9 @@ impl OverlaySession {
 					overlay_bounds,
 					Self::frozen_selection_resize_cursor_icon(corner),
 				)],
-				FrozenSelectionInteractionKind::Move => Vec::new(),
+				FrozenSelectionInteractionKind::Move => {
+					vec![OverlayCursorRect::new(overlay_bounds, CursorIcon::Grabbing)]
+				},
 			};
 		}
 
@@ -6642,6 +6644,7 @@ fn macos_cursor_object_for_icon(icon: CursorIcon) -> *mut Object {
 	let cursor_class = objc::class!(NSCursor);
 
 	match icon {
+		CursorIcon::Crosshair => unsafe { objc::msg_send![cursor_class, crosshairCursor] },
 		CursorIcon::Grab => unsafe { objc::msg_send![cursor_class, openHandCursor] },
 		CursorIcon::Grabbing => unsafe { objc::msg_send![cursor_class, closedHandCursor] },
 		CursorIcon::NeswResize => unsafe {
