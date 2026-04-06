@@ -624,6 +624,31 @@ fn auto_center_frozen_capture_rect_recenters_detected_content() {
 }
 
 #[test]
+fn auto_center_frozen_capture_rect_works_outside_pointer_mode() {
+	let monitor = tests::test_monitor_with_scale(80, 60, 2_000);
+	let capture_rect = RectPoints::new(20, 16, 40, 24);
+	let mut image = RgbaImage::from_pixel(160, 120, Rgba([14, 16, 20, 255]));
+	let mut session = OverlaySession::new();
+
+	for y in 40..52 {
+		for x in 52..68 {
+			image.put_pixel(x, y, Rgba([228, 232, 240, 255]));
+		}
+	}
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, image);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+
+	assert!(session.frozen_auto_center_available());
+	assert!(session.auto_center_frozen_capture_rect());
+	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(10, 11, 40, 24)));
+}
+
+#[test]
 fn frozen_selection_resize_hit_test_prefers_corner_handles() {
 	let capture_rect = RectPoints::new(100, 120, 8, 8);
 
