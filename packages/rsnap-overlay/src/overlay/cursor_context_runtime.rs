@@ -8,6 +8,17 @@ use crate::overlay::{
 };
 
 impl OverlaySession {
+	fn preferred_device_cursor_point(&self) -> Option<GlobalPoint> {
+		if let (Some(event_cursor_at), Some((_event_monitor, event_global))) =
+			(self.last_event_cursor_at, self.last_event_cursor)
+			&& event_cursor_at.elapsed() <= LIVE_EVENT_CURSOR_CACHE_TTL
+		{
+			return Some(event_global);
+		}
+
+		self.state.cursor
+	}
+
 	pub(super) fn initialize_cursor_state_for_cursor(
 		&mut self,
 		cursor: GlobalPoint,
@@ -173,11 +184,32 @@ impl OverlaySession {
 		&self,
 		raw: GlobalPoint,
 	) -> Option<(MonitorRect, GlobalPoint, DeviceCursorPointSource)> {
-		if let Some(monitor) = self.monitor_at(raw) {
-			return Some((monitor, raw, DeviceCursorPointSource::DevicePoints));
-		}
+		let monitors: Vec<_> = self.windows.values().map(|window| window.monitor).collect();
 
-		for monitor in self.windows.values().map(|window| window.monitor) {
+		Self::resolve_device_cursor_point_for_monitors(
+			&monitors,
+			raw,
+			self.preferred_device_cursor_point(),
+		)
+	}
+
+	pub(super) fn resolve_device_cursor_point_for_monitors(
+		monitors: &[MonitorRect],
+		raw: GlobalPoint,
+		preferred: Option<GlobalPoint>,
+	) -> Option<(MonitorRect, GlobalPoint, DeviceCursorPointSource)> {
+		let mut candidates = Vec::with_capacity(monitors.len().saturating_mul(2));
+
+		for &monitor in monitors {
+			if monitor.contains(raw) {
+				Self::push_device_cursor_candidate(
+					&mut candidates,
+					monitor,
+					raw,
+					DeviceCursorPointSource::DevicePoints,
+				);
+			}
+
 			let sf = f64::from(monitor.scale_factor()).max(1.0);
 			let origin_px_x = (monitor.origin.x as f64 * sf).round() as i64;
 			let origin_px_y = (monitor.origin.y as f64 * sf).round() as i64;
@@ -210,11 +242,53 @@ impl OverlaySession {
 			);
 
 			if monitor.contains(candidate) {
-				return Some((monitor, candidate, DeviceCursorPointSource::DevicePixelsFallback));
+				Self::push_device_cursor_candidate(
+					&mut candidates,
+					monitor,
+					candidate,
+					DeviceCursorPointSource::DevicePixelsFallback,
+				);
 			}
 		}
 
-		None
+		let preferred = preferred.unwrap_or(raw);
+
+		candidates.into_iter().min_by_key(|(_, global, source)| {
+			(
+				Self::device_cursor_distance_sq(*global, preferred),
+				Self::device_cursor_source_rank(*source),
+			)
+		})
+	}
+
+	fn push_device_cursor_candidate(
+		candidates: &mut Vec<(MonitorRect, GlobalPoint, DeviceCursorPointSource)>,
+		monitor: MonitorRect,
+		global: GlobalPoint,
+		source: DeviceCursorPointSource,
+	) {
+		if candidates.iter().any(|(existing_monitor, existing_global, _)| {
+			*existing_monitor == monitor && *existing_global == global
+		}) {
+			return;
+		}
+
+		candidates.push((monitor, global, source));
+	}
+
+	fn device_cursor_distance_sq(a: GlobalPoint, b: GlobalPoint) -> i64 {
+		let dx = i64::from(a.x) - i64::from(b.x);
+		let dy = i64::from(a.y) - i64::from(b.y);
+
+		dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy))
+	}
+
+	fn device_cursor_source_rank(source: DeviceCursorPointSource) -> u8 {
+		match source {
+			DeviceCursorPointSource::DevicePoints => 0,
+			DeviceCursorPointSource::DevicePixelsFallback => 1,
+			DeviceCursorPointSource::EventRecentFallback => 2,
+		}
 	}
 
 	pub(super) fn resolve_live_cursor_point(

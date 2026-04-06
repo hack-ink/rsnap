@@ -434,7 +434,7 @@ fn frozen_selection_cursor_icon_uses_corner_resize_hover() {
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 	session.state.cursor = Some(GlobalPoint::new(95, 115));
 
-	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::NwResize);
+	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::NwseResize);
 
 	session.state.cursor = Some(GlobalPoint::new(150, 180));
 
@@ -462,7 +462,76 @@ fn frozen_selection_cursor_icon_tracks_active_resize_drag() {
 		press_cursor_y: 360,
 	};
 
-	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::SeResize);
+	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::NwseResize);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_selection_cursor_rects_use_native_handle_hover_and_full_window_resize_drag() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
+	assert_eq!(
+		overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(95.0, 115.0)),
+		Some(CursorIcon::NwseResize)
+	);
+	assert_eq!(
+		overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(305.0, 115.0)),
+		Some(CursorIcon::NeswResize)
+	);
+
+	session.frozen_selection_drag = FrozenSelectionDragState {
+		active: true,
+		interaction: FrozenSelectionInteractionKind::Resize(FrozenSelectionCorner::TopLeft),
+		anchor_rect: capture_rect,
+		pointer_offset_x: 0,
+		pointer_offset_y: 0,
+		press_cursor_x: 100,
+		press_cursor_y: 120,
+	};
+
+	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
+	assert_eq!(rects.len(), 1);
+	assert_eq!(rects[0].icon, CursorIcon::NwseResize);
+	assert_eq!(rects[0].rect.min, Pos2::ZERO);
+	assert_eq!(rects[0].rect.max, Pos2::new(monitor.width as f32, monitor.height as f32));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_selection_cursor_rects_match_resize_hit_test_for_tiny_overlapping_handles() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 8, 8);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
+	let top_overlap = Pos2::new(107.0, 117.0);
+	let center_inside = Pos2::new(104.0, 124.0);
+
+	assert_eq!(
+		WindowRenderer::frozen_selection_resize_hit_test(capture_rect, top_overlap),
+		Some(FrozenSelectionCorner::TopRight)
+	);
+	assert_eq!(
+		overlay::overlay_cursor_rect_icon_at_point(&rects, top_overlap),
+		Some(CursorIcon::NeswResize)
+	);
+	assert_eq!(WindowRenderer::frozen_selection_resize_hit_test(capture_rect, center_inside), None);
+	assert_eq!(overlay::overlay_cursor_rect_icon_at_point(&rects, center_inside), None);
 }
 
 #[test]
