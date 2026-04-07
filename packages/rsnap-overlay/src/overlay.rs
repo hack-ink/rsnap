@@ -2015,9 +2015,16 @@ impl OverlaySession {
 
 				let rect = Rect::from_min_max(Pos2::new(min_x, min_y), Pos2::new(max_x, max_y));
 				let point = rect.center();
-				let Some(corner) =
-					WindowRenderer::frozen_selection_resize_hit_test(capture_rect, point)
-				else {
+				let Some(interaction) = Self::frozen_selection_interaction_kind(
+					capture_rect,
+					point.x as u32,
+					point.y as u32,
+				) else {
+					continue;
+				};
+				let FrozenSelectionInteractionKind::Resize(corner) = interaction else {
+					rects.push(OverlayCursorRect::new(rect, CursorIcon::Grab));
+
 					continue;
 				};
 				let icon = Self::frozen_selection_resize_cursor_icon(corner);

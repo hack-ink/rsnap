@@ -745,6 +745,10 @@ fn frozen_selection_cursor_rects_use_native_handle_hover_and_full_window_resize_
 		overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(305.0, 115.0)),
 		Some(CursorIcon::NeswResize)
 	);
+	assert_eq!(
+		overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(150.0, 180.0)),
+		Some(CursorIcon::Grab)
+	);
 
 	session.frozen_selection_drag = FrozenSelectionDragState {
 		active: true,
@@ -871,7 +875,10 @@ fn frozen_selection_cursor_rects_match_resize_hit_test_for_tiny_overlapping_hand
 		Some(CursorIcon::NwseResize)
 	);
 	assert_eq!(WindowRenderer::frozen_selection_resize_hit_test(capture_rect, center_inside), None);
-	assert_eq!(overlay::overlay_cursor_rect_icon_at_point(&rects, center_inside), None);
+	assert_eq!(
+		overlay::overlay_cursor_rect_icon_at_point(&rects, center_inside),
+		Some(CursorIcon::Grab)
+	);
 }
 
 #[test]
