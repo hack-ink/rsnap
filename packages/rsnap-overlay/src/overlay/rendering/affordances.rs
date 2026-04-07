@@ -9,7 +9,8 @@ use crate::overlay::rendering::{
 };
 #[allow(unused_imports)]
 use crate::overlay::{
-	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX,
+	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_BRUSH_COLOR_RGBA,
+	FROZEN_BRUSH_STROKE_WIDTH_POINTS, FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX,
 	FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_CORNER_KEEPOUT_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_HIT_OFFSET_POINTS,
@@ -18,13 +19,13 @@ use crate::overlay::{
 	FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FROZEN_SELECTION_SCRIM_ALPHA_DARK,
 	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TOOLBAR_BUTTON_SIZE_POINTS,
-	FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId, FrozenCaptureSource,
+	FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId, FrozenBrushState, FrozenCaptureSource,
 	FrozenSelectionCorner, FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool,
 	HUD_PILL_CORNER_RADIUS_POINTS, HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_INNER_MARGIN_Y_POINTS,
 	HUD_PILL_STROKE_WIDTH_POINTS, HudPillGeometry, HudTheme, Id,
 	LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK, LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT,
 	LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh, MonitorRect, Order, OverlayMode,
-	OverlayState, Painter, Pos2, Rect, RectPoints, SELECTION_DASHED_BORDER_ALPHA,
+	OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints, SELECTION_DASHED_BORDER_ALPHA,
 	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
 	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_FLOW_CORE_FLOW_WIDTH,
 	SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST, SELECTION_FLOW_LIGHT_PALETTE,
@@ -137,6 +138,7 @@ impl WindowRenderer {
 		frozen_selection_resize_handles_enabled: bool,
 		frozen_capture_source: FrozenCaptureSource,
 		frozen_toolbar_reserved_rect: Option<Rect>,
+		frozen_brush_state: Option<&FrozenBrushState>,
 		_frozen_capture_is_fullscreen_fallback: bool,
 		_selection_flow_enabled: bool,
 		_selection_flow_stroke_width_px: f32,
@@ -199,8 +201,97 @@ impl WindowRenderer {
 				selection_dashed_border_cache,
 			);
 		}
+		if let Some(frozen_brush_state) = frozen_brush_state {
+			let brush_painter = painter.with_clip_rect(rect);
+
+			has_affordance |= Self::render_frozen_brush_strokes(&brush_painter, frozen_brush_state);
+		}
 
 		has_affordance
+	}
+
+	pub(in crate::overlay) fn render_frozen_brush_strokes(
+		painter: &Painter,
+		frozen_brush_state: &FrozenBrushState,
+	) -> bool {
+		let color = Color32::from_rgba_unmultiplied(
+			FROZEN_BRUSH_COLOR_RGBA[0],
+			FROZEN_BRUSH_COLOR_RGBA[1],
+			FROZEN_BRUSH_COLOR_RGBA[2],
+			FROZEN_BRUSH_COLOR_RGBA[3],
+		);
+		let radius = FROZEN_BRUSH_STROKE_WIDTH_POINTS * 0.5;
+		let mut drew = false;
+
+		for brush in &frozen_brush_state.committed_strokes {
+			drew |= Self::paint_frozen_brush_stroke(painter, &brush.points, radius, color);
+		}
+
+		if let Some(active_stroke) = &frozen_brush_state.active_stroke {
+			let preview_points = OverlaySession::preview_frozen_brush_points(active_stroke);
+
+			drew |= Self::paint_frozen_brush_stroke(painter, &preview_points, radius, color);
+		}
+
+		drew
+	}
+
+	fn paint_frozen_brush_stroke(
+		painter: &Painter,
+		points: &[Pos2],
+		radius: f32,
+		color: Color32,
+	) -> bool {
+		let rendered_points = OverlaySession::rendered_frozen_brush_points(
+			points,
+			overlay::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
+		);
+
+		match rendered_points.as_slice() {
+			[] => false,
+			[point] => {
+				painter.circle_filled(*point, radius, color);
+
+				true
+			},
+			_ => {
+				let first = rendered_points[0];
+				let second = rendered_points[1];
+				let penultimate = rendered_points[rendered_points.len().saturating_sub(2)];
+				let last = rendered_points[rendered_points.len().saturating_sub(1)];
+				let total_length = rendered_points
+					.windows(2)
+					.fold(0.0, |length, window| length + window[0].distance(window[1]));
+				let max_cap_inset = (total_length * 0.5 - 0.01).max(0.0);
+				let cap_inset = radius.min(max_cap_inset);
+				let mut body_points = rendered_points.clone();
+
+				if cap_inset > 0.0 {
+					let start_delta = second - first;
+
+					if start_delta.length_sq() > f32::EPSILON {
+						let start_dir = start_delta.normalized();
+
+						body_points[0] = first + (start_dir * cap_inset);
+					}
+
+					let end_delta = last - penultimate;
+
+					if end_delta.length_sq() > f32::EPSILON {
+						let end_dir = end_delta.normalized();
+						let last_index = body_points.len().saturating_sub(1);
+
+						body_points[last_index] = last - (end_dir * cap_inset);
+					}
+				}
+
+				painter.add(Shape::line(body_points, Stroke::new(radius * 2.0, color)));
+				painter.circle_filled(first, radius, color);
+				painter.circle_filled(last, radius, color);
+
+				true
+			},
+		}
 	}
 
 	pub(in crate::overlay) fn frozen_capture_focus_rect(

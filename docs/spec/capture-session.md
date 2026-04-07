@@ -16,6 +16,7 @@ Defines:
 - capture-session entry, live-mode, frozen-mode, and export invariants
 - hovered-window, region-selection, and fullscreen fallback behavior
 - the current macOS scroll-capture contract
+- the presence of Frozen-mode annotation state in session output
 
 This repository contains a pure-Rust screenshot prototype targeting macOS first, with a
 cross-platform architecture.
@@ -61,6 +62,8 @@ cross-platform architecture.
    - `Space` -> copy the frozen cropped PNG (region/window/fullscreen) to the system clipboard, then exit
    - On macOS, the frozen toolbar may expose `Recognize Text`, which runs Apple Vision OCR on the current frozen capture, copies the recognized text to the clipboard, and exits
    - Cmd+S (macOS) / Ctrl+S -> save the frozen cropped PNG to disk, then exit
+   - In Frozen mode, toolbar-driven annotations are part of the frozen capture state; the pen-tool
+     contract lives in `docs/spec/annotation-pen.md`
    - Esc -> cancel and exit without copying
    - After a dragged-region freeze enters Frozen mode, dragging inside the bright region
      repositions the frozen capture rect without resizing it and keeps it on the same monitor
@@ -195,5 +198,6 @@ Research and cross-platform notes live in:
 
 ## Current non-goals
 
-- Annotation/editor UI, pinning, and advanced editing tools.
+- Rich annotation/editor tooling beyond the current frozen toolbar tools, pinning, and advanced
+  editing workflows.
 - Cross-monitor selection and cross-monitor window capture behavior.
