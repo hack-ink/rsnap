@@ -637,11 +637,7 @@ fn preview_frozen_brush_points_follow_modeled_centerline_instead_of_raw_wobble()
 			Pos2::new(7.0, 0.18),
 			Pos2::new(8.0, 0.0),
 		],
-		points: vec![
-			Pos2::new(0.0, 0.0),
-			Pos2::new(4.0, 0.04),
-			Pos2::new(8.0, 0.0),
-		],
+		points: vec![Pos2::new(0.0, 0.0), Pos2::new(4.0, 0.04), Pos2::new(8.0, 0.0)],
 		model_state: FrozenBrushModelState {
 			filtered_input_point: Pos2::new(8.0, 0.0),
 			modeled_point: Pos2::new(8.0, 0.0),
