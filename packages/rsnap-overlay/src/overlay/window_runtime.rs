@@ -620,11 +620,11 @@ impl OverlaySession {
 				window.id(),
 				OverlayWindow {
 					monitor: monitor_rect,
+					#[cfg(target_os = "macos")]
+					cursor_rects,
 					window,
 					renderer,
 					refresh_rate_millihertz,
-					#[cfg(target_os = "macos")]
-					cursor_rects,
 				},
 			);
 		}

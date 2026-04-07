@@ -137,11 +137,12 @@ pub(super) struct StartupLiveRgbPlan {
 
 pub(super) struct OverlayWindow {
 	pub(super) monitor: MonitorRect,
+	#[cfg(target_os = "macos")]
+	// Drop cursor rect support before releasing the backing window.
+	pub(super) cursor_rects: MacOSOverlayCursorRectSupport,
 	pub(super) window: Arc<Window>,
 	pub(super) renderer: WindowRenderer,
 	pub(super) refresh_rate_millihertz: Option<u32>,
-	#[cfg(target_os = "macos")]
-	pub(super) cursor_rects: MacOSOverlayCursorRectSupport,
 }
 
 pub(super) struct GpuContext {
