@@ -2592,7 +2592,8 @@ impl OverlaySession {
 	}
 
 	fn finished_frozen_brush_points(stroke: &ActiveFrozenBrushStroke) -> Vec<Pos2> {
-		let source_points = if stroke.points.len() >= 2 { &stroke.points } else { &stroke.raw_points };
+		let source_points =
+			if stroke.points.len() >= 2 { &stroke.points } else { &stroke.raw_points };
 
 		Self::processed_frozen_brush_points(
 			source_points,
@@ -2656,8 +2657,7 @@ impl OverlaySession {
 		} else {
 			&active_stroke.raw_points
 		};
-		let rounding_passes =
-			Self::frozen_brush_preview_rounding_passes(&active_stroke.raw_points);
+		let rounding_passes = Self::frozen_brush_preview_rounding_passes(&active_stroke.raw_points);
 
 		Self::processed_frozen_brush_points(
 			source_points,
@@ -2763,14 +2763,10 @@ impl OverlaySession {
 			for window in rounded.windows(2) {
 				let start = window[0];
 				let end = window[1];
-				let quarter = Pos2::new(
-					(start.x * 0.75) + (end.x * 0.25),
-					(start.y * 0.75) + (end.y * 0.25),
-				);
-				let three_quarters = Pos2::new(
-					(start.x * 0.25) + (end.x * 0.75),
-					(start.y * 0.25) + (end.y * 0.75),
-				);
+				let quarter =
+					Pos2::new((start.x * 0.75) + (end.x * 0.25), (start.y * 0.75) + (end.y * 0.25));
+				let three_quarters =
+					Pos2::new((start.x * 0.25) + (end.x * 0.75), (start.y * 0.25) + (end.y * 0.75));
 
 				Self::push_processed_frozen_brush_point(&mut next, quarter);
 				Self::push_processed_frozen_brush_point(&mut next, three_quarters);
@@ -2778,10 +2774,9 @@ impl OverlaySession {
 
 			let last = rounded[rounded.len().saturating_sub(1)];
 
-			if next
-				.last()
-				.is_none_or(|point| point.distance(last) > FROZEN_BRUSH_PREVIEW_POINT_SPACING_MIN_POINTS)
-			{
+			if next.last().is_none_or(|point| {
+				point.distance(last) > FROZEN_BRUSH_PREVIEW_POINT_SPACING_MIN_POINTS
+			}) {
 				next.push(last);
 			} else if let Some(last_point) = next.last_mut() {
 				*last_point = last;
