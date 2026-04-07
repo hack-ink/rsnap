@@ -6825,11 +6825,35 @@ fn macos_overlay_view_current_local_point(overlay_view_key: usize) -> Option<Pos
 }
 
 #[cfg(target_os = "macos")]
+fn macos_overlay_view_bounds(overlay_view_key: usize) -> Option<Rect> {
+	let overlay_view = overlay_view_key as *mut Object;
+
+	if overlay_view.is_null() {
+		return None;
+	}
+
+	unsafe {
+		let bounds: NSRect = objc::msg_send![overlay_view, bounds];
+
+		Some(Rect::from_min_size(
+			Pos2::new(bounds.origin.x as f32, bounds.origin.y as f32),
+			Vec2::new(bounds.size.width as f32, bounds.size.height as f32),
+		))
+	}
+}
+
+#[cfg(target_os = "macos")]
 fn macos_cursor_icon_for_current_pointer(
 	entries: Option<&[OverlayCursorRect]>,
 	local_point: Option<Pos2>,
+	overlay_bounds: Option<Rect>,
 ) -> Option<CursorIcon> {
 	let local_point = local_point?;
+	let overlay_bounds = overlay_bounds?;
+
+	if !overlay_bounds.contains(local_point) {
+		return None;
+	}
 
 	Some(match entries {
 		Some(entries) => {
@@ -6843,7 +6867,10 @@ fn macos_cursor_icon_for_current_pointer(
 fn macos_apply_overlay_cursor_for_current_pointer(overlay_view_key: usize) {
 	let entries = macos_overlay_view_cursor_rect_entries(overlay_view_key);
 	let local_point = macos_overlay_view_current_local_point(overlay_view_key);
-	let Some(icon) = macos_cursor_icon_for_current_pointer(entries.as_deref(), local_point) else {
+	let overlay_bounds = macos_overlay_view_bounds(overlay_view_key);
+	let Some(icon) =
+		macos_cursor_icon_for_current_pointer(entries.as_deref(), local_point, overlay_bounds)
+	else {
 		return;
 	};
 	let cursor = macos_cursor_object_for_icon(icon);
