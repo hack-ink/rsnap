@@ -54,6 +54,8 @@ Then keep the body explicit:
 
 ## Current specs
 
+- `docs/spec/annotation-pen.md` for the Frozen-mode pen-tool behavior contract and beautification
+  invariants
 - `docs/spec/capture-session.md` for the capture-flow and scroll-capture behavior contract
 - `docs/spec/performance.md` for render cadence, performance scenarios, metrics,
   thresholds, and known performance-contract gaps

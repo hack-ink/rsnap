@@ -127,6 +127,7 @@ impl OverlaySession {
 				None,
 				None,
 				None,
+				None,
 			)?;
 
 			summary.renderer_draw_elapsed = Some(draw_started_at.elapsed());

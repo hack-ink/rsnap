@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use crate::overlay::{
-	CURSOR_POLL_INTERVAL_MIN, DeviceCursorPointSource, Duration, Instant,
-	LIVE_HOVER_HIT_TEST_INTERVAL, OverlayMode, OverlaySession,
+	CURSOR_POLL_INTERVAL_MIN, DeviceCursorPointSource, Duration, GlobalPoint, Instant,
+	LIVE_HOVER_HIT_TEST_INTERVAL, MonitorRect, OverlayMode, OverlaySession,
 };
 
 impl OverlaySession {
@@ -13,10 +13,14 @@ impl OverlaySession {
 		let interval =
 			self.frozen_cursor_tracking_interval(self.state.monitor).max(CURSOR_POLL_INTERVAL_MIN);
 		let now = Instant::now();
+		let brush_sampling_active = self.frozen_brush.active_stroke.is_some();
+		let poll_due = now.duration_since(self.last_frozen_cursor_poll_at) >= interval;
 
 		self.schedule_egui_repaint_after(interval);
 
-		if let Some((monitor, global)) = self.last_fresh_event_cursor() {
+		if (!brush_sampling_active || !poll_due)
+			&& let Some((monitor, global)) = self.last_fresh_event_cursor()
+		{
 			let old_monitor = self.active_cursor_monitor();
 
 			if tracing::enabled!(tracing::Level::TRACE) {
@@ -31,40 +35,11 @@ impl OverlaySession {
 				return;
 			}
 
-			let previous_drag_rect = self.state.drag_rect;
-
-			self.update_cursor_state(monitor, global);
-			self.update_hud_window_position(monitor, global);
-			self.update_live_drag_rect(monitor, global);
-			self.update_frozen_selection_drag_rect(global);
-			self.update_frozen_mosaic_drag_rect(global);
-			self.sync_overlay_cursor_icons();
-			self.force_apply_pending_hud_and_loupe_moves();
-			self.request_redraw_hud_window();
-
-			if self.state.alt_held || self.loupe_window_visible {
-				self.request_redraw_loupe_window();
-			}
-
-			if let Some(old_monitor) = old_monitor
-				&& old_monitor != monitor
-			{
-				self.request_redraw_for_monitor(old_monitor);
-			}
-
-			if Self::live_overlay_redraw_needed_for_cursor_update(
-				old_monitor,
-				monitor,
-				previous_drag_rect,
-				self.state.drag_rect,
-			) {
-				self.request_redraw_for_monitor(monitor);
-			}
+			self.apply_frozen_cursor_tracking_update(old_monitor, monitor, global);
 
 			return;
 		}
-
-		if now.duration_since(self.last_frozen_cursor_poll_at) < interval {
+		if !poll_due {
 			return;
 		}
 
@@ -88,6 +63,15 @@ impl OverlaySession {
 			return;
 		}
 
+		self.apply_frozen_cursor_tracking_update(old_monitor, monitor, global);
+	}
+
+	fn apply_frozen_cursor_tracking_update(
+		&mut self,
+		old_monitor: Option<MonitorRect>,
+		monitor: MonitorRect,
+		global: GlobalPoint,
+	) {
 		let previous_drag_rect = self.state.drag_rect;
 
 		self.update_cursor_state(monitor, global);
@@ -95,6 +79,9 @@ impl OverlaySession {
 		self.update_live_drag_rect(monitor, global);
 		self.update_frozen_selection_drag_rect(global);
 		self.update_frozen_mosaic_drag_rect(global);
+
+		let brush_changed = self.update_frozen_brush_stroke(global);
+
 		self.sync_overlay_cursor_icons();
 		self.force_apply_pending_hud_and_loupe_moves();
 		self.request_redraw_hud_window();
@@ -109,12 +96,13 @@ impl OverlaySession {
 			self.request_redraw_for_monitor(old_monitor);
 		}
 
-		if Self::live_overlay_redraw_needed_for_cursor_update(
-			old_monitor,
-			monitor,
-			previous_drag_rect,
-			self.state.drag_rect,
-		) {
+		if brush_changed
+			|| Self::live_overlay_redraw_needed_for_cursor_update(
+				old_monitor,
+				monitor,
+				previous_drag_rect,
+				self.state.drag_rect,
+			) {
 			self.request_redraw_for_monitor(monitor);
 		}
 	}

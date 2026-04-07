@@ -277,6 +277,7 @@ impl OverlaySession {
 				self.frozen_capture_source,
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				None,
+				None,
 				Some(&mut self.toolbar_state),
 				toolbar_input,
 			);
