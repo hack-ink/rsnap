@@ -43,5 +43,5 @@ Then keep the body decision-oriented:
 
 ## Current decision records
 
-No durable decision records have been written yet. Add one here when a tradeoff needs to remain
-discoverable beyond commit history and code comments.
+- `docs/decisions/annotation-pen-style.md` for the pen-tool tradeoff that prioritizes polished
+  screenshot annotation over faithful pointer-path reproduction
