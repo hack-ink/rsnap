@@ -844,8 +844,25 @@ fn macos_cursor_object_maps_crosshair_icon() {
 #[test]
 fn macos_cursor_icon_defaults_without_active_rect_entries() {
 	assert_eq!(
-		overlay::macos_cursor_icon_for_current_pointer(None, Some(Pos2::new(150.0, 180.0))),
+		overlay::macos_cursor_icon_for_current_pointer(
+			None,
+			Some(Pos2::new(150.0, 180.0)),
+			Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0))),
+		),
 		Some(CursorIcon::Default)
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_cursor_icon_skips_windows_outside_pointer_bounds() {
+	assert_eq!(
+		overlay::macos_cursor_icon_for_current_pointer(
+			None,
+			Some(Pos2::new(450.0, 180.0)),
+			Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0))),
+		),
+		None
 	);
 }
 
