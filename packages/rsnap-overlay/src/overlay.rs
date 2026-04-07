@@ -6825,15 +6825,27 @@ fn macos_overlay_view_current_local_point(overlay_view_key: usize) -> Option<Pos
 }
 
 #[cfg(target_os = "macos")]
+fn macos_cursor_icon_for_current_pointer(
+	entries: Option<&[OverlayCursorRect]>,
+	local_point: Option<Pos2>,
+) -> Option<CursorIcon> {
+	let local_point = local_point?;
+
+	Some(match entries {
+		Some(entries) => {
+			overlay_cursor_rect_icon_at_point(entries, local_point).unwrap_or(CursorIcon::Default)
+		},
+		None => CursorIcon::Default,
+	})
+}
+
+#[cfg(target_os = "macos")]
 fn macos_apply_overlay_cursor_for_current_pointer(overlay_view_key: usize) {
-	let Some(entries) = macos_overlay_view_cursor_rect_entries(overlay_view_key) else {
+	let entries = macos_overlay_view_cursor_rect_entries(overlay_view_key);
+	let local_point = macos_overlay_view_current_local_point(overlay_view_key);
+	let Some(icon) = macos_cursor_icon_for_current_pointer(entries.as_deref(), local_point) else {
 		return;
 	};
-	let Some(local_point) = macos_overlay_view_current_local_point(overlay_view_key) else {
-		return;
-	};
-	let icon =
-		overlay_cursor_rect_icon_at_point(&entries, local_point).unwrap_or(CursorIcon::Default);
 	let cursor = macos_cursor_object_for_icon(icon);
 
 	if cursor.is_null() {

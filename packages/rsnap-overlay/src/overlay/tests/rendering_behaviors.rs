@@ -842,6 +842,15 @@ fn macos_cursor_object_maps_crosshair_icon() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn macos_cursor_icon_defaults_without_active_rect_entries() {
+	assert_eq!(
+		overlay::macos_cursor_icon_for_current_pointer(None, Some(Pos2::new(150.0, 180.0))),
+		Some(CursorIcon::Default)
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn frozen_selection_cursor_rects_match_resize_hit_test_for_tiny_overlapping_handles() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 8, 8);
