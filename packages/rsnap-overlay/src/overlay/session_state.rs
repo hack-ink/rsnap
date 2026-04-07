@@ -183,6 +183,35 @@ impl Default for FrozenToolbarState {
 	}
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct FrozenBrushStroke {
+	pub(super) points: Vec<Pos2>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FrozenBrushModelState {
+	pub(super) filtered_input_point: Pos2,
+	pub(super) modeled_point: Pos2,
+	pub(super) modeled_velocity: Vec2,
+	pub(super) modeled_elapsed_seconds: f32,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ActiveFrozenBrushStroke {
+	pub(super) raw_points: Vec<Pos2>,
+	pub(super) points: Vec<Pos2>,
+	pub(super) model_state: FrozenBrushModelState,
+	pub(super) started_at: Instant,
+	pub(super) last_sample_at: Instant,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct FrozenBrushState {
+	pub(super) committed_strokes: Vec<FrozenBrushStroke>,
+	pub(super) redo_strokes: Vec<FrozenBrushStroke>,
+	pub(super) active_stroke: Option<ActiveFrozenBrushStroke>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct FrozenSelectionDragState {
 	pub(super) active: bool,
