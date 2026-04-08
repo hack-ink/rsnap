@@ -4516,7 +4516,7 @@ impl OverlaySession {
 		Some(WindowRenderer::frozen_text_edit_interaction_rect(
 			edit_state.anchor,
 			visible_text.as_str(),
-			self.toolbar_state.text_style.font_size_points,
+			&FontId::proportional(self.toolbar_state.text_style.font_size_points),
 		))
 	}
 
