@@ -52,18 +52,18 @@ use crate::overlay::rendering;
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 use crate::overlay::{
 	self, ActiveFrozenBrushStroke, FROZEN_BRUSH_COLOR_RGBA, FROZEN_EDIT_HISTORY_LIMIT,
-	FROZEN_TEXT_CARET_REPAINT_INTERVAL, FrozenBrushModelState, FrozenCommittedOverlay,
-	FrozenEditKind, FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit,
-	FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextColor, FrozenTextEditState,
-	FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS,
-	HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect,
-	SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
-	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
-	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
-	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache,
-	SelectionDashedBorderMetrics, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
-	SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
-	Vec2, WindowRenderer, hud_helpers,
+	FROZEN_TEXT_CARET_REPAINT_INTERVAL, FrozenBrushModelState, FrozenBrushStroke,
+	FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform, FrozenImagePatch,
+	FrozenMosaicEdit, FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextColor,
+	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
+	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
+	OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
+	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+	SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
+	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -1458,6 +1458,60 @@ fn evicting_old_mosaic_history_also_discards_patch_payloads() {
 
 	assert_eq!(session.frozen_edit_undo_stack.len(), FROZEN_EDIT_HISTORY_LIMIT);
 	assert!(session.frozen_mosaic_undo_stack.is_empty());
+}
+
+#[test]
+fn evicting_old_brush_and_text_history_discards_matching_payloads() {
+	let mut session = OverlaySession::new();
+
+	for index in 0..(FROZEN_EDIT_HISTORY_LIMIT + 2) {
+		let x = index as f32;
+
+		if index % 2 == 0 {
+			session
+				.frozen_brush
+				.committed_strokes
+				.push(FrozenBrushStroke { points: vec![Pos2::new(x, 0.0)] });
+			session.push_frozen_edit_to_undo_history(FrozenEditKind::BrushStroke);
+		} else {
+			session.frozen_text_annotations.push(FrozenTextAnnotation {
+				anchor: Pos2::new(x, 0.0),
+				text: format!("text-{index}"),
+				style: session.toolbar_state.text_style,
+			});
+			session.push_frozen_edit_to_undo_history(FrozenEditKind::TextAnnotation);
+		}
+	}
+
+	assert_eq!(session.frozen_edit_undo_stack.len(), FROZEN_EDIT_HISTORY_LIMIT);
+	assert_eq!(session.frozen_brush.committed_strokes.len(), FROZEN_EDIT_HISTORY_LIMIT / 2);
+	assert_eq!(session.frozen_text_annotations.len(), FROZEN_EDIT_HISTORY_LIMIT / 2);
+	assert_eq!(session.frozen_brush.committed_strokes[0].points[0], Pos2::new(2.0, 0.0));
+	assert_eq!(session.frozen_text_annotations[0].text, "text-3");
+
+	let mut observed = Vec::new();
+
+	OverlaySession::for_each_frozen_committed_overlay(
+		&session.frozen_edit_undo_stack,
+		&session.frozen_brush.committed_strokes,
+		&session.frozen_text_annotations,
+		|overlay| match overlay {
+			FrozenCommittedOverlay::Brush(stroke) => {
+				observed.push(format!("brush:{:.0}", stroke.points[0].x));
+			},
+			FrozenCommittedOverlay::Text(annotation) => observed.push(annotation.text.clone()),
+		},
+	);
+
+	let expected = (2..(FROZEN_EDIT_HISTORY_LIMIT + 2))
+		.map(
+			|index| {
+				if index % 2 == 0 { format!("brush:{index}") } else { format!("text-{index}") }
+			},
+		)
+		.collect::<Vec<_>>();
+
+	assert_eq!(observed, expected);
 }
 
 #[cfg(target_os = "macos")]

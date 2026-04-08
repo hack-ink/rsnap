@@ -4037,17 +4037,33 @@ impl OverlaySession {
 		self.frozen_text_redo_annotations.clear();
 	}
 
+	fn discard_evicted_frozen_edit_payload(&mut self, edit_kind: FrozenEditKind) {
+		match edit_kind {
+			FrozenEditKind::BrushStroke => {
+				if !self.frozen_brush.committed_strokes.is_empty() {
+					self.frozen_brush.committed_strokes.remove(0);
+				}
+			},
+			FrozenEditKind::MosaicEdit => {
+				if !self.frozen_mosaic_undo_stack.is_empty() {
+					self.frozen_mosaic_undo_stack.remove(0);
+				}
+			},
+			FrozenEditKind::TextAnnotation => {
+				if !self.frozen_text_annotations.is_empty() {
+					self.frozen_text_annotations.remove(0);
+				}
+			},
+		}
+	}
+
 	fn push_frozen_edit_to_undo_history(&mut self, edit_kind: FrozenEditKind) {
 		self.frozen_edit_undo_stack.push(edit_kind);
 
 		if self.frozen_edit_undo_stack.len() > FROZEN_EDIT_HISTORY_LIMIT {
 			let evicted = self.frozen_edit_undo_stack.remove(0);
 
-			if matches!(evicted, FrozenEditKind::MosaicEdit)
-				&& !self.frozen_mosaic_undo_stack.is_empty()
-			{
-				self.frozen_mosaic_undo_stack.remove(0);
-			}
+			self.discard_evicted_frozen_edit_payload(evicted);
 		}
 
 		self.clear_frozen_redo_history();
