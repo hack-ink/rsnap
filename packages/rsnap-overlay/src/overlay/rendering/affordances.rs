@@ -1,4 +1,9 @@
+use std::sync::{Arc, OnceLock};
+
 use egui::Context;
+use egui::FontDefinitions;
+use egui::Galley;
+use egui::RawInput;
 use egui::text::CCursor;
 
 #[allow(unused_imports)]
@@ -53,8 +58,6 @@ const FROZEN_TEXT_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS: f32 = 24.0;
 const FROZEN_TEXT_TOOLBAR_SIZE_LABEL_WIDTH_POINTS: f32 = 54.0;
 const FROZEN_TEXT_INTERACTION_PADDING_X_POINTS: f32 = 8.0;
 const FROZEN_TEXT_INTERACTION_PADDING_Y_POINTS: f32 = 6.0;
-const FROZEN_TEXT_INTERACTION_LINE_HEIGHT_FACTOR: f32 = 1.25;
-const FROZEN_TEXT_INTERACTION_CHAR_WIDTH_FACTOR: f32 = 0.58;
 
 #[derive(Clone, Copy)]
 pub(in crate::overlay) struct SelectionScrimStyle {
@@ -64,6 +67,35 @@ pub(in crate::overlay) struct SelectionScrimStyle {
 }
 
 impl WindowRenderer {
+	fn frozen_text_measurement_ctx() -> &'static Context {
+		static CTX: OnceLock<Context> = OnceLock::new();
+
+		CTX.get_or_init(|| {
+			let ctx = Context::default();
+			let mut fonts = FontDefinitions::default();
+
+			ctx.set_fonts({
+				super::configure_egui_fonts(&mut fonts);
+
+				fonts
+			});
+
+			let _ = ctx.run_ui(RawInput::default(), |_ui| {});
+
+			ctx
+		})
+	}
+
+	fn frozen_text_edit_layout(painter: &Painter, text: &str, font_id: &FontId) -> Arc<Galley> {
+		painter.layout_no_wrap(text.to_owned(), font_id.clone(), Color32::WHITE)
+	}
+
+	fn frozen_text_edit_measurement_layout(text: &str, font_id: &FontId) -> Arc<Galley> {
+		Self::frozen_text_measurement_ctx().fonts_mut(|fonts| {
+			fonts.layout_no_wrap(text.to_owned(), font_id.clone(), Color32::WHITE)
+		})
+	}
+
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay) fn render_live_capture_affordances(
 		ctx: &Context,
@@ -460,7 +492,7 @@ impl WindowRenderer {
 		font_id: &FontId,
 		caret_char_index: usize,
 	) -> Rect {
-		let galley = painter.layout_no_wrap(text.to_owned(), font_id.clone(), Color32::WHITE);
+		let galley = Self::frozen_text_edit_layout(painter, text, font_id);
 		let caret =
 			galley.pos_from_cursor(CCursor::new(caret_char_index.min(text.chars().count())));
 		let caret_height = caret.height().max(font_id.size);
@@ -494,18 +526,12 @@ impl WindowRenderer {
 	pub(in crate::overlay) fn frozen_text_edit_interaction_rect(
 		anchor: Pos2,
 		text: &str,
-		font_size_points: f32,
+		font_id: &FontId,
 	) -> Rect {
 		let text = if text.is_empty() { FROZEN_TEXT_PREVIEW_PLACEHOLDER } else { text };
-		let line_count = text.lines().count().max(1) as f32;
-		let widest_line_chars =
-			text.lines().map(|line| line.chars().count()).max().unwrap_or(0).max(1) as f32;
-		let text_width =
-			(widest_line_chars * font_size_points * FROZEN_TEXT_INTERACTION_CHAR_WIDTH_FACTOR)
-				.max(font_size_points);
-		let text_height =
-			(line_count * font_size_points * FROZEN_TEXT_INTERACTION_LINE_HEIGHT_FACTOR)
-				.max(font_size_points);
+		let galley = Self::frozen_text_edit_measurement_layout(text, font_id);
+		let text_size =
+			Vec2::new(galley.size().x.max(font_id.size), galley.size().y.max(font_id.size));
 
 		Rect::from_min_max(
 			Pos2::new(
@@ -513,8 +539,8 @@ impl WindowRenderer {
 				anchor.y - FROZEN_TEXT_INTERACTION_PADDING_Y_POINTS,
 			),
 			Pos2::new(
-				anchor.x + text_width + FROZEN_TEXT_INTERACTION_PADDING_X_POINTS,
-				anchor.y + text_height + FROZEN_TEXT_INTERACTION_PADDING_Y_POINTS,
+				anchor.x + text_size.x + FROZEN_TEXT_INTERACTION_PADDING_X_POINTS,
+				anchor.y + text_size.y + FROZEN_TEXT_INTERACTION_PADDING_Y_POINTS,
 			),
 		)
 	}

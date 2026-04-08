@@ -759,12 +759,26 @@ fn frozen_text_placeholder_fill_tracks_selected_text_color() {
 #[test]
 fn frozen_text_edit_interaction_rect_uses_placeholder_bounds_when_empty() {
 	let anchor = Pos2::new(140.0, 160.0);
-	let rect =
-		WindowRenderer::frozen_text_edit_interaction_rect(anchor, "", FROZEN_TEXT_FONT_SIZE_POINTS);
+	let font_id = FontId::proportional(FROZEN_TEXT_FONT_SIZE_POINTS);
+	let rect = WindowRenderer::frozen_text_edit_interaction_rect(anchor, "", &font_id);
 
 	assert!(rect.contains(anchor));
 	assert!(rect.width() > FROZEN_TEXT_FONT_SIZE_POINTS);
 	assert!(rect.height() >= FROZEN_TEXT_FONT_SIZE_POINTS);
+}
+
+#[test]
+fn frozen_text_edit_interaction_rect_covers_full_width_text_layout() {
+	let ctx = tests::test_egui_context();
+	let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("text-hitbox-cjk")));
+	let anchor = Pos2::new(140.0, 160.0);
+	let font_id = FontId::proportional(FROZEN_TEXT_FONT_SIZE_POINTS);
+	let rect = WindowRenderer::frozen_text_edit_interaction_rect(anchor, "你好世界", &font_id);
+	let caret_rect =
+		WindowRenderer::frozen_text_edit_caret_rect(&painter, anchor, "你好世界", &font_id);
+
+	assert!(rect.contains(caret_rect.min));
+	assert!(rect.contains(Pos2::new(caret_rect.max.x, caret_rect.min.y)));
 }
 
 #[test]

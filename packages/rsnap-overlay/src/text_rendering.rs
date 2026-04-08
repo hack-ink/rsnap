@@ -165,8 +165,8 @@ fn render_with_font_stack(
 	let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
 
 	layout.reset(&LayoutSettings {
-		x: annotation.anchor_px.x.max(0.0),
-		y: annotation.anchor_px.y.max(0.0),
+		x: annotation.anchor_px.x,
+		y: annotation.anchor_px.y,
 		..LayoutSettings::default()
 	});
 
@@ -381,5 +381,46 @@ mod tests {
 				assert_eq!(pixel[3], 0, "unexpected pixel outside glyph bounds at ({x}, {y})");
 			}
 		}
+	}
+
+	#[test]
+	fn font_stack_rendering_preserves_negative_anchor_offsets_for_clipping() {
+		let fonts = super::export_text_fonts();
+		let text = "Wide";
+		let runs =
+			super::build_text_font_runs(fonts, text).expect("ASCII text should map to a font");
+		let annotation_at_origin = RasterTextAnnotation {
+			anchor_px: Pos2::new(0.0, 0.0),
+			font_size_px: 28.0,
+			fill_rgba: [255, 255, 255, 255],
+			text,
+		};
+		let annotation_with_negative_anchor =
+			RasterTextAnnotation { anchor_px: Pos2::new(-8.0, -8.0), ..annotation_at_origin };
+		let mut image_at_origin = image::RgbaImage::from_pixel(96, 64, Rgba([0, 0, 0, 0]));
+		let mut image_with_negative_anchor =
+			image::RgbaImage::from_pixel(96, 64, Rgba([0, 0, 0, 0]));
+
+		assert!(super::render_with_font_stack(
+			&mut image_at_origin,
+			annotation_at_origin,
+			fonts,
+			&runs,
+		));
+		assert!(super::render_with_font_stack(
+			&mut image_with_negative_anchor,
+			annotation_with_negative_anchor,
+			fonts,
+			&runs,
+		));
+
+		let visible_pixels_at_origin =
+			image_at_origin.pixels().filter(|pixel| pixel[3] != 0).count();
+		let visible_pixels_with_negative_anchor =
+			image_with_negative_anchor.pixels().filter(|pixel| pixel[3] != 0).count();
+
+		assert!(visible_pixels_at_origin > 0);
+		assert!(visible_pixels_with_negative_anchor > 0);
+		assert!(visible_pixels_with_negative_anchor < visible_pixels_at_origin);
 	}
 }
