@@ -4,20 +4,14 @@ use std::{
 };
 
 use egui::{FontData, FontDefinitions, FontFamily};
-use fontdb::{Database, Family, ID, Query, Stretch, Style, Weight};
+use fontdb::{Database, FaceInfo, Family, ID, Query, Stretch, Style, Weight};
 use ttf_parser::Face;
+
+type UnicodeCoverage = Vec<UnicodeCoverageRange>;
 
 const NORMAL_WEIGHT_MIN: u16 = 300;
 const NORMAL_WEIGHT_MAX: u16 = 700;
 const MAX_SYSTEM_TEXT_FALLBACKS: usize = 16;
-
-type UnicodeCoverage = Vec<UnicodeCoverageRange>;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct UnicodeCoverageRange {
-	start: u32,
-	end: u32,
-}
 
 #[derive(Debug)]
 pub(crate) struct SystemTextFont {
@@ -40,6 +34,12 @@ struct CandidateSystemTextFont {
 	family_name: String,
 	order: usize,
 	weight_delta: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct UnicodeCoverageRange {
+	start: u32,
+	end: u32,
 }
 
 pub(crate) fn system_text_fonts() -> &'static [SystemTextFont] {
@@ -113,7 +113,7 @@ fn build_candidate_system_text_font(
 	})
 }
 
-fn is_system_text_candidate_face(face: &fontdb::FaceInfo) -> bool {
+fn is_system_text_candidate_face(face: &FaceInfo) -> bool {
 	!face.monospaced
 		&& face.style == Style::Normal
 		&& face.stretch == Stretch::Normal
@@ -193,6 +193,7 @@ fn try_select_system_text_font(
 	selected.push(font);
 	selected_face_ids.insert(candidate.face_id);
 	selected_families.insert(candidate.family_name.clone());
+
 	merge_coverage_codepoints(covered_codepoints, &coverage_codepoints);
 }
 
@@ -200,8 +201,8 @@ fn load_system_text_coverage(database: &Database, face_id: ID) -> Option<Unicode
 	database
 		.with_face_data(face_id, |font_bytes, face_index| {
 			let face = Face::parse(font_bytes, face_index).ok()?;
-			let mut code_points = Vec::new();
 			let cmap = face.tables().cmap?;
+			let mut code_points = Vec::new();
 
 			for subtable in cmap.subtables {
 				if !subtable.is_unicode() {
@@ -216,7 +217,7 @@ fn load_system_text_coverage(database: &Database, face_id: ID) -> Option<Unicode
 		.flatten()
 }
 
-fn primary_family_name(face: &fontdb::FaceInfo) -> Option<String> {
+fn primary_family_name(face: &FaceInfo) -> Option<String> {
 	Some(face.families.first()?.0.clone())
 }
 
@@ -250,10 +251,12 @@ fn compress_codepoints_into_coverage(mut code_points: Vec<u32>) -> Option<Unicod
 	for code_point in code_points.into_iter().skip(1) {
 		if code_point <= end.saturating_add(1) {
 			end = code_point;
+
 			continue;
 		}
 
 		push_coverage_range(&mut coverage, UnicodeCoverageRange { start, end });
+
 		start = code_point;
 		end = code_point;
 	}
@@ -268,6 +271,7 @@ fn push_coverage_range(coverage: &mut UnicodeCoverage, range: UnicodeCoverageRan
 		&& range.start <= last_range.end.saturating_add(1)
 	{
 		last_range.end = last_range.end.max(range.end);
+
 		return;
 	}
 
@@ -333,18 +337,22 @@ fn merge_coverage_codepoints(
 				if covered_range.start <= candidate_range.start =>
 			{
 				covered_index += 1;
+
 				covered_range
 			},
 			(Some(_), Some(candidate_range)) => {
 				candidate_index += 1;
+
 				candidate_range
 			},
 			(Some(covered_range), None) => {
 				covered_index += 1;
+
 				covered_range
 			},
 			(None, Some(candidate_range)) => {
 				candidate_index += 1;
+
 				candidate_range
 			},
 			(None, None) => break,
@@ -358,20 +366,17 @@ fn merge_coverage_codepoints(
 
 #[cfg(test)]
 mod tests {
-	use super::{
-		UnicodeCoverage, UnicodeCoverageRange, coverage_adds_new_codepoints,
-		merge_coverage_codepoints, push_coverage_range,
-	};
+	use crate::system_fonts::{UnicodeCoverage, UnicodeCoverageRange};
 
 	#[test]
 	fn coverage_tracks_arbitrary_script_codepoints() {
 		let mut coverage = UnicodeCoverage::new();
 
-		push_coverage_range(
+		super::push_coverage_range(
 			&mut coverage,
 			UnicodeCoverageRange { start: u32::from('ᚠ'), end: u32::from('ᚠ') },
 		);
-		push_coverage_range(
+		super::push_coverage_range(
 			&mut coverage,
 			UnicodeCoverageRange { start: u32::from('𐓐'), end: u32::from('𐓐') },
 		);
@@ -387,14 +392,14 @@ mod tests {
 
 	#[test]
 	fn coverage_adds_new_codepoints_within_same_unicode_page() {
-		let mut covered_codepoints =
-			vec![UnicodeCoverageRange { start: u32::from('A'), end: u32::from('A') }];
 		let candidate_codepoints =
 			vec![UnicodeCoverageRange { start: u32::from('z'), end: u32::from('z') }];
+		let mut covered_codepoints =
+			vec![UnicodeCoverageRange { start: u32::from('A'), end: u32::from('A') }];
 
-		assert!(coverage_adds_new_codepoints(&covered_codepoints, &candidate_codepoints));
+		assert!(super::coverage_adds_new_codepoints(&covered_codepoints, &candidate_codepoints,));
 
-		merge_coverage_codepoints(&mut covered_codepoints, &candidate_codepoints);
+		super::merge_coverage_codepoints(&mut covered_codepoints, &candidate_codepoints);
 
 		assert_eq!(
 			covered_codepoints,
@@ -403,6 +408,6 @@ mod tests {
 				UnicodeCoverageRange { start: u32::from('z'), end: u32::from('z') }
 			]
 		);
-		assert!(!coverage_adds_new_codepoints(&covered_codepoints, &candidate_codepoints));
+		assert!(!super::coverage_adds_new_codepoints(&covered_codepoints, &candidate_codepoints,));
 	}
 }
