@@ -52,17 +52,18 @@ use crate::overlay::rendering;
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 use crate::overlay::{
 	self, ActiveFrozenBrushStroke, FROZEN_BRUSH_COLOR_RGBA, FROZEN_EDIT_HISTORY_LIMIT,
-	FROZEN_TEXT_CARET_REPAINT_INTERVAL, FrozenBrushModelState, FrozenEditKind,
-	FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit, FrozenSelectionDragState,
-	FrozenTextAnnotation, FrozenTextColor, FrozenTextEditState, FrozenTextInputSource,
-	FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme,
-	OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
-	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
-	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
-	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
-	SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
-	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
-	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
+	FROZEN_TEXT_CARET_REPAINT_INTERVAL, FrozenBrushModelState, FrozenCommittedOverlay,
+	FrozenEditKind, FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit,
+	FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextColor, FrozenTextEditState,
+	FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS,
+	HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect,
+	SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
+	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
+	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache,
+	SelectionDashedBorderMetrics, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
+	SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
+	Vec2, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -1286,6 +1287,7 @@ fn current_export_image_renders_frozen_text_annotations() {
 		text: String::from("Text"),
 		style: session.toolbar_state.text_style,
 	});
+	session.push_frozen_edit_to_undo_history(FrozenEditKind::TextAnnotation);
 
 	let export = session.current_export_image().expect("export image");
 
@@ -1302,6 +1304,53 @@ fn frozen_export_transform_uses_actual_export_image_dimensions() {
 	assert_eq!(transform.point_to_pixels(Pos2::new(20.0, 17.0)), Pos2::new(30.0, 15.0));
 	assert_eq!(transform.point_to_pixels(Pos2::new(30.0, 22.0)), Pos2::new(60.0, 30.0));
 	assert_eq!(transform.scalar_scale(), 3.0);
+}
+
+#[test]
+fn frozen_committed_overlay_iteration_preserves_cross_tool_order() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session
+		.state
+		.finish_freeze(monitor, image::RgbaImage::from_pixel(16, 16, Rgba([0, 0, 0, 255])));
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 16, 16));
+	session.authoritative_frozen_capture_ready = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+
+	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
+	assert!(session.finish_frozen_brush_stroke());
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(6, 6)));
+	assert!(session.append_text_to_frozen_edit("middle"));
+	assert!(session.finish_frozen_text_editing(true));
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+
+	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(10, 10)));
+	assert!(session.finish_frozen_brush_stroke());
+
+	let mut observed = Vec::new();
+
+	OverlaySession::for_each_frozen_committed_overlay(
+		&session.frozen_edit_undo_stack,
+		&session.frozen_brush.committed_strokes,
+		&session.frozen_text_annotations,
+		|overlay| match overlay {
+			FrozenCommittedOverlay::Brush(stroke) => {
+				observed.push(format!("brush:{:.0}", stroke.points[0].x));
+			},
+			FrozenCommittedOverlay::Text(annotation) => {
+				observed.push(format!("text:{}", annotation.text));
+			},
+		},
+	);
+
+	assert_eq!(observed, ["brush:2", "text:middle", "brush:10"]);
 }
 
 #[test]

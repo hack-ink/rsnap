@@ -3553,30 +3553,52 @@ impl OverlaySession {
 		}
 	}
 
-	fn annotated_frozen_export_image(&self, mut export_image: RgbaImage) -> RgbaImage {
-		if self.frozen_brush.committed_strokes.is_empty()
-			&& self.frozen_brush.active_stroke.is_none()
-		{
-			return export_image;
+	fn render_frozen_committed_overlays_into_image(&self, image: &mut RgbaImage) {
+		if self.scroll_capture.active {
+			return;
 		}
 
-		let Some(export_transform) = self.frozen_export_transform_for_image(&export_image) else {
-			return export_image;
+		let Some(export_transform) = self.frozen_export_transform_for_image(image) else {
+			return;
 		};
 
-		Self::rasterize_frozen_brush_strokes(
-			&mut export_image,
-			export_transform,
-			&self.frozen_brush,
+		Self::for_each_frozen_committed_overlay(
+			&self.frozen_edit_undo_stack,
+			&self.frozen_brush.committed_strokes,
+			&self.frozen_text_annotations,
+			|overlay| match overlay {
+				FrozenCommittedOverlay::Brush(stroke) => {
+					Self::rasterize_frozen_brush_points_into_image(
+						image,
+						export_transform,
+						&stroke.points,
+					);
+				},
+				FrozenCommittedOverlay::Text(annotation) => {
+					Self::render_frozen_text_annotation_into_image(
+						image,
+						export_transform,
+						annotation,
+					);
+				},
+			},
 		);
 
-		export_image
+		if let Some(active_stroke) = &self.frozen_brush.active_stroke {
+			let display_points = Self::active_frozen_brush_display_points(active_stroke);
+
+			Self::rasterize_frozen_brush_points_into_image(
+				image,
+				export_transform,
+				&display_points,
+			);
+		}
 	}
 
-	fn rasterize_frozen_brush_strokes(
+	fn rasterize_frozen_brush_points_into_image(
 		export_image: &mut RgbaImage,
 		export_transform: FrozenExportTransform,
-		frozen_brush: &FrozenBrushState,
+		points: &[Pos2],
 	) {
 		if export_image.width() == 0 || export_image.height() == 0 {
 			return;
@@ -3588,49 +3610,49 @@ impl OverlaySession {
 		let mut coverage_mask =
 			vec![0_u8; export_image.width() as usize * export_image.height() as usize];
 
-		for stroke in &frozen_brush.committed_strokes {
-			Self::rasterize_frozen_brush_stroke(
-				&mut coverage_mask,
-				export_image.width(),
-				export_image.height(),
-				stroke,
-				export_transform,
-				radius,
-			);
-		}
-
-		if let Some(active_stroke) = &frozen_brush.active_stroke {
-			let display_points = Self::active_frozen_brush_display_points(active_stroke);
-
-			Self::rasterize_frozen_brush_points(
-				&mut coverage_mask,
-				export_image.width(),
-				export_image.height(),
-				&display_points,
-				export_transform,
-				radius,
-			);
-		}
-
-		Self::blend_frozen_brush_coverage_mask(export_image, &coverage_mask, color);
-	}
-
-	fn rasterize_frozen_brush_stroke(
-		coverage_mask: &mut [u8],
-		export_width: u32,
-		export_height: u32,
-		stroke: &FrozenBrushStroke,
-		export_transform: FrozenExportTransform,
-		radius: f32,
-	) {
 		Self::rasterize_frozen_brush_points(
-			coverage_mask,
-			export_width,
-			export_height,
-			&stroke.points,
+			&mut coverage_mask,
+			export_image.width(),
+			export_image.height(),
+			points,
 			export_transform,
 			radius,
 		);
+		Self::blend_frozen_brush_coverage_mask(export_image, &coverage_mask, color);
+	}
+
+	fn for_each_frozen_committed_overlay(
+		edit_history: &[FrozenEditKind],
+		brush_strokes: &[FrozenBrushStroke],
+		text_annotations: &[FrozenTextAnnotation],
+		mut f: impl FnMut(FrozenCommittedOverlay<'_>),
+	) {
+		let mut brush_index = 0;
+		let mut text_index = 0;
+
+		for edit_kind in edit_history {
+			match edit_kind {
+				FrozenEditKind::BrushStroke => {
+					let Some(stroke) = brush_strokes.get(brush_index) else {
+						continue;
+					};
+
+					brush_index += 1;
+
+					f(FrozenCommittedOverlay::Brush(stroke));
+				},
+				FrozenEditKind::TextAnnotation => {
+					let Some(annotation) = text_annotations.get(text_index) else {
+						continue;
+					};
+
+					text_index += 1;
+
+					f(FrozenCommittedOverlay::Text(annotation));
+				},
+				FrozenEditKind::MosaicEdit => {},
+			}
+		}
 	}
 
 	fn rasterize_frozen_brush_points(
@@ -4607,26 +4629,19 @@ impl OverlaySession {
 		self.finish_frozen_text_editing(true)
 	}
 
-	fn render_frozen_text_annotations_into_image(&self, image: &mut RgbaImage) {
-		if self.frozen_text_annotations.is_empty() || self.scroll_capture.active {
-			return;
-		}
-
-		let Some(export_transform) = self.frozen_export_transform_for_image(image) else {
-			return;
+	fn render_frozen_text_annotation_into_image(
+		image: &mut RgbaImage,
+		export_transform: FrozenExportTransform,
+		annotation: &FrozenTextAnnotation,
+	) {
+		let raster_annotation = RasterTextAnnotation {
+			anchor_px: export_transform.point_to_pixels(annotation.anchor),
+			font_size_px: annotation.style.font_size_points * export_transform.scalar_scale(),
+			fill_rgba: annotation.style.color.export_rgba(),
+			text: annotation.text.as_str(),
 		};
-		let annotations = self
-			.frozen_text_annotations
-			.iter()
-			.map(|annotation| RasterTextAnnotation {
-				anchor_px: export_transform.point_to_pixels(annotation.anchor),
-				font_size_px: annotation.style.font_size_points * export_transform.scalar_scale(),
-				fill_rgba: annotation.style.color.export_rgba(),
-				text: annotation.text.as_str(),
-			})
-			.collect::<Vec<_>>();
 
-		text_rendering::render_text_annotations(image, &annotations);
+		text_rendering::render_text_annotations(image, &[raster_annotation]);
 	}
 
 	fn handle_captured_freeze_response(
@@ -6744,9 +6759,9 @@ impl OverlaySession {
 		let mut export_image =
 			self.cropped_frozen_capture_image().or_else(|| self.state.frozen_image.clone())?;
 
-		self.render_frozen_text_annotations_into_image(&mut export_image);
+		self.render_frozen_committed_overlays_into_image(&mut export_image);
 
-		Some(self.annotated_frozen_export_image(export_image))
+		Some(export_image)
 	}
 
 	#[cfg(target_os = "macos")]
@@ -7734,6 +7749,7 @@ impl OverlaySession {
 				self.frozen_capture_source,
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				frozen_toolbar_reserved_rect,
+				&self.frozen_edit_undo_stack,
 				(!self.scroll_capture.active).then_some(&self.frozen_brush),
 				&self.frozen_text_annotations,
 				self.frozen_text_edit.as_ref(),
@@ -8187,6 +8203,12 @@ enum FrozenEditKind {
 	BrushStroke,
 	MosaicEdit,
 	TextAnnotation,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FrozenCommittedOverlay<'a> {
+	Brush(&'a FrozenBrushStroke),
+	Text(&'a FrozenTextAnnotation),
 }
 
 #[derive(Clone, Copy, Debug)]
