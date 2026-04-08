@@ -90,13 +90,26 @@ fn load_export_text_fonts() -> Vec<ExportTextFont> {
 
 	system_fonts::configure_text_font_fallbacks(&mut fonts);
 
-	fonts
-		.families
-		.get(&FontFamily::Proportional)
+	collect_export_text_fonts(
+		fonts
+			.families
+			.get(&FontFamily::Proportional)
+			.into_iter()
+			.flat_map(|family| family.iter())
+			.filter_map(|font_name| fonts.font_data.get(font_name).cloned()),
+	)
+}
+
+fn collect_export_text_fonts(
+	font_data: impl IntoIterator<Item = Arc<FontData>>,
+) -> Vec<ExportTextFont> {
+	font_data
 		.into_iter()
-		.flat_map(|family| family.iter())
-		.filter_map(|font_name| fonts.font_data.get(font_name).cloned())
-		.map(ExportTextFont::new)
+		.filter_map(|font_data| {
+			let export_font = ExportTextFont::new(font_data);
+
+			export_font.font().is_some().then_some(export_font)
+		})
 		.collect()
 }
 
@@ -148,7 +161,12 @@ fn font_index_for_char(
 			.or_else(|| (!fonts.is_empty()).then_some(0));
 	}
 
-	fonts.iter().position(|font| font.supports_char(ch))
+	fonts
+		.iter()
+		.position(|font| font.supports_char(ch))
+		.or(active_font_index)
+		.or(previous_visible_font_index)
+		.or_else(|| (!fonts.is_empty()).then_some(0))
 }
 
 fn render_with_font_stack(
@@ -157,10 +175,12 @@ fn render_with_font_stack(
 	fonts: &[ExportTextFont],
 	runs: &[TextFontRun<'_>],
 ) -> bool {
-	let Some(parsed_fonts) = fonts.iter().map(ExportTextFont::font).collect::<Option<Vec<_>>>()
-	else {
+	let parsed_fonts: Vec<_> = fonts.iter().filter_map(ExportTextFont::font).collect();
+
+	if parsed_fonts.is_empty() || parsed_fonts.len() != fonts.len() {
 		return false;
-	};
+	}
+
 	let fill_rgba = Rgba(annotation.fill_rgba);
 	let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
 
@@ -338,7 +358,9 @@ fn blend_pixel(image: &mut RgbaImage, x: i32, y: i32, color: Rgba<u8>, coverage:
 
 #[cfg(test)]
 mod tests {
-	use egui::Pos2;
+	use std::sync::Arc;
+
+	use egui::{FontData, FontDefinitions, Pos2};
 	use image::Rgba;
 
 	use crate::text_rendering::RasterTextAnnotation;
@@ -422,5 +444,44 @@ mod tests {
 		assert!(visible_pixels_at_origin > 0);
 		assert!(visible_pixels_with_negative_anchor > 0);
 		assert!(visible_pixels_with_negative_anchor < visible_pixels_at_origin);
+	}
+
+	#[test]
+	fn collect_export_text_fonts_filters_unparsable_font_data() {
+		let valid_font_data = FontDefinitions::default()
+			.font_data
+			.values()
+			.next()
+			.cloned()
+			.expect("default egui fonts should include at least one font");
+		let fonts = super::collect_export_text_fonts([
+			Arc::new(FontData::from_static(b"not-a-font")),
+			valid_font_data,
+		]);
+
+		assert_eq!(fonts.len(), 1);
+		assert!(fonts[0].font().is_some());
+	}
+
+	#[test]
+	fn font_stack_rendering_keeps_supported_chars_when_text_contains_missing_glyph() {
+		let fonts = super::export_text_fonts();
+		let text = "A\u{10ffff}B";
+		let runs = super::build_text_font_runs(fonts, text)
+			.expect("missing glyphs should not force the whole annotation onto bitmap fallback");
+		let mut image = image::RgbaImage::from_pixel(128, 64, Rgba([0, 0, 0, 0]));
+
+		assert!(super::render_with_font_stack(
+			&mut image,
+			RasterTextAnnotation {
+				anchor_px: Pos2::new(8.0, 8.0),
+				font_size_px: 24.0,
+				fill_rgba: [255, 255, 255, 255],
+				text,
+			},
+			fonts,
+			&runs,
+		));
+		assert!(image.pixels().any(|pixel| pixel[3] != 0));
 	}
 }
