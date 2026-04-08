@@ -2003,6 +2003,7 @@ fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
 		false,
 		FrozenCaptureSource::None,
 		None,
+		&[],
 		None,
 		&[],
 		None,

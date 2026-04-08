@@ -27,25 +27,25 @@ use crate::overlay::{
 	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TEXT_FONT_SIZE_POINTS,
 	FROZEN_TEXT_FONT_SIZE_PRESETS, FROZEN_TEXT_PREVIEW_PLACEHOLDER,
 	FROZEN_TOOLBAR_BUTTON_SIZE_POINTS, FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId,
-	FrozenBrushState, FrozenCaptureSource, FrozenSelectionCorner, FrozenTextAnnotation,
-	FrozenTextColor, FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState,
-	FrozenToolbarState, FrozenToolbarTool, HUD_PILL_CORNER_RADIUS_POINTS,
-	HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_INNER_MARGIN_Y_POINTS, HUD_PILL_STROKE_WIDTH_POINTS,
-	HudPillGeometry, HudTheme, Id, LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK,
-	LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT, LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh,
-	MonitorRect, Order, OverlayMode, OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints,
-	SELECTION_DASHED_BORDER_ALPHA, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
-	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
-	SELECTION_FLOW_CORE_FLOW_WIDTH, SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST,
-	SELECTION_FLOW_LIGHT_PALETTE, SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS,
-	SELECTION_FLOW_PALETTE, SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED,
-	SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX, SELECTION_SIZE_BADGE_FONT_SIZE_POINTS,
-	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
-	SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX, SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX,
-	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS,
-	SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind, TOOLBAR_CAPTURE_GAP_PX,
-	TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder, Vec2,
-	regular,
+	FrozenBrushState, FrozenCaptureSource, FrozenCommittedOverlay, FrozenEditKind,
+	FrozenSelectionCorner, FrozenTextAnnotation, FrozenTextColor, FrozenTextEditState,
+	FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool,
+	HUD_PILL_CORNER_RADIUS_POINTS, HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_INNER_MARGIN_Y_POINTS,
+	HUD_PILL_STROKE_WIDTH_POINTS, HudPillGeometry, HudTheme, Id,
+	LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK, LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT,
+	LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh, MonitorRect, Order, OverlayMode,
+	OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints, SELECTION_DASHED_BORDER_ALPHA,
+	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_FLOW_CORE_FLOW_WIDTH,
+	SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST, SELECTION_FLOW_LIGHT_PALETTE,
+	SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS, SELECTION_FLOW_PALETTE,
+	SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED, SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX,
+	SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, SELECTION_SIZE_BADGE_GAP_PX,
+	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX,
+	SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+	SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS, SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind,
+	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
+	Ui, UiBuilder, Vec2, regular,
 };
 
 const FROZEN_TEXT_TOOLBAR_SECTION_GAP_POINTS: f32 = 8.0;
@@ -187,6 +187,7 @@ impl WindowRenderer {
 		frozen_selection_resize_handles_enabled: bool,
 		frozen_capture_source: FrozenCaptureSource,
 		frozen_toolbar_reserved_rect: Option<Rect>,
+		frozen_edit_history: &[FrozenEditKind],
 		frozen_brush_state: Option<&FrozenBrushState>,
 		frozen_text_annotations: &[FrozenTextAnnotation],
 		frozen_text_edit: Option<&FrozenTextEditState>,
@@ -213,13 +214,14 @@ impl WindowRenderer {
 			show_resize_handles,
 			selection_dashed_border_cache,
 		);
+		let brush_painter = painter.with_clip_rect(rect);
 
-		has_affordance |= Self::render_frozen_text_annotations(
+		has_affordance |= Self::render_frozen_committed_overlay_annotations(
 			&painter,
-			theme,
+			&brush_painter,
+			frozen_edit_history,
+			frozen_brush_state,
 			frozen_text_annotations,
-			frozen_text_edit,
-			frozen_text_style,
 		);
 
 		if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
@@ -261,19 +263,86 @@ impl WindowRenderer {
 				selection_dashed_border_cache,
 			);
 		}
-		if let Some(frozen_brush_state) = frozen_brush_state {
-			let brush_painter = painter.with_clip_rect(rect);
 
-			has_affordance |= Self::render_frozen_brush_strokes(&brush_painter, frozen_brush_state);
+		has_affordance |= Self::render_frozen_text_annotations(
+			&painter,
+			theme,
+			&[],
+			frozen_text_edit,
+			frozen_text_style,
+		);
+
+		if let Some(frozen_brush_state) = frozen_brush_state {
+			has_affordance |=
+				Self::render_active_frozen_brush_stroke(&brush_painter, frozen_brush_state);
 		}
 
 		has_affordance
 	}
 
-	pub(in crate::overlay) fn render_frozen_brush_strokes(
+	fn render_frozen_committed_overlay_annotations(
+		painter: &Painter,
+		brush_painter: &Painter,
+		frozen_edit_history: &[FrozenEditKind],
+		frozen_brush_state: Option<&FrozenBrushState>,
+		frozen_text_annotations: &[FrozenTextAnnotation],
+	) -> bool {
+		let font_fill = |annotation: &FrozenTextAnnotation| {
+			(
+				FontId::proportional(annotation.style.font_size_points),
+				annotation.style.color.swatch_fill(),
+			)
+		};
+		let brush_strokes =
+			frozen_brush_state.map_or_else(|| &[][..], |state| state.committed_strokes.as_slice());
+		let radius = FROZEN_BRUSH_STROKE_WIDTH_POINTS * 0.5;
+		let color = Color32::from_rgba_unmultiplied(
+			FROZEN_BRUSH_COLOR_RGBA[0],
+			FROZEN_BRUSH_COLOR_RGBA[1],
+			FROZEN_BRUSH_COLOR_RGBA[2],
+			FROZEN_BRUSH_COLOR_RGBA[3],
+		);
+		let mut drew = false;
+
+		OverlaySession::for_each_frozen_committed_overlay(
+			frozen_edit_history,
+			brush_strokes,
+			frozen_text_annotations,
+			|overlay| match overlay {
+				FrozenCommittedOverlay::Brush(stroke) => {
+					drew |= Self::paint_frozen_brush_stroke(
+						brush_painter,
+						&stroke.points,
+						radius,
+						color,
+					);
+				},
+				FrozenCommittedOverlay::Text(annotation) => {
+					let (font_id, fill) = font_fill(annotation);
+
+					Self::paint_frozen_text_label(
+						painter,
+						annotation.anchor,
+						annotation.text.as_str(),
+						&font_id,
+						fill,
+					);
+
+					drew = true;
+				},
+			},
+		);
+
+		drew
+	}
+
+	fn render_active_frozen_brush_stroke(
 		painter: &Painter,
 		frozen_brush_state: &FrozenBrushState,
 	) -> bool {
+		let Some(active_stroke) = &frozen_brush_state.active_stroke else {
+			return false;
+		};
 		let color = Color32::from_rgba_unmultiplied(
 			FROZEN_BRUSH_COLOR_RGBA[0],
 			FROZEN_BRUSH_COLOR_RGBA[1],
@@ -281,19 +350,9 @@ impl WindowRenderer {
 			FROZEN_BRUSH_COLOR_RGBA[3],
 		);
 		let radius = FROZEN_BRUSH_STROKE_WIDTH_POINTS * 0.5;
-		let mut drew = false;
+		let preview_points = OverlaySession::preview_frozen_brush_points(active_stroke);
 
-		for brush in &frozen_brush_state.committed_strokes {
-			drew |= Self::paint_frozen_brush_stroke(painter, &brush.points, radius, color);
-		}
-
-		if let Some(active_stroke) = &frozen_brush_state.active_stroke {
-			let preview_points = OverlaySession::preview_frozen_brush_points(active_stroke);
-
-			drew |= Self::paint_frozen_brush_stroke(painter, &preview_points, radius, color);
-		}
-
-		drew
+		Self::paint_frozen_brush_stroke(painter, &preview_points, radius, color)
 	}
 
 	fn paint_frozen_brush_stroke(
