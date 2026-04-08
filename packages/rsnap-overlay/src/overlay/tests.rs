@@ -35,6 +35,7 @@ use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 #[cfg(target_os = "macos")]
 use winit::keyboard::ModifiersState;
+use winit::keyboard::{Key, NamedKey};
 #[cfg(target_os = "macos")]
 use winit::window::WindowId;
 
@@ -51,10 +52,11 @@ use crate::overlay::rendering;
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 use crate::overlay::{
 	self, ActiveFrozenBrushStroke, FROZEN_BRUSH_COLOR_RGBA, FROZEN_EDIT_HISTORY_LIMIT,
-	FrozenBrushModelState, FrozenEditKind, FrozenImagePatch, FrozenMosaicEdit,
-	FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextColor, FrozenTextInputSource,
-	FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme,
-	OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+	FROZEN_TEXT_CARET_REPAINT_INTERVAL, FrozenBrushModelState, FrozenEditKind, FrozenImagePatch,
+	FrozenMosaicEdit, FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextColor,
+	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
+	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
+	OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
 	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
 	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
 	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
@@ -1164,6 +1166,56 @@ fn frozen_text_preedit_cursor_range_updates_caret_position() {
 			.as_ref()
 			.and_then(|edit| edit.visible_text_and_caret_char_index().1),
 		Some(1)
+	);
+}
+
+#[test]
+fn frozen_text_enter_does_not_finish_while_ime_preedit_is_active() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("A"));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((3, 3))));
+	assert!(!session.handle_frozen_text_pressed_key(&Key::Named(NamedKey::Enter), None));
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some("A"));
+	assert_eq!(
+		session.frozen_text_edit.as_ref().and_then(|edit| edit.ime_preedit.as_deref()),
+		Some("汉")
+	);
+	assert!(session.frozen_text_annotations.is_empty());
+}
+
+#[test]
+fn frozen_text_caret_repaint_schedules_delayed_repaint_while_editing() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.frozen_text_edit = Some(FrozenTextEditState::new(Pos2::new(120.0, 140.0)));
+	*session.egui_repaint_deadline.lock().unwrap_or_else(|err| err.into_inner()) = None;
+
+	let started_at = Instant::now();
+
+	session.maybe_keep_frozen_text_caret_repaint();
+
+	let deadline = session
+		.egui_repaint_deadline
+		.lock()
+		.unwrap_or_else(|err| err.into_inner())
+		.expect("caret repaint should be scheduled");
+
+	assert!(deadline >= started_at);
+	assert!(
+		deadline <= started_at + FROZEN_TEXT_CARET_REPAINT_INTERVAL + Duration::from_millis(20)
 	);
 }
 
