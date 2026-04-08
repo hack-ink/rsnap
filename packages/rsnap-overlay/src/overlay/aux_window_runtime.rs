@@ -1,10 +1,10 @@
 #[allow(unused_imports)]
 use crate::overlay::{
-	Duration, Event, GlobalPoint, HUD_LOUPE_MOVE_INTERVAL_MIN, INTERACTIVE_REPAINT_FPS_CAP,
-	Instant, LOUPE_WINDOW_WARMUP_REDRAWS, LogicalPosition, MonitorRect, MonitorRectPoints,
-	OVERLAY_EVENT_LOOP_STALL_THRESHOLD, Ordering, OverlayControl, OverlayEventLoopPhase,
-	OverlayMode, OverlaySession, SLOW_OP_WARN_INTERVAL, SLOW_OP_WARN_OUTER_POSITION, WindowEvent,
-	scroll_capture,
+	Duration, Event, FROZEN_TEXT_CARET_REPAINT_INTERVAL, GlobalPoint, HUD_LOUPE_MOVE_INTERVAL_MIN,
+	INTERACTIVE_REPAINT_FPS_CAP, Instant, LOUPE_WINDOW_WARMUP_REDRAWS, LogicalPosition,
+	MonitorRect, MonitorRectPoints, OVERLAY_EVENT_LOOP_STALL_THRESHOLD, Ordering, OverlayControl,
+	OverlayEventLoopPhase, OverlayMode, OverlaySession, SLOW_OP_WARN_INTERVAL,
+	SLOW_OP_WARN_OUTER_POSITION, WindowEvent, scroll_capture,
 };
 
 impl OverlaySession {
@@ -66,6 +66,7 @@ impl OverlaySession {
 		self.maybe_clear_loupe_activation_after_focus_loss();
 		self.maybe_request_keepalive_redraw();
 		self.maybe_keep_selection_flow_repaint();
+		self.maybe_keep_frozen_text_caret_repaint();
 		self.maybe_keep_frozen_capture_redraw();
 		self.maybe_tick_toolbar_window_warmup_redraw();
 		self.maybe_tick_loupe_window_warmup_redraw();
@@ -189,6 +190,19 @@ impl OverlaySession {
 		}
 
 		self.schedule_egui_repaint_after(repaint_interval);
+	}
+
+	pub(super) fn maybe_keep_frozen_text_caret_repaint(&self) {
+		if !matches!(self.state.mode, OverlayMode::Frozen) || self.frozen_text_edit.is_none() {
+			return;
+		}
+
+		let Some(monitor) = self.state.monitor else {
+			return;
+		};
+
+		self.request_redraw_for_monitor(monitor);
+		self.schedule_egui_repaint_after(FROZEN_TEXT_CARET_REPAINT_INTERVAL);
 	}
 
 	pub(super) fn live_overlay_selection_flow_repaint_active(&self) -> bool {

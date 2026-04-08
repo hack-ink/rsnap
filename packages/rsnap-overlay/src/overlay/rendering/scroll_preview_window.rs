@@ -55,7 +55,7 @@ impl ScrollPreviewWindow {
 		let egui_ctx = egui::Context::default();
 		let mut fonts = FontDefinitions::default();
 
-		egui_phosphor::add_to_fonts(&mut fonts, Variant::Regular);
+		super::configure_egui_fonts(&mut fonts);
 
 		egui_ctx.set_fonts(fonts);
 

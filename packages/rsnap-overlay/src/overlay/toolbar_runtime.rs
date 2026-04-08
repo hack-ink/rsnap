@@ -278,6 +278,9 @@ impl OverlaySession {
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				None,
 				None,
+				&self.frozen_text_annotations,
+				self.frozen_text_edit.as_ref(),
+				self.toolbar_state.text_style,
 				Some(&mut self.toolbar_state),
 				toolbar_input,
 			);
@@ -337,6 +340,12 @@ impl OverlaySession {
 		if let Err(err) = self.draw_toolbar_window_frame(monitor, toolbar_input) {
 			return self.exit(OverlayExit::Error(format!("{err:#}")));
 		}
+
+		if self.sync_frozen_text_edit_for_selected_tool() {
+			self.request_redraw_for_monitor(monitor);
+		}
+
+		self.sync_overlay_cursor_icons();
 
 		let draw_frame_elapsed = draw_frame_started_at.elapsed();
 

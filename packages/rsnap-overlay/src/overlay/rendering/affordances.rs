@@ -1,4 +1,5 @@
 use egui::Context;
+use egui::text::CCursor;
 
 #[allow(unused_imports)]
 use crate::overlay::rendering::{
@@ -18,26 +19,42 @@ use crate::overlay::{
 	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FROZEN_SELECTION_SCRIM_ALPHA_DARK,
-	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TOOLBAR_BUTTON_SIZE_POINTS,
-	FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId, FrozenBrushState, FrozenCaptureSource,
-	FrozenSelectionCorner, FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool,
-	HUD_PILL_CORNER_RADIUS_POINTS, HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_INNER_MARGIN_Y_POINTS,
-	HUD_PILL_STROKE_WIDTH_POINTS, HudPillGeometry, HudTheme, Id,
-	LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK, LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT,
-	LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh, MonitorRect, Order, OverlayMode,
-	OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints, SELECTION_DASHED_BORDER_ALPHA,
-	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
-	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_FLOW_CORE_FLOW_WIDTH,
-	SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST, SELECTION_FLOW_LIGHT_PALETTE,
-	SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS, SELECTION_FLOW_PALETTE,
-	SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED, SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX,
-	SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, SELECTION_SIZE_BADGE_GAP_PX,
-	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX,
-	SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
-	SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS, SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind,
-	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
-	Ui, UiBuilder, Vec2, regular,
+	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TEXT_FONT_SIZE_POINTS,
+	FROZEN_TEXT_FONT_SIZE_PRESETS, FROZEN_TEXT_PREVIEW_PLACEHOLDER,
+	FROZEN_TOOLBAR_BUTTON_SIZE_POINTS, FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId,
+	FrozenBrushState, FrozenCaptureSource, FrozenSelectionCorner, FrozenTextAnnotation,
+	FrozenTextColor, FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState,
+	FrozenToolbarState, FrozenToolbarTool, HUD_PILL_CORNER_RADIUS_POINTS,
+	HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_INNER_MARGIN_Y_POINTS, HUD_PILL_STROKE_WIDTH_POINTS,
+	HudPillGeometry, HudTheme, Id, LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK,
+	LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT, LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh,
+	MonitorRect, Order, OverlayMode, OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints,
+	SELECTION_DASHED_BORDER_ALPHA, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
+	SELECTION_FLOW_CORE_FLOW_WIDTH, SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST,
+	SELECTION_FLOW_LIGHT_PALETTE, SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS,
+	SELECTION_FLOW_PALETTE, SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED,
+	SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX, SELECTION_SIZE_BADGE_FONT_SIZE_POINTS,
+	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
+	SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX, SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX,
+	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS,
+	SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind, TOOLBAR_CAPTURE_GAP_PX,
+	TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder, Vec2,
+	regular,
 };
+
+const FROZEN_TEXT_TOOLBAR_SECTION_GAP_POINTS: f32 = 8.0;
+const FROZEN_TEXT_TOOLBAR_SECTION_HEIGHT_POINTS: f32 = 30.0;
+const FROZEN_TEXT_TOOLBAR_SECTION_DIVIDER_ALPHA_DARK: u8 = 60;
+const FROZEN_TEXT_TOOLBAR_SECTION_DIVIDER_ALPHA_LIGHT: u8 = 72;
+const FROZEN_TEXT_TOOLBAR_SWATCH_SIZE_POINTS: f32 = 18.0;
+const FROZEN_TEXT_TOOLBAR_SWATCH_GAP_POINTS: f32 = 8.0;
+const FROZEN_TEXT_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS: f32 = 24.0;
+const FROZEN_TEXT_TOOLBAR_SIZE_LABEL_WIDTH_POINTS: f32 = 54.0;
+const FROZEN_TEXT_INTERACTION_PADDING_X_POINTS: f32 = 8.0;
+const FROZEN_TEXT_INTERACTION_PADDING_Y_POINTS: f32 = 6.0;
+const FROZEN_TEXT_INTERACTION_LINE_HEIGHT_FACTOR: f32 = 1.25;
+const FROZEN_TEXT_INTERACTION_CHAR_WIDTH_FACTOR: f32 = 0.58;
 
 #[derive(Clone, Copy)]
 pub(in crate::overlay) struct SelectionScrimStyle {
@@ -139,6 +156,9 @@ impl WindowRenderer {
 		frozen_capture_source: FrozenCaptureSource,
 		frozen_toolbar_reserved_rect: Option<Rect>,
 		frozen_brush_state: Option<&FrozenBrushState>,
+		frozen_text_annotations: &[FrozenTextAnnotation],
+		frozen_text_edit: Option<&FrozenTextEditState>,
+		frozen_text_style: FrozenTextStyle,
 		_frozen_capture_is_fullscreen_fallback: bool,
 		_selection_flow_enabled: bool,
 		_selection_flow_stroke_width_px: f32,
@@ -160,6 +180,14 @@ impl WindowRenderer {
 			theme,
 			show_resize_handles,
 			selection_dashed_border_cache,
+		);
+
+		has_affordance |= Self::render_frozen_text_annotations(
+			&painter,
+			theme,
+			frozen_text_annotations,
+			frozen_text_edit,
+			frozen_text_style,
 		);
 
 		if let Some(target) = Self::frozen_capture_size_badge_target(state, screen_rect) {
@@ -292,6 +320,208 @@ impl WindowRenderer {
 				true
 			},
 		}
+	}
+
+	fn render_frozen_text_annotations(
+		painter: &Painter,
+		theme: HudTheme,
+		annotations: &[FrozenTextAnnotation],
+		text_edit: Option<&FrozenTextEditState>,
+		text_style: FrozenTextStyle,
+	) -> bool {
+		let mut rendered = false;
+
+		for annotation in annotations {
+			let font_id = FontId::proportional(annotation.style.font_size_points);
+
+			Self::paint_frozen_text_label(
+				painter,
+				annotation.anchor,
+				annotation.text.as_str(),
+				&font_id,
+				annotation.style.color.swatch_fill(),
+			);
+
+			rendered = true;
+		}
+
+		if let Some(text_edit) = text_edit {
+			let (visible_text, caret_char_index) = text_edit.visible_text_and_caret_char_index();
+			let font_id = FontId::proportional(text_style.font_size_points);
+			let (text, color) = if visible_text.is_empty() {
+				(
+					FROZEN_TEXT_PREVIEW_PLACEHOLDER,
+					Self::frozen_text_placeholder_fill(text_style.color, theme),
+				)
+			} else {
+				(visible_text.as_str(), text_style.color.swatch_fill())
+			};
+
+			Self::paint_frozen_text_label(painter, text_edit.anchor, text, &font_id, color);
+
+			if let Some(caret_char_index) = caret_char_index
+				&& Self::frozen_text_caret_visible(painter.ctx().input(|i| i.time))
+			{
+				Self::paint_frozen_text_caret(
+					painter,
+					text_edit.anchor,
+					visible_text.as_str(),
+					&font_id,
+					caret_char_index,
+					text_style.color.swatch_fill(),
+				);
+			}
+
+			rendered = true;
+		}
+
+		rendered
+	}
+
+	fn paint_frozen_text_label(
+		painter: &Painter,
+		anchor: Pos2,
+		text: &str,
+		font_id: &FontId,
+		fill: Color32,
+	) {
+		let galley = painter.layout_no_wrap(text.to_owned(), font_id.clone(), fill);
+
+		painter.galley(anchor, galley, fill);
+	}
+
+	fn paint_frozen_text_caret(
+		painter: &Painter,
+		anchor: Pos2,
+		text: &str,
+		font_id: &FontId,
+		caret_char_index: usize,
+		fill: Color32,
+	) {
+		let caret_rect = Self::frozen_text_edit_caret_rect_at_char_index(
+			painter,
+			anchor,
+			text,
+			font_id,
+			caret_char_index,
+		);
+		let caret_top = caret_rect.min;
+		let caret_bottom = Pos2::new(caret_rect.min.x, caret_rect.max.y);
+
+		painter.line_segment([caret_top, caret_bottom], Stroke::new(1.5, fill));
+	}
+
+	pub(in crate::overlay) fn frozen_text_placeholder_fill(
+		color: FrozenTextColor,
+		theme: HudTheme,
+	) -> Color32 {
+		let [r, g, b, _] = color.swatch_fill().to_array();
+		let soften_ratio = match theme {
+			HudTheme::Dark => 0.46,
+			HudTheme::Light => 0.56,
+		};
+		let alpha = match theme {
+			HudTheme::Dark => 196,
+			HudTheme::Light => 172,
+		};
+
+		Color32::from_rgba_unmultiplied(
+			Self::blend_color_channel(r, 255, soften_ratio),
+			Self::blend_color_channel(g, 255, soften_ratio),
+			Self::blend_color_channel(b, 255, soften_ratio),
+			alpha,
+		)
+	}
+
+	fn blend_color_channel(from: u8, to: u8, ratio: f32) -> u8 {
+		(from as f32 + (to as f32 - from as f32) * ratio).clamp(0.0, 255.0).round() as u8
+	}
+
+	#[cfg_attr(not(test), allow(dead_code))]
+	pub(in crate::overlay) fn frozen_text_edit_caret_rect(
+		painter: &Painter,
+		anchor: Pos2,
+		text: &str,
+		font_id: &FontId,
+	) -> Rect {
+		Self::frozen_text_edit_caret_rect_at_char_index(
+			painter,
+			anchor,
+			text,
+			font_id,
+			text.chars().count(),
+		)
+	}
+
+	pub(in crate::overlay) fn frozen_text_edit_caret_rect_at_char_index(
+		painter: &Painter,
+		anchor: Pos2,
+		text: &str,
+		font_id: &FontId,
+		caret_char_index: usize,
+	) -> Rect {
+		let galley = painter.layout_no_wrap(text.to_owned(), font_id.clone(), Color32::WHITE);
+		let caret =
+			galley.pos_from_cursor(CCursor::new(caret_char_index.min(text.chars().count())));
+		let caret_height = caret.height().max(font_id.size);
+
+		Rect::from_min_max(
+			Pos2::new(anchor.x + caret.min.x, anchor.y + caret.min.y),
+			Pos2::new(anchor.x + caret.max.x, anchor.y + caret.min.y + caret_height),
+		)
+	}
+
+	pub(in crate::overlay) fn frozen_text_edit_caret_rect_for_window(
+		&self,
+		anchor: Pos2,
+		text: &str,
+		font_id: &FontId,
+		caret_char_index: usize,
+	) -> Rect {
+		let painter = self
+			.egui_ctx
+			.layer_painter(LayerId::new(Order::Foreground, Id::new("frozen-text-ime-caret")));
+
+		Self::frozen_text_edit_caret_rect_at_char_index(
+			&painter,
+			anchor,
+			text,
+			font_id,
+			caret_char_index,
+		)
+	}
+
+	pub(in crate::overlay) fn frozen_text_edit_interaction_rect(
+		anchor: Pos2,
+		text: &str,
+		font_size_points: f32,
+	) -> Rect {
+		let text = if text.is_empty() { FROZEN_TEXT_PREVIEW_PLACEHOLDER } else { text };
+		let line_count = text.lines().count().max(1) as f32;
+		let widest_line_chars =
+			text.lines().map(|line| line.chars().count()).max().unwrap_or(0).max(1) as f32;
+		let text_width =
+			(widest_line_chars * font_size_points * FROZEN_TEXT_INTERACTION_CHAR_WIDTH_FACTOR)
+				.max(font_size_points);
+		let text_height =
+			(line_count * font_size_points * FROZEN_TEXT_INTERACTION_LINE_HEIGHT_FACTOR)
+				.max(font_size_points);
+
+		Rect::from_min_max(
+			Pos2::new(
+				anchor.x - FROZEN_TEXT_INTERACTION_PADDING_X_POINTS,
+				anchor.y - FROZEN_TEXT_INTERACTION_PADDING_Y_POINTS,
+			),
+			Pos2::new(
+				anchor.x + text_width + FROZEN_TEXT_INTERACTION_PADDING_X_POINTS,
+				anchor.y + text_height + FROZEN_TEXT_INTERACTION_PADDING_Y_POINTS,
+			),
+		)
+	}
+
+	pub(in crate::overlay) fn frozen_text_caret_visible(time_secs: f64) -> bool {
+		(time_secs.rem_euclid(crate::overlay::FROZEN_TEXT_CARET_BLINK_PERIOD_SECS))
+			< crate::overlay::FROZEN_TEXT_CARET_BLINK_PERIOD_SECS * 0.5
 	}
 
 	pub(in crate::overlay) fn frozen_capture_focus_rect(
@@ -2049,7 +2279,12 @@ impl WindowRenderer {
 			+ spacing_count * FROZEN_TOOLBAR_ITEM_SPACING_POINTS
 			+ 2.0 * HUD_PILL_INNER_MARGIN_X_POINTS
 			+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
-		let height = toolbar_state.pill_height_points.unwrap_or(TOOLBAR_EXPANDED_HEIGHT_PX);
+		let mut height = toolbar_state.pill_height_points.unwrap_or(TOOLBAR_EXPANDED_HEIGHT_PX);
+
+		if Self::frozen_text_style_toolbar_visible(toolbar_state) {
+			height +=
+				FROZEN_TEXT_TOOLBAR_SECTION_GAP_POINTS + FROZEN_TEXT_TOOLBAR_SECTION_HEIGHT_POINTS;
+		}
 
 		Vec2::new(width, height)
 	}
@@ -2245,24 +2480,15 @@ impl WindowRenderer {
 				let toolbar_frame =
 					Self::hud_pill_frame(theme, hud_opaque, hud_opacity, body_fill, false);
 
-				if response.drag_started() {
-					toolbar_state.dragging = true;
-					toolbar_state.floating_position = Some(toolbar_pos);
-					toolbar_state.drag_offset = cursor - toolbar_pos;
-				}
-				if toolbar_state.dragging && left_button_down {
-					let desired_pos = cursor - toolbar_state.drag_offset;
-
-					toolbar_state.floating_position = Some(Self::clamp_toolbar_position(
-						screen_rect,
-						toolbar_size,
-						desired_pos,
-						TOOLBAR_SCREEN_MARGIN_PX,
-						TOOLBAR_SCREEN_MARGIN_PX,
-					));
-				} else if toolbar_state.dragging {
-					toolbar_state.dragging = false;
-				}
+				Self::update_frozen_toolbar_drag_state(
+					toolbar_state,
+					response.drag_started(),
+					toolbar_pos,
+					screen_rect,
+					toolbar_size,
+					cursor,
+					left_button_down,
+				);
 
 				// Draw the capsule ourselves at the exact allocated rect. This keeps the visible pill
 				// and the blur rect perfectly aligned (no shrink-to-content surprises on first frame).
@@ -2296,19 +2522,122 @@ impl WindowRenderer {
 					HUD_PILL_INNER_MARGIN_X_POINTS,
 					HUD_PILL_INNER_MARGIN_Y_POINTS,
 				));
-				let _ = ui.scope_builder(UiBuilder::new().max_rect(inner_rect), |ui| {
-					ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-						ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
 
-						Self::render_frozen_toolbar_controls(ui, toolbar_state, theme);
-					});
-				});
+				Self::render_frozen_toolbar_body(ui, inner_rect, toolbar_state, theme);
 
 				*hud_pill_out = Some(HudPillGeometry {
 					rect,
 					radius_points: f32::from(HUD_PILL_CORNER_RADIUS_POINTS),
 				});
 			});
+	}
+
+	fn update_frozen_toolbar_drag_state(
+		toolbar_state: &mut FrozenToolbarState,
+		drag_started: bool,
+		toolbar_pos: Pos2,
+		screen_rect: Rect,
+		toolbar_size: Vec2,
+		cursor: Pos2,
+		left_button_down: bool,
+	) {
+		if drag_started {
+			toolbar_state.dragging = true;
+			toolbar_state.floating_position = Some(toolbar_pos);
+			toolbar_state.drag_offset = cursor - toolbar_pos;
+		}
+		if toolbar_state.dragging && left_button_down {
+			let desired_pos = cursor - toolbar_state.drag_offset;
+
+			toolbar_state.floating_position = Some(Self::clamp_toolbar_position(
+				screen_rect,
+				toolbar_size,
+				desired_pos,
+				TOOLBAR_SCREEN_MARGIN_PX,
+				TOOLBAR_SCREEN_MARGIN_PX,
+			));
+		} else if toolbar_state.dragging {
+			toolbar_state.dragging = false;
+		}
+	}
+
+	fn render_frozen_toolbar_body(
+		ui: &mut Ui,
+		inner_rect: Rect,
+		toolbar_state: &mut FrozenToolbarState,
+		theme: HudTheme,
+	) {
+		let _ = ui.scope_builder(UiBuilder::new().max_rect(inner_rect), |ui| {
+			ui.with_layout(Layout::top_down(Align::Center), |ui| {
+				Self::render_frozen_toolbar_primary_row(
+					ui,
+					inner_rect.width(),
+					toolbar_state,
+					theme,
+				);
+
+				if Self::frozen_text_style_toolbar_visible(toolbar_state) {
+					Self::render_frozen_text_toolbar_section(ui, inner_rect, toolbar_state, theme);
+				}
+			});
+		});
+	}
+
+	fn render_frozen_toolbar_primary_row(
+		ui: &mut Ui,
+		width: f32,
+		toolbar_state: &mut FrozenToolbarState,
+		theme: HudTheme,
+	) {
+		let _ = ui.allocate_ui_with_layout(
+			Vec2::new(width, FROZEN_TOOLBAR_BUTTON_SIZE_POINTS),
+			Layout::left_to_right(Align::Center),
+			|ui| {
+				ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+
+				Self::render_frozen_toolbar_controls(ui, toolbar_state, theme);
+			},
+		);
+	}
+
+	fn paint_frozen_text_toolbar_spacing(ui: &mut Ui, inner_rect: Rect, theme: HudTheme) {
+		ui.add_space(FROZEN_TEXT_TOOLBAR_SECTION_GAP_POINTS * 0.5);
+
+		Self::paint_frozen_text_toolbar_divider(ui, inner_rect, theme);
+
+		ui.add_space(FROZEN_TEXT_TOOLBAR_SECTION_GAP_POINTS * 0.5);
+	}
+
+	fn render_frozen_text_toolbar_section(
+		ui: &mut Ui,
+		inner_rect: Rect,
+		toolbar_state: &mut FrozenToolbarState,
+		theme: HudTheme,
+	) {
+		Self::paint_frozen_text_toolbar_spacing(ui, inner_rect, theme);
+
+		let _ = ui.allocate_ui_with_layout(
+			Vec2::new(inner_rect.width(), FROZEN_TEXT_TOOLBAR_SECTION_HEIGHT_POINTS),
+			Layout::left_to_right(Align::Center),
+			|ui| Self::render_frozen_text_toolbar_controls(ui, toolbar_state, theme),
+		);
+	}
+
+	fn paint_frozen_text_toolbar_divider(ui: &Ui, inner_rect: Rect, theme: HudTheme) {
+		let divider_color = match theme {
+			HudTheme::Dark => {
+				Color32::from_white_alpha(FROZEN_TEXT_TOOLBAR_SECTION_DIVIDER_ALPHA_DARK)
+			},
+			HudTheme::Light => {
+				Color32::from_black_alpha(FROZEN_TEXT_TOOLBAR_SECTION_DIVIDER_ALPHA_LIGHT)
+			},
+		};
+		let divider_y = ui.cursor().min.y;
+
+		ui.painter().line_segment(
+			[Pos2::new(inner_rect.left(), divider_y), Pos2::new(inner_rect.right(), divider_y)],
+			Stroke::new(1.0, divider_color),
+		);
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -2391,6 +2720,148 @@ impl WindowRenderer {
 				);
 			}
 		});
+	}
+
+	fn frozen_text_style_toolbar_visible(toolbar_state: &FrozenToolbarState) -> bool {
+		toolbar_state.selected_tool == FrozenToolbarTool::Text
+	}
+
+	fn render_frozen_text_toolbar_controls(
+		ui: &mut Ui,
+		toolbar_state: &mut FrozenToolbarState,
+		theme: HudTheme,
+	) {
+		let can_decrease = toolbar_state.text_style.font_size_points
+			> FROZEN_TEXT_FONT_SIZE_PRESETS[0] + f32::EPSILON;
+		let can_increase = toolbar_state.text_style.font_size_points
+			< FROZEN_TEXT_FONT_SIZE_PRESETS[FROZEN_TEXT_FONT_SIZE_PRESETS.len() - 1] - f32::EPSILON;
+
+		ui.horizontal_centered(|ui| {
+			ui.spacing_mut().item_spacing.x = FROZEN_TEXT_TOOLBAR_SWATCH_GAP_POINTS;
+
+			if Self::render_frozen_text_toolbar_icon_button(
+				ui,
+				regular::MINUS,
+				"Smaller text",
+				can_decrease,
+				theme,
+			) && toolbar_state.text_style.step_font_size(-1)
+			{
+				toolbar_state.needs_redraw = true;
+			}
+
+			let label_response = ui.allocate_response(
+				Vec2::new(
+					FROZEN_TEXT_TOOLBAR_SIZE_LABEL_WIDTH_POINTS,
+					FROZEN_TEXT_TOOLBAR_SECTION_HEIGHT_POINTS,
+				),
+				Sense::hover(),
+			);
+			let label_color = Self::hud_text_colors(theme).0;
+
+			ui.painter().text(
+				label_response.rect.center(),
+				Align2::CENTER_CENTER,
+				format!("{} pt", toolbar_state.text_style.font_size_points.round() as i32),
+				FontId::new(13.0, FontFamily::Proportional),
+				label_color,
+			);
+
+			if Self::render_frozen_text_toolbar_icon_button(
+				ui,
+				regular::PLUS,
+				"Larger text",
+				can_increase,
+				theme,
+			) && toolbar_state.text_style.step_font_size(1)
+			{
+				toolbar_state.needs_redraw = true;
+			}
+
+			ui.add_space(4.0);
+
+			for color in FrozenTextColor::ALL {
+				if Self::render_frozen_text_color_swatch(
+					ui,
+					color,
+					toolbar_state.text_style.color == color,
+					theme,
+				) {
+					toolbar_state.text_style.color = color;
+					toolbar_state.needs_redraw = true;
+				}
+			}
+		});
+	}
+
+	fn render_frozen_text_toolbar_icon_button(
+		ui: &mut Ui,
+		icon: &str,
+		hover_text: &str,
+		enabled: bool,
+		theme: HudTheme,
+	) -> bool {
+		let response = ui.allocate_response(
+			Vec2::new(
+				FROZEN_TEXT_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS,
+				FROZEN_TEXT_TOOLBAR_SECTION_HEIGHT_POINTS,
+			),
+			Sense::click(),
+		);
+		let hovered = enabled && response.hovered();
+		let response = response.on_hover_text(hover_text);
+		let style = Self::frozen_toolbar_button_style(theme, enabled, hovered, false);
+		let bg_rect = response.rect.shrink2(egui::vec2(2.0, 3.0));
+
+		if hovered {
+			ui.painter().rect_filled(bg_rect, 8.0, style.bg_color);
+		}
+
+		ui.painter().text(
+			response.rect.center(),
+			Align2::CENTER_CENTER,
+			icon,
+			FontId::new(16.0, FontFamily::Proportional),
+			style.icon_color,
+		);
+
+		enabled && response.clicked()
+	}
+
+	fn render_frozen_text_color_swatch(
+		ui: &mut Ui,
+		color: FrozenTextColor,
+		selected: bool,
+		theme: HudTheme,
+	) -> bool {
+		let response = ui
+			.allocate_response(Vec2::splat(FROZEN_TEXT_TOOLBAR_SWATCH_SIZE_POINTS), Sense::click());
+		let radius = FROZEN_TEXT_TOOLBAR_SWATCH_SIZE_POINTS * 0.5 - 1.0;
+		let stroke_color = match theme {
+			HudTheme::Dark => {
+				if selected {
+					Color32::WHITE
+				} else {
+					Color32::from_white_alpha(96)
+				}
+			},
+			HudTheme::Light => {
+				if selected {
+					Color32::BLACK
+				} else {
+					Color32::from_black_alpha(96)
+				}
+			},
+		};
+
+		ui.painter().circle_filled(response.rect.center(), radius, color.swatch_fill());
+		ui.painter().circle_stroke(
+			response.rect.center(),
+			radius,
+			Stroke::new(if selected { 2.0 } else { 1.0 }, stroke_color),
+		);
+
+		response.on_hover_text("Text color").clicked()
 	}
 
 	pub(in crate::overlay) fn frozen_toolbar_button_style(

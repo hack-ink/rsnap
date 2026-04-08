@@ -18,18 +18,19 @@ use crate::overlay::{
 	BindingType, BlendState, Buffer, BufferBindingType, BufferSize, BufferUsages, ClippedPrimitive,
 	Color32, ColorWrites, CompositeAlphaMode, Cow, CurrentSurfaceTexture, Device, Duration, Event,
 	ExperimentalFeatures, Features, FilterMode, FontDefinitions, FontFamily, FrontFace,
-	FrozenBrushState, FrozenCaptureSource, FrozenSelectionCorner, FrozenToolbarPointerState,
-	FrozenToolbarState, FullOutput, HudAnchor, HudTheme, Id, Instant, LayerId, LoadOp, MemoryHints,
-	MipmapFilterMode, MonitorRect, MultisampleState, Mutex, Order, OverlayMode, OverlaySession,
-	OverlayState, PhysicalSize, PipelineCompilationOptions, PointerButton, PolygonMode, Pos2,
-	PowerPreference, PresentMode, PrimitiveTopology, Queue, Rect, RectPoints, RenderPipeline,
-	Renderer, Result, SLOW_OP_WARN_RENDER, Sampler, SamplerBindingType, ScreenDescriptor,
-	ShaderSource, ShaderStages, SlowOperationLogger, StoreOp, Surface, SurfaceCapabilities,
-	SurfaceFrameSkipReason, SurfaceTexture, Texture, TextureAspect, TextureSampleType,
-	TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, ThemeMode,
-	ToolbarPlacement, Trace, Variant, Vec2, ViewportId, Visuals, WindowId, WindowRendererPath,
-	WrapErr, eyre, hud_helpers, mem,
+	FrozenBrushState, FrozenCaptureSource, FrozenSelectionCorner, FrozenTextAnnotation,
+	FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState,
+	FullOutput, HudAnchor, HudTheme, Id, Instant, LayerId, LoadOp, MemoryHints, MipmapFilterMode,
+	MonitorRect, MultisampleState, Mutex, Order, OverlayMode, OverlaySession, OverlayState,
+	PhysicalSize, PipelineCompilationOptions, PointerButton, PolygonMode, Pos2, PowerPreference,
+	PresentMode, PrimitiveTopology, Queue, Rect, RectPoints, RenderPipeline, Renderer, Result,
+	SLOW_OP_WARN_RENDER, Sampler, SamplerBindingType, ScreenDescriptor, ShaderSource, ShaderStages,
+	SlowOperationLogger, StoreOp, Surface, SurfaceCapabilities, SurfaceFrameSkipReason,
+	SurfaceTexture, Texture, TextureAspect, TextureSampleType, TextureUsages, TextureView,
+	TextureViewDescriptor, TextureViewDimension, ThemeMode, ToolbarPlacement, Trace, Variant, Vec2,
+	ViewportId, Visuals, WindowId, WindowRendererPath, WrapErr, eyre, hud_helpers, mem,
 };
+use crate::system_fonts;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct FrozenToolbarButtonStyle {
@@ -41,6 +42,30 @@ pub(super) struct FrozenToolbarButtonStyle {
 pub(super) struct ScrollPreviewView {
 	pub(super) paused: bool,
 	pub(super) theme: HudTheme,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct SelectionFlowGeometryCacheKey {
+	rect_min_x_bits: u32,
+	rect_min_y_bits: u32,
+	rect_max_x_bits: u32,
+	rect_max_y_bits: u32,
+	corner_radius_bits: u32,
+	seam_offset_bits: u32,
+	sample_count: usize,
+}
+impl SelectionFlowGeometryCacheKey {
+	const fn new(rect: Rect, corner_radius: f32, seam_offset: f32, sample_count: usize) -> Self {
+		Self {
+			rect_min_x_bits: rect.min.x.to_bits(),
+			rect_min_y_bits: rect.min.y.to_bits(),
+			rect_max_x_bits: rect.max.x.to_bits(),
+			rect_max_y_bits: rect.max.y.to_bits(),
+			corner_radius_bits: corner_radius.to_bits(),
+			seam_offset_bits: seam_offset.to_bits(),
+			sample_count,
+		}
+	}
 }
 
 #[derive(Debug, Default)]
@@ -693,6 +718,9 @@ impl WindowRenderer {
 		frozen_capture_is_fullscreen_fallback: bool,
 		frozen_toolbar_reserved_rect: Option<Rect>,
 		frozen_brush_state: Option<&FrozenBrushState>,
+		frozen_text_annotations: &[FrozenTextAnnotation],
+		frozen_text_edit: Option<&FrozenTextEditState>,
+		frozen_text_style: FrozenTextStyle,
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 		mut toolbar_state: Option<&mut FrozenToolbarState>,
@@ -790,6 +818,9 @@ impl WindowRenderer {
 					frozen_capture_source,
 					frozen_toolbar_reserved_rect,
 					frozen_brush_state,
+					frozen_text_annotations,
+					frozen_text_edit,
+					frozen_text_style,
 					frozen_capture_is_fullscreen_fallback,
 					selection_flow_enabled,
 					selection_flow_stroke_width_px,
@@ -1027,26 +1058,7 @@ impl WindowRenderer {
 		let egui_ctx = egui::Context::default();
 		let mut fonts = FontDefinitions::default();
 
-		egui_phosphor::add_to_fonts(&mut fonts, Variant::Regular);
-
-		let phosphor_fill = String::from("phosphor-fill");
-		let proportional_fallback =
-			fonts.families.get(&FontFamily::Proportional).and_then(|names| names.first()).cloned();
-
-		fonts.font_data.insert(phosphor_fill.clone(), Variant::Fill.font_data().into());
-
-		{
-			let family =
-				fonts.families.entry(FontFamily::Name(phosphor_fill.clone().into())).or_default();
-
-			family.insert(0, phosphor_fill.clone());
-
-			if let Some(fallback) = proportional_fallback
-				&& !family.contains(&fallback)
-			{
-				family.push(fallback);
-			}
-		}
+		configure_egui_fonts(&mut fonts);
 
 		egui_ctx.set_fonts(fonts);
 
@@ -1323,6 +1335,9 @@ impl WindowRenderer {
 		frozen_capture_is_fullscreen_fallback: bool,
 		frozen_toolbar_reserved_rect: Option<Rect>,
 		frozen_brush_state: Option<&FrozenBrushState>,
+		frozen_text_annotations: &[FrozenTextAnnotation],
+		frozen_text_edit: Option<&FrozenTextEditState>,
+		frozen_text_style: FrozenTextStyle,
 		toolbar_state: Option<&mut FrozenToolbarState>,
 		toolbar_pointer: Option<FrozenToolbarPointerState>,
 	) -> Result<()> {
@@ -1386,6 +1401,9 @@ impl WindowRenderer {
 			frozen_capture_is_fullscreen_fallback,
 			frozen_toolbar_reserved_rect,
 			frozen_brush_state,
+			frozen_text_annotations,
+			frozen_text_edit,
+			frozen_text_style,
 			&mut selection_flow_cache,
 			&mut selection_dashed_border_cache,
 			toolbar_state,
@@ -1438,30 +1456,6 @@ impl WindowRenderer {
 			hud_shader_blur_active,
 			toolbar_active,
 		)
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SelectionFlowGeometryCacheKey {
-	rect_min_x_bits: u32,
-	rect_min_y_bits: u32,
-	rect_max_x_bits: u32,
-	rect_max_y_bits: u32,
-	corner_radius_bits: u32,
-	seam_offset_bits: u32,
-	sample_count: usize,
-}
-impl SelectionFlowGeometryCacheKey {
-	const fn new(rect: Rect, corner_radius: f32, seam_offset: f32, sample_count: usize) -> Self {
-		Self {
-			rect_min_x_bits: rect.min.x.to_bits(),
-			rect_min_y_bits: rect.min.y.to_bits(),
-			rect_max_x_bits: rect.max.x.to_bits(),
-			rect_max_y_bits: rect.max.y.to_bits(),
-			corner_radius_bits: corner_radius.to_bits(),
-			seam_offset_bits: seam_offset.to_bits(),
-			sample_count,
-		}
 	}
 }
 
@@ -1585,4 +1579,29 @@ impl WindowRendererPhaseTimings {
 
 		slow_op_logger.warn_if_redraw_substep_slow(op, elapsed, self.total, describe);
 	}
+}
+
+pub(super) fn configure_egui_fonts(fonts: &mut FontDefinitions) {
+	egui_phosphor::add_to_fonts(fonts, Variant::Regular);
+
+	let phosphor_fill = String::from("phosphor-fill");
+	let proportional_fallback =
+		fonts.families.get(&FontFamily::Proportional).and_then(|names| names.first()).cloned();
+
+	fonts.font_data.insert(phosphor_fill.clone(), Variant::Fill.font_data().into());
+
+	{
+		let family =
+			fonts.families.entry(FontFamily::Name(phosphor_fill.clone().into())).or_default();
+
+		family.insert(0, phosphor_fill.clone());
+
+		if let Some(fallback) = proportional_fallback
+			&& !family.contains(&fallback)
+		{
+			family.push(fallback);
+		}
+	}
+
+	system_fonts::configure_text_font_fallbacks(fonts);
 }

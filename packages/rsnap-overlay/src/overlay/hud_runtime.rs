@@ -126,6 +126,9 @@ impl OverlaySession {
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				None,
 				None,
+				&self.frozen_text_annotations,
+				self.frozen_text_edit.as_ref(),
+				self.toolbar_state.text_style,
 				None,
 				None,
 			)?;
