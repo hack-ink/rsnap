@@ -52,11 +52,11 @@ use crate::overlay::rendering;
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 use crate::overlay::{
 	self, ActiveFrozenBrushStroke, FROZEN_BRUSH_COLOR_RGBA, FROZEN_EDIT_HISTORY_LIMIT,
-	FROZEN_TEXT_CARET_REPAINT_INTERVAL, FrozenBrushModelState, FrozenEditKind, FrozenImagePatch,
-	FrozenMosaicEdit, FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextColor,
-	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
-	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
-	OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+	FROZEN_TEXT_CARET_REPAINT_INTERVAL, FrozenBrushModelState, FrozenEditKind,
+	FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit, FrozenSelectionDragState,
+	FrozenTextAnnotation, FrozenTextColor, FrozenTextEditState, FrozenTextInputSource,
+	FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme,
+	OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
 	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
 	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
 	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
@@ -1291,6 +1291,17 @@ fn current_export_image_renders_frozen_text_annotations() {
 
 	assert_eq!(export.dimensions(), (120, 80));
 	assert!(export.pixels().any(|pixel| *pixel != Rgba([0, 0, 0, 255])));
+}
+
+#[test]
+fn frozen_export_transform_uses_actual_export_image_dimensions() {
+	let capture_rect = RectPoints::new(10, 12, 20, 10);
+	let transform = FrozenExportTransform::new(capture_rect, 60, 30).expect("transform");
+
+	assert_eq!(transform.point_to_pixels(Pos2::new(10.0, 12.0)), Pos2::new(0.0, 0.0));
+	assert_eq!(transform.point_to_pixels(Pos2::new(20.0, 17.0)), Pos2::new(30.0, 15.0));
+	assert_eq!(transform.point_to_pixels(Pos2::new(30.0, 22.0)), Pos2::new(60.0, 30.0));
+	assert_eq!(transform.scalar_scale(), 3.0);
 }
 
 #[test]
