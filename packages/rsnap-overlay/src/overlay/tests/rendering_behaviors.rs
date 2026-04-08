@@ -21,7 +21,10 @@ use crate::overlay::tests::{
 	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
 	overlay,
 };
-use crate::overlay::{FrozenSelectionCorner, FrozenSelectionInteractionKind};
+use crate::overlay::{
+	FROZEN_TEXT_CARET_BLINK_PERIOD_SECS, FROZEN_TEXT_FONT_SIZE_POINTS, FontId,
+	FrozenSelectionCorner, FrozenSelectionInteractionKind, FrozenTextColor,
+};
 use crate::worker::{WorkerErrorSource, WorkerResponse};
 
 fn test_mosaic_source_image() -> RgbaImage {
@@ -243,8 +246,8 @@ fn frozen_mosaic_drag_waits_for_final_capture_ready() {
 	assert!(!session.frozen_final_capture_ready());
 	assert!(!session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
 	assert!(!session.commit_frozen_mosaic_drag());
-	assert!(!session.undo_frozen_mosaic_edit());
-	assert!(!session.redo_frozen_mosaic_edit());
+	assert!(!session.perform_frozen_undo());
+	assert!(!session.perform_frozen_redo());
 	assert_eq!(session.state.frozen_mosaic_preview_rect, None);
 	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
 
@@ -297,11 +300,11 @@ fn frozen_mosaic_commit_round_trips_through_undo_and_redo() {
 	assert_eq!(session.state.frozen_mosaic_preview_rect, None);
 	assert!(session.toolbar_state.undo_available);
 	assert!(!session.toolbar_state.redo_available);
-	assert!(session.undo_frozen_mosaic_edit());
+	assert!(session.perform_frozen_undo());
 	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
 	assert!(!session.toolbar_state.undo_available);
 	assert!(session.toolbar_state.redo_available);
-	assert!(session.redo_frozen_mosaic_edit());
+	assert!(session.perform_frozen_redo());
 	assert_eq!(session.state.frozen_image.as_ref(), Some(&edited));
 	assert!(session.toolbar_state.undo_available);
 	assert!(!session.toolbar_state.redo_available);
@@ -696,6 +699,94 @@ fn frozen_selection_cursor_icon_uses_corner_resize_hover() {
 	session.state.cursor = Some(GlobalPoint::new(150, 180));
 
 	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::Grab);
+}
+
+#[test]
+fn frozen_text_edit_caret_rect_starts_at_anchor_when_text_is_empty() {
+	let ctx = tests::test_egui_context();
+	let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("text-caret-empty")));
+	let anchor = Pos2::new(140.0, 160.0);
+	let font_id = FontId::proportional(FROZEN_TEXT_FONT_SIZE_POINTS);
+	let caret_rect = WindowRenderer::frozen_text_edit_caret_rect(&painter, anchor, "", &font_id);
+
+	assert!((caret_rect.min.x - anchor.x).abs() <= f32::EPSILON);
+	assert!((caret_rect.min.y - anchor.y).abs() <= f32::EPSILON);
+	assert!(caret_rect.height() >= FROZEN_TEXT_FONT_SIZE_POINTS);
+}
+
+#[test]
+fn frozen_text_edit_caret_rect_tracks_multiline_text_end() {
+	let ctx = tests::test_egui_context();
+	let painter =
+		ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("text-caret-multiline")));
+	let anchor = Pos2::new(140.0, 160.0);
+	let font_id = FontId::proportional(FROZEN_TEXT_FONT_SIZE_POINTS);
+	let caret_rect =
+		WindowRenderer::frozen_text_edit_caret_rect(&painter, anchor, "A\nB", &font_id);
+
+	assert!(caret_rect.min.y > anchor.y);
+	assert!(caret_rect.min.x > anchor.x);
+}
+
+#[test]
+fn frozen_text_edit_caret_rect_tracks_explicit_preedit_cursor_position() {
+	let ctx = tests::test_egui_context();
+	let painter =
+		ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("text-caret-preedit-cursor")));
+	let anchor = Pos2::new(140.0, 160.0);
+	let font_id = FontId::proportional(FROZEN_TEXT_FONT_SIZE_POINTS);
+	let caret_rect = WindowRenderer::frozen_text_edit_caret_rect_at_char_index(
+		&painter, anchor, "ABCD", &font_id, 2,
+	);
+	let end_rect = WindowRenderer::frozen_text_edit_caret_rect(&painter, anchor, "ABCD", &font_id);
+
+	assert!(caret_rect.min.x > anchor.x);
+	assert!(caret_rect.min.x < end_rect.min.x);
+	assert!((caret_rect.min.y - anchor.y).abs() <= f32::EPSILON);
+}
+
+#[test]
+fn frozen_text_placeholder_fill_tracks_selected_text_color() {
+	let blue = WindowRenderer::frozen_text_placeholder_fill(FrozenTextColor::Blue, HudTheme::Dark);
+	let red = WindowRenderer::frozen_text_placeholder_fill(FrozenTextColor::Red, HudTheme::Dark);
+
+	assert!(blue.b() > blue.r());
+	assert!(red.r() > red.b());
+	assert!(blue.a() < 255);
+	assert!(red.a() < 255);
+}
+
+#[test]
+fn frozen_text_edit_interaction_rect_uses_placeholder_bounds_when_empty() {
+	let anchor = Pos2::new(140.0, 160.0);
+	let rect =
+		WindowRenderer::frozen_text_edit_interaction_rect(anchor, "", FROZEN_TEXT_FONT_SIZE_POINTS);
+
+	assert!(rect.contains(anchor));
+	assert!(rect.width() > FROZEN_TEXT_FONT_SIZE_POINTS);
+	assert!(rect.height() >= FROZEN_TEXT_FONT_SIZE_POINTS);
+}
+
+#[test]
+fn frozen_text_caret_visible_blinks_on_half_periods() {
+	assert!(WindowRenderer::frozen_text_caret_visible(0.0));
+	assert!(WindowRenderer::frozen_text_caret_visible(FROZEN_TEXT_CARET_BLINK_PERIOD_SECS * 0.49,));
+	assert!(
+		!WindowRenderer::frozen_text_caret_visible(FROZEN_TEXT_CARET_BLINK_PERIOD_SECS * 0.51,)
+	);
+}
+
+#[test]
+fn frozen_toolbar_size_expands_for_text_style_toolbar() {
+	let mut toolbar_state = FrozenToolbarState::default();
+	let base_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+
+	toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	let expanded_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+
+	assert!(expanded_size.y > base_size.y);
+	assert_eq!(expanded_size.x, base_size.x);
 }
 
 #[test]
@@ -1899,6 +1990,9 @@ fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
 		FrozenCaptureSource::None,
 		None,
 		None,
+		&[],
+		None,
+		FrozenToolbarState::default().text_style,
 		false,
 		true,
 		1.0,
