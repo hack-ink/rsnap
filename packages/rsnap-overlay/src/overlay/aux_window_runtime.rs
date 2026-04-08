@@ -196,12 +196,10 @@ impl OverlaySession {
 		if !matches!(self.state.mode, OverlayMode::Frozen) || self.frozen_text_edit.is_none() {
 			return;
 		}
-
-		let Some(monitor) = self.state.monitor else {
+		if self.state.monitor.is_none() {
 			return;
-		};
+		}
 
-		self.request_redraw_for_monitor(monitor);
 		self.schedule_egui_repaint_after(FROZEN_TEXT_CARET_REPAINT_INTERVAL);
 	}
 

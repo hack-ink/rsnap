@@ -318,6 +318,10 @@ impl FrozenTextEditState {
 		self.visible_text_and_caret_char_index().0
 	}
 
+	pub(super) fn has_ime_preedit(&self) -> bool {
+		self.ime_preedit.is_some()
+	}
+
 	pub(super) fn visible_text_and_caret_char_index(&self) -> (String, Option<usize>) {
 		let committed_char_count = self.text.chars().count();
 

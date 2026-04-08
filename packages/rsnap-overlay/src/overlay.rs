@@ -4407,15 +4407,12 @@ impl OverlaySession {
 		let Some(edit_state) = self.frozen_text_edit.as_mut() else {
 			return false;
 		};
+		let had_preedit = edit_state.has_ime_preedit();
 
 		edit_state.ime_preedit = None;
 		edit_state.ime_preedit_cursor_char_range = None;
 
-		if edit_state.text.pop().is_none() {
-			return false;
-		}
-
-		true
+		had_preedit || edit_state.text.pop().is_some()
 	}
 
 	fn undo_frozen_text_annotation(&mut self) -> bool {
@@ -6548,56 +6545,65 @@ impl OverlaySession {
 			return Some(OverlayControl::Continue);
 		}
 
-		let monitor = self.state.monitor?;
-		let generation = self.note_frozen_text_input_event();
-		let control = match &event.logical_key {
+		let changed =
+			self.handle_frozen_text_pressed_key(&event.logical_key, event.text.as_deref());
+
+		if changed {
+			self.sync_text_input_ime_state();
+
+			if let Some(monitor) = self.state.monitor {
+				self.sync_frozen_text_ime_cursor_area(monitor);
+				self.request_redraw_for_monitor(monitor);
+			}
+		}
+
+		Some(OverlayControl::Continue)
+	}
+
+	fn handle_frozen_text_pressed_key(&mut self, logical_key: &Key, text: Option<&str>) -> bool {
+		match logical_key {
 			Key::Named(NamedKey::Escape) => {
 				let _ = self.finish_frozen_text_editing(false);
 
-				Some(OverlayControl::Continue)
+				true
 			},
 			Key::Named(NamedKey::Enter) => {
+				if self.frozen_text_edit.as_ref().is_some_and(FrozenTextEditState::has_ime_preedit)
+				{
+					return false;
+				}
 				if self.keyboard_modifiers.shift_key() {
+					let generation = self.note_frozen_text_input_event();
+
 					self.append_text_to_frozen_edit_for_input_event(
 						FrozenTextInputSource::Key,
 						generation,
 						"\n",
-					);
+					)
 				} else {
 					let _ = self.finish_frozen_text_editing(true);
+
+					true
 				}
-
-				Some(OverlayControl::Continue)
 			},
-			Key::Named(NamedKey::Backspace) => {
-				self.backspace_frozen_text_edit();
-
-				Some(OverlayControl::Continue)
-			},
+			Key::Named(NamedKey::Backspace) => self.backspace_frozen_text_edit(),
 			_ if !self.keyboard_modifiers.control_key()
 				&& !self.keyboard_modifiers.super_key()
 				&& !self.keyboard_modifiers.alt_key() =>
 			{
-				if let Some(text) = event.text.as_deref() {
-					self.append_text_to_frozen_edit_for_input_event(
-						FrozenTextInputSource::Key,
-						generation,
-						text,
-					);
-				}
+				let Some(text) = text else {
+					return false;
+				};
+				let generation = self.note_frozen_text_input_event();
 
-				Some(OverlayControl::Continue)
+				self.append_text_to_frozen_edit_for_input_event(
+					FrozenTextInputSource::Key,
+					generation,
+					text,
+				)
 			},
-			_ => Some(OverlayControl::Continue),
-		};
-
-		if control.is_some() {
-			self.sync_text_input_ime_state();
-			self.sync_frozen_text_ime_cursor_area(monitor);
-			self.request_redraw_for_monitor(monitor);
+			_ => false,
 		}
-
-		control
 	}
 
 	fn handle_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
