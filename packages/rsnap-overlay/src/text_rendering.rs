@@ -337,23 +337,30 @@ fn blend_pixel(image: &mut RgbaImage, x: i32, y: i32, color: Rgba<u8>, coverage:
 		return;
 	}
 
-	let alpha = (f32::from(color[3]) / 255.0) * (f32::from(coverage) / 255.0);
+	let src_alpha = (f32::from(color[3]) / 255.0) * (f32::from(coverage) / 255.0);
 
-	if alpha <= 0.0 {
+	if src_alpha <= 0.0 {
 		return;
 	}
 
 	let pixel = image.get_pixel_mut(x, y);
-	let inv_alpha = 1.0 - alpha;
+	let dst_alpha = f32::from(pixel[3]) / 255.0;
+	let out_alpha = src_alpha + dst_alpha * (1.0 - src_alpha);
+
+	if out_alpha <= 0.0 {
+		return;
+	}
 
 	for channel in 0..3 {
 		let dst = f32::from(pixel[channel]);
 		let src = f32::from(color[channel]);
 
-		pixel[channel] = (src * alpha + dst * inv_alpha).round().clamp(0.0, 255.0) as u8;
+		pixel[channel] = ((src * src_alpha + dst * dst_alpha * (1.0 - src_alpha)) / out_alpha)
+			.round()
+			.clamp(0.0, 255.0) as u8;
 	}
 
-	pixel[3] = 255;
+	pixel[3] = (out_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
 }
 
 #[cfg(test)]
@@ -403,6 +410,15 @@ mod tests {
 				assert_eq!(pixel[3], 0, "unexpected pixel outside glyph bounds at ({x}, {y})");
 			}
 		}
+	}
+
+	#[test]
+	fn blend_pixel_preserves_partial_alpha_for_antialiased_text_edges() {
+		let mut image = image::RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 0]));
+
+		super::blend_pixel(&mut image, 0, 0, Rgba([255, 255, 255, 255]), 128);
+
+		assert_eq!(*image.get_pixel(0, 0), Rgba([255, 255, 255, 128]));
 	}
 
 	#[test]
