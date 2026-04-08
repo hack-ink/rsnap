@@ -3560,17 +3560,13 @@ impl OverlaySession {
 			return export_image;
 		}
 
-		let Some(monitor) = self.state.monitor else {
-			return export_image;
-		};
-		let Some(capture_rect) = self.frozen_capture_rect_for_monitor(monitor) else {
+		let Some(export_transform) = self.frozen_export_transform_for_image(&export_image) else {
 			return export_image;
 		};
 
 		Self::rasterize_frozen_brush_strokes(
 			&mut export_image,
-			monitor,
-			capture_rect,
+			export_transform,
 			&self.frozen_brush,
 		);
 
@@ -3579,15 +3575,15 @@ impl OverlaySession {
 
 	fn rasterize_frozen_brush_strokes(
 		export_image: &mut RgbaImage,
-		monitor: MonitorRect,
-		capture_rect: RectPoints,
+		export_transform: FrozenExportTransform,
 		frozen_brush: &FrozenBrushState,
 	) {
 		if export_image.width() == 0 || export_image.height() == 0 {
 			return;
 		}
 
-		let radius = (FROZEN_BRUSH_STROKE_WIDTH_POINTS * monitor.scale_factor() * 0.5).max(1.0);
+		let radius =
+			(FROZEN_BRUSH_STROKE_WIDTH_POINTS * export_transform.scalar_scale() * 0.5).max(1.0);
 		let color = image::Rgba(FROZEN_BRUSH_COLOR_RGBA);
 		let mut coverage_mask =
 			vec![0_u8; export_image.width() as usize * export_image.height() as usize];
@@ -3598,8 +3594,7 @@ impl OverlaySession {
 				export_image.width(),
 				export_image.height(),
 				stroke,
-				capture_rect,
-				monitor,
+				export_transform,
 				radius,
 			);
 		}
@@ -3612,8 +3607,7 @@ impl OverlaySession {
 				export_image.width(),
 				export_image.height(),
 				&display_points,
-				capture_rect,
-				monitor,
+				export_transform,
 				radius,
 			);
 		}
@@ -3626,8 +3620,7 @@ impl OverlaySession {
 		export_width: u32,
 		export_height: u32,
 		stroke: &FrozenBrushStroke,
-		capture_rect: RectPoints,
-		monitor: MonitorRect,
+		export_transform: FrozenExportTransform,
 		radius: f32,
 	) {
 		Self::rasterize_frozen_brush_points(
@@ -3635,8 +3628,7 @@ impl OverlaySession {
 			export_width,
 			export_height,
 			&stroke.points,
-			capture_rect,
-			monitor,
+			export_transform,
 			radius,
 		);
 	}
@@ -3646,8 +3638,7 @@ impl OverlaySession {
 		export_width: u32,
 		export_height: u32,
 		points: &[Pos2],
-		capture_rect: RectPoints,
-		monitor: MonitorRect,
+		export_transform: FrozenExportTransform,
 		radius: f32,
 	) {
 		let rendered_points =
@@ -3655,9 +3646,7 @@ impl OverlaySession {
 		let Some(first) = rendered_points.first().copied() else {
 			return;
 		};
-		let scale_factor = monitor.scale_factor();
-		let mut previous =
-			Self::frozen_brush_point_to_export_pixels(first, capture_rect, scale_factor);
+		let mut previous = export_transform.point_to_pixels(first);
 
 		Self::rasterize_frozen_brush_circle(
 			coverage_mask,
@@ -3668,8 +3657,7 @@ impl OverlaySession {
 		);
 
 		for point in rendered_points.into_iter().skip(1) {
-			let current =
-				Self::frozen_brush_point_to_export_pixels(point, capture_rect, scale_factor);
+			let current = export_transform.point_to_pixels(point);
 
 			Self::rasterize_frozen_brush_segment(
 				coverage_mask,
@@ -3684,14 +3672,20 @@ impl OverlaySession {
 		}
 	}
 
-	fn frozen_brush_point_to_export_pixels(
-		point: Pos2,
-		capture_rect: RectPoints,
-		scale_factor: f32,
-	) -> Pos2 {
-		Pos2::new(
-			(point.x - capture_rect.x as f32) * scale_factor,
-			(point.y - capture_rect.y as f32) * scale_factor,
+	fn frozen_export_capture_rect(&self) -> Option<RectPoints> {
+		self.state.frozen_capture_rect.or_else(|| {
+			self.state.monitor.map(|monitor| RectPoints::new(0, 0, monitor.width, monitor.height))
+		})
+	}
+
+	fn frozen_export_transform_for_image(
+		&self,
+		image: &RgbaImage,
+	) -> Option<FrozenExportTransform> {
+		FrozenExportTransform::new(
+			self.frozen_export_capture_rect()?,
+			image.width(),
+			image.height(),
 		)
 	}
 
@@ -4618,23 +4612,15 @@ impl OverlaySession {
 			return;
 		}
 
-		let Some(monitor) = self.state.monitor else {
+		let Some(export_transform) = self.frozen_export_transform_for_image(image) else {
 			return;
 		};
-		let capture_rect = self
-			.state
-			.frozen_capture_rect
-			.unwrap_or_else(|| RectPoints::new(0, 0, monitor.width, monitor.height));
-		let scale_factor = monitor.scale_factor();
 		let annotations = self
 			.frozen_text_annotations
 			.iter()
 			.map(|annotation| RasterTextAnnotation {
-				anchor_px: Pos2::new(
-					(annotation.anchor.x - capture_rect.x as f32) * scale_factor,
-					(annotation.anchor.y - capture_rect.y as f32) * scale_factor,
-				),
-				font_size_px: annotation.style.font_size_points * scale_factor,
+				anchor_px: export_transform.point_to_pixels(annotation.anchor),
+				font_size_px: annotation.style.font_size_points * export_transform.scalar_scale(),
 				fill_rgba: annotation.style.color.export_rgba(),
 				text: annotation.text.as_str(),
 			})
@@ -8201,6 +8187,41 @@ enum FrozenEditKind {
 	BrushStroke,
 	MosaicEdit,
 	TextAnnotation,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FrozenExportTransform {
+	capture_rect: RectPoints,
+	scale_x: f32,
+	scale_y: f32,
+}
+impl FrozenExportTransform {
+	fn new(capture_rect: RectPoints, export_width: u32, export_height: u32) -> Option<Self> {
+		if capture_rect.width == 0
+			|| capture_rect.height == 0
+			|| export_width == 0
+			|| export_height == 0
+		{
+			return None;
+		}
+
+		Some(Self {
+			capture_rect,
+			scale_x: export_width as f32 / capture_rect.width as f32,
+			scale_y: export_height as f32 / capture_rect.height as f32,
+		})
+	}
+
+	fn point_to_pixels(self, point: Pos2) -> Pos2 {
+		Pos2::new(
+			(point.x - self.capture_rect.x as f32) * self.scale_x,
+			(point.y - self.capture_rect.y as f32) * self.scale_y,
+		)
+	}
+
+	fn scalar_scale(self) -> f32 {
+		(self.scale_x + self.scale_y) * 0.5
+	}
 }
 
 #[derive(Debug)]
