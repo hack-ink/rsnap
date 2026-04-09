@@ -1474,12 +1474,6 @@ impl OverlaySession {
 			&& self.inflight_freeze_capture.is_none()
 	}
 
-	fn should_force_pending_hud_and_loupe_moves(&self) -> bool {
-		matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.state.monitor.is_some()
-			&& !self.frozen_final_capture_ready()
-	}
-
 	#[cfg(target_os = "macos")]
 	fn try_latest_live_freeze_preview(&mut self, monitor: MonitorRect) -> Option<RgbaImage> {
 		if self.state.live_bg_monitor == Some(monitor)
@@ -1505,7 +1499,6 @@ impl OverlaySession {
 
 		if let Some(cursor) = cursor {
 			self.update_cursor_state(monitor, cursor);
-			self.update_hud_window_position(monitor, cursor);
 		}
 	}
 
@@ -1566,26 +1559,11 @@ impl OverlaySession {
 		}
 	}
 
-	fn refresh_frozen_helper_windows_for_transition(
-		&mut self,
-		monitor: MonitorRect,
-		cursor: Option<GlobalPoint>,
-	) {
-		if let Some(cursor) = cursor {
-			self.update_hud_window_position(monitor, cursor);
-		}
-
-		if self.should_force_pending_hud_and_loupe_moves() {
-			self.force_apply_pending_hud_and_loupe_moves();
-		}
-
+	fn refresh_frozen_helper_windows_for_transition(&mut self, monitor: MonitorRect) {
+		self.force_apply_pending_toolbar_window_move();
 		self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(Some(monitor)));
 		self.request_redraw_for_monitor(monitor);
-		self.request_redraw_hud_window();
-
-		if self.state.alt_held || self.loupe_window_visible {
-			self.request_redraw_loupe_window();
-		}
+		self.request_redraw_toolbar_window();
 	}
 
 	fn begin_frozen_capture_with_rect(
@@ -1604,12 +1582,13 @@ impl OverlaySession {
 		};
 
 		let capture_rect = rect.unwrap_or(RectPoints::new(0, 0, monitor.width, monitor.height));
-		let frozen_rgb = self.state.rgb;
-		let frozen_loupe = self.state.loupe.as_ref().map(|loupe| crate::state::LoupeSample {
-			center: loupe.center,
-			patch: loupe.patch.clone(),
-		});
 
+		self.state.alt_held = false;
+		self.loupe_activation_key_down = false;
+		self.state.rgb = None;
+		self.state.loupe = None;
+
+		self.set_alt_loupe_window_visible(None, false);
 		self.state.clear_error();
 		self.state.begin_freeze(monitor);
 
@@ -1650,8 +1629,6 @@ impl OverlaySession {
 		self.seed_frozen_toolbar_default_position(monitor, capture_rect);
 		self.request_redraw_toolbar_window();
 
-		self.state.rgb = frozen_rgb;
-		self.state.loupe = frozen_loupe;
 		self.pending_freeze_capture = Some(monitor);
 		self.pending_freeze_capture_armed = false;
 		self.inflight_freeze_capture = None;
@@ -1665,7 +1642,7 @@ impl OverlaySession {
 		self.left_mouse_button_down_monitor = None;
 		self.left_mouse_button_down_global = None;
 
-		self.refresh_frozen_helper_windows_for_transition(monitor, cursor);
+		self.refresh_frozen_helper_windows_for_transition(monitor);
 
 		#[cfg(target_os = "macos")]
 		{
@@ -1674,7 +1651,7 @@ impl OverlaySession {
 				self.state.live_bg_image = None;
 
 				self.commit_frozen_preview(monitor, image, cursor);
-				self.force_apply_pending_hud_and_loupe_moves();
+				self.force_apply_pending_toolbar_window_move();
 			} else {
 				self.state.live_bg_monitor = None;
 				self.state.live_bg_image = None;
@@ -1698,12 +1675,9 @@ impl OverlaySession {
 
 				if let Some(cursor) = cursor {
 					self.update_cursor_state(monitor, cursor);
-					self.update_hud_window_position(monitor, cursor);
 				}
 
-				if self.should_force_pending_hud_and_loupe_moves() {
-					self.force_apply_pending_hud_and_loupe_moves();
-				}
+				self.force_apply_pending_toolbar_window_move();
 			} else {
 				self.state.live_bg_monitor = None;
 				self.state.live_bg_image = None;
@@ -1715,6 +1689,8 @@ impl OverlaySession {
 	}
 
 	fn update_live_drag_rect(&mut self, monitor: MonitorRect, global: GlobalPoint) {
+		let was_active = self.live_drag_hides_auxiliary_windows();
+
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			self.state.drag_rect = None;
 
@@ -1744,6 +1720,10 @@ impl OverlaySession {
 		}
 
 		self.state.drag_rect = Some(MonitorRectPoints { monitor_id: monitor.id, rect });
+
+		if !was_active {
+			self.hide_auxiliary_windows_for_live_drag();
+		}
 	}
 
 	fn frozen_capture_rect_drag_target(&self) -> Option<(MonitorRect, RectPoints)> {
@@ -2168,6 +2148,10 @@ impl OverlaySession {
 		matches!(self.state.mode, OverlayMode::Frozen) && self.frozen_selection_drag.active
 	}
 
+	pub(super) fn live_drag_hides_auxiliary_windows(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Live) && self.state.drag_rect.is_some()
+	}
+
 	fn hide_auxiliary_windows_for_frozen_selection_drag(&mut self) {
 		if let Some(hud_window) = self.hud_window.as_ref() {
 			hud_window.window.set_visible(false);
@@ -2194,6 +2178,24 @@ impl OverlaySession {
 		if let Some(preview_window) = self.scroll_preview_window.as_ref() {
 			preview_window.window.set_visible(false);
 		}
+
+		self.last_present_at = Instant::now();
+	}
+
+	fn hide_auxiliary_windows_for_live_drag(&mut self) {
+		if let Some(hud_window) = self.hud_window.as_ref() {
+			hud_window.window.set_visible(false);
+		}
+
+		self.hud_window_visible = false;
+
+		if let Some(loupe_window) = self.loupe_window.as_ref() {
+			loupe_window.window.set_visible(false);
+		}
+
+		self.loupe_window_visible = false;
+
+		self.reset_loupe_window_warmup_redraws();
 
 		self.last_present_at = Instant::now();
 	}
@@ -3934,33 +3936,12 @@ impl OverlaySession {
 		})
 	}
 
-	fn refresh_frozen_cursor_samples(&mut self, monitor: MonitorRect) {
-		if let Some(cursor) = self.state.cursor {
-			self.state.rgb =
-				image_helpers::frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
-			self.state.loupe = image_helpers::frozen_loupe_patch(
-				&self.state.frozen_image,
-				Some(monitor),
-				cursor,
-				self.loupe_patch_width_px,
-				self.loupe_patch_height_px,
-			)
-			.map(|patch| crate::state::LoupeSample { center: cursor, patch });
-		}
-	}
-
 	fn note_frozen_image_mutated(&mut self, monitor: MonitorRect) {
 		self.state.frozen_generation = self.state.frozen_generation.wrapping_add(1);
 
-		self.refresh_frozen_cursor_samples(monitor);
 		self.sync_frozen_toolbar_state();
 		self.request_redraw_for_monitor(monitor);
-		self.request_redraw_hud_window();
 		self.request_redraw_toolbar_window();
-
-		if self.state.alt_held || self.loupe_window_visible {
-			self.request_redraw_loupe_window();
-		}
 	}
 
 	fn push_frozen_mosaic_edit(&mut self, edit: FrozenMosaicEdit) {
@@ -4251,25 +4232,7 @@ impl OverlaySession {
 			}
 
 			if let Some(cursor) = self.state.cursor {
-				self.state.rgb =
-					image_helpers::frozen_rgb(&self.state.frozen_image, Some(monitor), cursor);
-				self.state.loupe = image_helpers::frozen_loupe_patch(
-					&self.state.frozen_image,
-					Some(monitor),
-					cursor,
-					self.loupe_patch_width_px,
-					self.loupe_patch_height_px,
-				)
-				.map(|patch| crate::state::LoupeSample { center: cursor, patch });
-
-				self.update_hud_window_position(monitor, cursor);
-			}
-
-			self.maybe_start_loupe_window_warmup_redraw();
-			self.request_redraw_hud_window();
-
-			if self.state.alt_held || self.loupe_window_visible {
-				self.request_redraw_loupe_window();
+				self.update_cursor_state(monitor, cursor);
 			}
 
 			self.request_redraw_toolbar_window();
@@ -4585,11 +4548,21 @@ impl OverlaySession {
 		if self.state.alt_held == alt {
 			return;
 		}
+		if alt && !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
 
 		self.state.alt_held = alt;
 
 		if !alt {
 			self.handle_alt_release();
+
+			return;
+		}
+		if self.live_drag_hides_auxiliary_windows() {
+			self.state.loupe = None;
+
+			self.set_alt_loupe_window_visible(None, false);
 
 			return;
 		}
@@ -4604,10 +4577,7 @@ impl OverlaySession {
 			self.maybe_request_live_bg(monitor);
 		}
 
-		match self.state.mode {
-			OverlayMode::Live => self.request_live_alt_samples(monitor, cursor),
-			OverlayMode::Frozen => self.request_frozen_alt_samples(cursor),
-		}
+		self.request_live_alt_samples(monitor, cursor);
 	}
 
 	fn apply_loupe_activation_input(&mut self, pressed: bool, repeat: bool) -> bool {
@@ -4626,6 +4596,12 @@ impl OverlaySession {
 	}
 
 	fn apply_loupe_activation_key_event(&mut self, pressed: bool, repeat: bool) -> bool {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			self.loupe_activation_key_down = false;
+
+			return false;
+		}
+
 		self.loupe_activation_key_down = pressed;
 
 		if !pressed && !self.state.alt_held {
@@ -4673,14 +4649,6 @@ impl OverlaySession {
 			{
 				self.request_redraw_loupe_window();
 			}
-
-			return OverlayControl::Continue;
-		}
-
-		if let Some(monitor) = self.active_cursor_monitor() {
-			self.request_redraw_for_monitor(monitor);
-		} else {
-			self.request_redraw_all();
 		}
 
 		OverlayControl::Continue
@@ -4715,10 +4683,7 @@ impl OverlaySession {
 			OverlayMode::Live => {
 				self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, cursor)
 			},
-			OverlayMode::Frozen => {
-				self.update_cursor_state(monitor, cursor);
-				self.update_hud_window_position(monitor, cursor);
-			},
+			OverlayMode::Frozen => self.update_cursor_state(monitor, cursor),
 		}
 	}
 
@@ -4731,16 +4696,22 @@ impl OverlaySession {
 
 		if matches!(self.state.mode, OverlayMode::Live) {
 			self.request_redraw_hud_window();
-
-			return;
-		}
-
-		if let Some(monitor) = self.active_cursor_monitor() {
-			self.request_redraw_for_monitor(monitor);
 		}
 	}
 
 	fn set_alt_loupe_window_visible(&mut self, monitor: Option<MonitorRect>, visible: bool) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			self.loupe_window_visible = false;
+
+			self.reset_loupe_window_warmup_redraws();
+
+			if let Some(loupe_window) = self.loupe_window.as_ref() {
+				loupe_window.window.set_visible(false);
+				loupe_window.window.request_redraw();
+			}
+
+			return;
+		}
 		if self.live_loupe_uses_hud_window() {
 			self.loupe_window_visible = false;
 
@@ -4799,23 +4770,6 @@ impl OverlaySession {
 
 		if apply.any_changed() {
 			self.request_redraw_live_sample_targets(monitor, apply);
-		}
-	}
-
-	fn request_frozen_alt_samples(&mut self, cursor: GlobalPoint) {
-		if let (Some(frozen_monitor), Some(_)) =
-			(self.state.monitor, self.state.frozen_image.as_ref())
-		{
-			self.state.loupe = image_helpers::frozen_loupe_patch(
-				&self.state.frozen_image,
-				Some(frozen_monitor),
-				cursor,
-				self.loupe_patch_width_px,
-				self.loupe_patch_height_px,
-			)
-			.map(|patch| crate::state::LoupeSample { center: cursor, patch });
-
-			self.request_redraw_for_monitor(frozen_monitor);
 		}
 	}
 
@@ -6110,7 +6064,8 @@ impl OverlaySession {
 	}
 
 	fn loupe_activation_shortcut_available(&self) -> bool {
-		!self.keyboard_modifiers.shift_key()
+		matches!(self.state.mode, OverlayMode::Live)
+			&& !self.keyboard_modifiers.shift_key()
 			&& !self.keyboard_modifiers.alt_key()
 			&& !self.keyboard_modifiers.control_key()
 			&& !self.keyboard_modifiers.super_key()

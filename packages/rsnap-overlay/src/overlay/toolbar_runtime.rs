@@ -11,6 +11,30 @@ use crate::overlay::{
 };
 
 impl OverlaySession {
+	pub(super) fn note_frozen_toolbar_cursor_event(
+		&mut self,
+		monitor: MonitorRect,
+		global_cursor: GlobalPoint,
+	) {
+		let old_monitor = self.active_cursor_monitor();
+		let old_cursor = self.state.cursor;
+
+		self.last_event_cursor = Some((monitor, global_cursor));
+		self.last_event_cursor_at = Some(Instant::now());
+
+		if old_monitor == Some(monitor) && old_cursor == Some(global_cursor) {
+			return;
+		}
+
+		self.update_cursor_state(monitor, global_cursor);
+
+		if let Some(old_monitor) = old_monitor
+			&& old_monitor != monitor
+		{
+			self.request_redraw_for_monitor(old_monitor);
+		}
+	}
+
 	pub(super) fn handle_toolbar_cursor_moved(
 		&mut self,
 		window_id: WindowId,
@@ -32,10 +56,23 @@ impl OverlaySession {
 
 		self.toolbar_pointer_local = Some(cursor_local);
 
+		let cached_toolbar_outer_pos = self.toolbar_outer_pos;
+		let window_toolbar_outer_pos = Self::toolbar_window_outer_position(toolbar_window);
+		let monitor = match self.state.monitor.or_else(|| self.active_cursor_monitor()) {
+			Some(monitor) => monitor,
+			None => return OverlayControl::Continue,
+		};
+		let toolbar_outer_pos = Self::toolbar_event_outer_position_from_sources(
+			monitor,
+			window_toolbar_outer_pos,
+			cached_toolbar_outer_pos,
+			self.toolbar_state.floating_position,
+		);
+		let global_cursor = toolbar_outer_pos
+			.map(|outer| Self::toolbar_cursor_global_position_from_outer(outer, cursor_local));
+
 		if self.frozen_selection_drag.active {
-			if let Some(global_cursor) =
-				self.toolbar_cursor_global_position(toolbar_window, cursor_local)
-			{
+			if let Some(global_cursor) = global_cursor {
 				self.update_frozen_selection_drag_rect(global_cursor);
 				self.update_frozen_mosaic_drag_rect(global_cursor);
 			}
@@ -43,20 +80,25 @@ impl OverlaySession {
 			return OverlayControl::Continue;
 		}
 		if self.frozen_mosaic_drag.active {
-			if let Some(global_cursor) =
-				self.toolbar_cursor_global_position(toolbar_window, cursor_local)
-			{
+			if let Some(global_cursor) = global_cursor {
 				self.update_frozen_mosaic_drag_rect(global_cursor);
 			}
 
 			return OverlayControl::Continue;
 		}
 
-		let monitor = match self.state.monitor.or_else(|| self.active_cursor_monitor()) {
-			Some(monitor) => monitor,
-			None => return OverlayControl::Continue,
-		};
-		let global_cursor = self.toolbar_cursor_global_position(toolbar_window, cursor_local);
+		if let Some(global_cursor) = global_cursor {
+			self.maybe_log_suspicious_toolbar_cursor_translation(
+				monitor,
+				self.state.cursor,
+				cursor_local,
+				global_cursor,
+				cached_toolbar_outer_pos,
+				window_toolbar_outer_pos,
+			);
+			self.note_frozen_toolbar_cursor_event(monitor, global_cursor);
+		}
+
 		let drag_monitor =
 			global_cursor.and_then(|cursor| self.monitor_at(cursor)).unwrap_or(monitor);
 		let mut mouse_drag = self.toolbar_left_button_down && self.toolbar_state.dragging;
@@ -69,27 +111,17 @@ impl OverlaySession {
 			let dy = cursor_local.y - drag_anchor.y;
 			let threshold_sq = TOOLBAR_DRAG_START_THRESHOLD_PX * TOOLBAR_DRAG_START_THRESHOLD_PX;
 
-			if dx * dx + dy * dy >= threshold_sq {
-				let toolbar_outer_pos = self.toolbar_outer_pos.or_else(|| {
-					self.toolbar_state.floating_position.map(|floating_position| {
-						GlobalPoint::new(
-							monitor.origin.x.saturating_add(floating_position.x.round() as i32),
-							monitor.origin.y.saturating_add(floating_position.y.round() as i32),
-						)
-					})
-				});
-
-				if let (Some(global_cursor), Some(toolbar_outer_pos)) =
+			if dx * dx + dy * dy >= threshold_sq
+				&& let (Some(global_cursor), Some(toolbar_outer_pos)) =
 					(global_cursor, toolbar_outer_pos)
-				{
-					self.toolbar_state.drag_offset = Vec2::new(
-						global_cursor.x as f32 - toolbar_outer_pos.x as f32,
-						global_cursor.y as f32 - toolbar_outer_pos.y as f32,
-					);
-					self.toolbar_state.dragging = true;
-					self.toolbar_state.drag_anchor = None;
-					mouse_drag = true;
-				}
+			{
+				self.toolbar_state.drag_offset = Vec2::new(
+					global_cursor.x as f32 - toolbar_outer_pos.x as f32,
+					global_cursor.y as f32 - toolbar_outer_pos.y as f32,
+				);
+				self.toolbar_state.dragging = true;
+				self.toolbar_state.drag_anchor = None;
+				mouse_drag = true;
 			}
 		}
 		if mouse_drag && global_cursor.is_none() {
@@ -112,19 +144,97 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
-	pub(super) fn toolbar_cursor_global_position(
-		&self,
+	pub(super) fn toolbar_event_outer_position_from_sources(
+		monitor: MonitorRect,
+		window_toolbar_outer_pos: Option<GlobalPoint>,
+		cached_toolbar_outer_pos: Option<GlobalPoint>,
+		floating_position: Option<Pos2>,
+	) -> Option<GlobalPoint> {
+		window_toolbar_outer_pos.or(cached_toolbar_outer_pos).or_else(|| {
+			floating_position.map(|floating_position| {
+				GlobalPoint::new(
+					monitor.origin.x.saturating_add(floating_position.x.round() as i32),
+					monitor.origin.y.saturating_add(floating_position.y.round() as i32),
+				)
+			})
+		})
+	}
+
+	pub(super) fn toolbar_window_outer_position(
 		toolbar_window: &HudOverlayWindow,
-		cursor_local: Pos2,
 	) -> Option<GlobalPoint> {
 		let toolbar_scale = toolbar_window.window.scale_factor().max(1.0);
 		let outer_position = toolbar_window.window.outer_position().ok()?;
+
+		Some(GlobalPoint::new(
+			(outer_position.x as f64 / toolbar_scale).round() as i32,
+			(outer_position.y as f64 / toolbar_scale).round() as i32,
+		))
+	}
+
+	pub(super) fn toolbar_cursor_global_position_from_outer(
+		outer_position: GlobalPoint,
+		cursor_local: Pos2,
+	) -> GlobalPoint {
 		let global_cursor = Pos2::new(
-			(outer_position.x as f64 / toolbar_scale) as f32 + cursor_local.x,
-			(outer_position.y as f64 / toolbar_scale) as f32 + cursor_local.y,
+			outer_position.x as f32 + cursor_local.x,
+			outer_position.y as f32 + cursor_local.y,
 		);
 
-		Some(GlobalPoint::new(global_cursor.x.round() as i32, global_cursor.y.round() as i32))
+		GlobalPoint::new(global_cursor.x.round() as i32, global_cursor.y.round() as i32)
+	}
+
+	fn toolbar_cursor_translation_suspicious(
+		monitor: MonitorRect,
+		old_cursor: Option<GlobalPoint>,
+		global_cursor: GlobalPoint,
+	) -> bool {
+		if !monitor.contains(global_cursor) {
+			return true;
+		}
+
+		let Some(old_cursor) = old_cursor else {
+			return false;
+		};
+		let delta_x = old_cursor.x.abs_diff(global_cursor.x);
+		let delta_y = old_cursor.y.abs_diff(global_cursor.y);
+		let jumps_far = delta_x > 160 || delta_y > 160;
+		let snaps_to_origin = global_cursor.x <= monitor.origin.x + 8
+			&& global_cursor.y <= monitor.origin.y + 8
+			&& (old_cursor.x > monitor.origin.x + 32 || old_cursor.y > monitor.origin.y + 32);
+
+		jumps_far || snaps_to_origin
+	}
+
+	fn maybe_log_suspicious_toolbar_cursor_translation(
+		&self,
+		monitor: MonitorRect,
+		old_cursor: Option<GlobalPoint>,
+		cursor_local: Pos2,
+		global_cursor: GlobalPoint,
+		cached_toolbar_outer_pos: Option<GlobalPoint>,
+		window_toolbar_outer_pos: Option<GlobalPoint>,
+	) {
+		if self.frozen_selection_drag.active
+			|| self.frozen_mosaic_drag.active
+			|| self.toolbar_state.dragging
+			|| !Self::toolbar_cursor_translation_suspicious(monitor, old_cursor, global_cursor)
+		{
+			return;
+		}
+
+		tracing::warn!(
+			op = "overlay.toolbar_cursor_translation_suspicious",
+			monitor_id = monitor.id,
+			old_cursor = ?old_cursor,
+			cursor_local = ?cursor_local,
+			global_cursor = ?global_cursor,
+			cached_toolbar_outer_pos = ?cached_toolbar_outer_pos,
+			window_toolbar_outer_pos = ?window_toolbar_outer_pos,
+			pending_toolbar_outer_pos = ?self.pending_toolbar_outer_pos,
+			toolbar_floating_position = ?self.toolbar_state.floating_position,
+			"Toolbar cursor translation jumped unexpectedly."
+		);
 	}
 
 	pub(super) fn handle_toolbar_window_resized(

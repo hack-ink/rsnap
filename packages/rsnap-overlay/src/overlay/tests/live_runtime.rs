@@ -4,11 +4,12 @@ use image::RgbaImage;
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 #[cfg(target_os = "macos")]
 use crate::overlay::DeviceCursorPointSource;
+use crate::overlay::OverlayControl;
 #[allow(unused_imports)]
 use crate::overlay::tests::{
-	self, Duration, GlobalPoint, HudRedrawSummary, LoupeSample, MonitorRect, MonitorRectPoints,
-	OverlayMode, OverlaySession, OverlayState, Pos2, Rect, RectPoints, Rgb, Vec2, WindowRenderer,
-	hud_helpers, overlay,
+	self, Duration, GlobalPoint, HudRedrawSummary, Instant, LoupeSample, MonitorRect,
+	MonitorRectPoints, OverlayMode, OverlaySession, OverlayState, Pos2, Rect, RectPoints, Rgb,
+	Vec2, WindowRenderer, hud_helpers, overlay,
 };
 #[cfg(target_os = "macos")]
 #[allow(unused_imports)]
@@ -50,6 +51,62 @@ fn apply_live_cursor_sample_updates_rgb_and_loupe_state() {
 		session.state.loupe.as_ref().map(|loupe| loupe.patch.dimensions()),
 		Some(patch.dimensions())
 	);
+}
+
+#[test]
+fn frozen_toolbar_cursor_event_updates_frozen_cursor_context() {
+	let monitor = MonitorRect {
+		id: 1,
+		origin: GlobalPoint::new(0, 0),
+		width: 1_000,
+		height: 800,
+		scale_factor_x1000: 1_000,
+	};
+	let cursor = GlobalPoint::new(120, 180);
+	let patch = RgbaImage::from_pixel(400, 300, crate::overlay::tests::Rgba([10, 20, 30, 255]));
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Frozen;
+	session.state.monitor = Some(monitor);
+	session.state.frozen_image = Some(patch.clone());
+	session.state.alt_held = true;
+
+	session.note_frozen_toolbar_cursor_event(monitor, cursor);
+
+	assert_eq!(session.last_event_cursor, Some((monitor, cursor)));
+	assert_eq!(session.state.cursor, Some(cursor));
+	assert_eq!(session.state.rgb, None);
+	assert!(session.state.loupe.is_none());
+}
+
+#[test]
+fn frozen_cursor_tracking_keeps_toolbar_hover_cursor_without_resampling_device_position() {
+	let monitor = MonitorRect {
+		id: 1,
+		origin: GlobalPoint::new(0, 0),
+		width: 1_000,
+		height: 800,
+		scale_factor_x1000: 1_000,
+	};
+	let expected_cursor = GlobalPoint::new(540, 420);
+	let stale_cursor = GlobalPoint::new(7, 8);
+	let mut session = OverlaySession::new();
+
+	session.session_active = true;
+	session.state.mode = OverlayMode::Frozen;
+	session.state.monitor = Some(monitor);
+	session.toolbar_state.visible = true;
+	session.toolbar_pointer_local = Some(Pos2::new(12.0, 10.0));
+	session.state.cursor = Some(stale_cursor);
+	session.cursor_monitor = Some(monitor);
+	session.last_event_cursor = Some((monitor, expected_cursor));
+	session.last_event_cursor_at = Some(Instant::now() - Duration::from_millis(500));
+	session.last_frozen_cursor_poll_at = Instant::now() - Duration::from_secs(1);
+
+	session.maybe_tick_frozen_cursor_tracking();
+
+	assert_eq!(session.state.cursor, Some(expected_cursor));
+	assert_eq!(session.cursor_monitor, Some(monitor));
 }
 
 #[cfg(target_os = "macos")]
@@ -178,6 +235,33 @@ fn clear_loupe_activation_on_focus_loss_releases_toggle_press_without_toggling_o
 	assert!(session.state.alt_held);
 	assert!(!session.loupe_activation_key_down);
 	assert!(session.plain_character_shortcut_available());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apply_loupe_activation_key_event_ignores_frozen_mode() {
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Frozen;
+
+	assert!(!session.apply_loupe_activation_key_event(true, false));
+	assert!(!session.state.alt_held);
+	assert!(!session.loupe_activation_key_down);
+}
+
+#[test]
+fn live_drag_alt_activation_does_not_reopen_loupe() {
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.state.drag_rect =
+		Some(MonitorRectPoints { monitor_id: 1, rect: RectPoints::new(100, 120, 240, 320) });
+
+	session.set_alt_held(true);
+
+	assert!(session.state.alt_held);
+	assert!(!session.loupe_window_visible);
+	assert!(session.state.loupe.is_none());
 }
 
 #[cfg(target_os = "macos")]
@@ -341,6 +425,22 @@ fn live_alt_loupe_window_redraw_is_not_skipped() {
 	session.state.alt_held = false;
 
 	assert!(session.should_skip_loupe_redraw());
+
+	session.state.alt_held = true;
+	session.state.drag_rect =
+		Some(MonitorRectPoints { monitor_id: 1, rect: RectPoints::new(100, 120, 240, 320) });
+
+	assert!(session.should_skip_loupe_redraw());
+}
+
+#[test]
+fn frozen_loupe_window_redraw_is_skipped() {
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Frozen;
+	session.state.alt_held = true;
+
+	assert!(session.should_skip_loupe_redraw());
 }
 
 #[test]
@@ -415,6 +515,39 @@ fn live_drag_focus_rect_uses_large_drag_on_active_monitor() {
 	});
 
 	assert_eq!(WindowRenderer::live_drag_focus_rect(&state, monitor, screen_rect), None);
+}
+
+#[test]
+fn live_drag_rect_activation_hides_auxiliary_windows() {
+	let monitor = MonitorRect {
+		id: 1,
+		origin: GlobalPoint::new(0, 0),
+		width: 1_000,
+		height: 800,
+		scale_factor_x1000: 1_000,
+	};
+	let start = GlobalPoint::new(120, 180);
+	let end = GlobalPoint::new(280, 360);
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.left_mouse_button_down = true;
+	session.left_mouse_button_down_monitor = Some(monitor);
+	session.left_mouse_button_down_global = Some(start);
+	session.hud_window_visible = true;
+	session.loupe_window_visible = true;
+
+	session.update_live_drag_rect(monitor, end);
+
+	assert_eq!(
+		session.state.drag_rect,
+		Some(MonitorRectPoints {
+			monitor_id: monitor.id,
+			rect: RectPoints::new(120, 180, 160, 180),
+		})
+	);
+	assert!(!session.hud_window_visible);
+	assert!(!session.loupe_window_visible);
 }
 
 #[cfg(target_os = "macos")]
@@ -703,6 +836,82 @@ fn frozen_hud_redraw_does_not_consume_pending_move_without_size_change() {
 		position_update_elapsed: Some(Duration::from_micros(1)),
 		..HudRedrawSummary::default()
 	}));
+}
+
+#[test]
+fn hidden_hud_redraw_forces_pending_move_before_show() {
+	let mut session = OverlaySession::new();
+
+	session.hud_window_visible = false;
+	session.pending_hud_outer_pos = Some(GlobalPoint::new(120, 180));
+
+	assert!(session.should_force_pending_hud_window_move_before_redraw());
+
+	session.hud_window_visible = true;
+
+	assert!(!session.should_force_pending_hud_window_move_before_redraw());
+
+	session.hud_window_visible = false;
+	session.pending_hud_outer_pos = None;
+
+	assert!(!session.should_force_pending_hud_window_move_before_redraw());
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn capture_windows_hidden_skips_hud_redraw() {
+	let mut session = OverlaySession::new();
+
+	session.hud_window_visible = true;
+	session.capture_windows_hidden = true;
+
+	assert!(matches!(session.maybe_skip_hud_redraw(), Some(OverlayControl::Continue)));
+	assert!(!session.hud_window_visible);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn capture_windows_hidden_allows_hud_redraw_for_error_message() {
+	let mut session = OverlaySession::new();
+
+	session.capture_windows_hidden = true;
+
+	session.state.set_error("Preparing capture...");
+
+	assert!(session.maybe_skip_hud_redraw().is_none());
+}
+
+#[test]
+fn live_drag_skips_hud_redraw() {
+	let monitor = MonitorRect {
+		id: 1,
+		origin: GlobalPoint::new(0, 0),
+		width: 1_000,
+		height: 800,
+		scale_factor_x1000: 1_000,
+	};
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.state.drag_rect = Some(MonitorRectPoints {
+		monitor_id: monitor.id,
+		rect: RectPoints::new(100, 120, 240, 320),
+	});
+	session.hud_window_visible = true;
+
+	assert!(matches!(session.maybe_skip_hud_redraw(), Some(OverlayControl::Continue)));
+	assert!(!session.hud_window_visible);
+}
+
+#[test]
+fn frozen_hud_redraw_skips_without_error_message() {
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Frozen;
+	session.hud_window_visible = true;
+
+	assert!(matches!(session.maybe_skip_hud_redraw(), Some(OverlayControl::Continue)));
+	assert!(!session.hud_window_visible);
 }
 
 #[test]

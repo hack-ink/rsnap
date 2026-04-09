@@ -6,7 +6,6 @@ use image::{
 };
 
 use crate::overlay::SCROLL_CAPTURE_PREVIEW_WIDTH_PX;
-use crate::state::{GlobalPoint, MonitorRect, Rgb};
 
 pub(super) fn resize_scroll_preview_segment(segment: &RgbaImage) -> RgbaImage {
 	if segment.width() <= SCROLL_CAPTURE_PREVIEW_WIDTH_PX {
@@ -19,64 +18,6 @@ pub(super) fn resize_scroll_preview_segment(segment: &RgbaImage) -> RgbaImage {
 		.max(1.0) as u32;
 
 	imageops::resize(segment, SCROLL_CAPTURE_PREVIEW_WIDTH_PX, preview_height, FilterType::Triangle)
-}
-
-pub(super) fn frozen_rgb(
-	image: &Option<RgbaImage>,
-	monitor: Option<MonitorRect>,
-	point: GlobalPoint,
-) -> Option<Rgb> {
-	let Some(image) = image else {
-		return None;
-	};
-	let monitor = monitor?;
-	let (x, y) = monitor.local_u32_pixels(point)?;
-	let pixel = image.get_pixel_checked(x, y)?;
-
-	Some(Rgb::new(pixel.0[0], pixel.0[1], pixel.0[2]))
-}
-
-pub(super) fn frozen_loupe_patch(
-	image: &Option<RgbaImage>,
-	monitor: Option<MonitorRect>,
-	point: GlobalPoint,
-	width_px: u32,
-	height_px: u32,
-) -> Option<RgbaImage> {
-	let Some(image) = image else {
-		return None;
-	};
-	let monitor = monitor?;
-	let (center_x, center_y) = monitor.local_u32_pixels(point)?;
-	let mut out = RgbaImage::new(width_px.max(1), height_px.max(1));
-	let out_width = out.width() as i32;
-	let out_height = out.height() as i32;
-	let half_width = out_width / 2;
-	let half_height = out_height / 2;
-	let center_x = center_x as i32;
-	let center_y = center_y as i32;
-	let image_width = image.width() as i32;
-	let image_height = image.height() as i32;
-
-	for out_y in 0..out.height() {
-		for out_x in 0..out.width() {
-			let image_x = center_x + (out_x as i32) - half_width;
-			let image_y = center_y + (out_y as i32) - half_height;
-			let color = if image_x >= 0
-				&& image_y >= 0
-				&& image_x < image_width
-				&& image_y < image_height
-			{
-				*image.get_pixel(image_x as u32, image_y as u32)
-			} else {
-				image::Rgba([0, 0, 0, 0])
-			};
-
-			out.put_pixel(out_x, out_y, color);
-		}
-	}
-
-	Some(out)
 }
 
 pub(super) fn pad_rows(
