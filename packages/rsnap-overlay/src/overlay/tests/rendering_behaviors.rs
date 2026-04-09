@@ -490,6 +490,57 @@ fn toolbar_cursor_global_position_from_outer_uses_cached_toolbar_origin() {
 }
 
 #[test]
+fn toolbar_event_outer_position_prefers_window_position_over_cached_position() {
+	let monitor = tests::test_monitor();
+	let window_outer_pos = Some(GlobalPoint::new(220, 260));
+	let cached_outer_pos = Some(GlobalPoint::new(340, 420));
+	let floating_position = Some(Pos2::new(80.0, 90.0));
+
+	assert_eq!(
+		OverlaySession::toolbar_event_outer_position_from_sources(
+			monitor,
+			window_outer_pos,
+			cached_outer_pos,
+			floating_position,
+		),
+		window_outer_pos
+	);
+}
+
+#[test]
+fn toolbar_event_outer_position_falls_back_to_cached_position() {
+	let monitor = tests::test_monitor();
+	let cached_outer_pos = Some(GlobalPoint::new(340, 420));
+	let floating_position = Some(Pos2::new(80.0, 90.0));
+
+	assert_eq!(
+		OverlaySession::toolbar_event_outer_position_from_sources(
+			monitor,
+			None,
+			cached_outer_pos,
+			floating_position,
+		),
+		cached_outer_pos
+	);
+}
+
+#[test]
+fn toolbar_event_outer_position_falls_back_to_floating_position() {
+	let monitor = tests::test_monitor();
+	let floating_position = Some(Pos2::new(80.4, 90.6));
+
+	assert_eq!(
+		OverlaySession::toolbar_event_outer_position_from_sources(
+			monitor,
+			None,
+			None,
+			floating_position,
+		),
+		Some(GlobalPoint::new(80, 91))
+	);
+}
+
+#[test]
 fn frozen_selection_resize_preserves_handle_press_offset() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
