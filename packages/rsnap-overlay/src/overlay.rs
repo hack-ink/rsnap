@@ -4970,6 +4970,8 @@ impl OverlaySession {
 			self.stop_frozen_selection_drag();
 			self.stop_frozen_mosaic_drag();
 
+			let _ = self.stop_frozen_text_edit_drag();
+
 			self.toolbar_state.dragging = false;
 			self.toolbar_state.drag_offset = Vec2::ZERO;
 			self.toolbar_state.drag_anchor = None;
