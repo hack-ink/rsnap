@@ -1058,6 +1058,28 @@ fn frozen_text_edit_drag_repositions_anchor_within_capture_rect() {
 }
 
 #[test]
+fn toolbar_mouse_release_stops_active_frozen_text_edit_drag() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.begin_frozen_text_edit_drag_at(monitor, GlobalPoint::new(141, 161)));
+
+	session.toolbar_left_button_down = true;
+
+	let _ = session.handle_toolbar_mouse_input(ElementState::Released);
+
+	assert!(!session.toolbar_left_button_down);
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.dragging), Some(false));
+}
+
+#[test]
 fn adjacent_text_events_from_key_and_ime_are_deduplicated() {
 	let monitor = test_monitor();
 	let mut session = OverlaySession::new();
