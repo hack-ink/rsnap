@@ -217,7 +217,6 @@ impl WindowRenderer {
 		let brush_painter = painter.with_clip_rect(rect);
 
 		has_affordance |= Self::render_frozen_committed_overlay_annotations(
-			&painter,
 			&brush_painter,
 			frozen_edit_history,
 			frozen_brush_state,
@@ -281,7 +280,6 @@ impl WindowRenderer {
 	}
 
 	fn render_frozen_committed_overlay_annotations(
-		painter: &Painter,
 		brush_painter: &Painter,
 		frozen_edit_history: &[FrozenEditKind],
 		frozen_brush_state: Option<&FrozenBrushState>,
@@ -321,7 +319,7 @@ impl WindowRenderer {
 					let (font_id, fill) = font_fill(annotation);
 
 					Self::paint_frozen_text_label(
-						painter,
+						brush_painter,
 						annotation.anchor,
 						annotation.text.as_str(),
 						&font_id,
