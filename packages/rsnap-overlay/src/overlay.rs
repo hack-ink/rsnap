@@ -4444,7 +4444,13 @@ impl OverlaySession {
 		edit_state.ime_preedit = None;
 		edit_state.ime_preedit_cursor_char_range = None;
 
-		had_preedit || edit_state.text.pop().is_some()
+		let changed = had_preedit || edit_state.text.pop().is_some();
+
+		if changed {
+			self.frozen_text_recent_input = None;
+		}
+
+		changed
 	}
 
 	fn undo_frozen_text_annotation(&mut self) -> bool {
