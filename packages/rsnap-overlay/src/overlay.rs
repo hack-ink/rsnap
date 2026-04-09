@@ -7921,6 +7921,9 @@ impl OverlaySession {
 				}
 			}
 		}
+		if draw_toolbar && self.sync_frozen_text_edit_for_selected_tool() {
+			self.request_redraw_for_monitor(overlay_monitor);
+		}
 		if draw_toolbar && let Some(action) = self.toolbar_state.pending_action.take() {
 			let control = self.handle_toolbar_action(action);
 

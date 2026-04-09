@@ -268,7 +268,7 @@ fn draw_bitmap_glyph(
 			}
 
 			let x = origin_x
-				+ i32::try_from((7_usize.saturating_sub(column_index)) as u32 * scale)
+				+ i32::try_from(u32::try_from(column_index).unwrap_or(0).saturating_mul(scale))
 					.unwrap_or(i32::MAX);
 			let y = origin_y
 				+ i32::try_from(u32::try_from(row_index).unwrap_or(0).saturating_mul(scale))
@@ -410,6 +410,23 @@ mod tests {
 				assert_eq!(pixel[3], 0, "unexpected pixel outside glyph bounds at ({x}, {y})");
 			}
 		}
+	}
+
+	#[test]
+	fn bitmap_glyph_draw_uses_lsb_first_bit_order() {
+		let mut image = image::RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 0]));
+
+		super::draw_bitmap_glyph(
+			&mut image,
+			0,
+			0,
+			&[0b0000_0001, 0, 0, 0, 0, 0, 0, 0],
+			1,
+			Rgba([255, 255, 255, 255]),
+		);
+
+		assert_eq!(*image.get_pixel(0, 0), Rgba([255, 255, 255, 255]));
+		assert_eq!(*image.get_pixel(7, 0), Rgba([0, 0, 0, 0]));
 	}
 
 	#[test]
