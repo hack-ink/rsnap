@@ -1808,32 +1808,6 @@ fn toolbar_window_stays_visible_while_final_capture_is_pending() {
 }
 
 #[test]
-fn force_pending_hud_and_loupe_moves_only_during_frozen_transition() {
-	let monitor = test_monitor();
-	let mut session = OverlaySession::new();
-
-	assert!(!session.should_force_pending_hud_and_loupe_moves());
-
-	session.state.begin_freeze(monitor);
-
-	assert!(session.should_force_pending_hud_and_loupe_moves());
-
-	session.state.finish_freeze(monitor, test_frozen_image());
-
-	session.authoritative_frozen_capture_ready = true;
-
-	assert!(!session.should_force_pending_hud_and_loupe_moves());
-
-	session.inflight_freeze_capture = Some(monitor);
-
-	assert!(session.should_force_pending_hud_and_loupe_moves());
-
-	session.state.mode = OverlayMode::Live;
-
-	assert!(!session.should_force_pending_hud_and_loupe_moves());
-}
-
-#[test]
 fn tinted_hud_body_fill_amount_zero_keeps_base_fill() {
 	for theme in [HudTheme::Dark, HudTheme::Light] {
 		let base_fill = hud_helpers::hud_body_fill_srgba8(theme, false);

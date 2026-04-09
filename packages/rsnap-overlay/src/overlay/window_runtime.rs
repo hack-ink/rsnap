@@ -313,7 +313,7 @@ impl OverlaySession {
 
 		self.complete_startup_aux_window_creation(created_aux_windows);
 
-		if self.state.alt_held {
+		if self.state.alt_held && matches!(self.state.mode, OverlayMode::Live) {
 			self.set_alt_loupe_window_visible(self.active_cursor_monitor(), true);
 		}
 		if self.toolbar_state.visible {
@@ -833,8 +833,13 @@ impl OverlaySession {
 		}
 
 		let hide_auxiliary_windows = self.frozen_selection_drag_hides_auxiliary_windows();
-		let request_hud_window = !hide_auxiliary_windows && self.hud_window.is_some();
-		let request_loupe_window = !hide_auxiliary_windows && self.loupe_window.is_some();
+		let hide_live_drag_auxiliary_windows = self.live_drag_hides_auxiliary_windows();
+		let request_hud_window = !hide_auxiliary_windows
+			&& !hide_live_drag_auxiliary_windows
+			&& self.hud_window.is_some();
+		let request_loupe_window = !hide_auxiliary_windows
+			&& !hide_live_drag_auxiliary_windows
+			&& self.loupe_window.is_some();
 		let request_toolbar_window = !hide_auxiliary_windows
 			&& cfg!(target_os = "macos")
 			&& matches!(self.state.mode, OverlayMode::Frozen)
@@ -888,7 +893,9 @@ impl OverlaySession {
 	}
 
 	pub(super) fn request_redraw_hud_window(&self) {
-		if self.frozen_selection_drag_hides_auxiliary_windows() {
+		if self.frozen_selection_drag_hides_auxiliary_windows()
+			|| self.live_drag_hides_auxiliary_windows()
+		{
 			return;
 		}
 
@@ -908,7 +915,9 @@ impl OverlaySession {
 	}
 
 	pub(super) fn request_redraw_loupe_window(&self) {
-		if self.frozen_selection_drag_hides_auxiliary_windows() {
+		if self.frozen_selection_drag_hides_auxiliary_windows()
+			|| self.live_drag_hides_auxiliary_windows()
+		{
 			return;
 		}
 

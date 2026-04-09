@@ -1,36 +1,10 @@
 #[allow(unused_imports)]
-use crate::overlay::{GlobalPoint, MonitorRect, OverlayMode, OverlaySession, image_helpers};
+use crate::overlay::{GlobalPoint, MonitorRect, OverlayMode, OverlaySession};
 
 impl OverlaySession {
 	pub(super) fn update_cursor_state(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
 		self.cursor_monitor = Some(monitor);
 		self.state.cursor = Some(cursor);
-
-		match self.state.mode {
-			OverlayMode::Live => {},
-			OverlayMode::Frozen => {
-				if self.state.frozen_image.is_none() {
-					return;
-				}
-
-				let frozen_monitor = self.state.monitor;
-
-				self.state.rgb =
-					image_helpers::frozen_rgb(&self.state.frozen_image, frozen_monitor, cursor);
-				self.state.loupe = if self.state.alt_held {
-					image_helpers::frozen_loupe_patch(
-						&self.state.frozen_image,
-						frozen_monitor,
-						cursor,
-						self.loupe_patch_width_px,
-						self.loupe_patch_height_px,
-					)
-					.map(|patch| crate::state::LoupeSample { center: cursor, patch })
-				} else {
-					None
-				};
-			},
-		}
 	}
 
 	#[cfg(not(target_os = "macos"))]
@@ -56,16 +30,20 @@ impl OverlaySession {
 		self.capture_windows_hidden = false;
 		#[cfg(not(target_os = "macos"))]
 		{
-			if let Some(hud_window) = &self.hud_window {
-				hud_window.window.set_visible(true);
+			if matches!(self.state.mode, OverlayMode::Live) {
+				if let Some(hud_window) = &self.hud_window {
+					hud_window.window.set_visible(true);
+				}
+
+				self.hud_window_visible = true;
+
+				if let Some(loupe_window) = &self.loupe_window {
+					loupe_window.window.set_visible(self.state.alt_held);
+				}
+			} else {
+				self.hud_window_visible = false;
+				self.loupe_window_visible = false;
 			}
-
-			self.hud_window_visible = true;
-		}
-
-		#[cfg(not(target_os = "macos"))]
-		if let Some(loupe_window) = &self.loupe_window {
-			loupe_window.window.set_visible(self.state.alt_held);
 		}
 	}
 
