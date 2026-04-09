@@ -352,12 +352,6 @@ impl OverlaySession {
 		self.last_hud_window_move_at = now;
 	}
 
-	pub(super) fn force_apply_pending_hud_and_loupe_moves(&mut self) {
-		self.force_apply_pending_hud_window_move();
-		self.force_apply_pending_loupe_window_move();
-		self.force_apply_pending_toolbar_window_move();
-	}
-
 	pub(super) fn maybe_apply_pending_loupe_window_move(&mut self, now: Instant) {
 		self.apply_pending_loupe_window_move(now, false);
 	}

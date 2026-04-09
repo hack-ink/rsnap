@@ -33,6 +33,18 @@ impl OverlaySession {
 	}
 
 	pub(super) fn maybe_skip_hud_redraw(&mut self) -> Option<OverlayControl> {
+		if self.live_drag_hides_auxiliary_windows() {
+			if let Some(hud_window) = self.hud_window.as_ref()
+				&& self.hud_window_visible
+			{
+				hud_window.window.set_visible(false);
+			}
+
+			self.hud_window_visible = false;
+			self.last_present_at = Instant::now();
+
+			return Some(OverlayControl::Continue);
+		}
 		if self.frozen_selection_drag_hides_auxiliary_windows() {
 			if let Some(hud_window) = self.hud_window.as_ref()
 				&& self.hud_window_visible
@@ -57,24 +69,36 @@ impl OverlaySession {
 
 			return Some(OverlayControl::Continue);
 		}
-		if self.capture_windows_hidden {
-			#[cfg(not(target_os = "macos"))]
+		if matches!(self.state.mode, OverlayMode::Frozen) && self.state.error_message.is_none() {
+			if let Some(hud_window) = self.hud_window.as_ref()
+				&& self.hud_window_visible
 			{
-				if let Some(hud_window) = self.hud_window.as_ref()
-					&& self.hud_window_visible
-				{
-					hud_window.window.set_visible(false);
-				}
-
-				self.hud_window_visible = false;
-				self.last_present_at = Instant::now();
-
-				#[cfg(not(target_os = "macos"))]
-				return Some(OverlayControl::Continue);
+				hud_window.window.set_visible(false);
 			}
+
+			self.hud_window_visible = false;
+			self.last_present_at = Instant::now();
+
+			return Some(OverlayControl::Continue);
+		}
+		if self.capture_windows_hidden && !cfg!(target_os = "macos") {
+			if let Some(hud_window) = self.hud_window.as_ref()
+				&& self.hud_window_visible
+			{
+				hud_window.window.set_visible(false);
+			}
+
+			self.hud_window_visible = false;
+			self.last_present_at = Instant::now();
+
+			return Some(OverlayControl::Continue);
 		}
 
 		None
+	}
+
+	pub(super) fn should_force_pending_hud_window_move_before_redraw(&self) -> bool {
+		!self.hud_window_visible && self.pending_hud_outer_pos.is_some()
 	}
 
 	pub(super) fn draw_hud_window_frame(
@@ -303,6 +327,10 @@ impl OverlaySession {
 			return control;
 		}
 
+		if self.should_force_pending_hud_window_move_before_redraw() {
+			self.force_apply_pending_hud_window_move();
+		}
+
 		let summary = match self.draw_hud_window_frame(live_loupe_in_hud) {
 			Ok(summary) => summary,
 			Err(err) => return self.exit(OverlayExit::Error(format!("{err:#}"))),
@@ -340,11 +368,13 @@ impl OverlaySession {
 	}
 
 	pub(super) fn should_skip_loupe_redraw(&self) -> bool {
-		self.frozen_selection_drag_hides_auxiliary_windows()
+		self.live_drag_hides_auxiliary_windows()
+			|| !matches!(self.state.mode, OverlayMode::Live)
+			|| self.frozen_selection_drag_hides_auxiliary_windows()
 			|| self.scroll_capture.active
 			|| self.capture_windows_hidden
 			|| !self.state.alt_held
-			|| (matches!(self.state.mode, OverlayMode::Live) && self.live_loupe_uses_hud_window())
+			|| self.live_loupe_uses_hud_window()
 	}
 
 	pub(super) fn current_loupe_draw_target(&self) -> Option<(MonitorRect, GlobalPoint)> {

@@ -39,6 +39,29 @@ impl OverlaySession {
 
 			return;
 		}
+		if self.toolbar_pointer_local.is_some()
+			&& self.toolbar_state.visible
+			&& let Some((monitor, global)) = self.last_event_cursor
+		{
+			let old_monitor = self.active_cursor_monitor();
+
+			if tracing::enabled!(tracing::Level::TRACE) {
+				tracing::trace!(
+					mode = "frozen",
+					source = DeviceCursorPointSource::EventRecentFallback.as_str(),
+					monitor_id = monitor.id,
+					toolbar_hover = true,
+					"Resolved toolbar hover cursor for frozen tick."
+				);
+			}
+			if self.state.cursor == Some(global) && old_monitor == Some(monitor) {
+				return;
+			}
+
+			self.apply_frozen_cursor_tracking_update(old_monitor, monitor, global);
+
+			return;
+		}
 		if !poll_due {
 			return;
 		}
@@ -75,7 +98,6 @@ impl OverlaySession {
 		let previous_drag_rect = self.state.drag_rect;
 
 		self.update_cursor_state(monitor, global);
-		self.update_hud_window_position(monitor, global);
 		self.update_live_drag_rect(monitor, global);
 		self.update_frozen_selection_drag_rect(global);
 		self.update_frozen_mosaic_drag_rect(global);
@@ -83,12 +105,6 @@ impl OverlaySession {
 		let brush_changed = self.update_frozen_brush_stroke(global);
 
 		self.sync_overlay_cursor_icons();
-		self.force_apply_pending_hud_and_loupe_moves();
-		self.request_redraw_hud_window();
-
-		if self.state.alt_held || self.loupe_window_visible {
-			self.request_redraw_loupe_window();
-		}
 
 		if let Some(old_monitor) = old_monitor
 			&& old_monitor != monitor
