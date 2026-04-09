@@ -1244,6 +1244,31 @@ fn finish_frozen_text_editing_commits_current_toolbar_text_style() {
 }
 
 #[test]
+fn inline_toolbar_mode_switch_finishes_active_frozen_text_edit() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.authoritative_frozen_capture_ready = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("Switched"));
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pointer;
+
+	let _ = session.handle_capture_and_toolbar_redraw_post(monitor, true);
+
+	assert!(session.frozen_text_edit.is_none());
+	assert_eq!(session.frozen_text_annotations.len(), 1);
+	assert_eq!(session.frozen_text_annotations[0].text, "Switched");
+	assert_eq!(session.toolbar_state.selected_tool, FrozenToolbarTool::Pointer);
+}
+
+#[test]
 fn frozen_text_undo_and_redo_round_trip_annotations() {
 	let monitor = test_monitor();
 	let mut session = OverlaySession::new();
