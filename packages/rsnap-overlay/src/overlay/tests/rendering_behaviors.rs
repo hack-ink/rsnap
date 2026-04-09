@@ -26,6 +26,7 @@ use crate::overlay::tests::{
 use crate::overlay::{
 	FROZEN_TEXT_CARET_BLINK_PERIOD_SECS, FROZEN_TEXT_FONT_SIZE_POINTS, FontId, FrozenEditKind,
 	FrozenSelectionCorner, FrozenSelectionInteractionKind, FrozenTextAnnotation, FrozenTextColor,
+	FrozenTextEditState,
 };
 use crate::worker::{WorkerErrorSource, WorkerResponse};
 
@@ -871,6 +872,97 @@ fn frozen_committed_text_annotations_are_clipped_to_capture_rect() {
 	assert!(
 		clipped_shape_count_with_text > clipped_shape_count_without_text,
 		"committed text should add shapes clipped to the frozen capture rect",
+	);
+}
+
+#[test]
+fn frozen_active_text_preview_is_clipped_to_capture_rect() {
+	let ctx = tests::test_egui_context();
+	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 120.0));
+	let capture_rect_points = RectPoints::new(40, 20, 80, 40);
+	let capture_rect = Rect::from_min_size(
+		Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
+		Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
+	);
+	let monitor = MonitorRect {
+		id: 1,
+		origin: GlobalPoint::new(0, 0),
+		width: screen_rect.width() as u32,
+		height: screen_rect.height() as u32,
+		scale_factor_x1000: 1_000,
+	};
+	let style = OverlaySession::new().toolbar_state.text_style;
+	let mut text_edit =
+		FrozenTextEditState::new(Pos2::new(capture_rect.max.x - 2.0, capture_rect.min.y + 4.0));
+
+	text_edit.text = String::from("editing");
+
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+
+	state.mode = OverlayMode::Frozen;
+	state.monitor = Some(monitor);
+	state.frozen_capture_rect = Some(capture_rect_points);
+
+	let empty_output = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|_ui: &mut Ui| {
+			assert!(WindowRenderer::render_frozen_capture_affordance(
+				&ctx,
+				&state,
+				monitor,
+				screen_rect,
+				HudTheme::Dark,
+				false,
+				FrozenCaptureSource::None,
+				None,
+				&[],
+				None,
+				&[],
+				None,
+				style,
+				false,
+				true,
+				1.0,
+				&mut selection_flow_geometry_cache,
+				&mut selection_dashed_border_cache,
+			));
+		},
+	);
+	let clipped_shape_count_without_preview =
+		empty_output.shapes.iter().filter(|shape| shape.clip_rect == capture_rect).count();
+	let preview_output = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|_ui: &mut Ui| {
+			assert!(WindowRenderer::render_frozen_capture_affordance(
+				&ctx,
+				&state,
+				monitor,
+				screen_rect,
+				HudTheme::Dark,
+				false,
+				FrozenCaptureSource::None,
+				None,
+				&[],
+				None,
+				&[],
+				Some(&text_edit),
+				style,
+				false,
+				true,
+				1.0,
+				&mut selection_flow_geometry_cache,
+				&mut selection_dashed_border_cache,
+			));
+		},
+	);
+	let clipped_shape_count_with_preview =
+		preview_output.shapes.iter().filter(|shape| shape.clip_rect == capture_rect).count();
+
+	assert!(
+		clipped_shape_count_with_preview > clipped_shape_count_without_preview,
+		"active text preview should add shapes clipped to the frozen capture rect",
 	);
 }
 

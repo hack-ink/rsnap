@@ -264,7 +264,7 @@ impl WindowRenderer {
 		}
 
 		has_affordance |= Self::render_frozen_text_annotations(
-			&painter,
+			&brush_painter,
 			theme,
 			&[],
 			frozen_text_edit,
