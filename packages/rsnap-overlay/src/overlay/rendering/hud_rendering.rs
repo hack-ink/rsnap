@@ -22,14 +22,9 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 	) -> bool {
-		if cfg!(target_os = "macos") && matches!(state.mode, OverlayMode::Frozen) {
-			return true;
-		}
+		let _ = monitor;
 
-		!matches!(state.mode, OverlayMode::Frozen)
-			|| state.monitor != Some(monitor)
-			|| state.frozen_image.is_some()
-			|| state.error_message.is_some()
+		matches!(state.mode, OverlayMode::Live) || state.error_message.is_some()
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -370,30 +365,8 @@ impl WindowRenderer {
 	) {
 		const CELL: f32 = 10.0;
 
-		let mode = state.mode;
-
-		if matches!(mode, OverlayMode::Live) {
+		if matches!(state.mode, OverlayMode::Live) {
 			self.render_live_loupe(ui, state, CELL, hud_blur_active, hud_opaque, theme);
-		} else if matches!(mode, OverlayMode::Frozen)
-			&& (state.frozen_image.is_some() || state.loupe.is_some())
-		{
-			let Some(monitor) = state.monitor else {
-				return;
-			};
-			let Some(cursor) = state.cursor else {
-				return;
-			};
-
-			self.render_frozen_loupe(
-				ui,
-				state,
-				monitor,
-				cursor,
-				CELL,
-				hud_blur_active,
-				hud_opaque,
-				theme,
-			);
 		}
 	}
 
@@ -479,92 +452,6 @@ impl WindowRenderer {
 		let center_y = (h / 2) as f32;
 		let center_min =
 			Pos2::new(image_rect.min.x + center_x * cell, image_rect.min.y + center_y * cell);
-		let center_rect = Rect::from_min_size(center_min, Vec2::splat(cell));
-
-		ui.painter().rect_stroke(
-			center_rect,
-			0.0,
-			Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 180)),
-			StrokeKind::Inside,
-		);
-	}
-
-	#[allow(clippy::too_many_arguments)]
-	fn render_frozen_loupe(
-		&mut self,
-		ui: &mut Ui,
-		state: &OverlayState,
-		monitor: MonitorRect,
-		cursor: GlobalPoint,
-		cell: f32,
-		hud_blur_active: bool,
-		hud_opaque: bool,
-		theme: HudTheme,
-	) {
-		if state.loupe.is_some() {
-			self.render_live_loupe(ui, state, cell, hud_blur_active, hud_opaque, theme);
-
-			return;
-		}
-
-		const LOUPE_RADIUS_PX: i32 = 5;
-		const LOUPE_SIDE_PX: i32 = (LOUPE_RADIUS_PX * 2) + 1;
-
-		let side = (LOUPE_SIDE_PX as f32) * cell;
-		let (rect, _) = ui.allocate_exact_size(Vec2::new(side, side), Sense::hover());
-		let Some(image) = state.frozen_image.as_ref() else {
-			return;
-		};
-		let Some((center_x, center_y)) = monitor.local_u32_pixels(cursor) else {
-			return;
-		};
-		let (width, height) = image.dimensions();
-		let width = width as i32;
-		let height = height as i32;
-		let center_x = center_x as i32;
-		let center_y = center_y as i32;
-		let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 140));
-		let grid_stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 26));
-
-		for dy in -LOUPE_RADIUS_PX..=LOUPE_RADIUS_PX {
-			for dx in -LOUPE_RADIUS_PX..=LOUPE_RADIUS_PX {
-				let x = center_x + dx;
-				let y = center_y + dy;
-				let cell_x = dx + LOUPE_RADIUS_PX;
-				let cell_y = dy + LOUPE_RADIUS_PX;
-				let cell_min = Pos2::new(
-					rect.min.x + (cell_x as f32) * cell,
-					rect.min.y + (cell_y as f32) * cell,
-				);
-				let cell_rect = Rect::from_min_size(cell_min, Vec2::splat(cell));
-				let fill = if x < 0 || y < 0 || x >= width || y >= height {
-					Color32::from_rgba_unmultiplied(0, 0, 0, 0)
-				} else {
-					let pixel =
-						image.get_pixel_checked(x as u32, y as u32).expect("pixel bounds checked");
-
-					Color32::from_rgb(pixel.0[0], pixel.0[1], pixel.0[2])
-				};
-
-				ui.painter().rect_filled(cell_rect, 0.0, fill);
-			}
-		}
-		for i in 0..=LOUPE_SIDE_PX {
-			let x = rect.min.x + (i as f32) * cell;
-			let y = rect.min.y + (i as f32) * cell;
-
-			ui.painter()
-				.line_segment([Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)], grid_stroke);
-			ui.painter()
-				.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], grid_stroke);
-		}
-
-		ui.painter().rect_stroke(rect, 3.0, stroke, StrokeKind::Outside);
-
-		let center_min = Pos2::new(
-			rect.min.x + (LOUPE_RADIUS_PX as f32) * cell,
-			rect.min.y + (LOUPE_RADIUS_PX as f32) * cell,
-		);
 		let center_rect = Rect::from_min_size(center_min, Vec2::splat(cell));
 
 		ui.painter().rect_stroke(

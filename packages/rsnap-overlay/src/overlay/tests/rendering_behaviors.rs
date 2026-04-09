@@ -479,6 +479,17 @@ fn toolbar_position_update_queues_pending_move_without_window() {
 }
 
 #[test]
+fn toolbar_cursor_global_position_from_outer_uses_cached_toolbar_origin() {
+	let outer_position = GlobalPoint::new(220, 260);
+	let cursor_local = Pos2::new(18.25, 12.75);
+
+	assert_eq!(
+		OverlaySession::toolbar_cursor_global_position_from_outer(outer_position, cursor_local),
+		GlobalPoint::new(238, 273)
+	);
+}
+
+#[test]
 fn frozen_selection_resize_preserves_handle_press_offset() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
