@@ -5959,7 +5959,18 @@ impl OverlaySession {
 		else {
 			return OverlayControl::Continue;
 		};
-		let changed = match event {
+		let changed = self.apply_frozen_text_ime_event(event);
+
+		if changed {
+			self.sync_frozen_text_ime_cursor_area(monitor);
+			self.request_redraw_for_monitor(monitor);
+		}
+
+		OverlayControl::Continue
+	}
+
+	fn apply_frozen_text_ime_event(&mut self, event: &Ime) -> bool {
+		match event {
 			Ime::Commit(text) => {
 				let generation = self.note_frozen_text_input_event();
 
@@ -5972,15 +5983,9 @@ impl OverlaySession {
 			Ime::Preedit(text, cursor_range) => {
 				self.set_frozen_text_ime_preedit(Some(text.clone()), *cursor_range)
 			},
-			Ime::Enabled | Ime::Disabled => false,
-		};
-
-		if changed {
-			self.sync_frozen_text_ime_cursor_area(monitor);
-			self.request_redraw_for_monitor(monitor);
+			Ime::Disabled => self.set_frozen_text_ime_preedit(None, None),
+			Ime::Enabled => false,
 		}
-
-		OverlayControl::Continue
 	}
 
 	fn handle_scroll_mouse_wheel(

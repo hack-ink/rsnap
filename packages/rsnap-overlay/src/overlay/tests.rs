@@ -32,7 +32,7 @@ use image::Rgba;
 use image::imageops;
 #[cfg(target_os = "macos")]
 use winit::dpi::PhysicalPosition;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta};
 #[cfg(target_os = "macos")]
 use winit::keyboard::ModifiersState;
 use winit::keyboard::{Key, NamedKey};
@@ -1194,6 +1194,28 @@ fn backspace_clears_recent_input_dedupe_marker_before_cross_source_retype() {
 		"A",
 	));
 	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some("A"));
+}
+
+#[test]
+fn ime_disabled_clears_frozen_text_preedit_state() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((0, 0))));
+	assert!(session.frozen_text_edit.as_ref().is_some_and(FrozenTextEditState::has_ime_preedit));
+	assert!(session.apply_frozen_text_ime_event(&Ime::Disabled));
+	assert_eq!(
+		session.frozen_text_edit.as_ref().and_then(|edit| edit.ime_preedit.as_deref()),
+		None
+	);
+	assert!(!session.frozen_text_edit.as_ref().is_some_and(FrozenTextEditState::has_ime_preedit));
 }
 
 #[test]

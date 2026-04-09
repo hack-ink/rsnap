@@ -12,6 +12,7 @@ type UnicodeCoverage = Vec<UnicodeCoverageRange>;
 const NORMAL_WEIGHT_MIN: u16 = 300;
 const NORMAL_WEIGHT_MAX: u16 = 700;
 const MAX_SYSTEM_TEXT_FALLBACKS: usize = 16;
+const MAX_SYSTEM_TEXT_COVERAGE_MISS_STREAK: usize = 32;
 
 #[derive(Debug)]
 pub(crate) struct SystemTextFont {
@@ -40,6 +41,13 @@ struct CandidateSystemTextFont {
 struct UnicodeCoverageRange {
 	start: u32,
 	end: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SystemTextFontProbeResult {
+	Selected,
+	SkippedNoCoverage,
+	Skipped,
 }
 
 pub(crate) fn system_text_fonts() -> &'static [SystemTextFont] {
@@ -129,36 +137,62 @@ fn select_system_text_fonts(
 	let mut selected_face_ids = HashSet::new();
 	let mut selected_families = HashSet::new();
 	let mut covered_codepoints = UnicodeCoverage::new();
+	let mut consecutive_coverage_misses = 0_usize;
 
 	if let Some(face_id) = generic_sans_face_id
 		&& let Some(candidate) = candidates.iter().find(|candidate| candidate.face_id == face_id)
 	{
-		try_select_system_text_font(
-			database,
-			candidate,
-			&mut selected,
-			&mut selected_face_ids,
-			&mut selected_families,
-			&mut covered_codepoints,
+		consecutive_coverage_misses = next_system_text_probe_miss_streak(
+			consecutive_coverage_misses,
+			try_select_system_text_font(
+				database,
+				candidate,
+				&mut selected,
+				&mut selected_face_ids,
+				&mut selected_families,
+				&mut covered_codepoints,
+			),
 		);
 	}
 
 	for candidate in candidates {
-		if selected.len() >= MAX_SYSTEM_TEXT_FALLBACKS {
+		if selected.len() >= MAX_SYSTEM_TEXT_FALLBACKS
+			|| system_text_probe_miss_streak_exhausted(consecutive_coverage_misses)
+		{
 			break;
 		}
 
-		try_select_system_text_font(
-			database,
-			candidate,
-			&mut selected,
-			&mut selected_face_ids,
-			&mut selected_families,
-			&mut covered_codepoints,
+		consecutive_coverage_misses = next_system_text_probe_miss_streak(
+			consecutive_coverage_misses,
+			try_select_system_text_font(
+				database,
+				candidate,
+				&mut selected,
+				&mut selected_face_ids,
+				&mut selected_families,
+				&mut covered_codepoints,
+			),
 		);
 	}
 
 	selected
+}
+
+fn next_system_text_probe_miss_streak(
+	consecutive_coverage_misses: usize,
+	probe_result: SystemTextFontProbeResult,
+) -> usize {
+	match probe_result {
+		SystemTextFontProbeResult::Selected => 0,
+		SystemTextFontProbeResult::SkippedNoCoverage => {
+			consecutive_coverage_misses.saturating_add(1)
+		},
+		SystemTextFontProbeResult::Skipped => consecutive_coverage_misses,
+	}
+}
+
+fn system_text_probe_miss_streak_exhausted(consecutive_coverage_misses: usize) -> bool {
+	consecutive_coverage_misses >= MAX_SYSTEM_TEXT_COVERAGE_MISS_STREAK
 }
 
 fn try_select_system_text_font(
@@ -168,26 +202,26 @@ fn try_select_system_text_font(
 	selected_face_ids: &mut HashSet<ID>,
 	selected_families: &mut HashSet<String>,
 	covered_codepoints: &mut UnicodeCoverage,
-) {
+) -> SystemTextFontProbeResult {
 	if selected_face_ids.contains(&candidate.face_id)
 		|| selected_families.contains(candidate.family_name.as_str())
 		|| selected.len() >= MAX_SYSTEM_TEXT_FALLBACKS
 	{
-		return;
+		return SystemTextFontProbeResult::Skipped;
 	}
 
 	let Some(coverage_codepoints) = load_system_text_coverage(database, candidate.face_id) else {
-		return;
+		return SystemTextFontProbeResult::Skipped;
 	};
 
 	if !selected.is_empty()
 		&& !coverage_adds_new_codepoints(covered_codepoints, &coverage_codepoints)
 	{
-		return;
+		return SystemTextFontProbeResult::SkippedNoCoverage;
 	}
 
 	let Some(font) = build_system_text_font(database, candidate.face_id) else {
-		return;
+		return SystemTextFontProbeResult::Skipped;
 	};
 
 	selected.push(font);
@@ -195,6 +229,8 @@ fn try_select_system_text_font(
 	selected_families.insert(candidate.family_name.clone());
 
 	merge_coverage_codepoints(covered_codepoints, &coverage_codepoints);
+
+	SystemTextFontProbeResult::Selected
 }
 
 fn load_system_text_coverage(database: &Database, face_id: ID) -> Option<UnicodeCoverage> {
@@ -366,7 +402,7 @@ fn merge_coverage_codepoints(
 
 #[cfg(test)]
 mod tests {
-	use crate::system_fonts::{UnicodeCoverage, UnicodeCoverageRange};
+	use crate::system_fonts::{SystemTextFontProbeResult, UnicodeCoverage, UnicodeCoverageRange};
 
 	#[test]
 	fn coverage_tracks_arbitrary_script_codepoints() {
@@ -409,5 +445,26 @@ mod tests {
 			]
 		);
 		assert!(!super::coverage_adds_new_codepoints(&covered_codepoints, &candidate_codepoints,));
+	}
+
+	#[test]
+	fn system_text_probe_miss_streak_resets_after_selected_font() {
+		let misses =
+			super::next_system_text_probe_miss_streak(7, SystemTextFontProbeResult::Selected);
+
+		assert_eq!(misses, 0);
+	}
+
+	#[test]
+	fn system_text_probe_miss_streak_advances_on_no_coverage_fonts() {
+		let misses = super::next_system_text_probe_miss_streak(
+			3,
+			SystemTextFontProbeResult::SkippedNoCoverage,
+		);
+
+		assert_eq!(misses, 4);
+		assert!(super::system_text_probe_miss_streak_exhausted(
+			super::MAX_SYSTEM_TEXT_COVERAGE_MISS_STREAK
+		));
 	}
 }
