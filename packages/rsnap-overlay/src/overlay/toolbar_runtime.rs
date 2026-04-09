@@ -62,7 +62,14 @@ impl OverlaySession {
 			Some(monitor) => monitor,
 			None => return OverlayControl::Continue,
 		};
-		let global_cursor = self.toolbar_cursor_global_position(toolbar_window, cursor_local);
+		let toolbar_outer_pos = Self::toolbar_event_outer_position_from_sources(
+			monitor,
+			window_toolbar_outer_pos,
+			cached_toolbar_outer_pos,
+			self.toolbar_state.floating_position,
+		);
+		let global_cursor = toolbar_outer_pos
+			.map(|outer| Self::toolbar_cursor_global_position_from_outer(outer, cursor_local));
 
 		if self.frozen_selection_drag.active {
 			if let Some(global_cursor) = global_cursor {
@@ -104,27 +111,17 @@ impl OverlaySession {
 			let dy = cursor_local.y - drag_anchor.y;
 			let threshold_sq = TOOLBAR_DRAG_START_THRESHOLD_PX * TOOLBAR_DRAG_START_THRESHOLD_PX;
 
-			if dx * dx + dy * dy >= threshold_sq {
-				let toolbar_outer_pos = self.toolbar_outer_pos.or_else(|| {
-					self.toolbar_state.floating_position.map(|floating_position| {
-						GlobalPoint::new(
-							monitor.origin.x.saturating_add(floating_position.x.round() as i32),
-							monitor.origin.y.saturating_add(floating_position.y.round() as i32),
-						)
-					})
-				});
-
-				if let (Some(global_cursor), Some(toolbar_outer_pos)) =
+			if dx * dx + dy * dy >= threshold_sq
+				&& let (Some(global_cursor), Some(toolbar_outer_pos)) =
 					(global_cursor, toolbar_outer_pos)
-				{
-					self.toolbar_state.drag_offset = Vec2::new(
-						global_cursor.x as f32 - toolbar_outer_pos.x as f32,
-						global_cursor.y as f32 - toolbar_outer_pos.y as f32,
-					);
-					self.toolbar_state.dragging = true;
-					self.toolbar_state.drag_anchor = None;
-					mouse_drag = true;
-				}
+			{
+				self.toolbar_state.drag_offset = Vec2::new(
+					global_cursor.x as f32 - toolbar_outer_pos.x as f32,
+					global_cursor.y as f32 - toolbar_outer_pos.y as f32,
+				);
+				self.toolbar_state.dragging = true;
+				self.toolbar_state.drag_anchor = None;
+				mouse_drag = true;
 			}
 		}
 		if mouse_drag && global_cursor.is_none() {
@@ -147,16 +144,20 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
-	pub(super) fn toolbar_cursor_global_position(
-		&self,
-		toolbar_window: &HudOverlayWindow,
-		cursor_local: Pos2,
+	pub(super) fn toolbar_event_outer_position_from_sources(
+		monitor: MonitorRect,
+		window_toolbar_outer_pos: Option<GlobalPoint>,
+		cached_toolbar_outer_pos: Option<GlobalPoint>,
+		floating_position: Option<Pos2>,
 	) -> Option<GlobalPoint> {
-		let outer_position = self
-			.toolbar_outer_pos
-			.or_else(|| Self::toolbar_window_outer_position(toolbar_window))?;
-
-		Some(Self::toolbar_cursor_global_position_from_outer(outer_position, cursor_local))
+		window_toolbar_outer_pos.or(cached_toolbar_outer_pos).or_else(|| {
+			floating_position.map(|floating_position| {
+				GlobalPoint::new(
+					monitor.origin.x.saturating_add(floating_position.x.round() as i32),
+					monitor.origin.y.saturating_add(floating_position.y.round() as i32),
+				)
+			})
+		})
 	}
 
 	pub(super) fn toolbar_window_outer_position(
