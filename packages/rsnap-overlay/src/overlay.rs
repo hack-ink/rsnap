@@ -5459,7 +5459,6 @@ impl OverlaySession {
 			should_trace_frozen_selection_drag_timing,
 			cursor_move_started_at,
 			old_monitor,
-			old_cursor,
 			monitor,
 			global,
 			frozen_selection_drag_global,
@@ -5573,7 +5572,6 @@ impl OverlaySession {
 			should_trace_frozen_selection_drag_timing,
 			cursor_move_started_at,
 			old_monitor,
-			old_cursor,
 			monitor,
 			global,
 			global,
@@ -5594,11 +5592,11 @@ impl OverlaySession {
 		should_trace_frozen_selection_drag_timing: bool,
 		cursor_move_started_at: Option<Instant>,
 		old_monitor: Option<MonitorRect>,
-		old_cursor: Option<GlobalPoint>,
 		monitor: MonitorRect,
 		global: GlobalPoint,
 		frozen_selection_drag_global: GlobalPoint,
 	) -> FrozenSelectionDragCursorMoveTiming {
+		let old_cursor = self.state.cursor;
 		let cursor_update_elapsed =
 			Self::measure_duration_if(should_trace_frozen_selection_drag_timing, || {
 				self.update_cursor_for_live_move(old_monitor, old_cursor, monitor, global)
