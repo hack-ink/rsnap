@@ -299,16 +299,22 @@ pub(super) struct FrozenTextEditState {
 	pub(super) text: String,
 	pub(super) ime_preedit: Option<String>,
 	pub(super) ime_preedit_cursor_char_range: Option<(usize, usize)>,
+	pub(super) caret_blink_started_at: Instant,
 	pub(super) dragging: bool,
 	pub(super) drag_offset: Vec2,
 }
 impl FrozenTextEditState {
 	pub(super) fn new(anchor: Pos2) -> Self {
+		Self::new_at(anchor, Instant::now())
+	}
+
+	pub(super) fn new_at(anchor: Pos2, caret_blink_started_at: Instant) -> Self {
 		Self {
 			anchor,
 			text: String::new(),
 			ime_preedit: None,
 			ime_preedit_cursor_char_range: None,
+			caret_blink_started_at,
 			dragging: false,
 			drag_offset: Vec2::ZERO,
 		}
@@ -320,6 +326,18 @@ impl FrozenTextEditState {
 
 	pub(super) fn has_ime_preedit(&self) -> bool {
 		self.ime_preedit.is_some()
+	}
+
+	pub(super) fn reset_caret_blink(&mut self) {
+		self.reset_caret_blink_at(Instant::now());
+	}
+
+	pub(super) fn reset_caret_blink_at(&mut self, caret_blink_started_at: Instant) {
+		self.caret_blink_started_at = caret_blink_started_at;
+	}
+
+	pub(super) fn caret_blink_elapsed_secs_at(&self, now: Instant) -> f64 {
+		now.duration_since(self.caret_blink_started_at).as_secs_f64()
 	}
 
 	pub(super) fn visible_text_and_caret_char_index(&self) -> (String, Option<usize>) {
