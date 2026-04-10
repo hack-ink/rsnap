@@ -1306,9 +1306,9 @@ fn frozen_text_style_change_refresh_check_ignores_other_monitor() {
 
 	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
 	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((0, 0))));
-	assert!(!session.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(
-		other_monitor
-	));
+	assert!(
+		!session.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(other_monitor)
+	);
 }
 
 #[test]
@@ -1385,6 +1385,25 @@ fn finish_frozen_text_editing_commits_current_toolbar_text_style() {
 }
 
 #[test]
+fn finish_frozen_text_editing_commits_active_ime_preedit_text() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("A"));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((3, 3))));
+	assert!(session.finish_frozen_text_editing(true));
+	assert_eq!(session.frozen_text_annotations.len(), 1);
+	assert_eq!(session.frozen_text_annotations[0].text, "A汉");
+}
+
+#[test]
 fn inline_toolbar_mode_switch_finishes_active_frozen_text_edit() {
 	let monitor = test_monitor();
 	let mut session = OverlaySession::new();
@@ -1407,6 +1426,31 @@ fn inline_toolbar_mode_switch_finishes_active_frozen_text_edit() {
 	assert_eq!(session.frozen_text_annotations.len(), 1);
 	assert_eq!(session.frozen_text_annotations[0].text, "Switched");
 	assert_eq!(session.toolbar_state.selected_tool, FrozenToolbarTool::Pointer);
+}
+
+#[test]
+fn inline_toolbar_mode_switch_commits_active_ime_preedit_text() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.authoritative_frozen_capture_ready = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("A"));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((3, 3))));
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pointer;
+
+	let _ = session.handle_capture_and_toolbar_redraw_post(monitor, true);
+
+	assert!(session.frozen_text_edit.is_none());
+	assert_eq!(session.frozen_text_annotations.len(), 1);
+	assert_eq!(session.frozen_text_annotations[0].text, "A汉");
 }
 
 #[test]
