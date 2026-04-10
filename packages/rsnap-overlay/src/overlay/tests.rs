@@ -2014,6 +2014,22 @@ fn scroll_capture_start_skips_scroll_live_stream_when_worker_sampling_is_forced(
 
 #[cfg(target_os = "macos")]
 #[test]
+fn scroll_capture_start_disables_text_mode_while_active() {
+	let mut session = OverlaySession::new();
+
+	seed_ready_scroll_capture_selection(&mut session);
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	let control = session.start_scroll_capture();
+
+	assert!(matches!(control, OverlayControl::Continue));
+	assert!(session.scroll_capture.active);
+	assert!(!session.frozen_text_tool_active());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn reset_for_start_preserves_external_scroll_input_drain_reader() {
 	let mut session = OverlaySession::default();
 

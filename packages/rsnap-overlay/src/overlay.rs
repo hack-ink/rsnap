@@ -4319,7 +4319,7 @@ impl OverlaySession {
 	}
 
 	fn frozen_text_tool_active(&self) -> bool {
-		self.toolbar_state.selected_tool == FrozenToolbarTool::Text
+		!self.scroll_capture.active && self.toolbar_state.selected_tool == FrozenToolbarTool::Text
 	}
 
 	fn sync_text_input_ime_state(&self) {
