@@ -254,7 +254,6 @@ const MACOS_HUD_WINDOW_LEVEL: isize = 26;
 const MACOS_OVERLAY_WINDOW_LEVEL: isize = 25;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
-const TOOLBAR_MAX_TOOL_COUNT: usize = 10;
 const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
 const CURSOR_EVENT_TICK_TTL: Duration = Duration::from_millis(24);
 const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
@@ -296,11 +295,6 @@ const SCROLL_CAPTURE_DUPLICATE_STREAM_REFRESH_INTERVAL: Duration = Duration::fro
 const HUD_PILL_INNER_MARGIN_X_POINTS: f32 = 12.0;
 const HUD_PILL_INNER_MARGIN_Y_POINTS: f32 = 8.0;
 const HUD_PILL_STROKE_WIDTH_POINTS: f32 = 1.0;
-const TOOLBAR_EXPANDED_WIDTH_PX: f32 = (TOOLBAR_MAX_TOOL_COUNT as f32)
-	* FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
-	+ ((TOOLBAR_MAX_TOOL_COUNT as f32) - 1.0) * FROZEN_TOOLBAR_ITEM_SPACING_POINTS
-	+ 2.0 * HUD_PILL_INNER_MARGIN_X_POINTS
-	+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
 const TOOLBAR_EXPANDED_HEIGHT_PX: f32 = FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
 	+ 2.0 * HUD_PILL_INNER_MARGIN_Y_POINTS
 	+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
@@ -8374,6 +8368,29 @@ unsafe impl Encode for MacOSOverlayPoint {
 }
 
 #[cfg(target_os = "macos")]
+fn frozen_toolbar_window_startup_size_points() -> Vec2 {
+	[
+		FrozenToolbarState::default(),
+		FrozenToolbarState { auto_center_available: true, ..FrozenToolbarState::default() },
+		FrozenToolbarState { scroll_capture_available: true, ..FrozenToolbarState::default() },
+		FrozenToolbarState {
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			scroll_capture_active: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+	]
+	.into_iter()
+	.map(|toolbar_state| WindowRenderer::frozen_toolbar_size(&toolbar_state))
+	.fold(Vec2::new(0.0, TOOLBAR_EXPANDED_HEIGHT_PX), |max_size, size| {
+		Vec2::new(max_size.x.max(size.x), max_size.y.max(size.y))
+	})
+}
+
 fn overlay_cursor_rect_icon_at_point(
 	rects: &[OverlayCursorRect],
 	point: Pos2,
