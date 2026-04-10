@@ -4360,10 +4360,7 @@ impl OverlaySession {
 	) -> bool {
 		self.state.monitor == Some(monitor)
 			&& self.frozen_text_tool_active()
-			&& self
-				.frozen_text_edit
-				.as_ref()
-				.is_some_and(FrozenTextEditState::has_ime_preedit)
+			&& self.frozen_text_edit.as_ref().is_some_and(FrozenTextEditState::has_ime_preedit)
 	}
 
 	fn refresh_frozen_text_ime_cursor_area_for_text_style_change(&self, monitor: MonitorRect) {
@@ -4378,12 +4375,13 @@ impl OverlaySession {
 
 			return false;
 		};
-		let had_visible_text = !edit_state.visible_text().trim().is_empty();
+		let committed_text = edit_state.visible_text();
+		let had_visible_text = !committed_text.trim().is_empty();
 
-		if commit && edit_state.has_committed_text() {
+		if commit && had_visible_text {
 			self.frozen_text_annotations.push(FrozenTextAnnotation {
 				anchor: edit_state.anchor,
-				text: edit_state.text,
+				text: committed_text,
 				style: self.toolbar_state.text_style,
 			});
 			self.push_frozen_edit_to_undo_history(FrozenEditKind::TextAnnotation);

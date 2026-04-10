@@ -362,10 +362,6 @@ impl FrozenTextEditState {
 
 		text.char_indices().take_while(|(index, _)| *index < clamped).count()
 	}
-
-	pub(super) fn has_committed_text(&self) -> bool {
-		!self.text.trim().is_empty()
-	}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
