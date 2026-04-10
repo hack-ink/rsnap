@@ -1,9 +1,15 @@
 use image::RgbaImage;
+#[cfg(target_os = "macos")]
+use winit::dpi::{PhysicalPosition, PhysicalSize};
+#[cfg(target_os = "macos")]
+use winit::event::ElementState;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 #[cfg(target_os = "macos")]
 use crate::overlay::DeviceCursorPointSource;
+#[cfg(target_os = "macos")]
+use crate::overlay::FrozenCaptureSource;
 use crate::overlay::OverlayControl;
 #[allow(unused_imports)]
 use crate::overlay::tests::{
@@ -671,6 +677,86 @@ fn resolve_device_cursor_point_keeps_direct_points_when_they_match_recent_cursor
 		),
 		Some((monitor, GlobalPoint::new(190, 230), DeviceCursorPointSource::DevicePoints))
 	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn overlay_window_event_global_position_rounds_fractional_scaled_positions() {
+	let monitor = tests::test_monitor_with_scale(1_000, 800, 2_000);
+	let window_size = PhysicalSize::new(2_000, 1_600);
+
+	assert_eq!(
+		OverlaySession::overlay_window_event_global_position(
+			monitor,
+			2.0,
+			window_size,
+			PhysicalPosition::new(301.9, 361.9),
+		),
+		GlobalPoint::new(151, 181)
+	);
+	assert_eq!(
+		OverlaySession::overlay_window_event_global_position(
+			monitor,
+			2.0,
+			window_size,
+			PhysicalPosition::new(1_999.9, 1_599.9),
+		),
+		GlobalPoint::new(999, 799)
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_selection_drag_uses_non_rounding_cursor_move_updates_without_shifting_cursor_context() {
+	let monitor = tests::test_monitor_with_scale(1_000, 800, 2_000);
+	let window_id = WindowId::from(1);
+	let position = PhysicalPosition::new(601.9, 721.9);
+	let window_size = PhysicalSize::new(2_000, 1_600);
+	let capture_rect = RectPoints::new(100, 120, 200, 240);
+	let event_global =
+		OverlaySession::overlay_window_event_global_position(monitor, 2.0, window_size, position);
+	let frozen_drag_global = OverlaySession::overlay_window_frozen_selection_drag_global_position(
+		monitor,
+		2.0,
+		window_size,
+		position,
+	);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.monitor = Some(monitor);
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
+	assert_eq!(event_global, GlobalPoint::new(301, 361));
+	assert_eq!(frozen_drag_global, GlobalPoint::new(300, 360));
+	assert!(matches!(
+		session.handle_cursor_moved_with_overlay_window(
+			window_id,
+			position,
+			Some(monitor),
+			monitor,
+			2.0,
+			window_size,
+		),
+		OverlayControl::Continue
+	));
+	assert_eq!(session.last_event_cursor, Some((monitor, event_global)));
+	assert!(session.last_event_cursor_at.is_some());
+	assert_eq!(session.cursor_monitor, Some(monitor));
+	assert_eq!(session.state.cursor, Some(event_global));
+	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(250, 300, 200, 240)));
+	assert!(matches!(
+		session.handle_frozen_left_mouse_input(monitor, ElementState::Released),
+		OverlayControl::Continue
+	));
+	assert_eq!(session.last_event_cursor, Some((monitor, event_global)));
+	assert_eq!(session.state.cursor, Some(event_global));
+	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(250, 300, 200, 240)));
+	assert_eq!(session.frozen_selection_drag, crate::overlay::FrozenSelectionDragState::default());
 }
 
 #[cfg(target_os = "macos")]
