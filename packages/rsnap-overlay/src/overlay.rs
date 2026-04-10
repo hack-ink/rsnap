@@ -5389,25 +5389,49 @@ impl OverlaySession {
 		window_id: WindowId,
 		position: PhysicalPosition<f64>,
 	) -> OverlayControl {
-		let should_trace_frozen_selection_drag_timing =
-			self.should_trace_frozen_selection_drag_timing();
-		let cursor_move_started_at = should_trace_frozen_selection_drag_timing.then(Instant::now);
 		let old_monitor = self.active_cursor_monitor();
-		let now = Instant::now();
 		let Some(overlay_window) = self.windows.get(&window_id) else {
 			return self.handle_cursor_moved_without_overlay_window(window_id, old_monitor);
 		};
 		let window_monitor = overlay_window.monitor;
 		let scale_factor = overlay_window.window.scale_factor();
 		let window_size = overlay_window.window.inner_size();
-		// Clamp to overlay window bounds and map to monitor coordinates.
-		let max_local_x = ((window_size.width as f64) / scale_factor).max(1.0) as i32 - 1;
-		let max_local_y = ((window_size.height as f64) / scale_factor).max(1.0) as i32 - 1;
-		let local_x = (position.x / scale_factor).round() as i32;
-		let local_y = (position.y / scale_factor).round() as i32;
-		let event_global = GlobalPoint::new(
-			window_monitor.origin.x + local_x.clamp(0, max_local_x),
-			window_monitor.origin.y + local_y.clamp(0, max_local_y),
+
+		self.handle_cursor_moved_with_overlay_window(
+			window_id,
+			position,
+			old_monitor,
+			window_monitor,
+			scale_factor,
+			window_size,
+		)
+	}
+
+	fn handle_cursor_moved_with_overlay_window(
+		&mut self,
+		window_id: WindowId,
+		position: PhysicalPosition<f64>,
+		old_monitor: Option<MonitorRect>,
+		window_monitor: MonitorRect,
+		scale_factor: f64,
+		window_size: PhysicalSize<u32>,
+	) -> OverlayControl {
+		let should_trace_frozen_selection_drag_timing =
+			self.should_trace_frozen_selection_drag_timing();
+		let cursor_move_started_at = should_trace_frozen_selection_drag_timing.then(Instant::now);
+		let now = Instant::now();
+		let event_global = Self::overlay_window_event_global_position(
+			window_monitor,
+			scale_factor,
+			window_size,
+			position,
+		);
+		let frozen_selection_drag_global = self.frozen_selection_drag_cursor_move_global(
+			window_monitor,
+			scale_factor,
+			window_size,
+			position,
+			event_global,
 		);
 		let monitor = window_monitor;
 		let global = event_global;
@@ -5438,6 +5462,7 @@ impl OverlaySession {
 			old_cursor,
 			monitor,
 			global,
+			frozen_selection_drag_global,
 		);
 
 		if should_trace_frozen_selection_drag_timing {
@@ -5448,6 +5473,65 @@ impl OverlaySession {
 		}
 
 		OverlayControl::Continue
+	}
+
+	fn overlay_window_event_global_position(
+		window_monitor: MonitorRect,
+		scale_factor: f64,
+		window_size: PhysicalSize<u32>,
+		position: PhysicalPosition<f64>,
+	) -> GlobalPoint {
+		let scale_factor = scale_factor.max(f64::MIN_POSITIVE);
+		let logical_width = ((window_size.width as f64) / scale_factor).max(1.0);
+		let logical_height = ((window_size.height as f64) / scale_factor).max(1.0);
+		let max_local_x = logical_width as i32 - 1;
+		let max_local_y = logical_height as i32 - 1;
+		let local_x = (position.x / scale_factor).round() as i32;
+		let local_y = (position.y / scale_factor).round() as i32;
+
+		GlobalPoint::new(
+			window_monitor.origin.x + local_x.clamp(0, max_local_x),
+			window_monitor.origin.y + local_y.clamp(0, max_local_y),
+		)
+	}
+
+	fn frozen_selection_drag_cursor_move_global(
+		&self,
+		window_monitor: MonitorRect,
+		scale_factor: f64,
+		window_size: PhysicalSize<u32>,
+		position: PhysicalPosition<f64>,
+		default_global: GlobalPoint,
+	) -> GlobalPoint {
+		if !matches!(self.state.mode, OverlayMode::Frozen) || !self.frozen_selection_drag.active {
+			return default_global;
+		}
+
+		Self::overlay_window_frozen_selection_drag_global_position(
+			window_monitor,
+			scale_factor,
+			window_size,
+			position,
+		)
+	}
+
+	fn overlay_window_frozen_selection_drag_global_position(
+		window_monitor: MonitorRect,
+		scale_factor: f64,
+		window_size: PhysicalSize<u32>,
+		position: PhysicalPosition<f64>,
+	) -> GlobalPoint {
+		let scale_factor = scale_factor.max(f64::MIN_POSITIVE);
+		let logical_width = ((window_size.width as f64) / scale_factor).max(1.0);
+		let logical_height = ((window_size.height as f64) / scale_factor).max(1.0);
+		let max_local_x = logical_width.ceil() as i32 - 1;
+		let max_local_y = logical_height.ceil() as i32 - 1;
+		// Frozen selection dragging should treat the event as covering the current logical cell so
+		// the final fractional trackpad move cannot nudge the rect lower-right on release.
+		let local_x = ((position.x / scale_factor).floor() as i32).clamp(0, max_local_x);
+		let local_y = ((position.y / scale_factor).floor() as i32).clamp(0, max_local_y);
+
+		GlobalPoint::new(window_monitor.origin.x + local_x, window_monitor.origin.y + local_y)
 	}
 
 	fn handle_cursor_moved_without_overlay_window(
@@ -5492,6 +5576,7 @@ impl OverlaySession {
 			old_cursor,
 			monitor,
 			global,
+			global,
 		);
 
 		if should_trace_frozen_selection_drag_timing {
@@ -5512,6 +5597,7 @@ impl OverlaySession {
 		old_cursor: Option<GlobalPoint>,
 		monitor: MonitorRect,
 		global: GlobalPoint,
+		frozen_selection_drag_global: GlobalPoint,
 	) -> FrozenSelectionDragCursorMoveTiming {
 		let cursor_update_elapsed =
 			Self::measure_duration_if(should_trace_frozen_selection_drag_timing, || {
@@ -5525,14 +5611,16 @@ impl OverlaySession {
 		let (frozen_rect_changed, frozen_drag_update_elapsed) =
 			if should_trace_frozen_selection_drag_timing {
 				let frozen_drag_update_started_at = Instant::now();
-				let frozen_rect_changed = self.update_frozen_selection_drag_rect(global);
+				let frozen_rect_changed =
+					self.update_frozen_selection_drag_rect(frozen_selection_drag_global);
 
 				self.update_frozen_mosaic_drag_rect(global);
 				self.update_frozen_text_edit_drag_anchor(global);
 
 				(frozen_rect_changed, Some(frozen_drag_update_started_at.elapsed()))
 			} else {
-				let frozen_rect_changed = self.update_frozen_selection_drag_rect(global);
+				let frozen_rect_changed =
+					self.update_frozen_selection_drag_rect(frozen_selection_drag_global);
 
 				self.update_frozen_mosaic_drag_rect(global);
 				self.update_frozen_text_edit_drag_anchor(global);
