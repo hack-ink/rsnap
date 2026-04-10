@@ -4435,6 +4435,7 @@ impl OverlaySession {
 
 		edit_state.ime_preedit = None;
 		edit_state.ime_preedit_cursor_char_range = None;
+		edit_state.reset_caret_blink();
 		self.frozen_text_recent_input = None;
 
 		true
@@ -4452,6 +4453,7 @@ impl OverlaySession {
 		let changed = had_preedit || edit_state.text.pop().is_some();
 
 		if changed {
+			edit_state.reset_caret_blink();
 			self.frozen_text_recent_input = None;
 		}
 
@@ -4515,6 +4517,7 @@ impl OverlaySession {
 
 		edit_state.ime_preedit = normalized;
 		edit_state.ime_preedit_cursor_char_range = normalized_cursor_range;
+		edit_state.reset_caret_blink();
 
 		true
 	}
