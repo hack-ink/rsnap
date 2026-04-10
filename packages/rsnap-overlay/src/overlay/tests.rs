@@ -26,17 +26,16 @@ use color_eyre::eyre;
 #[cfg(target_os = "macos")]
 use color_eyre::eyre::Result;
 use egui::FontDefinitions;
-use egui::FontFamily;
 use egui::RawInput;
-use egui_phosphor::Variant;
 use image::Rgba;
 #[cfg(target_os = "macos")]
 use image::imageops;
 #[cfg(target_os = "macos")]
 use winit::dpi::PhysicalPosition;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta};
 #[cfg(target_os = "macos")]
 use winit::keyboard::ModifiersState;
+use winit::keyboard::{Key, NamedKey};
 #[cfg(target_os = "macos")]
 use winit::window::WindowId;
 
@@ -48,19 +47,23 @@ use crate::backend::CaptureBackend;
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::FrozenCaptureSource;
 use crate::overlay::PngAction;
+use crate::overlay::rendering;
 #[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 use crate::overlay::{
-	self, ActiveFrozenBrushStroke, FROZEN_BRUSH_COLOR_RGBA, FrozenBrushModelState,
-	FrozenSelectionDragState, FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS,
-	HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect,
-	SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
-	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
-	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
-	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache,
-	SelectionDashedBorderMetrics, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
-	SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
-	Vec2, WindowRenderer, hud_helpers,
+	self, ActiveFrozenBrushStroke, FROZEN_BRUSH_COLOR_RGBA, FROZEN_EDIT_HISTORY_LIMIT,
+	FROZEN_TEXT_CARET_REPAINT_INTERVAL, FrozenBrushModelState, FrozenBrushStroke,
+	FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform, FrozenImagePatch,
+	FrozenMosaicEdit, FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextColor,
+	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
+	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
+	OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_SIZE_BADGE_GAP_PX,
+	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+	SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
+	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -299,26 +302,8 @@ fn test_frozen_image() -> image::RgbaImage {
 fn test_egui_context() -> egui::Context {
 	let ctx = egui::Context::default();
 	let mut fonts = FontDefinitions::default();
-	let phosphor_fill = String::from("phosphor-fill");
-	let proportional_fallback =
-		fonts.families.get(&FontFamily::Proportional).and_then(|names| names.first()).cloned();
 
-	egui_phosphor::add_to_fonts(&mut fonts, Variant::Regular);
-
-	fonts.font_data.insert(phosphor_fill.clone(), Variant::Fill.font_data().into());
-	fonts
-		.families
-		.entry(FontFamily::Name(phosphor_fill.clone().into()))
-		.or_default()
-		.extend([phosphor_fill]);
-
-	if let Some(fallback) = proportional_fallback {
-		let family = fonts.families.entry(FontFamily::Name("phosphor-fill".into())).or_default();
-
-		if !family.contains(&fallback) {
-			family.push(fallback);
-		}
-	}
+	rendering::configure_egui_fonts(&mut fonts);
 
 	ctx.set_fonts(fonts);
 
@@ -422,12 +407,12 @@ fn frozen_brush_undo_and_redo_update_export_image() {
 
 	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(3, 3)));
 	assert!(session.finish_frozen_brush_stroke());
-	assert!(session.undo_frozen_brush_stroke());
+	assert!(session.perform_frozen_undo());
 
 	let undone = session.current_export_image().expect("undo export image");
 
 	assert_eq!(undone.get_pixel(3, 3), &Rgba([12, 34, 56, 255]));
-	assert!(session.redo_frozen_brush_stroke());
+	assert!(session.perform_frozen_redo());
 
 	let redone = session.current_export_image().expect("redo export image");
 
@@ -457,6 +442,24 @@ fn current_export_image_antialiases_frozen_brush_edges() {
 		.any(|pixel| pixel != &background && pixel != &Rgba(FROZEN_BRUSH_COLOR_RGBA));
 
 	assert!(has_antialiased_edge, "expected blended edge pixels around the exported brush");
+}
+
+#[test]
+fn rasterizing_frozen_brush_clears_reused_coverage_mask() {
+	let export_transform =
+		FrozenExportTransform::new(RectPoints::new(0, 0, 8, 8), 8, 8).expect("export transform");
+	let mut export_image = image::RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255]));
+	let mut coverage_mask = vec![255_u8; 8 * 8];
+
+	OverlaySession::rasterize_frozen_brush_points_into_image(
+		&mut export_image,
+		&mut coverage_mask,
+		export_transform,
+		&[Pos2::new(2.0, 2.0)],
+	);
+
+	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
+	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FROZEN_BRUSH_COLOR_RGBA));
 }
 
 fn significant_y_direction_reversals(points: &[Pos2], min_delta: f32) -> usize {
@@ -1009,6 +1012,766 @@ fn begin_ocr_action_uses_scroll_capture_export_image_in_deferred_request() {
 	assert!(session.state.error_message.is_none());
 }
 
+#[test]
+fn begin_frozen_text_edit_at_starts_text_input_inside_capture_rect() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert_eq!(
+		session.frozen_text_edit.as_ref().map(|edit| edit.anchor),
+		Some(Pos2::new(140.0, 160.0))
+	);
+	assert!(!session.frozen_selection_drag.active);
+}
+
+#[test]
+fn begin_frozen_text_edit_at_ignores_non_authoritative_monitor() {
+	let monitor = test_monitor();
+	let other_monitor = MonitorRect {
+		id: 2,
+		origin: GlobalPoint::new(1_000, 0),
+		width: monitor.width,
+		height: monitor.height,
+		scale_factor_x1000: monitor.scale_factor_x1000,
+	};
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(!session.begin_frozen_text_edit_at(other_monitor, GlobalPoint::new(1_140, 160)));
+	assert!(session.frozen_text_edit.is_none());
+}
+
+#[test]
+fn default_frozen_text_style_uses_16_point_font() {
+	let session = OverlaySession::new();
+
+	assert_eq!(
+		session.toolbar_state.text_style.font_size_points,
+		overlay::FROZEN_TEXT_FONT_SIZE_POINTS
+	);
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 16.0);
+	assert_eq!(session.toolbar_state.text_style.color, FrozenTextColor::Blue);
+}
+
+fn test_frozen_mosaic_edit() -> FrozenMosaicEdit {
+	let patch = FrozenImagePatch {
+		rect: RectPoints::new(0, 0, 1, 1),
+		before: image::RgbaImage::from_pixel(1, 1, Rgba([0, 0, 0, 255])),
+		after: image::RgbaImage::from_pixel(1, 1, Rgba([255, 255, 255, 255])),
+	};
+
+	FrozenMosaicEdit { preview_patch: patch.clone(), window_patch: Some(patch) }
+}
+
+#[test]
+fn frozen_text_edit_drag_repositions_anchor_within_capture_rect() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.begin_frozen_text_edit_drag_at(monitor, GlobalPoint::new(141, 161)));
+	assert!(session.update_frozen_text_edit_drag_anchor(GlobalPoint::new(200, 210)));
+	assert_eq!(
+		session.frozen_text_edit.as_ref().map(|edit| edit.anchor),
+		Some(Pos2::new(199.0, 209.0))
+	);
+	assert!(session.stop_frozen_text_edit_drag());
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.dragging), Some(false));
+}
+
+#[test]
+fn toolbar_mouse_release_stops_active_frozen_text_edit_drag() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.begin_frozen_text_edit_drag_at(monitor, GlobalPoint::new(141, 161)));
+
+	session.toolbar_left_button_down = true;
+
+	let _ = session.handle_toolbar_mouse_input(ElementState::Released);
+
+	assert!(!session.toolbar_left_button_down);
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.dragging), Some(false));
+}
+
+#[test]
+fn adjacent_text_events_from_key_and_ime_are_deduplicated() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+
+	let key_generation = session.note_frozen_text_input_event();
+
+	assert!(session.append_text_to_frozen_edit_for_input_event(
+		FrozenTextInputSource::Key,
+		key_generation,
+		"A",
+	));
+
+	let ime_generation = session.note_frozen_text_input_event();
+
+	assert!(!session.append_text_to_frozen_edit_for_input_event(
+		FrozenTextInputSource::Ime,
+		ime_generation,
+		"A",
+	));
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some("A"));
+
+	let _ = session.finish_frozen_text_editing(false);
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(150, 165)));
+
+	let ime_generation = session.note_frozen_text_input_event();
+
+	assert!(session.append_text_to_frozen_edit_for_input_event(
+		FrozenTextInputSource::Ime,
+		ime_generation,
+		"B",
+	));
+
+	let key_generation = session.note_frozen_text_input_event();
+
+	assert!(!session.append_text_to_frozen_edit_for_input_event(
+		FrozenTextInputSource::Key,
+		key_generation,
+		"B",
+	));
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some("B"));
+}
+
+#[test]
+fn non_adjacent_identical_text_events_from_different_sources_are_not_deduplicated() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+
+	let key_generation = session.note_frozen_text_input_event();
+
+	assert!(session.append_text_to_frozen_edit_for_input_event(
+		FrozenTextInputSource::Key,
+		key_generation,
+		"A",
+	));
+
+	let _ = session.note_frozen_text_input_event();
+	let ime_generation = session.note_frozen_text_input_event();
+
+	assert!(session.append_text_to_frozen_edit_for_input_event(
+		FrozenTextInputSource::Ime,
+		ime_generation,
+		"A",
+	));
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some("AA"));
+}
+
+#[test]
+fn backspace_clears_recent_input_dedupe_marker_before_cross_source_retype() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+
+	let key_generation = session.note_frozen_text_input_event();
+
+	assert!(session.append_text_to_frozen_edit_for_input_event(
+		FrozenTextInputSource::Key,
+		key_generation,
+		"A",
+	));
+	assert!(session.backspace_frozen_text_edit());
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some(""));
+
+	let ime_generation = session.note_frozen_text_input_event();
+
+	assert!(session.append_text_to_frozen_edit_for_input_event(
+		FrozenTextInputSource::Ime,
+		ime_generation,
+		"A",
+	));
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some("A"));
+}
+
+#[test]
+fn ime_disabled_clears_frozen_text_preedit_state() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((0, 0))));
+	assert!(session.frozen_text_edit.as_ref().is_some_and(FrozenTextEditState::has_ime_preedit));
+	assert!(session.apply_frozen_text_ime_event(&Ime::Disabled));
+	assert_eq!(
+		session.frozen_text_edit.as_ref().and_then(|edit| edit.ime_preedit.as_deref()),
+		None
+	);
+	assert!(!session.frozen_text_edit.as_ref().is_some_and(FrozenTextEditState::has_ime_preedit));
+}
+
+#[test]
+fn frozen_text_preedit_cursor_range_updates_caret_position() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("A"));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉字")), Some((3, 3))));
+
+	let edit_state = session.frozen_text_edit.as_ref().expect("text edit");
+
+	assert_eq!(edit_state.visible_text(), "A汉字");
+	assert_eq!(edit_state.visible_text_and_caret_char_index().1, Some(2));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉字")), Some((0, 0))));
+	assert_eq!(
+		session
+			.frozen_text_edit
+			.as_ref()
+			.and_then(|edit| edit.visible_text_and_caret_char_index().1),
+		Some(1)
+	);
+}
+
+#[test]
+fn frozen_text_style_change_refresh_check_requires_active_ime_preedit() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(!session.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(monitor));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((0, 0))));
+	assert!(session.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(monitor));
+}
+
+#[test]
+fn frozen_text_style_change_refresh_check_ignores_other_monitor() {
+	let monitor = test_monitor();
+	let other_monitor = MonitorRect {
+		id: 2,
+		origin: GlobalPoint::new(1_000, 0),
+		width: monitor.width,
+		height: monitor.height,
+		scale_factor_x1000: monitor.scale_factor_x1000,
+	};
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((0, 0))));
+	assert!(
+		!session.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(other_monitor)
+	);
+}
+
+#[test]
+fn frozen_text_enter_does_not_finish_while_ime_preedit_is_active() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("A"));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((3, 3))));
+	assert!(!session.handle_frozen_text_pressed_key(&Key::Named(NamedKey::Enter), None));
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some("A"));
+	assert_eq!(
+		session.frozen_text_edit.as_ref().and_then(|edit| edit.ime_preedit.as_deref()),
+		Some("汉")
+	);
+	assert!(session.frozen_text_annotations.is_empty());
+}
+
+#[test]
+fn frozen_text_caret_repaint_schedules_delayed_repaint_while_editing() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.frozen_text_edit = Some(FrozenTextEditState::new(Pos2::new(120.0, 140.0)));
+	*session.egui_repaint_deadline.lock().unwrap_or_else(|err| err.into_inner()) = None;
+
+	let started_at = Instant::now();
+
+	session.maybe_keep_frozen_text_caret_repaint();
+
+	let deadline = session
+		.egui_repaint_deadline
+		.lock()
+		.unwrap_or_else(|err| err.into_inner())
+		.expect("caret repaint should be scheduled");
+
+	assert!(deadline >= started_at);
+	assert!(
+		deadline <= started_at + FROZEN_TEXT_CARET_REPAINT_INTERVAL + Duration::from_millis(20)
+	);
+}
+
+#[test]
+fn finish_frozen_text_editing_commits_current_toolbar_text_style() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+	session.toolbar_state.text_style.font_size_points = 30.0;
+	session.toolbar_state.text_style.color = FrozenTextColor::Yellow;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("Styled"));
+	assert!(session.finish_frozen_text_editing(true));
+
+	let annotation = session.frozen_text_annotations.first().expect("annotation");
+
+	assert_eq!(annotation.style.font_size_points, 30.0);
+	assert_eq!(annotation.style.color, FrozenTextColor::Yellow);
+}
+
+#[test]
+fn finish_frozen_text_editing_commits_active_ime_preedit_text() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("A"));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((3, 3))));
+	assert!(session.finish_frozen_text_editing(true));
+	assert_eq!(session.frozen_text_annotations.len(), 1);
+	assert_eq!(session.frozen_text_annotations[0].text, "A汉");
+}
+
+#[test]
+fn inline_toolbar_mode_switch_finishes_active_frozen_text_edit() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.authoritative_frozen_capture_ready = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("Switched"));
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pointer;
+
+	let _ = session.handle_capture_and_toolbar_redraw_post(monitor, true);
+
+	assert!(session.frozen_text_edit.is_none());
+	assert_eq!(session.frozen_text_annotations.len(), 1);
+	assert_eq!(session.frozen_text_annotations[0].text, "Switched");
+	assert_eq!(session.toolbar_state.selected_tool, FrozenToolbarTool::Pointer);
+}
+
+#[test]
+fn inline_toolbar_mode_switch_commits_active_ime_preedit_text() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.authoritative_frozen_capture_ready = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("A"));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((3, 3))));
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pointer;
+
+	let _ = session.handle_capture_and_toolbar_redraw_post(monitor, true);
+
+	assert!(session.frozen_text_edit.is_none());
+	assert_eq!(session.frozen_text_annotations.len(), 1);
+	assert_eq!(session.frozen_text_annotations[0].text, "A汉");
+}
+
+#[test]
+fn frozen_text_undo_and_redo_round_trip_annotations() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.append_text_to_frozen_edit("Undoable"));
+	assert!(session.finish_frozen_text_editing(true));
+	assert_eq!(session.frozen_text_annotations.len(), 1);
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
+	assert!(session.perform_frozen_undo());
+	assert!(session.frozen_text_annotations.is_empty());
+	assert!(!session.toolbar_state.undo_available);
+	assert!(session.toolbar_state.redo_available);
+	assert!(session.perform_frozen_redo());
+	assert_eq!(session.frozen_text_annotations.len(), 1);
+	assert_eq!(session.frozen_text_annotations[0].text, "Undoable");
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
+}
+
+#[test]
+fn current_export_image_renders_frozen_text_annotations() {
+	let monitor = test_monitor_with_scale(160, 120, 1_000);
+	let base = image::RgbaImage::from_pixel(160, 120, Rgba([0, 0, 0, 255]));
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, base);
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(10, 12, 120, 80));
+
+	session.frozen_text_annotations.push(FrozenTextAnnotation {
+		anchor: Pos2::new(24.0, 24.0),
+		text: String::from("Text"),
+		style: session.toolbar_state.text_style,
+	});
+	session.push_frozen_edit_to_undo_history(FrozenEditKind::TextAnnotation);
+
+	let export = session.current_export_image().expect("export image");
+
+	assert_eq!(export.dimensions(), (120, 80));
+	assert!(export.pixels().any(|pixel| *pixel != Rgba([0, 0, 0, 255])));
+}
+
+#[test]
+fn scroll_capture_hides_frozen_text_annotations_in_preview() {
+	let mut session = OverlaySession::new();
+
+	session.frozen_text_annotations.push(FrozenTextAnnotation {
+		anchor: Pos2::new(12.0, 18.0),
+		text: String::from("visible"),
+		style: session.toolbar_state.text_style,
+	});
+
+	assert_eq!(session.visible_frozen_text_annotations().len(), 1);
+
+	session.scroll_capture.active = true;
+
+	assert!(session.visible_frozen_text_annotations().is_empty());
+}
+
+#[test]
+fn scroll_capture_hides_active_frozen_text_edit_in_preview() {
+	let mut session = OverlaySession::new();
+
+	session.frozen_text_edit = Some(FrozenTextEditState::new(Pos2::new(12.0, 18.0)));
+
+	assert!(session.visible_frozen_text_edit().is_some());
+
+	session.scroll_capture.active = true;
+
+	assert!(session.visible_frozen_text_edit().is_none());
+}
+
+#[test]
+fn frozen_export_transform_uses_actual_export_image_dimensions() {
+	let capture_rect = RectPoints::new(10, 12, 20, 10);
+	let transform = FrozenExportTransform::new(capture_rect, 60, 30).expect("transform");
+
+	assert_eq!(transform.point_to_pixels(Pos2::new(10.0, 12.0)), Pos2::new(0.0, 0.0));
+	assert_eq!(transform.point_to_pixels(Pos2::new(20.0, 17.0)), Pos2::new(30.0, 15.0));
+	assert_eq!(transform.point_to_pixels(Pos2::new(30.0, 22.0)), Pos2::new(60.0, 30.0));
+	assert_eq!(transform.scalar_scale(), 3.0);
+}
+
+#[test]
+fn frozen_committed_overlay_iteration_preserves_cross_tool_order() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session
+		.state
+		.finish_freeze(monitor, image::RgbaImage::from_pixel(16, 16, Rgba([0, 0, 0, 255])));
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 16, 16));
+	session.authoritative_frozen_capture_ready = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+
+	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
+	assert!(session.finish_frozen_brush_stroke());
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(6, 6)));
+	assert!(session.append_text_to_frozen_edit("middle"));
+	assert!(session.finish_frozen_text_editing(true));
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+
+	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(10, 10)));
+	assert!(session.finish_frozen_brush_stroke());
+
+	let mut observed = Vec::new();
+
+	OverlaySession::for_each_frozen_committed_overlay(
+		&session.frozen_edit_undo_stack,
+		&session.frozen_brush.committed_strokes,
+		&session.frozen_text_annotations,
+		|overlay| match overlay {
+			FrozenCommittedOverlay::Brush(stroke) => {
+				observed.push(format!("brush:{:.0}", stroke.points[0].x));
+			},
+			FrozenCommittedOverlay::Text(annotation) => {
+				observed.push(format!("text:{}", annotation.text));
+			},
+		},
+	);
+
+	assert_eq!(observed, ["brush:2", "text:middle", "brush:10"]);
+}
+
+#[test]
+fn frozen_annotation_history_undoes_across_tools_in_reverse_commit_order() {
+	let monitor = test_monitor_with_scale(8, 8, 1_000);
+	let original = image::RgbaImage::from_fn(8, 8, |x, y| {
+		Rgba([(x * 17) as u8, (y * 23) as u8, ((x + y) * 11) as u8, 255])
+	});
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, original.clone());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+	session.authoritative_frozen_capture_ready = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+
+	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
+	assert!(session.finish_frozen_brush_stroke());
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(3, 4)));
+	assert!(session.append_text_to_frozen_edit("Layered"));
+	assert!(session.finish_frozen_text_editing(true));
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+
+	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
+	assert!(session.update_frozen_mosaic_drag_rect(GlobalPoint::new(4, 4)));
+	assert!(session.commit_frozen_mosaic_drag());
+
+	let mosaiced =
+		session.state.frozen_image.clone().expect("mosaic commit should retain the frozen image");
+
+	assert!(session.perform_frozen_undo());
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
+	assert_eq!(session.frozen_text_annotations.len(), 1);
+	assert_eq!(session.frozen_brush.committed_strokes.len(), 1);
+	assert!(session.perform_frozen_undo());
+	assert!(session.frozen_text_annotations.is_empty());
+	assert_eq!(session.frozen_brush.committed_strokes.len(), 1);
+	assert!(session.perform_frozen_undo());
+	assert!(session.frozen_brush.committed_strokes.is_empty());
+	assert!(!session.toolbar_state.undo_available);
+	assert!(session.toolbar_state.redo_available);
+	assert!(session.perform_frozen_redo());
+	assert_eq!(session.frozen_brush.committed_strokes.len(), 1);
+	assert!(session.frozen_text_annotations.is_empty());
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
+	assert!(session.perform_frozen_redo());
+	assert_eq!(session.frozen_text_annotations.len(), 1);
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
+	assert!(session.perform_frozen_redo());
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&mosaiced));
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
+}
+
+#[test]
+fn committing_new_frozen_edit_clears_redo_across_tools() {
+	let monitor = test_monitor_with_scale(8, 8, 1_000);
+	let base = image::RgbaImage::from_fn(8, 8, |x, y| {
+		Rgba([(x * 11) as u8, (y * 13) as u8, ((x + y) * 7) as u8, 255])
+	});
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, base);
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+	session.authoritative_frozen_capture_ready = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(2, 2)));
+	assert!(session.append_text_to_frozen_edit("redo"));
+	assert!(session.finish_frozen_text_editing(true));
+	assert!(session.perform_frozen_undo());
+	assert!(session.toolbar_state.redo_available);
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
+
+	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
+	assert!(session.update_frozen_mosaic_drag_rect(GlobalPoint::new(4, 4)));
+	assert!(session.commit_frozen_mosaic_drag());
+	assert!(!session.toolbar_state.redo_available);
+	assert!(!session.perform_frozen_redo());
+	assert!(session.frozen_text_annotations.is_empty());
+}
+
+#[test]
+fn evicting_old_mosaic_history_also_discards_patch_payloads() {
+	let mut session = OverlaySession::new();
+
+	for _ in 0..FROZEN_EDIT_HISTORY_LIMIT {
+		session.push_frozen_mosaic_edit(test_frozen_mosaic_edit());
+		session.push_frozen_edit_to_undo_history(FrozenEditKind::MosaicEdit);
+	}
+
+	assert_eq!(session.frozen_mosaic_undo_stack.len(), FROZEN_EDIT_HISTORY_LIMIT);
+
+	for _ in 0..FROZEN_EDIT_HISTORY_LIMIT {
+		session.push_frozen_edit_to_undo_history(FrozenEditKind::BrushStroke);
+	}
+
+	assert_eq!(session.frozen_edit_undo_stack.len(), FROZEN_EDIT_HISTORY_LIMIT);
+	assert!(session.frozen_mosaic_undo_stack.is_empty());
+}
+
+#[test]
+fn evicting_old_brush_and_text_history_discards_matching_payloads() {
+	let mut session = OverlaySession::new();
+
+	for index in 0..(FROZEN_EDIT_HISTORY_LIMIT + 2) {
+		let x = index as f32;
+
+		if index % 2 == 0 {
+			session
+				.frozen_brush
+				.committed_strokes
+				.push(FrozenBrushStroke { points: vec![Pos2::new(x, 0.0)] });
+			session.push_frozen_edit_to_undo_history(FrozenEditKind::BrushStroke);
+		} else {
+			session.frozen_text_annotations.push(FrozenTextAnnotation {
+				anchor: Pos2::new(x, 0.0),
+				text: format!("text-{index}"),
+				style: session.toolbar_state.text_style,
+			});
+			session.push_frozen_edit_to_undo_history(FrozenEditKind::TextAnnotation);
+		}
+	}
+
+	assert_eq!(session.frozen_edit_undo_stack.len(), FROZEN_EDIT_HISTORY_LIMIT);
+	assert_eq!(session.frozen_brush.committed_strokes.len(), FROZEN_EDIT_HISTORY_LIMIT / 2);
+	assert_eq!(session.frozen_text_annotations.len(), FROZEN_EDIT_HISTORY_LIMIT / 2);
+	assert_eq!(session.frozen_brush.committed_strokes[0].points[0], Pos2::new(2.0, 0.0));
+	assert_eq!(session.frozen_text_annotations[0].text, "text-3");
+
+	let mut observed = Vec::new();
+
+	OverlaySession::for_each_frozen_committed_overlay(
+		&session.frozen_edit_undo_stack,
+		&session.frozen_brush.committed_strokes,
+		&session.frozen_text_annotations,
+		|overlay| match overlay {
+			FrozenCommittedOverlay::Brush(stroke) => {
+				observed.push(format!("brush:{:.0}", stroke.points[0].x));
+			},
+			FrozenCommittedOverlay::Text(annotation) => observed.push(annotation.text.clone()),
+		},
+	);
+
+	let expected = (2..(FROZEN_EDIT_HISTORY_LIMIT + 2))
+		.map(
+			|index| {
+				if index % 2 == 0 { format!("brush:{index}") } else { format!("text-{index}") }
+			},
+		)
+		.collect::<Vec<_>>();
+
+	assert_eq!(observed, expected);
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn duplicate_live_frames_schedule_forced_refresh_when_downward_backlog_is_fresh() {
@@ -1247,6 +2010,22 @@ fn scroll_capture_start_skips_scroll_live_stream_when_worker_sampling_is_forced(
 	assert!(session.scroll_capture.active);
 	assert!(session.scroll_capture.live_stream.is_none());
 	assert!(session.scroll_capture.live_stream_backlog.is_empty());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn scroll_capture_start_disables_text_mode_while_active() {
+	let mut session = OverlaySession::new();
+
+	seed_ready_scroll_capture_selection(&mut session);
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	let control = session.start_scroll_capture();
+
+	assert!(matches!(control, OverlayControl::Continue));
+	assert!(session.scroll_capture.active);
+	assert!(!session.frozen_text_tool_active());
 }
 
 #[cfg(target_os = "macos")]

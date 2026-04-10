@@ -23,6 +23,9 @@ egui               = { workspace = true }
 egui-phosphor      = { workspace = true }
 egui-wgpu          = { workspace = true }
 egui-winit         = { workspace = true }
+font8x8            = { workspace = true }
+fontdb             = { workspace = true }
+fontdue            = { workspace = true }
 image              = { workspace = true }
 pollster           = { workspace = true }
 serde              = { workspace = true }
@@ -30,6 +33,7 @@ serde_json         = { version = "1.0" }
 thiserror          = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+ttf-parser         = { workspace = true }
 wgpu               = { workspace = true }
 winit              = { workspace = true }
 
