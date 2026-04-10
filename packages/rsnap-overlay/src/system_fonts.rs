@@ -47,7 +47,8 @@ struct UnicodeCoverageRange {
 enum SystemTextFontProbeResult {
 	Selected,
 	SkippedNoCoverage,
-	Skipped,
+	SkippedAfterProbe,
+	SkippedUnprobed,
 }
 
 pub(crate) fn system_text_fonts() -> &'static [SystemTextFont] {
@@ -181,10 +182,10 @@ fn next_system_text_probe_count(
 	probe_result: SystemTextFontProbeResult,
 ) -> usize {
 	match probe_result {
-		SystemTextFontProbeResult::Selected | SystemTextFontProbeResult::SkippedNoCoverage => {
-			coverage_probes.saturating_add(1)
-		},
-		SystemTextFontProbeResult::Skipped => coverage_probes,
+		SystemTextFontProbeResult::Selected
+		| SystemTextFontProbeResult::SkippedNoCoverage
+		| SystemTextFontProbeResult::SkippedAfterProbe => coverage_probes.saturating_add(1),
+		SystemTextFontProbeResult::SkippedUnprobed => coverage_probes,
 	}
 }
 
@@ -204,11 +205,11 @@ fn try_select_system_text_font(
 		|| selected_families.contains(candidate.family_name.as_str())
 		|| selected.len() >= MAX_SYSTEM_TEXT_FALLBACKS
 	{
-		return SystemTextFontProbeResult::Skipped;
+		return SystemTextFontProbeResult::SkippedUnprobed;
 	}
 
 	let Some(coverage_codepoints) = load_system_text_coverage(database, candidate.face_id) else {
-		return SystemTextFontProbeResult::Skipped;
+		return SystemTextFontProbeResult::SkippedAfterProbe;
 	};
 
 	if !selected.is_empty()
@@ -218,7 +219,7 @@ fn try_select_system_text_font(
 	}
 
 	let Some(font) = build_system_text_font(database, candidate.face_id) else {
-		return SystemTextFontProbeResult::Skipped;
+		return SystemTextFontProbeResult::SkippedAfterProbe;
 	};
 
 	selected.push(font);
@@ -456,7 +457,7 @@ mod tests {
 	#[test]
 	fn system_text_probe_count_ignores_unprobed_candidates() {
 		let probe_count =
-			super::next_system_text_probe_count(3, SystemTextFontProbeResult::Skipped);
+			super::next_system_text_probe_count(3, SystemTextFontProbeResult::SkippedUnprobed);
 
 		assert_eq!(probe_count, 3);
 	}
@@ -465,6 +466,14 @@ mod tests {
 	fn system_text_probe_count_advances_on_no_coverage_fonts() {
 		let probe_count =
 			super::next_system_text_probe_count(3, SystemTextFontProbeResult::SkippedNoCoverage);
+
+		assert_eq!(probe_count, 4);
+	}
+
+	#[test]
+	fn system_text_probe_count_advances_after_failed_probe_attempts() {
+		let probe_count =
+			super::next_system_text_probe_count(3, SystemTextFontProbeResult::SkippedAfterProbe);
 
 		assert_eq!(probe_count, 4);
 	}

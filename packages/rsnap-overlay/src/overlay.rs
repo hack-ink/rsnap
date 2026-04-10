@@ -7771,16 +7771,10 @@ impl OverlaySession {
 		};
 		let scroll_capture_active = self.scroll_capture.active;
 		let frozen_text_style = self.toolbar_state.text_style;
-		let visible_frozen_text_annotations: &[FrozenTextAnnotation] = if scroll_capture_active {
-			&[]
-		} else {
-			&self.frozen_text_annotations
-		};
-		let visible_frozen_text_edit = if scroll_capture_active {
-			None
-		} else {
-			self.frozen_text_edit.as_ref()
-		};
+		let visible_frozen_text_annotations: &[FrozenTextAnnotation] =
+			if scroll_capture_active { &[] } else { &self.frozen_text_annotations };
+		let visible_frozen_text_edit =
+			if scroll_capture_active { None } else { self.frozen_text_edit.as_ref() };
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
 		{
