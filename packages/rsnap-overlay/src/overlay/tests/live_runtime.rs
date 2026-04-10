@@ -712,7 +712,6 @@ fn frozen_selection_drag_uses_non_rounding_cursor_move_updates_without_shifting_
 	let window_id = WindowId::from(1);
 	let position = PhysicalPosition::new(601.9, 721.9);
 	let window_size = PhysicalSize::new(2_000, 1_600);
-	let mut session = OverlaySession::new();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
 	let event_global =
 		OverlaySession::overlay_window_event_global_position(monitor, 2.0, window_size, position);
@@ -722,9 +721,11 @@ fn frozen_selection_drag_uses_non_rounding_cursor_move_updates_without_shifting_
 		window_size,
 		position,
 	);
+	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
 	session.state.monitor = Some(monitor);
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
