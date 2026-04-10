@@ -2000,7 +2000,7 @@ impl OverlaySession {
 	fn overlay_cursor_icon_for_monitor(&self, monitor: MonitorRect) -> CursorIcon {
 		match self.state.mode {
 			OverlayMode::Frozen => self.frozen_selection_cursor_icon_for_monitor(monitor),
-			OverlayMode::Live => CursorIcon::Default,
+			OverlayMode::Live => CursorIcon::Crosshair,
 		}
 	}
 
@@ -2009,12 +2009,15 @@ impl OverlaySession {
 		&self,
 		monitor: MonitorRect,
 	) -> Vec<OverlayCursorRect> {
+		let overlay_bounds =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+
+		if matches!(self.state.mode, OverlayMode::Live) {
+			return vec![OverlayCursorRect::new(overlay_bounds, CursorIcon::Crosshair)];
+		}
 		if !matches!(self.state.mode, OverlayMode::Frozen) {
 			return Vec::new();
 		}
-
-		let overlay_bounds =
-			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 
 		if let Some((target_monitor, capture_rect)) = self.frozen_mosaic_drag_target() {
 			if target_monitor != monitor {

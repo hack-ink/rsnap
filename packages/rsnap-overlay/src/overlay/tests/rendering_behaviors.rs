@@ -767,6 +767,16 @@ fn frozen_selection_cursor_icon_uses_corner_resize_hover() {
 }
 
 #[test]
+fn live_overlay_cursor_icon_uses_crosshair() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+
+	assert_eq!(session.overlay_cursor_icon_for_monitor(monitor), CursorIcon::Crosshair);
+}
+
+#[test]
 fn frozen_text_edit_caret_rect_starts_at_anchor_when_text_is_empty() {
 	let ctx = tests::test_egui_context();
 	let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("text-caret-empty")));
@@ -1174,6 +1184,22 @@ fn frozen_mosaic_cursor_rects_preserve_crosshair_hover_and_drag() {
 	assert_eq!(overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(80.0, 100.0)), None);
 
 	session.frozen_mosaic_drag.active = true;
+
+	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
+
+	assert_eq!(rects.len(), 1);
+	assert_eq!(rects[0].icon, CursorIcon::Crosshair);
+	assert_eq!(rects[0].rect.min, Pos2::ZERO);
+	assert_eq!(rects[0].rect.max, Pos2::new(monitor.width as f32, monitor.height as f32));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn live_cursor_rects_cover_overlay_with_crosshair() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
 
 	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
 
