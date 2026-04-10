@@ -8419,6 +8419,7 @@ fn frozen_toolbar_window_startup_size_points() -> Vec2 {
 	})
 }
 
+#[cfg(target_os = "macos")]
 fn overlay_cursor_rect_icon_at_point(
 	rects: &[OverlayCursorRect],
 	point: Pos2,
