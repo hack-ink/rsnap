@@ -8399,9 +8399,19 @@ unsafe impl Encode for MacOSOverlayPoint {
 fn frozen_toolbar_window_startup_size_points() -> Vec2 {
 	[
 		FrozenToolbarState::default(),
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Text,
+			..FrozenToolbarState::default()
+		},
 		FrozenToolbarState { auto_center_available: true, ..FrozenToolbarState::default() },
 		FrozenToolbarState { scroll_capture_available: true, ..FrozenToolbarState::default() },
 		FrozenToolbarState {
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Text,
 			auto_center_available: true,
 			scroll_capture_available: true,
 			..FrozenToolbarState::default()
