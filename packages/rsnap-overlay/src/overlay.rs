@@ -6807,6 +6807,16 @@ impl OverlaySession {
 		Some(export_image)
 	}
 
+	#[cfg(test)]
+	fn visible_frozen_text_annotations(&self) -> &[FrozenTextAnnotation] {
+		if self.scroll_capture.active { &[] } else { &self.frozen_text_annotations }
+	}
+
+	#[cfg(test)]
+	fn visible_frozen_text_edit(&self) -> Option<&FrozenTextEditState> {
+		if self.scroll_capture.active { None } else { self.frozen_text_edit.as_ref() }
+	}
+
 	#[cfg(target_os = "macos")]
 	fn current_deferred_text_recognition_request(
 		&mut self,
@@ -7759,7 +7769,18 @@ impl OverlaySession {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
+		let scroll_capture_active = self.scroll_capture.active;
 		let frozen_text_style = self.toolbar_state.text_style;
+		let visible_frozen_text_annotations: &[FrozenTextAnnotation] = if scroll_capture_active {
+			&[]
+		} else {
+			&self.frozen_text_annotations
+		};
+		let visible_frozen_text_edit = if scroll_capture_active {
+			None
+		} else {
+			self.frozen_text_edit.as_ref()
+		};
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
 		{
@@ -7786,16 +7807,16 @@ impl OverlaySession {
 				self.config.theme_mode,
 				self.config.selection_flow_enabled,
 				self.config.selection_flow_stroke_width_px,
-				!self.scroll_capture.active,
-				self.scroll_capture.active,
+				!scroll_capture_active,
+				scroll_capture_active,
 				frozen_selection_resize_handles_enabled,
 				self.frozen_capture_source,
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				frozen_toolbar_reserved_rect,
 				&self.frozen_edit_undo_stack,
-				(!self.scroll_capture.active).then_some(&self.frozen_brush),
-				&self.frozen_text_annotations,
-				self.frozen_text_edit.as_ref(),
+				(!scroll_capture_active).then_some(&self.frozen_brush),
+				visible_frozen_text_annotations,
+				visible_frozen_text_edit,
 				frozen_text_style,
 				toolbar_state,
 				toolbar_input,
