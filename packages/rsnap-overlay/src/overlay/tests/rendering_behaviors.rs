@@ -2493,6 +2493,44 @@ fn auto_center_toolbar_tool_only_appears_when_available() {
 	}
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn toolbar_window_startup_size_covers_every_tool_permutation() {
+	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let toolbar_states = [
+		FrozenToolbarState::default(),
+		FrozenToolbarState { auto_center_available: true, ..FrozenToolbarState::default() },
+		FrozenToolbarState { scroll_capture_available: true, ..FrozenToolbarState::default() },
+		FrozenToolbarState {
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			scroll_capture_active: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+	];
+
+	for toolbar_state in toolbar_states {
+		let toolbar_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+
+		assert!(
+			startup_size.x >= toolbar_size.x,
+			"startup width {} should cover toolbar width {} for {toolbar_state:?}",
+			startup_size.x,
+			toolbar_size.x
+		);
+		assert!(
+			startup_size.y >= toolbar_size.y,
+			"startup height {} should cover toolbar height {} for {toolbar_state:?}",
+			startup_size.y,
+			toolbar_size.y
+		);
+	}
+}
+
 #[test]
 fn scroll_preview_prefers_right_side_when_space_exists() {
 	let monitor = MonitorRect {
