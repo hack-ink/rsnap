@@ -444,6 +444,24 @@ fn current_export_image_antialiases_frozen_brush_edges() {
 	assert!(has_antialiased_edge, "expected blended edge pixels around the exported brush");
 }
 
+#[test]
+fn rasterizing_frozen_brush_clears_reused_coverage_mask() {
+	let export_transform =
+		FrozenExportTransform::new(RectPoints::new(0, 0, 8, 8), 8, 8).expect("export transform");
+	let mut export_image = image::RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255]));
+	let mut coverage_mask = vec![255_u8; 8 * 8];
+
+	OverlaySession::rasterize_frozen_brush_points_into_image(
+		&mut export_image,
+		&mut coverage_mask,
+		export_transform,
+		&[Pos2::new(2.0, 2.0)],
+	);
+
+	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
+	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FROZEN_BRUSH_COLOR_RGBA));
+}
+
 fn significant_y_direction_reversals(points: &[Pos2], min_delta: f32) -> usize {
 	let mut last_direction = 0_i8;
 	let mut reversals = 0;
