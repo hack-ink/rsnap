@@ -2493,7 +2493,6 @@ fn auto_center_toolbar_tool_only_appears_when_available() {
 	}
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn toolbar_window_startup_size_covers_every_tool_permutation() {
 	let startup_size = overlay::frozen_toolbar_window_startup_size_points();

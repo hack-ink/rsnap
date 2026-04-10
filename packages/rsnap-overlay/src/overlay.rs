@@ -8367,7 +8367,6 @@ unsafe impl Encode for MacOSOverlayPoint {
 	}
 }
 
-#[cfg(target_os = "macos")]
 fn frozen_toolbar_window_startup_size_points() -> Vec2 {
 	[
 		FrozenToolbarState::default(),
