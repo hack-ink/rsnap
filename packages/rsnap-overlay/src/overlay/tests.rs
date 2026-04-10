@@ -1506,6 +1506,36 @@ fn current_export_image_renders_frozen_text_annotations() {
 }
 
 #[test]
+fn scroll_capture_hides_frozen_text_annotations_in_preview() {
+	let mut session = OverlaySession::new();
+
+	session.frozen_text_annotations.push(FrozenTextAnnotation {
+		anchor: Pos2::new(12.0, 18.0),
+		text: String::from("visible"),
+		style: session.toolbar_state.text_style,
+	});
+
+	assert_eq!(session.visible_frozen_text_annotations().len(), 1);
+
+	session.scroll_capture.active = true;
+
+	assert!(session.visible_frozen_text_annotations().is_empty());
+}
+
+#[test]
+fn scroll_capture_hides_active_frozen_text_edit_in_preview() {
+	let mut session = OverlaySession::new();
+
+	session.frozen_text_edit = Some(FrozenTextEditState::new(Pos2::new(12.0, 18.0)));
+
+	assert!(session.visible_frozen_text_edit().is_some());
+
+	session.scroll_capture.active = true;
+
+	assert!(session.visible_frozen_text_edit().is_none());
+}
+
+#[test]
 fn frozen_export_transform_uses_actual_export_image_dimensions() {
 	let capture_rect = RectPoints::new(10, 12, 20, 10);
 	let transform = FrozenExportTransform::new(capture_rect, 60, 30).expect("transform");
