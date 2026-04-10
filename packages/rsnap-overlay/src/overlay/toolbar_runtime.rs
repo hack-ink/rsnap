@@ -373,6 +373,7 @@ impl OverlaySession {
 		if self.toolbar_state.needs_redraw {
 			self.toolbar_state.needs_redraw = false;
 
+			self.refresh_frozen_text_ime_cursor_area_for_text_style_change(monitor);
 			self.request_redraw_for_monitor(monitor);
 			self.request_redraw_toolbar_window();
 		}

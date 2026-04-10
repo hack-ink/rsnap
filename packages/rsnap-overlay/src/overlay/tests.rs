@@ -1270,6 +1270,48 @@ fn frozen_text_preedit_cursor_range_updates_caret_position() {
 }
 
 #[test]
+fn frozen_text_style_change_refresh_check_requires_active_ime_preedit() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(!session.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(monitor));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((0, 0))));
+	assert!(session.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(monitor));
+}
+
+#[test]
+fn frozen_text_style_change_refresh_check_ignores_other_monitor() {
+	let monitor = test_monitor();
+	let other_monitor = MonitorRect {
+		id: 2,
+		origin: GlobalPoint::new(1_000, 0),
+		width: monitor.width,
+		height: monitor.height,
+		scale_factor_x1000: monitor.scale_factor_x1000,
+	};
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((0, 0))));
+	assert!(!session.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(
+		other_monitor
+	));
+}
+
+#[test]
 fn frozen_text_enter_does_not_finish_while_ime_preedit_is_active() {
 	let monitor = test_monitor();
 	let mut session = OverlaySession::new();

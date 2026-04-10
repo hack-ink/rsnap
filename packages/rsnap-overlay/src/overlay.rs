@@ -4354,6 +4354,24 @@ impl OverlaySession {
 		);
 	}
 
+	fn should_refresh_frozen_text_ime_cursor_area_for_text_style_change(
+		&self,
+		monitor: MonitorRect,
+	) -> bool {
+		self.state.monitor == Some(monitor)
+			&& self.frozen_text_tool_active()
+			&& self
+				.frozen_text_edit
+				.as_ref()
+				.is_some_and(FrozenTextEditState::has_ime_preedit)
+	}
+
+	fn refresh_frozen_text_ime_cursor_area_for_text_style_change(&self, monitor: MonitorRect) {
+		if self.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(monitor) {
+			self.sync_frozen_text_ime_cursor_area(monitor);
+		}
+	}
+
 	fn finish_frozen_text_editing(&mut self, commit: bool) -> bool {
 		let Some(edit_state) = self.frozen_text_edit.take() else {
 			self.sync_text_input_ime_state();
@@ -7951,6 +7969,7 @@ impl OverlaySession {
 		if draw_toolbar && self.toolbar_state.needs_redraw {
 			self.toolbar_state.needs_redraw = false;
 
+			self.refresh_frozen_text_ime_cursor_area_for_text_style_change(overlay_monitor);
 			self.request_redraw_for_monitor(overlay_monitor);
 		}
 
