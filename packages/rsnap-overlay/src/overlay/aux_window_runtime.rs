@@ -68,6 +68,7 @@ impl OverlaySession {
 		self.maybe_keep_selection_flow_repaint();
 		self.maybe_keep_frozen_text_caret_repaint();
 		self.maybe_keep_frozen_capture_redraw();
+		self.maybe_request_due_egui_repaint(now);
 		self.maybe_tick_toolbar_window_warmup_redraw();
 		self.maybe_tick_loupe_window_warmup_redraw();
 		self.maybe_tick_live_cursor_tracking();
@@ -201,6 +202,30 @@ impl OverlaySession {
 		}
 
 		self.schedule_egui_repaint_after(FROZEN_TEXT_CARET_REPAINT_INTERVAL);
+	}
+
+	pub(super) fn maybe_request_due_egui_repaint(&self, now: Instant) {
+		if !self.take_due_egui_repaint_deadline(now) {
+			return;
+		}
+
+		self.request_redraw_all();
+	}
+
+	pub(super) fn take_due_egui_repaint_deadline(&self, now: Instant) -> bool {
+		let mut next_repaint =
+			self.egui_repaint_deadline.lock().unwrap_or_else(|err| err.into_inner());
+		let Some(deadline) = *next_repaint else {
+			return false;
+		};
+
+		if deadline > now {
+			return false;
+		}
+
+		*next_repaint = None;
+
+		true
 	}
 
 	pub(super) fn live_overlay_selection_flow_repaint_active(&self) -> bool {

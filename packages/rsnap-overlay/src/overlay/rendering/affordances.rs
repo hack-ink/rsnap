@@ -1,4 +1,5 @@
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 use egui::Context;
 use egui::FontDefinitions;
@@ -449,8 +450,9 @@ impl WindowRenderer {
 			Self::paint_frozen_text_label(painter, text_edit.anchor, text, &font_id, color);
 
 			if let Some(caret_char_index) = caret_char_index
-				&& Self::frozen_text_caret_visible(painter.ctx().input(|i| i.time))
-			{
+				&& Self::frozen_text_caret_visible(
+					text_edit.caret_blink_elapsed_secs_at(Instant::now()),
+				) {
 				Self::paint_frozen_text_caret(
 					painter,
 					text_edit.anchor,

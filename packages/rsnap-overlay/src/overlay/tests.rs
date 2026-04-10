@@ -1237,6 +1237,61 @@ fn backspace_clears_recent_input_dedupe_marker_before_cross_source_retype() {
 }
 
 #[test]
+fn text_input_resets_frozen_text_caret_blink_phase() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+
+	let stale_started_at = Instant::now() - FROZEN_TEXT_CARET_REPAINT_INTERVAL * 3;
+
+	session.frozen_text_edit.as_mut().expect("text edit").reset_caret_blink_at(stale_started_at);
+
+	let generation = session.note_frozen_text_input_event();
+
+	assert!(session.append_text_to_frozen_edit_for_input_event(
+		FrozenTextInputSource::Key,
+		generation,
+		"A",
+	));
+
+	let edit_state = session.frozen_text_edit.as_ref().expect("text edit");
+
+	assert!(edit_state.caret_blink_started_at > stale_started_at);
+	assert!(edit_state.caret_blink_elapsed_secs_at(edit_state.caret_blink_started_at) == 0.0);
+}
+
+#[test]
+fn ime_preedit_updates_reset_frozen_text_caret_blink_phase() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+
+	let stale_started_at = Instant::now() - FROZEN_TEXT_CARET_REPAINT_INTERVAL * 3;
+
+	session.frozen_text_edit.as_mut().expect("text edit").reset_caret_blink_at(stale_started_at);
+
+	assert!(session.set_frozen_text_ime_preedit(Some(String::from("汉")), Some((0, 0))));
+
+	let edit_state = session.frozen_text_edit.as_ref().expect("text edit");
+
+	assert!(edit_state.caret_blink_started_at > stale_started_at);
+}
+
+#[test]
 fn ime_disabled_clears_frozen_text_preedit_state() {
 	let monitor = test_monitor();
 	let mut session = OverlaySession::new();
@@ -1377,6 +1432,18 @@ fn frozen_text_caret_repaint_schedules_delayed_repaint_while_editing() {
 	assert!(
 		deadline <= started_at + FROZEN_TEXT_CARET_REPAINT_INTERVAL + Duration::from_millis(20)
 	);
+}
+
+#[test]
+fn due_egui_repaint_deadline_is_consumed_once_ready() {
+	let session = OverlaySession::new();
+	let due_at = Instant::now() - Duration::from_millis(1);
+
+	*session.egui_repaint_deadline.lock().unwrap_or_else(|err| err.into_inner()) = Some(due_at);
+
+	assert!(session.take_due_egui_repaint_deadline(Instant::now()));
+	assert!(session.egui_repaint_deadline.lock().unwrap_or_else(|err| err.into_inner()).is_none());
+	assert!(!session.take_due_egui_repaint_deadline(Instant::now()));
 }
 
 #[test]
