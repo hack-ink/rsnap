@@ -4515,6 +4515,10 @@ impl OverlaySession {
 	}
 
 	fn begin_frozen_text_edit_at(&mut self, monitor: MonitorRect, cursor: GlobalPoint) -> bool {
+		if self.state.monitor != Some(monitor) {
+			return false;
+		}
+
 		let Some((local_x, local_y)) = monitor.local_u32(cursor) else {
 			return false;
 		};
