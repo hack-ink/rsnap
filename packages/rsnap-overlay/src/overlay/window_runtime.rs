@@ -759,7 +759,7 @@ impl OverlaySession {
 	}
 
 	fn create_toolbar_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-		let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+		let startup_size = super::frozen_toolbar_window_startup_size_points();
 		let attrs = Window::default_attributes()
 			.with_title("rsnap-toolbar")
 			.with_decorations(false)

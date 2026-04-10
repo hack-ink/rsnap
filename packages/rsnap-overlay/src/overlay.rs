@@ -3555,6 +3555,7 @@ impl OverlaySession {
 		let Some(export_transform) = self.frozen_export_transform_for_image(image) else {
 			return;
 		};
+		let mut brush_coverage_mask = None;
 
 		Self::for_each_frozen_committed_overlay(
 			&self.frozen_edit_undo_stack,
@@ -3562,8 +3563,13 @@ impl OverlaySession {
 			&self.frozen_text_annotations,
 			|overlay| match overlay {
 				FrozenCommittedOverlay::Brush(stroke) => {
+					let coverage_mask = brush_coverage_mask.get_or_insert_with(|| {
+						vec![0_u8; image.width() as usize * image.height() as usize]
+					});
+
 					Self::rasterize_frozen_brush_points_into_image(
 						image,
+						coverage_mask,
 						export_transform,
 						&stroke.points,
 					);
@@ -3580,9 +3586,13 @@ impl OverlaySession {
 
 		if let Some(active_stroke) = &self.frozen_brush.active_stroke {
 			let display_points = Self::active_frozen_brush_display_points(active_stroke);
+			let coverage_mask = brush_coverage_mask.get_or_insert_with(|| {
+				vec![0_u8; image.width() as usize * image.height() as usize]
+			});
 
 			Self::rasterize_frozen_brush_points_into_image(
 				image,
+				coverage_mask,
 				export_transform,
 				&display_points,
 			);
@@ -3591,28 +3601,32 @@ impl OverlaySession {
 
 	fn rasterize_frozen_brush_points_into_image(
 		export_image: &mut RgbaImage,
+		coverage_mask: &mut [u8],
 		export_transform: FrozenExportTransform,
 		points: &[Pos2],
 	) {
 		if export_image.width() == 0 || export_image.height() == 0 {
 			return;
 		}
+		if coverage_mask.len() != export_image.width() as usize * export_image.height() as usize {
+			return;
+		}
 
 		let radius =
 			(FROZEN_BRUSH_STROKE_WIDTH_POINTS * export_transform.scalar_scale() * 0.5).max(1.0);
 		let color = image::Rgba(FROZEN_BRUSH_COLOR_RGBA);
-		let mut coverage_mask =
-			vec![0_u8; export_image.width() as usize * export_image.height() as usize];
+
+		coverage_mask.fill(0);
 
 		Self::rasterize_frozen_brush_points(
-			&mut coverage_mask,
+			coverage_mask,
 			export_image.width(),
 			export_image.height(),
 			points,
 			export_transform,
 			radius,
 		);
-		Self::blend_frozen_brush_coverage_mask(export_image, &coverage_mask, color);
+		Self::blend_frozen_brush_coverage_mask(export_image, coverage_mask, color);
 	}
 
 	fn for_each_frozen_committed_overlay(
