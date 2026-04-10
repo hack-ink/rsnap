@@ -8,10 +8,11 @@ use std::{
 use image::RgbaImage;
 
 use crate::overlay::{
-	DeviceCursorPointSource, FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint,
-	LIVE_PRESENT_INTERVAL_MIN, MonitorRect, PhysicalPosition, Pos2,
-	REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints, SLOW_OP_WARN_INTERVAL,
-	ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2, WindowId,
+	Color32, DeviceCursorPointSource, FROZEN_TEXT_FONT_SIZE_POINTS, FROZEN_TEXT_FONT_SIZE_PRESETS,
+	FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint, LIVE_PRESENT_INTERVAL_MIN,
+	MonitorRect, PhysicalPosition, Pos2, REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints,
+	SLOW_OP_WARN_INTERVAL, ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2,
+	WindowId,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{ExternalScrollInputDrainReader, MacLiveFrameStream};
@@ -142,6 +143,7 @@ pub(super) struct FrozenToolbarState {
 	pub(super) visible: bool,
 	pub(super) dragging: bool,
 	pub(super) selected_tool: FrozenToolbarTool,
+	pub(super) text_style: FrozenTextStyle,
 	pub(super) auto_center_available: bool,
 	pub(super) undo_available: bool,
 	pub(super) redo_available: bool,
@@ -164,6 +166,7 @@ impl Default for FrozenToolbarState {
 			visible: true,
 			dragging: false,
 			selected_tool: FrozenToolbarTool::Pointer,
+			text_style: FrozenTextStyle::default(),
 			auto_center_available: false,
 			undo_available: false,
 			redo_available: false,
@@ -210,6 +213,155 @@ pub(super) struct FrozenBrushState {
 	pub(super) committed_strokes: Vec<FrozenBrushStroke>,
 	pub(super) redo_strokes: Vec<FrozenBrushStroke>,
 	pub(super) active_stroke: Option<ActiveFrozenBrushStroke>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FrozenTextColor {
+	White,
+	Yellow,
+	Green,
+	Blue,
+	Red,
+	Black,
+}
+impl FrozenTextColor {
+	pub(super) const ALL: [Self; 6] =
+		[Self::White, Self::Yellow, Self::Green, Self::Blue, Self::Red, Self::Black];
+
+	pub(super) const fn swatch_fill(self) -> Color32 {
+		match self {
+			Self::White => Color32::from_rgb(255, 255, 255),
+			Self::Yellow => Color32::from_rgb(255, 219, 77),
+			Self::Green => Color32::from_rgb(92, 214, 149),
+			Self::Blue => Color32::from_rgb(102, 178, 255),
+			Self::Red => Color32::from_rgb(255, 107, 107),
+			Self::Black => Color32::from_rgb(24, 24, 24),
+		}
+	}
+
+	pub(super) const fn export_rgba(self) -> [u8; 4] {
+		let [r, g, b, a] = self.swatch_fill().to_array();
+
+		[r, g, b, a]
+	}
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct FrozenTextStyle {
+	pub(super) font_size_points: f32,
+	pub(super) color: FrozenTextColor,
+}
+impl FrozenTextStyle {
+	pub(super) fn step_font_size(&mut self, direction: i8) -> bool {
+		let current_index = FROZEN_TEXT_FONT_SIZE_PRESETS
+			.iter()
+			.position(|size| (*size - self.font_size_points).abs() <= f32::EPSILON)
+			.unwrap_or_else(|| {
+				FROZEN_TEXT_FONT_SIZE_PRESETS
+					.iter()
+					.position(|size| *size >= self.font_size_points)
+					.unwrap_or(FROZEN_TEXT_FONT_SIZE_PRESETS.len().saturating_sub(1))
+			});
+		let next_index = if direction < 0 {
+			current_index.saturating_sub(1)
+		} else if direction > 0 {
+			(current_index + 1).min(FROZEN_TEXT_FONT_SIZE_PRESETS.len().saturating_sub(1))
+		} else {
+			current_index
+		};
+		let next_size = FROZEN_TEXT_FONT_SIZE_PRESETS[next_index];
+
+		if (next_size - self.font_size_points).abs() <= f32::EPSILON {
+			return false;
+		}
+
+		self.font_size_points = next_size;
+
+		true
+	}
+}
+impl Default for FrozenTextStyle {
+	fn default() -> Self {
+		Self { font_size_points: FROZEN_TEXT_FONT_SIZE_POINTS, color: FrozenTextColor::Blue }
+	}
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct FrozenTextAnnotation {
+	pub(super) anchor: Pos2,
+	pub(super) text: String,
+	pub(super) style: FrozenTextStyle,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct FrozenTextEditState {
+	pub(super) anchor: Pos2,
+	pub(super) text: String,
+	pub(super) ime_preedit: Option<String>,
+	pub(super) ime_preedit_cursor_char_range: Option<(usize, usize)>,
+	pub(super) dragging: bool,
+	pub(super) drag_offset: Vec2,
+}
+impl FrozenTextEditState {
+	pub(super) fn new(anchor: Pos2) -> Self {
+		Self {
+			anchor,
+			text: String::new(),
+			ime_preedit: None,
+			ime_preedit_cursor_char_range: None,
+			dragging: false,
+			drag_offset: Vec2::ZERO,
+		}
+	}
+
+	pub(super) fn visible_text(&self) -> String {
+		self.visible_text_and_caret_char_index().0
+	}
+
+	pub(super) fn has_ime_preedit(&self) -> bool {
+		self.ime_preedit.is_some()
+	}
+
+	pub(super) fn visible_text_and_caret_char_index(&self) -> (String, Option<usize>) {
+		let committed_char_count = self.text.chars().count();
+
+		match self.ime_preedit.as_deref() {
+			Some(preedit) if !preedit.is_empty() => {
+				let mut visible = self.text.clone();
+
+				visible.push_str(preedit);
+
+				(
+					visible,
+					self.ime_preedit_cursor_char_range
+						.map(|(_, end)| committed_char_count.saturating_add(end)),
+				)
+			},
+			_ => (self.text.clone(), Some(committed_char_count)),
+		}
+	}
+
+	pub(super) fn normalize_ime_preedit_cursor_char_range(
+		preedit: &str,
+		cursor_range: Option<(usize, usize)>,
+	) -> Option<(usize, usize)> {
+		let (start, end) = cursor_range?;
+
+		Some((
+			Self::char_index_from_byte_offset(preedit, start),
+			Self::char_index_from_byte_offset(preedit, end),
+		))
+	}
+
+	fn char_index_from_byte_offset(text: &str, byte_offset: usize) -> usize {
+		let clamped = byte_offset.min(text.len());
+
+		if clamped == text.len() {
+			return text.chars().count();
+		}
+
+		text.char_indices().take_while(|(index, _)| *index < clamped).count()
+	}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

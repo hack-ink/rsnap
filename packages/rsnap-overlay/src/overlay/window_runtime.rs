@@ -18,8 +18,7 @@ use crate::overlay::{
 	ActiveEventLoop, GlobalPoint, GpuContext, HUD_PILL_CORNER_RADIUS_POINTS, HudOverlayWindow,
 	LOUPE_TILE_CORNER_RADIUS_POINTS, LiveSampleApplyResult, LogicalPosition, LogicalSize,
 	MonitorRect, OverlayMode, OverlaySession, OverlayWindow, OverlayWorker, Result,
-	ScrollPreviewWindow, TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_EXPANDED_WIDTH_PX, WindowLevel,
-	WindowRenderer, hud_helpers,
+	ScrollPreviewWindow, TOOLBAR_EXPANDED_HEIGHT_PX, WindowLevel, WindowRenderer, hud_helpers,
 };
 
 impl OverlaySession {
@@ -760,13 +759,14 @@ impl OverlaySession {
 	}
 
 	fn create_toolbar_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+		let startup_size = super::frozen_toolbar_window_startup_size_points();
 		let attrs = Window::default_attributes()
 			.with_title("rsnap-toolbar")
 			.with_decorations(false)
 			.with_resizable(false)
 			.with_inner_size(LogicalSize::new(
-				TOOLBAR_EXPANDED_WIDTH_PX as f64,
-				TOOLBAR_EXPANDED_HEIGHT_PX as f64,
+				startup_size.x as f64,
+				f64::from(startup_size.y.max(TOOLBAR_EXPANDED_HEIGHT_PX)),
 			))
 			.with_transparent(true)
 			.with_visible(false)

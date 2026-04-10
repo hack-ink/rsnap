@@ -1,3 +1,5 @@
+use std::slice;
+
 use egui::Id;
 use egui::LayerId;
 use egui::Order;
@@ -21,7 +23,11 @@ use crate::overlay::tests::{
 	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
 	overlay,
 };
-use crate::overlay::{FrozenSelectionCorner, FrozenSelectionInteractionKind};
+use crate::overlay::{
+	FROZEN_TEXT_CARET_BLINK_PERIOD_SECS, FROZEN_TEXT_FONT_SIZE_POINTS, FontId, FrozenEditKind,
+	FrozenSelectionCorner, FrozenSelectionInteractionKind, FrozenTextAnnotation, FrozenTextColor,
+	FrozenTextEditState,
+};
 use crate::worker::{WorkerErrorSource, WorkerResponse};
 
 fn test_mosaic_source_image() -> RgbaImage {
@@ -243,8 +249,8 @@ fn frozen_mosaic_drag_waits_for_final_capture_ready() {
 	assert!(!session.frozen_final_capture_ready());
 	assert!(!session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
 	assert!(!session.commit_frozen_mosaic_drag());
-	assert!(!session.undo_frozen_mosaic_edit());
-	assert!(!session.redo_frozen_mosaic_edit());
+	assert!(!session.perform_frozen_undo());
+	assert!(!session.perform_frozen_redo());
 	assert_eq!(session.state.frozen_mosaic_preview_rect, None);
 	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
 
@@ -297,11 +303,11 @@ fn frozen_mosaic_commit_round_trips_through_undo_and_redo() {
 	assert_eq!(session.state.frozen_mosaic_preview_rect, None);
 	assert!(session.toolbar_state.undo_available);
 	assert!(!session.toolbar_state.redo_available);
-	assert!(session.undo_frozen_mosaic_edit());
+	assert!(session.perform_frozen_undo());
 	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
 	assert!(!session.toolbar_state.undo_available);
 	assert!(session.toolbar_state.redo_available);
-	assert!(session.redo_frozen_mosaic_edit());
+	assert!(session.perform_frozen_redo());
 	assert_eq!(session.state.frozen_image.as_ref(), Some(&edited));
 	assert!(session.toolbar_state.undo_available);
 	assert!(!session.toolbar_state.redo_available);
@@ -758,6 +764,290 @@ fn frozen_selection_cursor_icon_uses_corner_resize_hover() {
 	session.state.cursor = Some(GlobalPoint::new(150, 180));
 
 	assert_eq!(session.frozen_selection_cursor_icon_for_monitor(monitor), CursorIcon::Grab);
+}
+
+#[test]
+fn frozen_text_edit_caret_rect_starts_at_anchor_when_text_is_empty() {
+	let ctx = tests::test_egui_context();
+	let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("text-caret-empty")));
+	let anchor = Pos2::new(140.0, 160.0);
+	let font_id = FontId::proportional(FROZEN_TEXT_FONT_SIZE_POINTS);
+	let caret_rect = WindowRenderer::frozen_text_edit_caret_rect(&painter, anchor, "", &font_id);
+
+	assert!((caret_rect.min.x - anchor.x).abs() <= f32::EPSILON);
+	assert!((caret_rect.min.y - anchor.y).abs() <= f32::EPSILON);
+	assert!(caret_rect.height() >= FROZEN_TEXT_FONT_SIZE_POINTS);
+}
+
+#[test]
+fn frozen_text_edit_caret_rect_tracks_multiline_text_end() {
+	let ctx = tests::test_egui_context();
+	let painter =
+		ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("text-caret-multiline")));
+	let anchor = Pos2::new(140.0, 160.0);
+	let font_id = FontId::proportional(FROZEN_TEXT_FONT_SIZE_POINTS);
+	let caret_rect =
+		WindowRenderer::frozen_text_edit_caret_rect(&painter, anchor, "A\nB", &font_id);
+
+	assert!(caret_rect.min.y > anchor.y);
+	assert!(caret_rect.min.x > anchor.x);
+}
+
+#[test]
+fn frozen_text_edit_caret_rect_tracks_explicit_preedit_cursor_position() {
+	let ctx = tests::test_egui_context();
+	let painter =
+		ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("text-caret-preedit-cursor")));
+	let anchor = Pos2::new(140.0, 160.0);
+	let font_id = FontId::proportional(FROZEN_TEXT_FONT_SIZE_POINTS);
+	let caret_rect = WindowRenderer::frozen_text_edit_caret_rect_at_char_index(
+		&painter, anchor, "ABCD", &font_id, 2,
+	);
+	let end_rect = WindowRenderer::frozen_text_edit_caret_rect(&painter, anchor, "ABCD", &font_id);
+
+	assert!(caret_rect.min.x > anchor.x);
+	assert!(caret_rect.min.x < end_rect.min.x);
+	assert!((caret_rect.min.y - anchor.y).abs() <= f32::EPSILON);
+}
+
+#[test]
+fn frozen_text_placeholder_fill_tracks_selected_text_color() {
+	let blue = WindowRenderer::frozen_text_placeholder_fill(FrozenTextColor::Blue, HudTheme::Dark);
+	let red = WindowRenderer::frozen_text_placeholder_fill(FrozenTextColor::Red, HudTheme::Dark);
+
+	assert!(blue.b() > blue.r());
+	assert!(red.r() > red.b());
+	assert!(blue.a() < 255);
+	assert!(red.a() < 255);
+}
+
+#[test]
+fn frozen_text_edit_interaction_rect_uses_placeholder_bounds_when_empty() {
+	let anchor = Pos2::new(140.0, 160.0);
+	let font_id = FontId::proportional(FROZEN_TEXT_FONT_SIZE_POINTS);
+	let rect = WindowRenderer::frozen_text_edit_interaction_rect(anchor, "", &font_id);
+
+	assert!(rect.contains(anchor));
+	assert!(rect.width() > FROZEN_TEXT_FONT_SIZE_POINTS);
+	assert!(rect.height() >= FROZEN_TEXT_FONT_SIZE_POINTS);
+}
+
+#[test]
+fn frozen_text_edit_interaction_rect_covers_full_width_text_layout() {
+	let ctx = tests::test_egui_context();
+	let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("text-hitbox-cjk")));
+	let anchor = Pos2::new(140.0, 160.0);
+	let font_id = FontId::proportional(FROZEN_TEXT_FONT_SIZE_POINTS);
+	let rect = WindowRenderer::frozen_text_edit_interaction_rect(anchor, "你好世界", &font_id);
+	let caret_rect =
+		WindowRenderer::frozen_text_edit_caret_rect(&painter, anchor, "你好世界", &font_id);
+
+	assert!(rect.contains(caret_rect.min));
+	assert!(rect.contains(Pos2::new(caret_rect.max.x, caret_rect.min.y)));
+}
+
+#[test]
+fn frozen_committed_text_annotations_are_clipped_to_capture_rect() {
+	let ctx = tests::test_egui_context();
+	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 120.0));
+	let capture_rect_points = RectPoints::new(40, 20, 80, 40);
+	let capture_rect = Rect::from_min_size(
+		Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
+		Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
+	);
+	let monitor = MonitorRect {
+		id: 1,
+		origin: GlobalPoint::new(0, 0),
+		width: screen_rect.width() as u32,
+		height: screen_rect.height() as u32,
+		scale_factor_x1000: 1_000,
+	};
+	let style = OverlaySession::new().toolbar_state.text_style;
+	let annotation = FrozenTextAnnotation {
+		anchor: Pos2::new(capture_rect.max.x - 2.0, capture_rect.min.y + 4.0),
+		text: String::from("edge"),
+		style,
+	};
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+
+	state.mode = OverlayMode::Frozen;
+	state.monitor = Some(monitor);
+	state.frozen_capture_rect = Some(capture_rect_points);
+
+	let empty_output = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|_ui: &mut Ui| {
+			assert!(WindowRenderer::render_frozen_capture_affordance(
+				&ctx,
+				&state,
+				monitor,
+				screen_rect,
+				HudTheme::Dark,
+				false,
+				FrozenCaptureSource::None,
+				None,
+				&[],
+				None,
+				&[],
+				None,
+				style,
+				false,
+				true,
+				1.0,
+				&mut selection_flow_geometry_cache,
+				&mut selection_dashed_border_cache,
+			));
+		},
+	);
+	let clipped_shape_count_without_text =
+		empty_output.shapes.iter().filter(|shape| shape.clip_rect == capture_rect).count();
+	let full_output = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|_ui: &mut Ui| {
+			assert!(WindowRenderer::render_frozen_capture_affordance(
+				&ctx,
+				&state,
+				monitor,
+				screen_rect,
+				HudTheme::Dark,
+				false,
+				FrozenCaptureSource::None,
+				None,
+				&[FrozenEditKind::TextAnnotation],
+				None,
+				slice::from_ref(&annotation),
+				None,
+				style,
+				false,
+				true,
+				1.0,
+				&mut selection_flow_geometry_cache,
+				&mut selection_dashed_border_cache,
+			));
+		},
+	);
+	let clipped_shape_count_with_text =
+		full_output.shapes.iter().filter(|shape| shape.clip_rect == capture_rect).count();
+
+	assert!(
+		clipped_shape_count_with_text > clipped_shape_count_without_text,
+		"committed text should add shapes clipped to the frozen capture rect",
+	);
+}
+
+#[test]
+fn frozen_active_text_preview_is_clipped_to_capture_rect() {
+	let ctx = tests::test_egui_context();
+	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 120.0));
+	let capture_rect_points = RectPoints::new(40, 20, 80, 40);
+	let capture_rect = Rect::from_min_size(
+		Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
+		Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
+	);
+	let monitor = MonitorRect {
+		id: 1,
+		origin: GlobalPoint::new(0, 0),
+		width: screen_rect.width() as u32,
+		height: screen_rect.height() as u32,
+		scale_factor_x1000: 1_000,
+	};
+	let style = OverlaySession::new().toolbar_state.text_style;
+	let mut text_edit =
+		FrozenTextEditState::new(Pos2::new(capture_rect.max.x - 2.0, capture_rect.min.y + 4.0));
+
+	text_edit.text = String::from("editing");
+
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+
+	state.mode = OverlayMode::Frozen;
+	state.monitor = Some(monitor);
+	state.frozen_capture_rect = Some(capture_rect_points);
+
+	let empty_output = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|_ui: &mut Ui| {
+			assert!(WindowRenderer::render_frozen_capture_affordance(
+				&ctx,
+				&state,
+				monitor,
+				screen_rect,
+				HudTheme::Dark,
+				false,
+				FrozenCaptureSource::None,
+				None,
+				&[],
+				None,
+				&[],
+				None,
+				style,
+				false,
+				true,
+				1.0,
+				&mut selection_flow_geometry_cache,
+				&mut selection_dashed_border_cache,
+			));
+		},
+	);
+	let clipped_shape_count_without_preview =
+		empty_output.shapes.iter().filter(|shape| shape.clip_rect == capture_rect).count();
+	let preview_output = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|_ui: &mut Ui| {
+			assert!(WindowRenderer::render_frozen_capture_affordance(
+				&ctx,
+				&state,
+				monitor,
+				screen_rect,
+				HudTheme::Dark,
+				false,
+				FrozenCaptureSource::None,
+				None,
+				&[],
+				None,
+				&[],
+				Some(&text_edit),
+				style,
+				false,
+				true,
+				1.0,
+				&mut selection_flow_geometry_cache,
+				&mut selection_dashed_border_cache,
+			));
+		},
+	);
+	let clipped_shape_count_with_preview =
+		preview_output.shapes.iter().filter(|shape| shape.clip_rect == capture_rect).count();
+
+	assert!(
+		clipped_shape_count_with_preview > clipped_shape_count_without_preview,
+		"active text preview should add shapes clipped to the frozen capture rect",
+	);
+}
+
+#[test]
+fn frozen_text_caret_visible_blinks_on_half_periods() {
+	assert!(WindowRenderer::frozen_text_caret_visible(0.0));
+	assert!(WindowRenderer::frozen_text_caret_visible(FROZEN_TEXT_CARET_BLINK_PERIOD_SECS * 0.49,));
+	assert!(
+		!WindowRenderer::frozen_text_caret_visible(FROZEN_TEXT_CARET_BLINK_PERIOD_SECS * 0.51,)
+	);
+}
+
+#[test]
+fn frozen_toolbar_size_expands_for_text_style_toolbar() {
+	let mut toolbar_state = FrozenToolbarState::default();
+	let base_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+
+	toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	let expanded_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+
+	assert!(expanded_size.y > base_size.y);
+	assert_eq!(expanded_size.x, base_size.x);
 }
 
 #[test]
@@ -1960,7 +2250,11 @@ fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
 		false,
 		FrozenCaptureSource::None,
 		None,
+		&[],
 		None,
+		&[],
+		None,
+		FrozenToolbarState::default().text_style,
 		false,
 		true,
 		1.0,
@@ -2258,6 +2552,53 @@ fn auto_center_toolbar_tool_only_appears_when_available() {
 	{
 		assert!(default_tools.contains(&FrozenToolbarTool::Ocr));
 		assert!(auto_center_tools.contains(&FrozenToolbarTool::Ocr));
+	}
+}
+
+#[test]
+fn toolbar_window_startup_size_covers_every_tool_permutation() {
+	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let toolbar_states = [
+		FrozenToolbarState::default(),
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Text,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState { auto_center_available: true, ..FrozenToolbarState::default() },
+		FrozenToolbarState { scroll_capture_available: true, ..FrozenToolbarState::default() },
+		FrozenToolbarState {
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Text,
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			scroll_capture_active: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+	];
+
+	for toolbar_state in toolbar_states {
+		let toolbar_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+
+		assert!(
+			startup_size.x >= toolbar_size.x,
+			"startup width {} should cover toolbar width {} for {toolbar_state:?}",
+			startup_size.x,
+			toolbar_size.x
+		);
+		assert!(
+			startup_size.y >= toolbar_size.y,
+			"startup height {} should cover toolbar height {} for {toolbar_state:?}",
+			startup_size.y,
+			toolbar_size.y
+		);
 	}
 }
 

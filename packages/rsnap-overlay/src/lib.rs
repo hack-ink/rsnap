@@ -34,6 +34,8 @@ mod overlay;
 mod png;
 mod scroll_capture;
 mod state;
+mod system_fonts;
+mod text_rendering;
 mod worker;
 
 #[cfg(target_os = "macos")]

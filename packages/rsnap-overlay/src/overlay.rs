@@ -137,7 +137,7 @@ use winit::event::Modifiers;
 use winit::window::Window;
 use winit::{
 	dpi::PhysicalSize,
-	event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
+	event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent},
 	event_loop::ActiveEventLoop,
 	keyboard::{Key, ModifiersState, NamedKey},
 	window::{CursorIcon, WindowId, WindowLevel},
@@ -159,7 +159,8 @@ use self::session_state::InflightScrollCaptureObservation;
 use self::session_state::{
 	ActiveFrozenBrushStroke, CursorMoveTrace, FrozenBrushModelState, FrozenBrushState,
 	FrozenBrushStroke, FrozenMosaicDragState, FrozenSelectionDragCursorMoveTiming,
-	FrozenSelectionDragState, FrozenToolbarPointerState, FrozenToolbarState, HudDrawConfig,
+	FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextColor, FrozenTextEditState,
+	FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState, HudDrawConfig,
 	LiveSampleApplyResult, ScrollCaptureState, SlowOperationLogger, WindowFreezeCaptureTarget,
 };
 #[cfg(target_os = "macos")]
@@ -178,6 +179,7 @@ use crate::deferred_text_recognition::DeferredTextRecognitionRequest;
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::scroll_capture::{self, ScrollDirection, ScrollObserveOutcome, ScrollSession};
 use crate::state::LiveCursorSample;
+use crate::text_rendering::{self, RasterTextAnnotation};
 use crate::worker::CapturedMonitorRegionResult;
 use crate::{
 	state::{
@@ -252,7 +254,6 @@ const MACOS_HUD_WINDOW_LEVEL: isize = 26;
 const MACOS_OVERLAY_WINDOW_LEVEL: isize = 25;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
-const TOOLBAR_MAX_TOOL_COUNT: usize = 10;
 const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
 const CURSOR_EVENT_TICK_TTL: Duration = Duration::from_millis(24);
 const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
@@ -294,11 +295,6 @@ const SCROLL_CAPTURE_DUPLICATE_STREAM_REFRESH_INTERVAL: Duration = Duration::fro
 const HUD_PILL_INNER_MARGIN_X_POINTS: f32 = 12.0;
 const HUD_PILL_INNER_MARGIN_Y_POINTS: f32 = 8.0;
 const HUD_PILL_STROKE_WIDTH_POINTS: f32 = 1.0;
-const TOOLBAR_EXPANDED_WIDTH_PX: f32 = (TOOLBAR_MAX_TOOL_COUNT as f32)
-	* FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
-	+ ((TOOLBAR_MAX_TOOL_COUNT as f32) - 1.0) * FROZEN_TOOLBAR_ITEM_SPACING_POINTS
-	+ 2.0 * HUD_PILL_INNER_MARGIN_X_POINTS
-	+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
 const TOOLBAR_EXPANDED_HEIGHT_PX: f32 = FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
 	+ 2.0 * HUD_PILL_INNER_MARGIN_Y_POINTS
 	+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
@@ -306,6 +302,11 @@ const TOOLBAR_CAPTURE_GAP_PX: f32 = 10.0;
 const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
 const TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS: f32 = 1.0;
 const HUD_PILL_CORNER_RADIUS_POINTS: u8 = 18;
+const FROZEN_TEXT_FONT_SIZE_POINTS: f32 = 16.0;
+const FROZEN_TEXT_FONT_SIZE_PRESETS: [f32; 4] = [16.0, 22.0, 30.0, 40.0];
+const FROZEN_TEXT_PREVIEW_PLACEHOLDER: &str = "Type";
+const FROZEN_TEXT_CARET_BLINK_PERIOD_SECS: f64 = 1.0;
+const FROZEN_TEXT_CARET_REPAINT_INTERVAL: Duration = Duration::from_millis(250);
 const SELECTION_SIZE_BADGE_FONT_SIZE_POINTS: f32 = 13.0;
 const SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS: f32 = 2.0;
 const SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX: f32 = 1.0;
@@ -911,6 +912,11 @@ pub struct OverlaySession {
 	png_encode_inflight: bool,
 	#[cfg(target_os = "macos")]
 	pending_self_capture_exception_window_ids_worker_refresh: bool,
+	frozen_text_annotations: Vec<FrozenTextAnnotation>,
+	frozen_text_redo_annotations: Vec<FrozenTextAnnotation>,
+	frozen_text_edit: Option<FrozenTextEditState>,
+	frozen_text_input_generation: u64,
+	frozen_text_recent_input: Option<FrozenTextRecentInput>,
 	toolbar_state: FrozenToolbarState,
 	toolbar_left_button_down: bool,
 	toolbar_left_button_went_down: bool,
@@ -922,6 +928,8 @@ pub struct OverlaySession {
 	frozen_brush: FrozenBrushState,
 	frozen_selection_drag: FrozenSelectionDragState,
 	frozen_mosaic_drag: FrozenMosaicDragState,
+	frozen_edit_undo_stack: Vec<FrozenEditKind>,
+	frozen_edit_redo_stack: Vec<FrozenEditKind>,
 	frozen_mosaic_undo_stack: Vec<FrozenMosaicEdit>,
 	frozen_mosaic_redo_stack: Vec<FrozenMosaicEdit>,
 	hud_window_visible: bool,
@@ -1121,6 +1129,11 @@ impl OverlaySession {
 			png_encode_inflight: false,
 			#[cfg(target_os = "macos")]
 			pending_self_capture_exception_window_ids_worker_refresh: false,
+			frozen_text_annotations: Vec::new(),
+			frozen_text_redo_annotations: Vec::new(),
+			frozen_text_edit: None,
+			frozen_text_input_generation: 0,
+			frozen_text_recent_input: None,
 			toolbar_state: FrozenToolbarState::default(),
 			toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
 			toolbar_pointer_local: None,
@@ -1128,6 +1141,8 @@ impl OverlaySession {
 			frozen_brush: FrozenBrushState::default(),
 			frozen_selection_drag: FrozenSelectionDragState::default(),
 			frozen_mosaic_drag: FrozenMosaicDragState::default(),
+			frozen_edit_undo_stack: Vec::new(),
+			frozen_edit_redo_stack: Vec::new(),
 			frozen_mosaic_undo_stack: Vec::new(),
 			frozen_mosaic_redo_stack: Vec::new(),
 			hud_window_visible: false, toolbar_window_visible: false,
@@ -1566,6 +1581,26 @@ impl OverlaySession {
 		self.request_redraw_toolbar_window();
 	}
 
+	fn reset_frozen_text_state(&mut self) {
+		self.frozen_text_annotations.clear();
+		self.frozen_text_redo_annotations.clear();
+
+		self.frozen_text_edit = None;
+
+		self.sync_text_input_ime_state();
+	}
+
+	fn reset_frozen_annotation_state(&mut self) {
+		self.frozen_brush = FrozenBrushState::default();
+		self.frozen_selection_drag = FrozenSelectionDragState::default();
+		self.frozen_mosaic_drag = FrozenMosaicDragState::default();
+
+		self.frozen_edit_undo_stack.clear();
+		self.frozen_edit_redo_stack.clear();
+		self.frozen_mosaic_undo_stack.clear();
+		self.frozen_mosaic_redo_stack.clear();
+	}
+
 	fn begin_frozen_capture_with_rect(
 		&mut self,
 		monitor: MonitorRect,
@@ -1596,12 +1631,8 @@ impl OverlaySession {
 		self.state.frozen_mosaic_preview_rect = None;
 		self.state.drag_rect = None;
 		self.state.hovered_window_rect = None;
-		self.frozen_brush = FrozenBrushState::default();
-		self.frozen_selection_drag = FrozenSelectionDragState::default();
-		self.frozen_mosaic_drag = FrozenMosaicDragState::default();
 
-		self.frozen_mosaic_undo_stack.clear();
-		self.frozen_mosaic_redo_stack.clear();
+		self.reset_frozen_annotation_state();
 
 		tracing::debug!(
 			monitor_id = monitor.id,
@@ -1622,6 +1653,7 @@ impl OverlaySession {
 		self.toolbar_state.layout_last_screen_size_points = None;
 		self.toolbar_state.layout_stable_frames = 0;
 
+		self.reset_frozen_text_state();
 		self.sync_frozen_toolbar_state();
 		// Spawn the toolbar immediately at the default position (capture aware). This avoids any
 		// dependency on egui viewport stabilization or additional input events (mouse move) to
@@ -1939,6 +1971,21 @@ impl OverlaySession {
 		let Some((cursor_x, cursor_y)) = monitor.local_u32(cursor) else {
 			return CursorIcon::Default;
 		};
+		let cursor_local = Pos2::new(cursor_x as f32, cursor_y as f32);
+
+		if let Some(hit_rect) = self.frozen_text_edit_hit_rect_for_monitor(monitor)
+			&& hit_rect.contains(cursor_local)
+		{
+			return if self.frozen_text_edit.as_ref().is_some_and(|edit| edit.dragging) {
+				CursorIcon::Grabbing
+			} else {
+				CursorIcon::Grab
+			};
+		}
+
+		if self.frozen_text_tool_active() && capture_rect.contains((cursor_x, cursor_y)) {
+			return CursorIcon::Text;
+		}
 
 		match Self::frozen_selection_interaction_kind(capture_rect, cursor_x, cursor_y) {
 			Some(FrozenSelectionInteractionKind::Resize(corner)) => {
@@ -2237,9 +2284,6 @@ impl OverlaySession {
 		let point = Pos2::new(cursor_x as f32, cursor_y as f32);
 		let sampled_at = Instant::now();
 
-		self.frozen_brush.redo_strokes.clear();
-		self.sync_frozen_toolbar_state();
-
 		self.frozen_brush.active_stroke =
 			Some(Self::new_active_frozen_brush_stroke(point, sampled_at));
 
@@ -2284,6 +2328,7 @@ impl OverlaySession {
 		self.frozen_brush
 			.committed_strokes
 			.push(FrozenBrushStroke { points: Self::finished_frozen_brush_points(&stroke) });
+		self.push_frozen_edit_to_undo_history(FrozenEditKind::BrushStroke);
 		self.sync_frozen_toolbar_state();
 
 		if let Some(monitor) = self.state.monitor {
@@ -3504,92 +3549,120 @@ impl OverlaySession {
 		}
 	}
 
-	fn annotated_frozen_export_image(&self, mut export_image: RgbaImage) -> RgbaImage {
-		if self.frozen_brush.committed_strokes.is_empty()
-			&& self.frozen_brush.active_stroke.is_none()
-		{
-			return export_image;
+	fn render_frozen_committed_overlays_into_image(&self, image: &mut RgbaImage) {
+		if self.scroll_capture.active {
+			return;
 		}
 
-		let Some(monitor) = self.state.monitor else {
-			return export_image;
+		let Some(export_transform) = self.frozen_export_transform_for_image(image) else {
+			return;
 		};
-		let Some(capture_rect) = self.frozen_capture_rect_for_monitor(monitor) else {
-			return export_image;
-		};
+		let mut brush_coverage_mask = None;
 
-		Self::rasterize_frozen_brush_strokes(
-			&mut export_image,
-			monitor,
-			capture_rect,
-			&self.frozen_brush,
+		Self::for_each_frozen_committed_overlay(
+			&self.frozen_edit_undo_stack,
+			&self.frozen_brush.committed_strokes,
+			&self.frozen_text_annotations,
+			|overlay| match overlay {
+				FrozenCommittedOverlay::Brush(stroke) => {
+					let coverage_mask = brush_coverage_mask.get_or_insert_with(|| {
+						vec![0_u8; image.width() as usize * image.height() as usize]
+					});
+
+					Self::rasterize_frozen_brush_points_into_image(
+						image,
+						coverage_mask,
+						export_transform,
+						&stroke.points,
+					);
+				},
+				FrozenCommittedOverlay::Text(annotation) => {
+					Self::render_frozen_text_annotation_into_image(
+						image,
+						export_transform,
+						annotation,
+					);
+				},
+			},
 		);
 
-		export_image
+		if let Some(active_stroke) = &self.frozen_brush.active_stroke {
+			let display_points = Self::active_frozen_brush_display_points(active_stroke);
+			let coverage_mask = brush_coverage_mask.get_or_insert_with(|| {
+				vec![0_u8; image.width() as usize * image.height() as usize]
+			});
+
+			Self::rasterize_frozen_brush_points_into_image(
+				image,
+				coverage_mask,
+				export_transform,
+				&display_points,
+			);
+		}
 	}
 
-	fn rasterize_frozen_brush_strokes(
+	fn rasterize_frozen_brush_points_into_image(
 		export_image: &mut RgbaImage,
-		monitor: MonitorRect,
-		capture_rect: RectPoints,
-		frozen_brush: &FrozenBrushState,
+		coverage_mask: &mut [u8],
+		export_transform: FrozenExportTransform,
+		points: &[Pos2],
 	) {
 		if export_image.width() == 0 || export_image.height() == 0 {
 			return;
 		}
+		if coverage_mask.len() != export_image.width() as usize * export_image.height() as usize {
+			return;
+		}
 
-		let radius = (FROZEN_BRUSH_STROKE_WIDTH_POINTS * monitor.scale_factor() * 0.5).max(1.0);
+		let radius =
+			(FROZEN_BRUSH_STROKE_WIDTH_POINTS * export_transform.scalar_scale() * 0.5).max(1.0);
 		let color = image::Rgba(FROZEN_BRUSH_COLOR_RGBA);
-		let mut coverage_mask =
-			vec![0_u8; export_image.width() as usize * export_image.height() as usize];
 
-		for stroke in &frozen_brush.committed_strokes {
-			Self::rasterize_frozen_brush_stroke(
-				&mut coverage_mask,
-				export_image.width(),
-				export_image.height(),
-				stroke,
-				capture_rect,
-				monitor,
-				radius,
-			);
-		}
+		coverage_mask.fill(0);
 
-		if let Some(active_stroke) = &frozen_brush.active_stroke {
-			let display_points = Self::active_frozen_brush_display_points(active_stroke);
-
-			Self::rasterize_frozen_brush_points(
-				&mut coverage_mask,
-				export_image.width(),
-				export_image.height(),
-				&display_points,
-				capture_rect,
-				monitor,
-				radius,
-			);
-		}
-
-		Self::blend_frozen_brush_coverage_mask(export_image, &coverage_mask, color);
-	}
-
-	fn rasterize_frozen_brush_stroke(
-		coverage_mask: &mut [u8],
-		export_width: u32,
-		export_height: u32,
-		stroke: &FrozenBrushStroke,
-		capture_rect: RectPoints,
-		monitor: MonitorRect,
-		radius: f32,
-	) {
 		Self::rasterize_frozen_brush_points(
 			coverage_mask,
-			export_width,
-			export_height,
-			&stroke.points,
-			capture_rect,
-			monitor,
+			export_image.width(),
+			export_image.height(),
+			points,
+			export_transform,
 			radius,
 		);
+		Self::blend_frozen_brush_coverage_mask(export_image, coverage_mask, color);
+	}
+
+	fn for_each_frozen_committed_overlay(
+		edit_history: &[FrozenEditKind],
+		brush_strokes: &[FrozenBrushStroke],
+		text_annotations: &[FrozenTextAnnotation],
+		mut f: impl FnMut(FrozenCommittedOverlay<'_>),
+	) {
+		let mut brush_index = 0;
+		let mut text_index = 0;
+
+		for edit_kind in edit_history {
+			match edit_kind {
+				FrozenEditKind::BrushStroke => {
+					let Some(stroke) = brush_strokes.get(brush_index) else {
+						continue;
+					};
+
+					brush_index += 1;
+
+					f(FrozenCommittedOverlay::Brush(stroke));
+				},
+				FrozenEditKind::TextAnnotation => {
+					let Some(annotation) = text_annotations.get(text_index) else {
+						continue;
+					};
+
+					text_index += 1;
+
+					f(FrozenCommittedOverlay::Text(annotation));
+				},
+				FrozenEditKind::MosaicEdit => {},
+			}
+		}
 	}
 
 	fn rasterize_frozen_brush_points(
@@ -3597,8 +3670,7 @@ impl OverlaySession {
 		export_width: u32,
 		export_height: u32,
 		points: &[Pos2],
-		capture_rect: RectPoints,
-		monitor: MonitorRect,
+		export_transform: FrozenExportTransform,
 		radius: f32,
 	) {
 		let rendered_points =
@@ -3606,9 +3678,7 @@ impl OverlaySession {
 		let Some(first) = rendered_points.first().copied() else {
 			return;
 		};
-		let scale_factor = monitor.scale_factor();
-		let mut previous =
-			Self::frozen_brush_point_to_export_pixels(first, capture_rect, scale_factor);
+		let mut previous = export_transform.point_to_pixels(first);
 
 		Self::rasterize_frozen_brush_circle(
 			coverage_mask,
@@ -3619,8 +3689,7 @@ impl OverlaySession {
 		);
 
 		for point in rendered_points.into_iter().skip(1) {
-			let current =
-				Self::frozen_brush_point_to_export_pixels(point, capture_rect, scale_factor);
+			let current = export_transform.point_to_pixels(point);
 
 			Self::rasterize_frozen_brush_segment(
 				coverage_mask,
@@ -3635,14 +3704,20 @@ impl OverlaySession {
 		}
 	}
 
-	fn frozen_brush_point_to_export_pixels(
-		point: Pos2,
-		capture_rect: RectPoints,
-		scale_factor: f32,
-	) -> Pos2 {
-		Pos2::new(
-			(point.x - capture_rect.x as f32) * scale_factor,
-			(point.y - capture_rect.y as f32) * scale_factor,
+	fn frozen_export_capture_rect(&self) -> Option<RectPoints> {
+		self.state.frozen_capture_rect.or_else(|| {
+			self.state.monitor.map(|monitor| RectPoints::new(0, 0, monitor.width, monitor.height))
+		})
+	}
+
+	fn frozen_export_transform_for_image(
+		&self,
+		image: &RgbaImage,
+	) -> Option<FrozenExportTransform> {
+		FrozenExportTransform::new(
+			self.frozen_export_capture_rect()?,
+			image.width(),
+			image.height(),
 		)
 	}
 
@@ -3944,14 +4019,47 @@ impl OverlaySession {
 		self.request_redraw_toolbar_window();
 	}
 
-	fn push_frozen_mosaic_edit(&mut self, edit: FrozenMosaicEdit) {
-		self.frozen_mosaic_undo_stack.push(edit);
+	fn clear_frozen_redo_history(&mut self) {
+		self.frozen_edit_redo_stack.clear();
+		self.frozen_brush.redo_strokes.clear();
+		self.frozen_mosaic_redo_stack.clear();
+		self.frozen_text_redo_annotations.clear();
+	}
 
-		if self.frozen_mosaic_undo_stack.len() > FROZEN_EDIT_HISTORY_LIMIT {
-			self.frozen_mosaic_undo_stack.remove(0);
+	fn discard_evicted_frozen_edit_payload(&mut self, edit_kind: FrozenEditKind) {
+		match edit_kind {
+			FrozenEditKind::BrushStroke => {
+				if !self.frozen_brush.committed_strokes.is_empty() {
+					self.frozen_brush.committed_strokes.remove(0);
+				}
+			},
+			FrozenEditKind::MosaicEdit => {
+				if !self.frozen_mosaic_undo_stack.is_empty() {
+					self.frozen_mosaic_undo_stack.remove(0);
+				}
+			},
+			FrozenEditKind::TextAnnotation => {
+				if !self.frozen_text_annotations.is_empty() {
+					self.frozen_text_annotations.remove(0);
+				}
+			},
+		}
+	}
+
+	fn push_frozen_edit_to_undo_history(&mut self, edit_kind: FrozenEditKind) {
+		self.frozen_edit_undo_stack.push(edit_kind);
+
+		if self.frozen_edit_undo_stack.len() > FROZEN_EDIT_HISTORY_LIMIT {
+			let evicted = self.frozen_edit_undo_stack.remove(0);
+
+			self.discard_evicted_frozen_edit_payload(evicted);
 		}
 
-		self.frozen_mosaic_redo_stack.clear();
+		self.clear_frozen_redo_history();
+	}
+
+	fn push_frozen_mosaic_edit(&mut self, edit: FrozenMosaicEdit) {
+		self.frozen_mosaic_undo_stack.push(edit);
 	}
 
 	fn apply_frozen_mosaic_edit(&mut self, rect_points: RectPoints) -> bool {
@@ -3994,6 +4102,7 @@ impl OverlaySession {
 		}
 
 		self.push_frozen_mosaic_edit(FrozenMosaicEdit { preview_patch, window_patch });
+		self.push_frozen_edit_to_undo_history(FrozenEditKind::MosaicEdit);
 		self.note_frozen_image_mutated(monitor);
 
 		true
@@ -4067,41 +4176,53 @@ impl OverlaySession {
 	}
 
 	fn frozen_undo_available(&self) -> bool {
-		match self.toolbar_state.selected_tool {
-			FrozenToolbarTool::Pen => !self.frozen_brush.committed_strokes.is_empty(),
-			FrozenToolbarTool::Mosaic => !self.frozen_mosaic_undo_stack.is_empty(),
-			_ => {
-				!self.frozen_brush.committed_strokes.is_empty()
-					|| !self.frozen_mosaic_undo_stack.is_empty()
-			},
-		}
+		!self.frozen_edit_undo_stack.is_empty()
 	}
 
 	fn frozen_redo_available(&self) -> bool {
-		match self.toolbar_state.selected_tool {
-			FrozenToolbarTool::Pen => !self.frozen_brush.redo_strokes.is_empty(),
-			FrozenToolbarTool::Mosaic => !self.frozen_mosaic_redo_stack.is_empty(),
-			_ => {
-				!self.frozen_brush.redo_strokes.is_empty()
-					|| !self.frozen_mosaic_redo_stack.is_empty()
-			},
-		}
+		!self.frozen_edit_redo_stack.is_empty()
 	}
 
 	fn perform_frozen_undo(&mut self) -> bool {
-		match self.toolbar_state.selected_tool {
-			FrozenToolbarTool::Pen => self.undo_frozen_brush_stroke(),
-			FrozenToolbarTool::Mosaic => self.undo_frozen_mosaic_edit(),
-			_ => self.undo_frozen_brush_stroke() || self.undo_frozen_mosaic_edit(),
+		let Some(edit_kind) = self.frozen_edit_undo_stack.pop() else {
+			return false;
+		};
+		let undone = match edit_kind {
+			FrozenEditKind::BrushStroke => self.undo_frozen_brush_stroke(),
+			FrozenEditKind::MosaicEdit => self.undo_frozen_mosaic_edit(),
+			FrozenEditKind::TextAnnotation => self.undo_frozen_text_annotation(),
+		};
+
+		if undone {
+			self.frozen_edit_redo_stack.push(edit_kind);
+		} else {
+			self.frozen_edit_undo_stack.push(edit_kind);
 		}
+
+		self.sync_frozen_toolbar_state();
+
+		undone
 	}
 
 	fn perform_frozen_redo(&mut self) -> bool {
-		match self.toolbar_state.selected_tool {
-			FrozenToolbarTool::Pen => self.redo_frozen_brush_stroke(),
-			FrozenToolbarTool::Mosaic => self.redo_frozen_mosaic_edit(),
-			_ => self.redo_frozen_brush_stroke() || self.redo_frozen_mosaic_edit(),
+		let Some(edit_kind) = self.frozen_edit_redo_stack.pop() else {
+			return false;
+		};
+		let redone = match edit_kind {
+			FrozenEditKind::BrushStroke => self.redo_frozen_brush_stroke(),
+			FrozenEditKind::MosaicEdit => self.redo_frozen_mosaic_edit(),
+			FrozenEditKind::TextAnnotation => self.redo_frozen_text_annotation(),
+		};
+
+		if redone {
+			self.frozen_edit_undo_stack.push(edit_kind);
+		} else {
+			self.frozen_edit_redo_stack.push(edit_kind);
 		}
+
+		self.sync_frozen_toolbar_state();
+
+		redone
 	}
 
 	fn flatten_window_image_with_matte(image: &RgbaImage, matte: image::Rgba<u8>) -> RgbaImage {
@@ -4176,6 +4297,382 @@ impl OverlaySession {
 		);
 
 		monitor_image
+	}
+
+	fn frozen_text_tool_active(&self) -> bool {
+		!self.scroll_capture.active && self.toolbar_state.selected_tool == FrozenToolbarTool::Text
+	}
+
+	fn sync_text_input_ime_state(&self) {
+		let ime_allowed = self.frozen_text_tool_active() && self.frozen_text_edit.is_some();
+
+		for overlay_window in self.windows.values() {
+			overlay_window.window.set_ime_allowed(ime_allowed);
+		}
+
+		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+			toolbar_window.window.set_ime_allowed(ime_allowed);
+		}
+	}
+
+	fn sync_frozen_text_ime_cursor_area(&self, monitor: MonitorRect) {
+		let Some(edit_state) = self.frozen_text_edit.as_ref() else {
+			return;
+		};
+		let Some(overlay_window) = self.windows.values().find(|window| window.monitor == monitor)
+		else {
+			return;
+		};
+		let (visible_text, caret_char_index) = edit_state.visible_text_and_caret_char_index();
+		let caret_rect = overlay_window.renderer.frozen_text_edit_caret_rect_for_window(
+			edit_state.anchor,
+			visible_text.as_str(),
+			&FontId::proportional(self.toolbar_state.text_style.font_size_points),
+			caret_char_index.unwrap_or_else(|| visible_text.chars().count()),
+		);
+
+		overlay_window.window.set_ime_cursor_area(
+			LogicalPosition::new(
+				f64::from(caret_rect.min.x.max(0.0)),
+				f64::from(caret_rect.min.y.max(0.0)),
+			),
+			LogicalSize::new(
+				f64::from(caret_rect.width().max(1.0)),
+				f64::from(caret_rect.height().max(self.toolbar_state.text_style.font_size_points)),
+			),
+		);
+	}
+
+	fn should_refresh_frozen_text_ime_cursor_area_for_text_style_change(
+		&self,
+		monitor: MonitorRect,
+	) -> bool {
+		self.state.monitor == Some(monitor)
+			&& self.frozen_text_tool_active()
+			&& self.frozen_text_edit.as_ref().is_some_and(FrozenTextEditState::has_ime_preedit)
+	}
+
+	fn refresh_frozen_text_ime_cursor_area_for_text_style_change(&self, monitor: MonitorRect) {
+		if self.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(monitor) {
+			self.sync_frozen_text_ime_cursor_area(monitor);
+		}
+	}
+
+	fn finish_frozen_text_editing(&mut self, commit: bool) -> bool {
+		let Some(edit_state) = self.frozen_text_edit.take() else {
+			self.sync_text_input_ime_state();
+
+			return false;
+		};
+		let committed_text = edit_state.visible_text();
+		let had_visible_text = !committed_text.trim().is_empty();
+
+		if commit && had_visible_text {
+			self.frozen_text_annotations.push(FrozenTextAnnotation {
+				anchor: edit_state.anchor,
+				text: committed_text,
+				style: self.toolbar_state.text_style,
+			});
+			self.push_frozen_edit_to_undo_history(FrozenEditKind::TextAnnotation);
+			self.sync_frozen_toolbar_state();
+		}
+
+		self.frozen_text_recent_input = None;
+
+		self.sync_text_input_ime_state();
+
+		had_visible_text
+	}
+
+	fn note_frozen_text_input_event(&mut self) -> u64 {
+		self.frozen_text_input_generation = self.frozen_text_input_generation.wrapping_add(1);
+
+		self.frozen_text_input_generation
+	}
+
+	fn append_text_to_frozen_edit_for_input_event(
+		&mut self,
+		source: FrozenTextInputSource,
+		generation: u64,
+		text: &str,
+	) -> bool {
+		let text = text.replace('\r', "");
+
+		if text.is_empty() {
+			return false;
+		}
+		if self.frozen_text_recent_input.as_ref().is_some_and(|recent| {
+			recent.source != source
+				&& recent.text == text
+				&& generation == recent.generation.saturating_add(1)
+		}) {
+			self.frozen_text_recent_input = None;
+
+			return false;
+		}
+
+		let changed = self.append_text_to_frozen_edit(text.as_str());
+
+		if changed {
+			self.frozen_text_recent_input =
+				Some(FrozenTextRecentInput { source, text, generation });
+		}
+
+		changed
+	}
+
+	fn append_text_to_frozen_edit(&mut self, text: &str) -> bool {
+		let Some(edit_state) = self.frozen_text_edit.as_mut() else {
+			return false;
+		};
+		let text = text.replace('\r', "");
+
+		if text.is_empty() {
+			return false;
+		}
+
+		edit_state.text.push_str(&text);
+
+		edit_state.ime_preedit = None;
+		edit_state.ime_preedit_cursor_char_range = None;
+		self.frozen_text_recent_input = None;
+
+		true
+	}
+
+	fn backspace_frozen_text_edit(&mut self) -> bool {
+		let Some(edit_state) = self.frozen_text_edit.as_mut() else {
+			return false;
+		};
+		let had_preedit = edit_state.has_ime_preedit();
+
+		edit_state.ime_preedit = None;
+		edit_state.ime_preedit_cursor_char_range = None;
+
+		let changed = had_preedit || edit_state.text.pop().is_some();
+
+		if changed {
+			self.frozen_text_recent_input = None;
+		}
+
+		changed
+	}
+
+	fn undo_frozen_text_annotation(&mut self) -> bool {
+		let Some(annotation) = self.frozen_text_annotations.pop() else {
+			return false;
+		};
+
+		self.frozen_text_redo_annotations.push(annotation);
+
+		self.toolbar_state.needs_redraw = true;
+
+		self.request_redraw_toolbar_window();
+
+		if let Some(monitor) = self.state.monitor {
+			self.request_redraw_for_monitor(monitor);
+		}
+
+		true
+	}
+
+	fn redo_frozen_text_annotation(&mut self) -> bool {
+		let Some(annotation) = self.frozen_text_redo_annotations.pop() else {
+			return false;
+		};
+
+		self.frozen_text_annotations.push(annotation);
+
+		self.toolbar_state.needs_redraw = true;
+
+		self.request_redraw_toolbar_window();
+
+		if let Some(monitor) = self.state.monitor {
+			self.request_redraw_for_monitor(monitor);
+		}
+
+		true
+	}
+
+	fn set_frozen_text_ime_preedit(
+		&mut self,
+		preedit: Option<String>,
+		cursor_range: Option<(usize, usize)>,
+	) -> bool {
+		let Some(edit_state) = self.frozen_text_edit.as_mut() else {
+			return false;
+		};
+		let normalized = preedit.filter(|text| !text.is_empty());
+		let normalized_cursor_range = normalized.as_deref().and_then(|text| {
+			FrozenTextEditState::normalize_ime_preedit_cursor_char_range(text, cursor_range)
+		});
+
+		if edit_state.ime_preedit == normalized
+			&& edit_state.ime_preedit_cursor_char_range == normalized_cursor_range
+		{
+			return false;
+		}
+
+		edit_state.ime_preedit = normalized;
+		edit_state.ime_preedit_cursor_char_range = normalized_cursor_range;
+
+		true
+	}
+
+	fn begin_frozen_text_edit_at(&mut self, monitor: MonitorRect, cursor: GlobalPoint) -> bool {
+		if self.state.monitor != Some(monitor) {
+			return false;
+		}
+
+		let Some((local_x, local_y)) = monitor.local_u32(cursor) else {
+			return false;
+		};
+		let Some(capture_rect) = self.state.frozen_capture_rect else {
+			return false;
+		};
+
+		if !capture_rect.contains((local_x, local_y)) {
+			return false;
+		}
+
+		let _ = self.finish_frozen_text_editing(true);
+
+		self.frozen_text_edit =
+			Some(FrozenTextEditState::new(Pos2::new(local_x as f32, local_y as f32)));
+		self.frozen_text_recent_input = None;
+
+		self.sync_text_input_ime_state();
+		self.sync_frozen_text_ime_cursor_area(monitor);
+		#[cfg(target_os = "macos")]
+		self.focus_frozen_text_input_window(Some(monitor));
+
+		true
+	}
+
+	fn frozen_text_edit_hit_rect_for_monitor(&self, monitor: MonitorRect) -> Option<Rect> {
+		if self.state.monitor != Some(monitor) {
+			return None;
+		}
+
+		let edit_state = self.frozen_text_edit.as_ref()?;
+		let visible_text = edit_state.visible_text();
+
+		Some(WindowRenderer::frozen_text_edit_interaction_rect(
+			edit_state.anchor,
+			visible_text.as_str(),
+			&FontId::proportional(self.toolbar_state.text_style.font_size_points),
+		))
+	}
+
+	fn begin_frozen_text_edit_drag_at(
+		&mut self,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+	) -> bool {
+		let Some((local_x, local_y)) = monitor.local_u32(cursor) else {
+			return false;
+		};
+		let Some(hit_rect) = self.frozen_text_edit_hit_rect_for_monitor(monitor) else {
+			return false;
+		};
+		let pointer = Pos2::new(local_x as f32, local_y as f32);
+
+		if !hit_rect.contains(pointer) {
+			return false;
+		}
+
+		let Some(edit_state) = self.frozen_text_edit.as_mut() else {
+			return false;
+		};
+
+		edit_state.dragging = true;
+		edit_state.drag_offset = pointer - edit_state.anchor;
+
+		true
+	}
+
+	fn stop_frozen_text_edit_drag(&mut self) -> bool {
+		let Some(edit_state) = self.frozen_text_edit.as_mut() else {
+			return false;
+		};
+		let was_dragging = edit_state.dragging;
+
+		edit_state.dragging = false;
+		edit_state.drag_offset = Vec2::ZERO;
+
+		was_dragging
+	}
+
+	fn update_frozen_text_edit_drag_anchor(&mut self, global: GlobalPoint) -> bool {
+		let Some(monitor) = self.state.monitor else {
+			let _ = self.stop_frozen_text_edit_drag();
+
+			return false;
+		};
+		let Some(capture_rect) = self.state.frozen_capture_rect else {
+			let _ = self.stop_frozen_text_edit_drag();
+
+			return false;
+		};
+		let Some(edit_state) = self.frozen_text_edit.as_mut() else {
+			return false;
+		};
+
+		if !edit_state.dragging {
+			return false;
+		}
+
+		let (cursor_x, cursor_y) = Self::clamped_local_point_in_monitor(monitor, global);
+		let max_x = capture_rect.x.saturating_add(capture_rect.width.saturating_sub(1)) as f32;
+		let max_y = capture_rect.y.saturating_add(capture_rect.height.saturating_sub(1)) as f32;
+		let changed = {
+			let next_anchor = Pos2::new(
+				(cursor_x as f32 - edit_state.drag_offset.x).clamp(capture_rect.x as f32, max_x),
+				(cursor_y as f32 - edit_state.drag_offset.y).clamp(capture_rect.y as f32, max_y),
+			);
+
+			if next_anchor == edit_state.anchor {
+				false
+			} else {
+				edit_state.anchor = next_anchor;
+
+				true
+			}
+		};
+
+		if !changed {
+			return false;
+		}
+
+		self.sync_frozen_text_ime_cursor_area(monitor);
+		self.request_redraw_for_monitor(monitor);
+
+		true
+	}
+
+	fn sync_frozen_text_edit_for_selected_tool(&mut self) -> bool {
+		if self.frozen_text_tool_active() {
+			self.sync_text_input_ime_state();
+
+			return false;
+		}
+
+		self.finish_frozen_text_editing(true)
+	}
+
+	fn render_frozen_text_annotation_into_image(
+		image: &mut RgbaImage,
+		export_transform: FrozenExportTransform,
+		annotation: &FrozenTextAnnotation,
+	) {
+		let raster_annotation = RasterTextAnnotation {
+			anchor_px: export_transform.point_to_pixels(annotation.anchor),
+			font_size_px: annotation.style.font_size_points * export_transform.scalar_scale(),
+			fill_rgba: annotation.style.color.export_rgba(),
+			text: annotation.text.as_str(),
+		};
+
+		text_rendering::render_text_annotations(image, &[raster_annotation]);
 	}
 
 	fn handle_captured_freeze_response(
@@ -4395,6 +4892,7 @@ impl OverlaySession {
 					self.handle_cursor_moved(window_id, *position)
 				}
 			},
+			WindowEvent::Ime(event) => self.handle_ime_event(window_id, event),
 			WindowEvent::MouseWheel { delta, .. } if toolbar_window_id => OverlayControl::Continue,
 			WindowEvent::MouseWheel { delta, .. } => {
 				self.handle_scroll_mouse_wheel(window_id, delta)
@@ -4469,6 +4967,8 @@ impl OverlaySession {
 			self.stop_frozen_selection_drag();
 			self.stop_frozen_mosaic_drag();
 
+			let _ = self.stop_frozen_text_edit_drag();
+
 			self.toolbar_state.dragging = false;
 			self.toolbar_state.drag_offset = Vec2::ZERO;
 			self.toolbar_state.drag_anchor = None;
@@ -4481,6 +4981,10 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		{
 			self.request_redraw_toolbar_window();
+
+			if !toolbar_left_button_down && self.frozen_text_edit.is_some() {
+				self.focus_frozen_text_input_window(self.state.monitor);
+			}
 		}
 
 		OverlayControl::Continue
@@ -5024,12 +5528,14 @@ impl OverlaySession {
 				let frozen_rect_changed = self.update_frozen_selection_drag_rect(global);
 
 				self.update_frozen_mosaic_drag_rect(global);
+				self.update_frozen_text_edit_drag_anchor(global);
 
 				(frozen_rect_changed, Some(frozen_drag_update_started_at.elapsed()))
 			} else {
 				let frozen_rect_changed = self.update_frozen_selection_drag_rect(global);
 
 				self.update_frozen_mosaic_drag_rect(global);
+				self.update_frozen_text_edit_drag_anchor(global);
 
 				(frozen_rect_changed, None)
 			};
@@ -5366,6 +5872,39 @@ impl OverlaySession {
 	) -> OverlayControl {
 		self.reset_toolbar_pointer_state();
 
+		if self.frozen_text_tool_active() {
+			match state {
+				ElementState::Pressed => {
+					let cursor = self.current_device_cursor();
+					let started_drag = self.begin_frozen_text_edit_drag_at(monitor, cursor);
+
+					if !started_drag {
+						let started = self.begin_frozen_text_edit_at(monitor, cursor);
+
+						if !started {
+							let _ = self.finish_frozen_text_editing(true);
+						}
+					}
+
+					self.sync_overlay_cursor_icons();
+				},
+				ElementState::Released => {
+					let stopped_drag = self.stop_frozen_text_edit_drag();
+
+					if stopped_drag {
+						self.sync_overlay_cursor_icons();
+					}
+				},
+			}
+
+			self.request_redraw_for_monitor(monitor);
+
+			return OverlayControl::Continue;
+		}
+		if self.frozen_text_edit.is_some() {
+			let _ = self.finish_frozen_text_editing(true);
+		}
+
 		match state {
 			ElementState::Pressed => {
 				let cursor = self.current_frozen_interaction_cursor();
@@ -5390,6 +5929,45 @@ impl OverlaySession {
 		self.request_redraw_for_monitor(monitor);
 
 		OverlayControl::Continue
+	}
+
+	fn handle_ime_event(&mut self, window_id: WindowId, event: &Ime) -> OverlayControl {
+		if !matches!(self.state.mode, OverlayMode::Frozen) || self.frozen_text_edit.is_none() {
+			return OverlayControl::Continue;
+		}
+
+		let Some(monitor) =
+			self.windows.get(&window_id).map(|window| window.monitor).or(self.state.monitor)
+		else {
+			return OverlayControl::Continue;
+		};
+		let changed = self.apply_frozen_text_ime_event(event);
+
+		if changed {
+			self.sync_frozen_text_ime_cursor_area(monitor);
+			self.request_redraw_for_monitor(monitor);
+		}
+
+		OverlayControl::Continue
+	}
+
+	fn apply_frozen_text_ime_event(&mut self, event: &Ime) -> bool {
+		match event {
+			Ime::Commit(text) => {
+				let generation = self.note_frozen_text_input_event();
+
+				self.append_text_to_frozen_edit_for_input_event(
+					FrozenTextInputSource::Ime,
+					generation,
+					text,
+				)
+			},
+			Ime::Preedit(text, cursor_range) => {
+				self.set_frozen_text_ime_preedit(Some(text.clone()), *cursor_range)
+			},
+			Ime::Disabled => self.set_frozen_text_ime_preedit(None, None),
+			Ime::Enabled => false,
+		}
 	}
 
 	fn handle_scroll_mouse_wheel(
@@ -5972,7 +6550,80 @@ impl OverlaySession {
 		})
 	}
 
+	fn handle_frozen_text_key_event(&mut self, event: &KeyEvent) -> Option<OverlayControl> {
+		self.frozen_text_edit.as_ref()?;
+
+		if event.state != ElementState::Pressed {
+			return Some(OverlayControl::Continue);
+		}
+
+		let changed =
+			self.handle_frozen_text_pressed_key(&event.logical_key, event.text.as_deref());
+
+		if changed {
+			self.sync_text_input_ime_state();
+
+			if let Some(monitor) = self.state.monitor {
+				self.sync_frozen_text_ime_cursor_area(monitor);
+				self.request_redraw_for_monitor(monitor);
+			}
+		}
+
+		Some(OverlayControl::Continue)
+	}
+
+	fn handle_frozen_text_pressed_key(&mut self, logical_key: &Key, text: Option<&str>) -> bool {
+		match logical_key {
+			Key::Named(NamedKey::Escape) => {
+				let _ = self.finish_frozen_text_editing(false);
+
+				true
+			},
+			Key::Named(NamedKey::Enter) => {
+				if self.frozen_text_edit.as_ref().is_some_and(FrozenTextEditState::has_ime_preedit)
+				{
+					return false;
+				}
+				if self.keyboard_modifiers.shift_key() {
+					let generation = self.note_frozen_text_input_event();
+
+					self.append_text_to_frozen_edit_for_input_event(
+						FrozenTextInputSource::Key,
+						generation,
+						"\n",
+					)
+				} else {
+					let _ = self.finish_frozen_text_editing(true);
+
+					true
+				}
+			},
+			Key::Named(NamedKey::Backspace) => self.backspace_frozen_text_edit(),
+			_ if !self.keyboard_modifiers.control_key()
+				&& !self.keyboard_modifiers.super_key()
+				&& !self.keyboard_modifiers.alt_key() =>
+			{
+				let Some(text) = text else {
+					return false;
+				};
+				let generation = self.note_frozen_text_input_event();
+
+				self.append_text_to_frozen_edit_for_input_event(
+					FrozenTextInputSource::Key,
+					generation,
+					text,
+				)
+			},
+			_ => false,
+		}
+	}
+
 	fn handle_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
+		if matches!(self.state.mode, OverlayMode::Frozen)
+			&& let Some(control) = self.handle_frozen_text_key_event(event)
+		{
+			return control;
+		}
 		if matches!(event.logical_key, Key::Named(NamedKey::Tab)) {
 			let pressed = event.state == ElementState::Pressed;
 
@@ -6117,9 +6768,22 @@ impl OverlaySession {
 				.map(|session| session.export_image().clone());
 		}
 
-		self.cropped_frozen_capture_image()
-			.or_else(|| self.state.frozen_image.clone())
-			.map(|export_image| self.annotated_frozen_export_image(export_image))
+		let mut export_image =
+			self.cropped_frozen_capture_image().or_else(|| self.state.frozen_image.clone())?;
+
+		self.render_frozen_committed_overlays_into_image(&mut export_image);
+
+		Some(export_image)
+	}
+
+	#[cfg(test)]
+	fn visible_frozen_text_annotations(&self) -> &[FrozenTextAnnotation] {
+		if self.scroll_capture.active { &[] } else { &self.frozen_text_annotations }
+	}
+
+	#[cfg(test)]
+	fn visible_frozen_text_edit(&self) -> Option<&FrozenTextEditState> {
+		if self.scroll_capture.active { None } else { self.frozen_text_edit.as_ref() }
 	}
 
 	#[cfg(target_os = "macos")]
@@ -6823,8 +7487,58 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn frozen_text_input_overlay_window(&self, monitor: Option<MonitorRect>) -> Option<&Window> {
+		monitor
+			.and_then(|target| self.windows.values().find(|window| window.monitor == target))
+			.or_else(|| self.windows.values().next())
+			.map(|overlay_window| overlay_window.window.as_ref())
+	}
+
+	#[cfg(target_os = "macos")]
+	fn focus_frozen_text_input_window(&self, monitor: Option<MonitorRect>) {
+		macos_activate_app();
+
+		let Some(target_window) = self.frozen_text_input_overlay_window(monitor) else {
+			tracing::info!(
+				op = "overlay.frozen_text_focus_requested",
+				target = "missing_window",
+				monitor_id = ?monitor.map(|target| target.id),
+				"Requested frozen text input focus, but no overlay window was available."
+			);
+
+			return;
+		};
+
+		tracing::info!(
+			op = "overlay.frozen_text_focus_requested",
+			target = "overlay_window",
+			monitor_id = ?monitor.map(|target| target.id),
+			"Requested frozen text input focus."
+		);
+
+		macos_make_window_key(target_window);
+	}
+
+	#[cfg(target_os = "macos")]
 	fn focus_frozen_keyboard_window(&self) {
 		macos_activate_app();
+
+		if self.frozen_text_edit.is_some()
+			&& let Some(target_window) = self.frozen_text_input_overlay_window(self.state.monitor)
+		{
+			tracing::info!(
+				op = "scroll_capture.frozen_focus_requested",
+				target = "overlay_window",
+				state_mode = ?self.state.mode,
+				toolbar_window_visible = self.toolbar_window_visible,
+				monitor_id = ?self.state.monitor.map(|monitor| monitor.id),
+				"Requested frozen keyboard focus for text editing."
+			);
+
+			macos_make_window_key(target_window);
+
+			return;
+		}
 
 		let target_window = if let Some(toolbar_window) = self.toolbar_window.as_ref() {
 			Some(toolbar_window.window.as_ref())
@@ -6992,24 +7706,7 @@ impl OverlaySession {
 		let toolbar_input =
 			if draw_toolbar { self.toolbar_pointer_state(overlay_monitor, None) } else { None };
 
-		if matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.state.monitor == Some(overlay_monitor)
-		{
-			tracing::trace!(
-				window_id = ?window_id,
-				monitor_id = overlay_monitor.id,
-				frozen_generation = self.state.frozen_generation,
-				final_capture_ready = self.authoritative_frozen_capture_ready,
-				frozen_image_ready = self.state.frozen_image.is_some(),
-				pending_freeze_capture = self.pending_freeze_capture.map(|m| m.id),
-				draw_toolbar,
-				toolbar_visible = self.toolbar_state.visible,
-				toolbar_floating_position = ?self.toolbar_state.floating_position,
-				toolbar_stable_frames = self.toolbar_state.layout_stable_frames,
-				toolbar_last_screen_size_points = ?self.toolbar_state.layout_last_screen_size_points,
-				"Overlay redraw (Frozen)."
-			);
-		}
+		self.log_frozen_overlay_redraw_trace(window_id, overlay_monitor, draw_toolbar);
 
 		let overlay_screen_rect = self.overlay_window_screen_rect(window_id, overlay_monitor);
 		let toolbar_visible_for_badge = if cfg!(target_os = "macos") {
@@ -7041,6 +7738,12 @@ impl OverlaySession {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
+		let scroll_capture_active = self.scroll_capture.active;
+		let frozen_text_style = self.toolbar_state.text_style;
+		let visible_frozen_text_annotations: &[FrozenTextAnnotation] =
+			if scroll_capture_active { &[] } else { &self.frozen_text_annotations };
+		let visible_frozen_text_edit =
+			if scroll_capture_active { None } else { self.frozen_text_edit.as_ref() };
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
 		{
@@ -7067,13 +7770,17 @@ impl OverlaySession {
 				self.config.theme_mode,
 				self.config.selection_flow_enabled,
 				self.config.selection_flow_stroke_width_px,
-				!self.scroll_capture.active,
-				self.scroll_capture.active,
+				!scroll_capture_active,
+				scroll_capture_active,
 				frozen_selection_resize_handles_enabled,
 				self.frozen_capture_source,
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				frozen_toolbar_reserved_rect,
-				(!self.scroll_capture.active).then_some(&self.frozen_brush),
+				&self.frozen_edit_undo_stack,
+				(!scroll_capture_active).then_some(&self.frozen_brush),
+				visible_frozen_text_annotations,
+				visible_frozen_text_edit,
+				frozen_text_style,
 				toolbar_state,
 				toolbar_input,
 			) {
@@ -7085,6 +7792,34 @@ impl OverlaySession {
 		self.note_startup_overlay_frame_presented();
 
 		self.handle_capture_and_toolbar_redraw_post(overlay_monitor, draw_toolbar)
+	}
+
+	fn log_frozen_overlay_redraw_trace(
+		&self,
+		window_id: WindowId,
+		overlay_monitor: MonitorRect,
+		draw_toolbar: bool,
+	) {
+		if !matches!(self.state.mode, OverlayMode::Frozen)
+			|| self.state.monitor != Some(overlay_monitor)
+		{
+			return;
+		}
+
+		tracing::trace!(
+			window_id = ?window_id,
+			monitor_id = overlay_monitor.id,
+			frozen_generation = self.state.frozen_generation,
+			final_capture_ready = self.authoritative_frozen_capture_ready,
+			frozen_image_ready = self.state.frozen_image.is_some(),
+			pending_freeze_capture = self.pending_freeze_capture.map(|m| m.id),
+			draw_toolbar,
+			toolbar_visible = self.toolbar_state.visible,
+			toolbar_floating_position = ?self.toolbar_state.floating_position,
+			toolbar_stable_frames = self.toolbar_state.layout_stable_frames,
+			toolbar_last_screen_size_points = ?self.toolbar_state.layout_last_screen_size_points,
+			"Overlay redraw (Frozen)."
+		);
 	}
 
 	fn overlay_window_screen_rect(&self, window_id: WindowId, monitor: MonitorRect) -> Rect {
@@ -7197,6 +7932,9 @@ impl OverlaySession {
 				}
 			}
 		}
+		if draw_toolbar && self.sync_frozen_text_edit_for_selected_tool() {
+			self.request_redraw_for_monitor(overlay_monitor);
+		}
 		if draw_toolbar && let Some(action) = self.toolbar_state.pending_action.take() {
 			let control = self.handle_toolbar_action(action);
 
@@ -7207,6 +7945,7 @@ impl OverlaySession {
 		if draw_toolbar && self.toolbar_state.needs_redraw {
 			self.toolbar_state.needs_redraw = false;
 
+			self.refresh_frozen_text_ime_cursor_area_for_text_style_change(overlay_monitor);
 			self.request_redraw_for_monitor(overlay_monitor);
 		}
 
@@ -7214,6 +7953,10 @@ impl OverlaySession {
 	}
 
 	fn handle_toolbar_action(&mut self, action: FrozenToolbarTool) -> OverlayControl {
+		if self.frozen_text_edit.is_some() {
+			let _ = self.finish_frozen_text_editing(true);
+		}
+
 		match action {
 			FrozenToolbarTool::Undo => {
 				let _ = self.perform_frozen_undo();
@@ -7397,8 +8140,17 @@ impl OverlaySession {
 		self.toolbar_left_button_went_up = false;
 		self.toolbar_pointer_local = None;
 
+		self.frozen_text_annotations.clear();
+		self.frozen_text_redo_annotations.clear();
+
+		self.frozen_text_edit = None;
+		self.frozen_text_recent_input = None;
+
+		self.sync_text_input_ime_state();
 		self.stop_frozen_selection_drag();
 		self.stop_frozen_mosaic_drag();
+		self.frozen_edit_undo_stack.clear();
+		self.frozen_edit_redo_stack.clear();
 		self.frozen_mosaic_undo_stack.clear();
 		self.frozen_mosaic_redo_stack.clear();
 		self.clear_pending_output_actions();
@@ -7462,6 +8214,67 @@ struct FrozenImagePatch {
 struct FrozenMosaicEdit {
 	preview_patch: FrozenImagePatch,
 	window_patch: Option<FrozenImagePatch>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrozenTextInputSource {
+	Key,
+	Ime,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct FrozenTextRecentInput {
+	source: FrozenTextInputSource,
+	text: String,
+	generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrozenEditKind {
+	BrushStroke,
+	MosaicEdit,
+	TextAnnotation,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FrozenCommittedOverlay<'a> {
+	Brush(&'a FrozenBrushStroke),
+	Text(&'a FrozenTextAnnotation),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FrozenExportTransform {
+	capture_rect: RectPoints,
+	scale_x: f32,
+	scale_y: f32,
+}
+impl FrozenExportTransform {
+	fn new(capture_rect: RectPoints, export_width: u32, export_height: u32) -> Option<Self> {
+		if capture_rect.width == 0
+			|| capture_rect.height == 0
+			|| export_width == 0
+			|| export_height == 0
+		{
+			return None;
+		}
+
+		Some(Self {
+			capture_rect,
+			scale_x: export_width as f32 / capture_rect.width as f32,
+			scale_y: export_height as f32 / capture_rect.height as f32,
+		})
+	}
+
+	fn point_to_pixels(self, point: Pos2) -> Pos2 {
+		Pos2::new(
+			(point.x - self.capture_rect.x as f32) * self.scale_x,
+			(point.y - self.capture_rect.y as f32) * self.scale_y,
+		)
+	}
+
+	fn scalar_scale(self) -> f32 {
+		(self.scale_x + self.scale_y) * 0.5
+	}
 }
 
 #[derive(Debug)]
@@ -7536,6 +8349,39 @@ unsafe impl Encode for MacOSOverlayPoint {
 	fn encode() -> Encoding {
 		unsafe { Encoding::from_str("{CGPoint=dd}") }
 	}
+}
+
+fn frozen_toolbar_window_startup_size_points() -> Vec2 {
+	[
+		FrozenToolbarState::default(),
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Text,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState { auto_center_available: true, ..FrozenToolbarState::default() },
+		FrozenToolbarState { scroll_capture_available: true, ..FrozenToolbarState::default() },
+		FrozenToolbarState {
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Text,
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			scroll_capture_active: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+	]
+	.into_iter()
+	.map(|toolbar_state| WindowRenderer::frozen_toolbar_size(&toolbar_state))
+	.fold(Vec2::new(0.0, TOOLBAR_EXPANDED_HEIGHT_PX), |max_size, size| {
+		Vec2::new(max_size.x.max(size.x), max_size.y.max(size.y))
+	})
 }
 
 #[cfg(target_os = "macos")]
