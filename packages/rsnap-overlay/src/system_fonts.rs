@@ -13,7 +13,6 @@ const NORMAL_WEIGHT_MIN: u16 = 300;
 const NORMAL_WEIGHT_MAX: u16 = 700;
 const MAX_SYSTEM_TEXT_FALLBACKS: usize = 16;
 const MAX_SYSTEM_TEXT_COVERAGE_PROBES: usize = 64;
-const MAX_SYSTEM_TEXT_COVERAGE_MISS_STREAK: usize = 32;
 
 #[derive(Debug)]
 pub(crate) struct SystemTextFont {
@@ -139,7 +138,6 @@ fn select_system_text_fonts(
 	let mut selected_families = HashSet::new();
 	let mut covered_codepoints = UnicodeCoverage::new();
 	let mut coverage_probes = 0_usize;
-	let mut consecutive_coverage_misses = 0_usize;
 
 	if let Some(face_id) = generic_sans_face_id
 		&& let Some(candidate) = candidates.iter().find(|candidate| candidate.face_id == face_id)
@@ -154,14 +152,11 @@ fn select_system_text_fonts(
 		);
 
 		coverage_probes = next_system_text_probe_count(coverage_probes, probe_result);
-		consecutive_coverage_misses =
-			next_system_text_probe_miss_streak(consecutive_coverage_misses, probe_result);
 	}
 
 	for candidate in candidates {
 		if selected.len() >= MAX_SYSTEM_TEXT_FALLBACKS
 			|| system_text_probe_budget_exhausted(coverage_probes)
-			|| system_text_probe_miss_streak_exhausted(consecutive_coverage_misses)
 		{
 			break;
 		}
@@ -176,8 +171,6 @@ fn select_system_text_fonts(
 		);
 
 		coverage_probes = next_system_text_probe_count(coverage_probes, probe_result);
-		consecutive_coverage_misses =
-			next_system_text_probe_miss_streak(consecutive_coverage_misses, probe_result);
 	}
 
 	selected
@@ -197,23 +190,6 @@ fn next_system_text_probe_count(
 
 fn system_text_probe_budget_exhausted(coverage_probes: usize) -> bool {
 	coverage_probes >= MAX_SYSTEM_TEXT_COVERAGE_PROBES
-}
-
-fn next_system_text_probe_miss_streak(
-	consecutive_coverage_misses: usize,
-	probe_result: SystemTextFontProbeResult,
-) -> usize {
-	match probe_result {
-		SystemTextFontProbeResult::Selected => 0,
-		SystemTextFontProbeResult::SkippedNoCoverage => {
-			consecutive_coverage_misses.saturating_add(1)
-		},
-		SystemTextFontProbeResult::Skipped => consecutive_coverage_misses,
-	}
-}
-
-fn system_text_probe_miss_streak_exhausted(consecutive_coverage_misses: usize) -> bool {
-	consecutive_coverage_misses >= MAX_SYSTEM_TEXT_COVERAGE_MISS_STREAK
 }
 
 fn try_select_system_text_font(
@@ -469,14 +445,6 @@ mod tests {
 	}
 
 	#[test]
-	fn system_text_probe_miss_streak_resets_after_selected_font() {
-		let misses =
-			super::next_system_text_probe_miss_streak(7, SystemTextFontProbeResult::Selected);
-
-		assert_eq!(misses, 0);
-	}
-
-	#[test]
 	fn system_text_probe_count_advances_when_coverage_was_loaded() {
 		let probe_count =
 			super::next_system_text_probe_count(3, SystemTextFontProbeResult::Selected);
@@ -494,15 +462,10 @@ mod tests {
 	}
 
 	#[test]
-	fn system_text_probe_miss_streak_advances_on_no_coverage_fonts() {
-		let misses = super::next_system_text_probe_miss_streak(
-			3,
-			SystemTextFontProbeResult::SkippedNoCoverage,
-		);
+	fn system_text_probe_count_advances_on_no_coverage_fonts() {
+		let probe_count =
+			super::next_system_text_probe_count(3, SystemTextFontProbeResult::SkippedNoCoverage);
 
-		assert_eq!(misses, 4);
-		assert!(super::system_text_probe_miss_streak_exhausted(
-			super::MAX_SYSTEM_TEXT_COVERAGE_MISS_STREAK
-		));
+		assert_eq!(probe_count, 4);
 	}
 }
