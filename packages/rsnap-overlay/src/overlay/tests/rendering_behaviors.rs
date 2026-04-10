@@ -2498,9 +2498,19 @@ fn toolbar_window_startup_size_covers_every_tool_permutation() {
 	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
 	let toolbar_states = [
 		FrozenToolbarState::default(),
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Text,
+			..FrozenToolbarState::default()
+		},
 		FrozenToolbarState { auto_center_available: true, ..FrozenToolbarState::default() },
 		FrozenToolbarState { scroll_capture_available: true, ..FrozenToolbarState::default() },
 		FrozenToolbarState {
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Text,
 			auto_center_available: true,
 			scroll_capture_available: true,
 			..FrozenToolbarState::default()
