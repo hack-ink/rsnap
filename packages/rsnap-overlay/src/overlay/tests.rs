@@ -1014,6 +1014,28 @@ fn begin_frozen_text_edit_at_starts_text_input_inside_capture_rect() {
 }
 
 #[test]
+fn begin_frozen_text_edit_at_ignores_non_authoritative_monitor() {
+	let monitor = test_monitor();
+	let other_monitor = MonitorRect {
+		id: 2,
+		origin: GlobalPoint::new(1_000, 0),
+		width: monitor.width,
+		height: monitor.height,
+		scale_factor_x1000: monitor.scale_factor_x1000,
+	};
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(!session.begin_frozen_text_edit_at(other_monitor, GlobalPoint::new(1_140, 160)));
+	assert!(session.frozen_text_edit.is_none());
+}
+
+#[test]
 fn default_frozen_text_style_uses_16_point_font() {
 	let session = OverlaySession::new();
 
