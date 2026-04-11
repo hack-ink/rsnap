@@ -332,6 +332,13 @@ impl OverlaySession {
 
 		self.complete_startup_aux_window_creation(created_aux_windows);
 
+		if created_aux_windows
+			&& let Some(monitor) = self.scroll_capture.monitor
+			&& self.rebuild_active_scroll_capture_live_stream()
+			&& let Some(live_stream) = self.scroll_capture.live_stream.as_ref()
+		{
+			live_stream.prime_monitor_nonblocking(monitor);
+		}
 		if self.loupe_window_needed() {
 			self.set_alt_loupe_window_visible(self.active_cursor_monitor(), true);
 		}

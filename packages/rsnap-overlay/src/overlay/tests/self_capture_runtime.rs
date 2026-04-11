@@ -2,6 +2,8 @@
 use std::ptr;
 
 #[cfg(target_os = "macos")]
+use crate::overlay::RectPoints;
+#[cfg(target_os = "macos")]
 #[allow(unused_imports)]
 use crate::overlay::tests::WorkerRequestSendError;
 #[cfg(target_os = "macos")]
@@ -159,6 +161,47 @@ fn refresh_startup_live_stream_after_window_creation_rebuilds_and_reprimes_strea
 	);
 	assert_eq!(
 		session.live_sample_stream.as_ref().unwrap().debug_last_request_kind(),
+		Some("prime_monitor_nonblocking")
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn rebuild_active_scroll_capture_live_stream_rebuilds_and_reprimes_after_aux_window_creation() {
+	let monitor = tests::test_monitor();
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.scroll_capture.live_stream.as_ref().unwrap().prime_monitor_nonblocking(monitor);
+
+	session.scroll_capture.monitor = Some(monitor);
+	session.scroll_capture.capture_rect_points = Some(RectPoints::new(1, 2, 30, 40));
+	session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(2, 4, 60, 80));
+
+	session.scroll_capture.live_stream_backlog.push_back(ScrollCaptureLiveFrame {
+		frame_seq: 3,
+		captured_at: Instant::now(),
+		image: tests::test_frozen_image(),
+	});
+
+	session.scroll_capture.last_stream_frame_seq = 3;
+	session.scroll_capture.last_stream_event_at = Some(Instant::now());
+	session.scroll_capture.last_stream_poll_at = Some(Instant::now());
+
+	assert!(session.rebuild_active_scroll_capture_live_stream());
+
+	let rebuilt_scroll_live_stream = session.scroll_capture.live_stream.as_ref().unwrap();
+
+	assert_eq!(rebuilt_scroll_live_stream.debug_self_capture_exception_window_ids(), &[17]);
+	assert_eq!(rebuilt_scroll_live_stream.debug_last_request_kind(), None);
+	assert!(session.scroll_capture.live_stream_backlog.is_empty());
+	assert_eq!(session.scroll_capture.last_stream_frame_seq, 0);
+	assert!(session.scroll_capture.last_stream_event_at.is_none());
+	assert!(session.scroll_capture.last_stream_poll_at.is_none());
+
+	rebuilt_scroll_live_stream.prime_monitor_nonblocking(monitor);
+
+	assert_eq!(
+		session.scroll_capture.live_stream.as_ref().unwrap().debug_last_request_kind(),
 		Some("prime_monitor_nonblocking")
 	);
 }
