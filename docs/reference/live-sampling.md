@@ -10,8 +10,8 @@ freeze/export.
 
 Depends on: `docs/spec/capture-session.md`
 
-Covers: The stream-only sampling model, cache usage, fallback behavior, and the current support
-constraints.
+Covers: The stream-only sampling model, cache usage, fallback behavior, and the current live
+versus freeze/export capture split.
 
 Spec boundary: `docs/spec/capture-session.md`
 
@@ -100,15 +100,14 @@ Fallback behavior:
   - Desktop layer
 - This keeps behavior stable and avoids false window outlines.
 
-## Proposed future architecture direction
+## Current capture-plane split
 
-Keep capture split by quality profile:
+The current implementation already keeps capture responsibilities split by quality profile:
 
 - `Live` plane: stream-first, low-latency RGB/Loupe and live outline updates.
 - `Freeze/export` plane: higher-cost still capture for full screenshot quality.
 
-Linux/Windows details are tracked for future work and remain out of scope for this
-live-implementation milestone.
+Linux/Windows details remain out of scope for the current macOS-first contract.
 
 ## Known status
 
