@@ -11,8 +11,8 @@ default strategy.
 
 Depends on: `docs/spec/capture-session.md`
 
-Covers: The snapshot-based default strategy, the researched alternative, and the planned rule for
-current live mode.
+Covers: The snapshot-based default strategy, the documented alternative, and the current default
+rule for live mode.
 
 Spec boundary: `docs/spec/capture-session.md`
 
@@ -41,7 +41,7 @@ Implementation notes:
 - If a snapshot is missing, no outline is drawn until fresh geometry is available.
 - Excluded from the target set: menu bar, dock, and desktop-layer windows.
 
-## Strategy B (alternative, researched)
+## Strategy B (documented alternative)
 
 - Query the active window under point directly on each cursor event, for example through
   platform-specific APIs that report the topmost window at a point.
@@ -53,7 +53,7 @@ Observed trade-offs:
 - Can produce inconsistent results across platform boundaries and special windows.
 - Less aligned with a strict stream-first low-latency pipeline.
 
-## Planned rule
+## Current default rule
 
 Use Strategy A by default on macOS live mode. Evaluate Strategy B only if a later release needs
 explicit behavior changes.

@@ -81,9 +81,9 @@ cargo run -p rsnap
 ### HUD settings behavior
 
 - HUD controls are in Settings → Overlay:
-  - Opacity (`0..100`, default `75`)
-  - Blur (`0..100`, default `25`)
-  - Tint (`0..100`, default `0`)
+  - Opacity (`0..100`, default `50`)
+  - Blur (`0..100`, default `50`)
+  - Tint (`0..100`, default `50`)
   - Hue (`0..360`, system-blue default)
   - Toolbar placement (`bottom` / `top`, default `bottom`)
 - Tint is applied as hue-shift intensity (0 = no tint, 100 = full tint), while Hue sets
@@ -150,7 +150,7 @@ Recording / automation permissions.
 
 For `XY-185` style downward scroll-capture work, treat the verification order as:
 
-1. deterministic tests and `cargo make check`
+1. deterministic tests and `cargo make checks`
 2. `cargo make replay-scroll-capture`
 3. `cargo make analyze-scroll-capture-trace`
 4. one fresh release live touchpad run with a newly recorded trace
@@ -173,6 +173,24 @@ command selection and baseline comparison lives at
 `docs/runbook/performance-validation.md`.
 
 The capture-session contract lives at `docs/spec/capture-session.md`.
+
+## Workspace Layout
+
+The tracked workspace keeps one app-shell crate in `apps/rsnap/`, one overlay/runtime crate in
+`packages/rsnap-overlay/`, and shared docs/assets/scripts at the repository root.
+Generated or local-only directories such as `target/`, `.worktrees/`, and `.workspaces/` are not
+part of the tracked repository structure. For the authoritative layout and ownership map, read
+`docs/reference/workspace-layout.md`.
+
+## Documentation
+
+- Product and development overview: this `README.md`
+- Unified documentation router: `docs/index.md`
+- Normative specs: `docs/spec/index.md`
+- Procedural runbooks: `docs/runbook/index.md`
+- Current implementation references: `docs/reference/index.md`
+- Durable design rationale: `docs/decisions/index.md`
+- Documentation policy and placement rules: `docs/policy.md`
 
 ## Support Me
 
