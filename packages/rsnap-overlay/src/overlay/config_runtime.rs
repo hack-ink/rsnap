@@ -1,4 +1,6 @@
 use winit::window::Window;
+#[cfg(target_os = "macos")]
+use winit::window::WindowId;
 
 #[cfg(target_os = "macos")]
 use crate::backend;
@@ -253,6 +255,11 @@ impl OverlaySession {
 		);
 
 		let _ = self.macos_hud_window_config_cache.insert(window.id(), desired);
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn remove_macos_hud_window_config_cache_entry(&mut self, window_id: WindowId) {
+		let _ = self.macos_hud_window_config_cache.remove(&window_id);
 	}
 
 	fn handle_fake_hud_blur_toggle(&mut self, prev_fake_blur: bool, new_fake_blur: bool) {
