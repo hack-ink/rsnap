@@ -27,6 +27,7 @@ use std::env;
 use std::ffi::c_void;
 use std::mem;
 use std::panic;
+use std::process;
 use std::ptr;
 use std::slice;
 #[cfg(target_os = "macos")]
@@ -220,12 +221,6 @@ type ExternalScrollInputDrainReader =
 	Arc<dyn Fn(u64, Instant) -> Vec<ExternalScrollInputEvent> + Send + Sync>;
 
 #[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MacOSFrontmostApplication {
-	process_id: i32,
-}
-
-#[cfg(target_os = "macos")]
 type ScrollCaptureStartGuard = Arc<dyn Fn() -> color_eyre::eyre::Result<bool> + Send + Sync>;
 
 #[cfg(target_os = "macos")]
@@ -400,325 +395,6 @@ const SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE: Duration = Duration::from_mil
 const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
 #[cfg(target_os = "macos")]
 const KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE: u32 = 0;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-/// Selects how the live HUD should be positioned.
-pub enum HudAnchor {
-	/// Pin the HUD cluster to the current cursor position.
-	Cursor,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-/// Chooses the requested HUD and chrome theme.
-pub enum ThemeMode {
-	#[default]
-	/// Follow the host window or operating-system theme.
-	System,
-	/// Force the dark theme variant.
-	Dark,
-	/// Force the light theme variant.
-	Light,
-}
-
-#[derive(Debug)]
-/// Describes how an overlay session finished.
-pub enum OverlayExit {
-	/// The user cancelled the session without producing output.
-	Cancelled,
-	/// The session completed by copying PNG bytes to the caller.
-	PngBytes(Vec<u8>),
-	/// The session completed by copying recognized text to the clipboard.
-	TextCopied(usize),
-	/// The session completed by handing OCR work to a background task.
-	#[cfg(target_os = "macos")]
-	DeferredTextRecognition(DeferredTextRecognitionRequest),
-	/// The session completed by saving a file to disk.
-	Saved(PathBuf),
-	/// The session failed with a user-visible error message.
-	Error(String),
-}
-
-#[derive(Debug)]
-/// Signals whether the caller should keep driving the overlay event loop.
-pub enum OverlayControl {
-	/// Keep the session alive and continue processing events.
-	Continue,
-	/// Exit the session with the provided terminal outcome.
-	Exit(OverlayExit),
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-/// Controls how the Tab-triggered loupe interaction is activated.
-pub enum AltActivationMode {
-	#[default]
-	/// Enable the loupe only while Tab is held.
-	Hold,
-	/// Toggle the loupe on and off with Tab presses.
-	Toggle,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-/// Chooses where the frozen toolbar is anchored relative to the capture.
-pub enum ToolbarPlacement {
-	/// Render the toolbar above the frozen capture.
-	Top,
-	#[default]
-	/// Render the toolbar below the frozen capture.
-	Bottom,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-/// Selects how saved captures are named on disk.
-pub enum OutputNaming {
-	#[default]
-	/// Use the current Unix timestamp in milliseconds.
-	Timestamp,
-	/// Use a zero-padded incrementing sequence number.
-	Sequence,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-/// Controls how transparent window captures are composited before export.
-pub enum WindowCaptureAlphaMode {
-	#[default]
-	/// Preserve the observed screen background behind transparent pixels.
-	Background,
-	/// Composite transparency against a light matte color.
-	MatteLight,
-	/// Composite transparency against a dark matte color.
-	MatteDark,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OverlayEventLoopPhase {
-	Idle,
-	WindowEvent,
-	AboutToWait,
-	RedrawDispatch,
-	HudRedraw,
-	LoupeRedraw,
-	ToolbarRedraw,
-	OverlayRedraw,
-}
-impl OverlayEventLoopPhase {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Idle => "idle",
-			Self::WindowEvent => "window_event",
-			Self::AboutToWait => "about_to_wait",
-			Self::RedrawDispatch => "redraw_dispatch",
-			Self::HudRedraw => "hud_redraw",
-			Self::LoupeRedraw => "loupe_redraw",
-			Self::ToolbarRedraw => "toolbar_redraw",
-			Self::OverlayRedraw => "overlay_window_redraw",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HudTheme {
-	Dark,
-	Light,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FrozenToolbarTool {
-	Pointer,
-	Pen,
-	Text,
-	Mosaic,
-	Undo,
-	Redo,
-	AutoCenter,
-	Scroll,
-	#[cfg(target_os = "macos")]
-	Ocr,
-	Copy,
-	Save,
-}
-impl FrozenToolbarTool {
-	const fn label(self) -> &'static str {
-		match self {
-			Self::Pointer => "Pointer",
-			Self::Pen => "Pen",
-			Self::Text => "Text",
-			Self::Mosaic => "Mosaic",
-			Self::Undo => "Undo",
-			Self::Redo => "Redo",
-			Self::AutoCenter => "Auto-center (C)",
-			Self::Scroll => "Scroll Capture",
-			#[cfg(target_os = "macos")]
-			Self::Ocr => "Recognize Text",
-			Self::Copy => "Copy",
-			Self::Save => "Save",
-		}
-	}
-
-	const fn icon(self) -> &'static str {
-		match self {
-			Self::Pointer => regular::CURSOR,
-			Self::Pen => regular::PENCIL_SIMPLE,
-			Self::Text => regular::TEXT_T,
-			Self::Mosaic => regular::CHECKERBOARD,
-			Self::Undo => regular::ARROW_COUNTER_CLOCKWISE,
-			Self::Redo => regular::ARROW_CLOCKWISE,
-			Self::AutoCenter => regular::ARROWS_IN_CARDINAL,
-			Self::Scroll => regular::ARROWS_DOWN_UP,
-			#[cfg(target_os = "macos")]
-			Self::Ocr => regular::FILE_TEXT,
-			Self::Copy => regular::COPY,
-			Self::Save => regular::FLOPPY_DISK,
-		}
-	}
-
-	const fn is_mode_tool(self) -> bool {
-		matches!(self, Self::Pointer | Self::Pen | Self::Text | Self::Mosaic)
-	}
-
-	const fn requires_final_capture(self) -> bool {
-		match self {
-			Self::Pointer | Self::Pen | Self::Text | Self::AutoCenter => false,
-			Self::Mosaic | Self::Undo | Self::Redo => true,
-			Self::Scroll | Self::Copy | Self::Save => true,
-			#[cfg(target_os = "macos")]
-			Self::Ocr => true,
-		}
-	}
-
-	fn is_available(self, toolbar_state: &FrozenToolbarState) -> bool {
-		match self {
-			Self::Undo => toolbar_state.undo_available,
-			Self::Redo => toolbar_state.redo_available,
-			_ => true,
-		}
-	}
-
-	fn unavailable_label(self, toolbar_state: &FrozenToolbarState) -> &'static str {
-		if self.requires_final_capture() && !toolbar_state.final_capture_ready {
-			return "Preparing capture...";
-		}
-
-		match self {
-			Self::Undo => "Nothing to undo",
-			Self::Redo => "Nothing to redo",
-			_ => "Preparing capture...",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ScrollCaptureFrameSource {
-	Worker { request_id: u64 },
-	LiveStream { frame_seq: u64 },
-}
-impl ScrollCaptureFrameSource {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Worker { .. } => "worker",
-			Self::LiveStream { .. } => "live_stream",
-		}
-	}
-
-	const fn worker_request_id(self) -> Option<u64> {
-		match self {
-			Self::Worker { request_id } => Some(request_id),
-			Self::LiveStream { .. } => None,
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PngAction {
-	Copy,
-	Save,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum FrozenCaptureSource {
-	#[default]
-	None,
-	DragRegion,
-	Window,
-	FullscreenFallback,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FrozenSelectionCorner {
-	TopLeft,
-	TopRight,
-	BottomLeft,
-	BottomRight,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum FrozenSelectionInteractionKind {
-	#[default]
-	Move,
-	Resize(FrozenSelectionCorner),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DeviceCursorPointSource {
-	DevicePoints,
-	DevicePixelsFallback,
-	EventRecentFallback,
-}
-impl DeviceCursorPointSource {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::DevicePoints => "device_points",
-			Self::DevicePixelsFallback => "device_pixels_fallback",
-			Self::EventRecentFallback => "event_recent_fallback",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SelectionFlowStyle {
-	Band,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum WindowRendererPath {
-	Overlay,
-	LoupeTile,
-}
-impl WindowRendererPath {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Overlay => "overlay",
-			Self::LoupeTile => "loupe_tile",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SurfaceFrameSkipReason {
-	Timeout,
-	Occluded,
-}
-impl SurfaceFrameSkipReason {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Timeout => "timeout",
-			Self::Occluded => "occluded",
-		}
-	}
-
-	const fn should_request_redraw(self) -> bool {
-		matches!(self, Self::Timeout)
-	}
-}
-
-enum AcquiredSurfaceFrame {
-	Ready(SurfaceTexture),
-	Skipped(SurfaceFrameSkipReason),
-}
 
 #[cfg(target_os = "macos")]
 pub(super) struct MacOSOverlayCursorRectSupport {
@@ -1241,7 +917,6 @@ impl OverlaySession {
 
 			return;
 		};
-
 		let restored = macos_restore_frontmost_application(target);
 
 		tracing::info!(
@@ -1259,6 +934,8 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	/// Returns whether the host should keep the global Escape hotkey registered
+	/// for the current overlay mode.
 	#[must_use]
 	pub fn wants_global_cancel_hotkey(&self) -> bool {
 		matches!(self.state.mode, OverlayMode::Live)
@@ -6765,6 +6442,7 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	/// Handles a host-level Escape hotkey press when the overlay is active.
 	pub fn handle_global_escape_hotkey(&mut self) -> OverlayControl {
 		if self.frozen_text_edit.is_some() {
 			let changed = self.handle_frozen_text_pressed_key(&Key::Named(NamedKey::Escape), None);
@@ -8180,8 +7858,10 @@ impl OverlaySession {
 
 		self.log_exit_begin(&exit_metadata);
 		self.finalize_scroll_capture_for_exit();
+
 		#[cfg(target_os = "macos")]
 		let frontmost_application_before_start = self.frontmost_application_before_start.take();
+
 		self.reset_runtime_for_exit();
 		#[cfg(target_os = "macos")]
 		self.restore_frontmost_application_after_exit(frontmost_application_before_start);
@@ -8368,6 +8048,12 @@ impl Default for OverlaySession {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MacOSFrontmostApplication {
+	process_id: i32,
+}
+
+#[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct OverlayCursorRect {
 	rect: Rect,
@@ -8393,30 +8079,11 @@ struct FrozenMosaicEdit {
 	window_patch: Option<FrozenImagePatch>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FrozenTextInputSource {
-	Key,
-	Ime,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 struct FrozenTextRecentInput {
 	source: FrozenTextInputSource,
 	text: String,
 	generation: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FrozenEditKind {
-	BrushStroke,
-	MosaicEdit,
-	TextAnnotation,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum FrozenCommittedOverlay<'a> {
-	Brush(&'a FrozenBrushStroke),
-	Text(&'a FrozenTextAnnotation),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -8526,6 +8193,344 @@ unsafe impl Encode for MacOSOverlayPoint {
 	fn encode() -> Encoding {
 		unsafe { Encoding::from_str("{CGPoint=dd}") }
 	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Selects how the live HUD should be positioned.
+pub enum HudAnchor {
+	/// Pin the HUD cluster to the current cursor position.
+	Cursor,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+/// Chooses the requested HUD and chrome theme.
+pub enum ThemeMode {
+	#[default]
+	/// Follow the host window or operating-system theme.
+	System,
+	/// Force the dark theme variant.
+	Dark,
+	/// Force the light theme variant.
+	Light,
+}
+
+#[derive(Debug)]
+/// Describes how an overlay session finished.
+pub enum OverlayExit {
+	/// The user cancelled the session without producing output.
+	Cancelled,
+	/// The session completed by copying PNG bytes to the caller.
+	PngBytes(Vec<u8>),
+	/// The session completed by copying recognized text to the clipboard.
+	TextCopied(usize),
+	/// The session completed by handing OCR work to a background task.
+	#[cfg(target_os = "macos")]
+	DeferredTextRecognition(DeferredTextRecognitionRequest),
+	/// The session completed by saving a file to disk.
+	Saved(PathBuf),
+	/// The session failed with a user-visible error message.
+	Error(String),
+}
+
+#[derive(Debug)]
+/// Signals whether the caller should keep driving the overlay event loop.
+pub enum OverlayControl {
+	/// Keep the session alive and continue processing events.
+	Continue,
+	/// Exit the session with the provided terminal outcome.
+	Exit(OverlayExit),
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+/// Controls how the Tab-triggered loupe interaction is activated.
+pub enum AltActivationMode {
+	#[default]
+	/// Enable the loupe only while Tab is held.
+	Hold,
+	/// Toggle the loupe on and off with Tab presses.
+	Toggle,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+/// Chooses where the frozen toolbar is anchored relative to the capture.
+pub enum ToolbarPlacement {
+	/// Render the toolbar above the frozen capture.
+	Top,
+	#[default]
+	/// Render the toolbar below the frozen capture.
+	Bottom,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+/// Selects how saved captures are named on disk.
+pub enum OutputNaming {
+	#[default]
+	/// Use the current Unix timestamp in milliseconds.
+	Timestamp,
+	/// Use a zero-padded incrementing sequence number.
+	Sequence,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+/// Controls how transparent window captures are composited before export.
+pub enum WindowCaptureAlphaMode {
+	#[default]
+	/// Preserve the observed screen background behind transparent pixels.
+	Background,
+	/// Composite transparency against a light matte color.
+	MatteLight,
+	/// Composite transparency against a dark matte color.
+	MatteDark,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OverlayEventLoopPhase {
+	Idle,
+	WindowEvent,
+	AboutToWait,
+	RedrawDispatch,
+	HudRedraw,
+	LoupeRedraw,
+	ToolbarRedraw,
+	OverlayRedraw,
+}
+impl OverlayEventLoopPhase {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Idle => "idle",
+			Self::WindowEvent => "window_event",
+			Self::AboutToWait => "about_to_wait",
+			Self::RedrawDispatch => "redraw_dispatch",
+			Self::HudRedraw => "hud_redraw",
+			Self::LoupeRedraw => "loupe_redraw",
+			Self::ToolbarRedraw => "toolbar_redraw",
+			Self::OverlayRedraw => "overlay_window_redraw",
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HudTheme {
+	Dark,
+	Light,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrozenToolbarTool {
+	Pointer,
+	Pen,
+	Text,
+	Mosaic,
+	Undo,
+	Redo,
+	AutoCenter,
+	Scroll,
+	#[cfg(target_os = "macos")]
+	Ocr,
+	Copy,
+	Save,
+}
+impl FrozenToolbarTool {
+	const fn label(self) -> &'static str {
+		match self {
+			Self::Pointer => "Pointer",
+			Self::Pen => "Pen",
+			Self::Text => "Text",
+			Self::Mosaic => "Mosaic",
+			Self::Undo => "Undo",
+			Self::Redo => "Redo",
+			Self::AutoCenter => "Auto-center (C)",
+			Self::Scroll => "Scroll Capture",
+			#[cfg(target_os = "macos")]
+			Self::Ocr => "Recognize Text",
+			Self::Copy => "Copy",
+			Self::Save => "Save",
+		}
+	}
+
+	const fn icon(self) -> &'static str {
+		match self {
+			Self::Pointer => regular::CURSOR,
+			Self::Pen => regular::PENCIL_SIMPLE,
+			Self::Text => regular::TEXT_T,
+			Self::Mosaic => regular::CHECKERBOARD,
+			Self::Undo => regular::ARROW_COUNTER_CLOCKWISE,
+			Self::Redo => regular::ARROW_CLOCKWISE,
+			Self::AutoCenter => regular::ARROWS_IN_CARDINAL,
+			Self::Scroll => regular::ARROWS_DOWN_UP,
+			#[cfg(target_os = "macos")]
+			Self::Ocr => regular::FILE_TEXT,
+			Self::Copy => regular::COPY,
+			Self::Save => regular::FLOPPY_DISK,
+		}
+	}
+
+	const fn is_mode_tool(self) -> bool {
+		matches!(self, Self::Pointer | Self::Pen | Self::Text | Self::Mosaic)
+	}
+
+	const fn requires_final_capture(self) -> bool {
+		match self {
+			Self::Pointer | Self::Pen | Self::Text | Self::AutoCenter => false,
+			Self::Mosaic | Self::Undo | Self::Redo => true,
+			Self::Scroll | Self::Copy | Self::Save => true,
+			#[cfg(target_os = "macos")]
+			Self::Ocr => true,
+		}
+	}
+
+	fn is_available(self, toolbar_state: &FrozenToolbarState) -> bool {
+		match self {
+			Self::Undo => toolbar_state.undo_available,
+			Self::Redo => toolbar_state.redo_available,
+			_ => true,
+		}
+	}
+
+	fn unavailable_label(self, toolbar_state: &FrozenToolbarState) -> &'static str {
+		if self.requires_final_capture() && !toolbar_state.final_capture_ready {
+			return "Preparing capture...";
+		}
+
+		match self {
+			Self::Undo => "Nothing to undo",
+			Self::Redo => "Nothing to redo",
+			_ => "Preparing capture...",
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScrollCaptureFrameSource {
+	Worker { request_id: u64 },
+	LiveStream { frame_seq: u64 },
+}
+impl ScrollCaptureFrameSource {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Worker { .. } => "worker",
+			Self::LiveStream { .. } => "live_stream",
+		}
+	}
+
+	const fn worker_request_id(self) -> Option<u64> {
+		match self {
+			Self::Worker { request_id } => Some(request_id),
+			Self::LiveStream { .. } => None,
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PngAction {
+	Copy,
+	Save,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum FrozenCaptureSource {
+	#[default]
+	None,
+	DragRegion,
+	Window,
+	FullscreenFallback,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrozenSelectionCorner {
+	TopLeft,
+	TopRight,
+	BottomLeft,
+	BottomRight,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum FrozenSelectionInteractionKind {
+	#[default]
+	Move,
+	Resize(FrozenSelectionCorner),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeviceCursorPointSource {
+	DevicePoints,
+	DevicePixelsFallback,
+	EventRecentFallback,
+}
+impl DeviceCursorPointSource {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::DevicePoints => "device_points",
+			Self::DevicePixelsFallback => "device_pixels_fallback",
+			Self::EventRecentFallback => "event_recent_fallback",
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionFlowStyle {
+	Band,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum WindowRendererPath {
+	Overlay,
+	LoupeTile,
+}
+impl WindowRendererPath {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Overlay => "overlay",
+			Self::LoupeTile => "loupe_tile",
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SurfaceFrameSkipReason {
+	Timeout,
+	Occluded,
+}
+impl SurfaceFrameSkipReason {
+	const fn as_str(self) -> &'static str {
+		match self {
+			Self::Timeout => "timeout",
+			Self::Occluded => "occluded",
+		}
+	}
+
+	const fn should_request_redraw(self) -> bool {
+		matches!(self, Self::Timeout)
+	}
+}
+
+enum AcquiredSurfaceFrame {
+	Ready(SurfaceTexture),
+	Skipped(SurfaceFrameSkipReason),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrozenTextInputSource {
+	Key,
+	Ime,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FrozenEditKind {
+	BrushStroke,
+	MosaicEdit,
+	TextAnnotation,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FrozenCommittedOverlay<'a> {
+	Brush(&'a FrozenBrushStroke),
+	Text(&'a FrozenTextAnnotation),
 }
 
 fn frozen_toolbar_window_startup_size_points() -> Vec2 {
@@ -9088,7 +9093,7 @@ fn macos_frontmost_application() -> Option<MacOSFrontmostApplication> {
 
 #[cfg(target_os = "macos")]
 fn macos_restore_frontmost_application(target: MacOSFrontmostApplication) -> bool {
-	if target.process_id == std::process::id() as i32 {
+	if target.process_id == process::id() as i32 {
 		macos_activate_app();
 
 		return true;
