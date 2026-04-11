@@ -1,5 +1,4 @@
 use crate::scroll_capture::support;
-#[allow(unused_imports)]
 use crate::scroll_capture::{
 	BlockedPreviewOnlyLocalCandidate, CommittedDownwardViewportCandidateMode,
 	DIRECTION_WARNING_MARGIN_X100, DOWNWARD_COMMITTED_KEYFRAME_LOCAL_OVERRUN_MAX_ROWS,

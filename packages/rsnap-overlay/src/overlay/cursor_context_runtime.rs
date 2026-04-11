@@ -1,7 +1,5 @@
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 use crate::overlay::{CursorSampleRequest, StartupLiveRgbPlan};
-#[allow(unused_imports)]
 use crate::overlay::{
 	DeviceCursorPointSource, FreezeCaptureTarget, GlobalPoint, Instant,
 	LIVE_EVENT_CURSOR_CACHE_TTL, MonitorRect, OverlayMode, OverlaySession,

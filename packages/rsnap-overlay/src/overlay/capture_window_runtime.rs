@@ -1,5 +1,6 @@
-#[allow(unused_imports)]
-use crate::overlay::{GlobalPoint, Instant, MonitorRect, OverlayMode, OverlaySession};
+#[cfg(target_os = "macos")]
+use crate::overlay::Instant;
+use crate::overlay::{GlobalPoint, MonitorRect, OverlayMode, OverlaySession};
 
 impl OverlaySession {
 	pub(super) fn update_cursor_state(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
