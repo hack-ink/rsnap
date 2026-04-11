@@ -72,7 +72,7 @@ impl OverlaySession {
 	pub(super) fn startup_live_rgb_plan(
 		startup_monitor: Option<MonitorRect>,
 	) -> StartupLiveRgbPlan {
-		StartupLiveRgbPlan { focus_window: true, seed_monitor: startup_monitor }
+		StartupLiveRgbPlan { focus_window: false, seed_monitor: startup_monitor }
 	}
 
 	#[cfg(target_os = "macos")]

@@ -14,6 +14,10 @@ use std::sync::{
 use std::time::Instant;
 
 use color_eyre::eyre::Result;
+#[cfg(target_os = "macos")]
+use global_hotkey::Error;
+#[cfg(target_os = "macos")]
+use global_hotkey::hotkey::Code;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
 #[cfg(target_os = "macos")]
 use tray_icon::menu::Menu;
@@ -49,12 +53,39 @@ pub(crate) enum UserEvent {
 	OverlayWorkerResponse,
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OverlayCancelHotkeyRegistrationState {
+	Unregistered,
+	Registered,
+	Blocked,
+}
+#[cfg(target_os = "macos")]
+impl OverlayCancelHotkeyRegistrationState {
+	fn allows_register_attempt(self) -> bool {
+		matches!(self, Self::Unregistered)
+	}
+
+	fn next_state_after_register_error(error: &Error) -> Self {
+		match error {
+			Error::AlreadyRegistered(_) => Self::Registered,
+			_ => Self::Blocked,
+		}
+	}
+}
+
 struct App {
 	capture_hotkey: HotKey,
 	capture_hotkey_id: u32,
 	settings_hotkey: Option<HotKey>,
 	settings_hotkey_id: Option<u32>,
 	_hotkey_manager: Option<GlobalHotKeyManager>,
+	#[cfg(target_os = "macos")]
+	overlay_cancel_hotkey: HotKey,
+	#[cfg(target_os = "macos")]
+	overlay_cancel_hotkey_id: u32,
+	#[cfg(target_os = "macos")]
+	overlay_cancel_hotkey_registration_state: OverlayCancelHotkeyRegistrationState,
 	capture_hotkey_recording_suspended: bool,
 	tray_icon: Option<TrayIcon>,
 	#[cfg(target_os = "macos")]
@@ -98,6 +129,11 @@ struct App {
 	startup_permissions_checked: bool,
 }
 impl App {
+	#[cfg(target_os = "macos")]
+	fn overlay_cancel_hotkey() -> HotKey {
+		HotKey::new(None, Code::Escape)
+	}
+
 	#[allow(clippy::too_many_arguments)]
 	fn new(
 		capture_hotkey: HotKey,
@@ -115,6 +151,13 @@ impl App {
 			capture_hotkey,
 			settings_hotkey,
 			settings_hotkey_id: settings_hotkey.as_ref().map(HotKey::id),
+			#[cfg(target_os = "macos")]
+			overlay_cancel_hotkey: Self::overlay_cancel_hotkey(),
+			#[cfg(target_os = "macos")]
+			overlay_cancel_hotkey_id: Self::overlay_cancel_hotkey().id(),
+			#[cfg(target_os = "macos")]
+			overlay_cancel_hotkey_registration_state:
+				OverlayCancelHotkeyRegistrationState::Unregistered,
 			capture_hotkey_recording_suspended: false,
 			_hotkey_manager: hotkey_manager,
 			tray_icon: None,
@@ -239,6 +282,11 @@ fn settings_window_entry(requested_by: &'static str) -> SettingsWindowEntry {
 
 #[cfg(test)]
 mod tests {
+	#[cfg(target_os = "macos")]
+	use global_hotkey::hotkey::{Code, Modifiers};
+
+	#[cfg(target_os = "macos")]
+	use crate::app::OverlayCancelHotkeyRegistrationState;
 	use crate::app::{self, SettingsWindowEntry};
 
 	#[test]
@@ -260,5 +308,33 @@ mod tests {
 			SettingsWindowEntry::Standard
 		);
 		assert_eq!(app::settings_window_entry("tray-settings-menu"), SettingsWindowEntry::Standard);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn overlay_cancel_hotkey_is_plain_escape() {
+		let hotkey = app::App::overlay_cancel_hotkey();
+
+		assert_eq!(hotkey.key, Code::Escape);
+		assert_eq!(hotkey.mods, Modifiers::empty());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn blocked_overlay_cancel_hotkey_registration_skips_retries_until_reset() {
+		assert!(OverlayCancelHotkeyRegistrationState::Unregistered.allows_register_attempt());
+		assert!(!OverlayCancelHotkeyRegistrationState::Registered.allows_register_attempt());
+		assert!(!OverlayCancelHotkeyRegistrationState::Blocked.allows_register_attempt());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn already_registered_overlay_cancel_hotkey_error_keeps_registered_state() {
+		let error = global_hotkey::Error::AlreadyRegistered(app::App::overlay_cancel_hotkey());
+
+		assert_eq!(
+			OverlayCancelHotkeyRegistrationState::next_state_after_register_error(&error),
+			OverlayCancelHotkeyRegistrationState::Registered
+		);
 	}
 }

@@ -18,6 +18,8 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
 #[cfg(target_os = "macos")]
+use crate::app::OverlayCancelHotkeyRegistrationState;
+#[cfg(target_os = "macos")]
 use crate::app::UserEvent;
 #[cfg(target_os = "macos")]
 use crate::app::scroll_input_macos::{
@@ -35,6 +37,105 @@ const SCROLL_INPUT_OBSERVER_READY_TIMEOUT: Duration = Duration::from_millis(250)
 const OVERLAY_SESSION_PREWARM_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 impl App {
+	#[cfg(target_os = "macos")]
+	fn register_overlay_cancel_hotkey(&mut self) {
+		if !self.overlay_cancel_hotkey_registration_state.allows_register_attempt() {
+			return;
+		}
+
+		let Some(manager) = self._hotkey_manager.as_mut() else {
+			self.overlay_cancel_hotkey_registration_state =
+				OverlayCancelHotkeyRegistrationState::Blocked;
+
+			tracing::warn!(
+				hotkey = "Esc",
+				"Capture cancel hotkey is unavailable because the global hotkey manager is missing."
+			);
+
+			return;
+		};
+
+		if let Err(err) = manager.register(self.overlay_cancel_hotkey) {
+			self.overlay_cancel_hotkey_registration_state =
+				OverlayCancelHotkeyRegistrationState::next_state_after_register_error(&err);
+
+			tracing::warn!(
+				error = ?err,
+				hotkey = "Esc",
+				hotkey_id = %self.overlay_cancel_hotkey_id,
+				"Failed to register the capture cancel hotkey."
+			);
+		} else {
+			self.overlay_cancel_hotkey_registration_state =
+				OverlayCancelHotkeyRegistrationState::Registered;
+
+			tracing::info!(
+				hotkey = "Esc",
+				hotkey_id = %self.overlay_cancel_hotkey_id,
+				"Registered the capture cancel hotkey."
+			);
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn unregister_overlay_cancel_hotkey(&mut self) {
+		if matches!(
+			self.overlay_cancel_hotkey_registration_state,
+			super::OverlayCancelHotkeyRegistrationState::Unregistered
+		) {
+			return;
+		}
+		if matches!(
+			self.overlay_cancel_hotkey_registration_state,
+			super::OverlayCancelHotkeyRegistrationState::Blocked
+		) {
+			self.overlay_cancel_hotkey_registration_state =
+				OverlayCancelHotkeyRegistrationState::Unregistered;
+
+			return;
+		}
+
+		let Some(manager) = self._hotkey_manager.as_mut() else {
+			self.overlay_cancel_hotkey_registration_state =
+				OverlayCancelHotkeyRegistrationState::Unregistered;
+
+			return;
+		};
+
+		if let Err(err) = manager.unregister(self.overlay_cancel_hotkey) {
+			self.overlay_cancel_hotkey_registration_state =
+				OverlayCancelHotkeyRegistrationState::Unregistered;
+
+			tracing::warn!(
+				error = ?err,
+				hotkey = "Esc",
+				hotkey_id = %self.overlay_cancel_hotkey_id,
+				"Failed to unregister the capture cancel hotkey."
+			);
+		} else {
+			self.overlay_cancel_hotkey_registration_state =
+				OverlayCancelHotkeyRegistrationState::Unregistered;
+
+			tracing::info!(
+				hotkey = "Esc",
+				hotkey_id = %self.overlay_cancel_hotkey_id,
+				"Unregistered the capture cancel hotkey."
+			);
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn sync_overlay_cancel_hotkey_registration(&mut self) {
+		let should_register =
+			self.overlay_session.as_ref().is_some_and(OverlaySession::wants_global_cancel_hotkey);
+
+		if should_register {
+			self.register_overlay_cancel_hotkey();
+		} else {
+			self.unregister_overlay_cancel_hotkey();
+		}
+	}
+
 	fn self_capture_exception_window_ids(&self) -> Vec<u32> {
 		self_capture_exception_window_ids_from_sources(
 			self.settings_window.as_ref().and_then(|window| window.capture_window_id()),
@@ -182,6 +283,9 @@ impl App {
 				);
 
 				self.overlay_session = Some(overlay_session);
+
+				#[cfg(target_os = "macos")]
+				self.sync_overlay_cancel_hotkey_registration();
 			},
 			Err(err) => {
 				let overlay_start_ms = overlay_start_started_at.elapsed().as_millis();
@@ -420,6 +524,9 @@ impl App {
 		};
 
 		#[cfg(target_os = "macos")]
+		self.unregister_overlay_cancel_hotkey();
+
+		#[cfg(target_os = "macos")]
 		{
 			self.prewarmed_overlay_session = None;
 			self.overlay_session_prewarm_requested = true;
@@ -623,11 +730,12 @@ impl App {
 	}
 
 	pub(super) fn handle_overlay_control(&mut self, control: OverlayControl) {
-		let OverlayControl::Exit(exit) = control else {
-			return;
-		};
+		if let OverlayControl::Exit(exit) = control {
+			self.end_overlay_session(exit);
+		}
 
-		self.end_overlay_session(exit);
+		#[cfg(target_os = "macos")]
+		self.sync_overlay_cancel_hotkey_registration();
 	}
 }
 
