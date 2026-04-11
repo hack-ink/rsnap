@@ -400,8 +400,10 @@ impl OverlayWorker {
 		&self,
 		monitor: MonitorRect,
 		target: FreezeCaptureTarget,
-	) -> bool {
-		self.req_tx.try_send(WorkerRequest::FreezeCapture { monitor, target }).is_ok()
+	) -> Result<(), WorkerRequestSendError> {
+		let request = WorkerRequest::FreezeCapture { monitor, target };
+
+		self.req_tx.try_send(request).map_err(Self::map_try_send_error)
 	}
 
 	pub(crate) fn request_hit_test_window(

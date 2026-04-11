@@ -2,6 +2,11 @@
 use std::ptr;
 
 #[cfg(target_os = "macos")]
+use crate::overlay::RectPoints;
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::tests::WorkerRequestSendError;
+#[cfg(target_os = "macos")]
 #[allow(unused_imports)]
 use crate::overlay::tests::{
 	self, Arc, InflightScrollCaptureObservation, OverlayControl, ScrollCaptureLiveFrame,
@@ -13,6 +18,8 @@ use crate::overlay::tests::{
 	GlobalPoint, Instant, OverlaySession, ScrollDirection, WorkerErrorSource, WorkerResponse,
 	overlay,
 };
+#[cfg(target_os = "macos")]
+use crate::overlay::worker_runtime::FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT;
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -133,7 +140,130 @@ fn complete_startup_aux_window_creation_defers_live_stream_upgrade_until_aux_win
 
 #[cfg(target_os = "macos")]
 #[test]
-fn showing_loupe_window_applies_pending_startup_live_stream_upgrade() {
+fn refresh_startup_live_stream_after_window_creation_rebuilds_and_reprimes_stream() {
+	let monitor = tests::test_monitor();
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	assert!(
+		session
+			.live_sample_stream
+			.as_ref()
+			.unwrap()
+			.debug_self_capture_exception_window_ids()
+			.is_empty()
+	);
+
+	session.refresh_startup_live_stream_after_window_creation(Some(monitor));
+
+	assert_eq!(
+		session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
+		&[17]
+	);
+	assert_eq!(
+		session.live_sample_stream.as_ref().unwrap().debug_last_request_kind(),
+		Some("prime_monitor_nonblocking")
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn rebuild_active_scroll_capture_live_stream_rebuilds_and_reprimes_after_aux_window_creation() {
+	let monitor = tests::test_monitor();
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.scroll_capture.live_stream.as_ref().unwrap().prime_monitor_nonblocking(monitor);
+
+	session.scroll_capture.monitor = Some(monitor);
+	session.scroll_capture.capture_rect_points = Some(RectPoints::new(1, 2, 30, 40));
+	session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(2, 4, 60, 80));
+
+	session.scroll_capture.live_stream_backlog.push_back(ScrollCaptureLiveFrame {
+		frame_seq: 3,
+		captured_at: Instant::now(),
+		image: tests::test_frozen_image(),
+	});
+
+	session.scroll_capture.last_stream_frame_seq = 3;
+	session.scroll_capture.last_stream_event_at = Some(Instant::now());
+	session.scroll_capture.last_stream_poll_at = Some(Instant::now());
+
+	assert!(session.rebuild_active_scroll_capture_live_stream());
+
+	let rebuilt_scroll_live_stream = session.scroll_capture.live_stream.as_ref().unwrap();
+
+	assert_eq!(rebuilt_scroll_live_stream.debug_self_capture_exception_window_ids(), &[17]);
+	assert_eq!(rebuilt_scroll_live_stream.debug_last_request_kind(), None);
+	assert!(session.scroll_capture.live_stream_backlog.is_empty());
+	assert_eq!(session.scroll_capture.last_stream_frame_seq, 0);
+	assert!(session.scroll_capture.last_stream_event_at.is_none());
+	assert!(session.scroll_capture.last_stream_poll_at.is_none());
+
+	rebuilt_scroll_live_stream.prime_monitor_nonblocking(monitor);
+
+	assert_eq!(
+		session.scroll_capture.live_stream.as_ref().unwrap().debug_last_request_kind(),
+		Some("prime_monitor_nonblocking")
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn armed_freeze_capture_without_worker_restores_visibility_and_surfaces_error() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	session.pending_freeze_capture = Some(monitor);
+	session.pending_freeze_capture_armed = true;
+	session.capture_windows_hidden = true;
+
+	session.maybe_dispatch_armed_freeze_capture();
+
+	assert!(session.pending_freeze_capture.is_none());
+	assert!(session.inflight_freeze_capture.is_none());
+	assert!(!session.pending_freeze_capture_armed);
+	assert!(!session.capture_windows_hidden);
+	assert_eq!(session.state.error_message.as_deref(), Some("Capture worker is unavailable."));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn repeated_freeze_capture_send_full_aborts_and_restores_hidden_windows() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	session.pending_freeze_capture = Some(monitor);
+	session.pending_freeze_capture_armed = true;
+	session.capture_windows_hidden = true;
+
+	for _ in 0..FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT.saturating_sub(1) {
+		session.handle_freeze_capture_request_send_error(monitor, WorkerRequestSendError::Full);
+
+		assert_eq!(session.pending_freeze_capture, Some(monitor));
+		assert!(session.pending_freeze_capture_armed);
+		assert!(session.capture_windows_hidden);
+		assert!(session.state.error_message.is_none());
+	}
+
+	session.handle_freeze_capture_request_send_error(monitor, WorkerRequestSendError::Full);
+
+	assert!(session.pending_freeze_capture.is_none());
+	assert!(session.inflight_freeze_capture.is_none());
+	assert!(!session.pending_freeze_capture_armed);
+	assert!(!session.capture_windows_hidden);
+	assert_eq!(session.freeze_capture_send_full_count, 0);
+	assert_eq!(
+		session.state.error_message.as_deref(),
+		Some("Capture worker is busy. Please try again.")
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn showing_loupe_window_requests_lazy_creation_before_applying_stream_upgrade() {
 	let monitor = tests::test_monitor();
 	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 	let original_live_sample_stream = ptr::from_ref(session.live_sample_stream.as_ref().unwrap());
@@ -144,7 +274,8 @@ fn showing_loupe_window_applies_pending_startup_live_stream_upgrade() {
 
 	session.set_alt_loupe_window_visible(Some(monitor), true);
 
-	assert!(!session.pending_startup_aux_live_stream_filter_upgrade);
+	assert!(session.pending_startup_aux_live_stream_filter_upgrade);
+	assert!(session.startup_aux_window_creation_pending);
 	assert_eq!(
 		ptr::from_ref(session.live_sample_stream.as_ref().unwrap()),
 		original_live_sample_stream
@@ -153,10 +284,7 @@ fn showing_loupe_window_applies_pending_startup_live_stream_upgrade() {
 		ptr::from_ref(session.scroll_capture.live_stream.as_ref().unwrap()),
 		original_scroll_live_stream
 	);
-	assert_eq!(
-		session.live_sample_stream.as_ref().unwrap().debug_last_request_kind(),
-		Some("upgrade_monitor_nonblocking")
-	);
+	assert_eq!(session.live_sample_stream.as_ref().unwrap().debug_last_request_kind(), None);
 	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
 }
 
@@ -271,6 +399,26 @@ fn captured_freeze_response_applies_deferred_worker_refresh() {
 	assert!(matches!(control, super::OverlayControl::Continue));
 	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
 	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn freeze_error_response_applies_deferred_worker_refresh() {
+	let monitor = tests::test_monitor();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.inflight_freeze_capture = Some(monitor);
+	session.pending_self_capture_exception_window_ids_worker_refresh = true;
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
+		source: WorkerErrorSource::FreezeCapture,
+		message: String::from("freeze failed"),
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+	assert_eq!(session.state.error_message.as_deref(), Some("freeze failed"));
 }
 
 #[cfg(target_os = "macos")]

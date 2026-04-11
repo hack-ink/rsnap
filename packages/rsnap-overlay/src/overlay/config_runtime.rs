@@ -1,4 +1,6 @@
 use winit::window::Window;
+#[cfg(target_os = "macos")]
+use winit::window::WindowId;
 
 #[cfg(target_os = "macos")]
 use crate::backend;
@@ -65,45 +67,49 @@ impl OverlaySession {
 			self.config.self_capture_exception_window_ids.clone(),
 		));
 
-		if self.scroll_capture.active {
-			self.scroll_capture.live_stream = if self.should_use_scroll_capture_worker_sampling() {
-				None
-			} else {
-				match (
-					self.scroll_capture.capture_rect_points,
-					self.scroll_capture.capture_rect_pixels,
-				) {
-					(Some(capture_rect_points), Some(capture_rect_pixels)) => {
-						Some(MacLiveFrameStream::with_scroll_capture_region_and_waker(
-							self.config.self_capture_exception_window_ids.clone(),
-							capture_rect_points,
-							capture_rect_pixels,
-							self.scroll_frame_waker.clone(),
-						))
-					},
-					_ => {
-						Some(MacLiveFrameStream::with_self_capture_exception_window_ids_and_waker(
-							self.config.self_capture_exception_window_ids.clone(),
-							self.scroll_frame_waker.clone(),
-						))
-					},
-				}
-			};
+		self.rebuild_active_scroll_capture_live_stream();
+		self.refresh_active_worker_for_self_capture_exception_window_ids_if_safe();
+	}
 
-			self.scroll_capture.live_stream_backlog.clear();
-
-			self.scroll_capture.last_stream_frame_seq = 0;
-			self.scroll_capture.last_stream_frame_fingerprint = None;
-			self.scroll_capture.consecutive_identical_stream_frames = 0;
-			self.scroll_capture.last_consumed_stream_frame_captured_at = None;
-			self.scroll_capture.last_stream_event_at = None;
-			self.scroll_capture.last_stream_poll_at = None;
-			self.scroll_capture.pending_post_stall_burst_after_seq = None;
-			self.scroll_capture.live_stream_stale_grace = None;
-			self.scroll_capture.last_duplicate_stream_refresh_at = None;
+	#[cfg(target_os = "macos")]
+	pub(super) fn rebuild_active_scroll_capture_live_stream(&mut self) -> bool {
+		if !self.scroll_capture.active {
+			return false;
 		}
 
-		self.refresh_active_worker_for_self_capture_exception_window_ids_if_safe();
+		self.scroll_capture.live_stream = if self.should_use_scroll_capture_worker_sampling() {
+			None
+		} else {
+			match (self.scroll_capture.capture_rect_points, self.scroll_capture.capture_rect_pixels)
+			{
+				(Some(capture_rect_points), Some(capture_rect_pixels)) => {
+					Some(MacLiveFrameStream::with_scroll_capture_region_and_waker(
+						self.config.self_capture_exception_window_ids.clone(),
+						capture_rect_points,
+						capture_rect_pixels,
+						self.scroll_frame_waker.clone(),
+					))
+				},
+				_ => Some(MacLiveFrameStream::with_self_capture_exception_window_ids_and_waker(
+					self.config.self_capture_exception_window_ids.clone(),
+					self.scroll_frame_waker.clone(),
+				)),
+			}
+		};
+
+		self.scroll_capture.live_stream_backlog.clear();
+
+		self.scroll_capture.last_stream_frame_seq = 0;
+		self.scroll_capture.last_stream_frame_fingerprint = None;
+		self.scroll_capture.consecutive_identical_stream_frames = 0;
+		self.scroll_capture.last_consumed_stream_frame_captured_at = None;
+		self.scroll_capture.last_stream_event_at = None;
+		self.scroll_capture.last_stream_poll_at = None;
+		self.scroll_capture.pending_post_stall_burst_after_seq = None;
+		self.scroll_capture.live_stream_stale_grace = None;
+		self.scroll_capture.last_duplicate_stream_refresh_at = None;
+
+		self.scroll_capture.live_stream.is_some()
 	}
 
 	#[cfg(target_os = "macos")]
@@ -249,6 +255,11 @@ impl OverlaySession {
 		);
 
 		let _ = self.macos_hud_window_config_cache.insert(window.id(), desired);
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn remove_macos_hud_window_config_cache_entry(&mut self, window_id: WindowId) {
+		let _ = self.macos_hud_window_config_cache.remove(&window_id);
 	}
 
 	fn handle_fake_hud_blur_toggle(&mut self, prev_fake_blur: bool, new_fake_blur: bool) {
