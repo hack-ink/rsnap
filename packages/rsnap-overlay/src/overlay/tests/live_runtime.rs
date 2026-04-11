@@ -786,9 +786,11 @@ fn wants_global_cancel_hotkey_only_in_live_mode() {
 	let mut session = OverlaySession::new();
 
 	session.state.mode = OverlayMode::Live;
+
 	assert!(session.wants_global_cancel_hotkey());
 
 	session.state.mode = OverlayMode::Frozen;
+
 	assert!(!session.wants_global_cancel_hotkey());
 }
 
