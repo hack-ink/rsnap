@@ -168,7 +168,7 @@ impl OverlaySession {
 			return;
 		};
 
-		if worker.request_freeze_capture(monitor, FreezeCaptureTarget::Monitor) {
+		if worker.request_freeze_capture(monitor, FreezeCaptureTarget::Monitor).is_ok() {
 			self.last_live_bg_request_at = Instant::now();
 		}
 	}

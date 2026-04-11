@@ -86,7 +86,7 @@ use crate::state::{WindowListSnapshot, WindowRect};
 #[cfg(target_os = "macos")]
 use crate::worker::OverlayWorker;
 #[cfg(target_os = "macos")]
-use crate::worker::{WorkerErrorSource, WorkerResponse};
+use crate::worker::{WorkerErrorSource, WorkerRequestSendError, WorkerResponse};
 
 #[cfg(target_os = "macos")]
 struct SequenceScrollCaptureBackend {

@@ -13,6 +13,11 @@ use crate::overlay::tests::{
 	GlobalPoint, Instant, OverlaySession, ScrollDirection, WorkerErrorSource, WorkerResponse,
 	overlay,
 };
+#[cfg(target_os = "macos")]
+use crate::overlay::worker_runtime::FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT;
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use crate::overlay::tests::WorkerRequestSendError;
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -156,6 +161,58 @@ fn refresh_startup_live_stream_after_window_creation_rebuilds_and_reprimes_strea
 		session.live_sample_stream.as_ref().unwrap().debug_last_request_kind(),
 		Some("prime_monitor_nonblocking")
 	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn armed_freeze_capture_without_worker_restores_visibility_and_surfaces_error() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	session.pending_freeze_capture = Some(monitor);
+	session.pending_freeze_capture_armed = true;
+	session.capture_windows_hidden = true;
+
+	session.maybe_dispatch_armed_freeze_capture();
+
+	assert!(session.pending_freeze_capture.is_none());
+	assert!(session.inflight_freeze_capture.is_none());
+	assert!(!session.pending_freeze_capture_armed);
+	assert!(!session.capture_windows_hidden);
+	assert_eq!(session.state.error_message.as_deref(), Some("Capture worker is unavailable."));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn repeated_freeze_capture_send_full_aborts_and_restores_hidden_windows() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	session.pending_freeze_capture = Some(monitor);
+	session.pending_freeze_capture_armed = true;
+	session.capture_windows_hidden = true;
+
+	for _ in 0..FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT.saturating_sub(1) {
+		session.handle_freeze_capture_request_send_error(monitor, WorkerRequestSendError::Full);
+
+		assert_eq!(session.pending_freeze_capture, Some(monitor));
+		assert!(session.pending_freeze_capture_armed);
+		assert!(session.capture_windows_hidden);
+		assert!(session.state.error_message.is_none());
+	}
+
+	session.handle_freeze_capture_request_send_error(monitor, WorkerRequestSendError::Full);
+
+	assert!(session.pending_freeze_capture.is_none());
+	assert!(session.inflight_freeze_capture.is_none());
+	assert!(!session.pending_freeze_capture_armed);
+	assert!(!session.capture_windows_hidden);
+	assert_eq!(session.freeze_capture_send_full_count, 0);
+	assert_eq!(session.state.error_message.as_deref(), Some("Capture worker is busy. Please try again."));
 }
 
 #[cfg(target_os = "macos")]
