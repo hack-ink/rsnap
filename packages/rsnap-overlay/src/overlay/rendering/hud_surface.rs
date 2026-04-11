@@ -1,16 +1,13 @@
 use egui::RawInput;
 use wgpu::{BindGroup, TextureFormat};
 
-#[allow(unused_imports)]
 use crate::overlay::rendering::{GpuContext, WindowRenderer, WindowRendererPhaseTimings};
-#[allow(unused_imports)]
 use crate::overlay::{
 	Area, BindingResource, Color32, CornerRadius, Frame, FullOutput, HudDrawConfig, HudTheme, Id,
 	Instant, LOUPE_TILE_CORNER_RADIUS_POINTS, Margin, MonitorRect, Order, Origin3d, OverlayMode,
-	OverlayState, PhysicalSize, Pos2, Rect, Result, Rgb, RgbaImage, Sampler, StoreOp, Stroke,
-	StrokeKind, Texture, TextureAspect, TextureDimension, TextureUsages, TextureView,
-	TextureViewDescriptor, ThemeMode, Vec2, WindowRendererPath, hud_helpers, image_helpers, mem,
-	ptr, slice,
+	OverlayState, PhysicalSize, Pos2, Rect, Result, Rgb, RgbaImage, Stroke, StrokeKind, Texture,
+	TextureAspect, TextureDimension, TextureUsages, TextureView, TextureViewDescriptor, ThemeMode,
+	Vec2, WindowRendererPath, hud_helpers, image_helpers, mem, ptr, slice,
 };
 
 impl WindowRenderer {

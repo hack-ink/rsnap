@@ -1,10 +1,9 @@
-#[allow(unused_imports)]
 use crate::overlay::{
-	Duration, Event, FROZEN_TEXT_CARET_REPAINT_INTERVAL, GlobalPoint, HUD_LOUPE_MOVE_INTERVAL_MIN,
+	Duration, FROZEN_TEXT_CARET_REPAINT_INTERVAL, GlobalPoint, HUD_LOUPE_MOVE_INTERVAL_MIN,
 	INTERACTIVE_REPAINT_FPS_CAP, Instant, LOUPE_WINDOW_WARMUP_REDRAWS, LogicalPosition,
 	MonitorRect, MonitorRectPoints, OVERLAY_EVENT_LOOP_STALL_THRESHOLD, Ordering, OverlayControl,
 	OverlayEventLoopPhase, OverlayMode, OverlaySession, SLOW_OP_WARN_INTERVAL,
-	SLOW_OP_WARN_OUTER_POSITION, WindowEvent, scroll_capture,
+	SLOW_OP_WARN_OUTER_POSITION, WindowEvent,
 };
 
 impl OverlaySession {

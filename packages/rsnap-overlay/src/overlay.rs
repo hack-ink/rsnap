@@ -153,8 +153,7 @@ use self::rendering::{
 };
 #[cfg(test)]
 use self::rendering::{
-	SelectionDashedBorderCache, SelectionDashedBorderMetrics, SelectionFlowGeometryCache,
-	SelectionSizeBadgeTarget,
+	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
 };
 #[cfg(all(target_os = "macos", test))]
 use self::session_state::InflightScrollCaptureObservation;

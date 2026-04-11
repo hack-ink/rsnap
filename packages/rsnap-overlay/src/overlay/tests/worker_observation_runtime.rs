@@ -1,11 +1,9 @@
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 use crate::overlay::tests::{
 	self, Duration, GlobalPoint, Instant, MonitorRect, OverlaySession, RectPoints, ScrollDirection,
-	ScrollObserveOutcome, ScrollSession, overlay,
+	ScrollObserveOutcome, ScrollSession,
 };
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 use crate::overlay::tests::{InflightScrollCaptureObservation, SCROLL_CAPTURE_INPUT_FRESHNESS};
 
 #[cfg(target_os = "macos")]

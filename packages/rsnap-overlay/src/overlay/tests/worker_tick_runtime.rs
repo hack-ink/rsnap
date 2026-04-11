@@ -1,11 +1,10 @@
-#[allow(unused_imports)]
-use crate::overlay::tests::{
-	self, Duration, GlobalPoint, Instant, MonitorRect, OverlaySession, RectPoints,
-	SCROLL_CAPTURE_SAMPLE_INTERVAL, ScrollDirection, ScrollObserveOutcome, ScrollSession, overlay,
-};
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
-use crate::overlay::tests::{Arc, MacLiveFrameStream, OverlayWorker, SequenceScrollCaptureBackend};
+use crate::overlay::tests::{
+	self, Arc, GlobalPoint, Instant, MacLiveFrameStream, MonitorRect, OverlaySession,
+	OverlayWorker, RectPoints, ScrollDirection, ScrollObserveOutcome, ScrollSession,
+	SequenceScrollCaptureBackend,
+};
+use crate::overlay::tests::{Duration, SCROLL_CAPTURE_SAMPLE_INTERVAL};
 
 #[cfg(target_os = "macos")]
 #[test]

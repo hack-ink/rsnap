@@ -1,4 +1,3 @@
-#[allow(unused_imports)]
 use crate::overlay::{
 	CURSOR_POLL_INTERVAL_MIN, DeviceCursorPointSource, Duration, GlobalPoint, Instant,
 	LIVE_HOVER_HIT_TEST_INTERVAL, MonitorRect, OverlayMode, OverlaySession,
