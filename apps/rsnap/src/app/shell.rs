@@ -233,6 +233,18 @@ impl App {
 		if event.state() != HotKeyState::Pressed {
 			return;
 		}
+		#[cfg(target_os = "macos")]
+		if self.overlay_session.is_some() && event.id() == self.overlay_cancel_hotkey_id {
+			tracing::info!(hotkey = "Esc", "Capture cancel requested from hotkey.");
+
+			if let Some(session) = self.overlay_session.as_mut() {
+				let control = session.handle_global_escape_hotkey();
+
+				self.handle_overlay_control(control);
+			}
+
+			return;
+		}
 		if event.id() == self.capture_hotkey_id {
 			tracing::info!(
 				hotkey = %self.capture_key_label(),
