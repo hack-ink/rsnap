@@ -3,13 +3,120 @@
 use crate::overlay::CursorSampleRequest;
 #[allow(unused_imports)]
 use crate::overlay::{
-	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, GlobalPoint, Instant,
-	LiveCursorSample, LiveSampleApplyResult, MonitorRect, MonitorRectPoints, OverlayControl,
-	OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit, WindowListSnapshot,
-	WorkerErrorSource, WorkerRequestSendError, WorkerResponse, mem,
+	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, FreezeCaptureTarget,
+	GlobalPoint, Instant, LiveCursorSample, LiveSampleApplyResult, MonitorRect, MonitorRectPoints,
+	OverlayControl, OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit,
+	WindowListSnapshot, WorkerErrorSource, WorkerRequestSendError, WorkerResponse, mem,
 };
 
+pub(super) const FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT: u64 = 8;
+
 impl OverlaySession {
+	fn clear_freeze_capture_tracking(&mut self) {
+		self.pending_freeze_capture = None;
+		self.inflight_freeze_capture = None;
+		self.pending_freeze_capture_armed = false;
+		self.pending_window_freeze_capture = None;
+		self.inflight_window_freeze_capture = None;
+		self.freeze_capture_send_full_count = 0;
+	}
+
+	pub(super) fn abort_pending_freeze_capture(&mut self, message: impl Into<String>) {
+		let message = message.into();
+
+		self.clear_freeze_capture_tracking();
+		self.restore_capture_windows_visibility();
+		self.state.set_error(message);
+		self.request_redraw_all();
+	}
+
+	pub(super) fn note_freeze_capture_request_started(
+		&mut self,
+		overlay_monitor: MonitorRect,
+		pending_window_target: Option<WindowFreezeCaptureTarget>,
+	) {
+		self.pending_freeze_capture = None;
+		self.pending_freeze_capture_armed = false;
+		self.inflight_freeze_capture = Some(overlay_monitor);
+		self.inflight_window_freeze_capture = pending_window_target;
+		self.pending_window_freeze_capture = None;
+		self.freeze_capture_send_full_count = 0;
+	}
+
+	pub(super) fn handle_freeze_capture_request_send_error(
+		&mut self,
+		overlay_monitor: MonitorRect,
+		err: WorkerRequestSendError,
+	) {
+		match err {
+			WorkerRequestSendError::Full => {
+				self.freeze_capture_send_full_count =
+					self.freeze_capture_send_full_count.saturating_add(1);
+
+				tracing::debug!(
+					monitor_id = overlay_monitor.id,
+					full_count = self.freeze_capture_send_full_count,
+					"Freeze capture request dropped: worker queue full."
+				);
+
+				if self.freeze_capture_send_full_count >= FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT {
+					self.abort_pending_freeze_capture("Capture worker is busy. Please try again.");
+				} else {
+					self.schedule_egui_repaint_after(
+						self.repaint_interval_for_monitor(Some(overlay_monitor)),
+					);
+				}
+			},
+			WorkerRequestSendError::Disconnected => {
+				tracing::warn!(
+					monitor_id = overlay_monitor.id,
+					"Freeze capture request failed: worker disconnected before capture could start."
+				);
+
+				self.abort_pending_freeze_capture("Capture worker is unavailable.");
+			},
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn maybe_dispatch_armed_freeze_capture(&mut self) {
+		if !self.pending_freeze_capture_armed {
+			return;
+		}
+
+		let Some(overlay_monitor) = self.pending_freeze_capture else {
+			self.pending_freeze_capture_armed = false;
+			self.freeze_capture_send_full_count = 0;
+
+			return;
+		};
+
+		if !self.pending_freeze_capture_matches(overlay_monitor) {
+			self.pending_freeze_capture_armed = false;
+			self.freeze_capture_send_full_count = 0;
+
+			return;
+		}
+
+		let Some(worker) = &self.worker else {
+			self.abort_pending_freeze_capture("Capture worker is unavailable.");
+
+			return;
+		};
+		let pending_window_target =
+			self.pending_window_freeze_capture.filter(|target| target.monitor == overlay_monitor);
+		let freeze_target = pending_window_target.map_or(FreezeCaptureTarget::Monitor, |target| {
+			FreezeCaptureTarget::Window { window_id: target.window_id }
+		});
+
+		match worker.request_freeze_capture(overlay_monitor, freeze_target) {
+			Ok(()) => {
+				self.note_freeze_capture_request_started(overlay_monitor, pending_window_target);
+			},
+			Err(err) => self.handle_freeze_capture_request_send_error(overlay_monitor, err),
+		}
+	}
+
 	pub(super) fn drain_worker_responses(&mut self) -> OverlayControl {
 		#[cfg(target_os = "macos")]
 		if self.worker.is_none() && self.live_sample_worker.is_none() {
@@ -515,15 +622,13 @@ impl OverlaySession {
 				OverlayControl::Continue
 			},
 			WorkerResponse::Error { source, message } => {
+				let mut error_already_handled = false;
+
 				match source {
 					WorkerErrorSource::FreezeCapture => {
-						self.pending_freeze_capture = None;
-						self.inflight_freeze_capture = None;
-						self.pending_freeze_capture_armed = false;
-						self.pending_window_freeze_capture = None;
-						self.inflight_window_freeze_capture = None;
+						self.abort_pending_freeze_capture(message.as_str());
 
-						self.restore_capture_windows_visibility();
+						error_already_handled = true;
 					},
 					WorkerErrorSource::RefreshWindowList => {
 						#[cfg(target_os = "macos")]
@@ -546,8 +651,10 @@ impl OverlaySession {
 					},
 				}
 
-				self.state.set_error(message);
-				self.request_redraw_all();
+				if !error_already_handled {
+					self.state.set_error(message);
+					self.request_redraw_all();
+				}
 
 				OverlayControl::Continue
 			},
