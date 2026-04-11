@@ -37,11 +37,13 @@ const OVERLAY_SESSION_PREWARM_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 impl App {
 	#[cfg(target_os = "macos")]
 	fn register_overlay_cancel_hotkey(&mut self) {
-		if self.overlay_cancel_hotkey_registered {
+		if !self.overlay_cancel_hotkey_registration_state.allows_register_attempt() {
 			return;
 		}
 
 		let Some(manager) = self._hotkey_manager.as_mut() else {
+			self.overlay_cancel_hotkey_registration_state =
+				super::OverlayCancelHotkeyRegistrationState::Blocked;
 			tracing::warn!(
 				hotkey = "Esc",
 				"Capture cancel hotkey is unavailable because the global hotkey manager is missing."
@@ -51,6 +53,8 @@ impl App {
 		};
 
 		if let Err(err) = manager.register(self.overlay_cancel_hotkey) {
+			self.overlay_cancel_hotkey_registration_state =
+				super::OverlayCancelHotkeyRegistrationState::Blocked;
 			tracing::warn!(
 				error = ?err,
 				hotkey = "Esc",
@@ -58,7 +62,8 @@ impl App {
 				"Failed to register the capture cancel hotkey."
 			);
 		} else {
-			self.overlay_cancel_hotkey_registered = true;
+			self.overlay_cancel_hotkey_registration_state =
+				super::OverlayCancelHotkeyRegistrationState::Registered;
 			tracing::info!(
 				hotkey = "Esc",
 				hotkey_id = %self.overlay_cancel_hotkey_id,
@@ -69,12 +74,25 @@ impl App {
 
 	#[cfg(target_os = "macos")]
 	fn unregister_overlay_cancel_hotkey(&mut self) {
-		if !self.overlay_cancel_hotkey_registered {
+		if matches!(
+			self.overlay_cancel_hotkey_registration_state,
+			super::OverlayCancelHotkeyRegistrationState::Unregistered
+		) {
+			return;
+		}
+		if matches!(
+			self.overlay_cancel_hotkey_registration_state,
+			super::OverlayCancelHotkeyRegistrationState::Blocked
+		) {
+			self.overlay_cancel_hotkey_registration_state =
+				super::OverlayCancelHotkeyRegistrationState::Unregistered;
+
 			return;
 		}
 
 		let Some(manager) = self._hotkey_manager.as_mut() else {
-			self.overlay_cancel_hotkey_registered = false;
+			self.overlay_cancel_hotkey_registration_state =
+				super::OverlayCancelHotkeyRegistrationState::Unregistered;
 
 			return;
 		};
@@ -87,7 +105,8 @@ impl App {
 				"Failed to unregister the capture cancel hotkey."
 			);
 		} else {
-			self.overlay_cancel_hotkey_registered = false;
+			self.overlay_cancel_hotkey_registration_state =
+				super::OverlayCancelHotkeyRegistrationState::Unregistered;
 			tracing::info!(
 				hotkey = "Esc",
 				hotkey_id = %self.overlay_cancel_hotkey_id,
