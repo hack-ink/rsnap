@@ -220,6 +220,12 @@ type ExternalScrollInputDrainReader =
 	Arc<dyn Fn(u64, Instant) -> Vec<ExternalScrollInputEvent> + Send + Sync>;
 
 #[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MacOSFrontmostApplication {
+	process_id: i32,
+}
+
+#[cfg(target_os = "macos")]
 type ScrollCaptureStartGuard = Arc<dyn Fn() -> color_eyre::eyre::Result<bool> + Send + Sync>;
 
 #[cfg(target_os = "macos")]
@@ -955,6 +961,8 @@ pub struct OverlaySession {
 	startup_aux_window_creation_scheduled: bool,
 	#[cfg(target_os = "macos")]
 	pending_startup_aux_live_stream_filter_upgrade: bool,
+	#[cfg(target_os = "macos")]
+	frontmost_application_before_start: Option<MacOSFrontmostApplication>,
 	response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl OverlaySession {
@@ -1166,6 +1174,8 @@ impl OverlaySession {
 			startup_aux_window_creation_scheduled: false,
 			#[cfg(target_os = "macos")]
 			pending_startup_aux_live_stream_filter_upgrade: false,
+			#[cfg(target_os = "macos")]
+			frontmost_application_before_start: None,
 			response_waker: None,
 		}
 	}
@@ -1209,9 +1219,49 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn capture_frontmost_application_for_exit_restore(&mut self) {
+		self.frontmost_application_before_start = macos_frontmost_application();
+
+		tracing::info!(
+			op = "overlay.frontmost_app_captured",
+			target_process_id =
+				self.frontmost_application_before_start.map(|target| target.process_id),
+			"Captured the pre-capture frontmost application for later restore."
+		);
+	}
+
+	#[cfg(target_os = "macos")]
+	fn restore_frontmost_application_after_exit(&self, target: Option<MacOSFrontmostApplication>) {
+		let Some(target) = target else {
+			tracing::info!(
+				op = "overlay.frontmost_app_restore_attempted",
+				target = "none",
+				"Skipped restoring the pre-capture frontmost application because none was recorded."
+			);
+
+			return;
+		};
+
+		let restored = macos_restore_frontmost_application(target);
+
+		tracing::info!(
+			op = "overlay.frontmost_app_restore_attempted",
+			target_process_id = target.process_id,
+			restored,
+			"Attempted to restore the pre-capture frontmost application."
+		);
+	}
+
+	#[cfg(target_os = "macos")]
 	/// Registers a wake callback for macOS live-stream frame notifications.
 	pub fn set_scroll_frame_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.scroll_frame_waker = Some(waker);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[must_use]
+	pub fn wants_global_cancel_hotkey(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Live)
 	}
 
 	#[cfg(target_os = "macos")]
@@ -6714,6 +6764,29 @@ impl OverlaySession {
 		}
 	}
 
+	#[cfg(target_os = "macos")]
+	pub fn handle_global_escape_hotkey(&mut self) -> OverlayControl {
+		if self.frozen_text_edit.is_some() {
+			let changed = self.handle_frozen_text_pressed_key(&Key::Named(NamedKey::Escape), None);
+
+			if changed {
+				self.sync_text_input_ime_state();
+
+				if let Some(monitor) = self.state.monitor {
+					self.sync_frozen_text_ime_cursor_area(monitor);
+					self.request_redraw_for_monitor(monitor);
+				}
+			}
+
+			return OverlayControl::Continue;
+		}
+		if self.scroll_capture.active {
+			return self.cancel_overlay("global_escape_hotkey_scroll_capture");
+		}
+
+		self.cancel_overlay("global_escape_hotkey")
+	}
+
 	fn handle_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
 		if matches!(self.state.mode, OverlayMode::Frozen)
 			&& let Some(control) = self.handle_frozen_text_key_event(event)
@@ -8107,7 +8180,11 @@ impl OverlaySession {
 
 		self.log_exit_begin(&exit_metadata);
 		self.finalize_scroll_capture_for_exit();
+		#[cfg(target_os = "macos")]
+		let frontmost_application_before_start = self.frontmost_application_before_start.take();
 		self.reset_runtime_for_exit();
+		#[cfg(target_os = "macos")]
+		self.restore_frontmost_application_after_exit(frontmost_application_before_start);
 		self.log_exit_end(&exit_metadata);
 
 		OverlayControl::Exit(exit)
@@ -8215,6 +8292,10 @@ impl OverlaySession {
 		self.loupe_window_visible = false;
 		self.loupe_window_warmup_redraws_remaining = 0;
 		self.scroll_capture = ScrollCaptureState::default();
+		#[cfg(target_os = "macos")]
+		{
+			self.frontmost_application_before_start = None;
+		}
 		self.frozen_capture_source = FrozenCaptureSource::None;
 		self.cursor_monitor = None;
 		self.gpu = None;
@@ -8981,6 +9062,53 @@ fn macos_activate_app() {
 		}
 
 		let _: () = objc::msg_send![app, activateIgnoringOtherApps: YES];
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn macos_frontmost_application() -> Option<MacOSFrontmostApplication> {
+	unsafe {
+		let workspace: *mut Object = objc::msg_send![objc::class!(NSWorkspace), sharedWorkspace];
+
+		if workspace.is_null() {
+			return None;
+		}
+
+		let app: *mut Object = objc::msg_send![workspace, frontmostApplication];
+
+		if app.is_null() {
+			return None;
+		}
+
+		let process_id: i32 = objc::msg_send![app, processIdentifier];
+
+		(process_id > 0).then_some(MacOSFrontmostApplication { process_id })
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn macos_restore_frontmost_application(target: MacOSFrontmostApplication) -> bool {
+	if target.process_id == std::process::id() as i32 {
+		macos_activate_app();
+
+		return true;
+	}
+
+	unsafe {
+		let running_application_class = objc::class!(NSRunningApplication);
+		let app: *mut Object = objc::msg_send![
+			running_application_class,
+			runningApplicationWithProcessIdentifier: target.process_id
+		];
+
+		if app.is_null() {
+			return false;
+		}
+
+		let options: usize = 1 << 1;
+		let activated: BOOL = objc::msg_send![app, activateWithOptions: options];
+
+		activated == YES
 	}
 }
 

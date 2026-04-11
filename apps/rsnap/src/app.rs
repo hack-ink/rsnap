@@ -14,6 +14,8 @@ use std::sync::{
 use std::time::Instant;
 
 use color_eyre::eyre::Result;
+#[cfg(target_os = "macos")]
+use global_hotkey::hotkey::Code;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
 #[cfg(target_os = "macos")]
 use tray_icon::menu::Menu;
@@ -55,6 +57,12 @@ struct App {
 	settings_hotkey: Option<HotKey>,
 	settings_hotkey_id: Option<u32>,
 	_hotkey_manager: Option<GlobalHotKeyManager>,
+	#[cfg(target_os = "macos")]
+	overlay_cancel_hotkey: HotKey,
+	#[cfg(target_os = "macos")]
+	overlay_cancel_hotkey_id: u32,
+	#[cfg(target_os = "macos")]
+	overlay_cancel_hotkey_registered: bool,
 	capture_hotkey_recording_suspended: bool,
 	tray_icon: Option<TrayIcon>,
 	#[cfg(target_os = "macos")]
@@ -98,6 +106,11 @@ struct App {
 	startup_permissions_checked: bool,
 }
 impl App {
+	#[cfg(target_os = "macos")]
+	fn overlay_cancel_hotkey() -> HotKey {
+		HotKey::new(None, Code::Escape)
+	}
+
 	#[allow(clippy::too_many_arguments)]
 	fn new(
 		capture_hotkey: HotKey,
@@ -115,6 +128,12 @@ impl App {
 			capture_hotkey,
 			settings_hotkey,
 			settings_hotkey_id: settings_hotkey.as_ref().map(HotKey::id),
+			#[cfg(target_os = "macos")]
+			overlay_cancel_hotkey: Self::overlay_cancel_hotkey(),
+			#[cfg(target_os = "macos")]
+			overlay_cancel_hotkey_id: Self::overlay_cancel_hotkey().id(),
+			#[cfg(target_os = "macos")]
+			overlay_cancel_hotkey_registered: false,
 			capture_hotkey_recording_suspended: false,
 			_hotkey_manager: hotkey_manager,
 			tray_icon: None,
@@ -240,6 +259,8 @@ fn settings_window_entry(requested_by: &'static str) -> SettingsWindowEntry {
 #[cfg(test)]
 mod tests {
 	use crate::app::{self, SettingsWindowEntry};
+	#[cfg(target_os = "macos")]
+	use global_hotkey::hotkey::{Code, Modifiers};
 
 	#[test]
 	fn startup_permission_check_uses_permissions_entry() {
@@ -260,5 +281,14 @@ mod tests {
 			SettingsWindowEntry::Standard
 		);
 		assert_eq!(app::settings_window_entry("tray-settings-menu"), SettingsWindowEntry::Standard);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn overlay_cancel_hotkey_is_plain_escape() {
+		let hotkey = app::App::overlay_cancel_hotkey();
+
+		assert_eq!(hotkey.key, Code::Escape);
+		assert_eq!(hotkey.mods, Modifiers::empty());
 	}
 }
