@@ -30,7 +30,7 @@ impl OverlaySession {
 		self.request_redraw_all();
 	}
 
-	fn note_freeze_capture_request_started(
+	pub(super) fn note_freeze_capture_request_started(
 		&mut self,
 		overlay_monitor: MonitorRect,
 		pending_window_target: Option<WindowFreezeCaptureTarget>,
