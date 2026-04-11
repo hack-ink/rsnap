@@ -15,6 +15,8 @@ use std::time::Instant;
 
 use color_eyre::eyre::Result;
 #[cfg(target_os = "macos")]
+use global_hotkey::Error as GlobalHotKeyError;
+#[cfg(target_os = "macos")]
 use global_hotkey::hotkey::Code;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
 #[cfg(target_os = "macos")]
@@ -62,6 +64,13 @@ enum OverlayCancelHotkeyRegistrationState {
 impl OverlayCancelHotkeyRegistrationState {
 	fn allows_register_attempt(self) -> bool {
 		matches!(self, Self::Unregistered)
+	}
+
+	fn next_state_after_register_error(error: &GlobalHotKeyError) -> Self {
+		match error {
+			GlobalHotKeyError::AlreadyRegistered(_) => Self::Registered,
+			_ => Self::Blocked,
+		}
 	}
 }
 
@@ -274,7 +283,7 @@ fn settings_window_entry(requested_by: &'static str) -> SettingsWindowEntry {
 #[cfg(test)]
 mod tests {
 	#[cfg(target_os = "macos")]
-	use crate::app::OverlayCancelHotkeyRegistrationState;
+	use crate::app::{GlobalHotKeyError, OverlayCancelHotkeyRegistrationState};
 	use crate::app::{self, SettingsWindowEntry};
 	#[cfg(target_os = "macos")]
 	use global_hotkey::hotkey::{Code, Modifiers};
@@ -315,5 +324,16 @@ mod tests {
 		assert!(OverlayCancelHotkeyRegistrationState::Unregistered.allows_register_attempt());
 		assert!(!OverlayCancelHotkeyRegistrationState::Registered.allows_register_attempt());
 		assert!(!OverlayCancelHotkeyRegistrationState::Blocked.allows_register_attempt());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn already_registered_overlay_cancel_hotkey_error_keeps_registered_state() {
+		let error = GlobalHotKeyError::AlreadyRegistered(app::App::overlay_cancel_hotkey());
+
+		assert_eq!(
+			OverlayCancelHotkeyRegistrationState::next_state_after_register_error(&error),
+			OverlayCancelHotkeyRegistrationState::Registered
+		);
 	}
 }

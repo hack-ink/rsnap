@@ -54,7 +54,7 @@ impl App {
 
 		if let Err(err) = manager.register(self.overlay_cancel_hotkey) {
 			self.overlay_cancel_hotkey_registration_state =
-				super::OverlayCancelHotkeyRegistrationState::Blocked;
+				super::OverlayCancelHotkeyRegistrationState::next_state_after_register_error(&err);
 			tracing::warn!(
 				error = ?err,
 				hotkey = "Esc",
@@ -98,6 +98,8 @@ impl App {
 		};
 
 		if let Err(err) = manager.unregister(self.overlay_cancel_hotkey) {
+			self.overlay_cancel_hotkey_registration_state =
+				super::OverlayCancelHotkeyRegistrationState::Unregistered;
 			tracing::warn!(
 				error = ?err,
 				hotkey = "Esc",
