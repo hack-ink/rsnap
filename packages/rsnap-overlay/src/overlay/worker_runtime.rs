@@ -624,12 +624,12 @@ impl OverlaySession {
 			WorkerResponse::Error { source, message } => {
 				let mut error_already_handled = false;
 
-					match source {
-						WorkerErrorSource::FreezeCapture => {
-							self.abort_pending_freeze_capture(message.as_str());
+				match source {
+					WorkerErrorSource::FreezeCapture => {
+						self.abort_pending_freeze_capture(message.as_str());
 
-							error_already_handled = true;
-						},
+						error_already_handled = true;
+					},
 					WorkerErrorSource::RefreshWindowList => {
 						#[cfg(target_os = "macos")]
 						{
