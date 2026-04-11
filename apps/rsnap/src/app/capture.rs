@@ -14,6 +14,8 @@ use std::time::Instant;
 use color_eyre::eyre;
 #[cfg(target_os = "macos")]
 use color_eyre::eyre::Result;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::NSBeep;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
@@ -135,6 +137,14 @@ impl App {
 			self.unregister_overlay_cancel_hotkey();
 		}
 	}
+
+	#[cfg(target_os = "macos")]
+	fn play_capture_success_feedback(&self) {
+		NSBeep();
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn play_capture_success_feedback(&self) {}
 
 	fn self_capture_exception_window_ids(&self) -> Vec<u32> {
 		self_capture_exception_window_ids_from_sources(
@@ -541,6 +551,7 @@ impl App {
 			OverlayExit::Cancelled => tracing::info!("Capture cancelled."),
 			OverlayExit::PngBytes(png_bytes) => {
 				tracing::info!(bytes = png_bytes.len(), "Capture copied to clipboard.");
+				self.play_capture_success_feedback();
 			},
 			OverlayExit::TextCopied(character_count) => {
 				tracing::info!(
@@ -617,6 +628,7 @@ impl App {
 			},
 			OverlayExit::Saved(path) => {
 				tracing::info!(path = %path.display(), "Capture saved to file.");
+				self.play_capture_success_feedback();
 			},
 			OverlayExit::Error(message) => tracing::warn!(error = %message, "Capture failed."),
 		};
