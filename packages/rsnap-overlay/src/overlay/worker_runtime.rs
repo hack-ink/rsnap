@@ -1,13 +1,11 @@
-#[cfg(target_os = "macos")]
-#[allow(unused_imports)]
-use crate::overlay::CursorSampleRequest;
-#[allow(unused_imports)]
 use crate::overlay::{
-	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, FreezeCaptureTarget,
-	GlobalPoint, Instant, LiveCursorSample, LiveSampleApplyResult, MonitorRect, MonitorRectPoints,
-	OverlayControl, OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit,
-	WindowListSnapshot, WorkerErrorSource, WorkerRequestSendError, WorkerResponse, mem,
+	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, GlobalPoint, Instant,
+	LiveCursorSample, LiveSampleApplyResult, MonitorRect, MonitorRectPoints, OverlayControl,
+	OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit, WindowListSnapshot,
+	WorkerErrorSource, WorkerRequestSendError, WorkerResponse,
 };
+#[cfg(target_os = "macos")]
+use crate::overlay::{CursorSampleRequest, FreezeCaptureTarget, mem};
 
 pub(super) const FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT: u64 = 8;
 

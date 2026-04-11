@@ -1,15 +1,13 @@
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 use crate::overlay::tests::{
 	self, Arc, MacLiveFrameStream, OverlayControl,
 	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
 	ScrollCaptureLiveFrame,
 };
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 use crate::overlay::tests::{
 	Duration, GlobalPoint, Instant, MonitorRect, OverlaySession, RectPoints, ScrollDirection,
-	ScrollSession, overlay,
+	ScrollSession,
 };
 
 #[cfg(target_os = "macos")]

@@ -1,11 +1,11 @@
-#[allow(unused_imports)]
 use crate::overlay::tests::{
-	self, Duration, GlobalPoint, Instant, MonitorRect, MouseScrollDelta, OverlaySession,
-	RectPoints, ScrollDirection, ScrollObserveOutcome, ScrollSession, overlay,
+	self, GlobalPoint, Instant, MonitorRect, MouseScrollDelta, OverlaySession, RectPoints,
+	ScrollDirection, ScrollObserveOutcome, ScrollSession,
 };
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
-use crate::overlay::tests::{Arc, OverlayControl, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE};
+use crate::overlay::tests::{
+	Arc, Duration, OverlayControl, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
+};
 
 #[cfg(target_os = "macos")]
 #[test]

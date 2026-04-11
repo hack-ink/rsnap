@@ -4,13 +4,13 @@ use winit::window::WindowId;
 
 #[cfg(target_os = "macos")]
 use crate::backend;
-#[allow(unused_imports)]
+#[cfg(target_os = "macos")]
+use crate::overlay::{self, OverlayWorker};
 use crate::overlay::{
-	self, Arc, HUD_PILL_CORNER_RADIUS_POINTS, Instant, LOUPE_TILE_CORNER_RADIUS_POINTS,
-	OverlayConfig, OverlayMode, OverlaySession, OverlayWorker, scroll_capture,
+	Arc, HUD_PILL_CORNER_RADIUS_POINTS, Instant, LOUPE_TILE_CORNER_RADIUS_POINTS, OverlayConfig,
+	OverlayMode, OverlaySession,
 };
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 use crate::overlay::{MacLiveFrameStream, MacOSHudWindowConfigState, SLOW_OP_WARN_HUD_CONFIG};
 
 impl OverlaySession {

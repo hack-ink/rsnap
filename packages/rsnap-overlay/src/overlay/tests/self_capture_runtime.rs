@@ -4,19 +4,15 @@ use std::ptr;
 #[cfg(target_os = "macos")]
 use crate::overlay::RectPoints;
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 use crate::overlay::tests::WorkerRequestSendError;
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 use crate::overlay::tests::{
-	self, Arc, InflightScrollCaptureObservation, OverlayControl, ScrollCaptureLiveFrame,
-	WindowListSnapshot, WindowRect,
+	self, Arc, InflightScrollCaptureObservation, ScrollCaptureLiveFrame, WindowListSnapshot,
+	WindowRect,
 };
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 use crate::overlay::tests::{
 	GlobalPoint, Instant, OverlaySession, ScrollDirection, WorkerErrorSource, WorkerResponse,
-	overlay,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::worker_runtime::FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT;

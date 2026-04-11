@@ -11,17 +11,15 @@ use crate::overlay::DeviceCursorPointSource;
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenCaptureSource;
 use crate::overlay::OverlayControl;
-#[allow(unused_imports)]
-use crate::overlay::tests::{
-	self, Duration, GlobalPoint, HudRedrawSummary, Instant, LoupeSample, MonitorRect,
-	MonitorRectPoints, OverlayMode, OverlaySession, OverlayState, Pos2, Rect, RectPoints, Rgb,
-	Vec2, WindowRenderer, hud_helpers, overlay,
-};
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 use crate::overlay::tests::{
-	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, LiveCursorSample,
+	self, AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, LiveCursorSample,
 	LiveSampleApplyResult, ModifiersState, OverlayExit, StartupLiveRgbPlan, WindowId,
+};
+use crate::overlay::tests::{
+	Duration, GlobalPoint, HudRedrawSummary, Instant, LoupeSample, MonitorRect, MonitorRectPoints,
+	OverlayMode, OverlaySession, OverlayState, Pos2, Rect, RectPoints, Rgb, Vec2, WindowRenderer,
+	hud_helpers,
 };
 
 #[cfg(target_os = "macos")]

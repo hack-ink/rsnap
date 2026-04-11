@@ -12,7 +12,6 @@ use self::hud_rendering::LiveLoupeTexture;
 use self::hud_surface::{HudBg, HudBlurUniformRaw};
 #[cfg(target_os = "macos")]
 use crate::overlay::MacOSOverlayCursorRectSupport;
-#[allow(unused_imports)]
 use crate::overlay::{
 	self, AcquiredSurfaceFrame, Adapter, AddressMode, Arc, BindGroupLayout, BindingResource,
 	BindingType, BlendState, Buffer, BufferBindingType, BufferSize, BufferUsages, ClippedPrimitive,
@@ -21,15 +20,14 @@ use crate::overlay::{
 	FrozenBrushState, FrozenCaptureSource, FrozenEditKind, FrozenSelectionCorner,
 	FrozenTextAnnotation, FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState,
 	FrozenToolbarState, FullOutput, HudAnchor, HudTheme, Id, Instant, LayerId, LoadOp, MemoryHints,
-	MipmapFilterMode, MonitorRect, MultisampleState, Mutex, Order, OverlayMode, OverlaySession,
-	OverlayState, PhysicalSize, PipelineCompilationOptions, PointerButton, PolygonMode, Pos2,
-	PowerPreference, PresentMode, PrimitiveTopology, Queue, Rect, RectPoints, RenderPipeline,
-	Renderer, Result, SLOW_OP_WARN_RENDER, Sampler, SamplerBindingType, ScreenDescriptor,
-	ShaderSource, ShaderStages, SlowOperationLogger, StoreOp, Surface, SurfaceCapabilities,
-	SurfaceFrameSkipReason, SurfaceTexture, Texture, TextureAspect, TextureSampleType,
-	TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, ThemeMode,
-	ToolbarPlacement, Trace, Variant, Vec2, ViewportId, Visuals, WindowId, WindowRendererPath,
-	WrapErr, eyre, hud_helpers, mem,
+	MipmapFilterMode, MonitorRect, MultisampleState, Mutex, Order, OverlayMode, OverlayState,
+	PhysicalSize, PipelineCompilationOptions, PointerButton, PolygonMode, Pos2, PowerPreference,
+	PresentMode, PrimitiveTopology, Queue, Rect, RectPoints, RenderPipeline, Renderer, Result,
+	SLOW_OP_WARN_RENDER, Sampler, SamplerBindingType, ScreenDescriptor, ShaderSource, ShaderStages,
+	SlowOperationLogger, StoreOp, Surface, SurfaceCapabilities, SurfaceFrameSkipReason,
+	SurfaceTexture, Texture, TextureAspect, TextureSampleType, TextureUsages,
+	TextureViewDescriptor, TextureViewDimension, ThemeMode, ToolbarPlacement, Trace, Variant, Vec2,
+	ViewportId, Visuals, WindowId, WindowRendererPath, WrapErr, eyre, hud_helpers, mem,
 };
 use crate::system_fonts;
 
