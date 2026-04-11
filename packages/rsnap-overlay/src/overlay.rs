@@ -8232,6 +8232,10 @@ impl OverlaySession {
 		self.event_loop_last_progress_monitor_id = None;
 		self.event_loop_last_progress_detail = None;
 		self.event_loop_last_stall_warn_at = None;
+
+		#[cfg(target_os = "macos")]
+		self.macos_hud_window_config_cache.clear();
+
 		self.toolbar_left_button_down = false;
 		self.toolbar_left_button_went_down = false;
 		self.toolbar_left_button_went_up = false;

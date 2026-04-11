@@ -150,7 +150,10 @@ impl OverlaySession {
 
 	#[cfg(target_os = "macos")]
 	pub(super) fn destroy_live_only_aux_windows(&mut self) {
-		self.loupe_window = None;
+		if let Some(loupe_window) = self.loupe_window.take() {
+			self.remove_macos_hud_window_config_cache_entry(loupe_window.window.id());
+		}
+
 		self.loupe_inner_size_points = None;
 		self.loupe_outer_pos = None;
 		self.pending_loupe_outer_pos = None;
