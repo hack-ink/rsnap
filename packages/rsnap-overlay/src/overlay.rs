@@ -1490,20 +1490,7 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn try_latest_live_freeze_preview(&mut self, monitor: MonitorRect) -> Option<RgbaImage> {
-		if self.state.live_bg_monitor == Some(monitor)
-			&& let Some(image) = self.state.live_bg_image.take()
-		{
-			return Some(image);
-		}
-
-		self.live_sample_stream
-			.as_ref()
-			.and_then(|stream| stream.peek_latest_rgba_snapshot(monitor))
-			.map(|snapshot| snapshot.image.as_ref().clone())
-	}
-
-	#[cfg(target_os = "macos")]
+	#[allow(dead_code)]
 	fn commit_frozen_preview(
 		&mut self,
 		monitor: MonitorRect,
@@ -1678,17 +1665,14 @@ impl OverlaySession {
 
 		#[cfg(target_os = "macos")]
 		{
-			if let Some(image) = self.try_latest_live_freeze_preview(monitor) {
-				self.state.live_bg_monitor = None;
-				self.state.live_bg_image = None;
+			let _ = cursor;
 
-				self.commit_frozen_preview(monitor, image, cursor);
-				self.force_apply_pending_toolbar_window_move();
-			} else {
-				self.state.live_bg_monitor = None;
-				self.state.live_bg_image = None;
-				self.capture_windows_hidden = true;
-			}
+			self.state.live_bg_monitor = None;
+			self.state.live_bg_image = None;
+			self.capture_windows_hidden = true;
+			self.pending_freeze_capture_armed = true;
+
+			self.hide_capture_windows();
 		}
 		#[cfg(not(target_os = "macos"))]
 		{
@@ -4728,7 +4712,11 @@ impl OverlaySession {
 			}
 
 			self.state.finish_freeze(monitor, frozen_preview_image);
+			#[cfg(target_os = "macos")]
+			self.destroy_live_only_aux_windows();
 			self.restore_capture_windows_visibility();
+			#[cfg(target_os = "macos")]
+			self.request_aux_window_creation_if_needed();
 
 			self.toolbar_state.needs_redraw = true;
 
@@ -5241,6 +5229,13 @@ impl OverlaySession {
 			let Some(monitor) = monitor else {
 				return;
 			};
+
+			#[cfg(target_os = "macos")]
+			if self.loupe_window.is_none() {
+				self.request_aux_window_creation_if_needed();
+
+				return;
+			}
 
 			self.maybe_apply_pending_startup_aux_live_stream_filter_upgrade(monitor);
 
@@ -6747,6 +6742,11 @@ impl OverlaySession {
 			{
 				self.toolbar_state.visible = !self.toolbar_state.visible;
 
+				#[cfg(target_os = "macos")]
+				if self.toolbar_state.visible {
+					self.request_aux_window_creation_if_needed();
+				}
+
 				self.request_redraw_all();
 
 				OverlayControl::Continue
@@ -7265,6 +7265,7 @@ impl OverlaySession {
 				"Entered scroll-capture mode."
 			);
 
+			self.request_aux_window_creation_if_needed();
 			self.sync_frozen_toolbar_state();
 			self.refresh_scroll_preview_committed_image();
 			self.refresh_scroll_preview_display_image();
@@ -7993,19 +7994,9 @@ impl OverlaySession {
 				.map_or(FreezeCaptureTarget::Monitor, |target| FreezeCaptureTarget::Window {
 					window_id: target.window_id,
 				});
-
 			#[cfg(target_os = "macos")]
-			{
-				if worker.request_freeze_capture(overlay_monitor, freeze_target) {
-					self.pending_freeze_capture = None;
-					self.pending_freeze_capture_armed = false;
-					self.inflight_freeze_capture = Some(overlay_monitor);
-					self.inflight_window_freeze_capture = pending_window_target;
-					self.pending_window_freeze_capture = None;
-				} else {
-					self.request_redraw_for_monitor(overlay_monitor);
-				}
-			}
+			let _ = (&worker, &freeze_target, &pending_window_target, &overlay_monitor);
+
 			#[cfg(not(target_os = "macos"))]
 			{
 				// Capture must happen on a post-hide redraw so the HUD/loupe are not included.
@@ -9071,8 +9062,6 @@ fn macos_configure_overlay_window_mouse_moved_events(window: &Window) {
 
 		let _: () = objc::msg_send![ns_window, setOpaque: false];
 		let _: () = objc::msg_send![ns_window, setHasShadow: false];
-		let sharing_type_none = 0_u64;
-		let _: () = objc::msg_send![ns_window, setSharingType: sharing_type_none];
 		let clear: *mut Object = objc::msg_send![objc::class!(NSColor), clearColor];
 		let _: () = objc::msg_send![ns_window, setBackgroundColor: clear];
 		let _: () = objc::msg_send![ns_window, setLevel: MACOS_OVERLAY_WINDOW_LEVEL];
@@ -9134,8 +9123,6 @@ fn macos_configure_hud_window(
 		let _: () = objc::msg_send![ns_window, setHasShadow: false];
 		let _: () = objc::msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
 		let _: () = objc::msg_send![ns_window, setLevel: MACOS_HUD_WINDOW_LEVEL];
-		let sharing_type_none = 0_u64;
-		let _: () = objc::msg_send![ns_window, setSharingType: sharing_type_none];
 		let clear: *mut Object = objc::msg_send![objc::class!(NSColor), clearColor];
 		let _: () = objc::msg_send![ns_window, setBackgroundColor: clear];
 		let content_view: *mut Object = objc::msg_send![ns_window, contentView];

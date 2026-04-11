@@ -210,7 +210,7 @@ impl OverlaySession {
 
 		#[cfg(target_os = "macos")]
 		{
-			self.startup_aux_window_creation_pending = true;
+			self.startup_aux_window_creation_pending = false;
 			self.startup_aux_window_creation_scheduled = false;
 
 			Ok(StartupWindowCreationMetrics {
@@ -286,7 +286,7 @@ impl OverlaySession {
 		&mut self,
 		event_loop: &ActiveEventLoop,
 	) -> Result<(), String> {
-		if !self.startup_aux_window_creation_pending {
+		if !self.startup_aux_window_creation_pending && !self.aux_window_creation_needed() {
 			return Ok(());
 		}
 
@@ -294,17 +294,17 @@ impl OverlaySession {
 
 		let mut created_aux_windows = false;
 
-		if self.loupe_window.is_none() {
+		if self.loupe_window.is_none() && self.loupe_window_needed() {
 			self.create_loupe_window(event_loop)?;
 
 			created_aux_windows = true;
 		}
-		if self.toolbar_window.is_none() {
+		if self.toolbar_window.is_none() && self.toolbar_window_needed() {
 			self.create_toolbar_window(event_loop)?;
 
 			created_aux_windows = true;
 		}
-		if self.scroll_preview_window.is_none() {
+		if self.scroll_preview_window.is_none() && self.scroll_preview_window_needed() {
 			self.create_scroll_preview_window(event_loop)?;
 
 			created_aux_windows = true;
@@ -312,17 +312,59 @@ impl OverlaySession {
 
 		self.complete_startup_aux_window_creation(created_aux_windows);
 
-		if self.state.alt_held && matches!(self.state.mode, OverlayMode::Live) {
+		if self.loupe_window_needed() {
 			self.set_alt_loupe_window_visible(self.active_cursor_monitor(), true);
 		}
-		if self.toolbar_state.visible {
+		if self.toolbar_window_needed() {
 			self.request_redraw_toolbar_window();
 		}
-		if self.scroll_capture.active {
+		if self.scroll_preview_window_needed() {
+			if let Some(monitor) = self.scroll_capture.monitor {
+				self.position_scroll_preview_window(monitor);
+			}
+
 			self.request_redraw_scroll_preview_window();
 		}
 
 		Ok(())
+	}
+
+	#[cfg(target_os = "macos")]
+	fn loupe_window_needed(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Live)
+			&& self.state.alt_held
+			&& !self.live_loupe_uses_hud_window()
+	}
+
+	#[cfg(target_os = "macos")]
+	fn toolbar_window_needed(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.toolbar_state.visible
+			&& self.authoritative_frozen_capture_ready
+			&& self.state.frozen_image.is_some()
+	}
+
+	#[cfg(target_os = "macos")]
+	fn scroll_preview_window_needed(&self) -> bool {
+		self.scroll_capture.active
+	}
+
+	#[cfg(target_os = "macos")]
+	fn aux_window_creation_needed(&self) -> bool {
+		(self.loupe_window.is_none() && self.loupe_window_needed())
+			|| (self.toolbar_window.is_none() && self.toolbar_window_needed())
+			|| (self.scroll_preview_window.is_none() && self.scroll_preview_window_needed())
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn request_aux_window_creation_if_needed(&mut self) {
+		if !self.aux_window_creation_needed() {
+			return;
+		}
+
+		self.startup_aux_window_creation_pending = true;
+
+		self.maybe_schedule_startup_aux_window_creation();
 	}
 
 	#[cfg(target_os = "macos")]

@@ -133,7 +133,7 @@ fn complete_startup_aux_window_creation_defers_live_stream_upgrade_until_aux_win
 
 #[cfg(target_os = "macos")]
 #[test]
-fn showing_loupe_window_applies_pending_startup_live_stream_upgrade() {
+fn showing_loupe_window_requests_lazy_creation_before_applying_stream_upgrade() {
 	let monitor = tests::test_monitor();
 	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 	let original_live_sample_stream = ptr::from_ref(session.live_sample_stream.as_ref().unwrap());
@@ -144,7 +144,8 @@ fn showing_loupe_window_applies_pending_startup_live_stream_upgrade() {
 
 	session.set_alt_loupe_window_visible(Some(monitor), true);
 
-	assert!(!session.pending_startup_aux_live_stream_filter_upgrade);
+	assert!(session.pending_startup_aux_live_stream_filter_upgrade);
+	assert!(session.startup_aux_window_creation_pending);
 	assert_eq!(
 		ptr::from_ref(session.live_sample_stream.as_ref().unwrap()),
 		original_live_sample_stream
@@ -153,10 +154,7 @@ fn showing_loupe_window_applies_pending_startup_live_stream_upgrade() {
 		ptr::from_ref(session.scroll_capture.live_stream.as_ref().unwrap()),
 		original_scroll_live_stream
 	);
-	assert_eq!(
-		session.live_sample_stream.as_ref().unwrap().debug_last_request_kind(),
-		Some("upgrade_monitor_nonblocking")
-	);
+	assert_eq!(session.live_sample_stream.as_ref().unwrap().debug_last_request_kind(), None);
 	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
 }
 
