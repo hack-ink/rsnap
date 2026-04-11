@@ -58,7 +58,15 @@ impl OverlaySession {
 		}
 
 		let gpu_init_ms = gpu_init_started_at.elapsed().as_millis();
+		#[cfg(target_os = "macos")]
+		let reused_prewarmed_windows = self.has_matching_prewarmed_startup_resources(&monitors);
 		let window_creation = self.create_startup_windows(event_loop, &monitors)?;
+
+		#[cfg(target_os = "macos")]
+		if !reused_prewarmed_windows {
+			self.refresh_startup_live_stream_after_window_creation(startup_monitor);
+		}
+
 		let prime_cursor_started_at = Instant::now();
 
 		self.prime_startup_cursor_context(startup_cursor, startup_monitor);
@@ -278,6 +286,18 @@ impl OverlaySession {
 
 			Duration::ZERO.as_millis()
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn refresh_startup_live_stream_after_window_creation(
+		&mut self,
+		startup_monitor: Option<MonitorRect>,
+	) {
+		self.live_sample_stream = Some(MacLiveFrameStream::with_self_capture_exception_window_ids(
+			self.config.self_capture_exception_window_ids.clone(),
+		));
+
+		self.prime_startup_live_stream_nonblocking(startup_monitor);
 	}
 
 	#[cfg(target_os = "macos")]

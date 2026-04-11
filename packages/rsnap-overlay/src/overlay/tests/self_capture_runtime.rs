@@ -133,6 +133,33 @@ fn complete_startup_aux_window_creation_defers_live_stream_upgrade_until_aux_win
 
 #[cfg(target_os = "macos")]
 #[test]
+fn refresh_startup_live_stream_after_window_creation_rebuilds_and_reprimes_stream() {
+	let monitor = tests::test_monitor();
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	assert!(
+		session
+			.live_sample_stream
+			.as_ref()
+			.unwrap()
+			.debug_self_capture_exception_window_ids()
+			.is_empty()
+	);
+
+	session.refresh_startup_live_stream_after_window_creation(Some(monitor));
+
+	assert_eq!(
+		session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
+		&[17]
+	);
+	assert_eq!(
+		session.live_sample_stream.as_ref().unwrap().debug_last_request_kind(),
+		Some("prime_monitor_nonblocking")
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn showing_loupe_window_requests_lazy_creation_before_applying_stream_upgrade() {
 	let monitor = tests::test_monitor();
 	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
