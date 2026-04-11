@@ -17,6 +17,7 @@ use color_eyre::eyre::Result;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
+#[cfg(target_os = "macos")]
 use crate::app::OverlayCancelHotkeyRegistrationState;
 #[cfg(target_os = "macos")]
 use crate::app::UserEvent;
