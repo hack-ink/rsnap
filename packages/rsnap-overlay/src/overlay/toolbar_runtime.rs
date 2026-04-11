@@ -1,14 +1,11 @@
-#[cfg(target_os = "macos")]
-#[allow(unused_imports)]
-use crate::overlay::TOOLBAR_WINDOW_WARMUP_REDRAWS;
-#[allow(unused_imports)]
 use crate::overlay::{
-	Arc, FrozenCaptureSource, FrozenToolbarPointerState, GlobalPoint,
-	HUD_PILL_CORNER_RADIUS_POINTS, HudAnchor, HudOverlayWindow, Instant, LogicalSize, MonitorRect,
-	OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
-	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2, WindowId,
-	scroll_capture,
+	Arc, FrozenToolbarPointerState, GlobalPoint, HUD_PILL_CORNER_RADIUS_POINTS, HudOverlayWindow,
+	Instant, MonitorRect, OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode,
+	OverlaySession, PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX,
+	Vec2, WindowId,
 };
+#[cfg(target_os = "macos")]
+use crate::overlay::{FrozenCaptureSource, HudAnchor, LogicalSize, TOOLBAR_WINDOW_WARMUP_REDRAWS};
 
 impl OverlaySession {
 	pub(super) fn note_frozen_toolbar_cursor_event(

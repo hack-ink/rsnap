@@ -10,16 +10,13 @@ use objc::runtime::Object;
 use winit::window::CursorIcon;
 
 use crate::OverlayControl;
-#[allow(unused_imports)]
 use crate::overlay::tests::{
 	self, Duration, ElementState, FrozenCaptureSource, FrozenSelectionDragState,
 	FrozenToolbarState, FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme,
 	MonitorRect, MonitorRectPoints, MouseButton, OverlayMode, OverlaySession, OverlayState,
-	PngAction, Pos2, RawInput, Rect, RectPoints, Rgba, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
-	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
-	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
-	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, ScrollSession, SelectionDashedBorderCache,
-	SelectionDashedBorderMetrics, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
+	PngAction, Pos2, Rect, RectPoints, Rgba, SELECTION_SIZE_BADGE_GAP_PX,
+	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, ScrollSession,
+	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
 	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer,
 	overlay,
 };

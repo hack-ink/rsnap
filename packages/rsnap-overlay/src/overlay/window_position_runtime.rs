@@ -1,4 +1,3 @@
-#[allow(unused_imports)]
 use crate::overlay::{
 	GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, MonitorRect, OverlayMode, OverlaySession, Pos2, Rect,
 	TOOLBAR_SCREEN_MARGIN_PX, Vec2, WindowRenderer,

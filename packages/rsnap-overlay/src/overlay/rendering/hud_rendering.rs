@@ -1,8 +1,6 @@
 use egui::Context;
 
-#[allow(unused_imports)]
 use crate::overlay::rendering::WindowRenderer;
-#[allow(unused_imports)]
 use crate::overlay::{
 	Align, Area, Color32, ColorImage, CornerRadius, Frame, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS,
 	HUD_PILL_CORNER_RADIUS_POINTS, HudAnchor, HudPillGeometry, HudTheme, Id, Layout, Margin,
