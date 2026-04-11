@@ -62,7 +62,7 @@ legacy recorded-source replay mode.
 
 For the downward scroll-capture rebuild, the expected verification sequence is:
 
-1. `cargo make check`
+1. `cargo make checks`
 2. `cargo make replay-scroll-capture`
 3. `cargo make analyze-scroll-capture-trace`
 4. any targeted deterministic `cargo test -p rsnap-overlay ...`
