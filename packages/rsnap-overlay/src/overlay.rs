@@ -865,6 +865,7 @@ pub struct OverlaySession {
 	window_list_refresh_interval: Duration,
 	last_live_bg_request_at: Instant,
 	live_bg_request_interval: Duration,
+	freeze_capture_send_full_count: u64,
 	hit_test_send_full_count: u64,
 	hit_test_send_disconnected_count: u64,
 	hit_test_request_id: u64,
@@ -1088,6 +1089,7 @@ impl OverlaySession {
 			window_list_refresh_interval: Duration::ZERO,
 			last_live_bg_request_at: Instant::now(),
 			live_bg_request_interval: Duration::ZERO,
+			freeze_capture_send_full_count: 0,
 			hit_test_send_full_count: 0,
 			hit_test_send_disconnected_count: 0,
 			hit_test_request_id: 0,
@@ -1652,6 +1654,7 @@ impl OverlaySession {
 		self.pending_freeze_capture_armed = false;
 		self.inflight_freeze_capture = None;
 		self.authoritative_frozen_capture_ready = false;
+		self.freeze_capture_send_full_count = 0;
 		self.pending_window_freeze_capture = window_target;
 		self.inflight_window_freeze_capture = None;
 		self.frozen_window_image = None;
@@ -7984,9 +7987,7 @@ impl OverlaySession {
 		overlay_monitor: MonitorRect,
 		draw_toolbar: bool,
 	) -> OverlayControl {
-		if self.should_dispatch_pending_freeze_capture(overlay_monitor)
-			&& let Some(worker) = &self.worker
-		{
+		if self.should_dispatch_pending_freeze_capture(overlay_monitor) {
 			let pending_window_target = self
 				.pending_window_freeze_capture
 				.filter(|target| target.monitor == overlay_monitor);
@@ -7995,22 +7996,31 @@ impl OverlaySession {
 					window_id: target.window_id,
 				});
 			#[cfg(target_os = "macos")]
-			let _ = (&worker, &freeze_target, &pending_window_target, &overlay_monitor);
+			let _ = (&freeze_target, &pending_window_target, &overlay_monitor);
 
 			#[cfg(not(target_os = "macos"))]
 			{
 				// Capture must happen on a post-hide redraw so the HUD/loupe are not included.
 				if self.pending_freeze_capture_armed {
-					if worker.request_freeze_capture(overlay_monitor, freeze_target) {
-						self.pending_freeze_capture = None;
-						self.pending_freeze_capture_armed = false;
-						self.inflight_freeze_capture = Some(overlay_monitor);
-						self.inflight_window_freeze_capture = pending_window_target;
-						self.pending_window_freeze_capture = None;
-					} else {
-						self.request_redraw_for_monitor(overlay_monitor);
+					let Some(worker) = &self.worker else {
+						self.abort_pending_freeze_capture("Capture worker is unavailable.");
+
+						return OverlayControl::Continue;
+					};
+
+					match worker.request_freeze_capture(overlay_monitor, freeze_target) {
+						Ok(()) => {
+							self.note_freeze_capture_request_started(
+								overlay_monitor,
+								pending_window_target,
+							);
+						},
+						Err(err) => {
+							self.handle_freeze_capture_request_send_error(overlay_monitor, err);
+						},
 					}
 				} else {
+					self.freeze_capture_send_full_count = 0;
 					self.pending_freeze_capture_armed = true;
 
 					#[cfg(not(target_os = "macos"))]
