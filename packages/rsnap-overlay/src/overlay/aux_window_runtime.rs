@@ -64,6 +64,8 @@ impl OverlaySession {
 		self.maybe_log_event_loop_stall(now);
 		self.mark_progress(OverlayEventLoopPhase::AboutToWait);
 		self.maybe_clear_loupe_activation_after_focus_loss();
+		#[cfg(target_os = "macos")]
+		self.maybe_dispatch_armed_freeze_capture();
 		self.maybe_request_keepalive_redraw();
 		self.maybe_keep_selection_flow_repaint();
 		self.maybe_keep_frozen_text_caret_repaint();

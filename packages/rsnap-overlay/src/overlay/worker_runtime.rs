@@ -3,13 +3,53 @@
 use crate::overlay::CursorSampleRequest;
 #[allow(unused_imports)]
 use crate::overlay::{
-	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, GlobalPoint, Instant,
-	LiveCursorSample, LiveSampleApplyResult, MonitorRect, MonitorRectPoints, OverlayControl,
-	OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit, WindowListSnapshot,
-	WorkerErrorSource, WorkerRequestSendError, WorkerResponse, mem,
+	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, FreezeCaptureTarget,
+	GlobalPoint, Instant, LiveCursorSample, LiveSampleApplyResult, MonitorRect, MonitorRectPoints,
+	OverlayControl, OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit,
+	WindowListSnapshot, WorkerErrorSource, WorkerRequestSendError, WorkerResponse, mem,
 };
 
 impl OverlaySession {
+	#[cfg(target_os = "macos")]
+	pub(super) fn maybe_dispatch_armed_freeze_capture(&mut self) {
+		if !self.pending_freeze_capture_armed {
+			return;
+		}
+
+		let Some(overlay_monitor) = self.pending_freeze_capture else {
+			self.pending_freeze_capture_armed = false;
+
+			return;
+		};
+
+		if !self.pending_freeze_capture_matches(overlay_monitor) {
+			self.pending_freeze_capture_armed = false;
+
+			return;
+		}
+
+		let Some(worker) = &self.worker else {
+			return;
+		};
+		let pending_window_target =
+			self.pending_window_freeze_capture.filter(|target| target.monitor == overlay_monitor);
+		let freeze_target = pending_window_target.map_or(FreezeCaptureTarget::Monitor, |target| {
+			FreezeCaptureTarget::Window { window_id: target.window_id }
+		});
+
+		if worker.request_freeze_capture(overlay_monitor, freeze_target) {
+			self.pending_freeze_capture = None;
+			self.pending_freeze_capture_armed = false;
+			self.inflight_freeze_capture = Some(overlay_monitor);
+			self.inflight_window_freeze_capture = pending_window_target;
+			self.pending_window_freeze_capture = None;
+		} else {
+			self.schedule_egui_repaint_after(
+				self.repaint_interval_for_monitor(Some(overlay_monitor)),
+			);
+		}
+	}
+
 	pub(super) fn drain_worker_responses(&mut self) -> OverlayControl {
 		#[cfg(target_os = "macos")]
 		if self.worker.is_none() && self.live_sample_worker.is_none() {
