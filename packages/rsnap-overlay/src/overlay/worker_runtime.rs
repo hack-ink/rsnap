@@ -622,12 +622,14 @@ impl OverlaySession {
 				OverlayControl::Continue
 			},
 			WorkerResponse::Error { source, message } => {
-				match source {
-					WorkerErrorSource::FreezeCapture => {
-						self.abort_pending_freeze_capture(message);
+				let mut error_already_handled = false;
 
-						return OverlayControl::Continue;
-					},
+					match source {
+						WorkerErrorSource::FreezeCapture => {
+							self.abort_pending_freeze_capture(message.as_str());
+
+							error_already_handled = true;
+						},
 					WorkerErrorSource::RefreshWindowList => {
 						#[cfg(target_os = "macos")]
 						{
@@ -649,8 +651,10 @@ impl OverlaySession {
 					},
 				}
 
-				self.state.set_error(message);
-				self.request_redraw_all();
+				if !error_already_handled {
+					self.state.set_error(message);
+					self.request_redraw_all();
+				}
 
 				OverlayControl::Continue
 			},

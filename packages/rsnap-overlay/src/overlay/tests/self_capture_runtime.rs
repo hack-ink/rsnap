@@ -357,6 +357,26 @@ fn captured_freeze_response_applies_deferred_worker_refresh() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn freeze_error_response_applies_deferred_worker_refresh() {
+	let monitor = tests::test_monitor();
+	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.inflight_freeze_capture = Some(monitor);
+	session.pending_self_capture_exception_window_ids_worker_refresh = true;
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
+		source: WorkerErrorSource::FreezeCapture,
+		message: String::from("freeze failed"),
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
+	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+	assert_eq!(session.state.error_message.as_deref(), Some("freeze failed"));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn hit_test_response_applies_deferred_worker_refresh() {
 	let monitor = tests::test_monitor();
 	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
