@@ -21,7 +21,7 @@ use crate::overlay::tests::{
 #[allow(unused_imports)]
 use crate::overlay::tests::{
 	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, LiveCursorSample,
-	LiveSampleApplyResult, ModifiersState, StartupLiveRgbPlan, WindowId,
+	LiveSampleApplyResult, ModifiersState, OverlayExit, StartupLiveRgbPlan, WindowId,
 };
 
 #[cfg(target_os = "macos")]
@@ -772,12 +772,39 @@ fn startup_live_rgb_plan_keeps_focus_independent_from_seed_monitor() {
 
 	assert_eq!(
 		OverlaySession::startup_live_rgb_plan(None),
-		StartupLiveRgbPlan { focus_window: true, seed_monitor: None }
+		StartupLiveRgbPlan { focus_window: false, seed_monitor: None }
 	);
 	assert_eq!(
 		OverlaySession::startup_live_rgb_plan(Some(monitor)),
-		StartupLiveRgbPlan { focus_window: true, seed_monitor: Some(monitor) }
+		StartupLiveRgbPlan { focus_window: false, seed_monitor: Some(monitor) }
 	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn wants_global_cancel_hotkey_only_in_live_mode() {
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+
+	assert!(session.wants_global_cancel_hotkey());
+
+	session.state.mode = OverlayMode::Frozen;
+
+	assert!(!session.wants_global_cancel_hotkey());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn global_escape_hotkey_cancels_live_capture() {
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+
+	assert!(matches!(
+		session.handle_global_escape_hotkey(),
+		OverlayControl::Exit(OverlayExit::Cancelled)
+	));
 }
 
 #[test]

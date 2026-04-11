@@ -33,6 +33,8 @@ impl OverlaySession {
 		let reset_started_at = Instant::now();
 
 		self.reset_for_start();
+		#[cfg(target_os = "macos")]
+		self.capture_frontmost_application_for_exit_restore();
 
 		let reset_ms = reset_started_at.elapsed().as_millis();
 		let worker_setup_ms = self.setup_startup_worker();
@@ -604,6 +606,7 @@ impl OverlaySession {
 
 			if visible {
 				window.request_redraw();
+				#[cfg(not(target_os = "macos"))]
 				window.focus_window();
 			}
 
