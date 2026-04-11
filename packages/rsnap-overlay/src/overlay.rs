@@ -27,6 +27,7 @@ use std::env;
 use std::ffi::c_void;
 use std::mem;
 use std::panic;
+#[cfg(target_os = "macos")]
 use std::process;
 use std::ptr;
 use std::slice;
