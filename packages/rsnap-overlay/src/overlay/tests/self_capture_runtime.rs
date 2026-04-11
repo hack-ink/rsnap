@@ -3,6 +3,9 @@ use std::ptr;
 
 #[cfg(target_os = "macos")]
 #[allow(unused_imports)]
+use crate::overlay::tests::WorkerRequestSendError;
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
 use crate::overlay::tests::{
 	self, Arc, InflightScrollCaptureObservation, OverlayControl, ScrollCaptureLiveFrame,
 	WindowListSnapshot, WindowRect,
@@ -15,9 +18,6 @@ use crate::overlay::tests::{
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::worker_runtime::FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT;
-#[cfg(target_os = "macos")]
-#[allow(unused_imports)]
-use crate::overlay::tests::WorkerRequestSendError;
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -212,7 +212,10 @@ fn repeated_freeze_capture_send_full_aborts_and_restores_hidden_windows() {
 	assert!(!session.pending_freeze_capture_armed);
 	assert!(!session.capture_windows_hidden);
 	assert_eq!(session.freeze_capture_send_full_count, 0);
-	assert_eq!(session.state.error_message.as_deref(), Some("Capture worker is busy. Please try again."));
+	assert_eq!(
+		session.state.error_message.as_deref(),
+		Some("Capture worker is busy. Please try again.")
+	);
 }
 
 #[cfg(target_os = "macos")]
