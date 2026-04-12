@@ -44,8 +44,6 @@ use std::{
 };
 
 use color_eyre::eyre::{self, Report, WrapErr};
-#[cfg(not(target_os = "macos"))]
-use device_query::DeviceQuery;
 use egui::FullOutput;
 use egui::Mesh;
 use egui::Painter;

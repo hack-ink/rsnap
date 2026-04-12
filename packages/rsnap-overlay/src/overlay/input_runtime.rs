@@ -1,13 +1,14 @@
 use std::time::{Duration, Instant};
 
-#[cfg(target_os = "macos")]
-use crate::overlay::macos_mouse_location;
+#[cfg(not(target_os = "macos"))]
+use device_query::DeviceQuery;
+
 use crate::overlay::{
 	AltActivationMode, CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource,
 	ElementState, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarTool, GlobalPoint, Ime, Key, KeyEvent, LIVE_DRAG_START_THRESHOLD_PX, Modifiers,
 	MonitorRect, NamedKey, OverlayControl, OverlayMode, OverlaySession, PhysicalPosition,
-	PhysicalSize, PngAction, SLOW_OP_WARN_CURSOR_LOCATION, Vec2, WindowId,
+	PhysicalSize, PngAction, Vec2, WindowId,
 };
 
 impl OverlaySession {
@@ -95,13 +96,13 @@ impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	pub(super) fn sample_mouse_location(&mut self) -> GlobalPoint {
 		let started_at = Instant::now();
-		let point = macos_mouse_location().unwrap_or(GlobalPoint::new(0, 0));
+		let point = super::macos_mouse_location().unwrap_or(GlobalPoint::new(0, 0));
 		let elapsed = started_at.elapsed();
 
 		self.slow_op_logger.warn_if_slow(
 			"overlay.macos_cursor_location",
 			elapsed,
-			SLOW_OP_WARN_CURSOR_LOCATION,
+			super::SLOW_OP_WARN_CURSOR_LOCATION,
 			|| format!("sample point=({}, {})", point.x, point.y),
 		);
 
