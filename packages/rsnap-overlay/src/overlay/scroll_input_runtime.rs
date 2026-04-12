@@ -1,8 +1,7 @@
 use std::time::Instant;
 
 use crate::overlay::{
-	GlobalPoint, MonitorRect, MouseScrollDelta, OverlayControl, OverlaySession, RectPoints,
-	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
+	GlobalPoint, MouseScrollDelta, OverlayControl, OverlaySession, SCROLL_CAPTURE_INPUT_FRESHNESS,
 	SCROLL_CAPTURE_INPUT_MOTION_PRIOR_ROWS_MAX, ScrollCaptureTraceSessionSnapshot, ScrollDirection,
 	ScrollObserveOutcome, WindowId,
 };
@@ -10,8 +9,9 @@ use crate::overlay::{
 use crate::overlay::{
 	KCG_SCROLL_EVENT_UNIT_LINE, KCG_SCROLL_EVENT_UNIT_PIXEL, MACOS_SCROLL_PIXEL_DELTA_CLAMP,
 	MACOS_SCROLL_PIXEL_WRAP_MODULUS, MACOS_SCROLL_PIXEL_WRAP_THRESHOLD, MacOSScrollPixelResidual,
-	MacOSScrollWheelEvent, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
-	macos_hid_event_source_state_id, macos_post_scroll_wheel_event,
+	MacOSScrollWheelEvent, MonitorRect, RectPoints,
+	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW,
+	SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
 };
 
 impl OverlaySession {
@@ -94,7 +94,7 @@ impl OverlaySession {
 			return false;
 		}
 
-		if let Err(err) = macos_post_scroll_wheel_event(normalized, target_point) {
+		if let Err(err) = super::macos_post_scroll_wheel_event(normalized, target_point) {
 			tracing::warn!(
 				op = "scroll_capture.wheel_forward_failed",
 				monitor_id = scroll_monitor.id,
@@ -133,7 +133,7 @@ impl OverlaySession {
 			posted_delta_y = normalized.posted_y,
 			pixel_residual_x = normalized.residual.x,
 			pixel_residual_y = normalized.residual.y,
-			source_state_id = macos_hid_event_source_state_id(),
+			source_state_id = super::macos_hid_event_source_state_id(),
 			"Forwarded scroll wheel event."
 		);
 

@@ -8,13 +8,15 @@ use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::{
-	FrozenCaptureSource, MonitorRect, OverlayControl, OverlaySession, Pos2, Rect, RectPoints,
-	SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_PREVIEW_WIDTH_PX,
-	SCROLL_CAPTURE_SAMPLE_INTERVAL, ScrollCaptureState, ScrollCaptureTraceRecorder,
-	ScrollDirection, ScrollObserveOutcome, ScrollSession, Vec2, WindowRenderer,
+	FrozenCaptureSource, Key, KeyEvent, MonitorRect, NamedKey, OverlayControl, OverlayMode,
+	OverlaySession, PngAction, Pos2, Rect, SCROLL_CAPTURE_INPUT_FRESHNESS,
+	SCROLL_CAPTURE_SAMPLE_INTERVAL, ScrollDirection, ScrollObserveOutcome, Vec2, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{MacOSScrollPixelResidual, macos_activate_app, macos_make_window_key};
+use crate::overlay::{
+	MacOSScrollPixelResidual, RectPoints, SCROLL_CAPTURE_PREVIEW_WIDTH_PX, ScrollCaptureState,
+	ScrollCaptureTraceRecorder, ScrollSession,
+};
 
 impl OverlaySession {
 	#[cfg(test)]
@@ -120,37 +122,28 @@ impl OverlaySession {
 		self.request_redraw_all();
 	}
 
-	pub(super) fn handle_scroll_capture_key_event(
-		&mut self,
-		event: &crate::overlay::KeyEvent,
-	) -> OverlayControl {
+	pub(super) fn handle_scroll_capture_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
 		match &event.logical_key {
-			crate::overlay::Key::Named(crate::overlay::NamedKey::Escape) => {
-				self.cancel_overlay("scroll_capture_escape_key")
-			},
-			crate::overlay::Key::Named(crate::overlay::NamedKey::Space) => {
-				self.begin_png_action(crate::overlay::PngAction::Copy);
+			Key::Named(NamedKey::Escape) => self.cancel_overlay("scroll_capture_escape_key"),
+			Key::Named(NamedKey::Space) => {
+				self.begin_png_action(PngAction::Copy);
 
 				OverlayControl::Continue
 			},
-			crate::overlay::Key::Character(key_text)
+			Key::Character(key_text)
 				if key_text.as_str().eq_ignore_ascii_case("s")
 					&& self.is_save_shortcut_pressed() =>
 			{
-				self.begin_png_action(crate::overlay::PngAction::Save);
+				self.begin_png_action(PngAction::Save);
 
 				OverlayControl::Continue
 			},
-			crate::overlay::Key::Character(key_text)
-				if key_text.as_str().eq_ignore_ascii_case("u") =>
-			{
+			Key::Character(key_text) if key_text.as_str().eq_ignore_ascii_case("u") => {
 				self.undo_scroll_capture_append();
 
 				OverlayControl::Continue
 			},
-			crate::overlay::Key::Character(key_text)
-				if key_text.as_str().eq_ignore_ascii_case("p") =>
-			{
+			Key::Character(key_text) if key_text.as_str().eq_ignore_ascii_case("p") => {
 				self.toggle_scroll_capture_paused();
 
 				OverlayControl::Continue
@@ -160,7 +153,7 @@ impl OverlaySession {
 	}
 
 	pub(super) fn scroll_capture_selection_is_ready(&self) -> bool {
-		matches!(self.state.mode, crate::overlay::OverlayMode::Frozen)
+		matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.state.monitor.is_some()
 			&& self.state.frozen_capture_rect.is_some()
 			&& self.frozen_capture_source == FrozenCaptureSource::DragRegion
@@ -189,7 +182,7 @@ impl OverlaySession {
 
 		#[cfg(target_os = "macos")]
 		{
-			matches!(self.state.mode, crate::overlay::OverlayMode::Frozen)
+			matches!(self.state.mode, OverlayMode::Frozen)
 				&& self.state.monitor.is_some()
 				&& self.state.frozen_capture_rect.is_some()
 				&& self.frozen_capture_source == FrozenCaptureSource::DragRegion
@@ -562,7 +555,7 @@ impl OverlaySession {
 
 	#[cfg(target_os = "macos")]
 	fn focus_scroll_keyboard_window(&self) {
-		macos_activate_app();
+		super::macos_activate_app();
 
 		let target_window = if let Some(toolbar_window) = self.toolbar_window.as_ref() {
 			Some(toolbar_window.window.as_ref())
@@ -578,7 +571,7 @@ impl OverlaySession {
 			return;
 		};
 
-		macos_make_window_key(target_window);
+		super::macos_make_window_key(target_window);
 	}
 
 	pub(super) fn update_scroll_toolbar_default_position(&mut self, monitor: MonitorRect) {
