@@ -10,7 +10,6 @@ use crate::overlay::{
 	MonitorRect, OverlaySession, Pos2, RectPoints, WINDOW_CAPTURE_MATTE_DARK_RGBA,
 	WINDOW_CAPTURE_MATTE_LIGHT_RGBA, WindowCaptureAlphaMode,
 };
-use crate::text_rendering::{self, RasterTextAnnotation};
 
 impl OverlaySession {
 	pub(super) fn cropped_frozen_capture_image(&self) -> Option<RgbaImage> {
@@ -360,21 +359,6 @@ impl OverlaySession {
 
 			pixel[3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
 		}
-	}
-
-	fn render_frozen_text_annotation_into_image(
-		image: &mut RgbaImage,
-		export_transform: FrozenExportTransform,
-		annotation: &FrozenTextAnnotation,
-	) {
-		let raster_annotation = RasterTextAnnotation {
-			anchor_px: export_transform.point_to_pixels(annotation.anchor),
-			font_size_px: annotation.style.font_size_points * export_transform.scalar_scale(),
-			fill_rgba: annotation.style.color.export_rgba(),
-			text: annotation.text.as_str(),
-		};
-
-		text_rendering::render_text_annotations(image, &[raster_annotation]);
 	}
 
 	pub(super) fn current_export_image(&self) -> Option<RgbaImage> {
