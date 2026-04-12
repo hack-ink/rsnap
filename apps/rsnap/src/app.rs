@@ -20,6 +20,10 @@ use global_hotkey::Error;
 use global_hotkey::hotkey::Code;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
 #[cfg(target_os = "macos")]
+use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::NSSound;
+#[cfg(target_os = "macos")]
 use tray_icon::menu::Menu;
 use tray_icon::{
 	TrayIcon,
@@ -108,6 +112,8 @@ struct App {
 	settings_window_capture_window_id: Option<u32>,
 	settings: AppSettings,
 	#[cfg(target_os = "macos")]
+	capture_success_sound: Option<Retained<NSSound>>,
+	#[cfg(target_os = "macos")]
 	overlay_proxy: EventLoopProxy<UserEvent>,
 	#[cfg(target_os = "macos")]
 	scroll_input_observer_lifecycle: Arc<ScrollInputObserverLifecycle>,
@@ -180,6 +186,8 @@ impl App {
 			settings_window: None,
 			settings_window_capture_window_id: None,
 			settings,
+			#[cfg(target_os = "macos")]
+			capture_success_sound: Self::load_capture_success_sound(),
 			#[cfg(target_os = "macos")]
 			overlay_proxy,
 			#[cfg(target_os = "macos")]
