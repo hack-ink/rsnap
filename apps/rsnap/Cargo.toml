@@ -44,7 +44,8 @@ criterion = { version = "0.8", features = ["html_reports"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2         = { workspace = true }
-objc2-app-kit = { workspace = true, features = ["NSGraphics", "NSScreen", "NSView", "NSWindow"] }
+objc2-app-kit = { workspace = true, features = ["NSScreen", "NSSound", "NSView", "NSWindow"] }
+objc2-foundation = { workspace = true, features = ["NSString"] }
 
 [[bench]]
 harness = false

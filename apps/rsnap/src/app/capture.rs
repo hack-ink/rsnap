@@ -15,7 +15,13 @@ use color_eyre::eyre;
 #[cfg(target_os = "macos")]
 use color_eyre::eyre::Result;
 #[cfg(target_os = "macos")]
-use objc2_app_kit::NSBeep;
+use objc2::AnyThread;
+#[cfg(target_os = "macos")]
+use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::NSSound;
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSString;
 use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
@@ -37,8 +43,35 @@ use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, Overl
 const SCROLL_INPUT_OBSERVER_READY_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(target_os = "macos")]
 const OVERLAY_SESSION_PREWARM_RETRY_BACKOFF: Duration = Duration::from_secs(1);
+#[cfg(target_os = "macos")]
+const CAPTURE_SUCCESS_SOUND_CANDIDATE_PATHS: [&str; 2] = [
+	"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif",
+	"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Shutter.aif",
+];
 
 impl App {
+	#[cfg(target_os = "macos")]
+	pub(super) fn load_capture_success_sound() -> Option<Retained<NSSound>> {
+		for path in CAPTURE_SUCCESS_SOUND_CANDIDATE_PATHS {
+			let ns_path = NSString::from_str(path);
+
+			if let Some(sound) =
+				NSSound::initWithContentsOfFile_byReference(NSSound::alloc(), &ns_path, true)
+			{
+				tracing::info!(path, "Loaded native capture success sound.");
+
+				return Some(sound);
+			}
+		}
+
+		tracing::warn!(
+			candidates = ?CAPTURE_SUCCESS_SOUND_CANDIDATE_PATHS,
+			"Failed to load a native capture success sound; capture completion audio is unavailable."
+		);
+
+		None
+	}
+
 	#[cfg(target_os = "macos")]
 	fn register_overlay_cancel_hotkey(&mut self) {
 		if !self.overlay_cancel_hotkey_registration_state.allows_register_attempt() {
@@ -140,7 +173,16 @@ impl App {
 
 	#[cfg(target_os = "macos")]
 	fn play_capture_success_feedback(&self) {
-		NSBeep();
+		let Some(sound) = self.capture_success_sound.as_ref() else {
+			return;
+		};
+
+		let _ = sound.stop();
+		sound.setCurrentTime(0.0);
+
+		if !sound.play() {
+			tracing::warn!("Failed to play the native capture success sound.");
+		}
 	}
 
 	#[cfg(not(target_os = "macos"))]
