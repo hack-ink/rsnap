@@ -2,12 +2,12 @@ use egui::{FontId, Pos2, Rect, Vec2};
 use image::RgbaImage;
 use winit::dpi::{LogicalPosition, LogicalSize};
 
+#[cfg(target_os = "macos")]
+use crate::overlay::Window;
 use crate::overlay::{
 	FrozenEditKind, FrozenExportTransform, FrozenTextAnnotation, FrozenTextEditState,
 	FrozenToolbarTool, GlobalPoint, MonitorRect, OverlaySession, WindowRenderer,
 };
-#[cfg(target_os = "macos")]
-use crate::overlay::{Window, macos_activate_app, macos_make_window_key};
 use crate::text_rendering::{self, RasterTextAnnotation};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -446,7 +446,7 @@ impl OverlaySession {
 
 	#[cfg(target_os = "macos")]
 	pub(super) fn focus_frozen_text_input_window(&self, monitor: Option<MonitorRect>) {
-		macos_activate_app();
+		super::macos_activate_app();
 
 		let Some(target_window) = self.frozen_text_input_overlay_window(monitor) else {
 			tracing::info!(
@@ -466,12 +466,12 @@ impl OverlaySession {
 			"Requested frozen text input focus."
 		);
 
-		macos_make_window_key(target_window);
+		super::macos_make_window_key(target_window);
 	}
 
 	#[cfg(target_os = "macos")]
 	pub(super) fn focus_frozen_keyboard_window(&self) {
-		macos_activate_app();
+		super::macos_activate_app();
 
 		if self.frozen_text_edit.is_some()
 			&& let Some(target_window) = self.frozen_text_input_overlay_window(self.state.monitor)
@@ -485,7 +485,7 @@ impl OverlaySession {
 				"Requested frozen keyboard focus for text editing."
 			);
 
-			macos_make_window_key(target_window);
+			super::macos_make_window_key(target_window);
 
 			return;
 		}
@@ -520,6 +520,6 @@ impl OverlaySession {
 			"Requested frozen keyboard focus."
 		);
 
-		macos_make_window_key(target_window);
+		super::macos_make_window_key(target_window);
 	}
 }
