@@ -1,15 +1,17 @@
 use std::time::{Duration, Instant};
 
-use image::RgbaImage;
+use image::{Rgba, RgbaImage};
 
 use crate::overlay::{
-	CursorIcon, FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS, FrozenCaptureSource,
-	FrozenMosaicDragState, FrozenSelectionCorner, FrozenSelectionDragState,
-	FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint, MonitorRect, MonitorRectPoints,
-	OverlayMode, OverlaySession, Pos2, RectPoints, Vec2, WindowRenderer,
+	CursorIcon, FrozenCaptureSource, FrozenMosaicDragState, FrozenSelectionCorner,
+	FrozenSelectionDragState, FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint,
+	MonitorRect, MonitorRectPoints, OverlayMode, OverlaySession, Pos2, RectPoints,
+	WindowRenderer,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{OverlayCursorRect, Rect};
+use crate::overlay::{
+	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS, OverlayCursorRect, Rect, Vec2,
+};
 
 impl OverlaySession {
 	pub(super) fn update_live_drag_rect(&mut self, monitor: MonitorRect, global: GlobalPoint) {
@@ -1029,7 +1031,7 @@ impl OverlaySession {
 		if sample_count == 0 { 0.0 } else { total_distance as f32 / sample_count as f32 }
 	}
 
-	fn rgb_distance_to_mean(pixel: &image::Rgba<u8>, mean: [f32; 3]) -> u32 {
+	fn rgb_distance_to_mean(pixel: &Rgba<u8>, mean: [f32; 3]) -> u32 {
 		(pixel[0] as f32 - mean[0]).abs().round() as u32
 			+ (pixel[1] as f32 - mean[1]).abs().round() as u32
 			+ (pixel[2] as f32 - mean[2]).abs().round() as u32
