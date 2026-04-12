@@ -58,7 +58,7 @@ impl App {
 			if let Some(sound) =
 				NSSound::initWithContentsOfFile_byReference(NSSound::alloc(), &ns_path, true)
 			{
-				tracing::info!(path, "Loaded native capture success sound.");
+				tracing::info!(path, sound_path = path, "Loaded native capture success sound.");
 
 				return Some(sound);
 			}
@@ -176,8 +176,8 @@ impl App {
 		let Some(sound) = self.capture_success_sound.as_ref() else {
 			return;
 		};
-
 		let _ = sound.stop();
+
 		sound.setCurrentTime(0.0);
 
 		if !sound.play() {
@@ -593,6 +593,7 @@ impl App {
 			OverlayExit::Cancelled => tracing::info!("Capture cancelled."),
 			OverlayExit::PngBytes(png_bytes) => {
 				tracing::info!(bytes = png_bytes.len(), "Capture copied to clipboard.");
+
 				self.play_capture_success_feedback();
 			},
 			OverlayExit::TextCopied(character_count) => {
@@ -670,6 +671,7 @@ impl App {
 			},
 			OverlayExit::Saved(path) => {
 				tracing::info!(path = %path.display(), "Capture saved to file.");
+
 				self.play_capture_success_feedback();
 			},
 			OverlayExit::Error(message) => tracing::warn!(error = %message, "Capture failed."),
