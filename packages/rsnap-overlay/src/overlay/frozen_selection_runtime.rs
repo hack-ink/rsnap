@@ -5,8 +5,7 @@ use image::{Rgba, RgbaImage};
 use crate::overlay::{
 	CursorIcon, FrozenCaptureSource, FrozenMosaicDragState, FrozenSelectionCorner,
 	FrozenSelectionDragState, FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint,
-	MonitorRect, MonitorRectPoints, OverlayMode, OverlaySession, Pos2, RectPoints,
-	WindowRenderer,
+	MonitorRect, MonitorRectPoints, OverlayMode, OverlaySession, Pos2, RectPoints, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
