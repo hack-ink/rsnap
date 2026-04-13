@@ -1166,7 +1166,7 @@ impl OverlaySession {
 		self.frozen_transition_started_at = Some(now);
 		self.frozen_transition_target_window_id = window_target.map(|target| target.window_id);
 
-		tracing::info!(
+		tracing::debug!(
 			op = "overlay.freeze_transition_begin",
 			monitor_id = monitor.id,
 			frozen_capture_source = ?self.frozen_capture_source,
@@ -1185,7 +1185,7 @@ impl OverlaySession {
 	) {
 		let now = Instant::now();
 
-		tracing::info!(
+		tracing::debug!(
 			op = "overlay.freeze_transition_preview_deferred",
 			monitor_id = monitor.id,
 			frozen_capture_source = ?self.frozen_capture_source,
@@ -1214,7 +1214,7 @@ impl OverlaySession {
 		self.frozen_transition_preview_committed_at = Some(now);
 		self.frozen_transition_preview_source = Some(source);
 
-		tracing::info!(
+		tracing::debug!(
 			op = "overlay.freeze_transition_preview_committed",
 			monitor_id = monitor.id,
 			frozen_capture_source = ?self.frozen_capture_source,
@@ -1240,7 +1240,7 @@ impl OverlaySession {
 				pending_window_target.map(|target| target.window_id);
 		}
 
-		tracing::info!(
+		tracing::debug!(
 			op = "overlay.freeze_transition_worker_requested",
 			monitor_id = monitor.id,
 			frozen_capture_source = ?self.frozen_capture_source,
@@ -1269,7 +1269,7 @@ impl OverlaySession {
 
 		self.frozen_transition_final_ready_at = Some(now);
 
-		tracing::info!(
+		tracing::debug!(
 			op = "overlay.freeze_transition_final_ready",
 			monitor_id = monitor.id,
 			frozen_capture_source = ?self.frozen_capture_source,
@@ -1295,7 +1295,7 @@ impl OverlaySession {
 
 		self.frozen_transition_toolbar_visible_at = Some(now);
 
-		tracing::info!(
+		tracing::debug!(
 			op = "overlay.freeze_transition_toolbar_visible",
 			monitor_id = monitor.id,
 			frozen_capture_source = ?self.frozen_capture_source,
@@ -1315,7 +1315,7 @@ impl OverlaySession {
 	fn note_frozen_transition_aborted(&self, message: &str) {
 		let now = Instant::now();
 
-		tracing::info!(
+		tracing::debug!(
 			op = "overlay.freeze_transition_aborted",
 			frozen_capture_source = ?self.frozen_capture_source,
 			alpha_mode = ?self.config.window_capture_alpha_mode,
@@ -1361,6 +1361,7 @@ impl OverlaySession {
 		window_target: Option<WindowFreezeCaptureTarget>,
 		cursor: Option<GlobalPoint>,
 		snapshot: Option<Arc<MonitorImageSnapshot>>,
+		source: &'static str,
 	) -> bool {
 		if !self.snapshot_can_finish_frozen_capture(window_target) {
 			return false;
@@ -1374,11 +1375,7 @@ impl OverlaySession {
 		let snapshot_image = snapshot.image.as_ref().clone();
 
 		self.commit_frozen_preview(monitor, snapshot_image, cursor);
-		self.note_frozen_transition_preview_committed(
-			monitor,
-			"live_stream_snapshot",
-			Some(snapshot_age_ms),
-		);
+		self.note_frozen_transition_preview_committed(monitor, source, Some(snapshot_age_ms));
 		self.pending_freeze_capture = None;
 		self.inflight_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
@@ -1387,7 +1384,7 @@ impl OverlaySession {
 		self.authoritative_frozen_capture_ready = true;
 		self.note_frozen_transition_final_ready(
 			monitor,
-			"live_stream_snapshot",
+			source,
 			window_target.map(|target| target.window_id),
 		);
 		self.freeze_capture_send_full_count = 0;
@@ -1402,14 +1399,16 @@ impl OverlaySession {
 			self.request_redraw_toolbar_window();
 		}
 
-		tracing::debug!(
-			monitor_id = monitor.id,
-			window_target = window_target.map(|target| target.window_id),
-			snapshot_age_ms,
-			"Frozen capture finished immediately from the latest live-stream snapshot."
-		);
-
 		true
+	}
+
+	#[cfg(any(target_os = "macos", test))]
+	fn can_finish_frozen_capture_from_unverified_snapshot(
+		&self,
+		window_target: Option<WindowFreezeCaptureTarget>,
+	) -> bool {
+		self.snapshot_can_finish_frozen_capture(window_target)
+			&& self.config.self_capture_exception_window_ids.is_empty()
 	}
 
 	#[cfg(any(target_os = "macos", test))]
@@ -1432,13 +1431,6 @@ impl OverlaySession {
 		self.toolbar_state.needs_redraw = true;
 		self.sync_frozen_toolbar_state();
 		self.request_redraw_for_monitor(monitor);
-
-		tracing::debug!(
-			monitor_id = monitor.id,
-			snapshot_age_ms,
-			source,
-			"Frozen capture preview was seeded from the latest live-stream snapshot while authoritative capture remains pending."
-		);
 
 		true
 	}
@@ -1473,6 +1465,19 @@ impl OverlaySession {
 				window_target,
 				cursor,
 				snapshot.clone(),
+				"live_stream_snapshot",
+			) {
+			return true;
+		}
+
+		if !self_capture_filter_complete
+			&& self.can_finish_frozen_capture_from_unverified_snapshot(window_target)
+			&& self.maybe_finish_frozen_capture_from_snapshot(
+				monitor,
+				window_target,
+				cursor,
+				snapshot.clone(),
+				"live_stream_snapshot_unverified_final",
 			) {
 			return true;
 		}

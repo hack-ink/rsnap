@@ -2249,7 +2249,7 @@ fn log_missing_current_process_fallback(
 	excepting_window_count: usize,
 	fallback_excluded_window_count: usize,
 ) {
-	tracing::info!(
+	tracing::debug!(
 		op = "live_frame_stream.setup_filter_fallback_missing_current_process",
 		monitor_id,
 		pid = process::id(),
