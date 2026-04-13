@@ -98,19 +98,14 @@ impl OverlaySession {
 		window_id: WindowId,
 		position: PhysicalPosition<f64>,
 	) -> OverlayControl {
-		let Some((
-			toolbar_window_id,
-			toolbar_scale,
-			toolbar_window_handle,
-			window_toolbar_outer_pos,
-		)) = self.toolbar_window.as_ref().map(|toolbar_window| {
-			(
-				toolbar_window.window.id(),
-				toolbar_window.window.scale_factor().max(1.0),
-				Arc::clone(&toolbar_window.window),
-				Self::toolbar_window_outer_position(toolbar_window),
-			)
-		})
+		let Some((toolbar_window_id, toolbar_scale, window_toolbar_outer_pos)) =
+			self.toolbar_window.as_ref().map(|toolbar_window| {
+				(
+					toolbar_window.window.id(),
+					toolbar_window.window.scale_factor().max(1.0),
+					Self::toolbar_window_outer_position(toolbar_window),
+				)
+			})
 		else {
 			return OverlayControl::Continue;
 		};
@@ -169,12 +164,7 @@ impl OverlaySession {
 		{
 			#[cfg(target_os = "macos")]
 			{
-				self.toolbar_state.dragging = true;
-				self.toolbar_state.drag_anchor = None;
-
-				let _ = toolbar_window_handle.drag_window();
-
-				return OverlayControl::Continue;
+				return self.begin_native_toolbar_drag();
 			}
 
 			#[cfg(not(target_os = "macos"))]
@@ -237,6 +227,21 @@ impl OverlaySession {
 		}
 
 		false
+	}
+
+	#[cfg(target_os = "macos")]
+	fn begin_native_toolbar_drag(&mut self) -> OverlayControl {
+		self.toolbar_state.dragging = true;
+		self.toolbar_state.drag_anchor = None;
+
+		let Some(toolbar_window_handle) =
+			self.toolbar_window.as_ref().map(|toolbar_window| Arc::clone(&toolbar_window.window))
+		else {
+			return OverlayControl::Continue;
+		};
+		let _ = toolbar_window_handle.drag_window();
+
+		OverlayControl::Continue
 	}
 
 	fn update_toolbar_cursor_event_from_global(
