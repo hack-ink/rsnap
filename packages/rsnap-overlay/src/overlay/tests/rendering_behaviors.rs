@@ -21,9 +21,9 @@ use crate::overlay::tests::{
 	overlay,
 };
 use crate::overlay::{
-	FROZEN_TEXT_CARET_BLINK_PERIOD_SECS, FROZEN_TEXT_FONT_SIZE_POINTS, FontId, FrozenEditKind,
-	FrozenSelectionCorner, FrozenSelectionInteractionKind, FrozenTextAnnotation, FrozenTextColor,
-	FrozenTextEditState,
+	FROZEN_TEXT_CARET_BLINK_PERIOD_SECS, FROZEN_TEXT_FONT_SIZE_POINTS, FontId,
+	FrozenAnnotationColor, FrozenEditKind, FrozenSelectionCorner, FrozenSelectionInteractionKind,
+	FrozenTextAnnotation, FrozenTextEditState,
 };
 use crate::worker::{WorkerErrorSource, WorkerResponse};
 
@@ -832,8 +832,10 @@ fn frozen_text_edit_caret_rect_tracks_explicit_preedit_cursor_position() {
 
 #[test]
 fn frozen_text_placeholder_fill_tracks_selected_text_color() {
-	let blue = WindowRenderer::frozen_text_placeholder_fill(FrozenTextColor::Blue, HudTheme::Dark);
-	let red = WindowRenderer::frozen_text_placeholder_fill(FrozenTextColor::Red, HudTheme::Dark);
+	let blue =
+		WindowRenderer::frozen_text_placeholder_fill(FrozenAnnotationColor::Blue, HudTheme::Dark);
+	let red =
+		WindowRenderer::frozen_text_placeholder_fill(FrozenAnnotationColor::Red, HudTheme::Dark);
 
 	assert!(blue.b() > blue.r());
 	assert!(red.r() > red.b());
@@ -1163,7 +1165,6 @@ fn frozen_base_toolbar_hud_pill_uses_half_height_corner_radius() {
 			);
 		},
 	);
-
 	let hud_pill = hud_pill.expect("base toolbar should render after readiness stabilizes");
 
 	assert_eq!(hud_pill.radius_points, (hud_pill.rect.height() * 0.5).round());
@@ -1179,6 +1180,7 @@ fn frozen_annotation_toolbar_hud_pill_keeps_standard_corner_radius() {
 	let mut session = OverlaySession::new();
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
 	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
@@ -1208,7 +1210,6 @@ fn frozen_annotation_toolbar_hud_pill_keeps_standard_corner_radius() {
 			);
 		},
 	);
-
 	let hud_pill = hud_pill.expect("annotation toolbar should render after readiness stabilizes");
 
 	assert_eq!(hud_pill.radius_points, 18.0);

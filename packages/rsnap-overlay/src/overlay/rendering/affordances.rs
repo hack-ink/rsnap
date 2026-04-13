@@ -5,6 +5,7 @@ use egui::Context;
 use egui::FontDefinitions;
 use egui::Galley;
 use egui::RawInput;
+use egui::Response;
 use egui::text::CCursor;
 
 use crate::overlay::rendering::{
@@ -24,8 +25,8 @@ use crate::overlay::{
 	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FROZEN_SELECTION_SCRIM_ALPHA_DARK,
 	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TEXT_PREVIEW_PLACEHOLDER,
 	FROZEN_TOOLBAR_BUTTON_SIZE_POINTS, FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId,
-	FrozenBrushState, FrozenCaptureSource, FrozenCommittedOverlay, FrozenEditKind,
-	FrozenSelectionCorner, FrozenTextAnnotation, FrozenTextColor, FrozenTextEditState,
+	FrozenAnnotationColor, FrozenBrushState, FrozenCaptureSource, FrozenCommittedOverlay,
+	FrozenEditKind, FrozenSelectionCorner, FrozenTextAnnotation, FrozenTextEditState,
 	FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool,
 	HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_STROKE_WIDTH_POINTS, HudPillGeometry, HudTheme, Id,
 	LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK, LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT,
@@ -41,8 +42,7 @@ use crate::overlay::{
 	SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
 	SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS, SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind,
 	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
-	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder, Vec2,
-	frozen_toolbar_corner_radius_u8, regular,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder, Vec2, regular,
 };
 
 const FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS: f32 = 4.0;
@@ -72,16 +72,6 @@ enum FrozenAnnotationStyleToolbarKind {
 	Pen,
 	Text,
 }
-
-#[derive(Clone, Copy)]
-struct FrozenAnnotationSizeControlAppearance {
-	capsule_fill: Color32,
-	capsule_stroke: Color32,
-	divider_color: Color32,
-	button_hover_fill: Color32,
-	text_color: Color32,
-}
-
 impl FrozenAnnotationStyleToolbarKind {
 	fn from_toolbar_state(toolbar_state: &FrozenToolbarState) -> Option<Self> {
 		match toolbar_state.selected_tool {
@@ -140,6 +130,7 @@ impl FrozenAnnotationStyleToolbarKind {
 				while text.contains('.') && text.ends_with('0') {
 					let _ = text.pop();
 				}
+
 				if text.ends_with('.') {
 					let _ = text.pop();
 				}
@@ -158,14 +149,18 @@ impl FrozenAnnotationStyleToolbarKind {
 		}
 	}
 
-	fn selected_color(self, toolbar_state: &FrozenToolbarState) -> FrozenTextColor {
+	fn selected_color(self, toolbar_state: &FrozenToolbarState) -> FrozenAnnotationColor {
 		match self {
 			Self::Pen => toolbar_state.brush_style.color,
 			Self::Text => toolbar_state.text_style.color,
 		}
 	}
 
-	fn set_color(self, toolbar_state: &mut FrozenToolbarState, color: FrozenTextColor) -> bool {
+	fn set_color(
+		self,
+		toolbar_state: &mut FrozenToolbarState,
+		color: FrozenAnnotationColor,
+	) -> bool {
 		let selected_color = match self {
 			Self::Pen => &mut toolbar_state.brush_style.color,
 			Self::Text => &mut toolbar_state.text_style.color,
@@ -183,6 +178,15 @@ impl FrozenAnnotationStyleToolbarKind {
 	fn apply_size_steps(self, toolbar_state: &mut FrozenToolbarState, steps: i32) -> bool {
 		toolbar_state.apply_annotation_size_steps(steps)
 	}
+}
+
+#[derive(Clone, Copy)]
+struct FrozenAnnotationSizeControlAppearance {
+	capsule_fill: Color32,
+	capsule_stroke: Color32,
+	divider_color: Color32,
+	button_hover_fill: Color32,
+	text_color: Color32,
 }
 
 impl WindowRenderer {
@@ -612,7 +616,7 @@ impl WindowRenderer {
 	}
 
 	pub(in crate::overlay) fn frozen_text_placeholder_fill(
-		color: FrozenTextColor,
+		color: FrozenAnnotationColor,
 		theme: HudTheme,
 	) -> Color32 {
 		let [r, g, b, _] = color.swatch_fill().to_array();
@@ -2677,7 +2681,7 @@ impl WindowRenderer {
 				);
 				#[cfg(target_os = "macos")]
 				let _ = &response;
-				let corner_radius = frozen_toolbar_corner_radius_u8(rect.height());
+				let corner_radius = overlay::frozen_toolbar_corner_radius_u8(rect.height());
 				let body_fill = Self::tinted_hud_body_fill(
 					theme,
 					hud_blur_active,
@@ -2688,7 +2692,9 @@ impl WindowRenderer {
 				);
 				let toolbar_frame =
 					Self::hud_pill_frame(theme, hud_opaque, hud_opacity, body_fill, false);
+
 				toolbar_state.annotation_size_control_hovered = false;
+
 				#[cfg(not(target_os = "macos"))]
 				Self::update_frozen_toolbar_drag_state(
 					toolbar_state,
@@ -2866,6 +2872,7 @@ impl WindowRenderer {
 
 		ui.horizontal_centered(|ui| {
 			ui.spacing_mut().item_spacing.x = item_spacing;
+
 			for tool in tools {
 				let is_mode_tool = tool.is_mode_tool();
 				let action_ready = tool.is_available(toolbar_state)
@@ -2941,6 +2948,7 @@ impl WindowRenderer {
 		let Some(style_kind) = FrozenAnnotationStyleToolbarKind::from_toolbar_state(toolbar_state)
 		else {
 			toolbar_state.annotation_size_control_hovered = false;
+
 			return;
 		};
 		let size_label = match style_kind {
@@ -2963,7 +2971,7 @@ impl WindowRenderer {
 
 			ui.add_space(4.0);
 
-			for color in FrozenTextColor::ALL {
+			for color in FrozenAnnotationColor::ALL {
 				if Self::render_frozen_annotation_color_swatch(
 					ui,
 					color,
@@ -3034,6 +3042,7 @@ impl WindowRenderer {
 		let appearance = Self::frozen_annotation_size_control_appearance(theme, hovered);
 
 		toolbar_state.annotation_size_control_hovered = hovered;
+
 		Self::paint_frozen_annotation_size_control_frame(
 			ui,
 			capsule_rect,
@@ -3108,8 +3117,8 @@ impl WindowRenderer {
 		ui: &Ui,
 		capsule_rect: Rect,
 		display_rect: Rect,
-		minus_response: &egui::Response,
-		plus_response: &egui::Response,
+		minus_response: &Response,
+		plus_response: &Response,
 		appearance: FrozenAnnotationSizeControlAppearance,
 	) {
 		ui.painter().rect_filled(
@@ -3133,7 +3142,6 @@ impl WindowRenderer {
 				);
 			}
 		}
-
 		for divider_x in [display_rect.left(), display_rect.right()] {
 			ui.painter().line_segment(
 				[
@@ -3148,7 +3156,7 @@ impl WindowRenderer {
 	fn paint_frozen_annotation_size_step_button(
 		ui: &Ui,
 		theme: HudTheme,
-		response: &egui::Response,
+		response: &Response,
 		icon: &str,
 	) {
 		let button_style =
@@ -3166,8 +3174,8 @@ impl WindowRenderer {
 	fn apply_frozen_annotation_size_control_clicks(
 		toolbar_state: &mut FrozenToolbarState,
 		style_kind: FrozenAnnotationStyleToolbarKind,
-		minus_response: &egui::Response,
-		plus_response: &egui::Response,
+		minus_response: &Response,
+		plus_response: &Response,
 	) {
 		let mut size_changed = false;
 
@@ -3238,7 +3246,7 @@ impl WindowRenderer {
 
 	fn render_frozen_annotation_color_swatch(
 		ui: &mut Ui,
-		color: FrozenTextColor,
+		color: FrozenAnnotationColor,
 		selected: bool,
 		theme: HudTheme,
 	) -> bool {

@@ -165,175 +165,12 @@ pub(super) struct FrozenToolbarState {
 	pub(super) drag_offset: Vec2,
 	pub(super) drag_anchor: Option<Pos2>,
 }
-impl Default for FrozenToolbarState {
-	fn default() -> Self {
-		Self {
-			visible: true,
-			dragging: false,
-			annotation_size_control_hovered: false,
-			annotation_size_wheel_accumulator: 0.0,
-			selected_tool: FrozenToolbarTool::Pointer,
-			brush_style: FrozenBrushStyle::default(),
-			text_style: FrozenTextStyle::default(),
-			auto_center_available: false,
-			undo_available: false,
-			redo_available: false,
-			scroll_capture_active: false,
-			scroll_capture_available: false,
-			final_capture_ready: false,
-			pending_action: None,
-			needs_redraw: false,
-			pill_height_points: None,
-			default_slot_position: None,
-			floating_position: None,
-			layout_last_screen_size_points: None,
-			layout_stable_frames: 0,
-			drag_offset: Vec2::ZERO,
-			drag_anchor: None,
-		}
-	}
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct FrozenBrushStroke {
-	pub(super) points: Vec<Pos2>,
-	pub(super) style: FrozenBrushStyle,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) struct FrozenBrushModelState {
-	pub(super) filtered_input_point: Pos2,
-	pub(super) modeled_point: Pos2,
-	pub(super) modeled_velocity: Vec2,
-	pub(super) modeled_elapsed_seconds: f32,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct ActiveFrozenBrushStroke {
-	pub(super) raw_points: Vec<Pos2>,
-	pub(super) points: Vec<Pos2>,
-	pub(super) style: FrozenBrushStyle,
-	pub(super) model_state: FrozenBrushModelState,
-	pub(super) started_at: Instant,
-	pub(super) last_sample_at: Instant,
-}
-
-#[derive(Debug, Default)]
-pub(super) struct FrozenBrushState {
-	pub(super) committed_strokes: Vec<FrozenBrushStroke>,
-	pub(super) redo_strokes: Vec<FrozenBrushStroke>,
-	pub(super) active_stroke: Option<ActiveFrozenBrushStroke>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum FrozenAnnotationColor {
-	White,
-	Yellow,
-	Green,
-	Blue,
-	Red,
-	Black,
-}
-impl FrozenAnnotationColor {
-	pub(super) const ALL: [Self; 6] =
-		[Self::White, Self::Yellow, Self::Green, Self::Blue, Self::Red, Self::Black];
-
-	pub(super) const fn swatch_fill(self) -> Color32 {
-		match self {
-			Self::White => Color32::from_rgb(255, 255, 255),
-			Self::Yellow => Color32::from_rgb(255, 219, 77),
-			Self::Green => Color32::from_rgb(92, 214, 149),
-			Self::Blue => Color32::from_rgb(102, 178, 255),
-			Self::Red => Color32::from_rgb(255, 107, 107),
-			Self::Black => Color32::from_rgb(24, 24, 24),
-		}
-	}
-
-	pub(super) const fn export_rgba(self) -> [u8; 4] {
-		let [r, g, b, a] = self.swatch_fill().to_array();
-
-		[r, g, b, a]
-	}
-}
-
-pub(super) type FrozenTextColor = FrozenAnnotationColor;
-
-fn set_clamped_points(current_value: &mut f32, next_value: f32, min: f32, max: f32) -> bool {
-	let next_size = next_value.clamp(min, max);
-
-	if (next_size - *current_value).abs() <= f32::EPSILON {
-		return false;
-	}
-
-	*current_value = next_size;
-
-	true
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct FrozenBrushStyle {
-	pub(super) stroke_width_points: f32,
-	pub(super) color: FrozenAnnotationColor,
-}
-impl FrozenBrushStyle {
-	pub(super) fn set_stroke_width(&mut self, stroke_width_points: f32) -> bool {
-		set_clamped_points(
-			&mut self.stroke_width_points,
-			stroke_width_points,
-			FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS,
-			FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS,
-		)
-	}
-
-	pub(super) fn offset_stroke_width(&mut self, delta_points: f32) -> bool {
-		self.set_stroke_width(self.stroke_width_points + delta_points)
-	}
-}
-impl Default for FrozenBrushStyle {
-	fn default() -> Self {
-		Self {
-			stroke_width_points: FROZEN_BRUSH_STROKE_WIDTH_POINTS,
-			color: FrozenAnnotationColor::Red,
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct FrozenTextStyle {
-	pub(super) font_size_points: f32,
-	pub(super) color: FrozenAnnotationColor,
-}
-impl FrozenTextStyle {
-	pub(super) fn set_font_size(&mut self, font_size_points: f32) -> bool {
-		set_clamped_points(
-			&mut self.font_size_points,
-			font_size_points,
-			FROZEN_TEXT_FONT_SIZE_MIN_POINTS,
-			FROZEN_TEXT_FONT_SIZE_MAX_POINTS,
-		)
-	}
-}
-impl Default for FrozenTextStyle {
-	fn default() -> Self {
-		Self { font_size_points: FROZEN_TEXT_FONT_SIZE_POINTS, color: FrozenAnnotationColor::Blue }
-	}
-}
-
-fn discrete_toolbar_wheel_steps(units: f32) -> i32 {
-	if units.abs() <= f32::EPSILON {
-		return 0;
-	}
-
-	let magnitude = if units.abs() < 1.0 { 1.0 } else { units.abs().round() };
-
-	units.signum() as i32 * magnitude as i32
-}
-
 impl FrozenToolbarState {
 	fn consume_annotation_size_wheel_steps(&mut self, delta: &MouseScrollDelta) -> i32 {
 		match delta {
 			MouseScrollDelta::LineDelta(_, y) => {
 				self.annotation_size_wheel_accumulator = 0.0;
+
 				discrete_toolbar_wheel_steps(*y)
 			},
 			MouseScrollDelta::PixelDelta(position) => {
@@ -419,12 +256,124 @@ impl FrozenToolbarState {
 	pub(super) fn apply_annotation_size_wheel_delta(&mut self, delta: &MouseScrollDelta) -> bool {
 		if !self.annotation_size_control_hovered {
 			self.annotation_size_wheel_accumulator = 0.0;
+
 			return false;
 		}
 
 		let steps = self.consume_annotation_size_wheel_steps(delta);
 
 		self.apply_annotation_size_steps(steps)
+	}
+}
+
+impl Default for FrozenToolbarState {
+	fn default() -> Self {
+		Self {
+			visible: true,
+			dragging: false,
+			annotation_size_control_hovered: false,
+			annotation_size_wheel_accumulator: 0.0,
+			selected_tool: FrozenToolbarTool::Pointer,
+			brush_style: FrozenBrushStyle::default(),
+			text_style: FrozenTextStyle::default(),
+			auto_center_available: false,
+			undo_available: false,
+			redo_available: false,
+			scroll_capture_active: false,
+			scroll_capture_available: false,
+			final_capture_ready: false,
+			pending_action: None,
+			needs_redraw: false,
+			pill_height_points: None,
+			default_slot_position: None,
+			floating_position: None,
+			layout_last_screen_size_points: None,
+			layout_stable_frames: 0,
+			drag_offset: Vec2::ZERO,
+			drag_anchor: None,
+		}
+	}
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct FrozenBrushStroke {
+	pub(super) points: Vec<Pos2>,
+	pub(super) style: FrozenBrushStyle,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FrozenBrushModelState {
+	pub(super) filtered_input_point: Pos2,
+	pub(super) modeled_point: Pos2,
+	pub(super) modeled_velocity: Vec2,
+	pub(super) modeled_elapsed_seconds: f32,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ActiveFrozenBrushStroke {
+	pub(super) raw_points: Vec<Pos2>,
+	pub(super) points: Vec<Pos2>,
+	pub(super) style: FrozenBrushStyle,
+	pub(super) model_state: FrozenBrushModelState,
+	pub(super) started_at: Instant,
+	pub(super) last_sample_at: Instant,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct FrozenBrushState {
+	pub(super) committed_strokes: Vec<FrozenBrushStroke>,
+	pub(super) redo_strokes: Vec<FrozenBrushStroke>,
+	pub(super) active_stroke: Option<ActiveFrozenBrushStroke>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct FrozenBrushStyle {
+	pub(super) stroke_width_points: f32,
+	pub(super) color: FrozenAnnotationColor,
+}
+impl FrozenBrushStyle {
+	pub(super) fn set_stroke_width(&mut self, stroke_width_points: f32) -> bool {
+		set_clamped_points(
+			&mut self.stroke_width_points,
+			stroke_width_points,
+			FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS,
+			FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS,
+		)
+	}
+
+	pub(super) fn offset_stroke_width(&mut self, delta_points: f32) -> bool {
+		self.set_stroke_width(self.stroke_width_points + delta_points)
+	}
+}
+
+impl Default for FrozenBrushStyle {
+	fn default() -> Self {
+		Self {
+			stroke_width_points: FROZEN_BRUSH_STROKE_WIDTH_POINTS,
+			color: FrozenAnnotationColor::Red,
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct FrozenTextStyle {
+	pub(super) font_size_points: f32,
+	pub(super) color: FrozenAnnotationColor,
+}
+impl FrozenTextStyle {
+	pub(super) fn set_font_size(&mut self, font_size_points: f32) -> bool {
+		set_clamped_points(
+			&mut self.font_size_points,
+			font_size_points,
+			FROZEN_TEXT_FONT_SIZE_MIN_POINTS,
+			FROZEN_TEXT_FONT_SIZE_MAX_POINTS,
+		)
+	}
+}
+
+impl Default for FrozenTextStyle {
+	fn default() -> Self {
+		Self { font_size_points: FROZEN_TEXT_FONT_SIZE_POINTS, color: FrozenAnnotationColor::Blue }
 	}
 }
 
@@ -687,4 +636,57 @@ impl LiveSampleApplyResult {
 	pub(super) fn any_changed(self) -> bool {
 		self.overlay_changed || self.hud_changed || self.loupe_changed
 	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FrozenAnnotationColor {
+	White,
+	Yellow,
+	Green,
+	Blue,
+	Red,
+	Black,
+}
+impl FrozenAnnotationColor {
+	pub(super) const ALL: [Self; 6] =
+		[Self::White, Self::Yellow, Self::Green, Self::Blue, Self::Red, Self::Black];
+
+	pub(super) const fn swatch_fill(self) -> Color32 {
+		match self {
+			Self::White => Color32::from_rgb(255, 255, 255),
+			Self::Yellow => Color32::from_rgb(255, 219, 77),
+			Self::Green => Color32::from_rgb(92, 214, 149),
+			Self::Blue => Color32::from_rgb(102, 178, 255),
+			Self::Red => Color32::from_rgb(255, 107, 107),
+			Self::Black => Color32::from_rgb(24, 24, 24),
+		}
+	}
+
+	pub(super) const fn export_rgba(self) -> [u8; 4] {
+		let [r, g, b, a] = self.swatch_fill().to_array();
+
+		[r, g, b, a]
+	}
+}
+
+fn set_clamped_points(current_value: &mut f32, next_value: f32, min: f32, max: f32) -> bool {
+	let next_size = next_value.clamp(min, max);
+
+	if (next_size - *current_value).abs() <= f32::EPSILON {
+		return false;
+	}
+
+	*current_value = next_size;
+
+	true
+}
+
+fn discrete_toolbar_wheel_steps(units: f32) -> i32 {
+	if units.abs() <= f32::EPSILON {
+		return 0;
+	}
+
+	let magnitude = if units.abs() < 1.0 { 1.0 } else { units.abs().round() };
+
+	units.signum() as i32 * magnitude as i32
 }

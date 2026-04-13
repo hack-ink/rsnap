@@ -18,7 +18,7 @@ use crate::overlay::{
 	ActiveEventLoop, GlobalPoint, GpuContext, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS,
 	LiveSampleApplyResult, LogicalPosition, LogicalSize, MonitorRect, OverlayMode, OverlaySession,
 	OverlayWindow, OverlayWorker, Result, ScrollPreviewWindow, TOOLBAR_EXPANDED_HEIGHT_PX,
-	WindowLevel, WindowRenderer, frozen_toolbar_corner_radius_points, hud_helpers,
+	WindowLevel, WindowRenderer, hud_helpers,
 };
 
 impl OverlaySession {
@@ -855,7 +855,7 @@ impl OverlaySession {
 		window.set_transparent(true);
 		self.configure_hud_window_common(
 			window.as_ref(),
-			Some(frozen_toolbar_corner_radius_points(
+			Some(overlay::frozen_toolbar_corner_radius_points(
 				startup_size.y.max(TOOLBAR_EXPANDED_HEIGHT_PX),
 			)),
 		);
