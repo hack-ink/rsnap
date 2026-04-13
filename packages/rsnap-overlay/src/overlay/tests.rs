@@ -32,10 +32,11 @@ use image::Rgba;
 use image::imageops;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta};
+#[cfg(not(target_os = "macos"))]
+use winit::event::{DeviceId, TouchPhase, WindowEvent};
 #[cfg(target_os = "macos")]
 use winit::keyboard::ModifiersState;
 use winit::keyboard::{Key, NamedKey};
-#[cfg(target_os = "macos")]
 use winit::window::WindowId;
 
 #[cfg(target_os = "macos")]
@@ -1296,6 +1297,29 @@ fn toolbar_annotation_size_steps_share_the_same_pen_and_text_logic() {
 	assert!(session.toolbar_state.text_style.set_font_size(27.5));
 	assert!(session.toolbar_state.apply_annotation_size_steps(-1));
 	assert_eq!(session.toolbar_state.text_style.font_size_points, 27.0);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn overlay_window_mouse_wheel_routes_inline_toolbar_size_adjustments() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+	session.toolbar_state.visible = true;
+	session.toolbar_state.annotation_size_control_hovered = true;
+
+	let event = WindowEvent::MouseWheel {
+		device_id: DeviceId::dummy(),
+		delta: MouseScrollDelta::LineDelta(0.0, 1.0),
+		phase: TouchPhase::Moved,
+	};
+
+	let _ = session.handle_window_event(WindowId::dummy(), &event);
+
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 17.0);
 }
 
 fn test_frozen_mosaic_edit() -> FrozenMosaicEdit {

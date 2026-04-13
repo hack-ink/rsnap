@@ -99,15 +99,15 @@ impl OverlaySession {
 		window_id: WindowId,
 		position: PhysicalPosition<f64>,
 	) -> OverlayControl {
-		let Some((
-			toolbar_window_id,
-			toolbar_scale,
-			toolbar_window_handle,
-			window_toolbar_outer_pos,
-		)) = self.toolbar_window.as_ref().map(|toolbar_window| {
-			(
-				toolbar_window.window.id(),
-				toolbar_window.window.scale_factor().max(1.0),
+			let Some((
+				toolbar_window_id,
+				toolbar_scale,
+				_toolbar_window_handle,
+				window_toolbar_outer_pos,
+			)) = self.toolbar_window.as_ref().map(|toolbar_window| {
+				(
+					toolbar_window.window.id(),
+					toolbar_window.window.scale_factor().max(1.0),
 				Arc::clone(&toolbar_window.window),
 				Self::toolbar_window_outer_position(toolbar_window),
 			)
@@ -186,11 +186,11 @@ impl OverlaySession {
 			let threshold_sq = TOOLBAR_DRAG_START_THRESHOLD_PX * TOOLBAR_DRAG_START_THRESHOLD_PX;
 
 			if dx * dx + dy * dy >= threshold_sq {
-				#[cfg(target_os = "macos")]
-				{
-					self.toolbar_state.dragging = true;
-					self.toolbar_state.drag_anchor = None;
-					let _ = toolbar_window_handle.drag_window();
+					#[cfg(target_os = "macos")]
+					{
+						self.toolbar_state.dragging = true;
+						self.toolbar_state.drag_anchor = None;
+						let _ = _toolbar_window_handle.drag_window();
 
 					return OverlayControl::Continue;
 				}
