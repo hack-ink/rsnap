@@ -462,33 +462,12 @@ impl OverlaySession {
 		}
 		#[cfg(target_os = "macos")]
 		{
-			let should_focus_frozen_keyboard = self.should_focus_frozen_toolbar_window_on_show();
-
-			if !self.toolbar_window_visible {
-				self.maybe_apply_pending_startup_aux_live_stream_filter_upgrade(monitor);
-			}
-
+			let Some(toolbar_became_visible) = self.prepare_toolbar_window_for_draw(monitor) else {
+				return Ok(());
+			};
 			let Some(gpu) = self.gpu.as_ref() else {
 				return Ok(());
 			};
-			let Some(toolbar_window) = self.toolbar_window.as_ref() else {
-				return Ok(());
-			};
-
-			toolbar_window.window.set_visible(true);
-
-			let mut toolbar_became_visible = false;
-
-			if !self.toolbar_window_visible {
-				self.toolbar_window_visible = true;
-				self.skip_toolbar_focus_on_next_show = false;
-				self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
-				toolbar_became_visible = true;
-			}
-			if should_focus_frozen_keyboard {
-				self.focus_frozen_keyboard_window();
-			}
-
 			let previous_floating_position = self.toolbar_state.floating_position;
 
 			self.toolbar_state.floating_position = Some(Pos2::ZERO);
@@ -564,6 +543,33 @@ impl OverlaySession {
 
 			Ok(())
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn prepare_toolbar_window_for_draw(&mut self, monitor: MonitorRect) -> Option<bool> {
+		let should_focus_frozen_keyboard = self.should_focus_frozen_toolbar_window_on_show();
+
+		if !self.toolbar_window_visible {
+			self.maybe_apply_pending_startup_aux_live_stream_filter_upgrade(monitor);
+		}
+
+		let toolbar_window = self.toolbar_window.as_ref()?;
+
+		toolbar_window.window.set_visible(true);
+
+		let mut toolbar_became_visible = false;
+
+		if !self.toolbar_window_visible {
+			self.toolbar_window_visible = true;
+			self.skip_toolbar_focus_on_next_show = false;
+			self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
+			toolbar_became_visible = true;
+		}
+		if should_focus_frozen_keyboard {
+			self.focus_frozen_keyboard_window();
+		}
+
+		Some(toolbar_became_visible)
 	}
 
 	pub(super) fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
