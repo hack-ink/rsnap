@@ -271,6 +271,11 @@ impl MacLiveFrameStream {
 	}
 
 	#[cfg(test)]
+	pub(crate) fn debug_set_self_capture_filter_complete(&self, monitor_id: u32, complete: bool) {
+		self.shared_latest_frame.set_stream_filter_status(monitor_id, complete);
+	}
+
+	#[cfg(test)]
 	fn record_debug_request_kind(&self, kind: &'static str) {
 		match self.debug_last_request_kind.lock() {
 			Ok(mut guard) => {
@@ -367,6 +372,10 @@ impl MacLiveFrameStream {
 			monitor,
 			image: Arc::new(image),
 		}))
+	}
+
+	pub(crate) fn self_capture_filter_complete_for_monitor(&self, monitor: MonitorRect) -> bool {
+		self.shared_latest_frame.self_capture_filter_complete_for_monitor(monitor.id)
 	}
 
 	pub(crate) fn latest_rgba_region(
@@ -592,6 +601,7 @@ struct SharedLatestFrame {
 	pending_monitor: Mutex<Option<u32>>,
 	pending_refresh_monitor: Mutex<Option<PendingMonitorRequest>>,
 	waiting_for_frame_until: Mutex<Option<(u32, Instant)>>,
+	stream_filter_status: Mutex<Option<StreamFilterStatus>>,
 }
 impl SharedLatestFrame {
 	fn store(&self, monitor_id: u32, frame: &QueuedPixelBufferFrame) -> StoreFrameOutcome {
@@ -943,6 +953,30 @@ impl SharedLatestFrame {
 
 		false
 	}
+
+	fn set_stream_filter_status(&self, monitor_id: u32, self_capture_filter_complete: bool) {
+		match self.stream_filter_status.lock() {
+			Ok(mut guard) => {
+				*guard = Some(StreamFilterStatus { monitor_id, self_capture_filter_complete });
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				*guard = Some(StreamFilterStatus { monitor_id, self_capture_filter_complete });
+			},
+		}
+	}
+
+	fn self_capture_filter_complete_for_monitor(&self, monitor_id: u32) -> bool {
+		match self.stream_filter_status.lock() {
+			Ok(guard) => guard.as_ref().is_some_and(|status| {
+				status.monitor_id == monitor_id && status.self_capture_filter_complete
+			}),
+			Err(poisoned) => poisoned.into_inner().as_ref().is_some_and(|status| {
+				status.monitor_id == monitor_id && status.self_capture_filter_complete
+			}),
+		}
+	}
 }
 
 #[derive(Clone, Copy)]
@@ -950,6 +984,12 @@ struct PendingMonitorRequest {
 	monitor_id: u32,
 	stalled_after_frame_seq: u64,
 	started_at: Instant,
+}
+
+#[derive(Clone, Copy)]
+struct StreamFilterStatus {
+	monitor_id: u32,
+	self_capture_filter_complete: bool,
 }
 
 struct StoreFrameOutcome {
@@ -1716,6 +1756,7 @@ fn ensure_stream(
 		}
 
 		let mut previous_state = state.replace(next_state);
+		shared_latest_frame.set_stream_filter_status(monitor.id, true);
 
 		teardown_stream(&mut previous_state);
 
@@ -1738,6 +1779,7 @@ fn ensure_stream(
 	let self_capture_filter_complete = next_state.self_capture_filter_complete;
 
 	*state = Some(next_state);
+	shared_latest_frame.set_stream_filter_status(monitor.id, self_capture_filter_complete);
 
 	shared_latest_frame.mark_waiting_for_frame(monitor.id);
 
@@ -1955,6 +1997,7 @@ fn refresh_stream(args: RefreshStreamArgs<'_>) -> StreamRequestProgress {
 	let self_capture_filter_complete = next_state.self_capture_filter_complete;
 	let replaced_existing_state = state.is_some();
 	let mut previous_state = state.replace(next_state);
+	shared_latest_frame.set_stream_filter_status(monitor.id, self_capture_filter_complete);
 
 	teardown_stream(&mut previous_state);
 
@@ -2965,6 +3008,38 @@ mod tests {
 		assert!(shared.waiting_for_frame_after_setup_at(7, now + Duration::from_millis(25)));
 		assert!(!shared.waiting_for_frame_after_setup_at(7, now + Duration::from_millis(60)));
 		assert!(!shared.waiting_for_frame_after_setup_at(7, now + Duration::from_millis(61)));
+	}
+
+	#[test]
+	fn shared_latest_frame_tracks_self_capture_filter_completeness_per_monitor() {
+		let shared = live_frame_stream_macos::SharedLatestFrame::default();
+
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
+
+		shared.set_stream_filter_status(7, false);
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
+
+		shared.set_stream_filter_status(7, true);
+		assert!(shared.self_capture_filter_complete_for_monitor(7));
+		assert!(!shared.self_capture_filter_complete_for_monitor(9));
+	}
+
+	#[test]
+	fn mac_live_frame_stream_reports_self_capture_filter_completeness_from_shared_status() {
+		let stream = live_frame_stream_macos::MacLiveFrameStream::with_waker(None);
+		let monitor = crate::state::MonitorRect {
+			id: 7,
+			origin: crate::state::GlobalPoint::new(0, 0),
+			width: 1_440,
+			height: 900,
+			scale_factor_x1000: 2_000,
+		};
+
+		assert!(!stream.self_capture_filter_complete_for_monitor(monitor));
+
+		stream.debug_set_self_capture_filter_complete(monitor.id, true);
+
+		assert!(stream.self_capture_filter_complete_for_monitor(monitor));
 	}
 
 	#[test]

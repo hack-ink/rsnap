@@ -1,3 +1,6 @@
+#[cfg(target_os = "macos")]
+use std::sync::Arc;
+
 use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -12,9 +15,12 @@ use crate::overlay::DeviceCursorPointSource;
 use crate::overlay::FrozenCaptureSource;
 use crate::overlay::OverlayControl;
 #[cfg(target_os = "macos")]
+use crate::overlay::tests::WorkerResponse;
+#[cfg(target_os = "macos")]
 use crate::overlay::tests::{
 	self, AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, LiveCursorSample,
 	LiveSampleApplyResult, ModifiersState, OverlayExit, StartupLiveRgbPlan, WindowId,
+	WindowListSnapshot,
 };
 use crate::overlay::tests::{
 	Duration, GlobalPoint, HudRedrawSummary, Instant, LoupeSample, MonitorRect, MonitorRectPoints,
@@ -552,6 +558,97 @@ fn live_drag_rect_activation_hides_auxiliary_windows() {
 	);
 	assert!(!session.hud_window_visible);
 	assert!(!session.loupe_window_visible);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn live_mouse_press_keeps_hovered_window_affordance_until_drag_or_release() {
+	let monitor = tests::test_monitor();
+	let hovered =
+		MonitorRectPoints { monitor_id: monitor.id, rect: RectPoints::new(100, 120, 240, 320) };
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.state.monitor = Some(monitor);
+	session.state.hovered_window_rect = Some(hovered);
+
+	assert!(matches!(
+		session.handle_left_mouse_input(WindowId::from(1), ElementState::Pressed),
+		OverlayControl::Continue
+	));
+	assert_eq!(session.state.hovered_window_rect, Some(hovered));
+	assert!(session.left_mouse_button_down);
+	assert_eq!(session.left_mouse_button_down_monitor, Some(monitor));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn live_press_pending_keeps_hovered_window_across_worker_updates() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(180, 220);
+	let hovered =
+		MonitorRectPoints { monitor_id: monitor.id, rect: RectPoints::new(100, 120, 240, 320) };
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.cursor_monitor = Some(monitor);
+	session.state.cursor = Some(cursor);
+	session.left_mouse_button_down = true;
+	session.left_mouse_button_down_monitor = Some(monitor);
+	session.left_mouse_button_down_global = Some(cursor);
+	session.state.hovered_window_rect = Some(hovered);
+
+	let apply = session.apply_live_cursor_sample_detail(
+		monitor,
+		cursor,
+		LiveCursorSample { rgb: None, patch: None },
+	);
+
+	assert!(!apply.overlay_changed);
+	assert_eq!(session.state.hovered_window_rect, Some(hovered));
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::RefreshedWindowList {
+		snapshot: Arc::new(WindowListSnapshot {
+			captured_at: Instant::now(),
+			windows: Arc::new(vec![]),
+		}),
+	});
+
+	assert!(matches!(control, OverlayControl::Continue));
+	assert_eq!(session.state.hovered_window_rect, Some(hovered));
+}
+
+#[test]
+fn live_drag_activation_clears_hovered_window_affordance() {
+	let monitor = MonitorRect {
+		id: 1,
+		origin: GlobalPoint::new(0, 0),
+		width: 1_000,
+		height: 800,
+		scale_factor_x1000: 1_000,
+	};
+	let start = GlobalPoint::new(120, 180);
+	let end = GlobalPoint::new(280, 360);
+	let hovered =
+		MonitorRectPoints { monitor_id: monitor.id, rect: RectPoints::new(100, 120, 240, 320) };
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.left_mouse_button_down = true;
+	session.left_mouse_button_down_monitor = Some(monitor);
+	session.left_mouse_button_down_global = Some(start);
+	session.state.hovered_window_rect = Some(hovered);
+
+	session.update_live_drag_rect(monitor, end);
+
+	assert_eq!(
+		session.state.drag_rect,
+		Some(MonitorRectPoints {
+			monitor_id: monitor.id,
+			rect: RectPoints::new(120, 180, 160, 180),
+		})
+	);
+	assert!(session.state.hovered_window_rect.is_none());
 }
 
 #[cfg(target_os = "macos")]

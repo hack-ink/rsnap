@@ -835,10 +835,9 @@ impl OverlaySession {
 			return;
 		}
 
-		let is_dragging_window = matches!(self.state.mode, OverlayMode::Live)
-			&& self.left_mouse_button_down
-			&& self.left_mouse_button_down_monitor == Some(monitor);
-		let had_snapshot_update = if is_dragging_window || self.state.alt_held {
+		let press_pending = self.live_press_pending_for_monitor(monitor);
+		let is_dragging_window = self.live_drag_active_for_monitor(monitor);
+		let had_snapshot_update = if press_pending || is_dragging_window || self.state.alt_held {
 			false
 		} else {
 			self.apply_live_hover_cache_state(monitor, global)
@@ -846,7 +845,7 @@ impl OverlaySession {
 		let sample_requested =
 			self.request_live_cursor_sample(monitor, global, self.state.alt_held);
 
-		if !is_dragging_window && !self.state.alt_held {
+		if !press_pending && !is_dragging_window && !self.state.alt_held {
 			let _ = self.request_live_window_list_refresh_if_needed();
 		}
 
@@ -897,7 +896,6 @@ impl OverlaySession {
 					self.left_mouse_button_down_monitor = Some(monitor);
 					self.left_mouse_button_down_global = Some(raw_cursor);
 					self.state.drag_rect = None;
-					self.state.hovered_window_rect = None;
 
 					self.reset_toolbar_pointer_state();
 					self.request_redraw_for_monitor(monitor);
@@ -909,7 +907,6 @@ impl OverlaySession {
 				self.left_mouse_button_down_monitor = Some(press_monitor);
 				self.left_mouse_button_down_global = Some(press_global);
 				self.state.drag_rect = None;
-				self.state.hovered_window_rect = None;
 
 				self.reset_toolbar_pointer_state();
 				self.update_cursor_state(press_monitor, press_global);

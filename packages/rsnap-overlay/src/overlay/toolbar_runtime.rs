@@ -476,11 +476,13 @@ impl OverlaySession {
 			};
 
 			toolbar_window.window.set_visible(true);
+			let mut toolbar_became_visible = false;
 
 			if !self.toolbar_window_visible {
 				self.toolbar_window_visible = true;
 				self.skip_toolbar_focus_on_next_show = false;
 				self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
+				toolbar_became_visible = true;
 			}
 			if should_focus_frozen_keyboard {
 				self.focus_frozen_keyboard_window();
@@ -553,6 +555,10 @@ impl OverlaySession {
 					f64::from(desired.0),
 					f64::from(desired.1),
 				));
+			}
+
+			if toolbar_became_visible {
+				self.note_frozen_transition_toolbar_visible(monitor);
 			}
 
 			Ok(())
