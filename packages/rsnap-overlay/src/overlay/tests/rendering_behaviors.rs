@@ -93,6 +93,7 @@ fn snapshot_background_capture_finishes_frozen_transition_immediately() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
+
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.pending_freeze_capture = Some(monitor);
 	session.pending_window_freeze_capture = Some(crate::overlay::WindowFreezeCaptureTarget {
@@ -130,7 +131,9 @@ fn snapshot_matte_window_capture_keeps_authoritative_handoff_pending() {
 	let mut session = OverlaySession::new();
 
 	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteDark;
+
 	session.state.begin_freeze(monitor);
+
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.pending_freeze_capture = Some(monitor);
 	session.pending_window_freeze_capture = Some(window_target);
@@ -188,6 +191,7 @@ fn snapshot_seeded_preview_keeps_authoritative_handoff_pending() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
+
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.pending_freeze_capture = Some(monitor);
 
