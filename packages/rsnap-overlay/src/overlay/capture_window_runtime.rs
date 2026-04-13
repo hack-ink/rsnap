@@ -5,7 +5,9 @@ use crate::overlay::{GlobalPoint, MonitorRect, OverlayMode, OverlaySession};
 impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	pub(super) const fn should_hide_overlay_windows_during_capture(&self) -> bool {
-		false
+		// Authoritative freeze capture still falls back to CoreGraphics monitor capture.
+		// Keep overlays hidden until XY-74/XY-75 replace that path with a verified exclusion contract.
+		true
 	}
 
 	pub(super) fn update_cursor_state(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
