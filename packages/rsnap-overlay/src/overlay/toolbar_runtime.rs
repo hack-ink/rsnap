@@ -1,6 +1,6 @@
 use crate::overlay::{
-	self, Arc, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant, MonitorRect,
-	OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
+	self, Arc, Duration, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant,
+	MonitorRect, OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
 	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2, WindowId,
 	WindowRenderer,
 };
@@ -462,30 +462,12 @@ impl OverlaySession {
 		}
 		#[cfg(target_os = "macos")]
 		{
-			let should_focus_frozen_keyboard = self.should_focus_frozen_toolbar_window_on_show();
-
-			if !self.toolbar_window_visible {
-				self.maybe_apply_pending_startup_aux_live_stream_filter_upgrade(monitor);
-			}
-
+			let Some(toolbar_became_visible) = self.prepare_toolbar_window_for_draw(monitor) else {
+				return Ok(());
+			};
 			let Some(gpu) = self.gpu.as_ref() else {
 				return Ok(());
 			};
-			let Some(toolbar_window) = self.toolbar_window.as_ref() else {
-				return Ok(());
-			};
-
-			toolbar_window.window.set_visible(true);
-
-			if !self.toolbar_window_visible {
-				self.toolbar_window_visible = true;
-				self.skip_toolbar_focus_on_next_show = false;
-				self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
-			}
-			if should_focus_frozen_keyboard {
-				self.focus_frozen_keyboard_window();
-			}
-
 			let previous_floating_position = self.toolbar_state.floating_position;
 
 			self.toolbar_state.floating_position = Some(Pos2::ZERO);
@@ -555,8 +537,39 @@ impl OverlaySession {
 				));
 			}
 
+			if toolbar_became_visible {
+				self.note_frozen_transition_toolbar_visible(monitor);
+			}
+
 			Ok(())
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn prepare_toolbar_window_for_draw(&mut self, monitor: MonitorRect) -> Option<bool> {
+		let should_focus_frozen_keyboard = self.should_focus_frozen_toolbar_window_on_show();
+
+		if !self.toolbar_window_visible {
+			self.maybe_apply_pending_startup_aux_live_stream_filter_upgrade(monitor);
+		}
+
+		let toolbar_window = self.toolbar_window.as_ref()?;
+
+		toolbar_window.window.set_visible(true);
+
+		let mut toolbar_became_visible = false;
+
+		if !self.toolbar_window_visible {
+			self.toolbar_window_visible = true;
+			self.skip_toolbar_focus_on_next_show = false;
+			self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
+			toolbar_became_visible = true;
+		}
+		if should_focus_frozen_keyboard {
+			self.focus_frozen_keyboard_window();
+		}
+
+		Some(toolbar_became_visible)
 	}
 
 	pub(super) fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
@@ -574,7 +587,6 @@ impl OverlaySession {
 		};
 		let toolbar_input = self.toolbar_pointer_state(monitor, self.toolbar_pointer_local);
 		let should_hide_toolbar_window = self.should_hide_toolbar_window(monitor);
-		let mut position_update_elapsed = None;
 
 		if should_hide_toolbar_window {
 			self.set_toolbar_window_hidden();
@@ -598,14 +610,8 @@ impl OverlaySession {
 
 		self.update_scroll_toolbar_default_position(monitor);
 
-		if let Some(toolbar_pos) = self.toolbar_state.floating_position {
-			let position_update_started_at = Instant::now();
-			let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+		let position_update_elapsed = self.update_toolbar_position_after_redraw(monitor);
 
-			self.force_apply_pending_toolbar_window_move();
-
-			position_update_elapsed = Some(position_update_started_at.elapsed());
-		}
 		if let Some(action) = self.toolbar_state.pending_action.take() {
 			let control = self.handle_toolbar_action(action);
 
@@ -623,22 +629,51 @@ impl OverlaySession {
 			self.request_redraw_for_monitor(monitor);
 			self.request_redraw_toolbar_window();
 		}
-		if tracing::enabled!(tracing::Level::TRACE)
-			&& matches!(self.state.mode, OverlayMode::Frozen)
-		{
-			tracing::trace!(
-				op = "overlay.toolbar_redraw_phase_timing",
-				monitor_id = monitor.id,
-				total_us = redraw_started_at.elapsed().as_micros(),
-				draw_frame_us = draw_frame_elapsed.as_micros(),
-				position_update_us =
-					position_update_elapsed.map_or(0, |elapsed| elapsed.as_micros()),
-				hidden = should_hide_toolbar_window,
-				frozen_selection_drag_active = self.frozen_selection_drag.active,
-				"Toolbar redraw phase timing."
-			);
-		}
+
+		self.log_toolbar_redraw_phase_timing(
+			monitor,
+			redraw_started_at,
+			draw_frame_elapsed,
+			position_update_elapsed,
+			should_hide_toolbar_window,
+		);
 
 		OverlayControl::Continue
+	}
+
+	fn update_toolbar_position_after_redraw(&mut self, monitor: MonitorRect) -> Option<Duration> {
+		let toolbar_pos = self.toolbar_state.floating_position?;
+		let position_update_started_at = Instant::now();
+		let _ = self.update_toolbar_outer_position(monitor, toolbar_pos);
+
+		self.force_apply_pending_toolbar_window_move();
+
+		Some(position_update_started_at.elapsed())
+	}
+
+	fn log_toolbar_redraw_phase_timing(
+		&self,
+		monitor: MonitorRect,
+		redraw_started_at: Instant,
+		draw_frame_elapsed: Duration,
+		position_update_elapsed: Option<Duration>,
+		should_hide_toolbar_window: bool,
+	) {
+		if !tracing::enabled!(tracing::Level::TRACE)
+			|| !matches!(self.state.mode, OverlayMode::Frozen)
+		{
+			return;
+		}
+
+		tracing::trace!(
+			op = "overlay.toolbar_redraw_phase_timing",
+			monitor_id = monitor.id,
+			total_us = redraw_started_at.elapsed().as_micros(),
+			draw_frame_us = draw_frame_elapsed.as_micros(),
+			position_update_us = position_update_elapsed.map_or(0, |elapsed| elapsed.as_micros()),
+			hidden = should_hide_toolbar_window,
+			frozen_selection_drag_active = self.frozen_selection_drag.active,
+			"Toolbar redraw phase timing."
+		);
 	}
 }

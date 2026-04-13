@@ -33,6 +33,7 @@ impl ScrollPreviewWindow {
 			.with_visible(false)
 			.with_resizable(false)
 			.with_decorations(false)
+			.with_content_protected(cfg!(target_os = "macos"))
 			.with_transparent(true)
 			.with_inner_size(LogicalSize::new(
 				SCROLL_PREVIEW_WINDOW_WIDTH_POINTS,
