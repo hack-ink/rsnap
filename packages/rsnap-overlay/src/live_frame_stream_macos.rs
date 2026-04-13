@@ -110,12 +110,13 @@ objc2::define_class!(
 	}
 );
 
+pub(crate) const STREAM_REGION_FRAME_MAX_AGE: Duration = Duration::from_millis(90);
+
 const STREAM_RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const STREAM_SETUP_BACKOFF: Duration = Duration::from_millis(300);
 const STREAM_INCOMPLETE_EXCEPTION_UPGRADE_BACKOFF: Duration = Duration::from_secs(3);
 const STREAM_FRAME_QUEUE_CAPACITY: usize = 16;
 const STREAM_CONFIG_QUEUE_DEPTH: usize = 8;
-const STREAM_REGION_FRAME_MAX_AGE: Duration = Duration::from_millis(90);
 const STREAM_ACTIVE_GESTURE_FORCE_REFRESH_MIN_AGE: Duration = Duration::from_millis(60);
 const STREAM_REGION_FRAME_REFRESH_TIMEOUT: Duration = Duration::from_millis(180);
 const STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(4);
