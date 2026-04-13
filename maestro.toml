@@ -1,0 +1,13 @@
+id            = "rsnap"
+repo_root     = "."
+workflow_path = "WORKFLOW.md"
+worktree_root = ".worktrees"
+
+[tracker]
+api_key_env_var = "LINEAR_API_KEY_HACKINK"
+
+[github]
+token_env_var = "GITHUB_PAT_Y"
+
+[agent]
+transport = "stdio://"
