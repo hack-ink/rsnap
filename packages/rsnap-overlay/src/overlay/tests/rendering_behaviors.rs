@@ -106,6 +106,7 @@ fn snapshot_background_capture_finishes_frozen_transition_immediately() {
 		session.pending_window_freeze_capture,
 		None,
 		Some(snapshot),
+		"live_stream_snapshot",
 	));
 	assert!(session.authoritative_frozen_capture_ready);
 	assert!(session.pending_freeze_capture.is_none());
@@ -139,11 +140,38 @@ fn snapshot_matte_window_capture_keeps_authoritative_handoff_pending() {
 		Some(window_target),
 		None,
 		Some(snapshot),
+		"live_stream_snapshot",
 	));
 	assert!(!session.authoritative_frozen_capture_ready);
 	assert_eq!(session.pending_freeze_capture, Some(monitor));
 	assert_eq!(session.pending_window_freeze_capture, Some(window_target));
 	assert!(session.state.frozen_image.is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn unverified_snapshot_can_finish_without_self_capture_exceptions() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(120, 160, 320, 240);
+	let window_target =
+		crate::overlay::WindowFreezeCaptureTarget { monitor, window_id: 11, rect: capture_rect };
+	let session = OverlaySession::new();
+
+	assert!(session.can_finish_frozen_capture_from_unverified_snapshot(Some(window_target)));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn unverified_snapshot_respects_self_capture_exception_windows() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(120, 160, 320, 240);
+	let window_target =
+		crate::overlay::WindowFreezeCaptureTarget { monitor, window_id: 11, rect: capture_rect };
+	let mut session = OverlaySession::new();
+
+	session.config.self_capture_exception_window_ids = vec![17];
+
+	assert!(!session.can_finish_frozen_capture_from_unverified_snapshot(Some(window_target)));
 }
 
 #[cfg(target_os = "macos")]

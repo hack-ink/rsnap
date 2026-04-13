@@ -50,11 +50,6 @@ impl OverlaySession {
 			preview_window.window.set_visible(false);
 		}
 
-		tracing::debug!(
-			hide_overlay_windows,
-			"Capture windows hidden for authoritative freeze capture."
-		);
-
 		self.last_present_at = Instant::now();
 	}
 
