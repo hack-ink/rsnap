@@ -1355,6 +1355,22 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn usable_frozen_capture_snapshot(
+		&self,
+		monitor: MonitorRect,
+		snapshot: Option<Arc<MonitorImageSnapshot>>,
+	) -> Option<(Arc<MonitorImageSnapshot>, u128)> {
+		let snapshot = snapshot.filter(|snapshot| snapshot.monitor == monitor)?;
+		let snapshot_age = snapshot.captured_at.elapsed();
+
+		if snapshot_age > STREAM_REGION_FRAME_MAX_AGE {
+			return None;
+		}
+
+		Some((snapshot, snapshot_age.as_millis()))
+	}
+
+	#[cfg(target_os = "macos")]
 	fn maybe_finish_frozen_capture_from_snapshot(
 		&mut self,
 		monitor: MonitorRect,
@@ -1367,16 +1383,11 @@ impl OverlaySession {
 			return false;
 		}
 
-		let Some(snapshot) = snapshot.filter(|snapshot| snapshot.monitor == monitor) else {
+		let Some((snapshot, snapshot_age_ms)) =
+			self.usable_frozen_capture_snapshot(monitor, snapshot)
+		else {
 			return false;
 		};
-		let snapshot_age = snapshot.captured_at.elapsed();
-
-		if snapshot_age > STREAM_REGION_FRAME_MAX_AGE {
-			return false;
-		}
-
-		let snapshot_age_ms = snapshot_age.as_millis();
 		let snapshot_image = snapshot.image.as_ref().clone();
 
 		self.commit_frozen_preview(monitor, snapshot_image, cursor);
@@ -1428,10 +1439,11 @@ impl OverlaySession {
 		snapshot: Option<Arc<MonitorImageSnapshot>>,
 		source: &'static str,
 	) -> bool {
-		let Some(snapshot) = snapshot.filter(|snapshot| snapshot.monitor == monitor) else {
+		let Some((snapshot, snapshot_age_ms)) =
+			self.usable_frozen_capture_snapshot(monitor, snapshot)
+		else {
 			return false;
 		};
-		let snapshot_age_ms = snapshot.captured_at.elapsed().as_millis();
 		let snapshot_image = snapshot.image.as_ref().clone();
 
 		self.commit_frozen_preview(monitor, snapshot_image, cursor);
