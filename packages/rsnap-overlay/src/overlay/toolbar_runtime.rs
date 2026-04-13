@@ -476,6 +476,7 @@ impl OverlaySession {
 			};
 
 			toolbar_window.window.set_visible(true);
+
 			let mut toolbar_became_visible = false;
 
 			if !self.toolbar_window_visible {

@@ -773,8 +773,7 @@ impl OverlaySession {
 			macos_hud_window_config_cache: HashMap::new(),
 			hud_outer_pos: None, pending_hud_outer_pos: None, hud_inner_size_points: None,
 			loupe_outer_pos: None, pending_loupe_outer_pos: None, loupe_inner_size_points: None,
-			toolbar_outer_pos: None, pending_toolbar_outer_pos: None,
-			toolbar_inner_size_points: None,
+			toolbar_outer_pos: None, pending_toolbar_outer_pos: None, toolbar_inner_size_points: None,
 			gpu: None,
 			last_hud_window_move_at: Instant::now(),
 			last_loupe_window_move_at: Instant::now(),
@@ -832,11 +831,8 @@ impl OverlaySession {
 			png_encode_inflight: false,
 			#[cfg(target_os = "macos")]
 			pending_self_capture_exception_window_ids_worker_refresh: false,
-			frozen_text_annotations: Vec::new(),
-			frozen_text_redo_annotations: Vec::new(),
-			frozen_text_edit: None,
-			frozen_text_input_generation: 0,
-			frozen_text_recent_input: None,
+			frozen_text_annotations: Vec::new(), frozen_text_redo_annotations: Vec::new(),
+			frozen_text_edit: None, frozen_text_input_generation: 0, frozen_text_recent_input: None,
 			toolbar_state: FrozenToolbarState::default(),
 			toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
 			toolbar_pointer_local: None,
@@ -1163,6 +1159,7 @@ impl OverlaySession {
 		let now = Instant::now();
 
 		self.reset_frozen_transition_timing();
+
 		self.frozen_transition_started_at = Some(now);
 		self.frozen_transition_target_window_id = window_target.map(|target| target.window_id);
 
@@ -1371,27 +1368,30 @@ impl OverlaySession {
 		let Some(snapshot) = snapshot.filter(|snapshot| snapshot.monitor == monitor) else {
 			return false;
 		};
-
 		let snapshot_age_ms = snapshot.captured_at.elapsed().as_millis();
 		let snapshot_image = snapshot.image.as_ref().clone();
 
 		self.commit_frozen_preview(monitor, snapshot_image, cursor);
 		self.note_frozen_transition_preview_committed(monitor, source, Some(snapshot_age_ms));
+
 		self.pending_freeze_capture = None;
 		self.inflight_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
 		self.pending_window_freeze_capture = None;
 		self.inflight_window_freeze_capture = None;
 		self.authoritative_frozen_capture_ready = true;
+
 		self.note_frozen_transition_final_ready(
 			monitor,
 			source,
 			window_target.map(|target| target.window_id),
 		);
+
 		self.freeze_capture_send_full_count = 0;
 		self.frozen_window_image = None;
 		self.capture_windows_hidden = false;
 		self.toolbar_state.needs_redraw = true;
+
 		self.sync_frozen_toolbar_state();
 		self.request_redraw_for_monitor(monitor);
 		#[cfg(target_os = "macos")]
@@ -1423,13 +1423,14 @@ impl OverlaySession {
 		let Some(snapshot) = snapshot.filter(|snapshot| snapshot.monitor == monitor) else {
 			return false;
 		};
-
 		let snapshot_age_ms = snapshot.captured_at.elapsed().as_millis();
 		let snapshot_image = snapshot.image.as_ref().clone();
 
 		self.commit_frozen_preview(monitor, snapshot_image, cursor);
 		self.note_frozen_transition_preview_committed(monitor, source, Some(snapshot_age_ms));
+
 		self.toolbar_state.needs_redraw = true;
+
 		self.sync_frozen_toolbar_state();
 		self.request_redraw_for_monitor(monitor);
 
@@ -1470,7 +1471,6 @@ impl OverlaySession {
 			) {
 			return true;
 		}
-
 		if !self_capture_filter_complete
 			&& self.can_finish_frozen_capture_from_unverified_snapshot(window_target)
 			&& self.maybe_finish_frozen_capture_from_snapshot(
@@ -1579,6 +1579,28 @@ impl OverlaySession {
 		self.request_redraw_toolbar_window();
 	}
 
+	fn prepare_toolbar_for_frozen_capture_transition(
+		&mut self,
+		monitor: MonitorRect,
+		capture_rect: RectPoints,
+	) {
+		self.toolbar_state.floating_position = None;
+		self.toolbar_state.default_slot_position = None;
+		self.toolbar_state.dragging = false;
+		self.toolbar_state.needs_redraw = true;
+		self.toolbar_state.pill_height_points = None;
+		self.toolbar_state.layout_last_screen_size_points = None;
+		self.toolbar_state.layout_stable_frames = 0;
+
+		self.reset_frozen_text_state();
+		self.sync_frozen_toolbar_state();
+		// Spawn the toolbar immediately at the default position (capture aware). This avoids any
+		// dependency on egui viewport stabilization or additional input events (mouse move) to
+		// finish the initial layout.
+		self.seed_frozen_toolbar_default_position(monitor, capture_rect);
+		self.request_redraw_toolbar_window();
+	}
+
 	fn reset_frozen_annotation_state(&mut self) {
 		self.frozen_brush = FrozenBrushState::default();
 		self.frozen_selection_drag = FrozenSelectionDragState::default();
@@ -1635,21 +1657,7 @@ impl OverlaySession {
 			"Freeze begin."
 		);
 
-		self.toolbar_state.floating_position = None;
-		self.toolbar_state.default_slot_position = None;
-		self.toolbar_state.dragging = false;
-		self.toolbar_state.needs_redraw = true;
-		self.toolbar_state.pill_height_points = None;
-		self.toolbar_state.layout_last_screen_size_points = None;
-		self.toolbar_state.layout_stable_frames = 0;
-
-		self.reset_frozen_text_state();
-		self.sync_frozen_toolbar_state();
-		// Spawn the toolbar immediately at the default position (capture aware). This avoids any
-		// dependency on egui viewport stabilization or additional input events (mouse move) to
-		// finish the initial layout.
-		self.seed_frozen_toolbar_default_position(monitor, capture_rect);
-		self.request_redraw_toolbar_window();
+		self.prepare_toolbar_for_frozen_capture_transition(monitor, capture_rect);
 
 		self.pending_freeze_capture = Some(monitor);
 		self.pending_freeze_capture_armed = false;
@@ -1703,6 +1711,7 @@ impl OverlaySession {
 				self.pending_freeze_capture = None;
 				self.pending_freeze_capture_armed = false;
 				self.authoritative_frozen_capture_ready = true;
+
 				self.note_frozen_transition_final_ready(monitor, "cached_live_background", None);
 
 				if let Some(cursor) = cursor {
@@ -2974,8 +2983,8 @@ impl OverlaySession {
 
 		self.frozen_text_edit = None;
 		self.frozen_text_recent_input = None;
-		self.reset_frozen_transition_timing();
 
+		self.reset_frozen_transition_timing();
 		self.sync_text_input_ime_state();
 		self.stop_frozen_selection_drag();
 		self.stop_frozen_mosaic_drag();

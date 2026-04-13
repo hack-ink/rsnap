@@ -40,6 +40,7 @@ impl OverlaySession {
 		self.inflight_window_freeze_capture = pending_window_target;
 		self.pending_window_freeze_capture = None;
 		self.freeze_capture_send_full_count = 0;
+
 		self.note_frozen_transition_worker_requested(overlay_monitor, pending_window_target);
 	}
 

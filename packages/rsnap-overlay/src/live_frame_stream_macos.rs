@@ -1756,6 +1756,7 @@ fn ensure_stream(
 		}
 
 		let mut previous_state = state.replace(next_state);
+
 		shared_latest_frame.set_stream_filter_status(monitor.id, true);
 
 		teardown_stream(&mut previous_state);
@@ -1779,8 +1780,8 @@ fn ensure_stream(
 	let self_capture_filter_complete = next_state.self_capture_filter_complete;
 
 	*state = Some(next_state);
-	shared_latest_frame.set_stream_filter_status(monitor.id, self_capture_filter_complete);
 
+	shared_latest_frame.set_stream_filter_status(monitor.id, self_capture_filter_complete);
 	shared_latest_frame.mark_waiting_for_frame(monitor.id);
 
 	tracing::debug!(
@@ -1997,6 +1998,7 @@ fn refresh_stream(args: RefreshStreamArgs<'_>) -> StreamRequestProgress {
 	let self_capture_filter_complete = next_state.self_capture_filter_complete;
 	let replaced_existing_state = state.is_some();
 	let mut previous_state = state.replace(next_state);
+
 	shared_latest_frame.set_stream_filter_status(monitor.id, self_capture_filter_complete);
 
 	teardown_stream(&mut previous_state);
@@ -3017,9 +3019,11 @@ mod tests {
 		assert!(!shared.self_capture_filter_complete_for_monitor(7));
 
 		shared.set_stream_filter_status(7, false);
+
 		assert!(!shared.self_capture_filter_complete_for_monitor(7));
 
 		shared.set_stream_filter_status(7, true);
+
 		assert!(shared.self_capture_filter_complete_for_monitor(7));
 		assert!(!shared.self_capture_filter_complete_for_monitor(9));
 	}

@@ -45,10 +45,10 @@ impl OverlaySession {
 		}
 
 		self.state.drag_rect = Some(MonitorRectPoints { monitor_id: monitor.id, rect });
+
 		if self.state.hovered_window_rect.is_some_and(|hovered| hovered.monitor_id == monitor.id) {
 			self.state.hovered_window_rect = None;
 		}
-
 		if !was_active {
 			self.hide_auxiliary_windows_for_live_drag();
 		}
