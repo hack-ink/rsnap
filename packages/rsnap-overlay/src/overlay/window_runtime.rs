@@ -10,16 +10,17 @@ use objc2_foundation::NSArray;
 use winit::window::{Window, WindowId};
 
 use crate::backend;
+use crate::overlay;
 #[cfg(target_os = "macos")]
 use crate::overlay::MacOSHudWindowConfigState;
-#[cfg(target_os = "macos")]
-use crate::overlay::{self, MacLiveFrameStream, MainThreadMarker, NSScreen};
 use crate::overlay::{
 	ActiveEventLoop, GlobalPoint, GpuContext, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS,
 	LiveSampleApplyResult, LogicalPosition, LogicalSize, MonitorRect, OverlayMode, OverlaySession,
 	OverlayWindow, OverlayWorker, Result, ScrollPreviewWindow, TOOLBAR_EXPANDED_HEIGHT_PX,
 	WindowLevel, WindowRenderer, hud_helpers,
 };
+#[cfg(target_os = "macos")]
+use crate::overlay::{MacLiveFrameStream, MainThreadMarker, NSScreen};
 
 impl OverlaySession {
 	/// Starts the overlay session and creates the required capture windows.
