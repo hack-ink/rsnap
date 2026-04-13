@@ -7,8 +7,8 @@ use crate::backend;
 #[cfg(target_os = "macos")]
 use crate::overlay::{self, OverlayWorker};
 use crate::overlay::{
-	Arc, HUD_PILL_CORNER_RADIUS_POINTS, Instant, LOUPE_TILE_CORNER_RADIUS_POINTS, OverlayConfig,
-	OverlayMode, OverlaySession,
+	Arc, Instant, LOUPE_TILE_CORNER_RADIUS_POINTS, OverlayConfig, OverlayMode, OverlaySession,
+	WindowRenderer, frozen_toolbar_corner_radius_points,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{MacLiveFrameStream, MacOSHudWindowConfigState, SLOW_OP_WARN_HUD_CONFIG};
@@ -178,7 +178,9 @@ impl OverlaySession {
 
 			self.configure_hud_window_common(
 				window.as_ref(),
-				Some(f64::from(HUD_PILL_CORNER_RADIUS_POINTS)),
+				Some(frozen_toolbar_corner_radius_points(
+					WindowRenderer::frozen_toolbar_size(&self.toolbar_state).y,
+				)),
 			);
 		}
 	}

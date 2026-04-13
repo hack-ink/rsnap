@@ -30,7 +30,6 @@ use egui::RawInput;
 use image::Rgba;
 #[cfg(target_os = "macos")]
 use image::imageops;
-#[cfg(target_os = "macos")]
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta};
 #[cfg(target_os = "macos")]
@@ -48,20 +47,20 @@ use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::FrozenCaptureSource;
 use crate::overlay::PngAction;
 use crate::overlay::rendering;
+use crate::overlay::session_state::FrozenBrushStyle;
 #[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 use crate::overlay::{
-	self, ActiveFrozenBrushStroke, FROZEN_BRUSH_COLOR_RGBA, FROZEN_EDIT_HISTORY_LIMIT,
-	FROZEN_TEXT_CARET_REPAINT_INTERVAL, FrozenBrushModelState, FrozenBrushStroke,
-	FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform, FrozenImagePatch,
-	FrozenMosaicEdit, FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextColor,
-	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
-	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
-	OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_SIZE_BADGE_GAP_PX,
-	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
-	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
-	SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
-	Vec2, WindowRenderer, hud_helpers,
+	self, ActiveFrozenBrushStroke, FROZEN_EDIT_HISTORY_LIMIT, FROZEN_TEXT_CARET_REPAINT_INTERVAL,
+	FrozenBrushModelState, FrozenBrushStroke, FrozenCommittedOverlay, FrozenEditKind,
+	FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit, FrozenSelectionDragState,
+	FrozenTextAnnotation, FrozenTextColor, FrozenTextEditState, FrozenTextInputSource,
+	FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme,
+	OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
+	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache, SelectionFlowGeometryCache,
+	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -386,7 +385,33 @@ fn current_export_image_includes_frozen_brush_strokes() {
 	let export_image = session.current_export_image().expect("annotated export image");
 
 	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
-	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FROZEN_BRUSH_COLOR_RGBA));
+	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FrozenTextColor::Red.export_rgba()));
+}
+
+#[test]
+fn current_export_image_uses_selected_brush_color() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session
+		.state
+		.finish_freeze(monitor, image::RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255])));
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+	session.authoritative_frozen_capture_ready = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+	session.toolbar_state.brush_style.color = FrozenTextColor::Green;
+
+	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
+	assert!(session.finish_frozen_brush_stroke());
+
+	let export_image = session.current_export_image().expect("annotated export image");
+
+	assert_eq!(
+		export_image.get_pixel(2, 2),
+		&Rgba(session.toolbar_state.brush_style.color.export_rgba())
+	);
 }
 
 #[test]
@@ -414,7 +439,7 @@ fn frozen_brush_undo_and_redo_update_export_image() {
 
 	let redone = session.current_export_image().expect("redo export image");
 
-	assert_eq!(redone.get_pixel(3, 3), &Rgba(FROZEN_BRUSH_COLOR_RGBA));
+	assert_eq!(redone.get_pixel(3, 3), &Rgba(FrozenTextColor::Red.export_rgba()));
 }
 
 #[test]
@@ -437,7 +462,7 @@ fn current_export_image_antialiases_frozen_brush_edges() {
 	let export_image = session.current_export_image().expect("annotated export image");
 	let has_antialiased_edge = export_image
 		.pixels()
-		.any(|pixel| pixel != &background && pixel != &Rgba(FROZEN_BRUSH_COLOR_RGBA));
+		.any(|pixel| pixel != &background && pixel != &Rgba(FrozenTextColor::Red.export_rgba()));
 
 	assert!(has_antialiased_edge, "expected blended edge pixels around the exported brush");
 }
@@ -454,10 +479,11 @@ fn rasterizing_frozen_brush_clears_reused_coverage_mask() {
 		&mut coverage_mask,
 		export_transform,
 		&[Pos2::new(2.0, 2.0)],
+		FrozenBrushStyle::default(),
 	);
 
 	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
-	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FROZEN_BRUSH_COLOR_RGBA));
+	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FrozenTextColor::Red.export_rgba()));
 }
 
 fn significant_y_direction_reversals(points: &[Pos2], min_delta: f32) -> usize {
@@ -606,6 +632,7 @@ fn preview_frozen_brush_points_keep_live_modeled_path_before_commit() {
 			Pos2::new(12.0, 4.0),
 		],
 		points: vec![Pos2::new(0.0, 0.0), Pos2::new(6.0, 2.0), Pos2::new(12.0, 4.0)],
+		style: FrozenBrushStyle::default(),
 		model_state: FrozenBrushModelState {
 			filtered_input_point: Pos2::new(12.0, 4.0),
 			modeled_point: Pos2::new(12.0, 4.0),
@@ -639,6 +666,7 @@ fn preview_frozen_brush_points_follow_modeled_centerline_instead_of_raw_wobble()
 			Pos2::new(8.0, 0.0),
 		],
 		points: vec![Pos2::new(0.0, 0.0), Pos2::new(4.0, 0.04), Pos2::new(8.0, 0.0)],
+		style: FrozenBrushStyle::default(),
 		model_state: FrozenBrushModelState {
 			filtered_input_point: Pos2::new(8.0, 0.0),
 			modeled_point: Pos2::new(8.0, 0.0),
@@ -673,7 +701,11 @@ fn rendered_live_frozen_brush_wave_preview_avoids_hard_inflection_kinks() {
 		Pos2::new(24.0, 0.0),
 	];
 	let started_at = Instant::now();
-	let mut stroke = OverlaySession::new_active_frozen_brush_stroke(raw_points[0], started_at);
+	let mut stroke = OverlaySession::new_active_frozen_brush_stroke(
+		raw_points[0],
+		started_at,
+		FrozenBrushStyle::default(),
+	);
 
 	for (index, point) in raw_points.iter().copied().enumerate().skip(1) {
 		let sampled_at = started_at
@@ -716,7 +748,11 @@ fn rendered_live_frozen_brush_arc_preview_avoids_corner_snap() {
 		Pos2::new(4.9, 12.0),
 	];
 	let started_at = Instant::now();
-	let mut stroke = OverlaySession::new_active_frozen_brush_stroke(raw_points[0], started_at);
+	let mut stroke = OverlaySession::new_active_frozen_brush_stroke(
+		raw_points[0],
+		started_at,
+		FrozenBrushStyle::default(),
+	);
 
 	for (index, point) in raw_points.iter().copied().enumerate().skip(1) {
 		let sampled_at = started_at
@@ -766,7 +802,11 @@ fn rendered_live_frozen_brush_suppresses_slow_straight_wobble() {
 		Pos2::new(8.0, 0.0),
 	];
 	let started_at = Instant::now();
-	let mut stroke = OverlaySession::new_active_frozen_brush_stroke(raw_points[0], started_at);
+	let mut stroke = OverlaySession::new_active_frozen_brush_stroke(
+		raw_points[0],
+		started_at,
+		FrozenBrushStyle::default(),
+	);
 
 	for (index, point) in raw_points.iter().copied().enumerate().skip(1) {
 		let sampled_at = started_at
@@ -1063,6 +1103,201 @@ fn default_frozen_text_style_uses_16_point_font() {
 	assert_eq!(session.toolbar_state.text_style.color, FrozenTextColor::Blue);
 }
 
+#[test]
+fn default_frozen_brush_style_uses_existing_width_and_color() {
+	let session = OverlaySession::new();
+
+	assert_eq!(
+		session.toolbar_state.brush_style.stroke_width_points,
+		overlay::FROZEN_BRUSH_STROKE_WIDTH_POINTS
+	);
+	assert_eq!(session.toolbar_state.brush_style.color, FrozenTextColor::Red);
+}
+
+#[test]
+fn frozen_text_style_accepts_arbitrary_sizes_and_clamps_to_bounds() {
+	let mut session = OverlaySession::new();
+
+	assert!(session.toolbar_state.text_style.set_font_size(27.5));
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 27.5);
+
+	assert!(session.toolbar_state.text_style.set_font_size(2.0));
+	assert_eq!(
+		session.toolbar_state.text_style.font_size_points,
+		overlay::FROZEN_TEXT_FONT_SIZE_MIN_POINTS
+	);
+
+	assert!(session.toolbar_state.text_style.set_font_size(200.0));
+	assert_eq!(
+		session.toolbar_state.text_style.font_size_points,
+		overlay::FROZEN_TEXT_FONT_SIZE_MAX_POINTS
+	);
+}
+
+#[test]
+fn frozen_brush_style_accepts_arbitrary_sizes_and_clamps_to_bounds() {
+	let mut session = OverlaySession::new();
+
+	assert!(session.toolbar_state.brush_style.set_stroke_width(4.25));
+	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 4.25);
+
+	assert!(session.toolbar_state.brush_style.set_stroke_width(0.1));
+	assert_eq!(
+		session.toolbar_state.brush_style.stroke_width_points,
+		overlay::FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS
+	);
+
+	assert!(session.toolbar_state.brush_style.set_stroke_width(100.0));
+	assert_eq!(
+		session.toolbar_state.brush_style.stroke_width_points,
+		overlay::FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS
+	);
+}
+
+#[test]
+fn toolbar_annotation_size_wheel_requires_hovered_size_control() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(
+		!session
+			.toolbar_state
+			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, 1.0))
+	);
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 16.0);
+}
+
+#[test]
+fn toolbar_annotation_size_wheel_adjusts_pen_and_text_sizes() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_state.annotation_size_control_hovered = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+
+	assert!(
+		session
+			.toolbar_state
+			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, 2.0))
+	);
+	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 4.0);
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(
+		session
+			.toolbar_state
+			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, -2.0))
+	);
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 14.0);
+}
+
+#[test]
+fn toolbar_annotation_size_line_wheel_treats_nonzero_delta_as_immediate_step() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_state.annotation_size_control_hovered = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(
+		session
+			.toolbar_state
+			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, 0.25))
+	);
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 17.0);
+	assert_eq!(session.toolbar_state.annotation_size_wheel_accumulator, 0.0);
+}
+
+#[test]
+fn toolbar_annotation_size_wheel_accumulates_trackpad_pixel_deltas() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_state.annotation_size_control_hovered = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(!session.toolbar_state.apply_annotation_size_wheel_delta(
+		&MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 15.0)),
+	));
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 16.0);
+
+	assert!(session.toolbar_state.apply_annotation_size_wheel_delta(
+		&MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 17.0)),
+	));
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 17.0);
+}
+
+#[test]
+fn toolbar_annotation_size_wheel_snaps_fractional_text_sizes_toward_integers() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_state.annotation_size_control_hovered = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+	assert!(session.toolbar_state.text_style.set_font_size(27.5));
+
+	assert!(
+		session
+			.toolbar_state
+			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, 1.0))
+	);
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 28.0);
+
+	assert!(session.toolbar_state.text_style.set_font_size(27.5));
+	session.toolbar_state.annotation_size_wheel_accumulator = 0.0;
+
+	assert!(
+		session
+			.toolbar_state
+			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, -1.0))
+	);
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 27.0);
+}
+
+#[test]
+fn toolbar_annotation_size_wheel_uses_adaptive_pen_step_sizes() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_state.annotation_size_control_hovered = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+
+	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 3.5);
+	assert!(
+		session
+			.toolbar_state
+			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, 1.0))
+	);
+	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 3.75);
+
+	assert!(session.toolbar_state.brush_style.set_stroke_width(6.0));
+	assert!(
+		session
+			.toolbar_state
+			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, 1.0))
+	);
+	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 6.5);
+
+	assert!(session.toolbar_state.brush_style.set_stroke_width(12.0));
+	assert!(
+		session
+			.toolbar_state
+			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, 1.0))
+	);
+	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 13.0);
+}
+
+#[test]
+fn toolbar_annotation_size_steps_share_the_same_pen_and_text_logic() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+	assert!(session.toolbar_state.apply_annotation_size_steps(1));
+	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 3.75);
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+	assert!(session.toolbar_state.text_style.set_font_size(27.5));
+	assert!(session.toolbar_state.apply_annotation_size_steps(-1));
+	assert_eq!(session.toolbar_state.text_style.font_size_points, 27.0);
+}
+
 fn test_frozen_mosaic_edit() -> FrozenMosaicEdit {
 	let patch = FrozenImagePatch {
 		rect: RectPoints::new(0, 0, 1, 1),
@@ -1115,6 +1350,54 @@ fn toolbar_mouse_release_stops_active_frozen_text_edit_drag() {
 
 	assert!(!session.toolbar_left_button_down);
 	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.dragging), Some(false));
+}
+
+#[test]
+fn toolbar_cursor_left_during_drag_keeps_drag_session_alive() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_left_button_down = true;
+	session.toolbar_left_button_went_down = true;
+	session.toolbar_pointer_local = Some(Pos2::new(48.0, 18.0));
+	session.toolbar_state.dragging = true;
+	session.toolbar_state.drag_offset = Vec2::new(12.0, 6.0);
+	session.toolbar_state.drag_anchor = Some(Pos2::new(40.0, 14.0));
+	session.toolbar_state.annotation_size_control_hovered = true;
+	session.toolbar_state.annotation_size_wheel_accumulator = 24.0;
+
+	let _ = session.handle_toolbar_cursor_left();
+
+	assert!(session.toolbar_left_button_down);
+	assert!(session.toolbar_left_button_went_down);
+	assert_eq!(session.toolbar_pointer_local, Some(Pos2::new(48.0, 18.0)));
+	assert!(session.toolbar_state.dragging);
+	assert_eq!(session.toolbar_state.drag_offset, Vec2::new(12.0, 6.0));
+	assert_eq!(session.toolbar_state.drag_anchor, Some(Pos2::new(40.0, 14.0)));
+	assert!(!session.toolbar_state.annotation_size_control_hovered);
+	assert_eq!(session.toolbar_state.annotation_size_wheel_accumulator, 0.0);
+}
+
+#[test]
+fn toolbar_cursor_left_while_idle_clears_pointer_state() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_left_button_went_down = true;
+	session.toolbar_left_button_went_up = true;
+	session.toolbar_pointer_local = Some(Pos2::new(22.0, 12.0));
+	session.toolbar_state.drag_offset = Vec2::new(5.0, 3.0);
+	session.toolbar_state.drag_anchor = Some(Pos2::new(18.0, 11.0));
+	session.toolbar_state.annotation_size_control_hovered = true;
+	session.toolbar_state.annotation_size_wheel_accumulator = 16.0;
+
+	let _ = session.handle_toolbar_cursor_left();
+
+	assert_eq!(session.toolbar_pointer_local, None);
+	assert!(!session.toolbar_left_button_went_down);
+	assert!(!session.toolbar_left_button_went_up);
+	assert_eq!(session.toolbar_state.drag_offset, Vec2::ZERO);
+	assert_eq!(session.toolbar_state.drag_anchor, None);
+	assert!(!session.toolbar_state.annotation_size_control_hovered);
+	assert_eq!(session.toolbar_state.annotation_size_wheel_accumulator, 0.0);
 }
 
 #[test]
@@ -1454,7 +1737,7 @@ fn finish_frozen_text_editing_commits_current_toolbar_text_style() {
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
-	session.toolbar_state.text_style.font_size_points = 30.0;
+	session.toolbar_state.text_style.font_size_points = 27.5;
 	session.toolbar_state.text_style.color = FrozenTextColor::Yellow;
 
 	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
@@ -1463,8 +1746,31 @@ fn finish_frozen_text_editing_commits_current_toolbar_text_style() {
 
 	let annotation = session.frozen_text_annotations.first().expect("annotation");
 
-	assert_eq!(annotation.style.font_size_points, 30.0);
+	assert_eq!(annotation.style.font_size_points, 27.5);
 	assert_eq!(annotation.style.color, FrozenTextColor::Yellow);
+}
+
+#[test]
+fn finish_frozen_brush_stroke_commits_current_toolbar_brush_style() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.authoritative_frozen_capture_ready = true;
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+	session.toolbar_state.brush_style.stroke_width_points = 4.25;
+	session.toolbar_state.brush_style.color = FrozenTextColor::Green;
+
+	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(140, 160)));
+	assert!(session.finish_frozen_brush_stroke());
+
+	let stroke = session.frozen_brush.committed_strokes.first().expect("brush stroke");
+
+	assert_eq!(stroke.style.stroke_width_points, 4.25);
+	assert_eq!(stroke.style.color, FrozenTextColor::Green);
 }
 
 #[test]
@@ -1791,10 +2097,10 @@ fn evicting_old_brush_and_text_history_discards_matching_payloads() {
 		let x = index as f32;
 
 		if index % 2 == 0 {
-			session
-				.frozen_brush
-				.committed_strokes
-				.push(FrozenBrushStroke { points: vec![Pos2::new(x, 0.0)] });
+			session.frozen_brush.committed_strokes.push(FrozenBrushStroke {
+				points: vec![Pos2::new(x, 0.0)],
+				style: FrozenBrushStyle::default(),
+			});
 			session.push_frozen_edit_to_undo_history(FrozenEditKind::BrushStroke);
 		} else {
 			session.frozen_text_annotations.push(FrozenTextAnnotation {

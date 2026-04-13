@@ -15,10 +15,10 @@ use crate::overlay::MacOSHudWindowConfigState;
 #[cfg(target_os = "macos")]
 use crate::overlay::{self, MacLiveFrameStream, MainThreadMarker, NSScreen};
 use crate::overlay::{
-	ActiveEventLoop, GlobalPoint, GpuContext, HUD_PILL_CORNER_RADIUS_POINTS, HudOverlayWindow,
-	LOUPE_TILE_CORNER_RADIUS_POINTS, LiveSampleApplyResult, LogicalPosition, LogicalSize,
-	MonitorRect, OverlayMode, OverlaySession, OverlayWindow, OverlayWorker, Result,
-	ScrollPreviewWindow, TOOLBAR_EXPANDED_HEIGHT_PX, WindowLevel, WindowRenderer, hud_helpers,
+	ActiveEventLoop, GlobalPoint, GpuContext, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS,
+	LiveSampleApplyResult, LogicalPosition, LogicalSize, MonitorRect, OverlayMode, OverlaySession,
+	OverlayWindow, OverlayWorker, Result, ScrollPreviewWindow, TOOLBAR_EXPANDED_HEIGHT_PX,
+	WindowLevel, WindowRenderer, frozen_toolbar_corner_radius_points, hud_helpers,
 };
 
 impl OverlaySession {
@@ -855,7 +855,9 @@ impl OverlaySession {
 		window.set_transparent(true);
 		self.configure_hud_window_common(
 			window.as_ref(),
-			Some(f64::from(HUD_PILL_CORNER_RADIUS_POINTS)),
+			Some(frozen_toolbar_corner_radius_points(
+				startup_size.y.max(TOOLBAR_EXPANDED_HEIGHT_PX),
+			)),
 		);
 		window.request_redraw();
 

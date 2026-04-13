@@ -4,6 +4,7 @@ use std::time::Instant;
 
 #[cfg(test)]
 use crate::overlay::FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS;
+use crate::overlay::session_state::FrozenBrushStyle;
 use crate::overlay::{
 	ActiveFrozenBrushStroke, FROZEN_BRUSH_COMMIT_ROUNDING_PASSES,
 	FROZEN_BRUSH_MODEL_CURVE_AMPLITUDE_POINTS, FROZEN_BRUSH_MODEL_CURVE_RESPONSE_BOOST,
@@ -64,8 +65,11 @@ impl OverlaySession {
 		let point = Pos2::new(cursor_x as f32, cursor_y as f32);
 		let sampled_at = Instant::now();
 
-		self.frozen_brush.active_stroke =
-			Some(Self::new_active_frozen_brush_stroke(point, sampled_at));
+		self.frozen_brush.active_stroke = Some(Self::new_active_frozen_brush_stroke(
+			point,
+			sampled_at,
+			self.toolbar_state.brush_style,
+		));
 
 		self.request_redraw_for_monitor(monitor);
 
@@ -105,9 +109,10 @@ impl OverlaySession {
 			return false;
 		}
 
-		self.frozen_brush
-			.committed_strokes
-			.push(FrozenBrushStroke { points: Self::finished_frozen_brush_points(&stroke) });
+		self.frozen_brush.committed_strokes.push(FrozenBrushStroke {
+			points: Self::finished_frozen_brush_points(&stroke),
+			style: stroke.style,
+		});
 		self.push_frozen_edit_to_undo_history(FrozenEditKind::BrushStroke);
 		self.sync_frozen_toolbar_state();
 
@@ -173,10 +178,12 @@ impl OverlaySession {
 	pub(super) fn new_active_frozen_brush_stroke(
 		point: Pos2,
 		sampled_at: Instant,
+		style: FrozenBrushStyle,
 	) -> ActiveFrozenBrushStroke {
 		ActiveFrozenBrushStroke {
 			raw_points: vec![point],
 			points: vec![point],
+			style,
 			model_state: FrozenBrushModelState {
 				filtered_input_point: point,
 				modeled_point: point,
@@ -753,7 +760,11 @@ impl OverlaySession {
 		}
 
 		let started_at = Instant::now();
-		let mut stroke = Self::new_active_frozen_brush_stroke(points[0], started_at);
+		let mut stroke = Self::new_active_frozen_brush_stroke(
+			points[0],
+			started_at,
+			FrozenBrushStyle::default(),
+		);
 
 		for (index, point) in points.iter().copied().enumerate().skip(1) {
 			let sampled_at = started_at

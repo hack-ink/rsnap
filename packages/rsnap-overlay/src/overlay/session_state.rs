@@ -8,11 +8,13 @@ use std::{
 use image::RgbaImage;
 
 use crate::overlay::{
-	Color32, DeviceCursorPointSource, FROZEN_TEXT_FONT_SIZE_POINTS, FROZEN_TEXT_FONT_SIZE_PRESETS,
-	FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint, LIVE_PRESENT_INTERVAL_MIN,
-	MonitorRect, PhysicalPosition, Pos2, REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints,
-	SLOW_OP_WARN_INTERVAL, ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2,
-	WindowId,
+	Color32, DeviceCursorPointSource, FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS,
+	FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS, FROZEN_BRUSH_STROKE_WIDTH_POINTS,
+	FROZEN_TEXT_FONT_SIZE_MAX_POINTS, FROZEN_TEXT_FONT_SIZE_MIN_POINTS,
+	FROZEN_TEXT_FONT_SIZE_POINTS, FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint,
+	LIVE_PRESENT_INTERVAL_MIN, MonitorRect, MouseScrollDelta, PhysicalPosition, Pos2,
+	REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints, SLOW_OP_WARN_INTERVAL,
+	ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2, WindowId,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{ExternalScrollInputDrainReader, MacLiveFrameStream};
@@ -142,7 +144,10 @@ pub(super) struct HudDrawConfig {
 pub(super) struct FrozenToolbarState {
 	pub(super) visible: bool,
 	pub(super) dragging: bool,
+	pub(super) annotation_size_control_hovered: bool,
+	pub(super) annotation_size_wheel_accumulator: f32,
 	pub(super) selected_tool: FrozenToolbarTool,
+	pub(super) brush_style: FrozenBrushStyle,
 	pub(super) text_style: FrozenTextStyle,
 	pub(super) auto_center_available: bool,
 	pub(super) undo_available: bool,
@@ -165,7 +170,10 @@ impl Default for FrozenToolbarState {
 		Self {
 			visible: true,
 			dragging: false,
+			annotation_size_control_hovered: false,
+			annotation_size_wheel_accumulator: 0.0,
 			selected_tool: FrozenToolbarTool::Pointer,
+			brush_style: FrozenBrushStyle::default(),
 			text_style: FrozenTextStyle::default(),
 			auto_center_available: false,
 			undo_available: false,
@@ -189,6 +197,7 @@ impl Default for FrozenToolbarState {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct FrozenBrushStroke {
 	pub(super) points: Vec<Pos2>,
+	pub(super) style: FrozenBrushStyle,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -203,6 +212,7 @@ pub(super) struct FrozenBrushModelState {
 pub(super) struct ActiveFrozenBrushStroke {
 	pub(super) raw_points: Vec<Pos2>,
 	pub(super) points: Vec<Pos2>,
+	pub(super) style: FrozenBrushStyle,
 	pub(super) model_state: FrozenBrushModelState,
 	pub(super) started_at: Instant,
 	pub(super) last_sample_at: Instant,
@@ -216,7 +226,7 @@ pub(super) struct FrozenBrushState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum FrozenTextColor {
+pub(super) enum FrozenAnnotationColor {
 	White,
 	Yellow,
 	Green,
@@ -224,7 +234,7 @@ pub(super) enum FrozenTextColor {
 	Red,
 	Black,
 }
-impl FrozenTextColor {
+impl FrozenAnnotationColor {
 	pub(super) const ALL: [Self; 6] =
 		[Self::White, Self::Yellow, Self::Green, Self::Blue, Self::Red, Self::Black];
 
@@ -246,43 +256,175 @@ impl FrozenTextColor {
 	}
 }
 
+pub(super) type FrozenTextColor = FrozenAnnotationColor;
+
+fn set_clamped_points(current_value: &mut f32, next_value: f32, min: f32, max: f32) -> bool {
+	let next_size = next_value.clamp(min, max);
+
+	if (next_size - *current_value).abs() <= f32::EPSILON {
+		return false;
+	}
+
+	*current_value = next_size;
+
+	true
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct FrozenBrushStyle {
+	pub(super) stroke_width_points: f32,
+	pub(super) color: FrozenAnnotationColor,
+}
+impl FrozenBrushStyle {
+	pub(super) fn set_stroke_width(&mut self, stroke_width_points: f32) -> bool {
+		set_clamped_points(
+			&mut self.stroke_width_points,
+			stroke_width_points,
+			FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS,
+			FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS,
+		)
+	}
+
+	pub(super) fn offset_stroke_width(&mut self, delta_points: f32) -> bool {
+		self.set_stroke_width(self.stroke_width_points + delta_points)
+	}
+}
+impl Default for FrozenBrushStyle {
+	fn default() -> Self {
+		Self {
+			stroke_width_points: FROZEN_BRUSH_STROKE_WIDTH_POINTS,
+			color: FrozenAnnotationColor::Red,
+		}
+	}
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct FrozenTextStyle {
 	pub(super) font_size_points: f32,
-	pub(super) color: FrozenTextColor,
+	pub(super) color: FrozenAnnotationColor,
 }
 impl FrozenTextStyle {
-	pub(super) fn step_font_size(&mut self, direction: i8) -> bool {
-		let current_index = FROZEN_TEXT_FONT_SIZE_PRESETS
-			.iter()
-			.position(|size| (*size - self.font_size_points).abs() <= f32::EPSILON)
-			.unwrap_or_else(|| {
-				FROZEN_TEXT_FONT_SIZE_PRESETS
-					.iter()
-					.position(|size| *size >= self.font_size_points)
-					.unwrap_or(FROZEN_TEXT_FONT_SIZE_PRESETS.len().saturating_sub(1))
-			});
-		let next_index = if direction < 0 {
-			current_index.saturating_sub(1)
-		} else if direction > 0 {
-			(current_index + 1).min(FROZEN_TEXT_FONT_SIZE_PRESETS.len().saturating_sub(1))
-		} else {
-			current_index
-		};
-		let next_size = FROZEN_TEXT_FONT_SIZE_PRESETS[next_index];
-
-		if (next_size - self.font_size_points).abs() <= f32::EPSILON {
-			return false;
-		}
-
-		self.font_size_points = next_size;
-
-		true
+	pub(super) fn set_font_size(&mut self, font_size_points: f32) -> bool {
+		set_clamped_points(
+			&mut self.font_size_points,
+			font_size_points,
+			FROZEN_TEXT_FONT_SIZE_MIN_POINTS,
+			FROZEN_TEXT_FONT_SIZE_MAX_POINTS,
+		)
 	}
 }
 impl Default for FrozenTextStyle {
 	fn default() -> Self {
-		Self { font_size_points: FROZEN_TEXT_FONT_SIZE_POINTS, color: FrozenTextColor::Blue }
+		Self { font_size_points: FROZEN_TEXT_FONT_SIZE_POINTS, color: FrozenAnnotationColor::Blue }
+	}
+}
+
+fn discrete_toolbar_wheel_steps(units: f32) -> i32 {
+	if units.abs() <= f32::EPSILON {
+		return 0;
+	}
+
+	let magnitude = if units.abs() < 1.0 { 1.0 } else { units.abs().round() };
+
+	units.signum() as i32 * magnitude as i32
+}
+
+impl FrozenToolbarState {
+	fn consume_annotation_size_wheel_steps(&mut self, delta: &MouseScrollDelta) -> i32 {
+		match delta {
+			MouseScrollDelta::LineDelta(_, y) => {
+				self.annotation_size_wheel_accumulator = 0.0;
+				discrete_toolbar_wheel_steps(*y)
+			},
+			MouseScrollDelta::PixelDelta(position) => {
+				self.annotation_size_wheel_accumulator +=
+					(position.y as f32 / 24.0).clamp(-2.0, 2.0);
+
+				let mut steps = 0_i32;
+
+				while self.annotation_size_wheel_accumulator >= 1.0 {
+					steps += 1;
+					self.annotation_size_wheel_accumulator -= 1.0;
+				}
+				while self.annotation_size_wheel_accumulator <= -1.0 {
+					steps -= 1;
+					self.annotation_size_wheel_accumulator += 1.0;
+				}
+
+				steps
+			},
+		}
+	}
+
+	fn apply_text_size_wheel_steps(&mut self, steps: i32) -> bool {
+		if steps == 0 {
+			return false;
+		}
+
+		let mut next_size = self.text_style.font_size_points;
+
+		for _ in 0..steps.abs() {
+			next_size = if steps > 0 {
+				if (next_size - next_size.round()).abs() <= f32::EPSILON {
+					next_size + 1.0
+				} else {
+					next_size.ceil()
+				}
+			} else if (next_size - next_size.round()).abs() <= f32::EPSILON {
+				next_size - 1.0
+			} else {
+				next_size.floor()
+			};
+		}
+
+		self.text_style.set_font_size(next_size)
+	}
+
+	fn brush_size_wheel_step(&self) -> f32 {
+		match self.brush_style.stroke_width_points {
+			width if width < 4.0 => 0.25,
+			width if width < 12.0 => 0.5,
+			_ => 1.0,
+		}
+	}
+
+	fn apply_brush_size_wheel_steps(&mut self, steps: i32) -> bool {
+		if steps == 0 {
+			return false;
+		}
+
+		let direction = steps.signum() as f32;
+		let mut changed = false;
+
+		for _ in 0..steps.abs() {
+			changed |=
+				self.brush_style.offset_stroke_width(direction * self.brush_size_wheel_step());
+		}
+
+		changed
+	}
+
+	pub(super) fn apply_annotation_size_steps(&mut self, steps: i32) -> bool {
+		if steps == 0 {
+			return false;
+		}
+
+		match self.selected_tool {
+			FrozenToolbarTool::Pen => self.apply_brush_size_wheel_steps(steps),
+			FrozenToolbarTool::Text => self.apply_text_size_wheel_steps(steps),
+			_ => false,
+		}
+	}
+
+	pub(super) fn apply_annotation_size_wheel_delta(&mut self, delta: &MouseScrollDelta) -> bool {
+		if !self.annotation_size_control_hovered {
+			self.annotation_size_wheel_accumulator = 0.0;
+			return false;
+		}
+
+		let steps = self.consume_annotation_size_wheel_steps(delta);
+
+		self.apply_annotation_size_steps(steps)
 	}
 }
 
@@ -529,6 +671,7 @@ pub(super) struct MacOSScrollWheelEvent {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct FrozenToolbarPointerState {
 	pub(super) cursor_local: Pos2,
+	#[cfg(not(target_os = "macos"))]
 	pub(super) left_button_down: bool,
 	pub(super) left_button_went_down: bool,
 	pub(super) left_button_went_up: bool,

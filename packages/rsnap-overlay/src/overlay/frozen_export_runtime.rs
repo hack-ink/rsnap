@@ -3,9 +3,9 @@ use image::{
 	imageops::{self, FilterType},
 };
 
+use crate::overlay::session_state::FrozenBrushStyle;
 use crate::overlay::{
-	FROZEN_BRUSH_COLOR_RGBA, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
-	FROZEN_BRUSH_STROKE_WIDTH_POINTS, FrozenBrushStroke, FrozenCaptureSource,
+	FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS, FrozenBrushStroke, FrozenCaptureSource,
 	FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform, FrozenTextAnnotation,
 	MonitorRect, OverlaySession, Pos2, RectPoints, WINDOW_CAPTURE_MATTE_DARK_RGBA,
 	WINDOW_CAPTURE_MATTE_LIGHT_RGBA, WindowCaptureAlphaMode,
@@ -72,6 +72,7 @@ impl OverlaySession {
 						coverage_mask,
 						export_transform,
 						&stroke.points,
+						stroke.style,
 					);
 				},
 				FrozenCommittedOverlay::Text(annotation) => {
@@ -95,6 +96,7 @@ impl OverlaySession {
 				coverage_mask,
 				export_transform,
 				&display_points,
+				active_stroke.style,
 			);
 		}
 	}
@@ -104,6 +106,7 @@ impl OverlaySession {
 		coverage_mask: &mut [u8],
 		export_transform: FrozenExportTransform,
 		points: &[Pos2],
+		style: FrozenBrushStyle,
 	) {
 		if export_image.width() == 0 || export_image.height() == 0 {
 			return;
@@ -112,9 +115,8 @@ impl OverlaySession {
 			return;
 		}
 
-		let radius =
-			(FROZEN_BRUSH_STROKE_WIDTH_POINTS * export_transform.scalar_scale() * 0.5).max(1.0);
-		let color = Rgba(FROZEN_BRUSH_COLOR_RGBA);
+		let radius = (style.stroke_width_points * export_transform.scalar_scale() * 0.5).max(1.0);
+		let color = Rgba(style.color.export_rgba());
 
 		coverage_mask.fill(0);
 
