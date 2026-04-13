@@ -225,10 +225,10 @@ fn armed_freeze_capture_without_worker_restores_visibility_and_surfaces_error() 
 
 #[cfg(target_os = "macos")]
 #[test]
-fn authoritative_freeze_capture_keeps_overlay_windows_visible_on_macos() {
+fn authoritative_freeze_capture_hides_overlay_windows_on_macos() {
 	let session = OverlaySession::new();
 
-	assert!(!session.should_hide_overlay_windows_during_capture());
+	assert!(session.should_hide_overlay_windows_during_capture());
 }
 
 #[cfg(target_os = "macos")]
