@@ -3,6 +3,11 @@ use crate::overlay::Instant;
 use crate::overlay::{GlobalPoint, MonitorRect, OverlayMode, OverlaySession};
 
 impl OverlaySession {
+	#[cfg(target_os = "macos")]
+	pub(super) const fn should_hide_overlay_windows_during_capture(&self) -> bool {
+		false
+	}
+
 	pub(super) fn update_cursor_state(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
 		self.cursor_monitor = Some(monitor);
 		self.state.cursor = Some(cursor);
@@ -12,8 +17,12 @@ impl OverlaySession {
 	pub(super) fn hide_capture_windows(&mut self) {
 		self.capture_windows_hidden = true;
 
-		for overlay_window in self.windows.values() {
-			overlay_window.window.set_visible(false);
+		let hide_overlay_windows = self.should_hide_overlay_windows_during_capture();
+
+		if hide_overlay_windows {
+			for overlay_window in self.windows.values() {
+				overlay_window.window.set_visible(false);
+			}
 		}
 
 		if let Some(hud_window) = &self.hud_window {
@@ -40,6 +49,11 @@ impl OverlaySession {
 		if let Some(preview_window) = &self.scroll_preview_window {
 			preview_window.window.set_visible(false);
 		}
+
+		tracing::debug!(
+			hide_overlay_windows,
+			"Capture windows hidden for authoritative freeze capture."
+		);
 
 		self.last_present_at = Instant::now();
 	}

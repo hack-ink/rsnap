@@ -45,6 +45,9 @@ impl OverlaySession {
 		}
 
 		self.state.drag_rect = Some(MonitorRectPoints { monitor_id: monitor.id, rect });
+		if self.state.hovered_window_rect.is_some_and(|hovered| hovered.monitor_id == monitor.id) {
+			self.state.hovered_window_rect = None;
+		}
 
 		if !was_active {
 			self.hide_auxiliary_windows_for_live_drag();
@@ -471,6 +474,21 @@ impl OverlaySession {
 
 	pub(super) fn frozen_selection_drag_hides_auxiliary_windows(&self) -> bool {
 		matches!(self.state.mode, OverlayMode::Frozen) && self.frozen_selection_drag.active
+	}
+
+	pub(super) fn live_press_active_for_monitor(&self, monitor: MonitorRect) -> bool {
+		matches!(self.state.mode, OverlayMode::Live)
+			&& self.left_mouse_button_down
+			&& self.left_mouse_button_down_monitor == Some(monitor)
+	}
+
+	pub(super) fn live_drag_active_for_monitor(&self, monitor: MonitorRect) -> bool {
+		matches!(self.state.mode, OverlayMode::Live)
+			&& self.state.drag_rect.is_some_and(|drag_rect| drag_rect.monitor_id == monitor.id)
+	}
+
+	pub(super) fn live_press_pending_for_monitor(&self, monitor: MonitorRect) -> bool {
+		self.live_press_active_for_monitor(monitor) && !self.live_drag_active_for_monitor(monitor)
 	}
 
 	pub(super) fn live_drag_hides_auxiliary_windows(&self) -> bool {

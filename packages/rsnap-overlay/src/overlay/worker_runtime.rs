@@ -22,6 +22,7 @@ impl OverlaySession {
 	pub(super) fn abort_pending_freeze_capture(&mut self, message: impl Into<String>) {
 		let message = message.into();
 
+		self.note_frozen_transition_aborted(message.as_str());
 		self.clear_freeze_capture_tracking();
 		self.restore_capture_windows_visibility();
 		self.state.set_error(message);
@@ -39,6 +40,7 @@ impl OverlaySession {
 		self.inflight_window_freeze_capture = pending_window_target;
 		self.pending_window_freeze_capture = None;
 		self.freeze_capture_send_full_count = 0;
+		self.note_frozen_transition_worker_requested(overlay_monitor, pending_window_target);
 	}
 
 	pub(super) fn handle_freeze_capture_request_send_error(
@@ -187,17 +189,16 @@ impl OverlaySession {
 			return false;
 		}
 
-		let is_dragging_window = matches!(self.state.mode, OverlayMode::Live)
-			&& self.left_mouse_button_down
-			&& self.left_mouse_button_down_monitor == Some(monitor);
-		let had_snapshot_update = if is_dragging_window || self.state.alt_held {
+		let press_pending = self.live_press_pending_for_monitor(monitor);
+		let is_dragging_window = self.live_drag_active_for_monitor(monitor);
+		let had_snapshot_update = if press_pending || is_dragging_window || self.state.alt_held {
 			false
 		} else {
 			self.apply_live_hover_cache_state(monitor, cursor)
 		};
 		let sample_updated = self.request_live_cursor_sample(monitor, cursor, self.state.alt_held);
 
-		if !is_dragging_window && !self.state.alt_held {
+		if !press_pending && !is_dragging_window && !self.state.alt_held {
 			let _ = self.request_live_window_list_refresh_if_needed();
 		}
 
@@ -415,9 +416,8 @@ impl OverlaySession {
 			return LiveSampleApplyResult::default();
 		}
 
-		let is_dragging_window = self.left_mouse_button_down
-			&& self.left_mouse_button_down_monitor == Some(monitor)
-			&& matches!(self.state.mode, OverlayMode::Live);
+		let press_pending = self.live_press_pending_for_monitor(monitor);
+		let is_dragging_window = self.live_drag_active_for_monitor(monitor);
 		let mut changed = LiveSampleApplyResult::default();
 
 		if is_dragging_window {
@@ -426,7 +426,7 @@ impl OverlaySession {
 				changed.overlay_changed = true;
 				changed.hud_changed = true;
 			}
-		} else if self.apply_live_hover_cache_state(monitor, point) {
+		} else if !press_pending && self.apply_live_hover_cache_state(monitor, point) {
 			changed.overlay_changed = true;
 			changed.hud_changed = true;
 		}
@@ -728,9 +728,8 @@ impl OverlaySession {
 		let Some(monitor) = self.active_cursor_monitor() else {
 			return;
 		};
-		let is_dragging_window = self.left_mouse_button_down
-			&& self.left_mouse_button_down_monitor == Some(monitor)
-			&& matches!(self.state.mode, OverlayMode::Live);
+		let press_pending = self.live_press_pending_for_monitor(monitor);
+		let is_dragging_window = self.live_drag_active_for_monitor(monitor);
 
 		if is_dragging_window {
 			if self.state.hovered_window_rect.is_some() {
@@ -746,6 +745,9 @@ impl OverlaySession {
 				);
 			}
 
+			return;
+		}
+		if press_pending {
 			return;
 		}
 		if self.apply_live_hover_cache_state(monitor, cursor) {
