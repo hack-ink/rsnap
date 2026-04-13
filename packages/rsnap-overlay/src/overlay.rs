@@ -1682,6 +1682,14 @@ impl OverlaySession {
 			WindowEvent::MouseWheel { delta, .. } if toolbar_window_id => {
 				self.handle_toolbar_mouse_wheel(delta)
 			},
+			WindowEvent::MouseWheel { delta, .. }
+				if !cfg!(target_os = "macos")
+					&& matches!(self.state.mode, OverlayMode::Frozen)
+					&& self.toolbar_state.visible
+					&& self.toolbar_state.annotation_size_control_hovered =>
+			{
+				self.handle_toolbar_mouse_wheel(delta)
+			},
 			WindowEvent::MouseWheel { delta, .. } => {
 				self.handle_scroll_mouse_wheel(window_id, delta)
 			},
