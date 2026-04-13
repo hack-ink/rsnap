@@ -188,32 +188,6 @@ fn stale_snapshot_does_not_finish_frozen_transition_immediately() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn unverified_snapshot_can_finish_without_self_capture_exceptions() {
-	let monitor = tests::test_monitor();
-	let capture_rect = RectPoints::new(120, 160, 320, 240);
-	let window_target =
-		crate::overlay::WindowFreezeCaptureTarget { monitor, window_id: 11, rect: capture_rect };
-	let session = OverlaySession::new();
-
-	assert!(session.can_finish_frozen_capture_from_unverified_snapshot(Some(window_target)));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn unverified_snapshot_respects_self_capture_exception_windows() {
-	let monitor = tests::test_monitor();
-	let capture_rect = RectPoints::new(120, 160, 320, 240);
-	let window_target =
-		crate::overlay::WindowFreezeCaptureTarget { monitor, window_id: 11, rect: capture_rect };
-	let mut session = OverlaySession::new();
-
-	session.config.self_capture_exception_window_ids = vec![17];
-
-	assert!(!session.can_finish_frozen_capture_from_unverified_snapshot(Some(window_target)));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
 fn snapshot_seeded_preview_keeps_authoritative_handoff_pending() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(120, 160, 320, 240);

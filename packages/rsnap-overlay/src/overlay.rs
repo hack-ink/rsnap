@@ -1423,15 +1423,6 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn can_finish_frozen_capture_from_unverified_snapshot(
-		&self,
-		window_target: Option<WindowFreezeCaptureTarget>,
-	) -> bool {
-		self.snapshot_can_finish_frozen_capture(window_target)
-			&& self.config.self_capture_exception_window_ids.is_empty()
-	}
-
-	#[cfg(target_os = "macos")]
 	fn maybe_seed_frozen_capture_preview_from_snapshot(
 		&mut self,
 		monitor: MonitorRect,
@@ -1488,17 +1479,6 @@ impl OverlaySession {
 				cursor,
 				snapshot.clone(),
 				"live_stream_snapshot",
-			) {
-			return true;
-		}
-		if !self_capture_filter_complete
-			&& self.can_finish_frozen_capture_from_unverified_snapshot(window_target)
-			&& self.maybe_finish_frozen_capture_from_snapshot(
-				monitor,
-				window_target,
-				cursor,
-				snapshot.clone(),
-				"live_stream_snapshot_unverified_final",
 			) {
 			return true;
 		}
