@@ -182,7 +182,9 @@ use self::trace_recording::{
 #[cfg(target_os = "macos")]
 use crate::deferred_text_recognition::DeferredTextRecognitionRequest;
 #[cfg(target_os = "macos")]
-use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
+use crate::live_frame_stream_macos::{
+	CursorSampleRequest, MacLiveFrameStream, STREAM_REGION_FRAME_MAX_AGE,
+};
 use crate::scroll_capture::{self, ScrollDirection, ScrollObserveOutcome, ScrollSession};
 use crate::state::LiveCursorSample;
 #[cfg(target_os = "macos")]
@@ -1368,7 +1370,13 @@ impl OverlaySession {
 		let Some(snapshot) = snapshot.filter(|snapshot| snapshot.monitor == monitor) else {
 			return false;
 		};
-		let snapshot_age_ms = snapshot.captured_at.elapsed().as_millis();
+		let snapshot_age = snapshot.captured_at.elapsed();
+
+		if snapshot_age > STREAM_REGION_FRAME_MAX_AGE {
+			return false;
+		}
+
+		let snapshot_age_ms = snapshot_age.as_millis();
 		let snapshot_image = snapshot.image.as_ref().clone();
 
 		self.commit_frozen_preview(monitor, snapshot_image, cursor);
