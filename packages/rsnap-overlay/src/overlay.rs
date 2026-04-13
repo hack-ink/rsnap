@@ -162,11 +162,12 @@ use self::rendering::{
 #[cfg(all(target_os = "macos", test))]
 use self::session_state::InflightScrollCaptureObservation;
 use self::session_state::{
-	ActiveFrozenBrushStroke, CursorMoveTrace, FrozenBrushModelState, FrozenBrushState,
-	FrozenBrushStroke, FrozenMosaicDragState, FrozenSelectionDragCursorMoveTiming,
-	FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextColor, FrozenTextEditState,
-	FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState, HudDrawConfig,
-	LiveSampleApplyResult, ScrollCaptureState, SlowOperationLogger, WindowFreezeCaptureTarget,
+	ActiveFrozenBrushStroke, CursorMoveTrace, FrozenAnnotationColor, FrozenBrushModelState,
+	FrozenBrushState, FrozenBrushStroke, FrozenMosaicDragState,
+	FrozenSelectionDragCursorMoveTiming, FrozenSelectionDragState, FrozenTextAnnotation,
+	FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState,
+	HudDrawConfig, LiveSampleApplyResult, ScrollCaptureState, SlowOperationLogger,
+	WindowFreezeCaptureTarget,
 };
 #[cfg(target_os = "macos")]
 use self::session_state::{
@@ -258,6 +259,7 @@ const MACOS_HUD_WINDOW_LEVEL: isize = 26;
 const MACOS_OVERLAY_WINDOW_LEVEL: isize = 25;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
+const TOOLBAR_PILL_INNER_MARGIN_Y_POINTS: f32 = 6.0;
 const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
 const CURSOR_EVENT_TICK_TTL: Duration = Duration::from_millis(24);
 const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
@@ -297,17 +299,17 @@ const SCROLL_CAPTURE_DUPLICATE_STREAM_STALL_THRESHOLD: u8 = 3;
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_DUPLICATE_STREAM_REFRESH_INTERVAL: Duration = Duration::from_millis(80);
 const HUD_PILL_INNER_MARGIN_X_POINTS: f32 = 12.0;
-const HUD_PILL_INNER_MARGIN_Y_POINTS: f32 = 8.0;
 const HUD_PILL_STROKE_WIDTH_POINTS: f32 = 1.0;
 const TOOLBAR_EXPANDED_HEIGHT_PX: f32 = FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
-	+ 2.0 * HUD_PILL_INNER_MARGIN_Y_POINTS
+	+ 2.0 * TOOLBAR_PILL_INNER_MARGIN_Y_POINTS
 	+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
 const TOOLBAR_CAPTURE_GAP_PX: f32 = 10.0;
 const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
 const TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS: f32 = 1.0;
 const HUD_PILL_CORNER_RADIUS_POINTS: u8 = 18;
 const FROZEN_TEXT_FONT_SIZE_POINTS: f32 = 16.0;
-const FROZEN_TEXT_FONT_SIZE_PRESETS: [f32; 4] = [16.0, 22.0, 30.0, 40.0];
+const FROZEN_TEXT_FONT_SIZE_MIN_POINTS: f32 = 12.0;
+const FROZEN_TEXT_FONT_SIZE_MAX_POINTS: f32 = 72.0;
 const FROZEN_TEXT_PREVIEW_PLACEHOLDER: &str = "Type";
 const FROZEN_TEXT_CARET_BLINK_PERIOD_SECS: f64 = 1.0;
 const FROZEN_TEXT_CARET_REPAINT_INTERVAL: Duration = Duration::from_millis(250);
@@ -356,6 +358,8 @@ const FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS: f32 = 1.3;
 const FROZEN_MOSAIC_BLOCK_SIZE_PX: u32 = 12;
 const FROZEN_EDIT_HISTORY_LIMIT: usize = 24;
 const FROZEN_BRUSH_STROKE_WIDTH_POINTS: f32 = 3.5;
+const FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS: f32 = 1.0;
+const FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS: f32 = 24.0;
 const FROZEN_BRUSH_POINT_SPACING_MIN_POINTS: f32 = 0.25;
 const FROZEN_BRUSH_PREVIEW_POINT_SPACING_MIN_POINTS: f32 = 0.1;
 const FROZEN_BRUSH_MODELED_POINT_SPACING_MIN_POINTS: f32 = 0.25;
@@ -381,7 +385,6 @@ const FROZEN_BRUSH_STREAMLINE_DISTANCE_CEILING_POINTS: f32 = 6.0;
 const FROZEN_BRUSH_PREVIEW_ROUNDING_PASSES: usize = 1;
 const FROZEN_BRUSH_COMMIT_ROUNDING_PASSES: usize = 2;
 const FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS: f32 = 0.25;
-const FROZEN_BRUSH_COLOR_RGBA: [u8; 4] = [255, 69, 58, 255];
 const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: image::Rgba<u8> = image::Rgba([246, 246, 246, 255]);
 const WINDOW_CAPTURE_MATTE_DARK_RGBA: image::Rgba<u8> = image::Rgba([24, 24, 24, 255]);
 const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
@@ -1600,6 +1603,14 @@ impl OverlaySession {
 		}
 	}
 
+	fn inline_toolbar_size_wheel_active(&self, toolbar_window_id: bool) -> bool {
+		!toolbar_window_id
+			&& !cfg!(target_os = "macos")
+			&& matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.toolbar_state.visible
+			&& self.toolbar_state.annotation_size_control_hovered
+	}
+
 	/// Handles a winit window event for one of the overlay-owned windows.
 	pub fn handle_window_event(
 		&mut self,
@@ -1635,6 +1646,8 @@ impl OverlaySession {
 			.toolbar_window
 			.as_ref()
 			.is_some_and(|toolbar_window| toolbar_window.window.id() == window_id);
+		let inline_toolbar_size_wheel_active =
+			self.inline_toolbar_size_wheel_active(toolbar_window_id);
 		let control = match event {
 			WindowEvent::CloseRequested => self.cancel_overlay("window_close_requested"),
 			WindowEvent::MouseInput {
@@ -1645,6 +1658,9 @@ impl OverlaySession {
 			WindowEvent::Resized(size) if toolbar_window_id => {
 				self.handle_toolbar_window_resized(*size)
 			},
+			WindowEvent::Moved(position) if toolbar_window_id => {
+				self.handle_toolbar_window_moved(window_id, *position)
+			},
 			WindowEvent::Resized(size) => self.handle_resized(window_id, *size),
 			WindowEvent::ScaleFactorChanged { .. } if toolbar_window_id => {
 				self.handle_toolbar_window_scale_factor_changed(window_id)
@@ -1652,20 +1668,7 @@ impl OverlaySession {
 			WindowEvent::ScaleFactorChanged { .. } => self.handle_scale_factor_changed(window_id),
 			WindowEvent::CursorEntered { .. } if toolbar_window_id => OverlayControl::Continue,
 			WindowEvent::CursorLeft { .. } if toolbar_window_id => {
-				self.toolbar_pointer_local = None;
-				self.toolbar_left_button_down = false;
-				self.toolbar_left_button_went_down = false;
-				self.toolbar_left_button_went_up = false;
-				self.toolbar_state.dragging = false;
-				self.toolbar_state.drag_offset = Vec2::ZERO;
-				self.toolbar_state.drag_anchor = None;
-
-				#[cfg(target_os = "macos")]
-				{
-					self.request_redraw_toolbar_window();
-				}
-
-				OverlayControl::Continue
+				self.handle_toolbar_cursor_left()
 			},
 			WindowEvent::CursorMoved { position, .. } => {
 				if toolbar_window_id {
@@ -1675,7 +1678,12 @@ impl OverlaySession {
 				}
 			},
 			WindowEvent::Ime(event) => self.handle_ime_event(window_id, event),
-			WindowEvent::MouseWheel { delta, .. } if toolbar_window_id => OverlayControl::Continue,
+			WindowEvent::MouseWheel { delta, .. } if toolbar_window_id => {
+				self.handle_toolbar_mouse_wheel(delta)
+			},
+			WindowEvent::MouseWheel { delta, .. } if inline_toolbar_size_wheel_active => {
+				self.handle_toolbar_mouse_wheel(delta)
+			},
 			WindowEvent::MouseWheel { delta, .. } => {
 				self.handle_scroll_mouse_wheel(window_id, delta)
 			},
@@ -1843,16 +1851,18 @@ impl OverlaySession {
 
 		let left_button_went_down = self.toolbar_left_button_went_down;
 		let left_button_went_up = self.toolbar_left_button_went_up;
+		#[cfg(not(target_os = "macos"))]
+		let left_button_down = self.toolbar_left_button_down;
 
 		self.toolbar_left_button_went_down = false;
 		self.toolbar_left_button_went_up = false;
 
 		let cursor_local = toolbar_cursor_local_override
 			.or_else(|| self.state.cursor.and_then(|cursor| global_to_local(cursor, monitor)))?;
-		let left_button_down = self.toolbar_left_button_down;
 
 		Some(FrozenToolbarPointerState {
 			cursor_local,
+			#[cfg(not(target_os = "macos"))]
 			left_button_down,
 			left_button_went_down,
 			left_button_went_up,
@@ -3087,9 +3097,25 @@ enum FrozenCommittedOverlay<'a> {
 	Text(&'a FrozenTextAnnotation),
 }
 
+pub(super) fn frozen_toolbar_corner_radius_u8(toolbar_height_points: f32) -> u8 {
+	if toolbar_height_points <= TOOLBAR_EXPANDED_HEIGHT_PX + 0.5 {
+		(toolbar_height_points * 0.5).round().clamp(1.0, f32::from(u8::MAX)) as u8
+	} else {
+		HUD_PILL_CORNER_RADIUS_POINTS
+	}
+}
+
+pub(super) fn frozen_toolbar_corner_radius_points(toolbar_height_points: f32) -> f64 {
+	f64::from(frozen_toolbar_corner_radius_u8(toolbar_height_points))
+}
+
 fn frozen_toolbar_window_startup_size_points() -> Vec2 {
 	[
 		FrozenToolbarState::default(),
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Pen,
+			..FrozenToolbarState::default()
+		},
 		FrozenToolbarState {
 			selected_tool: FrozenToolbarTool::Text,
 			..FrozenToolbarState::default()
@@ -3097,6 +3123,12 @@ fn frozen_toolbar_window_startup_size_points() -> Vec2 {
 		FrozenToolbarState { auto_center_available: true, ..FrozenToolbarState::default() },
 		FrozenToolbarState { scroll_capture_available: true, ..FrozenToolbarState::default() },
 		FrozenToolbarState {
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Pen,
 			auto_center_available: true,
 			scroll_capture_available: true,
 			..FrozenToolbarState::default()

@@ -230,4 +230,48 @@ impl OverlaySession {
 
 		true
 	}
+
+	pub(super) fn sync_toolbar_outer_position_from_window(
+		&mut self,
+		monitor: MonitorRect,
+		outer_position: GlobalPoint,
+	) -> bool {
+		let toolbar_size = if let Some((width, height)) = self.toolbar_inner_size_points {
+			Vec2::new(width as f32, height as f32)
+		} else if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+			let toolbar_scale = toolbar_window.window.scale_factor().max(1.0);
+			let size = toolbar_window.window.inner_size();
+			let toolbar_w = ((size.width as f64) / toolbar_scale).ceil().max(1.0) as f32;
+			let toolbar_h = ((size.height as f64) / toolbar_scale).ceil().max(1.0) as f32;
+
+			Vec2::new(toolbar_w, toolbar_h)
+		} else {
+			WindowRenderer::frozen_toolbar_size(&self.toolbar_state)
+		};
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let local_pos = Pos2::new(
+			outer_position.x as f32 - monitor.origin.x as f32,
+			outer_position.y as f32 - monitor.origin.y as f32,
+		);
+		let clamped_local_pos = WindowRenderer::clamp_toolbar_position(
+			screen_rect,
+			toolbar_size,
+			local_pos,
+			TOOLBAR_SCREEN_MARGIN_PX,
+			TOOLBAR_SCREEN_MARGIN_PX,
+		);
+		let desired = GlobalPoint::new(
+			monitor.origin.x.saturating_add(clamped_local_pos.x.round() as i32),
+			monitor.origin.y.saturating_add(clamped_local_pos.y.round() as i32),
+		);
+		let changed = self.toolbar_outer_pos != Some(desired)
+			|| self.toolbar_state.floating_position != Some(clamped_local_pos);
+
+		self.toolbar_outer_pos = Some(desired);
+		self.toolbar_state.floating_position = Some(clamped_local_pos);
+		self.pending_toolbar_outer_pos = (desired != outer_position).then_some(desired);
+
+		changed
+	}
 }
