@@ -31,9 +31,9 @@ use image::Rgba;
 #[cfg(target_os = "macos")]
 use image::imageops;
 use winit::dpi::PhysicalPosition;
-use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta};
 #[cfg(not(target_os = "macos"))]
 use winit::event::{DeviceId, TouchPhase, WindowEvent};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta};
 #[cfg(target_os = "macos")]
 use winit::keyboard::ModifiersState;
 use winit::keyboard::{Key, NamedKey};
@@ -53,9 +53,9 @@ use crate::overlay::session_state::FrozenBrushStyle;
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 use crate::overlay::{
 	self, ActiveFrozenBrushStroke, FROZEN_EDIT_HISTORY_LIMIT, FROZEN_TEXT_CARET_REPAINT_INTERVAL,
-	FrozenBrushModelState, FrozenBrushStroke, FrozenCommittedOverlay, FrozenEditKind,
-	FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit, FrozenSelectionDragState,
-	FrozenTextAnnotation, FrozenTextColor, FrozenTextEditState, FrozenTextInputSource,
+	FrozenAnnotationColor, FrozenBrushModelState, FrozenBrushStroke, FrozenCommittedOverlay,
+	FrozenEditKind, FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit,
+	FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme,
 	OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
 	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
@@ -386,7 +386,7 @@ fn current_export_image_includes_frozen_brush_strokes() {
 	let export_image = session.current_export_image().expect("annotated export image");
 
 	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
-	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FrozenTextColor::Red.export_rgba()));
+	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FrozenAnnotationColor::Red.export_rgba()));
 }
 
 #[test]
@@ -402,7 +402,7 @@ fn current_export_image_uses_selected_brush_color() {
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
 	session.authoritative_frozen_capture_ready = true;
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
-	session.toolbar_state.brush_style.color = FrozenTextColor::Green;
+	session.toolbar_state.brush_style.color = FrozenAnnotationColor::Green;
 
 	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
 	assert!(session.finish_frozen_brush_stroke());
@@ -440,7 +440,7 @@ fn frozen_brush_undo_and_redo_update_export_image() {
 
 	let redone = session.current_export_image().expect("redo export image");
 
-	assert_eq!(redone.get_pixel(3, 3), &Rgba(FrozenTextColor::Red.export_rgba()));
+	assert_eq!(redone.get_pixel(3, 3), &Rgba(FrozenAnnotationColor::Red.export_rgba()));
 }
 
 #[test]
@@ -461,9 +461,9 @@ fn current_export_image_antialiases_frozen_brush_edges() {
 	assert!(session.finish_frozen_brush_stroke());
 
 	let export_image = session.current_export_image().expect("annotated export image");
-	let has_antialiased_edge = export_image
-		.pixels()
-		.any(|pixel| pixel != &background && pixel != &Rgba(FrozenTextColor::Red.export_rgba()));
+	let has_antialiased_edge = export_image.pixels().any(|pixel| {
+		pixel != &background && pixel != &Rgba(FrozenAnnotationColor::Red.export_rgba())
+	});
 
 	assert!(has_antialiased_edge, "expected blended edge pixels around the exported brush");
 }
@@ -484,7 +484,7 @@ fn rasterizing_frozen_brush_clears_reused_coverage_mask() {
 	);
 
 	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
-	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FrozenTextColor::Red.export_rgba()));
+	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FrozenAnnotationColor::Red.export_rgba()));
 }
 
 fn significant_y_direction_reversals(points: &[Pos2], min_delta: f32) -> usize {
@@ -1101,7 +1101,7 @@ fn default_frozen_text_style_uses_16_point_font() {
 		overlay::FROZEN_TEXT_FONT_SIZE_POINTS
 	);
 	assert_eq!(session.toolbar_state.text_style.font_size_points, 16.0);
-	assert_eq!(session.toolbar_state.text_style.color, FrozenTextColor::Blue);
+	assert_eq!(session.toolbar_state.text_style.color, FrozenAnnotationColor::Blue);
 }
 
 #[test]
@@ -1112,7 +1112,7 @@ fn default_frozen_brush_style_uses_existing_width_and_color() {
 		session.toolbar_state.brush_style.stroke_width_points,
 		overlay::FROZEN_BRUSH_STROKE_WIDTH_POINTS
 	);
-	assert_eq!(session.toolbar_state.brush_style.color, FrozenTextColor::Red);
+	assert_eq!(session.toolbar_state.brush_style.color, FrozenAnnotationColor::Red);
 }
 
 #[test]
@@ -1121,13 +1121,11 @@ fn frozen_text_style_accepts_arbitrary_sizes_and_clamps_to_bounds() {
 
 	assert!(session.toolbar_state.text_style.set_font_size(27.5));
 	assert_eq!(session.toolbar_state.text_style.font_size_points, 27.5);
-
 	assert!(session.toolbar_state.text_style.set_font_size(2.0));
 	assert_eq!(
 		session.toolbar_state.text_style.font_size_points,
 		overlay::FROZEN_TEXT_FONT_SIZE_MIN_POINTS
 	);
-
 	assert!(session.toolbar_state.text_style.set_font_size(200.0));
 	assert_eq!(
 		session.toolbar_state.text_style.font_size_points,
@@ -1141,13 +1139,11 @@ fn frozen_brush_style_accepts_arbitrary_sizes_and_clamps_to_bounds() {
 
 	assert!(session.toolbar_state.brush_style.set_stroke_width(4.25));
 	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 4.25);
-
 	assert!(session.toolbar_state.brush_style.set_stroke_width(0.1));
 	assert_eq!(
 		session.toolbar_state.brush_style.stroke_width_points,
 		overlay::FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS
 	);
-
 	assert!(session.toolbar_state.brush_style.set_stroke_width(100.0));
 	assert_eq!(
 		session.toolbar_state.brush_style.stroke_width_points,
@@ -1220,7 +1216,6 @@ fn toolbar_annotation_size_wheel_accumulates_trackpad_pixel_deltas() {
 		&MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 15.0)),
 	));
 	assert_eq!(session.toolbar_state.text_style.font_size_points, 16.0);
-
 	assert!(session.toolbar_state.apply_annotation_size_wheel_delta(
 		&MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 17.0)),
 	));
@@ -1233,16 +1228,16 @@ fn toolbar_annotation_size_wheel_snaps_fractional_text_sizes_toward_integers() {
 
 	session.toolbar_state.annotation_size_control_hovered = true;
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
-	assert!(session.toolbar_state.text_style.set_font_size(27.5));
 
+	assert!(session.toolbar_state.text_style.set_font_size(27.5));
 	assert!(
 		session
 			.toolbar_state
 			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, 1.0))
 	);
 	assert_eq!(session.toolbar_state.text_style.font_size_points, 28.0);
-
 	assert!(session.toolbar_state.text_style.set_font_size(27.5));
+
 	session.toolbar_state.annotation_size_wheel_accumulator = 0.0;
 
 	assert!(
@@ -1267,7 +1262,6 @@ fn toolbar_annotation_size_wheel_uses_adaptive_pen_step_sizes() {
 			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, 1.0))
 	);
 	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 3.75);
-
 	assert!(session.toolbar_state.brush_style.set_stroke_width(6.0));
 	assert!(
 		session
@@ -1275,7 +1269,6 @@ fn toolbar_annotation_size_wheel_uses_adaptive_pen_step_sizes() {
 			.apply_annotation_size_wheel_delta(&MouseScrollDelta::LineDelta(0.0, 1.0))
 	);
 	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 6.5);
-
 	assert!(session.toolbar_state.brush_style.set_stroke_width(12.0));
 	assert!(
 		session
@@ -1290,10 +1283,12 @@ fn toolbar_annotation_size_steps_share_the_same_pen_and_text_logic() {
 	let mut session = OverlaySession::new();
 
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+
 	assert!(session.toolbar_state.apply_annotation_size_steps(1));
 	assert_eq!(session.toolbar_state.brush_style.stroke_width_points, 3.75);
 
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
 	assert!(session.toolbar_state.text_style.set_font_size(27.5));
 	assert!(session.toolbar_state.apply_annotation_size_steps(-1));
 	assert_eq!(session.toolbar_state.text_style.font_size_points, 27.0);
@@ -1307,6 +1302,7 @@ fn overlay_window_mouse_wheel_routes_inline_toolbar_size_adjustments() {
 
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, test_frozen_image());
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 	session.toolbar_state.visible = true;
 	session.toolbar_state.annotation_size_control_hovered = true;
@@ -1316,7 +1312,6 @@ fn overlay_window_mouse_wheel_routes_inline_toolbar_size_adjustments() {
 		delta: MouseScrollDelta::LineDelta(0.0, 1.0),
 		phase: TouchPhase::Moved,
 	};
-
 	let _ = session.handle_window_event(WindowId::dummy(), &event);
 
 	assert_eq!(session.toolbar_state.text_style.font_size_points, 17.0);
@@ -1762,7 +1757,7 @@ fn finish_frozen_text_editing_commits_current_toolbar_text_style() {
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 	session.toolbar_state.text_style.font_size_points = 27.5;
-	session.toolbar_state.text_style.color = FrozenTextColor::Yellow;
+	session.toolbar_state.text_style.color = FrozenAnnotationColor::Yellow;
 
 	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
 	assert!(session.append_text_to_frozen_edit("Styled"));
@@ -1771,7 +1766,7 @@ fn finish_frozen_text_editing_commits_current_toolbar_text_style() {
 	let annotation = session.frozen_text_annotations.first().expect("annotation");
 
 	assert_eq!(annotation.style.font_size_points, 27.5);
-	assert_eq!(annotation.style.color, FrozenTextColor::Yellow);
+	assert_eq!(annotation.style.color, FrozenAnnotationColor::Yellow);
 }
 
 #[test]
@@ -1786,7 +1781,7 @@ fn finish_frozen_brush_stroke_commits_current_toolbar_brush_style() {
 	session.authoritative_frozen_capture_ready = true;
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
 	session.toolbar_state.brush_style.stroke_width_points = 4.25;
-	session.toolbar_state.brush_style.color = FrozenTextColor::Green;
+	session.toolbar_state.brush_style.color = FrozenAnnotationColor::Green;
 
 	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(140, 160)));
 	assert!(session.finish_frozen_brush_stroke());
@@ -1794,7 +1789,7 @@ fn finish_frozen_brush_stroke_commits_current_toolbar_brush_style() {
 	let stroke = session.frozen_brush.committed_strokes.first().expect("brush stroke");
 
 	assert_eq!(stroke.style.stroke_width_points, 4.25);
-	assert_eq!(stroke.style.color, FrozenTextColor::Green);
+	assert_eq!(stroke.style.color, FrozenAnnotationColor::Green);
 }
 
 #[test]

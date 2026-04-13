@@ -49,6 +49,7 @@ impl OverlaySession {
 				&& let Some(outer_position) = Self::toolbar_window_outer_position(toolbar_window)
 			{
 				let _ = self.sync_toolbar_outer_position_from_window(monitor, outer_position);
+
 				self.force_apply_pending_toolbar_window_move();
 			}
 
@@ -85,7 +86,6 @@ impl OverlaySession {
 		if !matches!(self.state.mode, OverlayMode::Frozen) || !self.toolbar_state.visible {
 			return OverlayControl::Continue;
 		}
-
 		if !self.toolbar_state.apply_annotation_size_wheel_delta(delta) {
 			return OverlayControl::Continue;
 		}
