@@ -185,7 +185,7 @@ use crate::deferred_text_recognition::DeferredTextRecognitionRequest;
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::scroll_capture::{self, ScrollDirection, ScrollObserveOutcome, ScrollSession};
 use crate::state::LiveCursorSample;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 use crate::state::MonitorImageSnapshot;
 use crate::worker::CapturedMonitorRegionResult;
 use crate::{
@@ -1177,7 +1177,7 @@ impl OverlaySession {
 		);
 	}
 
-	#[cfg(any(target_os = "macos", test))]
+	#[cfg(target_os = "macos")]
 	fn note_frozen_transition_preview_deferred(
 		&self,
 		monitor: MonitorRect,
@@ -1287,7 +1287,7 @@ impl OverlaySession {
 		);
 	}
 
-	#[cfg(any(target_os = "macos", test))]
+	#[cfg(target_os = "macos")]
 	fn note_frozen_transition_toolbar_visible(&mut self, monitor: MonitorRect) {
 		if self.frozen_transition_toolbar_visible_at.is_some() {
 			return;
@@ -1332,7 +1332,7 @@ impl OverlaySession {
 		);
 	}
 
-	#[cfg(any(target_os = "macos", test))]
+	#[cfg(target_os = "macos")]
 	fn commit_frozen_preview(
 		&mut self,
 		monitor: MonitorRect,
@@ -1346,7 +1346,7 @@ impl OverlaySession {
 		}
 	}
 
-	#[cfg(any(target_os = "macos", test))]
+	#[cfg(target_os = "macos")]
 	fn snapshot_can_finish_frozen_capture(
 		&self,
 		window_target: Option<WindowFreezeCaptureTarget>,
@@ -1355,7 +1355,7 @@ impl OverlaySession {
 			|| self.config.window_capture_alpha_mode == WindowCaptureAlphaMode::Background
 	}
 
-	#[cfg(any(target_os = "macos", test))]
+	#[cfg(target_os = "macos")]
 	fn maybe_finish_frozen_capture_from_snapshot(
 		&mut self,
 		monitor: MonitorRect,
@@ -1403,7 +1403,7 @@ impl OverlaySession {
 		true
 	}
 
-	#[cfg(any(target_os = "macos", test))]
+	#[cfg(target_os = "macos")]
 	fn can_finish_frozen_capture_from_unverified_snapshot(
 		&self,
 		window_target: Option<WindowFreezeCaptureTarget>,
@@ -1412,7 +1412,7 @@ impl OverlaySession {
 			&& self.config.self_capture_exception_window_ids.is_empty()
 	}
 
-	#[cfg(any(target_os = "macos", test))]
+	#[cfg(target_os = "macos")]
 	fn maybe_seed_frozen_capture_preview_from_snapshot(
 		&mut self,
 		monitor: MonitorRect,
