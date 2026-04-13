@@ -5,6 +5,7 @@ use egui::Context;
 use egui::FontDefinitions;
 use egui::Galley;
 use egui::RawInput;
+use egui::Response;
 use egui::text::CCursor;
 
 use crate::overlay::rendering::{
@@ -14,8 +15,7 @@ use crate::overlay::rendering::{
 	SelectionSizeBadgeTarget, WindowRenderer,
 };
 use crate::overlay::{
-	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_BRUSH_COLOR_RGBA,
-	FROZEN_BRUSH_STROKE_WIDTH_POINTS, FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX,
+	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX,
 	FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_CORNER_KEEPOUT_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_HIT_OFFSET_POINTS,
@@ -23,38 +23,40 @@ use crate::overlay::{
 	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FROZEN_SELECTION_SCRIM_ALPHA_DARK,
-	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TEXT_FONT_SIZE_PRESETS,
-	FROZEN_TEXT_PREVIEW_PLACEHOLDER, FROZEN_TOOLBAR_BUTTON_SIZE_POINTS,
-	FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId, FrozenBrushState, FrozenCaptureSource,
-	FrozenCommittedOverlay, FrozenEditKind, FrozenSelectionCorner, FrozenTextAnnotation,
-	FrozenTextColor, FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState,
-	FrozenToolbarState, FrozenToolbarTool, HUD_PILL_CORNER_RADIUS_POINTS,
-	HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_INNER_MARGIN_Y_POINTS, HUD_PILL_STROKE_WIDTH_POINTS,
-	HudPillGeometry, HudTheme, Id, LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK,
-	LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT, LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh,
-	MonitorRect, Order, OverlayMode, OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints,
-	SELECTION_DASHED_BORDER_ALPHA, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
-	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
-	SELECTION_FLOW_CORE_FLOW_WIDTH, SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST,
-	SELECTION_FLOW_LIGHT_PALETTE, SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS,
-	SELECTION_FLOW_PALETTE, SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED,
-	SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX, SELECTION_SIZE_BADGE_FONT_SIZE_POINTS,
-	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
-	SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX, SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX,
-	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS,
-	SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind, TOOLBAR_CAPTURE_GAP_PX,
-	TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder, Vec2,
-	regular,
+	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TEXT_PREVIEW_PLACEHOLDER,
+	FROZEN_TOOLBAR_BUTTON_SIZE_POINTS, FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId,
+	FrozenAnnotationColor, FrozenBrushState, FrozenCaptureSource, FrozenCommittedOverlay,
+	FrozenEditKind, FrozenSelectionCorner, FrozenTextAnnotation, FrozenTextEditState,
+	FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool,
+	HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_STROKE_WIDTH_POINTS, HudPillGeometry, HudTheme, Id,
+	LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK, LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT,
+	LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh, MonitorRect, Order, OverlayMode,
+	OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints, SELECTION_DASHED_BORDER_ALPHA,
+	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
+	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_FLOW_CORE_FLOW_WIDTH,
+	SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST, SELECTION_FLOW_LIGHT_PALETTE,
+	SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS, SELECTION_FLOW_PALETTE,
+	SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED, SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX,
+	SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, SELECTION_SIZE_BADGE_GAP_PX,
+	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX,
+	SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+	SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS, SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind,
+	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder, Vec2, regular,
 };
 
-const FROZEN_TEXT_TOOLBAR_SECTION_GAP_POINTS: f32 = 8.0;
-const FROZEN_TEXT_TOOLBAR_SECTION_HEIGHT_POINTS: f32 = 30.0;
-const FROZEN_TEXT_TOOLBAR_SECTION_DIVIDER_ALPHA_DARK: u8 = 60;
-const FROZEN_TEXT_TOOLBAR_SECTION_DIVIDER_ALPHA_LIGHT: u8 = 72;
-const FROZEN_TEXT_TOOLBAR_SWATCH_SIZE_POINTS: f32 = 18.0;
-const FROZEN_TEXT_TOOLBAR_SWATCH_GAP_POINTS: f32 = 8.0;
-const FROZEN_TEXT_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS: f32 = 24.0;
-const FROZEN_TEXT_TOOLBAR_SIZE_LABEL_WIDTH_POINTS: f32 = 54.0;
+const FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS: f32 = 4.0;
+const FROZEN_ANNOTATION_TOOLBAR_SECTION_HEIGHT_POINTS: f32 = 24.0;
+const FROZEN_ANNOTATION_TOOLBAR_SECTION_DIVIDER_ALPHA_DARK: u8 = 60;
+const FROZEN_ANNOTATION_TOOLBAR_SECTION_DIVIDER_ALPHA_LIGHT: u8 = 72;
+const FROZEN_ANNOTATION_TOOLBAR_SWATCH_SIZE_POINTS: f32 = 16.0;
+const FROZEN_ANNOTATION_TOOLBAR_SWATCH_GAP_POINTS: f32 = 6.0;
+const FROZEN_ANNOTATION_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS: f32 = 20.0;
+const FROZEN_ANNOTATION_TOOLBAR_SIZE_DISPLAY_WIDTH_POINTS: f32 = 58.0;
+const FROZEN_ANNOTATION_TOOLBAR_PEN_SIZE_DISPLAY_WIDTH_POINTS: f32 = 84.0;
+const FROZEN_ANNOTATION_TOOLBAR_SIZE_CAPSULE_CORNER_RADIUS_POINTS: u8 = 8;
+const FROZEN_ANNOTATION_TOOLBAR_SIZE_PREVIEW_GAP_POINTS: f32 = 8.0;
+const FROZEN_ANNOTATION_TOOLBAR_PEN_PREVIEW_LENGTH_POINTS: f32 = 18.0;
 const FROZEN_TEXT_INTERACTION_PADDING_X_POINTS: f32 = 8.0;
 const FROZEN_TEXT_INTERACTION_PADDING_Y_POINTS: f32 = 6.0;
 
@@ -63,6 +65,128 @@ pub(in crate::overlay) struct SelectionScrimStyle {
 	pub(in crate::overlay) scrim_fill: Color32,
 	pub(in crate::overlay) stroke_width_override: Option<f32>,
 	pub(in crate::overlay) exclude_resize_handle_corners: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum FrozenAnnotationStyleToolbarKind {
+	Pen,
+	Text,
+}
+impl FrozenAnnotationStyleToolbarKind {
+	fn from_toolbar_state(toolbar_state: &FrozenToolbarState) -> Option<Self> {
+		match toolbar_state.selected_tool {
+			FrozenToolbarTool::Pen => Some(Self::Pen),
+			FrozenToolbarTool::Text => Some(Self::Text),
+			_ => None,
+		}
+	}
+
+	const fn size_hover_text(self) -> &'static str {
+		match self {
+			Self::Pen => "Scroll or use +/- to adjust stroke size",
+			Self::Text => "Scroll or use +/- to adjust text size",
+		}
+	}
+
+	const fn size_display_width(self) -> f32 {
+		match self {
+			Self::Pen => FROZEN_ANNOTATION_TOOLBAR_PEN_SIZE_DISPLAY_WIDTH_POINTS,
+			Self::Text => FROZEN_ANNOTATION_TOOLBAR_SIZE_DISPLAY_WIDTH_POINTS,
+		}
+	}
+
+	const fn size_control_width(self) -> f32 {
+		self.size_display_width() + FROZEN_ANNOTATION_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS * 2.0
+	}
+
+	const fn decrease_hover_text(self) -> &'static str {
+		match self {
+			Self::Pen => "Smaller stroke",
+			Self::Text => "Smaller text",
+		}
+	}
+
+	const fn increase_hover_text(self) -> &'static str {
+		match self {
+			Self::Pen => "Larger stroke",
+			Self::Text => "Larger text",
+		}
+	}
+
+	fn size_value(self, toolbar_state: &FrozenToolbarState) -> f64 {
+		match self {
+			Self::Pen => toolbar_state.brush_style.stroke_width_points,
+			Self::Text => toolbar_state.text_style.font_size_points,
+		}
+		.into()
+	}
+
+	fn formatted_size_text(self, toolbar_state: &FrozenToolbarState) -> String {
+		match self {
+			Self::Pen => {
+				let size_points = self.size_value(toolbar_state);
+				let mut text = format!("{size_points:.2}");
+
+				while text.contains('.') && text.ends_with('0') {
+					let _ = text.pop();
+				}
+
+				if text.ends_with('.') {
+					let _ = text.pop();
+				}
+
+				text
+			},
+			Self::Text => {
+				let font_size = toolbar_state.text_style.font_size_points;
+
+				if (font_size - font_size.round()).abs() <= f32::EPSILON {
+					format!("{}", font_size.round() as i32)
+				} else {
+					format!("{font_size:.1}")
+				}
+			},
+		}
+	}
+
+	fn selected_color(self, toolbar_state: &FrozenToolbarState) -> FrozenAnnotationColor {
+		match self {
+			Self::Pen => toolbar_state.brush_style.color,
+			Self::Text => toolbar_state.text_style.color,
+		}
+	}
+
+	fn set_color(
+		self,
+		toolbar_state: &mut FrozenToolbarState,
+		color: FrozenAnnotationColor,
+	) -> bool {
+		let selected_color = match self {
+			Self::Pen => &mut toolbar_state.brush_style.color,
+			Self::Text => &mut toolbar_state.text_style.color,
+		};
+
+		if *selected_color == color {
+			return false;
+		}
+
+		*selected_color = color;
+
+		true
+	}
+
+	fn apply_size_steps(self, toolbar_state: &mut FrozenToolbarState, steps: i32) -> bool {
+		toolbar_state.apply_annotation_size_steps(steps)
+	}
+}
+
+#[derive(Clone, Copy)]
+struct FrozenAnnotationSizeControlAppearance {
+	capsule_fill: Color32,
+	capsule_stroke: Color32,
+	divider_color: Color32,
+	button_hover_fill: Color32,
+	text_color: Color32,
 }
 
 impl WindowRenderer {
@@ -292,13 +416,6 @@ impl WindowRenderer {
 		};
 		let brush_strokes =
 			frozen_brush_state.map_or_else(|| &[][..], |state| state.committed_strokes.as_slice());
-		let radius = FROZEN_BRUSH_STROKE_WIDTH_POINTS * 0.5;
-		let color = Color32::from_rgba_unmultiplied(
-			FROZEN_BRUSH_COLOR_RGBA[0],
-			FROZEN_BRUSH_COLOR_RGBA[1],
-			FROZEN_BRUSH_COLOR_RGBA[2],
-			FROZEN_BRUSH_COLOR_RGBA[3],
-		);
 		let mut drew = false;
 
 		OverlaySession::for_each_frozen_committed_overlay(
@@ -310,8 +427,8 @@ impl WindowRenderer {
 					drew |= Self::paint_frozen_brush_stroke(
 						brush_painter,
 						&stroke.points,
-						radius,
-						color,
+						stroke.style.stroke_width_points * 0.5,
+						stroke.style.color.swatch_fill(),
 					);
 				},
 				FrozenCommittedOverlay::Text(annotation) => {
@@ -340,16 +457,14 @@ impl WindowRenderer {
 		let Some(active_stroke) = &frozen_brush_state.active_stroke else {
 			return false;
 		};
-		let color = Color32::from_rgba_unmultiplied(
-			FROZEN_BRUSH_COLOR_RGBA[0],
-			FROZEN_BRUSH_COLOR_RGBA[1],
-			FROZEN_BRUSH_COLOR_RGBA[2],
-			FROZEN_BRUSH_COLOR_RGBA[3],
-		);
-		let radius = FROZEN_BRUSH_STROKE_WIDTH_POINTS * 0.5;
 		let preview_points = OverlaySession::preview_frozen_brush_points(active_stroke);
 
-		Self::paint_frozen_brush_stroke(painter, &preview_points, radius, color)
+		Self::paint_frozen_brush_stroke(
+			painter,
+			&preview_points,
+			active_stroke.style.stroke_width_points * 0.5,
+			active_stroke.style.color.swatch_fill(),
+		)
 	}
 
 	fn paint_frozen_brush_stroke(
@@ -501,7 +616,7 @@ impl WindowRenderer {
 	}
 
 	pub(in crate::overlay) fn frozen_text_placeholder_fill(
-		color: FrozenTextColor,
+		color: FrozenAnnotationColor,
 		theme: HudTheme,
 	) -> Color32 {
 		let [r, g, b, _] = color.swatch_fill().to_array();
@@ -2173,6 +2288,8 @@ impl WindowRenderer {
 		let Some(toolbar_state) = toolbar_state else {
 			return;
 		};
+		#[cfg(target_os = "macos")]
+		let _ = pointer_state;
 
 		if !matches!(state.mode, OverlayMode::Frozen) || !toolbar_state.visible {
 			return;
@@ -2181,11 +2298,10 @@ impl WindowRenderer {
 			return;
 		}
 
+		#[cfg(not(target_os = "macos"))]
 		let (cursor, left_button_down) = if let Some(pointer_state) = pointer_state {
 			(pointer_state.cursor_local, pointer_state.left_button_down)
 		} else {
-			toolbar_state.dragging = false;
-
 			(Pos2::new(-1.0, -1.0), false)
 		};
 		let toolbar_size = Self::frozen_toolbar_size(toolbar_state);
@@ -2226,7 +2342,9 @@ impl WindowRenderer {
 			hud_opacity,
 			hud_milk_amount,
 			hud_tint_hue,
+			#[cfg(not(target_os = "macos"))]
 			cursor,
+			#[cfg(not(target_os = "macos"))]
 			left_button_down,
 			hud_pill_out,
 		);
@@ -2364,9 +2482,9 @@ impl WindowRenderer {
 			+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
 		let mut height = toolbar_state.pill_height_points.unwrap_or(TOOLBAR_EXPANDED_HEIGHT_PX);
 
-		if Self::frozen_text_style_toolbar_visible(toolbar_state) {
-			height +=
-				FROZEN_TEXT_TOOLBAR_SECTION_GAP_POINTS + FROZEN_TEXT_TOOLBAR_SECTION_HEIGHT_POINTS;
+		if Self::frozen_annotation_style_toolbar_visible(toolbar_state) {
+			height += FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS
+				+ FROZEN_ANNOTATION_TOOLBAR_SECTION_HEIGHT_POINTS;
 		}
 
 		Vec2::new(width, height)
@@ -2542,16 +2660,28 @@ impl WindowRenderer {
 		hud_opacity: f32,
 		hud_milk_amount: f32,
 		hud_tint_hue: f32,
-		cursor: Pos2,
-		left_button_down: bool,
+		#[cfg(not(target_os = "macos"))] cursor: Pos2,
+		#[cfg(not(target_os = "macos"))] left_button_down: bool,
 		hud_pill_out: &mut Option<HudPillGeometry>,
 	) {
+		#[cfg(target_os = "macos")]
+		let _ = screen_rect;
+
 		Area::new(Id::new(format!("frozen-toolbar-{}", monitor.id)))
 			.order(Order::Foreground)
 			.fixed_pos(toolbar_pos)
 			.show(ctx, |ui| {
-				let (rect, response) =
-					ui.allocate_exact_size(toolbar_size, Sense::click_and_drag());
+				let (rect, response) = ui.allocate_exact_size(
+					toolbar_size,
+					if cfg!(target_os = "macos") {
+						Sense::hover()
+					} else {
+						Sense::click_and_drag()
+					},
+				);
+				#[cfg(target_os = "macos")]
+				let _ = &response;
+				let corner_radius = overlay::frozen_toolbar_corner_radius_u8(rect.height());
 				let body_fill = Self::tinted_hud_body_fill(
 					theme,
 					hud_blur_active,
@@ -2563,6 +2693,9 @@ impl WindowRenderer {
 				let toolbar_frame =
 					Self::hud_pill_frame(theme, hud_opaque, hud_opacity, body_fill, false);
 
+				toolbar_state.annotation_size_control_hovered = false;
+
+				#[cfg(not(target_os = "macos"))]
 				Self::update_frozen_toolbar_drag_state(
 					toolbar_state,
 					response.drag_started(),
@@ -2575,14 +2708,10 @@ impl WindowRenderer {
 
 				// Draw the capsule ourselves at the exact allocated rect. This keeps the visible pill
 				// and the blur rect perfectly aligned (no shrink-to-content surprises on first frame).
-				ui.painter().rect_filled(
-					rect,
-					f32::from(HUD_PILL_CORNER_RADIUS_POINTS),
-					toolbar_frame.fill,
-				);
+				ui.painter().rect_filled(rect, f32::from(corner_radius), toolbar_frame.fill);
 				ui.painter().rect_stroke(
 					rect.shrink(0.5),
-					CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS),
+					CornerRadius::same(corner_radius),
 					toolbar_frame.stroke,
 					StrokeKind::Inside,
 				);
@@ -2596,25 +2725,24 @@ impl WindowRenderer {
 
 				ui.painter().rect_stroke(
 					inner_rect,
-					CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS.saturating_sub(1)),
+					CornerRadius::same(corner_radius.saturating_sub(1)),
 					inner_stroke,
 					StrokeKind::Inside,
 				);
 
 				let inner_rect = rect.shrink2(egui::vec2(
 					HUD_PILL_INNER_MARGIN_X_POINTS,
-					HUD_PILL_INNER_MARGIN_Y_POINTS,
+					TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
 				));
 
 				Self::render_frozen_toolbar_body(ui, inner_rect, toolbar_state, theme);
 
-				*hud_pill_out = Some(HudPillGeometry {
-					rect,
-					radius_points: f32::from(HUD_PILL_CORNER_RADIUS_POINTS),
-				});
+				*hud_pill_out =
+					Some(HudPillGeometry { rect, radius_points: f32::from(corner_radius) });
 			});
 	}
 
+	#[cfg(not(target_os = "macos"))]
 	fn update_frozen_toolbar_drag_state(
 		toolbar_state: &mut FrozenToolbarState,
 		drag_started: bool,
@@ -2639,8 +2767,6 @@ impl WindowRenderer {
 				TOOLBAR_SCREEN_MARGIN_PX,
 				TOOLBAR_SCREEN_MARGIN_PX,
 			));
-		} else if toolbar_state.dragging {
-			toolbar_state.dragging = false;
 		}
 	}
 
@@ -2659,8 +2785,13 @@ impl WindowRenderer {
 					theme,
 				);
 
-				if Self::frozen_text_style_toolbar_visible(toolbar_state) {
-					Self::render_frozen_text_toolbar_section(ui, inner_rect, toolbar_state, theme);
+				if Self::frozen_annotation_style_toolbar_visible(toolbar_state) {
+					Self::render_frozen_annotation_toolbar_section(
+						ui,
+						inner_rect,
+						toolbar_state,
+						theme,
+					);
 				}
 			});
 		});
@@ -2683,36 +2814,36 @@ impl WindowRenderer {
 		);
 	}
 
-	fn paint_frozen_text_toolbar_spacing(ui: &mut Ui, inner_rect: Rect, theme: HudTheme) {
-		ui.add_space(FROZEN_TEXT_TOOLBAR_SECTION_GAP_POINTS * 0.5);
+	fn paint_frozen_annotation_toolbar_spacing(ui: &mut Ui, inner_rect: Rect, theme: HudTheme) {
+		ui.add_space(FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS * 0.5);
 
-		Self::paint_frozen_text_toolbar_divider(ui, inner_rect, theme);
+		Self::paint_frozen_annotation_toolbar_divider(ui, inner_rect, theme);
 
-		ui.add_space(FROZEN_TEXT_TOOLBAR_SECTION_GAP_POINTS * 0.5);
+		ui.add_space(FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS * 0.5);
 	}
 
-	fn render_frozen_text_toolbar_section(
+	fn render_frozen_annotation_toolbar_section(
 		ui: &mut Ui,
 		inner_rect: Rect,
 		toolbar_state: &mut FrozenToolbarState,
 		theme: HudTheme,
 	) {
-		Self::paint_frozen_text_toolbar_spacing(ui, inner_rect, theme);
+		Self::paint_frozen_annotation_toolbar_spacing(ui, inner_rect, theme);
 
 		let _ = ui.allocate_ui_with_layout(
-			Vec2::new(inner_rect.width(), FROZEN_TEXT_TOOLBAR_SECTION_HEIGHT_POINTS),
+			Vec2::new(inner_rect.width(), FROZEN_ANNOTATION_TOOLBAR_SECTION_HEIGHT_POINTS),
 			Layout::left_to_right(Align::Center),
-			|ui| Self::render_frozen_text_toolbar_controls(ui, toolbar_state, theme),
+			|ui| Self::render_frozen_annotation_toolbar_controls(ui, toolbar_state, theme),
 		);
 	}
 
-	fn paint_frozen_text_toolbar_divider(ui: &Ui, inner_rect: Rect, theme: HudTheme) {
+	fn paint_frozen_annotation_toolbar_divider(ui: &Ui, inner_rect: Rect, theme: HudTheme) {
 		let divider_color = match theme {
 			HudTheme::Dark => {
-				Color32::from_white_alpha(FROZEN_TEXT_TOOLBAR_SECTION_DIVIDER_ALPHA_DARK)
+				Color32::from_white_alpha(FROZEN_ANNOTATION_TOOLBAR_SECTION_DIVIDER_ALPHA_DARK)
 			},
 			HudTheme::Light => {
-				Color32::from_black_alpha(FROZEN_TEXT_TOOLBAR_SECTION_DIVIDER_ALPHA_LIGHT)
+				Color32::from_black_alpha(FROZEN_ANNOTATION_TOOLBAR_SECTION_DIVIDER_ALPHA_LIGHT)
 			},
 		};
 		let divider_y = ui.cursor().min.y;
@@ -2724,7 +2855,7 @@ impl WindowRenderer {
 	}
 
 	#[allow(clippy::too_many_arguments)]
-	pub(in crate::overlay) fn render_frozen_toolbar_controls(
+	fn render_frozen_toolbar_controls(
 		ui: &mut Ui,
 		toolbar_state: &mut FrozenToolbarState,
 		theme: HudTheme,
@@ -2805,121 +2936,325 @@ impl WindowRenderer {
 		});
 	}
 
-	fn frozen_text_style_toolbar_visible(toolbar_state: &FrozenToolbarState) -> bool {
-		toolbar_state.selected_tool == FrozenToolbarTool::Text
+	fn frozen_annotation_style_toolbar_visible(toolbar_state: &FrozenToolbarState) -> bool {
+		FrozenAnnotationStyleToolbarKind::from_toolbar_state(toolbar_state).is_some()
 	}
 
-	fn render_frozen_text_toolbar_controls(
+	fn render_frozen_annotation_toolbar_controls(
 		ui: &mut Ui,
 		toolbar_state: &mut FrozenToolbarState,
 		theme: HudTheme,
 	) {
-		let can_decrease = toolbar_state.text_style.font_size_points
-			> FROZEN_TEXT_FONT_SIZE_PRESETS[0] + f32::EPSILON;
-		let can_increase = toolbar_state.text_style.font_size_points
-			< FROZEN_TEXT_FONT_SIZE_PRESETS[FROZEN_TEXT_FONT_SIZE_PRESETS.len() - 1] - f32::EPSILON;
+		let Some(style_kind) = FrozenAnnotationStyleToolbarKind::from_toolbar_state(toolbar_state)
+		else {
+			toolbar_state.annotation_size_control_hovered = false;
+
+			return;
+		};
+		let size_label = match style_kind {
+			FrozenAnnotationStyleToolbarKind::Text => {
+				format!("{} pt", style_kind.formatted_size_text(toolbar_state))
+			},
+			FrozenAnnotationStyleToolbarKind::Pen => style_kind.formatted_size_text(toolbar_state),
+		};
 
 		ui.horizontal_centered(|ui| {
-			ui.spacing_mut().item_spacing.x = FROZEN_TEXT_TOOLBAR_SWATCH_GAP_POINTS;
+			ui.spacing_mut().item_spacing.x = FROZEN_ANNOTATION_TOOLBAR_SWATCH_GAP_POINTS;
 
-			if Self::render_frozen_text_toolbar_icon_button(
+			Self::render_frozen_annotation_size_control(
 				ui,
-				regular::MINUS,
-				"Smaller text",
-				can_decrease,
+				toolbar_state,
 				theme,
-			) && toolbar_state.text_style.step_font_size(-1)
-			{
-				toolbar_state.needs_redraw = true;
-			}
-
-			let label_response = ui.allocate_response(
-				Vec2::new(
-					FROZEN_TEXT_TOOLBAR_SIZE_LABEL_WIDTH_POINTS,
-					FROZEN_TEXT_TOOLBAR_SECTION_HEIGHT_POINTS,
-				),
-				Sense::hover(),
+				style_kind,
+				&size_label,
 			);
-			let label_color = Self::hud_text_colors(theme).0;
-
-			ui.painter().text(
-				label_response.rect.center(),
-				Align2::CENTER_CENTER,
-				format!("{} pt", toolbar_state.text_style.font_size_points.round() as i32),
-				FontId::new(13.0, FontFamily::Proportional),
-				label_color,
-			);
-
-			if Self::render_frozen_text_toolbar_icon_button(
-				ui,
-				regular::PLUS,
-				"Larger text",
-				can_increase,
-				theme,
-			) && toolbar_state.text_style.step_font_size(1)
-			{
-				toolbar_state.needs_redraw = true;
-			}
 
 			ui.add_space(4.0);
 
-			for color in FrozenTextColor::ALL {
-				if Self::render_frozen_text_color_swatch(
+			for color in FrozenAnnotationColor::ALL {
+				if Self::render_frozen_annotation_color_swatch(
 					ui,
 					color,
-					toolbar_state.text_style.color == color,
+					style_kind.selected_color(toolbar_state) == color,
 					theme,
-				) {
-					toolbar_state.text_style.color = color;
+				) && style_kind.set_color(toolbar_state, color)
+				{
 					toolbar_state.needs_redraw = true;
 				}
 			}
 		});
+
+		if !toolbar_state.annotation_size_control_hovered {
+			toolbar_state.annotation_size_wheel_accumulator = 0.0;
+		}
 	}
 
-	fn render_frozen_text_toolbar_icon_button(
+	fn render_frozen_annotation_size_control(
 		ui: &mut Ui,
-		icon: &str,
-		hover_text: &str,
-		enabled: bool,
+		toolbar_state: &mut FrozenToolbarState,
 		theme: HudTheme,
-	) -> bool {
-		let response = ui.allocate_response(
+		style_kind: FrozenAnnotationStyleToolbarKind,
+		size_label: &str,
+	) {
+		let (size_rect, size_response) = ui.allocate_exact_size(
 			Vec2::new(
-				FROZEN_TEXT_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS,
-				FROZEN_TEXT_TOOLBAR_SECTION_HEIGHT_POINTS,
+				style_kind.size_control_width(),
+				FROZEN_ANNOTATION_TOOLBAR_SECTION_HEIGHT_POINTS,
 			),
-			Sense::click(),
+			Sense::hover(),
 		);
-		let hovered = enabled && response.hovered();
-		let response = response.on_hover_text(hover_text);
-		let style = Self::frozen_toolbar_button_style(theme, enabled, hovered, false);
-		let bg_rect = response.rect.shrink2(egui::vec2(2.0, 3.0));
+		let size_response = size_response.on_hover_text(style_kind.size_hover_text());
+		let minus_rect = Rect::from_min_max(
+			size_rect.min,
+			Pos2::new(
+				size_rect.min.x + FROZEN_ANNOTATION_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS,
+				size_rect.max.y,
+			),
+		);
+		let plus_rect = Rect::from_min_max(
+			Pos2::new(
+				size_rect.max.x - FROZEN_ANNOTATION_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS,
+				size_rect.min.y,
+			),
+			size_rect.max,
+		);
+		let display_rect = Rect::from_min_max(
+			Pos2::new(minus_rect.max.x, size_rect.min.y),
+			Pos2::new(plus_rect.min.x, size_rect.max.y),
+		);
+		let minus_response = ui
+			.interact(
+				minus_rect,
+				ui.id().with(("annotation-size-decrease", style_kind)),
+				Sense::click(),
+			)
+			.on_hover_text(style_kind.decrease_hover_text());
+		let plus_response = ui
+			.interact(
+				plus_rect,
+				ui.id().with(("annotation-size-increase", style_kind)),
+				Sense::click(),
+			)
+			.on_hover_text(style_kind.increase_hover_text());
+		let hovered =
+			size_response.hovered() || minus_response.hovered() || plus_response.hovered();
+		let capsule_rect = size_rect.shrink2(egui::vec2(1.0, 3.0));
+		let appearance = Self::frozen_annotation_size_control_appearance(theme, hovered);
 
-		if hovered {
-			ui.painter().rect_filled(bg_rect, 8.0, style.bg_color);
+		toolbar_state.annotation_size_control_hovered = hovered;
+
+		Self::paint_frozen_annotation_size_control_frame(
+			ui,
+			capsule_rect,
+			display_rect,
+			&minus_response,
+			&plus_response,
+			appearance,
+		);
+		Self::paint_frozen_annotation_size_step_button(ui, theme, &minus_response, regular::MINUS);
+		Self::paint_frozen_annotation_size_step_button(ui, theme, &plus_response, regular::PLUS);
+		Self::apply_frozen_annotation_size_control_clicks(
+			toolbar_state,
+			style_kind,
+			&minus_response,
+			&plus_response,
+		);
+		Self::paint_frozen_annotation_size_display(
+			ui,
+			toolbar_state,
+			style_kind,
+			display_rect,
+			size_label,
+			appearance.text_color,
+		);
+	}
+
+	fn frozen_annotation_size_control_appearance(
+		theme: HudTheme,
+		hovered: bool,
+	) -> FrozenAnnotationSizeControlAppearance {
+		match theme {
+			HudTheme::Dark => FrozenAnnotationSizeControlAppearance {
+				capsule_fill: Color32::from_rgba_unmultiplied(
+					255,
+					255,
+					255,
+					if hovered { 22 } else { 12 },
+				),
+				capsule_stroke: Color32::from_rgba_unmultiplied(
+					255,
+					255,
+					255,
+					if hovered { 34 } else { 22 },
+				),
+				divider_color: Color32::from_white_alpha(if hovered { 34 } else { 22 }),
+				button_hover_fill: Color32::from_rgba_unmultiplied(255, 255, 255, 16),
+				text_color: Self::frozen_toolbar_button_style(theme, true, hovered, false)
+					.icon_color,
+			},
+			HudTheme::Light => FrozenAnnotationSizeControlAppearance {
+				capsule_fill: Color32::from_rgba_unmultiplied(
+					0,
+					0,
+					0,
+					if hovered { 18 } else { 10 },
+				),
+				capsule_stroke: Color32::from_rgba_unmultiplied(
+					0,
+					0,
+					0,
+					if hovered { 28 } else { 18 },
+				),
+				divider_color: Color32::from_black_alpha(if hovered { 30 } else { 18 }),
+				button_hover_fill: Color32::from_rgba_unmultiplied(0, 0, 0, 14),
+				text_color: Self::frozen_toolbar_button_style(theme, true, hovered, false)
+					.icon_color,
+			},
 		}
+	}
+
+	fn paint_frozen_annotation_size_control_frame(
+		ui: &Ui,
+		capsule_rect: Rect,
+		display_rect: Rect,
+		minus_response: &Response,
+		plus_response: &Response,
+		appearance: FrozenAnnotationSizeControlAppearance,
+	) {
+		ui.painter().rect_filled(
+			capsule_rect,
+			CornerRadius::same(FROZEN_ANNOTATION_TOOLBAR_SIZE_CAPSULE_CORNER_RADIUS_POINTS),
+			appearance.capsule_fill,
+		);
+		ui.painter().rect_stroke(
+			capsule_rect,
+			CornerRadius::same(FROZEN_ANNOTATION_TOOLBAR_SIZE_CAPSULE_CORNER_RADIUS_POINTS),
+			Stroke::new(1.0, appearance.capsule_stroke),
+			StrokeKind::Inside,
+		);
+
+		for response in [minus_response, plus_response] {
+			if response.hovered() {
+				ui.painter().rect_filled(
+					response.rect.shrink2(egui::vec2(2.0, 4.0)),
+					CornerRadius::same(6),
+					appearance.button_hover_fill,
+				);
+			}
+		}
+		for divider_x in [display_rect.left(), display_rect.right()] {
+			ui.painter().line_segment(
+				[
+					Pos2::new(divider_x, capsule_rect.top() + 5.0),
+					Pos2::new(divider_x, capsule_rect.bottom() - 5.0),
+				],
+				Stroke::new(1.0, appearance.divider_color),
+			);
+		}
+	}
+
+	fn paint_frozen_annotation_size_step_button(
+		ui: &Ui,
+		theme: HudTheme,
+		response: &Response,
+		icon: &str,
+	) {
+		let button_style =
+			Self::frozen_toolbar_button_style(theme, true, response.hovered(), false);
 
 		ui.painter().text(
 			response.rect.center(),
 			Align2::CENTER_CENTER,
 			icon,
-			FontId::new(16.0, FontFamily::Proportional),
-			style.icon_color,
+			FontId::new(13.0, FontFamily::Proportional),
+			button_style.icon_color,
 		);
-
-		enabled && response.clicked()
 	}
 
-	fn render_frozen_text_color_swatch(
+	fn apply_frozen_annotation_size_control_clicks(
+		toolbar_state: &mut FrozenToolbarState,
+		style_kind: FrozenAnnotationStyleToolbarKind,
+		minus_response: &Response,
+		plus_response: &Response,
+	) {
+		let mut size_changed = false;
+
+		if minus_response.clicked() {
+			toolbar_state.annotation_size_wheel_accumulator = 0.0;
+			size_changed |= style_kind.apply_size_steps(toolbar_state, -1);
+		}
+		if plus_response.clicked() {
+			toolbar_state.annotation_size_wheel_accumulator = 0.0;
+			size_changed |= style_kind.apply_size_steps(toolbar_state, 1);
+		}
+		if size_changed {
+			toolbar_state.needs_redraw = true;
+		}
+	}
+
+	fn paint_frozen_annotation_size_display(
+		ui: &Ui,
+		toolbar_state: &FrozenToolbarState,
+		style_kind: FrozenAnnotationStyleToolbarKind,
+		display_rect: Rect,
+		size_label: &str,
+		text_color: Color32,
+	) {
+		match style_kind {
+			FrozenAnnotationStyleToolbarKind::Text => {
+				ui.painter().text(
+					display_rect.center(),
+					Align2::CENTER_CENTER,
+					size_label,
+					FontId::new(13.0, FontFamily::Proportional),
+					text_color,
+				);
+			},
+			FrozenAnnotationStyleToolbarKind::Pen => {
+				let preview_width = toolbar_state.brush_style.stroke_width_points.clamp(1.0, 10.0);
+				let preview_center = Pos2::new(
+					display_rect.left()
+						+ 10.0 + FROZEN_ANNOTATION_TOOLBAR_PEN_PREVIEW_LENGTH_POINTS * 0.5,
+					display_rect.center().y,
+				);
+				let preview_half_length = FROZEN_ANNOTATION_TOOLBAR_PEN_PREVIEW_LENGTH_POINTS * 0.5;
+				let preview_start =
+					Pos2::new(preview_center.x - preview_half_length, preview_center.y);
+				let preview_end =
+					Pos2::new(preview_center.x + preview_half_length, preview_center.y);
+				let preview_color = toolbar_state.brush_style.color.swatch_fill();
+
+				ui.painter().line_segment(
+					[preview_start, preview_end],
+					Stroke::new(preview_width, preview_color),
+				);
+				ui.painter().circle_filled(preview_start, preview_width * 0.5, preview_color);
+				ui.painter().circle_filled(preview_end, preview_width * 0.5, preview_color);
+				ui.painter().text(
+					Pos2::new(
+						preview_end.x + FROZEN_ANNOTATION_TOOLBAR_SIZE_PREVIEW_GAP_POINTS,
+						display_rect.center().y,
+					),
+					Align2::LEFT_CENTER,
+					size_label,
+					FontId::new(13.0, FontFamily::Proportional),
+					text_color,
+				);
+			},
+		}
+	}
+
+	fn render_frozen_annotation_color_swatch(
 		ui: &mut Ui,
-		color: FrozenTextColor,
+		color: FrozenAnnotationColor,
 		selected: bool,
 		theme: HudTheme,
 	) -> bool {
-		let response = ui
-			.allocate_response(Vec2::splat(FROZEN_TEXT_TOOLBAR_SWATCH_SIZE_POINTS), Sense::click());
-		let radius = FROZEN_TEXT_TOOLBAR_SWATCH_SIZE_POINTS * 0.5 - 1.0;
+		let response = ui.allocate_response(
+			Vec2::splat(FROZEN_ANNOTATION_TOOLBAR_SWATCH_SIZE_POINTS),
+			Sense::click(),
+		);
+		let radius = FROZEN_ANNOTATION_TOOLBAR_SWATCH_SIZE_POINTS * 0.5 - 1.0;
 		let stroke_color = match theme {
 			HudTheme::Dark => {
 				if selected {
@@ -2944,7 +3279,7 @@ impl WindowRenderer {
 			Stroke::new(if selected { 2.0 } else { 1.0 }, stroke_color),
 		);
 
-		response.on_hover_text("Text color").clicked()
+		response.on_hover_text("Annotation color").clicked()
 	}
 
 	pub(in crate::overlay) fn frozen_toolbar_button_style(

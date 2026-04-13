@@ -21,9 +21,9 @@ use crate::overlay::tests::{
 	overlay,
 };
 use crate::overlay::{
-	FROZEN_TEXT_CARET_BLINK_PERIOD_SECS, FROZEN_TEXT_FONT_SIZE_POINTS, FontId, FrozenEditKind,
-	FrozenSelectionCorner, FrozenSelectionInteractionKind, FrozenTextAnnotation, FrozenTextColor,
-	FrozenTextEditState,
+	FROZEN_TEXT_CARET_BLINK_PERIOD_SECS, FROZEN_TEXT_FONT_SIZE_POINTS, FontId,
+	FrozenAnnotationColor, FrozenEditKind, FrozenSelectionCorner, FrozenSelectionInteractionKind,
+	FrozenTextAnnotation, FrozenTextEditState,
 };
 use crate::worker::{WorkerErrorSource, WorkerResponse};
 
@@ -482,6 +482,19 @@ fn toolbar_position_update_queues_pending_move_without_window() {
 }
 
 #[test]
+fn toolbar_window_position_sync_updates_runtime_state_without_requeueing_in_bounds_move() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.toolbar_inner_size_points = Some((460, 54));
+
+	assert!(session.sync_toolbar_outer_position_from_window(monitor, GlobalPoint::new(120, 160)));
+	assert_eq!(session.toolbar_state.floating_position, Some(Pos2::new(120.0, 160.0)));
+	assert_eq!(session.toolbar_outer_pos, Some(GlobalPoint::new(120, 160)));
+	assert_eq!(session.pending_toolbar_outer_pos, None);
+}
+
+#[test]
 fn toolbar_cursor_global_position_from_outer_uses_cached_toolbar_origin() {
 	let outer_position = GlobalPoint::new(220, 260);
 	let cursor_local = Pos2::new(18.25, 12.75);
@@ -819,8 +832,10 @@ fn frozen_text_edit_caret_rect_tracks_explicit_preedit_cursor_position() {
 
 #[test]
 fn frozen_text_placeholder_fill_tracks_selected_text_color() {
-	let blue = WindowRenderer::frozen_text_placeholder_fill(FrozenTextColor::Blue, HudTheme::Dark);
-	let red = WindowRenderer::frozen_text_placeholder_fill(FrozenTextColor::Red, HudTheme::Dark);
+	let blue =
+		WindowRenderer::frozen_text_placeholder_fill(FrozenAnnotationColor::Blue, HudTheme::Dark);
+	let red =
+		WindowRenderer::frozen_text_placeholder_fill(FrozenAnnotationColor::Red, HudTheme::Dark);
 
 	assert!(blue.b() > blue.r());
 	assert!(red.r() > red.b());
@@ -1045,16 +1060,159 @@ fn frozen_text_caret_visible_blinks_on_half_periods() {
 }
 
 #[test]
-fn frozen_toolbar_size_expands_for_text_style_toolbar() {
+fn frozen_toolbar_size_expands_for_annotation_style_toolbar() {
 	let mut toolbar_state = FrozenToolbarState::default();
 	let base_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+
+	toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+
+	let pen_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+
+	assert!(pen_size.y > base_size.y);
+	assert_eq!(pen_size.x, base_size.x);
 
 	toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
 	let expanded_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
 
 	assert!(expanded_size.y > base_size.y);
-	assert_eq!(expanded_size.x, base_size.x);
+	assert_eq!(expanded_size, pen_size);
+}
+
+#[test]
+fn render_frozen_toolbar_ui_keeps_runtime_drag_when_pointer_snapshot_is_missing() {
+	let ctx = tests::test_egui_context();
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(200, 180, 200, 300);
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut session = OverlaySession::new();
+
+	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+
+	session.toolbar_state.dragging = true;
+
+	let toolbar_placement = session.config.toolbar_placement;
+	let state = &session.state;
+	let toolbar_state = &mut session.toolbar_state;
+	let mut hud_pill = None;
+	let _ = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|ui: &mut Ui| {
+			WindowRenderer::render_frozen_toolbar_ui(
+				ui.ctx(),
+				state,
+				monitor,
+				HudTheme::Dark,
+				toolbar_placement,
+				false,
+				false,
+				1.0,
+				0.0,
+				0.0,
+				Some(toolbar_state),
+				None,
+				&mut hud_pill,
+			);
+		},
+	);
+
+	assert!(hud_pill.is_some(), "toolbar should still render once readiness stabilizes");
+	assert!(
+		session.toolbar_state.dragging,
+		"rendering without a pointer snapshot must not clear runtime-managed drag state"
+	);
+}
+
+#[test]
+fn frozen_base_toolbar_hud_pill_uses_half_height_corner_radius() {
+	let ctx = tests::test_egui_context();
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(200, 180, 200, 300);
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut session = OverlaySession::new();
+
+	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+
+	let toolbar_placement = session.config.toolbar_placement;
+	let state = &session.state;
+	let toolbar_state = &mut session.toolbar_state;
+	let mut hud_pill = None;
+	let _ = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|ui: &mut Ui| {
+			WindowRenderer::render_frozen_toolbar_ui(
+				ui.ctx(),
+				state,
+				monitor,
+				HudTheme::Dark,
+				toolbar_placement,
+				false,
+				false,
+				1.0,
+				0.0,
+				0.0,
+				Some(toolbar_state),
+				None,
+				&mut hud_pill,
+			);
+		},
+	);
+	let hud_pill = hud_pill.expect("base toolbar should render after readiness stabilizes");
+
+	assert_eq!(hud_pill.radius_points, (hud_pill.rect.height() * 0.5).round());
+}
+
+#[test]
+fn frozen_annotation_toolbar_hud_pill_keeps_standard_corner_radius() {
+	let ctx = tests::test_egui_context();
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(200, 180, 200, 300);
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut session = OverlaySession::new();
+
+	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+
+	let toolbar_placement = session.config.toolbar_placement;
+	let state = &session.state;
+	let toolbar_state = &mut session.toolbar_state;
+	let mut hud_pill = None;
+	let _ = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|ui: &mut Ui| {
+			WindowRenderer::render_frozen_toolbar_ui(
+				ui.ctx(),
+				state,
+				monitor,
+				HudTheme::Dark,
+				toolbar_placement,
+				false,
+				false,
+				1.0,
+				0.0,
+				0.0,
+				Some(toolbar_state),
+				None,
+				&mut hud_pill,
+			);
+		},
+	);
+	let hud_pill = hud_pill.expect("annotation toolbar should render after readiness stabilizes");
+
+	assert_eq!(hud_pill.radius_points, 18.0);
 }
 
 #[test]
@@ -2584,12 +2742,22 @@ fn toolbar_window_startup_size_covers_every_tool_permutation() {
 	let toolbar_states = [
 		FrozenToolbarState::default(),
 		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Pen,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
 			selected_tool: FrozenToolbarTool::Text,
 			..FrozenToolbarState::default()
 		},
 		FrozenToolbarState { auto_center_available: true, ..FrozenToolbarState::default() },
 		FrozenToolbarState { scroll_capture_available: true, ..FrozenToolbarState::default() },
 		FrozenToolbarState {
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Pen,
 			auto_center_available: true,
 			scroll_capture_available: true,
 			..FrozenToolbarState::default()
