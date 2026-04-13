@@ -603,6 +603,7 @@ struct SharedLatestFrame {
 	pending_refresh_monitor: Mutex<Option<PendingMonitorRequest>>,
 	waiting_for_frame_until: Mutex<Option<(u32, Instant)>>,
 	stream_filter_status: Mutex<Option<StreamFilterStatus>>,
+	pending_stream_filter_complete_monitor: Mutex<Option<u32>>,
 }
 impl SharedLatestFrame {
 	fn store(&self, monitor_id: u32, frame: &QueuedPixelBufferFrame) -> StoreFrameOutcome {
@@ -648,6 +649,7 @@ impl SharedLatestFrame {
 	}
 
 	fn complete_pending_requests_for_stored_frame(&self, monitor_id: u32) -> StoreFrameOutcome {
+		self.complete_pending_stream_filter_status(monitor_id);
 		self.clear_waiting_for_frame(monitor_id);
 		StoreFrameOutcome {
 			completed_ensure: self.finish_ensure_monitor(monitor_id),
@@ -976,6 +978,54 @@ impl SharedLatestFrame {
 			Err(poisoned) => poisoned.into_inner().as_ref().is_some_and(|status| {
 				status.monitor_id == monitor_id && status.self_capture_filter_complete
 			}),
+		}
+	}
+
+	fn defer_stream_filter_complete_until_next_frame(
+		&self,
+		monitor_id: u32,
+		self_capture_filter_complete: bool,
+	) {
+		self.set_stream_filter_status(monitor_id, false);
+
+		match self.pending_stream_filter_complete_monitor.lock() {
+			Ok(mut guard) => {
+				*guard = self_capture_filter_complete.then_some(monitor_id);
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				*guard = self_capture_filter_complete.then_some(monitor_id);
+			},
+		}
+	}
+
+	fn complete_pending_stream_filter_status(&self, monitor_id: u32) {
+		let should_mark_complete = match self.pending_stream_filter_complete_monitor.lock() {
+			Ok(mut guard) => {
+				if guard.is_some_and(|pending_monitor_id| pending_monitor_id == monitor_id) {
+					*guard = None;
+
+					true
+				} else {
+					false
+				}
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				if guard.is_some_and(|pending_monitor_id| pending_monitor_id == monitor_id) {
+					*guard = None;
+
+					true
+				} else {
+					false
+				}
+			},
+		};
+
+		if should_mark_complete {
+			self.set_stream_filter_status(monitor_id, true);
 		}
 	}
 }
@@ -1758,7 +1808,7 @@ fn ensure_stream(
 
 		let mut previous_state = state.replace(next_state);
 
-		shared_latest_frame.set_stream_filter_status(monitor.id, true);
+		shared_latest_frame.defer_stream_filter_complete_until_next_frame(monitor.id, true);
 
 		teardown_stream(&mut previous_state);
 
@@ -1782,7 +1832,8 @@ fn ensure_stream(
 
 	*state = Some(next_state);
 
-	shared_latest_frame.set_stream_filter_status(monitor.id, self_capture_filter_complete);
+	shared_latest_frame
+		.defer_stream_filter_complete_until_next_frame(monitor.id, self_capture_filter_complete);
 	shared_latest_frame.mark_waiting_for_frame(monitor.id);
 
 	tracing::debug!(
@@ -2000,7 +2051,8 @@ fn refresh_stream(args: RefreshStreamArgs<'_>) -> StreamRequestProgress {
 	let replaced_existing_state = state.is_some();
 	let mut previous_state = state.replace(next_state);
 
-	shared_latest_frame.set_stream_filter_status(monitor.id, self_capture_filter_complete);
+	shared_latest_frame
+		.defer_stream_filter_complete_until_next_frame(monitor.id, self_capture_filter_complete);
 
 	teardown_stream(&mut previous_state);
 
@@ -3027,6 +3079,50 @@ mod tests {
 
 		assert!(shared.self_capture_filter_complete_for_monitor(7));
 		assert!(!shared.self_capture_filter_complete_for_monitor(9));
+	}
+
+	#[test]
+	fn deferred_filter_complete_waits_for_matching_first_frame() {
+		let shared = live_frame_stream_macos::SharedLatestFrame::default();
+		let pixel_buffer = test_pixel_buffer();
+		let other_monitor_frame = live_frame_stream_macos::QueuedPixelBufferFrame {
+			frame_seq: 1,
+			captured_at: std::time::Instant::now(),
+			pixel_buffer: pixel_buffer.clone(),
+		};
+		let matching_monitor_frame = live_frame_stream_macos::QueuedPixelBufferFrame {
+			frame_seq: 2,
+			captured_at: std::time::Instant::now(),
+			pixel_buffer,
+		};
+
+		shared.defer_stream_filter_complete_until_next_frame(7, true);
+
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
+
+		let _ = shared.store(9, &other_monitor_frame);
+
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
+
+		let _ = shared.store(7, &matching_monitor_frame);
+
+		assert!(shared.self_capture_filter_complete_for_monitor(7));
+	}
+
+	#[test]
+	fn incomplete_filter_never_flips_complete_after_first_frame() {
+		let shared = live_frame_stream_macos::SharedLatestFrame::default();
+		let frame = live_frame_stream_macos::QueuedPixelBufferFrame {
+			frame_seq: 1,
+			captured_at: std::time::Instant::now(),
+			pixel_buffer: test_pixel_buffer(),
+		};
+
+		shared.defer_stream_filter_complete_until_next_frame(7, false);
+
+		let _ = shared.store(7, &frame);
+
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
 	}
 
 	#[test]
