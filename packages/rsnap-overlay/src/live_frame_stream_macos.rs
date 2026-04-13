@@ -77,6 +77,7 @@ objc2::define_class!(
 				self.ivars().frame_seq_counter.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
 			let frame = QueuedPixelBufferFrame {
 				frame_seq,
+				stream_generation: self.ivars().stream_generation,
 				captured_at: Instant::now(),
 				pixel_buffer: SharedPixelBuffer(image_buffer),
 			};
@@ -110,12 +111,13 @@ objc2::define_class!(
 	}
 );
 
+pub(crate) const STREAM_REGION_FRAME_MAX_AGE: Duration = Duration::from_millis(90);
+
 const STREAM_RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const STREAM_SETUP_BACKOFF: Duration = Duration::from_millis(300);
 const STREAM_INCOMPLETE_EXCEPTION_UPGRADE_BACKOFF: Duration = Duration::from_secs(3);
 const STREAM_FRAME_QUEUE_CAPACITY: usize = 16;
 const STREAM_CONFIG_QUEUE_DEPTH: usize = 8;
-const STREAM_REGION_FRAME_MAX_AGE: Duration = Duration::from_millis(90);
 const STREAM_ACTIVE_GESTURE_FORCE_REFRESH_MIN_AGE: Duration = Duration::from_millis(60);
 const STREAM_REGION_FRAME_REFRESH_TIMEOUT: Duration = Duration::from_millis(180);
 const STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(4);
@@ -271,6 +273,11 @@ impl MacLiveFrameStream {
 	}
 
 	#[cfg(test)]
+	pub(crate) fn debug_set_self_capture_filter_complete(&self, monitor_id: u32, complete: bool) {
+		self.shared_latest_frame.set_stream_filter_status(monitor_id, complete);
+	}
+
+	#[cfg(test)]
 	fn record_debug_request_kind(&self, kind: &'static str) {
 		match self.debug_last_request_kind.lock() {
 			Ok(mut guard) => {
@@ -367,6 +374,10 @@ impl MacLiveFrameStream {
 			monitor,
 			image: Arc::new(image),
 		}))
+	}
+
+	pub(crate) fn self_capture_filter_complete_for_monitor(&self, monitor: MonitorRect) -> bool {
+		self.shared_latest_frame.self_capture_filter_complete_for_monitor(monitor.id)
 	}
 
 	pub(crate) fn latest_rgba_region(
@@ -576,6 +587,7 @@ unsafe impl Sync for SharedPixelBuffer {}
 #[derive(Clone)]
 struct QueuedPixelBufferFrame {
 	frame_seq: u64,
+	stream_generation: u64,
 	captured_at: Instant,
 	pixel_buffer: SharedPixelBuffer,
 }
@@ -592,9 +604,16 @@ struct SharedLatestFrame {
 	pending_monitor: Mutex<Option<u32>>,
 	pending_refresh_monitor: Mutex<Option<PendingMonitorRequest>>,
 	waiting_for_frame_until: Mutex<Option<(u32, Instant)>>,
+	active_stream_generation: Mutex<Option<StreamGenerationStatus>>,
+	stream_filter_status: Mutex<Option<StreamFilterStatus>>,
+	pending_stream_filter_complete_monitor: Mutex<Option<StreamGenerationStatus>>,
 }
 impl SharedLatestFrame {
 	fn store(&self, monitor_id: u32, frame: &QueuedPixelBufferFrame) -> StoreFrameOutcome {
+		if !self.stream_generation_is_active_for_monitor(monitor_id, frame.stream_generation) {
+			return StoreFrameOutcome { completed_ensure: false, completed_refresh: false };
+		}
+
 		match self.frames.lock() {
 			Ok(mut guard) => {
 				let shared = guard.get_or_insert_with(|| SharedQueuedPixelBufferFrames {
@@ -633,10 +652,15 @@ impl SharedLatestFrame {
 			},
 		}
 
-		self.complete_pending_requests_for_stored_frame(monitor_id)
+		self.complete_pending_requests_for_stored_frame(monitor_id, frame.stream_generation)
 	}
 
-	fn complete_pending_requests_for_stored_frame(&self, monitor_id: u32) -> StoreFrameOutcome {
+	fn complete_pending_requests_for_stored_frame(
+		&self,
+		monitor_id: u32,
+		stream_generation: u64,
+	) -> StoreFrameOutcome {
+		self.complete_pending_stream_filter_status(monitor_id, stream_generation);
 		self.clear_waiting_for_frame(monitor_id);
 		StoreFrameOutcome {
 			completed_ensure: self.finish_ensure_monitor(monitor_id),
@@ -645,18 +669,40 @@ impl SharedLatestFrame {
 	}
 
 	fn latest_frame_for_monitor(&self, monitor_id: u32) -> Option<QueuedPixelBufferFrame> {
+		let active_stream_generation = self.active_stream_generation_for_monitor(monitor_id);
+
 		match self.frames.lock() {
 			Ok(guard) => guard
 				.as_ref()
 				.and_then(|latest| {
-					(latest.monitor_id == monitor_id).then(|| latest.frames.back().cloned())
+					(latest.monitor_id == monitor_id).then(|| {
+						latest
+							.frames
+							.iter()
+							.rev()
+							.find(|frame| {
+								active_stream_generation
+									.is_none_or(|generation| frame.stream_generation == generation)
+							})
+							.cloned()
+					})
 				})
 				.flatten(),
 			Err(poisoned) => poisoned
 				.into_inner()
 				.as_ref()
 				.and_then(|latest| {
-					(latest.monitor_id == monitor_id).then(|| latest.frames.back().cloned())
+					(latest.monitor_id == monitor_id).then(|| {
+						latest
+							.frames
+							.iter()
+							.rev()
+							.find(|frame| {
+								active_stream_generation
+									.is_none_or(|generation| frame.stream_generation == generation)
+							})
+							.cloned()
+					})
 				})
 				.flatten(),
 		}
@@ -667,6 +713,8 @@ impl SharedLatestFrame {
 		monitor_id: u32,
 		after_frame_seq: u64,
 	) -> Vec<QueuedPixelBufferFrame> {
+		let active_stream_generation = self.active_stream_generation_for_monitor(monitor_id);
+
 		match self.frames.lock() {
 			Ok(guard) => guard
 				.as_ref()
@@ -675,7 +723,11 @@ impl SharedLatestFrame {
 					shared
 						.frames
 						.iter()
-						.filter(|frame| frame.frame_seq > after_frame_seq)
+						.filter(|frame| {
+							frame.frame_seq > after_frame_seq
+								&& active_stream_generation
+									.is_none_or(|generation| frame.stream_generation == generation)
+						})
 						.cloned()
 						.collect()
 				})
@@ -688,7 +740,11 @@ impl SharedLatestFrame {
 					shared
 						.frames
 						.iter()
-						.filter(|frame| frame.frame_seq > after_frame_seq)
+						.filter(|frame| {
+							frame.frame_seq > after_frame_seq
+								&& active_stream_generation
+									.is_none_or(|generation| frame.stream_generation == generation)
+						})
 						.cloned()
 						.collect()
 				})
@@ -943,6 +999,120 @@ impl SharedLatestFrame {
 
 		false
 	}
+
+	fn set_stream_filter_status(&self, monitor_id: u32, self_capture_filter_complete: bool) {
+		match self.stream_filter_status.lock() {
+			Ok(mut guard) => {
+				*guard = Some(StreamFilterStatus { monitor_id, self_capture_filter_complete });
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				*guard = Some(StreamFilterStatus { monitor_id, self_capture_filter_complete });
+			},
+		}
+	}
+
+	fn self_capture_filter_complete_for_monitor(&self, monitor_id: u32) -> bool {
+		match self.stream_filter_status.lock() {
+			Ok(guard) => guard.as_ref().is_some_and(|status| {
+				status.monitor_id == monitor_id && status.self_capture_filter_complete
+			}),
+			Err(poisoned) => poisoned.into_inner().as_ref().is_some_and(|status| {
+				status.monitor_id == monitor_id && status.self_capture_filter_complete
+			}),
+		}
+	}
+
+	fn activate_stream_generation(&self, monitor_id: u32, stream_generation: u64) {
+		match self.active_stream_generation.lock() {
+			Ok(mut guard) => {
+				*guard = Some(StreamGenerationStatus { monitor_id, stream_generation });
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				*guard = Some(StreamGenerationStatus { monitor_id, stream_generation });
+			},
+		}
+	}
+
+	fn active_stream_generation_for_monitor(&self, monitor_id: u32) -> Option<u64> {
+		match self.active_stream_generation.lock() {
+			Ok(guard) => guard.as_ref().and_then(|status| {
+				(status.monitor_id == monitor_id).then_some(status.stream_generation)
+			}),
+			Err(poisoned) => poisoned.into_inner().as_ref().and_then(|status| {
+				(status.monitor_id == monitor_id).then_some(status.stream_generation)
+			}),
+		}
+	}
+
+	fn stream_generation_is_active_for_monitor(
+		&self,
+		monitor_id: u32,
+		stream_generation: u64,
+	) -> bool {
+		self.active_stream_generation_for_monitor(monitor_id)
+			.is_none_or(|active_generation| active_generation == stream_generation)
+	}
+
+	fn defer_stream_filter_complete_until_next_frame(
+		&self,
+		monitor_id: u32,
+		stream_generation: u64,
+		self_capture_filter_complete: bool,
+	) {
+		self.set_stream_filter_status(monitor_id, false);
+
+		match self.pending_stream_filter_complete_monitor.lock() {
+			Ok(mut guard) => {
+				*guard = self_capture_filter_complete
+					.then_some(StreamGenerationStatus { monitor_id, stream_generation });
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				*guard = self_capture_filter_complete
+					.then_some(StreamGenerationStatus { monitor_id, stream_generation });
+			},
+		}
+	}
+
+	fn complete_pending_stream_filter_status(&self, monitor_id: u32, stream_generation: u64) {
+		let should_mark_complete = match self.pending_stream_filter_complete_monitor.lock() {
+			Ok(mut guard) => {
+				if guard.is_some_and(|pending| {
+					pending.monitor_id == monitor_id
+						&& pending.stream_generation == stream_generation
+				}) {
+					*guard = None;
+
+					true
+				} else {
+					false
+				}
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				if guard.is_some_and(|pending| {
+					pending.monitor_id == monitor_id
+						&& pending.stream_generation == stream_generation
+				}) {
+					*guard = None;
+
+					true
+				} else {
+					false
+				}
+			},
+		};
+
+		if should_mark_complete {
+			self.set_stream_filter_status(monitor_id, true);
+		}
+	}
 }
 
 #[derive(Clone, Copy)]
@@ -952,6 +1122,18 @@ struct PendingMonitorRequest {
 	started_at: Instant,
 }
 
+#[derive(Clone, Copy)]
+struct StreamFilterStatus {
+	monitor_id: u32,
+	self_capture_filter_complete: bool,
+}
+
+#[derive(Clone, Copy)]
+struct StreamGenerationStatus {
+	monitor_id: u32,
+	stream_generation: u64,
+}
+
 struct StoreFrameOutcome {
 	completed_ensure: bool,
 	completed_refresh: bool,
@@ -959,6 +1141,7 @@ struct StoreFrameOutcome {
 
 struct StreamOutputIvars {
 	monitor_id: u32,
+	stream_generation: u64,
 	frames: Mutex<VecDeque<QueuedPixelBufferFrame>>,
 	frame_seq_counter: Arc<AtomicU64>,
 	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -967,12 +1150,14 @@ struct StreamOutputIvars {
 impl StreamOutputIvars {
 	fn new(
 		monitor_id: u32,
+		stream_generation: u64,
 		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 		frame_seq_counter: Arc<AtomicU64>,
 		shared_latest_frame: Arc<SharedLatestFrame>,
 	) -> Self {
 		Self {
 			monitor_id,
+			stream_generation,
 			frames: Mutex::new(VecDeque::with_capacity(STREAM_FRAME_QUEUE_CAPACITY)),
 			frame_seq_counter,
 			frame_waker,
@@ -983,6 +1168,7 @@ impl StreamOutputIvars {
 
 struct StreamState {
 	monitor_id: u32,
+	stream_generation: u64,
 	self_capture_filter_complete: bool,
 	stream: Retained<SCStream>,
 	output: Retained<StreamOutput>,
@@ -1038,6 +1224,7 @@ struct PreparedStreamFilter {
 }
 
 struct StartedStreamArtifacts {
+	stream_generation: u64,
 	stream: Retained<SCStream>,
 	output: Retained<StreamOutput>,
 	sample_handler_queue: DispatchRetained<DispatchQueue>,
@@ -1100,12 +1287,14 @@ enum StreamReuseDecision {
 impl StreamOutput {
 	fn new(
 		monitor_id: u32,
+		stream_generation: u64,
 		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 		frame_seq_counter: Arc<AtomicU64>,
 		shared_latest_frame: Arc<SharedLatestFrame>,
 	) -> Retained<Self> {
 		let this = Self::alloc().set_ivars(StreamOutputIvars::new(
 			monitor_id,
+			stream_generation,
 			frame_waker,
 			frame_seq_counter,
 			shared_latest_frame,
@@ -1715,7 +1904,17 @@ fn ensure_stream(
 			return StreamRequestProgress::Settled;
 		}
 
+		let stream_generation = next_state.stream_generation;
+
+		shared_latest_frame.activate_stream_generation(monitor.id, stream_generation);
+
 		let mut previous_state = state.replace(next_state);
+
+		shared_latest_frame.defer_stream_filter_complete_until_next_frame(
+			monitor.id,
+			stream_generation,
+			true,
+		);
 
 		teardown_stream(&mut previous_state);
 
@@ -1736,9 +1935,17 @@ fn ensure_stream(
 	teardown_stream(state);
 
 	let self_capture_filter_complete = next_state.self_capture_filter_complete;
+	let stream_generation = next_state.stream_generation;
+
+	shared_latest_frame.activate_stream_generation(monitor.id, stream_generation);
 
 	*state = Some(next_state);
 
+	shared_latest_frame.defer_stream_filter_complete_until_next_frame(
+		monitor.id,
+		stream_generation,
+		self_capture_filter_complete,
+	);
 	shared_latest_frame.mark_waiting_for_frame(monitor.id);
 
 	tracing::debug!(
@@ -1953,8 +2160,18 @@ fn refresh_stream(args: RefreshStreamArgs<'_>) -> StreamRequestProgress {
 		return StreamRequestProgress::Settled;
 	};
 	let self_capture_filter_complete = next_state.self_capture_filter_complete;
+	let stream_generation = next_state.stream_generation;
 	let replaced_existing_state = state.is_some();
+
+	shared_latest_frame.activate_stream_generation(monitor.id, stream_generation);
+
 	let mut previous_state = state.replace(next_state);
+
+	shared_latest_frame.defer_stream_filter_complete_until_next_frame(
+		monitor.id,
+		stream_generation,
+		self_capture_filter_complete,
+	);
 
 	teardown_stream(&mut previous_state);
 
@@ -2035,6 +2252,7 @@ fn setup_stream_for_monitor(
 
 	Some(StreamState {
 		monitor_id: monitor.id,
+		stream_generation: started_stream.stream_generation,
 		self_capture_filter_complete: prepared_filter.self_capture_filter_complete,
 		stream: started_stream.stream,
 		output: started_stream.output,
@@ -2206,7 +2424,7 @@ fn log_missing_current_process_fallback(
 	excepting_window_count: usize,
 	fallback_excluded_window_count: usize,
 ) {
-	tracing::info!(
+	tracing::debug!(
 		op = "live_frame_stream.setup_filter_fallback_missing_current_process",
 		monitor_id,
 		pid = process::id(),
@@ -2232,7 +2450,14 @@ fn build_and_start_stream_artifacts(
 	let sample_handler_queue = build_sample_handler_queue_for_monitor(monitor.id);
 	let queue_build_ms = queue_build_started_at.elapsed().as_millis();
 	let output_build_started_at = Instant::now();
-	let output = StreamOutput::new(monitor.id, frame_waker, frame_seq_counter, shared_latest_frame);
+	let stream_generation = frame_seq_counter.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+	let output = StreamOutput::new(
+		monitor.id,
+		stream_generation,
+		frame_waker,
+		frame_seq_counter,
+		shared_latest_frame,
+	);
 	let output_build_ms = output_build_started_at.elapsed().as_millis();
 	let stream_init_started_at = Instant::now();
 	let delegate_proto = ProtocolObject::from_ref(&*output);
@@ -2272,6 +2497,7 @@ fn build_and_start_stream_artifacts(
 	}
 
 	Some(StartedStreamArtifacts {
+		stream_generation,
 		stream,
 		output,
 		sample_handler_queue,
@@ -2968,6 +3194,123 @@ mod tests {
 	}
 
 	#[test]
+	fn shared_latest_frame_tracks_self_capture_filter_completeness_per_monitor() {
+		let shared = live_frame_stream_macos::SharedLatestFrame::default();
+
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
+
+		shared.set_stream_filter_status(7, false);
+
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
+
+		shared.set_stream_filter_status(7, true);
+
+		assert!(shared.self_capture_filter_complete_for_monitor(7));
+		assert!(!shared.self_capture_filter_complete_for_monitor(9));
+	}
+
+	#[test]
+	fn deferred_filter_complete_waits_for_matching_first_frame() {
+		let shared = live_frame_stream_macos::SharedLatestFrame::default();
+		let pixel_buffer = test_pixel_buffer();
+		let other_monitor_frame = live_frame_stream_macos::QueuedPixelBufferFrame {
+			frame_seq: 1,
+			stream_generation: 1,
+			captured_at: std::time::Instant::now(),
+			pixel_buffer: pixel_buffer.clone(),
+		};
+		let matching_monitor_frame = live_frame_stream_macos::QueuedPixelBufferFrame {
+			frame_seq: 2,
+			stream_generation: 1,
+			captured_at: std::time::Instant::now(),
+			pixel_buffer,
+		};
+
+		shared.activate_stream_generation(7, 1);
+		shared.defer_stream_filter_complete_until_next_frame(7, 1, true);
+
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
+
+		let _ = shared.store(9, &other_monitor_frame);
+
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
+
+		let _ = shared.store(7, &matching_monitor_frame);
+
+		assert!(shared.self_capture_filter_complete_for_monitor(7));
+	}
+
+	#[test]
+	fn deferred_filter_complete_ignores_stale_generation_frames() {
+		let shared = live_frame_stream_macos::SharedLatestFrame::default();
+		let pixel_buffer = test_pixel_buffer();
+		let stale_frame = live_frame_stream_macos::QueuedPixelBufferFrame {
+			frame_seq: 1,
+			stream_generation: 1,
+			captured_at: std::time::Instant::now(),
+			pixel_buffer: pixel_buffer.clone(),
+		};
+		let current_frame = live_frame_stream_macos::QueuedPixelBufferFrame {
+			frame_seq: 2,
+			stream_generation: 2,
+			captured_at: std::time::Instant::now(),
+			pixel_buffer,
+		};
+
+		shared.activate_stream_generation(7, 2);
+		shared.defer_stream_filter_complete_until_next_frame(7, 2, true);
+
+		let _ = shared.store(7, &stale_frame);
+
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
+		assert!(shared.latest_frame_for_monitor(7).is_none());
+
+		let _ = shared.store(7, &current_frame);
+
+		assert!(shared.self_capture_filter_complete_for_monitor(7));
+		assert_eq!(
+			shared.latest_frame_for_monitor(7).map(|frame| frame.stream_generation),
+			Some(2)
+		);
+	}
+
+	#[test]
+	fn incomplete_filter_never_flips_complete_after_first_frame() {
+		let shared = live_frame_stream_macos::SharedLatestFrame::default();
+		let frame = live_frame_stream_macos::QueuedPixelBufferFrame {
+			frame_seq: 1,
+			stream_generation: 1,
+			captured_at: std::time::Instant::now(),
+			pixel_buffer: test_pixel_buffer(),
+		};
+
+		shared.activate_stream_generation(7, 1);
+		shared.defer_stream_filter_complete_until_next_frame(7, 1, false);
+
+		let _ = shared.store(7, &frame);
+
+		assert!(!shared.self_capture_filter_complete_for_monitor(7));
+	}
+
+	#[test]
+	fn mac_live_frame_stream_reports_self_capture_filter_completeness_from_shared_status() {
+		let stream = live_frame_stream_macos::MacLiveFrameStream::with_waker(None);
+		let monitor = crate::state::MonitorRect {
+			id: 7,
+			origin: crate::state::GlobalPoint::new(0, 0),
+			width: 1_440,
+			height: 900,
+			scale_factor_x1000: 2_000,
+		};
+
+		assert!(!stream.self_capture_filter_complete_for_monitor(monitor));
+
+		stream.debug_set_self_capture_filter_complete(monitor.id, true);
+
+		assert!(stream.self_capture_filter_complete_for_monitor(monitor));
+	}
+
+	#[test]
 	fn stored_frame_completion_clears_pending_ensure_for_same_monitor() {
 		let shared = live_frame_stream_macos::SharedLatestFrame::default();
 		let now = std::time::Instant::now();
@@ -2976,7 +3319,7 @@ mod tests {
 
 		shared.mark_waiting_for_frame_until(7, now + Duration::from_secs(1));
 
-		let outcome = shared.complete_pending_requests_for_stored_frame(7);
+		let outcome = shared.complete_pending_requests_for_stored_frame(7, 1);
 
 		assert!(outcome.completed_ensure);
 		assert!(!outcome.completed_refresh);
@@ -2993,7 +3336,7 @@ mod tests {
 
 		shared.mark_waiting_for_frame_until(7, now + Duration::from_secs(1));
 
-		let outcome = shared.complete_pending_requests_for_stored_frame(9);
+		let outcome = shared.complete_pending_requests_for_stored_frame(9, 1);
 
 		assert!(!outcome.completed_ensure);
 		assert!(!outcome.completed_refresh);
@@ -3010,7 +3353,7 @@ mod tests {
 
 		shared.mark_waiting_for_frame_until(7, now + Duration::from_secs(1));
 
-		let outcome = shared.complete_pending_requests_for_stored_frame(7);
+		let outcome = shared.complete_pending_requests_for_stored_frame(7, 1);
 
 		assert!(!outcome.completed_ensure);
 		assert!(outcome.completed_refresh);
@@ -3099,6 +3442,7 @@ mod tests {
 		let pixel_buffer = test_pixel_buffer();
 		let make_frame = |frame_seq| live_frame_stream_macos::QueuedPixelBufferFrame {
 			frame_seq,
+			stream_generation: 1,
 			captured_at: std::time::Instant::now(),
 			pixel_buffer: pixel_buffer.clone(),
 		};
@@ -3127,6 +3471,7 @@ mod tests {
 		let rect = crate::state::RectPoints::new(0, 0, 1, 1);
 		let frame = live_frame_stream_macos::QueuedPixelBufferFrame {
 			frame_seq: 4,
+			stream_generation: 1,
 			captured_at: std::time::Instant::now(),
 			pixel_buffer: test_pixel_buffer(),
 		};

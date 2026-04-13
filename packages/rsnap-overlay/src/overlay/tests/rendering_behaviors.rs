@@ -1,4 +1,8 @@
 use std::slice;
+#[cfg(target_os = "macos")]
+use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 use egui::Id;
 use egui::LayerId;
@@ -10,6 +14,8 @@ use objc::runtime::Object;
 use winit::window::CursorIcon;
 
 use crate::OverlayControl;
+#[cfg(target_os = "macos")]
+use crate::overlay::WindowCaptureAlphaMode;
 use crate::overlay::tests::{
 	self, Duration, ElementState, FrozenCaptureSource, FrozenSelectionDragState,
 	FrozenToolbarState, FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme,
@@ -25,6 +31,8 @@ use crate::overlay::{
 	FrozenAnnotationColor, FrozenEditKind, FrozenSelectionCorner, FrozenSelectionInteractionKind,
 	FrozenTextAnnotation, FrozenTextEditState,
 };
+#[cfg(target_os = "macos")]
+use crate::state::MonitorImageSnapshot;
 use crate::worker::{WorkerErrorSource, WorkerResponse};
 
 fn test_mosaic_source_image() -> RgbaImage {
@@ -69,6 +77,174 @@ fn pending_freeze_capture_dispatches_even_with_seeded_preview() {
 	session.pending_freeze_capture = Some(monitor);
 
 	assert!(session.should_dispatch_pending_freeze_capture(monitor));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn snapshot_background_capture_finishes_frozen_transition_immediately() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(120, 160, 320, 240);
+	let frozen_image = tests::test_frozen_image();
+	let snapshot = Arc::new(MonitorImageSnapshot {
+		captured_at: Instant::now(),
+		monitor,
+		image: Arc::new(frozen_image.clone()),
+	});
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.pending_freeze_capture = Some(monitor);
+	session.pending_window_freeze_capture = Some(crate::overlay::WindowFreezeCaptureTarget {
+		monitor,
+		window_id: 11,
+		rect: capture_rect,
+	});
+
+	assert!(session.maybe_finish_frozen_capture_from_snapshot(
+		monitor,
+		session.pending_window_freeze_capture,
+		None,
+		Some(snapshot),
+		"live_stream_snapshot",
+	));
+	assert!(session.authoritative_frozen_capture_ready);
+	assert!(session.pending_freeze_capture.is_none());
+	assert!(session.pending_window_freeze_capture.is_none());
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&frozen_image));
+	assert!(session.toolbar_state.final_capture_ready);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn snapshot_matte_window_capture_keeps_authoritative_handoff_pending() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(120, 160, 320, 240);
+	let snapshot = Arc::new(MonitorImageSnapshot {
+		captured_at: Instant::now(),
+		monitor,
+		image: Arc::new(tests::test_frozen_image()),
+	});
+	let window_target =
+		crate::overlay::WindowFreezeCaptureTarget { monitor, window_id: 11, rect: capture_rect };
+	let mut session = OverlaySession::new();
+
+	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteDark;
+
+	session.state.begin_freeze(monitor);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.pending_freeze_capture = Some(monitor);
+	session.pending_window_freeze_capture = Some(window_target);
+
+	assert!(!session.maybe_finish_frozen_capture_from_snapshot(
+		monitor,
+		Some(window_target),
+		None,
+		Some(snapshot),
+		"live_stream_snapshot",
+	));
+	assert!(!session.authoritative_frozen_capture_ready);
+	assert_eq!(session.pending_freeze_capture, Some(monitor));
+	assert_eq!(session.pending_window_freeze_capture, Some(window_target));
+	assert!(session.state.frozen_image.is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn stale_snapshot_does_not_finish_frozen_transition_immediately() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(120, 160, 320, 240);
+	let snapshot = Arc::new(MonitorImageSnapshot {
+		captured_at: Instant::now()
+			- crate::live_frame_stream_macos::STREAM_REGION_FRAME_MAX_AGE
+			- Duration::from_millis(1),
+		monitor,
+		image: Arc::new(tests::test_frozen_image()),
+	});
+	let window_target =
+		crate::overlay::WindowFreezeCaptureTarget { monitor, window_id: 11, rect: capture_rect };
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.pending_freeze_capture = Some(monitor);
+	session.pending_window_freeze_capture = Some(window_target);
+
+	assert!(!session.maybe_finish_frozen_capture_from_snapshot(
+		monitor,
+		Some(window_target),
+		None,
+		Some(snapshot),
+		"live_stream_snapshot",
+	));
+	assert!(!session.authoritative_frozen_capture_ready);
+	assert_eq!(session.pending_freeze_capture, Some(monitor));
+	assert_eq!(session.pending_window_freeze_capture, Some(window_target));
+	assert!(session.state.frozen_image.is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn snapshot_seeded_preview_keeps_authoritative_handoff_pending() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(120, 160, 320, 240);
+	let frozen_image = tests::test_frozen_image();
+	let snapshot = Arc::new(MonitorImageSnapshot {
+		captured_at: Instant::now(),
+		monitor,
+		image: Arc::new(frozen_image.clone()),
+	});
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.pending_freeze_capture = Some(monitor);
+
+	assert!(session.maybe_seed_frozen_capture_preview_from_snapshot(
+		monitor,
+		None,
+		Some(snapshot),
+		"live_stream_snapshot_seeded_unverified",
+	));
+	assert!(!session.authoritative_frozen_capture_ready);
+	assert_eq!(session.pending_freeze_capture, Some(monitor));
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&frozen_image));
+	assert!(!session.toolbar_state.final_capture_ready);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn stale_snapshot_does_not_seed_frozen_preview() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(120, 160, 320, 240);
+	let snapshot = Arc::new(MonitorImageSnapshot {
+		captured_at: Instant::now()
+			- crate::live_frame_stream_macos::STREAM_REGION_FRAME_MAX_AGE
+			- Duration::from_millis(1),
+		monitor,
+		image: Arc::new(tests::test_frozen_image()),
+	});
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.pending_freeze_capture = Some(monitor);
+
+	assert!(!session.maybe_seed_frozen_capture_preview_from_snapshot(
+		monitor,
+		None,
+		Some(snapshot),
+		"live_stream_snapshot_seeded_unverified",
+	));
+	assert_eq!(session.pending_freeze_capture, Some(monitor));
+	assert!(!session.authoritative_frozen_capture_ready);
+	assert!(session.state.frozen_image.is_none());
+	assert!(!session.toolbar_state.final_capture_ready);
 }
 
 #[cfg(not(target_os = "macos"))]
