@@ -1177,6 +1177,7 @@ impl OverlaySession {
 		);
 	}
 
+	#[cfg(any(target_os = "macos", test))]
 	fn note_frozen_transition_preview_deferred(
 		&self,
 		monitor: MonitorRect,
@@ -1286,6 +1287,7 @@ impl OverlaySession {
 		);
 	}
 
+	#[cfg(any(target_os = "macos", test))]
 	fn note_frozen_transition_toolbar_visible(&mut self, monitor: MonitorRect) {
 		if self.frozen_transition_toolbar_visible_at.is_some() {
 			return;
@@ -1330,8 +1332,7 @@ impl OverlaySession {
 		);
 	}
 
-	#[cfg(target_os = "macos")]
-	#[allow(dead_code)]
+	#[cfg(any(target_os = "macos", test))]
 	fn commit_frozen_preview(
 		&mut self,
 		monitor: MonitorRect,
