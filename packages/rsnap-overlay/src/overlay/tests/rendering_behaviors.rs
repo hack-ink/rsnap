@@ -699,6 +699,7 @@ fn entering_frozen_capture_skips_initial_toolbar_focus_restore() {
 	let mut session = OverlaySession::new();
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
 	session.toolbar_state.visible = true;
 
 	assert!(session.skip_toolbar_focus_on_next_show);
@@ -716,12 +717,12 @@ fn frozen_selection_drag_does_not_rearm_initial_frontmost_restore() {
 
 	session.state.begin_freeze(monitor);
 	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 	session.preserve_frontmost_on_next_toolbar_show = false;
 
 	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(250, 240)));
-
 	assert!(session.skip_toolbar_focus_on_next_show);
 	assert!(!session.preserve_frontmost_on_next_toolbar_show);
 }
