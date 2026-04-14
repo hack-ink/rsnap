@@ -133,9 +133,12 @@ impl OverlaySession {
 	fn current_toolbar_cursor_local(&mut self) -> Option<Pos2> {
 		let toolbar_window = self.toolbar_window.as_ref()?;
 		let outer_position = Self::toolbar_window_outer_position(toolbar_window)?;
+		#[cfg(target_os = "macos")]
+		let cursor_global = super::macos_mouse_location()?;
+		#[cfg(not(target_os = "macos"))]
 		let cursor_global = self.sample_mouse_location();
 
-		Some(Self::toolbar_cursor_local_position_from_outer(outer_position, cursor_global))
+		Self::toolbar_cursor_local_from_sampled_global(outer_position, Some(cursor_global))
 	}
 
 	fn toolbar_primary_rect_contains(&self, cursor_local: Pos2) -> bool {
@@ -151,6 +154,15 @@ impl OverlaySession {
 			global_cursor.x as f32 - outer_position.x as f32,
 			global_cursor.y as f32 - outer_position.y as f32,
 		)
+	}
+
+	pub(super) fn toolbar_cursor_local_from_sampled_global(
+		outer_position: GlobalPoint,
+		sampled_cursor: Option<GlobalPoint>,
+	) -> Option<Pos2> {
+		sampled_cursor.map(|global_cursor| {
+			Self::toolbar_cursor_local_position_from_outer(outer_position, global_cursor)
+		})
 	}
 
 	pub(super) fn handle_modifiers_changed(&mut self, modifiers: &Modifiers) -> OverlayControl {

@@ -13,6 +13,9 @@ impl OverlaySession {
 	pub(super) fn update_cursor_state(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
 		self.cursor_monitor = Some(monitor);
 		self.state.cursor = Some(cursor);
+
+		#[cfg(target_os = "macos")]
+		self.sync_toolbar_window_cursor_hittest(Some(cursor));
 	}
 
 	#[cfg(target_os = "macos")]
@@ -42,10 +45,17 @@ impl OverlaySession {
 		self.reset_loupe_window_warmup_redraws();
 
 		if let Some(toolbar_window) = &self.toolbar_window {
+			#[cfg(target_os = "macos")]
+			let _ = toolbar_window.window.set_cursor_hittest(false);
+
 			toolbar_window.window.set_visible(false);
 		}
 
 		self.toolbar_window_visible = false;
+		#[cfg(target_os = "macos")]
+		{
+			self.toolbar_window_cursor_hittest_enabled = false;
+		}
 		self.toolbar_window_warmup_redraws_remaining = 0;
 
 		if let Some(preview_window) = &self.scroll_preview_window {

@@ -853,7 +853,7 @@ impl OverlaySession {
 			.map_err(|err| format!("Unable to create toolbar window: {err}"))?;
 		let window = Arc::new(window);
 		#[cfg(target_os = "macos")]
-		let _ = window.set_cursor_hittest(true);
+		let _ = window.set_cursor_hittest(false);
 		#[cfg(not(target_os = "macos"))]
 		let _ = window.set_cursor_hittest(false);
 
@@ -877,6 +877,7 @@ impl OverlaySession {
 				startup_size.x.ceil().max(1.0) as u32,
 				startup_size.y.ceil().max(1.0) as u32,
 			));
+			self.toolbar_window_cursor_hittest_enabled = false;
 		}
 		#[cfg(not(target_os = "macos"))]
 		{
