@@ -5,11 +5,11 @@
 
 use std::collections::VecDeque;
 use std::ops::Deref;
+use std::process;
 #[cfg(test)]
 use std::ptr;
 #[cfg(test)]
 use std::ptr::NonNull;
-use std::process;
 use std::slice;
 use std::sync::{
 	Arc, Mutex,
@@ -25,7 +25,7 @@ use image::RgbaImage;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass, Message};
-use objc2_core_foundation::{self, CGPoint, CGRect, CGSize, CFRetained};
+use objc2_core_foundation::{self, CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_media::{CMSampleBuffer, kCMTimeZero};
 use objc2_core_video::{
 	CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
@@ -304,7 +304,11 @@ impl MacLiveFrameStream {
 	}
 
 	#[cfg(test)]
-	pub(crate) fn debug_set_active_stream_generation(&self, monitor_id: u32, stream_generation: u64) {
+	pub(crate) fn debug_set_active_stream_generation(
+		&self,
+		monitor_id: u32,
+		stream_generation: u64,
+	) {
 		self.shared_latest_frame.activate_stream_generation(monitor_id, stream_generation);
 	}
 
@@ -339,9 +343,7 @@ impl MacLiveFrameStream {
 		assert_eq!(res, objc2_core_video::kCVReturnSuccess);
 
 		SharedPixelBuffer(unsafe {
-			CFRetained::from_raw(
-				NonNull::new(buffer).expect("test pixel buffer"),
-			)
+			CFRetained::from_raw(NonNull::new(buffer).expect("test pixel buffer"))
 		})
 	}
 

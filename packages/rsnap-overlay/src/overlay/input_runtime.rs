@@ -959,14 +959,13 @@ impl OverlaySession {
 				}
 
 				let raw_cursor = self.current_device_cursor();
-				let (press_monitor, press_global) =
-					if let Some((press_monitor, press_global, _)) =
-						self.resolve_live_cursor_point(raw_cursor)
-					{
-						(press_monitor, press_global)
-					} else {
-						(monitor, raw_cursor)
-					};
+				let (press_monitor, press_global) = if let Some((press_monitor, press_global, _)) =
+					self.resolve_live_cursor_point(raw_cursor)
+				{
+					(press_monitor, press_global)
+				} else {
+					(monitor, raw_cursor)
+				};
 
 				self.update_cursor_state(press_monitor, press_global);
 				self.update_hud_window_position(press_monitor, press_global);
@@ -986,14 +985,13 @@ impl OverlaySession {
 			},
 			ElementState::Released => {
 				let raw_cursor = self.current_device_cursor();
-				let release_global =
-					if let Some((_, release_global, _)) =
-						self.resolve_live_cursor_point(raw_cursor)
-					{
-						release_global
-					} else {
-						raw_cursor
-					};
+				let release_global = if let Some((_, release_global, _)) =
+					self.resolve_live_cursor_point(raw_cursor)
+				{
+					release_global
+				} else {
+					raw_cursor
+				};
 
 				match self.live_capture_interaction {
 					LiveCaptureInteraction::PressPending {
