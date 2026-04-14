@@ -117,8 +117,7 @@ impl OverlaySession {
 			if let Some(toolbar_window) = &self.toolbar_window {
 				let show_toolbar = matches!(self.state.mode, OverlayMode::Frozen)
 					&& self.toolbar_state.visible
-					&& self.authoritative_frozen_capture_ready
-					&& self.state.frozen_image.is_some();
+					&& self.frozen_preview_visible();
 
 				toolbar_window.window.set_visible(show_toolbar);
 

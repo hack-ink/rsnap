@@ -396,7 +396,7 @@ impl WindowRenderer {
 				(state.live_bg_generation, state.live_bg_image.as_ref())
 			},
 			OverlayMode::Frozen if state.monitor == Some(monitor) => {
-				(state.frozen_generation, state.frozen_image.as_ref())
+				(state.frozen_generation, state.frozen_surface_image())
 			},
 			OverlayMode::Live => {
 				self.hud_bg = None;

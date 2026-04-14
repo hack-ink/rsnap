@@ -6,9 +6,10 @@ use device_query::DeviceQuery;
 use crate::overlay::{
 	AltActivationMode, CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource,
 	ElementState, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
-	FrozenToolbarTool, GlobalPoint, Ime, Key, KeyEvent, LIVE_DRAG_START_THRESHOLD_PX, Modifiers,
-	MonitorRect, MouseScrollDelta, NamedKey, OverlayControl, OverlayMode, OverlaySession,
-	PhysicalPosition, PhysicalSize, PngAction, Pos2, Vec2, WindowId, WindowRenderer,
+	FrozenToolbarTool, GlobalPoint, Ime, Key, KeyEvent, LiveCaptureInteraction,
+	LiveClickCaptureTarget, Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl,
+	OverlayMode, OverlaySession, PhysicalPosition, PhysicalSize, PngAction, Pos2, Vec2, WindowId,
+	WindowRenderer,
 };
 
 impl OverlaySession {
@@ -902,8 +903,8 @@ impl OverlaySession {
 			return;
 		}
 
-		let press_pending = self.live_press_pending_for_monitor(monitor);
-		let is_dragging_window = self.live_drag_active_for_monitor(monitor);
+		let press_pending = self.live_capture_interaction_is_press_pending();
+		let is_dragging_window = self.live_capture_interaction_is_dragging();
 		let had_snapshot_update = if press_pending || is_dragging_window || self.state.alt_held {
 			false
 		} else {
@@ -951,86 +952,95 @@ impl OverlaySession {
 
 		match state {
 			ElementState::Pressed => {
-				if self.left_mouse_button_down {
+				if self.live_capture_interaction_is_press_pending()
+					|| self.live_capture_interaction_is_dragging()
+				{
 					return OverlayControl::Continue;
 				}
 
 				let raw_cursor = self.current_device_cursor();
-				let Some((press_monitor, press_global, _)) =
-					self.resolve_live_cursor_point(raw_cursor)
-				else {
-					self.left_mouse_button_down = true;
-					self.left_mouse_button_down_monitor = Some(monitor);
-					self.left_mouse_button_down_global = Some(raw_cursor);
-					self.state.drag_rect = None;
+				let (press_monitor, press_global) =
+					if let Some((press_monitor, press_global, _)) =
+						self.resolve_live_cursor_point(raw_cursor)
+					{
+						(press_monitor, press_global)
+					} else {
+						(monitor, raw_cursor)
+					};
 
-					self.reset_toolbar_pointer_state();
-					self.request_redraw_for_monitor(monitor);
-
-					return OverlayControl::Continue;
-				};
-
-				self.left_mouse_button_down = true;
-				self.left_mouse_button_down_monitor = Some(press_monitor);
-				self.left_mouse_button_down_global = Some(press_global);
-				self.state.drag_rect = None;
-
-				self.reset_toolbar_pointer_state();
 				self.update_cursor_state(press_monitor, press_global);
 				self.update_hud_window_position(press_monitor, press_global);
+				self.begin_live_capture_press(press_monitor, press_global);
+
+				if matches!(
+					self.live_capture_interaction,
+					LiveCaptureInteraction::PressPending { click_target: None, .. }
+				) {
+					self.request_click_capture_hit_test(press_monitor, press_global);
+				}
+
+				self.reset_toolbar_pointer_state();
 				self.request_redraw_for_monitor(press_monitor);
 
 				OverlayControl::Continue
 			},
 			ElementState::Released => {
-				let Some(start_monitor) = self.left_mouse_button_down_monitor else {
-					return OverlayControl::Continue;
-				};
-				let Some(start_global) = self.left_mouse_button_down_global else {
-					self.left_mouse_button_down = false;
-					self.left_mouse_button_down_monitor = None;
-
-					return OverlayControl::Continue;
-				};
 				let raw_cursor = self.current_device_cursor();
-				let (release_monitor, release_global) =
-					if let Some((release_monitor, release_global, _)) =
+				let release_global =
+					if let Some((_, release_global, _)) =
 						self.resolve_live_cursor_point(raw_cursor)
 					{
-						(release_monitor, release_global)
+						release_global
 					} else {
-						(start_monitor, start_global)
+						raw_cursor
 					};
 
-				self.left_mouse_button_down = false;
-				self.left_mouse_button_down_monitor = None;
-				self.left_mouse_button_down_global = None;
-
-				let drag_rect = if start_monitor == release_monitor {
-					self.state.drag_rect.take()
-				} else {
-					None
-				};
-
-				if let Some(rect) = drag_rect
-					&& start_monitor == release_monitor
-					&& rect.monitor_id == release_monitor.id
-					&& rect.rect.width as f32 >= LIVE_DRAG_START_THRESHOLD_PX
-					&& rect.rect.height as f32 >= LIVE_DRAG_START_THRESHOLD_PX
-				{
-					self.begin_frozen_capture_with_rect(
-						release_monitor,
-						Some(rect.rect),
-						None,
-						Some(release_global),
-					);
-
-					return OverlayControl::Continue;
+				match self.live_capture_interaction {
+					LiveCaptureInteraction::PressPending {
+						monitor: press_monitor,
+						press_global,
+						click_target,
+						..
+					} => {
+						if let Some(target) = click_target {
+							self.begin_frozen_capture_from_click(
+								press_monitor,
+								target,
+								release_global,
+							);
+						} else if self.pending_click_hit_test_request_id.is_some() {
+							self.set_live_capture_interaction(
+								LiveCaptureInteraction::PressPending {
+									monitor: press_monitor,
+									press_global,
+									click_target: None,
+									release_global: Some(release_global),
+									released: true,
+								},
+							);
+						} else {
+							self.begin_frozen_capture_from_click(
+								press_monitor,
+								LiveClickCaptureTarget::fullscreen_fallback(),
+								release_global,
+							);
+						}
+					},
+					LiveCaptureInteraction::DraggingSelection { monitor, .. } => {
+						if let Some(drag_rect) =
+							self.state.drag_rect.filter(|rect| rect.monitor_id == monitor.id)
+						{
+							self.begin_frozen_capture_from_drag(
+								monitor,
+								drag_rect.rect,
+								release_global,
+							);
+						} else {
+							self.set_live_capture_interaction(LiveCaptureInteraction::Idle);
+						}
+					},
+					_ => {},
 				}
-
-				self.state.drag_rect = None;
-
-				self.request_click_capture_hit_test(release_monitor, release_global);
 
 				OverlayControl::Continue
 			},

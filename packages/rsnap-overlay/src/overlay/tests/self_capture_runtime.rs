@@ -4,6 +4,8 @@ use std::ptr;
 #[cfg(target_os = "macos")]
 use crate::overlay::RectPoints;
 #[cfg(target_os = "macos")]
+use crate::overlay::POST_HIDE_LIVE_SNAPSHOT_GRACE;
+#[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerRequestSendError;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::{
@@ -12,7 +14,8 @@ use crate::overlay::tests::{
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::{
-	GlobalPoint, Instant, OverlaySession, ScrollDirection, WorkerErrorSource, WorkerResponse,
+	Duration, GlobalPoint, Instant, OverlaySession, ScrollDirection, WorkerErrorSource,
+	WorkerResponse,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::worker_runtime::FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT;
@@ -221,6 +224,128 @@ fn armed_freeze_capture_without_worker_restores_visibility_and_surfaces_error() 
 	assert!(!session.pending_freeze_capture_armed);
 	assert!(!session.capture_windows_hidden);
 	assert_eq!(session.state.error_message.as_deref(), Some("Capture worker is unavailable."));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn begin_frozen_capture_hides_overlay_windows_immediately_on_macos() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		None,
+		Some(cursor),
+	);
+
+	assert!(session.pending_freeze_capture_armed);
+	assert!(session.capture_windows_hidden);
+	assert!(session.state.frozen_image.is_none());
+	assert!(session.pending_freeze_capture_windows_hidden_at.is_some());
+	assert!(session
+		.pending_freeze_capture_windows_hidden_at
+		.is_some_and(|hidden_at| hidden_at >= session.last_present_at));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn hidden_live_snapshot_can_finish_frozen_capture_before_authoritative_dispatch() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		None,
+		Some(cursor),
+	);
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_store_test_snapshot(monitor, Instant::now() + Duration::from_millis(1));
+
+	let _ = session.about_to_wait();
+
+	assert!(session.authoritative_frozen_capture_ready);
+	assert!(session.pending_freeze_capture.is_none());
+	assert!(session.inflight_freeze_capture.is_none());
+	assert!(!session.pending_freeze_capture_armed);
+	assert!(!session.capture_windows_hidden);
+	assert!(session.pending_freeze_capture_windows_hidden_at.is_none());
+	assert!(session.state.frozen_image.is_some());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn authoritative_dispatch_waits_briefly_for_hidden_live_snapshot() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		None,
+		Some(cursor),
+	);
+	session.maybe_dispatch_armed_freeze_capture();
+
+	assert_eq!(session.pending_freeze_capture, Some(monitor));
+	assert!(session.pending_freeze_capture_armed);
+	assert_eq!(session.inflight_freeze_capture, None);
+	assert!(session.capture_windows_hidden);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn authoritative_dispatch_falls_back_after_hidden_live_snapshot_grace_expires() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		None,
+		Some(cursor),
+	);
+
+	session.pending_freeze_capture_windows_hidden_at =
+		Some(Instant::now() - POST_HIDE_LIVE_SNAPSHOT_GRACE - Duration::from_millis(1));
+
+	session.maybe_dispatch_armed_freeze_capture();
+
+	assert!(session.pending_freeze_capture.is_none());
+	assert!(!session.pending_freeze_capture_armed);
+	assert_eq!(session.inflight_freeze_capture, Some(monitor));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn pre_hide_live_snapshot_does_not_finish_frozen_capture_before_authoritative_dispatch() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+	let stream = session.live_sample_stream.as_ref().unwrap();
+
+	stream.debug_store_test_snapshot(monitor, Instant::now());
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		None,
+		Some(cursor),
+	);
+
+	let _ = session.about_to_wait();
+
+	assert_eq!(session.pending_freeze_capture, Some(monitor));
+	assert_eq!(session.inflight_freeze_capture, None);
+	assert!(session.capture_windows_hidden);
+	assert!(session.state.frozen_image.is_none());
 }
 
 #[cfg(target_os = "macos")]
