@@ -599,6 +599,8 @@ pub struct OverlaySession {
 	pending_freeze_capture_armed: bool,
 	#[cfg(target_os = "macos")]
 	pending_freeze_capture_windows_hidden_at: Option<Instant>,
+	#[cfg(target_os = "macos")]
+	pending_freeze_capture_hidden_after_stream_generation: Option<u64>,
 	authoritative_frozen_capture_ready: bool,
 	frozen_transition_started_at: Option<Instant>,
 	frozen_transition_preview_committed_at: Option<Instant>,
@@ -836,8 +838,7 @@ impl OverlaySession {
 			loupe_patch_height_px: 0,
 			egui_repaint_deadline: Arc::new(Mutex::new(None)),
 			pending_freeze_capture: None, inflight_freeze_capture: None, pending_freeze_capture_armed: false,
-			#[cfg(target_os = "macos")]
-			pending_freeze_capture_windows_hidden_at: None,
+			#[cfg(target_os = "macos")] pending_freeze_capture_windows_hidden_at: None, #[cfg(target_os = "macos")] pending_freeze_capture_hidden_after_stream_generation: None,
 			authoritative_frozen_capture_ready: false, frozen_transition_started_at: None, frozen_transition_preview_committed_at: None,
 			frozen_transition_preview_source: None, frozen_transition_final_ready_at: None,
 			frozen_transition_toolbar_visible_at: None, frozen_transition_target_window_id: None,
@@ -1572,6 +1573,7 @@ impl OverlaySession {
 		self.inflight_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
 		self.pending_freeze_capture_windows_hidden_at = None;
+		self.pending_freeze_capture_hidden_after_stream_generation = None;
 		self.pending_window_freeze_capture = None;
 		self.inflight_window_freeze_capture = None;
 		self.authoritative_frozen_capture_ready = true;
@@ -1640,6 +1642,11 @@ impl OverlaySession {
 		let Some(hidden_at) = self.pending_freeze_capture_windows_hidden_at else {
 			return false;
 		};
+		let Some(hidden_after_stream_generation) =
+			self.pending_freeze_capture_hidden_after_stream_generation
+		else {
+			return false;
+		};
 
 		if !self.pending_freeze_capture_matches(monitor)
 			|| self.authoritative_frozen_capture_ready
@@ -1662,7 +1669,9 @@ impl OverlaySession {
 			return false;
 		};
 
-		if snapshot.captured_at < hidden_at {
+		if snapshot.captured_at < hidden_at
+			|| snapshot.stream_generation <= hidden_after_stream_generation
+		{
 			return false;
 		}
 
@@ -1683,6 +1692,11 @@ impl OverlaySession {
 		let Some(hidden_at) = self.pending_freeze_capture_windows_hidden_at else {
 			return false;
 		};
+		let Some(hidden_after_stream_generation) =
+			self.pending_freeze_capture_hidden_after_stream_generation
+		else {
+			return false;
+		};
 
 		if hidden_at.elapsed() >= POST_HIDE_LIVE_SNAPSHOT_GRACE {
 			return false;
@@ -1700,7 +1714,10 @@ impl OverlaySession {
 
 		stream
 			.peek_latest_rgba_snapshot(monitor)
-			.is_none_or(|snapshot| snapshot.captured_at < hidden_at)
+			.is_none_or(|snapshot| {
+				snapshot.captured_at < hidden_at
+					|| snapshot.stream_generation <= hidden_after_stream_generation
+			})
 	}
 
 	fn seed_frozen_toolbar_default_position(
@@ -1839,6 +1856,7 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		{
 			self.pending_freeze_capture_windows_hidden_at = None;
+			self.pending_freeze_capture_hidden_after_stream_generation = None;
 		}
 		self.inflight_freeze_capture = None;
 		self.authoritative_frozen_capture_ready = false;
@@ -1950,6 +1968,18 @@ impl OverlaySession {
 		);
 		self.hide_capture_windows();
 
+		self.pending_freeze_capture_hidden_after_stream_generation =
+			self.live_sample_stream.as_ref().and_then(|stream| {
+				let (after_frame_seq, hidden_after_stream_generation) = stream
+					.latest_frame_frontier_for_monitor(monitor)
+					.map_or((0, 0), |(frame_seq, stream_generation)| {
+						(frame_seq, stream_generation)
+					});
+
+				stream
+					.refresh_monitor_nonblocking_if_stale(monitor, after_frame_seq, true)
+					.then_some(hidden_after_stream_generation)
+			});
 		self.pending_freeze_capture_windows_hidden_at = Some(Instant::now());
 
 		self.note_frozen_transition_authoritative_handoff_armed(monitor);
