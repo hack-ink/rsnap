@@ -233,6 +233,13 @@ fn authoritative_freeze_capture_hides_overlay_windows_on_macos() {
 
 #[cfg(target_os = "macos")]
 #[test]
+#[allow(clippy::assertions_on_constants)]
+fn capture_windows_are_not_content_protected_on_macos() {
+	assert!(!super::super::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn repeated_freeze_capture_send_full_aborts_and_restores_hidden_windows() {
 	let monitor = tests::test_monitor();
 	let mut session = OverlaySession::new();
