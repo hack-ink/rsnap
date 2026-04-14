@@ -4,7 +4,9 @@ use crate::overlay::{
 	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2, WindowId,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS, WindowRenderer};
+use crate::overlay::{
+	FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS, WindowRenderer,
+};
 
 impl OverlaySession {
 	pub(super) fn handle_toolbar_window_moved(
