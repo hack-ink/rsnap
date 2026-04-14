@@ -2,9 +2,9 @@
 use std::ptr;
 
 #[cfg(target_os = "macos")]
-use crate::overlay::RectPoints;
-#[cfg(target_os = "macos")]
 use crate::overlay::POST_HIDE_LIVE_SNAPSHOT_GRACE;
+#[cfg(target_os = "macos")]
+use crate::overlay::RectPoints;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerRequestSendError;
 #[cfg(target_os = "macos")]
@@ -244,9 +244,11 @@ fn begin_frozen_capture_hides_overlay_windows_immediately_on_macos() {
 	assert!(session.capture_windows_hidden);
 	assert!(session.state.frozen_image.is_none());
 	assert!(session.pending_freeze_capture_windows_hidden_at.is_some());
-	assert!(session
-		.pending_freeze_capture_windows_hidden_at
-		.is_some_and(|hidden_at| hidden_at >= session.last_present_at));
+	assert!(
+		session
+			.pending_freeze_capture_windows_hidden_at
+			.is_some_and(|hidden_at| hidden_at >= session.last_present_at)
+	);
 }
 
 #[cfg(target_os = "macos")]
@@ -256,37 +258,26 @@ fn hidden_live_snapshot_can_finish_frozen_capture_before_authoritative_dispatch(
 	let cursor = GlobalPoint::new(120, 180);
 	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
-	session
-		.live_sample_stream
-		.as_ref()
-		.unwrap()
-		.debug_set_active_stream_generation(monitor.id, 1);
-	session
-		.live_sample_stream
-		.as_ref()
-		.unwrap()
-		.debug_store_test_snapshot_with_metadata(monitor, 1, 1, Instant::now());
+	session.live_sample_stream.as_ref().unwrap().debug_set_active_stream_generation(monitor.id, 1);
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		1,
+		1,
+		Instant::now(),
+	);
 	session.begin_frozen_capture_with_rect(
 		monitor,
 		Some(RectPoints::new(100, 140, 320, 240)),
 		None,
 		Some(cursor),
 	);
-	session
-		.live_sample_stream
-		.as_ref()
-		.unwrap()
-		.debug_set_active_stream_generation(monitor.id, 2);
-	session
-		.live_sample_stream
-		.as_ref()
-		.unwrap()
-		.debug_store_test_snapshot_with_metadata(
-			monitor,
-			2,
-			2,
-			Instant::now() + Duration::from_millis(1),
-		);
+	session.live_sample_stream.as_ref().unwrap().debug_set_active_stream_generation(monitor.id, 2);
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		2,
+		2,
+		Instant::now() + Duration::from_millis(1),
+	);
 
 	let _ = session.about_to_wait();
 
@@ -351,37 +342,26 @@ fn pre_hide_live_snapshot_does_not_finish_frozen_capture_before_authoritative_di
 	let cursor = GlobalPoint::new(120, 180);
 	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
-	session
-		.live_sample_stream
-		.as_ref()
-		.unwrap()
-		.debug_set_active_stream_generation(monitor.id, 1);
-	session
-		.live_sample_stream
-		.as_ref()
-		.unwrap()
-		.debug_store_test_snapshot_with_metadata(monitor, 1, 1, Instant::now());
+	session.live_sample_stream.as_ref().unwrap().debug_set_active_stream_generation(monitor.id, 1);
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		1,
+		1,
+		Instant::now(),
+	);
 	session.begin_frozen_capture_with_rect(
 		monitor,
 		Some(RectPoints::new(100, 140, 320, 240)),
 		None,
 		Some(cursor),
 	);
-	session
-		.live_sample_stream
-		.as_ref()
-		.unwrap()
-		.debug_set_active_stream_generation(monitor.id, 1);
-	session
-		.live_sample_stream
-		.as_ref()
-		.unwrap()
-		.debug_store_test_snapshot_with_metadata(
-			monitor,
-			2,
-			1,
-			Instant::now() + Duration::from_millis(1),
-		);
+	session.live_sample_stream.as_ref().unwrap().debug_set_active_stream_generation(monitor.id, 1);
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		2,
+		1,
+		Instant::now() + Duration::from_millis(1),
+	);
 
 	let _ = session.about_to_wait();
 

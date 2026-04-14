@@ -1187,8 +1187,7 @@ impl OverlaySession {
 		&self,
 		monitor: MonitorRect,
 	) -> Option<WindowFreezeCaptureTarget> {
-		self.pending_window_freeze_capture
-			.filter(|target| target.monitor == monitor)
+		self.pending_window_freeze_capture.filter(|target| target.monitor == monitor)
 	}
 
 	fn frozen_transition_elapsed_ms_since(
@@ -1264,13 +1263,13 @@ impl OverlaySession {
 		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
 			op: "overlay.freeze_transition_begin",
 			monitor: Some(monitor),
-				reason: None,
-				source: None,
-				snapshot_age_ms: None,
-				grace_ms: None,
-				captured_window_id: None,
-				message: "Frozen transition started.",
-			});
+			reason: None,
+			source: None,
+			snapshot_age_ms: None,
+			grace_ms: None,
+			captured_window_id: None,
+			message: "Frozen transition started.",
+		});
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1295,11 +1294,11 @@ impl OverlaySession {
 			"Frozen transition preview is deferred while capture settles."
 		);
 
-			self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-				op: "overlay.freeze_transition_preview_deferred",
-				monitor: Some(monitor),
-				reason: Some(reason),
-				source: None,
+		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
+			op: "overlay.freeze_transition_preview_deferred",
+			monitor: Some(monitor),
+			reason: Some(reason),
+			source: None,
 			snapshot_age_ms,
 			grace_ms: None,
 			captured_window_id: None,
@@ -1335,16 +1334,16 @@ impl OverlaySession {
 			"Frozen transition preview became visible."
 		);
 
-			self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-				op: "overlay.freeze_transition_preview_committed",
-				monitor: Some(monitor),
-				reason: None,
-				source: Some(source),
-				snapshot_age_ms,
-				grace_ms: None,
-				captured_window_id: None,
-				message: "Frozen transition preview became visible.",
-			});
+		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
+			op: "overlay.freeze_transition_preview_committed",
+			monitor: Some(monitor),
+			reason: None,
+			source: Some(source),
+			snapshot_age_ms,
+			grace_ms: None,
+			captured_window_id: None,
+			message: "Frozen transition preview became visible.",
+		});
 	}
 
 	fn note_frozen_transition_worker_requested(
@@ -1373,16 +1372,16 @@ impl OverlaySession {
 			"Authoritative frozen capture was requested from the worker."
 		);
 
-			self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-				op: "overlay.freeze_transition_worker_requested",
-				monitor: Some(monitor),
-				reason: None,
-				source: None,
-				snapshot_age_ms: None,
-				grace_ms: None,
-				captured_window_id: None,
-				message: "Authoritative frozen capture was requested from the worker.",
-			});
+		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
+			op: "overlay.freeze_transition_worker_requested",
+			monitor: Some(monitor),
+			reason: None,
+			source: None,
+			snapshot_age_ms: None,
+			grace_ms: None,
+			captured_window_id: None,
+			message: "Authoritative frozen capture was requested from the worker.",
+		});
 	}
 
 	fn note_frozen_transition_final_ready(
@@ -1415,16 +1414,16 @@ impl OverlaySession {
 			"Frozen transition final capture is ready."
 		);
 
-			self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-				op: "overlay.freeze_transition_final_ready",
-				monitor: Some(monitor),
-				reason: None,
-				source: Some(source),
-				snapshot_age_ms: None,
-				grace_ms: None,
-				captured_window_id,
-				message: "Frozen transition final capture is ready.",
-			});
+		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
+			op: "overlay.freeze_transition_final_ready",
+			monitor: Some(monitor),
+			reason: None,
+			source: Some(source),
+			snapshot_age_ms: None,
+			grace_ms: None,
+			captured_window_id,
+			message: "Frozen transition final capture is ready.",
+		});
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1453,16 +1452,16 @@ impl OverlaySession {
 			"Frozen transition toolbar became visible."
 		);
 
-			self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-				op: "overlay.freeze_transition_toolbar_visible",
-				monitor: Some(monitor),
-				reason: None,
-				source: None,
-				snapshot_age_ms: None,
-				grace_ms: None,
-				captured_window_id: None,
-				message: "Frozen transition toolbar became visible.",
-			});
+		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
+			op: "overlay.freeze_transition_toolbar_visible",
+			monitor: Some(monitor),
+			reason: None,
+			source: None,
+			snapshot_age_ms: None,
+			grace_ms: None,
+			captured_window_id: None,
+			message: "Frozen transition toolbar became visible.",
+		});
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1496,16 +1495,16 @@ impl OverlaySession {
 			"Frozen transition was aborted before completion."
 		);
 
-			self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-				op: "overlay.freeze_transition_aborted",
-				monitor: None,
-				reason: None,
-				source: None,
-				snapshot_age_ms: None,
-				grace_ms: None,
-				captured_window_id: None,
-				message: "Frozen transition was aborted before completion.",
-			});
+		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
+			op: "overlay.freeze_transition_aborted",
+			monitor: None,
+			reason: None,
+			source: None,
+			snapshot_age_ms: None,
+			grace_ms: None,
+			captured_window_id: None,
+			message: "Frozen transition was aborted before completion.",
+		});
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1714,12 +1713,10 @@ impl OverlaySession {
 			return false;
 		};
 
-		stream
-			.peek_latest_rgba_snapshot(monitor)
-			.is_none_or(|snapshot| {
-				snapshot.captured_at < hidden_at
-					|| snapshot.stream_generation <= hidden_after_stream_generation
-			})
+		stream.peek_latest_rgba_snapshot(monitor).is_none_or(|snapshot| {
+			snapshot.captured_at < hidden_at
+				|| snapshot.stream_generation <= hidden_after_stream_generation
+		})
 	}
 
 	fn seed_frozen_toolbar_default_position(
@@ -2004,11 +2001,7 @@ impl OverlaySession {
 			self.state.live_bg_monitor = None;
 
 			self.state.finish_freeze(monitor, image);
-			self.note_frozen_transition_preview_committed(
-				monitor,
-				"cached_live_background",
-				None,
-			);
+			self.note_frozen_transition_preview_committed(monitor, "cached_live_background", None);
 
 			self.pending_freeze_capture = None;
 			self.pending_freeze_capture_armed = false;

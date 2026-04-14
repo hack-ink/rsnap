@@ -1,9 +1,8 @@
 use crate::overlay::{
 	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, GlobalPoint, Instant,
 	LiveCaptureInteraction, LiveClickCaptureTarget, LiveCursorSample, LiveSampleApplyResult,
-	MonitorRect, OverlayControl, OverlayMode, OverlaySession, WindowFreezeCaptureTarget,
-	WindowHit, WindowListSnapshot,
-	WorkerErrorSource, WorkerRequestSendError, WorkerResponse,
+	MonitorRect, OverlayControl, OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit,
+	WindowListSnapshot, WorkerErrorSource, WorkerRequestSendError, WorkerResponse,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -121,7 +120,8 @@ impl OverlaySession {
 
 			return;
 		}
-		if self.should_wait_for_hidden_live_snapshot_before_authoritative_dispatch(overlay_monitor) {
+		if self.should_wait_for_hidden_live_snapshot_before_authoritative_dispatch(overlay_monitor)
+		{
 			self.schedule_egui_repaint_after(POST_HIDE_LIVE_SNAPSHOT_GRACE);
 
 			return;
@@ -810,8 +810,8 @@ impl OverlaySession {
 
 		self.pending_click_hit_test_request_id = None;
 
-		let click_target =
-			hit.map_or_else(LiveClickCaptureTarget::fullscreen_fallback, |window_hit| {
+		let click_target = hit
+			.map_or_else(LiveClickCaptureTarget::fullscreen_fallback, |window_hit| {
 				LiveClickCaptureTarget::from_window_hit(monitor, window_hit)
 			});
 
