@@ -25,10 +25,11 @@ use crate::overlay::{
 	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FROZEN_SELECTION_SCRIM_ALPHA_DARK,
 	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TEXT_PREVIEW_PLACEHOLDER,
 	FROZEN_TOOLBAR_BUTTON_SIZE_POINTS, FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId,
-	FrozenAnnotationColor, FrozenBrushState, FrozenCaptureSource, FrozenCommittedOverlay,
-	FrozenEditKind, FrozenSelectionCorner, FrozenTextAnnotation, FrozenTextEditState,
-	FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool,
-	HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_STROKE_WIDTH_POINTS, HudPillGeometry, HudTheme, Id,
+	FrozenAnnotationColor, FrozenArrowAnnotation, FrozenBrushState, FrozenCaptureSource,
+	FrozenCommittedOverlay, FrozenEditKind, FrozenSelectionCorner, FrozenSpotlightAnnotation,
+	FrozenTextAnnotation, FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState,
+	FrozenToolbarState, FrozenToolbarTool, HUD_PILL_INNER_MARGIN_X_POINTS,
+	HUD_PILL_STROKE_WIDTH_POINTS, HudPillGeometry, HudTheme, Id,
 	LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK, LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT,
 	LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh, MonitorRect, Order, OverlayMode,
 	OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints, SELECTION_DASHED_BORDER_ALPHA,
@@ -57,6 +58,128 @@ const FROZEN_ANNOTATION_TOOLBAR_SIZE_PREVIEW_GAP_POINTS: f32 = 8.0;
 const FROZEN_ANNOTATION_TOOLBAR_PEN_PREVIEW_LENGTH_POINTS: f32 = 18.0;
 const FROZEN_TEXT_INTERACTION_PADDING_X_POINTS: f32 = 8.0;
 const FROZEN_TEXT_INTERACTION_PADDING_Y_POINTS: f32 = 6.0;
+#[cfg(target_os = "macos")]
+const FROZEN_TOOLBAR_TOOLS_SCROLL_MODE: [FrozenToolbarTool; 3] =
+	[FrozenToolbarTool::Ocr, FrozenToolbarTool::Copy, FrozenToolbarTool::Save];
+#[cfg(not(target_os = "macos"))]
+const FROZEN_TOOLBAR_TOOLS_SCROLL_MODE: [FrozenToolbarTool; 2] =
+	[FrozenToolbarTool::Copy, FrozenToolbarTool::Save];
+#[cfg(target_os = "macos")]
+const FROZEN_TOOLBAR_TOOLS_WITH_SCROLL_AND_AUTO_CENTER: [FrozenToolbarTool; 13] = [
+	FrozenToolbarTool::Pointer,
+	FrozenToolbarTool::Pen,
+	FrozenToolbarTool::Arrow,
+	FrozenToolbarTool::Text,
+	FrozenToolbarTool::Mosaic,
+	FrozenToolbarTool::Spotlight,
+	FrozenToolbarTool::Undo,
+	FrozenToolbarTool::Redo,
+	FrozenToolbarTool::AutoCenter,
+	FrozenToolbarTool::Scroll,
+	FrozenToolbarTool::Ocr,
+	FrozenToolbarTool::Copy,
+	FrozenToolbarTool::Save,
+];
+#[cfg(not(target_os = "macos"))]
+const FROZEN_TOOLBAR_TOOLS_WITH_SCROLL_AND_AUTO_CENTER: [FrozenToolbarTool; 12] = [
+	FrozenToolbarTool::Pointer,
+	FrozenToolbarTool::Pen,
+	FrozenToolbarTool::Arrow,
+	FrozenToolbarTool::Text,
+	FrozenToolbarTool::Mosaic,
+	FrozenToolbarTool::Spotlight,
+	FrozenToolbarTool::Undo,
+	FrozenToolbarTool::Redo,
+	FrozenToolbarTool::AutoCenter,
+	FrozenToolbarTool::Scroll,
+	FrozenToolbarTool::Copy,
+	FrozenToolbarTool::Save,
+];
+#[cfg(target_os = "macos")]
+const FROZEN_TOOLBAR_TOOLS_WITH_AUTO_CENTER: [FrozenToolbarTool; 12] = [
+	FrozenToolbarTool::Pointer,
+	FrozenToolbarTool::Pen,
+	FrozenToolbarTool::Arrow,
+	FrozenToolbarTool::Text,
+	FrozenToolbarTool::Mosaic,
+	FrozenToolbarTool::Spotlight,
+	FrozenToolbarTool::Undo,
+	FrozenToolbarTool::Redo,
+	FrozenToolbarTool::AutoCenter,
+	FrozenToolbarTool::Ocr,
+	FrozenToolbarTool::Copy,
+	FrozenToolbarTool::Save,
+];
+#[cfg(not(target_os = "macos"))]
+const FROZEN_TOOLBAR_TOOLS_WITH_AUTO_CENTER: [FrozenToolbarTool; 11] = [
+	FrozenToolbarTool::Pointer,
+	FrozenToolbarTool::Pen,
+	FrozenToolbarTool::Arrow,
+	FrozenToolbarTool::Text,
+	FrozenToolbarTool::Mosaic,
+	FrozenToolbarTool::Spotlight,
+	FrozenToolbarTool::Undo,
+	FrozenToolbarTool::Redo,
+	FrozenToolbarTool::AutoCenter,
+	FrozenToolbarTool::Copy,
+	FrozenToolbarTool::Save,
+];
+#[cfg(target_os = "macos")]
+const FROZEN_TOOLBAR_TOOLS_WITH_SCROLL: [FrozenToolbarTool; 12] = [
+	FrozenToolbarTool::Pointer,
+	FrozenToolbarTool::Pen,
+	FrozenToolbarTool::Arrow,
+	FrozenToolbarTool::Text,
+	FrozenToolbarTool::Mosaic,
+	FrozenToolbarTool::Spotlight,
+	FrozenToolbarTool::Undo,
+	FrozenToolbarTool::Redo,
+	FrozenToolbarTool::Scroll,
+	FrozenToolbarTool::Ocr,
+	FrozenToolbarTool::Copy,
+	FrozenToolbarTool::Save,
+];
+#[cfg(not(target_os = "macos"))]
+const FROZEN_TOOLBAR_TOOLS_WITH_SCROLL: [FrozenToolbarTool; 11] = [
+	FrozenToolbarTool::Pointer,
+	FrozenToolbarTool::Pen,
+	FrozenToolbarTool::Arrow,
+	FrozenToolbarTool::Text,
+	FrozenToolbarTool::Mosaic,
+	FrozenToolbarTool::Spotlight,
+	FrozenToolbarTool::Undo,
+	FrozenToolbarTool::Redo,
+	FrozenToolbarTool::Scroll,
+	FrozenToolbarTool::Copy,
+	FrozenToolbarTool::Save,
+];
+#[cfg(target_os = "macos")]
+const FROZEN_TOOLBAR_TOOLS_WITHOUT_SCROLL: [FrozenToolbarTool; 11] = [
+	FrozenToolbarTool::Pointer,
+	FrozenToolbarTool::Pen,
+	FrozenToolbarTool::Arrow,
+	FrozenToolbarTool::Text,
+	FrozenToolbarTool::Mosaic,
+	FrozenToolbarTool::Spotlight,
+	FrozenToolbarTool::Undo,
+	FrozenToolbarTool::Redo,
+	FrozenToolbarTool::Ocr,
+	FrozenToolbarTool::Copy,
+	FrozenToolbarTool::Save,
+];
+#[cfg(not(target_os = "macos"))]
+const FROZEN_TOOLBAR_TOOLS_WITHOUT_SCROLL: [FrozenToolbarTool; 10] = [
+	FrozenToolbarTool::Pointer,
+	FrozenToolbarTool::Pen,
+	FrozenToolbarTool::Arrow,
+	FrozenToolbarTool::Text,
+	FrozenToolbarTool::Mosaic,
+	FrozenToolbarTool::Spotlight,
+	FrozenToolbarTool::Undo,
+	FrozenToolbarTool::Redo,
+	FrozenToolbarTool::Copy,
+	FrozenToolbarTool::Save,
+];
 
 #[derive(Clone, Copy)]
 pub(in crate::overlay) struct SelectionScrimStyle {
@@ -73,7 +196,7 @@ enum FrozenAnnotationStyleToolbarKind {
 impl FrozenAnnotationStyleToolbarKind {
 	fn from_toolbar_state(toolbar_state: &FrozenToolbarState) -> Option<Self> {
 		match toolbar_state.selected_tool {
-			FrozenToolbarTool::Pen => Some(Self::Pen),
+			FrozenToolbarTool::Pen | FrozenToolbarTool::Arrow => Some(Self::Pen),
 			FrozenToolbarTool::Text => Some(Self::Text),
 			_ => None,
 		}
@@ -289,6 +412,10 @@ impl WindowRenderer {
 		frozen_toolbar_reserved_rect: Option<Rect>,
 		frozen_edit_history: &[FrozenEditKind],
 		frozen_brush_state: Option<&FrozenBrushState>,
+		frozen_arrow_annotations: &[FrozenArrowAnnotation],
+		frozen_arrow_preview: Option<&FrozenArrowAnnotation>,
+		frozen_spotlight_annotations: &[FrozenSpotlightAnnotation],
+		frozen_spotlight_preview_rect: Option<RectPoints>,
 		frozen_text_annotations: &[FrozenTextAnnotation],
 		frozen_text_edit: Option<&FrozenTextEditState>,
 		frozen_text_style: FrozenTextStyle,
@@ -298,6 +425,9 @@ impl WindowRenderer {
 		_selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
+		let Some(capture_rect_points) = state.frozen_capture_rect else {
+			return false;
+		};
 		let Some(rect) = Self::frozen_capture_focus_rect(state, screen_rect) else {
 			return false;
 		};
@@ -316,10 +446,20 @@ impl WindowRenderer {
 		);
 		let brush_painter = painter.with_clip_rect(rect);
 
+		has_affordance |= Self::render_frozen_spotlight_annotations(
+			&brush_painter,
+			capture_rect_points,
+			screen_rect,
+			frozen_spotlight_annotations,
+			frozen_spotlight_preview_rect,
+			theme,
+			selection_dashed_border_cache,
+		);
 		has_affordance |= Self::render_frozen_committed_overlay_annotations(
 			&brush_painter,
 			frozen_edit_history,
 			frozen_brush_state,
+			frozen_arrow_annotations,
 			frozen_text_annotations,
 		);
 
@@ -375,6 +515,9 @@ impl WindowRenderer {
 			has_affordance |=
 				Self::render_active_frozen_brush_stroke(&brush_painter, frozen_brush_state);
 		}
+		if let Some(arrow_preview) = frozen_arrow_preview {
+			has_affordance |= Self::paint_frozen_arrow(&brush_painter, arrow_preview);
+		}
 
 		has_affordance
 	}
@@ -383,6 +526,7 @@ impl WindowRenderer {
 		brush_painter: &Painter,
 		frozen_edit_history: &[FrozenEditKind],
 		frozen_brush_state: Option<&FrozenBrushState>,
+		frozen_arrow_annotations: &[FrozenArrowAnnotation],
 		frozen_text_annotations: &[FrozenTextAnnotation],
 	) -> bool {
 		let font_fill = |annotation: &FrozenTextAnnotation| {
@@ -398,6 +542,7 @@ impl WindowRenderer {
 		OverlaySession::for_each_frozen_committed_overlay(
 			frozen_edit_history,
 			brush_strokes,
+			frozen_arrow_annotations,
 			frozen_text_annotations,
 			|overlay| match overlay {
 				FrozenCommittedOverlay::Brush(stroke) => {
@@ -407,6 +552,9 @@ impl WindowRenderer {
 						stroke.style.stroke_width_points * 0.5,
 						stroke.style.color.swatch_fill(),
 					);
+				},
+				FrozenCommittedOverlay::Arrow(annotation) => {
+					drew |= Self::paint_frozen_arrow(brush_painter, annotation);
 				},
 				FrozenCommittedOverlay::Text(annotation) => {
 					let (font_id, fill) = font_fill(annotation);
@@ -425,6 +573,58 @@ impl WindowRenderer {
 		);
 
 		drew
+	}
+
+	fn render_frozen_spotlight_annotations(
+		painter: &Painter,
+		capture_rect: RectPoints,
+		screen_rect: Rect,
+		annotations: &[FrozenSpotlightAnnotation],
+		preview_rect: Option<RectPoints>,
+		theme: HudTheme,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
+	) -> bool {
+		let spotlight_rects = OverlaySession::clipped_frozen_spotlight_rects(
+			capture_rect,
+			annotations.iter().map(|annotation| annotation.rect).chain(preview_rect),
+		);
+
+		if spotlight_rects.is_empty() {
+			return false;
+		}
+
+		let fill = Color32::from_black_alpha(OverlaySession::frozen_spotlight_scrim_alpha());
+
+		for scrim_rect in
+			OverlaySession::frozen_spotlight_scrim_rects(capture_rect, &spotlight_rects)
+		{
+			let scrim_rect = Self::selection_focus_rect(scrim_rect, screen_rect);
+
+			if scrim_rect.width() > 0.0 && scrim_rect.height() > 0.0 {
+				painter.rect_filled(scrim_rect, 0.0, fill);
+			}
+		}
+
+		let Some(preview_rect) = preview_rect else {
+			return true;
+		};
+		let Some(preview_rect) =
+			OverlaySession::clipped_frozen_spotlight_rects(capture_rect, [preview_rect])
+				.into_iter()
+				.next()
+		else {
+			return true;
+		};
+
+		Self::render_selection_dashed_border(
+			painter,
+			Self::selection_focus_rect(preview_rect, screen_rect),
+			screen_rect,
+			theme,
+			Some(2.1),
+			false,
+			selection_dashed_border_cache,
+		)
 	}
 
 	fn render_active_frozen_brush_stroke(
@@ -500,6 +700,51 @@ impl WindowRenderer {
 				true
 			},
 		}
+	}
+
+	fn paint_frozen_arrow(painter: &Painter, annotation: &FrozenArrowAnnotation) -> bool {
+		let Some(geometry) = OverlaySession::frozen_arrow_geometry(annotation) else {
+			return false;
+		};
+		let stroke_color = annotation.style.color.swatch_fill();
+		let stroke_width =
+			OverlaySession::frozen_arrow_stroke_width_points(annotation.style.stroke_width_points);
+		let outline_width =
+			OverlaySession::frozen_arrow_outline_width_points(annotation.style.stroke_width_points);
+		let outline_stroke_width = OverlaySession::frozen_arrow_outline_stroke_width_points(
+			annotation.style.stroke_width_points,
+		);
+		let outline_color = Color32::from_rgba_unmultiplied(255, 255, 255, 208);
+		let (outline_tip, outline_left, outline_right) =
+			OverlaySession::frozen_arrow_expanded_triangle(
+				geometry.tip,
+				geometry.head_left,
+				geometry.head_right,
+				outline_width,
+			);
+
+		painter.line_segment(
+			[annotation.start, geometry.shaft_end],
+			Stroke::new(outline_stroke_width, outline_color),
+		);
+		painter.circle_filled(annotation.start, stroke_width * 0.5 + outline_width, outline_color);
+		painter.add(Shape::convex_polygon(
+			vec![outline_tip, outline_left, outline_right],
+			outline_color,
+			Stroke::NONE,
+		));
+		painter.line_segment(
+			[annotation.start, geometry.shaft_end],
+			Stroke::new(stroke_width, stroke_color),
+		);
+		painter.circle_filled(annotation.start, stroke_width * 0.5, stroke_color);
+		painter.add(Shape::convex_polygon(
+			vec![geometry.tip, geometry.head_left, geometry.head_right],
+			stroke_color,
+			Stroke::NONE,
+		));
+
+		true
 	}
 
 	fn render_frozen_text_annotations(
@@ -2334,123 +2579,16 @@ impl WindowRenderer {
 	pub(in crate::overlay) fn frozen_toolbar_tools(
 		toolbar_state: &FrozenToolbarState,
 	) -> &'static [FrozenToolbarTool] {
-		#[cfg(target_os = "macos")]
-		const TOOLS_SCROLL_MODE: [FrozenToolbarTool; 3] =
-			[FrozenToolbarTool::Ocr, FrozenToolbarTool::Copy, FrozenToolbarTool::Save];
-		#[cfg(not(target_os = "macos"))]
-		const TOOLS_SCROLL_MODE: [FrozenToolbarTool; 2] =
-			[FrozenToolbarTool::Copy, FrozenToolbarTool::Save];
-		#[cfg(target_os = "macos")]
-		const TOOLS_WITH_SCROLL_AND_AUTO_CENTER: [FrozenToolbarTool; 11] = [
-			FrozenToolbarTool::Pointer,
-			FrozenToolbarTool::Pen,
-			FrozenToolbarTool::Text,
-			FrozenToolbarTool::Mosaic,
-			FrozenToolbarTool::Undo,
-			FrozenToolbarTool::Redo,
-			FrozenToolbarTool::AutoCenter,
-			FrozenToolbarTool::Scroll,
-			FrozenToolbarTool::Ocr,
-			FrozenToolbarTool::Copy,
-			FrozenToolbarTool::Save,
-		];
-		#[cfg(not(target_os = "macos"))]
-		const TOOLS_WITH_SCROLL_AND_AUTO_CENTER: [FrozenToolbarTool; 10] = [
-			FrozenToolbarTool::Pointer,
-			FrozenToolbarTool::Pen,
-			FrozenToolbarTool::Text,
-			FrozenToolbarTool::Mosaic,
-			FrozenToolbarTool::Undo,
-			FrozenToolbarTool::Redo,
-			FrozenToolbarTool::AutoCenter,
-			FrozenToolbarTool::Scroll,
-			FrozenToolbarTool::Copy,
-			FrozenToolbarTool::Save,
-		];
-		#[cfg(target_os = "macos")]
-		const TOOLS_WITH_AUTO_CENTER: [FrozenToolbarTool; 10] = [
-			FrozenToolbarTool::Pointer,
-			FrozenToolbarTool::Pen,
-			FrozenToolbarTool::Text,
-			FrozenToolbarTool::Mosaic,
-			FrozenToolbarTool::Undo,
-			FrozenToolbarTool::Redo,
-			FrozenToolbarTool::AutoCenter,
-			FrozenToolbarTool::Ocr,
-			FrozenToolbarTool::Copy,
-			FrozenToolbarTool::Save,
-		];
-		#[cfg(not(target_os = "macos"))]
-		const TOOLS_WITH_AUTO_CENTER: [FrozenToolbarTool; 9] = [
-			FrozenToolbarTool::Pointer,
-			FrozenToolbarTool::Pen,
-			FrozenToolbarTool::Text,
-			FrozenToolbarTool::Mosaic,
-			FrozenToolbarTool::Undo,
-			FrozenToolbarTool::Redo,
-			FrozenToolbarTool::AutoCenter,
-			FrozenToolbarTool::Copy,
-			FrozenToolbarTool::Save,
-		];
-		#[cfg(target_os = "macos")]
-		const TOOLS_WITH_SCROLL: [FrozenToolbarTool; 10] = [
-			FrozenToolbarTool::Pointer,
-			FrozenToolbarTool::Pen,
-			FrozenToolbarTool::Text,
-			FrozenToolbarTool::Mosaic,
-			FrozenToolbarTool::Undo,
-			FrozenToolbarTool::Redo,
-			FrozenToolbarTool::Scroll,
-			FrozenToolbarTool::Ocr,
-			FrozenToolbarTool::Copy,
-			FrozenToolbarTool::Save,
-		];
-		#[cfg(not(target_os = "macos"))]
-		const TOOLS_WITH_SCROLL: [FrozenToolbarTool; 9] = [
-			FrozenToolbarTool::Pointer,
-			FrozenToolbarTool::Pen,
-			FrozenToolbarTool::Text,
-			FrozenToolbarTool::Mosaic,
-			FrozenToolbarTool::Undo,
-			FrozenToolbarTool::Redo,
-			FrozenToolbarTool::Scroll,
-			FrozenToolbarTool::Copy,
-			FrozenToolbarTool::Save,
-		];
-		#[cfg(target_os = "macos")]
-		const TOOLS_WITHOUT_SCROLL: [FrozenToolbarTool; 9] = [
-			FrozenToolbarTool::Pointer,
-			FrozenToolbarTool::Pen,
-			FrozenToolbarTool::Text,
-			FrozenToolbarTool::Mosaic,
-			FrozenToolbarTool::Undo,
-			FrozenToolbarTool::Redo,
-			FrozenToolbarTool::Ocr,
-			FrozenToolbarTool::Copy,
-			FrozenToolbarTool::Save,
-		];
-		#[cfg(not(target_os = "macos"))]
-		const TOOLS_WITHOUT_SCROLL: [FrozenToolbarTool; 8] = [
-			FrozenToolbarTool::Pointer,
-			FrozenToolbarTool::Pen,
-			FrozenToolbarTool::Text,
-			FrozenToolbarTool::Mosaic,
-			FrozenToolbarTool::Undo,
-			FrozenToolbarTool::Redo,
-			FrozenToolbarTool::Copy,
-			FrozenToolbarTool::Save,
-		];
-
 		if toolbar_state.scroll_capture_active {
-			&TOOLS_SCROLL_MODE
+			&FROZEN_TOOLBAR_TOOLS_SCROLL_MODE
 		} else if toolbar_state.auto_center_available && toolbar_state.scroll_capture_available {
-			&TOOLS_WITH_SCROLL_AND_AUTO_CENTER
+			&FROZEN_TOOLBAR_TOOLS_WITH_SCROLL_AND_AUTO_CENTER
 		} else if toolbar_state.auto_center_available {
-			&TOOLS_WITH_AUTO_CENTER
+			&FROZEN_TOOLBAR_TOOLS_WITH_AUTO_CENTER
 		} else if toolbar_state.scroll_capture_available {
-			&TOOLS_WITH_SCROLL
+			&FROZEN_TOOLBAR_TOOLS_WITH_SCROLL
 		} else {
-			&TOOLS_WITHOUT_SCROLL
+			&FROZEN_TOOLBAR_TOOLS_WITHOUT_SCROLL
 		}
 	}
 

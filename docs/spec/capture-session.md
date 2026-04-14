@@ -62,8 +62,14 @@ cross-platform architecture.
    - `Space` -> copy the frozen cropped PNG (region/window/fullscreen) to the system clipboard, then exit
    - On macOS, the frozen toolbar may expose `Recognize Text`, which runs Apple Vision OCR on the current frozen capture, copies the recognized text to the clipboard, and exits
    - Cmd+S (macOS) / Ctrl+S -> save the frozen cropped PNG to disk, then exit
-   - In Frozen mode, toolbar-driven annotations are part of the frozen capture state; the pen-tool
+   - In Frozen mode, toolbar-driven annotations are part of the frozen capture state. Current
+     annotation/edit tools are pointer, pen, arrow, text, mosaic, and spotlight; the pen-tool
      contract lives in `docs/spec/annotation-pen.md`
+   - Arrow annotations are drag-defined overlays that participate in preview, export, and
+     undo/redo like other committed Frozen-mode annotations.
+   - Spotlight annotations keep the selected rectangle undimmed while darkening the surrounding
+     frozen capture, and committed pen/arrow/text overlays must render above the spotlight effect
+     in both preview and export.
    - Esc -> cancel and exit without copying
    - After a dragged-region freeze enters Frozen mode, dragging inside the bright region
      repositions the frozen capture rect without resizing it and keeps it on the same monitor

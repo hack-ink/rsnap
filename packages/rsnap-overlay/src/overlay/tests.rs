@@ -53,15 +53,16 @@ use crate::overlay::session_state::FrozenBrushStyle;
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 use crate::overlay::{
 	self, ActiveFrozenBrushStroke, FROZEN_EDIT_HISTORY_LIMIT, FROZEN_TEXT_CARET_REPAINT_INTERVAL,
-	FrozenAnnotationColor, FrozenBrushModelState, FrozenBrushStroke, FrozenCommittedOverlay,
-	FrozenEditKind, FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit,
-	FrozenSelectionDragState, FrozenTextAnnotation, FrozenTextEditState, FrozenTextInputSource,
-	FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme,
-	OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
-	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
-	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache, SelectionFlowGeometryCache,
-	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
-	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, hud_helpers,
+	FrozenAnnotationColor, FrozenArrowAnnotation, FrozenBrushModelState, FrozenBrushStroke,
+	FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform, FrozenImagePatch,
+	FrozenMosaicEdit, FrozenSelectionDragState, FrozenSpotlightAnnotation, FrozenTextAnnotation,
+	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
+	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
+	OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_SIZE_BADGE_GAP_PX,
+	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
+	SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
+	Vec2, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -1382,6 +1383,79 @@ fn toolbar_mouse_release_stops_active_frozen_text_edit_drag() {
 }
 
 #[test]
+fn toolbar_mouse_release_commits_active_frozen_arrow_drag() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Arrow;
+
+	assert!(session.begin_frozen_arrow_drag(GlobalPoint::new(140, 160)));
+	assert!(session.update_frozen_arrow_drag(GlobalPoint::new(220, 200)));
+
+	session.toolbar_left_button_down = true;
+
+	let _ = session.handle_toolbar_mouse_input(ElementState::Released);
+
+	assert!(!session.toolbar_left_button_down);
+	assert!(!session.frozen_arrow_drag.active);
+	assert_eq!(session.frozen_arrow_annotations.len(), 1);
+	assert_eq!(session.frozen_edit_undo_stack.last(), Some(&FrozenEditKind::ArrowAnnotation));
+}
+
+#[test]
+fn toolbar_mouse_release_commits_active_frozen_spotlight_drag() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Spotlight;
+
+	assert!(session.begin_frozen_spotlight_drag(GlobalPoint::new(140, 160)));
+	assert!(session.update_frozen_spotlight_drag_rect(GlobalPoint::new(220, 200)));
+
+	session.toolbar_left_button_down = true;
+
+	let _ = session.handle_toolbar_mouse_input(ElementState::Released);
+
+	assert!(!session.toolbar_left_button_down);
+	assert!(!session.frozen_spotlight_drag.active);
+	assert_eq!(session.frozen_spotlight_preview_rect, None);
+	assert_eq!(session.frozen_spotlight_annotations.len(), 1);
+	assert_eq!(session.frozen_edit_undo_stack.last(), Some(&FrozenEditKind::SpotlightAnnotation));
+}
+
+#[test]
+fn toolbar_mouse_release_finishes_active_frozen_brush_stroke() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+
+	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(140, 160)));
+	assert!(session.update_frozen_brush_stroke(GlobalPoint::new(220, 200)));
+
+	session.toolbar_left_button_down = true;
+
+	let _ = session.handle_toolbar_mouse_input(ElementState::Released);
+
+	assert!(!session.toolbar_left_button_down);
+	assert!(session.frozen_brush.active_stroke.is_none());
+	assert_eq!(session.frozen_brush.committed_strokes.len(), 1);
+	assert_eq!(session.frozen_edit_undo_stack.last(), Some(&FrozenEditKind::BrushStroke));
+}
+
+#[test]
 fn toolbar_cursor_left_during_drag_keeps_drag_session_alive() {
 	let mut session = OverlaySession::new();
 
@@ -1993,6 +2067,138 @@ fn current_export_image_renders_frozen_text_annotations() {
 }
 
 #[test]
+fn current_export_image_applies_frozen_spotlight_outside_selection() {
+	let monitor = test_monitor_with_scale(8, 8, 1_000);
+	let base = image::RgbaImage::from_pixel(8, 8, Rgba([120, 180, 210, 255]));
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, base);
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+
+	session
+		.frozen_spotlight_annotations
+		.push(FrozenSpotlightAnnotation { rect: RectPoints::new(2, 2, 3, 3) });
+	session.push_frozen_edit_to_undo_history(FrozenEditKind::SpotlightAnnotation);
+
+	let export = session.current_export_image().expect("export image");
+	let dimmed = |channel: u8| {
+		((u16::from(channel) * OverlaySession::frozen_spotlight_outside_brightness_numerator())
+			/ 255) as u8
+	};
+
+	assert_eq!(export.get_pixel(0, 0), &Rgba([dimmed(120), dimmed(180), dimmed(210), 255]));
+	assert_eq!(export.get_pixel(3, 3), &Rgba([120, 180, 210, 255]));
+}
+
+#[test]
+fn frozen_spotlight_export_dim_matches_preview_scrim_alpha() {
+	let visible_numerator = u16::from(u8::MAX - OverlaySession::frozen_spotlight_scrim_alpha());
+
+	assert_eq!(OverlaySession::frozen_spotlight_outside_brightness_numerator(), visible_numerator,);
+
+	for channel in [0_u8, 1, 17, 64, 120, 180, 210, 254, 255] {
+		let preview_dimmed = ((u16::from(channel) * visible_numerator) / 255) as u8;
+
+		assert_eq!(
+			OverlaySession::dim_frozen_spotlight_channel(channel),
+			preview_dimmed,
+			"channel {channel}",
+		);
+	}
+}
+
+#[test]
+fn current_export_image_applies_multiple_frozen_spotlights_without_extra_darkening() {
+	let monitor = test_monitor_with_scale(8, 8, 1_000);
+	let base = image::RgbaImage::from_pixel(8, 8, Rgba([120, 180, 210, 255]));
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, base);
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+
+	session
+		.frozen_spotlight_annotations
+		.push(FrozenSpotlightAnnotation { rect: RectPoints::new(1, 1, 2, 2) });
+	session.push_frozen_edit_to_undo_history(FrozenEditKind::SpotlightAnnotation);
+	session
+		.frozen_spotlight_annotations
+		.push(FrozenSpotlightAnnotation { rect: RectPoints::new(5, 5, 2, 2) });
+	session.push_frozen_edit_to_undo_history(FrozenEditKind::SpotlightAnnotation);
+
+	let export = session.current_export_image().expect("export image");
+	let dimmed = |channel: u8| {
+		((u16::from(channel) * OverlaySession::frozen_spotlight_outside_brightness_numerator())
+			/ 255) as u8
+	};
+
+	assert_eq!(export.get_pixel(0, 0), &Rgba([dimmed(120), dimmed(180), dimmed(210), 255]));
+	assert_eq!(export.get_pixel(4, 4), &Rgba([dimmed(120), dimmed(180), dimmed(210), 255]));
+	assert_eq!(export.get_pixel(1, 1), &Rgba([120, 180, 210, 255]));
+	assert_eq!(export.get_pixel(5, 5), &Rgba([120, 180, 210, 255]));
+}
+
+#[test]
+fn current_export_image_renders_frozen_arrow_after_spotlight_scrim() {
+	let monitor = test_monitor_with_scale(8, 8, 1_000);
+	let base = image::RgbaImage::from_pixel(8, 8, Rgba([120, 120, 120, 255]));
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, base);
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+
+	session
+		.frozen_spotlight_annotations
+		.push(FrozenSpotlightAnnotation { rect: RectPoints::new(3, 3, 2, 2) });
+	session.push_frozen_edit_to_undo_history(FrozenEditKind::SpotlightAnnotation);
+	session.frozen_arrow_annotations.push(FrozenArrowAnnotation {
+		start: Pos2::new(1.0, 1.0),
+		end: Pos2::new(7.0, 1.0),
+		style: FrozenBrushStyle::default(),
+	});
+	session.push_frozen_edit_to_undo_history(FrozenEditKind::ArrowAnnotation);
+
+	let export = session.current_export_image().expect("export image");
+	let dimmed =
+		((120_u16 * OverlaySession::frozen_spotlight_outside_brightness_numerator()) / 255) as u8;
+
+	assert_eq!(export.get_pixel(6, 6), &Rgba([dimmed, dimmed, dimmed, 255]));
+	assert_eq!(export.get_pixel(4, 1), &Rgba(FrozenBrushStyle::default().color.export_rgba()));
+}
+
+#[test]
+fn current_export_image_renders_frozen_arrow_outline_without_tinting() {
+	let monitor = test_monitor_with_scale(32, 32, 1_000);
+	let base = image::RgbaImage::from_pixel(32, 32, Rgba([0, 0, 0, 255]));
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, base);
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 32, 32));
+
+	session.frozen_arrow_annotations.push(FrozenArrowAnnotation {
+		start: Pos2::new(4.0, 16.0),
+		end: Pos2::new(28.0, 16.0),
+		style: FrozenBrushStyle { stroke_width_points: 6.0, ..FrozenBrushStyle::default() },
+	});
+	session.push_frozen_edit_to_undo_history(FrozenEditKind::ArrowAnnotation);
+
+	let export = session.current_export_image().expect("export image");
+	let halo_pixel = export.get_pixel(16, 10);
+
+	assert_eq!(halo_pixel[3], 255);
+	assert!(halo_pixel[0].abs_diff(halo_pixel[1]) <= 1);
+	assert!(halo_pixel[1].abs_diff(halo_pixel[2]) <= 1);
+	assert!(halo_pixel[0] > 0);
+}
+
+#[test]
 fn scroll_capture_hides_frozen_text_annotations_in_preview() {
 	let mut session = OverlaySession::new();
 
@@ -2066,10 +2272,14 @@ fn frozen_committed_overlay_iteration_preserves_cross_tool_order() {
 	OverlaySession::for_each_frozen_committed_overlay(
 		&session.frozen_edit_undo_stack,
 		&session.frozen_brush.committed_strokes,
+		&session.frozen_arrow_annotations,
 		&session.frozen_text_annotations,
 		|overlay| match overlay {
 			FrozenCommittedOverlay::Brush(stroke) => {
 				observed.push(format!("brush:{:.0}", stroke.points[0].x));
+			},
+			FrozenCommittedOverlay::Arrow(annotation) => {
+				observed.push(format!("arrow:{:.0}", annotation.start.x));
 			},
 			FrozenCommittedOverlay::Text(annotation) => {
 				observed.push(format!("text:{}", annotation.text));
@@ -2221,10 +2431,14 @@ fn evicting_old_brush_and_text_history_discards_matching_payloads() {
 	OverlaySession::for_each_frozen_committed_overlay(
 		&session.frozen_edit_undo_stack,
 		&session.frozen_brush.committed_strokes,
+		&session.frozen_arrow_annotations,
 		&session.frozen_text_annotations,
 		|overlay| match overlay {
 			FrozenCommittedOverlay::Brush(stroke) => {
 				observed.push(format!("brush:{:.0}", stroke.points[0].x));
+			},
+			FrozenCommittedOverlay::Arrow(annotation) => {
+				observed.push(format!("arrow:{:.0}", annotation.start.x));
 			},
 			FrozenCommittedOverlay::Text(annotation) => observed.push(annotation.text.clone()),
 		},

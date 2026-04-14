@@ -13,6 +13,8 @@ use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::DeviceCursorPointSource;
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenCaptureSource;
+#[cfg(target_os = "macos")]
+use crate::overlay::FrozenToolbarTool;
 use crate::overlay::OverlayControl;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerResponse;
@@ -852,6 +854,71 @@ fn frozen_selection_drag_uses_non_rounding_cursor_move_updates_without_shifting_
 	assert_eq!(session.state.cursor, Some(event_global));
 	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(250, 300, 200, 240)));
 	assert_eq!(session.frozen_selection_drag, crate::overlay::FrozenSelectionDragState::default());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_arrow_drag_updates_from_overlay_cursor_moved_events() {
+	let monitor = tests::test_monitor_with_scale(1_000, 800, 2_000);
+	let window_id = WindowId::from(1);
+	let position = PhysicalPosition::new(801.9, 321.9);
+	let window_size = PhysicalSize::new(2_000, 1_600);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.monitor = Some(monitor);
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 600, 400));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Arrow;
+
+	assert!(session.begin_frozen_arrow_drag(GlobalPoint::new(200, 160)));
+	assert!(matches!(
+		session.handle_cursor_moved_with_overlay_window(
+			window_id,
+			position,
+			Some(monitor),
+			monitor,
+			2.0,
+			window_size,
+		),
+		OverlayControl::Continue
+	));
+	assert_eq!(
+		session.active_frozen_arrow_preview().map(|annotation| (annotation.start, annotation.end)),
+		Some((Pos2::new(200.0, 160.0), Pos2::new(401.0, 161.0)))
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_spotlight_drag_updates_from_overlay_cursor_moved_events() {
+	let monitor = tests::test_monitor_with_scale(1_000, 800, 2_000);
+	let window_id = WindowId::from(1);
+	let position = PhysicalPosition::new(1_601.9, 1_121.9);
+	let window_size = PhysicalSize::new(2_000, 1_600);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	session.state.monitor = Some(monitor);
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 600, 400));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Spotlight;
+
+	assert!(session.begin_frozen_spotlight_drag(GlobalPoint::new(200, 160)));
+	assert!(matches!(
+		session.handle_cursor_moved_with_overlay_window(
+			window_id,
+			position,
+			Some(monitor),
+			monitor,
+			2.0,
+			window_size,
+		),
+		OverlayControl::Continue
+	));
+	assert_eq!(session.frozen_spotlight_preview_rect, Some(RectPoints::new(200, 160, 500, 360)));
 }
 
 #[cfg(target_os = "macos")]

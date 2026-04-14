@@ -17,12 +17,13 @@ use crate::overlay::{
 	BindingType, BlendState, Buffer, BufferBindingType, BufferSize, BufferUsages, ClippedPrimitive,
 	Color32, ColorWrites, CompositeAlphaMode, Cow, CurrentSurfaceTexture, Device, Duration, Event,
 	ExperimentalFeatures, Features, FilterMode, FontDefinitions, FontFamily, FrontFace,
-	FrozenBrushState, FrozenCaptureSource, FrozenEditKind, FrozenSelectionCorner,
-	FrozenTextAnnotation, FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState,
-	FrozenToolbarState, FullOutput, HudAnchor, HudTheme, Id, Instant, LayerId, LoadOp, MemoryHints,
-	MipmapFilterMode, MonitorRect, MultisampleState, Mutex, Order, OverlayMode, OverlayState,
-	PhysicalSize, PipelineCompilationOptions, PointerButton, PolygonMode, Pos2, PowerPreference,
-	PresentMode, PrimitiveTopology, Queue, Rect, RectPoints, RenderPipeline, Renderer, Result,
+	FrozenArrowAnnotation, FrozenBrushState, FrozenCaptureSource, FrozenEditKind,
+	FrozenSelectionCorner, FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState,
+	FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState, FullOutput, HudAnchor,
+	HudDrawConfig, HudTheme, Id, Instant, LayerId, LoadOp, MemoryHints, MipmapFilterMode,
+	MonitorRect, MultisampleState, Mutex, Order, OverlayMode, OverlayState, PhysicalSize,
+	PipelineCompilationOptions, PointerButton, PolygonMode, Pos2, PowerPreference, PresentMode,
+	PrimitiveTopology, Queue, Rect, RectPoints, RenderPipeline, Renderer, Result,
 	SLOW_OP_WARN_RENDER, Sampler, SamplerBindingType, ScreenDescriptor, ShaderSource, ShaderStages,
 	SlowOperationLogger, StoreOp, Surface, SurfaceCapabilities, SurfaceFrameSkipReason,
 	SurfaceTexture, Texture, TextureAspect, TextureSampleType, TextureUsages,
@@ -719,6 +720,10 @@ impl WindowRenderer {
 		frozen_toolbar_reserved_rect: Option<Rect>,
 		frozen_edit_history: &[FrozenEditKind],
 		frozen_brush_state: Option<&FrozenBrushState>,
+		frozen_arrow_annotations: &[FrozenArrowAnnotation],
+		frozen_arrow_preview: Option<&FrozenArrowAnnotation>,
+		frozen_spotlight_annotations: &[FrozenSpotlightAnnotation],
+		frozen_spotlight_preview_rect: Option<RectPoints>,
 		frozen_text_annotations: &[FrozenTextAnnotation],
 		frozen_text_edit: Option<&FrozenTextEditState>,
 		frozen_text_style: FrozenTextStyle,
@@ -820,6 +825,10 @@ impl WindowRenderer {
 					frozen_toolbar_reserved_rect,
 					frozen_edit_history,
 					frozen_brush_state,
+					frozen_arrow_annotations,
+					frozen_arrow_preview,
+					frozen_spotlight_annotations,
+					frozen_spotlight_preview_rect,
 					frozen_text_annotations,
 					frozen_text_edit,
 					frozen_text_style,
@@ -842,6 +851,32 @@ impl WindowRenderer {
 		for id in &full_output.textures_delta.free {
 			self.egui_renderer.free_texture(id);
 		}
+	}
+
+	fn sync_hud_bg_with_timing(
+		&mut self,
+		gpu: &GpuContext,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		hud_cfg: HudDrawConfig,
+	) -> Result<Duration> {
+		let sync_hud_bg_started_at = Instant::now();
+
+		self.sync_or_clear_hud_bg(gpu, state, monitor, hud_cfg)?;
+
+		Ok(sync_hud_bg_started_at.elapsed())
+	}
+
+	fn sync_egui_textures_with_timing(
+		&mut self,
+		gpu: &GpuContext,
+		full_output: &FullOutput,
+	) -> Duration {
+		let sync_egui_textures_started_at = Instant::now();
+
+		self.sync_egui_textures(gpu, full_output);
+
+		sync_egui_textures_started_at.elapsed()
 	}
 
 	fn acquire_frame(&mut self, gpu: &GpuContext) -> Result<AcquiredSurfaceFrame> {
@@ -1338,6 +1373,10 @@ impl WindowRenderer {
 		frozen_toolbar_reserved_rect: Option<Rect>,
 		frozen_edit_history: &[FrozenEditKind],
 		frozen_brush_state: Option<&FrozenBrushState>,
+		frozen_arrow_annotations: &[FrozenArrowAnnotation],
+		frozen_arrow_preview: Option<&FrozenArrowAnnotation>,
+		frozen_spotlight_annotations: &[FrozenSpotlightAnnotation],
+		frozen_spotlight_preview_rect: Option<RectPoints>,
 		frozen_text_annotations: &[FrozenTextAnnotation],
 		frozen_text_edit: Option<&FrozenTextEditState>,
 		frozen_text_style: FrozenTextStyle,
@@ -1368,11 +1407,8 @@ impl WindowRenderer {
 			show_hud_blur,
 			hud_opaque,
 		);
-		let sync_hud_bg_started_at = Instant::now();
 
-		self.sync_or_clear_hud_bg(gpu, state, monitor, hud_cfg)?;
-
-		phase_timings.sync_hud_bg = sync_hud_bg_started_at.elapsed();
+		phase_timings.sync_hud_bg = self.sync_hud_bg_with_timing(gpu, state, monitor, hud_cfg)?;
 
 		let hud_shader_blur_active = self.hud_shader_blur_active(state, monitor, hud_cfg);
 		let mut selection_flow_cache = mem::take(&mut self.selection_flow_cache);
@@ -1405,6 +1441,10 @@ impl WindowRenderer {
 			frozen_toolbar_reserved_rect,
 			frozen_edit_history,
 			frozen_brush_state,
+			frozen_arrow_annotations,
+			frozen_arrow_preview,
+			frozen_spotlight_annotations,
+			frozen_spotlight_preview_rect,
 			frozen_text_annotations,
 			frozen_text_edit,
 			frozen_text_style,
@@ -1431,11 +1471,7 @@ impl WindowRenderer {
 			&mut phase_timings,
 		);
 
-		let sync_egui_textures_started_at = Instant::now();
-
-		self.sync_egui_textures(gpu, &full_output);
-
-		phase_timings.sync_egui_textures = sync_egui_textures_started_at.elapsed();
+		phase_timings.sync_egui_textures = self.sync_egui_textures_with_timing(gpu, &full_output);
 
 		let tessellate_started_at = Instant::now();
 		let paint_jobs = self.egui_ctx.tessellate(full_output.shapes, pixels_per_point);

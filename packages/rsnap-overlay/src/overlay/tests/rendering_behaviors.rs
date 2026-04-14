@@ -487,6 +487,79 @@ fn frozen_mosaic_commit_round_trips_through_undo_and_redo() {
 }
 
 #[test]
+fn frozen_arrow_drag_commits_without_final_capture_and_round_trips_undo_redo() {
+	let monitor = tests::test_monitor_with_scale(8, 8, 1_000);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_mosaic_source_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Arrow;
+
+	assert!(!session.frozen_final_capture_ready());
+	assert!(session.begin_frozen_arrow_drag(GlobalPoint::new(1, 1)));
+	assert_eq!(
+		session.active_frozen_arrow_preview().map(|annotation| (annotation.start, annotation.end)),
+		Some((Pos2::new(1.0, 1.0), Pos2::new(1.0, 1.0)))
+	);
+	assert!(session.update_frozen_arrow_drag(GlobalPoint::new(7, 1)));
+	assert_eq!(
+		session.active_frozen_arrow_preview().map(|annotation| (annotation.start, annotation.end)),
+		Some((Pos2::new(1.0, 1.0), Pos2::new(7.0, 1.0)))
+	);
+	assert!(session.commit_frozen_arrow_drag());
+	assert_eq!(session.frozen_arrow_annotations.len(), 1);
+	assert_eq!(session.frozen_arrow_annotations[0].start, Pos2::new(1.0, 1.0));
+	assert_eq!(session.frozen_arrow_annotations[0].end, Pos2::new(7.0, 1.0));
+	assert_eq!(session.frozen_edit_undo_stack.last(), Some(&FrozenEditKind::ArrowAnnotation));
+	assert!(session.active_frozen_arrow_preview().is_none());
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
+	assert!(session.perform_frozen_undo());
+	assert!(session.frozen_arrow_annotations.is_empty());
+	assert!(!session.toolbar_state.undo_available);
+	assert!(session.toolbar_state.redo_available);
+	assert!(session.perform_frozen_redo());
+	assert_eq!(session.frozen_arrow_annotations.len(), 1);
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
+}
+
+#[test]
+fn frozen_spotlight_drag_clamps_preview_and_round_trips_undo_redo() {
+	let monitor = tests::test_monitor_with_scale(8, 8, 1_000);
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_mosaic_source_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(2, 2, 4, 4));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Spotlight;
+
+	assert!(!session.frozen_final_capture_ready());
+	assert!(session.begin_frozen_spotlight_drag(GlobalPoint::new(3, 3)));
+	assert_eq!(session.frozen_spotlight_preview_rect, Some(RectPoints::new(3, 3, 1, 1)));
+	assert!(session.update_frozen_spotlight_drag_rect(GlobalPoint::new(30, 30)));
+	assert_eq!(session.frozen_spotlight_preview_rect, Some(RectPoints::new(3, 3, 3, 3)));
+	assert!(session.commit_frozen_spotlight_drag());
+	assert_eq!(session.frozen_spotlight_annotations.len(), 1);
+	assert_eq!(session.frozen_spotlight_annotations[0].rect, RectPoints::new(3, 3, 3, 3));
+	assert_eq!(session.frozen_edit_undo_stack.last(), Some(&FrozenEditKind::SpotlightAnnotation));
+	assert_eq!(session.frozen_spotlight_preview_rect, None);
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
+	assert!(session.perform_frozen_undo());
+	assert!(session.frozen_spotlight_annotations.is_empty());
+	assert!(!session.toolbar_state.undo_available);
+	assert!(session.toolbar_state.redo_available);
+	assert!(session.perform_frozen_redo());
+	assert_eq!(session.frozen_spotlight_annotations.len(), 1);
+	assert!(session.toolbar_state.undo_available);
+	assert!(!session.toolbar_state.redo_available);
+}
+
+#[test]
 fn frozen_selection_drag_updates_capture_rect_and_toolbar_position() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
@@ -1182,6 +1255,10 @@ fn frozen_committed_text_annotations_are_clipped_to_capture_rect() {
 				None,
 				&[],
 				None,
+				&[],
+				None,
+				&[],
+				None,
 				style,
 				false,
 				true,
@@ -1206,6 +1283,10 @@ fn frozen_committed_text_annotations_are_clipped_to_capture_rect() {
 				FrozenCaptureSource::None,
 				None,
 				&[FrozenEditKind::TextAnnotation],
+				None,
+				&[],
+				None,
+				&[],
 				None,
 				slice::from_ref(&annotation),
 				None,
@@ -1273,6 +1354,10 @@ fn frozen_active_text_preview_is_clipped_to_capture_rect() {
 				None,
 				&[],
 				None,
+				&[],
+				None,
+				&[],
+				None,
 				style,
 				false,
 				true,
@@ -1295,6 +1380,10 @@ fn frozen_active_text_preview_is_clipped_to_capture_rect() {
 				HudTheme::Dark,
 				false,
 				FrozenCaptureSource::None,
+				None,
+				&[],
+				None,
+				&[],
 				None,
 				&[],
 				None,
@@ -2860,6 +2949,10 @@ fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
 		HudTheme::Dark,
 		false,
 		FrozenCaptureSource::None,
+		None,
+		&[],
+		None,
+		&[],
 		None,
 		&[],
 		None,

@@ -5,10 +5,10 @@ use image::{
 
 use crate::overlay::session_state::FrozenBrushStyle;
 use crate::overlay::{
-	FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS, FrozenBrushStroke, FrozenCaptureSource,
-	FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform, FrozenTextAnnotation,
-	MonitorRect, OverlaySession, Pos2, RectPoints, WINDOW_CAPTURE_MATTE_DARK_RGBA,
-	WINDOW_CAPTURE_MATTE_LIGHT_RGBA, WindowCaptureAlphaMode,
+	FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS, FrozenArrowAnnotation, FrozenBrushStroke,
+	FrozenCaptureSource, FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform,
+	FrozenSpotlightAnnotation, FrozenTextAnnotation, MonitorRect, OverlaySession, Pos2, RectPoints,
+	WINDOW_CAPTURE_MATTE_DARK_RGBA, WINDOW_CAPTURE_MATTE_LIGHT_RGBA, WindowCaptureAlphaMode,
 };
 
 impl OverlaySession {
@@ -55,11 +55,25 @@ impl OverlaySession {
 		let Some(export_transform) = self.frozen_export_transform_for_image(image) else {
 			return;
 		};
+		let mut spotlight_annotations = Vec::new();
+
+		Self::for_each_frozen_spotlight_annotation(
+			&self.frozen_edit_undo_stack,
+			&self.frozen_spotlight_annotations,
+			|annotation| spotlight_annotations.push(annotation.clone()),
+		);
+		Self::apply_frozen_spotlight_annotations_to_image(
+			image,
+			export_transform,
+			&spotlight_annotations,
+		);
+
 		let mut brush_coverage_mask = None;
 
 		Self::for_each_frozen_committed_overlay(
 			&self.frozen_edit_undo_stack,
 			&self.frozen_brush.committed_strokes,
+			&self.frozen_arrow_annotations,
 			&self.frozen_text_annotations,
 			|overlay| match overlay {
 				FrozenCommittedOverlay::Brush(stroke) => {
@@ -73,6 +87,18 @@ impl OverlaySession {
 						export_transform,
 						&stroke.points,
 						stroke.style,
+					);
+				},
+				FrozenCommittedOverlay::Arrow(annotation) => {
+					let coverage_mask = brush_coverage_mask.get_or_insert_with(|| {
+						vec![0_u8; image.width() as usize * image.height() as usize]
+					});
+
+					Self::render_frozen_arrow_annotation_into_image(
+						image,
+						coverage_mask,
+						export_transform,
+						annotation,
 					);
 				},
 				FrozenCommittedOverlay::Text(annotation) => {
@@ -134,10 +160,12 @@ impl OverlaySession {
 	pub(super) fn for_each_frozen_committed_overlay(
 		edit_history: &[FrozenEditKind],
 		brush_strokes: &[FrozenBrushStroke],
+		arrow_annotations: &[FrozenArrowAnnotation],
 		text_annotations: &[FrozenTextAnnotation],
 		mut f: impl FnMut(FrozenCommittedOverlay<'_>),
 	) {
 		let mut brush_index = 0;
+		let mut arrow_index = 0;
 		let mut text_index = 0;
 
 		for edit_kind in edit_history {
@@ -151,6 +179,15 @@ impl OverlaySession {
 
 					f(FrozenCommittedOverlay::Brush(stroke));
 				},
+				FrozenEditKind::ArrowAnnotation => {
+					let Some(annotation) = arrow_annotations.get(arrow_index) else {
+						continue;
+					};
+
+					arrow_index += 1;
+
+					f(FrozenCommittedOverlay::Arrow(annotation));
+				},
 				FrozenEditKind::TextAnnotation => {
 					let Some(annotation) = text_annotations.get(text_index) else {
 						continue;
@@ -160,9 +197,229 @@ impl OverlaySession {
 
 					f(FrozenCommittedOverlay::Text(annotation));
 				},
-				FrozenEditKind::MosaicEdit => {},
+				FrozenEditKind::MosaicEdit | FrozenEditKind::SpotlightAnnotation => {},
 			}
 		}
+	}
+
+	pub(super) fn for_each_frozen_spotlight_annotation(
+		edit_history: &[FrozenEditKind],
+		spotlight_annotations: &[FrozenSpotlightAnnotation],
+		mut f: impl FnMut(&FrozenSpotlightAnnotation),
+	) {
+		let mut spotlight_index = 0;
+
+		for edit_kind in edit_history {
+			if *edit_kind != FrozenEditKind::SpotlightAnnotation {
+				continue;
+			}
+
+			let Some(annotation) = spotlight_annotations.get(spotlight_index) else {
+				continue;
+			};
+
+			spotlight_index += 1;
+
+			f(annotation);
+		}
+	}
+
+	fn export_rect_points(
+		export_transform: FrozenExportTransform,
+		rect: RectPoints,
+		export_width: u32,
+		export_height: u32,
+	) -> Option<RectPoints> {
+		let min = export_transform.point_to_pixels(Pos2::new(rect.x as f32, rect.y as f32));
+		let max = export_transform.point_to_pixels(Pos2::new(
+			rect.x.saturating_add(rect.width) as f32,
+			rect.y.saturating_add(rect.height) as f32,
+		));
+		let left = min.x.floor().max(0.0) as u32;
+		let top = min.y.floor().max(0.0) as u32;
+		let right = max.x.ceil().min(export_width as f32) as u32;
+		let bottom = max.y.ceil().min(export_height as f32) as u32;
+
+		(right > left && bottom > top).then(|| {
+			RectPoints::new(left, top, right.saturating_sub(left), bottom.saturating_sub(top))
+		})
+	}
+
+	fn apply_frozen_spotlight_annotations_to_image(
+		image: &mut RgbaImage,
+		export_transform: FrozenExportTransform,
+		annotations: &[FrozenSpotlightAnnotation],
+	) {
+		let capture_rect = RectPoints::new(0, 0, image.width(), image.height());
+		let spotlight_rects = annotations
+			.iter()
+			.filter_map(|annotation| {
+				Self::export_rect_points(
+					export_transform,
+					annotation.rect,
+					image.width(),
+					image.height(),
+				)
+			})
+			.collect::<Vec<_>>();
+		let spotlight_rects = Self::clipped_frozen_spotlight_rects(capture_rect, spotlight_rects);
+
+		if spotlight_rects.is_empty() {
+			return;
+		}
+
+		for dim_rect in Self::frozen_spotlight_scrim_rects(capture_rect, &spotlight_rects) {
+			let right = dim_rect.x.saturating_add(dim_rect.width);
+			let bottom = dim_rect.y.saturating_add(dim_rect.height);
+
+			for y in dim_rect.y..bottom {
+				for x in dim_rect.x..right {
+					let pixel = image.get_pixel_mut(x, y);
+
+					for channel in 0..3 {
+						pixel[channel] = Self::dim_frozen_spotlight_channel(pixel[channel]);
+					}
+				}
+			}
+		}
+	}
+
+	fn render_frozen_arrow_annotation_into_image(
+		export_image: &mut RgbaImage,
+		coverage_mask: &mut [u8],
+		export_transform: FrozenExportTransform,
+		annotation: &FrozenArrowAnnotation,
+	) {
+		let Some(geometry) = Self::frozen_arrow_geometry(annotation) else {
+			return;
+		};
+		let outline_width =
+			Self::frozen_arrow_outline_width_points(annotation.style.stroke_width_points)
+				* export_transform.scalar_scale();
+		let mut shaft_style = annotation.style;
+
+		shaft_style.stroke_width_points =
+			Self::frozen_arrow_stroke_width_points(annotation.style.stroke_width_points);
+
+		let outline_style = FrozenBrushStyle {
+			stroke_width_points: Self::frozen_arrow_outline_stroke_width_points(
+				annotation.style.stroke_width_points,
+			),
+			..shaft_style
+		};
+		let outline_radius =
+			(outline_style.stroke_width_points * export_transform.scalar_scale() * 0.5).max(1.0);
+
+		coverage_mask.fill(0);
+
+		Self::rasterize_frozen_brush_points(
+			coverage_mask,
+			export_image.width(),
+			export_image.height(),
+			&[annotation.start, geometry.shaft_end],
+			export_transform,
+			outline_radius,
+		);
+		Self::blend_frozen_brush_coverage_mask(
+			export_image,
+			coverage_mask,
+			Rgba([255, 255, 255, 208]),
+		);
+
+		coverage_mask.fill(0);
+
+		Self::rasterize_frozen_brush_points_into_image(
+			export_image,
+			coverage_mask,
+			export_transform,
+			&[annotation.start, geometry.shaft_end],
+			shaft_style,
+		);
+
+		coverage_mask.fill(0);
+
+		let (outline_tip, outline_left, outline_right) = Self::expanded_triangle(
+			export_transform.point_to_pixels(geometry.tip),
+			export_transform.point_to_pixels(geometry.head_left),
+			export_transform.point_to_pixels(geometry.head_right),
+			outline_width,
+		);
+
+		Self::rasterize_frozen_triangle(
+			coverage_mask,
+			export_image.width(),
+			export_image.height(),
+			outline_tip,
+			outline_left,
+			outline_right,
+		);
+		Self::blend_frozen_brush_coverage_mask(
+			export_image,
+			coverage_mask,
+			Rgba([255, 255, 255, 208]),
+		);
+
+		coverage_mask.fill(0);
+
+		Self::rasterize_frozen_triangle(
+			coverage_mask,
+			export_image.width(),
+			export_image.height(),
+			export_transform.point_to_pixels(geometry.tip),
+			export_transform.point_to_pixels(geometry.head_left),
+			export_transform.point_to_pixels(geometry.head_right),
+		);
+		Self::blend_frozen_brush_coverage_mask(
+			export_image,
+			coverage_mask,
+			Rgba(annotation.style.color.export_rgba()),
+		);
+	}
+
+	fn expanded_triangle(a: Pos2, b: Pos2, c: Pos2, amount: f32) -> (Pos2, Pos2, Pos2) {
+		Self::frozen_arrow_expanded_triangle(a, b, c, amount)
+	}
+
+	fn rasterize_frozen_triangle(
+		coverage_mask: &mut [u8],
+		export_width: u32,
+		export_height: u32,
+		a: Pos2,
+		b: Pos2,
+		c: Pos2,
+	) {
+		if export_width == 0 || export_height == 0 {
+			return;
+		}
+
+		let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as u32;
+		let min_y = a.y.min(b.y).min(c.y).floor().max(0.0) as u32;
+		let max_x = a.x.max(b.x).max(c.x).ceil().min(export_width.saturating_sub(1) as f32) as u32;
+		let max_y = a.y.max(b.y).max(c.y).ceil().min(export_height.saturating_sub(1) as f32) as u32;
+
+		for y in min_y..=max_y {
+			for x in min_x..=max_x {
+				let sample = Pos2::new(x as f32 + 0.5, y as f32 + 0.5);
+
+				if Self::point_in_triangle(sample, a, b, c) {
+					let index = y as usize * export_width as usize + x as usize;
+
+					coverage_mask[index] = 255;
+				}
+			}
+		}
+	}
+
+	fn point_in_triangle(sample: Pos2, a: Pos2, b: Pos2, c: Pos2) -> bool {
+		fn edge(p0: Pos2, p1: Pos2, p2: Pos2) -> f32 {
+			(p2.x - p0.x) * (p1.y - p0.y) - (p2.y - p0.y) * (p1.x - p0.x)
+		}
+
+		let ab = edge(a, b, sample);
+		let bc = edge(b, c, sample);
+		let ca = edge(c, a, sample);
+
+		(ab >= 0.0 && bc >= 0.0 && ca >= 0.0) || (ab <= 0.0 && bc <= 0.0 && ca <= 0.0)
 	}
 
 	fn rasterize_frozen_brush_points(
