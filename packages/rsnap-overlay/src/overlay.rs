@@ -858,11 +858,8 @@ impl OverlaySession {
 			frozen_brush: FrozenBrushState::default(), frozen_arrow_drag: FrozenArrowDragState::default(),
 			frozen_selection_drag: FrozenSelectionDragState::default(),
 			frozen_mosaic_drag: FrozenMosaicDragState::default(), frozen_spotlight_drag: FrozenSpotlightDragState::default(),
-			frozen_spotlight_preview_rect: None,
-			frozen_edit_undo_stack: Vec::new(),
-			frozen_edit_redo_stack: Vec::new(),
-			frozen_mosaic_undo_stack: Vec::new(),
-			frozen_mosaic_redo_stack: Vec::new(),
+			frozen_spotlight_preview_rect: None, frozen_edit_undo_stack: Vec::new(),
+			frozen_edit_redo_stack: Vec::new(), frozen_mosaic_undo_stack: Vec::new(), frozen_mosaic_redo_stack: Vec::new(),
 			hud_window_visible: false, toolbar_window_visible: false,
 			skip_toolbar_focus_on_next_show: false, toolbar_window_warmup_redraws_remaining: 0,
 			loupe_window_visible: false, loupe_window_warmup_redraws_remaining: 0,
@@ -870,11 +867,7 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			scroll_frame_waker: None,
 			#[cfg(target_os = "macos")]
-			scroll_capture_start_guard: None,
-			#[cfg(target_os = "macos")]
-			scroll_capture_starting_hook: None,
-			#[cfg(target_os = "macos")]
-			scroll_capture_started_hook: None,
+			scroll_capture_start_guard: None, scroll_capture_starting_hook: None, scroll_capture_started_hook: None,
 			#[cfg(target_os = "macos")]
 			startup_aux_window_waker: None,
 			#[cfg(target_os = "macos")]
