@@ -873,8 +873,10 @@ impl OverlaySession {
 
 		#[cfg(target_os = "macos")]
 		{
-			self.toolbar_inner_size_points =
-				Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
+			self.toolbar_inner_size_points = Some((
+				startup_size.x.ceil().max(1.0) as u32,
+				startup_size.y.ceil().max(1.0) as u32,
+			));
 		}
 		#[cfg(not(target_os = "macos"))]
 		{

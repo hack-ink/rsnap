@@ -681,16 +681,11 @@ fn toolbar_position_update_near_edge_clamps_with_runtime_positioning_geometry() 
 	let startup_window_size = Vec2::new(startup_size.x, startup_size.y);
 	let rendered_toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
 
-	session.toolbar_inner_size_points = Some((
-		startup_size.x.ceil().max(1.0) as u32,
-		startup_size.y.ceil().max(1.0) as u32,
-	));
+	session.toolbar_inner_size_points =
+		Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
 
-	let expected_toolbar_size = if cfg!(target_os = "macos") {
-		startup_window_size
-	} else {
-		rendered_toolbar_size
-	};
+	let expected_toolbar_size =
+		if cfg!(target_os = "macos") { startup_window_size } else { rendered_toolbar_size };
 	let expected = WindowRenderer::clamp_toolbar_position(
 		screen_rect,
 		expected_toolbar_size,
@@ -730,16 +725,11 @@ fn toolbar_window_position_sync_near_edge_clamps_with_runtime_positioning_geomet
 	let startup_window_size = Vec2::new(startup_size.x, startup_size.y);
 	let rendered_toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
 
-	session.toolbar_inner_size_points = Some((
-		startup_size.x.ceil().max(1.0) as u32,
-		startup_size.y.ceil().max(1.0) as u32,
-	));
+	session.toolbar_inner_size_points =
+		Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
 
-	let expected_toolbar_size = if cfg!(target_os = "macos") {
-		startup_window_size
-	} else {
-		rendered_toolbar_size
-	};
+	let expected_toolbar_size =
+		if cfg!(target_os = "macos") { startup_window_size } else { rendered_toolbar_size };
 	let expected = WindowRenderer::clamp_toolbar_position(
 		screen_rect,
 		expected_toolbar_size,
@@ -767,9 +757,8 @@ fn toolbar_window_position_sync_near_edge_clamps_with_runtime_positioning_geomet
 	);
 	assert_eq!(
 		session.pending_toolbar_outer_pos,
-		(session.toolbar_outer_pos != Some(desired_outer)).then_some(
-			GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32)
-		)
+		(session.toolbar_outer_pos != Some(desired_outer))
+			.then_some(GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32))
 	);
 }
 
