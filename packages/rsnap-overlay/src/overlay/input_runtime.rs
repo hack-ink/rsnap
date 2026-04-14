@@ -53,8 +53,12 @@ impl OverlaySession {
 				self.force_apply_pending_toolbar_window_move();
 			}
 
+			let _ = self.commit_frozen_arrow_drag();
+			let _ = self.commit_frozen_spotlight_drag();
+			let _ = self.commit_frozen_mosaic_drag();
+			let _ = self.finish_frozen_brush_stroke();
+
 			self.stop_frozen_selection_drag();
-			self.stop_frozen_mosaic_drag();
 
 			let _ = self.stop_frozen_text_edit_drag();
 
@@ -685,7 +689,9 @@ impl OverlaySession {
 				let frozen_rect_changed =
 					self.update_frozen_selection_drag_rect(frozen_selection_drag_global);
 
+				self.update_frozen_arrow_drag(global);
 				self.update_frozen_mosaic_drag_rect(global);
+				self.update_frozen_spotlight_drag_rect(global);
 				self.update_frozen_text_edit_drag_anchor(global);
 
 				(frozen_rect_changed, Some(frozen_drag_update_started_at.elapsed()))
@@ -693,7 +699,9 @@ impl OverlaySession {
 				let frozen_rect_changed =
 					self.update_frozen_selection_drag_rect(frozen_selection_drag_global);
 
+				self.update_frozen_arrow_drag(global);
 				self.update_frozen_mosaic_drag_rect(global);
+				self.update_frozen_spotlight_drag_rect(global);
 				self.update_frozen_text_edit_drag_anchor(global);
 
 				(frozen_rect_changed, None)
@@ -1065,19 +1073,33 @@ impl OverlaySession {
 			ElementState::Pressed => {
 				let cursor = self.current_frozen_interaction_cursor();
 
-				if self.toolbar_state.selected_tool == FrozenToolbarTool::Pen {
-					let _ = self.begin_frozen_brush_stroke(cursor);
-				} else if !self.begin_frozen_selection_drag(cursor) {
-					let _ = self.begin_frozen_mosaic_drag(cursor);
+				match self.toolbar_state.selected_tool {
+					FrozenToolbarTool::Pen => {
+						let _ = self.begin_frozen_brush_stroke(cursor);
+					},
+					FrozenToolbarTool::Arrow => {
+						let _ = self.begin_frozen_arrow_drag(cursor);
+					},
+					FrozenToolbarTool::Spotlight => {
+						let _ = self.begin_frozen_spotlight_drag(cursor);
+					},
+					FrozenToolbarTool::Mosaic => {
+						let _ = self.begin_frozen_mosaic_drag(cursor);
+					},
+					_ => {
+						let _ = self.begin_frozen_selection_drag(cursor);
+					},
 				}
 
 				self.sync_overlay_cursor_icons();
 			},
 			ElementState::Released => {
+				let _ = self.commit_frozen_arrow_drag();
+				let _ = self.commit_frozen_spotlight_drag();
+				let _ = self.commit_frozen_mosaic_drag();
 				let _ = self.finish_frozen_brush_stroke();
 
 				self.stop_frozen_selection_drag();
-				self.stop_frozen_mosaic_drag();
 				self.sync_overlay_cursor_icons();
 			},
 		}

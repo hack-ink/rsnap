@@ -99,7 +99,9 @@ impl OverlaySession {
 		self.update_cursor_state(monitor, global);
 		self.update_live_drag_rect(monitor, global);
 		self.update_frozen_selection_drag_rect(global);
+		self.update_frozen_arrow_drag(global);
 		self.update_frozen_mosaic_drag_rect(global);
+		self.update_frozen_spotlight_drag_rect(global);
 
 		let brush_changed = self.update_frozen_brush_stroke(global);
 

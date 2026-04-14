@@ -248,7 +248,9 @@ impl FrozenToolbarState {
 		}
 
 		match self.selected_tool {
-			FrozenToolbarTool::Pen => self.apply_brush_size_wheel_steps(steps),
+			FrozenToolbarTool::Pen | FrozenToolbarTool::Arrow => {
+				self.apply_brush_size_wheel_steps(steps)
+			},
 			FrozenToolbarTool::Text => self.apply_text_size_wheel_steps(steps),
 			_ => false,
 		}
@@ -387,6 +389,18 @@ pub(super) struct FrozenTextAnnotation {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(super) struct FrozenArrowAnnotation {
+	pub(super) start: Pos2,
+	pub(super) end: Pos2,
+	pub(super) style: FrozenBrushStyle,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct FrozenSpotlightAnnotation {
+	pub(super) rect: RectPoints,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct FrozenTextEditState {
 	pub(super) anchor: Pos2,
 	pub(super) text: String,
@@ -501,6 +515,22 @@ impl Default for FrozenSelectionDragState {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct FrozenMosaicDragState {
+	pub(super) active: bool,
+	pub(super) anchor_x: u32,
+	pub(super) anchor_y: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct FrozenArrowDragState {
+	pub(super) active: bool,
+	pub(super) anchor_x: u32,
+	pub(super) anchor_y: u32,
+	pub(super) current_x: u32,
+	pub(super) current_y: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct FrozenSpotlightDragState {
 	pub(super) active: bool,
 	pub(super) anchor_x: u32,
 	pub(super) anchor_y: u32,
