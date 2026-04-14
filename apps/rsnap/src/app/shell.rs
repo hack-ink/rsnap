@@ -230,6 +230,17 @@ impl App {
 		event_loop: &ActiveEventLoop,
 		event: GlobalHotKeyEvent,
 	) {
+		#[cfg(target_os = "macos")]
+		if self.overlay_session.is_some() && event.id() == self.overlay_loupe_hotkey_id {
+			if let Some(session) = self.overlay_session.as_mut() {
+				let control =
+					session.handle_global_loupe_hotkey(event.state() == HotKeyState::Pressed);
+
+				self.handle_overlay_control(control);
+			}
+
+			return;
+		}
 		if event.state() != HotKeyState::Pressed {
 			return;
 		}

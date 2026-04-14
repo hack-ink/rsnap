@@ -271,6 +271,9 @@ impl OverlaySession {
 	}
 
 	pub(super) fn apply_loupe_activation_key_event(&mut self, pressed: bool, repeat: bool) -> bool {
+		if self.loupe_activation_key_down == pressed && !repeat {
+			return false;
+		}
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			self.loupe_activation_key_down = false;
 
@@ -1242,6 +1245,16 @@ impl OverlaySession {
 		}
 
 		self.cancel_overlay("global_escape_hotkey")
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Handles a host-level Tab hotkey press/release while the live overlay is active.
+	pub fn handle_global_loupe_hotkey(&mut self, pressed: bool) -> OverlayControl {
+		if self.apply_loupe_activation_key_event(pressed, false) {
+			return self.request_redraw_for_alt_state_change();
+		}
+
+		OverlayControl::Continue
 	}
 
 	pub(super) fn handle_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
