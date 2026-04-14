@@ -4,6 +4,29 @@ use crate::overlay::{
 };
 
 impl OverlaySession {
+	pub(super) fn toolbar_positioning_size(&self) -> Vec2 {
+		#[cfg(target_os = "macos")]
+		{
+			if let Some((width, height)) = self.toolbar_inner_size_points {
+				Vec2::new(width as f32, height as f32)
+			} else if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+				let toolbar_scale = toolbar_window.window.scale_factor().max(1.0);
+				let size = toolbar_window.window.inner_size();
+				let toolbar_w = ((size.width as f64) / toolbar_scale).ceil().max(1.0) as f32;
+				let toolbar_h = ((size.height as f64) / toolbar_scale).ceil().max(1.0) as f32;
+
+				Vec2::new(toolbar_w, toolbar_h)
+			} else {
+				WindowRenderer::frozen_toolbar_size(&self.toolbar_state)
+			}
+		}
+
+		#[cfg(not(target_os = "macos"))]
+		{
+			WindowRenderer::frozen_toolbar_size(&self.toolbar_state)
+		}
+	}
+
 	pub(super) fn update_hud_window_position(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
 		if self.live_loupe_uses_hud_window()
 			&& matches!(self.state.mode, OverlayMode::Live)
@@ -194,18 +217,7 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		local_pos: Pos2,
 	) -> bool {
-		let toolbar_size = if let Some((width, height)) = self.toolbar_inner_size_points {
-			Vec2::new(width as f32, height as f32)
-		} else if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-			let toolbar_scale = toolbar_window.window.scale_factor().max(1.0);
-			let size = toolbar_window.window.inner_size();
-			let toolbar_w = ((size.width as f64) / toolbar_scale).ceil().max(1.0) as f32;
-			let toolbar_h = ((size.height as f64) / toolbar_scale).ceil().max(1.0) as f32;
-
-			Vec2::new(toolbar_w, toolbar_h)
-		} else {
-			WindowRenderer::frozen_toolbar_size(&self.toolbar_state)
-		};
+		let toolbar_size = self.toolbar_positioning_size();
 		let screen_rect =
 			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 		let clamped_local_pos = WindowRenderer::clamp_toolbar_position(
@@ -236,18 +248,7 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		outer_position: GlobalPoint,
 	) -> bool {
-		let toolbar_size = if let Some((width, height)) = self.toolbar_inner_size_points {
-			Vec2::new(width as f32, height as f32)
-		} else if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-			let toolbar_scale = toolbar_window.window.scale_factor().max(1.0);
-			let size = toolbar_window.window.inner_size();
-			let toolbar_w = ((size.width as f64) / toolbar_scale).ceil().max(1.0) as f32;
-			let toolbar_h = ((size.height as f64) / toolbar_scale).ceil().max(1.0) as f32;
-
-			Vec2::new(toolbar_w, toolbar_h)
-		} else {
-			WindowRenderer::frozen_toolbar_size(&self.toolbar_state)
-		};
+		let toolbar_size = self.toolbar_positioning_size();
 		let screen_rect =
 			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 		let local_pos = Pos2::new(

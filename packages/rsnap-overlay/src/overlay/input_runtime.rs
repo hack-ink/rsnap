@@ -8,7 +8,7 @@ use crate::overlay::{
 	ElementState, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarTool, GlobalPoint, Ime, Key, KeyEvent, LIVE_DRAG_START_THRESHOLD_PX, Modifiers,
 	MonitorRect, MouseScrollDelta, NamedKey, OverlayControl, OverlayMode, OverlaySession,
-	PhysicalPosition, PhysicalSize, PngAction, Vec2, WindowId,
+	PhysicalPosition, PhysicalSize, PngAction, Pos2, Vec2, WindowId, WindowRenderer,
 };
 
 impl OverlaySession {
@@ -59,12 +59,18 @@ impl OverlaySession {
 			let _ = self.stop_frozen_text_edit_drag();
 
 			self.toolbar_state.dragging = false;
+			self.toolbar_state.drag_start_eligible = false;
 			self.toolbar_state.drag_offset = Vec2::ZERO;
 			self.toolbar_state.drag_anchor = None;
 		} else {
 			self.toolbar_state.drag_offset = Vec2::ZERO;
 			self.toolbar_state.dragging = false;
 			self.toolbar_state.drag_anchor = None;
+
+			let current_cursor_local = self.current_toolbar_cursor_local();
+
+			self.toolbar_state.drag_start_eligible =
+				self.resolve_toolbar_drag_start_eligibility(current_cursor_local);
 		}
 
 		#[cfg(target_os = "macos")]
@@ -111,7 +117,52 @@ impl OverlaySession {
 		self.toolbar_pointer_local = None;
 		self.toolbar_state.annotation_size_control_hovered = false;
 		self.toolbar_state.annotation_size_wheel_accumulator = 0.0;
+		self.toolbar_state.drag_start_eligible = false;
 		self.toolbar_state.drag_anchor = None;
+	}
+
+	pub(super) fn resolve_toolbar_drag_start_eligibility(
+		&self,
+		current_cursor_local: Option<Pos2>,
+	) -> bool {
+		current_cursor_local
+			.or(self.toolbar_pointer_local)
+			.is_some_and(|cursor_local| self.toolbar_primary_rect_contains(cursor_local))
+	}
+
+	fn current_toolbar_cursor_local(&mut self) -> Option<Pos2> {
+		let toolbar_window = self.toolbar_window.as_ref()?;
+		let outer_position = Self::toolbar_window_outer_position(toolbar_window)?;
+		#[cfg(target_os = "macos")]
+		let cursor_global = super::macos_mouse_location()?;
+		#[cfg(not(target_os = "macos"))]
+		let cursor_global = self.sample_mouse_location();
+
+		Self::toolbar_cursor_local_from_sampled_global(outer_position, Some(cursor_global))
+	}
+
+	fn toolbar_primary_rect_contains(&self, cursor_local: Pos2) -> bool {
+		WindowRenderer::frozen_toolbar_primary_rect(&self.toolbar_state, Pos2::ZERO)
+			.contains(cursor_local)
+	}
+
+	pub(super) fn toolbar_cursor_local_position_from_outer(
+		outer_position: GlobalPoint,
+		global_cursor: GlobalPoint,
+	) -> Pos2 {
+		Pos2::new(
+			global_cursor.x as f32 - outer_position.x as f32,
+			global_cursor.y as f32 - outer_position.y as f32,
+		)
+	}
+
+	pub(super) fn toolbar_cursor_local_from_sampled_global(
+		outer_position: GlobalPoint,
+		sampled_cursor: Option<GlobalPoint>,
+	) -> Option<Pos2> {
+		sampled_cursor.map(|global_cursor| {
+			Self::toolbar_cursor_local_position_from_outer(outer_position, global_cursor)
+		})
 	}
 
 	pub(super) fn handle_modifiers_changed(&mut self, modifiers: &Modifiers) -> OverlayControl {

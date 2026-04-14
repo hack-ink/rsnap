@@ -144,6 +144,7 @@ pub(super) struct HudDrawConfig {
 pub(super) struct FrozenToolbarState {
 	pub(super) visible: bool,
 	pub(super) dragging: bool,
+	pub(super) drag_start_eligible: bool,
 	pub(super) annotation_size_control_hovered: bool,
 	pub(super) annotation_size_wheel_accumulator: f32,
 	pub(super) selected_tool: FrozenToolbarTool,
@@ -271,6 +272,7 @@ impl Default for FrozenToolbarState {
 		Self {
 			visible: true,
 			dragging: false,
+			drag_start_eligible: false,
 			annotation_size_control_hovered: false,
 			annotation_size_wheel_accumulator: 0.0,
 			selected_tool: FrozenToolbarTool::Pointer,
@@ -350,7 +352,7 @@ impl Default for FrozenBrushStyle {
 	fn default() -> Self {
 		Self {
 			stroke_width_points: FROZEN_BRUSH_STROKE_WIDTH_POINTS,
-			color: FrozenAnnotationColor::Red,
+			color: FrozenAnnotationColor::Blue,
 		}
 	}
 }

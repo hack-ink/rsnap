@@ -621,6 +621,8 @@ pub struct OverlaySession {
 	toolbar_left_button_went_down: bool,
 	toolbar_left_button_went_up: bool,
 	toolbar_pointer_local: Option<Pos2>,
+	#[cfg(target_os = "macos")]
+	toolbar_window_cursor_hittest_enabled: bool,
 	left_mouse_button_down: bool,
 	left_mouse_button_down_monitor: Option<MonitorRect>,
 	left_mouse_button_down_global: Option<GlobalPoint>,
@@ -753,6 +755,7 @@ impl OverlaySession {
 		}
 	}
 
+	#[allow(clippy::too_many_lines)]
 	#[rustfmt::skip]
 	fn build_base_session_defaults() -> Self {
 		Self {
@@ -836,9 +839,11 @@ impl OverlaySession {
 			frozen_text_annotations: Vec::new(), frozen_text_redo_annotations: Vec::new(),
 			frozen_text_edit: None, frozen_text_input_generation: 0, frozen_text_recent_input: None,
 			toolbar_state: FrozenToolbarState::default(),
-			toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
-			toolbar_pointer_local: None,
-			left_mouse_button_down: false, left_mouse_button_down_monitor: None, left_mouse_button_down_global: None,
+				toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
+				toolbar_pointer_local: None,
+				#[cfg(target_os = "macos")]
+				toolbar_window_cursor_hittest_enabled: false,
+				left_mouse_button_down: false, left_mouse_button_down_monitor: None, left_mouse_button_down_global: None,
 			frozen_brush: FrozenBrushState::default(),
 			frozen_selection_drag: FrozenSelectionDragState::default(),
 			frozen_mosaic_drag: FrozenMosaicDragState::default(),
@@ -1531,6 +1536,8 @@ impl OverlaySession {
 		tracing::debug!(
 			monitor_id = monitor.id,
 			frozen_generation = self.state.frozen_generation,
+			toolbar_primary_size_points =
+				?WindowRenderer::frozen_toolbar_primary_size(&self.toolbar_state),
 			toolbar_size_points =
 				?WindowRenderer::frozen_toolbar_size(&self.toolbar_state),
 			default_pos = ?default_pos,
@@ -1549,12 +1556,14 @@ impl OverlaySession {
 			Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
 			Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
 		);
-		let toolbar_size = WindowRenderer::frozen_toolbar_size(&self.toolbar_state);
+		let toolbar_primary_size = WindowRenderer::frozen_toolbar_primary_size(&self.toolbar_state);
+		let toolbar_window_size = self.toolbar_positioning_size();
 
-		WindowRenderer::frozen_toolbar_default_pos(
+		WindowRenderer::frozen_toolbar_default_window_pos(
 			screen_rect,
 			capture_rect,
-			toolbar_size,
+			toolbar_primary_size,
+			toolbar_window_size,
 			self.config.toolbar_placement,
 		)
 	}
@@ -2016,6 +2025,7 @@ impl OverlaySession {
 	}
 
 	/// Handles a winit window event for one of the overlay-owned windows.
+	#[allow(clippy::too_many_lines)]
 	pub fn handle_window_event(
 		&mut self,
 		window_id: WindowId,
@@ -2547,20 +2557,22 @@ impl OverlaySession {
 		self.maybe_log_event_loop_stall(Instant::now());
 		self.mark_progress(OverlayEventLoopPhase::OverlayRedraw);
 
-		// On macOS the frozen toolbar is now rendered in its own native HUD window; keep this
-		// fullscreen overlay free of toolbar UI so shader-backed blur and monitor-aligned offsets
-		// do not conflict with native-window positioning.
-		let draw_toolbar = !cfg!(target_os = "macos")
-			&& matches!(self.state.mode, OverlayMode::Frozen)
+		let overlay_screen_rect = self.overlay_window_screen_rect(window_id, overlay_monitor);
+		#[cfg(target_os = "macos")]
+		let draw_toolbar = false;
+		#[cfg(not(target_os = "macos"))]
+		let draw_toolbar = matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.toolbar_state.visible
 			&& self.state.monitor == Some(overlay_monitor)
 			&& self.frozen_final_capture_ready();
+		#[cfg(not(target_os = "macos"))]
 		let toolbar_input =
 			if draw_toolbar { self.toolbar_pointer_state(overlay_monitor, None) } else { None };
+		#[cfg(target_os = "macos")]
+		let toolbar_input = None;
 
 		self.log_frozen_overlay_redraw_trace(window_id, overlay_monitor, draw_toolbar);
 
-		let overlay_screen_rect = self.overlay_window_screen_rect(window_id, overlay_monitor);
 		let toolbar_visible_for_badge = if cfg!(target_os = "macos") {
 			!self.should_hide_toolbar_window(overlay_monitor)
 		} else {
@@ -2944,6 +2956,10 @@ impl OverlaySession {
 		self.pending_toolbar_outer_pos = None;
 		self.hud_window_visible = false;
 		self.toolbar_window_visible = false;
+		#[cfg(target_os = "macos")]
+		{
+			self.toolbar_window_cursor_hittest_enabled = false;
+		}
 		self.skip_toolbar_focus_on_next_show = false;
 		self.toolbar_window_warmup_redraws_remaining = 0;
 		self.loupe_window_visible = false;

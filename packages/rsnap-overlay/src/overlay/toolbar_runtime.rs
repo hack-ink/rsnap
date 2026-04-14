@@ -2,10 +2,11 @@ use crate::overlay::{
 	self, Arc, Duration, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant,
 	MonitorRect, OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
 	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2, WindowId,
-	WindowRenderer,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{FrozenCaptureSource, HudAnchor, LogicalSize, TOOLBAR_WINDOW_WARMUP_REDRAWS};
+use crate::overlay::{
+	FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS, WindowRenderer,
+};
 
 impl OverlaySession {
 	pub(super) fn handle_toolbar_window_moved(
@@ -37,6 +38,9 @@ impl OverlaySession {
 		);
 		let changed = self.sync_toolbar_outer_position_from_window(monitor, outer_position);
 
+		#[cfg(target_os = "macos")]
+		self.sync_toolbar_window_cursor_hittest(super::macos_mouse_location());
+
 		if self.pending_toolbar_outer_pos.is_some() {
 			self.force_apply_pending_toolbar_window_move();
 		} else {
@@ -58,11 +62,13 @@ impl OverlaySession {
 			self.toolbar_left_button_went_down = false;
 			self.toolbar_left_button_went_up = false;
 			self.toolbar_state.drag_offset = Vec2::ZERO;
+			self.toolbar_state.drag_start_eligible = false;
 			self.toolbar_state.drag_anchor = None;
 		}
 
 		#[cfg(target_os = "macos")]
 		{
+			self.sync_toolbar_window_cursor_hittest(None);
 			self.request_redraw_toolbar_window();
 		}
 
@@ -155,7 +161,10 @@ impl OverlaySession {
 		#[cfg(not(target_os = "macos"))]
 		let mut mouse_drag = self.toolbar_left_button_down && self.toolbar_state.dragging;
 
-		if self.toolbar_left_button_down && self.toolbar_state.drag_anchor.is_none() {
+		if self.toolbar_left_button_down
+			&& self.toolbar_state.drag_start_eligible
+			&& self.toolbar_state.drag_anchor.is_none()
+		{
 			self.toolbar_state.drag_anchor = Some(cursor_local);
 		}
 		if !mouse_drag
@@ -176,6 +185,7 @@ impl OverlaySession {
 					global_cursor.y as f32 - toolbar_outer_pos.y as f32,
 				);
 				self.toolbar_state.dragging = true;
+				self.toolbar_state.drag_start_eligible = false;
 				self.toolbar_state.drag_anchor = None;
 				mouse_drag = true;
 			}
@@ -232,6 +242,7 @@ impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	fn begin_native_toolbar_drag(&mut self) -> OverlayControl {
 		self.toolbar_state.dragging = true;
+		self.toolbar_state.drag_start_eligible = false;
 		self.toolbar_state.drag_anchor = None;
 
 		let Some(toolbar_window_handle) =
@@ -396,12 +407,14 @@ impl OverlaySession {
 		match toolbar_window.renderer.resize(size) {
 			Ok(()) => {
 				let window = Arc::clone(&toolbar_window.window);
+				let toolbar_height_points = self
+					.toolbar_inner_size_points
+					.map(|(_, height)| height as f32)
+					.unwrap_or_else(|| super::frozen_toolbar_window_startup_size_points().y);
 
 				self.configure_hud_window_common(
 					window.as_ref(),
-					Some(overlay::frozen_toolbar_corner_radius_points(
-						WindowRenderer::frozen_toolbar_size(&self.toolbar_state).y,
-					)),
+					Some(overlay::frozen_toolbar_corner_radius_points(toolbar_height_points)),
 				);
 
 				OverlayControl::Continue
@@ -428,10 +441,17 @@ impl OverlaySession {
 
 	pub(super) fn set_toolbar_window_hidden(&mut self) {
 		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+			#[cfg(target_os = "macos")]
+			let _ = toolbar_window.window.set_cursor_hittest(false);
+
 			toolbar_window.window.set_visible(false);
 		}
 
 		self.toolbar_window_visible = false;
+		#[cfg(target_os = "macos")]
+		{
+			self.toolbar_window_cursor_hittest_enabled = false;
+		}
 		self.toolbar_window_warmup_redraws_remaining = 0;
 		self.last_present_at = Instant::now();
 	}
@@ -513,30 +533,6 @@ impl OverlaySession {
 
 			draw_result?;
 
-			let desired_inner_size = toolbar_window.renderer.hud_pill.map(|hud_pill| {
-				(
-					hud_pill.rect.width().ceil().max(1.0) as u32,
-					hud_pill.rect.height().ceil().max(1.0) as u32,
-				)
-			});
-			let toolbar_window = Arc::clone(&toolbar_window.window);
-
-			if let Some(desired) = desired_inner_size
-				&& self.toolbar_inner_size_points != Some(desired)
-			{
-				self.toolbar_inner_size_points = Some(desired);
-
-				self.configure_hud_window_common(
-					toolbar_window.as_ref(),
-					Some(overlay::frozen_toolbar_corner_radius_points(desired.1 as f32)),
-				);
-
-				let _ = toolbar_window.request_inner_size(LogicalSize::new(
-					f64::from(desired.0),
-					f64::from(desired.1),
-				));
-			}
-
 			if toolbar_became_visible {
 				self.note_frozen_transition_toolbar_visible(monitor);
 			}
@@ -571,7 +567,6 @@ impl OverlaySession {
 
 		Some(toolbar_became_visible)
 	}
-
 	pub(super) fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
 		let redraw_started_at = Instant::now();
 
@@ -612,6 +607,9 @@ impl OverlaySession {
 
 		let position_update_elapsed = self.update_toolbar_position_after_redraw(monitor);
 
+		#[cfg(target_os = "macos")]
+		self.sync_toolbar_window_cursor_hittest(super::macos_mouse_location());
+
 		if let Some(action) = self.toolbar_state.pending_action.take() {
 			let control = self.handle_toolbar_action(action);
 
@@ -649,6 +647,68 @@ impl OverlaySession {
 		self.force_apply_pending_toolbar_window_move();
 
 		Some(position_update_started_at.elapsed())
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn sync_toolbar_window_cursor_hittest(
+		&mut self,
+		current_cursor: Option<GlobalPoint>,
+	) {
+		let enabled = self.toolbar_window_cursor_hittest_should_be_enabled(current_cursor);
+		let Some(toolbar_window) = self.toolbar_window.as_ref() else {
+			self.toolbar_window_cursor_hittest_enabled = false;
+
+			return;
+		};
+
+		if enabled == self.toolbar_window_cursor_hittest_enabled {
+			return;
+		}
+
+		let _ = toolbar_window.window.set_cursor_hittest(enabled);
+
+		self.toolbar_window_cursor_hittest_enabled = enabled;
+	}
+
+	#[cfg(target_os = "macos")]
+	fn toolbar_window_cursor_hittest_should_be_enabled(
+		&self,
+		current_cursor: Option<GlobalPoint>,
+	) -> bool {
+		if !self.toolbar_window_visible
+			|| !matches!(self.state.mode, OverlayMode::Frozen)
+			|| !self.toolbar_state.visible
+			|| self.state.frozen_image.is_none()
+		{
+			return false;
+		}
+
+		let Some(monitor) = self.state.monitor.or_else(|| self.active_cursor_monitor()) else {
+			return false;
+		};
+		let Some(cursor_global) = current_cursor.or(self.state.cursor) else {
+			return false;
+		};
+		let window_toolbar_outer_pos =
+			self.toolbar_window.as_ref().and_then(Self::toolbar_window_outer_position);
+		let toolbar_outer_pos = window_toolbar_outer_pos
+			.or(self.pending_toolbar_outer_pos)
+			.or(self.toolbar_outer_pos)
+			.or_else(|| {
+				self.toolbar_state.floating_position.map(|floating_position| {
+					GlobalPoint::new(
+						monitor.origin.x.saturating_add(floating_position.x.round() as i32),
+						monitor.origin.y.saturating_add(floating_position.y.round() as i32),
+					)
+				})
+			});
+		let Some(toolbar_outer_pos) = toolbar_outer_pos else {
+			return false;
+		};
+		let cursor_local =
+			Self::toolbar_cursor_local_position_from_outer(toolbar_outer_pos, cursor_global);
+
+		WindowRenderer::frozen_toolbar_visible_capsules_contain(&self.toolbar_state, cursor_local)
 	}
 
 	fn log_toolbar_redraw_phase_timing(
