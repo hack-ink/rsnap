@@ -63,6 +63,7 @@ impl OverlaySession {
 		self.maybe_log_event_loop_stall(now);
 		self.mark_progress(OverlayEventLoopPhase::AboutToWait);
 		self.maybe_clear_loupe_activation_after_focus_loss();
+		self.maybe_timeout_pending_click_hit_test(now);
 
 		#[cfg(target_os = "macos")]
 		{

@@ -12,6 +12,56 @@ use crate::overlay::{
 pub(super) const FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT: u64 = 8;
 
 impl OverlaySession {
+	pub(super) fn maybe_timeout_pending_click_hit_test(&mut self, now: Instant) -> bool {
+		let Some(request_id) = self.pending_click_hit_test_request_id else {
+			self.pending_click_hit_test_requested_at = None;
+
+			return false;
+		};
+		let Some(requested_at) = self.pending_click_hit_test_requested_at else {
+			return false;
+		};
+		let Some(elapsed) = now.checked_duration_since(requested_at) else {
+			return false;
+		};
+
+		if elapsed < crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT {
+			return false;
+		}
+
+		self.pending_click_hit_test_request_id = None;
+		self.pending_click_hit_test_requested_at = None;
+
+		tracing::warn!(
+			request_id,
+			elapsed_ms = elapsed.as_millis(),
+			timeout_ms = crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT.as_millis(),
+			"Pending click hit test timed out."
+		);
+
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return true;
+		}
+
+		let LiveCaptureInteraction::PressPending { monitor, .. } = self.live_capture_interaction else {
+			return true;
+		};
+		let next_interaction = self
+			.state
+			.cursor
+			.filter(|cursor| monitor.contains(*cursor))
+			.and_then(|cursor| {
+				self.live_capture_target_from_snapshot(monitor, cursor)
+					.map(|target| LiveCaptureInteraction::HoverWindow { monitor, target })
+			})
+			.unwrap_or(LiveCaptureInteraction::Idle);
+
+		self.set_live_capture_interaction(next_interaction);
+		self.request_redraw_for_monitor(monitor);
+
+		true
+	}
+
 	fn clear_freeze_capture_tracking(&mut self) {
 		self.pending_freeze_capture = None;
 		self.inflight_freeze_capture = None;
@@ -809,6 +859,7 @@ impl OverlaySession {
 		}
 
 		self.pending_click_hit_test_request_id = None;
+		self.pending_click_hit_test_requested_at = None;
 
 		let click_target = hit
 			.map_or_else(LiveClickCaptureTarget::fullscreen_fallback, |window_hit| {
@@ -851,10 +902,13 @@ impl OverlaySession {
 
 		self.hit_test_request_id = request_id;
 
-		match worker.request_hit_test_window(monitor, cursor, request_id) {
-			Ok(()) => {
-				self.pending_click_hit_test_request_id = Some(request_id);
-			},
+			match worker.request_hit_test_window(monitor, cursor, request_id) {
+				Ok(()) => {
+					self.pending_click_hit_test_request_id = Some(request_id);
+					self.pending_click_hit_test_requested_at = Some(Instant::now());
+
+					self.schedule_egui_repaint_after(crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT);
+				},
 			Err(WorkerRequestSendError::Full) => {
 				self.hit_test_send_full_count = self.hit_test_send_full_count.saturating_add(1);
 
