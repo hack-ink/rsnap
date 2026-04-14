@@ -241,6 +241,8 @@ type ScrollCaptureStartedHook = Arc<dyn Fn() + Send + Sync>;
 
 type Result<T, E = Report> = std::result::Result<T, E>;
 
+pub(crate) const CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED: bool = false;
+
 #[cfg(target_os = "macos")]
 const KCG_HID_EVENT_TAP: u32 = 0;
 #[cfg(target_os = "macos")]

@@ -36,8 +36,8 @@ cross-platform architecture.
 - On macOS, Frozen mode may recognize text from the current frozen capture and copy the recognized text to the clipboard.
 - Cmd+S (macOS) / Ctrl+S saves the frozen PNG to disk.
 - `Esc` cancels capture.
-- In Frozen mode, a loupe and toolbar are part of the floating HUD set and can still
-  interact with pointer movement and redraw.
+- In Frozen mode, the toolbar remains part of the floating HUD set. The live loupe is
+  hidden after freeze and may be recreated only when a later live-mode transition needs it.
 - In Frozen mode, a dragged-region capture may be repositioned by dragging inside the
   bright selected area; width and height remain fixed and the moved rect stays on the
   current monitor.
@@ -51,6 +51,10 @@ cross-platform architecture.
 3. When the capture session overlay is visible, underlying desktop content MUST NOT be
    interactive.
 4. The overlay background should be transparent and non-dimming by default.
+4a. On macOS, rsnap overlay, HUD, loupe, frozen toolbar, and scroll preview windows MUST remain
+    externally capturable by system screenshot and screen-recording tools. Internal self-capture
+    correctness comes from rsnap's own exclusion filters and freeze handoff logic, not window
+    content protection.
 5. In live mode, the overlay MUST show a HUD near the cursor with:
    - global cursor coordinates `x,y`
    - pixel color `rgb(r,g,b)` under the cursor
@@ -62,6 +66,9 @@ cross-platform architecture.
    - `Space` -> copy the frozen cropped PNG (region/window/fullscreen) to the system clipboard, then exit
    - On macOS, the frozen toolbar may expose `Recognize Text`, which runs Apple Vision OCR on the current frozen capture, copies the recognized text to the clipboard, and exits
    - Cmd+S (macOS) / Ctrl+S -> save the frozen cropped PNG to disk, then exit
+   - On macOS, freeze may complete directly from a fresh live-stream snapshot only when the
+     live stream has complete self-capture exclusions. Otherwise live snapshots are preview-only
+     until authoritative capture completes
    - In Frozen mode, toolbar-driven annotations are part of the frozen capture state. Current
      annotation/edit tools are pointer, pen, arrow, text, mosaic, and spotlight; the pen-tool
      contract lives in `docs/spec/annotation-pen.md`
@@ -198,9 +205,10 @@ Research and cross-platform notes live in:
 
 ## HUD/toolbar lifecycle
 
-- All floating HUD windows are created at overlay start.
-- In Frozen mode, loupe/toolbar visibility follows Tab + current mode state and
-  `show_frozen_capture` state.
+- Overlay windows and the main HUD are created at overlay start.
+- The loupe, frozen toolbar, and scroll preview windows may be created lazily when the
+  active mode first needs them.
+- In Frozen mode, toolbar visibility follows current mode state and `show_frozen_capture`.
 
 ## Current non-goals
 
