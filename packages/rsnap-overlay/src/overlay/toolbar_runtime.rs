@@ -580,6 +580,14 @@ impl OverlaySession {
 			self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
 			toolbar_became_visible = true;
 		}
+		#[cfg(target_os = "macos")]
+		if toolbar_became_visible && self.preserve_frontmost_on_next_toolbar_show {
+			self.preserve_frontmost_on_next_toolbar_show = false;
+
+			self.restore_recorded_frontmost_application_for_focus_preservation(
+				"toolbar_first_show",
+			);
+		}
 		if should_focus_frozen_keyboard {
 			self.focus_frozen_keyboard_window();
 		}
