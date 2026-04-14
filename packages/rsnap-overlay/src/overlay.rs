@@ -1182,6 +1182,7 @@ impl OverlaySession {
 			&& self.inflight_freeze_capture.is_none()
 	}
 
+	#[cfg(target_os = "macos")]
 	fn pending_window_freeze_capture_for_monitor(
 		&self,
 		monitor: MonitorRect,
@@ -1464,6 +1465,7 @@ impl OverlaySession {
 			});
 	}
 
+	#[cfg(target_os = "macos")]
 	fn note_frozen_transition_authoritative_handoff_armed(&self, monitor: MonitorRect) {
 		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
 			op: "overlay.freeze_transition_authoritative_handoff_armed",
