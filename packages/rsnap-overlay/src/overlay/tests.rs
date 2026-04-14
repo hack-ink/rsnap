@@ -1483,8 +1483,12 @@ fn toolbar_cursor_left_during_drag_keeps_drag_session_alive() {
 #[test]
 fn toolbar_drag_start_eligibility_prefers_live_cursor_over_stale_cache() {
 	let mut session = OverlaySession::new();
+	#[cfg(target_os = "macos")]
+	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	#[cfg(not(target_os = "macos"))]
+	let primary_origin = Pos2::ZERO;
 	let primary_rect =
-		WindowRenderer::frozen_toolbar_primary_rect(&session.toolbar_state, Pos2::ZERO);
+		WindowRenderer::frozen_toolbar_primary_rect(&session.toolbar_state, primary_origin);
 	let stale_cursor = Pos2::new(primary_rect.right() + 12.0, primary_rect.center().y);
 	let live_cursor = primary_rect.center();
 
@@ -1499,8 +1503,12 @@ fn toolbar_drag_start_eligibility_prefers_live_cursor_over_stale_cache() {
 #[test]
 fn toolbar_drag_start_eligibility_falls_back_to_cached_pointer_when_live_cursor_is_missing() {
 	let mut session = OverlaySession::new();
+	#[cfg(target_os = "macos")]
+	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	#[cfg(not(target_os = "macos"))]
+	let primary_origin = Pos2::ZERO;
 	let primary_rect =
-		WindowRenderer::frozen_toolbar_primary_rect(&session.toolbar_state, Pos2::ZERO);
+		WindowRenderer::frozen_toolbar_primary_rect(&session.toolbar_state, primary_origin);
 	let cached_cursor = primary_rect.center();
 
 	assert!(primary_rect.contains(cached_cursor));
@@ -1536,15 +1544,18 @@ fn toolbar_visible_capsule_hit_test_excludes_gap_between_capsules() {
 
 	assert!(WindowRenderer::frozen_toolbar_visible_capsules_contain(
 		&session.toolbar_state,
+		Pos2::ZERO,
 		primary_point
 	));
 	assert!(window_rect.contains(gap_point));
 	assert!(!WindowRenderer::frozen_toolbar_visible_capsules_contain(
 		&session.toolbar_state,
+		Pos2::ZERO,
 		gap_point
 	));
 	assert!(WindowRenderer::frozen_toolbar_visible_capsules_contain(
 		&session.toolbar_state,
+		Pos2::ZERO,
 		style_point
 	));
 }

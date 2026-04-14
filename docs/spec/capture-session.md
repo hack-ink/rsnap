@@ -17,6 +17,7 @@ Defines:
 - hovered-window, region-selection, and fullscreen fallback behavior
 - the current macOS scroll-capture contract
 - the presence of Frozen-mode annotation state in session output
+- the existence of a separate Frozen-toolbar layout contract for primary-toolbar anchoring
 
 This repository contains a pure-Rust screenshot prototype targeting macOS first, with a
 cross-platform architecture.
@@ -71,7 +72,8 @@ cross-platform architecture.
      until authoritative capture completes
    - In Frozen mode, toolbar-driven annotations are part of the frozen capture state. Current
      annotation/edit tools are pointer, pen, arrow, text, mosaic, and spotlight; the pen-tool
-     contract lives in `docs/spec/annotation-pen.md`
+     contract lives in `docs/spec/annotation-pen.md`, and Frozen toolbar placement/expansion
+     invariants live in `docs/spec/frozen-toolbar-layout.md`
    - Arrow annotations are drag-defined overlays that participate in preview, export, and
      undo/redo like other committed Frozen-mode annotations.
    - Spotlight annotations keep the selected rectangle undimmed while darkening the surrounding

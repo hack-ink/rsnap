@@ -861,7 +861,7 @@ impl OverlaySession {
 		self.configure_hud_window_common(
 			window.as_ref(),
 			Some(overlay::frozen_toolbar_corner_radius_points(
-				startup_size.y.max(TOOLBAR_EXPANDED_HEIGHT_PX),
+				WindowRenderer::frozen_toolbar_primary_size(&self.toolbar_state).y,
 			)),
 		);
 		window.request_redraw();
