@@ -103,6 +103,47 @@ impl OverlaySession {
 		Some((monitor, capture_rect))
 	}
 
+	fn frozen_arrow_drag_target(&self) -> Option<(MonitorRect, RectPoints)> {
+		(self.toolbar_state.selected_tool == FrozenToolbarTool::Arrow)
+			.then(|| self.frozen_brush_capture_target())
+			.flatten()
+	}
+
+	fn frozen_spotlight_drag_target(&self) -> Option<(MonitorRect, RectPoints)> {
+		(self.toolbar_state.selected_tool == FrozenToolbarTool::Spotlight)
+			.then(|| self.frozen_brush_capture_target())
+			.flatten()
+	}
+
+	fn frozen_capture_tool_cursor_icon(
+		&self,
+		monitor: MonitorRect,
+		target: Option<(MonitorRect, RectPoints)>,
+		active: bool,
+	) -> Option<CursorIcon> {
+		let (target_monitor, capture_rect) = target?;
+
+		if target_monitor != monitor {
+			return Some(CursorIcon::Default);
+		}
+		if active {
+			return Some(CursorIcon::Crosshair);
+		}
+
+		let Some(cursor) = self.state.cursor else {
+			return Some(CursorIcon::Default);
+		};
+		let Some((cursor_x, cursor_y)) = monitor.local_u32(cursor) else {
+			return Some(CursorIcon::Default);
+		};
+
+		Some(if capture_rect.contains((cursor_x, cursor_y)) {
+			CursorIcon::Crosshair
+		} else {
+			CursorIcon::Default
+		})
+	}
+
 	pub(super) fn begin_frozen_selection_drag(&mut self, global: GlobalPoint) -> bool {
 		let Some((monitor, capture_rect)) = self.frozen_selection_drag_target() else {
 			return false;
@@ -181,50 +222,19 @@ impl OverlaySession {
 		&self,
 		monitor: MonitorRect,
 	) -> CursorIcon {
-		if let Some((target_monitor, capture_rect)) = self.frozen_mosaic_drag_target() {
-			if target_monitor != monitor {
-				return CursorIcon::Default;
+		let pen_target = (self.toolbar_state.selected_tool == FrozenToolbarTool::Pen)
+			.then(|| self.frozen_brush_capture_target())
+			.flatten();
+
+		for (target, active) in [
+			(self.frozen_mosaic_drag_target(), self.frozen_mosaic_drag.active),
+			(self.frozen_spotlight_drag_target(), self.frozen_spotlight_drag.active),
+			(self.frozen_arrow_drag_target(), self.frozen_arrow_drag.active),
+			(pen_target, self.frozen_brush.active_stroke.is_some()),
+		] {
+			if let Some(icon) = self.frozen_capture_tool_cursor_icon(monitor, target, active) {
+				return icon;
 			}
-			if self.frozen_mosaic_drag.active {
-				return CursorIcon::Crosshair;
-			}
-
-			let Some(cursor) = self.state.cursor else {
-				return CursorIcon::Default;
-			};
-			let Some((cursor_x, cursor_y)) = monitor.local_u32(cursor) else {
-				return CursorIcon::Default;
-			};
-
-			return if capture_rect.contains((cursor_x, cursor_y)) {
-				CursorIcon::Crosshair
-			} else {
-				CursorIcon::Default
-			};
-		}
-
-		if self.toolbar_state.selected_tool == FrozenToolbarTool::Pen
-			&& let Some((target_monitor, capture_rect)) = self.frozen_brush_capture_target()
-		{
-			if target_monitor != monitor {
-				return CursorIcon::Default;
-			}
-			if self.frozen_brush.active_stroke.is_some() {
-				return CursorIcon::Crosshair;
-			}
-
-			let Some(cursor) = self.state.cursor else {
-				return CursorIcon::Default;
-			};
-			let Some((cursor_x, cursor_y)) = monitor.local_u32(cursor) else {
-				return CursorIcon::Default;
-			};
-
-			return if capture_rect.contains((cursor_x, cursor_y)) {
-				CursorIcon::Crosshair
-			} else {
-				CursorIcon::Default
-			};
 		}
 
 		let Some((target_monitor, capture_rect)) = self.frozen_selection_drag_target() else {
@@ -297,6 +307,42 @@ impl OverlaySession {
 			return Vec::new();
 		}
 
+		if let Some((target_monitor, capture_rect)) = self.frozen_spotlight_drag_target() {
+			if target_monitor != monitor {
+				return Vec::new();
+			}
+			if self.frozen_spotlight_drag.active {
+				return vec![OverlayCursorRect::new(overlay_bounds, CursorIcon::Crosshair)];
+			}
+
+			let capture_rect = Rect::from_min_size(
+				Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
+				Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
+			)
+			.intersect(overlay_bounds);
+
+			return (capture_rect.width() > 0.0 && capture_rect.height() > 0.0)
+				.then_some(vec![OverlayCursorRect::new(capture_rect, CursorIcon::Crosshair)])
+				.unwrap_or_default();
+		}
+		if let Some((target_monitor, capture_rect)) = self.frozen_arrow_drag_target() {
+			if target_monitor != monitor {
+				return Vec::new();
+			}
+			if self.frozen_arrow_drag.active {
+				return vec![OverlayCursorRect::new(overlay_bounds, CursorIcon::Crosshair)];
+			}
+
+			let capture_rect = Rect::from_min_size(
+				Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
+				Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
+			)
+			.intersect(overlay_bounds);
+
+			return (capture_rect.width() > 0.0 && capture_rect.height() > 0.0)
+				.then_some(vec![OverlayCursorRect::new(capture_rect, CursorIcon::Crosshair)])
+				.unwrap_or_default();
+		}
 		if let Some((target_monitor, capture_rect)) = self.frozen_mosaic_drag_target() {
 			if target_monitor != monitor {
 				return Vec::new();
@@ -644,7 +690,7 @@ impl OverlaySession {
 		(local_x, local_y)
 	}
 
-	fn clamped_local_point_in_rect(
+	pub(super) fn clamped_local_point_in_rect(
 		monitor: MonitorRect,
 		capture_rect: RectPoints,
 		global: GlobalPoint,
@@ -656,7 +702,7 @@ impl OverlaySession {
 		(local_x.clamp(capture_rect.x, max_x), local_y.clamp(capture_rect.y, max_y))
 	}
 
-	fn rect_from_drag_points(
+	pub(super) fn rect_from_drag_points(
 		anchor_x: u32,
 		anchor_y: u32,
 		cursor_x: u32,

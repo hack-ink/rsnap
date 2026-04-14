@@ -6,10 +6,12 @@ mod capture_window_runtime;
 mod config_runtime;
 mod cursor_context_runtime;
 mod cursor_runtime;
+mod frozen_arrow_runtime;
 mod frozen_brush_runtime;
 mod frozen_export_runtime;
 mod frozen_mosaic_runtime;
 mod frozen_selection_runtime;
+mod frozen_spotlight_runtime;
 mod frozen_text_runtime;
 mod hud_helpers;
 mod hud_runtime;
@@ -162,12 +164,12 @@ use self::rendering::{
 #[cfg(all(target_os = "macos", test))]
 use self::session_state::InflightScrollCaptureObservation;
 use self::session_state::{
-	ActiveFrozenBrushStroke, CursorMoveTrace, FrozenAnnotationColor, FrozenBrushModelState,
-	FrozenBrushState, FrozenBrushStroke, FrozenMosaicDragState,
-	FrozenSelectionDragCursorMoveTiming, FrozenSelectionDragState, FrozenTextAnnotation,
-	FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState,
-	HudDrawConfig, LiveSampleApplyResult, ScrollCaptureState, SlowOperationLogger,
-	WindowFreezeCaptureTarget,
+	ActiveFrozenBrushStroke, CursorMoveTrace, FrozenAnnotationColor, FrozenArrowAnnotation,
+	FrozenArrowDragState, FrozenBrushModelState, FrozenBrushState, FrozenBrushStroke,
+	FrozenMosaicDragState, FrozenSelectionDragCursorMoveTiming, FrozenSelectionDragState,
+	FrozenSpotlightAnnotation, FrozenSpotlightDragState, FrozenTextAnnotation, FrozenTextEditState,
+	FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState, HudDrawConfig,
+	LiveSampleApplyResult, ScrollCaptureState, SlowOperationLogger, WindowFreezeCaptureTarget,
 };
 #[cfg(target_os = "macos")]
 use self::session_state::{
@@ -613,6 +615,10 @@ pub struct OverlaySession {
 	pending_self_capture_exception_window_ids_worker_refresh: bool,
 	frozen_text_annotations: Vec<FrozenTextAnnotation>,
 	frozen_text_redo_annotations: Vec<FrozenTextAnnotation>,
+	frozen_arrow_annotations: Vec<FrozenArrowAnnotation>,
+	frozen_arrow_redo_annotations: Vec<FrozenArrowAnnotation>,
+	frozen_spotlight_annotations: Vec<FrozenSpotlightAnnotation>,
+	frozen_spotlight_redo_annotations: Vec<FrozenSpotlightAnnotation>,
 	frozen_text_edit: Option<FrozenTextEditState>,
 	frozen_text_input_generation: u64,
 	frozen_text_recent_input: Option<FrozenTextRecentInput>,
@@ -627,8 +633,11 @@ pub struct OverlaySession {
 	left_mouse_button_down_monitor: Option<MonitorRect>,
 	left_mouse_button_down_global: Option<GlobalPoint>,
 	frozen_brush: FrozenBrushState,
+	frozen_arrow_drag: FrozenArrowDragState,
 	frozen_selection_drag: FrozenSelectionDragState,
 	frozen_mosaic_drag: FrozenMosaicDragState,
+	frozen_spotlight_drag: FrozenSpotlightDragState,
+	frozen_spotlight_preview_rect: Option<RectPoints>,
 	frozen_edit_undo_stack: Vec<FrozenEditKind>,
 	frozen_edit_redo_stack: Vec<FrozenEditKind>,
 	frozen_mosaic_undo_stack: Vec<FrozenMosaicEdit>,
@@ -837,24 +846,26 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			pending_self_capture_exception_window_ids_worker_refresh: false,
 			frozen_text_annotations: Vec::new(), frozen_text_redo_annotations: Vec::new(),
+			frozen_arrow_annotations: Vec::new(), frozen_arrow_redo_annotations: Vec::new(),
+			frozen_spotlight_annotations: Vec::new(), frozen_spotlight_redo_annotations: Vec::new(),
 			frozen_text_edit: None, frozen_text_input_generation: 0, frozen_text_recent_input: None,
 			toolbar_state: FrozenToolbarState::default(),
-				toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
-				toolbar_pointer_local: None,
-				#[cfg(target_os = "macos")]
-				toolbar_window_cursor_hittest_enabled: false,
-				left_mouse_button_down: false, left_mouse_button_down_monitor: None, left_mouse_button_down_global: None,
-			frozen_brush: FrozenBrushState::default(),
+			toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
+			toolbar_pointer_local: None,
+			#[cfg(target_os = "macos")]
+			toolbar_window_cursor_hittest_enabled: false,
+			left_mouse_button_down: false, left_mouse_button_down_monitor: None, left_mouse_button_down_global: None,
+			frozen_brush: FrozenBrushState::default(), frozen_arrow_drag: FrozenArrowDragState::default(),
 			frozen_selection_drag: FrozenSelectionDragState::default(),
-			frozen_mosaic_drag: FrozenMosaicDragState::default(),
+			frozen_mosaic_drag: FrozenMosaicDragState::default(), frozen_spotlight_drag: FrozenSpotlightDragState::default(),
+			frozen_spotlight_preview_rect: None,
 			frozen_edit_undo_stack: Vec::new(),
 			frozen_edit_redo_stack: Vec::new(),
 			frozen_mosaic_undo_stack: Vec::new(),
 			frozen_mosaic_redo_stack: Vec::new(),
 			hud_window_visible: false, toolbar_window_visible: false,
 			skip_toolbar_focus_on_next_show: false, toolbar_window_warmup_redraws_remaining: 0,
-			loupe_window_visible: false,
-			loupe_window_warmup_redraws_remaining: 0,
+			loupe_window_visible: false, loupe_window_warmup_redraws_remaining: 0,
 			scroll_capture: ScrollCaptureState::default(),
 			#[cfg(target_os = "macos")]
 			scroll_frame_waker: None,
@@ -1612,8 +1623,17 @@ impl OverlaySession {
 
 	fn reset_frozen_annotation_state(&mut self) {
 		self.frozen_brush = FrozenBrushState::default();
+
+		self.frozen_arrow_annotations.clear();
+		self.frozen_arrow_redo_annotations.clear();
+		self.frozen_spotlight_annotations.clear();
+		self.frozen_spotlight_redo_annotations.clear();
+
+		self.frozen_arrow_drag = FrozenArrowDragState::default();
 		self.frozen_selection_drag = FrozenSelectionDragState::default();
 		self.frozen_mosaic_drag = FrozenMosaicDragState::default();
+		self.frozen_spotlight_drag = FrozenSpotlightDragState::default();
+		self.frozen_spotlight_preview_rect = None;
 
 		self.frozen_edit_undo_stack.clear();
 		self.frozen_edit_redo_stack.clear();
@@ -1779,6 +1799,8 @@ impl OverlaySession {
 		self.frozen_brush.redo_strokes.clear();
 		self.frozen_mosaic_redo_stack.clear();
 		self.frozen_text_redo_annotations.clear();
+		self.frozen_arrow_redo_annotations.clear();
+		self.frozen_spotlight_redo_annotations.clear();
 	}
 
 	fn discard_evicted_frozen_edit_payload(&mut self, edit_kind: FrozenEditKind) {
@@ -1796,6 +1818,16 @@ impl OverlaySession {
 			FrozenEditKind::TextAnnotation => {
 				if !self.frozen_text_annotations.is_empty() {
 					self.frozen_text_annotations.remove(0);
+				}
+			},
+			FrozenEditKind::ArrowAnnotation => {
+				if !self.frozen_arrow_annotations.is_empty() {
+					self.frozen_arrow_annotations.remove(0);
+				}
+			},
+			FrozenEditKind::SpotlightAnnotation => {
+				if !self.frozen_spotlight_annotations.is_empty() {
+					self.frozen_spotlight_annotations.remove(0);
 				}
 			},
 		}
@@ -1829,6 +1861,8 @@ impl OverlaySession {
 			FrozenEditKind::BrushStroke => self.undo_frozen_brush_stroke(),
 			FrozenEditKind::MosaicEdit => self.undo_frozen_mosaic_edit(),
 			FrozenEditKind::TextAnnotation => self.undo_frozen_text_annotation(),
+			FrozenEditKind::ArrowAnnotation => self.undo_frozen_arrow_annotation(),
+			FrozenEditKind::SpotlightAnnotation => self.undo_frozen_spotlight_annotation(),
 		};
 
 		if undone {
@@ -1850,6 +1884,8 @@ impl OverlaySession {
 			FrozenEditKind::BrushStroke => self.redo_frozen_brush_stroke(),
 			FrozenEditKind::MosaicEdit => self.redo_frozen_mosaic_edit(),
 			FrozenEditKind::TextAnnotation => self.redo_frozen_text_annotation(),
+			FrozenEditKind::ArrowAnnotation => self.redo_frozen_arrow_annotation(),
+			FrozenEditKind::SpotlightAnnotation => self.redo_frozen_spotlight_annotation(),
 		};
 
 		if redone {
@@ -2007,6 +2043,8 @@ impl OverlaySession {
 		button: MouseButton,
 	) {
 		if state == ElementState::Released && button == MouseButton::Left {
+			self.commit_frozen_arrow_drag();
+			self.commit_frozen_spotlight_drag();
 			self.commit_frozen_mosaic_drag();
 
 			let _ = self.finish_frozen_brush_stroke();
@@ -2542,6 +2580,39 @@ impl OverlaySession {
 		false
 	}
 
+	fn frozen_toolbar_badge_visibility(
+		&mut self,
+		overlay_monitor: MonitorRect,
+		overlay_screen_rect: Rect,
+		draw_toolbar: bool,
+	) -> bool {
+		let toolbar_visible_for_badge = if cfg!(target_os = "macos") {
+			!self.should_hide_toolbar_window(overlay_monitor)
+		} else {
+			draw_toolbar
+		};
+
+		#[cfg(target_os = "macos")]
+		{
+			if !toolbar_visible_for_badge {
+				return false;
+			}
+
+			let ready = self.advance_frozen_toolbar_readiness_sample(overlay_screen_rect);
+
+			if !ready {
+				self.request_redraw_for_monitor(overlay_monitor);
+			}
+
+			ready
+		}
+
+		#[cfg(not(target_os = "macos"))]
+		{
+			toolbar_visible_for_badge && self.frozen_toolbar_ready_for_draw(overlay_screen_rect)
+		}
+	}
+
 	fn handle_overlay_window_redraw(&mut self, window_id: WindowId) -> OverlayControl {
 		let Some(overlay_monitor) = self.windows.get(&window_id).map(|overlay| overlay.monitor)
 		else {
@@ -2573,26 +2644,11 @@ impl OverlaySession {
 
 		self.log_frozen_overlay_redraw_trace(window_id, overlay_monitor, draw_toolbar);
 
-		let toolbar_visible_for_badge = if cfg!(target_os = "macos") {
-			!self.should_hide_toolbar_window(overlay_monitor)
-		} else {
-			draw_toolbar
-		};
-		#[cfg(target_os = "macos")]
-		let toolbar_ready_for_badge = if toolbar_visible_for_badge {
-			let ready = self.advance_frozen_toolbar_readiness_sample(overlay_screen_rect);
-
-			if !ready {
-				self.request_redraw_for_monitor(overlay_monitor);
-			}
-
-			ready
-		} else {
-			false
-		};
-		#[cfg(not(target_os = "macos"))]
-		let toolbar_ready_for_badge =
-			toolbar_visible_for_badge && self.frozen_toolbar_ready_for_draw(overlay_screen_rect);
+		let toolbar_ready_for_badge = self.frozen_toolbar_badge_visibility(
+			overlay_monitor,
+			overlay_screen_rect,
+			draw_toolbar,
+		);
 		let frozen_toolbar_reserved_rect = self.frozen_size_badge_toolbar_reserved_rect(
 			overlay_monitor,
 			overlay_screen_rect,
@@ -2606,8 +2662,16 @@ impl OverlaySession {
 		let frozen_text_style = self.toolbar_state.text_style;
 		let visible_frozen_text_annotations: &[FrozenTextAnnotation] =
 			if scroll_capture_active { &[] } else { &self.frozen_text_annotations };
+		let visible_frozen_arrow_annotations: &[FrozenArrowAnnotation] =
+			if scroll_capture_active { &[] } else { &self.frozen_arrow_annotations };
+		let visible_frozen_spotlight_annotations: &[FrozenSpotlightAnnotation] =
+			if scroll_capture_active { &[] } else { &self.frozen_spotlight_annotations };
 		let visible_frozen_text_edit =
 			if scroll_capture_active { None } else { self.frozen_text_edit.as_ref() };
+		let visible_frozen_arrow_preview =
+			if scroll_capture_active { None } else { self.active_frozen_arrow_preview() };
+		let visible_frozen_spotlight_preview_rect =
+			if scroll_capture_active { None } else { self.frozen_spotlight_preview_rect };
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
 		{
@@ -2642,6 +2706,10 @@ impl OverlaySession {
 				frozen_toolbar_reserved_rect,
 				&self.frozen_edit_undo_stack,
 				(!scroll_capture_active).then_some(&self.frozen_brush),
+				visible_frozen_arrow_annotations,
+				visible_frozen_arrow_preview.as_ref(),
+				visible_frozen_spotlight_annotations,
+				visible_frozen_spotlight_preview_rect,
 				visible_frozen_text_annotations,
 				visible_frozen_text_edit,
 				frozen_text_style,
@@ -3315,8 +3383,10 @@ enum HudTheme {
 enum FrozenToolbarTool {
 	Pointer,
 	Pen,
+	Arrow,
 	Text,
 	Mosaic,
+	Spotlight,
 	Undo,
 	Redo,
 	AutoCenter,
@@ -3331,8 +3401,10 @@ impl FrozenToolbarTool {
 		match self {
 			Self::Pointer => "Pointer",
 			Self::Pen => "Pen",
+			Self::Arrow => "Arrow",
 			Self::Text => "Text",
 			Self::Mosaic => "Mosaic",
+			Self::Spotlight => "Spotlight",
 			Self::Undo => "Undo",
 			Self::Redo => "Redo",
 			Self::AutoCenter => "Auto-center (C)",
@@ -3348,8 +3420,10 @@ impl FrozenToolbarTool {
 		match self {
 			Self::Pointer => regular::CURSOR,
 			Self::Pen => regular::PENCIL_SIMPLE,
+			Self::Arrow => regular::ARROW_UP_RIGHT,
 			Self::Text => regular::TEXT_T,
 			Self::Mosaic => regular::CHECKERBOARD,
+			Self::Spotlight => regular::FRAME_CORNERS,
 			Self::Undo => regular::ARROW_COUNTER_CLOCKWISE,
 			Self::Redo => regular::ARROW_CLOCKWISE,
 			Self::AutoCenter => regular::ARROWS_IN_CARDINAL,
@@ -3362,12 +3436,20 @@ impl FrozenToolbarTool {
 	}
 
 	const fn is_mode_tool(self) -> bool {
-		matches!(self, Self::Pointer | Self::Pen | Self::Text | Self::Mosaic)
+		matches!(
+			self,
+			Self::Pointer | Self::Pen | Self::Arrow | Self::Text | Self::Mosaic | Self::Spotlight
+		)
 	}
 
 	const fn requires_final_capture(self) -> bool {
 		match self {
-			Self::Pointer | Self::Pen | Self::Text | Self::AutoCenter => false,
+			Self::Pointer
+			| Self::Pen
+			| Self::Arrow
+			| Self::Text
+			| Self::AutoCenter
+			| Self::Spotlight => false,
 			Self::Mosaic | Self::Undo | Self::Redo => true,
 			Self::Scroll | Self::Copy | Self::Save => true,
 			#[cfg(target_os = "macos")]
@@ -3510,12 +3592,23 @@ enum FrozenEditKind {
 	BrushStroke,
 	MosaicEdit,
 	TextAnnotation,
+	ArrowAnnotation,
+	SpotlightAnnotation,
 }
 
 #[derive(Clone, Copy, Debug)]
 enum FrozenCommittedOverlay<'a> {
 	Brush(&'a FrozenBrushStroke),
 	Text(&'a FrozenTextAnnotation),
+	Arrow(&'a FrozenArrowAnnotation),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FrozenArrowGeometry {
+	shaft_end: Pos2,
+	tip: Pos2,
+	head_left: Pos2,
+	head_right: Pos2,
 }
 
 pub(super) fn frozen_toolbar_corner_radius_u8(toolbar_height_points: f32) -> u8 {
@@ -3538,6 +3631,10 @@ fn frozen_toolbar_window_startup_size_points() -> Vec2 {
 			..FrozenToolbarState::default()
 		},
 		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Arrow,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
 			selected_tool: FrozenToolbarTool::Text,
 			..FrozenToolbarState::default()
 		},
@@ -3550,6 +3647,12 @@ fn frozen_toolbar_window_startup_size_points() -> Vec2 {
 		},
 		FrozenToolbarState {
 			selected_tool: FrozenToolbarTool::Pen,
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Arrow,
 			auto_center_available: true,
 			scroll_capture_available: true,
 			..FrozenToolbarState::default()

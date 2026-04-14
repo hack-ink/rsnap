@@ -228,9 +228,23 @@ impl OverlaySession {
 
 			return true;
 		}
+		if self.frozen_arrow_drag.active {
+			if let Some(global_cursor) = global_cursor {
+				self.update_frozen_arrow_drag(global_cursor);
+			}
+
+			return true;
+		}
 		if self.frozen_mosaic_drag.active {
 			if let Some(global_cursor) = global_cursor {
 				self.update_frozen_mosaic_drag_rect(global_cursor);
+			}
+
+			return true;
+		}
+		if self.frozen_spotlight_drag.active {
+			if let Some(global_cursor) = global_cursor {
+				self.update_frozen_spotlight_drag_rect(global_cursor);
 			}
 
 			return true;
@@ -489,6 +503,7 @@ impl OverlaySession {
 				return Ok(());
 			};
 			let previous_floating_position = self.toolbar_state.floating_position;
+			let frozen_arrow_preview = self.active_frozen_arrow_preview();
 
 			self.toolbar_state.floating_position = Some(Pos2::ZERO);
 
@@ -522,6 +537,10 @@ impl OverlaySession {
 				None,
 				&[],
 				None,
+				&self.frozen_arrow_annotations,
+				frozen_arrow_preview.as_ref(),
+				&self.frozen_spotlight_annotations,
+				self.frozen_spotlight_preview_rect,
 				&self.frozen_text_annotations,
 				self.frozen_text_edit.as_ref(),
 				self.toolbar_state.text_style,
