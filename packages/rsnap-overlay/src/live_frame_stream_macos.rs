@@ -5,6 +5,10 @@
 
 use std::collections::VecDeque;
 use std::ops::Deref;
+#[cfg(test)]
+use std::ptr;
+#[cfg(test)]
+use std::ptr::NonNull;
 use std::process;
 use std::slice;
 use std::sync::{
@@ -21,7 +25,7 @@ use image::RgbaImage;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass, Message};
-use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{self, CGPoint, CGRect, CGSize, CFRetained};
 use objc2_core_media::{CMSampleBuffer, kCMTimeZero};
 use objc2_core_video::{
 	CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
@@ -278,6 +282,17 @@ impl MacLiveFrameStream {
 	}
 
 	#[cfg(test)]
+	pub(crate) fn debug_store_test_snapshot(&self, monitor: MonitorRect, captured_at: Instant) {
+		let frame = QueuedPixelBufferFrame {
+			frame_seq: 1,
+			stream_generation: 1,
+			captured_at,
+			pixel_buffer: Self::debug_test_pixel_buffer(),
+		};
+		let _ = self.shared_latest_frame.store(monitor.id, &frame);
+	}
+
+	#[cfg(test)]
 	fn record_debug_request_kind(&self, kind: &'static str) {
 		match self.debug_last_request_kind.lock() {
 			Ok(mut guard) => {
@@ -289,6 +304,29 @@ impl MacLiveFrameStream {
 				*guard = Some(kind);
 			},
 		}
+	}
+
+	#[cfg(test)]
+	fn debug_test_pixel_buffer() -> SharedPixelBuffer {
+		let mut buffer = ptr::null_mut();
+		let res = unsafe {
+			objc2_core_video::CVPixelBufferCreate(
+				None,
+				1,
+				1,
+				objc2_core_video::kCVPixelFormatType_32BGRA,
+				None,
+				NonNull::from(&mut buffer),
+			)
+		};
+
+		assert_eq!(res, objc2_core_video::kCVReturnSuccess);
+
+		SharedPixelBuffer(unsafe {
+			CFRetained::from_raw(
+				NonNull::new(buffer).expect("test pixel buffer"),
+			)
+		})
 	}
 
 	pub(crate) fn sample_rgb(&mut self, monitor: MonitorRect, x_px: u32, y_px: u32) -> Option<Rgb> {
