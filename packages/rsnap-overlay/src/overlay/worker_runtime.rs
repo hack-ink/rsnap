@@ -43,7 +43,8 @@ impl OverlaySession {
 			return true;
 		}
 
-		let LiveCaptureInteraction::PressPending { monitor, .. } = self.live_capture_interaction else {
+		let LiveCaptureInteraction::PressPending { monitor, .. } = self.live_capture_interaction
+		else {
 			return true;
 		};
 		let next_interaction = self
@@ -902,13 +903,13 @@ impl OverlaySession {
 
 		self.hit_test_request_id = request_id;
 
-			match worker.request_hit_test_window(monitor, cursor, request_id) {
-				Ok(()) => {
-					self.pending_click_hit_test_request_id = Some(request_id);
-					self.pending_click_hit_test_requested_at = Some(Instant::now());
+		match worker.request_hit_test_window(monitor, cursor, request_id) {
+			Ok(()) => {
+				self.pending_click_hit_test_request_id = Some(request_id);
+				self.pending_click_hit_test_requested_at = Some(Instant::now());
 
-					self.schedule_egui_repaint_after(crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT);
-				},
+				self.schedule_egui_repaint_after(crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT);
+			},
 			Err(WorkerRequestSendError::Full) => {
 				self.hit_test_send_full_count = self.hit_test_send_full_count.saturating_add(1);
 

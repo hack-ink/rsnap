@@ -13,9 +13,9 @@ use crate::overlay::DeviceCursorPointSource;
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenCaptureSource;
 #[cfg(target_os = "macos")]
-use crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT;
-#[cfg(target_os = "macos")]
 use crate::overlay::FrozenToolbarTool;
+#[cfg(target_os = "macos")]
+use crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT;
 use crate::overlay::tests;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerResponse;

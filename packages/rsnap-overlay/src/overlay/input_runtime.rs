@@ -946,13 +946,13 @@ impl OverlaySession {
 		if matches!(self.state.mode, OverlayMode::Frozen) {
 			return self.handle_frozen_left_mouse_input(monitor, state);
 		}
-			if !matches!(self.state.mode, OverlayMode::Live) {
-				return OverlayControl::Continue;
-			}
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return OverlayControl::Continue;
+		}
 
-			self.maybe_timeout_pending_click_hit_test(Instant::now());
+		self.maybe_timeout_pending_click_hit_test(Instant::now());
 
-			match state {
+		match state {
 			ElementState::Pressed => {
 				if self.live_capture_interaction_is_press_pending()
 					|| self.live_capture_interaction_is_dragging()
