@@ -690,6 +690,7 @@ impl WindowRenderer {
 	}
 
 	#[allow(clippy::too_many_arguments)]
+	#[allow(clippy::too_many_lines)]
 	fn run_egui(
 		&mut self,
 		raw_input: egui::RawInput,

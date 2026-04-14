@@ -8,7 +8,7 @@ use crate::overlay::{
 	ElementState, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarTool, GlobalPoint, Ime, Key, KeyEvent, LIVE_DRAG_START_THRESHOLD_PX, Modifiers,
 	MonitorRect, MouseScrollDelta, NamedKey, OverlayControl, OverlayMode, OverlaySession,
-	PhysicalPosition, PhysicalSize, PngAction, Vec2, WindowId,
+	PhysicalPosition, PhysicalSize, PngAction, Pos2, Vec2, WindowId, WindowRenderer,
 };
 
 impl OverlaySession {
@@ -59,12 +59,18 @@ impl OverlaySession {
 			let _ = self.stop_frozen_text_edit_drag();
 
 			self.toolbar_state.dragging = false;
+			self.toolbar_state.drag_start_eligible = false;
 			self.toolbar_state.drag_offset = Vec2::ZERO;
 			self.toolbar_state.drag_anchor = None;
 		} else {
 			self.toolbar_state.drag_offset = Vec2::ZERO;
 			self.toolbar_state.dragging = false;
 			self.toolbar_state.drag_anchor = None;
+			self.toolbar_state.drag_start_eligible =
+				self.toolbar_pointer_local.is_some_and(|cursor_local| {
+					WindowRenderer::frozen_toolbar_primary_rect(&self.toolbar_state, Pos2::ZERO)
+						.contains(cursor_local)
+				});
 		}
 
 		#[cfg(target_os = "macos")]
@@ -111,6 +117,7 @@ impl OverlaySession {
 		self.toolbar_pointer_local = None;
 		self.toolbar_state.annotation_size_control_hovered = false;
 		self.toolbar_state.annotation_size_wheel_accumulator = 0.0;
+		self.toolbar_state.drag_start_eligible = false;
 		self.toolbar_state.drag_anchor = None;
 	}
 

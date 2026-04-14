@@ -386,7 +386,10 @@ fn current_export_image_includes_frozen_brush_strokes() {
 	let export_image = session.current_export_image().expect("annotated export image");
 
 	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
-	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FrozenAnnotationColor::Red.export_rgba()));
+	assert_eq!(
+		export_image.get_pixel(2, 2),
+		&Rgba(session.toolbar_state.brush_style.color.export_rgba())
+	);
 }
 
 #[test]
@@ -440,7 +443,10 @@ fn frozen_brush_undo_and_redo_update_export_image() {
 
 	let redone = session.current_export_image().expect("redo export image");
 
-	assert_eq!(redone.get_pixel(3, 3), &Rgba(FrozenAnnotationColor::Red.export_rgba()));
+	assert_eq!(
+		redone.get_pixel(3, 3),
+		&Rgba(session.toolbar_state.brush_style.color.export_rgba())
+	);
 }
 
 #[test]
@@ -462,7 +468,8 @@ fn current_export_image_antialiases_frozen_brush_edges() {
 
 	let export_image = session.current_export_image().expect("annotated export image");
 	let has_antialiased_edge = export_image.pixels().any(|pixel| {
-		pixel != &background && pixel != &Rgba(FrozenAnnotationColor::Red.export_rgba())
+		pixel != &background
+			&& pixel != &Rgba(session.toolbar_state.brush_style.color.export_rgba())
 	});
 
 	assert!(has_antialiased_edge, "expected blended edge pixels around the exported brush");
@@ -484,7 +491,10 @@ fn rasterizing_frozen_brush_clears_reused_coverage_mask() {
 	);
 
 	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
-	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FrozenAnnotationColor::Red.export_rgba()));
+	assert_eq!(
+		export_image.get_pixel(2, 2),
+		&Rgba(FrozenBrushStyle::default().color.export_rgba())
+	);
 }
 
 fn significant_y_direction_reversals(points: &[Pos2], min_delta: f32) -> usize {
@@ -1112,7 +1122,7 @@ fn default_frozen_brush_style_uses_existing_width_and_color() {
 		session.toolbar_state.brush_style.stroke_width_points,
 		overlay::FROZEN_BRUSH_STROKE_WIDTH_POINTS
 	);
-	assert_eq!(session.toolbar_state.brush_style.color, FrozenAnnotationColor::Red);
+	assert_eq!(session.toolbar_state.brush_style.color, FrozenAnnotationColor::Blue);
 }
 
 #[test]

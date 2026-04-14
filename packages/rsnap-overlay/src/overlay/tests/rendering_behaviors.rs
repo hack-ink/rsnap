@@ -1236,23 +1236,29 @@ fn frozen_text_caret_visible_blinks_on_half_periods() {
 }
 
 #[test]
-fn frozen_toolbar_size_expands_for_annotation_style_toolbar() {
+fn frozen_toolbar_primary_size_stays_stable_when_annotation_style_capsule_appears() {
 	let mut toolbar_state = FrozenToolbarState::default();
-	let base_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+	let base_primary_size = WindowRenderer::frozen_toolbar_primary_size(&toolbar_state);
+	let base_window_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
 
 	toolbar_state.selected_tool = FrozenToolbarTool::Pen;
 
-	let pen_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+	let pen_primary_size = WindowRenderer::frozen_toolbar_primary_size(&toolbar_state);
+	let pen_window_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
 
-	assert!(pen_size.y > base_size.y);
-	assert_eq!(pen_size.x, base_size.x);
+	assert_eq!(pen_primary_size, base_primary_size);
+	assert!(pen_window_size.x >= base_window_size.x);
+	assert!(pen_window_size.y > base_window_size.y);
 
 	toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
-	let expanded_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
+	let text_primary_size = WindowRenderer::frozen_toolbar_primary_size(&toolbar_state);
+	let text_window_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
 
-	assert!(expanded_size.y > base_size.y);
-	assert_eq!(expanded_size, pen_size);
+	assert_eq!(text_primary_size, base_primary_size);
+	assert_eq!(text_window_size.x, base_window_size.x);
+	assert!(text_window_size.y > base_window_size.y);
+	assert!(pen_window_size.y >= text_window_size.y);
 }
 
 #[test]
@@ -1388,7 +1394,10 @@ fn frozen_annotation_toolbar_hud_pill_keeps_standard_corner_radius() {
 	);
 	let hud_pill = hud_pill.expect("annotation toolbar should render after readiness stabilizes");
 
-	assert_eq!(hud_pill.radius_points, 18.0);
+	assert_eq!(
+		hud_pill.radius_points,
+		f32::from(overlay::frozen_toolbar_corner_radius_u8(hud_pill.rect.height())),
+	);
 }
 
 #[test]
@@ -1735,9 +1744,10 @@ fn frozen_toolbar_default_position_fits_below_capture_rect() {
 	let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 	let capture_rect = Rect::from_min_size(Pos2::new(50.0, 100.0), Vec2::new(300.0, 200.0));
 	let toolbar_size = Vec2::new(460.0, 54.0);
-	let pos = WindowRenderer::frozen_toolbar_default_pos(
+	let pos = WindowRenderer::frozen_toolbar_default_window_pos(
 		monitor,
 		capture_rect,
+		toolbar_size,
 		toolbar_size,
 		ToolbarPlacement::Bottom,
 	);
@@ -1755,9 +1765,10 @@ fn frozen_toolbar_default_position_falls_inside_when_no_space_below_capture_rect
 	let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 600.0));
 	let toolbar_size = Vec2::new(460.0, 54.0);
 	let capture_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 560.0));
-	let pos = WindowRenderer::frozen_toolbar_default_pos(
+	let pos = WindowRenderer::frozen_toolbar_default_window_pos(
 		monitor,
 		capture_rect,
+		toolbar_size,
 		toolbar_size,
 		ToolbarPlacement::Bottom,
 	);
@@ -1773,13 +1784,36 @@ fn frozen_toolbar_default_position_falls_inside_when_no_space_below_capture_rect
 }
 
 #[test]
+fn frozen_toolbar_default_window_position_clamps_using_secondary_capsule_width() {
+	let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
+	let capture_rect = Rect::from_min_size(Pos2::new(640.0, 120.0), Vec2::new(120.0, 220.0));
+	let toolbar_primary_size = Vec2::new(268.0, 54.0);
+	let toolbar_window_size = Vec2::new(340.0, 82.0);
+	let pos = WindowRenderer::frozen_toolbar_default_window_pos(
+		monitor,
+		capture_rect,
+		toolbar_primary_size,
+		toolbar_window_size,
+		ToolbarPlacement::Bottom,
+	);
+	let ideal_x = capture_rect.center().x - toolbar_primary_size.x / 2.0;
+	let max_x = (monitor.max.x - toolbar_window_size.x - TOOLBAR_SCREEN_MARGIN_PX)
+		.max(TOOLBAR_SCREEN_MARGIN_PX);
+
+	assert!(ideal_x > max_x);
+	assert_eq!(pos.x, max_x);
+	assert_eq!(pos.y, capture_rect.max.y + TOOLBAR_CAPTURE_GAP_PX);
+}
+
+#[test]
 fn frozen_toolbar_top_default_position_fits_above_capture_rect() {
 	let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 	let capture_rect = Rect::from_min_size(Pos2::new(50.0, 180.0), Vec2::new(300.0, 200.0));
 	let toolbar_size = Vec2::new(460.0, 54.0);
-	let pos = WindowRenderer::frozen_toolbar_default_pos(
+	let pos = WindowRenderer::frozen_toolbar_default_window_pos(
 		monitor,
 		capture_rect,
+		toolbar_size,
 		toolbar_size,
 		ToolbarPlacement::Top,
 	);
@@ -1797,9 +1831,10 @@ fn frozen_toolbar_top_default_position_falls_inside_when_no_space_above_capture_
 	let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 600.0));
 	let capture_rect = Rect::from_min_size(Pos2::new(0.0, 20.0), Vec2::new(500.0, 400.0));
 	let toolbar_size = Vec2::new(460.0, 54.0);
-	let pos = WindowRenderer::frozen_toolbar_default_pos(
+	let pos = WindowRenderer::frozen_toolbar_default_window_pos(
 		monitor,
 		capture_rect,
+		toolbar_size,
 		toolbar_size,
 		ToolbarPlacement::Top,
 	);
@@ -1968,9 +2003,10 @@ fn frozen_selection_size_badge_keeps_below_placement_after_toolbar_leaves_defaul
 	state.monitor = Some(monitor);
 	state.frozen_capture_rect = Some(capture_rect_points);
 
-	let default_toolbar_pos = WindowRenderer::frozen_toolbar_default_pos(
+	let default_toolbar_pos = WindowRenderer::frozen_toolbar_default_window_pos(
 		screen_rect,
 		capture_rect,
+		WindowRenderer::frozen_toolbar_size(&FrozenToolbarState::default()),
 		WindowRenderer::frozen_toolbar_size(&FrozenToolbarState::default()),
 		ToolbarPlacement::Bottom,
 	);
@@ -2057,6 +2093,65 @@ fn overlay_session_computes_frozen_toolbar_reserved_rect_without_inline_toolbar_
 }
 
 #[test]
+fn frozen_annotation_capsule_keeps_top_toolbar_default_slot_stable() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(160, 220, 260, 240);
+	let mut session = OverlaySession::new();
+
+	session.config.toolbar_placement = ToolbarPlacement::Top;
+
+	let base_pos = session.frozen_toolbar_default_position_for_capture_rect(monitor, capture_rect);
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	let styled_pos =
+		session.frozen_toolbar_default_position_for_capture_rect(monitor, capture_rect);
+
+	assert_eq!(styled_pos, base_pos);
+}
+
+#[test]
+fn frozen_toolbar_reserved_rect_covers_secondary_annotation_capsule() {
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let capture_rect_points = RectPoints::new(200, 180, 200, 300);
+	let capture_rect = Rect::from_min_size(
+		Pos2::new(capture_rect_points.x as f32, capture_rect_points.y as f32),
+		Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
+	);
+	let mut state = OverlayState::new();
+
+	state.mode = OverlayMode::Frozen;
+	state.monitor = Some(monitor);
+	state.frozen_capture_rect = Some(capture_rect_points);
+
+	let toolbar_state = FrozenToolbarState {
+		selected_tool: FrozenToolbarTool::Text,
+		..FrozenToolbarState::default()
+	};
+	let primary_size = WindowRenderer::frozen_toolbar_primary_size(&toolbar_state);
+	let default_pos = WindowRenderer::frozen_toolbar_default_window_pos(
+		screen_rect,
+		capture_rect,
+		primary_size,
+		WindowRenderer::frozen_toolbar_size(&toolbar_state),
+		ToolbarPlacement::Bottom,
+	);
+	let reserved_rect = WindowRenderer::frozen_toolbar_reserved_rect(
+		&state,
+		monitor,
+		screen_rect,
+		ToolbarPlacement::Bottom,
+		&toolbar_state,
+	)
+	.expect("annotation style capsule should be reserved with the default slot");
+
+	assert_eq!(reserved_rect.min, default_pos);
+	assert_eq!(reserved_rect.size(), WindowRenderer::frozen_toolbar_size(&toolbar_state));
+}
+
+#[test]
 fn frozen_toolbar_reserved_rect_uses_overlay_viewport_size() {
 	let monitor = MonitorRect {
 		id: 1,
@@ -2080,15 +2175,17 @@ fn frozen_toolbar_reserved_rect_uses_overlay_viewport_size() {
 	session.toolbar_state.layout_last_screen_size_points = Some(toolbar_window_rect.size());
 
 	let toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
-	let overlay_default_pos = WindowRenderer::frozen_toolbar_default_pos(
+	let overlay_default_pos = WindowRenderer::frozen_toolbar_default_window_pos(
 		overlay_screen_rect,
 		capture_rect.intersect(overlay_screen_rect),
 		toolbar_size,
+		toolbar_size,
 		session.config.toolbar_placement,
 	);
-	let toolbar_window_default_pos = WindowRenderer::frozen_toolbar_default_pos(
+	let toolbar_window_default_pos = WindowRenderer::frozen_toolbar_default_window_pos(
 		toolbar_window_rect,
 		capture_rect.intersect(toolbar_window_rect),
+		toolbar_size,
 		toolbar_size,
 		session.config.toolbar_placement,
 	);
@@ -2281,9 +2378,10 @@ fn frozen_toolbar_reserved_rect_restores_near_default_slot() {
 	let mut state = OverlayState::new();
 	let mut toolbar_state = FrozenToolbarState::default();
 	let toolbar_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
-	let default_pos = WindowRenderer::frozen_toolbar_default_pos(
+	let default_pos = WindowRenderer::frozen_toolbar_default_window_pos(
 		screen_rect,
 		capture_rect,
+		toolbar_size,
 		toolbar_size,
 		ToolbarPlacement::Bottom,
 	);
