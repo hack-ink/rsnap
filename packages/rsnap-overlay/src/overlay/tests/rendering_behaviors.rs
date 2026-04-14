@@ -801,17 +801,12 @@ fn toolbar_position_update_near_edge_clamps_with_runtime_positioning_geometry() 
 	assert_eq!(session.toolbar_state.floating_position, Some(expected));
 
 	#[cfg(target_os = "macos")]
-	let expected_outer = GlobalPoint::new(
-		expected.x.round() as i32,
-		(expected.y - primary_origin.y).round() as i32,
-	);
+	let expected_outer =
+		GlobalPoint::new(expected.x.round() as i32, (expected.y - primary_origin.y).round() as i32);
 	#[cfg(not(target_os = "macos"))]
 	let expected_outer = GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32);
 
-	assert_eq!(
-		session.toolbar_outer_pos,
-		Some(expected_outer)
-	);
+	assert_eq!(session.toolbar_outer_pos, Some(expected_outer));
 }
 
 #[test]
@@ -856,17 +851,12 @@ fn toolbar_window_position_sync_near_edge_clamps_with_runtime_positioning_geomet
 	assert_eq!(session.toolbar_state.floating_position, Some(expected));
 
 	#[cfg(target_os = "macos")]
-	let expected_outer = GlobalPoint::new(
-		expected.x.round() as i32,
-		(expected.y - primary_origin.y).round() as i32,
-	);
+	let expected_outer =
+		GlobalPoint::new(expected.x.round() as i32, (expected.y - primary_origin.y).round() as i32);
 	#[cfg(not(target_os = "macos"))]
 	let expected_outer = GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32);
 
-	assert_eq!(
-		session.toolbar_outer_pos,
-		Some(expected_outer)
-	);
+	assert_eq!(session.toolbar_outer_pos, Some(expected_outer));
 	assert_eq!(
 		session.pending_toolbar_outer_pos,
 		(session.toolbar_outer_pos != Some(desired_outer)).then_some(expected_outer)
@@ -920,10 +910,8 @@ fn toolbar_position_update_clamps_scroll_mode_pen_from_primary_anchor_width() {
 	assert_eq!(session.toolbar_state.floating_position, Some(expected));
 
 	#[cfg(target_os = "macos")]
-	let expected_outer = GlobalPoint::new(
-		expected.x.round() as i32,
-		(expected.y - primary_origin.y).round() as i32,
-	);
+	let expected_outer =
+		GlobalPoint::new(expected.x.round() as i32, (expected.y - primary_origin.y).round() as i32);
 	#[cfg(not(target_os = "macos"))]
 	let expected_outer = GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32);
 
@@ -2505,10 +2493,7 @@ fn frozen_annotation_capsule_flips_above_without_moving_bottom_toolbar_anchor() 
 		toolbar_state.annotation_style_capsule_placement,
 		FrozenAnnotationStyleCapsulePlacement::Above
 	);
-	assert_eq!(
-		WindowRenderer::frozen_toolbar_primary_rect(&toolbar_state, anchor).min,
-		anchor
-	);
+	assert_eq!(WindowRenderer::frozen_toolbar_primary_rect(&toolbar_state, anchor).min, anchor);
 	assert!(
 		WindowRenderer::frozen_toolbar_window_rect(&toolbar_state, anchor).min.y < anchor.y,
 		"style capsule should render above the stable primary anchor when bottom space is tight",
@@ -2528,10 +2513,8 @@ fn frozen_annotation_capsule_flip_keeps_native_toolbar_outer_position_stable() {
 		Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
 
 	let primary_size = WindowRenderer::frozen_toolbar_primary_size(&session.toolbar_state);
-	let primary_anchor = Pos2::new(
-		160.0,
-		screen_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - primary_size.y,
-	);
+	let primary_anchor =
+		Pos2::new(160.0, screen_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - primary_size.y);
 	let base_outer = session.toolbar_outer_position_from_primary_anchor(monitor, primary_anchor);
 
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;

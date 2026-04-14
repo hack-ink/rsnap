@@ -1,13 +1,11 @@
 use crate::overlay::{
 	self, Arc, Duration, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant,
 	MonitorRect, OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
-	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2,
-	WindowId, WindowRenderer,
+	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2, WindowId,
+	WindowRenderer,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{
-	FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS,
-};
+use crate::overlay::{FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS};
 
 impl OverlaySession {
 	pub(super) fn handle_toolbar_window_moved(
@@ -511,7 +509,8 @@ impl OverlaySession {
 			let previous_floating_position = self.toolbar_state.floating_position;
 			let frozen_arrow_preview = self.active_frozen_arrow_preview();
 
-			self.toolbar_state.floating_position = Some(super::frozen_toolbar_window_primary_origin());
+			self.toolbar_state.floating_position =
+				Some(super::frozen_toolbar_window_primary_origin());
 
 			let Some(toolbar_window) = self.toolbar_window.as_mut() else {
 				return Ok(());

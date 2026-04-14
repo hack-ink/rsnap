@@ -1190,10 +1190,7 @@ impl WindowRenderer {
 			toolbar_pos,
 		);
 
-		Some(Self::frozen_toolbar_window_rect(
-			&reserved_toolbar_state,
-			toolbar_pos,
-		))
+		Some(Self::frozen_toolbar_window_rect(&reserved_toolbar_state, toolbar_pos))
 	}
 
 	pub(in crate::overlay) fn selection_size_badge_text(
@@ -2778,11 +2775,7 @@ impl WindowRenderer {
 	) -> Option<Pos2> {
 		if let Some(pos) = toolbar_state.floating_position {
 			#[cfg(any(not(target_os = "macos"), test))]
-			Self::sync_frozen_annotation_style_capsule_placement(
-				toolbar_state,
-				screen_rect,
-				pos,
-			);
+			Self::sync_frozen_annotation_style_capsule_placement(toolbar_state, screen_rect, pos);
 
 			return Some(pos);
 		}
@@ -2922,12 +2915,12 @@ impl WindowRenderer {
 			},
 		};
 		let min_y = screen_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX;
-		let max_y = (screen_rect.max.y - toolbar_positioning_size.y - TOOLBAR_SCREEN_MARGIN_PX)
-			.max(min_y);
+		let max_y =
+			(screen_rect.max.y - toolbar_positioning_size.y - TOOLBAR_SCREEN_MARGIN_PX).max(min_y);
 		let ideal_x = capture_rect.center().x - toolbar_primary_size.x / 2.0;
 		let min_x = screen_rect.min.x + TOOLBAR_SCREEN_MARGIN_PX;
-		let max_x = (screen_rect.max.x - toolbar_positioning_size.x - TOOLBAR_SCREEN_MARGIN_PX)
-			.max(min_x);
+		let max_x =
+			(screen_rect.max.x - toolbar_positioning_size.x - TOOLBAR_SCREEN_MARGIN_PX).max(min_x);
 		let x = ideal_x.clamp(min_x, max_x);
 		let y = y.max(min_y).min(max_y);
 
@@ -2957,11 +2950,9 @@ impl WindowRenderer {
 		let area_id = Id::new(format!("frozen-toolbar-{}", monitor.id));
 		let window_rect = Self::frozen_toolbar_window_rect(toolbar_state, toolbar_pos);
 
-		Area::new(area_id)
-			.order(Order::Foreground)
-			.fixed_pos(window_rect.min)
-			.show(ctx, |ui| {
-			let (_area_rect, _window_response) = ui.allocate_exact_size(toolbar_size, Sense::hover());
+		Area::new(area_id).order(Order::Foreground).fixed_pos(window_rect.min).show(ctx, |ui| {
+			let (_area_rect, _window_response) =
+				ui.allocate_exact_size(toolbar_size, Sense::hover());
 			let toolbar_rect = Self::frozen_toolbar_primary_rect(toolbar_state, toolbar_pos);
 			let style_rect =
 				Self::frozen_annotation_style_capsule_rect(toolbar_state, toolbar_rect);
