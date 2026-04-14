@@ -146,7 +146,12 @@ impl OverlaySession {
 	}
 
 	fn toolbar_primary_rect_contains(&self, cursor_local: Pos2) -> bool {
-		WindowRenderer::frozen_toolbar_primary_rect(&self.toolbar_state, Pos2::ZERO)
+		#[cfg(target_os = "macos")]
+		let toolbar_primary_origin = super::frozen_toolbar_window_primary_origin();
+		#[cfg(not(target_os = "macos"))]
+		let toolbar_primary_origin = Pos2::ZERO;
+
+		WindowRenderer::frozen_toolbar_primary_rect(&self.toolbar_state, toolbar_primary_origin)
 			.contains(cursor_local)
 	}
 

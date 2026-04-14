@@ -1573,15 +1573,33 @@ impl OverlaySession {
 			Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
 		);
 		let toolbar_primary_size = WindowRenderer::frozen_toolbar_primary_size(&self.toolbar_state);
-		let toolbar_window_size = self.toolbar_positioning_size();
+		let toolbar_positioning_size = self.toolbar_positioning_size();
 
 		WindowRenderer::frozen_toolbar_default_window_pos(
 			screen_rect,
 			capture_rect,
 			toolbar_primary_size,
-			toolbar_window_size,
+			toolbar_positioning_size,
 			self.config.toolbar_placement,
 		)
+	}
+
+	fn sync_frozen_annotation_style_capsule_placement(&mut self, monitor: MonitorRect) {
+		let Some(toolbar_pos) = self
+			.toolbar_state
+			.floating_position
+			.or(self.toolbar_state.default_slot_position)
+		else {
+			return;
+		};
+		let screen_rect =
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+
+		WindowRenderer::sync_frozen_annotation_style_capsule_placement(
+			&mut self.toolbar_state,
+			screen_rect,
+			toolbar_pos,
+		);
 	}
 
 	fn initial_session_runtime(config: &OverlayConfig) -> InitialSessionRuntime {
@@ -2579,8 +2597,12 @@ impl OverlaySession {
 		if frozen_toolbar_matches_default_slot(toolbar_pos, previous_default_pos) {
 			self.toolbar_state.floating_position = Some(current_default_pos);
 
+			self.sync_frozen_annotation_style_capsule_placement(monitor);
+
 			return !frozen_toolbar_matches_default_slot(toolbar_pos, current_default_pos);
 		}
+
+		self.sync_frozen_annotation_style_capsule_placement(monitor);
 
 		false
 	}
@@ -3628,6 +3650,10 @@ pub(super) fn frozen_toolbar_corner_radius_points(toolbar_height_points: f32) ->
 	f64::from(frozen_toolbar_corner_radius_u8(toolbar_height_points))
 }
 
+pub(in crate::overlay) fn frozen_toolbar_window_primary_origin() -> Pos2 {
+	Pos2::new(0.0, WindowRenderer::frozen_toolbar_window_top_padding_points())
+}
+
 fn frozen_toolbar_window_startup_size_points() -> Vec2 {
 	[
 		FrozenToolbarState::default(),
@@ -3679,6 +3705,7 @@ fn frozen_toolbar_window_startup_size_points() -> Vec2 {
 	.fold(Vec2::new(0.0, TOOLBAR_EXPANDED_HEIGHT_PX), |max_size, size| {
 		Vec2::new(max_size.x.max(size.x), max_size.y.max(size.y))
 	})
+	+ Vec2::new(0.0, WindowRenderer::frozen_toolbar_window_top_padding_points())
 }
 
 #[cfg(target_os = "macos")]

@@ -14,6 +14,7 @@ use crate::overlay::rendering::{
 	SelectionFlowGeometryCacheKey, SelectionSizeBadgeLayout, SelectionSizeBadgePadding,
 	SelectionSizeBadgeTarget, WindowRenderer,
 };
+use crate::overlay::session_state::FrozenAnnotationStyleCapsulePlacement;
 use crate::overlay::{
 	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX,
 	FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
@@ -1167,12 +1168,12 @@ impl WindowRenderer {
 
 		let capture_rect = Self::frozen_toolbar_capture_rect(state, monitor, screen_rect);
 		let toolbar_primary_size = Self::frozen_toolbar_primary_size(toolbar_state);
-		let toolbar_window_size = Self::frozen_toolbar_size(toolbar_state);
+		let toolbar_positioning_size = Self::frozen_toolbar_positioning_size(toolbar_state);
 		let default_pos = Self::frozen_toolbar_default_window_pos(
 			screen_rect,
 			capture_rect,
 			toolbar_primary_size,
-			toolbar_window_size,
+			toolbar_positioning_size,
 			toolbar_placement,
 		);
 		let toolbar_pos = toolbar_state.floating_position.unwrap_or(default_pos);
@@ -1181,7 +1182,18 @@ impl WindowRenderer {
 			return None;
 		}
 
-		Some(Self::frozen_toolbar_window_rect(toolbar_state, toolbar_pos))
+		let mut reserved_toolbar_state = toolbar_state.clone();
+
+		Self::sync_frozen_annotation_style_capsule_placement(
+			&mut reserved_toolbar_state,
+			screen_rect,
+			toolbar_pos,
+		);
+
+		Some(Self::frozen_toolbar_window_rect(
+			&reserved_toolbar_state,
+			toolbar_pos,
+		))
 	}
 
 	pub(in crate::overlay) fn selection_size_badge_text(
@@ -2529,6 +2541,7 @@ impl WindowRenderer {
 			(Pos2::new(-1.0, -1.0), false)
 		};
 		let toolbar_primary_size = Self::frozen_toolbar_primary_size(toolbar_state);
+		let toolbar_positioning_size = Self::frozen_toolbar_positioning_size(toolbar_state);
 		let toolbar_size = Self::frozen_toolbar_size(toolbar_state);
 		let screen_rect = ctx.input(|i| i.viewport_rect());
 		let capture_rect = Self::frozen_toolbar_capture_rect(state, monitor, screen_rect);
@@ -2540,7 +2553,7 @@ impl WindowRenderer {
 			screen_rect,
 			capture_rect,
 			toolbar_primary_size,
-			toolbar_size,
+			toolbar_positioning_size,
 			toolbar_placement,
 		) else {
 			return;
@@ -2629,6 +2642,78 @@ impl WindowRenderer {
 		Some(Vec2::new(width, height))
 	}
 
+	pub(in crate::overlay) fn frozen_toolbar_positioning_size(
+		toolbar_state: &FrozenToolbarState,
+	) -> Vec2 {
+		Self::frozen_toolbar_primary_size(toolbar_state)
+	}
+
+	pub(in crate::overlay) fn frozen_toolbar_window_top_padding_points() -> f32 {
+		[
+			FrozenToolbarState {
+				selected_tool: FrozenToolbarTool::Pen,
+				..FrozenToolbarState::default()
+			},
+			FrozenToolbarState {
+				selected_tool: FrozenToolbarTool::Text,
+				..FrozenToolbarState::default()
+			},
+		]
+		.into_iter()
+		.map(|toolbar_state| {
+			Self::frozen_annotation_style_capsule_size(&toolbar_state).map_or(0.0, |style_size| {
+				style_size.y + FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS
+			})
+		})
+		.fold(0.0, f32::max)
+	}
+
+	fn frozen_annotation_style_capsule_placement_for_toolbar_pos(
+		toolbar_state: &FrozenToolbarState,
+		screen_rect: Rect,
+		toolbar_pos: Pos2,
+	) -> FrozenAnnotationStyleCapsulePlacement {
+		let Some(style_size) = Self::frozen_annotation_style_capsule_size(toolbar_state) else {
+			return FrozenAnnotationStyleCapsulePlacement::Below;
+		};
+		let toolbar_rect = Self::frozen_toolbar_primary_rect(toolbar_state, toolbar_pos);
+		let below_y = toolbar_rect.max.y + FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS;
+		let above_y =
+			toolbar_rect.min.y - FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS - style_size.y;
+		let fits_below = below_y + style_size.y + TOOLBAR_SCREEN_MARGIN_PX <= screen_rect.max.y;
+		let fits_above = above_y >= screen_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX;
+
+		if fits_below {
+			FrozenAnnotationStyleCapsulePlacement::Below
+		} else if fits_above {
+			FrozenAnnotationStyleCapsulePlacement::Above
+		} else {
+			let below_space = screen_rect.max.y - below_y;
+			let above_space = toolbar_rect.min.y
+				- FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS
+				- screen_rect.min.y;
+
+			if above_space > below_space {
+				FrozenAnnotationStyleCapsulePlacement::Above
+			} else {
+				FrozenAnnotationStyleCapsulePlacement::Below
+			}
+		}
+	}
+
+	pub(in crate::overlay) fn sync_frozen_annotation_style_capsule_placement(
+		toolbar_state: &mut FrozenToolbarState,
+		screen_rect: Rect,
+		toolbar_pos: Pos2,
+	) {
+		toolbar_state.annotation_style_capsule_placement =
+			Self::frozen_annotation_style_capsule_placement_for_toolbar_pos(
+				toolbar_state,
+				screen_rect,
+				toolbar_pos,
+			);
+	}
+
 	fn frozen_annotation_style_capsule_rect(
 		toolbar_state: &FrozenToolbarState,
 		toolbar_rect: Rect,
@@ -2637,7 +2722,14 @@ impl WindowRenderer {
 		let min_x = toolbar_rect.left();
 		let max_x = (toolbar_rect.right() - style_size.x).max(min_x);
 		let x = (toolbar_rect.center().x - style_size.x * 0.5).clamp(min_x, max_x);
-		let y = toolbar_rect.max.y + FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS;
+		let y = match toolbar_state.annotation_style_capsule_placement {
+			FrozenAnnotationStyleCapsulePlacement::Above => {
+				toolbar_rect.min.y - FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS - style_size.y
+			},
+			FrozenAnnotationStyleCapsulePlacement::Below => {
+				toolbar_rect.max.y + FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS
+			},
+		};
 
 		Some(Rect::from_min_size(Pos2::new(x, y), style_size))
 	}
@@ -2655,9 +2747,10 @@ impl WindowRenderer {
 	#[cfg(any(target_os = "macos", test))]
 	pub(in crate::overlay) fn frozen_toolbar_visible_capsules_contain(
 		toolbar_state: &FrozenToolbarState,
+		toolbar_pos: Pos2,
 		cursor_local: Pos2,
 	) -> bool {
-		let toolbar_rect = Self::frozen_toolbar_primary_rect(toolbar_state, Pos2::ZERO);
+		let toolbar_rect = Self::frozen_toolbar_primary_rect(toolbar_state, toolbar_pos);
 
 		if toolbar_rect.contains(cursor_local) {
 			return true;
@@ -2684,6 +2777,13 @@ impl WindowRenderer {
 		toolbar_placement: ToolbarPlacement,
 	) -> Option<Pos2> {
 		if let Some(pos) = toolbar_state.floating_position {
+			#[cfg(any(not(target_os = "macos"), test))]
+			Self::sync_frozen_annotation_style_capsule_placement(
+				toolbar_state,
+				screen_rect,
+				pos,
+			);
+
 			return Some(pos);
 		}
 
@@ -2759,6 +2859,15 @@ impl WindowRenderer {
 		toolbar_state.default_slot_position = Some(default_pos);
 		toolbar_state.floating_position = Some(default_pos);
 
+		#[cfg(any(not(target_os = "macos"), test))]
+		{
+			Self::sync_frozen_annotation_style_capsule_placement(
+				toolbar_state,
+				screen_rect,
+				default_pos,
+			);
+		}
+
 		Some(default_pos)
 	}
 
@@ -2790,7 +2899,7 @@ impl WindowRenderer {
 		screen_rect: Rect,
 		capture_rect: Rect,
 		toolbar_primary_size: Vec2,
-		toolbar_window_size: Vec2,
+		toolbar_positioning_size: Vec2,
 		toolbar_placement: ToolbarPlacement,
 	) -> Pos2 {
 		let y = match toolbar_placement {
@@ -2813,12 +2922,12 @@ impl WindowRenderer {
 			},
 		};
 		let min_y = screen_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX;
-		let max_y =
-			(screen_rect.max.y - toolbar_window_size.y - TOOLBAR_SCREEN_MARGIN_PX).max(min_y);
+		let max_y = (screen_rect.max.y - toolbar_positioning_size.y - TOOLBAR_SCREEN_MARGIN_PX)
+			.max(min_y);
 		let ideal_x = capture_rect.center().x - toolbar_primary_size.x / 2.0;
 		let min_x = screen_rect.min.x + TOOLBAR_SCREEN_MARGIN_PX;
-		let max_x =
-			(screen_rect.max.x - toolbar_window_size.x - TOOLBAR_SCREEN_MARGIN_PX).max(min_x);
+		let max_x = (screen_rect.max.x - toolbar_positioning_size.x - TOOLBAR_SCREEN_MARGIN_PX)
+			.max(min_x);
 		let x = ideal_x.clamp(min_x, max_x);
 		let y = y.max(min_y).min(max_y);
 
@@ -2846,11 +2955,14 @@ impl WindowRenderer {
 		#[cfg(target_os = "macos")]
 		let _ = screen_rect;
 		let area_id = Id::new(format!("frozen-toolbar-{}", monitor.id));
+		let window_rect = Self::frozen_toolbar_window_rect(toolbar_state, toolbar_pos);
 
-		Area::new(area_id).order(Order::Foreground).fixed_pos(toolbar_pos).show(ctx, |ui| {
-			let (window_rect, _window_response) =
-				ui.allocate_exact_size(toolbar_size, Sense::hover());
-			let toolbar_rect = Self::frozen_toolbar_primary_rect(toolbar_state, window_rect.min);
+		Area::new(area_id)
+			.order(Order::Foreground)
+			.fixed_pos(window_rect.min)
+			.show(ctx, |ui| {
+			let (_area_rect, _window_response) = ui.allocate_exact_size(toolbar_size, Sense::hover());
+			let toolbar_rect = Self::frozen_toolbar_primary_rect(toolbar_state, toolbar_pos);
 			let style_rect =
 				Self::frozen_annotation_style_capsule_rect(toolbar_state, toolbar_rect);
 			let toolbar_response = ui.interact(
@@ -2869,7 +2981,7 @@ impl WindowRenderer {
 				toolbar_response.drag_started(),
 				toolbar_pos,
 				screen_rect,
-				toolbar_size,
+				Self::frozen_toolbar_positioning_size(toolbar_state),
 				cursor,
 				left_button_down,
 			);
