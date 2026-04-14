@@ -4,7 +4,6 @@ use std::sync::Arc;
 use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-#[cfg(target_os = "macos")]
 use winit::event::ElementState;
 
 #[cfg(target_os = "macos")]
@@ -15,12 +14,14 @@ use crate::overlay::DeviceCursorPointSource;
 use crate::overlay::FrozenCaptureSource;
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenToolbarTool;
-use crate::overlay::OverlayControl;
+#[cfg(target_os = "macos")]
+use crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT;
+use crate::overlay::tests;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerResponse;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::{
-	self, AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, LiveCursorSample,
+	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, LiveCursorSample,
 	LiveSampleApplyResult, ModifiersState, OverlayExit, StartupLiveRgbPlan, WindowId,
 	WindowListSnapshot,
 };
@@ -29,6 +30,9 @@ use crate::overlay::tests::{
 	OverlayMode, OverlaySession, OverlayState, Pos2, Rect, RectPoints, Rgb, Vec2, WindowRenderer,
 	hud_helpers,
 };
+use crate::overlay::{LiveCaptureInteraction, LiveClickCaptureTarget, OverlayControl};
+#[cfg(target_os = "macos")]
+use crate::state::{WindowHit, WindowRect};
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -482,8 +486,18 @@ fn live_alt_loupe_window_redraw_is_not_skipped() {
 	assert!(session.should_skip_loupe_redraw());
 
 	session.state.alt_held = true;
-	session.state.drag_rect =
-		Some(MonitorRectPoints { monitor_id: 1, rect: RectPoints::new(100, 120, 240, 320) });
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::DraggingSelection {
+		monitor: MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_000,
+			height: 800,
+			scale_factor_x1000: 1_000,
+		},
+		press_global: GlobalPoint::new(100, 120),
+		current_global: GlobalPoint::new(340, 440),
+	});
 
 	assert!(session.should_skip_loupe_redraw());
 }
@@ -586,9 +600,15 @@ fn live_drag_rect_activation_hides_auxiliary_windows() {
 	let mut session = OverlaySession::new();
 
 	session.state.mode = OverlayMode::Live;
-	session.left_mouse_button_down = true;
-	session.left_mouse_button_down_monitor = Some(monitor);
-	session.left_mouse_button_down_global = Some(start);
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global: start,
+		click_target: None,
+		release_global: None,
+		released: false,
+	});
+
 	session.hud_window_visible = true;
 	session.loupe_window_visible = true;
 
@@ -611,19 +631,29 @@ fn live_mouse_press_keeps_hovered_window_affordance_until_drag_or_release() {
 	let monitor = tests::test_monitor();
 	let hovered =
 		MonitorRectPoints { monitor_id: monitor.id, rect: RectPoints::new(100, 120, 240, 320) };
+	let press_global = GlobalPoint::new(180, 220);
 	let mut session = OverlaySession::new();
 
 	session.state.mode = OverlayMode::Live;
 	session.state.monitor = Some(monitor);
-	session.state.hovered_window_rect = Some(hovered);
 
-	assert!(matches!(
-		session.handle_left_mouse_input(WindowId::from(1), ElementState::Pressed),
-		OverlayControl::Continue
-	));
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global,
+		click_target: Some(LiveClickCaptureTarget {
+			capture_rect: Some(hovered.rect),
+			window_target: None,
+		}),
+		release_global: None,
+		released: false,
+	});
+
 	assert_eq!(session.state.hovered_window_rect, Some(hovered));
-	assert!(session.left_mouse_button_down);
-	assert_eq!(session.left_mouse_button_down_monitor, Some(monitor));
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::PressPending { monitor: press_monitor, .. }
+			if press_monitor == monitor
+	));
 }
 
 #[cfg(target_os = "macos")]
@@ -638,10 +668,17 @@ fn live_press_pending_keeps_hovered_window_across_worker_updates() {
 	session.state.mode = OverlayMode::Live;
 	session.cursor_monitor = Some(monitor);
 	session.state.cursor = Some(cursor);
-	session.left_mouse_button_down = true;
-	session.left_mouse_button_down_monitor = Some(monitor);
-	session.left_mouse_button_down_global = Some(cursor);
-	session.state.hovered_window_rect = Some(hovered);
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global: cursor,
+		click_target: Some(LiveClickCaptureTarget {
+			capture_rect: Some(hovered.rect),
+			window_target: None,
+		}),
+		release_global: None,
+		released: false,
+	});
 
 	let apply = session.apply_live_cursor_sample_detail(
 		monitor,
@@ -679,11 +716,17 @@ fn live_drag_activation_clears_hovered_window_affordance() {
 	let mut session = OverlaySession::new();
 
 	session.state.mode = OverlayMode::Live;
-	session.left_mouse_button_down = true;
-	session.left_mouse_button_down_monitor = Some(monitor);
-	session.left_mouse_button_down_global = Some(start);
-	session.state.hovered_window_rect = Some(hovered);
 
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global: start,
+		click_target: Some(LiveClickCaptureTarget {
+			capture_rect: Some(hovered.rect),
+			window_target: None,
+		}),
+		release_global: None,
+		released: false,
+	});
 	session.update_live_drag_rect(monitor, end);
 
 	assert_eq!(
@@ -694,6 +737,188 @@ fn live_drag_activation_clears_hovered_window_affordance() {
 		})
 	);
 	assert!(session.state.hovered_window_rect.is_none());
+}
+
+#[test]
+fn live_press_pending_small_jitter_keeps_hovered_window_affordance() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 240, 320);
+	let press_global = GlobalPoint::new(180, 220);
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global,
+		click_target: Some(LiveClickCaptureTarget {
+			capture_rect: Some(capture_rect),
+			window_target: None,
+		}),
+		release_global: None,
+		released: false,
+	});
+	session.update_live_drag_rect(monitor, GlobalPoint::new(183, 224));
+
+	assert_eq!(
+		session.state.hovered_window_rect,
+		Some(MonitorRectPoints { monitor_id: monitor.id, rect: capture_rect })
+	);
+	assert!(session.state.drag_rect.is_none());
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::PressPending { monitor: press_monitor, .. }
+			if press_monitor == monitor
+	));
+}
+
+#[test]
+fn live_release_click_uses_mouse_down_locked_target() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(100, 120, 240, 320);
+	let press_global = GlobalPoint::new(180, 220);
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.state.monitor = Some(monitor);
+	session.state.cursor = Some(GlobalPoint::new(420, 440));
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global,
+		click_target: Some(LiveClickCaptureTarget {
+			capture_rect: Some(capture_rect),
+			window_target: None,
+		}),
+		release_global: None,
+		released: false,
+	});
+
+	assert!(matches!(
+		session.handle_left_mouse_input(winit::window::WindowId::from(1), ElementState::Released),
+		OverlayControl::Continue
+	));
+	assert!(matches!(session.state.mode, OverlayMode::Frozen));
+	assert_eq!(session.state.frozen_capture_rect, Some(capture_rect));
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::FrozenFromClick {
+			monitor: frozen_monitor,
+			target: LiveClickCaptureTarget {
+				capture_rect: Some(target_rect),
+				..
+			},
+		} if frozen_monitor == monitor && target_rect == capture_rect
+	));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn released_press_pending_waits_for_async_hit_test_before_entering_frozen() {
+	let monitor = tests::test_monitor();
+	let press_global = GlobalPoint::new(180, 220);
+	let capture_rect = RectPoints::new(100, 120, 240, 320);
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.state.monitor = Some(monitor);
+	session.pending_click_hit_test_request_id = Some(7);
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global,
+		click_target: None,
+		release_global: Some(GlobalPoint::new(420, 440)),
+		released: true,
+	});
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::HitTestWindow {
+		monitor,
+		point: press_global,
+		request_id: 7,
+		hit: Some(WindowHit { window_id: Some(42), rect: capture_rect }),
+	});
+
+	assert!(matches!(control, OverlayControl::Continue));
+	assert!(session.pending_click_hit_test_request_id.is_none());
+	assert!(matches!(session.state.mode, OverlayMode::Frozen));
+	assert_eq!(session.state.cursor, Some(GlobalPoint::new(420, 440)));
+	assert_eq!(session.state.frozen_capture_rect, Some(capture_rect));
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::FrozenFromClick {
+			monitor: frozen_monitor,
+			target: LiveClickCaptureTarget {
+				capture_rect: Some(target_rect),
+				window_target: Some(window_target),
+			},
+		} if frozen_monitor == monitor && target_rect == capture_rect && window_target.window_id == 42
+	));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn timed_out_click_hit_test_unlocks_press_pending_for_retry() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(180, 220);
+	let capture_rect = RectPoints::new(100, 120, 240, 320);
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.state.monitor = Some(monitor);
+	session.state.cursor = Some(cursor);
+	session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
+		captured_at: Instant::now(),
+		windows: Arc::new(vec![WindowRect {
+			window_id: Some(42),
+			x: i64::from(monitor.origin.x) + i64::from(capture_rect.x),
+			y: i64::from(monitor.origin.y) + i64::from(capture_rect.y),
+			width: i64::from(capture_rect.width),
+			height: i64::from(capture_rect.height),
+		}]),
+	}));
+	session.pending_click_hit_test_request_id = Some(7);
+	session.pending_click_hit_test_requested_at =
+		Some(Instant::now() - PENDING_CLICK_HIT_TEST_TIMEOUT - Duration::from_millis(1));
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global: cursor,
+		click_target: None,
+		release_global: Some(cursor),
+		released: true,
+	});
+
+	let control = session.about_to_wait();
+
+	assert!(matches!(control, OverlayControl::Continue));
+	assert!(session.pending_click_hit_test_request_id.is_none());
+	assert!(session.pending_click_hit_test_requested_at.is_none());
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::HoverWindow {
+			monitor: hover_monitor,
+			target: LiveClickCaptureTarget {
+				capture_rect: Some(target_rect),
+				window_target: Some(window_target),
+			},
+		} if hover_monitor == monitor && target_rect == capture_rect && window_target.window_id == 42
+	));
+
+	session.begin_live_capture_press(monitor, cursor);
+
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::PressPending {
+			monitor: press_monitor,
+			click_target: Some(LiveClickCaptureTarget {
+				capture_rect: Some(target_rect),
+				window_target: Some(window_target),
+			}),
+			released: false,
+			..
+		} if press_monitor == monitor && target_rect == capture_rect && window_target.window_id == 42
+	));
 }
 
 #[cfg(target_os = "macos")]
@@ -1257,10 +1482,13 @@ fn live_drag_skips_hud_redraw() {
 	let mut session = OverlaySession::new();
 
 	session.state.mode = OverlayMode::Live;
-	session.state.drag_rect = Some(MonitorRectPoints {
-		monitor_id: monitor.id,
-		rect: RectPoints::new(100, 120, 240, 320),
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::DraggingSelection {
+		monitor,
+		press_global: GlobalPoint::new(100, 120),
+		current_global: GlobalPoint::new(340, 440),
 	});
+
 	session.hud_window_visible = true;
 
 	assert!(matches!(session.maybe_skip_hud_redraw(), Some(OverlayControl::Continue)));
