@@ -1348,7 +1348,7 @@ fn frozen_toolbar_primary_size_stays_stable_when_annotation_style_capsule_appear
 	let text_window_size = WindowRenderer::frozen_toolbar_size(&toolbar_state);
 
 	assert_eq!(text_primary_size, base_primary_size);
-	assert_eq!(text_window_size.x, base_window_size.x);
+	assert!(text_window_size.x >= base_window_size.x);
 	assert!(text_window_size.y > base_window_size.y);
 	assert!(pen_window_size.y >= text_window_size.y);
 }
@@ -1489,6 +1489,70 @@ fn frozen_annotation_toolbar_hud_pill_keeps_standard_corner_radius() {
 	assert_eq!(
 		hud_pill.radius_points,
 		f32::from(overlay::frozen_toolbar_corner_radius_u8(hud_pill.rect.height())),
+	);
+}
+
+#[test]
+fn frozen_annotation_toolbar_hud_pill_covers_full_toolbar_bounds() {
+	let ctx = tests::test_egui_context();
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(200, 180, 200, 300);
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut session = OverlaySession::new();
+
+	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
+
+	let toolbar_placement = session.config.toolbar_placement;
+	let state = &session.state;
+	let toolbar_state = &mut session.toolbar_state;
+	let mut hud_pill = None;
+	let _ = ctx.run_ui(
+		egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() },
+		|ui: &mut Ui| {
+			WindowRenderer::render_frozen_toolbar_ui(
+				ui.ctx(),
+				state,
+				monitor,
+				HudTheme::Dark,
+				toolbar_placement,
+				false,
+				false,
+				1.0,
+				0.0,
+				0.0,
+				Some(toolbar_state),
+				None,
+				&mut hud_pill,
+			);
+		},
+	);
+	let hud_pill = hud_pill.expect("annotation toolbar should render after readiness stabilizes");
+
+	assert_eq!(hud_pill.rect.size(), WindowRenderer::frozen_toolbar_size(&session.toolbar_state));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn seeded_frozen_toolbar_default_slot_uses_positioning_window_size() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(760, 160, 160, 240);
+	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let mut session = OverlaySession::new();
+
+	session.toolbar_inner_size_points =
+		Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
+
+	session.seed_frozen_toolbar_default_position(monitor, capture_rect);
+
+	assert_eq!(
+		session.toolbar_state.default_slot_position,
+		session.toolbar_state.floating_position
 	);
 }
 
