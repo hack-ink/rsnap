@@ -32,6 +32,9 @@ cross-platform architecture.
   if no window is detected, it falls back to freezing that monitor fullscreen.
 - Hovering over a window in live mode shows a glowing border that tracks the target
   window.
+- On macOS, live drag/window-click entry into Frozen mode must restore the pre-capture
+  target after the selection completes instead of leaving rsnap focused, and exiting capture
+  must restore the originally captured frontmost application.
 - `Space` copies the frozen PNG of the selected region/window/fullscreen to clipboard.
 - On macOS, Frozen mode may recognize text from the current frozen capture and copy the recognized text to the clipboard.
 - Cmd+S (macOS) / Ctrl+S saves the frozen PNG to disk.

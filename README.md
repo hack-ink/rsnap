@@ -20,6 +20,7 @@ Pure-Rust menubar screenshot prototype (macOS-first).
 - Transparent capture-session overlay that blocks desktop interaction.
 - HUD near the cursor showing global `x,y` and `rgb(r,g,b)`.
 - Left click + drag freezes a selected region; a single left click freezes the hovered window or falls back to the active monitor fullscreen.
+- On macOS, entering Frozen mode restores the pre-capture target after selection completes instead of leaving rsnap focused; exiting capture restores the original frontmost app.
 - In Frozen mode, a dragged-region capture can be dragged from inside the bright selection area to reposition it without resizing.
 - In Frozen mode, `Space` copies the current frozen PNG to the clipboard and exits.
 - In Frozen mode, Cmd+S (macOS) / Ctrl+S saves the current PNG to disk and exits.
