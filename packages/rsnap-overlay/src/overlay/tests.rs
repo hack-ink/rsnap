@@ -1437,6 +1437,45 @@ fn toolbar_drag_start_eligibility_falls_back_to_cached_pointer_when_live_cursor_
 }
 
 #[test]
+fn toolbar_cursor_local_from_sampled_global_returns_none_when_sampling_fails() {
+	let outer_position = GlobalPoint::new(320, 140);
+
+	assert_eq!(
+		OverlaySession::toolbar_cursor_local_from_sampled_global(outer_position, None),
+		None
+	);
+}
+
+#[test]
+fn toolbar_visible_capsule_hit_test_excludes_gap_between_capsules() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	let primary_rect =
+		WindowRenderer::frozen_toolbar_primary_rect(&session.toolbar_state, Pos2::ZERO);
+	let window_rect =
+		WindowRenderer::frozen_toolbar_window_rect(&session.toolbar_state, Pos2::ZERO);
+	let primary_point = primary_rect.center();
+	let gap_point = Pos2::new(primary_rect.center().x, primary_rect.max.y + 1.0);
+	let style_point = Pos2::new(primary_rect.center().x, window_rect.max.y - 1.0);
+
+	assert!(WindowRenderer::frozen_toolbar_visible_capsules_contain(
+		&session.toolbar_state,
+		primary_point
+	));
+	assert!(window_rect.contains(gap_point));
+	assert!(!WindowRenderer::frozen_toolbar_visible_capsules_contain(
+		&session.toolbar_state,
+		gap_point
+	));
+	assert!(WindowRenderer::frozen_toolbar_visible_capsules_contain(
+		&session.toolbar_state,
+		style_point
+	));
+}
+
+#[test]
 fn toolbar_cursor_left_while_idle_clears_pointer_state() {
 	let mut session = OverlaySession::new();
 

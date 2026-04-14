@@ -621,6 +621,8 @@ pub struct OverlaySession {
 	toolbar_left_button_went_down: bool,
 	toolbar_left_button_went_up: bool,
 	toolbar_pointer_local: Option<Pos2>,
+	#[cfg(target_os = "macos")]
+	toolbar_window_cursor_hittest_enabled: bool,
 	left_mouse_button_down: bool,
 	left_mouse_button_down_monitor: Option<MonitorRect>,
 	left_mouse_button_down_global: Option<GlobalPoint>,
@@ -837,9 +839,11 @@ impl OverlaySession {
 			frozen_text_annotations: Vec::new(), frozen_text_redo_annotations: Vec::new(),
 			frozen_text_edit: None, frozen_text_input_generation: 0, frozen_text_recent_input: None,
 			toolbar_state: FrozenToolbarState::default(),
-			toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
-			toolbar_pointer_local: None,
-			left_mouse_button_down: false, left_mouse_button_down_monitor: None, left_mouse_button_down_global: None,
+				toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
+				toolbar_pointer_local: None,
+				#[cfg(target_os = "macos")]
+				toolbar_window_cursor_hittest_enabled: false,
+				left_mouse_button_down: false, left_mouse_button_down_monitor: None, left_mouse_button_down_global: None,
 			frozen_brush: FrozenBrushState::default(),
 			frozen_selection_drag: FrozenSelectionDragState::default(),
 			frozen_mosaic_drag: FrozenMosaicDragState::default(),
@@ -2952,6 +2956,10 @@ impl OverlaySession {
 		self.pending_toolbar_outer_pos = None;
 		self.hud_window_visible = false;
 		self.toolbar_window_visible = false;
+		#[cfg(target_os = "macos")]
+		{
+			self.toolbar_window_cursor_hittest_enabled = false;
+		}
 		self.skip_toolbar_focus_on_next_show = false;
 		self.toolbar_window_warmup_redraws_remaining = 0;
 		self.loupe_window_visible = false;

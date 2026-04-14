@@ -2514,6 +2514,20 @@ impl WindowRenderer {
 			.map_or(toolbar_rect, |style_rect| toolbar_rect.union(style_rect))
 	}
 
+	pub(in crate::overlay) fn frozen_toolbar_visible_capsules_contain(
+		toolbar_state: &FrozenToolbarState,
+		cursor_local: Pos2,
+	) -> bool {
+		let toolbar_rect = Self::frozen_toolbar_primary_rect(toolbar_state, Pos2::ZERO);
+
+		if toolbar_rect.contains(cursor_local) {
+			return true;
+		}
+
+		Self::frozen_annotation_style_capsule_rect(toolbar_state, toolbar_rect)
+			.is_some_and(|style_rect| style_rect.contains(cursor_local))
+	}
+
 	pub(in crate::overlay) fn frozen_toolbar_size(toolbar_state: &FrozenToolbarState) -> Vec2 {
 		Self::frozen_toolbar_window_rect(toolbar_state, Pos2::ZERO).size()
 	}
