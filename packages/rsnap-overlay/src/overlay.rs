@@ -272,6 +272,7 @@ const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
 const CURSOR_EVENT_TICK_TTL: Duration = Duration::from_millis(24);
 const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
 const LIVE_WINDOW_LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(120);
+const PENDING_CLICK_HIT_TEST_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(target_os = "macos")]
 const POST_HIDE_LIVE_SNAPSHOT_GRACE: Duration = Duration::from_millis(12);
 const LIVE_PRESENT_INTERVAL_MIN: Duration = Duration::from_nanos(8_333_333);
@@ -573,6 +574,7 @@ pub struct OverlaySession {
 	latest_live_cursor_sample_requested_at: Option<Instant>,
 	last_idle_live_sample_request_at: Option<Instant>,
 	pending_click_hit_test_request_id: Option<u64>,
+	pending_click_hit_test_requested_at: Option<Instant>,
 	#[cfg(target_os = "macos")]
 	window_list_refresh_inflight: bool,
 	#[cfg(target_os = "macos")]
@@ -818,6 +820,7 @@ impl OverlaySession {
 			latest_live_cursor_sample_requested_at: None,
 			last_idle_live_sample_request_at: None,
 			pending_click_hit_test_request_id: None,
+			pending_click_hit_test_requested_at: None,
 			#[cfg(target_os = "macos")]
 			window_list_refresh_inflight: false,
 			#[cfg(target_os = "macos")]
@@ -1863,10 +1866,11 @@ impl OverlaySession {
 		self.pending_window_freeze_capture = window_target;
 		self.inflight_window_freeze_capture = None;
 		self.frozen_window_image = None;
-		self.capture_windows_hidden = false;
-		self.pending_click_hit_test_request_id = None;
+			self.capture_windows_hidden = false;
+			self.pending_click_hit_test_request_id = None;
+			self.pending_click_hit_test_requested_at = None;
 
-		if !matches!(
+			if !matches!(
 			self.live_capture_interaction,
 			LiveCaptureInteraction::FrozenFromClick { .. }
 				| LiveCaptureInteraction::FrozenFromDrag { .. }
@@ -3322,9 +3326,11 @@ impl OverlaySession {
 		self.event_loop_progress_seq = 0;
 		self.event_loop_last_progress_at = Instant::now();
 		self.event_loop_last_progress_window_id = None;
-		self.event_loop_last_progress_monitor_id = None;
-		self.event_loop_last_progress_detail = None;
-		self.event_loop_last_stall_warn_at = None;
+			self.event_loop_last_progress_monitor_id = None;
+			self.event_loop_last_progress_detail = None;
+			self.event_loop_last_stall_warn_at = None;
+			self.pending_click_hit_test_request_id = None;
+			self.pending_click_hit_test_requested_at = None;
 
 		#[cfg(target_os = "macos")]
 		self.macos_hud_window_config_cache.clear();
