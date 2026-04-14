@@ -2568,6 +2568,7 @@ impl OverlaySession {
 		let toolbar_input = None;
 
 		self.log_frozen_overlay_redraw_trace(window_id, overlay_monitor, draw_toolbar);
+
 		let toolbar_visible_for_badge = if cfg!(target_os = "macos") {
 			!self.should_hide_toolbar_window(overlay_monitor)
 		} else {
