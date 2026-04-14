@@ -5,26 +5,35 @@ use crate::overlay::{
 
 impl OverlaySession {
 	pub(super) fn toolbar_positioning_size(&self) -> Vec2 {
-		#[cfg(target_os = "macos")]
-		{
-			if let Some((width, height)) = self.toolbar_inner_size_points {
-				Vec2::new(width as f32, height as f32)
-			} else if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-				let toolbar_scale = toolbar_window.window.scale_factor().max(1.0);
-				let size = toolbar_window.window.inner_size();
-				let toolbar_w = ((size.width as f64) / toolbar_scale).ceil().max(1.0) as f32;
-				let toolbar_h = ((size.height as f64) / toolbar_scale).ceil().max(1.0) as f32;
+		WindowRenderer::frozen_toolbar_positioning_size(&self.toolbar_state)
+	}
 
-				Vec2::new(toolbar_w, toolbar_h)
-			} else {
-				WindowRenderer::frozen_toolbar_size(&self.toolbar_state)
-			}
-		}
+	#[cfg(target_os = "macos")]
+	pub(super) fn toolbar_outer_position_from_primary_anchor(
+		&self,
+		monitor: MonitorRect,
+		primary_anchor: Pos2,
+	) -> GlobalPoint {
+		let primary_origin = super::frozen_toolbar_window_primary_origin();
 
-		#[cfg(not(target_os = "macos"))]
-		{
-			WindowRenderer::frozen_toolbar_size(&self.toolbar_state)
-		}
+		GlobalPoint::new(
+			monitor.origin.x.saturating_add((primary_anchor.x - primary_origin.x).round() as i32),
+			monitor.origin.y.saturating_add((primary_anchor.y - primary_origin.y).round() as i32),
+		)
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn toolbar_primary_anchor_from_outer_position(
+		&self,
+		monitor: MonitorRect,
+		outer_position: GlobalPoint,
+	) -> Pos2 {
+		let primary_origin = super::frozen_toolbar_window_primary_origin();
+
+		Pos2::new(
+			outer_position.x as f32 - monitor.origin.x as f32 + primary_origin.x,
+			outer_position.y as f32 - monitor.origin.y as f32 + primary_origin.y,
+		)
 	}
 
 	pub(super) fn update_hud_window_position(&mut self, monitor: MonitorRect, cursor: GlobalPoint) {
@@ -227,6 +236,9 @@ impl OverlaySession {
 			TOOLBAR_SCREEN_MARGIN_PX,
 			TOOLBAR_SCREEN_MARGIN_PX,
 		);
+		#[cfg(target_os = "macos")]
+		let desired = self.toolbar_outer_position_from_primary_anchor(monitor, clamped_local_pos);
+		#[cfg(not(target_os = "macos"))]
 		let desired = GlobalPoint::new(
 			monitor.origin.x.saturating_add(clamped_local_pos.x.round() as i32),
 			monitor.origin.y.saturating_add(clamped_local_pos.y.round() as i32),
@@ -240,6 +252,8 @@ impl OverlaySession {
 		self.pending_toolbar_outer_pos = Some(desired);
 		self.toolbar_state.floating_position = Some(clamped_local_pos);
 
+		self.sync_frozen_annotation_style_capsule_placement(monitor);
+
 		true
 	}
 
@@ -251,6 +265,9 @@ impl OverlaySession {
 		let toolbar_size = self.toolbar_positioning_size();
 		let screen_rect =
 			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		#[cfg(target_os = "macos")]
+		let local_pos = self.toolbar_primary_anchor_from_outer_position(monitor, outer_position);
+		#[cfg(not(target_os = "macos"))]
 		let local_pos = Pos2::new(
 			outer_position.x as f32 - monitor.origin.x as f32,
 			outer_position.y as f32 - monitor.origin.y as f32,
@@ -262,6 +279,9 @@ impl OverlaySession {
 			TOOLBAR_SCREEN_MARGIN_PX,
 			TOOLBAR_SCREEN_MARGIN_PX,
 		);
+		#[cfg(target_os = "macos")]
+		let desired = self.toolbar_outer_position_from_primary_anchor(monitor, clamped_local_pos);
+		#[cfg(not(target_os = "macos"))]
 		let desired = GlobalPoint::new(
 			monitor.origin.x.saturating_add(clamped_local_pos.x.round() as i32),
 			monitor.origin.y.saturating_add(clamped_local_pos.y.round() as i32),
@@ -271,6 +291,9 @@ impl OverlaySession {
 
 		self.toolbar_outer_pos = Some(desired);
 		self.toolbar_state.floating_position = Some(clamped_local_pos);
+
+		self.sync_frozen_annotation_style_capsule_placement(monitor);
+
 		self.pending_toolbar_outer_pos = (desired != outer_position).then_some(desired);
 
 		changed

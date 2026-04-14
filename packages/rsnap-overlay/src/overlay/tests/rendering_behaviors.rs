@@ -16,6 +16,7 @@ use winit::window::CursorIcon;
 use crate::OverlayControl;
 #[cfg(target_os = "macos")]
 use crate::overlay::WindowCaptureAlphaMode;
+use crate::overlay::session_state::FrozenAnnotationStyleCapsulePlacement;
 use crate::overlay::tests::{
 	self, Duration, ElementState, FrozenCaptureSource, FrozenSelectionDragState,
 	FrozenToolbarState, FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme,
@@ -755,25 +756,41 @@ fn frozen_selection_resize_updates_capture_rect_and_toolbar_position() {
 #[test]
 fn toolbar_position_update_queues_pending_move_without_window() {
 	let monitor = tests::test_monitor();
+	#[cfg(target_os = "macos")]
+	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
 	let mut session = OverlaySession::new();
 
 	session.toolbar_inner_size_points = Some((460, 54));
 
 	assert!(session.update_toolbar_outer_position(monitor, Pos2::new(120.0, 160.0)));
 	assert_eq!(session.toolbar_state.floating_position, Some(Pos2::new(120.0, 160.0)));
-	assert_eq!(session.toolbar_outer_pos, Some(GlobalPoint::new(120, 160)));
-	assert_eq!(session.pending_toolbar_outer_pos, Some(GlobalPoint::new(120, 160)));
+
+	#[cfg(target_os = "macos")]
+	let expected_outer = GlobalPoint::new(120, (160.0 - primary_origin.y).round() as i32);
+	#[cfg(not(target_os = "macos"))]
+	let expected_outer = GlobalPoint::new(120, 160);
+
+	assert_eq!(session.toolbar_outer_pos, Some(expected_outer));
+	assert_eq!(session.pending_toolbar_outer_pos, Some(expected_outer));
 }
 
 #[test]
 fn toolbar_window_position_sync_updates_runtime_state_without_requeueing_in_bounds_move() {
 	let monitor = tests::test_monitor();
+	#[cfg(target_os = "macos")]
+	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
 	let mut session = OverlaySession::new();
 
 	session.toolbar_inner_size_points = Some((460, 54));
 
 	assert!(session.sync_toolbar_outer_position_from_window(monitor, GlobalPoint::new(120, 160)));
-	assert_eq!(session.toolbar_state.floating_position, Some(Pos2::new(120.0, 160.0)));
+
+	#[cfg(target_os = "macos")]
+	let expected_anchor = Pos2::new(120.0, 160.0 + primary_origin.y);
+	#[cfg(not(target_os = "macos"))]
+	let expected_anchor = Pos2::new(120.0, 160.0);
+
+	assert_eq!(session.toolbar_state.floating_position, Some(expected_anchor));
 	assert_eq!(session.toolbar_outer_pos, Some(GlobalPoint::new(120, 160)));
 	assert_eq!(session.pending_toolbar_outer_pos, None);
 }
@@ -786,14 +803,16 @@ fn toolbar_position_update_near_edge_clamps_with_runtime_positioning_geometry() 
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let positioning_size = WindowRenderer::frozen_toolbar_positioning_size(&session.toolbar_state);
+	#[cfg(target_os = "macos")]
+	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	#[cfg(not(target_os = "macos"))]
 	let startup_window_size = Vec2::new(startup_size.x, startup_size.y);
-	let rendered_toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
 
 	session.toolbar_inner_size_points =
 		Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
 
-	let expected_toolbar_size =
-		if cfg!(target_os = "macos") { startup_window_size } else { rendered_toolbar_size };
+	let expected_toolbar_size = positioning_size;
 	let expected = WindowRenderer::clamp_toolbar_position(
 		screen_rect,
 		expected_toolbar_size,
@@ -815,10 +834,14 @@ fn toolbar_position_update_near_edge_clamps_with_runtime_positioning_geometry() 
 	);
 	assert!(session.update_toolbar_outer_position(monitor, desired));
 	assert_eq!(session.toolbar_state.floating_position, Some(expected));
-	assert_eq!(
-		session.toolbar_outer_pos,
-		Some(GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32))
-	);
+
+	#[cfg(target_os = "macos")]
+	let expected_outer =
+		GlobalPoint::new(expected.x.round() as i32, (expected.y - primary_origin.y).round() as i32);
+	#[cfg(not(target_os = "macos"))]
+	let expected_outer = GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32);
+
+	assert_eq!(session.toolbar_outer_pos, Some(expected_outer));
 }
 
 #[test]
@@ -830,14 +853,16 @@ fn toolbar_window_position_sync_near_edge_clamps_with_runtime_positioning_geomet
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let positioning_size = WindowRenderer::frozen_toolbar_positioning_size(&session.toolbar_state);
+	#[cfg(target_os = "macos")]
+	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	#[cfg(not(target_os = "macos"))]
 	let startup_window_size = Vec2::new(startup_size.x, startup_size.y);
-	let rendered_toolbar_size = WindowRenderer::frozen_toolbar_size(&session.toolbar_state);
 
 	session.toolbar_inner_size_points =
 		Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
 
-	let expected_toolbar_size =
-		if cfg!(target_os = "macos") { startup_window_size } else { rendered_toolbar_size };
+	let expected_toolbar_size = positioning_size;
 	let expected = WindowRenderer::clamp_toolbar_position(
 		screen_rect,
 		expected_toolbar_size,
@@ -859,15 +884,73 @@ fn toolbar_window_position_sync_near_edge_clamps_with_runtime_positioning_geomet
 	);
 	assert!(session.sync_toolbar_outer_position_from_window(monitor, desired_outer));
 	assert_eq!(session.toolbar_state.floating_position, Some(expected));
-	assert_eq!(
-		session.toolbar_outer_pos,
-		Some(GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32))
-	);
+
+	#[cfg(target_os = "macos")]
+	let expected_outer =
+		GlobalPoint::new(expected.x.round() as i32, (expected.y - primary_origin.y).round() as i32);
+	#[cfg(not(target_os = "macos"))]
+	let expected_outer = GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32);
+
+	assert_eq!(session.toolbar_outer_pos, Some(expected_outer));
 	assert_eq!(
 		session.pending_toolbar_outer_pos,
-		(session.toolbar_outer_pos != Some(desired_outer))
-			.then_some(GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32))
+		(session.toolbar_outer_pos != Some(desired_outer)).then_some(expected_outer)
 	);
+}
+
+#[test]
+fn toolbar_position_update_clamps_scroll_mode_pen_from_primary_anchor_width() {
+	let monitor = tests::test_monitor();
+	let desired = Pos2::new(900.0, 160.0);
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let primary_toolbar_state = FrozenToolbarState {
+		selected_tool: FrozenToolbarTool::Pen,
+		scroll_capture_active: true,
+		..FrozenToolbarState::default()
+	};
+	let primary_size = WindowRenderer::frozen_toolbar_primary_size(&primary_toolbar_state);
+	let full_toolbar_size = WindowRenderer::frozen_toolbar_size(&primary_toolbar_state);
+	#[cfg(target_os = "macos")]
+	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	let mut session = OverlaySession::new();
+
+	assert!(
+		full_toolbar_size.x > primary_size.x,
+		"regression setup requires the secondary style capsule to be wider than the primary pill",
+	);
+
+	session.toolbar_state = primary_toolbar_state;
+	session.toolbar_inner_size_points =
+		Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
+
+	let expected = WindowRenderer::clamp_toolbar_position(
+		screen_rect,
+		primary_size,
+		desired,
+		TOOLBAR_SCREEN_MARGIN_PX,
+		TOOLBAR_SCREEN_MARGIN_PX,
+	);
+	let union_clamped = WindowRenderer::clamp_toolbar_position(
+		screen_rect,
+		full_toolbar_size,
+		desired,
+		TOOLBAR_SCREEN_MARGIN_PX,
+		TOOLBAR_SCREEN_MARGIN_PX,
+	);
+
+	assert_ne!(expected, union_clamped);
+	assert!(session.update_toolbar_outer_position(monitor, desired));
+	assert_eq!(session.toolbar_state.floating_position, Some(expected));
+
+	#[cfg(target_os = "macos")]
+	let expected_outer =
+		GlobalPoint::new(expected.x.round() as i32, (expected.y - primary_origin.y).round() as i32);
+	#[cfg(not(target_os = "macos"))]
+	let expected_outer = GlobalPoint::new(expected.x.round() as i32, expected.y.round() as i32);
+
+	assert_eq!(session.toolbar_outer_pos, Some(expected_outer));
 }
 
 #[test]
@@ -920,6 +1003,12 @@ fn toolbar_event_outer_position_falls_back_to_cached_position() {
 fn toolbar_event_outer_position_falls_back_to_floating_position() {
 	let monitor = tests::test_monitor();
 	let floating_position = Some(Pos2::new(80.4, 90.6));
+	#[cfg(target_os = "macos")]
+	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	#[cfg(target_os = "macos")]
+	let expected = GlobalPoint::new(80, (90.6 - primary_origin.y).round() as i32);
+	#[cfg(not(target_os = "macos"))]
+	let expected = GlobalPoint::new(80, 91);
 
 	assert_eq!(
 		OverlaySession::toolbar_event_outer_position_from_sources(
@@ -928,7 +1017,7 @@ fn toolbar_event_outer_position_falls_back_to_floating_position() {
 			None,
 			floating_position,
 		),
-		Some(GlobalPoint::new(80, 91))
+		Some(expected)
 	);
 }
 
@@ -2064,23 +2153,26 @@ fn frozen_toolbar_default_position_falls_inside_when_no_space_below_capture_rect
 }
 
 #[test]
-fn frozen_toolbar_default_window_position_clamps_using_secondary_capsule_width() {
+fn frozen_toolbar_default_window_position_clamps_using_primary_anchor_width() {
 	let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 	let capture_rect = Rect::from_min_size(Pos2::new(640.0, 120.0), Vec2::new(120.0, 220.0));
 	let toolbar_primary_size = Vec2::new(268.0, 54.0);
-	let toolbar_window_size = Vec2::new(340.0, 82.0);
+	let secondary_union_size = Vec2::new(340.0, 82.0);
 	let pos = WindowRenderer::frozen_toolbar_default_window_pos(
 		monitor,
 		capture_rect,
 		toolbar_primary_size,
-		toolbar_window_size,
+		toolbar_primary_size,
 		ToolbarPlacement::Bottom,
 	);
 	let ideal_x = capture_rect.center().x - toolbar_primary_size.x / 2.0;
-	let max_x = (monitor.max.x - toolbar_window_size.x - TOOLBAR_SCREEN_MARGIN_PX)
+	let max_x = (monitor.max.x - toolbar_primary_size.x - TOOLBAR_SCREEN_MARGIN_PX)
+		.max(TOOLBAR_SCREEN_MARGIN_PX);
+	let secondary_union_max_x = (monitor.max.x - secondary_union_size.x - TOOLBAR_SCREEN_MARGIN_PX)
 		.max(TOOLBAR_SCREEN_MARGIN_PX);
 
 	assert!(ideal_x > max_x);
+	assert_ne!(max_x, secondary_union_max_x);
 	assert_eq!(pos.x, max_x);
 	assert_eq!(pos.y, capture_rect.max.y + TOOLBAR_CAPTURE_GAP_PX);
 }
@@ -2388,6 +2480,104 @@ fn frozen_annotation_capsule_keeps_top_toolbar_default_slot_stable() {
 		session.frozen_toolbar_default_position_for_capture_rect(monitor, capture_rect);
 
 	assert_eq!(styled_pos, base_pos);
+}
+
+#[test]
+fn frozen_annotation_capsule_flips_above_without_moving_bottom_toolbar_anchor() {
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut toolbar_state = FrozenToolbarState {
+		selected_tool: FrozenToolbarTool::Text,
+		..FrozenToolbarState::default()
+	};
+	let primary_size = WindowRenderer::frozen_toolbar_primary_size(&toolbar_state);
+	let anchor_y = screen_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - primary_size.y;
+	let capture_rect = Rect::from_min_size(
+		Pos2::new(160.0, anchor_y - TOOLBAR_CAPTURE_GAP_PX - 200.0),
+		Vec2::new(260.0, 200.0),
+	);
+	let anchor = WindowRenderer::frozen_toolbar_default_window_pos(
+		screen_rect,
+		capture_rect,
+		primary_size,
+		WindowRenderer::frozen_toolbar_positioning_size(&toolbar_state),
+		ToolbarPlacement::Bottom,
+	);
+
+	assert_eq!(anchor.y, anchor_y);
+	assert!(anchor.y + primary_size.y + TOOLBAR_SCREEN_MARGIN_PX <= screen_rect.max.y);
+
+	let mut below_toolbar_state = toolbar_state.clone();
+
+	below_toolbar_state.annotation_style_capsule_placement =
+		FrozenAnnotationStyleCapsulePlacement::Below;
+
+	assert!(
+		WindowRenderer::frozen_toolbar_window_rect(&below_toolbar_state, anchor).max.y
+			> screen_rect.max.y
+	);
+
+	WindowRenderer::sync_frozen_annotation_style_capsule_placement(
+		&mut toolbar_state,
+		screen_rect,
+		anchor,
+	);
+
+	assert_eq!(
+		toolbar_state.annotation_style_capsule_placement,
+		FrozenAnnotationStyleCapsulePlacement::Above
+	);
+	assert_eq!(WindowRenderer::frozen_toolbar_primary_rect(&toolbar_state, anchor).min, anchor);
+	assert!(
+		WindowRenderer::frozen_toolbar_window_rect(&toolbar_state, anchor).min.y < anchor.y,
+		"style capsule should render above the stable primary anchor when bottom space is tight",
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_annotation_capsule_flip_keeps_native_toolbar_outer_position_stable() {
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let mut session = OverlaySession::new();
+
+	session.toolbar_inner_size_points =
+		Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
+
+	let primary_size = WindowRenderer::frozen_toolbar_primary_size(&session.toolbar_state);
+	let primary_anchor =
+		Pos2::new(160.0, screen_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - primary_size.y);
+	let base_outer = session.toolbar_outer_position_from_primary_anchor(monitor, primary_anchor);
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	WindowRenderer::sync_frozen_annotation_style_capsule_placement(
+		&mut session.toolbar_state,
+		screen_rect,
+		primary_anchor,
+	);
+
+	assert_eq!(
+		session.toolbar_state.annotation_style_capsule_placement,
+		FrozenAnnotationStyleCapsulePlacement::Above
+	);
+
+	let mut below_toolbar_state = session.toolbar_state.clone();
+
+	below_toolbar_state.annotation_style_capsule_placement =
+		FrozenAnnotationStyleCapsulePlacement::Below;
+
+	assert!(
+		WindowRenderer::frozen_toolbar_window_rect(&below_toolbar_state, primary_anchor).max.y
+			> screen_rect.max.y
+	);
+	assert_eq!(
+		session.toolbar_outer_position_from_primary_anchor(monitor, primary_anchor),
+		base_outer
+	);
 }
 
 #[test]

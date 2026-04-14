@@ -140,13 +140,20 @@ pub(super) struct HudDrawConfig {
 	pub(super) hud_glass_active: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FrozenAnnotationStyleCapsulePlacement {
+	Above,
+	Below,
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct FrozenToolbarState {
 	pub(super) visible: bool,
 	pub(super) dragging: bool,
 	pub(super) drag_start_eligible: bool,
 	pub(super) annotation_size_control_hovered: bool,
 	pub(super) annotation_size_wheel_accumulator: f32,
+	pub(super) annotation_style_capsule_placement: FrozenAnnotationStyleCapsulePlacement,
 	pub(super) selected_tool: FrozenToolbarTool,
 	pub(super) brush_style: FrozenBrushStyle,
 	pub(super) text_style: FrozenTextStyle,
@@ -159,6 +166,7 @@ pub(super) struct FrozenToolbarState {
 	pub(super) pending_action: Option<FrozenToolbarTool>,
 	pub(super) needs_redraw: bool,
 	pub(super) pill_height_points: Option<f32>,
+	// Both positions track the primary capsule anchor, never the full toolbar union origin.
 	pub(super) default_slot_position: Option<Pos2>,
 	pub(super) floating_position: Option<Pos2>,
 	pub(super) layout_last_screen_size_points: Option<Vec2>,
@@ -277,6 +285,7 @@ impl Default for FrozenToolbarState {
 			drag_start_eligible: false,
 			annotation_size_control_hovered: false,
 			annotation_size_wheel_accumulator: 0.0,
+			annotation_style_capsule_placement: FrozenAnnotationStyleCapsulePlacement::Below,
 			selected_tool: FrozenToolbarTool::Pointer,
 			brush_style: FrozenBrushStyle::default(),
 			text_style: FrozenTextStyle::default(),
