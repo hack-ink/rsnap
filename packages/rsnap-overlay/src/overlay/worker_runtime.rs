@@ -20,6 +20,7 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		{
 			self.pending_freeze_capture_windows_hidden_at = None;
+			self.pending_freeze_capture_hidden_after_stream_generation = None;
 		}
 		self.pending_window_freeze_capture = None;
 		self.inflight_window_freeze_capture = None;
@@ -46,6 +47,7 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		{
 			self.pending_freeze_capture_windows_hidden_at = None;
+			self.pending_freeze_capture_hidden_after_stream_generation = None;
 		}
 		self.inflight_freeze_capture = Some(overlay_monitor);
 		self.inflight_window_freeze_capture = pending_window_target;
@@ -102,6 +104,7 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			{
 				self.pending_freeze_capture_windows_hidden_at = None;
+				self.pending_freeze_capture_hidden_after_stream_generation = None;
 			}
 
 			return;
@@ -113,6 +116,7 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			{
 				self.pending_freeze_capture_windows_hidden_at = None;
+				self.pending_freeze_capture_hidden_after_stream_generation = None;
 			}
 
 			return;

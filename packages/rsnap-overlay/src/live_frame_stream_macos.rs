@@ -283,13 +283,29 @@ impl MacLiveFrameStream {
 
 	#[cfg(test)]
 	pub(crate) fn debug_store_test_snapshot(&self, monitor: MonitorRect, captured_at: Instant) {
+		self.debug_store_test_snapshot_with_metadata(monitor, 1, 1, captured_at);
+	}
+
+	#[cfg(test)]
+	pub(crate) fn debug_store_test_snapshot_with_metadata(
+		&self,
+		monitor: MonitorRect,
+		frame_seq: u64,
+		stream_generation: u64,
+		captured_at: Instant,
+	) {
 		let frame = QueuedPixelBufferFrame {
-			frame_seq: 1,
-			stream_generation: 1,
+			frame_seq,
+			stream_generation,
 			captured_at,
 			pixel_buffer: Self::debug_test_pixel_buffer(),
 		};
 		let _ = self.shared_latest_frame.store(monitor.id, &frame);
+	}
+
+	#[cfg(test)]
+	pub(crate) fn debug_set_active_stream_generation(&self, monitor_id: u32, stream_generation: u64) {
+		self.shared_latest_frame.activate_stream_generation(monitor_id, stream_generation);
 	}
 
 	#[cfg(test)]
@@ -409,9 +425,19 @@ impl MacLiveFrameStream {
 
 		Some(Arc::new(MonitorImageSnapshot {
 			captured_at: frame.captured_at,
+			stream_generation: frame.stream_generation,
 			monitor,
 			image: Arc::new(image),
 		}))
+	}
+
+	pub(crate) fn latest_frame_frontier_for_monitor(
+		&self,
+		monitor: MonitorRect,
+	) -> Option<(u64, u64)> {
+		self.shared_latest_frame
+			.latest_frame_for_monitor(monitor.id)
+			.map(|frame| (frame.frame_seq, frame.stream_generation))
 	}
 
 	pub(crate) fn self_capture_filter_complete_for_monitor(&self, monitor: MonitorRect) -> bool {
@@ -1725,6 +1751,7 @@ fn reply_with_latest_rgba_snapshot(
 
 		Some(Arc::new(MonitorImageSnapshot {
 			captured_at: frame.captured_at,
+			stream_generation: frame.stream_generation,
 			monitor,
 			image: Arc::new(image),
 		}))

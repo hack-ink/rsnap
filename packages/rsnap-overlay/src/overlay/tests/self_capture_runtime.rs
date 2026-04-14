@@ -256,6 +256,16 @@ fn hidden_live_snapshot_can_finish_frozen_capture_before_authoritative_dispatch(
 	let cursor = GlobalPoint::new(120, 180);
 	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_active_stream_generation(monitor.id, 1);
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_store_test_snapshot_with_metadata(monitor, 1, 1, Instant::now());
 	session.begin_frozen_capture_with_rect(
 		monitor,
 		Some(RectPoints::new(100, 140, 320, 240)),
@@ -266,7 +276,17 @@ fn hidden_live_snapshot_can_finish_frozen_capture_before_authoritative_dispatch(
 		.live_sample_stream
 		.as_ref()
 		.unwrap()
-		.debug_store_test_snapshot(monitor, Instant::now() + Duration::from_millis(1));
+		.debug_set_active_stream_generation(monitor.id, 2);
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_store_test_snapshot_with_metadata(
+			monitor,
+			2,
+			2,
+			Instant::now() + Duration::from_millis(1),
+		);
 
 	let _ = session.about_to_wait();
 
@@ -330,15 +350,38 @@ fn pre_hide_live_snapshot_does_not_finish_frozen_capture_before_authoritative_di
 	let monitor = tests::test_monitor();
 	let cursor = GlobalPoint::new(120, 180);
 	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
-	let stream = session.live_sample_stream.as_ref().unwrap();
 
-	stream.debug_store_test_snapshot(monitor, Instant::now());
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_active_stream_generation(monitor.id, 1);
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_store_test_snapshot_with_metadata(monitor, 1, 1, Instant::now());
 	session.begin_frozen_capture_with_rect(
 		monitor,
 		Some(RectPoints::new(100, 140, 320, 240)),
 		None,
 		Some(cursor),
 	);
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_active_stream_generation(monitor.id, 1);
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_store_test_snapshot_with_metadata(
+			monitor,
+			2,
+			1,
+			Instant::now() + Duration::from_millis(1),
+		);
 
 	let _ = session.about_to_wait();
 
