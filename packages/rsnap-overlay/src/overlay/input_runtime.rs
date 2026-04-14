@@ -66,11 +66,11 @@ impl OverlaySession {
 			self.toolbar_state.drag_offset = Vec2::ZERO;
 			self.toolbar_state.dragging = false;
 			self.toolbar_state.drag_anchor = None;
+
+			let current_cursor_local = self.current_toolbar_cursor_local();
+
 			self.toolbar_state.drag_start_eligible =
-				self.toolbar_pointer_local.is_some_and(|cursor_local| {
-					WindowRenderer::frozen_toolbar_primary_rect(&self.toolbar_state, Pos2::ZERO)
-						.contains(cursor_local)
-				});
+				self.resolve_toolbar_drag_start_eligibility(current_cursor_local);
 		}
 
 		#[cfg(target_os = "macos")]
@@ -119,6 +119,38 @@ impl OverlaySession {
 		self.toolbar_state.annotation_size_wheel_accumulator = 0.0;
 		self.toolbar_state.drag_start_eligible = false;
 		self.toolbar_state.drag_anchor = None;
+	}
+
+	pub(super) fn resolve_toolbar_drag_start_eligibility(
+		&self,
+		current_cursor_local: Option<Pos2>,
+	) -> bool {
+		current_cursor_local
+			.or(self.toolbar_pointer_local)
+			.is_some_and(|cursor_local| self.toolbar_primary_rect_contains(cursor_local))
+	}
+
+	fn current_toolbar_cursor_local(&mut self) -> Option<Pos2> {
+		let toolbar_window = self.toolbar_window.as_ref()?;
+		let outer_position = Self::toolbar_window_outer_position(toolbar_window)?;
+		let cursor_global = self.sample_mouse_location();
+
+		Some(Self::toolbar_cursor_local_position_from_outer(outer_position, cursor_global))
+	}
+
+	fn toolbar_primary_rect_contains(&self, cursor_local: Pos2) -> bool {
+		WindowRenderer::frozen_toolbar_primary_rect(&self.toolbar_state, Pos2::ZERO)
+			.contains(cursor_local)
+	}
+
+	pub(super) fn toolbar_cursor_local_position_from_outer(
+		outer_position: GlobalPoint,
+		global_cursor: GlobalPoint,
+	) -> Pos2 {
+		Pos2::new(
+			global_cursor.x as f32 - outer_position.x as f32,
+			global_cursor.y as f32 - outer_position.y as f32,
+		)
 	}
 
 	pub(super) fn handle_modifiers_changed(&mut self, modifiers: &Modifiers) -> OverlayControl {
