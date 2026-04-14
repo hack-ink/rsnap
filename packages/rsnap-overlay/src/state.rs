@@ -14,6 +14,8 @@ pub(crate) struct LoupeSample {
 pub struct MonitorImageSnapshot {
 	/// When the frame was captured.
 	pub captured_at: Instant,
+	/// Live-stream generation that produced this frame.
+	pub stream_generation: u64,
 	/// The monitor that produced this frame.
 	pub monitor: MonitorRect,
 	/// The captured monitor image in RGBA pixel format.
