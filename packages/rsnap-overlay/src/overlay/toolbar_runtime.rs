@@ -2,11 +2,10 @@ use crate::overlay::{
 	self, Arc, Duration, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant,
 	MonitorRect, OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
 	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2, WindowId,
+	WindowRenderer,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{
-	FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS, WindowRenderer,
-};
+use crate::overlay::{FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS};
 
 impl OverlaySession {
 	pub(super) fn handle_toolbar_window_moved(
@@ -306,6 +305,10 @@ impl OverlaySession {
 	) -> Option<GlobalPoint> {
 		window_toolbar_outer_pos.or(cached_toolbar_outer_pos).or_else(|| {
 			floating_position.map(|floating_position| {
+				#[cfg(target_os = "macos")]
+				let floating_position =
+					floating_position - super::frozen_toolbar_window_primary_origin().to_vec2();
+
 				GlobalPoint::new(
 					monitor.origin.x.saturating_add(floating_position.x.round() as i32),
 					monitor.origin.y.saturating_add(floating_position.y.round() as i32),
@@ -421,10 +424,8 @@ impl OverlaySession {
 		match toolbar_window.renderer.resize(size) {
 			Ok(()) => {
 				let window = Arc::clone(&toolbar_window.window);
-				let toolbar_height_points = self
-					.toolbar_inner_size_points
-					.map(|(_, height)| height as f32)
-					.unwrap_or_else(|| super::frozen_toolbar_window_startup_size_points().y);
+				let toolbar_height_points =
+					WindowRenderer::frozen_toolbar_primary_size(&self.toolbar_state).y;
 
 				self.configure_hud_window_common(
 					window.as_ref(),
@@ -499,13 +500,17 @@ impl OverlaySession {
 			let Some(toolbar_became_visible) = self.prepare_toolbar_window_for_draw(monitor) else {
 				return Ok(());
 			};
+
+			self.sync_frozen_annotation_style_capsule_placement(monitor);
+
 			let Some(gpu) = self.gpu.as_ref() else {
 				return Ok(());
 			};
 			let previous_floating_position = self.toolbar_state.floating_position;
 			let frozen_arrow_preview = self.active_frozen_arrow_preview();
 
-			self.toolbar_state.floating_position = Some(Pos2::ZERO);
+			self.toolbar_state.floating_position =
+				Some(super::frozen_toolbar_window_primary_origin());
 
 			let Some(toolbar_window) = self.toolbar_window.as_mut() else {
 				return Ok(());
@@ -722,20 +727,37 @@ impl OverlaySession {
 			.or(self.pending_toolbar_outer_pos)
 			.or(self.toolbar_outer_pos)
 			.or_else(|| {
-				self.toolbar_state.floating_position.map(|floating_position| {
-					GlobalPoint::new(
-						monitor.origin.x.saturating_add(floating_position.x.round() as i32),
-						monitor.origin.y.saturating_add(floating_position.y.round() as i32),
-					)
-				})
+				#[cfg(target_os = "macos")]
+				{
+					self.toolbar_state.floating_position.map(|floating_position| {
+						self.toolbar_outer_position_from_primary_anchor(monitor, floating_position)
+					})
+				}
+				#[cfg(not(target_os = "macos"))]
+				{
+					self.toolbar_state.floating_position.map(|floating_position| {
+						GlobalPoint::new(
+							monitor.origin.x.saturating_add(floating_position.x.round() as i32),
+							monitor.origin.y.saturating_add(floating_position.y.round() as i32),
+						)
+					})
+				}
 			});
 		let Some(toolbar_outer_pos) = toolbar_outer_pos else {
 			return false;
 		};
 		let cursor_local =
 			Self::toolbar_cursor_local_position_from_outer(toolbar_outer_pos, cursor_global);
+		#[cfg(target_os = "macos")]
+		let toolbar_primary_origin = super::frozen_toolbar_window_primary_origin();
+		#[cfg(not(target_os = "macos"))]
+		let toolbar_primary_origin = Pos2::ZERO;
 
-		WindowRenderer::frozen_toolbar_visible_capsules_contain(&self.toolbar_state, cursor_local)
+		WindowRenderer::frozen_toolbar_visible_capsules_contain(
+			&self.toolbar_state,
+			toolbar_primary_origin,
+			cursor_local,
+		)
 	}
 
 	fn log_toolbar_redraw_phase_timing(
