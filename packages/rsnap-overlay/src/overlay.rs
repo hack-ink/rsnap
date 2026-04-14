@@ -848,8 +848,7 @@ impl OverlaySession {
 			frozen_text_annotations: Vec::new(), frozen_text_redo_annotations: Vec::new(),
 			frozen_arrow_annotations: Vec::new(), frozen_arrow_redo_annotations: Vec::new(),
 			frozen_spotlight_annotations: Vec::new(), frozen_spotlight_redo_annotations: Vec::new(),
-			frozen_text_edit: None, frozen_text_input_generation: 0, frozen_text_recent_input: None,
-			toolbar_state: FrozenToolbarState::default(),
+			frozen_text_edit: None, frozen_text_input_generation: 0, frozen_text_recent_input: None, toolbar_state: FrozenToolbarState::default(),
 			toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
 			toolbar_pointer_local: None,
 			#[cfg(target_os = "macos")]
@@ -860,14 +859,17 @@ impl OverlaySession {
 			frozen_mosaic_drag: FrozenMosaicDragState::default(), frozen_spotlight_drag: FrozenSpotlightDragState::default(),
 			frozen_spotlight_preview_rect: None, frozen_edit_undo_stack: Vec::new(),
 			frozen_edit_redo_stack: Vec::new(), frozen_mosaic_undo_stack: Vec::new(), frozen_mosaic_redo_stack: Vec::new(),
-			hud_window_visible: false, toolbar_window_visible: false,
-			skip_toolbar_focus_on_next_show: false, toolbar_window_warmup_redraws_remaining: 0,
-			loupe_window_visible: false, loupe_window_warmup_redraws_remaining: 0,
+			hud_window_visible: false, toolbar_window_visible: false, skip_toolbar_focus_on_next_show: false,
+			toolbar_window_warmup_redraws_remaining: 0, loupe_window_visible: false, loupe_window_warmup_redraws_remaining: 0,
 			scroll_capture: ScrollCaptureState::default(),
 			#[cfg(target_os = "macos")]
 			scroll_frame_waker: None,
 			#[cfg(target_os = "macos")]
-			scroll_capture_start_guard: None, scroll_capture_starting_hook: None, scroll_capture_started_hook: None,
+			scroll_capture_start_guard: None,
+			#[cfg(target_os = "macos")]
+			scroll_capture_starting_hook: None,
+			#[cfg(target_os = "macos")]
+			scroll_capture_started_hook: None,
 			#[cfg(target_os = "macos")]
 			startup_aux_window_waker: None,
 			#[cfg(target_os = "macos")]
