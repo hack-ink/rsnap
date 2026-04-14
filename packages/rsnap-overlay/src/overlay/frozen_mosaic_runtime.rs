@@ -6,7 +6,7 @@ use crate::overlay::{
 };
 
 impl OverlaySession {
-	fn intersect_rect_points(left: RectPoints, right: RectPoints) -> Option<RectPoints> {
+	pub(super) fn intersect_rect_points(left: RectPoints, right: RectPoints) -> Option<RectPoints> {
 		let x = left.x.max(right.x);
 		let y = left.y.max(right.y);
 		let right_edge = left.x.saturating_add(left.width).min(right.x.saturating_add(right.width));
