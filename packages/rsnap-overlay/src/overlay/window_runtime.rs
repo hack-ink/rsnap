@@ -628,7 +628,7 @@ impl OverlaySession {
 				.with_title("rsnap-overlay")
 				.with_decorations(false)
 				.with_resizable(false)
-				.with_content_protected(cfg!(target_os = "macos"))
+				.with_content_protected(overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
 				.with_transparent(true)
 				.with_window_level(WindowLevel::AlwaysOnTop)
 				.with_inner_size(LogicalSize::new(
@@ -769,7 +769,7 @@ impl OverlaySession {
 			.with_title("rsnap-hud")
 			.with_decorations(false)
 			.with_resizable(false)
-			.with_content_protected(cfg!(target_os = "macos"))
+			.with_content_protected(overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
 			.with_transparent(true)
 			.with_visible(false)
 			.with_window_level(WindowLevel::AlwaysOnTop)
@@ -803,7 +803,7 @@ impl OverlaySession {
 			.with_title("rsnap-loupe")
 			.with_decorations(false)
 			.with_resizable(false)
-			.with_content_protected(cfg!(target_os = "macos"))
+			.with_content_protected(overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
 			.with_transparent(true)
 			.with_visible(false)
 			.with_window_level(WindowLevel::AlwaysOnTop)
@@ -840,7 +840,7 @@ impl OverlaySession {
 			.with_title("rsnap-toolbar")
 			.with_decorations(false)
 			.with_resizable(false)
-			.with_content_protected(cfg!(target_os = "macos"))
+			.with_content_protected(overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
 			.with_inner_size(LogicalSize::new(
 				startup_size.x as f64,
 				f64::from(startup_size.y.max(TOOLBAR_EXPANDED_HEIGHT_PX)),
