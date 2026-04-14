@@ -15,6 +15,8 @@ use color_eyre::eyre;
 #[cfg(target_os = "macos")]
 use color_eyre::eyre::Result;
 #[cfg(target_os = "macos")]
+use global_hotkey::hotkey::HotKey;
+#[cfg(target_os = "macos")]
 use objc2::AnyThread;
 #[cfg(target_os = "macos")]
 use objc2::rc::Retained;
@@ -26,7 +28,7 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
 #[cfg(target_os = "macos")]
-use crate::app::OverlayCancelHotkeyRegistrationState;
+use crate::app::OverlayHotkeyRegistrationState;
 #[cfg(target_os = "macos")]
 use crate::app::UserEvent;
 #[cfg(target_os = "macos")]
@@ -48,6 +50,18 @@ const CAPTURE_SUCCESS_SOUND_CANDIDATE_PATHS: [&str; 2] = [
 	"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif",
 	"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Shutter.aif",
 ];
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+struct OverlayHotkeySpec {
+	hotkey: HotKey,
+	hotkey_id: u32,
+	hotkey_label: &'static str,
+	missing_manager_message: &'static str,
+	register_failure_message: &'static str,
+	register_success_message: &'static str,
+	unregister_failure_message: &'static str,
+	unregister_success_message: &'static str,
+}
 
 impl App {
 	#[cfg(target_os = "macos")]
@@ -73,101 +87,162 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn register_overlay_cancel_hotkey(&mut self) {
-		if !self.overlay_cancel_hotkey_registration_state.allows_register_attempt() {
-			return;
+	fn register_overlay_hotkey(
+		&mut self,
+		spec: OverlayHotkeySpec,
+		registration_state: OverlayHotkeyRegistrationState,
+	) -> OverlayHotkeyRegistrationState {
+		if !registration_state.allows_register_attempt() {
+			return registration_state;
 		}
 
 		let Some(manager) = self._hotkey_manager.as_mut() else {
-			self.overlay_cancel_hotkey_registration_state =
-				OverlayCancelHotkeyRegistrationState::Blocked;
+			tracing::warn!(hotkey = spec.hotkey_label, "{}", spec.missing_manager_message);
 
-			tracing::warn!(
-				hotkey = "Esc",
-				"Capture cancel hotkey is unavailable because the global hotkey manager is missing."
-			);
-
-			return;
+			return OverlayHotkeyRegistrationState::Blocked;
 		};
 
-		if let Err(err) = manager.register(self.overlay_cancel_hotkey) {
-			self.overlay_cancel_hotkey_registration_state =
-				OverlayCancelHotkeyRegistrationState::next_state_after_register_error(&err);
+		match manager.register(spec.hotkey) {
+			Ok(()) => {
+				tracing::info!(
+					hotkey = spec.hotkey_label,
+					hotkey_id = %spec.hotkey_id,
+					"{}",
+					spec.register_success_message
+				);
 
-			tracing::warn!(
-				error = ?err,
-				hotkey = "Esc",
-				hotkey_id = %self.overlay_cancel_hotkey_id,
-				"Failed to register the capture cancel hotkey."
-			);
-		} else {
-			self.overlay_cancel_hotkey_registration_state =
-				OverlayCancelHotkeyRegistrationState::Registered;
+				OverlayHotkeyRegistrationState::Registered
+			},
+			Err(err) => {
+				tracing::warn!(
+					error = ?err,
+					hotkey = spec.hotkey_label,
+					hotkey_id = %spec.hotkey_id,
+					"{}",
+					spec.register_failure_message
+				);
 
-			tracing::info!(
-				hotkey = "Esc",
-				hotkey_id = %self.overlay_cancel_hotkey_id,
-				"Registered the capture cancel hotkey."
-			);
+				OverlayHotkeyRegistrationState::next_state_after_register_error(&err)
+			},
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn unregister_overlay_hotkey(
+		&mut self,
+		spec: OverlayHotkeySpec,
+		registration_state: OverlayHotkeyRegistrationState,
+	) -> OverlayHotkeyRegistrationState {
+		if matches!(registration_state, OverlayHotkeyRegistrationState::Unregistered) {
+			return registration_state;
+		}
+		if matches!(registration_state, OverlayHotkeyRegistrationState::Blocked) {
+			return OverlayHotkeyRegistrationState::Unregistered;
+		}
+
+		let Some(manager) = self._hotkey_manager.as_mut() else {
+			return OverlayHotkeyRegistrationState::Unregistered;
+		};
+
+		match manager.unregister(spec.hotkey) {
+			Ok(()) => {
+				tracing::info!(
+					hotkey = spec.hotkey_label,
+					hotkey_id = %spec.hotkey_id,
+					"{}",
+					spec.unregister_success_message
+				);
+			},
+			Err(err) => {
+				tracing::warn!(
+					error = ?err,
+					hotkey = spec.hotkey_label,
+					hotkey_id = %spec.hotkey_id,
+					"{}",
+					spec.unregister_failure_message
+				);
+			},
+		}
+
+		OverlayHotkeyRegistrationState::Unregistered
+	}
+
+	#[cfg(target_os = "macos")]
+	fn overlay_cancel_hotkey_spec(&self) -> OverlayHotkeySpec {
+		OverlayHotkeySpec {
+			hotkey: self.overlay_cancel_hotkey,
+			hotkey_id: self.overlay_cancel_hotkey_id,
+			hotkey_label: "Esc",
+			missing_manager_message: "Capture cancel hotkey is unavailable because the global hotkey manager is missing.",
+			register_failure_message: "Failed to register the capture cancel hotkey.",
+			register_success_message: "Registered the capture cancel hotkey.",
+			unregister_failure_message: "Failed to unregister the capture cancel hotkey.",
+			unregister_success_message: "Unregistered the capture cancel hotkey.",
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn overlay_loupe_hotkey_spec(&self) -> OverlayHotkeySpec {
+		OverlayHotkeySpec {
+			hotkey: self.overlay_loupe_hotkey,
+			hotkey_id: self.overlay_loupe_hotkey_id,
+			hotkey_label: "Tab",
+			missing_manager_message: "Capture loupe hotkey is unavailable because the global hotkey manager is missing.",
+			register_failure_message: "Failed to register the capture loupe hotkey.",
+			register_success_message: "Registered the capture loupe hotkey.",
+			unregister_failure_message: "Failed to unregister the capture loupe hotkey.",
+			unregister_success_message: "Unregistered the capture loupe hotkey.",
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn register_overlay_cancel_hotkey(&mut self) {
+		let spec = self.overlay_cancel_hotkey_spec();
+
+		self.overlay_cancel_hotkey_registration_state =
+			self.register_overlay_hotkey(spec, self.overlay_cancel_hotkey_registration_state);
 	}
 
 	#[cfg(target_os = "macos")]
 	fn unregister_overlay_cancel_hotkey(&mut self) {
-		if matches!(
-			self.overlay_cancel_hotkey_registration_state,
-			super::OverlayCancelHotkeyRegistrationState::Unregistered
-		) {
-			return;
-		}
-		if matches!(
-			self.overlay_cancel_hotkey_registration_state,
-			super::OverlayCancelHotkeyRegistrationState::Blocked
-		) {
-			self.overlay_cancel_hotkey_registration_state =
-				OverlayCancelHotkeyRegistrationState::Unregistered;
+		let spec = self.overlay_cancel_hotkey_spec();
 
-			return;
-		}
-
-		let Some(manager) = self._hotkey_manager.as_mut() else {
-			self.overlay_cancel_hotkey_registration_state =
-				OverlayCancelHotkeyRegistrationState::Unregistered;
-
-			return;
-		};
-
-		if let Err(err) = manager.unregister(self.overlay_cancel_hotkey) {
-			self.overlay_cancel_hotkey_registration_state =
-				OverlayCancelHotkeyRegistrationState::Unregistered;
-
-			tracing::warn!(
-				error = ?err,
-				hotkey = "Esc",
-				hotkey_id = %self.overlay_cancel_hotkey_id,
-				"Failed to unregister the capture cancel hotkey."
-			);
-		} else {
-			self.overlay_cancel_hotkey_registration_state =
-				OverlayCancelHotkeyRegistrationState::Unregistered;
-
-			tracing::info!(
-				hotkey = "Esc",
-				hotkey_id = %self.overlay_cancel_hotkey_id,
-				"Unregistered the capture cancel hotkey."
-			);
-		}
+		self.overlay_cancel_hotkey_registration_state =
+			self.unregister_overlay_hotkey(spec, self.overlay_cancel_hotkey_registration_state);
 	}
 
 	#[cfg(target_os = "macos")]
-	fn sync_overlay_cancel_hotkey_registration(&mut self) {
-		let should_register =
-			self.overlay_session.as_ref().is_some_and(OverlaySession::wants_global_cancel_hotkey);
+	fn register_overlay_loupe_hotkey(&mut self) {
+		let spec = self.overlay_loupe_hotkey_spec();
 
-		if should_register {
+		self.overlay_loupe_hotkey_registration_state =
+			self.register_overlay_hotkey(spec, self.overlay_loupe_hotkey_registration_state);
+	}
+
+	#[cfg(target_os = "macos")]
+	fn unregister_overlay_loupe_hotkey(&mut self) {
+		let spec = self.overlay_loupe_hotkey_spec();
+
+		self.overlay_loupe_hotkey_registration_state =
+			self.unregister_overlay_hotkey(spec, self.overlay_loupe_hotkey_registration_state);
+	}
+
+	#[cfg(target_os = "macos")]
+	fn sync_overlay_hotkey_registrations(&mut self) {
+		let should_register_cancel =
+			self.overlay_session.as_ref().is_some_and(OverlaySession::wants_global_cancel_hotkey);
+		let should_register_loupe =
+			self.overlay_session.as_ref().is_some_and(OverlaySession::wants_global_loupe_hotkey);
+
+		if should_register_cancel {
 			self.register_overlay_cancel_hotkey();
 		} else {
 			self.unregister_overlay_cancel_hotkey();
+		}
+		if should_register_loupe {
+			self.register_overlay_loupe_hotkey();
+		} else {
+			self.unregister_overlay_loupe_hotkey();
 		}
 	}
 
@@ -337,7 +412,7 @@ impl App {
 				self.overlay_session = Some(overlay_session);
 
 				#[cfg(target_os = "macos")]
-				self.sync_overlay_cancel_hotkey_registration();
+				self.sync_overlay_hotkey_registrations();
 			},
 			Err(err) => {
 				let overlay_start_ms = overlay_start_started_at.elapsed().as_millis();
@@ -576,7 +651,10 @@ impl App {
 		};
 
 		#[cfg(target_os = "macos")]
-		self.unregister_overlay_cancel_hotkey();
+		{
+			self.unregister_overlay_cancel_hotkey();
+			self.unregister_overlay_loupe_hotkey();
+		}
 
 		#[cfg(target_os = "macos")]
 		{
@@ -791,7 +869,7 @@ impl App {
 		}
 
 		#[cfg(target_os = "macos")]
-		self.sync_overlay_cancel_hotkey_registration();
+		self.sync_overlay_hotkey_registrations();
 	}
 }
 

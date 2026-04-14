@@ -261,6 +261,28 @@ fn apply_loupe_activation_key_event_ignores_frozen_mode() {
 	assert!(!session.loupe_activation_key_down);
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn duplicate_loupe_activation_key_events_do_not_double_toggle() {
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.config.alt_activation = AltActivationMode::Toggle;
+
+	assert!(session.apply_loupe_activation_key_event(true, false));
+	assert!(session.state.alt_held);
+	assert!(session.loupe_activation_key_down);
+	assert!(!session.apply_loupe_activation_key_event(true, false));
+	assert!(session.state.alt_held);
+	assert!(session.loupe_activation_key_down);
+	assert!(!session.apply_loupe_activation_key_event(false, false));
+	assert!(session.state.alt_held);
+	assert!(!session.loupe_activation_key_down);
+	assert!(!session.apply_loupe_activation_key_event(false, false));
+	assert!(session.state.alt_held);
+	assert!(!session.loupe_activation_key_down);
+}
+
 #[test]
 fn live_drag_alt_activation_does_not_reopen_loupe() {
 	let mut session = OverlaySession::new();
@@ -958,6 +980,20 @@ fn wants_global_cancel_hotkey_only_in_live_mode() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn wants_global_loupe_hotkey_only_in_live_mode() {
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+
+	assert!(session.wants_global_loupe_hotkey());
+
+	session.state.mode = OverlayMode::Frozen;
+
+	assert!(!session.wants_global_loupe_hotkey());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn global_escape_hotkey_cancels_live_capture() {
 	let mut session = OverlaySession::new();
 
@@ -967,6 +1003,22 @@ fn global_escape_hotkey_cancels_live_capture() {
 		session.handle_global_escape_hotkey(),
 		OverlayControl::Exit(OverlayExit::Cancelled)
 	));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn global_loupe_hotkey_tracks_live_hold_state() {
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.config.alt_activation = AltActivationMode::Hold;
+
+	assert!(matches!(session.handle_global_loupe_hotkey(true), OverlayControl::Continue));
+	assert!(session.state.alt_held);
+	assert!(session.loupe_activation_key_down);
+	assert!(matches!(session.handle_global_loupe_hotkey(false), OverlayControl::Continue));
+	assert!(!session.state.alt_held);
+	assert!(!session.loupe_activation_key_down);
 }
 
 #[test]
