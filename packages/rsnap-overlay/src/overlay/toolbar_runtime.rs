@@ -2,10 +2,9 @@ use crate::overlay::{
 	self, Arc, Duration, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant,
 	MonitorRect, OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
 	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2, WindowId,
-	WindowRenderer,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{FrozenCaptureSource, HudAnchor, LogicalSize, TOOLBAR_WINDOW_WARMUP_REDRAWS};
+use crate::overlay::{FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS};
 
 impl OverlaySession {
 	pub(super) fn handle_toolbar_window_moved(
@@ -58,6 +57,7 @@ impl OverlaySession {
 			self.toolbar_left_button_went_down = false;
 			self.toolbar_left_button_went_up = false;
 			self.toolbar_state.drag_offset = Vec2::ZERO;
+			self.toolbar_state.drag_start_eligible = false;
 			self.toolbar_state.drag_anchor = None;
 		}
 
@@ -155,7 +155,10 @@ impl OverlaySession {
 		#[cfg(not(target_os = "macos"))]
 		let mut mouse_drag = self.toolbar_left_button_down && self.toolbar_state.dragging;
 
-		if self.toolbar_left_button_down && self.toolbar_state.drag_anchor.is_none() {
+		if self.toolbar_left_button_down
+			&& self.toolbar_state.drag_start_eligible
+			&& self.toolbar_state.drag_anchor.is_none()
+		{
 			self.toolbar_state.drag_anchor = Some(cursor_local);
 		}
 		if !mouse_drag
@@ -176,6 +179,7 @@ impl OverlaySession {
 					global_cursor.y as f32 - toolbar_outer_pos.y as f32,
 				);
 				self.toolbar_state.dragging = true;
+				self.toolbar_state.drag_start_eligible = false;
 				self.toolbar_state.drag_anchor = None;
 				mouse_drag = true;
 			}
@@ -232,6 +236,7 @@ impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	fn begin_native_toolbar_drag(&mut self) -> OverlayControl {
 		self.toolbar_state.dragging = true;
+		self.toolbar_state.drag_start_eligible = false;
 		self.toolbar_state.drag_anchor = None;
 
 		let Some(toolbar_window_handle) =
@@ -396,12 +401,14 @@ impl OverlaySession {
 		match toolbar_window.renderer.resize(size) {
 			Ok(()) => {
 				let window = Arc::clone(&toolbar_window.window);
+				let toolbar_height_points = self
+					.toolbar_inner_size_points
+					.map(|(_, height)| height as f32)
+					.unwrap_or_else(|| super::frozen_toolbar_window_startup_size_points().y);
 
 				self.configure_hud_window_common(
 					window.as_ref(),
-					Some(overlay::frozen_toolbar_corner_radius_points(
-						WindowRenderer::frozen_toolbar_size(&self.toolbar_state).y,
-					)),
+					Some(overlay::frozen_toolbar_corner_radius_points(toolbar_height_points)),
 				);
 
 				OverlayControl::Continue
@@ -513,30 +520,6 @@ impl OverlaySession {
 
 			draw_result?;
 
-			let desired_inner_size = toolbar_window.renderer.hud_pill.map(|hud_pill| {
-				(
-					hud_pill.rect.width().ceil().max(1.0) as u32,
-					hud_pill.rect.height().ceil().max(1.0) as u32,
-				)
-			});
-			let toolbar_window = Arc::clone(&toolbar_window.window);
-
-			if let Some(desired) = desired_inner_size
-				&& self.toolbar_inner_size_points != Some(desired)
-			{
-				self.toolbar_inner_size_points = Some(desired);
-
-				self.configure_hud_window_common(
-					toolbar_window.as_ref(),
-					Some(overlay::frozen_toolbar_corner_radius_points(desired.1 as f32)),
-				);
-
-				let _ = toolbar_window.request_inner_size(LogicalSize::new(
-					f64::from(desired.0),
-					f64::from(desired.1),
-				));
-			}
-
 			if toolbar_became_visible {
 				self.note_frozen_transition_toolbar_visible(monitor);
 			}
@@ -571,7 +554,6 @@ impl OverlaySession {
 
 		Some(toolbar_became_visible)
 	}
-
 	pub(super) fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
 		let redraw_started_at = Instant::now();
 
