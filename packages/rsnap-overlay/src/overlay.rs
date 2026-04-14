@@ -959,6 +959,14 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	/// Returns whether the host should keep the global Tab hotkey registered
+	/// for the current overlay mode.
+	#[must_use]
+	pub fn wants_global_loupe_hotkey(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Live)
+	}
+
+	#[cfg(target_os = "macos")]
 	/// Registers a wake callback that creates non-critical startup windows after first paint.
 	pub fn set_startup_aux_window_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.startup_aux_window_waker = Some(waker);
