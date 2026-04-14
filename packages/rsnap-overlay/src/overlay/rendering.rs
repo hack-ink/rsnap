@@ -12,6 +12,8 @@ use self::hud_rendering::LiveLoupeTexture;
 use self::hud_surface::{HudBg, HudBlurUniformRaw};
 #[cfg(target_os = "macos")]
 use crate::overlay::MacOSOverlayCursorRectSupport;
+#[cfg(target_os = "macos")]
+use crate::overlay::macos_configure_hud_window;
 use crate::overlay::{
 	self, AcquiredSurfaceFrame, Adapter, AddressMode, Arc, BindGroupLayout, BindingResource,
 	BindingType, BlendState, Buffer, BufferBindingType, BufferSize, BufferUsages, ClippedPrimitive,
