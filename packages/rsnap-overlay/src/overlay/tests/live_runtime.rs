@@ -13,6 +13,8 @@ use crate::overlay::DeviceCursorPointSource;
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenCaptureSource;
 #[cfg(target_os = "macos")]
+use crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT;
+#[cfg(target_os = "macos")]
 use crate::overlay::FrozenToolbarTool;
 use crate::overlay::tests;
 #[cfg(target_os = "macos")]
@@ -30,7 +32,7 @@ use crate::overlay::tests::{
 };
 use crate::overlay::{LiveCaptureInteraction, LiveClickCaptureTarget, OverlayControl};
 #[cfg(target_os = "macos")]
-use crate::state::WindowHit;
+use crate::state::{WindowHit, WindowRect};
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -851,6 +853,71 @@ fn released_press_pending_waits_for_async_hit_test_before_entering_frozen() {
 				window_target: Some(window_target),
 			},
 		} if frozen_monitor == monitor && target_rect == capture_rect && window_target.window_id == 42
+	));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn timed_out_click_hit_test_unlocks_press_pending_for_retry() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(180, 220);
+	let capture_rect = RectPoints::new(100, 120, 240, 320);
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.state.monitor = Some(monitor);
+	session.state.cursor = Some(cursor);
+	session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
+		captured_at: Instant::now(),
+		windows: Arc::new(vec![WindowRect {
+			window_id: Some(42),
+			x: i64::from(monitor.origin.x) + i64::from(capture_rect.x),
+			y: i64::from(monitor.origin.y) + i64::from(capture_rect.y),
+			width: i64::from(capture_rect.width),
+			height: i64::from(capture_rect.height),
+		}]),
+	}));
+	session.pending_click_hit_test_request_id = Some(7);
+	session.pending_click_hit_test_requested_at =
+		Some(Instant::now() - PENDING_CLICK_HIT_TEST_TIMEOUT - Duration::from_millis(1));
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global: cursor,
+		click_target: None,
+		release_global: Some(cursor),
+		released: true,
+	});
+
+	let control = session.about_to_wait();
+
+	assert!(matches!(control, OverlayControl::Continue));
+	assert!(session.pending_click_hit_test_request_id.is_none());
+	assert!(session.pending_click_hit_test_requested_at.is_none());
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::HoverWindow {
+			monitor: hover_monitor,
+			target: LiveClickCaptureTarget {
+				capture_rect: Some(target_rect),
+				window_target: Some(window_target),
+			},
+		} if hover_monitor == monitor && target_rect == capture_rect && window_target.window_id == 42
+	));
+
+	session.begin_live_capture_press(monitor, cursor);
+
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::PressPending {
+			monitor: press_monitor,
+			click_target: Some(LiveClickCaptureTarget {
+				capture_rect: Some(target_rect),
+				window_target: Some(window_target),
+			}),
+			released: false,
+			..
+		} if press_monitor == monitor && target_rect == capture_rect && window_target.window_id == 42
 	));
 }
 
