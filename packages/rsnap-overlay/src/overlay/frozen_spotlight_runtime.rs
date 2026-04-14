@@ -4,12 +4,16 @@ use crate::overlay::{
 };
 
 impl OverlaySession {
-	pub(super) const fn frozen_spotlight_outside_brightness_numerator() -> u16 {
-		148
+	pub(super) const fn frozen_spotlight_scrim_alpha() -> u8 {
+		107
 	}
 
-	pub(super) const fn frozen_spotlight_scrim_alpha() -> u8 {
-		u8::MAX - Self::frozen_spotlight_outside_brightness_numerator() as u8
+	pub(super) const fn frozen_spotlight_outside_brightness_numerator() -> u16 {
+		(u8::MAX - Self::frozen_spotlight_scrim_alpha()) as u16
+	}
+
+	pub(super) fn dim_frozen_spotlight_channel(channel: u8) -> u8 {
+		((u16::from(channel) * Self::frozen_spotlight_outside_brightness_numerator()) / 255) as u8
 	}
 
 	fn rect_points_right(rect: crate::RectPoints) -> u32 {
@@ -155,8 +159,14 @@ impl OverlaySession {
 	}
 
 	pub(super) fn stop_frozen_spotlight_drag(&mut self) {
+		let was_active = self.frozen_spotlight_drag.active;
+
 		self.frozen_spotlight_drag = FrozenSpotlightDragState::default();
 		self.frozen_spotlight_preview_rect = None;
+
+		if was_active && let Some(monitor) = self.state.monitor {
+			self.request_redraw_for_monitor(monitor);
+		}
 	}
 
 	pub(super) fn commit_frozen_spotlight_drag(&mut self) -> bool {

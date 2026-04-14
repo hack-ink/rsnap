@@ -2090,6 +2090,23 @@ fn current_export_image_applies_frozen_spotlight_outside_selection() {
 }
 
 #[test]
+fn frozen_spotlight_export_dim_matches_preview_scrim_alpha() {
+	let visible_numerator = u16::from(u8::MAX - OverlaySession::frozen_spotlight_scrim_alpha());
+
+	assert_eq!(OverlaySession::frozen_spotlight_outside_brightness_numerator(), visible_numerator,);
+
+	for channel in [0_u8, 1, 17, 64, 120, 180, 210, 254, 255] {
+		let preview_dimmed = ((u16::from(channel) * visible_numerator) / 255) as u8;
+
+		assert_eq!(
+			OverlaySession::dim_frozen_spotlight_channel(channel),
+			preview_dimmed,
+			"channel {channel}",
+		);
+	}
+}
+
+#[test]
 fn current_export_image_applies_multiple_frozen_spotlights_without_extra_darkening() {
 	let monitor = test_monitor_with_scale(8, 8, 1_000);
 	let base = image::RgbaImage::from_pixel(8, 8, Rgba([120, 180, 210, 255]));

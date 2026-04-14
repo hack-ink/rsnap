@@ -277,9 +277,7 @@ impl OverlaySession {
 					let pixel = image.get_pixel_mut(x, y);
 
 					for channel in 0..3 {
-						pixel[channel] = ((u16::from(pixel[channel])
-							* Self::frozen_spotlight_outside_brightness_numerator())
-							/ 255) as u8;
+						pixel[channel] = Self::dim_frozen_spotlight_channel(pixel[channel]);
 					}
 				}
 			}
