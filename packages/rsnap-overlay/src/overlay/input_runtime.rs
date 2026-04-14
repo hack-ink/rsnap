@@ -21,9 +21,9 @@ impl OverlaySession {
 			return;
 		}
 
-		self.focused_window_ids.remove(&window_id);
+		let was_focused = self.focused_window_ids.remove(&window_id);
 
-		if self.focused_window_ids.is_empty() {
+		if was_focused && self.focused_window_ids.is_empty() {
 			self.pending_focus_loss_cleanup = true;
 		}
 	}
