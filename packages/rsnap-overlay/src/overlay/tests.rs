@@ -387,7 +387,10 @@ fn current_export_image_includes_frozen_brush_strokes() {
 	let export_image = session.current_export_image().expect("annotated export image");
 
 	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
-	assert_eq!(export_image.get_pixel(2, 2), &Rgba(session.toolbar_state.brush_style.color.export_rgba()));
+	assert_eq!(
+		export_image.get_pixel(2, 2),
+		&Rgba(session.toolbar_state.brush_style.color.export_rgba())
+	);
 }
 
 #[test]
