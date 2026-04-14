@@ -9,6 +9,7 @@ use crate::overlay;
 use crate::overlay::OverlayWorker;
 use crate::overlay::{
 	Arc, Instant, LOUPE_TILE_CORNER_RADIUS_POINTS, OverlayConfig, OverlayMode, OverlaySession,
+	WindowRenderer,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{MacLiveFrameStream, MacOSHudWindowConfigState, SLOW_OP_WARN_HUD_CONFIG};
@@ -175,10 +176,8 @@ impl OverlaySession {
 		}
 		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
 			let window = Arc::clone(&toolbar_window.window);
-			let toolbar_height_points = self
-				.toolbar_inner_size_points
-				.map(|(_, height)| height as f32)
-				.unwrap_or_else(|| overlay::frozen_toolbar_window_startup_size_points().y);
+			let toolbar_height_points =
+				WindowRenderer::frozen_toolbar_primary_size(&self.toolbar_state).y;
 
 			self.configure_hud_window_common(
 				window.as_ref(),
