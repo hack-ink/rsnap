@@ -1585,10 +1585,8 @@ impl OverlaySession {
 	}
 
 	fn sync_frozen_annotation_style_capsule_placement(&mut self, monitor: MonitorRect) {
-		let Some(toolbar_pos) = self
-			.toolbar_state
-			.floating_position
-			.or(self.toolbar_state.default_slot_position)
+		let Some(toolbar_pos) =
+			self.toolbar_state.floating_position.or(self.toolbar_state.default_slot_position)
 		else {
 			return;
 		};
@@ -3705,8 +3703,7 @@ fn frozen_toolbar_window_startup_size_points() -> Vec2 {
 	.map(|toolbar_state| WindowRenderer::frozen_toolbar_size(&toolbar_state))
 	.fold(Vec2::new(0.0, TOOLBAR_EXPANDED_HEIGHT_PX), |max_size, size| {
 		Vec2::new(max_size.x.max(size.x), max_size.y.max(size.y))
-	})
-	+ Vec2::new(0.0, WindowRenderer::frozen_toolbar_window_top_padding_points())
+	}) + Vec2::new(0.0, WindowRenderer::frozen_toolbar_window_top_padding_points())
 }
 
 #[cfg(target_os = "macos")]
