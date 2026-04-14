@@ -387,6 +387,27 @@ fn pending_focus_loss_cleanup_clears_loupe_after_all_overlay_windows_blur() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn initial_unfocused_window_blur_does_not_cancel_first_global_loupe_press() {
+	let overlay_window_id = WindowId::from(1);
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.config.alt_activation = AltActivationMode::Hold;
+
+	session.note_window_focus_change(overlay_window_id, false);
+
+	assert!(matches!(session.handle_global_loupe_hotkey(true), OverlayControl::Continue));
+	assert!(session.state.alt_held);
+	assert!(session.loupe_activation_key_down);
+
+	session.maybe_clear_loupe_activation_after_focus_loss();
+
+	assert!(session.state.alt_held);
+	assert!(session.loupe_activation_key_down);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn live_loupe_keeps_a_dedicated_window_during_live_alt() {
 	let mut session = OverlaySession::new();
 
