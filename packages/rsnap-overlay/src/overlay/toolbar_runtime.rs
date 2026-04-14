@@ -1,11 +1,12 @@
 use crate::overlay::{
 	self, Arc, Duration, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant,
 	MonitorRect, OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
-	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2, WindowId,
+	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2,
+	WindowId, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
-	FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS, WindowRenderer,
+	FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS,
 };
 
 impl OverlaySession {
