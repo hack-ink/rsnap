@@ -1604,7 +1604,7 @@ impl OverlaySession {
 		true
 	}
 
-	#[cfg(test)]
+	#[cfg(all(test, target_os = "macos"))]
 	fn maybe_seed_frozen_capture_preview_from_snapshot(
 		&mut self,
 		monitor: MonitorRect,
