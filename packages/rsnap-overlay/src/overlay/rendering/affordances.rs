@@ -2720,7 +2720,6 @@ impl WindowRenderer {
 				cursor,
 				left_button_down,
 			);
-
 			Self::paint_frozen_toolbar_capsule(
 				ui,
 				toolbar_rect,
@@ -2731,6 +2730,7 @@ impl WindowRenderer {
 				hud_milk_amount,
 				hud_tint_hue,
 			);
+
 			let toolbar_inner_rect = toolbar_rect.shrink2(egui::vec2(
 				HUD_PILL_INNER_MARGIN_X_POINTS,
 				TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
@@ -2755,6 +2755,7 @@ impl WindowRenderer {
 					hud_milk_amount,
 					hud_tint_hue,
 				);
+
 				let style_inner_rect = style_rect.shrink2(egui::vec2(
 					HUD_PILL_INNER_MARGIN_X_POINTS,
 					TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
