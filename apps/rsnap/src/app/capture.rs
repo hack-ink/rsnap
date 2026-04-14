@@ -239,7 +239,6 @@ impl App {
 		} else {
 			self.unregister_overlay_cancel_hotkey();
 		}
-
 		if should_register_loupe {
 			self.register_overlay_loupe_hotkey();
 		} else {
