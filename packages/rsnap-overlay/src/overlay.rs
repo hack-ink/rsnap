@@ -1697,6 +1697,7 @@ impl OverlaySession {
 		self.state.hovered_window_rect = None;
 
 		self.reset_frozen_annotation_state();
+
 		self.skip_toolbar_focus_on_next_show = true;
 		#[cfg(target_os = "macos")]
 		{
@@ -2973,6 +2974,7 @@ impl OverlaySession {
 
 		#[cfg(target_os = "macos")]
 		let frontmost_application_before_start = self.frontmost_application_before_start.take();
+
 		self.reset_runtime_for_exit();
 		#[cfg(target_os = "macos")]
 		self.restore_frontmost_application_after_exit(frontmost_application_before_start);
@@ -4343,6 +4345,7 @@ fn macos_configure_overlay_window_mouse_moved_events(window: &Window) {
 		}
 
 		macos_configure_nonactivating_capture_window_with_ns_window(ns_window);
+
 		let _: () = objc::msg_send![ns_window, setOpaque: false];
 		let _: () = objc::msg_send![ns_window, setHasShadow: false];
 		let clear: *mut Object = objc::msg_send![objc::class!(NSColor), clearColor];

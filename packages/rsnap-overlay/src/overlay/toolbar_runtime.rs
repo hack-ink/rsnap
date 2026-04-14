@@ -583,6 +583,7 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		if toolbar_became_visible && self.preserve_frontmost_on_next_toolbar_show {
 			self.preserve_frontmost_on_next_toolbar_show = false;
+
 			self.restore_recorded_frontmost_application_for_focus_preservation(
 				"toolbar_first_show",
 			);
