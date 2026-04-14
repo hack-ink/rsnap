@@ -13,6 +13,7 @@ use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::DeviceCursorPointSource;
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenCaptureSource;
+#[cfg(target_os = "macos")]
 use crate::overlay::FrozenToolbarTool;
 use crate::overlay::OverlayControl;
 #[cfg(target_os = "macos")]

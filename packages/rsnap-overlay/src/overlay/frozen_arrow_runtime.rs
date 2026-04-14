@@ -102,6 +102,7 @@ impl OverlaySession {
 			current_x: cursor_x,
 			current_y: cursor_y,
 		};
+
 		self.request_redraw_for_monitor(monitor);
 
 		true
@@ -127,6 +128,7 @@ impl OverlaySession {
 
 		self.frozen_arrow_drag.current_x = cursor_x;
 		self.frozen_arrow_drag.current_y = cursor_y;
+
 		self.request_redraw_for_monitor(monitor);
 
 		true
@@ -190,7 +192,9 @@ impl OverlaySession {
 
 		self.frozen_arrow_redo_annotations.push(annotation);
 		self.sync_frozen_toolbar_state();
+
 		self.toolbar_state.needs_redraw = true;
+
 		self.request_redraw_toolbar_window();
 
 		if let Some(monitor) = self.state.monitor {
@@ -207,7 +211,9 @@ impl OverlaySession {
 
 		self.frozen_arrow_annotations.push(annotation);
 		self.sync_frozen_toolbar_state();
+
 		self.toolbar_state.needs_redraw = true;
+
 		self.request_redraw_toolbar_window();
 
 		if let Some(monitor) = self.state.monitor {

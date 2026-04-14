@@ -1,6 +1,6 @@
 use crate::overlay::{
 	FrozenEditKind, FrozenSpotlightAnnotation, FrozenSpotlightDragState, FrozenToolbarTool,
-	GlobalPoint, OverlaySession, RectPoints,
+	GlobalPoint, OverlaySession,
 };
 
 impl OverlaySession {
@@ -12,15 +12,15 @@ impl OverlaySession {
 		u8::MAX - Self::frozen_spotlight_outside_brightness_numerator() as u8
 	}
 
-	fn rect_points_right(rect: RectPoints) -> u32 {
+	fn rect_points_right(rect: crate::RectPoints) -> u32 {
 		rect.x.saturating_add(rect.width)
 	}
 
-	fn rect_points_bottom(rect: RectPoints) -> u32 {
+	fn rect_points_bottom(rect: crate::RectPoints) -> u32 {
 		rect.y.saturating_add(rect.height)
 	}
 
-	fn rect_points_contains_rect(outer: RectPoints, inner: RectPoints) -> bool {
+	fn rect_points_contains_rect(outer: crate::RectPoints, inner: crate::RectPoints) -> bool {
 		inner.x >= outer.x
 			&& inner.y >= outer.y
 			&& Self::rect_points_right(inner) <= Self::rect_points_right(outer)
@@ -28,9 +28,9 @@ impl OverlaySession {
 	}
 
 	pub(super) fn clipped_frozen_spotlight_rects(
-		capture_rect: RectPoints,
-		spotlight_rects: impl IntoIterator<Item = RectPoints>,
-	) -> Vec<RectPoints> {
+		capture_rect: crate::RectPoints,
+		spotlight_rects: impl IntoIterator<Item = crate::RectPoints>,
+	) -> Vec<crate::RectPoints> {
 		spotlight_rects
 			.into_iter()
 			.filter_map(|rect| Self::intersect_rect_points(rect, capture_rect))
@@ -39,9 +39,9 @@ impl OverlaySession {
 	}
 
 	pub(super) fn frozen_spotlight_scrim_rects(
-		capture_rect: RectPoints,
-		spotlight_rects: &[RectPoints],
-	) -> Vec<RectPoints> {
+		capture_rect: crate::RectPoints,
+		spotlight_rects: &[crate::RectPoints],
+	) -> Vec<crate::RectPoints> {
 		if capture_rect.is_empty() || spotlight_rects.is_empty() {
 			return Vec::new();
 		}
@@ -77,7 +77,7 @@ impl OverlaySession {
 					continue;
 				}
 
-				let rect = RectPoints::new(
+				let rect = crate::RectPoints::new(
 					left,
 					top,
 					right.saturating_sub(left),
@@ -118,8 +118,8 @@ impl OverlaySession {
 
 		self.frozen_spotlight_drag =
 			FrozenSpotlightDragState { active: true, anchor_x: cursor_x, anchor_y: cursor_y };
-		self.frozen_spotlight_preview_rect =
-			Some(crate::overlay::RectPoints::new(cursor_x, cursor_y, 1, 1));
+		self.frozen_spotlight_preview_rect = Some(crate::RectPoints::new(cursor_x, cursor_y, 1, 1));
+
 		self.request_redraw_for_monitor(monitor);
 
 		true
@@ -148,6 +148,7 @@ impl OverlaySession {
 		}
 
 		self.frozen_spotlight_preview_rect = Some(next_rect);
+
 		self.request_redraw_for_monitor(monitor);
 
 		true
@@ -189,7 +190,9 @@ impl OverlaySession {
 
 		self.frozen_spotlight_redo_annotations.push(annotation);
 		self.sync_frozen_toolbar_state();
+
 		self.toolbar_state.needs_redraw = true;
+
 		self.request_redraw_toolbar_window();
 
 		if let Some(monitor) = self.state.monitor {
@@ -206,7 +209,9 @@ impl OverlaySession {
 
 		self.frozen_spotlight_annotations.push(annotation);
 		self.sync_frozen_toolbar_state();
+
 		self.toolbar_state.needs_redraw = true;
+
 		self.request_redraw_toolbar_window();
 
 		if let Some(monitor) = self.state.monitor {
