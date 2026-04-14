@@ -1,7 +1,5 @@
 use wgpu::SurfaceConfiguration;
 
-#[cfg(target_os = "macos")]
-use crate::overlay;
 use crate::overlay::rendering::{GpuContext, ScrollPreviewView, WindowRenderer};
 use crate::overlay::{
 	AcquiredSurfaceFrame, ActiveEventLoop, Align, Arc, CentralPanel, Color32, ColorImage,
@@ -33,7 +31,7 @@ impl ScrollPreviewWindow {
 			.with_visible(false)
 			.with_resizable(false)
 			.with_decorations(false)
-			.with_content_protected(cfg!(target_os = "macos"))
+			.with_content_protected(super::overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
 			.with_transparent(true)
 			.with_inner_size(LogicalSize::new(
 				SCROLL_PREVIEW_WINDOW_WIDTH_POINTS,
@@ -84,7 +82,7 @@ impl ScrollPreviewWindow {
 		let _ = window.set_cursor_hittest(false);
 
 		#[cfg(target_os = "macos")]
-		overlay::macos_configure_hud_window(window.as_ref(), false, 0.0, Some(18.0));
+		super::macos_configure_hud_window(window.as_ref(), false, 0.0, Some(18.0));
 
 		Ok(Self {
 			window,
