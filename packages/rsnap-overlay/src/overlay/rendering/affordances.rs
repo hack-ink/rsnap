@@ -47,8 +47,6 @@ use crate::overlay::{
 
 const FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS: f32 = 4.0;
 const FROZEN_ANNOTATION_TOOLBAR_SECTION_HEIGHT_POINTS: f32 = 24.0;
-const FROZEN_ANNOTATION_TOOLBAR_SECTION_DIVIDER_ALPHA_DARK: u8 = 60;
-const FROZEN_ANNOTATION_TOOLBAR_SECTION_DIVIDER_ALPHA_LIGHT: u8 = 72;
 const FROZEN_ANNOTATION_TOOLBAR_SWATCH_SIZE_POINTS: f32 = 16.0;
 const FROZEN_ANNOTATION_TOOLBAR_SWATCH_GAP_POINTS: f32 = 6.0;
 const FROZEN_ANNOTATION_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS: f32 = 20.0;
@@ -81,13 +79,6 @@ impl FrozenAnnotationStyleToolbarKind {
 		}
 	}
 
-	const fn size_hover_text(self) -> &'static str {
-		match self {
-			Self::Pen => "Scroll or use +/- to adjust stroke size",
-			Self::Text => "Scroll or use +/- to adjust text size",
-		}
-	}
-
 	const fn size_display_width(self) -> f32 {
 		match self {
 			Self::Pen => FROZEN_ANNOTATION_TOOLBAR_PEN_SIZE_DISPLAY_WIDTH_POINTS,
@@ -97,20 +88,6 @@ impl FrozenAnnotationStyleToolbarKind {
 
 	const fn size_control_width(self) -> f32 {
 		self.size_display_width() + FROZEN_ANNOTATION_TOOLBAR_SIZE_BUTTON_WIDTH_POINTS * 2.0
-	}
-
-	const fn decrease_hover_text(self) -> &'static str {
-		match self {
-			Self::Pen => "Smaller stroke",
-			Self::Text => "Smaller text",
-		}
-	}
-
-	const fn increase_hover_text(self) -> &'static str {
-		match self {
-			Self::Pen => "Larger stroke",
-			Self::Text => "Larger text",
-		}
 	}
 
 	fn size_value(self, toolbar_state: &FrozenToolbarState) -> f64 {
@@ -944,11 +921,13 @@ impl WindowRenderer {
 		}
 
 		let capture_rect = Self::frozen_toolbar_capture_rect(state, monitor, screen_rect);
-		let toolbar_size = Self::frozen_toolbar_size(toolbar_state);
-		let default_pos = Self::frozen_toolbar_default_pos(
+		let toolbar_primary_size = Self::frozen_toolbar_primary_size(toolbar_state);
+		let toolbar_window_size = Self::frozen_toolbar_size(toolbar_state);
+		let default_pos = Self::frozen_toolbar_default_window_pos(
 			screen_rect,
 			capture_rect,
-			toolbar_size,
+			toolbar_primary_size,
+			toolbar_window_size,
 			toolbar_placement,
 		);
 		let toolbar_pos = toolbar_state.floating_position.unwrap_or(default_pos);
@@ -957,7 +936,7 @@ impl WindowRenderer {
 			return None;
 		}
 
-		Some(Rect::from_min_size(toolbar_pos, toolbar_size))
+		Some(Self::frozen_toolbar_window_rect(toolbar_state, toolbar_pos))
 	}
 
 	pub(in crate::overlay) fn selection_size_badge_text(
@@ -2304,6 +2283,7 @@ impl WindowRenderer {
 		} else {
 			(Pos2::new(-1.0, -1.0), false)
 		};
+		let toolbar_primary_size = Self::frozen_toolbar_primary_size(toolbar_state);
 		let toolbar_size = Self::frozen_toolbar_size(toolbar_state);
 		let screen_rect = ctx.input(|i| i.viewport_rect());
 		let capture_rect = Self::frozen_toolbar_capture_rect(state, monitor, screen_rect);
@@ -2314,6 +2294,7 @@ impl WindowRenderer {
 			toolbar_state,
 			screen_rect,
 			capture_rect,
+			toolbar_primary_size,
 			toolbar_size,
 			toolbar_placement,
 		) else {
@@ -2473,21 +2454,83 @@ impl WindowRenderer {
 		}
 	}
 
-	pub(in crate::overlay) fn frozen_toolbar_size(toolbar_state: &FrozenToolbarState) -> Vec2 {
+	pub(in crate::overlay) fn frozen_toolbar_primary_size(
+		toolbar_state: &FrozenToolbarState,
+	) -> Vec2 {
 		let tool_count = Self::frozen_toolbar_tools(toolbar_state).len() as f32;
 		let spacing_count = (tool_count - 1.0).max(0.0);
 		let width = tool_count * FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
 			+ spacing_count * FROZEN_TOOLBAR_ITEM_SPACING_POINTS
 			+ 2.0 * HUD_PILL_INNER_MARGIN_X_POINTS
 			+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
-		let mut height = toolbar_state.pill_height_points.unwrap_or(TOOLBAR_EXPANDED_HEIGHT_PX);
-
-		if Self::frozen_annotation_style_toolbar_visible(toolbar_state) {
-			height += FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS
-				+ FROZEN_ANNOTATION_TOOLBAR_SECTION_HEIGHT_POINTS;
-		}
+		let height = toolbar_state.pill_height_points.unwrap_or(TOOLBAR_EXPANDED_HEIGHT_PX);
 
 		Vec2::new(width, height)
+	}
+
+	pub(in crate::overlay) fn frozen_toolbar_primary_rect(
+		toolbar_state: &FrozenToolbarState,
+		toolbar_pos: Pos2,
+	) -> Rect {
+		Rect::from_min_size(toolbar_pos, Self::frozen_toolbar_primary_size(toolbar_state))
+	}
+
+	pub(in crate::overlay) fn frozen_annotation_style_capsule_size(
+		toolbar_state: &FrozenToolbarState,
+	) -> Option<Vec2> {
+		let style_kind = FrozenAnnotationStyleToolbarKind::from_toolbar_state(toolbar_state)?;
+		let swatch_count = FrozenAnnotationColor::ALL.len() as f32;
+		let swatches_width = swatch_count * FROZEN_ANNOTATION_TOOLBAR_SWATCH_SIZE_POINTS
+			+ (swatch_count - 1.0).max(0.0) * FROZEN_ANNOTATION_TOOLBAR_SWATCH_GAP_POINTS;
+		let content_width = style_kind.size_control_width() + 4.0 + swatches_width;
+		let width = content_width
+			+ 2.0 * HUD_PILL_INNER_MARGIN_X_POINTS
+			+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
+		let height = toolbar_state.pill_height_points.unwrap_or(TOOLBAR_EXPANDED_HEIGHT_PX);
+
+		Some(Vec2::new(width, height))
+	}
+
+	fn frozen_annotation_style_capsule_rect(
+		toolbar_state: &FrozenToolbarState,
+		toolbar_rect: Rect,
+	) -> Option<Rect> {
+		let style_size = Self::frozen_annotation_style_capsule_size(toolbar_state)?;
+		let min_x = toolbar_rect.left();
+		let max_x = (toolbar_rect.right() - style_size.x).max(min_x);
+		let x = (toolbar_rect.center().x - style_size.x * 0.5).clamp(min_x, max_x);
+		let y = toolbar_rect.max.y + FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS;
+
+		Some(Rect::from_min_size(Pos2::new(x, y), style_size))
+	}
+
+	pub(in crate::overlay) fn frozen_toolbar_window_rect(
+		toolbar_state: &FrozenToolbarState,
+		toolbar_pos: Pos2,
+	) -> Rect {
+		let toolbar_rect = Self::frozen_toolbar_primary_rect(toolbar_state, toolbar_pos);
+
+		Self::frozen_annotation_style_capsule_rect(toolbar_state, toolbar_rect)
+			.map_or(toolbar_rect, |style_rect| toolbar_rect.union(style_rect))
+	}
+
+	#[cfg(any(target_os = "macos", test))]
+	pub(in crate::overlay) fn frozen_toolbar_visible_capsules_contain(
+		toolbar_state: &FrozenToolbarState,
+		cursor_local: Pos2,
+	) -> bool {
+		let toolbar_rect = Self::frozen_toolbar_primary_rect(toolbar_state, Pos2::ZERO);
+
+		if toolbar_rect.contains(cursor_local) {
+			return true;
+		}
+
+		Self::frozen_annotation_style_capsule_rect(toolbar_state, toolbar_rect)
+			.is_some_and(|style_rect| style_rect.contains(cursor_local))
+	}
+
+	pub(in crate::overlay) fn frozen_toolbar_size(toolbar_state: &FrozenToolbarState) -> Vec2 {
+		Self::frozen_toolbar_window_rect(toolbar_state, Pos2::ZERO).size()
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -2498,6 +2541,7 @@ impl WindowRenderer {
 		toolbar_state: &mut FrozenToolbarState,
 		screen_rect: Rect,
 		capture_rect: Rect,
+		toolbar_primary_size: Vec2,
 		toolbar_size: Vec2,
 		toolbar_placement: ToolbarPlacement,
 	) -> Option<Pos2> {
@@ -2557,9 +2601,10 @@ impl WindowRenderer {
 			return None;
 		}
 
-		let default_pos = Self::frozen_toolbar_default_pos(
+		let default_pos = Self::frozen_toolbar_default_window_pos(
 			screen_rect,
 			capture_rect,
+			toolbar_primary_size,
 			toolbar_size,
 			toolbar_placement,
 		);
@@ -2567,6 +2612,7 @@ impl WindowRenderer {
 		tracing::debug!(
 			monitor_id = monitor.id,
 			frozen_generation = state.frozen_generation,
+			toolbar_primary_size_points = ?toolbar_primary_size,
 			toolbar_size_points = ?toolbar_size,
 			default_pos = ?default_pos,
 			"Frozen toolbar birth resolved."
@@ -2602,48 +2648,43 @@ impl WindowRenderer {
 		capture_rect.intersect(screen_rect)
 	}
 
-	pub(in crate::overlay) fn frozen_toolbar_default_pos(
+	pub(in crate::overlay) fn frozen_toolbar_default_window_pos(
 		screen_rect: Rect,
 		capture_rect: Rect,
-		toolbar_size: Vec2,
+		toolbar_primary_size: Vec2,
+		toolbar_window_size: Vec2,
 		toolbar_placement: ToolbarPlacement,
 	) -> Pos2 {
 		let y = match toolbar_placement {
 			ToolbarPlacement::Bottom => {
 				let below_y = capture_rect.max.y + TOOLBAR_CAPTURE_GAP_PX;
-				let within_screen =
-					below_y + toolbar_size.y + TOOLBAR_SCREEN_MARGIN_PX <= screen_rect.max.y;
+				let within_screen = below_y + toolbar_primary_size.y + TOOLBAR_SCREEN_MARGIN_PX
+					<= screen_rect.max.y;
 
 				if within_screen {
 					below_y
 				} else {
-					capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y
+					capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_primary_size.y
 				}
 			},
 			ToolbarPlacement::Top => {
-				let above_y = capture_rect.min.y - TOOLBAR_CAPTURE_GAP_PX - toolbar_size.y;
+				let above_y = capture_rect.min.y - TOOLBAR_CAPTURE_GAP_PX - toolbar_primary_size.y;
 				let within_screen = above_y >= screen_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX;
 
 				if within_screen { above_y } else { capture_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX }
 			},
 		};
 		let min_y = screen_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX;
-		let max_y = (screen_rect.max.y - toolbar_size.y - TOOLBAR_SCREEN_MARGIN_PX).max(min_y);
-		let x = Self::frozen_toolbar_default_x(screen_rect, toolbar_size, capture_rect.center().x);
+		let max_y =
+			(screen_rect.max.y - toolbar_window_size.y - TOOLBAR_SCREEN_MARGIN_PX).max(min_y);
+		let ideal_x = capture_rect.center().x - toolbar_primary_size.x / 2.0;
+		let min_x = screen_rect.min.x + TOOLBAR_SCREEN_MARGIN_PX;
+		let max_x =
+			(screen_rect.max.x - toolbar_window_size.x - TOOLBAR_SCREEN_MARGIN_PX).max(min_x);
+		let x = ideal_x.clamp(min_x, max_x);
 		let y = y.max(min_y).min(max_y);
 
 		Pos2::new(x, y)
-	}
-
-	pub(in crate::overlay) fn frozen_toolbar_default_x(
-		screen_rect: Rect,
-		toolbar_size: Vec2,
-		anchor_center_x: f32,
-	) -> f32 {
-		let min_x = screen_rect.min.x + TOOLBAR_SCREEN_MARGIN_PX;
-		let max_x = (screen_rect.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX).max(min_x);
-
-		(anchor_center_x - toolbar_size.x / 2.0).clamp(min_x, max_x)
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -2666,23 +2707,62 @@ impl WindowRenderer {
 	) {
 		#[cfg(target_os = "macos")]
 		let _ = screen_rect;
+		let area_id = Id::new(format!("frozen-toolbar-{}", monitor.id));
 
-		Area::new(Id::new(format!("frozen-toolbar-{}", monitor.id)))
-			.order(Order::Foreground)
-			.fixed_pos(toolbar_pos)
-			.show(ctx, |ui| {
-				let (rect, response) = ui.allocate_exact_size(
-					toolbar_size,
-					if cfg!(target_os = "macos") {
-						Sense::hover()
-					} else {
-						Sense::click_and_drag()
-					},
+		Area::new(area_id).order(Order::Foreground).fixed_pos(toolbar_pos).show(ctx, |ui| {
+			let (window_rect, _window_response) =
+				ui.allocate_exact_size(toolbar_size, Sense::hover());
+			let toolbar_rect = Self::frozen_toolbar_primary_rect(toolbar_state, window_rect.min);
+			let style_rect =
+				Self::frozen_annotation_style_capsule_rect(toolbar_state, toolbar_rect);
+			let toolbar_response = ui.interact(
+				toolbar_rect,
+				area_id.with("primary-capsule"),
+				if cfg!(target_os = "macos") { Sense::hover() } else { Sense::click_and_drag() },
+			);
+			#[cfg(target_os = "macos")]
+			let _ = &toolbar_response;
+
+			toolbar_state.annotation_size_control_hovered = false;
+
+			#[cfg(not(target_os = "macos"))]
+			Self::update_frozen_toolbar_drag_state(
+				toolbar_state,
+				toolbar_response.drag_started(),
+				toolbar_pos,
+				screen_rect,
+				toolbar_size,
+				cursor,
+				left_button_down,
+			);
+			Self::paint_frozen_toolbar_capsule(
+				ui,
+				toolbar_rect,
+				theme,
+				hud_blur_active,
+				hud_opaque,
+				hud_opacity,
+				hud_milk_amount,
+				hud_tint_hue,
+			);
+
+			let toolbar_inner_rect = toolbar_rect.shrink2(egui::vec2(
+				HUD_PILL_INNER_MARGIN_X_POINTS,
+				TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
+			));
+			let _ = ui.scope_builder(UiBuilder::new().max_rect(toolbar_inner_rect), |ui| {
+				Self::render_frozen_toolbar_primary_row(
+					ui,
+					toolbar_inner_rect.width(),
+					toolbar_state,
+					theme,
 				);
-				#[cfg(target_os = "macos")]
-				let _ = &response;
-				let corner_radius = overlay::frozen_toolbar_corner_radius_u8(rect.height());
-				let body_fill = Self::tinted_hud_body_fill(
+			});
+
+			if let Some(style_rect) = style_rect {
+				Self::paint_frozen_toolbar_capsule(
+					ui,
+					style_rect,
 					theme,
 					hud_blur_active,
 					hud_opaque,
@@ -2690,56 +2770,80 @@ impl WindowRenderer {
 					hud_milk_amount,
 					hud_tint_hue,
 				);
-				let toolbar_frame =
-					Self::hud_pill_frame(theme, hud_opaque, hud_opacity, body_fill, false);
 
-				toolbar_state.annotation_size_control_hovered = false;
-
-				#[cfg(not(target_os = "macos"))]
-				Self::update_frozen_toolbar_drag_state(
-					toolbar_state,
-					response.drag_started(),
-					toolbar_pos,
-					screen_rect,
-					toolbar_size,
-					cursor,
-					left_button_down,
-				);
-
-				// Draw the capsule ourselves at the exact allocated rect. This keeps the visible pill
-				// and the blur rect perfectly aligned (no shrink-to-content surprises on first frame).
-				ui.painter().rect_filled(rect, f32::from(corner_radius), toolbar_frame.fill);
-				ui.painter().rect_stroke(
-					rect.shrink(0.5),
-					CornerRadius::same(corner_radius),
-					toolbar_frame.stroke,
-					StrokeKind::Inside,
-				);
-
-				let inner_stroke_color = match theme {
-					HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
-					HudTheme::Light => Color32::from_rgba_unmultiplied(255, 255, 255, 140),
-				};
-				let inner_stroke = Stroke::new(1.0, inner_stroke_color);
-				let inner_rect = rect.shrink(1.0);
-
-				ui.painter().rect_stroke(
-					inner_rect,
-					CornerRadius::same(corner_radius.saturating_sub(1)),
-					inner_stroke,
-					StrokeKind::Inside,
-				);
-
-				let inner_rect = rect.shrink2(egui::vec2(
+				let style_inner_rect = style_rect.shrink2(egui::vec2(
 					HUD_PILL_INNER_MARGIN_X_POINTS,
 					TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
 				));
+				let _ = ui.scope_builder(UiBuilder::new().max_rect(style_inner_rect), |ui| {
+					let _ = ui.allocate_ui_with_layout(
+						Vec2::new(
+							style_inner_rect.width(),
+							FROZEN_ANNOTATION_TOOLBAR_SECTION_HEIGHT_POINTS,
+						),
+						Layout::left_to_right(Align::Center),
+						|ui| {
+							Self::render_frozen_annotation_toolbar_controls(
+								ui,
+								toolbar_state,
+								theme,
+							)
+						},
+					);
+				});
+			}
 
-				Self::render_frozen_toolbar_body(ui, inner_rect, toolbar_state, theme);
-
-				*hud_pill_out =
-					Some(HudPillGeometry { rect, radius_points: f32::from(corner_radius) });
+			*hud_pill_out = Some(HudPillGeometry {
+				rect: window_rect,
+				radius_points: f32::from(overlay::frozen_toolbar_corner_radius_u8(
+					window_rect.height(),
+				)),
 			});
+		});
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn paint_frozen_toolbar_capsule(
+		ui: &Ui,
+		rect: Rect,
+		theme: HudTheme,
+		hud_blur_active: bool,
+		hud_opaque: bool,
+		hud_opacity: f32,
+		hud_milk_amount: f32,
+		hud_tint_hue: f32,
+	) {
+		let corner_radius = overlay::frozen_toolbar_corner_radius_u8(rect.height());
+		let body_fill = Self::tinted_hud_body_fill(
+			theme,
+			hud_blur_active,
+			hud_opaque,
+			hud_opacity,
+			hud_milk_amount,
+			hud_tint_hue,
+		);
+		let toolbar_frame = Self::hud_pill_frame(theme, hud_opaque, hud_opacity, body_fill, false);
+
+		ui.painter().rect_filled(rect, f32::from(corner_radius), toolbar_frame.fill);
+		ui.painter().rect_stroke(
+			rect.shrink(0.5),
+			CornerRadius::same(corner_radius),
+			toolbar_frame.stroke,
+			StrokeKind::Inside,
+		);
+
+		let inner_stroke_color = match theme {
+			HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
+			HudTheme::Light => Color32::from_rgba_unmultiplied(255, 255, 255, 140),
+		};
+		let inner_rect = rect.shrink(1.0);
+
+		ui.painter().rect_stroke(
+			inner_rect,
+			CornerRadius::same(corner_radius.saturating_sub(1)),
+			Stroke::new(1.0, inner_stroke_color),
+			StrokeKind::Inside,
+		);
 	}
 
 	#[cfg(not(target_os = "macos"))]
@@ -2770,33 +2874,6 @@ impl WindowRenderer {
 		}
 	}
 
-	fn render_frozen_toolbar_body(
-		ui: &mut Ui,
-		inner_rect: Rect,
-		toolbar_state: &mut FrozenToolbarState,
-		theme: HudTheme,
-	) {
-		let _ = ui.scope_builder(UiBuilder::new().max_rect(inner_rect), |ui| {
-			ui.with_layout(Layout::top_down(Align::Center), |ui| {
-				Self::render_frozen_toolbar_primary_row(
-					ui,
-					inner_rect.width(),
-					toolbar_state,
-					theme,
-				);
-
-				if Self::frozen_annotation_style_toolbar_visible(toolbar_state) {
-					Self::render_frozen_annotation_toolbar_section(
-						ui,
-						inner_rect,
-						toolbar_state,
-						theme,
-					);
-				}
-			});
-		});
-	}
-
 	fn render_frozen_toolbar_primary_row(
 		ui: &mut Ui,
 		width: f32,
@@ -2811,46 +2888,6 @@ impl WindowRenderer {
 
 				Self::render_frozen_toolbar_controls(ui, toolbar_state, theme);
 			},
-		);
-	}
-
-	fn paint_frozen_annotation_toolbar_spacing(ui: &mut Ui, inner_rect: Rect, theme: HudTheme) {
-		ui.add_space(FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS * 0.5);
-
-		Self::paint_frozen_annotation_toolbar_divider(ui, inner_rect, theme);
-
-		ui.add_space(FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS * 0.5);
-	}
-
-	fn render_frozen_annotation_toolbar_section(
-		ui: &mut Ui,
-		inner_rect: Rect,
-		toolbar_state: &mut FrozenToolbarState,
-		theme: HudTheme,
-	) {
-		Self::paint_frozen_annotation_toolbar_spacing(ui, inner_rect, theme);
-
-		let _ = ui.allocate_ui_with_layout(
-			Vec2::new(inner_rect.width(), FROZEN_ANNOTATION_TOOLBAR_SECTION_HEIGHT_POINTS),
-			Layout::left_to_right(Align::Center),
-			|ui| Self::render_frozen_annotation_toolbar_controls(ui, toolbar_state, theme),
-		);
-	}
-
-	fn paint_frozen_annotation_toolbar_divider(ui: &Ui, inner_rect: Rect, theme: HudTheme) {
-		let divider_color = match theme {
-			HudTheme::Dark => {
-				Color32::from_white_alpha(FROZEN_ANNOTATION_TOOLBAR_SECTION_DIVIDER_ALPHA_DARK)
-			},
-			HudTheme::Light => {
-				Color32::from_black_alpha(FROZEN_ANNOTATION_TOOLBAR_SECTION_DIVIDER_ALPHA_LIGHT)
-			},
-		};
-		let divider_y = ui.cursor().min.y;
-
-		ui.painter().line_segment(
-			[Pos2::new(inner_rect.left(), divider_y), Pos2::new(inner_rect.right(), divider_y)],
-			Stroke::new(1.0, divider_color),
 		);
 	}
 
@@ -2936,10 +2973,6 @@ impl WindowRenderer {
 		});
 	}
 
-	fn frozen_annotation_style_toolbar_visible(toolbar_state: &FrozenToolbarState) -> bool {
-		FrozenAnnotationStyleToolbarKind::from_toolbar_state(toolbar_state).is_some()
-	}
-
 	fn render_frozen_annotation_toolbar_controls(
 		ui: &mut Ui,
 		toolbar_state: &mut FrozenToolbarState,
@@ -3003,7 +3036,6 @@ impl WindowRenderer {
 			),
 			Sense::hover(),
 		);
-		let size_response = size_response.on_hover_text(style_kind.size_hover_text());
 		let minus_rect = Rect::from_min_max(
 			size_rect.min,
 			Pos2::new(
@@ -3022,20 +3054,16 @@ impl WindowRenderer {
 			Pos2::new(minus_rect.max.x, size_rect.min.y),
 			Pos2::new(plus_rect.min.x, size_rect.max.y),
 		);
-		let minus_response = ui
-			.interact(
-				minus_rect,
-				ui.id().with(("annotation-size-decrease", style_kind)),
-				Sense::click(),
-			)
-			.on_hover_text(style_kind.decrease_hover_text());
-		let plus_response = ui
-			.interact(
-				plus_rect,
-				ui.id().with(("annotation-size-increase", style_kind)),
-				Sense::click(),
-			)
-			.on_hover_text(style_kind.increase_hover_text());
+		let minus_response = ui.interact(
+			minus_rect,
+			ui.id().with(("annotation-size-decrease", style_kind)),
+			Sense::click(),
+		);
+		let plus_response = ui.interact(
+			plus_rect,
+			ui.id().with(("annotation-size-increase", style_kind)),
+			Sense::click(),
+		);
 		let hovered =
 			size_response.hovered() || minus_response.hovered() || plus_response.hovered();
 		let capsule_rect = size_rect.shrink2(egui::vec2(1.0, 3.0));
@@ -3279,7 +3307,7 @@ impl WindowRenderer {
 			Stroke::new(if selected { 2.0 } else { 1.0 }, stroke_color),
 		);
 
-		response.on_hover_text("Annotation color").clicked()
+		response.clicked()
 	}
 
 	pub(in crate::overlay) fn frozen_toolbar_button_style(

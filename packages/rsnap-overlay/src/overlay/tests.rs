@@ -386,7 +386,10 @@ fn current_export_image_includes_frozen_brush_strokes() {
 	let export_image = session.current_export_image().expect("annotated export image");
 
 	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
-	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FrozenAnnotationColor::Red.export_rgba()));
+	assert_eq!(
+		export_image.get_pixel(2, 2),
+		&Rgba(session.toolbar_state.brush_style.color.export_rgba())
+	);
 }
 
 #[test]
@@ -440,7 +443,10 @@ fn frozen_brush_undo_and_redo_update_export_image() {
 
 	let redone = session.current_export_image().expect("redo export image");
 
-	assert_eq!(redone.get_pixel(3, 3), &Rgba(FrozenAnnotationColor::Red.export_rgba()));
+	assert_eq!(
+		redone.get_pixel(3, 3),
+		&Rgba(session.toolbar_state.brush_style.color.export_rgba())
+	);
 }
 
 #[test]
@@ -462,7 +468,8 @@ fn current_export_image_antialiases_frozen_brush_edges() {
 
 	let export_image = session.current_export_image().expect("annotated export image");
 	let has_antialiased_edge = export_image.pixels().any(|pixel| {
-		pixel != &background && pixel != &Rgba(FrozenAnnotationColor::Red.export_rgba())
+		pixel != &background
+			&& pixel != &Rgba(session.toolbar_state.brush_style.color.export_rgba())
 	});
 
 	assert!(has_antialiased_edge, "expected blended edge pixels around the exported brush");
@@ -484,7 +491,10 @@ fn rasterizing_frozen_brush_clears_reused_coverage_mask() {
 	);
 
 	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
-	assert_eq!(export_image.get_pixel(2, 2), &Rgba(FrozenAnnotationColor::Red.export_rgba()));
+	assert_eq!(
+		export_image.get_pixel(2, 2),
+		&Rgba(FrozenBrushStyle::default().color.export_rgba())
+	);
 }
 
 fn significant_y_direction_reversals(points: &[Pos2], min_delta: f32) -> usize {
@@ -1112,7 +1122,7 @@ fn default_frozen_brush_style_uses_existing_width_and_color() {
 		session.toolbar_state.brush_style.stroke_width_points,
 		overlay::FROZEN_BRUSH_STROKE_WIDTH_POINTS
 	);
-	assert_eq!(session.toolbar_state.brush_style.color, FrozenAnnotationColor::Red);
+	assert_eq!(session.toolbar_state.brush_style.color, FrozenAnnotationColor::Blue);
 }
 
 #[test]
@@ -1394,6 +1404,75 @@ fn toolbar_cursor_left_during_drag_keeps_drag_session_alive() {
 	assert_eq!(session.toolbar_state.drag_anchor, Some(Pos2::new(40.0, 14.0)));
 	assert!(!session.toolbar_state.annotation_size_control_hovered);
 	assert_eq!(session.toolbar_state.annotation_size_wheel_accumulator, 0.0);
+}
+
+#[test]
+fn toolbar_drag_start_eligibility_prefers_live_cursor_over_stale_cache() {
+	let mut session = OverlaySession::new();
+	let primary_rect =
+		WindowRenderer::frozen_toolbar_primary_rect(&session.toolbar_state, Pos2::ZERO);
+	let stale_cursor = Pos2::new(primary_rect.right() + 12.0, primary_rect.center().y);
+	let live_cursor = primary_rect.center();
+
+	assert!(!primary_rect.contains(stale_cursor));
+	assert!(primary_rect.contains(live_cursor));
+
+	session.toolbar_pointer_local = Some(stale_cursor);
+
+	assert!(session.resolve_toolbar_drag_start_eligibility(Some(live_cursor)));
+}
+
+#[test]
+fn toolbar_drag_start_eligibility_falls_back_to_cached_pointer_when_live_cursor_is_missing() {
+	let mut session = OverlaySession::new();
+	let primary_rect =
+		WindowRenderer::frozen_toolbar_primary_rect(&session.toolbar_state, Pos2::ZERO);
+	let cached_cursor = primary_rect.center();
+
+	assert!(primary_rect.contains(cached_cursor));
+
+	session.toolbar_pointer_local = Some(cached_cursor);
+
+	assert!(session.resolve_toolbar_drag_start_eligibility(None));
+}
+
+#[test]
+fn toolbar_cursor_local_from_sampled_global_returns_none_when_sampling_fails() {
+	let outer_position = GlobalPoint::new(320, 140);
+
+	assert_eq!(
+		OverlaySession::toolbar_cursor_local_from_sampled_global(outer_position, None),
+		None
+	);
+}
+
+#[test]
+fn toolbar_visible_capsule_hit_test_excludes_gap_between_capsules() {
+	let mut session = OverlaySession::new();
+
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	let primary_rect =
+		WindowRenderer::frozen_toolbar_primary_rect(&session.toolbar_state, Pos2::ZERO);
+	let window_rect =
+		WindowRenderer::frozen_toolbar_window_rect(&session.toolbar_state, Pos2::ZERO);
+	let primary_point = primary_rect.center();
+	let gap_point = Pos2::new(primary_rect.center().x, primary_rect.max.y + 1.0);
+	let style_point = Pos2::new(primary_rect.center().x, window_rect.max.y - 1.0);
+
+	assert!(WindowRenderer::frozen_toolbar_visible_capsules_contain(
+		&session.toolbar_state,
+		primary_point
+	));
+	assert!(window_rect.contains(gap_point));
+	assert!(!WindowRenderer::frozen_toolbar_visible_capsules_contain(
+		&session.toolbar_state,
+		gap_point
+	));
+	assert!(WindowRenderer::frozen_toolbar_visible_capsules_contain(
+		&session.toolbar_state,
+		style_point
+	));
 }
 
 #[test]
