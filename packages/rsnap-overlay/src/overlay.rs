@@ -1866,11 +1866,11 @@ impl OverlaySession {
 		self.pending_window_freeze_capture = window_target;
 		self.inflight_window_freeze_capture = None;
 		self.frozen_window_image = None;
-			self.capture_windows_hidden = false;
-			self.pending_click_hit_test_request_id = None;
-			self.pending_click_hit_test_requested_at = None;
+		self.capture_windows_hidden = false;
+		self.pending_click_hit_test_request_id = None;
+		self.pending_click_hit_test_requested_at = None;
 
-			if !matches!(
+		if !matches!(
 			self.live_capture_interaction,
 			LiveCaptureInteraction::FrozenFromClick { .. }
 				| LiveCaptureInteraction::FrozenFromDrag { .. }
@@ -3326,11 +3326,11 @@ impl OverlaySession {
 		self.event_loop_progress_seq = 0;
 		self.event_loop_last_progress_at = Instant::now();
 		self.event_loop_last_progress_window_id = None;
-			self.event_loop_last_progress_monitor_id = None;
-			self.event_loop_last_progress_detail = None;
-			self.event_loop_last_stall_warn_at = None;
-			self.pending_click_hit_test_request_id = None;
-			self.pending_click_hit_test_requested_at = None;
+		self.event_loop_last_progress_monitor_id = None;
+		self.event_loop_last_progress_detail = None;
+		self.event_loop_last_stall_warn_at = None;
+		self.pending_click_hit_test_request_id = None;
+		self.pending_click_hit_test_requested_at = None;
 
 		#[cfg(target_os = "macos")]
 		self.macos_hud_window_config_cache.clear();
