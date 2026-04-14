@@ -871,8 +871,15 @@ impl OverlaySession {
 			WindowRenderer::new(gpu, Arc::clone(&window), Arc::clone(&self.egui_repaint_deadline))
 				.map_err(|err| format!("Failed to init toolbar renderer: {err:#}"))?;
 
-		self.toolbar_inner_size_points =
-			Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
+		#[cfg(target_os = "macos")]
+		{
+			self.toolbar_inner_size_points =
+				Some((startup_size.x.ceil().max(1.0) as u32, startup_size.y.ceil().max(1.0) as u32));
+		}
+		#[cfg(not(target_os = "macos"))]
+		{
+			self.toolbar_inner_size_points = None;
+		}
 		self.toolbar_window = Some(HudOverlayWindow { window, renderer });
 
 		Ok(())
