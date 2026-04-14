@@ -2779,9 +2779,9 @@ impl WindowRenderer {
 			}
 
 			*hud_pill_out = Some(HudPillGeometry {
-				rect: toolbar_rect,
+				rect: window_rect,
 				radius_points: f32::from(overlay::frozen_toolbar_corner_radius_u8(
-					toolbar_rect.height(),
+					window_rect.height(),
 				)),
 			});
 		});

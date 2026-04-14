@@ -4,7 +4,7 @@ use crate::overlay::{
 };
 
 impl OverlaySession {
-	fn toolbar_positioning_size(&self) -> Vec2 {
+	pub(super) fn toolbar_positioning_size(&self) -> Vec2 {
 		#[cfg(target_os = "macos")]
 		{
 			if let Some((width, height)) = self.toolbar_inner_size_points {

@@ -1553,7 +1553,7 @@ impl OverlaySession {
 			Vec2::new(capture_rect_points.width as f32, capture_rect_points.height as f32),
 		);
 		let toolbar_primary_size = WindowRenderer::frozen_toolbar_primary_size(&self.toolbar_state);
-		let toolbar_window_size = WindowRenderer::frozen_toolbar_size(&self.toolbar_state);
+		let toolbar_window_size = self.toolbar_positioning_size();
 
 		WindowRenderer::frozen_toolbar_default_window_pos(
 			screen_rect,

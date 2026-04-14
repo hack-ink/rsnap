@@ -583,7 +583,7 @@ impl OverlaySession {
 			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
 		let preview_rect = self.scroll_preview_local_rect(monitor);
 		let toolbar_primary_size = WindowRenderer::frozen_toolbar_primary_size(&self.toolbar_state);
-		let toolbar_window_size = WindowRenderer::frozen_toolbar_size(&self.toolbar_state);
+		let toolbar_window_size = self.toolbar_positioning_size();
 		let toolbar_pos = WindowRenderer::frozen_toolbar_default_window_pos(
 			screen_rect,
 			preview_rect,
