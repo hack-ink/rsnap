@@ -2514,6 +2514,7 @@ impl WindowRenderer {
 			.map_or(toolbar_rect, |style_rect| toolbar_rect.union(style_rect))
 	}
 
+	#[cfg(any(target_os = "macos", test))]
 	pub(in crate::overlay) fn frozen_toolbar_visible_capsules_contain(
 		toolbar_state: &FrozenToolbarState,
 		cursor_local: Pos2,
