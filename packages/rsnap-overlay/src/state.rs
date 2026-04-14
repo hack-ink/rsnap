@@ -14,6 +14,8 @@ pub(crate) struct LoupeSample {
 pub struct MonitorImageSnapshot {
 	/// When the frame was captured.
 	pub captured_at: Instant,
+	/// Live-stream generation that produced this frame.
+	pub stream_generation: u64,
 	/// The monitor that produced this frame.
 	pub monitor: MonitorRect,
 	/// The captured monitor image in RGBA pixel format.
@@ -310,6 +312,7 @@ pub struct OverlayState {
 	pub live_bg_image: Option<RgbaImage>,
 	pub live_bg_generation: u64,
 	pub frozen_image: Option<RgbaImage>,
+	pub frozen_transition_image: Option<RgbaImage>,
 	pub frozen_generation: u64,
 	pub error_message: Option<String>,
 	pub alt_held: bool,
@@ -331,6 +334,7 @@ impl OverlayState {
 			live_bg_image: None,
 			live_bg_generation: 0,
 			frozen_image: None,
+			frozen_transition_image: None,
 			frozen_generation: 0,
 			error_message: None,
 			alt_held: false,
@@ -355,6 +359,7 @@ impl OverlayState {
 	pub fn begin_freeze(&mut self, monitor: MonitorRect) {
 		self.monitor = Some(monitor);
 		self.frozen_image = None;
+		self.frozen_transition_image = None;
 		self.frozen_mosaic_preview_rect = None;
 		self.loupe = None;
 		self.mode = OverlayMode::Frozen;
@@ -366,12 +371,24 @@ impl OverlayState {
 		// freeze request/response cycle.
 		self.monitor = Some(monitor);
 		self.frozen_image = Some(image);
+		self.frozen_transition_image = None;
 		self.mode = OverlayMode::Frozen;
+	}
+
+	#[cfg(test)]
+	pub fn seed_frozen_transition_image(&mut self, image: RgbaImage) {
+		self.frozen_transition_image = Some(image);
+	}
+
+	pub fn frozen_surface_image(&self) -> Option<&RgbaImage> {
+		self.frozen_image.as_ref().or(self.frozen_transition_image.as_ref())
 	}
 }
 
 #[cfg(test)]
 mod tests {
+	use image::{Rgba, RgbaImage};
+
 	use crate::state::{GlobalPoint, MonitorRect, RectPoints};
 
 	#[test]
@@ -410,5 +427,48 @@ mod tests {
 		let pixel_rect = monitor.local_rect_to_pixels(rect);
 
 		assert_eq!(pixel_rect, RectPoints::new(20, 40, 260, 260));
+	}
+
+	#[test]
+	fn begin_freeze_clears_frozen_transition_image() {
+		let monitor = MonitorRect {
+			id: 7,
+			origin: GlobalPoint::new(0, 0),
+			width: 100,
+			height: 100,
+			scale_factor_x1000: 1_000,
+		};
+		let mut state = crate::state::OverlayState::new();
+
+		state.seed_frozen_transition_image(RgbaImage::new(2, 2));
+		state.begin_freeze(monitor);
+
+		assert!(state.frozen_transition_image.is_none());
+		assert!(state.frozen_image.is_none());
+	}
+
+	#[test]
+	fn frozen_surface_image_prefers_final_frozen_image() {
+		let monitor = MonitorRect {
+			id: 7,
+			origin: GlobalPoint::new(0, 0),
+			width: 100,
+			height: 100,
+			scale_factor_x1000: 1_000,
+		};
+		let transition = RgbaImage::from_pixel(2, 2, Rgba([10, 20, 30, 255]));
+		let final_image = RgbaImage::from_pixel(2, 2, Rgba([40, 50, 60, 255]));
+		let mut state = crate::state::OverlayState::new();
+
+		state.begin_freeze(monitor);
+		state.seed_frozen_transition_image(transition);
+
+		assert_eq!(state.frozen_surface_image(), state.frozen_transition_image.as_ref());
+
+		state.finish_freeze(monitor, final_image.clone());
+
+		assert_eq!(state.frozen_image.as_ref(), Some(&final_image));
+		assert!(state.frozen_transition_image.is_none());
+		assert_eq!(state.frozen_surface_image(), Some(&final_image));
 	}
 }
