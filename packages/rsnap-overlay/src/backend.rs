@@ -358,6 +358,7 @@ impl XcapCaptureBackend {
 			.wrap_err_with(|| format!("failed to capture monitor for rgb sampling: {monitor:?}"))?;
 		let snapshot = Arc::new(MonitorImageSnapshot {
 			captured_at: Instant::now(),
+			stream_generation: 0,
 			monitor,
 			image: Arc::new(image),
 		});
@@ -775,6 +776,7 @@ impl CaptureBackend for XcapCaptureBackend {
 
 		self.cache = Some(Arc::new(MonitorImageSnapshot {
 			captured_at: Instant::now(),
+			stream_generation: 0,
 			monitor,
 			image: Arc::new(image.clone()),
 		}));

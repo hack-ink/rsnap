@@ -67,11 +67,12 @@ use crate::overlay::{
 #[cfg(target_os = "macos")]
 use crate::overlay::{
 	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
-	InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult,
-	LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl, OverlayExit,
-	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
-	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
-	ScrollCaptureFrameSource, StartupLiveRgbPlan, WindowCaptureAlphaMode,
+	InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveCaptureInteraction,
+	LiveSampleApplyResult, LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl,
+	OverlayExit, SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW,
+	SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
+	SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource, StartupLiveRgbPlan,
+	WindowCaptureAlphaMode,
 };
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 #[cfg(target_os = "macos")]
@@ -2749,9 +2750,13 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 		capture_windows_hidden: true,
 		loupe_activation_key_down: true,
 		keyboard_modifiers: ModifiersState::SHIFT,
-		left_mouse_button_down: true,
-		left_mouse_button_down_monitor: Some(test_monitor()),
-		left_mouse_button_down_global: Some(GlobalPoint::new(12, 34)),
+		live_capture_interaction: LiveCaptureInteraction::PressPending {
+			monitor: test_monitor(),
+			press_global: GlobalPoint::new(12, 34),
+			click_target: None,
+			release_global: None,
+			released: false,
+		},
 		hud_window_visible: true,
 		toolbar_window_visible: true,
 		toolbar_window_warmup_redraws_remaining: 3,
@@ -2770,9 +2775,7 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 	assert!(!session.capture_windows_hidden);
 	assert!(!session.loupe_activation_key_down);
 	assert_eq!(session.keyboard_modifiers, ModifiersState::default());
-	assert!(!session.left_mouse_button_down);
-	assert!(session.left_mouse_button_down_monitor.is_none());
-	assert!(session.left_mouse_button_down_global.is_none());
+	assert_eq!(session.live_capture_interaction, LiveCaptureInteraction::Idle);
 	assert!(!session.hud_window_visible);
 	assert!(!session.toolbar_window_visible);
 	assert_eq!(session.toolbar_window_warmup_redraws_remaining, 0);
@@ -3258,6 +3261,23 @@ fn toolbar_window_hides_until_frozen_pixels_exist() {
 	session.inflight_freeze_capture = Some(monitor);
 
 	assert!(session.should_hide_toolbar_window(monitor));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn toolbar_window_is_needed_for_seeded_preview_before_final_capture_ready() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.finish_freeze(monitor, test_frozen_image());
+
+	session.toolbar_state.visible = true;
+
+	session.request_aux_window_creation_if_needed();
+
+	assert!(session.startup_aux_window_creation_pending);
+	assert!(!session.authoritative_frozen_capture_ready);
 }
 
 #[test]
