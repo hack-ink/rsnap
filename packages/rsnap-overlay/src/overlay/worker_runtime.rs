@@ -1,13 +1,14 @@
 use crate::overlay::{
 	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, GlobalPoint, Instant,
 	LiveCaptureInteraction, LiveClickCaptureTarget, LiveCursorSample, LiveSampleApplyResult,
-	MonitorRect, OverlayControl, OverlayMode, OverlaySession, POST_HIDE_LIVE_SNAPSHOT_GRACE,
-	WindowFreezeCaptureTarget, WindowHit,
-	WindowListSnapshot,
+	MonitorRect, OverlayControl, OverlayMode, OverlaySession, WindowFreezeCaptureTarget,
+	WindowHit, WindowListSnapshot,
 	WorkerErrorSource, WorkerRequestSendError, WorkerResponse,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{CursorSampleRequest, FreezeCaptureTarget, mem};
+use crate::overlay::{
+	CursorSampleRequest, FreezeCaptureTarget, POST_HIDE_LIVE_SNAPSHOT_GRACE, mem,
+};
 
 pub(super) const FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT: u64 = 8;
 
