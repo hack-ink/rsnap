@@ -1,7 +1,9 @@
 use crate::overlay::{
 	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, GlobalPoint, Instant,
-	LiveCursorSample, LiveSampleApplyResult, MonitorRect, MonitorRectPoints, OverlayControl,
-	OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit, WindowListSnapshot,
+	LiveCaptureInteraction, LiveClickCaptureTarget, LiveCursorSample, LiveSampleApplyResult,
+	MonitorRect, OverlayControl, OverlayMode, OverlaySession, POST_HIDE_LIVE_SNAPSHOT_GRACE,
+	WindowFreezeCaptureTarget, WindowHit,
+	WindowListSnapshot,
 	WorkerErrorSource, WorkerRequestSendError, WorkerResponse,
 };
 #[cfg(target_os = "macos")]
@@ -14,6 +16,10 @@ impl OverlaySession {
 		self.pending_freeze_capture = None;
 		self.inflight_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
+		#[cfg(target_os = "macos")]
+		{
+			self.pending_freeze_capture_windows_hidden_at = None;
+		}
 		self.pending_window_freeze_capture = None;
 		self.inflight_window_freeze_capture = None;
 		self.freeze_capture_send_full_count = 0;
@@ -36,6 +42,10 @@ impl OverlaySession {
 	) {
 		self.pending_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
+		#[cfg(target_os = "macos")]
+		{
+			self.pending_freeze_capture_windows_hidden_at = None;
+		}
 		self.inflight_freeze_capture = Some(overlay_monitor);
 		self.inflight_window_freeze_capture = pending_window_target;
 		self.pending_window_freeze_capture = None;
@@ -88,6 +98,10 @@ impl OverlaySession {
 		let Some(overlay_monitor) = self.pending_freeze_capture else {
 			self.pending_freeze_capture_armed = false;
 			self.freeze_capture_send_full_count = 0;
+			#[cfg(target_os = "macos")]
+			{
+				self.pending_freeze_capture_windows_hidden_at = None;
+			}
 
 			return;
 		};
@@ -95,20 +109,29 @@ impl OverlaySession {
 		if !self.pending_freeze_capture_matches(overlay_monitor) {
 			self.pending_freeze_capture_armed = false;
 			self.freeze_capture_send_full_count = 0;
+			#[cfg(target_os = "macos")]
+			{
+				self.pending_freeze_capture_windows_hidden_at = None;
+			}
+
+			return;
+		}
+		if self.should_wait_for_hidden_live_snapshot_before_authoritative_dispatch(overlay_monitor) {
+			self.schedule_egui_repaint_after(POST_HIDE_LIVE_SNAPSHOT_GRACE);
 
 			return;
 		}
 
-		let Some(worker) = &self.worker else {
-			self.abort_pending_freeze_capture("Capture worker is unavailable.");
-
-			return;
-		};
 		let pending_window_target =
 			self.pending_window_freeze_capture.filter(|target| target.monitor == overlay_monitor);
 		let freeze_target = pending_window_target.map_or(FreezeCaptureTarget::Monitor, |target| {
 			FreezeCaptureTarget::Window { window_id: target.window_id }
 		});
+		let Some(worker) = &self.worker else {
+			self.abort_pending_freeze_capture("Capture worker is unavailable.");
+
+			return;
+		};
 
 		match worker.request_freeze_capture(overlay_monitor, freeze_target) {
 			Ok(()) => {
@@ -190,8 +213,8 @@ impl OverlaySession {
 			return false;
 		}
 
-		let press_pending = self.live_press_pending_for_monitor(monitor);
-		let is_dragging_window = self.live_drag_active_for_monitor(monitor);
+		let press_pending = self.live_capture_interaction_is_press_pending();
+		let is_dragging_window = self.live_capture_interaction_is_dragging();
 		let had_snapshot_update = if press_pending || is_dragging_window || self.state.alt_held {
 			false
 		} else {
@@ -417,8 +440,8 @@ impl OverlaySession {
 			return LiveSampleApplyResult::default();
 		}
 
-		let press_pending = self.live_press_pending_for_monitor(monitor);
-		let is_dragging_window = self.live_drag_active_for_monitor(monitor);
+		let press_pending = self.live_capture_interaction_is_press_pending();
+		let is_dragging_window = self.live_capture_interaction_is_dragging();
 		let mut changed = LiveSampleApplyResult::default();
 
 		if is_dragging_window {
@@ -466,21 +489,27 @@ impl OverlaySession {
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			return false;
 		}
+		if self.live_capture_interaction_is_press_pending()
+			|| self.live_capture_interaction_is_dragging()
+		{
+			return false;
+		}
 		if !monitor.contains(cursor) {
 			return false;
 		}
 
-		let hovered_window_rect = self
+		let previous_hovered_window_rect = self.state.hovered_window_rect;
+		let next_interaction = self
 			.hovered_window_hit_from_window_list_snapshot(monitor, cursor)
-			.map(|hit| MonitorRectPoints { monitor_id: monitor.id, rect: hit.rect });
-		let mut updated = false;
+			.map(|hit| LiveCaptureInteraction::HoverWindow {
+				monitor,
+				target: LiveClickCaptureTarget::from_window_hit(monitor, hit),
+			})
+			.unwrap_or(LiveCaptureInteraction::Idle);
 
-		if self.state.hovered_window_rect != hovered_window_rect {
-			self.state.hovered_window_rect = hovered_window_rect;
-			updated = true;
-		}
+		self.set_live_capture_interaction(next_interaction);
 
-		updated
+		self.state.hovered_window_rect != previous_hovered_window_rect
 	}
 
 	pub(super) fn live_sample_request_redraw_intent(
@@ -513,7 +542,7 @@ impl OverlaySession {
 		})
 	}
 
-	fn hovered_window_hit_from_window_list_snapshot(
+	pub(super) fn hovered_window_hit_from_window_list_snapshot(
 		&self,
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
@@ -729,8 +758,8 @@ impl OverlaySession {
 		let Some(monitor) = self.active_cursor_monitor() else {
 			return;
 		};
-		let press_pending = self.live_press_pending_for_monitor(monitor);
-		let is_dragging_window = self.live_drag_active_for_monitor(monitor);
+		let press_pending = self.live_capture_interaction_is_press_pending();
+		let is_dragging_window = self.live_capture_interaction_is_dragging();
 
 		if is_dragging_window {
 			if self.state.hovered_window_rect.is_some() {
@@ -766,28 +795,26 @@ impl OverlaySession {
 	fn handle_hit_test_window_response(
 		&mut self,
 		monitor: MonitorRect,
-		point: GlobalPoint,
+		_point: GlobalPoint,
 		request_id: u64,
 		hit: Option<WindowHit>,
 	) {
+		if self.pending_click_hit_test_request_id != Some(request_id) {
+			return;
+		}
+
+		self.pending_click_hit_test_request_id = None;
+
+		let click_target =
+			hit.map_or_else(LiveClickCaptureTarget::fullscreen_fallback, |window_hit| {
+				LiveClickCaptureTarget::from_window_hit(monitor, window_hit)
+			});
+
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			return;
 		}
-		if self.pending_click_hit_test_request_id == Some(request_id) {
-			self.pending_click_hit_test_request_id = None;
-			self.state.hovered_window_rect = None;
 
-			let capture_rect = hit.map(|window_hit| window_hit.rect);
-			let window_target = hit.and_then(|window_hit| {
-				window_hit.window_id.map(|window_id| WindowFreezeCaptureTarget {
-					monitor,
-					window_id,
-					rect: window_hit.rect,
-				})
-			});
-
-			self.begin_frozen_capture_with_rect(monitor, capture_rect, window_target, Some(point));
-		}
+		self.resolve_live_capture_click_target(monitor, click_target);
 	}
 
 	pub(super) fn request_click_capture_hit_test(
@@ -795,60 +822,67 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		cursor: GlobalPoint,
 	) {
-		self.request_live_window_list_refresh_if_needed();
-
-		if self.window_list_snapshot.is_none() {
-			let request_id = self.hit_test_request_id.wrapping_add(1);
-			let Some(worker) = self.worker.as_ref() else {
-				self.begin_frozen_capture_with_rect(monitor, None, None, Some(cursor));
-
-				return;
-			};
-
-			self.hit_test_request_id = request_id;
-
-			match worker.request_hit_test_window(monitor, cursor, request_id) {
-				Ok(()) => {
-					self.pending_click_hit_test_request_id = Some(request_id);
-
-					return;
-				},
-				Err(WorkerRequestSendError::Full) => {
-					self.hit_test_send_full_count = self.hit_test_send_full_count.saturating_add(1);
-
-					tracing::debug!(
-						request_id,
-						monitor_id = monitor.id,
-						point = ?cursor,
-						full_count = self.hit_test_send_full_count,
-						"Hit test request dropped: worker queue full."
-					);
-				},
-				Err(WorkerRequestSendError::Disconnected) => {
-					self.hit_test_send_disconnected_count =
-						self.hit_test_send_disconnected_count.saturating_add(1);
-
-					tracing::debug!(
-						request_id,
-						monitor_id = monitor.id,
-						point = ?cursor,
-						disconnected_count = self.hit_test_send_disconnected_count,
-						"Hit test request dropped: worker queue disconnected."
-					);
-				},
-			}
+		if self.pending_click_hit_test_request_id.is_some() {
+			return;
 		}
 
-		let capture_hit = self.hovered_window_hit_from_window_list_snapshot(monitor, cursor);
-		let capture_rect = capture_hit.map(|window_hit| window_hit.rect);
-		let window_target = capture_hit.and_then(|window_hit| {
-			window_hit.window_id.map(|window_id| WindowFreezeCaptureTarget {
-				monitor,
-				window_id,
-				rect: window_hit.rect,
-			})
-		});
+		self.request_live_window_list_refresh_if_needed();
 
-		self.begin_frozen_capture_with_rect(monitor, capture_rect, window_target, Some(cursor));
+		if let Some(target) = self.live_capture_target_from_snapshot(monitor, cursor) {
+			self.resolve_live_capture_click_target(monitor, target);
+
+			return;
+		}
+
+		let request_id = self.hit_test_request_id.wrapping_add(1);
+		let Some(worker) = self.worker.as_ref() else {
+			self.resolve_live_capture_click_target(
+				monitor,
+				LiveClickCaptureTarget::fullscreen_fallback(),
+			);
+
+			return;
+		};
+
+		self.hit_test_request_id = request_id;
+
+		match worker.request_hit_test_window(monitor, cursor, request_id) {
+			Ok(()) => {
+				self.pending_click_hit_test_request_id = Some(request_id);
+			},
+			Err(WorkerRequestSendError::Full) => {
+				self.hit_test_send_full_count = self.hit_test_send_full_count.saturating_add(1);
+
+				tracing::debug!(
+					request_id,
+					monitor_id = monitor.id,
+					point = ?cursor,
+					full_count = self.hit_test_send_full_count,
+					"Hit test request dropped: worker queue full."
+				);
+
+				self.resolve_live_capture_click_target(
+					monitor,
+					LiveClickCaptureTarget::fullscreen_fallback(),
+				);
+			},
+			Err(WorkerRequestSendError::Disconnected) => {
+				self.hit_test_send_disconnected_count =
+					self.hit_test_send_disconnected_count.saturating_add(1);
+
+				tracing::debug!(
+					request_id,
+					monitor_id = monitor.id,
+					point = ?cursor,
+					disconnected_count = self.hit_test_send_disconnected_count,
+					"Hit test request dropped: worker queue disconnected."
+				);
+
+				self.resolve_live_capture_click_target(
+					monitor,
+					LiveClickCaptureTarget::fullscreen_fallback(),
+				);
+			},
+		}
 	}
 }

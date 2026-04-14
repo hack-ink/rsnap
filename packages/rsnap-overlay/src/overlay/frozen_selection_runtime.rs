@@ -5,7 +5,8 @@ use image::{Rgba, RgbaImage};
 use crate::overlay::{
 	CursorIcon, FrozenCaptureSource, FrozenMosaicDragState, FrozenSelectionCorner,
 	FrozenSelectionDragState, FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint,
-	MonitorRect, MonitorRectPoints, OverlayMode, OverlaySession, Pos2, RectPoints, WindowRenderer,
+	LiveCaptureInteraction, LiveClickCaptureTarget, MonitorRect, MonitorRectPoints, OverlayMode,
+	OverlaySession, Pos2, RectPoints, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -13,44 +14,221 @@ use crate::overlay::{
 };
 
 impl OverlaySession {
-	pub(super) fn update_live_drag_rect(&mut self, monitor: MonitorRect, global: GlobalPoint) {
-		let was_active = self.live_drag_hides_auxiliary_windows();
-
-		if !matches!(self.state.mode, OverlayMode::Live) {
-			self.state.drag_rect = None;
-
-			return;
+	fn live_capture_interaction_hovered_window_rect(
+		interaction: LiveCaptureInteraction,
+	) -> Option<MonitorRectPoints> {
+		match interaction {
+			LiveCaptureInteraction::HoverWindow { monitor, target }
+			| LiveCaptureInteraction::PressPending {
+				monitor,
+				click_target: Some(target),
+				..
+			} => target
+				.capture_rect
+				.map(|rect| MonitorRectPoints { monitor_id: monitor.id, rect }),
+			_ => None,
 		}
-		if !self.left_mouse_button_down || self.left_mouse_button_down_monitor != Some(monitor) {
-			self.state.drag_rect = None;
+	}
 
-			return;
-		}
-
-		let Some(start_global) = self.left_mouse_button_down_global else {
-			self.state.drag_rect = None;
-
-			return;
+	fn live_capture_interaction_drag_rect(
+		interaction: LiveCaptureInteraction,
+	) -> Option<MonitorRectPoints> {
+		let LiveCaptureInteraction::DraggingSelection {
+			monitor,
+			press_global,
+			current_global,
+		} = interaction
+		else {
+			return None;
 		};
-		let Some(rect) = monitor.local_rect_from_points(start_global, global) else {
-			self.state.drag_rect = None;
+		let rect = monitor.local_rect_from_points(press_global, current_global)?;
 
-			return;
-		};
+		(!rect.is_empty()).then_some(MonitorRectPoints { monitor_id: monitor.id, rect })
+	}
 
-		if rect.is_empty() {
-			self.state.drag_rect = None;
+	pub(super) fn sync_live_capture_visual_state(&mut self) {
+		self.state.hovered_window_rect =
+			Self::live_capture_interaction_hovered_window_rect(self.live_capture_interaction);
+		self.state.drag_rect =
+			Self::live_capture_interaction_drag_rect(self.live_capture_interaction);
+	}
 
-			return;
-		}
+	pub(super) fn set_live_capture_interaction(&mut self, interaction: LiveCaptureInteraction) {
+		let was_dragging = self.live_capture_interaction_is_dragging();
 
-		self.state.drag_rect = Some(MonitorRectPoints { monitor_id: monitor.id, rect });
+		self.live_capture_interaction = interaction;
 
-		if self.state.hovered_window_rect.is_some_and(|hovered| hovered.monitor_id == monitor.id) {
-			self.state.hovered_window_rect = None;
-		}
-		if !was_active {
+		self.sync_live_capture_visual_state();
+
+		if !was_dragging && self.live_capture_interaction_is_dragging() {
 			self.hide_auxiliary_windows_for_live_drag();
+		}
+	}
+
+	pub(super) fn live_capture_interaction_is_press_pending(&self) -> bool {
+		matches!(self.live_capture_interaction, LiveCaptureInteraction::PressPending { .. })
+	}
+
+	pub(super) fn live_capture_interaction_is_dragging(&self) -> bool {
+		matches!(self.live_capture_interaction, LiveCaptureInteraction::DraggingSelection { .. })
+	}
+
+	pub(super) fn live_capture_target_from_snapshot(
+		&self,
+		monitor: MonitorRect,
+		cursor: GlobalPoint,
+	) -> Option<LiveClickCaptureTarget> {
+		self.window_list_snapshot.as_ref()?;
+
+		let target = self.hovered_window_hit_from_window_list_snapshot(monitor, cursor).map_or_else(
+			LiveClickCaptureTarget::fullscreen_fallback,
+			|hit| LiveClickCaptureTarget::from_window_hit(monitor, hit),
+		);
+
+		Some(target)
+	}
+
+	fn live_capture_drag_threshold_reached(
+		monitor: MonitorRect,
+		press_global: GlobalPoint,
+		current_global: GlobalPoint,
+	) -> bool {
+		monitor.local_rect_from_points(press_global, current_global).is_some_and(|rect| {
+			rect.width as f32 >= crate::overlay::LIVE_DRAG_START_THRESHOLD_PX
+				&& rect.height as f32 >= crate::overlay::LIVE_DRAG_START_THRESHOLD_PX
+		})
+	}
+
+	pub(super) fn begin_live_capture_press(
+		&mut self,
+		monitor: MonitorRect,
+		press_global: GlobalPoint,
+	) {
+		// Lock click intent at mouse-down so release never has to recompute against a changed
+		// desktop snapshot.
+		let click_target = self.live_capture_target_from_snapshot(monitor, press_global);
+
+		self.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+			monitor,
+			press_global,
+			click_target,
+			release_global: None,
+			released: false,
+		});
+	}
+
+	pub(super) fn resolve_live_capture_click_target(
+		&mut self,
+		monitor: MonitorRect,
+		click_target: LiveClickCaptureTarget,
+	) {
+		let LiveCaptureInteraction::PressPending {
+			press_global,
+			release_global,
+			released,
+			..
+		} = self.live_capture_interaction
+		else {
+			return;
+		};
+
+		if let Some(cursor) = release_global.or(self.state.cursor).or(Some(press_global))
+			&& released
+		{
+			self.begin_frozen_capture_from_click(monitor, click_target, cursor);
+
+			return;
+		}
+
+		self.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+			monitor,
+			press_global,
+			click_target: Some(click_target),
+			release_global,
+			released,
+		});
+	}
+
+	pub(super) fn begin_frozen_capture_from_click(
+		&mut self,
+		monitor: MonitorRect,
+		target: LiveClickCaptureTarget,
+		cursor: GlobalPoint,
+	) {
+		self.set_live_capture_interaction(LiveCaptureInteraction::FrozenFromClick {
+			monitor,
+			target,
+		});
+		self.begin_frozen_capture_with_rect(
+			monitor,
+			target.capture_rect,
+			target.window_target,
+			Some(cursor),
+		);
+	}
+
+	pub(super) fn begin_frozen_capture_from_drag(
+		&mut self,
+		monitor: MonitorRect,
+		capture_rect: RectPoints,
+		cursor: GlobalPoint,
+	) {
+		self.set_live_capture_interaction(LiveCaptureInteraction::FrozenFromDrag {
+			monitor,
+			capture_rect,
+		});
+		self.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, Some(cursor));
+	}
+
+	pub(super) fn update_live_drag_rect(&mut self, monitor: MonitorRect, global: GlobalPoint) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			self.set_live_capture_interaction(LiveCaptureInteraction::Idle);
+
+			return;
+		}
+
+		match self.live_capture_interaction {
+			LiveCaptureInteraction::PressPending {
+				monitor: press_monitor,
+				press_global,
+				click_target,
+				release_global,
+				released: false,
+			} => {
+				if press_monitor == monitor
+					&& Self::live_capture_drag_threshold_reached(
+						press_monitor,
+						press_global,
+						global,
+					)
+				{
+					self.set_live_capture_interaction(LiveCaptureInteraction::DraggingSelection {
+						monitor: press_monitor,
+						press_global,
+						current_global: global,
+					});
+				} else if press_monitor != monitor {
+					self.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+						monitor: press_monitor,
+						press_global,
+						click_target,
+						release_global,
+						released: false,
+					});
+				}
+			},
+			LiveCaptureInteraction::DraggingSelection {
+				monitor: drag_monitor,
+				press_global,
+				..
+			} => {
+				self.set_live_capture_interaction(LiveCaptureInteraction::DraggingSelection {
+					monitor: drag_monitor,
+					press_global,
+					current_global: global,
+				});
+			},
+			_ => {},
 		}
 	}
 
@@ -522,23 +700,8 @@ impl OverlaySession {
 		matches!(self.state.mode, OverlayMode::Frozen) && self.frozen_selection_drag.active
 	}
 
-	pub(super) fn live_press_active_for_monitor(&self, monitor: MonitorRect) -> bool {
-		matches!(self.state.mode, OverlayMode::Live)
-			&& self.left_mouse_button_down
-			&& self.left_mouse_button_down_monitor == Some(monitor)
-	}
-
-	pub(super) fn live_drag_active_for_monitor(&self, monitor: MonitorRect) -> bool {
-		matches!(self.state.mode, OverlayMode::Live)
-			&& self.state.drag_rect.is_some_and(|drag_rect| drag_rect.monitor_id == monitor.id)
-	}
-
-	pub(super) fn live_press_pending_for_monitor(&self, monitor: MonitorRect) -> bool {
-		self.live_press_active_for_monitor(monitor) && !self.live_drag_active_for_monitor(monitor)
-	}
-
 	pub(super) fn live_drag_hides_auxiliary_windows(&self) -> bool {
-		matches!(self.state.mode, OverlayMode::Live) && self.state.drag_rect.is_some()
+		matches!(self.state.mode, OverlayMode::Live) && self.live_capture_interaction_is_dragging()
 	}
 
 	fn hide_auxiliary_windows_for_frozen_selection_drag(&mut self) {

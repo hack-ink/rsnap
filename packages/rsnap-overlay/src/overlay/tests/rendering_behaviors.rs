@@ -219,6 +219,36 @@ fn snapshot_seeded_preview_keeps_authoritative_handoff_pending() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn snapshot_seeded_preview_makes_toolbar_eligible_before_final_capture_ready() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(120, 160, 320, 240);
+	let snapshot = Arc::new(MonitorImageSnapshot {
+		captured_at: Instant::now(),
+		monitor,
+		image: Arc::new(tests::test_frozen_image()),
+	});
+	let mut session = OverlaySession::new();
+
+	session.toolbar_state.visible = true;
+
+	session.state.begin_freeze(monitor);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.pending_freeze_capture = Some(monitor);
+
+	assert!(session.maybe_seed_frozen_capture_preview_from_snapshot(
+		monitor,
+		None,
+		Some(snapshot),
+		"live_stream_snapshot_seeded_unverified",
+	));
+	assert!(session.frozen_preview_visible());
+	assert!(!session.authoritative_frozen_capture_ready);
+	assert!(session.startup_aux_window_creation_pending);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn stale_snapshot_does_not_seed_frozen_preview() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(120, 160, 320, 240);

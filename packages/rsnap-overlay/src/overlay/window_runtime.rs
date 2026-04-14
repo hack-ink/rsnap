@@ -370,8 +370,7 @@ impl OverlaySession {
 	fn toolbar_window_needed(&self) -> bool {
 		matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.toolbar_state.visible
-			&& self.authoritative_frozen_capture_ready
-			&& self.state.frozen_image.is_some()
+			&& self.frozen_preview_visible()
 	}
 
 	#[cfg(target_os = "macos")]
