@@ -270,15 +270,12 @@ fn duplicate_loupe_activation_key_events_do_not_double_toggle() {
 	assert!(session.apply_loupe_activation_key_event(true, false));
 	assert!(session.state.alt_held);
 	assert!(session.loupe_activation_key_down);
-
 	assert!(!session.apply_loupe_activation_key_event(true, false));
 	assert!(session.state.alt_held);
 	assert!(session.loupe_activation_key_down);
-
 	assert!(!session.apply_loupe_activation_key_event(false, false));
 	assert!(session.state.alt_held);
 	assert!(!session.loupe_activation_key_down);
-
 	assert!(!session.apply_loupe_activation_key_event(false, false));
 	assert!(session.state.alt_held);
 	assert!(!session.loupe_activation_key_down);
@@ -952,7 +949,6 @@ fn global_loupe_hotkey_tracks_live_hold_state() {
 	assert!(matches!(session.handle_global_loupe_hotkey(true), OverlayControl::Continue));
 	assert!(session.state.alt_held);
 	assert!(session.loupe_activation_key_down);
-
 	assert!(matches!(session.handle_global_loupe_hotkey(false), OverlayControl::Continue));
 	assert!(!session.state.alt_held);
 	assert!(!session.loupe_activation_key_down);
