@@ -45,3 +45,5 @@ Then keep the body decision-oriented:
 
 - `docs/decisions/annotation-pen-style.md` for the pen-tool tradeoff that prioritizes polished
   screenshot annotation over faithful pointer-path reproduction
+- `docs/decisions/frozen-toolbar-anchor.md` for the stable-anchor layout choice that prevents
+  style-capsule expansion from moving the primary Frozen toolbar
