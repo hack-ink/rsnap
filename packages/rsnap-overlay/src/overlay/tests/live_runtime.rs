@@ -987,16 +987,19 @@ fn startup_live_rgb_plan_keeps_focus_independent_from_seed_monitor() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn wants_global_cancel_hotkey_only_in_live_mode() {
+fn wants_global_cancel_hotkey_for_any_active_session_mode() {
 	let mut session = OverlaySession::new();
 
+	assert!(!session.wants_global_cancel_hotkey());
+
+	session.session_active = true;
 	session.state.mode = OverlayMode::Live;
 
 	assert!(session.wants_global_cancel_hotkey());
 
 	session.state.mode = OverlayMode::Frozen;
 
-	assert!(!session.wants_global_cancel_hotkey());
+	assert!(session.wants_global_cancel_hotkey());
 }
 
 #[cfg(target_os = "macos")]
@@ -1019,6 +1022,19 @@ fn global_escape_hotkey_cancels_live_capture() {
 	let mut session = OverlaySession::new();
 
 	session.state.mode = OverlayMode::Live;
+
+	assert!(matches!(
+		session.handle_global_escape_hotkey(),
+		OverlayControl::Exit(OverlayExit::Cancelled)
+	));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn global_escape_hotkey_cancels_frozen_capture() {
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Frozen;
 
 	assert!(matches!(
 		session.handle_global_escape_hotkey(),
