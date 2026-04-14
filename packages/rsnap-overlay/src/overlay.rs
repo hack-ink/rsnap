@@ -3650,6 +3650,7 @@ pub(super) fn frozen_toolbar_corner_radius_points(toolbar_height_points: f32) ->
 	f64::from(frozen_toolbar_corner_radius_u8(toolbar_height_points))
 }
 
+#[cfg(target_os = "macos")]
 pub(in crate::overlay) fn frozen_toolbar_window_primary_origin() -> Pos2 {
 	Pos2::new(0.0, WindowRenderer::frozen_toolbar_window_top_padding_points())
 }
