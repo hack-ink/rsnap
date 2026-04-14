@@ -647,6 +647,8 @@ pub struct OverlaySession {
 	hud_window_visible: bool,
 	toolbar_window_visible: bool,
 	skip_toolbar_focus_on_next_show: bool,
+	#[cfg(target_os = "macos")]
+	preserve_frontmost_on_next_toolbar_show: bool,
 	toolbar_window_warmup_redraws_remaining: u8,
 	loupe_window_visible: bool,
 	loupe_window_warmup_redraws_remaining: u8,
@@ -862,6 +864,8 @@ impl OverlaySession {
 			frozen_spotlight_preview_rect: None, frozen_edit_undo_stack: Vec::new(),
 			frozen_edit_redo_stack: Vec::new(), frozen_mosaic_undo_stack: Vec::new(), frozen_mosaic_redo_stack: Vec::new(),
 			hud_window_visible: false, toolbar_window_visible: false, skip_toolbar_focus_on_next_show: false,
+			#[cfg(target_os = "macos")]
+			preserve_frontmost_on_next_toolbar_show: false,
 			toolbar_window_warmup_redraws_remaining: 0, loupe_window_visible: false, loupe_window_warmup_redraws_remaining: 0,
 			scroll_capture: ScrollCaptureState::default(),
 			#[cfg(target_os = "macos")]
@@ -958,6 +962,22 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn restore_recorded_frontmost_application_for_focus_preservation(&self, reason: &'static str) {
+		let Some(target) = self.frontmost_application_before_start else {
+			return;
+		};
+		let restored = macos_restore_frontmost_application(target);
+
+		tracing::info!(
+			op = "overlay.frontmost_app_focus_preservation_attempted",
+			target_process_id = target.process_id,
+			reason,
+			restored,
+			"Attempted to preserve the pre-capture frontmost application during overlay interaction."
+		);
+	}
+
+	#[cfg(target_os = "macos")]
 	/// Registers a wake callback for macOS live-stream frame notifications.
 	pub fn set_scroll_frame_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.scroll_frame_waker = Some(waker);
@@ -968,7 +988,7 @@ impl OverlaySession {
 	/// for the current overlay mode.
 	#[must_use]
 	pub fn wants_global_cancel_hotkey(&self) -> bool {
-		matches!(self.state.mode, OverlayMode::Live)
+		self.session_active
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1680,6 +1700,12 @@ impl OverlaySession {
 
 		self.reset_frozen_annotation_state();
 
+		self.skip_toolbar_focus_on_next_show = true;
+		#[cfg(target_os = "macos")]
+		{
+			self.preserve_frontmost_on_next_toolbar_show = true;
+		}
+
 		tracing::debug!(
 			monitor_id = monitor.id,
 			origin = ?monitor.origin,
@@ -1708,6 +1734,8 @@ impl OverlaySession {
 		self.left_mouse_button_down_global = None;
 
 		self.refresh_frozen_helper_windows_for_transition(monitor);
+		#[cfg(target_os = "macos")]
+		self.restore_recorded_frontmost_application_for_focus_preservation("begin_frozen_capture");
 
 		#[cfg(target_os = "macos")]
 		{
@@ -3032,6 +3060,7 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		{
 			self.toolbar_window_cursor_hittest_enabled = false;
+			self.preserve_frontmost_on_next_toolbar_show = false;
 		}
 		self.skip_toolbar_focus_on_next_show = false;
 		self.toolbar_window_warmup_redraws_remaining = 0;
@@ -4317,6 +4346,8 @@ fn macos_configure_overlay_window_mouse_moved_events(window: &Window) {
 			return;
 		}
 
+		macos_configure_nonactivating_capture_window_with_ns_window(ns_window);
+
 		let _: () = objc::msg_send![ns_window, setOpaque: false];
 		let _: () = objc::msg_send![ns_window, setHasShadow: false];
 		let clear: *mut Object = objc::msg_send![objc::class!(NSColor), clearColor];
@@ -4347,6 +4378,8 @@ fn macos_configure_hud_window(
 		if ns_window.is_null() {
 			return;
 		}
+
+		macos_configure_nonactivating_capture_window_with_ns_window(ns_window);
 
 		// winit exposes blur as a boolean. We also set an explicit radius so we can drive it from
 		// settings (this uses the same private CGS API that winit uses internally).
@@ -4402,6 +4435,20 @@ fn macos_configure_hud_window(
 		let radius = corner_radius_points.unwrap_or(height_points * 0.5);
 		let _: () = objc::msg_send![layer, setCornerRadius: radius];
 		let _: () = objc::msg_send![layer, setMasksToBounds: YES];
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn macos_configure_nonactivating_capture_window_with_ns_window(ns_window: *mut Object) {
+	if ns_window.is_null() {
+		return;
+	}
+
+	unsafe {
+		let style_mask: usize = objc::msg_send![ns_window, styleMask];
+		let nonactivating_panel_mask: usize = 1 << 7;
+		let _: () = objc::msg_send![ns_window, setStyleMask: style_mask | nonactivating_panel_mask];
+		let _: () = objc::msg_send![ns_window, setHidesOnDeactivate: false];
 	}
 }
 
