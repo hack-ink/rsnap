@@ -2,9 +2,9 @@
 use std::sync::Arc;
 
 use image::RgbaImage;
-use winit::event::ElementState;
 #[cfg(target_os = "macos")]
 use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::event::ElementState;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
@@ -14,7 +14,6 @@ use crate::overlay::DeviceCursorPointSource;
 use crate::overlay::FrozenCaptureSource;
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenToolbarTool;
-use crate::overlay::{LiveCaptureInteraction, LiveClickCaptureTarget, OverlayControl};
 use crate::overlay::tests;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerResponse;
@@ -29,6 +28,7 @@ use crate::overlay::tests::{
 	OverlayMode, OverlaySession, OverlayState, Pos2, Rect, RectPoints, Rgb, Vec2, WindowRenderer,
 	hud_helpers,
 };
+use crate::overlay::{LiveCaptureInteraction, LiveClickCaptureTarget, OverlayControl};
 #[cfg(target_os = "macos")]
 use crate::state::WindowHit;
 

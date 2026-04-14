@@ -58,8 +58,7 @@ use crate::overlay::{
 	FrozenMosaicEdit, FrozenSelectionDragState, FrozenSpotlightAnnotation, FrozenTextAnnotation,
 	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
 	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
-	OverlaySession, Pos2, Rect,
-	SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_SIZE_BADGE_GAP_PX,
+	OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_SIZE_BADGE_GAP_PX,
 	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
 	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
 	SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
@@ -68,12 +67,12 @@ use crate::overlay::{
 #[cfg(target_os = "macos")]
 use crate::overlay::{
 	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
-	InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult,
-	LiveCaptureInteraction, LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl,
-	OverlayExit,
-	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
-	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
-	ScrollCaptureFrameSource, StartupLiveRgbPlan, WindowCaptureAlphaMode,
+	InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveCaptureInteraction,
+	LiveSampleApplyResult, LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl,
+	OverlayExit, SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW,
+	SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
+	SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource, StartupLiveRgbPlan,
+	WindowCaptureAlphaMode,
 };
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 #[cfg(target_os = "macos")]

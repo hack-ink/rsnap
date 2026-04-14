@@ -20,12 +20,8 @@ impl OverlaySession {
 		match interaction {
 			LiveCaptureInteraction::HoverWindow { monitor, target }
 			| LiveCaptureInteraction::PressPending {
-				monitor,
-				click_target: Some(target),
-				..
-			} => target
-				.capture_rect
-				.map(|rect| MonitorRectPoints { monitor_id: monitor.id, rect }),
+				monitor, click_target: Some(target), ..
+			} => target.capture_rect.map(|rect| MonitorRectPoints { monitor_id: monitor.id, rect }),
 			_ => None,
 		}
 	}
@@ -33,11 +29,8 @@ impl OverlaySession {
 	fn live_capture_interaction_drag_rect(
 		interaction: LiveCaptureInteraction,
 	) -> Option<MonitorRectPoints> {
-		let LiveCaptureInteraction::DraggingSelection {
-			monitor,
-			press_global,
-			current_global,
-		} = interaction
+		let LiveCaptureInteraction::DraggingSelection { monitor, press_global, current_global } =
+			interaction
 		else {
 			return None;
 		};
@@ -80,10 +73,11 @@ impl OverlaySession {
 	) -> Option<LiveClickCaptureTarget> {
 		self.window_list_snapshot.as_ref()?;
 
-		let target = self.hovered_window_hit_from_window_list_snapshot(monitor, cursor).map_or_else(
-			LiveClickCaptureTarget::fullscreen_fallback,
-			|hit| LiveClickCaptureTarget::from_window_hit(monitor, hit),
-		);
+		let target = self
+			.hovered_window_hit_from_window_list_snapshot(monitor, cursor)
+			.map_or_else(LiveClickCaptureTarget::fullscreen_fallback, |hit| {
+				LiveClickCaptureTarget::from_window_hit(monitor, hit)
+			});
 
 		Some(target)
 	}
@@ -122,12 +116,8 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		click_target: LiveClickCaptureTarget,
 	) {
-		let LiveCaptureInteraction::PressPending {
-			press_global,
-			release_global,
-			released,
-			..
-		} = self.live_capture_interaction
+		let LiveCaptureInteraction::PressPending { press_global, release_global, released, .. } =
+			self.live_capture_interaction
 		else {
 			return;
 		};
@@ -200,8 +190,7 @@ impl OverlaySession {
 						press_monitor,
 						press_global,
 						global,
-					)
-				{
+					) {
 					self.set_live_capture_interaction(LiveCaptureInteraction::DraggingSelection {
 						monitor: press_monitor,
 						press_global,
