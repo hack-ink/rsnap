@@ -2298,13 +2298,25 @@ impl OverlaySession {
 	) {
 		if matches!(self.state.mode, OverlayMode::Frozen) && self.state.monitor == Some(monitor) {
 			self.inflight_freeze_capture = None;
+
+			let window_capture_target = self.inflight_window_freeze_capture.take();
+
+			#[cfg(target_os = "macos")]
+			if self.maybe_retry_unhidden_matte_capture_after_window_miss(
+				monitor,
+				window_capture_target,
+				window_image.is_some(),
+				captured_window_id,
+			) {
+				return;
+			}
+
 			self.frozen_export_ready = true;
 			#[cfg(test)]
 			{
 				self.authoritative_frozen_capture_ready = true;
 			}
 
-			let window_capture_target = self.inflight_window_freeze_capture.take();
 			let had_display_image = self.frozen_display_ready();
 			let mut frozen_preview_image = image;
 
@@ -2393,6 +2405,42 @@ impl OverlaySession {
 
 			self.request_redraw_for_monitor(monitor);
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn maybe_retry_unhidden_matte_capture_after_window_miss(
+		&mut self,
+		monitor: MonitorRect,
+		window_capture_target: Option<WindowFreezeCaptureTarget>,
+		window_image_present: bool,
+		captured_window_id: Option<u32>,
+	) -> bool {
+		let Some(target) = window_capture_target else {
+			return false;
+		};
+
+		if target.monitor != monitor
+			|| !matches!(
+				self.config.window_capture_alpha_mode,
+				WindowCaptureAlphaMode::MatteLight | WindowCaptureAlphaMode::MatteDark
+			) || self.capture_windows_hidden
+			|| (captured_window_id == Some(target.window_id) && window_image_present)
+		{
+			return false;
+		}
+
+		self.pending_freeze_capture = Some(monitor);
+		self.pending_window_freeze_capture = Some(target);
+		self.frozen_export_ready = false;
+		#[cfg(test)]
+		{
+			self.authoritative_frozen_capture_ready = false;
+		}
+		self.frozen_window_image = None;
+
+		self.begin_hidden_authoritative_freeze_capture_fallback(monitor);
+
+		true
 	}
 
 	fn handle_encoded_png_response(&mut self, png_bytes: Vec<u8>) -> OverlayControl {
