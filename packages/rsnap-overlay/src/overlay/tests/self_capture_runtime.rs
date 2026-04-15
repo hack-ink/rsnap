@@ -444,6 +444,7 @@ fn window_matte_capture_without_live_preview_aborts_after_timeout_without_hiding
 	assert!(!session.pending_freeze_capture_armed);
 	assert_eq!(session.inflight_freeze_capture, None);
 	assert!(!session.capture_windows_hidden);
+	assert!(!session.frozen_capture_redraw_pending());
 	assert_eq!(
 		session.state.error_message.as_deref(),
 		Some("Unable to capture a clean preview. Please try again.")
