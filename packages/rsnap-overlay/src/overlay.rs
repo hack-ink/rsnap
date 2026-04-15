@@ -1294,6 +1294,7 @@ impl OverlaySession {
 		self.frozen_display_ready() && self.state.monitor == Some(monitor)
 	}
 
+	#[cfg(target_os = "macos")]
 	fn preserve_live_frozen_entry_affordance(&self) -> bool {
 		!self.scroll_capture.active
 			&& !self.frozen_selection_drag.active
