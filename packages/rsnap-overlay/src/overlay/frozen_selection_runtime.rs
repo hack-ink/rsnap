@@ -225,7 +225,7 @@ impl OverlaySession {
 		if !matches!(self.state.mode, OverlayMode::Frozen)
 			|| self.frozen_capture_source != FrozenCaptureSource::DragRegion
 			|| self.scroll_capture.active
-			|| self.state.frozen_image.is_none()
+			|| !self.frozen_display_ready()
 		{
 			return None;
 		}
@@ -253,7 +253,7 @@ impl OverlaySession {
 	fn frozen_mosaic_drag_target(&self) -> Option<(MonitorRect, RectPoints)> {
 		if !matches!(self.state.mode, OverlayMode::Frozen)
 			|| self.scroll_capture.active
-			|| self.state.frozen_image.is_none()
+			|| !self.frozen_display_ready()
 			|| !self.frozen_final_capture_ready()
 			|| self.toolbar_state.selected_tool != FrozenToolbarTool::Mosaic
 		{

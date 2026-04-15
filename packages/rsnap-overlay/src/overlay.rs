@@ -274,6 +274,8 @@ const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
 const LIVE_WINDOW_LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(120);
 const PENDING_CLICK_HIT_TEST_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(target_os = "macos")]
+const DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT: Duration = Duration::from_millis(150);
+#[cfg(target_os = "macos")]
 const POST_HIDE_LIVE_SNAPSHOT_GRACE: Duration = Duration::from_millis(12);
 const LIVE_PRESENT_INTERVAL_MIN: Duration = Duration::from_nanos(8_333_333);
 const HUD_LOUPE_MOVE_INTERVAL_MIN: Duration = LIVE_PRESENT_INTERVAL_MIN;
@@ -603,6 +605,8 @@ pub struct OverlaySession {
 	pending_freeze_capture_windows_hidden_at: Option<Instant>,
 	#[cfg(target_os = "macos")]
 	pending_freeze_capture_hidden_after_stream_generation: Option<u64>,
+	frozen_export_ready: bool,
+	#[cfg(test)]
 	authoritative_frozen_capture_ready: bool,
 	frozen_transition_started_at: Option<Instant>,
 	frozen_transition_preview_committed_at: Option<Instant>,
@@ -777,9 +781,10 @@ impl OverlaySession {
 	#[allow(clippy::too_many_lines)]
 	#[rustfmt::skip]
 	fn build_base_session_defaults() -> Self {
+		let now = Instant::now();
+
 		Self {
-			config: OverlayConfig::default(),
-			worker: None,
+			config: OverlayConfig::default(), worker: None,
 			#[cfg(target_os = "macos")]
 			live_sample_worker: None,
 			#[cfg(target_os = "macos")]
@@ -799,16 +804,13 @@ impl OverlaySession {
 			loupe_outer_pos: None, pending_loupe_outer_pos: None, loupe_inner_size_points: None,
 			toolbar_outer_pos: None, pending_toolbar_outer_pos: None, toolbar_inner_size_points: None,
 			gpu: None,
-			last_hud_window_move_at: Instant::now(),
-			last_loupe_window_move_at: Instant::now(),
-			last_toolbar_window_move_at: Instant::now(),
-			last_present_at: Instant::now(),
-			last_live_cursor_poll_at: Instant::now(),
-			last_frozen_cursor_poll_at: Instant::now(),
+			last_hud_window_move_at: now, last_loupe_window_move_at: now,
+			last_toolbar_window_move_at: now, last_present_at: now,
+			last_live_cursor_poll_at: now, last_frozen_cursor_poll_at: now,
 			window_list_snapshot: None,
-			last_window_list_refresh_request_at: Instant::now(),
+			last_window_list_refresh_request_at: now,
 			window_list_refresh_interval: Duration::ZERO,
-			last_live_bg_request_at: Instant::now(),
+			last_live_bg_request_at: now,
 			live_bg_request_interval: Duration::ZERO,
 			freeze_capture_send_full_count: 0,
 			hit_test_send_full_count: 0,
@@ -833,7 +835,7 @@ impl OverlaySession {
 			keyboard_modifiers: ModifiersState::default(),
 			event_loop_phase: OverlayEventLoopPhase::Idle,
 			event_loop_progress_seq: 0,
-			event_loop_last_progress_at: Instant::now(),
+			event_loop_last_progress_at: now,
 			event_loop_last_progress_window_id: None, event_loop_last_progress_monitor_id: None,
 			event_loop_last_progress_detail: None,
 			event_loop_last_stall_warn_at: None,
@@ -842,7 +844,10 @@ impl OverlaySession {
 			egui_repaint_deadline: Arc::new(Mutex::new(None)),
 			pending_freeze_capture: None, inflight_freeze_capture: None, pending_freeze_capture_armed: false,
 			#[cfg(target_os = "macos")] pending_freeze_capture_windows_hidden_at: None, #[cfg(target_os = "macos")] pending_freeze_capture_hidden_after_stream_generation: None,
-			authoritative_frozen_capture_ready: false, frozen_transition_started_at: None, frozen_transition_preview_committed_at: None,
+			frozen_export_ready: false,
+			#[cfg(test)]
+			authoritative_frozen_capture_ready: false,
+			frozen_transition_started_at: None, frozen_transition_preview_committed_at: None,
 			frozen_transition_preview_source: None, frozen_transition_final_ready_at: None,
 			frozen_transition_toolbar_visible_at: None, frozen_transition_target_window_id: None,
 			pending_window_freeze_capture: None, inflight_window_freeze_capture: None, frozen_window_image: None,
@@ -850,8 +855,7 @@ impl OverlaySession {
 			capture_windows_hidden: false,
 			#[cfg(target_os = "macos")]
 			next_ocr_request_id: 0,
-			pending_encode_png: None,
-			pending_png_action: None,
+			pending_encode_png: None, pending_png_action: None,
 			#[cfg(target_os = "macos")]
 			png_encode_inflight: false,
 			#[cfg(target_os = "macos")]
@@ -1108,10 +1112,7 @@ impl OverlaySession {
 	}
 
 	fn maybe_keep_frozen_capture_redraw(&self) {
-		if !matches!(self.state.mode, OverlayMode::Frozen) {
-			return;
-		}
-		if self.state.frozen_image.is_some() {
+		if !matches!(self.state.mode, OverlayMode::Frozen) || self.frozen_display_ready() {
 			return;
 		}
 
@@ -1128,8 +1129,17 @@ impl OverlaySession {
 		self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(self.state.monitor));
 	}
 
+	fn frozen_display_ready(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.state.frozen_surface_image().is_some()
+	}
+
+	fn frozen_display_ready_for_monitor(&self, monitor: MonitorRect) -> bool {
+		self.frozen_display_ready() && self.state.monitor == Some(monitor)
+	}
+
 	fn frozen_preview_visible(&self) -> bool {
-		matches!(self.state.mode, OverlayMode::Frozen) && self.state.frozen_image.is_some()
+		self.frozen_display_ready()
 	}
 
 	fn maybe_tick_toolbar_window_warmup_redraw(&mut self) {
@@ -1145,7 +1155,7 @@ impl OverlaySession {
 		{
 			if !matches!(self.state.mode, OverlayMode::Frozen)
 				|| !self.toolbar_state.visible
-				|| self.state.frozen_image.is_none()
+				|| !self.frozen_display_ready()
 				|| self.state.monitor.is_none()
 			{
 				self.toolbar_window_warmup_redraws_remaining = 0;
@@ -1174,13 +1184,21 @@ impl OverlaySession {
 
 	#[cfg(not(target_os = "macos"))]
 	fn should_dispatch_pending_freeze_capture(&self, monitor: MonitorRect) -> bool {
-		self.pending_freeze_capture_matches(monitor) && self.state.frozen_image.is_none()
+		self.pending_freeze_capture_matches(monitor) && !self.frozen_preview_visible()
 	}
 
 	fn frozen_final_capture_ready(&self) -> bool {
 		matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.authoritative_frozen_capture_ready
-			&& self.state.frozen_image.is_some()
+			&& {
+				#[cfg(test)]
+				{
+					self.frozen_export_ready || self.authoritative_frozen_capture_ready
+				}
+				#[cfg(not(test))]
+				{
+					self.frozen_export_ready
+				}
+			} && self.state.frozen_export_image.is_some()
 			&& self.pending_freeze_capture.is_none()
 			&& self.inflight_freeze_capture.is_none()
 	}
@@ -1517,7 +1535,7 @@ impl OverlaySession {
 		image: RgbaImage,
 		cursor: Option<GlobalPoint>,
 	) {
-		self.state.finish_freeze(monitor, image);
+		self.state.commit_frozen_display_image(monitor, image);
 
 		if let Some(cursor) = cursor {
 			self.update_cursor_state(monitor, cursor);
@@ -1550,6 +1568,29 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn begin_hidden_authoritative_freeze_capture_fallback(&mut self, monitor: MonitorRect) {
+		let after_stream_generation = self
+			.live_sample_stream
+			.as_ref()
+			.and_then(|stream| stream.latest_frame_frontier_for_monitor(monitor))
+			.map_or(0, |(_, stream_generation)| stream_generation);
+
+		self.state.live_bg_monitor = None;
+		self.state.live_bg_image = None;
+		self.capture_windows_hidden = true;
+
+		self.hide_capture_windows();
+
+		self.pending_freeze_capture_windows_hidden_at = Some(Instant::now());
+		self.pending_freeze_capture_hidden_after_stream_generation = Some(after_stream_generation);
+		self.pending_freeze_capture_armed = true;
+		self.freeze_capture_send_full_count = 0;
+
+		self.note_frozen_transition_authoritative_handoff_armed(monitor);
+		self.request_redraw_for_monitor(monitor);
+	}
+
+	#[cfg(target_os = "macos")]
 	fn maybe_finish_frozen_capture_from_snapshot(
 		&mut self,
 		monitor: MonitorRect,
@@ -1568,6 +1609,7 @@ impl OverlaySession {
 			return false;
 		};
 		let snapshot_image = snapshot.image.as_ref().clone();
+		let export_image = snapshot_image.clone();
 		let restore_hidden_capture_windows = self.capture_windows_hidden;
 
 		self.commit_frozen_preview(monitor, snapshot_image, cursor);
@@ -1580,8 +1622,13 @@ impl OverlaySession {
 		self.pending_freeze_capture_hidden_after_stream_generation = None;
 		self.pending_window_freeze_capture = None;
 		self.inflight_window_freeze_capture = None;
-		self.authoritative_frozen_capture_ready = true;
+		self.frozen_export_ready = true;
+		#[cfg(test)]
+		{
+			self.authoritative_frozen_capture_ready = true;
+		}
 
+		self.state.commit_frozen_export_image(export_image);
 		self.note_frozen_transition_final_ready(
 			monitor,
 			source,
@@ -1610,7 +1657,7 @@ impl OverlaySession {
 		true
 	}
 
-	#[cfg(all(test, target_os = "macos"))]
+	#[cfg(target_os = "macos")]
 	fn maybe_seed_frozen_capture_preview_from_snapshot(
 		&mut self,
 		monitor: MonitorRect,
@@ -1639,6 +1686,46 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn maybe_update_pending_frozen_capture_from_live_stream_snapshot(
+		&mut self,
+		monitor: MonitorRect,
+	) -> bool {
+		if !self.pending_freeze_capture_matches(monitor)
+			|| self.frozen_export_ready
+			|| self.inflight_freeze_capture.is_some()
+			|| self.capture_windows_hidden
+		{
+			return false;
+		}
+
+		let window_target = self.pending_window_freeze_capture_for_monitor(monitor);
+		let snapshot = self
+			.live_sample_stream
+			.as_ref()
+			.and_then(|stream| stream.peek_latest_rgba_snapshot(monitor));
+
+		if self.snapshot_can_finish_frozen_capture(window_target) {
+			return self.maybe_finish_frozen_capture_from_snapshot(
+				monitor,
+				window_target,
+				self.state.cursor,
+				snapshot,
+				"live_stream_snapshot_followup",
+			);
+		}
+		if self.frozen_preview_visible() {
+			return false;
+		}
+
+		self.maybe_seed_frozen_capture_preview_from_snapshot(
+			monitor,
+			self.state.cursor,
+			snapshot,
+			"live_stream_snapshot_preview_followup",
+		)
+	}
+
+	#[cfg(target_os = "macos")]
 	fn maybe_finish_pending_frozen_capture_from_hidden_live_stream_snapshot(
 		&mut self,
 		monitor: MonitorRect,
@@ -1653,7 +1740,7 @@ impl OverlaySession {
 		};
 
 		if !self.pending_freeze_capture_matches(monitor)
-			|| self.authoritative_frozen_capture_ready
+			|| self.frozen_export_ready
 			|| self.inflight_freeze_capture.is_some()
 			|| !self.capture_windows_hidden
 		{
@@ -1861,7 +1948,11 @@ impl OverlaySession {
 			self.pending_freeze_capture_hidden_after_stream_generation = None;
 		}
 		self.inflight_freeze_capture = None;
-		self.authoritative_frozen_capture_ready = false;
+		self.frozen_export_ready = false;
+		#[cfg(test)]
+		{
+			self.authoritative_frozen_capture_ready = false;
+		}
 		self.freeze_capture_send_full_count = 0;
 		self.pending_window_freeze_capture = window_target;
 		self.inflight_window_freeze_capture = None;
@@ -1952,7 +2043,7 @@ impl OverlaySession {
 	fn begin_frozen_capture_with_rect_macos(
 		&mut self,
 		monitor: MonitorRect,
-		_window_target: Option<WindowFreezeCaptureTarget>,
+		window_target: Option<WindowFreezeCaptureTarget>,
 		cursor: Option<GlobalPoint>,
 	) -> bool {
 		if let Some(cursor) = cursor {
@@ -1961,31 +2052,55 @@ impl OverlaySession {
 
 		self.state.live_bg_monitor = None;
 		self.state.live_bg_image = None;
-		self.capture_windows_hidden = true;
-		self.pending_freeze_capture_armed = true;
+		self.capture_windows_hidden = false;
+		self.pending_freeze_capture_windows_hidden_at = None;
+		self.pending_freeze_capture_hidden_after_stream_generation = None;
+
+		let snapshot = self
+			.live_sample_stream
+			.as_ref()
+			.and_then(|stream| stream.peek_latest_rgba_snapshot(monitor));
+
+		if self.maybe_finish_frozen_capture_from_snapshot(
+			monitor,
+			window_target,
+			cursor,
+			snapshot.clone(),
+			"live_stream_snapshot_at_freeze_begin",
+		) {
+			return true;
+		}
+
+		let seeded_preview = self.maybe_seed_frozen_capture_preview_from_snapshot(
+			monitor,
+			cursor,
+			snapshot.clone(),
+			"live_stream_snapshot_preview_at_freeze_begin",
+		);
+
+		self.pending_freeze_capture_armed = window_target.is_some()
+			&& self.config.window_capture_alpha_mode != WindowCaptureAlphaMode::Background;
+
+		if let Some(stream) = self.live_sample_stream.as_ref() {
+			let after_frame_seq = stream
+				.latest_frame_frontier_for_monitor(monitor)
+				.map_or(0, |(frame_seq, _)| frame_seq);
+			let _ = stream.refresh_monitor_nonblocking_if_stale(monitor, after_frame_seq, true);
+		}
 
 		self.note_frozen_transition_preview_deferred(
 			monitor,
-			"waiting_for_hidden_live_snapshot_or_authoritative_capture",
+			if seeded_preview {
+				"waiting_for_export_authority"
+			} else {
+				"waiting_for_live_stream_snapshot"
+			},
 			None,
 		);
-		self.hide_capture_windows();
 
-		self.pending_freeze_capture_hidden_after_stream_generation =
-			self.live_sample_stream.as_ref().and_then(|stream| {
-				let (after_frame_seq, hidden_after_stream_generation) = stream
-					.latest_frame_frontier_for_monitor(monitor)
-					.map_or((0, 0), |(frame_seq, stream_generation)| {
-						(frame_seq, stream_generation)
-					});
-
-				stream
-					.refresh_monitor_nonblocking_if_stale(monitor, after_frame_seq, true)
-					.then_some(hidden_after_stream_generation)
-			});
-		self.pending_freeze_capture_windows_hidden_at = Some(Instant::now());
-
-		self.note_frozen_transition_authoritative_handoff_armed(monitor);
+		if self.pending_freeze_capture_armed {
+			self.note_frozen_transition_authoritative_handoff_armed(monitor);
+		}
 
 		false
 	}
@@ -2009,7 +2124,11 @@ impl OverlaySession {
 
 			self.pending_freeze_capture = None;
 			self.pending_freeze_capture_armed = false;
-			self.authoritative_frozen_capture_ready = true;
+			self.frozen_export_ready = true;
+			#[cfg(test)]
+			{
+				self.authoritative_frozen_capture_ready = true;
+			}
 
 			self.note_frozen_transition_final_ready(monitor, "cached_live_background", None);
 
@@ -2035,7 +2154,7 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		capture_rect_pixels: RectPoints,
 	) -> Option<RgbaImage> {
-		let frozen_image = self.state.frozen_image.as_ref()?;
+		let frozen_image = self.state.frozen_export_image.as_ref()?;
 		let x = capture_rect_pixels.x.min(frozen_image.width());
 		let y = capture_rect_pixels.y.min(frozen_image.height());
 		let max_width = frozen_image.width().saturating_sub(x);
@@ -2179,9 +2298,26 @@ impl OverlaySession {
 	) {
 		if matches!(self.state.mode, OverlayMode::Frozen) && self.state.monitor == Some(monitor) {
 			self.inflight_freeze_capture = None;
-			self.authoritative_frozen_capture_ready = true;
 
 			let window_capture_target = self.inflight_window_freeze_capture.take();
+
+			#[cfg(target_os = "macos")]
+			if self.maybe_retry_unhidden_matte_capture_after_window_miss(
+				monitor,
+				window_capture_target,
+				window_image.is_some(),
+				captured_window_id,
+			) {
+				return;
+			}
+
+			self.frozen_export_ready = true;
+			#[cfg(test)]
+			{
+				self.authoritative_frozen_capture_ready = true;
+			}
+
+			let had_display_image = self.frozen_display_ready();
 			let mut frozen_preview_image = image;
 
 			self.pending_window_freeze_capture = None;
@@ -2212,8 +2348,16 @@ impl OverlaySession {
 				}
 			}
 
-			self.state.finish_freeze(monitor, frozen_preview_image);
-			self.note_frozen_transition_preview_committed(monitor, "authoritative_capture", None);
+			if !had_display_image {
+				self.state.commit_frozen_display_image(monitor, frozen_preview_image.clone());
+				self.note_frozen_transition_preview_committed(
+					monitor,
+					"authoritative_capture",
+					None,
+				);
+			}
+
+			self.state.commit_frozen_export_image(frozen_preview_image.clone());
 			self.note_frozen_transition_final_ready(
 				monitor,
 				"authoritative_capture",
@@ -2261,6 +2405,42 @@ impl OverlaySession {
 
 			self.request_redraw_for_monitor(monitor);
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn maybe_retry_unhidden_matte_capture_after_window_miss(
+		&mut self,
+		monitor: MonitorRect,
+		window_capture_target: Option<WindowFreezeCaptureTarget>,
+		window_image_present: bool,
+		captured_window_id: Option<u32>,
+	) -> bool {
+		let Some(target) = window_capture_target else {
+			return false;
+		};
+
+		if target.monitor != monitor
+			|| !matches!(
+				self.config.window_capture_alpha_mode,
+				WindowCaptureAlphaMode::MatteLight | WindowCaptureAlphaMode::MatteDark
+			) || self.capture_windows_hidden
+			|| (captured_window_id == Some(target.window_id) && window_image_present)
+		{
+			return false;
+		}
+
+		self.pending_freeze_capture = Some(monitor);
+		self.pending_window_freeze_capture = Some(target);
+		self.frozen_export_ready = false;
+		#[cfg(test)]
+		{
+			self.authoritative_frozen_capture_ready = false;
+		}
+		self.frozen_window_image = None;
+
+		self.begin_hidden_authoritative_freeze_capture_fallback(monitor);
+
+		true
 	}
 
 	fn handle_encoded_png_response(&mut self, png_bytes: Vec<u8>) -> OverlayControl {
@@ -2629,7 +2809,7 @@ impl OverlaySession {
 		}
 
 		let crop_rect = self.deferred_text_recognition_crop_rect_pixels()?;
-		let frozen_image = self.state.frozen_image.take()?;
+		let frozen_image = self.state.frozen_export_image.take()?;
 
 		Some(DeferredTextRecognitionRequest::frozen_crop(
 			request_id,
@@ -2641,7 +2821,7 @@ impl OverlaySession {
 
 	#[cfg(target_os = "macos")]
 	fn deferred_text_recognition_crop_rect_pixels(&self) -> Option<Option<RectPoints>> {
-		let frozen_image = self.state.frozen_image.as_ref()?;
+		let frozen_image = self.state.frozen_export_image.as_ref()?;
 		let Some(monitor) = self.state.monitor else {
 			return Some(None);
 		};
@@ -3017,8 +3197,8 @@ impl OverlaySession {
 			window_id = ?window_id,
 			monitor_id = overlay_monitor.id,
 			frozen_generation = self.state.frozen_generation,
-			final_capture_ready = self.authoritative_frozen_capture_ready,
-			frozen_image_ready = self.state.frozen_image.is_some(),
+			final_capture_ready = self.frozen_export_ready,
+			frozen_image_ready = self.frozen_display_ready(),
 			pending_freeze_capture = self.pending_freeze_capture.map(|m| m.id),
 			draw_toolbar,
 			toolbar_visible = self.toolbar_state.visible,
@@ -3453,6 +3633,7 @@ struct FrozenImagePatch {
 #[derive(Clone, Debug)]
 struct FrozenMosaicEdit {
 	preview_patch: FrozenImagePatch,
+	export_patch: FrozenImagePatch,
 	window_patch: Option<FrozenImagePatch>,
 }
 

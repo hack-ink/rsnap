@@ -875,9 +875,9 @@ impl App {
 
 fn self_capture_exception_window_ids_from_sources(
 	current_window_id: Option<u32>,
-	cached_window_id: Option<u32>,
+	_cached_window_id: Option<u32>,
 ) -> Vec<u32> {
-	current_window_id.or(cached_window_id).into_iter().collect()
+	current_window_id.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -885,10 +885,10 @@ mod tests {
 	use crate::app::capture;
 
 	#[test]
-	fn self_capture_exception_window_ids_fall_back_to_cached_settings_window_id() {
+	fn self_capture_exception_window_ids_ignore_stale_cached_settings_window_id() {
 		assert_eq!(
 			capture::self_capture_exception_window_ids_from_sources(None, Some(41)),
-			vec![41]
+			Vec::<u32>::new()
 		);
 	}
 
