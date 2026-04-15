@@ -64,19 +64,10 @@ impl OverlaySession {
 		self.mark_progress(OverlayEventLoopPhase::AboutToWait);
 		self.maybe_clear_loupe_activation_after_focus_loss();
 		self.maybe_timeout_pending_click_hit_test(now);
-
 		#[cfg(target_os = "macos")]
 		{
-			if let Some(monitor) =
-				self.frozen_capture_monitor().filter(|_| self.frozen_capture_export_pending())
-			{
-				let _ = self.maybe_update_pending_frozen_capture_from_live_stream_snapshot(monitor);
-				let _ = self.maybe_drive_pending_display_first_freeze_preview(now);
-			}
-
-			self.maybe_dispatch_armed_freeze_capture();
+			self.maybe_drive_macos_display_first_frozen_capture_backend(now);
 		}
-
 		self.maybe_request_keepalive_redraw();
 		self.maybe_keep_selection_flow_repaint();
 		self.maybe_keep_frozen_text_caret_repaint();
