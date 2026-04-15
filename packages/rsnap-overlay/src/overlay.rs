@@ -2192,6 +2192,8 @@ impl OverlaySession {
 				window_image.is_some(),
 				captured_window_id,
 			) {
+				self.restore_capture_windows_visibility();
+
 				return;
 			}
 
