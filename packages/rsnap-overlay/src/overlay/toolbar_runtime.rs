@@ -440,10 +440,8 @@ impl OverlaySession {
 
 	pub(super) fn should_hide_toolbar_window(&self, monitor: MonitorRect) -> bool {
 		self.frozen_selection_drag_hides_auxiliary_windows()
-			|| !matches!(self.state.mode, OverlayMode::Frozen)
+			|| !self.frozen_display_ready_for_monitor(monitor)
 			|| !self.toolbar_state.visible
-			|| self.state.frozen_image.is_none()
-			|| self.state.monitor != Some(monitor)
 	}
 
 	#[cfg(any(target_os = "macos", test))]
@@ -708,9 +706,8 @@ impl OverlaySession {
 		current_cursor: Option<GlobalPoint>,
 	) -> bool {
 		if !self.toolbar_window_visible
-			|| !matches!(self.state.mode, OverlayMode::Frozen)
+			|| !self.frozen_display_ready()
 			|| !self.toolbar_state.visible
-			|| self.state.frozen_image.is_none()
 		{
 			return false;
 		}

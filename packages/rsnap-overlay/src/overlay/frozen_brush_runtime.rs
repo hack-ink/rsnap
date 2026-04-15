@@ -32,7 +32,7 @@ impl OverlaySession {
 	pub(super) fn frozen_brush_capture_target(&self) -> Option<(MonitorRect, RectPoints)> {
 		if !matches!(self.state.mode, OverlayMode::Frozen)
 			|| self.scroll_capture.active
-			|| self.state.frozen_image.is_none()
+			|| !self.frozen_display_ready()
 		{
 			return None;
 		}
