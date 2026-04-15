@@ -82,9 +82,8 @@ fn frozen_toolbar_cursor_event_updates_frozen_cursor_context() {
 	let patch = RgbaImage::from_pixel(400, 300, crate::overlay::tests::Rgba([10, 20, 30, 255]));
 	let mut session = OverlaySession::new();
 
-	session.state.mode = OverlayMode::Frozen;
-	session.state.monitor = Some(monitor);
-	session.state.frozen_image = Some(patch.clone());
+	session.state.commit_frozen_display_image(monitor, patch.clone());
+
 	session.state.alt_held = true;
 
 	session.note_frozen_toolbar_cursor_event(monitor, cursor);
