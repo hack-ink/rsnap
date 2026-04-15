@@ -82,6 +82,25 @@ fn pending_freeze_capture_dispatches_even_with_seeded_preview() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn pending_freeze_capture_dispatches_when_previous_frozen_monitor_differs() {
+	let previous_monitor = tests::test_monitor();
+	let next_monitor = MonitorRect {
+		id: previous_monitor.id + 1,
+		origin: GlobalPoint::new(previous_monitor.width as i32, 0),
+		..previous_monitor
+	};
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(previous_monitor);
+
+	tests::finish_frozen_display_state(&mut session, previous_monitor, tests::test_frozen_image());
+	tests::set_session_pending_freeze_capture(&mut session, Some(next_monitor));
+
+	assert!(session.should_dispatch_pending_freeze_capture(next_monitor));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn snapshot_background_capture_finishes_frozen_transition_immediately() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(120, 160, 320, 240);
