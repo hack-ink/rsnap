@@ -8,6 +8,7 @@ mod cursor_context_runtime;
 mod cursor_runtime;
 mod frozen_arrow_runtime;
 mod frozen_brush_runtime;
+mod frozen_capture_backend_adapter;
 mod frozen_export_runtime;
 mod frozen_mosaic_runtime;
 mod frozen_selection_runtime;
@@ -185,13 +186,9 @@ use self::trace_recording::{
 #[cfg(target_os = "macos")]
 use crate::deferred_text_recognition::DeferredTextRecognitionRequest;
 #[cfg(target_os = "macos")]
-use crate::live_frame_stream_macos::{
-	CursorSampleRequest, MacLiveFrameStream, STREAM_REGION_FRAME_MAX_AGE,
-};
+use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::scroll_capture::{self, ScrollDirection, ScrollObserveOutcome, ScrollSession};
 use crate::state::LiveCursorSample;
-#[cfg(target_os = "macos")]
-use crate::state::MonitorImageSnapshot;
 use crate::worker::CapturedMonitorRegionResult;
 use crate::{
 	state::{
@@ -1674,163 +1671,6 @@ impl OverlaySession {
 		}
 	}
 
-	#[cfg(target_os = "macos")]
-	fn snapshot_can_finish_frozen_capture(
-		&self,
-		window_target: Option<WindowFreezeCaptureTarget>,
-	) -> bool {
-		window_target.is_none()
-			|| self.config.window_capture_alpha_mode == WindowCaptureAlphaMode::Background
-	}
-
-	#[cfg(target_os = "macos")]
-	fn usable_frozen_capture_snapshot(
-		&self,
-		monitor: MonitorRect,
-		snapshot: Option<Arc<MonitorImageSnapshot>>,
-	) -> Option<(Arc<MonitorImageSnapshot>, u128)> {
-		let snapshot = snapshot.filter(|snapshot| snapshot.monitor == monitor)?;
-		let snapshot_age = snapshot.captured_at.elapsed();
-
-		if snapshot_age > STREAM_REGION_FRAME_MAX_AGE {
-			return None;
-		}
-
-		Some((snapshot, snapshot_age.as_millis()))
-	}
-
-	#[cfg(target_os = "macos")]
-	fn maybe_finish_frozen_capture_from_snapshot(
-		&mut self,
-		monitor: MonitorRect,
-		window_target: Option<WindowFreezeCaptureTarget>,
-		cursor: Option<GlobalPoint>,
-		snapshot: Option<Arc<MonitorImageSnapshot>>,
-		source: &'static str,
-	) -> bool {
-		if !self.snapshot_can_finish_frozen_capture(window_target) {
-			return false;
-		}
-
-		let Some((snapshot, snapshot_age_ms)) =
-			self.usable_frozen_capture_snapshot(monitor, snapshot)
-		else {
-			return false;
-		};
-		let snapshot_image = snapshot.image.as_ref().clone();
-		let export_image = snapshot_image.clone();
-		let restore_hidden_capture_windows = self.capture_windows_hidden;
-
-		self.commit_frozen_preview(monitor, snapshot_image, cursor);
-		self.note_frozen_transition_preview_committed(monitor, source, Some(snapshot_age_ms));
-		self.promote_frozen_capture_display_ready(monitor);
-		self.set_frozen_capture_export_ready(monitor);
-		self.state.commit_frozen_export_image(export_image);
-		self.note_frozen_transition_final_ready(
-			monitor,
-			source,
-			window_target.map(|target| target.window_id),
-		);
-
-		self.freeze_capture_send_full_count = 0;
-		self.frozen_window_image = None;
-		self.toolbar_state.needs_redraw = true;
-
-		if restore_hidden_capture_windows {
-			self.destroy_live_only_aux_windows();
-			self.restore_capture_windows_visibility();
-		} else {
-			self.capture_windows_hidden = false;
-		}
-
-		self.sync_frozen_toolbar_state();
-		self.request_redraw_for_monitor(monitor);
-		#[cfg(target_os = "macos")]
-		{
-			self.request_aux_window_creation_if_needed();
-			self.request_redraw_toolbar_window();
-		}
-
-		true
-	}
-
-	#[cfg(target_os = "macos")]
-	fn request_pending_frozen_capture_live_stream_refresh(&self, monitor: MonitorRect) {
-		let Some(stream) = self.live_sample_stream.as_ref() else {
-			return;
-		};
-		let after_frame_seq =
-			stream.latest_frame_frontier_for_monitor(monitor).map_or(0, |(frame_seq, _)| frame_seq);
-		let _ = stream.refresh_monitor_nonblocking_if_stale(monitor, after_frame_seq, true);
-	}
-
-	#[cfg(target_os = "macos")]
-	fn maybe_seed_frozen_capture_preview_from_snapshot(
-		&mut self,
-		monitor: MonitorRect,
-		cursor: Option<GlobalPoint>,
-		snapshot: Option<Arc<MonitorImageSnapshot>>,
-		source: &'static str,
-	) -> bool {
-		let Some((snapshot, snapshot_age_ms)) =
-			self.usable_frozen_capture_snapshot(monitor, snapshot)
-		else {
-			return false;
-		};
-		let snapshot_image = snapshot.image.as_ref().clone();
-
-		self.commit_frozen_preview(monitor, snapshot_image, cursor);
-		self.note_frozen_transition_preview_committed(monitor, source, Some(snapshot_age_ms));
-
-		self.toolbar_state.needs_redraw = true;
-
-		self.sync_frozen_toolbar_state();
-		self.request_redraw_for_monitor(monitor);
-		self.request_aux_window_creation_if_needed();
-		self.request_redraw_toolbar_window();
-
-		true
-	}
-
-	#[cfg(target_os = "macos")]
-	fn maybe_update_pending_frozen_capture_from_live_stream_snapshot(
-		&mut self,
-		monitor: MonitorRect,
-	) -> bool {
-		if !self.pending_freeze_capture_matches(monitor)
-			|| self.frozen_capture_export_ready()
-			|| self.frozen_capture_worker_inflight()
-		{
-			return false;
-		}
-
-		let window_target = self.pending_window_freeze_capture_for_monitor(monitor);
-		let snapshot = self
-			.live_sample_stream
-			.as_ref()
-			.and_then(|stream| stream.peek_latest_rgba_snapshot(monitor));
-
-		if self.snapshot_can_finish_frozen_capture(window_target) {
-			return self.maybe_finish_frozen_capture_from_snapshot(
-				monitor,
-				window_target,
-				self.state.cursor,
-				snapshot,
-				"live_stream_snapshot_followup",
-			);
-		}
-		if self.frozen_preview_visible() {
-			return false;
-		}
-
-		self.maybe_seed_frozen_capture_preview_from_snapshot(
-			monitor,
-			self.state.cursor,
-			snapshot,
-			"live_stream_snapshot_preview_followup",
-		)
-	}
-
 	fn seed_frozen_toolbar_default_position(
 		&mut self,
 		monitor: MonitorRect,
@@ -2050,68 +1890,6 @@ impl OverlaySession {
 		// started the asynchronous export-authority path. Otherwise the overlay can briefly present
 		// an empty black frozen frame before the real preview arrives.
 		self.refresh_frozen_helper_windows_for_transition(monitor);
-	}
-
-	#[cfg(target_os = "macos")]
-	fn begin_frozen_capture_with_rect_macos(
-		&mut self,
-		monitor: MonitorRect,
-		window_target: Option<WindowFreezeCaptureTarget>,
-		cursor: Option<GlobalPoint>,
-	) -> bool {
-		if let Some(cursor) = cursor {
-			self.update_cursor_state(monitor, cursor);
-		}
-
-		self.state.live_bg_monitor = None;
-		self.state.live_bg_image = None;
-		self.capture_windows_hidden = false;
-
-		let snapshot = self
-			.live_sample_stream
-			.as_ref()
-			.and_then(|stream| stream.peek_latest_rgba_snapshot(monitor));
-
-		if self.maybe_finish_frozen_capture_from_snapshot(
-			monitor,
-			window_target,
-			cursor,
-			snapshot.clone(),
-			"live_stream_snapshot_at_freeze_begin",
-		) {
-			return true;
-		}
-
-		let seeded_preview = self.maybe_seed_frozen_capture_preview_from_snapshot(
-			monitor,
-			cursor,
-			snapshot.clone(),
-			"live_stream_snapshot_preview_at_freeze_begin",
-		);
-		let arm_worker = window_target.is_some()
-			&& self.config.window_capture_alpha_mode != WindowCaptureAlphaMode::Background;
-
-		self.set_frozen_capture_worker_state(if arm_worker {
-			FrozenCaptureWorkerState::Armed
-		} else {
-			FrozenCaptureWorkerState::Idle
-		});
-		self.request_pending_frozen_capture_live_stream_refresh(monitor);
-		self.note_frozen_transition_preview_deferred(
-			monitor,
-			if seeded_preview {
-				"waiting_for_export_authority"
-			} else {
-				"waiting_for_live_stream_snapshot"
-			},
-			None,
-		);
-
-		if arm_worker {
-			self.note_frozen_transition_authoritative_handoff_armed(monitor);
-		}
-
-		false
 	}
 
 	#[cfg(not(target_os = "macos"))]

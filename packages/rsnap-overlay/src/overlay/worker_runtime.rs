@@ -6,7 +6,7 @@ use crate::overlay::{
 	WorkerRequestSendError, WorkerResponse,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{CursorSampleRequest, FreezeCaptureTarget, mem};
+use crate::overlay::{CursorSampleRequest, mem};
 
 pub(super) const FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT: u64 = 8;
 
@@ -94,45 +94,6 @@ impl OverlaySession {
 		self.request_redraw_all();
 	}
 
-	#[cfg(target_os = "macos")]
-	pub(super) fn maybe_drive_pending_display_first_freeze_preview(
-		&mut self,
-		now: Instant,
-	) -> bool {
-		let Some(overlay_monitor) =
-			self.frozen_capture_monitor().filter(|_| self.frozen_capture_export_pending())
-		else {
-			return false;
-		};
-
-		if !self.pending_freeze_capture_matches(overlay_monitor)
-			|| self.frozen_capture_export_ready()
-			|| self.frozen_capture_worker_inflight()
-		{
-			return false;
-		}
-		if self.frozen_preview_visible() {
-			return false;
-		}
-
-		self.request_pending_frozen_capture_live_stream_refresh(overlay_monitor);
-
-		let Some(started_at) = self.frozen_transition_started_at else {
-			return false;
-		};
-		let Some(elapsed) = now.checked_duration_since(started_at) else {
-			return false;
-		};
-
-		if elapsed < crate::overlay::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT {
-			return false;
-		}
-
-		self.abort_pending_freeze_capture("Unable to capture a clean preview. Please try again.");
-
-		true
-	}
-
 	pub(super) fn note_freeze_capture_request_started(
 		&mut self,
 		overlay_monitor: MonitorRect,
@@ -177,66 +138,6 @@ impl OverlaySession {
 
 				self.abort_pending_freeze_capture("Capture worker is unavailable.");
 			},
-		}
-	}
-
-	#[cfg(target_os = "macos")]
-	pub(super) fn maybe_dispatch_armed_freeze_capture(&mut self) {
-		if !self.frozen_capture_worker_armed() {
-			return;
-		}
-
-		let Some(overlay_monitor) =
-			self.frozen_capture_monitor().filter(|_| self.frozen_capture_export_pending())
-		else {
-			self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Idle);
-
-			self.freeze_capture_send_full_count = 0;
-
-			return;
-		};
-
-		if !self.pending_freeze_capture_matches(overlay_monitor) {
-			self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Idle);
-
-			self.freeze_capture_send_full_count = 0;
-
-			return;
-		}
-
-		let pending_window_target = self.pending_window_freeze_capture_for_monitor(overlay_monitor);
-
-		if !self.capture_windows_hidden
-			&& self.snapshot_can_finish_frozen_capture(pending_window_target)
-		{
-			self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Idle);
-
-			self.freeze_capture_send_full_count = 0;
-
-			return;
-		}
-		if !self.capture_windows_hidden
-			&& pending_window_target.is_some()
-			&& !self.snapshot_can_finish_frozen_capture(pending_window_target)
-			&& !self.frozen_preview_visible()
-		{
-			return;
-		}
-
-		let freeze_target = pending_window_target.map_or(FreezeCaptureTarget::Monitor, |target| {
-			FreezeCaptureTarget::Window { window_id: target.window_id }
-		});
-		let Some(worker) = &self.worker else {
-			self.abort_pending_freeze_capture("Capture worker is unavailable.");
-
-			return;
-		};
-
-		match worker.request_freeze_capture(overlay_monitor, freeze_target) {
-			Ok(()) => {
-				self.note_freeze_capture_request_started(overlay_monitor, pending_window_target);
-			},
-			Err(err) => self.handle_freeze_capture_request_send_error(overlay_monitor, err),
 		}
 	}
 
