@@ -62,7 +62,7 @@ use crate::overlay::{
 	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
 	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
 	SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
-	Vec2, WindowRenderer, hud_helpers,
+	Vec2, WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -72,7 +72,6 @@ use crate::overlay::{
 	OverlayExit, SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW,
 	SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
 	SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource, StartupLiveRgbPlan,
-	WindowCaptureAlphaMode,
 };
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 #[cfg(target_os = "macos")]
@@ -959,6 +958,34 @@ fn authoritative_freeze_response_updates_export_authority_without_overwriting_di
 	assert_eq!(session.state.frozen_image.as_ref(), Some(&preview_image));
 	assert_eq!(session.state.frozen_export_image.as_ref(), Some(&authoritative_image));
 	assert!(session.authoritative_frozen_capture_ready);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn window_matte_capture_miss_restores_hidden_windows_before_returning() {
+	let monitor = test_monitor();
+	let preview_image = test_frozen_image();
+	let capture_rect = RectPoints::new(2, 1, 4, 4);
+	let mut session = OverlaySession::new();
+
+	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteDark;
+
+	session.state.begin_freeze(monitor);
+	session.state.commit_frozen_display_image(monitor, preview_image.clone());
+
+	session.capture_windows_hidden = true;
+	session.inflight_window_freeze_capture =
+		Some(crate::overlay::WindowFreezeCaptureTarget { monitor, window_id: 41, rect: capture_rect });
+
+	session.handle_captured_freeze_response(monitor, test_frozen_image(), None, None);
+
+	assert!(!session.capture_windows_hidden);
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&preview_image));
+	assert!(session.state.frozen_export_image.is_none());
+	assert_eq!(
+		session.state.error_message.as_deref(),
+		Some("Window capture is unavailable. Please try again.")
+	);
 }
 
 #[cfg(target_os = "macos")]
