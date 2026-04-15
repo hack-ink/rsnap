@@ -699,6 +699,7 @@ impl WindowRenderer {
 		raw_input: egui::RawInput,
 		state: &OverlayState,
 		monitor: MonitorRect,
+		pending_frozen_display_handoff_monitor: Option<MonitorRect>,
 		can_draw_hud: bool,
 		hud_local_cursor_override: Option<Pos2>,
 		hud_compact: bool,
@@ -714,6 +715,7 @@ impl WindowRenderer {
 		theme: HudTheme,
 		selection_flow_enabled: bool,
 		selection_flow_stroke_width_px: f32,
+		pending_frozen_display_handoff: bool,
 		needs_frozen_surface_bg: bool,
 		show_frozen_capture_affordance: bool,
 		frozen_selection_resize_handles_enabled: bool,
@@ -789,22 +791,16 @@ impl WindowRenderer {
 			}
 
 			if matches!(state.mode, OverlayMode::Live) && !can_draw_hud {
-				let screen_rect = ctx.input(|i| i.viewport_rect());
-				let layer = LayerId::new(
-					Order::Foreground,
-					Id::new(format!("live-capture-{}", monitor.id)),
-				);
-				let painter = ctx.layer_painter(layer);
-
-				_show_selection_affordance |= Self::render_live_capture_affordances(
+				_show_selection_affordance |= Self::render_live_or_pending_capture_affordances(
 					ctx,
-					&painter,
 					state,
 					monitor,
-					screen_rect,
+					pending_frozen_display_handoff_monitor,
 					theme,
 					selection_flow_enabled,
 					selection_flow_stroke_width_px,
+					pending_frozen_display_handoff,
+					frozen_capture_source,
 					selection_flow_geometry_cache,
 					selection_dashed_border_cache,
 				);
@@ -844,6 +840,56 @@ impl WindowRenderer {
 		});
 
 		(full_output, hud_pill)
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	fn render_live_or_pending_capture_affordances(
+		ctx: &egui::Context,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		pending_frozen_display_handoff_monitor: Option<MonitorRect>,
+		theme: HudTheme,
+		selection_flow_enabled: bool,
+		selection_flow_stroke_width_px: f32,
+		pending_frozen_display_handoff: bool,
+		frozen_capture_source: FrozenCaptureSource,
+		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
+	) -> bool {
+		let screen_rect = ctx.input(|i| i.viewport_rect());
+		let layer =
+			LayerId::new(Order::Foreground, Id::new(format!("live-capture-{}", monitor.id)));
+		let painter = ctx.layer_painter(layer);
+
+		if pending_frozen_display_handoff {
+			Self::render_pending_frozen_display_handoff_affordance(
+				ctx,
+				&painter,
+				state,
+				monitor,
+				pending_frozen_display_handoff_monitor,
+				screen_rect,
+				theme,
+				selection_flow_enabled,
+				selection_flow_stroke_width_px,
+				frozen_capture_source,
+				selection_flow_geometry_cache,
+				selection_dashed_border_cache,
+			)
+		} else {
+			Self::render_live_capture_affordances(
+				ctx,
+				&painter,
+				state,
+				monitor,
+				screen_rect,
+				theme,
+				selection_flow_enabled,
+				selection_flow_stroke_width_px,
+				selection_flow_geometry_cache,
+				selection_dashed_border_cache,
+			)
+		}
 	}
 
 	fn sync_egui_textures(&mut self, gpu: &GpuContext, full_output: &FullOutput) {
@@ -1368,6 +1414,8 @@ impl WindowRenderer {
 		selection_flow_enabled: bool,
 		selection_flow_stroke_width_px: f32,
 		allow_frozen_surface_bg: bool,
+		pending_frozen_display_handoff: bool,
+		pending_frozen_display_handoff_monitor: Option<MonitorRect>,
 		show_frozen_capture_affordance: bool,
 		frozen_selection_resize_handles_enabled: bool,
 		frozen_capture_source: FrozenCaptureSource,
@@ -1420,6 +1468,7 @@ impl WindowRenderer {
 			raw_input,
 			state,
 			monitor,
+			pending_frozen_display_handoff_monitor,
 			hud_cfg.can_draw_hud,
 			hud_local_cursor_override,
 			hud_compact,
@@ -1435,6 +1484,7 @@ impl WindowRenderer {
 			theme,
 			selection_flow_enabled,
 			selection_flow_stroke_width_px,
+			pending_frozen_display_handoff,
 			hud_cfg.needs_frozen_surface_bg,
 			show_frozen_capture_affordance,
 			frozen_selection_resize_handles_enabled,

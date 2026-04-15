@@ -128,6 +128,9 @@ impl OverlaySession {
 		if !self.is_active() || !matches!(self.state.mode, OverlayMode::Live) {
 			return;
 		}
+		if self.frozen_display_handoff_pending() {
+			return;
+		}
 
 		let interval = self
 			.repaint_interval_for_monitor(self.active_cursor_monitor())
@@ -235,6 +238,9 @@ impl OverlaySession {
 
 	pub(super) fn maybe_tick_live_sampling(&mut self) {
 		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
+		if self.frozen_display_handoff_pending() {
 			return;
 		}
 		if self.pending_click_hit_test_request_id.is_some() {

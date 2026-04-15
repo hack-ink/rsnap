@@ -1111,9 +1111,7 @@ impl OverlaySession {
 	}
 
 	fn frozen_capture_redraw_pending(&self) -> bool {
-		matches!(self.state.mode, OverlayMode::Frozen)
-			&& !self.frozen_display_ready()
-			&& self.frozen_capture_export_pending()
+		!self.frozen_display_ready() && self.frozen_capture_export_pending()
 	}
 
 	fn frozen_capture_monitor(&self) -> Option<MonitorRect> {
@@ -1201,6 +1199,24 @@ impl OverlaySession {
 	) {
 		self.frozen_capture_session_state =
 			FrozenCaptureSessionState::DisplayPending { monitor, worker_state, window_target };
+	}
+
+	fn frozen_display_handoff_pending(&self) -> bool {
+		matches!(
+			self.frozen_capture_session_state,
+			FrozenCaptureSessionState::DisplayPending { .. }
+		) && !matches!(self.state.mode, OverlayMode::Frozen)
+	}
+
+	fn commit_first_frozen_display_handoff(&mut self, monitor: MonitorRect) {
+		if matches!(self.state.mode, OverlayMode::Frozen) {
+			return;
+		}
+
+		self.state.begin_freeze(monitor);
+
+		self.state.drag_rect = None;
+		self.state.hovered_window_rect = None;
 	}
 
 	fn promote_frozen_capture_display_ready(&mut self, monitor: MonitorRect) {
@@ -1307,10 +1323,7 @@ impl OverlaySession {
 	}
 
 	fn pending_freeze_capture_matches(&self, monitor: MonitorRect) -> bool {
-		self.frozen_capture_monitor() == Some(monitor)
-			&& matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.state.monitor == Some(monitor)
-			&& self.frozen_capture_dispatch_pending()
+		self.frozen_capture_monitor() == Some(monitor) && self.frozen_capture_dispatch_pending()
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1660,6 +1673,7 @@ impl OverlaySession {
 		image: RgbaImage,
 		cursor: Option<GlobalPoint>,
 	) {
+		self.commit_first_frozen_display_handoff(monitor);
 		self.state.commit_frozen_display_image(monitor, image);
 		self.promote_frozen_capture_display_ready(monitor);
 
@@ -1844,13 +1858,10 @@ impl OverlaySession {
 
 		self.set_alt_loupe_window_visible(None, false);
 		self.state.clear_error();
-		self.state.begin_freeze(monitor);
 		self.begin_frozen_transition_timing(monitor, capture_rect, window_target);
 
 		self.state.frozen_capture_rect = Some(capture_rect);
 		self.state.frozen_mosaic_preview_rect = None;
-		self.state.drag_rect = None;
-		self.state.hovered_window_rect = None;
 
 		self.reset_frozen_annotation_state();
 
@@ -1903,6 +1914,7 @@ impl OverlaySession {
 		{
 			self.state.live_bg_monitor = None;
 
+			self.commit_first_frozen_display_handoff(monitor);
 			self.state.commit_frozen_final_image(monitor, image);
 			self.note_frozen_transition_preview_committed(monitor, "cached_live_background", None);
 			self.promote_frozen_capture_display_ready(monitor);
@@ -2073,10 +2085,7 @@ impl OverlaySession {
 		window_image: Option<RgbaImage>,
 		captured_window_id: Option<u32>,
 	) {
-		if matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.state.monitor == Some(monitor)
-			&& self.frozen_capture_export_pending()
-		{
+		if self.frozen_capture_monitor() == Some(monitor) && self.frozen_capture_export_pending() {
 			let window_capture_target = self.frozen_capture_window_target();
 			let had_display_image = self.frozen_display_ready();
 			let frozen_preview_image = image;
@@ -2104,6 +2113,7 @@ impl OverlaySession {
 			);
 
 			if !had_display_image {
+				self.commit_first_frozen_display_handoff(monitor);
 				self.state.commit_frozen_display_image(monitor, frozen_preview_image.clone());
 				self.promote_frozen_capture_display_ready(monitor);
 				self.note_frozen_transition_preview_committed(
@@ -2928,6 +2938,9 @@ impl OverlaySession {
 			if scroll_capture_active { None } else { self.active_frozen_arrow_preview() };
 		let visible_frozen_spotlight_preview_rect =
 			if scroll_capture_active { None } else { self.frozen_spotlight_preview_rect };
+		let pending_frozen_display_handoff = self.frozen_display_handoff_pending();
+		let pending_frozen_display_handoff_monitor =
+			self.frozen_capture_monitor().filter(|_| pending_frozen_display_handoff);
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
 		{
@@ -2955,6 +2968,8 @@ impl OverlaySession {
 				self.config.selection_flow_enabled,
 				self.config.selection_flow_stroke_width_px,
 				!scroll_capture_active,
+				pending_frozen_display_handoff,
+				pending_frozen_display_handoff_monitor,
 				scroll_capture_active,
 				frozen_selection_resize_handles_enabled,
 				self.frozen_capture_source,

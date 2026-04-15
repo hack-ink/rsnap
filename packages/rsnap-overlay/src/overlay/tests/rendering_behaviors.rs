@@ -82,6 +82,25 @@ fn pending_freeze_capture_dispatches_even_with_seeded_preview() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn pending_freeze_capture_dispatches_when_previous_frozen_monitor_differs() {
+	let previous_monitor = tests::test_monitor();
+	let next_monitor = MonitorRect {
+		id: previous_monitor.id + 1,
+		origin: GlobalPoint::new(previous_monitor.width as i32, 0),
+		..previous_monitor
+	};
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(previous_monitor);
+
+	tests::finish_frozen_display_state(&mut session, previous_monitor, tests::test_frozen_image());
+	tests::set_session_pending_freeze_capture(&mut session, Some(next_monitor));
+
+	assert!(session.should_dispatch_pending_freeze_capture(next_monitor));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn snapshot_background_capture_finishes_frozen_transition_immediately() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(120, 160, 320, 240);
@@ -1653,6 +1672,8 @@ fn render_frozen_toolbar_ui_keeps_runtime_drag_when_pointer_snapshot_is_missing(
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
 
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
 	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
 	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
 
@@ -1701,6 +1722,8 @@ fn frozen_base_toolbar_hud_pill_uses_half_height_corner_radius() {
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
 
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
 	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
 	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
 
@@ -1743,6 +1766,8 @@ fn frozen_annotation_toolbar_hud_pill_keeps_standard_corner_radius() {
 	let mut session = OverlaySession::new();
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
 
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
@@ -1791,6 +1816,8 @@ fn frozen_annotation_toolbar_hud_pill_covers_full_toolbar_bounds() {
 	let mut session = OverlaySession::new();
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
 
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
@@ -2865,6 +2892,8 @@ fn render_frozen_toolbar_ui_waits_for_readiness_before_first_visible_frame() {
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
 
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
 	assert!(session.toolbar_state.visible);
 	assert_eq!(session.toolbar_state.layout_last_screen_size_points, None);
 	assert_eq!(session.toolbar_state.layout_stable_frames, 0);
@@ -3375,6 +3404,145 @@ fn render_live_capture_affordances_skips_fullscreen_flow_without_hover_or_drag()
 		&mut selection_dashed_border_cache,
 	));
 	assert!(selection_flow_geometry_cache.is_empty());
+	assert_eq!(selection_dashed_border_cache.key, None);
+}
+
+#[test]
+fn pending_frozen_display_handoff_affordance_keeps_window_scrim_visible() {
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("pending-window-handoff"));
+	let painter = ctx.layer_painter(layer);
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+	state.mode = OverlayMode::Live;
+	state.monitor = Some(monitor);
+	state.frozen_capture_rect = Some(RectPoints::new(100, 120, 240, 320));
+
+	assert!(WindowRenderer::render_pending_frozen_display_handoff_affordance(
+		&ctx,
+		&painter,
+		&state,
+		monitor,
+		Some(monitor),
+		screen_rect,
+		HudTheme::Light,
+		true,
+		1.0,
+		FrozenCaptureSource::Window,
+		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
+	));
+	assert_eq!(selection_dashed_border_cache.key, None);
+}
+
+#[test]
+fn pending_frozen_display_handoff_affordance_keeps_drag_border_visible() {
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("pending-drag-handoff"));
+	let painter = ctx.layer_painter(layer);
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+	state.mode = OverlayMode::Live;
+	state.monitor = Some(monitor);
+	state.frozen_capture_rect = Some(RectPoints::new(100, 120, 240, 320));
+
+	assert!(WindowRenderer::render_pending_frozen_display_handoff_affordance(
+		&ctx,
+		&painter,
+		&state,
+		monitor,
+		Some(monitor),
+		screen_rect,
+		HudTheme::Light,
+		false,
+		1.0,
+		FrozenCaptureSource::DragRegion,
+		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
+	));
+	assert!(selection_dashed_border_cache.key.is_some());
+}
+
+#[test]
+fn pending_frozen_display_handoff_affordance_skips_non_target_monitor() {
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("pending-off-monitor-handoff"));
+	let painter = ctx.layer_painter(layer);
+	let target_monitor = tests::test_monitor();
+	let other_monitor = MonitorRect {
+		id: target_monitor.id + 1,
+		origin: GlobalPoint::new(target_monitor.width as i32, 0),
+		..target_monitor
+	};
+	let screen_rect = Rect::from_min_size(
+		Pos2::new(other_monitor.origin.x as f32, other_monitor.origin.y as f32),
+		Vec2::new(other_monitor.width as f32, other_monitor.height as f32),
+	);
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+	state.mode = OverlayMode::Live;
+	state.monitor = Some(target_monitor);
+	state.frozen_capture_rect = Some(RectPoints::new(100, 120, 240, 320));
+
+	assert!(!WindowRenderer::render_pending_frozen_display_handoff_affordance(
+		&ctx,
+		&painter,
+		&state,
+		other_monitor,
+		Some(target_monitor),
+		screen_rect,
+		HudTheme::Light,
+		true,
+		1.0,
+		FrozenCaptureSource::Window,
+		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
+	));
+	assert_eq!(selection_dashed_border_cache.key, None);
+}
+
+#[test]
+fn pending_frozen_display_handoff_affordance_uses_pending_monitor_when_state_monitor_is_unset() {
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("pending-unset-monitor-handoff"));
+	let painter = ctx.layer_painter(layer);
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+	state.mode = OverlayMode::Live;
+	state.monitor = None;
+	state.frozen_capture_rect = Some(RectPoints::new(100, 120, 240, 320));
+
+	assert!(WindowRenderer::render_pending_frozen_display_handoff_affordance(
+		&ctx,
+		&painter,
+		&state,
+		monitor,
+		Some(monitor),
+		screen_rect,
+		HudTheme::Light,
+		true,
+		1.0,
+		FrozenCaptureSource::Window,
+		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
+	));
 	assert_eq!(selection_dashed_border_cache.key, None);
 }
 
