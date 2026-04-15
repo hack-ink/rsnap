@@ -5,6 +5,8 @@ use std::ptr;
 use image::{Rgba, RgbaImage};
 
 #[cfg(target_os = "macos")]
+use crate::overlay::OverlayMode;
+#[cfg(target_os = "macos")]
 use crate::overlay::RectPoints;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerRequestSendError;
@@ -22,6 +24,8 @@ use crate::overlay::tests::{
 use crate::overlay::worker_runtime::FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT;
 #[cfg(target_os = "macos")]
 use crate::overlay::{WindowCaptureAlphaMode, WindowFreezeCaptureTarget};
+#[cfg(target_os = "macos")]
+use crate::state::MonitorRectPoints;
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -232,11 +236,63 @@ fn armed_freeze_capture_without_worker_restores_visibility_and_surfaces_error() 
 
 #[cfg(target_os = "macos")]
 #[test]
+fn pending_frozen_handoff_keeps_live_mode_and_hover_until_first_display_image_arrives() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let capture_rect = RectPoints::new(100, 140, 320, 240);
+	let hover_rect = MonitorRectPoints { monitor_id: monitor.id, rect: capture_rect };
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.begin_frozen_capture_from_click(
+		monitor,
+		crate::overlay::LiveClickCaptureTarget {
+			capture_rect: Some(capture_rect),
+			window_target: Some(WindowFreezeCaptureTarget {
+				monitor,
+				window_id: 41,
+				rect: capture_rect,
+			}),
+		},
+		cursor,
+	);
+
+	assert!(matches!(session.state.mode, OverlayMode::Live));
+	assert_eq!(session.state.hovered_window_rect, Some(hover_rect));
+	assert!(session.state.frozen_display_image.is_none());
+	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
+
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		1,
+		1,
+		Instant::now(),
+	);
+
+	let _ = session.about_to_wait();
+
+	assert!(matches!(session.state.mode, OverlayMode::Frozen));
+	assert!(session.state.frozen_display_image.is_some());
+	assert!(tests::session_export_authority_ready(&session));
+	assert!(session.state.hovered_window_rect.is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn begin_frozen_capture_background_snapshot_finishes_without_hiding_overlay_windows_on_macos() {
 	let monitor = tests::test_monitor();
 	let cursor = GlobalPoint::new(120, 180);
 	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
 	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
 		monitor,
 		1,
@@ -272,6 +328,11 @@ fn live_snapshot_followup_can_finish_background_capture_before_timeout() {
 		Some(cursor),
 	);
 	session.live_sample_stream.as_ref().unwrap().debug_set_active_stream_generation(monitor.id, 2);
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
 	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
 		monitor,
 		51,
@@ -298,6 +359,11 @@ fn window_matte_capture_seeds_preview_and_arms_worker_without_hiding_overlay_win
 
 	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteDark;
 
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
 	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
 		monitor,
 		1,
@@ -332,6 +398,11 @@ fn window_matte_capture_dispatches_worker_without_hiding_overlay_windows() {
 
 	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteDark;
 
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
 	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
 		monitor,
 		1,
@@ -365,6 +436,11 @@ fn window_matte_capture_miss_keeps_preview_and_surfaces_export_error() {
 
 	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteDark;
 
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
 	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
 		monitor,
 		1,
@@ -418,6 +494,11 @@ fn stale_window_matte_response_after_export_failure_is_ignored() {
 
 	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteDark;
 
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
 	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
 		monitor,
 		1,
@@ -472,7 +553,7 @@ fn stale_window_matte_response_after_export_failure_is_ignored() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn window_matte_capture_without_live_preview_aborts_after_timeout_without_hiding() {
+fn window_matte_capture_without_live_preview_escalates_to_hidden_fallback_after_timeout() {
 	let monitor = tests::test_monitor();
 	let cursor = GlobalPoint::new(120, 180);
 	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
@@ -508,13 +589,9 @@ fn window_matte_capture_without_live_preview_aborts_after_timeout_without_hiding
 
 	assert_eq!(tests::session_pending_freeze_capture(&session), None);
 	assert!(!tests::session_frozen_capture_armed(&session));
-	assert_eq!(tests::session_inflight_freeze_capture(&session), None);
-	assert!(!session.capture_windows_hidden);
-	assert!(!session.frozen_capture_redraw_pending());
-	assert_eq!(
-		session.state.error_message.as_deref(),
-		Some("Unable to capture a clean preview. Please try again.")
-	);
+	assert_eq!(tests::session_inflight_freeze_capture(&session), Some(monitor));
+	assert!(session.capture_windows_hidden);
+	assert!(session.state.error_message.is_none());
 }
 
 #[cfg(target_os = "macos")]
@@ -537,6 +614,11 @@ fn background_capture_without_initial_snapshot_waits_for_live_stream_followup_wi
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_display_image.is_none());
 
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
 	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
 		monitor,
 		2,
@@ -555,7 +637,35 @@ fn background_capture_without_initial_snapshot_waits_for_live_stream_followup_wi
 
 #[cfg(target_os = "macos")]
 #[test]
-fn background_capture_without_live_snapshot_aborts_after_timeout_without_hiding() {
+fn incomplete_self_capture_filter_blocks_display_first_snapshot_handoff() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		None,
+		Some(cursor),
+	);
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		2,
+		1,
+		Instant::now(),
+	);
+
+	let _ = session.about_to_wait();
+
+	assert!(matches!(session.state.mode, OverlayMode::Live));
+	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
+	assert!(session.state.frozen_display_image.is_none());
+	assert!(session.state.frozen_export_image.is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn background_capture_without_live_snapshot_escalates_to_hidden_fallback_after_timeout() {
 	let monitor = tests::test_monitor();
 	let cursor = GlobalPoint::new(120, 180);
 	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
@@ -585,12 +695,9 @@ fn background_capture_without_live_snapshot_aborts_after_timeout_without_hiding(
 
 	assert_eq!(tests::session_pending_freeze_capture(&session), None);
 	assert!(!tests::session_frozen_capture_armed(&session));
-	assert_eq!(tests::session_inflight_freeze_capture(&session), None);
-	assert!(!session.capture_windows_hidden);
-	assert_eq!(
-		session.state.error_message.as_deref(),
-		Some("Unable to capture a clean preview. Please try again.")
-	);
+	assert_eq!(tests::session_inflight_freeze_capture(&session), Some(monitor));
+	assert!(session.capture_windows_hidden);
+	assert!(session.state.error_message.is_none());
 }
 
 #[cfg(target_os = "macos")]

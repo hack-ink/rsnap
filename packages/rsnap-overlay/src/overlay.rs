@@ -1111,9 +1111,7 @@ impl OverlaySession {
 	}
 
 	fn frozen_capture_redraw_pending(&self) -> bool {
-		matches!(self.state.mode, OverlayMode::Frozen)
-			&& !self.frozen_display_ready()
-			&& self.frozen_capture_export_pending()
+		!self.frozen_display_ready() && self.frozen_capture_export_pending()
 	}
 
 	fn frozen_capture_monitor(&self) -> Option<MonitorRect> {
@@ -1201,6 +1199,24 @@ impl OverlaySession {
 	) {
 		self.frozen_capture_session_state =
 			FrozenCaptureSessionState::DisplayPending { monitor, worker_state, window_target };
+	}
+
+	fn frozen_display_handoff_pending(&self) -> bool {
+		matches!(
+			self.frozen_capture_session_state,
+			FrozenCaptureSessionState::DisplayPending { .. }
+		) && !matches!(self.state.mode, OverlayMode::Frozen)
+	}
+
+	fn commit_first_frozen_display_handoff(&mut self, monitor: MonitorRect) {
+		if matches!(self.state.mode, OverlayMode::Frozen) {
+			return;
+		}
+
+		self.state.begin_freeze(monitor);
+
+		self.state.drag_rect = None;
+		self.state.hovered_window_rect = None;
 	}
 
 	fn promote_frozen_capture_display_ready(&mut self, monitor: MonitorRect) {
@@ -1308,8 +1324,7 @@ impl OverlaySession {
 
 	fn pending_freeze_capture_matches(&self, monitor: MonitorRect) -> bool {
 		self.frozen_capture_monitor() == Some(monitor)
-			&& matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.state.monitor == Some(monitor)
+			&& self.state.monitor.is_none_or(|active_monitor| active_monitor == monitor)
 			&& self.frozen_capture_dispatch_pending()
 	}
 
@@ -1660,6 +1675,7 @@ impl OverlaySession {
 		image: RgbaImage,
 		cursor: Option<GlobalPoint>,
 	) {
+		self.commit_first_frozen_display_handoff(monitor);
 		self.state.commit_frozen_display_image(monitor, image);
 		self.promote_frozen_capture_display_ready(monitor);
 
@@ -1844,13 +1860,10 @@ impl OverlaySession {
 
 		self.set_alt_loupe_window_visible(None, false);
 		self.state.clear_error();
-		self.state.begin_freeze(monitor);
 		self.begin_frozen_transition_timing(monitor, capture_rect, window_target);
 
 		self.state.frozen_capture_rect = Some(capture_rect);
 		self.state.frozen_mosaic_preview_rect = None;
-		self.state.drag_rect = None;
-		self.state.hovered_window_rect = None;
 
 		self.reset_frozen_annotation_state();
 
@@ -2104,6 +2117,7 @@ impl OverlaySession {
 			);
 
 			if !had_display_image {
+				self.commit_first_frozen_display_handoff(monitor);
 				self.state.commit_frozen_display_image(monitor, frozen_preview_image.clone());
 				self.promote_frozen_capture_display_ready(monitor);
 				self.note_frozen_transition_preview_committed(

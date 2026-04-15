@@ -875,6 +875,10 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		global: GlobalPoint,
 	) {
+		if self.frozen_display_handoff_pending() {
+			return;
+		}
+
 		self.update_cursor_state(monitor, global);
 		self.update_hud_window_position(monitor, global);
 
@@ -897,6 +901,9 @@ impl OverlaySession {
 
 	fn request_cursor_move_samples(&mut self, monitor: MonitorRect, global: GlobalPoint) {
 		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
+		if self.frozen_display_handoff_pending() {
 			return;
 		}
 		if self.pending_click_hit_test_request_id.is_some() {
@@ -947,6 +954,9 @@ impl OverlaySession {
 			return self.handle_frozen_left_mouse_input(monitor, state);
 		}
 		if !matches!(self.state.mode, OverlayMode::Live) {
+			return OverlayControl::Continue;
+		}
+		if self.frozen_display_handoff_pending() {
 			return OverlayControl::Continue;
 		}
 
