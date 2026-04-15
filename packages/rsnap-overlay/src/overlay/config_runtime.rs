@@ -12,7 +12,10 @@ use crate::overlay::{
 	WindowRenderer,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{MacLiveFrameStream, MacOSHudWindowConfigState, SLOW_OP_WARN_HUD_CONFIG};
+use crate::overlay::{
+	FrozenCaptureWorkerState, MacLiveFrameStream, MacOSHudWindowConfigState,
+	SLOW_OP_WARN_HUD_CONFIG,
+};
 
 impl OverlaySession {
 	/// Applies updated runtime configuration to an existing session.
@@ -154,7 +157,7 @@ impl OverlaySession {
 
 	#[cfg(target_os = "macos")]
 	pub(super) fn has_inflight_worker_response_state(&self) -> bool {
-		self.inflight_freeze_capture.is_some()
+		self.frozen_capture_worker_state() == Some(FrozenCaptureWorkerState::Inflight)
 			|| self.pending_click_hit_test_request_id.is_some()
 			|| self.window_list_refresh_inflight
 			|| self.png_encode_inflight
