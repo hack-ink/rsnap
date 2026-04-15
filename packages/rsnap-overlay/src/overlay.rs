@@ -1172,6 +1172,24 @@ impl OverlaySession {
 		)
 	}
 
+	fn frozen_capture_dispatch_pending(&self) -> bool {
+		matches!(
+			self.frozen_capture_session_state,
+			FrozenCaptureSessionState::DisplayPending {
+				worker_state: FrozenCaptureWorkerState::Idle | FrozenCaptureWorkerState::Armed,
+				..
+			}
+				| FrozenCaptureSessionState::DisplayReady {
+					export:
+						FrozenExportSessionState::Pending {
+							worker_state: FrozenCaptureWorkerState::Idle | FrozenCaptureWorkerState::Armed,
+							..
+						},
+					..
+				}
+		)
+	}
+
 	fn frozen_capture_worker_armed(&self) -> bool {
 		self.frozen_capture_worker_state() == Some(FrozenCaptureWorkerState::Armed)
 	}
@@ -1297,7 +1315,7 @@ impl OverlaySession {
 		self.frozen_capture_monitor() == Some(monitor)
 			&& matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.state.monitor == Some(monitor)
-			&& self.frozen_capture_export_pending()
+			&& self.frozen_capture_dispatch_pending()
 	}
 
 	#[cfg(target_os = "macos")]
