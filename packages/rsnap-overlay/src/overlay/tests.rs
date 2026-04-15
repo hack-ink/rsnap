@@ -3717,6 +3717,26 @@ fn toolbar_window_stays_visible_while_final_capture_is_pending() {
 	assert!(!session.should_hide_toolbar_window(monitor));
 }
 
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn handle_capture_redraw_does_not_rearm_inflight_freeze_capture() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	set_session_inflight_freeze_capture(&mut session, Some(monitor));
+
+	session.capture_windows_hidden = true;
+
+	let _ = session.handle_capture_and_toolbar_redraw_post(monitor, false);
+
+	assert_eq!(session_inflight_freeze_capture(&session), Some(monitor));
+	assert!(session_pending_freeze_capture(&session).is_none());
+	assert!(!session_frozen_capture_armed(&session));
+	assert!(session.capture_windows_hidden);
+}
+
 #[test]
 fn tinted_hud_body_fill_amount_zero_keeps_base_fill() {
 	for theme in [HudTheme::Dark, HudTheme::Light] {
