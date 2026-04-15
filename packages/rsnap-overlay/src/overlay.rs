@@ -2269,7 +2269,6 @@ impl OverlaySession {
 		}
 	}
 
-	#[cfg(target_os = "macos")]
 	fn reject_dirty_window_export_authority(
 		&mut self,
 		monitor: MonitorRect,
@@ -2309,7 +2308,6 @@ impl OverlaySession {
 		true
 	}
 
-	#[cfg(target_os = "macos")]
 	fn apply_window_capture_export_authority(
 		&mut self,
 		monitor: MonitorRect,
