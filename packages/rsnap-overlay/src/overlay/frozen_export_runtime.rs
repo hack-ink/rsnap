@@ -24,26 +24,26 @@ impl OverlaySession {
 			}
 		}
 
-		let frozen_image = self.state.frozen_export_image.as_ref()?;
+		let export_image = self.state.frozen_export_image.as_ref()?;
 		let Some(monitor) = self.state.monitor else {
-			return Some(frozen_image.clone());
+			return Some(export_image.clone());
 		};
 		let capture_rect = self
 			.state
 			.frozen_capture_rect
 			.unwrap_or_else(|| RectPoints::new(0, 0, monitor.width, monitor.height));
 		let capture_rect = monitor.local_rect_to_pixels(capture_rect);
-		let x = capture_rect.x.min(frozen_image.width());
-		let y = capture_rect.y.min(frozen_image.height());
-		let max_width = frozen_image.width().saturating_sub(x);
-		let max_height = frozen_image.height().saturating_sub(y);
+		let x = capture_rect.x.min(export_image.width());
+		let y = capture_rect.y.min(export_image.height());
+		let max_width = export_image.width().saturating_sub(x);
+		let max_height = export_image.height().saturating_sub(y);
 		let width = capture_rect.width.min(max_width);
 		let height = capture_rect.height.min(max_height);
 
 		if width == 0 || height == 0 {
 			None
 		} else {
-			Some(imageops::crop_imm(frozen_image, x, y, width, height).to_image())
+			Some(imageops::crop_imm(export_image, x, y, width, height).to_image())
 		}
 	}
 
