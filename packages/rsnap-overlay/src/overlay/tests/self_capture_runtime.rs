@@ -702,6 +702,48 @@ fn background_capture_without_live_snapshot_escalates_to_hidden_fallback_after_t
 
 #[cfg(target_os = "macos")]
 #[test]
+fn hidden_fallback_capture_response_commits_frozen_images_while_mode_is_still_live() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		None,
+		Some(cursor),
+	);
+
+	session.frozen_transition_started_at = Some(
+		Instant::now()
+			- crate::overlay::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT
+			- Duration::from_millis(1),
+	);
+
+	let _ = session.about_to_wait();
+
+	assert!(matches!(session.state.mode, OverlayMode::Live));
+	assert_eq!(tests::session_inflight_freeze_capture(&session), Some(monitor));
+	assert!(session.capture_windows_hidden);
+
+	let image = tests::test_frozen_image();
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::CapturedFreeze {
+		monitor,
+		image: image.clone(),
+		window_image: None,
+		captured_window_id: None,
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert!(matches!(session.state.mode, OverlayMode::Frozen));
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&image));
+	assert_eq!(session.state.frozen_export_image.as_ref(), Some(&image));
+	assert!(tests::session_export_authority_ready(&session));
+	assert!(!session.capture_windows_hidden);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn authoritative_freeze_capture_hides_overlay_windows_on_macos() {
 	let session = OverlaySession::new();
 
