@@ -461,6 +461,7 @@ impl OverlaySession {
 		}
 
 		self.toolbar_window_visible = false;
+		self.toolbar_window_drawn_once = false;
 		#[cfg(target_os = "macos")]
 		{
 			self.toolbar_window_cursor_hittest_enabled = false;
@@ -554,6 +555,8 @@ impl OverlaySession {
 			self.toolbar_state.floating_position = previous_floating_position;
 
 			draw_result?;
+
+			self.toolbar_window_drawn_once = true;
 
 			if toolbar_became_visible {
 				self.note_frozen_transition_toolbar_visible(monitor);

@@ -641,6 +641,7 @@ pub struct OverlaySession {
 	frozen_mosaic_redo_stack: Vec<FrozenMosaicEdit>,
 	hud_window_visible: bool,
 	toolbar_window_visible: bool,
+	toolbar_window_drawn_once: bool,
 	skip_toolbar_focus_on_next_show: bool,
 	#[cfg(target_os = "macos")]
 	preserve_frontmost_on_next_toolbar_show: bool,
@@ -855,7 +856,7 @@ impl OverlaySession {
 			frozen_mosaic_drag: FrozenMosaicDragState::default(), frozen_spotlight_drag: FrozenSpotlightDragState::default(),
 			frozen_spotlight_preview_rect: None, frozen_edit_undo_stack: Vec::new(),
 			frozen_edit_redo_stack: Vec::new(), frozen_mosaic_undo_stack: Vec::new(), frozen_mosaic_redo_stack: Vec::new(),
-			hud_window_visible: false, toolbar_window_visible: false, skip_toolbar_focus_on_next_show: false,
+			hud_window_visible: false, toolbar_window_visible: false, toolbar_window_drawn_once: false, skip_toolbar_focus_on_next_show: false,
 			#[cfg(target_os = "macos")]
 			preserve_frontmost_on_next_toolbar_show: false,
 			toolbar_window_warmup_redraws_remaining: 0, loupe_window_visible: false, loupe_window_warmup_redraws_remaining: 0,
@@ -2860,7 +2861,7 @@ impl OverlaySession {
 				self.request_redraw_for_monitor(overlay_monitor);
 			}
 
-			ready
+			ready && self.toolbar_window_drawn_once
 		}
 
 		#[cfg(not(target_os = "macos"))]
@@ -3283,6 +3284,7 @@ impl OverlaySession {
 		self.pending_toolbar_outer_pos = None;
 		self.hud_window_visible = false;
 		self.toolbar_window_visible = false;
+		self.toolbar_window_drawn_once = false;
 		#[cfg(target_os = "macos")]
 		{
 			self.toolbar_window_cursor_hittest_enabled = false;
