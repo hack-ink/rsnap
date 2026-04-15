@@ -418,6 +418,9 @@ impl WindowRenderer {
 		if !matches!(state.mode, OverlayMode::Live) {
 			return false;
 		}
+		if state.monitor != Some(monitor) {
+			return false;
+		}
 
 		let Some(capture_rect) = state.frozen_capture_rect else {
 			return false;

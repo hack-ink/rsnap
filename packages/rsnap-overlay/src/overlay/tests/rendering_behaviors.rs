@@ -3401,6 +3401,7 @@ fn pending_frozen_display_handoff_affordance_keeps_window_scrim_visible() {
 	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
 
 	state.mode = OverlayMode::Live;
+	state.monitor = Some(monitor);
 	state.frozen_capture_rect = Some(RectPoints::new(100, 120, 240, 320));
 
 	assert!(WindowRenderer::render_pending_frozen_display_handoff_affordance(
@@ -3432,6 +3433,7 @@ fn pending_frozen_display_handoff_affordance_keeps_drag_border_visible() {
 	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
 
 	state.mode = OverlayMode::Live;
+	state.monitor = Some(monitor);
 	state.frozen_capture_rect = Some(RectPoints::new(100, 120, 240, 320));
 
 	assert!(WindowRenderer::render_pending_frozen_display_handoff_affordance(
@@ -3448,6 +3450,45 @@ fn pending_frozen_display_handoff_affordance_keeps_drag_border_visible() {
 		&mut selection_dashed_border_cache,
 	));
 	assert!(selection_dashed_border_cache.key.is_some());
+}
+
+#[test]
+fn pending_frozen_display_handoff_affordance_skips_non_target_monitor() {
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("pending-off-monitor-handoff"));
+	let painter = ctx.layer_painter(layer);
+	let target_monitor = tests::test_monitor();
+	let other_monitor = MonitorRect {
+		id: target_monitor.id + 1,
+		origin: GlobalPoint::new(target_monitor.width as i32, 0),
+		..target_monitor
+	};
+	let screen_rect = Rect::from_min_size(
+		Pos2::new(other_monitor.origin.x as f32, other_monitor.origin.y as f32),
+		Vec2::new(other_monitor.width as f32, other_monitor.height as f32),
+	);
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+	state.mode = OverlayMode::Live;
+	state.monitor = Some(target_monitor);
+	state.frozen_capture_rect = Some(RectPoints::new(100, 120, 240, 320));
+
+	assert!(!WindowRenderer::render_pending_frozen_display_handoff_affordance(
+		&ctx,
+		&painter,
+		&state,
+		other_monitor,
+		screen_rect,
+		HudTheme::Light,
+		true,
+		1.0,
+		FrozenCaptureSource::Window,
+		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
+	));
+	assert_eq!(selection_dashed_border_cache.key, None);
 }
 
 #[test]
