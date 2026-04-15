@@ -115,10 +115,10 @@ fn snapshot_background_capture_finishes_frozen_transition_immediately() {
 		Some(snapshot),
 		"live_stream_snapshot",
 	));
-	assert!(tests::session_frozen_export_ready_state(&session));
+	assert!(tests::session_export_authority_ready(&session));
 	assert!(tests::session_pending_freeze_capture(&session).is_none());
 	assert!(tests::session_pending_window_freeze_capture(&session).is_none());
-	assert_eq!(session.state.frozen_image.as_ref(), Some(&frozen_image));
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&frozen_image));
 	assert!(session.toolbar_state.final_capture_ready);
 }
 
@@ -153,10 +153,10 @@ fn snapshot_matte_window_capture_keeps_authoritative_handoff_pending() {
 		Some(snapshot),
 		"live_stream_snapshot",
 	));
-	assert!(!tests::session_frozen_export_ready_state(&session));
+	assert!(!tests::session_export_authority_ready(&session));
 	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
 	assert_eq!(tests::session_pending_window_freeze_capture(&session), Some(window_target));
-	assert!(session.state.frozen_image.is_none());
+	assert!(session.state.frozen_display_image.is_none());
 }
 
 #[cfg(target_os = "macos")]
@@ -190,10 +190,10 @@ fn stale_snapshot_does_not_finish_frozen_transition_immediately() {
 		Some(snapshot),
 		"live_stream_snapshot",
 	));
-	assert!(!tests::session_frozen_export_ready_state(&session));
+	assert!(!tests::session_export_authority_ready(&session));
 	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
 	assert_eq!(tests::session_pending_window_freeze_capture(&session), Some(window_target));
-	assert!(session.state.frozen_image.is_none());
+	assert!(session.state.frozen_display_image.is_none());
 }
 
 #[cfg(target_os = "macos")]
@@ -222,9 +222,9 @@ fn snapshot_seeded_preview_keeps_authoritative_handoff_pending() {
 		Some(snapshot),
 		"live_stream_snapshot_seeded_unverified",
 	));
-	assert!(!tests::session_frozen_export_ready_state(&session));
+	assert!(!tests::session_export_authority_ready(&session));
 	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
-	assert_eq!(session.state.frozen_image.as_ref(), Some(&frozen_image));
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&frozen_image));
 	assert!(!session.toolbar_state.final_capture_ready);
 }
 
@@ -256,7 +256,7 @@ fn snapshot_seeded_preview_makes_toolbar_eligible_before_final_capture_ready() {
 		"live_stream_snapshot_seeded_unverified",
 	));
 	assert!(session.frozen_preview_visible());
-	assert!(!tests::session_frozen_export_ready_state(&session));
+	assert!(!tests::session_export_authority_ready(&session));
 	assert!(session.startup_aux_window_creation_pending);
 }
 
@@ -288,8 +288,8 @@ fn stale_snapshot_does_not_seed_frozen_preview() {
 		"live_stream_snapshot_seeded_unverified",
 	));
 	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
-	assert!(!tests::session_frozen_export_ready_state(&session));
-	assert!(session.state.frozen_image.is_none());
+	assert!(!tests::session_export_authority_ready(&session));
+	assert!(session.state.frozen_display_image.is_none());
 	assert!(!session.toolbar_state.final_capture_ready);
 }
 
@@ -317,7 +317,7 @@ fn frozen_final_capture_ready_requires_no_pending_or_inflight_capture() {
 	assert!(!session.frozen_final_capture_ready());
 
 	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
-	tests::set_session_frozen_export_ready_state(&mut session, true);
+	tests::promote_session_export_authority_ready(&mut session);
 
 	assert!(session.frozen_final_capture_ready());
 
@@ -478,9 +478,9 @@ fn frozen_mosaic_drag_waits_for_final_capture_ready() {
 	assert!(!session.perform_frozen_undo());
 	assert!(!session.perform_frozen_redo());
 	assert_eq!(session.state.frozen_mosaic_preview_rect, None);
-	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&original));
 
-	tests::set_session_frozen_export_ready_state(&mut session, true);
+	tests::promote_session_export_authority_ready(&mut session);
 
 	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
 }
@@ -497,7 +497,7 @@ fn frozen_mosaic_drag_updates_preview_rect_inside_capture_bounds() {
 	session.state.frozen_capture_rect = Some(RectPoints::new(2, 2, 4, 4));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
 
-	tests::set_session_frozen_export_ready_state(&mut session, true);
+	tests::promote_session_export_authority_ready(&mut session);
 
 	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(3, 3)));
 	assert!(session.update_frozen_mosaic_drag_rect(GlobalPoint::new(30, 30)));
@@ -518,14 +518,17 @@ fn frozen_mosaic_commit_round_trips_through_undo_and_redo() {
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
 
-	tests::set_session_frozen_export_ready_state(&mut session, true);
+	tests::promote_session_export_authority_ready(&mut session);
 
 	assert!(session.begin_frozen_mosaic_drag(GlobalPoint::new(1, 1)));
 	assert!(session.update_frozen_mosaic_drag_rect(GlobalPoint::new(4, 4)));
 	assert!(session.commit_frozen_mosaic_drag());
 
-	let edited =
-		session.state.frozen_image.clone().expect("mosaic commit should retain the frozen image");
+	let edited = session
+		.state
+		.frozen_display_image
+		.clone()
+		.expect("mosaic commit should retain the frozen display image");
 
 	assert_eq!(edited.get_pixel(2, 2), &expected_fill);
 	assert_eq!(edited.get_pixel(4, 4), &expected_fill);
@@ -534,11 +537,11 @@ fn frozen_mosaic_commit_round_trips_through_undo_and_redo() {
 	assert!(session.toolbar_state.undo_available);
 	assert!(!session.toolbar_state.redo_available);
 	assert!(session.perform_frozen_undo());
-	assert_eq!(session.state.frozen_image.as_ref(), Some(&original));
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&original));
 	assert!(!session.toolbar_state.undo_available);
 	assert!(session.toolbar_state.redo_available);
 	assert!(session.perform_frozen_redo());
-	assert_eq!(session.state.frozen_image.as_ref(), Some(&edited));
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&edited));
 	assert!(session.toolbar_state.undo_available);
 	assert!(!session.toolbar_state.redo_available);
 }
@@ -1191,7 +1194,7 @@ fn cropped_frozen_capture_image_uses_moved_capture_rect() {
 
 	session.state.begin_freeze(monitor);
 
-	tests::finish_frozen_display_state(&mut session, monitor, image);
+	tests::finish_frozen_ready_state(&mut session, monitor, image);
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(8, 6, 40, 32));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
@@ -1222,7 +1225,7 @@ fn auto_center_frozen_capture_rect_recenters_detected_content() {
 
 	session.state.begin_freeze(monitor);
 
-	tests::finish_frozen_display_state(&mut session, monitor, image);
+	tests::finish_frozen_ready_state(&mut session, monitor, image);
 
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
@@ -1254,7 +1257,7 @@ fn auto_center_frozen_capture_rect_works_outside_pointer_mode() {
 
 	session.state.begin_freeze(monitor);
 
-	tests::finish_frozen_display_state(&mut session, monitor, image);
+	tests::finish_frozen_ready_state(&mut session, monitor, image);
 
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
@@ -1955,7 +1958,7 @@ fn frozen_mosaic_cursor_rects_preserve_crosshair_hover_and_drag() {
 	session.state.begin_freeze(monitor);
 
 	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
-	tests::set_session_frozen_export_ready_state(&mut session, true);
+	tests::promote_session_export_authority_ready(&mut session);
 
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
@@ -2175,7 +2178,7 @@ fn scroll_capture_and_export_wait_for_authoritative_frozen_capture() {
 	session.state.begin_freeze(monitor);
 
 	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
-	tests::set_session_frozen_export_ready_state(&mut session, true);
+	tests::promote_session_export_authority_ready(&mut session);
 
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
@@ -3477,7 +3480,7 @@ fn drag_region_toolbar_size_stays_stable_while_final_capture_readiness_changes()
 	assert!(pending_tools.contains(&FrozenToolbarTool::AutoCenter));
 	assert!(pending_tools.contains(&FrozenToolbarTool::Scroll));
 
-	tests::set_session_frozen_export_ready_state(&mut session, true);
+	tests::promote_session_export_authority_ready(&mut session);
 
 	session.sync_frozen_toolbar_state();
 
