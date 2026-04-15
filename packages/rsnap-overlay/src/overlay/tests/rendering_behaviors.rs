@@ -2910,8 +2910,66 @@ fn frozen_toolbar_badge_visibility_waits_for_first_toolbar_draw() {
 
 	session.toolbar_window_drawn_once = true;
 
+	assert!(!session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
+
+	session.toolbar_badge_slot_ready = true;
+
 	assert!(session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
 	assert!(session.frozen_size_badge_toolbar_reserved_rect(monitor, screen_rect, true).is_some());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_toolbar_badge_visibility_resets_for_new_frozen_transition() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(200, 180, 200, 300);
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut session = OverlaySession::new();
+
+	session.toolbar_window_drawn_once = true;
+
+	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	assert!(!session.toolbar_window_drawn_once);
+	assert!(!session.toolbar_badge_slot_ready);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
+	session.sync_frozen_toolbar_state();
+
+	assert!(session.maybe_recenter_frozen_toolbar_default_slot(monitor));
+	assert!(!session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
+	assert_eq!(session.toolbar_state.layout_stable_frames, 0);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_toolbar_badge_visibility_waits_for_overlay_frame_after_first_toolbar_draw() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(200, 180, 200, 300);
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut session = OverlaySession::new();
+
+	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
+	session.sync_frozen_toolbar_state();
+
+	assert!(session.maybe_recenter_frozen_toolbar_default_slot(monitor));
+	assert!(!session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
+	assert!(!session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
+
+	session.toolbar_window_visible = true;
+	session.toolbar_window_drawn_once = true;
+
+	assert!(!session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
+
+	session.toolbar_badge_slot_ready = true;
+
+	assert!(session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
 }
 
 #[test]
@@ -3489,6 +3547,41 @@ fn pending_frozen_display_handoff_affordance_keeps_drag_border_visible() {
 	state.mode = OverlayMode::Live;
 	state.monitor = Some(monitor);
 	state.frozen_capture_rect = Some(RectPoints::new(100, 120, 240, 320));
+
+	assert!(WindowRenderer::render_pending_frozen_display_handoff_affordance(
+		&ctx,
+		&painter,
+		&state,
+		monitor,
+		Some(monitor),
+		screen_rect,
+		HudTheme::Light,
+		false,
+		1.0,
+		FrozenCaptureSource::DragRegion,
+		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
+	));
+	assert!(selection_dashed_border_cache.key.is_some());
+}
+
+#[test]
+fn pending_frozen_display_handoff_affordance_applies_after_preview_commit_before_toolbar_draw() {
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("pending-frozen-preview-handoff"));
+	let painter = ctx.layer_painter(layer);
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+	state.begin_freeze(monitor);
+
+	state.frozen_capture_rect = Some(RectPoints::new(100, 120, 240, 320));
+
+	state.commit_frozen_display_image(monitor, tests::test_frozen_image());
 
 	assert!(WindowRenderer::render_pending_frozen_display_handoff_affordance(
 		&ctx,

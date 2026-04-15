@@ -54,14 +54,20 @@ impl OverlaySession {
 	}
 
 	pub(super) fn set_live_capture_interaction(&mut self, interaction: LiveCaptureInteraction) {
-		let was_dragging = self.live_capture_interaction_is_dragging();
+		let was_hiding_auxiliary_windows = self.live_capture_hides_auxiliary_windows();
 
 		self.live_capture_interaction = interaction;
 
 		self.sync_live_capture_visual_state();
 
-		if !was_dragging && self.live_capture_interaction_is_dragging() {
-			self.hide_auxiliary_windows_for_live_drag();
+		let now_hiding_auxiliary_windows = self.live_capture_hides_auxiliary_windows();
+
+		if now_hiding_auxiliary_windows
+			&& (!was_hiding_auxiliary_windows
+				|| self.hud_window_visible
+				|| self.loupe_window_visible)
+		{
+			self.hide_auxiliary_windows_for_live_capture();
 		}
 	}
 
@@ -71,6 +77,14 @@ impl OverlaySession {
 
 	pub(super) fn live_capture_interaction_is_dragging(&self) -> bool {
 		matches!(self.live_capture_interaction, LiveCaptureInteraction::DraggingSelection { .. })
+	}
+
+	pub(super) fn live_capture_interaction_is_frozen_handoff(&self) -> bool {
+		matches!(
+			self.live_capture_interaction,
+			LiveCaptureInteraction::FrozenFromClick { .. }
+				| LiveCaptureInteraction::FrozenFromDrag { .. }
+		)
 	}
 
 	pub(super) fn live_capture_target_from_snapshot(
@@ -109,6 +123,7 @@ impl OverlaySession {
 		// desktop snapshot.
 		let click_target = self.live_capture_target_from_snapshot(monitor, press_global);
 
+		self.note_frozen_transition_press_pending(monitor, click_target);
 		self.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
 			monitor,
 			press_global,
@@ -116,6 +131,8 @@ impl OverlaySession {
 			release_global: None,
 			released: false,
 		});
+		#[cfg(target_os = "macos")]
+		self.prewarm_frozen_capture_live_stream_refresh(monitor);
 	}
 
 	pub(super) fn resolve_live_capture_click_target(
@@ -699,8 +716,12 @@ impl OverlaySession {
 		matches!(self.state.mode, OverlayMode::Frozen) && self.frozen_selection_drag.active
 	}
 
-	pub(super) fn live_drag_hides_auxiliary_windows(&self) -> bool {
-		matches!(self.state.mode, OverlayMode::Live) && self.live_capture_interaction_is_dragging()
+	pub(super) fn live_capture_hides_auxiliary_windows(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Live)
+			&& (self.live_capture_interaction_is_press_pending()
+				|| self.live_capture_interaction_is_dragging()
+				|| self.live_capture_interaction_is_frozen_handoff()
+				|| self.frozen_display_handoff_pending())
 	}
 
 	fn hide_auxiliary_windows_for_frozen_selection_drag(&mut self) {
@@ -725,6 +746,7 @@ impl OverlaySession {
 		self.skip_toolbar_focus_on_next_show = true;
 		self.toolbar_window_visible = false;
 		self.toolbar_window_drawn_once = false;
+		self.toolbar_badge_slot_ready = false;
 		self.toolbar_window_warmup_redraws_remaining = 0;
 
 		if let Some(preview_window) = self.scroll_preview_window.as_ref() {
@@ -734,7 +756,7 @@ impl OverlaySession {
 		self.last_present_at = Instant::now();
 	}
 
-	fn hide_auxiliary_windows_for_live_drag(&mut self) {
+	fn hide_auxiliary_windows_for_live_capture(&mut self) {
 		if let Some(hud_window) = self.hud_window.as_ref() {
 			hud_window.window.set_visible(false);
 		}

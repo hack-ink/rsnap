@@ -131,10 +131,12 @@ impl OverlaySession {
 
 				if !show_toolbar {
 					self.toolbar_window_drawn_once = false;
+					self.toolbar_badge_slot_ready = false;
 				}
 			} else {
 				self.toolbar_window_visible = false;
 				self.toolbar_window_drawn_once = false;
+				self.toolbar_badge_slot_ready = false;
 			}
 			if let Some(preview_window) = &self.scroll_preview_window {
 				preview_window.window.set_visible(self.scroll_capture.active);
@@ -179,6 +181,8 @@ impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	pub(super) fn destroy_live_only_aux_windows(&mut self) {
 		if let Some(loupe_window) = self.loupe_window.take() {
+			super::macos_clear_capture_window_focus_policy(loupe_window.window.as_ref());
+
 			self.remove_macos_hud_window_config_cache_entry(loupe_window.window.id());
 		}
 
