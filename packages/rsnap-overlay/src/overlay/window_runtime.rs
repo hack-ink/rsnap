@@ -932,10 +932,8 @@ impl OverlaySession {
 			&& self.loupe_window.is_some();
 		let request_toolbar_window = !hide_auxiliary_windows
 			&& cfg!(target_os = "macos")
-			&& matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.toolbar_state.visible
-			&& self.state.monitor == Some(monitor)
-			&& self.state.frozen_image.is_some();
+			&& self.frozen_display_ready_for_monitor(monitor)
+			&& self.toolbar_state.visible;
 		let request_scroll_preview_window =
 			!hide_auxiliary_windows && self.scroll_preview_window.is_some();
 

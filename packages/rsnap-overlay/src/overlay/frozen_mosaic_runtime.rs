@@ -148,6 +148,14 @@ impl OverlaySession {
 		else {
 			return false;
 		};
+		let Some(export_patch) = self
+			.state
+			.frozen_export_image
+			.as_ref()
+			.and_then(|image| Self::build_frozen_image_patch(image, preview_rect_px))
+		else {
+			return false;
+		};
 		let window_patch = match (self.frozen_window_image.as_ref(), self.state.frozen_capture_rect)
 		{
 			(Some(window_image), Some(capture_rect_points)) => Self::map_rect_into_window_image(
@@ -163,13 +171,20 @@ impl OverlaySession {
 		if let Some(image) = self.state.frozen_image.as_mut() {
 			Self::apply_frozen_image_patch(image, &preview_patch, true);
 		}
+		if let Some(image) = self.state.frozen_export_image.as_mut() {
+			Self::apply_frozen_image_patch(image, &export_patch, true);
+		}
 		if let (Some(window_image), Some(window_patch)) =
 			(self.frozen_window_image.as_mut(), window_patch.as_ref())
 		{
 			Self::apply_frozen_image_patch(window_image, window_patch, true);
 		}
 
-		self.push_frozen_mosaic_edit(FrozenMosaicEdit { preview_patch, window_patch });
+		self.push_frozen_mosaic_edit(FrozenMosaicEdit {
+			preview_patch,
+			export_patch,
+			window_patch,
+		});
 		self.push_frozen_edit_to_undo_history(FrozenEditKind::MosaicEdit);
 		self.note_frozen_image_mutated(monitor);
 
@@ -183,6 +198,9 @@ impl OverlaySession {
 
 		if let Some(image) = self.state.frozen_image.as_mut() {
 			Self::apply_frozen_image_patch(image, &edit.preview_patch, use_after);
+		}
+		if let Some(image) = self.state.frozen_export_image.as_mut() {
+			Self::apply_frozen_image_patch(image, &edit.export_patch, use_after);
 		}
 		if let (Some(window_image), Some(window_patch)) =
 			(self.frozen_window_image.as_mut(), edit.window_patch.as_ref())

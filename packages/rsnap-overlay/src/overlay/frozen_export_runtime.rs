@@ -24,7 +24,7 @@ impl OverlaySession {
 			}
 		}
 
-		let frozen_image = self.state.frozen_image.as_ref()?;
+		let frozen_image = self.state.frozen_export_image.as_ref()?;
 		let Some(monitor) = self.state.monitor else {
 			return Some(frozen_image.clone());
 		};
@@ -629,8 +629,9 @@ impl OverlaySession {
 				.map(|session| session.export_image().clone());
 		}
 
-		let mut export_image =
-			self.cropped_frozen_capture_image().or_else(|| self.state.frozen_image.clone())?;
+		let mut export_image = self
+			.cropped_frozen_capture_image()
+			.or_else(|| self.state.frozen_export_image.clone())?;
 
 		self.render_frozen_committed_overlays_into_image(&mut export_image);
 
