@@ -365,6 +365,55 @@ fn window_matte_capture_dispatches_worker_without_hiding_overlay_windows() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn window_matte_capture_miss_rearms_hidden_retry_before_accepting_monitor_fallback() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteDark;
+
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		1,
+		1,
+		Instant::now(),
+	);
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		Some(WindowFreezeCaptureTarget {
+			monitor,
+			window_id: 41,
+			rect: RectPoints::new(100, 140, 320, 240),
+		}),
+		Some(cursor),
+	);
+
+	let preview_image = session.state.frozen_image.clone();
+
+	session.maybe_dispatch_armed_freeze_capture();
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::CapturedFreeze {
+		monitor,
+		image: tests::test_frozen_image(),
+		window_image: None,
+		captured_window_id: None,
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert_eq!(session.pending_freeze_capture, Some(monitor));
+	assert!(session.pending_freeze_capture_armed);
+	assert_eq!(session.pending_window_freeze_capture.map(|target| target.window_id), Some(41));
+	assert_eq!(session.inflight_freeze_capture, None);
+	assert!(session.capture_windows_hidden);
+	assert!(session.pending_freeze_capture_windows_hidden_at.is_some());
+	assert!(session.state.frozen_export_image.is_none());
+	assert!(!session.frozen_export_ready);
+	assert_eq!(session.state.frozen_image, preview_image);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn window_matte_capture_without_live_preview_waits_for_hidden_fallback_before_dispatch() {
 	let monitor = tests::test_monitor();
 	let cursor = GlobalPoint::new(120, 180);
