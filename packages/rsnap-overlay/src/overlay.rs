@@ -2086,10 +2086,7 @@ impl OverlaySession {
 		window_image: Option<RgbaImage>,
 		captured_window_id: Option<u32>,
 	) {
-		if matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.state.monitor == Some(monitor)
-			&& self.frozen_capture_export_pending()
-		{
+		if self.frozen_capture_monitor() == Some(monitor) && self.frozen_capture_export_pending() {
 			let window_capture_target = self.frozen_capture_window_target();
 			let had_display_image = self.frozen_display_ready();
 			let frozen_preview_image = image;
