@@ -946,6 +946,23 @@ fn begin_ocr_action_drag_region_still_uses_frozen_image_under_matte_mode() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn authoritative_freeze_response_updates_export_authority_without_overwriting_display_preview() {
+	let monitor = test_monitor();
+	let preview_image = image::RgbaImage::from_pixel(8, 8, Rgba([18, 24, 32, 255]));
+	let authoritative_image = image::RgbaImage::from_pixel(8, 8, Rgba([92, 108, 124, 255]));
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+	session.state.commit_frozen_display_image(monitor, preview_image.clone());
+	session.handle_captured_freeze_response(monitor, authoritative_image.clone(), None, None);
+
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&preview_image));
+	assert_eq!(session.state.frozen_export_image.as_ref(), Some(&authoritative_image));
+	assert!(session.authoritative_frozen_capture_ready);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn window_matte_mosaic_export_and_ocr_match_preview_pixels() {
 	let monitor = test_monitor_with_scale(8, 8, 1_000);
 	let capture_rect = RectPoints::new(2, 1, 4, 4);
@@ -1336,7 +1353,11 @@ fn test_frozen_mosaic_edit() -> FrozenMosaicEdit {
 		after: image::RgbaImage::from_pixel(1, 1, Rgba([255, 255, 255, 255])),
 	};
 
-	FrozenMosaicEdit { preview_patch: patch.clone(), window_patch: Some(patch) }
+	FrozenMosaicEdit {
+		preview_patch: patch.clone(),
+		export_patch: patch.clone(),
+		window_patch: Some(patch),
+	}
 }
 
 #[test]

@@ -87,6 +87,40 @@ impl OverlaySession {
 		self.request_redraw_all();
 	}
 
+	#[cfg(target_os = "macos")]
+	pub(super) fn maybe_escalate_pending_display_first_freeze_to_hidden_fallback(
+		&mut self,
+		now: Instant,
+	) -> bool {
+		let Some(overlay_monitor) = self.pending_freeze_capture else {
+			return false;
+		};
+		let Some(started_at) = self.frozen_transition_started_at else {
+			return false;
+		};
+
+		if !self.pending_freeze_capture_matches(overlay_monitor)
+			|| self.capture_windows_hidden
+			|| self.frozen_export_ready
+			|| self.inflight_freeze_capture.is_some()
+			|| self.frozen_preview_visible()
+		{
+			return false;
+		}
+
+		let Some(elapsed) = now.checked_duration_since(started_at) else {
+			return false;
+		};
+
+		if elapsed < crate::overlay::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT {
+			return false;
+		}
+
+		self.begin_hidden_authoritative_freeze_capture_fallback(overlay_monitor);
+
+		true
+	}
+
 	pub(super) fn note_freeze_capture_request_started(
 		&mut self,
 		overlay_monitor: MonitorRect,
@@ -171,7 +205,9 @@ impl OverlaySession {
 
 			return;
 		}
-		if self.should_wait_for_hidden_live_snapshot_before_authoritative_dispatch(overlay_monitor)
+		if self.capture_windows_hidden
+			&& self
+				.should_wait_for_hidden_live_snapshot_before_authoritative_dispatch(overlay_monitor)
 		{
 			self.schedule_egui_repaint_after(POST_HIDE_LIVE_SNAPSHOT_GRACE);
 
@@ -180,6 +216,23 @@ impl OverlaySession {
 
 		let pending_window_target =
 			self.pending_window_freeze_capture.filter(|target| target.monitor == overlay_monitor);
+
+		if !self.capture_windows_hidden
+			&& self.snapshot_can_finish_frozen_capture(pending_window_target)
+		{
+			self.pending_freeze_capture_armed = false;
+			self.freeze_capture_send_full_count = 0;
+
+			return;
+		}
+		if !self.capture_windows_hidden
+			&& pending_window_target.is_some()
+			&& !self.snapshot_can_finish_frozen_capture(pending_window_target)
+			&& !self.frozen_preview_visible()
+		{
+			return;
+		}
+
 		let freeze_target = pending_window_target.map_or(FreezeCaptureTarget::Monitor, |target| {
 			FreezeCaptureTarget::Window { window_id: target.window_id }
 		});
