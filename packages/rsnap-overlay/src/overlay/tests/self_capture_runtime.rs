@@ -267,7 +267,7 @@ fn hidden_live_snapshot_can_finish_frozen_capture_before_authoritative_dispatch(
 	session.live_sample_stream.as_ref().unwrap().debug_set_active_stream_generation(monitor.id, 1);
 	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
 		monitor,
-		1,
+		50,
 		1,
 		Instant::now(),
 	);
@@ -280,7 +280,7 @@ fn hidden_live_snapshot_can_finish_frozen_capture_before_authoritative_dispatch(
 	session.live_sample_stream.as_ref().unwrap().debug_set_active_stream_generation(monitor.id, 2);
 	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
 		monitor,
-		2,
+		51,
 		2,
 		Instant::now() + Duration::from_millis(1),
 	);
