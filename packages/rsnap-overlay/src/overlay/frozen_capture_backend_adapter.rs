@@ -6,7 +6,7 @@ use crate::live_frame_stream_macos::STREAM_REGION_FRAME_MAX_AGE;
 #[cfg(target_os = "macos")]
 use crate::overlay::{
 	Arc, DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT, FreezeCaptureTarget, FrozenCaptureWorkerState,
-	GlobalPoint, Instant, MonitorRect, OverlaySession, WindowCaptureAlphaMode,
+	GlobalPoint, Instant, MonitorRect, OverlayMode, OverlaySession, WindowCaptureAlphaMode,
 	WindowFreezeCaptureTarget,
 };
 #[cfg(target_os = "macos")]
@@ -88,6 +88,17 @@ impl OverlaySession {
 		let after_frame_seq =
 			stream.latest_frame_frontier_for_monitor(monitor).map_or(0, |(frame_seq, _)| frame_seq);
 		let _ = stream.refresh_monitor_nonblocking_if_stale(monitor, after_frame_seq, true);
+	}
+
+	pub(in crate::overlay) fn prewarm_frozen_capture_live_stream_refresh(
+		&self,
+		monitor: MonitorRect,
+	) {
+		if !matches!(self.state.mode, OverlayMode::Live) || self.frozen_display_handoff_pending() {
+			return;
+		}
+
+		self.request_pending_frozen_capture_live_stream_refresh(monitor);
 	}
 
 	fn frozen_capture_display_candidate_from_snapshot(

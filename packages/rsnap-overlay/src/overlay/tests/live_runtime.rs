@@ -624,6 +624,59 @@ fn live_drag_rect_activation_hides_auxiliary_windows() {
 	assert!(!session.loupe_window_visible);
 }
 
+#[test]
+fn live_press_pending_activation_hides_auxiliary_windows_immediately() {
+	let monitor = MonitorRect {
+		id: 1,
+		origin: GlobalPoint::new(0, 0),
+		width: 1_000,
+		height: 800,
+		scale_factor_x1000: 1_000,
+	};
+	let start = GlobalPoint::new(120, 180);
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.hud_window_visible = true;
+	session.loupe_window_visible = true;
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global: start,
+		click_target: None,
+		release_global: None,
+		released: false,
+	});
+
+	assert!(!session.hud_window_visible);
+	assert!(!session.loupe_window_visible);
+}
+
+#[test]
+fn live_frozen_handoff_activation_hides_auxiliary_windows_immediately() {
+	let monitor = MonitorRect {
+		id: 1,
+		origin: GlobalPoint::new(0, 0),
+		width: 1_000,
+		height: 800,
+		scale_factor_x1000: 1_000,
+	};
+	let capture_rect = RectPoints::new(120, 180, 160, 180);
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.hud_window_visible = true;
+	session.loupe_window_visible = true;
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::FrozenFromDrag {
+		monitor,
+		capture_rect,
+	});
+
+	assert!(!session.hud_window_visible);
+	assert!(!session.loupe_window_visible);
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn live_mouse_press_keeps_hovered_window_affordance_until_drag_or_release() {
@@ -977,6 +1030,48 @@ fn prime_startup_live_stream_nonblocking_primes_stream_for_live_mode() {
 	assert_eq!(
 		session.live_sample_stream.as_ref().and_then(MacLiveFrameStream::debug_last_request_kind),
 		Some("prime_monitor_nonblocking")
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn begin_live_capture_press_prewarms_frozen_entry_stream_when_unprimed() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let mut session = OverlaySession::new();
+
+	session.live_sample_stream = Some(MacLiveFrameStream::new());
+
+	session.begin_live_capture_press(monitor, cursor);
+
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::PressPending { monitor: interaction_monitor, press_global, .. }
+			if interaction_monitor == monitor && press_global == cursor
+	));
+	assert_eq!(
+		session.live_sample_stream.as_ref().and_then(MacLiveFrameStream::debug_last_request_kind),
+		Some("prime_monitor_nonblocking")
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn begin_live_capture_press_force_refreshes_existing_live_snapshot() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let stream = MacLiveFrameStream::new();
+	let mut session = OverlaySession::new();
+
+	stream.debug_store_test_snapshot(monitor, Instant::now());
+
+	session.live_sample_stream = Some(stream);
+
+	session.begin_live_capture_press(monitor, cursor);
+
+	assert_eq!(
+		session.live_sample_stream.as_ref().and_then(MacLiveFrameStream::debug_last_request_kind),
+		Some("refresh_monitor_nonblocking_if_stale")
 	);
 }
 
