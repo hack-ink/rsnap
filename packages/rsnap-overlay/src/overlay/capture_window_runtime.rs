@@ -128,8 +128,13 @@ impl OverlaySession {
 				}
 
 				self.toolbar_window_visible = show_toolbar;
+
+				if !show_toolbar {
+					self.toolbar_window_drawn_once = false;
+				}
 			} else {
 				self.toolbar_window_visible = false;
+				self.toolbar_window_drawn_once = false;
 			}
 			if let Some(preview_window) = &self.scroll_preview_window {
 				preview_window.window.set_visible(self.scroll_capture.active);

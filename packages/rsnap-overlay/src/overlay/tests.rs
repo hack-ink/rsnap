@@ -3223,6 +3223,7 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 		},
 		hud_window_visible: true,
 		toolbar_window_visible: true,
+		toolbar_window_drawn_once: true,
 		toolbar_window_warmup_redraws_remaining: 3,
 		..OverlaySession::default()
 	};
@@ -3244,6 +3245,7 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 	assert_eq!(session.live_capture_interaction, LiveCaptureInteraction::Idle);
 	assert!(!session.hud_window_visible);
 	assert!(!session.toolbar_window_visible);
+	assert!(!session.toolbar_window_drawn_once);
 	assert_eq!(session.toolbar_window_warmup_redraws_remaining, 0);
 }
 
