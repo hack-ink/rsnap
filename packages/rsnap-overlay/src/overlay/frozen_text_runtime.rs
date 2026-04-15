@@ -117,6 +117,10 @@ impl OverlaySession {
 		self.frozen_text_recent_input = None;
 
 		self.sync_text_input_ime_state();
+		#[cfg(target_os = "macos")]
+		self.restore_passive_capture_window_focus_policy_for_pointer_interaction(
+			"frozen_text_edit_finished",
+		);
 
 		had_visible_text
 	}

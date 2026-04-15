@@ -189,6 +189,27 @@ fn session_inflight_freeze_capture(session: &OverlaySession) -> Option<MonitorRe
 	}
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn passive_capture_window_policy_tracks_window_membership() {
+	let first_window_key = 0x1001usize;
+	let second_window_key = 0x2002usize;
+
+	assert!(!overlay::macos_capture_window_is_passive(first_window_key));
+	assert!(!overlay::macos_capture_window_is_passive(second_window_key));
+	assert!(overlay::macos_update_capture_window_passive_state(first_window_key, true));
+	assert!(overlay::macos_capture_window_is_passive(first_window_key));
+	assert!(!overlay::macos_capture_window_is_passive(second_window_key));
+	assert!(!overlay::macos_update_capture_window_passive_state(first_window_key, true));
+	assert!(overlay::macos_update_capture_window_passive_state(second_window_key, true));
+	assert!(overlay::macos_capture_window_is_passive(second_window_key));
+	assert!(overlay::macos_update_capture_window_passive_state(first_window_key, false));
+	assert!(!overlay::macos_capture_window_is_passive(first_window_key));
+	assert!(overlay::macos_capture_window_is_passive(second_window_key));
+	assert!(overlay::macos_update_capture_window_passive_state(second_window_key, false));
+	assert!(!overlay::macos_capture_window_is_passive(second_window_key));
+}
+
 fn session_pending_window_freeze_capture(
 	session: &OverlaySession,
 ) -> Option<crate::overlay::session_state::WindowFreezeCaptureTarget> {
@@ -3224,6 +3245,7 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 		hud_window_visible: true,
 		toolbar_window_visible: true,
 		toolbar_window_drawn_once: true,
+		toolbar_badge_slot_ready: true,
 		toolbar_window_warmup_redraws_remaining: 3,
 		..OverlaySession::default()
 	};
@@ -3246,6 +3268,7 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 	assert!(!session.hud_window_visible);
 	assert!(!session.toolbar_window_visible);
 	assert!(!session.toolbar_window_drawn_once);
+	assert!(!session.toolbar_badge_slot_ready);
 	assert_eq!(session.toolbar_window_warmup_redraws_remaining, 0);
 }
 
@@ -3768,6 +3791,44 @@ fn toolbar_window_stays_visible_while_final_capture_is_pending() {
 	set_session_inflight_freeze_capture(&mut session, Some(monitor));
 
 	assert!(!session.should_hide_toolbar_window(monitor));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_visual_handoff_stays_pending_while_frozen_entry_is_still_idle() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
+
+	assert!(session.frozen_visual_handoff_pending_for_monitor(monitor));
+
+	session.toolbar_window_drawn_once = true;
+
+	assert!(session.frozen_visual_handoff_pending_for_monitor(monitor));
+
+	session.frozen_edit_undo_stack.push(FrozenEditKind::BrushStroke);
+
+	assert!(!session.frozen_visual_handoff_pending_for_monitor(monitor));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_surface_bg_stays_locked_during_idle_frozen_entry() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
+
+	assert!(!session.allow_frozen_surface_bg_for_overlay_monitor(monitor, false));
+
+	session.frozen_edit_undo_stack.push(FrozenEditKind::BrushStroke);
+
+	assert!(session.allow_frozen_surface_bg_for_overlay_monitor(monitor, false));
 }
 
 #[cfg(not(target_os = "macos"))]

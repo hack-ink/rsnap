@@ -455,6 +455,13 @@ impl OverlaySession {
 	pub(super) fn set_toolbar_window_hidden(&mut self) {
 		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
 			#[cfg(target_os = "macos")]
+			super::macos_update_capture_window_focus_policy(
+				toolbar_window.window.as_ref(),
+				false,
+				"toolbar_hidden",
+			);
+
+			#[cfg(target_os = "macos")]
 			let _ = toolbar_window.window.set_cursor_hittest(false);
 
 			toolbar_window.window.set_visible(false);
@@ -462,6 +469,7 @@ impl OverlaySession {
 
 		self.toolbar_window_visible = false;
 		self.toolbar_window_drawn_once = false;
+		self.toolbar_badge_slot_ready = false;
 		#[cfg(target_os = "macos")]
 		{
 			self.toolbar_window_cursor_hittest_enabled = false;
@@ -558,8 +566,13 @@ impl OverlaySession {
 
 			draw_result?;
 
+			let first_toolbar_draw = !self.toolbar_window_drawn_once;
+
 			self.toolbar_window_drawn_once = true;
 
+			if first_toolbar_draw {
+				self.note_frozen_transition_toolbar_first_draw(monitor);
+			}
 			if toolbar_became_visible {
 				self.note_frozen_transition_toolbar_visible(monitor);
 			}

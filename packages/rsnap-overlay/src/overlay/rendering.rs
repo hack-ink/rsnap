@@ -790,7 +790,9 @@ impl WindowRenderer {
 				);
 			}
 
-			if matches!(state.mode, OverlayMode::Live) && !can_draw_hud {
+			if (matches!(state.mode, OverlayMode::Live) || pending_frozen_display_handoff)
+				&& !can_draw_hud
+			{
 				_show_selection_affordance |= Self::render_live_or_pending_capture_affordances(
 					ctx,
 					state,
@@ -806,6 +808,7 @@ impl WindowRenderer {
 				);
 			}
 			if matches!(state.mode, OverlayMode::Frozen)
+				&& !pending_frozen_display_handoff
 				&& (needs_frozen_surface_bg || show_frozen_capture_affordance)
 				&& state.monitor == Some(monitor)
 				&& state.frozen_capture_rect.is_some()
