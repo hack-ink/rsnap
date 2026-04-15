@@ -2853,6 +2853,40 @@ fn frozen_toolbar_ready_for_draw_recovers_after_preseeded_position_is_sampled() 
 	assert!(session.frozen_toolbar_ready_for_draw(screen_rect));
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn frozen_toolbar_badge_visibility_waits_for_first_toolbar_draw() {
+	let monitor = tests::test_monitor();
+	let capture_rect = RectPoints::new(200, 180, 200, 300);
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut session = OverlaySession::new();
+
+	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
+	session.sync_frozen_toolbar_state();
+
+	assert!(session.maybe_recenter_frozen_toolbar_default_slot(monitor));
+	assert!(!session.toolbar_window_visible);
+	assert!(!session.should_hide_toolbar_window(monitor));
+	assert!(!session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
+	assert_eq!(session.toolbar_state.layout_last_screen_size_points, Some(screen_rect.size()));
+	assert_eq!(session.toolbar_state.layout_stable_frames, 0);
+	assert!(!session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
+	assert_eq!(session.toolbar_state.layout_stable_frames, 1);
+
+	session.toolbar_window_visible = true;
+
+	assert!(!session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
+
+	session.toolbar_window_drawn_once = true;
+
+	assert!(session.frozen_toolbar_badge_visibility(monitor, screen_rect, false));
+	assert!(session.frozen_size_badge_toolbar_reserved_rect(monitor, screen_rect, true).is_some());
+}
+
 #[test]
 fn render_frozen_toolbar_ui_waits_for_readiness_before_first_visible_frame() {
 	let ctx = tests::test_egui_context();
