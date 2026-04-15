@@ -3409,6 +3409,7 @@ fn pending_frozen_display_handoff_affordance_keeps_window_scrim_visible() {
 		&painter,
 		&state,
 		monitor,
+		Some(monitor),
 		screen_rect,
 		HudTheme::Light,
 		true,
@@ -3441,6 +3442,7 @@ fn pending_frozen_display_handoff_affordance_keeps_drag_border_visible() {
 		&painter,
 		&state,
 		monitor,
+		Some(monitor),
 		screen_rect,
 		HudTheme::Light,
 		false,
@@ -3480,6 +3482,40 @@ fn pending_frozen_display_handoff_affordance_skips_non_target_monitor() {
 		&painter,
 		&state,
 		other_monitor,
+		Some(target_monitor),
+		screen_rect,
+		HudTheme::Light,
+		true,
+		1.0,
+		FrozenCaptureSource::Window,
+		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
+	));
+	assert_eq!(selection_dashed_border_cache.key, None);
+}
+
+#[test]
+fn pending_frozen_display_handoff_affordance_uses_pending_monitor_when_state_monitor_is_unset() {
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("pending-unset-monitor-handoff"));
+	let painter = ctx.layer_painter(layer);
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+	state.mode = OverlayMode::Live;
+	state.monitor = None;
+	state.frozen_capture_rect = Some(RectPoints::new(100, 120, 240, 320));
+
+	assert!(WindowRenderer::render_pending_frozen_display_handoff_affordance(
+		&ctx,
+		&painter,
+		&state,
+		monitor,
+		Some(monitor),
 		screen_rect,
 		HudTheme::Light,
 		true,

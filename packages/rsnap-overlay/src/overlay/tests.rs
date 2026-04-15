@@ -622,6 +622,8 @@ fn cached_live_background_fast_path_advances_frozen_generation() {
 	session.state.begin_freeze(monitor);
 	session.state.commit_frozen_final_image(monitor, first_image);
 
+	session.state.mode = OverlayMode::Live;
+
 	let previous_generation = session.state.frozen_generation;
 
 	session.state.live_bg_monitor = Some(monitor);

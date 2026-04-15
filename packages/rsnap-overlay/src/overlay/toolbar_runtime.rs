@@ -534,6 +534,7 @@ impl OverlaySession {
 				self.config.selection_flow_stroke_width_px,
 				false,
 				false,
+				None,
 				false,
 				false,
 				self.frozen_capture_source,

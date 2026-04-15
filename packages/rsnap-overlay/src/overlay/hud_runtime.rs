@@ -106,8 +106,7 @@ impl OverlaySession {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return Err(eyre::eyre!("Missing GPU context"));
 		};
-		let monitor =
-			self.monitor_for_mode().or_else(|| self.windows.values().next().map(|w| w.monitor));
+		let monitor = self.monitor_for_mode().or(self.windows.values().next().map(|w| w.monitor));
 		let mut summary = HudRedrawSummary::default();
 
 		if let (Some(monitor), Some(hud_window)) = (monitor, self.hud_window.as_mut()) {
@@ -143,6 +142,7 @@ impl OverlaySession {
 				self.config.selection_flow_stroke_width_px,
 				true,
 				false,
+				None,
 				false,
 				false,
 				self.frozen_capture_source,

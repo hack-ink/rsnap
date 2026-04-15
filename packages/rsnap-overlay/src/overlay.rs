@@ -2941,6 +2941,8 @@ impl OverlaySession {
 		let visible_frozen_spotlight_preview_rect =
 			if scroll_capture_active { None } else { self.frozen_spotlight_preview_rect };
 		let pending_frozen_display_handoff = self.frozen_display_handoff_pending();
+		let pending_frozen_display_handoff_monitor =
+			self.frozen_capture_monitor().filter(|_| pending_frozen_display_handoff);
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
 		{
@@ -2969,6 +2971,7 @@ impl OverlaySession {
 				self.config.selection_flow_stroke_width_px,
 				!scroll_capture_active,
 				pending_frozen_display_handoff,
+				pending_frozen_display_handoff_monitor,
 				scroll_capture_active,
 				frozen_selection_resize_handles_enabled,
 				self.frozen_capture_source,
