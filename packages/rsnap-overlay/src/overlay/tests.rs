@@ -1293,16 +1293,20 @@ fn window_matte_capture_miss_restores_hidden_windows_before_returning() {
 	session.state.commit_frozen_display_image(monitor, preview_image.clone());
 
 	session.capture_windows_hidden = true;
-	session.inflight_window_freeze_capture = Some(crate::overlay::WindowFreezeCaptureTarget {
-		monitor,
-		window_id: 41,
-		rect: capture_rect,
-	});
+
+	set_session_inflight_window_freeze_capture(
+		&mut session,
+		Some(crate::overlay::WindowFreezeCaptureTarget {
+			monitor,
+			window_id: 41,
+			rect: capture_rect,
+		}),
+	);
 
 	session.handle_captured_freeze_response(monitor, test_frozen_image(), None, None);
 
 	assert!(!session.capture_windows_hidden);
-	assert_eq!(session.state.frozen_image.as_ref(), Some(&preview_image));
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&preview_image));
 	assert!(session.state.frozen_export_image.is_none());
 	assert_eq!(
 		session.state.error_message.as_deref(),
