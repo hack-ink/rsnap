@@ -1175,15 +1175,13 @@ impl OverlaySession {
 			FrozenCaptureSessionState::DisplayPending {
 				worker_state: FrozenCaptureWorkerState::Idle | FrozenCaptureWorkerState::Armed,
 				..
-			}
-				| FrozenCaptureSessionState::DisplayReady {
-					export:
-						FrozenExportSessionState::Pending {
-							worker_state: FrozenCaptureWorkerState::Idle | FrozenCaptureWorkerState::Armed,
-							..
-						},
+			} | FrozenCaptureSessionState::DisplayReady {
+				export: FrozenExportSessionState::Pending {
+					worker_state: FrozenCaptureWorkerState::Idle | FrozenCaptureWorkerState::Armed,
 					..
-				}
+				},
+				..
+			}
 		)
 	}
 
@@ -1331,7 +1329,6 @@ impl OverlaySession {
 			&& self.state.frozen_export_image.is_some()
 	}
 
-	#[cfg(target_os = "macos")]
 	fn pending_window_freeze_capture_for_monitor(
 		&self,
 		monitor: MonitorRect,
