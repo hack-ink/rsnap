@@ -1482,7 +1482,7 @@ impl WindowRenderer {
 
 		let draw_frozen_bg = hud_cfg.needs_frozen_surface_bg
 			&& state.monitor == Some(monitor)
-			&& state.frozen_surface_image().is_some();
+			&& state.frozen_display_surface_image().is_some();
 
 		self.finish_window_renderer_draw(
 			gpu,
