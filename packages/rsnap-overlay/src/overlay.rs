@@ -1573,7 +1573,7 @@ impl OverlaySession {
 			.live_sample_stream
 			.as_ref()
 			.and_then(|stream| stream.latest_frame_frontier_for_monitor(monitor))
-			.map_or(0, |(frame_seq, _)| frame_seq);
+			.map_or(0, |(_, stream_generation)| stream_generation);
 
 		self.state.live_bg_monitor = None;
 		self.state.live_bg_image = None;
