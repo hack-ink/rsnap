@@ -724,6 +724,7 @@ impl OverlaySession {
 
 		self.skip_toolbar_focus_on_next_show = true;
 		self.toolbar_window_visible = false;
+		self.toolbar_window_drawn_once = false;
 		self.toolbar_window_warmup_redraws_remaining = 0;
 
 		if let Some(preview_window) = self.scroll_preview_window.as_ref() {
