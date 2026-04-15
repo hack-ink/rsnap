@@ -144,6 +144,7 @@ impl OverlaySession {
 				true,
 				false,
 				false,
+				false,
 				self.frozen_capture_source,
 				self.frozen_capture_source == FrozenCaptureSource::FullscreenFallback,
 				None,
