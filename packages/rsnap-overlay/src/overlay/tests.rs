@@ -629,7 +629,7 @@ fn cached_live_background_fast_path_advances_frozen_generation() {
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
 
-	assert_eq!(session.state.mode, OverlayMode::Frozen);
+	assert!(matches!(session.state.mode, OverlayMode::Frozen));
 	assert_eq!(session.state.monitor, Some(monitor));
 	assert_eq!(session.state.frozen_generation, previous_generation.wrapping_add(1));
 	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&second_image));
