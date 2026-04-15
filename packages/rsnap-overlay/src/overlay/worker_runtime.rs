@@ -1,8 +1,9 @@
 use crate::overlay::{
-	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, GlobalPoint, Instant,
-	LiveCaptureInteraction, LiveClickCaptureTarget, LiveCursorSample, LiveSampleApplyResult,
-	MonitorRect, OverlayControl, OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit,
-	WindowListSnapshot, WorkerErrorSource, WorkerRequestSendError, WorkerResponse,
+	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, FrozenCaptureWorkerState,
+	GlobalPoint, Instant, LiveCaptureInteraction, LiveClickCaptureTarget, LiveCursorSample,
+	LiveSampleApplyResult, MonitorRect, OverlayControl, OverlayMode, OverlaySession,
+	WindowFreezeCaptureTarget, WindowHit, WindowListSnapshot, WorkerErrorSource,
+	WorkerRequestSendError, WorkerResponse,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{CursorSampleRequest, FreezeCaptureTarget, mem};
@@ -62,11 +63,8 @@ impl OverlaySession {
 	}
 
 	fn clear_freeze_capture_tracking(&mut self) {
-		self.pending_freeze_capture = None;
-		self.inflight_freeze_capture = None;
-		self.pending_freeze_capture_armed = false;
-		self.pending_window_freeze_capture = None;
-		self.inflight_window_freeze_capture = None;
+		self.clear_frozen_capture_session_state();
+
 		self.freeze_capture_send_full_count = 0;
 	}
 
@@ -74,9 +72,25 @@ impl OverlaySession {
 		let message = message.into();
 
 		self.note_frozen_transition_aborted(message.as_str());
-		self.clear_freeze_capture_tracking();
+
+		if matches!(self.state.mode, OverlayMode::Frozen)
+			&& let Some(monitor) = self.frozen_capture_monitor()
+			&& self.state.monitor == Some(monitor)
+		{
+			self.set_frozen_capture_export_failed(monitor);
+		} else {
+			self.clear_freeze_capture_tracking();
+		}
+
+		self.freeze_capture_send_full_count = 0;
+
 		self.restore_capture_windows_visibility();
 		self.state.set_error(message);
+
+		self.toolbar_state.needs_redraw = true;
+
+		self.sync_frozen_toolbar_state();
+		self.request_redraw_toolbar_window();
 		self.request_redraw_all();
 	}
 
@@ -85,13 +99,15 @@ impl OverlaySession {
 		&mut self,
 		now: Instant,
 	) -> bool {
-		let Some(overlay_monitor) = self.pending_freeze_capture else {
+		let Some(overlay_monitor) =
+			self.frozen_capture_monitor().filter(|_| self.frozen_capture_export_pending())
+		else {
 			return false;
 		};
 
 		if !self.pending_freeze_capture_matches(overlay_monitor)
-			|| self.frozen_export_ready
-			|| self.inflight_freeze_capture.is_some()
+			|| self.frozen_capture_export_ready()
+			|| self.frozen_capture_worker_inflight()
 		{
 			return false;
 		}
@@ -122,11 +138,8 @@ impl OverlaySession {
 		overlay_monitor: MonitorRect,
 		pending_window_target: Option<WindowFreezeCaptureTarget>,
 	) {
-		self.pending_freeze_capture = None;
-		self.pending_freeze_capture_armed = false;
-		self.inflight_freeze_capture = Some(overlay_monitor);
-		self.inflight_window_freeze_capture = pending_window_target;
-		self.pending_window_freeze_capture = None;
+		self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Inflight);
+
 		self.freeze_capture_send_full_count = 0;
 
 		self.note_frozen_transition_worker_requested(overlay_monitor, pending_window_target);
@@ -169,31 +182,35 @@ impl OverlaySession {
 
 	#[cfg(target_os = "macos")]
 	pub(super) fn maybe_dispatch_armed_freeze_capture(&mut self) {
-		if !self.pending_freeze_capture_armed {
+		if !self.frozen_capture_worker_armed() {
 			return;
 		}
 
-		let Some(overlay_monitor) = self.pending_freeze_capture else {
-			self.pending_freeze_capture_armed = false;
+		let Some(overlay_monitor) =
+			self.frozen_capture_monitor().filter(|_| self.frozen_capture_export_pending())
+		else {
+			self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Idle);
+
 			self.freeze_capture_send_full_count = 0;
 
 			return;
 		};
 
 		if !self.pending_freeze_capture_matches(overlay_monitor) {
-			self.pending_freeze_capture_armed = false;
+			self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Idle);
+
 			self.freeze_capture_send_full_count = 0;
 
 			return;
 		}
 
-		let pending_window_target =
-			self.pending_window_freeze_capture.filter(|target| target.monitor == overlay_monitor);
+		let pending_window_target = self.pending_window_freeze_capture_for_monitor(overlay_monitor);
 
 		if !self.capture_windows_hidden
 			&& self.snapshot_can_finish_frozen_capture(pending_window_target)
 		{
-			self.pending_freeze_capture_armed = false;
+			self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Idle);
+
 			self.freeze_capture_send_full_count = 0;
 
 			return;

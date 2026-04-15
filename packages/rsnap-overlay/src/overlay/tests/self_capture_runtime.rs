@@ -2,6 +2,9 @@
 use std::ptr;
 
 #[cfg(target_os = "macos")]
+use image::{Rgba, RgbaImage};
+
+#[cfg(target_os = "macos")]
 use crate::overlay::RectPoints;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerRequestSendError;
@@ -213,15 +216,16 @@ fn armed_freeze_capture_without_worker_restores_visibility_and_surfaces_error() 
 
 	session.state.begin_freeze(monitor);
 
-	session.pending_freeze_capture = Some(monitor);
-	session.pending_freeze_capture_armed = true;
+	tests::set_session_pending_freeze_capture(&mut session, Some(monitor));
+	tests::set_session_pending_freeze_capture_armed(&mut session, true);
+
 	session.capture_windows_hidden = true;
 
 	session.maybe_dispatch_armed_freeze_capture();
 
-	assert!(session.pending_freeze_capture.is_none());
-	assert!(session.inflight_freeze_capture.is_none());
-	assert!(!session.pending_freeze_capture_armed);
+	assert!(tests::session_pending_freeze_capture(&session).is_none());
+	assert!(tests::session_inflight_freeze_capture(&session).is_none());
+	assert!(!tests::session_frozen_capture_armed(&session));
 	assert!(!session.capture_windows_hidden);
 	assert_eq!(session.state.error_message.as_deref(), Some("Capture worker is unavailable."));
 }
@@ -246,8 +250,8 @@ fn begin_frozen_capture_background_snapshot_finishes_without_hiding_overlay_wind
 		Some(cursor),
 	);
 
-	assert!(session.pending_freeze_capture.is_none());
-	assert!(!session.pending_freeze_capture_armed);
+	assert!(tests::session_pending_freeze_capture(&session).is_none());
+	assert!(!tests::session_frozen_capture_armed(&session));
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_image.is_some());
 	assert!(session.state.frozen_export_image.is_some());
@@ -277,10 +281,10 @@ fn live_snapshot_followup_can_finish_background_capture_before_timeout() {
 
 	let _ = session.about_to_wait();
 
-	assert!(session.authoritative_frozen_capture_ready);
-	assert!(session.pending_freeze_capture.is_none());
-	assert!(session.inflight_freeze_capture.is_none());
-	assert!(!session.pending_freeze_capture_armed);
+	assert!(tests::session_frozen_export_ready_state(&session));
+	assert!(tests::session_pending_freeze_capture(&session).is_none());
+	assert!(tests::session_inflight_freeze_capture(&session).is_none());
+	assert!(!tests::session_frozen_capture_armed(&session));
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_image.is_some());
 }
@@ -311,9 +315,9 @@ fn window_matte_capture_seeds_preview_and_arms_worker_without_hiding_overlay_win
 		Some(cursor),
 	);
 
-	assert_eq!(session.pending_freeze_capture, Some(monitor));
-	assert!(session.pending_freeze_capture_armed);
-	assert_eq!(session.inflight_freeze_capture, None);
+	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
+	assert!(tests::session_frozen_capture_armed(&session));
+	assert_eq!(tests::session_inflight_freeze_capture(&session), None);
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_image.is_some());
 	assert!(session.state.frozen_export_image.is_none());
@@ -346,9 +350,9 @@ fn window_matte_capture_dispatches_worker_without_hiding_overlay_windows() {
 	);
 	session.maybe_dispatch_armed_freeze_capture();
 
-	assert!(session.pending_freeze_capture.is_none());
-	assert!(!session.pending_freeze_capture_armed);
-	assert_eq!(session.inflight_freeze_capture, Some(monitor));
+	assert!(tests::session_pending_freeze_capture(&session).is_none());
+	assert!(!tests::session_frozen_capture_armed(&session));
+	assert_eq!(tests::session_inflight_freeze_capture(&session), Some(monitor));
 	assert!(!session.capture_windows_hidden);
 }
 
@@ -390,14 +394,76 @@ fn window_matte_capture_miss_keeps_preview_and_surfaces_export_error() {
 	});
 
 	assert!(matches!(control, super::OverlayControl::Continue));
-	assert_eq!(session.pending_freeze_capture, None);
-	assert!(!session.pending_freeze_capture_armed);
-	assert_eq!(session.pending_window_freeze_capture, None);
-	assert_eq!(session.inflight_freeze_capture, None);
+	assert_eq!(tests::session_pending_freeze_capture(&session), None);
+	assert!(!tests::session_frozen_capture_armed(&session));
+	assert_eq!(tests::session_pending_window_freeze_capture(&session), None);
+	assert_eq!(tests::session_inflight_freeze_capture(&session), None);
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_export_image.is_none());
-	assert!(!session.frozen_export_ready);
+	assert!(!tests::session_frozen_export_ready_state(&session));
 	assert_eq!(session.state.frozen_image, preview_image);
+	assert_eq!(
+		session.state.error_message.as_deref(),
+		Some("Window capture is unavailable. Please try again.")
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn stale_window_matte_response_after_export_failure_is_ignored() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+	let late_image = RgbaImage::from_pixel(8, 8, Rgba([77, 91, 103, 255]));
+
+	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteDark;
+
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		1,
+		1,
+		Instant::now(),
+	);
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		Some(WindowFreezeCaptureTarget {
+			monitor,
+			window_id: 41,
+			rect: RectPoints::new(100, 140, 320, 240),
+		}),
+		Some(cursor),
+	);
+
+	let preview_image = session
+		.state
+		.frozen_image
+		.clone()
+		.expect("preview should be seeded before the matte export worker runs");
+
+	session.maybe_dispatch_armed_freeze_capture();
+
+	let _ = session.maybe_tick_worker_response_limiter(WorkerResponse::CapturedFreeze {
+		monitor,
+		image: tests::test_frozen_image(),
+		window_image: None,
+		captured_window_id: None,
+	});
+
+	assert!(session.state.frozen_export_image.is_none());
+	assert!(!tests::session_frozen_export_ready_state(&session));
+
+	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::CapturedFreeze {
+		monitor,
+		image: late_image,
+		window_image: None,
+		captured_window_id: None,
+	});
+
+	assert!(matches!(control, super::OverlayControl::Continue));
+	assert_eq!(session.state.frozen_image.as_ref(), Some(&preview_image));
+	assert!(session.state.frozen_export_image.is_none());
+	assert!(!tests::session_frozen_export_ready_state(&session));
 	assert_eq!(
 		session.state.error_message.as_deref(),
 		Some("Window capture is unavailable. Please try again.")
@@ -426,9 +492,9 @@ fn window_matte_capture_without_live_preview_aborts_after_timeout_without_hiding
 	);
 	session.maybe_dispatch_armed_freeze_capture();
 
-	assert_eq!(session.pending_freeze_capture, Some(monitor));
-	assert!(session.pending_freeze_capture_armed);
-	assert_eq!(session.inflight_freeze_capture, None);
+	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
+	assert!(tests::session_frozen_capture_armed(&session));
+	assert_eq!(tests::session_inflight_freeze_capture(&session), None);
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_image.is_none());
 
@@ -440,9 +506,9 @@ fn window_matte_capture_without_live_preview_aborts_after_timeout_without_hiding
 
 	let _ = session.about_to_wait();
 
-	assert_eq!(session.pending_freeze_capture, None);
-	assert!(!session.pending_freeze_capture_armed);
-	assert_eq!(session.inflight_freeze_capture, None);
+	assert_eq!(tests::session_pending_freeze_capture(&session), None);
+	assert!(!tests::session_frozen_capture_armed(&session));
+	assert_eq!(tests::session_inflight_freeze_capture(&session), None);
 	assert!(!session.capture_windows_hidden);
 	assert!(!session.frozen_capture_redraw_pending());
 	assert_eq!(
@@ -465,9 +531,9 @@ fn background_capture_without_initial_snapshot_waits_for_live_stream_followup_wi
 		Some(cursor),
 	);
 
-	assert_eq!(session.pending_freeze_capture, Some(monitor));
-	assert!(!session.pending_freeze_capture_armed);
-	assert_eq!(session.inflight_freeze_capture, None);
+	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
+	assert!(!tests::session_frozen_capture_armed(&session));
+	assert_eq!(tests::session_inflight_freeze_capture(&session), None);
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_image.is_none());
 
@@ -480,8 +546,8 @@ fn background_capture_without_initial_snapshot_waits_for_live_stream_followup_wi
 
 	let _ = session.about_to_wait();
 
-	assert_eq!(session.pending_freeze_capture, None);
-	assert_eq!(session.inflight_freeze_capture, None);
+	assert_eq!(tests::session_pending_freeze_capture(&session), None);
+	assert_eq!(tests::session_inflight_freeze_capture(&session), None);
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_image.is_some());
 	assert!(session.state.frozen_export_image.is_some());
@@ -503,9 +569,9 @@ fn background_capture_without_live_snapshot_aborts_after_timeout_without_hiding(
 		Some(cursor),
 	);
 
-	assert_eq!(session.pending_freeze_capture, Some(monitor));
-	assert!(!session.pending_freeze_capture_armed);
-	assert_eq!(session.inflight_freeze_capture, None);
+	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
+	assert!(!tests::session_frozen_capture_armed(&session));
+	assert_eq!(tests::session_inflight_freeze_capture(&session), None);
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_image.is_none());
 
@@ -517,9 +583,9 @@ fn background_capture_without_live_snapshot_aborts_after_timeout_without_hiding(
 
 	let _ = session.about_to_wait();
 
-	assert_eq!(session.pending_freeze_capture, None);
-	assert!(!session.pending_freeze_capture_armed);
-	assert_eq!(session.inflight_freeze_capture, None);
+	assert_eq!(tests::session_pending_freeze_capture(&session), None);
+	assert!(!tests::session_frozen_capture_armed(&session));
+	assert_eq!(tests::session_inflight_freeze_capture(&session), None);
 	assert!(!session.capture_windows_hidden);
 	assert_eq!(
 		session.state.error_message.as_deref(),
@@ -550,24 +616,25 @@ fn repeated_freeze_capture_send_full_aborts_and_restores_hidden_windows() {
 
 	session.state.begin_freeze(monitor);
 
-	session.pending_freeze_capture = Some(monitor);
-	session.pending_freeze_capture_armed = true;
+	tests::set_session_pending_freeze_capture(&mut session, Some(monitor));
+	tests::set_session_pending_freeze_capture_armed(&mut session, true);
+
 	session.capture_windows_hidden = true;
 
 	for _ in 0..FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT.saturating_sub(1) {
 		session.handle_freeze_capture_request_send_error(monitor, WorkerRequestSendError::Full);
 
-		assert_eq!(session.pending_freeze_capture, Some(monitor));
-		assert!(session.pending_freeze_capture_armed);
+		assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
+		assert!(tests::session_frozen_capture_armed(&session));
 		assert!(session.capture_windows_hidden);
 		assert!(session.state.error_message.is_none());
 	}
 
 	session.handle_freeze_capture_request_send_error(monitor, WorkerRequestSendError::Full);
 
-	assert!(session.pending_freeze_capture.is_none());
-	assert!(session.inflight_freeze_capture.is_none());
-	assert!(!session.pending_freeze_capture_armed);
+	assert!(tests::session_pending_freeze_capture(&session).is_none());
+	assert!(tests::session_inflight_freeze_capture(&session).is_none());
+	assert!(!tests::session_frozen_capture_armed(&session));
 	assert!(!session.capture_windows_hidden);
 	assert_eq!(session.freeze_capture_send_full_count, 0);
 	assert_eq!(
@@ -641,7 +708,7 @@ fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refre
 	let monitor = tests::test_monitor();
 	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
-	session.inflight_freeze_capture = Some(monitor);
+	tests::set_session_inflight_freeze_capture(&mut session, Some(monitor));
 
 	session.apply_self_capture_exception_window_ids_to_active_streams();
 
@@ -701,7 +768,8 @@ fn captured_freeze_response_applies_deferred_worker_refresh() {
 	let monitor = tests::test_monitor();
 	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
-	session.inflight_freeze_capture = Some(monitor);
+	tests::set_session_inflight_freeze_capture(&mut session, Some(monitor));
+
 	session.pending_self_capture_exception_window_ids_worker_refresh = true;
 
 	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::CapturedFreeze {
@@ -722,7 +790,8 @@ fn freeze_error_response_applies_deferred_worker_refresh() {
 	let monitor = tests::test_monitor();
 	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
-	session.inflight_freeze_capture = Some(monitor);
+	tests::set_session_inflight_freeze_capture(&mut session, Some(monitor));
+
 	session.pending_self_capture_exception_window_ids_worker_refresh = true;
 
 	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
