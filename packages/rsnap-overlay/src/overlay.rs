@@ -1323,9 +1323,7 @@ impl OverlaySession {
 	}
 
 	fn pending_freeze_capture_matches(&self, monitor: MonitorRect) -> bool {
-		self.frozen_capture_monitor() == Some(monitor)
-			&& self.state.monitor.is_none_or(|active_monitor| active_monitor == monitor)
-			&& self.frozen_capture_dispatch_pending()
+		self.frozen_capture_monitor() == Some(monitor) && self.frozen_capture_dispatch_pending()
 	}
 
 	#[cfg(target_os = "macos")]
