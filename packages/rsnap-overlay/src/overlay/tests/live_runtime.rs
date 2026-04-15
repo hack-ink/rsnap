@@ -797,8 +797,9 @@ fn live_release_click_uses_mouse_down_locked_target() {
 		session.handle_left_mouse_input(winit::window::WindowId::from(1), ElementState::Released),
 		OverlayControl::Continue
 	));
-	assert!(matches!(session.state.mode, OverlayMode::Frozen));
+	assert!(matches!(session.state.mode, OverlayMode::Live));
 	assert_eq!(session.state.frozen_capture_rect, Some(capture_rect));
+	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
 	assert!(matches!(
 		session.live_capture_interaction,
 		LiveCaptureInteraction::FrozenFromClick {
@@ -840,9 +841,17 @@ fn released_press_pending_waits_for_async_hit_test_before_entering_frozen() {
 
 	assert!(matches!(control, OverlayControl::Continue));
 	assert!(session.pending_click_hit_test_request_id.is_none());
-	assert!(matches!(session.state.mode, OverlayMode::Frozen));
-	assert_eq!(session.state.cursor, Some(GlobalPoint::new(420, 440)));
+	assert!(matches!(session.state.mode, OverlayMode::Live));
 	assert_eq!(session.state.frozen_capture_rect, Some(capture_rect));
+	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
+	assert_eq!(
+		tests::session_pending_window_freeze_capture(&session),
+		Some(crate::overlay::session_state::WindowFreezeCaptureTarget {
+			monitor,
+			window_id: 42,
+			rect: capture_rect,
+		})
+	);
 	assert!(matches!(
 		session.live_capture_interaction,
 		LiveCaptureInteraction::FrozenFromClick {

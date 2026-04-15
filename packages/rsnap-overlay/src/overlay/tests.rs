@@ -46,6 +46,8 @@ use crate::backend::CaptureBackend;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::FrozenCaptureSource;
+#[cfg(not(target_os = "macos"))]
+use crate::overlay::OverlayConfig;
 use crate::overlay::PngAction;
 use crate::overlay::rendering;
 #[cfg(target_os = "macos")]
@@ -603,6 +605,37 @@ fn test_egui_context() -> egui::Context {
 	let _ = ctx.run_ui(RawInput::default(), |_ui| {});
 
 	ctx
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn cached_live_background_fast_path_advances_frozen_generation() {
+	let monitor = test_monitor();
+	let capture_rect = RectPoints::new(0, 0, monitor.width, monitor.height);
+	let first_image = test_frozen_image();
+	let second_image = image::RgbaImage::from_pixel(8, 8, Rgba([90, 12, 45, 255]));
+	let mut session = OverlaySession::with_config(OverlayConfig {
+		show_hud_blur: true,
+		..OverlayConfig::default()
+	});
+
+	session.state.begin_freeze(monitor);
+	session.state.commit_frozen_final_image(monitor, first_image);
+
+	session.state.mode = OverlayMode::Live;
+
+	let previous_generation = session.state.frozen_generation;
+
+	session.state.live_bg_monitor = Some(monitor);
+	session.state.live_bg_image = Some(second_image.clone());
+
+	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	assert!(matches!(session.state.mode, OverlayMode::Frozen));
+	assert_eq!(session.state.monitor, Some(monitor));
+	assert_eq!(session.state.frozen_generation, previous_generation.wrapping_add(1));
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&second_image));
+	assert_eq!(session.state.frozen_export_image.as_ref(), Some(&second_image));
 }
 
 #[cfg(target_os = "macos")]

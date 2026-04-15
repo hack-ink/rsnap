@@ -32,8 +32,8 @@ struct FrozenCaptureBackendDispatch {
 enum FrozenCaptureBackendSignal {
 	None,
 	Wait { reason: &'static str, arm_worker: bool },
+	EscalateHiddenFallback { reason: &'static str },
 	Dispatch(FrozenCaptureBackendDispatch),
-	Abort { message: &'static str },
 }
 
 #[cfg(target_os = "macos")]
@@ -63,6 +63,14 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		snapshot: Option<Arc<MonitorImageSnapshot>>,
 	) -> Option<(Arc<MonitorImageSnapshot>, u128)> {
+		if self
+			.live_sample_stream
+			.as_ref()
+			.is_some_and(|stream| !stream.self_capture_filter_complete_for_monitor(monitor))
+		{
+			return None;
+		}
+
 		let snapshot = snapshot.filter(|snapshot| snapshot.monitor == monitor)?;
 		let snapshot_age = snapshot.captured_at.elapsed();
 
@@ -170,6 +178,17 @@ impl OverlaySession {
 					self.note_frozen_transition_authoritative_handoff_armed(monitor);
 				}
 			},
+			FrozenCaptureBackendSignal::EscalateHiddenFallback { reason } => {
+				self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Armed);
+				self.note_frozen_transition_preview_deferred(monitor, reason, None);
+				self.note_frozen_transition_authoritative_handoff_armed(monitor);
+
+				if !self.capture_windows_hidden {
+					self.hide_capture_windows();
+				}
+
+				self.request_redraw_for_monitor(monitor);
+			},
 			FrozenCaptureBackendSignal::Dispatch(dispatch) => {
 				let Some(worker) = &self.worker else {
 					self.abort_pending_freeze_capture("Capture worker is unavailable.");
@@ -183,9 +202,6 @@ impl OverlaySession {
 					},
 					Err(err) => self.handle_freeze_capture_request_send_error(monitor, err),
 				}
-			},
-			FrozenCaptureBackendSignal::Abort { message } => {
-				self.abort_pending_freeze_capture(message);
 			},
 		}
 	}
@@ -315,8 +331,8 @@ impl OverlaySession {
 
 		FrozenCaptureBackendUpdate {
 			display_candidate: None,
-			signal: FrozenCaptureBackendSignal::Abort {
-				message: "Unable to capture a clean preview. Please try again.",
+			signal: FrozenCaptureBackendSignal::EscalateHiddenFallback {
+				reason: "timed_out_waiting_for_clean_preview",
 			},
 		}
 	}
