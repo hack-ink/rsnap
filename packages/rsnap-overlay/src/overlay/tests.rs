@@ -48,9 +48,11 @@ use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::FrozenCaptureSource;
 use crate::overlay::PngAction;
 use crate::overlay::rendering;
-use crate::overlay::session_state::FrozenBrushStyle;
 #[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
+use crate::overlay::session_state::{
+	FrozenBrushStyle, FrozenCaptureSessionState, FrozenCaptureWorkerState, FrozenExportSessionState,
+};
 use crate::overlay::{
 	self, ActiveFrozenBrushStroke, FROZEN_EDIT_HISTORY_LIMIT, FROZEN_TEXT_CARET_REPAINT_INTERVAL,
 	FrozenAnnotationColor, FrozenArrowAnnotation, FrozenBrushModelState, FrozenBrushStroke,
@@ -133,6 +135,291 @@ impl CaptureBackend for SequenceScrollCaptureBackend {
 	fn refresh_window_cache(&mut self) -> Result<Arc<WindowListSnapshot>> {
 		Err(eyre::eyre!("unused in this test"))
 	}
+}
+
+fn session_pending_freeze_capture(session: &OverlaySession) -> Option<MonitorRect> {
+	match session.frozen_capture_session_state {
+		FrozenCaptureSessionState::DisplayPending {
+			monitor,
+			worker_state: FrozenCaptureWorkerState::Idle | FrozenCaptureWorkerState::Armed,
+			..
+		} => Some(monitor),
+		FrozenCaptureSessionState::DisplayReady { monitor, export } => match export {
+			FrozenExportSessionState::Pending {
+				worker_state: FrozenCaptureWorkerState::Idle | FrozenCaptureWorkerState::Armed,
+				..
+			} => Some(monitor),
+			FrozenExportSessionState::Pending {
+				worker_state: FrozenCaptureWorkerState::Inflight,
+				..
+			}
+			| FrozenExportSessionState::Ready
+			| FrozenExportSessionState::Failed => None,
+		},
+		FrozenCaptureSessionState::Inactive
+		| FrozenCaptureSessionState::DisplayFailed { .. }
+		| FrozenCaptureSessionState::DisplayPending {
+			worker_state: FrozenCaptureWorkerState::Inflight,
+			..
+		} => None,
+	}
+}
+
+fn session_inflight_freeze_capture(session: &OverlaySession) -> Option<MonitorRect> {
+	match session.frozen_capture_session_state {
+		FrozenCaptureSessionState::DisplayPending {
+			monitor,
+			worker_state: FrozenCaptureWorkerState::Inflight,
+			..
+		}
+		| FrozenCaptureSessionState::DisplayReady {
+			monitor,
+			export:
+				FrozenExportSessionState::Pending {
+					worker_state: FrozenCaptureWorkerState::Inflight,
+					..
+				},
+		} => Some(monitor),
+		FrozenCaptureSessionState::Inactive
+		| FrozenCaptureSessionState::DisplayFailed { .. }
+		| FrozenCaptureSessionState::DisplayPending { .. }
+		| FrozenCaptureSessionState::DisplayReady { .. } => None,
+	}
+}
+
+fn session_pending_window_freeze_capture(
+	session: &OverlaySession,
+) -> Option<crate::overlay::session_state::WindowFreezeCaptureTarget> {
+	match session.frozen_capture_session_state {
+		FrozenCaptureSessionState::DisplayPending {
+			worker_state: FrozenCaptureWorkerState::Idle | FrozenCaptureWorkerState::Armed,
+			window_target,
+			..
+		} => window_target,
+		FrozenCaptureSessionState::DisplayReady { export, .. } => match export {
+			FrozenExportSessionState::Pending {
+				worker_state: FrozenCaptureWorkerState::Idle | FrozenCaptureWorkerState::Armed,
+				window_target,
+			} => window_target,
+			FrozenExportSessionState::Pending {
+				worker_state: FrozenCaptureWorkerState::Inflight,
+				..
+			}
+			| FrozenExportSessionState::Ready
+			| FrozenExportSessionState::Failed => None,
+		},
+		FrozenCaptureSessionState::Inactive
+		| FrozenCaptureSessionState::DisplayFailed { .. }
+		| FrozenCaptureSessionState::DisplayPending {
+			worker_state: FrozenCaptureWorkerState::Inflight,
+			..
+		} => None,
+	}
+}
+
+fn session_inflight_window_freeze_capture(
+	session: &OverlaySession,
+) -> Option<crate::overlay::session_state::WindowFreezeCaptureTarget> {
+	match session.frozen_capture_session_state {
+		FrozenCaptureSessionState::DisplayPending {
+			worker_state: FrozenCaptureWorkerState::Inflight,
+			window_target,
+			..
+		}
+		| FrozenCaptureSessionState::DisplayReady {
+			export:
+				FrozenExportSessionState::Pending {
+					worker_state: FrozenCaptureWorkerState::Inflight,
+					window_target,
+				},
+			..
+		} => window_target,
+		FrozenCaptureSessionState::Inactive
+		| FrozenCaptureSessionState::DisplayFailed { .. }
+		| FrozenCaptureSessionState::DisplayPending { .. }
+		| FrozenCaptureSessionState::DisplayReady { .. } => None,
+	}
+}
+
+fn session_frozen_capture_armed(session: &OverlaySession) -> bool {
+	matches!(
+		session.frozen_capture_session_state,
+		FrozenCaptureSessionState::DisplayPending {
+			worker_state: FrozenCaptureWorkerState::Armed,
+			..
+		} | FrozenCaptureSessionState::DisplayReady {
+			export: FrozenExportSessionState::Pending {
+				worker_state: FrozenCaptureWorkerState::Armed,
+				..
+			},
+			..
+		}
+	)
+}
+
+fn session_frozen_export_ready_state(session: &OverlaySession) -> bool {
+	matches!(
+		session.frozen_capture_session_state,
+		FrozenCaptureSessionState::DisplayReady { export: FrozenExportSessionState::Ready, .. }
+	)
+}
+
+fn set_session_frozen_capture_state(
+	session: &mut OverlaySession,
+	monitor: Option<MonitorRect>,
+	worker_state: FrozenCaptureWorkerState,
+	window_target: Option<crate::overlay::session_state::WindowFreezeCaptureTarget>,
+) {
+	let Some(monitor) = monitor else {
+		session.frozen_capture_session_state = FrozenCaptureSessionState::Inactive;
+
+		return;
+	};
+	let display_ready = matches!(session.state.mode, OverlayMode::Frozen)
+		&& session.state.monitor == Some(monitor)
+		&& session.state.frozen_surface_image().is_some();
+
+	session.frozen_capture_session_state = if display_ready {
+		FrozenCaptureSessionState::DisplayReady {
+			monitor,
+			export: FrozenExportSessionState::Pending { worker_state, window_target },
+		}
+	} else {
+		FrozenCaptureSessionState::DisplayPending { monitor, worker_state, window_target }
+	};
+}
+
+fn set_session_pending_freeze_capture(session: &mut OverlaySession, monitor: Option<MonitorRect>) {
+	let worker_state = if session_frozen_capture_armed(session) {
+		FrozenCaptureWorkerState::Armed
+	} else {
+		FrozenCaptureWorkerState::Idle
+	};
+	let window_target = session_pending_window_freeze_capture(session)
+		.or_else(|| session_inflight_window_freeze_capture(session));
+
+	set_session_frozen_capture_state(session, monitor, worker_state, window_target);
+}
+
+fn set_session_pending_window_freeze_capture(
+	session: &mut OverlaySession,
+	window_target: Option<crate::overlay::session_state::WindowFreezeCaptureTarget>,
+) {
+	let monitor = session_pending_freeze_capture(session)
+		.or_else(|| session_inflight_freeze_capture(session))
+		.or_else(|| window_target.map(|target| target.monitor));
+	let worker_state = match session_inflight_freeze_capture(session) {
+		Some(_) => FrozenCaptureWorkerState::Inflight,
+		None if session_frozen_capture_armed(session) => FrozenCaptureWorkerState::Armed,
+		None => FrozenCaptureWorkerState::Idle,
+	};
+
+	set_session_frozen_capture_state(session, monitor, worker_state, window_target);
+}
+
+fn set_session_inflight_freeze_capture(session: &mut OverlaySession, monitor: Option<MonitorRect>) {
+	let window_target = session_pending_window_freeze_capture(session)
+		.or_else(|| session_inflight_window_freeze_capture(session));
+
+	set_session_frozen_capture_state(
+		session,
+		monitor,
+		FrozenCaptureWorkerState::Inflight,
+		window_target,
+	);
+}
+
+fn set_session_inflight_window_freeze_capture(
+	session: &mut OverlaySession,
+	window_target: Option<crate::overlay::session_state::WindowFreezeCaptureTarget>,
+) {
+	let monitor = session_inflight_freeze_capture(session)
+		.or_else(|| session_pending_freeze_capture(session))
+		.or_else(|| window_target.map(|target| target.monitor));
+
+	set_session_frozen_capture_state(
+		session,
+		monitor,
+		FrozenCaptureWorkerState::Inflight,
+		window_target,
+	);
+}
+
+fn set_session_pending_freeze_capture_armed(session: &mut OverlaySession, armed: bool) {
+	let monitor = session_pending_freeze_capture(session)
+		.or_else(|| session_inflight_freeze_capture(session));
+	let window_target = session_pending_window_freeze_capture(session)
+		.or_else(|| session_inflight_window_freeze_capture(session));
+	let worker_state = if session_inflight_freeze_capture(session).is_some() {
+		FrozenCaptureWorkerState::Inflight
+	} else if armed {
+		FrozenCaptureWorkerState::Armed
+	} else {
+		FrozenCaptureWorkerState::Idle
+	};
+
+	set_session_frozen_capture_state(session, monitor, worker_state, window_target);
+}
+
+fn set_session_frozen_export_ready_state(session: &mut OverlaySession, ready: bool) {
+	if ready {
+		let monitor = session
+			.state
+			.monitor
+			.or_else(|| session_pending_freeze_capture(session))
+			.or_else(|| session_inflight_freeze_capture(session))
+			.unwrap_or_else(test_monitor);
+
+		session.frozen_capture_session_state = FrozenCaptureSessionState::DisplayReady {
+			monitor,
+			export: FrozenExportSessionState::Ready,
+		};
+	} else if let Some(monitor) = session
+		.state
+		.monitor
+		.or_else(|| session_pending_freeze_capture(session))
+		.or_else(|| session_inflight_freeze_capture(session))
+	{
+		session.frozen_capture_session_state = FrozenCaptureSessionState::DisplayReady {
+			monitor,
+			export: FrozenExportSessionState::Failed,
+		};
+	} else {
+		session.frozen_capture_session_state = FrozenCaptureSessionState::Inactive;
+	}
+}
+
+fn finish_frozen_display_state(
+	session: &mut OverlaySession,
+	monitor: MonitorRect,
+	image: image::RgbaImage,
+) {
+	session.state.finish_freeze(monitor, image);
+
+	session.frozen_capture_session_state = FrozenCaptureSessionState::DisplayReady {
+		monitor,
+		export: FrozenExportSessionState::Pending {
+			worker_state: FrozenCaptureWorkerState::Idle,
+			window_target: None,
+		},
+	};
+}
+
+fn commit_frozen_display_preview_state(
+	session: &mut OverlaySession,
+	monitor: MonitorRect,
+	image: image::RgbaImage,
+) {
+	session.state.commit_frozen_display_image(monitor, image);
+
+	session.frozen_capture_session_state = FrozenCaptureSessionState::DisplayReady {
+		monitor,
+		export: FrozenExportSessionState::Pending {
+			worker_state: FrozenCaptureWorkerState::Idle,
+			window_target: session_pending_window_freeze_capture(session)
+				.or_else(|| session_inflight_window_freeze_capture(session)),
+		},
+	};
 }
 
 fn make_scroll_capture_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
@@ -331,11 +618,13 @@ fn seed_ready_scroll_capture_selection(session: &mut OverlaySession) {
 	let monitor = test_monitor_with_scale(8, 8, 1_000);
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(1, 1, 4, 4));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(session, true);
 }
 
 #[test]
@@ -349,11 +638,14 @@ fn begin_png_action_copies_preview_render_image_during_active_scroll_capture() {
 	let monitor = test_monitor();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.scroll_capture.active = true;
 	session.scroll_capture.session = Some(scroll_session);
 	session.scroll_capture.preview_display_image =
@@ -377,7 +669,9 @@ fn current_export_image_includes_frozen_brush_strokes() {
 		.finish_freeze(monitor, image::RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255])));
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
 
 	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
@@ -404,7 +698,9 @@ fn current_export_image_uses_selected_brush_color() {
 		.finish_freeze(monitor, image::RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255])));
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
 	session.toolbar_state.brush_style.color = FrozenAnnotationColor::Green;
 
@@ -430,7 +726,9 @@ fn frozen_brush_undo_and_redo_update_export_image() {
 		.finish_freeze(monitor, image::RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255])));
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
 
 	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(3, 3)));
@@ -457,10 +755,17 @@ fn current_export_image_antialiases_frozen_brush_edges() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, image::RgbaImage::from_pixel(16, 16, background));
+
+	finish_frozen_display_state(
+		&mut session,
+		monitor,
+		image::RgbaImage::from_pixel(16, 16, background),
+	);
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 16, 16));
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
 
 	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(3, 3)));
@@ -892,12 +1197,14 @@ fn begin_ocr_action_exits_with_deferred_request_and_clears_stale_png_output_inte
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, expected_export.clone());
+
+	finish_frozen_display_state(&mut session, monitor, expected_export.clone());
 
 	session.state.frozen_capture_rect =
 		Some(RectPoints::new(0, 0, expected_export.width(), expected_export.height()));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
 
 	session.begin_png_action(PngAction::Copy);
 
@@ -926,12 +1233,14 @@ fn begin_ocr_action_drag_region_still_uses_frozen_image_under_matte_mode() {
 	session.config.window_capture_alpha_mode = WindowCaptureAlphaMode::MatteLight;
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, expected_export.clone());
+
+	finish_frozen_display_state(&mut session, monitor, expected_export.clone());
 
 	session.state.frozen_capture_rect =
 		Some(RectPoints::new(0, 0, expected_export.width(), expected_export.height()));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
 
 	let control = session.begin_ocr_action();
 	let OverlayControl::Exit(OverlayExit::DeferredTextRecognition(request)) = control else {
@@ -952,12 +1261,14 @@ fn authoritative_freeze_response_updates_export_authority_without_overwriting_di
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.commit_frozen_display_image(monitor, preview_image.clone());
+
+	commit_frozen_display_preview_state(&mut session, monitor, preview_image.clone());
+
 	session.handle_captured_freeze_response(monitor, authoritative_image.clone(), None, None);
 
 	assert_eq!(session.state.frozen_image.as_ref(), Some(&preview_image));
 	assert_eq!(session.state.frozen_export_image.as_ref(), Some(&authoritative_image));
-	assert!(session.authoritative_frozen_capture_ready);
+	assert!(session_frozen_export_ready_state(&session));
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1021,8 +1332,11 @@ fn window_matte_mosaic_export_and_ocr_match_preview_pixels() {
 
 	session.state.frozen_capture_rect = Some(capture_rect);
 	session.frozen_capture_source = FrozenCaptureSource::Window;
-	session.inflight_window_freeze_capture =
-		Some(crate::overlay::WindowFreezeCaptureTarget { monitor, window_id, rect: capture_rect });
+
+	set_session_inflight_window_freeze_capture(
+		&mut session,
+		Some(crate::overlay::WindowFreezeCaptureTarget { monitor, window_id, rect: capture_rect }),
+	);
 
 	session.handle_captured_freeze_response(
 		monitor,
@@ -1031,7 +1345,7 @@ fn window_matte_mosaic_export_and_ocr_match_preview_pixels() {
 		Some(window_id),
 	);
 
-	assert!(session.authoritative_frozen_capture_ready);
+	assert!(session_frozen_export_ready_state(&session));
 	assert!(session.apply_frozen_mosaic_edit(capture_rect));
 
 	let expected_export = imageops::crop_imm(
@@ -1066,11 +1380,13 @@ fn begin_ocr_action_skips_deferred_request_when_drag_region_crop_is_out_of_bound
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, frozen_image.clone());
+
+	finish_frozen_display_state(&mut session, monitor, frozen_image.clone());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(monitor.width + 10, 20, 100, 80));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
 
 	let control = session.begin_ocr_action();
 
@@ -1091,11 +1407,14 @@ fn begin_ocr_action_uses_scroll_capture_export_image_in_deferred_request() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.scroll_capture.active = true;
 	session.scroll_capture.session = Some(scroll_session);
 	session.scroll_capture.preview_display_image =
@@ -1116,7 +1435,8 @@ fn begin_frozen_text_edit_at_starts_text_input_inside_capture_rect() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1142,7 +1462,8 @@ fn begin_frozen_text_edit_at_ignores_non_authoritative_monitor() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1360,7 +1681,8 @@ fn overlay_window_mouse_wheel_routes_inline_toolbar_size_adjustments() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 	session.toolbar_state.visible = true;
@@ -1396,7 +1718,8 @@ fn frozen_text_edit_drag_repositions_anchor_within_capture_rect() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1418,7 +1741,8 @@ fn toolbar_mouse_release_stops_active_frozen_text_edit_drag() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1440,7 +1764,8 @@ fn toolbar_mouse_release_commits_active_frozen_arrow_drag() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Arrow;
@@ -1464,7 +1789,8 @@ fn toolbar_mouse_release_commits_active_frozen_spotlight_drag() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Spotlight;
@@ -1489,7 +1815,8 @@ fn toolbar_mouse_release_finishes_active_frozen_brush_stroke() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
@@ -1641,7 +1968,8 @@ fn adjacent_text_events_from_key_and_ime_are_deduplicated() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1693,7 +2021,8 @@ fn non_adjacent_identical_text_events_from_different_sources_are_not_deduplicate
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1725,7 +2054,8 @@ fn backspace_clears_recent_input_dedupe_marker_before_cross_source_retype() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1758,7 +2088,8 @@ fn text_input_resets_frozen_text_caret_blink_phase() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1789,7 +2120,8 @@ fn ime_preedit_updates_reset_frozen_text_caret_blink_phase() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1813,7 +2145,8 @@ fn ime_disabled_clears_frozen_text_preedit_state() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1835,7 +2168,8 @@ fn frozen_text_preedit_cursor_range_updates_caret_position() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1864,7 +2198,8 @@ fn frozen_text_style_change_refresh_check_requires_active_ime_preedit() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1888,7 +2223,8 @@ fn frozen_text_style_change_refresh_check_ignores_other_monitor() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1906,7 +2242,8 @@ fn frozen_text_enter_does_not_finish_while_ime_preedit_is_active() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1929,7 +2266,8 @@ fn frozen_text_caret_repaint_schedules_delayed_repaint_while_editing() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.frozen_text_edit = Some(FrozenTextEditState::new(Pos2::new(120.0, 140.0)));
 	*session.egui_repaint_deadline.lock().unwrap_or_else(|err| err.into_inner()) = None;
@@ -1968,7 +2306,8 @@ fn finish_frozen_text_editing_commits_current_toolbar_text_style() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -1991,10 +2330,13 @@ fn finish_frozen_brush_stroke_commits_current_toolbar_brush_style() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
 	session.toolbar_state.brush_style.stroke_width_points = 4.25;
 	session.toolbar_state.brush_style.color = FrozenAnnotationColor::Green;
@@ -2014,7 +2356,8 @@ fn finish_frozen_text_editing_commits_active_ime_preedit_text() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -2033,10 +2376,13 @@ fn inline_toolbar_mode_switch_finishes_active_frozen_text_edit() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
 	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
@@ -2058,10 +2404,13 @@ fn inline_toolbar_mode_switch_commits_active_ime_preedit_text() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
 	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
@@ -2083,7 +2432,8 @@ fn frozen_text_undo_and_redo_round_trip_annotations() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
@@ -2112,7 +2462,8 @@ fn current_export_image_renders_frozen_text_annotations() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, base);
+
+	finish_frozen_display_state(&mut session, monitor, base);
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(10, 12, 120, 80));
 
@@ -2136,7 +2487,8 @@ fn current_export_image_applies_frozen_spotlight_outside_selection() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, base);
+
+	finish_frozen_display_state(&mut session, monitor, base);
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
 
@@ -2179,7 +2531,8 @@ fn current_export_image_applies_multiple_frozen_spotlights_without_extra_darkeni
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, base);
+
+	finish_frozen_display_state(&mut session, monitor, base);
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
 
@@ -2211,7 +2564,8 @@ fn current_export_image_renders_frozen_arrow_after_spotlight_scrim() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, base);
+
+	finish_frozen_display_state(&mut session, monitor, base);
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
 
@@ -2241,7 +2595,8 @@ fn current_export_image_renders_frozen_arrow_outline_without_tinting() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, base);
+
+	finish_frozen_display_state(&mut session, monitor, base);
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 32, 32));
 
@@ -2313,7 +2668,9 @@ fn frozen_committed_overlay_iteration_preserves_cross_tool_order() {
 		.finish_freeze(monitor, image::RgbaImage::from_pixel(16, 16, Rgba([0, 0, 0, 255])));
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 16, 16));
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
 
 	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
@@ -2362,10 +2719,13 @@ fn frozen_annotation_history_undoes_across_tools_in_reverse_commit_order() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, original.clone());
+
+	finish_frozen_display_state(&mut session, monitor, original.clone());
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
 
 	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
@@ -2419,10 +2779,13 @@ fn committing_new_frozen_edit_clears_redo_across_tools() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, base);
+
+	finish_frozen_display_state(&mut session, monitor, base);
 
 	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
-	session.authoritative_frozen_capture_ready = true;
+
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
 	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(2, 2)));
@@ -2797,7 +3160,6 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 		png_encode_inflight: true,
 		pending_self_capture_exception_window_ids_worker_refresh: true,
 		pending_startup_aux_live_stream_filter_upgrade: true,
-		authoritative_frozen_capture_ready: true,
 		capture_windows_hidden: true,
 		loupe_activation_key_down: true,
 		keyboard_modifiers: ModifiersState::SHIFT,
@@ -2814,6 +3176,8 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 		..OverlaySession::default()
 	};
 
+	set_session_frozen_export_ready_state(&mut session, true);
+
 	session.reset_for_start();
 
 	assert!(!session.is_active());
@@ -2822,7 +3186,7 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 	assert!(!session.png_encode_inflight);
 	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
 	assert!(!session.pending_startup_aux_live_stream_filter_upgrade);
-	assert!(!session.authoritative_frozen_capture_ready);
+	assert!(!session_frozen_export_ready_state(&session));
 	assert!(!session.capture_windows_hidden);
 	assert!(!session.loupe_activation_key_down);
 	assert_eq!(session.keyboard_modifiers, ModifiersState::default());
@@ -3304,12 +3668,12 @@ fn toolbar_window_hides_until_frozen_pixels_exist() {
 
 	assert!(session.should_hide_toolbar_window(monitor));
 
-	session.pending_freeze_capture = Some(monitor);
+	set_session_pending_freeze_capture(&mut session, Some(monitor));
 
 	assert!(session.should_hide_toolbar_window(monitor));
 
-	session.pending_freeze_capture = None;
-	session.inflight_freeze_capture = Some(monitor);
+	set_session_pending_freeze_capture(&mut session, None);
+	set_session_inflight_freeze_capture(&mut session, Some(monitor));
 
 	assert!(session.should_hide_toolbar_window(monitor));
 }
@@ -3321,14 +3685,15 @@ fn toolbar_window_is_needed_for_seeded_preview_before_final_capture_ready() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	session.toolbar_state.visible = true;
 
 	session.request_aux_window_creation_if_needed();
 
 	assert!(session.startup_aux_window_creation_pending);
-	assert!(!session.authoritative_frozen_capture_ready);
+	assert!(!session_frozen_export_ready_state(&session));
 }
 
 #[test]
@@ -3337,16 +3702,17 @@ fn toolbar_window_stays_visible_while_final_capture_is_pending() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, test_frozen_image());
+
+	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
 	assert!(!session.should_hide_toolbar_window(monitor));
 
-	session.pending_freeze_capture = Some(monitor);
+	set_session_pending_freeze_capture(&mut session, Some(monitor));
 
 	assert!(!session.should_hide_toolbar_window(monitor));
 
-	session.pending_freeze_capture = None;
-	session.inflight_freeze_capture = Some(monitor);
+	set_session_pending_freeze_capture(&mut session, None);
+	set_session_inflight_freeze_capture(&mut session, Some(monitor));
 
 	assert!(!session.should_hide_toolbar_window(monitor));
 }

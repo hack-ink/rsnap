@@ -166,6 +166,7 @@ use self::session_state::InflightScrollCaptureObservation;
 use self::session_state::{
 	ActiveFrozenBrushStroke, CursorMoveTrace, FrozenAnnotationColor, FrozenArrowAnnotation,
 	FrozenArrowDragState, FrozenBrushModelState, FrozenBrushState, FrozenBrushStroke,
+	FrozenCaptureSessionState, FrozenCaptureWorkerState, FrozenExportSessionState,
 	FrozenMosaicDragState, FrozenSelectionDragCursorMoveTiming, FrozenSelectionDragState,
 	FrozenSpotlightAnnotation, FrozenSpotlightDragState, FrozenTextAnnotation, FrozenTextEditState,
 	FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState, HudDrawConfig,
@@ -596,20 +597,13 @@ pub struct OverlaySession {
 	event_loop_last_stall_warn_at: Option<Instant>,
 	loupe_patch_width_px: u32,
 	loupe_patch_height_px: u32,
-	pending_freeze_capture: Option<MonitorRect>,
-	inflight_freeze_capture: Option<MonitorRect>,
-	pending_freeze_capture_armed: bool,
-	frozen_export_ready: bool,
-	#[cfg(test)]
-	authoritative_frozen_capture_ready: bool,
+	frozen_capture_session_state: FrozenCaptureSessionState,
 	frozen_transition_started_at: Option<Instant>,
 	frozen_transition_preview_committed_at: Option<Instant>,
 	frozen_transition_preview_source: Option<&'static str>,
 	frozen_transition_final_ready_at: Option<Instant>,
 	frozen_transition_toolbar_visible_at: Option<Instant>,
 	frozen_transition_target_window_id: Option<u32>,
-	pending_window_freeze_capture: Option<WindowFreezeCaptureTarget>,
-	inflight_window_freeze_capture: Option<WindowFreezeCaptureTarget>,
 	frozen_window_image: Option<RgbaImage>,
 	frozen_capture_source: FrozenCaptureSource,
 	capture_windows_hidden: bool,
@@ -836,14 +830,11 @@ impl OverlaySession {
 			loupe_patch_width_px: 0,
 			loupe_patch_height_px: 0,
 			egui_repaint_deadline: Arc::new(Mutex::new(None)),
-			pending_freeze_capture: None, inflight_freeze_capture: None, pending_freeze_capture_armed: false,
-			frozen_export_ready: false,
-			#[cfg(test)]
-			authoritative_frozen_capture_ready: false,
+			frozen_capture_session_state: FrozenCaptureSessionState::Inactive,
 			frozen_transition_started_at: None, frozen_transition_preview_committed_at: None,
 			frozen_transition_preview_source: None, frozen_transition_final_ready_at: None,
 			frozen_transition_toolbar_visible_at: None, frozen_transition_target_window_id: None,
-			pending_window_freeze_capture: None, inflight_window_freeze_capture: None, frozen_window_image: None,
+			frozen_window_image: None,
 			frozen_capture_source: FrozenCaptureSource::None,
 			capture_windows_hidden: false,
 			#[cfg(target_os = "macos")]
@@ -1125,12 +1116,144 @@ impl OverlaySession {
 	fn frozen_capture_redraw_pending(&self) -> bool {
 		matches!(self.state.mode, OverlayMode::Frozen)
 			&& !self.frozen_display_ready()
-			&& (self.pending_freeze_capture.is_some() || self.inflight_freeze_capture.is_some())
+			&& self.frozen_capture_export_pending()
+	}
+
+	fn frozen_capture_monitor(&self) -> Option<MonitorRect> {
+		match self.frozen_capture_session_state {
+			FrozenCaptureSessionState::Inactive => None,
+			FrozenCaptureSessionState::DisplayPending { monitor, .. }
+			| FrozenCaptureSessionState::DisplayFailed { monitor }
+			| FrozenCaptureSessionState::DisplayReady { monitor, .. } => Some(monitor),
+		}
+	}
+
+	fn frozen_capture_window_target(&self) -> Option<WindowFreezeCaptureTarget> {
+		match self.frozen_capture_session_state {
+			FrozenCaptureSessionState::DisplayPending { window_target, .. } => window_target,
+			FrozenCaptureSessionState::DisplayReady {
+				export: FrozenExportSessionState::Pending { window_target, .. },
+				..
+			} => window_target,
+			FrozenCaptureSessionState::Inactive
+			| FrozenCaptureSessionState::DisplayFailed { .. }
+			| FrozenCaptureSessionState::DisplayReady { .. } => None,
+		}
+	}
+
+	fn frozen_capture_worker_state(&self) -> Option<FrozenCaptureWorkerState> {
+		match self.frozen_capture_session_state {
+			FrozenCaptureSessionState::DisplayPending { worker_state, .. } => Some(worker_state),
+			FrozenCaptureSessionState::DisplayReady {
+				export: FrozenExportSessionState::Pending { worker_state, .. },
+				..
+			} => Some(worker_state),
+			FrozenCaptureSessionState::Inactive
+			| FrozenCaptureSessionState::DisplayFailed { .. }
+			| FrozenCaptureSessionState::DisplayReady { .. } => None,
+		}
+	}
+
+	fn frozen_capture_export_pending(&self) -> bool {
+		matches!(
+			self.frozen_capture_session_state,
+			FrozenCaptureSessionState::DisplayPending { .. }
+				| FrozenCaptureSessionState::DisplayReady {
+					export: FrozenExportSessionState::Pending { .. },
+					..
+				}
+		)
+	}
+
+	fn frozen_capture_export_ready(&self) -> bool {
+		matches!(
+			self.frozen_capture_session_state,
+			FrozenCaptureSessionState::DisplayReady { export: FrozenExportSessionState::Ready, .. }
+		)
+	}
+
+	fn frozen_capture_worker_armed(&self) -> bool {
+		self.frozen_capture_worker_state() == Some(FrozenCaptureWorkerState::Armed)
+	}
+
+	fn frozen_capture_worker_inflight(&self) -> bool {
+		self.frozen_capture_worker_state() == Some(FrozenCaptureWorkerState::Inflight)
+	}
+
+	fn set_frozen_capture_display_pending(
+		&mut self,
+		monitor: MonitorRect,
+		worker_state: FrozenCaptureWorkerState,
+		window_target: Option<WindowFreezeCaptureTarget>,
+	) {
+		self.frozen_capture_session_state =
+			FrozenCaptureSessionState::DisplayPending { monitor, worker_state, window_target };
+	}
+
+	fn promote_frozen_capture_display_ready(&mut self, monitor: MonitorRect) {
+		let export = match self.frozen_capture_session_state {
+			FrozenCaptureSessionState::DisplayPending { worker_state, window_target, .. } => {
+				FrozenExportSessionState::Pending { worker_state, window_target }
+			},
+			FrozenCaptureSessionState::DisplayReady { export, .. } => export,
+			FrozenCaptureSessionState::DisplayFailed { .. }
+			| FrozenCaptureSessionState::Inactive => FrozenExportSessionState::Pending {
+				worker_state: FrozenCaptureWorkerState::Idle,
+				window_target: None,
+			},
+		};
+
+		self.frozen_capture_session_state =
+			FrozenCaptureSessionState::DisplayReady { monitor, export };
+	}
+
+	fn set_frozen_capture_worker_state(&mut self, worker_state: FrozenCaptureWorkerState) {
+		self.frozen_capture_session_state = match self.frozen_capture_session_state {
+			FrozenCaptureSessionState::DisplayPending { monitor, window_target, .. } => {
+				FrozenCaptureSessionState::DisplayPending { monitor, worker_state, window_target }
+			},
+			FrozenCaptureSessionState::DisplayReady {
+				monitor,
+				export: FrozenExportSessionState::Pending { window_target, .. },
+			} => FrozenCaptureSessionState::DisplayReady {
+				monitor,
+				export: FrozenExportSessionState::Pending { worker_state, window_target },
+			},
+			other => other,
+		};
+	}
+
+	fn set_frozen_capture_export_ready(&mut self, monitor: MonitorRect) {
+		self.frozen_capture_session_state = FrozenCaptureSessionState::DisplayReady {
+			monitor,
+			export: FrozenExportSessionState::Ready,
+		};
+	}
+
+	fn set_frozen_capture_export_failed(&mut self, monitor: MonitorRect) {
+		self.frozen_capture_session_state = match self.frozen_capture_session_state {
+			FrozenCaptureSessionState::DisplayReady { .. } => {
+				FrozenCaptureSessionState::DisplayReady {
+					monitor,
+					export: FrozenExportSessionState::Failed,
+				}
+			},
+			FrozenCaptureSessionState::DisplayPending { .. }
+			| FrozenCaptureSessionState::DisplayFailed { .. }
+			| FrozenCaptureSessionState::Inactive => FrozenCaptureSessionState::DisplayFailed { monitor },
+		};
+	}
+
+	fn clear_frozen_capture_session_state(&mut self) {
+		self.frozen_capture_session_state = FrozenCaptureSessionState::Inactive;
 	}
 
 	fn frozen_display_ready(&self) -> bool {
 		matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.state.frozen_surface_image().is_some()
+			&& matches!(
+				self.frozen_capture_session_state,
+				FrozenCaptureSessionState::DisplayReady { .. }
+			) && self.state.frozen_surface_image().is_some()
 	}
 
 	fn frozen_display_ready_for_monitor(&self, monitor: MonitorRect) -> bool {
@@ -1171,9 +1294,10 @@ impl OverlaySession {
 	}
 
 	fn pending_freeze_capture_matches(&self, monitor: MonitorRect) -> bool {
-		self.pending_freeze_capture == Some(monitor)
+		self.frozen_capture_monitor() == Some(monitor)
 			&& matches!(self.state.mode, OverlayMode::Frozen)
 			&& self.state.monitor == Some(monitor)
+			&& self.frozen_capture_export_pending()
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1188,18 +1312,8 @@ impl OverlaySession {
 
 	fn frozen_final_capture_ready(&self) -> bool {
 		matches!(self.state.mode, OverlayMode::Frozen)
-			&& {
-				#[cfg(test)]
-				{
-					self.frozen_export_ready || self.authoritative_frozen_capture_ready
-				}
-				#[cfg(not(test))]
-				{
-					self.frozen_export_ready
-				}
-			} && self.state.frozen_export_image.is_some()
-			&& self.pending_freeze_capture.is_none()
-			&& self.inflight_freeze_capture.is_none()
+			&& self.frozen_capture_export_ready()
+			&& self.state.frozen_export_image.is_some()
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1207,7 +1321,7 @@ impl OverlaySession {
 		&self,
 		monitor: MonitorRect,
 	) -> Option<WindowFreezeCaptureTarget> {
-		self.pending_window_freeze_capture.filter(|target| target.monitor == monitor)
+		self.frozen_capture_window_target().filter(|target| target.monitor == monitor)
 	}
 
 	fn frozen_transition_elapsed_ms_since(
@@ -1535,6 +1649,7 @@ impl OverlaySession {
 		cursor: Option<GlobalPoint>,
 	) {
 		self.state.commit_frozen_display_image(monitor, image);
+		self.promote_frozen_capture_display_ready(monitor);
 
 		if let Some(cursor) = cursor {
 			self.update_cursor_state(monitor, cursor);
@@ -1590,18 +1705,8 @@ impl OverlaySession {
 
 		self.commit_frozen_preview(monitor, snapshot_image, cursor);
 		self.note_frozen_transition_preview_committed(monitor, source, Some(snapshot_age_ms));
-
-		self.pending_freeze_capture = None;
-		self.inflight_freeze_capture = None;
-		self.pending_freeze_capture_armed = false;
-		self.pending_window_freeze_capture = None;
-		self.inflight_window_freeze_capture = None;
-		self.frozen_export_ready = true;
-		#[cfg(test)]
-		{
-			self.authoritative_frozen_capture_ready = true;
-		}
-
+		self.promote_frozen_capture_display_ready(monitor);
+		self.set_frozen_capture_export_ready(monitor);
 		self.state.commit_frozen_export_image(export_image);
 		self.note_frozen_transition_final_ready(
 			monitor,
@@ -1675,8 +1780,8 @@ impl OverlaySession {
 		monitor: MonitorRect,
 	) -> bool {
 		if !self.pending_freeze_capture_matches(monitor)
-			|| self.frozen_export_ready
-			|| self.inflight_freeze_capture.is_some()
+			|| self.frozen_capture_export_ready()
+			|| self.frozen_capture_worker_inflight()
 		{
 			return false;
 		}
@@ -1839,17 +1944,13 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		window_target: Option<WindowFreezeCaptureTarget>,
 	) {
-		self.pending_freeze_capture = Some(monitor);
-		self.pending_freeze_capture_armed = false;
-		self.inflight_freeze_capture = None;
-		self.frozen_export_ready = false;
-		#[cfg(test)]
-		{
-			self.authoritative_frozen_capture_ready = false;
-		}
+		self.set_frozen_capture_display_pending(
+			monitor,
+			FrozenCaptureWorkerState::Idle,
+			window_target,
+		);
+
 		self.freeze_capture_send_full_count = 0;
-		self.pending_window_freeze_capture = window_target;
-		self.inflight_window_freeze_capture = None;
 		self.frozen_window_image = None;
 		self.capture_windows_hidden = false;
 		self.pending_click_hit_test_request_id = None;
@@ -1969,10 +2070,14 @@ impl OverlaySession {
 			snapshot.clone(),
 			"live_stream_snapshot_preview_at_freeze_begin",
 		);
-
-		self.pending_freeze_capture_armed = window_target.is_some()
+		let arm_worker = window_target.is_some()
 			&& self.config.window_capture_alpha_mode != WindowCaptureAlphaMode::Background;
 
+		self.set_frozen_capture_worker_state(if arm_worker {
+			FrozenCaptureWorkerState::Armed
+		} else {
+			FrozenCaptureWorkerState::Idle
+		});
 		self.request_pending_frozen_capture_live_stream_refresh(monitor);
 		self.note_frozen_transition_preview_deferred(
 			monitor,
@@ -1984,7 +2089,7 @@ impl OverlaySession {
 			None,
 		);
 
-		if self.pending_freeze_capture_armed {
+		if arm_worker {
 			self.note_frozen_transition_authoritative_handoff_armed(monitor);
 		}
 
@@ -2007,15 +2112,8 @@ impl OverlaySession {
 
 			self.state.finish_freeze(monitor, image);
 			self.note_frozen_transition_preview_committed(monitor, "cached_live_background", None);
-
-			self.pending_freeze_capture = None;
-			self.pending_freeze_capture_armed = false;
-			self.frozen_export_ready = true;
-			#[cfg(test)]
-			{
-				self.authoritative_frozen_capture_ready = true;
-			}
-
+			self.promote_frozen_capture_display_ready(monitor);
+			self.set_frozen_capture_export_ready(monitor);
 			self.note_frozen_transition_final_ready(monitor, "cached_live_background", None);
 
 			if let Some(cursor) = cursor {
@@ -2182,14 +2280,14 @@ impl OverlaySession {
 		window_image: Option<RgbaImage>,
 		captured_window_id: Option<u32>,
 	) {
-		if matches!(self.state.mode, OverlayMode::Frozen) && self.state.monitor == Some(monitor) {
-			self.inflight_freeze_capture = None;
-
-			let window_capture_target = self.inflight_window_freeze_capture.take();
+		if matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.state.monitor == Some(monitor)
+			&& self.frozen_capture_export_pending()
+		{
+			let window_capture_target = self.frozen_capture_window_target();
 			let had_display_image = self.frozen_display_ready();
 			let frozen_preview_image = image;
 
-			self.pending_window_freeze_capture = None;
 			self.frozen_window_image = None;
 
 			if self.reject_dirty_window_export_authority(
@@ -2203,12 +2301,6 @@ impl OverlaySession {
 				return;
 			}
 
-			self.frozen_export_ready = true;
-			#[cfg(test)]
-			{
-				self.authoritative_frozen_capture_ready = true;
-			}
-
 			let frozen_preview_image = self.apply_window_capture_export_authority(
 				monitor,
 				had_display_image,
@@ -2220,6 +2312,7 @@ impl OverlaySession {
 
 			if !had_display_image {
 				self.state.commit_frozen_display_image(monitor, frozen_preview_image.clone());
+				self.promote_frozen_capture_display_ready(monitor);
 				self.note_frozen_transition_preview_committed(
 					monitor,
 					"authoritative_capture",
@@ -2228,6 +2321,7 @@ impl OverlaySession {
 			}
 
 			self.state.commit_frozen_export_image(frozen_preview_image.clone());
+			self.set_frozen_capture_export_ready(monitor);
 			self.note_frozen_transition_final_ready(
 				monitor,
 				"authoritative_capture",
@@ -2258,12 +2352,8 @@ impl OverlaySession {
 
 			return;
 		}
-		if self.inflight_freeze_capture == Some(monitor) {
-			self.inflight_freeze_capture = None;
-		}
-		if self.inflight_window_freeze_capture.is_some_and(|inflight| inflight.monitor == monitor) {
-			self.inflight_window_freeze_capture = None;
-			self.pending_window_freeze_capture = None;
+		if self.frozen_capture_worker_inflight() && self.frozen_capture_monitor() == Some(monitor) {
+			self.clear_frozen_capture_session_state();
 		}
 		if matches!(self.state.mode, OverlayMode::Live)
 			&& self.use_fake_hud_blur()
@@ -2297,12 +2387,7 @@ impl OverlaySession {
 			return false;
 		}
 
-		self.frozen_export_ready = false;
-		#[cfg(test)]
-		{
-			self.authoritative_frozen_capture_ready = false;
-		}
-
+		self.set_frozen_capture_export_failed(monitor);
 		self.note_frozen_transition_aborted(
 			"Window export authority did not resolve to a clean target window.",
 		);
@@ -3120,9 +3205,13 @@ impl OverlaySession {
 			window_id = ?window_id,
 			monitor_id = overlay_monitor.id,
 			frozen_generation = self.state.frozen_generation,
-			final_capture_ready = self.frozen_export_ready,
+			final_capture_ready = self.frozen_final_capture_ready(),
 			frozen_image_ready = self.frozen_display_ready(),
-			pending_freeze_capture = self.pending_freeze_capture.map(|m| m.id),
+			frozen_capture_session_state = ?self.frozen_capture_session_state,
+			pending_freeze_capture = self
+				.frozen_capture_monitor()
+				.filter(|_| self.frozen_capture_export_pending())
+				.map(|m| m.id),
 			draw_toolbar,
 			toolbar_visible = self.toolbar_state.visible,
 			toolbar_floating_position = ?self.toolbar_state.floating_position,
@@ -3198,9 +3287,8 @@ impl OverlaySession {
 		draw_toolbar: bool,
 	) -> OverlayControl {
 		if self.should_dispatch_pending_freeze_capture(overlay_monitor) {
-			let pending_window_target = self
-				.pending_window_freeze_capture
-				.filter(|target| target.monitor == overlay_monitor);
+			let pending_window_target =
+				self.pending_window_freeze_capture_for_monitor(overlay_monitor);
 			let freeze_target = pending_window_target
 				.map_or(FreezeCaptureTarget::Monitor, |target| FreezeCaptureTarget::Window {
 					window_id: target.window_id,
@@ -3211,7 +3299,7 @@ impl OverlaySession {
 			#[cfg(not(target_os = "macos"))]
 			{
 				// Capture must happen on a post-hide redraw so the HUD/loupe are not included.
-				if self.pending_freeze_capture_armed {
+				if self.frozen_capture_worker_armed() {
 					let Some(worker) = &self.worker else {
 						self.abort_pending_freeze_capture("Capture worker is unavailable.");
 
@@ -3231,8 +3319,8 @@ impl OverlaySession {
 					}
 				} else {
 					self.freeze_capture_send_full_count = 0;
-					self.pending_freeze_capture_armed = true;
 
+					self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Armed);
 					#[cfg(not(target_os = "macos"))]
 					self.hide_capture_windows();
 					self.request_redraw_for_monitor(overlay_monitor);

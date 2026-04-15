@@ -1089,7 +1089,8 @@ fn frozen_selection_drag_uses_non_rounding_cursor_move_updates_without_shifting_
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
 
 	session.state.monitor = Some(monitor);
 	session.state.frozen_capture_rect = Some(capture_rect);
@@ -1134,7 +1135,8 @@ fn frozen_arrow_drag_updates_from_overlay_cursor_moved_events() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
 
 	session.state.monitor = Some(monitor);
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 600, 400));
@@ -1168,7 +1170,8 @@ fn frozen_spotlight_drag_updates_from_overlay_cursor_moved_events() {
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
-	session.state.finish_freeze(monitor, tests::test_frozen_image());
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
 
 	session.state.monitor = Some(monitor);
 	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 600, 400));
