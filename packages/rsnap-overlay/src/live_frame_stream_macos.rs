@@ -1845,13 +1845,16 @@ fn refresh_stream_nonblocking(
 	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> StreamRequestProgress {
 	let now = Instant::now();
+	let current_monitor_id = state.as_ref().map(|current| current.monitor_id);
 
-	if let Some(last) = *last_setup_attempt_at
+	if refresh_stream_requires_setup_backoff(current_monitor_id, monitor.id)
+		&& let Some(last) = *last_setup_attempt_at
 		&& now.duration_since(last) < STREAM_SETUP_BACKOFF
 	{
 		tracing::info!(
 			op = "live_frame_stream.refresh_monitor_backoff",
 			monitor_id = monitor.id,
+			current_monitor_id,
 			elapsed_since_last_setup_ms = now.duration_since(last).as_millis(),
 			backoff_ms = STREAM_SETUP_BACKOFF.as_millis(),
 			"Skipped ScreenCaptureKit refresh because setup backoff is still active."
@@ -1859,12 +1862,11 @@ fn refresh_stream_nonblocking(
 
 		return StreamRequestProgress::Settled;
 	}
-
-	if state.as_ref().is_none_or(|current| current.monitor_id != monitor.id) {
+	if current_monitor_id != Some(monitor.id) {
 		tracing::info!(
 			op = "live_frame_stream.refresh_monitor_recover_via_ensure",
 			monitor_id = monitor.id,
-			current_monitor_id = state.as_ref().map(|current| current.monitor_id),
+			current_monitor_id,
 			"Refresh request found no matching live stream and is falling back to ensure."
 		);
 
@@ -1892,6 +1894,13 @@ fn refresh_stream_nonblocking(
 		frame_seq_counter,
 		shared_latest_frame,
 	})
+}
+
+fn refresh_stream_requires_setup_backoff(
+	current_monitor_id: Option<u32>,
+	requested_monitor_id: u32,
+) -> bool {
+	current_monitor_id != Some(requested_monitor_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3245,6 +3254,13 @@ mod tests {
 			),
 			Duration::ZERO
 		);
+	}
+
+	#[test]
+	fn refresh_stream_requires_setup_backoff_only_for_recovery_paths() {
+		assert!(live_frame_stream_macos::refresh_stream_requires_setup_backoff(None, 7));
+		assert!(live_frame_stream_macos::refresh_stream_requires_setup_backoff(Some(9), 7));
+		assert!(!live_frame_stream_macos::refresh_stream_requires_setup_backoff(Some(7), 7));
 	}
 
 	#[test]

@@ -76,9 +76,7 @@ use image::imageops;
 #[cfg(target_os = "macos")]
 use objc::declare::ClassDecl;
 #[cfg(target_os = "macos")]
-use objc::runtime::Sel;
-#[cfg(target_os = "macos")]
-use objc::runtime::{BOOL, Class, Object, YES};
+use objc::runtime::{self, BOOL, Class, Imp, NO, Object, Sel, YES};
 #[cfg(target_os = "macos")]
 use objc::{Encode, Encoding};
 #[cfg(target_os = "macos")]
@@ -595,11 +593,14 @@ pub struct OverlaySession {
 	loupe_patch_width_px: u32,
 	loupe_patch_height_px: u32,
 	frozen_capture_session_state: FrozenCaptureSessionState,
+	frozen_transition_press_pending_at: Option<Instant>,
 	frozen_transition_started_at: Option<Instant>,
 	frozen_transition_preview_committed_at: Option<Instant>,
 	frozen_transition_preview_source: Option<&'static str>,
 	frozen_transition_final_ready_at: Option<Instant>,
 	frozen_transition_toolbar_visible_at: Option<Instant>,
+	frozen_transition_toolbar_first_draw_at: Option<Instant>,
+	frozen_transition_badge_slot_armed_at: Option<Instant>,
 	frozen_transition_target_window_id: Option<u32>,
 	frozen_window_image: Option<RgbaImage>,
 	frozen_capture_source: FrozenCaptureSource,
@@ -642,6 +643,7 @@ pub struct OverlaySession {
 	hud_window_visible: bool,
 	toolbar_window_visible: bool,
 	toolbar_window_drawn_once: bool,
+	toolbar_badge_slot_ready: bool,
 	skip_toolbar_focus_on_next_show: bool,
 	#[cfg(target_os = "macos")]
 	preserve_frontmost_on_next_toolbar_show: bool,
@@ -829,9 +831,11 @@ impl OverlaySession {
 			loupe_patch_height_px: 0,
 			egui_repaint_deadline: Arc::new(Mutex::new(None)),
 			frozen_capture_session_state: FrozenCaptureSessionState::Inactive,
+			frozen_transition_press_pending_at: None,
 			frozen_transition_started_at: None, frozen_transition_preview_committed_at: None,
 			frozen_transition_preview_source: None, frozen_transition_final_ready_at: None,
-			frozen_transition_toolbar_visible_at: None, frozen_transition_target_window_id: None,
+			frozen_transition_toolbar_visible_at: None, frozen_transition_toolbar_first_draw_at: None,
+			frozen_transition_badge_slot_armed_at: None, frozen_transition_target_window_id: None,
 			frozen_window_image: None,
 			frozen_capture_source: FrozenCaptureSource::None,
 			capture_windows_hidden: false,
@@ -856,7 +860,7 @@ impl OverlaySession {
 			frozen_mosaic_drag: FrozenMosaicDragState::default(), frozen_spotlight_drag: FrozenSpotlightDragState::default(),
 			frozen_spotlight_preview_rect: None, frozen_edit_undo_stack: Vec::new(),
 			frozen_edit_redo_stack: Vec::new(), frozen_mosaic_undo_stack: Vec::new(), frozen_mosaic_redo_stack: Vec::new(),
-			hud_window_visible: false, toolbar_window_visible: false, toolbar_window_drawn_once: false, skip_toolbar_focus_on_next_show: false,
+			hud_window_visible: false, toolbar_window_visible: false, toolbar_window_drawn_once: false, toolbar_badge_slot_ready: false, skip_toolbar_focus_on_next_show: false,
 			#[cfg(target_os = "macos")]
 			preserve_frontmost_on_next_toolbar_show: false,
 			toolbar_window_warmup_redraws_remaining: 0, loupe_window_visible: false, loupe_window_warmup_redraws_remaining: 0,
@@ -1290,6 +1294,33 @@ impl OverlaySession {
 		self.frozen_display_ready() && self.state.monitor == Some(monitor)
 	}
 
+	#[cfg(target_os = "macos")]
+	fn preserve_live_frozen_entry_affordance(&self) -> bool {
+		!self.scroll_capture.active
+			&& !self.frozen_selection_drag.active
+			&& !self.toolbar_state.dragging
+			&& self.frozen_edit_undo_stack.is_empty()
+			&& self.state.frozen_mosaic_preview_rect.is_none()
+			&& self.frozen_text_edit.is_none()
+			&& self.active_frozen_arrow_preview().is_none()
+			&& self.frozen_spotlight_preview_rect.is_none()
+	}
+
+	fn frozen_visual_handoff_pending_for_monitor(&self, monitor: MonitorRect) -> bool {
+		#[cfg(target_os = "macos")]
+		{
+			self.frozen_display_ready_for_monitor(monitor)
+				&& self.preserve_live_frozen_entry_affordance()
+		}
+
+		#[cfg(not(target_os = "macos"))]
+		{
+			let _ = monitor;
+
+			false
+		}
+	}
+
 	fn frozen_preview_visible(&self) -> bool {
 		self.frozen_display_ready()
 	}
@@ -1366,35 +1397,78 @@ impl OverlaySession {
 		self.frozen_transition_preview_source = None;
 		self.frozen_transition_final_ready_at = None;
 		self.frozen_transition_toolbar_visible_at = None;
+		self.frozen_transition_toolbar_first_draw_at = None;
+		self.frozen_transition_badge_slot_armed_at = None;
 		self.frozen_transition_target_window_id = None;
 	}
 
 	fn log_frozen_transition_timing_info(&self, event: FrozenTransitionTimingInfo) {
 		let now = Instant::now();
+		let since_press_ms =
+			self.frozen_transition_elapsed_ms_since(self.frozen_transition_press_pending_at, now);
+		let since_begin_ms =
+			self.frozen_transition_elapsed_ms_since(self.frozen_transition_started_at, now);
+		let since_preview_ms = self
+			.frozen_transition_elapsed_ms_since(self.frozen_transition_preview_committed_at, now);
+		let since_final_ready_ms =
+			self.frozen_transition_elapsed_ms_since(self.frozen_transition_final_ready_at, now);
+		let since_toolbar_first_draw_ms = self
+			.frozen_transition_elapsed_ms_since(self.frozen_transition_toolbar_first_draw_at, now);
+		let slow_transition = matches!(
+			event.op,
+			"overlay.freeze_transition_preview_committed"
+				| "overlay.freeze_transition_toolbar_visible"
+				| "overlay.freeze_transition_toolbar_first_draw"
+				| "overlay.freeze_transition_badge_slot_armed"
+		) && since_press_ms.is_some_and(|elapsed_ms| elapsed_ms >= 400);
 
-		tracing::info!(
-			target: "rsnap",
-			op = event.op,
-			monitor_id = event.monitor.map(|monitor| monitor.id),
-			frozen_capture_source = ?self.frozen_capture_source,
-			alpha_mode = ?self.config.window_capture_alpha_mode,
-			target_window_id = self.frozen_transition_target_window_id,
-			captured_window_id = event.captured_window_id,
+		if slow_transition {
+			tracing::warn!(
+				target: "rsnap",
+				op = event.op,
+				monitor_id = event.monitor.map(|monitor| monitor.id),
+				frozen_capture_source = ?self.frozen_capture_source,
+				alpha_mode = ?self.config.window_capture_alpha_mode,
+				target_window_id = self.frozen_transition_target_window_id,
+				captured_window_id = event.captured_window_id,
 				source = event.source,
 				preview_source = self.frozen_transition_preview_source,
 				reason = event.reason,
 				snapshot_age_ms = event.snapshot_age_ms,
 				grace_ms = event.grace_ms,
 				capture_windows_hidden = self.capture_windows_hidden,
-			since_begin_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_started_at, now),
-			since_preview_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_preview_committed_at, now),
-			since_final_ready_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_final_ready_at, now),
-			"{}",
-			event.message
-		);
+				since_press_ms,
+				since_begin_ms,
+				since_preview_ms,
+				since_final_ready_ms,
+				since_toolbar_first_draw_ms,
+				"{}",
+				event.message
+			);
+		} else {
+			tracing::info!(
+				target: "rsnap",
+				op = event.op,
+				monitor_id = event.monitor.map(|monitor| monitor.id),
+				frozen_capture_source = ?self.frozen_capture_source,
+				alpha_mode = ?self.config.window_capture_alpha_mode,
+				target_window_id = self.frozen_transition_target_window_id,
+				captured_window_id = event.captured_window_id,
+				source = event.source,
+				preview_source = self.frozen_transition_preview_source,
+				reason = event.reason,
+				snapshot_age_ms = event.snapshot_age_ms,
+				grace_ms = event.grace_ms,
+				capture_windows_hidden = self.capture_windows_hidden,
+				since_press_ms,
+				since_begin_ms,
+				since_preview_ms,
+				since_final_ready_ms,
+				since_toolbar_first_draw_ms,
+				"{}",
+				event.message
+			);
+		}
 	}
 
 	fn begin_frozen_transition_timing(
@@ -1429,6 +1503,41 @@ impl OverlaySession {
 			grace_ms: None,
 			captured_window_id: None,
 			message: "Frozen transition started.",
+		});
+	}
+
+	fn note_frozen_transition_press_pending(
+		&mut self,
+		monitor: MonitorRect,
+		click_target: Option<LiveClickCaptureTarget>,
+	) {
+		let now = Instant::now();
+		let reason = click_target.map(|target| {
+			if target.window_target.is_some() {
+				"window_target"
+			} else if target.capture_rect.is_none() {
+				"fullscreen_fallback"
+			} else {
+				"rect_target"
+			}
+		});
+
+		self.frozen_transition_press_pending_at = Some(now);
+
+		if self.frozen_transition_target_window_id.is_none() {
+			self.frozen_transition_target_window_id =
+				click_target.and_then(|target| target.window_target).map(|target| target.window_id);
+		}
+
+		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
+			op: "overlay.freeze_transition_press_pending",
+			monitor: Some(monitor),
+			reason,
+			source: None,
+			snapshot_age_ms: None,
+			grace_ms: None,
+			captured_window_id: None,
+			message: "Frozen transition intent was armed on mouse-down.",
 		});
 	}
 
@@ -1625,6 +1734,46 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn note_frozen_transition_toolbar_first_draw(&mut self, monitor: MonitorRect) {
+		if self.frozen_transition_toolbar_first_draw_at.is_some() {
+			return;
+		}
+
+		self.frozen_transition_toolbar_first_draw_at = Some(Instant::now());
+
+		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
+			op: "overlay.freeze_transition_toolbar_first_draw",
+			monitor: Some(monitor),
+			reason: None,
+			source: None,
+			snapshot_age_ms: None,
+			grace_ms: None,
+			captured_window_id: None,
+			message: "Frozen transition rendered the first visible toolbar frame.",
+		});
+	}
+
+	#[cfg(target_os = "macos")]
+	fn note_frozen_transition_badge_slot_armed(&mut self, monitor: MonitorRect) {
+		if self.frozen_transition_badge_slot_armed_at.is_some() {
+			return;
+		}
+
+		self.frozen_transition_badge_slot_armed_at = Some(Instant::now());
+
+		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
+			op: "overlay.freeze_transition_badge_slot_armed",
+			monitor: Some(monitor),
+			reason: None,
+			source: None,
+			snapshot_age_ms: None,
+			grace_ms: None,
+			captured_window_id: None,
+			message: "Frozen transition armed overlay badge-slot avoidance after toolbar draw.",
+		});
+	}
+
+	#[cfg(target_os = "macos")]
 	fn note_frozen_transition_authoritative_handoff_armed(&self, monitor: MonitorRect) {
 		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
 			op: "overlay.freeze_transition_authoritative_handoff_armed",
@@ -1772,6 +1921,8 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		capture_rect: RectPoints,
 	) {
+		self.toolbar_window_drawn_once = false;
+		self.toolbar_badge_slot_ready = false;
 		self.toolbar_state.floating_position = None;
 		self.toolbar_state.default_slot_position = None;
 		self.toolbar_state.dragging = false;
@@ -2812,6 +2963,33 @@ impl OverlaySession {
 		macos_make_window_key(target_window);
 	}
 
+	#[cfg(target_os = "macos")]
+	fn restore_passive_capture_window_focus_policy_for_pointer_interaction(
+		&self,
+		reason: &'static str,
+	) {
+		for overlay_window in self.windows.values() {
+			macos_update_capture_window_focus_policy(overlay_window.window.as_ref(), false, reason);
+		}
+
+		if let Some(hud_window) = self.hud_window.as_ref() {
+			macos_update_capture_window_focus_policy(hud_window.window.as_ref(), false, reason);
+		}
+		if let Some(loupe_window) = self.loupe_window.as_ref() {
+			macos_update_capture_window_focus_policy(loupe_window.window.as_ref(), false, reason);
+		}
+		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+			macos_update_capture_window_focus_policy(toolbar_window.window.as_ref(), false, reason);
+		}
+		if let Some(scroll_preview_window) = self.scroll_preview_window.as_ref() {
+			macos_update_capture_window_focus_policy(
+				scroll_preview_window.window.as_ref(),
+				false,
+				reason,
+			);
+		}
+	}
+
 	fn maybe_recenter_frozen_toolbar_default_slot(&mut self, monitor: MonitorRect) -> bool {
 		if !matches!(self.state.mode, OverlayMode::Frozen) || self.state.monitor != Some(monitor) {
 			return false;
@@ -2871,7 +3049,7 @@ impl OverlaySession {
 				self.request_redraw_for_monitor(overlay_monitor);
 			}
 
-			ready && self.toolbar_window_drawn_once
+			ready && self.toolbar_window_drawn_once && self.toolbar_badge_slot_ready
 		}
 
 		#[cfg(not(target_os = "macos"))]
@@ -2880,18 +3058,47 @@ impl OverlaySession {
 		}
 	}
 
+	fn pending_frozen_display_handoff_state(
+		&self,
+		overlay_monitor: MonitorRect,
+	) -> (bool, Option<MonitorRect>) {
+		let pending_frozen_display_handoff = self.frozen_display_handoff_pending()
+			|| self.frozen_visual_handoff_pending_for_monitor(overlay_monitor);
+		let pending_frozen_display_handoff_monitor =
+			self.frozen_capture_monitor().filter(|_| pending_frozen_display_handoff);
+
+		(pending_frozen_display_handoff, pending_frozen_display_handoff_monitor)
+	}
+
+	fn allow_frozen_surface_bg_for_overlay_monitor(
+		&self,
+		overlay_monitor: MonitorRect,
+		scroll_capture_active: bool,
+	) -> bool {
+		!scroll_capture_active
+			&& !self.frozen_display_handoff_pending()
+			&& !self.frozen_visual_handoff_pending_for_monitor(overlay_monitor)
+	}
+
+	fn mark_overlay_window_redraw_progress(
+		&mut self,
+		window_id: WindowId,
+		overlay_monitor: MonitorRect,
+	) {
+		self.sync_overlay_cursor_icons();
+		self.sync_frozen_toolbar_state();
+
+		self.event_loop_last_progress_window_id = Some(window_id);
+		self.event_loop_last_progress_monitor_id = Some(overlay_monitor.id);
+	}
+
 	fn handle_overlay_window_redraw(&mut self, window_id: WindowId) -> OverlayControl {
 		let Some(overlay_monitor) = self.windows.get(&window_id).map(|overlay| overlay.monitor)
 		else {
 			return OverlayControl::Continue;
 		};
 
-		self.sync_overlay_cursor_icons();
-		self.sync_frozen_toolbar_state();
-
-		self.event_loop_last_progress_window_id = Some(window_id);
-		self.event_loop_last_progress_monitor_id = Some(overlay_monitor.id);
-
+		self.mark_overlay_window_redraw_progress(window_id, overlay_monitor);
 		self.maybe_log_event_loop_stall(Instant::now());
 		self.mark_progress(OverlayEventLoopPhase::OverlayRedraw);
 
@@ -2939,9 +3146,10 @@ impl OverlaySession {
 			if scroll_capture_active { None } else { self.active_frozen_arrow_preview() };
 		let visible_frozen_spotlight_preview_rect =
 			if scroll_capture_active { None } else { self.frozen_spotlight_preview_rect };
-		let pending_frozen_display_handoff = self.frozen_display_handoff_pending();
-		let pending_frozen_display_handoff_monitor =
-			self.frozen_capture_monitor().filter(|_| pending_frozen_display_handoff);
+		let (pending_frozen_display_handoff, pending_frozen_display_handoff_monitor) =
+			self.pending_frozen_display_handoff_state(overlay_monitor);
+		let allow_frozen_surface_bg = self
+			.allow_frozen_surface_bg_for_overlay_monitor(overlay_monitor, scroll_capture_active);
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
 
 		{
@@ -2968,7 +3176,7 @@ impl OverlaySession {
 				self.config.theme_mode,
 				self.config.selection_flow_enabled,
 				self.config.selection_flow_stroke_width_px,
-				!scroll_capture_active,
+				allow_frozen_surface_bg,
 				pending_frozen_display_handoff,
 				pending_frozen_display_handoff_monitor,
 				scroll_capture_active,
@@ -2991,11 +3199,41 @@ impl OverlaySession {
 				return self.exit(OverlayExit::Error(format!("{err:#}")));
 			}
 		}
+
+		self.maybe_arm_frozen_toolbar_badge_slot_after_overlay_draw(overlay_monitor);
+
 		self.last_present_at = Instant::now();
 
 		self.note_startup_overlay_frame_presented();
 
 		self.handle_capture_and_toolbar_redraw_post(overlay_monitor, draw_toolbar)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn maybe_arm_frozen_toolbar_badge_slot_after_overlay_draw(
+		&mut self,
+		overlay_monitor: MonitorRect,
+	) {
+		if self.toolbar_badge_slot_ready
+			|| !matches!(self.state.mode, OverlayMode::Frozen)
+			|| self.state.monitor != Some(overlay_monitor)
+			|| !self.toolbar_window_visible
+			|| !self.toolbar_window_drawn_once
+		{
+			return;
+		}
+
+		self.toolbar_badge_slot_ready = true;
+
+		self.note_frozen_transition_badge_slot_armed(overlay_monitor);
+		self.request_redraw_for_monitor(overlay_monitor);
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn maybe_arm_frozen_toolbar_badge_slot_after_overlay_draw(
+		&mut self,
+		_overlay_monitor: MonitorRect,
+	) {
 	}
 
 	fn log_frozen_overlay_redraw_trace(
@@ -3281,6 +3519,25 @@ impl OverlaySession {
 		self.set_scroll_overlay_mouse_passthrough(false);
 
 		self.session_active = false;
+		#[cfg(target_os = "macos")]
+		{
+			for overlay_window in self.windows.values() {
+				macos_clear_capture_window_focus_policy(overlay_window.window.as_ref());
+			}
+
+			if let Some(hud_window) = self.hud_window.as_ref() {
+				macos_clear_capture_window_focus_policy(hud_window.window.as_ref());
+			}
+			if let Some(loupe_window) = self.loupe_window.as_ref() {
+				macos_clear_capture_window_focus_policy(loupe_window.window.as_ref());
+			}
+			if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+				macos_clear_capture_window_focus_policy(toolbar_window.window.as_ref());
+			}
+			if let Some(scroll_preview_window) = self.scroll_preview_window.as_ref() {
+				macos_clear_capture_window_focus_policy(scroll_preview_window.window.as_ref());
+			}
+		}
 
 		self.windows.clear();
 
@@ -3300,6 +3557,10 @@ impl OverlaySession {
 		self.hud_window_visible = false;
 		self.toolbar_window_visible = false;
 		self.toolbar_window_drawn_once = false;
+		self.toolbar_badge_slot_ready = false;
+		self.frozen_transition_press_pending_at = None;
+		self.frozen_transition_toolbar_first_draw_at = None;
+		self.frozen_transition_badge_slot_armed_at = None;
 		#[cfg(target_os = "macos")]
 		{
 			self.toolbar_window_cursor_hittest_enabled = false;
@@ -4376,6 +4637,114 @@ fn macos_overlay_cursor_view_class() -> *const Class {
 }
 
 #[cfg(target_os = "macos")]
+fn macos_passive_capture_window_keys() -> &'static Mutex<HashSet<usize>> {
+	static WINDOW_KEYS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+
+	WINDOW_KEYS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_capture_window_is_passive(window_key: usize) -> bool {
+	macos_passive_capture_window_keys()
+		.lock()
+		.expect("passive capture window key set poisoned")
+		.contains(&window_key)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_update_capture_window_passive_state(window_key: usize, passive: bool) -> bool {
+	let mut window_keys = macos_passive_capture_window_keys()
+		.lock()
+		.expect("passive capture window key set poisoned");
+
+	if passive { window_keys.insert(window_key) } else { window_keys.remove(&window_key) }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bool_window_method_imp(imp: extern "C" fn(&Object, Sel) -> BOOL) -> Imp {
+	unsafe { mem::transmute::<extern "C" fn(&Object, Sel) -> BOOL, Imp>(imp) }
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn macos_dynamic_capture_window_can_become_main_window(
+	this: &Object,
+	_cmd: Sel,
+) -> BOOL {
+	if macos_capture_window_is_passive((this as *const Object) as usize) { NO } else { YES }
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn macos_dynamic_capture_window_can_become_key_window(this: &Object, _cmd: Sel) -> BOOL {
+	if macos_capture_window_is_passive((this as *const Object) as usize) { NO } else { YES }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_install_capture_window_focus_hooks() {
+	static INSTALLED: OnceLock<()> = OnceLock::new();
+	INSTALLED.get_or_init(|| {
+		let window_class = Class::get("WinitWindow").expect("WinitWindow class should exist");
+
+		unsafe {
+			let can_become_main_window =
+				runtime::class_getInstanceMethod(window_class, objc::sel!(canBecomeMainWindow));
+			let can_become_key_window =
+				runtime::class_getInstanceMethod(window_class, objc::sel!(canBecomeKeyWindow));
+
+			assert!(
+				!can_become_main_window.is_null(),
+				"WinitWindow::canBecomeMainWindow should exist"
+			);
+			assert!(
+				!can_become_key_window.is_null(),
+				"WinitWindow::canBecomeKeyWindow should exist"
+			);
+
+			let _: Imp = runtime::method_setImplementation(
+				can_become_main_window.cast_mut(),
+				macos_bool_window_method_imp(macos_dynamic_capture_window_can_become_main_window),
+			);
+			let _: Imp = runtime::method_setImplementation(
+				can_become_key_window.cast_mut(),
+				macos_bool_window_method_imp(macos_dynamic_capture_window_can_become_key_window),
+			);
+		}
+
+		tracing::trace!(
+			op = "overlay.macos_capture_window_focus_hooks_installed",
+			"Installed passive capture window focus hooks on WinitWindow."
+		);
+	});
+}
+
+#[cfg(target_os = "macos")]
+fn macos_set_capture_window_focus_policy(
+	ns_window: *mut Object,
+	allow_key_focus: bool,
+	reason: &'static str,
+) {
+	if ns_window.is_null() {
+		return;
+	}
+
+	macos_install_capture_window_focus_hooks();
+
+	let window_key = ns_window as usize;
+	let changed = macos_update_capture_window_passive_state(window_key, !allow_key_focus);
+
+	if !changed {
+		return;
+	}
+
+	tracing::trace!(
+		op = "overlay.macos_capture_window_focus_policy_changed",
+		reason,
+		allow_key_focus,
+		window_key,
+		"Updated macOS capture window focus policy."
+	);
+}
+
+#[cfg(target_os = "macos")]
 fn macos_overlay_window_ns_view(window: &Window) -> Option<*mut Object> {
 	let Ok(handle) = window.window_handle() else {
 		return None;
@@ -4585,6 +4954,8 @@ fn macos_restore_frontmost_application(target: MacOSFrontmostApplication) -> boo
 
 #[cfg(target_os = "macos")]
 fn macos_make_window_key(window: &Window) {
+	macos_update_capture_window_focus_policy(window, true, "explicit_focus_request");
+
 	let Ok(handle) = window.window_handle() else {
 		return;
 	};
@@ -4605,6 +4976,60 @@ fn macos_make_window_key(window: &Window) {
 	}
 
 	window.focus_window();
+}
+
+#[cfg(target_os = "macos")]
+fn macos_update_capture_window_focus_policy(
+	window: &Window,
+	allow_key_focus: bool,
+	reason: &'static str,
+) {
+	let Ok(handle) = window.window_handle() else {
+		return;
+	};
+	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+		return;
+	};
+	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
+
+	unsafe {
+		let ns_window: *mut Object = objc::msg_send![ns_view, window];
+
+		if ns_window.is_null() {
+			return;
+		}
+
+		macos_set_capture_window_focus_policy(ns_window, allow_key_focus, reason);
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn macos_clear_capture_window_focus_policy(window: &Window) {
+	let Ok(handle) = window.window_handle() else {
+		return;
+	};
+	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
+		return;
+	};
+	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
+
+	unsafe {
+		let ns_window: *mut Object = objc::msg_send![ns_view, window];
+
+		if ns_window.is_null() {
+			return;
+		}
+
+		let window_key = ns_window as usize;
+
+		if macos_update_capture_window_passive_state(window_key, false) {
+			tracing::trace!(
+				op = "overlay.macos_capture_window_focus_policy_cleared",
+				window_key,
+				"Cleared macOS capture window passive focus policy."
+			);
+		}
+	}
 }
 
 #[cfg(target_os = "macos")]
@@ -4772,6 +5197,8 @@ fn macos_configure_nonactivating_capture_window_with_ns_window(ns_window: *mut O
 		let _: () = objc::msg_send![ns_window, setStyleMask: style_mask | nonactivating_panel_mask];
 		let _: () = objc::msg_send![ns_window, setHidesOnDeactivate: false];
 	}
+
+	macos_set_capture_window_focus_policy(ns_window, false, "capture_window_configured");
 }
 
 #[cfg(test)]

@@ -240,7 +240,7 @@ impl OverlaySession {
 
 			return;
 		}
-		if self.live_drag_hides_auxiliary_windows() {
+		if self.live_capture_hides_auxiliary_windows() {
 			self.state.loupe = None;
 
 			self.set_alt_loupe_window_visible(None, false);

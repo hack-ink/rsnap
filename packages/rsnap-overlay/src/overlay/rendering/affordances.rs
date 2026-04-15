@@ -335,7 +335,7 @@ impl WindowRenderer {
 	) -> bool {
 		let mut has_rect = false;
 
-		if !matches!(state.mode, OverlayMode::Live) {
+		if !matches!(state.mode, OverlayMode::Live | OverlayMode::Frozen) {
 			return false;
 		}
 
@@ -416,7 +416,7 @@ impl WindowRenderer {
 		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
 		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
 	) -> bool {
-		if !matches!(state.mode, OverlayMode::Live) {
+		if !matches!(state.mode, OverlayMode::Live | OverlayMode::Frozen) {
 			return false;
 		}
 		if pending_handoff_monitor != Some(monitor) {
@@ -432,7 +432,7 @@ impl WindowRenderer {
 			return false;
 		}
 
-		let mut has_affordance = match frozen_capture_source {
+		match frozen_capture_source {
 			FrozenCaptureSource::None => false,
 			FrozenCaptureSource::DragRegion => Self::render_live_drag_selection_affordance(
 				painter,
@@ -464,25 +464,7 @@ impl WindowRenderer {
 
 				rendered
 			},
-		};
-
-		if let Some(target) = Self::selection_size_badge_target_from_rect(capture_rect, screen_rect)
-		{
-			Self::render_selection_size_badge(
-				ctx,
-				painter,
-				monitor,
-				screen_rect,
-				target,
-				None,
-				false,
-				theme,
-			);
-
-			has_affordance = true;
 		}
-
-		has_affordance
 	}
 
 	#[allow(clippy::too_many_arguments)]

@@ -156,15 +156,26 @@ impl OverlaySession {
 		self.create_hud_window(event_loop)?;
 
 		let hud_window_ms = hud_window_started_at.elapsed().as_millis();
+		#[cfg(target_os = "macos")]
+		let toolbar_window_ms = {
+			let toolbar_window_started_at = Instant::now();
+
+			self.create_toolbar_window(event_loop)?;
+
+			toolbar_window_started_at.elapsed().as_millis()
+		};
+		#[cfg(not(target_os = "macos"))]
+		let toolbar_window_ms = 0;
 
 		tracing::info!(
 			op = "overlay.prewarm_phase_timing",
 			monitor_count = monitors.len(),
 			window_count = self.windows.len(),
-			monitor_enum_ms,
-			gpu_init_ms,
-			overlay_windows_ms,
-			hud_window_ms,
+			monitor_enum_ms = monitor_enum_ms,
+			gpu_init_ms = gpu_init_ms,
+			overlay_windows_ms = overlay_windows_ms,
+			hud_window_ms = hud_window_ms,
+			toolbar_window_ms = toolbar_window_ms,
 			total_ms = prewarm_started_at.elapsed().as_millis(),
 			"Overlay startup resources prewarmed."
 		);
@@ -706,6 +717,9 @@ impl OverlaySession {
 
 	fn activate_prewarmed_overlay_windows(&self) {
 		for window in self.windows.values() {
+			#[cfg(target_os = "macos")]
+			overlay::macos_configure_overlay_window_mouse_moved_events(window.window.as_ref());
+
 			window.window.set_visible(true);
 		}
 	}
@@ -719,12 +733,29 @@ impl OverlaySession {
 	}
 
 	fn discard_prewarmed_startup_resources(&mut self) {
+		#[cfg(target_os = "macos")]
+		{
+			for window in self.windows.values() {
+				overlay::macos_clear_capture_window_focus_policy(window.window.as_ref());
+			}
+
+			if let Some(hud_window) = self.hud_window.as_ref() {
+				overlay::macos_clear_capture_window_focus_policy(hud_window.window.as_ref());
+			}
+			if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+				overlay::macos_clear_capture_window_focus_policy(toolbar_window.window.as_ref());
+			}
+		}
+
 		self.windows.clear();
 
 		self.hud_window = None;
 		self.hud_inner_size_points = None;
 		self.hud_outer_pos = None;
 		self.pending_hud_outer_pos = None;
+		self.toolbar_window = None;
+		self.toolbar_inner_size_points = None;
+		self.toolbar_window_visible = false;
 
 		#[cfg(target_os = "macos")]
 		self.macos_hud_window_config_cache.clear();
@@ -740,6 +771,8 @@ impl OverlaySession {
 			gpu: self.gpu.take(),
 			windows: mem::take(&mut self.windows),
 			hud_window: self.hud_window.take(),
+			toolbar_window: self.toolbar_window.take(),
+			toolbar_inner_size_points: self.toolbar_inner_size_points.take(),
 			#[cfg(target_os = "macos")]
 			macos_hud_window_config_cache: mem::take(&mut self.macos_hud_window_config_cache),
 		})
@@ -757,6 +790,8 @@ impl OverlaySession {
 		self.gpu = resources.gpu;
 		self.windows = resources.windows;
 		self.hud_window = resources.hud_window;
+		self.toolbar_window = resources.toolbar_window;
+		self.toolbar_inner_size_points = resources.toolbar_inner_size_points;
 		#[cfg(target_os = "macos")]
 		{
 			self.macos_hud_window_config_cache = resources.macos_hud_window_config_cache;
@@ -923,7 +958,7 @@ impl OverlaySession {
 		}
 
 		let hide_auxiliary_windows = self.frozen_selection_drag_hides_auxiliary_windows();
-		let hide_live_drag_auxiliary_windows = self.live_drag_hides_auxiliary_windows();
+		let hide_live_drag_auxiliary_windows = self.live_capture_hides_auxiliary_windows();
 		let request_hud_window = !hide_auxiliary_windows
 			&& !hide_live_drag_auxiliary_windows
 			&& self.hud_window.is_some();
@@ -982,7 +1017,7 @@ impl OverlaySession {
 
 	pub(super) fn request_redraw_hud_window(&self) {
 		if self.frozen_selection_drag_hides_auxiliary_windows()
-			|| self.live_drag_hides_auxiliary_windows()
+			|| self.live_capture_hides_auxiliary_windows()
 		{
 			return;
 		}
@@ -1004,7 +1039,7 @@ impl OverlaySession {
 
 	pub(super) fn request_redraw_loupe_window(&self) {
 		if self.frozen_selection_drag_hides_auxiliary_windows()
-			|| self.live_drag_hides_auxiliary_windows()
+			|| self.live_capture_hides_auxiliary_windows()
 		{
 			return;
 		}
@@ -1063,6 +1098,8 @@ struct PrewarmedStartupResources {
 	gpu: Option<GpuContext>,
 	windows: HashMap<WindowId, OverlayWindow>,
 	hud_window: Option<HudOverlayWindow>,
+	toolbar_window: Option<HudOverlayWindow>,
+	toolbar_inner_size_points: Option<(u32, u32)>,
 	#[cfg(target_os = "macos")]
 	macos_hud_window_config_cache: HashMap<WindowId, MacOSHudWindowConfigState>,
 }
