@@ -436,6 +436,9 @@ impl OverlaySession {
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			return LiveSampleApplyResult::default();
 		}
+		if self.frozen_display_handoff_pending() {
+			return LiveSampleApplyResult::default();
+		}
 		if self.active_cursor_monitor() != Some(monitor) {
 			return LiveSampleApplyResult::default();
 		}
@@ -487,6 +490,9 @@ impl OverlaySession {
 		cursor: GlobalPoint,
 	) -> bool {
 		if !matches!(self.state.mode, OverlayMode::Live) {
+			return false;
+		}
+		if self.frozen_display_handoff_pending() {
 			return false;
 		}
 		if self.live_capture_interaction_is_press_pending()
@@ -751,6 +757,9 @@ impl OverlaySession {
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			return;
 		}
+		if self.frozen_display_handoff_pending() {
+			return;
+		}
 
 		let Some(cursor) = self.state.cursor else {
 			return;
@@ -812,6 +821,9 @@ impl OverlaySession {
 			});
 
 		if !matches!(self.state.mode, OverlayMode::Live) {
+			return;
+		}
+		if self.frozen_display_handoff_pending() {
 			return;
 		}
 

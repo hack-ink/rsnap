@@ -22,6 +22,10 @@ impl OverlaySession {
 			| LiveCaptureInteraction::PressPending {
 				monitor, click_target: Some(target), ..
 			} => target.capture_rect.map(|rect| MonitorRectPoints { monitor_id: monitor.id, rect }),
+			LiveCaptureInteraction::FrozenFromClick {
+				monitor,
+				target: LiveClickCaptureTarget { capture_rect: Some(target), .. },
+			} => Some(MonitorRectPoints { monitor_id: monitor.id, rect: target }),
 			_ => None,
 		}
 	}
@@ -29,14 +33,17 @@ impl OverlaySession {
 	fn live_capture_interaction_drag_rect(
 		interaction: LiveCaptureInteraction,
 	) -> Option<MonitorRectPoints> {
-		let LiveCaptureInteraction::DraggingSelection { monitor, press_global, current_global } =
-			interaction
-		else {
-			return None;
-		};
-		let rect = monitor.local_rect_from_points(press_global, current_global)?;
+		match interaction {
+			LiveCaptureInteraction::DraggingSelection { monitor, press_global, current_global } => {
+				let rect = monitor.local_rect_from_points(press_global, current_global)?;
 
-		(!rect.is_empty()).then_some(MonitorRectPoints { monitor_id: monitor.id, rect })
+				(!rect.is_empty()).then_some(MonitorRectPoints { monitor_id: monitor.id, rect })
+			},
+			LiveCaptureInteraction::FrozenFromDrag { monitor, capture_rect } => {
+				Some(MonitorRectPoints { monitor_id: monitor.id, rect: capture_rect })
+			},
+			_ => None,
+		}
 	}
 
 	pub(super) fn sync_live_capture_visual_state(&mut self) {
@@ -174,6 +181,9 @@ impl OverlaySession {
 		if !matches!(self.state.mode, OverlayMode::Live) {
 			self.set_live_capture_interaction(LiveCaptureInteraction::Idle);
 
+			return;
+		}
+		if self.frozen_display_handoff_pending() {
 			return;
 		}
 

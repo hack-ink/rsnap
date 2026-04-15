@@ -1653,6 +1653,8 @@ fn render_frozen_toolbar_ui_keeps_runtime_drag_when_pointer_snapshot_is_missing(
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
 
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
 	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
 	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
 
@@ -1701,6 +1703,8 @@ fn frozen_base_toolbar_hud_pill_uses_half_height_corner_radius() {
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
 
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
 	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
 	assert!(!session.advance_frozen_toolbar_readiness_sample(screen_rect));
 
@@ -1743,6 +1747,8 @@ fn frozen_annotation_toolbar_hud_pill_keeps_standard_corner_radius() {
 	let mut session = OverlaySession::new();
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
 
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
@@ -1791,6 +1797,8 @@ fn frozen_annotation_toolbar_hud_pill_covers_full_toolbar_bounds() {
 	let mut session = OverlaySession::new();
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
 
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
@@ -2864,6 +2872,8 @@ fn render_frozen_toolbar_ui_waits_for_readiness_before_first_visible_frame() {
 	let toolbar_placement = session.config.toolbar_placement;
 
 	session.begin_frozen_capture_with_rect(monitor, Some(capture_rect), None, None);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
 
 	assert!(session.toolbar_state.visible);
 	assert_eq!(session.toolbar_state.layout_last_screen_size_points, None);
