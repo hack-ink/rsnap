@@ -36,7 +36,7 @@ impl WindowRenderer {
 					screen_size_points = ?screen_size_points,
 					flip_y = false,
 					frozen_generation = state.frozen_generation,
-					frozen_image_ready = state.frozen_image.is_some(),
+					display_image_ready = state.frozen_display_image.is_some(),
 					toolbar_active,
 					"Frozen frame metrics."
 				);
@@ -396,7 +396,7 @@ impl WindowRenderer {
 				(state.live_bg_generation, state.live_bg_image.as_ref())
 			},
 			OverlayMode::Frozen if state.monitor == Some(monitor) => {
-				(state.frozen_generation, state.frozen_surface_image())
+				(state.frozen_generation, state.frozen_display_surface_image())
 			},
 			OverlayMode::Live => {
 				self.hud_bg = None;

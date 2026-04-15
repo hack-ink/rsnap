@@ -142,7 +142,7 @@ impl OverlaySession {
 		let preview_rect_px = monitor.local_rect_to_pixels(rect_points);
 		let Some(preview_patch) = self
 			.state
-			.frozen_image
+			.frozen_display_image
 			.as_ref()
 			.and_then(|image| Self::build_frozen_image_patch(image, preview_rect_px))
 		else {
@@ -168,7 +168,7 @@ impl OverlaySession {
 			_ => None,
 		};
 
-		if let Some(image) = self.state.frozen_image.as_mut() {
+		if let Some(image) = self.state.frozen_display_image.as_mut() {
 			Self::apply_frozen_image_patch(image, &preview_patch, true);
 		}
 		if let Some(image) = self.state.frozen_export_image.as_mut() {
@@ -196,7 +196,7 @@ impl OverlaySession {
 			return false;
 		};
 
-		if let Some(image) = self.state.frozen_image.as_mut() {
+		if let Some(image) = self.state.frozen_display_image.as_mut() {
 			Self::apply_frozen_image_patch(image, &edit.preview_patch, use_after);
 		}
 		if let Some(image) = self.state.frozen_export_image.as_mut() {

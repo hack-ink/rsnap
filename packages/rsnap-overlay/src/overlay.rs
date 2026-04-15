@@ -1268,7 +1268,7 @@ impl OverlaySession {
 			&& matches!(
 				self.frozen_capture_session_state,
 				FrozenCaptureSessionState::DisplayReady { .. }
-			) && self.state.frozen_surface_image().is_some()
+			) && self.state.frozen_display_surface_image().is_some()
 	}
 
 	fn frozen_display_ready_for_monitor(&self, monitor: MonitorRect) -> bool {
@@ -1906,7 +1906,7 @@ impl OverlaySession {
 		{
 			self.state.live_bg_monitor = None;
 
-			self.state.finish_freeze(monitor, image);
+			self.state.commit_frozen_final_image(monitor, image);
 			self.note_frozen_transition_preview_committed(monitor, "cached_live_background", None);
 			self.promote_frozen_capture_display_ready(monitor);
 			self.set_frozen_capture_export_ready(monitor);
@@ -1934,11 +1934,11 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		capture_rect_pixels: RectPoints,
 	) -> Option<RgbaImage> {
-		let frozen_image = self.state.frozen_export_image.as_ref()?;
-		let x = capture_rect_pixels.x.min(frozen_image.width());
-		let y = capture_rect_pixels.y.min(frozen_image.height());
-		let max_width = frozen_image.width().saturating_sub(x);
-		let max_height = frozen_image.height().saturating_sub(y);
+		let export_image = self.state.frozen_export_image.as_ref()?;
+		let x = capture_rect_pixels.x.min(export_image.width());
+		let y = capture_rect_pixels.y.min(export_image.height());
+		let max_width = export_image.width().saturating_sub(x);
+		let max_height = export_image.height().saturating_sub(y);
 		let width = capture_rect_pixels.width.min(max_width);
 		let height = capture_rect_pixels.height.min(max_height);
 
@@ -1946,13 +1946,13 @@ impl OverlaySession {
 			tracing::debug!(
 				monitor_id = monitor.id,
 				capture_rect_pixels = ?capture_rect_pixels,
-				frozen_image_size = ?(frozen_image.width(), frozen_image.height()),
+				export_image_size = ?(export_image.width(), export_image.height()),
 				"Scroll capture base-frame crop resolved to an empty region."
 			);
 
 			None
 		} else {
-			Some(imageops::crop_imm(frozen_image, x, y, width, height).to_image())
+			Some(imageops::crop_imm(export_image, x, y, width, height).to_image())
 		}
 	}
 
@@ -2224,7 +2224,7 @@ impl OverlaySession {
 			WindowCaptureAlphaMode::Background => base_image,
 			WindowCaptureAlphaMode::MatteLight | WindowCaptureAlphaMode::MatteDark => {
 				let base_image = if had_display_image {
-					self.state.frozen_image.clone().unwrap_or(base_image)
+					self.state.frozen_display_image.clone().unwrap_or(base_image)
 				} else {
 					base_image
 				};
@@ -2613,19 +2613,19 @@ impl OverlaySession {
 		}
 
 		let crop_rect = self.deferred_text_recognition_crop_rect_pixels()?;
-		let frozen_image = self.state.frozen_export_image.take()?;
+		let export_image = self.state.frozen_export_image.take()?;
 
 		Some(DeferredTextRecognitionRequest::frozen_crop(
 			request_id,
 			requested_at,
-			frozen_image,
+			export_image,
 			crop_rect,
 		))
 	}
 
 	#[cfg(target_os = "macos")]
 	fn deferred_text_recognition_crop_rect_pixels(&self) -> Option<Option<RectPoints>> {
-		let frozen_image = self.state.frozen_export_image.as_ref()?;
+		let export_image = self.state.frozen_export_image.as_ref()?;
 		let Some(monitor) = self.state.monitor else {
 			return Some(None);
 		};
@@ -2634,17 +2634,17 @@ impl OverlaySession {
 			.frozen_capture_rect
 			.unwrap_or_else(|| RectPoints::new(0, 0, monitor.width, monitor.height));
 		let capture_rect = monitor.local_rect_to_pixels(capture_rect);
-		let x = capture_rect.x.min(frozen_image.width());
-		let y = capture_rect.y.min(frozen_image.height());
-		let max_width = frozen_image.width().saturating_sub(x);
-		let max_height = frozen_image.height().saturating_sub(y);
+		let x = capture_rect.x.min(export_image.width());
+		let y = capture_rect.y.min(export_image.height());
+		let max_width = export_image.width().saturating_sub(x);
+		let max_height = export_image.height().saturating_sub(y);
 		let width = capture_rect.width.min(max_width);
 		let height = capture_rect.height.min(max_height);
 
 		if width == 0 || height == 0 {
 			return None;
 		}
-		if x == 0 && y == 0 && width == frozen_image.width() && height == frozen_image.height() {
+		if x == 0 && y == 0 && width == export_image.width() && height == export_image.height() {
 			return Some(None);
 		}
 

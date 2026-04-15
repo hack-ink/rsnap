@@ -311,7 +311,7 @@ pub struct OverlayState {
 	pub live_bg_monitor: Option<MonitorRect>,
 	pub live_bg_image: Option<RgbaImage>,
 	pub live_bg_generation: u64,
-	pub frozen_image: Option<RgbaImage>,
+	pub frozen_display_image: Option<RgbaImage>,
 	pub frozen_export_image: Option<RgbaImage>,
 	pub frozen_generation: u64,
 	pub error_message: Option<String>,
@@ -333,7 +333,7 @@ impl OverlayState {
 			live_bg_monitor: None,
 			live_bg_image: None,
 			live_bg_generation: 0,
-			frozen_image: None,
+			frozen_display_image: None,
 			frozen_export_image: None,
 			frozen_generation: 0,
 			error_message: None,
@@ -358,7 +358,7 @@ impl OverlayState {
 
 	pub fn begin_freeze(&mut self, monitor: MonitorRect) {
 		self.monitor = Some(monitor);
-		self.frozen_image = None;
+		self.frozen_display_image = None;
 		self.frozen_export_image = None;
 		self.frozen_mosaic_preview_rect = None;
 		self.loupe = None;
@@ -367,18 +367,18 @@ impl OverlayState {
 	}
 
 	#[cfg(any(test, not(target_os = "macos")))]
-	pub fn finish_freeze(&mut self, monitor: MonitorRect, image: RgbaImage) {
+	pub fn commit_frozen_final_image(&mut self, monitor: MonitorRect, image: RgbaImage) {
 		// Keep the existing generation set by `begin_freeze` so renderers can key off a single
 		// freeze request/response cycle.
 		self.monitor = Some(monitor);
 		self.frozen_export_image = Some(image.clone());
-		self.frozen_image = Some(image);
+		self.frozen_display_image = Some(image);
 		self.mode = OverlayMode::Frozen;
 	}
 
 	pub fn commit_frozen_display_image(&mut self, monitor: MonitorRect, image: RgbaImage) {
 		self.monitor = Some(monitor);
-		self.frozen_image = Some(image);
+		self.frozen_display_image = Some(image);
 		self.mode = OverlayMode::Frozen;
 	}
 
@@ -386,8 +386,8 @@ impl OverlayState {
 		self.frozen_export_image = Some(image);
 	}
 
-	pub fn frozen_surface_image(&self) -> Option<&RgbaImage> {
-		self.frozen_image.as_ref()
+	pub fn frozen_display_surface_image(&self) -> Option<&RgbaImage> {
+		self.frozen_display_image.as_ref()
 	}
 }
 
@@ -450,12 +450,32 @@ mod tests {
 		state.commit_frozen_export_image(RgbaImage::new(2, 2));
 		state.begin_freeze(monitor);
 
-		assert!(state.frozen_image.is_none());
+		assert!(state.frozen_display_image.is_none());
 		assert!(state.frozen_export_image.is_none());
 	}
 
 	#[test]
-	fn finish_freeze_populates_display_and_export_images() {
+	fn commit_frozen_display_image_leaves_export_authority_unset() {
+		let monitor = MonitorRect {
+			id: 3,
+			origin: GlobalPoint::new(0, 0),
+			width: 100,
+			height: 100,
+			scale_factor_x1000: 1_000,
+		};
+		let display_image = RgbaImage::from_pixel(2, 2, Rgba([10, 20, 30, 255]));
+		let mut state = crate::state::OverlayState::new();
+
+		state.begin_freeze(monitor);
+		state.commit_frozen_display_image(monitor, display_image.clone());
+
+		assert_eq!(state.frozen_display_image.as_ref(), Some(&display_image));
+		assert!(state.frozen_export_image.is_none());
+		assert_eq!(state.frozen_display_surface_image(), Some(&display_image));
+	}
+
+	#[test]
+	fn commit_frozen_final_image_populates_display_and_export_images() {
 		let monitor = MonitorRect {
 			id: 7,
 			origin: GlobalPoint::new(0, 0),
@@ -467,10 +487,10 @@ mod tests {
 		let mut state = crate::state::OverlayState::new();
 
 		state.begin_freeze(monitor);
-		state.finish_freeze(monitor, final_image.clone());
+		state.commit_frozen_final_image(monitor, final_image.clone());
 
-		assert_eq!(state.frozen_image.as_ref(), Some(&final_image));
+		assert_eq!(state.frozen_display_image.as_ref(), Some(&final_image));
 		assert_eq!(state.frozen_export_image.as_ref(), Some(&final_image));
-		assert_eq!(state.frozen_surface_image(), Some(&final_image));
+		assert_eq!(state.frozen_display_surface_image(), Some(&final_image));
 	}
 }

@@ -27,16 +27,16 @@ const PUBLISH_GATE_PENDING_POLL_INTERVAL: Duration = Duration::from_millis(5);
 #[derive(Debug)]
 pub(crate) enum DeferredTextRecognitionImageSource {
 	Prepared { image: RgbaImage },
-	FrozenCrop { frozen_image: RgbaImage, crop_rect: Option<RectPoints> },
+	FrozenCrop { export_image: RgbaImage, crop_rect: Option<RectPoints> },
 }
 #[cfg(target_os = "macos")]
 impl DeferredTextRecognitionImageSource {
 	fn image_dimensions(&self) -> (u32, u32) {
 		match self {
 			Self::Prepared { image } => image.dimensions(),
-			Self::FrozenCrop { frozen_image, crop_rect } => crop_rect
+			Self::FrozenCrop { export_image, crop_rect } => crop_rect
 				.map(|crop_rect| (crop_rect.width, crop_rect.height))
-				.unwrap_or_else(|| frozen_image.dimensions()),
+				.unwrap_or_else(|| export_image.dimensions()),
 		}
 	}
 
@@ -44,8 +44,8 @@ impl DeferredTextRecognitionImageSource {
 	fn export_image(&self) -> Option<RgbaImage> {
 		match self {
 			Self::Prepared { image } => Some(image.clone()),
-			Self::FrozenCrop { frozen_image, crop_rect } => {
-				export_image_from_frozen_crop(frozen_image, *crop_rect)
+			Self::FrozenCrop { export_image, crop_rect } => {
+				export_image_from_frozen_crop(export_image, *crop_rect)
 			},
 		}
 	}
@@ -53,8 +53,8 @@ impl DeferredTextRecognitionImageSource {
 	fn into_export_image(self) -> Option<RgbaImage> {
 		match self {
 			Self::Prepared { image } => Some(image),
-			Self::FrozenCrop { frozen_image, crop_rect } => {
-				export_image_from_frozen_crop(&frozen_image, crop_rect)
+			Self::FrozenCrop { export_image, crop_rect } => {
+				export_image_from_frozen_crop(&export_image, crop_rect)
 			},
 		}
 	}
@@ -99,14 +99,14 @@ impl DeferredTextRecognitionRequest {
 	pub(crate) fn frozen_crop(
 		request_id: u64,
 		requested_at: Instant,
-		frozen_image: RgbaImage,
+		export_image: RgbaImage,
 		crop_rect: Option<RectPoints>,
 	) -> Self {
 		Self {
 			request_id,
 			requested_at,
 			image_source: DeferredTextRecognitionImageSource::FrozenCrop {
-				frozen_image,
+				export_image,
 				crop_rect,
 			},
 		}
@@ -499,7 +499,7 @@ fn outcome(
 
 #[cfg(target_os = "macos")]
 fn export_image_from_frozen_crop(
-	frozen_image: &RgbaImage,
+	export_image: &RgbaImage,
 	crop_rect: Option<RectPoints>,
 ) -> Option<RgbaImage> {
 	match crop_rect {
@@ -510,7 +510,7 @@ fn export_image_from_frozen_crop(
 
 			Some(
 				imageops::crop_imm(
-					frozen_image,
+					export_image,
 					crop_rect.x,
 					crop_rect.y,
 					crop_rect.width,
@@ -519,7 +519,7 @@ fn export_image_from_frozen_crop(
 				.to_image(),
 			)
 		},
-		None => Some(frozen_image.clone()),
+		None => Some(export_image.clone()),
 	}
 }
 
@@ -578,7 +578,7 @@ mod tests {
 			request_id: 7,
 			requested_at: Instant::now(),
 			image_source: DeferredTextRecognitionImageSource::FrozenCrop {
-				frozen_image: image,
+				export_image: image,
 				crop_rect: Some(RectPoints::new(2, 1, 2, 2)),
 			},
 		};
