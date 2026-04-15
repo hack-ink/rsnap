@@ -407,6 +407,7 @@ impl WindowRenderer {
 		painter: &Painter,
 		state: &OverlayState,
 		monitor: MonitorRect,
+		pending_handoff_monitor: Option<MonitorRect>,
 		screen_rect: Rect,
 		theme: HudTheme,
 		selection_flow_enabled: bool,
@@ -418,7 +419,7 @@ impl WindowRenderer {
 		if !matches!(state.mode, OverlayMode::Live) {
 			return false;
 		}
-		if state.monitor != Some(monitor) {
+		if pending_handoff_monitor != Some(monitor) {
 			return false;
 		}
 
