@@ -5,8 +5,9 @@ use crate::overlay::{GlobalPoint, MonitorRect, OverlayMode, OverlaySession};
 impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	pub(super) const fn should_hide_overlay_windows_during_capture(&self) -> bool {
-		// Authoritative freeze capture still falls back to CoreGraphics monitor capture.
-		// Keep overlays hidden until XY-74/XY-75 replace that path with a verified exclusion contract.
+		// Display-first frozen entry no longer depends on hiding overlays. Keep the legacy hide policy
+		// available only for explicit last-resort macOS capture paths until the backend contract is
+		// fully retired.
 		true
 	}
 
@@ -19,6 +20,7 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	#[allow(dead_code)]
 	pub(super) fn hide_capture_windows(&mut self) {
 		self.capture_windows_hidden = true;
 

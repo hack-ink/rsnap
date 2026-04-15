@@ -5,9 +5,7 @@ use crate::overlay::{
 	WindowListSnapshot, WorkerErrorSource, WorkerRequestSendError, WorkerResponse,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{
-	CursorSampleRequest, FreezeCaptureTarget, POST_HIDE_LIVE_SNAPSHOT_GRACE, mem,
-};
+use crate::overlay::{CursorSampleRequest, FreezeCaptureTarget, mem};
 
 pub(super) const FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT: u64 = 8;
 
@@ -67,11 +65,6 @@ impl OverlaySession {
 		self.pending_freeze_capture = None;
 		self.inflight_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
-		#[cfg(target_os = "macos")]
-		{
-			self.pending_freeze_capture_windows_hidden_at = None;
-			self.pending_freeze_capture_hidden_after_stream_generation = None;
-		}
 		self.pending_window_freeze_capture = None;
 		self.inflight_window_freeze_capture = None;
 		self.freeze_capture_send_full_count = 0;
@@ -88,26 +81,29 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	pub(super) fn maybe_escalate_pending_display_first_freeze_to_hidden_fallback(
+	pub(super) fn maybe_drive_pending_display_first_freeze_preview(
 		&mut self,
 		now: Instant,
 	) -> bool {
 		let Some(overlay_monitor) = self.pending_freeze_capture else {
 			return false;
 		};
-		let Some(started_at) = self.frozen_transition_started_at else {
-			return false;
-		};
 
 		if !self.pending_freeze_capture_matches(overlay_monitor)
-			|| self.capture_windows_hidden
 			|| self.frozen_export_ready
 			|| self.inflight_freeze_capture.is_some()
-			|| self.frozen_preview_visible()
 		{
 			return false;
 		}
+		if self.frozen_preview_visible() {
+			return false;
+		}
 
+		self.request_pending_frozen_capture_live_stream_refresh(overlay_monitor);
+
+		let Some(started_at) = self.frozen_transition_started_at else {
+			return false;
+		};
 		let Some(elapsed) = now.checked_duration_since(started_at) else {
 			return false;
 		};
@@ -116,7 +112,7 @@ impl OverlaySession {
 			return false;
 		}
 
-		self.begin_hidden_authoritative_freeze_capture_fallback(overlay_monitor);
+		self.abort_pending_freeze_capture("Unable to capture a clean preview. Please try again.");
 
 		true
 	}
@@ -128,11 +124,6 @@ impl OverlaySession {
 	) {
 		self.pending_freeze_capture = None;
 		self.pending_freeze_capture_armed = false;
-		#[cfg(target_os = "macos")]
-		{
-			self.pending_freeze_capture_windows_hidden_at = None;
-			self.pending_freeze_capture_hidden_after_stream_generation = None;
-		}
 		self.inflight_freeze_capture = Some(overlay_monitor);
 		self.inflight_window_freeze_capture = pending_window_target;
 		self.pending_window_freeze_capture = None;
@@ -185,11 +176,6 @@ impl OverlaySession {
 		let Some(overlay_monitor) = self.pending_freeze_capture else {
 			self.pending_freeze_capture_armed = false;
 			self.freeze_capture_send_full_count = 0;
-			#[cfg(target_os = "macos")]
-			{
-				self.pending_freeze_capture_windows_hidden_at = None;
-				self.pending_freeze_capture_hidden_after_stream_generation = None;
-			}
 
 			return;
 		};
@@ -197,19 +183,6 @@ impl OverlaySession {
 		if !self.pending_freeze_capture_matches(overlay_monitor) {
 			self.pending_freeze_capture_armed = false;
 			self.freeze_capture_send_full_count = 0;
-			#[cfg(target_os = "macos")]
-			{
-				self.pending_freeze_capture_windows_hidden_at = None;
-				self.pending_freeze_capture_hidden_after_stream_generation = None;
-			}
-
-			return;
-		}
-		if self.capture_windows_hidden
-			&& self
-				.should_wait_for_hidden_live_snapshot_before_authoritative_dispatch(overlay_monitor)
-		{
-			self.schedule_egui_repaint_after(POST_HIDE_LIVE_SNAPSHOT_GRACE);
 
 			return;
 		}
