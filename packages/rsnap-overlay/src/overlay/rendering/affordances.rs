@@ -402,6 +402,86 @@ impl WindowRenderer {
 	}
 
 	#[allow(clippy::too_many_arguments)]
+	pub(in crate::overlay) fn render_pending_frozen_display_handoff_affordance(
+		ctx: &Context,
+		painter: &Painter,
+		state: &OverlayState,
+		monitor: MonitorRect,
+		screen_rect: Rect,
+		theme: HudTheme,
+		selection_flow_enabled: bool,
+		selection_flow_stroke_width_px: f32,
+		frozen_capture_source: FrozenCaptureSource,
+		selection_flow_geometry_cache: &mut SelectionFlowGeometryCache,
+		selection_dashed_border_cache: &mut SelectionDashedBorderCache,
+	) -> bool {
+		if !matches!(state.mode, OverlayMode::Live) {
+			return false;
+		}
+
+		let Some(capture_rect) = state.frozen_capture_rect else {
+			return false;
+		};
+		let focus_rect = Self::selection_focus_rect(capture_rect, screen_rect);
+
+		if focus_rect.width() <= 0.0 || focus_rect.height() <= 0.0 {
+			return false;
+		}
+
+		let mut has_affordance = match frozen_capture_source {
+			FrozenCaptureSource::None => false,
+			FrozenCaptureSource::DragRegion => Self::render_live_drag_selection_affordance(
+				painter,
+				focus_rect,
+				screen_rect,
+				theme,
+				selection_dashed_border_cache,
+			),
+			FrozenCaptureSource::Window | FrozenCaptureSource::FullscreenFallback => {
+				let mut rendered =
+					Self::render_live_drag_selection_scrim(painter, focus_rect, screen_rect, theme);
+
+				if selection_flow_enabled
+					&& focus_rect.width() >= LIVE_DRAG_START_THRESHOLD_PX
+					&& focus_rect.height() >= LIVE_DRAG_START_THRESHOLD_PX
+				{
+					Self::render_selection_flow_ring(
+						painter,
+						focus_rect,
+						ctx,
+						theme,
+						SelectionFlowStyle::Band,
+						selection_flow_stroke_width_px,
+						selection_flow_geometry_cache,
+					);
+
+					rendered = true;
+				}
+
+				rendered
+			},
+		};
+
+		if let Some(target) = Self::selection_size_badge_target_from_rect(capture_rect, screen_rect)
+		{
+			Self::render_selection_size_badge(
+				ctx,
+				painter,
+				monitor,
+				screen_rect,
+				target,
+				None,
+				false,
+				theme,
+			);
+
+			has_affordance = true;
+		}
+
+		has_affordance
+	}
+
+	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay) fn render_frozen_capture_affordance(
 		ctx: &Context,
 		state: &OverlayState,
