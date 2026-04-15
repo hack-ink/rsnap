@@ -26,6 +26,42 @@ pub(super) struct WindowFreezeCaptureTarget {
 	pub(super) rect: RectPoints,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum FrozenCaptureWorkerState {
+	#[default]
+	Idle,
+	Armed,
+	Inflight,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FrozenExportSessionState {
+	Pending {
+		worker_state: FrozenCaptureWorkerState,
+		window_target: Option<WindowFreezeCaptureTarget>,
+	},
+	Ready,
+	Failed,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum FrozenCaptureSessionState {
+	#[default]
+	Inactive,
+	DisplayPending {
+		monitor: MonitorRect,
+		worker_state: FrozenCaptureWorkerState,
+		window_target: Option<WindowFreezeCaptureTarget>,
+	},
+	DisplayFailed {
+		monitor: MonitorRect,
+	},
+	DisplayReady {
+		monitor: MonitorRect,
+		export: FrozenExportSessionState,
+	},
+}
+
 #[derive(Default)]
 pub(super) struct SlowOperationLogger {
 	last_warn_at: HashMap<&'static str, Instant>,

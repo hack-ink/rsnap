@@ -67,7 +67,9 @@ impl OverlaySession {
 
 		#[cfg(target_os = "macos")]
 		{
-			if let Some(monitor) = self.pending_freeze_capture {
+			if let Some(monitor) =
+				self.frozen_capture_monitor().filter(|_| self.frozen_capture_export_pending())
+			{
 				let _ = self.maybe_update_pending_frozen_capture_from_live_stream_snapshot(monitor);
 				let _ = self.maybe_drive_pending_display_first_freeze_preview(now);
 			}
