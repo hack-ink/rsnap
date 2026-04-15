@@ -41,7 +41,6 @@ struct FrozenCaptureBackendUpdate {
 	display_candidate: Option<FrozenCaptureDisplayCandidate>,
 	signal: FrozenCaptureBackendSignal,
 }
-
 #[cfg(target_os = "macos")]
 impl FrozenCaptureBackendUpdate {
 	fn none() -> Self {
@@ -144,6 +143,7 @@ impl OverlaySession {
 		}
 
 		self.toolbar_state.needs_redraw = true;
+
 		self.sync_frozen_toolbar_state();
 		self.request_redraw_for_monitor(monitor);
 		self.request_aux_window_creation_if_needed();
@@ -287,6 +287,7 @@ impl OverlaySession {
 		if self.frozen_preview_visible() {
 			return FrozenCaptureBackendUpdate::none();
 		}
+
 		if let Some(display_candidate) = self.frozen_capture_display_candidate_from_snapshot(
 			monitor,
 			window_target,
@@ -331,6 +332,7 @@ impl OverlaySession {
 			self.frozen_capture_monitor().filter(|_| self.frozen_capture_export_pending())
 		else {
 			self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Idle);
+
 			self.freeze_capture_send_full_count = 0;
 
 			return None;
@@ -338,6 +340,7 @@ impl OverlaySession {
 
 		if !self.pending_freeze_capture_matches(monitor) {
 			self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Idle);
+
 			self.freeze_capture_send_full_count = 0;
 
 			return None;
@@ -347,6 +350,7 @@ impl OverlaySession {
 
 		if !self.capture_windows_hidden && self.snapshot_can_finish_frozen_capture(window_target) {
 			self.set_frozen_capture_worker_state(FrozenCaptureWorkerState::Idle);
+
 			self.freeze_capture_send_full_count = 0;
 
 			return None;
@@ -373,8 +377,8 @@ impl OverlaySession {
 		else {
 			return;
 		};
-
 		let update = self.maybe_macos_pending_frozen_capture_backend_update(monitor, now);
+
 		self.apply_frozen_capture_backend_update(monitor, update);
 
 		let Some(monitor) =
@@ -404,6 +408,7 @@ impl OverlaySession {
 		if !self.snapshot_can_finish_frozen_capture(window_target) {
 			return false;
 		}
+
 		let Some(display_candidate) = self.frozen_capture_display_candidate_from_snapshot(
 			monitor,
 			window_target,
