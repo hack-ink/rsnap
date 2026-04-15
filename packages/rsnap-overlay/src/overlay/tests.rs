@@ -257,6 +257,7 @@ fn session_frozen_capture_armed(session: &OverlaySession) -> bool {
 	)
 }
 
+#[cfg(target_os = "macos")]
 fn session_export_authority_ready(session: &OverlaySession) -> bool {
 	matches!(
 		session.frozen_capture_session_state,
@@ -410,6 +411,7 @@ fn finish_frozen_ready_state(
 	};
 }
 
+#[cfg(target_os = "macos")]
 fn commit_frozen_display_preview_state(
 	session: &mut OverlaySession,
 	monitor: MonitorRect,
