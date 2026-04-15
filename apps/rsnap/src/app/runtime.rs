@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 use std::time::{Duration, Instant};
 
 use color_eyre::eyre;
@@ -77,6 +77,16 @@ impl ApplicationHandler<UserEvent> for App {
 			UserEvent::OverlayWorkerResponse => {
 				if let Some(session) = self.overlay_session.as_mut() {
 					let control = session.handle_worker_response_ready();
+
+					self.handle_overlay_control(control);
+				}
+			},
+			#[cfg(target_os = "macos")]
+			UserEvent::OverlayNativeCaptureInput => {
+				self.overlay_native_capture_input_event_pending.store(false, Ordering::Release);
+
+				if let Some(session) = self.overlay_session.as_mut() {
+					let control = session.handle_native_capture_input_ready();
 
 					self.handle_overlay_control(control);
 				}

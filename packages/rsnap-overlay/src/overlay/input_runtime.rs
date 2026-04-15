@@ -2,12 +2,14 @@ use std::time::{Duration, Instant};
 
 #[cfg(not(target_os = "macos"))]
 use device_query::DeviceQuery;
+use winit::event::KeyEvent;
+use winit::keyboard::ModifiersState;
 
 use crate::overlay::{
 	AltActivationMode, CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource,
 	ElementState, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
-	FrozenToolbarTool, GlobalPoint, Ime, Key, KeyEvent, LiveCaptureInteraction,
-	LiveClickCaptureTarget, Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl,
+	FrozenToolbarTool, GlobalPoint, Ime, Key, LiveCaptureInteraction, LiveClickCaptureTarget,
+	Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl, OverlayKeyboardInputEvent,
 	OverlayMode, OverlaySession, PhysicalPosition, PhysicalSize, PngAction, Pos2, Vec2, WindowId,
 	WindowRenderer,
 };
@@ -177,6 +179,15 @@ impl OverlaySession {
 
 	pub(super) fn handle_modifiers_changed(&mut self, modifiers: &Modifiers) -> OverlayControl {
 		self.keyboard_modifiers = modifiers.state();
+
+		OverlayControl::Continue
+	}
+
+	pub(super) fn handle_modifiers_state_changed(
+		&mut self,
+		modifiers: ModifiersState,
+	) -> OverlayControl {
+		self.keyboard_modifiers = modifiers;
 
 		OverlayControl::Continue
 	}
@@ -493,6 +504,54 @@ impl OverlaySession {
 			scale_factor,
 			window_size,
 		)
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn handle_native_overlay_pointer_moved(
+		&mut self,
+		monitor: MonitorRect,
+		global: GlobalPoint,
+	) -> OverlayControl {
+		let should_trace_frozen_selection_drag_timing =
+			self.should_trace_frozen_selection_drag_timing();
+		let cursor_move_started_at = should_trace_frozen_selection_drag_timing.then(Instant::now);
+		let now = Instant::now();
+		let old_monitor = self.active_cursor_monitor();
+		let old_cursor = self.state.cursor;
+		let source = DeviceCursorPointSource::EventRecentFallback;
+		let trace = CursorMoveTrace {
+			window_id: WindowId::dummy(),
+			position: PhysicalPosition::new(0.0, 0.0),
+			old_cursor,
+			device_cursor: global,
+			event_global: global,
+			monitor,
+			global,
+			source,
+		};
+
+		self.last_event_cursor = Some((monitor, global));
+		self.last_event_cursor_at = Some(now);
+
+		self.trace_cursor_moved_with_mapping(trace);
+
+		let timing = self.run_cursor_move_updates(
+			should_trace_frozen_selection_drag_timing,
+			cursor_move_started_at,
+			old_monitor,
+			monitor,
+			global,
+			global,
+		);
+
+		if should_trace_frozen_selection_drag_timing {
+			self.trace_frozen_selection_drag_cursor_move(monitor, old_monitor, old_cursor, timing);
+		}
+		if self.update_frozen_brush_stroke(global) {
+			self.request_redraw_for_monitor(monitor);
+		}
+
+		OverlayControl::Continue
 	}
 
 	pub(super) fn handle_cursor_moved_with_overlay_window(
@@ -964,12 +1023,6 @@ impl OverlaySession {
 
 		match state {
 			ElementState::Pressed => {
-				if self.live_capture_interaction_is_press_pending()
-					|| self.live_capture_interaction_is_dragging()
-				{
-					return OverlayControl::Continue;
-				}
-
 				let raw_cursor = self.current_device_cursor();
 				let (press_monitor, press_global) = if let Some((press_monitor, press_global, _)) =
 					self.resolve_live_cursor_point(raw_cursor)
@@ -979,21 +1032,7 @@ impl OverlaySession {
 					(monitor, raw_cursor)
 				};
 
-				self.update_cursor_state(press_monitor, press_global);
-				self.update_hud_window_position(press_monitor, press_global);
-				self.begin_live_capture_press(press_monitor, press_global);
-
-				if matches!(
-					self.live_capture_interaction,
-					LiveCaptureInteraction::PressPending { click_target: None, .. }
-				) {
-					self.request_click_capture_hit_test(press_monitor, press_global);
-				}
-
-				self.reset_toolbar_pointer_state();
-				self.request_redraw_for_monitor(press_monitor);
-
-				OverlayControl::Continue
+				self.handle_live_overlay_left_mouse_input(press_monitor, press_global, state)
 			},
 			ElementState::Released => {
 				let raw_cursor = self.current_device_cursor();
@@ -1005,6 +1044,62 @@ impl OverlaySession {
 					raw_cursor
 				};
 
+				self.handle_live_overlay_left_mouse_input(monitor, release_global, state)
+			},
+		}
+	}
+
+	pub(super) fn handle_live_overlay_left_mouse_input(
+		&mut self,
+		monitor: MonitorRect,
+		global: GlobalPoint,
+		state: ElementState,
+	) -> OverlayControl {
+		if matches!(self.state.mode, OverlayMode::Frozen) {
+			self.last_event_cursor = Some((monitor, global));
+			self.last_event_cursor_at = Some(Instant::now());
+
+			self.update_cursor_state(monitor, global);
+
+			return self.handle_frozen_left_mouse_input(monitor, state);
+		}
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return OverlayControl::Continue;
+		}
+		if self.frozen_display_handoff_pending() {
+			return OverlayControl::Continue;
+		}
+
+		self.maybe_timeout_pending_click_hit_test(Instant::now());
+
+		match state {
+			ElementState::Pressed => {
+				if self.live_capture_interaction_is_press_pending()
+					|| self.live_capture_interaction_is_dragging()
+				{
+					return OverlayControl::Continue;
+				}
+
+				self.last_event_cursor = Some((monitor, global));
+				self.last_event_cursor_at = Some(Instant::now());
+
+				self.update_cursor_state(monitor, global);
+				self.update_hud_window_position(monitor, global);
+				self.begin_live_capture_press(monitor, global);
+
+				if matches!(
+					self.live_capture_interaction,
+					LiveCaptureInteraction::PressPending { click_target: None, .. }
+				) {
+					self.request_click_capture_hit_test(monitor, global);
+				}
+
+				self.reset_toolbar_pointer_state();
+				self.request_redraw_for_monitor(monitor);
+
+				OverlayControl::Continue
+			},
+			ElementState::Released => {
 				match self.live_capture_interaction {
 					LiveCaptureInteraction::PressPending {
 						monitor: press_monitor,
@@ -1013,18 +1108,14 @@ impl OverlaySession {
 						..
 					} => {
 						if let Some(target) = click_target {
-							self.begin_frozen_capture_from_click(
-								press_monitor,
-								target,
-								release_global,
-							);
+							self.begin_frozen_capture_from_click(press_monitor, target, global);
 						} else if self.pending_click_hit_test_request_id.is_some() {
 							self.set_live_capture_interaction(
 								LiveCaptureInteraction::PressPending {
 									monitor: press_monitor,
 									press_global,
 									click_target: None,
-									release_global: Some(release_global),
+									release_global: Some(global),
 									released: true,
 								},
 							);
@@ -1032,7 +1123,7 @@ impl OverlaySession {
 							self.begin_frozen_capture_from_click(
 								press_monitor,
 								LiveClickCaptureTarget::fullscreen_fallback(),
-								release_global,
+								global,
 							);
 						}
 					},
@@ -1040,11 +1131,7 @@ impl OverlaySession {
 						if let Some(drag_rect) =
 							self.state.drag_rect.filter(|rect| rect.monitor_id == monitor.id)
 						{
-							self.begin_frozen_capture_from_drag(
-								monitor,
-								drag_rect.rect,
-								release_global,
-							);
+							self.begin_frozen_capture_from_drag(monitor, drag_rect.rect, global);
 						} else {
 							self.set_live_capture_interaction(LiveCaptureInteraction::Idle);
 						}
@@ -1138,13 +1225,22 @@ impl OverlaySession {
 	}
 
 	pub(super) fn handle_ime_event(&mut self, window_id: WindowId, event: &Ime) -> OverlayControl {
+		let monitor =
+			self.windows.get(&window_id).map(|window| window.monitor).or(self.state.monitor);
+
+		self.handle_overlay_ime_event(monitor, event)
+	}
+
+	pub(super) fn handle_overlay_ime_event(
+		&mut self,
+		monitor: Option<MonitorRect>,
+		event: &Ime,
+	) -> OverlayControl {
 		if !matches!(self.state.mode, OverlayMode::Frozen) || self.frozen_text_edit.is_none() {
 			return OverlayControl::Continue;
 		}
 
-		let Some(monitor) =
-			self.windows.get(&window_id).map(|window| window.monitor).or(self.state.monitor)
-		else {
+		let Some(monitor) = monitor.or(self.state.monitor) else {
 			return OverlayControl::Continue;
 		};
 		let changed = self.apply_frozen_text_ime_event(event);
@@ -1176,7 +1272,10 @@ impl OverlaySession {
 		}
 	}
 
-	fn handle_frozen_text_key_event(&mut self, event: &KeyEvent) -> Option<OverlayControl> {
+	fn handle_frozen_text_key_event(
+		&mut self,
+		event: &OverlayKeyboardInputEvent,
+	) -> Option<OverlayControl> {
 		self.frozen_text_edit.as_ref()?;
 
 		if event.state != ElementState::Pressed {
@@ -1283,6 +1382,13 @@ impl OverlaySession {
 	}
 
 	pub(super) fn handle_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
+		self.handle_overlay_keyboard_input_event(&OverlayKeyboardInputEvent::from_winit(event))
+	}
+
+	pub(super) fn handle_overlay_keyboard_input_event(
+		&mut self,
+		event: &OverlayKeyboardInputEvent,
+	) -> OverlayControl {
 		if matches!(self.state.mode, OverlayMode::Frozen)
 			&& let Some(control) = self.handle_frozen_text_key_event(event)
 		{

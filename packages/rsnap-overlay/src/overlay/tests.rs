@@ -189,27 +189,6 @@ fn session_inflight_freeze_capture(session: &OverlaySession) -> Option<MonitorRe
 	}
 }
 
-#[cfg(target_os = "macos")]
-#[test]
-fn passive_capture_window_policy_tracks_window_membership() {
-	let first_window_key = 0x1001usize;
-	let second_window_key = 0x2002usize;
-
-	assert!(!overlay::macos_capture_window_is_passive(first_window_key));
-	assert!(!overlay::macos_capture_window_is_passive(second_window_key));
-	assert!(overlay::macos_update_capture_window_passive_state(first_window_key, true));
-	assert!(overlay::macos_capture_window_is_passive(first_window_key));
-	assert!(!overlay::macos_capture_window_is_passive(second_window_key));
-	assert!(!overlay::macos_update_capture_window_passive_state(first_window_key, true));
-	assert!(overlay::macos_update_capture_window_passive_state(second_window_key, true));
-	assert!(overlay::macos_capture_window_is_passive(second_window_key));
-	assert!(overlay::macos_update_capture_window_passive_state(first_window_key, false));
-	assert!(!overlay::macos_capture_window_is_passive(first_window_key));
-	assert!(overlay::macos_capture_window_is_passive(second_window_key));
-	assert!(overlay::macos_update_capture_window_passive_state(second_window_key, false));
-	assert!(!overlay::macos_capture_window_is_passive(second_window_key));
-}
-
 fn session_pending_window_freeze_capture(
 	session: &OverlaySession,
 ) -> Option<crate::overlay::session_state::WindowFreezeCaptureTarget> {

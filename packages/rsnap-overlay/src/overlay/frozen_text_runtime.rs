@@ -1,9 +1,8 @@
 use egui::{FontId, Pos2, Rect, Vec2};
 use image::RgbaImage;
+#[cfg(not(target_os = "macos"))]
 use winit::dpi::{LogicalPosition, LogicalSize};
 
-#[cfg(target_os = "macos")]
-use crate::overlay::Window;
 use crate::overlay::{
 	FrozenEditKind, FrozenExportTransform, FrozenTextAnnotation, FrozenTextEditState,
 	FrozenToolbarTool, GlobalPoint, MonitorRect, OverlaySession, WindowRenderer,
@@ -37,27 +36,45 @@ impl OverlaySession {
 		!self.scroll_capture.active && self.toolbar_state.selected_tool == FrozenToolbarTool::Text
 	}
 
-	pub(super) fn sync_text_input_ime_state(&self) {
+	pub(super) fn sync_text_input_ime_state(&mut self) {
+		#[cfg(target_os = "macos")]
+		{
+			let _ = self.sync_native_capture_shells();
+		}
+
+		#[cfg(not(target_os = "macos"))]
 		let ime_allowed = self.frozen_text_tool_active() && self.frozen_text_edit.is_some();
 
+		#[cfg(not(target_os = "macos"))]
 		for overlay_window in self.windows.values() {
 			overlay_window.window.set_ime_allowed(ime_allowed);
 		}
 
+		#[cfg(not(target_os = "macos"))]
 		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
 			toolbar_window.window.set_ime_allowed(ime_allowed);
 		}
 	}
 
-	pub(super) fn sync_frozen_text_ime_cursor_area(&self, monitor: MonitorRect) {
+	pub(super) fn sync_frozen_text_ime_cursor_area(&mut self, monitor: MonitorRect) {
+		#[cfg(target_os = "macos")]
+		{
+			let _ = monitor;
+			let _ = self.sync_native_capture_shells();
+		}
+
+		#[cfg(not(target_os = "macos"))]
 		let Some(edit_state) = self.frozen_text_edit.as_ref() else {
 			return;
 		};
+		#[cfg(not(target_os = "macos"))]
 		let Some(overlay_window) = self.windows.values().find(|window| window.monitor == monitor)
 		else {
 			return;
 		};
+		#[cfg(not(target_os = "macos"))]
 		let (visible_text, caret_char_index) = edit_state.visible_text_and_caret_char_index();
+		#[cfg(not(target_os = "macos"))]
 		let caret_rect = overlay_window.renderer.frozen_text_edit_caret_rect_for_window(
 			edit_state.anchor,
 			visible_text.as_str(),
@@ -65,6 +82,7 @@ impl OverlaySession {
 			caret_char_index.unwrap_or_else(|| visible_text.chars().count()),
 		);
 
+		#[cfg(not(target_os = "macos"))]
 		overlay_window.window.set_ime_cursor_area(
 			LogicalPosition::new(
 				f64::from(caret_rect.min.x.max(0.0)),
@@ -87,7 +105,7 @@ impl OverlaySession {
 	}
 
 	pub(super) fn refresh_frozen_text_ime_cursor_area_for_text_style_change(
-		&self,
+		&mut self,
 		monitor: MonitorRect,
 	) {
 		if self.should_refresh_frozen_text_ime_cursor_area_for_text_style_change(monitor) {
@@ -117,10 +135,6 @@ impl OverlaySession {
 		self.frozen_text_recent_input = None;
 
 		self.sync_text_input_ime_state();
-		#[cfg(target_os = "macos")]
-		self.restore_passive_capture_window_focus_policy_for_pointer_interaction(
-			"frozen_text_edit_finished",
-		);
 
 		had_visible_text
 	}
@@ -441,89 +455,14 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn frozen_text_input_overlay_window(&self, monitor: Option<MonitorRect>) -> Option<&Window> {
-		monitor
-			.and_then(|target| self.windows.values().find(|window| window.monitor == target))
-			.or_else(|| self.windows.values().next())
-			.map(|overlay_window| overlay_window.window.as_ref())
-	}
-
-	#[cfg(target_os = "macos")]
-	pub(super) fn focus_frozen_text_input_window(&self, monitor: Option<MonitorRect>) {
-		super::macos_activate_app();
-
-		let Some(target_window) = self.frozen_text_input_overlay_window(monitor) else {
-			tracing::info!(
-				op = "overlay.frozen_text_focus_requested",
-				target = "missing_window",
-				monitor_id = ?monitor.map(|target| target.id),
-				"Requested frozen text input focus, but no overlay window was available."
-			);
-
-			return;
-		};
-
+	pub(super) fn focus_frozen_text_input_window(&mut self, monitor: Option<MonitorRect>) {
 		tracing::info!(
 			op = "overlay.frozen_text_focus_requested",
-			target = "overlay_window",
+			target = "native_key_focus_shell",
 			monitor_id = ?monitor.map(|target| target.id),
 			"Requested frozen text input focus."
 		);
 
-		super::macos_make_window_key(target_window);
-	}
-
-	#[cfg(target_os = "macos")]
-	pub(super) fn focus_frozen_keyboard_window(&self) {
-		super::macos_activate_app();
-
-		if self.frozen_text_edit.is_some()
-			&& let Some(target_window) = self.frozen_text_input_overlay_window(self.state.monitor)
-		{
-			tracing::info!(
-				op = "scroll_capture.frozen_focus_requested",
-				target = "overlay_window",
-				state_mode = ?self.state.mode,
-				toolbar_window_visible = self.toolbar_window_visible,
-				monitor_id = ?self.state.monitor.map(|monitor| monitor.id),
-				"Requested frozen keyboard focus for text editing."
-			);
-
-			super::macos_make_window_key(target_window);
-
-			return;
-		}
-
-		let target_window = if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-			Some(toolbar_window.window.as_ref())
-		} else {
-			self.windows
-				.values()
-				.find(|overlay_window| Some(overlay_window.monitor) == self.state.monitor)
-				.map(|overlay_window| overlay_window.window.as_ref())
-		};
-		let Some(target_window) = target_window else {
-			tracing::info!(
-				op = "scroll_capture.frozen_focus_requested",
-				target = "missing_window",
-				state_mode = ?self.state.mode,
-				toolbar_window_present = self.toolbar_window.is_some(),
-				monitor_id = ?self.state.monitor.map(|monitor| monitor.id),
-				"Requested frozen keyboard focus, but no target window was available."
-			);
-
-			return;
-		};
-
-		tracing::info!(
-			op = "scroll_capture.frozen_focus_requested",
-			target = if self.toolbar_window.is_some() { "toolbar_window" } else { "overlay_window" },
-			state_mode = ?self.state.mode,
-			toolbar_window_visible = self.toolbar_window_visible,
-			monitor_id = ?self.state.monitor.map(|monitor| monitor.id),
-			"Requested frozen keyboard focus."
-		);
-
-		super::macos_make_window_key(target_window);
+		let _ = self.sync_native_capture_shells();
 	}
 }
