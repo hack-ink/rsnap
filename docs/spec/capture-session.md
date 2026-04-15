@@ -70,9 +70,21 @@ cross-platform architecture.
    - `Space` -> copy the frozen cropped PNG (region/window/fullscreen) to the system clipboard, then exit
    - On macOS, the frozen toolbar may expose `Recognize Text`, which runs Apple Vision OCR on the current frozen capture, copies the recognized text to the clipboard, and exits
    - Cmd+S (macOS) / Ctrl+S -> save the frozen cropped PNG to disk, then exit
-   - On macOS, freeze may complete directly from a fresh live-stream snapshot only when the
-     live stream has complete self-capture exclusions. Otherwise live snapshots are preview-only
-     until authoritative capture completes
+   - On macOS, Frozen entry is display-first: entering Frozen mode MUST commit a display image in
+     a single visible handoff instead of waiting on a later visible capture swap.
+   - Background region/fullscreen/window-background freezes SHOULD complete directly from a fresh
+     live-stream snapshot when one is available. If no usable live snapshot is available yet, the
+     session may wait briefly for a follow-up live snapshot before escalating to the exceptional
+     hidden authoritative fallback.
+   - Window matte freezes MAY seed display from a live-stream snapshot first and continue preparing
+     export authority in the background. The later export-authority response MUST NOT overwrite an
+     already-visible display image.
+   - Frozen-mode display readiness and export readiness are separate. Pointer drag/reposition,
+     pen, arrow, text, spotlight, and toolbar visibility are display-driven; copy/save/OCR/scroll/
+     mosaic remain gated on export-ready bytes.
+   - On macOS, the normal Frozen-entry path MUST NOT hide overlay/HUD/toolbar windows. Hiding
+     capture windows is reserved for exceptional authoritative fallback when no usable display-first
+     path arrives in time.
    - In Frozen mode, toolbar-driven annotations are part of the frozen capture state. Current
      annotation/edit tools are pointer, pen, arrow, text, mosaic, and spotlight; the pen-tool
      contract lives in `docs/spec/annotation-pen.md`, and Frozen toolbar placement/expansion
