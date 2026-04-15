@@ -1916,6 +1916,7 @@ impl OverlaySession {
 		{
 			self.state.live_bg_monitor = None;
 
+			self.commit_first_frozen_display_handoff(monitor);
 			self.state.commit_frozen_final_image(monitor, image);
 			self.note_frozen_transition_preview_committed(monitor, "cached_live_background", None);
 			self.promote_frozen_capture_display_ready(monitor);
