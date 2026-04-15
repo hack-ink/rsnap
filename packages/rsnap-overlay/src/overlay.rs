@@ -1105,7 +1105,7 @@ impl OverlaySession {
 	}
 
 	fn maybe_keep_frozen_capture_redraw(&self) {
-		if !matches!(self.state.mode, OverlayMode::Frozen) || self.frozen_display_ready() {
+		if !self.frozen_capture_redraw_pending() {
 			return;
 		}
 
@@ -1120,6 +1120,12 @@ impl OverlaySession {
 		}
 
 		self.schedule_egui_repaint_after(self.repaint_interval_for_monitor(self.state.monitor));
+	}
+
+	fn frozen_capture_redraw_pending(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Frozen)
+			&& !self.frozen_display_ready()
+			&& (self.pending_freeze_capture.is_some() || self.inflight_freeze_capture.is_some())
 	}
 
 	fn frozen_display_ready(&self) -> bool {
