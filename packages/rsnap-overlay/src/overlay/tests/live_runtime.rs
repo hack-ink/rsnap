@@ -15,14 +15,18 @@ use crate::overlay::FrozenCaptureSource;
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenToolbarTool;
 #[cfg(target_os = "macos")]
+use crate::overlay::MacOSNativeCaptureInputEvent;
+#[cfg(target_os = "macos")]
+use crate::overlay::OverlayKeyboardInputEvent;
+#[cfg(target_os = "macos")]
 use crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT;
 use crate::overlay::tests;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerResponse;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::{
-	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, LiveCursorSample,
-	LiveSampleApplyResult, ModifiersState, OverlayExit, StartupLiveRgbPlan, WindowId,
+	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, Ime, Key, LiveCursorSample,
+	LiveSampleApplyResult, ModifiersState, NamedKey, OverlayExit, StartupLiveRgbPlan, WindowId,
 	WindowListSnapshot,
 };
 use crate::overlay::tests::{
@@ -122,6 +126,153 @@ fn frozen_cursor_tracking_keeps_toolbar_hover_cursor_without_resampling_device_p
 
 	assert_eq!(session.state.cursor, Some(expected_cursor));
 	assert_eq!(session.cursor_monitor, Some(monitor));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_toolbar_pointer_move_starts_manual_drag_without_winit_window_events() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
+	session.session_active = true;
+	session.state.monitor = Some(monitor);
+	session.toolbar_state.visible = true;
+	session.toolbar_window_visible = true;
+	session.toolbar_left_button_down = true;
+	session.toolbar_state.drag_start_eligible = true;
+	session.toolbar_state.drag_anchor = Some(Pos2::new(8.0, 8.0));
+	session.toolbar_outer_pos = Some(GlobalPoint::new(160, 140));
+
+	assert!(matches!(
+		session.handle_native_toolbar_pointer_moved(
+			monitor,
+			Pos2::new(40.0, 26.0),
+			GlobalPoint::new(200, 166),
+			Some(GlobalPoint::new(160, 140)),
+		),
+		OverlayControl::Continue
+	));
+	assert!(session.toolbar_state.dragging);
+	assert_eq!(session.toolbar_pointer_local, Some(Pos2::new(40.0, 26.0)));
+	assert_eq!(session.state.cursor, Some(GlobalPoint::new(200, 166)));
+	assert!(session.pending_toolbar_outer_pos.is_some());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_capture_input_ready_routes_toolbar_pointer_left_without_window_id() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
+	session.toolbar_state.visible = true;
+	session.toolbar_pointer_local = Some(Pos2::new(12.0, 10.0));
+
+	session
+		.native_capture_input_queue
+		.lock()
+		.expect("native capture input queue")
+		.push_back(MacOSNativeCaptureInputEvent::ToolbarPointerLeft);
+
+	assert!(matches!(session.handle_native_capture_input_ready(), OverlayControl::Continue));
+	assert_eq!(session.toolbar_pointer_local, None);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_capture_input_ready_routes_keyboard_input_to_frozen_text_edit() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+
+	session.native_capture_input_queue.lock().expect("native capture input queue").push_back(
+		MacOSNativeCaptureInputEvent::KeyboardInput {
+			monitor: Some(monitor),
+			event: OverlayKeyboardInputEvent {
+				logical_key: Key::Character(String::from("A").into()),
+				text: Some(String::from("A")),
+				state: ElementState::Pressed,
+				repeat: false,
+			},
+		},
+	);
+
+	assert!(matches!(session.handle_native_capture_input_ready(), OverlayControl::Continue));
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some("A"));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_capture_input_ready_routes_ime_preedit_to_frozen_text_edit() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+
+	session.native_capture_input_queue.lock().expect("native capture input queue").push_back(
+		MacOSNativeCaptureInputEvent::Ime {
+			monitor: Some(monitor),
+			event: Ime::Preedit(String::from("汉"), Some((0, 0))),
+		},
+	);
+
+	assert!(matches!(session.handle_native_capture_input_ready(), OverlayControl::Continue));
+	assert_eq!(
+		session.frozen_text_edit.as_ref().and_then(|edit| edit.ime_preedit.as_deref()),
+		Some("汉")
+	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_capture_input_ready_routes_scroll_capture_escape_without_winit_window_events() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
+	session.scroll_capture.active = true;
+
+	session.native_capture_input_queue.lock().expect("native capture input queue").push_back(
+		MacOSNativeCaptureInputEvent::KeyboardInput {
+			monitor: Some(monitor),
+			event: OverlayKeyboardInputEvent {
+				logical_key: Key::Named(NamedKey::Escape),
+				text: None,
+				state: ElementState::Pressed,
+				repeat: false,
+			},
+		},
+	);
+
+	assert!(matches!(
+		session.handle_native_capture_input_ready(),
+		OverlayControl::Exit(OverlayExit::Cancelled)
+	));
 }
 
 #[cfg(target_os = "macos")]

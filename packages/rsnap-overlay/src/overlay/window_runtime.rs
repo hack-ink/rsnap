@@ -85,6 +85,8 @@ impl OverlaySession {
 
 		self.session_active = true;
 
+		#[cfg(target_os = "macos")]
+		self.ensure_native_capture_shells()?;
 		self.request_redraw_all();
 
 		let request_redraw_ms = request_redraw_started_at.elapsed().as_millis();
@@ -469,6 +471,8 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		let startup_aux_window_waker = self.startup_aux_window_waker.clone();
 		#[cfg(target_os = "macos")]
+		let native_capture_input_waker = self.native_capture_input_waker.clone();
+		#[cfg(target_os = "macos")]
 		let external_scroll_input_drain_reader =
 			self.scroll_capture.external_scroll_input_drain_reader.clone();
 
@@ -484,6 +488,7 @@ impl OverlaySession {
 			self.scroll_capture_starting_hook = scroll_capture_starting_hook;
 			self.scroll_capture_started_hook = scroll_capture_started_hook;
 			self.startup_aux_window_waker = startup_aux_window_waker;
+			self.native_capture_input_waker = native_capture_input_waker;
 			self.pending_startup_aux_live_stream_filter_upgrade = false;
 			self.scroll_capture.external_scroll_input_drain_reader =
 				external_scroll_input_drain_reader;
@@ -733,20 +738,6 @@ impl OverlaySession {
 	}
 
 	fn discard_prewarmed_startup_resources(&mut self) {
-		#[cfg(target_os = "macos")]
-		{
-			for window in self.windows.values() {
-				overlay::macos_clear_capture_window_focus_policy(window.window.as_ref());
-			}
-
-			if let Some(hud_window) = self.hud_window.as_ref() {
-				overlay::macos_clear_capture_window_focus_policy(hud_window.window.as_ref());
-			}
-			if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-				overlay::macos_clear_capture_window_focus_policy(toolbar_window.window.as_ref());
-			}
-		}
-
 		self.windows.clear();
 
 		self.hud_window = None;

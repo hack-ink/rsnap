@@ -55,6 +55,8 @@ pub(crate) enum UserEvent {
 	OverlayScrollInput,
 	#[cfg(target_os = "macos")]
 	OverlayWorkerResponse,
+	#[cfg(target_os = "macos")]
+	OverlayNativeCaptureInput,
 }
 
 #[cfg(target_os = "macos")]
@@ -127,6 +129,8 @@ struct App {
 	scroll_input_shared_state: Arc<SharedScrollInputState>,
 	#[cfg(target_os = "macos")]
 	overlay_stream_event_pending: Arc<AtomicBool>,
+	#[cfg(target_os = "macos")]
+	overlay_native_capture_input_event_pending: Arc<AtomicBool>,
 	#[cfg(target_os = "macos")]
 	latest_deferred_ocr_generation: Arc<AtomicU64>,
 	#[cfg(target_os = "macos")]
@@ -212,6 +216,8 @@ impl App {
 			scroll_input_shared_state,
 			#[cfg(target_os = "macos")]
 			overlay_stream_event_pending: Arc::new(AtomicBool::new(false)),
+			#[cfg(target_os = "macos")]
+			overlay_native_capture_input_event_pending: Arc::new(AtomicBool::new(false)),
 			#[cfg(target_os = "macos")]
 			latest_deferred_ocr_generation: Arc::new(AtomicU64::new(0)),
 			#[cfg(target_os = "macos")]

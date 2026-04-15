@@ -18,6 +18,8 @@ mod hud_helpers;
 mod hud_runtime;
 mod image_helpers;
 mod input_runtime;
+#[cfg(target_os = "macos")]
+mod macos_native_capture_shell_runtime;
 mod rendering;
 mod scroll_capture_runtime;
 mod scroll_input_runtime;
@@ -45,7 +47,7 @@ use std::sync::OnceLock;
 use std::{
 	borrow::Cow,
 	cmp::Ordering,
-	collections::{HashMap, HashSet},
+	collections::{HashMap, HashSet, VecDeque},
 	path::PathBuf,
 	sync::{Arc, Mutex},
 	time::{Duration, Instant},
@@ -76,7 +78,7 @@ use image::imageops;
 #[cfg(target_os = "macos")]
 use objc::declare::ClassDecl;
 #[cfg(target_os = "macos")]
-use objc::runtime::{self, BOOL, Class, Imp, NO, Object, Sel, YES};
+use objc::runtime::{BOOL, Class, NO, Object, Sel, YES};
 #[cfg(target_os = "macos")]
 use objc::{Encode, Encoding};
 #[cfg(target_os = "macos")]
@@ -137,8 +139,7 @@ use wgpu::TextureViewDimension;
 use wgpu::Trace;
 use wgpu::{self};
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
-use winit::event::KeyEvent;
-use winit::event::Modifiers;
+use winit::event::{KeyEvent, Modifiers};
 #[cfg(target_os = "macos")]
 use winit::window::Window;
 use winit::{
@@ -150,6 +151,8 @@ use winit::{
 };
 
 use self::frozen_text_runtime::{FrozenTextInputSource, FrozenTextRecentInput};
+#[cfg(target_os = "macos")]
+use self::macos_native_capture_shell_runtime::MacOSNativeCaptureShells;
 #[cfg(target_os = "macos")]
 use self::rendering::StartupLiveRgbPlan;
 use self::rendering::{
@@ -531,6 +534,8 @@ pub struct OverlaySession {
 	cursor_monitor: Option<MonitorRect>,
 	egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
 	windows: HashMap<WindowId, OverlayWindow>,
+	#[cfg(target_os = "macos")]
+	native_capture_shells: Option<MacOSNativeCaptureShells>,
 	focused_window_ids: HashSet<WindowId>,
 	pending_focus_loss_cleanup: bool,
 	hud_window: Option<HudOverlayWindow>,
@@ -662,6 +667,10 @@ pub struct OverlaySession {
 	#[cfg(target_os = "macos")]
 	startup_aux_window_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	#[cfg(target_os = "macos")]
+	native_capture_input_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+	#[cfg(target_os = "macos")]
+	native_capture_input_queue: Arc<Mutex<VecDeque<MacOSNativeCaptureInputEvent>>>,
+	#[cfg(target_os = "macos")]
 	startup_aux_window_creation_pending: bool,
 	#[cfg(target_os = "macos")]
 	startup_aux_window_creation_scheduled: bool,
@@ -782,7 +791,7 @@ impl OverlaySession {
 			state: OverlayState::new(),
 			session_active: false,
 			cursor_monitor: None,
-			windows: HashMap::new(),
+			windows: HashMap::new(), #[cfg(target_os = "macos")] native_capture_shells: None,
 			focused_window_ids: HashSet::new(),
 			pending_focus_loss_cleanup: false,
 			hud_window: None, loupe_window: None, toolbar_window: None, scroll_preview_window: None,
@@ -852,8 +861,7 @@ impl OverlaySession {
 			frozen_text_edit: None, frozen_text_input_generation: 0, frozen_text_recent_input: None, toolbar_state: FrozenToolbarState::default(),
 			toolbar_left_button_down: false, toolbar_left_button_went_down: false, toolbar_left_button_went_up: false,
 			toolbar_pointer_local: None,
-			#[cfg(target_os = "macos")]
-			toolbar_window_cursor_hittest_enabled: false,
+			#[cfg(target_os = "macos")] toolbar_window_cursor_hittest_enabled: false,
 			live_capture_interaction: LiveCaptureInteraction::Idle,
 			frozen_brush: FrozenBrushState::default(), frozen_arrow_drag: FrozenArrowDragState::default(),
 			frozen_selection_drag: FrozenSelectionDragState::default(),
@@ -873,16 +881,13 @@ impl OverlaySession {
 			scroll_capture_starting_hook: None,
 			#[cfg(target_os = "macos")]
 			scroll_capture_started_hook: None,
-			#[cfg(target_os = "macos")]
-			startup_aux_window_waker: None,
-			#[cfg(target_os = "macos")]
-			startup_aux_window_creation_pending: false,
-			#[cfg(target_os = "macos")]
-			startup_aux_window_creation_scheduled: false,
-			#[cfg(target_os = "macos")]
-			pending_startup_aux_live_stream_filter_upgrade: false,
-			#[cfg(target_os = "macos")]
-			frontmost_application_before_start: None,
+			#[cfg(target_os = "macos")] startup_aux_window_waker: None,
+			#[cfg(target_os = "macos")] native_capture_input_waker: None,
+			#[cfg(target_os = "macos")] native_capture_input_queue: Arc::new(Mutex::new(VecDeque::new())),
+			#[cfg(target_os = "macos")] startup_aux_window_creation_pending: false,
+			#[cfg(target_os = "macos")] startup_aux_window_creation_scheduled: false,
+			#[cfg(target_os = "macos")] pending_startup_aux_live_stream_filter_upgrade: false,
+			#[cfg(target_os = "macos")] frontmost_application_before_start: None,
 			response_waker: None,
 		}
 	}
@@ -1003,6 +1008,12 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	/// Registers a wake callback for AppKit-native passive capture input.
+	pub fn set_native_capture_input_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
+		self.native_capture_input_waker = Some(waker);
+	}
+
+	#[cfg(target_os = "macos")]
 	/// Supplies a host-owned guard that must approve scroll capture before it can start.
 	/// Return `Ok(false)` to reject the attempt without surfacing a HUD error.
 	pub fn set_scroll_capture_start_guard(&mut self, guard: ScrollCaptureStartGuard) {
@@ -1025,6 +1036,120 @@ impl OverlaySession {
 	/// Registers a wake callback for worker-thread responses.
 	pub fn set_response_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.response_waker = Some(waker);
+	}
+
+	#[cfg(target_os = "macos")]
+	fn native_capture_input_dispatch(&self) -> Option<MacOSNativeCaptureInputDispatch> {
+		self.native_capture_input_waker.as_ref().cloned().map(|waker| {
+			MacOSNativeCaptureInputDispatch {
+				queue: Arc::clone(&self.native_capture_input_queue),
+				waker,
+			}
+		})
+	}
+
+	#[cfg(target_os = "macos")]
+	fn drain_native_capture_input_events(&self) -> Vec<MacOSNativeCaptureInputEvent> {
+		let Ok(mut queue) = self.native_capture_input_queue.lock() else {
+			tracing::warn!(
+				op = "overlay.native_capture_input_queue_poisoned",
+				"Draining native capture input from a poisoned queue."
+			);
+
+			return Vec::new();
+		};
+
+		queue.drain(..).collect()
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Drains and applies any queued passive AppKit capture input events.
+	pub fn handle_native_capture_input_ready(&mut self) -> OverlayControl {
+		let now = Instant::now();
+
+		self.maybe_log_event_loop_stall(now);
+		self.mark_progress_with_detail(
+			OverlayEventLoopPhase::WindowEvent,
+			Some("native_capture_input"),
+		);
+
+		for event in self.drain_native_capture_input_events() {
+			let control = match event {
+				MacOSNativeCaptureInputEvent::OverlayPointerMoved { monitor, global } => {
+					self.handle_native_overlay_pointer_moved(monitor, global)
+				},
+				MacOSNativeCaptureInputEvent::OverlayMouseInput {
+					monitor,
+					global,
+					button,
+					state,
+				} => {
+					self.maybe_stop_frozen_selection_drag_for_mouse_input(state, button);
+
+					match (state, button) {
+						(ElementState::Pressed, MouseButton::Right) => {
+							self.cancel_overlay("native_capture_right_click")
+						},
+						(_, MouseButton::Left) => {
+							self.handle_live_overlay_left_mouse_input(monitor, global, state)
+						},
+						_ => OverlayControl::Continue,
+					}
+				},
+				MacOSNativeCaptureInputEvent::ToolbarPointerMoved {
+					monitor,
+					local,
+					global,
+					outer_position,
+				} => self.handle_native_toolbar_pointer_moved(
+					monitor,
+					local,
+					global,
+					Some(outer_position),
+				),
+				MacOSNativeCaptureInputEvent::ToolbarPointerLeft => {
+					self.handle_toolbar_cursor_left()
+				},
+				MacOSNativeCaptureInputEvent::ToolbarMouseInput { button, state } => {
+					self.maybe_stop_frozen_selection_drag_for_mouse_input(state, button);
+
+					match (state, button) {
+						(ElementState::Pressed, MouseButton::Right) => {
+							self.cancel_overlay("native_toolbar_right_click")
+						},
+						(_, MouseButton::Left) => self.handle_toolbar_mouse_input(state),
+						_ => OverlayControl::Continue,
+					}
+				},
+				MacOSNativeCaptureInputEvent::ToolbarScrollWheel { delta } => {
+					let delta = match delta {
+						MacOSNativeCaptureScrollDelta::Line { x, y } => {
+							MouseScrollDelta::LineDelta(x, y)
+						},
+						MacOSNativeCaptureScrollDelta::Pixel { x, y } => {
+							MouseScrollDelta::PixelDelta(PhysicalPosition::new(x, y))
+						},
+					};
+
+					self.handle_toolbar_mouse_wheel(&delta)
+				},
+				MacOSNativeCaptureInputEvent::KeyboardInput { monitor: _, event } => {
+					self.handle_overlay_keyboard_input_event(&event)
+				},
+				MacOSNativeCaptureInputEvent::Ime { monitor, event } => {
+					self.handle_overlay_ime_event(monitor, &event)
+				},
+				MacOSNativeCaptureInputEvent::ModifiersChanged { state } => {
+					self.handle_modifiers_state_changed(state)
+				},
+			};
+
+			if !matches!(control, OverlayControl::Continue) {
+				return control;
+			}
+		}
+
+		OverlayControl::Continue
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1219,6 +1344,9 @@ impl OverlaySession {
 		}
 
 		self.state.begin_freeze(monitor);
+
+		#[cfg(target_os = "macos")]
+		let _ = self.sync_native_capture_shells();
 
 		self.state.drag_rect = None;
 		self.state.hovered_window_rect = None;
@@ -2932,64 +3060,15 @@ impl OverlaySession {
 
 	#[cfg(target_os = "macos")]
 	fn focus_live_capture_window(&self) {
-		macos_activate_app();
-
-		let target_window = self
-			.active_cursor_monitor()
-			.and_then(|monitor| {
-				self.windows.values().find(|overlay_window| overlay_window.monitor == monitor)
-			})
-			.or_else(|| self.windows.values().next())
-			.map(|overlay_window| overlay_window.window.as_ref());
-		let Some(target_window) = target_window else {
-			tracing::info!(
-				op = "overlay.live_focus_requested",
-				target = "missing_window",
-				window_count = self.windows.len(),
-				"Requested live capture focus, but no overlay window was available."
-			);
-
-			return;
-		};
-
 		tracing::info!(
 			op = "overlay.live_focus_requested",
-			target = "overlay_window",
+			target = "native_passive_shell",
 			window_count = self.windows.len(),
-			cursor_monitor_id = ?self.active_cursor_monitor().map(|monitor| monitor.id),
-			"Requested live capture focus."
+			"Skipped live capture key focus because passive AppKit shells own live pointer input."
 		);
-
-		macos_make_window_key(target_window);
 	}
 
 	#[cfg(target_os = "macos")]
-	fn restore_passive_capture_window_focus_policy_for_pointer_interaction(
-		&self,
-		reason: &'static str,
-	) {
-		for overlay_window in self.windows.values() {
-			macos_update_capture_window_focus_policy(overlay_window.window.as_ref(), false, reason);
-		}
-
-		if let Some(hud_window) = self.hud_window.as_ref() {
-			macos_update_capture_window_focus_policy(hud_window.window.as_ref(), false, reason);
-		}
-		if let Some(loupe_window) = self.loupe_window.as_ref() {
-			macos_update_capture_window_focus_policy(loupe_window.window.as_ref(), false, reason);
-		}
-		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-			macos_update_capture_window_focus_policy(toolbar_window.window.as_ref(), false, reason);
-		}
-		if let Some(scroll_preview_window) = self.scroll_preview_window.as_ref() {
-			macos_update_capture_window_focus_policy(
-				scroll_preview_window.window.as_ref(),
-				false,
-				reason,
-			);
-		}
-	}
-
 	fn maybe_recenter_frozen_toolbar_default_slot(&mut self, monitor: MonitorRect) -> bool {
 		if !matches!(self.state.mode, OverlayMode::Frozen) || self.state.monitor != Some(monitor) {
 			return false;
@@ -3519,26 +3598,11 @@ impl OverlaySession {
 		self.set_scroll_overlay_mouse_passthrough(false);
 
 		self.session_active = false;
+
 		#[cfg(target_os = "macos")]
 		{
-			for overlay_window in self.windows.values() {
-				macos_clear_capture_window_focus_policy(overlay_window.window.as_ref());
-			}
-
-			if let Some(hud_window) = self.hud_window.as_ref() {
-				macos_clear_capture_window_focus_policy(hud_window.window.as_ref());
-			}
-			if let Some(loupe_window) = self.loupe_window.as_ref() {
-				macos_clear_capture_window_focus_policy(loupe_window.window.as_ref());
-			}
-			if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-				macos_clear_capture_window_focus_policy(toolbar_window.window.as_ref());
-			}
-			if let Some(scroll_preview_window) = self.scroll_preview_window.as_ref() {
-				macos_clear_capture_window_focus_policy(scroll_preview_window.window.as_ref());
-			}
+			self.destroy_native_capture_shells();
 		}
-
 		self.windows.clear();
 
 		self.hud_window = None;
@@ -3927,6 +3991,95 @@ pub enum WindowCaptureAlphaMode {
 	MatteLight,
 	/// Composite transparency against a dark matte color.
 	MatteDark,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MacOSNativeCaptureScrollDelta {
+	Line { x: f32, y: f32 },
+	Pixel { x: f64, y: f64 },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct OverlayKeyboardInputEvent {
+	logical_key: Key,
+	text: Option<String>,
+	state: ElementState,
+	repeat: bool,
+}
+impl OverlayKeyboardInputEvent {
+	fn from_winit(event: &KeyEvent) -> Self {
+		Self {
+			logical_key: event.logical_key.clone(),
+			text: event.text.as_deref().map(ToOwned::to_owned),
+			state: event.state,
+			repeat: event.repeat,
+		}
+	}
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq)]
+enum MacOSNativeCaptureInputEvent {
+	OverlayPointerMoved {
+		monitor: MonitorRect,
+		global: GlobalPoint,
+	},
+	OverlayMouseInput {
+		monitor: MonitorRect,
+		global: GlobalPoint,
+		button: MouseButton,
+		state: ElementState,
+	},
+	ToolbarPointerMoved {
+		monitor: MonitorRect,
+		local: Pos2,
+		global: GlobalPoint,
+		outer_position: GlobalPoint,
+	},
+	ToolbarPointerLeft,
+	ToolbarMouseInput {
+		button: MouseButton,
+		state: ElementState,
+	},
+	ToolbarScrollWheel {
+		delta: MacOSNativeCaptureScrollDelta,
+	},
+	KeyboardInput {
+		monitor: Option<MonitorRect>,
+		event: OverlayKeyboardInputEvent,
+	},
+	Ime {
+		monitor: Option<MonitorRect>,
+		event: Ime,
+	},
+	ModifiersChanged {
+		state: ModifiersState,
+	},
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+struct MacOSNativeCaptureInputDispatch {
+	queue: Arc<Mutex<VecDeque<MacOSNativeCaptureInputEvent>>>,
+	waker: Arc<dyn Fn() + Send + Sync>,
+}
+#[cfg(target_os = "macos")]
+impl MacOSNativeCaptureInputDispatch {
+	fn enqueue(&self, event: MacOSNativeCaptureInputEvent) {
+		if let Ok(mut queue) = self.queue.lock() {
+			queue.push_back(event);
+		} else {
+			tracing::warn!(
+				op = "overlay.native_capture_input_queue_poisoned",
+				"Dropping native capture input event because the queue lock was poisoned."
+			);
+
+			return;
+		}
+
+		(self.waker)();
+	}
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -4637,114 +4790,6 @@ fn macos_overlay_cursor_view_class() -> *const Class {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_passive_capture_window_keys() -> &'static Mutex<HashSet<usize>> {
-	static WINDOW_KEYS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
-
-	WINDOW_KEYS.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
-#[cfg(target_os = "macos")]
-fn macos_capture_window_is_passive(window_key: usize) -> bool {
-	macos_passive_capture_window_keys()
-		.lock()
-		.expect("passive capture window key set poisoned")
-		.contains(&window_key)
-}
-
-#[cfg(target_os = "macos")]
-fn macos_update_capture_window_passive_state(window_key: usize, passive: bool) -> bool {
-	let mut window_keys = macos_passive_capture_window_keys()
-		.lock()
-		.expect("passive capture window key set poisoned");
-
-	if passive { window_keys.insert(window_key) } else { window_keys.remove(&window_key) }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_bool_window_method_imp(imp: extern "C" fn(&Object, Sel) -> BOOL) -> Imp {
-	unsafe { mem::transmute::<extern "C" fn(&Object, Sel) -> BOOL, Imp>(imp) }
-}
-
-#[cfg(target_os = "macos")]
-extern "C" fn macos_dynamic_capture_window_can_become_main_window(
-	this: &Object,
-	_cmd: Sel,
-) -> BOOL {
-	if macos_capture_window_is_passive((this as *const Object) as usize) { NO } else { YES }
-}
-
-#[cfg(target_os = "macos")]
-extern "C" fn macos_dynamic_capture_window_can_become_key_window(this: &Object, _cmd: Sel) -> BOOL {
-	if macos_capture_window_is_passive((this as *const Object) as usize) { NO } else { YES }
-}
-
-#[cfg(target_os = "macos")]
-fn macos_install_capture_window_focus_hooks() {
-	static INSTALLED: OnceLock<()> = OnceLock::new();
-	INSTALLED.get_or_init(|| {
-		let window_class = Class::get("WinitWindow").expect("WinitWindow class should exist");
-
-		unsafe {
-			let can_become_main_window =
-				runtime::class_getInstanceMethod(window_class, objc::sel!(canBecomeMainWindow));
-			let can_become_key_window =
-				runtime::class_getInstanceMethod(window_class, objc::sel!(canBecomeKeyWindow));
-
-			assert!(
-				!can_become_main_window.is_null(),
-				"WinitWindow::canBecomeMainWindow should exist"
-			);
-			assert!(
-				!can_become_key_window.is_null(),
-				"WinitWindow::canBecomeKeyWindow should exist"
-			);
-
-			let _: Imp = runtime::method_setImplementation(
-				can_become_main_window.cast_mut(),
-				macos_bool_window_method_imp(macos_dynamic_capture_window_can_become_main_window),
-			);
-			let _: Imp = runtime::method_setImplementation(
-				can_become_key_window.cast_mut(),
-				macos_bool_window_method_imp(macos_dynamic_capture_window_can_become_key_window),
-			);
-		}
-
-		tracing::trace!(
-			op = "overlay.macos_capture_window_focus_hooks_installed",
-			"Installed passive capture window focus hooks on WinitWindow."
-		);
-	});
-}
-
-#[cfg(target_os = "macos")]
-fn macos_set_capture_window_focus_policy(
-	ns_window: *mut Object,
-	allow_key_focus: bool,
-	reason: &'static str,
-) {
-	if ns_window.is_null() {
-		return;
-	}
-
-	macos_install_capture_window_focus_hooks();
-
-	let window_key = ns_window as usize;
-	let changed = macos_update_capture_window_passive_state(window_key, !allow_key_focus);
-
-	if !changed {
-		return;
-	}
-
-	tracing::trace!(
-		op = "overlay.macos_capture_window_focus_policy_changed",
-		reason,
-		allow_key_focus,
-		window_key,
-		"Updated macOS capture window focus policy."
-	);
-}
-
-#[cfg(target_os = "macos")]
 fn macos_overlay_window_ns_view(window: &Window) -> Option<*mut Object> {
 	let Ok(handle) = window.window_handle() else {
 		return None;
@@ -4953,86 +4998,6 @@ fn macos_restore_frontmost_application(target: MacOSFrontmostApplication) -> boo
 }
 
 #[cfg(target_os = "macos")]
-fn macos_make_window_key(window: &Window) {
-	macos_update_capture_window_focus_policy(window, true, "explicit_focus_request");
-
-	let Ok(handle) = window.window_handle() else {
-		return;
-	};
-	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-		return;
-	};
-	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
-
-	unsafe {
-		let ns_window: *mut Object = objc::msg_send![ns_view, window];
-
-		if ns_window.is_null() {
-			return;
-		}
-
-		let nil: *mut Object = ptr::null_mut();
-		let _: () = objc::msg_send![ns_window, makeKeyAndOrderFront: nil];
-	}
-
-	window.focus_window();
-}
-
-#[cfg(target_os = "macos")]
-fn macos_update_capture_window_focus_policy(
-	window: &Window,
-	allow_key_focus: bool,
-	reason: &'static str,
-) {
-	let Ok(handle) = window.window_handle() else {
-		return;
-	};
-	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-		return;
-	};
-	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
-
-	unsafe {
-		let ns_window: *mut Object = objc::msg_send![ns_view, window];
-
-		if ns_window.is_null() {
-			return;
-		}
-
-		macos_set_capture_window_focus_policy(ns_window, allow_key_focus, reason);
-	}
-}
-
-#[cfg(target_os = "macos")]
-fn macos_clear_capture_window_focus_policy(window: &Window) {
-	let Ok(handle) = window.window_handle() else {
-		return;
-	};
-	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-		return;
-	};
-	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
-
-	unsafe {
-		let ns_window: *mut Object = objc::msg_send![ns_view, window];
-
-		if ns_window.is_null() {
-			return;
-		}
-
-		let window_key = ns_window as usize;
-
-		if macos_update_capture_window_passive_state(window_key, false) {
-			tracing::trace!(
-				op = "overlay.macos_capture_window_focus_policy_cleared",
-				window_key,
-				"Cleared macOS capture window passive focus policy."
-			);
-		}
-	}
-}
-
-#[cfg(target_os = "macos")]
 fn macos_post_scroll_wheel_event(
 	delta: MacOSScrollWheelEvent,
 	target_point: GlobalPoint,
@@ -5197,8 +5162,24 @@ fn macos_configure_nonactivating_capture_window_with_ns_window(ns_window: *mut O
 		let _: () = objc::msg_send![ns_window, setStyleMask: style_mask | nonactivating_panel_mask];
 		let _: () = objc::msg_send![ns_window, setHidesOnDeactivate: false];
 	}
+}
 
-	macos_set_capture_window_focus_policy(ns_window, false, "capture_window_configured");
+#[cfg(target_os = "macos")]
+fn macos_set_capture_window_mouse_passthrough(window: &Window, passthrough: bool) {
+	let Some(ns_view) = macos_overlay_window_ns_view(window) else {
+		return;
+	};
+
+	unsafe {
+		let ns_window: *mut Object = objc::msg_send![ns_view, window];
+
+		if ns_window.is_null() {
+			return;
+		}
+
+		let ignores_mouse_events = if passthrough { YES } else { NO };
+		let _: () = objc::msg_send![ns_window, setIgnoresMouseEvents: ignores_mouse_events];
+	}
 }
 
 #[cfg(test)]

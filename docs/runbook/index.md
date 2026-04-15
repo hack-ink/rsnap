@@ -60,3 +60,5 @@ Then structure the body for execution:
 
 - `docs/runbook/performance-validation.md` for repo-native performance and smoke command routing
 - `docs/runbook/scroll-capture-benchmarks.md` for deterministic scroll-capture benchmark usage
+- `docs/runbook/macos-native-capture-window-validation.md` for manual validation of passive
+  pointer shells and explicit key-focus shell behavior on macOS

@@ -45,6 +45,10 @@ impl OverlaySession {
 		} else {
 			self.last_toolbar_window_move_at = Instant::now();
 		}
+
+		#[cfg(target_os = "macos")]
+		let _ = self.sync_native_capture_shells();
+
 		if changed {
 			self.request_redraw_toolbar_window();
 		}
@@ -124,9 +128,6 @@ impl OverlaySession {
 
 		let cursor_local =
 			Pos2::new((position.x / toolbar_scale) as f32, (position.y / toolbar_scale) as f32);
-
-		self.toolbar_pointer_local = Some(cursor_local);
-
 		let cached_toolbar_outer_pos = self.toolbar_outer_pos;
 		let monitor = match self.state.monitor.or_else(|| self.active_cursor_monitor()) {
 			Some(monitor) => monitor,
@@ -138,81 +139,15 @@ impl OverlaySession {
 			cached_toolbar_outer_pos,
 			self.toolbar_state.floating_position,
 		);
-		let global_cursor = toolbar_outer_pos
-			.map(|outer| Self::toolbar_cursor_global_position_from_outer(outer, cursor_local));
 
-		if self.handle_toolbar_cursor_move_for_active_selection(global_cursor) {
-			return OverlayControl::Continue;
-		}
-
-		self.update_toolbar_cursor_event_from_global(
+		self.handle_toolbar_pointer_moved_from_positions(
 			monitor,
 			cursor_local,
-			global_cursor,
+			toolbar_outer_pos
+				.map(|outer| Self::toolbar_cursor_global_position_from_outer(outer, cursor_local)),
 			cached_toolbar_outer_pos,
 			window_toolbar_outer_pos,
-		);
-
-		#[cfg(not(target_os = "macos"))]
-		let drag_monitor = global_cursor.and_then(|cursor| self.monitor_at(cursor)).unwrap_or(monitor);
-		#[cfg(target_os = "macos")]
-		let mouse_drag = self.toolbar_left_button_down && self.toolbar_state.dragging;
-		#[cfg(not(target_os = "macos"))]
-		let mut mouse_drag = self.toolbar_left_button_down && self.toolbar_state.dragging;
-
-		if self.toolbar_left_button_down
-			&& self.toolbar_state.drag_start_eligible
-			&& self.toolbar_state.drag_anchor.is_none()
-		{
-			self.toolbar_state.drag_anchor = Some(cursor_local);
-		}
-		if !mouse_drag
-			&& let Some(drag_anchor) = self.toolbar_state.drag_anchor
-			&& Self::toolbar_drag_threshold_reached(cursor_local, drag_anchor)
-		{
-			#[cfg(target_os = "macos")]
-			{
-				return self.begin_native_toolbar_drag();
-			}
-
-			#[cfg(not(target_os = "macos"))]
-			if let (Some(global_cursor), Some(toolbar_outer_pos)) =
-				(global_cursor, toolbar_outer_pos)
-			{
-				self.toolbar_state.drag_offset = Vec2::new(
-					global_cursor.x as f32 - toolbar_outer_pos.x as f32,
-					global_cursor.y as f32 - toolbar_outer_pos.y as f32,
-				);
-				self.toolbar_state.dragging = true;
-				self.toolbar_state.drag_start_eligible = false;
-				self.toolbar_state.drag_anchor = None;
-				mouse_drag = true;
-			}
-		}
-		#[cfg(not(target_os = "macos"))]
-		if mouse_drag && global_cursor.is_none() {
-			mouse_drag = false;
-		}
-		#[cfg(not(target_os = "macos"))]
-		if mouse_drag && let Some(global_cursor) = global_cursor {
-			let desired_global = Pos2::new(
-				global_cursor.x as f32 - self.toolbar_state.drag_offset.x,
-				global_cursor.y as f32 - self.toolbar_state.drag_offset.y,
-			);
-			let desired_local = Pos2::new(
-				desired_global.x - drag_monitor.origin.x as f32,
-				desired_global.y - drag_monitor.origin.y as f32,
-			);
-			let _ = self.update_toolbar_outer_position(drag_monitor, desired_local);
-		}
-		#[cfg(target_os = "macos")]
-		if self.toolbar_state.dragging {
-			return OverlayControl::Continue;
-		}
-
-		self.request_redraw_toolbar_window();
-
-		OverlayControl::Continue
+		)
 	}
 
 	fn handle_toolbar_cursor_move_for_active_selection(
@@ -264,6 +199,116 @@ impl OverlaySession {
 			return OverlayControl::Continue;
 		};
 		let _ = toolbar_window_handle.drag_window();
+
+		OverlayControl::Continue
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn handle_native_toolbar_pointer_moved(
+		&mut self,
+		monitor: MonitorRect,
+		cursor_local: Pos2,
+		global_cursor: GlobalPoint,
+		toolbar_outer_pos: Option<GlobalPoint>,
+	) -> OverlayControl {
+		if !matches!(self.state.mode, OverlayMode::Frozen) || !self.toolbar_state.visible {
+			return OverlayControl::Continue;
+		}
+
+		self.handle_toolbar_pointer_moved_from_positions(
+			monitor,
+			cursor_local,
+			Some(global_cursor),
+			self.toolbar_outer_pos,
+			toolbar_outer_pos,
+		)
+	}
+
+	fn handle_toolbar_pointer_moved_from_positions(
+		&mut self,
+		monitor: MonitorRect,
+		cursor_local: Pos2,
+		global_cursor: Option<GlobalPoint>,
+		cached_toolbar_outer_pos: Option<GlobalPoint>,
+		window_toolbar_outer_pos: Option<GlobalPoint>,
+	) -> OverlayControl {
+		self.toolbar_pointer_local = Some(cursor_local);
+
+		if self.handle_toolbar_cursor_move_for_active_selection(global_cursor) {
+			return OverlayControl::Continue;
+		}
+
+		self.update_toolbar_cursor_event_from_global(
+			monitor,
+			cursor_local,
+			global_cursor,
+			cached_toolbar_outer_pos,
+			window_toolbar_outer_pos,
+		);
+
+		let drag_monitor =
+			global_cursor.and_then(|cursor| self.monitor_at(cursor)).unwrap_or(monitor);
+		#[cfg(target_os = "macos")]
+		let manual_toolbar_drag = self.should_host_toolbar_pointer_input_in_native_shell();
+		#[cfg(not(target_os = "macos"))]
+		let manual_toolbar_drag = true;
+		let mut mouse_drag = self.toolbar_left_button_down && self.toolbar_state.dragging;
+
+		if self.toolbar_left_button_down
+			&& self.toolbar_state.drag_start_eligible
+			&& self.toolbar_state.drag_anchor.is_none()
+		{
+			self.toolbar_state.drag_anchor = Some(cursor_local);
+		}
+		if !mouse_drag
+			&& let Some(drag_anchor) = self.toolbar_state.drag_anchor
+			&& Self::toolbar_drag_threshold_reached(cursor_local, drag_anchor)
+		{
+			if manual_toolbar_drag {
+				if let (Some(global_cursor), Some(toolbar_outer_pos)) =
+					(global_cursor, window_toolbar_outer_pos.or(cached_toolbar_outer_pos))
+				{
+					self.toolbar_state.drag_offset = Vec2::new(
+						global_cursor.x as f32 - toolbar_outer_pos.x as f32,
+						global_cursor.y as f32 - toolbar_outer_pos.y as f32,
+					);
+					self.toolbar_state.dragging = true;
+					self.toolbar_state.drag_start_eligible = false;
+					self.toolbar_state.drag_anchor = None;
+					mouse_drag = true;
+				}
+			} else {
+				#[cfg(target_os = "macos")]
+				{
+					return self.begin_native_toolbar_drag();
+				}
+			}
+		}
+		if mouse_drag && global_cursor.is_none() {
+			mouse_drag = false;
+		}
+		if mouse_drag && let Some(global_cursor) = global_cursor {
+			let desired_global = Pos2::new(
+				global_cursor.x as f32 - self.toolbar_state.drag_offset.x,
+				global_cursor.y as f32 - self.toolbar_state.drag_offset.y,
+			);
+			let desired_local = Pos2::new(
+				desired_global.x - drag_monitor.origin.x as f32,
+				desired_global.y - drag_monitor.origin.y as f32,
+			);
+			let _ = self.update_toolbar_outer_position(drag_monitor, desired_local);
+
+			self.force_apply_pending_toolbar_window_move();
+
+			#[cfg(target_os = "macos")]
+			let _ = self.sync_native_capture_shells();
+		}
+		#[cfg(target_os = "macos")]
+		if !manual_toolbar_drag && self.toolbar_state.dragging {
+			return OverlayControl::Continue;
+		}
+
+		self.request_redraw_toolbar_window();
 
 		OverlayControl::Continue
 	}
@@ -444,23 +489,13 @@ impl OverlaySession {
 			|| !self.toolbar_state.visible
 	}
 
-	#[cfg(any(target_os = "macos", test))]
+	#[cfg(test)]
 	pub(super) fn should_focus_frozen_toolbar_window_on_show(&self) -> bool {
-		!self.toolbar_window_visible
-			&& !self.skip_toolbar_focus_on_next_show
-			&& matches!(self.state.mode, OverlayMode::Frozen)
-			&& !self.scroll_capture.active
+		false
 	}
 
 	pub(super) fn set_toolbar_window_hidden(&mut self) {
 		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-			#[cfg(target_os = "macos")]
-			super::macos_update_capture_window_focus_policy(
-				toolbar_window.window.as_ref(),
-				false,
-				"toolbar_hidden",
-			);
-
 			#[cfg(target_os = "macos")]
 			let _ = toolbar_window.window.set_cursor_hittest(false);
 
@@ -476,6 +511,9 @@ impl OverlaySession {
 		}
 		self.toolbar_window_warmup_redraws_remaining = 0;
 		self.last_present_at = Instant::now();
+
+		#[cfg(target_os = "macos")]
+		let _ = self.sync_native_capture_shells();
 	}
 
 	pub(super) fn draw_toolbar_window_frame(
@@ -583,8 +621,6 @@ impl OverlaySession {
 
 	#[cfg(target_os = "macos")]
 	fn prepare_toolbar_window_for_draw(&mut self, monitor: MonitorRect) -> Option<bool> {
-		let should_focus_frozen_keyboard = self.should_focus_frozen_toolbar_window_on_show();
-
 		if !self.toolbar_window_visible {
 			self.maybe_apply_pending_startup_aux_live_stream_filter_upgrade(monitor);
 		}
@@ -609,9 +645,8 @@ impl OverlaySession {
 				"toolbar_first_show",
 			);
 		}
-		if should_focus_frozen_keyboard {
-			self.focus_frozen_keyboard_window();
-		}
+
+		let _ = self.sync_native_capture_shells();
 
 		Some(toolbar_became_visible)
 	}
@@ -702,6 +737,16 @@ impl OverlaySession {
 		&mut self,
 		current_cursor: Option<GlobalPoint>,
 	) {
+		if self.should_host_toolbar_pointer_input_in_native_shell() {
+			self.toolbar_window_cursor_hittest_enabled = false;
+
+			if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+				let _ = toolbar_window.window.set_cursor_hittest(false);
+			}
+
+			return;
+		}
+
 		let enabled = self.toolbar_window_cursor_hittest_should_be_enabled(current_cursor);
 		let Some(toolbar_window) = self.toolbar_window.as_ref() else {
 			self.toolbar_window_cursor_hittest_enabled = false;

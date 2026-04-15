@@ -59,6 +59,12 @@ cross-platform architecture.
     externally capturable by system screenshot and screen-recording tools. Internal self-capture
     correctness comes from rsnap's own exclusion filters and freeze handoff logic, not window
     content protection.
+4b. On macOS, live overlay pointer input and frozen-toolbar pointer input MUST be handled through
+    passive AppKit-owned shells so the pointer path does not require capture windows to become
+    `key`/`main` windows.
+4c. On macOS, explicit keyboard ownership during capture MUST be scoped to a dedicated key-focus
+    shell that is activated only for Frozen text editing and scroll capture. Ordinary live
+    selection and frozen pointer interaction MUST NOT rely on capture windows becoming key.
 5. In live mode, the overlay MUST show a HUD near the cursor with:
    - global cursor coordinates `x,y`
    - pixel color `rgb(r,g,b)` under the cursor
