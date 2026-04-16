@@ -119,10 +119,13 @@ cross-platform architecture.
    - Scroll capture is macOS-only. Other platforms must treat this flow as unsupported
      until they have their own native contract.
    - It requires Screen Recording permission for live capture imagery.
-   - Entering scroll capture additionally requires Accessibility because rsnap forwards
-     scroll input into the target app.
+   - Entering scroll capture additionally requires Accessibility because rsnap still
+     retains a macOS wheel-forwarding fallback for cases where the overlay receives the
+     event instead of the target app.
    - Entering scroll capture additionally requires Input Monitoring because rsnap listens
-     for global scroll-wheel input through a native macOS listen-event tap.
+     for global scroll-wheel input through a native macOS listen-event tap while the
+     frozen overlay windows switch into mouse passthrough so the target app normally
+     receives the real scroll gesture directly.
    - Entry is dragged-region-only. Window freezes and fullscreen fallbacks must not arm
      scroll capture, even if a frozen image exists.
    - The frozen toolbar may expose `Scroll Capture ↓`, and plain `s` may start scroll

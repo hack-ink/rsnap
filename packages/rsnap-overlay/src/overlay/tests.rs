@@ -3289,6 +3289,35 @@ fn reset_for_start_clears_reused_session_transient_flags() {
 	assert_eq!(session.toolbar_window_warmup_redraws_remaining, 0);
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn destroy_live_only_aux_windows_clears_live_widget_state() {
+	let mut session = OverlaySession {
+		hud_outer_pos: Some(GlobalPoint::new(12, 34)),
+		pending_hud_outer_pos: Some(GlobalPoint::new(56, 78)),
+		hud_inner_size_points: Some((320, 48)),
+		hud_window_visible: true,
+		loupe_outer_pos: Some(GlobalPoint::new(90, 120)),
+		pending_loupe_outer_pos: Some(GlobalPoint::new(130, 160)),
+		loupe_inner_size_points: Some((96, 96)),
+		loupe_window_visible: true,
+		..OverlaySession::default()
+	};
+
+	session.destroy_live_only_aux_windows();
+
+	assert!(session.hud_window.is_none());
+	assert!(session.hud_outer_pos.is_none());
+	assert!(session.pending_hud_outer_pos.is_none());
+	assert!(session.hud_inner_size_points.is_none());
+	assert!(!session.hud_window_visible);
+	assert!(session.loupe_window.is_none());
+	assert!(session.loupe_outer_pos.is_none());
+	assert!(session.pending_loupe_outer_pos.is_none());
+	assert!(session.loupe_inner_size_points.is_none());
+	assert!(!session.loupe_window_visible);
+}
+
 #[test]
 fn is_active_tracks_explicit_session_state() {
 	let inactive = OverlaySession::default();

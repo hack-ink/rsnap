@@ -73,6 +73,9 @@ Keyboard ownership is now explicit and scoped:
   composition can flow without turning the pointer shells into key windows.
 - Scroll capture uses the same key-focus shell pattern for `Esc`, `Space`, save shortcuts, and
   pause/undo controls.
+- During scroll capture that key-focus shell stays nonactivating while the full-screen frozen
+  overlay windows switch into mouse passthrough, so the target app keeps receiving the real
+  scroll gesture.
 - When neither text editing nor scroll capture needs keyboard ownership, no capture window should
   remain key-capable.
 

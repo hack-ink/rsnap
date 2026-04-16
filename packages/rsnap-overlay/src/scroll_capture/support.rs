@@ -65,7 +65,7 @@ pub(crate) fn scroll_capture_fingerprint_delta(left: &[u8], right: &[u8]) -> u32
 		comparisons = comparisons.saturating_add(4);
 	}
 
-	if comparisons == 0 { u32::MAX } else { (total_abs_diff / comparisons) as u32 }
+	total_abs_diff.checked_div(comparisons).map_or(u32::MAX, |average| average as u32)
 }
 
 #[cfg(test)]

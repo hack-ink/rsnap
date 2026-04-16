@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use egui::FontId;
@@ -63,8 +62,6 @@ impl MacOSNativeCaptureShells {
 			window_count = windows.len(),
 			"Synced passive overlay shells."
 		);
-
-		macos_set_system_cursor_hidden(visible);
 
 		for overlay_window in windows.values() {
 			if let Some(shell) = self.overlay_shells.get(&overlay_window.monitor.id) {
@@ -370,22 +367,6 @@ impl MacOSPassiveShellWindow {
 				let _: () = objc::msg_send![ns_window, invalidateCursorRectsForView: view];
 			}
 		}
-
-		if let Some(callback) = macos_shell_callback(self.view_key) {
-			match callback {
-				MacOSPassiveShellCallback::Overlay { .. } => {
-					let seeded_point = visible
-						.then(|| macos_seed_passive_shell_cursor_point(ns_window, view))
-						.flatten();
-
-					macos_update_passive_shell_cursor_point(self.view_key, seeded_point);
-				},
-				MacOSPassiveShellCallback::Toolbar { .. }
-				| MacOSPassiveShellCallback::KeyFocus { .. } => {
-					macos_update_passive_shell_cursor_point(self.view_key, None);
-				},
-			}
-		}
 	}
 
 	fn set_toolbar_state(&self, monitor: MonitorRect, outer_position: GlobalPoint) {
@@ -404,7 +385,6 @@ impl MacOSPassiveShellWindow {
 impl Drop for MacOSPassiveShellWindow {
 	fn drop(&mut self) {
 		macos_unregister_shell_callback(self.view_key);
-		macos_clear_passive_shell_cursor_point(self.view_key);
 
 		unsafe {
 			let ns_window = self.window_key as *mut Object;
@@ -529,8 +509,6 @@ impl MacOSKeyFocusShellWindow {
 		if ns_window.is_null() || view.is_null() {
 			return;
 		}
-
-		super::macos_activate_app();
 
 		unsafe {
 			let input_context: *mut Object = objc::msg_send![view, inputContext];
@@ -789,6 +767,8 @@ impl OverlaySession {
 	pub(super) fn sync_native_capture_shells(&mut self) -> Result<(), String> {
 		let live_shell_visible = self.should_host_live_pointer_input_in_native_shell();
 		let toolbar_shell_visible = self.should_host_toolbar_pointer_input_in_native_shell();
+		let overlay_mouse_passthrough =
+			live_shell_visible || self.scroll_capture.overlay_mouse_passthrough_active;
 		let toolbar_context = self.toolbar_window.as_ref().map(|toolbar_window| {
 			let monitor = self.state.monitor.or_else(|| self.active_cursor_monitor());
 			let outer_position = Self::toolbar_window_outer_position(toolbar_window)
@@ -812,7 +792,7 @@ impl OverlaySession {
 		for overlay_window in self.windows.values() {
 			super::macos_set_capture_window_mouse_passthrough(
 				overlay_window.window.as_ref(),
-				live_shell_visible,
+				overlay_mouse_passthrough,
 			);
 		}
 
@@ -859,8 +839,6 @@ impl OverlaySession {
 	}
 
 	pub(super) fn destroy_native_capture_shells(&mut self) {
-		macos_set_system_cursor_hidden(false);
-
 		for overlay_window in self.windows.values() {
 			super::macos_set_capture_window_mouse_passthrough(
 				overlay_window.window.as_ref(),
@@ -1049,7 +1027,9 @@ impl MacOSPassiveShellCallback {
 
 	fn dispatch_mouse_exited(&self, view_key: usize) {
 		match self {
-			Self::Overlay { .. } => macos_update_passive_shell_cursor_point(view_key, None),
+			Self::Overlay { .. } => {
+				let _ = view_key;
+			},
 			Self::Toolbar { dispatch, .. } => {
 				dispatch.enqueue(MacOSNativeCaptureInputEvent::ToolbarPointerLeft);
 			},
@@ -1341,29 +1321,8 @@ extern "C" fn macos_passive_shell_view_hit_test(
 }
 
 extern "C" fn macos_passive_shell_view_draw_rect(this: &Object, _cmd: Sel, dirty_rect: MacOSRect) {
-	let Some(callback) = macos_shell_callback(this as *const Object as usize) else {
-		return;
-	};
-
-	if !matches!(callback, MacOSPassiveShellCallback::Overlay { .. }) {
-		return;
-	}
-
-	let clear: *mut Object = unsafe { objc::msg_send![objc::class!(NSColor), clearColor] };
-
-	if !clear.is_null() {
-		unsafe {
-			let _: () = objc::msg_send![clear, setFill];
-			let _: () =
-				objc::msg_send![objc::class!(NSBezierPath), fillRect: NSRect::from(dirty_rect)];
-		}
-	}
-
-	let Some(point) = macos_passive_shell_cursor_point(this as *const Object as usize) else {
-		return;
-	};
-
-	macos_draw_passive_shell_crosshair(point);
+	let _ = this;
+	let _ = dirty_rect;
 }
 
 extern "C" fn macos_passive_shell_view_reset_cursor_rects(this: &Object, _cmd: Sel) {
@@ -1919,21 +1878,12 @@ fn macos_dispatch_shell_pointer_moved(this: &Object, event: *mut Object) {
 
 	match callback {
 		MacOSPassiveShellCallback::Overlay { .. } => {
-			macos_update_passive_shell_cursor_point(
-				this as *const Object as usize,
-				Some(local_point),
-			);
-
 			super::macos_set_cursor_icon(CursorIcon::Crosshair);
 		},
 		MacOSPassiveShellCallback::Toolbar { .. } => {
-			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
-
 			super::macos_set_cursor_icon(CursorIcon::Default);
 		},
-		MacOSPassiveShellCallback::KeyFocus { .. } => {
-			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
-		},
+		MacOSPassiveShellCallback::KeyFocus { .. } => {},
 	}
 
 	callback.dispatch_pointer_moved(local_point);
@@ -1952,18 +1902,12 @@ fn macos_dispatch_shell_mouse_input(
 
 	match callback {
 		MacOSPassiveShellCallback::Overlay { .. } => {
-			macos_update_passive_shell_cursor_point(this as *const Object as usize, local_point);
-
 			super::macos_set_cursor_icon(CursorIcon::Crosshair);
 		},
 		MacOSPassiveShellCallback::Toolbar { .. } => {
-			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
-
 			super::macos_set_cursor_icon(CursorIcon::Default);
 		},
-		MacOSPassiveShellCallback::KeyFocus { .. } => {
-			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
-		},
+		MacOSPassiveShellCallback::KeyFocus { .. } => {},
 	}
 
 	callback.dispatch_mouse_input(local_point, button, state);
@@ -2011,199 +1955,6 @@ fn macos_shell_scroll_delta(event: *mut Object) -> Option<MacOSNativeCaptureScro
 
 fn macos_set_crosshair_cursor() {
 	super::macos_set_cursor_icon(CursorIcon::Crosshair);
-}
-
-fn macos_passive_shell_cursor_points() -> &'static Mutex<HashMap<usize, Option<NSPoint>>> {
-	static POINTS: OnceLock<Mutex<HashMap<usize, Option<NSPoint>>>> = OnceLock::new();
-
-	POINTS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn macos_passive_shell_cursor_point(view_key: usize) -> Option<NSPoint> {
-	let points = macos_passive_shell_cursor_points();
-
-	match points.lock() {
-		Ok(guard) => guard.get(&view_key).copied().flatten(),
-		Err(poisoned) => poisoned.into_inner().get(&view_key).copied().flatten(),
-	}
-}
-
-fn macos_clear_passive_shell_cursor_point(view_key: usize) {
-	let points = macos_passive_shell_cursor_points();
-
-	match points.lock() {
-		Ok(mut guard) => {
-			guard.remove(&view_key);
-		},
-		Err(poisoned) => {
-			poisoned.into_inner().remove(&view_key);
-		},
-	}
-}
-
-fn macos_update_passive_shell_cursor_point(view_key: usize, next_point: Option<NSPoint>) {
-	let previous = {
-		let points = macos_passive_shell_cursor_points();
-
-		match points.lock() {
-			Ok(mut guard) => {
-				let previous = guard.get(&view_key).copied().flatten();
-
-				if previous == next_point {
-					return;
-				}
-				if next_point.is_some() {
-					guard.insert(view_key, next_point);
-				} else {
-					guard.remove(&view_key);
-				}
-
-				previous
-			},
-			Err(poisoned) => {
-				let mut guard = poisoned.into_inner();
-				let previous = guard.get(&view_key).copied().flatten();
-
-				if previous == next_point {
-					return;
-				}
-				if next_point.is_some() {
-					guard.insert(view_key, next_point);
-				} else {
-					guard.remove(&view_key);
-				}
-
-				previous
-			},
-		}
-	};
-	let view = view_key as *mut Object;
-
-	if view.is_null() {
-		return;
-	}
-
-	unsafe {
-		if let Some(previous) = previous {
-			let _: () = objc::msg_send![
-				view,
-				setNeedsDisplayInRect: macos_passive_shell_cursor_dirty_rect(previous)
-			];
-		}
-		if let Some(next) = next_point {
-			let _: () = objc::msg_send![view, setNeedsDisplayInRect: macos_passive_shell_cursor_dirty_rect(next)];
-		}
-	}
-}
-
-fn macos_passive_shell_cursor_dirty_rect(point: NSPoint) -> NSRect {
-	const CURSOR_DIRTY_RADIUS: f64 = 18.0;
-
-	NSRect::new(
-		NSPoint::new(point.x - CURSOR_DIRTY_RADIUS, point.y - CURSOR_DIRTY_RADIUS),
-		NSSize::new(CURSOR_DIRTY_RADIUS * 2.0, CURSOR_DIRTY_RADIUS * 2.0),
-	)
-}
-
-fn macos_seed_passive_shell_cursor_point(
-	ns_window: *mut Object,
-	view: *mut Object,
-) -> Option<NSPoint> {
-	if ns_window.is_null() || view.is_null() {
-		return None;
-	}
-
-	let global = super::macos_mouse_location()?;
-
-	unsafe {
-		let screen_point = NSPoint::new(f64::from(global.x), f64::from(global.y));
-		let window_point: NSPoint =
-			objc::msg_send![ns_window, convertPointFromScreen: screen_point];
-		let local_point: NSPoint =
-			objc::msg_send![view, convertPoint: window_point fromView: ptr::null_mut::<Object>()];
-		let bounds: NSRect = objc::msg_send![view, bounds];
-		let contains = local_point.x >= bounds.origin.x
-			&& local_point.y >= bounds.origin.y
-			&& local_point.x <= bounds.origin.x + bounds.size.width
-			&& local_point.y <= bounds.origin.y + bounds.size.height;
-
-		contains.then_some(local_point)
-	}
-}
-
-fn macos_draw_passive_shell_crosshair(point: NSPoint) {
-	let outline_color: *mut Object = unsafe {
-		objc::msg_send![objc::class!(NSColor), colorWithCalibratedWhite: 0.0 alpha: 0.95]
-	};
-	let fill_color: *mut Object = unsafe {
-		objc::msg_send![objc::class!(NSColor), colorWithCalibratedWhite: 1.0 alpha: 0.95]
-	};
-
-	macos_fill_passive_shell_crosshair_segments(outline_color, point, 3.0);
-	macos_fill_passive_shell_crosshair_segments(fill_color, point, 1.0);
-}
-
-fn macos_fill_passive_shell_crosshair_segments(color: *mut Object, point: NSPoint, thickness: f64) {
-	if color.is_null() {
-		return;
-	}
-
-	const EXTENT: f64 = 11.0;
-	const GAP: f64 = 3.0;
-
-	let rects = [
-		NSRect::new(
-			NSPoint::new(point.x - EXTENT, point.y - thickness * 0.5),
-			NSSize::new(EXTENT - GAP, thickness),
-		),
-		NSRect::new(
-			NSPoint::new(point.x + GAP, point.y - thickness * 0.5),
-			NSSize::new(EXTENT - GAP, thickness),
-		),
-		NSRect::new(
-			NSPoint::new(point.x - thickness * 0.5, point.y - EXTENT),
-			NSSize::new(thickness, EXTENT - GAP),
-		),
-		NSRect::new(
-			NSPoint::new(point.x - thickness * 0.5, point.y + GAP),
-			NSSize::new(thickness, EXTENT - GAP),
-		),
-	];
-
-	unsafe {
-		let _: () = objc::msg_send![color, setFill];
-
-		for rect in rects {
-			let _: () = objc::msg_send![objc::class!(NSBezierPath), fillRect: rect];
-		}
-	}
-}
-
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-	fn CGMainDisplayID() -> u32;
-	fn CGDisplayHideCursor(display: u32) -> i32;
-	fn CGDisplayShowCursor(display: u32) -> i32;
-}
-
-fn macos_set_system_cursor_hidden(hidden: bool) {
-	static CURSOR_HIDDEN: AtomicBool = AtomicBool::new(false);
-
-	let previous = CURSOR_HIDDEN.swap(hidden, Ordering::SeqCst);
-
-	if previous == hidden {
-		return;
-	}
-
-	unsafe {
-		if hidden {
-			let _ = CGDisplayHideCursor(CGMainDisplayID());
-			let _: () = objc::msg_send![objc::class!(NSCursor), hide];
-		} else {
-			let _: () = objc::msg_send![objc::class!(NSCursor), unhide];
-			let _ = CGDisplayShowCursor(CGMainDisplayID());
-		}
-	}
 }
 
 fn macos_shell_callback_name(callback: &MacOSPassiveShellCallback) -> &'static str {

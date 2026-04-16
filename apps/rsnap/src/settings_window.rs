@@ -19,7 +19,6 @@ use egui_wgpu::Renderer;
 use global_hotkey::hotkey::HotKey;
 use wgpu::Surface;
 use wgpu::SurfaceConfiguration;
-use winit::event::ElementState;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
@@ -228,17 +227,14 @@ impl SettingsWindow {
 
 				self.window.request_redraw();
 			},
-			WindowEvent::KeyboardInput { event, .. } if self.capture_hotkey_recording => {
-				if event.state == ElementState::Pressed {
-					self.handle_capture_hotkey_recording_input(event);
-				}
-			},
 			WindowEvent::ThemeChanged(_) => {
 				// Follow system theme changes when ThemeMode::System is active.
 				self.window.request_redraw();
 			},
 			WindowEvent::KeyboardInput { event, .. } => {
-				if platform::should_close_from_keyboard(self.modifiers, event) {
+				if self.capture_hotkey_recording && event.state.is_pressed() {
+					self.handle_capture_hotkey_recording_input(event);
+				} else if platform::should_close_from_keyboard(self.modifiers, event) {
 					return SettingsControl::CloseRequested;
 				}
 			},

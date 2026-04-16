@@ -583,6 +583,8 @@ impl OverlaySession {
 
 		self.scroll_capture.overlay_mouse_passthrough_active = passthrough;
 
+		let _ = self.sync_native_capture_shells();
+
 		tracing::info!(
 			op = if passthrough {
 				"scroll_capture.mouse_passthrough_armed"

@@ -27,6 +27,8 @@ theft or missing IME behavior.
 2. Live drag region
    - Start capture over another app.
    - Press-drag-release to create a region freeze.
+   - Verify the live selection cursor stays a single native crosshair and no duplicate custom
+     cursor overlay appears during the drag.
    - Verify auxiliary live widgets disappear on press and do not reappear during handoff.
    - Verify the target app remains the apparent frontmost app after selection completes.
 

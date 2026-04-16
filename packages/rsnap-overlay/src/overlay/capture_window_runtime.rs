@@ -118,7 +118,16 @@ impl OverlaySession {
 				return;
 			}
 
+			if let Some(hud_window) = &self.hud_window {
+				hud_window.window.set_visible(false);
+			}
+
 			self.hud_window_visible = false;
+
+			if let Some(loupe_window) = &self.loupe_window {
+				loupe_window.window.set_visible(false);
+			}
+
 			self.loupe_window_visible = false;
 
 			if let Some(toolbar_window) = &self.toolbar_window {
@@ -185,6 +194,15 @@ impl OverlaySession {
 
 	#[cfg(target_os = "macos")]
 	pub(super) fn destroy_live_only_aux_windows(&mut self) {
+		if let Some(hud_window) = self.hud_window.take() {
+			self.remove_macos_hud_window_config_cache_entry(hud_window.window.id());
+		}
+
+		self.hud_inner_size_points = None;
+		self.hud_outer_pos = None;
+		self.pending_hud_outer_pos = None;
+		self.hud_window_visible = false;
+
 		if let Some(loupe_window) = self.loupe_window.take() {
 			self.remove_macos_hud_window_config_cache_entry(loupe_window.window.id());
 		}
