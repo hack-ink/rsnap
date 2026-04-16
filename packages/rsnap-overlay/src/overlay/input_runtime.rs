@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 #[cfg(not(target_os = "macos"))]
 use device_query::DeviceQuery;
 use winit::event::KeyEvent;
+#[cfg(target_os = "macos")]
 use winit::keyboard::ModifiersState;
 
 #[cfg(target_os = "macos")]
