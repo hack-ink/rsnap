@@ -493,6 +493,9 @@ impl OverlaySession {
 	) -> Vec<OverlayCursorRect> {
 		let overlay_bounds =
 			Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+		let pen_target = (self.toolbar_state.selected_tool == FrozenToolbarTool::Pen)
+			.then(|| self.frozen_brush_capture_target())
+			.flatten();
 
 		if matches!(self.state.mode, OverlayMode::Live) {
 			return vec![OverlayCursorRect::new(overlay_bounds, CursorIcon::Crosshair)];
@@ -501,47 +504,20 @@ impl OverlaySession {
 			return Vec::new();
 		}
 
-		if let Some((target_monitor, capture_rect)) = self.frozen_spotlight_drag_target() {
+		for (target, active) in [
+			(self.frozen_mosaic_drag_target(), self.frozen_mosaic_drag.active),
+			(self.frozen_spotlight_drag_target(), self.frozen_spotlight_drag.active),
+			(self.frozen_arrow_drag_target(), self.frozen_arrow_drag.active),
+			(pen_target, self.frozen_brush.active_stroke.is_some()),
+		] {
+			let Some((target_monitor, capture_rect)) = target else {
+				continue;
+			};
+
 			if target_monitor != monitor {
 				return Vec::new();
 			}
-			if self.frozen_spotlight_drag.active {
-				return vec![OverlayCursorRect::new(overlay_bounds, CursorIcon::Crosshair)];
-			}
-
-			let capture_rect = Rect::from_min_size(
-				Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
-				Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
-			)
-			.intersect(overlay_bounds);
-
-			return (capture_rect.width() > 0.0 && capture_rect.height() > 0.0)
-				.then_some(vec![OverlayCursorRect::new(capture_rect, CursorIcon::Crosshair)])
-				.unwrap_or_default();
-		}
-		if let Some((target_monitor, capture_rect)) = self.frozen_arrow_drag_target() {
-			if target_monitor != monitor {
-				return Vec::new();
-			}
-			if self.frozen_arrow_drag.active {
-				return vec![OverlayCursorRect::new(overlay_bounds, CursorIcon::Crosshair)];
-			}
-
-			let capture_rect = Rect::from_min_size(
-				Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
-				Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
-			)
-			.intersect(overlay_bounds);
-
-			return (capture_rect.width() > 0.0 && capture_rect.height() > 0.0)
-				.then_some(vec![OverlayCursorRect::new(capture_rect, CursorIcon::Crosshair)])
-				.unwrap_or_default();
-		}
-		if let Some((target_monitor, capture_rect)) = self.frozen_mosaic_drag_target() {
-			if target_monitor != monitor {
-				return Vec::new();
-			}
-			if self.frozen_mosaic_drag.active {
+			if active {
 				return vec![OverlayCursorRect::new(overlay_bounds, CursorIcon::Crosshair)];
 			}
 
@@ -573,6 +549,31 @@ impl OverlaySession {
 					vec![OverlayCursorRect::new(overlay_bounds, CursorIcon::Grabbing)]
 				},
 			};
+		}
+
+		if let Some(hit_rect) = self.frozen_text_edit_hit_rect_for_monitor(monitor) {
+			let text_edit_dragging =
+				self.frozen_text_edit.as_ref().is_some_and(|edit| edit.dragging);
+			let rect = hit_rect.intersect(overlay_bounds);
+
+			if rect.width() > 0.0 && rect.height() > 0.0 {
+				return vec![OverlayCursorRect::new(
+					rect,
+					if text_edit_dragging { CursorIcon::Grabbing } else { CursorIcon::Grab },
+				)];
+			}
+		}
+
+		if self.frozen_text_tool_active() {
+			let capture_rect = Rect::from_min_size(
+				Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
+				Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
+			)
+			.intersect(overlay_bounds);
+
+			return (capture_rect.width() > 0.0 && capture_rect.height() > 0.0)
+				.then_some(vec![OverlayCursorRect::new(capture_rect, CursorIcon::Text)])
+				.unwrap_or_default();
 		}
 
 		Self::frozen_selection_hover_cursor_rects(capture_rect)
@@ -698,17 +699,36 @@ impl OverlaySession {
 	}
 
 	pub(super) fn sync_overlay_cursor_icons(&self) {
+		#[cfg(target_os = "macos")]
+		let current_monitor = self.monitor_for_mode().or(self.state.monitor);
+
 		for overlay_window in self.windows.values() {
-			#[cfg(not(target_os = "macos"))]
 			let icon = self.overlay_cursor_icon_for_monitor(overlay_window.monitor);
 
-			#[cfg(not(target_os = "macos"))]
+			tracing::warn!(
+				op = "overlay.sync_overlay_cursor_icons",
+				monitor_id = overlay_window.monitor.id,
+				mode = ?self.state.mode,
+				icon = ?icon,
+				active_monitor_id = ?current_monitor.map(|monitor| monitor.id),
+				cursor = ?self.state.cursor,
+				"Synced overlay cursor icons."
+			);
+
 			overlay_window.window.set_cursor(icon);
 			#[cfg(target_os = "macos")]
-			overlay_window.cursor_rects.sync_cursor_rects(
-				overlay_window.window.as_ref(),
-				&self.frozen_selection_cursor_rects_for_monitor(overlay_window.monitor),
-			);
+			{
+				overlay_window.cursor_rects.sync_cursor_rects(
+					overlay_window.window.as_ref(),
+					&self.frozen_selection_cursor_rects_for_monitor(overlay_window.monitor),
+				);
+
+				if current_monitor == Some(overlay_window.monitor) {
+					super::macos_set_cursor_icon(
+						self.overlay_cursor_icon_for_monitor(overlay_window.monitor),
+					);
+				}
+			}
 		}
 	}
 

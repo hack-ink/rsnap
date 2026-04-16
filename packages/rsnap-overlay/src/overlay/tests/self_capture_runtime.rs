@@ -352,6 +352,81 @@ fn live_snapshot_followup_can_finish_background_capture_before_timeout() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn background_capture_prefers_live_surface_bg_for_initial_display_handoff() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let live_image = RgbaImage::from_pixel(8, 8, Rgba([91, 27, 63, 255]));
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.state.live_bg_monitor = Some(monitor);
+	session.state.live_bg_image = Some(live_image.clone());
+
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		2,
+		1,
+		Instant::now(),
+	);
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		None,
+		Some(cursor),
+	);
+
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&live_image));
+	assert!(session.state.frozen_export_image.is_some());
+	assert!(tests::session_export_authority_ready(&session));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn background_capture_followup_export_does_not_overwrite_live_surface_preview() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(120, 180);
+	let live_image = RgbaImage::from_pixel(8, 8, Rgba([101, 31, 79, 255]));
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.state.live_bg_monitor = Some(monitor);
+	session.state.live_bg_image = Some(live_image.clone());
+
+	session.begin_frozen_capture_with_rect(
+		monitor,
+		Some(RectPoints::new(100, 140, 320, 240)),
+		None,
+		Some(cursor),
+	);
+
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&live_image));
+	assert!(session.state.frozen_export_image.is_none());
+	assert!(!tests::session_export_authority_ready(&session));
+
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		4,
+		1,
+		Instant::now(),
+	);
+
+	let _ = session.about_to_wait();
+
+	assert_eq!(session.state.frozen_display_image.as_ref(), Some(&live_image));
+	assert!(session.state.frozen_export_image.is_some());
+	assert!(tests::session_export_authority_ready(&session));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn window_matte_capture_seeds_preview_and_arms_worker_without_hiding_overlay_windows() {
 	let monitor = tests::test_monitor();
 	let cursor = GlobalPoint::new(120, 180);

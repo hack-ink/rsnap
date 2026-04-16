@@ -7,11 +7,11 @@ use winit::keyboard::ModifiersState;
 
 use crate::overlay::{
 	AltActivationMode, CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource,
-	ElementState, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
-	FrozenToolbarTool, GlobalPoint, Ime, Key, LiveCaptureInteraction, LiveClickCaptureTarget,
-	Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl, OverlayKeyboardInputEvent,
-	OverlayMode, OverlaySession, PhysicalPosition, PhysicalSize, PngAction, Pos2, Vec2, WindowId,
-	WindowRenderer,
+	ElementState, FrozenGlobalHotkey, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState,
+	FrozenTextInputSource, FrozenToolbarTool, GlobalPoint, Ime, Key, LiveCaptureInteraction,
+	LiveClickCaptureTarget, Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl,
+	OverlayKeyboardInputEvent, OverlayMode, OverlaySession, PhysicalPosition, PhysicalSize,
+	PngAction, Pos2, Vec2, WindowId, WindowRenderer,
 };
 
 impl OverlaySession {
@@ -1381,6 +1381,22 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
+	#[cfg(target_os = "macos")]
+	/// Handles a host-level frozen shortcut while ordinary frozen mode runs without a key window.
+	pub fn handle_global_frozen_hotkey(&mut self, hotkey: FrozenGlobalHotkey) -> OverlayControl {
+		if !self.wants_global_frozen_hotkeys() {
+			return OverlayControl::Continue;
+		}
+
+		match hotkey {
+			FrozenGlobalHotkey::Copy => self.handle_frozen_copy_hotkey(),
+			FrozenGlobalHotkey::AutoCenter => self.handle_frozen_auto_center_hotkey(),
+			FrozenGlobalHotkey::ToggleToolbar => self.toggle_toolbar_visibility_hotkey(),
+			FrozenGlobalHotkey::StartScrollCapture => self.handle_frozen_scroll_capture_hotkey(),
+			FrozenGlobalHotkey::Save => self.handle_frozen_save_hotkey(),
+		}
+	}
+
 	pub(super) fn handle_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
 		self.handle_overlay_keyboard_input_event(&OverlayKeyboardInputEvent::from_winit(event))
 	}
@@ -1419,63 +1435,81 @@ impl OverlaySession {
 				if (key_text == "h" || key_text == "H")
 					&& self.plain_character_shortcut_available() =>
 			{
-				self.toolbar_state.visible = !self.toolbar_state.visible;
-
-				#[cfg(target_os = "macos")]
-				if self.toolbar_state.visible {
-					self.request_aux_window_creation_if_needed();
-				}
-
-				self.request_redraw_all();
-
-				OverlayControl::Continue
+				self.toggle_toolbar_visibility_hotkey()
 			},
 			Key::Character(key_text)
 				if key_text.as_str().eq_ignore_ascii_case("c")
 					&& self.plain_character_shortcut_available() =>
 			{
-				self.auto_center_frozen_capture_rect();
-
-				OverlayControl::Continue
+				self.handle_frozen_auto_center_hotkey()
 			},
 			Key::Character(key_text)
 				if key_text.as_str().eq_ignore_ascii_case("s")
 					&& self.is_save_shortcut_pressed() =>
 			{
-				self.begin_png_action(PngAction::Save);
-
-				OverlayControl::Continue
+				self.handle_frozen_save_hotkey()
 			},
 			Key::Character(key_text)
 				if key_text.as_str().eq_ignore_ascii_case("s")
 					&& self.plain_character_shortcut_available() =>
 			{
-				let available = self.scroll_capture_is_available();
-				let selection_ready = self.scroll_capture_selection_is_ready();
-
-				tracing::info!(
-					op = "scroll_capture.frozen_s_pressed",
-					available,
-					scroll_capture_active = self.scroll_capture.active,
-					selection_ready,
-					frozen_capture_source = ?self.frozen_capture_source,
-					state_mode = ?self.state.mode,
-					"Received `s` while frozen."
-				);
-
-				if selection_ready {
-					return self.start_scroll_capture();
-				}
-
-				OverlayControl::Continue
+				self.handle_frozen_scroll_capture_hotkey()
 			},
-			Key::Named(NamedKey::Space) => {
-				self.begin_png_action(PngAction::Copy);
-
-				OverlayControl::Continue
-			},
+			Key::Named(NamedKey::Space) => self.handle_frozen_copy_hotkey(),
 			_ => OverlayControl::Continue,
 		}
+	}
+
+	fn toggle_toolbar_visibility_hotkey(&mut self) -> OverlayControl {
+		self.toolbar_state.visible = !self.toolbar_state.visible;
+
+		#[cfg(target_os = "macos")]
+		if self.toolbar_state.visible {
+			self.request_aux_window_creation_if_needed();
+		}
+
+		self.request_redraw_all();
+
+		OverlayControl::Continue
+	}
+
+	fn handle_frozen_auto_center_hotkey(&mut self) -> OverlayControl {
+		self.auto_center_frozen_capture_rect();
+
+		OverlayControl::Continue
+	}
+
+	fn handle_frozen_save_hotkey(&mut self) -> OverlayControl {
+		self.begin_png_action(PngAction::Save);
+
+		OverlayControl::Continue
+	}
+
+	fn handle_frozen_scroll_capture_hotkey(&mut self) -> OverlayControl {
+		let available = self.scroll_capture_is_available();
+		let selection_ready = self.scroll_capture_selection_is_ready();
+
+		tracing::info!(
+			op = "scroll_capture.frozen_s_pressed",
+			available,
+			scroll_capture_active = self.scroll_capture.active,
+			selection_ready,
+			frozen_capture_source = ?self.frozen_capture_source,
+			state_mode = ?self.state.mode,
+			"Received `s` while frozen."
+		);
+
+		if selection_ready {
+			return self.start_scroll_capture();
+		}
+
+		OverlayControl::Continue
+	}
+
+	fn handle_frozen_copy_hotkey(&mut self) -> OverlayControl {
+		self.begin_png_action(PngAction::Copy);
+
+		OverlayControl::Continue
 	}
 
 	pub(super) fn is_save_shortcut_pressed(&self) -> bool {

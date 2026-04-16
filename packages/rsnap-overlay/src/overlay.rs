@@ -349,10 +349,10 @@ const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] =
 	[(196, 226, 255), (228, 198, 255), (176, 244, 224)];
 const SELECTION_FLOW_LIGHT_PALETTE: [(u8, u8, u8); 3] =
 	[(196, 226, 255), (228, 198, 255), (176, 244, 224)];
-const LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 96;
-const LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK: u8 = 148;
-const FROZEN_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 224;
-const FROZEN_SELECTION_SCRIM_ALPHA_DARK: u8 = 208;
+const LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT: u8 = 120;
+const LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK: u8 = 176;
+const FROZEN_SELECTION_SCRIM_ALPHA_LIGHT: u8 = LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT;
+const FROZEN_SELECTION_SCRIM_ALPHA_DARK: u8 = LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK;
 const FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX: f32 = 1.55;
 const SELECTION_DASHED_BORDER_WIDTH_PX: f32 = 3.1;
 const SELECTION_DASHED_BORDER_DASH_LENGTH_PX: f32 = 12.0;
@@ -565,6 +565,8 @@ pub struct OverlaySession {
 	window_list_refresh_interval: Duration,
 	last_live_bg_request_at: Instant,
 	live_bg_request_interval: Duration,
+	#[cfg(target_os = "macos")]
+	last_live_surface_bg_snapshot_at: Option<Instant>,
 	freeze_capture_send_full_count: u64,
 	hit_test_send_full_count: u64,
 	hit_test_send_disconnected_count: u64,
@@ -809,6 +811,8 @@ impl OverlaySession {
 			window_list_refresh_interval: Duration::ZERO,
 			last_live_bg_request_at: now,
 			live_bg_request_interval: Duration::ZERO,
+			#[cfg(target_os = "macos")]
+			last_live_surface_bg_snapshot_at: None,
 			freeze_capture_send_full_count: 0,
 			hit_test_send_full_count: 0,
 			hit_test_send_disconnected_count: 0,
@@ -999,6 +1003,17 @@ impl OverlaySession {
 	#[must_use]
 	pub fn wants_global_loupe_hotkey(&self) -> bool {
 		matches!(self.state.mode, OverlayMode::Live)
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Returns whether the host should register ordinary frozen shortcuts
+	/// while the session runs without a focused key window.
+	#[must_use]
+	pub fn wants_global_frozen_hotkeys(&self) -> bool {
+		self.session_active
+			&& matches!(self.state.mode, OverlayMode::Frozen)
+			&& !self.scroll_capture.active
+			&& self.frozen_text_edit.is_none()
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1212,6 +1227,55 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn clear_live_surface_bg(&mut self) {
+		self.state.live_bg_monitor = None;
+		self.state.live_bg_image = None;
+		self.last_live_surface_bg_snapshot_at = None;
+	}
+
+	#[cfg(target_os = "macos")]
+	fn sync_live_surface_bg_from_stream(&mut self, monitor: MonitorRect) {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			self.clear_live_surface_bg();
+
+			return;
+		}
+		if self.active_cursor_monitor() != Some(monitor) {
+			return;
+		}
+
+		let Some(stream) = self.live_sample_stream.as_ref() else {
+			return;
+		};
+
+		if !stream.self_capture_filter_complete_for_monitor(monitor) {
+			return;
+		}
+
+		let Some(snapshot) = stream.peek_latest_rgba_snapshot(monitor) else {
+			return;
+		};
+		let allow_refresh = self.frozen_display_handoff_pending();
+
+		if !allow_refresh
+			&& self.state.live_bg_monitor == Some(monitor)
+			&& self.state.live_bg_image.is_some()
+		{
+			return;
+		}
+		if self.state.live_bg_monitor == Some(monitor)
+			&& self.last_live_surface_bg_snapshot_at == Some(snapshot.captured_at)
+		{
+			return;
+		}
+
+		self.state.live_bg_monitor = Some(monitor);
+		self.state.live_bg_image = Some(snapshot.image.as_ref().clone());
+		self.state.live_bg_generation = self.state.live_bg_generation.wrapping_add(1);
+		self.last_live_surface_bg_snapshot_at = Some(snapshot.captured_at);
+	}
+
+	#[cfg(target_os = "macos")]
 	fn macos_hud_window_blur_enabled(&self) -> bool {
 		self.config.show_hud_blur
 	}
@@ -1422,31 +1486,10 @@ impl OverlaySession {
 		self.frozen_display_ready() && self.state.monitor == Some(monitor)
 	}
 
-	#[cfg(target_os = "macos")]
-	fn preserve_live_frozen_entry_affordance(&self) -> bool {
-		!self.scroll_capture.active
-			&& !self.frozen_selection_drag.active
-			&& !self.toolbar_state.dragging
-			&& self.frozen_edit_undo_stack.is_empty()
-			&& self.state.frozen_mosaic_preview_rect.is_none()
-			&& self.frozen_text_edit.is_none()
-			&& self.active_frozen_arrow_preview().is_none()
-			&& self.frozen_spotlight_preview_rect.is_none()
-	}
-
 	fn frozen_visual_handoff_pending_for_monitor(&self, monitor: MonitorRect) -> bool {
-		#[cfg(target_os = "macos")]
-		{
-			self.frozen_display_ready_for_monitor(monitor)
-				&& self.preserve_live_frozen_entry_affordance()
-		}
+		let _ = monitor;
 
-		#[cfg(not(target_os = "macos"))]
-		{
-			let _ = monitor;
-
-			false
-		}
+		false
 	}
 
 	fn frozen_preview_visible(&self) -> bool {
@@ -1958,6 +2001,8 @@ impl OverlaySession {
 		if let Some(cursor) = cursor {
 			self.update_cursor_state(monitor, cursor);
 		}
+
+		self.sync_overlay_cursor_icons();
 	}
 
 	fn seed_frozen_toolbar_default_position(
@@ -3159,6 +3204,34 @@ impl OverlaySession {
 			&& !self.frozen_visual_handoff_pending_for_monitor(overlay_monitor)
 	}
 
+	fn should_draw_live_surface_bg_for_overlay_monitor(
+		&self,
+		overlay_monitor: MonitorRect,
+	) -> bool {
+		matches!(self.state.mode, OverlayMode::Live)
+			&& self.state.live_bg_monitor == Some(overlay_monitor)
+			&& self.state.live_bg_image.is_some()
+	}
+
+	fn should_refresh_live_surface_bg_for_overlay_monitor(
+		&self,
+		overlay_monitor: MonitorRect,
+	) -> bool {
+		if !matches!(self.state.mode, OverlayMode::Live) {
+			return false;
+		}
+		if self.active_cursor_monitor() != Some(overlay_monitor) {
+			return false;
+		}
+		if self.frozen_display_handoff_pending()
+			|| self.frozen_visual_handoff_pending_for_monitor(overlay_monitor)
+		{
+			return true;
+		}
+
+		self.state.live_bg_monitor != Some(overlay_monitor) || self.state.live_bg_image.is_none()
+	}
+
 	fn mark_overlay_window_redraw_progress(
 		&mut self,
 		window_id: WindowId,
@@ -3171,6 +3244,30 @@ impl OverlaySession {
 		self.event_loop_last_progress_monitor_id = Some(overlay_monitor.id);
 	}
 
+	#[cfg(target_os = "macos")]
+	fn maybe_sync_live_surface_bg_for_overlay_redraw(&mut self, overlay_monitor: MonitorRect) {
+		if self.should_refresh_live_surface_bg_for_overlay_monitor(overlay_monitor) {
+			self.sync_live_surface_bg_from_stream(overlay_monitor);
+		}
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn maybe_sync_live_surface_bg_for_overlay_redraw(&mut self, _overlay_monitor: MonitorRect) {}
+
+	fn finish_overlay_window_redraw(
+		&mut self,
+		overlay_monitor: MonitorRect,
+		draw_toolbar: bool,
+	) -> OverlayControl {
+		self.maybe_arm_frozen_toolbar_badge_slot_after_overlay_draw(overlay_monitor);
+
+		self.last_present_at = Instant::now();
+
+		self.note_startup_overlay_frame_presented();
+
+		self.handle_capture_and_toolbar_redraw_post(overlay_monitor, draw_toolbar)
+	}
+
 	fn handle_overlay_window_redraw(&mut self, window_id: WindowId) -> OverlayControl {
 		let Some(overlay_monitor) = self.windows.get(&window_id).map(|overlay| overlay.monitor)
 		else {
@@ -3180,6 +3277,7 @@ impl OverlaySession {
 		self.mark_overlay_window_redraw_progress(window_id, overlay_monitor);
 		self.maybe_log_event_loop_stall(Instant::now());
 		self.mark_progress(OverlayEventLoopPhase::OverlayRedraw);
+		self.maybe_sync_live_surface_bg_for_overlay_redraw(overlay_monitor);
 
 		let overlay_screen_rect = self.overlay_window_screen_rect(window_id, overlay_monitor);
 		#[cfg(target_os = "macos")]
@@ -3211,8 +3309,8 @@ impl OverlaySession {
 		let Some(gpu) = self.gpu.as_ref() else {
 			return self.exit(OverlayExit::Error(String::from("Missing GPU context")));
 		};
-		let scroll_capture_active = self.scroll_capture.active;
-		let frozen_text_style = self.toolbar_state.text_style;
+		let (scroll_capture_active, frozen_text_style) =
+			(self.scroll_capture.active, self.toolbar_state.text_style);
 		let visible_frozen_text_annotations: &[FrozenTextAnnotation] =
 			if scroll_capture_active { &[] } else { &self.frozen_text_annotations };
 		let visible_frozen_arrow_annotations: &[FrozenArrowAnnotation] =
@@ -3229,7 +3327,11 @@ impl OverlaySession {
 			self.pending_frozen_display_handoff_state(overlay_monitor);
 		let allow_frozen_surface_bg = self
 			.allow_frozen_surface_bg_for_overlay_monitor(overlay_monitor, scroll_capture_active);
+		let allow_live_surface_bg =
+			self.should_draw_live_surface_bg_for_overlay_monitor(overlay_monitor);
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
+		let selection_flow_enabled =
+			self.config.selection_flow_enabled && !cfg!(target_os = "macos");
 
 		{
 			let Some(overlay_window) = self.windows.get_mut(&window_id) else {
@@ -3253,9 +3355,10 @@ impl OverlaySession {
 				self.config.hud_milk_amount,
 				self.config.hud_tint_hue,
 				self.config.theme_mode,
-				self.config.selection_flow_enabled,
+				selection_flow_enabled,
 				self.config.selection_flow_stroke_width_px,
 				allow_frozen_surface_bg,
+				allow_live_surface_bg,
 				pending_frozen_display_handoff,
 				pending_frozen_display_handoff_monitor,
 				scroll_capture_active,
@@ -3279,13 +3382,7 @@ impl OverlaySession {
 			}
 		}
 
-		self.maybe_arm_frozen_toolbar_badge_slot_after_overlay_draw(overlay_monitor);
-
-		self.last_present_at = Instant::now();
-
-		self.note_startup_overlay_frame_presented();
-
-		self.handle_capture_and_toolbar_redraw_post(overlay_monitor, draw_toolbar)
+		self.finish_overlay_window_redraw(overlay_monitor, draw_toolbar)
 	}
 
 	#[cfg(target_os = "macos")]
@@ -3936,6 +4033,22 @@ pub enum OverlayExit {
 	Saved(PathBuf),
 	/// The session failed with a user-visible error message.
 	Error(String),
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Host-routed frozen shortcuts that should work without a focused key window.
+pub enum FrozenGlobalHotkey {
+	/// Copy the current frozen export image.
+	Copy,
+	/// Recenter the drag-region capture rect around detected content.
+	AutoCenter,
+	/// Toggle toolbar visibility while frozen.
+	ToggleToolbar,
+	/// Start scroll capture from an existing frozen selection.
+	StartScrollCapture,
+	/// Save the current frozen export image.
+	Save,
 }
 
 #[derive(Debug)]
@@ -4690,6 +4803,7 @@ fn macos_cursor_object_for_icon(icon: CursorIcon) -> *mut Object {
 		CursorIcon::Crosshair => unsafe { objc::msg_send![cursor_class, crosshairCursor] },
 		CursorIcon::Grab => unsafe { objc::msg_send![cursor_class, openHandCursor] },
 		CursorIcon::Grabbing => unsafe { objc::msg_send![cursor_class, closedHandCursor] },
+		CursorIcon::Text => unsafe { objc::msg_send![cursor_class, IBeamCursor] },
 		CursorIcon::NeswResize => unsafe {
 			let responds: bool = objc::msg_send![cursor_class, respondsToSelector: objc::sel!(_windowResizeNorthEastSouthWestCursor)];
 
@@ -4709,6 +4823,19 @@ fn macos_cursor_object_for_icon(icon: CursorIcon) -> *mut Object {
 			}
 		},
 		_ => unsafe { objc::msg_send![cursor_class, arrowCursor] },
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn macos_set_cursor_icon(icon: CursorIcon) {
+	let cursor = macos_cursor_object_for_icon(icon);
+
+	if cursor.is_null() {
+		return;
+	}
+
+	unsafe {
+		let _: () = objc::msg_send![cursor, set];
 	}
 }
 
@@ -4909,15 +5036,8 @@ fn macos_apply_overlay_cursor_for_current_pointer(overlay_view_key: usize) {
 	else {
 		return;
 	};
-	let cursor = macos_cursor_object_for_icon(icon);
 
-	if cursor.is_null() {
-		return;
-	}
-
-	unsafe {
-		let _: () = objc::msg_send![cursor, set];
-	}
+	macos_set_cursor_icon(icon);
 }
 
 #[cfg(target_os = "macos")]

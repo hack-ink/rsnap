@@ -1,3 +1,5 @@
+use winit::window::Window;
+
 use crate::overlay::{
 	Duration, FrozenCaptureSource, GlobalPoint, HudAnchor, HudPillGeometry, HudRedrawSummary,
 	Instant, LIVE_PRESENT_INTERVAL_MIN, LogicalSize, MonitorRect, OverlayControl,
@@ -28,6 +30,14 @@ impl OverlaySession {
 		_loupe_tile: Option<Rect>,
 	) -> Rect {
 		hud_pill.rect
+	}
+
+	fn ensure_aux_window_visible(window: &Window, visible: &mut bool) {
+		if !*visible {
+			window.set_visible(true);
+
+			*visible = true;
+		}
 	}
 
 	pub(super) fn maybe_skip_hud_redraw(&mut self) -> Option<OverlayControl> {
@@ -110,14 +120,13 @@ impl OverlaySession {
 		let mut summary = HudRedrawSummary::default();
 
 		if let (Some(monitor), Some(hud_window)) = (monitor, self.hud_window.as_mut()) {
-			summary.redraw_window_id = Some(hud_window.window.id());
-			summary.redraw_monitor_id = Some(monitor.id);
+			(summary.redraw_window_id, summary.redraw_monitor_id) =
+				(Some(hud_window.window.id()), Some(monitor.id));
 
-			if !self.hud_window_visible {
-				hud_window.window.set_visible(true);
-
-				self.hud_window_visible = true;
-			}
+			Self::ensure_aux_window_visible(
+				hud_window.window.as_ref(),
+				&mut self.hud_window_visible,
+			);
 
 			let draw_started_at = Instant::now();
 
@@ -141,6 +150,7 @@ impl OverlaySession {
 				self.config.selection_flow_enabled,
 				self.config.selection_flow_stroke_width_px,
 				true,
+				false,
 				false,
 				None,
 				false,
