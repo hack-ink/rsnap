@@ -719,6 +719,7 @@ impl App {
 		{
 			self.unregister_overlay_cancel_hotkey();
 			self.unregister_overlay_loupe_hotkey();
+			self.unregister_overlay_frozen_hotkeys();
 		}
 
 		#[cfg(target_os = "macos")]
