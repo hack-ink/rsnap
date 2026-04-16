@@ -57,7 +57,7 @@ impl MacOSNativeCaptureShells {
 	}
 
 	fn sync_overlay_shells(&self, windows: &HashMap<WindowId, OverlayWindow>, visible: bool) {
-		tracing::warn!(
+		tracing::trace!(
 			op = "overlay.macos_passive_shell_sync_overlay_shells",
 			visible,
 			window_count = windows.len(),
@@ -1154,7 +1154,7 @@ extern "C" fn macos_passive_shell_view_cursor_update(
 		return;
 	};
 
-	tracing::warn!(
+	tracing::trace!(
 		op = "overlay.macos_passive_shell_cursor_update",
 		callback = %macos_shell_callback_name(&callback),
 		"Passive shell received cursorUpdate."
