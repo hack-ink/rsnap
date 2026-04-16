@@ -1,12 +1,12 @@
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-	use std::ptr;
 	use image::{Rgba, RgbaImage};
 	use objc2_core_foundation::{CFData, CGPoint, CGRect, CGSize};
 	use objc2_core_graphics::{
-		CGBitmapContextCreate, CGColorRenderingIntent, CGColorSpace, CGContext,
-		CGDataProvider, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
+		CGBitmapContextCreate, CGColorRenderingIntent, CGColorSpace, CGContext, CGDataProvider,
+		CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
 	};
+	use std::ptr;
 
 	use crate::macos_color::color_managed_rgba_from_bgra_bytes;
 
@@ -146,6 +146,31 @@ mod tests {
 
 		assert_eq!(image, expected);
 	}
+
+	#[test]
+	fn color_managed_path_preserves_source_alpha() {
+		let src_space =
+			CGColorSpace::with_name(Some(unsafe { objc2_core_graphics::kCGColorSpaceSRGB }))
+				.expect("sRGB");
+		let src = [
+			10_u8, 20, 30, 128, // premultiplied BGRA for RGBA(30,20,10,128)
+		];
+		let image = color_managed_rgba_from_bgra_bytes(
+			1,
+			1,
+			4,
+			&src,
+			Some(src_space.as_ref()),
+			None,
+			objc2_core_graphics::CGBitmapInfo(
+				CGImageAlphaInfo::PremultipliedFirst.0 | CGImageByteOrderInfo::Order32Little.0,
+			),
+		)
+		.expect("converted image");
+		let expected = RgbaImage::from_vec(1, 1, vec![30, 20, 10, 128]).expect("expected image");
+
+		assert_eq!(image, expected);
+	}
 }
 
 #[cfg(target_os = "macos")]
@@ -160,7 +185,10 @@ use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::{CFData, CFRetained, CGPoint, CGRect, CGSize};
 #[cfg(target_os = "macos")]
-use objc2_core_graphics::{self, CGBitmapContextCreate, CGColorRenderingIntent, CGColorSpace, CGContext, CGDataProvider, CGDirectDisplayID, CGDisplayCopyColorSpace, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo};
+use objc2_core_graphics::{
+	self, CGBitmapContextCreate, CGColorRenderingIntent, CGColorSpace, CGContext, CGDataProvider,
+	CGDirectDisplayID, CGDisplayCopyColorSpace, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo,
+};
 #[cfg(target_os = "macos")]
 use objc2_core_video::{
 	CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
@@ -273,7 +301,7 @@ fn color_managed_rgba_from_bgra_bytes(
 	data: &[u8],
 	src_color_space: Option<&CGColorSpace>,
 	display_id: Option<u32>,
-	_src_bitmap_info: objc2_core_graphics::CGBitmapInfo,
+	src_bitmap_info: objc2_core_graphics::CGBitmapInfo,
 ) -> Option<RgbaImage> {
 	if width == 0 || height == 0 {
 		return None;
@@ -296,8 +324,10 @@ fn color_managed_rgba_from_bgra_bytes(
 	let src_space =
 		src_color_space.or(fallback_monitor_space.as_deref()).or(fallback_srgb_space.as_deref())?;
 	let dst_space = srgb_color_space()?;
-	let normalized_src_bitmap_info =
-		objc2_core_graphics::CGBitmapInfo(CGImageAlphaInfo::NoneSkipFirst.0 | CGImageByteOrderInfo::Order32Little.0);
+	let normalized_src_bitmap_info = objc2_core_graphics::CGBitmapInfo(
+		src_bitmap_info.difference(objc2_core_graphics::CGBitmapInfo::ByteOrderInfoMask).bits()
+			| CGImageByteOrderInfo::Order32Little.0,
+	);
 	let provider =
 		CGDataProvider::with_cf_data(Some(CFData::from_bytes(&data[..required_len]).as_ref()))?;
 	let source = unsafe {

@@ -12,9 +12,9 @@ use crate::overlay::{
 	AltActivationMode, CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource,
 	ElementState, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarTool, GlobalPoint, Ime, Key, LiveCaptureInteraction, LiveClickCaptureTarget,
-	Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl,
-	OverlayKeyboardInputEvent, OverlayMode, OverlaySession, PhysicalPosition, PhysicalSize,
-	PngAction, Pos2, Vec2, WindowId, WindowRenderer,
+	Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl, OverlayKeyboardInputEvent,
+	OverlayMode, OverlaySession, PhysicalPosition, PhysicalSize, PngAction, Pos2, Vec2, WindowId,
+	WindowRenderer,
 };
 
 impl OverlaySession {

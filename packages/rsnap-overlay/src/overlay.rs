@@ -32,6 +32,8 @@ mod window_position_runtime;
 mod window_runtime;
 mod worker_runtime;
 
+#[cfg(target_os = "macos")]
+use std::collections::VecDeque;
 #[cfg(not(target_os = "macos"))]
 use std::env;
 #[cfg(target_os = "macos")]
@@ -42,8 +44,6 @@ use std::panic;
 use std::process;
 use std::ptr;
 use std::slice;
-#[cfg(target_os = "macos")]
-use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
 use std::sync::OnceLock;
 use std::{
