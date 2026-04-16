@@ -5,11 +5,13 @@ use device_query::DeviceQuery;
 use winit::event::KeyEvent;
 use winit::keyboard::ModifiersState;
 
+#[cfg(target_os = "macos")]
+use crate::overlay::FrozenGlobalHotkey;
 use crate::overlay::{
 	AltActivationMode, CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource,
-	ElementState, FrozenGlobalHotkey, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState,
-	FrozenTextInputSource, FrozenToolbarTool, GlobalPoint, Ime, Key, LiveCaptureInteraction,
-	LiveClickCaptureTarget, Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl,
+	ElementState, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
+	FrozenToolbarTool, GlobalPoint, Ime, Key, LiveCaptureInteraction, LiveClickCaptureTarget,
+	Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl,
 	OverlayKeyboardInputEvent, OverlayMode, OverlaySession, PhysicalPosition, PhysicalSize,
 	PngAction, Pos2, Vec2, WindowId, WindowRenderer,
 };
@@ -183,6 +185,7 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
+	#[cfg(target_os = "macos")]
 	pub(super) fn handle_modifiers_state_changed(
 		&mut self,
 		modifiers: ModifiersState,
