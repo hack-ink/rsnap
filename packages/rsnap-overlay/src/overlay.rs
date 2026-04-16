@@ -154,7 +154,9 @@ use winit::{
 
 use self::frozen_text_runtime::{FrozenTextInputSource, FrozenTextRecentInput};
 #[cfg(target_os = "macos")]
-use self::macos_native_capture_shell_runtime::MacOSNativeCaptureShells;
+use self::macos_native_capture_shell_runtime::{
+	MacOSNativeCaptureRootOwner, MacOSNativeCaptureShells,
+};
 #[cfg(target_os = "macos")]
 use self::rendering::StartupLiveRgbPlan;
 use self::rendering::{
@@ -537,6 +539,8 @@ pub struct OverlaySession {
 	egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
 	windows: HashMap<WindowId, OverlayWindow>,
 	#[cfg(target_os = "macos")]
+	native_capture_root_owner: Option<MacOSNativeCaptureRootOwner>,
+	#[cfg(target_os = "macos")]
 	native_capture_shells: Option<MacOSNativeCaptureShells>,
 	focused_window_ids: HashSet<WindowId>,
 	pending_focus_loss_cleanup: bool,
@@ -795,7 +799,9 @@ impl OverlaySession {
 			state: OverlayState::new(),
 			session_active: false,
 			cursor_monitor: None,
-			windows: HashMap::new(), #[cfg(target_os = "macos")] native_capture_shells: None,
+			windows: HashMap::new(),
+			#[cfg(target_os = "macos")] native_capture_root_owner: None,
+			#[cfg(target_os = "macos")] native_capture_shells: None,
 			focused_window_ids: HashSet::new(),
 			pending_focus_loss_cleanup: false,
 			hud_window: None, loupe_window: None, toolbar_window: None, scroll_preview_window: None,

@@ -406,6 +406,8 @@ impl OverlaySession {
 			self.request_redraw_scroll_preview_window();
 		}
 
+		let _ = self.sync_native_capture_shells();
+
 		Ok(())
 	}
 
@@ -775,6 +777,8 @@ impl OverlaySession {
 	}
 
 	fn discard_prewarmed_startup_resources(&mut self) {
+		#[cfg(target_os = "macos")]
+		self.destroy_native_capture_root_owner();
 		self.windows.clear();
 
 		self.hud_window = None;
@@ -793,6 +797,9 @@ impl OverlaySession {
 		if !self.has_prewarmed_startup_resources() {
 			return None;
 		}
+
+		#[cfg(target_os = "macos")]
+		self.destroy_native_capture_root_owner();
 
 		Some(PrewarmedStartupResources {
 			egui_repaint_deadline: Arc::clone(&self.egui_repaint_deadline),

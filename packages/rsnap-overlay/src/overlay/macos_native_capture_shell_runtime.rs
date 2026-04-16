@@ -162,6 +162,80 @@ impl MacOSNativeCaptureShells {
 	}
 }
 
+pub(super) struct MacOSNativeCaptureRootOwner {
+	window_key: usize,
+}
+impl MacOSNativeCaptureRootOwner {
+	fn sync_frame_and_visibility(&self, frame: NSRect, visible: bool) {
+		let ns_window = self.window_key as *mut Object;
+
+		if ns_window.is_null() {
+			return;
+		}
+
+		unsafe {
+			let _: () = objc::msg_send![ns_window, setFrame: frame display: NO];
+
+			if visible {
+				let _: () = objc::msg_send![ns_window, orderFrontRegardless];
+			} else {
+				let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
+			}
+		}
+	}
+
+	fn attach_child_window(&self, child_window: *mut Object) {
+		let ns_window = self.window_key as *mut Object;
+
+		if ns_window.is_null() || child_window.is_null() || ns_window == child_window {
+			return;
+		}
+
+		unsafe {
+			let current_parent: *mut Object = objc::msg_send![child_window, parentWindow];
+
+			if current_parent == ns_window {
+				return;
+			}
+			if !current_parent.is_null() {
+				let _: () = objc::msg_send![current_parent, removeChildWindow: child_window];
+			}
+
+			let _: () = objc::msg_send![ns_window, addChildWindow: child_window ordered: 1_isize];
+		}
+	}
+
+	fn detach_child_window(&self, child_window: *mut Object) {
+		let ns_window = self.window_key as *mut Object;
+
+		if ns_window.is_null() || child_window.is_null() {
+			return;
+		}
+
+		unsafe {
+			let current_parent: *mut Object = objc::msg_send![child_window, parentWindow];
+
+			if current_parent == ns_window {
+				let _: () = objc::msg_send![ns_window, removeChildWindow: child_window];
+			}
+		}
+	}
+}
+
+impl Drop for MacOSNativeCaptureRootOwner {
+	fn drop(&mut self) {
+		unsafe {
+			let ns_window = self.window_key as *mut Object;
+
+			if !ns_window.is_null() {
+				let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
+				let _: () = objc::msg_send![ns_window, close];
+				let _: () = objc::msg_send![ns_window, release];
+			}
+		}
+	}
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MacOSRange {
@@ -261,6 +335,10 @@ struct MacOSPassiveShellWindow {
 	toolbar_state: Option<Arc<Mutex<MacOSPassiveToolbarShellState>>>,
 }
 impl MacOSPassiveShellWindow {
+	fn ns_window(&self) -> *mut Object {
+		self.window_key as *mut Object
+	}
+
 	fn sync_from_render_window(&self, render_window: &Window, visible: bool) {
 		let Some(render_ns_window) = macos_overlay_window_ns_window(render_window) else {
 			return;
@@ -358,6 +436,10 @@ struct MacOSKeyFocusShellWindow {
 	state: Arc<Mutex<MacOSKeyFocusShellState>>,
 }
 impl MacOSKeyFocusShellWindow {
+	fn ns_window(&self) -> *mut Object {
+		self.window_key as *mut Object
+	}
+
 	fn sync_from_render_window(
 		&self,
 		render_window: &Window,
@@ -505,6 +587,175 @@ impl From<MacOSRect> for NSRect {
 }
 
 impl OverlaySession {
+	pub(super) fn ensure_native_capture_root_owner(&mut self) -> Result<(), String> {
+		if self.native_capture_root_owner.is_some() {
+			return Ok(());
+		}
+
+		let Some(reference_window) = self.native_capture_root_owner_reference_window() else {
+			return Ok(());
+		};
+		let render_ns_window = macos_overlay_window_ns_window(reference_window)
+			.ok_or_else(|| String::from("Missing macOS render NSWindow for native capture root"))?;
+		let frame = macos_ns_window_frame(render_ns_window)
+			.ok_or_else(|| String::from("Missing macOS render frame for native capture root"))?;
+		let level = unsafe { macos_ns_window_level(render_ns_window) };
+		let collection_behavior = unsafe { macos_ns_window_collection_behavior(render_ns_window) };
+
+		self.native_capture_root_owner =
+			Some(macos_create_native_capture_root_owner(frame, level, collection_behavior)?);
+
+		Ok(())
+	}
+
+	pub(super) fn sync_native_capture_root_owner(&mut self) -> Result<(), String> {
+		self.ensure_native_capture_root_owner()?;
+
+		let Some(root_owner) = self.native_capture_root_owner.as_ref() else {
+			return Ok(());
+		};
+
+		if let Some(frame) = self.native_capture_root_owner_frame() {
+			root_owner.sync_frame_and_visibility(frame, self.session_active);
+		} else {
+			root_owner.sync_frame_and_visibility(
+				NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0)),
+				false,
+			);
+
+			return Ok(());
+		}
+
+		for overlay_window in self.windows.values() {
+			if let Some(ns_window) = macos_overlay_window_ns_window(overlay_window.window.as_ref())
+			{
+				root_owner.attach_child_window(ns_window);
+			}
+		}
+		for aux_window in [
+			self.hud_window.as_ref().map(|window| window.window.as_ref()),
+			self.loupe_window.as_ref().map(|window| window.window.as_ref()),
+			self.toolbar_window.as_ref().map(|window| window.window.as_ref()),
+			self.scroll_preview_window.as_ref().map(|window| window.window.as_ref()),
+		]
+		.into_iter()
+		.flatten()
+		{
+			if let Some(ns_window) = macos_overlay_window_ns_window(aux_window) {
+				root_owner.attach_child_window(ns_window);
+			}
+		}
+
+		if let Some(shells) = self.native_capture_shells.as_ref() {
+			for shell in shells.overlay_shells.values() {
+				root_owner.attach_child_window(shell.ns_window());
+			}
+
+			if let Some(shell) = shells.toolbar_shell.as_ref() {
+				root_owner.attach_child_window(shell.ns_window());
+			}
+			if let Some(shell) = shells.key_focus_shell.as_ref() {
+				root_owner.attach_child_window(shell.ns_window());
+			}
+		}
+
+		Ok(())
+	}
+
+	pub(super) fn destroy_native_capture_root_owner(&mut self) {
+		self.detach_native_capture_root_owned_windows();
+
+		self.native_capture_root_owner = None;
+	}
+
+	fn detach_native_capture_root_owned_windows(&self) {
+		let Some(root_owner) = self.native_capture_root_owner.as_ref() else {
+			return;
+		};
+
+		for overlay_window in self.windows.values() {
+			if let Some(ns_window) = macos_overlay_window_ns_window(overlay_window.window.as_ref())
+			{
+				root_owner.detach_child_window(ns_window);
+			}
+		}
+		for aux_window in [
+			self.hud_window.as_ref().map(|window| window.window.as_ref()),
+			self.loupe_window.as_ref().map(|window| window.window.as_ref()),
+			self.toolbar_window.as_ref().map(|window| window.window.as_ref()),
+			self.scroll_preview_window.as_ref().map(|window| window.window.as_ref()),
+		]
+		.into_iter()
+		.flatten()
+		{
+			if let Some(ns_window) = macos_overlay_window_ns_window(aux_window) {
+				root_owner.detach_child_window(ns_window);
+			}
+		}
+
+		if let Some(shells) = self.native_capture_shells.as_ref() {
+			for shell in shells.overlay_shells.values() {
+				root_owner.detach_child_window(shell.ns_window());
+			}
+
+			if let Some(shell) = shells.toolbar_shell.as_ref() {
+				root_owner.detach_child_window(shell.ns_window());
+			}
+			if let Some(shell) = shells.key_focus_shell.as_ref() {
+				root_owner.detach_child_window(shell.ns_window());
+			}
+		}
+	}
+
+	fn native_capture_root_owner_reference_window(&self) -> Option<&Window> {
+		self.windows
+			.values()
+			.next()
+			.map(|window| window.window.as_ref())
+			.or_else(|| self.hud_window.as_ref().map(|window| window.window.as_ref()))
+			.or_else(|| self.loupe_window.as_ref().map(|window| window.window.as_ref()))
+			.or_else(|| self.toolbar_window.as_ref().map(|window| window.window.as_ref()))
+			.or_else(|| self.scroll_preview_window.as_ref().map(|window| window.window.as_ref()))
+	}
+
+	fn native_capture_root_owner_frame(&self) -> Option<NSRect> {
+		let mut union_frame: Option<NSRect> = None;
+
+		for ns_window in self
+			.windows
+			.values()
+			.filter_map(|window| macos_overlay_window_ns_window(window.window.as_ref()))
+			.chain(
+				[
+					self.hud_window
+						.as_ref()
+						.and_then(|window| macos_overlay_window_ns_window(window.window.as_ref())),
+					self.loupe_window
+						.as_ref()
+						.and_then(|window| macos_overlay_window_ns_window(window.window.as_ref())),
+					self.toolbar_window
+						.as_ref()
+						.and_then(|window| macos_overlay_window_ns_window(window.window.as_ref())),
+					self.scroll_preview_window
+						.as_ref()
+						.and_then(|window| macos_overlay_window_ns_window(window.window.as_ref())),
+				]
+				.into_iter()
+				.flatten(),
+			) {
+			let Some(frame) = macos_ns_window_frame(ns_window) else {
+				continue;
+			};
+
+			union_frame = Some(match union_frame {
+				Some(current_union) => macos_union_ns_rect(current_union, frame),
+				None => frame,
+			});
+		}
+
+		union_frame
+	}
+
 	pub(super) fn ensure_native_capture_shells(&mut self) -> Result<(), String> {
 		let Some(dispatch) = self.native_capture_input_dispatch() else {
 			return Ok(());
@@ -570,7 +821,7 @@ impl OverlaySession {
 				super::macos_set_capture_window_mouse_passthrough(toolbar_window.as_ref(), false);
 			}
 
-			return Ok(());
+			return self.sync_native_capture_root_owner();
 		};
 
 		shells.sync_overlay_shells(&self.windows, live_shell_visible);
@@ -602,6 +853,8 @@ impl OverlaySession {
 			shells.clear_key_focus_shell();
 		}
 
+		self.sync_native_capture_root_owner()?;
+
 		Ok(())
 	}
 
@@ -621,6 +874,8 @@ impl OverlaySession {
 				false,
 			);
 		}
+
+		self.destroy_native_capture_root_owner();
 
 		self.native_capture_shells = None;
 	}
@@ -1971,6 +2226,48 @@ fn macos_create_passive_overlay_shell_window(
 	)
 }
 
+fn macos_create_native_capture_root_owner(
+	frame: NSRect,
+	level: i64,
+	collection_behavior: usize,
+) -> Result<MacOSNativeCaptureRootOwner, String> {
+	let panel_class = macos_passive_shell_panel_class();
+	let nonactivating_panel_mask: usize = 1 << 7;
+	let backing_buffered: usize = 2;
+
+	unsafe {
+		let ns_window_alloc: *mut Object = objc::msg_send![panel_class, alloc];
+		let ns_window: *mut Object = objc::msg_send![
+			ns_window_alloc,
+			initWithContentRect: frame
+			styleMask: nonactivating_panel_mask
+			backing: backing_buffered
+			defer: NO
+		];
+
+		if ns_window.is_null() {
+			return Err(String::from("Failed to create native capture root owner window"));
+		}
+
+		let clear: *mut Object = objc::msg_send![objc::class!(NSColor), clearColor];
+
+		super::macos_configure_nonactivating_capture_window_with_ns_window(ns_window);
+
+		let _: () = objc::msg_send![ns_window, setReleasedWhenClosed: NO];
+		let _: () = objc::msg_send![ns_window, setOpaque: NO];
+		let _: () = objc::msg_send![ns_window, setHasShadow: NO];
+		let _: () = objc::msg_send![ns_window, setBackgroundColor: clear];
+		let _: () = objc::msg_send![ns_window, setLevel: level];
+		let _: () = objc::msg_send![ns_window, setCollectionBehavior: collection_behavior];
+		let _: () = objc::msg_send![ns_window, setAcceptsMouseMovedEvents: NO];
+		let _: () = objc::msg_send![ns_window, setIgnoresMouseEvents: YES];
+		let _: () = objc::msg_send![ns_window, setHidesOnDeactivate: NO];
+		let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
+
+		Ok(MacOSNativeCaptureRootOwner { window_key: ns_window as usize })
+	}
+}
+
 fn macos_create_passive_toolbar_shell_window(
 	render_window: &Window,
 	dispatch: MacOSNativeCaptureInputDispatch,
@@ -2167,4 +2464,13 @@ unsafe fn macos_ns_window_collection_behavior(ns_window: *mut Object) -> usize {
 	let behavior: usize = objc::msg_send![ns_window, collectionBehavior];
 
 	behavior
+}
+
+fn macos_union_ns_rect(lhs: NSRect, rhs: NSRect) -> NSRect {
+	let min_x = lhs.origin.x.min(rhs.origin.x);
+	let min_y = lhs.origin.y.min(rhs.origin.y);
+	let max_x = (lhs.origin.x + lhs.size.width).max(rhs.origin.x + rhs.size.width);
+	let max_y = (lhs.origin.y + lhs.size.height).max(rhs.origin.y + rhs.size.height);
+
+	NSRect::new(NSPoint::new(min_x, min_y), NSSize::new(max_x - min_x, max_y - min_y))
 }

@@ -270,7 +270,7 @@ fn pending_frozen_handoff_keeps_live_mode_and_hover_until_first_display_image_ar
 		monitor,
 		1,
 		1,
-		Instant::now(),
+		tests::fresh_live_stream_snapshot_captured_at(),
 	);
 
 	let _ = session.about_to_wait();
@@ -297,7 +297,7 @@ fn begin_frozen_capture_background_snapshot_finishes_without_hiding_overlay_wind
 		monitor,
 		1,
 		1,
-		Instant::now(),
+		tests::fresh_live_stream_snapshot_captured_at(),
 	);
 	session.begin_frozen_capture_with_rect(
 		monitor,
@@ -337,7 +337,7 @@ fn live_snapshot_followup_can_finish_background_capture_before_timeout() {
 		monitor,
 		51,
 		2,
-		Instant::now() + Duration::from_millis(1),
+		tests::fresh_live_stream_snapshot_captured_at(),
 	);
 
 	let _ = session.about_to_wait();
@@ -370,7 +370,7 @@ fn background_capture_prefers_live_surface_bg_for_initial_display_handoff() {
 		monitor,
 		2,
 		1,
-		Instant::now(),
+		tests::fresh_live_stream_snapshot_captured_at(),
 	);
 	session.begin_frozen_capture_with_rect(
 		monitor,
@@ -415,7 +415,7 @@ fn background_capture_followup_export_does_not_overwrite_live_surface_preview() 
 		monitor,
 		4,
 		1,
-		Instant::now(),
+		tests::fresh_live_stream_snapshot_captured_at(),
 	);
 
 	let _ = session.about_to_wait();
@@ -443,7 +443,7 @@ fn window_matte_capture_seeds_preview_and_arms_worker_without_hiding_overlay_win
 		monitor,
 		1,
 		1,
-		Instant::now(),
+		tests::fresh_live_stream_snapshot_captured_at(),
 	);
 	session.begin_frozen_capture_with_rect(
 		monitor,
@@ -482,7 +482,7 @@ fn window_matte_capture_dispatches_worker_without_hiding_overlay_windows() {
 		monitor,
 		1,
 		1,
-		Instant::now(),
+		tests::fresh_live_stream_snapshot_captured_at(),
 	);
 	session.begin_frozen_capture_with_rect(
 		monitor,
@@ -520,7 +520,7 @@ fn window_matte_capture_miss_keeps_preview_and_surfaces_export_error() {
 		monitor,
 		1,
 		1,
-		Instant::now(),
+		tests::fresh_live_stream_snapshot_captured_at(),
 	);
 	session.begin_frozen_capture_with_rect(
 		monitor,
@@ -698,7 +698,7 @@ fn background_capture_without_initial_snapshot_waits_for_live_stream_followup_wi
 		monitor,
 		2,
 		1,
-		Instant::now(),
+		tests::fresh_live_stream_snapshot_captured_at(),
 	);
 
 	let _ = session.about_to_wait();
@@ -727,7 +727,7 @@ fn incomplete_self_capture_filter_blocks_display_first_snapshot_handoff() {
 		monitor,
 		2,
 		1,
-		Instant::now(),
+		tests::fresh_live_stream_snapshot_captured_at(),
 	);
 
 	let _ = session.about_to_wait();
