@@ -699,7 +699,6 @@ impl OverlaySession {
 	}
 
 	pub(super) fn sync_overlay_cursor_icons(&self) {
-		#[cfg(target_os = "macos")]
 		let current_monitor = self.monitor_for_mode().or(self.state.monitor);
 
 		for overlay_window in self.windows.values() {

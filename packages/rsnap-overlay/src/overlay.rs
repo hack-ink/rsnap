@@ -43,11 +43,13 @@ use std::process;
 use std::ptr;
 use std::slice;
 #[cfg(target_os = "macos")]
+use std::collections::VecDeque;
+#[cfg(target_os = "macos")]
 use std::sync::OnceLock;
 use std::{
 	borrow::Cow,
 	cmp::Ordering,
-	collections::{HashMap, HashSet, VecDeque},
+	collections::{HashMap, HashSet},
 	path::PathBuf,
 	sync::{Arc, Mutex},
 	time::{Duration, Instant},
@@ -3113,7 +3115,6 @@ impl OverlaySession {
 		);
 	}
 
-	#[cfg(target_os = "macos")]
 	fn maybe_recenter_frozen_toolbar_default_slot(&mut self, monitor: MonitorRect) -> bool {
 		if !matches!(self.state.mode, OverlayMode::Frozen) || self.state.monitor != Some(monitor) {
 			return false;
@@ -4035,7 +4036,6 @@ pub enum OverlayExit {
 	Error(String),
 }
 
-#[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Host-routed frozen shortcuts that should work without a focused key window.
 pub enum FrozenGlobalHotkey {

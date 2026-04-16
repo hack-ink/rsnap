@@ -792,9 +792,13 @@ impl MacOSPassiveShellCallback {
 		}
 	}
 
-	fn dispatch_mouse_exited(&self) {
-		if let Self::Toolbar { dispatch, .. } = self {
-			dispatch.enqueue(MacOSNativeCaptureInputEvent::ToolbarPointerLeft);
+	fn dispatch_mouse_exited(&self, view_key: usize) {
+		match self {
+			Self::Overlay { .. } => macos_update_passive_shell_cursor_point(view_key, None),
+			Self::Toolbar { dispatch, .. } => {
+				dispatch.enqueue(MacOSNativeCaptureInputEvent::ToolbarPointerLeft);
+			},
+			Self::KeyFocus { .. } => {},
 		}
 	}
 
@@ -1191,11 +1195,12 @@ extern "C" fn macos_passive_shell_view_right_mouse_down(
 }
 
 extern "C" fn macos_passive_shell_view_mouse_exited(this: &Object, _cmd: Sel, _event: *mut Object) {
+	let view_key = this as *const Object as usize;
 	let Some(callback) = macos_shell_callback(this as *const Object as usize) else {
 		return;
 	};
 
-	callback.dispatch_mouse_exited();
+	callback.dispatch_mouse_exited(view_key);
 }
 
 extern "C" fn macos_passive_shell_view_scroll_wheel(this: &Object, _cmd: Sel, event: *mut Object) {

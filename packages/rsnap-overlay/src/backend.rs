@@ -40,6 +40,7 @@ use xcap::Window;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
+#[cfg(target_os = "macos")]
 use crate::macos_color;
 use crate::state::{
 	GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb, WindowHit,
