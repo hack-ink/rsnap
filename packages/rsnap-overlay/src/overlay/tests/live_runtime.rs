@@ -36,9 +36,7 @@ use crate::overlay::tests::{
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{FrozenGlobalHotkey, PngAction};
-use crate::overlay::{
-	LiveCaptureInteraction, LiveClickCaptureTarget, OverlayControl,
-};
+use crate::overlay::{LiveCaptureInteraction, LiveClickCaptureTarget, OverlayControl};
 #[cfg(target_os = "macos")]
 use crate::state::{WindowHit, WindowRect};
 

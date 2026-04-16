@@ -1085,11 +1085,7 @@ extern "C" fn macos_passive_shell_view_hit_test(
 	this as *const Object as *mut Object
 }
 
-extern "C" fn macos_passive_shell_view_draw_rect(
-	this: &Object,
-	_cmd: Sel,
-	dirty_rect: MacOSRect,
-) {
+extern "C" fn macos_passive_shell_view_draw_rect(this: &Object, _cmd: Sel, dirty_rect: MacOSRect) {
 	let Some(callback) = macos_shell_callback(this as *const Object as usize) else {
 		return;
 	};
@@ -1103,7 +1099,8 @@ extern "C" fn macos_passive_shell_view_draw_rect(
 	if !clear.is_null() {
 		unsafe {
 			let _: () = objc::msg_send![clear, setFill];
-			let _: () = objc::msg_send![objc::class!(NSBezierPath), fillRect: NSRect::from(dirty_rect)];
+			let _: () =
+				objc::msg_send![objc::class!(NSBezierPath), fillRect: NSRect::from(dirty_rect)];
 		}
 	}
 
@@ -1667,7 +1664,10 @@ fn macos_dispatch_shell_pointer_moved(this: &Object, event: *mut Object) {
 
 	match callback {
 		MacOSPassiveShellCallback::Overlay { .. } => {
-			macos_update_passive_shell_cursor_point(this as *const Object as usize, Some(local_point));
+			macos_update_passive_shell_cursor_point(
+				this as *const Object as usize,
+				Some(local_point),
+			);
 
 			super::macos_set_cursor_icon(CursorIcon::Crosshair);
 		},
@@ -1836,8 +1836,7 @@ fn macos_update_passive_shell_cursor_point(view_key: usize, next_point: Option<N
 			];
 		}
 		if let Some(next) = next_point {
-			let _: () =
-				objc::msg_send![view, setNeedsDisplayInRect: macos_passive_shell_cursor_dirty_rect(next)];
+			let _: () = objc::msg_send![view, setNeedsDisplayInRect: macos_passive_shell_cursor_dirty_rect(next)];
 		}
 	}
 }
@@ -1851,7 +1850,10 @@ fn macos_passive_shell_cursor_dirty_rect(point: NSPoint) -> NSRect {
 	)
 }
 
-fn macos_seed_passive_shell_cursor_point(ns_window: *mut Object, view: *mut Object) -> Option<NSPoint> {
+fn macos_seed_passive_shell_cursor_point(
+	ns_window: *mut Object,
+	view: *mut Object,
+) -> Option<NSPoint> {
 	if ns_window.is_null() || view.is_null() {
 		return None;
 	}
@@ -1860,7 +1862,8 @@ fn macos_seed_passive_shell_cursor_point(ns_window: *mut Object, view: *mut Obje
 
 	unsafe {
 		let screen_point = NSPoint::new(f64::from(global.x), f64::from(global.y));
-		let window_point: NSPoint = objc::msg_send![ns_window, convertPointFromScreen: screen_point];
+		let window_point: NSPoint =
+			objc::msg_send![ns_window, convertPointFromScreen: screen_point];
 		let local_point: NSPoint =
 			objc::msg_send![view, convertPoint: window_point fromView: ptr::null_mut::<Object>()];
 		let bounds: NSRect = objc::msg_send![view, bounds];
@@ -1874,8 +1877,9 @@ fn macos_seed_passive_shell_cursor_point(ns_window: *mut Object, view: *mut Obje
 }
 
 fn macos_draw_passive_shell_crosshair(point: NSPoint) {
-	let outline_color: *mut Object =
-		unsafe { objc::msg_send![objc::class!(NSColor), colorWithCalibratedWhite: 0.0 alpha: 0.95] };
+	let outline_color: *mut Object = unsafe {
+		objc::msg_send![objc::class!(NSColor), colorWithCalibratedWhite: 0.0 alpha: 0.95]
+	};
 	let fill_color: *mut Object = unsafe {
 		objc::msg_send![objc::class!(NSColor), colorWithCalibratedWhite: 1.0 alpha: 0.95]
 	};

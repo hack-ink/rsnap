@@ -704,7 +704,7 @@ impl OverlaySession {
 		for overlay_window in self.windows.values() {
 			let icon = self.overlay_cursor_icon_for_monitor(overlay_window.monitor);
 
-			tracing::warn!(
+			tracing::trace!(
 				op = "overlay.sync_overlay_cursor_icons",
 				monitor_id = overlay_window.monitor.id,
 				mode = ?self.state.mode,
