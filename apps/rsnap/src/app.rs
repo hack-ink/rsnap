@@ -41,7 +41,9 @@ use self::scroll_input_macos::SharedScrollInputState;
 use crate::permissions_macos;
 use crate::settings::AppSettings;
 use crate::settings_window::{SettingsWindow, SettingsWindowEntry};
-use rsnap_overlay::{FrozenGlobalHotkey, OverlaySession};
+#[cfg(target_os = "macos")]
+use rsnap_overlay::FrozenGlobalHotkey;
+use rsnap_overlay::OverlaySession;
 
 pub(crate) enum UserEvent {
 	TrayIcon,
