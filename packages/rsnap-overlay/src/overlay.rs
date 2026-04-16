@@ -3214,6 +3214,7 @@ impl OverlaySession {
 			&& self.state.live_bg_image.is_some()
 	}
 
+	#[cfg(target_os = "macos")]
 	fn should_refresh_live_surface_bg_for_overlay_monitor(
 		&self,
 		overlay_monitor: MonitorRect,
