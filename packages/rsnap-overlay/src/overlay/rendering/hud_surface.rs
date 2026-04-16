@@ -611,9 +611,12 @@ pub(in crate::overlay) struct HudPillGeometry {
 
 #[cfg(test)]
 mod tests {
+	#[cfg(target_os = "macos")]
 	use image::{Rgba, RgbaImage};
 
+	#[cfg(target_os = "macos")]
 	use crate::overlay::WindowRenderer;
+	#[cfg(target_os = "macos")]
 	use crate::state::{GlobalPoint, MonitorRect, OverlayMode, OverlayState};
 
 	#[cfg(target_os = "macos")]

@@ -61,7 +61,7 @@ use crate::overlay::{
 	FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform, FrozenImagePatch,
 	FrozenMosaicEdit, FrozenSelectionDragState, FrozenSpotlightAnnotation, FrozenTextAnnotation,
 	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
-	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, LiveCaptureInteraction,
+	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme,
 	OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
 	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
 	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache, SelectionFlowGeometryCache,
@@ -69,6 +69,8 @@ use crate::overlay::{
 	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowCaptureAlphaMode, WindowRenderer,
 	hud_helpers,
 };
+#[cfg(target_os = "macos")]
+use crate::overlay::LiveCaptureInteraction;
 #[cfg(target_os = "macos")]
 use crate::overlay::{
 	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
