@@ -1657,7 +1657,7 @@ fn macos_dispatch_shell_pointer_moved(this: &Object, event: *mut Object) {
 		return;
 	};
 
-	tracing::warn!(
+	tracing::trace!(
 		op = "overlay.macos_passive_shell_pointer_moved",
 		callback = %macos_shell_callback_name(&callback),
 		x = local_point.x,
