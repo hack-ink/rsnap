@@ -28,6 +28,8 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
 #[cfg(target_os = "macos")]
+use crate::app::OverlayFrozenHotkeyBinding;
+#[cfg(target_os = "macos")]
 use crate::app::OverlayHotkeyRegistrationState;
 #[cfg(target_os = "macos")]
 use crate::app::UserEvent;
@@ -196,6 +198,20 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn overlay_frozen_hotkey_spec(binding: &OverlayFrozenHotkeyBinding) -> OverlayHotkeySpec {
+		OverlayHotkeySpec {
+			hotkey: binding.hotkey,
+			hotkey_id: binding.hotkey_id,
+			hotkey_label: binding.label,
+			missing_manager_message: "Frozen overlay hotkeys are unavailable because the global hotkey manager is missing.",
+			register_failure_message: "Failed to register a frozen overlay hotkey.",
+			register_success_message: "Registered a frozen overlay hotkey.",
+			unregister_failure_message: "Failed to unregister a frozen overlay hotkey.",
+			unregister_success_message: "Unregistered a frozen overlay hotkey.",
+		}
+	}
+
+	#[cfg(target_os = "macos")]
 	fn register_overlay_cancel_hotkey(&mut self) {
 		let spec = self.overlay_cancel_hotkey_spec();
 
@@ -228,11 +244,36 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn register_overlay_frozen_hotkeys(&mut self) {
+		for index in 0..self.overlay_frozen_hotkeys.len() {
+			let binding = self.overlay_frozen_hotkeys[index];
+			let spec = Self::overlay_frozen_hotkey_spec(&binding);
+			let registration_state = self.register_overlay_hotkey(spec, binding.registration_state);
+
+			self.overlay_frozen_hotkeys[index].registration_state = registration_state;
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn unregister_overlay_frozen_hotkeys(&mut self) {
+		for index in 0..self.overlay_frozen_hotkeys.len() {
+			let binding = self.overlay_frozen_hotkeys[index];
+			let spec = Self::overlay_frozen_hotkey_spec(&binding);
+			let registration_state =
+				self.unregister_overlay_hotkey(spec, binding.registration_state);
+
+			self.overlay_frozen_hotkeys[index].registration_state = registration_state;
+		}
+	}
+
+	#[cfg(target_os = "macos")]
 	fn sync_overlay_hotkey_registrations(&mut self) {
 		let should_register_cancel =
 			self.overlay_session.as_ref().is_some_and(OverlaySession::wants_global_cancel_hotkey);
 		let should_register_loupe =
 			self.overlay_session.as_ref().is_some_and(OverlaySession::wants_global_loupe_hotkey);
+		let should_register_frozen =
+			self.overlay_session.as_ref().is_some_and(OverlaySession::wants_global_frozen_hotkeys);
 
 		if should_register_cancel {
 			self.register_overlay_cancel_hotkey();
@@ -243,6 +284,11 @@ impl App {
 			self.register_overlay_loupe_hotkey();
 		} else {
 			self.unregister_overlay_loupe_hotkey();
+		}
+		if should_register_frozen {
+			self.register_overlay_frozen_hotkeys();
+		} else {
+			self.unregister_overlay_frozen_hotkeys();
 		}
 	}
 

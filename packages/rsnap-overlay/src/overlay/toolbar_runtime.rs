@@ -581,6 +581,7 @@ impl OverlaySession {
 				self.config.selection_flow_stroke_width_px,
 				false,
 				false,
+				false,
 				None,
 				false,
 				false,

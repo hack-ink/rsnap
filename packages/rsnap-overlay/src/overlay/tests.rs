@@ -61,21 +61,22 @@ use crate::overlay::{
 	FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform, FrozenImagePatch,
 	FrozenMosaicEdit, FrozenSelectionDragState, FrozenSpotlightAnnotation, FrozenTextAnnotation,
 	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
-	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
-	OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_SIZE_BADGE_GAP_PX,
-	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
-	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
-	SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
-	Vec2, WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
+	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, LiveCaptureInteraction,
+	OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlaySession, Pos2, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
+	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache, SelectionFlowGeometryCache,
+	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowCaptureAlphaMode, WindowRenderer,
+	hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
 	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry,
-	InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveCaptureInteraction,
-	LiveSampleApplyResult, LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl,
-	OverlayExit, SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW,
-	SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
-	SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource, StartupLiveRgbPlan,
+	InflightScrollCaptureObservation, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult,
+	LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayControl, OverlayExit,
+	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
+	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
+	ScrollCaptureFrameSource, StartupLiveRgbPlan,
 };
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 #[cfg(target_os = "macos")]
@@ -651,6 +652,33 @@ fn configured_session_with_macos_worker() -> (OverlaySession, u64) {
 	session.config.self_capture_exception_window_ids = vec![17];
 
 	(session, worker_debug_id)
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn sync_live_surface_bg_from_stream_promotes_clean_live_snapshot() {
+	let monitor = test_monitor();
+	let stream = MacLiveFrameStream::new();
+	let captured_at = Instant::now();
+	let mut session = OverlaySession::new();
+
+	stream.debug_set_active_stream_generation(monitor.id, 1);
+	stream.debug_set_self_capture_filter_complete(monitor.id, true);
+	stream.debug_store_test_snapshot_with_metadata(monitor, 7, 1, captured_at);
+
+	session.live_sample_stream = Some(stream);
+	session.cursor_monitor = Some(monitor);
+
+	session.sync_live_surface_bg_from_stream(monitor);
+
+	assert_eq!(session.state.live_bg_monitor, Some(monitor));
+	assert!(session.state.live_bg_image.is_some());
+	assert_eq!(session.last_live_surface_bg_snapshot_at, Some(captured_at));
+	assert_eq!(session.state.live_bg_generation, 1);
+
+	session.sync_live_surface_bg_from_stream(monitor);
+
+	assert_eq!(session.state.live_bg_generation, 1);
 }
 
 #[cfg(target_os = "macos")]
@@ -3774,28 +3802,20 @@ fn toolbar_window_stays_visible_while_final_capture_is_pending() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn frozen_visual_handoff_stays_pending_while_frozen_entry_is_still_idle() {
+fn frozen_visual_handoff_ends_once_display_is_ready() {
 	let monitor = test_monitor();
 	let mut session = OverlaySession::new();
 
 	session.state.begin_freeze(monitor);
 
 	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
-
-	assert!(session.frozen_visual_handoff_pending_for_monitor(monitor));
-
-	session.toolbar_window_drawn_once = true;
-
-	assert!(session.frozen_visual_handoff_pending_for_monitor(monitor));
-
-	session.frozen_edit_undo_stack.push(FrozenEditKind::BrushStroke);
 
 	assert!(!session.frozen_visual_handoff_pending_for_monitor(monitor));
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn frozen_surface_bg_stays_locked_during_idle_frozen_entry() {
+fn frozen_surface_bg_unlocks_as_soon_as_display_is_ready() {
 	let monitor = test_monitor();
 	let mut session = OverlaySession::new();
 
@@ -3803,11 +3823,57 @@ fn frozen_surface_bg_stays_locked_during_idle_frozen_entry() {
 
 	finish_frozen_display_state(&mut session, monitor, test_frozen_image());
 
-	assert!(!session.allow_frozen_surface_bg_for_overlay_monitor(monitor, false));
-
-	session.frozen_edit_undo_stack.push(FrozenEditKind::BrushStroke);
-
 	assert!(session.allow_frozen_surface_bg_for_overlay_monitor(monitor, false));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn live_surface_bg_refresh_disables_during_drag_capture_and_loupe() {
+	let monitor = test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.cursor_monitor = Some(monitor);
+
+	assert!(!session.should_draw_live_surface_bg_for_overlay_monitor(monitor));
+	assert!(session.should_refresh_live_surface_bg_for_overlay_monitor(monitor));
+
+	session.state.live_bg_monitor = Some(monitor);
+	session.state.live_bg_image = Some(test_frozen_image());
+
+	assert!(session.should_draw_live_surface_bg_for_overlay_monitor(monitor));
+	assert!(!session.should_refresh_live_surface_bg_for_overlay_monitor(monitor));
+
+	session.state.alt_held = true;
+
+	assert!(session.should_draw_live_surface_bg_for_overlay_monitor(monitor));
+	assert!(!session.should_refresh_live_surface_bg_for_overlay_monitor(monitor));
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::PressPending {
+		monitor,
+		press_global: monitor.origin,
+		click_target: None,
+		release_global: None,
+		released: false,
+	});
+
+	assert!(session.should_draw_live_surface_bg_for_overlay_monitor(monitor));
+	assert!(!session.should_refresh_live_surface_bg_for_overlay_monitor(monitor));
+
+	session.set_live_capture_interaction(LiveCaptureInteraction::DraggingSelection {
+		monitor,
+		press_global: monitor.origin,
+		current_global: monitor.origin,
+	});
+
+	assert!(session.should_draw_live_surface_bg_for_overlay_monitor(monitor));
+	assert!(!session.should_refresh_live_surface_bg_for_overlay_monitor(monitor));
+
+	session.state.live_bg_monitor = None;
+	session.state.live_bg_image = None;
+
+	assert!(!session.should_draw_live_surface_bg_for_overlay_monitor(monitor));
+	assert!(session.should_refresh_live_surface_bg_for_overlay_monitor(monitor));
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -3828,6 +3894,16 @@ fn handle_capture_redraw_does_not_rearm_inflight_freeze_capture() {
 	assert!(session_pending_freeze_capture(&session).is_none());
 	assert!(!session_frozen_capture_armed(&session));
 	assert!(session.capture_windows_hidden);
+}
+
+#[test]
+fn frozen_selection_scrim_matches_live_drag_scrim() {
+	for theme in [HudTheme::Dark, HudTheme::Light] {
+		assert_eq!(
+			WindowRenderer::frozen_selection_scrim_color(theme),
+			WindowRenderer::live_drag_selection_scrim_color(theme),
+		);
+	}
 }
 
 #[test]

@@ -34,7 +34,9 @@ use crate::overlay::tests::{
 	OverlayMode, OverlaySession, OverlayState, Pos2, Rect, RectPoints, Rgb, Vec2, WindowRenderer,
 	hud_helpers,
 };
-use crate::overlay::{LiveCaptureInteraction, LiveClickCaptureTarget, OverlayControl};
+use crate::overlay::{
+	FrozenGlobalHotkey, LiveCaptureInteraction, LiveClickCaptureTarget, OverlayControl, PngAction,
+};
 #[cfg(target_os = "macos")]
 use crate::state::{WindowHit, WindowRect};
 
@@ -1500,6 +1502,37 @@ fn wants_global_loupe_hotkey_only_in_live_mode() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn wants_global_frozen_hotkeys_only_in_plain_frozen_mode() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	assert!(!session.wants_global_frozen_hotkeys());
+
+	session.session_active = true;
+	session.state.mode = OverlayMode::Live;
+
+	assert!(!session.wants_global_frozen_hotkeys());
+
+	session.state.begin_freeze(monitor);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
+	assert!(session.wants_global_frozen_hotkeys());
+
+	session.scroll_capture.active = true;
+
+	assert!(!session.wants_global_frozen_hotkeys());
+
+	session.scroll_capture.active = false;
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(!session.wants_global_frozen_hotkeys());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn global_escape_hotkey_cancels_live_capture() {
 	let mut session = OverlaySession::new();
 
@@ -1538,6 +1571,48 @@ fn global_loupe_hotkey_tracks_live_hold_state() {
 	assert!(matches!(session.handle_global_loupe_hotkey(false), OverlayControl::Continue));
 	assert!(!session.state.alt_held);
 	assert!(!session.loupe_activation_key_down);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn global_frozen_copy_hotkey_queues_copy_without_key_window() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.session_active = true;
+
+	session.state.begin_freeze(monitor);
+
+	tests::finish_frozen_ready_state(&mut session, monitor, tests::test_frozen_image());
+
+	assert!(matches!(
+		session.handle_global_frozen_hotkey(FrozenGlobalHotkey::Copy),
+		OverlayControl::Continue
+	));
+	assert_eq!(session.pending_png_action, Some(PngAction::Copy));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn global_frozen_copy_hotkey_ignores_active_text_edit() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.session_active = true;
+
+	session.state.begin_freeze(monitor);
+
+	tests::finish_frozen_ready_state(&mut session, monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(matches!(
+		session.handle_global_frozen_hotkey(FrozenGlobalHotkey::Copy),
+		OverlayControl::Continue
+	));
+	assert_eq!(session.pending_png_action, None);
 }
 
 #[test]

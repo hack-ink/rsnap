@@ -1,20 +1,25 @@
 use std::collections::HashMap;
 use std::ffi::CStr;
+use std::ffi::c_void;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use egui::FontId;
 use objc::declare::ClassDecl;
 use objc::runtime::{BOOL, Class, NO, Object, Sel, YES};
 use objc::{Encode, Encoding};
 use objc2_foundation::{NSPoint, NSRange, NSRect, NSSize};
 use winit::event::{ElementState, Ime, MouseButton};
+use winit::keyboard::{Key, ModifiersState, NamedKey, NativeKey};
+use winit::window::WindowId;
 
+use crate::overlay::OverlayWindow;
 use crate::overlay::{
 	CursorIcon, GlobalPoint, MacOSNativeCaptureInputDispatch, MacOSNativeCaptureInputEvent,
 	MacOSNativeCaptureScrollDelta, MonitorRect, OverlayKeyboardInputEvent, OverlayMode,
 	OverlaySession, Pos2, Window,
 };
-use winit::keyboard::{Key, ModifiersState, NamedKey, NativeKey};
 
 macro_rules! sel {
 	($($tt:tt)*) => {
@@ -26,75 +31,6 @@ macro_rules! sel_impl {
 	($($tt:tt)*) => {
 		objc::sel_impl!($($tt)*)
 	};
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MacOSRange {
-	location: usize,
-	length: usize,
-}
-unsafe impl Encode for MacOSRange {
-	fn encode() -> Encoding {
-		unsafe { Encoding::from_str("{_NSRange=QQ}") }
-	}
-}
-impl From<NSRange> for MacOSRange {
-	fn from(value: NSRange) -> Self {
-		Self { location: value.location, length: value.length }
-	}
-}
-impl From<MacOSRange> for NSRange {
-	fn from(value: MacOSRange) -> Self {
-		Self::new(value.location, value.length)
-	}
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct MacOSSize {
-	width: f64,
-	height: f64,
-}
-unsafe impl Encode for MacOSSize {
-	fn encode() -> Encoding {
-		unsafe { Encoding::from_str("{CGSize=dd}") }
-	}
-}
-impl From<NSSize> for MacOSSize {
-	fn from(value: NSSize) -> Self {
-		Self { width: value.width, height: value.height }
-	}
-}
-impl From<MacOSSize> for NSSize {
-	fn from(value: MacOSSize) -> Self {
-		Self::new(value.width, value.height)
-	}
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct MacOSRect {
-	origin: super::MacOSOverlayPoint,
-	size: MacOSSize,
-}
-unsafe impl Encode for MacOSRect {
-	fn encode() -> Encoding {
-		unsafe { Encoding::from_str("{CGRect={CGPoint=dd}{CGSize=dd}}") }
-	}
-}
-impl From<NSRect> for MacOSRect {
-	fn from(value: NSRect) -> Self {
-		Self {
-			origin: super::MacOSOverlayPoint { x: value.origin.x, y: value.origin.y },
-			size: MacOSSize::from(value.size),
-		}
-	}
-}
-impl From<MacOSRect> for NSRect {
-	fn from(value: MacOSRect) -> Self {
-		Self::new(NSPoint::new(value.origin.x, value.origin.y), NSSize::from(value.size))
-	}
 }
 
 pub(super) struct MacOSNativeCaptureShells {
@@ -120,15 +56,24 @@ impl MacOSNativeCaptureShells {
 		}
 	}
 
-	fn sync_overlay_shells(
-		&self,
-		windows: &HashMap<winit::window::WindowId, crate::overlay::OverlayWindow>,
-		visible: bool,
-	) {
+	fn sync_overlay_shells(&self, windows: &HashMap<WindowId, OverlayWindow>, visible: bool) {
+		tracing::warn!(
+			op = "overlay.macos_passive_shell_sync_overlay_shells",
+			visible,
+			window_count = windows.len(),
+			"Synced passive overlay shells."
+		);
+
+		macos_set_system_cursor_hidden(visible);
+
 		for overlay_window in windows.values() {
 			if let Some(shell) = self.overlay_shells.get(&overlay_window.monitor.id) {
 				shell.sync_from_render_window(overlay_window.window.as_ref(), visible);
 			}
+		}
+
+		if visible {
+			macos_set_crosshair_cursor();
 		}
 	}
 
@@ -188,7 +133,9 @@ impl MacOSNativeCaptureShells {
 		visible: bool,
 	) -> Result<(), String> {
 		let should_focus = visible
-			&& (!self.key_focus_shell_active || self.key_focus_shell_target != Some(target));
+			&& (!self.key_focus_shell_active
+				|| self.key_focus_shell_target != Some(target)
+				|| matches!(target.kind, MacOSKeyFocusShellKind::FrozenText));
 
 		self.key_focus_shell_active = visible;
 		self.key_focus_shell_target = visible.then_some(target);
@@ -215,16 +162,67 @@ impl MacOSNativeCaptureShells {
 	}
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MacOSRange {
+	location: usize,
+	length: usize,
+}
+unsafe impl Encode for MacOSRange {
+	fn encode() -> Encoding {
+		unsafe { Encoding::from_str("{_NSRange=QQ}") }
+	}
+}
+
+impl From<NSRange> for MacOSRange {
+	fn from(value: NSRange) -> Self {
+		Self { location: value.location, length: value.length }
+	}
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct MacOSSize {
+	width: f64,
+	height: f64,
+}
+unsafe impl Encode for MacOSSize {
+	fn encode() -> Encoding {
+		unsafe { Encoding::from_str("{CGSize=dd}") }
+	}
+}
+
+impl From<NSSize> for MacOSSize {
+	fn from(value: NSSize) -> Self {
+		Self { width: value.width, height: value.height }
+	}
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MacOSRect {
+	origin: super::MacOSOverlayPoint,
+	size: MacOSSize,
+}
+unsafe impl Encode for MacOSRect {
+	fn encode() -> Encoding {
+		unsafe { Encoding::from_str("{CGRect={CGPoint=dd}{CGSize=dd}}") }
+	}
+}
+
+impl From<NSRect> for MacOSRect {
+	fn from(value: NSRect) -> Self {
+		Self {
+			origin: super::MacOSOverlayPoint { x: value.origin.x, y: value.origin.y },
+			size: MacOSSize::from(value.size),
+		}
+	}
+}
+
 #[derive(Clone, Copy, Default)]
 struct MacOSPassiveToolbarShellState {
 	monitor: Option<MonitorRect>,
 	outer_position: Option<GlobalPoint>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MacOSKeyFocusShellKind {
-	FrozenText,
-	ScrollCapture,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -254,6 +252,469 @@ impl Default for MacOSKeyFocusShellState {
 			had_ime_input_during_keydown: false,
 		}
 	}
+}
+
+struct MacOSPassiveShellWindow {
+	window_key: usize,
+	view_key: usize,
+	tracking_area_key: usize,
+	toolbar_state: Option<Arc<Mutex<MacOSPassiveToolbarShellState>>>,
+}
+impl MacOSPassiveShellWindow {
+	fn sync_from_render_window(&self, render_window: &Window, visible: bool) {
+		let Some(render_ns_window) = macos_overlay_window_ns_window(render_window) else {
+			return;
+		};
+		let Some(frame) = macos_ns_window_frame(render_ns_window) else {
+			return;
+		};
+
+		self.sync_frame_and_visibility(frame, visible);
+	}
+
+	fn sync_frame_and_visibility(&self, frame: NSRect, visible: bool) {
+		let ns_window = self.window_key as *mut Object;
+		let view = self.view_key as *mut Object;
+
+		if ns_window.is_null() {
+			return;
+		}
+
+		unsafe {
+			let _: () = objc::msg_send![ns_window, setFrame: frame display: NO];
+
+			if visible {
+				let _: () = objc::msg_send![ns_window, orderFrontRegardless];
+			} else {
+				let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
+			}
+			if !view.is_null() {
+				let _: () = objc::msg_send![ns_window, invalidateCursorRectsForView: view];
+			}
+		}
+
+		if let Some(callback) = macos_shell_callback(self.view_key) {
+			match callback {
+				MacOSPassiveShellCallback::Overlay { .. } => {
+					let seeded_point = visible
+						.then(|| macos_seed_passive_shell_cursor_point(ns_window, view))
+						.flatten();
+
+					macos_update_passive_shell_cursor_point(self.view_key, seeded_point);
+				},
+				MacOSPassiveShellCallback::Toolbar { .. }
+				| MacOSPassiveShellCallback::KeyFocus { .. } => {
+					macos_update_passive_shell_cursor_point(self.view_key, None);
+				},
+			}
+		}
+	}
+
+	fn set_toolbar_state(&self, monitor: MonitorRect, outer_position: GlobalPoint) {
+		let Some(state) = self.toolbar_state.as_ref() else {
+			return;
+		};
+		let Ok(mut state) = state.lock() else {
+			return;
+		};
+
+		state.monitor = Some(monitor);
+		state.outer_position = Some(outer_position);
+	}
+}
+
+impl Drop for MacOSPassiveShellWindow {
+	fn drop(&mut self) {
+		macos_unregister_shell_callback(self.view_key);
+		macos_clear_passive_shell_cursor_point(self.view_key);
+
+		unsafe {
+			let ns_window = self.window_key as *mut Object;
+
+			if !ns_window.is_null() {
+				let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
+				let _: () = objc::msg_send![ns_window, close];
+				let _: () = objc::msg_send![ns_window, release];
+			}
+
+			let tracking_area = self.tracking_area_key as *mut Object;
+
+			if !tracking_area.is_null() {
+				let _: () = objc::msg_send![tracking_area, release];
+			}
+
+			let view = self.view_key as *mut Object;
+
+			if !view.is_null() {
+				let _: () = objc::msg_send![view, release];
+			}
+		}
+	}
+}
+
+struct MacOSKeyFocusShellWindow {
+	window_key: usize,
+	view_key: usize,
+	state: Arc<Mutex<MacOSKeyFocusShellState>>,
+}
+impl MacOSKeyFocusShellWindow {
+	fn sync_from_render_window(
+		&self,
+		render_window: &Window,
+		target: MacOSKeyFocusShellTarget,
+		visible: bool,
+	) {
+		let Some(render_ns_window) = macos_overlay_window_ns_window(render_window) else {
+			return;
+		};
+		let Some(frame) = macos_ns_window_frame(render_ns_window) else {
+			return;
+		};
+
+		self.set_target(target);
+		self.sync_frame_and_visibility(frame, visible);
+	}
+
+	fn set_target(&self, target: MacOSKeyFocusShellTarget) {
+		let Ok(mut state) = self.state.lock() else {
+			return;
+		};
+
+		state.target = Some(target);
+
+		let view = self.view_key as *mut Object;
+
+		if view.is_null() {
+			return;
+		}
+
+		unsafe {
+			let input_context: *mut Object = objc::msg_send![view, inputContext];
+
+			if !input_context.is_null() {
+				let _: () = objc::msg_send![input_context, invalidateCharacterCoordinates];
+			}
+		}
+	}
+
+	fn clear_target(&self) {
+		let Ok(mut state) = self.state.lock() else {
+			return;
+		};
+
+		state.target = None;
+
+		state.marked_text.clear();
+
+		state.forward_key_event_to_app = false;
+		state.had_ime_input_during_keydown = false;
+	}
+
+	fn sync_frame_and_visibility(&self, frame: NSRect, visible: bool) {
+		let ns_window = self.window_key as *mut Object;
+
+		if ns_window.is_null() {
+			return;
+		}
+
+		unsafe {
+			let _: () = objc::msg_send![ns_window, setFrame: frame display: NO];
+
+			if visible {
+				let _: () = objc::msg_send![ns_window, orderFrontRegardless];
+			} else {
+				let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
+			}
+		}
+	}
+
+	fn hide(&self) {
+		let ns_window = self.window_key as *mut Object;
+
+		if ns_window.is_null() {
+			return;
+		}
+
+		unsafe {
+			let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
+		}
+	}
+
+	fn ensure_key_focus(&self) {
+		let ns_window = self.window_key as *mut Object;
+		let view = self.view_key as *mut Object;
+
+		if ns_window.is_null() || view.is_null() {
+			return;
+		}
+
+		super::macos_activate_app();
+
+		unsafe {
+			let input_context: *mut Object = objc::msg_send![view, inputContext];
+
+			if !input_context.is_null() {
+				let _: () = objc::msg_send![input_context, activate];
+				let _: () = objc::msg_send![input_context, invalidateCharacterCoordinates];
+			}
+
+			let _: () = objc::msg_send![ns_window, makeFirstResponder: view];
+			let _: () = objc::msg_send![ns_window, makeKeyAndOrderFront: ptr::null_mut::<Object>()];
+		}
+	}
+}
+
+impl Drop for MacOSKeyFocusShellWindow {
+	fn drop(&mut self) {
+		macos_unregister_shell_callback(self.view_key);
+
+		unsafe {
+			let ns_window = self.window_key as *mut Object;
+
+			if !ns_window.is_null() {
+				let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
+				let _: () = objc::msg_send![ns_window, close];
+				let _: () = objc::msg_send![ns_window, release];
+			}
+
+			let view = self.view_key as *mut Object;
+
+			if !view.is_null() {
+				let _: () = objc::msg_send![view, release];
+			}
+		}
+	}
+}
+
+impl From<MacOSRange> for NSRange {
+	fn from(value: MacOSRange) -> Self {
+		Self::new(value.location, value.length)
+	}
+}
+
+impl From<MacOSSize> for NSSize {
+	fn from(value: MacOSSize) -> Self {
+		Self::new(value.width, value.height)
+	}
+}
+
+impl From<MacOSRect> for NSRect {
+	fn from(value: MacOSRect) -> Self {
+		Self::new(NSPoint::new(value.origin.x, value.origin.y), NSSize::from(value.size))
+	}
+}
+
+impl OverlaySession {
+	pub(super) fn ensure_native_capture_shells(&mut self) -> Result<(), String> {
+		let Some(dispatch) = self.native_capture_input_dispatch() else {
+			return Ok(());
+		};
+
+		if self.native_capture_shells.is_some() {
+			self.sync_native_capture_shells()?;
+
+			return Ok(());
+		}
+
+		let mut overlay_shells = HashMap::with_capacity(self.windows.len());
+
+		for overlay_window in self.windows.values() {
+			let shell = macos_create_passive_overlay_shell_window(
+				overlay_window.window.as_ref(),
+				overlay_window.monitor,
+				dispatch.clone(),
+			)?;
+
+			overlay_shells.insert(overlay_window.monitor.id, shell);
+		}
+
+		self.native_capture_shells = Some(MacOSNativeCaptureShells::new(overlay_shells, dispatch));
+
+		self.sync_native_capture_shells()?;
+
+		Ok(())
+	}
+
+	pub(super) fn sync_native_capture_shells(&mut self) -> Result<(), String> {
+		let live_shell_visible = self.should_host_live_pointer_input_in_native_shell();
+		let toolbar_shell_visible = self.should_host_toolbar_pointer_input_in_native_shell();
+		let toolbar_context = self.toolbar_window.as_ref().map(|toolbar_window| {
+			let monitor = self.state.monitor.or_else(|| self.active_cursor_monitor());
+			let outer_position = Self::toolbar_window_outer_position(toolbar_window)
+				.or(self.pending_toolbar_outer_pos)
+				.or(self.toolbar_outer_pos)
+				.or_else(|| {
+					monitor.and_then(|monitor| {
+						self.toolbar_state.floating_position.map(|floating_position| {
+							self.toolbar_outer_position_from_primary_anchor(
+								monitor,
+								floating_position,
+							)
+						})
+					})
+				});
+
+			(Arc::clone(&toolbar_window.window), monitor, outer_position)
+		});
+		let key_focus_context = self.native_key_focus_shell_context();
+
+		for overlay_window in self.windows.values() {
+			super::macos_set_capture_window_mouse_passthrough(
+				overlay_window.window.as_ref(),
+				live_shell_visible,
+			);
+		}
+
+		let Some(shells) = self.native_capture_shells.as_mut() else {
+			if let Some((toolbar_window, _, _)) = toolbar_context.as_ref() {
+				super::macos_set_capture_window_mouse_passthrough(toolbar_window.as_ref(), false);
+			}
+
+			return Ok(());
+		};
+
+		shells.sync_overlay_shells(&self.windows, live_shell_visible);
+
+		if let Some((toolbar_window, monitor, outer_position)) = toolbar_context {
+			if let (Some(monitor), Some(outer_position)) = (monitor, outer_position) {
+				shells.sync_toolbar_shell(
+					toolbar_window.as_ref(),
+					monitor,
+					outer_position,
+					toolbar_shell_visible,
+				)?;
+
+				super::macos_set_capture_window_mouse_passthrough(
+					toolbar_window.as_ref(),
+					toolbar_shell_visible,
+				);
+			} else {
+				super::macos_set_capture_window_mouse_passthrough(toolbar_window.as_ref(), false);
+
+				shells.clear_toolbar_shell();
+			}
+		} else {
+			shells.clear_toolbar_shell();
+		}
+		if let Some((render_window, target)) = key_focus_context {
+			shells.sync_key_focus_shell(render_window.as_ref(), target, true)?;
+		} else {
+			shells.clear_key_focus_shell();
+		}
+
+		Ok(())
+	}
+
+	pub(super) fn destroy_native_capture_shells(&mut self) {
+		macos_set_system_cursor_hidden(false);
+
+		for overlay_window in self.windows.values() {
+			super::macos_set_capture_window_mouse_passthrough(
+				overlay_window.window.as_ref(),
+				false,
+			);
+		}
+
+		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
+			super::macos_set_capture_window_mouse_passthrough(
+				toolbar_window.window.as_ref(),
+				false,
+			);
+		}
+
+		self.native_capture_shells = None;
+	}
+
+	fn native_key_focus_shell_context(&self) -> Option<(Arc<Window>, MacOSKeyFocusShellTarget)> {
+		if self.scroll_capture.active {
+			let render_window = self
+				.scroll_preview_window
+				.as_ref()
+				.map(|preview_window| Arc::clone(&preview_window.window))
+				.or_else(|| {
+					self.scroll_capture.monitor.and_then(|target_monitor| {
+						self.windows
+							.values()
+							.find(|overlay_window| overlay_window.monitor == target_monitor)
+							.map(|overlay_window| Arc::clone(&overlay_window.window))
+					})
+				})?;
+			let target = MacOSKeyFocusShellTarget {
+				kind: MacOSKeyFocusShellKind::ScrollCapture,
+				monitor: self.scroll_capture.monitor,
+				ime_allowed: false,
+				ime_origin: NSPoint::new(0.0, 0.0),
+				ime_size: NSSize::new(1.0, 1.0),
+			};
+
+			return Some((render_window, target));
+		}
+
+		let edit_state = self.frozen_text_edit.as_ref()?;
+
+		if !self.frozen_text_tool_active() {
+			return None;
+		}
+
+		let monitor = self.state.monitor?;
+		let overlay_window = self.windows.values().find(|window| window.monitor == monitor)?;
+		let (visible_text, caret_char_index) = edit_state.visible_text_and_caret_char_index();
+		let caret_rect = overlay_window.renderer.frozen_text_edit_caret_rect_for_window(
+			edit_state.anchor,
+			visible_text.as_str(),
+			&FontId::proportional(self.toolbar_state.text_style.font_size_points),
+			caret_char_index.unwrap_or_else(|| visible_text.chars().count()),
+		);
+		let target = MacOSKeyFocusShellTarget {
+			kind: MacOSKeyFocusShellKind::FrozenText,
+			monitor: Some(monitor),
+			ime_allowed: true,
+			ime_origin: NSPoint::new(
+				f64::from(caret_rect.min.x.max(0.0)),
+				f64::from(caret_rect.min.y.max(0.0)),
+			),
+			ime_size: NSSize::new(
+				f64::from(caret_rect.width().max(1.0)),
+				f64::from(caret_rect.height().max(self.toolbar_state.text_style.font_size_points)),
+			),
+		};
+
+		Some((Arc::clone(&overlay_window.window), target))
+	}
+
+	pub(super) fn should_host_live_pointer_input_in_native_shell(&self) -> bool {
+		self.session_active
+			&& !self.capture_windows_hidden
+			&& matches!(self.state.mode, OverlayMode::Live)
+			&& !self.windows.is_empty()
+	}
+
+	pub(super) fn should_host_toolbar_pointer_input_in_native_shell(&self) -> bool {
+		self.session_active
+			&& matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.toolbar_state.visible
+			&& self.toolbar_window_visible
+	}
+}
+
+impl MonitorRect {
+	fn clamp_local_point(self, local_point: NSPoint) -> GlobalPoint {
+		let max_x = self.width.saturating_sub(1) as i32;
+		let max_y = self.height.saturating_sub(1) as i32;
+		let local_x = (local_point.x.round() as i32).clamp(0, max_x);
+		let local_y = (local_point.y.round() as i32).clamp(0, max_y);
+
+		GlobalPoint::new(
+			self.origin.x.saturating_add(local_x),
+			self.origin.y.saturating_add(local_y),
+		)
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MacOSKeyFocusShellKind {
+	FrozenText,
+	ScrollCapture,
 }
 
 #[derive(Clone)]
@@ -344,400 +805,6 @@ impl MacOSPassiveShellCallback {
 	}
 }
 
-struct MacOSPassiveShellWindow {
-	window_key: usize,
-	view_key: usize,
-	tracking_area_key: usize,
-	toolbar_state: Option<Arc<Mutex<MacOSPassiveToolbarShellState>>>,
-}
-impl MacOSPassiveShellWindow {
-	fn sync_from_render_window(&self, render_window: &Window, visible: bool) {
-		let Some(render_ns_window) = macos_overlay_window_ns_window(render_window) else {
-			return;
-		};
-		let Some(frame) = macos_ns_window_frame(render_ns_window) else {
-			return;
-		};
-
-		self.sync_frame_and_visibility(frame, visible);
-	}
-
-	fn sync_frame_and_visibility(&self, frame: NSRect, visible: bool) {
-		let ns_window = self.window_key as *mut Object;
-
-		if ns_window.is_null() {
-			return;
-		}
-
-		unsafe {
-			let _: () = objc::msg_send![ns_window, setFrame: frame display: NO];
-
-			if visible {
-				let _: () = objc::msg_send![ns_window, orderFrontRegardless];
-			} else {
-				let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
-			}
-		}
-	}
-
-	fn set_toolbar_state(&self, monitor: MonitorRect, outer_position: GlobalPoint) {
-		let Some(state) = self.toolbar_state.as_ref() else {
-			return;
-		};
-		let Ok(mut state) = state.lock() else {
-			return;
-		};
-
-		state.monitor = Some(monitor);
-		state.outer_position = Some(outer_position);
-	}
-}
-
-struct MacOSKeyFocusShellWindow {
-	window_key: usize,
-	view_key: usize,
-	state: Arc<Mutex<MacOSKeyFocusShellState>>,
-}
-impl MacOSKeyFocusShellWindow {
-	fn sync_from_render_window(
-		&self,
-		render_window: &Window,
-		target: MacOSKeyFocusShellTarget,
-		visible: bool,
-	) {
-		let Some(render_ns_window) = macos_overlay_window_ns_window(render_window) else {
-			return;
-		};
-		let Some(frame) = macos_ns_window_frame(render_ns_window) else {
-			return;
-		};
-
-		self.set_target(target);
-		self.sync_frame_and_visibility(frame, visible);
-	}
-
-	fn set_target(&self, target: MacOSKeyFocusShellTarget) {
-		let Ok(mut state) = self.state.lock() else {
-			return;
-		};
-
-		state.target = Some(target);
-
-		let view = self.view_key as *mut Object;
-		if view.is_null() {
-			return;
-		}
-
-		unsafe {
-			let input_context: *mut Object = objc::msg_send![view, inputContext];
-
-			if !input_context.is_null() {
-				let _: () = objc::msg_send![input_context, invalidateCharacterCoordinates];
-			}
-		}
-	}
-
-	fn clear_target(&self) {
-		let Ok(mut state) = self.state.lock() else {
-			return;
-		};
-
-		state.target = None;
-		state.marked_text.clear();
-		state.forward_key_event_to_app = false;
-		state.had_ime_input_during_keydown = false;
-	}
-
-	fn sync_frame_and_visibility(&self, frame: NSRect, visible: bool) {
-		let ns_window = self.window_key as *mut Object;
-
-		if ns_window.is_null() {
-			return;
-		}
-
-		unsafe {
-			let _: () = objc::msg_send![ns_window, setFrame: frame display: NO];
-
-			if visible {
-				let _: () = objc::msg_send![ns_window, orderFrontRegardless];
-			} else {
-				let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
-			}
-		}
-	}
-
-	fn hide(&self) {
-		let ns_window = self.window_key as *mut Object;
-
-		if ns_window.is_null() {
-			return;
-		}
-
-		unsafe {
-			let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
-		}
-	}
-
-	fn ensure_key_focus(&self) {
-		let ns_window = self.window_key as *mut Object;
-		let view = self.view_key as *mut Object;
-
-		if ns_window.is_null() || view.is_null() {
-			return;
-		}
-
-		super::macos_activate_app();
-
-		unsafe {
-			let _: () = objc::msg_send![ns_window, makeFirstResponder: view];
-			let _: () = objc::msg_send![ns_window, makeKeyAndOrderFront: ptr::null_mut::<Object>()];
-		}
-	}
-}
-impl Drop for MacOSKeyFocusShellWindow {
-	fn drop(&mut self) {
-		macos_unregister_shell_callback(self.view_key);
-
-		unsafe {
-			let ns_window = self.window_key as *mut Object;
-			if !ns_window.is_null() {
-				let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
-				let _: () = objc::msg_send![ns_window, close];
-				let _: () = objc::msg_send![ns_window, release];
-			}
-
-			let view = self.view_key as *mut Object;
-			if !view.is_null() {
-				let _: () = objc::msg_send![view, release];
-			}
-		}
-	}
-}
-impl Drop for MacOSPassiveShellWindow {
-	fn drop(&mut self) {
-		macos_unregister_shell_callback(self.view_key);
-
-		unsafe {
-			let ns_window = self.window_key as *mut Object;
-			if !ns_window.is_null() {
-				let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
-				let _: () = objc::msg_send![ns_window, close];
-				let _: () = objc::msg_send![ns_window, release];
-			}
-
-			let tracking_area = self.tracking_area_key as *mut Object;
-			if !tracking_area.is_null() {
-				let _: () = objc::msg_send![tracking_area, release];
-			}
-
-			let view = self.view_key as *mut Object;
-			if !view.is_null() {
-				let _: () = objc::msg_send![view, release];
-			}
-		}
-	}
-}
-
-impl OverlaySession {
-	pub(super) fn ensure_native_capture_shells(&mut self) -> Result<(), String> {
-		let Some(dispatch) = self.native_capture_input_dispatch() else {
-			return Ok(());
-		};
-
-		if self.native_capture_shells.is_some() {
-			self.sync_native_capture_shells()?;
-
-			return Ok(());
-		}
-
-		let mut overlay_shells = HashMap::with_capacity(self.windows.len());
-
-		for overlay_window in self.windows.values() {
-			let shell = macos_create_passive_overlay_shell_window(
-				overlay_window.window.as_ref(),
-				overlay_window.monitor,
-				dispatch.clone(),
-			)?;
-			overlay_shells.insert(overlay_window.monitor.id, shell);
-		}
-
-		self.native_capture_shells = Some(MacOSNativeCaptureShells::new(overlay_shells, dispatch));
-		self.sync_native_capture_shells()?;
-
-		Ok(())
-	}
-
-	pub(super) fn sync_native_capture_shells(&mut self) -> Result<(), String> {
-		let live_shell_visible = self.should_host_live_pointer_input_in_native_shell();
-		let toolbar_shell_visible = self.should_host_toolbar_pointer_input_in_native_shell();
-		let toolbar_context = self.toolbar_window.as_ref().map(|toolbar_window| {
-			let monitor = self.state.monitor.or_else(|| self.active_cursor_monitor());
-			let outer_position = Self::toolbar_window_outer_position(toolbar_window)
-				.or(self.pending_toolbar_outer_pos)
-				.or(self.toolbar_outer_pos)
-				.or_else(|| {
-					monitor.and_then(|monitor| {
-						self.toolbar_state.floating_position.map(|floating_position| {
-							self.toolbar_outer_position_from_primary_anchor(
-								monitor,
-								floating_position,
-							)
-						})
-					})
-				});
-
-			(Arc::clone(&toolbar_window.window), monitor, outer_position)
-		});
-		let key_focus_context = self.native_key_focus_shell_context();
-
-		for overlay_window in self.windows.values() {
-			super::macos_set_capture_window_mouse_passthrough(
-				overlay_window.window.as_ref(),
-				live_shell_visible,
-			);
-		}
-
-		let Some(shells) = self.native_capture_shells.as_mut() else {
-			if let Some((toolbar_window, _, _)) = toolbar_context.as_ref() {
-				super::macos_set_capture_window_mouse_passthrough(toolbar_window.as_ref(), false);
-			}
-
-			return Ok(());
-		};
-
-		shells.sync_overlay_shells(&self.windows, live_shell_visible);
-
-		if let Some((toolbar_window, monitor, outer_position)) = toolbar_context {
-			if let (Some(monitor), Some(outer_position)) = (monitor, outer_position) {
-				shells.sync_toolbar_shell(
-					toolbar_window.as_ref(),
-					monitor,
-					outer_position,
-					toolbar_shell_visible,
-				)?;
-				super::macos_set_capture_window_mouse_passthrough(
-					toolbar_window.as_ref(),
-					toolbar_shell_visible,
-				);
-			} else {
-				super::macos_set_capture_window_mouse_passthrough(toolbar_window.as_ref(), false);
-				shells.clear_toolbar_shell();
-			}
-		} else {
-			shells.clear_toolbar_shell();
-		}
-
-		if let Some((render_window, target)) = key_focus_context {
-			shells.sync_key_focus_shell(render_window.as_ref(), target, true)?;
-		} else {
-			shells.clear_key_focus_shell();
-		}
-
-		Ok(())
-	}
-
-	pub(super) fn destroy_native_capture_shells(&mut self) {
-		for overlay_window in self.windows.values() {
-			super::macos_set_capture_window_mouse_passthrough(
-				overlay_window.window.as_ref(),
-				false,
-			);
-		}
-		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-			super::macos_set_capture_window_mouse_passthrough(
-				toolbar_window.window.as_ref(),
-				false,
-			);
-		}
-
-		self.native_capture_shells = None;
-	}
-
-	fn native_key_focus_shell_context(&self) -> Option<(Arc<Window>, MacOSKeyFocusShellTarget)> {
-		if self.scroll_capture.active {
-			let render_window = self
-				.scroll_preview_window
-				.as_ref()
-				.map(|preview_window| Arc::clone(&preview_window.window))
-				.or_else(|| {
-					self.scroll_capture.monitor.and_then(|target_monitor| {
-						self.windows
-							.values()
-							.find(|overlay_window| overlay_window.monitor == target_monitor)
-							.map(|overlay_window| Arc::clone(&overlay_window.window))
-					})
-				})?;
-			let target = MacOSKeyFocusShellTarget {
-				kind: MacOSKeyFocusShellKind::ScrollCapture,
-				monitor: self.scroll_capture.monitor,
-				ime_allowed: false,
-				ime_origin: NSPoint::new(0.0, 0.0),
-				ime_size: NSSize::new(1.0, 1.0),
-			};
-
-			return Some((render_window, target));
-		}
-
-		let edit_state = self.frozen_text_edit.as_ref()?;
-		if !self.frozen_text_tool_active() {
-			return None;
-		}
-
-		let monitor = self.state.monitor?;
-		let overlay_window = self.windows.values().find(|window| window.monitor == monitor)?;
-		let (visible_text, caret_char_index) = edit_state.visible_text_and_caret_char_index();
-		let caret_rect = overlay_window.renderer.frozen_text_edit_caret_rect_for_window(
-			edit_state.anchor,
-			visible_text.as_str(),
-			&egui::FontId::proportional(self.toolbar_state.text_style.font_size_points),
-			caret_char_index.unwrap_or_else(|| visible_text.chars().count()),
-		);
-		let target = MacOSKeyFocusShellTarget {
-			kind: MacOSKeyFocusShellKind::FrozenText,
-			monitor: Some(monitor),
-			ime_allowed: true,
-			ime_origin: NSPoint::new(
-				f64::from(caret_rect.min.x.max(0.0)),
-				f64::from(caret_rect.min.y.max(0.0)),
-			),
-			ime_size: NSSize::new(
-				f64::from(caret_rect.width().max(1.0)),
-				f64::from(caret_rect.height().max(self.toolbar_state.text_style.font_size_points)),
-			),
-		};
-
-		Some((Arc::clone(&overlay_window.window), target))
-	}
-
-	pub(super) fn should_host_live_pointer_input_in_native_shell(&self) -> bool {
-		self.session_active
-			&& !self.capture_windows_hidden
-			&& matches!(self.state.mode, OverlayMode::Live)
-			&& !self.windows.is_empty()
-	}
-
-	pub(super) fn should_host_toolbar_pointer_input_in_native_shell(&self) -> bool {
-		self.session_active
-			&& matches!(self.state.mode, OverlayMode::Frozen)
-			&& self.toolbar_state.visible
-			&& self.toolbar_window_visible
-	}
-}
-
-impl MonitorRect {
-	fn clamp_local_point(self, local_point: NSPoint) -> GlobalPoint {
-		let max_x = self.width.saturating_sub(1) as i32;
-		let max_y = self.height.saturating_sub(1) as i32;
-		let local_x = (local_point.x.round() as i32).clamp(0, max_x);
-		let local_y = (local_point.y.round() as i32).clamp(0, max_y);
-
-		GlobalPoint::new(
-			self.origin.x.saturating_add(local_x),
-			self.origin.y.saturating_add(local_y),
-		)
-	}
-}
-
 fn macos_shell_callbacks() -> &'static Mutex<HashMap<usize, MacOSPassiveShellCallback>> {
 	static CALLBACKS: OnceLock<Mutex<HashMap<usize, MacOSPassiveShellCallback>>> = OnceLock::new();
 
@@ -811,8 +878,20 @@ fn macos_passive_shell_view_class() -> *const Class {
 					as extern "C" fn(&Object, Sel, super::MacOSOverlayPoint) -> *mut Object,
 			);
 			decl.add_method(
+				objc::sel!(drawRect:),
+				macos_passive_shell_view_draw_rect as extern "C" fn(&Object, Sel, MacOSRect),
+			);
+			decl.add_method(
+				objc::sel!(resetCursorRects),
+				macos_passive_shell_view_reset_cursor_rects as extern "C" fn(&Object, Sel),
+			);
+			decl.add_method(
 				objc::sel!(mouseMoved:),
 				macos_passive_shell_view_mouse_moved as extern "C" fn(&Object, Sel, *mut Object),
+			);
+			decl.add_method(
+				objc::sel!(cursorUpdate:),
+				macos_passive_shell_view_cursor_update as extern "C" fn(&Object, Sel, *mut Object),
 			);
 			decl.add_method(
 				objc::sel!(mouseDragged:),
@@ -853,7 +932,7 @@ fn macos_key_focus_shell_panel_class() -> *const Class {
 			return class as *const Class as usize;
 		}
 
-		let superclass = objc::class!(NSPanel);
+		let superclass = objc::class!(NSWindow);
 		let mut decl = ClassDecl::new("RsnapKeyFocusCaptureShellPanel", superclass)
 			.expect("key-focus capture shell panel class");
 
@@ -938,12 +1017,7 @@ fn macos_key_focus_shell_view_class() -> *const Class {
 			decl.add_method(
 				objc::sel!(attributedSubstringForProposedRange:actualRange:),
 				macos_key_focus_shell_view_attributed_substring_for_proposed_range
-					as extern "C" fn(
-						&Object,
-						Sel,
-						MacOSRange,
-						*mut std::ffi::c_void,
-					) -> *mut Object,
+					as extern "C" fn(&Object, Sel, MacOSRange, *mut c_void) -> *mut Object,
 			);
 			decl.add_method(
 				objc::sel!(characterIndexForPoint:),
@@ -953,7 +1027,7 @@ fn macos_key_focus_shell_view_class() -> *const Class {
 			decl.add_method(
 				objc::sel!(firstRectForCharacterRange:actualRange:),
 				macos_key_focus_shell_view_first_rect_for_character_range
-					as extern "C" fn(&Object, Sel, MacOSRange, *mut std::ffi::c_void) -> MacOSRect,
+					as extern "C" fn(&Object, Sel, MacOSRange, *mut c_void) -> MacOSRect,
 			);
 			decl.add_method(
 				objc::sel!(insertText:replacementRange:),
@@ -1007,6 +1081,58 @@ extern "C" fn macos_passive_shell_view_hit_test(
 	this as *const Object as *mut Object
 }
 
+extern "C" fn macos_passive_shell_view_draw_rect(
+	this: &Object,
+	_cmd: Sel,
+	dirty_rect: MacOSRect,
+) {
+	let Some(callback) = macos_shell_callback(this as *const Object as usize) else {
+		return;
+	};
+
+	if !matches!(callback, MacOSPassiveShellCallback::Overlay { .. }) {
+		return;
+	}
+
+	let clear: *mut Object = unsafe { objc::msg_send![objc::class!(NSColor), clearColor] };
+
+	if !clear.is_null() {
+		unsafe {
+			let _: () = objc::msg_send![clear, setFill];
+			let _: () = objc::msg_send![objc::class!(NSBezierPath), fillRect: NSRect::from(dirty_rect)];
+		}
+	}
+
+	let Some(point) = macos_passive_shell_cursor_point(this as *const Object as usize) else {
+		return;
+	};
+
+	macos_draw_passive_shell_crosshair(point);
+}
+
+extern "C" fn macos_passive_shell_view_reset_cursor_rects(this: &Object, _cmd: Sel) {
+	let bounds: NSRect = unsafe { objc::msg_send![this, bounds] };
+	let Some(callback) = macos_shell_callback(this as *const Object as usize) else {
+		return;
+	};
+	let cursor = match callback {
+		MacOSPassiveShellCallback::Overlay { .. } => {
+			super::macos_cursor_object_for_icon(CursorIcon::Crosshair)
+		},
+		MacOSPassiveShellCallback::Toolbar { .. } | MacOSPassiveShellCallback::KeyFocus { .. } => {
+			super::macos_cursor_object_for_icon(CursorIcon::Default)
+		},
+	};
+
+	if cursor.is_null() {
+		return;
+	}
+
+	unsafe {
+		let _: () = objc::msg_send![this, addCursorRect: bounds cursor: cursor];
+	}
+}
+
 extern "C" fn macos_key_focus_shell_view_accepts_first_responder(
 	_this: &Object,
 	_cmd: Sel,
@@ -1016,6 +1142,32 @@ extern "C" fn macos_key_focus_shell_view_accepts_first_responder(
 
 extern "C" fn macos_passive_shell_view_mouse_moved(this: &Object, _cmd: Sel, event: *mut Object) {
 	macos_dispatch_shell_pointer_moved(this, event);
+}
+
+extern "C" fn macos_passive_shell_view_cursor_update(
+	this: &Object,
+	_cmd: Sel,
+	_event: *mut Object,
+) {
+	let Some(callback) = macos_shell_callback(this as *const Object as usize) else {
+		return;
+	};
+
+	tracing::warn!(
+		op = "overlay.macos_passive_shell_cursor_update",
+		callback = %macos_shell_callback_name(&callback),
+		"Passive shell received cursorUpdate."
+	);
+
+	match callback {
+		MacOSPassiveShellCallback::Overlay { .. } => {
+			super::macos_set_cursor_icon(CursorIcon::Crosshair);
+		},
+		MacOSPassiveShellCallback::Toolbar { .. } => {
+			super::macos_set_cursor_icon(CursorIcon::Default);
+		},
+		MacOSPassiveShellCallback::KeyFocus { .. } => {},
+	}
 }
 
 extern "C" fn macos_passive_shell_view_mouse_dragged(this: &Object, _cmd: Sel, event: *mut Object) {
@@ -1094,6 +1246,7 @@ fn macos_text_input_object_to_string(string: *mut Object) -> String {
 		let is_attributed: BOOL = objc::msg_send![string, isKindOfClass: attributed_string_class];
 		let string_object = if is_attributed == YES {
 			let value: *mut Object = objc::msg_send![string, string];
+
 			value
 		} else {
 			string
@@ -1130,7 +1283,6 @@ fn macos_modifier_state_from_event(event: *mut Object) -> ModifiersState {
 	const CONTROL: u64 = 1 << 18;
 	const OPTION: u64 = 1 << 19;
 	const COMMAND: u64 = 1 << 20;
-
 	unsafe {
 		let flags: u64 = objc::msg_send![event, modifierFlags];
 		let mut state = ModifiersState::empty();
@@ -1237,7 +1389,6 @@ extern "C" fn macos_key_focus_shell_view_key_down(this: &Object, _cmd: Sel, even
 	let Some((shell_state, dispatch)) = macos_key_focus_shell_state(this) else {
 		return;
 	};
-
 	let ime_allowed = macos_key_focus_ime_allowed(this);
 
 	if let Ok(mut state) = shell_state.lock() {
@@ -1345,10 +1496,18 @@ extern "C" fn macos_key_focus_shell_view_set_marked_text(
 	let monitor = if let Ok(mut state) = shell_state.lock() {
 		state.marked_text = text.clone();
 		state.had_ime_input_during_keydown = true;
+
 		state.target.and_then(|target| target.monitor)
 	} else {
 		None
 	};
+
+	tracing::info!(
+		op = "overlay.macos_key_focus_shell_set_marked_text",
+		monitor_id = ?monitor.map(|target| target.id),
+		text_len = text.chars().count(),
+		"Received marked text from the native key-focus shell."
+	);
 
 	dispatch.enqueue(MacOSNativeCaptureInputEvent::Ime {
 		monitor,
@@ -1362,10 +1521,19 @@ extern "C" fn macos_key_focus_shell_view_unmark_text(this: &Object, _cmd: Sel) {
 	};
 	let monitor = if let Ok(mut state) = shell_state.lock() {
 		state.marked_text.clear();
+
 		state.target.and_then(|target| target.monitor)
 	} else {
 		None
 	};
+
+	unsafe {
+		let input_context: *mut Object = objc::msg_send![this, inputContext];
+
+		if !input_context.is_null() {
+			let _: () = objc::msg_send![input_context, discardMarkedText];
+		}
+	}
 
 	dispatch.enqueue(MacOSNativeCaptureInputEvent::Ime {
 		monitor,
@@ -1384,7 +1552,7 @@ extern "C" fn macos_key_focus_shell_view_attributed_substring_for_proposed_range
 	_this: &Object,
 	_cmd: Sel,
 	_range: MacOSRange,
-	_actual_range: *mut std::ffi::c_void,
+	_actual_range: *mut c_void,
 ) -> *mut Object {
 	ptr::null_mut::<Object>()
 }
@@ -1401,7 +1569,7 @@ extern "C" fn macos_key_focus_shell_view_first_rect_for_character_range(
 	this: &Object,
 	_cmd: Sel,
 	_range: MacOSRange,
-	_actual_range: *mut std::ffi::c_void,
+	_actual_range: *mut c_void,
 ) -> MacOSRect {
 	let Some(target) = macos_key_focus_target(this) else {
 		return MacOSRect::from(NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0)));
@@ -1440,11 +1608,20 @@ extern "C" fn macos_key_focus_shell_view_insert_text(
 
 	let monitor = if let Ok(mut state) = shell_state.lock() {
 		state.marked_text.clear();
+
 		state.had_ime_input_during_keydown = true;
+
 		state.target.and_then(|target| target.monitor)
 	} else {
 		None
 	};
+
+	tracing::info!(
+		op = "overlay.macos_key_focus_shell_insert_text",
+		monitor_id = ?monitor.map(|target| target.id),
+		text_len = text.chars().count(),
+		"Committed text from the native key-focus shell."
+	);
 
 	dispatch.enqueue(MacOSNativeCaptureInputEvent::Ime {
 		monitor,
@@ -1475,10 +1652,28 @@ fn macos_dispatch_shell_pointer_moved(this: &Object, event: *mut Object) {
 		return;
 	};
 
+	tracing::warn!(
+		op = "overlay.macos_passive_shell_pointer_moved",
+		callback = %macos_shell_callback_name(&callback),
+		x = local_point.x,
+		y = local_point.y,
+		"Passive shell received pointer movement."
+	);
+
 	match callback {
-		MacOSPassiveShellCallback::Overlay { .. } => macos_set_crosshair_cursor(),
-		MacOSPassiveShellCallback::Toolbar { .. } => macos_set_default_cursor(),
-		MacOSPassiveShellCallback::KeyFocus { .. } => {},
+		MacOSPassiveShellCallback::Overlay { .. } => {
+			macos_update_passive_shell_cursor_point(this as *const Object as usize, Some(local_point));
+
+			super::macos_set_cursor_icon(CursorIcon::Crosshair);
+		},
+		MacOSPassiveShellCallback::Toolbar { .. } => {
+			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
+
+			super::macos_set_cursor_icon(CursorIcon::Default);
+		},
+		MacOSPassiveShellCallback::KeyFocus { .. } => {
+			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
+		},
 	}
 
 	callback.dispatch_pointer_moved(local_point);
@@ -1496,9 +1691,19 @@ fn macos_dispatch_shell_mouse_input(
 	let local_point = macos_shell_local_point(this, event);
 
 	match callback {
-		MacOSPassiveShellCallback::Overlay { .. } => macos_set_crosshair_cursor(),
-		MacOSPassiveShellCallback::Toolbar { .. } => macos_set_default_cursor(),
-		MacOSPassiveShellCallback::KeyFocus { .. } => {},
+		MacOSPassiveShellCallback::Overlay { .. } => {
+			macos_update_passive_shell_cursor_point(this as *const Object as usize, local_point);
+
+			super::macos_set_cursor_icon(CursorIcon::Crosshair);
+		},
+		MacOSPassiveShellCallback::Toolbar { .. } => {
+			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
+
+			super::macos_set_cursor_icon(CursorIcon::Default);
+		},
+		MacOSPassiveShellCallback::KeyFocus { .. } => {
+			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
+		},
 	}
 
 	callback.dispatch_mouse_input(local_point, button, state);
@@ -1545,16 +1750,203 @@ fn macos_shell_scroll_delta(event: *mut Object) -> Option<MacOSNativeCaptureScro
 }
 
 fn macos_set_crosshair_cursor() {
-	unsafe {
-		let cursor = super::macos_cursor_object_for_icon(CursorIcon::Crosshair);
-		let _: () = objc::msg_send![cursor, set];
+	super::macos_set_cursor_icon(CursorIcon::Crosshair);
+}
+
+fn macos_passive_shell_cursor_points() -> &'static Mutex<HashMap<usize, Option<NSPoint>>> {
+	static POINTS: OnceLock<Mutex<HashMap<usize, Option<NSPoint>>>> = OnceLock::new();
+
+	POINTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn macos_passive_shell_cursor_point(view_key: usize) -> Option<NSPoint> {
+	let points = macos_passive_shell_cursor_points();
+
+	match points.lock() {
+		Ok(guard) => guard.get(&view_key).copied().flatten(),
+		Err(poisoned) => poisoned.into_inner().get(&view_key).copied().flatten(),
 	}
 }
 
-fn macos_set_default_cursor() {
+fn macos_clear_passive_shell_cursor_point(view_key: usize) {
+	let points = macos_passive_shell_cursor_points();
+
+	match points.lock() {
+		Ok(mut guard) => {
+			guard.remove(&view_key);
+		},
+		Err(poisoned) => {
+			poisoned.into_inner().remove(&view_key);
+		},
+	}
+}
+
+fn macos_update_passive_shell_cursor_point(view_key: usize, next_point: Option<NSPoint>) {
+	let previous = {
+		let points = macos_passive_shell_cursor_points();
+
+		match points.lock() {
+			Ok(mut guard) => {
+				let previous = guard.get(&view_key).copied().flatten();
+
+				if previous == next_point {
+					return;
+				}
+				if next_point.is_some() {
+					guard.insert(view_key, next_point);
+				} else {
+					guard.remove(&view_key);
+				}
+
+				previous
+			},
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+				let previous = guard.get(&view_key).copied().flatten();
+
+				if previous == next_point {
+					return;
+				}
+				if next_point.is_some() {
+					guard.insert(view_key, next_point);
+				} else {
+					guard.remove(&view_key);
+				}
+
+				previous
+			},
+		}
+	};
+	let view = view_key as *mut Object;
+
+	if view.is_null() {
+		return;
+	}
+
 	unsafe {
-		let cursor = super::macos_cursor_object_for_icon(CursorIcon::Default);
-		let _: () = objc::msg_send![cursor, set];
+		if let Some(previous) = previous {
+			let _: () = objc::msg_send![
+				view,
+				setNeedsDisplayInRect: macos_passive_shell_cursor_dirty_rect(previous)
+			];
+		}
+		if let Some(next) = next_point {
+			let _: () =
+				objc::msg_send![view, setNeedsDisplayInRect: macos_passive_shell_cursor_dirty_rect(next)];
+		}
+	}
+}
+
+fn macos_passive_shell_cursor_dirty_rect(point: NSPoint) -> NSRect {
+	const CURSOR_DIRTY_RADIUS: f64 = 18.0;
+
+	NSRect::new(
+		NSPoint::new(point.x - CURSOR_DIRTY_RADIUS, point.y - CURSOR_DIRTY_RADIUS),
+		NSSize::new(CURSOR_DIRTY_RADIUS * 2.0, CURSOR_DIRTY_RADIUS * 2.0),
+	)
+}
+
+fn macos_seed_passive_shell_cursor_point(ns_window: *mut Object, view: *mut Object) -> Option<NSPoint> {
+	if ns_window.is_null() || view.is_null() {
+		return None;
+	}
+
+	let global = super::macos_mouse_location()?;
+
+	unsafe {
+		let screen_point = NSPoint::new(f64::from(global.x), f64::from(global.y));
+		let window_point: NSPoint = objc::msg_send![ns_window, convertPointFromScreen: screen_point];
+		let local_point: NSPoint =
+			objc::msg_send![view, convertPoint: window_point fromView: ptr::null_mut::<Object>()];
+		let bounds: NSRect = objc::msg_send![view, bounds];
+		let contains = local_point.x >= bounds.origin.x
+			&& local_point.y >= bounds.origin.y
+			&& local_point.x <= bounds.origin.x + bounds.size.width
+			&& local_point.y <= bounds.origin.y + bounds.size.height;
+
+		contains.then_some(local_point)
+	}
+}
+
+fn macos_draw_passive_shell_crosshair(point: NSPoint) {
+	let outline_color: *mut Object =
+		unsafe { objc::msg_send![objc::class!(NSColor), colorWithCalibratedWhite: 0.0 alpha: 0.95] };
+	let fill_color: *mut Object = unsafe {
+		objc::msg_send![objc::class!(NSColor), colorWithCalibratedWhite: 1.0 alpha: 0.95]
+	};
+
+	macos_fill_passive_shell_crosshair_segments(outline_color, point, 3.0);
+	macos_fill_passive_shell_crosshair_segments(fill_color, point, 1.0);
+}
+
+fn macos_fill_passive_shell_crosshair_segments(color: *mut Object, point: NSPoint, thickness: f64) {
+	if color.is_null() {
+		return;
+	}
+
+	const EXTENT: f64 = 11.0;
+	const GAP: f64 = 3.0;
+
+	let rects = [
+		NSRect::new(
+			NSPoint::new(point.x - EXTENT, point.y - thickness * 0.5),
+			NSSize::new(EXTENT - GAP, thickness),
+		),
+		NSRect::new(
+			NSPoint::new(point.x + GAP, point.y - thickness * 0.5),
+			NSSize::new(EXTENT - GAP, thickness),
+		),
+		NSRect::new(
+			NSPoint::new(point.x - thickness * 0.5, point.y - EXTENT),
+			NSSize::new(thickness, EXTENT - GAP),
+		),
+		NSRect::new(
+			NSPoint::new(point.x - thickness * 0.5, point.y + GAP),
+			NSSize::new(thickness, EXTENT - GAP),
+		),
+	];
+
+	unsafe {
+		let _: () = objc::msg_send![color, setFill];
+
+		for rect in rects {
+			let _: () = objc::msg_send![objc::class!(NSBezierPath), fillRect: rect];
+		}
+	}
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+	fn CGMainDisplayID() -> u32;
+	fn CGDisplayHideCursor(display: u32) -> i32;
+	fn CGDisplayShowCursor(display: u32) -> i32;
+}
+
+fn macos_set_system_cursor_hidden(hidden: bool) {
+	static CURSOR_HIDDEN: AtomicBool = AtomicBool::new(false);
+
+	let previous = CURSOR_HIDDEN.swap(hidden, Ordering::SeqCst);
+
+	if previous == hidden {
+		return;
+	}
+
+	unsafe {
+		if hidden {
+			let _ = CGDisplayHideCursor(CGMainDisplayID());
+			let _: () = objc::msg_send![objc::class!(NSCursor), hide];
+		} else {
+			let _: () = objc::msg_send![objc::class!(NSCursor), unhide];
+			let _ = CGDisplayShowCursor(CGMainDisplayID());
+		}
+	}
+}
+
+fn macos_shell_callback_name(callback: &MacOSPassiveShellCallback) -> &'static str {
+	match callback {
+		MacOSPassiveShellCallback::Overlay { .. } => "overlay",
+		MacOSPassiveShellCallback::Toolbar { .. } => "toolbar",
+		MacOSPassiveShellCallback::KeyFocus { .. } => "key_focus",
 	}
 }
 
@@ -1595,7 +1987,7 @@ fn macos_create_key_focus_shell_window(
 	let collection_behavior = unsafe { macos_ns_window_collection_behavior(render_ns_window) };
 	let panel_class = macos_key_focus_shell_panel_class();
 	let view_class = macos_key_focus_shell_view_class();
-	let nonactivating_panel_mask: usize = 1 << 7;
+	let borderless_panel_mask: usize = 0;
 	let backing_buffered: usize = 2;
 	let state = Arc::new(Mutex::new(MacOSKeyFocusShellState::default()));
 
@@ -1604,7 +1996,7 @@ fn macos_create_key_focus_shell_window(
 		let ns_window: *mut Object = objc::msg_send![
 			ns_window_alloc,
 			initWithContentRect: frame
-			styleMask: nonactivating_panel_mask
+			styleMask: borderless_panel_mask
 			backing: backing_buffered
 			defer: NO
 		];
@@ -1693,7 +2085,7 @@ fn macos_create_passive_shell_window(
 		}
 
 		let tracking_area_alloc: *mut Object = objc::msg_send![objc::class!(NSTrackingArea), alloc];
-		let tracking_options: usize = 0x01 | 0x02 | 0x80 | 0x200 | 0x400;
+		let tracking_options: usize = 0x01 | 0x02 | 0x04 | 0x80 | 0x200 | 0x400;
 		let tracking_rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0));
 		let tracking_area: *mut Object = objc::msg_send![
 			tracking_area_alloc,

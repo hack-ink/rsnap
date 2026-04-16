@@ -40,6 +40,7 @@ use xcap::Window;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
+use crate::macos_color;
 use crate::state::{
 	GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb, WindowHit,
 	WindowListSnapshot, WindowRect,
@@ -381,7 +382,7 @@ impl XcapCaptureBackend {
 		let cg_image = objc2_core_graphics::CGDisplayCreateImage(monitor.id)
 			.ok_or_else(|| eyre::eyre!("CGDisplayCreateImage returned null"))?;
 
-		rgba_image_from_cg_image(cg_image.as_ref())
+		rgba_image_from_cg_image_for_display(cg_image.as_ref(), Some(monitor.id))
 			.wrap_err_with(|| format!("failed to decode display image for monitor: {monitor:?}"))
 	}
 
@@ -409,7 +410,7 @@ impl XcapCaptureBackend {
 			return Err(CaptureBackendError::WindowNotFound { window_id }.into());
 		};
 
-		rgba_image_from_cg_image(cg_image)
+		rgba_image_from_cg_image_for_display(cg_image, None)
 			.wrap_err_with(|| format!("Failed to decode window capture bytes: {window_id}"))
 	}
 
@@ -1004,6 +1005,18 @@ fn rgba_image_from_cg_image(cg_image: &CGImage) -> Result<RgbaImage> {
 }
 
 #[cfg(target_os = "macos")]
+fn rgba_image_from_cg_image_for_display(
+	cg_image: &CGImage,
+	display_id: Option<u32>,
+) -> Result<RgbaImage> {
+	if let Some(image) = macos_color::rgba_image_from_cg_image_color_managed(cg_image, display_id) {
+		return Ok(image);
+	}
+
+	rgba_image_from_cg_image(cg_image)
+}
+
+#[cfg(target_os = "macos")]
 fn rgba_image_from_bgra_rows(
 	width: usize,
 	height: usize,
@@ -1058,7 +1071,7 @@ fn capture_monitor_region_with_core_graphics(
 	);
 	let image = objc2_core_graphics::CGDisplayCreateImageForRect(monitor.id, cg_rect)
 		.ok_or_else(|| eyre::eyre!("CGDisplayCreateImageForRect returned null"))?;
-	let image = rgba_image_from_cg_image(image.as_ref())
+	let image = rgba_image_from_cg_image_for_display(image.as_ref(), Some(monitor.id))
 		.wrap_err("failed to decode CGDisplay rect capture")?;
 
 	if image.width() == rect_px.width.max(1) && image.height() == rect_px.height.max(1) {
@@ -1067,7 +1080,7 @@ fn capture_monitor_region_with_core_graphics(
 
 	let full_image = objc2_core_graphics::CGDisplayCreateImage(monitor.id)
 		.ok_or_else(|| eyre::eyre!("CGDisplayCreateImage returned null"))?;
-	let full_image = rgba_image_from_cg_image(full_image.as_ref())
+	let full_image = rgba_image_from_cg_image_for_display(full_image.as_ref(), Some(monitor.id))
 		.wrap_err("failed to decode CGDisplay full-monitor capture")?;
 
 	crop_monitor_image_region(&full_image, rect_px)
@@ -1179,7 +1192,7 @@ fn capture_monitor_region_image_with_screenshot_manager(
 		CGSize::new(f64::from(rect_px.width) / sf, f64::from(rect_px.height) / sf),
 	);
 	let cg_image = capture_screenshot_cg_image(cg_rect)?;
-	let image = rgba_image_from_cg_image(cg_image.as_ref())?;
+	let image = rgba_image_from_cg_image_for_display(cg_image.as_ref(), Some(monitor.id))?;
 
 	// ScreenCaptureKit may round point-space captures by one pixel at non-integer scale edges.
 	// Clamp or extend back to the requested region so the stitcher sees stable dimensions.
