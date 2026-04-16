@@ -54,6 +54,10 @@ impl OverlaySession {
 		self.prime_startup_live_stream_nonblocking(startup_monitor);
 
 		let startup_stream_prime_ms = startup_stream_prime_started_at.elapsed().as_millis();
+		#[cfg(target_os = "macos")]
+		let startup_live_bg_seed_ms = self.seed_startup_live_surface_bg(startup_monitor);
+		#[cfg(not(target_os = "macos"))]
+		let startup_live_bg_seed_ms = 0;
 		let gpu_init_started_at = Instant::now();
 
 		if self.gpu.is_none() {
@@ -85,6 +89,8 @@ impl OverlaySession {
 
 		self.session_active = true;
 
+		#[cfg(target_os = "macos")]
+		self.ensure_native_capture_shells()?;
 		self.request_redraw_all();
 
 		let request_redraw_ms = request_redraw_started_at.elapsed().as_millis();
@@ -99,6 +105,7 @@ impl OverlaySession {
 			worker_setup_ms,
 			monitor_enum_ms,
 			startup_stream_prime_ms,
+			startup_live_bg_seed_ms,
 			gpu_init_ms,
 			overlay_windows_ms = window_creation.overlay_windows_ms,
 			hud_window_ms = window_creation.hud_window_ms,
@@ -181,6 +188,38 @@ impl OverlaySession {
 		);
 
 		Ok(())
+	}
+
+	#[cfg(target_os = "macos")]
+	fn seed_startup_live_surface_bg(&mut self, startup_monitor: Option<MonitorRect>) -> u128 {
+		let started_at = Instant::now();
+		let Some(monitor) = startup_monitor else {
+			return 0;
+		};
+		let mut backend = backend::default_capture_backend_with_self_capture_exception_window_ids(
+			self.config.self_capture_exception_window_ids.clone(),
+		);
+
+		match backend.capture_monitor(monitor) {
+			Ok(image) => {
+				self.state.live_bg_monitor = Some(monitor);
+				self.state.live_bg_image = Some(image);
+				self.state.live_bg_generation = self.state.live_bg_generation.wrapping_add(1);
+				#[cfg(target_os = "macos")]
+				{
+					self.last_live_surface_bg_snapshot_at = None;
+				}
+			},
+			Err(err) => {
+				tracing::debug!(
+					monitor_id = monitor.id,
+					error = ?err,
+					"Failed to seed startup live surface background."
+				);
+			},
+		}
+
+		started_at.elapsed().as_millis()
 	}
 
 	fn setup_startup_worker(&mut self) -> u128 {
@@ -469,6 +508,8 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		let startup_aux_window_waker = self.startup_aux_window_waker.clone();
 		#[cfg(target_os = "macos")]
+		let native_capture_input_waker = self.native_capture_input_waker.clone();
+		#[cfg(target_os = "macos")]
 		let external_scroll_input_drain_reader =
 			self.scroll_capture.external_scroll_input_drain_reader.clone();
 
@@ -484,6 +525,7 @@ impl OverlaySession {
 			self.scroll_capture_starting_hook = scroll_capture_starting_hook;
 			self.scroll_capture_started_hook = scroll_capture_started_hook;
 			self.startup_aux_window_waker = startup_aux_window_waker;
+			self.native_capture_input_waker = native_capture_input_waker;
 			self.pending_startup_aux_live_stream_filter_upgrade = false;
 			self.scroll_capture.external_scroll_input_drain_reader =
 				external_scroll_input_drain_reader;
@@ -733,20 +775,6 @@ impl OverlaySession {
 	}
 
 	fn discard_prewarmed_startup_resources(&mut self) {
-		#[cfg(target_os = "macos")]
-		{
-			for window in self.windows.values() {
-				overlay::macos_clear_capture_window_focus_policy(window.window.as_ref());
-			}
-
-			if let Some(hud_window) = self.hud_window.as_ref() {
-				overlay::macos_clear_capture_window_focus_policy(hud_window.window.as_ref());
-			}
-			if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-				overlay::macos_clear_capture_window_focus_policy(toolbar_window.window.as_ref());
-			}
-		}
-
 		self.windows.clear();
 
 		self.hud_window = None;

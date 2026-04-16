@@ -716,7 +716,7 @@ impl WindowRenderer {
 		selection_flow_enabled: bool,
 		selection_flow_stroke_width_px: f32,
 		pending_frozen_display_handoff: bool,
-		needs_frozen_surface_bg: bool,
+		needs_surface_bg: bool,
 		show_frozen_capture_affordance: bool,
 		frozen_selection_resize_handles_enabled: bool,
 		frozen_capture_source: FrozenCaptureSource,
@@ -809,7 +809,7 @@ impl WindowRenderer {
 			}
 			if matches!(state.mode, OverlayMode::Frozen)
 				&& !pending_frozen_display_handoff
-				&& (needs_frozen_surface_bg || show_frozen_capture_affordance)
+				&& (needs_surface_bg || show_frozen_capture_affordance)
 				&& state.monitor == Some(monitor)
 				&& state.frozen_capture_rect.is_some()
 			{
@@ -1417,6 +1417,7 @@ impl WindowRenderer {
 		selection_flow_enabled: bool,
 		selection_flow_stroke_width_px: f32,
 		allow_frozen_surface_bg: bool,
+		allow_live_surface_bg: bool,
 		pending_frozen_display_handoff: bool,
 		pending_frozen_display_handoff_monitor: Option<MonitorRect>,
 		show_frozen_capture_affordance: bool,
@@ -1456,6 +1457,7 @@ impl WindowRenderer {
 			monitor,
 			draw_hud,
 			allow_frozen_surface_bg,
+			allow_live_surface_bg,
 			toolbar_active,
 			show_hud_blur,
 			hud_opaque,
@@ -1488,7 +1490,7 @@ impl WindowRenderer {
 			selection_flow_enabled,
 			selection_flow_stroke_width_px,
 			pending_frozen_display_handoff,
-			hud_cfg.needs_frozen_surface_bg,
+			hud_cfg.needs_surface_bg,
 			show_frozen_capture_affordance,
 			frozen_selection_resize_handles_enabled,
 			frozen_capture_source,
@@ -1533,10 +1535,6 @@ impl WindowRenderer {
 
 		phase_timings.tessellate = tessellate_started_at.elapsed();
 
-		let draw_frozen_bg = hud_cfg.needs_frozen_surface_bg
-			&& state.monitor == Some(monitor)
-			&& state.frozen_display_surface_image().is_some();
-
 		self.finish_window_renderer_draw(
 			gpu,
 			state,
@@ -1547,10 +1545,26 @@ impl WindowRenderer {
 			draw_started_at,
 			&mut phase_timings,
 			paint_jobs,
-			draw_frozen_bg,
+			Self::should_draw_surface_bg(state, monitor, hud_cfg.needs_surface_bg),
 			hud_shader_blur_active,
 			toolbar_active,
 		)
+	}
+
+	fn should_draw_surface_bg(
+		state: &OverlayState,
+		monitor: MonitorRect,
+		needs_surface_bg: bool,
+	) -> bool {
+		needs_surface_bg
+			&& match state.mode {
+				OverlayMode::Live => {
+					state.live_bg_monitor == Some(monitor) && state.live_bg_image.is_some()
+				},
+				OverlayMode::Frozen => {
+					state.monitor == Some(monitor) && state.frozen_display_surface_image().is_some()
+				},
+			}
 	}
 }
 

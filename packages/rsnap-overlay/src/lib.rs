@@ -29,6 +29,8 @@ mod deferred_text_recognition;
 #[cfg(target_os = "macos")]
 mod live_frame_stream_macos;
 #[cfg(target_os = "macos")]
+mod macos_color;
+#[cfg(target_os = "macos")]
 mod ocr_macos;
 mod overlay;
 mod png;
@@ -45,8 +47,8 @@ pub use crate::deferred_text_recognition::{
 	process_deferred_text_recognition_for_latest_capture,
 };
 pub use crate::overlay::{
-	AltActivationMode, HudAnchor, OutputNaming, OverlayConfig, OverlayControl, OverlayExit,
-	OverlaySession, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode,
+	AltActivationMode, FrozenGlobalHotkey, HudAnchor, OutputNaming, OverlayConfig, OverlayControl,
+	OverlayExit, OverlaySession, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode,
 };
 pub use crate::state::{
 	GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb, WindowHit,

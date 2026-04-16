@@ -70,6 +70,9 @@ Key paths:
 - `packages/rsnap-overlay/src/lib.rs`: public session-level surface exported to the app shell
 - `packages/rsnap-overlay/src/overlay.rs`: overlay root plus its focused runtime/rendering support
   modules
+- `packages/rsnap-overlay/src/overlay/macos_native_capture_shell_runtime.rs`: macOS-only passive
+  AppKit overlay/toolbar shells plus the dedicated key-focus shell bridge for text and scroll
+  interactions
 - `packages/rsnap-overlay/src/scroll_capture.rs`: scroll-capture session entry with focused
   support modules under `scroll_capture/`
 

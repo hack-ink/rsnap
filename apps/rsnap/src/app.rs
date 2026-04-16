@@ -17,7 +17,7 @@ use color_eyre::eyre::Result;
 #[cfg(target_os = "macos")]
 use global_hotkey::Error;
 #[cfg(target_os = "macos")]
-use global_hotkey::hotkey::Code;
+use global_hotkey::hotkey::{Code, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, hotkey::HotKey};
 #[cfg(target_os = "macos")]
 use objc2::rc::Retained;
@@ -41,6 +41,8 @@ use self::scroll_input_macos::SharedScrollInputState;
 use crate::permissions_macos;
 use crate::settings::AppSettings;
 use crate::settings_window::{SettingsWindow, SettingsWindowEntry};
+#[cfg(target_os = "macos")]
+use rsnap_overlay::FrozenGlobalHotkey;
 use rsnap_overlay::OverlaySession;
 
 pub(crate) enum UserEvent {
@@ -55,6 +57,8 @@ pub(crate) enum UserEvent {
 	OverlayScrollInput,
 	#[cfg(target_os = "macos")]
 	OverlayWorkerResponse,
+	#[cfg(target_os = "macos")]
+	OverlayNativeCaptureInput,
 }
 
 #[cfg(target_os = "macos")]
@@ -78,6 +82,28 @@ impl OverlayHotkeyRegistrationState {
 	}
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OverlayFrozenHotkeyBinding {
+	action: FrozenGlobalHotkey,
+	hotkey: HotKey,
+	hotkey_id: u32,
+	registration_state: OverlayHotkeyRegistrationState,
+	label: &'static str,
+}
+#[cfg(target_os = "macos")]
+impl OverlayFrozenHotkeyBinding {
+	fn new(action: FrozenGlobalHotkey, hotkey: HotKey, label: &'static str) -> Self {
+		Self {
+			action,
+			hotkey_id: hotkey.id(),
+			hotkey,
+			registration_state: OverlayHotkeyRegistrationState::Unregistered,
+			label,
+		}
+	}
+}
+
 struct App {
 	capture_hotkey: HotKey,
 	capture_hotkey_id: u32,
@@ -96,6 +122,8 @@ struct App {
 	overlay_loupe_hotkey_id: u32,
 	#[cfg(target_os = "macos")]
 	overlay_loupe_hotkey_registration_state: OverlayHotkeyRegistrationState,
+	#[cfg(target_os = "macos")]
+	overlay_frozen_hotkeys: Vec<OverlayFrozenHotkeyBinding>,
 	capture_hotkey_recording_suspended: bool,
 	tray_icon: Option<TrayIcon>,
 	#[cfg(target_os = "macos")]
@@ -128,6 +156,8 @@ struct App {
 	#[cfg(target_os = "macos")]
 	overlay_stream_event_pending: Arc<AtomicBool>,
 	#[cfg(target_os = "macos")]
+	overlay_native_capture_input_event_pending: Arc<AtomicBool>,
+	#[cfg(target_os = "macos")]
 	latest_deferred_ocr_generation: Arc<AtomicU64>,
 	#[cfg(target_os = "macos")]
 	pending_deferred_ocr_generation: Arc<AtomicU64>,
@@ -149,6 +179,37 @@ impl App {
 	#[cfg(target_os = "macos")]
 	fn overlay_loupe_hotkey() -> HotKey {
 		HotKey::new(None, Code::Tab)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn overlay_frozen_hotkeys() -> Vec<OverlayFrozenHotkeyBinding> {
+		vec![
+			OverlayFrozenHotkeyBinding::new(
+				FrozenGlobalHotkey::Copy,
+				HotKey::new(None, Code::Space),
+				"Space",
+			),
+			OverlayFrozenHotkeyBinding::new(
+				FrozenGlobalHotkey::AutoCenter,
+				HotKey::new(None, Code::KeyC),
+				"C",
+			),
+			OverlayFrozenHotkeyBinding::new(
+				FrozenGlobalHotkey::ToggleToolbar,
+				HotKey::new(None, Code::KeyH),
+				"H",
+			),
+			OverlayFrozenHotkeyBinding::new(
+				FrozenGlobalHotkey::StartScrollCapture,
+				HotKey::new(None, Code::KeyS),
+				"S",
+			),
+			OverlayFrozenHotkeyBinding::new(
+				FrozenGlobalHotkey::Save,
+				HotKey::new(Some(Modifiers::SUPER), Code::KeyS),
+				"Cmd+S",
+			),
+		]
 	}
 
 	#[allow(clippy::too_many_arguments)]
@@ -180,6 +241,8 @@ impl App {
 			overlay_loupe_hotkey_id: Self::overlay_loupe_hotkey().id(),
 			#[cfg(target_os = "macos")]
 			overlay_loupe_hotkey_registration_state: OverlayHotkeyRegistrationState::Unregistered,
+			#[cfg(target_os = "macos")]
+			overlay_frozen_hotkeys: Self::overlay_frozen_hotkeys(),
 			capture_hotkey_recording_suspended: false,
 			_hotkey_manager: hotkey_manager,
 			tray_icon: None,
@@ -212,6 +275,8 @@ impl App {
 			scroll_input_shared_state,
 			#[cfg(target_os = "macos")]
 			overlay_stream_event_pending: Arc::new(AtomicBool::new(false)),
+			#[cfg(target_os = "macos")]
+			overlay_native_capture_input_event_pending: Arc::new(AtomicBool::new(false)),
 			#[cfg(target_os = "macos")]
 			latest_deferred_ocr_generation: Arc::new(AtomicU64::new(0)),
 			#[cfg(target_os = "macos")]
@@ -312,6 +377,8 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	use crate::app::OverlayHotkeyRegistrationState;
 	use crate::app::{self, SettingsWindowEntry};
+	#[cfg(target_os = "macos")]
+	use rsnap_overlay::FrozenGlobalHotkey;
 
 	#[test]
 	fn startup_permission_check_uses_permissions_entry() {
@@ -350,6 +417,24 @@ mod tests {
 
 		assert_eq!(hotkey.key, Code::Tab);
 		assert_eq!(hotkey.mods, Modifiers::empty());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn overlay_frozen_hotkeys_cover_copy_center_toolbar_scroll_and_save() {
+		let bindings = app::App::overlay_frozen_hotkeys();
+
+		assert_eq!(bindings.len(), 5);
+		assert!(bindings.iter().any(|binding| {
+			binding.action == FrozenGlobalHotkey::Copy
+				&& binding.hotkey.key == Code::Space
+				&& binding.hotkey.mods == Modifiers::empty()
+		}));
+		assert!(bindings.iter().any(|binding| {
+			binding.action == FrozenGlobalHotkey::Save
+				&& binding.hotkey.key == Code::KeyS
+				&& binding.hotkey.mods == Modifiers::SUPER
+		}));
 	}
 
 	#[cfg(target_os = "macos")]

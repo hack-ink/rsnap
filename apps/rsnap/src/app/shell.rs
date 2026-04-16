@@ -256,6 +256,25 @@ impl App {
 
 			return;
 		}
+		#[cfg(target_os = "macos")]
+		if self.overlay_session.is_some()
+			&& let Some(binding) =
+				self.overlay_frozen_hotkeys.iter().find(|binding| binding.hotkey_id == event.id())
+		{
+			tracing::info!(
+				hotkey = binding.label,
+				action = ?binding.action,
+				"Capture frozen action requested from hotkey."
+			);
+
+			if let Some(session) = self.overlay_session.as_mut() {
+				let control = session.handle_global_frozen_hotkey(binding.action);
+
+				self.handle_overlay_control(control);
+			}
+
+			return;
+		}
 		if event.id() == self.capture_hotkey_id {
 			tracing::info!(
 				hotkey = %self.capture_key_label(),

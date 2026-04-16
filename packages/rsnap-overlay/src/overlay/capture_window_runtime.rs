@@ -24,6 +24,7 @@ impl OverlaySession {
 	pub(super) fn hide_capture_windows(&mut self) {
 		self.capture_windows_hidden = true;
 
+		let _ = self.sync_native_capture_shells();
 		let hide_overlay_windows = self.should_hide_overlay_windows_during_capture();
 
 		if hide_overlay_windows {
@@ -88,6 +89,10 @@ impl OverlaySession {
 		}
 
 		self.capture_windows_hidden = false;
+
+		#[cfg(target_os = "macos")]
+		let _ = self.sync_native_capture_shells();
+
 		#[cfg(target_os = "macos")]
 		{
 			for overlay_window in self.windows.values() {
@@ -181,8 +186,6 @@ impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	pub(super) fn destroy_live_only_aux_windows(&mut self) {
 		if let Some(loupe_window) = self.loupe_window.take() {
-			super::macos_clear_capture_window_focus_policy(loupe_window.window.as_ref());
-
 			self.remove_macos_hud_window_config_cache_entry(loupe_window.window.id());
 		}
 
