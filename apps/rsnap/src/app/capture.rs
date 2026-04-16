@@ -28,6 +28,8 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
 #[cfg(target_os = "macos")]
+use crate::app::OverlayFrozenHotkeyBinding;
+#[cfg(target_os = "macos")]
 use crate::app::OverlayHotkeyRegistrationState;
 #[cfg(target_os = "macos")]
 use crate::app::UserEvent;
@@ -196,6 +198,20 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn overlay_frozen_hotkey_spec(binding: &OverlayFrozenHotkeyBinding) -> OverlayHotkeySpec {
+		OverlayHotkeySpec {
+			hotkey: binding.hotkey,
+			hotkey_id: binding.hotkey_id,
+			hotkey_label: binding.label,
+			missing_manager_message: "Frozen overlay hotkeys are unavailable because the global hotkey manager is missing.",
+			register_failure_message: "Failed to register a frozen overlay hotkey.",
+			register_success_message: "Registered a frozen overlay hotkey.",
+			unregister_failure_message: "Failed to unregister a frozen overlay hotkey.",
+			unregister_success_message: "Unregistered a frozen overlay hotkey.",
+		}
+	}
+
+	#[cfg(target_os = "macos")]
 	fn register_overlay_cancel_hotkey(&mut self) {
 		let spec = self.overlay_cancel_hotkey_spec();
 
@@ -228,11 +244,36 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn register_overlay_frozen_hotkeys(&mut self) {
+		for index in 0..self.overlay_frozen_hotkeys.len() {
+			let binding = self.overlay_frozen_hotkeys[index];
+			let spec = Self::overlay_frozen_hotkey_spec(&binding);
+			let registration_state = self.register_overlay_hotkey(spec, binding.registration_state);
+
+			self.overlay_frozen_hotkeys[index].registration_state = registration_state;
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn unregister_overlay_frozen_hotkeys(&mut self) {
+		for index in 0..self.overlay_frozen_hotkeys.len() {
+			let binding = self.overlay_frozen_hotkeys[index];
+			let spec = Self::overlay_frozen_hotkey_spec(&binding);
+			let registration_state =
+				self.unregister_overlay_hotkey(spec, binding.registration_state);
+
+			self.overlay_frozen_hotkeys[index].registration_state = registration_state;
+		}
+	}
+
+	#[cfg(target_os = "macos")]
 	fn sync_overlay_hotkey_registrations(&mut self) {
 		let should_register_cancel =
 			self.overlay_session.as_ref().is_some_and(OverlaySession::wants_global_cancel_hotkey);
 		let should_register_loupe =
 			self.overlay_session.as_ref().is_some_and(OverlaySession::wants_global_loupe_hotkey);
+		let should_register_frozen =
+			self.overlay_session.as_ref().is_some_and(OverlaySession::wants_global_frozen_hotkeys);
 
 		if should_register_cancel {
 			self.register_overlay_cancel_hotkey();
@@ -243,6 +284,11 @@ impl App {
 			self.register_overlay_loupe_hotkey();
 		} else {
 			self.unregister_overlay_loupe_hotkey();
+		}
+		if should_register_frozen {
+			self.register_overlay_frozen_hotkeys();
+		} else {
+			self.unregister_overlay_frozen_hotkeys();
 		}
 	}
 
@@ -366,6 +412,7 @@ impl App {
 			self.overlay_session_prewarm_retry_not_before = None;
 			self.overlay_session_generation = self.overlay_session_generation.wrapping_add(1);
 
+			self.overlay_native_capture_input_event_pending.store(false, Ordering::Release);
 			self.pending_deferred_ocr_generation
 				.store(self.overlay_session_generation, Ordering::Release);
 		}
@@ -603,6 +650,22 @@ impl App {
 					let _ = overlay_proxy.send_event(UserEvent::OverlayWorkerResponse);
 				}
 			}));
+			overlay_session.set_native_capture_input_waker(Arc::new({
+				let overlay_proxy = self.overlay_proxy.clone();
+				let native_input_pending =
+					Arc::clone(&self.overlay_native_capture_input_event_pending);
+
+				move || {
+					if native_input_pending
+						.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+						.is_ok() && overlay_proxy
+						.send_event(UserEvent::OverlayNativeCaptureInput)
+						.is_err()
+					{
+						native_input_pending.store(false, Ordering::Release);
+					}
+				}
+			}));
 			overlay_session.set_external_scroll_input_drain_reader(Arc::new({
 				let shared_state = Arc::clone(&self.scroll_input_shared_state);
 
@@ -651,9 +714,12 @@ impl App {
 		};
 
 		#[cfg(target_os = "macos")]
+		self.overlay_native_capture_input_event_pending.store(false, Ordering::Release);
+		#[cfg(target_os = "macos")]
 		{
 			self.unregister_overlay_cancel_hotkey();
 			self.unregister_overlay_loupe_hotkey();
+			self.unregister_overlay_frozen_hotkeys();
 		}
 
 		#[cfg(target_os = "macos")]

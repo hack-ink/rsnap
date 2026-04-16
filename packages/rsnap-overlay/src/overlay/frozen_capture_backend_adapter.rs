@@ -126,6 +126,35 @@ impl OverlaySession {
 		})
 	}
 
+	fn frozen_capture_display_candidate_from_live_surface_bg(
+		&self,
+		monitor: MonitorRect,
+		cursor: Option<GlobalPoint>,
+		source: &'static str,
+		export_candidate: Option<(Arc<MonitorImageSnapshot>, u128)>,
+		captured_window_id: Option<u32>,
+	) -> Option<FrozenCaptureDisplayCandidate> {
+		let display_image = self
+			.state
+			.live_bg_image
+			.as_ref()
+			.filter(|_| self.state.live_bg_monitor == Some(monitor))
+			.cloned()?;
+		let (export_image, snapshot_age_ms) = match export_candidate {
+			Some((snapshot, age_ms)) => (Some(snapshot.image.as_ref().clone()), age_ms),
+			None => (None, 0),
+		};
+
+		Some(FrozenCaptureDisplayCandidate {
+			display_image,
+			export_image,
+			cursor,
+			source,
+			snapshot_age_ms,
+			captured_window_id,
+		})
+	}
+
 	fn apply_frozen_capture_display_candidate(
 		&mut self,
 		monitor: MonitorRect,
@@ -133,13 +162,16 @@ impl OverlaySession {
 	) {
 		let restore_hidden_capture_windows =
 			self.capture_windows_hidden && candidate.export_image.is_some();
+		let had_display_preview = self.frozen_preview_visible();
 
-		self.commit_frozen_preview(monitor, candidate.display_image, candidate.cursor);
-		self.note_frozen_transition_preview_committed(
-			monitor,
-			candidate.source,
-			Some(candidate.snapshot_age_ms),
-		);
+		if !had_display_preview {
+			self.commit_frozen_preview(monitor, candidate.display_image, candidate.cursor);
+			self.note_frozen_transition_preview_committed(
+				monitor,
+				candidate.source,
+				Some(candidate.snapshot_age_ms),
+			);
+		}
 
 		if let Some(export_image) = candidate.export_image {
 			self.set_frozen_capture_export_ready(monitor);
@@ -239,8 +271,43 @@ impl OverlaySession {
 			.live_sample_stream
 			.as_ref()
 			.and_then(|stream| stream.peek_latest_rgba_snapshot(monitor));
+		let can_finish_from_snapshot = self.snapshot_can_finish_frozen_capture(window_target);
 
-		if self.snapshot_can_finish_frozen_capture(window_target)
+		if let Some(display_candidate) = self.frozen_capture_display_candidate_from_live_surface_bg(
+			monitor,
+			cursor,
+			"live_surface_background_at_freeze_begin",
+			can_finish_from_snapshot
+				.then(|| self.usable_frozen_capture_snapshot(monitor, snapshot.clone()))
+				.flatten(),
+			can_finish_from_snapshot
+				.then(|| window_target.map(|target| target.window_id))
+				.flatten(),
+		) {
+			return FrozenCaptureBackendUpdate {
+				display_candidate: Some(display_candidate),
+				signal: if can_finish_from_snapshot
+					&& self.usable_frozen_capture_snapshot(monitor, snapshot.clone()).is_some()
+				{
+					FrozenCaptureBackendSignal::None
+				} else {
+					let arm_worker = window_target.is_some()
+						&& self.config.window_capture_alpha_mode
+							!= WindowCaptureAlphaMode::Background;
+
+					FrozenCaptureBackendSignal::Wait {
+						reason: if window_target.is_some() {
+							"waiting_for_export_authority"
+						} else {
+							"waiting_for_live_stream_snapshot"
+						},
+						arm_worker,
+					}
+				},
+			};
+		}
+
+		if can_finish_from_snapshot
 			&& let Some(display_candidate) = self.frozen_capture_display_candidate_from_snapshot(
 				monitor,
 				window_target,
@@ -510,8 +577,6 @@ impl OverlaySession {
 			self.update_cursor_state(monitor, cursor);
 		}
 
-		self.state.live_bg_monitor = None;
-		self.state.live_bg_image = None;
 		self.capture_windows_hidden = false;
 
 		let update = self.macos_begin_frozen_capture_backend_update(monitor, window_target, cursor);
@@ -522,6 +587,11 @@ impl OverlaySession {
 			.is_some();
 
 		self.apply_frozen_capture_backend_update(monitor, update);
+
+		if matches!(self.state.mode, OverlayMode::Frozen) {
+			self.state.live_bg_monitor = None;
+			self.state.live_bg_image = None;
+		}
 
 		finished
 	}

@@ -42,18 +42,27 @@ impl WindowRenderer {
 				);
 	}
 
+	#[allow(clippy::too_many_arguments)]
 	pub(in crate::overlay::rendering) fn resolve_hud_draw_config(
 		state: &OverlayState,
 		monitor: MonitorRect,
 		draw_hud: bool,
 		allow_frozen_surface_bg: bool,
+		allow_live_surface_bg: bool,
 		toolbar_active: bool,
 		show_hud_blur: bool,
 		hud_opaque: bool,
 	) -> HudDrawConfig {
 		let can_draw_hud = draw_hud && Self::should_draw_hud(state, monitor);
-		let needs_frozen_surface_bg =
-			allow_frozen_surface_bg && !draw_hud && matches!(state.mode, OverlayMode::Frozen);
+		let needs_surface_bg = !draw_hud
+			&& match state.mode {
+				OverlayMode::Frozen => allow_frozen_surface_bg,
+				OverlayMode::Live => {
+					allow_live_surface_bg
+						&& state.live_bg_monitor == Some(monitor)
+						&& state.live_bg_image.is_some()
+				},
+			};
 		// `show_hud_blur` is a UX toggle for "glass mode".
 		// - On macOS: HUD uses native compositor blur; toolbar uses native HUD windowing, so shader
 		//   blur stays tied to monitor-aligned overlay windows.
@@ -64,12 +73,7 @@ impl WindowRenderer {
 		let needs_shader_blur_bg =
 			toolbar_glass_active || (hud_glass_active && use_shader_blur_for_hud);
 
-		HudDrawConfig {
-			can_draw_hud,
-			needs_frozen_surface_bg,
-			needs_shader_blur_bg,
-			hud_glass_active,
-		}
+		HudDrawConfig { can_draw_hud, needs_surface_bg, needs_shader_blur_bg, hud_glass_active }
 	}
 
 	pub(in crate::overlay::rendering) fn sync_or_clear_hud_bg(
@@ -79,7 +83,7 @@ impl WindowRenderer {
 		monitor: MonitorRect,
 		hud_cfg: HudDrawConfig,
 	) -> Result<()> {
-		if hud_cfg.needs_frozen_surface_bg || hud_cfg.needs_shader_blur_bg {
+		if hud_cfg.needs_surface_bg || hud_cfg.needs_shader_blur_bg {
 			return self.sync_hud_bg(gpu, state, monitor);
 		}
 
@@ -133,7 +137,7 @@ impl WindowRenderer {
 			&& !hud_opaque;
 		let hud_cfg = HudDrawConfig {
 			can_draw_hud: false,
-			needs_frozen_surface_bg: false,
+			needs_surface_bg: false,
 			needs_shader_blur_bg: shader_blur_active,
 			hud_glass_active: shader_blur_active,
 		};
@@ -391,12 +395,12 @@ impl WindowRenderer {
 		state: &OverlayState,
 		monitor: MonitorRect,
 	) -> Result<()> {
-		let (target_generation, target_image) = match state.mode {
+		let (target_generation, target_image, live_surface_bg) = match state.mode {
 			OverlayMode::Live if state.live_bg_monitor == Some(monitor) => {
-				(state.live_bg_generation, state.live_bg_image.as_ref())
+				(state.live_bg_generation, state.live_bg_image.as_ref(), true)
 			},
 			OverlayMode::Frozen if state.monitor == Some(monitor) => {
-				(state.frozen_generation, state.frozen_display_surface_image())
+				(state.frozen_generation, state.frozen_display_surface_image(), false)
 			},
 			OverlayMode::Live => {
 				self.hud_bg = None;
@@ -429,7 +433,26 @@ impl WindowRenderer {
 			return Ok(());
 		};
 
+		if live_surface_bg {
+			return self.render_live_bg_to_texture(gpu, image, target_generation);
+		}
+
 		self.render_frozen_bg_to_texture(gpu, image, target_generation)
+	}
+
+	pub(in crate::overlay::rendering) fn render_live_bg_to_texture(
+		&mut self,
+		gpu: &GpuContext,
+		image: &RgbaImage,
+		target_generation: u64,
+	) -> Result<()> {
+		self.render_hud_bg_to_texture(
+			gpu,
+			image,
+			target_generation,
+			gpu.device.limits().max_texture_dimension_2d,
+			false,
+		)
 	}
 
 	pub(in crate::overlay::rendering) fn render_frozen_bg_to_texture(
@@ -438,13 +461,27 @@ impl WindowRenderer {
 		image: &RgbaImage,
 		target_generation: u64,
 	) -> Result<()> {
-		let upload_image = image_helpers::downscale_for_gpu_upload(
+		self.render_hud_bg_to_texture(
+			gpu,
 			image,
+			target_generation,
 			gpu.device.limits().max_texture_dimension_2d,
-		);
+			true,
+		)
+	}
+
+	fn render_hud_bg_to_texture(
+		&mut self,
+		gpu: &GpuContext,
+		image: &RgbaImage,
+		target_generation: u64,
+		max_side: u32,
+		generate_mipmaps: bool,
+	) -> Result<()> {
+		let upload_image = image_helpers::downscale_for_gpu_upload(image, max_side);
 		let (width, height) = upload_image.dimensions();
-		let max_side = gpu.device.limits().max_texture_dimension_2d;
-		let mip_level_count = Self::mip_level_count(width, height).min(10);
+		let mip_level_count =
+			if generate_mipmaps { Self::mip_level_count(width, height).min(10) } else { 1 };
 
 		debug_assert!(width <= max_side && height <= max_side);
 
@@ -496,7 +533,10 @@ impl WindowRenderer {
 			},
 			wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
 		);
-		self.generate_mipmaps(gpu, &texture, mip_level_count);
+
+		if generate_mipmaps {
+			self.generate_mipmaps(gpu, &texture, mip_level_count);
+		}
 
 		let view = texture.create_view(&TextureViewDescriptor::default());
 		let hud_blur_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -567,4 +607,86 @@ impl HudBlurUniformRaw {
 pub(in crate::overlay) struct HudPillGeometry {
 	pub(in crate::overlay) rect: Rect,
 	pub(in crate::overlay) radius_points: f32,
+}
+
+#[cfg(test)]
+mod tests {
+	#[cfg(target_os = "macos")]
+	use image::{Rgba, RgbaImage};
+
+	#[cfg(target_os = "macos")]
+	use crate::overlay::WindowRenderer;
+	#[cfg(target_os = "macos")]
+	use crate::state::{GlobalPoint, MonitorRect, OverlayMode, OverlayState};
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn resolve_hud_draw_config_uses_surface_bg_for_live_cached_monitor_image() {
+		let monitor = MonitorRect {
+			id: 7,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_440,
+			height: 900,
+			scale_factor_x1000: 2_000,
+		};
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Live;
+		state.live_bg_monitor = Some(monitor);
+		state.live_bg_image = Some(RgbaImage::from_pixel(2, 2, Rgba([0, 0, 0, 255])));
+
+		let cfg = WindowRenderer::resolve_hud_draw_config(
+			&state, monitor, false, false, true, false, false, false,
+		);
+
+		assert!(cfg.needs_surface_bg);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn resolve_hud_draw_config_skips_surface_bg_when_live_overlay_surface_is_disallowed() {
+		let monitor = MonitorRect {
+			id: 7,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_440,
+			height: 900,
+			scale_factor_x1000: 2_000,
+		};
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Live;
+		state.live_bg_monitor = Some(monitor);
+		state.live_bg_image = Some(RgbaImage::from_pixel(2, 2, Rgba([0, 0, 0, 255])));
+
+		let cfg = WindowRenderer::resolve_hud_draw_config(
+			&state, monitor, false, false, false, false, false, false,
+		);
+
+		assert!(!cfg.needs_surface_bg);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn resolve_hud_draw_config_skips_surface_bg_when_live_hud_is_visible() {
+		let monitor = MonitorRect {
+			id: 7,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_440,
+			height: 900,
+			scale_factor_x1000: 2_000,
+		};
+		let mut state = OverlayState::new();
+
+		state.mode = OverlayMode::Live;
+		state.live_bg_monitor = Some(monitor);
+		state.live_bg_image = Some(RgbaImage::from_pixel(2, 2, Rgba([0, 0, 0, 255])));
+		state.cursor = Some(GlobalPoint::new(10, 10));
+
+		let cfg = WindowRenderer::resolve_hud_draw_config(
+			&state, monitor, true, false, true, false, false, false,
+		);
+
+		assert!(cfg.can_draw_hud);
+		assert!(!cfg.needs_surface_bg);
+	}
 }

@@ -752,7 +752,7 @@ fn frozen_selection_drag_defers_pending_toolbar_window_move() {
 }
 
 #[test]
-fn frozen_selection_drag_skips_toolbar_focus_even_before_first_show() {
+fn frozen_selection_drag_keeps_toolbar_show_unfocused_even_before_first_show() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
 	let mut session = OverlaySession::new();
@@ -767,7 +767,7 @@ fn frozen_selection_drag_skips_toolbar_focus_even_before_first_show() {
 
 	assert!(!session.toolbar_window_visible);
 	assert!(!session.skip_toolbar_focus_on_next_show);
-	assert!(session.should_focus_frozen_toolbar_window_on_show());
+	assert!(!session.should_focus_frozen_toolbar_window_on_show());
 	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
 	assert!(session.skip_toolbar_focus_on_next_show);
 	assert!(!session.should_focus_frozen_toolbar_window_on_show());

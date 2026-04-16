@@ -171,7 +171,7 @@ pub(super) struct FrozenSelectionDragCursorMoveTiming {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct HudDrawConfig {
 	pub(super) can_draw_hud: bool,
-	pub(super) needs_frozen_surface_bg: bool,
+	pub(super) needs_surface_bg: bool,
 	pub(super) needs_shader_blur_bg: bool,
 	pub(super) hud_glass_active: bool,
 }

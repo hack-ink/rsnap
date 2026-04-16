@@ -8,8 +8,8 @@ use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::{
-	FrozenCaptureSource, Key, KeyEvent, MonitorRect, NamedKey, OverlayControl, OverlayMode,
-	OverlaySession, PngAction, Pos2, Rect, SCROLL_CAPTURE_INPUT_FRESHNESS,
+	FrozenCaptureSource, Key, MonitorRect, NamedKey, OverlayControl, OverlayKeyboardInputEvent,
+	OverlayMode, OverlaySession, PngAction, Pos2, Rect, SCROLL_CAPTURE_INPUT_FRESHNESS,
 	SCROLL_CAPTURE_SAMPLE_INTERVAL, ScrollDirection, ScrollObserveOutcome, Vec2, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
@@ -122,7 +122,10 @@ impl OverlaySession {
 		self.request_redraw_all();
 	}
 
-	pub(super) fn handle_scroll_capture_key_event(&mut self, event: &KeyEvent) -> OverlayControl {
+	pub(super) fn handle_scroll_capture_key_event(
+		&mut self,
+		event: &OverlayKeyboardInputEvent,
+	) -> OverlayControl {
 		match &event.logical_key {
 			Key::Named(NamedKey::Escape) => self.cancel_overlay("scroll_capture_escape_key"),
 			Key::Named(NamedKey::Space) => {
@@ -554,24 +557,10 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn focus_scroll_keyboard_window(&self) {
+	fn focus_scroll_keyboard_window(&mut self) {
 		super::macos_activate_app();
 
-		let target_window = if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-			Some(toolbar_window.window.as_ref())
-		} else if let Some(preview_window) = self.scroll_preview_window.as_ref() {
-			Some(preview_window.window.as_ref())
-		} else {
-			self.windows
-				.values()
-				.find(|overlay_window| Some(overlay_window.monitor) == self.scroll_capture.monitor)
-				.map(|overlay_window| overlay_window.window.as_ref())
-		};
-		let Some(target_window) = target_window else {
-			return;
-		};
-
-		super::macos_make_window_key(target_window);
+		let _ = self.sync_native_capture_shells();
 	}
 
 	pub(super) fn update_scroll_toolbar_default_position(&mut self, monitor: MonitorRect) {

@@ -47,3 +47,5 @@ Then keep the body descriptive:
   directories
 - `docs/reference/live-sampling.md` for the stream-first live RGB and loupe sampling path
 - `docs/reference/window-hit-testing.md` for live-mode hovered-window targeting strategy
+- `docs/reference/macos-native-capture-window-layer.md` for the passive AppKit shell and
+  explicit key-focus shell boundary on macOS

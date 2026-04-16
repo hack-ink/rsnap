@@ -38,6 +38,7 @@ use objc2_screen_capture_kit::{
 	SCStreamConfiguration, SCStreamDelegate, SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
+use crate::macos_color;
 use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb};
 
 objc2::define_class!(
@@ -423,7 +424,8 @@ impl MacLiveFrameStream {
 			return None;
 		};
 		let (width_px, height_px) = pixel_buffer_size_px(&frame.pixel_buffer)?;
-		let image = rgba_image_from_pixel_buffer(&frame.pixel_buffer, width_px, height_px)?;
+		let image =
+			rgba_image_from_pixel_buffer(&frame.pixel_buffer, width_px, height_px, monitor.id)?;
 
 		Some(Arc::new(MonitorImageSnapshot {
 			captured_at: frame.captured_at,
@@ -1749,7 +1751,8 @@ fn reply_with_latest_rgba_snapshot(
 	let snapshot = state.as_ref().and_then(|stream_state| {
 		let frame = stream_state.output.latest_frame()?;
 		let (width_px, height_px) = pixel_buffer_size_px(&frame.pixel_buffer)?;
-		let image = rgba_image_from_pixel_buffer(&frame.pixel_buffer, width_px, height_px)?;
+		let image =
+			rgba_image_from_pixel_buffer(&frame.pixel_buffer, width_px, height_px, monitor.id)?;
 
 		Some(Arc::new(MonitorImageSnapshot {
 			captured_at: frame.captured_at,
@@ -3032,7 +3035,17 @@ fn rgba_image_from_pixel_buffer(
 	pixel_buffer: &CFRetained<CVPixelBuffer>,
 	width_px: u32,
 	height_px: u32,
+	display_id: u32,
 ) -> Option<RgbaImage> {
+	if let Some(image) = macos_color::rgba_image_from_pixel_buffer_color_managed(
+		pixel_buffer,
+		width_px,
+		height_px,
+		Some(display_id),
+	) {
+		return Some(image);
+	}
+
 	let lock_result =
 		unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
 
