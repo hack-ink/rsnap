@@ -518,6 +518,7 @@ impl App {
 
 	#[cfg(target_os = "macos")]
 	fn reset_capture_start_after_failure(&mut self) {
+		self.reset_overlay_native_capture_input_dispatch();
 		self.pending_deferred_ocr_generation.store(0, Ordering::Release);
 		self.scroll_input_shared_state.set_enabled(false);
 		self.scroll_input_shared_state.set_event_waker(None);
@@ -635,6 +636,7 @@ impl App {
 			let reset_started_at = Instant::now();
 
 			self.finish_coalesced_overlay_stream_frame_send();
+			self.reset_overlay_native_capture_input_dispatch();
 			self.scroll_input_shared_state.clear();
 
 			reset_started_at.elapsed().as_millis()
@@ -736,6 +738,7 @@ impl App {
 		#[cfg(target_os = "macos")]
 		{
 			self.teardown_overlay_capture_host();
+			self.reset_overlay_native_capture_input_dispatch();
 			self.unregister_overlay_cancel_hotkey();
 			self.unregister_overlay_loupe_hotkey();
 			self.unregister_overlay_frozen_hotkeys();
