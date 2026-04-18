@@ -86,6 +86,7 @@ impl OverlaySession {
 		let request_redraw_started_at = Instant::now();
 
 		self.session_active = true;
+
 		self.request_redraw_all();
 
 		let request_redraw_ms = request_redraw_started_at.elapsed().as_millis();
