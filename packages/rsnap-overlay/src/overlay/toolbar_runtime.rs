@@ -45,10 +45,6 @@ impl OverlaySession {
 		} else {
 			self.last_toolbar_window_move_at = Instant::now();
 		}
-
-		#[cfg(target_os = "macos")]
-		let _ = self.sync_native_capture_shells();
-
 		if changed {
 			self.request_redraw_toolbar_window();
 		}
@@ -299,9 +295,6 @@ impl OverlaySession {
 			let _ = self.update_toolbar_outer_position(drag_monitor, desired_local);
 
 			self.force_apply_pending_toolbar_window_move();
-
-			#[cfg(target_os = "macos")]
-			let _ = self.sync_native_capture_shells();
 		}
 		#[cfg(target_os = "macos")]
 		if !manual_toolbar_drag && self.toolbar_state.dragging {
@@ -511,9 +504,6 @@ impl OverlaySession {
 		}
 		self.toolbar_window_warmup_redraws_remaining = 0;
 		self.last_present_at = Instant::now();
-
-		#[cfg(target_os = "macos")]
-		let _ = self.sync_native_capture_shells();
 	}
 
 	pub(super) fn draw_toolbar_window_frame(
@@ -638,16 +628,6 @@ impl OverlaySession {
 			self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
 			toolbar_became_visible = true;
 		}
-		#[cfg(target_os = "macos")]
-		if toolbar_became_visible && self.preserve_frontmost_on_next_toolbar_show {
-			self.preserve_frontmost_on_next_toolbar_show = false;
-
-			self.restore_recorded_frontmost_application_for_focus_preservation(
-				"toolbar_first_show",
-			);
-		}
-
-		let _ = self.sync_native_capture_shells();
 
 		Some(toolbar_became_visible)
 	}
