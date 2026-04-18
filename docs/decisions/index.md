@@ -43,6 +43,8 @@ Then keep the body decision-oriented:
 
 ## Current decision records
 
+- `docs/decisions/native-host-rust-core-reset.md` for the accepted architecture reset that makes
+  native hosts own OS semantics and Rust own cross-platform product semantics
 - `docs/decisions/annotation-pen-style.md` for the pen-tool tradeoff that prioritizes polished
   screenshot annotation over faithful pointer-path reproduction
 - `docs/decisions/frozen-toolbar-anchor.md` for the stable-anchor layout choice that prevents
