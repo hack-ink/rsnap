@@ -3,7 +3,7 @@
 Purpose: Route agents to the smallest correct document set for the current task.
 
 Audience: All documentation in this repository is written for AI agents and LLM workflows.
-The split below is by question type, not by human-versus-agent audience.
+The active split below is by question type, not by human-versus-agent audience.
 
 ## Read order
 
@@ -12,20 +12,28 @@ The split below is by question type, not by human-versus-agent audience.
 - Then choose one primary lane:
   - `docs/spec/index.md` when the question is "what must be true?"
   - `docs/runbook/index.md` when the question is "which sequence should I execute?"
-  - `docs/reference/index.md` when the question is "how is it currently organized or implemented?"
+  - `docs/reference/index.md` when the question is "how is it currently organized, or what is the
+    current target architecture?"
   - `docs/decisions/index.md` when the question is "why was this tradeoff accepted?"
 
 ## Routing matrix
 
 - Need contracts, invariants, schemas, enums, state machines, or required behavior ->
   `docs/spec/`
+- Need the normative host/core ownership boundary ->
+  `docs/spec/platform-host-boundary.md`
+- Need the product-level capture contract independent from implementation history ->
+  `docs/spec/capture-session.md`
 - Need runbooks, migrations, validation steps, troubleshooting, or operational sequences ->
   `docs/runbook/`
-- Need current implementation shape, crate ownership, directory layout, or technical context that
-  is descriptive rather than normative -> `docs/reference/`
-- Need to know where code, assets, scripts, or docs live, or which crate owns a change ->
+- Need the step-by-step execution sequence for a host/core reset slice ->
+  `docs/runbook/architecture-reset-implementation.md`
+- Need the active architecture-reset target and migration posture ->
+  `docs/reference/host-core-reset.md`
+- Need current repository layout or crate ownership notes ->
   `docs/reference/workspace-layout.md`
-- Need durable rationale for an accepted tradeoff -> `docs/decisions/`
+- Need durable rationale for the architecture reset ->
+  `docs/decisions/native-host-rust-core-reset.md`
 - Need repo task names or automation entrypoints -> `Makefile.toml`
 - Need documentation placement or authoring rules -> `docs/policy.md`
 
@@ -38,3 +46,4 @@ The split below is by question type, not by human-versus-agent audience.
 - Keep links explicit and stable.
 - Let structure emerge from real topics. Do not create empty folders, empty indexes, or
   naming schemes that are stricter than the current corpus needs.
+- Historical documents must say so clearly and must stay outside the default route for new work.

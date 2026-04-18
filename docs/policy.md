@@ -4,7 +4,7 @@ Purpose: Define how agent-facing documentation is organized, updated, and kept c
 across this repository.
 
 Audience: All documentation under `docs/` is written for AI agents and LLM workflows.
-The split between `spec`, `runbook`, `reference`, and `decisions` is by task shape, not by
+The active split between `spec`, `runbook`, `reference`, and `decisions` is by task shape, not by
 reader type.
 
 ## Principles
@@ -14,6 +14,7 @@ reader type.
 - Separate normative truth, execution steps, descriptive current-state reference, and durable
   design rationale.
 - Prefer explicit section labels and stable links over prose-heavy narrative.
+- Remove superseded historical material from the active docs tree.
 - Let structure emerge from real topics. Avoid premature folder taxonomies.
 
 ## Document classes
@@ -33,6 +34,8 @@ reader type.
   defining correctness, it belongs in `docs/reference/`.
 - If a document records why a durable tradeoff was accepted, which alternatives were considered,
   and what consequences follow from that choice, it belongs in `docs/decisions/`.
+- If a document becomes historical-only and no longer helps execute current work, remove it from
+  `docs/` instead of keeping it in the active routing surface.
 - Do not duplicate the same authoritative content across documents. Link to the source
   of truth instead.
 - A runbook may summarize why a step exists, but normative statements still live in the
@@ -115,6 +118,8 @@ When answering a repository question:
 - Procedure change: update the relevant runbook.
 - Layout, ownership, or current-implementation explanation change: update the relevant reference.
 - Durable accepted tradeoff change: add or update the relevant decision record.
+- Historical or supporting context that should not remain authoritative: remove it from `docs/`
+  instead of leaving it available as a default planning input.
 - If a change touches both truth and procedure, update both documents and keep their
   boundary explicit.
 - If a change touches truth plus descriptive context, update both the spec and the reference.

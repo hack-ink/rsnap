@@ -1,240 +1,174 @@
 # rsnap Capture Session Contract
 
-Purpose: Define the current normative capture-session contract for rsnap capture flow, HUD
-behavior, and macOS scroll capture.
+Purpose: Define the product-level normative contract for rsnap capture flow, Frozen-mode
+behavior, export readiness, and macOS-first scroll capture.
 
 Status: normative
 
 Read this when: You are implementing, reviewing, or validating capture behavior, live-mode
-feedback, export flow, or the macOS scroll-capture path.
+feedback, export flow, or scroll-capture behavior.
 
-Not this document: Procedural runbooks, troubleshooting steps, or descriptive implementation
-notes. Use `docs/runbook/` for procedures and `docs/reference/` for current implementation
-context.
+Not this document: Platform window ownership, native host implementation strategy, or historical
+macOS shell design. Use `docs/spec/platform-host-boundary.md` for the host/core boundary,
+`docs/reference/host-core-reset.md` for active migration context, and `docs/reference/` for
+descriptive implementation notes.
 
 Defines:
 - capture-session entry, live-mode, frozen-mode, and export invariants
-- hovered-window, region-selection, and fullscreen fallback behavior
-- the current macOS scroll-capture contract
+- the display-first Frozen contract
+- the distinction between display readiness and export readiness
+- the current macOS-first scroll-capture contract
 - the presence of Frozen-mode annotation state in session output
 - the existence of a separate Frozen-toolbar layout contract for primary-toolbar anchoring
 
-This repository contains a pure-Rust screenshot prototype targeting macOS first, with a
-cross-platform architecture.
+This repository currently ships macOS-first, but this contract is intentionally written at the
+product level rather than binding itself to a particular window toolkit or shell structure.
 
-## Scope and current behavior
+## Architecture posture
 
-- Overlay starts from the global capture hotkey and runs a fullscreen, non-interactive
-  capture layer per monitor.
-- Live mode shows HUD widgets near the cursor that track pointer movement.
-- Click-drag on the live overlay selects a rectangular region on the monitor under
-  the cursor, then freezes that region.
-- A single left click selects the window under the cursor on the current monitor;
-  if no window is detected, it falls back to freezing that monitor fullscreen.
-- Hovering over a window in live mode shows a glowing border that tracks the target
-  window.
-- On macOS, live drag/window-click entry into Frozen mode must restore the pre-capture
-  target after the selection completes instead of leaving rsnap focused, and exiting capture
-  must restore the originally captured frontmost application.
-- `Space` copies the frozen PNG of the selected region/window/fullscreen to clipboard.
-- On macOS, Frozen mode may recognize text from the current frozen capture and copy the recognized text to the clipboard.
-- Cmd+S (macOS) / Ctrl+S saves the frozen PNG to disk.
-- `Esc` cancels capture.
-- In Frozen mode, the toolbar remains part of the floating HUD set. The live loupe is
-  hidden after freeze and may be recreated only when a later live-mode transition needs it.
-- In Frozen mode, a dragged-region capture may be repositioned by dragging inside the
-  bright selected area; width and height remain fixed and the moved rect stays on the
-  current monitor.
-- In Frozen mode, scroll capture follows the active macOS scroll-capture contract in Goal 9.
-  Older image-only resume heuristics are out of spec.
+- rsnap product behavior must remain valid independently from any specific capture-window
+  implementation strategy.
+- Platform-native ownership of windows, focus, activation, cursor, IME, permissions, clipboard,
+  save panels, OCR, and native capture capabilities is governed by
+  `docs/spec/platform-host-boundary.md`.
+- Superseded implementation details such as passive AppKit shells, dedicated key-focus shells, or
+  visible `winit` capture-window ownership are not part of this contract.
 
 ## Required behavior
 
 1. Menubar-only app (no Dock icon) on macOS.
-2. Global hotkey starts capture session (default `Alt+X`, macOS: Option+X) and can be customized from Settings.
-3. When the capture session overlay is visible, underlying desktop content MUST NOT be
-   interactive.
-4. The overlay background should be transparent and non-dimming by default.
-4a. On macOS, rsnap overlay, HUD, loupe, frozen toolbar, and scroll preview windows MUST remain
-    externally capturable by system screenshot and screen-recording tools. Internal self-capture
-    correctness comes from rsnap's own exclusion filters and freeze handoff logic, not window
-    content protection.
-4b. On macOS, live overlay pointer input and frozen-toolbar pointer input MUST be handled through
-    passive AppKit-owned shells so the pointer path does not require capture windows to become
-    `key`/`main` windows.
-4c. On macOS, explicit keyboard ownership during capture MUST be scoped to a dedicated key-focus
-    shell that is activated only for Frozen text editing and scroll capture. Ordinary live
-    selection and frozen pointer interaction MUST NOT rely on capture windows becoming key.
-5. In live mode, the overlay MUST show a HUD near the cursor with:
-   - global cursor coordinates `x,y`
-   - pixel color `rgb(r,g,b)` under the cursor
-6. The first prototype capture flow is:
-   - Hotkey -> live transparent overlay
-   - Left click + drag -> freeze a cropped region on the cursor monitor
-   - Left click (without drag) -> hit-test window under the cursor on the same monitor and
-     freeze that window bounds; fallback to fullscreen of the current monitor if no window is hit
-   - `Space` -> copy the frozen cropped PNG (region/window/fullscreen) to the system clipboard, then exit
-   - On macOS, the frozen toolbar may expose `Recognize Text`, which runs Apple Vision OCR on the current frozen capture, copies the recognized text to the clipboard, and exits
-   - Cmd+S (macOS) / Ctrl+S -> save the frozen cropped PNG to disk, then exit
-   - On macOS, Frozen entry is display-first: entering Frozen mode MUST commit a display image in
-     a single visible handoff instead of waiting on a later visible capture swap.
-   - Background region/fullscreen/window-background freezes SHOULD complete directly from a fresh
-     live-stream snapshot when one is available. If no usable live snapshot is available yet, the
-     session may wait briefly for a follow-up live snapshot before escalating to the exceptional
-     hidden authoritative fallback.
-   - Window matte freezes MAY seed display from a live-stream snapshot first and continue preparing
-     export authority in the background. The later export-authority response MUST NOT overwrite an
-     already-visible display image.
-   - Frozen-mode display readiness and export readiness are separate. Pointer drag/reposition,
-     pen, arrow, text, spotlight, and toolbar visibility are display-driven; copy/save/OCR/scroll/
-     mosaic remain gated on export-ready bytes.
-   - On macOS, the normal Frozen-entry path MUST NOT hide overlay/HUD/toolbar windows. Hiding
-     capture windows is reserved for exceptional authoritative fallback when no usable display-first
-     path arrives in time.
-   - In Frozen mode, toolbar-driven annotations are part of the frozen capture state. Current
-     annotation/edit tools are pointer, pen, arrow, text, mosaic, and spotlight; the pen-tool
-     contract lives in `docs/spec/annotation-pen.md`, and Frozen toolbar placement/expansion
-     invariants live in `docs/spec/frozen-toolbar-layout.md`
-   - Arrow annotations are drag-defined overlays that participate in preview, export, and
-     undo/redo like other committed Frozen-mode annotations.
-   - Spotlight annotations keep the selected rectangle undimmed while darkening the surrounding
-     frozen capture, and committed pen/arrow/text overlays must render above the spotlight effect
-     in both preview and export.
-   - Esc -> cancel and exit without copying
-   - After a dragged-region freeze enters Frozen mode, dragging inside the bright region
-     repositions the frozen capture rect without resizing it and keeps it on the same monitor
-7. Hover feedback and hit-test behavior:
-   - While in live mode, hovering over a window highlights that window with an obvious glowing
-     selection border.
-   - This feedback follows cursor movement and updates as the cursor moves.
-8. Capture scope constraints:
-   - Region selection and window hit-testing are implemented only within the monitor containing
-     the cursor.
-   - Cross-monitor capture (including spanning-window and cross-monitor region selection) is deferred
-     and tracked as future work.
-9. Frozen-mode scroll capture (macOS, SSOT for implementation/review):
-   - Scroll capture is macOS-only. Other platforms must treat this flow as unsupported
-     until they have their own native contract.
-   - It requires Screen Recording permission for live capture imagery.
-   - Entering scroll capture additionally requires Accessibility because rsnap forwards
-     scroll input into the target app.
-   - Entering scroll capture additionally requires Input Monitoring because rsnap listens
-     for global scroll-wheel input through a native macOS listen-event tap.
-   - Entry is dragged-region-only. Window freezes and fullscreen fallbacks must not arm
-     scroll capture, even if a frozen image exists.
-   - The frozen toolbar may expose `Scroll Capture ↓`, and plain `s` may start scroll
-     capture, whenever the frozen capture source is a dragged region on macOS.
-   - The image source for scroll-capture commits is discrete monitor-region screenshots
-     captured through the native macOS screenshot API. Live streams may still support the
-     surrounding overlay experience, but they are not the geometry authority for downward
-     stitch commits.
-   - Pairwise image registration plus overlap proof between adjacent discrete screenshots is
-     the source of truth for downward scroll progress, viewport reacquisition, and append
-     eligibility.
-   - Stitching is downward-only. Down-scroll may refresh preview state and append committed
-     rows. Up-scroll / rewind may be observed, but it must never append stitched growth.
-   - After an upward rewind, growth stays blocked until captured-frame proof reacquires
-     the last committed viewport and then re-advances past the resume frontier. Do not
-     resume from stale, weak, or best-guess heuristics.
-   - If pairwise proof is weak, ambiguous, stale, or otherwise not trustworthy, fail closed:
-     no append, no position advance, and no best-guess resume. Keep the session blocked or
-     preview-only until trustworthy proof arrives.
-   - Preview, `Space`, and save/export must all render from the same committed stitched
-     canvas. Provisional or preview-only state must never produce a different clipboard or
-     saved result from what the user sees.
-   - `Space` copies the stitched image and exits. Cmd+S (macOS) / Ctrl+S saves it and exits.
-     `Esc` / `Back` stops scroll capture and restores the original Frozen capture.
-   - Verification order is part of the contract: deterministic and replay entrypoints must
-     pass before any final live touchpad acceptance run is treated as authoritative.
+2. Global hotkey starts capture session (default `Alt+X`, macOS: Option+X) and can be customized
+   from Settings.
+3. When the capture session UI is visible, underlying desktop content MUST NOT be interactive.
+4. The visible capture UI should be transparent and non-dimming by default.
+5. On macOS, rsnap overlay, HUD, loupe, frozen toolbar, and scroll preview surfaces MUST remain
+   externally capturable by system screenshot and screen-recording tools. Internal self-capture
+   correctness comes from rsnap's own capture filters and handoff logic, not window content
+   protection.
+6. The product contract does not require any specific platform window implementation. Focus,
+   cursor, keyboard, and IME correctness are mandatory outcomes, regardless of how the native host
+   achieves them.
 
-## HUD, blur, tint and hue controls
+## Live mode
 
-Rendering is implemented through three floating widgets:
+- Live mode presents a capture surface for the monitor under the cursor.
+- Live mode shows a HUD near the cursor with:
+  - global cursor coordinates `x,y`
+  - pixel color `rgb(r,g,b)` under the cursor
+- Hovering over a window in live mode shows an obvious targeting outline that follows the current
+  target.
+- Left click + drag freezes a cropped region on the cursor monitor.
+- Left click without drag hit-tests the window under the cursor on the same monitor and freezes
+  that window bounds.
+- If no window is hit, the click path falls back to freezing the current monitor fullscreen.
+- Capture scope is single-monitor only for now. Cross-monitor region selection and cross-monitor
+  window capture remain out of scope.
+
+## Focus, activation, and session cleanup
+
+- Entering capture MUST NOT leave the target app permanently deactivated after the selection
+  completes.
+- On macOS, live drag and window-click entry into Frozen mode must restore the pre-capture target
+  after selection instead of leaving rsnap focused.
+- Exiting capture must restore the originally captured frontmost application where the platform
+  allows that behavior.
+- Normal interaction must not require a visible Dock activation or an implementation artifact such
+  as a temporary key/main window promotion just to complete ordinary capture flows.
+- Session exit cleanup must ensure the next capture session does not inherit stale focus, stale
+  key ownership, stale cursor ownership, or missing pointer input.
+
+## Frozen mode
+
+- `Esc` cancels capture.
+- `Space` copies the frozen PNG of the selected region/window/fullscreen to the system clipboard,
+  then exits.
+- Cmd+S (macOS) / Ctrl+S saves the frozen PNG to disk, then exits.
+- On macOS, Frozen mode may expose `Recognize Text`, which runs native OCR on the current frozen
+  capture, copies the recognized text to the clipboard, and exits.
+- In Frozen mode, the toolbar remains part of the floating HUD set. The live loupe is hidden after
+  freeze and may be recreated only when a later live-mode transition needs it.
+- In Frozen mode, a dragged-region capture may be repositioned by dragging inside the bright
+  selected area; width and height remain fixed and the moved rect stays on the current monitor.
+- Frozen toolbar placement and expansion invariants are governed by
+  `docs/spec/frozen-toolbar-layout.md`.
+- Pen behavior is governed by `docs/spec/annotation-pen.md`.
+
+## Display-first Frozen entry
+
+- On macOS, Frozen entry is display-first: entering Frozen mode MUST commit a display image in a
+  single visible handoff instead of waiting on a later visible capture swap.
+- Frozen-mode display readiness and export readiness are separate:
+  - pointer drag/reposition, pen, arrow, text, spotlight, and toolbar visibility are
+    display-driven
+  - copy, save, OCR, scroll capture, mosaic, and any final-byte-dependent action are gated on
+    export readiness
+- Background region/fullscreen/window-background freezes SHOULD complete directly from a fresh
+  live-stream snapshot when one is available.
+- If no usable display-first path is available yet, the session may wait briefly for a follow-up
+  display candidate before escalating to exceptional fallback behavior.
+- Window matte freezes MAY seed display from a live-stream snapshot first and continue preparing
+  export authority in the background. A later export-authority response MUST NOT overwrite an
+  already-visible display image.
+- Normal-path Frozen entry MUST NOT depend on hiding capture UI. Any hidden-window or equivalent
+  fallback is exceptional, measurable, and outside the normal path.
+
+## Scroll capture
+
+- On macOS, scroll capture is available only from a dragged-region freeze.
+- The frozen toolbar may expose `Scroll Capture Down`, and plain `s` may start scroll capture,
+  whenever the frozen capture source is a dragged region on macOS.
+- Scroll capture uses discrete monitor-region screenshots from the native platform capture API as
+  the source of truth for committed downward growth.
+- Pairwise image registration plus overlap proof between adjacent discrete screenshots is the
+  source of truth for downward scroll progress, viewport reacquisition, and append eligibility.
+- Stitching is downward-only:
+  - downward motion may append committed rows
+  - upward rewind may be observed, but must never append stitched growth
+- After an upward rewind, growth stays blocked until trustworthy proof reacquires the last
+  committed viewport and then re-advances past the resume frontier.
+- If pairwise proof is weak, ambiguous, stale, or otherwise not trustworthy, the system must fail
+  closed: no append, no position advance, and no best-guess resume.
+- Preview, `Space`, and save/export must all render from the same committed stitched canvas.
+  Provisional or preview-only state must never produce a different clipboard or saved result from
+  what the user sees.
+- `Space` copies the stitched image and exits. Cmd+S (macOS) / Ctrl+S saves it and exits.
+  `Esc` / `Back` stops scroll capture and restores the original Frozen capture.
+- Verification order is part of the contract: deterministic and replay entrypoints must pass
+  before any final live touchpad acceptance run is treated as authoritative.
+
+## HUD and control defaults
+
+The current product surface includes three floating widgets:
 
 - Main HUD (live info + action hint)
 - Loupe (Tab-held magnified sample)
 - Frozen toolbar (only visible in frozen + captured states)
 
-All three are styled using the same HUD styling pipeline.
+Default settings:
 
-- Architecture:
-  - The capture layer is a transparent fullscreen overlay per monitor for input blocking.
-  - The HUD widgets are separate always-on-top, borderless windows that follow the cursor
-    and move with cursor tracking.
-  - macOS native blur is enabled via native window configuration when Glass is enabled.
-    Non-macOS uses the same styling fields and currently applies fake blur work paths.
-- Blur control semantics:
-  - `Glass HUD` toggles the whole style mode.
-  - `Blur` controls blur amount (0..1); 0 disables blur.
-  - Blur is independent from opacity in intent: with blur active, alpha is still
-    constrained by blur style floor so the blur remains visually present even when overall
-    opacity is low.
-- Tint semantics:
-  - `Tint` is tint intensity (0..1), currently implemented as `hud_milk_amount`.
-  - `0` means no color shift, `1` means full hue shift.
-- Hue semantics:
-  - `Hue` sets target hue in `[0,1]`, and UI renders it as 0-360°.
-  - Default is a default hue of `215°` (normalized to `215.0 / 360.0` in settings).
+- HUD opacity: `50` (stored `0.5`)
+- HUD blur: `50` (stored `0.5`)
+- Tint amount: `50` (stored `0.5`)
+- Hue: `215` (stored `215.0 / 360.0`)
+- Loupe activation: `Hold` (`Tab`)
+- Loupe sample size: `Medium (21x21)`
+- Toolbar placement: `Bottom`
 
-## Control defaults and input behavior
+Slider semantics:
 
-- Default settings:
-  - HUD opacity: `50` (stored `0.5`)
-  - HUD blur: `50` (stored `0.5`)
-  - Tint amount: `50` (stored `0.5`)
-  - Hue: `215` (stored `215.0 / 360.0`)
-  - Loupe activation: `Hold` (`Tab`)
-  - Loupe sample size: `Medium (21x21)`
-  - Toolbar placement: `Bottom`
-- Slider semantics:
-  - Opacity / Blur / Tint: slider and numeric entry are in `0..100` percentage points.
-  - Input accepts integer percent values (`50`) and values without `%` in the same field.
-  - Hue input is an integer degree value in `0..360`.
-  - The HUD widget controls are disabled when `Glass HUD` is off.
+- Opacity / Blur / Tint are in `0..100` percentage points.
+- Hue input is an integer degree value in `0..360`.
+- The HUD widget controls are disabled when `Glass HUD` is off.
 
-## Cursor tracking and redraw behavior
+## Performance and redraw
 
-- Cursor tracking is primarily event-driven from `WindowEvent::CursorMoved`.
-- On macOS, overlay windows are configured to receive mouse-move events (native call path),
-  and live cursor tracking updates HUD/loupe windows through event-based movement.
-- For non-macOS, live cursor polling is used as a fallback to keep redraw/tick flowing.
-- In live mode, tracking keeps the HUD aligned and requests redraw for both current monitor
-  and previous monitor when crossing monitor boundaries.
-- Frozen mode keeps toolbar/loupe/frozen-surface behavior stable and redraw-safe after capture.
+- Live RGB/Loupe sampling should be frame-stream based rather than "take a screenshot on cursor
+  move".
+- Cursor tracking should keep the HUD aligned and keep hover/selection feedback responsive.
 - Render cadence, performance scenarios, and tracking requirements are governed by
   `docs/spec/performance.md`.
 
-## Live sampling performance notes
-
-Live RGB/Loupe sampling should be **frame-stream based** (latest-frame sampling) rather than
-“take a screenshot on cursor move”. This is required to avoid intermittent UI jank under
-high-frequency cursor movement.
-
-Research and cross-platform notes live in:
-
-- `docs/reference/live-sampling.md`
-
-## Implementation ownership notes
-
-- The app shell owns menubar startup, hotkeys, settings-window launch, and macOS external
-  scroll-input normalization before handing session configuration and normalized runtime events
-  to `rsnap-overlay`.
-- The app-shell contract with `rsnap-overlay` is intentionally session-level: runtime
-  configuration, overlay-session lifecycle, and session control/output events are the stable
-  boundary.
-- `rsnap-overlay` owns overlay window lifecycle, HUD/loupe/toolbar rendering, and session
-  control. Capture backend, worker, scroll-stitching, and output helpers remain internal
-  crate implementation details rather than app-shell contract surface.
-
-## HUD/toolbar lifecycle
-
-- Overlay windows and the main HUD are created at overlay start.
-- The loupe, frozen toolbar, and scroll preview windows may be created lazily when the
-  active mode first needs them.
-- In Frozen mode, toolbar visibility follows current mode state and `show_frozen_capture`.
-
 ## Current non-goals
 
-- Rich annotation/editor tooling beyond the current frozen toolbar tools, pinning, and advanced
-  editing workflows.
 - Cross-monitor selection and cross-monitor window capture behavior.
+- Rich editing workflows beyond the current frozen-toolbar tools and bounded annotation set.
