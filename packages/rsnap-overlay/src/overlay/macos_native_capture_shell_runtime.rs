@@ -162,6 +162,228 @@ impl MacOSNativeCaptureShells {
 	}
 }
 
+/// App-owned macOS capture host adapter that owns native shell lifecycle,
+/// host-routed capture input dispatch, and focus restoration side effects.
+pub struct MacOSCaptureHost {
+	native_capture_shells: Option<MacOSNativeCaptureShells>,
+	native_capture_input_dispatch: MacOSNativeCaptureInputDispatch,
+	frontmost_application_before_start: Option<super::MacOSFrontmostApplication>,
+	last_synced_mode: Option<OverlayMode>,
+}
+impl MacOSCaptureHost {
+	/// Creates a new host adapter that forwards native capture events to the caller.
+	pub fn new(event_sink: Arc<dyn Fn(MacOSNativeCaptureInputEvent) + Send + Sync>) -> Self {
+		Self {
+			native_capture_shells: None,
+			native_capture_input_dispatch: MacOSNativeCaptureInputDispatch { sink: event_sink },
+			frontmost_application_before_start: None,
+			last_synced_mode: None,
+		}
+	}
+
+	/// Captures the currently frontmost application before starting a capture session.
+	pub fn begin_session(&mut self) {
+		self.frontmost_application_before_start = super::macos_frontmost_application();
+		self.last_synced_mode = None;
+
+		tracing::info!(
+			op = "overlay.frontmost_app_captured",
+			target_process_id =
+				self.frontmost_application_before_start.map(|target| target.process_id),
+			"Captured the pre-capture frontmost application for later restore."
+		);
+	}
+
+	/// Cancels a session start before any host-owned shells were synchronized.
+	pub fn cancel_session_start(&mut self) {
+		let target = self.frontmost_application_before_start.take();
+
+		self.restore_frontmost_application_after_exit(target);
+	}
+
+	fn ensure_native_capture_shells(&mut self, session: &mut OverlaySession) -> Result<(), String> {
+		if self.native_capture_shells.is_some() {
+			self.sync_native_capture_shells(session)?;
+
+			return Ok(());
+		}
+
+		let mut overlay_shells = HashMap::with_capacity(session.windows.len());
+
+		for overlay_window in session.windows.values() {
+			let shell = macos_create_passive_overlay_shell_window(
+				overlay_window.window.as_ref(),
+				overlay_window.monitor,
+				self.native_capture_input_dispatch.clone(),
+			)?;
+
+			overlay_shells.insert(overlay_window.monitor.id, shell);
+		}
+
+		self.native_capture_shells = Some(MacOSNativeCaptureShells::new(
+			overlay_shells,
+			self.native_capture_input_dispatch.clone(),
+		));
+
+		self.sync_native_capture_shells(session)?;
+
+		Ok(())
+	}
+
+	fn sync_native_capture_shells(&mut self, session: &mut OverlaySession) -> Result<(), String> {
+		let live_shell_visible = session.should_host_live_pointer_input_in_native_shell();
+		let toolbar_shell_visible = session.should_host_toolbar_pointer_input_in_native_shell();
+		let toolbar_context = session.toolbar_window.as_ref().map(|toolbar_window| {
+			let monitor = session.state.monitor.or_else(|| session.active_cursor_monitor());
+			let outer_position = OverlaySession::toolbar_window_outer_position(toolbar_window)
+				.or(session.pending_toolbar_outer_pos)
+				.or(session.toolbar_outer_pos)
+				.or_else(|| {
+					monitor.and_then(|monitor| {
+						session.toolbar_state.floating_position.map(|floating_position| {
+							session.toolbar_outer_position_from_primary_anchor(
+								monitor,
+								floating_position,
+							)
+						})
+					})
+				});
+
+			(Arc::clone(&toolbar_window.window), monitor, outer_position)
+		});
+		let key_focus_context = session.native_key_focus_shell_context();
+
+		for overlay_window in session.windows.values() {
+			super::macos_set_capture_window_mouse_passthrough(
+				overlay_window.window.as_ref(),
+				live_shell_visible,
+			);
+		}
+
+		let Some(shells) = self.native_capture_shells.as_mut() else {
+			if let Some((toolbar_window, _, _)) = toolbar_context.as_ref() {
+				super::macos_set_capture_window_mouse_passthrough(toolbar_window.as_ref(), false);
+			}
+
+			return Ok(());
+		};
+
+		shells.sync_overlay_shells(&session.windows, live_shell_visible);
+
+		if let Some((toolbar_window, monitor, outer_position)) = toolbar_context {
+			if let (Some(monitor), Some(outer_position)) = (monitor, outer_position) {
+				shells.sync_toolbar_shell(
+					toolbar_window.as_ref(),
+					monitor,
+					outer_position,
+					toolbar_shell_visible,
+				)?;
+
+				super::macos_set_capture_window_mouse_passthrough(
+					toolbar_window.as_ref(),
+					toolbar_shell_visible,
+				);
+			} else {
+				super::macos_set_capture_window_mouse_passthrough(toolbar_window.as_ref(), false);
+
+				shells.clear_toolbar_shell();
+			}
+		} else {
+			shells.clear_toolbar_shell();
+		}
+		if let Some((render_window, target)) = key_focus_context {
+			shells.sync_key_focus_shell(render_window.as_ref(), target, true)?;
+		} else {
+			shells.clear_key_focus_shell();
+		}
+
+		self.maybe_preserve_frontmost_application(session);
+		self.last_synced_mode = Some(session.state.mode);
+
+		Ok(())
+	}
+
+	fn destroy_native_capture_shells(&mut self, session: &OverlaySession) {
+		macos_set_system_cursor_hidden(false);
+
+		for overlay_window in session.windows.values() {
+			super::macos_set_capture_window_mouse_passthrough(
+				overlay_window.window.as_ref(),
+				false,
+			);
+		}
+
+		if let Some(toolbar_window) = session.toolbar_window.as_ref() {
+			super::macos_set_capture_window_mouse_passthrough(
+				toolbar_window.window.as_ref(),
+				false,
+			);
+		}
+
+		self.native_capture_shells = None;
+		self.last_synced_mode = None;
+
+		let target = self.frontmost_application_before_start.take();
+		self.restore_frontmost_application_after_exit(target);
+	}
+
+	fn maybe_preserve_frontmost_application(&mut self, session: &mut OverlaySession) {
+		let transitioned_into_frozen = matches!(session.state.mode, OverlayMode::Frozen)
+			&& !matches!(self.last_synced_mode, Some(OverlayMode::Frozen));
+
+		if transitioned_into_frozen {
+			self.restore_recorded_frontmost_application_for_focus_preservation(
+				"begin_frozen_capture",
+			);
+		}
+
+		if session.toolbar_window_visible && session.preserve_frontmost_on_next_toolbar_show {
+			session.preserve_frontmost_on_next_toolbar_show = false;
+			self.restore_recorded_frontmost_application_for_focus_preservation(
+				"toolbar_first_show",
+			);
+		}
+	}
+
+	fn restore_frontmost_application_after_exit(
+		&self,
+		target: Option<super::MacOSFrontmostApplication>,
+	) {
+		let Some(target) = target else {
+			tracing::info!(
+				op = "overlay.frontmost_app_restore_attempted",
+				target = "none",
+				"Skipped restoring the pre-capture frontmost application because none was recorded."
+			);
+
+			return;
+		};
+		let restored = super::macos_restore_frontmost_application(target);
+
+		tracing::info!(
+			op = "overlay.frontmost_app_restore_attempted",
+			target_process_id = target.process_id,
+			restored,
+			"Attempted to restore the pre-capture frontmost application."
+		);
+	}
+
+	fn restore_recorded_frontmost_application_for_focus_preservation(&self, reason: &'static str) {
+		let Some(target) = self.frontmost_application_before_start else {
+			return;
+		};
+		let restored = super::macos_restore_frontmost_application(target);
+
+		tracing::info!(
+			op = "overlay.frontmost_app_focus_preservation_attempted",
+			target_process_id = target.process_id,
+			reason,
+			restored,
+			"Attempted to preserve the pre-capture frontmost application during overlay interaction."
+		);
+	}
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MacOSRange {
@@ -505,124 +727,14 @@ impl From<MacOSRect> for NSRect {
 }
 
 impl OverlaySession {
-	pub(super) fn ensure_native_capture_shells(&mut self) -> Result<(), String> {
-		let Some(dispatch) = self.native_capture_input_dispatch() else {
-			return Ok(());
-		};
-
-		if self.native_capture_shells.is_some() {
-			self.sync_native_capture_shells()?;
-
-			return Ok(());
-		}
-
-		let mut overlay_shells = HashMap::with_capacity(self.windows.len());
-
-		for overlay_window in self.windows.values() {
-			let shell = macos_create_passive_overlay_shell_window(
-				overlay_window.window.as_ref(),
-				overlay_window.monitor,
-				dispatch.clone(),
-			)?;
-
-			overlay_shells.insert(overlay_window.monitor.id, shell);
-		}
-
-		self.native_capture_shells = Some(MacOSNativeCaptureShells::new(overlay_shells, dispatch));
-
-		self.sync_native_capture_shells()?;
-
-		Ok(())
+	/// Synchronizes the app-owned macOS capture host with the current overlay session state.
+	pub fn sync_macos_capture_host(&mut self, host: &mut MacOSCaptureHost) -> Result<(), String> {
+		host.ensure_native_capture_shells(self)
 	}
 
-	pub(super) fn sync_native_capture_shells(&mut self) -> Result<(), String> {
-		let live_shell_visible = self.should_host_live_pointer_input_in_native_shell();
-		let toolbar_shell_visible = self.should_host_toolbar_pointer_input_in_native_shell();
-		let toolbar_context = self.toolbar_window.as_ref().map(|toolbar_window| {
-			let monitor = self.state.monitor.or_else(|| self.active_cursor_monitor());
-			let outer_position = Self::toolbar_window_outer_position(toolbar_window)
-				.or(self.pending_toolbar_outer_pos)
-				.or(self.toolbar_outer_pos)
-				.or_else(|| {
-					monitor.and_then(|monitor| {
-						self.toolbar_state.floating_position.map(|floating_position| {
-							self.toolbar_outer_position_from_primary_anchor(
-								monitor,
-								floating_position,
-							)
-						})
-					})
-				});
-
-			(Arc::clone(&toolbar_window.window), monitor, outer_position)
-		});
-		let key_focus_context = self.native_key_focus_shell_context();
-
-		for overlay_window in self.windows.values() {
-			super::macos_set_capture_window_mouse_passthrough(
-				overlay_window.window.as_ref(),
-				live_shell_visible,
-			);
-		}
-
-		let Some(shells) = self.native_capture_shells.as_mut() else {
-			if let Some((toolbar_window, _, _)) = toolbar_context.as_ref() {
-				super::macos_set_capture_window_mouse_passthrough(toolbar_window.as_ref(), false);
-			}
-
-			return Ok(());
-		};
-
-		shells.sync_overlay_shells(&self.windows, live_shell_visible);
-
-		if let Some((toolbar_window, monitor, outer_position)) = toolbar_context {
-			if let (Some(monitor), Some(outer_position)) = (monitor, outer_position) {
-				shells.sync_toolbar_shell(
-					toolbar_window.as_ref(),
-					monitor,
-					outer_position,
-					toolbar_shell_visible,
-				)?;
-
-				super::macos_set_capture_window_mouse_passthrough(
-					toolbar_window.as_ref(),
-					toolbar_shell_visible,
-				);
-			} else {
-				super::macos_set_capture_window_mouse_passthrough(toolbar_window.as_ref(), false);
-
-				shells.clear_toolbar_shell();
-			}
-		} else {
-			shells.clear_toolbar_shell();
-		}
-		if let Some((render_window, target)) = key_focus_context {
-			shells.sync_key_focus_shell(render_window.as_ref(), target, true)?;
-		} else {
-			shells.clear_key_focus_shell();
-		}
-
-		Ok(())
-	}
-
-	pub(super) fn destroy_native_capture_shells(&mut self) {
-		macos_set_system_cursor_hidden(false);
-
-		for overlay_window in self.windows.values() {
-			super::macos_set_capture_window_mouse_passthrough(
-				overlay_window.window.as_ref(),
-				false,
-			);
-		}
-
-		if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-			super::macos_set_capture_window_mouse_passthrough(
-				toolbar_window.window.as_ref(),
-				false,
-			);
-		}
-
-		self.native_capture_shells = None;
+	/// Tears down the app-owned macOS capture host for the current session.
+	pub fn teardown_macos_capture_host(&mut self, host: &mut MacOSCaptureHost) {
+		host.destroy_native_capture_shells(self);
 	}
 
 	fn native_key_focus_shell_context(&self) -> Option<(Arc<Window>, MacOSKeyFocusShellTarget)> {

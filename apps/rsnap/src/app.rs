@@ -1,4 +1,6 @@
 mod capture;
+#[cfg(target_os = "macos")]
+mod capture_host_macos;
 mod hotkeys;
 mod runtime;
 #[cfg(target_os = "macos")]
@@ -41,9 +43,9 @@ use self::scroll_input_macos::SharedScrollInputState;
 use crate::permissions_macos;
 use crate::settings::AppSettings;
 use crate::settings_window::{SettingsWindow, SettingsWindowEntry};
-#[cfg(target_os = "macos")]
-use rsnap_overlay::FrozenGlobalHotkey;
 use rsnap_overlay::OverlaySession;
+#[cfg(target_os = "macos")]
+use rsnap_overlay::{FrozenGlobalHotkey, MacOSCaptureHost, MacOSNativeCaptureInputEvent};
 
 pub(crate) enum UserEvent {
 	TrayIcon,
@@ -58,7 +60,7 @@ pub(crate) enum UserEvent {
 	#[cfg(target_os = "macos")]
 	OverlayWorkerResponse,
 	#[cfg(target_os = "macos")]
-	OverlayNativeCaptureInput,
+	OverlayNativeCaptureInput(u64, MacOSNativeCaptureInputEvent),
 }
 
 #[cfg(target_os = "macos")]
@@ -141,6 +143,8 @@ struct App {
 	menubar_quit_menu_id: Option<MenuId>,
 	overlay_session: Option<OverlaySession>,
 	#[cfg(target_os = "macos")]
+	overlay_capture_host: Option<MacOSCaptureHost>,
+	#[cfg(target_os = "macos")]
 	prewarmed_overlay_session: Option<OverlaySession>,
 	settings_window: Option<SettingsWindow>,
 	settings_window_capture_window_id: Option<u32>,
@@ -155,8 +159,6 @@ struct App {
 	scroll_input_shared_state: Arc<SharedScrollInputState>,
 	#[cfg(target_os = "macos")]
 	overlay_stream_event_pending: Arc<AtomicBool>,
-	#[cfg(target_os = "macos")]
-	overlay_native_capture_input_event_pending: Arc<AtomicBool>,
 	#[cfg(target_os = "macos")]
 	latest_deferred_ocr_generation: Arc<AtomicU64>,
 	#[cfg(target_os = "macos")]
@@ -261,6 +263,8 @@ impl App {
 			menubar_quit_menu_id: None,
 			overlay_session: None,
 			#[cfg(target_os = "macos")]
+			overlay_capture_host: None,
+			#[cfg(target_os = "macos")]
 			prewarmed_overlay_session: None,
 			settings_window: None,
 			settings_window_capture_window_id: None,
@@ -275,8 +279,6 @@ impl App {
 			scroll_input_shared_state,
 			#[cfg(target_os = "macos")]
 			overlay_stream_event_pending: Arc::new(AtomicBool::new(false)),
-			#[cfg(target_os = "macos")]
-			overlay_native_capture_input_event_pending: Arc::new(AtomicBool::new(false)),
 			#[cfg(target_os = "macos")]
 			latest_deferred_ocr_generation: Arc::new(AtomicU64::new(0)),
 			#[cfg(target_os = "macos")]

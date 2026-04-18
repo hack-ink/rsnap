@@ -656,11 +656,25 @@ fn configured_session_with_macos_worker() -> (OverlaySession, u64) {
 }
 
 #[cfg(target_os = "macos")]
+fn fresh_live_stream_snapshot_captured_at() -> Instant {
+	// Bias "fresh snapshot" fixtures away from nextest scheduling jitter so these tests assert
+	// display-first semantics, not whether the process lost >90ms of CPU between two lines.
+	Instant::now() + Duration::from_secs(1)
+}
+
+#[cfg(target_os = "macos")]
+fn stale_live_stream_snapshot_captured_at() -> Instant {
+	Instant::now()
+		- crate::live_frame_stream_macos::STREAM_REGION_FRAME_MAX_AGE
+		- Duration::from_millis(1)
+}
+
+#[cfg(target_os = "macos")]
 #[test]
 fn sync_live_surface_bg_from_stream_promotes_clean_live_snapshot() {
 	let monitor = test_monitor();
 	let stream = MacLiveFrameStream::new();
-	let captured_at = Instant::now();
+	let captured_at = fresh_live_stream_snapshot_captured_at();
 	let mut session = OverlaySession::new();
 
 	stream.debug_set_active_stream_generation(monitor.id, 1);
