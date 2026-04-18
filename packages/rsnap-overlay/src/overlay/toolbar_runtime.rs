@@ -45,7 +45,6 @@ impl OverlaySession {
 		} else {
 			self.last_toolbar_window_move_at = Instant::now();
 		}
-
 		if changed {
 			self.request_redraw_toolbar_window();
 		}
@@ -629,6 +628,7 @@ impl OverlaySession {
 			self.toolbar_window_warmup_redraws_remaining = TOOLBAR_WINDOW_WARMUP_REDRAWS;
 			toolbar_became_visible = true;
 		}
+
 		Some(toolbar_became_visible)
 	}
 	pub(super) fn handle_toolbar_window_redraw_requested(&mut self) -> OverlayControl {
