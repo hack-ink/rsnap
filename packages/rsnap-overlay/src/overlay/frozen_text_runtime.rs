@@ -38,7 +38,6 @@ impl OverlaySession {
 	pub(super) fn sync_text_input_ime_state(&mut self) {
 		#[cfg(target_os = "macos")]
 		{
-			let _ = self.sync_native_capture_shells();
 			let ime_allowed = self.frozen_text_tool_active() && self.frozen_text_edit.is_some();
 
 			for overlay_window in self.windows.values() {
@@ -95,8 +94,6 @@ impl OverlaySession {
 					),
 				),
 			);
-
-			let _ = self.sync_native_capture_shells();
 		}
 
 		#[cfg(not(target_os = "macos"))]
@@ -498,7 +495,5 @@ impl OverlaySession {
 			monitor_id = ?monitor.map(|target| target.id),
 			"Requested frozen text input focus."
 		);
-
-		let _ = self.sync_native_capture_shells();
 	}
 }

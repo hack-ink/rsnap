@@ -24,7 +24,6 @@ impl OverlaySession {
 	pub(super) fn hide_capture_windows(&mut self) {
 		self.capture_windows_hidden = true;
 
-		let _ = self.sync_native_capture_shells();
 		let hide_overlay_windows = self.should_hide_overlay_windows_during_capture();
 
 		if hide_overlay_windows {
@@ -89,9 +88,6 @@ impl OverlaySession {
 		}
 
 		self.capture_windows_hidden = false;
-
-		#[cfg(target_os = "macos")]
-		let _ = self.sync_native_capture_shells();
 
 		#[cfg(target_os = "macos")]
 		{

@@ -559,8 +559,6 @@ impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	fn focus_scroll_keyboard_window(&mut self) {
 		super::macos_activate_app();
-
-		let _ = self.sync_native_capture_shells();
 	}
 
 	pub(super) fn update_scroll_toolbar_default_position(&mut self, monitor: MonitorRect) {

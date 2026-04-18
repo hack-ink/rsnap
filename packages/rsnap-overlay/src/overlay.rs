@@ -32,8 +32,6 @@ mod window_position_runtime;
 mod window_runtime;
 mod worker_runtime;
 
-#[cfg(target_os = "macos")]
-use std::collections::VecDeque;
 #[cfg(not(target_os = "macos"))]
 use std::env;
 #[cfg(target_os = "macos")]
@@ -154,7 +152,7 @@ use winit::{
 
 use self::frozen_text_runtime::{FrozenTextInputSource, FrozenTextRecentInput};
 #[cfg(target_os = "macos")]
-use self::macos_native_capture_shell_runtime::MacOSNativeCaptureShells;
+pub use self::macos_native_capture_shell_runtime::MacOSCaptureHost;
 #[cfg(target_os = "macos")]
 use self::rendering::StartupLiveRgbPlan;
 use self::rendering::{
@@ -536,8 +534,6 @@ pub struct OverlaySession {
 	cursor_monitor: Option<MonitorRect>,
 	egui_repaint_deadline: Arc<Mutex<Option<Instant>>>,
 	windows: HashMap<WindowId, OverlayWindow>,
-	#[cfg(target_os = "macos")]
-	native_capture_shells: Option<MacOSNativeCaptureShells>,
 	focused_window_ids: HashSet<WindowId>,
 	pending_focus_loss_cleanup: bool,
 	hud_window: Option<HudOverlayWindow>,
@@ -671,17 +667,11 @@ pub struct OverlaySession {
 	#[cfg(target_os = "macos")]
 	startup_aux_window_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 	#[cfg(target_os = "macos")]
-	native_capture_input_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	#[cfg(target_os = "macos")]
-	native_capture_input_queue: Arc<Mutex<VecDeque<MacOSNativeCaptureInputEvent>>>,
-	#[cfg(target_os = "macos")]
 	startup_aux_window_creation_pending: bool,
 	#[cfg(target_os = "macos")]
 	startup_aux_window_creation_scheduled: bool,
 	#[cfg(target_os = "macos")]
 	pending_startup_aux_live_stream_filter_upgrade: bool,
-	#[cfg(target_os = "macos")]
-	frontmost_application_before_start: Option<MacOSFrontmostApplication>,
 	response_waker: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl OverlaySession {
@@ -795,7 +785,7 @@ impl OverlaySession {
 			state: OverlayState::new(),
 			session_active: false,
 			cursor_monitor: None,
-			windows: HashMap::new(), #[cfg(target_os = "macos")] native_capture_shells: None,
+			windows: HashMap::new(),
 			focused_window_ids: HashSet::new(),
 			pending_focus_loss_cleanup: false,
 			hud_window: None, loupe_window: None, toolbar_window: None, scroll_preview_window: None,
@@ -888,12 +878,9 @@ impl OverlaySession {
 			#[cfg(target_os = "macos")]
 			scroll_capture_started_hook: None,
 			#[cfg(target_os = "macos")] startup_aux_window_waker: None,
-			#[cfg(target_os = "macos")] native_capture_input_waker: None,
-			#[cfg(target_os = "macos")] native_capture_input_queue: Arc::new(Mutex::new(VecDeque::new())),
 			#[cfg(target_os = "macos")] startup_aux_window_creation_pending: false,
 			#[cfg(target_os = "macos")] startup_aux_window_creation_scheduled: false,
 			#[cfg(target_os = "macos")] pending_startup_aux_live_stream_filter_upgrade: false,
-			#[cfg(target_os = "macos")] frontmost_application_before_start: None,
 			response_waker: None,
 		}
 	}
@@ -937,55 +924,6 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn capture_frontmost_application_for_exit_restore(&mut self) {
-		self.frontmost_application_before_start = macos_frontmost_application();
-
-		tracing::info!(
-			op = "overlay.frontmost_app_captured",
-			target_process_id =
-				self.frontmost_application_before_start.map(|target| target.process_id),
-			"Captured the pre-capture frontmost application for later restore."
-		);
-	}
-
-	#[cfg(target_os = "macos")]
-	fn restore_frontmost_application_after_exit(&self, target: Option<MacOSFrontmostApplication>) {
-		let Some(target) = target else {
-			tracing::info!(
-				op = "overlay.frontmost_app_restore_attempted",
-				target = "none",
-				"Skipped restoring the pre-capture frontmost application because none was recorded."
-			);
-
-			return;
-		};
-		let restored = macos_restore_frontmost_application(target);
-
-		tracing::info!(
-			op = "overlay.frontmost_app_restore_attempted",
-			target_process_id = target.process_id,
-			restored,
-			"Attempted to restore the pre-capture frontmost application."
-		);
-	}
-
-	#[cfg(target_os = "macos")]
-	fn restore_recorded_frontmost_application_for_focus_preservation(&self, reason: &'static str) {
-		let Some(target) = self.frontmost_application_before_start else {
-			return;
-		};
-		let restored = macos_restore_frontmost_application(target);
-
-		tracing::info!(
-			op = "overlay.frontmost_app_focus_preservation_attempted",
-			target_process_id = target.process_id,
-			reason,
-			restored,
-			"Attempted to preserve the pre-capture frontmost application during overlay interaction."
-		);
-	}
-
-	#[cfg(target_os = "macos")]
 	/// Registers a wake callback for macOS live-stream frame notifications.
 	pub fn set_scroll_frame_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.scroll_frame_waker = Some(waker);
@@ -1025,12 +963,6 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	/// Registers a wake callback for AppKit-native passive capture input.
-	pub fn set_native_capture_input_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
-		self.native_capture_input_waker = Some(waker);
-	}
-
-	#[cfg(target_os = "macos")]
 	/// Supplies a host-owned guard that must approve scroll capture before it can start.
 	/// Return `Ok(false)` to reject the attempt without surfacing a HUD error.
 	pub fn set_scroll_capture_start_guard(&mut self, guard: ScrollCaptureStartGuard) {
@@ -1056,32 +988,11 @@ impl OverlaySession {
 	}
 
 	#[cfg(target_os = "macos")]
-	fn native_capture_input_dispatch(&self) -> Option<MacOSNativeCaptureInputDispatch> {
-		self.native_capture_input_waker.as_ref().cloned().map(|waker| {
-			MacOSNativeCaptureInputDispatch {
-				queue: Arc::clone(&self.native_capture_input_queue),
-				waker,
-			}
-		})
-	}
-
-	#[cfg(target_os = "macos")]
-	fn drain_native_capture_input_events(&self) -> Vec<MacOSNativeCaptureInputEvent> {
-		let Ok(mut queue) = self.native_capture_input_queue.lock() else {
-			tracing::warn!(
-				op = "overlay.native_capture_input_queue_poisoned",
-				"Draining native capture input from a poisoned queue."
-			);
-
-			return Vec::new();
-		};
-
-		queue.drain(..).collect()
-	}
-
-	#[cfg(target_os = "macos")]
-	/// Drains and applies any queued passive AppKit capture input events.
-	pub fn handle_native_capture_input_ready(&mut self) -> OverlayControl {
+	/// Applies one host-routed passive AppKit capture input event.
+	pub fn handle_native_capture_input_event(
+		&mut self,
+		event: MacOSNativeCaptureInputEvent,
+	) -> OverlayControl {
 		let now = Instant::now();
 
 		self.maybe_log_event_loop_stall(now);
@@ -1090,83 +1001,68 @@ impl OverlaySession {
 			Some("native_capture_input"),
 		);
 
-		for event in self.drain_native_capture_input_events() {
-			let control = match event {
-				MacOSNativeCaptureInputEvent::OverlayPointerMoved { monitor, global } => {
-					self.handle_native_overlay_pointer_moved(monitor, global)
-				},
-				MacOSNativeCaptureInputEvent::OverlayMouseInput {
-					monitor,
-					global,
-					button,
-					state,
-				} => {
-					self.maybe_stop_frozen_selection_drag_for_mouse_input(state, button);
+		match event {
+			MacOSNativeCaptureInputEvent::OverlayPointerMoved { monitor, global } => {
+				self.handle_native_overlay_pointer_moved(monitor, global)
+			},
+			MacOSNativeCaptureInputEvent::OverlayMouseInput { monitor, global, button, state } => {
+				self.maybe_stop_frozen_selection_drag_for_mouse_input(state, button);
 
-					match (state, button) {
-						(ElementState::Pressed, MouseButton::Right) => {
-							self.cancel_overlay("native_capture_right_click")
-						},
-						(_, MouseButton::Left) => {
-							self.handle_live_overlay_left_mouse_input(monitor, global, state)
-						},
-						_ => OverlayControl::Continue,
-					}
-				},
-				MacOSNativeCaptureInputEvent::ToolbarPointerMoved {
-					monitor,
-					local,
-					global,
-					outer_position,
-				} => self.handle_native_toolbar_pointer_moved(
-					monitor,
-					local,
-					global,
-					Some(outer_position),
-				),
-				MacOSNativeCaptureInputEvent::ToolbarPointerLeft => {
-					self.handle_toolbar_cursor_left()
-				},
-				MacOSNativeCaptureInputEvent::ToolbarMouseInput { button, state } => {
-					self.maybe_stop_frozen_selection_drag_for_mouse_input(state, button);
+				match (state, button) {
+					(ElementState::Pressed, MouseButton::Right) => {
+						self.cancel_overlay("native_capture_right_click")
+					},
+					(_, MouseButton::Left) => {
+						self.handle_live_overlay_left_mouse_input(monitor, global, state)
+					},
+					_ => OverlayControl::Continue,
+				}
+			},
+			MacOSNativeCaptureInputEvent::ToolbarPointerMoved {
+				monitor,
+				local,
+				global,
+				outer_position,
+			} => self.handle_native_toolbar_pointer_moved(
+				monitor,
+				local,
+				global,
+				Some(outer_position),
+			),
+			MacOSNativeCaptureInputEvent::ToolbarPointerLeft => self.handle_toolbar_cursor_left(),
+			MacOSNativeCaptureInputEvent::ToolbarMouseInput { button, state } => {
+				self.maybe_stop_frozen_selection_drag_for_mouse_input(state, button);
 
-					match (state, button) {
-						(ElementState::Pressed, MouseButton::Right) => {
-							self.cancel_overlay("native_toolbar_right_click")
-						},
-						(_, MouseButton::Left) => self.handle_toolbar_mouse_input(state),
-						_ => OverlayControl::Continue,
-					}
-				},
-				MacOSNativeCaptureInputEvent::ToolbarScrollWheel { delta } => {
-					let delta = match delta {
-						MacOSNativeCaptureScrollDelta::Line { x, y } => {
-							MouseScrollDelta::LineDelta(x, y)
-						},
-						MacOSNativeCaptureScrollDelta::Pixel { x, y } => {
-							MouseScrollDelta::PixelDelta(PhysicalPosition::new(x, y))
-						},
-					};
+				match (state, button) {
+					(ElementState::Pressed, MouseButton::Right) => {
+						self.cancel_overlay("native_toolbar_right_click")
+					},
+					(_, MouseButton::Left) => self.handle_toolbar_mouse_input(state),
+					_ => OverlayControl::Continue,
+				}
+			},
+			MacOSNativeCaptureInputEvent::ToolbarScrollWheel { delta } => {
+				let delta = match delta {
+					MacOSNativeCaptureScrollDelta::Line { x, y } => {
+						MouseScrollDelta::LineDelta(x, y)
+					},
+					MacOSNativeCaptureScrollDelta::Pixel { x, y } => {
+						MouseScrollDelta::PixelDelta(PhysicalPosition::new(x, y))
+					},
+				};
 
-					self.handle_toolbar_mouse_wheel(&delta)
-				},
-				MacOSNativeCaptureInputEvent::KeyboardInput { monitor: _, event } => {
-					self.handle_overlay_keyboard_input_event(&event)
-				},
-				MacOSNativeCaptureInputEvent::Ime { monitor, event } => {
-					self.handle_overlay_ime_event(monitor, &event)
-				},
-				MacOSNativeCaptureInputEvent::ModifiersChanged { state } => {
-					self.handle_modifiers_state_changed(state)
-				},
-			};
-
-			if !matches!(control, OverlayControl::Continue) {
-				return control;
-			}
+				self.handle_toolbar_mouse_wheel(&delta)
+			},
+			MacOSNativeCaptureInputEvent::KeyboardInput { monitor: _, event } => {
+				self.handle_overlay_keyboard_input_event(&event)
+			},
+			MacOSNativeCaptureInputEvent::Ime { monitor, event } => {
+				self.handle_overlay_ime_event(monitor, &event)
+			},
+			MacOSNativeCaptureInputEvent::ModifiersChanged { state } => {
+				self.handle_modifiers_state_changed(state)
+			},
 		}
-
-		OverlayControl::Continue
 	}
 
 	#[cfg(target_os = "macos")]
@@ -1410,9 +1306,6 @@ impl OverlaySession {
 		}
 
 		self.state.begin_freeze(monitor);
-
-		#[cfg(target_os = "macos")]
-		let _ = self.sync_native_capture_shells();
 
 		self.state.drag_rect = None;
 		self.state.hovered_window_rect = None;
@@ -2211,8 +2104,6 @@ impl OverlaySession {
 
 		self.prepare_toolbar_for_frozen_capture_transition(monitor, capture_rect);
 		self.prepare_frozen_capture_handoff_state(monitor, window_target);
-		#[cfg(target_os = "macos")]
-		self.restore_recorded_frontmost_application_for_focus_preservation("begin_frozen_capture");
 
 		#[cfg(target_os = "macos")]
 		if self.begin_frozen_capture_with_rect_macos(monitor, window_target, cursor) {
@@ -3632,12 +3523,7 @@ impl OverlaySession {
 		self.log_exit_begin(&exit_metadata);
 		self.finalize_scroll_capture_for_exit();
 
-		#[cfg(target_os = "macos")]
-		let frontmost_application_before_start = self.frontmost_application_before_start.take();
-
 		self.reset_runtime_for_exit();
-		#[cfg(target_os = "macos")]
-		self.restore_frontmost_application_after_exit(frontmost_application_before_start);
 		self.log_exit_end(&exit_metadata);
 
 		OverlayControl::Exit(exit)
@@ -3697,11 +3583,6 @@ impl OverlaySession {
 		self.set_scroll_overlay_mouse_passthrough(false);
 
 		self.session_active = false;
-
-		#[cfg(target_os = "macos")]
-		{
-			self.destroy_native_capture_shells();
-		}
 		self.windows.clear();
 
 		self.hud_window = None;
@@ -3734,10 +3615,6 @@ impl OverlaySession {
 		self.loupe_window_visible = false;
 		self.loupe_window_warmup_redraws_remaining = 0;
 		self.scroll_capture = ScrollCaptureState::default();
-		#[cfg(target_os = "macos")]
-		{
-			self.frontmost_application_before_start = None;
-		}
 		self.frozen_capture_source = FrozenCaptureSource::None;
 		self.cursor_monitor = None;
 		self.gpu = None;
@@ -4109,13 +3986,13 @@ pub enum WindowCaptureAlphaMode {
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum MacOSNativeCaptureScrollDelta {
+pub enum MacOSNativeCaptureScrollDelta {
 	Line { x: f32, y: f32 },
 	Pixel { x: f64, y: f64 },
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct OverlayKeyboardInputEvent {
+pub struct OverlayKeyboardInputEvent {
 	logical_key: Key,
 	text: Option<String>,
 	state: ElementState,
@@ -4134,7 +4011,7 @@ impl OverlayKeyboardInputEvent {
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Debug, PartialEq)]
-enum MacOSNativeCaptureInputEvent {
+pub enum MacOSNativeCaptureInputEvent {
 	OverlayPointerMoved {
 		monitor: MonitorRect,
 		global: GlobalPoint,
@@ -4175,24 +4052,12 @@ enum MacOSNativeCaptureInputEvent {
 #[cfg(target_os = "macos")]
 #[derive(Clone)]
 struct MacOSNativeCaptureInputDispatch {
-	queue: Arc<Mutex<VecDeque<MacOSNativeCaptureInputEvent>>>,
-	waker: Arc<dyn Fn() + Send + Sync>,
+	sink: Arc<dyn Fn(MacOSNativeCaptureInputEvent) + Send + Sync>,
 }
 #[cfg(target_os = "macos")]
 impl MacOSNativeCaptureInputDispatch {
 	fn enqueue(&self, event: MacOSNativeCaptureInputEvent) {
-		if let Ok(mut queue) = self.queue.lock() {
-			queue.push_back(event);
-		} else {
-			tracing::warn!(
-				op = "overlay.native_capture_input_queue_poisoned",
-				"Dropping native capture input event because the queue lock was poisoned."
-			);
-
-			return;
-		}
-
-		(self.waker)();
+		(self.sink)(event);
 	}
 }
 
