@@ -36,6 +36,8 @@ use winit::event_loop::ActiveEventLoop;
 use winit::event_loop::EventLoopProxy;
 
 #[cfg(target_os = "macos")]
+use self::capture_host_macos::OverlayNativeCaptureInputBuffer;
+#[cfg(target_os = "macos")]
 use self::scroll_input_macos::ScrollInputObserverLifecycle;
 #[cfg(target_os = "macos")]
 use self::scroll_input_macos::SharedScrollInputState;
@@ -45,7 +47,7 @@ use crate::settings::AppSettings;
 use crate::settings_window::{SettingsWindow, SettingsWindowEntry};
 use rsnap_overlay::OverlaySession;
 #[cfg(target_os = "macos")]
-use rsnap_overlay::{FrozenGlobalHotkey, MacOSCaptureHost, MacOSNativeCaptureInputEvent};
+use rsnap_overlay::{FrozenGlobalHotkey, MacOSCaptureHost};
 
 pub(crate) enum UserEvent {
 	TrayIcon,
@@ -60,7 +62,7 @@ pub(crate) enum UserEvent {
 	#[cfg(target_os = "macos")]
 	OverlayWorkerResponse,
 	#[cfg(target_os = "macos")]
-	OverlayNativeCaptureInput(u64, MacOSNativeCaptureInputEvent),
+	OverlayNativeCaptureInput,
 }
 
 #[cfg(target_os = "macos")]
@@ -159,6 +161,8 @@ struct App {
 	scroll_input_shared_state: Arc<SharedScrollInputState>,
 	#[cfg(target_os = "macos")]
 	overlay_stream_event_pending: Arc<AtomicBool>,
+	#[cfg(target_os = "macos")]
+	overlay_native_capture_input_buffer: OverlayNativeCaptureInputBuffer,
 	#[cfg(target_os = "macos")]
 	latest_deferred_ocr_generation: Arc<AtomicU64>,
 	#[cfg(target_os = "macos")]
@@ -279,6 +283,8 @@ impl App {
 			scroll_input_shared_state,
 			#[cfg(target_os = "macos")]
 			overlay_stream_event_pending: Arc::new(AtomicBool::new(false)),
+			#[cfg(target_os = "macos")]
+			overlay_native_capture_input_buffer: OverlayNativeCaptureInputBuffer::new(),
 			#[cfg(target_os = "macos")]
 			latest_deferred_ocr_generation: Arc::new(AtomicU64::new(0)),
 			#[cfg(target_os = "macos")]
