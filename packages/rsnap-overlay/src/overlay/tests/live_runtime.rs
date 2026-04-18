@@ -177,13 +177,10 @@ fn native_capture_input_ready_routes_toolbar_pointer_left_without_window_id() {
 	session.toolbar_state.visible = true;
 	session.toolbar_pointer_local = Some(Pos2::new(12.0, 10.0));
 
-	session
-		.native_capture_input_queue
-		.lock()
-		.expect("native capture input queue")
-		.push_back(MacOSNativeCaptureInputEvent::ToolbarPointerLeft);
-
-	assert!(matches!(session.handle_native_capture_input_ready(), OverlayControl::Continue));
+	assert!(matches!(
+		session.handle_native_capture_input_event(MacOSNativeCaptureInputEvent::ToolbarPointerLeft),
+		OverlayControl::Continue
+	));
 	assert_eq!(session.toolbar_pointer_local, None);
 }
 
@@ -202,8 +199,8 @@ fn native_capture_input_ready_routes_keyboard_input_to_frozen_text_edit() {
 
 	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
 
-	session.native_capture_input_queue.lock().expect("native capture input queue").push_back(
-		MacOSNativeCaptureInputEvent::KeyboardInput {
+	assert!(matches!(
+		session.handle_native_capture_input_event(MacOSNativeCaptureInputEvent::KeyboardInput {
 			monitor: Some(monitor),
 			event: OverlayKeyboardInputEvent {
 				logical_key: Key::Character(String::from("A").into()),
@@ -211,10 +208,9 @@ fn native_capture_input_ready_routes_keyboard_input_to_frozen_text_edit() {
 				state: ElementState::Pressed,
 				repeat: false,
 			},
-		},
-	);
-
-	assert!(matches!(session.handle_native_capture_input_ready(), OverlayControl::Continue));
+		}),
+		OverlayControl::Continue
+	));
 	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some("A"));
 }
 
@@ -233,14 +229,13 @@ fn native_capture_input_ready_routes_ime_preedit_to_frozen_text_edit() {
 
 	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
 
-	session.native_capture_input_queue.lock().expect("native capture input queue").push_back(
-		MacOSNativeCaptureInputEvent::Ime {
+	assert!(matches!(
+		session.handle_native_capture_input_event(MacOSNativeCaptureInputEvent::Ime {
 			monitor: Some(monitor),
 			event: Ime::Preedit(String::from("汉"), Some((0, 0))),
-		},
-	);
-
-	assert!(matches!(session.handle_native_capture_input_ready(), OverlayControl::Continue));
+		}),
+		OverlayControl::Continue
+	));
 	assert_eq!(
 		session.frozen_text_edit.as_ref().and_then(|edit| edit.ime_preedit.as_deref()),
 		Some("汉")
@@ -259,8 +254,8 @@ fn native_capture_input_ready_routes_scroll_capture_escape_without_winit_window_
 
 	session.scroll_capture.active = true;
 
-	session.native_capture_input_queue.lock().expect("native capture input queue").push_back(
-		MacOSNativeCaptureInputEvent::KeyboardInput {
+	assert!(matches!(
+		session.handle_native_capture_input_event(MacOSNativeCaptureInputEvent::KeyboardInput {
 			monitor: Some(monitor),
 			event: OverlayKeyboardInputEvent {
 				logical_key: Key::Named(NamedKey::Escape),
@@ -268,11 +263,7 @@ fn native_capture_input_ready_routes_scroll_capture_escape_without_winit_window_
 				state: ElementState::Pressed,
 				repeat: false,
 			},
-		},
-	);
-
-	assert!(matches!(
-		session.handle_native_capture_input_ready(),
+		}),
 		OverlayControl::Exit(OverlayExit::Cancelled)
 	));
 }
@@ -1216,7 +1207,7 @@ fn begin_live_capture_press_force_refreshes_existing_live_snapshot() {
 	let stream = MacLiveFrameStream::new();
 	let mut session = OverlaySession::new();
 
-	stream.debug_store_test_snapshot(monitor, Instant::now());
+	stream.debug_store_test_snapshot(monitor, tests::fresh_live_stream_snapshot_captured_at());
 
 	session.live_sample_stream = Some(stream);
 
