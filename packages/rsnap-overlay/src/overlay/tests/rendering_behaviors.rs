@@ -1,8 +1,6 @@
 use std::slice;
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
-#[cfg(target_os = "macos")]
-use std::time::Instant;
 
 use egui::Id;
 use egui::LayerId;
@@ -106,7 +104,7 @@ fn snapshot_background_capture_finishes_frozen_transition_immediately() {
 	let capture_rect = RectPoints::new(120, 160, 320, 240);
 	let frozen_image = tests::test_frozen_image();
 	let snapshot = Arc::new(MonitorImageSnapshot {
-		captured_at: Instant::now(),
+		captured_at: tests::fresh_live_stream_snapshot_captured_at(),
 		stream_generation: 1,
 		monitor,
 		image: Arc::new(frozen_image.clone()),
@@ -147,7 +145,7 @@ fn snapshot_matte_window_capture_keeps_authoritative_handoff_pending() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(120, 160, 320, 240);
 	let snapshot = Arc::new(MonitorImageSnapshot {
-		captured_at: Instant::now(),
+		captured_at: tests::fresh_live_stream_snapshot_captured_at(),
 		stream_generation: 1,
 		monitor,
 		image: Arc::new(tests::test_frozen_image()),
@@ -184,9 +182,7 @@ fn stale_snapshot_does_not_finish_frozen_transition_immediately() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(120, 160, 320, 240);
 	let snapshot = Arc::new(MonitorImageSnapshot {
-		captured_at: Instant::now()
-			- crate::live_frame_stream_macos::STREAM_REGION_FRAME_MAX_AGE
-			- Duration::from_millis(1),
+		captured_at: tests::stale_live_stream_snapshot_captured_at(),
 		stream_generation: 1,
 		monitor,
 		image: Arc::new(tests::test_frozen_image()),
@@ -222,7 +218,7 @@ fn snapshot_seeded_preview_keeps_authoritative_handoff_pending() {
 	let capture_rect = RectPoints::new(120, 160, 320, 240);
 	let frozen_image = tests::test_frozen_image();
 	let snapshot = Arc::new(MonitorImageSnapshot {
-		captured_at: Instant::now(),
+		captured_at: tests::fresh_live_stream_snapshot_captured_at(),
 		stream_generation: 1,
 		monitor,
 		image: Arc::new(frozen_image.clone()),
@@ -253,7 +249,7 @@ fn snapshot_seeded_preview_makes_toolbar_eligible_before_final_capture_ready() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(120, 160, 320, 240);
 	let snapshot = Arc::new(MonitorImageSnapshot {
-		captured_at: Instant::now(),
+		captured_at: tests::fresh_live_stream_snapshot_captured_at(),
 		stream_generation: 1,
 		monitor,
 		image: Arc::new(tests::test_frozen_image()),
@@ -285,9 +281,7 @@ fn stale_snapshot_does_not_seed_frozen_preview() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(120, 160, 320, 240);
 	let snapshot = Arc::new(MonitorImageSnapshot {
-		captured_at: Instant::now()
-			- crate::live_frame_stream_macos::STREAM_REGION_FRAME_MAX_AGE
-			- Duration::from_millis(1),
+		captured_at: tests::stale_live_stream_snapshot_captured_at(),
 		stream_generation: 1,
 		monitor,
 		image: Arc::new(tests::test_frozen_image()),

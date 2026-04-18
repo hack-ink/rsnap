@@ -34,8 +34,6 @@ impl OverlaySession {
 		let reset_started_at = Instant::now();
 
 		self.reset_for_start();
-		#[cfg(target_os = "macos")]
-		self.capture_frontmost_application_for_exit_restore();
 
 		let reset_ms = reset_started_at.elapsed().as_millis();
 		let worker_setup_ms = self.setup_startup_worker();
@@ -89,8 +87,6 @@ impl OverlaySession {
 
 		self.session_active = true;
 
-		#[cfg(target_os = "macos")]
-		self.ensure_native_capture_shells()?;
 		self.request_redraw_all();
 
 		let request_redraw_ms = request_redraw_started_at.elapsed().as_millis();
@@ -508,8 +504,6 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		let startup_aux_window_waker = self.startup_aux_window_waker.clone();
 		#[cfg(target_os = "macos")]
-		let native_capture_input_waker = self.native_capture_input_waker.clone();
-		#[cfg(target_os = "macos")]
 		let external_scroll_input_drain_reader =
 			self.scroll_capture.external_scroll_input_drain_reader.clone();
 
@@ -525,7 +519,6 @@ impl OverlaySession {
 			self.scroll_capture_starting_hook = scroll_capture_starting_hook;
 			self.scroll_capture_started_hook = scroll_capture_started_hook;
 			self.startup_aux_window_waker = startup_aux_window_waker;
-			self.native_capture_input_waker = native_capture_input_waker;
 			self.pending_startup_aux_live_stream_filter_upgrade = false;
 			self.scroll_capture.external_scroll_input_drain_reader =
 				external_scroll_input_drain_reader;

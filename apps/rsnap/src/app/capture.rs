@@ -40,7 +40,7 @@ use crate::app::scroll_input_macos::{
 #[cfg(target_os = "macos")]
 use crate::permissions_macos;
 #[cfg(target_os = "macos")]
-use rsnap_overlay::DeferredTextRecognitionRequest;
+use rsnap_overlay::{DeferredTextRecognitionRequest, MacOSCaptureHost};
 use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
 
 #[cfg(target_os = "macos")]
@@ -412,7 +412,6 @@ impl App {
 			self.overlay_session_prewarm_retry_not_before = None;
 			self.overlay_session_generation = self.overlay_session_generation.wrapping_add(1);
 
-			self.overlay_native_capture_input_event_pending.store(false, Ordering::Release);
 			self.pending_deferred_ocr_generation
 				.store(self.overlay_session_generation, Ordering::Release);
 		}
@@ -424,6 +423,8 @@ impl App {
 
 		let hook_wiring_ms = hook_wiring_started_at.elapsed().as_millis();
 		let overlay_start_started_at = Instant::now();
+		#[cfg(target_os = "macos")]
+		let mut overlay_capture_host = self.begin_overlay_capture_host_session();
 
 		match overlay_session.start(event_loop) {
 			Ok(()) => {
@@ -459,19 +460,20 @@ impl App {
 				self.overlay_session = Some(overlay_session);
 
 				#[cfg(target_os = "macos")]
+				if !self.attach_overlay_capture_host_after_start(overlay_capture_host) {
+					return;
+				}
+
+				#[cfg(target_os = "macos")]
 				self.sync_overlay_hotkey_registrations();
 			},
 			Err(err) => {
 				let overlay_start_ms = overlay_start_started_at.elapsed().as_millis();
 
 				#[cfg(target_os = "macos")]
-				self.pending_deferred_ocr_generation.store(0, Ordering::Release);
+				overlay_capture_host.cancel_session_start();
 				#[cfg(target_os = "macos")]
-				{
-					self.scroll_input_shared_state.set_enabled(false);
-					self.scroll_input_shared_state.set_event_waker(None);
-					self.scroll_input_shared_state.clear();
-				}
+				self.reset_capture_start_after_failure();
 
 				tracing::warn!(
 					op = "capture.start_phase_timing",
@@ -488,13 +490,47 @@ impl App {
 					"Failed to start overlay session."
 				);
 
-				#[cfg(target_os = "macos")]
-				{
-					self.overlay_session_prewarm_requested = true;
-				}
+				self.note_capture_start_failure_for_prewarm();
 			},
 		}
 	}
+
+	#[cfg(target_os = "macos")]
+	fn begin_overlay_capture_host_session(&self) -> MacOSCaptureHost {
+		let mut overlay_capture_host = self.build_overlay_capture_host();
+
+		overlay_capture_host.begin_session();
+
+		overlay_capture_host
+	}
+
+	#[cfg(target_os = "macos")]
+	fn attach_overlay_capture_host_after_start(
+		&mut self,
+		overlay_capture_host: MacOSCaptureHost,
+	) -> bool {
+		self.overlay_capture_host = Some(overlay_capture_host);
+
+		self.sync_overlay_capture_host();
+
+		self.overlay_session.is_some()
+	}
+
+	#[cfg(target_os = "macos")]
+	fn reset_capture_start_after_failure(&mut self) {
+		self.pending_deferred_ocr_generation.store(0, Ordering::Release);
+		self.scroll_input_shared_state.set_enabled(false);
+		self.scroll_input_shared_state.set_event_waker(None);
+		self.scroll_input_shared_state.clear();
+	}
+
+	#[cfg(target_os = "macos")]
+	fn note_capture_start_failure_for_prewarm(&mut self) {
+		self.overlay_session_prewarm_requested = true;
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn note_capture_start_failure_for_prewarm(&mut self) {}
 
 	#[cfg(target_os = "macos")]
 	fn take_overlay_session_for_capture_start(&mut self) -> (&'static str, OverlaySession) {
@@ -650,22 +686,6 @@ impl App {
 					let _ = overlay_proxy.send_event(UserEvent::OverlayWorkerResponse);
 				}
 			}));
-			overlay_session.set_native_capture_input_waker(Arc::new({
-				let overlay_proxy = self.overlay_proxy.clone();
-				let native_input_pending =
-					Arc::clone(&self.overlay_native_capture_input_event_pending);
-
-				move || {
-					if native_input_pending
-						.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-						.is_ok() && overlay_proxy
-						.send_event(UserEvent::OverlayNativeCaptureInput)
-						.is_err()
-					{
-						native_input_pending.store(false, Ordering::Release);
-					}
-				}
-			}));
 			overlay_session.set_external_scroll_input_drain_reader(Arc::new({
 				let shared_state = Arc::clone(&self.scroll_input_shared_state);
 
@@ -709,18 +729,21 @@ impl App {
 	}
 
 	pub(super) fn end_overlay_session(&mut self, exit: OverlayExit) {
-		let Some(_session) = self.overlay_session.take() else {
+		if self.overlay_session.is_none() {
 			return;
-		};
+		}
 
 		#[cfg(target_os = "macos")]
-		self.overlay_native_capture_input_event_pending.store(false, Ordering::Release);
-		#[cfg(target_os = "macos")]
 		{
+			self.teardown_overlay_capture_host();
 			self.unregister_overlay_cancel_hotkey();
 			self.unregister_overlay_loupe_hotkey();
 			self.unregister_overlay_frozen_hotkeys();
 		}
+
+		let Some(_session) = self.overlay_session.take() else {
+			return;
+		};
 
 		#[cfg(target_os = "macos")]
 		{
@@ -936,6 +959,8 @@ impl App {
 
 		#[cfg(target_os = "macos")]
 		self.sync_overlay_hotkey_registrations();
+		#[cfg(target_os = "macos")]
+		self.sync_overlay_capture_host();
 	}
 }
 
