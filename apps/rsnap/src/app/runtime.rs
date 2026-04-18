@@ -84,16 +84,10 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 			},
 			#[cfg(target_os = "macos")]
-			UserEvent::OverlayNativeCaptureInput(generation, event) => {
-				if generation != self.overlay_session_generation {
-					return;
-				}
+			UserEvent::OverlayNativeCaptureInput => {
+				let control = self.handle_overlay_native_capture_input_ready();
 
-				if let Some(session) = self.overlay_session.as_mut() {
-					let control = session.handle_native_capture_input_event(event);
-
-					self.handle_overlay_control(control);
-				}
+				self.handle_overlay_control(control);
 			},
 		}
 	}
