@@ -19,6 +19,12 @@ Governing performance contract: `docs/spec/performance.md`
 
 Date: 2026-03-02
 
+## Active-lane note
+
+This document describes the checked-in live-sampling implementation, not the full target
+architecture. For the reset architecture route, start with `docs/reference/host-core-reset.md` and
+`docs/spec/platform-host-boundary.md`.
+
 ## Why this doc exists
 
 rsnap current UX requires instant updates on cursor movement:

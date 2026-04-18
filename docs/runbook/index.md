@@ -17,7 +17,8 @@ Question this index answers: "which sequence should I execute?"
 - You need the authoritative contract, schema, or invariant.
 - You need descriptive current-state context such as repository layout or implementation strategy;
   read `docs/reference/index.md`.
-- You need durable rationale for why an accepted tradeoff exists; read `docs/decisions/index.md`.
+- You need durable rationale for why an accepted tradeoff exists; read
+  `docs/decisions/index.md`.
 - You need broad documentation policy or repo task-entrypoint rules; read
   `docs/policy.md` or `Makefile.toml` instead.
 
@@ -58,7 +59,12 @@ Then structure the body for execution:
 
 ## Current runbooks
 
+- `docs/runbook/architecture-reset-implementation.md` for executing one host/core reset slice
+  without reintroducing mixed ownership
+- `docs/runbook/architecture-reset-validation.md` for validating host/core reset work without
+  routing through superseded shell-specific assumptions
 - `docs/runbook/performance-validation.md` for repo-native performance and smoke command routing
 - `docs/runbook/scroll-capture-benchmarks.md` for deterministic scroll-capture benchmark usage
-- `docs/runbook/macos-native-capture-window-validation.md` for manual validation of passive
-  pointer shells and explicit key-focus shell behavior on macOS
+
+Historical validation material is archived outside the active runbook lane and should not be used
+as the default validation route for reset work.

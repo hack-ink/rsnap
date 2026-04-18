@@ -54,9 +54,12 @@ Then keep the body explicit:
 
 ## Current specs
 
+- `docs/spec/capture-session.md` for the product-level capture-flow, Frozen-mode, and
+  scroll-capture contract
+- `docs/spec/platform-host-boundary.md` for the normative ownership boundary between native hosts
+  and the Rust core
 - `docs/spec/annotation-pen.md` for the Frozen-mode pen-tool behavior contract and beautification
   invariants
-- `docs/spec/capture-session.md` for the capture-flow and scroll-capture behavior contract
 - `docs/spec/frozen-toolbar-layout.md` for the stable-anchor and above/below expansion contract of
   the Frozen toolbar style capsule
 - `docs/spec/performance.md` for render cadence, performance scenarios, metrics,
