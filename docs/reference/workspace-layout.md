@@ -1,38 +1,50 @@
 # Workspace Layout Reference
 
-Purpose: Explain the current rsnap workspace layout, which crate owns which behavior, and which
-directories are source versus generated or runtime-local.
+Purpose: Explain the current rsnap workspace layout, which crate owns which behavior today, and
+which directories are source versus generated or runtime-local.
 
-Read this when: You are deciding where a change belongs, checking whether the current directory
-structure still matches the implementation, or routing a docs/code question to the right crate or
-folder.
+Read this when: You are deciding where a change belongs in the current tree, checking whether the
+directory structure still matches the implementation, or routing a docs/code question to the right
+crate or folder.
 
-Inputs: `Cargo.toml`; `README.md`; `docs/spec/capture-session.md`
+Inputs: `Cargo.toml`; `README.md`; `docs/spec/capture-session.md`;
+`docs/spec/platform-host-boundary.md`
 
-Depends on: `docs/spec/capture-session.md`
+Depends on: `docs/spec/capture-session.md`; `docs/reference/host-core-reset.md`
 
-Covers: The tracked workspace layout, crate ownership boundaries, and the local directories that
-should not be treated as repository source.
+Covers: The checked-in workspace layout, crate ownership boundaries today, and the local
+directories that should not be treated as repository source.
+
+## Important posture
+
+This document describes the checked-in repository structure today. It is not the architecture
+target for the reset lane.
+
+For the active target architecture and migration direction, read:
+
+- `docs/reference/host-core-reset.md`
+- `docs/spec/platform-host-boundary.md`
+- `docs/decisions/native-host-rust-core-reset.md`
 
 ## Current top-level layout
 
 | Path | Role |
 | --- | --- |
 | `apps/rsnap/` | Desktop app-shell crate: tray/menubar startup, hotkeys, settings window, permissions, logging, and session handoff into `rsnap-overlay` |
-| `packages/rsnap-overlay/` | Overlay/runtime crate: overlay windows, HUD/loupe/toolbar rendering, capture backend integration, OCR handoff, worker runtime, and scroll capture |
+| `packages/rsnap-overlay/` | Current overlay/runtime crate: capture-session logic, overlay rendering, capture backend integration, worker runtime, and scroll capture |
 | `docs/` | Agent-facing repository docs split into `spec`, `runbook`, `reference`, and `decisions` |
 | `assets/` | Shared app-icon and tray-icon source plus generated bundle/runtime assets |
 | `scripts/` | Packaging and dedicated macOS smoke helpers |
 | `.github/` | CI workflows and repository rules |
 
-This top-level split is reasonable for the current implementation because the workspace has one
-shipping app crate and one reusable overlay/runtime crate, with docs and assets shared at the root.
+This top-level split reflects the codebase as checked in today. It remains useful for navigation,
+but it should not be mistaken for the durable host/core target boundary.
 
 ## Crate ownership map
 
 ### `apps/rsnap/`
 
-Treat `apps/rsnap/` as the app shell.
+Treat `apps/rsnap/` as the current app shell.
 
 It owns:
 
@@ -54,32 +66,40 @@ Key paths:
 
 ### `packages/rsnap-overlay/`
 
-Treat `packages/rsnap-overlay/` as the capture-session and overlay engine.
+Treat `packages/rsnap-overlay/` as the current transitional container for most capture-session and
+overlay behavior.
 
-It owns:
+Today it owns:
 
-- overlay session lifecycle
-- overlay, HUD, loupe, and toolbar windows
+- capture-session lifecycle
+- overlay, HUD, loupe, and toolbar rendering
 - frozen-mode behavior and output flow
 - capture backend abstraction and worker coordination
 - macOS live frame streaming and OCR support
 - scroll-capture session logic, replay support, and benchmarks
 
+Important:
+
+- This is the checked-in ownership shape today.
+- It is not the long-lived reset target.
+- New work should avoid deepening `rsnap-overlay` as the authority for OS-facing window, focus,
+  cursor, IME, or capture-capability semantics when that work belongs on the native-host side of
+  the reset boundary.
+
 Key paths:
 
-- `packages/rsnap-overlay/src/lib.rs`: public session-level surface exported to the app shell
-- `packages/rsnap-overlay/src/overlay.rs`: overlay root plus its focused runtime/rendering support
-  modules
-- `packages/rsnap-overlay/src/overlay/macos_native_capture_shell_runtime.rs`: macOS-only passive
-  AppKit overlay/toolbar shells plus the dedicated key-focus shell bridge for text and scroll
-  interactions
-- `packages/rsnap-overlay/src/scroll_capture.rs`: scroll-capture session entry with focused
-  support modules under `scroll_capture/`
+- `packages/rsnap-overlay/src/lib.rs`: current public session-level surface exported to the app
+  shell
+- `packages/rsnap-overlay/src/overlay.rs`: current overlay root plus its focused
+  runtime/rendering support modules
+- `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: current macOS live-stream support
+- `packages/rsnap-overlay/src/scroll_capture.rs`: current scroll-capture session entry with
+  focused support modules under `scroll_capture/`
 
 ## Documentation placement
 
 - `README.md`: user-facing product and development overview for the whole workspace
-- `docs/spec/`: normative behavior and performance contracts
+- `docs/spec/`: normative behavior and architecture contracts
 - `docs/runbook/`: procedural and maintenance runbooks
 - `docs/reference/`: descriptive layout, ownership, and implementation references
 - `docs/decisions/`: durable rationale records for accepted tradeoffs
@@ -98,18 +118,15 @@ unless a task explicitly concerns runtime lane management or generated outputs.
 
 ## Structure assessment
 
-The current directory structure is mostly sound:
+The current directory structure is still navigable and serviceable for the checked-in codebase:
 
-- the top-level split between `apps/` and `packages/` matches the actual crate boundary
-- `docs/`, `assets/`, and `scripts/` live at the right shared-workspace level
-- the overlay and settings-window internals have already been split into focused submodules rather
-  than staying in single hotspot files
+- the top-level split between `apps/` and `packages/` still reflects the actual tree
+- `docs/`, `assets/`, and `scripts/` remain at the correct shared-workspace level
+- several large files have already been split into focused submodules
 
-The main source of confusion was documentation, not code layout:
+But the active architecture direction has changed:
 
-- root docs did not clearly separate product overview from internal ownership notes
-- the docs router did not answer basic "where does this live?" questions
-- old terminology blurred runbooks, references, and durable rationale
+- the durable story is no longer "app shell + one overlay/runtime authority"
+- the durable story is "native host owns OS semantics, Rust core owns product semantics"
 
-Use this reference as the default answer for repository-layout questions instead of inferring
-meaning from local runtime directories such as `.worktrees/` or `.workspaces/`.
+Use this reference for current filesystem routing, not as the final architecture source of truth.

@@ -1,7 +1,7 @@
 # Reference Index
 
 Purpose: Route agents to descriptive documents that explain the current repository layout,
-implementation shape, and chosen technical approach without defining normative truth or an
+active target architecture, and technical context without defining normative truth or an
 execution sequence.
 
 Question this index answers: "how is it currently organized or implemented?"
@@ -9,7 +9,7 @@ Question this index answers: "how is it currently organized or implemented?"
 ## Use this index when
 
 - You need the current crate or directory ownership map.
-- You need a descriptive explanation of the current implementation model or default strategy.
+- You need the active target architecture for the reset lane.
 - You need change-planning context before editing code, but not a normative contract or a runbook.
 
 ## Do not use this index when
@@ -22,7 +22,7 @@ Question this index answers: "how is it currently organized or implemented?"
 
 - Repository maps and ownership notes.
 - Current implementation-model explanations.
-- Strategy and default-choice references that help route or scope a change.
+- Active migration-target notes that are descriptive rather than normative.
 - Non-normative technical context that should stay separate from runbooks.
 
 ## Reference document contract
@@ -43,9 +43,12 @@ Then keep the body descriptive:
 
 ## Current references
 
+- `docs/reference/host-core-reset.md` for the active target architecture and migration posture of
+  the host/core reset
 - `docs/reference/workspace-layout.md` for workspace layout, crate boundaries, and local-only
   directories
 - `docs/reference/live-sampling.md` for the stream-first live RGB and loupe sampling path
 - `docs/reference/window-hit-testing.md` for live-mode hovered-window targeting strategy
-- `docs/reference/macos-native-capture-window-layer.md` for the passive AppKit shell and
-  explicit key-focus shell boundary on macOS
+
+Historical and superseded material is intentionally omitted from the active reference lane and
+should not drive change planning.

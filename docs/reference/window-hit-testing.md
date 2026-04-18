@@ -16,6 +16,12 @@ rule for live mode.
 
 Spec boundary: `docs/spec/capture-session.md`
 
+## Active-lane note
+
+This document describes the checked-in live hit-testing implementation, not the final architecture
+boundary for the reset lane. For the active target architecture, start with
+`docs/reference/host-core-reset.md` and `docs/spec/platform-host-boundary.md`.
+
 ## Current Strategy Scope
 
 This reference describes the current window-outline strategy used by rsnap live mode as of March
