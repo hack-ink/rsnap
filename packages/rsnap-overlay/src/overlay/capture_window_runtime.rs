@@ -88,7 +88,6 @@ impl OverlaySession {
 		}
 
 		self.capture_windows_hidden = false;
-
 		#[cfg(target_os = "macos")]
 		{
 			for overlay_window in self.windows.values() {

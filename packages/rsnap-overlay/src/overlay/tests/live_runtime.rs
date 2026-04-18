@@ -198,7 +198,6 @@ fn native_capture_input_ready_routes_keyboard_input_to_frozen_text_edit() {
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
 	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
-
 	assert!(matches!(
 		session.handle_native_capture_input_event(MacOSNativeCaptureInputEvent::KeyboardInput {
 			monitor: Some(monitor),
@@ -228,7 +227,6 @@ fn native_capture_input_ready_routes_ime_preedit_to_frozen_text_edit() {
 	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
 	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
-
 	assert!(matches!(
 		session.handle_native_capture_input_event(MacOSNativeCaptureInputEvent::Ime {
 			monitor: Some(monitor),

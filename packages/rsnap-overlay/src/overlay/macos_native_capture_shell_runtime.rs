@@ -14,6 +14,7 @@ use winit::event::{ElementState, Ime, MouseButton};
 use winit::keyboard::{Key, ModifiersState, NamedKey, NativeKey};
 use winit::window::WindowId;
 
+use crate::overlay::MacOSFrontmostApplication;
 use crate::overlay::OverlayWindow;
 use crate::overlay::{
 	CursorIcon, GlobalPoint, MacOSNativeCaptureInputDispatch, MacOSNativeCaptureInputEvent,
@@ -167,7 +168,7 @@ impl MacOSNativeCaptureShells {
 pub struct MacOSCaptureHost {
 	native_capture_shells: Option<MacOSNativeCaptureShells>,
 	native_capture_input_dispatch: MacOSNativeCaptureInputDispatch,
-	frontmost_application_before_start: Option<super::MacOSFrontmostApplication>,
+	frontmost_application_before_start: Option<MacOSFrontmostApplication>,
 	last_synced_mode: Option<OverlayMode>,
 }
 impl MacOSCaptureHost {
@@ -298,6 +299,7 @@ impl MacOSCaptureHost {
 		}
 
 		self.maybe_preserve_frontmost_application(session);
+
 		self.last_synced_mode = Some(session.state.mode);
 
 		Ok(())
@@ -324,6 +326,7 @@ impl MacOSCaptureHost {
 		self.last_synced_mode = None;
 
 		let target = self.frontmost_application_before_start.take();
+
 		self.restore_frontmost_application_after_exit(target);
 	}
 
@@ -336,19 +339,16 @@ impl MacOSCaptureHost {
 				"begin_frozen_capture",
 			);
 		}
-
 		if session.toolbar_window_visible && session.preserve_frontmost_on_next_toolbar_show {
 			session.preserve_frontmost_on_next_toolbar_show = false;
+
 			self.restore_recorded_frontmost_application_for_focus_preservation(
 				"toolbar_first_show",
 			);
 		}
 	}
 
-	fn restore_frontmost_application_after_exit(
-		&self,
-		target: Option<super::MacOSFrontmostApplication>,
-	) {
+	fn restore_frontmost_application_after_exit(&self, target: Option<MacOSFrontmostApplication>) {
 		let Some(target) = target else {
 			tracing::info!(
 				op = "overlay.frontmost_app_restore_attempted",

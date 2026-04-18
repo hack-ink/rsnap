@@ -32,6 +32,9 @@ mod window_position_runtime;
 mod window_runtime;
 mod worker_runtime;
 
+#[cfg(target_os = "macos")]
+pub use self::macos_native_capture_shell_runtime::MacOSCaptureHost;
+
 #[cfg(not(target_os = "macos"))]
 use std::env;
 #[cfg(target_os = "macos")]
@@ -151,8 +154,6 @@ use winit::{
 };
 
 use self::frozen_text_runtime::{FrozenTextInputSource, FrozenTextRecentInput};
-#[cfg(target_os = "macos")]
-pub use self::macos_native_capture_shell_runtime::MacOSCaptureHost;
 #[cfg(target_os = "macos")]
 use self::rendering::StartupLiveRgbPlan;
 use self::rendering::{
@@ -3522,7 +3523,6 @@ impl OverlaySession {
 
 		self.log_exit_begin(&exit_metadata);
 		self.finalize_scroll_capture_for_exit();
-
 		self.reset_runtime_for_exit();
 		self.log_exit_end(&exit_metadata);
 
@@ -3583,6 +3583,7 @@ impl OverlaySession {
 		self.set_scroll_overlay_mouse_passthrough(false);
 
 		self.session_active = false;
+
 		self.windows.clear();
 
 		self.hud_window = None;
@@ -3690,6 +3691,25 @@ impl OverlaySession {
 impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
+	}
+}
+
+#[derive(Clone, Debug, PartialEq)]
+/// Opaque keyboard event payload forwarded from the native passive capture host.
+pub struct OverlayKeyboardInputEvent {
+	logical_key: Key,
+	text: Option<String>,
+	state: ElementState,
+	repeat: bool,
+}
+impl OverlayKeyboardInputEvent {
+	fn from_winit(event: &KeyEvent) -> Self {
+		Self {
+			logical_key: event.logical_key.clone(),
+			text: event.text.as_deref().map(ToOwned::to_owned),
+			state: event.state,
+			repeat: event.repeat,
+		}
 	}
 }
 
@@ -3876,6 +3896,18 @@ struct FrozenArrowGeometry {
 	head_right: Pos2,
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+struct MacOSNativeCaptureInputDispatch {
+	sink: Arc<dyn Fn(MacOSNativeCaptureInputEvent) + Send + Sync>,
+}
+#[cfg(target_os = "macos")]
+impl MacOSNativeCaptureInputDispatch {
+	fn enqueue(&self, event: MacOSNativeCaptureInputEvent) {
+		(self.sink)(event);
+	}
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Selects how the live HUD should be positioned.
 pub enum HudAnchor {
@@ -3986,79 +4018,90 @@ pub enum WindowCaptureAlphaMode {
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Scroll-wheel delta routed from the native passive capture host.
 pub enum MacOSNativeCaptureScrollDelta {
-	Line { x: f32, y: f32 },
-	Pixel { x: f64, y: f64 },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct OverlayKeyboardInputEvent {
-	logical_key: Key,
-	text: Option<String>,
-	state: ElementState,
-	repeat: bool,
-}
-impl OverlayKeyboardInputEvent {
-	fn from_winit(event: &KeyEvent) -> Self {
-		Self {
-			logical_key: event.logical_key.clone(),
-			text: event.text.as_deref().map(ToOwned::to_owned),
-			state: event.state,
-			repeat: event.repeat,
-		}
-	}
+	/// A line-based scroll delta measured in lines along the x/y axes.
+	Line {
+		/// Horizontal line delta.
+		x: f32,
+		/// Vertical line delta.
+		y: f32,
+	},
+	/// A pixel-based scroll delta measured in pixels along the x/y axes.
+	Pixel {
+		/// Horizontal pixel delta.
+		x: f64,
+		/// Vertical pixel delta.
+		y: f64,
+	},
 }
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Debug, PartialEq)]
+/// Input event routed from the app-owned macOS passive capture host into the overlay core.
 pub enum MacOSNativeCaptureInputEvent {
+	/// Pointer movement over a passive overlay shell.
 	OverlayPointerMoved {
+		/// Monitor whose passive shell observed the pointer movement.
 		monitor: MonitorRect,
+		/// Pointer location in global desktop coordinates.
 		global: GlobalPoint,
 	},
+	/// Mouse-button activity observed by a passive overlay shell.
 	OverlayMouseInput {
+		/// Monitor whose passive shell observed the mouse input.
 		monitor: MonitorRect,
+		/// Pointer location in global desktop coordinates.
 		global: GlobalPoint,
+		/// Mouse button that changed state.
 		button: MouseButton,
+		/// New state for the button.
 		state: ElementState,
 	},
+	/// Pointer movement over a passive toolbar shell.
 	ToolbarPointerMoved {
+		/// Monitor that currently anchors the toolbar shell.
 		monitor: MonitorRect,
+		/// Pointer location in toolbar-local coordinates.
 		local: Pos2,
+		/// Pointer location in global desktop coordinates.
 		global: GlobalPoint,
+		/// Toolbar shell origin in global desktop coordinates.
 		outer_position: GlobalPoint,
 	},
+	/// Pointer exit from the passive toolbar shell.
 	ToolbarPointerLeft,
+	/// Mouse-button activity observed by the passive toolbar shell.
 	ToolbarMouseInput {
+		/// Mouse button that changed state.
 		button: MouseButton,
+		/// New state for the button.
 		state: ElementState,
 	},
+	/// Scroll-wheel input observed by the passive toolbar shell.
 	ToolbarScrollWheel {
+		/// Scroll delta reported by the native host.
 		delta: MacOSNativeCaptureScrollDelta,
 	},
+	/// Keyboard input forwarded from the passive key-focus shell.
 	KeyboardInput {
+		/// Monitor associated with the active key-focus shell, if any.
 		monitor: Option<MonitorRect>,
+		/// Opaque keyboard event payload translated from winit/native state.
 		event: OverlayKeyboardInputEvent,
 	},
+	/// IME input forwarded from the passive key-focus shell.
 	Ime {
+		/// Monitor associated with the active key-focus shell, if any.
 		monitor: Option<MonitorRect>,
+		/// IME payload to apply inside the overlay session.
 		event: Ime,
 	},
+	/// Modifier-key state update forwarded from the native host.
 	ModifiersChanged {
+		/// Current modifier-key state.
 		state: ModifiersState,
 	},
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone)]
-struct MacOSNativeCaptureInputDispatch {
-	sink: Arc<dyn Fn(MacOSNativeCaptureInputEvent) + Send + Sync>,
-}
-#[cfg(target_os = "macos")]
-impl MacOSNativeCaptureInputDispatch {
-	fn enqueue(&self, event: MacOSNativeCaptureInputEvent) {
-		(self.sink)(event);
-	}
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
