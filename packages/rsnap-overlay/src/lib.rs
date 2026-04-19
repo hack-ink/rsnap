@@ -53,7 +53,8 @@ pub use crate::overlay::{
 };
 #[cfg(target_os = "macos")]
 pub use crate::overlay::{
-	MacOSCaptureHost, MacOSNativeCaptureInputEvent, MacOSNativeCaptureScrollDelta,
+	MacOSCaptureHost, MacOSCaptureHostSyncState, MacOSNativeCaptureInputEvent,
+	MacOSNativeCaptureScrollDelta,
 };
 pub use crate::state::{
 	GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb, WindowHit,

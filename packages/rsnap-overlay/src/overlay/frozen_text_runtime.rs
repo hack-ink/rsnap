@@ -1,5 +1,6 @@
 use egui::{FontId, Pos2, Rect, Vec2};
 use image::RgbaImage;
+#[cfg(not(target_os = "macos"))]
 use winit::dpi::{LogicalPosition, LogicalSize};
 
 use crate::overlay::{
@@ -38,15 +39,8 @@ impl OverlaySession {
 	pub(super) fn sync_text_input_ime_state(&mut self) {
 		#[cfg(target_os = "macos")]
 		{
-			let ime_allowed = self.frozen_text_tool_active() && self.frozen_text_edit.is_some();
-
-			for overlay_window in self.windows.values() {
-				overlay_window.window.set_ime_allowed(ime_allowed);
-			}
-
-			if let Some(toolbar_window) = self.toolbar_window.as_ref() {
-				toolbar_window.window.set_ime_allowed(false);
-			}
+			// macOS text focus and IME lifecycle are owned by the native capture host.
+			let _ = self;
 		}
 
 		#[cfg(not(target_os = "macos"))]
@@ -66,34 +60,8 @@ impl OverlaySession {
 	pub(super) fn sync_frozen_text_ime_cursor_area(&mut self, monitor: MonitorRect) {
 		#[cfg(target_os = "macos")]
 		{
-			let Some(edit_state) = self.frozen_text_edit.as_ref() else {
-				return;
-			};
-			let Some(overlay_window) =
-				self.windows.values().find(|window| window.monitor == monitor)
-			else {
-				return;
-			};
-			let (visible_text, caret_char_index) = edit_state.visible_text_and_caret_char_index();
-			let caret_rect = overlay_window.renderer.frozen_text_edit_caret_rect_for_window(
-				edit_state.anchor,
-				visible_text.as_str(),
-				&FontId::proportional(self.toolbar_state.text_style.font_size_points),
-				caret_char_index.unwrap_or_else(|| visible_text.chars().count()),
-			);
-
-			overlay_window.window.set_ime_cursor_area(
-				LogicalPosition::new(
-					f64::from(caret_rect.min.x.max(0.0)),
-					f64::from(caret_rect.min.y.max(0.0)),
-				),
-				LogicalSize::new(
-					f64::from(caret_rect.width().max(1.0)),
-					f64::from(
-						caret_rect.height().max(self.toolbar_state.text_style.font_size_points),
-					),
-				),
-			);
+			// macOS candidate-window geometry is synchronized through the host sync state.
+			let _ = (self, monitor);
 		}
 
 		#[cfg(not(target_os = "macos"))]
