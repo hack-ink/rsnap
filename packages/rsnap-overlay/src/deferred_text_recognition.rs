@@ -13,12 +13,9 @@ use std::{
 #[cfg(target_os = "macos")]
 use image::{RgbaImage, imageops};
 
+use crate::ocr_macos::{self, RecognizedTextOutput};
 #[cfg(target_os = "macos")]
 use crate::state::RectPoints;
-use crate::{
-	ocr_macos::{self, RecognizedTextOutput},
-	overlay::output,
-};
 
 #[cfg(target_os = "macos")]
 const PUBLISH_GATE_PENDING_POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -64,14 +61,12 @@ impl DeferredTextRecognitionImageSource {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Final background OCR outcome reported for structured logging and telemetry.
 pub enum DeferredTextRecognitionOutcomeKind {
-	/// OCR produced non-empty text and the clipboard write succeeded.
-	TextCopied,
+	/// OCR produced non-empty text that the native host may publish.
+	TextReady,
 	/// OCR completed successfully but did not return any non-whitespace text.
 	NoText,
 	/// OCR finished, but a newer capture superseded this request before publish.
 	StaleRequestSuppressed,
-	/// OCR completed successfully but writing the recognized text to the clipboard failed.
-	ClipboardError,
 	/// OCR could not prepare the export image or Vision failed to recognize text.
 	RecognizeError,
 }
@@ -134,6 +129,8 @@ pub struct DeferredTextRecognitionOutcome {
 	pub recognized_lines: usize,
 	/// Number of characters returned by Vision after line joining.
 	pub recognized_chars: usize,
+	/// Recognized text to publish through the host-owned clipboard effect.
+	pub recognized_text: Option<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -286,11 +283,10 @@ fn empty_export_outcome(
 		"recognize_error",
 		0,
 		0,
-		None,
 		Some(error.as_str()),
 	);
 
-	outcome(context.request_id, DeferredTextRecognitionOutcomeKind::RecognizeError, 0, 0)
+	outcome(context.request_id, DeferredTextRecognitionOutcomeKind::RecognizeError, 0, 0, None)
 }
 
 #[cfg(target_os = "macos")]
@@ -331,7 +327,6 @@ fn recognized_text_outcome(
 			recognized_lines,
 			recognized_chars,
 			None,
-			None,
 		);
 
 		return outcome(
@@ -339,58 +334,29 @@ fn recognized_text_outcome(
 			DeferredTextRecognitionOutcomeKind::NoText,
 			recognized_lines,
 			recognized_chars,
+			None,
 		);
 	}
 	if !publish_gate_allows_publish(publish_gate) {
 		return stale_recognized_text_outcome(context, recognized_lines, recognized_chars);
 	}
 
-	let clipboard_write_started_at = Instant::now();
+	log_ocr_request_completed(
+		context.request_id,
+		context.requested_at,
+		"text_ready",
+		recognized_lines,
+		recognized_chars,
+		None,
+	);
 
-	if !publish_gate_allows_publish(publish_gate) {
-		return stale_recognized_text_outcome(context, recognized_lines, recognized_chars);
-	}
-
-	match output::write_text_to_clipboard(&output.text) {
-		Ok(()) => {
-			log_ocr_request_completed(
-				context.request_id,
-				context.requested_at,
-				"text_copied",
-				recognized_lines,
-				recognized_chars,
-				Some(clipboard_write_started_at.elapsed().as_millis()),
-				None,
-			);
-
-			outcome(
-				context.request_id,
-				DeferredTextRecognitionOutcomeKind::TextCopied,
-				recognized_lines,
-				recognized_chars,
-			)
-		},
-		Err(err) => {
-			let error = format!("{err:#}");
-
-			log_ocr_request_completed(
-				context.request_id,
-				context.requested_at,
-				"clipboard_error",
-				recognized_lines,
-				recognized_chars,
-				Some(clipboard_write_started_at.elapsed().as_millis()),
-				Some(error.as_str()),
-			);
-
-			outcome(
-				context.request_id,
-				DeferredTextRecognitionOutcomeKind::ClipboardError,
-				recognized_lines,
-				recognized_chars,
-			)
-		},
-	}
+	outcome(
+		context.request_id,
+		DeferredTextRecognitionOutcomeKind::TextReady,
+		recognized_lines,
+		recognized_chars,
+		Some(output.text),
+	)
 }
 
 #[cfg(target_os = "macos")]
@@ -413,7 +379,6 @@ fn stale_recognized_text_outcome(
 		recognized_lines,
 		recognized_chars,
 		None,
-		None,
 	);
 
 	outcome(
@@ -421,6 +386,7 @@ fn stale_recognized_text_outcome(
 		DeferredTextRecognitionOutcomeKind::StaleRequestSuppressed,
 		recognized_lines,
 		recognized_chars,
+		None,
 	)
 }
 
@@ -446,10 +412,15 @@ fn stale_request_outcome(
 		0,
 		0,
 		None,
-		None,
 	);
 
-	outcome(context.request_id, DeferredTextRecognitionOutcomeKind::StaleRequestSuppressed, 0, 0)
+	outcome(
+		context.request_id,
+		DeferredTextRecognitionOutcomeKind::StaleRequestSuppressed,
+		0,
+		0,
+		None,
+	)
 }
 
 #[cfg(target_os = "macos")]
@@ -480,11 +451,10 @@ fn recognize_error_outcome(
 		"recognize_error",
 		0,
 		0,
-		None,
 		Some(error.as_str()),
 	);
 
-	outcome(context.request_id, DeferredTextRecognitionOutcomeKind::RecognizeError, 0, 0)
+	outcome(context.request_id, DeferredTextRecognitionOutcomeKind::RecognizeError, 0, 0, None)
 }
 
 #[cfg(target_os = "macos")]
@@ -493,8 +463,15 @@ fn outcome(
 	kind: DeferredTextRecognitionOutcomeKind,
 	recognized_lines: usize,
 	recognized_chars: usize,
+	recognized_text: Option<String>,
 ) -> DeferredTextRecognitionOutcome {
-	DeferredTextRecognitionOutcome { request_id, kind, recognized_lines, recognized_chars }
+	DeferredTextRecognitionOutcome {
+		request_id,
+		kind,
+		recognized_lines,
+		recognized_chars,
+		recognized_text,
+	}
 }
 
 #[cfg(target_os = "macos")]
@@ -530,7 +507,6 @@ fn log_ocr_request_completed(
 	outcome: &'static str,
 	recognized_lines: usize,
 	recognized_chars: usize,
-	clipboard_write_ms: Option<u128>,
 	error: Option<&str>,
 ) {
 	tracing::info!(
@@ -541,7 +517,6 @@ fn log_ocr_request_completed(
 		total_ms = requested_at.elapsed().as_millis(),
 		recognized_lines,
 		recognized_chars,
-		clipboard_write_ms,
 		error,
 		"OCR request completed."
 	);
