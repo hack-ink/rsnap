@@ -5,6 +5,8 @@ use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::ElementState;
+#[cfg(target_os = "macos")]
+use winit::event::MouseButton;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
@@ -39,6 +41,24 @@ use crate::overlay::{FrozenGlobalHotkey, PngAction};
 use crate::overlay::{LiveCaptureInteraction, LiveClickCaptureTarget, OverlayControl};
 #[cfg(target_os = "macos")]
 use crate::state::{WindowHit, WindowRect};
+
+#[cfg(target_os = "macos")]
+fn single_window_list_snapshot(
+	monitor: MonitorRect,
+	capture_rect: RectPoints,
+	window_id: u32,
+) -> Arc<WindowListSnapshot> {
+	Arc::new(WindowListSnapshot {
+		captured_at: Instant::now(),
+		windows: Arc::new(vec![WindowRect {
+			window_id: Some(window_id),
+			x: i64::from(monitor.origin.x) + i64::from(capture_rect.x),
+			y: i64::from(monitor.origin.y) + i64::from(capture_rect.y),
+			width: i64::from(capture_rect.width),
+			height: i64::from(capture_rect.height),
+		}]),
+	})
+}
 
 #[cfg(target_os = "macos")]
 #[test]
@@ -182,6 +202,195 @@ fn native_capture_input_ready_routes_toolbar_pointer_left_without_window_id() {
 		OverlayControl::Continue
 	));
 	assert_eq!(session.toolbar_pointer_local, None);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_overlay_pointer_move_updates_live_hover_target_without_window_events() {
+	let monitor = tests::test_monitor();
+	let cursor = GlobalPoint::new(180, 220);
+	let capture_rect = RectPoints::new(100, 120, 240, 320);
+	let mut session = OverlaySession::new();
+
+	session.state.mode = OverlayMode::Live;
+	session.state.monitor = Some(monitor);
+	session.window_list_snapshot = Some(single_window_list_snapshot(monitor, capture_rect, 42));
+
+	assert!(matches!(
+		session.handle_native_capture_input_event(
+			MacOSNativeCaptureInputEvent::OverlayPointerMoved { monitor, global: cursor }
+		),
+		OverlayControl::Continue
+	));
+	assert_eq!(session.state.cursor, Some(cursor));
+	assert_eq!(session.last_event_cursor, Some((monitor, cursor)));
+	assert_eq!(
+		session.state.hovered_window_rect,
+		Some(MonitorRectPoints { monitor_id: monitor.id, rect: capture_rect })
+	);
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::HoverWindow {
+			monitor: hover_monitor,
+			target: LiveClickCaptureTarget {
+				capture_rect: Some(target_rect),
+				window_target: Some(window_target),
+			},
+		} if hover_monitor == monitor && target_rect == capture_rect && window_target.window_id == 42
+	));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_overlay_click_uses_locked_target_and_finishes_display_first_handoff() {
+	let monitor = tests::test_monitor();
+	let press_global = GlobalPoint::new(180, 220);
+	let release_global = GlobalPoint::new(181, 221);
+	let capture_rect = RectPoints::new(100, 120, 240, 320);
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.state.mode = OverlayMode::Live;
+	session.state.monitor = Some(monitor);
+	session.window_list_snapshot = Some(single_window_list_snapshot(monitor, capture_rect, 42));
+
+	assert!(matches!(
+		session.handle_native_capture_input_event(
+			MacOSNativeCaptureInputEvent::OverlayMouseInput {
+				monitor,
+				global: press_global,
+				button: MouseButton::Left,
+				state: ElementState::Pressed,
+			}
+		),
+		OverlayControl::Continue
+	));
+
+	// The live click target must stay locked to the mouse-down snapshot even if the cached
+	// window list changes before release.
+	session.window_list_snapshot = Some(Arc::new(WindowListSnapshot {
+		captured_at: Instant::now(),
+		windows: Arc::new(Vec::new()),
+	}));
+
+	assert!(matches!(
+		session.handle_native_capture_input_event(
+			MacOSNativeCaptureInputEvent::OverlayMouseInput {
+				monitor,
+				global: release_global,
+				button: MouseButton::Left,
+				state: ElementState::Released,
+			}
+		),
+		OverlayControl::Continue
+	));
+	assert!(matches!(session.state.mode, OverlayMode::Live));
+	assert_eq!(session.state.frozen_capture_rect, Some(capture_rect));
+	assert_eq!(tests::session_pending_freeze_capture(&session), Some(monitor));
+	assert_eq!(
+		tests::session_pending_window_freeze_capture(&session),
+		Some(crate::overlay::session_state::WindowFreezeCaptureTarget {
+			monitor,
+			window_id: 42,
+			rect: capture_rect,
+		})
+	);
+	assert!(matches!(
+		session.live_capture_interaction,
+		LiveCaptureInteraction::FrozenFromClick {
+			monitor: frozen_monitor,
+			target: LiveClickCaptureTarget {
+				capture_rect: Some(target_rect),
+				window_target: Some(window_target),
+			},
+		} if frozen_monitor == monitor && target_rect == capture_rect && window_target.window_id == 42
+	));
+
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		1,
+		1,
+		tests::fresh_live_stream_snapshot_captured_at(),
+	);
+
+	let _ = session.about_to_wait();
+
+	assert!(matches!(session.state.mode, OverlayMode::Frozen));
+	assert_eq!(session.state.frozen_capture_rect, Some(capture_rect));
+	assert!(session.state.frozen_display_image.is_some());
+	assert!(session.state.frozen_export_image.is_some());
+	assert!(tests::session_export_authority_ready(&session));
+	assert!(!session.capture_windows_hidden);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_overlay_drag_selection_commits_display_first_frozen_entry() {
+	let monitor = tests::test_monitor();
+	let press_global = GlobalPoint::new(180, 220);
+	let drag_global = GlobalPoint::new(420, 460);
+	let capture_rect = monitor
+		.local_rect_from_points(press_global, drag_global)
+		.expect("drag should produce a capture rect");
+	let (mut session, _original_worker_debug_id) = tests::configured_session_with_macos_worker();
+
+	session.state.mode = OverlayMode::Live;
+	session.state.monitor = Some(monitor);
+
+	session
+		.live_sample_stream
+		.as_ref()
+		.unwrap()
+		.debug_set_self_capture_filter_complete(monitor.id, true);
+	session.live_sample_stream.as_ref().unwrap().debug_store_test_snapshot_with_metadata(
+		monitor,
+		2,
+		1,
+		tests::fresh_live_stream_snapshot_captured_at(),
+	);
+
+	assert!(matches!(
+		session.handle_native_capture_input_event(
+			MacOSNativeCaptureInputEvent::OverlayMouseInput {
+				monitor,
+				global: press_global,
+				button: MouseButton::Left,
+				state: ElementState::Pressed,
+			}
+		),
+		OverlayControl::Continue
+	));
+	assert!(matches!(
+		session.handle_native_capture_input_event(
+			MacOSNativeCaptureInputEvent::OverlayPointerMoved { monitor, global: drag_global }
+		),
+		OverlayControl::Continue
+	));
+	assert_eq!(
+		session.state.drag_rect,
+		Some(MonitorRectPoints { monitor_id: monitor.id, rect: capture_rect })
+	);
+	assert!(matches!(
+		session.handle_native_capture_input_event(
+			MacOSNativeCaptureInputEvent::OverlayMouseInput {
+				monitor,
+				global: drag_global,
+				button: MouseButton::Left,
+				state: ElementState::Released,
+			}
+		),
+		OverlayControl::Continue
+	));
+	assert!(matches!(session.state.mode, OverlayMode::Frozen));
+	assert_eq!(session.state.frozen_capture_rect, Some(capture_rect));
+	assert!(session.state.frozen_display_image.is_some());
+	assert!(session.state.frozen_export_image.is_some());
+	assert!(tests::session_export_authority_ready(&session));
+	assert!(!session.capture_windows_hidden);
 }
 
 #[cfg(target_os = "macos")]
