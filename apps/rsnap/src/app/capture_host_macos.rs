@@ -135,7 +135,7 @@ impl App {
 	pub(super) fn sync_overlay_capture_host(&mut self) {
 		let sync_result = match (self.overlay_session.as_mut(), self.overlay_capture_host.as_mut())
 		{
-			(Some(session), Some(host)) => session.sync_macos_capture_host(host),
+			(Some(session), Some(host)) => host.sync(session.take_macos_capture_host_sync_state()),
 			_ => return,
 		};
 

@@ -7,6 +7,8 @@ use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::ElementState;
 #[cfg(target_os = "macos")]
 use winit::event::MouseButton;
+#[cfg(target_os = "macos")]
+use winit::event::WindowEvent;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
@@ -447,6 +449,30 @@ fn native_capture_input_ready_routes_ime_preedit_to_frozen_text_edit() {
 		session.frozen_text_edit.as_ref().and_then(|edit| edit.ime_preedit.as_deref()),
 		Some("汉")
 	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_winit_ime_events_do_not_mutate_frozen_text_edit() {
+	let monitor = tests::test_monitor();
+	let mut session = OverlaySession::new();
+
+	session.state.begin_freeze(monitor);
+
+	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+
+	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+
+	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+	assert!(matches!(
+		session.handle_window_event(
+			WindowId::from(7),
+			&WindowEvent::Ime(Ime::Commit(String::from("A")))
+		),
+		OverlayControl::Continue
+	));
+	assert_eq!(session.frozen_text_edit.as_ref().map(|edit| edit.text.as_str()), Some(""));
 }
 
 #[cfg(target_os = "macos")]

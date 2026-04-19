@@ -32,7 +32,7 @@ mod window_runtime;
 mod worker_runtime;
 
 #[cfg(target_os = "macos")]
-pub use self::macos_native_capture_shell_runtime::MacOSCaptureHost;
+pub use self::macos_native_capture_shell_runtime::{MacOSCaptureHost, MacOSCaptureHostSyncState};
 
 #[cfg(not(target_os = "macos"))]
 use std::env;
@@ -2690,6 +2690,9 @@ impl OverlaySession {
 					self.handle_cursor_moved(window_id, *position)
 				}
 			},
+			#[cfg(target_os = "macos")]
+			WindowEvent::Ime(_) => OverlayControl::Continue,
+			#[cfg(not(target_os = "macos"))]
 			WindowEvent::Ime(event) => self.handle_ime_event(window_id, event),
 			WindowEvent::MouseWheel { delta, .. } if toolbar_window_id => {
 				self.handle_toolbar_mouse_wheel(delta)
@@ -2720,7 +2723,13 @@ impl OverlaySession {
 
 				OverlayControl::Continue
 			},
+			#[cfg(target_os = "macos")]
+			WindowEvent::KeyboardInput { .. } => OverlayControl::Continue,
+			#[cfg(not(target_os = "macos"))]
 			WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(event),
+			#[cfg(target_os = "macos")]
+			WindowEvent::ModifiersChanged(_) => OverlayControl::Continue,
+			#[cfg(not(target_os = "macos"))]
 			WindowEvent::ModifiersChanged(modifiers) => self.handle_modifiers_changed(modifiers),
 			WindowEvent::RedrawRequested => self.handle_redraw_requested(window_id),
 			_ => OverlayControl::Continue,
