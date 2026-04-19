@@ -3230,14 +3230,14 @@ fn scroll_capture_host_busy_request_backs_off_without_error() {
 		Arc::new(|_, _| Vec::new()),
 	));
 
-		let control = session.start_scroll_capture();
+	let control = session.start_scroll_capture();
 
-		assert!(matches!(control, OverlayControl::Continue));
-		assert!(session.scroll_capture.active);
+	assert!(matches!(control, OverlayControl::Continue));
+	assert!(session.scroll_capture.active);
 
-		enable_test_worker_scroll_capture_path(&mut session);
+	enable_test_worker_scroll_capture_path(&mut session);
 
-		let before_retry = Instant::now();
+	let before_retry = Instant::now();
 
 	session.scroll_capture.next_sample_at = Some(before_retry - Duration::from_millis(1));
 
