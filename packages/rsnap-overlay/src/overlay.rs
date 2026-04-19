@@ -1003,6 +1003,82 @@ impl OverlaySession {
 		self.request_redraw_all();
 	}
 
+	#[doc(hidden)]
+	pub fn debug_prepare_live_test_session(&mut self, monitor: MonitorRect) {
+		self.state.mode = OverlayMode::Live;
+		self.state.monitor = Some(monitor);
+		self.state.cursor = None;
+		self.state.hovered_window_rect = None;
+		self.state.drag_rect = None;
+		self.state.frozen_capture_rect = None;
+		self.state.frozen_display_image = None;
+		self.state.frozen_export_image = None;
+		self.last_event_cursor = None;
+		self.last_event_cursor_at = None;
+		self.live_capture_interaction = LiveCaptureInteraction::Idle;
+		self.capture_windows_hidden = false;
+	}
+
+	#[doc(hidden)]
+	pub fn debug_set_window_list_snapshot(&mut self, snapshot: Arc<WindowListSnapshot>) {
+		self.window_list_snapshot = Some(snapshot);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[doc(hidden)]
+	pub fn debug_seed_macos_live_stream_snapshot(
+		&mut self,
+		monitor: MonitorRect,
+		captured_at: Instant,
+	) {
+		let stream = self.live_sample_stream.get_or_insert_with(MacLiveFrameStream::new);
+
+		stream.debug_set_self_capture_filter_complete(monitor.id, true);
+		stream.debug_store_test_snapshot(monitor, captured_at);
+	}
+
+	#[doc(hidden)]
+	pub fn debug_cursor(&self) -> Option<GlobalPoint> {
+		self.state.cursor
+	}
+
+	#[doc(hidden)]
+	pub fn debug_hovered_window_rect(&self) -> Option<(u32, RectPoints)> {
+		self.state
+			.hovered_window_rect
+			.map(|hovered_window_rect| (hovered_window_rect.monitor_id, hovered_window_rect.rect))
+	}
+
+	#[doc(hidden)]
+	pub fn debug_drag_rect(&self) -> Option<(u32, RectPoints)> {
+		self.state.drag_rect.map(|drag_rect| (drag_rect.monitor_id, drag_rect.rect))
+	}
+
+	#[doc(hidden)]
+	pub fn debug_frozen_capture_rect(&self) -> Option<RectPoints> {
+		self.state.frozen_capture_rect
+	}
+
+	#[doc(hidden)]
+	pub fn debug_is_frozen_mode(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Frozen)
+	}
+
+	#[doc(hidden)]
+	pub fn debug_has_frozen_display_image(&self) -> bool {
+		self.state.frozen_display_image.is_some()
+	}
+
+	#[doc(hidden)]
+	pub fn debug_has_frozen_export_image(&self) -> bool {
+		self.state.frozen_export_image.is_some()
+	}
+
+	#[doc(hidden)]
+	pub fn debug_capture_windows_hidden(&self) -> bool {
+		self.capture_windows_hidden
+	}
+
 	#[cfg(target_os = "macos")]
 	/// Applies one host-routed passive AppKit capture input event.
 	pub fn handle_native_capture_input_event(
