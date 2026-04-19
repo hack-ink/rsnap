@@ -20,10 +20,10 @@ use winit::{
 };
 
 #[cfg(target_os = "macos")]
+use crate::app::OverlayEventProxy;
+#[cfg(target_os = "macos")]
 use crate::app::scroll_input_macos::{ScrollInputObserverLifecycle, SharedScrollInputState};
 use crate::app::{App, UserEvent};
-#[cfg(target_os = "macos")]
-use crate::app::OverlayEventProxy;
 use crate::settings::AppSettings;
 use crate::settings_window::{CaptureHotkeyNotice, SettingsControl, SettingsWindowAction};
 #[cfg(target_os = "macos")]
