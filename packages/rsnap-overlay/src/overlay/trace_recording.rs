@@ -624,7 +624,6 @@ mod tests {
 	use std::process;
 	use std::sync::atomic::{AtomicU64, Ordering};
 
-	use crate::GlobalPoint;
 	use crate::overlay::trace_recording;
 	use crate::overlay::trace_recording::SCROLL_CAPTURE_TRACE_SCHEMA;
 	use crate::overlay::trace_recording::{
@@ -635,6 +634,7 @@ mod tests {
 		env, fs,
 	};
 	use crate::overlay::{OverlaySession, ScrollCaptureFrameSource};
+	use crate::state::GlobalPoint;
 
 	static TRACE_TEST_ROOT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
