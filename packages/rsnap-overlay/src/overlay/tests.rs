@@ -4033,6 +4033,17 @@ fn live_surface_bg_refresh_disables_during_drag_capture_and_loupe() {
 	assert!(session.should_refresh_live_surface_bg_for_overlay_monitor(monitor));
 }
 
+#[test]
+fn selection_flow_overlay_draw_respects_config() {
+	let mut session = OverlaySession::new();
+
+	assert!(session.selection_flow_enabled_for_overlay_draw());
+
+	session.config.selection_flow_enabled = false;
+
+	assert!(!session.selection_flow_enabled_for_overlay_draw());
+}
+
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn handle_capture_redraw_does_not_rearm_inflight_freeze_capture() {

@@ -3835,6 +3835,10 @@ impl OverlaySession {
 			&& self.state.live_bg_image.is_some()
 	}
 
+	fn selection_flow_enabled_for_overlay_draw(&self) -> bool {
+		self.config.selection_flow_enabled
+	}
+
 	#[cfg(target_os = "macos")]
 	fn should_refresh_live_surface_bg_for_overlay_monitor(
 		&self,
@@ -3952,9 +3956,8 @@ impl OverlaySession {
 			.allow_frozen_surface_bg_for_overlay_monitor(overlay_monitor, scroll_capture_active);
 		let allow_live_surface_bg =
 			self.should_draw_live_surface_bg_for_overlay_monitor(overlay_monitor);
+		let selection_flow_enabled = self.selection_flow_enabled_for_overlay_draw();
 		let toolbar_state = if draw_toolbar { Some(&mut self.toolbar_state) } else { None };
-		let selection_flow_enabled =
-			self.config.selection_flow_enabled && !cfg!(target_os = "macos");
 
 		{
 			let Some(overlay_window) = self.windows.get_mut(&window_id) else {
