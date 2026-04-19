@@ -1075,6 +1075,11 @@ impl OverlaySession {
 	}
 
 	#[doc(hidden)]
+	pub fn debug_error_message(&self) -> Option<&str> {
+		self.state.error_message.as_deref()
+	}
+
+	#[doc(hidden)]
 	pub fn debug_capture_windows_hidden(&self) -> bool {
 		self.capture_windows_hidden
 	}
