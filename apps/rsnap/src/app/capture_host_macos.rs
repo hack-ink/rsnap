@@ -161,7 +161,8 @@ mod tests {
 	use std::sync::atomic::{AtomicUsize, Ordering};
 	use std::time::{Duration, Instant};
 
-	use winit::event::{ElementState, MouseButton};
+	use winit::event::{ElementState, Ime, MouseButton};
+	use winit::keyboard::{Key, NamedKey};
 
 	use crate::app::capture_host_macos::OverlayNativeCaptureInputBuffer;
 	use crate::app::scroll_input_macos::{ScrollInputObserverLifecycle, SharedScrollInputState};
@@ -233,6 +234,52 @@ mod tests {
 			.lock()
 			.expect("native input queue lock should be available")
 			.len()
+	}
+
+	fn frozen_text_capture_rect() -> RectPoints {
+		RectPoints::new(100, 120, 220, 180)
+	}
+
+	fn frozen_text_cursor(monitor: MonitorRect, capture_rect: RectPoints) -> GlobalPoint {
+		GlobalPoint::new(
+			monitor.origin.x + capture_rect.x as i32 + 40,
+			monitor.origin.y + capture_rect.y as i32 + 40,
+		)
+	}
+
+	fn app_with_frozen_text_session() -> (App, Arc<AtomicUsize>, MonitorRect) {
+		let (mut app, wake_count) = test_app();
+		let monitor = test_monitor();
+		let capture_rect = frozen_text_capture_rect();
+		let cursor = frozen_text_cursor(monitor, capture_rect);
+		let mut session = OverlaySession::with_config(OverlayConfig::default());
+
+		session.debug_prepare_frozen_text_test_session(monitor, capture_rect, cursor);
+
+		app.overlay_session_generation = 13;
+		app.overlay_session = Some(session);
+		app.overlay_capture_host = Some(app.build_overlay_capture_host());
+
+		(app, wake_count, monitor)
+	}
+
+	fn dispatch_native_capture_input(app: &App, event: MacOSNativeCaptureInputEvent) {
+		app.overlay_capture_host
+			.as_ref()
+			.expect("overlay capture host should be attached for app-level dispatch tests")
+			.debug_dispatch_native_capture_input(event);
+	}
+
+	fn dispatch_keyboard_input(
+		app: &App,
+		monitor: MonitorRect,
+		logical_key: Key,
+		text: Option<&str>,
+	) {
+		app.overlay_capture_host
+			.as_ref()
+			.expect("overlay capture host should be attached for app-level dispatch tests")
+			.debug_dispatch_keyboard_input(Some(monitor), logical_key, text);
 	}
 
 	#[test]
@@ -416,5 +463,111 @@ mod tests {
 		assert!(session.debug_has_frozen_display_image());
 		assert!(session.debug_has_frozen_export_image());
 		assert!(!session.debug_capture_windows_hidden());
+	}
+
+	#[test]
+	fn host_buffered_native_text_input_reaches_frozen_text_edit_through_app_dispatch() {
+		let (mut app, wake_count, monitor) = app_with_frozen_text_session();
+
+		assert!(
+			app.overlay_session
+				.as_ref()
+				.expect("overlay session should be active")
+				.debug_wants_macos_frozen_text_host_focus()
+		);
+
+		dispatch_keyboard_input(&app, monitor, Key::Character(String::from("A").into()), Some("A"));
+
+		assert_eq!(queued_native_input_count(&app), 1);
+		assert!(app.overlay_native_capture_input_buffer.event_pending.load(Ordering::Acquire));
+		assert_eq!(wake_count.load(Ordering::Acquire), 1);
+
+		app.handle_overlay_native_capture_input_user_event_for_test();
+
+		assert_eq!(queued_native_input_count(&app), 0);
+		assert!(!app.overlay_native_capture_input_buffer.event_pending.load(Ordering::Acquire));
+
+		let session = app.overlay_session.as_ref().expect("overlay session should remain active");
+		let host =
+			app.overlay_capture_host.as_ref().expect("overlay capture host should remain attached");
+
+		assert_eq!(session.debug_frozen_text_edit_text(), Some("A"));
+		assert_eq!(session.debug_frozen_text_annotation_count(), 0);
+		assert!(session.debug_wants_macos_frozen_text_host_focus());
+		assert!(host.debug_last_synced_frozen_mode());
+	}
+
+	#[test]
+	fn host_buffered_native_ime_preedit_reaches_frozen_text_edit_through_app_dispatch() {
+		let (mut app, wake_count, monitor) = app_with_frozen_text_session();
+
+		dispatch_native_capture_input(
+			&app,
+			MacOSNativeCaptureInputEvent::Ime {
+				monitor: Some(monitor),
+				event: Ime::Preedit(String::from("汉"), Some((0, 0))),
+			},
+		);
+
+		assert_eq!(queued_native_input_count(&app), 1);
+		assert!(app.overlay_native_capture_input_buffer.event_pending.load(Ordering::Acquire));
+		assert_eq!(wake_count.load(Ordering::Acquire), 1);
+
+		app.handle_overlay_native_capture_input_user_event_for_test();
+
+		let session = app.overlay_session.as_ref().expect("overlay session should remain active");
+
+		assert_eq!(session.debug_frozen_text_ime_preedit(), Some("汉"));
+		assert!(session.debug_wants_macos_frozen_text_host_focus());
+	}
+
+	#[test]
+	fn host_buffered_native_ime_commit_reaches_frozen_text_edit_through_app_dispatch() {
+		let (mut app, wake_count, monitor) = app_with_frozen_text_session();
+
+		dispatch_native_capture_input(
+			&app,
+			MacOSNativeCaptureInputEvent::Ime {
+				monitor: Some(monitor),
+				event: Ime::Commit(String::from("汉")),
+			},
+		);
+
+		assert_eq!(queued_native_input_count(&app), 1);
+		assert!(app.overlay_native_capture_input_buffer.event_pending.load(Ordering::Acquire));
+		assert_eq!(wake_count.load(Ordering::Acquire), 1);
+
+		app.handle_overlay_native_capture_input_user_event_for_test();
+
+		let session = app.overlay_session.as_ref().expect("overlay session should remain active");
+
+		assert_eq!(session.debug_frozen_text_edit_text(), Some("汉"));
+		assert!(session.debug_wants_macos_frozen_text_host_focus());
+	}
+
+	#[test]
+	fn host_buffered_native_escape_cancels_frozen_text_edit_and_releases_host_focus() {
+		let (mut app, wake_count, monitor) = app_with_frozen_text_session();
+
+		dispatch_keyboard_input(&app, monitor, Key::Character(String::from("A").into()), Some("A"));
+
+		app.handle_overlay_native_capture_input_user_event_for_test();
+
+		dispatch_keyboard_input(&app, monitor, Key::Named(NamedKey::Escape), None);
+
+		assert_eq!(queued_native_input_count(&app), 1);
+		assert!(app.overlay_native_capture_input_buffer.event_pending.load(Ordering::Acquire));
+		assert_eq!(wake_count.load(Ordering::Acquire), 2);
+
+		app.handle_overlay_native_capture_input_user_event_for_test();
+
+		assert_eq!(queued_native_input_count(&app), 0);
+		assert!(!app.overlay_native_capture_input_buffer.event_pending.load(Ordering::Acquire));
+
+		let session = app.overlay_session.as_ref().expect("overlay session should remain active");
+
+		assert!(!session.debug_has_frozen_text_edit());
+		assert_eq!(session.debug_frozen_text_annotation_count(), 0);
+		assert!(!session.debug_wants_macos_frozen_text_host_focus());
 	}
 }
