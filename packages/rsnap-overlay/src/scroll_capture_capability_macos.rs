@@ -118,12 +118,11 @@ impl MacOSScrollCaptureCapability {
 						request_id: resp.request_id,
 					});
 				},
+				}
 			}
-		}
-
-		while let Some(resp) = worker.try_recv() {
-			if let WorkerResponse::Error {
-				source: WorkerErrorSource::CaptureMonitorRegion,
+			while let Some(resp) = worker.try_recv() {
+				if let WorkerResponse::Error {
+					source: WorkerErrorSource::CaptureMonitorRegion,
 				message,
 			} = resp
 			{

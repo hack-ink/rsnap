@@ -12,13 +12,12 @@ use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::{
 	FrozenCaptureSource, Key, MonitorRect, NamedKey, OverlayControl, OverlayKeyboardInputEvent,
 	OverlayMode, OverlaySession, PngAction, Pos2, Rect, SCROLL_CAPTURE_INPUT_FRESHNESS,
-	SCROLL_CAPTURE_SAMPLE_INTERVAL, ScrollCaptureHostStartRequest, ScrollDirection,
-	ScrollObserveOutcome, Vec2, WindowRenderer,
+	SCROLL_CAPTURE_SAMPLE_INTERVAL, ScrollDirection, ScrollObserveOutcome, Vec2, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
-	MacOSScrollPixelResidual, RectPoints, SCROLL_CAPTURE_PREVIEW_WIDTH_PX, ScrollCaptureState,
-	ScrollCaptureTraceRecorder, ScrollSession,
+	MacOSScrollPixelResidual, RectPoints, SCROLL_CAPTURE_PREVIEW_WIDTH_PX,
+	ScrollCaptureHostStartRequest, ScrollCaptureState, ScrollCaptureTraceRecorder, ScrollSession,
 };
 
 impl OverlaySession {
