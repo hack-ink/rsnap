@@ -77,7 +77,7 @@ macro_rules! sel_impl {
 	};
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 type CopyPngHostEffectHook = dyn Fn(&[u8]) -> Result<()> + Send + Sync + 'static;
 
 #[cfg(all(test, target_os = "macos"))]
@@ -98,12 +98,12 @@ const CAPTURE_SUCCESS_SOUND_CANDIDATE_PATHS: [&str; 2] = [
 	"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Shutter.aif",
 ];
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 static HOST_EFFECT_TEST_HOOKS: OnceLock<Mutex<HostEffectTestHooks>> = OnceLock::new();
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 static HOST_EFFECT_TEST_SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 #[derive(Default)]
 struct HostEffectTestHooks {
 	copy_png: Option<Arc<CopyPngHostEffectHook>>,
@@ -1214,12 +1214,12 @@ impl App {
 	}
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 fn host_effect_test_hooks() -> &'static Mutex<HostEffectTestHooks> {
 	HOST_EFFECT_TEST_HOOKS.get_or_init(|| Mutex::new(HostEffectTestHooks::default()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 fn set_host_effect_test_hooks(hooks: HostEffectTestHooks) {
 	let mut guard =
 		host_effect_test_hooks().lock().expect("host-effect test hooks lock should be available");
@@ -1227,12 +1227,12 @@ fn set_host_effect_test_hooks(hooks: HostEffectTestHooks) {
 	*guard = hooks;
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 fn host_effect_test_serial() -> &'static Mutex<()> {
 	HOST_EFFECT_TEST_SERIAL.get_or_init(|| Mutex::new(()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 fn copy_png_host_effect_test_hook() -> Option<Arc<CopyPngHostEffectHook>> {
 	host_effect_test_hooks()
 		.lock()
@@ -1297,7 +1297,7 @@ fn save_png_bytes_to_configured_dir(
 
 #[cfg(target_os = "macos")]
 fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
-	#[cfg(test)]
+	#[cfg(all(test, target_os = "macos"))]
 	if let Some(copy_hook) = copy_png_host_effect_test_hook() {
 		return copy_hook(png_bytes);
 	}
@@ -1329,11 +1329,6 @@ fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
 
 #[cfg(not(target_os = "macos"))]
 fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
-	#[cfg(test)]
-	if let Some(copy_hook) = copy_png_host_effect_test_hook() {
-		return copy_hook(png_bytes);
-	}
-
 	let image = image::load_from_memory(png_bytes).wrap_err("Failed to decode PNG bytes")?;
 	let rgba = image.to_rgba8();
 	let (width, height) = rgba.dimensions();
@@ -1724,9 +1719,7 @@ mod tests {
 		shared_state.record(-12.0, 140.0, 220.0, true, false);
 
 		assert_eq!(
-			shared_state
-				.replay_after_seq_through(0, Instant::now() + Duration::from_secs(1))
-				.len(),
+			shared_state.replay_after_seq_through(0, Instant::now() + Duration::from_secs(1)).len(),
 			1
 		);
 
