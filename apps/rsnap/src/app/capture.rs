@@ -4,11 +4,11 @@ use std::borrow::Cow;
 use std::ffi::CString;
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 use std::sync::Arc;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 use std::sync::Mutex;
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 use std::sync::OnceLock;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicU64;
@@ -1448,9 +1448,9 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	use std::time::Instant;
 	#[cfg(target_os = "macos")]
+	use std::{env, process};
+	#[cfg(target_os = "macos")]
 	use std::{fs, thread, time::Duration};
-	use std::env;
-	use std::process;
 
 	use crate::app::capture;
 	#[cfg(target_os = "macos")]
@@ -1464,7 +1464,6 @@ mod tests {
 		DeferredTextRecognitionRequest, OutputNaming, OverlayConfig, OverlayControl,
 		OverlayHostEffectRequest, OverlaySession,
 	};
-
 
 	#[cfg(target_os = "macos")]
 	struct HostEffectTestHooksGuard {
