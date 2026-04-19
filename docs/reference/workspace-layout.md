@@ -53,6 +53,8 @@ It owns:
 - startup permission checks and permission-window routing
 - settings window lifecycle
 - app-level logging/bootstrap
+- macOS native capture-host shell lifecycle for pointer, first-responder, keyboard, and IME
+  routing into the overlay core
 - macOS external scroll-input normalization before handing events to the overlay session
 - deferred OCR generation tracking around overlay exits
 
@@ -74,6 +76,8 @@ Today it owns:
 - capture-session lifecycle
 - overlay, HUD, loupe, and toolbar rendering
 - frozen-mode behavior and output flow
+- text annotation semantics, text model, edit intent, caret and selection semantics, and rendered
+  text state
 - capture backend abstraction and worker coordination
 - macOS live frame streaming and OCR support
 - scroll-capture session logic, replay support, and benchmarks

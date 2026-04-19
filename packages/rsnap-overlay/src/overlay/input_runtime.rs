@@ -1228,6 +1228,7 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
+	#[cfg(not(target_os = "macos"))]
 	pub(super) fn handle_ime_event(&mut self, window_id: WindowId, event: &Ime) -> OverlayControl {
 		let monitor =
 			self.windows.get(&window_id).map(|window| window.monitor).or(self.state.monitor);
