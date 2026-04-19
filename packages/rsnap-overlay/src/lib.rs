@@ -48,8 +48,8 @@ pub use crate::deferred_text_recognition::{
 };
 pub use crate::overlay::{
 	AltActivationMode, FrozenGlobalHotkey, HudAnchor, OutputNaming, OverlayConfig, OverlayControl,
-	OverlayExit, OverlayKeyboardInputEvent, OverlaySession, ThemeMode, ToolbarPlacement,
-	WindowCaptureAlphaMode,
+	OverlayExit, OverlayHostEffectRequest, OverlayKeyboardInputEvent, OverlaySession, ThemeMode,
+	ToolbarPlacement, WindowCaptureAlphaMode,
 };
 #[cfg(target_os = "macos")]
 pub use crate::overlay::{

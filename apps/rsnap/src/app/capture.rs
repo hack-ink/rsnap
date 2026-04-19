@@ -1,3 +1,9 @@
+#[cfg(not(target_os = "macos"))]
+use std::borrow::Cow;
+#[cfg(target_os = "macos")]
+use std::ffi::CString;
+use std::fs;
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicU64;
 #[cfg(target_os = "macos")]
@@ -5,17 +11,21 @@ use std::sync::atomic::Ordering;
 #[cfg(target_os = "macos")]
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
-use std::thread::Builder;
+use std::thread::{self, Builder};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use arboard::Clipboard;
+#[cfg(not(target_os = "macos"))]
+use arboard::ImageData;
 #[cfg(target_os = "macos")]
 use color_eyre::eyre;
-#[cfg(target_os = "macos")]
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, WrapErr};
 #[cfg(target_os = "macos")]
 use global_hotkey::hotkey::HotKey;
+#[cfg(target_os = "macos")]
+use objc::runtime::{BOOL, Object, YES};
 #[cfg(target_os = "macos")]
 use objc2::AnyThread;
 #[cfg(target_os = "macos")]
@@ -39,14 +49,36 @@ use crate::app::scroll_input_macos::{
 };
 #[cfg(target_os = "macos")]
 use crate::permissions_macos;
+use crate::settings;
 #[cfg(target_os = "macos")]
-use rsnap_overlay::{DeferredTextRecognitionRequest, MacOSCaptureHost};
-use rsnap_overlay::{HudAnchor, OverlayConfig, OverlayControl, OverlayExit, OverlaySession};
+use rsnap_overlay::{
+	DeferredTextRecognitionOutcomeKind, DeferredTextRecognitionRequest, MacOSCaptureHost,
+};
+use rsnap_overlay::{
+	HudAnchor, OutputNaming, OverlayConfig, OverlayControl, OverlayExit, OverlayHostEffectRequest,
+	OverlaySession,
+};
+
+#[cfg(target_os = "macos")]
+macro_rules! sel {
+	($($tt:tt)*) => {
+		objc::sel!($($tt)*)
+	};
+}
+
+#[cfg(target_os = "macos")]
+macro_rules! sel_impl {
+	($($tt:tt)*) => {
+		objc::sel_impl!($($tt)*)
+	};
+}
 
 #[cfg(target_os = "macos")]
 const SCROLL_INPUT_OBSERVER_READY_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(target_os = "macos")]
 const OVERLAY_SESSION_PREWARM_RETRY_BACKOFF: Duration = Duration::from_secs(1);
+#[cfg(target_os = "macos")]
+const DEFERRED_OCR_PUBLISH_PENDING_POLL_INTERVAL: Duration = Duration::from_millis(5);
 #[cfg(target_os = "macos")]
 const CAPTURE_SUCCESS_SOUND_CANDIDATE_PATHS: [&str; 2] = [
 	"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif",
@@ -731,8 +763,22 @@ impl App {
 	}
 
 	pub(super) fn end_overlay_session(&mut self, exit: OverlayExit) {
-		if self.overlay_session.is_none() {
+		if !self.finish_overlay_session_teardown() {
 			return;
+		}
+
+		match exit {
+			OverlayExit::Cancelled => tracing::info!("Capture cancelled."),
+			OverlayExit::HostEffect(_) => {},
+			OverlayExit::Error(message) => tracing::warn!(error = %message, "Capture failed."),
+		};
+
+		tracing::info!("Capture overlay ended.");
+	}
+
+	fn finish_overlay_session_teardown(&mut self) -> bool {
+		if self.overlay_session.is_none() {
+			return false;
 		}
 
 		#[cfg(target_os = "macos")]
@@ -745,7 +791,7 @@ impl App {
 		}
 
 		let Some(_session) = self.overlay_session.take() else {
-			return;
+			return false;
 		};
 
 		#[cfg(target_os = "macos")]
@@ -759,95 +805,7 @@ impl App {
 			self.scroll_input_shared_state.clear();
 		}
 
-		match exit {
-			OverlayExit::Cancelled => tracing::info!("Capture cancelled."),
-			OverlayExit::PngBytes(png_bytes) => {
-				tracing::info!(bytes = png_bytes.len(), "Capture copied to clipboard.");
-
-				self.play_capture_success_feedback();
-			},
-			OverlayExit::TextCopied(character_count) => {
-				tracing::info!(
-					characters = character_count,
-					"Recognized text copied to clipboard."
-				);
-			},
-			#[cfg(target_os = "macos")]
-			OverlayExit::DeferredTextRecognition(request) => {
-				let request_id = request.request_id;
-				let request_generation = self.overlay_session_generation;
-				let latest_deferred_ocr_generation =
-					Arc::clone(&self.latest_deferred_ocr_generation);
-				let pending_deferred_ocr_generation =
-					Arc::clone(&self.pending_deferred_ocr_generation);
-				let request_slot = Arc::new(Mutex::new(Some(request)));
-				let request_slot_for_worker = Arc::clone(&request_slot);
-				let latest_deferred_ocr_generation_for_worker =
-					Arc::clone(&latest_deferred_ocr_generation);
-				let pending_deferred_ocr_generation_for_worker =
-					Arc::clone(&pending_deferred_ocr_generation);
-
-				match Builder::new().name(format!("rsnap-ocr-{request_id}")).spawn(move || {
-					let Some(request) =
-						Self::take_deferred_text_recognition_request(&request_slot_for_worker)
-					else {
-						tracing::warn!(
-							request_id = request_id,
-							"Deferred OCR request was unavailable when the background worker started."
-						);
-
-						return;
-					};
-
-					Self::process_deferred_text_recognition_request(
-						request,
-						latest_deferred_ocr_generation_for_worker,
-						pending_deferred_ocr_generation_for_worker,
-						request_generation,
-					);
-				}) {
-					Ok(_handle) => {
-						tracing::info!(
-							request_id = request_id,
-							"Capture handed OCR work to the background worker."
-						);
-					},
-					Err(err) => {
-						tracing::warn!(
-							request_id,
-							error = %err,
-							"Failed to start the background OCR worker; running deferred OCR inline."
-						);
-
-						let Some(request) =
-							Self::take_deferred_text_recognition_request(&request_slot)
-						else {
-							tracing::warn!(
-								request_id = request_id,
-								"Deferred OCR request was unavailable after background worker startup failed."
-							);
-
-							return;
-						};
-
-						Self::process_deferred_text_recognition_request(
-							request,
-							latest_deferred_ocr_generation,
-							pending_deferred_ocr_generation,
-							request_generation,
-						);
-					},
-				}
-			},
-			OverlayExit::Saved(path) => {
-				tracing::info!(path = %path.display(), "Capture saved to file.");
-
-				self.play_capture_success_feedback();
-			},
-			OverlayExit::Error(message) => tracing::warn!(error = %message, "Capture failed."),
-		};
-
-		tracing::info!("Capture overlay ended.");
+		true
 	}
 
 	#[cfg(target_os = "macos")]
@@ -875,12 +833,259 @@ impl App {
 		pending_deferred_ocr_generation: Arc<AtomicU64>,
 		request_generation: u64,
 	) {
-		let _ = rsnap_overlay::process_deferred_text_recognition_for_latest_capture(
+		let latest_deferred_ocr_generation_for_publish =
+			Arc::clone(&latest_deferred_ocr_generation);
+		let pending_deferred_ocr_generation_for_publish =
+			Arc::clone(&pending_deferred_ocr_generation);
+		let outcome = rsnap_overlay::process_deferred_text_recognition_for_latest_capture(
 			request,
 			latest_deferred_ocr_generation,
 			pending_deferred_ocr_generation,
 			request_generation,
 		);
+
+		match outcome.kind {
+			DeferredTextRecognitionOutcomeKind::TextReady => {
+				let Some(recognized_text) = outcome.recognized_text.as_deref() else {
+					tracing::warn!(
+						request_id = outcome.request_id,
+						"Deferred OCR reported text readiness without recognized text."
+					);
+
+					return;
+				};
+
+				if !deferred_text_recognition_publish_allowed(
+					&latest_deferred_ocr_generation_for_publish,
+					&pending_deferred_ocr_generation_for_publish,
+					request_generation,
+				) {
+					tracing::info!(
+						request_id = outcome.request_id,
+						"Deferred OCR publish was suppressed after recognition because a newer capture took ownership before host clipboard publish."
+					);
+
+					return;
+				}
+
+				match write_text_to_clipboard(recognized_text) {
+					Ok(()) => {
+						tracing::info!(
+							request_id = outcome.request_id,
+							characters = outcome.recognized_chars,
+							lines = outcome.recognized_lines,
+							"Recognized text copied to clipboard."
+						);
+					},
+					Err(err) => {
+						tracing::warn!(
+							request_id = outcome.request_id,
+							error = %err,
+							characters = outcome.recognized_chars,
+							lines = outcome.recognized_lines,
+							"Failed to copy recognized text to the host clipboard."
+						);
+					},
+				}
+			},
+			DeferredTextRecognitionOutcomeKind::NoText => {
+				tracing::info!(
+					request_id = outcome.request_id,
+					lines = outcome.recognized_lines,
+					characters = outcome.recognized_chars,
+					"Deferred OCR finished without recognized text."
+				);
+			},
+			DeferredTextRecognitionOutcomeKind::StaleRequestSuppressed => {
+				tracing::info!(
+					request_id = outcome.request_id,
+					"Deferred OCR publish was suppressed because a newer capture took ownership."
+				);
+			},
+			DeferredTextRecognitionOutcomeKind::RecognizeError => {
+				tracing::warn!(
+					request_id = outcome.request_id,
+					"Deferred OCR failed before host publish."
+				);
+			},
+		}
+	}
+
+	fn handle_overlay_host_effect_request(&mut self, request: OverlayHostEffectRequest) {
+		match request {
+			OverlayHostEffectRequest::CopyPng { png_bytes } => {
+				self.handle_copy_png_host_effect(png_bytes)
+			},
+			OverlayHostEffectRequest::SavePng {
+				png_bytes,
+				output_dir,
+				output_filename_prefix,
+				output_naming,
+			} => self.handle_save_png_host_effect(
+				png_bytes,
+				output_dir,
+				output_filename_prefix,
+				output_naming,
+			),
+			#[cfg(target_os = "macos")]
+			OverlayHostEffectRequest::DeferredTextRecognition(request) => {
+				self.handle_deferred_text_recognition_host_effect(request);
+			},
+		}
+	}
+
+	fn handle_copy_png_host_effect(&mut self, png_bytes: Vec<u8>) {
+		match write_png_bytes_to_clipboard(&png_bytes) {
+			Ok(()) => {
+				tracing::info!(bytes = png_bytes.len(), "Capture copied to clipboard.");
+
+				self.play_capture_success_feedback();
+
+				let completed_request = OverlayHostEffectRequest::CopyPng { png_bytes };
+
+				self.complete_overlay_host_effect_request(&completed_request);
+			},
+			Err(err) => {
+				let message = format!("{err:#}");
+
+				tracing::warn!(
+					error = %err,
+					bytes = png_bytes.len(),
+					"Failed to copy capture PNG through the host clipboard."
+				);
+
+				if let Some(session) = self.overlay_session.as_mut() {
+					session.report_host_effect_error(message);
+				}
+			},
+		}
+	}
+
+	fn handle_save_png_host_effect(
+		&mut self,
+		png_bytes: Vec<u8>,
+		output_dir: PathBuf,
+		output_filename_prefix: String,
+		output_naming: OutputNaming,
+	) {
+		match save_png_bytes_to_configured_dir(
+			&png_bytes,
+			&output_dir,
+			&output_filename_prefix,
+			output_naming,
+		) {
+			Ok(path) => {
+				tracing::info!(path = %path.display(), "Capture saved to file.");
+
+				self.play_capture_success_feedback();
+
+				let completed_request = OverlayHostEffectRequest::SavePng {
+					png_bytes,
+					output_dir,
+					output_filename_prefix,
+					output_naming,
+				};
+
+				self.complete_overlay_host_effect_request(&completed_request);
+			},
+			Err(err) => {
+				let message = format!("{err:#}");
+
+				tracing::warn!(
+					error = %err,
+					bytes = png_bytes.len(),
+					"Failed to save capture PNG through the host output path."
+				);
+
+				if let Some(session) = self.overlay_session.as_mut() {
+					session.report_host_effect_error(message);
+				}
+			},
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn handle_deferred_text_recognition_host_effect(
+		&mut self,
+		request: DeferredTextRecognitionRequest,
+	) {
+		let completed_request = OverlayHostEffectRequest::DeferredTextRecognition(request);
+
+		self.complete_overlay_host_effect_request(&completed_request);
+
+		let OverlayHostEffectRequest::DeferredTextRecognition(request) = completed_request else {
+			unreachable!("constructed deferred text recognition request")
+		};
+		let request_id = request.request_id;
+		let request_generation = self.overlay_session_generation;
+		let latest_deferred_ocr_generation = Arc::clone(&self.latest_deferred_ocr_generation);
+		let pending_deferred_ocr_generation = Arc::clone(&self.pending_deferred_ocr_generation);
+		let request_slot = Arc::new(Mutex::new(Some(request)));
+		let request_slot_for_worker = Arc::clone(&request_slot);
+		let latest_deferred_ocr_generation_for_worker = Arc::clone(&latest_deferred_ocr_generation);
+		let pending_deferred_ocr_generation_for_worker =
+			Arc::clone(&pending_deferred_ocr_generation);
+
+		match Builder::new().name(format!("rsnap-ocr-{request_id}")).spawn(move || {
+			let Some(request) =
+				Self::take_deferred_text_recognition_request(&request_slot_for_worker)
+			else {
+				tracing::warn!(
+					request_id = request_id,
+					"Deferred OCR request was unavailable when the background worker started."
+				);
+
+				return;
+			};
+
+			Self::process_deferred_text_recognition_request(
+				request,
+				latest_deferred_ocr_generation_for_worker,
+				pending_deferred_ocr_generation_for_worker,
+				request_generation,
+			);
+		}) {
+			Ok(_handle) => {
+				tracing::info!(
+					request_id = request_id,
+					"Capture handed OCR work to the background worker."
+				);
+			},
+			Err(err) => {
+				tracing::warn!(
+					request_id,
+					error = %err,
+					"Failed to start the background OCR worker; running deferred OCR inline."
+				);
+
+				let Some(request) = Self::take_deferred_text_recognition_request(&request_slot)
+				else {
+					tracing::warn!(
+						request_id = request_id,
+						"Deferred OCR request was unavailable after background worker startup failed."
+					);
+
+					return;
+				};
+
+				Self::process_deferred_text_recognition_request(
+					request,
+					latest_deferred_ocr_generation,
+					pending_deferred_ocr_generation,
+					request_generation,
+				);
+			},
+		}
+	}
+
+	fn complete_overlay_host_effect_request(&mut self, request: &OverlayHostEffectRequest) {
+		if let Some(session) = self.overlay_session.as_mut() {
+			session.complete_host_effect_request(request);
+		}
+
+		if self.finish_overlay_session_teardown() {
+			tracing::info!("Capture overlay ended.");
+		}
 	}
 
 	#[cfg(target_os = "macos")]
@@ -956,8 +1161,10 @@ impl App {
 	}
 
 	pub(super) fn handle_overlay_control(&mut self, control: OverlayControl) {
-		if let OverlayControl::Exit(exit) = control {
-			self.end_overlay_session(exit);
+		match control {
+			OverlayControl::Continue => {},
+			OverlayControl::HostEffect(request) => self.handle_overlay_host_effect_request(request),
+			OverlayControl::Exit(exit) => self.end_overlay_session(exit),
 		}
 
 		#[cfg(target_os = "macos")]
@@ -965,6 +1172,178 @@ impl App {
 		#[cfg(target_os = "macos")]
 		self.sync_overlay_capture_host();
 	}
+}
+
+#[cfg(target_os = "macos")]
+fn deferred_text_recognition_publish_allowed(
+	latest_generation: &Arc<AtomicU64>,
+	pending_generation: &Arc<AtomicU64>,
+	request_generation: u64,
+) -> bool {
+	loop {
+		let pending_generation = pending_generation.load(Ordering::Acquire);
+
+		if pending_generation > request_generation {
+			thread::sleep(DEFERRED_OCR_PUBLISH_PENDING_POLL_INTERVAL);
+
+			continue;
+		}
+
+		return latest_generation.load(Ordering::Acquire) == request_generation;
+	}
+}
+
+fn save_png_bytes_to_configured_dir(
+	png_bytes: &[u8],
+	output_dir: &Path,
+	output_filename_prefix: &str,
+	output_naming: OutputNaming,
+) -> Result<PathBuf> {
+	let output_dir = if output_dir.as_os_str().is_empty() {
+		PathBuf::from(".")
+	} else {
+		output_dir.to_path_buf()
+	};
+
+	fs::create_dir_all(&output_dir)
+		.wrap_err_with(|| format!("Failed to create output directory: {}", output_dir.display()))?;
+
+	let prefix = settings::sanitize_output_filename_prefix(output_filename_prefix);
+	let target_path = next_output_png_path(&output_dir, &prefix, output_naming);
+
+	write_png_bytes_atomic(&target_path, png_bytes)?;
+
+	Ok(target_path)
+}
+
+#[cfg(target_os = "macos")]
+fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
+	let pasteboard_type = CString::new("public.png").wrap_err("Invalid NSPasteboard type")?;
+
+	unsafe {
+		let data: *mut Object = objc::msg_send![
+			objc::class!(NSData),
+			dataWithBytes: png_bytes.as_ptr()
+			length: png_bytes.len()
+		];
+		let pasteboard: *mut Object =
+			objc::msg_send![objc::class!(NSPasteboard), generalPasteboard];
+		let _: i64 = objc::msg_send![pasteboard, clearContents];
+		let ty: *mut Object = objc::msg_send![
+			objc::class!(NSString),
+			stringWithUTF8String: pasteboard_type.as_ptr()
+		];
+		let ok: BOOL = objc::msg_send![pasteboard, setData: data forType: ty];
+
+		if ok != YES {
+			return Err(eyre::eyre!("NSPasteboard setData:forType failed"));
+		}
+	}
+
+	Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
+	let image = image::load_from_memory(png_bytes).wrap_err("Failed to decode PNG bytes")?;
+	let rgba = image.to_rgba8();
+	let (width, height) = rgba.dimensions();
+	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
+
+	clipboard
+		.set_image(ImageData {
+			width: width as usize,
+			height: height as usize,
+			bytes: Cow::Owned(rgba.into_raw()),
+		})
+		.wrap_err("Failed to write image to clipboard")?;
+
+	Ok(())
+}
+
+fn write_text_to_clipboard(text: &str) -> Result<()> {
+	let mut clipboard = Clipboard::new().wrap_err("Failed to initialize clipboard")?;
+
+	clipboard.set_text(text.to_string()).wrap_err("Failed to write text to clipboard")?;
+
+	Ok(())
+}
+
+fn next_output_png_path(output_dir: &Path, prefix: &str, naming: OutputNaming) -> PathBuf {
+	let base = match naming {
+		OutputNaming::Timestamp => format!("{prefix}-{}", current_unix_millis()),
+		OutputNaming::Sequence => {
+			format!("{prefix}-{:04}", next_sequence_index(output_dir, prefix))
+		},
+	};
+
+	unique_png_path(output_dir, &base)
+}
+
+fn current_unix_millis() -> u128 {
+	SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |duration| duration.as_millis())
+}
+
+fn next_sequence_index(output_dir: &Path, prefix: &str) -> u32 {
+	let Ok(entries) = fs::read_dir(output_dir) else {
+		return 1;
+	};
+	let mut max_seen = 0_u32;
+
+	for entry in entries.flatten() {
+		let file_name = entry.file_name();
+		let Some(file_name) = file_name.to_str() else {
+			continue;
+		};
+		let Some(stem) = file_name.strip_suffix(".png") else {
+			continue;
+		};
+		let Some(number_text) = stem.strip_prefix(prefix).and_then(|rest| rest.strip_prefix('-'))
+		else {
+			continue;
+		};
+
+		if !number_text.chars().all(|ch| ch.is_ascii_digit()) {
+			continue;
+		}
+
+		if let Ok(value) = number_text.parse::<u32>() {
+			max_seen = max_seen.max(value);
+		}
+	}
+
+	max_seen.saturating_add(1).max(1)
+}
+
+fn unique_png_path(output_dir: &Path, base: &str) -> PathBuf {
+	let direct_path = output_dir.join(format!("{base}.png"));
+
+	if !direct_path.exists() {
+		return direct_path;
+	}
+
+	let mut suffix = 2_u32;
+
+	loop {
+		let candidate = output_dir.join(format!("{base}-{suffix}.png"));
+
+		if !candidate.exists() {
+			return candidate;
+		}
+
+		suffix = suffix.saturating_add(1);
+	}
+}
+
+fn write_png_bytes_atomic(target_path: &Path, png_bytes: &[u8]) -> Result<()> {
+	let tmp_path = target_path.with_extension("png.tmp");
+
+	fs::write(&tmp_path, png_bytes)
+		.wrap_err_with(|| format!("Failed to write temporary PNG file: {}", tmp_path.display()))?;
+	fs::rename(&tmp_path, target_path)
+		.wrap_err_with(|| format!("Failed to finalize PNG file: {}", target_path.display()))?;
+
+	Ok(())
 }
 
 fn self_capture_exception_window_ids_from_sources(
@@ -976,6 +1355,14 @@ fn self_capture_exception_window_ids_from_sources(
 
 #[cfg(test)]
 mod tests {
+	#[cfg(target_os = "macos")]
+	use std::sync::{
+		Arc,
+		atomic::{AtomicU64, Ordering},
+	};
+	#[cfg(target_os = "macos")]
+	use std::{thread, time::Duration};
+
 	use crate::app::capture;
 
 	#[test]
@@ -992,5 +1379,49 @@ mod tests {
 			capture::self_capture_exception_window_ids_from_sources(Some(7), Some(41)),
 			vec![7]
 		);
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn deferred_text_recognition_publish_allowed_waits_for_newer_capture_resolution() {
+		let latest_generation = Arc::new(AtomicU64::new(7));
+		let pending_generation = Arc::new(AtomicU64::new(8));
+		let latest_generation_writer = Arc::clone(&latest_generation);
+		let pending_generation_writer = Arc::clone(&pending_generation);
+		let resolver = thread::spawn(move || {
+			thread::sleep(Duration::from_millis(15));
+
+			latest_generation_writer.store(8, Ordering::Release);
+			pending_generation_writer.store(0, Ordering::Release);
+		});
+
+		assert!(!capture::deferred_text_recognition_publish_allowed(
+			&latest_generation,
+			&pending_generation,
+			7,
+		));
+
+		resolver.join().expect("publish gate resolver should finish");
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn deferred_text_recognition_publish_allowed_accepts_failed_newer_capture_start() {
+		let latest_generation = Arc::new(AtomicU64::new(7));
+		let pending_generation = Arc::new(AtomicU64::new(8));
+		let pending_generation_writer = Arc::clone(&pending_generation);
+		let resolver = thread::spawn(move || {
+			thread::sleep(Duration::from_millis(15));
+
+			pending_generation_writer.store(0, Ordering::Release);
+		});
+
+		assert!(capture::deferred_text_recognition_publish_allowed(
+			&latest_generation,
+			&pending_generation,
+			7,
+		));
+
+		resolver.join().expect("publish gate resolver should finish");
 	}
 }

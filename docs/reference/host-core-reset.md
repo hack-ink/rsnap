@@ -39,6 +39,9 @@ Today:
 
 - `apps/rsnap/` is still the app shell
 - `packages/rsnap-overlay/` is still a large transitional runtime container
+- final-byte export effects now cross the boundary as explicit host-effect requests: the overlay
+  prepares authoritative export/OCR payloads, and `apps/rsnap/` owns clipboard, save, and
+  deferred OCR publication
 
 During the reset, treat these as implementation containers rather than the final architecture
 story.
