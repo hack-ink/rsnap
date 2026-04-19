@@ -44,7 +44,7 @@ Child-run execution policy inherits from the Codex runtime. Do not add repo-loca
 
 Use the issue-scoped tracker tools autonomously for normal-path state changes and comments on the currently leased issue.
 
-Automatic intake is driven by the service-scoped Linear label `maestro:queued:<service-id>` derived from `maestro.toml` `id`. Repository policy in this file decides how eligible queued issues move through the lane; it does not select a Linear project.
+Automatic intake is driven by the service-scoped Linear label `maestro:queued:<service-id>` derived from `maestro.toml` `service_id`. Repository policy in this file decides how eligible queued issues move through the lane; it does not select a Linear project.
 
 Treat `In Review` as a PR-backed handoff state. A normal success path must push the lane branch, create or update a non-draft PR, and only then ask `maestro` to complete the `In Review` handoff.
 
