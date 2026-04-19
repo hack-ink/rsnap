@@ -66,6 +66,27 @@ pub(crate) enum UserEvent {
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone)]
+struct OverlayEventProxy {
+	sender: Arc<dyn Fn(UserEvent) -> Result<(), ()> + Send + Sync>,
+}
+#[cfg(target_os = "macos")]
+impl OverlayEventProxy {
+	fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
+		Self { sender: Arc::new(move |event| proxy.send_event(event).map_err(|_| ())) }
+	}
+
+	fn send_event(&self, event: UserEvent) -> Result<(), ()> {
+		(self.sender)(event)
+	}
+
+	#[cfg(test)]
+	fn for_test(sender: Arc<dyn Fn(UserEvent) -> Result<(), ()> + Send + Sync>) -> Self {
+		Self { sender }
+	}
+}
+
+#[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OverlayHotkeyRegistrationState {
 	Unregistered,
@@ -154,7 +175,7 @@ struct App {
 	#[cfg(target_os = "macos")]
 	capture_success_sound: Option<Retained<NSSound>>,
 	#[cfg(target_os = "macos")]
-	overlay_proxy: EventLoopProxy<UserEvent>,
+	overlay_proxy: OverlayEventProxy,
 	#[cfg(target_os = "macos")]
 	scroll_input_observer_lifecycle: Arc<ScrollInputObserverLifecycle>,
 	#[cfg(target_os = "macos")]
@@ -224,7 +245,7 @@ impl App {
 		settings: AppSettings,
 		settings_hotkey: Option<HotKey>,
 		hotkey_manager: Option<GlobalHotKeyManager>,
-		#[cfg(target_os = "macos")] overlay_proxy: EventLoopProxy<UserEvent>,
+		#[cfg(target_os = "macos")] overlay_proxy: OverlayEventProxy,
 		#[cfg(target_os = "macos")] scroll_input_observer_lifecycle: Arc<
 			ScrollInputObserverLifecycle,
 		>,

@@ -21,7 +21,7 @@ use winit::{
 
 #[cfg(target_os = "macos")]
 use crate::app::scroll_input_macos::{ScrollInputObserverLifecycle, SharedScrollInputState};
-use crate::app::{App, UserEvent};
+use crate::app::{App, OverlayEventProxy, UserEvent};
 use crate::settings::AppSettings;
 use crate::settings_window::{CaptureHotkeyNotice, SettingsControl, SettingsWindowAction};
 #[cfg(target_os = "macos")]
@@ -303,7 +303,7 @@ pub(super) fn run() -> Result<()> {
 		settings_hotkey,
 		hotkey_manager,
 		#[cfg(target_os = "macos")]
-		overlay_proxy,
+		OverlayEventProxy::new(overlay_proxy),
 		#[cfg(target_os = "macos")]
 		scroll_input_observer_lifecycle,
 		#[cfg(target_os = "macos")]

@@ -6,9 +6,7 @@
 use std::collections::VecDeque;
 use std::ops::Deref;
 use std::process;
-#[cfg(test)]
 use std::ptr;
-#[cfg(test)]
 use std::ptr::NonNull;
 use std::slice;
 use std::sync::{
@@ -277,17 +275,14 @@ impl MacLiveFrameStream {
 		}
 	}
 
-	#[cfg(test)]
 	pub(crate) fn debug_set_self_capture_filter_complete(&self, monitor_id: u32, complete: bool) {
 		self.shared_latest_frame.set_stream_filter_status(monitor_id, complete);
 	}
 
-	#[cfg(test)]
 	pub(crate) fn debug_store_test_snapshot(&self, monitor: MonitorRect, captured_at: Instant) {
 		self.debug_store_test_snapshot_with_metadata(monitor, 1, 1, captured_at);
 	}
 
-	#[cfg(test)]
 	pub(crate) fn debug_store_test_snapshot_with_metadata(
 		&self,
 		monitor: MonitorRect,
@@ -327,7 +322,6 @@ impl MacLiveFrameStream {
 		}
 	}
 
-	#[cfg(test)]
 	fn debug_test_pixel_buffer() -> SharedPixelBuffer {
 		let mut buffer = ptr::null_mut();
 		let res = unsafe {
