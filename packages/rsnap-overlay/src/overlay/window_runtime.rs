@@ -496,16 +496,18 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		let scroll_frame_waker = self.scroll_frame_waker.clone();
 		#[cfg(target_os = "macos")]
-		let scroll_capture_start_guard = self.scroll_capture_start_guard.clone();
-		#[cfg(target_os = "macos")]
-		let scroll_capture_starting_hook = self.scroll_capture_starting_hook.clone();
-		#[cfg(target_os = "macos")]
-		let scroll_capture_started_hook = self.scroll_capture_started_hook.clone();
-		#[cfg(target_os = "macos")]
-		let startup_aux_window_waker = self.startup_aux_window_waker.clone();
+		let scroll_capture_host_adapter = self.scroll_capture_host_adapter.clone();
 		#[cfg(target_os = "macos")]
 		let external_scroll_input_drain_reader =
 			self.scroll_capture.external_scroll_input_drain_reader.clone();
+		#[cfg(all(test, target_os = "macos"))]
+		let scroll_capture_start_guard = self.scroll_capture_start_guard.clone();
+		#[cfg(all(test, target_os = "macos"))]
+		let scroll_capture_starting_hook = self.scroll_capture_starting_hook.clone();
+		#[cfg(all(test, target_os = "macos"))]
+		let scroll_capture_started_hook = self.scroll_capture_started_hook.clone();
+		#[cfg(target_os = "macos")]
+		let startup_aux_window_waker = self.startup_aux_window_waker.clone();
 
 		*self = Self::with_config(config);
 
@@ -515,13 +517,17 @@ impl OverlaySession {
 		#[cfg(target_os = "macos")]
 		{
 			self.scroll_frame_waker = scroll_frame_waker;
-			self.scroll_capture_start_guard = scroll_capture_start_guard;
-			self.scroll_capture_starting_hook = scroll_capture_starting_hook;
-			self.scroll_capture_started_hook = scroll_capture_started_hook;
-			self.startup_aux_window_waker = startup_aux_window_waker;
-			self.pending_startup_aux_live_stream_filter_upgrade = false;
+			self.scroll_capture_host_adapter = scroll_capture_host_adapter;
 			self.scroll_capture.external_scroll_input_drain_reader =
 				external_scroll_input_drain_reader;
+			#[cfg(all(test, target_os = "macos"))]
+			{
+				self.scroll_capture_start_guard = scroll_capture_start_guard;
+				self.scroll_capture_starting_hook = scroll_capture_starting_hook;
+				self.scroll_capture_started_hook = scroll_capture_started_hook;
+			}
+			self.startup_aux_window_waker = startup_aux_window_waker;
+			self.pending_startup_aux_live_stream_filter_upgrade = false;
 		}
 	}
 

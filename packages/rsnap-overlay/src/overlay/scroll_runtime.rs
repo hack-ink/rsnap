@@ -23,12 +23,13 @@ use crate::overlay::{
 };
 use crate::overlay::{MonitorRect, RectPoints};
 use crate::overlay::{
-	OverlayControl, OverlaySession, ScrollCaptureFrameSource, ScrollCaptureTraceFrameRecord,
-	ScrollObserveOutcome, ScrollSession,
+	OverlayControl, OverlaySession, ScrollCaptureFrameSource, ScrollCaptureHostFrameRequestError,
+	ScrollCaptureTraceFrameRecord, ScrollObserveOutcome, ScrollSession,
 };
 use crate::scroll_capture::ScrollDirection;
 #[cfg(target_os = "macos")]
 use crate::scroll_capture::{self};
+#[cfg(all(test, target_os = "macos"))]
 use crate::worker::WorkerRequestSendError;
 
 impl OverlaySession {
@@ -108,14 +109,50 @@ impl OverlaySession {
 
 			return;
 		};
-		let Some(worker) = self.worker.as_ref() else {
-			self.scroll_capture_set_error("Scroll capture worker is unavailable.");
+
+		#[cfg(all(test, target_os = "macos"))]
+		if self.scroll_capture_host_adapter.is_none() {
+			let Some(worker) = self.worker.as_ref() else {
+				self.scroll_capture_set_error("Scroll capture worker is unavailable.");
+
+				return;
+			};
+			let request_id = self.scroll_capture.next_request_id.wrapping_add(1);
+
+			match worker.request_capture_monitor_region(monitor, capture_rect, request_id) {
+				Ok(()) => {
+					self.scroll_capture.next_request_id = request_id;
+					self.scroll_capture.inflight_request_id = Some(request_id);
+					self.scroll_capture.inflight_request_observation =
+						Some(crate::overlay::session_state::InflightScrollCaptureObservation {
+							was_observable: self
+								.scroll_capture_observation_block_reason_at(now)
+								.is_none(),
+							external_input_seq: self.scroll_capture.last_external_scroll_input_seq,
+							input_direction: self.scroll_capture.input_direction,
+						});
+					self.scroll_capture.next_sample_at = Some(now + SCROLL_CAPTURE_SAMPLE_INTERVAL);
+				},
+				Err(WorkerRequestSendError::Full) => {
+					self.scroll_capture.next_sample_at =
+						Some(now + SCROLL_CAPTURE_SAMPLE_INTERVAL.saturating_mul(2));
+				},
+				Err(WorkerRequestSendError::Disconnected) => {
+					self.scroll_capture_set_error("Scroll capture worker disconnected.");
+				},
+			}
+
+			return;
+		}
+
+		let Some(host_adapter) = self.scroll_capture_host_adapter.as_ref() else {
+			self.scroll_capture_set_error("Scroll capture capability is unavailable.");
 
 			return;
 		};
 		let request_id = self.scroll_capture.next_request_id.wrapping_add(1);
 
-		match worker.request_capture_monitor_region(monitor, capture_rect, request_id) {
+		match (host_adapter.request_frame)(monitor, capture_rect, request_id) {
 			Ok(()) => {
 				self.scroll_capture.next_request_id = request_id;
 				self.scroll_capture.inflight_request_id = Some(request_id);
@@ -132,12 +169,12 @@ impl OverlaySession {
 				}
 				self.scroll_capture.next_sample_at = Some(now + SCROLL_CAPTURE_SAMPLE_INTERVAL);
 			},
-			Err(WorkerRequestSendError::Full) => {
+			Err(ScrollCaptureHostFrameRequestError::Busy) => {
 				self.scroll_capture.next_sample_at =
 					Some(now + SCROLL_CAPTURE_SAMPLE_INTERVAL.saturating_mul(2));
 			},
-			Err(WorkerRequestSendError::Disconnected) => {
-				self.scroll_capture_set_error("Scroll capture worker disconnected.");
+			Err(ScrollCaptureHostFrameRequestError::Unavailable(message)) => {
+				self.scroll_capture_set_error(message);
 			},
 		}
 	}
