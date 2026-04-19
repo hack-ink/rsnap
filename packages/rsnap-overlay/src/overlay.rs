@@ -1038,6 +1038,37 @@ impl OverlaySession {
 	}
 
 	#[doc(hidden)]
+	pub fn debug_prepare_frozen_text_test_session(
+		&mut self,
+		monitor: MonitorRect,
+		capture_rect: RectPoints,
+		cursor: GlobalPoint,
+	) {
+		self.debug_prepare_live_test_session(monitor);
+
+		self.session_active = true;
+
+		self.state.begin_freeze(monitor);
+
+		self.state.frozen_capture_rect = Some(capture_rect);
+
+		let frozen_image = RgbaImage::from_pixel(
+			capture_rect.width.max(1),
+			capture_rect.height.max(1),
+			image::Rgba([0, 0, 0, 255]),
+		);
+
+		self.state.commit_frozen_display_image(monitor, frozen_image.clone());
+		self.state.commit_frozen_export_image(frozen_image);
+
+		self.toolbar_state.selected_tool = FrozenToolbarTool::Text;
+		self.toolbar_state.visible = true;
+		self.toolbar_window_visible = true;
+
+		let _ = self.begin_frozen_text_edit_at(monitor, cursor);
+	}
+
+	#[doc(hidden)]
 	pub fn debug_cursor(&self) -> Option<GlobalPoint> {
 		self.state.cursor
 	}
@@ -1072,6 +1103,34 @@ impl OverlaySession {
 	#[doc(hidden)]
 	pub fn debug_has_frozen_export_image(&self) -> bool {
 		self.state.frozen_export_image.is_some()
+	}
+
+	#[doc(hidden)]
+	pub fn debug_has_frozen_text_edit(&self) -> bool {
+		self.frozen_text_edit.is_some()
+	}
+
+	#[doc(hidden)]
+	pub fn debug_frozen_text_edit_text(&self) -> Option<&str> {
+		self.frozen_text_edit.as_ref().map(|edit| edit.text.as_str())
+	}
+
+	#[doc(hidden)]
+	pub fn debug_frozen_text_ime_preedit(&self) -> Option<&str> {
+		self.frozen_text_edit.as_ref().and_then(|edit| edit.ime_preedit.as_deref())
+	}
+
+	#[doc(hidden)]
+	pub fn debug_frozen_text_annotation_count(&self) -> usize {
+		self.frozen_text_annotations.len()
+	}
+
+	#[cfg(target_os = "macos")]
+	#[doc(hidden)]
+	pub fn debug_wants_macos_frozen_text_host_focus(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.frozen_text_tool_active()
+			&& self.frozen_text_edit.is_some()
 	}
 
 	#[doc(hidden)]
