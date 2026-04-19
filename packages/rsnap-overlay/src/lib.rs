@@ -35,6 +35,8 @@ mod ocr_macos;
 mod overlay;
 mod png;
 mod scroll_capture;
+#[cfg(target_os = "macos")]
+mod scroll_capture_capability_macos;
 mod state;
 mod system_fonts;
 mod text_rendering;
@@ -54,7 +56,12 @@ pub use crate::overlay::{
 #[cfg(target_os = "macos")]
 pub use crate::overlay::{
 	MacOSCaptureHost, MacOSCaptureHostSyncState, MacOSNativeCaptureInputEvent,
-	MacOSNativeCaptureScrollDelta,
+	MacOSNativeCaptureScrollDelta, ScrollCaptureHostAdapter, ScrollCaptureHostFrameRequestError,
+	ScrollCaptureHostStartRequest,
+};
+#[cfg(target_os = "macos")]
+pub use crate::scroll_capture_capability_macos::{
+	MacOSScrollCaptureCapability, MacOSScrollCaptureCapabilityEvent,
 };
 pub use crate::state::{
 	GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb, WindowHit,

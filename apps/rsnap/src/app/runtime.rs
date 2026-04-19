@@ -79,6 +79,8 @@ impl ApplicationHandler<UserEvent> for App {
 			},
 			#[cfg(target_os = "macos")]
 			UserEvent::OverlayWorkerResponse => {
+				self.drain_overlay_scroll_capture_capability_events();
+
 				if let Some(session) = self.overlay_session.as_mut() {
 					let control = session.handle_worker_response_ready();
 

@@ -7,6 +7,9 @@ const KCG_SCROLL_WHEEL_EVENT_IS_CONTINUOUS_FIELD: u32 = 88;
 const KCG_SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1_FIELD: u32 = 96;
 const KCG_SCROLL_WHEEL_EVENT_SCROLL_PHASE_FIELD: u32 = 99;
 const KCG_SCROLL_WHEEL_EVENT_MOMENTUM_PHASE_FIELD: u32 = 123;
+const MACOS_SCROLL_PIXEL_WRAP_MODULUS: f64 = 4_294_967_296.0;
+const MACOS_SCROLL_PIXEL_WRAP_THRESHOLD: f64 = 1_000_000.0;
+const MACOS_SCROLL_PIXEL_DELTA_CLAMP: f64 = 240.0;
 const NSEVENT_PHASE_BEGAN: u64 = 0x1 << 0;
 const NSEVENT_PHASE_STATIONARY: u64 = 0x1 << 1;
 const NSEVENT_PHASE_CHANGED: u64 = 0x1 << 2;
@@ -35,7 +38,12 @@ pub(super) fn decode_scroll_input_from_cg_event(
 	cg_event: CGEventRef,
 ) -> Option<DecodedScrollInput> {
 	let location = unsafe { CGEventGetLocation(cg_event) };
-	let raw_delta_y = scroll_delta_y_from_cg_event(cg_event);
+	let (raw_delta_y, is_continuous) = scroll_delta_y_from_cg_event(cg_event);
+	let delta_y = if is_continuous {
+		normalize_macos_scroll_pixel_component(raw_delta_y)
+	} else {
+		raw_delta_y
+	};
 	let scroll_phase = scroll_phase_bits_from_cg_event(cg_event);
 	let momentum_phase = scroll_momentum_phase_bits_from_cg_event(cg_event);
 	let gesture_active =
@@ -55,27 +63,25 @@ pub(super) fn decode_scroll_input_from_cg_event(
 		"Decoded native macOS scroll input event."
 	);
 
-	decode_scroll_input_from_fields(raw_delta_y, location, gesture_active, gesture_ended)
+	decode_scroll_input_from_parts(raw_delta_y, delta_y, location, gesture_active, gesture_ended)
 }
 
-pub(super) fn decode_scroll_input_from_fields(
-	raw_delta_y: f64,
-	location: MacOSCGPoint,
-	gesture_active: bool,
-	gesture_ended: bool,
-) -> Option<DecodedScrollInput> {
-	if raw_delta_y == 0.0 && !gesture_ended {
-		return None;
+pub(super) fn normalize_macos_scroll_pixel_component(value: f64) -> f64 {
+	if !value.is_finite() {
+		return 0.0;
 	}
 
-	Some(DecodedScrollInput {
-		raw_delta_y,
-		delta_y: raw_delta_y,
-		global_x: location.x,
-		global_y: location.y,
-		gesture_active,
-		gesture_ended,
-	})
+	let normalized = if value.abs() > MACOS_SCROLL_PIXEL_WRAP_THRESHOLD {
+		if value.is_sign_positive() {
+			value - MACOS_SCROLL_PIXEL_WRAP_MODULUS
+		} else {
+			value + MACOS_SCROLL_PIXEL_WRAP_MODULUS
+		}
+	} else {
+		value
+	};
+
+	normalized.clamp(-MACOS_SCROLL_PIXEL_DELTA_CLAMP, MACOS_SCROLL_PIXEL_DELTA_CLAMP)
 }
 
 pub(super) fn scroll_phase_bits_are_active(phase_bits: u64) -> bool {
@@ -91,17 +97,65 @@ pub(super) fn scroll_phase_bits_are_terminal(phase_bits: u64) -> bool {
 	phase_bits & (NSEVENT_PHASE_ENDED | NSEVENT_PHASE_CANCELLED) != 0
 }
 
-fn scroll_delta_y_from_cg_event(cg_event: CGEventRef) -> f64 {
+#[cfg(test)]
+fn decode_scroll_input_from_fields(
+	raw_delta_y: f64,
+	location: MacOSCGPoint,
+	gesture_active: bool,
+	gesture_ended: bool,
+) -> Option<DecodedScrollInput> {
+	decode_scroll_input_from_parts(
+		raw_delta_y,
+		raw_delta_y,
+		location,
+		gesture_active,
+		gesture_ended,
+	)
+}
+
+fn decode_scroll_input_from_parts(
+	raw_delta_y: f64,
+	delta_y: f64,
+	location: MacOSCGPoint,
+	gesture_active: bool,
+	gesture_ended: bool,
+) -> Option<DecodedScrollInput> {
+	if raw_delta_y == 0.0 && !gesture_ended {
+		return None;
+	}
+
+	Some(DecodedScrollInput {
+		raw_delta_y,
+		delta_y,
+		global_x: location.x,
+		global_y: location.y,
+		gesture_active,
+		gesture_ended,
+	})
+}
+
+fn scroll_delta_y_from_cg_event(cg_event: CGEventRef) -> (f64, bool) {
 	let is_continuous = unsafe {
 		CGEventGetIntegerValueField(cg_event, KCG_SCROLL_WHEEL_EVENT_IS_CONTINUOUS_FIELD)
 	} != 0;
 
 	if is_continuous {
-		unsafe {
-			CGEventGetDoubleValueField(cg_event, KCG_SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1_FIELD)
-		}
+		(
+			unsafe {
+				CGEventGetDoubleValueField(
+					cg_event,
+					KCG_SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1_FIELD,
+				)
+			},
+			true,
+		)
 	} else {
-		unsafe { CGEventGetDoubleValueField(cg_event, KCG_SCROLL_WHEEL_EVENT_DELTA_AXIS_1_FIELD) }
+		(
+			unsafe {
+				CGEventGetDoubleValueField(cg_event, KCG_SCROLL_WHEEL_EVENT_DELTA_AXIS_1_FIELD)
+			},
+			false,
+		)
 	}
 }
 
@@ -164,5 +218,17 @@ mod tests {
 		assert!(decode::scroll_phase_bits_are_terminal(NSEVENT_PHASE_ENDED));
 		assert!(decode::scroll_phase_bits_are_terminal(NSEVENT_PHASE_CANCELLED));
 		assert!(!decode::scroll_phase_bits_are_terminal(NSEVENT_PHASE_BEGAN));
+	}
+
+	#[test]
+	fn normalize_scroll_input_wraps_large_pixel_deltas_back_into_signed_range() {
+		assert_eq!(decode::normalize_macos_scroll_pixel_component(4_294_967_294.0), -2.0);
+		assert_eq!(decode::normalize_macos_scroll_pixel_component(4_294_967_290.0), -6.0);
+	}
+
+	#[test]
+	fn normalize_scroll_input_clamps_continuous_pixel_delta_magnitude() {
+		assert_eq!(decode::normalize_macos_scroll_pixel_component(512.0), 240.0);
+		assert_eq!(decode::normalize_macos_scroll_pixel_component(-512.0), -240.0);
 	}
 }

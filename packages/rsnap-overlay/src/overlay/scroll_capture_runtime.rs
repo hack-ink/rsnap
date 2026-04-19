@@ -1,5 +1,7 @@
 #[cfg(target_os = "macos")]
 use std::collections::VecDeque;
+#[cfg(all(test, target_os = "macos"))]
+use std::sync::Arc;
 use std::time::Instant;
 
 use color_eyre::Result;
@@ -10,7 +12,8 @@ use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::{
 	FrozenCaptureSource, Key, MonitorRect, NamedKey, OverlayControl, OverlayKeyboardInputEvent,
 	OverlayMode, OverlaySession, PngAction, Pos2, Rect, SCROLL_CAPTURE_INPUT_FRESHNESS,
-	SCROLL_CAPTURE_SAMPLE_INTERVAL, ScrollDirection, ScrollObserveOutcome, Vec2, WindowRenderer,
+	SCROLL_CAPTURE_SAMPLE_INTERVAL, ScrollCaptureHostStartRequest, ScrollDirection,
+	ScrollObserveOutcome, Vec2, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -298,9 +301,10 @@ impl OverlaySession {
 			overlay_mouse_passthrough_until: None,
 			#[cfg(target_os = "macos")]
 			external_scroll_input_drain_reader: self
-				.scroll_capture
-				.external_scroll_input_drain_reader
-				.clone(),
+				.scroll_capture_host_adapter
+				.as_ref()
+				.map(|adapter| adapter.external_input_drain_reader.clone())
+				.or_else(|| self.scroll_capture.external_scroll_input_drain_reader.clone()),
 			last_external_scroll_input_seq: 0,
 			#[cfg(target_os = "macos")]
 			pixel_delta_residual: MacOSScrollPixelResidual::default(),
@@ -361,6 +365,82 @@ impl OverlaySession {
 		})
 	}
 
+	#[cfg(target_os = "macos")]
+	fn resolve_scroll_capture_host_adapter(
+		&mut self,
+	) -> Option<crate::overlay::ScrollCaptureHostAdapter> {
+		if let Some(host_adapter) = self.scroll_capture_host_adapter.clone() {
+			return Some(host_adapter);
+		}
+
+		#[cfg(test)]
+		{
+			Some(crate::overlay::ScrollCaptureHostAdapter::new(
+				Arc::new(|_| Ok(true)),
+				Arc::new(|| {}),
+				Arc::new(|_, _, _| Ok(())),
+				self.scroll_capture
+					.external_scroll_input_drain_reader
+					.clone()
+					.unwrap_or_else(|| Arc::new(|_, _| Vec::new())),
+			))
+		}
+		#[cfg(not(test))]
+		{
+			self.state.set_error(String::from("Scroll capture capability is unavailable."));
+			self.request_redraw_all();
+
+			None
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn begin_scroll_capture_host_session(
+		&mut self,
+		host_adapter: &crate::overlay::ScrollCaptureHostAdapter,
+		monitor: MonitorRect,
+		capture_rect_points: RectPoints,
+		capture_rect_pixels: RectPoints,
+	) -> bool {
+		#[cfg(test)]
+		if let Some(guard) = self.scroll_capture_start_guard.clone() {
+			match guard() {
+				Ok(true) => {},
+				Ok(false) => return false,
+				Err(err) => {
+					self.state.set_error(format!("{err:#}"));
+					self.request_redraw_all();
+
+					return false;
+				},
+			}
+		}
+		#[cfg(test)]
+		if let Some(hook) = self.scroll_capture_starting_hook.clone()
+			&& let Err(err) = hook()
+		{
+			self.state.set_error(format!("{err:#}"));
+			self.request_redraw_all();
+
+			return false;
+		}
+
+		match (host_adapter.start)(ScrollCaptureHostStartRequest {
+			monitor,
+			capture_rect_points,
+			capture_rect_pixels,
+		}) {
+			Ok(true) => true,
+			Ok(false) => false,
+			Err(err) => {
+				self.state.set_error(format!("{err:#}"));
+				self.request_redraw_all();
+
+				false
+			},
+		}
+	}
+
 	pub(super) fn start_scroll_capture(&mut self) -> OverlayControl {
 		if self.scroll_capture.active {
 			tracing::info!(
@@ -389,25 +469,16 @@ impl OverlaySession {
 			else {
 				return OverlayControl::Continue;
 			};
+			let Some(host_adapter) = self.resolve_scroll_capture_host_adapter() else {
+				return OverlayControl::Continue;
+			};
 
-			if let Some(guard) = self.scroll_capture_start_guard.clone() {
-				match guard() {
-					Ok(true) => {},
-					Ok(false) => return OverlayControl::Continue,
-					Err(err) => {
-						self.state.set_error(format!("{err:#}"));
-						self.request_redraw_all();
-
-						return OverlayControl::Continue;
-					},
-				}
-			}
-			if let Some(hook) = self.scroll_capture_starting_hook.clone()
-				&& let Err(err) = hook()
-			{
-				self.state.set_error(format!("{err:#}"));
-				self.request_redraw_all();
-
+			if !self.begin_scroll_capture_host_session(
+				&host_adapter,
+				monitor,
+				capture_rect_points,
+				capture_rect_pixels,
+			) {
 				return OverlayControl::Continue;
 			}
 
@@ -421,6 +492,8 @@ impl OverlaySession {
 			) {
 				Ok(scroll_capture) => scroll_capture,
 				Err(err) => {
+					(host_adapter.stop)();
+
 					self.state.set_error(format!("{err:#}"));
 					self.request_redraw_all();
 
@@ -428,15 +501,16 @@ impl OverlaySession {
 				},
 			};
 
-			if let Some(hook) = self.scroll_capture_started_hook.clone() {
-				hook();
-			}
 			if let Some(trace_recorder) = self.scroll_capture.trace_recorder.as_ref() {
 				tracing::info!(
 					op = "scroll_capture.trace_recording_enabled",
 					manifest_path = %trace_recorder.manifest_path().display(),
 					"Enabled scroll-capture live trace recording for this session."
 				);
+			}
+			#[cfg(test)]
+			if let Some(hook) = self.scroll_capture_started_hook.clone() {
+				hook();
 			}
 
 			tracing::info!(
@@ -467,18 +541,12 @@ impl OverlaySession {
 				preview.window.set_visible(true);
 				preview.window.request_redraw();
 			}
-			if let (Some(monitor), Some(live_stream)) =
-				(self.scroll_capture.monitor, self.scroll_capture.live_stream.as_ref())
-			{
-				live_stream.prime_monitor_nonblocking(monitor);
-			}
 
 			self.request_redraw_for_monitor(monitor);
 
 			OverlayControl::Continue
 		}
 	}
-
 	pub(super) fn toggle_scroll_capture_paused(&mut self) {
 		if !self.scroll_capture.active {
 			return;
