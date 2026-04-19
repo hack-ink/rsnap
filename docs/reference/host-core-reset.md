@@ -62,6 +62,15 @@ comfortable, such as:
 - filing or landing cleanup that only splits files without clarifying the future boundary
 - hard-coding product behavior around a specific platform shell implementation
 
+Current reset posture for the scroll-capture slice:
+
+- the native app host owns scroll-capture permission checks, external scroll-input observer
+  lifecycle, native scroll-input normalization, and screenshot capability acquisition
+- the Rust overlay core owns scroll-capture session state, overlap proof, stitching, and
+  fail-closed product semantics
+- capability start/stop, frame delivery, and host-side failures must cross the boundary as explicit
+  host/core protocol calls instead of implicit worker ownership inside the overlay runtime
+
 ## Vertical-slice model
 
 The reset is intended to land as vertical slices rather than as one giant rewrite.

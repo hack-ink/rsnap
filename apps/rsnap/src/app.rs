@@ -47,7 +47,7 @@ use crate::settings::AppSettings;
 use crate::settings_window::{SettingsWindow, SettingsWindowEntry};
 use rsnap_overlay::OverlaySession;
 #[cfg(target_os = "macos")]
-use rsnap_overlay::{FrozenGlobalHotkey, MacOSCaptureHost};
+use rsnap_overlay::{FrozenGlobalHotkey, MacOSCaptureHost, MacOSScrollCaptureCapability};
 
 pub(crate) enum UserEvent {
 	TrayIcon,
@@ -167,6 +167,8 @@ struct App {
 	overlay_session: Option<OverlaySession>,
 	#[cfg(target_os = "macos")]
 	overlay_capture_host: Option<MacOSCaptureHost>,
+	#[cfg(target_os = "macos")]
+	overlay_scroll_capture_capability: Option<MacOSScrollCaptureCapability>,
 	#[cfg(target_os = "macos")]
 	prewarmed_overlay_session: Option<OverlaySession>,
 	settings_window: Option<SettingsWindow>,
@@ -289,6 +291,8 @@ impl App {
 			overlay_session: None,
 			#[cfg(target_os = "macos")]
 			overlay_capture_host: None,
+			#[cfg(target_os = "macos")]
+			overlay_scroll_capture_capability: None,
 			#[cfg(target_os = "macos")]
 			prewarmed_overlay_session: None,
 			settings_window: None,

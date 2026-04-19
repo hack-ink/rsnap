@@ -57,6 +57,8 @@ use crate::settings;
 #[cfg(target_os = "macos")]
 use rsnap_overlay::{
 	DeferredTextRecognitionOutcomeKind, DeferredTextRecognitionRequest, MacOSCaptureHost,
+	MacOSScrollCaptureCapability, MacOSScrollCaptureCapabilityEvent, ScrollCaptureHostAdapter,
+	ScrollCaptureHostFrameRequestError,
 };
 use rsnap_overlay::{
 	HudAnchor, OutputNaming, OverlayConfig, OverlayControl, OverlayExit, OverlayHostEffectRequest,
@@ -476,6 +478,9 @@ impl App {
 		}
 
 		let scroll_input_reset_ms = self.reset_scroll_input_for_capture_start();
+
+		self.prepare_scroll_capture_capability_for_capture_start();
+
 		let hook_wiring_started_at = Instant::now();
 
 		self.wire_capture_session_hooks(&mut overlay_session);
@@ -576,8 +581,34 @@ impl App {
 	}
 
 	#[cfg(target_os = "macos")]
+	fn build_overlay_scroll_capture_capability(&self) -> MacOSScrollCaptureCapability {
+		MacOSScrollCaptureCapability::new(
+			self.self_capture_exception_window_ids(),
+			Some(Arc::new({
+				let overlay_proxy = self.overlay_proxy.clone();
+
+				move || {
+					let _ = overlay_proxy.send_event(UserEvent::OverlayWorkerResponse);
+				}
+			})),
+		)
+	}
+
+	#[cfg(target_os = "macos")]
+	fn prepare_scroll_capture_capability_for_capture_start(&mut self) {
+		self.overlay_scroll_capture_capability =
+			Some(self.build_overlay_scroll_capture_capability());
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	fn prepare_scroll_capture_capability_for_capture_start(&mut self) {}
+
+	#[cfg(target_os = "macos")]
 	fn reset_capture_start_after_failure(&mut self) {
 		self.reset_overlay_native_capture_input_dispatch();
+
+		self.overlay_scroll_capture_capability = None;
+
 		self.pending_deferred_ocr_generation.store(0, Ordering::Release);
 		self.scroll_input_shared_state.set_enabled(false);
 		self.scroll_input_shared_state.set_event_waker(None);
@@ -747,30 +778,89 @@ impl App {
 					let _ = overlay_proxy.send_event(UserEvent::OverlayWorkerResponse);
 				}
 			}));
-			overlay_session.set_external_scroll_input_drain_reader(Arc::new({
+
+			let external_scroll_input_drain_reader = Arc::new({
 				let shared_state = Arc::clone(&self.scroll_input_shared_state);
 
 				move |after_seq, through| shared_state.replay_after_seq_through(after_seq, through)
-			}));
+			});
+			let scroll_capture_capability_for_start =
+				self.overlay_scroll_capture_capability.clone();
+			let scroll_capture_capability_for_request =
+				self.overlay_scroll_capture_capability.clone();
 
-			overlay_session
-				.set_scroll_capture_start_guard(Arc::new(Self::ensure_scroll_capture_permissions));
+			overlay_session.set_scroll_capture_host_adapter(ScrollCaptureHostAdapter::new(
+				Arc::new({
+					let shared_state = Arc::clone(&self.scroll_input_shared_state);
+					let observer_lifecycle = Arc::clone(&self.scroll_input_observer_lifecycle);
 
-			overlay_session.set_scroll_capture_starting_hook(Arc::new({
-				let shared_state = Arc::clone(&self.scroll_input_shared_state);
-				let observer_lifecycle = Arc::clone(&self.scroll_input_observer_lifecycle);
+					move |request| {
+						let _ = request;
+						let Some(_capability) = scroll_capture_capability_for_start.as_ref() else {
+							return Err(eyre::eyre!("Scroll capture capability is unavailable."));
+						};
 
-				move || Self::prepare_external_scroll_input(&shared_state, &observer_lifecycle)
-			}));
-			overlay_session.set_scroll_capture_started_hook(Arc::new({
-				let shared_state = Arc::clone(&self.scroll_input_shared_state);
+						if !Self::ensure_scroll_capture_permissions()? {
+							return Ok(false);
+						}
 
-				move || Self::enable_external_scroll_input(&shared_state)
-			}));
+						Self::prepare_external_scroll_input(&shared_state, &observer_lifecycle)?;
+						Self::enable_external_scroll_input(&shared_state);
+
+						Ok(true)
+					}
+				}),
+				Arc::new({
+					let shared_state = Arc::clone(&self.scroll_input_shared_state);
+
+					move || {
+						shared_state.set_enabled(false);
+						shared_state.clear();
+					}
+				}),
+				Arc::new(move |monitor, rect_px, request_id| {
+					let Some(capability) = scroll_capture_capability_for_request.as_ref() else {
+						return Err(ScrollCaptureHostFrameRequestError::Unavailable(String::from(
+							"Scroll capture capability is unavailable.",
+						)));
+					};
+
+					capability.request_frame(monitor, rect_px, request_id)
+				}),
+				external_scroll_input_drain_reader,
+			));
 		}
 		#[cfg(not(target_os = "macos"))]
 		{
 			let _ = overlay_session;
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn drain_overlay_scroll_capture_capability_events(&mut self) {
+		let Some(capability) = self.overlay_scroll_capture_capability.as_ref() else {
+			return;
+		};
+		let events = capability.drain_events();
+		let Some(session) = self.overlay_session.as_mut() else {
+			return;
+		};
+
+		for event in events {
+			match event {
+				MacOSScrollCaptureCapabilityEvent::Frame {
+					monitor,
+					rect_px,
+					request_id,
+					image,
+				} => session.handle_host_scroll_capture_frame(monitor, rect_px, request_id, image),
+				MacOSScrollCaptureCapabilityEvent::NoNewFrame { monitor, rect_px, request_id } => {
+					session.handle_host_scroll_capture_no_frame(monitor, rect_px, request_id)
+				},
+				MacOSScrollCaptureCapabilityEvent::Failure { message } => {
+					session.report_scroll_capture_capability_error(message);
+				},
+			}
 		}
 	}
 
@@ -824,6 +914,7 @@ impl App {
 		#[cfg(target_os = "macos")]
 		{
 			self.prewarmed_overlay_session = None;
+			self.overlay_scroll_capture_capability = None;
 			self.overlay_session_prewarm_requested = true;
 			self.overlay_session_prewarm_retry_not_before = None;
 
