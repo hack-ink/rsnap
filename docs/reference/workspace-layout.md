@@ -31,7 +31,7 @@ For the active target architecture and migration direction, read:
 | Path | Role |
 | --- | --- |
 | `apps/rsnap/` | Desktop app-shell crate: tray/menubar startup, hotkeys, settings window, permissions, logging, and session handoff into `rsnap-overlay` |
-| `packages/rsnap-overlay/` | Current overlay/runtime crate: capture-session logic, overlay rendering, capture backend integration, worker runtime, and scroll capture |
+| `packages/rsnap-overlay/` | Current overlay/runtime crate: capture-session logic, overlay rendering, capture backend integration, worker runtime, and scroll-capture stitching/replay semantics |
 | `docs/` | Agent-facing repository docs split into `spec`, `runbook`, `reference`, and `decisions` |
 | `assets/` | Shared app-icon and tray-icon source plus generated bundle/runtime assets |
 | `scripts/` | Packaging and dedicated macOS smoke helpers |
@@ -55,7 +55,9 @@ It owns:
 - app-level logging/bootstrap
 - macOS native capture-host shell lifecycle for pointer, first-responder, keyboard, and IME
   routing into the overlay core
-- macOS external scroll-input normalization before handing events to the overlay session
+- macOS external scroll-input normalization and observer lifecycle before handing replayable input
+  into the overlay session
+- macOS scroll-capture screenshot capability acquisition and host-side capability error delivery
 - deferred OCR generation tracking around overlay exits
 
 Key paths:

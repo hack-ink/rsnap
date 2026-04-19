@@ -79,7 +79,8 @@ use crate::overlay::{
 	LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayExit,
 	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
 	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
-	ScrollCaptureFrameSource, StartupLiveRgbPlan,
+	ScrollCaptureFrameSource, ScrollCaptureHostAdapter, ScrollCaptureHostFrameRequestError,
+	StartupLiveRgbPlan,
 };
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 #[cfg(target_os = "macos")]
@@ -3170,6 +3171,28 @@ fn scroll_capture_guard_silent_reject_keeps_frozen_capture_available_without_err
 
 #[cfg(target_os = "macos")]
 #[test]
+fn scroll_capture_host_adapter_silent_reject_keeps_frozen_capture_available_without_error() {
+	let mut session = OverlaySession::new();
+
+	seed_ready_scroll_capture_selection(&mut session);
+
+	session.set_scroll_capture_host_adapter(ScrollCaptureHostAdapter::new(
+		Arc::new(|_| Ok(false)),
+		Arc::new(|| {}),
+		Arc::new(|_, _, _| Ok(())),
+		Arc::new(|_, _| Vec::new()),
+	));
+
+	let control = session.start_scroll_capture();
+
+	assert!(matches!(control, OverlayControl::Continue));
+	assert!(!session.scroll_capture.active);
+	assert!(session.state.frozen_display_image.is_some());
+	assert!(session.state.error_message.is_none());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn scroll_capture_starting_hook_error_keeps_frozen_capture_available() {
 	let mut session = OverlaySession::new();
 
@@ -3190,6 +3213,39 @@ fn scroll_capture_starting_hook_error_keeps_frozen_capture_available() {
 			.as_deref()
 			.is_some_and(|message| message.contains("Observer was not ready."))
 	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn scroll_capture_host_busy_request_backs_off_without_error() {
+	let mut session = OverlaySession::new();
+
+	seed_ready_scroll_capture_selection(&mut session);
+	enable_test_worker_scroll_capture_path(&mut session);
+
+	session.set_scroll_capture_host_adapter(ScrollCaptureHostAdapter::new(
+		Arc::new(|_| Ok(true)),
+		Arc::new(|| {}),
+		Arc::new(|_, _, _| Err(ScrollCaptureHostFrameRequestError::Busy)),
+		Arc::new(|_, _| Vec::new()),
+	));
+
+	let control = session.start_scroll_capture();
+
+	assert!(matches!(control, OverlayControl::Continue));
+	assert!(session.scroll_capture.active);
+
+	enable_test_worker_scroll_capture_path(&mut session);
+
+	let before_retry = Instant::now();
+
+	session.scroll_capture.next_sample_at = Some(before_retry - Duration::from_millis(1));
+
+	session.maybe_tick_scroll_capture();
+
+	assert!(session.scroll_capture.inflight_request_id.is_none());
+	assert!(session.state.error_message.is_none());
+	assert!(session.scroll_capture.next_sample_at.is_some_and(|next| next > before_retry));
 }
 
 #[cfg(target_os = "macos")]
