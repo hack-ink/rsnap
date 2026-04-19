@@ -37,8 +37,10 @@ The checked-in repository does not yet fully match the target design.
 
 Today:
 
-- `apps/rsnap/` is still the app shell
-- `packages/rsnap-overlay/` is still a large transitional runtime container
+- `apps/rsnap/` is still the app shell and now exposes the runtime and native-host entry points
+- `packages/rsnap-overlay/` is still a large transitional runtime container, but its public root
+  now centers on session/replay surfaces while remaining macOS host adapters stay behind explicit
+  host modules
 - final-byte export effects now cross the boundary as explicit host-effect requests: the overlay
   prepares authoritative export/OCR payloads, and `apps/rsnap/` owns clipboard, save, and
   deferred OCR publication

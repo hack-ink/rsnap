@@ -52,17 +52,19 @@ use crate::app::scroll_input_macos::{
 	self, ScrollInputObserverLifecycle, ScrollInputObserverWaitOutcome, SharedScrollInputState,
 };
 #[cfg(target_os = "macos")]
+use crate::host_macos;
+#[cfg(target_os = "macos")]
+use crate::host_macos::{
+	MacOSCaptureHost, MacOSScrollCaptureCapability, MacOSScrollCaptureCapabilityEvent,
+};
+#[cfg(target_os = "macos")]
 use crate::permissions_macos;
 use crate::settings;
 #[cfg(target_os = "macos")]
-use rsnap_overlay::{
-	DeferredTextRecognitionOutcomeKind, DeferredTextRecognitionRequest, MacOSCaptureHost,
-	MacOSScrollCaptureCapability, MacOSScrollCaptureCapabilityEvent, ScrollCaptureHostAdapter,
-	ScrollCaptureHostFrameRequestError,
-};
-use rsnap_overlay::{
-	HudAnchor, OutputNaming, OverlayConfig, OverlayControl, OverlayExit, OverlayHostEffectRequest,
-	OverlaySession,
+use rsnap_overlay::session::{
+	DeferredTextRecognitionOutcomeKind, DeferredTextRecognitionRequest, HudAnchor, OutputNaming,
+	OverlayConfig, OverlayControl, OverlayExit, OverlayHostEffectRequest, OverlaySession,
+	ScrollCaptureHostAdapter, ScrollCaptureHostFrameRequestError,
 };
 
 #[cfg(target_os = "macos")]
@@ -415,10 +417,14 @@ impl App {
 
 	fn map_alt_activation(
 		mode: crate::settings::AltActivationMode,
-	) -> rsnap_overlay::AltActivationMode {
+	) -> rsnap_overlay::session::AltActivationMode {
 		match mode {
-			crate::settings::AltActivationMode::Hold => rsnap_overlay::AltActivationMode::Hold,
-			crate::settings::AltActivationMode::Toggle => rsnap_overlay::AltActivationMode::Toggle,
+			crate::settings::AltActivationMode::Hold => {
+				rsnap_overlay::session::AltActivationMode::Hold
+			},
+			crate::settings::AltActivationMode::Toggle => {
+				rsnap_overlay::session::AltActivationMode::Toggle
+			},
 		}
 	}
 
@@ -955,7 +961,7 @@ impl App {
 			Arc::clone(&latest_deferred_ocr_generation);
 		let pending_deferred_ocr_generation_for_publish =
 			Arc::clone(&pending_deferred_ocr_generation);
-		let outcome = rsnap_overlay::process_deferred_text_recognition_for_latest_capture(
+		let outcome = host_macos::process_deferred_text_recognition_for_latest_capture(
 			request,
 			latest_deferred_ocr_generation,
 			pending_deferred_ocr_generation,
@@ -1551,7 +1557,7 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	use crate::settings::AppSettings;
 	#[cfg(target_os = "macos")]
-	use rsnap_overlay::{
+	use rsnap_overlay::session::{
 		DeferredTextRecognitionRequest, OutputNaming, OverlayConfig, OverlayControl,
 		OverlayHostEffectRequest, OverlaySession,
 	};

@@ -23,7 +23,8 @@ use crate::overlay::{
 use crate::overlay::{MacLiveFrameStream, MainThreadMarker, NSScreen};
 
 impl OverlaySession {
-	/// Starts the overlay session and creates the required capture windows.
+	/// Starts the core session runtime and prepares the render windows and surfaces that the
+	/// native host will present and synchronize for an active capture session.
 	pub fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
 		let startup_started_at = Instant::now();
 
@@ -121,8 +122,8 @@ impl OverlaySession {
 		Ok(())
 	}
 
-	/// Pre-creates the GPU context plus hidden overlay/HUD windows so the first capture can
-	/// reuse them instead of paying the full cold-start cost on demand.
+	/// Pre-creates render resources and hidden session windows so the native host can reuse them
+	/// instead of paying the full cold-start cost on the first capture.
 	pub fn prewarm(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
 		if self.is_active() || self.has_prewarmed_startup_resources() {
 			return Ok(());

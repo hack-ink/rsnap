@@ -20,7 +20,7 @@ use crate::settings_window::CaptureHotkeyNotice;
 use crate::settings_window::SETTINGS_COMBO_WIDTH;
 use crate::settings_window::hotkey::SettingsUiHotkeyHost;
 use crate::settings_window::sections::{self, SettingsUiHost, SettingsUiSectionDefaults};
-use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
+use rsnap_overlay::session::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Stable settings-window benchmark scenarios used by Criterion benches.

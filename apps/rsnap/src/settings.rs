@@ -7,7 +7,7 @@ use directories::{ProjectDirs, UserDirs};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use serde::{Deserialize, Serialize};
 
-use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
+use rsnap_overlay::session::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -370,7 +370,9 @@ mod tests {
 	};
 
 	use crate::settings::{AltActivationMode, AppSettings, LoupeSampleSize};
-	use rsnap_overlay::{OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode};
+	use rsnap_overlay::session::{
+		OutputNaming, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode,
+	};
 
 	#[test]
 	fn toml_roundtrip() {
