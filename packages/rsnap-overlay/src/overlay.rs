@@ -1052,7 +1052,8 @@ impl Default for OverlayConfig {
 	}
 }
 
-/// Stateful overlay controller that drives capture windows and session output.
+/// Transitional Rust-core session controller that owns product state, rendering,
+/// explicit host requests, and host-sync state consumed by the native app host.
 pub struct OverlaySession {
 	config: OverlayConfig,
 	worker: Option<OverlayWorker>,

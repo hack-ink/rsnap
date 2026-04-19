@@ -26,7 +26,7 @@ use crate::settings_window::{
 	SETTINGS_SLIDER_RAIL_HEIGHT, SETTINGS_SLIDER_WIDGET_HEIGHT, SETTINGS_VALUE_BOX_WIDTH,
 	SettingsWindow, platform,
 };
-use rsnap_overlay::{OutputNaming, ToolbarPlacement, WindowCaptureAlphaMode};
+use rsnap_overlay::session::{OutputNaming, ToolbarPlacement, WindowCaptureAlphaMode};
 
 pub(super) trait SettingsUiHost: SettingsUiHotkeyHost {
 	fn combo_width(&self) -> f32;

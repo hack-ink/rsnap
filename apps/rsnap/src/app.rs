@@ -42,12 +42,14 @@ use self::scroll_input_macos::ScrollInputObserverLifecycle;
 #[cfg(target_os = "macos")]
 use self::scroll_input_macos::SharedScrollInputState;
 #[cfg(target_os = "macos")]
+use crate::host_macos::{MacOSCaptureHost, MacOSScrollCaptureCapability};
+#[cfg(target_os = "macos")]
 use crate::permissions_macos;
 use crate::settings::AppSettings;
 use crate::settings_window::{SettingsWindow, SettingsWindowEntry};
-use rsnap_overlay::OverlaySession;
 #[cfg(target_os = "macos")]
-use rsnap_overlay::{FrozenGlobalHotkey, MacOSCaptureHost, MacOSScrollCaptureCapability};
+use rsnap_overlay::session::FrozenGlobalHotkey;
+use rsnap_overlay::session::OverlaySession;
 
 pub(crate) enum UserEvent {
 	TrayIcon,
@@ -411,7 +413,7 @@ mod tests {
 	use crate::app::OverlayHotkeyRegistrationState;
 	use crate::app::{self, SettingsWindowEntry};
 	#[cfg(target_os = "macos")]
-	use rsnap_overlay::FrozenGlobalHotkey;
+	use rsnap_overlay::session::FrozenGlobalHotkey;
 
 	#[test]
 	fn startup_permission_check_uses_permissions_entry() {

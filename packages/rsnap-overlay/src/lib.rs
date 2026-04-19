@@ -1,7 +1,7 @@
-//! Public session-level overlay API used by the desktop application crate.
+//! Public Rust-core session API used by the desktop application crate.
 //!
 //! Backend implementations remain internal to this crate and are not part of the
-//! app-shell integration surface.
+//! native-host integration surface exposed from `apps/rsnap`.
 
 #![allow(unused_crate_dependencies)]
 
@@ -20,6 +20,49 @@ pub mod replay_support {
 		RecordedScrollCaptureReplayMode, RecordedScrollCaptureReplayRecordedOutcome,
 		RecordedScrollCaptureReplayStepResult, RecordedScrollCaptureReplaySummary,
 		replay_recorded_scroll_capture_trace, replay_recorded_scroll_capture_trace_with_mode,
+	};
+}
+pub mod session {
+	//! Rust-core session, protocol, and shared state exports consumed by the native app host.
+
+	#[cfg(target_os = "macos")]
+	pub use crate::deferred_text_recognition::{
+		DeferredTextRecognitionOutcome, DeferredTextRecognitionOutcomeKind,
+		DeferredTextRecognitionRequest,
+	};
+	pub use crate::overlay::{
+		AltActivationMode, FrozenGlobalHotkey, HudAnchor, OutputNaming, OverlayConfig,
+		OverlayControl, OverlayExit, OverlayHostEffectRequest, OverlayKeyboardInputEvent,
+		OverlaySession, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode,
+	};
+	#[cfg(target_os = "macos")]
+	pub use crate::overlay::{
+		ScrollCaptureHostAdapter, ScrollCaptureHostFrameRequestError, ScrollCaptureHostStartRequest,
+	};
+	pub use crate::state::{
+		GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb,
+		WindowHit, WindowListSnapshot, WindowRect,
+	};
+}
+#[cfg(target_os = "macos")]
+pub mod host_effects_macos {
+	//! Host-owned macOS effect helpers executed after the core emits explicit requests.
+
+	pub use crate::deferred_text_recognition::{
+		process_deferred_text_recognition, process_deferred_text_recognition_for_latest_capture,
+	};
+}
+#[cfg(target_os = "macos")]
+pub mod host_macos {
+	//! Transitional macOS host adapters kept explicit so the crate root does not imply
+	//! top-level host ownership.
+
+	pub use crate::overlay::{
+		MacOSCaptureHost, MacOSCaptureHostSyncState, MacOSNativeCaptureInputEvent,
+		MacOSNativeCaptureScrollDelta,
+	};
+	pub use crate::scroll_capture_capability_macos::{
+		MacOSScrollCaptureCapability, MacOSScrollCaptureCapabilityEvent,
 	};
 }
 
@@ -41,32 +84,6 @@ mod state;
 mod system_fonts;
 mod text_rendering;
 mod worker;
-
-#[cfg(target_os = "macos")]
-pub use crate::deferred_text_recognition::{
-	DeferredTextRecognitionOutcome, DeferredTextRecognitionOutcomeKind,
-	DeferredTextRecognitionRequest, process_deferred_text_recognition,
-	process_deferred_text_recognition_for_latest_capture,
-};
-pub use crate::overlay::{
-	AltActivationMode, FrozenGlobalHotkey, HudAnchor, OutputNaming, OverlayConfig, OverlayControl,
-	OverlayExit, OverlayHostEffectRequest, OverlayKeyboardInputEvent, OverlaySession, ThemeMode,
-	ToolbarPlacement, WindowCaptureAlphaMode,
-};
-#[cfg(target_os = "macos")]
-pub use crate::overlay::{
-	MacOSCaptureHost, MacOSCaptureHostSyncState, MacOSNativeCaptureInputEvent,
-	MacOSNativeCaptureScrollDelta, ScrollCaptureHostAdapter, ScrollCaptureHostFrameRequestError,
-	ScrollCaptureHostStartRequest,
-};
-#[cfg(target_os = "macos")]
-pub use crate::scroll_capture_capability_macos::{
-	MacOSScrollCaptureCapability, MacOSScrollCaptureCapabilityEvent,
-};
-pub use crate::state::{
-	GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb, WindowHit,
-	WindowListSnapshot, WindowRect,
-};
 
 /// Returns the `rsnap-overlay` crate version.
 pub fn overlay_version() -> &'static str {

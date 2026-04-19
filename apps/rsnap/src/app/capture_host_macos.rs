@@ -5,7 +5,8 @@ use std::sync::{
 };
 
 use crate::app::{App, UserEvent};
-use rsnap_overlay::{MacOSCaptureHost, MacOSNativeCaptureInputEvent, OverlayControl, OverlayExit};
+use crate::host_macos::{MacOSCaptureHost, MacOSNativeCaptureInputEvent};
+use rsnap_overlay::session::{OverlayControl, OverlayExit};
 
 #[derive(Clone)]
 pub(super) struct OverlayNativeCaptureInputBuffer {
@@ -167,10 +168,11 @@ mod tests {
 	use crate::app::capture_host_macos::OverlayNativeCaptureInputBuffer;
 	use crate::app::scroll_input_macos::{ScrollInputObserverLifecycle, SharedScrollInputState};
 	use crate::app::{App, OverlayEventProxy, UserEvent};
+	use crate::host_macos::MacOSNativeCaptureInputEvent;
 	use crate::settings::AppSettings;
-	use rsnap_overlay::{
-		GlobalPoint, MacOSNativeCaptureInputEvent, MonitorRect, OverlayConfig, OverlaySession,
-		RectPoints, WindowListSnapshot, WindowRect,
+	use rsnap_overlay::session::{
+		GlobalPoint, MonitorRect, OverlayConfig, OverlaySession, RectPoints, WindowListSnapshot,
+		WindowRect,
 	};
 
 	fn test_monitor() -> MonitorRect {

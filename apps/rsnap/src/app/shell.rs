@@ -12,7 +12,7 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::app::App;
 use crate::icon;
-use rsnap_overlay::OverlayExit;
+use rsnap_overlay::session::OverlayExit;
 
 impl App {
 	#[cfg(target_os = "macos")]

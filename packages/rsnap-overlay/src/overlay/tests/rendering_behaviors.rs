@@ -11,7 +11,7 @@ use image::RgbaImage;
 use objc::runtime::Object;
 use winit::window::CursorIcon;
 
-use crate::OverlayControl;
+use crate::overlay::OverlayControl;
 #[cfg(target_os = "macos")]
 use crate::overlay::WindowCaptureAlphaMode;
 use crate::overlay::session_state::FrozenAnnotationStyleCapsulePlacement;
