@@ -3430,6 +3430,40 @@ fn render_live_capture_affordances_keep_hover_scrim_when_flow_disabled() {
 }
 
 #[test]
+fn render_live_capture_affordances_draw_hover_flow_when_enabled() {
+	let ctx = tests::test_egui_context();
+	let layer = LayerId::new(Order::Foreground, Id::new("live-hover-flow-enabled"));
+	let painter = ctx.layer_painter(layer);
+	let monitor = tests::test_monitor();
+	let screen_rect =
+		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
+	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+	let mut state = OverlayState::new();
+	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+
+	state.mode = OverlayMode::Live;
+	state.hovered_window_rect = Some(MonitorRectPoints {
+		monitor_id: monitor.id,
+		rect: RectPoints::new(100, 120, 240, 320),
+	});
+
+	assert!(WindowRenderer::render_live_capture_affordances(
+		&ctx,
+		&painter,
+		&state,
+		monitor,
+		screen_rect,
+		HudTheme::Light,
+		true,
+		1.0,
+		&mut selection_flow_geometry_cache,
+		&mut selection_dashed_border_cache,
+	));
+	assert!(!selection_flow_geometry_cache.is_empty());
+	assert_eq!(selection_dashed_border_cache.key, None);
+}
+
+#[test]
 fn render_live_capture_affordances_draw_drag_border_when_flow_disabled() {
 	let ctx = tests::test_egui_context();
 	let layer = LayerId::new(Order::Foreground, Id::new("live-drag-flow-disabled"));
