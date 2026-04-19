@@ -111,6 +111,15 @@ impl DeferredTextRecognitionRequest {
 		self.image_source.image_dimensions()
 	}
 
+	#[doc(hidden)]
+	pub fn debug_prepared_for_test(
+		request_id: u64,
+		requested_at: Instant,
+		image: RgbaImage,
+	) -> Self {
+		Self::prepared(request_id, requested_at, image)
+	}
+
 	#[cfg(test)]
 	pub(crate) fn export_image(&self) -> Option<RgbaImage> {
 		self.image_source.export_image()

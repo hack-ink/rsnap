@@ -5,11 +5,15 @@ use std::ffi::CString;
 use std::fs;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
+use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
+#[cfg(all(test, target_os = "macos"))]
+use std::sync::OnceLock;
+#[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicU64;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::Ordering;
-#[cfg(target_os = "macos")]
-use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use std::thread::{self, Builder};
 #[cfg(target_os = "macos")]
@@ -73,6 +77,15 @@ macro_rules! sel_impl {
 	};
 }
 
+#[cfg(all(test, target_os = "macos"))]
+type CopyPngHostEffectHook = dyn Fn(&[u8]) -> Result<()> + Send + Sync + 'static;
+
+#[cfg(all(test, target_os = "macos"))]
+type DeferredTextRecognitionHandoffHook = dyn Fn(DeferredTextRecognitionRequest, Arc<AtomicU64>, Arc<AtomicU64>, u64)
+	+ Send
+	+ Sync
+	+ 'static;
+
 #[cfg(target_os = "macos")]
 const SCROLL_INPUT_OBSERVER_READY_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(target_os = "macos")]
@@ -84,6 +97,20 @@ const CAPTURE_SUCCESS_SOUND_CANDIDATE_PATHS: [&str; 2] = [
 	"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif",
 	"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Shutter.aif",
 ];
+
+#[cfg(all(test, target_os = "macos"))]
+static HOST_EFFECT_TEST_HOOKS: OnceLock<Mutex<HostEffectTestHooks>> = OnceLock::new();
+#[cfg(all(test, target_os = "macos"))]
+static HOST_EFFECT_TEST_SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(all(test, target_os = "macos"))]
+#[derive(Default)]
+struct HostEffectTestHooks {
+	copy_png: Option<Arc<CopyPngHostEffectHook>>,
+	#[cfg(target_os = "macos")]
+	deferred_text_recognition_handoff: Option<Arc<DeferredTextRecognitionHandoffHook>>,
+}
+
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy)]
 struct OverlayHotkeySpec {
@@ -1020,6 +1047,19 @@ impl App {
 		let request_generation = self.overlay_session_generation;
 		let latest_deferred_ocr_generation = Arc::clone(&self.latest_deferred_ocr_generation);
 		let pending_deferred_ocr_generation = Arc::clone(&self.pending_deferred_ocr_generation);
+
+		#[cfg(test)]
+		if let Some(handoff_hook) = deferred_text_recognition_handoff_test_hook() {
+			handoff_hook(
+				request,
+				latest_deferred_ocr_generation,
+				pending_deferred_ocr_generation,
+				request_generation,
+			);
+
+			return;
+		}
+
 		let request_slot = Arc::new(Mutex::new(Some(request)));
 		let request_slot_for_worker = Arc::clone(&request_slot);
 		let latest_deferred_ocr_generation_for_worker = Arc::clone(&latest_deferred_ocr_generation);
@@ -1174,6 +1214,45 @@ impl App {
 	}
 }
 
+#[cfg(all(test, target_os = "macos"))]
+fn host_effect_test_hooks() -> &'static Mutex<HostEffectTestHooks> {
+	HOST_EFFECT_TEST_HOOKS.get_or_init(|| Mutex::new(HostEffectTestHooks::default()))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn set_host_effect_test_hooks(hooks: HostEffectTestHooks) {
+	let mut guard =
+		host_effect_test_hooks().lock().expect("host-effect test hooks lock should be available");
+
+	*guard = hooks;
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn host_effect_test_serial() -> &'static Mutex<()> {
+	HOST_EFFECT_TEST_SERIAL.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn copy_png_host_effect_test_hook() -> Option<Arc<CopyPngHostEffectHook>> {
+	host_effect_test_hooks()
+		.lock()
+		.expect("host-effect test hooks lock should be available")
+		.copy_png
+		.as_ref()
+		.map(Arc::clone)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn deferred_text_recognition_handoff_test_hook() -> Option<Arc<DeferredTextRecognitionHandoffHook>>
+{
+	host_effect_test_hooks()
+		.lock()
+		.expect("host-effect test hooks lock should be available")
+		.deferred_text_recognition_handoff
+		.as_ref()
+		.map(Arc::clone)
+}
+
 #[cfg(target_os = "macos")]
 fn deferred_text_recognition_publish_allowed(
 	latest_generation: &Arc<AtomicU64>,
@@ -1218,6 +1297,11 @@ fn save_png_bytes_to_configured_dir(
 
 #[cfg(target_os = "macos")]
 fn write_png_bytes_to_clipboard(png_bytes: &[u8]) -> Result<()> {
+	#[cfg(all(test, target_os = "macos"))]
+	if let Some(copy_hook) = copy_png_host_effect_test_hook() {
+		return copy_hook(png_bytes);
+	}
+
 	let pasteboard_type = CString::new("public.png").wrap_err("Invalid NSPasteboard type")?;
 
 	unsafe {
@@ -1359,12 +1443,39 @@ mod tests {
 	#[cfg(target_os = "macos")]
 	use std::sync::{
 		Arc,
-		atomic::{AtomicU64, Ordering},
+		atomic::{AtomicU64, AtomicUsize, Ordering},
 	};
 	#[cfg(target_os = "macos")]
-	use std::{thread, time::Duration};
+	use std::time::Instant;
+	#[cfg(target_os = "macos")]
+	use std::{env, process};
+	#[cfg(target_os = "macos")]
+	use std::{fs, thread, time::Duration};
 
 	use crate::app::capture;
+	#[cfg(target_os = "macos")]
+	use crate::app::scroll_input_macos::{ScrollInputObserverLifecycle, SharedScrollInputState};
+	#[cfg(target_os = "macos")]
+	use crate::app::{App, OverlayEventProxy, UserEvent};
+	#[cfg(target_os = "macos")]
+	use crate::settings::AppSettings;
+	#[cfg(target_os = "macos")]
+	use rsnap_overlay::{
+		DeferredTextRecognitionRequest, OutputNaming, OverlayConfig, OverlayControl,
+		OverlayHostEffectRequest, OverlaySession,
+	};
+
+	#[cfg(target_os = "macos")]
+	struct HostEffectTestHooksGuard {
+		_serial: std::sync::MutexGuard<'static, ()>,
+	}
+
+	#[cfg(target_os = "macos")]
+	impl Drop for HostEffectTestHooksGuard {
+		fn drop(&mut self) {
+			capture::set_host_effect_test_hooks(capture::HostEffectTestHooks::default());
+		}
+	}
 
 	#[test]
 	fn self_capture_exception_window_ids_ignore_stale_cached_settings_window_id() {
@@ -1424,5 +1535,235 @@ mod tests {
 		));
 
 		resolver.join().expect("publish gate resolver should finish");
+	}
+
+	#[cfg(target_os = "macos")]
+	fn install_host_effect_test_hooks(
+		hooks: capture::HostEffectTestHooks,
+	) -> HostEffectTestHooksGuard {
+		let serial = capture::host_effect_test_serial()
+			.lock()
+			.expect("host-effect test serial lock should be available");
+
+		capture::set_host_effect_test_hooks(hooks);
+
+		HostEffectTestHooksGuard { _serial: serial }
+	}
+
+	#[cfg(target_os = "macos")]
+	fn test_app() -> App {
+		let settings = AppSettings::default();
+		let capture_hotkey = settings.capture_hotkey();
+		let overlay_proxy = OverlayEventProxy::for_test(Arc::new(|_event: UserEvent| Ok(())));
+		let mut app = App::new(
+			capture_hotkey,
+			settings,
+			None,
+			None,
+			overlay_proxy,
+			Arc::new(ScrollInputObserverLifecycle::default()),
+			Arc::new(SharedScrollInputState::default()),
+		);
+
+		app.capture_success_sound = None;
+
+		app
+	}
+
+	#[cfg(target_os = "macos")]
+	fn unique_test_dir(label: &str) -> std::path::PathBuf {
+		env::temp_dir().join(format!(
+			"rsnap-{label}-{}-{}",
+			process::id(),
+			capture::current_unix_millis()
+		))
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn copy_png_host_effect_success_tears_down_the_overlay_session() {
+		let call_count = Arc::new(AtomicUsize::new(0));
+		let _hooks = install_host_effect_test_hooks(capture::HostEffectTestHooks {
+			copy_png: Some(Arc::new({
+				let call_count = Arc::clone(&call_count);
+
+				move |png_bytes| {
+					call_count.fetch_add(1, Ordering::AcqRel);
+
+					assert_eq!(png_bytes, [1, 2, 3, 4]);
+
+					Ok(())
+				}
+			})),
+			deferred_text_recognition_handoff: None,
+		});
+		let mut app = test_app();
+
+		app.overlay_session = Some(OverlaySession::with_config(OverlayConfig::default()));
+
+		app.handle_overlay_control(OverlayControl::HostEffect(OverlayHostEffectRequest::CopyPng {
+			png_bytes: vec![1, 2, 3, 4],
+		}));
+
+		assert_eq!(call_count.load(Ordering::Acquire), 1);
+		assert!(app.overlay_session.is_none());
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn copy_png_host_effect_failure_keeps_the_overlay_session_alive() {
+		let call_count = Arc::new(AtomicUsize::new(0));
+		let _hooks = install_host_effect_test_hooks(capture::HostEffectTestHooks {
+			copy_png: Some(Arc::new({
+				let call_count = Arc::clone(&call_count);
+
+				move |_png_bytes| {
+					call_count.fetch_add(1, Ordering::AcqRel);
+
+					Err(color_eyre::eyre::eyre!("copy failed"))
+				}
+			})),
+			deferred_text_recognition_handoff: None,
+		});
+		let mut app = test_app();
+
+		app.overlay_session = Some(OverlaySession::with_config(OverlayConfig::default()));
+
+		app.handle_overlay_control(OverlayControl::HostEffect(OverlayHostEffectRequest::CopyPng {
+			png_bytes: vec![9, 8, 7, 6],
+		}));
+
+		assert_eq!(call_count.load(Ordering::Acquire), 1);
+
+		let session = app
+			.overlay_session
+			.as_ref()
+			.expect("copy failure should keep the overlay session active");
+
+		assert_eq!(session.debug_error_message(), Some("copy failed"));
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn save_png_host_effect_success_writes_the_png_and_tears_down_the_overlay_session() {
+		let output_dir = unique_test_dir("save-success");
+		let png_bytes = vec![4, 3, 2, 1];
+		let mut app = test_app();
+
+		app.overlay_session = Some(OverlaySession::with_config(OverlayConfig::default()));
+
+		app.handle_overlay_control(OverlayControl::HostEffect(OverlayHostEffectRequest::SavePng {
+			png_bytes: png_bytes.clone(),
+			output_dir: output_dir.clone(),
+			output_filename_prefix: String::from("capture"),
+			output_naming: OutputNaming::Sequence,
+		}));
+
+		let entries = fs::read_dir(&output_dir)
+			.expect("save host effect should create the output directory")
+			.collect::<Result<Vec<_>, _>>()
+			.expect("saved directory entries should be readable");
+
+		assert_eq!(entries.len(), 1);
+		assert_eq!(fs::read(entries[0].path()).expect("saved PNG should be readable"), png_bytes);
+		assert!(app.overlay_session.is_none());
+
+		fs::remove_dir_all(&output_dir).expect("save-success output directory should be removable");
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn save_png_host_effect_failure_keeps_the_overlay_session_alive() {
+		let base_dir = unique_test_dir("save-failure");
+		let output_dir = base_dir.join("occupied");
+		let mut app = test_app();
+
+		fs::create_dir_all(&base_dir).expect("save-failure base directory should be creatable");
+		fs::write(&output_dir, b"not a directory")
+			.expect("occupied output path should be creatable as a file");
+
+		app.overlay_session = Some(OverlaySession::with_config(OverlayConfig::default()));
+
+		app.handle_overlay_control(OverlayControl::HostEffect(OverlayHostEffectRequest::SavePng {
+			png_bytes: vec![6, 7, 8, 9],
+			output_dir: output_dir.clone(),
+			output_filename_prefix: String::from("capture"),
+			output_naming: OutputNaming::Sequence,
+		}));
+
+		let session = app
+			.overlay_session
+			.as_ref()
+			.expect("save failure should keep the overlay session active");
+
+		assert!(
+			session
+				.debug_error_message()
+				.is_some_and(|message| message.contains("Failed to create output directory"))
+		);
+
+		fs::remove_dir_all(&base_dir).expect("save-failure output directory should be removable");
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn deferred_text_recognition_host_effect_hands_the_request_to_the_app_worker_after_teardown() {
+		let handoff_count = Arc::new(AtomicUsize::new(0));
+		let handed_off_request_id = Arc::new(AtomicU64::new(u64::MAX));
+		let handed_off_generation = Arc::new(AtomicU64::new(u64::MAX));
+		let mut app = test_app();
+		let shared_state = Arc::clone(&app.scroll_input_shared_state);
+
+		shared_state.set_enabled(true);
+		shared_state.record(-12.0, 140.0, 220.0, true, false);
+
+		assert_eq!(
+			shared_state.replay_after_seq_through(0, Instant::now() + Duration::from_secs(1)).len(),
+			1
+		);
+
+		let _hooks = install_host_effect_test_hooks(capture::HostEffectTestHooks {
+			copy_png: None,
+			deferred_text_recognition_handoff: Some(Arc::new({
+				let handoff_count = Arc::clone(&handoff_count);
+				let handed_off_request_id = Arc::clone(&handed_off_request_id);
+				let handed_off_generation = Arc::clone(&handed_off_generation);
+				let shared_state = Arc::clone(&shared_state);
+
+				move |request, _latest_generation, _pending_generation, request_generation| {
+					handoff_count.fetch_add(1, Ordering::AcqRel);
+					handed_off_request_id.store(request.request_id, Ordering::Release);
+					handed_off_generation.store(request_generation, Ordering::Release);
+
+					assert!(!shared_state.is_enabled());
+					assert!(
+						shared_state
+							.replay_after_seq_through(0, Instant::now() + Duration::from_secs(1))
+							.is_empty()
+					);
+				}
+			})),
+		});
+		let request_id = 44;
+
+		app.overlay_session = Some(OverlaySession::with_config(OverlayConfig::default()));
+		app.overlay_session_generation = 17;
+
+		app.latest_deferred_ocr_generation.store(17, Ordering::Release);
+		app.pending_deferred_ocr_generation.store(0, Ordering::Release);
+		app.handle_overlay_control(OverlayControl::HostEffect(
+			OverlayHostEffectRequest::DeferredTextRecognition(
+				DeferredTextRecognitionRequest::debug_prepared_for_test(
+					request_id,
+					Instant::now(),
+					image::RgbaImage::from_pixel(2, 2, image::Rgba([0, 0, 0, 255])),
+				),
+			),
+		));
+
+		assert_eq!(handoff_count.load(Ordering::Acquire), 1);
+		assert_eq!(handed_off_request_id.load(Ordering::Acquire), request_id);
+		assert_eq!(handed_off_generation.load(Ordering::Acquire), 17);
+		assert!(app.overlay_session.is_none());
 	}
 }
