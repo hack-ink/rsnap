@@ -177,8 +177,10 @@ The capture-session contract lives at `docs/spec/capture-session.md`.
 
 ## Workspace Layout
 
-The tracked workspace keeps one app-shell crate in `apps/rsnap/`, one overlay/runtime crate in
-`packages/rsnap-overlay/`, and shared docs/assets/scripts at the repository root.
+The tracked workspace keeps one native-host app crate in `apps/rsnap/`, one Rust-core
+session/rendering crate in `packages/rsnap-overlay/`, and shared docs/assets/scripts at the
+repository root. The app crate exposes runtime and macOS host entry points, while
+`rsnap-overlay` exposes the Rust-core session façade plus explicit transitional host modules.
 Generated or local-only directories such as `target/`, `.worktrees/`, and `.workspaces/` are not
 part of the tracked repository structure. For the authoritative layout and ownership map, read
 `docs/reference/workspace-layout.md`.

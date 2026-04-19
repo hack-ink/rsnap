@@ -30,8 +30,8 @@ For the active target architecture and migration direction, read:
 
 | Path | Role |
 | --- | --- |
-| `apps/rsnap/` | Desktop app-shell crate: tray/menubar startup, hotkeys, settings window, permissions, logging, and session handoff into `rsnap-overlay` |
-| `packages/rsnap-overlay/` | Current overlay/runtime crate: capture-session logic, overlay rendering, capture backend integration, worker runtime, and scroll-capture stitching/replay semantics |
+| `apps/rsnap/` | Desktop native-host crate: tray/menubar startup, hotkeys, settings window, permissions, runtime entry points, macOS host facades, and session handoff into `rsnap-overlay::session` |
+| `packages/rsnap-overlay/` | Rust-core session/rendering crate: capture-session logic, overlay rendering, capture backend integration, worker runtime, and scroll-capture stitching/replay semantics, with any remaining macOS host adapters quarantined behind explicit host modules |
 | `docs/` | Agent-facing repository docs split into `spec`, `runbook`, `reference`, and `decisions` |
 | `assets/` | Shared app-icon and tray-icon source plus generated bundle/runtime assets |
 | `scripts/` | Packaging and dedicated macOS smoke helpers |
@@ -62,6 +62,8 @@ It owns:
 
 Key paths:
 
+- `apps/rsnap/src/lib.rs`: public runtime entry points plus the crate-level native-host façade
+- `apps/rsnap/src/host_macos.rs`: public macOS host-owned capture/effect entry points
 - `apps/rsnap/src/app.rs`: app-shell root and event routing
 - `apps/rsnap/src/app/`: focused support modules for capture, hotkeys, runtime, and macOS scroll
   input
@@ -94,8 +96,8 @@ Important:
 
 Key paths:
 
-- `packages/rsnap-overlay/src/lib.rs`: current public session-level surface exported to the app
-  shell
+- `packages/rsnap-overlay/src/lib.rs`: explicit `session` façade plus quarantined
+  `host_macos` / `host_effects_macos` transition modules
 - `packages/rsnap-overlay/src/overlay.rs`: current overlay root plus its focused
   runtime/rendering support modules
 - `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: current macOS live-stream support

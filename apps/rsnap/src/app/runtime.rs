@@ -27,7 +27,7 @@ use crate::app::{App, UserEvent};
 use crate::settings::AppSettings;
 use crate::settings_window::{CaptureHotkeyNotice, SettingsControl, SettingsWindowAction};
 #[cfg(target_os = "macos")]
-use rsnap_overlay::OverlayExit;
+use rsnap_overlay::session::OverlayExit;
 
 impl ApplicationHandler<UserEvent> for App {
 	fn resumed(&mut self, event_loop: &ActiveEventLoop) {

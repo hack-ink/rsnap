@@ -11,7 +11,7 @@ use crate::settings_window::{
 	SETTINGS_SECTION_GAP, SETTINGS_THEME_ICON_SIZE, SETTINGS_TITLEBAR_HEIGHT, SettingsWindow,
 	platform,
 };
-use rsnap_overlay::ThemeMode;
+use rsnap_overlay::session::ThemeMode;
 
 impl SettingsWindow {
 	pub(super) fn ui(&mut self, root_ui: &mut Ui, settings: &mut AppSettings) -> bool {
