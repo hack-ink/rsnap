@@ -62,9 +62,12 @@ use crate::permissions_macos;
 use crate::settings;
 #[cfg(target_os = "macos")]
 use rsnap_overlay::session::{
-	DeferredTextRecognitionOutcomeKind, DeferredTextRecognitionRequest, HudAnchor, OutputNaming,
-	OverlayConfig, OverlayControl, OverlayExit, OverlayHostEffectRequest, OverlaySession,
-	ScrollCaptureHostAdapter, ScrollCaptureHostFrameRequestError,
+	DeferredTextRecognitionOutcomeKind, DeferredTextRecognitionRequest, ScrollCaptureHostAdapter,
+	ScrollCaptureHostFrameRequestError,
+};
+use rsnap_overlay::session::{
+	HudAnchor, OutputNaming, OverlayConfig, OverlayControl, OverlayExit, OverlayHostEffectRequest,
+	OverlaySession,
 };
 
 #[cfg(target_os = "macos")]
