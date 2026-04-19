@@ -4,7 +4,9 @@ use std::sync::Arc;
 use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, MouseButton};
+use winit::event::ElementState;
+#[cfg(target_os = "macos")]
+use winit::event::MouseButton;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
