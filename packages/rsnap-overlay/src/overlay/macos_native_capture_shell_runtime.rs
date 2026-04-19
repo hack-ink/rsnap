@@ -202,6 +202,11 @@ impl MacOSCaptureHost {
 		self.restore_frontmost_application_after_exit(target);
 	}
 
+	#[doc(hidden)]
+	pub fn debug_dispatch_native_capture_input(&self, event: MacOSNativeCaptureInputEvent) {
+		self.native_capture_input_dispatch.enqueue(event);
+	}
+
 	fn ensure_native_capture_shells(&mut self, session: &mut OverlaySession) -> Result<(), String> {
 		if self.native_capture_shells.is_some() {
 			self.sync_native_capture_shells(session)?;
