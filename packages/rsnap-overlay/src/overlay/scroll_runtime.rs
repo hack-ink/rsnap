@@ -163,8 +163,6 @@ impl OverlaySession {
 		#[cfg(not(target_os = "macos"))]
 		{
 			self.request_scroll_capture_worker_sample_with_worker(now, monitor, capture_rect);
-
-			return;
 		}
 
 		#[cfg(target_os = "macos")]
