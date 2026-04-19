@@ -1,4 +1,3 @@
-pub(crate) mod output;
 pub(crate) mod replay_support;
 
 mod aux_window_runtime;
@@ -986,6 +985,22 @@ impl OverlaySession {
 	/// Registers a wake callback for worker-thread responses.
 	pub fn set_response_waker(&mut self, waker: Arc<dyn Fn() + Send + Sync>) {
 		self.response_waker = Some(waker);
+	}
+
+	/// Completes a host-owned effect request and finalizes overlay exit cleanup.
+	pub fn complete_host_effect_request(&mut self, request: &OverlayHostEffectRequest) {
+		let exit_metadata = Self::host_effect_exit_metadata(request);
+
+		self.log_exit_begin(&exit_metadata);
+		self.finalize_scroll_capture_for_exit();
+		self.reset_runtime_for_exit();
+		self.log_exit_end(&exit_metadata);
+	}
+
+	/// Surfaces a host-effect failure on the overlay HUD without ending the session.
+	pub fn report_host_effect_error(&mut self, message: impl Into<String>) {
+		self.state.set_error(message);
+		self.request_redraw_all();
 	}
 
 	#[cfg(target_os = "macos")]
@@ -2479,26 +2494,15 @@ impl OverlaySession {
 		};
 
 		match action {
-			PngAction::Copy => match output::write_png_bytes_to_clipboard(&png_bytes) {
-				Ok(()) => self.exit(OverlayExit::PngBytes(png_bytes)),
-				Err(err) => {
-					self.state.set_error(format!("{err:#}"));
-					self.request_redraw_all();
-
-					OverlayControl::Continue
-				},
+			PngAction::Copy => {
+				OverlayControl::HostEffect(OverlayHostEffectRequest::CopyPng { png_bytes })
 			},
-			PngAction::Save => {
-				match output::save_png_bytes_to_configured_dir(&png_bytes, &self.config) {
-					Ok(path) => self.exit(OverlayExit::Saved(path)),
-					Err(err) => {
-						self.state.set_error(format!("{err:#}"));
-						self.request_redraw_all();
-
-						OverlayControl::Continue
-					},
-				}
-			},
+			PngAction::Save => OverlayControl::HostEffect(OverlayHostEffectRequest::SavePng {
+				png_bytes,
+				output_dir: self.config.output_dir.clone(),
+				output_filename_prefix: self.config.output_filename_prefix.clone(),
+				output_naming: self.config.output_naming,
+			}),
 		}
 	}
 
@@ -2958,7 +2962,7 @@ impl OverlaySession {
 			"Queued OCR request."
 		);
 
-		self.exit(OverlayExit::DeferredTextRecognition(request))
+		OverlayControl::HostEffect(OverlayHostEffectRequest::DeferredTextRecognition(request))
 	}
 
 	fn handle_redraw_requested(&mut self, window_id: WindowId) -> OverlayControl {
@@ -3532,20 +3536,30 @@ impl OverlaySession {
 	fn exit_metadata(exit: &OverlayExit) -> OverlayExitMetadata<'_> {
 		match exit {
 			OverlayExit::Cancelled => OverlayExitMetadata::new("cancelled"),
-			OverlayExit::PngBytes(png_bytes) => {
-				OverlayExitMetadata::new("png_bytes").with_png_bytes_len(png_bytes.len())
-			},
-			OverlayExit::TextCopied(_) => OverlayExitMetadata::new("text_copied"),
-			#[cfg(target_os = "macos")]
-			OverlayExit::DeferredTextRecognition(request) => {
-				OverlayExitMetadata::new("deferred_text_recognition")
-					.with_ocr_request_id(request.request_id)
-			},
-			OverlayExit::Saved(path) => {
-				OverlayExitMetadata::new("saved").with_saved_path(path.display().to_string())
-			},
+			OverlayExit::HostEffect(request) => Self::host_effect_exit_metadata(request),
 			OverlayExit::Error(message) => {
 				OverlayExitMetadata::new("error").with_error_message(message.as_str())
+			},
+		}
+	}
+
+	fn host_effect_exit_metadata(request: &OverlayHostEffectRequest) -> OverlayExitMetadata<'_> {
+		match request {
+			OverlayHostEffectRequest::CopyPng { png_bytes } => {
+				OverlayExitMetadata::new("host_effect")
+					.with_host_effect_kind("copy_png")
+					.with_png_bytes_len(png_bytes.len())
+			},
+			OverlayHostEffectRequest::SavePng { png_bytes, .. } => {
+				OverlayExitMetadata::new("host_effect")
+					.with_host_effect_kind("save_png")
+					.with_png_bytes_len(png_bytes.len())
+			},
+			#[cfg(target_os = "macos")]
+			OverlayHostEffectRequest::DeferredTextRecognition(request) => {
+				OverlayExitMetadata::new("host_effect")
+					.with_host_effect_kind("deferred_text_recognition")
+					.with_ocr_request_id(request.request_id)
 			},
 		}
 	}
@@ -3563,8 +3577,8 @@ impl OverlaySession {
 		tracing::info!(
 			op = "overlay.exit_begin",
 			exit_kind = exit_metadata.exit_kind,
+			host_effect_kind = exit_metadata.host_effect_kind,
 			png_bytes_len = exit_metadata.png_bytes_len,
-			saved_path = exit_metadata.saved_path,
 			error_message = exit_metadata.error_message,
 			ocr_request_id = exit_metadata.ocr_request_id,
 			scroll_capture_active = self.scroll_capture.active,
@@ -3664,8 +3678,8 @@ impl OverlaySession {
 		tracing::info!(
 			op = "overlay.exit_end",
 			exit_kind = exit_metadata.exit_kind,
+			host_effect_kind = exit_metadata.host_effect_kind,
 			png_bytes_len = exit_metadata.png_bytes_len,
-			saved_path = exit_metadata.saved_path,
 			error_message = exit_metadata.error_message,
 			ocr_request_id = exit_metadata.ocr_request_id,
 			"Finished overlay exit cleanup."
@@ -3817,8 +3831,8 @@ impl FrozenExportTransform {
 #[derive(Debug)]
 struct OverlayExitMetadata<'a> {
 	exit_kind: &'static str,
+	host_effect_kind: Option<&'static str>,
 	png_bytes_len: Option<usize>,
-	saved_path: Option<String>,
 	error_message: Option<&'a str>,
 	ocr_request_id: Option<u64>,
 }
@@ -3826,21 +3840,21 @@ impl<'a> OverlayExitMetadata<'a> {
 	fn new(exit_kind: &'static str) -> Self {
 		Self {
 			exit_kind,
+			host_effect_kind: None,
 			png_bytes_len: None,
-			saved_path: None,
 			error_message: None,
 			ocr_request_id: None,
 		}
 	}
 
-	fn with_png_bytes_len(mut self, png_bytes_len: usize) -> Self {
-		self.png_bytes_len = Some(png_bytes_len);
+	fn with_host_effect_kind(mut self, host_effect_kind: &'static str) -> Self {
+		self.host_effect_kind = Some(host_effect_kind);
 
 		self
 	}
 
-	fn with_saved_path(mut self, saved_path: String) -> Self {
-		self.saved_path = Some(saved_path);
+	fn with_png_bytes_len(mut self, png_bytes_len: usize) -> Self {
+		self.png_bytes_len = Some(png_bytes_len);
 
 		self
 	}
@@ -3929,19 +3943,36 @@ pub enum ThemeMode {
 }
 
 #[derive(Debug)]
+/// A host-owned side-effect request emitted by the overlay core.
+pub enum OverlayHostEffectRequest {
+	/// Copy the encoded PNG for the completed capture to the host clipboard.
+	CopyPng {
+		/// Immutable encoded PNG payload prepared from the authoritative export image.
+		png_bytes: Vec<u8>,
+	},
+	/// Save the encoded PNG for the completed capture through the host-owned output path.
+	SavePng {
+		/// Immutable encoded PNG payload prepared from the authoritative export image.
+		png_bytes: Vec<u8>,
+		/// Output directory snapshot captured when the save request was issued.
+		output_dir: PathBuf,
+		/// Filename prefix snapshot captured when the save request was issued.
+		output_filename_prefix: String,
+		/// Naming policy snapshot captured when the save request was issued.
+		output_naming: OutputNaming,
+	},
+	/// Run deferred OCR for the completed capture through the native host.
+	#[cfg(target_os = "macos")]
+	DeferredTextRecognition(DeferredTextRecognitionRequest),
+}
+
+#[derive(Debug)]
 /// Describes how an overlay session finished.
 pub enum OverlayExit {
 	/// The user cancelled the session without producing output.
 	Cancelled,
-	/// The session completed by copying PNG bytes to the caller.
-	PngBytes(Vec<u8>),
-	/// The session completed by copying recognized text to the clipboard.
-	TextCopied(usize),
-	/// The session completed by handing OCR work to a background task.
-	#[cfg(target_os = "macos")]
-	DeferredTextRecognition(DeferredTextRecognitionRequest),
-	/// The session completed by saving a file to disk.
-	Saved(PathBuf),
+	/// The session completed by handing a host-owned side effect to the caller.
+	HostEffect(OverlayHostEffectRequest),
 	/// The session failed with a user-visible error message.
 	Error(String),
 }
@@ -3966,6 +3997,8 @@ pub enum FrozenGlobalHotkey {
 pub enum OverlayControl {
 	/// Keep the session alive and continue processing events.
 	Continue,
+	/// Execute the requested host-owned side effect before deciding whether to exit.
+	HostEffect(OverlayHostEffectRequest),
 	/// Exit the session with the provided terminal outcome.
 	Exit(OverlayExit),
 }

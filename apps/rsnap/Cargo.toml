@@ -18,7 +18,11 @@ name       = "Rsnap"
 name = "rsnap"
 path = "src/main.rs"
 
+[features]
+cargo-clippy = []
+
 [dependencies]
+arboard            = { workspace = true }
 color-eyre         = { workspace = true }
 core-foundation    = { version = "0.10" }
 directories        = { workspace = true }
@@ -43,6 +47,7 @@ winit              = { workspace = true }
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc             = { workspace = true }
 objc2            = { workspace = true }
 objc2-app-kit    = { workspace = true, features = ["NSScreen", "NSSound", "NSView", "NSWindow"] }
 objc2-foundation = { workspace = true, features = ["NSString"] }
