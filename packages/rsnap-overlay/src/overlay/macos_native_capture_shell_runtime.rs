@@ -216,6 +216,29 @@ impl MacOSCaptureHost {
 		self.native_capture_input_dispatch.enqueue(event);
 	}
 
+	#[doc(hidden)]
+	pub fn debug_dispatch_keyboard_input(
+		&self,
+		monitor: Option<MonitorRect>,
+		logical_key: Key,
+		text: Option<&str>,
+	) {
+		self.native_capture_input_dispatch.enqueue(MacOSNativeCaptureInputEvent::KeyboardInput {
+			monitor,
+			event: OverlayKeyboardInputEvent {
+				logical_key,
+				text: text.map(String::from),
+				state: ElementState::Pressed,
+				repeat: false,
+			},
+		});
+	}
+
+	#[doc(hidden)]
+	pub fn debug_last_synced_frozen_mode(&self) -> bool {
+		self.last_synced_frozen_mode
+	}
+
 	/// Synchronizes native macOS capture shells from explicit host/core state.
 	pub fn sync(&mut self, state: MacOSCaptureHostSyncState) -> Result<(), String> {
 		if self.native_capture_shells.is_some() {
