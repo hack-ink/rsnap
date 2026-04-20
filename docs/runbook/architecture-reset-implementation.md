@@ -71,11 +71,11 @@ Start with the smallest checked-in command set that matches the slice:
 - Rust logic or cross-platform product behavior:
   run `cargo make test`
 - scroll-capture behavior or replay-sensitive stitching logic:
-  run `cargo make replay-scroll-capture`
+  run `scripts/smoke/replay-scroll-capture.sh`
 - performance-sensitive rendering or interaction:
-  run `cargo make perf-local`
+  run `scripts/perf/local.sh`
 - dedicated macOS desktop readiness without claiming full live acceptance:
-  run `cargo make smoke-self-check-macos`
+  run `scripts/smoke/self-check-macos.sh`
 
 If the slice changes live desktop behavior materially, finish with the relevant manual validation
 from `docs/runbook/architecture-reset-validation.md`.

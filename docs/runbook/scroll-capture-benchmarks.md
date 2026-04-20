@@ -17,8 +17,8 @@ understanding of what the synthetic fixture is intended to cover.
 If you are debugging correctness rather than hot-path speed, start with:
 
 ```bash
-cargo make replay-scroll-capture
-cargo make replay-scroll-capture-self-check
+scripts/smoke/replay-scroll-capture.sh
+scripts/smoke/replay-scroll-capture-self-check.sh
 ```
 
 That replay runner exercises shipping overlay and session logic against the latest recorded live
@@ -27,12 +27,12 @@ tasks force the worker-pairwise mode so they match current macOS production scro
 authority. It requires a recorded manifest under `~/Library/Application Support/ink.hack.rsnap/scroll-capture-traces/`
 unless you invoke the example with `--trace <manifest-path>`. Use the direct example without
 `--force-worker-pairwise` only when you intentionally want to compare the legacy recorded-source
-replay path. `cargo make replay-scroll-capture-self-check` is the deterministic fallback when you
-want to validate the replay harness without depending on a user-recorded trace. For semantic analysis
-(first bad frame, under-consumption, overshoot), use:
+replay path. `scripts/smoke/replay-scroll-capture-self-check.sh` is the deterministic fallback
+when you want to validate the replay harness without depending on a user-recorded trace. For
+semantic analysis (first bad frame, under-consumption, overshoot), use:
 
 ```bash
-cargo make analyze-scroll-capture-trace
+scripts/smoke/analyze-scroll-capture-trace.sh
 ```
 
 Use the benchmark target below only when you specifically need performance numbers. A clean

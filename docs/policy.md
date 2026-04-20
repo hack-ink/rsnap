@@ -98,7 +98,8 @@ Decision header:
 - Procedural router: `docs/runbook/index.md`
 - Descriptive router: `docs/reference/index.md`
 - Decision router: `docs/decisions/index.md`
-- Repo task and automation entrypoints: `Makefile.toml`
+- Generic repo gates: `Makefile.toml`
+- Smoke/perf validation entrypoints: `scripts/smoke/` and `scripts/perf/`
 
 ## LLM reading guidance
 
@@ -110,7 +111,8 @@ When answering a repository question:
    - "Which sequence should I execute?" -> `docs/runbook/index.md`
    - "How is it currently organized or implemented?" -> `docs/reference/index.md`
    - "Why was this tradeoff accepted?" -> `docs/decisions/index.md`
-3. Read `Makefile.toml` when the task depends on repository automation or named tasks.
+3. Read `Makefile.toml` when the task depends on generic repo gates such as `fmt`, `lint`, `test`, or `checks`.
+4. Read `scripts/smoke/`, `scripts/perf/`, and the relevant runbook when the task depends on smoke or performance validation entrypoints.
 
 ## Update workflow
 

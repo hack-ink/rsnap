@@ -103,7 +103,7 @@ Diagnostic signals:
 - `Slow operation detected` entries for redraw-related operations
 
 Current coarse smoke surface:
-- `scripts/live-loupe-perf-smoke-macos.sh`
+- `scripts/smoke/live-loupe-perf-macos.sh`
 
 ### Scenario 2: render-heavy component paths
 
