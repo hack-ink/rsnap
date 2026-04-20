@@ -33,6 +33,7 @@ use crate::overlay::{
 #[cfg(target_os = "macos")]
 use crate::state::MonitorImageSnapshot;
 use crate::worker::{WorkerErrorSource, WorkerResponse};
+#[cfg(target_os = "macos")]
 use crate::overlay::frozen_selection_runtime;
 
 fn test_mosaic_source_image() -> RgbaImage {
