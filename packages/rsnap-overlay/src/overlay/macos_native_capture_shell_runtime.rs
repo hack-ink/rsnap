@@ -385,7 +385,6 @@ impl MacOSCaptureHost {
 			"Attempted to restore the pre-capture frontmost application."
 		);
 	}
-
 }
 
 struct MacOSCaptureHostOverlayShell {
@@ -1292,7 +1291,6 @@ extern "C" fn macos_passive_shell_view_draw_rect(this: &Object, _cmd: Sel, dirty
 				objc::msg_send![objc::class!(NSBezierPath), fillRect: NSRect::from(dirty_rect)];
 		}
 	}
-
 }
 
 extern "C" fn macos_passive_shell_view_reset_cursor_rects(this: &Object, _cmd: Sel) {
