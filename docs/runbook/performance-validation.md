@@ -9,7 +9,8 @@ refreshing local benchmark baselines, or deciding whether a change needs determi
 deterministic benches, dedicated desktop smoke, or some combination of those surfaces.
 
 Inputs: `scripts/smoke/`; `scripts/perf/`; `docs/spec/performance.md`;
-`docs/runbook/scroll-capture-benchmarks.md`
+`docs/runbook/scroll-capture-benchmarks.md`;
+`docs/reference/smoke-perf-validation-surface.md`
 
 Depends on: `docs/spec/performance.md`
 
@@ -40,10 +41,9 @@ Use the smallest command that matches the regression surface:
 `scripts/smoke/replay-scroll-capture.sh` and
 `scripts/smoke/analyze-scroll-capture-trace.sh` force
 `scroll_capture_replay --force-worker-pairwise`, so the repo-native non-live
-entrypoints exercise the same worker screenshot + pairwise registration commit
-path that current macOS production uses. Invoke the example directly without
-that flag only when you intentionally want to compare the legacy
-recorded-source replay mode.
+entrypoints exercise the same replay mode that current macOS production uses.
+Use `scripts/smoke/replay-scroll-capture-self-check.sh` for the matching
+worker-pairwise self-check path when no recorded user trace is available.
 
 ## What each high-level task does
 
@@ -70,18 +70,8 @@ For the downward scroll-capture rebuild, the expected verification sequence is:
 4. any targeted deterministic `cargo test -p rsnap-overlay ...`
 5. one fresh release live touchpad run with a newly recorded trace
 
-The low-level deterministic and smoke tasks remain available:
-
-- `scripts/smoke/replay-scroll-capture.sh`
-- `scripts/smoke/replay-scroll-capture-self-check.sh`
-- `scripts/smoke/analyze-scroll-capture-trace.sh`
-- `scripts/smoke/live-loupe-perf-macos.sh`
-- `scripts/smoke/live-loupe-perf-self-check-macos.sh`
-- `scripts/smoke/self-check-macos.sh`
-- `scripts/smoke/macos.sh`
-
-Use them when you need to isolate deterministic scroll-capture replay or the live-loupe smoke
-harness instead of the high-level performance entrypoint.
+For the current ownership map of those scripts versus replay, runtime, and
+session tests, read `docs/reference/smoke-perf-validation-surface.md`.
 
 ## Baseline workflow for local benchmarks
 
@@ -140,6 +130,8 @@ Dedicated macOS smoke:
 
 ## Related docs
 
+- `docs/reference/smoke-perf-validation-surface.md` for the smoke/perf ownership map and cleanup
+  boundaries.
 - `docs/runbook/scroll-capture-benchmarks.md` for the scroll-capture fixture contract and
   per-target baseline commands.
 - `docs/reference/live-sampling.md` for the stream-first live cursor and loupe path that
