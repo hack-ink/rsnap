@@ -8,7 +8,8 @@ The active split below is by question type, not by human-versus-agent audience.
 ## Read order
 
 - Read `docs/policy.md` for document contracts and placement rules.
-- Read `Makefile.toml` when the task depends on repo task names or execution entrypoints.
+- Read `Makefile.toml` when the task depends on generic repo gates such as `fmt`, `lint`, `test`, or `checks`.
+- Read `scripts/smoke/` and `scripts/perf/` when the task depends on smoke or performance validation entrypoints.
 - Then choose one primary lane:
   - `docs/spec/index.md` when the question is "what must be true?"
   - `docs/runbook/index.md` when the question is "which sequence should I execute?"
@@ -34,7 +35,8 @@ The active split below is by question type, not by human-versus-agent audience.
   `docs/reference/workspace-layout.md`
 - Need durable rationale for the architecture reset ->
   `docs/decisions/native-host-rust-core-reset.md`
-- Need repo task names or automation entrypoints -> `Makefile.toml`
+- Need generic repo gate names -> `Makefile.toml`
+- Need smoke or perf validation entrypoints -> `scripts/smoke/` and `scripts/perf/`
 - Need documentation placement or authoring rules -> `docs/policy.md`
 
 ## Retrieval rules
