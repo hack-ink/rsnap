@@ -109,10 +109,12 @@ fn make_scroll_capture_window(
 	)
 }
 
+#[cfg(target_os = "macos")]
 fn make_sparse_worker_capture_window(width: u32, height: u32, start_row: u32) -> image::RgbaImage {
 	scroll_capture_runtime_support::make_sparse_worker_capture_window(width, height, start_row)
 }
 
+#[cfg(target_os = "macos")]
 fn make_browser_like_worker_capture_window(
 	width: u32,
 	height: u32,
