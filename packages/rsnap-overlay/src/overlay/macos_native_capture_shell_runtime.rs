@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use egui::FontId;
@@ -62,8 +61,6 @@ impl MacOSNativeCaptureShells {
 			window_count = windows.len(),
 			"Synced passive overlay shells."
 		);
-
-		macos_set_system_cursor_hidden(visible);
 
 		for overlay_window in windows {
 			if let Some(shell) = self.overlay_shells.get(&overlay_window.monitor.id) {
@@ -169,7 +166,6 @@ pub struct MacOSCaptureHostSyncState {
 	toolbar_pointer_shell_visible: bool,
 	key_focus_target: Option<MacOSCaptureHostKeyFocusTarget>,
 	frozen_mode_active: bool,
-	preserve_frontmost_on_toolbar_show: bool,
 }
 
 /// App-owned macOS capture host adapter that owns native shell lifecycle,
@@ -195,6 +191,10 @@ impl MacOSCaptureHost {
 	pub fn begin_session(&mut self) {
 		self.frontmost_application_before_start = super::macos_frontmost_application();
 		self.last_synced_frozen_mode = false;
+
+		// AppKit only keeps native cursor ownership stable while rsnap is the active app. Capture
+		// the prior frontmost app for teardown restore, then activate rsnap for the overlay session.
+		super::macos_activate_app();
 
 		tracing::info!(
 			op = "overlay.frontmost_app_captured",
@@ -337,8 +337,6 @@ impl MacOSCaptureHost {
 	}
 
 	fn destroy_native_capture_shells(&mut self, session: &OverlaySession) {
-		macos_set_system_cursor_hidden(false);
-
 		for overlay_window in session.windows.values() {
 			super::macos_set_capture_window_mouse_passthrough(
 				overlay_window.window.as_ref(),
@@ -361,19 +359,11 @@ impl MacOSCaptureHost {
 		self.restore_frontmost_application_after_exit(target);
 	}
 
-	fn maybe_preserve_frontmost_application(&mut self, state: &MacOSCaptureHostSyncState) {
-		let transitioned_into_frozen = state.frozen_mode_active && !self.last_synced_frozen_mode;
-
-		if transitioned_into_frozen {
-			self.restore_recorded_frontmost_application_for_focus_preservation(
-				"begin_frozen_capture",
-			);
-		}
-		if state.preserve_frontmost_on_toolbar_show {
-			self.restore_recorded_frontmost_application_for_focus_preservation(
-				"toolbar_first_show",
-			);
-		}
+	fn maybe_preserve_frontmost_application(&mut self, _state: &MacOSCaptureHostSyncState) {
+		// Do not hand focus back during an active overlay session. Live crosshair and frozen hover
+		// cursors are native AppKit cursors; restoring the previous frontmost app during capture
+		// hands visible cursor ownership back to that app and leaves rsnap showing an arrow until
+		// the next direct interaction. The original app is restored when the session exits.
 	}
 
 	fn restore_frontmost_application_after_exit(&self, target: Option<MacOSFrontmostApplication>) {
@@ -393,21 +383,6 @@ impl MacOSCaptureHost {
 			target_process_id = target.process_id,
 			restored,
 			"Attempted to restore the pre-capture frontmost application."
-		);
-	}
-
-	fn restore_recorded_frontmost_application_for_focus_preservation(&self, reason: &'static str) {
-		let Some(target) = self.frontmost_application_before_start else {
-			return;
-		};
-		let restored = super::macos_restore_frontmost_application(target);
-
-		tracing::info!(
-			op = "overlay.frontmost_app_focus_preservation_attempted",
-			target_process_id = target.process_id,
-			reason,
-			restored,
-			"Attempted to preserve the pre-capture frontmost application during overlay interaction."
 		);
 	}
 }
@@ -780,6 +755,12 @@ impl OverlaySession {
 		host.destroy_native_capture_shells(self);
 	}
 
+	/// Re-applies cursor authority after the host has switched native shell visibility or
+	/// passthrough ownership.
+	pub fn refresh_macos_cursor_after_host_sync(&self) {
+		self.apply_macos_cursor_authority();
+	}
+
 	/// Builds the explicit macOS host sync state for the current overlay session.
 	pub fn take_macos_capture_host_sync_state(&mut self) -> MacOSCaptureHostSyncState {
 		let overlay_shells = self
@@ -814,10 +795,8 @@ impl OverlaySession {
 				placement,
 			}
 		});
-		let preserve_frontmost_on_toolbar_show =
-			self.toolbar_window_visible && self.preserve_frontmost_on_next_toolbar_show;
 
-		if preserve_frontmost_on_toolbar_show {
+		if self.toolbar_window_visible && self.preserve_frontmost_on_next_toolbar_show {
 			self.preserve_frontmost_on_next_toolbar_show = false;
 		}
 
@@ -827,7 +806,6 @@ impl OverlaySession {
 			toolbar_shell,
 			toolbar_pointer_shell_visible: self.should_host_toolbar_pointer_input_in_native_shell(),
 			frozen_mode_active: matches!(self.state.mode, OverlayMode::Frozen),
-			preserve_frontmost_on_toolbar_show,
 			key_focus_target: self.native_key_focus_shell_target(),
 		}
 	}
@@ -1313,12 +1291,6 @@ extern "C" fn macos_passive_shell_view_draw_rect(this: &Object, _cmd: Sel, dirty
 				objc::msg_send![objc::class!(NSBezierPath), fillRect: NSRect::from(dirty_rect)];
 		}
 	}
-
-	let Some(point) = macos_passive_shell_cursor_point(this as *const Object as usize) else {
-		return;
-	};
-
-	macos_draw_passive_shell_crosshair(point);
 }
 
 extern "C" fn macos_passive_shell_view_reset_cursor_rects(this: &Object, _cmd: Sel) {
@@ -1974,15 +1946,6 @@ fn macos_passive_shell_cursor_points() -> &'static Mutex<HashMap<usize, Option<N
 	POINTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn macos_passive_shell_cursor_point(view_key: usize) -> Option<NSPoint> {
-	let points = macos_passive_shell_cursor_points();
-
-	match points.lock() {
-		Ok(guard) => guard.get(&view_key).copied().flatten(),
-		Err(poisoned) => poisoned.into_inner().get(&view_key).copied().flatten(),
-	}
-}
-
 fn macos_clear_passive_shell_cursor_point(view_key: usize) {
 	let points = macos_passive_shell_cursor_points();
 
@@ -2083,81 +2046,6 @@ fn macos_seed_passive_shell_cursor_point(
 			&& local_point.y <= bounds.origin.y + bounds.size.height;
 
 		contains.then_some(local_point)
-	}
-}
-
-fn macos_draw_passive_shell_crosshair(point: NSPoint) {
-	let outline_color: *mut Object = unsafe {
-		objc::msg_send![objc::class!(NSColor), colorWithCalibratedWhite: 0.0 alpha: 0.95]
-	};
-	let fill_color: *mut Object = unsafe {
-		objc::msg_send![objc::class!(NSColor), colorWithCalibratedWhite: 1.0 alpha: 0.95]
-	};
-
-	macos_fill_passive_shell_crosshair_segments(outline_color, point, 3.0);
-	macos_fill_passive_shell_crosshair_segments(fill_color, point, 1.0);
-}
-
-fn macos_fill_passive_shell_crosshair_segments(color: *mut Object, point: NSPoint, thickness: f64) {
-	if color.is_null() {
-		return;
-	}
-
-	const EXTENT: f64 = 11.0;
-	const GAP: f64 = 3.0;
-
-	let rects = [
-		NSRect::new(
-			NSPoint::new(point.x - EXTENT, point.y - thickness * 0.5),
-			NSSize::new(EXTENT - GAP, thickness),
-		),
-		NSRect::new(
-			NSPoint::new(point.x + GAP, point.y - thickness * 0.5),
-			NSSize::new(EXTENT - GAP, thickness),
-		),
-		NSRect::new(
-			NSPoint::new(point.x - thickness * 0.5, point.y - EXTENT),
-			NSSize::new(thickness, EXTENT - GAP),
-		),
-		NSRect::new(
-			NSPoint::new(point.x - thickness * 0.5, point.y + GAP),
-			NSSize::new(thickness, EXTENT - GAP),
-		),
-	];
-
-	unsafe {
-		let _: () = objc::msg_send![color, setFill];
-
-		for rect in rects {
-			let _: () = objc::msg_send![objc::class!(NSBezierPath), fillRect: rect];
-		}
-	}
-}
-
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-	fn CGMainDisplayID() -> u32;
-	fn CGDisplayHideCursor(display: u32) -> i32;
-	fn CGDisplayShowCursor(display: u32) -> i32;
-}
-
-fn macos_set_system_cursor_hidden(hidden: bool) {
-	static CURSOR_HIDDEN: AtomicBool = AtomicBool::new(false);
-
-	let previous = CURSOR_HIDDEN.swap(hidden, Ordering::SeqCst);
-
-	if previous == hidden {
-		return;
-	}
-
-	unsafe {
-		if hidden {
-			let _ = CGDisplayHideCursor(CGMainDisplayID());
-			let _: () = objc::msg_send![objc::class!(NSCursor), hide];
-		} else {
-			let _: () = objc::msg_send![objc::class!(NSCursor), unhide];
-			let _ = CGDisplayShowCursor(CGMainDisplayID());
-		}
 	}
 }
 

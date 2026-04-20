@@ -14,6 +14,8 @@ use winit::window::CursorIcon;
 use crate::overlay::OverlayControl;
 #[cfg(target_os = "macos")]
 use crate::overlay::WindowCaptureAlphaMode;
+#[cfg(target_os = "macos")]
+use crate::overlay::frozen_selection_runtime;
 use crate::overlay::session_state::FrozenAnnotationStyleCapsulePlacement;
 use crate::overlay::tests::{
 	self, Duration, ElementState, FrozenCaptureSource, FrozenSelectionDragState,
@@ -785,7 +787,7 @@ fn entering_frozen_capture_skips_initial_toolbar_focus_restore() {
 	assert!(session.skip_toolbar_focus_on_next_show);
 	assert!(!session.should_focus_frozen_toolbar_window_on_show());
 	#[cfg(target_os = "macos")]
-	assert!(session.preserve_frontmost_on_next_toolbar_show);
+	assert!(!session.preserve_frontmost_on_next_toolbar_show);
 }
 
 #[cfg(target_os = "macos")]
@@ -2017,6 +2019,23 @@ fn live_cursor_rects_cover_overlay_with_crosshair() {
 	assert_eq!(rects[0].icon, CursorIcon::Crosshair);
 	assert_eq!(rects[0].rect.min, Pos2::ZERO);
 	assert_eq!(rects[0].rect.max, Pos2::new(monitor.width as f32, monitor.height as f32));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_live_cursor_sync_keeps_render_rects_active_during_native_shell_input() {
+	assert!(frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
+		OverlayMode::Live,
+		true,
+	));
+	assert!(frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
+		OverlayMode::Live,
+		false,
+	));
+	assert!(frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
+		OverlayMode::Frozen,
+		true,
+	));
 }
 
 #[cfg(target_os = "macos")]
