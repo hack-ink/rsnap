@@ -13,19 +13,6 @@ use crate::overlay::{
 	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS, OverlayCursorRect, Rect, Vec2,
 };
 
-#[cfg(target_os = "macos")]
-pub(super) const fn macos_overlay_cursor_uses_render_rects(
-	mode: OverlayMode,
-	_host_live_pointer_input: bool,
-) -> bool {
-	// Keep native cursor rects active in live mode as well. The passive input shell still owns
-	// pointer dispatch, but the render window must continue advertising a native cursor shape so
-	// AppKit does not fall back to an empty-rect arrow during live/frozen handoff.
-	match mode {
-		OverlayMode::Live | OverlayMode::Frozen => true,
-	}
-}
-
 impl OverlaySession {
 	#[cfg(target_os = "macos")]
 	pub(super) fn apply_macos_cursor_authority(&self) {
@@ -781,6 +768,7 @@ impl OverlaySession {
 
 			#[cfg(not(target_os = "macos"))]
 			overlay_window.window.set_cursor(icon);
+
 			#[cfg(target_os = "macos")]
 			{
 				overlay_window.window.set_cursor(icon);
@@ -790,6 +778,7 @@ impl OverlaySession {
 				} else {
 					Vec::new()
 				};
+
 				overlay_window
 					.cursor_rects
 					.sync_cursor_rects(overlay_window.window.as_ref(), &rects);
@@ -1371,5 +1360,18 @@ impl OverlaySession {
 		(pixel[0] as f32 - mean[0]).abs().round() as u32
 			+ (pixel[1] as f32 - mean[1]).abs().round() as u32
 			+ (pixel[2] as f32 - mean[2]).abs().round() as u32
+	}
+}
+
+#[cfg(target_os = "macos")]
+pub(super) const fn macos_overlay_cursor_uses_render_rects(
+	mode: OverlayMode,
+	_host_live_pointer_input: bool,
+) -> bool {
+	// Keep native cursor rects active in live mode as well. The passive input shell still owns
+	// pointer dispatch, but the render window must continue advertising a native cursor shape so
+	// AppKit does not fall back to an empty-rect arrow during live/frozen handoff.
+	match mode {
+		OverlayMode::Live | OverlayMode::Frozen => true,
 	}
 }

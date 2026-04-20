@@ -796,6 +796,7 @@ impl OverlaySession {
 				placement,
 			}
 		});
+
 		if self.toolbar_window_visible && self.preserve_frontmost_on_next_toolbar_show {
 			self.preserve_frontmost_on_next_toolbar_show = false;
 		}
