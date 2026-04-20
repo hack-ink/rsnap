@@ -2820,7 +2820,9 @@ impl OverlaySession {
 		self.skip_toolbar_focus_on_next_show = true;
 		#[cfg(target_os = "macos")]
 		{
-			self.preserve_frontmost_on_next_toolbar_show = true;
+			// Keep rsnap active for the entire overlay session so AppKit continues to honor native
+			// crosshair / grab / resize cursors. The pre-capture frontmost app is restored on exit.
+			self.preserve_frontmost_on_next_toolbar_show = false;
 		}
 
 		tracing::debug!(
@@ -4478,6 +4480,33 @@ impl MacOSOverlayCursorRectSupport {
 
 		macos_apply_overlay_cursor_for_current_pointer(self.view_key);
 	}
+
+	fn apply_cursor_for_current_pointer(&self) {
+		tracing::trace!(
+			op = "overlay.macos_overlay_cursor_rect_support_apply_current_pointer",
+			view_key = self.view_key,
+			"Applying macOS overlay cursor rect authority for current pointer."
+		);
+
+		macos_apply_overlay_cursor_for_current_pointer(self.view_key);
+	}
+
+	fn apply_cursor_for_current_pointer_or_fallback(&self, fallback_icon: CursorIcon) {
+		if macos_overlay_view_cursor_rect_entries(self.view_key).is_none() {
+			tracing::trace!(
+				op = "overlay.macos_overlay_cursor_rect_support_apply_fallback",
+				view_key = self.view_key,
+				icon = ?fallback_icon,
+				"Fell back to the session cursor icon because the render cursor rects are not ready yet."
+			);
+
+			macos_set_cursor_icon(fallback_icon);
+
+			return;
+		}
+
+		self.apply_cursor_for_current_pointer();
+	}
 }
 
 #[cfg(target_os = "macos")]
@@ -5035,8 +5064,22 @@ fn macos_set_cursor_icon(icon: CursorIcon) {
 	let cursor = macos_cursor_object_for_icon(icon);
 
 	if cursor.is_null() {
+		tracing::trace!(
+			op = "overlay.macos_set_cursor_icon",
+			icon = ?icon,
+			cursor_available = false,
+			"Skipped macOS cursor update because no cursor object was available."
+		);
+
 		return;
 	}
+
+	tracing::trace!(
+		op = "overlay.macos_set_cursor_icon",
+		icon = ?icon,
+		cursor_available = true,
+		"Setting macOS cursor icon."
+	);
 
 	unsafe {
 		let _: () = objc::msg_send![cursor, set];
@@ -5238,8 +5281,28 @@ fn macos_apply_overlay_cursor_for_current_pointer(overlay_view_key: usize) {
 	let Some(icon) =
 		macos_cursor_icon_for_current_pointer(entries.as_deref(), local_point, overlay_bounds)
 	else {
+		tracing::trace!(
+			op = "overlay.macos_apply_overlay_cursor_for_current_pointer",
+			view_key = overlay_view_key,
+			entry_count = entries.as_ref().map_or(0, Vec::len),
+			local_point = ?local_point,
+			overlay_bounds = ?overlay_bounds,
+			icon = ?"none",
+			"Skipped macOS overlay cursor apply because the pointer is not within an active cursor rect."
+		);
+
 		return;
 	};
+
+	tracing::trace!(
+		op = "overlay.macos_apply_overlay_cursor_for_current_pointer",
+		view_key = overlay_view_key,
+		entry_count = entries.as_ref().map_or(0, Vec::len),
+		local_point = ?local_point,
+		overlay_bounds = ?overlay_bounds,
+		icon = ?icon,
+		"Resolved macOS overlay cursor icon for current pointer."
+	);
 
 	macos_set_cursor_icon(icon);
 }

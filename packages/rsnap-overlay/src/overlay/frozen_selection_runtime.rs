@@ -13,7 +13,64 @@ use crate::overlay::{
 	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS, OverlayCursorRect, Rect, Vec2,
 };
 
+#[cfg(target_os = "macos")]
+pub(super) const fn macos_overlay_cursor_uses_render_rects(
+	mode: OverlayMode,
+	_host_live_pointer_input: bool,
+) -> bool {
+	// Keep native cursor rects active in live mode as well. The passive input shell still owns
+	// pointer dispatch, but the render window must continue advertising a native cursor shape so
+	// AppKit does not fall back to an empty-rect arrow during live/frozen handoff.
+	match mode {
+		OverlayMode::Live | OverlayMode::Frozen => true,
+	}
+}
+
 impl OverlaySession {
+	#[cfg(target_os = "macos")]
+	pub(super) fn apply_macos_cursor_authority(&self) {
+		let render_cursor_rects = macos_overlay_cursor_uses_render_rects(
+			self.state.mode,
+			self.should_host_live_pointer_input_in_native_shell(),
+		);
+
+		tracing::trace!(
+			op = "overlay.apply_macos_cursor_authority",
+			mode = ?self.state.mode,
+			render_cursor_rects,
+			cursor = ?self.state.cursor,
+			monitor_id = self.monitor_for_mode().or(self.state.monitor).map(|monitor| monitor.id),
+			"Applied macOS cursor authority."
+		);
+
+		if !render_cursor_rects {
+			if self.session_active
+				&& !self.capture_windows_hidden
+				&& matches!(self.state.mode, OverlayMode::Live)
+				&& !self.windows.is_empty()
+			{
+				super::macos_set_cursor_icon(CursorIcon::Crosshair);
+			}
+
+			return;
+		}
+
+		let Some(current_monitor) = self.monitor_for_mode().or(self.state.monitor) else {
+			return;
+		};
+		let Some(overlay_window) =
+			self.windows.values().find(|overlay_window| overlay_window.monitor == current_monitor)
+		else {
+			return;
+		};
+
+		overlay_window
+			.cursor_rects
+			.apply_cursor_for_current_pointer_or_fallback(
+				self.overlay_cursor_icon_for_monitor(overlay_window.monitor),
+			);
+	}
+
 	fn live_capture_interaction_hovered_window_rect(
 		interaction: LiveCaptureInteraction,
 	) -> Option<MonitorRectPoints> {
@@ -700,6 +757,13 @@ impl OverlaySession {
 
 	pub(super) fn sync_overlay_cursor_icons(&self) {
 		let current_monitor = self.monitor_for_mode().or(self.state.monitor);
+		#[cfg(target_os = "macos")]
+		let render_cursor_rects = macos_overlay_cursor_uses_render_rects(
+			self.state.mode,
+			self.should_host_live_pointer_input_in_native_shell(),
+		);
+		#[cfg(not(target_os = "macos"))]
+		let render_cursor_rects = false;
 
 		for overlay_window in self.windows.values() {
 			let icon = self.overlay_cursor_icon_for_monitor(overlay_window.monitor);
@@ -711,24 +775,29 @@ impl OverlaySession {
 				icon = ?icon,
 				active_monitor_id = ?current_monitor.map(|monitor| monitor.id),
 				cursor = ?self.state.cursor,
+				render_cursor_rects,
 				"Synced overlay cursor icons."
 			);
 
+			#[cfg(not(target_os = "macos"))]
 			overlay_window.window.set_cursor(icon);
 			#[cfg(target_os = "macos")]
 			{
-				overlay_window.cursor_rects.sync_cursor_rects(
-					overlay_window.window.as_ref(),
-					&self.frozen_selection_cursor_rects_for_monitor(overlay_window.monitor),
-				);
+				overlay_window.window.set_cursor(icon);
 
-				if current_monitor == Some(overlay_window.monitor) {
-					super::macos_set_cursor_icon(
-						self.overlay_cursor_icon_for_monitor(overlay_window.monitor),
-					);
-				}
+				let rects = if render_cursor_rects {
+					self.frozen_selection_cursor_rects_for_monitor(overlay_window.monitor)
+				} else {
+					Vec::new()
+				};
+				overlay_window
+					.cursor_rects
+					.sync_cursor_rects(overlay_window.window.as_ref(), &rects);
 			}
 		}
+
+		#[cfg(target_os = "macos")]
+		self.apply_macos_cursor_authority();
 	}
 
 	pub(super) fn frozen_selection_drag_hides_auxiliary_windows(&self) -> bool {
