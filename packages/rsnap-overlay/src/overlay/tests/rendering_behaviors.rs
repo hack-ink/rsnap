@@ -33,6 +33,7 @@ use crate::overlay::{
 #[cfg(target_os = "macos")]
 use crate::state::MonitorImageSnapshot;
 use crate::worker::{WorkerErrorSource, WorkerResponse};
+use crate::overlay::frozen_selection_runtime;
 
 fn test_mosaic_source_image() -> RgbaImage {
 	RgbaImage::from_fn(8, 8, |x, y| {
@@ -2022,15 +2023,15 @@ fn live_cursor_rects_cover_overlay_with_crosshair() {
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_live_cursor_sync_keeps_render_rects_active_during_native_shell_input() {
-	assert!(super::super::frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
+	assert!(frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
 		OverlayMode::Live,
 		true,
 	));
-	assert!(super::super::frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
+	assert!(frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
 		OverlayMode::Live,
 		false,
 	));
-	assert!(super::super::frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
+	assert!(frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
 		OverlayMode::Frozen,
 		true,
 	));
