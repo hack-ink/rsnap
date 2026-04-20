@@ -7,7 +7,7 @@ usage() {
   cat <<'EOF'
 Usage: replay-scroll-capture-self-check.sh
 
-Runs the deterministic replay self-check test without requiring a recorded user trace.
+Runs the deterministic worker-pairwise replay self-check without requiring a recorded user trace.
 EOF
 }
 
@@ -19,4 +19,4 @@ case "${1:-}" in
 esac
 
 cd "$ROOT_DIR"
-exec cargo test -p rsnap-overlay replay_recorded_live_trace_round_trips_one_commit --lib "$@"
+exec cargo test -p rsnap-overlay replay_recorded_live_trace_round_trips_one_commit_in_worker_pairwise_mode --lib "$@"

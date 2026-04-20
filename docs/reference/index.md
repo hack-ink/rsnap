@@ -45,6 +45,8 @@ Then keep the body descriptive:
 
 - `docs/reference/host-core-reset.md` for the active target architecture and migration posture of
   the host/core reset
+- `docs/reference/smoke-perf-validation-surface.md` for the current smoke/perf asset ownership
+  map across scripts, replay, benches, runtime tests, and session tests
 - `docs/reference/workspace-layout.md` for workspace layout, crate boundaries, and local-only
   directories
 - `docs/reference/live-sampling.md` for the stream-first live RGB and loupe sampling path

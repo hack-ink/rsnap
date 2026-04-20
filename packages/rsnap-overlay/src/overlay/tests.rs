@@ -1,13 +1,12 @@
 mod live_runtime;
 mod rendering_behaviors;
+mod scroll_capture_runtime_support;
 mod scroll_input_runtime;
 mod self_capture_runtime;
 mod stream_refresh_runtime;
 mod worker_observation_runtime;
 mod worker_tick_runtime;
 
-#[cfg(target_os = "macos")]
-use std::collections::VecDeque;
 use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
@@ -17,8 +16,6 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::Ordering;
-#[cfg(target_os = "macos")]
-use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -42,8 +39,6 @@ use winit::window::WindowId;
 
 #[cfg(target_os = "macos")]
 use crate::backend;
-#[cfg(target_os = "macos")]
-use crate::backend::CaptureBackend;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 use crate::overlay::FrozenCaptureSource;
@@ -96,52 +91,76 @@ use crate::worker::OverlayWorker;
 #[cfg(target_os = "macos")]
 use crate::worker::{WorkerErrorSource, WorkerRequestSendError, WorkerResponse};
 
-#[cfg(target_os = "macos")]
-struct SequenceScrollCaptureBackend {
-	frames: VecDeque<Option<image::RgbaImage>>,
-}
-#[cfg(target_os = "macos")]
-impl SequenceScrollCaptureBackend {
-	fn new(frames: impl IntoIterator<Item = Option<image::RgbaImage>>) -> Self {
-		Self { frames: frames.into_iter().collect() }
-	}
+fn make_scroll_capture_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
+	scroll_capture_runtime_support::make_scroll_capture_test_image(width, rows)
 }
 
+fn make_scroll_capture_window(
+	document: &[[u8; 4]],
+	width: u32,
+	start_row: usize,
+	window_rows: usize,
+) -> image::RgbaImage {
+	scroll_capture_runtime_support::make_scroll_capture_window(
+		document,
+		width,
+		start_row,
+		window_rows,
+	)
+}
+
 #[cfg(target_os = "macos")]
-impl CaptureBackend for SequenceScrollCaptureBackend {
-	fn capture_monitor(&mut self, _monitor: MonitorRect) -> Result<image::RgbaImage> {
-		Err(eyre::eyre!("unused in this test"))
-	}
+fn make_sparse_worker_capture_window(width: u32, height: u32, start_row: u32) -> image::RgbaImage {
+	scroll_capture_runtime_support::make_sparse_worker_capture_window(width, height, start_row)
+}
 
-	fn capture_monitor_region_for_scroll_capture(
-		&mut self,
-		_monitor: MonitorRect,
-		_rect_px: RectPoints,
-	) -> Result<Option<image::RgbaImage>> {
-		Ok(self.frames.pop_front().unwrap_or(None))
-	}
+#[cfg(target_os = "macos")]
+fn make_browser_like_worker_capture_window(
+	width: u32,
+	height: u32,
+	start_row: u32,
+) -> image::RgbaImage {
+	scroll_capture_runtime_support::make_browser_like_worker_capture_window(
+		width, height, start_row,
+	)
+}
 
-	fn pixel_rgb_in_monitor(
-		&mut self,
-		_monitor: MonitorRect,
-		_point: GlobalPoint,
-	) -> Result<Option<Rgb>> {
-		Ok(None)
-	}
+fn set_scroll_capture_input(session: &mut OverlaySession, direction: ScrollDirection) {
+	scroll_capture_runtime_support::set_scroll_capture_input(session, direction);
+}
 
-	fn rgba_patch_in_monitor(
-		&mut self,
-		_monitor: MonitorRect,
-		_point: GlobalPoint,
-		_width_px: u32,
-		_height_px: u32,
-	) -> Result<Option<image::RgbaImage>> {
-		Ok(None)
-	}
+#[cfg(target_os = "macos")]
+fn enable_test_worker_scroll_capture_path(session: &mut OverlaySession) {
+	scroll_capture_runtime_support::enable_test_worker_scroll_capture_path(session);
+}
 
-	fn refresh_window_cache(&mut self) -> Result<Arc<WindowListSnapshot>> {
-		Err(eyre::eyre!("unused in this test"))
-	}
+#[cfg(target_os = "macos")]
+fn seed_worker_scroll_capture_session(
+	session: &mut OverlaySession,
+	monitor: MonitorRect,
+	rect: RectPoints,
+	base: image::RgbaImage,
+	frames: impl IntoIterator<Item = Option<image::RgbaImage>>,
+) {
+	scroll_capture_runtime_support::seed_worker_scroll_capture_session(
+		session, monitor, rect, base, frames,
+	);
+}
+
+#[cfg(target_os = "macos")]
+fn drain_scroll_capture_worker_until_idle(session: &mut OverlaySession) {
+	scroll_capture_runtime_support::drain_scroll_capture_worker_until_idle(session);
+}
+
+fn observe_scroll_capture_frame(
+	session: &mut OverlaySession,
+	frame: image::RgbaImage,
+) -> Option<ScrollObserveOutcome> {
+	scroll_capture_runtime_support::observe_scroll_capture_frame(session, frame)
+}
+
+fn scroll_capture_export_height(session: &OverlaySession) -> u32 {
+	scroll_capture_runtime_support::scroll_capture_export_height(session)
 }
 
 fn session_pending_freeze_capture(session: &OverlaySession) -> Option<MonitorRect> {
@@ -434,151 +453,6 @@ fn commit_frozen_display_preview_state(
 				.or_else(|| session_inflight_window_freeze_capture(session)),
 		},
 	};
-}
-
-fn make_scroll_capture_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
-	let mut image = image::RgbaImage::new(width, rows.len() as u32);
-
-	for (y, row) in rows.iter().enumerate() {
-		for x in 0..width {
-			image.put_pixel(x, y as u32, Rgba(*row));
-		}
-	}
-
-	image
-}
-
-fn make_scroll_capture_window(
-	document: &[[u8; 4]],
-	width: u32,
-	start_row: usize,
-	window_rows: usize,
-) -> image::RgbaImage {
-	make_scroll_capture_test_image(width, &document[start_row..start_row + window_rows])
-}
-
-#[cfg(target_os = "macos")]
-fn make_sparse_worker_capture_window(width: u32, height: u32, start_row: u32) -> image::RgbaImage {
-	let stripe_x = 104_u32;
-	let mut image = image::RgbaImage::from_pixel(width, height, Rgba([255, 255, 255, 255]));
-
-	for y in 0..height {
-		let document_row = start_row.saturating_add(y);
-		let shade = ((document_row.saturating_mul(17)) % 180) as u8;
-
-		for x in stripe_x..stripe_x.saturating_add(6) {
-			image.put_pixel(x, y, Rgba([shade, shade, shade, 255]));
-		}
-		for x in stripe_x.saturating_add(10)..stripe_x.saturating_add(13) {
-			if document_row % 19 < 9 {
-				image.put_pixel(x, y, Rgba([40, 40, 40, 255]));
-			}
-		}
-	}
-
-	image
-}
-
-#[cfg(target_os = "macos")]
-fn make_browser_like_worker_capture_window(
-	width: u32,
-	height: u32,
-	start_row: u32,
-) -> image::RgbaImage {
-	let scrollbar_left = width.saturating_sub(18);
-	let content_left = 56_u32;
-	let content_right = width.saturating_sub(48);
-	let heading_width = 220_u32;
-	let paragraph_width = content_right.saturating_sub(content_left);
-	let mut image = make_sparse_worker_capture_window(width, height, start_row);
-
-	for y in 0..height {
-		let document_row = start_row.saturating_add(y);
-
-		if document_row % 420 < 18 {
-			for x in content_left..content_left.saturating_add(heading_width) {
-				image.put_pixel(x, y, Rgba([26, 26, 26, 255]));
-			}
-		} else if document_row % 420 >= 54 && document_row % 420 < 220 {
-			if document_row % 24 < 3 {
-				let trim = ((document_row / 24) % 5) * 18;
-
-				for x in
-					content_left..content_left.saturating_add(paragraph_width.saturating_sub(trim))
-				{
-					image.put_pixel(x, y, Rgba([72, 72, 72, 255]));
-				}
-			}
-		} else if document_row % 420 >= 270 && document_row % 420 < 360 && document_row % 20 < 2 {
-			for x in content_left.saturating_add(20)
-				..content_left.saturating_add(paragraph_width.saturating_sub(70))
-			{
-				image.put_pixel(x, y, Rgba([98, 98, 98, 255]));
-			}
-		}
-
-		for x in scrollbar_left..width {
-			image.put_pixel(x, y, Rgba([232, 232, 232, 255]));
-		}
-	}
-
-	let thumb_height = (height / 5).max(16);
-	let thumb_top = (start_row / 3) % height.max(thumb_height + 1);
-	let thumb_top = thumb_top.min(height.saturating_sub(thumb_height));
-
-	for y in thumb_top..thumb_top.saturating_add(thumb_height) {
-		for x in scrollbar_left.saturating_add(3)..width.saturating_sub(4) {
-			image.put_pixel(x, y, Rgba([96, 96, 96, 255]));
-		}
-	}
-
-	image
-}
-
-fn set_scroll_capture_input(session: &mut OverlaySession, direction: ScrollDirection) {
-	session.scroll_capture.input_direction = Some(direction);
-	session.scroll_capture.input_direction_at = Some(Instant::now());
-	session.scroll_capture.input_gesture_active = true;
-}
-
-#[cfg(target_os = "macos")]
-fn enable_test_worker_scroll_capture_path(session: &mut OverlaySession) {
-	session.scroll_capture.force_worker_sampling_in_tests = true;
-}
-
-#[cfg(target_os = "macos")]
-fn drain_scroll_capture_worker_until_idle(session: &mut OverlaySession) {
-	for _ in 0..64 {
-		let _ = session.drain_worker_responses();
-
-		if session.scroll_capture.inflight_request_id.is_none() {
-			return;
-		}
-
-		thread::sleep(Duration::from_millis(5));
-	}
-
-	panic!(
-		"timed out waiting for worker scroll-capture response; inflight_request_id={:?}",
-		session.scroll_capture.inflight_request_id
-	);
-}
-
-fn observe_scroll_capture_frame(
-	session: &mut OverlaySession,
-	frame: image::RgbaImage,
-) -> Option<ScrollObserveOutcome> {
-	match session.observe_scroll_capture_frame(frame).transpose() {
-		Ok(outcome) => outcome,
-		Err(err) => panic!("observe_scroll_capture_frame failed: {err:#}"),
-	}
-}
-
-fn scroll_capture_export_height(session: &OverlaySession) -> u32 {
-	match session.scroll_capture.session.as_ref() {
-		Some(scroll_session) => scroll_session.export_image().height(),
-		None => panic!("scroll_capture_export_height requires an active scroll session"),
-	}
 }
 
 fn test_monitor() -> MonitorRect {

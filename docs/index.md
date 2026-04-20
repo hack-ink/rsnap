@@ -31,6 +31,8 @@ The active split below is by question type, not by human-versus-agent audience.
   `docs/runbook/architecture-reset-implementation.md`
 - Need the active architecture-reset target and migration posture ->
   `docs/reference/host-core-reset.md`
+- Need the current smoke/perf ownership map before pruning validation assets ->
+  `docs/reference/smoke-perf-validation-surface.md`
 - Need current repository layout or crate ownership notes ->
   `docs/reference/workspace-layout.md`
 - Need durable rationale for the architecture reset ->
