@@ -8,7 +8,8 @@ Read this when: You are investigating a scroll-capture correctness or performanc
 refreshing local benchmark baselines, or deciding whether a change needs deterministic replay,
 deterministic benches, dedicated desktop smoke, or some combination of those surfaces.
 
-Inputs: `Makefile.toml`; `docs/spec/performance.md`; `docs/runbook/scroll-capture-benchmarks.md`
+Inputs: `scripts/smoke/`; `scripts/perf/`; `docs/spec/performance.md`;
+`docs/runbook/scroll-capture-benchmarks.md`
 
 Depends on: `docs/spec/performance.md`
 
@@ -20,42 +21,43 @@ baseline workflow for the committed Criterion benchmark targets.
 Use the smallest command that matches the regression surface:
 
 - Scroll-capture correctness or stitching-behavior regressions before final live validation:
-  `cargo make replay-scroll-capture`
+  `scripts/smoke/replay-scroll-capture.sh`
 - Replay-harness sanity check when no user-recorded trace is available yet:
-  `cargo make replay-scroll-capture-self-check`
+  `scripts/smoke/replay-scroll-capture-self-check.sh`
 - Scroll-capture semantic trace analysis (first bad frame, under-consumption, overshoot):
-  `cargo make analyze-scroll-capture-trace`
+  `scripts/smoke/analyze-scroll-capture-trace.sh`
 - Component render regressions in egui-heavy UI such as the settings window:
-  `cargo make perf-bench-settings-window`
+  `cargo bench -p rsnap --bench settings_window -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1`
 - Scroll-capture or image-processing hot-path regressions:
-  `cargo make perf-bench-scroll-capture`
+  `cargo bench -p rsnap-overlay --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1`
 - General local deterministic performance sweep before or after a change:
-  `cargo make perf-local`
+  `scripts/perf/local.sh`
 - Dedicated macOS environment validation without driving the real smoke scenario:
-  `cargo make perf-self-check-macos`
+  `scripts/perf/self-check-macos.sh`
 - Dedicated macOS end-to-end GUI performance smoke on a logged-in desktop session:
-  `cargo make perf-macos`
+  `scripts/perf/macos.sh`
 
-`cargo make replay-scroll-capture` and `cargo make analyze-scroll-capture-trace`
-force `scroll_capture_replay --force-worker-pairwise`, so the repo-native
-non-live entrypoints exercise the same worker screenshot + pairwise
-registration commit path that current macOS production uses. Invoke the example
-directly without that flag only when you intentionally want to compare the
-legacy recorded-source replay mode.
+`scripts/smoke/replay-scroll-capture.sh` and
+`scripts/smoke/analyze-scroll-capture-trace.sh` force
+`scroll_capture_replay --force-worker-pairwise`, so the repo-native non-live
+entrypoints exercise the same worker screenshot + pairwise registration commit
+path that current macOS production uses. Invoke the example directly without
+that flag only when you intentionally want to compare the legacy
+recorded-source replay mode.
 
 ## What each high-level task does
 
-- `perf-local`
+- `scripts/perf/local.sh`
   - Runs both committed Criterion benchmark targets with the repo's smoke-sized sample settings.
   - Use this for routine local comparisons and for regressions that do not require a real desktop
     session.
-- `perf-self-check-macos`
-  - Runs `perf-local`, then runs the live-loupe self-check plus recorded-live-trace
+- `scripts/perf/self-check-macos.sh`
+  - Runs `scripts/perf/local.sh`, then runs the live-loupe self-check plus recorded-live-trace
     scroll-capture replay.
   - Use this to validate that the dedicated macOS environment, permissions, and smoke harness are
     ready without treating it as an end-to-end performance assertion.
-- `perf-macos`
-  - Runs `perf-local`, then runs the real live-loupe GUI smoke task plus recorded-live-trace
+- `scripts/perf/macos.sh`
+  - Runs `scripts/perf/local.sh`, then runs the real live-loupe GUI smoke task plus recorded-live-trace
     scroll-capture replay.
   - Use this only on a dedicated logged-in macOS desktop session with the expected Screen
     Recording and automation permissions.
@@ -63,28 +65,29 @@ legacy recorded-source replay mode.
 For the downward scroll-capture rebuild, the expected verification sequence is:
 
 1. `cargo make checks`
-2. `cargo make replay-scroll-capture`
-3. `cargo make analyze-scroll-capture-trace`
+2. `scripts/smoke/replay-scroll-capture.sh`
+3. `scripts/smoke/analyze-scroll-capture-trace.sh`
 4. any targeted deterministic `cargo test -p rsnap-overlay ...`
 5. one fresh release live touchpad run with a newly recorded trace
 
 The low-level deterministic and smoke tasks remain available:
 
-- `cargo make replay-scroll-capture`
-- `cargo make replay-scroll-capture-self-check`
-- `cargo make analyze-scroll-capture-trace`
-- `cargo make smoke-live-loupe-perf-macos`
-- `cargo make smoke-self-check-macos`
-- `cargo make smoke-macos`
+- `scripts/smoke/replay-scroll-capture.sh`
+- `scripts/smoke/replay-scroll-capture-self-check.sh`
+- `scripts/smoke/analyze-scroll-capture-trace.sh`
+- `scripts/smoke/live-loupe-perf-macos.sh`
+- `scripts/smoke/live-loupe-perf-self-check-macos.sh`
+- `scripts/smoke/self-check-macos.sh`
+- `scripts/smoke/macos.sh`
 
 Use them when you need to isolate deterministic scroll-capture replay or the live-loupe smoke
 harness instead of the high-level performance entrypoint.
 
 ## Baseline workflow for local benchmarks
 
-The cargo-make tasks intentionally use short, repeatable Criterion settings for routine checks.
-When you need a named before/after comparison, use the direct benchmark commands so Criterion can
-save or load a baseline:
+`scripts/perf/local.sh` intentionally uses short, repeatable Criterion settings for routine
+checks. When you need a named before/after comparison, use the direct benchmark commands so
+Criterion can save or load a baseline:
 
 ```bash
 cargo bench -p rsnap --bench settings_window -- --save-baseline local-settings-ui
@@ -115,24 +118,24 @@ Dedicated macOS smoke:
 
 ## Interpreting failures
 
-- `perf-bench-settings-window` or `perf-bench-scroll-capture` regressions:
+- direct benchmark regressions from the settings-window or scroll-capture targets:
   compare scenario-level numbers against your saved baseline and inspect the relevant benchmark
   group before escalating to GUI smoke.
-- `replay-scroll-capture` failures:
+- `scripts/smoke/replay-scroll-capture.sh` failures:
   treat them as authoritative regressions against the latest recorded live trace in shipping
   worker-pairwise overlay or session logic before attempting more desktop-session repro. If the
   command reports that no trace manifests were found, that is an operator/setup failure: record a
   fresh live trace first or rerun the example with `--trace <manifest-path>`.
-- `replay-scroll-capture-self-check` failures:
+- `scripts/smoke/replay-scroll-capture-self-check.sh` failures:
   treat them as deterministic regressions in the replay harness itself, not as evidence about the
   latest user-recorded live trace.
 - clean replay plus trace analysis:
   this is necessary but not sufficient for XY-185 style sign-off; the remaining risk is
   isolated to the final fresh live touchpad run, not eliminated.
-- `perf-self-check-macos` failures:
+- `scripts/perf/self-check-macos.sh` failures:
   treat these first as environment or permission readiness failures unless local benches also
   regressed.
-- `perf-macos` failures with healthy local benches:
+- `scripts/perf/macos.sh` failures with healthy local benches:
   suspect live overlay cadence, desktop-session conditions, or smoke-harness environment drift.
 
 ## Related docs

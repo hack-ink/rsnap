@@ -36,7 +36,8 @@ read_first = [
   "docs/policy.md",
 ]
 +++
-Use `cargo make` whenever an equivalent task exists.
+Use `cargo make` for the generic repo gates defined in `Makefile.toml`.
+Use `scripts/smoke/` and `scripts/perf/` for smoke/perf validation entrypoints that intentionally live outside `Makefile.toml`.
 
 Use single-line `maestro/commit/1` JSON commit messages for local commits. Commit messages describe the tree change only; do not encode landing, CI, or closeout state.
 
@@ -58,7 +59,7 @@ Route documentation updates by class: behavioral or schema changes go in `docs/s
 
 When capture-session behavior, scroll-capture behavior, or performance contracts change, update the relevant docs in the same lane. The usual authority is `docs/spec/capture-session.md`, `docs/spec/performance.md`, and `docs/runbook/performance-validation.md`.
 
-Use deterministic validation first. Reach for `cargo make replay-scroll-capture`, `cargo make analyze-scroll-capture-trace`, or the macOS smoke and perf tasks only when the changed surface actually needs that evidence; do not treat dedicated live macOS smoke as a default PR gate.
+Use deterministic validation first. Reach for `scripts/smoke/replay-scroll-capture.sh`, `scripts/smoke/analyze-scroll-capture-trace.sh`, or the `scripts/smoke/` and `scripts/perf/` macOS entrypoints only when the changed surface actually needs that evidence; do not treat dedicated live macOS smoke as a default PR gate.
 
 Do not claim work is complete, fixed, or passing without fresh verification evidence from the selected repo gate or another command that directly proves the claim.
 

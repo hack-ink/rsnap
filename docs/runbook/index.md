@@ -20,7 +20,7 @@ Question this index answers: "which sequence should I execute?"
 - You need durable rationale for why an accepted tradeoff exists; read
   `docs/decisions/index.md`.
 - You need broad documentation policy or repo task-entrypoint rules; read
-  `docs/policy.md` or `Makefile.toml` instead.
+  `docs/policy.md`, `Makefile.toml`, or `scripts/smoke/` and `scripts/perf/` instead.
 
 ## What belongs in `docs/runbook/`
 
