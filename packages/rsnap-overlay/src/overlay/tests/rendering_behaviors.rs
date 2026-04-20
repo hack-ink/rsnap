@@ -14,6 +14,8 @@ use winit::window::CursorIcon;
 use crate::overlay::OverlayControl;
 #[cfg(target_os = "macos")]
 use crate::overlay::WindowCaptureAlphaMode;
+#[cfg(target_os = "macos")]
+use crate::overlay::frozen_selection_runtime;
 use crate::overlay::session_state::FrozenAnnotationStyleCapsulePlacement;
 use crate::overlay::tests::{
 	self, Duration, ElementState, FrozenCaptureSource, FrozenSelectionDragState,
@@ -33,8 +35,6 @@ use crate::overlay::{
 #[cfg(target_os = "macos")]
 use crate::state::MonitorImageSnapshot;
 use crate::worker::{WorkerErrorSource, WorkerResponse};
-#[cfg(target_os = "macos")]
-use crate::overlay::frozen_selection_runtime;
 
 fn test_mosaic_source_image() -> RgbaImage {
 	RgbaImage::from_fn(8, 8, |x, y| {

@@ -51,11 +51,9 @@ impl OverlaySession {
 			return;
 		};
 
-		overlay_window
-			.cursor_rects
-			.apply_cursor_for_current_pointer_or_fallback(
-				self.overlay_cursor_icon_for_monitor(overlay_window.monitor),
-			);
+		overlay_window.cursor_rects.apply_cursor_for_current_pointer_or_fallback(
+			self.overlay_cursor_icon_for_monitor(overlay_window.monitor),
+		);
 	}
 
 	fn live_capture_interaction_hovered_window_rect(
