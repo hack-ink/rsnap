@@ -1178,7 +1178,7 @@ mod tests {
 
 	#[cfg(target_os = "macos")]
 	#[test]
-	fn replay_recorded_live_trace_round_trips_one_commit() {
+	fn replay_recorded_live_trace_round_trips_one_commit_in_recorded_source_mode() {
 		let rows = [
 			[10, 0, 0, 255],
 			[20, 0, 0, 255],
@@ -1291,7 +1291,7 @@ mod tests {
 	}
 
 	#[test]
-	fn replay_recorded_live_trace_round_trips_one_commit_forces_worker_pairwise() {
+	fn replay_recorded_live_trace_round_trips_one_commit_in_worker_pairwise_mode() {
 		let base_frame = make_sparse_textlike_window(256, 120, 0);
 		let next_frame = make_sparse_textlike_window(256, 120, 9);
 		let mut session = OverlaySession::new();

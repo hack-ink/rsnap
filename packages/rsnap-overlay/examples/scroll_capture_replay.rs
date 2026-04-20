@@ -1,4 +1,4 @@
-//! Deterministic scroll-capture replay runner used by cargo-make verification tasks.
+//! Deterministic scroll-capture replay runner used by the repo smoke/perf scripts.
 
 #![allow(unused_crate_dependencies)]
 

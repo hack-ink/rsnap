@@ -14,26 +14,9 @@ Depends on: `docs/spec/performance.md`
 Outputs: A repeatable local benchmark run, an optional saved Criterion baseline, and a clear
 understanding of what the synthetic fixture is intended to cover.
 
-If you are debugging correctness rather than hot-path speed, start with:
-
-```bash
-scripts/smoke/replay-scroll-capture.sh
-scripts/smoke/replay-scroll-capture-self-check.sh
-```
-
-That replay runner exercises shipping overlay and session logic against the latest recorded live
-trace and should be treated as the primary non-live correctness surface. The repo-native replay
-tasks force the worker-pairwise mode so they match current macOS production scroll-capture
-authority. It requires a recorded manifest under `~/Library/Application Support/ink.hack.rsnap/scroll-capture-traces/`
-unless you invoke the example with `--trace <manifest-path>`. Use the direct example without
-`--force-worker-pairwise` only when you intentionally want to compare the legacy recorded-source
-replay path. `scripts/smoke/replay-scroll-capture-self-check.sh` is the deterministic fallback
-when you want to validate the replay harness without depending on a user-recorded trace. For
-semantic analysis (first bad frame, under-consumption, overshoot), use:
-
-```bash
-scripts/smoke/analyze-scroll-capture-trace.sh
-```
+If you are debugging correctness rather than hot-path speed, route through
+`docs/runbook/performance-validation.md` first. That runbook owns replay,
+self-check, semantic analysis, and macOS smoke command selection.
 
 Use the benchmark target below only when you specifically need performance numbers. A clean
 benchmark run does not replace replay, trace analysis, or the final fresh live touchpad
