@@ -117,60 +117,61 @@ cargo make test
 Scroll-capture verification now starts with deterministic replay instead of the old GUI smoke:
 
 ```sh
-cargo make replay-scroll-capture
-cargo make replay-scroll-capture-self-check
+scripts/smoke/replay-scroll-capture.sh
+scripts/smoke/replay-scroll-capture-self-check.sh
 ```
 
 For semantic trace analysis (first bad frame, under-consumption, overshoot), use:
 
 ```sh
-cargo make analyze-scroll-capture-trace
+scripts/smoke/analyze-scroll-capture-trace.sh
 ```
 
 The remaining macOS GUI smoke harnesses are still available for live-loupe and
 desktop-session checks:
 
 ```sh
-cargo make smoke-self-check-macos
-cargo make smoke-macos
+scripts/smoke/self-check-macos.sh
+scripts/smoke/macos.sh
 ```
 
-`cargo make replay-scroll-capture` and `cargo make analyze-scroll-capture-trace`
-now force the latest recorded live trace through the same worker-pairwise
-commit path that current macOS production scroll capture uses. They are
-trace-driven rather than scenario-driven, so they expect at least one recorded
-trace under `~/Library/Application Support/ink.hack.rsnap/scroll-capture-traces/`
-unless you pass `--trace <manifest-path>` directly to the example. Use the
-direct example without `--force-worker-pairwise` only when you intentionally
-want to compare the legacy recorded-source replay mode. `cargo make
-replay-scroll-capture-self-check` is the repo-local fallback when you want to
-verify the replay harness itself without relying on a user-recorded trace.
-`cargo make smoke-self-check-macos` and `cargo make smoke-macos` still drive
-the logged-in macOS live-loupe smoke path and require the expected Screen
-Recording / automation permissions.
+`scripts/smoke/replay-scroll-capture.sh` and
+`scripts/smoke/analyze-scroll-capture-trace.sh` now force the latest recorded
+live trace through the same worker-pairwise commit path that current macOS
+production scroll capture uses. They are trace-driven rather than
+scenario-driven, so they expect at least one recorded trace under
+`~/Library/Application Support/ink.hack.rsnap/scroll-capture-traces/` unless
+you pass `--trace <manifest-path>` directly to the example. Use the direct
+example without `--force-worker-pairwise` only when you intentionally want to
+compare the legacy recorded-source replay mode.
+`scripts/smoke/replay-scroll-capture-self-check.sh` is the repo-local fallback
+when you want to verify the replay harness itself without relying on a
+user-recorded trace. `scripts/smoke/self-check-macos.sh` and
+`scripts/smoke/macos.sh` still drive the logged-in macOS live-loupe smoke path
+and require the expected Screen Recording / automation permissions.
 
 For `XY-185` style downward scroll-capture work, treat the verification order as:
 
 1. deterministic tests and `cargo make checks`
-2. `cargo make replay-scroll-capture`
-3. `cargo make analyze-scroll-capture-trace`
+2. `scripts/smoke/replay-scroll-capture.sh`
+3. `scripts/smoke/analyze-scroll-capture-trace.sh`
 4. one fresh release live touchpad run with a newly recorded trace
 
 Repo-native performance entrypoints are available for deterministic benches and
 dedicated smoke:
 
 ```sh
-cargo make perf-local
-cargo make perf-self-check-macos
-cargo make perf-macos
+scripts/perf/local.sh
+scripts/perf/self-check-macos.sh
+scripts/perf/macos.sh
 ```
 
-Use `cargo make perf-local` for component-render and scroll-capture regressions
-that should stay comparable on a normal development machine. Use
-`cargo make perf-self-check-macos` to validate the dedicated macOS smoke
-environment, and `cargo make perf-macos` only on a logged-in desktop session
-when you need end-to-end GUI performance evidence. The durable runbook for
-command selection and baseline comparison lives at
+Use `scripts/perf/local.sh` for component-render and scroll-capture regressions
+that should stay comparable on a normal development machine.
+`scripts/perf/self-check-macos.sh` validates the dedicated macOS smoke
+environment, and `scripts/perf/macos.sh` is the end-to-end GUI performance
+entrypoint for a logged-in desktop session. The durable runbook for command
+selection and baseline comparison lives at
 `docs/runbook/performance-validation.md`.
 
 The capture-session contract lives at `docs/spec/capture-session.md`.

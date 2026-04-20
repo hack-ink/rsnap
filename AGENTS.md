@@ -8,7 +8,7 @@ These instructions define repository-specific execution rules and scope limits f
 
 ## 1.1 Workspace Automation (cargo make)
 
-- `Makefile.toml` is the source of truth for task names and behavior.
-- Run `cargo make` from the repository root, and use it whenever an equivalent task exists.
-- Run standalone commands only when `Makefile.toml` does not cover the capability or cannot produce the required effect for the current task.
-- When task details are needed, inspect `Makefile.toml` directly or run `cargo make --list-all-steps`.
+- `Makefile.toml` is the source of truth for generic repo gates: `fmt`, `lint`, `test`, and `checks`.
+- Run `cargo make` from the repository root when you need one of those generic repo gates.
+- Smoke and performance validation entrypoints live under `scripts/smoke/` and `scripts/perf/`; run those scripts directly instead of adding them back to `Makefile.toml`.
+- When task details are needed, inspect `Makefile.toml` for generic gates and the relevant script or runbook for smoke/perf flows.

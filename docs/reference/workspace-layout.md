@@ -34,7 +34,7 @@ For the active target architecture and migration direction, read:
 | `packages/rsnap-overlay/` | Rust-core session/rendering crate: capture-session logic, overlay rendering, capture backend integration, worker runtime, and scroll-capture stitching/replay semantics, with any remaining macOS host adapters quarantined behind explicit host modules |
 | `docs/` | Agent-facing repository docs split into `spec`, `runbook`, `reference`, and `decisions` |
 | `assets/` | Shared app-icon and tray-icon source plus generated bundle/runtime assets |
-| `scripts/` | Packaging and dedicated macOS smoke helpers |
+| `scripts/` | Packaging helpers plus structured smoke/perf entrypoints under `scripts/smoke/` and `scripts/perf/` |
 | `.github/` | CI workflows and repository rules |
 
 This top-level split reflects the codebase as checked in today. It remains useful for navigation,
