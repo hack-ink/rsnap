@@ -125,6 +125,19 @@ copy_if_changed() {
 	return 0
 }
 
+sync_bundle_dir() {
+	local source_dir="$1"
+	local destination_dir="$2"
+	if [[ ! -d "$source_dir" ]]; then
+		return 1
+	fi
+
+	mkdir -p "$(dirname "$destination_dir")"
+	rm -rf "$destination_dir"
+	cp -R "$source_dir" "$destination_dir"
+	return 0
+}
+
 write_if_changed() {
 	local destination="$1"
 	local contents="$2"
@@ -159,6 +172,14 @@ stage_app_bundle() {
 			STAGED_APP_DIRTY=1
 		fi
 	fi
+
+	local resource_bundle
+	while IFS= read -r resource_bundle; do
+		[[ -n "$resource_bundle" ]] || continue
+		if sync_bundle_dir "$resource_bundle" "$APP_RESOURCES/$(basename "$resource_bundle")"; then
+			STAGED_APP_DIRTY=1
+		fi
+	done < <(find "$BUILD_ROOT" -maxdepth 1 -name '*.bundle' -type d | sort)
 
 	local info_plist_contents
 	info_plist_contents="$(cat <<PLIST
