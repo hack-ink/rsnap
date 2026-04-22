@@ -396,6 +396,7 @@ final class LiveOverlayRenderer {
 	private let rightScrimLayer = CALayer()
 	private let bottomScrimLayer = CALayer()
 	private let hoverGlowLayer = CAShapeLayer()
+	private let dragBorderOutlineLayer = CAShapeLayer()
 	private let dragBorderLayer = CAShapeLayer()
 	private let selectionSizeLayer = CATextLayer()
 	private let hudLayer = CALayer()
@@ -474,8 +475,10 @@ final class LiveOverlayRenderer {
 		hoverGlowLayer.shadowRadius = 12
 		rootLayer.addSublayer(hoverGlowLayer)
 
+		dragBorderOutlineLayer.fillColor = NSColor.clear.cgColor
+		rootLayer.addSublayer(dragBorderOutlineLayer)
+
 		dragBorderLayer.fillColor = NSColor.clear.cgColor
-		dragBorderLayer.lineDashPattern = [12, 8]
 		rootLayer.addSublayer(dragBorderLayer)
 
 		selectionSizeLayer.contentsScale = 2
@@ -518,6 +521,7 @@ final class LiveOverlayRenderer {
 		guard let focusRect else {
 			[topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer].forEach { $0.isHidden = true }
 			hoverGlowLayer.isHidden = true
+			dragBorderOutlineLayer.isHidden = true
 			dragBorderLayer.isHidden = true
 			selectionSizeLayer.isHidden = true
 			return
@@ -540,15 +544,25 @@ final class LiveOverlayRenderer {
 
 		if let dragSelection = snapshot.dragSelectionLocal {
 			hoverGlowLayer.isHidden = true
+			dragBorderOutlineLayer.isHidden = false
 			dragBorderLayer.isHidden = false
-			let dragPath = NSBezierPath(
-				roundedRect: dragSelection,
-				xRadius: CaptureChrome.selectionCornerRadius,
-				yRadius: CaptureChrome.selectionCornerRadius
-			).cgPath
+			let pixelsPerPoint = hostView?.window?.screen?.backingScaleFactor ?? 1
+			let borderOutset = CaptureChrome.dashedBorderOutset(
+				strokeWidth: CaptureChrome.liveDashedBorderWidth,
+				pixelsPerPoint: pixelsPerPoint
+			)
+			let borderRect = dragSelection.insetBy(dx: -borderOutset, dy: -borderOutset)
+			let dragPath = CaptureChrome.dashedBorderPath(for: borderRect)
+			dragBorderOutlineLayer.path = dragPath
+			dragBorderOutlineLayer.strokeColor = NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255).cgColor
+			dragBorderOutlineLayer.lineWidth = CaptureChrome.liveDashedBorderWidth + 0.75
+			dragBorderOutlineLayer.lineCap = .butt
+			dragBorderOutlineLayer.lineJoin = .miter
 			dragBorderLayer.path = dragPath
 			dragBorderLayer.strokeColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor
 			dragBorderLayer.lineWidth = CaptureChrome.liveDashedBorderWidth
+			dragBorderLayer.lineCap = .butt
+			dragBorderLayer.lineJoin = .miter
 			if let selectionSizeText = snapshot.selectionSizeText {
 				let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
 				let textSize = selectionSizeText.size(using: font)
@@ -572,6 +586,7 @@ final class LiveOverlayRenderer {
 			return
 		}
 
+		dragBorderOutlineLayer.isHidden = true
 		dragBorderLayer.isHidden = true
 		selectionSizeLayer.isHidden = true
 		let hoverPath = NSBezierPath(
