@@ -361,6 +361,7 @@ final class LiveDisplayLinkDriver: @unchecked Sendable {
 @MainActor
 final class LiveOverlayRenderer {
 	private weak var hostView: NSView?
+	var onTick: (() -> Void)?
 	private let rootLayer = CALayer()
 	private let topScrimLayer = CALayer()
 	private let leftScrimLayer = CALayer()
@@ -398,6 +399,7 @@ final class LiveOverlayRenderer {
 		configureLayers()
 		displayLink.onTick = { [weak self] in
 			self?.renderCurrentSnapshot()
+			self?.onTick?()
 		}
 	}
 
@@ -428,6 +430,7 @@ final class LiveOverlayRenderer {
 
 	func renderNow() {
 		renderCurrentSnapshot()
+		onTick?()
 	}
 
 	private func configureLayers() {
