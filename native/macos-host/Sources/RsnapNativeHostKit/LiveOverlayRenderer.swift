@@ -16,6 +16,8 @@ struct GlassPatchRequest {
 	let kind: LiveGlassSurfaceKind
 	let globalRect: CGRect
 	let blurAmount: CGFloat
+	let tintAmount: CGFloat
+	let brightnessBias: CGFloat
 }
 
 struct LivePreviewSnapshot {
@@ -266,7 +268,12 @@ final class GlassPatchFeed {
 
 			guard
 				let patch = capturePatch(request.globalRect),
-				let blurred = blurredImage(from: patch, blurAmount: request.blurAmount)
+				let blurred = blurredImage(
+					from: patch,
+					blurAmount: request.blurAmount,
+					tintAmount: request.tintAmount,
+					brightnessBias: request.brightnessBias
+				)
 			else {
 				continue
 			}
@@ -279,17 +286,38 @@ final class GlassPatchFeed {
 	}
 
 	private func blurredImage(from image: CGImage, blurAmount: CGFloat) -> CGImage? {
+		blurredImage(from: image, blurAmount: blurAmount, tintAmount: 0, brightnessBias: 0)
+	}
+
+	private func blurredImage(
+		from image: CGImage,
+		blurAmount: CGFloat,
+		tintAmount: CGFloat,
+		brightnessBias: CGFloat
+	) -> CGImage? {
 		let ciImage = CIImage(cgImage: image)
 		let clampedImage = ciImage.clampedToExtent()
 		guard let filter = CIFilter(name: "CIGaussianBlur") else {
 			return image
 		}
 		filter.setValue(clampedImage, forKey: kCIInputImageKey)
-		filter.setValue(14 + blurAmount.clamped(to: 0...1) * 32, forKey: kCIInputRadiusKey)
+		let normalizedBlur = blurAmount.clamped(to: 0...1)
+		let blurRadius = 4 + pow(normalizedBlur, 0.82) * 44
+		filter.setValue(blurRadius, forKey: kCIInputRadiusKey)
 		guard let outputImage = filter.outputImage?.cropped(to: ciImage.extent) else {
 			return image
 		}
-		return ciContext.createCGImage(outputImage, from: outputImage.extent) ?? image
+		let tunedImage: CIImage
+		if let colorControls = CIFilter(name: "CIColorControls") {
+			colorControls.setValue(outputImage, forKey: kCIInputImageKey)
+			colorControls.setValue(1.08 + tintAmount.clamped(to: 0...1) * 0.34, forKey: kCIInputSaturationKey)
+			colorControls.setValue(1.03, forKey: kCIInputContrastKey)
+			colorControls.setValue(brightnessBias, forKey: kCIInputBrightnessKey)
+			tunedImage = colorControls.outputImage?.cropped(to: ciImage.extent) ?? outputImage
+		} else {
+			tunedImage = outputImage
+		}
+		return ciContext.createCGImage(tunedImage, from: tunedImage.extent) ?? image
 	}
 }
 
@@ -677,6 +705,7 @@ final class LiveOverlayRenderer {
 		glassLayer.masksToBounds = true
 		glassLayer.contentsGravity = .resizeAspectFill
 		glassLayer.contents = glassImage
+		glassLayer.opacity = hasGlass ? Float(0.88 + settings.hudBlur.clamped(to: 0...1) * 0.12) : 0
 		glassLayer.isHidden = !hasGlass
 
 		fillLayer.frame = frame

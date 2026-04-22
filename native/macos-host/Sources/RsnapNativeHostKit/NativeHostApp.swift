@@ -2602,6 +2602,7 @@ final class CaptureHostView: NSView {
 			controller?.updateLiveGlassRequests([])
 			return
 		}
+		let theme = chromeTheme()
 		let point = livePointerPreviewGlobal ?? scene.pointer
 		controller?.updateLivePreviewDemand(
 			point: point,
@@ -2615,13 +2616,31 @@ final class CaptureHostView: NSView {
 		let statusFrame = currentStatusMessageFrame()
 		let requests = [
 			hudFrame.flatMap { globalRect(from: $0) }.map {
-				GlassPatchRequest(kind: .hud, globalRect: $0, blurAmount: settings.hudBlur)
+				GlassPatchRequest(
+					kind: .hud,
+					globalRect: $0,
+					blurAmount: settings.hudBlur,
+					tintAmount: settings.hudTint,
+					brightnessBias: CGFloat(themeBrightnessBias(for: theme))
+				)
 			},
 			loupeFrame.flatMap { globalRect(from: $0) }.map {
-				GlassPatchRequest(kind: .loupe, globalRect: $0, blurAmount: settings.hudBlur)
+				GlassPatchRequest(
+					kind: .loupe,
+					globalRect: $0,
+					blurAmount: settings.hudBlur,
+					tintAmount: settings.hudTint,
+					brightnessBias: CGFloat(themeBrightnessBias(for: theme))
+				)
 			},
 			statusFrame.flatMap { globalRect(from: $0) }.map {
-				GlassPatchRequest(kind: .status, globalRect: $0, blurAmount: settings.hudBlur)
+				GlassPatchRequest(
+					kind: .status,
+					globalRect: $0,
+					blurAmount: settings.hudBlur,
+					tintAmount: settings.hudTint,
+					brightnessBias: CGFloat(themeBrightnessBias(for: theme))
+				)
 			},
 		].compactMap { $0 }
 		controller?.updateLiveGlassRequests(requests)
@@ -2923,6 +2942,10 @@ final class CaptureHostView: NSView {
 
 	private func themeBrightnessBias() -> Double {
 		chromeTheme() == .dark ? 0.015 : -0.01
+	}
+
+	private func themeBrightnessBias(for theme: CaptureChromeTheme) -> Double {
+		theme == .dark ? 0.015 : -0.01
 	}
 
 	private func queuePointerEvent(_ event: QueuedPointerEvent) {
