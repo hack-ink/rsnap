@@ -4,9 +4,17 @@ import Foundation
 import RsnapHostBridge
 
 final class LiveFrameStreamBroker {
+	private struct SamplerMonitor {
+		let id: UInt32
+		let appKitFrame: CGRect
+		let quartzFrame: CGRect
+		let scaleFactorX1000: UInt32
+	}
+
 	private let stateLock = NSLock()
 	private let sampler: RsnapLiveSampler?
-	private var monitors: [MonitorSnapshot] = []
+	private var monitors: [SamplerMonitor] = []
+	private var mainDisplayHeight: CGFloat = 0
 
 	init() {
 		sampler = try? RsnapLiveSampler()
@@ -14,13 +22,16 @@ final class LiveFrameStreamBroker {
 
 	func start(for screens: [NSScreen]) {
 		stateLock.lock()
-		monitors = screens.compactMap(Self.monitorSnapshot(for:))
+		let mainDisplayHeight = Self.mainDisplayHeight(for: screens)
+		self.mainDisplayHeight = mainDisplayHeight
+		monitors = screens.compactMap { Self.monitorSnapshot(for: $0, mainDisplayHeight: mainDisplayHeight) }
 		stateLock.unlock()
 	}
 
 	func stop() {
 		stateLock.lock()
 		monitors.removeAll()
+		mainDisplayHeight = 0
 		stateLock.unlock()
 	}
 
@@ -28,9 +39,14 @@ final class LiveFrameStreamBroker {
 		guard let sampler, let monitor = monitor(containing: point) else {
 			return nil
 		}
+		let samplerPoint = Self.appKitPointToQuartz(point, mainDisplayHeight: mainDisplayHeight)
 		guard let sample = try? sampler.sampleCursor(
-			monitor: monitor,
-			point: point,
+			monitor: MonitorSnapshot(
+				id: monitor.id,
+				frame: monitor.quartzFrame,
+				scaleFactorX1000: monitor.scaleFactorX1000
+			),
+			point: samplerPoint,
 			patchSidePixels: sidePixels
 		) else {
 			return nil
@@ -48,22 +64,49 @@ final class LiveFrameStreamBroker {
 		return sample(at: point, sidePixels: sidePixels)?.loupePatch
 	}
 
-	private func monitor(containing point: CGPoint) -> MonitorSnapshot? {
+	private func monitor(containing point: CGPoint) -> SamplerMonitor? {
 		stateLock.lock()
 		let monitors = self.monitors
 		stateLock.unlock()
-		return monitors.first(where: { $0.frame.contains(point) })
+		return monitors.first(where: { $0.appKitFrame.contains(point) })
 	}
 
-	private static func monitorSnapshot(for screen: NSScreen) -> MonitorSnapshot? {
+	private static func monitorSnapshot(
+		for screen: NSScreen,
+		mainDisplayHeight: CGFloat
+	) -> SamplerMonitor? {
 		guard let displayID = screen.displayID else {
 			return nil
 		}
-		return MonitorSnapshot(
+		let appKitFrame = screen.frame
+		return SamplerMonitor(
 			id: displayID,
-			frame: screen.frame,
+			appKitFrame: appKitFrame,
+			quartzFrame: appKitRectToQuartz(appKitFrame, mainDisplayHeight: mainDisplayHeight),
 			scaleFactorX1000: UInt32(max((screen.backingScaleFactor * 1000).rounded(), 1000))
 		)
+	}
+
+	private static func mainDisplayHeight(for screens: [NSScreen]) -> CGFloat {
+		screens
+			.first(where: { $0.frame.origin.x.rounded() == 0 && $0.frame.origin.y.rounded() == 0 })?
+			.frame.height
+			.rounded()
+			?? screens.first?.frame.height.rounded()
+			?? 0
+	}
+
+	private static func appKitRectToQuartz(_ rect: CGRect, mainDisplayHeight: CGFloat) -> CGRect {
+		CGRect(
+			x: rect.minX,
+			y: mainDisplayHeight - rect.maxY,
+			width: rect.width,
+			height: rect.height
+		)
+	}
+
+	private static func appKitPointToQuartz(_ point: CGPoint, mainDisplayHeight: CGFloat) -> CGPoint {
+		CGPoint(x: point.x, y: mainDisplayHeight - point.y - 1)
 	}
 
 	private func cgImage(from sample: LiveSampleSnapshot?) -> CGImage? {

@@ -1423,15 +1423,21 @@ final class CaptureOverlayController {
 	) -> LiveChromeSample? {
 		let latestSample = chromeSampleFeed.snapshot()
 		let wantsLoupePatch = includeLoupePatch
+		let wantsLoupePatchSide = settings.loupeSampleSize.sidePixels
+		let latestLoupePatchSatisfiesDemand =
+			latestSample?.loupePatch.map { $0.width == wantsLoupePatchSide && $0.height == wantsLoupePatchSide }
+			?? false
 		let latestSampleSatisfiesDemand =
 			latestSample?.rgbSample != nil
-			&& (!wantsLoupePatch || latestSample?.loupePatch != nil)
+			&& (!wantsLoupePatch || latestLoupePatchSatisfiesDemand)
 		if latestSampleSatisfiesDemand {
 			return latestSample
 		}
 
 		let _ = point
-		let _ = settings
+		if wantsLoupePatch, let latestSample {
+			return LiveChromeSample(rgbSample: latestSample.rgbSample, loupePatch: nil)
+		}
 		return latestSample
 	}
 
@@ -1542,6 +1548,11 @@ final class CaptureHostView: NSView {
 		let frame: CGRect
 		let capturedAt: TimeInterval
 		let image: CGImage
+	}
+
+	private struct LiveFloatingPlacement {
+		let frame: CGRect
+		let flippedHorizontally: Bool
 	}
 
 	private enum CursorPresentation: Equatable {
@@ -2515,7 +2526,7 @@ final class CaptureHostView: NSView {
 		}
 	}
 
-	private func currentHudFrame() -> CGRect? {
+	private func currentHudPlacement() -> LiveFloatingPlacement? {
 		guard scene.mode == .live, let anchor = localPointer() else {
 			return nil
 		}
@@ -2539,31 +2550,48 @@ final class CaptureHostView: NSView {
 			+ rgbSize.width
 			+ keycapFrame.width
 			+ itemSpacing * (keycapVisible ? 5 : 4)
-		return CGRect(
-			x: (anchor.x + 14).clamped(to: 6...(bounds.width - contentWidth - CaptureChrome.hudInnerMarginX * 2 - 6)),
-			y: (anchor.y + 14).clamped(to: 6...(bounds.height - contentHeight - CaptureChrome.hudInnerMarginY * 2 - 6)),
+		let size = CGSize(
 			width: contentWidth + CaptureChrome.hudInnerMarginX * 2,
 			height: contentHeight + CaptureChrome.hudInnerMarginY * 2
 		)
+		return liveFloatingPlacement(
+			anchor: anchor,
+			size: size,
+			offsetX: 48,
+			offsetY: 24,
+			preferBelow: true
+		)
 	}
 
-	private func currentLoupeFrame(hudFrame: CGRect, patch: CGImage?) -> CGRect? {
+	private func currentHudFrame() -> CGRect? {
+		currentHudPlacement()?.frame
+	}
+
+	private func currentLoupeFrame(
+		hudFrame: CGRect,
+		patch: CGImage?,
+		alignTrailing: Bool
+	) -> CGRect? {
 		guard let patch else {
 			return nil
 		}
 		let innerSide = CGFloat(patch.width) * CaptureChrome.loupeCellSize
-		return CGRect(
-			x: hudFrame.minX.clamped(to: 6...(bounds.width - innerSide - 20 - 6)),
-			y: (hudFrame.maxY + CaptureChrome.hudLoupeGap).clamped(
-				to: 6...(bounds.height - innerSide - 20 - 6)
-			),
-			width: innerSide + 20,
-			height: innerSide + 20
+		let size = CGSize(width: innerSide + 20, height: innerSide + 20)
+		return liveStackedRect(
+			referenceFrame: hudFrame,
+			size: size,
+			gap: CaptureChrome.hudLoupeGap,
+			preferBelow: true,
+			alignTrailing: alignTrailing
 		)
 	}
 
 	private func currentLoupeFrame(hudFrame: CGRect) -> CGRect? {
-		currentLoupeFrame(hudFrame: hudFrame, patch: chrome.loupePatch)
+		currentLoupeFrame(
+			hudFrame: hudFrame,
+			patch: chrome.loupePatch,
+			alignTrailing: currentHudPlacement()?.flippedHorizontally ?? false
+		)
 	}
 
 	private func currentStatusMessageFrame() -> CGRect? {
@@ -2639,10 +2667,20 @@ final class CaptureHostView: NSView {
 		let rgbSample = chromeSample?.rgbSample
 			?? chrome.rgbSample
 			?? scene.rgb
-		let hudFrame = currentHudFrame().flatMap(globalRect(from:))
-		let loupeFrame = currentHudFrame()
-			.flatMap { currentLoupeFrame(hudFrame: $0, patch: chromeSample?.loupePatch) }
-			.flatMap(globalRect(from:))
+		let hudPlacement = currentHudPlacement()
+		let hudFrameLocal = hudPlacement?.frame
+		let hudFrame = hudFrameLocal.flatMap(globalRect(from:))
+		let loupeFrame = scene.loupeVisible
+			? hudFrameLocal
+				.flatMap {
+					currentLoupeFrame(
+						hudFrame: $0,
+						patch: chromeSample?.loupePatch,
+						alignTrailing: hudPlacement?.flippedHorizontally ?? false
+					)
+				}
+				.flatMap(globalRect(from:))
+			: nil
 		let statusFrame = currentStatusMessageFrame().flatMap(globalRect(from:))
 		let theme = chromeTheme()
 
@@ -2689,6 +2727,77 @@ final class CaptureHostView: NSView {
 			loupe: loupeSnapshot,
 			status: statusSnapshot
 		)
+	}
+
+	private func liveFloatingPlacement(
+		anchor: CGPoint,
+		size: CGSize,
+		offsetX: CGFloat,
+		offsetY: CGFloat,
+		preferBelow: Bool
+	) -> LiveFloatingPlacement {
+		let minX: CGFloat = 6
+		let minY: CGFloat = 6
+		let maxX = max(bounds.width - size.width - 6, minX)
+		let maxY = max(bounds.height - size.height - 6, minY)
+
+		var x = anchor.x + offsetX
+		var flippedHorizontally = false
+		if x + size.width > bounds.width - 6 {
+			x = anchor.x - offsetX - size.width
+			flippedHorizontally = true
+		}
+		x = x.clamped(to: minX...maxX)
+
+		let preferredBelowY = anchor.y - offsetY - size.height
+		let preferredAboveY = anchor.y + offsetY
+		var y = preferBelow ? preferredBelowY : preferredAboveY
+		if preferBelow {
+			if y < minY {
+				y = preferredAboveY
+			}
+		} else if y + size.height > bounds.height - 6 {
+			y = preferredBelowY
+		}
+		y = y.clamped(to: minY...maxY)
+
+		return LiveFloatingPlacement(
+			frame: CGRect(origin: CGPoint(x: x, y: y), size: size),
+			flippedHorizontally: flippedHorizontally
+		)
+	}
+
+	private func liveStackedRect(
+		referenceFrame: CGRect,
+		size: CGSize,
+		gap: CGFloat,
+		preferBelow: Bool,
+		alignTrailing: Bool = false
+	) -> CGRect {
+		let minX: CGFloat = 6
+		let minY: CGFloat = 6
+		let maxX = max(bounds.width - size.width - 6, minX)
+		let maxY = max(bounds.height - size.height - 6, minY)
+
+		var x = alignTrailing ? (referenceFrame.maxX - size.width) : referenceFrame.minX
+		if !alignTrailing, x + size.width > bounds.width - 6 {
+			x = referenceFrame.maxX - size.width
+		}
+		x = x.clamped(to: minX...maxX)
+
+		let preferredBelowY = referenceFrame.minY - gap - size.height
+		let preferredAboveY = referenceFrame.maxY + gap
+		var y = preferBelow ? preferredBelowY : preferredAboveY
+		if preferBelow {
+			if y < minY {
+				y = preferredAboveY
+			}
+		} else if y + size.height > bounds.height - 6 {
+			y = preferredBelowY
+		}
+		y = y.clamped(to: minY...maxY)
+
+		return CGRect(origin: CGPoint(x: x, y: y), size: size)
 	}
 
 	private func updateLiveRendererState() {

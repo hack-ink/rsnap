@@ -162,8 +162,12 @@ final class ChromeSampleFeed {
 
 	func updateDemand(point: CGPoint?, sidePixels: Int) {
 		stateLock.lock()
+		let nextSidePixels = max(1, sidePixels)
+		if nextSidePixels != desiredSidePixels {
+			latestSample = nil
+		}
 		desiredPoint = point
-		desiredSidePixels = max(1, sidePixels)
+		desiredSidePixels = nextSidePixels
 		stateLock.unlock()
 	}
 
