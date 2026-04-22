@@ -143,7 +143,7 @@ final class ChromeSampleFeed {
 		stop()
 		let timer = DispatchSource.makeTimerSource(queue: queue)
 		let interval = TimeInterval(1.0 / 60.0)
-		timer.schedule(deadline: .now() + interval, repeating: interval)
+		timer.schedule(deadline: .now(), repeating: interval)
 		timer.setEventHandler { [weak self] in
 			self?.refresh()
 		}

@@ -326,8 +326,16 @@ final class CaptureSessionController: NSObject {
 		)
 	}
 
-	func liveChromeSnapshot() -> LiveChromeSample? {
-		overlayController?.liveChromeSnapshot()
+	func liveChromeSnapshot(
+		point: CGPoint?,
+		settings: NativeHostSettings,
+		includeLoupePatch: Bool
+	) -> LiveChromeSample? {
+		overlayController?.liveChromeSnapshot(
+			point: point,
+			settings: settings,
+			includeLoupePatch: includeLoupePatch
+		)
 	}
 
 	func updateLiveGlassRequests(_ requests: [GlassPatchRequest]) {
@@ -861,12 +869,17 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func currentLiveInputs(at point: CGPoint) -> (rgb: RGBSample?, activeMonitor: MonitorSnapshot?, highlightedWindow: WindowSnapshot?) {
-		let chromeSample = overlayController?.liveChromeSnapshot()
+		let chromeSample = overlayController?.liveChromeSnapshot(
+			point: point,
+			settings: currentSettings,
+			includeLoupePatch: scene.loupeVisible
+		)
+		let rgbSample = chromeSample?.rgbSample ?? chromeState.rgbSample ?? scene.rgb
 		let highlightedWindow = highlightedWindow(at: point)
-		chromeState.rgbSample = chromeSample?.rgbSample
+		chromeState.rgbSample = rgbSample
 		chromeState.loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
 		return (
-			rgb: chromeSample?.rgbSample,
+			rgb: rgbSample,
 			activeMonitor: activeMonitor(at: point),
 			highlightedWindow: highlightedWindow
 		)
@@ -1302,9 +1315,6 @@ final class CaptureOverlayController {
 
 	func show() {
 		close()
-		liveFrameStream.start(for: NSScreen.screens)
-		windowSnapshotFeed.start(desktopFrame: Self.desktopFrame)
-		chromeSampleFeed.start()
 		NSApp.activate(ignoringOtherApps: true)
 		for (index, screen) in NSScreen.screens.enumerated() {
 			let window = CaptureOverlayWindow(screen: screen, controller: controller)
@@ -1317,6 +1327,10 @@ final class CaptureOverlayController {
 				window.orderFrontRegardless()
 			}
 		}
+		liveFrameStream.start(for: NSScreen.screens)
+		windowSnapshotFeed.start(desktopFrame: Self.desktopFrame)
+		chromeSampleFeed.start()
+		chromeSampleFeed.updateDemand(point: NSEvent.mouseLocation, sidePixels: 1)
 	}
 
 	fileprivate func update(
@@ -1402,8 +1416,23 @@ final class CaptureOverlayController {
 		chromeSampleFeed.updateDemand(point: point, sidePixels: samplePixels)
 	}
 
-	fileprivate func liveChromeSnapshot() -> LiveChromeSample? {
-		chromeSampleFeed.snapshot()
+	fileprivate func liveChromeSnapshot(
+		point: CGPoint?,
+		settings: NativeHostSettings,
+		includeLoupePatch: Bool
+	) -> LiveChromeSample? {
+		let latestSample = chromeSampleFeed.snapshot()
+		let wantsLoupePatch = includeLoupePatch
+		let latestSampleSatisfiesDemand =
+			latestSample?.rgbSample != nil
+			&& (!wantsLoupePatch || latestSample?.loupePatch != nil)
+		if latestSampleSatisfiesDemand {
+			return latestSample
+		}
+
+		let _ = point
+		let _ = settings
+		return latestSample
 	}
 
 	fileprivate func updateLiveGlassRequests(_ requests: [GlassPatchRequest]) {
@@ -2571,6 +2600,8 @@ final class CaptureHostView: NSView {
 
 		let chromeSample = currentLiveChromeSample()
 		let rgbSample = chromeSample?.rgbSample
+			?? chrome.rgbSample
+			?? scene.rgb
 		let loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
 		let dragSelectionLocal = localRect(from: scene.liveSelectionPreview)
 		let hoverSelectionLocal = dragSelectionLocal == nil
@@ -2589,8 +2620,8 @@ final class CaptureHostView: NSView {
 			loupeFrame: nil,
 			statusFrame: nil,
 			positionText: formatPositionText(),
-			hexText: formatRGBText(for: rgbSample).0,
-			rgbText: formatRGBText(for: rgbSample).1,
+			hexText: formatLiveRGBText(for: rgbSample).0,
+			rgbText: formatLiveRGBText(for: rgbSample).1,
 			rgbSample: rgbSample,
 			keycapVisible: settings.showAltHintKeycap,
 			statusMessage: scene.statusMessage,
@@ -2605,6 +2636,9 @@ final class CaptureHostView: NSView {
 		}
 
 		let chromeSample = currentLiveChromeSample()
+		let rgbSample = chromeSample?.rgbSample
+			?? chrome.rgbSample
+			?? scene.rgb
 		let hudFrame = currentHudFrame().flatMap(globalRect(from:))
 		let loupeFrame = currentHudFrame()
 			.flatMap { currentLoupeFrame(hudFrame: $0, patch: chromeSample?.loupePatch) }
@@ -2619,9 +2653,9 @@ final class CaptureHostView: NSView {
 				theme: theme,
 				settings: settings,
 				positionText: formatPositionText(),
-				hexText: formatRGBText(for: chromeSample?.rgbSample).0,
-				rgbText: formatRGBText(for: chromeSample?.rgbSample).1,
-				rgbSample: chromeSample?.rgbSample,
+				hexText: formatLiveRGBText(for: rgbSample).0,
+				rgbText: formatLiveRGBText(for: rgbSample).1,
+				rgbSample: rgbSample,
 				keycapVisible: settings.showAltHintKeycap
 			)
 		}
@@ -2687,7 +2721,11 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentLiveChromeSample() -> LiveChromeSample? {
-		controller?.liveChromeSnapshot()
+		controller?.liveChromeSnapshot(
+			point: livePointerPreviewGlobal ?? scene.pointer,
+			settings: settings,
+			includeLoupePatch: scene.loupeVisible
+		)
 	}
 
 	private func selectionSizeText(for rect: CGRect) -> String {
@@ -2723,6 +2761,13 @@ final class CaptureHostView: NSView {
 
 	private func formatRGBText() -> (String, String) {
 		formatRGBText(for: chrome.rgbSample)
+	}
+
+	private func formatLiveRGBText(for sample: RGBSample?) -> (String, String) {
+		guard sample != nil else {
+			return ("", "")
+		}
+		return formatRGBText(for: sample)
 	}
 
 	private func drawPill(

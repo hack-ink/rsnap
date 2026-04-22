@@ -28,6 +28,15 @@ let package = Package(
 			name: "RsnapHostBridge",
 			dependencies: ["CRsnapHostFFI"],
 			linkerSettings: [
+				.linkedFramework("AppKit"),
+				.linkedFramework("Carbon"),
+				.linkedFramework("CoreGraphics"),
+				.linkedFramework("CoreMedia"),
+				.linkedFramework("CoreVideo"),
+				.linkedFramework("Metal"),
+				.linkedFramework("QuartzCore"),
+				.linkedFramework("ScreenCaptureKit"),
+				.linkedFramework("Vision"),
 				.unsafeFlags([
 					"-L",
 					rustLibDir,
