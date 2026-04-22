@@ -60,7 +60,7 @@ use crate::overlay::{
 	FrozenMosaicEdit, FrozenSelectionDragState, FrozenSpotlightAnnotation, FrozenTextAnnotation,
 	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
 	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
-	OutputNaming, OverlayControl, OverlayHostEffectRequest, OverlaySession, Pos2, Rect,
+	OutputNaming, OverlayControl, OverlaySession, Pos2, PreparedHostEffectRequest, Rect,
 	SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_SIZE_BADGE_GAP_PX,
 	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
 	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
@@ -625,7 +625,7 @@ fn encoded_copy_png_exits_with_host_effect_request() {
 	session.pending_png_action = Some(PngAction::Copy);
 
 	let control = session.handle_encoded_png_response(vec![1, 2, 3, 4]);
-	let OverlayControl::HostEffect(OverlayHostEffectRequest::CopyPng { png_bytes }) = control
+	let OverlayControl::HostEffect(PreparedHostEffectRequest::CopyPng { png_bytes }) = control
 	else {
 		panic!("expected copy host effect request");
 	};
@@ -643,7 +643,7 @@ fn encoded_save_png_exits_with_host_effect_request_and_save_snapshot() {
 	session.config.output_naming = OutputNaming::Sequence;
 
 	let control = session.handle_encoded_png_response(vec![4, 3, 2, 1]);
-	let OverlayControl::HostEffect(OverlayHostEffectRequest::SavePng {
+	let OverlayControl::HostEffect(PreparedHostEffectRequest::SavePng {
 		png_bytes,
 		output_dir,
 		output_filename_prefix,
@@ -685,7 +685,7 @@ fn complete_host_effect_request_runs_overlay_exit_cleanup() {
 	session.pending_png_action = Some(PngAction::Copy);
 	session.pending_encode_png = Some(test_frozen_image());
 
-	session.complete_host_effect_request(&OverlayHostEffectRequest::CopyPng {
+	session.complete_host_effect_request(&PreparedHostEffectRequest::CopyPng {
 		png_bytes: vec![1, 2, 3],
 	});
 
@@ -1251,7 +1251,7 @@ fn begin_ocr_action_exits_with_deferred_request_and_clears_stale_png_output_inte
 	assert_eq!(session.pending_encode_png.as_ref(), Some(&expected_export));
 
 	let control = session.begin_ocr_action();
-	let OverlayControl::HostEffect(OverlayHostEffectRequest::DeferredTextRecognition(request)) =
+	let OverlayControl::HostEffect(PreparedHostEffectRequest::DeferredTextRecognition(request)) =
 		control
 	else {
 		panic!("expected deferred OCR request");
@@ -1284,7 +1284,7 @@ fn begin_ocr_action_drag_region_still_uses_frozen_image_under_matte_mode() {
 	promote_session_export_authority_ready(&mut session);
 
 	let control = session.begin_ocr_action();
-	let OverlayControl::HostEffect(OverlayHostEffectRequest::DeferredTextRecognition(request)) =
+	let OverlayControl::HostEffect(PreparedHostEffectRequest::DeferredTextRecognition(request)) =
 		control
 	else {
 		panic!("expected deferred OCR request");
@@ -1411,7 +1411,7 @@ fn window_matte_mosaic_export_and_ocr_match_preview_pixels() {
 	assert_eq!(session.current_export_image().as_ref(), Some(&expected_export));
 
 	let control = session.begin_ocr_action();
-	let OverlayControl::HostEffect(OverlayHostEffectRequest::DeferredTextRecognition(request)) =
+	let OverlayControl::HostEffect(PreparedHostEffectRequest::DeferredTextRecognition(request)) =
 		control
 	else {
 		panic!("expected deferred OCR request");
@@ -1470,7 +1470,7 @@ fn begin_ocr_action_uses_scroll_capture_export_image_in_deferred_request() {
 		Some(image::RgbaImage::from_pixel(320, 64, Rgba([77, 0, 0, 255])));
 
 	let control = session.begin_ocr_action();
-	let OverlayControl::HostEffect(OverlayHostEffectRequest::DeferredTextRecognition(request)) =
+	let OverlayControl::HostEffect(PreparedHostEffectRequest::DeferredTextRecognition(request)) =
 		control
 	else {
 		panic!("expected deferred OCR request");

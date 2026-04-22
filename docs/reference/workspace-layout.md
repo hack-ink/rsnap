@@ -30,10 +30,13 @@ For the active target architecture and migration direction, read:
 
 | Path | Role |
 | --- | --- |
-| `apps/rsnap/` | Desktop native-host crate: tray/menubar startup, hotkeys, settings window, permissions, runtime entry points, macOS host facades, and session handoff into `rsnap-overlay::session` |
+| `native/macos-host/` | SwiftPM AppKit-first macOS host shell: menu bar entry, full-screen capture windows, in-window HUD/toolbar, and native bridging into `rsnap-host-ffi` |
+| `apps/rsnap/` | Thin launcher/bootstrap crate: startup logging, build metadata, stable-bundle resolution, and `cargo run -p rsnap` handoff into the staged native macOS host |
 | `packages/rsnap-overlay/` | Rust-core session/rendering crate: capture-session logic, overlay rendering, capture backend integration, worker runtime, and scroll-capture stitching/replay semantics, with any remaining macOS host adapters quarantined behind explicit host modules |
+| `packages/rsnap-capture-core/` | New durable product-semantics crate: shared geometry, semantic scene model, host/core protocol enums, and the first reset-native session core |
+| `packages/rsnap-host-ffi/` | New thin C ABI bridge crate for future native hosts that call the Rust product core |
 | `docs/` | Agent-facing repository docs split into `spec`, `runbook`, `reference`, and `decisions` |
-| `assets/` | Shared app-icon and tray-icon source plus generated bundle/runtime assets |
+| `assets/` | Shared app-icon source plus generated bundle/runtime assets |
 | `scripts/` | Packaging helpers plus structured smoke/perf entrypoints under `scripts/smoke/` and `scripts/perf/` |
 | `.github/` | CI workflows and repository rules |
 
@@ -44,31 +47,22 @@ but it should not be mistaken for the durable host/core target boundary.
 
 ### `apps/rsnap/`
 
-Treat `apps/rsnap/` as the current app shell.
+Treat `apps/rsnap/` as the launcher/bootstrap layer for the native host.
 
 It owns:
 
-- tray and menubar wiring
-- capture and settings hotkeys
-- startup permission checks and permission-window routing
-- settings window lifecycle
 - app-level logging/bootstrap
-- macOS native capture-host shell lifecycle for pointer, first-responder, keyboard, and IME
-  routing into the overlay core
-- macOS external scroll-input normalization and observer lifecycle before handing replayable input
-  into the overlay session
-- macOS scroll-capture screenshot capability acquisition and host-side capability error delivery
-- deferred OCR generation tracking around overlay exits
+- build metadata emission
+- stable native-bundle lookup from the current worktree
+- fallback handoff into `scripts/build_and_run.sh` when the staged native bundle is missing
+- explicit unsupported-platform failure for non-macOS builds
 
 Key paths:
 
-- `apps/rsnap/src/lib.rs`: public runtime entry points plus the crate-level native-host façade
-- `apps/rsnap/src/host_macos.rs`: public macOS host-owned capture/effect entry points
-- `apps/rsnap/src/app.rs`: app-shell root and event routing
-- `apps/rsnap/src/app/`: focused support modules for capture, hotkeys, runtime, and macOS scroll
-  input
-- `apps/rsnap/src/settings_window/`: settings-window UI, platform hooks, benchmark harness, and
-  rendering helpers
+- `apps/rsnap/src/lib.rs`: public runtime entry points for the launcher crate
+- `apps/rsnap/src/native_launcher_macos.rs`: staged native-bundle lookup and launch handoff
+- `apps/rsnap/src/startup.rs`: startup logging/bootstrap helpers
+- `apps/rsnap/src/unsupported_platform.rs`: explicit non-macOS error path
 
 ### `packages/rsnap-overlay/`
 
@@ -104,6 +98,57 @@ Key paths:
 - `packages/rsnap-overlay/src/scroll_capture.rs`: current scroll-capture session entry with
   focused support modules under `scroll_capture/`
 
+### `packages/rsnap-capture-core/`
+
+Treat `packages/rsnap-capture-core/` as the new durable product-semantics landing zone.
+
+It owns:
+
+- portable geometry types
+- semantic scene snapshots
+- explicit host/core protocol enums and structs
+- the first reset-native reference session core
+
+This crate must stay free of:
+
+- top-level window ownership
+- `winit` or `egui` runtime authority
+- AppKit ownership
+- host-side permission or capture capability code
+
+### `packages/rsnap-host-ffi/`
+
+Treat `packages/rsnap-host-ffi/` as the thin ABI companion to `rsnap-capture-core/`.
+
+It owns:
+
+- opaque session handles for foreign hosts
+- FFI-safe config, event, report, scene, and request types
+- exported `extern "C"` functions that forward into `rsnap-capture-core`
+- the checked-in C header consumed by future native hosts:
+  `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
+
+It does not own product behavior beyond ABI adaptation.
+
+### `native/macos-host/`
+
+Treat `native/macos-host/` as the new native macOS landing zone for the reset.
+
+It owns:
+
+- the SwiftPM-built `.app` host shell
+- the AppKit window/view tree used for live and frozen capture UI
+- native cursor, focus, event routing, menu bar entry, and host-side effects
+- the checked-in bridge probe used by `cargo make test-host-reset`
+
+It depends on:
+
+- `packages/rsnap-host-ffi/` for the C ABI contract
+- `packages/rsnap-capture-core/` indirectly through that ABI
+
+It must not grow a second product-semantic model. Scene state and host requests still come from the
+Rust core.
+
 ## Documentation placement
 
 - `README.md`: user-facing product and development overview for the whole workspace
@@ -117,6 +162,7 @@ Key paths:
 These paths are intentionally ignored and should not be treated as tracked repository structure:
 
 - `target/`: Rust build products, benchmark outputs, and local analysis artifacts
+- `.native-host-dist/`: locally staged native-host `.app` bundles from `scripts/build_and_run.sh`
 - `.worktrees/`: local git worktree lanes
 - `.workspaces/`: local clone-backed workspace lanes from older workflows
 - `.codex/`: local agent/runtime state

@@ -106,6 +106,10 @@ args = [
 # | --------- | --------- | --- |
 # | test      | composite |     |
 # | test-rust | command   |     |
+# | test-host-reset | composite | |
+# | test-rust-host-reset | command | |
+# | test-host-ffi-header | command | |
+# | test-macos-native-host-stage | command | |
 
 [tasks.test]
 workspace = false
@@ -123,6 +127,69 @@ args = [
 	"--all-targets",
 	"--all-features",
 ]
+
+[tasks.test-host-reset]
+workspace = false
+dependencies = [
+	"test-rust-host-reset",
+	"test-host-ffi-header",
+	"test-macos-native-host",
+]
+
+[tasks.test-rust-host-reset]
+workspace = false
+command = "cargo"
+args = [
+	"test",
+	"-p",
+	"rsnap-capture-core",
+	"-p",
+	"rsnap-host-ffi",
+]
+
+[tasks.test-host-ffi-header]
+workspace = false
+command = "clang"
+args = [
+	"-std=c11",
+	"-fsyntax-only",
+	"-I",
+	"packages/rsnap-host-ffi/include",
+	"packages/rsnap-host-ffi/tests/header_smoke.c",
+]
+
+[tasks.build-host-ffi-staticlib]
+workspace = false
+command = "cargo"
+args = [
+	"build",
+	"-p",
+	"rsnap-host-ffi",
+]
+
+[tasks.test-macos-native-host]
+workspace = false
+dependencies = [
+	"build-host-ffi-staticlib",
+]
+script = '''
+swift package --package-path native/macos-host clean
+RSNAP_HOST_FFI_LIB_DIR="$PWD/target/debug" \
+swift run --package-path native/macos-host RsnapHostBridgeProbe
+'''
+
+[tasks.test-macos-native-host-stage]
+workspace = false
+script = '''
+RSNAP_NATIVE_HOST_SKIP_SIGN=1 ./scripts/build_and_run.sh stage
+COMMON_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+APP_PATH="$COMMON_ROOT/.native-host-dist/rsnap.app"
+test -x "$APP_PATH/Contents/MacOS/RsnapNativeHost"
+test -f "$APP_PATH/Contents/Info.plist"
+test -f "$APP_PATH/Contents/Resources/AppIcon.icns"
+plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist" | grep -qx 'ink.hack.rsnap'
+plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true'
+'''
 
 
 # Format
