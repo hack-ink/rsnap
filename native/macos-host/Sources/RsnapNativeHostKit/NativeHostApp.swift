@@ -68,6 +68,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		)
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		refreshStatusMenuState()
+		sessionController.warmLiveSamplingIfPossible(at: NSEvent.mouseLocation)
 		menuBarLogger.info("finishLaunching end statusItemPresent=\(self.statusItem != nil, privacy: .public)")
 	}
 
@@ -224,6 +225,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 @MainActor
 final class CaptureSessionController: NSObject {
 	private let settingsStore: NativeHostSettingsStore
+	private let liveFrameStream = LiveFrameStreamBroker()
 	private var session: RsnapHostSession?
 	private var overlayController: CaptureOverlayController?
 	var captureStateDidChange: (() -> Void)?
@@ -270,6 +272,13 @@ final class CaptureSessionController: NSObject {
 		settingsStore.settings
 	}
 
+	func warmLiveSamplingIfPossible(at point: CGPoint) {
+		guard NativePermissions.status(for: .screenRecording) else {
+			return
+		}
+		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: point)
+	}
+
 	func startCapture() {
 		NSLog("RsnapNativeHost startCapture requested; sessionActive=\(session != nil)")
 		if session != nil {
@@ -283,6 +292,7 @@ final class CaptureSessionController: NSObject {
 		}
 
 		do {
+			warmLiveSamplingIfPossible(at: NSEvent.mouseLocation)
 			let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
 			self.session = session
 
@@ -290,7 +300,10 @@ final class CaptureSessionController: NSObject {
 			let initialScene = try session.currentScene()
 			self.scene = initialScene
 
-			let overlayController = CaptureOverlayController(controller: self)
+			let overlayController = CaptureOverlayController(
+				controller: self,
+				liveFrameStream: liveFrameStream
+			)
 			self.overlayController = overlayController
 			overlayController.show(
 				initialScene: initialScene,
@@ -1309,13 +1322,14 @@ final class CaptureOverlayController {
 	private var windows: [CaptureOverlayWindow] = []
 	private var retiringWindows: [CaptureOverlayWindow] = []
 	private var focusedWindowNumber: Int?
-	private let liveFrameStream = LiveFrameStreamBroker()
+	private let liveFrameStream: LiveFrameStreamBroker
 	private lazy var windowSnapshotFeed = WindowSnapshotFeed()
 	private lazy var chromeSampleFeed = ChromeSampleFeed(broker: liveFrameStream)
 	private let liveChromeWindows = LiveChromeVisualWindowController()
 
-	init(controller: CaptureSessionController) {
+	init(controller: CaptureSessionController, liveFrameStream: LiveFrameStreamBroker) {
 		self.controller = controller
+		self.liveFrameStream = liveFrameStream
 	}
 
 	var primaryWindow: NSWindow? {
@@ -1361,10 +1375,10 @@ final class CaptureOverlayController {
 				window.orderFrontRegardless()
 			}
 		}
-		liveFrameStream.start(for: NSScreen.screens)
+		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: focusPoint)
 		windowSnapshotFeed.start(desktopFrame: Self.desktopFrame)
 		chromeSampleFeed.start()
-		chromeSampleFeed.updateDemand(point: focusPoint, sidePixels: 1)
+		chromeSampleFeed.prime(point: focusPoint, sidePixels: 1)
 	}
 
 	fileprivate func update(
@@ -1396,7 +1410,6 @@ final class CaptureOverlayController {
 	}
 
 	func close() {
-		liveFrameStream.stop()
 		windowSnapshotFeed.stop()
 		chromeSampleFeed.stop()
 		liveChromeWindows.hideAll()
@@ -1906,26 +1919,28 @@ final class CaptureHostView: NSView {
 		let theme = chromeTheme()
 		let palette = CaptureChrome.palette(for: theme, settings: settings)
 		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-		let secondaryFont = font
-		let positionText = formatPositionText()
-		let (hexText, rgbText) = formatRGBText()
-		let itemSpacing: CGFloat = 10
+		let positionDisplay = currentPositionDisplay(font: font)
+		let colorDisplay = currentLiveColorDisplay(for: chrome.rgbSample, font: font)
+		let itemSpacing: CGFloat = 8
 		let swatchSize = CGSize(width: 10, height: 10)
-		let positionSize = positionText.size(using: font)
-		let bulletSize = "•".size(using: font)
-		let hexSize = hexText.size(using: font)
-		let rgbSize = rgbText.size(using: secondaryFont)
+		let commaSeparator = ","
+		let xGroupText = "x=\(positionDisplay.xValueText)"
+		let yGroupText = "y=\(positionDisplay.yValueText)"
+		let positionHeight = max(
+			xGroupText.size(using: font).height,
+			yGroupText.size(using: font).height
+		)
 		let keycapVisible = settings.showAltHintKeycap
 		let keycapSize = keycapVisible ? "Tab".size(using: font) : .zero
 		let keycapFrame = keycapVisible ? CGSize(width: keycapSize.width + 12, height: keycapSize.height + 4) : .zero
-		let contentHeight = max(positionSize.height, swatchSize.height, rgbSize.height, keycapFrame.height)
-		let contentWidth = positionSize.width
-			+ bulletSize.width
+		let contentHeight = max(positionHeight, swatchSize.height, font.pointSize, keycapFrame.height)
+		let contentWidth = positionDisplay.xSlotWidth
+			+ commaSeparator.size(using: font).width
+			+ positionDisplay.ySlotWidth
 			+ swatchSize.width
-			+ hexSize.width
-			+ rgbSize.width
+			+ colorDisplay.hexSlotWidth
 			+ keycapFrame.width
-			+ itemSpacing * (keycapVisible ? 5 : 4)
+			+ itemSpacing * (keycapVisible ? 3 : 2)
 		let hudFrame = CGRect(
 			x: (anchor.x + 14).clamped(to: 6...(bounds.width - contentWidth - CaptureChrome.hudInnerMarginX * 2 - 6)),
 			y: (anchor.y + 14).clamped(to: 6...(bounds.height - contentHeight - CaptureChrome.hudInnerMarginY * 2 - 6)),
@@ -1936,12 +1951,13 @@ final class CaptureHostView: NSView {
 		drawPill(in: hudFrame, context: context, theme: theme, strongShadow: true, surfaceKind: .hud)
 
 		var cursorX = hudFrame.minX + CaptureChrome.hudInnerMarginX
-		let baselineY = hudFrame.midY - positionSize.height / 2
-		drawText(positionText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
-		cursorX += positionSize.width + itemSpacing
-
-		drawText("•", at: CGPoint(x: cursorX, y: baselineY), color: palette.secondaryText, font: font)
-		cursorX += bulletSize.width + itemSpacing
+		let baselineY = hudFrame.midY - positionHeight / 2
+		drawText(xGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		cursorX += positionDisplay.xSlotWidth
+		drawText(commaSeparator, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		cursorX += commaSeparator.size(using: font).width
+		drawText(yGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		cursorX += positionDisplay.ySlotWidth + itemSpacing
 
 		let swatchRect = CGRect(
 			x: cursorX,
@@ -1958,17 +1974,19 @@ final class CaptureHostView: NSView {
 			)
 		} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
 		context.setFillColor(swatchColor.cgColor)
-		context.fillEllipse(in: swatchRect)
+		context.fill(swatchRect)
 		context.setStrokeColor(palette.swatchStroke.cgColor)
 		context.setLineWidth(1)
-		context.strokeEllipse(in: swatchRect)
+		context.stroke(swatchRect)
 		cursorX += swatchSize.width + itemSpacing
 
-		drawText(hexText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
-		cursorX += hexSize.width + itemSpacing
-
-		drawText(rgbText, at: CGPoint(x: cursorX, y: baselineY), color: palette.secondaryText, font: secondaryFont)
-		cursorX += rgbSize.width + itemSpacing
+		drawText(
+			colorDisplay.hexText,
+			at: CGPoint(x: cursorX, y: baselineY),
+			color: palette.labelText,
+			font: font
+		)
+		cursorX += colorDisplay.hexSlotWidth + itemSpacing
 
 		if keycapVisible {
 			let keycapRect = CGRect(
@@ -2594,25 +2612,28 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-		let positionText = formatPositionText()
-		let (hexText, rgbText) = formatRGBText()
-		let itemSpacing: CGFloat = 10
+		let positionDisplay = currentPositionDisplay(font: font)
+		let colorDisplay = currentLiveColorDisplay(for: chrome.rgbSample ?? scene.rgb, font: font)
+		let itemSpacing: CGFloat = 8
 		let swatchSize = CGSize(width: 10, height: 10)
-		let positionSize = positionText.size(using: font)
-		let bulletSize = "•".size(using: font)
-		let hexSize = hexText.size(using: font)
-		let rgbSize = rgbText.size(using: font)
+		let commaSeparator = ","
+		let xGroupText = "x=\(positionDisplay.xValueText)"
+		let yGroupText = "y=\(positionDisplay.yValueText)"
+		let positionHeight = max(
+			xGroupText.size(using: font).height,
+			yGroupText.size(using: font).height
+		)
 		let keycapVisible = settings.showAltHintKeycap
 		let keycapSize = keycapVisible ? "Tab".size(using: font) : .zero
 		let keycapFrame = keycapVisible ? CGSize(width: keycapSize.width + 12, height: keycapSize.height + 4) : .zero
-		let contentHeight = max(positionSize.height, swatchSize.height, rgbSize.height, keycapFrame.height)
-		let contentWidth = positionSize.width
-			+ bulletSize.width
+		let contentHeight = max(positionHeight, swatchSize.height, font.pointSize, keycapFrame.height)
+		let contentWidth = positionDisplay.xSlotWidth
+			+ commaSeparator.size(using: font).width
+			+ positionDisplay.ySlotWidth
 			+ swatchSize.width
-			+ hexSize.width
-			+ rgbSize.width
+			+ colorDisplay.hexSlotWidth
 			+ keycapFrame.width
-			+ itemSpacing * (keycapVisible ? 5 : 4)
+			+ itemSpacing * (keycapVisible ? 3 : 2)
 		let size = CGSize(
 			width: contentWidth + CaptureChrome.hudInnerMarginX * 2,
 			height: contentHeight + CaptureChrome.hudInnerMarginY * 2
@@ -2698,6 +2719,9 @@ final class CaptureHostView: NSView {
 		let hoverSelectionLocal = dragSelectionLocal == nil
 			? localRect(from: liveHighlightedWindowPreview?.frame ?? scene.highlightedWindow?.frame)
 			: nil
+		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+		let positionDisplay = currentPositionDisplay(font: font)
+		let colorDisplay = currentLiveColorDisplay(for: rgbSample, font: font)
 
 		return LivePreviewSnapshot(
 			bounds: bounds,
@@ -2710,9 +2734,8 @@ final class CaptureHostView: NSView {
 			hudFrame: nil,
 			loupeFrame: nil,
 			statusFrame: nil,
-			positionText: formatPositionText(),
-			hexText: formatLiveRGBText(for: rgbSample).0,
-			rgbText: formatLiveRGBText(for: rgbSample).1,
+			positionDisplay: positionDisplay,
+			colorDisplay: colorDisplay,
 			rgbSample: rgbSample,
 			keycapVisible: settings.showAltHintKeycap,
 			statusMessage: scene.statusMessage,
@@ -2746,6 +2769,9 @@ final class CaptureHostView: NSView {
 			: nil
 		let statusFrame = currentStatusMessageFrame().flatMap(globalRect(from:))
 		let theme = chromeTheme()
+		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+		let positionDisplay = currentPositionDisplay(font: font)
+		let colorDisplay = currentLiveColorDisplay(for: rgbSample, font: font)
 
 		let hudSnapshot = hudFrame.map {
 			LiveHudVisualSnapshot(
@@ -2753,9 +2779,8 @@ final class CaptureHostView: NSView {
 				frame: $0,
 				theme: theme,
 				settings: settings,
-				positionText: formatPositionText(),
-				hexText: formatLiveRGBText(for: rgbSample).0,
-				rgbText: formatLiveRGBText(for: rgbSample).1,
+				positionDisplay: positionDisplay,
+				colorDisplay: colorDisplay,
 				rgbSample: rgbSample,
 				keycapVisible: settings.showAltHintKeycap
 			)
@@ -2905,7 +2930,99 @@ final class CaptureHostView: NSView {
 		return "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))"
 	}
 
+	private func currentPositionDisplay(font: NSFont) -> LivePositionDisplay {
+		guard let pointer = livePointerPreviewGlobal ?? scene.pointer else {
+			let placeholder = "?"
+			let slotWidth = placeholder.size(using: font).width
+			return LivePositionDisplay(
+				xValueText: placeholder,
+				yValueText: placeholder,
+				xSlotWidth: slotWidth,
+				ySlotWidth: slotWidth
+			)
+		}
+		let screenFrame = window?.screen?.frame ?? .zero
+		let maxX = Int(screenFrame.maxX.rounded()) - 1
+		let maxY = Int(screenFrame.maxY.rounded()) - 1
+		let minX = Int(screenFrame.minX.rounded())
+		let minY = Int(screenFrame.minY.rounded())
+		let xCandidates = ["x=\(minX)", "x=\(maxX)", "x=\(Int(pointer.x.rounded()))"]
+		let yCandidates = ["y=\(minY)", "y=\(maxY)", "y=\(Int(pointer.y.rounded()))"]
+		return LivePositionDisplay(
+			xValueText: String(Int(pointer.x.rounded())),
+			yValueText: String(Int(pointer.y.rounded())),
+			xSlotWidth: xCandidates.map { $0.size(using: font).width }.max() ?? 0,
+			ySlotWidth: yCandidates.map { $0.size(using: font).width }.max() ?? 0
+		)
+	}
+
+	private func currentLiveColorDisplay(for sample: RGBSample?, font: NSFont) -> LiveColorDisplay {
+		let placeholderHex = "Sampling…"
+		let hexText = sample.map { String(format: "#%02X%02X%02X", $0.r, $0.g, $0.b) } ?? placeholderHex
+		let hexSlotWidth = hexText.size(using: font).width
+		if let sample {
+			let componentSlotWidth = "255".size(using: font).width
+			return LiveColorDisplay(
+				hexText: hexText,
+				hexSlotWidth: hexSlotWidth,
+				rgbValueDisplay: .sample(
+					rText: "\(sample.r)",
+					gText: "\(sample.g)",
+					bText: "\(sample.b)",
+					componentSlotWidth: componentSlotWidth
+				)
+			)
+		}
+		return LiveColorDisplay(
+			hexText: hexText,
+			hexSlotWidth: hexSlotWidth,
+			rgbValueDisplay: .placeholder(text: "Preparing color")
+		)
+	}
+
+	private func liveRGBLayoutWidth(for colorDisplay: LiveColorDisplay, font: NSFont) -> CGFloat {
+		let prefixWidth = "RGB(".size(using: font).width
+		let commaWidth = ",".size(using: font).width
+		let suffixWidth = ")".size(using: font).width
+		let sampleWidth: CGFloat
+		switch colorDisplay.rgbValueDisplay {
+		case let .sample(_, _, _, componentSlotWidth):
+			sampleWidth = prefixWidth + componentSlotWidth * 3 + commaWidth * 2 + suffixWidth
+		case .placeholder:
+			let componentSlotWidth = "255".size(using: font).width
+			sampleWidth = prefixWidth + componentSlotWidth * 3 + commaWidth * 2 + suffixWidth
+		}
+		let placeholderWidth: CGFloat
+		switch colorDisplay.rgbValueDisplay {
+		case let .placeholder(text):
+			placeholderWidth = text.size(using: font).width
+		case .sample:
+			placeholderWidth = "Preparing color".size(using: font).width
+		}
+		return max(sampleWidth, placeholderWidth)
+	}
+
 	private func formatPositionText() -> String {
+		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+		let positionDisplay = currentPositionDisplay(font: font)
+		return "x=\(positionDisplay.xValueText), y=\(positionDisplay.yValueText)"
+	}
+
+	private func formatRGBText(for sample: RGBSample?) -> (String, String) {
+		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+		let colorDisplay = currentLiveColorDisplay(for: sample, font: font)
+		let rgbText: String = {
+			switch colorDisplay.rgbValueDisplay {
+			case let .sample(rText, gText, bText, _):
+				return "RGB(\(rText), \(gText), \(bText))"
+			case let .placeholder(text):
+				return text
+			}
+		}()
+		return (colorDisplay.hexText, rgbText)
+	}
+
+	private func legacyFormatPositionText() -> String {
 		guard let pointer = livePointerPreviewGlobal ?? scene.pointer else {
 			return "x=?, y=?"
 		}
@@ -2921,23 +3038,13 @@ final class CaptureHostView: NSView {
 		return String(format: "x=%\(xWidth)d, y=%\(yWidth)d", x, y)
 	}
 
-	private func formatRGBText(for sample: RGBSample?) -> (String, String) {
-		guard let rgb = sample else {
-			return ("#??????", "RGB(???, ???, ???)")
-		}
-		return (
-			String(format: "#%02X%02X%02X", rgb.r, rgb.g, rgb.b),
-			String(format: "RGB(%3d, %3d, %3d)", rgb.r, rgb.g, rgb.b)
-		)
-	}
-
 	private func formatRGBText() -> (String, String) {
 		formatRGBText(for: chrome.rgbSample)
 	}
 
 	private func formatLiveRGBText(for sample: RGBSample?) -> (String, String) {
 		guard sample != nil else {
-			return ("", "")
+			return ("Sampling…", "Preparing color")
 		}
 		return formatRGBText(for: sample)
 	}

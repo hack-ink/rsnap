@@ -20,12 +20,18 @@ final class LiveFrameStreamBroker {
 		sampler = try? RsnapLiveSampler()
 	}
 
-	func start(for screens: [NSScreen]) {
+	func start(for screens: [NSScreen], prewarmPoint: CGPoint? = nil) {
 		stateLock.lock()
 		let mainDisplayHeight = Self.mainDisplayHeight(for: screens)
 		self.mainDisplayHeight = mainDisplayHeight
 		monitors = screens.compactMap { Self.monitorSnapshot(for: $0, mainDisplayHeight: mainDisplayHeight) }
+		let targetMonitor = prewarmPoint.flatMap { point in
+			monitors.first(where: { $0.appKitFrame.contains(point) })
+		}
 		stateLock.unlock()
+		if let targetMonitor {
+			prime(monitor: targetMonitor)
+		}
 	}
 
 	func stop() {
@@ -41,11 +47,7 @@ final class LiveFrameStreamBroker {
 		}
 		let samplerPoint = Self.appKitPointToQuartz(point, mainDisplayHeight: mainDisplayHeight)
 		guard let sample = try? sampler.sampleCursor(
-			monitor: MonitorSnapshot(
-				id: monitor.id,
-				frame: monitor.quartzFrame,
-				scaleFactorX1000: monitor.scaleFactorX1000
-			),
+			monitor: samplerMonitorSnapshot(for: monitor),
 			point: samplerPoint,
 			patchSidePixels: sidePixels
 		) else {
@@ -64,11 +66,33 @@ final class LiveFrameStreamBroker {
 		return sample(at: point, sidePixels: sidePixels)?.loupePatch
 	}
 
+	func prime(at point: CGPoint?) {
+		guard let point, let monitor = monitor(containing: point) else {
+			return
+		}
+		prime(monitor: monitor)
+	}
+
 	private func monitor(containing point: CGPoint) -> SamplerMonitor? {
 		stateLock.lock()
 		let monitors = self.monitors
 		stateLock.unlock()
 		return monitors.first(where: { $0.appKitFrame.contains(point) })
+	}
+
+	private func prime(monitor: SamplerMonitor) {
+		guard let sampler else {
+			return
+		}
+		try? sampler.primeMonitor(samplerMonitorSnapshot(for: monitor))
+	}
+
+	private func samplerMonitorSnapshot(for monitor: SamplerMonitor) -> MonitorSnapshot {
+		MonitorSnapshot(
+			id: monitor.id,
+			frame: monitor.quartzFrame,
+			scaleFactorX1000: monitor.scaleFactorX1000
+		)
 	}
 
 	private static func monitorSnapshot(

@@ -694,4 +694,27 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 			patchRGBA: patchData
 		)
 	}
+
+	public func primeMonitor(_ monitor: MonitorSnapshot) throws {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		let status = rsnap_live_sampler_prime_monitor(
+			handle,
+			RsnapMonitorRect(
+				id: monitor.id,
+				origin: RsnapPoint(
+					x: Int32(monitor.frame.origin.x.rounded()),
+					y: Int32(monitor.frame.origin.y.rounded())
+				),
+				width: UInt32(max(monitor.frame.width.rounded(), 0)),
+				height: UInt32(max(monitor.frame.height.rounded(), 0)),
+				scale_factor_x1000: monitor.scaleFactorX1000
+			)
+		)
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: "priming live monitor", code: code)
+		}
+	}
 }

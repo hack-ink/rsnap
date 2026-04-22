@@ -52,6 +52,12 @@ impl HostMacLiveSampler {
 			)
 			.unwrap_or(LiveCursorSample { rgb: None, patch: None })
 	}
+
+	/// Starts warming the ScreenCaptureKit stream for the requested monitor without
+	/// blocking on the first frame.
+	pub fn prime_monitor(&self, monitor: MonitorRect) {
+		self.stream.prime_monitor_nonblocking(monitor);
+	}
 }
 
 impl Default for HostMacLiveSampler {
