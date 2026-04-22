@@ -31,9 +31,8 @@ struct LivePreviewSnapshot {
 	let hudFrame: CGRect?
 	let loupeFrame: CGRect?
 	let statusFrame: CGRect?
-	let positionText: String
-	let hexText: String
-	let rgbText: String
+	let positionDisplay: LivePositionDisplay
+	let colorDisplay: LiveColorDisplay
 	let rgbSample: RGBSample?
 	let keycapVisible: Bool
 	let statusMessage: String?
@@ -126,7 +125,7 @@ final class WindowSnapshotFeed {
 	}
 }
 
-final class ChromeSampleFeed {
+final class ChromeSampleFeed: @unchecked Sendable {
 	private let broker: LiveFrameStreamBroker
 	private let queue = DispatchQueue(label: "ink.hack.rsnap.native-host.chrome-sample-feed", qos: .userInteractive)
 	private let stateLock = NSLock()
@@ -163,11 +162,36 @@ final class ChromeSampleFeed {
 	func updateDemand(point: CGPoint?, sidePixels: Int) {
 		stateLock.lock()
 		let nextSidePixels = max(1, sidePixels)
-		if nextSidePixels != desiredSidePixels {
+		let sidePixelsChanged = nextSidePixels != desiredSidePixels
+		let pointChanged = desiredPoint.map { current in
+			guard let point else {
+				return true
+			}
+			return abs(current.x - point.x) > 0.5 || abs(current.y - point.y) > 0.5
+		} ?? (point != nil)
+		if sidePixelsChanged {
 			latestSample = nil
 		}
 		desiredPoint = point
 		desiredSidePixels = nextSidePixels
+		stateLock.unlock()
+		if pointChanged || sidePixelsChanged {
+			queue.async { [weak self] in
+				self?.refresh()
+			}
+		}
+	}
+
+	func prime(point: CGPoint?, sidePixels: Int) {
+		updateDemand(point: point, sidePixels: sidePixels)
+		guard let point else {
+			return
+		}
+		let sample = broker.sample(at: point, sidePixels: max(1, sidePixels))
+		stateLock.lock()
+		if let sample {
+			latestSample = sample
+		}
 		stateLock.unlock()
 	}
 
@@ -581,16 +605,27 @@ final class LiveOverlayRenderer {
 		)
 
 		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-		let positionSize = snapshot.positionText.size(using: font)
-		let hexSize = snapshot.hexText.size(using: font)
-		let rgbSize = snapshot.rgbText.size(using: font)
+		let positionText = "x=\(snapshot.positionDisplay.xValueText), y=\(snapshot.positionDisplay.yValueText)"
+		let positionSize = CGSize(
+			width: snapshot.positionDisplay.xSlotWidth
+				+ ",".size(using: font).width
+				+ snapshot.positionDisplay.ySlotWidth,
+			height: positionText.size(using: font).height
+		)
 		var cursorX = CaptureChrome.hudInnerMarginX
 		let baselineY = (hudLayer.bounds.height - positionSize.height) / 2
-		applyText(hudPositionLayer, text: snapshot.positionText, font: font, color: palette.labelText, frame: CGRect(x: cursorX, y: baselineY, width: ceil(positionSize.width), height: ceil(positionSize.height)), alignment: .left)
+		applyText(
+			hudPositionLayer,
+			text: positionText,
+			font: font,
+			color: palette.labelText,
+			frame: CGRect(x: cursorX, y: baselineY, width: ceil(positionSize.width), height: ceil(positionSize.height)),
+			alignment: .left
+		)
 		cursorX += positionSize.width + 10
 
 		hudSwatchLayer.frame = CGRect(x: cursorX, y: hudLayer.bounds.midY - 5, width: 10, height: 10)
-		hudSwatchLayer.cornerRadius = 5
+		hudSwatchLayer.cornerRadius = 0
 		let swatchColor = snapshot.rgbSample.map {
 			NSColor(calibratedRed: CGFloat($0.r) / 255, green: CGFloat($0.g) / 255, blue: CGFloat($0.b) / 255, alpha: 1)
 		} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
@@ -599,10 +634,11 @@ final class LiveOverlayRenderer {
 		hudSwatchLayer.borderWidth = 1
 		cursorX += 20
 
-		applyText(hudHexLayer, text: snapshot.hexText, font: font, color: palette.labelText, frame: CGRect(x: cursorX, y: baselineY, width: ceil(hexSize.width), height: ceil(hexSize.height)), alignment: .left)
-		cursorX += hexSize.width + 10
-		applyText(hudRGBLayer, text: snapshot.rgbText, font: font, color: palette.secondaryText, frame: CGRect(x: cursorX, y: baselineY, width: ceil(rgbSize.width), height: ceil(rgbSize.height)), alignment: .left)
-		cursorX += rgbSize.width + 10
+		let hexSize = snapshot.colorDisplay.hexText.size(using: font)
+		applyText(hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: palette.labelText, frame: CGRect(x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth), height: ceil(hexSize.height)), alignment: .left)
+		cursorX += snapshot.colorDisplay.hexSlotWidth + 10
+
+		hudRGBLayer.isHidden = true
 
 		if snapshot.keycapVisible {
 			let keycapText = "Tab"

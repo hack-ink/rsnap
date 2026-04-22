@@ -4,14 +4,31 @@ import Darwin
 import Foundation
 import RsnapHostBridge
 
+struct LivePositionDisplay {
+	let xValueText: String
+	let yValueText: String
+	let xSlotWidth: CGFloat
+	let ySlotWidth: CGFloat
+}
+
+enum LiveRGBValueDisplay {
+	case sample(rText: String, gText: String, bText: String, componentSlotWidth: CGFloat)
+	case placeholder(text: String)
+}
+
+struct LiveColorDisplay {
+	let hexText: String
+	let hexSlotWidth: CGFloat
+	let rgbValueDisplay: LiveRGBValueDisplay
+}
+
 struct LiveHudVisualSnapshot {
 	let sourceWindowNumber: Int
 	let frame: CGRect
 	let theme: CaptureChromeTheme
 	let settings: NativeHostSettings
-	let positionText: String
-	let hexText: String
-	let rgbText: String
+	let positionDisplay: LivePositionDisplay
+	let colorDisplay: LiveColorDisplay
 	let rgbSample: RGBSample?
 	let keycapVisible: Bool
 }
@@ -105,6 +122,7 @@ private final class LiveChromeOverlayWindow: NSWindow {
 		hasShadow = false
 		ignoresMouseEvents = true
 		isMovable = false
+		animationBehavior = .none
 		isOpaque = false
 		level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
 		sharingType = .none
@@ -131,12 +149,12 @@ private final class LiveChromeOverlayWindow: NSWindow {
 				abs(lastPresentedFrame.minX - roundedFrame.minX) > 0.5 ||
 				abs(lastPresentedFrame.minY - roundedFrame.minY) > 0.5
 			if sizeChanged {
-				setFrame(roundedFrame, display: false)
+				setFrame(roundedFrame, display: false, animate: false)
 			} else if originChanged {
-				setFrameOrigin(roundedFrame.origin)
+				setFrame(roundedFrame, display: false, animate: false)
 			}
 		} else {
-			setFrame(roundedFrame, display: false)
+			setFrame(roundedFrame, display: false, animate: false)
 		}
 		lastPresentedFrame = roundedFrame
 
@@ -221,35 +239,42 @@ private final class LiveChromeRenderView: NSView {
 		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
 		drawPill(in: frame, context: context, palette: palette, settings: snapshot.settings, strongShadow: true)
 
-		let positionSize = snapshot.positionText.size(using: font)
-		let bulletSize = "•".size(using: font)
-		let hexSize = snapshot.hexText.size(using: font)
-		let rgbSize = snapshot.rgbText.size(using: font)
-		let itemSpacing: CGFloat = 10
+		let commaSeparator = ","
+		let xGroupText = "x=\(snapshot.positionDisplay.xValueText)"
+		let yGroupText = "y=\(snapshot.positionDisplay.yValueText)"
+		let positionHeight = max(
+			xGroupText.size(using: font).height,
+			yGroupText.size(using: font).height
+		)
+		let itemSpacing: CGFloat = 8
 		var cursorX = CaptureChrome.hudInnerMarginX
-		let baselineY = (frame.height - positionSize.height) / 2
+		let baselineY = (frame.height - positionHeight) / 2
 
-		drawText(snapshot.positionText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
-		cursorX += positionSize.width + itemSpacing
-
-		drawText("•", at: CGPoint(x: cursorX, y: baselineY), color: palette.secondaryText, font: font)
-		cursorX += bulletSize.width + itemSpacing
+		drawText(xGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		cursorX += snapshot.positionDisplay.xSlotWidth
+		drawText(commaSeparator, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		cursorX += commaSeparator.size(using: font).width
+		drawText(yGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		cursorX += snapshot.positionDisplay.ySlotWidth + itemSpacing
 
 		let swatchRect = CGRect(x: cursorX, y: frame.midY - 5, width: 10, height: 10)
 		let swatchColor = snapshot.rgbSample.map {
 			NSColor(calibratedRed: CGFloat($0.r) / 255, green: CGFloat($0.g) / 255, blue: CGFloat($0.b) / 255, alpha: 1)
 		} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
 		context.setFillColor(swatchColor.cgColor)
-		context.fillEllipse(in: swatchRect)
+		context.fill(swatchRect)
 		context.setStrokeColor(palette.swatchStroke.cgColor)
 		context.setLineWidth(1)
-		context.strokeEllipse(in: swatchRect)
+		context.stroke(swatchRect)
 		cursorX += 10 + itemSpacing
 
-		drawText(snapshot.hexText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
-		cursorX += hexSize.width + itemSpacing
-		drawText(snapshot.rgbText, at: CGPoint(x: cursorX, y: baselineY), color: palette.secondaryText, font: font)
-		cursorX += rgbSize.width + itemSpacing
+		drawText(
+			snapshot.colorDisplay.hexText,
+			at: CGPoint(x: cursorX, y: baselineY),
+			color: palette.labelText,
+			font: font
+		)
+		cursorX += snapshot.colorDisplay.hexSlotWidth + itemSpacing
 
 		if snapshot.keycapVisible {
 			let keycapText = "Tab"
@@ -361,8 +386,11 @@ final class LiveChromeVisualWindowController {
 	private let statusWindow = LiveChromeOverlayWindow(kind: .status)
 
 	func update(snapshot: LiveChromeVisualSnapshot?, focusedWindowNumber: Int?) {
-		guard let snapshot, snapshot.sourceWindowNumber == focusedWindowNumber else {
+		guard let snapshot else {
 			hideAll()
+			return
+		}
+		guard snapshot.sourceWindowNumber == focusedWindowNumber else {
 			return
 		}
 

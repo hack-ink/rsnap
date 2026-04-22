@@ -222,6 +222,10 @@ typedef struct RsnapLiveSample {
 uint32_t rsnap_host_ffi_abi_version(void);
 RsnapSessionHandle *rsnap_session_create(struct RsnapSessionConfig config);
 RsnapLiveSamplerHandle *rsnap_live_sampler_create(void);
+enum RsnapStatus rsnap_live_sampler_prime_monitor(
+	RsnapLiveSamplerHandle *handle,
+	struct RsnapMonitorRect monitor
+);
 void rsnap_session_destroy(RsnapSessionHandle *handle);
 void rsnap_live_sampler_destroy(RsnapLiveSamplerHandle *handle);
 enum RsnapStatus rsnap_session_enter_live(RsnapSessionHandle *handle);
