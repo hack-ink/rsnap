@@ -53,7 +53,7 @@ impl CaptureSessionCore {
 	/// Enters live mode and requests native live capture.
 	pub fn enter_live(&mut self) {
 		self.scene.mode = CaptureMode::Live;
-		self.scene.cursor_intent = CursorIntent::Crosshair;
+		self.scene.cursor_intent = CursorIntent::Default;
 		self.scene.pointer = None;
 		self.scene.active_monitor = None;
 		self.scene.highlighted_window = None;
@@ -325,7 +325,7 @@ impl CaptureSessionCore {
 	fn update_cursor_intent(&mut self, point: GlobalPoint) {
 		self.scene.cursor_intent = match self.scene.mode {
 			CaptureMode::Hidden => CursorIntent::Default,
-			CaptureMode::Live => CursorIntent::Crosshair,
+			CaptureMode::Live => CursorIntent::Default,
 			CaptureMode::Frozen => {
 				self.scene.frozen_selection.map_or(CursorIntent::Default, |selection| {
 					self.frozen_cursor_intent(point, selection)
@@ -483,13 +483,13 @@ mod tests {
 	}
 
 	#[test]
-	fn enter_live_requests_capture_and_crosshair() {
+	fn enter_live_requests_capture_and_default_cursor() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
 
 		assert_eq!(session.scene_model().mode, CaptureMode::Live);
-		assert_eq!(session.scene_model().cursor_intent, CursorIntent::Crosshair);
+		assert_eq!(session.scene_model().cursor_intent, CursorIntent::Default);
 		assert_eq!(session.pop_host_request(), Some(HostRequest::StartLiveCapture));
 	}
 
