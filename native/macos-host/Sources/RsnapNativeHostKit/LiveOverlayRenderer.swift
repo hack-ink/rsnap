@@ -457,6 +457,10 @@ final class LiveOverlayRenderer {
 		rootLayer.isHidden = true
 	}
 
+	func suspend() {
+		rootLayer.isHidden = true
+	}
+
 	func renderNow() {
 		renderCurrentSnapshot()
 		onTick?()
