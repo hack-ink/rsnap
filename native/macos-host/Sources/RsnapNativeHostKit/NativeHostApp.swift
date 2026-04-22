@@ -338,6 +338,10 @@ final class CaptureSessionController: NSObject {
 		overlayController?.liveGlassPatches() ?? [:]
 	}
 
+	func updateLiveChromeVisuals(_ snapshot: LiveChromeVisualSnapshot?) {
+		overlayController?.updateLiveChromeVisuals(snapshot)
+	}
+
 	func previewHighlightedWindow(at point: CGPoint) -> WindowSnapshot? {
 		overlayController?.hoverWindowPreview(at: point)
 	}
@@ -1286,9 +1290,7 @@ final class CaptureOverlayController {
 	private let liveFrameStream = LiveFrameStreamBroker()
 	private lazy var windowSnapshotFeed = WindowSnapshotFeed()
 	private lazy var chromeSampleFeed = ChromeSampleFeed(broker: liveFrameStream)
-	private lazy var glassPatchFeed = GlassPatchFeed { [liveFrameStream] rect in
-		liveFrameStream.patch(in: rect)
-	}
+	private let liveChromeWindows = LiveChromeVisualWindowController()
 
 	init(controller: CaptureSessionController) {
 		self.controller = controller
@@ -1303,7 +1305,6 @@ final class CaptureOverlayController {
 		liveFrameStream.start(for: NSScreen.screens)
 		windowSnapshotFeed.start(desktopFrame: Self.desktopFrame)
 		chromeSampleFeed.start()
-		glassPatchFeed.start()
 		NSApp.activate(ignoringOtherApps: true)
 		for (index, screen) in NSScreen.screens.enumerated() {
 			let window = CaptureOverlayWindow(screen: screen, controller: controller)
@@ -1350,7 +1351,7 @@ final class CaptureOverlayController {
 		liveFrameStream.stop()
 		windowSnapshotFeed.stop()
 		chromeSampleFeed.stop()
-		glassPatchFeed.stop()
+		liveChromeWindows.hideAll()
 		guard !windows.isEmpty else {
 			focusedWindowNumber = nil
 			return
@@ -1406,11 +1407,17 @@ final class CaptureOverlayController {
 	}
 
 	fileprivate func updateLiveGlassRequests(_ requests: [GlassPatchRequest]) {
-		glassPatchFeed.updateRequests(requests)
+		let _ = requests
 	}
 
 	fileprivate func liveGlassPatches() -> [LiveGlassSurfaceKind: CGImage] {
-		glassPatchFeed.snapshot()
+		[:]
+	}
+
+	fileprivate func updateLiveChromeVisuals(
+		_ snapshot: LiveChromeVisualSnapshot?
+	) {
+		liveChromeWindows.update(snapshot: snapshot, focusedWindowNumber: focusedWindowNumber)
 	}
 
 	func captureImageBelowOverlay(in rect: CGRect, near point: CGPoint) -> CGImage? {
@@ -1567,6 +1574,12 @@ final class CaptureHostView: NSView {
 		liveRenderer.install { [weak self] in
 			self?.currentLivePreviewSnapshot()
 		}
+		liveRenderer.onTick = { [weak self] in
+			guard let self else {
+				return
+			}
+			self.controller?.updateLiveChromeVisuals(self.currentLiveChromeVisualSnapshot())
+		}
 		liveRendererInstalled = true
 	}
 
@@ -1606,7 +1619,9 @@ final class CaptureHostView: NSView {
 		if scene.mode == .live {
 			updateLivePreviewDemands()
 			liveRenderer.renderNow()
+			controller?.updateLiveChromeVisuals(currentLiveChromeVisualSnapshot())
 		} else {
+			controller?.updateLiveChromeVisuals(nil)
 			needsDisplay = true
 		}
 	}
@@ -1617,6 +1632,7 @@ final class CaptureHostView: NSView {
 		updateLiveRendererState()
 		if scene.mode == .live {
 			updateLivePreviewDemands()
+			controller?.updateLiveChromeVisuals(currentLiveChromeVisualSnapshot())
 		}
 	}
 
@@ -1915,6 +1931,7 @@ final class CaptureHostView: NSView {
 		liveHighlightedWindowPreview = controller?.previewHighlightedWindow(at: globalPoint) ?? scene.highlightedWindow
 		updateLivePreviewDemands()
 		liveRenderer.renderNow()
+		controller?.updateLiveChromeVisuals(currentLiveChromeVisualSnapshot())
 	}
 
 	private func localFrozenSelectionRect() -> CGRect? {
@@ -2555,9 +2572,6 @@ final class CaptureHostView: NSView {
 		let chromeSample = currentLiveChromeSample()
 		let rgbSample = chromeSample?.rgbSample
 		let loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
-		let hudFrame = currentHudFrame()
-		let loupeFrame = hudFrame.flatMap { currentLoupeFrame(hudFrame: $0, patch: loupePatch) }
-		let statusFrame = currentStatusMessageFrame()
 		let dragSelectionLocal = localRect(from: scene.liveSelectionPreview)
 		let hoverSelectionLocal = dragSelectionLocal == nil
 			? localRect(from: liveHighlightedWindowPreview?.frame ?? scene.highlightedWindow?.frame)
@@ -2571,9 +2585,9 @@ final class CaptureHostView: NSView {
 			dragSelectionLocal: dragSelectionLocal,
 			hoverSelectionLocal: hoverSelectionLocal,
 			selectionSizeText: dragSelectionLocal.map(selectionSizeText(for:)),
-			hudFrame: hudFrame,
-			loupeFrame: loupeFrame,
-			statusFrame: statusFrame,
+			hudFrame: nil,
+			loupeFrame: nil,
+			statusFrame: nil,
 			positionText: formatPositionText(),
 			hexText: formatRGBText(for: rgbSample).0,
 			rgbText: formatRGBText(for: rgbSample).1,
@@ -2581,7 +2595,65 @@ final class CaptureHostView: NSView {
 			keycapVisible: settings.showAltHintKeycap,
 			statusMessage: scene.statusMessage,
 			loupePatch: loupePatch,
-			glassPatches: controller?.liveGlassPatches() ?? [:]
+			glassPatches: [:]
+		)
+	}
+
+	private func currentLiveChromeVisualSnapshot() -> LiveChromeVisualSnapshot? {
+		guard scene.mode == .live, let sourceWindowNumber = window?.windowNumber else {
+			return nil
+		}
+
+		let chromeSample = currentLiveChromeSample()
+		let hudFrame = currentHudFrame().flatMap(globalRect(from:))
+		let loupeFrame = currentHudFrame()
+			.flatMap { currentLoupeFrame(hudFrame: $0, patch: chromeSample?.loupePatch) }
+			.flatMap(globalRect(from:))
+		let statusFrame = currentStatusMessageFrame().flatMap(globalRect(from:))
+		let theme = chromeTheme()
+
+		let hudSnapshot = hudFrame.map {
+			LiveHudVisualSnapshot(
+				sourceWindowNumber: sourceWindowNumber,
+				frame: $0,
+				theme: theme,
+				settings: settings,
+				positionText: formatPositionText(),
+				hexText: formatRGBText(for: chromeSample?.rgbSample).0,
+				rgbText: formatRGBText(for: chromeSample?.rgbSample).1,
+				rgbSample: chromeSample?.rgbSample,
+				keycapVisible: settings.showAltHintKeycap
+			)
+		}
+		let loupeSnapshot: LiveLoupeVisualSnapshot? = {
+			guard let frame = loupeFrame, let patch = chromeSample?.loupePatch else {
+				return nil
+			}
+			return LiveLoupeVisualSnapshot(
+				sourceWindowNumber: sourceWindowNumber,
+				frame: frame,
+				theme: theme,
+				settings: settings,
+				patch: patch
+			)
+		}()
+		let statusSnapshot: LiveStatusVisualSnapshot? = {
+			guard let frame = statusFrame, let message = scene.statusMessage, !message.isEmpty else {
+				return nil
+			}
+			return LiveStatusVisualSnapshot(
+				sourceWindowNumber: sourceWindowNumber,
+				frame: frame,
+				theme: theme,
+				settings: settings,
+				message: message
+			)
+		}()
+
+		return LiveChromeVisualSnapshot(
+			hud: hudSnapshot,
+			loupe: loupeSnapshot,
+			status: statusSnapshot
 		)
 	}
 
@@ -2599,51 +2671,14 @@ final class CaptureHostView: NSView {
 	private func updateLivePreviewDemands() {
 		guard scene.mode == .live else {
 			controller?.updateLivePreviewDemand(point: nil, settings: settings, includeLoupePatch: false)
-			controller?.updateLiveGlassRequests([])
 			return
 		}
-		let theme = chromeTheme()
 		let point = livePointerPreviewGlobal ?? scene.pointer
 		controller?.updateLivePreviewDemand(
 			point: point,
 			settings: settings,
 			includeLoupePatch: scene.loupeVisible
 		)
-		let hudFrame = currentHudFrame()
-		let loupeFrame = hudFrame.flatMap {
-			currentLoupeFrame(hudFrame: $0, patch: currentLiveChromeSample()?.loupePatch)
-		}
-		let statusFrame = currentStatusMessageFrame()
-		let requests = [
-			hudFrame.flatMap { globalRect(from: $0) }.map {
-				GlassPatchRequest(
-					kind: .hud,
-					globalRect: $0,
-					blurAmount: settings.hudBlur,
-					tintAmount: settings.hudTint,
-					brightnessBias: CGFloat(themeBrightnessBias(for: theme))
-				)
-			},
-			loupeFrame.flatMap { globalRect(from: $0) }.map {
-				GlassPatchRequest(
-					kind: .loupe,
-					globalRect: $0,
-					blurAmount: settings.hudBlur,
-					tintAmount: settings.hudTint,
-					brightnessBias: CGFloat(themeBrightnessBias(for: theme))
-				)
-			},
-			statusFrame.flatMap { globalRect(from: $0) }.map {
-				GlassPatchRequest(
-					kind: .status,
-					globalRect: $0,
-					blurAmount: settings.hudBlur,
-					tintAmount: settings.hudTint,
-					brightnessBias: CGFloat(themeBrightnessBias(for: theme))
-				)
-			},
-		].compactMap { $0 }
-		controller?.updateLiveGlassRequests(requests)
 	}
 
 	private func currentDisplayID() -> CGDirectDisplayID? {
