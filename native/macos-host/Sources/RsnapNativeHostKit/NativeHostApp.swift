@@ -1898,7 +1898,8 @@ final class CaptureHostView: NSView {
 				drawDashedSelectionBorder(
 					around: selection,
 					in: context,
-					lineWidth: CaptureChrome.frozenDashedBorderWidth
+					lineWidth: CaptureChrome.frozenDashedBorderWidth,
+					excludeResizeHandleCorners: true
 				)
 				drawFrozenResizeHandles(for: selection, in: context)
 				drawFrozenOverlays(for: selection, in: context)
@@ -2230,25 +2231,36 @@ final class CaptureHostView: NSView {
 	private func drawDashedSelectionBorder(
 		around rect: CGRect,
 		in context: CGContext,
-		lineWidth: CGFloat
+		lineWidth: CGFloat,
+		excludeResizeHandleCorners: Bool
 	) {
 		let outlineColor = NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
 		let strokeColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 248 / 255)
-		let roundedRect = NSBezierPath(
-			roundedRect: rect,
-			xRadius: CaptureChrome.selectionCornerRadius,
-			yRadius: CaptureChrome.selectionCornerRadius
+		let pixelsPerPoint = window?.screen?.backingScaleFactor ?? 1
+		let borderOutset = CaptureChrome.dashedBorderOutset(
+			strokeWidth: lineWidth,
+			pixelsPerPoint: pixelsPerPoint
 		)
-		let dashPattern: [CGFloat] = [12.0, 7.8]
-		roundedRect.setLineDash(dashPattern, count: dashPattern.count, phase: 0)
+		let borderRect = rect.insetBy(dx: -borderOutset, dy: -borderOutset)
+		let path = CaptureChrome.dashedBorderPath(
+			for: borderRect,
+			cornerKeepout: excludeResizeHandleCorners ? CaptureChrome.resizeHandleOuterRadius : 0
+		)
 
-		outlineColor.setStroke()
-		roundedRect.lineWidth = lineWidth + 0.75
-		roundedRect.stroke()
+		context.saveGState()
+		context.setLineCap(.butt)
+		context.setLineJoin(.miter)
 
-		strokeColor.setStroke()
-		roundedRect.lineWidth = lineWidth
-		roundedRect.stroke()
+		context.addPath(path)
+		context.setStrokeColor(outlineColor.cgColor)
+		context.setLineWidth(lineWidth + 0.75)
+		context.strokePath()
+
+		context.addPath(path)
+		context.setStrokeColor(strokeColor.cgColor)
+		context.setLineWidth(lineWidth)
+		context.strokePath()
+		context.restoreGState()
 	}
 
 	private func drawFrozenResizeHandles(for rect: CGRect, in context: CGContext) {
@@ -3741,8 +3753,10 @@ enum CaptureChrome {
 	static let loupeCellSize: CGFloat = 10
 	static let liveScrimAlpha: CGFloat = 176.0 / 255.0
 	static let frozenScrimAlpha: CGFloat = 176.0 / 255.0
-	static let liveDashedBorderWidth: CGFloat = 3.1
+	static let liveDashedBorderWidth: CGFloat = 1.55
 	static let frozenDashedBorderWidth: CGFloat = 1.55
+	static let dashedBorderDashLength: CGFloat = 8.0
+	static let dashedBorderGapLength: CGFloat = 4.2
 	static let selectionCornerRadius: CGFloat = 18
 	static let liveSelectionCornerRadius: CGFloat = 20
 	static let resizeHandleHitSize: CGFloat = 24
@@ -3754,6 +3768,220 @@ enum CaptureChrome {
 	static let toolbarVerticalPadding: CGFloat = 6
 	static let toolbarGap: CGFloat = 10
 	static let toolbarScreenMargin: CGFloat = 10
+
+	static func dashedBorderOutset(strokeWidth: CGFloat, pixelsPerPoint: CGFloat) -> CGFloat {
+		let feathering = 1.0 / max(pixelsPerPoint, .leastNonzeroMagnitude)
+		return (strokeWidth + feathering) * 0.5
+	}
+
+	static func dashedBorderPath(
+		for rect: CGRect,
+		dashLength: CGFloat = dashedBorderDashLength,
+		gapLength: CGFloat = dashedBorderGapLength,
+		cornerKeepout: CGFloat = 0
+	) -> CGPath {
+		let path = CGMutablePath()
+		for (start, end) in dashedBorderSegments(
+			for: rect,
+			dashLength: dashLength,
+			gapLength: gapLength,
+			cornerKeepout: cornerKeepout
+		) {
+			path.move(to: start)
+			path.addLine(to: end)
+		}
+		return path
+	}
+
+	private static func dashedBorderSegments(
+		for rect: CGRect,
+		dashLength: CGFloat,
+		gapLength: CGFloat,
+		cornerKeepout: CGFloat
+	) -> [(CGPoint, CGPoint)] {
+		if cornerKeepout > 0 {
+			let horizontalRanges = dashedBorderEdgeRanges(
+				edgeLength: rect.width,
+				cornerKeepout: cornerKeepout,
+				dashLength: dashLength,
+				gapLength: gapLength
+			)
+			let verticalRanges = dashedBorderEdgeRanges(
+				edgeLength: rect.height,
+				cornerKeepout: cornerKeepout,
+				dashLength: dashLength,
+				gapLength: gapLength
+			)
+			var segments: [(CGPoint, CGPoint)] = []
+			for (start, end) in horizontalRanges {
+				segments.append((
+					CGPoint(x: rect.minX + start, y: rect.minY),
+					CGPoint(x: rect.minX + end, y: rect.minY)
+				))
+			}
+			for (start, end) in verticalRanges {
+				segments.append((
+					CGPoint(x: rect.maxX, y: rect.minY + start),
+					CGPoint(x: rect.maxX, y: rect.minY + end)
+				))
+			}
+			for (start, end) in horizontalRanges {
+				segments.append((
+					CGPoint(x: rect.minX + start, y: rect.maxY),
+					CGPoint(x: rect.minX + end, y: rect.maxY)
+				))
+			}
+			for (start, end) in verticalRanges {
+				segments.append((
+					CGPoint(x: rect.minX, y: rect.minY + start),
+					CGPoint(x: rect.minX, y: rect.minY + end)
+				))
+			}
+			return segments
+		}
+
+		let perimeter = dashedBorderPerimeter(for: rect)
+		guard perimeter > 0 else {
+			return []
+		}
+
+		var segments: [(CGPoint, CGPoint)] = []
+		for (dashStart, dashEnd) in dashedBorderDashRanges(
+			perimeter: perimeter,
+			dashLength: dashLength,
+			gapLength: gapLength
+		) {
+			appendDashedBorderSegments(
+				for: rect,
+				dashStart: dashStart,
+				dashEnd: dashEnd,
+				into: &segments
+			)
+		}
+		return segments
+	}
+
+	private static func dashedBorderEdgeRanges(
+		edgeLength: CGFloat,
+		cornerKeepout: CGFloat,
+		dashLength: CGFloat,
+		gapLength: CGFloat
+	) -> [(CGFloat, CGFloat)] {
+		let usableLength = edgeLength - cornerKeepout * 2
+		guard usableLength > 0 else {
+			return []
+		}
+		if usableLength <= dashLength {
+			return [(cornerKeepout, edgeLength - cornerKeepout)]
+		}
+
+		let clampedDashLength = min(dashLength, usableLength)
+		let cycleSpan = max(dashLength + gapLength, .leastNonzeroMagnitude)
+		let dashCount = max(Int(floor((usableLength + gapLength) / cycleSpan)), 1)
+		if dashCount == 1 {
+			return [(cornerKeepout, edgeLength - cornerKeepout)]
+		}
+
+		let occupiedLength = CGFloat(dashCount) * clampedDashLength + CGFloat(dashCount - 1) * gapLength
+		let gapCount = max(dashCount - 1, 0)
+		let resolvedGapLength: CGFloat = if gapCount == 0 {
+			gapLength
+		} else {
+			gapLength + max(usableLength - occupiedLength, 0) / CGFloat(gapCount)
+		}
+
+		return (0..<dashCount).map { index in
+			let start = cornerKeepout + CGFloat(index) * (clampedDashLength + resolvedGapLength)
+			return (start, start + clampedDashLength)
+		}
+	}
+
+	private static func dashedBorderDashRanges(
+		perimeter: CGFloat,
+		dashLength: CGFloat,
+		gapLength: CGFloat
+	) -> [(CGFloat, CGFloat)] {
+		guard perimeter > 0 else {
+			return []
+		}
+		let targetCycle = max(dashLength + gapLength, .leastNonzeroMagnitude)
+		let cycleCount = max(Int((perimeter / targetCycle).rounded()), 1)
+		let cycleSpan = perimeter / CGFloat(cycleCount)
+		let resolvedDashLength = min(dashLength, cycleSpan)
+
+		return (0..<cycleCount).map { index in
+			let start = CGFloat(index) * cycleSpan
+			return (start, start + resolvedDashLength)
+		}
+	}
+
+	private static func appendDashedBorderSegments(
+		for rect: CGRect,
+		dashStart: CGFloat,
+		dashEnd: CGFloat,
+		into segments: inout [(CGPoint, CGPoint)]
+	) {
+		var segmentStart = dashStart
+		for cornerDistance in dashedBorderCornerDistances(for: rect) {
+			if segmentStart >= dashEnd {
+				break
+			}
+			if cornerDistance <= segmentStart || cornerDistance >= dashEnd {
+				continue
+			}
+			pushDashedBorderSegment(for: rect, start: segmentStart, end: cornerDistance, into: &segments)
+			segmentStart = cornerDistance
+		}
+		if segmentStart < dashEnd {
+			pushDashedBorderSegment(for: rect, start: segmentStart, end: dashEnd, into: &segments)
+		}
+	}
+
+	private static func pushDashedBorderSegment(
+		for rect: CGRect,
+		start: CGFloat,
+		end: CGFloat,
+		into segments: inout [(CGPoint, CGPoint)]
+	) {
+		let startPoint = dashedBorderPoint(for: rect, distance: start)
+		let endPoint = dashedBorderPoint(for: rect, distance: end)
+		guard startPoint != endPoint else {
+			return
+		}
+		segments.append((startPoint, endPoint))
+	}
+
+	private static func dashedBorderPoint(for rect: CGRect, distance: CGFloat) -> CGPoint {
+		let width = rect.width
+		let height = rect.height
+		let perimeter = dashedBorderPerimeter(for: rect)
+		let normalizedDistance = distance.truncatingRemainder(dividingBy: perimeter)
+		let resolvedDistance = normalizedDistance < 0 ? normalizedDistance + perimeter : normalizedDistance
+
+		if resolvedDistance < width {
+			return CGPoint(x: rect.minX + resolvedDistance, y: rect.minY)
+		}
+		if resolvedDistance < width + height {
+			return CGPoint(x: rect.maxX, y: rect.minY + (resolvedDistance - width))
+		}
+		if resolvedDistance < width * 2 + height {
+			return CGPoint(x: rect.maxX - (resolvedDistance - width - height), y: rect.maxY)
+		}
+		return CGPoint(x: rect.minX, y: rect.maxY - (resolvedDistance - width * 2 - height))
+	}
+
+	private static func dashedBorderCornerDistances(for rect: CGRect) -> [CGFloat] {
+		let width = rect.width
+		let height = rect.height
+		return [width, width + height, width * 2 + height, dashedBorderPerimeter(for: rect)]
+	}
+
+	private static func dashedBorderPerimeter(for rect: CGRect) -> CGFloat {
+		guard rect.width > 0, rect.height > 0 else {
+			return 0
+		}
+		return (rect.width + rect.height) * 2
+	}
 
 	static func palette(for theme: CaptureChromeTheme, settings: NativeHostSettings) -> CaptureChromePalette {
 		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
