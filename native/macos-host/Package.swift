@@ -47,6 +47,9 @@ let package = Package(
 		.target(
 			name: "RsnapNativeHostKit",
 			dependencies: ["RsnapHostBridge"],
+			resources: [
+				.process("Resources"),
+			],
 			linkerSettings: [
 				.linkedFramework("AppKit"),
 				.linkedFramework("Carbon"),

@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import CoreText
 import Darwin
 import Foundation
 import RsnapHostBridge
@@ -75,6 +76,67 @@ struct LiveChromeVisualSnapshot {
 			?? loupe?.sourceWindowNumber
 			?? status?.sourceWindowNumber
 			?? toolbar?.sourceWindowNumber
+	}
+}
+
+@MainActor
+private enum PhosphorToolbarIcons {
+	private static var didRegisterFonts = false
+
+	static func icon(for kind: ToolbarItemKind) -> String {
+		switch kind {
+		case .pointer:
+			return "\u{E1DC}"
+		case .pen:
+			return "\u{E3B4}"
+		case .arrow:
+			return "\u{E092}"
+		case .text:
+			return "\u{E48A}"
+		case .mosaic:
+			return "\u{E8C4}"
+		case .spotlight:
+			return "\u{E626}"
+		case .undo:
+			return "\u{E038}"
+		case .redo:
+			return "\u{E036}"
+		case .autoCenter:
+			return "\u{E09C}"
+		case .scroll:
+			return "\u{E098}"
+		case .ocr:
+			return "\u{E23A}"
+		case .copy:
+			return "\u{E1CA}"
+		case .save:
+			return "\u{E248}"
+		}
+	}
+
+	static func font(selected: Bool, size: CGFloat) -> NSFont {
+		ensureRegistered()
+		let name = selected ? "Phosphor-Fill" : "Phosphor"
+		return NSFont(name: name, size: size) ?? NSFont.systemFont(ofSize: size, weight: .regular)
+	}
+
+	private static func ensureRegistered() {
+		guard !didRegisterFonts else {
+			return
+		}
+		for resourceName in ["Phosphor", "Phosphor-Fill"] {
+			guard
+				let url = Bundle.module.url(
+					forResource: resourceName,
+					withExtension: "ttf",
+					subdirectory: nil
+				)
+			else {
+				continue
+			}
+			CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+		}
+		didRegisterFonts = true
 	}
 }
 
@@ -392,7 +454,13 @@ private final class LiveChromeRenderView: NSView {
 			let symbolColor = item.enabled
 				? (item.selected ? palette.toolbarSelectedIcon : palette.toolbarIcon)
 				: palette.toolbarDisabledIcon
-			drawToolbarGlyph(item.kind, in: item.frame, color: symbolColor, context: context)
+			drawToolbarGlyph(
+				item.kind,
+				selected: item.selected,
+				in: item.frame,
+				color: symbolColor,
+				context: context
+			)
 		}
 	}
 
@@ -430,130 +498,28 @@ private final class LiveChromeRenderView: NSView {
 
 	private func drawToolbarGlyph(
 		_ kind: ToolbarItemKind,
+		selected: Bool,
 		in rect: CGRect,
 		color: NSColor,
 		context: CGContext
 	) {
+		let icon = PhosphorToolbarIcons.icon(for: kind)
+		let font = PhosphorToolbarIcons.font(selected: selected, size: 18)
+		let attributed = NSAttributedString(string: icon, attributes: [
+			.font: font,
+			.foregroundColor: color,
+		])
+		let line = CTLineCreateWithAttributedString(attributed)
+		let bounds = CTLineGetBoundsWithOptions(line, [.useOpticalBounds, .excludeTypographicLeading])
+		let origin = CGPoint(
+			x: rect.midX - bounds.width * 0.5 - bounds.origin.x,
+			y: rect.midY - bounds.height * 0.5 - bounds.origin.y
+		)
 		context.saveGState()
-		context.setStrokeColor(color.cgColor)
-		context.setFillColor(color.cgColor)
-		context.setLineWidth(1.7)
-		context.setLineCap(.round)
-		context.setLineJoin(.round)
-
-		let insetRect = rect.insetBy(dx: 5.5, dy: 5.5)
-		switch kind {
-		case .pointer:
-			let path = NSBezierPath()
-			path.move(to: CGPoint(x: insetRect.minX, y: insetRect.minY))
-			path.line(to: CGPoint(x: insetRect.maxX - 2, y: insetRect.midY - 1))
-			path.line(to: CGPoint(x: insetRect.midX + 0.5, y: insetRect.midY + 0.5))
-			path.line(to: CGPoint(x: insetRect.maxX, y: insetRect.maxY))
-			path.lineWidth = 1.6
-			path.stroke()
-		case .pen:
-			context.move(to: CGPoint(x: insetRect.minX + 1, y: insetRect.minY + 1))
-			context.addLine(to: CGPoint(x: insetRect.maxX - 2, y: insetRect.maxY - 2))
-			context.strokePath()
-			context.fillEllipse(in: CGRect(x: insetRect.maxX - 3.5, y: insetRect.maxY - 3.5, width: 3, height: 3))
-		case .arrow:
-			drawArrow(
-				from: CGPoint(x: insetRect.minX, y: insetRect.minY + 1),
-				to: CGPoint(x: insetRect.maxX, y: insetRect.maxY),
-				in: context
-			)
-		case .text:
-			let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-			drawText("T", at: CGPoint(x: rect.midX - 4, y: rect.midY - 7), color: color, font: font)
-		case .mosaic:
-			let size = insetRect.width / 3
-			for row in 0..<3 {
-				for column in 0..<3 {
-					if (row + column).isMultiple(of: 2) {
-						let cell = CGRect(
-							x: insetRect.minX + CGFloat(column) * size,
-							y: insetRect.minY + CGFloat(row) * size,
-							width: size - 1,
-							height: size - 1
-						)
-						context.fill(cell)
-					}
-				}
-			}
-		case .spotlight:
-			context.strokeEllipse(in: insetRect)
-			context.move(to: CGPoint(x: insetRect.maxX - 1, y: insetRect.minY + 2))
-			context.addLine(to: CGPoint(x: insetRect.maxX + 3, y: insetRect.minY - 2))
-			context.strokePath()
-		case .undo:
-			context.move(to: CGPoint(x: insetRect.maxX, y: insetRect.midY))
-			context.addQuadCurve(to: CGPoint(x: insetRect.minX + 3, y: insetRect.maxY - 1), control: CGPoint(x: insetRect.midX, y: insetRect.maxY + 2))
-			context.strokePath()
-			context.move(to: CGPoint(x: insetRect.minX + 3, y: insetRect.maxY - 1))
-			context.addLine(to: CGPoint(x: insetRect.minX + 2, y: insetRect.maxY - 5))
-			context.addLine(to: CGPoint(x: insetRect.minX + 6, y: insetRect.maxY - 3))
-			context.strokePath()
-		case .redo:
-			context.move(to: CGPoint(x: insetRect.minX, y: insetRect.midY))
-			context.addQuadCurve(to: CGPoint(x: insetRect.maxX - 3, y: insetRect.maxY - 1), control: CGPoint(x: insetRect.midX, y: insetRect.maxY + 2))
-			context.strokePath()
-			context.move(to: CGPoint(x: insetRect.maxX - 3, y: insetRect.maxY - 1))
-			context.addLine(to: CGPoint(x: insetRect.maxX - 6, y: insetRect.maxY - 3))
-			context.addLine(to: CGPoint(x: insetRect.maxX - 2, y: insetRect.maxY - 5))
-			context.strokePath()
-		case .autoCenter:
-			context.stroke(CGRect(x: insetRect.minX + 1, y: insetRect.minY + 1, width: insetRect.width - 2, height: insetRect.height - 2))
-			context.fillEllipse(in: CGRect(x: insetRect.midX - 1.6, y: insetRect.midY - 1.6, width: 3.2, height: 3.2))
-		case .scroll:
-			context.move(to: CGPoint(x: insetRect.midX, y: insetRect.maxY))
-			context.addLine(to: CGPoint(x: insetRect.midX, y: insetRect.minY + 2))
-			context.strokePath()
-			context.move(to: CGPoint(x: insetRect.midX - 3, y: insetRect.maxY - 3))
-			context.addLine(to: CGPoint(x: insetRect.midX, y: insetRect.maxY))
-			context.addLine(to: CGPoint(x: insetRect.midX + 3, y: insetRect.maxY - 3))
-			context.strokePath()
-			context.move(to: CGPoint(x: insetRect.midX - 3, y: insetRect.minY + 5))
-			context.addLine(to: CGPoint(x: insetRect.midX, y: insetRect.minY + 2))
-			context.addLine(to: CGPoint(x: insetRect.midX + 3, y: insetRect.minY + 5))
-			context.strokePath()
-		case .ocr:
-			let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-			drawText("OCR", at: CGPoint(x: rect.midX - 9, y: rect.midY - 6), color: color, font: font)
-		case .copy:
-			context.stroke(CGRect(x: insetRect.minX + 2, y: insetRect.minY + 1, width: insetRect.width - 4, height: insetRect.height - 4))
-			context.stroke(CGRect(x: insetRect.minX + 5, y: insetRect.minY + 4, width: insetRect.width - 4, height: insetRect.height - 4))
-		case .save:
-			context.stroke(CGRect(x: insetRect.minX + 1, y: insetRect.minY + 1, width: insetRect.width - 2, height: insetRect.height - 2))
-			context.fill(CGRect(x: insetRect.minX + 3, y: insetRect.maxY - 5, width: insetRect.width - 6, height: 3))
-			context.stroke(CGRect(x: insetRect.midX - 3, y: insetRect.minY + 3, width: 6, height: 4))
-		}
-
+		context.textMatrix = .identity
+		context.textPosition = origin
+		CTLineDraw(line, context)
 		context.restoreGState()
-	}
-
-	private func drawArrow(from start: CGPoint, to end: CGPoint, in context: CGContext) {
-		context.beginPath()
-		context.move(to: start)
-		context.addLine(to: end)
-		context.strokePath()
-
-		let angle = atan2(end.y - start.y, end.x - start.x)
-		let headLength: CGFloat = 10
-		let headSpread: CGFloat = .pi / 7
-		let left = CGPoint(
-			x: end.x - cos(angle - headSpread) * headLength,
-			y: end.y - sin(angle - headSpread) * headLength
-		)
-		let right = CGPoint(
-			x: end.x - cos(angle + headSpread) * headLength,
-			y: end.y - sin(angle + headSpread) * headLength
-		)
-		context.beginPath()
-		context.move(to: end)
-		context.addLine(to: left)
-		context.move(to: end)
-		context.addLine(to: right)
-		context.strokePath()
 	}
 }
 
