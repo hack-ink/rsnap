@@ -286,13 +286,22 @@ final class CaptureSessionController: NSObject {
 			let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
 			self.session = session
 
+			try session.enterLive()
+			let initialScene = try session.currentScene()
+			self.scene = initialScene
+
 			let overlayController = CaptureOverlayController(controller: self)
 			self.overlayController = overlayController
-			overlayController.show()
+			overlayController.show(
+				initialScene: initialScene,
+				chrome: chromeState,
+				settings: settingsStore.settings,
+				focusPoint: NSEvent.mouseLocation
+			)
 			(NSApp.delegate as? NativeHostApplicationController)?.window = overlayController.primaryWindow
+			sceneDidChange?(initialScene)
 			NSLog("RsnapNativeHost overlay shown")
 
-			try session.enterLive()
 			pointerMoved(to: NSEvent.mouseLocation)
 			captureStateDidChange?()
 		} catch {
@@ -1310,17 +1319,42 @@ final class CaptureOverlayController {
 	}
 
 	var primaryWindow: NSWindow? {
-		windows.first
+		windows.first(where: { $0.windowNumber == focusedWindowNumber }) ?? windows.first
 	}
 
-	func show() {
+	fileprivate func show(
+		initialScene: SceneSnapshot,
+		chrome: CaptureChromeState,
+		settings: NativeHostSettings,
+		focusPoint: CGPoint
+	) {
 		close()
 		NSApp.activate(ignoringOtherApps: true)
-		for (index, screen) in NSScreen.screens.enumerated() {
-			let window = CaptureOverlayWindow(screen: screen, controller: controller)
+		var targetWindow: CaptureOverlayWindow?
+		for screen in NSScreen.screens {
+			let window = CaptureOverlayWindow(
+				screen: screen,
+				controller: controller,
+				initialScene: initialScene,
+				initialChrome: chrome,
+				initialSettings: settings
+			)
+			window.hostView.update(
+				scene: initialScene,
+				chrome: chrome,
+				settings: settings
+			)
 			windows.append(window)
-			if index == 0 {
+			if targetWindow == nil, screen.frame.contains(focusPoint) {
+				targetWindow = window
+			}
+		}
+
+		let focusedWindow = targetWindow ?? windows.first
+		for window in windows {
+			if window === focusedWindow {
 				window.makeKeyAndOrderFront(nil)
+				window.makeFirstResponder(window.hostView)
 				focusedWindowNumber = window.windowNumber
 				(NSApp.delegate as? NativeHostApplicationController)?.window = window
 			} else {
@@ -1330,7 +1364,7 @@ final class CaptureOverlayController {
 		liveFrameStream.start(for: NSScreen.screens)
 		windowSnapshotFeed.start(desktopFrame: Self.desktopFrame)
 		chromeSampleFeed.start()
-		chromeSampleFeed.updateDemand(point: NSEvent.mouseLocation, sidePixels: 1)
+		chromeSampleFeed.updateDemand(point: focusPoint, sidePixels: 1)
 	}
 
 	fileprivate func update(
@@ -1504,7 +1538,13 @@ final class CaptureOverlayWindow: NSWindow {
 	override var canBecomeKey: Bool { true }
 	override var canBecomeMain: Bool { true }
 
-	init(screen: NSScreen, controller: CaptureSessionController?) {
+	fileprivate init(
+		screen: NSScreen,
+		controller: CaptureSessionController?,
+		initialScene: SceneSnapshot,
+		initialChrome: CaptureChromeState,
+		initialSettings: NativeHostSettings
+	) {
 		hostView = CaptureHostView(frame: screen.frame)
 		super.init(
 			contentRect: screen.frame,
@@ -1515,6 +1555,11 @@ final class CaptureOverlayWindow: NSWindow {
 
 		setFrame(screen.frame, display: false)
 		hostView.controller = controller
+		hostView.seedInitialState(
+			scene: initialScene,
+			chrome: initialChrome,
+			settings: initialSettings
+		)
 		contentView = hostView
 		acceptsMouseMovedEvents = true
 		backgroundColor = .clear
@@ -1652,7 +1697,6 @@ final class CaptureHostView: NSView {
 		if cursorPresentation != lastCursorPresentation {
 			lastCursorPresentation = cursorPresentation
 			window?.invalidateCursorRects(for: self)
-			cursor(for: cursorPresentation).set()
 		}
 		updateChromeMaterialViews()
 		updateLiveRendererState()
@@ -1664,6 +1708,26 @@ final class CaptureHostView: NSView {
 			controller?.updateLiveChromeVisuals(nil)
 			needsDisplay = true
 		}
+	}
+
+	fileprivate func seedInitialState(
+		scene: SceneSnapshot,
+		chrome: CaptureChromeState,
+		settings: NativeHostSettings
+	) {
+		self.scene = scene
+		self.chrome = chrome
+		self.settings = settings
+		if scene.mode == .live {
+			livePointerPreviewGlobal = scene.pointer
+			liveHighlightedWindowPreview = scene.highlightedWindow
+		} else {
+			livePointerPreviewGlobal = nil
+			liveHighlightedWindowPreview = nil
+		}
+		lastCursorPresentation = currentCursorPresentation()
+		updateChromeMaterialViews()
+		updateLiveRendererState()
 	}
 
 	override func layout() {
@@ -1690,7 +1754,7 @@ final class CaptureHostView: NSView {
 
 		let trackingAreaRef = NSTrackingArea(
 			rect: bounds,
-			options: [.activeAlways, .cursorUpdate, .inVisibleRect, .mouseMoved, .enabledDuringMouseDrag],
+			options: [.activeInKeyWindow, .cursorUpdate, .inVisibleRect, .mouseMoved, .enabledDuringMouseDrag],
 			owner: self,
 			userInfo: nil
 		)
@@ -2519,7 +2583,6 @@ final class CaptureHostView: NSView {
 			let cursorPresentation = currentCursorPresentation()
 			if cursorPresentation != lastCursorPresentation {
 				lastCursorPresentation = cursorPresentation
-				cursor(for: cursorPresentation).set()
 			}
 			window?.invalidateCursorRects(for: self)
 			needsDisplay = true

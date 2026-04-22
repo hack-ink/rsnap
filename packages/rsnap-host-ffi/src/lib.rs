@@ -1097,10 +1097,11 @@ mod tests {
 	use std::ptr;
 
 	use super::{
-		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapHostEvent,
-		RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind,
-		RsnapHostRequestValue, RsnapMonitorRect, RsnapPlatformTag, RsnapSceneKind, RsnapSceneModel,
-		RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
+		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCursorIntent,
+		RsnapHostEvent, RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind,
+		RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect, RsnapPlatformTag,
+		RsnapSceneKind, RsnapSceneModel, RsnapSessionConfig, RsnapSessionHandle, RsnapStatus,
+		RsnapWindowRect,
 		rsnap_host_ffi_abi_version, rsnap_session_copy_scene_model, rsnap_session_create,
 		rsnap_session_destroy, rsnap_session_enter_live, rsnap_session_handle_host_event,
 		rsnap_session_handle_host_report, rsnap_session_take_next_request,
@@ -1129,6 +1130,7 @@ mod tests {
 		assert_eq!(request.kind, RsnapHostRequestKind::StartLiveCapture as u32);
 		assert_eq!(unsafe { rsnap_session_copy_scene_model(handle, &mut scene) }, RsnapStatus::Ok);
 		assert_eq!(scene.scene_kind, RsnapSceneKind::Live as u32);
+		assert_eq!(scene.cursor_intent, RsnapCursorIntent::Default as u32);
 
 		unsafe { rsnap_session_destroy(handle) };
 	}
