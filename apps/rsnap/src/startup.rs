@@ -2,11 +2,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use directories::ProjectDirs;
+use serde::Deserialize;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::EnvFilter;
-
-use crate::settings::AppSettings;
 
 /// Build metadata logged during application startup.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,7 +72,7 @@ fn init_console_logging(filter: EnvFilter) {
 
 fn default_log_filter() -> EnvFilter {
 	EnvFilter::try_from_default_env()
-		.or_else(|_| load_log_filter_from_settings().ok_or(()))
+		.or_else(|_| load_log_filter_from_settings_file().ok_or(()))
 		.unwrap_or_else(|_| EnvFilter::new("warn,rsnap=info"))
 }
 
@@ -81,8 +80,17 @@ fn resolve_log_dir() -> Option<PathBuf> {
 	ProjectDirs::from("ink", "hack", "rsnap").map(|dirs| dirs.data_dir().join("logs"))
 }
 
-fn load_log_filter_from_settings() -> Option<EnvFilter> {
-	let settings = AppSettings::load();
+fn load_log_filter_from_settings_file() -> Option<EnvFilter> {
+	let path = launcher_settings_path()?;
+	let contents = fs::read_to_string(path).ok()?;
+	let settings = match toml::from_str::<LauncherSettingsFile>(&contents) {
+		Ok(settings) => settings,
+		Err(err) => {
+			eprintln!("Invalid launcher settings file: {err}");
+
+			return None;
+		},
+	};
 	let filter = settings.log_filter.as_deref()?.trim();
 
 	if filter.is_empty() {
@@ -97,6 +105,17 @@ fn load_log_filter_from_settings() -> Option<EnvFilter> {
 			None
 		},
 	}
+}
+
+fn launcher_settings_path() -> Option<PathBuf> {
+	let dirs = ProjectDirs::from("ink", "hack", "rsnap")?;
+
+	Some(dirs.config_dir().join("settings.toml"))
+}
+
+#[derive(Deserialize)]
+struct LauncherSettingsFile {
+	log_filter: Option<String>,
 }
 
 #[cfg(test)]
