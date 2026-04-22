@@ -37,13 +37,17 @@ The checked-in repository does not yet fully match the target design.
 
 Today:
 
-- `apps/rsnap/` is still the app shell and now exposes the runtime and native-host entry points
+- `apps/rsnap/` is now the thin launcher/bootstrap layer for the staged native host bundle
 - `packages/rsnap-overlay/` is still a large transitional runtime container, but its public root
   now centers on session/replay surfaces while remaining macOS host adapters stay behind explicit
   host modules
-- final-byte export effects now cross the boundary as explicit host-effect requests: the overlay
-  prepares authoritative export/OCR payloads, and `apps/rsnap/` owns clipboard, save, and
-  deferred OCR publication
+- `packages/rsnap-capture-core/` is now the checked-in landing zone for portable geometry,
+  semantic scene models, and the first durable host/core protocol types
+- `packages/rsnap-host-ffi/` is now the checked-in thin C ABI bridge for future native hosts and
+  ships the first checked-in header at `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
+- `native/macos-host/` is now the visible app shell and owns clipboard, save, and deferred OCR
+  publication for the reset lane, while the Rust core continues to prepare authoritative semantic
+  host-effect requests
 
 During the reset, treat these as implementation containers rather than the final architecture
 story.
@@ -72,6 +76,14 @@ Current reset posture for the scroll-capture slice:
   fail-closed product semantics
 - capability start/stop, frame delivery, and host-side failures must cross the boundary as explicit
   host/core protocol calls instead of implicit worker ownership inside the overlay runtime
+
+Current reset posture for the boundary slice:
+
+- durable geometry and scene protocol types now belong in `rsnap-capture-core`
+- native-host ABI entry points now belong in `rsnap-host-ffi`
+- targeted reset-slice validation now lives at `cargo make test-host-reset`
+- `apps/rsnap/` and `rsnap-overlay/` should treat those crates as the migration target instead of
+  inventing parallel durable protocol types inside legacy containers
 
 ## Vertical-slice model
 

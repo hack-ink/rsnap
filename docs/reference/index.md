@@ -48,7 +48,7 @@ Then keep the body descriptive:
 - `docs/reference/smoke-perf-validation-surface.md` for the current smoke/perf asset ownership
   map across scripts, replay, benches, runtime tests, and session tests
 - `docs/reference/workspace-layout.md` for workspace layout, crate boundaries, and local-only
-  directories
+  directories, including the new `rsnap-capture-core` and `rsnap-host-ffi` reset crates
 - `docs/reference/live-sampling.md` for the stream-first live RGB and loupe sampling path
 - `docs/reference/window-hit-testing.md` for live-mode hovered-window targeting strategy
 

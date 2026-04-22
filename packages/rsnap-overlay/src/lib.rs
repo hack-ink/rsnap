@@ -25,15 +25,10 @@ pub mod replay_support {
 pub mod session {
 	//! Rust-core session, protocol, and shared state exports consumed by the native app host.
 
-	#[cfg(target_os = "macos")]
-	pub use crate::deferred_text_recognition::{
-		DeferredTextRecognitionOutcome, DeferredTextRecognitionOutcomeKind,
-		DeferredTextRecognitionRequest,
-	};
 	pub use crate::overlay::{
-		AltActivationMode, FrozenGlobalHotkey, HudAnchor, OutputNaming, OverlayConfig,
-		OverlayControl, OverlayExit, OverlayHostEffectRequest, OverlayKeyboardInputEvent,
-		OverlaySession, ThemeMode, ToolbarPlacement, WindowCaptureAlphaMode,
+		AltActivationMode, FrozenGlobalHotkey, HudAnchor, OverlayConfig, OverlayControl,
+		OverlayExit, OverlayKeyboardInputEvent, OverlaySession, ThemeMode, ToolbarPlacement,
+		WindowCaptureAlphaMode,
 	};
 	#[cfg(target_os = "macos")]
 	pub use crate::overlay::{
@@ -42,6 +37,10 @@ pub mod session {
 	pub use crate::state::{
 		GlobalPoint, LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb,
 		WindowHit, WindowListSnapshot, WindowRect,
+	};
+	pub use rsnap_capture_core::{
+		DeferredTextRecognitionOutcome, DeferredTextRecognitionOutcomeKind,
+		DeferredTextRecognitionRequest, OutputNaming, PreparedHostEffectRequest,
 	};
 }
 #[cfg(target_os = "macos")]

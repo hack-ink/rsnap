@@ -1,0 +1,17 @@
+[package]
+authors.workspace     = true
+description = "Platform-neutral capture-session semantics and host/core protocol models for rsnap"
+edition.workspace     = true
+homepage.workspace    = true
+license.workspace     = true
+name                  = "rsnap-capture-core"
+readme.workspace      = true
+repository.workspace  = true
+version.workspace     = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+image = { workspace = true }
+serde = { workspace = true }

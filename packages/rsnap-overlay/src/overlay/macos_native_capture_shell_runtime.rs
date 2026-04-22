@@ -885,18 +885,16 @@ impl OverlaySession {
 	}
 }
 
-impl MonitorRect {
-	fn clamp_local_point(self, local_point: NSPoint) -> GlobalPoint {
-		let max_x = self.width.saturating_sub(1) as i32;
-		let max_y = self.height.saturating_sub(1) as i32;
-		let local_x = (local_point.x.round() as i32).clamp(0, max_x);
-		let local_y = (local_point.y.round() as i32).clamp(0, max_y);
+fn clamp_monitor_local_point(monitor: MonitorRect, local_point: NSPoint) -> GlobalPoint {
+	let max_x = monitor.width.saturating_sub(1) as i32;
+	let max_y = monitor.height.saturating_sub(1) as i32;
+	let local_x = (local_point.x.round() as i32).clamp(0, max_x);
+	let local_y = (local_point.y.round() as i32).clamp(0, max_y);
 
-		GlobalPoint::new(
-			self.origin.x.saturating_add(local_x),
-			self.origin.y.saturating_add(local_y),
-		)
-	}
+	GlobalPoint::new(
+		monitor.origin.x.saturating_add(local_x),
+		monitor.origin.y.saturating_add(local_y),
+	)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -926,7 +924,7 @@ impl MacOSPassiveShellCallback {
 			Self::Overlay { monitor, dispatch } => {
 				dispatch.enqueue(MacOSNativeCaptureInputEvent::OverlayPointerMoved {
 					monitor: *monitor,
-					global: monitor.clamp_local_point(local_point),
+					global: clamp_monitor_local_point(*monitor, local_point),
 				});
 			},
 			Self::Toolbar { state, dispatch } => {
@@ -968,7 +966,7 @@ impl MacOSPassiveShellCallback {
 
 				dispatch.enqueue(MacOSNativeCaptureInputEvent::OverlayMouseInput {
 					monitor: *monitor,
-					global: monitor.clamp_local_point(local_point),
+					global: clamp_monitor_local_point(*monitor, local_point),
 					button,
 					state,
 				});
