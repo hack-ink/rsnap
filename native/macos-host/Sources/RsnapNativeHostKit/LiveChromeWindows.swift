@@ -49,13 +49,32 @@ struct LiveStatusVisualSnapshot {
 	let message: String
 }
 
+struct FrozenToolbarVisualItemSnapshot {
+	let kind: ToolbarItemKind
+	let frame: CGRect
+	let enabled: Bool
+	let selected: Bool
+}
+
+struct FrozenToolbarVisualSnapshot {
+	let sourceWindowNumber: Int
+	let frame: CGRect
+	let theme: CaptureChromeTheme
+	let settings: NativeHostSettings
+	let items: [FrozenToolbarVisualItemSnapshot]
+}
+
 struct LiveChromeVisualSnapshot {
 	let hud: LiveHudVisualSnapshot?
 	let loupe: LiveLoupeVisualSnapshot?
 	let status: LiveStatusVisualSnapshot?
+	let toolbar: FrozenToolbarVisualSnapshot?
 
 	var sourceWindowNumber: Int? {
-		hud?.sourceWindowNumber ?? loupe?.sourceWindowNumber ?? status?.sourceWindowNumber
+		hud?.sourceWindowNumber
+			?? loupe?.sourceWindowNumber
+			?? status?.sourceWindowNumber
+			?? toolbar?.sourceWindowNumber
 	}
 }
 
@@ -63,6 +82,7 @@ private enum ChromeVisualKind {
 	case hud
 	case loupe
 	case status
+	case toolbar
 }
 
 @MainActor
@@ -185,6 +205,7 @@ private final class LiveChromeRenderView: NSView {
 	private var hudSnapshot: LiveHudVisualSnapshot?
 	private var loupeSnapshot: LiveLoupeVisualSnapshot?
 	private var statusSnapshot: LiveStatusVisualSnapshot?
+	private var toolbarSnapshot: FrozenToolbarVisualSnapshot?
 
 	init(kind: ChromeVisualKind, frame: CGRect) {
 		self.kind = kind
@@ -215,6 +236,11 @@ private final class LiveChromeRenderView: NSView {
 		needsDisplay = true
 	}
 
+	func update(toolbar snapshot: FrozenToolbarVisualSnapshot?) {
+		toolbarSnapshot = snapshot
+		needsDisplay = true
+	}
+
 	override func draw(_ dirtyRect: NSRect) {
 		super.draw(dirtyRect)
 		guard let context = NSGraphicsContext.current?.cgContext else {
@@ -227,6 +253,8 @@ private final class LiveChromeRenderView: NSView {
 			drawLoupe(in: context)
 		case .status:
 			drawStatus(in: context)
+		case .toolbar:
+			drawToolbar(in: context)
 		}
 	}
 
@@ -346,6 +374,28 @@ private final class LiveChromeRenderView: NSView {
 		)
 	}
 
+	private func drawToolbar(in context: CGContext) {
+		guard let snapshot = toolbarSnapshot else {
+			return
+		}
+		let frame = bounds
+		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
+		drawPill(in: frame, context: context, palette: palette, settings: snapshot.settings, strongShadow: false)
+
+		for item in snapshot.items {
+			if item.selected {
+				context.setFillColor(palette.toolbarSelectedBackground.cgColor)
+				let hoverPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
+				hoverPath.fill()
+			}
+
+			let symbolColor = item.enabled
+				? (item.selected ? palette.toolbarSelectedIcon : palette.toolbarIcon)
+				: palette.toolbarDisabledIcon
+			drawToolbarGlyph(item.kind, in: item.frame, color: symbolColor, context: context)
+		}
+	}
+
 	private func drawPill(
 		in frame: CGRect,
 		context: CGContext,
@@ -377,6 +427,134 @@ private final class LiveChromeRenderView: NSView {
 			.foregroundColor: color,
 		])
 	}
+
+	private func drawToolbarGlyph(
+		_ kind: ToolbarItemKind,
+		in rect: CGRect,
+		color: NSColor,
+		context: CGContext
+	) {
+		context.saveGState()
+		context.setStrokeColor(color.cgColor)
+		context.setFillColor(color.cgColor)
+		context.setLineWidth(1.7)
+		context.setLineCap(.round)
+		context.setLineJoin(.round)
+
+		let insetRect = rect.insetBy(dx: 5.5, dy: 5.5)
+		switch kind {
+		case .pointer:
+			let path = NSBezierPath()
+			path.move(to: CGPoint(x: insetRect.minX, y: insetRect.minY))
+			path.line(to: CGPoint(x: insetRect.maxX - 2, y: insetRect.midY - 1))
+			path.line(to: CGPoint(x: insetRect.midX + 0.5, y: insetRect.midY + 0.5))
+			path.line(to: CGPoint(x: insetRect.maxX, y: insetRect.maxY))
+			path.lineWidth = 1.6
+			path.stroke()
+		case .pen:
+			context.move(to: CGPoint(x: insetRect.minX + 1, y: insetRect.minY + 1))
+			context.addLine(to: CGPoint(x: insetRect.maxX - 2, y: insetRect.maxY - 2))
+			context.strokePath()
+			context.fillEllipse(in: CGRect(x: insetRect.maxX - 3.5, y: insetRect.maxY - 3.5, width: 3, height: 3))
+		case .arrow:
+			drawArrow(
+				from: CGPoint(x: insetRect.minX, y: insetRect.minY + 1),
+				to: CGPoint(x: insetRect.maxX, y: insetRect.maxY),
+				in: context
+			)
+		case .text:
+			let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+			drawText("T", at: CGPoint(x: rect.midX - 4, y: rect.midY - 7), color: color, font: font)
+		case .mosaic:
+			let size = insetRect.width / 3
+			for row in 0..<3 {
+				for column in 0..<3 {
+					if (row + column).isMultiple(of: 2) {
+						let cell = CGRect(
+							x: insetRect.minX + CGFloat(column) * size,
+							y: insetRect.minY + CGFloat(row) * size,
+							width: size - 1,
+							height: size - 1
+						)
+						context.fill(cell)
+					}
+				}
+			}
+		case .spotlight:
+			context.strokeEllipse(in: insetRect)
+			context.move(to: CGPoint(x: insetRect.maxX - 1, y: insetRect.minY + 2))
+			context.addLine(to: CGPoint(x: insetRect.maxX + 3, y: insetRect.minY - 2))
+			context.strokePath()
+		case .undo:
+			context.move(to: CGPoint(x: insetRect.maxX, y: insetRect.midY))
+			context.addQuadCurve(to: CGPoint(x: insetRect.minX + 3, y: insetRect.maxY - 1), control: CGPoint(x: insetRect.midX, y: insetRect.maxY + 2))
+			context.strokePath()
+			context.move(to: CGPoint(x: insetRect.minX + 3, y: insetRect.maxY - 1))
+			context.addLine(to: CGPoint(x: insetRect.minX + 2, y: insetRect.maxY - 5))
+			context.addLine(to: CGPoint(x: insetRect.minX + 6, y: insetRect.maxY - 3))
+			context.strokePath()
+		case .redo:
+			context.move(to: CGPoint(x: insetRect.minX, y: insetRect.midY))
+			context.addQuadCurve(to: CGPoint(x: insetRect.maxX - 3, y: insetRect.maxY - 1), control: CGPoint(x: insetRect.midX, y: insetRect.maxY + 2))
+			context.strokePath()
+			context.move(to: CGPoint(x: insetRect.maxX - 3, y: insetRect.maxY - 1))
+			context.addLine(to: CGPoint(x: insetRect.maxX - 6, y: insetRect.maxY - 3))
+			context.addLine(to: CGPoint(x: insetRect.maxX - 2, y: insetRect.maxY - 5))
+			context.strokePath()
+		case .autoCenter:
+			context.stroke(CGRect(x: insetRect.minX + 1, y: insetRect.minY + 1, width: insetRect.width - 2, height: insetRect.height - 2))
+			context.fillEllipse(in: CGRect(x: insetRect.midX - 1.6, y: insetRect.midY - 1.6, width: 3.2, height: 3.2))
+		case .scroll:
+			context.move(to: CGPoint(x: insetRect.midX, y: insetRect.maxY))
+			context.addLine(to: CGPoint(x: insetRect.midX, y: insetRect.minY + 2))
+			context.strokePath()
+			context.move(to: CGPoint(x: insetRect.midX - 3, y: insetRect.maxY - 3))
+			context.addLine(to: CGPoint(x: insetRect.midX, y: insetRect.maxY))
+			context.addLine(to: CGPoint(x: insetRect.midX + 3, y: insetRect.maxY - 3))
+			context.strokePath()
+			context.move(to: CGPoint(x: insetRect.midX - 3, y: insetRect.minY + 5))
+			context.addLine(to: CGPoint(x: insetRect.midX, y: insetRect.minY + 2))
+			context.addLine(to: CGPoint(x: insetRect.midX + 3, y: insetRect.minY + 5))
+			context.strokePath()
+		case .ocr:
+			let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+			drawText("OCR", at: CGPoint(x: rect.midX - 9, y: rect.midY - 6), color: color, font: font)
+		case .copy:
+			context.stroke(CGRect(x: insetRect.minX + 2, y: insetRect.minY + 1, width: insetRect.width - 4, height: insetRect.height - 4))
+			context.stroke(CGRect(x: insetRect.minX + 5, y: insetRect.minY + 4, width: insetRect.width - 4, height: insetRect.height - 4))
+		case .save:
+			context.stroke(CGRect(x: insetRect.minX + 1, y: insetRect.minY + 1, width: insetRect.width - 2, height: insetRect.height - 2))
+			context.fill(CGRect(x: insetRect.minX + 3, y: insetRect.maxY - 5, width: insetRect.width - 6, height: 3))
+			context.stroke(CGRect(x: insetRect.midX - 3, y: insetRect.minY + 3, width: 6, height: 4))
+		}
+
+		context.restoreGState()
+	}
+
+	private func drawArrow(from start: CGPoint, to end: CGPoint, in context: CGContext) {
+		context.beginPath()
+		context.move(to: start)
+		context.addLine(to: end)
+		context.strokePath()
+
+		let angle = atan2(end.y - start.y, end.x - start.x)
+		let headLength: CGFloat = 10
+		let headSpread: CGFloat = .pi / 7
+		let left = CGPoint(
+			x: end.x - cos(angle - headSpread) * headLength,
+			y: end.y - sin(angle - headSpread) * headLength
+		)
+		let right = CGPoint(
+			x: end.x - cos(angle + headSpread) * headLength,
+			y: end.y - sin(angle + headSpread) * headLength
+		)
+		context.beginPath()
+		context.move(to: end)
+		context.addLine(to: left)
+		context.move(to: end)
+		context.addLine(to: right)
+		context.strokePath()
+	}
 }
 
 @MainActor
@@ -384,6 +562,7 @@ final class LiveChromeVisualWindowController {
 	private let hudWindow = LiveChromeOverlayWindow(kind: .hud)
 	private let loupeWindow = LiveChromeOverlayWindow(kind: .loupe)
 	private let statusWindow = LiveChromeOverlayWindow(kind: .status)
+	private let toolbarWindow = LiveChromeOverlayWindow(kind: .toolbar)
 
 	func update(snapshot: LiveChromeVisualSnapshot?, focusedWindowNumber: Int?) {
 		guard let snapshot else {
@@ -414,9 +593,23 @@ final class LiveChromeVisualWindowController {
 		} else {
 			statusWindow.hide()
 		}
+
+		if let toolbar = snapshot.toolbar {
+			toolbarWindow.renderView.update(toolbar: toolbar)
+			toolbarWindow.update(frame: toolbar.frame, settings: toolbar.settings)
+		} else {
+			toolbarWindow.hide()
+		}
 	}
 
 	func hideAll() {
+		hudWindow.hide()
+		loupeWindow.hide()
+		statusWindow.hide()
+		toolbarWindow.hide()
+	}
+
+	func hideLiveWindows() {
 		hudWindow.hide()
 		loupeWindow.hide()
 		statusWindow.hide()

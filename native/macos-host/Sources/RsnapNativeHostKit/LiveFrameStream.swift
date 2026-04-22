@@ -12,7 +12,11 @@ final class LiveFrameStreamBroker {
 	}
 
 	private let stateLock = NSLock()
-	private let sampler: RsnapLiveSampler?
+	private let samplerReleaseQueue = DispatchQueue(
+		label: "ink.hack.rsnap.live-frame-stream.release",
+		qos: .utility
+	)
+	private var sampler: RsnapLiveSampler?
 	private var monitors: [SamplerMonitor] = []
 	private var mainDisplayHeight: CGFloat = 0
 
@@ -21,6 +25,11 @@ final class LiveFrameStreamBroker {
 	}
 
 	func start(for screens: [NSScreen], prewarmPoint: CGPoint? = nil) {
+		stateLock.lock()
+		if sampler == nil {
+			sampler = try? RsnapLiveSampler()
+		}
+		stateLock.unlock()
 		stateLock.lock()
 		let mainDisplayHeight = Self.mainDisplayHeight(for: screens)
 		self.mainDisplayHeight = mainDisplayHeight
@@ -36,12 +45,23 @@ final class LiveFrameStreamBroker {
 
 	func stop() {
 		stateLock.lock()
+		let retiringSampler = sampler
 		monitors.removeAll()
 		mainDisplayHeight = 0
+		sampler = nil
 		stateLock.unlock()
+		guard let retiringSampler else {
+			return
+		}
+		samplerReleaseQueue.async {
+			withExtendedLifetime(retiringSampler) {}
+		}
 	}
 
 	func sample(at point: CGPoint, sidePixels: Int) -> LiveChromeSample? {
+		stateLock.lock()
+		let sampler = self.sampler
+		stateLock.unlock()
 		guard let sampler, let monitor = monitor(containing: point) else {
 			return nil
 		}
@@ -81,6 +101,9 @@ final class LiveFrameStreamBroker {
 	}
 
 	private func prime(monitor: SamplerMonitor) {
+		stateLock.lock()
+		let sampler = self.sampler
+		stateLock.unlock()
 		guard let sampler else {
 			return
 		}
