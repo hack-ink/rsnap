@@ -7,11 +7,13 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 7u
+#define RSNAP_HOST_FFI_ABI_VERSION 8u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
+#define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
 
 typedef struct RsnapSessionHandle RsnapSessionHandle;
+typedef struct RsnapLiveSamplerHandle RsnapLiveSamplerHandle;
 
 typedef enum RsnapStatus {
 	RSNAP_STATUS_OK = 0,
@@ -208,9 +210,20 @@ typedef struct RsnapHostRequestValue {
 	uint32_t kind;
 } RsnapHostRequestValue;
 
+typedef struct RsnapLiveSample {
+	struct RsnapRgb rgb;
+	uint8_t has_rgb;
+	uint32_t patch_width;
+	uint32_t patch_height;
+	uint32_t patch_len;
+	uint8_t patch_rgba[RSNAP_LIVE_SAMPLE_PATCH_CAPACITY];
+} RsnapLiveSample;
+
 uint32_t rsnap_host_ffi_abi_version(void);
 RsnapSessionHandle *rsnap_session_create(struct RsnapSessionConfig config);
+RsnapLiveSamplerHandle *rsnap_live_sampler_create(void);
 void rsnap_session_destroy(RsnapSessionHandle *handle);
+void rsnap_live_sampler_destroy(RsnapLiveSamplerHandle *handle);
 enum RsnapStatus rsnap_session_enter_live(RsnapSessionHandle *handle);
 enum RsnapStatus rsnap_session_handle_host_event(
 	RsnapSessionHandle *handle,
@@ -227,6 +240,14 @@ enum RsnapStatus rsnap_session_copy_scene_model(
 enum RsnapStatus rsnap_session_take_next_request(
 	RsnapSessionHandle *handle,
 	struct RsnapHostRequestValue *out_request
+);
+enum RsnapStatus rsnap_live_sampler_sample_cursor(
+	RsnapLiveSamplerHandle *handle,
+	struct RsnapMonitorRect monitor,
+	struct RsnapPoint point,
+	uint32_t patch_width_px,
+	uint32_t patch_height_px,
+	struct RsnapLiveSample *out_sample
 );
 
 #ifdef __cplusplus

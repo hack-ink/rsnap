@@ -64,6 +64,8 @@ pub mod host_macos {
 		MacOSScrollCaptureCapability, MacOSScrollCaptureCapabilityEvent,
 	};
 }
+#[cfg(target_os = "macos")]
+pub mod host_live_sampling_macos;
 
 mod backend;
 #[cfg(target_os = "macos")]

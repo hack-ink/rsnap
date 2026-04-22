@@ -27,6 +27,25 @@ public struct RGBSample: Equatable, Sendable {
 	}
 }
 
+public struct LiveSampleSnapshot: Equatable, Sendable {
+	public var rgb: RGBSample?
+	public var patchWidth: Int
+	public var patchHeight: Int
+	public var patchRGBA: Data?
+
+	public init(
+		rgb: RGBSample?,
+		patchWidth: Int = 0,
+		patchHeight: Int = 0,
+		patchRGBA: Data? = nil
+	) {
+		self.rgb = rgb
+		self.patchWidth = patchWidth
+		self.patchHeight = patchHeight
+		self.patchRGBA = patchRGBA
+	}
+}
+
 public struct MonitorSnapshot: Equatable, Sendable {
 	public var id: UInt32
 	public var frame: CGRect
@@ -600,6 +619,79 @@ public final class RsnapHostSession {
 				width: Int(window.width),
 				height: Int(window.height)
 			)
+		)
+	}
+}
+
+public final class RsnapLiveSampler: @unchecked Sendable {
+	private let handle: OpaquePointer
+	private let stateLock = NSLock()
+
+	public init() throws {
+		let actualAbi = rsnap_host_ffi_abi_version()
+		if actualAbi != RSNAP_HOST_FFI_ABI_VERSION {
+			throw HostBridgeError.abiVersionMismatch(
+				expected: RSNAP_HOST_FFI_ABI_VERSION,
+				actual: actualAbi
+			)
+		}
+		guard let handle = rsnap_live_sampler_create() else {
+			throw HostBridgeError.sessionCreationFailed
+		}
+		self.handle = handle
+	}
+
+	deinit {
+		rsnap_live_sampler_destroy(handle)
+	}
+
+	public func sampleCursor(
+		monitor: MonitorSnapshot,
+		point: CGPoint,
+		patchSidePixels: Int
+	) throws -> LiveSampleSnapshot? {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		var outSample = RsnapLiveSample()
+		let status = rsnap_live_sampler_sample_cursor(
+			handle,
+			RsnapMonitorRect(
+				id: monitor.id,
+				origin: RsnapPoint(
+					x: Int32(monitor.frame.origin.x.rounded()),
+					y: Int32(monitor.frame.origin.y.rounded())
+				),
+				width: UInt32(max(monitor.frame.width.rounded(), 0)),
+				height: UInt32(max(monitor.frame.height.rounded(), 0)),
+				scale_factor_x1000: monitor.scaleFactorX1000
+			),
+			RsnapPoint(x: Int32(point.x.rounded()), y: Int32(point.y.rounded())),
+			UInt32(max(patchSidePixels, 0)),
+			UInt32(max(patchSidePixels, 0)),
+			&outSample
+		)
+		let code = rsnap_status_code(status)
+		if code == 3 {
+			return nil
+		}
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: "sampling live cursor", code: code)
+		}
+
+		let patchData: Data? = withUnsafeBytes(of: outSample.patch_rgba) { rawBuffer in
+			let count = min(Int(outSample.patch_len), rawBuffer.count)
+			guard count > 0 else {
+				return nil
+			}
+			return Data(rawBuffer.prefix(count))
+		}
+
+		return LiveSampleSnapshot(
+			rgb: outSample.has_rgb == 0 ? nil : RGBSample(r: outSample.rgb.r, g: outSample.rgb.g, b: outSample.rgb.b),
+			patchWidth: Int(outSample.patch_width),
+			patchHeight: Int(outSample.patch_height),
+			patchRGBA: patchData
 		)
 	}
 }

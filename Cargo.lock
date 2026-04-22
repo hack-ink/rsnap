@@ -3401,6 +3401,7 @@ name = "rsnap-host-ffi"
 version = "0.1.0"
 dependencies = [
  "rsnap-capture-core",
+ "rsnap-overlay",
 ]
 
 [[package]]

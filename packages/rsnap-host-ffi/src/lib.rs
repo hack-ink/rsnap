@@ -11,15 +11,27 @@ use rsnap_capture_core::{
 	HostEvent, HostReport, HostRequest, MonitorRect, PermissionKind, PlatformTag, Rgb,
 	SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
 };
+#[cfg(target_os = "macos")]
+use rsnap_overlay::{
+	host_live_sampling_macos::HostMacLiveSampler,
+	session::{GlobalPoint as OverlayGlobalPoint, MonitorRect as OverlayMonitorRect},
+};
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 7;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 8;
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
+const RSNAP_LIVE_SAMPLE_PATCH_CAPACITY: usize = 4096;
 
 /// Opaque session handle owned by the native host through the C ABI.
 pub struct RsnapSessionHandle {
 	session: CaptureSessionCore,
+}
+
+#[cfg(target_os = "macos")]
+/// Opaque live-sampler handle owned by the native host through the C ABI.
+pub struct RsnapLiveSamplerHandle {
+	sampler: HostMacLiveSampler,
 }
 
 /// Result code returned by FFI entry points.
@@ -34,6 +46,37 @@ pub enum RsnapStatus {
 	NullOutput = 2,
 	/// No queued value was available.
 	Empty = 3,
+}
+
+/// FFI-safe live cursor sample copied out of the native Rust sampler.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RsnapLiveSample {
+	/// Sampled RGB value.
+	pub rgb: RsnapRgb,
+	/// Non-zero when `rgb` is present.
+	pub has_rgb: u8,
+	/// Sampled loupe patch width in pixels.
+	pub patch_width: u32,
+	/// Sampled loupe patch height in pixels.
+	pub patch_height: u32,
+	/// Byte count copied into `patch_rgba`.
+	pub patch_len: u32,
+	/// Optional RGBA patch bytes in row-major order.
+	pub patch_rgba: [u8; RSNAP_LIVE_SAMPLE_PATCH_CAPACITY],
+}
+
+impl Default for RsnapLiveSample {
+	fn default() -> Self {
+		Self {
+			rgb: RsnapRgb::default(),
+			has_rgb: 0,
+			patch_width: 0,
+			patch_height: 0,
+			patch_len: 0,
+			patch_rgba: [0; RSNAP_LIVE_SAMPLE_PATCH_CAPACITY],
+		}
+	}
 }
 
 /// FFI-safe platform tag.
@@ -458,6 +501,19 @@ pub extern "C" fn rsnap_host_ffi_abi_version() -> u32 {
 	RSNAP_HOST_FFI_ABI_VERSION
 }
 
+/// Creates a new opaque live-sampler handle for the native host.
+///
+/// # Safety
+///
+/// The returned pointer must be released by calling `rsnap_live_sampler_destroy`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_create() -> *mut RsnapLiveSamplerHandle {
+	Box::into_raw(Box::new(RsnapLiveSamplerHandle {
+		sampler: HostMacLiveSampler::new(),
+	}))
+}
+
 /// Destroys an opaque session handle.
 ///
 /// # Safety
@@ -466,6 +522,21 @@ pub extern "C" fn rsnap_host_ffi_abi_version() -> u32 {
 /// has not already been destroyed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rsnap_session_destroy(handle: *mut RsnapSessionHandle) {
+	if let Some(handle) = NonNull::new(handle) {
+		unsafe {
+			drop(Box::from_raw(handle.as_ptr()));
+		}
+	}
+}
+
+/// Destroys an opaque live-sampler handle.
+///
+/// # Safety
+///
+/// The pointer must either be null or a pointer returned by `rsnap_live_sampler_create`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_destroy(handle: *mut RsnapLiveSamplerHandle) {
 	if let Some(handle) = NonNull::new(handle) {
 		unsafe {
 			drop(Box::from_raw(handle.as_ptr()));
@@ -583,12 +654,74 @@ pub unsafe extern "C" fn rsnap_session_take_next_request(
 	RsnapStatus::Ok
 }
 
+/// Samples the current live RGB value and optional loupe patch through the proven
+/// Rust ScreenCaptureKit path.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_live_sampler_create`, and
+/// `out_sample` must be a valid writable pointer.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_sample_cursor(
+	handle: *mut RsnapLiveSamplerHandle,
+	monitor: RsnapMonitorRect,
+	point: RsnapPoint,
+	patch_width_px: u32,
+	patch_height_px: u32,
+	out_sample: *mut RsnapLiveSample,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	if out_sample.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let sample = handle.sampler.sample_cursor(
+		decode_overlay_monitor(monitor),
+		decode_overlay_point(point),
+		patch_width_px,
+		patch_height_px,
+	);
+	let mut out = RsnapLiveSample::default();
+	if let Some(rgb) = sample.rgb {
+		out.rgb = RsnapRgb { r: rgb.r, g: rgb.g, b: rgb.b };
+		out.has_rgb = 1;
+	}
+	if let Some(patch) = sample.patch {
+		let bytes = patch.as_raw();
+		let len = bytes.len().min(RSNAP_LIVE_SAMPLE_PATCH_CAPACITY);
+		out.patch_width = patch.width();
+		out.patch_height = patch.height();
+		out.patch_len = len as u32;
+		out.patch_rgba[..len].copy_from_slice(&bytes[..len]);
+	}
+
+	unsafe {
+		ptr::write(out_sample, out);
+	}
+
+	if out.has_rgb == 0 && out.patch_len == 0 {
+		return RsnapStatus::Empty;
+	}
+
+	RsnapStatus::Ok
+}
+
 unsafe fn handle_mut<'a>(handle: *mut RsnapSessionHandle) -> Option<&'a mut RsnapSessionHandle> {
 	unsafe { handle.as_mut() }
 }
 
 unsafe fn handle_ref<'a>(handle: *const RsnapSessionHandle) -> Option<&'a RsnapSessionHandle> {
 	unsafe { handle.as_ref() }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn live_sampler_handle_mut<'a>(
+	handle: *mut RsnapLiveSamplerHandle,
+) -> Option<&'a mut RsnapLiveSamplerHandle> {
+	unsafe { handle.as_mut() }
 }
 
 fn decode_session_config(config: RsnapSessionConfig) -> SessionConfig {
@@ -914,6 +1047,11 @@ fn decode_point(point: RsnapPoint) -> GlobalPoint {
 	GlobalPoint::new(point.x, point.y)
 }
 
+#[cfg(target_os = "macos")]
+fn decode_overlay_point(point: RsnapPoint) -> OverlayGlobalPoint {
+	OverlayGlobalPoint::new(point.x, point.y)
+}
+
 fn encode_rgb(rgb: Rgb) -> RsnapRgb {
 	RsnapRgb { r: rgb.r, g: rgb.g, b: rgb.b }
 }
@@ -926,6 +1064,17 @@ fn encode_monitor(monitor: MonitorRect) -> RsnapMonitorRect {
 	RsnapMonitorRect {
 		id: monitor.id,
 		origin: encode_point(monitor.origin),
+		width: monitor.width,
+		height: monitor.height,
+		scale_factor_x1000: monitor.scale_factor_x1000,
+	}
+}
+
+#[cfg(target_os = "macos")]
+fn decode_overlay_monitor(monitor: RsnapMonitorRect) -> OverlayMonitorRect {
+	OverlayMonitorRect {
+		id: monitor.id,
+		origin: OverlayGlobalPoint::new(monitor.origin.x, monitor.origin.y),
 		width: monitor.width,
 		height: monitor.height,
 		scale_factor_x1000: monitor.scale_factor_x1000,
