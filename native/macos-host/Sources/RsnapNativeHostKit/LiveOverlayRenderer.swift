@@ -51,6 +51,7 @@ private enum LiveOverlayTypography {
 
 final class WindowSnapshotFeed {
 	private let ownPID = ProcessInfo.processInfo.processIdentifier
+	private let maxWindowLayerForTargeting = 3
 	private let queue = DispatchQueue(label: "ink.hack.rsnap.native-host.window-snapshot-feed", qos: .userInitiated)
 	private let stateLock = NSLock()
 	private var timer: DispatchSourceTimer?
@@ -97,8 +98,9 @@ final class WindowSnapshotFeed {
 			?? []
 		var snapshots: [WindowSnapshot] = []
 		for info in candidateWindows {
+			let isOnScreen = (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false
 			let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? -1
-			if ownerPID == ownPID {
+			if !isOnScreen || ownerPID == ownPID {
 				continue
 			}
 			let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
@@ -106,7 +108,7 @@ final class WindowSnapshotFeed {
 				continue
 			}
 			let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
-			if layer < 0 {
+			if layer < 0 || layer > maxWindowLayerForTargeting {
 				continue
 			}
 			guard let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary else {
@@ -395,6 +397,424 @@ final class LiveDisplayLinkDriver: @unchecked Sendable {
 	}
 }
 
+private final class SelectionFlowBandLayer: CALayer {
+	private struct SamplePoint {
+		let point: CGPoint
+		let progress: CGFloat
+	}
+
+	private static let cornerRadius: CGFloat = 9.0
+	private static let minSegments = 160
+	private static let maxSegments = 1_536
+	private static let sampleStep: CGFloat = 3.2
+	private static let speed: CGFloat = 0.24
+	private static let bandWidth: CGFloat = 0.06
+	private static let flowBoost: CGFloat = 2.8
+	private static let phaseMultiplier: CGFloat = 1.28
+	private static let phaseOffset: CGFloat = 0.72
+	private static let darkPalette: [(CGFloat, CGFloat, CGFloat)] = [
+		(196.0 / 255.0, 226.0 / 255.0, 1.0),
+		(228.0 / 255.0, 198.0 / 255.0, 1.0),
+		(176.0 / 255.0, 244.0 / 255.0, 224.0 / 255.0),
+	]
+	private static let lightPalette = darkPalette
+	private static let passes: [(width: CGFloat, alphaScale: CGFloat)] = [
+		(2.4, 0.52),
+	]
+
+	private var focusRect: CGRect = .null
+	private var theme: CaptureChromeTheme = .dark
+	private var phase: CGFloat = 0
+
+	override init() {
+		super.init()
+		contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+		isOpaque = false
+		needsDisplayOnBoundsChange = true
+	}
+
+	override init(layer: Any) {
+		super.init(layer: layer)
+		if let layer = layer as? SelectionFlowBandLayer {
+			focusRect = layer.focusRect
+			theme = layer.theme
+			phase = layer.phase
+		}
+	}
+
+	required init?(coder: NSCoder) {
+		fatalError("init(coder:) has not been implemented")
+	}
+
+	func hide() {
+		guard !isHidden || !focusRect.isNull else {
+			return
+		}
+		isHidden = true
+		focusRect = .null
+	}
+
+	func update(
+		frame: CGRect,
+		focusRect: CGRect,
+		theme: CaptureChromeTheme,
+		timestamp: CFTimeInterval,
+		contentsScale: CGFloat
+	) {
+		self.frame = frame
+		self.contentsScale = contentsScale
+		self.focusRect = focusRect
+		self.theme = theme
+		phase = CGFloat(timestamp) * Self.speed * Self.phaseMultiplier + Self.phaseOffset
+		isHidden = false
+		setNeedsDisplay()
+	}
+
+	override func draw(in ctx: CGContext) {
+		guard !focusRect.isNull else {
+			return
+		}
+		let cornerRadius = selectionFlowCornerRadius(for: focusRect)
+		let perimeter = selectionFlowPerimeter(for: focusRect, cornerRadius: cornerRadius)
+		let sampleCount = selectionFlowSampleCount(for: perimeter)
+		let seamOffset: CGFloat
+		if focusRect.width > cornerRadius * 2 {
+			seamOffset = (focusRect.width - cornerRadius * 2) * 0.5
+		} else {
+			seamOffset = 0
+		}
+		let samples = selectionFlowSamples(
+			for: focusRect,
+			cornerRadius: cornerRadius,
+			sampleCount: sampleCount,
+			startOffset: seamOffset
+		)
+		let normals = selectionFlowNormals(for: samples)
+		guard samples.count > 1, normals.count == samples.count else {
+			return
+		}
+		ctx.setAllowsAntialiasing(true)
+		ctx.setShouldAntialias(true)
+		for pass in Self.passes {
+			let half = max(pass.width * 0.5, 0.1)
+			for index in samples.indices {
+				let current = samples[index]
+				let next = samples[(index + 1) % samples.count]
+				let currentMovement = selectionFlowBand(
+					progress: current.progress,
+					phase: phase,
+					bandWidth: Self.bandWidth
+				)
+				let nextMovement = selectionFlowBand(
+					progress: next.progress,
+					phase: phase,
+					bandWidth: Self.bandWidth
+				)
+				let currentIntensity = Self.flowBoost * currentMovement
+				let nextIntensity = Self.flowBoost * nextMovement
+				let currentColor = selectionFlowColor(
+					progress: current.progress + phase,
+					alphaScale: pass.alphaScale,
+					intensity: currentIntensity
+				)
+				let nextColor = selectionFlowColor(
+					progress: next.progress + phase,
+					alphaScale: pass.alphaScale,
+					intensity: nextIntensity
+				)
+				let color = averagedColor(currentColor, nextColor)
+				if color.alphaComponent <= 0.002 {
+					continue
+				}
+				let currentNormal = scaledVector(normals[index], by: half)
+				let nextNormal = scaledVector(normals[(index + 1) % normals.count], by: half)
+				let quad = CGMutablePath()
+				quad.move(to: offset(current.point, by: currentNormal))
+				quad.addLine(to: offset(next.point, by: nextNormal))
+				quad.addLine(to: offset(next.point, by: scaledVector(nextNormal, by: -1)))
+				quad.addLine(to: offset(current.point, by: scaledVector(currentNormal, by: -1)))
+				quad.closeSubpath()
+				ctx.setFillColor(color.cgColor)
+				ctx.addPath(quad)
+				ctx.fillPath()
+			}
+		}
+	}
+
+	private func selectionFlowCornerRadius(for rect: CGRect) -> CGFloat {
+		max(
+			0,
+			min(
+				Self.cornerRadius,
+				min(rect.width / 2 - 0.25, rect.height / 2 - 0.25)
+			)
+		)
+	}
+
+	private func selectionFlowSampleCount(for perimeter: CGFloat) -> Int {
+		guard perimeter > 0, perimeter.isFinite else {
+			return Self.minSegments
+		}
+		let byStep = Int(ceil(perimeter / Self.sampleStep))
+		return min(max(byStep, Self.minSegments), Self.maxSegments)
+	}
+
+	private func selectionFlowBand(
+		progress: CGFloat,
+		phase: CGFloat,
+		bandWidth: CGFloat
+	) -> CGFloat {
+		let width = min(max(bandWidth, 0.001), 0.5)
+		let wrapped = (progress - phase).truncatingRemainder(dividingBy: 1)
+		let distance = wrapped >= 0 ? wrapped : wrapped + 1
+		let shortest = min(distance, 1 - distance)
+		let normalized = min(shortest / width, 1)
+		return pow(1 - normalized, 2)
+	}
+
+	private func selectionFlowColor(
+		progress: CGFloat,
+		alphaScale: CGFloat,
+		intensity: CGFloat
+	) -> NSColor {
+		let palette = theme == .dark ? Self.darkPalette : Self.lightPalette
+		let normalized = progress.truncatingRemainder(dividingBy: 1) >= 0
+			? progress.truncatingRemainder(dividingBy: 1)
+			: progress.truncatingRemainder(dividingBy: 1) + 1
+		let bandPosition = normalized * CGFloat(palette.count)
+		let bandIndex = Int(floor(bandPosition)) % palette.count
+		let local = bandPosition - CGFloat(bandIndex)
+		let current = palette[bandIndex]
+		let next = palette[(bandIndex + 1) % palette.count]
+		let blend = { (lhs: CGFloat, rhs: CGFloat) in lhs + (rhs - lhs) * local }
+		let alpha = min(max(alphaScale * intensity, 0), 1)
+		return NSColor(
+			red: blend(current.0, next.0),
+			green: blend(current.1, next.1),
+			blue: blend(current.2, next.2),
+			alpha: alpha
+		)
+	}
+
+	private func selectionFlowSamples(
+		for rect: CGRect,
+		cornerRadius: CGFloat,
+		sampleCount: Int,
+		startOffset: CGFloat
+	) -> [SamplePoint] {
+		let perimeter = selectionFlowPerimeter(for: rect, cornerRadius: cornerRadius)
+		guard perimeter > 0 else {
+			return []
+		}
+		let start = (startOffset / perimeter).truncatingRemainder(dividingBy: 1)
+		return (0..<sampleCount).map { index in
+			let t = (CGFloat(index) + 0.5) / CGFloat(sampleCount)
+			let progress = (t + start).truncatingRemainder(dividingBy: 1)
+			return SamplePoint(
+				point: selectionFlowPoint(
+					for: rect,
+					cornerRadius: cornerRadius,
+					distance: perimeter * progress
+				),
+				progress: t
+			)
+		}
+	}
+
+	private func selectionFlowNormals(for samples: [SamplePoint]) -> [CGVector] {
+		let count = samples.count
+		guard count > 0 else {
+			return []
+		}
+		var normals = Array(repeating: CGVector(dx: 0, dy: 0), count: count)
+		var firstNonZero: Int?
+		for index in 0..<count {
+			let current = samples[index].point
+			let previous = samples[(index + count - 1) % count].point
+			let next = samples[(index + 1) % count].point
+			let previousTangent = CGVector(dx: current.x - previous.x, dy: current.y - previous.y)
+			let nextTangent = CGVector(dx: next.x - current.x, dy: next.y - current.y)
+			var normal = CGVector(dx: 0, dy: 0)
+			if lengthSquared(previousTangent) > CGFloat.ulpOfOne {
+				let previousLength = length(previousTangent)
+				normal.dx += -previousTangent.dy / previousLength
+				normal.dy += previousTangent.dx / previousLength
+			}
+			if lengthSquared(nextTangent) > CGFloat.ulpOfOne {
+				let nextLength = length(nextTangent)
+				normal.dx += -nextTangent.dy / nextLength
+				normal.dy += nextTangent.dx / nextLength
+			}
+			if lengthSquared(normal) <= CGFloat.ulpOfOne {
+				if lengthSquared(nextTangent) > CGFloat.ulpOfOne {
+					let nextLength = length(nextTangent)
+					normal = CGVector(dx: -nextTangent.dy / nextLength, dy: nextTangent.dx / nextLength)
+				} else if lengthSquared(previousTangent) > CGFloat.ulpOfOne {
+					let previousLength = length(previousTangent)
+					normal = CGVector(dx: -previousTangent.dy / previousLength, dy: previousTangent.dx / previousLength)
+				}
+			}
+			if lengthSquared(normal) > CGFloat.ulpOfOne {
+				let normalized = scaledVector(normal, by: 1 / length(normal))
+				if firstNonZero == nil {
+					firstNonZero = index
+				}
+				normals[index] = normalized
+			}
+		}
+		if let firstNonZero {
+			var previous = normals[firstNonZero]
+			if lengthSquared(previous) > CGFloat.ulpOfOne {
+				for index in (firstNonZero + 1)..<count {
+					if lengthSquared(normals[index]) > CGFloat.ulpOfOne, dot(normals[index], previous) < 0 {
+						normals[index] = scaledVector(normals[index], by: -1)
+					}
+					if lengthSquared(normals[index]) > CGFloat.ulpOfOne {
+						previous = normals[index]
+					}
+				}
+				if firstNonZero > 0 {
+					for index in stride(from: firstNonZero - 1, through: 0, by: -1) {
+						if lengthSquared(normals[index]) > CGFloat.ulpOfOne, dot(normals[index], previous) < 0 {
+							normals[index] = scaledVector(normals[index], by: -1)
+						}
+						if lengthSquared(normals[index]) > CGFloat.ulpOfOne {
+							previous = normals[index]
+						}
+					}
+				}
+			}
+		}
+		return normals
+	}
+
+	private func selectionFlowPerimeter(for rect: CGRect, cornerRadius: CGFloat) -> CGFloat {
+		let edgeTop = max(rect.width - cornerRadius * 2, 0)
+		let edgeRight = max(rect.height - cornerRadius * 2, 0)
+		let cornerLength = (.pi / 2) * cornerRadius
+		return 2 * (edgeTop + edgeRight) + 4 * cornerLength
+	}
+
+	private func selectionFlowPoint(
+		for rect: CGRect,
+		cornerRadius: CGFloat,
+		distance: CGFloat
+	) -> CGPoint {
+		if cornerRadius <= .ulpOfOne {
+			let perimeter = selectionFlowPerimeter(for: rect, cornerRadius: 0)
+			let keep = distance.truncatingRemainder(dividingBy: perimeter)
+			let edgeTop = rect.width
+			let edgeRight = rect.height
+			if keep < edgeTop {
+				return CGPoint(x: rect.minX + keep, y: rect.minY)
+			}
+			if keep < edgeTop + edgeRight {
+				return CGPoint(x: rect.maxX, y: rect.minY + (keep - edgeTop))
+			}
+			if keep < edgeTop * 2 + edgeRight {
+				return CGPoint(x: rect.maxX - (keep - edgeTop - edgeRight), y: rect.maxY)
+			}
+			return CGPoint(
+				x: rect.minX,
+				y: rect.maxY - (keep - edgeTop * 2 - edgeRight)
+			)
+		}
+
+		let x0 = rect.minX
+		let x1 = rect.maxX
+		let y0 = rect.minY
+		let y1 = rect.maxY
+		let perimeter = selectionFlowPerimeter(for: rect, cornerRadius: cornerRadius)
+		var remain = distance.truncatingRemainder(dividingBy: perimeter)
+		if remain < 0 {
+			remain += perimeter
+		}
+		let edgeTop = max(rect.width - cornerRadius * 2, 0)
+		let edgeRight = max(rect.height - cornerRadius * 2, 0)
+		let cornerLength = (.pi / 2) * cornerRadius
+
+		if remain < edgeTop {
+			return CGPoint(x: x0 + cornerRadius + remain, y: y0)
+		}
+		remain -= edgeTop
+		if remain < cornerLength {
+			let angle = -(.pi / 2) + remain / cornerRadius
+			return CGPoint(
+				x: x1 - cornerRadius + cornerRadius * cos(angle),
+				y: y0 + cornerRadius + cornerRadius * sin(angle)
+			)
+		}
+		remain -= cornerLength
+		if remain < edgeRight {
+			return CGPoint(x: x1, y: y0 + cornerRadius + remain)
+		}
+		remain -= edgeRight
+		if remain < cornerLength {
+			let angle = remain / cornerRadius
+			return CGPoint(
+				x: x1 - cornerRadius + cornerRadius * cos(angle),
+				y: y1 - cornerRadius + cornerRadius * sin(angle)
+			)
+		}
+		remain -= cornerLength
+		if remain < edgeTop {
+			return CGPoint(x: x1 - cornerRadius - remain, y: y1)
+		}
+		remain -= edgeTop
+		if remain < cornerLength {
+			let angle = (.pi / 2) + remain / cornerRadius
+			return CGPoint(
+				x: x0 + cornerRadius + cornerRadius * cos(angle),
+				y: y1 - cornerRadius + cornerRadius * sin(angle)
+			)
+		}
+		remain -= cornerLength
+		if remain < edgeRight {
+			return CGPoint(x: x0, y: y1 - cornerRadius - remain)
+		}
+		remain -= edgeRight
+		if remain < cornerLength {
+			let angle = .pi + remain / cornerRadius
+			return CGPoint(
+				x: x0 + cornerRadius + cornerRadius * cos(angle),
+				y: y0 + cornerRadius + cornerRadius * sin(angle)
+			)
+		}
+		return CGPoint(x: x0 + cornerRadius, y: y0)
+	}
+
+	private func averagedColor(_ lhs: NSColor, _ rhs: NSColor) -> NSColor {
+		let left = lhs.usingColorSpace(.deviceRGB) ?? lhs
+		let right = rhs.usingColorSpace(.deviceRGB) ?? rhs
+		return NSColor(
+			red: (left.redComponent + right.redComponent) * 0.5,
+			green: (left.greenComponent + right.greenComponent) * 0.5,
+			blue: (left.blueComponent + right.blueComponent) * 0.5,
+			alpha: (left.alphaComponent + right.alphaComponent) * 0.5
+		)
+	}
+
+	private func offset(_ point: CGPoint, by vector: CGVector) -> CGPoint {
+		CGPoint(x: point.x + vector.dx, y: point.y + vector.dy)
+	}
+
+	private func scaledVector(_ vector: CGVector, by scalar: CGFloat) -> CGVector {
+		CGVector(dx: vector.dx * scalar, dy: vector.dy * scalar)
+	}
+
+	private func dot(_ lhs: CGVector, _ rhs: CGVector) -> CGFloat {
+		lhs.dx * rhs.dx + lhs.dy * rhs.dy
+	}
+
+	private func lengthSquared(_ vector: CGVector) -> CGFloat {
+		vector.dx * vector.dx + vector.dy * vector.dy
+	}
+
+	private func length(_ vector: CGVector) -> CGFloat {
+		sqrt(lengthSquared(vector))
+	}
+}
+
 @MainActor
 final class LiveOverlayRenderer {
 	private weak var hostView: NSView?
@@ -406,6 +826,7 @@ final class LiveOverlayRenderer {
 	private let rightScrimLayer = CALayer()
 	private let bottomScrimLayer = CALayer()
 	private let hoverGlowLayer = CAShapeLayer()
+	private let hoverFlowLayer = SelectionFlowBandLayer()
 	private let dragBorderOutlineLayer = CAShapeLayer()
 	private let dragBorderLayer = CAShapeLayer()
 	private let selectionSizeLayer = CATextLayer()
@@ -485,6 +906,8 @@ final class LiveOverlayRenderer {
 		hoverGlowLayer.shadowRadius = 12
 		rootLayer.addSublayer(hoverGlowLayer)
 
+		rootLayer.addSublayer(hoverFlowLayer)
+
 		dragBorderOutlineLayer.fillColor = NSColor.clear.cgColor
 		rootLayer.addSublayer(dragBorderOutlineLayer)
 
@@ -541,6 +964,7 @@ final class LiveOverlayRenderer {
 		guard let focusRect else {
 			[topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer].forEach { $0.isHidden = true }
 			hoverGlowLayer.isHidden = true
+			hoverFlowLayer.hide()
 			dragBorderOutlineLayer.isHidden = true
 			dragBorderLayer.isHidden = true
 			selectionSizeLayer.isHidden = true
@@ -564,6 +988,7 @@ final class LiveOverlayRenderer {
 
 		if snapshot.frozenPending {
 			hoverGlowLayer.isHidden = true
+			hoverFlowLayer.hide()
 			dragBorderOutlineLayer.isHidden = false
 			dragBorderLayer.isHidden = false
 			selectionSizeLayer.isHidden = true
@@ -589,6 +1014,7 @@ final class LiveOverlayRenderer {
 
 		if let dragSelection = snapshot.dragSelectionLocal {
 			hoverGlowLayer.isHidden = true
+			hoverFlowLayer.hide()
 			dragBorderOutlineLayer.isHidden = false
 			dragBorderLayer.isHidden = false
 			let pixelsPerPoint = hostView?.window?.screen?.backingScaleFactor ?? 1
@@ -640,9 +1066,14 @@ final class LiveOverlayRenderer {
 			yRadius: CaptureChrome.liveSelectionCornerRadius
 		).cgPath
 		hoverGlowLayer.path = hoverPath
-		hoverGlowLayer.strokeColor = NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 0.45).cgColor
-		hoverGlowLayer.shadowColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.55).cgColor
-		hoverGlowLayer.isHidden = false
+		hoverGlowLayer.isHidden = true
+		hoverFlowLayer.update(
+			frame: snapshot.bounds,
+			focusRect: focusRect,
+			theme: snapshot.theme,
+			timestamp: CACurrentMediaTime(),
+			contentsScale: hostView?.window?.screen?.backingScaleFactor ?? 2
+		)
 	}
 
 	private func renderHud(_ snapshot: LivePreviewSnapshot) {
