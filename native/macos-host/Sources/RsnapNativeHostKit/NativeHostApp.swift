@@ -2611,9 +2611,9 @@ final class CaptureHostView: NSView {
 		case .resizeLeftRight:
 			return .resizeLeftRight
 		case .resizeNorthEastSouthWest:
-			return ._windowResizeNorthEastSouthWest
-		case .resizeNorthWestSouthEast:
 			return ._windowResizeNorthWestSouthEast
+		case .resizeNorthWestSouthEast:
+			return ._windowResizeNorthEastSouthWest
 		case .iBeam:
 			return .iBeam
 		}
