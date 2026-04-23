@@ -12,7 +12,7 @@ const RESIZE_HANDLE_RADIUS_POINTS: i32 = 12;
 const RESIZE_EDGE_TOLERANCE_POINTS: i32 = 4;
 const LIVE_SELECTION_DEFAULT_WIDTH: u32 = 320;
 const LIVE_SELECTION_DEFAULT_HEIGHT: u32 = 200;
-const LIVE_SELECTION_DRAG_THRESHOLD_POINTS: u32 = 10;
+const LIVE_SELECTION_DRAG_THRESHOLD_POINTS: u32 = 1;
 
 /// Reference capture-session core that owns semantic state and emits host requests.
 #[derive(Debug)]
@@ -283,13 +283,16 @@ impl CaptureSessionCore {
 		let top = live_press_start.y.min(point.y);
 		let width = live_press_start.x.abs_diff(point.x);
 		let height = live_press_start.y.abs_diff(point.y);
-		if width < LIVE_SELECTION_DRAG_THRESHOLD_POINTS
-			|| height < LIVE_SELECTION_DRAG_THRESHOLD_POINTS
-		{
+		if width.max(height) < LIVE_SELECTION_DRAG_THRESHOLD_POINTS {
 			return None;
 		}
 
-		Some(crate::geometry::GlobalRect::new(left, top, width, height))
+		Some(crate::geometry::GlobalRect::new(
+			left,
+			top,
+			width.max(1),
+			height.max(1),
+		))
 	}
 
 	fn finalize_live_selection(
@@ -609,6 +612,75 @@ mod tests {
 			session.pop_host_request(),
 			Some(HostRequest::RequestFreezeSnapshot {
 				selection: GlobalRect::new(20, 30, 60, 80),
+			})
+		);
+	}
+
+	#[test]
+	fn primary_drag_allows_thin_preview_once_drag_threshold_is_crossed() {
+		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
+		session.enter_live();
+		let _ = session.pop_host_request();
+		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
+			point: GlobalPoint::new(20, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+		session.handle_host_event(HostEvent::PrimaryInteractionUpdated {
+			point: GlobalPoint::new(21, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+
+		assert_eq!(
+			session.scene_model().live_selection_preview,
+			Some(GlobalRect::new(20, 30, 1, 1))
+		);
+
+		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
+			point: GlobalPoint::new(21, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+
+		assert_eq!(
+			session.pop_host_request(),
+			Some(HostRequest::RequestFreezeSnapshot {
+				selection: GlobalRect::new(20, 30, 1, 1),
+			})
+		);
+	}
+
+	#[test]
+	fn primary_interaction_below_drag_threshold_stays_click_targeted() {
+		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
+		session.enter_live();
+		let _ = session.pop_host_request();
+		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
+			point: GlobalPoint::new(20, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+		session.handle_host_event(HostEvent::PrimaryInteractionUpdated {
+			point: GlobalPoint::new(20, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+
+		assert_eq!(session.scene_model().live_selection_preview, None);
+
+		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
+			point: GlobalPoint::new(20, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+
+		assert_eq!(
+			session.pop_host_request(),
+			Some(HostRequest::RequestFreezeSnapshot {
+				selection: highlighted_window().global_rect().unwrap(),
 			})
 		);
 	}
