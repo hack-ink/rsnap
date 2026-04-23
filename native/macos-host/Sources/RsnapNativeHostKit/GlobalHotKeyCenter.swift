@@ -112,8 +112,6 @@ final class GlobalHotKeyCenter {
 			return OSStatus(eventNotHandledErr)
 		}
 
-		NSLog("RsnapNativeHost hotkey fired: \(binding.rawValue)")
-
 		switch binding {
 		case .capture:
 			onCaptureRequested?()

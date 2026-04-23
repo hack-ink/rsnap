@@ -63,9 +63,8 @@ final class WindowSnapshotFeed {
 		stateLock.lock()
 		self.desktopFrame = desktopFrame
 		stateLock.unlock()
-		refresh()
 		let timer = DispatchSource.makeTimerSource(queue: queue)
-		timer.schedule(deadline: .now() + LiveSamplingBudget.hoverWindowCacheRefreshInterval, repeating: LiveSamplingBudget.hoverWindowCacheRefreshInterval)
+		timer.schedule(deadline: .now(), repeating: LiveSamplingBudget.hoverWindowCacheRefreshInterval)
 		timer.setEventHandler { [weak self] in
 			self?.refresh()
 		}
