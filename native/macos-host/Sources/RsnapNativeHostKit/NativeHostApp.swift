@@ -2503,8 +2503,7 @@ final class CaptureHostView: NSView {
 				drawDashedSelectionBorder(
 					around: selection,
 					in: context,
-					lineWidth: CaptureChrome.frozenDashedBorderWidth,
-					excludeResizeHandleCorners: chrome.frozenSelectionEditable
+					lineWidth: CaptureChrome.frozenDashedBorderWidth
 				)
 				if chrome.frozenSelectionEditable {
 					drawFrozenResizeHandles(for: selection, in: context)
@@ -2915,8 +2914,7 @@ final class CaptureHostView: NSView {
 	private func drawDashedSelectionBorder(
 		around rect: CGRect,
 		in context: CGContext,
-		lineWidth: CGFloat,
-		excludeResizeHandleCorners: Bool
+		lineWidth: CGFloat
 	) {
 		let outlineColor = NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
 		let strokeColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 248 / 255)
@@ -2927,8 +2925,7 @@ final class CaptureHostView: NSView {
 		)
 		let borderRect = rect.insetBy(dx: -borderOutset, dy: -borderOutset)
 		let path = CaptureChrome.dashedBorderPath(
-			for: borderRect,
-			cornerKeepout: excludeResizeHandleCorners ? CaptureChrome.resizeHandleOuterRadius : 0
+			for: borderRect
 		)
 
 		context.saveGState()
@@ -2950,40 +2947,78 @@ final class CaptureHostView: NSView {
 	private func drawFrozenResizeHandles(for rect: CGRect, in context: CGContext) {
 		let outlineColor = NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 124 / 255)
 		let strokeColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 246 / 255)
-		let dotColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 252 / 255)
+		let leg = CaptureChrome.resizeHandleLegLength
+		let offset = CaptureChrome.resizeHandleOffset
+		let handles: [(CGPoint, CGPoint, CGPoint)]
+		switch settings.frozenResizeHandleOrientation {
+		case .outward:
+			handles = [
+				(
+					CGPoint(x: rect.minX - offset - leg, y: rect.maxY + offset + leg),
+					CGPoint(x: rect.minX - offset, y: rect.maxY + offset + leg),
+					CGPoint(x: rect.minX - offset - leg, y: rect.maxY + offset)
+				),
+				(
+					CGPoint(x: rect.maxX + offset + leg, y: rect.maxY + offset + leg),
+					CGPoint(x: rect.maxX + offset, y: rect.maxY + offset + leg),
+					CGPoint(x: rect.maxX + offset + leg, y: rect.maxY + offset)
+				),
+				(
+					CGPoint(x: rect.minX - offset - leg, y: rect.minY - offset - leg),
+					CGPoint(x: rect.minX - offset, y: rect.minY - offset - leg),
+					CGPoint(x: rect.minX - offset - leg, y: rect.minY - offset)
+				),
+				(
+					CGPoint(x: rect.maxX + offset + leg, y: rect.minY - offset - leg),
+					CGPoint(x: rect.maxX + offset, y: rect.minY - offset - leg),
+					CGPoint(x: rect.maxX + offset + leg, y: rect.minY - offset)
+				),
+			]
+		case .inward:
+			handles = [
+				(
+					CGPoint(x: rect.minX - offset, y: rect.maxY + offset),
+					CGPoint(x: rect.minX - offset - leg, y: rect.maxY + offset),
+					CGPoint(x: rect.minX - offset, y: rect.maxY + offset + leg)
+				),
+				(
+					CGPoint(x: rect.maxX + offset, y: rect.maxY + offset),
+					CGPoint(x: rect.maxX + offset + leg, y: rect.maxY + offset),
+					CGPoint(x: rect.maxX + offset, y: rect.maxY + offset + leg)
+				),
+				(
+					CGPoint(x: rect.minX - offset, y: rect.minY - offset),
+					CGPoint(x: rect.minX - offset - leg, y: rect.minY - offset),
+					CGPoint(x: rect.minX - offset, y: rect.minY - offset - leg)
+				),
+				(
+					CGPoint(x: rect.maxX + offset, y: rect.minY - offset),
+					CGPoint(x: rect.maxX + offset + leg, y: rect.minY - offset),
+					CGPoint(x: rect.maxX + offset, y: rect.minY - offset - leg)
+				),
+			]
+		}
 
-		for point in [rect.origin, CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)] {
-			let center = point
+		context.saveGState()
+		context.setLineCap(.butt)
+		context.setLineJoin(.miter)
+		for (elbow, horizontal, vertical) in handles {
+			let path = CGMutablePath()
+			path.move(to: horizontal)
+			path.addLine(to: elbow)
+			path.addLine(to: vertical)
+
+			context.addPath(path)
 			context.setStrokeColor(outlineColor.cgColor)
-			context.setLineWidth(CaptureChrome.resizeHandleStrokeWidth + 0.6)
-			context.strokeEllipse(
-				in: CGRect(
-					x: center.x - CaptureChrome.resizeHandleOuterRadius,
-					y: center.y - CaptureChrome.resizeHandleOuterRadius,
-					width: CaptureChrome.resizeHandleOuterRadius * 2,
-					height: CaptureChrome.resizeHandleOuterRadius * 2
-				)
-			)
+			context.setLineWidth(CaptureChrome.resizeHandleStrokeWidth + 0.8)
+			context.strokePath()
+
+			context.addPath(path)
 			context.setStrokeColor(strokeColor.cgColor)
 			context.setLineWidth(CaptureChrome.resizeHandleStrokeWidth)
-			context.strokeEllipse(
-				in: CGRect(
-					x: center.x - CaptureChrome.resizeHandleOuterRadius,
-					y: center.y - CaptureChrome.resizeHandleOuterRadius,
-					width: CaptureChrome.resizeHandleOuterRadius * 2,
-					height: CaptureChrome.resizeHandleOuterRadius * 2
-				)
-			)
-			context.setFillColor(dotColor.cgColor)
-			context.fillEllipse(
-				in: CGRect(
-					x: center.x - CaptureChrome.resizeHandleCenterDotRadius,
-					y: center.y - CaptureChrome.resizeHandleCenterDotRadius,
-					width: CaptureChrome.resizeHandleCenterDotRadius * 2,
-					height: CaptureChrome.resizeHandleCenterDotRadius * 2
-				)
-			)
+			context.strokePath()
 		}
+		context.restoreGState()
 	}
 
 	private func drawSelectionSizeBadge(for rect: CGRect, in context: CGContext) {
@@ -4511,9 +4546,9 @@ enum CaptureChrome {
 	static let selectionCornerRadius: CGFloat = 18
 	static let liveSelectionCornerRadius: CGFloat = 20
 	static let resizeHandleHitSize: CGFloat = 24
-	static let resizeHandleOuterRadius: CGFloat = 4.25
-	static let resizeHandleCenterDotRadius: CGFloat = 1.15
 	static let resizeHandleStrokeWidth: CGFloat = 1.3
+	static let resizeHandleLegLength: CGFloat = 8
+	static let resizeHandleOffset: CGFloat = 2.5
 	static let toolbarButtonSize: CGFloat = 24
 	static let toolbarItemSpacing: CGFloat = 4
 	static let toolbarVerticalPadding: CGFloat = 5

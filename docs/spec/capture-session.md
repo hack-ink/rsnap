@@ -58,6 +58,8 @@ product level rather than binding itself to a particular window toolkit or shell
 - Hovering over a window in live mode shows an obvious targeting outline that follows the current
   target.
 - Left click + drag freezes a cropped region on the cursor monitor.
+- Live drag preview begins as soon as the pointer moves away from the press point; thin captures
+  down to `1x1` pixels are valid frozen selections.
 - Left click without drag hit-tests the window under the cursor on the same monitor and freezes
   that window bounds.
 - If no window is hit, the click path falls back to freezing the current monitor fullscreen.

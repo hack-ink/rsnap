@@ -12,6 +12,7 @@ final class NativeHostSettingsStore {
 		static let outputFilenamePrefix = "outputFilenamePrefix"
 		static let outputNaming = "outputNaming"
 		static let toolbarPlacement = "toolbarPlacement"
+		static let frozenResizeHandleOrientation = "frozenResizeHandleOrientation"
 		static let showAltHintKeycap = "showAltHintKeycap"
 		static let hudGlassEnabled = "hudGlassEnabled"
 		static let hudOpacity = "hudOpacity"
@@ -34,6 +35,7 @@ final class NativeHostSettingsStore {
 			outputFilenamePrefix: defaults.string(forKey: DefaultsKey.outputFilenamePrefix) ?? baseSettings.outputFilenamePrefix,
 			outputNaming: OutputNamingPreference(rawValue: defaults.string(forKey: DefaultsKey.outputNaming) ?? "") ?? baseSettings.outputNaming,
 			toolbarPlacement: ToolbarPlacementPreference(rawValue: defaults.string(forKey: DefaultsKey.toolbarPlacement) ?? "") ?? baseSettings.toolbarPlacement,
+			frozenResizeHandleOrientation: FrozenResizeHandleOrientationPreference(rawValue: defaults.string(forKey: DefaultsKey.frozenResizeHandleOrientation) ?? "") ?? baseSettings.frozenResizeHandleOrientation,
 			showAltHintKeycap: defaults.object(forKey: DefaultsKey.showAltHintKeycap) as? Bool ?? baseSettings.showAltHintKeycap,
 			hudGlassEnabled: defaults.object(forKey: DefaultsKey.hudGlassEnabled) as? Bool ?? baseSettings.hudGlassEnabled,
 			hudOpacity: defaults.object(forKey: DefaultsKey.hudOpacity) as? Double ?? baseSettings.hudOpacity,
@@ -74,6 +76,7 @@ final class NativeHostSettingsStore {
 		defaults.set(settings.outputFilenamePrefix, forKey: DefaultsKey.outputFilenamePrefix)
 		defaults.set(settings.outputNaming.rawValue, forKey: DefaultsKey.outputNaming)
 		defaults.set(settings.toolbarPlacement.rawValue, forKey: DefaultsKey.toolbarPlacement)
+		defaults.set(settings.frozenResizeHandleOrientation.rawValue, forKey: DefaultsKey.frozenResizeHandleOrientation)
 		defaults.set(settings.showAltHintKeycap, forKey: DefaultsKey.showAltHintKeycap)
 		defaults.set(settings.hudGlassEnabled, forKey: DefaultsKey.hudGlassEnabled)
 		defaults.set(settings.hudOpacity, forKey: DefaultsKey.hudOpacity)
@@ -118,6 +121,10 @@ final class NativeHostSettingsStore {
 			case "toolbar_placement":
 				if let placement = ToolbarPlacementPreference(rawValue: unquoted) {
 					migrated.toolbarPlacement = placement
+				}
+			case "frozen_resize_handle_orientation":
+				if let orientation = FrozenResizeHandleOrientationPreference(rawValue: unquoted) {
+					migrated.frozenResizeHandleOrientation = orientation
 				}
 			case "show_alt_hint_keycap":
 				if let boolValue = parseTomlBool(unquoted) {
@@ -177,6 +184,7 @@ struct NativeHostSettings: Equatable {
 	var outputFilenamePrefix: String
 	var outputNaming: OutputNamingPreference
 	var toolbarPlacement: ToolbarPlacementPreference
+	var frozenResizeHandleOrientation: FrozenResizeHandleOrientationPreference
 	var showAltHintKeycap: Bool
 	var hudGlassEnabled: Bool
 	var hudOpacity: Double
@@ -192,6 +200,7 @@ struct NativeHostSettings: Equatable {
 		outputFilenamePrefix: "rsnap",
 		outputNaming: .timestamp,
 		toolbarPlacement: .bottom,
+		frozenResizeHandleOrientation: .inward,
 		showAltHintKeycap: true,
 		hudGlassEnabled: true,
 		hudOpacity: 0.5,
@@ -257,6 +266,20 @@ enum ToolbarPlacementPreference: String, CaseIterable {
 			return "Bottom"
 		case .top:
 			return "Top"
+		}
+	}
+}
+
+enum FrozenResizeHandleOrientationPreference: String, CaseIterable {
+	case outward
+	case inward
+
+	var title: String {
+		switch self {
+		case .outward:
+			return "Open Outward"
+		case .inward:
+			return "Open Inward"
 		}
 	}
 }

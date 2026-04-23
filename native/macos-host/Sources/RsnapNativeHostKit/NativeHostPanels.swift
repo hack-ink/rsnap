@@ -11,6 +11,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 	private let prefixField = NSTextField(string: "")
 	private let namingControl = NSSegmentedControl(labels: OutputNamingPreference.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
 	private let toolbarPlacementControl = NSSegmentedControl(labels: ToolbarPlacementPreference.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+	private let frozenResizeHandleOrientationControl = NSSegmentedControl(labels: FrozenResizeHandleOrientationPreference.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
 	private let showAltHintKeycapButton = NSButton(checkboxWithTitle: "Show Tab hint in HUD", target: nil, action: nil)
 	private let hudGlassEnabledButton = NSButton(checkboxWithTitle: "Glass HUD", target: nil, action: nil)
 	private let loupeSampleSizeControl = NSSegmentedControl(labels: LoupeSampleSizePreference.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
@@ -27,7 +28,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 	init(settingsStore: NativeHostSettingsStore) {
 		self.settingsStore = settingsStore
 
-		let contentRect = NSRect(x: 0, y: 0, width: 560, height: 520)
+		let contentRect = NSRect(x: 0, y: 0, width: 560, height: 580)
 		let window = NSWindow(
 			contentRect: contentRect,
 			styleMask: [.titled, .closable, .miniaturizable],
@@ -79,6 +80,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		stack.addArrangedSubview(makeTintColorRow())
 		stack.addArrangedSubview(makeSliderRow(title: "Hue", slider: hudHueSlider, valueLabel: hudHueValueLabel))
 		stack.addArrangedSubview(makeToolbarPlacementRow())
+		stack.addArrangedSubview(makeFrozenResizeHandleOrientationRow())
 
 		root.addSubview(stack)
 		NSLayoutConstraint.activate([
@@ -173,6 +175,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		toolbarPlacementControl.target = self
 		toolbarPlacementControl.action = #selector(toolbarPlacementChanged)
 		container.addArrangedSubview(toolbarPlacementControl)
+		return container
+	}
+
+	private func makeFrozenResizeHandleOrientationRow() -> NSView {
+		let container = NSStackView()
+		container.orientation = .vertical
+		container.alignment = .leading
+		container.spacing = 6
+
+		let title = NSTextField(labelWithString: "Frozen corner handle direction")
+		title.font = .systemFont(ofSize: 13, weight: .medium)
+		container.addArrangedSubview(title)
+
+		let subtitle = NSTextField(labelWithString: "Controls whether the corner brackets open outward or inward.")
+		subtitle.font = .systemFont(ofSize: 12)
+		subtitle.textColor = .secondaryLabelColor
+		container.addArrangedSubview(subtitle)
+
+		frozenResizeHandleOrientationControl.target = self
+		frozenResizeHandleOrientationControl.action = #selector(frozenResizeHandleOrientationChanged)
+		container.addArrangedSubview(frozenResizeHandleOrientationControl)
 		return container
 	}
 
@@ -277,6 +300,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		prefixField.stringValue = settings.outputFilenamePrefix
 		namingControl.selectedSegment = OutputNamingPreference.allCases.firstIndex(of: settings.outputNaming) ?? 0
 		toolbarPlacementControl.selectedSegment = ToolbarPlacementPreference.allCases.firstIndex(of: settings.toolbarPlacement) ?? 0
+		frozenResizeHandleOrientationControl.selectedSegment = FrozenResizeHandleOrientationPreference.allCases.firstIndex(of: settings.frozenResizeHandleOrientation) ?? 0
 		showAltHintKeycapButton.state = settings.showAltHintKeycap ? .on : .off
 		hudGlassEnabledButton.state = settings.hudGlassEnabled ? .on : .off
 		loupeSampleSizeControl.selectedSegment = LoupeSampleSizePreference.allCases.firstIndex(of: settings.loupeSampleSize) ?? 0
@@ -339,6 +363,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 			return
 		}
 		settingsStore.update { $0.toolbarPlacement = ToolbarPlacementPreference.allCases[index] }
+		refreshFromSettings()
+	}
+
+	@objc
+	private func frozenResizeHandleOrientationChanged() {
+		let index = frozenResizeHandleOrientationControl.selectedSegment
+		guard FrozenResizeHandleOrientationPreference.allCases.indices.contains(index) else {
+			return
+		}
+		settingsStore.update { $0.frozenResizeHandleOrientation = FrozenResizeHandleOrientationPreference.allCases[index] }
 		refreshFromSettings()
 	}
 
