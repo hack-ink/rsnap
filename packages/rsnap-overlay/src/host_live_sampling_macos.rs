@@ -67,6 +67,11 @@ impl HostMacLiveSampler {
 		self.stream.prime_monitor_nonblocking(monitor);
 	}
 
+	/// Stops any active ScreenCaptureKit stream but keeps the sampler worker alive.
+	pub fn reset(&self) {
+		self.stream.reset();
+	}
+
 	#[must_use]
 	/// Returns a cached RGBA region from the latest monitor frame when one is already warm.
 	///

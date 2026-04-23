@@ -544,6 +544,10 @@ impl MacLiveFrameStream {
 		}
 	}
 
+	pub(crate) fn reset(&self) {
+		let _ = self.request_tx.send(WorkerRequest::Reset);
+	}
+
 	pub(crate) fn upgrade_monitor_nonblocking(&self, monitor: MonitorRect) -> bool {
 		#[cfg(test)]
 		self.record_debug_request_kind("upgrade_monitor_nonblocking");
@@ -671,6 +675,51 @@ struct SharedLatestFrame {
 	pending_stream_filter_complete_monitor: Mutex<Option<StreamGenerationStatus>>,
 }
 impl SharedLatestFrame {
+	fn reset(&self) {
+		match self.pending_monitor.lock() {
+			Ok(mut guard) => *guard = None,
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+				*guard = None;
+			},
+		}
+		match self.pending_refresh_monitor.lock() {
+			Ok(mut guard) => *guard = None,
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+				*guard = None;
+			},
+		}
+		match self.waiting_for_frame_until.lock() {
+			Ok(mut guard) => *guard = None,
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+				*guard = None;
+			},
+		}
+		match self.active_stream_generation.lock() {
+			Ok(mut guard) => *guard = None,
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+				*guard = None;
+			},
+		}
+		match self.stream_filter_status.lock() {
+			Ok(mut guard) => *guard = None,
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+				*guard = None;
+			},
+		}
+		match self.pending_stream_filter_complete_monitor.lock() {
+			Ok(mut guard) => *guard = None,
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+				*guard = None;
+			},
+		}
+	}
+
 	fn store(&self, monitor_id: u32, frame: &QueuedPixelBufferFrame) -> StoreFrameOutcome {
 		if !self.stream_generation_is_active_for_monitor(monitor_id, frame.stream_generation) {
 			return StoreFrameOutcome { completed_ensure: false, completed_refresh: false };
@@ -1303,6 +1352,7 @@ enum WorkerRequest {
 		monitor: MonitorRect,
 		force_retry_upgrade: bool,
 	},
+	Reset,
 	RefreshMonitor {
 		monitor: MonitorRect,
 	},
@@ -1490,6 +1540,12 @@ fn handle_stream_worker_request(
 				frame_seq_counter,
 				shared_latest_frame,
 			)
+		},
+		WorkerRequest::Reset => {
+			teardown_stream(state);
+			*last_setup_attempt_at = None;
+			shared_latest_frame.reset();
+			true
 		},
 		WorkerRequest::RefreshMonitor { monitor } => handle_refresh_monitor_request(
 			state,
