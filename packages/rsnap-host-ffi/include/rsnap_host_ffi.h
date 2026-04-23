@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 11u
+#define RSNAP_HOST_FFI_ABI_VERSION 13u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -230,6 +230,14 @@ typedef struct RsnapRgbaRegion {
 	uint8_t *rgba;
 } RsnapRgbaRegion;
 
+typedef struct RsnapOwnedRgbaRegion {
+	uint32_t width;
+	uint32_t height;
+	size_t len;
+	size_t capacity;
+	uint8_t *rgba;
+} RsnapOwnedRgbaRegion;
+
 uint32_t rsnap_host_ffi_abi_version(void);
 RsnapSessionHandle *rsnap_session_create(struct RsnapSessionConfig config);
 RsnapLiveSamplerHandle *rsnap_live_sampler_create(void);
@@ -270,11 +278,23 @@ enum RsnapStatus rsnap_live_sampler_peek_region_rgba(
 	struct RsnapRect rect,
 	struct RsnapRgbaRegion *out_region
 );
+enum RsnapStatus rsnap_live_sampler_take_region_rgba(
+	RsnapLiveSamplerHandle *handle,
+	struct RsnapMonitorRect monitor,
+	struct RsnapRect rect,
+	struct RsnapOwnedRgbaRegion *out_region
+);
 enum RsnapStatus rsnap_live_sampler_peek_latest_monitor_rgba(
 	RsnapLiveSamplerHandle *handle,
 	struct RsnapMonitorRect monitor,
 	struct RsnapRgbaRegion *out_region
 );
+enum RsnapStatus rsnap_live_sampler_take_latest_monitor_rgba(
+	RsnapLiveSamplerHandle *handle,
+	struct RsnapMonitorRect monitor,
+	struct RsnapOwnedRgbaRegion *out_region
+);
+void rsnap_owned_rgba_region_release(struct RsnapOwnedRgbaRegion *region);
 
 #ifdef __cplusplus
 }

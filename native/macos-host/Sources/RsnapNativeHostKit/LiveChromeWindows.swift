@@ -5,25 +5,28 @@ import Darwin
 import Foundation
 import RsnapHostBridge
 
-struct LivePositionDisplay {
+@MainActor
+private enum LiveChromeTypography {
+	static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+	static let lineHeight = ceil("x=0".size(using: font).height)
+	static let commaWidth = ",".size(using: font).width
+	static let keycapTextSize = "Tab".size(using: font)
+	static let keycapFrameSize = CGSize(width: keycapTextSize.width + 12, height: keycapTextSize.height + 4)
+}
+
+struct LivePositionDisplay: Equatable {
 	let xValueText: String
 	let yValueText: String
 	let xSlotWidth: CGFloat
 	let ySlotWidth: CGFloat
 }
 
-enum LiveRGBValueDisplay {
-	case sample(rText: String, gText: String, bText: String, componentSlotWidth: CGFloat)
-	case placeholder(text: String)
-}
-
-struct LiveColorDisplay {
+struct LiveColorDisplay: Equatable {
 	let hexText: String
 	let hexSlotWidth: CGFloat
-	let rgbValueDisplay: LiveRGBValueDisplay
 }
 
-struct LiveHudVisualSnapshot {
+struct LiveHudVisualSnapshot: Equatable {
 	let sourceWindowNumber: Int
 	let frame: CGRect
 	let theme: CaptureChromeTheme
@@ -42,14 +45,14 @@ struct LiveLoupeVisualSnapshot {
 	let patch: CGImage
 }
 
-struct FrozenToolbarVisualItemSnapshot {
+struct FrozenToolbarVisualItemSnapshot: Equatable {
 	let kind: ToolbarItemKind
 	let frame: CGRect
 	let enabled: Bool
 	let selected: Bool
 }
 
-struct FrozenToolbarVisualSnapshot {
+struct FrozenToolbarVisualSnapshot: Equatable {
 	let sourceWindowNumber: Int
 	let frame: CGRect
 	let theme: CaptureChromeTheme
@@ -73,8 +76,18 @@ enum PhosphorToolbarIcons {
 		"RsnapNativeHostKit_RsnapNativeHostKit.bundle",
 		"RsnapNativeHostKit.bundle",
 	]
+	struct CachedGlyph {
+		let line: CTLine
+		let bounds: CGRect
+	}
+	private struct GlyphKey: Hashable {
+		let kind: ToolbarItemKind
+		let selected: Bool
+		let sizeX100: Int
+	}
 	private static var didAttemptRegisterFonts = false
 	private static var resolvedFontBundle: Bundle?
+	private static var glyphCache: [GlyphKey: CachedGlyph] = [:]
 
 	static func icon(for kind: ToolbarItemKind) -> String {
 		switch kind {
@@ -111,6 +124,27 @@ enum PhosphorToolbarIcons {
 		ensureRegistered()
 		let name = selected ? "Phosphor-Fill" : "Phosphor"
 		return NSFont(name: name, size: size) ?? NSFont.systemFont(ofSize: size, weight: .regular)
+	}
+
+	static func cachedGlyph(for kind: ToolbarItemKind, selected: Bool, size: CGFloat) -> CachedGlyph {
+		let key = GlyphKey(
+			kind: kind,
+			selected: selected,
+			sizeX100: Int((size * 100).rounded())
+		)
+		if let cached = glyphCache[key] {
+			return cached
+		}
+		let attributed = NSAttributedString(string: icon(for: kind), attributes: [
+			.font: font(selected: selected, size: size),
+		])
+		let line = CTLineCreateWithAttributedString(attributed)
+		let glyph = CachedGlyph(
+			line: line,
+			bounds: CTLineGetBoundsWithOptions(line, [.useOpticalBounds, .excludeTypographicLeading])
+		)
+		glyphCache[key] = glyph
+		return glyph
 	}
 
 	private static func ensureRegistered() {
@@ -297,10 +331,18 @@ private final class LiveChromeOverlayWindow: NSWindow {
 }
 
 private final class LiveChromeRenderView: NSView {
+	private struct LoupeSnapshotKey: Equatable {
+		let frame: CGRect
+		let theme: CaptureChromeTheme
+		let settings: NativeHostSettings
+		let patchIdentity: UInt
+	}
+
 	private let kind: ChromeVisualKind
 	private var hudSnapshot: LiveHudVisualSnapshot?
 	private var loupeSnapshot: LiveLoupeVisualSnapshot?
 	private var toolbarSnapshot: FrozenToolbarVisualSnapshot?
+	private var loupeSnapshotKey: LoupeSnapshotKey?
 
 	init(kind: ChromeVisualKind, frame: CGRect) {
 		self.kind = kind
@@ -317,16 +359,34 @@ private final class LiveChromeRenderView: NSView {
 	override var isOpaque: Bool { false }
 
 	func update(hud snapshot: LiveHudVisualSnapshot?) {
+		guard hudSnapshot != snapshot else {
+			return
+		}
 		hudSnapshot = snapshot
 		needsDisplay = true
 	}
 
 	func update(loupe snapshot: LiveLoupeVisualSnapshot?) {
+		let nextKey = snapshot.map {
+			LoupeSnapshotKey(
+				frame: $0.frame,
+				theme: $0.theme,
+				settings: $0.settings,
+				patchIdentity: UInt(bitPattern: Unmanaged.passUnretained($0.patch).toOpaque())
+			)
+		}
+		guard loupeSnapshotKey != nextKey else {
+			return
+		}
+		loupeSnapshotKey = nextKey
 		loupeSnapshot = snapshot
 		needsDisplay = true
 	}
 
 	func update(toolbar snapshot: FrozenToolbarVisualSnapshot?) {
+		guard toolbarSnapshot != snapshot else {
+			return
+		}
 		toolbarSnapshot = snapshot
 		needsDisplay = true
 	}
@@ -352,16 +412,13 @@ private final class LiveChromeRenderView: NSView {
 		}
 		let frame = bounds
 		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+		let font = LiveChromeTypography.font
 		drawPill(in: frame, context: context, palette: palette, settings: snapshot.settings, strongShadow: true)
 
 		let commaSeparator = ","
 		let xGroupText = "x=\(snapshot.positionDisplay.xValueText)"
 		let yGroupText = "y=\(snapshot.positionDisplay.yValueText)"
-		let positionHeight = max(
-			xGroupText.size(using: font).height,
-			yGroupText.size(using: font).height
-		)
+		let positionHeight = LiveChromeTypography.lineHeight
 		let itemSpacing: CGFloat = 8
 		var cursorX = CaptureChrome.hudInnerMarginX
 		let baselineY = (frame.height - positionHeight) / 2
@@ -369,7 +426,7 @@ private final class LiveChromeRenderView: NSView {
 		drawText(xGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
 		cursorX += snapshot.positionDisplay.xSlotWidth
 		drawText(commaSeparator, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
-		cursorX += commaSeparator.size(using: font).width
+		cursorX += LiveChromeTypography.commaWidth
 		drawText(yGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
 		cursorX += snapshot.positionDisplay.ySlotWidth + itemSpacing
 
@@ -394,12 +451,11 @@ private final class LiveChromeRenderView: NSView {
 
 		if snapshot.keycapVisible {
 			let keycapText = "Tab"
-			let keycapSize = keycapText.size(using: font)
 			let keycapRect = CGRect(
 				x: cursorX,
-				y: frame.midY - (keycapSize.height + 4) / 2,
-				width: keycapSize.width + 12,
-				height: keycapSize.height + 4
+				y: frame.midY - LiveChromeTypography.keycapFrameSize.height / 2,
+				width: LiveChromeTypography.keycapFrameSize.width,
+				height: LiveChromeTypography.keycapFrameSize.height
 			)
 			context.setFillColor(palette.keycapFill.cgColor)
 			let keycapPath = NSBezierPath(roundedRect: keycapRect, xRadius: 6, yRadius: 6)
@@ -410,8 +466,8 @@ private final class LiveChromeRenderView: NSView {
 			drawText(
 				keycapText,
 				at: CGPoint(
-					x: keycapRect.midX - keycapSize.width / 2,
-					y: keycapRect.midY - keycapSize.height / 2
+					x: keycapRect.midX - LiveChromeTypography.keycapTextSize.width / 2,
+					y: keycapRect.midY - LiveChromeTypography.keycapTextSize.height / 2
 				),
 				color: palette.keycapText,
 				font: font
@@ -513,22 +569,16 @@ private final class LiveChromeRenderView: NSView {
 		color: NSColor,
 		context: CGContext
 	) {
-		let icon = PhosphorToolbarIcons.icon(for: kind)
-		let font = PhosphorToolbarIcons.font(selected: selected, size: 18)
-		let attributed = NSAttributedString(string: icon, attributes: [
-			.font: font,
-			.foregroundColor: color,
-		])
-		let line = CTLineCreateWithAttributedString(attributed)
-		let bounds = CTLineGetBoundsWithOptions(line, [.useOpticalBounds, .excludeTypographicLeading])
+		let glyph = PhosphorToolbarIcons.cachedGlyph(for: kind, selected: selected, size: 18)
 		let origin = CGPoint(
-			x: rect.midX - bounds.width * 0.5 - bounds.origin.x,
-			y: rect.midY - bounds.height * 0.5 - bounds.origin.y
+			x: rect.midX - glyph.bounds.width * 0.5 - glyph.bounds.origin.x,
+			y: rect.midY - glyph.bounds.height * 0.5 - glyph.bounds.origin.y
 		)
 		context.saveGState()
+		context.setFillColor(color.cgColor)
 		context.textMatrix = .identity
 		context.textPosition = origin
-		CTLineDraw(line, context)
+		CTLineDraw(glyph.line, context)
 		context.restoreGState()
 	}
 }

@@ -1912,95 +1912,6 @@ final class CaptureHostView: NSView {
 		}
 	}
 
-	private final class FrozenToolbarOverlayView: NSView {
-		private var theme: CaptureChromeTheme = .dark
-		private var settings: NativeHostSettings = .defaults
-		private var items: [FrozenToolbarItemLayout] = []
-		private var hoveredItem: ToolbarItemKind?
-
-		override var isOpaque: Bool { false }
-
-		override func hitTest(_ point: NSPoint) -> NSView? {
-			nil
-		}
-
-		func update(
-			theme: CaptureChromeTheme,
-			settings: NativeHostSettings,
-			items: [FrozenToolbarItemLayout],
-			hoveredItem: ToolbarItemKind?
-		) {
-			self.theme = theme
-			self.settings = settings
-			self.items = items.map {
-				FrozenToolbarItemLayout(
-					kind: $0.kind,
-					frame: $0.frame.offsetBy(dx: -frame.minX, dy: -frame.minY),
-					enabled: $0.enabled,
-					selected: $0.selected
-				)
-			}
-			self.hoveredItem = hoveredItem
-			needsDisplay = true
-		}
-
-		override func draw(_ dirtyRect: NSRect) {
-			super.draw(dirtyRect)
-			guard let context = NSGraphicsContext.current?.cgContext else {
-				return
-			}
-			let palette = CaptureChrome.palette(for: theme, settings: settings)
-			for item in items {
-				let hovered = item.kind == hoveredItem && item.enabled
-				let selected = item.selected
-				if hovered || selected {
-					context.setFillColor((selected ? palette.toolbarSelectedBackground : palette.toolbarHoverBackground).cgColor)
-					let hoverPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
-					hoverPath.fill()
-				}
-
-				let symbolColor = item.enabled
-					? (selected
-						? palette.toolbarSelectedIcon
-						: (hovered ? palette.toolbarHoverIcon : palette.toolbarIcon))
-					: palette.toolbarDisabledIcon
-				drawToolbarGlyph(
-					item.kind,
-					selected: selected,
-					in: item.frame,
-					color: symbolColor,
-					context: context
-				)
-			}
-		}
-
-		private func drawToolbarGlyph(
-			_ kind: ToolbarItemKind,
-			selected: Bool,
-			in rect: CGRect,
-			color: NSColor,
-			context: CGContext
-		) {
-			let icon = PhosphorToolbarIcons.icon(for: kind)
-			let font = PhosphorToolbarIcons.font(selected: selected, size: 18)
-			let attributed = NSAttributedString(string: icon, attributes: [
-				.font: font,
-				.foregroundColor: color,
-			])
-			let line = CTLineCreateWithAttributedString(attributed)
-			let bounds = CTLineGetBoundsWithOptions(line, [.useOpticalBounds, .excludeTypographicLeading])
-			let origin = CGPoint(
-				x: rect.midX - bounds.width * 0.5 - bounds.origin.x,
-				y: rect.midY - bounds.height * 0.5 - bounds.origin.y
-			)
-			context.saveGState()
-			context.textMatrix = .identity
-			context.textPosition = origin
-			CTLineDraw(line, context)
-			context.restoreGState()
-		}
-	}
-
 	private enum QueuedPointerEvent {
 		case moved(CGPoint)
 		case liveDragged(CGPoint)
@@ -2035,6 +1946,41 @@ final class CaptureHostView: NSView {
 		case iBeam
 	}
 
+	private struct PositionSlotWidthKey: Hashable {
+		let minX: Int
+		let maxX: Int
+		let minY: Int
+		let maxY: Int
+	}
+
+	private struct HudLayoutMetrics {
+		let font: NSFont
+		let lineHeight: CGFloat
+		let commaWidth: CGFloat
+		let keycapTextSize: CGSize
+		let keycapFrameSize: CGSize
+		let hexSlotWidth: CGFloat
+		let placeholderXSlotWidth: CGFloat
+		let placeholderYSlotWidth: CGFloat
+	}
+
+	private static let hudLayoutMetrics: HudLayoutMetrics = {
+		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+		let keycapTextSize = "Tab".size(using: font)
+		return HudLayoutMetrics(
+			font: font,
+			lineHeight: ceil("x=0".size(using: font).height),
+			commaWidth: ",".size(using: font).width,
+			keycapTextSize: keycapTextSize,
+			keycapFrameSize: CGSize(width: keycapTextSize.width + 12, height: keycapTextSize.height + 4),
+			hexSlotWidth: "#FFFFFF".size(using: font).width,
+			placeholderXSlotWidth: "x=?".size(using: font).width,
+			placeholderYSlotWidth: "y=?".size(using: font).width
+		)
+	}()
+
+	private static var positionSlotWidthCache: [PositionSlotWidthKey: (x: CGFloat, y: CGFloat)] = [:]
+
 	weak var controller: CaptureSessionController?
 
 	private var scene = SceneSnapshot(
@@ -2055,7 +2001,6 @@ final class CaptureHostView: NSView {
 	private let hudMaterialView = PassthroughVisualEffectView(frame: .zero)
 	private let loupeMaterialView = PassthroughVisualEffectView(frame: .zero)
 	private let toolbarMaterialView = PassthroughVisualEffectView(frame: .zero)
-	private let frozenToolbarOverlayView = FrozenToolbarOverlayView(frame: .zero)
 	private var trackingAreaRef: NSTrackingArea?
 	private var hoveredToolbarAction: ToolbarItemKind?
 	private var lastCursorPresentation: CursorPresentation?
@@ -2088,8 +2033,6 @@ final class CaptureHostView: NSView {
 			configureChromeMaterialView($0)
 			addSubview($0, positioned: .below, relativeTo: nil)
 		}
-		frozenToolbarOverlayView.isHidden = true
-		addSubview(frozenToolbarOverlayView)
 		liveRenderer.install { [weak self] in
 			self?.currentRendererPreviewSnapshot()
 		}
@@ -2158,7 +2101,6 @@ final class CaptureHostView: NSView {
 		if scene.mode == .live {
 			updateLivePreviewDemands()
 			liveRenderer.renderNow()
-			controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 		} else {
 			if transitioningToFrozen {
 				needsDisplay = true
@@ -2474,24 +2416,21 @@ final class CaptureHostView: NSView {
 		}
 		let theme = chromeTheme()
 		let palette = CaptureChrome.palette(for: theme, settings: settings)
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-		let positionDisplay = currentPositionDisplay(font: font)
-		let colorDisplay = currentLiveColorDisplay(for: chrome.rgbSample, font: font)
+		let metrics = Self.hudLayoutMetrics
+		let font = metrics.font
+		let positionDisplay = currentPositionDisplay()
+		let colorDisplay = currentLiveColorDisplay(for: chrome.rgbSample)
 		let itemSpacing: CGFloat = 8
 		let swatchSize = CGSize(width: 10, height: 10)
 		let commaSeparator = ","
 		let xGroupText = "x=\(positionDisplay.xValueText)"
 		let yGroupText = "y=\(positionDisplay.yValueText)"
-		let positionHeight = max(
-			xGroupText.size(using: font).height,
-			yGroupText.size(using: font).height
-		)
+		let positionHeight = metrics.lineHeight
 		let keycapVisible = settings.showAltHintKeycap
-		let keycapSize = keycapVisible ? "Tab".size(using: font) : .zero
-		let keycapFrame = keycapVisible ? CGSize(width: keycapSize.width + 12, height: keycapSize.height + 4) : .zero
-		let contentHeight = max(positionHeight, swatchSize.height, font.pointSize, keycapFrame.height)
+		let keycapFrame = keycapVisible ? metrics.keycapFrameSize : .zero
+		let contentHeight = max(positionHeight, swatchSize.height, keycapFrame.height)
 		let contentWidth = positionDisplay.xSlotWidth
-			+ commaSeparator.size(using: font).width
+			+ metrics.commaWidth
 			+ positionDisplay.ySlotWidth
 			+ swatchSize.width
 			+ colorDisplay.hexSlotWidth
@@ -2511,7 +2450,7 @@ final class CaptureHostView: NSView {
 		drawText(xGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
 		cursorX += positionDisplay.xSlotWidth
 		drawText(commaSeparator, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
-		cursorX += commaSeparator.size(using: font).width
+		cursorX += metrics.commaWidth
 		drawText(yGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
 		cursorX += positionDisplay.ySlotWidth + itemSpacing
 
@@ -2560,8 +2499,8 @@ final class CaptureHostView: NSView {
 			drawText(
 				"Tab",
 				at: CGPoint(
-					x: keycapRect.midX - keycapSize.width / 2,
-					y: keycapRect.midY - keycapSize.height / 2
+					x: keycapRect.midX - metrics.keycapTextSize.width / 2,
+					y: keycapRect.midY - metrics.keycapTextSize.height / 2
 				),
 				color: palette.keycapText,
 				font: font
@@ -2588,7 +2527,6 @@ final class CaptureHostView: NSView {
 		liveHighlightedWindowPreview = controller?.previewHighlightedWindow(at: globalPoint) ?? scene.highlightedWindow
 		updateLivePreviewDemands()
 		liveRenderer.renderNow()
-		controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 	}
 
 	private func localFrozenSelectionRect() -> CGRect? {
@@ -2839,7 +2777,7 @@ final class CaptureHostView: NSView {
 	private func drawSelectionSizeBadge(for rect: CGRect, in context: CGContext) {
 		let scale = window?.screen?.backingScaleFactor ?? 1
 		let text = "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))"
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+		let font = Self.hudLayoutMetrics.font
 		let textSize = text.size(using: font)
 		let x = min(rect.maxX - textSize.width, bounds.maxX - 8 - textSize.width)
 		let preferredY = rect.maxY + 8
@@ -3158,24 +3096,16 @@ final class CaptureHostView: NSView {
 		guard scene.mode == .live, let anchor = localPointer() else {
 			return nil
 		}
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-		let positionDisplay = currentPositionDisplay(font: font)
-		let colorDisplay = currentLiveColorDisplay(for: chrome.rgbSample ?? scene.rgb, font: font)
+		let metrics = Self.hudLayoutMetrics
+		let positionDisplay = currentPositionDisplay()
+		let colorDisplay = currentLiveColorDisplay(for: chrome.rgbSample ?? scene.rgb)
 		let itemSpacing: CGFloat = 8
 		let swatchSize = CGSize(width: 10, height: 10)
-		let commaSeparator = ","
-		let xGroupText = "x=\(positionDisplay.xValueText)"
-		let yGroupText = "y=\(positionDisplay.yValueText)"
-		let positionHeight = max(
-			xGroupText.size(using: font).height,
-			yGroupText.size(using: font).height
-		)
 		let keycapVisible = settings.showAltHintKeycap
-		let keycapSize = keycapVisible ? "Tab".size(using: font) : .zero
-		let keycapFrame = keycapVisible ? CGSize(width: keycapSize.width + 12, height: keycapSize.height + 4) : .zero
-		let contentHeight = max(positionHeight, swatchSize.height, font.pointSize, keycapFrame.height)
+		let keycapFrame = keycapVisible ? metrics.keycapFrameSize : .zero
+		let contentHeight = max(metrics.lineHeight, swatchSize.height, keycapFrame.height)
 		let contentWidth = positionDisplay.xSlotWidth
-			+ commaSeparator.size(using: font).width
+			+ metrics.commaWidth
 			+ positionDisplay.ySlotWidth
 			+ swatchSize.width
 			+ colorDisplay.hexSlotWidth
@@ -3248,7 +3178,6 @@ final class CaptureHostView: NSView {
 		let hoverSelectionLocal = dragSelectionLocal == nil
 			? localRect(from: liveHighlightedWindowPreview?.frame ?? scene.highlightedWindow?.frame)
 			: nil
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
 		let rgbSample = chrome.rgbSample ?? scene.rgb
 		return LivePreviewSnapshot(
 			bounds: bounds,
@@ -3263,8 +3192,8 @@ final class CaptureHostView: NSView {
 			selectionSizeText: dragSelectionLocal.map(selectionSizeText(for:)),
 			hudFrame: nil,
 			loupeFrame: nil,
-			positionDisplay: currentPositionDisplay(font: font),
-			colorDisplay: currentLiveColorDisplay(for: rgbSample, font: font),
+			positionDisplay: currentPositionDisplay(),
+			colorDisplay: currentLiveColorDisplay(for: rgbSample),
 			rgbSample: rgbSample,
 			keycapVisible: false,
 			loupePatch: nil,
@@ -3282,7 +3211,6 @@ final class CaptureHostView: NSView {
 		guard let frozenSelectionLocal else {
 			return nil
 		}
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
 		return LivePreviewSnapshot(
 			bounds: bounds,
 			theme: chromeTheme(),
@@ -3296,8 +3224,8 @@ final class CaptureHostView: NSView {
 			selectionSizeText: nil,
 			hudFrame: nil,
 			loupeFrame: nil,
-			positionDisplay: currentPositionDisplay(font: font),
-			colorDisplay: currentLiveColorDisplay(for: chrome.rgbSample ?? scene.rgb, font: font),
+			positionDisplay: currentPositionDisplay(),
+			colorDisplay: currentLiveColorDisplay(for: chrome.rgbSample ?? scene.rgb),
 			rgbSample: chrome.rgbSample ?? scene.rgb,
 			keycapVisible: false,
 			loupePatch: nil,
@@ -3332,9 +3260,8 @@ final class CaptureHostView: NSView {
 		let hoverSelectionLocal = dragSelectionLocal == nil
 			? localRect(from: liveHighlightedWindowPreview?.frame ?? scene.highlightedWindow?.frame)
 			: nil
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-		let positionDisplay = currentPositionDisplay(font: font)
-		let colorDisplay = currentLiveColorDisplay(for: rgbSample, font: font)
+		let positionDisplay = currentPositionDisplay()
+		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
 
 		return LivePreviewSnapshot(
 			bounds: bounds,
@@ -3393,9 +3320,8 @@ final class CaptureHostView: NSView {
 				.flatMap(globalRect(from:))
 			: nil
 		let theme = chromeTheme()
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-		let positionDisplay = currentPositionDisplay(font: font)
-		let colorDisplay = currentLiveColorDisplay(for: rgbSample, font: font)
+		let positionDisplay = currentPositionDisplay()
+		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
 
 		let hudSnapshot = hudFrame.map {
 			LiveHudVisualSnapshot(
@@ -3566,123 +3492,56 @@ final class CaptureHostView: NSView {
 		return "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))"
 	}
 
-	private func currentPositionDisplay(font: NSFont) -> LivePositionDisplay {
+	private static func cachedPositionSlotWidths(for screenFrame: CGRect) -> (x: CGFloat, y: CGFloat) {
+		let minX = Int(screenFrame.minX.rounded())
+		let maxX = Int(screenFrame.maxX.rounded()) - 1
+		let minY = Int(screenFrame.minY.rounded())
+		let maxY = Int(screenFrame.maxY.rounded()) - 1
+		let key = PositionSlotWidthKey(minX: minX, maxX: maxX, minY: minY, maxY: maxY)
+		if let cached = positionSlotWidthCache[key] {
+			return cached
+		}
+		let font = hudLayoutMetrics.font
+		let slotWidths = (
+			x: ["x=\(minX)", "x=\(maxX)"].map { $0.size(using: font).width }.max() ?? 0,
+			y: ["y=\(minY)", "y=\(maxY)"].map { $0.size(using: font).width }.max() ?? 0
+		)
+		positionSlotWidthCache[key] = slotWidths
+		return slotWidths
+	}
+
+	private func currentPositionDisplay() -> LivePositionDisplay {
+		let metrics = Self.hudLayoutMetrics
 		guard let pointer = livePointerPreviewGlobal ?? scene.pointer else {
-			let placeholder = "?"
-			let slotWidth = placeholder.size(using: font).width
 			return LivePositionDisplay(
-				xValueText: placeholder,
-				yValueText: placeholder,
-				xSlotWidth: slotWidth,
-				ySlotWidth: slotWidth
+				xValueText: "?",
+				yValueText: "?",
+				xSlotWidth: metrics.placeholderXSlotWidth,
+				ySlotWidth: metrics.placeholderYSlotWidth
 			)
 		}
 		let screenFrame = window?.screen?.frame ?? .zero
-		let maxX = Int(screenFrame.maxX.rounded()) - 1
-		let maxY = Int(screenFrame.maxY.rounded()) - 1
-		let minX = Int(screenFrame.minX.rounded())
-		let minY = Int(screenFrame.minY.rounded())
-		let xCandidates = ["x=\(minX)", "x=\(maxX)", "x=\(Int(pointer.x.rounded()))"]
-		let yCandidates = ["y=\(minY)", "y=\(maxY)", "y=\(Int(pointer.y.rounded()))"]
+		let slotWidths = Self.cachedPositionSlotWidths(for: screenFrame)
 		return LivePositionDisplay(
 			xValueText: String(Int(pointer.x.rounded())),
 			yValueText: String(Int(pointer.y.rounded())),
-			xSlotWidth: xCandidates.map { $0.size(using: font).width }.max() ?? 0,
-			ySlotWidth: yCandidates.map { $0.size(using: font).width }.max() ?? 0
+			xSlotWidth: slotWidths.x,
+			ySlotWidth: slotWidths.y
 		)
 	}
 
-	private func currentLiveColorDisplay(for sample: RGBSample?, font: NSFont) -> LiveColorDisplay {
+	private func currentLiveColorDisplay(for sample: RGBSample?) -> LiveColorDisplay {
 		let placeholderHex = ""
 		let hexText = sample.map { String(format: "#%02X%02X%02X", $0.r, $0.g, $0.b) } ?? placeholderHex
-		let hexSlotWidth = max(hexText.size(using: font).width, "#FFFFFF".size(using: font).width)
-		if let sample {
-			let componentSlotWidth = "255".size(using: font).width
-			return LiveColorDisplay(
-				hexText: hexText,
-				hexSlotWidth: hexSlotWidth,
-				rgbValueDisplay: .sample(
-					rText: "\(sample.r)",
-					gText: "\(sample.g)",
-					bText: "\(sample.b)",
-					componentSlotWidth: componentSlotWidth
-				)
-			)
-		}
 		return LiveColorDisplay(
 			hexText: hexText,
-			hexSlotWidth: hexSlotWidth,
-			rgbValueDisplay: .placeholder(text: "")
+			hexSlotWidth: Self.hudLayoutMetrics.hexSlotWidth
 		)
-	}
-
-	private func liveRGBLayoutWidth(for colorDisplay: LiveColorDisplay, font: NSFont) -> CGFloat {
-		let prefixWidth = "RGB(".size(using: font).width
-		let commaWidth = ",".size(using: font).width
-		let suffixWidth = ")".size(using: font).width
-		let sampleWidth: CGFloat
-		switch colorDisplay.rgbValueDisplay {
-		case let .sample(_, _, _, componentSlotWidth):
-			sampleWidth = prefixWidth + componentSlotWidth * 3 + commaWidth * 2 + suffixWidth
-		case .placeholder:
-			let componentSlotWidth = "255".size(using: font).width
-			sampleWidth = prefixWidth + componentSlotWidth * 3 + commaWidth * 2 + suffixWidth
-		}
-		let placeholderWidth: CGFloat
-		switch colorDisplay.rgbValueDisplay {
-		case let .placeholder(text):
-			placeholderWidth = text.size(using: font).width
-		case .sample:
-			placeholderWidth = 0
-		}
-		return max(sampleWidth, placeholderWidth)
 	}
 
 	private func formatPositionText() -> String {
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-		let positionDisplay = currentPositionDisplay(font: font)
+		let positionDisplay = currentPositionDisplay()
 		return "x=\(positionDisplay.xValueText), y=\(positionDisplay.yValueText)"
-	}
-
-	private func formatRGBText(for sample: RGBSample?) -> (String, String) {
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-		let colorDisplay = currentLiveColorDisplay(for: sample, font: font)
-		let rgbText: String = {
-			switch colorDisplay.rgbValueDisplay {
-			case let .sample(rText, gText, bText, _):
-				return "RGB(\(rText), \(gText), \(bText))"
-			case let .placeholder(text):
-				return text
-			}
-		}()
-		return (colorDisplay.hexText, rgbText)
-	}
-
-	private func legacyFormatPositionText() -> String {
-		guard let pointer = livePointerPreviewGlobal ?? scene.pointer else {
-			return "x=?, y=?"
-		}
-		let screenFrame = window?.screen?.frame ?? .zero
-		let maxX = Int(screenFrame.maxX.rounded()) - 1
-		let maxY = Int(screenFrame.maxY.rounded()) - 1
-		let minX = Int(screenFrame.minX.rounded())
-		let minY = Int(screenFrame.minY.rounded())
-		let xWidth = max(String(minX).count, String(maxX).count, 1)
-		let yWidth = max(String(minY).count, String(maxY).count, 1)
-		let x = Int(pointer.x.rounded())
-		let y = Int(pointer.y.rounded())
-		return String(format: "x=%\(xWidth)d, y=%\(yWidth)d", x, y)
-	}
-
-	private func formatRGBText() -> (String, String) {
-		formatRGBText(for: chrome.rgbSample)
-	}
-
-	private func formatLiveRGBText(for sample: RGBSample?) -> (String, String) {
-		guard sample != nil else {
-			return ("", "")
-		}
-		return formatRGBText(for: sample)
 	}
 
 	private func drawPill(
@@ -3837,166 +3696,17 @@ final class CaptureHostView: NSView {
 		color: NSColor,
 		context: CGContext
 	) {
-		let icon = PhosphorToolbarIcons.icon(for: kind)
-		let font = PhosphorToolbarIcons.font(selected: selected, size: 18)
-		let attributed = NSAttributedString(string: icon, attributes: [
-			.font: font,
-			.foregroundColor: color,
-		])
-		let line = CTLineCreateWithAttributedString(attributed)
-		let bounds = CTLineGetBoundsWithOptions(line, [.useOpticalBounds, .excludeTypographicLeading])
+		let glyph = PhosphorToolbarIcons.cachedGlyph(for: kind, selected: selected, size: 18)
 		let origin = CGPoint(
-			x: rect.midX - bounds.width * 0.5 - bounds.origin.x,
-			y: rect.midY - bounds.height * 0.5 - bounds.origin.y
+			x: rect.midX - glyph.bounds.width * 0.5 - glyph.bounds.origin.x,
+			y: rect.midY - glyph.bounds.height * 0.5 - glyph.bounds.origin.y
 		)
 		context.saveGState()
+		context.setFillColor(color.cgColor)
 		context.textMatrix = .identity
 		context.textPosition = origin
-		CTLineDraw(line, context)
+		CTLineDraw(glyph.line, context)
 		context.restoreGState()
-	}
-
-	private func drawToolbarGlyph(
-		_ kind: ToolbarItemKind,
-		in rect: CGRect,
-		color: NSColor,
-		context: CGContext
-	) {
-		context.saveGState()
-		context.setStrokeColor(color.cgColor)
-		context.setFillColor(color.cgColor)
-		context.setLineWidth(1.7)
-		context.setLineCap(.round)
-		context.setLineJoin(.round)
-
-		let insetRect = rect.insetBy(dx: 5.5, dy: 5.5)
-		switch kind {
-		case .pointer:
-			let path = NSBezierPath()
-			path.move(to: CGPoint(x: insetRect.minX, y: insetRect.minY))
-			path.line(to: CGPoint(x: insetRect.maxX - 2, y: insetRect.midY - 1))
-			path.line(to: CGPoint(x: insetRect.midX + 0.5, y: insetRect.midY + 0.5))
-			path.line(to: CGPoint(x: insetRect.maxX, y: insetRect.maxY))
-			path.lineWidth = 1.6
-			path.stroke()
-		case .pen:
-			context.move(to: CGPoint(x: insetRect.minX + 1, y: insetRect.minY + 1))
-			context.addLine(to: CGPoint(x: insetRect.maxX - 2, y: insetRect.maxY - 2))
-			context.strokePath()
-			context.fillEllipse(in: CGRect(x: insetRect.maxX - 3.5, y: insetRect.maxY - 3.5, width: 3, height: 3))
-		case .arrow:
-			drawArrow(
-				from: CGPoint(x: insetRect.minX, y: insetRect.minY + 1),
-				to: CGPoint(x: insetRect.maxX, y: insetRect.maxY),
-				in: context
-			)
-		case .text:
-			let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-			drawText("T", at: CGPoint(x: rect.midX - 4, y: rect.midY - 7), color: color, font: font)
-		case .mosaic:
-			let size = insetRect.width / 3
-			for row in 0..<3 {
-				for column in 0..<3 {
-					if (row + column).isMultiple(of: 2) {
-						let cell = CGRect(
-							x: insetRect.minX + CGFloat(column) * size,
-							y: insetRect.minY + CGFloat(row) * size,
-							width: size - 1,
-							height: size - 1
-						)
-						context.fill(cell)
-					}
-				}
-			}
-		case .spotlight:
-			let outer = insetRect
-			let inner = outer.insetBy(dx: 3, dy: 3)
-			context.stroke(outer)
-			context.clear(inner)
-			context.stroke(inner)
-		case .undo:
-			drawCurvedArrow(in: insetRect, clockwise: false, context: context)
-		case .redo:
-			drawCurvedArrow(in: insetRect, clockwise: true, context: context)
-		case .autoCenter:
-			let center = CGPoint(x: insetRect.midX, y: insetRect.midY)
-			for target in [
-				CGPoint(x: insetRect.minX, y: insetRect.midY),
-				CGPoint(x: insetRect.maxX, y: insetRect.midY),
-				CGPoint(x: insetRect.midX, y: insetRect.minY),
-				CGPoint(x: insetRect.midX, y: insetRect.maxY),
-			] {
-				context.move(to: target)
-				context.addLine(to: center)
-				context.strokePath()
-			}
-		case .scroll:
-			context.move(to: CGPoint(x: insetRect.midX, y: insetRect.minY))
-			context.addLine(to: CGPoint(x: insetRect.midX, y: insetRect.maxY))
-			context.strokePath()
-			drawArrow(
-				from: CGPoint(x: insetRect.midX, y: insetRect.minY + 3),
-				to: CGPoint(x: insetRect.midX, y: insetRect.minY),
-				in: context
-			)
-			drawArrow(
-				from: CGPoint(x: insetRect.midX, y: insetRect.maxY - 3),
-				to: CGPoint(x: insetRect.midX, y: insetRect.maxY),
-				in: context
-			)
-		case .ocr:
-			let corner: CGFloat = 4
-			context.move(to: CGPoint(x: insetRect.minX, y: insetRect.minY + corner))
-			context.addLine(to: CGPoint(x: insetRect.minX, y: insetRect.minY))
-			context.addLine(to: CGPoint(x: insetRect.minX + corner, y: insetRect.minY))
-			context.move(to: CGPoint(x: insetRect.maxX - corner, y: insetRect.minY))
-			context.addLine(to: CGPoint(x: insetRect.maxX, y: insetRect.minY))
-			context.addLine(to: CGPoint(x: insetRect.maxX, y: insetRect.minY + corner))
-			context.move(to: CGPoint(x: insetRect.minX, y: insetRect.maxY - corner))
-			context.addLine(to: CGPoint(x: insetRect.minX, y: insetRect.maxY))
-			context.addLine(to: CGPoint(x: insetRect.minX + corner, y: insetRect.maxY))
-			context.move(to: CGPoint(x: insetRect.maxX - corner, y: insetRect.maxY))
-			context.addLine(to: CGPoint(x: insetRect.maxX, y: insetRect.maxY))
-			context.addLine(to: CGPoint(x: insetRect.maxX, y: insetRect.maxY - corner))
-			context.strokePath()
-		case .copy:
-			context.stroke(insetRect.offsetBy(dx: -2, dy: 2))
-			context.stroke(insetRect.offsetBy(dx: 1, dy: -1))
-		case .save:
-			let tray = CGRect(x: insetRect.minX, y: insetRect.maxY - 4, width: insetRect.width, height: 4)
-			context.stroke(tray)
-			drawArrow(
-				from: CGPoint(x: insetRect.midX, y: insetRect.minY),
-				to: CGPoint(x: insetRect.midX, y: insetRect.maxY - 3),
-				in: context
-			)
-		}
-
-		context.restoreGState()
-	}
-
-	private func drawCurvedArrow(in rect: CGRect, clockwise: Bool, context: CGContext) {
-		let radius = min(rect.width, rect.height) * 0.42
-		let center = CGPoint(x: rect.midX, y: rect.midY)
-		let startAngle: CGFloat = clockwise ? .pi * 0.15 : .pi * 0.85
-		let endAngle: CGFloat = clockwise ? .pi * 1.55 : -.pi * 0.55
-		context.addArc(
-			center: center,
-			radius: radius,
-			startAngle: startAngle,
-			endAngle: endAngle,
-			clockwise: !clockwise
-		)
-		context.strokePath()
-		let headPoint = CGPoint(
-			x: center.x + cos(endAngle) * radius,
-			y: center.y + sin(endAngle) * radius
-		)
-		let tailPoint = CGPoint(
-			x: headPoint.x + (clockwise ? -4 : 4),
-			y: headPoint.y + 2
-		)
-		drawArrow(from: tailPoint, to: headPoint, in: context)
 	}
 
 	private func chromeTheme() -> CaptureChromeTheme {
@@ -4016,7 +3726,6 @@ final class CaptureHostView: NSView {
 		[hudMaterialView, loupeMaterialView, toolbarMaterialView].forEach {
 			$0.isHidden = true
 		}
-		frozenToolbarOverlayView.isHidden = true
 	}
 
 	private func suppressLiveHoverChrome() {
@@ -4026,7 +3735,6 @@ final class CaptureHostView: NSView {
 		liveHoverChromeSuppressed = true
 		updateLivePreviewDemands()
 		liveRenderer.renderNow()
-		controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 	}
 
 	private func themeBrightnessBias() -> Double {
@@ -4448,7 +4156,7 @@ private struct FrozenOverlayState {
 	}
 }
 
-private struct FrozenToolbarItemLayout {
+private struct FrozenToolbarItemLayout: Equatable {
 	let kind: ToolbarItemKind
 	let frame: CGRect
 	let enabled: Bool
@@ -4460,7 +4168,7 @@ private struct FrozenToolbarLayout {
 	let items: [FrozenToolbarItemLayout]
 }
 
-enum CaptureChromeTheme {
+enum CaptureChromeTheme: Equatable {
 	case dark
 	case light
 }
