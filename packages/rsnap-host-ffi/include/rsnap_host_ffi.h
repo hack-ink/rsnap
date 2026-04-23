@@ -1,13 +1,14 @@
 #ifndef RSNAP_HOST_FFI_H
 #define RSNAP_HOST_FFI_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 8u
+#define RSNAP_HOST_FFI_ABI_VERSION 11u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -208,6 +209,8 @@ typedef enum RsnapHostRequestKind {
 
 typedef struct RsnapHostRequestValue {
 	uint32_t kind;
+	struct RsnapRect selection;
+	uint8_t has_selection;
 } RsnapHostRequestValue;
 
 typedef struct RsnapLiveSample {
@@ -218,6 +221,14 @@ typedef struct RsnapLiveSample {
 	uint32_t patch_len;
 	uint8_t patch_rgba[RSNAP_LIVE_SAMPLE_PATCH_CAPACITY];
 } RsnapLiveSample;
+
+typedef struct RsnapRgbaRegion {
+	uint32_t width;
+	uint32_t height;
+	size_t len;
+	size_t capacity;
+	uint8_t *rgba;
+} RsnapRgbaRegion;
 
 uint32_t rsnap_host_ffi_abi_version(void);
 RsnapSessionHandle *rsnap_session_create(struct RsnapSessionConfig config);
@@ -252,6 +263,17 @@ enum RsnapStatus rsnap_live_sampler_sample_cursor(
 	uint32_t patch_width_px,
 	uint32_t patch_height_px,
 	struct RsnapLiveSample *out_sample
+);
+enum RsnapStatus rsnap_live_sampler_peek_region_rgba(
+	RsnapLiveSamplerHandle *handle,
+	struct RsnapMonitorRect monitor,
+	struct RsnapRect rect,
+	struct RsnapRgbaRegion *out_region
+);
+enum RsnapStatus rsnap_live_sampler_peek_latest_monitor_rgba(
+	RsnapLiveSamplerHandle *handle,
+	struct RsnapMonitorRect monitor,
+	struct RsnapRgbaRegion *out_region
 );
 
 #ifdef __cplusplus

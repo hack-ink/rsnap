@@ -308,17 +308,11 @@ impl CaptureSessionCore {
 
 		self.live_press_start = None;
 		self.live_press_target = None;
-		self.scene.live_selection_preview = None;
 
 		if let Some(selection) = selection {
-			self.scene.mode = CaptureMode::Frozen;
-			self.scene.frozen_selection = Some(selection);
-			self.scene.cursor_intent = CursorIntent::Grab;
-			self.scene.active_monitor = None;
-			self.scene.highlighted_window = None;
-			self.scene.status_message = Some(String::from("Waiting for frozen snapshot."));
-			self.pending_requests.push_back(HostRequest::RequestFreezeSnapshot);
-			self.refresh_toolbar_actions();
+			self.scene.live_selection_preview = Some(selection);
+			self.scene.status_message = None;
+			self.pending_requests.push_back(HostRequest::RequestFreezeSnapshot { selection });
 		}
 	}
 
@@ -606,9 +600,17 @@ mod tests {
 			highlighted_window: Some(highlighted_window()),
 		});
 
-		assert_eq!(session.scene_model().mode, CaptureMode::Frozen);
-		assert_eq!(session.scene_model().frozen_selection, Some(GlobalRect::new(20, 30, 60, 80)));
-		assert_eq!(session.pop_host_request(), Some(HostRequest::RequestFreezeSnapshot));
+		assert_eq!(session.scene_model().mode, CaptureMode::Live);
+		assert_eq!(
+			session.scene_model().live_selection_preview,
+			Some(GlobalRect::new(20, 30, 60, 80))
+		);
+		assert_eq!(
+			session.pop_host_request(),
+			Some(HostRequest::RequestFreezeSnapshot {
+				selection: GlobalRect::new(20, 30, 60, 80),
+			})
+		);
 	}
 
 	#[test]

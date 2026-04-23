@@ -46,6 +46,18 @@ public struct LiveSampleSnapshot: Equatable, Sendable {
 	}
 }
 
+public struct RGBARegionSnapshot: Equatable, Sendable {
+	public var width: Int
+	public var height: Int
+	public var rgba: Data
+
+	public init(width: Int, height: Int, rgba: Data) {
+		self.width = width
+		self.height = height
+		self.rgba = rgba
+	}
+}
+
 public struct MonitorSnapshot: Equatable, Sendable {
 	public var id: UInt32
 	public var frame: CGRect
@@ -167,16 +179,16 @@ public struct SceneSnapshot: Equatable, Sendable {
 	}
 }
 
-public enum HostRequestKind: UInt32, Equatable, Sendable {
-	case startLiveCapture = 0
-	case stopLiveCapture = 1
-	case requestFreezeSnapshot = 2
-	case copyCapture = 3
-	case saveCapture = 4
-	case recognizeText = 5
-	case requestScreenRecordingPermission = 6
-	case requestAccessibilityPermission = 7
-	case requestInputMonitoringPermission = 8
+public enum HostRequest: Equatable, Sendable {
+	case startLiveCapture
+	case stopLiveCapture
+	case requestFreezeSnapshot(selection: CGRect)
+	case copyCapture
+	case saveCapture
+	case recognizeText
+	case requestScreenRecordingPermission
+	case requestAccessibilityPermission
+	case requestInputMonitoringPermission
 }
 
 public enum HostEffectKind: UInt32, Equatable, Sendable {
@@ -316,7 +328,7 @@ public final class RsnapHostSession {
 		return try decode(scene: outScene)
 	}
 
-	public func takeNextRequest() throws -> HostRequestKind? {
+	public func takeNextRequest() throws -> HostRequest? {
 		var outRequest = RsnapHostRequestValue()
 		let status = rsnap_session_take_next_request(handle, &outRequest)
 		let code = rsnap_status_code(status)
@@ -325,15 +337,11 @@ public final class RsnapHostSession {
 		}
 		try requireOk(status, context: "draining queued host request")
 
-		guard let request = HostRequestKind(rawValue: outRequest.kind) else {
-			throw HostBridgeError.invalidRequestKind(outRequest.kind)
-		}
-
-		return request
+		return try decode(request: outRequest)
 	}
 
-	public func drainRequests() throws -> [HostRequestKind] {
-		var requests: [HostRequestKind] = []
+	public func drainRequests() throws -> [HostRequest] {
+		var requests: [HostRequest] = []
 		while let request = try takeNextRequest() {
 			requests.append(request)
 		}
@@ -521,6 +529,34 @@ public final class RsnapHostSession {
 		}
 		return withUnsafeBytes(of: scene.status_message) { rawBuffer in
 			String(bytes: rawBuffer.prefix(count), encoding: .utf8)
+		}
+	}
+
+	private func decode(request: RsnapHostRequestValue) throws -> HostRequest {
+		switch request.kind {
+		case RSNAP_HOST_REQUEST_START_LIVE_CAPTURE.rawValue:
+			return .startLiveCapture
+		case RSNAP_HOST_REQUEST_STOP_LIVE_CAPTURE.rawValue:
+			return .stopLiveCapture
+		case RSNAP_HOST_REQUEST_REQUEST_FREEZE_SNAPSHOT.rawValue:
+			guard request.has_selection != 0 else {
+				throw HostBridgeError.invalidRequestKind(request.kind)
+			}
+			return .requestFreezeSnapshot(selection: decode(rect: request.selection))
+		case RSNAP_HOST_REQUEST_COPY_CAPTURE.rawValue:
+			return .copyCapture
+		case RSNAP_HOST_REQUEST_SAVE_CAPTURE.rawValue:
+			return .saveCapture
+		case RSNAP_HOST_REQUEST_RECOGNIZE_TEXT.rawValue:
+			return .recognizeText
+		case RSNAP_HOST_REQUEST_REQUEST_SCREEN_RECORDING_PERMISSION.rawValue:
+			return .requestScreenRecordingPermission
+		case RSNAP_HOST_REQUEST_REQUEST_ACCESSIBILITY_PERMISSION.rawValue:
+			return .requestAccessibilityPermission
+		case RSNAP_HOST_REQUEST_REQUEST_INPUT_MONITORING_PERMISSION.rawValue:
+			return .requestInputMonitoringPermission
+		default:
+			throw HostBridgeError.invalidRequestKind(request.kind)
 		}
 	}
 
@@ -716,5 +752,146 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 		if code != 0 {
 			throw HostBridgeError.ffiStatus(context: "priming live monitor", code: code)
 		}
+	}
+
+	public func peekRegion(
+		monitor: MonitorSnapshot,
+		rect: CGRect
+	) throws -> RGBARegionSnapshot? {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		var outRegion = RsnapRgbaRegion()
+		let status = rsnap_live_sampler_peek_region_rgba(
+			handle,
+			RsnapMonitorRect(
+				id: monitor.id,
+				origin: RsnapPoint(
+					x: Int32(monitor.frame.origin.x.rounded()),
+					y: Int32(monitor.frame.origin.y.rounded())
+				),
+				width: UInt32(max(monitor.frame.width.rounded(), 0)),
+				height: UInt32(max(monitor.frame.height.rounded(), 0)),
+				scale_factor_x1000: monitor.scaleFactorX1000
+			),
+			RsnapRect(
+				x: Int32(rect.origin.x.rounded()),
+				y: Int32(rect.origin.y.rounded()),
+				width: UInt32(max(rect.width.rounded(), 0)),
+				height: UInt32(max(rect.height.rounded(), 0))
+			),
+			&outRegion
+		)
+		let code = rsnap_status_code(status)
+		if code == 3 {
+			return nil
+		}
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: "peeking live RGBA region", code: code)
+		}
+		guard outRegion.len > 0 else {
+			return nil
+		}
+		let byteCount = outRegion.len
+		let bytes = UnsafeMutablePointer<UInt8>.allocate(capacity: byteCount)
+		defer {
+			bytes.deallocate()
+		}
+
+		outRegion.capacity = byteCount
+		outRegion.rgba = bytes
+		let copyStatus = rsnap_live_sampler_peek_region_rgba(
+			handle,
+			RsnapMonitorRect(
+				id: monitor.id,
+				origin: RsnapPoint(
+					x: Int32(monitor.frame.origin.x.rounded()),
+					y: Int32(monitor.frame.origin.y.rounded())
+				),
+				width: UInt32(max(monitor.frame.width.rounded(), 0)),
+				height: UInt32(max(monitor.frame.height.rounded(), 0)),
+				scale_factor_x1000: monitor.scaleFactorX1000
+			),
+			RsnapRect(
+				x: Int32(rect.origin.x.rounded()),
+				y: Int32(rect.origin.y.rounded()),
+				width: UInt32(max(rect.width.rounded(), 0)),
+				height: UInt32(max(rect.height.rounded(), 0))
+			),
+			&outRegion
+		)
+		let copyCode = rsnap_status_code(copyStatus)
+		if copyCode == 3 {
+			return nil
+		}
+		if copyCode != 0 {
+			throw HostBridgeError.ffiStatus(context: "copying live RGBA region", code: copyCode)
+		}
+		let data = Data(bytes: bytes, count: byteCount)
+		return RGBARegionSnapshot(
+			width: Int(outRegion.width),
+			height: Int(outRegion.height),
+			rgba: data
+		)
+	}
+
+	public func peekLatestMonitorImage(
+		monitor: MonitorSnapshot
+	) throws -> RGBARegionSnapshot? {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		var outRegion = RsnapRgbaRegion()
+		let encodedMonitor = RsnapMonitorRect(
+			id: monitor.id,
+			origin: RsnapPoint(
+				x: Int32(monitor.frame.origin.x.rounded()),
+				y: Int32(monitor.frame.origin.y.rounded())
+			),
+			width: UInt32(max(monitor.frame.width.rounded(), 0)),
+			height: UInt32(max(monitor.frame.height.rounded(), 0)),
+			scale_factor_x1000: monitor.scaleFactorX1000
+		)
+		let status = rsnap_live_sampler_peek_latest_monitor_rgba(
+			handle,
+			encodedMonitor,
+			&outRegion
+		)
+		let code = rsnap_status_code(status)
+		if code == 3 {
+			return nil
+		}
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: "peeking latest monitor RGBA snapshot", code: code)
+		}
+		guard outRegion.len > 0 else {
+			return nil
+		}
+		let byteCount = outRegion.len
+		let bytes = UnsafeMutablePointer<UInt8>.allocate(capacity: byteCount)
+		defer {
+			bytes.deallocate()
+		}
+
+		outRegion.capacity = byteCount
+		outRegion.rgba = bytes
+		let copyStatus = rsnap_live_sampler_peek_latest_monitor_rgba(
+			handle,
+			encodedMonitor,
+			&outRegion
+		)
+		let copyCode = rsnap_status_code(copyStatus)
+		if copyCode == 3 {
+			return nil
+		}
+		if copyCode != 0 {
+			throw HostBridgeError.ffiStatus(context: "copying latest monitor RGBA snapshot", code: copyCode)
+		}
+		let data = Data(bytes: bytes, count: byteCount)
+		return RGBARegionSnapshot(
+			width: Int(outRegion.width),
+			height: Int(outRegion.height),
+			rgba: data
+		)
 	}
 }

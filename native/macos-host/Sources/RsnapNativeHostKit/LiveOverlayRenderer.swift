@@ -9,7 +9,6 @@ import RsnapHostBridge
 enum LiveGlassSurfaceKind: Hashable {
 	case hud
 	case loupe
-	case status
 }
 
 struct GlassPatchRequest {
@@ -24,18 +23,19 @@ struct LivePreviewSnapshot {
 	let bounds: CGRect
 	let theme: CaptureChromeTheme
 	let settings: NativeHostSettings
+	let frozenPending: Bool
+	let frozenDisplayFrame: CGRect?
+	let frozenDisplayImage: CGImage?
 	let pointerLocal: CGPoint?
 	let dragSelectionLocal: CGRect?
 	let hoverSelectionLocal: CGRect?
 	let selectionSizeText: String?
 	let hudFrame: CGRect?
 	let loupeFrame: CGRect?
-	let statusFrame: CGRect?
 	let positionDisplay: LivePositionDisplay
 	let colorDisplay: LiveColorDisplay
 	let rgbSample: RGBSample?
 	let keycapVisible: Bool
-	let statusMessage: String?
 	let loupePatch: CGImage?
 	let glassPatches: [LiveGlassSurfaceKind: CGImage]
 }
@@ -391,6 +391,7 @@ final class LiveOverlayRenderer {
 	private weak var hostView: NSView?
 	var onTick: (() -> Void)?
 	private let rootLayer = CALayer()
+	private let frozenDisplayLayer = CALayer()
 	private let topScrimLayer = CALayer()
 	private let leftScrimLayer = CALayer()
 	private let rightScrimLayer = CALayer()
@@ -415,11 +416,6 @@ final class LiveOverlayRenderer {
 	private let loupeStrokeLayer = CAShapeLayer()
 	private let loupePatchLayer = CALayer()
 	private let loupeCenterLayer = CAShapeLayer()
-	private let statusLayer = CALayer()
-	private let statusGlassLayer = CALayer()
-	private let statusFillLayer = CALayer()
-	private let statusStrokeLayer = CAShapeLayer()
-	private let statusTextLayer = CATextLayer()
 	private let displayLink = LiveDisplayLinkDriver()
 	private var snapshotProvider: (() -> LivePreviewSnapshot?)?
 
@@ -469,6 +465,8 @@ final class LiveOverlayRenderer {
 	private func configureLayers() {
 		rootLayer.zPosition = 100
 		rootLayer.masksToBounds = false
+		frozenDisplayLayer.isHidden = true
+		rootLayer.addSublayer(frozenDisplayLayer)
 		[topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer].forEach {
 			rootLayer.addSublayer($0)
 			$0.isHidden = true
@@ -488,7 +486,7 @@ final class LiveOverlayRenderer {
 		selectionSizeLayer.contentsScale = 2
 		rootLayer.addSublayer(selectionSizeLayer)
 
-		[hudLayer, loupeLayer, statusLayer].forEach {
+		[hudLayer, loupeLayer].forEach {
 			$0.masksToBounds = false
 			rootLayer.addSublayer($0)
 		}
@@ -498,10 +496,7 @@ final class LiveOverlayRenderer {
 		[loupeGlassLayer, loupeFillLayer, loupeStrokeLayer, loupePatchLayer, loupeCenterLayer].forEach {
 			loupeLayer.addSublayer($0)
 		}
-		[statusGlassLayer, statusFillLayer, statusStrokeLayer, statusTextLayer].forEach {
-			statusLayer.addSublayer($0)
-		}
-		[hudLayer, loupeLayer, statusLayer].forEach { $0.isHidden = true }
+		[hudLayer, loupeLayer].forEach { $0.isHidden = true }
 	}
 
 	private func renderCurrentSnapshot() {
@@ -513,11 +508,24 @@ final class LiveOverlayRenderer {
 		CATransaction.setDisableActions(true)
 		rootLayer.isHidden = false
 		rootLayer.frame = snapshot.bounds
+		renderFrozenDisplay(snapshot)
 		renderFocus(snapshot)
 		renderHud(snapshot)
 		renderLoupe(snapshot)
-		renderStatus(snapshot)
 		CATransaction.commit()
+	}
+
+	private func renderFrozenDisplay(_ snapshot: LivePreviewSnapshot) {
+		guard let image = snapshot.frozenDisplayImage, let frame = snapshot.frozenDisplayFrame else {
+			frozenDisplayLayer.isHidden = true
+			frozenDisplayLayer.contents = nil
+			return
+		}
+		frozenDisplayLayer.contentsGravity = .resize
+		frozenDisplayLayer.contentsScale = hostView?.window?.screen?.backingScaleFactor ?? 2
+		frozenDisplayLayer.frame = frame
+		frozenDisplayLayer.contents = image
+		frozenDisplayLayer.isHidden = false
 	}
 
 	private func renderFocus(_ snapshot: LivePreviewSnapshot) {
@@ -544,6 +552,31 @@ final class LiveOverlayRenderer {
 			layer.backgroundColor = scrimColor
 			layer.frame = rect
 			layer.isHidden = rect.width <= 0 || rect.height <= 0
+		}
+
+		if snapshot.frozenPending {
+			hoverGlowLayer.isHidden = true
+			dragBorderOutlineLayer.isHidden = false
+			dragBorderLayer.isHidden = false
+			selectionSizeLayer.isHidden = true
+			let pixelsPerPoint = hostView?.window?.screen?.backingScaleFactor ?? 1
+			let borderOutset = CaptureChrome.dashedBorderOutset(
+				strokeWidth: CaptureChrome.frozenDashedBorderWidth,
+				pixelsPerPoint: pixelsPerPoint
+			)
+			let borderRect = focusRect.insetBy(dx: -borderOutset, dy: -borderOutset)
+			let frozenPath = CaptureChrome.dashedBorderPath(for: borderRect)
+			dragBorderOutlineLayer.path = frozenPath
+			dragBorderOutlineLayer.strokeColor = NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255).cgColor
+			dragBorderOutlineLayer.lineWidth = CaptureChrome.frozenDashedBorderWidth + 0.75
+			dragBorderOutlineLayer.lineCap = .butt
+			dragBorderOutlineLayer.lineJoin = .miter
+			dragBorderLayer.path = frozenPath
+			dragBorderLayer.strokeColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 248 / 255).cgColor
+			dragBorderLayer.lineWidth = CaptureChrome.frozenDashedBorderWidth
+			dragBorderLayer.lineCap = .butt
+			dragBorderLayer.lineJoin = .miter
+			return
 		}
 
 		if let dragSelection = snapshot.dragSelectionLocal {
@@ -711,28 +744,6 @@ final class LiveOverlayRenderer {
 		loupeCenterLayer.fillColor = NSColor.clear.cgColor
 		loupeCenterLayer.strokeColor = NSColor.white.withAlphaComponent(0.9).cgColor
 		loupeCenterLayer.lineWidth = 2
-	}
-
-	private func renderStatus(_ snapshot: LivePreviewSnapshot) {
-		guard let statusMessage = snapshot.statusMessage, let statusFrame = snapshot.statusFrame else {
-			statusLayer.isHidden = true
-			return
-		}
-		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
-		let font = NSFont.systemFont(ofSize: 12, weight: .medium)
-		statusLayer.isHidden = false
-		statusLayer.frame = statusFrame
-		applySurfaceStyle(
-			container: statusLayer,
-			glassLayer: statusGlassLayer,
-			fillLayer: statusFillLayer,
-			strokeLayer: statusStrokeLayer,
-			frame: statusLayer.bounds,
-			palette: palette,
-			settings: snapshot.settings,
-			glassImage: snapshot.glassPatches[.status]
-		)
-		applyText(statusTextLayer, text: statusMessage, font: font, color: palette.labelText, frame: statusLayer.bounds.insetBy(dx: CaptureChrome.hudInnerMarginX, dy: CaptureChrome.hudInnerMarginY - 1), alignment: .left)
 	}
 
 	private func applySurfaceStyle(

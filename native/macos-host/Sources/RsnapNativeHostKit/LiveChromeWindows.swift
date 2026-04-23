@@ -42,14 +42,6 @@ struct LiveLoupeVisualSnapshot {
 	let patch: CGImage
 }
 
-struct LiveStatusVisualSnapshot {
-	let sourceWindowNumber: Int
-	let frame: CGRect
-	let theme: CaptureChromeTheme
-	let settings: NativeHostSettings
-	let message: String
-}
-
 struct FrozenToolbarVisualItemSnapshot {
 	let kind: ToolbarItemKind
 	let frame: CGRect
@@ -66,22 +58,23 @@ struct FrozenToolbarVisualSnapshot {
 }
 
 struct LiveChromeVisualSnapshot {
+	let sourceWindowNumber: Int?
 	let hud: LiveHudVisualSnapshot?
 	let loupe: LiveLoupeVisualSnapshot?
-	let status: LiveStatusVisualSnapshot?
 	let toolbar: FrozenToolbarVisualSnapshot?
-
-	var sourceWindowNumber: Int? {
-		hud?.sourceWindowNumber
-			?? loupe?.sourceWindowNumber
-			?? status?.sourceWindowNumber
-			?? toolbar?.sourceWindowNumber
-	}
 }
 
 @MainActor
-private enum PhosphorToolbarIcons {
-	private static var didRegisterFonts = false
+enum PhosphorToolbarIcons {
+	private final class BundleProbe {}
+
+	private static let bundleCandidates = [
+		"RsnapNativeHost_RsnapNativeHostKit.bundle",
+		"RsnapNativeHostKit_RsnapNativeHostKit.bundle",
+		"RsnapNativeHostKit.bundle",
+	]
+	private static var didAttemptRegisterFonts = false
+	private static var resolvedFontBundle: Bundle?
 
 	static func icon(for kind: ToolbarItemKind) -> String {
 		switch kind {
@@ -121,12 +114,17 @@ private enum PhosphorToolbarIcons {
 	}
 
 	private static func ensureRegistered() {
-		guard !didRegisterFonts else {
+		guard !didAttemptRegisterFonts else {
 			return
 		}
+		didAttemptRegisterFonts = true
+		guard let bundle = resolvedFontBundle ?? locateFontBundle() else {
+			return
+		}
+		resolvedFontBundle = bundle
 		for resourceName in ["Phosphor", "Phosphor-Fill"] {
 			guard
-				let url = Bundle.module.url(
+				let url = bundle.url(
 					forResource: resourceName,
 					withExtension: "ttf",
 					subdirectory: nil
@@ -136,14 +134,50 @@ private enum PhosphorToolbarIcons {
 			}
 			CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
 		}
-		didRegisterFonts = true
+	}
+
+	private static func locateFontBundle() -> Bundle? {
+		let fileManager = FileManager.default
+		let searchRoots: [URL] = [
+			Bundle.main.resourceURL,
+			Bundle.main.bundleURL.deletingLastPathComponent(),
+			Bundle(for: BundleProbe.self).resourceURL,
+			Bundle(for: BundleProbe.self).bundleURL.deletingLastPathComponent(),
+		].compactMap { $0 }
+
+		for root in searchRoots {
+			for candidate in bundleCandidates {
+				let bundleURL = root.appendingPathComponent(candidate)
+				if let bundle = Bundle(url: bundleURL),
+					bundle.url(forResource: "Phosphor", withExtension: "ttf") != nil
+				{
+					return bundle
+				}
+			}
+
+			guard let entries = try? fileManager.contentsOfDirectory(
+				at: root,
+				includingPropertiesForKeys: nil,
+				options: [.skipsHiddenFiles]
+			) else {
+				continue
+			}
+			for entry in entries where entry.pathExtension == "bundle" {
+				if let bundle = Bundle(url: entry),
+					bundle.url(forResource: "Phosphor", withExtension: "ttf") != nil
+				{
+					return bundle
+				}
+			}
+		}
+
+		return nil
 	}
 }
 
 private enum ChromeVisualKind {
 	case hud
 	case loupe
-	case status
 	case toolbar
 }
 
@@ -266,7 +300,6 @@ private final class LiveChromeRenderView: NSView {
 	private let kind: ChromeVisualKind
 	private var hudSnapshot: LiveHudVisualSnapshot?
 	private var loupeSnapshot: LiveLoupeVisualSnapshot?
-	private var statusSnapshot: LiveStatusVisualSnapshot?
 	private var toolbarSnapshot: FrozenToolbarVisualSnapshot?
 
 	init(kind: ChromeVisualKind, frame: CGRect) {
@@ -293,11 +326,6 @@ private final class LiveChromeRenderView: NSView {
 		needsDisplay = true
 	}
 
-	func update(status snapshot: LiveStatusVisualSnapshot?) {
-		statusSnapshot = snapshot
-		needsDisplay = true
-	}
-
 	func update(toolbar snapshot: FrozenToolbarVisualSnapshot?) {
 		toolbarSnapshot = snapshot
 		needsDisplay = true
@@ -313,8 +341,6 @@ private final class LiveChromeRenderView: NSView {
 			drawHud(in: context)
 		case .loupe:
 			drawLoupe(in: context)
-		case .status:
-			drawStatus(in: context)
 		case .toolbar:
 			drawToolbar(in: context)
 		}
@@ -420,22 +446,6 @@ private final class LiveChromeRenderView: NSView {
 		context.stroke(centerRect)
 	}
 
-	private func drawStatus(in context: CGContext) {
-		guard let snapshot = statusSnapshot else {
-			return
-		}
-		let frame = bounds
-		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
-		let font = NSFont.systemFont(ofSize: 12, weight: .medium)
-		drawPill(in: frame, context: context, palette: palette, settings: snapshot.settings, strongShadow: true)
-		drawText(
-			snapshot.message,
-			at: CGPoint(x: CaptureChrome.hudInnerMarginX, y: CaptureChrome.hudInnerMarginY - 1),
-			color: palette.labelText,
-			font: font
-		)
-	}
-
 	private func drawToolbar(in context: CGContext) {
 		guard let snapshot = toolbarSnapshot else {
 			return
@@ -527,7 +537,6 @@ private final class LiveChromeRenderView: NSView {
 final class LiveChromeVisualWindowController {
 	private let hudWindow = LiveChromeOverlayWindow(kind: .hud)
 	private let loupeWindow = LiveChromeOverlayWindow(kind: .loupe)
-	private let statusWindow = LiveChromeOverlayWindow(kind: .status)
 	private let toolbarWindow = LiveChromeOverlayWindow(kind: .toolbar)
 
 	func update(snapshot: LiveChromeVisualSnapshot?, focusedWindowNumber: Int?) {
@@ -553,13 +562,6 @@ final class LiveChromeVisualWindowController {
 			loupeWindow.hide()
 		}
 
-		if let status = snapshot.status {
-			statusWindow.renderView.update(status: status)
-			statusWindow.update(frame: status.frame, settings: status.settings)
-		} else {
-			statusWindow.hide()
-		}
-
 		if let toolbar = snapshot.toolbar {
 			toolbarWindow.renderView.update(toolbar: toolbar)
 			toolbarWindow.update(frame: toolbar.frame, settings: toolbar.settings)
@@ -571,13 +573,11 @@ final class LiveChromeVisualWindowController {
 	func hideAll() {
 		hudWindow.hide()
 		loupeWindow.hide()
-		statusWindow.hide()
 		toolbarWindow.hide()
 	}
 
 	func hideLiveWindows() {
 		hudWindow.hide()
 		loupeWindow.hide()
-		statusWindow.hide()
 	}
 }

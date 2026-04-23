@@ -1,3 +1,5 @@
+use image::imageops::crop_imm;
+
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect};
 
@@ -5,6 +7,12 @@ use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect};
 /// native host for RGB and loupe sampling.
 pub struct HostMacLiveSampler {
 	stream: MacLiveFrameStream,
+}
+
+pub struct HostRgbaRegion {
+	pub width: u32,
+	pub height: u32,
+	pub rgba: Vec<u8>,
 }
 
 impl HostMacLiveSampler {
@@ -57,6 +65,54 @@ impl HostMacLiveSampler {
 	/// blocking on the first frame.
 	pub fn prime_monitor(&self, monitor: MonitorRect) {
 		self.stream.prime_monitor_nonblocking(monitor);
+	}
+
+	#[must_use]
+	/// Returns a cached RGBA region from the latest monitor frame when one is already warm.
+	///
+	/// This does not block on a fresh capture. When the latest frame is unavailable, the
+	/// underlying stream is primed and `None` is returned.
+	pub fn peek_region_rgba(
+		&self,
+		monitor: MonitorRect,
+		origin: GlobalPoint,
+		width: u32,
+		height: u32,
+	) -> Option<HostRgbaRegion> {
+		let width = i32::try_from(width).ok()?;
+		let height = i32::try_from(height).ok()?;
+		let rect = monitor.clip_global_rect(origin.x, origin.y, width, height)?;
+		let snapshot = self.stream.peek_latest_rgba_snapshot(monitor)?;
+		let rect_px = monitor.local_rect_to_pixels(rect);
+		let image = crop_imm(
+			snapshot.image.as_ref(),
+			rect_px.x,
+			rect_px.y,
+			rect_px.width.max(1),
+			rect_px.height.max(1),
+		)
+		.to_image();
+
+		Some(HostRgbaRegion {
+			width: image.width(),
+			height: image.height(),
+			rgba: image.into_raw(),
+		})
+	}
+
+	#[must_use]
+	/// Returns the latest cached full-monitor RGBA snapshot when one is already warm.
+	///
+	/// This does not block on a fresh capture. When the latest frame is unavailable, the
+	/// underlying stream is primed and `None` is returned.
+	pub fn peek_latest_monitor_rgba(&self, monitor: MonitorRect) -> Option<HostRgbaRegion> {
+		let snapshot = self.stream.peek_latest_rgba_snapshot(monitor)?;
+		let image = snapshot.image.as_ref();
+		Some(HostRgbaRegion {
+			width: image.width(),
+			height: image.height(),
+			rgba: image.clone().into_raw(),
+		})
 	}
 }
 

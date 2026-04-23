@@ -74,7 +74,17 @@ enum RsnapHostBridgeProbe {
 				)
 			)
 		)
-		guard try session.takeNextRequest() == .requestFreezeSnapshot else {
+		scene = try session.currentScene()
+		guard
+			scene.mode == .live,
+			scene.liveSelectionPreview == CGRect(x: 120, y: 180, width: 140, height: 140)
+		else {
+			fatalError("unexpected post-complete live scene: \(scene)")
+		}
+		guard
+			try session.takeNextRequest()
+				== .requestFreezeSnapshot(selection: CGRect(x: 120, y: 180, width: 140, height: 140))
+		else {
 			fatalError("expected a freeze snapshot request")
 		}
 

@@ -11,14 +11,27 @@ final class LiveFrameStreamBroker {
 		let scaleFactorX1000: UInt32
 	}
 
+	private struct CachedMonitorImage {
+		let frame: CGRect
+		let image: CGImage
+		let generation: UInt64
+	}
+
 	private let stateLock = NSLock()
 	private let samplerReleaseQueue = DispatchQueue(
 		label: "ink.hack.rsnap.live-frame-stream.release",
 		qos: .utility
 	)
+	private let monitorImageWarmQueue = DispatchQueue(
+		label: "ink.hack.rsnap.live-frame-stream.monitor-image-warm",
+		qos: .utility
+	)
 	private var sampler: RsnapLiveSampler?
 	private var monitors: [SamplerMonitor] = []
 	private var mainDisplayHeight: CGFloat = 0
+	private var cachedMonitorImages: [UInt32: CachedMonitorImage] = [:]
+	private var warmingMonitorGenerations: [UInt32: UInt64] = [:]
+	private var streamGeneration: UInt64 = 0
 
 	init() {
 		sampler = try? RsnapLiveSampler()
@@ -29,25 +42,36 @@ final class LiveFrameStreamBroker {
 		if sampler == nil {
 			sampler = try? RsnapLiveSampler()
 		}
-		stateLock.unlock()
-		stateLock.lock()
+		streamGeneration &+= 1
+		let generation = streamGeneration
 		let mainDisplayHeight = Self.mainDisplayHeight(for: screens)
 		self.mainDisplayHeight = mainDisplayHeight
 		monitors = screens.compactMap { Self.monitorSnapshot(for: $0, mainDisplayHeight: mainDisplayHeight) }
+		let liveMonitors = Dictionary(uniqueKeysWithValues: monitors.map { ($0.id, $0) })
+		cachedMonitorImages = cachedMonitorImages.filter { monitorID, cachedImage in
+			guard let liveMonitor = liveMonitors[monitorID] else {
+				return false
+			}
+			return liveMonitor.appKitFrame == cachedImage.frame
+		}
+		warmingMonitorGenerations.removeAll()
 		let targetMonitor = prewarmPoint.flatMap { point in
 			monitors.first(where: { $0.appKitFrame.contains(point) })
 		}
 		stateLock.unlock()
 		if let targetMonitor {
 			prime(monitor: targetMonitor)
+			warmMonitorImage(monitor: targetMonitor, generation: generation)
 		}
 	}
 
 	func stop() {
 		stateLock.lock()
 		let retiringSampler = sampler
+		streamGeneration &+= 1
 		monitors.removeAll()
 		mainDisplayHeight = 0
+		warmingMonitorGenerations.removeAll()
 		sampler = nil
 		stateLock.unlock()
 		guard let retiringSampler else {
@@ -86,11 +110,52 @@ final class LiveFrameStreamBroker {
 		return sample(at: point, sidePixels: sidePixels)?.loupePatch
 	}
 
+	func region(in rect: CGRect) -> CGImage? {
+		stateLock.lock()
+		let sampler = self.sampler
+		stateLock.unlock()
+		guard
+			let sampler,
+			let monitor = monitor(containing: CGPoint(x: rect.midX, y: rect.midY)),
+			let snapshot = try? sampler.peekRegion(
+				monitor: samplerMonitorSnapshot(for: monitor),
+				rect: rect
+			)
+		else {
+			return nil
+		}
+
+		return cgImage(
+			width: snapshot.width,
+			height: snapshot.height,
+			rgba: snapshot.rgba
+		)
+	}
+
+	func monitorImage(containing point: CGPoint) -> (frame: CGRect, image: CGImage)? {
+		guard let monitor = monitor(containing: point) else {
+			return nil
+		}
+		stateLock.lock()
+		let generation = streamGeneration
+		let cachedImage = cachedMonitorImages[monitor.id]
+		stateLock.unlock()
+		if let cachedImage {
+			if cachedImage.generation != generation {
+				warmMonitorImage(monitor: monitor, generation: generation)
+			}
+			return (frame: cachedImage.frame, image: cachedImage.image)
+		}
+		warmMonitorImage(monitor: monitor)
+		return nil
+	}
+
 	func prime(at point: CGPoint?) {
 		guard let point, let monitor = monitor(containing: point) else {
 			return
 		}
 		prime(monitor: monitor)
+		warmMonitorImage(monitor: monitor)
 	}
 
 	private func monitor(containing point: CGPoint) -> SamplerMonitor? {
@@ -108,6 +173,57 @@ final class LiveFrameStreamBroker {
 			return
 		}
 		try? sampler.primeMonitor(samplerMonitorSnapshot(for: monitor))
+	}
+
+	private func warmMonitorImage(monitor: SamplerMonitor, generation requestedGeneration: UInt64? = nil) {
+		stateLock.lock()
+		let generation = requestedGeneration ?? streamGeneration
+		if cachedMonitorImages[monitor.id]?.generation == generation ||
+			warmingMonitorGenerations[monitor.id] == generation
+		{
+			stateLock.unlock()
+			return
+		}
+		guard let sampler else {
+			stateLock.unlock()
+			return
+		}
+		warmingMonitorGenerations[monitor.id] = generation
+		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
+		stateLock.unlock()
+
+		monitorImageWarmQueue.async { [weak self] in
+			guard let self else {
+				return
+			}
+			var cachedImage: CachedMonitorImage?
+			for _ in 0..<90 {
+				if let snapshot = try? sampler.peekLatestMonitorImage(monitor: encodedMonitor),
+					let image = self.cgImage(width: snapshot.width, height: snapshot.height, rgba: snapshot.rgba)
+				{
+					cachedImage = CachedMonitorImage(
+						frame: monitor.appKitFrame,
+						image: image,
+						generation: generation
+					)
+					break
+				}
+				try? sampler.primeMonitor(encodedMonitor)
+				Thread.sleep(forTimeInterval: 1.0 / 120.0)
+			}
+
+			self.stateLock.lock()
+			if self.warmingMonitorGenerations[monitor.id] == generation {
+				self.warmingMonitorGenerations.removeValue(forKey: monitor.id)
+			}
+			if let cachedImage,
+				self.streamGeneration == generation,
+				self.sampler != nil
+			{
+				self.cachedMonitorImages[monitor.id] = cachedImage
+			}
+			self.stateLock.unlock()
+		}
 	}
 
 	private func samplerMonitorSnapshot(for monitor: SamplerMonitor) -> MonitorSnapshot {
@@ -166,16 +282,27 @@ final class LiveFrameStreamBroker {
 			return nil
 		}
 
+		return cgImage(
+			width: sample.patchWidth,
+			height: sample.patchHeight,
+			rgba: patchRGBA
+		)
+	}
+
+	private func cgImage(width: Int, height: Int, rgba: Data) -> CGImage? {
+		guard width > 0, height > 0 else {
+			return nil
+		}
 		let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
 		let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
 		guard
-			let provider = CGDataProvider(data: patchRGBA as CFData),
+			let provider = CGDataProvider(data: rgba as CFData),
 			let image = CGImage(
-				width: sample.patchWidth,
-				height: sample.patchHeight,
+				width: width,
+				height: height,
 				bitsPerComponent: 8,
 				bitsPerPixel: 32,
-				bytesPerRow: sample.patchWidth * 4,
+				bytesPerRow: width * 4,
 				space: colorSpace,
 				bitmapInfo: bitmapInfo,
 				provider: provider,
