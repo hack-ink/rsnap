@@ -545,11 +545,15 @@ final class CaptureSessionController: NSObject {
 			pointerMoved(to: point)
 			return
 		}
-		guard let selection = scene.frozenSelection else {
+		guard let selection = currentFrozenSelection() else {
 			pointerMoved(to: point)
 			return
 		}
 		let selectedTool = scene.toolbarItems.first(where: { $0.selected })?.kind ?? .pointer
+		if selectedTool == .pointer, beginFrozenSelectionTransformIfPossible(at: point, selection: selection) {
+			refreshOverlay()
+			return
+		}
 		if chromeState.frozenOverlay.begin(tool: selectedTool, at: point, selection: selection) {
 			refreshOverlay()
 			return
@@ -558,8 +562,12 @@ final class CaptureSessionController: NSObject {
 	}
 
 	func continueFrozenInteraction(to point: CGPoint) {
-		guard scene.mode == .frozen, let selection = scene.frozenSelection else {
+		guard scene.mode == .frozen, let selection = currentFrozenSelection() else {
 			pointerMoved(to: point)
+			return
+		}
+		if updateFrozenSelectionTransform(to: point) {
+			refreshOverlay()
 			return
 		}
 		if chromeState.frozenOverlay.update(to: point, selection: selection) {
@@ -570,8 +578,11 @@ final class CaptureSessionController: NSObject {
 	}
 
 	func completeFrozenInteraction(at point: CGPoint) {
-		guard scene.mode == .frozen, let selection = scene.frozenSelection else {
+		guard scene.mode == .frozen, let selection = currentFrozenSelection() else {
 			pointerMoved(to: point)
+			return
+		}
+		if completeFrozenSelectionTransform(at: point) {
 			return
 		}
 		let _ = chromeState.frozenOverlay.update(to: point, selection: selection)
@@ -580,6 +591,142 @@ final class CaptureSessionController: NSObject {
 			return
 		}
 		pointerMoved(to: point)
+	}
+
+	private func currentFrozenSelection() -> CGRect? {
+		chromeState.frozenSelectionSnapshot ?? scene.frozenSelection
+	}
+
+	private func beginFrozenSelectionTransformIfPossible(
+		at point: CGPoint,
+		selection: CGRect
+	) -> Bool {
+		guard chromeState.frozenSelectionEditable else {
+			return false
+		}
+		guard let monitorFrame = screen(containing: CGPoint(x: selection.midX, y: selection.midY))?.frame else {
+			return false
+		}
+		guard let kind = FrozenSelectionTransformKind.hitTest(at: point, selection: selection) else {
+			return false
+		}
+		chromeState.frozenSelectionInteraction = FrozenSelectionInteractionState(
+			kind: kind,
+			initialPointer: point,
+			initialSelection: selection,
+			monitorFrame: monitorFrame
+		)
+		chromeState.frozenSelectionSnapshot = selection
+		return true
+	}
+
+	private func updateFrozenSelectionTransform(to point: CGPoint) -> Bool {
+		guard let interaction = chromeState.frozenSelectionInteraction else {
+			return false
+		}
+		guard let nextSelection = transformedFrozenSelection(interaction: interaction, point: point) else {
+			return false
+		}
+		guard chromeState.frozenSelectionSnapshot != nextSelection else {
+			return true
+		}
+		chromeState.frozenSelectionSnapshot = nextSelection
+		return true
+	}
+
+	private func completeFrozenSelectionTransform(at point: CGPoint) -> Bool {
+		guard let interaction = chromeState.frozenSelectionInteraction else {
+			return false
+		}
+		chromeState.frozenSelectionInteraction = nil
+		let nextSelection = transformedFrozenSelection(interaction: interaction, point: point) ?? interaction.initialSelection
+		chromeState.frozenSelectionSnapshot = nextSelection
+		guard nextSelection != scene.frozenSelection else {
+			refreshOverlay()
+			return true
+		}
+
+		frozenSnapshotGeneration &+= 1
+		let generation = frozenSnapshotGeneration
+		let captureSource = overlayController?.frozenCaptureJobSource(
+			near: CGPoint(x: nextSelection.midX, y: nextSelection.midY)
+		)
+		chromeState.frozenBaseImage = nil
+		chromeState.frozenMosaicImage = nil
+		ensureFrozenBaseImageFromDisplayIfNeeded(for: nextSelection)
+		scheduleFrozenCaptureSnapshot(
+			for: nextSelection,
+			source: captureSource,
+			generation: generation
+		)
+		refreshOverlay()
+		DispatchQueue.main.async { [weak self] in
+			guard let self else {
+				return
+			}
+			guard generation == self.frozenSnapshotGeneration else {
+				return
+			}
+			do {
+				try self.session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
+				try self.syncCore()
+			} catch {
+				NSLog("Failed to commit frozen selection transform: \(error)")
+				self.chromeState.frozenSelectionSnapshot = self.scene.frozenSelection
+				self.refreshOverlay()
+			}
+		}
+		return true
+	}
+
+	private func transformedFrozenSelection(
+		interaction: FrozenSelectionInteractionState,
+		point: CGPoint
+	) -> CGRect? {
+		let minSize: CGFloat = 24
+		let selection = interaction.initialSelection
+		let monitor = interaction.monitorFrame
+		let deltaX = point.x - interaction.initialPointer.x
+		let deltaY = point.y - interaction.initialPointer.y
+
+		switch interaction.kind {
+		case .move:
+			return Self.clampedSelectionRect(
+				width: selection.width,
+				height: selection.height,
+				x: selection.minX + deltaX,
+				y: selection.minY + deltaY,
+				monitorFrame: monitor
+			)
+		case .resizeLeft:
+			let newMinX = (selection.minX + deltaX).clamped(to: monitor.minX...(selection.maxX - minSize))
+			return CGRect(x: newMinX, y: selection.minY, width: selection.maxX - newMinX, height: selection.height)
+		case .resizeRight:
+			let newMaxX = (selection.maxX + deltaX).clamped(to: (selection.minX + minSize)...monitor.maxX)
+			return CGRect(x: selection.minX, y: selection.minY, width: newMaxX - selection.minX, height: selection.height)
+		case .resizeTop:
+			let newMaxY = (selection.maxY + deltaY).clamped(to: (selection.minY + minSize)...monitor.maxY)
+			return CGRect(x: selection.minX, y: selection.minY, width: selection.width, height: newMaxY - selection.minY)
+		case .resizeBottom:
+			let newMinY = (selection.minY + deltaY).clamped(to: monitor.minY...(selection.maxY - minSize))
+			return CGRect(x: selection.minX, y: newMinY, width: selection.width, height: selection.maxY - newMinY)
+		case .resizeTopLeft:
+			let newMinX = (selection.minX + deltaX).clamped(to: monitor.minX...(selection.maxX - minSize))
+			let newMaxY = (selection.maxY + deltaY).clamped(to: (selection.minY + minSize)...monitor.maxY)
+			return CGRect(x: newMinX, y: selection.minY, width: selection.maxX - newMinX, height: newMaxY - selection.minY)
+		case .resizeTopRight:
+			let newMaxX = (selection.maxX + deltaX).clamped(to: (selection.minX + minSize)...monitor.maxX)
+			let newMaxY = (selection.maxY + deltaY).clamped(to: (selection.minY + minSize)...monitor.maxY)
+			return CGRect(x: selection.minX, y: selection.minY, width: newMaxX - selection.minX, height: newMaxY - selection.minY)
+		case .resizeBottomLeft:
+			let newMinX = (selection.minX + deltaX).clamped(to: monitor.minX...(selection.maxX - minSize))
+			let newMinY = (selection.minY + deltaY).clamped(to: monitor.minY...(selection.maxY - minSize))
+			return CGRect(x: newMinX, y: newMinY, width: selection.maxX - newMinX, height: selection.maxY - newMinY)
+		case .resizeBottomRight:
+			let newMaxX = (selection.maxX + deltaX).clamped(to: (selection.minX + minSize)...monitor.maxX)
+			let newMinY = (selection.minY + deltaY).clamped(to: monitor.minY...(selection.maxY - minSize))
+			return CGRect(x: selection.minX, y: newMinY, width: newMaxX - selection.minX, height: selection.maxY - newMinY)
+		}
 	}
 
 	func performFrozenUndo() {
@@ -597,7 +744,7 @@ final class CaptureSessionController: NSObject {
 	}
 
 	func performFrozenAutoCenter() {
-		guard let selection = scene.frozenSelection else {
+		guard let selection = currentFrozenSelection() else {
 			return
 		}
 		if chromeState.frozenOverlay.canUndo || chromeState.frozenOverlay.activeTextEdit != nil {
@@ -778,7 +925,10 @@ final class CaptureSessionController: NSObject {
 			tearDownCapture()
 		case let .requestFreezeSnapshot(selection):
 			let requestStart = ProcessInfo.processInfo.systemUptime
-			try commitFrozenSelection(selection)
+			try commitFrozenSelection(
+				selection,
+				editable: scene.liveSelectionPreview == selection
+			)
 			let elapsedMs = (ProcessInfo.processInfo.systemUptime - requestStart) * 1000
 			frozenTransitionLogger.log("requestFreezeSnapshot handled elapsedMs=\(elapsedMs, format: .fixed(precision: 2))")
 		case .copyCapture:
@@ -808,7 +958,7 @@ final class CaptureSessionController: NSObject {
 		}
 	}
 
-	private func commitFrozenSelection(_ selection: CGRect) throws {
+	private func commitFrozenSelection(_ selection: CGRect, editable: Bool) throws {
 		guard let session else {
 			return
 		}
@@ -823,6 +973,8 @@ final class CaptureSessionController: NSObject {
 			chromeState.frozenDisplayImage = seededDisplayImage
 		}
 		chromeState.frozenSelectionSnapshot = selection
+		chromeState.frozenSelectionEditable = editable
+		chromeState.frozenSelectionInteraction = nil
 		if let cachedMonitorImage = overlayController?.cachedMonitorImage(
 			near: CGPoint(x: selection.midX, y: selection.midY)
 		) {
@@ -1940,8 +2092,10 @@ final class CaptureHostView: NSView {
 		case closedHand
 		case resizeUpDown
 		case resizeLeftRight
-		case resizeNorthEastSouthWest
-		case resizeNorthWestSouthEast
+		case resizeTopLeft
+		case resizeTopRight
+		case resizeBottomLeft
+		case resizeBottomRight
 		case iBeam
 	}
 
@@ -2085,11 +2239,7 @@ final class CaptureHostView: NSView {
 			}
 		}
 		refreshHoveredToolbarAction()
-		let cursorPresentation = currentCursorPresentation()
-		if cursorPresentation != lastCursorPresentation {
-			lastCursorPresentation = cursorPresentation
-			window?.invalidateCursorRects(for: self)
-		}
+		syncVisibleCursor()
 		updateChromeMaterialViews()
 		updateLiveRendererState()
 		if scene.mode == .live {
@@ -2169,11 +2319,7 @@ final class CaptureHostView: NSView {
 		livePointerPreviewGlobal = nil
 		liveHighlightedWindowPreview = nil
 		refreshHoveredToolbarAction()
-		let cursorPresentation = currentCursorPresentation()
-		if cursorPresentation != lastCursorPresentation {
-			lastCursorPresentation = cursorPresentation
-			window?.invalidateCursorRects(for: self)
-		}
+		syncVisibleCursor()
 		updateChromeMaterialViews()
 		needsDisplay = true
 		controller?.updateLivePreviewDemand(point: nil, settings: settings, includeLoupePatch: false)
@@ -2253,6 +2399,7 @@ final class CaptureHostView: NSView {
 			queuePointerEvent(.liveDragged(point))
 		} else {
 			controller?.continueFrozenInteraction(to: globalPoint(from: event))
+			syncVisibleCursor()
 		}
 	}
 
@@ -2272,16 +2419,18 @@ final class CaptureHostView: NSView {
 				return
 			}
 			controller?.beginFrozenInteraction(at: point)
+			syncVisibleCursor()
 		}
 	}
 
 	override func mouseUp(with event: NSEvent) {
+		let point = globalPoint(from: event)
 		if scene.mode == .live {
-			let point = globalPoint(from: event)
 			updateLivePointerPreview(to: point)
 			controller?.completePrimaryInteraction(at: point)
 		} else if scene.mode == .frozen {
-			controller?.completeFrozenInteraction(at: globalPoint(from: event))
+			controller?.completeFrozenInteraction(at: point)
+			syncVisibleCursor()
 		}
 	}
 
@@ -2354,9 +2503,11 @@ final class CaptureHostView: NSView {
 					around: selection,
 					in: context,
 					lineWidth: CaptureChrome.frozenDashedBorderWidth,
-					excludeResizeHandleCorners: true
+					excludeResizeHandleCorners: chrome.frozenSelectionEditable
 				)
-				drawFrozenResizeHandles(for: selection, in: context)
+				if chrome.frozenSelectionEditable {
+					drawFrozenResizeHandles(for: selection, in: context)
+				}
 				drawFrozenOverlays(for: selection, in: context)
 				drawSelectionSizeBadge(for: selection, in: context)
 			}
@@ -2521,7 +2672,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func localFrozenSelectionRect() -> CGRect? {
-		localRect(from: scene.frozenSelection)
+		localRect(from: chrome.frozenSelectionSnapshot ?? scene.frozenSelection)
 	}
 
 	private func localRect(from globalRect: CGRect?) -> CGRect? {
@@ -2564,17 +2715,36 @@ final class CaptureHostView: NSView {
 		if hoveredToolbarAction != nil {
 			return .arrow
 		}
-		if scene.mode == .frozen,
-			let selection = scene.frozenSelection,
-			let pointer = scene.pointer,
-			selection.contains(CGPoint(x: pointer.x, y: pointer.y)),
-			let selectedModeTool = visibleToolbarItems().first(where: { $0.selected })?.kind,
-			[ToolbarItemKind.pen, .arrow, .mosaic, .spotlight].contains(selectedModeTool)
-		{
-			return .crosshair
+		if scene.mode == .frozen {
+			if let interaction = chrome.frozenSelectionInteraction {
+				return cursorPresentation(for: cursorIntent(for: interaction.kind, active: true))
+			}
+			if let selectedModeTool = visibleToolbarItems().first(where: { $0.selected })?.kind,
+				selectedModeTool == .pointer,
+				!chrome.frozenSelectionEditable
+			{
+				return .arrow
+			}
+			if let selection = chrome.frozenSelectionSnapshot ?? scene.frozenSelection,
+				let selectedModeTool = visibleToolbarItems().first(where: { $0.selected })?.kind
+			{
+				if [ToolbarItemKind.pen, .arrow, .mosaic, .spotlight].contains(selectedModeTool) {
+					return .crosshair
+				}
+				if selectedModeTool == .pointer, chrome.frozenSelectionEditable,
+					let pointer = currentGlobalMousePoint(),
+					let intent = editableFrozenCursorIntent(at: pointer, selection: selection)
+				{
+					return cursorPresentation(for: intent)
+				}
+			}
 		}
 
-		switch scene.cursorIntent {
+		return cursorPresentation(for: scene.cursorIntent)
+	}
+
+	private func cursorPresentation(for intent: CursorIntent) -> CursorPresentation {
+		switch intent {
 		case .default:
 			return .arrow
 		case .crosshair:
@@ -2587,13 +2757,50 @@ final class CaptureHostView: NSView {
 			return .resizeUpDown
 		case .resizeEast, .resizeWest:
 			return .resizeLeftRight
-		case .resizeNorthEast, .resizeSouthWest:
-			return .resizeNorthEastSouthWest
-		case .resizeNorthWest, .resizeSouthEast:
-			return .resizeNorthWestSouthEast
+		case .resizeNorthEast:
+			return .resizeTopRight
+		case .resizeNorthWest:
+			return .resizeTopLeft
+		case .resizeSouthEast:
+			return .resizeBottomRight
+		case .resizeSouthWest:
+			return .resizeBottomLeft
 		case .text:
 			return .iBeam
 		}
+	}
+
+	private func cursorIntent(
+		for interactionKind: FrozenSelectionTransformKind,
+		active: Bool
+	) -> CursorIntent {
+		switch interactionKind {
+		case .move:
+			return active ? .grabbing : .grab
+		case .resizeLeft:
+			return .resizeWest
+		case .resizeRight:
+			return .resizeEast
+		case .resizeTop:
+			return .resizeNorth
+		case .resizeBottom:
+			return .resizeSouth
+		case .resizeTopLeft:
+			return .resizeNorthWest
+		case .resizeTopRight:
+			return .resizeNorthEast
+		case .resizeBottomLeft:
+			return .resizeSouthWest
+		case .resizeBottomRight:
+			return .resizeSouthEast
+		}
+	}
+
+	private func editableFrozenCursorIntent(at point: CGPoint, selection: CGRect) -> CursorIntent? {
+		guard let kind = FrozenSelectionTransformKind.hitTest(at: point, selection: selection) else {
+			return nil
+		}
+		return cursorIntent(for: kind, active: false)
 	}
 
 	private func cursor(for presentation: CursorPresentation) -> NSCursor {
@@ -2610,10 +2817,14 @@ final class CaptureHostView: NSView {
 			return .resizeUpDown
 		case .resizeLeftRight:
 			return .resizeLeftRight
-		case .resizeNorthEastSouthWest:
-			return ._windowResizeNorthWestSouthEast
-		case .resizeNorthWestSouthEast:
-			return ._windowResizeNorthEastSouthWest
+		case .resizeTopLeft:
+			return ._windowResizeTopLeft
+		case .resizeTopRight:
+			return ._windowResizeTopRight
+		case .resizeBottomLeft:
+			return ._windowResizeBottomLeft
+		case .resizeBottomRight:
+			return ._windowResizeBottomRight
 		case .iBeam:
 			return .iBeam
 		}
@@ -2624,6 +2835,15 @@ final class CaptureHostView: NSView {
 			return NSEvent.mouseLocation
 		}
 		return window.convertPoint(toScreen: event.locationInWindow)
+	}
+
+	private func currentGlobalMousePoint() -> CGPoint? {
+		guard let window else {
+			return NSEvent.mouseLocation
+		}
+		let localPoint = window.mouseLocationOutsideOfEventStream
+		let globalPoint = window.convertPoint(toScreen: localPoint)
+		return NSScreen.screens.contains(where: { $0.frame.contains(globalPoint) }) ? globalPoint : nil
 	}
 
 	private func drawLoupe(in context: CGContext) {
@@ -3047,13 +3267,21 @@ final class CaptureHostView: NSView {
 		let hoveredAction = localPoint.flatMap(toolbarAction(at:))
 		if hoveredToolbarAction != hoveredAction {
 			hoveredToolbarAction = hoveredAction
-			let cursorPresentation = currentCursorPresentation()
-			if cursorPresentation != lastCursorPresentation {
-				lastCursorPresentation = cursorPresentation
-			}
-			window?.invalidateCursorRects(for: self)
+			syncVisibleCursor()
 			updateChromeMaterialViews()
 			needsDisplay = true
+		}
+	}
+
+	private func syncVisibleCursor() {
+		let cursorPresentation = currentCursorPresentation()
+		guard cursorPresentation != lastCursorPresentation else {
+			return
+		}
+		lastCursorPresentation = cursorPresentation
+		window?.invalidateCursorRects(for: self)
+		if scene.mode == .frozen {
+			cursor(for: cursorPresentation).set()
 		}
 	}
 
@@ -3537,11 +3765,6 @@ final class CaptureHostView: NSView {
 		)
 	}
 
-	private func formatPositionText() -> String {
-		let positionDisplay = currentPositionDisplay()
-		return "x=\(positionDisplay.xValueText), y=\(positionDisplay.yValueText)"
-	}
-
 	private func drawPill(
 		in frame: CGRect,
 		context: CGContext,
@@ -3788,18 +4011,44 @@ final class CaptureHostView: NSView {
 }
 
 private extension NSCursor {
-	static var _windowResizeNorthEastSouthWest: NSCursor {
+	private static func frozenDiagonalCursor(
+		from baseCursor: NSCursor
+	) -> NSCursor {
+		NSCursor(image: baseCursor.image, hotSpot: baseCursor.hotSpot)
+	}
+
+	private static var _diagonalTopLeftBottomRight: NSCursor {
 		if #available(macOS 15.0, *) {
-			return .frameResize(position: .topRight, directions: [.inward, .outward])
+			return frozenDiagonalCursor(
+				from: .frameResize(position: .topLeft, directions: [.inward, .outward])
+			)
 		}
 		return .crosshair
 	}
 
-	static var _windowResizeNorthWestSouthEast: NSCursor {
+	private static var _diagonalTopRightBottomLeft: NSCursor {
 		if #available(macOS 15.0, *) {
-			return .frameResize(position: .topLeft, directions: [.inward, .outward])
+			return frozenDiagonalCursor(
+				from: .frameResize(position: .topRight, directions: [.inward, .outward])
+			)
 		}
 		return .crosshair
+	}
+
+	static var _windowResizeTopRight: NSCursor {
+		_diagonalTopRightBottomLeft
+	}
+
+	static var _windowResizeTopLeft: NSCursor {
+		_diagonalTopLeftBottomRight
+	}
+
+	static var _windowResizeBottomLeft: NSCursor {
+		_diagonalTopRightBottomLeft
+	}
+
+	static var _windowResizeBottomRight: NSCursor {
+		_diagonalTopLeftBottomRight
 	}
 }
 
@@ -3833,11 +4082,75 @@ private struct FrozenTextEditState {
 	var text: String
 }
 
+private enum FrozenSelectionTransformKind {
+	case move
+	case resizeLeft
+	case resizeRight
+	case resizeTop
+	case resizeBottom
+	case resizeTopLeft
+	case resizeTopRight
+	case resizeBottomLeft
+	case resizeBottomRight
+}
+
+private extension FrozenSelectionTransformKind {
+	static func hitTest(
+		at point: CGPoint,
+		selection: CGRect
+	) -> FrozenSelectionTransformKind? {
+		let handleRadius = CGFloat(12)
+		let edgeTolerance = CGFloat(4)
+		let left = selection.minX
+		let right = selection.maxX
+		let top = selection.maxY
+		let bottom = selection.minY
+
+		if abs(point.x - left) <= handleRadius, abs(point.y - top) <= handleRadius {
+			return .resizeTopLeft
+		}
+		if abs(point.x - right) <= handleRadius, abs(point.y - top) <= handleRadius {
+			return .resizeTopRight
+		}
+		if abs(point.x - left) <= handleRadius, abs(point.y - bottom) <= handleRadius {
+			return .resizeBottomLeft
+		}
+		if abs(point.x - right) <= handleRadius, abs(point.y - bottom) <= handleRadius {
+			return .resizeBottomRight
+		}
+		if point.y >= bottom, point.y <= top, abs(point.x - left) <= edgeTolerance {
+			return .resizeLeft
+		}
+		if point.y >= bottom, point.y <= top, abs(point.x - right) <= edgeTolerance {
+			return .resizeRight
+		}
+		if point.x >= left, point.x <= right, abs(point.y - top) <= edgeTolerance {
+			return .resizeTop
+		}
+		if point.x >= left, point.x <= right, abs(point.y - bottom) <= edgeTolerance {
+			return .resizeBottom
+		}
+		if selection.contains(point) {
+			return .move
+		}
+		return nil
+	}
+}
+
+private struct FrozenSelectionInteractionState {
+	let kind: FrozenSelectionTransformKind
+	let initialPointer: CGPoint
+	let initialSelection: CGRect
+	let monitorFrame: CGRect
+}
+
 private struct CaptureChromeState {
 	var loupePatch: CGImage?
 	var rgbSample: RGBSample?
 	var hostLocalFrozenSelecting = false
 	var frozenSelectionSnapshot: CGRect?
+	var frozenSelectionEditable = false
+	var frozenSelectionInteraction: FrozenSelectionInteractionState?
 	var frozenDisplayFrame: CGRect?
 	var frozenDisplayImage: CGImage?
 	var frozenBaseImage: CGImage?
@@ -3851,6 +4164,8 @@ private struct CaptureChromeState {
 	mutating func beginHostLocalFrozenSelecting(frame: CGRect, image: CGImage) {
 		hostLocalFrozenSelecting = true
 		frozenSelectionSnapshot = nil
+		frozenSelectionEditable = false
+		frozenSelectionInteraction = nil
 		frozenDisplayFrame = frame
 		frozenDisplayImage = image
 		frozenBaseImage = nil
@@ -3865,6 +4180,8 @@ private struct CaptureChromeState {
 	mutating func resetFrozenChrome() {
 		hostLocalFrozenSelecting = false
 		frozenSelectionSnapshot = nil
+		frozenSelectionEditable = false
+		frozenSelectionInteraction = nil
 		frozenDisplayFrame = nil
 		frozenDisplayImage = nil
 		frozenBaseImage = nil

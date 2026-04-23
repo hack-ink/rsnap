@@ -61,6 +61,13 @@ The host must not retain its own product-state copy of:
 Those semantics belong to `rsnap-capture-core` and must cross the native boundary through
 `SceneModel` / `HostEvent`, not through host-local shadow state.
 
+The one allowed exception is transient host-local frozen transform presentation while a dragged
+region is being interactively moved or resized after Frozen entry. In that case the native host may
+hold a short-lived display snapshot, editability flag, and in-progress selection rect derived from
+the last committed `SceneModel.frozen_selection`, but it must publish the committed rect back
+through `HostReport::FreezeSnapshotCommitted` and must not invent a second durable product state for
+window-selected frozen captures.
+
 These types are semantic protocol models. They must not encode:
 
 - `winit` window identifiers
