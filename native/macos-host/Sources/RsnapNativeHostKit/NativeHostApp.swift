@@ -683,7 +683,7 @@ final class CaptureSessionController: NSObject {
 		interaction: FrozenSelectionInteractionState,
 		point: CGPoint
 	) -> CGRect? {
-		let minSize: CGFloat = 24
+		let minSize = CaptureChrome.frozenSelectionMinimumSize
 		let selection = interaction.initialSelection
 		let monitor = interaction.monitorFrame
 		let deltaX = point.x - interaction.initialPointer.x
@@ -4545,6 +4545,7 @@ enum CaptureChrome {
 	static let dashedBorderGapLength: CGFloat = 4.2
 	static let selectionCornerRadius: CGFloat = 18
 	static let liveSelectionCornerRadius: CGFloat = 20
+	static let frozenSelectionMinimumSize: CGFloat = 1
 	static let resizeHandleHitSize: CGFloat = 24
 	static let resizeHandleStrokeWidth: CGFloat = 1.3
 	static let resizeHandleLegLength: CGFloat = 8
