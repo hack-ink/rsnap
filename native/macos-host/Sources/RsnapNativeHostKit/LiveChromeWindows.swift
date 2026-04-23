@@ -137,6 +137,7 @@ enum PhosphorToolbarIcons {
 		}
 		let attributed = NSAttributedString(string: icon(for: kind), attributes: [
 			.font: font(selected: selected, size: size),
+			NSAttributedString.Key(rawValue: kCTForegroundColorFromContextAttributeName as String): true,
 		])
 		let line = CTLineCreateWithAttributedString(attributed)
 		let glyph = CachedGlyph(
@@ -546,7 +547,13 @@ private final class LiveChromeRenderView: NSView {
 		if strongShadow {
 			context.setShadow(offset: .zero, blur: 10, color: palette.shadow.cgColor)
 		}
-		context.setFillColor(palette.bodyFill.cgColor)
+		context.setFillColor(
+			CaptureChrome.effectiveBodyFill(
+				palette: palette,
+				settings: settings,
+				hasGlass: settings.hudGlassEnabled && settings.hudBlur > 0.01
+			).cgColor
+		)
 		pillPath.fill()
 		context.restoreGState()
 

@@ -3557,20 +3557,33 @@ final class CaptureHostView: NSView {
 			xRadius: CaptureChrome.hudCornerRadius,
 			yRadius: CaptureChrome.hudCornerRadius
 		)
+		let glassImage = (
+			settings.hudGlassEnabled &&
+			settings.hudBlur > 0.01
+		) ? glassPatch(for: surfaceKind, frame: frame) : nil
+		let hasGlass = glassImage != nil
 		context.saveGState()
 		if strongShadow {
 			context.setShadow(offset: .zero, blur: 10, color: palette.shadow.cgColor)
 		}
 		if
-			settings.hudGlassEnabled,
-			settings.hudBlur > 0.01,
+			hasGlass,
 			let clipPath = pillPath.copy() as? NSBezierPath,
-			let glassImage = glassPatch(for: surfaceKind, frame: frame)
+			let glassImage
 		{
 			clipPath.addClip()
+			context.saveGState()
+			context.setAlpha(CGFloat(CaptureChrome.glassOpacity(settings: settings)))
 			context.draw(glassImage, in: frame)
+			context.restoreGState()
 		}
-		context.setFillColor(palette.bodyFill.cgColor)
+		context.setFillColor(
+			CaptureChrome.effectiveBodyFill(
+				palette: palette,
+				settings: settings,
+				hasGlass: hasGlass
+			).cgColor
+		)
 		pillPath.fill()
 		context.restoreGState()
 
@@ -3607,7 +3620,7 @@ final class CaptureHostView: NSView {
 			}
 			return nil
 		}
-		guard let image = blurredGlassPatch(from: patch) else {
+		guard let image = blurredGlassPatch(from: patch, surfaceKind: surfaceKind) else {
 			if scene.mode == .frozen, surfaceKind == .toolbar, !didLogFrozenToolbarGlassMiss {
 				didLogFrozenToolbarGlassMiss = true
 				frozenTransitionLogger.log(
@@ -3657,13 +3670,19 @@ final class CaptureHostView: NSView {
 		return image.cropping(to: cropRect)
 	}
 
-	private func blurredGlassPatch(from image: CGImage) -> CGImage? {
+	private func blurredGlassPatch(from image: CGImage, surfaceKind: GlassSurfaceKind) -> CGImage? {
 		let ciImage = CIImage(cgImage: image)
 		let clampedImage = ciImage.clampedToExtent()
 		guard let filter = CIFilter(name: "CIGaussianBlur") else {
 			return image
 		}
-		let blurRadius = CGFloat(14 + settings.hudBlur.clamped(to: 0...1) * 32)
+		let blurAmount = CGFloat(settings.hudBlur.clamped(to: 0...1))
+		let blurRadius: CGFloat = switch surfaceKind {
+		case .toolbar:
+			blurAmount * 12.0
+		case .hud, .loupe:
+			14 + blurAmount * 32.0
+		}
 		filter.setValue(clampedImage, forKey: kCIInputImageKey)
 		filter.setValue(blurRadius, forKey: kCIInputRadiusKey)
 		guard let blurredImage = filter.outputImage?.cropped(to: ciImage.extent) else {
@@ -3672,9 +3691,16 @@ final class CaptureHostView: NSView {
 		let colorAdjustedImage: CIImage
 		if let colorControls = CIFilter(name: "CIColorControls") {
 			colorControls.setValue(blurredImage, forKey: kCIInputImageKey)
-			colorControls.setValue(1.18 + settings.hudTint.clamped(to: 0...1) * 0.42, forKey: kCIInputSaturationKey)
-			colorControls.setValue(1.04, forKey: kCIInputContrastKey)
-			colorControls.setValue(themeBrightnessBias(), forKey: kCIInputBrightnessKey)
+			switch surfaceKind {
+			case .toolbar:
+				colorControls.setValue(1.0 + settings.hudTint.clamped(to: 0...1) * 0.12, forKey: kCIInputSaturationKey)
+				colorControls.setValue(1.0, forKey: kCIInputContrastKey)
+				colorControls.setValue(themeBrightnessBias() * 0.35, forKey: kCIInputBrightnessKey)
+			case .hud, .loupe:
+				colorControls.setValue(1.18 + settings.hudTint.clamped(to: 0...1) * 0.42, forKey: kCIInputSaturationKey)
+				colorControls.setValue(1.04, forKey: kCIInputContrastKey)
+				colorControls.setValue(themeBrightnessBias(), forKey: kCIInputBrightnessKey)
+			}
 			colorAdjustedImage = colorControls.outputImage?.cropped(to: ciImage.extent) ?? blurredImage
 		} else {
 			colorAdjustedImage = blurredImage
@@ -4174,21 +4200,32 @@ enum CaptureChromeTheme: Equatable {
 }
 
 struct CaptureChromePalette {
+	let foregrounds: CaptureChromeForegroundPalette
 	let bodyFill: NSColor
 	let outerStroke: NSColor
 	let shadow: NSColor
-	let labelText: NSColor
-	let secondaryText: NSColor
 	let swatchStroke: NSColor
 	let keycapFill: NSColor
 	let keycapStroke: NSColor
-	let keycapText: NSColor
-	let toolbarIcon: NSColor
-	let toolbarHoverIcon: NSColor
-	let toolbarSelectedIcon: NSColor
-	let toolbarDisabledIcon: NSColor
 	let toolbarHoverBackground: NSColor
 	let toolbarSelectedBackground: NSColor
+
+	var labelText: NSColor { foregrounds.primary }
+	var secondaryText: NSColor { foregrounds.secondary }
+	var keycapText: NSColor { foregrounds.secondary }
+	var toolbarIcon: NSColor { foregrounds.control }
+	var toolbarHoverIcon: NSColor { foregrounds.controlHover }
+	var toolbarSelectedIcon: NSColor { foregrounds.controlSelected }
+	var toolbarDisabledIcon: NSColor { foregrounds.controlDisabled }
+}
+
+struct CaptureChromeForegroundPalette {
+	let primary: NSColor
+	let secondary: NSColor
+	let control: NSColor
+	let controlHover: NSColor
+	let controlSelected: NSColor
+	let controlDisabled: NSColor
 }
 
 enum CaptureChrome {
@@ -4433,6 +4470,7 @@ enum CaptureChrome {
 		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
 		let tint = CGFloat(settings.hudTint.clamped(to: 0...1))
 		let hue = CGFloat(settings.hudTintHue.clamped(to: 0...1))
+		let foregrounds = foregroundPalette(for: theme)
 		let bodyAlphaFloor: CGFloat = theme == .dark ? 0.06 : 0.08
 		let fillOpacity: CGFloat = settings.hudGlassEnabled
 			? max(bodyAlphaFloor, opacity * 0.20)
@@ -4451,45 +4489,78 @@ enum CaptureChrome {
 					.mixed(with: tintColor, fraction: tint * 0.55)
 					.withAlphaComponent(fillOpacity)
 				return CaptureChromePalette(
+					foregrounds: foregrounds,
 					bodyFill: bodyFill,
-				outerStroke: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.12, 0.14 + opacity * 0.10)),
-				shadow: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.16, 0.12 + opacity * 0.18)),
-				labelText: NSColor(srgbRed: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 235 / 255),
-				secondaryText: NSColor(srgbRed: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 150 / 255),
-				swatchStroke: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 36 / 255),
-				keycapFill: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.06, opacity * 0.18)),
-				keycapStroke: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.10, opacity * 0.22)),
-				keycapText: NSColor(srgbRed: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 150 / 255),
-				toolbarIcon: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 160 / 255),
-				toolbarHoverIcon: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 222 / 255),
-				toolbarSelectedIcon: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1),
-				toolbarDisabledIcon: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 72 / 255),
-				toolbarHoverBackground: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.08, opacity * 0.18)),
-				toolbarSelectedBackground: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.12, opacity * 0.24))
-			)
+					outerStroke: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.12, 0.14 + opacity * 0.10)),
+					shadow: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.16, 0.12 + opacity * 0.18)),
+					swatchStroke: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 36 / 255),
+					keycapFill: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.06, opacity * 0.18)),
+					keycapStroke: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.10, opacity * 0.22)),
+					toolbarHoverBackground: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.08, opacity * 0.18)),
+					toolbarSelectedBackground: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.12, opacity * 0.24))
+				)
 			case .light:
 				let baseFill = NSColor(srgbRed: 232 / 255, green: 236 / 255, blue: 243 / 255, alpha: 1)
 				let bodyFill = baseFill
 					.mixed(with: tintColor, fraction: tint * 0.45)
 					.withAlphaComponent(fillOpacity)
 				return CaptureChromePalette(
+					foregrounds: foregrounds,
 					bodyFill: bodyFill,
-				outerStroke: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.12, 0.16 + opacity * 0.12)),
-				shadow: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, 0.06 + opacity * 0.14)),
-				labelText: NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 235 / 255),
-				secondaryText: NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 160 / 255),
-				swatchStroke: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 44 / 255),
-				keycapFill: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.05, opacity * 0.12)),
-				keycapStroke: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, opacity * 0.20)),
-				keycapText: NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 160 / 255),
-				toolbarIcon: NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 182 / 255),
-				toolbarHoverIcon: NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 220 / 255),
-				toolbarSelectedIcon: NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 1),
-				toolbarDisabledIcon: NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 82 / 255),
-				toolbarHoverBackground: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.08, opacity * 0.16)),
-				toolbarSelectedBackground: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, opacity * 0.22))
-			)
+					outerStroke: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.12, 0.16 + opacity * 0.12)),
+					shadow: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, 0.06 + opacity * 0.14)),
+					swatchStroke: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 44 / 255),
+					keycapFill: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.05, opacity * 0.12)),
+					keycapStroke: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, opacity * 0.20)),
+					toolbarHoverBackground: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.08, opacity * 0.16)),
+					toolbarSelectedBackground: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, opacity * 0.22))
+				)
 		}
+	}
+
+	private static func foregroundPalette(for theme: CaptureChromeTheme) -> CaptureChromeForegroundPalette {
+		switch theme {
+			case .dark:
+				let primary = NSColor(srgbRed: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 235 / 255)
+				let secondary = NSColor(srgbRed: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 150 / 255)
+				let controlBase = NSColor.white
+				return CaptureChromeForegroundPalette(
+					primary: primary,
+					secondary: secondary,
+					control: controlBase.withAlphaComponent(160 / 255),
+					controlHover: controlBase.withAlphaComponent(222 / 255),
+					controlSelected: controlBase,
+					controlDisabled: controlBase.withAlphaComponent(72 / 255)
+				)
+			case .light:
+				let primary = NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 235 / 255)
+				let secondary = NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 160 / 255)
+				let controlBase = NSColor.black
+				return CaptureChromeForegroundPalette(
+					primary: primary,
+					secondary: secondary,
+					control: controlBase.withAlphaComponent(182 / 255),
+					controlHover: controlBase.withAlphaComponent(220 / 255),
+					controlSelected: controlBase,
+					controlDisabled: controlBase.withAlphaComponent(82 / 255)
+				)
+		}
+	}
+
+	static func glassOpacity(settings: NativeHostSettings) -> Float {
+		Float(0.88 + settings.hudBlur.clamped(to: 0...1) * 0.12)
+	}
+
+	static func effectiveBodyFill(
+		palette: CaptureChromePalette,
+		settings: NativeHostSettings,
+		hasGlass: Bool
+	) -> NSColor {
+		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
+		if hasGlass {
+			return palette.bodyFill.withAlphaComponent(max(palette.bodyFill.alphaComponent, max(0.18, opacity * 0.34)))
+		}
+		return palette.bodyFill.withAlphaComponent(max(0.42, opacity * 0.82))
 	}
 }
 
