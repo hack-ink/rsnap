@@ -91,7 +91,7 @@ product level rather than binding itself to a particular window toolkit or shell
   freeze and may be recreated only when a later live-mode transition needs it.
 - In Frozen mode, a dragged-region capture may be repositioned by dragging inside the bright
   selected area and may be resized from its edges and corners; all edits stay on the current
-  monitor.
+  monitor, and thin edited captures down to `1x1` remain valid.
 - In Frozen mode, a window-click capture remains locked to the captured window bounds: it does not
   expose resize handles and does not enter drag/resize pointer affordances while the pointer tool
   is selected.
