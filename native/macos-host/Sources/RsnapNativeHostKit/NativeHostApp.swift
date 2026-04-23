@@ -1920,7 +1920,6 @@ final class CaptureHostView: NSView {
 	private enum GlassSurfaceKind: Hashable {
 		case hud
 		case loupe
-		case toolbar
 	}
 
 	private struct GlassPatchCache {
@@ -2000,7 +1999,6 @@ final class CaptureHostView: NSView {
 	private var settings = NativeHostSettings.defaults
 	private let hudMaterialView = PassthroughVisualEffectView(frame: .zero)
 	private let loupeMaterialView = PassthroughVisualEffectView(frame: .zero)
-	private let toolbarMaterialView = PassthroughVisualEffectView(frame: .zero)
 	private var trackingAreaRef: NSTrackingArea?
 	private var hoveredToolbarAction: ToolbarItemKind?
 	private var lastCursorPresentation: CursorPresentation?
@@ -2017,8 +2015,6 @@ final class CaptureHostView: NSView {
 	private var glassPatchCache: [GlassSurfaceKind: GlassPatchCache] = [:]
 	private var didLogFrozenDisplayDraw = false
 	private var didLogFrozenDisplayMissing = false
-	private var didLogFrozenToolbarGlass = false
-	private var didLogFrozenToolbarGlassMiss = false
 	private lazy var liveRenderer = LiveOverlayRenderer(hostView: self)
 	private var liveRendererInstalled = false
 	private var deferredLiveShutdownWorkItem: DispatchWorkItem?
@@ -2029,7 +2025,7 @@ final class CaptureHostView: NSView {
 		super.init(frame: frameRect)
 		wantsLayer = true
 		layerContentsRedrawPolicy = .duringViewResize
-		[hudMaterialView, loupeMaterialView, toolbarMaterialView].forEach {
+		[hudMaterialView, loupeMaterialView].forEach {
 			configureChromeMaterialView($0)
 			addSubview($0, positioned: .below, relativeTo: nil)
 		}
@@ -2060,8 +2056,6 @@ final class CaptureHostView: NSView {
 		if scene.mode != .frozen {
 			didLogFrozenDisplayDraw = false
 			didLogFrozenDisplayMissing = false
-			didLogFrozenToolbarGlass = false
-			didLogFrozenToolbarGlassMiss = false
 			frozenFirstDisplayCompletionQueued = false
 		}
 		self.scene = scene
@@ -2161,8 +2155,6 @@ final class CaptureHostView: NSView {
 	) {
 		didLogFrozenDisplayDraw = false
 		didLogFrozenDisplayMissing = false
-		didLogFrozenToolbarGlass = false
-		didLogFrozenToolbarGlassMiss = false
 		let retainedLivePreview = lastLivePreviewSnapshot ?? currentLivePreviewSnapshot()
 		frozenTransitionLogger.log(
 			"installFrozenFirstFrame selection=\(String(describing: scene.frozenSelection), privacy: .public) retainedLivePreview=\(retainedLivePreview != nil, privacy: .public) frozenDisplayImage=\(chrome.frozenDisplayImage != nil, privacy: .public) frozenDisplayFrame=\(String(describing: chrome.frozenDisplayFrame), privacy: .public)"
@@ -2366,7 +2358,6 @@ final class CaptureHostView: NSView {
 				)
 				drawFrozenResizeHandles(for: selection, in: context)
 				drawFrozenOverlays(for: selection, in: context)
-				drawFrozenToolbar(for: selection, in: context)
 				drawSelectionSizeBadge(for: selection, in: context)
 			}
 			scheduleFrozenFirstFrameInstallCompletionIfNeeded()
@@ -2791,32 +2782,6 @@ final class CaptureHostView: NSView {
 		drawText(text, at: CGPoint(x: anchor.x + 1, y: anchor.y), color: NSColor.black.withAlphaComponent(0.75), font: font)
 		drawText(text, at: CGPoint(x: anchor.x, y: anchor.y + 1), color: NSColor.black.withAlphaComponent(0.75), font: font)
 		drawText(text, at: CGPoint(x: anchor.x, y: anchor.y), color: NSColor.white.withAlphaComponent(0.98), font: font)
-	}
-
-	private func drawFrozenToolbar(for selection: CGRect, in context: CGContext) {
-		guard let layout = toolbarLayout(for: selection) else {
-			return
-		}
-
-		drawPill(in: layout.frame, context: context, theme: chromeTheme(), strongShadow: false, surfaceKind: .toolbar)
-
-		let palette = CaptureChrome.palette(for: chromeTheme(), settings: settings)
-		for item in layout.items {
-			let hovered = item.kind == hoveredToolbarAction && item.enabled
-			let selected = item.selected
-			if hovered || selected {
-				context.setFillColor((selected ? palette.toolbarSelectedBackground : palette.toolbarHoverBackground).cgColor)
-				let hoverPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
-				hoverPath.fill()
-			}
-
-			let symbolColor = item.enabled
-				? (selected
-					? palette.toolbarSelectedIcon
-					: (hovered ? palette.toolbarHoverIcon : palette.toolbarIcon))
-				: palette.toolbarDisabledIcon
-			drawToolbarPhosphorGlyph(item.kind, selected: selected, in: item.frame, color: symbolColor, context: context)
-		}
 	}
 
 	private func drawFrozenOverlays(for selection: CGRect, in context: CGContext) {
@@ -3357,11 +3322,44 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentFrozenChromeVisualSnapshot() -> LiveChromeVisualSnapshot? {
+		let toolbarSnapshot: FrozenToolbarVisualSnapshot? = {
+			guard
+				let sourceWindowNumber = window?.windowNumber,
+				let selection = localFrozenSelectionRect(),
+				let layout = toolbarLayout(for: selection),
+				let frame = globalRect(from: layout.frame)
+			else {
+				return nil
+			}
+
+			let items = layout.items.map { item in
+				FrozenToolbarVisualItemSnapshot(
+					kind: item.kind,
+					frame: CGRect(
+						x: item.frame.minX - layout.frame.minX,
+						y: item.frame.minY - layout.frame.minY,
+						width: item.frame.width,
+						height: item.frame.height
+					),
+					enabled: item.enabled,
+					selected: item.selected
+				)
+			}
+
+			return FrozenToolbarVisualSnapshot(
+				sourceWindowNumber: sourceWindowNumber,
+				frame: frame,
+				theme: chromeTheme(),
+				settings: settings,
+				items: items
+			)
+		}()
+
 		return LiveChromeVisualSnapshot(
 			sourceWindowNumber: window?.windowNumber,
 			hud: nil,
 			loupe: nil,
-			toolbar: nil
+			toolbar: toolbarSnapshot
 		)
 	}
 
@@ -3605,35 +3603,13 @@ final class CaptureHostView: NSView {
 		}
 
 		guard let globalFrame = globalRect(from: frame) else {
-			if scene.mode == .frozen, surfaceKind == .toolbar, !didLogFrozenToolbarGlassMiss {
-				didLogFrozenToolbarGlassMiss = true
-				frozenTransitionLogger.log("glassPatch toolbar miss missingGlobalFrame localFrame=\(frame.debugDescription, privacy: .public)")
-			}
 			return nil
 		}
 		guard let patch = glassSourcePatch(in: globalFrame) else {
-			if scene.mode == .frozen, surfaceKind == .toolbar, !didLogFrozenToolbarGlassMiss {
-				didLogFrozenToolbarGlassMiss = true
-				frozenTransitionLogger.log(
-					"glassPatch toolbar miss missingSourcePatch globalFrame=\(globalFrame.debugDescription, privacy: .public) frozenDisplayImage=\(self.chrome.frozenDisplayImage != nil, privacy: .public) frozenDisplayFrame=\(String(describing: self.chrome.frozenDisplayFrame), privacy: .public)"
-				)
-			}
 			return nil
 		}
 		guard let image = blurredGlassPatch(from: patch, surfaceKind: surfaceKind) else {
-			if scene.mode == .frozen, surfaceKind == .toolbar, !didLogFrozenToolbarGlassMiss {
-				didLogFrozenToolbarGlassMiss = true
-				frozenTransitionLogger.log(
-					"glassPatch toolbar miss blurFailed patchPx=\(patch.width)x\(patch.height)"
-				)
-			}
 			return nil
-		}
-		if scene.mode == .frozen, surfaceKind == .toolbar, !didLogFrozenToolbarGlass {
-			didLogFrozenToolbarGlass = true
-			frozenTransitionLogger.log(
-				"glassPatch toolbar ok globalFrame=\(globalFrame.debugDescription, privacy: .public) patchPx=\(patch.width)x\(patch.height) blurredPx=\(image.width)x\(image.height)"
-			)
 		}
 
 		glassPatchCache[surfaceKind] = GlassPatchCache(frame: frame, capturedAt: now, image: image)
@@ -3678,8 +3654,6 @@ final class CaptureHostView: NSView {
 		}
 		let blurAmount = CGFloat(settings.hudBlur.clamped(to: 0...1))
 		let blurRadius: CGFloat = switch surfaceKind {
-		case .toolbar:
-			blurAmount * 12.0
 		case .hud, .loupe:
 			14 + blurAmount * 32.0
 		}
@@ -3692,10 +3666,6 @@ final class CaptureHostView: NSView {
 		if let colorControls = CIFilter(name: "CIColorControls") {
 			colorControls.setValue(blurredImage, forKey: kCIInputImageKey)
 			switch surfaceKind {
-			case .toolbar:
-				colorControls.setValue(1.0 + settings.hudTint.clamped(to: 0...1) * 0.12, forKey: kCIInputSaturationKey)
-				colorControls.setValue(1.0, forKey: kCIInputContrastKey)
-				colorControls.setValue(themeBrightnessBias() * 0.35, forKey: kCIInputBrightnessKey)
 			case .hud, .loupe:
 				colorControls.setValue(1.18 + settings.hudTint.clamped(to: 0...1) * 0.42, forKey: kCIInputSaturationKey)
 				colorControls.setValue(1.04, forKey: kCIInputContrastKey)
@@ -3715,26 +3685,6 @@ final class CaptureHostView: NSView {
 		])
 	}
 
-	private func drawToolbarPhosphorGlyph(
-		_ kind: ToolbarItemKind,
-		selected: Bool,
-		in rect: CGRect,
-		color: NSColor,
-		context: CGContext
-	) {
-		let glyph = PhosphorToolbarIcons.cachedGlyph(for: kind, selected: selected, size: 18)
-		let origin = CGPoint(
-			x: rect.midX - glyph.bounds.width * 0.5 - glyph.bounds.origin.x,
-			y: rect.midY - glyph.bounds.height * 0.5 - glyph.bounds.origin.y
-		)
-		context.saveGState()
-		context.setFillColor(color.cgColor)
-		context.textMatrix = .identity
-		context.textPosition = origin
-		CTLineDraw(glyph.line, context)
-		context.restoreGState()
-	}
-
 	private func chromeTheme() -> CaptureChromeTheme {
 		effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua ? .light : .dark
 	}
@@ -3749,7 +3699,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func updateChromeMaterialViews() {
-		[hudMaterialView, loupeMaterialView, toolbarMaterialView].forEach {
+		[hudMaterialView, loupeMaterialView].forEach {
 			$0.isHidden = true
 		}
 	}
@@ -4248,7 +4198,7 @@ enum CaptureChrome {
 	static let resizeHandleStrokeWidth: CGFloat = 1.3
 	static let toolbarButtonSize: CGFloat = 24
 	static let toolbarItemSpacing: CGFloat = 4
-	static let toolbarVerticalPadding: CGFloat = 6
+	static let toolbarVerticalPadding: CGFloat = 5
 	static let toolbarGap: CGFloat = 10
 	static let toolbarScreenMargin: CGFloat = 10
 
