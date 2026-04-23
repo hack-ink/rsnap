@@ -18,7 +18,7 @@ use rsnap_overlay::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 11;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 13;
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
 const RSNAP_LIVE_SAMPLE_PATCH_CAPACITY: usize = 4096;
@@ -96,6 +96,28 @@ pub struct RsnapRgbaRegion {
 }
 
 impl Default for RsnapRgbaRegion {
+	fn default() -> Self {
+		Self { width: 0, height: 0, len: 0, capacity: 0, rgba: ptr::null_mut() }
+	}
+}
+
+/// FFI-safe owned RGBA image region whose buffer is retained by Rust until explicitly freed.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RsnapOwnedRgbaRegion {
+	/// Region width in pixels.
+	pub width: u32,
+	/// Region height in pixels.
+	pub height: u32,
+	/// Byte count in `rgba`.
+	pub len: usize,
+	/// Reserved buffer capacity in bytes.
+	pub capacity: usize,
+	/// Owned RGBA byte buffer in row-major order.
+	pub rgba: *mut u8,
+}
+
+impl Default for RsnapOwnedRgbaRegion {
 	fn default() -> Self {
 		Self { width: 0, height: 0, len: 0, capacity: 0, rgba: ptr::null_mut() }
 	}
@@ -823,6 +845,59 @@ pub unsafe extern "C" fn rsnap_live_sampler_peek_region_rgba(
 	RsnapStatus::Ok
 }
 
+/// Transfers ownership of a cached RGBA region from the latest live sampler monitor frame
+/// to the caller.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_live_sampler_create`, and
+/// `out_region` must be a valid writable pointer. The caller must later release the
+/// returned buffer with `rsnap_owned_rgba_region_release`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_take_region_rgba(
+	handle: *mut RsnapLiveSamplerHandle,
+	monitor: RsnapMonitorRect,
+	rect: RsnapRect,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let region = handle.sampler.peek_region_rgba(
+		decode_overlay_monitor(monitor),
+		decode_overlay_point(RsnapPoint { x: rect.x, y: rect.y }),
+		rect.width,
+		rect.height,
+	);
+
+	let Some(region) = region else {
+		unsafe {
+			ptr::write(out_region, RsnapOwnedRgbaRegion::default());
+		}
+		return RsnapStatus::Empty;
+	};
+
+	let mut rgba = region.rgba;
+	let out = RsnapOwnedRgbaRegion {
+		width: region.width,
+		height: region.height,
+		len: rgba.len(),
+		capacity: rgba.capacity(),
+		rgba: rgba.as_mut_ptr(),
+	};
+	std::mem::forget(rgba);
+	unsafe {
+		ptr::write(out_region, out);
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Peeks the latest cached full-monitor RGBA snapshot from the live sampler without waiting
 /// for a new capture.
 ///
@@ -876,6 +951,70 @@ pub unsafe extern "C" fn rsnap_live_sampler_peek_latest_monitor_rgba(
 	}
 
 	RsnapStatus::Ok
+}
+
+/// Transfers ownership of the latest cached full-monitor RGBA snapshot buffer to the caller.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_live_sampler_create`, and
+/// `out_region` must be a valid writable pointer. The caller must later release the
+/// returned buffer with `rsnap_owned_rgba_region_release`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_take_latest_monitor_rgba(
+	handle: *mut RsnapLiveSamplerHandle,
+	monitor: RsnapMonitorRect,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(region) = handle.sampler.peek_latest_monitor_rgba(decode_overlay_monitor(monitor)) else {
+		unsafe {
+			ptr::write(out_region, RsnapOwnedRgbaRegion::default());
+		}
+		return RsnapStatus::Empty;
+	};
+
+	let mut rgba = region.rgba;
+	let out = RsnapOwnedRgbaRegion {
+		width: region.width,
+		height: region.height,
+		len: rgba.len(),
+		capacity: rgba.capacity(),
+		rgba: rgba.as_mut_ptr(),
+	};
+	std::mem::forget(rgba);
+	unsafe {
+		ptr::write(out_region, out);
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Releases a buffer previously returned by `rsnap_live_sampler_take_latest_monitor_rgba`.
+///
+/// # Safety
+///
+/// `region` must point to a struct returned by `rsnap_live_sampler_take_latest_monitor_rgba`
+/// that has not already been released.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_owned_rgba_region_release(
+	region: *mut RsnapOwnedRgbaRegion,
+) {
+	let Some(region) = (unsafe { region.as_mut() }) else {
+		return;
+	};
+	if !region.rgba.is_null() && region.capacity > 0 {
+		let _ = unsafe { Vec::from_raw_parts(region.rgba, region.len, region.capacity) };
+	}
+	*region = RsnapOwnedRgbaRegion::default();
 }
 
 unsafe fn handle_mut<'a>(handle: *mut RsnapSessionHandle) -> Option<&'a mut RsnapSessionHandle> {

@@ -4,7 +4,7 @@ import Foundation
 import RsnapHostBridge
 
 final class LiveFrameStreamBroker {
-	private struct SamplerMonitor {
+	private struct SamplerMonitor: Equatable {
 		let id: UInt32
 		let appKitFrame: CGRect
 		let quartzFrame: CGRect
@@ -32,6 +32,9 @@ final class LiveFrameStreamBroker {
 	private var cachedMonitorImages: [UInt32: CachedMonitorImage] = [:]
 	private var warmingMonitorGenerations: [UInt32: UInt64] = [:]
 	private var streamGeneration: UInt64 = 0
+	private var lastPrimedMonitorID: UInt32?
+	private var lastPrimeGeneration: UInt64 = 0
+	private var lastPrimeUptime: TimeInterval = 0
 
 	init() {
 		sampler = try? RsnapLiveSampler()
@@ -42,11 +45,25 @@ final class LiveFrameStreamBroker {
 		if sampler == nil {
 			sampler = try? RsnapLiveSampler()
 		}
-		streamGeneration &+= 1
-		let generation = streamGeneration
 		let mainDisplayHeight = Self.mainDisplayHeight(for: screens)
 		self.mainDisplayHeight = mainDisplayHeight
-		monitors = screens.compactMap { Self.monitorSnapshot(for: $0, mainDisplayHeight: mainDisplayHeight) }
+		let nextMonitors = screens.compactMap { Self.monitorSnapshot(for: $0, mainDisplayHeight: mainDisplayHeight) }
+		let targetMonitor = prewarmPoint.flatMap { point in
+			nextMonitors.first(where: { $0.appKitFrame.contains(point) })
+		}
+		let monitorsUnchanged = nextMonitors == monitors
+		monitors = nextMonitors
+		if monitorsUnchanged {
+			let generation = streamGeneration
+			stateLock.unlock()
+			if let targetMonitor {
+				prime(monitor: targetMonitor)
+				warmMonitorImage(monitor: targetMonitor, generation: generation)
+			}
+			return
+		}
+		streamGeneration &+= 1
+		let generation = streamGeneration
 		let liveMonitors = Dictionary(uniqueKeysWithValues: monitors.map { ($0.id, $0) })
 		cachedMonitorImages = cachedMonitorImages.filter { monitorID, cachedImage in
 			guard let liveMonitor = liveMonitors[monitorID] else {
@@ -55,9 +72,6 @@ final class LiveFrameStreamBroker {
 			return liveMonitor.appKitFrame == cachedImage.frame
 		}
 		warmingMonitorGenerations.removeAll()
-		let targetMonitor = prewarmPoint.flatMap { point in
-			monitors.first(where: { $0.appKitFrame.contains(point) })
-		}
 		stateLock.unlock()
 		if let targetMonitor {
 			prime(monitor: targetMonitor)
@@ -72,6 +86,9 @@ final class LiveFrameStreamBroker {
 		monitors.removeAll()
 		mainDisplayHeight = 0
 		warmingMonitorGenerations.removeAll()
+		lastPrimedMonitorID = nil
+		lastPrimeGeneration = 0
+		lastPrimeUptime = 0
 		sampler = nil
 		stateLock.unlock()
 		guard let retiringSampler else {
@@ -168,6 +185,23 @@ final class LiveFrameStreamBroker {
 	private func prime(monitor: SamplerMonitor) {
 		stateLock.lock()
 		let sampler = self.sampler
+		let generation = streamGeneration
+		let cachedImage = cachedMonitorImages[monitor.id]
+		let now = ProcessInfo.processInfo.systemUptime
+		if cachedImage?.generation == generation {
+			stateLock.unlock()
+			return
+		}
+		if lastPrimedMonitorID == monitor.id,
+			lastPrimeGeneration == generation,
+			now - lastPrimeUptime < (1.0 / 30.0)
+		{
+			stateLock.unlock()
+			return
+		}
+		lastPrimedMonitorID = monitor.id
+		lastPrimeGeneration = generation
+		lastPrimeUptime = now
 		stateLock.unlock()
 		guard let sampler else {
 			return

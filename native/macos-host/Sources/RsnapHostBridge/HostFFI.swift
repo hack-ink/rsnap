@@ -761,87 +761,6 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 		stateLock.lock()
 		defer { stateLock.unlock() }
 
-		var outRegion = RsnapRgbaRegion()
-		let status = rsnap_live_sampler_peek_region_rgba(
-			handle,
-			RsnapMonitorRect(
-				id: monitor.id,
-				origin: RsnapPoint(
-					x: Int32(monitor.frame.origin.x.rounded()),
-					y: Int32(monitor.frame.origin.y.rounded())
-				),
-				width: UInt32(max(monitor.frame.width.rounded(), 0)),
-				height: UInt32(max(monitor.frame.height.rounded(), 0)),
-				scale_factor_x1000: monitor.scaleFactorX1000
-			),
-			RsnapRect(
-				x: Int32(rect.origin.x.rounded()),
-				y: Int32(rect.origin.y.rounded()),
-				width: UInt32(max(rect.width.rounded(), 0)),
-				height: UInt32(max(rect.height.rounded(), 0))
-			),
-			&outRegion
-		)
-		let code = rsnap_status_code(status)
-		if code == 3 {
-			return nil
-		}
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: "peeking live RGBA region", code: code)
-		}
-		guard outRegion.len > 0 else {
-			return nil
-		}
-		let byteCount = outRegion.len
-		let bytes = UnsafeMutablePointer<UInt8>.allocate(capacity: byteCount)
-		defer {
-			bytes.deallocate()
-		}
-
-		outRegion.capacity = byteCount
-		outRegion.rgba = bytes
-		let copyStatus = rsnap_live_sampler_peek_region_rgba(
-			handle,
-			RsnapMonitorRect(
-				id: monitor.id,
-				origin: RsnapPoint(
-					x: Int32(monitor.frame.origin.x.rounded()),
-					y: Int32(monitor.frame.origin.y.rounded())
-				),
-				width: UInt32(max(monitor.frame.width.rounded(), 0)),
-				height: UInt32(max(monitor.frame.height.rounded(), 0)),
-				scale_factor_x1000: monitor.scaleFactorX1000
-			),
-			RsnapRect(
-				x: Int32(rect.origin.x.rounded()),
-				y: Int32(rect.origin.y.rounded()),
-				width: UInt32(max(rect.width.rounded(), 0)),
-				height: UInt32(max(rect.height.rounded(), 0))
-			),
-			&outRegion
-		)
-		let copyCode = rsnap_status_code(copyStatus)
-		if copyCode == 3 {
-			return nil
-		}
-		if copyCode != 0 {
-			throw HostBridgeError.ffiStatus(context: "copying live RGBA region", code: copyCode)
-		}
-		let data = Data(bytes: bytes, count: byteCount)
-		return RGBARegionSnapshot(
-			width: Int(outRegion.width),
-			height: Int(outRegion.height),
-			rgba: data
-		)
-	}
-
-	public func peekLatestMonitorImage(
-		monitor: MonitorSnapshot
-	) throws -> RGBARegionSnapshot? {
-		stateLock.lock()
-		defer { stateLock.unlock() }
-
-		var outRegion = RsnapRgbaRegion()
 		let encodedMonitor = RsnapMonitorRect(
 			id: monitor.id,
 			origin: RsnapPoint(
@@ -852,7 +771,65 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 			height: UInt32(max(monitor.frame.height.rounded(), 0)),
 			scale_factor_x1000: monitor.scaleFactorX1000
 		)
-		let status = rsnap_live_sampler_peek_latest_monitor_rgba(
+		let encodedRect = RsnapRect(
+			x: Int32(rect.origin.x.rounded()),
+			y: Int32(rect.origin.y.rounded()),
+			width: UInt32(max(rect.width.rounded(), 0)),
+			height: UInt32(max(rect.height.rounded(), 0))
+		)
+		var ownedRegion = RsnapOwnedRgbaRegion()
+		let takeStatus = rsnap_live_sampler_take_region_rgba(
+			handle,
+			encodedMonitor,
+			encodedRect,
+			&ownedRegion
+		)
+		let takeCode = rsnap_status_code(takeStatus)
+		if takeCode == 3 {
+			return nil
+		}
+		if takeCode != 0 {
+			throw HostBridgeError.ffiStatus(context: "taking live RGBA region", code: takeCode)
+		}
+		guard ownedRegion.len > 0, let rgba = ownedRegion.rgba else {
+			return nil
+		}
+		let regionHandle = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
+		regionHandle.initialize(to: ownedRegion)
+		let data = Data(
+			bytesNoCopy: rgba,
+			count: ownedRegion.len,
+			deallocator: .custom { _, _ in
+				rsnap_owned_rgba_region_release(regionHandle)
+				regionHandle.deinitialize(count: 1)
+				regionHandle.deallocate()
+			}
+		)
+		return RGBARegionSnapshot(
+			width: Int(ownedRegion.width),
+			height: Int(ownedRegion.height),
+			rgba: data
+		)
+	}
+
+	public func peekLatestMonitorImage(
+		monitor: MonitorSnapshot
+	) throws -> RGBARegionSnapshot? {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		var outRegion = RsnapOwnedRgbaRegion()
+		let encodedMonitor = RsnapMonitorRect(
+			id: monitor.id,
+			origin: RsnapPoint(
+				x: Int32(monitor.frame.origin.x.rounded()),
+				y: Int32(monitor.frame.origin.y.rounded())
+			),
+			width: UInt32(max(monitor.frame.width.rounded(), 0)),
+			height: UInt32(max(monitor.frame.height.rounded(), 0)),
+			scale_factor_x1000: monitor.scaleFactorX1000
+		)
+		let status = rsnap_live_sampler_take_latest_monitor_rgba(
 			handle,
 			encodedMonitor,
 			&outRegion
@@ -864,30 +841,20 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 		if code != 0 {
 			throw HostBridgeError.ffiStatus(context: "peeking latest monitor RGBA snapshot", code: code)
 		}
-		guard outRegion.len > 0 else {
+		guard outRegion.len > 0, let rgba = outRegion.rgba else {
 			return nil
 		}
-		let byteCount = outRegion.len
-		let bytes = UnsafeMutablePointer<UInt8>.allocate(capacity: byteCount)
-		defer {
-			bytes.deallocate()
-		}
-
-		outRegion.capacity = byteCount
-		outRegion.rgba = bytes
-		let copyStatus = rsnap_live_sampler_peek_latest_monitor_rgba(
-			handle,
-			encodedMonitor,
-			&outRegion
+		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
+		ownedRegion.initialize(to: outRegion)
+		let data = Data(
+			bytesNoCopy: rgba,
+			count: outRegion.len,
+			deallocator: .custom { _, _ in
+				rsnap_owned_rgba_region_release(ownedRegion)
+				ownedRegion.deinitialize(count: 1)
+				ownedRegion.deallocate()
+			}
 		)
-		let copyCode = rsnap_status_code(copyStatus)
-		if copyCode == 3 {
-			return nil
-		}
-		if copyCode != 0 {
-			throw HostBridgeError.ffiStatus(context: "copying latest monitor RGBA snapshot", code: copyCode)
-		}
-		let data = Data(bytes: bytes, count: byteCount)
 		return RGBARegionSnapshot(
 			width: Int(outRegion.width),
 			height: Int(outRegion.height),

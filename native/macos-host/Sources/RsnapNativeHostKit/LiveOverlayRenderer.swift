@@ -40,6 +40,15 @@ struct LivePreviewSnapshot {
 	let glassPatches: [LiveGlassSurfaceKind: CGImage]
 }
 
+@MainActor
+private enum LiveOverlayTypography {
+	static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+	static let lineHeight = ceil("x=0".size(using: font).height)
+	static let commaWidth = ",".size(using: font).width
+	static let keycapTextSize = "Tab".size(using: font)
+	static let keycapFrameSize = CGSize(width: keycapTextSize.width + 12, height: keycapTextSize.height + 4)
+}
+
 final class WindowSnapshotFeed {
 	private let ownPID = ProcessInfo.processInfo.processIdentifier
 	private let queue = DispatchQueue(label: "ink.hack.rsnap.native-host.window-snapshot-feed", qos: .userInitiated)
@@ -406,7 +415,6 @@ final class LiveOverlayRenderer {
 	private let hudStrokeLayer = CAShapeLayer()
 	private let hudPositionLayer = CATextLayer()
 	private let hudHexLayer = CATextLayer()
-	private let hudRGBLayer = CATextLayer()
 	private let hudSwatchLayer = CALayer()
 	private let hudKeycapLayer = CALayer()
 	private let hudKeycapTextLayer = CATextLayer()
@@ -490,7 +498,7 @@ final class LiveOverlayRenderer {
 			$0.masksToBounds = false
 			rootLayer.addSublayer($0)
 		}
-		[hudGlassLayer, hudFillLayer, hudStrokeLayer, hudSwatchLayer, hudPositionLayer, hudHexLayer, hudRGBLayer, hudKeycapLayer, hudKeycapTextLayer].forEach {
+		[hudGlassLayer, hudFillLayer, hudStrokeLayer, hudSwatchLayer, hudPositionLayer, hudHexLayer, hudKeycapLayer, hudKeycapTextLayer].forEach {
 			hudLayer.addSublayer($0)
 		}
 		[loupeGlassLayer, loupeFillLayer, loupeStrokeLayer, loupePatchLayer, loupeCenterLayer].forEach {
@@ -601,7 +609,7 @@ final class LiveOverlayRenderer {
 			dragBorderLayer.lineCap = .butt
 			dragBorderLayer.lineJoin = .miter
 			if let selectionSizeText = snapshot.selectionSizeText {
-				let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+				let font = LiveOverlayTypography.font
 				let textSize = selectionSizeText.size(using: font)
 				let x = min(dragSelection.maxX - textSize.width, bounds.maxX - 8 - textSize.width)
 				let preferredY = dragSelection.maxY + 8
@@ -656,13 +664,13 @@ final class LiveOverlayRenderer {
 			glassImage: snapshot.glassPatches[.hud]
 		)
 
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+		let font = LiveOverlayTypography.font
 		let positionText = "x=\(snapshot.positionDisplay.xValueText), y=\(snapshot.positionDisplay.yValueText)"
 		let positionSize = CGSize(
 			width: snapshot.positionDisplay.xSlotWidth
-				+ ",".size(using: font).width
+				+ LiveOverlayTypography.commaWidth
 				+ snapshot.positionDisplay.ySlotWidth,
-			height: positionText.size(using: font).height
+			height: LiveOverlayTypography.lineHeight
 		)
 		var cursorX = CaptureChrome.hudInnerMarginX
 		let baselineY = (hudLayer.bounds.height - positionSize.height) / 2
@@ -686,17 +694,18 @@ final class LiveOverlayRenderer {
 		hudSwatchLayer.borderWidth = 1
 		cursorX += 20
 
-		let hexSize = snapshot.colorDisplay.hexText.size(using: font)
-		applyText(hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: palette.labelText, frame: CGRect(x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth), height: ceil(hexSize.height)), alignment: .left)
+		applyText(hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: palette.labelText, frame: CGRect(x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth), height: ceil(LiveOverlayTypography.lineHeight)), alignment: .left)
 		cursorX += snapshot.colorDisplay.hexSlotWidth + 10
-
-		hudRGBLayer.isHidden = true
 
 		if snapshot.keycapVisible {
 			let keycapText = "Tab"
 			let keycapFont = font
-			let keycapTextSize = keycapText.size(using: keycapFont)
-			let keycapFrame = CGRect(x: cursorX, y: hudLayer.bounds.midY - (keycapTextSize.height + 4) / 2, width: keycapTextSize.width + 12, height: keycapTextSize.height + 4)
+			let keycapFrame = CGRect(
+				x: cursorX,
+				y: hudLayer.bounds.midY - LiveOverlayTypography.keycapFrameSize.height / 2,
+				width: LiveOverlayTypography.keycapFrameSize.width,
+				height: LiveOverlayTypography.keycapFrameSize.height
+			)
 			hudKeycapLayer.isHidden = false
 			hudKeycapTextLayer.isHidden = false
 			hudKeycapLayer.frame = keycapFrame
