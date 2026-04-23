@@ -281,8 +281,11 @@ pub enum HostRequest {
 	StartLiveCapture,
 	/// Stop native live capture.
 	StopLiveCapture,
-	/// Request a frozen snapshot from the native host.
-	RequestFreezeSnapshot,
+	/// Request a frozen snapshot handoff from the native host for the provided selection.
+	RequestFreezeSnapshot {
+		/// Selection rectangle that should become the first visible frozen frame.
+		selection: GlobalRect,
+	},
 	/// Perform a host-owned effect.
 	PerformHostEffect(HostEffectKind),
 	/// Request a host-owned permission flow.

@@ -18,7 +18,7 @@ use rsnap_overlay::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 8;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 11;
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
 const RSNAP_LIVE_SAMPLE_PATCH_CAPACITY: usize = 4096;
@@ -76,6 +76,28 @@ impl Default for RsnapLiveSample {
 			patch_len: 0,
 			patch_rgba: [0; RSNAP_LIVE_SAMPLE_PATCH_CAPACITY],
 		}
+	}
+}
+
+/// FFI-safe owned RGBA image region copied out of the cached live sampler frame.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RsnapRgbaRegion {
+	/// Region width in pixels.
+	pub width: u32,
+	/// Region height in pixels.
+	pub height: u32,
+	/// Byte count in `rgba`.
+	pub len: usize,
+	/// Caller-provided buffer capacity in bytes.
+	pub capacity: usize,
+	/// Caller-provided RGBA byte buffer in row-major order.
+	pub rgba: *mut u8,
+}
+
+impl Default for RsnapRgbaRegion {
+	fn default() -> Self {
+		Self { width: 0, height: 0, len: 0, capacity: 0, rgba: ptr::null_mut() }
 	}
 }
 
@@ -479,6 +501,20 @@ pub enum RsnapHostRequestKind {
 pub struct RsnapHostRequestValue {
 	/// Request kind.
 	pub kind: u32,
+	/// Optional selection payload for frozen handoff requests.
+	pub selection: RsnapRect,
+	/// Non-zero when `selection` is populated.
+	pub has_selection: u8,
+}
+
+impl Default for RsnapHostRequestValue {
+	fn default() -> Self {
+		Self {
+			kind: 0,
+			selection: RsnapRect::default(),
+			has_selection: 0,
+		}
+	}
 }
 
 /// Creates a new opaque session handle.
@@ -665,10 +701,7 @@ pub unsafe extern "C" fn rsnap_session_take_next_request(
 	};
 
 	unsafe {
-		ptr::write(
-			out_request.as_ptr(),
-			RsnapHostRequestValue { kind: encode_host_request_kind(request) as u32 },
-		);
+		ptr::write(out_request.as_ptr(), encode_host_request(request));
 	}
 
 	RsnapStatus::Ok
@@ -724,6 +757,122 @@ pub unsafe extern "C" fn rsnap_live_sampler_sample_cursor(
 
 	if out.has_rgb == 0 && out.patch_len == 0 {
 		return RsnapStatus::Empty;
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Peeks a cached RGBA region from the latest live sampler monitor frame without waiting
+/// for a new capture.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_live_sampler_create`, and
+/// `out_region` must be a valid writable pointer. The caller may first call with a null
+/// `rgba` pointer and zero `capacity` to query the required size, then call again with a
+/// writable buffer to receive the bytes.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_peek_region_rgba(
+	handle: *mut RsnapLiveSamplerHandle,
+	monitor: RsnapMonitorRect,
+	rect: RsnapRect,
+	out_region: *mut RsnapRgbaRegion,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let region = handle.sampler.peek_region_rgba(
+		decode_overlay_monitor(monitor),
+		decode_overlay_point(RsnapPoint { x: rect.x, y: rect.y }),
+		rect.width,
+		rect.height,
+	);
+
+	let Some(region) = region else {
+		unsafe {
+			ptr::write(out_region, RsnapRgbaRegion::default());
+		}
+		return RsnapStatus::Empty;
+	};
+
+	let requested = unsafe { &mut *out_region };
+	let len = region.rgba.len();
+	if !requested.rgba.is_null() && requested.capacity >= len {
+		unsafe {
+			ptr::copy_nonoverlapping(region.rgba.as_ptr(), requested.rgba, len);
+		}
+	}
+	unsafe {
+		ptr::write(
+			out_region,
+			RsnapRgbaRegion {
+				width: region.width,
+				height: region.height,
+				len,
+				capacity: requested.capacity,
+				rgba: requested.rgba,
+			},
+		);
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Peeks the latest cached full-monitor RGBA snapshot from the live sampler without waiting
+/// for a new capture.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_live_sampler_create`, and
+/// `out_region` must be a valid writable pointer. The caller may first call with a null
+/// `rgba` pointer and zero `capacity` to query the required size, then call again with a
+/// writable buffer to receive the bytes.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_peek_latest_monitor_rgba(
+	handle: *mut RsnapLiveSamplerHandle,
+	monitor: RsnapMonitorRect,
+	out_region: *mut RsnapRgbaRegion,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let region = handle.sampler.peek_latest_monitor_rgba(decode_overlay_monitor(monitor));
+
+	let Some(region) = region else {
+		unsafe {
+			ptr::write(out_region, RsnapRgbaRegion::default());
+		}
+		return RsnapStatus::Empty;
+	};
+
+	let requested = unsafe { &mut *out_region };
+	let len = region.rgba.len();
+	if !requested.rgba.is_null() && requested.capacity >= len {
+		unsafe {
+			ptr::copy_nonoverlapping(region.rgba.as_ptr(), requested.rgba, len);
+		}
+	}
+	unsafe {
+		ptr::write(
+			out_region,
+			RsnapRgbaRegion {
+				width: region.width,
+				height: region.height,
+				len,
+				capacity: requested.capacity,
+				rgba: requested.rgba,
+			},
+		);
 	}
 
 	RsnapStatus::Ok
@@ -983,24 +1132,40 @@ fn decode_toolbar_item_kind(kind: u32) -> ToolbarItemKind {
 	}
 }
 
-fn encode_host_request_kind(request: HostRequest) -> RsnapHostRequestKind {
+fn encode_host_request(request: HostRequest) -> RsnapHostRequestValue {
 	match request {
-		HostRequest::StartLiveCapture => RsnapHostRequestKind::StartLiveCapture,
-		HostRequest::StopLiveCapture => RsnapHostRequestKind::StopLiveCapture,
-		HostRequest::RequestFreezeSnapshot => RsnapHostRequestKind::RequestFreezeSnapshot,
-		HostRequest::PerformHostEffect(effect) => match effect {
-			HostEffectKind::CopyCapture => RsnapHostRequestKind::CopyCapture,
-			HostEffectKind::SaveCapture => RsnapHostRequestKind::SaveCapture,
-			HostEffectKind::RecognizeText => RsnapHostRequestKind::RecognizeText,
+		HostRequest::StartLiveCapture => RsnapHostRequestValue {
+			kind: RsnapHostRequestKind::StartLiveCapture as u32,
+			..RsnapHostRequestValue::default()
 		},
-		HostRequest::RequestPermission(permission) => match permission {
-			PermissionKind::ScreenRecording => {
-				RsnapHostRequestKind::RequestScreenRecordingPermission
-			},
-			PermissionKind::Accessibility => RsnapHostRequestKind::RequestAccessibilityPermission,
-			PermissionKind::InputMonitoring => {
-				RsnapHostRequestKind::RequestInputMonitoringPermission
-			},
+		HostRequest::StopLiveCapture => RsnapHostRequestValue {
+			kind: RsnapHostRequestKind::StopLiveCapture as u32,
+			..RsnapHostRequestValue::default()
+		},
+		HostRequest::RequestFreezeSnapshot { selection } => RsnapHostRequestValue {
+			kind: RsnapHostRequestKind::RequestFreezeSnapshot as u32,
+			selection: encode_rect(selection),
+			has_selection: 1,
+		},
+		HostRequest::PerformHostEffect(effect) => RsnapHostRequestValue {
+			kind: match effect {
+				HostEffectKind::CopyCapture => RsnapHostRequestKind::CopyCapture,
+				HostEffectKind::SaveCapture => RsnapHostRequestKind::SaveCapture,
+				HostEffectKind::RecognizeText => RsnapHostRequestKind::RecognizeText,
+			} as u32,
+			..RsnapHostRequestValue::default()
+		},
+		HostRequest::RequestPermission(permission) => RsnapHostRequestValue {
+			kind: match permission {
+				PermissionKind::ScreenRecording => {
+					RsnapHostRequestKind::RequestScreenRecordingPermission
+				},
+				PermissionKind::Accessibility => RsnapHostRequestKind::RequestAccessibilityPermission,
+				PermissionKind::InputMonitoring => {
+					RsnapHostRequestKind::RequestInputMonitoringPermission
+				},
+			} as u32,
+			..RsnapHostRequestValue::default()
 		},
 	}
 }
@@ -1139,7 +1304,7 @@ mod tests {
 	#[test]
 	fn ffi_session_enters_live_and_emits_request() {
 		let handle = unsafe { rsnap_session_create(default_config()) };
-		let mut request = RsnapHostRequestValue { kind: u32::MAX };
+		let mut request = RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
 		let mut scene = RsnapSceneModel::default();
 
 		assert_eq!(unsafe { rsnap_session_enter_live(handle) }, RsnapStatus::Ok);
@@ -1161,7 +1326,7 @@ mod tests {
 		let mut scene = RsnapSceneModel::default();
 
 		assert_eq!(unsafe { rsnap_session_enter_live(handle) }, RsnapStatus::Ok);
-		let mut request = RsnapHostRequestValue { kind: u32::MAX };
+		let mut request = RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
 		let _ = unsafe { rsnap_session_take_next_request(handle, &mut request) };
 
 		assert_eq!(
@@ -1195,7 +1360,7 @@ mod tests {
 		let mut scene = RsnapSceneModel::default();
 
 		let _ = unsafe { rsnap_session_enter_live(handle) };
-		let mut request = RsnapHostRequestValue { kind: u32::MAX };
+		let mut request = RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
 		let _ = unsafe { rsnap_session_take_next_request(handle, &mut request) };
 		assert_eq!(
 			unsafe {
@@ -1245,6 +1410,58 @@ mod tests {
 	#[test]
 	fn destroy_allows_null() {
 		let handle: *mut RsnapSessionHandle = ptr::null_mut();
+
+		unsafe { rsnap_session_destroy(handle) };
+	}
+
+	#[test]
+	fn ffi_freeze_request_carries_selection_payload() {
+		let handle = unsafe { rsnap_session_create(default_config()) };
+		let mut request = RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
+
+		assert_eq!(unsafe { rsnap_session_enter_live(handle) }, RsnapStatus::Ok);
+		let _ = unsafe { rsnap_session_take_next_request(handle, &mut request) };
+
+		assert_eq!(
+			unsafe {
+				rsnap_session_handle_host_event(
+					handle,
+					RsnapHostEvent {
+						kind: RsnapHostEventKind::PrimaryInteractionCompleted as u32,
+						point: RsnapPoint { x: 80, y: 110 },
+						has_point: 1,
+						rgb: RsnapRgb::default(),
+						has_rgb: 0,
+						active_monitor: RsnapMonitorRect {
+							id: 9,
+							origin: RsnapPoint { x: 0, y: 0 },
+							width: 1440,
+							height: 900,
+							scale_factor_x1000: 2_000,
+						},
+						has_active_monitor: 1,
+						highlighted_window: RsnapWindowRect {
+							window_id: 42,
+							has_window_id: 1,
+							x: 20,
+							y: 30,
+							width: 60,
+							height: 80,
+						},
+						has_highlighted_window: 1,
+						toolbar_item_kind: 0,
+					},
+				)
+			},
+			RsnapStatus::Ok
+		);
+		assert_eq!(
+			unsafe { rsnap_session_take_next_request(handle, &mut request) },
+			RsnapStatus::Ok
+		);
+		assert_eq!(request.kind, RsnapHostRequestKind::RequestFreezeSnapshot as u32);
+		assert_eq!(request.has_selection, 1);
+		assert_eq!(request.selection, RsnapRect { x: 20, y: 30, width: 60, height: 80 });
 
 		unsafe { rsnap_session_destroy(handle) };
 	}
