@@ -787,12 +787,12 @@ final class LiveOverlayRenderer {
 		glassLayer.masksToBounds = true
 		glassLayer.contentsGravity = .resizeAspectFill
 		glassLayer.contents = glassImage
-		glassLayer.opacity = hasGlass ? Float(0.88 + settings.hudBlur.clamped(to: 0...1) * 0.12) : 0
+		glassLayer.opacity = hasGlass ? CaptureChrome.glassOpacity(settings: settings) : 0
 		glassLayer.isHidden = !hasGlass
 
 		fillLayer.frame = frame
 		fillLayer.cornerRadius = cornerRadius
-		fillLayer.backgroundColor = effectiveBodyFill(
+		fillLayer.backgroundColor = CaptureChrome.effectiveBodyFill(
 			palette: palette,
 			settings: settings,
 			hasGlass: hasGlass
@@ -803,18 +803,6 @@ final class LiveOverlayRenderer {
 		strokeLayer.fillColor = NSColor.clear.cgColor
 		strokeLayer.strokeColor = palette.outerStroke.cgColor
 		strokeLayer.lineWidth = 1
-	}
-
-	private func effectiveBodyFill(
-		palette: CaptureChromePalette,
-		settings: NativeHostSettings,
-		hasGlass: Bool
-	) -> NSColor {
-		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
-		if hasGlass {
-			return palette.bodyFill.withAlphaComponent(max(palette.bodyFill.alphaComponent, max(0.18, opacity * 0.34)))
-		}
-		return palette.bodyFill.withAlphaComponent(max(0.42, opacity * 0.82))
 	}
 
 	private func applyText(
