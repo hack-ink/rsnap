@@ -251,6 +251,7 @@ final class CaptureSessionController: NSObject {
 	private var session: RsnapHostSession?
 	private var overlayController: CaptureOverlayController?
 	private var frozenSnapshotGeneration: UInt64 = 0
+	private var completedHostEffect: HostEffectKind?
 	var captureStateDidChange: (() -> Void)?
 	private var scene = SceneSnapshot(
 		mode: .hidden,
@@ -533,12 +534,12 @@ final class CaptureSessionController: NSObject {
 
 	func copySelection() {
 		let _ = chromeState.frozenOverlay.commitTextEdit()
-		sendFrozenAction(.copyRequested)
+		sendFrozenAction(.copyRequested, exitAfter: .copyCapture)
 	}
 
 	func saveSelection() {
 		let _ = chromeState.frozenOverlay.commitTextEdit()
-		sendFrozenAction(.saveRequested)
+		sendFrozenAction(.saveRequested, exitAfter: .saveCapture)
 	}
 
 	func recognizeText() {
@@ -546,11 +547,30 @@ final class CaptureSessionController: NSObject {
 		sendFrozenAction(.recognizeTextRequested)
 	}
 
+	func startScrollCapture() {
+		let _ = chromeState.frozenOverlay.commitTextEdit()
+		do {
+			try sendHostStatusMessage("Scroll capture is not available in the native host yet.")
+			try syncCore()
+		} catch {
+			NSLog("Failed to report unavailable scroll capture: \(error)")
+		}
+	}
+
 	func invokeToolbarItem(_ item: ToolbarItemKind) {
 		if item != .text {
 			let _ = chromeState.frozenOverlay.commitTextEdit()
 		}
-		sendFrozenAction(.toolbarItemInvoked(item))
+		switch item {
+		case .copy:
+			sendFrozenAction(.toolbarItemInvoked(item), exitAfter: .copyCapture)
+		case .save:
+			sendFrozenAction(.toolbarItemInvoked(item), exitAfter: .saveCapture)
+		case .scroll:
+			startScrollCapture()
+		default:
+			sendFrozenAction(.toolbarItemInvoked(item))
+		}
 	}
 
 	func beginFrozenInteraction(at point: CGPoint) {
@@ -763,9 +783,10 @@ final class CaptureSessionController: NSObject {
 		if chromeState.frozenOverlay.canUndo || chromeState.frozenOverlay.activeTextEdit != nil {
 			return
 		}
-		ensureFrozenBaseImageFromDisplayIfNeeded(for: selection)
 		if chromeState.frozenSelectionSnapshot != selection || chromeState.frozenBaseImage == nil {
-			refreshFrozenCaptureSnapshot(for: selection)
+			chromeState.frozenSelectionSnapshot = selection
+			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
+			chromeState.frozenMosaicImage = nil
 		}
 		guard
 			let baseImage = chromeState.frozenBaseImage,
@@ -791,7 +812,8 @@ final class CaptureSessionController: NSObject {
 			width: selection.width,
 			height: selection.height,
 			x: selection.minX + deltaX,
-			y: selection.minY + deltaY,
+			// Content bounds are in top-down CGImage coordinates; AppKit screen coordinates are bottom-up.
+			y: selection.minY - deltaY,
 			monitorFrame: screen.frame
 		)
 		guard nextSelection != selection else {
@@ -799,9 +821,21 @@ final class CaptureSessionController: NSObject {
 		}
 
 		do {
-			refreshFrozenCaptureSnapshot(for: nextSelection)
+			frozenSnapshotGeneration &+= 1
+			let generation = frozenSnapshotGeneration
+			let captureSource = overlayController?.frozenCaptureJobSource(
+				near: CGPoint(x: nextSelection.midX, y: nextSelection.midY)
+			)
+			chromeState.frozenSelectionSnapshot = nextSelection
+			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: nextSelection)
+			chromeState.frozenMosaicImage = nil
 			try session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 			try syncCore()
+			scheduleFrozenCaptureSnapshot(
+				for: nextSelection,
+				source: captureSource,
+				generation: generation
+			)
 		} catch {
 			NSLog("Failed to auto-center frozen selection: \(error)")
 		}
@@ -829,6 +863,10 @@ final class CaptureSessionController: NSObject {
 			break
 		}
 
+		let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+		guard !flags.contains(.command), !flags.contains(.control), !flags.contains(.option) else {
+			return false
+		}
 		guard let characters = event.characters else {
 			return false
 		}
@@ -849,10 +887,14 @@ final class CaptureSessionController: NSObject {
 		}
 	}
 
-	private func sendFrozenAction(_ event: HostEvent) {
+	private func sendFrozenAction(_ event: HostEvent, exitAfter expectedEffect: HostEffectKind? = nil) {
 		do {
+			completedHostEffect = nil
 			try session?.send(event: event)
 			try syncCore()
+			if let expectedEffect, completedHostEffect == expectedEffect {
+				tearDownCapture()
+			}
 		} catch {
 			NSLog("Failed to send frozen action: \(error)")
 		}
@@ -1052,6 +1094,7 @@ final class CaptureSessionController: NSObject {
 
 		try session.send(report: .hostEffectCompleted(.copyCapture))
 		try session.send(report: .statusMessage("Copied capture to clipboard."))
+		completedHostEffect = .copyCapture
 	}
 
 	private func performSave() throws {
@@ -1073,6 +1116,7 @@ final class CaptureSessionController: NSObject {
 
 		try session.send(report: .hostEffectCompleted(.saveCapture))
 		try session.send(report: .statusMessage("Saved capture to \(outputURL.lastPathComponent)."))
+		completedHostEffect = .saveCapture
 	}
 
 	private func performRecognizeText() throws {
@@ -1141,19 +1185,21 @@ final class CaptureSessionController: NSObject {
 		guard chromeState.frozenSelectionSnapshot == selection, chromeState.frozenBaseImage == nil else {
 			return
 		}
+		chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
+	}
+
+	private func frozenBaseImageFromDisplay(for selection: CGRect) -> CGImage? {
 		guard
 			let displayFrame = chromeState.frozenDisplayFrame,
-			let displayImage = chromeState.frozenDisplayImage,
-			let baseImage = Self.cropFrozenDisplayImage(
-				displayImage,
-				displayFrame: displayFrame,
-				selection: selection
-			)
+			let displayImage = chromeState.frozenDisplayImage
 		else {
-			return
+			return nil
 		}
-
-		chromeState.frozenBaseImage = baseImage
+		return Self.cropFrozenDisplayImage(
+			displayImage,
+			displayFrame: displayFrame,
+			selection: selection
+		)
 	}
 
 	private func scheduleFrozenCaptureSnapshot(
@@ -1418,6 +1464,7 @@ final class CaptureSessionController: NSObject {
 	private func tearDownCapture() {
 		liveFrameStream.stop()
 		frozenSnapshotGeneration &+= 1
+		completedHostEffect = nil
 		chromeState = CaptureChromeState()
 		overlayController?.close()
 		overlayController = nil
@@ -1522,13 +1569,22 @@ final class CaptureSessionController: NSObject {
 		guard width >= 2, height >= 2 else {
 			return nil
 		}
+		guard
+			bitmap.bitsPerSample == 8,
+			!bitmap.isPlanar,
+			bitmap.samplesPerPixel >= 3,
+			!bitmap.bitmapFormat.contains(.floatingPointSamples),
+			let bitmapData = bitmap.bitmapData
+		else {
+			return nil
+		}
 
 		let edgeStrip = max(1, min(24, Int((CGFloat(min(width, height)) * 0.08).rounded())))
 		guard
-			let topMean = regionRGBMean(bitmap, x0: 0, x1: width, y0: 0, y1: edgeStrip),
-			let bottomMean = regionRGBMean(bitmap, x0: 0, x1: width, y0: height - edgeStrip, y1: height),
-			let leftMean = regionRGBMean(bitmap, x0: 0, x1: edgeStrip, y0: 0, y1: height),
-			let rightMean = regionRGBMean(bitmap, x0: width - edgeStrip, x1: width, y0: 0, y1: height)
+			let topMean = regionRGBMean(bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: 0, y1: edgeStrip),
+			let bottomMean = regionRGBMean(bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: height - edgeStrip, y1: height),
+			let leftMean = regionRGBMean(bitmapData, bitmap: bitmap, x0: 0, x1: edgeStrip, y0: 0, y1: height),
+			let rightMean = regionRGBMean(bitmapData, bitmap: bitmap, x0: width - edgeStrip, x1: width, y0: 0, y1: height)
 		else {
 			return nil
 		}
@@ -1539,14 +1595,14 @@ final class CaptureSessionController: NSObject {
 				96,
 				Int(
 					round(
-						max(
-							regionRGBMeanDistance(bitmap, x0: 0, x1: width, y0: 0, y1: edgeStrip, mean: topMean),
-							regionRGBMeanDistance(bitmap, x0: 0, x1: width, y0: height - edgeStrip, y1: height, mean: bottomMean),
-							regionRGBMeanDistance(bitmap, x0: 0, x1: edgeStrip, y0: 0, y1: height, mean: leftMean),
-							regionRGBMeanDistance(bitmap, x0: width - edgeStrip, x1: width, y0: 0, y1: height, mean: rightMean)
-						) * 3
+							max(
+								regionRGBMeanDistance(bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: 0, y1: edgeStrip, mean: topMean),
+								regionRGBMeanDistance(bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: height - edgeStrip, y1: height, mean: bottomMean),
+								regionRGBMeanDistance(bitmapData, bitmap: bitmap, x0: 0, x1: edgeStrip, y0: 0, y1: height, mean: leftMean),
+								regionRGBMeanDistance(bitmapData, bitmap: bitmap, x0: width - edgeStrip, x1: width, y0: 0, y1: height, mean: rightMean)
+							) * 3
+						)
 					)
-				)
 			)
 		)
 		let minSalientPerRow = max(1, width / 64)
@@ -1556,16 +1612,14 @@ final class CaptureSessionController: NSObject {
 
 		for y in 0..<height {
 			for x in 0..<width {
-				guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
-					continue
-				}
-				let distances = [
-					rgbDistanceToMean(color, mean: topMean),
-					rgbDistanceToMean(color, mean: bottomMean),
-					rgbDistanceToMean(color, mean: leftMean),
-					rgbDistanceToMean(color, mean: rightMean),
-				]
-				guard let salientDistance = distances.min(), salientDistance >= CGFloat(threshold) else {
+				let rgb = rgbComponents(bitmapData, bitmap: bitmap, x: x, y: y)
+				let salientDistance = min(
+					rgbDistanceToMean(rgb, mean: topMean),
+					rgbDistanceToMean(rgb, mean: bottomMean),
+					rgbDistanceToMean(rgb, mean: leftMean),
+					rgbDistanceToMean(rgb, mean: rightMean)
+				)
+				guard salientDistance >= CGFloat(threshold) else {
 					continue
 				}
 				rowCounts[y] += 1
@@ -1596,7 +1650,8 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private static func regionRGBMean(
-		_ bitmap: NSBitmapImageRep,
+		_ bitmapData: UnsafeMutablePointer<UInt8>,
+		bitmap: NSBitmapImageRep,
 		x0: Int,
 		x1: Int,
 		y0: Int,
@@ -1611,12 +1666,10 @@ final class CaptureSessionController: NSObject {
 		var count: CGFloat = 0
 		for y in y0..<y1 {
 			for x in x0..<x1 {
-				guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
-					continue
-				}
-				rTotal += color.redComponent * 255
-				gTotal += color.greenComponent * 255
-				bTotal += color.blueComponent * 255
+				let rgb = rgbComponents(bitmapData, bitmap: bitmap, x: x, y: y)
+				rTotal += rgb.r
+				gTotal += rgb.g
+				bTotal += rgb.b
 				count += 1
 			}
 		}
@@ -1627,7 +1680,8 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private static func regionRGBMeanDistance(
-		_ bitmap: NSBitmapImageRep,
+		_ bitmapData: UnsafeMutablePointer<UInt8>,
+		bitmap: NSBitmapImageRep,
 		x0: Int,
 		x1: Int,
 		y0: Int,
@@ -1641,20 +1695,45 @@ final class CaptureSessionController: NSObject {
 		var count: CGFloat = 0
 		for y in y0..<y1 {
 			for x in x0..<x1 {
-				guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
-					continue
-				}
-				total += rgbDistanceToMean(color, mean: mean)
+				total += rgbDistanceToMean(
+					rgbComponents(bitmapData, bitmap: bitmap, x: x, y: y),
+					mean: mean
+				)
 				count += 1
 			}
 		}
 		return count == 0 ? 0 : total / count
 	}
 
-	private static func rgbDistanceToMean(_ color: NSColor, mean: [CGFloat]) -> CGFloat {
-		abs(color.redComponent * 255 - mean[0]).rounded()
-			+ abs(color.greenComponent * 255 - mean[1]).rounded()
-			+ abs(color.blueComponent * 255 - mean[2]).rounded()
+	private static func rgbComponents(
+		_ bitmapData: UnsafeMutablePointer<UInt8>,
+		bitmap: NSBitmapImageRep,
+		x: Int,
+		y: Int
+	) -> (r: CGFloat, g: CGFloat, b: CGFloat) {
+		let bytesPerPixel = max(3, bitmap.bitsPerPixel / 8)
+		let offset = y * bitmap.bytesPerRow + x * bytesPerPixel
+		if bitmap.bitmapFormat.contains(.alphaFirst), bytesPerPixel >= 4 {
+			return (
+				r: CGFloat(bitmapData[offset + 1]),
+				g: CGFloat(bitmapData[offset + 2]),
+				b: CGFloat(bitmapData[offset + 3])
+			)
+		}
+		return (
+			r: CGFloat(bitmapData[offset]),
+			g: CGFloat(bitmapData[offset + 1]),
+			b: CGFloat(bitmapData[offset + 2])
+		)
+	}
+
+	private static func rgbDistanceToMean(
+		_ rgb: (r: CGFloat, g: CGFloat, b: CGFloat),
+		mean: [CGFloat]
+	) -> CGFloat {
+		abs(rgb.r - mean[0]).rounded()
+			+ abs(rgb.g - mean[1]).rounded()
+			+ abs(rgb.b - mean[2]).rounded()
 	}
 }
 
@@ -2419,6 +2498,9 @@ final class CaptureHostView: NSView {
 					controller?.performFrozenUndo()
 				}
 				return
+			case "s":
+				controller?.saveSelection()
+				return
 			default:
 				break
 			}
@@ -2430,29 +2512,39 @@ final class CaptureHostView: NSView {
 		case 48:
 			controller?.toggleLoupe()
 		case 49:
-			if scene.mode == .live {
+			if scene.mode == .frozen {
+				controller?.copySelection()
+			} else if scene.mode == .live {
 				controller?.completePrimaryInteraction(at: scene.pointer ?? NSEvent.mouseLocation)
 			}
 		default:
-			switch event.charactersIgnoringModifiers?.lowercased() {
-			case "a":
-				if scene.mode == .frozen {
+			if scene.mode == .frozen, plainFrozenShortcutAvailable(event) {
+				switch event.charactersIgnoringModifiers?.lowercased() {
+				case "c":
 					controller?.performFrozenAutoCenter()
 					return
-				}
-			case "c":
-				controller?.copySelection()
-			case "s":
-				controller?.saveSelection()
-			case "r":
-				guard toolbarItem(.ocr)?.enabled == true else {
+				case "s":
+					controller?.startScrollCapture()
 					return
+				case "r":
+					guard toolbarItem(.ocr)?.enabled == true else {
+						return
+					}
+					controller?.recognizeText()
+					return
+				default:
+					break
 				}
-				controller?.recognizeText()
-			default:
-				super.keyDown(with: event)
 			}
+			super.keyDown(with: event)
 		}
+	}
+
+	private func plainFrozenShortcutAvailable(_ event: NSEvent) -> Bool {
+		let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+		return !flags.contains(.command)
+			&& !flags.contains(.control)
+			&& !flags.contains(.option)
 	}
 
 	override func draw(_ dirtyRect: NSRect) {
