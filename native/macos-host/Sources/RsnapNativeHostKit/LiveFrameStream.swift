@@ -18,10 +18,6 @@ final class LiveFrameStreamBroker {
 	}
 
 	private let stateLock = NSLock()
-	private let samplerReleaseQueue = DispatchQueue(
-		label: "ink.hack.rsnap.live-frame-stream.release",
-		qos: .utility
-	)
 	private let monitorImageWarmQueue = DispatchQueue(
 		label: "ink.hack.rsnap.live-frame-stream.monitor-image-warm",
 		qos: .utility
@@ -81,22 +77,20 @@ final class LiveFrameStreamBroker {
 
 	func stop() {
 		stateLock.lock()
-		let retiringSampler = sampler
 		streamGeneration &+= 1
 		monitors.removeAll()
 		mainDisplayHeight = 0
+		cachedMonitorImages.removeAll()
 		warmingMonitorGenerations.removeAll()
 		lastPrimedMonitorID = nil
 		lastPrimeGeneration = 0
 		lastPrimeUptime = 0
-		sampler = nil
+		let sampler = self.sampler
 		stateLock.unlock()
-		guard let retiringSampler else {
+		guard let sampler else {
 			return
 		}
-		samplerReleaseQueue.async {
-			withExtendedLifetime(retiringSampler) {}
-		}
+		try? sampler.reset()
 	}
 
 	func sample(at point: CGPoint, sidePixels: Int) -> LiveChromeSample? {
@@ -173,6 +167,13 @@ final class LiveFrameStreamBroker {
 		}
 		prime(monitor: monitor)
 		warmMonitorImage(monitor: monitor)
+	}
+
+	func seedSample(
+		at point: CGPoint,
+		sidePixels: Int
+	) -> LiveChromeSample? {
+		return sample(at: point, sidePixels: sidePixels)
 	}
 
 	private func monitor(containing point: CGPoint) -> SamplerMonitor? {

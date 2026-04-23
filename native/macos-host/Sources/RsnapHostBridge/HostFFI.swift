@@ -754,6 +754,17 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 		}
 	}
 
+	public func reset() throws {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		let status = rsnap_live_sampler_reset(handle)
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: "resetting live monitor sampler", code: code)
+		}
+	}
+
 	public func peekRegion(
 		monitor: MonitorSnapshot,
 		rect: CGRect

@@ -286,11 +286,13 @@ final class CaptureSessionController: NSObject {
 		settingsStore.settings
 	}
 
-	func warmLiveSamplingIfPossible(at point: CGPoint) {
+	@discardableResult
+	func warmLiveSamplingIfPossible(at point: CGPoint) -> LiveChromeSample? {
 		guard NativePermissions.status(for: .screenRecording) else {
-			return
+			return nil
 		}
 		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: point)
+		return liveFrameStream.seedSample(at: point, sidePixels: 1)
 	}
 
 	func startCapture() {
@@ -306,7 +308,8 @@ final class CaptureSessionController: NSObject {
 		}
 
 		do {
-			warmLiveSamplingIfPossible(at: NSEvent.mouseLocation)
+			let initialSample = warmLiveSamplingIfPossible(at: NSEvent.mouseLocation)
+			chromeState.rgbSample = initialSample?.rgbSample
 			let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
 			self.session = session
 

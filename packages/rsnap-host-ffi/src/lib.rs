@@ -592,6 +592,24 @@ pub unsafe extern "C" fn rsnap_live_sampler_prime_monitor(
 	RsnapStatus::Ok
 }
 
+/// Stops any active ScreenCaptureKit stream while retaining the live-sampler worker.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_live_sampler_create`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_reset(
+	handle: *mut RsnapLiveSamplerHandle,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	handle.sampler.reset();
+	RsnapStatus::Ok
+}
+
 /// Destroys an opaque session handle.
 ///
 /// # Safety

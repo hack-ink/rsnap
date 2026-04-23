@@ -245,6 +245,9 @@ enum RsnapStatus rsnap_live_sampler_prime_monitor(
 	RsnapLiveSamplerHandle *handle,
 	struct RsnapMonitorRect monitor
 );
+enum RsnapStatus rsnap_live_sampler_reset(
+	RsnapLiveSamplerHandle *handle
+);
 void rsnap_session_destroy(RsnapSessionHandle *handle);
 void rsnap_live_sampler_destroy(RsnapLiveSamplerHandle *handle);
 enum RsnapStatus rsnap_session_enter_live(RsnapSessionHandle *handle);
