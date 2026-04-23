@@ -1036,17 +1036,17 @@ final class LiveOverlayRenderer {
 			if let selectionSizeText = snapshot.selectionSizeText {
 				let font = LiveOverlayTypography.font
 				let textSize = selectionSizeText.size(using: font)
-				let x = min(dragSelection.maxX - textSize.width, bounds.maxX - 8 - textSize.width)
-				let preferredY = dragSelection.maxY + 8
-				let y = preferredY + textSize.height <= bounds.maxY - 8
-					? preferredY
-					: max(bounds.minY + 8, dragSelection.maxY - 8 - textSize.height)
+				let frame = CaptureChrome.selectionSizeBadgeFrame(
+					for: dragSelection,
+					textSize: textSize,
+					in: bounds
+				)
 				applyText(
 					selectionSizeLayer,
 					text: selectionSizeText,
 					font: font,
 					color: NSColor.white.withAlphaComponent(0.98),
-					frame: CGRect(x: x, y: y, width: ceil(textSize.width), height: ceil(textSize.height)),
+					frame: frame,
 					alignment: .left
 				)
 				selectionSizeLayer.isHidden = false
