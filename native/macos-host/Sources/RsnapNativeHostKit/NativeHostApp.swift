@@ -1703,7 +1703,6 @@ final class CaptureOverlayController {
 		focusPoint: CGPoint
 	) {
 		close()
-		NSApp.activate(ignoringOtherApps: true)
 		var targetWindow: CaptureOverlayWindow?
 		for screen in NSScreen.screens {
 			let window = CaptureOverlayWindow(
@@ -1726,13 +1725,12 @@ final class CaptureOverlayController {
 
 		let focusedWindow = targetWindow ?? windows.first
 		for window in windows {
+			window.orderFrontRegardless()
 			if window === focusedWindow {
-				window.makeKeyAndOrderFront(nil)
+				window.makeKey()
 				window.makeFirstResponder(window.hostView)
 				focusedWindowNumber = window.windowNumber
 				(NSApp.delegate as? NativeHostApplicationController)?.window = window
-			} else {
-				window.orderFrontRegardless()
 			}
 		}
 		collapsedForFrozen = false
@@ -1793,7 +1791,8 @@ final class CaptureOverlayController {
 			return
 		}
 
-		targetWindow.makeKeyAndOrderFront(nil)
+		targetWindow.orderFrontRegardless()
+		targetWindow.makeKey()
 		targetWindow.makeFirstResponder(targetWindow.hostView)
 		focusedWindowNumber = targetWindow.windowNumber
 		(NSApp.delegate as? NativeHostApplicationController)?.window = targetWindow
@@ -2013,11 +2012,11 @@ final class CaptureOverlayController {
 }
 
 @MainActor
-final class CaptureOverlayWindow: NSWindow {
+final class CaptureOverlayWindow: NSPanel {
 	let hostView: CaptureHostView
 
 	override var canBecomeKey: Bool { true }
-	override var canBecomeMain: Bool { true }
+	override var canBecomeMain: Bool { false }
 
 	fileprivate init(
 		screen: NSScreen,
@@ -2029,7 +2028,7 @@ final class CaptureOverlayWindow: NSWindow {
 		hostView = CaptureHostView(frame: screen.frame)
 		super.init(
 			contentRect: screen.frame,
-			styleMask: [.borderless],
+			styleMask: [.borderless, .nonactivatingPanel],
 			backing: .buffered,
 			defer: false
 		)
@@ -2046,7 +2045,9 @@ final class CaptureOverlayWindow: NSWindow {
 		backgroundColor = .clear
 		collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 		hasShadow = false
+		hidesOnDeactivate = false
 		ignoresMouseEvents = false
+		isFloatingPanel = true
 		isMovable = false
 		isOpaque = false
 		level = .screenSaver
