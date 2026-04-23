@@ -2984,12 +2984,13 @@ final class CaptureHostView: NSView {
 		let text = "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))"
 		let font = Self.hudLayoutMetrics.font
 		let textSize = text.size(using: font)
-		let x = min(rect.maxX - textSize.width, bounds.maxX - 8 - textSize.width)
-		let preferredY = rect.maxY + 8
-		let y = preferredY + textSize.height <= bounds.maxY - 8
-			? preferredY
-			: max(bounds.minY + 8, rect.maxY - 8 - textSize.height)
-		let anchor = CGPoint(x: x, y: y)
+		let badgeFrame = CaptureChrome.selectionSizeBadgeFrame(
+			for: rect,
+			textSize: textSize,
+			in: bounds,
+			avoiding: toolbarLayout(for: rect)?.frame
+		)
+		let anchor = badgeFrame.origin
 
 		drawText(text, at: CGPoint(x: anchor.x, y: anchor.y - 1), color: NSColor.black.withAlphaComponent(0.6), font: font)
 		drawText(text, at: CGPoint(x: anchor.x - 1, y: anchor.y), color: NSColor.black.withAlphaComponent(0.75), font: font)
@@ -4516,10 +4517,92 @@ enum CaptureChrome {
 	static let toolbarVerticalPadding: CGFloat = 5
 	static let toolbarGap: CGFloat = 10
 	static let toolbarScreenMargin: CGFloat = 10
+	static let selectionSizeBadgeGap: CGFloat = 8
+	static let selectionSizeBadgeInset: CGFloat = 8
+	static let selectionSizeBadgeToolbarAvoidance: CGFloat = 4
 
 	static func dashedBorderOutset(strokeWidth: CGFloat, pixelsPerPoint: CGFloat) -> CGFloat {
 		let feathering = 1.0 / max(pixelsPerPoint, .leastNonzeroMagnitude)
 		return (strokeWidth + feathering) * 0.5
+	}
+
+	static func selectionSizeBadgeFrame(
+		for selection: CGRect,
+		textSize: CGSize,
+		in bounds: CGRect,
+		avoiding toolbarFrame: CGRect? = nil
+	) -> CGRect {
+		let size = CGSize(width: ceil(textSize.width), height: ceil(textSize.height))
+		let bottomOutside = CGRect(
+			x: selection.maxX - size.width,
+			y: selection.minY - selectionSizeBadgeGap - size.height,
+			width: size.width,
+			height: size.height
+		)
+		if fitsSelectionSizeBadge(bottomOutside, in: bounds),
+			!selectionSizeBadge(bottomOutside, conflictsWith: toolbarFrame)
+		{
+			return bottomOutside
+		}
+
+		if selectionSizeBadge(bottomOutside, conflictsWith: toolbarFrame) {
+			let topOutside = CGRect(
+				x: selection.maxX - size.width,
+				y: selection.maxY + selectionSizeBadgeGap,
+				width: size.width,
+				height: size.height
+			)
+			if fitsSelectionSizeBadge(topOutside, in: bounds),
+				!selectionSizeBadge(topOutside, conflictsWith: toolbarFrame)
+			{
+				return topOutside
+			}
+		}
+
+		return selectionSizeBadgeInsideBottomRight(
+			selection: selection,
+			size: size,
+			bounds: bounds
+		)
+	}
+
+	private static func fitsSelectionSizeBadge(_ frame: CGRect, in bounds: CGRect) -> Bool {
+		frame.minX >= bounds.minX + selectionSizeBadgeGap &&
+			frame.maxX <= bounds.maxX - selectionSizeBadgeGap &&
+			frame.minY >= bounds.minY + selectionSizeBadgeGap &&
+			frame.maxY <= bounds.maxY - selectionSizeBadgeGap
+	}
+
+	private static func selectionSizeBadge(
+		_ frame: CGRect,
+		conflictsWith toolbarFrame: CGRect?
+	) -> Bool {
+		guard let toolbarFrame else {
+			return false
+		}
+		return frame.insetBy(
+			dx: -selectionSizeBadgeToolbarAvoidance,
+			dy: -selectionSizeBadgeToolbarAvoidance
+		).intersects(toolbarFrame)
+	}
+
+	private static func selectionSizeBadgeInsideBottomRight(
+		selection: CGRect,
+		size: CGSize,
+		bounds: CGRect
+	) -> CGRect {
+		let minX = bounds.minX + selectionSizeBadgeGap
+		let maxX = max(minX, bounds.maxX - selectionSizeBadgeGap - size.width)
+		let minY = bounds.minY + selectionSizeBadgeGap
+		let maxY = max(minY, bounds.maxY - selectionSizeBadgeGap - size.height)
+		let targetX = min(selection.maxX - selectionSizeBadgeInset - size.width, bounds.maxX - selectionSizeBadgeGap - size.width)
+		let targetY = max(selection.minY + selectionSizeBadgeInset, bounds.minY + selectionSizeBadgeGap)
+		return CGRect(
+			x: targetX.clamped(to: minX...maxX),
+			y: targetY.clamped(to: minY...maxY),
+			width: size.width,
+			height: size.height
+		)
 	}
 
 	static func dashedBorderPath(
