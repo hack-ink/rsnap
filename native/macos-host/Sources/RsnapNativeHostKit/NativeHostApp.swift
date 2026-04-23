@@ -21,10 +21,19 @@ private let menuBarLogger = Logger(
 	subsystem: Bundle.main.bundleIdentifier ?? "ink.hack.rsnap",
 	category: "MenuBar"
 )
-private let frozenTransitionLogger = Logger(
-	subsystem: Bundle.main.bundleIdentifier ?? "ink.hack.rsnap",
-	category: "FrozenTransition"
-)
+
+private func makeFrozenMosaicImage(from image: CGImage) -> CGImage? {
+	let ciImage = CIImage(cgImage: image)
+	guard let filter = CIFilter(name: "CIPixellate") else {
+		return nil
+	}
+	filter.setValue(ciImage, forKey: kCIInputImageKey)
+	filter.setValue(18.0, forKey: kCIInputScaleKey)
+	guard let outputImage = filter.outputImage?.cropped(to: ciImage.extent) else {
+		return nil
+	}
+	return frozenEffectCIContext.createCGImage(outputImage, from: outputImage.extent)
+}
 
 @MainActor
 public final class NativeHostApplicationController: NSObject, NSApplicationDelegate {
@@ -296,7 +305,6 @@ final class CaptureSessionController: NSObject {
 	}
 
 	func startCapture() {
-		NSLog("RsnapNativeHost startCapture requested; sessionActive=\(session != nil)")
 		if session != nil {
 			overlayController?.focusWindow(at: NSEvent.mouseLocation)
 			return
@@ -308,12 +316,21 @@ final class CaptureSessionController: NSObject {
 		}
 
 		do {
-			let initialSample = warmLiveSamplingIfPossible(at: NSEvent.mouseLocation)
+			let startPoint = NSEvent.mouseLocation
+			let initialSample = warmLiveSamplingIfPossible(at: startPoint)
 			chromeState.rgbSample = initialSample?.rgbSample
 			let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
 			self.session = session
 
 			try session.enterLive()
+			try session.send(
+				event: .pointerMoved(
+					point: startPoint,
+					rgb: initialSample?.rgbSample,
+					activeMonitor: activeMonitor(at: startPoint),
+					highlightedWindow: nil
+				)
+			)
 			let initialScene = try session.currentScene()
 			self.scene = initialScene
 
@@ -326,13 +343,11 @@ final class CaptureSessionController: NSObject {
 				initialScene: initialScene,
 				chrome: chromeState,
 				settings: settingsStore.settings,
-				focusPoint: NSEvent.mouseLocation
+				focusPoint: startPoint
 			)
 			(NSApp.delegate as? NativeHostApplicationController)?.window = overlayController.primaryWindow
 			sceneDidChange?(initialScene)
-			NSLog("RsnapNativeHost overlay shown")
 
-			pointerMoved(to: NSEvent.mouseLocation)
 			captureStateDidChange?()
 		} catch {
 			NSLog("Failed to start native rsnap host: \(error)")
@@ -342,7 +357,6 @@ final class CaptureSessionController: NSObject {
 
 	private func ensureCapturePermissions() -> Bool {
 		let granted = NativePermissions.status(for: .screenRecording)
-		NSLog("RsnapNativeHost screen recording preflight=\(granted)")
 		guard !granted else {
 			return true
 		}
@@ -493,8 +507,6 @@ final class CaptureSessionController: NSObject {
 		}
 
 		do {
-			let transitionStart = ProcessInfo.processInfo.systemUptime
-			frozenTransitionLogger.log("completePrimaryInteraction begin")
 			liveFrameStream.prime(at: point)
 			beginHostLocalFrozenSelectingIfPossible(at: point)
 			let liveInputs = currentLiveInputs(at: point)
@@ -514,8 +526,6 @@ final class CaptureSessionController: NSObject {
 				)
 			)
 			try syncCore()
-			let elapsedMs = (ProcessInfo.processInfo.systemUptime - transitionStart) * 1000
-			frozenTransitionLogger.log("completePrimaryInteraction end elapsedMs=\(elapsedMs, format: .fixed(precision: 2))")
 		} catch {
 			NSLog("Failed to freeze selection: \(error)")
 		}
@@ -852,6 +862,9 @@ final class CaptureSessionController: NSObject {
 		guard scene.mode == .live else {
 			return
 		}
+		guard !chromeState.hostLocalFrozenSelecting else {
+			return
+		}
 		if let cachedMonitorImage = overlayController?.cachedMonitorImage(near: point) {
 			chromeState.beginHostLocalFrozenSelecting(
 				frame: cachedMonitorImage.frame,
@@ -866,7 +879,6 @@ final class CaptureSessionController: NSObject {
 		guard let session else {
 			return
 		}
-		let syncStart = ProcessInfo.processInfo.systemUptime
 
 		var pendingRequests = try session.drainRequests()
 		while !pendingRequests.isEmpty {
@@ -900,24 +912,12 @@ final class CaptureSessionController: NSObject {
 			return
 		}
 
-		if scene.mode == .frozen {
-			frozenTransitionLogger.log(
-				"syncCore publish frozen selection=\(String(describing: scene.frozenSelection), privacy: .public) chromeDisplayImage=\(self.chromeState.frozenDisplayImage != nil, privacy: .public) chromeDisplayFrame=\(String(describing: self.chromeState.frozenDisplayFrame), privacy: .public) toolbarItems=\(scene.toolbarItems.count)"
-			)
-		}
-
 		overlayController?.update(
 			scene: scene,
 			chrome: chromeState,
 			settings: settingsStore.settings
 		)
 		sceneDidChange?(scene)
-		if previousMode == .live || scene.mode == .frozen || previousMode == .frozen {
-			let elapsedMs = (ProcessInfo.processInfo.systemUptime - syncStart) * 1000
-			frozenTransitionLogger.log(
-				"syncCore previousMode=\(String(describing: previousMode), privacy: .public) nextMode=\(String(describing: scene.mode), privacy: .public) elapsedMs=\(elapsedMs, format: .fixed(precision: 2))"
-			)
-		}
 	}
 
 	private func handle(request: HostRequest) throws {
@@ -927,13 +927,10 @@ final class CaptureSessionController: NSObject {
 		case .stopLiveCapture:
 			tearDownCapture()
 		case let .requestFreezeSnapshot(selection):
-			let requestStart = ProcessInfo.processInfo.systemUptime
 			try commitFrozenSelection(
 				selection,
 				editable: scene.liveSelectionPreview == selection
 			)
-			let elapsedMs = (ProcessInfo.processInfo.systemUptime - requestStart) * 1000
-			frozenTransitionLogger.log("requestFreezeSnapshot handled elapsedMs=\(elapsedMs, format: .fixed(precision: 2))")
 		case .copyCapture:
 			try performCopy()
 		case .saveCapture:
@@ -988,9 +985,6 @@ final class CaptureSessionController: NSObject {
 			near: CGPoint(x: selection.midX, y: selection.midY)
 		)
 		let hostOwnedFrozenScene = hostOwnedFrozenPresentationScene(for: selection)
-		frozenTransitionLogger.log(
-			"commitFrozenSelection selection=\(selection.debugDescription, privacy: .public) cachedMonitorImage=\(self.chromeState.frozenDisplayImage != nil, privacy: .public) displayFrame=\(String(describing: self.chromeState.frozenDisplayFrame), privacy: .public) imagePx=\(self.chromeState.frozenDisplayImage?.width ?? 0)x\(self.chromeState.frozenDisplayImage?.height ?? 0)"
-		)
 		overlayController?.presentFrozenFirstFrame(
 			scene: hostOwnedFrozenScene,
 			chrome: chromeState,
@@ -1140,7 +1134,7 @@ final class CaptureSessionController: NSObject {
 		)
 		chromeState.frozenSelectionSnapshot = selection
 		chromeState.frozenBaseImage = baseImage
-		chromeState.frozenMosaicImage = baseImage.flatMap(Self.makeFrozenMosaicImage)
+		chromeState.frozenMosaicImage = nil
 	}
 
 	private func ensureFrozenBaseImageFromDisplayIfNeeded(for selection: CGRect) {
@@ -1160,9 +1154,6 @@ final class CaptureSessionController: NSObject {
 		}
 
 		chromeState.frozenBaseImage = baseImage
-		if chromeState.frozenMosaicImage == nil {
-			chromeState.frozenMosaicImage = Self.makeFrozenMosaicImage(from: baseImage)
-		}
 	}
 
 	private func scheduleFrozenCaptureSnapshot(
@@ -1179,7 +1170,6 @@ final class CaptureSessionController: NSObject {
 				in: selection,
 				source: source
 			)
-			let mosaicImage = baseImage.flatMap { Self.makeFrozenMosaicImage(from: $0) }
 			DispatchQueue.main.async { [weak self] in
 				guard let self else {
 					return
@@ -1192,7 +1182,7 @@ final class CaptureSessionController: NSObject {
 				}
 				self.chromeState.frozenSelectionSnapshot = selection
 				self.chromeState.frozenBaseImage = baseImage
-				self.chromeState.frozenMosaicImage = mosaicImage
+				self.chromeState.frozenMosaicImage = nil
 				self.refreshOverlay()
 			}
 		}
@@ -1213,19 +1203,6 @@ final class CaptureSessionController: NSObject {
 			return nil
 		}
 		return image.cropping(to: cropRect)
-	}
-
-	nonisolated private static func makeFrozenMosaicImage(from image: CGImage) -> CGImage? {
-		let ciImage = CIImage(cgImage: image)
-		guard let filter = CIFilter(name: "CIPixellate") else {
-			return nil
-		}
-		filter.setValue(ciImage, forKey: kCIInputImageKey)
-		filter.setValue(18.0, forKey: kCIInputScaleKey)
-		guard let outputImage = filter.outputImage?.cropped(to: ciImage.extent) else {
-			return nil
-		}
-		return frozenEffectCIContext.createCGImage(outputImage, from: outputImage.extent)
 	}
 
 	private func screen(containing point: CGPoint) -> NSScreen? {
@@ -1319,6 +1296,9 @@ final class CaptureSessionController: NSObject {
 		}
 
 		let mosaicRects = chromeState.frozenOverlay.mosaicRects.map(mapRect)
+		if chromeState.frozenMosaicImage == nil, !mosaicRects.isEmpty {
+			chromeState.frozenMosaicImage = makeFrozenMosaicImage(from: image)
+		}
 		if let mosaicImage = chromeState.frozenMosaicImage, !mosaicRects.isEmpty {
 			for rect in mosaicRects {
 				if let mosaicPatch = mosaicImage.cropping(to: rect.integral.intersection(imageRect)) {
@@ -1749,7 +1729,6 @@ final class CaptureOverlayController {
 		settings: NativeHostSettings
 	) {
 		if scene.mode == .frozen, let selection = scene.frozenSelection {
-			frozenTransitionLogger.log("overlayController.update frozen selection=\(selection.debugDescription, privacy: .public)")
 			prepareFrozenPresentation(for: selection)
 		}
 		for window in windows {
@@ -2171,8 +2150,6 @@ final class CaptureHostView: NSView {
 	private var frozenFirstDisplayCompletionQueued = false
 	private var lastLivePreviewSnapshot: LivePreviewSnapshot?
 	private var glassPatchCache: [GlassSurfaceKind: GlassPatchCache] = [:]
-	private var didLogFrozenDisplayDraw = false
-	private var didLogFrozenDisplayMissing = false
 	private lazy var liveRenderer = LiveOverlayRenderer(hostView: self)
 	private var liveRendererInstalled = false
 	private var deferredLiveShutdownWorkItem: DispatchWorkItem?
@@ -2212,8 +2189,6 @@ final class CaptureHostView: NSView {
 		let previousMode = self.scene.mode
 		let transitioningToFrozen = previousMode == .live && scene.mode == .frozen
 		if scene.mode != .frozen {
-			didLogFrozenDisplayDraw = false
-			didLogFrozenDisplayMissing = false
 			frozenFirstDisplayCompletionQueued = false
 		}
 		self.scene = scene
@@ -2307,12 +2282,7 @@ final class CaptureHostView: NSView {
 		chrome: CaptureChromeState,
 		settings: NativeHostSettings
 	) {
-		didLogFrozenDisplayDraw = false
-		didLogFrozenDisplayMissing = false
 		let retainedLivePreview = lastLivePreviewSnapshot ?? currentLivePreviewSnapshot()
-		frozenTransitionLogger.log(
-			"installFrozenFirstFrame selection=\(String(describing: scene.frozenSelection), privacy: .public) retainedLivePreview=\(retainedLivePreview != nil, privacy: .public) frozenDisplayImage=\(chrome.frozenDisplayImage != nil, privacy: .public) frozenDisplayFrame=\(String(describing: chrome.frozenDisplayFrame), privacy: .public)"
-		)
 		self.scene = scene
 		self.chrome = chrome
 		self.settings = settings
@@ -2335,9 +2305,6 @@ final class CaptureHostView: NSView {
 			return
 		}
 		frozenFirstDisplayCompletionQueued = false
-		frozenTransitionLogger.log(
-			"finishFrozenFirstFrameInstall frozenDisplayImage=\(self.chrome.frozenDisplayImage != nil, privacy: .public) frozenDisplayFrame=\(String(describing: self.chrome.frozenDisplayFrame), privacy: .public)"
-		)
 		pendingFrozenFirstDisplay = false
 		lastLivePreviewSnapshot = nil
 		if scene.mode != .live {
@@ -2534,19 +2501,7 @@ final class CaptureHostView: NSView {
 			return
 		}
 		guard let frame = localFrozenDisplayFrame(), let image = chrome.frozenDisplayImage else {
-			if !didLogFrozenDisplayMissing {
-				didLogFrozenDisplayMissing = true
-				frozenTransitionLogger.log(
-					"drawFrozenDisplaySurface missing frame=\(self.localFrozenDisplayFrame() != nil, privacy: .public) image=\(self.chrome.frozenDisplayImage != nil, privacy: .public) chromeFrame=\(String(describing: self.chrome.frozenDisplayFrame), privacy: .public)"
-				)
-			}
 			return
-		}
-		if !didLogFrozenDisplayDraw {
-			didLogFrozenDisplayDraw = true
-			frozenTransitionLogger.log(
-				"drawFrozenDisplaySurface frame=\(frame.debugDescription, privacy: .public) imagePx=\(image.width)x\(image.height)"
-			)
 		}
 
 		context.saveGState()
@@ -3055,6 +3010,9 @@ final class CaptureHostView: NSView {
 		let mosaicRects = chrome.frozenOverlay.mosaicRects.compactMap(localRect(from:))
 		let previewRect = chrome.frozenOverlay.previewMosaicRect.flatMap(localRect(from:))
 		let allRects = mosaicRects + (previewRect.map { [$0] } ?? [])
+		if chrome.frozenMosaicImage == nil, !allRects.isEmpty, let baseImage = chrome.frozenBaseImage {
+			chrome.frozenMosaicImage = makeFrozenMosaicImage(from: baseImage)
+		}
 		guard !allRects.isEmpty, let mosaicImage = chrome.frozenMosaicImage else {
 			return
 		}
