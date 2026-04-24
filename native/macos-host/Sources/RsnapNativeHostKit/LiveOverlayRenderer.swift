@@ -50,18 +50,19 @@ private enum LiveOverlayTypography {
 }
 
 final class WindowSnapshotFeed {
-	private let ownPID = ProcessInfo.processInfo.processIdentifier
-	private let maxWindowLayerForTargeting = 3
+	private static let ownPID = ProcessInfo.processInfo.processIdentifier
+	private static let maxWindowLayerForTargeting = 3
 	private let queue = DispatchQueue(label: "ink.hack.rsnap.native-host.window-snapshot-feed", qos: .userInitiated)
 	private let stateLock = NSLock()
 	private var timer: DispatchSourceTimer?
 	private var desktopFrame: CGRect = .null
 	private var latestSnapshots: [WindowSnapshot] = []
 
-	func start(desktopFrame: CGRect) {
+	func start(desktopFrame: CGRect, initialSnapshots: [WindowSnapshot] = []) {
 		stop()
 		stateLock.lock()
 		self.desktopFrame = desktopFrame
+		latestSnapshots = initialSnapshots
 		stateLock.unlock()
 		let timer = DispatchSource.makeTimerSource(queue: queue)
 		timer.schedule(deadline: .now(), repeating: LiveSamplingBudget.hoverWindowCacheRefreshInterval)
@@ -87,10 +88,7 @@ final class WindowSnapshotFeed {
 		return snapshots.first(where: { $0.frame.contains(point) })
 	}
 
-	private func refresh() {
-		stateLock.lock()
-		let desktopFrame = self.desktopFrame
-		stateLock.unlock()
+	static func snapshots(desktopFrame: CGRect) -> [WindowSnapshot] {
 		let candidateWindows =
 			(CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
 				as? [[String: Any]])
@@ -129,6 +127,18 @@ final class WindowSnapshotFeed {
 			let windowID = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value
 			snapshots.append(WindowSnapshot(windowID: windowID, frame: appKitBounds))
 		}
+		return snapshots
+	}
+
+	static func window(at point: CGPoint, in snapshots: [WindowSnapshot]) -> WindowSnapshot? {
+		snapshots.first(where: { $0.frame.contains(point) })
+	}
+
+	private func refresh() {
+		stateLock.lock()
+		let desktopFrame = self.desktopFrame
+		stateLock.unlock()
+		let snapshots = Self.snapshots(desktopFrame: desktopFrame)
 		stateLock.lock()
 		latestSnapshots = snapshots
 		stateLock.unlock()
