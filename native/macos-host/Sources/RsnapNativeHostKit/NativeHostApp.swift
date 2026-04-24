@@ -40,6 +40,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private let settingsStore = NativeHostSettingsStore()
 	private let globalHotKeys = GlobalHotKeyCenter()
 	private var lifecycleActivity: NSObjectProtocol?
+	private var liveSamplingPrewarmWorkItem: DispatchWorkItem?
 	private var didBootstrap = false
 	@objc public dynamic var window: NSWindow?
 	private lazy var sessionController: CaptureSessionController = {
@@ -82,6 +83,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		)
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		refreshStatusMenuState()
+		scheduleLiveSamplingPrewarm()
 		menuBarLogger.info("finishLaunching end statusItemPresent=\(self.statusItem != nil, privacy: .public)")
 	}
 
@@ -187,6 +189,25 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			captureHotKey: settingsStore.settings.captureHotkey,
 			sceneMode: mode
 		)
+	}
+
+	private func scheduleLiveSamplingPrewarm() {
+		liveSamplingPrewarmWorkItem?.cancel()
+		let workItem = DispatchWorkItem { [weak self] in
+			self?.liveSamplingPrewarmWorkItem = nil
+			self?.prewarmLiveSamplingIfPossible()
+		}
+		liveSamplingPrewarmWorkItem = workItem
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+	}
+
+	private func prewarmLiveSamplingIfPossible() {
+		guard !sessionController.isCaptureActive else {
+			return
+		}
+		let point = NSEvent.mouseLocation
+		let sample = sessionController.warmLiveSamplingIfPossible(at: point)
+		menuBarLogger.debug("prewarmed live sampling sampleReady=\(sample?.rgbSample != nil, privacy: .public)")
 	}
 
 	@objc
