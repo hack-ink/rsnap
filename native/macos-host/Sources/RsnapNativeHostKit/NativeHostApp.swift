@@ -2055,6 +2055,7 @@ final class CaptureOverlayWindow: NSPanel {
 		)
 		contentView = hostView
 		acceptsMouseMovedEvents = true
+		animationBehavior = .none
 		backgroundColor = .clear
 		collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 		hasShadow = false
