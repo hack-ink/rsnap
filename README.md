@@ -84,10 +84,11 @@ cargo run -p rsnap
 - Normal region/window/monitor capture does not require Accessibility or Input Monitoring.
 - Scroll capture currently requires **Accessibility** because rsnap forwards scroll into the target app.
 - Scroll capture currently requires **Input Monitoring** because rsnap listens for global scroll-wheel input via a native macOS listen-event tap.
+- The native host currently disables scroll capture, so the active native feature set only requests Screen Recording.
 - macOS may phrase the Input Monitoring prompt as receiving keystrokes from any application even though rsnap only listens for scroll-wheel input in this path.
 - macOS may describe Screen Recording as `Screen & System Audio Recording` or as direct screen/audio access when rsnap bypasses the system picker.
-- The native menubar host exposes `Permissions…`, which shows Screen Recording, Accessibility, and Input Monitoring status and can issue the matching request or open the relevant macOS settings pane.
-- Normal capture and scroll capture still depend on the same underlying macOS permission state; if access is missing, rsnap reports it in the host status message and the Permissions window is the canonical repair surface.
+- The native menubar host exposes `Permissions…`, which shows Screen Recording, Accessibility, and Input Monitoring status. It marks Accessibility and Input Monitoring as not needed until native scroll automation is enabled.
+- Normal native capture depends on Screen Recording; if access is missing, rsnap reports it in the host status message and the Permissions window is the canonical repair surface.
 - You can reopen `Permissions…` from the tray or menubar menu at any time.
 - Base capture path: `System Settings` -> `Privacy & Security` -> `Screen Recording`.
 - Scroll capture paths: `System Settings` -> `Privacy & Security` -> `Accessibility` and `Input Monitoring`.

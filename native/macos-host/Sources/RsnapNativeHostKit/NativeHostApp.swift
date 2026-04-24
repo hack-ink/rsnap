@@ -244,10 +244,6 @@ final class CaptureSessionController: NSObject {
 
 	private let settingsStore: NativeHostSettingsStore
 	private let liveFrameStream = LiveFrameStreamBroker()
-	private let frozenSnapshotQueue = DispatchQueue(
-		label: "ink.hack.rsnap.native-host.frozen-snapshot",
-		qos: .userInitiated
-	)
 	private var session: RsnapHostSession?
 	private var overlayController: CaptureOverlayController?
 	private var frozenSnapshotGeneration: UInt64 = 0
@@ -685,17 +681,9 @@ final class CaptureSessionController: NSObject {
 
 		frozenSnapshotGeneration &+= 1
 		let generation = frozenSnapshotGeneration
-		let captureSource = overlayController?.frozenCaptureJobSource(
-			near: CGPoint(x: nextSelection.midX, y: nextSelection.midY)
-		)
 		chromeState.frozenBaseImage = nil
 		chromeState.frozenMosaicImage = nil
 		ensureFrozenBaseImageFromDisplayIfNeeded(for: nextSelection)
-		scheduleFrozenCaptureSnapshot(
-			for: nextSelection,
-			source: captureSource,
-			generation: generation
-		)
 		refreshOverlay()
 		DispatchQueue.main.async { [weak self] in
 			guard let self else {
@@ -826,20 +814,11 @@ final class CaptureSessionController: NSObject {
 
 		do {
 			frozenSnapshotGeneration &+= 1
-			let generation = frozenSnapshotGeneration
-			let captureSource = overlayController?.frozenCaptureJobSource(
-				near: CGPoint(x: nextSelection.midX, y: nextSelection.midY)
-			)
 			chromeState.frozenSelectionSnapshot = nextSelection
 			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: nextSelection)
 			chromeState.frozenMosaicImage = nil
 			try session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 			try syncCore()
-			scheduleFrozenCaptureSnapshot(
-				for: nextSelection,
-				source: captureSource,
-				generation: generation
-			)
 		} catch {
 			NSLog("Failed to auto-center frozen selection: \(error)")
 		}
@@ -911,14 +890,7 @@ final class CaptureSessionController: NSObject {
 		guard !chromeState.hostLocalFrozenSelecting else {
 			return
 		}
-		if let cachedMonitorImage = overlayController?.cachedMonitorImage(near: point) {
-			chromeState.beginHostLocalFrozenSelecting(
-				frame: cachedMonitorImage.frame,
-				image: cachedMonitorImage.image
-			)
-			return
-		}
-		overlayController?.primeMonitorImage(near: point)
+		chromeState.beginHostLocalFrozenSelecting()
 	}
 
 	private func syncCore() throws {
@@ -990,12 +962,22 @@ final class CaptureSessionController: NSObject {
 				try sendHostStatusMessage("Screen recording permission is required.")
 			}
 		case .requestAccessibilityPermission:
+			guard NativePermissions.requiredForCurrentNativeHost(.accessibility) else {
+				try session?.send(report: .permissionChanged(.accessibility, granted: NativePermissions.status(for: .accessibility)))
+				try sendHostStatusMessage("Accessibility is not required by the current native host.")
+				return
+			}
 			let granted = NativePermissions.request(.accessibility)
 			try session?.send(report: .permissionChanged(.accessibility, granted: granted))
 			if !granted {
 				try sendHostStatusMessage("Accessibility permission is required.")
 			}
 		case .requestInputMonitoringPermission:
+			guard NativePermissions.requiredForCurrentNativeHost(.inputMonitoring) else {
+				try session?.send(report: .permissionChanged(.inputMonitoring, granted: NativePermissions.status(for: .inputMonitoring)))
+				try sendHostStatusMessage("Input Monitoring is not required by the current native host.")
+				return
+			}
 			let granted = NativePermissions.request(.inputMonitoring)
 			try session?.send(report: .permissionChanged(.inputMonitoring, granted: granted))
 			if !granted {
@@ -1009,37 +991,25 @@ final class CaptureSessionController: NSObject {
 			return
 		}
 		frozenSnapshotGeneration &+= 1
-		let generation = frozenSnapshotGeneration
-		let seededDisplayFrame = chromeState.frozenDisplayFrame
-		let seededDisplayImage = chromeState.frozenDisplayImage
-		let hadHostLocalFrozenSelecting = chromeState.hostLocalFrozenSelecting
+		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
 		chromeState.resetFrozenChrome()
-		if hadHostLocalFrozenSelecting {
-			chromeState.frozenDisplayFrame = seededDisplayFrame
-			chromeState.frozenDisplayImage = seededDisplayImage
-		}
 		chromeState.frozenSelectionSnapshot = selection
 		chromeState.frozenSelectionEditable = editable
 		chromeState.frozenSelectionInteraction = nil
-		if let cachedMonitorImage = overlayController?.cachedMonitorImage(
-			near: CGPoint(x: selection.midX, y: selection.midY)
-		) {
-			chromeState.frozenDisplayFrame = cachedMonitorImage.frame
-			chromeState.frozenDisplayImage = cachedMonitorImage.image
+		if let latestMonitorImage = overlayController?.latestMonitorImage(near: selectionCenter) {
+			chromeState.frozenDisplayFrame = latestMonitorImage.frame
+			chromeState.frozenDisplayImage = latestMonitorImage.image
+			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
+		} else if let currentMonitorImage = overlayController?.currentMonitorImageBelowOverlay(near: selectionCenter) {
+			chromeState.frozenDisplayFrame = currentMonitorImage.frame
+			chromeState.frozenDisplayImage = currentMonitorImage.image
+			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
 		}
-		let captureSource = overlayController?.frozenCaptureJobSource(
-			near: CGPoint(x: selection.midX, y: selection.midY)
-		)
 		let hostOwnedFrozenScene = hostOwnedFrozenPresentationScene(for: selection)
 		overlayController?.presentFrozenFirstFrame(
 			scene: hostOwnedFrozenScene,
 			chrome: chromeState,
 			settings: settingsStore.settings
-		)
-		scheduleFrozenCaptureSnapshot(
-			for: selection,
-			source: captureSource,
-			generation: generation
 		)
 		try session.send(report: .freezeSnapshotCommitted(selection: selection))
 	}
@@ -1204,38 +1174,6 @@ final class CaptureSessionController: NSObject {
 			displayFrame: displayFrame,
 			selection: selection
 		)
-	}
-
-	private func scheduleFrozenCaptureSnapshot(
-		for selection: CGRect,
-		source: FrozenCaptureJobSource?,
-		generation: UInt64
-	) {
-		guard let source else {
-			return
-		}
-
-		frozenSnapshotQueue.async { [weak self] in
-			let baseImage = CaptureOverlayController.captureImageBelowOverlay(
-				in: selection,
-				source: source
-			)
-			DispatchQueue.main.async { [weak self] in
-				guard let self else {
-					return
-				}
-				guard generation == self.frozenSnapshotGeneration else {
-					return
-				}
-				guard self.scene.mode == .frozen, self.scene.frozenSelection == selection else {
-					return
-				}
-				self.chromeState.frozenSelectionSnapshot = selection
-				self.chromeState.frozenBaseImage = baseImage
-				self.chromeState.frozenMosaicImage = nil
-				self.refreshOverlay()
-			}
-		}
 	}
 
 	private static func cropFrozenDisplayImage(
@@ -1919,14 +1857,23 @@ final class CaptureOverlayController {
 		liveFrameStream.region(in: rect)
 	}
 
-	fileprivate func cachedMonitorImage(
+	fileprivate func latestMonitorImage(
 		near point: CGPoint
 	) -> (frame: CGRect, image: CGImage)? {
-		liveFrameStream.monitorImage(containing: point)
+		liveFrameStream.latestMonitorImage(containing: point)
 	}
 
-	fileprivate func primeMonitorImage(near point: CGPoint) {
-		liveFrameStream.prime(at: point)
+	fileprivate func currentMonitorImageBelowOverlay(
+		near point: CGPoint
+	) -> (frame: CGRect, image: CGImage)? {
+		guard
+			let source = frozenCaptureJobSource(near: point),
+			let monitorFrame = NSScreen.screens.first(where: { $0.frame.contains(point) })?.frame,
+			let image = Self.captureImageBelowOverlay(in: monitorFrame, source: source)
+		else {
+			return nil
+		}
+		return (frame: monitorFrame, image: image)
 	}
 
 	fileprivate func updateLivePreviewDemand(
@@ -4256,13 +4203,13 @@ private struct CaptureChromeState {
 		loupePatch = nil
 	}
 
-	mutating func beginHostLocalFrozenSelecting(frame: CGRect, image: CGImage) {
+	mutating func beginHostLocalFrozenSelecting() {
 		hostLocalFrozenSelecting = true
 		frozenSelectionSnapshot = nil
 		frozenSelectionEditable = false
 		frozenSelectionInteraction = nil
-		frozenDisplayFrame = frame
-		frozenDisplayImage = image
+		frozenDisplayFrame = nil
+		frozenDisplayImage = nil
 		frozenBaseImage = nil
 		frozenMosaicImage = nil
 		frozenOverlay.reset()

@@ -499,8 +499,13 @@ final class PermissionsWindowController: NSWindowController {
 	func refreshStatuses() {
 		for row in rows {
 			let granted = NativePermissions.status(for: row.kind)
-			row.statusLabel.stringValue = granted ? "Granted" : "Required"
-			row.statusLabel.textColor = granted ? NSColor.systemGreen : NSColor.secondaryLabelColor
+			let required = NativePermissions.requiredForCurrentNativeHost(row.kind)
+			row.statusLabel.stringValue = granted ? "Granted" : (required ? "Required" : "Not needed")
+			row.statusLabel.textColor = granted
+				? NSColor.systemGreen
+				: (required ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor)
+			row.actionButton.isEnabled = !granted && required
+			row.actionButton.title = required ? "Request / Open Settings" : "Not used"
 		}
 	}
 
@@ -515,7 +520,7 @@ final class PermissionsWindowController: NSWindowController {
 		stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
 		stack.translatesAutoresizingMaskIntoConstraints = false
 
-		let intro = NSTextField(wrappingLabelWithString: "rsnap needs system permissions for capture and scroll automation. Request the permission, then use System Settings if macOS still keeps access blocked.")
+		let intro = NSTextField(wrappingLabelWithString: "Normal native capture only needs Screen Recording. Accessibility and Input Monitoring are reserved for scroll automation.")
 		intro.maximumNumberOfLines = 0
 		intro.textColor = .secondaryLabelColor
 		stack.addArrangedSubview(intro)
@@ -549,6 +554,10 @@ final class PermissionsWindowController: NSWindowController {
 		else {
 			return
 		}
+		guard NativePermissions.requiredForCurrentNativeHost(kind) else {
+			refreshStatuses()
+			return
+		}
 		_ = NativePermissions.request(kind)
 		refreshStatuses()
 	}
@@ -556,6 +565,15 @@ final class PermissionsWindowController: NSWindowController {
 
 @MainActor
 enum NativePermissions {
+	static func requiredForCurrentNativeHost(_ kind: PermissionKind) -> Bool {
+		switch kind {
+		case .screenRecording:
+			return true
+		case .accessibility, .inputMonitoring:
+			return false
+		}
+	}
+
 	static func status(for kind: PermissionKind) -> Bool {
 		switch kind {
 		case .screenRecording:

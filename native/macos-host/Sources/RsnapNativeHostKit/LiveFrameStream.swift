@@ -11,22 +11,10 @@ final class LiveFrameStreamBroker {
 		let scaleFactorX1000: UInt32
 	}
 
-	private struct CachedMonitorImage {
-		let frame: CGRect
-		let image: CGImage
-		let generation: UInt64
-	}
-
 	private let stateLock = NSLock()
-	private let monitorImageWarmQueue = DispatchQueue(
-		label: "ink.hack.rsnap.live-frame-stream.monitor-image-warm",
-		qos: .utility
-	)
 	private var sampler: RsnapLiveSampler?
 	private var monitors: [SamplerMonitor] = []
 	private var mainDisplayHeight: CGFloat = 0
-	private var cachedMonitorImages: [UInt32: CachedMonitorImage] = [:]
-	private var warmingMonitorGenerations: [UInt32: UInt64] = [:]
 	private var streamGeneration: UInt64 = 0
 	private var lastPrimedMonitorID: UInt32?
 	private var lastPrimeGeneration: UInt64 = 0
@@ -50,28 +38,16 @@ final class LiveFrameStreamBroker {
 		let monitorsUnchanged = nextMonitors == monitors
 		monitors = nextMonitors
 		if monitorsUnchanged {
-			let generation = streamGeneration
 			stateLock.unlock()
 			if let targetMonitor {
 				prime(monitor: targetMonitor)
-				warmMonitorImage(monitor: targetMonitor, generation: generation)
 			}
 			return
 		}
 		streamGeneration &+= 1
-		let generation = streamGeneration
-		let liveMonitors = Dictionary(uniqueKeysWithValues: monitors.map { ($0.id, $0) })
-		cachedMonitorImages = cachedMonitorImages.filter { monitorID, cachedImage in
-			guard let liveMonitor = liveMonitors[monitorID] else {
-				return false
-			}
-			return liveMonitor.appKitFrame == cachedImage.frame
-		}
-		warmingMonitorGenerations.removeAll()
 		stateLock.unlock()
 		if let targetMonitor {
 			prime(monitor: targetMonitor)
-			warmMonitorImage(monitor: targetMonitor, generation: generation)
 		}
 	}
 
@@ -80,8 +56,6 @@ final class LiveFrameStreamBroker {
 		streamGeneration &+= 1
 		monitors.removeAll()
 		mainDisplayHeight = 0
-		cachedMonitorImages.removeAll()
-		warmingMonitorGenerations.removeAll()
 		lastPrimedMonitorID = nil
 		lastPrimeGeneration = 0
 		lastPrimeUptime = 0
@@ -143,21 +117,26 @@ final class LiveFrameStreamBroker {
 		)
 	}
 
-	func monitorImage(containing point: CGPoint) -> (frame: CGRect, image: CGImage)? {
+	func latestMonitorImage(containing point: CGPoint) -> (frame: CGRect, image: CGImage)? {
 		guard let monitor = monitor(containing: point) else {
 			return nil
 		}
 		stateLock.lock()
-		let generation = streamGeneration
-		let cachedImage = cachedMonitorImages[monitor.id]
+		let sampler = self.sampler
+		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
 		stateLock.unlock()
-		if let cachedImage {
-			if cachedImage.generation != generation {
-				warmMonitorImage(monitor: monitor, generation: generation)
-			}
-			return (frame: cachedImage.frame, image: cachedImage.image)
+		guard let sampler else {
+			return nil
 		}
-		warmMonitorImage(monitor: monitor)
+		for _ in 0..<3 {
+			if let snapshot = try? sampler.peekLatestMonitorImage(monitor: encodedMonitor),
+				let image = cgImage(width: snapshot.width, height: snapshot.height, rgba: snapshot.rgba)
+			{
+				return (frame: monitor.appKitFrame, image: image)
+			}
+			prime(monitor: monitor)
+			Thread.sleep(forTimeInterval: 1.0 / 120.0)
+		}
 		return nil
 	}
 
@@ -166,7 +145,6 @@ final class LiveFrameStreamBroker {
 			return
 		}
 		prime(monitor: monitor)
-		warmMonitorImage(monitor: monitor)
 	}
 
 	func seedSample(
@@ -187,12 +165,7 @@ final class LiveFrameStreamBroker {
 		stateLock.lock()
 		let sampler = self.sampler
 		let generation = streamGeneration
-		let cachedImage = cachedMonitorImages[monitor.id]
 		let now = ProcessInfo.processInfo.systemUptime
-		if cachedImage?.generation == generation {
-			stateLock.unlock()
-			return
-		}
 		if lastPrimedMonitorID == monitor.id,
 			lastPrimeGeneration == generation,
 			now - lastPrimeUptime < (1.0 / 30.0)
@@ -208,57 +181,6 @@ final class LiveFrameStreamBroker {
 			return
 		}
 		try? sampler.primeMonitor(samplerMonitorSnapshot(for: monitor))
-	}
-
-	private func warmMonitorImage(monitor: SamplerMonitor, generation requestedGeneration: UInt64? = nil) {
-		stateLock.lock()
-		let generation = requestedGeneration ?? streamGeneration
-		if cachedMonitorImages[monitor.id]?.generation == generation ||
-			warmingMonitorGenerations[monitor.id] == generation
-		{
-			stateLock.unlock()
-			return
-		}
-		guard let sampler else {
-			stateLock.unlock()
-			return
-		}
-		warmingMonitorGenerations[monitor.id] = generation
-		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
-		stateLock.unlock()
-
-		monitorImageWarmQueue.async { [weak self] in
-			guard let self else {
-				return
-			}
-			var cachedImage: CachedMonitorImage?
-			for _ in 0..<90 {
-				if let snapshot = try? sampler.peekLatestMonitorImage(monitor: encodedMonitor),
-					let image = self.cgImage(width: snapshot.width, height: snapshot.height, rgba: snapshot.rgba)
-				{
-					cachedImage = CachedMonitorImage(
-						frame: monitor.appKitFrame,
-						image: image,
-						generation: generation
-					)
-					break
-				}
-				try? sampler.primeMonitor(encodedMonitor)
-				Thread.sleep(forTimeInterval: 1.0 / 120.0)
-			}
-
-			self.stateLock.lock()
-			if self.warmingMonitorGenerations[monitor.id] == generation {
-				self.warmingMonitorGenerations.removeValue(forKey: monitor.id)
-			}
-			if let cachedImage,
-				self.streamGeneration == generation,
-				self.sampler != nil
-			{
-				self.cachedMonitorImages[monitor.id] = cachedImage
-			}
-			self.stateLock.unlock()
-		}
 	}
 
 	private func samplerMonitorSnapshot(for monitor: SamplerMonitor) -> MonitorSnapshot {
