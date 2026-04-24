@@ -35,6 +35,17 @@ struct LiveHudVisualSnapshot: Equatable {
 	let colorDisplay: LiveColorDisplay
 	let rgbSample: RGBSample?
 	let keycapVisible: Bool
+	let inputUptime: TimeInterval?
+	let inputSequence: UInt64
+
+	static func == (lhs: LiveHudVisualSnapshot, rhs: LiveHudVisualSnapshot) -> Bool {
+		lhs.theme == rhs.theme
+			&& lhs.settings == rhs.settings
+			&& lhs.positionDisplay == rhs.positionDisplay
+			&& lhs.colorDisplay == rhs.colorDisplay
+			&& lhs.rgbSample == rhs.rgbSample
+			&& lhs.keycapVisible == rhs.keycapVisible
+	}
 }
 
 struct LiveLoupeVisualSnapshot {
@@ -43,6 +54,8 @@ struct LiveLoupeVisualSnapshot {
 	let theme: CaptureChromeTheme
 	let settings: NativeHostSettings
 	let patch: CGImage
+	let inputUptime: TimeInterval?
+	let inputSequence: UInt64
 }
 
 struct FrozenToolbarVisualItemSnapshot: Equatable {
@@ -65,6 +78,14 @@ struct LiveChromeVisualSnapshot {
 	let hud: LiveHudVisualSnapshot?
 	let loupe: LiveLoupeVisualSnapshot?
 	let toolbar: FrozenToolbarVisualSnapshot?
+}
+
+struct LiveChromePositionSnapshot {
+	let sourceWindowNumber: Int?
+	let hudFrame: CGRect?
+	let loupeFrame: CGRect?
+	let inputUptime: TimeInterval?
+	let inputSequence: UInt64
 }
 
 @MainActor
@@ -302,7 +323,7 @@ private final class LiveChromeOverlayWindow: NSWindow {
 			if sizeChanged {
 				setFrame(roundedFrame, display: false, animate: false)
 			} else if originChanged {
-				setFrame(roundedFrame, display: false, animate: false)
+				setFrameOrigin(roundedFrame.origin)
 			}
 		} else {
 			setFrame(roundedFrame, display: false, animate: false)
@@ -321,6 +342,33 @@ private final class LiveChromeOverlayWindow: NSWindow {
 		}
 	}
 
+	func moveIfPossible(frame: CGRect) -> Bool {
+		guard let lastPresentedFrame else {
+			return false
+		}
+		let roundedFrame = CGRect(
+			x: frame.origin.x.rounded(),
+			y: frame.origin.y.rounded(),
+			width: ceil(frame.width),
+			height: ceil(frame.height)
+		)
+		let sizeMatches =
+			abs(lastPresentedFrame.width - roundedFrame.width) <= 0.5 &&
+			abs(lastPresentedFrame.height - roundedFrame.height) <= 0.5
+		guard sizeMatches else {
+			return false
+		}
+		let originChanged =
+			abs(lastPresentedFrame.minX - roundedFrame.minX) > 0.5 ||
+			abs(lastPresentedFrame.minY - roundedFrame.minY) > 0.5
+		guard originChanged else {
+			return false
+		}
+		setFrameOrigin(roundedFrame.origin)
+		self.lastPresentedFrame = roundedFrame
+		return true
+	}
+
 	func hide() {
 		guard isPresented else {
 			return
@@ -333,7 +381,6 @@ private final class LiveChromeOverlayWindow: NSWindow {
 
 private final class LiveChromeRenderView: NSView {
 	private struct LoupeSnapshotKey: Equatable {
-		let frame: CGRect
 		let theme: CaptureChromeTheme
 		let settings: NativeHostSettings
 		let patchIdentity: UInt
@@ -370,7 +417,6 @@ private final class LiveChromeRenderView: NSView {
 	func update(loupe snapshot: LiveLoupeVisualSnapshot?) {
 		let nextKey = snapshot.map {
 			LoupeSnapshotKey(
-				frame: $0.frame,
 				theme: $0.theme,
 				settings: $0.settings,
 				patchIdentity: UInt(bitPattern: Unmanaged.passUnretained($0.patch).toOpaque())
@@ -595,8 +641,53 @@ final class LiveChromeVisualWindowController {
 	private let hudWindow = LiveChromeOverlayWindow(kind: .hud)
 	private let loupeWindow = LiveChromeOverlayWindow(kind: .loupe)
 	private let toolbarWindow = LiveChromeOverlayWindow(kind: .toolbar)
+	private let updateDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.update_duration",
+		category: "LiveChromeTelemetry"
+	)
+	private let hudApplyLatencyMetric = NativeHostTelemetry.distribution(
+		"live_chrome.hud.apply_latency",
+		category: "LiveChromeTelemetry"
+	)
+	private let hudWindowDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.hud.window_update_duration",
+		category: "LiveChromeTelemetry"
+	)
+	private let loupeApplyLatencyMetric = NativeHostTelemetry.distribution(
+		"live_chrome.loupe.apply_latency",
+		category: "LiveChromeTelemetry"
+	)
+	private let loupeWindowDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.loupe.window_update_duration",
+		category: "LiveChromeTelemetry"
+	)
+	private let hudFastPositionLatencyMetric = NativeHostTelemetry.distribution(
+		"live_chrome.hud.fast_position_latency",
+		category: "LiveChromeTelemetry"
+	)
+	private let hudFastPositionDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.hud.fast_position_duration",
+		category: "LiveChromeTelemetry"
+	)
+	private let loupeFastPositionLatencyMetric = NativeHostTelemetry.distribution(
+		"live_chrome.loupe.fast_position_latency",
+		category: "LiveChromeTelemetry"
+	)
+	private let loupeFastPositionDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.loupe.fast_position_duration",
+		category: "LiveChromeTelemetry"
+	)
+	private var lastHudLatencyInputSequence: UInt64?
+	private var lastLoupeLatencyInputSequence: UInt64?
+	private var lastFastHudLatencyInputSequence: UInt64?
+	private var lastFastLoupeLatencyInputSequence: UInt64?
 
 	func update(snapshot: LiveChromeVisualSnapshot?, focusedWindowNumber: Int?) {
+		let updateStart = ProcessInfo.processInfo.systemUptime
+		defer {
+			updateDurationMetric.recordMillisecondsSince(updateStart)
+		}
+
 		guard let snapshot else {
 			hideAll()
 			return
@@ -606,15 +697,31 @@ final class LiveChromeVisualWindowController {
 		}
 
 		if let hud = snapshot.hud {
+			let hudStart = ProcessInfo.processInfo.systemUptime
 			hudWindow.renderView.update(hud: hud)
 			hudWindow.update(frame: hud.frame, settings: hud.settings)
+			hudWindowDurationMetric.recordMillisecondsSince(hudStart)
+			recordInputLatency(
+				inputUptime: hud.inputUptime,
+				inputSequence: hud.inputSequence,
+				lastInputSequence: &lastHudLatencyInputSequence,
+				metric: hudApplyLatencyMetric
+			)
 		} else {
 			hudWindow.hide()
 		}
 
 		if let loupe = snapshot.loupe {
+			let loupeStart = ProcessInfo.processInfo.systemUptime
 			loupeWindow.renderView.update(loupe: loupe)
 			loupeWindow.update(frame: loupe.frame, settings: loupe.settings)
+			loupeWindowDurationMetric.recordMillisecondsSince(loupeStart)
+			recordInputLatency(
+				inputUptime: loupe.inputUptime,
+				inputSequence: loupe.inputSequence,
+				lastInputSequence: &lastLoupeLatencyInputSequence,
+				metric: loupeApplyLatencyMetric
+			)
 		} else {
 			loupeWindow.hide()
 		}
@@ -625,6 +732,49 @@ final class LiveChromeVisualWindowController {
 		} else {
 			toolbarWindow.hide()
 		}
+	}
+
+	func updatePositions(snapshot: LiveChromePositionSnapshot?, focusedWindowNumber: Int?) {
+		guard let snapshot, snapshot.sourceWindowNumber == focusedWindowNumber else {
+			return
+		}
+		if let hudFrame = snapshot.hudFrame {
+			let moveStart = ProcessInfo.processInfo.systemUptime
+			if hudWindow.moveIfPossible(frame: hudFrame) {
+				hudFastPositionDurationMetric.recordMillisecondsSince(moveStart)
+				recordInputLatency(
+					inputUptime: snapshot.inputUptime,
+					inputSequence: snapshot.inputSequence,
+					lastInputSequence: &lastFastHudLatencyInputSequence,
+					metric: hudFastPositionLatencyMetric
+				)
+			}
+		}
+		if let loupeFrame = snapshot.loupeFrame {
+			let moveStart = ProcessInfo.processInfo.systemUptime
+			if loupeWindow.moveIfPossible(frame: loupeFrame) {
+				loupeFastPositionDurationMetric.recordMillisecondsSince(moveStart)
+				recordInputLatency(
+					inputUptime: snapshot.inputUptime,
+					inputSequence: snapshot.inputSequence,
+					lastInputSequence: &lastFastLoupeLatencyInputSequence,
+					metric: loupeFastPositionLatencyMetric
+				)
+			}
+		}
+	}
+
+	private func recordInputLatency(
+		inputUptime: TimeInterval?,
+		inputSequence: UInt64,
+		lastInputSequence: inout UInt64?,
+		metric: NativeHostTelemetry.DistributionMetric
+	) {
+		guard inputSequence != 0, lastInputSequence != inputSequence else {
+			return
+		}
+		lastInputSequence = inputSequence
+		metric.recordLatencySince(inputUptime)
 	}
 
 	func hideAll() {
