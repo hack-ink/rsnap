@@ -371,9 +371,23 @@ final class GlassPatchFeed {
 
 final class LiveDisplayLinkDriver: @unchecked Sendable {
 	var onTick: (() -> Void)?
+	private let stateLock = NSLock()
 	private var displayLink: CVDisplayLink?
+	private var currentDisplayID: CGDirectDisplayID?
+	private var currentTargetFramesPerSecond: Int?
+	private var tickPending = false
 
-	func start(displayID: CGDirectDisplayID) {
+	func start(displayID: CGDirectDisplayID, targetFramesPerSecond: Int) {
+		let sanitizedTarget = max(1, targetFramesPerSecond)
+		stateLock.lock()
+		let alreadyRunning = displayLink != nil &&
+			currentDisplayID == displayID &&
+			currentTargetFramesPerSecond == sanitizedTarget
+		stateLock.unlock()
+		guard !alreadyRunning else {
+			return
+		}
+
 		stop()
 		var link: CVDisplayLink?
 		guard CVDisplayLinkCreateWithActiveCGDisplays(&link) == kCVReturnSuccess, let link else {
@@ -384,21 +398,53 @@ final class LiveDisplayLinkDriver: @unchecked Sendable {
 			guard let self else {
 				return kCVReturnSuccess
 			}
+			self.stateLock.lock()
+			guard !self.tickPending else {
+				self.stateLock.unlock()
+				return kCVReturnSuccess
+			}
+			self.tickPending = true
+			self.stateLock.unlock()
 			DispatchQueue.main.async {
+				self.stateLock.lock()
+				self.tickPending = false
+				self.stateLock.unlock()
 				self.onTick?()
 			}
 			return kCVReturnSuccess
 		}
+		stateLock.lock()
 		displayLink = link
-		CVDisplayLinkStart(link)
+		currentDisplayID = displayID
+		currentTargetFramesPerSecond = sanitizedTarget
+		tickPending = false
+		stateLock.unlock()
+		guard CVDisplayLinkStart(link) == kCVReturnSuccess else {
+			stateLock.lock()
+			displayLink = nil
+			currentDisplayID = nil
+			currentTargetFramesPerSecond = nil
+			tickPending = false
+			stateLock.unlock()
+			return
+		}
 	}
 
 	func stop() {
+		stateLock.lock()
 		guard let displayLink else {
+			currentDisplayID = nil
+			currentTargetFramesPerSecond = nil
+			tickPending = false
+			stateLock.unlock()
 			return
 		}
-		CVDisplayLinkStop(displayLink)
 		self.displayLink = nil
+		currentDisplayID = nil
+		currentTargetFramesPerSecond = nil
+		tickPending = false
+		stateLock.unlock()
+		CVDisplayLinkStop(displayLink)
 	}
 
 	deinit {
@@ -878,12 +924,12 @@ final class LiveOverlayRenderer {
 		rootLayer.isHidden = true
 	}
 
-	func updateDisplayID(_ displayID: CGDirectDisplayID?) {
+	func updateDisplayID(_ displayID: CGDirectDisplayID?, targetFramesPerSecond: Int) {
 		guard let displayID else {
 			stop()
 			return
 		}
-		displayLink.start(displayID: displayID)
+		displayLink.start(displayID: displayID, targetFramesPerSecond: targetFramesPerSecond)
 	}
 
 	func stop() {
