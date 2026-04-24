@@ -319,6 +319,9 @@ final class CaptureSessionController: NSObject {
 		do {
 			let startPoint = NSEvent.mouseLocation
 			let initialSample = warmLiveSamplingIfPossible(at: startPoint)
+			let desktopFrame = CaptureOverlayController.desktopFrame
+			let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
+			let initialHighlightedWindow = WindowSnapshotFeed.window(at: startPoint, in: initialWindowSnapshots)
 			chromeState.rgbSample = initialSample?.rgbSample
 			let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
 			self.session = session
@@ -329,7 +332,7 @@ final class CaptureSessionController: NSObject {
 					point: startPoint,
 					rgb: initialSample?.rgbSample,
 					activeMonitor: activeMonitor(at: startPoint),
-					highlightedWindow: nil
+					highlightedWindow: initialHighlightedWindow
 				)
 			)
 			let initialScene = try session.currentScene()
@@ -344,7 +347,8 @@ final class CaptureSessionController: NSObject {
 				initialScene: initialScene,
 				chrome: chromeState,
 				settings: settingsStore.settings,
-				focusPoint: startPoint
+				focusPoint: startPoint,
+				initialWindowSnapshots: initialWindowSnapshots
 			)
 			(NSApp.delegate as? NativeHostApplicationController)?.window = overlayController.primaryWindow
 			sceneDidChange?(initialScene)
@@ -1762,7 +1766,8 @@ final class CaptureOverlayController {
 		initialScene: SceneSnapshot,
 		chrome: CaptureChromeState,
 		settings: NativeHostSettings,
-		focusPoint: CGPoint
+		focusPoint: CGPoint,
+		initialWindowSnapshots: [WindowSnapshot]
 	) {
 		close()
 		var targetWindow: CaptureOverlayWindow?
@@ -1797,7 +1802,7 @@ final class CaptureOverlayController {
 		}
 		collapsedForFrozen = false
 		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: focusPoint)
-		windowSnapshotFeed.start(desktopFrame: Self.desktopFrame)
+		windowSnapshotFeed.start(desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
 		chromeSampleFeed.start()
 		chromeSampleFeed.prime(point: focusPoint, sidePixels: 1)
 	}
@@ -2007,7 +2012,7 @@ final class CaptureOverlayController {
 		)
 	}
 
-	private static var desktopFrame: CGRect {
+	fileprivate static var desktopFrame: CGRect {
 		NSScreen.screens.map(\.frame).reduce(.null) { frame, next in
 			frame.isNull ? next : frame.union(next)
 		}
