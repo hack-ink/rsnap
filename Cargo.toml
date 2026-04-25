@@ -50,7 +50,7 @@ xcap                     = { version = "0.9" }
 
 rsnap-capture-core = { version = "0.1.0", path = "packages/rsnap-capture-core" }
 rsnap-host-ffi     = { version = "0.1.0", path = "packages/rsnap-host-ffi" }
-rsnap-overlay = { version = "0.1.0", path = "packages/rsnap-overlay" }
+rsnap-overlay      = { version = "0.1.0", path = "packages/rsnap-overlay" }
 
 raw-window-handle = { version = "0.6" }
 
