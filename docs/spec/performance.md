@@ -108,16 +108,18 @@ Current coarse smoke surface:
 ### Scenario 2: render-heavy component paths
 
 Surface:
-- settings window render path
-- other egui-heavy component paths selected by benchmark value
+- native host chrome, loupe, and toolbar paths that remain visible to users during live or frozen
+  capture
+- any future deterministic UI benchmark surfaces added for native-host rendering hot spots
 
 Primary metrics:
-- benchmark time for representative component render scenarios
+- live frame timing and redraw stability for representative component render scenarios
 - phase timings where benchmark design can isolate UI build, tessellation, upload, or command
   encoding work
 
 Required measurement style:
-- repeatable local benchmark runs with saved baselines
+- dedicated macOS smoke today, with deterministic component baselines added only when they measure
+  the native-host path directly
 
 ### Scenario 3: scroll-capture and image-processing hot paths
 

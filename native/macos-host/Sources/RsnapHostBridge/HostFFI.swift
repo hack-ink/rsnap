@@ -1,0 +1,875 @@
+import CoreGraphics
+import Foundation
+import CRsnapHostFFI
+
+public struct SessionConfiguration: Equatable, Sendable {
+	public var allowTextInput: Bool
+	public var prefersToolbarAboveSelection: Bool
+
+	public init(
+		allowTextInput: Bool = true,
+		prefersToolbarAboveSelection: Bool = false
+	) {
+		self.allowTextInput = allowTextInput
+		self.prefersToolbarAboveSelection = prefersToolbarAboveSelection
+	}
+}
+
+public struct RGBSample: Equatable, Sendable {
+	public var r: UInt8
+	public var g: UInt8
+	public var b: UInt8
+
+	public init(r: UInt8, g: UInt8, b: UInt8) {
+		self.r = r
+		self.g = g
+		self.b = b
+	}
+}
+
+public struct LiveSampleSnapshot: Equatable, Sendable {
+	public var rgb: RGBSample?
+	public var patchWidth: Int
+	public var patchHeight: Int
+	public var patchRGBA: Data?
+
+	public init(
+		rgb: RGBSample?,
+		patchWidth: Int = 0,
+		patchHeight: Int = 0,
+		patchRGBA: Data? = nil
+	) {
+		self.rgb = rgb
+		self.patchWidth = patchWidth
+		self.patchHeight = patchHeight
+		self.patchRGBA = patchRGBA
+	}
+}
+
+public struct RGBARegionSnapshot: Equatable, Sendable {
+	public var width: Int
+	public var height: Int
+	public var rgba: Data
+
+	public init(width: Int, height: Int, rgba: Data) {
+		self.width = width
+		self.height = height
+		self.rgba = rgba
+	}
+}
+
+public struct MonitorSnapshot: Equatable, Sendable {
+	public var id: UInt32
+	public var frame: CGRect
+	public var scaleFactorX1000: UInt32
+
+	public init(id: UInt32, frame: CGRect, scaleFactorX1000: UInt32) {
+		self.id = id
+		self.frame = frame
+		self.scaleFactorX1000 = scaleFactorX1000
+	}
+}
+
+public struct WindowSnapshot: Equatable, Sendable {
+	public var windowID: UInt32?
+	public var frame: CGRect
+
+	public init(windowID: UInt32?, frame: CGRect) {
+		self.windowID = windowID
+		self.frame = frame
+	}
+}
+
+public enum SceneKind: UInt32, Equatable, Sendable {
+	case hidden = 0
+	case live = 1
+	case frozen = 2
+}
+
+public enum CursorIntent: UInt32, Equatable, Sendable {
+	case `default` = 0
+	case crosshair = 1
+	case grab = 2
+	case grabbing = 3
+	case resizeNorth = 4
+	case resizeSouth = 5
+	case resizeEast = 6
+	case resizeWest = 7
+	case resizeNorthEast = 8
+	case resizeNorthWest = 9
+	case resizeSouthEast = 10
+	case resizeSouthWest = 11
+	case text = 12
+}
+
+public enum ToolbarItemKind: UInt32, Equatable, Sendable {
+	case pointer = 0
+	case pen = 1
+	case arrow = 2
+	case text = 3
+	case mosaic = 4
+	case spotlight = 5
+	case undo = 6
+	case redo = 7
+	case autoCenter = 8
+	case scroll = 9
+	case ocr = 10
+	case copy = 11
+	case save = 12
+
+	public var isModeTool: Bool {
+		switch self {
+		case .pointer, .pen, .arrow, .text, .mosaic, .spotlight:
+			return true
+		case .undo, .redo, .autoCenter, .scroll, .ocr, .copy, .save:
+			return false
+		}
+	}
+}
+
+public struct ToolbarItem: Equatable, Sendable {
+	public var kind: ToolbarItemKind
+	public var enabled: Bool
+	public var selected: Bool
+
+	public init(kind: ToolbarItemKind, enabled: Bool, selected: Bool) {
+		self.kind = kind
+		self.enabled = enabled
+		self.selected = selected
+	}
+}
+
+public struct SceneSnapshot: Equatable, Sendable {
+	public var mode: SceneKind
+	public var cursorIntent: CursorIntent
+	public var pointer: CGPoint?
+	public var activeMonitor: MonitorSnapshot?
+	public var highlightedWindow: WindowSnapshot?
+	public var liveSelectionPreview: CGRect?
+	public var frozenSelection: CGRect?
+	public var rgb: RGBSample?
+	public var loupeVisible: Bool
+	public var toolbarItems: [ToolbarItem]
+	public var statusMessage: String?
+
+	public init(
+		mode: SceneKind,
+		cursorIntent: CursorIntent,
+		pointer: CGPoint?,
+		activeMonitor: MonitorSnapshot?,
+		highlightedWindow: WindowSnapshot?,
+		liveSelectionPreview: CGRect?,
+		frozenSelection: CGRect?,
+		rgb: RGBSample?,
+		loupeVisible: Bool,
+		toolbarItems: [ToolbarItem],
+		statusMessage: String?
+	) {
+		self.mode = mode
+		self.cursorIntent = cursorIntent
+		self.pointer = pointer
+		self.activeMonitor = activeMonitor
+		self.highlightedWindow = highlightedWindow
+		self.liveSelectionPreview = liveSelectionPreview
+		self.frozenSelection = frozenSelection
+		self.rgb = rgb
+		self.loupeVisible = loupeVisible
+		self.toolbarItems = toolbarItems
+		self.statusMessage = statusMessage
+	}
+}
+
+public enum HostRequest: Equatable, Sendable {
+	case startLiveCapture
+	case stopLiveCapture
+	case requestFreezeSnapshot(selection: CGRect)
+	case copyCapture
+	case saveCapture
+	case recognizeText
+	case requestScreenRecordingPermission
+	case requestAccessibilityPermission
+	case requestInputMonitoringPermission
+}
+
+public enum HostEffectKind: UInt32, Equatable, Sendable {
+	case copyCapture = 0
+	case saveCapture = 1
+	case recognizeText = 2
+}
+
+public enum PermissionKind: UInt32, Equatable, Sendable {
+	case screenRecording = 0
+	case accessibility = 1
+	case inputMonitoring = 2
+}
+
+public enum HostEvent: Sendable {
+	case sessionActivated
+	case pointerMoved(
+		point: CGPoint,
+		rgb: RGBSample?,
+		activeMonitor: MonitorSnapshot?,
+		highlightedWindow: WindowSnapshot?
+	)
+	case primaryInteractionStarted(
+		point: CGPoint,
+		activeMonitor: MonitorSnapshot?,
+		highlightedWindow: WindowSnapshot?
+	)
+	case primaryInteractionUpdated(
+		point: CGPoint,
+		activeMonitor: MonitorSnapshot?,
+		highlightedWindow: WindowSnapshot?
+	)
+	case primaryInteractionCompleted(
+		point: CGPoint,
+		activeMonitor: MonitorSnapshot?,
+		highlightedWindow: WindowSnapshot?
+	)
+	case cancelRequested
+	case copyRequested
+	case saveRequested
+	case recognizeTextRequested
+	case toggleLoupe
+	case toolbarItemInvoked(ToolbarItemKind)
+}
+
+public enum HostReport: Sendable {
+	case freezeSnapshotCommitted(selection: CGRect)
+	case hostEffectCompleted(HostEffectKind)
+	case permissionChanged(PermissionKind, granted: Bool)
+	case statusMessage(String)
+}
+
+public enum HostBridgeError: Error, CustomStringConvertible {
+	case abiVersionMismatch(expected: UInt32, actual: UInt32)
+	case sessionCreationFailed
+	case ffiStatus(context: String, code: UInt32)
+	case invalidSceneKind(UInt32)
+	case invalidCursorIntent(UInt32)
+	case invalidRequestKind(UInt32)
+
+	public var description: String {
+		switch self {
+		case let .abiVersionMismatch(expected, actual):
+			return "ABI mismatch: expected \(expected), got \(actual)"
+		case .sessionCreationFailed:
+			return "Failed to create rsnap host session."
+		case let .ffiStatus(context, code):
+			return "FFI status \(code) while \(context)"
+		case let .invalidSceneKind(rawValue):
+			return "Unknown scene kind \(rawValue)"
+		case let .invalidCursorIntent(rawValue):
+			return "Unknown cursor intent \(rawValue)"
+		case let .invalidRequestKind(rawValue):
+			return "Unknown host request kind \(rawValue)"
+		}
+	}
+}
+
+public final class RsnapHostSession {
+	private let handle: OpaquePointer
+	public let configuration: SessionConfiguration
+
+	public init(configuration: SessionConfiguration = .init()) throws {
+		let actualAbi = rsnap_host_ffi_abi_version()
+		if actualAbi != RSNAP_HOST_FFI_ABI_VERSION {
+			throw HostBridgeError.abiVersionMismatch(
+				expected: RSNAP_HOST_FFI_ABI_VERSION,
+				actual: actualAbi
+			)
+		}
+
+		let config = RsnapSessionConfig(
+			platform: RSNAP_PLATFORM_MACOS,
+			allow_text_input: configuration.allowTextInput ? 1 : 0,
+			prefers_toolbar_above_selection: configuration.prefersToolbarAboveSelection ? 1 : 0
+		)
+		guard let handle = rsnap_session_create(config) else {
+			throw HostBridgeError.sessionCreationFailed
+		}
+
+		self.handle = handle
+		self.configuration = configuration
+	}
+
+	deinit {
+		rsnap_session_destroy(handle)
+	}
+
+	public func enterLive() throws {
+		try requireOk(
+			rsnap_session_enter_live(handle),
+			context: "entering live mode"
+		)
+	}
+
+	public func send(event: HostEvent) throws {
+		try requireOk(
+			rsnap_session_handle_host_event(handle, encode(event: event)),
+			context: "sending host event"
+		)
+	}
+
+	public func send(report: HostReport) throws {
+		try requireOk(
+			rsnap_session_handle_host_report(handle, encode(report: report)),
+			context: "sending host report"
+		)
+	}
+
+	public func currentScene() throws -> SceneSnapshot {
+		var outScene = RsnapSceneModel()
+		try requireOk(
+			rsnap_session_copy_scene_model(handle, &outScene),
+			context: "copying scene model"
+		)
+
+		return try decode(scene: outScene)
+	}
+
+	public func takeNextRequest() throws -> HostRequest? {
+		var outRequest = RsnapHostRequestValue()
+		let status = rsnap_session_take_next_request(handle, &outRequest)
+		let code = rsnap_status_code(status)
+		if code == 3 {
+			return nil
+		}
+		try requireOk(status, context: "draining queued host request")
+
+		return try decode(request: outRequest)
+	}
+
+	public func drainRequests() throws -> [HostRequest] {
+		var requests: [HostRequest] = []
+		while let request = try takeNextRequest() {
+			requests.append(request)
+		}
+		return requests
+	}
+
+	private func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private func encode(event: HostEvent) -> RsnapHostEvent {
+		switch event {
+		case .sessionActivated:
+			return RsnapHostEvent(
+				kind: RSNAP_HOST_EVENT_SESSION_ACTIVATED.rawValue,
+				point: RsnapPoint(),
+				has_point: 0,
+				rgb: RsnapRgb(),
+				has_rgb: 0,
+				active_monitor: RsnapMonitorRect(),
+				has_active_monitor: 0,
+				highlighted_window: RsnapWindowRect(),
+				has_highlighted_window: 0,
+				toolbar_item_kind: 0
+			)
+		case let .pointerMoved(point, rgb, activeMonitor, highlightedWindow):
+			return RsnapHostEvent(
+				kind: RSNAP_HOST_EVENT_POINTER_MOVED.rawValue,
+				point: encode(point: point),
+				has_point: 1,
+				rgb: encode(rgb: rgb),
+				has_rgb: rgb == nil ? 0 : 1,
+				active_monitor: encode(monitor: activeMonitor),
+				has_active_monitor: activeMonitor == nil ? 0 : 1,
+				highlighted_window: encode(window: highlightedWindow),
+				has_highlighted_window: highlightedWindow == nil ? 0 : 1,
+				toolbar_item_kind: 0
+			)
+		case let .primaryInteractionStarted(point, activeMonitor, highlightedWindow):
+			return RsnapHostEvent(
+				kind: RSNAP_HOST_EVENT_PRIMARY_INTERACTION_STARTED.rawValue,
+				point: encode(point: point),
+				has_point: 1,
+				rgb: RsnapRgb(),
+				has_rgb: 0,
+				active_monitor: encode(monitor: activeMonitor),
+				has_active_monitor: activeMonitor == nil ? 0 : 1,
+				highlighted_window: encode(window: highlightedWindow),
+				has_highlighted_window: highlightedWindow == nil ? 0 : 1,
+				toolbar_item_kind: 0
+			)
+		case let .primaryInteractionUpdated(point, activeMonitor, highlightedWindow):
+			return RsnapHostEvent(
+				kind: RSNAP_HOST_EVENT_PRIMARY_INTERACTION_UPDATED.rawValue,
+				point: encode(point: point),
+				has_point: 1,
+				rgb: RsnapRgb(),
+				has_rgb: 0,
+				active_monitor: encode(monitor: activeMonitor),
+				has_active_monitor: activeMonitor == nil ? 0 : 1,
+				highlighted_window: encode(window: highlightedWindow),
+				has_highlighted_window: highlightedWindow == nil ? 0 : 1,
+				toolbar_item_kind: 0
+			)
+		case let .primaryInteractionCompleted(point, activeMonitor, highlightedWindow):
+			return RsnapHostEvent(
+				kind: RSNAP_HOST_EVENT_PRIMARY_INTERACTION_COMPLETED.rawValue,
+				point: encode(point: point),
+				has_point: 1,
+				rgb: RsnapRgb(),
+				has_rgb: 0,
+				active_monitor: encode(monitor: activeMonitor),
+				has_active_monitor: activeMonitor == nil ? 0 : 1,
+				highlighted_window: encode(window: highlightedWindow),
+				has_highlighted_window: highlightedWindow == nil ? 0 : 1,
+				toolbar_item_kind: 0
+			)
+		case .cancelRequested:
+			return eventWith(kind: RSNAP_HOST_EVENT_CANCEL_REQUESTED.rawValue)
+		case .copyRequested:
+			return eventWith(kind: RSNAP_HOST_EVENT_COPY_REQUESTED.rawValue)
+		case .saveRequested:
+			return eventWith(kind: RSNAP_HOST_EVENT_SAVE_REQUESTED.rawValue)
+		case .recognizeTextRequested:
+			return eventWith(kind: RSNAP_HOST_EVENT_RECOGNIZE_TEXT_REQUESTED.rawValue)
+		case .toggleLoupe:
+			return eventWith(kind: RSNAP_HOST_EVENT_TOGGLE_LOUPE.rawValue)
+		case let .toolbarItemInvoked(item):
+			return RsnapHostEvent(
+				kind: RSNAP_HOST_EVENT_TOOLBAR_ITEM_INVOKED.rawValue,
+				point: RsnapPoint(),
+				has_point: 0,
+				rgb: RsnapRgb(),
+				has_rgb: 0,
+				active_monitor: RsnapMonitorRect(),
+				has_active_monitor: 0,
+				highlighted_window: RsnapWindowRect(),
+				has_highlighted_window: 0,
+				toolbar_item_kind: item.rawValue
+			)
+		}
+	}
+
+	private func encode(report: HostReport) -> RsnapHostReport {
+		var reportValue = RsnapHostReport()
+
+		switch report {
+		case let .freezeSnapshotCommitted(selection):
+			reportValue.kind = RSNAP_HOST_REPORT_FREEZE_SNAPSHOT_COMMITTED.rawValue
+			reportValue.selection = encode(rect: selection)
+			reportValue.has_selection = 1
+		case let .hostEffectCompleted(effect):
+			reportValue.kind = RSNAP_HOST_REPORT_HOST_EFFECT_COMPLETED.rawValue
+			reportValue.effect_kind = effect.rawValue
+		case let .permissionChanged(permission, granted):
+			reportValue.kind = RSNAP_HOST_REPORT_PERMISSION_CHANGED.rawValue
+			reportValue.permission_kind = permission.rawValue
+			reportValue.granted = granted ? 1 : 0
+		case let .statusMessage(message):
+			reportValue.kind = RSNAP_HOST_REPORT_STATUS_MESSAGE.rawValue
+			encodeStatusMessage(message, into: &reportValue)
+		}
+
+		return reportValue
+	}
+
+	private func decode(scene: RsnapSceneModel) throws -> SceneSnapshot {
+		guard let mode = SceneKind(rawValue: scene.scene_kind) else {
+			throw HostBridgeError.invalidSceneKind(scene.scene_kind)
+		}
+		guard let cursorIntent = CursorIntent(rawValue: scene.cursor_intent) else {
+			throw HostBridgeError.invalidCursorIntent(scene.cursor_intent)
+		}
+
+		return SceneSnapshot(
+			mode: mode,
+			cursorIntent: cursorIntent,
+			pointer: scene.has_pointer == 0 ? nil : decode(point: scene.pointer),
+			activeMonitor: scene.has_active_monitor == 0 ? nil : decode(monitor: scene.active_monitor),
+			highlightedWindow: scene.has_highlighted_window == 0 ? nil : decode(window: scene.highlighted_window),
+			liveSelectionPreview: scene.has_live_selection_preview == 0 ? nil : decode(rect: scene.live_selection_preview),
+			frozenSelection: scene.has_frozen_selection == 0 ? nil : decode(rect: scene.frozen_selection),
+			rgb: scene.has_rgb == 0 ? nil : decode(rgb: scene.rgb),
+			loupeVisible: scene.loupe_visible != 0,
+			toolbarItems: decodeToolbarItems(scene),
+			statusMessage: decodeStatusMessage(scene)
+		)
+	}
+
+	private func eventWith(kind: UInt32) -> RsnapHostEvent {
+		RsnapHostEvent(
+			kind: kind,
+			point: RsnapPoint(),
+			has_point: 0,
+			rgb: RsnapRgb(),
+			has_rgb: 0,
+			active_monitor: RsnapMonitorRect(),
+			has_active_monitor: 0,
+			highlighted_window: RsnapWindowRect(),
+			has_highlighted_window: 0,
+			toolbar_item_kind: 0
+		)
+	}
+
+	private func decodeToolbarItems(_ scene: RsnapSceneModel) -> [ToolbarItem] {
+		let count = min(Int(scene.toolbar_item_count), Int(RSNAP_TOOLBAR_ITEM_CAPACITY))
+		return withUnsafeBytes(of: scene.toolbar_items) { rawBuffer in
+			let buffer = rawBuffer.bindMemory(to: RsnapToolbarItem.self)
+			return buffer.prefix(count).compactMap { item in
+				guard item.present != 0, let kind = ToolbarItemKind(rawValue: item.kind) else {
+					return nil
+				}
+				return ToolbarItem(kind: kind, enabled: item.enabled != 0, selected: item.selected != 0)
+			}
+		}
+	}
+
+	private func decodeStatusMessage(_ scene: RsnapSceneModel) -> String? {
+		let count = min(Int(scene.status_message_len), Int(RSNAP_STATUS_MESSAGE_CAPACITY))
+		guard count > 0 else {
+			return nil
+		}
+		return withUnsafeBytes(of: scene.status_message) { rawBuffer in
+			String(bytes: rawBuffer.prefix(count), encoding: .utf8)
+		}
+	}
+
+	private func decode(request: RsnapHostRequestValue) throws -> HostRequest {
+		switch request.kind {
+		case RSNAP_HOST_REQUEST_START_LIVE_CAPTURE.rawValue:
+			return .startLiveCapture
+		case RSNAP_HOST_REQUEST_STOP_LIVE_CAPTURE.rawValue:
+			return .stopLiveCapture
+		case RSNAP_HOST_REQUEST_REQUEST_FREEZE_SNAPSHOT.rawValue:
+			guard request.has_selection != 0 else {
+				throw HostBridgeError.invalidRequestKind(request.kind)
+			}
+			return .requestFreezeSnapshot(selection: decode(rect: request.selection))
+		case RSNAP_HOST_REQUEST_COPY_CAPTURE.rawValue:
+			return .copyCapture
+		case RSNAP_HOST_REQUEST_SAVE_CAPTURE.rawValue:
+			return .saveCapture
+		case RSNAP_HOST_REQUEST_RECOGNIZE_TEXT.rawValue:
+			return .recognizeText
+		case RSNAP_HOST_REQUEST_REQUEST_SCREEN_RECORDING_PERMISSION.rawValue:
+			return .requestScreenRecordingPermission
+		case RSNAP_HOST_REQUEST_REQUEST_ACCESSIBILITY_PERMISSION.rawValue:
+			return .requestAccessibilityPermission
+		case RSNAP_HOST_REQUEST_REQUEST_INPUT_MONITORING_PERMISSION.rawValue:
+			return .requestInputMonitoringPermission
+		default:
+			throw HostBridgeError.invalidRequestKind(request.kind)
+		}
+	}
+
+	private func encodeStatusMessage(_ message: String, into report: inout RsnapHostReport) {
+		let data = Array(message.utf8.prefix(Int(RSNAP_STATUS_MESSAGE_CAPACITY)))
+		report.status_message_len = UInt32(data.count)
+		withUnsafeMutableBytes(of: &report.status_message) { rawBuffer in
+			rawBuffer.initializeMemory(as: UInt8.self, repeating: 0)
+			rawBuffer.prefix(data.count).copyBytes(from: data)
+		}
+	}
+
+	private func encode(point: CGPoint) -> RsnapPoint {
+		RsnapPoint(x: Int32(point.x.rounded()), y: Int32(point.y.rounded()))
+	}
+
+	private func decode(point: RsnapPoint) -> CGPoint {
+		CGPoint(x: Int(point.x), y: Int(point.y))
+	}
+
+	private func encode(rgb: RGBSample?) -> RsnapRgb {
+		guard let rgb else {
+			return RsnapRgb()
+		}
+		return RsnapRgb(r: rgb.r, g: rgb.g, b: rgb.b)
+	}
+
+	private func decode(rgb: RsnapRgb) -> RGBSample {
+		RGBSample(r: rgb.r, g: rgb.g, b: rgb.b)
+	}
+
+	private func encode(rect: CGRect) -> RsnapRect {
+		RsnapRect(
+			x: Int32(rect.origin.x.rounded()),
+			y: Int32(rect.origin.y.rounded()),
+			width: UInt32(max(rect.width.rounded(), 0)),
+			height: UInt32(max(rect.height.rounded(), 0))
+		)
+	}
+
+	private func decode(rect: RsnapRect) -> CGRect {
+		CGRect(
+			x: Int(rect.x),
+			y: Int(rect.y),
+			width: Int(rect.width),
+			height: Int(rect.height)
+		)
+	}
+
+	private func encode(monitor: MonitorSnapshot?) -> RsnapMonitorRect {
+		guard let monitor else {
+			return RsnapMonitorRect()
+		}
+		return RsnapMonitorRect(
+			id: monitor.id,
+			origin: encode(point: monitor.frame.origin),
+			width: UInt32(max(monitor.frame.width.rounded(), 0)),
+			height: UInt32(max(monitor.frame.height.rounded(), 0)),
+			scale_factor_x1000: monitor.scaleFactorX1000
+		)
+	}
+
+	private func decode(monitor: RsnapMonitorRect) -> MonitorSnapshot {
+		MonitorSnapshot(
+			id: monitor.id,
+			frame: CGRect(
+				x: Int(monitor.origin.x),
+				y: Int(monitor.origin.y),
+				width: Int(monitor.width),
+				height: Int(monitor.height)
+			),
+			scaleFactorX1000: monitor.scale_factor_x1000
+		)
+	}
+
+	private func encode(window: WindowSnapshot?) -> RsnapWindowRect {
+		guard let window else {
+			return RsnapWindowRect()
+		}
+		return RsnapWindowRect(
+			window_id: window.windowID ?? 0,
+			has_window_id: window.windowID == nil ? 0 : 1,
+			x: Int64(window.frame.origin.x.rounded()),
+			y: Int64(window.frame.origin.y.rounded()),
+			width: Int64(window.frame.width.rounded()),
+			height: Int64(window.frame.height.rounded())
+		)
+	}
+
+	private func decode(window: RsnapWindowRect) -> WindowSnapshot {
+		WindowSnapshot(
+			windowID: window.has_window_id == 0 ? nil : window.window_id,
+			frame: CGRect(
+				x: Int(window.x),
+				y: Int(window.y),
+				width: Int(window.width),
+				height: Int(window.height)
+			)
+		)
+	}
+}
+
+public final class RsnapLiveSampler: @unchecked Sendable {
+	private let handle: OpaquePointer
+	private let stateLock = NSLock()
+
+	public init() throws {
+		let actualAbi = rsnap_host_ffi_abi_version()
+		if actualAbi != RSNAP_HOST_FFI_ABI_VERSION {
+			throw HostBridgeError.abiVersionMismatch(
+				expected: RSNAP_HOST_FFI_ABI_VERSION,
+				actual: actualAbi
+			)
+		}
+		guard let handle = rsnap_live_sampler_create() else {
+			throw HostBridgeError.sessionCreationFailed
+		}
+		self.handle = handle
+	}
+
+	deinit {
+		rsnap_live_sampler_destroy(handle)
+	}
+
+	public func sampleCursor(
+		monitor: MonitorSnapshot,
+		point: CGPoint,
+		patchSidePixels: Int
+	) throws -> LiveSampleSnapshot? {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		var outSample = RsnapLiveSample()
+		let status = rsnap_live_sampler_sample_cursor(
+			handle,
+			RsnapMonitorRect(
+				id: monitor.id,
+				origin: RsnapPoint(
+					x: Int32(monitor.frame.origin.x.rounded()),
+					y: Int32(monitor.frame.origin.y.rounded())
+				),
+				width: UInt32(max(monitor.frame.width.rounded(), 0)),
+				height: UInt32(max(monitor.frame.height.rounded(), 0)),
+				scale_factor_x1000: monitor.scaleFactorX1000
+			),
+			RsnapPoint(x: Int32(point.x.rounded()), y: Int32(point.y.rounded())),
+			UInt32(max(patchSidePixels, 0)),
+			UInt32(max(patchSidePixels, 0)),
+			&outSample
+		)
+		let code = rsnap_status_code(status)
+		if code == 3 {
+			return nil
+		}
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: "sampling live cursor", code: code)
+		}
+
+		let patchData: Data? = withUnsafeBytes(of: outSample.patch_rgba) { rawBuffer in
+			let count = min(Int(outSample.patch_len), rawBuffer.count)
+			guard count > 0 else {
+				return nil
+			}
+			return Data(rawBuffer.prefix(count))
+		}
+
+		return LiveSampleSnapshot(
+			rgb: outSample.has_rgb == 0 ? nil : RGBSample(r: outSample.rgb.r, g: outSample.rgb.g, b: outSample.rgb.b),
+			patchWidth: Int(outSample.patch_width),
+			patchHeight: Int(outSample.patch_height),
+			patchRGBA: patchData
+		)
+	}
+
+	public func primeMonitor(_ monitor: MonitorSnapshot) throws {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		let status = rsnap_live_sampler_prime_monitor(
+			handle,
+			RsnapMonitorRect(
+				id: monitor.id,
+				origin: RsnapPoint(
+					x: Int32(monitor.frame.origin.x.rounded()),
+					y: Int32(monitor.frame.origin.y.rounded())
+				),
+				width: UInt32(max(monitor.frame.width.rounded(), 0)),
+				height: UInt32(max(monitor.frame.height.rounded(), 0)),
+				scale_factor_x1000: monitor.scaleFactorX1000
+			)
+		)
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: "priming live monitor", code: code)
+		}
+	}
+
+	public func reset() throws {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		let status = rsnap_live_sampler_reset(handle)
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: "resetting live monitor sampler", code: code)
+		}
+	}
+
+	public func peekRegion(
+		monitor: MonitorSnapshot,
+		rect: CGRect
+	) throws -> RGBARegionSnapshot? {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		let encodedMonitor = RsnapMonitorRect(
+			id: monitor.id,
+			origin: RsnapPoint(
+				x: Int32(monitor.frame.origin.x.rounded()),
+				y: Int32(monitor.frame.origin.y.rounded())
+			),
+			width: UInt32(max(monitor.frame.width.rounded(), 0)),
+			height: UInt32(max(monitor.frame.height.rounded(), 0)),
+			scale_factor_x1000: monitor.scaleFactorX1000
+		)
+		let encodedRect = RsnapRect(
+			x: Int32(rect.origin.x.rounded()),
+			y: Int32(rect.origin.y.rounded()),
+			width: UInt32(max(rect.width.rounded(), 0)),
+			height: UInt32(max(rect.height.rounded(), 0))
+		)
+		var ownedRegion = RsnapOwnedRgbaRegion()
+		let takeStatus = rsnap_live_sampler_take_region_rgba(
+			handle,
+			encodedMonitor,
+			encodedRect,
+			&ownedRegion
+		)
+		let takeCode = rsnap_status_code(takeStatus)
+		if takeCode == 3 {
+			return nil
+		}
+		if takeCode != 0 {
+			throw HostBridgeError.ffiStatus(context: "taking live RGBA region", code: takeCode)
+		}
+		guard ownedRegion.len > 0, let rgba = ownedRegion.rgba else {
+			return nil
+		}
+		let regionHandle = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
+		regionHandle.initialize(to: ownedRegion)
+		let data = Data(
+			bytesNoCopy: rgba,
+			count: ownedRegion.len,
+			deallocator: .custom { _, _ in
+				rsnap_owned_rgba_region_release(regionHandle)
+				regionHandle.deinitialize(count: 1)
+				regionHandle.deallocate()
+			}
+		)
+		return RGBARegionSnapshot(
+			width: Int(ownedRegion.width),
+			height: Int(ownedRegion.height),
+			rgba: data
+		)
+	}
+
+	public func peekLatestMonitorImage(
+		monitor: MonitorSnapshot
+	) throws -> RGBARegionSnapshot? {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		var outRegion = RsnapOwnedRgbaRegion()
+		let encodedMonitor = RsnapMonitorRect(
+			id: monitor.id,
+			origin: RsnapPoint(
+				x: Int32(monitor.frame.origin.x.rounded()),
+				y: Int32(monitor.frame.origin.y.rounded())
+			),
+			width: UInt32(max(monitor.frame.width.rounded(), 0)),
+			height: UInt32(max(monitor.frame.height.rounded(), 0)),
+			scale_factor_x1000: monitor.scaleFactorX1000
+		)
+		let status = rsnap_live_sampler_take_latest_monitor_rgba(
+			handle,
+			encodedMonitor,
+			&outRegion
+		)
+		let code = rsnap_status_code(status)
+		if code == 3 {
+			return nil
+		}
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: "peeking latest monitor RGBA snapshot", code: code)
+		}
+		guard outRegion.len > 0, let rgba = outRegion.rgba else {
+			return nil
+		}
+		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
+		ownedRegion.initialize(to: outRegion)
+		let data = Data(
+			bytesNoCopy: rgba,
+			count: outRegion.len,
+			deallocator: .custom { _, _ in
+				rsnap_owned_rgba_region_release(ownedRegion)
+				ownedRegion.deinitialize(count: 1)
+				ownedRegion.deallocate()
+			}
+		)
+		return RGBARegionSnapshot(
+			width: Int(outRegion.width),
+			height: Int(outRegion.height),
+			rgba: data
+		)
+	}
+}

@@ -9,11 +9,6 @@ readme.workspace      = true
 repository.workspace  = true
 version.workspace     = true
 
-[package.metadata.bundle]
-icon       = ["../../assets/app-icon/generated/app-icon.icns", "assets/app-icon/generated/app-icon.icns"]
-identifier = "ink.hack.rsnap"
-name       = "Rsnap"
-
 [[bin]]
 name = "rsnap"
 path = "src/main.rs"
@@ -22,36 +17,10 @@ path = "src/main.rs"
 cargo-clippy = []
 
 [dependencies]
-arboard            = { workspace = true }
 color-eyre         = { workspace = true }
-core-foundation    = { version = "0.10" }
 directories        = { workspace = true }
-egui               = { workspace = true }
-egui-phosphor      = { workspace = true }
-egui-wgpu          = { workspace = true }
-egui-winit         = { workspace = true }
-global-hotkey      = { workspace = true }
-image              = { workspace = true }
-pollster           = { workspace = true }
-rsnap-overlay      = { workspace = true }
 serde              = { workspace = true }
 toml               = { workspace = true }
 tracing            = { workspace = true }
 tracing-appender   = { workspace = true }
 tracing-subscriber = { workspace = true }
-tray-icon          = { workspace = true }
-wgpu               = { workspace = true }
-winit              = { workspace = true }
-
-[dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc             = { workspace = true }
-objc2            = { workspace = true }
-objc2-app-kit    = { workspace = true, features = ["NSScreen", "NSSound", "NSView", "NSWindow"] }
-objc2-foundation = { workspace = true, features = ["NSString"] }
-
-[[bench]]
-harness = false
-name    = "settings_window"

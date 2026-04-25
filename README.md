@@ -2,7 +2,7 @@
 
 # rsnap
 
-Pure-Rust menubar screenshot prototype (macOS-first).
+macOS-first screenshot prototype in native-host / Rust-core reset.
 
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Language Checks](https://github.com/hack-ink/rsnap/actions/workflows/language.yml/badge.svg?branch=main)](https://github.com/hack-ink/rsnap/actions/workflows/language.yml)
@@ -36,6 +36,22 @@ Pure-Rust menubar screenshot prototype (macOS-first).
 
 Prototype / in active development.
 
+## Reset posture
+
+- Shipping behavior on macOS now enters through the native host lane:
+  - `native/macos-host/` is the SwiftPM AppKit host shell and the default local Run path.
+  - `apps/rsnap/` is now a thin launcher/bootstrap crate that stages or opens the native host
+    bundle and records startup logging.
+  - `packages/rsnap-overlay/` remains a transitional Rust implementation container for reset
+    slices that have not yet moved into `rsnap-capture-core` / the native host.
+- The active reset target is no longer a pure-Rust UI stack. New boundary crates now live in:
+  - `packages/rsnap-capture-core/` for platform-neutral session semantics and host/core protocol
+    models
+  - `packages/rsnap-host-ffi/` for the thin C ABI that a future native macOS host will call
+    through `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
+- Current version support remains **macOS only**. Windows and Linux stay out of scope for this
+  version beyond protocol and abstraction design.
+
 ## Capture platform support
 
 - Live sampling path: **macOS 12.3+** via ScreenCaptureKit. Live loupe/window
@@ -68,12 +84,11 @@ cargo run -p rsnap
 - Normal region/window/monitor capture does not require Accessibility or Input Monitoring.
 - Scroll capture currently requires **Accessibility** because rsnap forwards scroll into the target app.
 - Scroll capture currently requires **Input Monitoring** because rsnap listens for global scroll-wheel input via a native macOS listen-event tap.
+- The native host currently disables scroll capture, so the active native feature set only requests Screen Recording.
 - macOS may phrase the Input Monitoring prompt as receiving keystrokes from any application even though rsnap only listens for scroll-wheel input in this path.
 - macOS may describe Screen Recording as `Screen & System Audio Recording` or as direct screen/audio access when rsnap bypasses the system picker.
-- On startup, `rsnap` checks Screen Recording, Accessibility, and Input Monitoring together and opens its own Settings window if any of them are missing.
-- In the app, the Permissions section shows Screen Recording, Accessibility, and Input Monitoring status. Each permission button can still issue the matching macOS request when the system allows it, then open the relevant macOS settings pane if access is still missing.
-- Normal capture does not issue a just-in-time permission request or reopen Settings when Screen Recording is missing.
-- Scroll capture does not issue a just-in-time permission request or show a HUD permission message when Accessibility or Input Monitoring is missing.
+- The native menubar host exposes `Permissions…`, which shows Screen Recording, Accessibility, and Input Monitoring status. It marks Accessibility and Input Monitoring as not needed until native scroll automation is enabled.
+- Normal native capture depends on Screen Recording; if access is missing, rsnap reports it in the host status message and the Permissions window is the canonical repair surface.
 - You can reopen `Permissions…` from the tray or menubar menu at any time.
 - Base capture path: `System Settings` -> `Privacy & Security` -> `Screen Recording`.
 - Scroll capture paths: `System Settings` -> `Privacy & Security` -> `Accessibility` and `Input Monitoring`.
@@ -81,16 +96,19 @@ cargo run -p rsnap
 
 ### HUD settings behavior
 
-- HUD controls are in Settings → Overlay:
-  - Opacity (`0..100`, default `50`)
-  - Blur (`0..100`, default `50`)
-  - Tint (`0..100`, default `50`)
-  - Hue (`0..360`, system-blue default)
-  - Toolbar placement (`bottom` / `top`, default `bottom`)
-- Tint is applied as hue-shift intensity (0 = no tint, 100 = full tint), while Hue sets
-  target color.
-- Numeric entry accepts plain integers for percent/degree fields and updates immediately.
-- Same HUD style settings are used by main HUD, loupe, and frozen toolbar.
+- The native `Settings…` window currently owns:
+  - HUD glass enable/disable
+  - HUD opacity / blur / tint / hue
+  - HUD `Tab` hint visibility
+  - loupe sample size (`small` / `medium` / `large`)
+  - output directory
+  - filename prefix
+  - output naming (`timestamp` / `sequence`)
+  - frozen toolbar placement (`bottom` / `top`)
+- Legacy `settings.toml` values for `show_alt_hint_keycap`, `hud_glass_enabled`, `hud_opacity`,
+  `hud_blur`, `hud_tint`, `hud_tint_hue`, `loupe_sample_size`, `output_dir`,
+  `output_filename_prefix`, `output_naming`, and `toolbar_placement` are migrated into the native
+  settings store on first launch.
 
 ### Output (save-to-disk)
 
@@ -101,10 +119,10 @@ cargo run -p rsnap
   The scroll-capture commit path uses discrete region screenshots plus pairwise image registration; clipboard and save must match the committed preview the user sees.
   `Space` copies the stitched image, Cmd+S (macOS) / Ctrl+S saves it, and `Esc` / `Back`
   returns to the original Frozen capture without exiting.
-- Output is configured in `settings.toml`:
-  - `output_dir` (default: Desktop)
-  - `output_filename_prefix` (default: `rsnap`, sanitized to `[A-Za-z0-9_-]`)
-  - `output_naming` (`timestamp` (unix ms) or `sequence` (0001))
+- Output is configured in the native `Settings…` window:
+  - `output directory` (default: Desktop)
+  - `filename prefix` (default: `rsnap`, sanitized to `[A-Za-z0-9_-]`)
+  - `output naming` (`timestamp` or `sequence`)
 
 ## Development
 
@@ -112,7 +130,25 @@ cargo run -p rsnap
 cargo make fmt
 cargo make lint
 cargo make test
+cargo make test-host-reset
+cargo make test-macos-native-host-stage
+./scripts/build_and_run.sh --verify
 ```
+
+Native-host local loop:
+
+- `scripts/build_and_run.sh` builds `rsnap-host-ffi`, builds `native/macos-host/`, stages
+  `.native-host-dist/rsnap.app`, and launches it as a real `.app` bundle.
+- On macOS, `cargo run -p rsnap` now delegates to that staged native host bundle instead of
+  starting a legacy Rust-owned capture runtime.
+- `.codex/environments/environment.toml` points the Codex app Run button at that script.
+- `cargo make test-host-reset` now includes the native-host bridge probe in addition to the Rust
+  core and header checks.
+- `scripts/build_and_run.sh stage` stages the native host bundle without launching it; this is the
+  macOS packaging entrypoint used by release automation.
+- The live native-host path is now driven by `primary interaction -> scene.liveSelectionPreview ->
+  requestFreezeSnapshot`, so the host no longer keeps its own pending freeze-selection shadow
+  state.
 
 Smoke/perf entrypoints:
 
@@ -138,10 +174,14 @@ The capture-session contract lives at `docs/spec/capture-session.md`.
 
 ## Workspace Layout
 
-The tracked workspace keeps one native-host app crate in `apps/rsnap/`, one Rust-core
-session/rendering crate in `packages/rsnap-overlay/`, and shared docs/assets/scripts at the
-repository root. The app crate exposes runtime and macOS host entry points, while
-`rsnap-overlay` exposes the Rust-core session façade plus explicit transitional host modules.
+The tracked workspace currently keeps:
+
+- `native/macos-host/` as the new AppKit-first macOS host shell and local run target
+- `apps/rsnap/` as the thin launcher/bootstrap crate for the native host bundle
+- `packages/rsnap-overlay/` as the large transitional overlay/runtime container
+- `packages/rsnap-capture-core/` as the new durable product-semantics layer
+- `packages/rsnap-host-ffi/` as the new thin C ABI bridge for future native hosts
+
 Generated or local-only directories such as `target/`, `.worktrees/`, and `.workspaces/` are not
 part of the tracked repository structure. For the authoritative layout and ownership map, read
 `docs/reference/workspace-layout.md`.

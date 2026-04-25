@@ -1,0 +1,4 @@
+module CRsnapHostFFI [system] {
+	header "include/rsnap_host_ffi_shim.h"
+	export *
+}

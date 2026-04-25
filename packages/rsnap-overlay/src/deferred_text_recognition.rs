@@ -7,160 +7,34 @@ use std::{
 		atomic::{AtomicU64, Ordering},
 	},
 	thread,
-	time::{Duration, Instant},
+	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-
-#[cfg(target_os = "macos")]
-use image::{RgbaImage, imageops};
 
 use crate::ocr_macos::{self, RecognizedTextOutput};
 #[cfg(target_os = "macos")]
-use crate::state::RectPoints;
+use rsnap_capture_core::{
+	DeferredTextRecognitionOutcome, DeferredTextRecognitionOutcomeKind,
+	DeferredTextRecognitionRequest,
+};
 
 #[cfg(target_os = "macos")]
 const PUBLISH_GATE_PENDING_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 #[cfg(target_os = "macos")]
-#[derive(Debug)]
-pub(crate) enum DeferredTextRecognitionImageSource {
-	Prepared { image: RgbaImage },
-	FrozenCrop { export_image: RgbaImage, crop_rect: Option<RectPoints> },
-}
-#[cfg(target_os = "macos")]
-impl DeferredTextRecognitionImageSource {
-	fn image_dimensions(&self) -> (u32, u32) {
-		match self {
-			Self::Prepared { image } => image.dimensions(),
-			Self::FrozenCrop { export_image, crop_rect } => crop_rect
-				.map(|crop_rect| (crop_rect.width, crop_rect.height))
-				.unwrap_or_else(|| export_image.dimensions()),
-		}
-	}
-
-	#[cfg(test)]
-	fn export_image(&self) -> Option<RgbaImage> {
-		match self {
-			Self::Prepared { image } => Some(image.clone()),
-			Self::FrozenCrop { export_image, crop_rect } => {
-				export_image_from_frozen_crop(export_image, *crop_rect)
-			},
-		}
-	}
-
-	fn into_export_image(self) -> Option<RgbaImage> {
-		match self {
-			Self::Prepared { image } => Some(image),
-			Self::FrozenCrop { export_image, crop_rect } => {
-				export_image_from_frozen_crop(&export_image, crop_rect)
-			},
-		}
-	}
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-/// Final background OCR outcome reported for structured logging and telemetry.
-pub enum DeferredTextRecognitionOutcomeKind {
-	/// OCR produced non-empty text that the native host may publish.
-	TextReady,
-	/// OCR completed successfully but did not return any non-whitespace text.
-	NoText,
-	/// OCR finished, but a newer capture superseded this request before publish.
-	StaleRequestSuppressed,
-	/// OCR could not prepare the export image or Vision failed to recognize text.
-	RecognizeError,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Debug)]
-/// A deferred OCR job emitted by the overlay and executed by the app shell.
-pub struct DeferredTextRecognitionRequest {
-	/// Monotonic request identifier used to correlate logs across threads.
-	pub request_id: u64,
-	/// Timestamp captured when the overlay scheduled the background OCR request.
-	pub requested_at: Instant,
-	pub(crate) image_source: DeferredTextRecognitionImageSource,
-}
-#[cfg(target_os = "macos")]
-impl DeferredTextRecognitionRequest {
-	pub(crate) fn prepared(request_id: u64, requested_at: Instant, image: RgbaImage) -> Self {
-		Self {
-			request_id,
-			requested_at,
-			image_source: DeferredTextRecognitionImageSource::Prepared { image },
-		}
-	}
-
-	pub(crate) fn frozen_crop(
-		request_id: u64,
-		requested_at: Instant,
-		export_image: RgbaImage,
-		crop_rect: Option<RectPoints>,
-	) -> Self {
-		Self {
-			request_id,
-			requested_at,
-			image_source: DeferredTextRecognitionImageSource::FrozenCrop {
-				export_image,
-				crop_rect,
-			},
-		}
-	}
-
-	pub(crate) fn image_dimensions(&self) -> (u32, u32) {
-		self.image_source.image_dimensions()
-	}
-
-	#[doc(hidden)]
-	pub fn debug_prepared_for_test(
-		request_id: u64,
-		requested_at: Instant,
-		image: RgbaImage,
-	) -> Self {
-		Self::prepared(request_id, requested_at, image)
-	}
-
-	#[cfg(test)]
-	pub(crate) fn export_image(&self) -> Option<RgbaImage> {
-		self.image_source.export_image()
-	}
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Debug)]
-/// Structured result returned after a deferred OCR request finishes.
-pub struct DeferredTextRecognitionOutcome {
-	/// Monotonic request identifier used to correlate logs across threads.
-	pub request_id: u64,
-	/// Final high-level outcome for the deferred OCR request.
-	pub kind: DeferredTextRecognitionOutcomeKind,
-	/// Number of non-empty lines returned by Vision.
-	pub recognized_lines: usize,
-	/// Number of characters returned by Vision after line joining.
-	pub recognized_chars: usize,
-	/// Recognized text to publish through the host-owned clipboard effect.
-	pub recognized_text: Option<String>,
-}
-
-#[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug)]
 struct DeferredTextRecognitionContext {
 	request_id: u64,
-	requested_at: Instant,
+	requested_at_unix_ms: u64,
 	worker_started_at: Instant,
-	queue_delay: Duration,
+	queue_delay_ms: u64,
 }
 #[cfg(target_os = "macos")]
 impl DeferredTextRecognitionContext {
-	fn new(request_id: u64, requested_at: Instant) -> Self {
+	fn new(request_id: u64, requested_at_unix_ms: u64) -> Self {
 		let worker_started_at = Instant::now();
+		let queue_delay_ms = current_unix_millis().saturating_sub(requested_at_unix_ms);
 
-		Self {
-			request_id,
-			requested_at,
-			worker_started_at,
-			queue_delay: worker_started_at.saturating_duration_since(requested_at),
-		}
+		Self { request_id, requested_at_unix_ms, worker_started_at, queue_delay_ms }
 	}
 }
 
@@ -231,14 +105,15 @@ fn process_deferred_text_recognition_with_gate(
 	request: DeferredTextRecognitionRequest,
 	publish_gate: Option<DeferredTextRecognitionPublishGate>,
 ) -> DeferredTextRecognitionOutcome {
-	let context = DeferredTextRecognitionContext::new(request.request_id, request.requested_at);
+	let context =
+		DeferredTextRecognitionContext::new(request.request_id, request.requested_at_unix_ms);
 
 	if !publish_gate_allows_publish(publish_gate.as_ref()) {
 		return stale_request_outcome(&context, Duration::ZERO);
 	}
 
 	let export_prepare_started_at = Instant::now();
-	let Some(export_image) = request.image_source.into_export_image() else {
+	let Some(export_image) = request.into_export_image() else {
 		return empty_export_outcome(&context, export_prepare_started_at.elapsed());
 	};
 	let export_prepare_elapsed = export_prepare_started_at.elapsed();
@@ -279,7 +154,7 @@ fn empty_export_outcome(
 		target: "rsnap",
 		op = "overlay.ocr_phase_timing",
 		request_id = context.request_id,
-		queue_delay_ms = context.queue_delay.as_millis(),
+		queue_delay_ms = context.queue_delay_ms,
 		export_prepare_ms = export_prepare_elapsed.as_millis(),
 		total_ms = context.worker_started_at.elapsed().as_millis(),
 		error = %error,
@@ -288,7 +163,7 @@ fn empty_export_outcome(
 
 	log_ocr_request_completed(
 		context.request_id,
-		context.requested_at,
+		context.requested_at_unix_ms,
 		"recognize_error",
 		0,
 		0,
@@ -317,7 +192,7 @@ fn recognized_text_outcome(
 		image_width_px,
 		image_height_px,
 		image_pixels = u64::from(image_width_px) * u64::from(image_height_px),
-		queue_delay_ms = context.queue_delay.as_millis(),
+		queue_delay_ms = context.queue_delay_ms,
 		export_prepare_ms = export_prepare_elapsed.as_millis(),
 		cg_image_ms = output.timings.cg_image.as_millis(),
 		vision_request_ms = output.timings.vision_request.as_millis(),
@@ -331,7 +206,7 @@ fn recognized_text_outcome(
 	if output.text.trim().is_empty() {
 		log_ocr_request_completed(
 			context.request_id,
-			context.requested_at,
+			context.requested_at_unix_ms,
 			"no_text",
 			recognized_lines,
 			recognized_chars,
@@ -352,7 +227,7 @@ fn recognized_text_outcome(
 
 	log_ocr_request_completed(
 		context.request_id,
-		context.requested_at,
+		context.requested_at_unix_ms,
 		"text_ready",
 		recognized_lines,
 		recognized_chars,
@@ -383,7 +258,7 @@ fn stale_recognized_text_outcome(
 ) -> DeferredTextRecognitionOutcome {
 	log_ocr_request_completed(
 		context.request_id,
-		context.requested_at,
+		context.requested_at_unix_ms,
 		"stale_request_suppressed",
 		recognized_lines,
 		recognized_chars,
@@ -408,7 +283,7 @@ fn stale_request_outcome(
 		target: "rsnap",
 		op = "overlay.ocr_phase_timing",
 		request_id = context.request_id,
-		queue_delay_ms = context.queue_delay.as_millis(),
+		queue_delay_ms = context.queue_delay_ms,
 		export_prepare_ms = export_prepare_elapsed.as_millis(),
 		total_ms = context.worker_started_at.elapsed().as_millis(),
 		"OCR request was suppressed because a newer capture superseded it before publish."
@@ -416,7 +291,7 @@ fn stale_request_outcome(
 
 	log_ocr_request_completed(
 		context.request_id,
-		context.requested_at,
+		context.requested_at_unix_ms,
 		"stale_request_suppressed",
 		0,
 		0,
@@ -447,7 +322,7 @@ fn recognize_error_outcome(
 		image_width_px,
 		image_height_px,
 		image_pixels = u64::from(image_width_px) * u64::from(image_height_px),
-		queue_delay_ms = context.queue_delay.as_millis(),
+		queue_delay_ms = context.queue_delay_ms,
 		export_prepare_ms = export_prepare_elapsed.as_millis(),
 		total_ms = context.worker_started_at.elapsed().as_millis(),
 		error = %error,
@@ -456,7 +331,7 @@ fn recognize_error_outcome(
 
 	log_ocr_request_completed(
 		context.request_id,
-		context.requested_at,
+		context.requested_at_unix_ms,
 		"recognize_error",
 		0,
 		0,
@@ -484,35 +359,9 @@ fn outcome(
 }
 
 #[cfg(target_os = "macos")]
-fn export_image_from_frozen_crop(
-	export_image: &RgbaImage,
-	crop_rect: Option<RectPoints>,
-) -> Option<RgbaImage> {
-	match crop_rect {
-		Some(crop_rect) => {
-			if crop_rect.width == 0 || crop_rect.height == 0 {
-				return None;
-			}
-
-			Some(
-				imageops::crop_imm(
-					export_image,
-					crop_rect.x,
-					crop_rect.y,
-					crop_rect.width,
-					crop_rect.height,
-				)
-				.to_image(),
-			)
-		},
-		None => Some(export_image.clone()),
-	}
-}
-
-#[cfg(target_os = "macos")]
 fn log_ocr_request_completed(
 	request_id: u64,
-	requested_at: Instant,
+	requested_at_unix_ms: u64,
 	outcome: &'static str,
 	recognized_lines: usize,
 	recognized_chars: usize,
@@ -523,12 +372,20 @@ fn log_ocr_request_completed(
 		op = "overlay.ocr_request_completed",
 		request_id,
 		outcome,
-		total_ms = requested_at.elapsed().as_millis(),
+		total_ms = current_unix_millis().saturating_sub(requested_at_unix_ms),
 		recognized_lines,
 		recognized_chars,
 		error,
 		"OCR request completed."
 	);
+}
+
+#[cfg(target_os = "macos")]
+fn current_unix_millis() -> u64 {
+	match SystemTime::now().duration_since(UNIX_EPOCH) {
+		Ok(duration) => duration.as_millis().try_into().unwrap_or(u64::MAX),
+		Err(_err) => 0,
+	}
 }
 
 #[cfg(test)]
@@ -545,11 +402,9 @@ mod tests {
 	use image::Rgba;
 	use image::RgbaImage;
 
-	use crate::deferred_text_recognition::{
-		self, DeferredTextRecognitionImageSource, DeferredTextRecognitionPublishGate,
-		DeferredTextRecognitionRequest,
-	};
+	use crate::deferred_text_recognition::{self, DeferredTextRecognitionPublishGate};
 	use crate::state::RectPoints;
+	use rsnap_capture_core::DeferredTextRecognitionRequest;
 
 	#[test]
 	fn frozen_crop_source_exports_clipped_region() {
@@ -558,14 +413,12 @@ mod tests {
 		*image.get_pixel_mut(2, 1) = Rgba([10, 20, 30, 255]);
 		*image.get_pixel_mut(3, 2) = Rgba([40, 50, 60, 255]);
 
-		let request = DeferredTextRecognitionRequest {
-			request_id: 7,
-			requested_at: Instant::now(),
-			image_source: DeferredTextRecognitionImageSource::FrozenCrop {
-				export_image: image,
-				crop_rect: Some(RectPoints::new(2, 1, 2, 2)),
-			},
-		};
+		let request = DeferredTextRecognitionRequest::frozen_crop(
+			7,
+			1_234,
+			image,
+			Some(RectPoints::new(2, 1, 2, 2)),
+		);
 		let export = request.export_image().expect("export image");
 
 		assert_eq!(export.dimensions(), (2, 2));
