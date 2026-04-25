@@ -46,13 +46,15 @@ use std::ptr;
 use std::slice;
 #[cfg(target_os = "macos")]
 use std::sync::OnceLock;
+#[cfg(target_os = "macos")]
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
 	borrow::Cow,
 	cmp::Ordering,
 	collections::{HashMap, HashSet},
 	path::PathBuf,
 	sync::{Arc, Mutex},
-	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+	time::{Duration, Instant},
 };
 
 use color_eyre::eyre::{self, Report, WrapErr};
@@ -4874,6 +4876,7 @@ fn global_to_local(cursor: GlobalPoint, monitor: MonitorRect) -> Option<Pos2> {
 	Some(Pos2::new(x as f32, y as f32))
 }
 
+#[cfg(target_os = "macos")]
 fn current_unix_millis() -> u64 {
 	match SystemTime::now().duration_since(UNIX_EPOCH) {
 		Ok(duration) => duration.as_millis().try_into().unwrap_or(u64::MAX),
