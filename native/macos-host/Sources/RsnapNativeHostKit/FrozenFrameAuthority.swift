@@ -125,9 +125,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		streams.removeAll()
 		stateLock.unlock()
 
-		staleStreams.forEach { $0.stop() }
+		for staleStream in staleStreams {
+			staleStream.stop()
+		}
 
-		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { [weak self] content, error in
+		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) {
+			[weak self] content, error in
 			guard let self else {
 				return
 			}
@@ -151,7 +154,9 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		streams.removeAll()
 		stateLock.unlock()
 
-		staleStreams.forEach { $0.stop() }
+		for staleStream in staleStreams {
+			staleStream.stop()
+		}
 	}
 
 	func latchToken(containing point: CGPoint) -> FrozenFrameLatchToken? {
@@ -159,7 +164,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		defer {
 			stateLock.unlock()
 		}
-		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key else {
+		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		else {
 			return nil
 		}
 		return FrozenFrameLatchToken(
@@ -176,7 +182,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	) -> FrozenFrameSnapshot? {
 		let deadline = Date(timeIntervalSinceNow: max(0, maxWait))
 		stateLock.lock()
-		let displayID = token?.displayID ?? displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		let displayID =
+			token?.displayID ?? displayTargets.first(where: { $0.value.frame.contains(point) })?.key
 		guard let displayID else {
 			stateLock.unlock()
 			return nil
@@ -201,7 +208,9 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		)
 	}
 
-	private func freshRecordLocked(displayID: CGDirectDisplayID, minimumSequence: UInt64) -> FrameRecord? {
+	private func freshRecordLocked(displayID: CGDirectDisplayID, minimumSequence: UInt64)
+		-> FrameRecord?
+	{
 		guard let record = latestFrames[displayID] else {
 			return nil
 		}
@@ -221,10 +230,13 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	) {
 		let currentPID = getpid()
 		let excludedApplications = content.applications.filter { $0.processID == currentPID }
-		let excludedWindows = content.windows.filter { $0.owningApplication?.processID == currentPID }
+		let excludedWindows = content.windows.filter {
+			$0.owningApplication?.processID == currentPID
+		}
 
 		for target in targets {
-			guard let display = content.displays.first(where: { $0.displayID == target.displayID }) else {
+			guard let display = content.displays.first(where: { $0.displayID == target.displayID })
+			else {
 				continue
 			}
 			let filter: SCContentFilter
@@ -238,14 +250,21 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
 			}
 
-			let output = FrozenFrameStreamOutput(displayID: target.displayID, displayFrame: target.frame) { [weak self] frame in
+			let output = FrozenFrameStreamOutput(
+				displayID: target.displayID, displayFrame: target.frame
+			) { [weak self] frame in
 				self?.store(frame: frame, generation: requestGeneration)
 			}
-			let stream = SCStream(filter: filter, configuration: Self.streamConfiguration(for: target), delegate: output)
+			let stream = SCStream(
+				filter: filter, configuration: Self.streamConfiguration(for: target),
+				delegate: output)
 			do {
-				try stream.addStreamOutput(output, type: SCStreamOutputType.screen, sampleHandlerQueue: outputQueue)
+				try stream.addStreamOutput(
+					output, type: SCStreamOutputType.screen, sampleHandlerQueue: outputQueue)
 			} catch {
-				NSLog("Frozen frame authority output install failed display=\(target.displayID): \(error)")
+				NSLog(
+					"Frozen frame authority output install failed display=\(target.displayID): \(error)"
+				)
 				continue
 			}
 
@@ -261,7 +280,9 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 
 			stream.startCapture { error in
 				if let error {
-					NSLog("Frozen frame authority stream start failed display=\(target.displayID): \(error)")
+					NSLog(
+						"Frozen frame authority stream start failed display=\(target.displayID): \(error)"
+					)
 				}
 			}
 		}
@@ -291,7 +312,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		configuration.width = target.widthPixels
 		configuration.height = target.heightPixels
 		configuration.pixelFormat = kCVPixelFormatType_32BGRA
-		configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(target.framesPerSecond))
+		configuration.minimumFrameInterval = CMTime(
+			value: 1, timescale: CMTimeScale(target.framesPerSecond))
 		configuration.queueDepth = 3
 		configuration.showsCursor = false
 		configuration.scalesToFit = false
@@ -326,17 +348,19 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			return nil
 		}
 		let retainedBacking = Unmanaged.passRetained(backing)
-		guard let provider = CGDataProvider(
-			dataInfo: retainedBacking.toOpaque(),
-			data: backing.baseAddress,
-			size: backing.byteCount,
-			releaseData: { info, _, _ in
-				guard let info else {
-					return
+		guard
+			let provider = CGDataProvider(
+				dataInfo: retainedBacking.toOpaque(),
+				data: backing.baseAddress,
+				size: backing.byteCount,
+				releaseData: { info, _, _ in
+					guard let info else {
+						return
+					}
+					Unmanaged<PixelBufferImageBacking>.fromOpaque(info).release()
 				}
-				Unmanaged<PixelBufferImageBacking>.fromOpaque(info).release()
-			}
-		) else {
+			)
+		else {
 			retainedBacking.release()
 			return nil
 		}
@@ -358,7 +382,9 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	}
 }
 
-private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate,
+	@unchecked Sendable
+{
 	private let displayID: CGDirectDisplayID
 	private let displayFrame: CGRect
 	private let onFrame: (FrozenFrameAuthority.FrameRecord) -> Void
@@ -374,8 +400,13 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 		self.onFrame = onFrame
 	}
 
-	func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-		guard type == .screen, Self.isUsableFrame(sampleBuffer), let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+	func stream(
+		_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+		of type: SCStreamOutputType
+	) {
+		guard type == .screen, Self.isUsableFrame(sampleBuffer),
+			let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
+		else {
 			return
 		}
 		sequence &+= 1
@@ -412,8 +443,8 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 	}
 }
 
-private extension NSScreen {
-	var displayID: CGDirectDisplayID? {
+extension NSScreen {
+	fileprivate var displayID: CGDirectDisplayID? {
 		(deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
 	}
 }

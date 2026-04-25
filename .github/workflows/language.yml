@@ -19,11 +19,7 @@ on:
       - '**/*.md'
       - '.gitignore'
       - 'docs/**'
-  merge_group:
-    paths-ignore:
-      - '**/*.md'
-      - '.gitignore'
-      - 'docs/**'
+  merge_group: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -53,7 +49,7 @@ jobs:
             libxrandr-dev
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7
         with:
           cache: true
           rustflags: ''
@@ -63,7 +59,7 @@ jobs:
         run: rustup toolchain install nightly --component rustfmt
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1
         with:
           tool: cargo-make
 
@@ -88,18 +84,68 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Install nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1
         with:
           tool: nextest
 
-      - name: Run lint
-        run: cargo make lint
+      - name: Run Rust lint
+        run: cargo make lint-rust
+
+      - name: Run vibe-style lint
+        run: cargo make lint-vstyle
 
       - name: Run Rust format checks
         run: cargo make fmt-rust-check
 
       - name: Run tests
         run: cargo make test-rust
+
+  swift:
+    name: Swift checks
+    runs-on: macos-latest
+    steps:
+      - name: Fetch latest code
+        uses: actions/checkout@v6
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7
+        with:
+          cache: true
+          rustflags: ''
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1
+        with:
+          tool: cargo-make
+
+      - name: Run Swift format lint
+        run: |
+          set -euo pipefail
+
+          SWIFT_FORMAT_REF="603.0.0-prerelease-2026-02-09"
+          SWIFT_FORMAT_REVISION="374ca240478f740794c1e60ea1693c439ee0b317"
+          SWIFT_FORMAT_DIR="$RUNNER_TEMP/swift-format"
+
+          git init "$SWIFT_FORMAT_DIR"
+          git -C "$SWIFT_FORMAT_DIR" remote add origin https://github.com/apple/swift-format.git
+          git -C "$SWIFT_FORMAT_DIR" fetch --depth 1 origin "refs/tags/$SWIFT_FORMAT_REF"
+          git -C "$SWIFT_FORMAT_DIR" checkout --detach FETCH_HEAD
+          test "$(git -C "$SWIFT_FORMAT_DIR" rev-parse HEAD)" = "$SWIFT_FORMAT_REVISION"
+
+          swift run --package-path "$SWIFT_FORMAT_DIR" swift-format \
+            lint \
+            --recursive \
+            --strict \
+            --parallel \
+            native/macos-host/Sources \
+            scripts/smoke/lib/live-loupe-mouse-path.swift
+
+      - name: Run SwiftLint and strict build
+        run: |
+          set -euo pipefail
+
+          cargo make lint-swiftlint
+          cargo make build-swift-strict
 
   toml:
     name: TOML checks
@@ -109,18 +155,18 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7
         with:
           cache: true
           rustflags: ''
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1
         with:
           tool: cargo-make
 
       - name: Install taplo
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1
         with:
           tool: taplo
 
