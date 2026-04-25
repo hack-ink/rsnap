@@ -8,13 +8,16 @@ pub mod geometry;
 pub mod protocol;
 pub mod session;
 
-pub use geometry::{
-	GlobalPoint, GlobalRect, MonitorRect, MonitorRectPoints, RectPoints, Rgb, WindowHit, WindowRect,
+pub use self::{
+	geometry::{
+		GlobalPoint, GlobalRect, MonitorRect, MonitorRectPoints, RectPoints, Rgb, WindowHit,
+		WindowRect,
+	},
+	protocol::{
+		CaptureMode, CursorIntent, DeferredTextRecognitionOutcome,
+		DeferredTextRecognitionOutcomeKind, DeferredTextRecognitionRequest, HostEffectKind,
+		HostEvent, HostReport, HostRequest, HudModel, OutputNaming, PermissionKind, PlatformTag,
+		PreparedHostEffectRequest, SceneModel, SessionConfig, ToolbarItemKind, ToolbarItemModel,
+	},
+	session::CaptureSessionCore,
 };
-pub use protocol::{
-	CaptureMode, CursorIntent, DeferredTextRecognitionOutcome, DeferredTextRecognitionOutcomeKind,
-	DeferredTextRecognitionRequest, HostEffectKind, HostEvent, HostReport, HostRequest, HudModel,
-	OutputNaming, PermissionKind, PlatformTag, PreparedHostEffectRequest, SceneModel,
-	SessionConfig, ToolbarItemKind, ToolbarItemModel,
-};
-pub use session::CaptureSessionCore;

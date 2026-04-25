@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 
 use crate::geometry::GlobalPoint;
+use crate::geometry::MonitorRect;
 use crate::protocol::{
 	CaptureMode, CursorIntent, HostEffectKind, HostEvent, HostReport, HostRequest, PermissionKind,
 	SceneModel, SessionConfig, ToolbarItemKind, ToolbarItemModel,
@@ -63,6 +64,7 @@ impl CaptureSessionCore {
 		self.selected_toolbar_item = ToolbarItemKind::Pointer;
 		self.live_press_start = None;
 		self.live_press_target = None;
+
 		self.refresh_toolbar_actions();
 		self.pending_requests.push_back(HostRequest::StartLiveCapture);
 	}
@@ -73,13 +75,16 @@ impl CaptureSessionCore {
 			HostEvent::SessionActivated => self.enter_live(),
 			HostEvent::PointerMoved { point, rgb, active_monitor, highlighted_window } => {
 				self.update_live_pointer_context(point, active_monitor, highlighted_window);
+
 				self.scene.hud.pointer = Some(point);
 				self.scene.hud.rgb = rgb;
+
 				self.update_cursor_intent(point);
 			},
 			HostEvent::PrimaryInteractionStarted { point, active_monitor, highlighted_window } => {
 				if self.scene.mode == CaptureMode::Live {
 					self.update_live_pointer_context(point, active_monitor, highlighted_window);
+
 					self.live_press_start = Some(point);
 					self.live_press_target = resolve_live_target(
 						self.scene.active_monitor,
@@ -91,6 +96,7 @@ impl CaptureSessionCore {
 			HostEvent::PrimaryInteractionUpdated { point, active_monitor, highlighted_window } => {
 				if self.scene.mode == CaptureMode::Live {
 					self.update_live_pointer_context(point, active_monitor, highlighted_window);
+
 					self.scene.live_selection_preview =
 						self.compute_live_selection_preview(point, self.scene.active_monitor);
 				}
@@ -142,6 +148,7 @@ impl CaptureSessionCore {
 				self.scene.highlighted_window = None;
 				self.scene.cursor_intent = CursorIntent::Grab;
 				self.scene.status_message = None;
+
 				self.refresh_toolbar_actions();
 			},
 			HostReport::HostEffectCompleted { effect } => {
@@ -178,6 +185,7 @@ impl CaptureSessionCore {
 		self.selected_toolbar_item = ToolbarItemKind::Pointer;
 		self.live_press_start = None;
 		self.live_press_target = None;
+
 		self.pending_requests.push_back(HostRequest::StopLiveCapture);
 	}
 
@@ -259,7 +267,7 @@ impl CaptureSessionCore {
 	fn update_live_pointer_context(
 		&mut self,
 		point: GlobalPoint,
-		active_monitor: Option<crate::geometry::MonitorRect>,
+		active_monitor: Option<MonitorRect>,
 		highlighted_window: Option<crate::geometry::WindowRect>,
 	) {
 		self.scene.pointer = Some(point);
@@ -271,10 +279,11 @@ impl CaptureSessionCore {
 	fn compute_live_selection_preview(
 		&self,
 		point: GlobalPoint,
-		active_monitor: Option<crate::geometry::MonitorRect>,
+		active_monitor: Option<MonitorRect>,
 	) -> Option<crate::geometry::GlobalRect> {
 		let live_press_start = self.live_press_start?;
 		let active_monitor = active_monitor?;
+
 		if !active_monitor.contains(live_press_start) || !active_monitor.contains(point) {
 			return None;
 		}
@@ -283,23 +292,15 @@ impl CaptureSessionCore {
 		let top = live_press_start.y.min(point.y);
 		let width = live_press_start.x.abs_diff(point.x);
 		let height = live_press_start.y.abs_diff(point.y);
+
 		if width.max(height) < LIVE_SELECTION_DRAG_THRESHOLD_POINTS {
 			return None;
 		}
 
-		Some(crate::geometry::GlobalRect::new(
-			left,
-			top,
-			width.max(1),
-			height.max(1),
-		))
+		Some(crate::geometry::GlobalRect::new(left, top, width.max(1), height.max(1)))
 	}
 
-	fn finalize_live_selection(
-		&mut self,
-		point: GlobalPoint,
-		active_monitor: Option<crate::geometry::MonitorRect>,
-	) {
+	fn finalize_live_selection(&mut self, point: GlobalPoint, active_monitor: Option<MonitorRect>) {
 		let selection = self
 			.scene
 			.live_selection_preview
@@ -315,6 +316,7 @@ impl CaptureSessionCore {
 		if let Some(selection) = selection {
 			self.scene.live_selection_preview = Some(selection);
 			self.scene.status_message = None;
+
 			self.pending_requests.push_back(HostRequest::RequestFreezeSnapshot { selection });
 		}
 	}
@@ -357,6 +359,7 @@ impl CaptureSessionCore {
 		let on_vertical_edge = point.y >= selection_top
 			&& point.y <= selection_bottom
 			&& (point.x - selection_left).abs() <= RESIZE_EDGE_TOLERANCE_POINTS;
+
 		if on_vertical_edge {
 			return CursorIntent::ResizeWest;
 		}
@@ -364,6 +367,7 @@ impl CaptureSessionCore {
 		let on_right_edge = point.y >= selection_top
 			&& point.y <= selection_bottom
 			&& (point.x - selection_right).abs() <= RESIZE_EDGE_TOLERANCE_POINTS;
+
 		if on_right_edge {
 			return CursorIntent::ResizeEast;
 		}
@@ -371,6 +375,7 @@ impl CaptureSessionCore {
 		let on_top_edge = point.x >= selection_left
 			&& point.x <= selection_right
 			&& (point.y - selection_top).abs() <= RESIZE_EDGE_TOLERANCE_POINTS;
+
 		if on_top_edge {
 			return CursorIntent::ResizeNorth;
 		}
@@ -378,10 +383,10 @@ impl CaptureSessionCore {
 		let on_bottom_edge = point.x >= selection_left
 			&& point.x <= selection_right
 			&& (point.y - selection_bottom).abs() <= RESIZE_EDGE_TOLERANCE_POINTS;
+
 		if on_bottom_edge {
 			return CursorIntent::ResizeSouth;
 		}
-
 		if selection.contains(point) {
 			return match self.selected_toolbar_item {
 				ToolbarItemKind::Text => CursorIntent::Text,
@@ -399,7 +404,7 @@ fn point_in_handle(point: GlobalPoint, handle_x: i32, handle_y: i32, radius: i32
 }
 
 fn resolve_live_target(
-	active_monitor: Option<crate::geometry::MonitorRect>,
+	active_monitor: Option<MonitorRect>,
 	highlighted_window: Option<crate::geometry::WindowRect>,
 ) -> Option<crate::geometry::GlobalRect> {
 	highlighted_window.and_then(crate::geometry::WindowRect::global_rect).or_else(|| {
@@ -416,14 +421,12 @@ fn resolve_live_target(
 
 fn default_live_selection(
 	point: GlobalPoint,
-	active_monitor: Option<crate::geometry::MonitorRect>,
+	active_monitor: Option<MonitorRect>,
 ) -> crate::geometry::GlobalRect {
 	let half_width = (LIVE_SELECTION_DEFAULT_WIDTH / 2) as i32;
 	let half_height = (LIVE_SELECTION_DEFAULT_HEIGHT / 2) as i32;
-
 	let unclamped_x = point.x.saturating_sub(half_width);
 	let unclamped_y = point.y.saturating_sub(half_height);
-
 	let (origin_x, origin_y) = if let Some(monitor) = active_monitor {
 		let max_x = if monitor.width > LIVE_SELECTION_DEFAULT_WIDTH {
 			monitor
@@ -443,6 +446,7 @@ fn default_live_selection(
 		} else {
 			monitor.origin.y
 		};
+
 		(unclamped_x.clamp(monitor.origin.x, max_x), unclamped_y.clamp(monitor.origin.y, max_y))
 	} else {
 		(unclamped_x, unclamped_y)
@@ -469,7 +473,7 @@ mod tests {
 		MonitorRect {
 			id: 7,
 			origin: GlobalPoint::new(0, 0),
-			width: 1440,
+			width: 1_440,
 			height: 900,
 			scale_factor_x1000: 2_000,
 		}
@@ -495,7 +499,9 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
 			point: GlobalPoint::new(40, 60),
 			active_monitor: Some(active_monitor()),
@@ -515,7 +521,9 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_report(HostReport::FreezeSnapshotCommitted {
 			selection: GlobalRect::new(10, 20, 100, 50),
 		});
@@ -535,17 +543,19 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_report(HostReport::FreezeSnapshotCommitted {
 			selection: GlobalRect::new(10, 20, 100, 50),
 		});
-
 		session.handle_host_event(HostEvent::PointerMoved {
 			point: GlobalPoint::new(110, 45),
 			rgb: None,
 			active_monitor: None,
 			highlighted_window: None,
 		});
+
 		assert_eq!(session.scene_model().cursor_intent, CursorIntent::ResizeEast);
 
 		session.handle_host_event(HostEvent::PointerMoved {
@@ -554,6 +564,7 @@ mod tests {
 			active_monitor: None,
 			highlighted_window: None,
 		});
+
 		assert_eq!(session.scene_model().cursor_intent, CursorIntent::ResizeNorthWest);
 	}
 
@@ -562,7 +573,9 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_event(HostEvent::PointerMoved {
 			point: GlobalPoint::new(120, 180),
 			rgb: Some(Rgb::new(9, 8, 7)),
@@ -580,7 +593,9 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
 			point: GlobalPoint::new(20, 30),
 			active_monitor: Some(active_monitor()),
@@ -610,9 +625,7 @@ mod tests {
 		);
 		assert_eq!(
 			session.pop_host_request(),
-			Some(HostRequest::RequestFreezeSnapshot {
-				selection: GlobalRect::new(20, 30, 60, 80),
-			})
+			Some(HostRequest::RequestFreezeSnapshot { selection: GlobalRect::new(20, 30, 60, 80) })
 		);
 	}
 
@@ -621,7 +634,9 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
 			point: GlobalPoint::new(20, 30),
 			active_monitor: Some(active_monitor()),
@@ -646,9 +661,7 @@ mod tests {
 
 		assert_eq!(
 			session.pop_host_request(),
-			Some(HostRequest::RequestFreezeSnapshot {
-				selection: GlobalRect::new(20, 30, 1, 1),
-			})
+			Some(HostRequest::RequestFreezeSnapshot { selection: GlobalRect::new(20, 30, 1, 1) })
 		);
 	}
 
@@ -657,7 +670,9 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
 			point: GlobalPoint::new(20, 30),
 			active_monitor: Some(active_monitor()),
@@ -690,7 +705,9 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_event(HostEvent::CancelRequested);
 
 		assert_eq!(session.scene_model().mode, CaptureMode::Hidden);
@@ -702,10 +719,13 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.handle_host_event(HostEvent::CopyRequested);
+
 		assert_eq!(session.pop_host_request(), None);
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_report(HostReport::FreezeSnapshotCommitted {
 			selection: GlobalRect::new(0, 0, 10, 10),
 		});
@@ -727,12 +747,14 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_report(HostReport::FreezeSnapshotCommitted {
 			selection: GlobalRect::new(10, 20, 100, 50),
 		});
-
 		session.handle_host_event(HostEvent::ToolbarItemInvoked { item: ToolbarItemKind::Text });
+
 		assert!(
 			session
 				.scene_model()
@@ -742,6 +764,7 @@ mod tests {
 		);
 
 		session.handle_host_event(HostEvent::ToolbarItemInvoked { item: ToolbarItemKind::Copy });
+
 		assert_eq!(
 			session.pop_host_request(),
 			Some(HostRequest::PerformHostEffect(HostEffectKind::CopyCapture))
@@ -753,10 +776,13 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.handle_host_event(HostEvent::RecognizeTextRequested);
+
 		assert_eq!(session.pop_host_request(), None);
 
 		session.enter_live();
+
 		let _ = session.pop_host_request();
+
 		session.handle_host_report(HostReport::FreezeSnapshotCommitted {
 			selection: GlobalRect::new(0, 0, 10, 10),
 		});

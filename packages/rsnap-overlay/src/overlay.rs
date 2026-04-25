@@ -93,9 +93,6 @@ use objc2_app_kit::NSScreen;
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 #[cfg(target_os = "macos")]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-#[cfg(target_os = "macos")]
-use rsnap_capture_core::DeferredTextRecognitionRequest;
-use rsnap_capture_core::{OutputNaming, PreparedHostEffectRequest};
 use serde::{Deserialize, Serialize};
 use wgpu::Adapter;
 use wgpu::AddressMode;
@@ -204,6 +201,9 @@ use crate::{
 		WorkerResponse,
 	},
 };
+#[cfg(target_os = "macos")]
+use rsnap_capture_core::DeferredTextRecognitionRequest;
+use rsnap_capture_core::{OutputNaming, PreparedHostEffectRequest};
 
 #[cfg(target_os = "macos")]
 macro_rules! sel {

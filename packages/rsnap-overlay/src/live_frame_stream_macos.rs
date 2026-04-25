@@ -680,6 +680,7 @@ impl SharedLatestFrame {
 			Ok(mut guard) => *guard = None,
 			Err(poisoned) => {
 				let mut guard = poisoned.into_inner();
+
 				*guard = None;
 			},
 		}
@@ -687,6 +688,7 @@ impl SharedLatestFrame {
 			Ok(mut guard) => *guard = None,
 			Err(poisoned) => {
 				let mut guard = poisoned.into_inner();
+
 				*guard = None;
 			},
 		}
@@ -694,6 +696,7 @@ impl SharedLatestFrame {
 			Ok(mut guard) => *guard = None,
 			Err(poisoned) => {
 				let mut guard = poisoned.into_inner();
+
 				*guard = None;
 			},
 		}
@@ -701,6 +704,7 @@ impl SharedLatestFrame {
 			Ok(mut guard) => *guard = None,
 			Err(poisoned) => {
 				let mut guard = poisoned.into_inner();
+
 				*guard = None;
 			},
 		}
@@ -708,6 +712,7 @@ impl SharedLatestFrame {
 			Ok(mut guard) => *guard = None,
 			Err(poisoned) => {
 				let mut guard = poisoned.into_inner();
+
 				*guard = None;
 			},
 		}
@@ -715,6 +720,7 @@ impl SharedLatestFrame {
 			Ok(mut guard) => *guard = None,
 			Err(poisoned) => {
 				let mut guard = poisoned.into_inner();
+
 				*guard = None;
 			},
 		}
@@ -1543,8 +1549,11 @@ fn handle_stream_worker_request(
 		},
 		WorkerRequest::Reset => {
 			teardown_stream(state);
+
 			*last_setup_attempt_at = None;
+
 			shared_latest_frame.reset();
+
 			true
 		},
 		WorkerRequest::RefreshMonitor { monitor } => handle_refresh_monitor_request(

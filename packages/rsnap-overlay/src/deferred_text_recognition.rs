@@ -10,13 +10,12 @@ use std::{
 	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use crate::ocr_macos::{self, RecognizedTextOutput};
 #[cfg(target_os = "macos")]
 use rsnap_capture_core::{
 	DeferredTextRecognitionOutcome, DeferredTextRecognitionOutcomeKind,
 	DeferredTextRecognitionRequest,
 };
-
-use crate::ocr_macos::{self, RecognizedTextOutput};
 
 #[cfg(target_os = "macos")]
 const PUBLISH_GATE_PENDING_POLL_INTERVAL: Duration = Duration::from_millis(5);

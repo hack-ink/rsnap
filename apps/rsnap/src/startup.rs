@@ -16,6 +16,11 @@ pub struct StartupBuildInfo {
 	pub version: &'static str,
 }
 
+#[derive(Deserialize)]
+struct LauncherSettingsFile {
+	log_filter: Option<String>,
+}
+
 /// Returns the build metadata that should be logged during app startup.
 pub fn startup_build_info() -> StartupBuildInfo {
 	StartupBuildInfo {
@@ -111,11 +116,6 @@ fn launcher_settings_path() -> Option<PathBuf> {
 	let dirs = ProjectDirs::from("ink", "hack", "rsnap")?;
 
 	Some(dirs.config_dir().join("settings.toml"))
-}
-
-#[derive(Deserialize)]
-struct LauncherSettingsFile {
-	log_filter: Option<String>,
 }
 
 #[cfg(test)]

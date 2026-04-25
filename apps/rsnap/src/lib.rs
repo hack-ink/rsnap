@@ -2,13 +2,6 @@
 
 #![allow(unused_crate_dependencies)]
 
-#[cfg(target_os = "macos")]
-mod native_launcher_macos;
-#[cfg(not(target_os = "macos"))]
-mod unsupported_platform;
-
-mod startup;
-
 pub mod runtime {
 	//! Public runtime entry points for the desktop host crate.
 
@@ -18,6 +11,12 @@ pub mod runtime {
 	#[cfg(not(target_os = "macos"))]
 	pub use crate::unsupported_platform::run;
 }
+
+#[cfg(target_os = "macos")]
+mod native_launcher_macos;
+mod startup;
+#[cfg(not(target_os = "macos"))]
+mod unsupported_platform;
 
 #[cfg(target_os = "macos")]
 pub use self::native_launcher_macos::run;
