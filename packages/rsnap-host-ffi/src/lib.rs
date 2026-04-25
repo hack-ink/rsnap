@@ -4,8 +4,12 @@
 //! new host/core direction with an opaque session handle, FFI-safe config/event
 //! structs, and copy-out scene/request snapshots.
 
+#[cfg(target_os = "macos")]
 use std::mem;
 use std::ptr::{self, NonNull};
+
+#[cfg(not(target_os = "macos"))]
+use rsnap_overlay as _;
 
 use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
