@@ -60,6 +60,7 @@ pub mod host_macos {
 		MacOSCaptureHost, MacOSCaptureHostSyncState, MacOSNativeCaptureInputEvent,
 		MacOSNativeCaptureScrollDelta,
 	};
+
 	pub use crate::scroll_capture_capability_macos::{
 		MacOSScrollCaptureCapability, MacOSScrollCaptureCapabilityEvent,
 	};

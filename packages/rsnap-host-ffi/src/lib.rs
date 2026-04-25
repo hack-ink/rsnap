@@ -4,24 +4,24 @@
 //! new host/core direction with an opaque session handle, FFI-safe config/event
 //! structs, and copy-out scene/request snapshots.
 
+use std::mem;
 use std::ptr::{self, NonNull};
 
+use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
-	CaptureMode, CaptureSessionCore, CursorIntent, GlobalPoint, GlobalRect, HostEffectKind,
-	HostEvent, HostReport, HostRequest, MonitorRect, PermissionKind, PlatformTag, Rgb,
-	SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
+	self, CaptureMode, CaptureSessionCore, CursorIntent, GlobalRect, HostEffectKind, HostEvent,
+	HostReport, HostRequest, PermissionKind, PlatformTag, Rgb, SessionConfig, ToolbarItemKind,
+	ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
-use rsnap_overlay::{
-	host_live_sampling_macos::HostMacLiveSampler,
-	session::{GlobalPoint as OverlayGlobalPoint, MonitorRect as OverlayMonitorRect},
-};
+use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
 
 /// ABI version exported by the thin C host bridge.
 pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 13;
+
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
-const RSNAP_LIVE_SAMPLE_PATCH_CAPACITY: usize = 4096;
+const RSNAP_LIVE_SAMPLE_PATCH_CAPACITY: usize = 4_096;
 
 /// Opaque session handle owned by the native host through the C ABI.
 pub struct RsnapSessionHandle {
@@ -65,7 +65,6 @@ pub struct RsnapLiveSample {
 	/// Optional RGBA patch bytes in row-major order.
 	pub patch_rgba: [u8; RSNAP_LIVE_SAMPLE_PATCH_CAPACITY],
 }
-
 impl Default for RsnapLiveSample {
 	fn default() -> Self {
 		Self {
@@ -94,7 +93,6 @@ pub struct RsnapRgbaRegion {
 	/// Caller-provided RGBA byte buffer in row-major order.
 	pub rgba: *mut u8,
 }
-
 impl Default for RsnapRgbaRegion {
 	fn default() -> Self {
 		Self { width: 0, height: 0, len: 0, capacity: 0, rgba: ptr::null_mut() }
@@ -116,7 +114,6 @@ pub struct RsnapOwnedRgbaRegion {
 	/// Owned RGBA byte buffer in row-major order.
 	pub rgba: *mut u8,
 }
-
 impl Default for RsnapOwnedRgbaRegion {
 	fn default() -> Self {
 		Self { width: 0, height: 0, len: 0, capacity: 0, rgba: ptr::null_mut() }
@@ -452,7 +449,6 @@ pub struct RsnapSceneModel {
 	/// Optional UTF-8 status message bytes.
 	pub status_message: [u8; RSNAP_STATUS_MESSAGE_CAPACITY],
 }
-
 impl Default for RsnapSceneModel {
 	fn default() -> Self {
 		Self {
@@ -557,9 +553,7 @@ pub extern "C" fn rsnap_host_ffi_abi_version() -> u32 {
 #[cfg(target_os = "macos")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rsnap_live_sampler_create() -> *mut RsnapLiveSamplerHandle {
-	Box::into_raw(Box::new(RsnapLiveSamplerHandle {
-		sampler: HostMacLiveSampler::new(),
-	}))
+	Box::into_raw(Box::new(RsnapLiveSamplerHandle { sampler: HostMacLiveSampler::new() }))
 }
 
 /// Starts warming the live sampler for the requested monitor without blocking on the
@@ -579,6 +573,7 @@ pub unsafe extern "C" fn rsnap_live_sampler_prime_monitor(
 	};
 
 	handle.sampler.prime_monitor(decode_overlay_monitor(monitor));
+
 	RsnapStatus::Ok
 }
 
@@ -597,6 +592,7 @@ pub unsafe extern "C" fn rsnap_live_sampler_reset(
 	};
 
 	handle.sampler.reset();
+
 	RsnapStatus::Ok
 }
 
@@ -757,6 +753,7 @@ pub unsafe extern "C" fn rsnap_live_sampler_sample_cursor(
 	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
 		return RsnapStatus::NullHandle;
 	};
+
 	if out_sample.is_null() {
 		return RsnapStatus::NullOutput;
 	}
@@ -768,6 +765,7 @@ pub unsafe extern "C" fn rsnap_live_sampler_sample_cursor(
 		patch_height_px,
 	);
 	let mut out = RsnapLiveSample::default();
+
 	if let Some(rgb) = sample.rgb {
 		out.rgb = RsnapRgb { r: rgb.r, g: rgb.g, b: rgb.b };
 		out.has_rgb = 1;
@@ -775,9 +773,11 @@ pub unsafe extern "C" fn rsnap_live_sampler_sample_cursor(
 	if let Some(patch) = sample.patch {
 		let bytes = patch.as_raw();
 		let len = bytes.len().min(RSNAP_LIVE_SAMPLE_PATCH_CAPACITY);
+
 		out.patch_width = patch.width();
 		out.patch_height = patch.height();
 		out.patch_len = len as u32;
+
 		out.patch_rgba[..len].copy_from_slice(&bytes[..len]);
 	}
 
@@ -812,6 +812,7 @@ pub unsafe extern "C" fn rsnap_live_sampler_peek_region_rgba(
 	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
 		return RsnapStatus::NullHandle;
 	};
+
 	if out_region.is_null() {
 		return RsnapStatus::NullOutput;
 	}
@@ -822,21 +823,22 @@ pub unsafe extern "C" fn rsnap_live_sampler_peek_region_rgba(
 		rect.width,
 		rect.height,
 	);
-
 	let Some(region) = region else {
 		unsafe {
 			ptr::write(out_region, RsnapRgbaRegion::default());
 		}
+
 		return RsnapStatus::Empty;
 	};
-
 	let requested = unsafe { &mut *out_region };
 	let len = region.rgba.len();
+
 	if !requested.rgba.is_null() && requested.capacity >= len {
 		unsafe {
 			ptr::copy_nonoverlapping(region.rgba.as_ptr(), requested.rgba, len);
 		}
 	}
+
 	unsafe {
 		ptr::write(
 			out_region,
@@ -872,6 +874,7 @@ pub unsafe extern "C" fn rsnap_live_sampler_take_region_rgba(
 	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
 		return RsnapStatus::NullHandle;
 	};
+
 	if out_region.is_null() {
 		return RsnapStatus::NullOutput;
 	}
@@ -882,14 +885,13 @@ pub unsafe extern "C" fn rsnap_live_sampler_take_region_rgba(
 		rect.width,
 		rect.height,
 	);
-
 	let Some(region) = region else {
 		unsafe {
 			ptr::write(out_region, RsnapOwnedRgbaRegion::default());
 		}
+
 		return RsnapStatus::Empty;
 	};
-
 	let mut rgba = region.rgba;
 	let out = RsnapOwnedRgbaRegion {
 		width: region.width,
@@ -898,7 +900,9 @@ pub unsafe extern "C" fn rsnap_live_sampler_take_region_rgba(
 		capacity: rgba.capacity(),
 		rgba: rgba.as_mut_ptr(),
 	};
-	std::mem::forget(rgba);
+
+	mem::forget(rgba);
+
 	unsafe {
 		ptr::write(out_region, out);
 	}
@@ -925,26 +929,28 @@ pub unsafe extern "C" fn rsnap_live_sampler_peek_latest_monitor_rgba(
 	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
 		return RsnapStatus::NullHandle;
 	};
+
 	if out_region.is_null() {
 		return RsnapStatus::NullOutput;
 	}
 
 	let region = handle.sampler.peek_latest_monitor_rgba(decode_overlay_monitor(monitor));
-
 	let Some(region) = region else {
 		unsafe {
 			ptr::write(out_region, RsnapRgbaRegion::default());
 		}
+
 		return RsnapStatus::Empty;
 	};
-
 	let requested = unsafe { &mut *out_region };
 	let len = region.rgba.len();
+
 	if !requested.rgba.is_null() && requested.capacity >= len {
 		unsafe {
 			ptr::copy_nonoverlapping(region.rgba.as_ptr(), requested.rgba, len);
 		}
 	}
+
 	unsafe {
 		ptr::write(
 			out_region,
@@ -978,17 +984,19 @@ pub unsafe extern "C" fn rsnap_live_sampler_take_latest_monitor_rgba(
 	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
 		return RsnapStatus::NullHandle;
 	};
+
 	if out_region.is_null() {
 		return RsnapStatus::NullOutput;
 	}
 
-	let Some(region) = handle.sampler.peek_latest_monitor_rgba(decode_overlay_monitor(monitor)) else {
+	let Some(region) = handle.sampler.peek_latest_monitor_rgba(decode_overlay_monitor(monitor))
+	else {
 		unsafe {
 			ptr::write(out_region, RsnapOwnedRgbaRegion::default());
 		}
+
 		return RsnapStatus::Empty;
 	};
-
 	let mut rgba = region.rgba;
 	let out = RsnapOwnedRgbaRegion {
 		width: region.width,
@@ -997,7 +1005,9 @@ pub unsafe extern "C" fn rsnap_live_sampler_take_latest_monitor_rgba(
 		capacity: rgba.capacity(),
 		rgba: rgba.as_mut_ptr(),
 	};
-	std::mem::forget(rgba);
+
+	mem::forget(rgba);
+
 	unsafe {
 		ptr::write(out_region, out);
 	}
@@ -1013,15 +1023,15 @@ pub unsafe extern "C" fn rsnap_live_sampler_take_latest_monitor_rgba(
 /// that has not already been released.
 #[cfg(target_os = "macos")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rsnap_owned_rgba_region_release(
-	region: *mut RsnapOwnedRgbaRegion,
-) {
+pub unsafe extern "C" fn rsnap_owned_rgba_region_release(region: *mut RsnapOwnedRgbaRegion) {
 	let Some(region) = (unsafe { region.as_mut() }) else {
 		return;
 	};
+
 	if !region.rgba.is_null() && region.capacity > 0 {
 		let _ = unsafe { Vec::from_raw_parts(region.rgba, region.len, region.capacity) };
 	}
+
 	*region = RsnapOwnedRgbaRegion::default();
 }
 
@@ -1058,7 +1068,7 @@ fn decode_host_event(event: RsnapHostEvent) -> HostEvent {
 		kind if kind == RsnapHostEventKind::SessionActivated as u32 => HostEvent::SessionActivated,
 		kind if kind == RsnapHostEventKind::PointerMoved as u32 => HostEvent::PointerMoved {
 			point: decode_optional_point(event.point, event.has_point)
-				.unwrap_or_else(|| GlobalPoint::new(0, 0)),
+				.unwrap_or_else(|| rsnap_capture_core::GlobalPoint::new(0, 0)),
 			rgb: decode_optional_rgb(event.rgb, event.has_rgb),
 			active_monitor: decode_optional_monitor(event.active_monitor, event.has_active_monitor),
 			highlighted_window: decode_optional_window(
@@ -1069,7 +1079,7 @@ fn decode_host_event(event: RsnapHostEvent) -> HostEvent {
 		kind if kind == RsnapHostEventKind::PrimaryInteractionStarted as u32 => {
 			HostEvent::PrimaryInteractionStarted {
 				point: decode_optional_point(event.point, event.has_point)
-					.unwrap_or_else(|| GlobalPoint::new(0, 0)),
+					.unwrap_or_else(|| rsnap_capture_core::GlobalPoint::new(0, 0)),
 				active_monitor: decode_optional_monitor(
 					event.active_monitor,
 					event.has_active_monitor,
@@ -1083,7 +1093,7 @@ fn decode_host_event(event: RsnapHostEvent) -> HostEvent {
 		kind if kind == RsnapHostEventKind::PrimaryInteractionUpdated as u32 => {
 			HostEvent::PrimaryInteractionUpdated {
 				point: decode_optional_point(event.point, event.has_point)
-					.unwrap_or_else(|| GlobalPoint::new(0, 0)),
+					.unwrap_or_else(|| rsnap_capture_core::GlobalPoint::new(0, 0)),
 				active_monitor: decode_optional_monitor(
 					event.active_monitor,
 					event.has_active_monitor,
@@ -1097,7 +1107,7 @@ fn decode_host_event(event: RsnapHostEvent) -> HostEvent {
 		kind if kind == RsnapHostEventKind::PrimaryInteractionCompleted as u32 => {
 			HostEvent::PrimaryInteractionCompleted {
 				point: decode_optional_point(event.point, event.has_point)
-					.unwrap_or_else(|| GlobalPoint::new(0, 0)),
+					.unwrap_or_else(|| rsnap_capture_core::GlobalPoint::new(0, 0)),
 				active_monitor: decode_optional_monitor(
 					event.active_monitor,
 					event.has_active_monitor,
@@ -1151,7 +1161,7 @@ fn decode_host_report(report: RsnapHostReport) -> HostReport {
 	}
 }
 
-fn encode_scene_model(scene: &rsnap_capture_core::SceneModel) -> RsnapSceneModel {
+fn encode_scene_model(scene: &SceneModel) -> RsnapSceneModel {
 	RsnapSceneModel {
 		scene_kind: encode_scene_kind(scene.mode) as u32,
 		cursor_intent: encode_cursor_intent(scene.cursor_intent) as u32,
@@ -1204,7 +1214,9 @@ fn encode_status_message(message: Option<&str>) -> [u8; RSNAP_STATUS_MESSAGE_CAP
 	};
 	let bytes = message.as_bytes();
 	let len = bytes.len().min(RSNAP_STATUS_MESSAGE_CAPACITY);
+
 	encoded[..len].copy_from_slice(&bytes[..len]);
+
 	encoded
 }
 
@@ -1213,6 +1225,7 @@ fn decode_status_message(bytes: &[u8; RSNAP_STATUS_MESSAGE_CAPACITY], len: u32) 
 		.ok()
 		.unwrap_or(RSNAP_STATUS_MESSAGE_CAPACITY)
 		.min(RSNAP_STATUS_MESSAGE_CAPACITY);
+
 	String::from_utf8_lossy(&bytes[..count]).into_owned()
 }
 
@@ -1307,7 +1320,9 @@ fn encode_host_request(request: HostRequest) -> RsnapHostRequestValue {
 				PermissionKind::ScreenRecording => {
 					RsnapHostRequestKind::RequestScreenRecordingPermission
 				},
-				PermissionKind::Accessibility => RsnapHostRequestKind::RequestAccessibilityPermission,
+				PermissionKind::Accessibility => {
+					RsnapHostRequestKind::RequestAccessibilityPermission
+				},
 				PermissionKind::InputMonitoring => {
 					RsnapHostRequestKind::RequestInputMonitoringPermission
 				},
@@ -1339,8 +1354,11 @@ fn decode_permission_kind(permission_kind: u32) -> PermissionKind {
 	}
 }
 
-fn decode_optional_point(point: RsnapPoint, has_point: u8) -> Option<GlobalPoint> {
-	(has_point != 0).then_some(GlobalPoint::new(point.x, point.y))
+fn decode_optional_point(
+	point: RsnapPoint,
+	has_point: u8,
+) -> Option<rsnap_capture_core::GlobalPoint> {
+	(has_point != 0).then_some(rsnap_capture_core::GlobalPoint::new(point.x, point.y))
 }
 
 fn decode_optional_rgb(rgb: RsnapRgb, has_rgb: u8) -> Option<Rgb> {
@@ -1351,8 +1369,11 @@ fn decode_optional_rect(rect: RsnapRect, has_rect: u8) -> Option<GlobalRect> {
 	(has_rect != 0).then_some(GlobalRect::new(rect.x, rect.y, rect.width, rect.height))
 }
 
-fn decode_optional_monitor(monitor: RsnapMonitorRect, has_monitor: u8) -> Option<MonitorRect> {
-	(has_monitor != 0).then_some(MonitorRect {
+fn decode_optional_monitor(
+	monitor: RsnapMonitorRect,
+	has_monitor: u8,
+) -> Option<rsnap_capture_core::MonitorRect> {
+	(has_monitor != 0).then_some(rsnap_capture_core::MonitorRect {
 		id: monitor.id,
 		origin: decode_point(monitor.origin),
 		width: monitor.width,
@@ -1371,17 +1392,17 @@ fn decode_optional_window(window: RsnapWindowRect, has_window: u8) -> Option<Win
 	})
 }
 
-fn encode_point(point: GlobalPoint) -> RsnapPoint {
+fn encode_point(point: rsnap_capture_core::GlobalPoint) -> RsnapPoint {
 	RsnapPoint { x: point.x, y: point.y }
 }
 
-fn decode_point(point: RsnapPoint) -> GlobalPoint {
-	GlobalPoint::new(point.x, point.y)
+fn decode_point(point: RsnapPoint) -> rsnap_capture_core::GlobalPoint {
+	rsnap_capture_core::GlobalPoint::new(point.x, point.y)
 }
 
 #[cfg(target_os = "macos")]
-fn decode_overlay_point(point: RsnapPoint) -> OverlayGlobalPoint {
-	OverlayGlobalPoint::new(point.x, point.y)
+fn decode_overlay_point(point: RsnapPoint) -> rsnap_overlay::session::GlobalPoint {
+	rsnap_overlay::session::GlobalPoint::new(point.x, point.y)
 }
 
 fn encode_rgb(rgb: Rgb) -> RsnapRgb {
@@ -1392,7 +1413,7 @@ fn encode_rect(rect: GlobalRect) -> RsnapRect {
 	RsnapRect { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
 }
 
-fn encode_monitor(monitor: MonitorRect) -> RsnapMonitorRect {
+fn encode_monitor(monitor: rsnap_capture_core::MonitorRect) -> RsnapMonitorRect {
 	RsnapMonitorRect {
 		id: monitor.id,
 		origin: encode_point(monitor.origin),
@@ -1403,10 +1424,10 @@ fn encode_monitor(monitor: MonitorRect) -> RsnapMonitorRect {
 }
 
 #[cfg(target_os = "macos")]
-fn decode_overlay_monitor(monitor: RsnapMonitorRect) -> OverlayMonitorRect {
-	OverlayMonitorRect {
+fn decode_overlay_monitor(monitor: RsnapMonitorRect) -> rsnap_overlay::session::MonitorRect {
+	rsnap_overlay::session::MonitorRect {
 		id: monitor.id,
-		origin: OverlayGlobalPoint::new(monitor.origin.x, monitor.origin.y),
+		origin: rsnap_overlay::session::GlobalPoint::new(monitor.origin.x, monitor.origin.y),
 		width: monitor.width,
 		height: monitor.height,
 		scale_factor_x1000: monitor.scale_factor_x1000,
@@ -1428,17 +1449,13 @@ fn encode_window(window: WindowRect) -> RsnapWindowRect {
 mod tests {
 	use std::ptr;
 
-	use super::{
+	use crate::{
 		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCursorIntent,
 		RsnapHostEvent, RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind,
 		RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect, RsnapPlatformTag,
-		RsnapSceneKind, RsnapSceneModel, RsnapSessionConfig, RsnapSessionHandle, RsnapStatus,
-		RsnapWindowRect,
-		rsnap_host_ffi_abi_version, rsnap_session_copy_scene_model, rsnap_session_create,
-		rsnap_session_destroy, rsnap_session_enter_live, rsnap_session_handle_host_event,
-		rsnap_session_handle_host_report, rsnap_session_take_next_request,
+		RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapSessionConfig,
+		RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
 	};
-	use super::{RsnapPoint, RsnapRect, RsnapRgb};
 
 	fn default_config() -> RsnapSessionConfig {
 		RsnapSessionConfig {
@@ -1450,35 +1467,41 @@ mod tests {
 
 	#[test]
 	fn ffi_session_enters_live_and_emits_request() {
-		let handle = unsafe { rsnap_session_create(default_config()) };
-		let mut request = RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
+		let handle = unsafe { crate::rsnap_session_create(default_config()) };
+		let mut request =
+			RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
 		let mut scene = RsnapSceneModel::default();
 
-		assert_eq!(unsafe { rsnap_session_enter_live(handle) }, RsnapStatus::Ok);
+		assert_eq!(unsafe { crate::rsnap_session_enter_live(handle) }, RsnapStatus::Ok);
 		assert_eq!(
-			unsafe { rsnap_session_take_next_request(handle, &mut request) },
+			unsafe { crate::rsnap_session_take_next_request(handle, &mut request) },
 			RsnapStatus::Ok
 		);
 		assert_eq!(request.kind, RsnapHostRequestKind::StartLiveCapture as u32);
-		assert_eq!(unsafe { rsnap_session_copy_scene_model(handle, &mut scene) }, RsnapStatus::Ok);
+		assert_eq!(
+			unsafe { crate::rsnap_session_copy_scene_model(handle, &mut scene) },
+			RsnapStatus::Ok
+		);
 		assert_eq!(scene.scene_kind, RsnapSceneKind::Live as u32);
 		assert_eq!(scene.cursor_intent, RsnapCursorIntent::Default as u32);
 
-		unsafe { rsnap_session_destroy(handle) };
+		unsafe { crate::rsnap_session_destroy(handle) };
 	}
 
 	#[test]
 	fn ffi_session_applies_freeze_report() {
-		let handle = unsafe { rsnap_session_create(default_config()) };
+		let handle = unsafe { crate::rsnap_session_create(default_config()) };
 		let mut scene = RsnapSceneModel::default();
 
-		assert_eq!(unsafe { rsnap_session_enter_live(handle) }, RsnapStatus::Ok);
-		let mut request = RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
-		let _ = unsafe { rsnap_session_take_next_request(handle, &mut request) };
+		assert_eq!(unsafe { crate::rsnap_session_enter_live(handle) }, RsnapStatus::Ok);
+
+		let mut request =
+			RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
+		let _ = unsafe { crate::rsnap_session_take_next_request(handle, &mut request) };
 
 		assert_eq!(
 			unsafe {
-				rsnap_session_handle_host_report(
+				crate::rsnap_session_handle_host_report(
 					handle,
 					RsnapHostReport {
 						kind: RsnapHostReportKind::FreezeSnapshotCommitted as u32,
@@ -1494,24 +1517,28 @@ mod tests {
 			},
 			RsnapStatus::Ok
 		);
-		assert_eq!(unsafe { rsnap_session_copy_scene_model(handle, &mut scene) }, RsnapStatus::Ok);
+		assert_eq!(
+			unsafe { crate::rsnap_session_copy_scene_model(handle, &mut scene) },
+			RsnapStatus::Ok
+		);
 		assert_eq!(scene.scene_kind, RsnapSceneKind::Frozen as u32);
 		assert_eq!(scene.has_frozen_selection, 1);
 
-		unsafe { rsnap_session_destroy(handle) };
+		unsafe { crate::rsnap_session_destroy(handle) };
 	}
 
 	#[test]
 	fn ffi_session_tracks_pointer_updates() {
-		let handle = unsafe { rsnap_session_create(default_config()) };
+		let handle = unsafe { crate::rsnap_session_create(default_config()) };
 		let mut scene = RsnapSceneModel::default();
+		let _ = unsafe { crate::rsnap_session_enter_live(handle) };
+		let mut request =
+			RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
+		let _ = unsafe { crate::rsnap_session_take_next_request(handle, &mut request) };
 
-		let _ = unsafe { rsnap_session_enter_live(handle) };
-		let mut request = RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
-		let _ = unsafe { rsnap_session_take_next_request(handle, &mut request) };
 		assert_eq!(
 			unsafe {
-				rsnap_session_handle_host_event(
+				crate::rsnap_session_handle_host_event(
 					handle,
 					RsnapHostEvent {
 						kind: RsnapHostEventKind::PointerMoved as u32,
@@ -1522,7 +1549,7 @@ mod tests {
 						active_monitor: RsnapMonitorRect {
 							id: 9,
 							origin: RsnapPoint { x: 0, y: 0 },
-							width: 1440,
+							width: 1_440,
 							height: 900,
 							scale_factor_x1000: 2_000,
 						},
@@ -1542,7 +1569,10 @@ mod tests {
 			},
 			RsnapStatus::Ok
 		);
-		assert_eq!(unsafe { rsnap_session_copy_scene_model(handle, &mut scene) }, RsnapStatus::Ok);
+		assert_eq!(
+			unsafe { crate::rsnap_session_copy_scene_model(handle, &mut scene) },
+			RsnapStatus::Ok
+		);
 		assert_eq!(scene.has_pointer, 1);
 		assert_eq!(scene.pointer.x, 50);
 		assert_eq!(scene.has_rgb, 1);
@@ -1551,27 +1581,29 @@ mod tests {
 		assert_eq!(scene.has_highlighted_window, 1);
 		assert_eq!(scene.highlighted_window.window_id, 42);
 
-		unsafe { rsnap_session_destroy(handle) };
+		unsafe { crate::rsnap_session_destroy(handle) };
 	}
 
 	#[test]
 	fn destroy_allows_null() {
 		let handle: *mut RsnapSessionHandle = ptr::null_mut();
 
-		unsafe { rsnap_session_destroy(handle) };
+		unsafe { crate::rsnap_session_destroy(handle) };
 	}
 
 	#[test]
 	fn ffi_freeze_request_carries_selection_payload() {
-		let handle = unsafe { rsnap_session_create(default_config()) };
-		let mut request = RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
+		let handle = unsafe { crate::rsnap_session_create(default_config()) };
+		let mut request =
+			RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
 
-		assert_eq!(unsafe { rsnap_session_enter_live(handle) }, RsnapStatus::Ok);
-		let _ = unsafe { rsnap_session_take_next_request(handle, &mut request) };
+		assert_eq!(unsafe { crate::rsnap_session_enter_live(handle) }, RsnapStatus::Ok);
+
+		let _ = unsafe { crate::rsnap_session_take_next_request(handle, &mut request) };
 
 		assert_eq!(
 			unsafe {
-				rsnap_session_handle_host_event(
+				crate::rsnap_session_handle_host_event(
 					handle,
 					RsnapHostEvent {
 						kind: RsnapHostEventKind::PrimaryInteractionCompleted as u32,
@@ -1582,7 +1614,7 @@ mod tests {
 						active_monitor: RsnapMonitorRect {
 							id: 9,
 							origin: RsnapPoint { x: 0, y: 0 },
-							width: 1440,
+							width: 1_440,
 							height: 900,
 							scale_factor_x1000: 2_000,
 						},
@@ -1603,18 +1635,18 @@ mod tests {
 			RsnapStatus::Ok
 		);
 		assert_eq!(
-			unsafe { rsnap_session_take_next_request(handle, &mut request) },
+			unsafe { crate::rsnap_session_take_next_request(handle, &mut request) },
 			RsnapStatus::Ok
 		);
 		assert_eq!(request.kind, RsnapHostRequestKind::RequestFreezeSnapshot as u32);
 		assert_eq!(request.has_selection, 1);
 		assert_eq!(request.selection, RsnapRect { x: 20, y: 30, width: 60, height: 80 });
 
-		unsafe { rsnap_session_destroy(handle) };
+		unsafe { crate::rsnap_session_destroy(handle) };
 	}
 
 	#[test]
 	fn abi_version_matches_constant() {
-		assert_eq!(rsnap_host_ffi_abi_version(), RSNAP_HOST_FFI_ABI_VERSION);
+		assert_eq!(crate::rsnap_host_ffi_abi_version(), RSNAP_HOST_FFI_ABI_VERSION);
 	}
 }

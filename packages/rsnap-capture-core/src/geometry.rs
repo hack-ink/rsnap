@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Global point in desktop coordinate space.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GlobalPoint {
 	/// Global X coordinate.
 	pub x: i32,
@@ -19,7 +19,7 @@ impl GlobalPoint {
 }
 
 /// Rectangle in global desktop coordinate space.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GlobalRect {
 	/// Global left coordinate.
 	pub x: i32,
@@ -54,7 +54,7 @@ impl GlobalRect {
 }
 
 /// Rectangle in monitor-local point or pixel coordinates, depending on context.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct RectPoints {
 	/// Left coordinate.
 	pub x: u32,
@@ -100,7 +100,7 @@ impl RectPoints {
 }
 
 /// RGB color sample without alpha.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Rgb {
 	/// Red channel.
 	pub r: u8,
@@ -124,7 +124,7 @@ impl Rgb {
 }
 
 /// Monitor bounds and scale factor in global desktop space.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct MonitorRect {
 	/// Stable monitor identifier used by the capture stack.
 	pub id: u32,
@@ -255,7 +255,7 @@ impl MonitorRect {
 }
 
 /// Associates a monitor identifier with a monitor-local rectangle.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct MonitorRectPoints {
 	/// The monitor that owns the rectangle.
 	pub monitor_id: u32,
@@ -264,7 +264,7 @@ pub struct MonitorRectPoints {
 }
 
 /// Window bounds expressed in global point coordinates.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct WindowRect {
 	/// The source window identifier when one exists.
 	pub window_id: Option<u32>,
@@ -291,7 +291,7 @@ impl WindowRect {
 }
 
 /// Result of hit testing a point against a window.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct WindowHit {
 	/// The source window identifier when one exists.
 	pub window_id: Option<u32>,
@@ -301,7 +301,7 @@ pub struct WindowHit {
 
 #[cfg(test)]
 mod tests {
-	use super::{GlobalPoint, GlobalRect, MonitorRect, RectPoints, Rgb, WindowRect};
+	use crate::geometry::{GlobalPoint, GlobalRect, MonitorRect, RectPoints, Rgb, WindowRect};
 
 	#[test]
 	fn global_rect_contains_point() {

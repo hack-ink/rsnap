@@ -1,6 +1,6 @@
 //! Public macOS live-frame sampling bridge used by the native host FFI layer.
 
-use image::imageops::crop_imm;
+use image::imageops;
 
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect};
@@ -10,17 +10,6 @@ use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect};
 pub struct HostMacLiveSampler {
 	stream: MacLiveFrameStream,
 }
-
-/// Owned RGBA pixels for a sampled host monitor region.
-pub struct HostRgbaRegion {
-	/// Region width in physical pixels.
-	pub width: u32,
-	/// Region height in physical pixels.
-	pub height: u32,
-	/// Packed RGBA8 pixels in row-major order.
-	pub rgba: Vec<u8>,
-}
-
 impl HostMacLiveSampler {
 	#[must_use]
 	/// Creates a host sampler that excludes the current process from capture.
@@ -95,7 +84,7 @@ impl HostMacLiveSampler {
 		let rect = monitor.clip_global_rect(origin.x, origin.y, width, height)?;
 		let snapshot = self.stream.peek_latest_rgba_snapshot(monitor)?;
 		let rect_px = monitor.local_rect_to_pixels(rect);
-		let image = crop_imm(
+		let image = imageops::crop_imm(
 			snapshot.image.as_ref(),
 			rect_px.x,
 			rect_px.y,
@@ -119,6 +108,7 @@ impl HostMacLiveSampler {
 	pub fn peek_latest_monitor_rgba(&self, monitor: MonitorRect) -> Option<HostRgbaRegion> {
 		let snapshot = self.stream.peek_latest_rgba_snapshot(monitor)?;
 		let image = snapshot.image.as_ref();
+
 		Some(HostRgbaRegion {
 			width: image.width(),
 			height: image.height(),
@@ -131,4 +121,14 @@ impl Default for HostMacLiveSampler {
 	fn default() -> Self {
 		Self::new()
 	}
+}
+
+/// Owned RGBA pixels for a sampled host monitor region.
+pub struct HostRgbaRegion {
+	/// Region width in physical pixels.
+	pub width: u32,
+	/// Region height in physical pixels.
+	pub height: u32,
+	/// Packed RGBA8 pixels in row-major order.
+	pub rgba: Vec<u8>,
 }

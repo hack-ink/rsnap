@@ -885,18 +885,6 @@ impl OverlaySession {
 	}
 }
 
-fn clamp_monitor_local_point(monitor: MonitorRect, local_point: NSPoint) -> GlobalPoint {
-	let max_x = monitor.width.saturating_sub(1) as i32;
-	let max_y = monitor.height.saturating_sub(1) as i32;
-	let local_x = (local_point.x.round() as i32).clamp(0, max_x);
-	let local_y = (local_point.y.round() as i32).clamp(0, max_y);
-
-	GlobalPoint::new(
-		monitor.origin.x.saturating_add(local_x),
-		monitor.origin.y.saturating_add(local_y),
-	)
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MacOSKeyFocusShellKind {
 	FrozenText,
@@ -993,6 +981,18 @@ impl MacOSPassiveShellCallback {
 			dispatch.enqueue(MacOSNativeCaptureInputEvent::ToolbarScrollWheel { delta });
 		}
 	}
+}
+
+fn clamp_monitor_local_point(monitor: MonitorRect, local_point: NSPoint) -> GlobalPoint {
+	let max_x = monitor.width.saturating_sub(1) as i32;
+	let max_y = monitor.height.saturating_sub(1) as i32;
+	let local_x = (local_point.x.round() as i32).clamp(0, max_x);
+	let local_y = (local_point.y.round() as i32).clamp(0, max_y);
+
+	GlobalPoint::new(
+		monitor.origin.x.saturating_add(local_x),
+		monitor.origin.y.saturating_add(local_y),
+	)
 }
 
 fn macos_shell_callbacks() -> &'static Mutex<HashMap<usize, MacOSPassiveShellCallback>> {

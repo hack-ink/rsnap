@@ -1,10 +1,11 @@
+pub use rsnap_capture_core::geometry::{
+	GlobalPoint, MonitorRect, MonitorRectPoints, RectPoints, Rgb, WindowHit, WindowRect,
+};
+
 use std::sync::Arc;
 use std::time::Instant;
 
 use image::RgbaImage;
-pub use rsnap_capture_core::geometry::{
-	GlobalPoint, MonitorRect, MonitorRectPoints, RectPoints, Rgb, WindowHit, WindowRect,
-};
 
 #[derive(Debug)]
 pub(crate) struct LoupeSample {
@@ -41,13 +42,6 @@ pub struct WindowListSnapshot {
 	pub captured_at: Instant,
 	/// Windows ordered for hit testing.
 	pub windows: Arc<Vec<WindowRect>>,
-}
-
-#[derive(Clone, Copy, Debug)]
-/// Internal overlay runtime mode.
-pub enum OverlayMode {
-	Live,
-	Frozen,
 }
 
 #[derive(Debug)]
@@ -142,6 +136,13 @@ impl OverlayState {
 	pub fn frozen_display_surface_image(&self) -> Option<&RgbaImage> {
 		self.frozen_display_image.as_ref()
 	}
+}
+
+#[derive(Clone, Copy, Debug)]
+/// Internal overlay runtime mode.
+pub enum OverlayMode {
+	Live,
+	Frozen,
 }
 
 #[cfg(test)]
