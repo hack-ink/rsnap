@@ -376,8 +376,22 @@ staged_bundle_is_current() {
 	[[ -n "$expected" && "$expected" == "$actual" ]]
 }
 
-if [[ "$MODE" != "stage" ]]; then
+terminate_running_host() {
+	local remaining_pids=""
 	pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+	for ((attempt = 0; attempt < 20; attempt++)); do
+		remaining_pids="$(pgrep -x "$EXECUTABLE_NAME" || true)"
+		[[ -z "$remaining_pids" ]] && return 0
+		sleep 0.1
+	done
+	while IFS= read -r pid; do
+		[[ -n "$pid" ]] || continue
+		kill -9 "$pid" >/dev/null 2>&1 || true
+	done <<<"$remaining_pids"
+}
+
+if [[ "$MODE" != "stage" ]]; then
+	terminate_running_host
 fi
 
 if [[ "${RSNAP_NATIVE_HOST_FORCE_REBUILD:-0}" != "1" ]] && staged_bundle_is_current; then

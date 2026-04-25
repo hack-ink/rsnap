@@ -265,8 +265,10 @@ final class CaptureSessionController: NSObject {
 
 	private let settingsStore: NativeHostSettingsStore
 	private let liveFrameStream = LiveFrameStreamBroker()
+	private let frozenFrameAuthority = FrozenFrameAuthority()
 	private var session: RsnapHostSession?
 	private var overlayController: CaptureOverlayController?
+	private var frozenFrameLatchToken: FrozenFrameLatchToken?
 	private var frozenSnapshotGeneration: UInt64 = 0
 	private var completedHostEffect: HostEffectKind?
 	var captureStateDidChange: (() -> Void)?
@@ -318,6 +320,7 @@ final class CaptureSessionController: NSObject {
 		guard NativePermissions.status(for: .screenRecording) else {
 			return nil
 		}
+		frozenFrameAuthority.start(for: NSScreen.screens)
 		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: point)
 		return liveFrameStream.seedSample(at: point, sidePixels: 1)
 	}
@@ -336,6 +339,7 @@ final class CaptureSessionController: NSObject {
 		do {
 			let startPoint = NSEvent.mouseLocation
 			let initialSample = warmLiveSamplingIfPossible(at: startPoint)
+			frozenFrameLatchToken = nil
 			let desktopFrame = CaptureOverlayController.desktopFrame
 			let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
 			let initialHighlightedWindow = WindowSnapshotFeed.window(at: startPoint, in: initialWindowSnapshots)
@@ -472,6 +476,7 @@ final class CaptureSessionController: NSObject {
 
 		do {
 			liveFrameStream.prime(at: point)
+			frozenFrameLatchToken = frozenFrameAuthority.latchToken(containing: point)
 			beginHostLocalFrozenSelectingIfPossible(at: point)
 			let liveInputs = currentLiveInputs(at: point)
 			try session?.send(
@@ -503,6 +508,9 @@ final class CaptureSessionController: NSObject {
 
 		do {
 			liveFrameStream.prime(at: point)
+			if frozenFrameLatchToken == nil {
+				frozenFrameLatchToken = frozenFrameAuthority.latchToken(containing: point)
+			}
 			beginHostLocalFrozenSelectingIfPossible(at: point)
 			let liveInputs = currentLiveInputs(at: point)
 			try session?.send(
@@ -534,6 +542,9 @@ final class CaptureSessionController: NSObject {
 
 		do {
 			liveFrameStream.prime(at: point)
+			if frozenFrameLatchToken == nil {
+				frozenFrameLatchToken = frozenFrameAuthority.latchToken(containing: point)
+			}
 			beginHostLocalFrozenSelectingIfPossible(at: point)
 			let liveInputs = currentLiveInputs(at: point)
 			try session?.send(
@@ -1017,19 +1028,31 @@ final class CaptureSessionController: NSObject {
 		}
 		frozenSnapshotGeneration &+= 1
 		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
+		let token = frozenFrameLatchToken ?? frozenFrameAuthority.latchToken(containing: selectionCenter)
+		let frozenFrame = frozenFrameAuthority.snapshot(
+			containing: selectionCenter,
+			after: token,
+			maxWait: frozenFrameLatchWait(for: selectionCenter)
+		)
+		guard let frozenFrame else {
+			NSLog("Frozen transition aborted: no fresh authority frame was available")
+			try sendHostStatusMessage("Could not freeze the current frame.")
+			return
+		}
+		frozenFrameLatchToken = nil
 		chromeState.resetFrozenChrome()
 		chromeState.frozenSelectionSnapshot = selection
 		chromeState.frozenSelectionEditable = editable
 		chromeState.frozenSelectionInteraction = nil
-		if let latestMonitorImage = overlayController?.latestMonitorImage(near: selectionCenter) {
-			chromeState.frozenDisplayFrame = latestMonitorImage.frame
-			chromeState.frozenDisplayImage = latestMonitorImage.image
-			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
-		} else if let currentMonitorImage = overlayController?.currentMonitorImageBelowOverlay(near: selectionCenter) {
-			chromeState.frozenDisplayFrame = currentMonitorImage.frame
-			chromeState.frozenDisplayImage = currentMonitorImage.image
-			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
-		}
+		chromeState.frozenDisplayFrame = frozenFrame.displayFrame
+		chromeState.frozenDisplayImage = frozenFrame.image
+		chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
+		NSLog(
+			"Frozen authority frame display=%u seq=%llu age=%.1fms",
+			frozenFrame.displayID,
+			frozenFrame.sequence,
+			frozenFrame.ageMilliseconds()
+		)
 		let hostOwnedFrozenScene = hostOwnedFrozenPresentationScene(for: selection)
 		overlayController?.presentFrozenFirstFrame(
 			scene: hostOwnedFrozenScene,
@@ -1037,6 +1060,13 @@ final class CaptureSessionController: NSObject {
 			settings: settingsStore.settings
 		)
 		try session.send(report: .freezeSnapshotCommitted(selection: selection))
+	}
+
+	private func frozenFrameLatchWait(for point: CGPoint) -> TimeInterval {
+		let frameInterval = screen(containing: point)
+			.map(NativeHostDisplayRefresh.frameInterval(for:))
+			?? (1.0 / 60.0)
+		return min(0.040, max(0.018, frameInterval * 2.5))
 	}
 
 	private func hostOwnedFrozenPresentationScene(for selection: CGRect) -> SceneSnapshot {
@@ -1430,6 +1460,7 @@ final class CaptureSessionController: NSObject {
 
 	private func tearDownCapture() {
 		liveFrameStream.stop()
+		frozenFrameLatchToken = nil
 		frozenSnapshotGeneration &+= 1
 		completedHostEffect = nil
 		chromeState = CaptureChromeState()
@@ -1801,13 +1832,13 @@ final class CaptureOverlayController {
 			return
 		}
 
+		primaryWindow.disableScreenUpdatesUntilFlush()
 		liveChromeWindows.hideLiveWindows()
 		primaryWindow.hostView.installFrozenFirstFrame(
 			scene: scene,
 			chrome: chrome,
 			settings: settings
 		)
-		primaryWindow.disableScreenUpdatesUntilFlush()
 		primaryWindow.displayIfNeeded()
 		prepareFrozenPresentation(for: selection)
 	}
@@ -2365,15 +2396,19 @@ final class CaptureHostView: NSView {
 		needsDisplay = true
 		controller?.updateLivePreviewDemand(point: nil, settings: settings, includeLoupePatch: false)
 		controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
+		liveRenderer.renderNow()
 	}
 
 	fileprivate func finishFrozenFirstFrameInstall() {
 		guard pendingFrozenFirstDisplay else {
 			return
 		}
+		window?.disableScreenUpdatesUntilFlush()
 		frozenFirstDisplayCompletionQueued = false
 		pendingFrozenFirstDisplay = false
 		lastLivePreviewSnapshot = nil
+		needsDisplay = true
+		displayIfNeeded()
 		if scene.mode != .live {
 			liveRenderer.stop()
 		}
@@ -2547,6 +2582,10 @@ final class CaptureHostView: NSView {
 		case .live:
 			break
 		case .frozen:
+			if pendingFrozenFirstDisplay {
+				scheduleFrozenFirstFrameInstallCompletionIfNeeded()
+				return
+			}
 			drawFrozenDisplaySurface(in: context)
 			if let selection = localFrozenSelectionRect() {
 				drawSelectionScrim(for: selection, in: context, alpha: CaptureChrome.frozenScrimAlpha)
