@@ -22,6 +22,37 @@ private let menuBarLogger = Logger(
 	category: "MenuBar"
 )
 
+private enum CaptureSuccessSound {
+	private static let candidatePaths = [
+		"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif",
+		"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Shutter.aif",
+	]
+
+	static func load() -> NSSound? {
+		for path in candidatePaths {
+			if let sound = NSSound(contentsOfFile: path, byReference: true) {
+				menuBarLogger.info("loaded capture success sound path=\(path, privacy: .public)")
+				return sound
+			}
+		}
+
+		let candidates = candidatePaths.joined(separator: ", ")
+		menuBarLogger.warning("failed to load capture success sound candidates=\(candidates, privacy: .public)")
+		return nil
+	}
+
+	static func play(_ sound: NSSound?) {
+		guard let sound else {
+			return
+		}
+		sound.stop()
+		sound.currentTime = 0
+		if !sound.play() {
+			menuBarLogger.warning("failed to play capture success sound")
+		}
+	}
+}
+
 private func makeFrozenMosaicImage(from image: CGImage) -> CGImage? {
 	let ciImage = CIImage(cgImage: image)
 	guard let filter = CIFilter(name: "CIPixellate") else {
@@ -266,6 +297,7 @@ final class CaptureSessionController: NSObject {
 	private let settingsStore: NativeHostSettingsStore
 	private let liveFrameStream = LiveFrameStreamBroker()
 	private let frozenFrameAuthority = FrozenFrameAuthority()
+	private let captureSuccessSound = CaptureSuccessSound.load()
 	private var session: RsnapHostSession?
 	private var overlayController: CaptureOverlayController?
 	private var frozenFrameLatchToken: FrozenFrameLatchToken?
@@ -1119,7 +1151,12 @@ final class CaptureSessionController: NSObject {
 		let pasteboard = NSPasteboard.general
 		pasteboard.clearContents()
 		let image = NSImage(cgImage: cgImage, size: .zero)
-		pasteboard.writeObjects([image])
+		guard pasteboard.writeObjects([image]) else {
+			try sendHostStatusMessage("Could not copy the captured image.")
+			return
+		}
+
+		CaptureSuccessSound.play(captureSuccessSound)
 
 		try session.send(report: .hostEffectCompleted(.copyCapture))
 		try session.send(report: .statusMessage("Copied capture to clipboard."))
@@ -1142,6 +1179,8 @@ final class CaptureSessionController: NSObject {
 
 		let outputURL = try nextOutputURL()
 		try pngData.write(to: outputURL, options: .atomic)
+
+		CaptureSuccessSound.play(captureSuccessSound)
 
 		try session.send(report: .hostEffectCompleted(.saveCapture))
 		try session.send(report: .statusMessage("Saved capture to \(outputURL.lastPathComponent)."))
