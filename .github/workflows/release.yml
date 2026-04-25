@@ -118,9 +118,9 @@ jobs:
           RSNAP_NATIVE_HOST_RUST_PROFILE=final-release \
           RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION=release \
           RSNAP_NATIVE_HOST_SKIP_SIGN=1 \
-          ./script/build_and_run.sh stage
+          ./scripts/build_and_run.sh stage
 
-          APP_PATH=".native-host-dist/rsnap.app"
+          APP_PATH="target/rsnap-native-host/rsnap.app"
           if [[ ! -d "${APP_PATH}" ]]; then
             echo "Failed to find staged native host app at ${APP_PATH}" >&2
             exit 1

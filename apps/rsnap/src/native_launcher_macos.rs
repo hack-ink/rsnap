@@ -1,9 +1,11 @@
+use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use color_eyre::eyre::{self, Context as _, Result};
 
 const APP_NAME: &str = "rsnap.app";
+const STAGE_DIR_NAME: &str = "rsnap-native-host";
 
 /// Launches the staged native macOS host bundle for the current worktree.
 pub fn run() -> Result<()> {
@@ -38,6 +40,12 @@ pub fn run() -> Result<()> {
 }
 
 fn stable_bundle_path(worktree_root: &Path) -> Result<PathBuf> {
+	if let Some(stage_dir) =
+		env::var_os("RSNAP_NATIVE_HOST_STAGE_DIR").filter(|value| !value.is_empty())
+	{
+		return Ok(PathBuf::from(stage_dir).join(APP_NAME));
+	}
+
 	let output = Command::new("git")
 		.args(["rev-parse", "--git-common-dir"])
 		.current_dir(worktree_root)
@@ -57,7 +65,7 @@ fn stable_bundle_path(worktree_root: &Path) -> Result<PathBuf> {
 		.parent()
 		.ok_or_else(|| eyre::eyre!("git common dir has no parent: {}", common_git_dir.display()))?;
 
-	Ok(common_root.join(".native-host-dist").join(APP_NAME))
+	Ok(common_root.join("target").join(STAGE_DIR_NAME).join(APP_NAME))
 }
 
 fn open_app_bundle(app_bundle: &Path) -> Result<()> {

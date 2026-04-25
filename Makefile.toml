@@ -183,7 +183,7 @@ workspace = false
 script = '''
 RSNAP_NATIVE_HOST_SKIP_SIGN=1 ./scripts/build_and_run.sh stage
 COMMON_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
-APP_PATH="$COMMON_ROOT/.native-host-dist/rsnap.app"
+APP_PATH="${RSNAP_NATIVE_HOST_STAGE_DIR:-$COMMON_ROOT/target/rsnap-native-host}/rsnap.app"
 test -x "$APP_PATH/Contents/MacOS/RsnapNativeHost"
 test -f "$APP_PATH/Contents/Info.plist"
 test -f "$APP_PATH/Contents/Resources/AppIcon.icns"
