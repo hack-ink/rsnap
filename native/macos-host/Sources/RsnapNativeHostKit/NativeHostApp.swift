@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import CoreImage
 import CoreText
+import Darwin
 import Foundation
 import OSLog
 import RsnapHostBridge
@@ -16,7 +17,7 @@ enum LiveSamplingBudget {
 	static let hoverWindowCacheRefreshInterval: TimeInterval = 1.0 / 15.0
 }
 
-private let frozenEffectCIContext = CIContext(options: nil)
+@MainActor private let frozenEffectCIContext = CIContext(options: nil)
 private let menuBarLogger = Logger(
 	subsystem: Bundle.main.bundleIdentifier ?? "ink.hack.rsnap",
 	category: "MenuBar"
@@ -37,7 +38,8 @@ private enum CaptureSuccessSound {
 		}
 
 		let candidates = candidatePaths.joined(separator: ", ")
-		menuBarLogger.warning("failed to load capture success sound candidates=\(candidates, privacy: .public)")
+		menuBarLogger.warning(
+			"failed to load capture success sound candidates=\(candidates, privacy: .public)")
 		return nil
 	}
 
@@ -53,7 +55,7 @@ private enum CaptureSuccessSound {
 	}
 }
 
-private func makeFrozenMosaicImage(from image: CGImage) -> CGImage? {
+@MainActor private func makeFrozenMosaicImage(from image: CGImage) -> CGImage? {
 	let ciImage = CIImage(cgImage: image)
 	guard let filter = CIFilter(name: "CIPixellate") else {
 		return nil
@@ -87,7 +89,8 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private var statusItem: NSStatusItem?
 	private weak var captureMenuItem: NSMenuItem?
 	private weak var cancelCaptureMenuItem: NSMenuItem?
-	private lazy var settingsWindowController = SettingsWindowController(settingsStore: settingsStore)
+	private lazy var settingsWindowController = SettingsWindowController(
+		settingsStore: settingsStore)
 	private lazy var permissionsWindowController = PermissionsWindowController()
 
 	public func finishLaunching() {
@@ -115,7 +118,8 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		refreshStatusMenuState()
 		scheduleLiveSamplingPrewarm()
-		menuBarLogger.info("finishLaunching end statusItemPresent=\(self.statusItem != nil, privacy: .public)")
+		menuBarLogger.info(
+			"finishLaunching end statusItemPresent=\(self.statusItem != nil, privacy: .public)")
 	}
 
 	public func applicationDidFinishLaunching(_ notification: Notification) {
@@ -158,14 +162,17 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private func configureStatusItem() {
 		let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 		item.isVisible = true
-		menuBarLogger.info("created status item buttonPresent=\(item.button != nil, privacy: .public)")
+		menuBarLogger.info(
+			"created status item buttonPresent=\(item.button != nil, privacy: .public)")
 		if let button = item.button {
 			if let image = Self.statusItemImage() {
 				button.image = image
 				button.imagePosition = .imageOnly
 				button.imageScaling = .scaleProportionallyDown
 				button.title = ""
-				menuBarLogger.info("configured status item with image size=\(Int(image.size.width), privacy: .public)x\(Int(image.size.height), privacy: .public)")
+				menuBarLogger.info(
+					"configured status item with image size=\(Int(image.size.width), privacy: .public)x\(Int(image.size.height), privacy: .public)"
+				)
 			} else {
 				button.title = "RS"
 				menuBarLogger.info("configured status item with text fallback")
@@ -184,17 +191,23 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			keyEquivalent: "\u{1b}"
 		)
 		menu.addItem(.separator())
-		menu.addItem(withTitle: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
-		menu.addItem(withTitle: "Permissions…", action: #selector(openPermissions(_:)), keyEquivalent: "")
+		menu.addItem(
+			withTitle: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
+		menu.addItem(
+			withTitle: "Permissions…", action: #selector(openPermissions(_:)), keyEquivalent: "")
 		menu.addItem(.separator())
 		menu.addItem(withTitle: "Quit", action: #selector(quit(_:)), keyEquivalent: "q")
-		menu.items.forEach { $0.target = self }
+		for menuItem in menu.items {
+			menuItem.target = self
+		}
 
 		item.menu = menu
 		statusItem = item
 		captureMenuItem = captureItem
 		cancelCaptureMenuItem = cancelItem
-		menuBarLogger.info("status item installed visible=\(item.isVisible, privacy: .public) hasMenu=\(item.menu != nil, privacy: .public)")
+		menuBarLogger.info(
+			"status item installed visible=\(item.isVisible, privacy: .public) hasMenu=\(item.menu != nil, privacy: .public)"
+		)
 	}
 
 	private func configureGlobalHotKeys() {
@@ -238,7 +251,8 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		}
 		let point = NSEvent.mouseLocation
 		let sample = sessionController.warmLiveSamplingIfPossible(at: point)
-		menuBarLogger.debug("prewarmed live sampling sampleReady=\(sample?.rgbSample != nil, privacy: .public)")
+		menuBarLogger.debug(
+			"prewarmed live sampling sampleReady=\(sample?.rgbSample != nil, privacy: .public)")
 	}
 
 	@objc
@@ -374,7 +388,8 @@ final class CaptureSessionController: NSObject {
 			frozenFrameLatchToken = nil
 			let desktopFrame = CaptureOverlayController.desktopFrame
 			let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
-			let initialHighlightedWindow = WindowSnapshotFeed.window(at: startPoint, in: initialWindowSnapshots)
+			let initialHighlightedWindow = WindowSnapshotFeed.window(
+				at: startPoint, in: initialWindowSnapshots)
 			chromeState.rgbSample = initialSample?.rgbSample
 			let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
 			self.session = session
@@ -403,7 +418,8 @@ final class CaptureSessionController: NSObject {
 				focusPoint: startPoint,
 				initialWindowSnapshots: initialWindowSnapshots
 			)
-			(NSApp.delegate as? NativeHostApplicationController)?.window = overlayController.primaryWindow
+			(NSApp.delegate as? NativeHostApplicationController)?.window =
+				overlayController.primaryWindow
 			sceneDidChange?(initialScene)
 
 			captureStateDidChange?()
@@ -651,7 +667,9 @@ final class CaptureSessionController: NSObject {
 			return
 		}
 		let selectedTool = scene.toolbarItems.first(where: { $0.selected })?.kind ?? .pointer
-		if selectedTool == .pointer, beginFrozenSelectionTransformIfPossible(at: point, selection: selection) {
+		if selectedTool == .pointer,
+			beginFrozenSelectionTransformIfPossible(at: point, selection: selection)
+		{
 			refreshOverlay()
 			return
 		}
@@ -705,10 +723,14 @@ final class CaptureSessionController: NSObject {
 		guard chromeState.frozenSelectionEditable else {
 			return false
 		}
-		guard let monitorFrame = screen(containing: CGPoint(x: selection.midX, y: selection.midY))?.frame else {
+		guard
+			let monitorFrame = screen(containing: CGPoint(x: selection.midX, y: selection.midY))?
+				.frame
+		else {
 			return false
 		}
-		guard let kind = FrozenSelectionTransformKind.hitTest(at: point, selection: selection) else {
+		guard let kind = FrozenSelectionTransformKind.hitTest(at: point, selection: selection)
+		else {
 			return false
 		}
 		chromeState.frozenSelectionInteraction = FrozenSelectionInteractionState(
@@ -725,7 +747,8 @@ final class CaptureSessionController: NSObject {
 		guard let interaction = chromeState.frozenSelectionInteraction else {
 			return false
 		}
-		guard let nextSelection = transformedFrozenSelection(interaction: interaction, point: point) else {
+		guard let nextSelection = transformedFrozenSelection(interaction: interaction, point: point)
+		else {
 			return false
 		}
 		guard chromeState.frozenSelectionSnapshot != nextSelection else {
@@ -740,7 +763,9 @@ final class CaptureSessionController: NSObject {
 			return false
 		}
 		chromeState.frozenSelectionInteraction = nil
-		let nextSelection = transformedFrozenSelection(interaction: interaction, point: point) ?? interaction.initialSelection
+		let nextSelection =
+			transformedFrozenSelection(interaction: interaction, point: point)
+			?? interaction.initialSelection
 		chromeState.frozenSelectionSnapshot = nextSelection
 		guard nextSelection != scene.frozenSelection else {
 			refreshOverlay()
@@ -792,33 +817,61 @@ final class CaptureSessionController: NSObject {
 				monitorFrame: monitor
 			)
 		case .resizeLeft:
-			let newMinX = (selection.minX + deltaX).clamped(to: monitor.minX...(selection.maxX - minSize))
-			return CGRect(x: newMinX, y: selection.minY, width: selection.maxX - newMinX, height: selection.height)
+			let newMinX = (selection.minX + deltaX).clamped(
+				to: monitor.minX...(selection.maxX - minSize))
+			return CGRect(
+				x: newMinX, y: selection.minY, width: selection.maxX - newMinX,
+				height: selection.height)
 		case .resizeRight:
-			let newMaxX = (selection.maxX + deltaX).clamped(to: (selection.minX + minSize)...monitor.maxX)
-			return CGRect(x: selection.minX, y: selection.minY, width: newMaxX - selection.minX, height: selection.height)
+			let newMaxX = (selection.maxX + deltaX).clamped(
+				to: (selection.minX + minSize)...monitor.maxX)
+			return CGRect(
+				x: selection.minX, y: selection.minY, width: newMaxX - selection.minX,
+				height: selection.height)
 		case .resizeTop:
-			let newMaxY = (selection.maxY + deltaY).clamped(to: (selection.minY + minSize)...monitor.maxY)
-			return CGRect(x: selection.minX, y: selection.minY, width: selection.width, height: newMaxY - selection.minY)
+			let newMaxY = (selection.maxY + deltaY).clamped(
+				to: (selection.minY + minSize)...monitor.maxY)
+			return CGRect(
+				x: selection.minX, y: selection.minY, width: selection.width,
+				height: newMaxY - selection.minY)
 		case .resizeBottom:
-			let newMinY = (selection.minY + deltaY).clamped(to: monitor.minY...(selection.maxY - minSize))
-			return CGRect(x: selection.minX, y: newMinY, width: selection.width, height: selection.maxY - newMinY)
+			let newMinY = (selection.minY + deltaY).clamped(
+				to: monitor.minY...(selection.maxY - minSize))
+			return CGRect(
+				x: selection.minX, y: newMinY, width: selection.width,
+				height: selection.maxY - newMinY)
 		case .resizeTopLeft:
-			let newMinX = (selection.minX + deltaX).clamped(to: monitor.minX...(selection.maxX - minSize))
-			let newMaxY = (selection.maxY + deltaY).clamped(to: (selection.minY + minSize)...monitor.maxY)
-			return CGRect(x: newMinX, y: selection.minY, width: selection.maxX - newMinX, height: newMaxY - selection.minY)
+			let newMinX = (selection.minX + deltaX).clamped(
+				to: monitor.minX...(selection.maxX - minSize))
+			let newMaxY = (selection.maxY + deltaY).clamped(
+				to: (selection.minY + minSize)...monitor.maxY)
+			return CGRect(
+				x: newMinX, y: selection.minY, width: selection.maxX - newMinX,
+				height: newMaxY - selection.minY)
 		case .resizeTopRight:
-			let newMaxX = (selection.maxX + deltaX).clamped(to: (selection.minX + minSize)...monitor.maxX)
-			let newMaxY = (selection.maxY + deltaY).clamped(to: (selection.minY + minSize)...monitor.maxY)
-			return CGRect(x: selection.minX, y: selection.minY, width: newMaxX - selection.minX, height: newMaxY - selection.minY)
+			let newMaxX = (selection.maxX + deltaX).clamped(
+				to: (selection.minX + minSize)...monitor.maxX)
+			let newMaxY = (selection.maxY + deltaY).clamped(
+				to: (selection.minY + minSize)...monitor.maxY)
+			return CGRect(
+				x: selection.minX, y: selection.minY, width: newMaxX - selection.minX,
+				height: newMaxY - selection.minY)
 		case .resizeBottomLeft:
-			let newMinX = (selection.minX + deltaX).clamped(to: monitor.minX...(selection.maxX - minSize))
-			let newMinY = (selection.minY + deltaY).clamped(to: monitor.minY...(selection.maxY - minSize))
-			return CGRect(x: newMinX, y: newMinY, width: selection.maxX - newMinX, height: selection.maxY - newMinY)
+			let newMinX = (selection.minX + deltaX).clamped(
+				to: monitor.minX...(selection.maxX - minSize))
+			let newMinY = (selection.minY + deltaY).clamped(
+				to: monitor.minY...(selection.maxY - minSize))
+			return CGRect(
+				x: newMinX, y: newMinY, width: selection.maxX - newMinX,
+				height: selection.maxY - newMinY)
 		case .resizeBottomRight:
-			let newMaxX = (selection.maxX + deltaX).clamped(to: (selection.minX + minSize)...monitor.maxX)
-			let newMinY = (selection.minY + deltaY).clamped(to: monitor.minY...(selection.maxY - minSize))
-			return CGRect(x: selection.minX, y: newMinY, width: newMaxX - selection.minX, height: selection.maxY - newMinY)
+			let newMaxX = (selection.maxX + deltaX).clamped(
+				to: (selection.minX + minSize)...monitor.maxX)
+			let newMinY = (selection.minY + deltaY).clamped(
+				to: monitor.minY...(selection.maxY - minSize))
+			return CGRect(
+				x: selection.minX, y: newMinY, width: newMaxX - selection.minX,
+				height: selection.maxY - newMinY)
 		}
 	}
 
@@ -938,7 +991,9 @@ final class CaptureSessionController: NSObject {
 		}
 	}
 
-	private func sendFrozenAction(_ event: HostEvent, exitAfter expectedEffect: HostEffectKind? = nil) {
+	private func sendFrozenAction(
+		_ event: HostEvent, exitAfter expectedEffect: HostEffectKind? = nil
+	) {
 		do {
 			completedHostEffect = nil
 			try session?.send(event: event)
@@ -1012,7 +1067,7 @@ final class CaptureSessionController: NSObject {
 			break
 		case .stopLiveCapture:
 			tearDownCapture()
-		case let .requestFreezeSnapshot(selection):
+		case .requestFreezeSnapshot(let selection):
 			try commitFrozenSelection(
 				selection,
 				editable: scene.liveSelectionPreview == selection
@@ -1031,8 +1086,11 @@ final class CaptureSessionController: NSObject {
 			}
 		case .requestAccessibilityPermission:
 			guard NativePermissions.requiredForCurrentNativeHost(.accessibility) else {
-				try session?.send(report: .permissionChanged(.accessibility, granted: NativePermissions.status(for: .accessibility)))
-				try sendHostStatusMessage("Accessibility is not required by the current native host.")
+				try session?.send(
+					report: .permissionChanged(
+						.accessibility, granted: NativePermissions.status(for: .accessibility)))
+				try sendHostStatusMessage(
+					"Accessibility is not required by the current native host.")
 				return
 			}
 			let granted = NativePermissions.request(.accessibility)
@@ -1042,8 +1100,11 @@ final class CaptureSessionController: NSObject {
 			}
 		case .requestInputMonitoringPermission:
 			guard NativePermissions.requiredForCurrentNativeHost(.inputMonitoring) else {
-				try session?.send(report: .permissionChanged(.inputMonitoring, granted: NativePermissions.status(for: .inputMonitoring)))
-				try sendHostStatusMessage("Input Monitoring is not required by the current native host.")
+				try session?.send(
+					report: .permissionChanged(
+						.inputMonitoring, granted: NativePermissions.status(for: .inputMonitoring)))
+				try sendHostStatusMessage(
+					"Input Monitoring is not required by the current native host.")
 				return
 			}
 			let granted = NativePermissions.request(.inputMonitoring)
@@ -1060,7 +1121,8 @@ final class CaptureSessionController: NSObject {
 		}
 		frozenSnapshotGeneration &+= 1
 		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
-		let token = frozenFrameLatchToken ?? frozenFrameAuthority.latchToken(containing: selectionCenter)
+		let token =
+			frozenFrameLatchToken ?? frozenFrameAuthority.latchToken(containing: selectionCenter)
 		let frozenFrame = frozenFrameAuthority.snapshot(
 			containing: selectionCenter,
 			after: token,
@@ -1095,7 +1157,8 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func frozenFrameLatchWait(for point: CGPoint) -> TimeInterval {
-		let frameInterval = screen(containing: point)
+		let frameInterval =
+			screen(containing: point)
 			.map(NativeHostDisplayRefresh.frameInterval(for:))
 			?? (1.0 / 60.0)
 		return min(0.040, max(0.018, frameInterval * 2.5))
@@ -1118,7 +1181,9 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func hostOwnedFrozenToolbarItems() -> [ToolbarItem] {
-		let allowTextInput = session?.configuration.allowTextInput ?? settingsStore.sessionConfiguration.allowTextInput
+		let allowTextInput =
+			session?.configuration.allowTextInput
+			?? settingsStore.sessionConfiguration.allowTextInput
 		var items: [ToolbarItem] = [
 			ToolbarItem(kind: .pointer, enabled: true, selected: true),
 			ToolbarItem(kind: .pen, enabled: true, selected: false),
@@ -1210,7 +1275,8 @@ final class CaptureSessionController: NSObject {
 		pasteboard.setString(text, forType: .string)
 
 		try session.send(report: .hostEffectCompleted(.recognizeText))
-		let message = text.isEmpty
+		let message =
+			text.isEmpty
 			? "No text was recognized."
 			: "Recognized text copied to clipboard."
 		try session.send(report: .statusMessage(message))
@@ -1250,7 +1316,8 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func ensureFrozenBaseImageFromDisplayIfNeeded(for selection: CGRect) {
-		guard chromeState.frozenSelectionSnapshot == selection, chromeState.frozenBaseImage == nil else {
+		guard chromeState.frozenSelectionSnapshot == selection, chromeState.frozenBaseImage == nil
+		else {
 			return
 		}
 		chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
@@ -1276,8 +1343,10 @@ final class CaptureSessionController: NSObject {
 		selection: CGRect
 	) -> CGImage? {
 		let cropRect = CGRect(
-			x: ((selection.minX - displayFrame.minX) / max(displayFrame.width, 1)) * CGFloat(image.width),
-			y: ((displayFrame.maxY - selection.maxY) / max(displayFrame.height, 1)) * CGFloat(image.height),
+			x: ((selection.minX - displayFrame.minX) / max(displayFrame.width, 1))
+				* CGFloat(image.width),
+			y: ((displayFrame.maxY - selection.maxY) / max(displayFrame.height, 1))
+				* CGFloat(image.height),
 			width: (selection.width / max(displayFrame.width, 1)) * CGFloat(image.width),
 			height: (selection.height / max(displayFrame.height, 1)) * CGFloat(image.height)
 		).integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
@@ -1295,7 +1364,8 @@ final class CaptureSessionController: NSObject {
 		guard let screen = screen(containing: point) else {
 			return nil
 		}
-		let screenNumber = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+		let screenNumber =
+			(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
 			.uint32Value
 			?? 0
 		return MonitorSnapshot(
@@ -1309,7 +1379,9 @@ final class CaptureSessionController: NSObject {
 		overlayController?.hoverWindow(at: point)
 	}
 
-	private func currentLiveInputs(at point: CGPoint) -> (rgb: RGBSample?, activeMonitor: MonitorSnapshot?, highlightedWindow: WindowSnapshot?) {
+	private func currentLiveInputs(at point: CGPoint) -> (
+		rgb: RGBSample?, activeMonitor: MonitorSnapshot?, highlightedWindow: WindowSnapshot?
+	) {
 		let chromeSample = overlayController?.liveChromeSnapshot(
 			point: point,
 			settings: currentSettings,
@@ -1383,7 +1455,8 @@ final class CaptureSessionController: NSObject {
 		}
 		if let mosaicImage = chromeState.frozenMosaicImage, !mosaicRects.isEmpty {
 			for rect in mosaicRects {
-				if let mosaicPatch = mosaicImage.cropping(to: rect.integral.intersection(imageRect)) {
+				if let mosaicPatch = mosaicImage.cropping(to: rect.integral.intersection(imageRect))
+				{
 					context.draw(mosaicPatch, in: rect)
 				}
 			}
@@ -1402,14 +1475,16 @@ final class CaptureSessionController: NSObject {
 			}
 			context.restoreGState()
 
-			context.setStrokeColor(NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor)
+			context.setStrokeColor(
+				NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor)
 			context.setLineWidth(2 * ((scaleX + scaleY) / 2))
 			for rect in spotlightRects {
 				context.stroke(rect.insetBy(dx: scaleX, dy: scaleY))
 			}
 		}
 
-		context.setStrokeColor(NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor)
+		context.setStrokeColor(
+			NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor)
 		context.setLineWidth(3 * ((scaleX + scaleY) / 2))
 		context.setLineCap(.round)
 		context.setLineJoin(.round)
@@ -1468,7 +1543,9 @@ final class CaptureSessionController: NSObject {
 		context.strokePath()
 	}
 
-	private func drawExportText(_ text: String, at point: CGPoint, scale: CGFloat, in context: CGContext) {
+	private func drawExportText(
+		_ text: String, at point: CGPoint, scale: CGFloat, in context: CGContext
+	) {
 		guard !text.isEmpty else {
 			return
 		}
@@ -1480,7 +1557,9 @@ final class CaptureSessionController: NSObject {
 		]
 		let attributed = NSAttributedString(string: text, attributes: attributes)
 		context.saveGState()
-		context.setShadow(offset: CGSize(width: 0, height: 1 * scale), blur: 4 * scale, color: NSColor.black.withAlphaComponent(0.45).cgColor)
+		context.setShadow(
+			offset: CGSize(width: 0, height: 1 * scale), blur: 4 * scale,
+			color: NSColor.black.withAlphaComponent(0.45).cgColor)
 		let graphicsContext = NSGraphicsContext(cgContext: context, flipped: false)
 		NSGraphicsContext.saveGraphicsState()
 		NSGraphicsContext.current = graphicsContext
@@ -1538,10 +1617,12 @@ final class CaptureSessionController: NSObject {
 	private func nextOutputURL() throws -> URL {
 		let settings = settingsStore.settings
 		let fileManager = FileManager.default
-		try fileManager.createDirectory(at: settings.outputDirectory, withIntermediateDirectories: true)
+		try fileManager.createDirectory(
+			at: settings.outputDirectory, withIntermediateDirectories: true)
 		switch settings.outputNaming {
 		case .timestamp:
-			let timestamp = ISO8601DateFormatter().string(from: .init()).replacingOccurrences(of: ":", with: "-")
+			let timestamp = ISO8601DateFormatter().string(from: .init()).replacingOccurrences(
+				of: ":", with: "-")
 			return settings.outputDirectory
 				.appendingPathComponent("\(settings.outputFilenamePrefix)-\(timestamp)")
 				.appendingPathExtension("png")
@@ -1551,18 +1632,21 @@ final class CaptureSessionController: NSObject {
 				includingPropertiesForKeys: nil
 			)
 			let prefix = "\(settings.outputFilenamePrefix)-"
-			let nextSequence = existingFiles.compactMap { url -> Int? in
-				guard url.pathExtension.lowercased() == "png" else {
-					return nil
-				}
-				let stem = url.deletingPathExtension().lastPathComponent
-				guard stem.hasPrefix(prefix) else {
-					return nil
-				}
-				return Int(stem.dropFirst(prefix.count))
-			}.max().map { $0 + 1 } ?? 1
+			let nextSequence =
+				existingFiles.compactMap { url -> Int? in
+					guard url.pathExtension.lowercased() == "png" else {
+						return nil
+					}
+					let stem = url.deletingPathExtension().lastPathComponent
+					guard stem.hasPrefix(prefix) else {
+						return nil
+					}
+					return Int(stem.dropFirst(prefix.count))
+				}.max().map { $0 + 1 } ?? 1
 			return settings.outputDirectory
-				.appendingPathComponent("\(settings.outputFilenamePrefix)-\(String(format: "%04d", nextSequence))")
+				.appendingPathComponent(
+					"\(settings.outputFilenamePrefix)-\(String(format: "%04d", nextSequence))"
+				)
 				.appendingPathExtension("png")
 		}
 	}
@@ -1618,10 +1702,14 @@ final class CaptureSessionController: NSObject {
 
 		let edgeStrip = max(1, min(24, Int((CGFloat(min(width, height)) * 0.08).rounded())))
 		guard
-			let topMean = regionRGBMean(bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: 0, y1: edgeStrip),
-			let bottomMean = regionRGBMean(bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: height - edgeStrip, y1: height),
-			let leftMean = regionRGBMean(bitmapData, bitmap: bitmap, x0: 0, x1: edgeStrip, y0: 0, y1: height),
-			let rightMean = regionRGBMean(bitmapData, bitmap: bitmap, x0: width - edgeStrip, x1: width, y0: 0, y1: height)
+			let topMean = regionRGBMean(
+				bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: 0, y1: edgeStrip),
+			let bottomMean = regionRGBMean(
+				bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: height - edgeStrip, y1: height),
+			let leftMean = regionRGBMean(
+				bitmapData, bitmap: bitmap, x0: 0, x1: edgeStrip, y0: 0, y1: height),
+			let rightMean = regionRGBMean(
+				bitmapData, bitmap: bitmap, x0: width - edgeStrip, x1: width, y0: 0, y1: height)
 		else {
 			return nil
 		}
@@ -1632,14 +1720,22 @@ final class CaptureSessionController: NSObject {
 				96,
 				Int(
 					round(
-							max(
-								regionRGBMeanDistance(bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: 0, y1: edgeStrip, mean: topMean),
-								regionRGBMeanDistance(bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: height - edgeStrip, y1: height, mean: bottomMean),
-								regionRGBMeanDistance(bitmapData, bitmap: bitmap, x0: 0, x1: edgeStrip, y0: 0, y1: height, mean: leftMean),
-								regionRGBMeanDistance(bitmapData, bitmap: bitmap, x0: width - edgeStrip, x1: width, y0: 0, y1: height, mean: rightMean)
-							) * 3
-						)
+						max(
+							regionRGBMeanDistance(
+								bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: 0, y1: edgeStrip,
+								mean: topMean),
+							regionRGBMeanDistance(
+								bitmapData, bitmap: bitmap, x0: 0, x1: width,
+								y0: height - edgeStrip, y1: height, mean: bottomMean),
+							regionRGBMeanDistance(
+								bitmapData, bitmap: bitmap, x0: 0, x1: edgeStrip, y0: 0, y1: height,
+								mean: leftMean),
+							regionRGBMeanDistance(
+								bitmapData, bitmap: bitmap, x0: width - edgeStrip, x1: width, y0: 0,
+								y1: height, mean: rightMean)
+						) * 3
 					)
+				)
 			)
 		)
 		let minSalientPerRow = max(1, width / 64)
@@ -1835,7 +1931,8 @@ final class CaptureOverlayController {
 		}
 		collapsedForFrozen = false
 		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: focusPoint)
-		windowSnapshotFeed.start(desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
+		windowSnapshotFeed.start(
+			desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
 		chromeSampleFeed.start()
 		chromeSampleFeed.prime(point: focusPoint, sidePixels: 1)
 	}
@@ -1865,7 +1962,9 @@ final class CaptureOverlayController {
 		guard
 			scene.mode == .frozen,
 			let selection = scene.frozenSelection,
-			let primaryWindow = windows.first(where: { $0.frame.contains(CGPoint(x: selection.midX, y: selection.midY)) }) ?? windows.first
+			let primaryWindow = windows.first(where: {
+				$0.frame.contains(CGPoint(x: selection.midX, y: selection.midY))
+			}) ?? windows.first
 		else {
 			update(scene: scene, chrome: chrome, settings: settings)
 			return
@@ -1883,7 +1982,8 @@ final class CaptureOverlayController {
 	}
 
 	func focusWindow(at point: CGPoint) {
-		guard let targetWindow = windows.first(where: { $0.frame.contains(point) }) ?? windows.first else {
+		guard let targetWindow = windows.first(where: { $0.frame.contains(point) }) ?? windows.first
+		else {
 			return
 		}
 		if focusedWindowNumber == targetWindow.windowNumber, targetWindow.isKeyWindow {
@@ -1989,7 +2089,9 @@ final class CaptureOverlayController {
 		let wantsLoupePatch = includeLoupePatch
 		let wantsLoupePatchSide = settings.loupeSampleSize.sidePixels
 		let latestLoupePatchSatisfiesDemand =
-			latestSample?.loupePatch.map { $0.width == wantsLoupePatchSide && $0.height == wantsLoupePatchSide }
+			latestSample?.loupePatch.map {
+				$0.width == wantsLoupePatchSide && $0.height == wantsLoupePatchSide
+			}
 			?? false
 		let latestSampleSatisfiesDemand =
 			latestSample?.rgbSample != nil
@@ -2025,13 +2127,17 @@ final class CaptureOverlayController {
 	fileprivate func updateLiveChromePositions(
 		_ snapshot: LiveChromePositionSnapshot?
 	) {
-		liveChromeWindows.updatePositions(snapshot: snapshot, focusedWindowNumber: focusedWindowNumber)
+		liveChromeWindows.updatePositions(
+			snapshot: snapshot, focusedWindowNumber: focusedWindowNumber)
 	}
 
 	fileprivate func frozenCaptureJobSource(
 		near point: CGPoint
 	) -> CaptureSessionController.FrozenCaptureJobSource? {
-		guard let referenceWindow = windows.first(where: { $0.frame.contains(point) }) ?? windows.first else {
+		guard
+			let referenceWindow = windows.first(where: { $0.frame.contains(point) })
+				?? windows.first
+		else {
 			return nil
 		}
 		return CaptureSessionController.FrozenCaptureJobSource(
@@ -2052,12 +2158,49 @@ final class CaptureOverlayController {
 		source: CaptureSessionController.FrozenCaptureJobSource
 	) -> CGImage? {
 		let quartzRect = appKitRectToQuartz(rect, desktopFrame: source.desktopFrame)
-		return CGWindowListCreateImage(
-			quartzRect,
-			.optionOnScreenBelowWindow,
-			source.referenceWindowID,
-			[.boundsIgnoreFraming, .bestResolution]
+		return legacyWindowListImage(
+			quartzRect: quartzRect,
+			windowListOption: .optionOnScreenBelowWindow,
+			windowID: source.referenceWindowID,
+			imageOption: [.boundsIgnoreFraming, .bestResolution]
 		)
+	}
+
+	nonisolated private static func legacyWindowListImage(
+		quartzRect: CGRect,
+		windowListOption: CGWindowListOption,
+		windowID: CGWindowID,
+		imageOption: CGWindowImageOption
+	) -> CGImage? {
+		typealias CreateImage =
+			@convention(c) (
+				CGRect,
+				UInt32,
+				CGWindowID,
+				UInt32
+			) -> Unmanaged<CGImage>?
+
+		guard
+			let coreGraphics = dlopen(
+				"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+				RTLD_LAZY
+			),
+			let symbol = dlsym(coreGraphics, "CGWindowListCreateImage")
+		else {
+			return nil
+		}
+		defer {
+			dlclose(coreGraphics)
+		}
+
+		let createImage = unsafeBitCast(symbol, to: CreateImage.self)
+		return createImage(
+			quartzRect,
+			windowListOption.rawValue,
+			windowID,
+			imageOption.rawValue
+		)?
+		.takeRetainedValue()
 	}
 
 	fileprivate static var desktopFrame: CGRect {
@@ -2075,7 +2218,9 @@ final class CaptureOverlayController {
 		)
 	}
 
-	nonisolated private static func appKitRectToQuartz(_ rect: CGRect, desktopFrame: CGRect) -> CGRect {
+	nonisolated private static func appKitRectToQuartz(_ rect: CGRect, desktopFrame: CGRect)
+		-> CGRect
+	{
 		CGRect(
 			x: rect.minX,
 			y: desktopFrame.maxY - rect.maxY,
@@ -2101,7 +2246,10 @@ final class CaptureOverlayController {
 		}
 
 		let focusPoint = CGPoint(x: selection.midX, y: selection.midY)
-		guard let primaryWindow = windows.first(where: { $0.frame.contains(focusPoint) }) ?? windows.first else {
+		guard
+			let primaryWindow = windows.first(where: { $0.frame.contains(focusPoint) })
+				?? windows.first
+		else {
 			return
 		}
 
@@ -2241,14 +2389,16 @@ final class CaptureHostView: NSView {
 			lineHeight: ceil("x=0".size(using: font).height),
 			commaWidth: ",".size(using: font).width,
 			keycapTextSize: keycapTextSize,
-			keycapFrameSize: CGSize(width: keycapTextSize.width + 12, height: keycapTextSize.height + 4),
+			keycapFrameSize: CGSize(
+				width: keycapTextSize.width + 12, height: keycapTextSize.height + 4),
 			hexSlotWidth: "#FFFFFF".size(using: font).width,
 			placeholderXSlotWidth: "x=?".size(using: font).width,
 			placeholderYSlotWidth: "y=?".size(using: font).width
 		)
 	}()
 
-	private static var positionSlotWidthCache: [PositionSlotWidthKey: (x: CGFloat, y: CGFloat)] = [:]
+	private static var positionSlotWidthCache: [PositionSlotWidthKey: (x: CGFloat, y: CGFloat)] =
+		[:]
 
 	weak var controller: CaptureSessionController?
 
@@ -2297,9 +2447,9 @@ final class CaptureHostView: NSView {
 		super.init(frame: frameRect)
 		wantsLayer = true
 		layerContentsRedrawPolicy = .duringViewResize
-		[hudMaterialView, loupeMaterialView].forEach {
-			configureChromeMaterialView($0)
-			addSubview($0, positioned: .below, relativeTo: nil)
+		for materialView in [hudMaterialView, loupeMaterialView] {
+			configureChromeMaterialView(materialView)
+			addSubview(materialView, positioned: .below, relativeTo: nil)
 		}
 		liveRenderer.install { [weak self] in
 			self?.currentRendererPreviewSnapshot()
@@ -2433,7 +2583,8 @@ final class CaptureHostView: NSView {
 		syncVisibleCursor()
 		updateChromeMaterialViews()
 		needsDisplay = true
-		controller?.updateLivePreviewDemand(point: nil, settings: settings, includeLoupePatch: false)
+		controller?.updateLivePreviewDemand(
+			point: nil, settings: settings, includeLoupePatch: false)
 		controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 		liveRenderer.renderNow()
 	}
@@ -2478,7 +2629,10 @@ final class CaptureHostView: NSView {
 
 		let trackingAreaRef = NSTrackingArea(
 			rect: bounds,
-			options: [.activeInKeyWindow, .cursorUpdate, .inVisibleRect, .mouseMoved, .enabledDuringMouseDrag],
+			options: [
+				.activeInKeyWindow, .cursorUpdate, .inVisibleRect, .mouseMoved,
+				.enabledDuringMouseDrag,
+			],
 			owner: self,
 			userInfo: nil
 		)
@@ -2627,7 +2781,8 @@ final class CaptureHostView: NSView {
 			}
 			drawFrozenDisplaySurface(in: context)
 			if let selection = localFrozenSelectionRect() {
-				drawSelectionScrim(for: selection, in: context, alpha: CaptureChrome.frozenScrimAlpha)
+				drawSelectionScrim(
+					for: selection, in: context, alpha: CaptureChrome.frozenScrimAlpha)
 				drawDashedSelectionBorder(
 					around: selection,
 					in: context,
@@ -2687,7 +2842,8 @@ final class CaptureHostView: NSView {
 		let keycapVisible = settings.showAltHintKeycap
 		let keycapFrame = keycapVisible ? metrics.keycapFrameSize : .zero
 		let contentHeight = max(positionHeight, swatchSize.height, keycapFrame.height)
-		let contentWidth = positionDisplay.xSlotWidth
+		let contentWidth =
+			positionDisplay.xSlotWidth
 			+ metrics.commaWidth
 			+ positionDisplay.ySlotWidth
 			+ swatchSize.width
@@ -2695,21 +2851,28 @@ final class CaptureHostView: NSView {
 			+ keycapFrame.width
 			+ itemSpacing * (keycapVisible ? 3 : 2)
 		let hudFrame = CGRect(
-			x: (anchor.x + 14).clamped(to: 6...(bounds.width - contentWidth - CaptureChrome.hudInnerMarginX * 2 - 6)),
-			y: (anchor.y + 14).clamped(to: 6...(bounds.height - contentHeight - CaptureChrome.hudInnerMarginY * 2 - 6)),
+			x: (anchor.x + 14).clamped(
+				to: 6...(bounds.width - contentWidth - CaptureChrome.hudInnerMarginX * 2 - 6)),
+			y: (anchor.y + 14).clamped(
+				to: 6...(bounds.height - contentHeight - CaptureChrome.hudInnerMarginY * 2 - 6)),
 			width: contentWidth + CaptureChrome.hudInnerMarginX * 2,
 			height: contentHeight + CaptureChrome.hudInnerMarginY * 2
 		)
 
-		drawPill(in: hudFrame, context: context, theme: theme, strongShadow: true, surfaceKind: .hud)
+		drawPill(
+			in: hudFrame, context: context, theme: theme, strongShadow: true, surfaceKind: .hud)
 
 		var cursorX = hudFrame.minX + CaptureChrome.hudInnerMarginX
 		let baselineY = hudFrame.midY - positionHeight / 2
-		drawText(xGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		drawText(
+			xGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
 		cursorX += positionDisplay.xSlotWidth
-		drawText(commaSeparator, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		drawText(
+			commaSeparator, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText,
+			font: font)
 		cursorX += metrics.commaWidth
-		drawText(yGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		drawText(
+			yGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
 		cursorX += positionDisplay.ySlotWidth + itemSpacing
 
 		let swatchRect = CGRect(
@@ -2718,14 +2881,15 @@ final class CaptureHostView: NSView {
 			width: swatchSize.width,
 			height: swatchSize.height
 		)
-		let swatchColor = chrome.rgbSample.map {
-			NSColor(
-				calibratedRed: CGFloat($0.r) / 255,
-				green: CGFloat($0.g) / 255,
-				blue: CGFloat($0.b) / 255,
-				alpha: 1
-			)
-		} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
+		let swatchColor =
+			chrome.rgbSample.map {
+				NSColor(
+					calibratedRed: CGFloat($0.r) / 255,
+					green: CGFloat($0.g) / 255,
+					blue: CGFloat($0.b) / 255,
+					alpha: 1
+				)
+			} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
 		context.setFillColor(swatchColor.cgColor)
 		context.fill(swatchRect)
 		context.setStrokeColor(palette.swatchStroke.cgColor)
@@ -2812,7 +2976,8 @@ final class CaptureHostView: NSView {
 		if pointerChanged {
 			controller?.updateLiveChromePositions(currentLiveChromePositionSnapshot())
 		}
-		liveHighlightedWindowPreview = controller?.previewHighlightedWindow(at: globalPoint) ?? scene.highlightedWindow
+		liveHighlightedWindowPreview =
+			controller?.previewHighlightedWindow(at: globalPoint) ?? scene.highlightedWindow
 		updateLivePreviewDemands()
 		liveRenderer.renderNow()
 	}
@@ -2943,7 +3108,8 @@ final class CaptureHostView: NSView {
 	}
 
 	private func editableFrozenCursorIntent(at point: CGPoint, selection: CGRect) -> CursorIntent? {
-		guard let kind = FrozenSelectionTransformKind.hitTest(at: point, selection: selection) else {
+		guard let kind = FrozenSelectionTransformKind.hitTest(at: point, selection: selection)
+		else {
 			return nil
 		}
 		return cursorIntent(for: kind, active: false)
@@ -2989,7 +3155,8 @@ final class CaptureHostView: NSView {
 		}
 		let localPoint = window.mouseLocationOutsideOfEventStream
 		let globalPoint = window.convertPoint(toScreen: localPoint)
-		return NSScreen.screens.contains(where: { $0.frame.contains(globalPoint) }) ? globalPoint : nil
+		return NSScreen.screens.contains(where: { $0.frame.contains(globalPoint) })
+			? globalPoint : nil
 	}
 
 	private func drawLoupe(in context: CGContext) {
@@ -3013,7 +3180,8 @@ final class CaptureHostView: NSView {
 		context.restoreGState()
 
 		let centerX = imageRect.minX + floor(CGFloat(patch.width) / 2) * CaptureChrome.loupeCellSize
-		let centerY = imageRect.minY + floor(CGFloat(patch.height) / 2) * CaptureChrome.loupeCellSize
+		let centerY =
+			imageRect.minY + floor(CGFloat(patch.height) / 2) * CaptureChrome.loupeCellSize
 		let centerRect = CGRect(
 			x: centerX,
 			y: centerY,
@@ -3030,10 +3198,18 @@ final class CaptureHostView: NSView {
 		context.setFillColor(scrimColor.cgColor)
 
 		for rect in [
-			CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: max(0, focusRect.minY - bounds.minY)),
-			CGRect(x: bounds.minX, y: focusRect.minY, width: max(0, focusRect.minX - bounds.minX), height: focusRect.height),
-			CGRect(x: focusRect.maxX, y: focusRect.minY, width: max(0, bounds.maxX - focusRect.maxX), height: focusRect.height),
-			CGRect(x: bounds.minX, y: focusRect.maxY, width: bounds.width, height: max(0, bounds.maxY - focusRect.maxY)),
+			CGRect(
+				x: bounds.minX, y: bounds.minY, width: bounds.width,
+				height: max(0, focusRect.minY - bounds.minY)),
+			CGRect(
+				x: bounds.minX, y: focusRect.minY, width: max(0, focusRect.minX - bounds.minX),
+				height: focusRect.height),
+			CGRect(
+				x: focusRect.maxX, y: focusRect.minY, width: max(0, bounds.maxX - focusRect.maxX),
+				height: focusRect.height),
+			CGRect(
+				x: bounds.minX, y: focusRect.maxY, width: bounds.width,
+				height: max(0, bounds.maxY - focusRect.maxY)),
 		] where rect.width > 0 && rect.height > 0 {
 			context.fill(rect)
 		}
@@ -3051,7 +3227,8 @@ final class CaptureHostView: NSView {
 			xRadius: CaptureChrome.liveSelectionCornerRadius,
 			yRadius: CaptureChrome.liveSelectionCornerRadius
 		)
-		context.setStrokeColor(NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 0.45).cgColor)
+		context.setStrokeColor(
+			NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 0.45).cgColor)
 		context.setLineWidth(2.25)
 		path.stroke()
 		context.restoreGState()
@@ -3062,8 +3239,10 @@ final class CaptureHostView: NSView {
 		in context: CGContext,
 		lineWidth: CGFloat
 	) {
-		let outlineColor = NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
-		let strokeColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 248 / 255)
+		let outlineColor = NSColor(
+			calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
+		let strokeColor = NSColor(
+			calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 248 / 255)
 		let pixelsPerPoint = window?.screen?.backingScaleFactor ?? 1
 		let borderOutset = CaptureChrome.dashedBorderOutset(
 			strokeWidth: lineWidth,
@@ -3091,8 +3270,10 @@ final class CaptureHostView: NSView {
 	}
 
 	private func drawFrozenResizeHandles(for rect: CGRect, in context: CGContext) {
-		let outlineColor = NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 124 / 255)
-		let strokeColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 246 / 255)
+		let outlineColor = NSColor(
+			calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 124 / 255)
+		let strokeColor = NSColor(
+			calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 246 / 255)
 		let leg = CaptureChrome.resizeHandleLegLength
 		let offset = CaptureChrome.resizeHandleOffset
 		let handles: [(CGPoint, CGPoint, CGPoint)]
@@ -3180,11 +3361,21 @@ final class CaptureHostView: NSView {
 		)
 		let anchor = badgeFrame.origin
 
-		drawText(text, at: CGPoint(x: anchor.x, y: anchor.y - 1), color: NSColor.black.withAlphaComponent(0.6), font: font)
-		drawText(text, at: CGPoint(x: anchor.x - 1, y: anchor.y), color: NSColor.black.withAlphaComponent(0.75), font: font)
-		drawText(text, at: CGPoint(x: anchor.x + 1, y: anchor.y), color: NSColor.black.withAlphaComponent(0.75), font: font)
-		drawText(text, at: CGPoint(x: anchor.x, y: anchor.y + 1), color: NSColor.black.withAlphaComponent(0.75), font: font)
-		drawText(text, at: CGPoint(x: anchor.x, y: anchor.y), color: NSColor.white.withAlphaComponent(0.98), font: font)
+		drawText(
+			text, at: CGPoint(x: anchor.x, y: anchor.y - 1),
+			color: NSColor.black.withAlphaComponent(0.6), font: font)
+		drawText(
+			text, at: CGPoint(x: anchor.x - 1, y: anchor.y),
+			color: NSColor.black.withAlphaComponent(0.75), font: font)
+		drawText(
+			text, at: CGPoint(x: anchor.x + 1, y: anchor.y),
+			color: NSColor.black.withAlphaComponent(0.75), font: font)
+		drawText(
+			text, at: CGPoint(x: anchor.x, y: anchor.y + 1),
+			color: NSColor.black.withAlphaComponent(0.75), font: font)
+		drawText(
+			text, at: CGPoint(x: anchor.x, y: anchor.y),
+			color: NSColor.white.withAlphaComponent(0.98), font: font)
 	}
 
 	private func drawFrozenOverlays(for selection: CGRect, in context: CGContext) {
@@ -3199,7 +3390,9 @@ final class CaptureHostView: NSView {
 		let mosaicRects = chrome.frozenOverlay.mosaicRects.compactMap(localRect(from:))
 		let previewRect = chrome.frozenOverlay.previewMosaicRect.flatMap(localRect(from:))
 		let allRects = mosaicRects + (previewRect.map { [$0] } ?? [])
-		if chrome.frozenMosaicImage == nil, !allRects.isEmpty, let baseImage = chrome.frozenBaseImage {
+		if chrome.frozenMosaicImage == nil, !allRects.isEmpty,
+			let baseImage = chrome.frozenBaseImage
+		{
 			chrome.frozenMosaicImage = makeFrozenMosaicImage(from: baseImage)
 		}
 		guard !allRects.isEmpty, let mosaicImage = chrome.frozenMosaicImage else {
@@ -3208,8 +3401,10 @@ final class CaptureHostView: NSView {
 
 		for rect in allRects {
 			let imageRect = CGRect(
-				x: ((rect.minX - selection.minX) / max(selection.width, 1)) * CGFloat(mosaicImage.width),
-				y: ((rect.minY - selection.minY) / max(selection.height, 1)) * CGFloat(mosaicImage.height),
+				x: ((rect.minX - selection.minX) / max(selection.width, 1))
+					* CGFloat(mosaicImage.width),
+				y: ((rect.minY - selection.minY) / max(selection.height, 1))
+					* CGFloat(mosaicImage.height),
 				width: (rect.width / max(selection.width, 1)) * CGFloat(mosaicImage.width),
 				height: (rect.height / max(selection.height, 1)) * CGFloat(mosaicImage.height)
 			).integral
@@ -3217,7 +3412,8 @@ final class CaptureHostView: NSView {
 				continue
 			}
 			context.draw(patch, in: rect)
-			context.setStrokeColor(NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.84).cgColor)
+			context.setStrokeColor(
+				NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.84).cgColor)
 			context.setLineWidth(1.5)
 			context.stroke(rect.insetBy(dx: 1, dy: 1))
 		}
@@ -3240,7 +3436,8 @@ final class CaptureHostView: NSView {
 		}
 		context.restoreGState()
 
-		context.setStrokeColor(NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.92).cgColor)
+		context.setStrokeColor(
+			NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.92).cgColor)
 		context.setLineWidth(2)
 		for rect in allRects {
 			context.stroke(rect.insetBy(dx: 1, dy: 1))
@@ -3248,14 +3445,16 @@ final class CaptureHostView: NSView {
 	}
 
 	private func drawFrozenPenStrokes(in context: CGContext) {
-		let allStrokes = chrome.frozenOverlay.penStrokes
+		let allStrokes =
+			chrome.frozenOverlay.penStrokes
 			+ (chrome.frozenOverlay.previewPenStroke.map { [$0] } ?? [])
 		guard !allStrokes.isEmpty else {
 			return
 		}
 
 		context.saveGState()
-		context.setStrokeColor(NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor)
+		context.setStrokeColor(
+			NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor)
 		context.setLineWidth(3)
 		context.setLineCap(.round)
 		context.setLineJoin(.round)
@@ -3277,19 +3476,22 @@ final class CaptureHostView: NSView {
 	}
 
 	private func drawFrozenArrows(in context: CGContext) {
-		let arrows = chrome.frozenOverlay.arrowAnnotations
+		let arrows =
+			chrome.frozenOverlay.arrowAnnotations
 			+ (chrome.frozenOverlay.previewArrow.map { [$0] } ?? [])
 		guard !arrows.isEmpty else {
 			return
 		}
 
 		context.saveGState()
-		context.setStrokeColor(NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor)
+		context.setStrokeColor(
+			NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor)
 		context.setLineWidth(3)
 		context.setLineCap(.round)
 		context.setLineJoin(.round)
 		for (start, end) in arrows {
-			guard let localStart = localPoint(from: start), let localEnd = localPoint(from: end) else {
+			guard let localStart = localPoint(from: start), let localEnd = localPoint(from: end)
+			else {
 				continue
 			}
 			drawArrow(from: localStart, to: localEnd, in: context)
@@ -3311,7 +3513,9 @@ final class CaptureHostView: NSView {
 		}
 	}
 
-	private func drawFrozenText(_ text: String, at point: CGPoint, scale: CGFloat, in context: CGContext) {
+	private func drawFrozenText(
+		_ text: String, at point: CGPoint, scale: CGFloat, in context: CGContext
+	) {
 		guard !text.isEmpty else {
 			return
 		}
@@ -3323,7 +3527,9 @@ final class CaptureHostView: NSView {
 		]
 		let attributed = NSAttributedString(string: text, attributes: attributes)
 		context.saveGState()
-		context.setShadow(offset: CGSize(width: 0, height: 1), blur: 4, color: NSColor.black.withAlphaComponent(0.45).cgColor)
+		context.setShadow(
+			offset: CGSize(width: 0, height: 1), blur: 4,
+			color: NSColor.black.withAlphaComponent(0.45).cgColor)
 		let graphicsContext = NSGraphicsContext(cgContext: context, flipped: false)
 		NSGraphicsContext.saveGraphicsState()
 		NSGraphicsContext.current = graphicsContext
@@ -3364,18 +3570,24 @@ final class CaptureHostView: NSView {
 		}
 
 		let itemCount = CGFloat(items.count)
-		let width = itemCount * CaptureChrome.toolbarButtonSize
+		let width =
+			itemCount * CaptureChrome.toolbarButtonSize
 			+ max(0, itemCount - 1) * CaptureChrome.toolbarItemSpacing
 			+ CaptureChrome.hudInnerMarginX * 2
 		let height = CaptureChrome.toolbarButtonSize + CaptureChrome.toolbarVerticalPadding * 2
 		let desiredY = selection.maxY + CaptureChrome.toolbarGap
 		let wantsTop = settings.toolbarPlacement == .top
-		let placedAbove = wantsTop || desiredY + height > bounds.maxY - CaptureChrome.toolbarScreenMargin
-		let y = placedAbove
-			? max(bounds.minY + CaptureChrome.toolbarScreenMargin, selection.minY - CaptureChrome.toolbarGap - height)
+		let placedAbove =
+			wantsTop || desiredY + height > bounds.maxY - CaptureChrome.toolbarScreenMargin
+		let y =
+			placedAbove
+			? max(
+				bounds.minY + CaptureChrome.toolbarScreenMargin,
+				selection.minY - CaptureChrome.toolbarGap - height)
 			: min(bounds.maxY - CaptureChrome.toolbarScreenMargin - height, desiredY)
 		let x = (selection.midX - width / 2).clamped(
-			to: CaptureChrome.toolbarScreenMargin...(bounds.maxX - CaptureChrome.toolbarScreenMargin - width)
+			to: CaptureChrome
+				.toolbarScreenMargin...(bounds.maxX - CaptureChrome.toolbarScreenMargin - width)
 		)
 		let frame = CGRect(x: x, y: y, width: width, height: height)
 		var itemFrames: [FrozenToolbarItemLayout] = []
@@ -3430,7 +3642,9 @@ final class CaptureHostView: NSView {
 	}
 
 	private func toolbarAction(at point: CGPoint) -> ToolbarItemKind? {
-		guard scene.mode == .frozen, let selection = localFrozenSelectionRect(), let layout = toolbarLayout(for: selection) else {
+		guard scene.mode == .frozen, let selection = localFrozenSelectionRect(),
+			let layout = toolbarLayout(for: selection)
+		else {
 			return nil
 		}
 		return layout.items.first(where: { $0.frame.contains(point) && $0.enabled })?.kind
@@ -3483,7 +3697,8 @@ final class CaptureHostView: NSView {
 		let keycapVisible = settings.showAltHintKeycap
 		let keycapFrame = keycapVisible ? metrics.keycapFrameSize : .zero
 		let contentHeight = max(metrics.lineHeight, swatchSize.height, keycapFrame.height)
-		let contentWidth = positionDisplay.xSlotWidth
+		let contentWidth =
+			positionDisplay.xSlotWidth
 			+ metrics.commaWidth
 			+ positionDisplay.ySlotWidth
 			+ swatchSize.width
@@ -3536,7 +3751,8 @@ final class CaptureHostView: NSView {
 
 	private func currentRendererPreviewSnapshot() -> LivePreviewSnapshot? {
 		if scene.mode == .live {
-			let snapshot = chrome.hostLocalFrozenSelecting
+			let snapshot =
+				chrome.hostLocalFrozenSelecting
 				? currentHostLocalFrozenSelectingPreviewSnapshot()
 				: currentLivePreviewSnapshot()
 			lastLivePreviewSnapshot = snapshot
@@ -3554,7 +3770,8 @@ final class CaptureHostView: NSView {
 		}
 
 		let dragSelectionLocal = localRect(from: scene.liveSelectionPreview)
-		let hoverSelectionLocal = dragSelectionLocal == nil
+		let hoverSelectionLocal =
+			dragSelectionLocal == nil
 			? localRect(from: liveHighlightedWindowPreview?.frame ?? scene.highlightedWindow?.frame)
 			: nil
 		let rgbSample = chrome.rgbSample ?? scene.rgb
@@ -3584,7 +3801,8 @@ final class CaptureHostView: NSView {
 		guard pendingFrozenFirstDisplay else {
 			return nil
 		}
-		let frozenSelectionLocal = localFrozenSelectionRect()
+		let frozenSelectionLocal =
+			localFrozenSelectionRect()
 			?? lastLivePreviewSnapshot?.dragSelectionLocal
 			?? lastLivePreviewSnapshot?.hoverSelectionLocal
 		guard let frozenSelectionLocal else {
@@ -3621,22 +3839,28 @@ final class CaptureHostView: NSView {
 		if let currentPreview = livePointerPreviewGlobal {
 			if hypot(currentPreview.x - polledPoint.x, currentPreview.y - polledPoint.y) >= 0.5 {
 				setLivePointerPreview(to: polledPoint)
-				liveHighlightedWindowPreview = controller?.previewHighlightedWindow(at: polledPoint) ?? liveHighlightedWindowPreview
+				liveHighlightedWindowPreview =
+					controller?.previewHighlightedWindow(at: polledPoint)
+					?? liveHighlightedWindowPreview
 			}
 		} else {
 			setLivePointerPreview(to: polledPoint)
-			liveHighlightedWindowPreview = controller?.previewHighlightedWindow(at: polledPoint) ?? liveHighlightedWindowPreview
+			liveHighlightedWindowPreview =
+				controller?.previewHighlightedWindow(at: polledPoint)
+				?? liveHighlightedWindowPreview
 		}
 
 		updateLivePreviewDemands()
 
 		let chromeSample = currentLiveChromeSample()
-		let rgbSample = chromeSample?.rgbSample
+		let rgbSample =
+			chromeSample?.rgbSample
 			?? chrome.rgbSample
 			?? scene.rgb
 		let loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
 		let dragSelectionLocal = localRect(from: scene.liveSelectionPreview)
-		let hoverSelectionLocal = dragSelectionLocal == nil
+		let hoverSelectionLocal =
+			dragSelectionLocal == nil
 			? localRect(from: liveHighlightedWindowPreview?.frame ?? scene.highlightedWindow?.frame)
 			: nil
 		let positionDisplay = currentPositionDisplay()
@@ -3681,13 +3905,15 @@ final class CaptureHostView: NSView {
 		}
 
 		let chromeSample = currentLiveChromeSample()
-		let rgbSample = chromeSample?.rgbSample
+		let rgbSample =
+			chromeSample?.rgbSample
 			?? chrome.rgbSample
 			?? scene.rgb
 		let hudPlacement = liveHoverChromeSuppressed ? nil : currentHudPlacement()
 		let hudFrameLocal = hudPlacement?.frame
 		let hudFrame = hudFrameLocal.flatMap(globalRect(from:))
-		let loupeFrame = !liveHoverChromeSuppressed && scene.loupeVisible
+		let loupeFrame =
+			!liveHoverChromeSuppressed && scene.loupeVisible
 			? hudFrameLocal
 				.flatMap {
 					currentLoupeFrame(
@@ -3745,7 +3971,8 @@ final class CaptureHostView: NSView {
 		}
 		let hudPlacement = liveHoverChromeSuppressed ? nil : currentHudPlacement()
 		let hudFrame = hudPlacement.flatMap { globalRect(from: $0.frame) }
-		let loupeFrame = !liveHoverChromeSuppressed && scene.loupeVisible
+		let loupeFrame =
+			!liveHoverChromeSuppressed && scene.loupeVisible
 			? hudPlacement
 				.flatMap {
 					currentLoupeFrame(
@@ -3898,7 +4125,8 @@ final class CaptureHostView: NSView {
 			NativeHostTelemetry.liveChromeRefreshTarget(
 				displayHz: displayHz,
 				targetHz: targetHz,
-				frameBudgetMilliseconds: NativeHostDisplayRefresh.frameBudgetMilliseconds(for: window?.screen)
+				frameBudgetMilliseconds: NativeHostDisplayRefresh.frameBudgetMilliseconds(
+					for: window?.screen)
 			)
 		}
 		liveRenderer.updateDisplayID(currentDisplayID(), targetFramesPerSecond: targetHz)
@@ -3918,7 +4146,8 @@ final class CaptureHostView: NSView {
 
 	private func updateLivePreviewDemands() {
 		guard scene.mode == .live else {
-			controller?.updateLivePreviewDemand(point: nil, settings: settings, includeLoupePatch: false)
+			controller?.updateLivePreviewDemand(
+				point: nil, settings: settings, includeLoupePatch: false)
 			return
 		}
 		let point = livePointerPreviewGlobal ?? scene.pointer
@@ -3947,7 +4176,9 @@ final class CaptureHostView: NSView {
 		return "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))"
 	}
 
-	private static func cachedPositionSlotWidths(for screenFrame: CGRect) -> (x: CGFloat, y: CGFloat) {
+	private static func cachedPositionSlotWidths(for screenFrame: CGRect) -> (
+		x: CGFloat, y: CGFloat
+	) {
 		let minX = Int(screenFrame.minX.rounded())
 		let maxX = Int(screenFrame.maxX.rounded()) - 1
 		let minY = Int(screenFrame.minY.rounded())
@@ -3987,7 +4218,8 @@ final class CaptureHostView: NSView {
 
 	private func currentLiveColorDisplay(for sample: RGBSample?) -> LiveColorDisplay {
 		let placeholderHex = ""
-		let hexText = sample.map { String(format: "#%02X%02X%02X", $0.r, $0.g, $0.b) } ?? placeholderHex
+		let hexText =
+			sample.map { String(format: "#%02X%02X%02X", $0.r, $0.g, $0.b) } ?? placeholderHex
 		return LiveColorDisplay(
 			hexText: hexText,
 			hexSlotWidth: Self.hudLayoutMetrics.hexSlotWidth
@@ -4007,17 +4239,15 @@ final class CaptureHostView: NSView {
 			xRadius: CaptureChrome.hudCornerRadius,
 			yRadius: CaptureChrome.hudCornerRadius
 		)
-		let glassImage = (
-			settings.hudGlassEnabled &&
-			settings.hudBlur > 0.01
-		) ? glassPatch(for: surfaceKind, frame: frame) : nil
+		let glassImage =
+			(settings.hudGlassEnabled && settings.hudBlur > 0.01)
+			? glassPatch(for: surfaceKind, frame: frame) : nil
 		let hasGlass = glassImage != nil
 		context.saveGState()
 		if strongShadow {
 			context.setShadow(offset: .zero, blur: 10, color: palette.shadow.cgColor)
 		}
-		if
-			hasGlass,
+		if hasGlass,
 			let clipPath = pillPath.copy() as? NSBezierPath,
 			let glassImage
 		{
@@ -4087,8 +4317,10 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 		let cropRect = CGRect(
-			x: ((globalFrame.minX - displayFrame.minX) / max(displayFrame.width, 1)) * CGFloat(image.width),
-			y: ((displayFrame.maxY - globalFrame.maxY) / max(displayFrame.height, 1)) * CGFloat(image.height),
+			x: ((globalFrame.minX - displayFrame.minX) / max(displayFrame.width, 1))
+				* CGFloat(image.width),
+			y: ((displayFrame.maxY - globalFrame.maxY) / max(displayFrame.height, 1))
+				* CGFloat(image.height),
 			width: (globalFrame.width / max(displayFrame.width, 1)) * CGFloat(image.width),
 			height: (globalFrame.height / max(displayFrame.height, 1)) * CGFloat(image.height)
 		).integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
@@ -4105,10 +4337,11 @@ final class CaptureHostView: NSView {
 			return image
 		}
 		let blurAmount = CGFloat(settings.hudBlur.clamped(to: 0...1))
-		let blurRadius: CGFloat = switch surfaceKind {
-		case .hud, .loupe:
-			14 + blurAmount * 32.0
-		}
+		let blurRadius: CGFloat =
+			switch surfaceKind {
+			case .hud, .loupe:
+				14 + blurAmount * 32.0
+			}
 		filter.setValue(clampedImage, forKey: kCIInputImageKey)
 		filter.setValue(blurRadius, forKey: kCIInputRadiusKey)
 		guard let blurredImage = filter.outputImage?.cropped(to: ciImage.extent) else {
@@ -4119,22 +4352,28 @@ final class CaptureHostView: NSView {
 			colorControls.setValue(blurredImage, forKey: kCIInputImageKey)
 			switch surfaceKind {
 			case .hud, .loupe:
-				colorControls.setValue(1.18 + settings.hudTint.clamped(to: 0...1) * 0.42, forKey: kCIInputSaturationKey)
+				colorControls.setValue(
+					1.18 + settings.hudTint.clamped(to: 0...1) * 0.42, forKey: kCIInputSaturationKey
+				)
 				colorControls.setValue(1.04, forKey: kCIInputContrastKey)
 				colorControls.setValue(themeBrightnessBias(), forKey: kCIInputBrightnessKey)
 			}
-			colorAdjustedImage = colorControls.outputImage?.cropped(to: ciImage.extent) ?? blurredImage
+			colorAdjustedImage =
+				colorControls.outputImage?.cropped(to: ciImage.extent) ?? blurredImage
 		} else {
 			colorAdjustedImage = blurredImage
 		}
-		return frozenEffectCIContext.createCGImage(colorAdjustedImage, from: colorAdjustedImage.extent) ?? image
+		return frozenEffectCIContext.createCGImage(
+			colorAdjustedImage, from: colorAdjustedImage.extent) ?? image
 	}
 
 	private func drawText(_ text: String, at point: CGPoint, color: NSColor, font: NSFont) {
-		(text as NSString).draw(at: point, withAttributes: [
-			.font: font,
-			.foregroundColor: color,
-		])
+		(text as NSString).draw(
+			at: point,
+			withAttributes: [
+				.font: font,
+				.foregroundColor: color,
+			])
 	}
 
 	private func chromeTheme() -> CaptureChromeTheme {
@@ -4151,8 +4390,8 @@ final class CaptureHostView: NSView {
 	}
 
 	private func updateChromeMaterialViews() {
-		[hudMaterialView, loupeMaterialView].forEach {
-			$0.isHidden = true
+		for materialView in [hudMaterialView, loupeMaterialView] {
+			materialView.isHidden = true
 		}
 	}
 
@@ -4226,7 +4465,8 @@ final class CaptureHostView: NSView {
 		}
 	}
 
-	private func setLastPointerDispatchUptime(_ uptime: TimeInterval, for event: QueuedPointerEvent) {
+	private func setLastPointerDispatchUptime(_ uptime: TimeInterval, for event: QueuedPointerEvent)
+	{
 		switch event {
 		case .moved:
 			lastHoverPointerDispatchUptime = uptime
@@ -4237,7 +4477,7 @@ final class CaptureHostView: NSView {
 
 }
 
-private extension NSCursor {
+extension NSCursor {
 	private static func frozenDiagonalCursor(
 		from baseCursor: NSCursor
 	) -> NSCursor {
@@ -4262,32 +4502,32 @@ private extension NSCursor {
 		return .crosshair
 	}
 
-	static var _windowResizeTopRight: NSCursor {
+	fileprivate static var _windowResizeTopRight: NSCursor {
 		_diagonalTopRightBottomLeft
 	}
 
-	static var _windowResizeTopLeft: NSCursor {
+	fileprivate static var _windowResizeTopLeft: NSCursor {
 		_diagonalTopLeftBottomRight
 	}
 
-	static var _windowResizeBottomLeft: NSCursor {
+	fileprivate static var _windowResizeBottomLeft: NSCursor {
 		_diagonalTopRightBottomLeft
 	}
 
-	static var _windowResizeBottomRight: NSCursor {
+	fileprivate static var _windowResizeBottomRight: NSCursor {
 		_diagonalTopLeftBottomRight
 	}
 }
 
-private extension CGRect {
-	func clamp(_ point: CGPoint) -> CGPoint {
+extension CGRect {
+	fileprivate func clamp(_ point: CGPoint) -> CGPoint {
 		CGPoint(
 			x: point.x.clamped(to: minX...maxX),
 			y: point.y.clamped(to: minY...maxY)
 		)
 	}
 
-	func normalizedRect(anchor: CGPoint, current: CGPoint) -> CGRect {
+	fileprivate func normalizedRect(anchor: CGPoint, current: CGPoint) -> CGRect {
 		let clampedAnchor = clamp(anchor)
 		let clampedCurrent = clamp(current)
 		return CGRect(
@@ -4321,8 +4561,8 @@ private enum FrozenSelectionTransformKind {
 	case resizeBottomRight
 }
 
-private extension FrozenSelectionTransformKind {
-	static func hitTest(
+extension FrozenSelectionTransformKind {
+	fileprivate static func hitTest(
 		at point: CGPoint,
 		selection: CGRect
 	) -> FrozenSelectionTransformKind? {
@@ -4479,20 +4719,22 @@ private struct FrozenOverlayState {
 		}
 
 		switch activeInteraction {
-			case .pen(var points):
-				let clamped = selection.clamp(point)
-				if let lastPoint = points.last, hypot(lastPoint.x - clamped.x, lastPoint.y - clamped.y) < 1.5 {
-					return false
-				}
-				points.append(clamped)
-				self.activeInteraction = .pen(points: points)
-			case .arrow(let start, _):
-				self.activeInteraction = .arrow(start: start, current: selection.clamp(point))
-			case .mosaic(let anchor, _):
-				self.activeInteraction = .mosaic(anchor: anchor, current: selection.clamp(point))
-			case .spotlight(let anchor, _):
-				self.activeInteraction = .spotlight(anchor: anchor, current: selection.clamp(point))
+		case .pen(var points):
+			let clamped = selection.clamp(point)
+			if let lastPoint = points.last,
+				hypot(lastPoint.x - clamped.x, lastPoint.y - clamped.y) < 1.5
+			{
+				return false
 			}
+			points.append(clamped)
+			self.activeInteraction = .pen(points: points)
+		case .arrow(let start, _):
+			self.activeInteraction = .arrow(start: start, current: selection.clamp(point))
+		case .mosaic(let anchor, _):
+			self.activeInteraction = .mosaic(anchor: anchor, current: selection.clamp(point))
+		case .spotlight(let anchor, _):
+			self.activeInteraction = .spotlight(anchor: anchor, current: selection.clamp(point))
+		}
 
 		return true
 	}
@@ -4504,27 +4746,27 @@ private struct FrozenOverlayState {
 		defer { self.activeInteraction = nil }
 
 		switch activeInteraction {
-			case .pen(let points):
-				guard points.count >= 2 else {
-					return false
-				}
-				edits.append(.pen(points))
-			case .arrow(let start, let current):
-				guard hypot(start.x - current.x, start.y - current.y) >= 6 else {
-					return false
-				}
-				edits.append(.arrow(start: start, end: current))
-			case .mosaic(let anchor, let current):
-				let rect = selection.normalizedRect(anchor: anchor, current: current)
-				guard rect.width >= 6, rect.height >= 6 else {
-					return false
-				}
-				edits.append(.mosaic(rect))
-			case .spotlight(let anchor, let current):
-				let rect = selection.normalizedRect(anchor: anchor, current: current)
-				guard rect.width >= 6, rect.height >= 6 else {
-					return false
-				}
+		case .pen(let points):
+			guard points.count >= 2 else {
+				return false
+			}
+			edits.append(.pen(points))
+		case .arrow(let start, let current):
+			guard hypot(start.x - current.x, start.y - current.y) >= 6 else {
+				return false
+			}
+			edits.append(.arrow(start: start, end: current))
+		case .mosaic(let anchor, let current):
+			let rect = selection.normalizedRect(anchor: anchor, current: current)
+			guard rect.width >= 6, rect.height >= 6 else {
+				return false
+			}
+			edits.append(.mosaic(rect))
+		case .spotlight(let anchor, let current):
+			let rect = selection.normalizedRect(anchor: anchor, current: current)
+			guard rect.width >= 6, rect.height >= 6 else {
+				return false
+			}
 			edits.append(.spotlight(rect))
 		}
 
@@ -4565,7 +4807,8 @@ private struct FrozenOverlayState {
 		guard !trimmed.isEmpty else {
 			return false
 		}
-		edits.append(.text(FrozenTextAnnotation(anchor: activeTextEdit.anchor, text: activeTextEdit.text)))
+		edits.append(
+			.text(FrozenTextAnnotation(anchor: activeTextEdit.anchor, text: activeTextEdit.text)))
 		redoEdits.removeAll()
 		return true
 	}
@@ -4796,10 +5039,10 @@ enum CaptureChrome {
 	}
 
 	private static func fitsSelectionSizeBadge(_ frame: CGRect, in bounds: CGRect) -> Bool {
-		frame.minX >= bounds.minX + selectionSizeBadgeGap &&
-			frame.maxX <= bounds.maxX - selectionSizeBadgeGap &&
-			frame.minY >= bounds.minY + selectionSizeBadgeGap &&
-			frame.maxY <= bounds.maxY - selectionSizeBadgeGap
+		frame.minX >= bounds.minX + selectionSizeBadgeGap
+			&& frame.maxX <= bounds.maxX - selectionSizeBadgeGap
+			&& frame.minY >= bounds.minY + selectionSizeBadgeGap
+			&& frame.maxY <= bounds.maxY - selectionSizeBadgeGap
 	}
 
 	private static func selectionSizeBadge(
@@ -4824,8 +5067,11 @@ enum CaptureChrome {
 		let maxX = max(minX, bounds.maxX - selectionSizeBadgeGap - size.width)
 		let minY = bounds.minY + selectionSizeBadgeGap
 		let maxY = max(minY, bounds.maxY - selectionSizeBadgeGap - size.height)
-		let targetX = min(selection.maxX - selectionSizeBadgeInset - size.width, bounds.maxX - selectionSizeBadgeGap - size.width)
-		let targetY = max(selection.minY + selectionSizeBadgeInset, bounds.minY + selectionSizeBadgeGap)
+		let targetX = min(
+			selection.maxX - selectionSizeBadgeInset - size.width,
+			bounds.maxX - selectionSizeBadgeGap - size.width)
+		let targetY = max(
+			selection.minY + selectionSizeBadgeInset, bounds.minY + selectionSizeBadgeGap)
 		return CGRect(
 			x: targetX.clamped(to: minX...maxX),
 			y: targetY.clamped(to: minY...maxY),
@@ -4874,28 +5120,32 @@ enum CaptureChrome {
 			)
 			var segments: [(CGPoint, CGPoint)] = []
 			for (start, end) in horizontalRanges {
-				segments.append((
-					CGPoint(x: rect.minX + start, y: rect.minY),
-					CGPoint(x: rect.minX + end, y: rect.minY)
-				))
+				segments.append(
+					(
+						CGPoint(x: rect.minX + start, y: rect.minY),
+						CGPoint(x: rect.minX + end, y: rect.minY)
+					))
 			}
 			for (start, end) in verticalRanges {
-				segments.append((
-					CGPoint(x: rect.maxX, y: rect.minY + start),
-					CGPoint(x: rect.maxX, y: rect.minY + end)
-				))
+				segments.append(
+					(
+						CGPoint(x: rect.maxX, y: rect.minY + start),
+						CGPoint(x: rect.maxX, y: rect.minY + end)
+					))
 			}
 			for (start, end) in horizontalRanges {
-				segments.append((
-					CGPoint(x: rect.minX + start, y: rect.maxY),
-					CGPoint(x: rect.minX + end, y: rect.maxY)
-				))
+				segments.append(
+					(
+						CGPoint(x: rect.minX + start, y: rect.maxY),
+						CGPoint(x: rect.minX + end, y: rect.maxY)
+					))
 			}
 			for (start, end) in verticalRanges {
-				segments.append((
-					CGPoint(x: rect.minX, y: rect.minY + start),
-					CGPoint(x: rect.minX, y: rect.minY + end)
-				))
+				segments.append(
+					(
+						CGPoint(x: rect.minX, y: rect.minY + start),
+						CGPoint(x: rect.minX, y: rect.minY + end)
+					))
 			}
 			return segments
 		}
@@ -4942,13 +5192,15 @@ enum CaptureChrome {
 			return [(cornerKeepout, edgeLength - cornerKeepout)]
 		}
 
-		let occupiedLength = CGFloat(dashCount) * clampedDashLength + CGFloat(dashCount - 1) * gapLength
+		let occupiedLength =
+			CGFloat(dashCount) * clampedDashLength + CGFloat(dashCount - 1) * gapLength
 		let gapCount = max(dashCount - 1, 0)
-		let resolvedGapLength: CGFloat = if gapCount == 0 {
-			gapLength
-		} else {
-			gapLength + max(usableLength - occupiedLength, 0) / CGFloat(gapCount)
-		}
+		let resolvedGapLength: CGFloat =
+			if gapCount == 0 {
+				gapLength
+			} else {
+				gapLength + max(usableLength - occupiedLength, 0) / CGFloat(gapCount)
+			}
 
 		return (0..<dashCount).map { index in
 			let start = cornerKeepout + CGFloat(index) * (clampedDashLength + resolvedGapLength)
@@ -4989,7 +5241,8 @@ enum CaptureChrome {
 			if cornerDistance <= segmentStart || cornerDistance >= dashEnd {
 				continue
 			}
-			pushDashedBorderSegment(for: rect, start: segmentStart, end: cornerDistance, into: &segments)
+			pushDashedBorderSegment(
+				for: rect, start: segmentStart, end: cornerDistance, into: &segments)
 			segmentStart = cornerDistance
 		}
 		if segmentStart < dashEnd {
@@ -5016,7 +5269,8 @@ enum CaptureChrome {
 		let height = rect.height
 		let perimeter = dashedBorderPerimeter(for: rect)
 		let normalizedDistance = distance.truncatingRemainder(dividingBy: perimeter)
-		let resolvedDistance = normalizedDistance < 0 ? normalizedDistance + perimeter : normalizedDistance
+		let resolvedDistance =
+			normalizedDistance < 0 ? normalizedDistance + perimeter : normalizedDistance
 
 		if resolvedDistance < width {
 			return CGPoint(x: rect.minX + resolvedDistance, y: rect.minY)
@@ -5043,13 +5297,16 @@ enum CaptureChrome {
 		return (rect.width + rect.height) * 2
 	}
 
-	static func palette(for theme: CaptureChromeTheme, settings: NativeHostSettings) -> CaptureChromePalette {
+	static func palette(for theme: CaptureChromeTheme, settings: NativeHostSettings)
+		-> CaptureChromePalette
+	{
 		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
 		let tint = CGFloat(settings.hudTint.clamped(to: 0...1))
 		let hue = CGFloat(settings.hudTintHue.clamped(to: 0...1))
 		let foregrounds = foregroundPalette(for: theme)
 		let bodyAlphaFloor: CGFloat = theme == .dark ? 0.06 : 0.08
-		let fillOpacity: CGFloat = settings.hudGlassEnabled
+		let fillOpacity: CGFloat =
+			settings.hudGlassEnabled
 			? max(bodyAlphaFloor, opacity * 0.20)
 			: opacity
 		let tintColor = NSColor(
@@ -5060,67 +5317,87 @@ enum CaptureChrome {
 		)
 
 		switch theme {
-			case .dark:
-				let baseFill = NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 1)
-				let bodyFill = baseFill
-					.mixed(with: tintColor, fraction: tint * 0.55)
-					.withAlphaComponent(fillOpacity)
-				return CaptureChromePalette(
-					foregrounds: foregrounds,
-					bodyFill: bodyFill,
-					outerStroke: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.12, 0.14 + opacity * 0.10)),
-					shadow: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.16, 0.12 + opacity * 0.18)),
-					swatchStroke: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 36 / 255),
-					keycapFill: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.06, opacity * 0.18)),
-					keycapStroke: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.10, opacity * 0.22)),
-					toolbarHoverBackground: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.08, opacity * 0.18)),
-					toolbarSelectedBackground: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: max(0.12, opacity * 0.24))
-				)
-			case .light:
-				let baseFill = NSColor(srgbRed: 232 / 255, green: 236 / 255, blue: 243 / 255, alpha: 1)
-				let bodyFill = baseFill
-					.mixed(with: tintColor, fraction: tint * 0.45)
-					.withAlphaComponent(fillOpacity)
-				return CaptureChromePalette(
-					foregrounds: foregrounds,
-					bodyFill: bodyFill,
-					outerStroke: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.12, 0.16 + opacity * 0.12)),
-					shadow: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, 0.06 + opacity * 0.14)),
-					swatchStroke: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 44 / 255),
-					keycapFill: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.05, opacity * 0.12)),
-					keycapStroke: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, opacity * 0.20)),
-					toolbarHoverBackground: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.08, opacity * 0.16)),
-					toolbarSelectedBackground: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, opacity * 0.22))
-				)
+		case .dark:
+			let baseFill = NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 1)
+			let bodyFill =
+				baseFill
+				.mixed(with: tintColor, fraction: tint * 0.55)
+				.withAlphaComponent(fillOpacity)
+			return CaptureChromePalette(
+				foregrounds: foregrounds,
+				bodyFill: bodyFill,
+				outerStroke: NSColor(
+					srgbRed: 1, green: 1, blue: 1, alpha: max(0.12, 0.14 + opacity * 0.10)),
+				shadow: NSColor(
+					srgbRed: 0, green: 0, blue: 0, alpha: max(0.16, 0.12 + opacity * 0.18)),
+				swatchStroke: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 36 / 255),
+				keycapFill: NSColor(
+					srgbRed: 1, green: 1, blue: 1, alpha: max(0.06, opacity * 0.18)),
+				keycapStroke: NSColor(
+					srgbRed: 1, green: 1, blue: 1, alpha: max(0.10, opacity * 0.22)),
+				toolbarHoverBackground: NSColor(
+					srgbRed: 1, green: 1, blue: 1, alpha: max(0.08, opacity * 0.18)),
+				toolbarSelectedBackground: NSColor(
+					srgbRed: 1, green: 1, blue: 1, alpha: max(0.12, opacity * 0.24))
+			)
+		case .light:
+			let baseFill = NSColor(srgbRed: 232 / 255, green: 236 / 255, blue: 243 / 255, alpha: 1)
+			let bodyFill =
+				baseFill
+				.mixed(with: tintColor, fraction: tint * 0.45)
+				.withAlphaComponent(fillOpacity)
+			return CaptureChromePalette(
+				foregrounds: foregrounds,
+				bodyFill: bodyFill,
+				outerStroke: NSColor(
+					srgbRed: 0, green: 0, blue: 0, alpha: max(0.12, 0.16 + opacity * 0.12)),
+				shadow: NSColor(
+					srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, 0.06 + opacity * 0.14)),
+				swatchStroke: NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 44 / 255),
+				keycapFill: NSColor(
+					srgbRed: 0, green: 0, blue: 0, alpha: max(0.05, opacity * 0.12)),
+				keycapStroke: NSColor(
+					srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, opacity * 0.20)),
+				toolbarHoverBackground: NSColor(
+					srgbRed: 0, green: 0, blue: 0, alpha: max(0.08, opacity * 0.16)),
+				toolbarSelectedBackground: NSColor(
+					srgbRed: 0, green: 0, blue: 0, alpha: max(0.10, opacity * 0.22))
+			)
 		}
 	}
 
-	private static func foregroundPalette(for theme: CaptureChromeTheme) -> CaptureChromeForegroundPalette {
+	private static func foregroundPalette(for theme: CaptureChromeTheme)
+		-> CaptureChromeForegroundPalette
+	{
 		switch theme {
-			case .dark:
-				let primary = NSColor(srgbRed: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 235 / 255)
-				let secondary = NSColor(srgbRed: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 150 / 255)
-				let controlBase = NSColor.white
-				return CaptureChromeForegroundPalette(
-					primary: primary,
-					secondary: secondary,
-					control: controlBase.withAlphaComponent(160 / 255),
-					controlHover: controlBase.withAlphaComponent(222 / 255),
-					controlSelected: controlBase,
-					controlDisabled: controlBase.withAlphaComponent(72 / 255)
-				)
-			case .light:
-				let primary = NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 235 / 255)
-				let secondary = NSColor(srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 160 / 255)
-				let controlBase = NSColor.black
-				return CaptureChromeForegroundPalette(
-					primary: primary,
-					secondary: secondary,
-					control: controlBase.withAlphaComponent(182 / 255),
-					controlHover: controlBase.withAlphaComponent(220 / 255),
-					controlSelected: controlBase,
-					controlDisabled: controlBase.withAlphaComponent(82 / 255)
-				)
+		case .dark:
+			let primary = NSColor(
+				srgbRed: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 235 / 255)
+			let secondary = NSColor(
+				srgbRed: 235 / 255, green: 235 / 255, blue: 245 / 255, alpha: 150 / 255)
+			let controlBase = NSColor.white
+			return CaptureChromeForegroundPalette(
+				primary: primary,
+				secondary: secondary,
+				control: controlBase.withAlphaComponent(160 / 255),
+				controlHover: controlBase.withAlphaComponent(222 / 255),
+				controlSelected: controlBase,
+				controlDisabled: controlBase.withAlphaComponent(72 / 255)
+			)
+		case .light:
+			let primary = NSColor(
+				srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 235 / 255)
+			let secondary = NSColor(
+				srgbRed: 28 / 255, green: 28 / 255, blue: 32 / 255, alpha: 160 / 255)
+			let controlBase = NSColor.black
+			return CaptureChromeForegroundPalette(
+				primary: primary,
+				secondary: secondary,
+				control: controlBase.withAlphaComponent(182 / 255),
+				controlHover: controlBase.withAlphaComponent(220 / 255),
+				controlSelected: controlBase,
+				controlDisabled: controlBase.withAlphaComponent(82 / 255)
+			)
 		}
 	}
 
@@ -5135,7 +5412,8 @@ enum CaptureChrome {
 	) -> NSColor {
 		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
 		if hasGlass {
-			return palette.bodyFill.withAlphaComponent(max(palette.bodyFill.alphaComponent, max(0.18, opacity * 0.34)))
+			return palette.bodyFill.withAlphaComponent(
+				max(palette.bodyFill.alphaComponent, max(0.18, opacity * 0.34)))
 		}
 		return palette.bodyFill.withAlphaComponent(max(0.42, opacity * 0.82))
 	}
@@ -5153,8 +5431,8 @@ extension Double {
 	}
 }
 
-private extension NSColor {
-	func mixed(with other: NSColor, fraction: CGFloat) -> NSColor {
+extension NSColor {
+	fileprivate func mixed(with other: NSColor, fraction: CGFloat) -> NSColor {
 		let amount = fraction.clamped(to: 0...1)
 		guard
 			let lhs = usingColorSpace(.sRGB),
@@ -5177,8 +5455,8 @@ extension String {
 	}
 }
 
-private extension NSImage {
-	func tinted(with color: NSColor) -> NSImage {
+extension NSImage {
+	fileprivate func tinted(with color: NSColor) -> NSImage {
 		let tinted = copy() as? NSImage ?? self
 		tinted.isTemplate = true
 		let image = NSImage(size: tinted.size)

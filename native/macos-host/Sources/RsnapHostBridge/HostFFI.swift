@@ -1,6 +1,6 @@
+import CRsnapHostFFI
 import CoreGraphics
 import Foundation
-import CRsnapHostFFI
 
 public struct SessionConfiguration: Equatable, Sendable {
 	public var allowTextInput: Bool
@@ -251,17 +251,17 @@ public enum HostBridgeError: Error, CustomStringConvertible {
 
 	public var description: String {
 		switch self {
-		case let .abiVersionMismatch(expected, actual):
+		case .abiVersionMismatch(let expected, let actual):
 			return "ABI mismatch: expected \(expected), got \(actual)"
 		case .sessionCreationFailed:
 			return "Failed to create rsnap host session."
-		case let .ffiStatus(context, code):
+		case .ffiStatus(let context, let code):
 			return "FFI status \(code) while \(context)"
-		case let .invalidSceneKind(rawValue):
+		case .invalidSceneKind(let rawValue):
 			return "Unknown scene kind \(rawValue)"
-		case let .invalidCursorIntent(rawValue):
+		case .invalidCursorIntent(let rawValue):
 			return "Unknown cursor intent \(rawValue)"
-		case let .invalidRequestKind(rawValue):
+		case .invalidRequestKind(let rawValue):
 			return "Unknown host request kind \(rawValue)"
 		}
 	}
@@ -370,7 +370,7 @@ public final class RsnapHostSession {
 				has_highlighted_window: 0,
 				toolbar_item_kind: 0
 			)
-		case let .pointerMoved(point, rgb, activeMonitor, highlightedWindow):
+		case .pointerMoved(let point, let rgb, let activeMonitor, let highlightedWindow):
 			return RsnapHostEvent(
 				kind: RSNAP_HOST_EVENT_POINTER_MOVED.rawValue,
 				point: encode(point: point),
@@ -383,7 +383,7 @@ public final class RsnapHostSession {
 				has_highlighted_window: highlightedWindow == nil ? 0 : 1,
 				toolbar_item_kind: 0
 			)
-		case let .primaryInteractionStarted(point, activeMonitor, highlightedWindow):
+		case .primaryInteractionStarted(let point, let activeMonitor, let highlightedWindow):
 			return RsnapHostEvent(
 				kind: RSNAP_HOST_EVENT_PRIMARY_INTERACTION_STARTED.rawValue,
 				point: encode(point: point),
@@ -396,7 +396,7 @@ public final class RsnapHostSession {
 				has_highlighted_window: highlightedWindow == nil ? 0 : 1,
 				toolbar_item_kind: 0
 			)
-		case let .primaryInteractionUpdated(point, activeMonitor, highlightedWindow):
+		case .primaryInteractionUpdated(let point, let activeMonitor, let highlightedWindow):
 			return RsnapHostEvent(
 				kind: RSNAP_HOST_EVENT_PRIMARY_INTERACTION_UPDATED.rawValue,
 				point: encode(point: point),
@@ -409,7 +409,7 @@ public final class RsnapHostSession {
 				has_highlighted_window: highlightedWindow == nil ? 0 : 1,
 				toolbar_item_kind: 0
 			)
-		case let .primaryInteractionCompleted(point, activeMonitor, highlightedWindow):
+		case .primaryInteractionCompleted(let point, let activeMonitor, let highlightedWindow):
 			return RsnapHostEvent(
 				kind: RSNAP_HOST_EVENT_PRIMARY_INTERACTION_COMPLETED.rawValue,
 				point: encode(point: point),
@@ -432,7 +432,7 @@ public final class RsnapHostSession {
 			return eventWith(kind: RSNAP_HOST_EVENT_RECOGNIZE_TEXT_REQUESTED.rawValue)
 		case .toggleLoupe:
 			return eventWith(kind: RSNAP_HOST_EVENT_TOGGLE_LOUPE.rawValue)
-		case let .toolbarItemInvoked(item):
+		case .toolbarItemInvoked(let item):
 			return RsnapHostEvent(
 				kind: RSNAP_HOST_EVENT_TOOLBAR_ITEM_INVOKED.rawValue,
 				point: RsnapPoint(),
@@ -452,18 +452,18 @@ public final class RsnapHostSession {
 		var reportValue = RsnapHostReport()
 
 		switch report {
-		case let .freezeSnapshotCommitted(selection):
+		case .freezeSnapshotCommitted(let selection):
 			reportValue.kind = RSNAP_HOST_REPORT_FREEZE_SNAPSHOT_COMMITTED.rawValue
 			reportValue.selection = encode(rect: selection)
 			reportValue.has_selection = 1
-		case let .hostEffectCompleted(effect):
+		case .hostEffectCompleted(let effect):
 			reportValue.kind = RSNAP_HOST_REPORT_HOST_EFFECT_COMPLETED.rawValue
 			reportValue.effect_kind = effect.rawValue
-		case let .permissionChanged(permission, granted):
+		case .permissionChanged(let permission, let granted):
 			reportValue.kind = RSNAP_HOST_REPORT_PERMISSION_CHANGED.rawValue
 			reportValue.permission_kind = permission.rawValue
 			reportValue.granted = granted ? 1 : 0
-		case let .statusMessage(message):
+		case .statusMessage(let message):
 			reportValue.kind = RSNAP_HOST_REPORT_STATUS_MESSAGE.rawValue
 			encodeStatusMessage(message, into: &reportValue)
 		}
@@ -483,10 +483,14 @@ public final class RsnapHostSession {
 			mode: mode,
 			cursorIntent: cursorIntent,
 			pointer: scene.has_pointer == 0 ? nil : decode(point: scene.pointer),
-			activeMonitor: scene.has_active_monitor == 0 ? nil : decode(monitor: scene.active_monitor),
-			highlightedWindow: scene.has_highlighted_window == 0 ? nil : decode(window: scene.highlighted_window),
-			liveSelectionPreview: scene.has_live_selection_preview == 0 ? nil : decode(rect: scene.live_selection_preview),
-			frozenSelection: scene.has_frozen_selection == 0 ? nil : decode(rect: scene.frozen_selection),
+			activeMonitor: scene.has_active_monitor == 0
+				? nil : decode(monitor: scene.active_monitor),
+			highlightedWindow: scene.has_highlighted_window == 0
+				? nil : decode(window: scene.highlighted_window),
+			liveSelectionPreview: scene.has_live_selection_preview == 0
+				? nil : decode(rect: scene.live_selection_preview),
+			frozenSelection: scene.has_frozen_selection == 0
+				? nil : decode(rect: scene.frozen_selection),
 			rgb: scene.has_rgb == 0 ? nil : decode(rgb: scene.rgb),
 			loupeVisible: scene.loupe_visible != 0,
 			toolbarItems: decodeToolbarItems(scene),
@@ -517,7 +521,8 @@ public final class RsnapHostSession {
 				guard item.present != 0, let kind = ToolbarItemKind(rawValue: item.kind) else {
 					return nil
 				}
-				return ToolbarItem(kind: kind, enabled: item.enabled != 0, selected: item.selected != 0)
+				return ToolbarItem(
+					kind: kind, enabled: item.enabled != 0, selected: item.selected != 0)
 			}
 		}
 	}
@@ -724,7 +729,8 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 		}
 
 		return LiveSampleSnapshot(
-			rgb: outSample.has_rgb == 0 ? nil : RGBSample(r: outSample.rgb.r, g: outSample.rgb.g, b: outSample.rgb.b),
+			rgb: outSample.has_rgb == 0
+				? nil : RGBSample(r: outSample.rgb.r, g: outSample.rgb.g, b: outSample.rgb.b),
 			patchWidth: Int(outSample.patch_width),
 			patchHeight: Int(outSample.patch_height),
 			patchRGBA: patchData
@@ -850,7 +856,8 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 			return nil
 		}
 		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: "peeking latest monitor RGBA snapshot", code: code)
+			throw HostBridgeError.ffiStatus(
+				context: "peeking latest monitor RGBA snapshot", code: code)
 		}
 		guard outRegion.len > 0, let rgba = outRegion.rgba else {
 			return nil

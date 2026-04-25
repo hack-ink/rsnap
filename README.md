@@ -138,7 +138,7 @@ cargo make test-macos-native-host-stage
 Native-host local loop:
 
 - `scripts/build_and_run.sh` builds `rsnap-host-ffi`, builds `native/macos-host/`, stages
-  `.native-host-dist/rsnap.app`, and launches it as a real `.app` bundle.
+  `target/rsnap-native-host/rsnap.app`, and launches it as a real `.app` bundle.
 - On macOS, `cargo run -p rsnap` now delegates to that staged native host bundle instead of
   starting a legacy Rust-owned capture runtime.
 - `.codex/environments/environment.toml` points the Codex app Run button at that script.

@@ -11,7 +11,8 @@ private enum LiveChromeTypography {
 	static let lineHeight = ceil("x=0".size(using: font).height)
 	static let commaWidth = ",".size(using: font).width
 	static let keycapTextSize = "Tab".size(using: font)
-	static let keycapFrameSize = CGSize(width: keycapTextSize.width + 12, height: keycapTextSize.height + 4)
+	static let keycapFrameSize = CGSize(
+		width: keycapTextSize.width + 12, height: keycapTextSize.height + 4)
 }
 
 struct LivePositionDisplay: Equatable {
@@ -147,7 +148,8 @@ enum PhosphorToolbarIcons {
 		return NSFont(name: name, size: size) ?? NSFont.systemFont(ofSize: size, weight: .regular)
 	}
 
-	static func cachedGlyph(for kind: ToolbarItemKind, selected: Bool, size: CGFloat) -> CachedGlyph {
+	static func cachedGlyph(for kind: ToolbarItemKind, selected: Bool, size: CGFloat) -> CachedGlyph
+	{
 		let key = GlyphKey(
 			kind: kind,
 			selected: selected,
@@ -156,14 +158,18 @@ enum PhosphorToolbarIcons {
 		if let cached = glyphCache[key] {
 			return cached
 		}
-		let attributed = NSAttributedString(string: icon(for: kind), attributes: [
-			.font: font(selected: selected, size: size),
-			NSAttributedString.Key(rawValue: kCTForegroundColorFromContextAttributeName as String): true,
-		])
+		let attributed = NSAttributedString(
+			string: icon(for: kind),
+			attributes: [
+				.font: font(selected: selected, size: size),
+				NSAttributedString.Key(
+					rawValue: kCTForegroundColorFromContextAttributeName as String): true,
+			])
 		let line = CTLineCreateWithAttributedString(attributed)
 		let glyph = CachedGlyph(
 			line: line,
-			bounds: CTLineGetBoundsWithOptions(line, [.useOpticalBounds, .excludeTypographicLeading])
+			bounds: CTLineGetBoundsWithOptions(
+				line, [.useOpticalBounds, .excludeTypographicLeading])
 		)
 		glyphCache[key] = glyph
 		return glyph
@@ -211,11 +217,13 @@ enum PhosphorToolbarIcons {
 				}
 			}
 
-			guard let entries = try? fileManager.contentsOfDirectory(
-				at: root,
-				includingPropertiesForKeys: nil,
-				options: [.skipsHiddenFiles]
-			) else {
+			guard
+				let entries = try? fileManager.contentsOfDirectory(
+					at: root,
+					includingPropertiesForKeys: nil,
+					options: [.skipsHiddenFiles]
+				)
+			else {
 				continue
 			}
 			for entry in entries where entry.pathExtension == "bundle" {
@@ -240,7 +248,8 @@ private enum ChromeVisualKind {
 @MainActor
 private enum MacOSWindowBlurBridge {
 	private typealias CGSMainConnectionIDFn = @convention(c) () -> UnsafeMutableRawPointer?
-	private typealias CGSSetWindowBackgroundBlurRadiusFn = @convention(c) (UnsafeMutableRawPointer?, Int, Int64) -> Int32
+	private typealias CGSSetWindowBackgroundBlurRadiusFn =
+		@convention(c) (UnsafeMutableRawPointer?, Int, Int64) -> Int32
 
 	private static let handle: UnsafeMutableRawPointer? = dlopen(
 		"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
@@ -315,11 +324,11 @@ private final class LiveChromeOverlayWindow: NSWindow {
 		)
 		if let lastPresentedFrame {
 			let sizeChanged =
-				abs(lastPresentedFrame.width - roundedFrame.width) > 0.5 ||
-				abs(lastPresentedFrame.height - roundedFrame.height) > 0.5
+				abs(lastPresentedFrame.width - roundedFrame.width) > 0.5
+				|| abs(lastPresentedFrame.height - roundedFrame.height) > 0.5
 			let originChanged =
-				abs(lastPresentedFrame.minX - roundedFrame.minX) > 0.5 ||
-				abs(lastPresentedFrame.minY - roundedFrame.minY) > 0.5
+				abs(lastPresentedFrame.minX - roundedFrame.minX) > 0.5
+				|| abs(lastPresentedFrame.minY - roundedFrame.minY) > 0.5
 			if sizeChanged {
 				setFrame(roundedFrame, display: false, animate: false)
 			} else if originChanged {
@@ -353,14 +362,14 @@ private final class LiveChromeOverlayWindow: NSWindow {
 			height: ceil(frame.height)
 		)
 		let sizeMatches =
-			abs(lastPresentedFrame.width - roundedFrame.width) <= 0.5 &&
-			abs(lastPresentedFrame.height - roundedFrame.height) <= 0.5
+			abs(lastPresentedFrame.width - roundedFrame.width) <= 0.5
+			&& abs(lastPresentedFrame.height - roundedFrame.height) <= 0.5
 		guard sizeMatches else {
 			return false
 		}
 		let originChanged =
-			abs(lastPresentedFrame.minX - roundedFrame.minX) > 0.5 ||
-			abs(lastPresentedFrame.minY - roundedFrame.minY) > 0.5
+			abs(lastPresentedFrame.minX - roundedFrame.minX) > 0.5
+			|| abs(lastPresentedFrame.minY - roundedFrame.minY) > 0.5
 		guard originChanged else {
 			return false
 		}
@@ -460,7 +469,9 @@ private final class LiveChromeRenderView: NSView {
 		let frame = bounds
 		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
 		let font = LiveChromeTypography.font
-		drawPill(in: frame, context: context, palette: palette, settings: snapshot.settings, strongShadow: true)
+		drawPill(
+			in: frame, context: context, palette: palette, settings: snapshot.settings,
+			strongShadow: true)
 
 		let commaSeparator = ","
 		let xGroupText = "x=\(snapshot.positionDisplay.xValueText)"
@@ -470,17 +481,24 @@ private final class LiveChromeRenderView: NSView {
 		var cursorX = CaptureChrome.hudInnerMarginX
 		let baselineY = (frame.height - positionHeight) / 2
 
-		drawText(xGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		drawText(
+			xGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
 		cursorX += snapshot.positionDisplay.xSlotWidth
-		drawText(commaSeparator, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		drawText(
+			commaSeparator, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText,
+			font: font)
 		cursorX += LiveChromeTypography.commaWidth
-		drawText(yGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
+		drawText(
+			yGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
 		cursorX += snapshot.positionDisplay.ySlotWidth + itemSpacing
 
 		let swatchRect = CGRect(x: cursorX, y: frame.midY - 5, width: 10, height: 10)
-		let swatchColor = snapshot.rgbSample.map {
-			NSColor(calibratedRed: CGFloat($0.r) / 255, green: CGFloat($0.g) / 255, blue: CGFloat($0.b) / 255, alpha: 1)
-		} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
+		let swatchColor =
+			snapshot.rgbSample.map {
+				NSColor(
+					calibratedRed: CGFloat($0.r) / 255, green: CGFloat($0.g) / 255,
+					blue: CGFloat($0.b) / 255, alpha: 1)
+			} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
 		context.setFillColor(swatchColor.cgColor)
 		context.fill(swatchRect)
 		context.setStrokeColor(palette.swatchStroke.cgColor)
@@ -528,7 +546,9 @@ private final class LiveChromeRenderView: NSView {
 		}
 		let frame = bounds
 		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
-		drawPill(in: frame, context: context, palette: palette, settings: snapshot.settings, strongShadow: true)
+		drawPill(
+			in: frame, context: context, palette: palette, settings: snapshot.settings,
+			strongShadow: true)
 
 		let imageRect = frame.insetBy(dx: 10, dy: 10)
 		context.saveGState()
@@ -536,8 +556,10 @@ private final class LiveChromeRenderView: NSView {
 		context.draw(snapshot.patch, in: imageRect)
 		context.restoreGState()
 
-		let centerX = imageRect.minX + floor(CGFloat(snapshot.patch.width) / 2) * CaptureChrome.loupeCellSize
-		let centerY = imageRect.minY + floor(CGFloat(snapshot.patch.height) / 2) * CaptureChrome.loupeCellSize
+		let centerX =
+			imageRect.minX + floor(CGFloat(snapshot.patch.width) / 2) * CaptureChrome.loupeCellSize
+		let centerY =
+			imageRect.minY + floor(CGFloat(snapshot.patch.height) / 2) * CaptureChrome.loupeCellSize
 		let centerRect = CGRect(
 			x: centerX,
 			y: centerY,
@@ -555,7 +577,9 @@ private final class LiveChromeRenderView: NSView {
 		}
 		let frame = bounds
 		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
-		drawPill(in: frame, context: context, palette: palette, settings: snapshot.settings, strongShadow: false)
+		drawPill(
+			in: frame, context: context, palette: palette, settings: snapshot.settings,
+			strongShadow: false)
 
 		for item in snapshot.items {
 			if item.selected {
@@ -564,7 +588,8 @@ private final class LiveChromeRenderView: NSView {
 				hoverPath.fill()
 			}
 
-			let symbolColor = item.enabled
+			let symbolColor =
+				item.enabled
 				? (item.selected ? palette.toolbarSelectedIcon : palette.toolbarIcon)
 				: palette.toolbarDisabledIcon
 			drawToolbarGlyph(
@@ -609,10 +634,12 @@ private final class LiveChromeRenderView: NSView {
 	}
 
 	private func drawText(_ text: String, at point: CGPoint, color: NSColor, font: NSFont) {
-		(text as NSString).draw(at: point, withAttributes: [
-			.font: font,
-			.foregroundColor: color,
-		])
+		(text as NSString).draw(
+			at: point,
+			withAttributes: [
+				.font: font,
+				.foregroundColor: color,
+			])
 	}
 
 	private func drawToolbarGlyph(

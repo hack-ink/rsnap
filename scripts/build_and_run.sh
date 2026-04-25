@@ -11,14 +11,14 @@ DEFAULT_SIGN_IDENTITY="x@acg.box"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/native/macos-host"
 COMMON_ROOT="$(cd "$(git -C "$ROOT_DIR" rev-parse --git-common-dir)/.." && pwd)"
-DIST_DIR="$COMMON_ROOT/.native-host-dist"
-APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
+STAGE_DIR="${RSNAP_NATIVE_HOST_STAGE_DIR:-$COMMON_ROOT/target/rsnap-native-host}"
+APP_BUNDLE="$STAGE_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$EXECUTABLE_NAME"
-APP_SOURCE_BINARY_CACHE="$DIST_DIR/.${EXECUTABLE_NAME}.source-bin"
-STAGE_FINGERPRINT_FILE="$DIST_DIR/.stage-fingerprint"
+APP_SOURCE_BINARY_CACHE="$STAGE_DIR/.${EXECUTABLE_NAME}.source-bin"
+STAGE_FINGERPRINT_FILE="$STAGE_DIR/.stage-fingerprint"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 APP_ICON_SOURCE="$ROOT_DIR/assets/app-icon/generated/app-icon.icns"
 APP_ICON_NAME="AppIcon.icns"
@@ -327,7 +327,7 @@ targets = [
 	"packages/rsnap-host-ffi",
 	"scripts/build_and_run.sh",
 ]
-skip_dirs = {".git", ".worktrees", "target", ".build", ".native-host-dist"}
+skip_dirs = {".git", ".worktrees", "target", ".build"}
 
 hasher = hashlib.sha256()
 for value in (rust_profile, swift_configuration, app_version):

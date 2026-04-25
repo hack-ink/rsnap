@@ -19,6 +19,9 @@ let package = Package(
 		.executable(name: "RsnapHostBridgeProbe", targets: ["RsnapHostBridgeProbe"]),
 		.executable(name: "RsnapNativeHost", targets: ["RsnapNativeHost"]),
 	],
+	dependencies: [
+		.package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", exact: "0.63.2"),
+	],
 	targets: [
 		.systemLibrary(
 			name: "CRsnapHostFFI",

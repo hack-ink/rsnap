@@ -7,6 +7,8 @@
 # | lint-fix        | composite |     |
 # | lint-rust       | command   |     |
 # | lint-fix-rust   | extend    |     |
+# | lint-swift      | composite |     |
+# | lint-fix-swift  | composite |     |
 # | lint-vstyle     | command   |     |
 # | lint-fix-vstyle | command   |     |
 
@@ -14,6 +16,7 @@
 workspace = false
 dependencies = [
 	"lint-rust",
+	"lint-swift",
 	"lint-vstyle",
 ]
 
@@ -21,6 +24,7 @@ dependencies = [
 workspace = false
 dependencies = [
 	"lint-fix-rust",
+	"lint-fix-swift",
 	"lint-fix-vstyle",
 ]
 
@@ -78,6 +82,70 @@ args = [
 	"-D",
 	"warnings",
 ]
+
+[tasks.lint-swift]
+workspace = false
+dependencies = [
+	"lint-swift-format",
+	"lint-swiftlint",
+	"build-swift-strict",
+]
+
+[tasks.lint-fix-swift]
+workspace = false
+dependencies = [
+	"fmt-swift",
+	"lint-fix-swiftlint",
+	"lint-swiftlint",
+	"build-swift-strict",
+]
+
+[tasks.lint-swift-format]
+workspace = false
+command = "swift"
+args = [
+	"format",
+	"lint",
+	"--recursive",
+	"--strict",
+	"--parallel",
+	"native/macos-host/Sources",
+	"scripts/smoke/lib/live-loupe-mouse-path.swift",
+]
+
+[tasks.lint-swiftlint]
+workspace = false
+script = '''
+SWIFT_PATH="$(xcrun --find swift)"
+export TOOLCHAIN_DIR="${TOOLCHAIN_DIR:-${SWIFT_PATH%/usr/bin/swift}}"
+swift package \
+	--package-path native/macos-host \
+	--disable-automatic-resolution \
+	plugin \
+	--allow-writing-to-package-directory \
+	swiftlint \
+	-- \
+	--strict \
+	--quiet \
+	--no-cache
+'''
+
+[tasks.lint-fix-swiftlint]
+workspace = false
+script = '''
+SWIFT_PATH="$(xcrun --find swift)"
+export TOOLCHAIN_DIR="${TOOLCHAIN_DIR:-${SWIFT_PATH%/usr/bin/swift}}"
+swift package \
+	--package-path native/macos-host \
+	--disable-automatic-resolution \
+	plugin \
+	--allow-writing-to-package-directory \
+	swiftlint \
+	-- \
+	--fix \
+	--quiet \
+	--no-cache
+'''
 
 [tasks.lint-vstyle]
 workspace = false
@@ -167,6 +235,19 @@ args = [
 	"rsnap-host-ffi",
 ]
 
+[tasks.build-swift-strict]
+workspace = false
+dependencies = [
+	"build-host-ffi-staticlib",
+]
+script = '''
+RSNAP_HOST_FFI_LIB_DIR="$PWD/target/debug" \
+swift build --package-path native/macos-host \
+	--explicit-target-dependency-import-check error \
+	-Xswiftc -warnings-as-errors \
+	-Xswiftc -strict-concurrency=complete
+'''
+
 [tasks.test-macos-native-host]
 workspace = false
 dependencies = [
@@ -183,7 +264,7 @@ workspace = false
 script = '''
 RSNAP_NATIVE_HOST_SKIP_SIGN=1 ./scripts/build_and_run.sh stage
 COMMON_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
-APP_PATH="$COMMON_ROOT/.native-host-dist/rsnap.app"
+APP_PATH="${RSNAP_NATIVE_HOST_STAGE_DIR:-$COMMON_ROOT/target/rsnap-native-host}/rsnap.app"
 test -x "$APP_PATH/Contents/MacOS/RsnapNativeHost"
 test -f "$APP_PATH/Contents/Info.plist"
 test -f "$APP_PATH/Contents/Resources/AppIcon.icns"
@@ -199,6 +280,8 @@ plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true
 # | fmt-check      | composite |     |
 # | fmt-rust       | command   |     |
 # | fmt-rust-check | extend    |     |
+# | fmt-swift      | command   |     |
+# | fmt-swift-check| command   |     |
 # | fmt-toml       | command   |     |
 # | fmt-toml-check | extend    |     |
 
@@ -206,6 +289,7 @@ plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true
 workspace = false
 dependencies = [
 	"fmt-rust",
+	"fmt-swift",
 	"fmt-toml",
 ]
 
@@ -213,6 +297,7 @@ dependencies = [
 workspace = false
 dependencies = [
 	"fmt-rust-check",
+	"fmt-swift-check",
 	"fmt-toml-check",
 ]
 
@@ -237,6 +322,23 @@ args = [
 	"fmt",
 	"--check",
 ]
+
+[tasks.fmt-swift]
+workspace = false
+command = "swift"
+args = [
+	"format",
+	"format",
+	"--in-place",
+	"--recursive",
+	"--parallel",
+	"native/macos-host/Sources",
+	"scripts/smoke/lib/live-loupe-mouse-path.swift",
+]
+
+[tasks.fmt-swift-check]
+workspace = false
+extend = "lint-swift-format"
 
 
 # Meta
