@@ -17,7 +17,7 @@ enum LiveSamplingBudget {
 	static let hoverWindowCacheRefreshInterval: TimeInterval = 1.0 / 15.0
 }
 
-private let frozenEffectCIContext = CIContext(options: nil)
+@MainActor private let frozenEffectCIContext = CIContext(options: nil)
 private let menuBarLogger = Logger(
 	subsystem: Bundle.main.bundleIdentifier ?? "ink.hack.rsnap",
 	category: "MenuBar"
@@ -55,7 +55,7 @@ private enum CaptureSuccessSound {
 	}
 }
 
-private func makeFrozenMosaicImage(from image: CGImage) -> CGImage? {
+@MainActor private func makeFrozenMosaicImage(from image: CGImage) -> CGImage? {
 	let ciImage = CIImage(cgImage: image)
 	guard let filter = CIFilter(name: "CIPixellate") else {
 		return nil
