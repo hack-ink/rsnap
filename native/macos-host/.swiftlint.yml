@@ -1,0 +1,24 @@
+strict: true
+included:
+  - Sources
+excluded:
+  - .build
+reporter: xcode
+
+only_rules:
+  - empty_count
+  - fallthrough
+  - fatal_error_message
+  - first_where
+  - force_cast
+  - force_try
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - legacy_random
+  - redundant_nil_coalescing
+  - unavailable_function
+
+force_cast: error
+force_try: error
+force_unwrapping: error
+implicitly_unwrapped_optional: error

@@ -31,7 +31,9 @@ final class LiveFrameStreamBroker {
 		}
 		let mainDisplayHeight = Self.mainDisplayHeight(for: screens)
 		self.mainDisplayHeight = mainDisplayHeight
-		let nextMonitors = screens.compactMap { Self.monitorSnapshot(for: $0, mainDisplayHeight: mainDisplayHeight) }
+		let nextMonitors = screens.compactMap {
+			Self.monitorSnapshot(for: $0, mainDisplayHeight: mainDisplayHeight)
+		}
 		let targetMonitor = prewarmPoint.flatMap { point in
 			nextMonitors.first(where: { $0.appKitFrame.contains(point) })
 		}
@@ -75,11 +77,13 @@ final class LiveFrameStreamBroker {
 			return nil
 		}
 		let samplerPoint = Self.appKitPointToQuartz(point, mainDisplayHeight: mainDisplayHeight)
-		guard let sample = try? sampler.sampleCursor(
-			monitor: samplerMonitorSnapshot(for: monitor),
-			point: samplerPoint,
-			patchSidePixels: sidePixels
-		) else {
+		guard
+			let sample = try? sampler.sampleCursor(
+				monitor: samplerMonitorSnapshot(for: monitor),
+				point: samplerPoint,
+				patchSidePixels: sidePixels
+			)
+		else {
 			return nil
 		}
 
@@ -130,7 +134,8 @@ final class LiveFrameStreamBroker {
 		}
 		for _ in 0..<3 {
 			if let snapshot = try? sampler.peekLatestMonitorImage(monitor: encodedMonitor),
-				let image = cgImage(width: snapshot.width, height: snapshot.height, rgba: snapshot.rgba)
+				let image = cgImage(
+					width: snapshot.width, height: snapshot.height, rgba: snapshot.rgba)
 			{
 				return (frame: monitor.appKitFrame, image: image)
 			}
@@ -225,7 +230,8 @@ final class LiveFrameStreamBroker {
 		)
 	}
 
-	private static func appKitPointToQuartz(_ point: CGPoint, mainDisplayHeight: CGFloat) -> CGPoint {
+	private static func appKitPointToQuartz(_ point: CGPoint, mainDisplayHeight: CGFloat) -> CGPoint
+	{
 		CGPoint(x: point.x, y: mainDisplayHeight - point.y - 1)
 	}
 
@@ -275,8 +281,8 @@ final class LiveFrameStreamBroker {
 	}
 }
 
-private extension NSScreen {
-	var displayID: CGDirectDisplayID? {
+extension NSScreen {
+	fileprivate var displayID: CGDirectDisplayID? {
 		(deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
 	}
 }

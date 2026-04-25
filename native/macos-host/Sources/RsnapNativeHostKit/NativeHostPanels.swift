@@ -9,16 +9,30 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 	private let settingsStore: NativeHostSettingsStore
 	private let outputDirectoryValueLabel = NSTextField(labelWithString: "")
 	private let prefixField = NSTextField(string: "")
-	private let namingControl = NSSegmentedControl(labels: OutputNamingPreference.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
-	private let toolbarPlacementControl = NSSegmentedControl(labels: ToolbarPlacementPreference.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
-	private let frozenResizeHandleOrientationControl = NSSegmentedControl(labels: FrozenResizeHandleOrientationPreference.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
-	private let showAltHintKeycapButton = NSButton(checkboxWithTitle: "Show Tab hint in HUD", target: nil, action: nil)
-	private let hudGlassEnabledButton = NSButton(checkboxWithTitle: "Glass HUD", target: nil, action: nil)
-	private let loupeSampleSizeControl = NSSegmentedControl(labels: LoupeSampleSizePreference.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
-	private let hudOpacitySlider = NSSlider(value: 50, minValue: 0, maxValue: 100, target: nil, action: nil)
-	private let hudBlurSlider = NSSlider(value: 50, minValue: 0, maxValue: 100, target: nil, action: nil)
-	private let hudTintSlider = NSSlider(value: 50, minValue: 0, maxValue: 100, target: nil, action: nil)
-	private let hudHueSlider = NSSlider(value: 215, minValue: 0, maxValue: 360, target: nil, action: nil)
+	private let namingControl = NSSegmentedControl(
+		labels: OutputNamingPreference.allCases.map(\.title), trackingMode: .selectOne, target: nil,
+		action: nil)
+	private let toolbarPlacementControl = NSSegmentedControl(
+		labels: ToolbarPlacementPreference.allCases.map(\.title), trackingMode: .selectOne,
+		target: nil, action: nil)
+	private let frozenResizeHandleOrientationControl = NSSegmentedControl(
+		labels: FrozenResizeHandleOrientationPreference.allCases.map(\.title),
+		trackingMode: .selectOne, target: nil, action: nil)
+	private let showAltHintKeycapButton = NSButton(
+		checkboxWithTitle: "Show Tab hint in HUD", target: nil, action: nil)
+	private let hudGlassEnabledButton = NSButton(
+		checkboxWithTitle: "Glass HUD", target: nil, action: nil)
+	private let loupeSampleSizeControl = NSSegmentedControl(
+		labels: LoupeSampleSizePreference.allCases.map(\.title), trackingMode: .selectOne,
+		target: nil, action: nil)
+	private let hudOpacitySlider = NSSlider(
+		value: 50, minValue: 0, maxValue: 100, target: nil, action: nil)
+	private let hudBlurSlider = NSSlider(
+		value: 50, minValue: 0, maxValue: 100, target: nil, action: nil)
+	private let hudTintSlider = NSSlider(
+		value: 50, minValue: 0, maxValue: 100, target: nil, action: nil)
+	private let hudHueSlider = NSSlider(
+		value: 215, minValue: 0, maxValue: 360, target: nil, action: nil)
 	private let hudTintColorWell = NSColorWell(frame: NSRect(x: 0, y: 0, width: 44, height: 24))
 	private let hudOpacityValueLabel = NSTextField(labelWithString: "")
 	private let hudBlurValueLabel = NSTextField(labelWithString: "")
@@ -74,11 +88,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		stack.addArrangedSubview(makeSectionTitle("Overlay"))
 		stack.addArrangedSubview(makeOverlayRow())
 		stack.addArrangedSubview(makeLoupeSampleSizeRow())
-		stack.addArrangedSubview(makeSliderRow(title: "Opacity", slider: hudOpacitySlider, valueLabel: hudOpacityValueLabel))
-		stack.addArrangedSubview(makeSliderRow(title: "Blur", slider: hudBlurSlider, valueLabel: hudBlurValueLabel))
-		stack.addArrangedSubview(makeSliderRow(title: "Tint", slider: hudTintSlider, valueLabel: hudTintValueLabel))
+		stack.addArrangedSubview(
+			makeSliderRow(
+				title: "Opacity", slider: hudOpacitySlider, valueLabel: hudOpacityValueLabel))
+		stack.addArrangedSubview(
+			makeSliderRow(title: "Blur", slider: hudBlurSlider, valueLabel: hudBlurValueLabel))
+		stack.addArrangedSubview(
+			makeSliderRow(title: "Tint", slider: hudTintSlider, valueLabel: hudTintValueLabel))
 		stack.addArrangedSubview(makeTintColorRow())
-		stack.addArrangedSubview(makeSliderRow(title: "Hue", slider: hudHueSlider, valueLabel: hudHueValueLabel))
+		stack.addArrangedSubview(
+			makeSliderRow(title: "Hue", slider: hudHueSlider, valueLabel: hudHueValueLabel))
 		stack.addArrangedSubview(makeToolbarPlacementRow())
 		stack.addArrangedSubview(makeFrozenResizeHandleOrientationRow())
 
@@ -111,9 +130,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		outputDirectoryValueLabel.lineBreakMode = .byTruncatingMiddle
 		outputDirectoryValueLabel.font = .systemFont(ofSize: 12)
 		outputDirectoryValueLabel.textColor = .secondaryLabelColor
-		outputDirectoryValueLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+		outputDirectoryValueLabel.setContentCompressionResistancePriority(
+			.defaultLow, for: .horizontal)
 
-		let chooseButton = NSButton(title: "Choose…", target: self, action: #selector(chooseOutputDirectory))
+		let chooseButton = NSButton(
+			title: "Choose…", target: self, action: #selector(chooseOutputDirectory))
 		let row = NSStackView(views: [outputDirectoryValueLabel, chooseButton])
 		row.orientation = .horizontal
 		row.alignment = .centerY
@@ -188,13 +209,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		title.font = .systemFont(ofSize: 13, weight: .medium)
 		container.addArrangedSubview(title)
 
-		let subtitle = NSTextField(labelWithString: "Controls whether the corner brackets open outward or inward.")
+		let subtitle = NSTextField(
+			labelWithString: "Controls whether the corner brackets open outward or inward.")
 		subtitle.font = .systemFont(ofSize: 12)
 		subtitle.textColor = .secondaryLabelColor
 		container.addArrangedSubview(subtitle)
 
 		frozenResizeHandleOrientationControl.target = self
-		frozenResizeHandleOrientationControl.action = #selector(frozenResizeHandleOrientationChanged)
+		frozenResizeHandleOrientationControl.action = #selector(
+			frozenResizeHandleOrientationChanged)
 		container.addArrangedSubview(frozenResizeHandleOrientationControl)
 		return container
 	}
@@ -282,7 +305,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		hudTintColorWell.target = self
 		hudTintColorWell.action = #selector(hudTintColorChanged)
 
-		let hint = NSTextField(labelWithString: "Chooses the hue directly; tint strength still uses the Tint slider.")
+		let hint = NSTextField(
+			labelWithString: "Chooses the hue directly; tint strength still uses the Tint slider.")
 		hint.font = .systemFont(ofSize: 12)
 		hint.textColor = .secondaryLabelColor
 
@@ -298,12 +322,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		let settings = settingsStore.settings
 		outputDirectoryValueLabel.stringValue = settings.outputDirectory.path
 		prefixField.stringValue = settings.outputFilenamePrefix
-		namingControl.selectedSegment = OutputNamingPreference.allCases.firstIndex(of: settings.outputNaming) ?? 0
-		toolbarPlacementControl.selectedSegment = ToolbarPlacementPreference.allCases.firstIndex(of: settings.toolbarPlacement) ?? 0
-		frozenResizeHandleOrientationControl.selectedSegment = FrozenResizeHandleOrientationPreference.allCases.firstIndex(of: settings.frozenResizeHandleOrientation) ?? 0
+		namingControl.selectedSegment =
+			OutputNamingPreference.allCases.firstIndex(of: settings.outputNaming) ?? 0
+		toolbarPlacementControl.selectedSegment =
+			ToolbarPlacementPreference.allCases.firstIndex(of: settings.toolbarPlacement) ?? 0
+		frozenResizeHandleOrientationControl.selectedSegment =
+			FrozenResizeHandleOrientationPreference.allCases.firstIndex(
+				of: settings.frozenResizeHandleOrientation) ?? 0
 		showAltHintKeycapButton.state = settings.showAltHintKeycap ? .on : .off
 		hudGlassEnabledButton.state = settings.hudGlassEnabled ? .on : .off
-		loupeSampleSizeControl.selectedSegment = LoupeSampleSizePreference.allCases.firstIndex(of: settings.loupeSampleSize) ?? 0
+		loupeSampleSizeControl.selectedSegment =
+			LoupeSampleSizePreference.allCases.firstIndex(of: settings.loupeSampleSize) ?? 0
 		hudOpacitySlider.doubleValue = settings.hudOpacity * 100
 		hudBlurSlider.doubleValue = settings.hudBlur * 100
 		hudTintSlider.doubleValue = settings.hudTint * 100
@@ -372,7 +401,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		guard FrozenResizeHandleOrientationPreference.allCases.indices.contains(index) else {
 			return
 		}
-		settingsStore.update { $0.frozenResizeHandleOrientation = FrozenResizeHandleOrientationPreference.allCases[index] }
+		settingsStore.update {
+			$0.frozenResizeHandleOrientation =
+				FrozenResizeHandleOrientationPreference.allCases[index]
+		}
 		refreshFromSettings()
 	}
 
@@ -461,14 +493,23 @@ final class PermissionsWindowController: NSWindowController {
 		let accessibilityStatus = NSTextField(labelWithString: "")
 		let inputMonitoringStatus = NSTextField(labelWithString: "")
 
-		let screenRecordingButton = NSButton(title: "Request / Open Settings", target: nil, action: nil)
-		let accessibilityButton = NSButton(title: "Request / Open Settings", target: nil, action: nil)
-		let inputMonitoringButton = NSButton(title: "Request / Open Settings", target: nil, action: nil)
+		let screenRecordingButton = NSButton(
+			title: "Request / Open Settings", target: nil, action: nil)
+		let accessibilityButton = NSButton(
+			title: "Request / Open Settings", target: nil, action: nil)
+		let inputMonitoringButton = NSButton(
+			title: "Request / Open Settings", target: nil, action: nil)
 
 		rows = [
-			Row(title: "Screen Recording", kind: .screenRecording, statusLabel: screenRecordingStatus, actionButton: screenRecordingButton),
-			Row(title: "Accessibility", kind: .accessibility, statusLabel: accessibilityStatus, actionButton: accessibilityButton),
-			Row(title: "Input Monitoring", kind: .inputMonitoring, statusLabel: inputMonitoringStatus, actionButton: inputMonitoringButton),
+			Row(
+				title: "Screen Recording", kind: .screenRecording,
+				statusLabel: screenRecordingStatus, actionButton: screenRecordingButton),
+			Row(
+				title: "Accessibility", kind: .accessibility, statusLabel: accessibilityStatus,
+				actionButton: accessibilityButton),
+			Row(
+				title: "Input Monitoring", kind: .inputMonitoring,
+				statusLabel: inputMonitoringStatus, actionButton: inputMonitoringButton),
 		]
 
 		super.init(window: window)
@@ -476,7 +517,8 @@ final class PermissionsWindowController: NSWindowController {
 		for row in rows {
 			row.actionButton.target = self
 			row.actionButton.action = #selector(requestPermission(_:))
-			row.actionButton.identifier = NSUserInterfaceItemIdentifier(rawValue: String(row.kind.rawValue))
+			row.actionButton.identifier = NSUserInterfaceItemIdentifier(
+				rawValue: String(row.kind.rawValue))
 		}
 
 		window.contentView = buildContentView()
@@ -500,8 +542,10 @@ final class PermissionsWindowController: NSWindowController {
 		for row in rows {
 			let granted = NativePermissions.status(for: row.kind)
 			let required = NativePermissions.requiredForCurrentNativeHost(row.kind)
-			row.statusLabel.stringValue = granted ? "Granted" : (required ? "Required" : "Not needed")
-			row.statusLabel.textColor = granted
+			row.statusLabel.stringValue =
+				granted ? "Granted" : (required ? "Required" : "Not needed")
+			row.statusLabel.textColor =
+				granted
 				? NSColor.systemGreen
 				: (required ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor)
 			row.actionButton.isEnabled = !granted && required
@@ -520,7 +564,10 @@ final class PermissionsWindowController: NSWindowController {
 		stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
 		stack.translatesAutoresizingMaskIntoConstraints = false
 
-		let intro = NSTextField(wrappingLabelWithString: "Normal native capture only needs Screen Recording. Accessibility and Input Monitoring are reserved for scroll automation.")
+		let intro = NSTextField(
+			wrappingLabelWithString:
+				"Normal native capture only needs Screen Recording. Accessibility and Input Monitoring are reserved for scroll automation."
+		)
 		intro.maximumNumberOfLines = 0
 		intro.textColor = .secondaryLabelColor
 		stack.addArrangedSubview(intro)
@@ -607,11 +654,14 @@ enum NativePermissions {
 		let urlString: String
 		switch kind {
 		case .screenRecording:
-			urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+			urlString =
+				"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
 		case .accessibility:
-			urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+			urlString =
+				"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 		case .inputMonitoring:
-			urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+			urlString =
+				"x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
 		}
 
 		guard let url = URL(string: urlString) else {

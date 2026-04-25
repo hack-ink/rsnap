@@ -16,7 +16,7 @@ final class GlobalHotKeyCenter {
 		let modifiers: UInt32
 	}
 
-	private static let signature = OSType(0x52534E50) // RSNP
+	private static let signature = OSType(0x5253_4E50)  // RSNP
 
 	var onCaptureRequested: (() -> Void)?
 	var onCancelRequested: (() -> Void)?
@@ -37,7 +37,8 @@ final class GlobalHotKeyCenter {
 				guard let eventRef, let userData else {
 					return OSStatus(eventNotHandledErr)
 				}
-				let center = Unmanaged<GlobalHotKeyCenter>.fromOpaque(userData).takeUnretainedValue()
+				let center = Unmanaged<GlobalHotKeyCenter>.fromOpaque(userData)
+					.takeUnretainedValue()
 				return center.handleHotKey(eventRef)
 			},
 			1,
@@ -90,7 +91,7 @@ final class GlobalHotKeyCenter {
 	}
 
 	private func unregister(_ binding: Binding) {
-		if let hotKeyRef = hotKeyRefs[binding] ?? nil {
+		if let hotKeyRef = hotKeyRefs[binding] {
 			UnregisterEventHotKey(hotKeyRef)
 		}
 		hotKeyRefs[binding] = nil
@@ -108,7 +109,9 @@ final class GlobalHotKeyCenter {
 			nil,
 			&hotKeyID
 		)
-		guard status == noErr, hotKeyID.signature == Self.signature, let binding = Binding(rawValue: hotKeyID.id) else {
+		guard status == noErr, hotKeyID.signature == Self.signature,
+			let binding = Binding(rawValue: hotKeyID.id)
+		else {
 			return OSStatus(eventNotHandledErr)
 		}
 
@@ -129,7 +132,8 @@ final class GlobalHotKeyCenter {
 	)
 
 	private static func parseCaptureHotKey(_ raw: String) -> HotKeyDefinition? {
-		let tokens = raw
+		let tokens =
+			raw
 			.split(separator: "+")
 			.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
 			.filter { !$0.isEmpty }

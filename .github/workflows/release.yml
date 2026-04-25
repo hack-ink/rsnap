@@ -187,10 +187,10 @@ jobs:
       - name: Hash
         run: |
           mkdir -p artifacts
-          mv rsnap-*/* artifacts/
+          mv -- rsnap-*/* artifacts/
           cd artifacts
-          sha256sum * | tee ../SHA256
-          md5sum * | tee ../MD5
+          sha256sum -- * | tee ../SHA256
+          md5sum -- * | tee ../MD5
           mv ../SHA256 .
           mv ../MD5 .
 
