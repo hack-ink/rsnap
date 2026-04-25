@@ -27,10 +27,10 @@ Use the smallest command that matches the regression surface:
   `scripts/smoke/replay-scroll-capture-self-check.sh`
 - Scroll-capture semantic trace analysis (first bad frame, under-consumption, overshoot):
   `scripts/smoke/analyze-scroll-capture-trace.sh`
-- Component render regressions in egui-heavy UI such as the settings window:
-  `cargo bench -p rsnap --bench settings_window -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1`
 - Scroll-capture or image-processing hot-path regressions:
   `cargo bench -p rsnap-overlay --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1`
+- Native-host live chrome regressions:
+  `scripts/perf/macos.sh`
 - General local deterministic performance sweep before or after a change:
   `scripts/perf/local.sh`
 - Dedicated macOS environment validation without driving the real smoke scenario:
@@ -48,7 +48,8 @@ worker-pairwise self-check path when no recorded user trace is available.
 ## What each high-level task does
 
 - `scripts/perf/local.sh`
-  - Runs both committed Criterion benchmark targets with the repo's smoke-sized sample settings.
+  - Runs the committed scroll-capture Criterion benchmark target with the repo's smoke-sized
+    sample settings.
   - Use this for routine local comparisons and for regressions that do not require a real desktop
     session.
 - `scripts/perf/self-check-macos.sh`
@@ -80,9 +81,6 @@ checks. When you need a named before/after comparison, use the direct benchmark 
 Criterion can save or load a baseline:
 
 ```bash
-cargo bench -p rsnap --bench settings_window -- --save-baseline local-settings-ui
-cargo bench -p rsnap --bench settings_window -- --baseline local-settings-ui
-
 cargo bench -p rsnap-overlay --bench scroll_capture -- --save-baseline local-scroll-capture
 cargo bench -p rsnap-overlay --bench scroll_capture -- --baseline local-scroll-capture
 ```
@@ -96,7 +94,7 @@ Local deterministic benches:
 
 - Do not require a desktop session.
 - Do not require Screen Recording or UI automation permissions.
-- Are the primary surface for repeatable component-render and scroll-capture comparisons.
+- Are the primary surface for repeatable scroll-capture and image-processing comparisons.
 
 Dedicated macOS smoke:
 
@@ -108,7 +106,7 @@ Dedicated macOS smoke:
 
 ## Interpreting failures
 
-- direct benchmark regressions from the settings-window or scroll-capture targets:
+- direct benchmark regressions from the scroll-capture target:
   compare scenario-level numbers against your saved baseline and inspect the relevant benchmark
   group before escalating to GUI smoke.
 - `scripts/smoke/replay-scroll-capture.sh` failures:

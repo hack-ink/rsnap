@@ -27,6 +27,7 @@ fontdb             = { workspace = true }
 fontdue            = { workspace = true }
 image              = { workspace = true }
 pollster           = { workspace = true }
+rsnap-capture-core = { workspace = true }
 serde              = { workspace = true }
 serde_json         = { version = "1.0" }
 thiserror          = { workspace = true }

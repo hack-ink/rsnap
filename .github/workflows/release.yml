@@ -58,10 +58,6 @@ jobs:
       - name: Add target
         run: rustup target add ${{ matrix.target.name }}
 
-      - name: Install cargo-bundle (macOS)
-        if: matrix.target.os == 'macos-latest'
-        run: cargo install cargo-bundle --locked
-
       - name: Build
         if: matrix.target.os != 'macos-latest'
         run: cargo build --profile final-release --locked --target ${{ matrix.target.name }}
@@ -119,11 +115,14 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
           security find-identity -v -p codesigning "${KEYCHAIN_PATH}"
 
-          ./scripts/bundle-macos.sh
+          RSNAP_NATIVE_HOST_RUST_PROFILE=final-release \
+          RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION=release \
+          RSNAP_NATIVE_HOST_SKIP_SIGN=1 \
+          ./script/build_and_run.sh stage
 
-          APP_PATH="target/${{ matrix.target.name }}/final-release/bundle/osx/Rsnap.app"
+          APP_PATH=".native-host-dist/rsnap.app"
           if [[ ! -d "${APP_PATH}" ]]; then
-            echo "Failed to find bundled app at ${APP_PATH}" >&2
+            echo "Failed to find staged native host app at ${APP_PATH}" >&2
             exit 1
           fi
 
