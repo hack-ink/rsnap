@@ -30,19 +30,36 @@ final class NativeHostSettingsStore {
 		self.defaults = defaults
 		let baseSettings = NativeHostSettings.defaults
 		var settings = NativeHostSettings(
-			captureHotkey: defaults.string(forKey: DefaultsKey.captureHotkey) ?? baseSettings.captureHotkey,
-			outputDirectory: defaults.url(forKey: DefaultsKey.outputDirectory) ?? baseSettings.outputDirectory,
-			outputFilenamePrefix: defaults.string(forKey: DefaultsKey.outputFilenamePrefix) ?? baseSettings.outputFilenamePrefix,
-			outputNaming: OutputNamingPreference(rawValue: defaults.string(forKey: DefaultsKey.outputNaming) ?? "") ?? baseSettings.outputNaming,
-			toolbarPlacement: ToolbarPlacementPreference(rawValue: defaults.string(forKey: DefaultsKey.toolbarPlacement) ?? "") ?? baseSettings.toolbarPlacement,
-			frozenResizeHandleOrientation: FrozenResizeHandleOrientationPreference(rawValue: defaults.string(forKey: DefaultsKey.frozenResizeHandleOrientation) ?? "") ?? baseSettings.frozenResizeHandleOrientation,
-			showAltHintKeycap: defaults.object(forKey: DefaultsKey.showAltHintKeycap) as? Bool ?? baseSettings.showAltHintKeycap,
-			hudGlassEnabled: defaults.object(forKey: DefaultsKey.hudGlassEnabled) as? Bool ?? baseSettings.hudGlassEnabled,
-			hudOpacity: defaults.object(forKey: DefaultsKey.hudOpacity) as? Double ?? baseSettings.hudOpacity,
-			hudBlur: defaults.object(forKey: DefaultsKey.hudBlur) as? Double ?? baseSettings.hudBlur,
-			hudTint: defaults.object(forKey: DefaultsKey.hudTint) as? Double ?? baseSettings.hudTint,
-			hudTintHue: defaults.object(forKey: DefaultsKey.hudTintHue) as? Double ?? baseSettings.hudTintHue,
-			loupeSampleSize: LoupeSampleSizePreference(rawValue: defaults.string(forKey: DefaultsKey.loupeSampleSize) ?? "") ?? baseSettings.loupeSampleSize
+			captureHotkey: defaults.string(forKey: DefaultsKey.captureHotkey)
+				?? baseSettings.captureHotkey,
+			outputDirectory: defaults.url(forKey: DefaultsKey.outputDirectory)
+				?? baseSettings.outputDirectory,
+			outputFilenamePrefix: defaults.string(forKey: DefaultsKey.outputFilenamePrefix)
+				?? baseSettings.outputFilenamePrefix,
+			outputNaming: OutputNamingPreference(
+				rawValue: defaults.string(forKey: DefaultsKey.outputNaming) ?? "")
+				?? baseSettings.outputNaming,
+			toolbarPlacement: ToolbarPlacementPreference(
+				rawValue: defaults.string(forKey: DefaultsKey.toolbarPlacement) ?? "")
+				?? baseSettings.toolbarPlacement,
+			frozenResizeHandleOrientation: FrozenResizeHandleOrientationPreference(
+				rawValue: defaults.string(forKey: DefaultsKey.frozenResizeHandleOrientation) ?? "")
+				?? baseSettings.frozenResizeHandleOrientation,
+			showAltHintKeycap: defaults.object(forKey: DefaultsKey.showAltHintKeycap) as? Bool
+				?? baseSettings.showAltHintKeycap,
+			hudGlassEnabled: defaults.object(forKey: DefaultsKey.hudGlassEnabled) as? Bool
+				?? baseSettings.hudGlassEnabled,
+			hudOpacity: defaults.object(forKey: DefaultsKey.hudOpacity) as? Double
+				?? baseSettings.hudOpacity,
+			hudBlur: defaults.object(forKey: DefaultsKey.hudBlur) as? Double
+				?? baseSettings.hudBlur,
+			hudTint: defaults.object(forKey: DefaultsKey.hudTint) as? Double
+				?? baseSettings.hudTint,
+			hudTintHue: defaults.object(forKey: DefaultsKey.hudTintHue) as? Double
+				?? baseSettings.hudTintHue,
+			loupeSampleSize: LoupeSampleSizePreference(
+				rawValue: defaults.string(forKey: DefaultsKey.loupeSampleSize) ?? "")
+				?? baseSettings.loupeSampleSize
 		)
 		if !defaults.bool(forKey: DefaultsKey.migratedLegacyToml),
 			let migrated = Self.migrateLegacyToml(into: settings)
@@ -76,7 +93,9 @@ final class NativeHostSettingsStore {
 		defaults.set(settings.outputFilenamePrefix, forKey: DefaultsKey.outputFilenamePrefix)
 		defaults.set(settings.outputNaming.rawValue, forKey: DefaultsKey.outputNaming)
 		defaults.set(settings.toolbarPlacement.rawValue, forKey: DefaultsKey.toolbarPlacement)
-		defaults.set(settings.frozenResizeHandleOrientation.rawValue, forKey: DefaultsKey.frozenResizeHandleOrientation)
+		defaults.set(
+			settings.frozenResizeHandleOrientation.rawValue,
+			forKey: DefaultsKey.frozenResizeHandleOrientation)
 		defaults.set(settings.showAltHintKeycap, forKey: DefaultsKey.showAltHintKeycap)
 		defaults.set(settings.hudGlassEnabled, forKey: DefaultsKey.hudGlassEnabled)
 		defaults.set(settings.hudOpacity, forKey: DefaultsKey.hudOpacity)
@@ -86,7 +105,8 @@ final class NativeHostSettingsStore {
 		defaults.set(settings.loupeSampleSize.rawValue, forKey: DefaultsKey.loupeSampleSize)
 	}
 
-	private static func migrateLegacyToml(into settings: NativeHostSettings) -> NativeHostSettings? {
+	private static func migrateLegacyToml(into settings: NativeHostSettings) -> NativeHostSettings?
+	{
 		let legacyPath = FileManager.default.homeDirectoryForCurrentUser
 			.appendingPathComponent("Library", isDirectory: true)
 			.appendingPathComponent("Application Support", isDirectory: true)
@@ -100,11 +120,13 @@ final class NativeHostSettingsStore {
 		let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
 		for rawLine in lines {
 			let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-			guard !line.isEmpty, !line.hasPrefix("#"), let separator = line.firstIndex(of: "=") else {
+			guard !line.isEmpty, !line.hasPrefix("#"), let separator = line.firstIndex(of: "=")
+			else {
 				continue
 			}
 			let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
-			let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+			let value = line[line.index(after: separator)...].trimmingCharacters(
+				in: .whitespacesAndNewlines)
 			let unquoted = value.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
 			switch key {
 			case "capture_hotkey":
@@ -227,7 +249,10 @@ struct NativeHostSettings: Equatable {
 	private static func sanitizeFilenamePrefix(_ raw: String) -> String {
 		let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 		let sanitized = trimmed.map { character -> Character in
-			if character.isASCII && (character.isLetter || character.isNumber || character == "-" || character == "_") {
+			if character.isASCII
+				&& (character.isLetter || character.isNumber || character == "-"
+					|| character == "_")
+			{
 				return character
 			}
 			return "_"
@@ -312,8 +337,8 @@ enum LoupeSampleSizePreference: String, CaseIterable {
 	}
 }
 
-private extension Comparable {
-	func clamped(to range: ClosedRange<Self>) -> Self {
+extension Comparable {
+	fileprivate func clamped(to range: ClosedRange<Self>) -> Self {
 		min(max(self, range.lowerBound), range.upperBound)
 	}
 }

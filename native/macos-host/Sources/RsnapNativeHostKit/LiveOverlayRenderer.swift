@@ -46,13 +46,15 @@ private enum LiveOverlayTypography {
 	static let lineHeight = ceil("x=0".size(using: font).height)
 	static let commaWidth = ",".size(using: font).width
 	static let keycapTextSize = "Tab".size(using: font)
-	static let keycapFrameSize = CGSize(width: keycapTextSize.width + 12, height: keycapTextSize.height + 4)
+	static let keycapFrameSize = CGSize(
+		width: keycapTextSize.width + 12, height: keycapTextSize.height + 4)
 }
 
 final class WindowSnapshotFeed {
 	private static let ownPID = ProcessInfo.processInfo.processIdentifier
 	private static let maxWindowLayerForTargeting = 3
-	private let queue = DispatchQueue(label: "ink.hack.rsnap.native-host.window-snapshot-feed", qos: .userInitiated)
+	private let queue = DispatchQueue(
+		label: "ink.hack.rsnap.native-host.window-snapshot-feed", qos: .userInitiated)
 	private let stateLock = NSLock()
 	private var timer: DispatchSourceTimer?
 	private var desktopFrame: CGRect = .null
@@ -65,7 +67,8 @@ final class WindowSnapshotFeed {
 		latestSnapshots = initialSnapshots
 		stateLock.unlock()
 		let timer = DispatchSource.makeTimerSource(queue: queue)
-		timer.schedule(deadline: .now(), repeating: LiveSamplingBudget.hoverWindowCacheRefreshInterval)
+		timer.schedule(
+			deadline: .now(), repeating: LiveSamplingBudget.hoverWindowCacheRefreshInterval)
 		timer.setEventHandler { [weak self] in
 			self?.refresh()
 		}
@@ -90,7 +93,8 @@ final class WindowSnapshotFeed {
 
 	static func snapshots(desktopFrame: CGRect) -> [WindowSnapshot] {
 		let candidateWindows =
-			(CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+			(CGWindowListCopyWindowInfo(
+				[.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
 				as? [[String: Any]])
 			?? []
 		var snapshots: [WindowSnapshot] = []
@@ -147,7 +151,8 @@ final class WindowSnapshotFeed {
 
 final class ChromeSampleFeed: @unchecked Sendable {
 	private let broker: LiveFrameStreamBroker
-	private let queue = DispatchQueue(label: "ink.hack.rsnap.native-host.chrome-sample-feed", qos: .userInteractive)
+	private let queue = DispatchQueue(
+		label: "ink.hack.rsnap.native-host.chrome-sample-feed", qos: .userInteractive)
 	private let stateLock = NSLock()
 	private var timer: DispatchSourceTimer?
 	private var desiredPoint: CGPoint?
@@ -183,12 +188,13 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		stateLock.lock()
 		let nextSidePixels = max(1, sidePixels)
 		let sidePixelsChanged = nextSidePixels != desiredSidePixels
-		let pointChanged = desiredPoint.map { current in
-			guard let point else {
-				return true
-			}
-			return abs(current.x - point.x) > 0.5 || abs(current.y - point.y) > 0.5
-		} ?? (point != nil)
+		let pointChanged =
+			desiredPoint.map { current in
+				guard let point else {
+					return true
+				}
+				return abs(current.x - point.x) > 0.5 || abs(current.y - point.y) > 0.5
+			} ?? (point != nil)
 		if sidePixelsChanged {
 			latestSample = nil
 		}
@@ -247,7 +253,8 @@ final class GlassPatchFeed {
 		let image: CGImage
 	}
 
-	private let queue = DispatchQueue(label: "ink.hack.rsnap.native-host.glass-patch-feed", qos: .utility)
+	private let queue = DispatchQueue(
+		label: "ink.hack.rsnap.native-host.glass-patch-feed", qos: .utility)
 	private let stateLock = NSLock()
 	private let capturePatch: (CGRect) -> CGImage?
 	private let ciContext = CIContext(options: nil)
@@ -306,7 +313,8 @@ final class GlassPatchFeed {
 
 		for (kind, request) in requests {
 			if let cachedPatch = cachedPatches[kind] {
-				let cachedCenter = CGPoint(x: cachedPatch.request.globalRect.midX, y: cachedPatch.request.globalRect.midY)
+				let cachedCenter = CGPoint(
+					x: cachedPatch.request.globalRect.midX, y: cachedPatch.request.globalRect.midY)
 				let nextCenter = CGPoint(x: request.globalRect.midX, y: request.globalRect.midY)
 				let distance = hypot(cachedCenter.x - nextCenter.x, cachedCenter.y - nextCenter.y)
 				if distance < 24, now - cachedPatch.capturedAt < 0.08 {
@@ -358,7 +366,8 @@ final class GlassPatchFeed {
 		let tunedImage: CIImage
 		if let colorControls = CIFilter(name: "CIColorControls") {
 			colorControls.setValue(outputImage, forKey: kCIInputImageKey)
-			colorControls.setValue(1.08 + tintAmount.clamped(to: 0...1) * 0.34, forKey: kCIInputSaturationKey)
+			colorControls.setValue(
+				1.08 + tintAmount.clamped(to: 0...1) * 0.34, forKey: kCIInputSaturationKey)
 			colorControls.setValue(1.03, forKey: kCIInputContrastKey)
 			colorControls.setValue(brightnessBias, forKey: kCIInputBrightnessKey)
 			tunedImage = colorControls.outputImage?.cropped(to: ciImage.extent) ?? outputImage
@@ -380,9 +389,9 @@ final class LiveDisplayLinkDriver: @unchecked Sendable {
 	func start(displayID: CGDirectDisplayID, targetFramesPerSecond: Int) {
 		let sanitizedTarget = max(1, targetFramesPerSecond)
 		stateLock.lock()
-		let alreadyRunning = displayLink != nil &&
-			currentDisplayID == displayID &&
-			currentTargetFramesPerSecond == sanitizedTarget
+		let alreadyRunning =
+			displayLink != nil && currentDisplayID == displayID
+			&& currentTargetFramesPerSecond == sanitizedTarget
 		stateLock.unlock()
 		guard !alreadyRunning else {
 			return
@@ -474,7 +483,7 @@ private final class SelectionFlowBandLayer: CALayer {
 	]
 	private static let lightPalette = darkPalette
 	private static let passes: [(width: CGFloat, alphaScale: CGFloat)] = [
-		(2.4, 0.52),
+		(2.4, 0.52)
 	]
 
 	private var focusRect: CGRect = .null
@@ -497,6 +506,7 @@ private final class SelectionFlowBandLayer: CALayer {
 		}
 	}
 
+	@available(*, unavailable)
 	required init?(coder: NSCoder) {
 		fatalError("init(coder:) has not been implemented")
 	}
@@ -633,7 +643,8 @@ private final class SelectionFlowBandLayer: CALayer {
 		intensity: CGFloat
 	) -> NSColor {
 		let palette = theme == .dark ? Self.darkPalette : Self.lightPalette
-		let normalized = progress.truncatingRemainder(dividingBy: 1) >= 0
+		let normalized =
+			progress.truncatingRemainder(dividingBy: 1) >= 0
 			? progress.truncatingRemainder(dividingBy: 1)
 			: progress.truncatingRemainder(dividingBy: 1) + 1
 		let bandPosition = normalized * CGFloat(palette.count)
@@ -703,10 +714,13 @@ private final class SelectionFlowBandLayer: CALayer {
 			if lengthSquared(normal) <= CGFloat.ulpOfOne {
 				if lengthSquared(nextTangent) > CGFloat.ulpOfOne {
 					let nextLength = length(nextTangent)
-					normal = CGVector(dx: -nextTangent.dy / nextLength, dy: nextTangent.dx / nextLength)
+					normal = CGVector(
+						dx: -nextTangent.dy / nextLength, dy: nextTangent.dx / nextLength)
 				} else if lengthSquared(previousTangent) > CGFloat.ulpOfOne {
 					let previousLength = length(previousTangent)
-					normal = CGVector(dx: -previousTangent.dy / previousLength, dy: previousTangent.dx / previousLength)
+					normal = CGVector(
+						dx: -previousTangent.dy / previousLength,
+						dy: previousTangent.dx / previousLength)
 				}
 			}
 			if lengthSquared(normal) > CGFloat.ulpOfOne {
@@ -721,7 +735,9 @@ private final class SelectionFlowBandLayer: CALayer {
 			var previous = normals[firstNonZero]
 			if lengthSquared(previous) > CGFloat.ulpOfOne {
 				for index in (firstNonZero + 1)..<count {
-					if lengthSquared(normals[index]) > CGFloat.ulpOfOne, dot(normals[index], previous) < 0 {
+					if lengthSquared(normals[index]) > CGFloat.ulpOfOne,
+						dot(normals[index], previous) < 0
+					{
 						normals[index] = scaledVector(normals[index], by: -1)
 					}
 					if lengthSquared(normals[index]) > CGFloat.ulpOfOne {
@@ -730,7 +746,9 @@ private final class SelectionFlowBandLayer: CALayer {
 				}
 				if firstNonZero > 0 {
 					for index in stride(from: firstNonZero - 1, through: 0, by: -1) {
-						if lengthSquared(normals[index]) > CGFloat.ulpOfOne, dot(normals[index], previous) < 0 {
+						if lengthSquared(normals[index]) > CGFloat.ulpOfOne,
+							dot(normals[index], previous) < 0
+						{
 							normals[index] = scaledVector(normals[index], by: -1)
 						}
 						if lengthSquared(normals[index]) > CGFloat.ulpOfOne {
@@ -951,9 +969,9 @@ final class LiveOverlayRenderer {
 		rootLayer.masksToBounds = false
 		frozenDisplayLayer.isHidden = true
 		rootLayer.addSublayer(frozenDisplayLayer)
-		[topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer].forEach {
-			rootLayer.addSublayer($0)
-			$0.isHidden = true
+		for scrimLayer in [topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer] {
+			rootLayer.addSublayer(scrimLayer)
+			scrimLayer.isHidden = true
 		}
 		hoverGlowLayer.fillColor = NSColor.clear.cgColor
 		hoverGlowLayer.lineWidth = 2.25
@@ -972,17 +990,24 @@ final class LiveOverlayRenderer {
 		selectionSizeLayer.contentsScale = 2
 		rootLayer.addSublayer(selectionSizeLayer)
 
-		[hudLayer, loupeLayer].forEach {
-			$0.masksToBounds = false
-			rootLayer.addSublayer($0)
+		for chromeLayer in [hudLayer, loupeLayer] {
+			chromeLayer.masksToBounds = false
+			rootLayer.addSublayer(chromeLayer)
 		}
-		[hudGlassLayer, hudFillLayer, hudStrokeLayer, hudSwatchLayer, hudPositionLayer, hudHexLayer, hudKeycapLayer, hudKeycapTextLayer].forEach {
-			hudLayer.addSublayer($0)
+		for hudSublayer in [
+			hudGlassLayer, hudFillLayer, hudStrokeLayer, hudSwatchLayer, hudPositionLayer,
+			hudHexLayer, hudKeycapLayer, hudKeycapTextLayer,
+		] {
+			hudLayer.addSublayer(hudSublayer)
 		}
-		[loupeGlassLayer, loupeFillLayer, loupeStrokeLayer, loupePatchLayer, loupeCenterLayer].forEach {
-			loupeLayer.addSublayer($0)
+		for loupeSublayer in [
+			loupeGlassLayer, loupeFillLayer, loupeStrokeLayer, loupePatchLayer, loupeCenterLayer,
+		] {
+			loupeLayer.addSublayer(loupeSublayer)
 		}
-		[hudLayer, loupeLayer].forEach { $0.isHidden = true }
+		for chromeLayer in [hudLayer, loupeLayer] {
+			chromeLayer.isHidden = true
+		}
 	}
 
 	private func renderCurrentSnapshot() {
@@ -1002,7 +1027,8 @@ final class LiveOverlayRenderer {
 	}
 
 	private func renderFrozenDisplay(_ snapshot: LivePreviewSnapshot) {
-		guard let image = snapshot.frozenDisplayImage, let frame = snapshot.frozenDisplayFrame else {
+		guard let image = snapshot.frozenDisplayImage, let frame = snapshot.frozenDisplayFrame
+		else {
 			frozenDisplayLayer.isHidden = true
 			frozenDisplayLayer.contents = nil
 			return
@@ -1017,7 +1043,9 @@ final class LiveOverlayRenderer {
 	private func renderFocus(_ snapshot: LivePreviewSnapshot) {
 		let focusRect = snapshot.dragSelectionLocal ?? snapshot.hoverSelectionLocal
 		guard let focusRect else {
-			[topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer].forEach { $0.isHidden = true }
+			for scrimLayer in [topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer] {
+				scrimLayer.isHidden = true
+			}
 			hoverGlowLayer.isHidden = true
 			hoverFlowLayer.hide()
 			dragBorderOutlineLayer.isHidden = true
@@ -1030,12 +1058,22 @@ final class LiveOverlayRenderer {
 		let scrimColor = NSColor(calibratedWhite: 0, alpha: scrimAlpha).cgColor
 		let bounds = snapshot.bounds
 		let rects = [
-			CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: max(0, focusRect.minY - bounds.minY)),
-			CGRect(x: bounds.minX, y: focusRect.minY, width: max(0, focusRect.minX - bounds.minX), height: focusRect.height),
-			CGRect(x: focusRect.maxX, y: focusRect.minY, width: max(0, bounds.maxX - focusRect.maxX), height: focusRect.height),
-			CGRect(x: bounds.minX, y: focusRect.maxY, width: bounds.width, height: max(0, bounds.maxY - focusRect.maxY)),
+			CGRect(
+				x: bounds.minX, y: bounds.minY, width: bounds.width,
+				height: max(0, focusRect.minY - bounds.minY)),
+			CGRect(
+				x: bounds.minX, y: focusRect.minY, width: max(0, focusRect.minX - bounds.minX),
+				height: focusRect.height),
+			CGRect(
+				x: focusRect.maxX, y: focusRect.minY, width: max(0, bounds.maxX - focusRect.maxX),
+				height: focusRect.height),
+			CGRect(
+				x: bounds.minX, y: focusRect.maxY, width: bounds.width,
+				height: max(0, bounds.maxY - focusRect.maxY)),
 		]
-		for (layer, rect) in zip([topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer], rects) {
+		for (layer, rect) in zip(
+			[topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer], rects)
+		{
 			layer.backgroundColor = scrimColor
 			layer.frame = rect
 			layer.isHidden = rect.width <= 0 || rect.height <= 0
@@ -1055,12 +1093,16 @@ final class LiveOverlayRenderer {
 			let borderRect = focusRect.insetBy(dx: -borderOutset, dy: -borderOutset)
 			let frozenPath = CaptureChrome.dashedBorderPath(for: borderRect)
 			dragBorderOutlineLayer.path = frozenPath
-			dragBorderOutlineLayer.strokeColor = NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255).cgColor
+			dragBorderOutlineLayer.strokeColor =
+				NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
+				.cgColor
 			dragBorderOutlineLayer.lineWidth = CaptureChrome.frozenDashedBorderWidth + 0.75
 			dragBorderOutlineLayer.lineCap = .butt
 			dragBorderOutlineLayer.lineJoin = .miter
 			dragBorderLayer.path = frozenPath
-			dragBorderLayer.strokeColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 248 / 255).cgColor
+			dragBorderLayer.strokeColor =
+				NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 248 / 255)
+				.cgColor
 			dragBorderLayer.lineWidth = CaptureChrome.frozenDashedBorderWidth
 			dragBorderLayer.lineCap = .butt
 			dragBorderLayer.lineJoin = .miter
@@ -1080,12 +1122,15 @@ final class LiveOverlayRenderer {
 			let borderRect = dragSelection.insetBy(dx: -borderOutset, dy: -borderOutset)
 			let dragPath = CaptureChrome.dashedBorderPath(for: borderRect)
 			dragBorderOutlineLayer.path = dragPath
-			dragBorderOutlineLayer.strokeColor = NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255).cgColor
+			dragBorderOutlineLayer.strokeColor =
+				NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
+				.cgColor
 			dragBorderOutlineLayer.lineWidth = CaptureChrome.liveDashedBorderWidth + 0.75
 			dragBorderOutlineLayer.lineCap = .butt
 			dragBorderOutlineLayer.lineJoin = .miter
 			dragBorderLayer.path = dragPath
-			dragBorderLayer.strokeColor = NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor
+			dragBorderLayer.strokeColor =
+				NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor
 			dragBorderLayer.lineWidth = CaptureChrome.liveDashedBorderWidth
 			dragBorderLayer.lineCap = .butt
 			dragBorderLayer.lineJoin = .miter
@@ -1151,7 +1196,8 @@ final class LiveOverlayRenderer {
 		)
 
 		let font = LiveOverlayTypography.font
-		let positionText = "x=\(snapshot.positionDisplay.xValueText), y=\(snapshot.positionDisplay.yValueText)"
+		let positionText =
+			"x=\(snapshot.positionDisplay.xValueText), y=\(snapshot.positionDisplay.yValueText)"
 		let positionSize = CGSize(
 			width: snapshot.positionDisplay.xSlotWidth
 				+ LiveOverlayTypography.commaWidth
@@ -1165,22 +1211,32 @@ final class LiveOverlayRenderer {
 			text: positionText,
 			font: font,
 			color: palette.labelText,
-			frame: CGRect(x: cursorX, y: baselineY, width: ceil(positionSize.width), height: ceil(positionSize.height)),
+			frame: CGRect(
+				x: cursorX, y: baselineY, width: ceil(positionSize.width),
+				height: ceil(positionSize.height)),
 			alignment: .left
 		)
 		cursorX += positionSize.width + 10
 
-		hudSwatchLayer.frame = CGRect(x: cursorX, y: hudLayer.bounds.midY - 5, width: 10, height: 10)
+		hudSwatchLayer.frame = CGRect(
+			x: cursorX, y: hudLayer.bounds.midY - 5, width: 10, height: 10)
 		hudSwatchLayer.cornerRadius = 0
-		let swatchColor = snapshot.rgbSample.map {
-			NSColor(calibratedRed: CGFloat($0.r) / 255, green: CGFloat($0.g) / 255, blue: CGFloat($0.b) / 255, alpha: 1)
-		} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
+		let swatchColor =
+			snapshot.rgbSample.map {
+				NSColor(
+					calibratedRed: CGFloat($0.r) / 255, green: CGFloat($0.g) / 255,
+					blue: CGFloat($0.b) / 255, alpha: 1)
+			} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
 		hudSwatchLayer.backgroundColor = swatchColor.cgColor
 		hudSwatchLayer.borderColor = palette.swatchStroke.cgColor
 		hudSwatchLayer.borderWidth = 1
 		cursorX += 20
 
-		applyText(hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: palette.labelText, frame: CGRect(x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth), height: ceil(LiveOverlayTypography.lineHeight)), alignment: .left)
+		applyText(
+			hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: palette.labelText,
+			frame: CGRect(
+				x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth),
+				height: ceil(LiveOverlayTypography.lineHeight)), alignment: .left)
 		cursorX += snapshot.colorDisplay.hexSlotWidth + 10
 
 		if snapshot.keycapVisible {
@@ -1199,7 +1255,9 @@ final class LiveOverlayRenderer {
 			hudKeycapLayer.backgroundColor = palette.keycapFill.cgColor
 			hudKeycapLayer.borderColor = palette.keycapStroke.cgColor
 			hudKeycapLayer.borderWidth = 1
-			applyText(hudKeycapTextLayer, text: keycapText, font: keycapFont, color: palette.keycapText, frame: keycapFrame, alignment: .center)
+			applyText(
+				hudKeycapTextLayer, text: keycapText, font: keycapFont, color: palette.keycapText,
+				frame: keycapFrame, alignment: .center)
 		} else {
 			hudKeycapLayer.isHidden = true
 			hudKeycapTextLayer.isHidden = true
@@ -1278,11 +1336,12 @@ final class LiveOverlayRenderer {
 
 		fillLayer.frame = frame
 		fillLayer.cornerRadius = cornerRadius
-		fillLayer.backgroundColor = CaptureChrome.effectiveBodyFill(
-			palette: palette,
-			settings: settings,
-			hasGlass: hasGlass
-		).cgColor
+		fillLayer.backgroundColor =
+			CaptureChrome.effectiveBodyFill(
+				palette: palette,
+				settings: settings,
+				hasGlass: hasGlass
+			).cgColor
 
 		strokeLayer.frame = frame
 		strokeLayer.path = boundsPath

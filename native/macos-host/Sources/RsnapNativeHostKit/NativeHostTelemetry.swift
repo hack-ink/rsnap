@@ -3,7 +3,8 @@ import OSLog
 
 enum NativeHostTelemetry {
 	static let subsystem = Bundle.main.bundleIdentifier ?? "ink.hack.rsnap"
-	private static let liveChromeLogger = Logger(subsystem: subsystem, category: "LiveChromeTelemetry")
+	private static let liveChromeLogger = Logger(
+		subsystem: subsystem, category: "LiveChromeTelemetry")
 
 	static func distribution(
 		_ name: String,
@@ -19,7 +20,9 @@ enum NativeHostTelemetry {
 		)
 	}
 
-	static func liveChromeRefreshTarget(displayHz: Int, targetHz: Int, frameBudgetMilliseconds: Double) {
+	static func liveChromeRefreshTarget(
+		displayHz: Int, targetHz: Int, frameBudgetMilliseconds: Double
+	) {
 		liveChromeLogger.info(
 			"event=live_chrome.refresh_target displayHz=\(displayHz, privacy: .public) targetHz=\(targetHz, privacy: .public) frameBudgetMs=\(frameBudgetMilliseconds, format: .fixed(precision: 2), privacy: .public)"
 		)

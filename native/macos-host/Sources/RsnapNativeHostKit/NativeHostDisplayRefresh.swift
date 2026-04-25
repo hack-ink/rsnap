@@ -6,7 +6,10 @@ enum NativeHostDisplayRefresh {
 	static let fallbackFramesPerSecond = 60
 
 	static func displayFramesPerSecond(for screen: NSScreen?) -> Int {
-		max(1, screen?.maximumFramesPerSecond ?? NSScreen.main?.maximumFramesPerSecond ?? fallbackFramesPerSecond)
+		max(
+			1,
+			screen?.maximumFramesPerSecond ?? NSScreen.main?.maximumFramesPerSecond
+				?? fallbackFramesPerSecond)
 	}
 
 	static func effectiveFramesPerSecond(for screen: NSScreen?) -> Int {

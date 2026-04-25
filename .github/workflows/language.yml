@@ -19,11 +19,7 @@ on:
       - '**/*.md'
       - '.gitignore'
       - 'docs/**'
-  merge_group:
-    paths-ignore:
-      - '**/*.md'
-      - '.gitignore'
-      - 'docs/**'
+  merge_group: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -92,14 +88,38 @@ jobs:
         with:
           tool: nextest
 
-      - name: Run lint
-        run: cargo make lint
+      - name: Run Rust lint
+        run: cargo make lint-rust
+
+      - name: Run vibe-style lint
+        run: cargo make lint-vstyle
 
       - name: Run Rust format checks
         run: cargo make fmt-rust-check
 
       - name: Run tests
         run: cargo make test-rust
+
+  swift:
+    name: Swift checks
+    runs-on: macos-latest
+    steps:
+      - name: Fetch latest code
+        uses: actions/checkout@v6
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: true
+          rustflags: ''
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Run Swift lint and strict build
+        run: cargo make lint-swift
 
   toml:
     name: TOML checks

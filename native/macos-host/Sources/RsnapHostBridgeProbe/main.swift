@@ -83,12 +83,15 @@ enum RsnapHostBridgeProbe {
 		}
 		guard
 			try session.takeNextRequest()
-				== .requestFreezeSnapshot(selection: CGRect(x: 120, y: 180, width: 140, height: 140))
+				== .requestFreezeSnapshot(
+					selection: CGRect(x: 120, y: 180, width: 140, height: 140))
 		else {
 			fatalError("expected a freeze snapshot request")
 		}
 
-		try session.send(report: .freezeSnapshotCommitted(selection: CGRect(x: 120, y: 180, width: 140, height: 140)))
+		try session.send(
+			report: .freezeSnapshotCommitted(
+				selection: CGRect(x: 120, y: 180, width: 140, height: 140)))
 		scene = try session.currentScene()
 		guard
 			scene.mode == .frozen,
@@ -150,7 +153,8 @@ enum RsnapHostBridgeProbe {
 		try session.send(report: .hostEffectCompleted(.copyCapture))
 		scene = try session.currentScene()
 		guard scene.statusMessage == "Copied capture." else {
-			fatalError("unexpected status message after copy: \(String(describing: scene.statusMessage))")
+			fatalError(
+				"unexpected status message after copy: \(String(describing: scene.statusMessage))")
 		}
 
 		try session.send(report: .statusMessage("Host-only status"))
