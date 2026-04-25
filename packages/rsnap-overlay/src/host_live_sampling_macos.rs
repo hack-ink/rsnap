@@ -1,3 +1,5 @@
+//! Public macOS live-frame sampling bridge used by the native host FFI layer.
+
 use image::imageops::crop_imm;
 
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
@@ -9,9 +11,13 @@ pub struct HostMacLiveSampler {
 	stream: MacLiveFrameStream,
 }
 
+/// Owned RGBA pixels for a sampled host monitor region.
 pub struct HostRgbaRegion {
+	/// Region width in physical pixels.
 	pub width: u32,
+	/// Region height in physical pixels.
 	pub height: u32,
+	/// Packed RGBA8 pixels in row-major order.
 	pub rgba: Vec<u8>,
 }
 

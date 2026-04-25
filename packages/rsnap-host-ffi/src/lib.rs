@@ -519,7 +519,7 @@ pub enum RsnapHostRequestKind {
 
 /// FFI-safe queued host request.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RsnapHostRequestValue {
 	/// Request kind.
 	pub kind: u32,
@@ -527,16 +527,6 @@ pub struct RsnapHostRequestValue {
 	pub selection: RsnapRect,
 	/// Non-zero when `selection` is populated.
 	pub has_selection: u8,
-}
-
-impl Default for RsnapHostRequestValue {
-	fn default() -> Self {
-		Self {
-			kind: 0,
-			selection: RsnapRect::default(),
-			has_selection: 0,
-		}
-	}
 }
 
 /// Creates a new opaque session handle.
