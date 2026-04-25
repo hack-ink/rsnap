@@ -231,6 +231,22 @@ jobs:
       - name: Login
         run: cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+      - name: Publish rsnap-capture-core
+        run: |
+          cargo publish -p rsnap-capture-core --locked
+
+      - name: Wait for rsnap-capture-core publication
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for _ in $(seq 1 24); do
+            if curl -fsSL "https://crates.io/api/v1/crates/rsnap-capture-core/${VERSION}" > /dev/null; then
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "Timed out waiting for rsnap-capture-core ${VERSION} on crates.io"
+          exit 1
+
       - name: Publish rsnap-overlay
         run: |
           cargo publish -p rsnap-overlay --locked
