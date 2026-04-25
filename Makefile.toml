@@ -102,15 +102,16 @@ dependencies = [
 
 [tasks.lint-swift-format]
 workspace = false
-script = '''
-swift run --package-path tools/swift-format-tool --disable-automatic-resolution swift-format \
-	lint \
-	"--recursive" \
-	"--strict" \
-	"--parallel" \
-	"native/macos-host/Sources" \
-	"scripts/smoke/lib/live-loupe-mouse-path.swift"
-'''
+command = "swift"
+args = [
+	"format",
+	"lint",
+	"--recursive",
+	"--strict",
+	"--parallel",
+	"native/macos-host/Sources",
+	"scripts/smoke/lib/live-loupe-mouse-path.swift",
+]
 
 [tasks.lint-swiftlint]
 workspace = false
@@ -279,8 +280,8 @@ plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true
 # | fmt-check      | composite |     |
 # | fmt-rust       | command   |     |
 # | fmt-rust-check | extend    |     |
-# | fmt-swift      | script    |     |
-# | fmt-swift-check| extend    |     |
+# | fmt-swift      | command   |     |
+# | fmt-swift-check| command   |     |
 # | fmt-toml       | command   |     |
 # | fmt-toml-check | extend    |     |
 
@@ -324,15 +325,16 @@ args = [
 
 [tasks.fmt-swift]
 workspace = false
-script = '''
-swift run --package-path tools/swift-format-tool --disable-automatic-resolution swift-format \
-	format \
-	"--in-place" \
-	"--recursive" \
-	"--parallel" \
-	"native/macos-host/Sources" \
-	"scripts/smoke/lib/live-loupe-mouse-path.swift"
-'''
+command = "swift"
+args = [
+	"format",
+	"format",
+	"--in-place",
+	"--recursive",
+	"--parallel",
+	"native/macos-host/Sources",
+	"scripts/smoke/lib/live-loupe-mouse-path.swift",
+]
 
 [tasks.fmt-swift-check]
 workspace = false
