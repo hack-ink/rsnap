@@ -162,7 +162,8 @@ Rust core.
 These paths are intentionally ignored and should not be treated as tracked repository structure:
 
 - `target/`: Rust build products, benchmark outputs, and local analysis artifacts
-- `.native-host-dist/`: locally staged native-host `.app` bundles from `scripts/build_and_run.sh`
+- `target/rsnap-native-host/`: locally staged native-host `.app` bundles from
+  `scripts/build_and_run.sh`
 - `.worktrees/`: local git worktree lanes
 - `.workspaces/`: local clone-backed workspace lanes from older workflows
 - `.codex/`: local agent/runtime state
