@@ -29,10 +29,10 @@ image              = { workspace = true }
 pollster           = { workspace = true }
 rsnap-capture-core = { workspace = true }
 serde              = { workspace = true }
-serde_json         = { version = "1.0" }
+serde_json         = { workspace = true }
 thiserror          = { workspace = true }
 tracing            = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 ttf-parser         = { workspace = true }
 wgpu               = { workspace = true }
 winit              = { workspace = true }
@@ -43,7 +43,7 @@ xcap         = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2                   = { workspace = true }
-dispatch2                = { version = "0.3" }
+dispatch2                = { workspace = true }
 objc                     = { workspace = true }
 objc2                    = { workspace = true }
 objc2-app-kit            = { workspace = true }
@@ -57,7 +57,7 @@ objc2-vision             = { workspace = true }
 raw-window-handle        = { workspace = true }
 
 [dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports"] }
+criterion = { workspace = true }
 
 [[bench]]
 harness = false
