@@ -58,6 +58,8 @@ product level rather than binding itself to a particular window toolkit or shell
 - Hovering over a window in live mode shows an obvious targeting outline that follows the current
   target.
 - Left click + drag freezes a cropped region on the cursor monitor.
+- Live drag preview begins as soon as the pointer moves away from the press point; thin captures
+  down to `1x1` pixels are valid frozen selections.
 - Left click without drag hit-tests the window under the cursor on the same monitor and freezes
   that window bounds.
 - If no window is hit, the click path falls back to freezing the current monitor fullscreen.
@@ -88,7 +90,11 @@ product level rather than binding itself to a particular window toolkit or shell
 - In Frozen mode, the toolbar remains part of the floating HUD set. The live loupe is hidden after
   freeze and may be recreated only when a later live-mode transition needs it.
 - In Frozen mode, a dragged-region capture may be repositioned by dragging inside the bright
-  selected area; width and height remain fixed and the moved rect stays on the current monitor.
+  selected area and may be resized from its edges and corners; all edits stay on the current
+  monitor, and thin edited captures down to `1x1` remain valid.
+- In Frozen mode, a window-click capture remains locked to the captured window bounds: it does not
+  expose resize handles and does not enter drag/resize pointer affordances while the pointer tool
+  is selected.
 - Frozen toolbar placement and expansion invariants are governed by
   `docs/spec/frozen-toolbar-layout.md`.
 - Pen behavior is governed by `docs/spec/annotation-pen.md`.

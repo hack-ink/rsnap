@@ -46,6 +46,8 @@ use std::ptr;
 use std::slice;
 #[cfg(target_os = "macos")]
 use std::sync::OnceLock;
+#[cfg(target_os = "macos")]
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
 	borrow::Cow,
 	cmp::Ordering,
@@ -185,8 +187,6 @@ use self::trace_recording::{
 	ScrollCaptureTraceFrameRecord, ScrollCaptureTraceRecorder, ScrollCaptureTraceSessionSnapshot,
 };
 #[cfg(target_os = "macos")]
-use crate::deferred_text_recognition::DeferredTextRecognitionRequest;
-#[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::scroll_capture::{self, ScrollDirection, ScrollObserveOutcome, ScrollSession};
 use crate::state::LiveCursorSample;
@@ -201,6 +201,9 @@ use crate::{
 		WorkerResponse,
 	},
 };
+#[cfg(target_os = "macos")]
+use rsnap_capture_core::DeferredTextRecognitionRequest;
+use rsnap_capture_core::{OutputNaming, PreparedHostEffectRequest};
 
 #[cfg(target_os = "macos")]
 macro_rules! sel {
@@ -461,36 +464,12 @@ pub enum ThemeMode {
 }
 
 #[derive(Debug)]
-/// A host-owned side-effect request emitted by the overlay core.
-pub enum OverlayHostEffectRequest {
-	/// Copy the encoded PNG for the completed capture to the host clipboard.
-	CopyPng {
-		/// Immutable encoded PNG payload prepared from the authoritative export image.
-		png_bytes: Vec<u8>,
-	},
-	/// Save the encoded PNG for the completed capture through the host-owned output path.
-	SavePng {
-		/// Immutable encoded PNG payload prepared from the authoritative export image.
-		png_bytes: Vec<u8>,
-		/// Output directory snapshot captured when the save request was issued.
-		output_dir: PathBuf,
-		/// Filename prefix snapshot captured when the save request was issued.
-		output_filename_prefix: String,
-		/// Naming policy snapshot captured when the save request was issued.
-		output_naming: OutputNaming,
-	},
-	/// Run deferred OCR for the completed capture through the native host.
-	#[cfg(target_os = "macos")]
-	DeferredTextRecognition(DeferredTextRecognitionRequest),
-}
-
-#[derive(Debug)]
 /// Describes how an overlay session finished.
 pub enum OverlayExit {
 	/// The user cancelled the session without producing output.
 	Cancelled,
 	/// The session completed by handing a host-owned side effect to the caller.
-	HostEffect(OverlayHostEffectRequest),
+	HostEffect(PreparedHostEffectRequest),
 	/// The session failed with a user-visible error message.
 	Error(String),
 }
@@ -516,7 +495,7 @@ pub enum OverlayControl {
 	/// Keep the session alive and continue processing events.
 	Continue,
 	/// Execute the requested host-owned side effect before deciding whether to exit.
-	HostEffect(OverlayHostEffectRequest),
+	HostEffect(PreparedHostEffectRequest),
 	/// Exit the session with the provided terminal outcome.
 	Exit(OverlayExit),
 }
@@ -541,17 +520,6 @@ pub enum ToolbarPlacement {
 	#[default]
 	/// Render the toolbar below the frozen capture.
 	Bottom,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-/// Selects how saved captures are named on disk.
-pub enum OutputNaming {
-	#[default]
-	/// Use the current Unix timestamp in milliseconds.
-	Timestamp,
-	/// Use a zero-padded incrementing sequence number.
-	Sequence,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -1543,7 +1511,7 @@ impl OverlaySession {
 	}
 
 	/// Completes a host-owned effect request and finalizes overlay exit cleanup.
-	pub fn complete_host_effect_request(&mut self, request: &OverlayHostEffectRequest) {
+	pub fn complete_host_effect_request(&mut self, request: &PreparedHostEffectRequest) {
 		let exit_metadata = Self::host_effect_exit_metadata(request);
 
 		self.log_exit_begin(&exit_metadata);
@@ -3213,9 +3181,9 @@ impl OverlaySession {
 
 		match action {
 			PngAction::Copy => {
-				OverlayControl::HostEffect(OverlayHostEffectRequest::CopyPng { png_bytes })
+				OverlayControl::HostEffect(PreparedHostEffectRequest::CopyPng { png_bytes })
 			},
-			PngAction::Save => OverlayControl::HostEffect(OverlayHostEffectRequest::SavePng {
+			PngAction::Save => OverlayControl::HostEffect(PreparedHostEffectRequest::SavePng {
 				png_bytes,
 				output_dir: self.config.output_dir.clone(),
 				output_filename_prefix: self.config.output_filename_prefix.clone(),
@@ -3538,12 +3506,16 @@ impl OverlaySession {
 		&mut self,
 		request_id: u64,
 	) -> Option<DeferredTextRecognitionRequest> {
-		let requested_at = Instant::now();
+		let requested_at_unix_ms = current_unix_millis();
 
 		if self.scroll_capture.active {
 			let image = self.scroll_capture.session.as_ref()?.export_image().clone();
 
-			return Some(DeferredTextRecognitionRequest::prepared(request_id, requested_at, image));
+			return Some(DeferredTextRecognitionRequest::prepared(
+				request_id,
+				requested_at_unix_ms,
+				image,
+			));
 		}
 		if self.frozen_capture_source == FrozenCaptureSource::Window {
 			match self.config.window_capture_alpha_mode {
@@ -3552,7 +3524,7 @@ impl OverlaySession {
 					if let Some(window_image) = self.frozen_window_image.take() {
 						return Some(DeferredTextRecognitionRequest::prepared(
 							request_id,
-							requested_at,
+							requested_at_unix_ms,
 							window_image,
 						));
 					}
@@ -3561,7 +3533,7 @@ impl OverlaySession {
 					if let Some(window_image) = self.frozen_window_image.take() {
 						return Some(DeferredTextRecognitionRequest::prepared(
 							request_id,
-							requested_at,
+							requested_at_unix_ms,
 							window_image,
 						));
 					}
@@ -3574,7 +3546,7 @@ impl OverlaySession {
 
 		Some(DeferredTextRecognitionRequest::frozen_crop(
 			request_id,
-			requested_at,
+			requested_at_unix_ms,
 			export_image,
 			crop_rect,
 		))
@@ -3689,7 +3661,7 @@ impl OverlaySession {
 			"Queued OCR request."
 		);
 
-		OverlayControl::HostEffect(OverlayHostEffectRequest::DeferredTextRecognition(request))
+		OverlayControl::HostEffect(PreparedHostEffectRequest::DeferredTextRecognition(request))
 	}
 
 	fn handle_redraw_requested(&mut self, window_id: WindowId) -> OverlayControl {
@@ -4273,20 +4245,20 @@ impl OverlaySession {
 		}
 	}
 
-	fn host_effect_exit_metadata(request: &OverlayHostEffectRequest) -> OverlayExitMetadata<'_> {
+	fn host_effect_exit_metadata(request: &PreparedHostEffectRequest) -> OverlayExitMetadata<'_> {
 		match request {
-			OverlayHostEffectRequest::CopyPng { png_bytes } => {
+			PreparedHostEffectRequest::CopyPng { png_bytes } => {
 				OverlayExitMetadata::new("host_effect")
 					.with_host_effect_kind("copy_png")
 					.with_png_bytes_len(png_bytes.len())
 			},
-			OverlayHostEffectRequest::SavePng { png_bytes, .. } => {
+			PreparedHostEffectRequest::SavePng { png_bytes, .. } => {
 				OverlayExitMetadata::new("host_effect")
 					.with_host_effect_kind("save_png")
 					.with_png_bytes_len(png_bytes.len())
 			},
 			#[cfg(target_os = "macos")]
-			OverlayHostEffectRequest::DeferredTextRecognition(request) => {
+			PreparedHostEffectRequest::DeferredTextRecognition(request) => {
 				OverlayExitMetadata::new("host_effect")
 					.with_host_effect_kind("deferred_text_recognition")
 					.with_ocr_request_id(request.request_id)
@@ -4902,6 +4874,14 @@ fn global_to_local(cursor: GlobalPoint, monitor: MonitorRect) -> Option<Pos2> {
 	let (x, y) = monitor.local_u32(cursor)?;
 
 	Some(Pos2::new(x as f32, y as f32))
+}
+
+#[cfg(target_os = "macos")]
+fn current_unix_millis() -> u64 {
+	match SystemTime::now().duration_since(UNIX_EPOCH) {
+		Ok(duration) => duration.as_millis().try_into().unwrap_or(u64::MAX),
+		Err(_err) => 0,
+	}
 }
 
 #[cfg(target_os = "macos")]

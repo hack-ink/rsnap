@@ -58,6 +58,8 @@ Then keep the body explicit:
   scroll-capture contract
 - `docs/spec/platform-host-boundary.md` for the normative ownership boundary between native hosts
   and the Rust core
+- `docs/spec/host-core-protocol.md` for the canonical reset crates and semantic host/core protocol
+  surface
 - `docs/spec/annotation-pen.md` for the Frozen-mode pen-tool behavior contract and beautification
   invariants
 - `docs/spec/frozen-toolbar-layout.md` for the stable-anchor and above/below expansion contract of

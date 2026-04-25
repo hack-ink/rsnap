@@ -23,6 +23,8 @@ The active split below is by question type, not by human-versus-agent audience.
   `docs/spec/`
 - Need the normative host/core ownership boundary ->
   `docs/spec/platform-host-boundary.md`
+- Need the canonical reset crates and protocol types for native-host integration ->
+  `docs/spec/host-core-protocol.md`
 - Need the product-level capture contract independent from implementation history ->
   `docs/spec/capture-session.md`
 - Need runbooks, migrations, validation steps, troubleshooting, or operational sequences ->
