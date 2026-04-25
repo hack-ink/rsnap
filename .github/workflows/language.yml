@@ -118,8 +118,34 @@ jobs:
         with:
           tool: cargo-make
 
-      - name: Run Swift lint and strict build
-        run: cargo make lint-swift
+      - name: Run Swift format lint
+        run: |
+          set -euo pipefail
+
+          SWIFT_FORMAT_REF="603.0.0-prerelease-2026-02-09"
+          SWIFT_FORMAT_REVISION="374ca240478f740794c1e60ea1693c439ee0b317"
+          SWIFT_FORMAT_DIR="$RUNNER_TEMP/swift-format"
+
+          git init "$SWIFT_FORMAT_DIR"
+          git -C "$SWIFT_FORMAT_DIR" remote add origin https://github.com/apple/swift-format.git
+          git -C "$SWIFT_FORMAT_DIR" fetch --depth 1 origin "refs/tags/$SWIFT_FORMAT_REF"
+          git -C "$SWIFT_FORMAT_DIR" checkout --detach FETCH_HEAD
+          test "$(git -C "$SWIFT_FORMAT_DIR" rev-parse HEAD)" = "$SWIFT_FORMAT_REVISION"
+
+          swift run --package-path "$SWIFT_FORMAT_DIR" swift-format \
+            lint \
+            --recursive \
+            --strict \
+            --parallel \
+            native/macos-host/Sources \
+            scripts/smoke/lib/live-loupe-mouse-path.swift
+
+      - name: Run SwiftLint and strict build
+        run: |
+          set -euo pipefail
+
+          cargo make lint-swiftlint
+          cargo make build-swift-strict
 
   toml:
     name: TOML checks
