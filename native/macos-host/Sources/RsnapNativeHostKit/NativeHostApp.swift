@@ -469,12 +469,8 @@ final class CaptureSessionController: NSObject {
 		)
 	}
 
-	func updateLiveGlassRequests(_ requests: [GlassPatchRequest]) {
-		overlayController?.updateLiveGlassRequests(requests)
-	}
-
-	func liveGlassPatches() -> [LiveGlassSurfaceKind: CGImage] {
-		overlayController?.liveGlassPatches() ?? [:]
+	func updateLiveChromeBackdrops(_ snapshot: LiveChromeBackdropSnapshot?) {
+		overlayController?.updateLiveChromeBackdrops(snapshot)
 	}
 
 	func updateLiveChromeVisuals(_ snapshot: LiveChromeVisualSnapshot?) {
@@ -1877,6 +1873,7 @@ final class CaptureOverlayController {
 	private lazy var windowSnapshotFeed = WindowSnapshotFeed()
 	private lazy var chromeSampleFeed = ChromeSampleFeed(broker: liveFrameStream)
 	private let liveChromeWindows = LiveChromeVisualWindowController()
+	private let liveChromeBackdrops = LiveChromeBackdropWindowController()
 
 	init(controller: CaptureSessionController, liveFrameStream: LiveFrameStreamBroker) {
 		self.controller = controller
@@ -1926,7 +1923,6 @@ final class CaptureOverlayController {
 			}
 		}
 		collapsedForFrozen = false
-		liveChromeWindows.prepareForLivePresentation(settings: settings)
 		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: focusPoint)
 		windowSnapshotFeed.start(
 			desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
@@ -1997,6 +1993,7 @@ final class CaptureOverlayController {
 	func close() {
 		windowSnapshotFeed.stop()
 		chromeSampleFeed.stop()
+		liveChromeBackdrops.hideAll()
 		liveChromeWindows.hideAll()
 		guard !windows.isEmpty else {
 			focusedWindowNumber = nil
@@ -2104,21 +2101,16 @@ final class CaptureOverlayController {
 		return latestSample
 	}
 
-	fileprivate func updateLiveGlassRequests(_ requests: [GlassPatchRequest]) {
-		let _ = requests
-	}
-
-	fileprivate func liveGlassPatches() -> [LiveGlassSurfaceKind: CGImage] {
-		[:]
-	}
-
 	fileprivate func updateLiveChromeVisuals(
 		_ snapshot: LiveChromeVisualSnapshot?
 	) {
-		guard snapshot != nil else {
-			return
-		}
 		liveChromeWindows.update(snapshot: snapshot, focusedWindowNumber: focusedWindowNumber)
+	}
+
+	fileprivate func updateLiveChromeBackdrops(
+		_ snapshot: LiveChromeBackdropSnapshot?
+	) {
+		liveChromeBackdrops.update(snapshot: snapshot, focusedWindowNumber: focusedWindowNumber)
 	}
 
 	fileprivate func updateLiveChromePositions(
@@ -2236,6 +2228,7 @@ final class CaptureOverlayController {
 		}
 		windowSnapshotFeed.stop()
 		chromeSampleFeed.stop()
+		liveChromeBackdrops.hideAll()
 		liveChromeWindows.hideLiveWindows()
 
 		guard windows.count > 1 else {
@@ -2434,6 +2427,7 @@ final class CaptureHostView: NSView {
 	private var glassPatchCache: [GlassSurfaceKind: GlassPatchCache] = [:]
 	private lazy var liveRenderer = LiveOverlayRenderer(hostView: self)
 	private var liveRendererInstalled = false
+	private var liveChromeFollowTimer: DispatchSourceTimer?
 	private var deferredLiveShutdownWorkItem: DispatchWorkItem?
 	private var loggedLiveTargetHz: Int?
 
@@ -2469,6 +2463,9 @@ final class CaptureHostView: NSView {
 		chrome: CaptureChromeState,
 		settings: NativeHostSettings
 	) {
+		let previousScene = self.scene
+		let previousChrome = self.chrome
+		let previousSettings = self.settings
 		let previousMode = self.scene.mode
 		let transitioningToFrozen = previousMode == .live && scene.mode == .frozen
 		if scene.mode != .frozen {
@@ -2506,7 +2503,16 @@ final class CaptureHostView: NSView {
 		updateLiveRendererState()
 		if scene.mode == .live {
 			updateLivePreviewDemands()
-			liveRenderer.renderNow()
+			if shouldRenderFullLiveOverlay(
+				previousScene: previousScene,
+				previousChrome: previousChrome,
+				previousSettings: previousSettings,
+				previousMode: previousMode
+			) {
+				liveRenderer.renderNow()
+			} else {
+				liveRenderer.renderLiveChromeNow()
+			}
 		} else {
 			if transitioningToFrozen {
 				needsDisplay = true
@@ -2520,6 +2526,22 @@ final class CaptureHostView: NSView {
 				controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 			}
 		}
+	}
+
+	private func shouldRenderFullLiveOverlay(
+		previousScene: SceneSnapshot,
+		previousChrome: CaptureChromeState,
+		previousSettings: NativeHostSettings,
+		previousMode: SceneKind
+	) -> Bool {
+		guard scene.mode == .live else {
+			return false
+		}
+		return previousMode != .live
+			|| previousScene.liveSelectionPreview != scene.liveSelectionPreview
+			|| previousScene.highlightedWindow != scene.highlightedWindow
+			|| previousChrome.hostLocalFrozenSelecting != chrome.hostLocalFrozenSelecting
+			|| previousSettings != settings
 	}
 
 	private func completeFrozenFirstDisplayHandoff() {
@@ -2982,14 +3004,15 @@ final class CaptureHostView: NSView {
 		guard scene.mode == .live else {
 			return
 		}
-		let pointerChanged = setLivePointerPreview(to: globalPoint)
-		if pointerChanged {
-			controller?.updateLiveChromePositions(currentLiveChromePositionSnapshot())
-		}
-		liveHighlightedWindowPreview =
+		// The follow clock owns routine layer movement so event bursts cannot create
+		// irregular extra commits between fixed 120Hz ticks.
+		_ = setLivePointerPreview(to: globalPoint)
+		let nextHighlightedWindow =
 			controller?.previewHighlightedWindow(at: globalPoint) ?? scene.highlightedWindow
-		updateLivePreviewDemands()
-		if rendersImmediately {
+		let highlightChanged = liveHighlightedWindowPreview != nextHighlightedWindow
+		liveHighlightedWindowPreview = nextHighlightedWindow
+		if rendersImmediately || highlightChanged {
+			updateLivePreviewDemands()
 			liveRenderer.renderNow()
 		}
 	}
@@ -3871,6 +3894,18 @@ final class CaptureHostView: NSView {
 			: nil
 		let positionDisplay = currentPositionDisplay()
 		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
+		let hudPlacement = liveHoverChromeSuppressed ? nil : currentHudPlacement()
+		let hudFrame = hudPlacement?.frame
+		let loupeFrame =
+			!liveHoverChromeSuppressed && scene.loupeVisible
+			? hudPlacement.flatMap {
+				currentLoupeFrame(
+					hudFrame: $0.frame,
+					patch: chromeSample?.loupePatch,
+					alignTrailing: $0.flippedHorizontally
+				)
+			}
+			: nil
 
 		return LivePreviewSnapshot(
 			bounds: bounds,
@@ -3883,8 +3918,8 @@ final class CaptureHostView: NSView {
 			dragSelectionLocal: dragSelectionLocal,
 			hoverSelectionLocal: hoverSelectionLocal,
 			selectionSizeText: dragSelectionLocal.map(selectionSizeText(for:)),
-			hudFrame: nil,
-			loupeFrame: nil,
+			hudFrame: hudFrame,
+			loupeFrame: loupeFrame,
 			positionDisplay: positionDisplay,
 			colorDisplay: colorDisplay,
 			rgbSample: rgbSample,
@@ -3898,119 +3933,113 @@ final class CaptureHostView: NSView {
 		_ globalPoint: CGPoint,
 		recordsInputLatency: Bool = true
 	) {
-		let pointerChanged = setLivePointerPreview(
+		_ = setLivePointerPreview(
 			to: globalPoint,
 			recordsInputLatency: recordsInputLatency
 		)
-		if pointerChanged {
-			controller?.updateLiveChromePositions(currentLiveChromePositionSnapshot())
-		}
 		liveHighlightedWindowPreview =
 			controller?.previewHighlightedWindow(at: globalPoint) ?? liveHighlightedWindowPreview
+	}
+
+	private func startLiveChromeFollowClock() {
+		guard liveChromeFollowTimer == nil else {
+			return
+		}
+		let timer = DispatchSource.makeTimerSource(queue: .main)
+		let intervalNanoseconds = max(
+			1,
+			Int((NativeHostDisplayRefresh.followClockInterval * 1_000_000_000.0).rounded())
+		)
+		timer.schedule(
+			deadline: .now(),
+			repeating: .nanoseconds(intervalNanoseconds),
+			leeway: .nanoseconds(0)
+		)
+		timer.setEventHandler { [weak self] in
+			self?.pollLiveChromeFollowPosition()
+		}
+		liveChromeFollowTimer = timer
+		timer.resume()
+	}
+
+	private func stopLiveChromeFollowClock() {
+		liveChromeFollowTimer?.cancel()
+		liveChromeFollowTimer = nil
+	}
+
+	private func pollLiveChromeFollowPosition() {
+		guard scene.mode == .live else {
+			stopLiveChromeFollowClock()
+			return
+		}
+		let point = NSEvent.mouseLocation
+		let pointerChanged = setLivePointerPreview(to: point, recordsInputLatency: false)
+		let nextHighlightedWindow =
+			controller?.previewHighlightedWindow(at: point) ?? scene.highlightedWindow
+		let highlightChanged = liveHighlightedWindowPreview != nextHighlightedWindow
+		liveHighlightedWindowPreview = nextHighlightedWindow
+		if highlightChanged {
+			updateLivePreviewDemands()
+			updateLiveChromeBackdrops()
+			liveRenderer.renderNow()
+		} else if pointerChanged {
+			updateLivePreviewDemands()
+			moveLiveChromeLayers()
+		}
+	}
+
+	private func moveLiveChromeLayers() {
+		let frames = currentLiveChromeLayerFrames()
+		updateLiveChromeBackdrops(hudFrame: frames.hud, loupeFrame: frames.loupe)
+		liveRenderer.moveLiveChrome(hudFrame: frames.hud, loupeFrame: frames.loupe)
+	}
+
+	private func updateLiveChromeBackdrops() {
+		let frames = currentLiveChromeLayerFrames()
+		updateLiveChromeBackdrops(hudFrame: frames.hud, loupeFrame: frames.loupe)
+	}
+
+	private func updateLiveChromeBackdrops(hudFrame: CGRect?, loupeFrame: CGRect?) {
+		guard scene.mode == .live, settings.hudGlassEnabled && settings.hudBlur > 0.01 else {
+			controller?.updateLiveChromeBackdrops(nil)
+			return
+		}
+		controller?.updateLiveChromeBackdrops(
+			LiveChromeBackdropSnapshot(
+				sourceWindowNumber: window?.windowNumber,
+				hudFrame: hudFrame.flatMap(globalRect(from:)),
+				loupeFrame: loupeFrame.flatMap(globalRect(from:)),
+				theme: chromeTheme(),
+				settings: settings
+			)
+		)
+	}
+
+	private func currentLiveChromeLayerFrames() -> (hud: CGRect?, loupe: CGRect?) {
+		let hudPlacement = liveHoverChromeSuppressed ? nil : currentHudPlacement()
+		let hudFrame = hudPlacement?.frame
+		let loupeFrame =
+			!liveHoverChromeSuppressed && scene.loupeVisible
+			? hudPlacement.flatMap {
+				currentLoupeFrame(
+					hudFrame: $0.frame,
+					patch: chrome.loupePatch,
+					alignTrailing: $0.flippedHorizontally
+				)
+			}
+			: nil
+		return (hudFrame, loupeFrame)
 	}
 
 	private func currentChromeVisualSnapshot() -> LiveChromeVisualSnapshot? {
 		switch scene.mode {
 		case .live:
-			return currentLiveChromeVisualSnapshot()
+			return nil
 		case .frozen:
 			return currentFrozenChromeVisualSnapshot()
 		case .hidden:
 			return nil
 		}
-	}
-
-	private func currentLiveChromeVisualSnapshot() -> LiveChromeVisualSnapshot? {
-		guard scene.mode == .live, let sourceWindowNumber = window?.windowNumber else {
-			return nil
-		}
-
-		let chromeSample = currentLiveChromeSample()
-		let rgbSample =
-			chromeSample?.rgbSample
-			?? chrome.rgbSample
-			?? scene.rgb
-		let hudPlacement = liveHoverChromeSuppressed ? nil : currentHudPlacement()
-		let hudFrameLocal = hudPlacement?.frame
-		let hudFrame = hudFrameLocal.flatMap(globalRect(from:))
-		let loupeFrame =
-			!liveHoverChromeSuppressed && scene.loupeVisible
-			? hudFrameLocal
-				.flatMap {
-					currentLoupeFrame(
-						hudFrame: $0,
-						patch: chromeSample?.loupePatch,
-						alignTrailing: hudPlacement?.flippedHorizontally ?? false
-					)
-				}
-				.flatMap(globalRect(from:))
-			: nil
-		let theme = chromeTheme()
-		let positionDisplay = currentPositionDisplay()
-		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
-
-		let hudSnapshot = hudFrame.map {
-			LiveHudVisualSnapshot(
-				sourceWindowNumber: sourceWindowNumber,
-				frame: $0,
-				theme: theme,
-				settings: settings,
-				positionDisplay: positionDisplay,
-				colorDisplay: colorDisplay,
-				rgbSample: rgbSample,
-				keycapVisible: settings.showAltHintKeycap,
-				inputUptime: livePointerPreviewInputUptime,
-				inputSequence: livePointerPreviewInputSequence
-			)
-		}
-		let loupeSnapshot: LiveLoupeVisualSnapshot? = {
-			guard let frame = loupeFrame, let patch = chromeSample?.loupePatch else {
-				return nil
-			}
-			return LiveLoupeVisualSnapshot(
-				sourceWindowNumber: sourceWindowNumber,
-				frame: frame,
-				theme: theme,
-				settings: settings,
-				patch: patch,
-				inputUptime: livePointerPreviewInputUptime,
-				inputSequence: livePointerPreviewInputSequence
-			)
-		}()
-
-		return LiveChromeVisualSnapshot(
-			sourceWindowNumber: sourceWindowNumber,
-			hud: hudSnapshot,
-			loupe: loupeSnapshot,
-			toolbar: nil
-		)
-	}
-
-	private func currentLiveChromePositionSnapshot() -> LiveChromePositionSnapshot? {
-		guard scene.mode == .live, let sourceWindowNumber = window?.windowNumber else {
-			return nil
-		}
-		let hudPlacement = liveHoverChromeSuppressed ? nil : currentHudPlacement()
-		let hudFrame = hudPlacement.flatMap { globalRect(from: $0.frame) }
-		let loupeFrame =
-			!liveHoverChromeSuppressed && scene.loupeVisible
-			? hudPlacement
-				.flatMap {
-					currentLoupeFrame(
-						hudFrame: $0.frame,
-						patch: chrome.loupePatch,
-						alignTrailing: $0.flippedHorizontally
-					)
-				}
-				.flatMap(globalRect(from:))
-			: nil
-		return LiveChromePositionSnapshot(
-			sourceWindowNumber: sourceWindowNumber,
-			hudFrame: hudFrame,
-			loupeFrame: loupeFrame,
-			inputUptime: livePointerPreviewInputUptime,
-			inputSequence: livePointerPreviewInputSequence
-		)
 	}
 
 	private func currentFrozenChromeVisualSnapshot() -> LiveChromeVisualSnapshot? {
@@ -4131,6 +4160,7 @@ final class CaptureHostView: NSView {
 			return
 		}
 		guard scene.mode == .live || pendingFrozenFirstDisplay else {
+			stopLiveChromeFollowClock()
 			liveRenderer.suspend()
 			loggedLiveTargetHz = nil
 			return
@@ -4145,6 +4175,12 @@ final class CaptureHostView: NSView {
 				frameBudgetMilliseconds: NativeHostDisplayRefresh.frameBudgetMilliseconds
 			)
 		}
+		if scene.mode == .live {
+			liveRenderer.stopFrameClock()
+			startLiveChromeFollowClock()
+			return
+		}
+		stopLiveChromeFollowClock()
 		liveRenderer.updateDisplayID(currentDisplayID(), targetFramesPerSecond: targetHz)
 	}
 
@@ -4153,6 +4189,7 @@ final class CaptureHostView: NSView {
 		deferredLiveShutdownWorkItem = nil
 		pendingFrozenFirstDisplay = false
 		lastLivePreviewSnapshot = nil
+		stopLiveChromeFollowClock()
 		guard scene.mode != .live else {
 			return
 		}
@@ -4164,6 +4201,7 @@ final class CaptureHostView: NSView {
 		guard scene.mode == .live else {
 			controller?.updateLivePreviewDemand(
 				point: nil, settings: settings, includeLoupePatch: false)
+			controller?.updateLiveChromeBackdrops(nil)
 			return
 		}
 		let point = livePointerPreviewGlobal ?? scene.pointer
@@ -4172,6 +4210,7 @@ final class CaptureHostView: NSView {
 			settings: settings,
 			includeLoupePatch: scene.loupeVisible && !liveHoverChromeSuppressed
 		)
+		updateLiveChromeBackdrops()
 	}
 
 	private func currentDisplayID() -> CGDirectDisplayID? {
@@ -4409,6 +4448,7 @@ final class CaptureHostView: NSView {
 		for materialView in [hudMaterialView, loupeMaterialView] {
 			materialView.isHidden = true
 		}
+		updateLiveChromeBackdrops()
 	}
 
 	private func suppressLiveHoverChrome() {

@@ -89,6 +89,14 @@ struct LiveChromePositionSnapshot {
 	let inputSequence: UInt64
 }
 
+struct LiveChromeBackdropSnapshot {
+	let sourceWindowNumber: Int?
+	let hudFrame: CGRect?
+	let loupeFrame: CGRect?
+	let theme: CaptureChromeTheme
+	let settings: NativeHostSettings
+}
+
 @MainActor
 enum PhosphorToolbarIcons {
 	private final class BundleProbe {}
@@ -418,6 +426,144 @@ private final class LiveChromeOverlayWindow: NSWindow {
 		isPresented = false
 		lastPresentedFrame = nil
 		alphaValue = 1
+	}
+}
+
+private final class LiveChromeBackdropWindow: NSWindow {
+	let renderView: LiveChromeBackdropView
+	private var lastPresentedFrame: CGRect?
+	private var lastAppliedBlurAmount: CGFloat?
+	private var isPresented = false
+
+	init() {
+		self.renderView = LiveChromeBackdropView(frame: .zero)
+		super.init(
+			contentRect: CGRect(x: 0, y: 0, width: 1, height: 1),
+			styleMask: [.borderless],
+			backing: .buffered,
+			defer: false
+		)
+		contentView = renderView
+		backgroundColor = .clear
+		collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+		hasShadow = false
+		ignoresMouseEvents = true
+		isMovable = false
+		animationBehavior = .none
+		isOpaque = false
+		level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue - 1)
+		sharingType = .none
+		titleVisibility = .hidden
+		titlebarAppearsTransparent = true
+		orderOut(nil)
+	}
+
+	override var canBecomeKey: Bool { false }
+	override var canBecomeMain: Bool { false }
+
+	private var presentationScale: CGFloat {
+		max(
+			backingScaleFactor,
+			screen?.backingScaleFactor ?? 0,
+			NSScreen.main?.backingScaleFactor ?? 1,
+			1
+		)
+	}
+
+	private func presentationFrame(from frame: CGRect) -> CGRect {
+		let scale = presentationScale
+		return CGRect(
+			x: (frame.origin.x * scale).rounded() / scale,
+			y: (frame.origin.y * scale).rounded() / scale,
+			width: (frame.width * scale).rounded(.up) / scale,
+			height: (frame.height * scale).rounded(.up) / scale
+		)
+	}
+
+	func update(frame: CGRect, theme: CaptureChromeTheme, settings: NativeHostSettings) {
+		let roundedFrame = presentationFrame(from: frame)
+		let tolerance: CGFloat = 0.001
+		if let lastPresentedFrame {
+			let sizeChanged =
+				abs(lastPresentedFrame.width - roundedFrame.width) > tolerance
+				|| abs(lastPresentedFrame.height - roundedFrame.height) > tolerance
+			let originChanged =
+				abs(lastPresentedFrame.minX - roundedFrame.minX) > tolerance
+				|| abs(lastPresentedFrame.minY - roundedFrame.minY) > tolerance
+			if sizeChanged {
+				setFrame(roundedFrame, display: false, animate: false)
+			} else if originChanged {
+				setFrameOrigin(roundedFrame.origin)
+			}
+		} else {
+			setFrame(roundedFrame, display: false, animate: false)
+		}
+		lastPresentedFrame = roundedFrame
+
+		let blurAmount = settings.hudGlassEnabled ? settings.hudBlur : 0
+		if lastAppliedBlurAmount == nil || abs((lastAppliedBlurAmount ?? 0) - blurAmount) > 0.01 {
+			MacOSWindowBlurBridge.applyBlur(to: self, amount: blurAmount)
+			lastAppliedBlurAmount = blurAmount
+		}
+
+		renderView.update(theme: theme, settings: settings)
+		if !isPresented {
+			orderFrontRegardless()
+			isPresented = true
+		}
+		if alphaValue != 1 {
+			alphaValue = 1
+		}
+	}
+
+	func hide() {
+		guard isPresented else {
+			return
+		}
+		orderOut(nil)
+		isPresented = false
+		lastPresentedFrame = nil
+		alphaValue = 1
+	}
+}
+
+private final class LiveChromeBackdropView: NSView {
+	private var theme: CaptureChromeTheme = .dark
+	private var settings = NativeHostSettings.defaults
+
+	override var isOpaque: Bool { false }
+
+	func update(theme: CaptureChromeTheme, settings: NativeHostSettings) {
+		let changed = self.theme != theme || self.settings != settings
+		self.theme = theme
+		self.settings = settings
+		if changed {
+			needsDisplay = true
+		}
+	}
+
+	override func draw(_ dirtyRect: NSRect) {
+		super.draw(dirtyRect)
+		let palette = CaptureChrome.palette(for: theme, settings: settings)
+		let pillPath = NSBezierPath(
+			roundedRect: bounds,
+			xRadius: CaptureChrome.hudCornerRadius,
+			yRadius: CaptureChrome.hudCornerRadius
+		)
+		guard let context = NSGraphicsContext.current?.cgContext else {
+			return
+		}
+		context.saveGState()
+		context.setShadow(offset: .zero, blur: 10, color: palette.shadow.cgColor)
+		context.setFillColor(
+			CaptureChrome.effectiveBodyFill(
+				palette: palette,
+				settings: settings,
+				hasGlass: true
+			).cgColor
+		)
+		pillPath.fill()
+		context.restoreGState()
 	}
 }
 
@@ -899,6 +1045,44 @@ final class LiveChromeVisualWindowController {
 	}
 
 	func hideLiveWindows() {
+		hudWindow.hide()
+		loupeWindow.hide()
+	}
+}
+
+@MainActor
+final class LiveChromeBackdropWindowController {
+	private let hudWindow = LiveChromeBackdropWindow()
+	private let loupeWindow = LiveChromeBackdropWindow()
+
+	func update(snapshot: LiveChromeBackdropSnapshot?, focusedWindowNumber: Int?) {
+		guard let snapshot else {
+			hideAll()
+			return
+		}
+		guard snapshot.sourceWindowNumber == focusedWindowNumber else {
+			return
+		}
+		guard snapshot.settings.hudGlassEnabled, snapshot.settings.hudBlur > 0.01 else {
+			hideAll()
+			return
+		}
+
+		if let hudFrame = snapshot.hudFrame {
+			hudWindow.update(frame: hudFrame, theme: snapshot.theme, settings: snapshot.settings)
+		} else {
+			hudWindow.hide()
+		}
+
+		if let loupeFrame = snapshot.loupeFrame {
+			loupeWindow.update(
+				frame: loupeFrame, theme: snapshot.theme, settings: snapshot.settings)
+		} else {
+			loupeWindow.hide()
+		}
+	}
+
+	func hideAll() {
 		hudWindow.hide()
 		loupeWindow.hide()
 	}
