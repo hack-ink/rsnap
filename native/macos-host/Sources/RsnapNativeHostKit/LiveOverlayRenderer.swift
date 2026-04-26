@@ -1,6 +1,5 @@
 import AppKit
 import CoreGraphics
-import CoreImage
 import Foundation
 import QuartzCore
 import RsnapHostBridge
@@ -8,14 +7,6 @@ import RsnapHostBridge
 enum LiveGlassSurfaceKind: Hashable {
 	case hud
 	case loupe
-}
-
-struct GlassPatchRequest {
-	let kind: LiveGlassSurfaceKind
-	let globalRect: CGRect
-	let blurAmount: CGFloat
-	let tintAmount: CGFloat
-	let brightnessBias: CGFloat
 }
 
 struct LivePreviewSnapshot {
@@ -249,138 +240,6 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		stateLock.lock()
 		latestSample = sample
 		stateLock.unlock()
-	}
-}
-
-final class GlassPatchFeed {
-	private struct CachedPatch {
-		let request: GlassPatchRequest
-		let capturedAt: TimeInterval
-		let image: CGImage
-	}
-
-	private let queue = DispatchQueue(
-		label: "ink.hack.rsnap.native-host.glass-patch-feed", qos: .utility)
-	private let stateLock = NSLock()
-	private let capturePatch: (CGRect) -> CGImage?
-	private let ciContext = CIContext(options: nil)
-	private var timer: DispatchSourceTimer?
-	private var requests: [LiveGlassSurfaceKind: GlassPatchRequest] = [:]
-	private var cachedPatches: [LiveGlassSurfaceKind: CachedPatch] = [:]
-
-	init(capturePatch: @escaping (CGRect) -> CGImage?) {
-		self.capturePatch = capturePatch
-	}
-
-	func start() {
-		stop()
-		let timer = DispatchSource.makeTimerSource(queue: queue)
-		let interval = TimeInterval(1.0 / 12.0)
-		timer.schedule(deadline: .now() + interval, repeating: interval)
-		timer.setEventHandler { [weak self] in
-			self?.refresh()
-		}
-		self.timer = timer
-		timer.resume()
-	}
-
-	func stop() {
-		timer?.cancel()
-		timer = nil
-		stateLock.lock()
-		requests.removeAll()
-		cachedPatches.removeAll()
-		stateLock.unlock()
-	}
-
-	func updateRequests(_ requests: [GlassPatchRequest]) {
-		let nextRequests = Dictionary(uniqueKeysWithValues: requests.map { ($0.kind, $0) })
-		stateLock.lock()
-		self.requests = nextRequests
-		cachedPatches = cachedPatches.filter { nextRequests[$0.key] != nil }
-		stateLock.unlock()
-	}
-
-	func snapshot() -> [LiveGlassSurfaceKind: CGImage] {
-		stateLock.lock()
-		let result = cachedPatches.mapValues(\.image)
-		stateLock.unlock()
-		return result
-	}
-
-	private func refresh() {
-		stateLock.lock()
-		let requests = self.requests
-		let cachedPatches = self.cachedPatches
-		stateLock.unlock()
-
-		var nextCachedPatches = cachedPatches
-		let now = ProcessInfo.processInfo.systemUptime
-
-		for (kind, request) in requests {
-			if let cachedPatch = cachedPatches[kind] {
-				let cachedCenter = CGPoint(
-					x: cachedPatch.request.globalRect.midX, y: cachedPatch.request.globalRect.midY)
-				let nextCenter = CGPoint(x: request.globalRect.midX, y: request.globalRect.midY)
-				let distance = hypot(cachedCenter.x - nextCenter.x, cachedCenter.y - nextCenter.y)
-				if distance < 24, now - cachedPatch.capturedAt < 0.08 {
-					continue
-				}
-			}
-
-			guard
-				let patch = capturePatch(request.globalRect),
-				let blurred = blurredImage(
-					from: patch,
-					blurAmount: request.blurAmount,
-					tintAmount: request.tintAmount,
-					brightnessBias: request.brightnessBias
-				)
-			else {
-				continue
-			}
-			nextCachedPatches[kind] = CachedPatch(request: request, capturedAt: now, image: blurred)
-		}
-
-		stateLock.lock()
-		self.cachedPatches = nextCachedPatches
-		stateLock.unlock()
-	}
-
-	private func blurredImage(from image: CGImage, blurAmount: CGFloat) -> CGImage? {
-		blurredImage(from: image, blurAmount: blurAmount, tintAmount: 0, brightnessBias: 0)
-	}
-
-	private func blurredImage(
-		from image: CGImage,
-		blurAmount: CGFloat,
-		tintAmount: CGFloat,
-		brightnessBias: CGFloat
-	) -> CGImage? {
-		let ciImage = CIImage(cgImage: image)
-		let clampedImage = ciImage.clampedToExtent()
-		guard let filter = CIFilter(name: "CIGaussianBlur") else {
-			return image
-		}
-		filter.setValue(clampedImage, forKey: kCIInputImageKey)
-		let normalizedBlur = blurAmount.clamped(to: 0...1)
-		let blurRadius = 4 + pow(normalizedBlur, 0.82) * 44
-		filter.setValue(blurRadius, forKey: kCIInputRadiusKey)
-		guard let outputImage = filter.outputImage?.cropped(to: ciImage.extent) else {
-			return image
-		}
-		let tunedImage: CIImage
-		if let colorControls = CIFilter(name: "CIColorControls") {
-			colorControls.setValue(outputImage, forKey: kCIInputImageKey)
-			colorControls.setValue(
-				1.08 + tintAmount.clamped(to: 0...1) * 0.34, forKey: kCIInputSaturationKey)
-			colorControls.setValue(1.03, forKey: kCIInputContrastKey)
-			colorControls.setValue(brightnessBias, forKey: kCIInputBrightnessKey)
-			tunedImage = colorControls.outputImage?.cropped(to: ciImage.extent) ?? outputImage
-		} else {
-			tunedImage = outputImage
-		}
-		return ciContext.createCGImage(tunedImage, from: tunedImage.extent) ?? image
 	}
 }
 
@@ -916,7 +775,24 @@ final class LiveOverlayRenderer {
 	private let loupePatchLayer = CALayer()
 	private let loupeCenterLayer = CAShapeLayer()
 	private let frameClock = LiveFrameClockDriver()
+	private let layerRenderDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.layer_render_duration",
+		category: "LiveChromeTelemetry"
+	)
+	private let layerChromeRenderDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.layer_chrome_render_duration",
+		category: "LiveChromeTelemetry"
+	)
+	private let layerPositionDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.layer_position_duration",
+		category: "LiveChromeTelemetry"
+	)
+	private let layerPositionGapMetric = NativeHostTelemetry.distribution(
+		"live_chrome.layer_position_gap",
+		category: "LiveChromeTelemetry"
+	)
 	private var snapshotProvider: (() -> LivePreviewSnapshot?)?
+	private var lastLayerPositionMoveUptime: TimeInterval?
 
 	init(hostView: NSView) {
 		self.hostView = hostView
@@ -947,6 +823,10 @@ final class LiveOverlayRenderer {
 		frameClock.start(targetFramesPerSecond: targetFramesPerSecond)
 	}
 
+	func stopFrameClock() {
+		frameClock.stop()
+	}
+
 	func stop() {
 		frameClock.stop()
 		rootLayer.isHidden = true
@@ -959,6 +839,35 @@ final class LiveOverlayRenderer {
 	func renderNow() {
 		renderCurrentSnapshot()
 		onTick?()
+	}
+
+	func renderLiveChromeNow() {
+		renderChromeSnapshot()
+		onTick?()
+	}
+
+	func moveLiveChrome(hudFrame: CGRect?, loupeFrame: CGRect?) {
+		let moveStart = ProcessInfo.processInfo.systemUptime
+		var moved = false
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		if let hudFrame, !hudLayer.isHidden, layerFrameNeedsUpdate(hudLayer.frame, hudFrame) {
+			hudLayer.frame = hudFrame
+			moved = true
+		}
+		if let loupeFrame, !loupeLayer.isHidden,
+			layerFrameNeedsUpdate(loupeLayer.frame, loupeFrame)
+		{
+			loupeLayer.frame = loupeFrame
+			moved = true
+		}
+		CATransaction.commit()
+
+		guard moved else {
+			return
+		}
+		layerPositionDurationMetric.recordMillisecondsSince(moveStart)
+		recordLayerPositionGap(moveStart)
 	}
 
 	private func configureLayers() {
@@ -1012,6 +921,10 @@ final class LiveOverlayRenderer {
 			rootLayer.isHidden = true
 			return
 		}
+		let renderStart = ProcessInfo.processInfo.systemUptime
+		defer {
+			layerRenderDurationMetric.recordMillisecondsSince(renderStart)
+		}
 		CATransaction.begin()
 		CATransaction.setDisableActions(true)
 		rootLayer.isHidden = false
@@ -1021,6 +934,45 @@ final class LiveOverlayRenderer {
 		renderHud(snapshot)
 		renderLoupe(snapshot)
 		CATransaction.commit()
+	}
+
+	private func renderChromeSnapshot() {
+		guard let snapshot = snapshotProvider?() else {
+			rootLayer.isHidden = true
+			return
+		}
+		let renderStart = ProcessInfo.processInfo.systemUptime
+		defer {
+			layerChromeRenderDurationMetric.recordMillisecondsSince(renderStart)
+		}
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		rootLayer.isHidden = false
+		rootLayer.frame = snapshot.bounds
+		renderHud(snapshot)
+		renderLoupe(snapshot)
+		CATransaction.commit()
+	}
+
+	private func layerFrameNeedsUpdate(_ current: CGRect, _ next: CGRect) -> Bool {
+		abs(current.minX - next.minX) > 0.001
+			|| abs(current.minY - next.minY) > 0.001
+			|| abs(current.width - next.width) > 0.001
+			|| abs(current.height - next.height) > 0.001
+	}
+
+	private func recordLayerPositionGap(_ moveUptime: TimeInterval) {
+		defer {
+			lastLayerPositionMoveUptime = moveUptime
+		}
+		guard let lastLayerPositionMoveUptime else {
+			return
+		}
+		let gapMilliseconds = (moveUptime - lastLayerPositionMoveUptime) * 1_000
+		guard gapMilliseconds >= 0, gapMilliseconds < 250 else {
+			return
+		}
+		layerPositionGapMetric.record(gapMilliseconds)
 	}
 
 	private func renderFrozenDisplay(_ snapshot: LivePreviewSnapshot) {
@@ -1315,26 +1267,30 @@ final class LiveOverlayRenderer {
 		)
 		let glassEnabled = settings.hudGlassEnabled && settings.hudBlur > 0.01
 		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
-		let hasGlass = glassEnabled && glassImage != nil
+		let hasInlineGlass = glassEnabled && glassImage != nil
+		let usesExternalGlass = glassEnabled && glassImage == nil
+		let hasGlass = hasInlineGlass || usesExternalGlass
 
 		container.cornerRadius = cornerRadius
 		container.shadowColor = palette.shadow.cgColor
 		container.shadowOffset = .zero
 		container.shadowRadius = 10
-		container.shadowOpacity = Float(max(0.12, opacity * 0.75))
+		container.shadowOpacity = usesExternalGlass ? 0 : Float(max(0.12, opacity * 0.75))
 
 		glassLayer.frame = frame
 		glassLayer.cornerRadius = cornerRadius
 		glassLayer.masksToBounds = true
 		glassLayer.contentsGravity = .resizeAspectFill
 		glassLayer.contents = glassImage
-		glassLayer.opacity = hasGlass ? CaptureChrome.glassOpacity(settings: settings) : 0
-		glassLayer.isHidden = !hasGlass
+		glassLayer.opacity = hasInlineGlass ? CaptureChrome.glassOpacity(settings: settings) : 0
+		glassLayer.isHidden = !hasInlineGlass
 
 		fillLayer.frame = frame
 		fillLayer.cornerRadius = cornerRadius
 		fillLayer.backgroundColor =
-			CaptureChrome.effectiveBodyFill(
+			usesExternalGlass
+			? NSColor.clear.cgColor
+			: CaptureChrome.effectiveBodyFill(
 				palette: palette,
 				settings: settings,
 				hasGlass: hasGlass
