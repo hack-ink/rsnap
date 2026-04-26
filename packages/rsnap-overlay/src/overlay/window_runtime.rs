@@ -724,6 +724,7 @@ impl OverlaySession {
 
 			#[cfg(target_os = "macos")]
 			let cursor_rects = overlay::macos_install_overlay_cursor_rect_support(window.as_ref())?;
+
 			if visible {
 				window.request_redraw();
 				#[cfg(not(target_os = "macos"))]
