@@ -1126,7 +1126,7 @@ final class CaptureSessionController: NSObject {
 		let frozenFrame = frozenFrameAuthority.snapshot(
 			containing: selectionCenter,
 			after: token,
-			maxWait: frozenFrameLatchWait(for: selectionCenter)
+			maxWait: frozenFrameLatchWait()
 		)
 		guard let frozenFrame else {
 			NSLog("Frozen transition aborted: no fresh authority frame was available")
@@ -1156,12 +1156,8 @@ final class CaptureSessionController: NSObject {
 		try session.send(report: .freezeSnapshotCommitted(selection: selection))
 	}
 
-	private func frozenFrameLatchWait(for point: CGPoint) -> TimeInterval {
-		let frameInterval =
-			screen(containing: point)
-			.map(NativeHostDisplayRefresh.frameInterval(for:))
-			?? (1.0 / 60.0)
-		return min(0.040, max(0.018, frameInterval * 2.5))
+	private func frozenFrameLatchWait() -> TimeInterval {
+		min(0.040, max(0.018, NativeHostDisplayRefresh.frameInterval * 2.5))
 	}
 
 	private func hostOwnedFrozenPresentationScene(for selection: CGRect) -> SceneSnapshot {
@@ -1930,6 +1926,7 @@ final class CaptureOverlayController {
 			}
 		}
 		collapsedForFrozen = false
+		liveChromeWindows.prepareForLivePresentation(settings: settings)
 		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: focusPoint)
 		windowSnapshotFeed.start(
 			desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
@@ -2438,7 +2435,6 @@ final class CaptureHostView: NSView {
 	private lazy var liveRenderer = LiveOverlayRenderer(hostView: self)
 	private var liveRendererInstalled = false
 	private var deferredLiveShutdownWorkItem: DispatchWorkItem?
-	private var loggedLiveDisplayHz: Int?
 	private var loggedLiveTargetHz: Int?
 
 	override var acceptsFirstResponder: Bool { true }
@@ -2487,7 +2483,7 @@ final class CaptureHostView: NSView {
 				liveHoverChromeSuppressed = false
 			}
 			if livePointerPreviewGlobal == nil {
-				seedLivePointerPreview(scene.pointer)
+				seedLivePointerPreview(scene.pointer, recordsInputLatency: false)
 			}
 			if liveHighlightedWindowPreview == nil {
 				liveHighlightedWindowPreview = scene.highlightedWindow
@@ -2553,7 +2549,7 @@ final class CaptureHostView: NSView {
 		frozenFirstDisplayCompletionQueued = false
 		lastLivePreviewSnapshot = nil
 		if scene.mode == .live {
-			seedLivePointerPreview(scene.pointer)
+			seedLivePointerPreview(scene.pointer, recordsInputLatency: false)
 			liveHighlightedWindowPreview = scene.highlightedWindow
 		} else {
 			resetLivePointerPreview()
@@ -2652,7 +2648,7 @@ final class CaptureHostView: NSView {
 	override func mouseMoved(with event: NSEvent) {
 		refreshHoveredToolbarAction(for: event.locationInWindow)
 		let point = globalPoint(from: event)
-		updateLivePointerPreview(to: point)
+		updateLivePointerPreview(to: point, rendersImmediately: false)
 		queuePointerEvent(.moved(point))
 	}
 
@@ -2661,7 +2657,7 @@ final class CaptureHostView: NSView {
 
 		if scene.mode == .live {
 			let point = globalPoint(from: event)
-			updateLivePointerPreview(to: point)
+			updateLivePointerPreview(to: point, rendersImmediately: false)
 			queuePointerEvent(.liveDragged(point))
 		} else {
 			controller?.continueFrozenInteraction(to: globalPoint(from: event))
@@ -2677,7 +2673,7 @@ final class CaptureHostView: NSView {
 			break
 		case .live:
 			suppressLiveHoverChrome()
-			updateLivePointerPreview(to: point)
+			updateLivePointerPreview(to: point, rendersImmediately: true)
 			controller?.beginPrimaryInteraction(at: point)
 		case .frozen:
 			if let action = toolbarAction(at: localPoint) {
@@ -2692,7 +2688,7 @@ final class CaptureHostView: NSView {
 	override func mouseUp(with event: NSEvent) {
 		let point = globalPoint(from: event)
 		if scene.mode == .live {
-			updateLivePointerPreview(to: point)
+			updateLivePointerPreview(to: point, rendersImmediately: true)
 			controller?.completePrimaryInteraction(at: point)
 		} else if scene.mode == .frozen {
 			controller?.completeFrozenInteraction(at: point)
@@ -2941,24 +2937,35 @@ final class CaptureHostView: NSView {
 		return localPoint(from: globalPoint)
 	}
 
-	private func seedLivePointerPreview(_ globalPoint: CGPoint?) {
+	private func seedLivePointerPreview(
+		_ globalPoint: CGPoint?,
+		recordsInputLatency: Bool = true
+	) {
 		guard let globalPoint else {
 			resetLivePointerPreview()
 			return
 		}
 		livePointerPreviewGlobal = globalPoint
-		livePointerPreviewInputUptime = ProcessInfo.processInfo.systemUptime
-		livePointerPreviewInputSequence &+= 1
+		if recordsInputLatency {
+			livePointerPreviewInputUptime = ProcessInfo.processInfo.systemUptime
+			livePointerPreviewInputSequence &+= 1
+		} else {
+			livePointerPreviewInputUptime = nil
+			livePointerPreviewInputSequence = 0
+		}
 	}
 
 	@discardableResult
-	private func setLivePointerPreview(to globalPoint: CGPoint) -> Bool {
+	private func setLivePointerPreview(
+		to globalPoint: CGPoint,
+		recordsInputLatency: Bool = true
+	) -> Bool {
 		if let current = livePointerPreviewGlobal,
 			hypot(current.x - globalPoint.x, current.y - globalPoint.y) < 0.5
 		{
 			return false
 		}
-		seedLivePointerPreview(globalPoint)
+		seedLivePointerPreview(globalPoint, recordsInputLatency: recordsInputLatency)
 		return true
 	}
 
@@ -2968,7 +2975,10 @@ final class CaptureHostView: NSView {
 		livePointerPreviewInputSequence = 0
 	}
 
-	private func updateLivePointerPreview(to globalPoint: CGPoint) {
+	private func updateLivePointerPreview(
+		to globalPoint: CGPoint,
+		rendersImmediately: Bool
+	) {
 		guard scene.mode == .live else {
 			return
 		}
@@ -2979,7 +2989,9 @@ final class CaptureHostView: NSView {
 		liveHighlightedWindowPreview =
 			controller?.previewHighlightedWindow(at: globalPoint) ?? scene.highlightedWindow
 		updateLivePreviewDemands()
-		liveRenderer.renderNow()
+		if rendersImmediately {
+			liveRenderer.renderNow()
+		}
 	}
 
 	private func localFrozenSelectionRect() -> CGRect? {
@@ -3838,16 +3850,10 @@ final class CaptureHostView: NSView {
 		let polledPoint = NSEvent.mouseLocation
 		if let currentPreview = livePointerPreviewGlobal {
 			if hypot(currentPreview.x - polledPoint.x, currentPreview.y - polledPoint.y) >= 0.5 {
-				setLivePointerPreview(to: polledPoint)
-				liveHighlightedWindowPreview =
-					controller?.previewHighlightedWindow(at: polledPoint)
-					?? liveHighlightedWindowPreview
+				applyPolledLivePointerPreview(polledPoint)
 			}
 		} else {
-			setLivePointerPreview(to: polledPoint)
-			liveHighlightedWindowPreview =
-				controller?.previewHighlightedWindow(at: polledPoint)
-				?? liveHighlightedWindowPreview
+			applyPolledLivePointerPreview(polledPoint, recordsInputLatency: false)
 		}
 
 		updateLivePreviewDemands()
@@ -3886,6 +3892,21 @@ final class CaptureHostView: NSView {
 			loupePatch: loupePatch,
 			glassPatches: [:]
 		)
+	}
+
+	private func applyPolledLivePointerPreview(
+		_ globalPoint: CGPoint,
+		recordsInputLatency: Bool = true
+	) {
+		let pointerChanged = setLivePointerPreview(
+			to: globalPoint,
+			recordsInputLatency: recordsInputLatency
+		)
+		if pointerChanged {
+			controller?.updateLiveChromePositions(currentLiveChromePositionSnapshot())
+		}
+		liveHighlightedWindowPreview =
+			controller?.previewHighlightedWindow(at: globalPoint) ?? liveHighlightedWindowPreview
 	}
 
 	private func currentChromeVisualSnapshot() -> LiveChromeVisualSnapshot? {
@@ -4111,22 +4132,17 @@ final class CaptureHostView: NSView {
 		}
 		guard scene.mode == .live || pendingFrozenFirstDisplay else {
 			liveRenderer.suspend()
-			loggedLiveDisplayHz = nil
 			loggedLiveTargetHz = nil
 			return
 		}
 		deferredLiveShutdownWorkItem?.cancel()
 		deferredLiveShutdownWorkItem = nil
-		let displayHz = NativeHostDisplayRefresh.displayFramesPerSecond(for: window?.screen)
-		let targetHz = NativeHostDisplayRefresh.effectiveFramesPerSecond(for: window?.screen)
-		if loggedLiveDisplayHz != displayHz || loggedLiveTargetHz != targetHz {
-			loggedLiveDisplayHz = displayHz
+		let targetHz = NativeHostDisplayRefresh.targetFramesPerSecond
+		if loggedLiveTargetHz != targetHz {
 			loggedLiveTargetHz = targetHz
 			NativeHostTelemetry.liveChromeRefreshTarget(
-				displayHz: displayHz,
 				targetHz: targetHz,
-				frameBudgetMilliseconds: NativeHostDisplayRefresh.frameBudgetMilliseconds(
-					for: window?.screen)
+				frameBudgetMilliseconds: NativeHostDisplayRefresh.frameBudgetMilliseconds
 			)
 		}
 		liveRenderer.updateDisplayID(currentDisplayID(), targetFramesPerSecond: targetHz)
@@ -4453,7 +4469,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func pointerDispatchInterval() -> TimeInterval {
-		NativeHostDisplayRefresh.frameInterval(for: window?.screen)
+		NativeHostDisplayRefresh.frameInterval
 	}
 
 	private func lastPointerDispatchUptime(for event: QueuedPointerEvent) -> TimeInterval {

@@ -1,7 +1,6 @@
 import AppKit
 import CoreGraphics
 import CoreImage
-import CoreVideo
 import Foundation
 import QuartzCore
 import RsnapHostBridge
@@ -166,8 +165,15 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	func start() {
 		stop()
 		let timer = DispatchSource.makeTimerSource(queue: queue)
-		let interval = TimeInterval(1.0 / 60.0)
-		timer.schedule(deadline: .now(), repeating: interval)
+		let intervalNanoseconds = max(
+			1,
+			Int((NativeHostDisplayRefresh.frameInterval * 1_000_000_000.0).rounded())
+		)
+		timer.schedule(
+			deadline: .now(),
+			repeating: .nanoseconds(intervalNanoseconds),
+			leeway: .nanoseconds(0)
+		)
 		timer.setEventHandler { [weak self] in
 			self?.refresh()
 		}
@@ -378,82 +384,73 @@ final class GlassPatchFeed {
 	}
 }
 
-final class LiveDisplayLinkDriver: @unchecked Sendable {
+final class LiveFrameClockDriver: @unchecked Sendable {
 	var onTick: (() -> Void)?
 	private let stateLock = NSLock()
-	private var displayLink: CVDisplayLink?
-	private var currentDisplayID: CGDirectDisplayID?
+	private let tickGapMetric = NativeHostTelemetry.distribution(
+		"live_chrome.frame_tick_gap",
+		category: "LiveChromeTelemetry"
+	)
+	private var timer: DispatchSourceTimer?
 	private var currentTargetFramesPerSecond: Int?
-	private var tickPending = false
+	private var lastTickUptime: TimeInterval?
 
-	func start(displayID: CGDirectDisplayID, targetFramesPerSecond: Int) {
+	func start(targetFramesPerSecond: Int) {
 		let sanitizedTarget = max(1, targetFramesPerSecond)
 		stateLock.lock()
-		let alreadyRunning =
-			displayLink != nil && currentDisplayID == displayID
-			&& currentTargetFramesPerSecond == sanitizedTarget
+		let alreadyRunning = timer != nil && currentTargetFramesPerSecond == sanitizedTarget
 		stateLock.unlock()
 		guard !alreadyRunning else {
 			return
 		}
 
 		stop()
-		var link: CVDisplayLink?
-		guard CVDisplayLinkCreateWithActiveCGDisplays(&link) == kCVReturnSuccess, let link else {
-			return
-		}
-		CVDisplayLinkSetCurrentCGDisplay(link, displayID)
-		CVDisplayLinkSetOutputHandler(link) { [weak self] _, _, _, _, _ in
-			guard let self else {
-				return kCVReturnSuccess
-			}
-			self.stateLock.lock()
-			guard !self.tickPending else {
-				self.stateLock.unlock()
-				return kCVReturnSuccess
-			}
-			self.tickPending = true
-			self.stateLock.unlock()
-			DispatchQueue.main.async {
-				self.stateLock.lock()
-				self.tickPending = false
-				self.stateLock.unlock()
-				self.onTick?()
-			}
-			return kCVReturnSuccess
+		let timer = DispatchSource.makeTimerSource(queue: .main)
+		let intervalNanoseconds = max(
+			1,
+			Int((1_000_000_000.0 / Double(sanitizedTarget)).rounded())
+		)
+		timer.schedule(
+			deadline: .now(),
+			repeating: .nanoseconds(intervalNanoseconds),
+			leeway: .nanoseconds(0)
+		)
+		timer.setEventHandler { [weak self] in
+			self?.tick()
 		}
 		stateLock.lock()
-		displayLink = link
-		currentDisplayID = displayID
+		self.timer = timer
 		currentTargetFramesPerSecond = sanitizedTarget
-		tickPending = false
+		lastTickUptime = nil
 		stateLock.unlock()
-		guard CVDisplayLinkStart(link) == kCVReturnSuccess else {
-			stateLock.lock()
-			displayLink = nil
-			currentDisplayID = nil
-			currentTargetFramesPerSecond = nil
-			tickPending = false
-			stateLock.unlock()
-			return
+		timer.resume()
+	}
+
+	private func tick() {
+		let now = ProcessInfo.processInfo.systemUptime
+		if let lastTickUptime {
+			let gapMilliseconds = (now - lastTickUptime) * 1_000
+			if gapMilliseconds >= 0, gapMilliseconds < 250 {
+				tickGapMetric.record(gapMilliseconds)
+			}
 		}
+		lastTickUptime = now
+		onTick?()
 	}
 
 	func stop() {
 		stateLock.lock()
-		guard let displayLink else {
-			currentDisplayID = nil
+		guard let timer else {
 			currentTargetFramesPerSecond = nil
-			tickPending = false
+			lastTickUptime = nil
 			stateLock.unlock()
 			return
 		}
-		self.displayLink = nil
-		currentDisplayID = nil
+		self.timer = nil
 		currentTargetFramesPerSecond = nil
-		tickPending = false
+		lastTickUptime = nil
 		stateLock.unlock()
-		CVDisplayLinkStop(displayLink)
+		timer.cancel()
 	}
 
 	deinit {
@@ -918,13 +915,13 @@ final class LiveOverlayRenderer {
 	private let loupeStrokeLayer = CAShapeLayer()
 	private let loupePatchLayer = CALayer()
 	private let loupeCenterLayer = CAShapeLayer()
-	private let displayLink = LiveDisplayLinkDriver()
+	private let frameClock = LiveFrameClockDriver()
 	private var snapshotProvider: (() -> LivePreviewSnapshot?)?
 
 	init(hostView: NSView) {
 		self.hostView = hostView
 		configureLayers()
-		displayLink.onTick = { [weak self] in
+		frameClock.onTick = { [weak self] in
 			self?.renderCurrentSnapshot()
 			self?.onTick?()
 		}
@@ -943,15 +940,15 @@ final class LiveOverlayRenderer {
 	}
 
 	func updateDisplayID(_ displayID: CGDirectDisplayID?, targetFramesPerSecond: Int) {
-		guard let displayID else {
+		guard displayID != nil else {
 			stop()
 			return
 		}
-		displayLink.start(displayID: displayID, targetFramesPerSecond: targetFramesPerSecond)
+		frameClock.start(targetFramesPerSecond: targetFramesPerSecond)
 	}
 
 	func stop() {
-		displayLink.stop()
+		frameClock.stop()
 		rootLayer.isHidden = true
 	}
 

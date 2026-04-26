@@ -1,7 +1,7 @@
 use crate::overlay::{
 	Duration, FROZEN_TEXT_CARET_REPAINT_INTERVAL, GlobalPoint, HUD_LOUPE_MOVE_INTERVAL_MIN,
-	INTERACTIVE_REPAINT_FPS_CAP, Instant, LOUPE_WINDOW_WARMUP_REDRAWS, LogicalPosition,
-	MonitorRect, MonitorRectPoints, OVERLAY_EVENT_LOOP_STALL_THRESHOLD, Ordering, OverlayControl,
+	INTERACTIVE_REPAINT_TARGET_FPS, Instant, LOUPE_WINDOW_WARMUP_REDRAWS, LogicalPosition,
+	MonitorRect, MonitorRectPoints, OVERLAY_EVENT_LOOP_STALL_THRESHOLD, OverlayControl,
 	OverlayEventLoopPhase, OverlayMode, OverlaySession, SLOW_OP_WARN_INTERVAL,
 	SLOW_OP_WARN_OUTER_POSITION, WindowEvent,
 };
@@ -260,41 +260,12 @@ impl OverlaySession {
 		old_cursor != Some(cursor) || old_monitor != Some(monitor)
 	}
 
-	pub(super) fn repaint_interval_for_monitor(&self, monitor: Option<MonitorRect>) -> Duration {
-		let monitor_fps = monitor
-			.and_then(|target| {
-				self.windows.values().find_map(|window| {
-					(target == window.monitor).then_some(window.refresh_rate_millihertz)
-				})
-			})
-			.flatten()
-			.and_then(|hz| {
-				let fps = (hz as f32) / 1_000.0;
-
-				if fps.is_finite() && fps > 0.0 { Some(fps) } else { None }
-			});
-		let fallback_fps = self
-			.windows
-			.values()
-			.filter_map(|window| window.refresh_rate_millihertz)
-			.filter_map(|hz| {
-				let fps = (hz as f32) / 1_000.0;
-
-				if fps.is_finite() && fps > 0.0 { Some(fps) } else { None }
-			})
-			.max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-		let fps = Self::interactive_repaint_fps(monitor_fps, fallback_fps);
-
-		Duration::from_secs_f32(1.0 / fps)
+	pub(super) fn repaint_interval_for_monitor(&self, _monitor: Option<MonitorRect>) -> Duration {
+		Duration::from_secs_f32(1.0 / Self::interactive_repaint_fps())
 	}
 
-	pub(super) fn interactive_repaint_fps(
-		monitor_fps: Option<f32>,
-		fallback_fps: Option<f32>,
-	) -> f32 {
-		monitor_fps
-			.or(fallback_fps)
-			.map_or(INTERACTIVE_REPAINT_FPS_CAP, |fps| fps.min(INTERACTIVE_REPAINT_FPS_CAP))
+	pub(super) const fn interactive_repaint_fps() -> f32 {
+		INTERACTIVE_REPAINT_TARGET_FPS
 	}
 
 	pub(super) fn selection_flow_repaint_interval(&self, monitor: Option<MonitorRect>) -> Duration {

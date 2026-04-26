@@ -724,8 +724,6 @@ impl OverlaySession {
 
 			#[cfg(target_os = "macos")]
 			let cursor_rects = overlay::macos_install_overlay_cursor_rect_support(window.as_ref())?;
-			let refresh_rate_millihertz =
-				window.current_monitor().and_then(|monitor| monitor.refresh_rate_millihertz());
 
 			if visible {
 				window.request_redraw();
@@ -749,7 +747,6 @@ impl OverlaySession {
 					cursor_rects,
 					window,
 					renderer,
-					refresh_rate_millihertz,
 				},
 			);
 		}
