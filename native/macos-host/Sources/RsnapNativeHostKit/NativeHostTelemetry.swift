@@ -21,10 +21,10 @@ enum NativeHostTelemetry {
 	}
 
 	static func liveChromeRefreshTarget(
-		displayHz: Int, targetHz: Int, frameBudgetMilliseconds: Double
+		targetHz: Int, frameBudgetMilliseconds: Double
 	) {
 		liveChromeLogger.info(
-			"event=live_chrome.refresh_target displayHz=\(displayHz, privacy: .public) targetHz=\(targetHz, privacy: .public) frameBudgetMs=\(frameBudgetMilliseconds, format: .fixed(precision: 2), privacy: .public)"
+			"event=live_chrome.refresh_target targetHz=\(targetHz, privacy: .public) frameBudgetMs=\(frameBudgetMilliseconds, format: .fixed(precision: 2), privacy: .public)"
 		)
 	}
 
