@@ -315,20 +315,53 @@ private final class LiveChromeOverlayWindow: NSWindow {
 	override var canBecomeKey: Bool { false }
 	override var canBecomeMain: Bool { false }
 
-	func update(frame: CGRect, settings: NativeHostSettings) {
-		let roundedFrame = CGRect(
-			x: frame.origin.x.rounded(),
-			y: frame.origin.y.rounded(),
-			width: ceil(frame.width),
-			height: ceil(frame.height)
+	private var presentationScale: CGFloat {
+		max(
+			backingScaleFactor,
+			screen?.backingScaleFactor ?? 0,
+			NSScreen.main?.backingScaleFactor ?? 1,
+			1
 		)
+	}
+
+	private func presentationFrame(from frame: CGRect) -> CGRect {
+		let scale = presentationScale
+		return CGRect(
+			x: (frame.origin.x * scale).rounded() / scale,
+			y: (frame.origin.y * scale).rounded() / scale,
+			width: (frame.width * scale).rounded(.up) / scale,
+			height: (frame.height * scale).rounded(.up) / scale
+		)
+	}
+
+	func prewarmForPresentation(settings: NativeHostSettings) {
+		guard !isPresented else {
+			return
+		}
+
+		let prewarmFrame = CGRect(x: -10_000, y: -10_000, width: 1, height: 1)
+		alphaValue = 0
+		setFrame(prewarmFrame, display: false, animate: false)
+		lastPresentedFrame = prewarmFrame
+		orderFrontRegardless()
+		isPresented = true
+		displayIfNeeded()
+
+		let blurAmount = settings.hudGlassEnabled ? settings.hudBlur : 0
+		MacOSWindowBlurBridge.applyBlur(to: self, amount: blurAmount)
+		lastAppliedBlurAmount = blurAmount
+	}
+
+	func update(frame: CGRect, settings: NativeHostSettings) {
+		let roundedFrame = presentationFrame(from: frame)
+		let tolerance: CGFloat = 0.001
 		if let lastPresentedFrame {
 			let sizeChanged =
-				abs(lastPresentedFrame.width - roundedFrame.width) > 0.5
-				|| abs(lastPresentedFrame.height - roundedFrame.height) > 0.5
+				abs(lastPresentedFrame.width - roundedFrame.width) > tolerance
+				|| abs(lastPresentedFrame.height - roundedFrame.height) > tolerance
 			let originChanged =
-				abs(lastPresentedFrame.minX - roundedFrame.minX) > 0.5
-				|| abs(lastPresentedFrame.minY - roundedFrame.minY) > 0.5
+				abs(lastPresentedFrame.minX - roundedFrame.minX) > tolerance
+				|| abs(lastPresentedFrame.minY - roundedFrame.minY) > tolerance
 			if sizeChanged {
 				setFrame(roundedFrame, display: false, animate: false)
 			} else if originChanged {
@@ -349,27 +382,26 @@ private final class LiveChromeOverlayWindow: NSWindow {
 			orderFrontRegardless()
 			isPresented = true
 		}
+		if alphaValue != 1 {
+			alphaValue = 1
+		}
 	}
 
 	func moveIfPossible(frame: CGRect) -> Bool {
 		guard let lastPresentedFrame else {
 			return false
 		}
-		let roundedFrame = CGRect(
-			x: frame.origin.x.rounded(),
-			y: frame.origin.y.rounded(),
-			width: ceil(frame.width),
-			height: ceil(frame.height)
-		)
+		let roundedFrame = presentationFrame(from: frame)
+		let tolerance: CGFloat = 0.001
 		let sizeMatches =
-			abs(lastPresentedFrame.width - roundedFrame.width) <= 0.5
-			&& abs(lastPresentedFrame.height - roundedFrame.height) <= 0.5
+			abs(lastPresentedFrame.width - roundedFrame.width) <= tolerance
+			&& abs(lastPresentedFrame.height - roundedFrame.height) <= tolerance
 		guard sizeMatches else {
 			return false
 		}
 		let originChanged =
-			abs(lastPresentedFrame.minX - roundedFrame.minX) > 0.5
-			|| abs(lastPresentedFrame.minY - roundedFrame.minY) > 0.5
+			abs(lastPresentedFrame.minX - roundedFrame.minX) > tolerance
+			|| abs(lastPresentedFrame.minY - roundedFrame.minY) > tolerance
 		guard originChanged else {
 			return false
 		}
@@ -385,6 +417,7 @@ private final class LiveChromeOverlayWindow: NSWindow {
 		orderOut(nil)
 		isPresented = false
 		lastPresentedFrame = nil
+		alphaValue = 1
 	}
 }
 
@@ -696,6 +729,10 @@ final class LiveChromeVisualWindowController {
 		"live_chrome.hud.fast_position_duration",
 		category: "LiveChromeTelemetry"
 	)
+	private let hudFastPositionGapMetric = NativeHostTelemetry.distribution(
+		"live_chrome.hud.fast_position_gap",
+		category: "LiveChromeTelemetry"
+	)
 	private let loupeFastPositionLatencyMetric = NativeHostTelemetry.distribution(
 		"live_chrome.loupe.fast_position_latency",
 		category: "LiveChromeTelemetry"
@@ -704,10 +741,21 @@ final class LiveChromeVisualWindowController {
 		"live_chrome.loupe.fast_position_duration",
 		category: "LiveChromeTelemetry"
 	)
+	private let loupeFastPositionGapMetric = NativeHostTelemetry.distribution(
+		"live_chrome.loupe.fast_position_gap",
+		category: "LiveChromeTelemetry"
+	)
 	private var lastHudLatencyInputSequence: UInt64?
 	private var lastLoupeLatencyInputSequence: UInt64?
 	private var lastFastHudLatencyInputSequence: UInt64?
 	private var lastFastLoupeLatencyInputSequence: UInt64?
+	private var lastFastHudPositionUptime: TimeInterval?
+	private var lastFastLoupePositionUptime: TimeInterval?
+
+	func prepareForLivePresentation(settings: NativeHostSettings) {
+		hudWindow.prewarmForPresentation(settings: settings)
+		loupeWindow.prewarmForPresentation(settings: settings)
+	}
 
 	func update(snapshot: LiveChromeVisualSnapshot?, focusedWindowNumber: Int?) {
 		let updateStart = ProcessInfo.processInfo.systemUptime
@@ -769,11 +817,22 @@ final class LiveChromeVisualWindowController {
 			let moveStart = ProcessInfo.processInfo.systemUptime
 			if hudWindow.moveIfPossible(frame: hudFrame) {
 				hudFastPositionDurationMetric.recordMillisecondsSince(moveStart)
+				recordPositionGap(
+					moveStart,
+					lastMoveUptime: &lastFastHudPositionUptime,
+					metric: hudFastPositionGapMetric
+				)
 				recordInputLatency(
 					inputUptime: snapshot.inputUptime,
 					inputSequence: snapshot.inputSequence,
 					lastInputSequence: &lastFastHudLatencyInputSequence,
 					metric: hudFastPositionLatencyMetric
+				)
+				recordInputLatency(
+					inputUptime: snapshot.inputUptime,
+					inputSequence: snapshot.inputSequence,
+					lastInputSequence: &lastHudLatencyInputSequence,
+					metric: hudApplyLatencyMetric
 				)
 			}
 		}
@@ -781,14 +840,43 @@ final class LiveChromeVisualWindowController {
 			let moveStart = ProcessInfo.processInfo.systemUptime
 			if loupeWindow.moveIfPossible(frame: loupeFrame) {
 				loupeFastPositionDurationMetric.recordMillisecondsSince(moveStart)
+				recordPositionGap(
+					moveStart,
+					lastMoveUptime: &lastFastLoupePositionUptime,
+					metric: loupeFastPositionGapMetric
+				)
 				recordInputLatency(
 					inputUptime: snapshot.inputUptime,
 					inputSequence: snapshot.inputSequence,
 					lastInputSequence: &lastFastLoupeLatencyInputSequence,
 					metric: loupeFastPositionLatencyMetric
 				)
+				recordInputLatency(
+					inputUptime: snapshot.inputUptime,
+					inputSequence: snapshot.inputSequence,
+					lastInputSequence: &lastLoupeLatencyInputSequence,
+					metric: loupeApplyLatencyMetric
+				)
 			}
 		}
+	}
+
+	private func recordPositionGap(
+		_ moveUptime: TimeInterval,
+		lastMoveUptime: inout TimeInterval?,
+		metric: NativeHostTelemetry.DistributionMetric
+	) {
+		defer {
+			lastMoveUptime = moveUptime
+		}
+		guard let lastMoveUptime else {
+			return
+		}
+		let gapMilliseconds = (moveUptime - lastMoveUptime) * 1_000
+		guard gapMilliseconds >= 0, gapMilliseconds < 250 else {
+			return
+		}
+		metric.record(gapMilliseconds)
 	}
 
 	private func recordInputLatency(
