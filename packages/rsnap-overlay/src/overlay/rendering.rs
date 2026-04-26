@@ -170,7 +170,6 @@ pub(super) struct OverlayWindow {
 	pub(super) cursor_rects: MacOSOverlayCursorRectSupport,
 	pub(super) window: Arc<Window>,
 	pub(super) renderer: WindowRenderer,
-	pub(super) refresh_rate_millihertz: Option<u32>,
 }
 
 pub(super) struct GpuContext {

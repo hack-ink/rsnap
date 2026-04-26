@@ -50,7 +50,6 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
 	borrow::Cow,
-	cmp::Ordering,
 	collections::{HashMap, HashSet},
 	path::PathBuf,
 	sync::{Arc, Mutex},
@@ -365,7 +364,7 @@ const SELECTION_FLOW_SPEED: f32 = 0.24;
 const SELECTION_FLOW_CORE_WIDTH_PX: f32 = 2.4;
 const SELECTION_FLOW_CORE_FLOW_WIDTH: f32 = 0.06;
 const SELECTION_FLOW_FLOW_BOOST: f32 = 2.8;
-const INTERACTIVE_REPAINT_FPS_CAP: f32 = 120.0;
+const INTERACTIVE_REPAINT_TARGET_FPS: f32 = 120.0;
 const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] =
 	[(196, 226, 255), (228, 198, 255), (176, 244, 224)];
 const SELECTION_FLOW_LIGHT_PALETTE: [(u8, u8, u8); 3] =

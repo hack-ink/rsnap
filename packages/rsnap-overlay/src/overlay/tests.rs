@@ -4027,22 +4027,8 @@ fn frozen_toolbar_clamps_floating_position() {
 }
 
 #[test]
-fn interactive_repaint_fps_uses_known_lower_monitor_refresh() {
-	assert_eq!(OverlaySession::interactive_repaint_fps(Some(60.0), Some(144.0)), 60.0);
-	assert_eq!(OverlaySession::interactive_repaint_fps(Some(75.0), Some(120.0)), 75.0);
-}
-
-#[test]
-fn interactive_repaint_fps_caps_known_higher_refresh_to_contract_limit() {
-	assert_eq!(OverlaySession::interactive_repaint_fps(Some(144.0), Some(60.0)), 120.0);
-	assert_eq!(OverlaySession::interactive_repaint_fps(Some(240.0), None), 120.0);
-}
-
-#[test]
-fn interactive_repaint_fps_falls_back_to_known_or_default_cap() {
-	assert_eq!(OverlaySession::interactive_repaint_fps(None, Some(90.0)), 90.0);
-	assert_eq!(OverlaySession::interactive_repaint_fps(None, Some(144.0)), 120.0);
-	assert_eq!(OverlaySession::interactive_repaint_fps(None, None), 120.0);
+fn interactive_repaint_fps_is_fixed_contract_target() {
+	assert_eq!(OverlaySession::interactive_repaint_fps(), 120.0);
 }
 
 #[test]

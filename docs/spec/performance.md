@@ -22,7 +22,7 @@ Defines:
 - the active render cadence contract for rsnap UI and overlay paths
 - the tracked performance scenarios and their primary metrics
 - the distinction between target cadence, diagnostic thresholds, and coarse smoke gates
-- the currently known gap between the agreed cadence contract and the live implementation
+- the current cadence implementation status and any known gap against the agreed contract
 
 ## Scope
 
@@ -42,25 +42,22 @@ or animation.
 
 For actively rendered rsnap UI and overlay paths, target cadence is:
 
-`min(120 Hz, active display refresh ceiling)`
+`120 Hz`
 
 Practical meaning:
 
-- If the active display refresh rate is `<= 120 Hz`, rsnap should not run below that display
-  refresh rate during the relevant active interaction path.
-- If the active display refresh rate is `> 120 Hz`, the current contract caps the target at
-  `120 Hz`.
+- The target frame budget is always `8.33 ms` for the relevant active interaction path.
+- rsnap MUST NOT lower this target by reading the active display refresh rate, deriving a
+  per-monitor display refresh ceiling, or treating an unknown display refresh rate as a separate
+  acceptance class.
+- Passing the cadence contract requires achieving the fixed `120 Hz` target. A lower display
+  refresh rate is not an alternate target and does not relax the requirement.
 
-Derived target frame budgets:
+Target frame budget:
 
-| Active display refresh ceiling | Target cadence | Target frame budget |
-| --- | --- | --- |
-| `60 Hz` | `60 Hz` | `16.67 ms` |
-| `75 Hz` | `75 Hz` | `13.33 ms` |
-| `90 Hz` | `90 Hz` | `11.11 ms` |
-| `120 Hz` | `120 Hz` | `8.33 ms` |
-| `144 Hz` | `120 Hz` | `8.33 ms` |
-| `240 Hz` | `120 Hz` | `8.33 ms` |
+| Target cadence | Target frame budget |
+| --- | --- |
+| `120 Hz` | `8.33 ms` |
 
 This cadence contract is normative even when current logs or smoke harnesses use coarser warning
 thresholds.
@@ -70,7 +67,7 @@ thresholds.
 The performance contract distinguishes three layers:
 
 1. Target cadence
-   - The per-surface target frame interval derived from the active render cadence contract.
+   - The per-surface target frame interval defined by the active render cadence contract.
    - This is the standard that implementation and benchmark work should aim to satisfy.
 2. Diagnostic thresholds
    - Structured timing or warning thresholds emitted by the runtime.
@@ -92,7 +89,7 @@ Surface:
 - live cursor sample apply path
 
 Primary metrics:
-- effective active redraw cadence against the target frame budget for the active display
+- effective active redraw cadence against the fixed `120 Hz` target frame budget
 - phase timings for redraw-related work
 - live sample apply latency
 
@@ -157,29 +154,43 @@ Passing one environment class does not automatically satisfy the other.
 
 The current overlay runtime already exposes several useful diagnostic thresholds:
 
-- `LIVE_PRESENT_INTERVAL_MIN = 8.33 ms` for the 120 Hz floor-derived present interval.
+- `LIVE_PRESENT_INTERVAL_MIN = 8.33 ms` for the fixed `120 Hz` target present interval.
 - `SLOW_OP_WARN_RENDER = 24 ms` for coarse render warnings.
 - `OVERLAY_EVENT_LOOP_STALL_THRESHOLD = 250 ms` for severe event-loop stalls.
 - `overlay.live_sample_apply_latency` is logged once latency reaches `12 ms`.
+- Native-host `live_chrome.hud.apply_latency` and `live_chrome.loupe.apply_latency` measure the
+  first successful visible apply for a live input sequence. If the position-only fast path moves
+  the HUD or loupe first, that fast-path apply owns the sample and the later full snapshot refresh
+  must not re-record the same input sequence as a slower apply.
+- Native-host `live_chrome.*.fast_position_latency` and
+  `live_chrome.*.fast_position_duration` are diagnostic signals for the position-only fast path;
+  they do not replace the first-visible-apply latency metric.
+- Native-host `live_chrome.*.fast_position_gap` reports the interval between successful
+  position-only moves. Use it to diagnose cadence jitter when per-move duration and apply latency
+  are low but the HUD or loupe still feels uneven.
+- Native-host `live_chrome.frame_tick_gap` reports the active live-frame clock interval. It should
+  cluster around the fixed `120 Hz` budget (`8.33 ms`) during active live capture.
 
 These values are useful for diagnosis, but they are not the full performance contract:
 
-- `24 ms` render warnings are too coarse to prove compliance with `8.33 ms` or `16.67 ms`
-  target budgets.
+- `24 ms` render warnings are too coarse to prove compliance with the `8.33 ms` target budget.
 - a passing live-loupe smoke run only shows that the path avoided severe regressions under the
   current harness thresholds.
 - direct cadence-aware benchmarks and phase timing are still required for contract compliance.
 
 ## Current cadence implementation status
 
-Overlay repaint interval derivation now applies the cadence contract directly:
+The current contract no longer treats display refresh-rate discovery as part of cadence
+derivation or acceptance. Implementation status should be judged against the fixed target:
 
-- known refresh rates below `120 Hz` use the known display ceiling
-- known refresh rates above `120 Hz` are capped at `120 Hz`
-- unknown refresh rates fall back to the contract cap of `120 Hz`
+- active interaction paths must target `120 Hz` directly
+- cadence derivation must not query or branch on the active display refresh rate
+- any implementation path that still lowers cadence from a known monitor refresh rate remains a
+  contract gap until removed
 
-Remaining performance work should treat cadence derivation as aligned and focus on measurement
-coverage, redraw localization, and benchmark baselines rather than re-arguing the core cap logic.
+Remaining performance work should focus on measurement coverage, redraw localization, benchmark
+baselines, and removing any refresh-rate-derived cadence paths before claiming contract
+compliance.
 
 ## Minimum artifact set for contract compliance
 
