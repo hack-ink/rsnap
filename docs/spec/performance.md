@@ -170,6 +170,14 @@ The current overlay runtime already exposes several useful diagnostic thresholds
   are low but the HUD or loupe still feels uneven.
 - Native-host `live_chrome.frame_tick_gap` reports the active live-frame clock interval. It should
   cluster around the fixed `120 Hz` budget (`8.33 ms`) during active live capture.
+- Native-host `live_chrome.layer_render_duration` reports the in-overlay CALayer presentation path
+  for live/frozen preview rendering when live chrome is not moved as separate windows.
+- Native-host `live_chrome.layer_chrome_render_duration` reports the in-overlay HUD/loupe content
+  refresh path after live chrome movement has been split from full overlay preview rendering.
+- Native-host `live_chrome.layer_position_duration` and `live_chrome.layer_position_gap` report the
+  layer-only live chrome move path used between full preview refreshes. The live chrome follow
+  clock may use a small scheduling headroom below `8.33 ms`, but acceptance is still judged against
+  the fixed `120 Hz` frame budget.
 
 These values are useful for diagnosis, but they are not the full performance contract:
 
