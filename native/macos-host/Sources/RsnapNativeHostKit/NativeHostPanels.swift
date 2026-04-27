@@ -41,6 +41,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 	private let hudOpacityValueLabel = NSTextField(labelWithString: "")
 	private let hudBlurValueLabel = NSTextField(labelWithString: "")
 	private let hudTintValueLabel = NSTextField(labelWithString: "")
+	private var glassTintOptionViews: [NSView] = []
 	private var classicGlassOptionViews: [NSView] = []
 	private var liquidGlassOptionViews: [NSView] = []
 
@@ -255,18 +256,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		}
 		container.addArrangedSubview(hudGlassModeControl)
 
+		let tintRows = [
+			makeGlassSubsectionTitle("Glass tint"),
+			makeSliderRow(
+				title: "Tint", slider: hudTintSlider, valueLabel: hudTintValueLabel,
+				action: #selector(hudTintChanged)),
+			makeTintColorRow(),
+		]
+		glassTintOptionViews = tintRows
+		for row in tintRows {
+			container.addArrangedSubview(row)
+		}
+
 		let classicRows = [
-			makeGlassSubsectionTitle("Classic blur options"),
+			makeGlassSubsectionTitle("Classic Glass options"),
 			makeSliderRow(
 				title: "Opacity", slider: hudOpacitySlider, valueLabel: hudOpacityValueLabel,
 				action: #selector(hudOpacityChanged)),
 			makeSliderRow(
 				title: "Blur", slider: hudBlurSlider, valueLabel: hudBlurValueLabel,
 				action: #selector(hudBlurChanged)),
-			makeSliderRow(
-				title: "Tint", slider: hudTintSlider, valueLabel: hudTintValueLabel,
-				action: #selector(hudTintChanged)),
-			makeTintColorRow(),
 		]
 		classicGlassOptionViews = classicRows
 		for row in classicRows {
@@ -415,17 +424,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		hudTintValueLabel.stringValue = "\(Int(settings.hudTint * 100))"
 		let glassEnabled = settings.hudGlassEnabled
 		let glassMode = settings.resolvedHudGlassMode
-		let classicBlurSelected = glassMode == .classicBlur
+		let classicGlassSelected = glassMode == .classicGlass
 		let liquidGlassSelected = glassMode == .liquidGlass
 		hudGlassModeControl.isEnabled = glassEnabled
+		for view in glassTintOptionViews {
+			view.isHidden = !glassEnabled
+		}
 		for view in classicGlassOptionViews {
-			view.isHidden = !glassEnabled || !classicBlurSelected
+			view.isHidden = !glassEnabled || !classicGlassSelected
 		}
 		for view in liquidGlassOptionViews {
 			view.isHidden = !glassEnabled || !liquidGlassSelected
 		}
-		hudOpacitySlider.isEnabled = glassEnabled
-		hudBlurSlider.isEnabled = glassEnabled
+		hudOpacitySlider.isEnabled = glassEnabled && classicGlassSelected
+		hudBlurSlider.isEnabled = glassEnabled && classicGlassSelected
 		hudTintSlider.isEnabled = glassEnabled
 		hudTintColorWell.isEnabled = glassEnabled
 		liquidGlassStyleControl.isEnabled = glassEnabled && liquidGlassSelected
