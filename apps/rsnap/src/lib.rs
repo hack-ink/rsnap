@@ -7,7 +7,9 @@ pub mod runtime {
 
 	#[cfg(target_os = "macos")]
 	pub use crate::native_launcher_macos::run;
-	pub use crate::startup::{StartupBuildInfo, init_logging, startup_build_info};
+	pub use crate::startup::{
+		RUST_TELEMETRY_SCHEMA, StartupBuildInfo, init_logging, startup_build_info, telemetry_run_id,
+	};
 	#[cfg(not(target_os = "macos"))]
 	pub use crate::unsupported_platform::run;
 }
@@ -20,6 +22,8 @@ mod unsupported_platform;
 
 #[cfg(target_os = "macos")]
 pub use self::native_launcher_macos::run;
-pub use self::runtime::{StartupBuildInfo, init_logging, startup_build_info};
+pub use self::runtime::{
+	RUST_TELEMETRY_SCHEMA, StartupBuildInfo, init_logging, startup_build_info, telemetry_run_id,
+};
 #[cfg(not(target_os = "macos"))]
 pub use self::unsupported_platform::run;

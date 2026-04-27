@@ -63,7 +63,10 @@ fn run_scroll_input_event_tap_thread(
 
 		lifecycle.mark_failed();
 
-		tracing::warn!("Failed to create scroll input event tap.");
+		tracing::warn!(
+			op = "scroll_input.tap_create_failed",
+			"Failed to create scroll input event tap."
+		);
 
 		return;
 	}
@@ -83,7 +86,10 @@ fn run_scroll_input_event_tap_thread(
 
 		lifecycle.mark_failed();
 
-		tracing::warn!("Failed to create run-loop source for scroll input event tap.");
+		tracing::warn!(
+			op = "scroll_input.tap_run_loop_source_create_failed",
+			"Failed to create run-loop source for scroll input event tap."
+		);
 
 		return;
 	}
