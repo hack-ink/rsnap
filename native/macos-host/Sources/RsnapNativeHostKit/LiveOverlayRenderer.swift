@@ -1331,7 +1331,7 @@ final class LiveOverlayRenderer {
 			transform: nil
 		)
 		let glassEnabled = settings.usesClassicHudGlass
-		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
+		let opacity = CaptureChrome.effectiveHudOpacity(settings: settings)
 		let hasInlineGlass = glassEnabled && glassImage != nil
 		let usesExternalGlass = glassEnabled && glassImage == nil
 		let hasGlass = hasInlineGlass || usesExternalGlass

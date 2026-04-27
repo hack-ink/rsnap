@@ -5234,6 +5234,8 @@ struct CaptureChromeForegroundPalette {
 }
 
 enum CaptureChrome {
+	private static let liquidGlassBodyOpacity: CGFloat = 0.5
+
 	static let hudInnerMarginX: CGFloat = 12
 	static let hudInnerMarginY: CGFloat = 8
 	static let hudCornerRadius: CGFloat = 18
@@ -5568,7 +5570,7 @@ enum CaptureChrome {
 	static func palette(for theme: CaptureChromeTheme, settings: NativeHostSettings)
 		-> CaptureChromePalette
 	{
-		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
+		let opacity = effectiveHudOpacity(settings: settings)
 		let tint = CGFloat(settings.hudTint.clamped(to: 0...1))
 		let foregrounds = foregroundPalette(for: theme)
 		let bodyAlphaFloor: CGFloat = theme == .dark ? 0.06 : 0.08
@@ -5576,7 +5578,7 @@ enum CaptureChrome {
 			settings.hudGlassEnabled
 			? max(bodyAlphaFloor, opacity * 0.20)
 			: opacity
-		let tintColor = classicTintColor(for: theme, settings: settings)
+		let tintColor = glassTintColor(for: theme, settings: settings)
 
 		switch theme {
 		case .dark:
@@ -5667,12 +5669,19 @@ enum CaptureChrome {
 		Float(0.88 + settings.hudBlur.clamped(to: 0...1) * 0.12)
 	}
 
+	static func effectiveHudOpacity(settings: NativeHostSettings) -> CGFloat {
+		if settings.usesLiquidHudGlass {
+			return liquidGlassBodyOpacity
+		}
+		return CGFloat(settings.hudOpacity.clamped(to: 0...1))
+	}
+
 	static func effectiveBodyFill(
 		palette: CaptureChromePalette,
 		settings: NativeHostSettings,
 		hasGlass: Bool
 	) -> NSColor {
-		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
+		let opacity = effectiveHudOpacity(settings: settings)
 		if hasGlass {
 			return palette.bodyFill.withAlphaComponent(
 				max(palette.bodyFill.alphaComponent, max(0.22, opacity * 0.42)))
@@ -5680,7 +5689,7 @@ enum CaptureChrome {
 		return palette.bodyFill.withAlphaComponent(max(0.42, opacity * 0.82))
 	}
 
-	private static func classicTintColor(
+	private static func glassTintColor(
 		for theme: CaptureChromeTheme, settings: NativeHostSettings
 	) -> NSColor {
 		let hue = CGFloat(settings.hudTintHue.clamped(to: 0...1))
