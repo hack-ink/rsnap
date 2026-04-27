@@ -373,31 +373,35 @@ private final class LiveChromeLiquidGlassView: NSView {
 	}
 
 	private static func makeGlassRoot(settings: NativeHostSettings) -> AnyView {
-		if #available(macOS 26.0, *) {
-			return makeAvailableGlassRoot(settings: settings)
-		}
+		#if compiler(>=6.2)
+			if #available(macOS 26.0, *) {
+				return makeAvailableGlassRoot(settings: settings)
+			}
+		#endif
 		return AnyView(Color.clear)
 	}
 
-	@available(macOS 26.0, *)
-	private static func makeAvailableGlassRoot(settings: NativeHostSettings) -> AnyView {
-		var glass =
-			switch settings.liquidGlassStyle {
-			case .regular:
-				Glass.regular
-			case .clear:
-				Glass.clear
-			}
-		glass = glass.interactive(false)
-		return AnyView(
-			GlassEffectContainer(spacing: 0) {
-				Color.clear
-					.frame(maxWidth: .infinity, maxHeight: .infinity)
-					.glassEffect(glass, in: .rect(cornerRadius: CaptureChrome.hudCornerRadius))
-			}
-			.allowsHitTesting(false)
-		)
-	}
+	#if compiler(>=6.2)
+		@available(macOS 26.0, *)
+		private static func makeAvailableGlassRoot(settings: NativeHostSettings) -> AnyView {
+			var glass =
+				switch settings.liquidGlassStyle {
+				case .regular:
+					Glass.regular
+				case .clear:
+					Glass.clear
+				}
+			glass = glass.interactive(false)
+			return AnyView(
+				GlassEffectContainer(spacing: 0) {
+					Color.clear
+						.frame(maxWidth: .infinity, maxHeight: .infinity)
+						.glassEffect(glass, in: .rect(cornerRadius: CaptureChrome.hudCornerRadius))
+				}
+				.allowsHitTesting(false)
+			)
+		}
+	#endif
 }
 
 private final class LiveChromeOverlayWindow: NSWindow {
