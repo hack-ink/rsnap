@@ -140,17 +140,28 @@ final class WindowSnapshotFeed {
 }
 
 final class ChromeSampleFeed: @unchecked Sendable {
+	typealias BackgroundSampler = @Sendable (CGPoint, LiveColorSampleSource) -> RGBSample?
+
 	private let broker: LiveFrameStreamBroker
+	private let backgroundSampler: BackgroundSampler
 	private let queue = DispatchQueue(
 		label: "ink.hack.rsnap.native-host.chrome-sample-feed", qos: .userInteractive)
 	private let stateLock = NSLock()
 	private var timer: DispatchSourceTimer?
 	private var desiredPoint: CGPoint?
 	private var desiredSidePixels: Int = 1
+	private var desiredIncludesLoupePatch = false
+	private var desiredSource: LiveColorSampleSource?
 	private var latestSample: LiveChromeSample?
+	private var lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
+	private var lastColorSampleUptime: TimeInterval = 0
 
-	init(broker: LiveFrameStreamBroker) {
+	init(
+		broker: LiveFrameStreamBroker,
+		backgroundSampler: @escaping BackgroundSampler
+	) {
 		self.broker = broker
+		self.backgroundSampler = backgroundSampler
 	}
 
 	func start() {
@@ -177,14 +188,24 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		timer = nil
 		stateLock.lock()
 		desiredPoint = nil
+		desiredIncludesLoupePatch = false
+		desiredSource = nil
 		latestSample = nil
 		stateLock.unlock()
 	}
 
-	func updateDemand(point: CGPoint?, sidePixels: Int) {
+	func updateDemand(
+		point: CGPoint?,
+		sidePixels: Int,
+		includeLoupePatch: Bool,
+		source: LiveColorSampleSource?
+	) {
 		stateLock.lock()
 		let nextSidePixels = max(1, sidePixels)
 		let sidePixelsChanged = nextSidePixels != desiredSidePixels
+		let patchDemandChanged = includeLoupePatch != desiredIncludesLoupePatch
+		let sourceChanged = desiredSource != source
+		let activating = desiredPoint == nil && point != nil
 		let pointChanged =
 			desiredPoint.map { current in
 				guard let point else {
@@ -192,28 +213,58 @@ final class ChromeSampleFeed: @unchecked Sendable {
 				}
 				return abs(current.x - point.x) > 0.5 || abs(current.y - point.y) > 0.5
 			} ?? (point != nil)
-		if sidePixelsChanged {
-			latestSample = nil
+		if sidePixelsChanged || patchDemandChanged {
+			latestSample = latestSample.map {
+				LiveChromeSample(rgbSample: $0.rgbSample, loupePatch: nil)
+			}
+		}
+		if pointChanged || sourceChanged {
+			lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
+		}
+		if activating || sourceChanged || sidePixelsChanged || patchDemandChanged {
+			lastColorSampleUptime = 0
 		}
 		desiredPoint = point
 		desiredSidePixels = nextSidePixels
+		desiredIncludesLoupePatch = includeLoupePatch
+		desiredSource = source
 		stateLock.unlock()
-		if pointChanged || sidePixelsChanged {
+		if activating || sidePixelsChanged || patchDemandChanged || sourceChanged {
 			queue.async { [weak self] in
 				self?.refresh()
 			}
 		}
 	}
 
-	func prime(point: CGPoint?, sidePixels: Int) {
-		updateDemand(point: point, sidePixels: sidePixels)
+	func prime(
+		point: CGPoint?,
+		sidePixels: Int,
+		includeLoupePatch: Bool,
+		source: LiveColorSampleSource?
+	) {
+		updateDemand(
+			point: point,
+			sidePixels: sidePixels,
+			includeLoupePatch: includeLoupePatch,
+			source: source
+		)
 		guard let point else {
 			return
 		}
-		let sample = broker.sample(at: point, sidePixels: max(1, sidePixels))
+		let streamSample =
+			includeLoupePatch ? broker.sample(at: point, sidePixels: max(1, sidePixels)) : nil
+		let rgbSample =
+			source.flatMap { backgroundSampler(point, $0) }
+			?? streamSample?.rgbSample
+			?? broker.rgbSample(at: point)
+		let sample = Self.sampleWithUpdatedPatch(
+			rgbSample: rgbSample,
+			patchSample: streamSample
+		)
 		stateLock.lock()
 		if let sample {
 			latestSample = sample
+			lastColorSampleUptime = ProcessInfo.processInfo.systemUptime
 		}
 		stateLock.unlock()
 	}
@@ -226,9 +277,19 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	}
 
 	private func refresh() {
+		let now = ProcessInfo.processInfo.systemUptime
 		stateLock.lock()
 		let point = desiredPoint
 		let sidePixels = desiredSidePixels
+		let includeLoupePatch = desiredIncludesLoupePatch
+		let source = desiredSource
+		let previousSample = latestSample
+		let pointIdleDuration = now - lastPointChangeUptime
+		let colorSampleInterval =
+			pointIdleDuration >= LiveSamplingBudget.stationaryColorSampleIdleDelay
+			? LiveSamplingBudget.stationaryColorSampleInterval
+			: LiveSamplingBudget.movingColorSampleInterval
+		let colorSampleDue = now - lastColorSampleUptime >= colorSampleInterval
 		stateLock.unlock()
 		guard let point else {
 			stateLock.lock()
@@ -236,10 +297,68 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			stateLock.unlock()
 			return
 		}
-		let sample = broker.sample(at: point, sidePixels: sidePixels)
+		let streamSample =
+			includeLoupePatch ? broker.sample(at: point, sidePixels: sidePixels) : nil
+		var sample =
+			Self.sampleWithUpdatedPatch(
+				rgbSample: previousSample?.rgbSample,
+				patchSample: streamSample ?? previousSample
+			) ?? streamSample
+		if colorSampleDue, let source {
+			stateLock.lock()
+			lastColorSampleUptime = now
+			stateLock.unlock()
+			if let rgbSample = currentRgbSample(
+				point: point,
+				source: source,
+				streamSample: streamSample,
+				prefersCachedStream: pointIdleDuration
+					< LiveSamplingBudget.stationaryColorSampleIdleDelay
+			) {
+				sample = Self.sampleWithUpdatedPatch(
+					rgbSample: rgbSample,
+					patchSample: streamSample ?? previousSample
+				)
+			}
+		}
 		stateLock.lock()
 		latestSample = sample
 		stateLock.unlock()
+	}
+
+	private static func sampleWithUpdatedPatch(
+		rgbSample: RGBSample?,
+		patchSample: LiveChromeSample?
+	) -> LiveChromeSample? {
+		guard rgbSample != nil || patchSample != nil else {
+			return nil
+		}
+		return LiveChromeSample(
+			rgbSample: rgbSample,
+			loupePatch: patchSample?.loupePatch
+		)
+	}
+
+	private func currentRgbSample(
+		point: CGPoint,
+		source: LiveColorSampleSource,
+		streamSample: LiveChromeSample?,
+		prefersCachedStream: Bool
+	) -> RGBSample? {
+		if prefersCachedStream,
+			let rgbSample = streamSample?.rgbSample ?? broker.rgbSample(at: point)
+		{
+			return rgbSample
+		}
+		if let rgbSample = backgroundSampler(point, source) {
+			return rgbSample
+		}
+		if !prefersCachedStream,
+			let rgbSample = streamSample?.rgbSample ?? broker.rgbSample(at: point)
+		{
+			return rgbSample
+		}
+		return nil
 	}
 }
 
