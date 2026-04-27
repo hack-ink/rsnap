@@ -15,6 +15,16 @@ struct LiveChromeSample {
 
 enum LiveSamplingBudget {
 	static let hoverWindowCacheRefreshInterval: TimeInterval = 1.0 / 15.0
+	static let movingColorSampleInterval: TimeInterval = 1.0 / 60.0
+	static let stationaryColorSampleIdleDelay: TimeInterval = 1.0 / 20.0
+	static let stationaryColorSampleInterval: TimeInterval = 1.0 / 30.0
+}
+
+struct LiveColorSampleSource: Equatable, Sendable {
+	let referenceWindowID: CGWindowID
+	let desktopFrame: CGRect
+	let screenFrame: CGRect
+	let scaleFactor: CGFloat
 }
 
 @MainActor private let frozenEffectCIContext = CIContext(options: nil)
@@ -1867,7 +1877,10 @@ final class CaptureOverlayController {
 	private var collapsedForFrozen = false
 	private let liveFrameStream: LiveFrameStreamBroker
 	private lazy var windowSnapshotFeed = WindowSnapshotFeed()
-	private lazy var chromeSampleFeed = ChromeSampleFeed(broker: liveFrameStream)
+	private lazy var chromeSampleFeed = ChromeSampleFeed(
+		broker: liveFrameStream,
+		backgroundSampler: Self.rgbSampleAtDisplayPoint
+	)
 	private let liveChromeWindows = LiveChromeVisualWindowController()
 	private let liveChromeBackdrops = LiveChromeBackdropWindowController()
 
@@ -1923,7 +1936,12 @@ final class CaptureOverlayController {
 		windowSnapshotFeed.start(
 			desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
 		chromeSampleFeed.start()
-		chromeSampleFeed.prime(point: focusPoint, sidePixels: 1)
+		chromeSampleFeed.prime(
+			point: focusPoint,
+			sidePixels: 1,
+			includeLoupePatch: false,
+			source: liveColorSampleSource(near: focusPoint)
+		)
 		for window in windows {
 			window.hostView.refreshLivePresentationNow()
 			window.displayIfNeeded()
@@ -2075,7 +2093,12 @@ final class CaptureOverlayController {
 		includeLoupePatch: Bool
 	) {
 		let samplePixels = includeLoupePatch ? settings.loupeSampleSize.sidePixels : 1
-		chromeSampleFeed.updateDemand(point: point, sidePixels: samplePixels)
+		chromeSampleFeed.updateDemand(
+			point: point,
+			sidePixels: samplePixels,
+			includeLoupePatch: includeLoupePatch,
+			source: point.flatMap { liveColorSampleSource(near: $0) }
+		)
 	}
 
 	fileprivate func liveChromeSnapshot(
@@ -2132,6 +2155,24 @@ final class CaptureOverlayController {
 		)
 	}
 
+	fileprivate func liveColorSampleSource(near point: CGPoint) -> LiveColorSampleSource? {
+		guard
+			let referenceWindow = windows.first(where: { $0.frame.contains(point) })
+				?? windows.first
+		else {
+			return nil
+		}
+		let screen =
+			NSScreen.screens.first(where: { $0.frame.contains(point) })
+			?? referenceWindow.screen
+		return LiveColorSampleSource(
+			referenceWindowID: CGWindowID(referenceWindow.windowNumber),
+			desktopFrame: Self.desktopFrame,
+			screenFrame: screen?.frame ?? referenceWindow.frame,
+			scaleFactor: screen?.backingScaleFactor ?? 1
+		)
+	}
+
 	func captureImageBelowOverlay(in rect: CGRect, near point: CGPoint) -> CGImage? {
 		guard let source = frozenCaptureJobSource(near: point) else {
 			return nil
@@ -2150,6 +2191,78 @@ final class CaptureOverlayController {
 			windowID: source.referenceWindowID,
 			imageOption: [.boundsIgnoreFraming, .bestResolution]
 		)
+	}
+
+	nonisolated private static func rgbSampleAtDisplayPoint(
+		_ point: CGPoint,
+		source: LiveColorSampleSource
+	) -> RGBSample? {
+		let scaleFactor = max(source.scaleFactor, 1)
+		let sampleSide = max(3 / scaleFactor, 1)
+		let sampleRect = CGRect(
+			x: point.x - sampleSide / 2,
+			y: point.y - sampleSide / 2,
+			width: sampleSide,
+			height: sampleSide
+		).intersection(source.screenFrame)
+		guard !sampleRect.isNull, sampleRect.width > 0, sampleRect.height > 0 else {
+			return nil
+		}
+		if let image = captureImageBelowOverlay(in: sampleRect, source: source),
+			let sample = rgbSample(from: image)
+		{
+			return sample
+		}
+		return nil
+	}
+
+	nonisolated private static func captureImageBelowOverlay(
+		in rect: CGRect,
+		source: LiveColorSampleSource
+	) -> CGImage? {
+		let quartzRect = appKitRectToQuartz(rect, desktopFrame: source.desktopFrame)
+		return legacyWindowListImage(
+			quartzRect: quartzRect,
+			windowListOption: .optionOnScreenBelowWindow,
+			windowID: source.referenceWindowID,
+			imageOption: [.boundsIgnoreFraming, .bestResolution]
+		)
+	}
+
+	nonisolated private static func rgbSample(from image: CGImage) -> RGBSample? {
+		let width = max(image.width, 1)
+		let height = max(image.height, 1)
+		let bytesPerPixel = 4
+		let bytesPerRow = width * bytesPerPixel
+		var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
+		let colorSpace = CGColorSpaceCreateDeviceRGB()
+		let bitmapInfo =
+			CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+		return pixels.withUnsafeMutableBytes { buffer -> RGBSample? in
+			guard
+				let baseAddress = buffer.baseAddress,
+				let context = CGContext(
+					data: baseAddress,
+					width: width,
+					height: height,
+					bitsPerComponent: 8,
+					bytesPerRow: bytesPerRow,
+					space: colorSpace,
+					bitmapInfo: bitmapInfo
+				)
+			else {
+				return nil
+			}
+			context.interpolationQuality = .none
+			context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+			let bytes = buffer.bindMemory(to: UInt8.self)
+			let centerOffset = ((height / 2) * bytesPerRow) + ((width / 2) * bytesPerPixel)
+			return RGBSample(
+				r: bytes[centerOffset],
+				g: bytes[centerOffset + 1],
+				b: bytes[centerOffset + 2]
+			)
+		}
 	}
 
 	nonisolated private static func legacyWindowListImage(
@@ -2421,6 +2534,8 @@ final class CaptureHostView: NSView {
 	private var pendingFrozenFirstDisplay = false
 	private var frozenFirstDisplayCompletionQueued = false
 	private var lastLivePreviewSnapshot: LivePreviewSnapshot?
+	private var latestLiveChromeSample: LiveChromeSample?
+	private var latestLiveRgbSample: RGBSample?
 	private var glassPatchCache: [GlassSurfaceKind: GlassPatchCache] = [:]
 	private lazy var liveRenderer = LiveOverlayRenderer(hostView: self)
 	private var liveRendererInstalled = false
@@ -2490,6 +2605,8 @@ final class CaptureHostView: NSView {
 				liveHoverChromeSuppressed = false
 				pendingFrozenFirstDisplay = false
 				lastLivePreviewSnapshot = nil
+				latestLiveChromeSample = nil
+				latestLiveRgbSample = nil
 			}
 			resetLivePointerPreview()
 			liveHighlightedWindowPreview = nil
@@ -2861,7 +2978,8 @@ final class CaptureHostView: NSView {
 		let metrics = Self.hudLayoutMetrics
 		let font = metrics.font
 		let positionDisplay = currentPositionDisplay()
-		let colorDisplay = currentLiveColorDisplay(for: chrome.rgbSample)
+		let rgbSample = latestLiveRgbSample
+		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
 		let itemSpacing: CGFloat = 8
 		let swatchSize = CGSize(width: 10, height: 10)
 		let commaSeparator = ","
@@ -2911,7 +3029,7 @@ final class CaptureHostView: NSView {
 			height: swatchSize.height
 		)
 		let swatchColor =
-			chrome.rgbSample.map {
+			rgbSample.map {
 				NSColor(
 					calibratedRed: CGFloat($0.r) / 255,
 					green: CGFloat($0.g) / 255,
@@ -3737,7 +3855,7 @@ final class CaptureHostView: NSView {
 		}
 		let metrics = Self.hudLayoutMetrics
 		let positionDisplay = currentPositionDisplay()
-		let colorDisplay = currentLiveColorDisplay(for: chrome.rgbSample ?? scene.rgb)
+		let colorDisplay = currentLiveColorDisplay(for: latestLiveRgbSample)
 		let itemSpacing: CGFloat = 8
 		let swatchSize = CGSize(width: 10, height: 10)
 		let keycapVisible = settings.showAltHintKeycap
@@ -3820,7 +3938,7 @@ final class CaptureHostView: NSView {
 			dragSelectionLocal == nil
 			? localRect(from: liveHighlightedWindowPreview?.frame ?? scene.highlightedWindow?.frame)
 			: nil
-		let rgbSample = chrome.rgbSample ?? scene.rgb
+		let rgbSample = latestLiveRgbSample
 		return LivePreviewSnapshot(
 			bounds: bounds,
 			theme: chromeTheme(),
@@ -3868,8 +3986,8 @@ final class CaptureHostView: NSView {
 			hudFrame: nil,
 			loupeFrame: nil,
 			positionDisplay: currentPositionDisplay(),
-			colorDisplay: currentLiveColorDisplay(for: chrome.rgbSample ?? scene.rgb),
-			rgbSample: chrome.rgbSample ?? scene.rgb,
+			colorDisplay: currentLiveColorDisplay(for: latestLiveRgbSample),
+			rgbSample: latestLiveRgbSample,
 			keycapVisible: false,
 			loupePatch: nil,
 			glassPatches: [:]
@@ -3896,10 +4014,7 @@ final class CaptureHostView: NSView {
 		updateLivePreviewDemands()
 
 		let chromeSample = currentLiveChromeSample()
-		let rgbSample =
-			chromeSample?.rgbSample
-			?? chrome.rgbSample
-			?? scene.rgb
+		let rgbSample = liveRgbSample(from: chromeSample)
 		let loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
 		let dragSelectionLocal = localRect(from: scene.liveSelectionPreview)
 		let hoverSelectionLocal =
@@ -4062,10 +4177,7 @@ final class CaptureHostView: NSView {
 		}
 
 		let chromeSample = currentLiveChromeSample()
-		let rgbSample =
-			chromeSample?.rgbSample
-			?? chrome.rgbSample
-			?? scene.rgb
+		let rgbSample = liveRgbSample(from: chromeSample)
 		let positionDisplay = currentPositionDisplay()
 		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
 		let hudPlacement = liveHoverChromeSuppressed ? nil : currentHudPlacement()
@@ -4301,11 +4413,27 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentLiveChromeSample() -> LiveChromeSample? {
-		controller?.liveChromeSnapshot(
+		let sample = controller?.liveChromeSnapshot(
 			point: livePointerPreviewGlobal ?? scene.pointer,
 			settings: settings,
 			includeLoupePatch: scene.loupeVisible && !liveHoverChromeSuppressed
 		)
+		if let sample {
+			latestLiveChromeSample = sample
+			if let rgbSample = sample.rgbSample {
+				latestLiveRgbSample = rgbSample
+			}
+			return sample
+		}
+		return latestLiveChromeSample
+	}
+
+	private func liveRgbSample(from sample: LiveChromeSample?) -> RGBSample? {
+		if let rgbSample = sample?.rgbSample {
+			latestLiveRgbSample = rgbSample
+			return rgbSample
+		}
+		return latestLiveRgbSample
 	}
 
 	private func selectionSizeText(for rect: CGRect) -> String {
