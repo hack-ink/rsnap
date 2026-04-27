@@ -4,7 +4,6 @@ import CoreImage
 import CoreText
 import Darwin
 import Foundation
-import OSLog
 import RsnapHostBridge
 import Vision
 
@@ -27,11 +26,15 @@ struct LiveColorSampleSource: Equatable, Sendable {
 	let scaleFactor: CGFloat
 }
 
+private struct LiveChromeRefreshTelemetryKey: Equatable {
+	let targetHz: Int
+	let hudGlassEnabled: Bool
+	let hudGlassMode: String
+	let liquidGlassStyle: String
+	let liquidGlassAvailable: Bool
+}
+
 @MainActor private let frozenEffectCIContext = CIContext(options: nil)
-private let menuBarLogger = Logger(
-	subsystem: Bundle.main.bundleIdentifier ?? "ink.hack.rsnap",
-	category: "MenuBar"
-)
 
 private enum CaptureSuccessSound {
 	private static let candidatePaths = [
@@ -42,14 +45,19 @@ private enum CaptureSuccessSound {
 	static func load() -> NSSound? {
 		for path in candidatePaths {
 			if let sound = NSSound(contentsOfFile: path, byReference: true) {
-				menuBarLogger.info("loaded capture success sound path=\(path, privacy: .public)")
+				NativeHostTelemetry.lifecycleEvent(
+					"native_host.capture_success_sound_loaded",
+					detail: "path=\(path)"
+				)
 				return sound
 			}
 		}
 
-		let candidates = candidatePaths.joined(separator: ", ")
-		menuBarLogger.warning(
-			"failed to load capture success sound candidates=\(candidates, privacy: .public)")
+		let candidates = candidatePaths.joined(separator: ",")
+		NativeHostTelemetry.lifecycleWarning(
+			"native_host.capture_success_sound_load_failed",
+			detail: "candidates=\(candidates)"
+		)
 		return nil
 	}
 
@@ -60,7 +68,8 @@ private enum CaptureSuccessSound {
 		sound.stop()
 		sound.currentTime = 0
 		if !sound.play() {
-			menuBarLogger.warning("failed to play capture success sound")
+			NativeHostTelemetry.lifecycleWarning(
+				"native_host.capture_success_sound_play_failed")
 		}
 	}
 }
@@ -108,7 +117,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			return
 		}
 		didBootstrap = true
-		menuBarLogger.info("finishLaunching begin")
+		NativeHostTelemetry.lifecycleEvent("native_host.finish_launching_begin")
 		NSApp.setActivationPolicy(.accessory)
 		ProcessInfo.processInfo.disableAutomaticTermination("rsnap menubar host")
 		ProcessInfo.processInfo.disableSuddenTermination()
@@ -128,8 +137,10 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		refreshStatusMenuState()
 		scheduleLiveSamplingPrewarm()
-		menuBarLogger.info(
-			"finishLaunching end statusItemPresent=\(self.statusItem != nil, privacy: .public)")
+		NativeHostTelemetry.lifecycleEvent(
+			"native_host.finish_launching_end",
+			detail: "statusItemPresent=\(statusItem != nil)"
+		)
 	}
 
 	public func applicationDidFinishLaunching(_ notification: Notification) {
@@ -172,20 +183,24 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private func configureStatusItem() {
 		let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 		item.isVisible = true
-		menuBarLogger.info(
-			"created status item buttonPresent=\(item.button != nil, privacy: .public)")
+		NativeHostTelemetry.lifecycleEvent(
+			"native_host.status_item_created",
+			detail: "buttonPresent=\(item.button != nil)"
+		)
 		if let button = item.button {
 			if let image = Self.statusItemImage() {
 				button.image = image
 				button.imagePosition = .imageOnly
 				button.imageScaling = .scaleProportionallyDown
 				button.title = ""
-				menuBarLogger.info(
-					"configured status item with image size=\(Int(image.size.width), privacy: .public)x\(Int(image.size.height), privacy: .public)"
+				NativeHostTelemetry.lifecycleEvent(
+					"native_host.status_item_image_configured",
+					detail: "width=\(Int(image.size.width)),height=\(Int(image.size.height))"
 				)
 			} else {
 				button.title = "RS"
-				menuBarLogger.info("configured status item with text fallback")
+				NativeHostTelemetry.lifecycleEvent(
+					"native_host.status_item_text_fallback_configured")
 			}
 		}
 
@@ -215,8 +230,9 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		statusItem = item
 		captureMenuItem = captureItem
 		cancelCaptureMenuItem = cancelItem
-		menuBarLogger.info(
-			"status item installed visible=\(item.isVisible, privacy: .public) hasMenu=\(item.menu != nil, privacy: .public)"
+		NativeHostTelemetry.lifecycleEvent(
+			"native_host.status_item_installed",
+			detail: "visible=\(item.isVisible),hasMenu=\(item.menu != nil)"
 		)
 	}
 
@@ -260,9 +276,12 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			return
 		}
 		let point = NSEvent.mouseLocation
-		let sample = sessionController.warmLiveSamplingIfPossible(at: point)
-		menuBarLogger.debug(
-			"prewarmed live sampling sampleReady=\(sample?.rgbSample != nil, privacy: .public)")
+		let sample = sessionController.warmLiveSamplingIfPossible(
+			at: point, source: "startup_prewarm", captureID: 0)
+		NativeHostTelemetry.lifecycleDebug(
+			"native_host.live_sampling_prewarm",
+			detail: "sampleReady=\(sample?.rgbSample != nil)"
+		)
 	}
 
 	@objc
@@ -327,6 +346,8 @@ final class CaptureSessionController: NSObject {
 	private var frozenFrameLatchToken: FrozenFrameLatchToken?
 	private var frozenSnapshotGeneration: UInt64 = 0
 	private var completedHostEffect: HostEffectKind?
+	private var nextCaptureTelemetryID: UInt64 = 1
+	private var activeCaptureTelemetryID: UInt64?
 	var captureStateDidChange: (() -> Void)?
 	private var scene = SceneSnapshot(
 		mode: .hidden,
@@ -371,36 +392,114 @@ final class CaptureSessionController: NSObject {
 		settingsStore.settings
 	}
 
+	private var currentCaptureTelemetryID: UInt64 {
+		activeCaptureTelemetryID ?? 0
+	}
+
+	var activeTelemetryCaptureID: UInt64 {
+		currentCaptureTelemetryID
+	}
+
+	private func allocateCaptureTelemetryID() -> UInt64 {
+		let captureID = nextCaptureTelemetryID
+		nextCaptureTelemetryID &+= 1
+		if nextCaptureTelemetryID == 0 {
+			nextCaptureTelemetryID = 1
+		}
+		return captureID
+	}
+
 	@discardableResult
-	func warmLiveSamplingIfPossible(at point: CGPoint) -> LiveChromeSample? {
+	func warmLiveSamplingIfPossible(
+		at point: CGPoint,
+		source: String = "capture",
+		captureID: UInt64 = 0
+	) -> LiveChromeSample? {
+		let warmStartedAt = ProcessInfo.processInfo.systemUptime
+		let screenCount = NSScreen.screens.count
 		guard NativePermissions.status(for: .screenRecording) else {
+			NativeHostTelemetry.liveSamplingWarmTiming(
+				captureID: captureID,
+				source: source,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: warmStartedAt),
+				frozenAuthorityStartMilliseconds: 0,
+				liveStreamStartMilliseconds: 0,
+				seedSampleMilliseconds: 0,
+				sampleReady: false,
+				screenCount: screenCount
+			)
 			return nil
 		}
-		frozenFrameAuthority.start(for: NSScreen.screens)
-		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: point)
-		return liveFrameStream.seedSample(at: point, sidePixels: 1)
+		let screens = NSScreen.screens
+		let frozenAuthorityStartedAt = ProcessInfo.processInfo.systemUptime
+		frozenFrameAuthority.start(for: screens, captureID: captureID, source: source)
+		let frozenAuthorityStartMilliseconds =
+			NativeHostTelemetry.milliseconds(since: frozenAuthorityStartedAt)
+		let liveStreamStartedAt = ProcessInfo.processInfo.systemUptime
+		liveFrameStream.start(for: screens, prewarmPoint: point)
+		let liveStreamStartMilliseconds =
+			NativeHostTelemetry.milliseconds(since: liveStreamStartedAt)
+		let seedStartedAt = ProcessInfo.processInfo.systemUptime
+		let sample = liveFrameStream.seedSample(at: point, sidePixels: 1)
+		let seedSampleMilliseconds = NativeHostTelemetry.milliseconds(since: seedStartedAt)
+		NativeHostTelemetry.liveSamplingWarmTiming(
+			captureID: captureID,
+			source: source,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: warmStartedAt),
+			frozenAuthorityStartMilliseconds: frozenAuthorityStartMilliseconds,
+			liveStreamStartMilliseconds: liveStreamStartMilliseconds,
+			seedSampleMilliseconds: seedSampleMilliseconds,
+			sampleReady: sample?.rgbSample != nil,
+			screenCount: screenCount
+		)
+		return sample
 	}
 
 	func startCapture() {
 		if session != nil {
+			NativeHostTelemetry.captureEvent(
+				"capture.focus_existing",
+				captureID: currentCaptureTelemetryID
+			)
 			overlayController?.focusWindow(at: NSEvent.mouseLocation)
 			return
 		}
+		let captureID = allocateCaptureTelemetryID()
+		activeCaptureTelemetryID = captureID
+		let captureStartedAt = ProcessInfo.processInfo.systemUptime
 		guard ensureCapturePermissions() else {
-			NSLog("RsnapNativeHost startCapture blocked by screen recording permission")
+			NativeHostTelemetry.captureWarning(
+				"capture.start_blocked",
+				captureID: captureID,
+				stage: "screen_recording_permission",
+				error: "permission_denied"
+			)
+			NativeHostTelemetry.captureStartFailureTiming(
+				captureID: captureID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
+				failureStage: "screen_recording_permission"
+			)
+			activeCaptureTelemetryID = nil
 			captureStateDidChange?()
 			return
 		}
 
 		do {
 			let startPoint = NSEvent.mouseLocation
-			let initialSample = warmLiveSamplingIfPossible(at: startPoint)
+			let warmStartedAt = ProcessInfo.processInfo.systemUptime
+			let initialSample = warmLiveSamplingIfPossible(
+				at: startPoint, source: "start_capture", captureID: captureID)
+			let warmMilliseconds = NativeHostTelemetry.milliseconds(since: warmStartedAt)
 			frozenFrameLatchToken = nil
 			let desktopFrame = CaptureOverlayController.desktopFrame
+			let windowSnapshotStartedAt = ProcessInfo.processInfo.systemUptime
 			let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
+			let windowSnapshotMilliseconds =
+				NativeHostTelemetry.milliseconds(since: windowSnapshotStartedAt)
 			let initialHighlightedWindow = WindowSnapshotFeed.window(
 				at: startPoint, in: initialWindowSnapshots)
 			chromeState.rgbSample = initialSample?.rgbSample
+			let sessionSetupStartedAt = ProcessInfo.processInfo.systemUptime
 			let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
 			self.session = session
 
@@ -415,12 +514,15 @@ final class CaptureSessionController: NSObject {
 			)
 			let initialScene = try session.currentScene()
 			self.scene = initialScene
+			let sessionSetupMilliseconds =
+				NativeHostTelemetry.milliseconds(since: sessionSetupStartedAt)
 
 			let overlayController = CaptureOverlayController(
 				controller: self,
 				liveFrameStream: liveFrameStream
 			)
 			self.overlayController = overlayController
+			let overlayShowStartedAt = ProcessInfo.processInfo.systemUptime
 			overlayController.show(
 				initialScene: initialScene,
 				chrome: chromeState,
@@ -428,13 +530,36 @@ final class CaptureSessionController: NSObject {
 				focusPoint: startPoint,
 				initialWindowSnapshots: initialWindowSnapshots
 			)
+			let overlayShowMilliseconds =
+				NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
 			(NSApp.delegate as? NativeHostApplicationController)?.window =
 				overlayController.primaryWindow
 			sceneDidChange?(initialScene)
 
 			captureStateDidChange?()
+			NativeHostTelemetry.captureStartTiming(
+				captureID: captureID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
+				warmMilliseconds: warmMilliseconds,
+				windowSnapshotMilliseconds: windowSnapshotMilliseconds,
+				sessionSetupMilliseconds: sessionSetupMilliseconds,
+				overlayShowMilliseconds: overlayShowMilliseconds,
+				initialSampleReady: initialSample?.rgbSample != nil,
+				screenCount: NSScreen.screens.count,
+				windowCount: initialWindowSnapshots.count
+			)
 		} catch {
-			NSLog("Failed to start native rsnap host: \(error)")
+			NativeHostTelemetry.captureWarning(
+				"capture.start_failed",
+				captureID: captureID,
+				stage: "exception",
+				error: String(describing: error)
+			)
+			NativeHostTelemetry.captureStartFailureTiming(
+				captureID: captureID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
+				failureStage: "exception"
+			)
 			tearDownCapture()
 		}
 	}
@@ -496,7 +621,12 @@ final class CaptureSessionController: NSObject {
 			try session?.send(event: .cancelRequested)
 			try syncCore()
 		} catch {
-			NSLog("Failed to cancel capture: \(error)")
+			NativeHostTelemetry.captureWarning(
+				"capture.cancel_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: "send_or_sync",
+				error: String(describing: error)
+			)
 			tearDownCapture()
 		}
 	}
@@ -514,7 +644,12 @@ final class CaptureSessionController: NSObject {
 			)
 			try syncCore()
 		} catch {
-			NSLog("Failed to send pointer update: \(error)")
+			NativeHostTelemetry.captureWarning(
+				"capture.pointer_update_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: "send_or_sync",
+				error: String(describing: error)
+			)
 		}
 	}
 
@@ -546,7 +681,12 @@ final class CaptureSessionController: NSObject {
 			)
 			try syncCore()
 		} catch {
-			NSLog("Failed to begin primary interaction: \(error)")
+			NativeHostTelemetry.captureWarning(
+				"capture.primary_interaction_begin_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: "send_or_sync",
+				error: String(describing: error)
+			)
 		}
 	}
 
@@ -580,7 +720,12 @@ final class CaptureSessionController: NSObject {
 			)
 			try syncCore()
 		} catch {
-			NSLog("Failed to update primary interaction: \(error)")
+			NativeHostTelemetry.captureWarning(
+				"capture.primary_interaction_update_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: "send_or_sync",
+				error: String(describing: error)
+			)
 		}
 	}
 
@@ -614,7 +759,12 @@ final class CaptureSessionController: NSObject {
 			)
 			try syncCore()
 		} catch {
-			NSLog("Failed to freeze selection: \(error)")
+			NativeHostTelemetry.captureWarning(
+				"capture.primary_interaction_complete_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: "send_or_sync",
+				error: String(describing: error)
+			)
 		}
 	}
 
@@ -639,7 +789,12 @@ final class CaptureSessionController: NSObject {
 			try sendHostStatusMessage("Scroll capture is not available in the native host yet.")
 			try syncCore()
 		} catch {
-			NSLog("Failed to report unavailable scroll capture: \(error)")
+			NativeHostTelemetry.captureWarning(
+				"capture.scroll_unavailable_report_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: "send_or_sync",
+				error: String(describing: error)
+			)
 		}
 	}
 
@@ -776,6 +931,7 @@ final class CaptureSessionController: NSObject {
 
 		frozenSnapshotGeneration &+= 1
 		let generation = frozenSnapshotGeneration
+		let captureID = currentCaptureTelemetryID
 		chromeState.frozenBaseImage = nil
 		chromeState.frozenMosaicImage = nil
 		ensureFrozenBaseImageFromDisplayIfNeeded(for: nextSelection)
@@ -791,7 +947,12 @@ final class CaptureSessionController: NSObject {
 				try self.session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 				try self.syncCore()
 			} catch {
-				NSLog("Failed to commit frozen selection transform: \(error)")
+				NativeHostTelemetry.captureWarning(
+					"capture.frozen_selection_transform_commit_failed",
+					captureID: captureID,
+					stage: "send_or_sync",
+					error: String(describing: error)
+				)
 				self.chromeState.frozenSelectionSnapshot = self.scene.frozenSelection
 				self.refreshOverlay()
 			}
@@ -943,7 +1104,12 @@ final class CaptureSessionController: NSObject {
 			try session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 			try syncCore()
 		} catch {
-			NSLog("Failed to auto-center frozen selection: \(error)")
+			NativeHostTelemetry.captureWarning(
+				"capture.frozen_auto_center_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: "send_or_sync",
+				error: String(describing: error)
+			)
 		}
 	}
 
@@ -989,7 +1155,12 @@ final class CaptureSessionController: NSObject {
 			try session?.send(event: .toggleLoupe)
 			try syncCore()
 		} catch {
-			NSLog("Failed to toggle loupe: \(error)")
+			NativeHostTelemetry.captureWarning(
+				"capture.toggle_loupe_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: "send_or_sync",
+				error: String(describing: error)
+			)
 		}
 	}
 
@@ -1004,7 +1175,12 @@ final class CaptureSessionController: NSObject {
 				tearDownCapture()
 			}
 		} catch {
-			NSLog("Failed to send frozen action: \(error)")
+			NativeHostTelemetry.captureWarning(
+				"capture.frozen_action_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: "send_or_sync",
+				error: String(describing: error)
+			)
 		}
 	}
 
@@ -1121,17 +1297,34 @@ final class CaptureSessionController: NSObject {
 		guard let session else {
 			return
 		}
+		let captureID = currentCaptureTelemetryID
+		let commitStartedAt = ProcessInfo.processInfo.systemUptime
 		frozenSnapshotGeneration &+= 1
 		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
+		let hadLatchToken = frozenFrameLatchToken != nil
 		let token =
 			frozenFrameLatchToken ?? frozenFrameAuthority.latchToken(containing: selectionCenter)
+		let snapshotStartedAt = ProcessInfo.processInfo.systemUptime
 		let frozenFrame = frozenFrameAuthority.snapshot(
 			containing: selectionCenter,
 			after: token,
 			maxWait: frozenFrameLatchWait()
 		)
+		let snapshotWaitMilliseconds =
+			NativeHostTelemetry.milliseconds(since: snapshotStartedAt)
 		guard let frozenFrame else {
-			NSLog("Frozen transition aborted: no fresh authority frame was available")
+			NativeHostTelemetry.captureWarning(
+				"capture.freeze_commit_failed",
+				captureID: captureID,
+				stage: "authority_snapshot",
+				error: "no_fresh_frame"
+			)
+			NativeHostTelemetry.freezeCommitFailureTiming(
+				captureID: captureID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: commitStartedAt),
+				snapshotWaitMilliseconds: snapshotWaitMilliseconds,
+				hadLatchToken: hadLatchToken
+			)
 			try sendHostStatusMessage("Could not freeze the current frame.")
 			return
 		}
@@ -1142,18 +1335,29 @@ final class CaptureSessionController: NSObject {
 		chromeState.frozenSelectionInteraction = nil
 		chromeState.frozenDisplayFrame = frozenFrame.displayFrame
 		chromeState.frozenDisplayImage = frozenFrame.image
+		let baseImageStartedAt = ProcessInfo.processInfo.systemUptime
 		chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
-		NSLog(
-			"Frozen authority frame display=%u seq=%llu age=%.1fms",
-			frozenFrame.displayID,
-			frozenFrame.sequence,
-			frozenFrame.ageMilliseconds()
-		)
+		let baseImageMilliseconds =
+			NativeHostTelemetry.milliseconds(since: baseImageStartedAt)
 		let hostOwnedFrozenScene = hostOwnedFrozenPresentationScene(for: selection)
+		let presentStartedAt = ProcessInfo.processInfo.systemUptime
 		overlayController?.presentFrozenFirstFrame(
 			scene: hostOwnedFrozenScene,
 			chrome: chromeState,
 			settings: settingsStore.settings
+		)
+		let presentMilliseconds = NativeHostTelemetry.milliseconds(since: presentStartedAt)
+		NativeHostTelemetry.freezeCommitTiming(
+			captureID: captureID,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: commitStartedAt),
+			snapshotWaitMilliseconds: snapshotWaitMilliseconds,
+			baseImageMilliseconds: baseImageMilliseconds,
+			presentMilliseconds: presentMilliseconds,
+			frameAgeMilliseconds: frozenFrame.ageMilliseconds(),
+			displayID: frozenFrame.displayID,
+			sequence: frozenFrame.sequence,
+			hadLatchToken: hadLatchToken,
+			baseReady: chromeState.frozenBaseImage != nil
 		)
 		try session.send(report: .freezeSnapshotCommitted(selection: selection))
 	}
@@ -1206,18 +1410,68 @@ final class CaptureSessionController: NSObject {
 		guard let session else {
 			return
 		}
+		let copyStartedAt = ProcessInfo.processInfo.systemUptime
+		let captureImageStartedAt = ProcessInfo.processInfo.systemUptime
 		guard let cgImage = try captureFrozenSelectionImage() else {
+			NativeHostTelemetry.copyCaptureTiming(
+				captureID: currentCaptureTelemetryID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: copyStartedAt),
+				captureImageMilliseconds: NativeHostTelemetry.milliseconds(
+					since: captureImageStartedAt),
+				clearPasteboardMilliseconds: 0,
+				makeImageMilliseconds: 0,
+				writePasteboardMilliseconds: 0,
+				success: false,
+				failureStage: "capture_image",
+				width: 0,
+				height: 0
+			)
 			try sendHostStatusMessage("Could not capture the frozen selection.")
 			return
 		}
+		let captureImageMilliseconds =
+			NativeHostTelemetry.milliseconds(since: captureImageStartedAt)
 
 		let pasteboard = NSPasteboard.general
+		let clearPasteboardStartedAt = ProcessInfo.processInfo.systemUptime
 		pasteboard.clearContents()
+		let clearPasteboardMilliseconds =
+			NativeHostTelemetry.milliseconds(since: clearPasteboardStartedAt)
+		let makeImageStartedAt = ProcessInfo.processInfo.systemUptime
 		let image = NSImage(cgImage: cgImage, size: .zero)
-		guard pasteboard.writeObjects([image]) else {
+		let makeImageMilliseconds = NativeHostTelemetry.milliseconds(since: makeImageStartedAt)
+		let writePasteboardStartedAt = ProcessInfo.processInfo.systemUptime
+		let didWritePasteboard = pasteboard.writeObjects([image])
+		let writePasteboardMilliseconds =
+			NativeHostTelemetry.milliseconds(since: writePasteboardStartedAt)
+		guard didWritePasteboard else {
+			NativeHostTelemetry.copyCaptureTiming(
+				captureID: currentCaptureTelemetryID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: copyStartedAt),
+				captureImageMilliseconds: captureImageMilliseconds,
+				clearPasteboardMilliseconds: clearPasteboardMilliseconds,
+				makeImageMilliseconds: makeImageMilliseconds,
+				writePasteboardMilliseconds: writePasteboardMilliseconds,
+				success: false,
+				failureStage: "pasteboard_write",
+				width: cgImage.width,
+				height: cgImage.height
+			)
 			try sendHostStatusMessage("Could not copy the captured image.")
 			return
 		}
+		NativeHostTelemetry.copyCaptureTiming(
+			captureID: currentCaptureTelemetryID,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: copyStartedAt),
+			captureImageMilliseconds: captureImageMilliseconds,
+			clearPasteboardMilliseconds: clearPasteboardMilliseconds,
+			makeImageMilliseconds: makeImageMilliseconds,
+			writePasteboardMilliseconds: writePasteboardMilliseconds,
+			success: true,
+			failureStage: "none",
+			width: cgImage.width,
+			height: cgImage.height
+		)
 
 		CaptureSuccessSound.play(captureSuccessSound)
 
@@ -1281,19 +1535,81 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func captureFrozenSelectionImage() throws -> CGImage? {
+		let captureStartedAt = ProcessInfo.processInfo.systemUptime
 		guard let selection = try session?.currentScene().frozenSelection else {
+			NativeHostTelemetry.frozenSelectionImageTiming(
+				captureID: currentCaptureTelemetryID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
+				ensureMilliseconds: 0,
+				refreshMilliseconds: 0,
+				compositeMilliseconds: 0,
+				source: "no_selection",
+				success: false,
+				width: 0,
+				height: 0,
+				hasOverlayEdits: false
+			)
 			return nil
 		}
 
+		let snapshotMatchedBefore = chromeState.frozenSelectionSnapshot == selection
+		let hadBaseImageBefore = chromeState.frozenBaseImage != nil
+		let hadFrozenDisplayImageBefore = chromeState.frozenDisplayImage != nil
+		let hasOverlayEdits =
+			chromeState.frozenOverlay.canUndo || chromeState.frozenOverlay.activeInteraction != nil
+		let ensureStartedAt = ProcessInfo.processInfo.systemUptime
 		ensureFrozenBaseImageFromDisplayIfNeeded(for: selection)
+		let ensureMilliseconds = NativeHostTelemetry.milliseconds(since: ensureStartedAt)
+		var refreshedFromBelowOverlay = false
+		var refreshMilliseconds = 0.0
 		if chromeState.frozenSelectionSnapshot != selection || chromeState.frozenBaseImage == nil {
+			let refreshStartedAt = ProcessInfo.processInfo.systemUptime
 			refreshFrozenCaptureSnapshot(for: selection)
+			refreshMilliseconds = NativeHostTelemetry.milliseconds(since: refreshStartedAt)
+			refreshedFromBelowOverlay = true
 		}
 		guard let baseImage = chromeState.frozenBaseImage else {
+			NativeHostTelemetry.frozenSelectionImageTiming(
+				captureID: currentCaptureTelemetryID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
+				ensureMilliseconds: ensureMilliseconds,
+				refreshMilliseconds: refreshMilliseconds,
+				compositeMilliseconds: 0,
+				source: "missing_base",
+				success: false,
+				width: 0,
+				height: 0,
+				hasOverlayEdits: hasOverlayEdits
+			)
 			return nil
 		}
 
-		return compositeFrozenOverlay(on: baseImage, selection: selection) ?? baseImage
+		let compositeStartedAt = ProcessInfo.processInfo.systemUptime
+		let result = compositeFrozenOverlay(on: baseImage, selection: selection) ?? baseImage
+		let compositeMilliseconds = NativeHostTelemetry.milliseconds(since: compositeStartedAt)
+		let imageSource: String
+		if refreshedFromBelowOverlay {
+			imageSource = "below_overlay_refresh"
+		} else if snapshotMatchedBefore, hadBaseImageBefore {
+			imageSource = "cached_base"
+		} else if hadFrozenDisplayImageBefore {
+			imageSource = "frozen_display_crop"
+		} else {
+			imageSource = "unknown_base"
+		}
+		NativeHostTelemetry.frozenSelectionImageTiming(
+			captureID: currentCaptureTelemetryID,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
+			ensureMilliseconds: ensureMilliseconds,
+			refreshMilliseconds: refreshMilliseconds,
+			compositeMilliseconds: compositeMilliseconds,
+			source: imageSource,
+			success: true,
+			width: result.width,
+			height: result.height,
+			hasOverlayEdits: hasOverlayEdits
+		)
+		return result
 	}
 
 	private func refreshFrozenCaptureSnapshot(for selection: CGRect) {
@@ -1575,6 +1891,7 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func tearDownCapture() {
+		let captureID = currentCaptureTelemetryID
 		liveFrameStream.stop()
 		frozenFrameLatchToken = nil
 		frozenSnapshotGeneration &+= 1
@@ -1601,6 +1918,10 @@ final class CaptureSessionController: NSObject {
 		)
 		sceneDidChange?(scene)
 		captureStateDidChange?()
+		if captureID != 0 {
+			NativeHostTelemetry.captureEvent("capture.teardown", captureID: captureID)
+		}
+		activeCaptureTelemetryID = nil
 	}
 
 	@objc
@@ -2541,7 +2862,7 @@ final class CaptureHostView: NSView {
 	private var liveRendererInstalled = false
 	private var liveChromeFollowTimer: DispatchSourceTimer?
 	private var deferredLiveShutdownWorkItem: DispatchWorkItem?
-	private var loggedLiveTargetHz: Int?
+	private var loggedLiveRefreshTarget: LiveChromeRefreshTelemetryKey?
 
 	override var acceptsFirstResponder: Bool { true }
 
@@ -4352,17 +4673,29 @@ final class CaptureHostView: NSView {
 		guard scene.mode == .live || pendingFrozenFirstDisplay else {
 			stopLiveChromeFollowClock()
 			liveRenderer.suspend()
-			loggedLiveTargetHz = nil
+			loggedLiveRefreshTarget = nil
 			return
 		}
 		deferredLiveShutdownWorkItem?.cancel()
 		deferredLiveShutdownWorkItem = nil
 		let targetHz = NativeHostDisplayRefresh.targetFramesPerSecond
-		if loggedLiveTargetHz != targetHz {
-			loggedLiveTargetHz = targetHz
+		let refreshTarget = LiveChromeRefreshTelemetryKey(
+			targetHz: targetHz,
+			hudGlassEnabled: settings.hudGlassEnabled,
+			hudGlassMode: settings.resolvedHudGlassMode.rawValue,
+			liquidGlassStyle: settings.liquidGlassStyle.rawValue,
+			liquidGlassAvailable: LiveChromeGlassMaterialSupport.isLiquidGlassAvailable
+		)
+		if loggedLiveRefreshTarget != refreshTarget {
+			loggedLiveRefreshTarget = refreshTarget
 			NativeHostTelemetry.liveChromeRefreshTarget(
+				captureID: controller?.activeTelemetryCaptureID ?? 0,
 				targetHz: targetHz,
-				frameBudgetMilliseconds: NativeHostDisplayRefresh.frameBudgetMilliseconds
+				frameBudgetMilliseconds: NativeHostDisplayRefresh.frameBudgetMilliseconds,
+				hudGlassEnabled: refreshTarget.hudGlassEnabled,
+				hudGlassMode: refreshTarget.hudGlassMode,
+				liquidGlassStyle: refreshTarget.liquidGlassStyle,
+				liquidGlassAvailable: refreshTarget.liquidGlassAvailable
 			)
 		}
 		if scene.mode == .live {

@@ -27,8 +27,12 @@ The active split below is by question type, not by human-versus-agent audience.
   `docs/spec/host-core-protocol.md`
 - Need the product-level capture contract independent from implementation history ->
   `docs/spec/capture-session.md`
+- Need telemetry fields, event names, metric names, or log correlation identifiers ->
+  `docs/spec/telemetry.md`
 - Need runbooks, migrations, validation steps, troubleshooting, or operational sequences ->
   `docs/runbook/`
+- Need native-host or Rust telemetry collection and summary steps ->
+  `docs/runbook/telemetry-debugging.md`
 - Need the step-by-step execution sequence for a host/core reset slice ->
   `docs/runbook/architecture-reset-implementation.md`
 - Need the active architecture-reset target and migration posture ->

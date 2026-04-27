@@ -1,11 +1,17 @@
 use std::fs;
 use std::path::PathBuf;
+use std::process;
+use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::ProjectDirs;
 use serde::Deserialize;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::EnvFilter;
+
+/// Schema marker emitted by Rust-side telemetry events.
+pub const RUST_TELEMETRY_SCHEMA: &str = "rsnap.rust.telemetry/1";
 
 /// Build metadata logged during application startup.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,6 +33,18 @@ pub fn startup_build_info() -> StartupBuildInfo {
 		version: env!("CARGO_PKG_VERSION"),
 		git_commit: option_env!("RSNAP_BUILD_GIT_COMMIT").unwrap_or("unknown"),
 	}
+}
+
+/// Returns the process-scoped telemetry run identifier.
+pub fn telemetry_run_id() -> &'static str {
+	static RUN_ID: OnceLock<String> = OnceLock::new();
+
+	RUN_ID.get_or_init(|| {
+		let started_at_milliseconds =
+			SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |duration| duration.as_millis());
+
+		format!("{}-{started_at_milliseconds}", process::id())
+	})
 }
 
 /// Initializes file logging when the settings and filesystem allow it.
@@ -66,7 +84,13 @@ pub fn init_logging() -> Option<WorkerGuard> {
 
 	tracing_subscriber::fmt().with_writer(writer).with_env_filter(filter).with_ansi(false).init();
 
-	tracing::info!(log_dir = %log_dir.display(), "File logging initialized.");
+	tracing::info!(
+		schema = RUST_TELEMETRY_SCHEMA,
+		run_id = telemetry_run_id(),
+		op = "logging.file_initialized",
+		log_dir = %log_dir.display(),
+		"File logging initialized."
+	);
 
 	Some(guard)
 }
