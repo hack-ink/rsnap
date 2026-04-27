@@ -288,9 +288,11 @@ enum LoupeSampleSizePreference: String, CaseIterable {
 
 enum LiveChromeGlassMaterialSupport {
 	static var isLiquidGlassAvailable: Bool {
-		if #available(macOS 26.0, *) {
-			return true
-		}
+		#if compiler(>=6.2)
+			if #available(macOS 26.0, *) {
+				return true
+			}
+		#endif
 		return false
 	}
 }
