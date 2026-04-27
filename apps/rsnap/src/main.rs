@@ -11,6 +11,9 @@ fn main() -> Result<()> {
 	let build_info = rsnap::startup_build_info();
 
 	tracing::info!(
+		schema = rsnap::RUST_TELEMETRY_SCHEMA,
+		run_id = rsnap::telemetry_run_id(),
+		op = "rsnap.starting",
 		version = build_info.version,
 		git_commit = build_info.git_commit,
 		"Starting rsnap."

@@ -3,8 +3,86 @@ import OSLog
 
 enum NativeHostTelemetry {
 	static let subsystem = Bundle.main.bundleIdentifier ?? "ink.hack.rsnap"
+	static let schema = "rsnap.native_host.telemetry/1"
+	static let runID = UUID().uuidString
+	private static let lifecycleLogger = Logger(
+		subsystem: subsystem, category: "Lifecycle")
+	private static let captureLogger = Logger(
+		subsystem: subsystem, category: "Capture")
+	private static let captureTimingLogger = Logger(
+		subsystem: subsystem, category: "CaptureTiming")
+	private static let frozenAuthorityLogger = Logger(
+		subsystem: subsystem, category: "FrozenFrameAuthority")
 	private static let liveChromeLogger = Logger(
 		subsystem: subsystem, category: "LiveChromeTelemetry")
+
+	static func milliseconds(since startUptime: TimeInterval) -> Double {
+		max(0, ProcessInfo.processInfo.systemUptime - startUptime) * 1_000
+	}
+
+	static func lifecycleEvent(
+		_ event: String,
+		outcome: String = "success",
+		detail: String = "none"
+	) {
+		lifecycleLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) event=\(event, privacy: .public) outcome=\(outcome, privacy: .public) detail=\(detail, privacy: .public)"
+		)
+	}
+
+	static func lifecycleWarning(
+		_ event: String,
+		outcome: String = "failure",
+		detail: String = "none"
+	) {
+		lifecycleLogger.warning(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) event=\(event, privacy: .public) outcome=\(outcome, privacy: .public) detail=\(detail, privacy: .public)"
+		)
+	}
+
+	static func lifecycleDebug(
+		_ event: String,
+		outcome: String = "success",
+		detail: String = "none"
+	) {
+		lifecycleLogger.debug(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) event=\(event, privacy: .public) outcome=\(outcome, privacy: .public) detail=\(detail, privacy: .public)"
+		)
+	}
+
+	static func captureEvent(
+		_ event: String,
+		captureID: UInt64,
+		outcome: String = "success",
+		detail: String = "none"
+	) {
+		captureLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=\(event, privacy: .public) outcome=\(outcome, privacy: .public) detail=\(detail, privacy: .public)"
+		)
+	}
+
+	static func captureWarning(
+		_ event: String,
+		captureID: UInt64,
+		stage: String,
+		error: String
+	) {
+		captureLogger.warning(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=\(event, privacy: .public) stage=\(stage, privacy: .public) error=\(error, privacy: .public)"
+		)
+	}
+
+	static func frozenAuthorityWarning(
+		_ event: String,
+		captureID: UInt64,
+		source: String,
+		displayID: UInt32,
+		error: String
+	) {
+		frozenAuthorityLogger.warning(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) source=\(source, privacy: .public) event=\(event, privacy: .public) displayID=\(displayID, privacy: .public) error=\(error, privacy: .public)"
+		)
+	}
 
 	static func distribution(
 		_ name: String,
@@ -21,10 +99,145 @@ enum NativeHostTelemetry {
 	}
 
 	static func liveChromeRefreshTarget(
-		targetHz: Int, frameBudgetMilliseconds: Double
+		captureID: UInt64,
+		targetHz: Int,
+		frameBudgetMilliseconds: Double,
+		hudGlassEnabled: Bool,
+		hudGlassMode: String,
+		liquidGlassStyle: String,
+		liquidGlassAvailable: Bool
 	) {
 		liveChromeLogger.info(
-			"event=live_chrome.refresh_target targetHz=\(targetHz, privacy: .public) frameBudgetMs=\(frameBudgetMilliseconds, format: .fixed(precision: 2), privacy: .public)"
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.refresh_target targetHz=\(targetHz, privacy: .public) frameBudgetMs=\(frameBudgetMilliseconds, format: .fixed(precision: 2), privacy: .public) hudGlassEnabled=\(hudGlassEnabled, privacy: .public) hudGlassMode=\(hudGlassMode, privacy: .public) liquidGlassStyle=\(liquidGlassStyle, privacy: .public) liquidGlassAvailable=\(liquidGlassAvailable, privacy: .public)"
+		)
+	}
+
+	static func liveSamplingWarmTiming(
+		captureID: UInt64,
+		source: String,
+		totalMilliseconds: Double,
+		frozenAuthorityStartMilliseconds: Double,
+		liveStreamStartMilliseconds: Double,
+		seedSampleMilliseconds: Double,
+		sampleReady: Bool,
+		screenCount: Int
+	) {
+		captureTimingLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.live_sampling_warm source=\(source, privacy: .public) totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) frozenAuthorityStartMs=\(frozenAuthorityStartMilliseconds, format: .fixed(precision: 2), privacy: .public) liveStreamStartMs=\(liveStreamStartMilliseconds, format: .fixed(precision: 2), privacy: .public) seedSampleMs=\(seedSampleMilliseconds, format: .fixed(precision: 2), privacy: .public) sampleReady=\(sampleReady, privacy: .public) screenCount=\(screenCount, privacy: .public)"
+		)
+	}
+
+	static func captureStartTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		warmMilliseconds: Double,
+		windowSnapshotMilliseconds: Double,
+		sessionSetupMilliseconds: Double,
+		overlayShowMilliseconds: Double,
+		initialSampleReady: Bool,
+		screenCount: Int,
+		windowCount: Int
+	) {
+		captureTimingLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.start_capture totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) warmMs=\(warmMilliseconds, format: .fixed(precision: 2), privacy: .public) windowSnapshotMs=\(windowSnapshotMilliseconds, format: .fixed(precision: 2), privacy: .public) sessionSetupMs=\(sessionSetupMilliseconds, format: .fixed(precision: 2), privacy: .public) overlayShowMs=\(overlayShowMilliseconds, format: .fixed(precision: 2), privacy: .public) initialSampleReady=\(initialSampleReady, privacy: .public) screenCount=\(screenCount, privacy: .public) windowCount=\(windowCount, privacy: .public)"
+		)
+	}
+
+	static func captureStartFailureTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		failureStage: String
+	) {
+		captureTimingLogger.warning(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.start_capture_failed totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) failureStage=\(failureStage, privacy: .public)"
+		)
+	}
+
+	static func frozenAuthorityContentLookupTiming(
+		captureID: UInt64,
+		source: String,
+		totalMilliseconds: Double,
+		success: Bool,
+		displayCount: Int,
+		windowCount: Int
+	) {
+		frozenAuthorityLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) source=\(source, privacy: .public) event=capture_timing.frozen_authority_content_lookup totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) displayCount=\(displayCount, privacy: .public) windowCount=\(windowCount, privacy: .public)"
+		)
+	}
+
+	static func frozenAuthorityFirstFrameTiming(
+		captureID: UInt64,
+		source: String,
+		displayID: UInt32,
+		totalMilliseconds: Double,
+		frameAgeMilliseconds: Double,
+		sequence: UInt64
+	) {
+		frozenAuthorityLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) source=\(source, privacy: .public) event=capture_timing.frozen_authority_first_frame displayID=\(displayID, privacy: .public) totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) frameAgeMs=\(frameAgeMilliseconds, format: .fixed(precision: 2), privacy: .public) sequence=\(sequence, privacy: .public)"
+		)
+	}
+
+	static func freezeCommitTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		snapshotWaitMilliseconds: Double,
+		baseImageMilliseconds: Double,
+		presentMilliseconds: Double,
+		frameAgeMilliseconds: Double,
+		displayID: UInt32,
+		sequence: UInt64,
+		hadLatchToken: Bool,
+		baseReady: Bool
+	) {
+		captureTimingLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.freeze_commit totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) snapshotWaitMs=\(snapshotWaitMilliseconds, format: .fixed(precision: 2), privacy: .public) baseImageMs=\(baseImageMilliseconds, format: .fixed(precision: 2), privacy: .public) presentMs=\(presentMilliseconds, format: .fixed(precision: 2), privacy: .public) frameAgeMs=\(frameAgeMilliseconds, format: .fixed(precision: 2), privacy: .public) displayID=\(displayID, privacy: .public) sequence=\(sequence, privacy: .public) hadLatchToken=\(hadLatchToken, privacy: .public) baseReady=\(baseReady, privacy: .public)"
+		)
+	}
+
+	static func freezeCommitFailureTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		snapshotWaitMilliseconds: Double,
+		hadLatchToken: Bool
+	) {
+		captureTimingLogger.warning(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.freeze_commit_failed totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) snapshotWaitMs=\(snapshotWaitMilliseconds, format: .fixed(precision: 2), privacy: .public) hadLatchToken=\(hadLatchToken, privacy: .public)"
+		)
+	}
+
+	static func frozenSelectionImageTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		ensureMilliseconds: Double,
+		refreshMilliseconds: Double,
+		compositeMilliseconds: Double,
+		source: String,
+		success: Bool,
+		width: Int,
+		height: Int,
+		hasOverlayEdits: Bool
+	) {
+		captureTimingLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.frozen_selection_image totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) ensureMs=\(ensureMilliseconds, format: .fixed(precision: 2), privacy: .public) refreshMs=\(refreshMilliseconds, format: .fixed(precision: 2), privacy: .public) compositeMs=\(compositeMilliseconds, format: .fixed(precision: 2), privacy: .public) source=\(source, privacy: .public) success=\(success, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public) hasOverlayEdits=\(hasOverlayEdits, privacy: .public)"
+		)
+	}
+
+	static func copyCaptureTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		captureImageMilliseconds: Double,
+		clearPasteboardMilliseconds: Double,
+		makeImageMilliseconds: Double,
+		writePasteboardMilliseconds: Double,
+		success: Bool,
+		failureStage: String,
+		width: Int,
+		height: Int
+	) {
+		captureTimingLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.copy_capture totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) clearPasteboardMs=\(clearPasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) makeImageMs=\(makeImageMilliseconds, format: .fixed(precision: 2), privacy: .public) writePasteboardMs=\(writePasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) failureStage=\(failureStage, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public)"
 		)
 	}
 
@@ -83,7 +296,7 @@ enum NativeHostTelemetry {
 			let p50 = percentile(sorted, 0.50)
 			let p95 = percentile(sorted, 0.95)
 			logger.info(
-				"metric=\(self.name, privacy: .public) unit=\(self.unit, privacy: .public) samples=\(sorted.count, privacy: .public) p50=\(p50, format: .fixed(precision: 2), privacy: .public) p95=\(p95, format: .fixed(precision: 2), privacy: .public) max=\(maxValue, format: .fixed(precision: 2), privacy: .public)"
+				"schema=\(NativeHostTelemetry.schema, privacy: .public) runID=\(NativeHostTelemetry.runID, privacy: .public) metric=\(self.name, privacy: .public) unit=\(self.unit, privacy: .public) samples=\(sorted.count, privacy: .public) p50=\(p50, format: .fixed(precision: 2), privacy: .public) p95=\(p95, format: .fixed(precision: 2), privacy: .public) max=\(maxValue, format: .fixed(precision: 2), privacy: .public)"
 			)
 		}
 
