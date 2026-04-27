@@ -227,18 +227,18 @@ enum FrozenResizeHandleOrientationPreference: String, CaseIterable {
 
 enum HudGlassModePreference: String, CaseIterable {
 	case liquidGlass = "liquid_glass"
-	case classicBlur = "classic_blur"
+	case classicGlass = "classic_glass"
 
 	static var defaultForCurrentSystem: Self {
-		LiveChromeGlassMaterialSupport.isLiquidGlassAvailable ? .liquidGlass : .classicBlur
+		LiveChromeGlassMaterialSupport.isLiquidGlassAvailable ? .liquidGlass : .classicGlass
 	}
 
 	var title: String {
 		switch self {
 		case .liquidGlass:
 			return "Liquid Glass"
-		case .classicBlur:
-			return "Classic Blur"
+		case .classicGlass:
+			return "Classic Glass"
 		}
 	}
 }
@@ -302,13 +302,13 @@ extension NativeHostSettings {
 		if hudGlassMode == .liquidGlass,
 			!LiveChromeGlassMaterialSupport.isLiquidGlassAvailable
 		{
-			return .classicBlur
+			return .classicGlass
 		}
 		return hudGlassMode
 	}
 
 	var usesClassicHudGlass: Bool {
-		hudGlassEnabled && resolvedHudGlassMode == .classicBlur && hudBlur > 0.01
+		hudGlassEnabled && resolvedHudGlassMode == .classicGlass && hudBlur > 0.01
 	}
 
 	var usesLiquidHudGlass: Bool {

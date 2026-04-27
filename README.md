@@ -98,9 +98,9 @@ cargo run -p rsnap
 
 - The native `Settings…` window currently owns:
   - HUD glass enable/disable
-  - HUD glass style (`Liquid Glass` / `Classic Blur`)
+  - HUD glass style (`Liquid Glass` / `Classic Glass`)
   - Liquid Glass style (`Regular` / `Clear`) when supported by macOS
-  - Classic HUD opacity / blur / tint / color
+  - shared HUD tint / color, plus Classic Glass opacity / blur
   - HUD `Tab` hint visibility
   - loupe sample size (`small` / `medium` / `large`)
   - output directory

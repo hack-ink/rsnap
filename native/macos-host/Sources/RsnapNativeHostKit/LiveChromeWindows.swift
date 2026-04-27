@@ -250,8 +250,7 @@ private enum ChromeVisualKind {
 	}
 
 	func usesClassicWindowGlass(settings: NativeHostSettings) -> Bool {
-		settings.hudGlassEnabled && !usesLiquidGlassSurface(settings: settings)
-			&& settings.hudBlur > 0.01
+		settings.usesClassicHudGlass && !usesLiquidGlassSurface(settings: settings)
 	}
 }
 
@@ -391,7 +390,7 @@ private final class LiveChromeLiquidGlassView: NSView {
 				case .clear:
 					Glass.clear
 				}
-			glass = glass.interactive(false)
+			glass = glass.tint(.clear).interactive(false)
 			return AnyView(
 				GlassEffectContainer(spacing: 0) {
 					Color.clear
@@ -950,21 +949,16 @@ private final class LiveChromeRenderView: NSView {
 		)
 		context.saveGState()
 		let usesLiquidGlass = kind.usesLiquidGlassSurface(settings: settings)
-		if usesLiquidGlass {
-			context.restoreGState()
-			return
-		} else {
-			if strongShadow {
-				context.setShadow(offset: .zero, blur: 10, color: palette.shadow.cgColor)
-			}
-			let fillColor = CaptureChrome.effectiveBodyFill(
-				palette: palette,
-				settings: settings,
-				hasGlass: kind.usesClassicWindowGlass(settings: settings)
-			)
-			context.setFillColor(fillColor.cgColor)
-			pillPath.fill()
+		if strongShadow, !usesLiquidGlass {
+			context.setShadow(offset: .zero, blur: 10, color: palette.shadow.cgColor)
 		}
+		let fillColor = CaptureChrome.effectiveBodyFill(
+			palette: palette,
+			settings: settings,
+			hasGlass: usesLiquidGlass || kind.usesClassicWindowGlass(settings: settings)
+		)
+		context.setFillColor(fillColor.cgColor)
+		pillPath.fill()
 		context.restoreGState()
 
 		context.setStrokeColor(palette.outerStroke.cgColor)
