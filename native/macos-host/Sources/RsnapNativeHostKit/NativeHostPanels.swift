@@ -21,7 +21,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 	private let showAltHintKeycapButton = NSButton(
 		checkboxWithTitle: "Show Tab hint in HUD", target: nil, action: nil)
 	private let hudGlassEnabledButton = NSButton(
-		checkboxWithTitle: "Glass HUD", target: nil, action: nil)
+		checkboxWithTitle: "Enable glass", target: nil, action: nil)
+	private let hudGlassModeControl = NSSegmentedControl(
+		labels: HudGlassModePreference.allCases.map(\.title), trackingMode: .selectOne,
+		target: nil, action: nil)
+	private let liquidGlassStyleControl = NSSegmentedControl(
+		labels: LiquidGlassStylePreference.allCases.map(\.title), trackingMode: .selectOne,
+		target: nil, action: nil)
 	private let loupeSampleSizeControl = NSSegmentedControl(
 		labels: LoupeSampleSizePreference.allCases.map(\.title), trackingMode: .selectOne,
 		target: nil, action: nil)
@@ -31,18 +37,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		value: 50, minValue: 0, maxValue: 100, target: nil, action: nil)
 	private let hudTintSlider = NSSlider(
 		value: 50, minValue: 0, maxValue: 100, target: nil, action: nil)
-	private let hudHueSlider = NSSlider(
-		value: 215, minValue: 0, maxValue: 360, target: nil, action: nil)
 	private let hudTintColorWell = NSColorWell(frame: NSRect(x: 0, y: 0, width: 44, height: 24))
 	private let hudOpacityValueLabel = NSTextField(labelWithString: "")
 	private let hudBlurValueLabel = NSTextField(labelWithString: "")
 	private let hudTintValueLabel = NSTextField(labelWithString: "")
-	private let hudHueValueLabel = NSTextField(labelWithString: "")
+	private var classicGlassOptionViews: [NSView] = []
+	private var liquidGlassOptionViews: [NSView] = []
 
 	init(settingsStore: NativeHostSettingsStore) {
 		self.settingsStore = settingsStore
 
-		let contentRect = NSRect(x: 0, y: 0, width: 560, height: 580)
+		let contentRect = NSRect(x: 0, y: 0, width: 560, height: 640)
 		let window = NSWindow(
 			contentRect: contentRect,
 			styleMask: [.titled, .closable, .miniaturizable],
@@ -87,17 +92,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		stack.addArrangedSubview(makeNamingRow())
 		stack.addArrangedSubview(makeSectionTitle("Overlay"))
 		stack.addArrangedSubview(makeOverlayRow())
+		stack.addArrangedSubview(makeHudGlassModeRow())
 		stack.addArrangedSubview(makeLoupeSampleSizeRow())
-		stack.addArrangedSubview(
-			makeSliderRow(
-				title: "Opacity", slider: hudOpacitySlider, valueLabel: hudOpacityValueLabel))
-		stack.addArrangedSubview(
-			makeSliderRow(title: "Blur", slider: hudBlurSlider, valueLabel: hudBlurValueLabel))
-		stack.addArrangedSubview(
-			makeSliderRow(title: "Tint", slider: hudTintSlider, valueLabel: hudTintValueLabel))
-		stack.addArrangedSubview(makeTintColorRow())
-		stack.addArrangedSubview(
-			makeSliderRow(title: "Hue", slider: hudHueSlider, valueLabel: hudHueValueLabel))
 		stack.addArrangedSubview(makeToolbarPlacementRow())
 		stack.addArrangedSubview(makeFrozenResizeHandleOrientationRow())
 
@@ -230,11 +226,84 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
 		showAltHintKeycapButton.target = self
 		showAltHintKeycapButton.action = #selector(showAltHintKeycapChanged)
-		hudGlassEnabledButton.target = self
-		hudGlassEnabledButton.action = #selector(hudGlassEnabledChanged)
 
 		container.addArrangedSubview(showAltHintKeycapButton)
+		return container
+	}
+
+	private func makeHudGlassModeRow() -> NSView {
+		let container = NSStackView()
+		container.orientation = .vertical
+		container.alignment = .leading
+		container.spacing = 6
+
+		let title = NSTextField(labelWithString: "Glass style")
+		title.font = .systemFont(ofSize: 13, weight: .medium)
+		container.addArrangedSubview(title)
+
+		hudGlassEnabledButton.target = self
+		hudGlassEnabledButton.action = #selector(hudGlassEnabledChanged)
 		container.addArrangedSubview(hudGlassEnabledButton)
+
+		hudGlassModeControl.target = self
+		hudGlassModeControl.action = #selector(hudGlassModeChanged)
+		hudGlassModeControl.segmentStyle = .rounded
+		hudGlassModeControl.widthAnchor.constraint(equalToConstant: 260).isActive = true
+		if let liquidGlassSegment = HudGlassModePreference.allCases.firstIndex(of: .liquidGlass) {
+			hudGlassModeControl.setToolTip(
+				"Requires Liquid Glass support.", forSegment: liquidGlassSegment)
+		}
+		container.addArrangedSubview(hudGlassModeControl)
+
+		let classicRows = [
+			makeGlassSubsectionTitle("Classic blur options"),
+			makeSliderRow(
+				title: "Opacity", slider: hudOpacitySlider, valueLabel: hudOpacityValueLabel,
+				action: #selector(hudOpacityChanged)),
+			makeSliderRow(
+				title: "Blur", slider: hudBlurSlider, valueLabel: hudBlurValueLabel,
+				action: #selector(hudBlurChanged)),
+			makeSliderRow(
+				title: "Tint", slider: hudTintSlider, valueLabel: hudTintValueLabel,
+				action: #selector(hudTintChanged)),
+			makeTintColorRow(),
+		]
+		classicGlassOptionViews = classicRows
+		for row in classicRows {
+			container.addArrangedSubview(row)
+		}
+
+		let liquidRows = [
+			makeGlassSubsectionTitle("Liquid Glass options"),
+			makeLiquidGlassStyleRow(),
+		]
+		liquidGlassOptionViews = liquidRows
+		for row in liquidRows {
+			container.addArrangedSubview(row)
+		}
+		return container
+	}
+
+	private func makeGlassSubsectionTitle(_ title: String) -> NSTextField {
+		let label = NSTextField(labelWithString: title)
+		label.font = .systemFont(ofSize: 12, weight: .medium)
+		label.textColor = .secondaryLabelColor
+		return label
+	}
+
+	private func makeLiquidGlassStyleRow() -> NSView {
+		let container = NSStackView()
+		container.orientation = .vertical
+		container.alignment = .leading
+		container.spacing = 6
+
+		let title = NSTextField(labelWithString: "Style")
+		title.font = .systemFont(ofSize: 13, weight: .medium)
+		container.addArrangedSubview(title)
+
+		liquidGlassStyleControl.target = self
+		liquidGlassStyleControl.action = #selector(liquidGlassStyleChanged)
+		container.addArrangedSubview(liquidGlassStyleControl)
 		return container
 	}
 
@@ -254,7 +323,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		return container
 	}
 
-	private func makeSliderRow(title: String, slider: NSSlider, valueLabel: NSTextField) -> NSView {
+	private func makeSliderRow(
+		title: String, slider: NSSlider, valueLabel: NSTextField, action: Selector
+	) -> NSView {
 		let container = NSStackView()
 		container.orientation = .vertical
 		container.alignment = .leading
@@ -265,18 +336,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		container.addArrangedSubview(titleLabel)
 
 		slider.target = self
-		switch title {
-		case "Opacity":
-			slider.action = #selector(hudOpacityChanged)
-		case "Blur":
-			slider.action = #selector(hudBlurChanged)
-		case "Tint":
-			slider.action = #selector(hudTintChanged)
-		case "Hue":
-			slider.action = #selector(hudHueChanged)
-		default:
-			break
-		}
+		slider.action = action
 
 		valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
 		valueLabel.textColor = .secondaryLabelColor
@@ -305,8 +365,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		hudTintColorWell.target = self
 		hudTintColorWell.action = #selector(hudTintColorChanged)
 
-		let hint = NSTextField(
-			labelWithString: "Chooses the hue directly; tint strength still uses the Tint slider.")
+		let hint = NSTextField(labelWithString: "Tint strength still uses the Tint slider.")
 		hint.font = .systemFont(ofSize: 12)
 		hint.textColor = .secondaryLabelColor
 
@@ -331,28 +390,45 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 				of: settings.frozenResizeHandleOrientation) ?? 0
 		showAltHintKeycapButton.state = settings.showAltHintKeycap ? .on : .off
 		hudGlassEnabledButton.state = settings.hudGlassEnabled ? .on : .off
+		hudGlassModeControl.selectedSegment =
+			HudGlassModePreference.allCases.firstIndex(of: settings.resolvedHudGlassMode) ?? 0
+		for (index, mode) in HudGlassModePreference.allCases.enumerated() {
+			let supported =
+				mode != .liquidGlass || LiveChromeGlassMaterialSupport.isLiquidGlassAvailable
+			hudGlassModeControl.setEnabled(supported, forSegment: index)
+		}
+		liquidGlassStyleControl.selectedSegment =
+			LiquidGlassStylePreference.allCases.firstIndex(of: settings.liquidGlassStyle) ?? 0
 		loupeSampleSizeControl.selectedSegment =
 			LoupeSampleSizePreference.allCases.firstIndex(of: settings.loupeSampleSize) ?? 0
 		hudOpacitySlider.doubleValue = settings.hudOpacity * 100
 		hudBlurSlider.doubleValue = settings.hudBlur * 100
 		hudTintSlider.doubleValue = settings.hudTint * 100
-		hudHueSlider.doubleValue = settings.hudTintHue * 360
 		hudTintColorWell.color = NSColor(
 			calibratedHue: CGFloat(settings.hudTintHue),
-			saturation: CGFloat(max(0.18, settings.hudTint)),
+			saturation: 0.85,
 			brightness: 1,
 			alpha: 1
 		)
 		hudOpacityValueLabel.stringValue = "\(Int(settings.hudOpacity * 100))"
 		hudBlurValueLabel.stringValue = "\(Int(settings.hudBlur * 100))"
 		hudTintValueLabel.stringValue = "\(Int(settings.hudTint * 100))"
-		hudHueValueLabel.stringValue = "\(Int(settings.hudTintHue * 360))°"
 		let glassEnabled = settings.hudGlassEnabled
+		let glassMode = settings.resolvedHudGlassMode
+		let classicBlurSelected = glassMode == .classicBlur
+		let liquidGlassSelected = glassMode == .liquidGlass
+		hudGlassModeControl.isEnabled = glassEnabled
+		for view in classicGlassOptionViews {
+			view.isHidden = !glassEnabled || !classicBlurSelected
+		}
+		for view in liquidGlassOptionViews {
+			view.isHidden = !glassEnabled || !liquidGlassSelected
+		}
 		hudOpacitySlider.isEnabled = glassEnabled
 		hudBlurSlider.isEnabled = glassEnabled
 		hudTintSlider.isEnabled = glassEnabled
-		hudHueSlider.isEnabled = glassEnabled
 		hudTintColorWell.isEnabled = glassEnabled
+		liquidGlassStyleControl.isEnabled = glassEnabled && liquidGlassSelected
 	}
 
 	@objc
@@ -421,6 +497,34 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 	}
 
 	@objc
+	private func hudGlassModeChanged() {
+		let index = hudGlassModeControl.selectedSegment
+		guard HudGlassModePreference.allCases.indices.contains(index) else {
+			refreshFromSettings()
+			return
+		}
+		let mode = HudGlassModePreference.allCases[index]
+		if mode == .liquidGlass, !LiveChromeGlassMaterialSupport.isLiquidGlassAvailable {
+			refreshFromSettings()
+			return
+		}
+		settingsStore.update { $0.hudGlassMode = mode }
+		refreshFromSettings()
+	}
+
+	@objc
+	private func liquidGlassStyleChanged() {
+		let index = liquidGlassStyleControl.selectedSegment
+		guard LiquidGlassStylePreference.allCases.indices.contains(index) else {
+			return
+		}
+		settingsStore.update {
+			$0.liquidGlassStyle = LiquidGlassStylePreference.allCases[index]
+		}
+		refreshFromSettings()
+	}
+
+	@objc
 	private func loupeSampleSizeChanged() {
 		let index = loupeSampleSizeControl.selectedSegment
 		guard LoupeSampleSizePreference.allCases.indices.contains(index) else {
@@ -449,22 +553,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 	}
 
 	@objc
-	private func hudHueChanged() {
-		settingsStore.update { $0.hudTintHue = hudHueSlider.doubleValue / 360.0 }
-		refreshFromSettings()
-	}
-
-	@objc
 	private func hudTintColorChanged() {
 		let converted = hudTintColorWell.color.usingColorSpace(.deviceRGB) ?? hudTintColorWell.color
 		let hue = converted.hueComponent
-		let saturation = converted.saturationComponent
 		settingsStore.update {
 			$0.hudTintHue = Double(hue)
-			$0.hudTint = Double(max($0.hudTint, saturation))
 		}
 		refreshFromSettings()
 	}
+
 }
 
 @MainActor
