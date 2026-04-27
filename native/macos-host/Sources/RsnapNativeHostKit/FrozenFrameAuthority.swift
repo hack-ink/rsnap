@@ -58,6 +58,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		}
 	}
 
+	private struct TelemetryContext {
+		let captureID: UInt64
+		let source: String
+		let startedAtUptime: TimeInterval
+	}
+
 	private final class PixelBufferImageBacking {
 		let pixelBuffer: CVPixelBuffer
 		let baseAddress: UnsafeMutableRawPointer
@@ -99,8 +105,13 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	private var displayTargets: [CGDirectDisplayID: DisplayTarget] = [:]
 	private var streams: [CGDirectDisplayID: DisplayStream] = [:]
 	private var latestFrames: [CGDirectDisplayID: FrameRecord] = [:]
+	private var firstFrameStartUptimes: [CGDirectDisplayID: TimeInterval] = [:]
+	private var firstFrameLoggedDisplayIDs: Set<CGDirectDisplayID> = []
+	private var telemetryContext = TelemetryContext(
+		captureID: 0, source: "capture", startedAtUptime: 0)
 
-	func start(for screens: [NSScreen]) {
+	func start(for screens: [NSScreen], captureID: UInt64 = 0, source: String = "capture") {
+		let setupStartedAt = ProcessInfo.processInfo.systemUptime
 		let targets = screens.compactMap(Self.displayTarget(for:))
 		guard !targets.isEmpty else {
 			stop()
@@ -112,7 +123,13 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		stateLock.lock()
 		let unchanged = activeDisplayIDs == targetIDs && displayTargets == nextTargets
 		displayTargets = nextTargets
-		if unchanged, !streams.isEmpty || setupDisplayIDs == targetIDs {
+		if unchanged, !streams.isEmpty {
+			updateTelemetryContextLocked(
+				captureID: captureID,
+				source: source,
+				startedAtUptime: setupStartedAt,
+				targetIDs: targetIDs
+			)
 			stateLock.unlock()
 			return
 		}
@@ -121,6 +138,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		activeDisplayIDs = targetIDs
 		setupDisplayIDs = targetIDs
 		latestFrames = latestFrames.filter { targetIDs.contains($0.key) }
+		updateTelemetryContextLocked(
+			captureID: captureID,
+			source: source,
+			startedAtUptime: setupStartedAt,
+			targetIDs: targetIDs
+		)
 		let staleStreams = streams.values
 		streams.removeAll()
 		stateLock.unlock()
@@ -134,12 +157,43 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			guard let self else {
 				return
 			}
+			guard self.isCurrentGeneration(requestGeneration) else {
+				return
+			}
 			guard let content else {
-				NSLog("Frozen frame authority content lookup failed: \(String(describing: error))")
+				NativeHostTelemetry.frozenAuthorityWarning(
+					"frozen_authority.content_lookup_failed",
+					captureID: captureID,
+					source: source,
+					displayID: 0,
+					error: String(describing: error)
+				)
+				NativeHostTelemetry.frozenAuthorityContentLookupTiming(
+					captureID: captureID,
+					source: source,
+					totalMilliseconds: NativeHostTelemetry.milliseconds(since: setupStartedAt),
+					success: false,
+					displayCount: targets.count,
+					windowCount: 0
+				)
 				self.finishSetup(generation: requestGeneration)
 				return
 			}
-			self.configureStreams(content: content, targets: targets, generation: requestGeneration)
+			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
+				captureID: captureID,
+				source: source,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: setupStartedAt),
+				success: true,
+				displayCount: content.displays.count,
+				windowCount: content.windows.count
+			)
+			self.configureStreams(
+				content: content,
+				targets: targets,
+				generation: requestGeneration,
+				captureID: captureID,
+				source: source
+			)
 		}
 	}
 
@@ -150,6 +204,10 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		setupDisplayIDs = nil
 		displayTargets.removeAll()
 		latestFrames.removeAll()
+		firstFrameStartUptimes.removeAll()
+		firstFrameLoggedDisplayIDs.removeAll()
+		telemetryContext = TelemetryContext(
+			captureID: 0, source: "capture", startedAtUptime: 0)
 		let staleStreams = streams.values
 		streams.removeAll()
 		stateLock.unlock()
@@ -226,7 +284,9 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	private func configureStreams(
 		content: SCShareableContent,
 		targets: [DisplayTarget],
-		generation requestGeneration: UInt64
+		generation requestGeneration: UInt64,
+		captureID: UInt64,
+		source: String
 	) {
 		let currentPID = getpid()
 		let excludedApplications = content.applications.filter { $0.processID == currentPID }
@@ -251,9 +311,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			}
 
 			let output = FrozenFrameStreamOutput(
-				displayID: target.displayID, displayFrame: target.frame
+				displayID: target.displayID,
+				displayFrame: target.frame
 			) { [weak self] frame in
 				self?.store(frame: frame, generation: requestGeneration)
+			} telemetrySnapshot: { [weak self] in
+				self?.currentTelemetrySnapshot() ?? (captureID: captureID, source: source)
 			}
 			let stream = SCStream(
 				filter: filter, configuration: Self.streamConfiguration(for: target),
@@ -262,8 +325,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				try stream.addStreamOutput(
 					output, type: SCStreamOutputType.screen, sampleHandlerQueue: outputQueue)
 			} catch {
-				NSLog(
-					"Frozen frame authority output install failed display=\(target.displayID): \(error)"
+				NativeHostTelemetry.frozenAuthorityWarning(
+					"frozen_authority.output_install_failed",
+					captureID: captureID,
+					source: source,
+					displayID: target.displayID,
+					error: String(describing: error)
 				)
 				continue
 			}
@@ -280,8 +347,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 
 			stream.startCapture { error in
 				if let error {
-					NSLog(
-						"Frozen frame authority stream start failed display=\(target.displayID): \(error)"
+					NativeHostTelemetry.frozenAuthorityWarning(
+						"frozen_authority.stream_start_failed",
+						captureID: captureID,
+						source: source,
+						displayID: target.displayID,
+						error: String(describing: error)
 					)
 				}
 			}
@@ -289,13 +360,38 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		finishSetup(generation: requestGeneration)
 	}
 
-	private func store(frame: FrameRecord, generation requestGeneration: UInt64) {
+	private func store(
+		frame: FrameRecord,
+		generation requestGeneration: UInt64
+	) {
+		var firstFrameTelemetry: TelemetryContext?
 		stateLock.lock()
 		if generation == requestGeneration, activeDisplayIDs.contains(frame.displayID) {
+			if !firstFrameLoggedDisplayIDs.contains(frame.displayID) {
+				firstFrameLoggedDisplayIDs.insert(frame.displayID)
+				let startedAt =
+					firstFrameStartUptimes[frame.displayID] ?? telemetryContext.startedAtUptime
+				firstFrameTelemetry = TelemetryContext(
+					captureID: telemetryContext.captureID,
+					source: telemetryContext.source,
+					startedAtUptime: startedAt
+				)
+			}
 			latestFrames[frame.displayID] = frame
 			stateLock.broadcast()
 		}
 		stateLock.unlock()
+		if let firstFrameTelemetry {
+			NativeHostTelemetry.frozenAuthorityFirstFrameTiming(
+				captureID: firstFrameTelemetry.captureID,
+				source: firstFrameTelemetry.source,
+				displayID: frame.displayID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(
+					since: firstFrameTelemetry.startedAtUptime),
+				frameAgeMilliseconds: frame.ageMilliseconds(),
+				sequence: frame.sequence
+			)
+		}
 	}
 
 	private func finishSetup(generation requestGeneration: UInt64) {
@@ -305,6 +401,38 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			stateLock.broadcast()
 		}
 		stateLock.unlock()
+	}
+
+	private func isCurrentGeneration(_ requestGeneration: UInt64) -> Bool {
+		stateLock.lock()
+		let isCurrent = generation == requestGeneration
+		stateLock.unlock()
+		return isCurrent
+	}
+
+	private func updateTelemetryContextLocked(
+		captureID: UInt64,
+		source: String,
+		startedAtUptime: TimeInterval,
+		targetIDs: Set<CGDirectDisplayID>
+	) {
+		telemetryContext = TelemetryContext(
+			captureID: captureID,
+			source: source,
+			startedAtUptime: startedAtUptime
+		)
+		firstFrameStartUptimes = firstFrameStartUptimes.filter { targetIDs.contains($0.key) }
+		firstFrameLoggedDisplayIDs.removeAll(keepingCapacity: true)
+		for targetID in targetIDs {
+			firstFrameStartUptimes[targetID] = startedAtUptime
+		}
+	}
+
+	private func currentTelemetrySnapshot() -> (captureID: UInt64, source: String) {
+		stateLock.lock()
+		let snapshot = (captureID: telemetryContext.captureID, source: telemetryContext.source)
+		stateLock.unlock()
+		return snapshot
 	}
 
 	private static func streamConfiguration(for target: DisplayTarget) -> SCStreamConfiguration {
@@ -388,16 +516,19 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 	private let displayID: CGDirectDisplayID
 	private let displayFrame: CGRect
 	private let onFrame: (FrozenFrameAuthority.FrameRecord) -> Void
+	private let telemetrySnapshot: () -> (captureID: UInt64, source: String)
 	private var sequence: UInt64 = 0
 
 	init(
 		displayID: CGDirectDisplayID,
 		displayFrame: CGRect,
-		onFrame: @escaping (FrozenFrameAuthority.FrameRecord) -> Void
+		onFrame: @escaping (FrozenFrameAuthority.FrameRecord) -> Void,
+		telemetrySnapshot: @escaping () -> (captureID: UInt64, source: String)
 	) {
 		self.displayID = displayID
 		self.displayFrame = displayFrame
 		self.onFrame = onFrame
+		self.telemetrySnapshot = telemetrySnapshot
 	}
 
 	func stream(
@@ -422,7 +553,14 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 	}
 
 	func stream(_ stream: SCStream, didStopWithError error: Error) {
-		NSLog("Frozen frame authority stream stopped display=\(displayID): \(error)")
+		let snapshot = telemetrySnapshot()
+		NativeHostTelemetry.frozenAuthorityWarning(
+			"frozen_authority.stream_stopped",
+			captureID: snapshot.captureID,
+			source: snapshot.source,
+			displayID: displayID,
+			error: String(describing: error)
+		)
 	}
 
 	private static func isUsableFrame(_ sampleBuffer: CMSampleBuffer) -> Bool {

@@ -435,7 +435,9 @@ case "$MODE" in
 		;;
 	--telemetry|telemetry)
 		open_app
-		/usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
+		RSNAP_TELEMETRY_BUNDLE_ID="$BUNDLE_ID" \
+			RSNAP_TELEMETRY_PROCESS="$EXECUTABLE_NAME" \
+			"$ROOT_DIR/scripts/telemetry/native-host.sh" stream
 		;;
 	--verify|verify)
 		open_app

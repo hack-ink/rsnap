@@ -66,3 +66,5 @@ Then keep the body explicit:
   the Frozen toolbar style capsule
 - `docs/spec/performance.md` for render cadence, performance scenarios, metrics,
   thresholds, and known performance-contract gaps
+- `docs/spec/telemetry.md` for native-host OSLog and Rust tracing schema fields, event naming,
+  metric naming, categories, and correlation identifiers
