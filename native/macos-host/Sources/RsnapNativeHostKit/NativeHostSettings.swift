@@ -15,12 +15,13 @@ final class NativeHostSettingsStore {
 		static let frozenResizeHandleOrientation = "frozenResizeHandleOrientation"
 		static let showAltHintKeycap = "showAltHintKeycap"
 		static let hudGlassEnabled = "hudGlassEnabled"
+		static let hudGlassMode = "hudGlassMode"
 		static let hudOpacity = "hudOpacity"
 		static let hudBlur = "hudBlur"
 		static let hudTint = "hudTint"
 		static let hudTintHue = "hudTintHue"
+		static let liquidGlassStyle = "liquidGlassStyle"
 		static let loupeSampleSize = "loupeSampleSize"
-		static let migratedLegacyToml = "migratedLegacyToml"
 	}
 
 	private let defaults: UserDefaults
@@ -29,7 +30,10 @@ final class NativeHostSettingsStore {
 	init(defaults: UserDefaults = .standard) {
 		self.defaults = defaults
 		let baseSettings = NativeHostSettings.defaults
-		var settings = NativeHostSettings(
+		let persistedHudGlassMode = HudGlassModePreference(
+			rawValue: defaults.string(forKey: DefaultsKey.hudGlassMode) ?? "")
+		let hudGlassMode = persistedHudGlassMode ?? baseSettings.hudGlassMode
+		let settings = NativeHostSettings(
 			captureHotkey: defaults.string(forKey: DefaultsKey.captureHotkey)
 				?? baseSettings.captureHotkey,
 			outputDirectory: defaults.url(forKey: DefaultsKey.outputDirectory)
@@ -49,6 +53,7 @@ final class NativeHostSettingsStore {
 				?? baseSettings.showAltHintKeycap,
 			hudGlassEnabled: defaults.object(forKey: DefaultsKey.hudGlassEnabled) as? Bool
 				?? baseSettings.hudGlassEnabled,
+			hudGlassMode: hudGlassMode,
 			hudOpacity: defaults.object(forKey: DefaultsKey.hudOpacity) as? Double
 				?? baseSettings.hudOpacity,
 			hudBlur: defaults.object(forKey: DefaultsKey.hudBlur) as? Double
@@ -57,17 +62,13 @@ final class NativeHostSettingsStore {
 				?? baseSettings.hudTint,
 			hudTintHue: defaults.object(forKey: DefaultsKey.hudTintHue) as? Double
 				?? baseSettings.hudTintHue,
+			liquidGlassStyle: LiquidGlassStylePreference(
+				rawValue: defaults.string(forKey: DefaultsKey.liquidGlassStyle) ?? "")
+				?? baseSettings.liquidGlassStyle,
 			loupeSampleSize: LoupeSampleSizePreference(
 				rawValue: defaults.string(forKey: DefaultsKey.loupeSampleSize) ?? "")
 				?? baseSettings.loupeSampleSize
 		)
-		if !defaults.bool(forKey: DefaultsKey.migratedLegacyToml),
-			let migrated = Self.migrateLegacyToml(into: settings)
-		{
-			settings = migrated
-			defaults.set(true, forKey: DefaultsKey.migratedLegacyToml)
-			Self.persist(settings, into: defaults)
-		}
 		self.settings = settings.sanitized()
 		Self.persist(self.settings, into: defaults)
 	}
@@ -82,7 +83,8 @@ final class NativeHostSettingsStore {
 	func update(_ mutate: (inout NativeHostSettings) -> Void) {
 		var next = settings
 		mutate(&next)
-		settings = next.sanitized()
+		let sanitized = next.sanitized()
+		settings = sanitized
 		Self.persist(settings, into: defaults)
 		NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
 	}
@@ -98,105 +100,13 @@ final class NativeHostSettingsStore {
 			forKey: DefaultsKey.frozenResizeHandleOrientation)
 		defaults.set(settings.showAltHintKeycap, forKey: DefaultsKey.showAltHintKeycap)
 		defaults.set(settings.hudGlassEnabled, forKey: DefaultsKey.hudGlassEnabled)
+		defaults.set(settings.hudGlassMode.rawValue, forKey: DefaultsKey.hudGlassMode)
 		defaults.set(settings.hudOpacity, forKey: DefaultsKey.hudOpacity)
 		defaults.set(settings.hudBlur, forKey: DefaultsKey.hudBlur)
 		defaults.set(settings.hudTint, forKey: DefaultsKey.hudTint)
 		defaults.set(settings.hudTintHue, forKey: DefaultsKey.hudTintHue)
+		defaults.set(settings.liquidGlassStyle.rawValue, forKey: DefaultsKey.liquidGlassStyle)
 		defaults.set(settings.loupeSampleSize.rawValue, forKey: DefaultsKey.loupeSampleSize)
-	}
-
-	private static func migrateLegacyToml(into settings: NativeHostSettings) -> NativeHostSettings?
-	{
-		let legacyPath = FileManager.default.homeDirectoryForCurrentUser
-			.appendingPathComponent("Library", isDirectory: true)
-			.appendingPathComponent("Application Support", isDirectory: true)
-			.appendingPathComponent("ink.hack.rsnap", isDirectory: true)
-			.appendingPathComponent("settings.toml", isDirectory: false)
-		guard let contents = try? String(contentsOf: legacyPath) else {
-			return nil
-		}
-
-		var migrated = settings
-		let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
-		for rawLine in lines {
-			let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-			guard !line.isEmpty, !line.hasPrefix("#"), let separator = line.firstIndex(of: "=")
-			else {
-				continue
-			}
-			let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
-			let value = line[line.index(after: separator)...].trimmingCharacters(
-				in: .whitespacesAndNewlines)
-			let unquoted = value.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-			switch key {
-			case "capture_hotkey":
-				migrated.captureHotkey = unquoted
-			case "output_dir":
-				let url = URL(fileURLWithPath: unquoted, isDirectory: true)
-				migrated.outputDirectory = url
-			case "output_filename_prefix":
-				migrated.outputFilenamePrefix = unquoted
-			case "output_naming":
-				if let naming = OutputNamingPreference(rawValue: unquoted) {
-					migrated.outputNaming = naming
-				}
-			case "toolbar_placement":
-				if let placement = ToolbarPlacementPreference(rawValue: unquoted) {
-					migrated.toolbarPlacement = placement
-				}
-			case "frozen_resize_handle_orientation":
-				if let orientation = FrozenResizeHandleOrientationPreference(rawValue: unquoted) {
-					migrated.frozenResizeHandleOrientation = orientation
-				}
-			case "show_alt_hint_keycap":
-				if let boolValue = parseTomlBool(unquoted) {
-					migrated.showAltHintKeycap = boolValue
-				}
-			case "hud_glass_enabled":
-				if let boolValue = parseTomlBool(unquoted) {
-					migrated.hudGlassEnabled = boolValue
-				}
-			case "hud_opacity":
-				if let value = parseTomlDouble(unquoted) {
-					migrated.hudOpacity = value
-				}
-			case "hud_blur":
-				if let value = parseTomlDouble(unquoted) {
-					migrated.hudBlur = value
-				}
-			case "hud_tint":
-				if let value = parseTomlDouble(unquoted) {
-					migrated.hudTint = value
-				}
-			case "hud_tint_hue":
-				if let value = parseTomlDouble(unquoted) {
-					migrated.hudTintHue = value
-				}
-			case "loupe_sample_size":
-				if let sampleSize = LoupeSampleSizePreference(rawValue: unquoted) {
-					migrated.loupeSampleSize = sampleSize
-				}
-			default:
-				continue
-			}
-		}
-
-		return migrated
-	}
-
-	private static func parseTomlBool(_ raw: String) -> Bool? {
-		switch raw.lowercased() {
-		case "true":
-			return true
-		case "false":
-			return false
-		default:
-			return nil
-		}
-	}
-
-	private static func parseTomlDouble(_ raw: String) -> Double? {
-		Double(raw)
 	}
 }
 
@@ -209,28 +119,34 @@ struct NativeHostSettings: Equatable {
 	var frozenResizeHandleOrientation: FrozenResizeHandleOrientationPreference
 	var showAltHintKeycap: Bool
 	var hudGlassEnabled: Bool
+	var hudGlassMode: HudGlassModePreference
 	var hudOpacity: Double
 	var hudBlur: Double
 	var hudTint: Double
 	var hudTintHue: Double
+	var liquidGlassStyle: LiquidGlassStylePreference
 	var loupeSampleSize: LoupeSampleSizePreference
 
-	static let defaults = NativeHostSettings(
-		captureHotkey: "alt+KeyX",
-		outputDirectory: FileManager.default.homeDirectoryForCurrentUser
-			.appendingPathComponent("Desktop", isDirectory: true),
-		outputFilenamePrefix: "rsnap",
-		outputNaming: .timestamp,
-		toolbarPlacement: .bottom,
-		frozenResizeHandleOrientation: .inward,
-		showAltHintKeycap: true,
-		hudGlassEnabled: true,
-		hudOpacity: 0.5,
-		hudBlur: 0.5,
-		hudTint: 0.5,
-		hudTintHue: 215.0 / 360.0,
-		loupeSampleSize: .medium
-	)
+	static var defaults: NativeHostSettings {
+		NativeHostSettings(
+			captureHotkey: "alt+KeyX",
+			outputDirectory: FileManager.default.homeDirectoryForCurrentUser
+				.appendingPathComponent("Desktop", isDirectory: true),
+			outputFilenamePrefix: "rsnap",
+			outputNaming: .timestamp,
+			toolbarPlacement: .bottom,
+			frozenResizeHandleOrientation: .inward,
+			showAltHintKeycap: true,
+			hudGlassEnabled: true,
+			hudGlassMode: HudGlassModePreference.defaultForCurrentSystem,
+			hudOpacity: 0.5,
+			hudBlur: 0.5,
+			hudTint: 0.5,
+			hudTintHue: 215.0 / 360.0,
+			liquidGlassStyle: .clear,
+			loupeSampleSize: .medium
+		)
+	}
 
 	func sanitized() -> Self {
 		var copy = self
@@ -309,6 +225,39 @@ enum FrozenResizeHandleOrientationPreference: String, CaseIterable {
 	}
 }
 
+enum HudGlassModePreference: String, CaseIterable {
+	case liquidGlass = "liquid_glass"
+	case classicBlur = "classic_blur"
+
+	static var defaultForCurrentSystem: Self {
+		LiveChromeGlassMaterialSupport.isLiquidGlassAvailable ? .liquidGlass : .classicBlur
+	}
+
+	var title: String {
+		switch self {
+		case .liquidGlass:
+			return "Liquid Glass"
+		case .classicBlur:
+			return "Classic Blur"
+		}
+	}
+}
+
+enum LiquidGlassStylePreference: String, CaseIterable {
+	case regular
+	case clear
+
+	var title: String {
+		switch self {
+		case .regular:
+			return "Regular"
+		case .clear:
+			return "Clear"
+		}
+	}
+
+}
+
 enum LoupeSampleSizePreference: String, CaseIterable {
 	case small
 	case medium
@@ -334,6 +283,36 @@ enum LoupeSampleSizePreference: String, CaseIterable {
 		case .large:
 			return 31
 		}
+	}
+}
+
+enum LiveChromeGlassMaterialSupport {
+	static var isLiquidGlassAvailable: Bool {
+		#if compiler(>=6.2)
+			if #available(macOS 26.0, *) {
+				return true
+			}
+		#endif
+		return false
+	}
+}
+
+extension NativeHostSettings {
+	var resolvedHudGlassMode: HudGlassModePreference {
+		if hudGlassMode == .liquidGlass,
+			!LiveChromeGlassMaterialSupport.isLiquidGlassAvailable
+		{
+			return .classicBlur
+		}
+		return hudGlassMode
+	}
+
+	var usesClassicHudGlass: Bool {
+		hudGlassEnabled && resolvedHudGlassMode == .classicBlur && hudBlur > 0.01
+	}
+
+	var usesLiquidHudGlass: Bool {
+		hudGlassEnabled && resolvedHudGlassMode == .liquidGlass
 	}
 }
 
