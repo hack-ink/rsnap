@@ -93,6 +93,10 @@ final class LiveFrameStreamBroker {
 		)
 	}
 
+	func rgbSample(at point: CGPoint) -> RGBSample? {
+		sample(at: point, sidePixels: 0)?.rgbSample
+	}
+
 	func patch(in rect: CGRect) -> CGImage? {
 		let point = CGPoint(x: rect.midX, y: rect.midY)
 		let sidePixels = max(Int(rect.width.rounded()), Int(rect.height.rounded()), 1)
