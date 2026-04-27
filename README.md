@@ -29,7 +29,7 @@ macOS-first screenshot prototype in native-host / Rust-core reset.
 - Scroll capture is currently implemented on macOS for dragged-region freezes and uses image-first downward stitching with a live side preview.
 - Upward scrolling may be observed for rewind/reacquire, but it never appends stitched rows.
 - `Esc` cancels capture; during scroll capture, `Esc` / `Back` returns to normal Frozen mode.
-- Glass HUD with configurable blur, tint, and hue controls.
+- Glass HUD with Liquid Glass on supported macOS, plus classic blur/tint controls.
 - Tab-triggered loupe sample and frozen-mode toolbar for quick action access.
 
 ## Status
@@ -98,17 +98,15 @@ cargo run -p rsnap
 
 - The native `Settings…` window currently owns:
   - HUD glass enable/disable
-  - HUD opacity / blur / tint / hue
+  - HUD glass style (`Liquid Glass` / `Classic Blur`)
+  - Liquid Glass style (`Regular` / `Clear`) when supported by macOS
+  - Classic HUD opacity / blur / tint / color
   - HUD `Tab` hint visibility
   - loupe sample size (`small` / `medium` / `large`)
   - output directory
   - filename prefix
   - output naming (`timestamp` / `sequence`)
   - frozen toolbar placement (`bottom` / `top`)
-- Legacy `settings.toml` values for `show_alt_hint_keycap`, `hud_glass_enabled`, `hud_opacity`,
-  `hud_blur`, `hud_tint`, `hud_tint_hue`, `loupe_sample_size`, `output_dir`,
-  `output_filename_prefix`, `output_naming`, and `toolbar_placement` are migrated into the native
-  settings store on first launch.
 
 ### Output (save-to-disk)
 

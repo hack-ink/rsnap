@@ -783,16 +783,7 @@ final class LiveOverlayRenderer {
 		"live_chrome.layer_chrome_render_duration",
 		category: "LiveChromeTelemetry"
 	)
-	private let layerPositionDurationMetric = NativeHostTelemetry.distribution(
-		"live_chrome.layer_position_duration",
-		category: "LiveChromeTelemetry"
-	)
-	private let layerPositionGapMetric = NativeHostTelemetry.distribution(
-		"live_chrome.layer_position_gap",
-		category: "LiveChromeTelemetry"
-	)
 	private var snapshotProvider: (() -> LivePreviewSnapshot?)?
-	private var lastLayerPositionMoveUptime: TimeInterval?
 
 	init(hostView: NSView) {
 		self.hostView = hostView
@@ -844,30 +835,6 @@ final class LiveOverlayRenderer {
 	func renderLiveChromeNow() {
 		renderChromeSnapshot()
 		onTick?()
-	}
-
-	func moveLiveChrome(hudFrame: CGRect?, loupeFrame: CGRect?) {
-		let moveStart = ProcessInfo.processInfo.systemUptime
-		var moved = false
-		CATransaction.begin()
-		CATransaction.setDisableActions(true)
-		if let hudFrame, !hudLayer.isHidden, layerFrameNeedsUpdate(hudLayer.frame, hudFrame) {
-			hudLayer.frame = hudFrame
-			moved = true
-		}
-		if let loupeFrame, !loupeLayer.isHidden,
-			layerFrameNeedsUpdate(loupeLayer.frame, loupeFrame)
-		{
-			loupeLayer.frame = loupeFrame
-			moved = true
-		}
-		CATransaction.commit()
-
-		guard moved else {
-			return
-		}
-		layerPositionDurationMetric.recordMillisecondsSince(moveStart)
-		recordLayerPositionGap(moveStart)
 	}
 
 	private func configureLayers() {
@@ -952,27 +919,6 @@ final class LiveOverlayRenderer {
 		renderHud(snapshot)
 		renderLoupe(snapshot)
 		CATransaction.commit()
-	}
-
-	private func layerFrameNeedsUpdate(_ current: CGRect, _ next: CGRect) -> Bool {
-		abs(current.minX - next.minX) > 0.001
-			|| abs(current.minY - next.minY) > 0.001
-			|| abs(current.width - next.width) > 0.001
-			|| abs(current.height - next.height) > 0.001
-	}
-
-	private func recordLayerPositionGap(_ moveUptime: TimeInterval) {
-		defer {
-			lastLayerPositionMoveUptime = moveUptime
-		}
-		guard let lastLayerPositionMoveUptime else {
-			return
-		}
-		let gapMilliseconds = (moveUptime - lastLayerPositionMoveUptime) * 1_000
-		guard gapMilliseconds >= 0, gapMilliseconds < 250 else {
-			return
-		}
-		layerPositionGapMetric.record(gapMilliseconds)
 	}
 
 	private func renderFrozenDisplay(_ snapshot: LivePreviewSnapshot) {
@@ -1265,7 +1211,7 @@ final class LiveOverlayRenderer {
 			cornerHeight: cornerRadius,
 			transform: nil
 		)
-		let glassEnabled = settings.hudGlassEnabled && settings.hudBlur > 0.01
+		let glassEnabled = settings.usesClassicHudGlass
 		let opacity = CGFloat(settings.hudOpacity.clamped(to: 0...1))
 		let hasInlineGlass = glassEnabled && glassImage != nil
 		let usesExternalGlass = glassEnabled && glassImage == nil
