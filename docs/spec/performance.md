@@ -159,25 +159,18 @@ The current overlay runtime already exposes several useful diagnostic thresholds
 - `OVERLAY_EVENT_LOOP_STALL_THRESHOLD = 250 ms` for severe event-loop stalls.
 - `overlay.live_sample_apply_latency` is logged once latency reaches `12 ms`.
 - Native-host `live_chrome.hud.apply_latency` and `live_chrome.loupe.apply_latency` measure the
-  first successful visible apply for a live input sequence. If the position-only fast path moves
-  the HUD or loupe first, that fast-path apply owns the sample and the later full snapshot refresh
-  must not re-record the same input sequence as a slower apply.
-- Native-host `live_chrome.*.fast_position_latency` and
-  `live_chrome.*.fast_position_duration` are diagnostic signals for the position-only fast path;
-  they do not replace the first-visible-apply latency metric.
-- Native-host `live_chrome.*.fast_position_gap` reports the interval between successful
-  position-only moves. Use it to diagnose cadence jitter when per-move duration and apply latency
-  are low but the HUD or loupe still feels uneven.
+  first successful visible apply for a live input sequence.
+- Native-host `live_chrome.hud.window_update_duration`,
+  `live_chrome.loupe.window_update_duration`, and `live_chrome.update_duration` report the external
+  live chrome window update path used by Liquid Glass HUD/loupe presentation.
 - Native-host `live_chrome.frame_tick_gap` reports the active live-frame clock interval. It should
   cluster around the fixed `120 Hz` budget (`8.33 ms`) during active live capture.
 - Native-host `live_chrome.layer_render_duration` reports the in-overlay CALayer presentation path
   for live/frozen preview rendering when live chrome is not moved as separate windows.
 - Native-host `live_chrome.layer_chrome_render_duration` reports the in-overlay HUD/loupe content
   refresh path after live chrome movement has been split from full overlay preview rendering.
-- Native-host `live_chrome.layer_position_duration` and `live_chrome.layer_position_gap` report the
-  layer-only live chrome move path used between full preview refreshes. The live chrome follow
-  clock may use a small scheduling headroom below `8.33 ms`, but acceptance is still judged against
-  the fixed `120 Hz` frame budget.
+- The live chrome follow clock may use a small scheduling headroom below `8.33 ms`, but acceptance
+  is still judged against the fixed `120 Hz` frame budget.
 
 These values are useful for diagnosis, but they are not the full performance contract:
 

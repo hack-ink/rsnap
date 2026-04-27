@@ -4,6 +4,7 @@ import CoreText
 import Darwin
 import Foundation
 import RsnapHostBridge
+import SwiftUI
 
 @MainActor
 private enum LiveChromeTypography {
@@ -79,14 +80,6 @@ struct LiveChromeVisualSnapshot {
 	let hud: LiveHudVisualSnapshot?
 	let loupe: LiveLoupeVisualSnapshot?
 	let toolbar: FrozenToolbarVisualSnapshot?
-}
-
-struct LiveChromePositionSnapshot {
-	let sourceWindowNumber: Int?
-	let hudFrame: CGRect?
-	let loupeFrame: CGRect?
-	let inputUptime: TimeInterval?
-	let inputSequence: UInt64
 }
 
 struct LiveChromeBackdropSnapshot {
@@ -251,6 +244,15 @@ private enum ChromeVisualKind {
 	case hud
 	case loupe
 	case toolbar
+
+	func usesLiquidGlassSurface(settings: NativeHostSettings) -> Bool {
+		settings.usesLiquidHudGlass && self != .toolbar
+	}
+
+	func usesClassicWindowGlass(settings: NativeHostSettings) -> Bool {
+		settings.hudGlassEnabled && !usesLiquidGlassSurface(settings: settings)
+			&& settings.hudBlur > 0.01
+	}
 }
 
 @MainActor
@@ -289,9 +291,125 @@ private enum MacOSWindowBlurBridge {
 	}
 }
 
+@MainActor
+private enum LiveChromeLiquidGlassBridge {
+	static func makeGlassView() -> NSView? {
+		guard LiveChromeGlassMaterialSupport.isLiquidGlassAvailable else {
+			return nil
+		}
+		let glassView = LiveChromeLiquidGlassView(frame: .zero)
+		glassView.autoresizingMask = [.width, .height]
+		return glassView
+	}
+
+	static func update(_ glassView: NSView, settings: NativeHostSettings) {
+		guard let glassView = glassView as? LiveChromeLiquidGlassView else {
+			return
+		}
+		glassView.update(settings: settings)
+	}
+
+	static func setContentView(_ contentView: NSView?, on glassView: NSView) {
+		guard let glassView = glassView as? LiveChromeLiquidGlassView else {
+			return
+		}
+		glassView.setContentView(contentView)
+	}
+}
+
+@MainActor
+private final class LiveChromeLiquidGlassView: NSView {
+	private let glassHostView: NSHostingView<AnyView>
+	private let contentContainerView = NSView(frame: .zero)
+	private weak var currentContentView: NSView?
+
+	override var isOpaque: Bool { false }
+
+	override init(frame frameRect: NSRect) {
+		self.glassHostView = NSHostingView(
+			rootView: Self.makeGlassRoot(settings: .defaults))
+		super.init(frame: frameRect)
+
+		wantsLayer = true
+		layer?.backgroundColor = NSColor.clear.cgColor
+		layer?.isOpaque = false
+
+		glassHostView.frame = bounds
+		glassHostView.autoresizingMask = [.width, .height]
+		glassHostView.wantsLayer = true
+		glassHostView.layer?.backgroundColor = NSColor.clear.cgColor
+		glassHostView.layer?.isOpaque = false
+		addSubview(glassHostView)
+
+		contentContainerView.frame = bounds
+		contentContainerView.autoresizingMask = [.width, .height]
+		contentContainerView.wantsLayer = true
+		contentContainerView.layer?.backgroundColor = NSColor.clear.cgColor
+		contentContainerView.layer?.isOpaque = false
+		addSubview(contentContainerView)
+	}
+
+	@available(*, unavailable)
+	required init?(coder: NSCoder) {
+		fatalError("init(coder:) has not been implemented")
+	}
+
+	func update(settings: NativeHostSettings) {
+		glassHostView.rootView = Self.makeGlassRoot(settings: settings)
+	}
+
+	func setContentView(_ contentView: NSView?) {
+		guard currentContentView !== contentView else {
+			return
+		}
+		currentContentView?.removeFromSuperview()
+		currentContentView = contentView
+		guard let contentView else {
+			return
+		}
+		contentView.frame = contentContainerView.bounds
+		contentView.autoresizingMask = [.width, .height]
+		contentContainerView.addSubview(contentView)
+	}
+
+	private static func makeGlassRoot(settings: NativeHostSettings) -> AnyView {
+		#if compiler(>=6.2)
+			if #available(macOS 26.0, *) {
+				return makeAvailableGlassRoot(settings: settings)
+			}
+		#endif
+		return AnyView(Color.clear)
+	}
+
+	#if compiler(>=6.2)
+		@available(macOS 26.0, *)
+		private static func makeAvailableGlassRoot(settings: NativeHostSettings) -> AnyView {
+			var glass =
+				switch settings.liquidGlassStyle {
+				case .regular:
+					Glass.regular
+				case .clear:
+					Glass.clear
+				}
+			glass = glass.interactive(false)
+			return AnyView(
+				GlassEffectContainer(spacing: 0) {
+					Color.clear
+						.frame(maxWidth: .infinity, maxHeight: .infinity)
+						.glassEffect(glass, in: .rect(cornerRadius: CaptureChrome.hudCornerRadius))
+				}
+				.allowsHitTesting(false)
+			)
+		}
+	#endif
+}
+
 private final class LiveChromeOverlayWindow: NSWindow {
 	let kind: ChromeVisualKind
 	let renderView: LiveChromeRenderView
+	private let liquidGlassView: NSView?
+	private var isUsingLiquidGlassContent = false
+	private var lastLiquidGlassStyle: LiquidGlassStylePreference?
 	private var lastPresentedFrame: CGRect?
 	private var lastAppliedBlurAmount: CGFloat?
 	private var isPresented = false
@@ -299,6 +417,7 @@ private final class LiveChromeOverlayWindow: NSWindow {
 	init(kind: ChromeVisualKind) {
 		self.kind = kind
 		self.renderView = LiveChromeRenderView(kind: kind, frame: .zero)
+		self.liquidGlassView = LiveChromeLiquidGlassBridge.makeGlassView()
 		super.init(
 			contentRect: CGRect(x: 0, y: 0, width: 1, height: 1),
 			styleMask: [.borderless],
@@ -306,6 +425,8 @@ private final class LiveChromeOverlayWindow: NSWindow {
 			defer: false
 		)
 		contentView = renderView
+		renderView.autoresizingMask = [.width, .height]
+		liquidGlassView?.autoresizingMask = [.width, .height]
 		backgroundColor = .clear
 		collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 		hasShadow = false
@@ -347,6 +468,7 @@ private final class LiveChromeOverlayWindow: NSWindow {
 			return
 		}
 
+		configureContentView(settings: settings)
 		let prewarmFrame = CGRect(x: -10_000, y: -10_000, width: 1, height: 1)
 		alphaValue = 0
 		setFrame(prewarmFrame, display: false, animate: false)
@@ -355,12 +477,13 @@ private final class LiveChromeOverlayWindow: NSWindow {
 		isPresented = true
 		displayIfNeeded()
 
-		let blurAmount = settings.hudGlassEnabled ? settings.hudBlur : 0
+		let blurAmount = windowBackgroundBlurAmount(settings: settings)
 		MacOSWindowBlurBridge.applyBlur(to: self, amount: blurAmount)
 		lastAppliedBlurAmount = blurAmount
 	}
 
 	func update(frame: CGRect, settings: NativeHostSettings) {
+		configureContentView(settings: settings)
 		let roundedFrame = presentationFrame(from: frame)
 		let tolerance: CGFloat = 0.001
 		if let lastPresentedFrame {
@@ -380,7 +503,7 @@ private final class LiveChromeOverlayWindow: NSWindow {
 		}
 		lastPresentedFrame = roundedFrame
 
-		let blurAmount = settings.hudGlassEnabled ? settings.hudBlur : 0
+		let blurAmount = windowBackgroundBlurAmount(settings: settings)
 		if lastAppliedBlurAmount == nil || abs((lastAppliedBlurAmount ?? 0) - blurAmount) > 0.01 {
 			MacOSWindowBlurBridge.applyBlur(to: self, amount: blurAmount)
 			lastAppliedBlurAmount = blurAmount
@@ -392,6 +515,38 @@ private final class LiveChromeOverlayWindow: NSWindow {
 		}
 		if alphaValue != 1 {
 			alphaValue = 1
+		}
+	}
+
+	private func windowBackgroundBlurAmount(settings: NativeHostSettings) -> CGFloat {
+		if kind.usesClassicWindowGlass(settings: settings) {
+			return CGFloat(settings.hudBlur)
+		}
+		return 0
+	}
+
+	private func configureContentView(settings: NativeHostSettings) {
+		let shouldUseLiquidGlass = kind.usesLiquidGlassSurface(settings: settings)
+		if shouldUseLiquidGlass, let liquidGlassView {
+			if !isUsingLiquidGlassContent {
+				contentView = liquidGlassView
+				liquidGlassView.frame = contentView?.bounds ?? .zero
+				renderView.frame = liquidGlassView.bounds
+				LiveChromeLiquidGlassBridge.setContentView(renderView, on: liquidGlassView)
+				isUsingLiquidGlassContent = true
+			}
+			if lastLiquidGlassStyle != settings.liquidGlassStyle {
+				LiveChromeLiquidGlassBridge.update(liquidGlassView, settings: settings)
+				lastLiquidGlassStyle = settings.liquidGlassStyle
+			}
+			return
+		}
+
+		if isUsingLiquidGlassContent, let liquidGlassView {
+			LiveChromeLiquidGlassBridge.setContentView(nil, on: liquidGlassView)
+			contentView = renderView
+			isUsingLiquidGlassContent = false
+			lastLiquidGlassStyle = nil
 		}
 	}
 
@@ -500,7 +655,7 @@ private final class LiveChromeBackdropWindow: NSWindow {
 		}
 		lastPresentedFrame = roundedFrame
 
-		let blurAmount = settings.hudGlassEnabled ? settings.hudBlur : 0
+		let blurAmount = settings.usesClassicHudGlass ? settings.hudBlur : 0
 		if lastAppliedBlurAmount == nil || abs((lastAppliedBlurAmount ?? 0) - blurAmount) > 0.01 {
 			MacOSWindowBlurBridge.applyBlur(to: self, amount: blurAmount)
 			lastAppliedBlurAmount = blurAmount
@@ -794,17 +949,22 @@ private final class LiveChromeRenderView: NSView {
 			yRadius: CaptureChrome.hudCornerRadius
 		)
 		context.saveGState()
-		if strongShadow {
-			context.setShadow(offset: .zero, blur: 10, color: palette.shadow.cgColor)
-		}
-		context.setFillColor(
-			CaptureChrome.effectiveBodyFill(
+		let usesLiquidGlass = kind.usesLiquidGlassSurface(settings: settings)
+		if usesLiquidGlass {
+			context.restoreGState()
+			return
+		} else {
+			if strongShadow {
+				context.setShadow(offset: .zero, blur: 10, color: palette.shadow.cgColor)
+			}
+			let fillColor = CaptureChrome.effectiveBodyFill(
 				palette: palette,
 				settings: settings,
-				hasGlass: settings.hudGlassEnabled && settings.hudBlur > 0.01
-			).cgColor
-		)
-		pillPath.fill()
+				hasGlass: kind.usesClassicWindowGlass(settings: settings)
+			)
+			context.setFillColor(fillColor.cgColor)
+			pillPath.fill()
+		}
 		context.restoreGState()
 
 		context.setStrokeColor(palette.outerStroke.cgColor)
@@ -867,36 +1027,8 @@ final class LiveChromeVisualWindowController {
 		"live_chrome.loupe.window_update_duration",
 		category: "LiveChromeTelemetry"
 	)
-	private let hudFastPositionLatencyMetric = NativeHostTelemetry.distribution(
-		"live_chrome.hud.fast_position_latency",
-		category: "LiveChromeTelemetry"
-	)
-	private let hudFastPositionDurationMetric = NativeHostTelemetry.distribution(
-		"live_chrome.hud.fast_position_duration",
-		category: "LiveChromeTelemetry"
-	)
-	private let hudFastPositionGapMetric = NativeHostTelemetry.distribution(
-		"live_chrome.hud.fast_position_gap",
-		category: "LiveChromeTelemetry"
-	)
-	private let loupeFastPositionLatencyMetric = NativeHostTelemetry.distribution(
-		"live_chrome.loupe.fast_position_latency",
-		category: "LiveChromeTelemetry"
-	)
-	private let loupeFastPositionDurationMetric = NativeHostTelemetry.distribution(
-		"live_chrome.loupe.fast_position_duration",
-		category: "LiveChromeTelemetry"
-	)
-	private let loupeFastPositionGapMetric = NativeHostTelemetry.distribution(
-		"live_chrome.loupe.fast_position_gap",
-		category: "LiveChromeTelemetry"
-	)
 	private var lastHudLatencyInputSequence: UInt64?
 	private var lastLoupeLatencyInputSequence: UInt64?
-	private var lastFastHudLatencyInputSequence: UInt64?
-	private var lastFastLoupeLatencyInputSequence: UInt64?
-	private var lastFastHudPositionUptime: TimeInterval?
-	private var lastFastLoupePositionUptime: TimeInterval?
 
 	func prepareForLivePresentation(settings: NativeHostSettings) {
 		hudWindow.prewarmForPresentation(settings: settings)
@@ -955,76 +1087,6 @@ final class LiveChromeVisualWindowController {
 		}
 	}
 
-	func updatePositions(snapshot: LiveChromePositionSnapshot?, focusedWindowNumber: Int?) {
-		guard let snapshot, snapshot.sourceWindowNumber == focusedWindowNumber else {
-			return
-		}
-		if let hudFrame = snapshot.hudFrame {
-			let moveStart = ProcessInfo.processInfo.systemUptime
-			if hudWindow.moveIfPossible(frame: hudFrame) {
-				hudFastPositionDurationMetric.recordMillisecondsSince(moveStart)
-				recordPositionGap(
-					moveStart,
-					lastMoveUptime: &lastFastHudPositionUptime,
-					metric: hudFastPositionGapMetric
-				)
-				recordInputLatency(
-					inputUptime: snapshot.inputUptime,
-					inputSequence: snapshot.inputSequence,
-					lastInputSequence: &lastFastHudLatencyInputSequence,
-					metric: hudFastPositionLatencyMetric
-				)
-				recordInputLatency(
-					inputUptime: snapshot.inputUptime,
-					inputSequence: snapshot.inputSequence,
-					lastInputSequence: &lastHudLatencyInputSequence,
-					metric: hudApplyLatencyMetric
-				)
-			}
-		}
-		if let loupeFrame = snapshot.loupeFrame {
-			let moveStart = ProcessInfo.processInfo.systemUptime
-			if loupeWindow.moveIfPossible(frame: loupeFrame) {
-				loupeFastPositionDurationMetric.recordMillisecondsSince(moveStart)
-				recordPositionGap(
-					moveStart,
-					lastMoveUptime: &lastFastLoupePositionUptime,
-					metric: loupeFastPositionGapMetric
-				)
-				recordInputLatency(
-					inputUptime: snapshot.inputUptime,
-					inputSequence: snapshot.inputSequence,
-					lastInputSequence: &lastFastLoupeLatencyInputSequence,
-					metric: loupeFastPositionLatencyMetric
-				)
-				recordInputLatency(
-					inputUptime: snapshot.inputUptime,
-					inputSequence: snapshot.inputSequence,
-					lastInputSequence: &lastLoupeLatencyInputSequence,
-					metric: loupeApplyLatencyMetric
-				)
-			}
-		}
-	}
-
-	private func recordPositionGap(
-		_ moveUptime: TimeInterval,
-		lastMoveUptime: inout TimeInterval?,
-		metric: NativeHostTelemetry.DistributionMetric
-	) {
-		defer {
-			lastMoveUptime = moveUptime
-		}
-		guard let lastMoveUptime else {
-			return
-		}
-		let gapMilliseconds = (moveUptime - lastMoveUptime) * 1_000
-		guard gapMilliseconds >= 0, gapMilliseconds < 250 else {
-			return
-		}
-		metric.record(gapMilliseconds)
-	}
-
 	private func recordInputLatency(
 		inputUptime: TimeInterval?,
 		inputSequence: UInt64,
@@ -1063,7 +1125,7 @@ final class LiveChromeBackdropWindowController {
 		guard snapshot.sourceWindowNumber == focusedWindowNumber else {
 			return
 		}
-		guard snapshot.settings.hudGlassEnabled, snapshot.settings.hudBlur > 0.01 else {
+		guard snapshot.settings.usesClassicHudGlass else {
 			hideAll()
 			return
 		}
