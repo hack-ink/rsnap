@@ -3488,6 +3488,7 @@ fn selection_flow_light_palette_uses_lower_luminance_colors() {
 	let light_palette = WindowRenderer::selection_flow_palette(HudTheme::Light);
 
 	assert_ne!(dark_palette, light_palette);
+
 	for &(red, green, blue) in light_palette {
 		let channel_sum = u16::from(red) + u16::from(green) + u16::from(blue);
 
