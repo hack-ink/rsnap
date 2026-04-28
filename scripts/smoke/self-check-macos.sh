@@ -9,12 +9,12 @@ case "${1:-}" in
 Usage: self-check-macos.sh
 
 Runs the macOS smoke readiness sequence:
-  1. live-loupe smoke environment self-check
+  1. native HUD-follow smoke environment self-check
   2. deterministic replay self-check
 EOF
     exit 0
     ;;
 esac
 
-"$SCRIPT_DIR/live-loupe-perf-self-check-macos.sh"
+"$SCRIPT_DIR/native-hud-follow-macos.sh" --self-check
 "$SCRIPT_DIR/replay-scroll-capture-self-check.sh"

@@ -226,11 +226,11 @@ enum FrozenResizeHandleOrientationPreference: String, CaseIterable {
 }
 
 enum HudGlassModePreference: String, CaseIterable {
-	case liquidGlass = "liquid_glass"
 	case classicGlass = "classic_glass"
+	case liquidGlass = "liquid_glass"
 
 	static var defaultForCurrentSystem: Self {
-		LiveChromeGlassMaterialSupport.isLiquidGlassAvailable ? .liquidGlass : .classicGlass
+		.classicGlass
 	}
 
 	var title: String {

@@ -110,7 +110,7 @@ args = [
 	"--strict",
 	"--parallel",
 	"native/macos-host/Sources",
-	"scripts/smoke/lib/live-loupe-mouse-path.swift",
+	"scripts/smoke/lib/live-hud-mouse-path.swift",
 ]
 
 [tasks.lint-swiftlint]
@@ -333,7 +333,7 @@ args = [
 	"--recursive",
 	"--parallel",
 	"native/macos-host/Sources",
-	"scripts/smoke/lib/live-loupe-mouse-path.swift",
+	"scripts/smoke/lib/live-hud-mouse-path.swift",
 ]
 
 [tasks.fmt-swift-check]

@@ -29,7 +29,7 @@ macOS-first screenshot prototype in native-host / Rust-core reset.
 - Scroll capture is currently implemented on macOS for dragged-region freezes and uses image-first downward stitching with a live side preview.
 - Upward scrolling may be observed for rewind/reacquire, but it never appends stitched rows.
 - `Esc` cancels capture; during scroll capture, `Esc` / `Back` returns to normal Frozen mode.
-- Glass HUD with Liquid Glass on supported macOS, plus classic blur/tint controls.
+- Glass HUD with Classic Glass by default and Liquid Glass on supported macOS.
 - Tab-triggered loupe sample and frozen-mode toolbar for quick action access.
 
 ## Status
@@ -98,7 +98,7 @@ cargo run -p rsnap
 
 - The native `Settings…` window currently owns:
   - HUD glass enable/disable
-  - HUD glass style (`Liquid Glass` / `Classic Glass`)
+  - HUD glass style (`Classic Glass` / `Liquid Glass`)
   - Liquid Glass style (`Regular` / `Clear`) when supported by macOS
   - shared HUD tint / color, plus Classic Glass opacity / blur
   - HUD `Tab` hint visibility
@@ -154,14 +154,16 @@ Smoke/perf entrypoints:
 scripts/smoke/replay-scroll-capture.sh
 scripts/smoke/replay-scroll-capture-self-check.sh
 scripts/smoke/analyze-scroll-capture-trace.sh
-scripts/smoke/live-loupe-perf-macos.sh
-scripts/smoke/live-loupe-perf-self-check-macos.sh
+scripts/smoke/native-hud-follow-macos.sh
 scripts/smoke/self-check-macos.sh
 scripts/smoke/macos.sh
 scripts/perf/local.sh
 scripts/perf/self-check-macos.sh
 scripts/perf/macos.sh
 ```
+
+`scripts/smoke/macos.sh` and `scripts/perf/macos.sh` run the native-host HUD-follow smoke
+plus recorded scroll-capture replay.
 
 For durable command selection, verification order, baseline workflow, and asset ownership:
 

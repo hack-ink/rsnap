@@ -40,24 +40,25 @@ or animation.
 
 ## Active render cadence contract
 
-For actively rendered rsnap UI and overlay paths, target cadence is:
+For actively rendered rsnap UI and overlay paths, target cadence is derived from the active
+display:
 
-`120 Hz`
+`min(active display maximum refresh rate, 120 Hz)`
 
 Practical meaning:
 
-- The target frame budget is always `8.33 ms` for the relevant active interaction path.
-- rsnap MUST NOT lower this target by reading the active display refresh rate, deriving a
-  per-monitor display refresh ceiling, or treating an unknown display refresh rate as a separate
-  acceptance class.
-- Passing the cadence contract requires achieving the fixed `120 Hz` target. A lower display
-  refresh rate is not an alternate target and does not relax the requirement.
+- On a `120 Hz` or faster display, the target frame budget is `8.33 ms`.
+- On a `60 Hz` display, the target frame budget is `16.67 ms`.
+- If the display refresh rate is unavailable, rsnap uses the conservative `60 Hz` fallback.
+- Position-only live chrome following may sample up to `120 Hz` even on a `60 Hz` display, but
+  content refresh and acceptance gates are judged against the active display target.
 
 Target frame budget:
 
 | Target cadence | Target frame budget |
 | --- | --- |
 | `120 Hz` | `8.33 ms` |
+| `60 Hz` | `16.67 ms` |
 
 This cadence contract is normative even when current logs or smoke harnesses use coarser warning
 thresholds.
@@ -89,7 +90,7 @@ Surface:
 - live cursor sample apply path
 
 Primary metrics:
-- effective active redraw cadence against the fixed `120 Hz` target frame budget
+- effective active redraw cadence against the active display target frame budget
 - phase timings for redraw-related work
 - live sample apply latency
 
@@ -100,7 +101,7 @@ Diagnostic signals:
 - `Slow operation detected` entries for redraw-related operations
 
 Current coarse smoke surface:
-- `scripts/smoke/live-loupe-perf-macos.sh`
+- `scripts/smoke/native-hud-follow-macos.sh`
 
 ### Scenario 2: render-heavy component paths
 
@@ -154,40 +155,48 @@ Passing one environment class does not automatically satisfy the other.
 
 The current overlay runtime already exposes several useful diagnostic thresholds:
 
-- `LIVE_PRESENT_INTERVAL_MIN = 8.33 ms` for the fixed `120 Hz` target present interval.
+- `LIVE_PRESENT_INTERVAL_MIN = 8.33 ms` for the maximum `120 Hz` target present interval.
 - `SLOW_OP_WARN_RENDER = 24 ms` for coarse render warnings.
 - `OVERLAY_EVENT_LOOP_STALL_THRESHOLD = 250 ms` for severe event-loop stalls.
 - `overlay.live_sample_apply_latency` is logged once latency reaches `12 ms`.
-- Native-host `live_chrome.hud.apply_latency` and `live_chrome.loupe.apply_latency` measure the
-  first successful visible apply for a live input sequence.
-- Native-host `live_chrome.hud.window_update_duration`,
-  `live_chrome.loupe.window_update_duration`, and `live_chrome.update_duration` report the external
-  live chrome window update path used by Liquid Glass HUD/loupe presentation.
+- Native-host `live_chrome.hud.apply_latency`, `live_chrome.loupe.apply_latency`,
+  `live_chrome.hud.window_update_duration`, `live_chrome.loupe.window_update_duration`, and
+  `live_chrome.update_duration` report external frozen-toolbar/window update paths when those
+  paths are active; live HUD/loupe position should not depend on moving external windows.
 - Native-host `live_chrome.frame_tick_gap` reports the active live-frame clock interval. It should
-  cluster around the fixed `120 Hz` budget (`8.33 ms`) during active live capture.
+  cluster around the active display target budget during live capture.
 - Native-host `live_chrome.layer_render_duration` reports the in-overlay CALayer presentation path
   for live/frozen preview rendering when live chrome is not moved as separate windows.
 - Native-host `live_chrome.layer_chrome_render_duration` reports the in-overlay HUD/loupe content
   refresh path after live chrome movement has been split from full overlay preview rendering.
-- The live chrome follow clock may use a small scheduling headroom below `8.33 ms`, but acceptance
-  is still judged against the fixed `120 Hz` frame budget.
+- Native-host `live_chrome.layer_chrome_render_gap` reports the actual in-overlay HUD/loupe visual
+  update cadence, including lightweight event-driven renders between frame-clock ticks.
+- Native-host `live_chrome.active_layer_chrome_render_gap` reports the same visual cadence only
+  while recent pointer input is active; HUD-follow smoke gates this metric so startup, Tab expand,
+  and close transitions do not mask or invent moving-pointer regressions.
+- Native-host `live_chrome.sample_refresh_gap` reports the color/loupe sampling feed cadence while
+  live capture is active.
+- Native-host `live_chrome.sample_refresh_gap` is gated against the pointer/sample target cadence,
+  which may run at `120 Hz` even when the active display target is `60 Hz`.
 
 These values are useful for diagnosis, but they are not the full performance contract:
 
-- `24 ms` render warnings are too coarse to prove compliance with the `8.33 ms` target budget.
-- a passing live-loupe smoke run only shows that the path avoided severe regressions under the
-  current harness thresholds.
+- `24 ms` render warnings are too coarse to prove compliance with the active target budget.
+- a passing live HUD smoke run only shows that the selected path avoided severe regressions under
+  the current harness thresholds.
 - direct cadence-aware benchmarks and phase timing are still required for contract compliance.
 
 ## Current cadence implementation status
 
-The current contract no longer treats display refresh-rate discovery as part of cadence
-derivation or acceptance. Implementation status should be judged against the fixed target:
+The current contract treats display refresh-rate discovery as part of cadence derivation.
+Implementation status should be judged against the active target:
 
-- active interaction paths must target `120 Hz` directly
-- cadence derivation must not query or branch on the active display refresh rate
-- any implementation path that still lowers cadence from a known monitor refresh rate remains a
-  contract gap until removed
+- active interaction paths must target `min(active display maximum refresh rate, 120 Hz)`
+- live chrome position-only following may poll up to `120 Hz` to avoid one missed timer becoming a
+  visible multi-frame stall
+- content sampling, color sampling, and loupe patch refresh must stay on the pointer/sample target
+  cadence while the live HUD/loupe is visible, including stationary pointers over dynamic
+  backgrounds; movement may be coalesced to that cadence, but not intentionally downsampled
 
 Remaining performance work should focus on measurement coverage, redraw localization, benchmark
 baselines, and removing any refresh-rate-derived cadence paths before claiming contract

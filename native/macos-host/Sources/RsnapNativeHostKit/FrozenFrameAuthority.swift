@@ -461,7 +461,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			frame: screen.frame,
 			widthPixels: max(1, Int((screen.frame.width * scale).rounded())),
 			heightPixels: max(1, Int((screen.frame.height * scale).rounded())),
-			framesPerSecond: NativeHostDisplayRefresh.targetFramesPerSecond
+			framesPerSecond: NativeHostDisplayRefresh.targetFramesPerSecond(for: screen)
 		)
 	}
 

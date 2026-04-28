@@ -5,6 +5,10 @@ enum NativeHostTelemetry {
 	static let subsystem = Bundle.main.bundleIdentifier ?? "ink.hack.rsnap"
 	static let schema = "rsnap.native_host.telemetry/1"
 	static let runID = UUID().uuidString
+	private static let distributionEmitQueue = DispatchQueue(
+		label: "ink.hack.rsnap.telemetry.distribution",
+		qos: .utility
+	)
 	private static let lifecycleLogger = Logger(
 		subsystem: subsystem, category: "Lifecycle")
 	private static let captureLogger = Logger(
@@ -109,6 +113,24 @@ enum NativeHostTelemetry {
 	) {
 		liveChromeLogger.info(
 			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.refresh_target targetHz=\(targetHz, privacy: .public) frameBudgetMs=\(frameBudgetMilliseconds, format: .fixed(precision: 2), privacy: .public) hudGlassEnabled=\(hudGlassEnabled, privacy: .public) hudGlassMode=\(hudGlassMode, privacy: .public) liquidGlassStyle=\(liquidGlassStyle, privacy: .public) liquidGlassAvailable=\(liquidGlassAvailable, privacy: .public)"
+		)
+	}
+
+	static func liveChromeInputSummary(
+		captureID: UInt64,
+		reason: String,
+		mouseEvents: Int,
+		followTicks: Int,
+		fastMoveAttempts: Int,
+		fastMoveSuccesses: Int,
+		loupeFastMoveAttempts: Int,
+		loupeFastMoveSuccesses: Int,
+		predictedMoves: Int,
+		fallbackRefreshes: Int,
+		immediateRefreshes: Int
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.input_summary reason=\(reason, privacy: .public) mouseEvents=\(mouseEvents, privacy: .public) followTicks=\(followTicks, privacy: .public) fastMoveAttempts=\(fastMoveAttempts, privacy: .public) fastMoveSuccesses=\(fastMoveSuccesses, privacy: .public) loupeFastMoveAttempts=\(loupeFastMoveAttempts, privacy: .public) loupeFastMoveSuccesses=\(loupeFastMoveSuccesses, privacy: .public) predictedMoves=\(predictedMoves, privacy: .public) fallbackRefreshes=\(fallbackRefreshes, privacy: .public) immediateRefreshes=\(immediateRefreshes, privacy: .public)"
 		)
 	}
 
@@ -241,7 +263,7 @@ enum NativeHostTelemetry {
 		)
 	}
 
-	final class DistributionMetric {
+	final class DistributionMetric: @unchecked Sendable {
 		private let name: String
 		private let unit: String
 		private let batchSize: Int
@@ -273,7 +295,9 @@ enum NativeHostTelemetry {
 			lock.unlock()
 
 			if let batch {
-				emit(batch)
+				NativeHostTelemetry.distributionEmitQueue.async { [weak self] in
+					self?.emit(batch)
+				}
 			}
 		}
 
