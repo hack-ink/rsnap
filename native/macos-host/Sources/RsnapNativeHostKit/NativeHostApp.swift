@@ -14,9 +14,6 @@ struct LiveChromeSample {
 
 enum LiveSamplingBudget {
 	static let hoverWindowCacheRefreshInterval: TimeInterval = 1.0 / 15.0
-	static let movingColorSampleInterval: TimeInterval = 1.0 / 60.0
-	static let stationaryColorSampleIdleDelay: TimeInterval = 1.0 / 20.0
-	static let stationaryColorSampleInterval: TimeInterval = 1.0 / 30.0
 }
 
 struct LiveColorSampleSource: Equatable, Sendable {
@@ -606,10 +603,6 @@ final class CaptureSessionController: NSObject {
 
 	func updateLiveChromeBackdrops(_ snapshot: LiveChromeBackdropSnapshot?) {
 		overlayController?.updateLiveChromeBackdrops(snapshot)
-	}
-
-	func updateLiveChromeVisuals(_ snapshot: LiveChromeVisualSnapshot?) {
-		overlayController?.updateLiveChromeVisuals(snapshot)
 	}
 
 	func previewHighlightedWindow(at point: CGPoint) -> WindowSnapshot? {
@@ -2202,7 +2195,6 @@ final class CaptureOverlayController {
 		broker: liveFrameStream,
 		backgroundSampler: Self.rgbSampleAtDisplayPoint
 	)
-	private let liveChromeWindows = LiveChromeVisualWindowController()
 	private let liveChromeBackdrops = LiveChromeBackdropWindowController()
 
 	init(controller: CaptureSessionController, liveFrameStream: LiveFrameStreamBroker) {
@@ -2256,16 +2248,20 @@ final class CaptureOverlayController {
 		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: focusPoint)
 		windowSnapshotFeed.start(
 			desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
-		chromeSampleFeed.start()
-		chromeSampleFeed.prime(
+		chromeSampleFeed.start(
+			targetFramesPerSecond: NativeHostDisplayRefresh.pointerFollowFramesPerSecond(
+				for: focusedWindow?.screen
+					?? NSScreen.screens.first(where: { $0.frame.contains(focusPoint) })
+			))
+		chromeSampleFeed.updateDemand(
 			point: focusPoint,
 			sidePixels: 1,
 			includeLoupePatch: false,
 			source: liveColorSampleSource(near: focusPoint)
 		)
-		for window in windows {
-			window.hostView.refreshLivePresentationNow()
-			window.displayIfNeeded()
+		if let focusedWindow {
+			focusedWindow.hostView.refreshLivePresentationNow()
+			focusedWindow.displayIfNeeded()
 		}
 	}
 
@@ -2303,7 +2299,6 @@ final class CaptureOverlayController {
 		}
 
 		primaryWindow.disableScreenUpdatesUntilFlush()
-		liveChromeWindows.hideLiveWindows()
 		primaryWindow.hostView.installFrozenFirstFrame(
 			scene: scene,
 			chrome: chrome,
@@ -2328,7 +2323,6 @@ final class CaptureOverlayController {
 		focusedWindowNumber = targetWindow.windowNumber
 		(NSApp.delegate as? NativeHostApplicationController)?.window = targetWindow
 		liveChromeBackdrops.hideAll()
-		liveChromeWindows.hideLiveWindows()
 		targetWindow.hostView.refreshLivePresentationNow()
 		targetWindow.displayIfNeeded()
 	}
@@ -2337,7 +2331,6 @@ final class CaptureOverlayController {
 		windowSnapshotFeed.stop()
 		chromeSampleFeed.stop()
 		liveChromeBackdrops.hideAll()
-		liveChromeWindows.hideAll()
 		guard !windows.isEmpty else {
 			focusedWindowNumber = nil
 			collapsedForFrozen = false
@@ -2351,6 +2344,7 @@ final class CaptureOverlayController {
 		(NSApp.delegate as? NativeHostApplicationController)?.window = nil
 
 		for window in windowsToRetire {
+			window.hostView.finishLivePresentationTelemetry(reason: "close")
 			window.hostView.controller = nil
 			window.ignoresMouseEvents = true
 			window.orderOut(nil)
@@ -2447,12 +2441,6 @@ final class CaptureOverlayController {
 			return LiveChromeSample(rgbSample: latestSample.rgbSample, loupePatch: nil)
 		}
 		return latestSample
-	}
-
-	fileprivate func updateLiveChromeVisuals(
-		_ snapshot: LiveChromeVisualSnapshot?
-	) {
-		liveChromeWindows.update(snapshot: snapshot, focusedWindowNumber: focusedWindowNumber)
 	}
 
 	fileprivate func updateLiveChromeBackdrops(
@@ -2586,34 +2574,39 @@ final class CaptureOverlayController {
 		}
 	}
 
+	private typealias LegacyWindowListCreateImage =
+		@convention(c) (
+			CGRect,
+			UInt32,
+			CGWindowID,
+			UInt32
+		) -> Unmanaged<CGImage>?
+
+	nonisolated private static let legacyWindowListCreateImage: LegacyWindowListCreateImage? = {
+		guard
+			let coreGraphics = dlopen(
+				"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+				RTLD_LAZY
+			)
+		else {
+			return nil
+		}
+		guard let symbol = dlsym(coreGraphics, "CGWindowListCreateImage") else {
+			dlclose(coreGraphics)
+			return nil
+		}
+		return unsafeBitCast(symbol, to: LegacyWindowListCreateImage.self)
+	}()
+
 	nonisolated private static func legacyWindowListImage(
 		quartzRect: CGRect,
 		windowListOption: CGWindowListOption,
 		windowID: CGWindowID,
 		imageOption: CGWindowImageOption
 	) -> CGImage? {
-		typealias CreateImage =
-			@convention(c) (
-				CGRect,
-				UInt32,
-				CGWindowID,
-				UInt32
-			) -> Unmanaged<CGImage>?
-
-		guard
-			let coreGraphics = dlopen(
-				"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
-				RTLD_LAZY
-			),
-			let symbol = dlsym(coreGraphics, "CGWindowListCreateImage")
-		else {
+		guard let createImage = legacyWindowListCreateImage else {
 			return nil
 		}
-		defer {
-			dlclose(coreGraphics)
-		}
-
-		let createImage = unsafeBitCast(symbol, to: CreateImage.self)
 		return createImage(
 			quartzRect,
 			windowListOption.rawValue,
@@ -2660,7 +2653,6 @@ final class CaptureOverlayController {
 		windowSnapshotFeed.stop()
 		chromeSampleFeed.stop()
 		liveChromeBackdrops.hideAll()
-		liveChromeWindows.hideLiveWindows()
 
 		guard windows.count > 1 else {
 			return
@@ -2743,6 +2735,105 @@ final class CaptureOverlayWindow: NSPanel {
 
 @MainActor
 final class CaptureHostView: NSView {
+	private final class FrozenToolbarRenderView: NSView {
+		struct Item: Equatable {
+			let kind: ToolbarItemKind
+			let frame: CGRect
+			let enabled: Bool
+			let selected: Bool
+		}
+
+		private var theme: CaptureChromeTheme = .dark
+		private var settings = NativeHostSettings.defaults
+		private var hoveredToolbarAction: ToolbarItemKind?
+		private var items: [Item] = []
+
+		override var isOpaque: Bool { false }
+
+		override func hitTest(_ point: NSPoint) -> NSView? {
+			nil
+		}
+
+		func update(
+			theme: CaptureChromeTheme,
+			settings: NativeHostSettings,
+			hoveredToolbarAction: ToolbarItemKind?,
+			items: [Item]
+		) {
+			let changed =
+				self.theme != theme || self.settings != settings
+				|| self.hoveredToolbarAction != hoveredToolbarAction || self.items != items
+			self.theme = theme
+			self.settings = settings
+			self.hoveredToolbarAction = hoveredToolbarAction
+			self.items = items
+			if changed {
+				needsDisplay = true
+			}
+		}
+
+		override func draw(_ dirtyRect: NSRect) {
+			super.draw(dirtyRect)
+			guard let context = NSGraphicsContext.current?.cgContext else {
+				return
+			}
+			let palette = CaptureChrome.palette(for: theme, settings: settings)
+			let pillPath = NSBezierPath(
+				roundedRect: bounds,
+				xRadius: CaptureChrome.hudCornerRadius,
+				yRadius: CaptureChrome.hudCornerRadius
+			)
+			context.setStrokeColor(palette.outerStroke.cgColor)
+			context.setLineWidth(1)
+			pillPath.stroke()
+
+			for item in items {
+				if hoveredToolbarAction == item.kind, item.enabled, !item.selected {
+					context.setFillColor(palette.toolbarHoverBackground.cgColor)
+					let hoverPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
+					hoverPath.fill()
+				}
+				if item.selected {
+					context.setFillColor(palette.toolbarSelectedBackground.cgColor)
+					let selectedPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
+					selectedPath.fill()
+				}
+
+				let symbolColor =
+					item.enabled
+					? (item.selected ? palette.toolbarSelectedIcon : palette.toolbarIcon)
+					: palette.toolbarDisabledIcon
+				drawToolbarGlyph(
+					item.kind,
+					selected: item.selected,
+					in: item.frame,
+					color: symbolColor,
+					context: context
+				)
+			}
+		}
+
+		private func drawToolbarGlyph(
+			_ kind: ToolbarItemKind,
+			selected: Bool,
+			in rect: CGRect,
+			color: NSColor,
+			context: CGContext
+		) {
+			let glyph = PhosphorToolbarIcons.cachedGlyph(for: kind, selected: selected, size: 18)
+			let origin = CGPoint(
+				x: rect.midX - glyph.bounds.width * 0.5 - glyph.bounds.origin.x,
+				y: rect.midY - glyph.bounds.height * 0.5 - glyph.bounds.origin.y
+			)
+			context.saveGState()
+			context.setFillColor(color.cgColor)
+			context.textMatrix = .identity
+			context.textPosition = origin
+			CTLineDraw(glyph.line, context)
+			context.restoreGState()
+		}
+	}
+
 	private final class PassthroughVisualEffectView: NSVisualEffectView {
 		override func hitTest(_ point: NSPoint) -> NSView? {
 			nil
@@ -2757,6 +2848,7 @@ final class CaptureHostView: NSView {
 	private enum GlassSurfaceKind: Hashable {
 		case hud
 		case loupe
+		case toolbar
 	}
 
 	private struct GlassPatchCache {
@@ -2840,6 +2932,10 @@ final class CaptureHostView: NSView {
 	private var settings = NativeHostSettings.defaults
 	private let hudMaterialView = PassthroughVisualEffectView(frame: .zero)
 	private let loupeMaterialView = PassthroughVisualEffectView(frame: .zero)
+	private var hudLiquidGlassView: NSView?
+	private var loupeLiquidGlassView: NSView?
+	private var toolbarLiquidGlassView: NSView?
+	private var toolbarLiquidGlassContentView: FrozenToolbarRenderView?
 	private var trackingAreaRef: NSTrackingArea?
 	private var hoveredToolbarAction: ToolbarItemKind?
 	private var lastCursorPresentation: CursorPresentation?
@@ -2850,6 +2946,7 @@ final class CaptureHostView: NSView {
 	private var livePointerPreviewGlobal: CGPoint?
 	private var livePointerPreviewInputUptime: TimeInterval?
 	private var livePointerPreviewInputSequence: UInt64 = 0
+	private var lastLivePointerEventUptime: TimeInterval?
 	private var liveHighlightedWindowPreview: WindowSnapshot?
 	private var liveHoverChromeSuppressed = false
 	private var pendingFrozenFirstDisplay = false
@@ -2860,9 +2957,14 @@ final class CaptureHostView: NSView {
 	private var glassPatchCache: [GlassSurfaceKind: GlassPatchCache] = [:]
 	private lazy var liveRenderer = LiveOverlayRenderer(hostView: self)
 	private var liveRendererInstalled = false
-	private var liveChromeFollowTimer: DispatchSourceTimer?
 	private var deferredLiveShutdownWorkItem: DispatchWorkItem?
 	private var loggedLiveRefreshTarget: LiveChromeRefreshTelemetryKey?
+	private let livePointerEventGapMetric = NativeHostTelemetry.distribution(
+		"live_chrome.pointer_event_gap",
+		category: "LiveChromeTelemetry"
+	)
+	private var liveChromeMouseEventCount = 0
+	private var didEmitLiveChromeInputSummary = false
 
 	override var acceptsFirstResponder: Bool { true }
 
@@ -2876,15 +2978,6 @@ final class CaptureHostView: NSView {
 		}
 		liveRenderer.install { [weak self] in
 			self?.currentRendererPreviewSnapshot()
-		}
-		liveRenderer.onTick = { [weak self] in
-			guard let self else {
-				return
-			}
-			guard !(self.scene.mode == .live && self.settings.usesLiquidHudGlass) else {
-				return
-			}
-			self.controller?.updateLiveChromeVisuals(self.currentChromeVisualSnapshot())
 		}
 		liveRendererInstalled = true
 	}
@@ -2914,6 +3007,7 @@ final class CaptureHostView: NSView {
 			pendingFrozenFirstDisplay = false
 			if previousMode != .live {
 				liveHoverChromeSuppressed = false
+				resetLiveChromeInputTelemetry()
 			}
 			if livePointerPreviewGlobal == nil {
 				seedLivePointerPreview(scene.pointer, recordsInputLatency: false)
@@ -2955,13 +3049,11 @@ final class CaptureHostView: NSView {
 			if transitioningToFrozen {
 				needsDisplay = true
 				completeFrozenFirstDisplayHandoff()
-				controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 			} else {
 				if previousMode == .live {
 					stopLivePresentationNow()
 				}
 				needsDisplay = true
-				controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 			}
 		}
 	}
@@ -3026,9 +3118,6 @@ final class CaptureHostView: NSView {
 		}
 		updateLivePreviewDemands()
 		liveRenderer.renderNow()
-		if settings.usesLiquidHudGlass {
-			controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
-		}
 	}
 
 	fileprivate func installFrozenFirstFrame(
@@ -3052,7 +3141,6 @@ final class CaptureHostView: NSView {
 		needsDisplay = true
 		controller?.updateLivePreviewDemand(
 			point: nil, settings: settings, includeLoupePatch: false)
-		controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 		liveRenderer.renderNow()
 	}
 
@@ -3069,7 +3157,6 @@ final class CaptureHostView: NSView {
 		if scene.mode != .live {
 			liveRenderer.stop()
 		}
-		controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 	}
 
 	override func layout() {
@@ -3078,7 +3165,6 @@ final class CaptureHostView: NSView {
 		updateLiveRendererState()
 		if scene.mode == .live {
 			updateLivePreviewDemands()
-			controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 		}
 	}
 
@@ -3097,8 +3183,7 @@ final class CaptureHostView: NSView {
 		let trackingAreaRef = NSTrackingArea(
 			rect: bounds,
 			options: [
-				.activeInKeyWindow, .cursorUpdate, .inVisibleRect, .mouseMoved,
-				.enabledDuringMouseDrag,
+				.activeAlways, .cursorUpdate, .inVisibleRect, .mouseMoved, .enabledDuringMouseDrag,
 			],
 			owner: self,
 			userInfo: nil
@@ -3117,14 +3202,21 @@ final class CaptureHostView: NSView {
 	}
 
 	override func mouseMoved(with event: NSEvent) {
-		refreshHoveredToolbarAction(for: event.locationInWindow)
+		if scene.mode == .frozen {
+			refreshHoveredToolbarAction(for: event.locationInWindow)
+		}
 		let point = globalPoint(from: event)
+		if scene.mode == .live {
+			liveChromeMouseEventCount += 1
+		}
 		updateLivePointerPreview(to: point, rendersImmediately: false)
 		queuePointerEvent(.moved(point))
 	}
 
 	override func mouseDragged(with event: NSEvent) {
-		refreshHoveredToolbarAction(for: event.locationInWindow)
+		if scene.mode == .frozen {
+			refreshHoveredToolbarAction(for: event.locationInWindow)
+		}
 
 		if scene.mode == .live {
 			let point = globalPoint(from: event)
@@ -3260,6 +3352,7 @@ final class CaptureHostView: NSView {
 				}
 				drawFrozenOverlays(for: selection, in: context)
 				drawSelectionSizeBadge(for: selection, in: context)
+				drawFrozenToolbar(for: selection, in: context)
 			}
 			scheduleFrozenFirstFrameInstallCompletionIfNeeded()
 		}
@@ -3433,7 +3526,7 @@ final class CaptureHostView: NSView {
 		recordsInputLatency: Bool = true
 	) -> Bool {
 		if let current = livePointerPreviewGlobal,
-			hypot(current.x - globalPoint.x, current.y - globalPoint.y) < 0.5
+			hypot(current.x - globalPoint.x, current.y - globalPoint.y) < 0.05
 		{
 			return false
 		}
@@ -3442,9 +3535,12 @@ final class CaptureHostView: NSView {
 	}
 
 	private func resetLivePointerPreview() {
+		emitLiveChromeInputSummary(reason: "reset")
+		resetLiveChromeInputTelemetry()
 		livePointerPreviewGlobal = nil
 		livePointerPreviewInputUptime = nil
 		livePointerPreviewInputSequence = 0
+		lastLivePointerEventUptime = nil
 	}
 
 	private func updateLivePointerPreview(
@@ -3454,17 +3550,55 @@ final class CaptureHostView: NSView {
 		guard scene.mode == .live else {
 			return
 		}
-		// The follow clock owns routine layer movement so event bursts cannot create
-		// irregular extra commits between fixed 120Hz ticks.
-		_ = setLivePointerPreview(to: globalPoint)
-		let nextHighlightedWindow =
-			controller?.previewHighlightedWindow(at: globalPoint) ?? scene.highlightedWindow
-		let highlightChanged = liveHighlightedWindowPreview != nextHighlightedWindow
-		liveHighlightedWindowPreview = nextHighlightedWindow
-		if rendersImmediately || highlightChanged {
+		recordLivePointerEventGap()
+		let pointerChanged = setLivePointerPreview(to: globalPoint)
+		if pointerChanged || rendersImmediately {
 			updateLivePreviewDemands()
-			liveRenderer.renderNow()
+			liveRenderer.renderLiveChromeNow()
 		}
+	}
+
+	private func recordLivePointerEventGap() {
+		let now = ProcessInfo.processInfo.systemUptime
+		if let lastLivePointerEventUptime {
+			let gapMilliseconds = (now - lastLivePointerEventUptime) * 1_000
+			if gapMilliseconds >= 0, gapMilliseconds < 250 {
+				livePointerEventGapMetric.record(gapMilliseconds)
+			}
+		}
+		lastLivePointerEventUptime = now
+	}
+
+	fileprivate func finishLivePresentationTelemetry(reason: String) {
+		emitLiveChromeInputSummary(reason: reason)
+	}
+
+	private func resetLiveChromeInputTelemetry() {
+		liveChromeMouseEventCount = 0
+		didEmitLiveChromeInputSummary = false
+	}
+
+	private func emitLiveChromeInputSummary(reason: String) {
+		guard !didEmitLiveChromeInputSummary else {
+			return
+		}
+		guard liveChromeMouseEventCount > 0 else {
+			return
+		}
+		didEmitLiveChromeInputSummary = true
+		NativeHostTelemetry.liveChromeInputSummary(
+			captureID: controller?.activeTelemetryCaptureID ?? 0,
+			reason: reason,
+			mouseEvents: liveChromeMouseEventCount,
+			followTicks: 0,
+			fastMoveAttempts: 0,
+			fastMoveSuccesses: 0,
+			loupeFastMoveAttempts: 0,
+			loupeFastMoveSuccesses: 0,
+			predictedMoves: 0,
+			fallbackRefreshes: 0,
+			immediateRefreshes: 0
+		)
 	}
 
 	private func localFrozenSelectionRect() -> CGRect? {
@@ -4158,6 +4292,69 @@ final class CaptureHostView: NSView {
 		}
 	}
 
+	private func drawFrozenToolbar(for selection: CGRect, in context: CGContext) {
+		guard !settings.usesLiquidHudGlass else {
+			return
+		}
+		guard let layout = toolbarLayout(for: selection) else {
+			return
+		}
+		let theme = chromeTheme()
+		let palette = CaptureChrome.palette(for: theme, settings: settings)
+		drawPill(
+			in: layout.frame,
+			context: context,
+			theme: theme,
+			strongShadow: false,
+			surfaceKind: .toolbar
+		)
+
+		for item in layout.items {
+			if hoveredToolbarAction == item.kind, item.enabled, !item.selected {
+				context.setFillColor(palette.toolbarHoverBackground.cgColor)
+				let hoverPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
+				hoverPath.fill()
+			}
+			if item.selected {
+				context.setFillColor(palette.toolbarSelectedBackground.cgColor)
+				let selectedPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
+				selectedPath.fill()
+			}
+
+			let symbolColor =
+				item.enabled
+				? (item.selected ? palette.toolbarSelectedIcon : palette.toolbarIcon)
+				: palette.toolbarDisabledIcon
+			drawToolbarGlyph(
+				item.kind,
+				selected: item.selected,
+				in: item.frame,
+				color: symbolColor,
+				context: context
+			)
+		}
+	}
+
+	private func drawToolbarGlyph(
+		_ kind: ToolbarItemKind,
+		selected: Bool,
+		in rect: CGRect,
+		color: NSColor,
+		context: CGContext
+	) {
+		let glyph = PhosphorToolbarIcons.cachedGlyph(for: kind, selected: selected, size: 18)
+		let origin = CGPoint(
+			x: rect.midX - glyph.bounds.width * 0.5 - glyph.bounds.origin.x,
+			y: rect.midY - glyph.bounds.height * 0.5 - glyph.bounds.origin.y
+		)
+		context.saveGState()
+		context.setFillColor(color.cgColor)
+		context.textMatrix = .identity
+		context.textPosition = origin
+		CTLineDraw(glyph.line, context)
+		context.restoreGState()
+	}
+
 	private func syncVisibleCursor() {
 		let cursorPresentation = currentCursorPresentation()
 		guard cursorPresentation != lastCursorPresentation else {
@@ -4174,33 +4371,37 @@ final class CaptureHostView: NSView {
 		guard scene.mode == .live, let anchor = localPointer() else {
 			return nil
 		}
+		return liveFloatingPlacement(
+			anchor: anchor,
+			size: currentHudSize(),
+			offsetX: 48,
+			offsetY: 24,
+			preferBelow: true
+		)
+	}
+
+	private func currentHudSize() -> CGSize {
 		let metrics = Self.hudLayoutMetrics
-		let positionDisplay = currentPositionDisplay()
-		let colorDisplay = currentLiveColorDisplay(for: latestLiveRgbSample)
 		let itemSpacing: CGFloat = 8
 		let swatchSize = CGSize(width: 10, height: 10)
 		let keycapVisible = settings.showAltHintKeycap
 		let keycapFrame = keycapVisible ? metrics.keycapFrameSize : .zero
 		let contentHeight = max(metrics.lineHeight, swatchSize.height, keycapFrame.height)
+		let screenFrame = window?.screen?.frame ?? NSScreen.main?.frame ?? bounds
+		let positionSlotWidths = Self.cachedPositionSlotWidths(for: screenFrame)
 		let contentWidth =
-			positionDisplay.xSlotWidth
+			positionSlotWidths.x
 			+ metrics.commaWidth
-			+ positionDisplay.ySlotWidth
+			+ positionSlotWidths.y
 			+ swatchSize.width
-			+ colorDisplay.hexSlotWidth
+			+ metrics.hexSlotWidth
 			+ keycapFrame.width
 			+ itemSpacing * (keycapVisible ? 3 : 2)
 		let size = CGSize(
 			width: contentWidth + CaptureChrome.hudInnerMarginX * 2,
 			height: contentHeight + CaptureChrome.hudInnerMarginY * 2
 		)
-		return liveFloatingPlacement(
-			anchor: anchor,
-			size: size,
-			offsetX: 48,
-			offsetY: 24,
-			preferBelow: true
-		)
+		return size
 	}
 
 	private func currentHudFrame() -> CGRect? {
@@ -4277,6 +4478,7 @@ final class CaptureHostView: NSView {
 			colorDisplay: currentLiveColorDisplay(for: rgbSample),
 			rgbSample: rgbSample,
 			keycapVisible: false,
+			inputUptime: nil,
 			loupePatch: nil,
 			glassPatches: [:]
 		)
@@ -4310,6 +4512,7 @@ final class CaptureHostView: NSView {
 			colorDisplay: currentLiveColorDisplay(for: latestLiveRgbSample),
 			rgbSample: latestLiveRgbSample,
 			keycapVisible: false,
+			inputUptime: nil,
 			loupePatch: nil,
 			glassPatches: [:]
 		)
@@ -4320,18 +4523,16 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 
-		if !settings.usesLiquidHudGlass {
-			let polledPoint = NSEvent.mouseLocation
-			if let currentPreview = livePointerPreviewGlobal {
-				if hypot(currentPreview.x - polledPoint.x, currentPreview.y - polledPoint.y) >= 0.5
-				{
-					applyPolledLivePointerPreview(polledPoint)
-				}
-			} else {
-				applyPolledLivePointerPreview(polledPoint, recordsInputLatency: false)
+		let polledPoint = currentGlobalMousePoint() ?? NSEvent.mouseLocation
+		if let currentPreview = livePointerPreviewGlobal {
+			if hypot(currentPreview.x - polledPoint.x, currentPreview.y - polledPoint.y) >= 0.5 {
+				applyPolledLivePointerPreview(polledPoint)
 			}
+		} else {
+			applyPolledLivePointerPreview(polledPoint, recordsInputLatency: false)
 		}
 
+		refreshLiveHighlightedWindowPreview(at: livePointerPreviewGlobal ?? scene.pointer)
 		updateLivePreviewDemands()
 
 		let chromeSample = currentLiveChromeSample()
@@ -4356,7 +4557,7 @@ final class CaptureHostView: NSView {
 				)
 			}
 			: nil
-		let renderChromeInExternalWindows = settings.usesLiquidHudGlass
+		updateLiveLiquidGlassViews(hudFrame: hudFrame, loupeFrame: loupeFrame)
 
 		return LivePreviewSnapshot(
 			bounds: bounds,
@@ -4369,12 +4570,13 @@ final class CaptureHostView: NSView {
 			dragSelectionLocal: dragSelectionLocal,
 			hoverSelectionLocal: hoverSelectionLocal,
 			selectionSizeText: dragSelectionLocal.map(selectionSizeText(for:)),
-			hudFrame: renderChromeInExternalWindows ? nil : hudFrame,
-			loupeFrame: renderChromeInExternalWindows ? nil : loupeFrame,
+			hudFrame: hudFrame,
+			loupeFrame: loupeFrame,
 			positionDisplay: positionDisplay,
 			colorDisplay: colorDisplay,
 			rgbSample: rgbSample,
 			keycapVisible: settings.showAltHintKeycap,
+			inputUptime: livePointerPreviewInputUptime,
 			loupePatch: loupePatch,
 			glassPatches: [:]
 		)
@@ -4388,56 +4590,14 @@ final class CaptureHostView: NSView {
 			to: globalPoint,
 			recordsInputLatency: recordsInputLatency
 		)
+	}
+
+	private func refreshLiveHighlightedWindowPreview(at globalPoint: CGPoint?) {
+		guard let globalPoint else {
+			return
+		}
 		liveHighlightedWindowPreview =
 			controller?.previewHighlightedWindow(at: globalPoint) ?? liveHighlightedWindowPreview
-	}
-
-	private func startLiveChromeFollowClock() {
-		guard liveChromeFollowTimer == nil else {
-			return
-		}
-		let timer = DispatchSource.makeTimerSource(queue: .main)
-		let intervalNanoseconds = max(
-			1,
-			Int((NativeHostDisplayRefresh.followClockInterval * 1_000_000_000.0).rounded())
-		)
-		timer.schedule(
-			deadline: .now(),
-			repeating: .nanoseconds(intervalNanoseconds),
-			leeway: .nanoseconds(0)
-		)
-		timer.setEventHandler { [weak self] in
-			self?.pollLiveChromeFollowPosition()
-		}
-		liveChromeFollowTimer = timer
-		timer.resume()
-	}
-
-	private func stopLiveChromeFollowClock() {
-		liveChromeFollowTimer?.cancel()
-		liveChromeFollowTimer = nil
-	}
-
-	private func pollLiveChromeFollowPosition() {
-		guard scene.mode == .live else {
-			stopLiveChromeFollowClock()
-			return
-		}
-		guard settings.usesLiquidHudGlass else {
-			stopLiveChromeFollowClock()
-			return
-		}
-		let point = NSEvent.mouseLocation
-		_ = setLivePointerPreview(to: point, recordsInputLatency: false)
-		let nextHighlightedWindow =
-			controller?.previewHighlightedWindow(at: point) ?? scene.highlightedWindow
-		let highlightChanged = liveHighlightedWindowPreview != nextHighlightedWindow
-		liveHighlightedWindowPreview = nextHighlightedWindow
-		updateLivePreviewDemands()
-		controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
-		if highlightChanged {
-			liveRenderer.renderNow()
-		}
 	}
 
 	private func updateLiveChromeBackdrops() {
@@ -4475,124 +4635,6 @@ final class CaptureHostView: NSView {
 			}
 			: nil
 		return (hudFrame, loupeFrame)
-	}
-
-	private func currentChromeVisualSnapshot() -> LiveChromeVisualSnapshot? {
-		switch scene.mode {
-		case .live:
-			return currentLiveChromeVisualSnapshot()
-		case .frozen:
-			return currentFrozenChromeVisualSnapshot()
-		case .hidden:
-			return nil
-		}
-	}
-
-	private func currentLiveChromeVisualSnapshot() -> LiveChromeVisualSnapshot? {
-		guard scene.mode == .live, settings.usesLiquidHudGlass, !chrome.hostLocalFrozenSelecting
-		else {
-			return nil
-		}
-		guard let sourceWindowNumber = window?.windowNumber else {
-			return nil
-		}
-
-		let chromeSample = currentLiveChromeSample()
-		let rgbSample = liveRgbSample(from: chromeSample)
-		let positionDisplay = currentPositionDisplay()
-		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
-		let hudPlacement = liveHoverChromeSuppressed ? nil : currentHudPlacement()
-		let hudSnapshot: LiveHudVisualSnapshot? = hudPlacement.flatMap { placement in
-			guard let frame = globalRect(from: placement.frame) else {
-				return nil
-			}
-			return LiveHudVisualSnapshot(
-				sourceWindowNumber: sourceWindowNumber,
-				frame: frame,
-				theme: chromeTheme(),
-				settings: settings,
-				positionDisplay: positionDisplay,
-				colorDisplay: colorDisplay,
-				rgbSample: rgbSample,
-				keycapVisible: settings.showAltHintKeycap,
-				inputUptime: livePointerPreviewInputUptime,
-				inputSequence: livePointerPreviewInputSequence
-			)
-		}
-		let loupeSnapshot: LiveLoupeVisualSnapshot? = {
-			guard
-				!liveHoverChromeSuppressed,
-				scene.loupeVisible,
-				let hudPlacement,
-				let patch = chromeSample?.loupePatch,
-				let localFrame = currentLoupeFrame(
-					hudFrame: hudPlacement.frame,
-					patch: patch,
-					alignTrailing: hudPlacement.flippedHorizontally
-				),
-				let frame = globalRect(from: localFrame)
-			else {
-				return nil
-			}
-			return LiveLoupeVisualSnapshot(
-				sourceWindowNumber: sourceWindowNumber,
-				frame: frame,
-				theme: chromeTheme(),
-				settings: settings,
-				patch: patch,
-				inputUptime: livePointerPreviewInputUptime,
-				inputSequence: livePointerPreviewInputSequence
-			)
-		}()
-
-		return LiveChromeVisualSnapshot(
-			sourceWindowNumber: sourceWindowNumber,
-			hud: hudSnapshot,
-			loupe: loupeSnapshot,
-			toolbar: nil
-		)
-	}
-
-	private func currentFrozenChromeVisualSnapshot() -> LiveChromeVisualSnapshot? {
-		let toolbarSnapshot: FrozenToolbarVisualSnapshot? = {
-			guard
-				let sourceWindowNumber = window?.windowNumber,
-				let selection = localFrozenSelectionRect(),
-				let layout = toolbarLayout(for: selection),
-				let frame = globalRect(from: layout.frame)
-			else {
-				return nil
-			}
-
-			let items = layout.items.map { item in
-				FrozenToolbarVisualItemSnapshot(
-					kind: item.kind,
-					frame: CGRect(
-						x: item.frame.minX - layout.frame.minX,
-						y: item.frame.minY - layout.frame.minY,
-						width: item.frame.width,
-						height: item.frame.height
-					),
-					enabled: item.enabled,
-					selected: item.selected
-				)
-			}
-
-			return FrozenToolbarVisualSnapshot(
-				sourceWindowNumber: sourceWindowNumber,
-				frame: frame,
-				theme: chromeTheme(),
-				settings: settings,
-				items: items
-			)
-		}()
-
-		return LiveChromeVisualSnapshot(
-			sourceWindowNumber: window?.windowNumber,
-			hud: nil,
-			loupe: nil,
-			toolbar: toolbarSnapshot
-		)
 	}
 
 	private func liveFloatingPlacement(
@@ -4671,16 +4713,15 @@ final class CaptureHostView: NSView {
 			return
 		}
 		guard scene.mode == .live || pendingFrozenFirstDisplay else {
-			stopLiveChromeFollowClock()
 			liveRenderer.suspend()
 			loggedLiveRefreshTarget = nil
 			return
 		}
 		deferredLiveShutdownWorkItem?.cancel()
 		deferredLiveShutdownWorkItem = nil
-		let targetHz = NativeHostDisplayRefresh.targetFramesPerSecond
+		let displayTargetHz = currentDisplayTargetFramesPerSecond()
 		let refreshTarget = LiveChromeRefreshTelemetryKey(
-			targetHz: targetHz,
+			targetHz: displayTargetHz,
 			hudGlassEnabled: settings.hudGlassEnabled,
 			hudGlassMode: settings.resolvedHudGlassMode.rawValue,
 			liquidGlassStyle: settings.liquidGlassStyle.rawValue,
@@ -4690,8 +4731,9 @@ final class CaptureHostView: NSView {
 			loggedLiveRefreshTarget = refreshTarget
 			NativeHostTelemetry.liveChromeRefreshTarget(
 				captureID: controller?.activeTelemetryCaptureID ?? 0,
-				targetHz: targetHz,
-				frameBudgetMilliseconds: NativeHostDisplayRefresh.frameBudgetMilliseconds,
+				targetHz: displayTargetHz,
+				frameBudgetMilliseconds: NativeHostDisplayRefresh.frameBudgetMilliseconds(
+					forTargetFramesPerSecond: displayTargetHz),
 				hudGlassEnabled: refreshTarget.hudGlassEnabled,
 				hudGlassMode: refreshTarget.hudGlassMode,
 				liquidGlassStyle: refreshTarget.liquidGlassStyle,
@@ -4699,16 +4741,11 @@ final class CaptureHostView: NSView {
 			)
 		}
 		if scene.mode == .live {
-			liveRenderer.updateDisplayID(currentDisplayID(), targetFramesPerSecond: targetHz)
-			if settings.usesLiquidHudGlass {
-				startLiveChromeFollowClock()
-			} else {
-				stopLiveChromeFollowClock()
-			}
+			liveRenderer.updateDisplayID(
+				currentDisplayID(), targetFramesPerSecond: currentPointerFollowFramesPerSecond())
 			return
 		}
-		stopLiveChromeFollowClock()
-		liveRenderer.updateDisplayID(currentDisplayID(), targetFramesPerSecond: targetHz)
+		liveRenderer.updateDisplayID(currentDisplayID(), targetFramesPerSecond: displayTargetHz)
 	}
 
 	private func stopLivePresentationNow() {
@@ -4716,12 +4753,11 @@ final class CaptureHostView: NSView {
 		deferredLiveShutdownWorkItem = nil
 		pendingFrozenFirstDisplay = false
 		lastLivePreviewSnapshot = nil
-		stopLiveChromeFollowClock()
+		hideLiveLiquidGlassViews()
 		guard scene.mode != .live else {
 			return
 		}
 		liveRenderer.stop()
-		controller?.updateLiveChromeVisuals(currentChromeVisualSnapshot())
 	}
 
 	private func updateLivePreviewDemands() {
@@ -4731,18 +4767,35 @@ final class CaptureHostView: NSView {
 			controller?.updateLiveChromeBackdrops(nil)
 			return
 		}
+		updateLivePreviewSampleDemand()
+		updateLiveChromeBackdrops()
+	}
+
+	private func updateLivePreviewSampleDemand() {
+		guard scene.mode == .live else {
+			controller?.updateLivePreviewDemand(
+				point: nil, settings: settings, includeLoupePatch: false)
+			return
+		}
 		let point = livePointerPreviewGlobal ?? scene.pointer
 		controller?.updateLivePreviewDemand(
 			point: point,
 			settings: settings,
 			includeLoupePatch: scene.loupeVisible && !liveHoverChromeSuppressed
 		)
-		updateLiveChromeBackdrops()
 	}
 
 	private func currentDisplayID() -> CGDirectDisplayID? {
 		(window?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
 			.uint32Value
+	}
+
+	private func currentDisplayTargetFramesPerSecond() -> Int {
+		NativeHostDisplayRefresh.targetFramesPerSecond(for: window?.screen)
+	}
+
+	private func currentPointerFollowFramesPerSecond() -> Int {
+		NativeHostDisplayRefresh.pointerFollowFramesPerSecond(for: window?.screen)
 	}
 
 	private func currentLiveChromeSample() -> LiveChromeSample? {
@@ -4854,7 +4907,7 @@ final class CaptureHostView: NSView {
 			context.draw(glassImage, in: frame)
 			context.restoreGState()
 		}
-		let usesLiquidGlass = scene.mode == .live && settings.usesLiquidHudGlass
+		let usesLiquidGlass = settings.usesLiquidHudGlass
 		let fillColor =
 			usesLiquidGlass
 			? NSColor.clear
@@ -4875,9 +4928,9 @@ final class CaptureHostView: NSView {
 	private func glassPatch(for surfaceKind: GlassSurfaceKind, frame: CGRect) -> CGImage? {
 		let now = ProcessInfo.processInfo.systemUptime
 		if let cached = glassPatchCache[surfaceKind],
-			now - cached.capturedAt < (scene.mode == .live ? 1.0 / 12.0 : 1.0 / 30.0),
-			abs(cached.frame.minX - frame.minX) < (scene.mode == .live ? 18 : 1),
-			abs(cached.frame.minY - frame.minY) < (scene.mode == .live ? 18 : 1),
+			now - cached.capturedAt < glassPatchCacheInterval(),
+			abs(cached.frame.minX - frame.minX) < 1,
+			abs(cached.frame.minY - frame.minY) < 1,
 			abs(cached.frame.width - frame.width) < 1,
 			abs(cached.frame.height - frame.height) < 1
 		{
@@ -4896,6 +4949,11 @@ final class CaptureHostView: NSView {
 
 		glassPatchCache[surfaceKind] = GlassPatchCache(frame: frame, capturedAt: now, image: image)
 		return image
+	}
+
+	private func glassPatchCacheInterval() -> TimeInterval {
+		NativeHostDisplayRefresh.frameInterval(
+			forTargetFramesPerSecond: currentDisplayTargetFramesPerSecond())
 	}
 
 	private func glassSourcePatch(in globalFrame: CGRect) -> CGImage? {
@@ -4939,7 +4997,7 @@ final class CaptureHostView: NSView {
 		let blurAmount = CGFloat(settings.hudBlur.clamped(to: 0...1))
 		let blurRadius: CGFloat =
 			switch surfaceKind {
-			case .hud, .loupe:
+			case .hud, .loupe, .toolbar:
 				14 + blurAmount * 32.0
 			}
 		filter.setValue(clampedImage, forKey: kCIInputImageKey)
@@ -4951,7 +5009,7 @@ final class CaptureHostView: NSView {
 		if let colorControls = CIFilter(name: "CIColorControls") {
 			colorControls.setValue(blurredImage, forKey: kCIInputImageKey)
 			switch surfaceKind {
-			case .hud, .loupe:
+			case .hud, .loupe, .toolbar:
 				colorControls.setValue(
 					1.18 + settings.hudTint.clamped(to: 0...1) * 0.42, forKey: kCIInputSaturationKey
 				)
@@ -4989,11 +5047,117 @@ final class CaptureHostView: NSView {
 		view.layer?.masksToBounds = true
 	}
 
+	private func configureChromeLiquidGlassView(_ view: NSView) {
+		view.isHidden = true
+		view.wantsLayer = true
+		view.layer?.cornerRadius = CaptureChrome.hudCornerRadius
+		view.layer?.masksToBounds = true
+		view.layer?.zPosition = 50
+	}
+
 	private func updateChromeMaterialViews() {
 		for materialView in [hudMaterialView, loupeMaterialView] {
 			materialView.isHidden = true
 		}
+		if scene.mode != .live || !settings.usesLiquidHudGlass || chrome.hostLocalFrozenSelecting {
+			hideLiveLiquidGlassViews()
+		}
+		updateFrozenToolbarLiquidGlassView()
 		updateLiveChromeBackdrops()
+	}
+
+	private func updateLiveLiquidGlassViews(hudFrame: CGRect?, loupeFrame: CGRect?) {
+		guard scene.mode == .live, settings.usesLiquidHudGlass, !chrome.hostLocalFrozenSelecting
+		else {
+			hideLiveLiquidGlassViews()
+			return
+		}
+		updateLiveLiquidGlassView(&hudLiquidGlassView, frame: hudFrame)
+		updateLiveLiquidGlassView(&loupeLiquidGlassView, frame: loupeFrame)
+	}
+
+	private func updateLiveLiquidGlassView(_ view: inout NSView?, frame: CGRect?) {
+		guard let frame else {
+			view?.isHidden = true
+			return
+		}
+		if view == nil {
+			guard let createdView = LiveChromeLiquidGlassBridge.makeGlassView() else {
+				return
+			}
+			configureChromeLiquidGlassView(createdView)
+			addSubview(createdView, positioned: .below, relativeTo: nil)
+			view = createdView
+		}
+		guard let activeView = view else {
+			return
+		}
+		LiveChromeLiquidGlassBridge.update(activeView, settings: settings)
+		if activeView.frame != frame {
+			activeView.frame = frame
+		}
+		activeView.isHidden = false
+	}
+
+	private func hideLiveLiquidGlassViews() {
+		hudLiquidGlassView?.removeFromSuperview()
+		loupeLiquidGlassView?.removeFromSuperview()
+		hudLiquidGlassView = nil
+		loupeLiquidGlassView = nil
+	}
+
+	private func updateFrozenToolbarLiquidGlassView() {
+		guard
+			scene.mode == .frozen,
+			settings.usesLiquidHudGlass,
+			let selection = localFrozenSelectionRect(),
+			let layout = toolbarLayout(for: selection)
+		else {
+			hideFrozenToolbarLiquidGlassView()
+			return
+		}
+		updateLiveLiquidGlassView(&toolbarLiquidGlassView, frame: layout.frame)
+		guard let toolbarLiquidGlassView else {
+			return
+		}
+		if toolbarLiquidGlassContentView == nil {
+			toolbarLiquidGlassContentView = FrozenToolbarRenderView(
+				frame: CGRect(origin: .zero, size: layout.frame.size))
+		}
+		guard let toolbarLiquidGlassContentView else {
+			return
+		}
+		let contentFrame = CGRect(origin: .zero, size: layout.frame.size)
+		if toolbarLiquidGlassContentView.frame != contentFrame {
+			toolbarLiquidGlassContentView.frame = contentFrame
+		}
+		toolbarLiquidGlassContentView.update(
+			theme: chromeTheme(),
+			settings: settings,
+			hoveredToolbarAction: hoveredToolbarAction,
+			items: layout.items.map { item in
+				FrozenToolbarRenderView.Item(
+					kind: item.kind,
+					frame: item.frame.offsetBy(
+						dx: -layout.frame.minX,
+						dy: -layout.frame.minY
+					),
+					enabled: item.enabled,
+					selected: item.selected
+				)
+			}
+		)
+		LiveChromeLiquidGlassBridge.setContentView(
+			toolbarLiquidGlassContentView, on: toolbarLiquidGlassView)
+	}
+
+	private func hideFrozenToolbarLiquidGlassView() {
+		if let toolbarLiquidGlassView {
+			LiveChromeLiquidGlassBridge.setContentView(nil, on: toolbarLiquidGlassView)
+		}
+		toolbarLiquidGlassView?.removeFromSuperview()
+		toolbarLiquidGlassView = nil
+		toolbarLiquidGlassContentView = nil
 	}
 
 	private func suppressLiveHoverChrome() {
@@ -5054,7 +5218,8 @@ final class CaptureHostView: NSView {
 	}
 
 	private func pointerDispatchInterval() -> TimeInterval {
-		NativeHostDisplayRefresh.frameInterval
+		NativeHostDisplayRefresh.frameInterval(
+			forTargetFramesPerSecond: currentDisplayTargetFramesPerSecond())
 	}
 
 	private func lastPointerDispatchUptime(for event: QueuedPointerEvent) -> TimeInterval {

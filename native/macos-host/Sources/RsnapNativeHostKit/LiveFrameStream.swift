@@ -11,6 +11,8 @@ final class LiveFrameStreamBroker {
 		let scaleFactorX1000: UInt32
 	}
 
+	private static let primeThrottleInterval: TimeInterval = 1.0 / 120.0
+
 	private let stateLock = NSLock()
 	private var sampler: RsnapLiveSampler?
 	private var monitors: [SamplerMonitor] = []
@@ -177,7 +179,7 @@ final class LiveFrameStreamBroker {
 		let now = ProcessInfo.processInfo.systemUptime
 		if lastPrimedMonitorID == monitor.id,
 			lastPrimeGeneration == generation,
-			now - lastPrimeUptime < (1.0 / 30.0)
+			now - lastPrimeUptime < Self.primeThrottleInterval
 		{
 			stateLock.unlock()
 			return

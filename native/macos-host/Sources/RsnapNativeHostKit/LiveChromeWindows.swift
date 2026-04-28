@@ -6,16 +6,6 @@ import Foundation
 import RsnapHostBridge
 import SwiftUI
 
-@MainActor
-private enum LiveChromeTypography {
-	static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-	static let lineHeight = ceil("x=0".size(using: font).height)
-	static let commaWidth = ",".size(using: font).width
-	static let keycapTextSize = "Tab".size(using: font)
-	static let keycapFrameSize = CGSize(
-		width: keycapTextSize.width + 12, height: keycapTextSize.height + 4)
-}
-
 struct LivePositionDisplay: Equatable {
 	let xValueText: String
 	let yValueText: String
@@ -26,60 +16,6 @@ struct LivePositionDisplay: Equatable {
 struct LiveColorDisplay: Equatable {
 	let hexText: String
 	let hexSlotWidth: CGFloat
-}
-
-struct LiveHudVisualSnapshot: Equatable {
-	let sourceWindowNumber: Int
-	let frame: CGRect
-	let theme: CaptureChromeTheme
-	let settings: NativeHostSettings
-	let positionDisplay: LivePositionDisplay
-	let colorDisplay: LiveColorDisplay
-	let rgbSample: RGBSample?
-	let keycapVisible: Bool
-	let inputUptime: TimeInterval?
-	let inputSequence: UInt64
-
-	static func == (lhs: LiveHudVisualSnapshot, rhs: LiveHudVisualSnapshot) -> Bool {
-		lhs.theme == rhs.theme
-			&& lhs.settings == rhs.settings
-			&& lhs.positionDisplay == rhs.positionDisplay
-			&& lhs.colorDisplay == rhs.colorDisplay
-			&& lhs.rgbSample == rhs.rgbSample
-			&& lhs.keycapVisible == rhs.keycapVisible
-	}
-}
-
-struct LiveLoupeVisualSnapshot {
-	let sourceWindowNumber: Int
-	let frame: CGRect
-	let theme: CaptureChromeTheme
-	let settings: NativeHostSettings
-	let patch: CGImage
-	let inputUptime: TimeInterval?
-	let inputSequence: UInt64
-}
-
-struct FrozenToolbarVisualItemSnapshot: Equatable {
-	let kind: ToolbarItemKind
-	let frame: CGRect
-	let enabled: Bool
-	let selected: Bool
-}
-
-struct FrozenToolbarVisualSnapshot: Equatable {
-	let sourceWindowNumber: Int
-	let frame: CGRect
-	let theme: CaptureChromeTheme
-	let settings: NativeHostSettings
-	let items: [FrozenToolbarVisualItemSnapshot]
-}
-
-struct LiveChromeVisualSnapshot {
-	let sourceWindowNumber: Int?
-	let hud: LiveHudVisualSnapshot?
-	let loupe: LiveLoupeVisualSnapshot?
-	let toolbar: FrozenToolbarVisualSnapshot?
 }
 
 struct LiveChromeBackdropSnapshot {
@@ -240,20 +176,6 @@ enum PhosphorToolbarIcons {
 	}
 }
 
-private enum ChromeVisualKind {
-	case hud
-	case loupe
-	case toolbar
-
-	func usesLiquidGlassSurface(settings: NativeHostSettings) -> Bool {
-		settings.usesLiquidHudGlass && self != .toolbar
-	}
-
-	func usesClassicWindowGlass(settings: NativeHostSettings) -> Bool {
-		settings.usesClassicHudGlass && !usesLiquidGlassSurface(settings: settings)
-	}
-}
-
 @MainActor
 private enum MacOSWindowBlurBridge {
 	private typealias CGSMainConnectionIDFn = @convention(c) () -> UnsafeMutableRawPointer?
@@ -291,7 +213,7 @@ private enum MacOSWindowBlurBridge {
 }
 
 @MainActor
-private enum LiveChromeLiquidGlassBridge {
+enum LiveChromeLiquidGlassBridge {
 	static func makeGlassView() -> NSView? {
 		guard LiveChromeGlassMaterialSupport.isLiquidGlassAvailable else {
 			return nil
@@ -317,12 +239,17 @@ private enum LiveChromeLiquidGlassBridge {
 }
 
 @MainActor
-private final class LiveChromeLiquidGlassView: NSView {
+final class LiveChromeLiquidGlassView: NSView {
 	private let glassHostView: NSHostingView<AnyView>
 	private let contentContainerView = NSView(frame: .zero)
 	private weak var currentContentView: NSView?
+	private var currentSettings: NativeHostSettings?
 
 	override var isOpaque: Bool { false }
+
+	override func hitTest(_ point: NSPoint) -> NSView? {
+		nil
+	}
 
 	override init(frame frameRect: NSRect) {
 		self.glassHostView = NSHostingView(
@@ -354,6 +281,10 @@ private final class LiveChromeLiquidGlassView: NSView {
 	}
 
 	func update(settings: NativeHostSettings) {
+		guard currentSettings != settings else {
+			return
+		}
+		currentSettings = settings
 		glassHostView.rootView = Self.makeGlassRoot(settings: settings)
 	}
 
@@ -390,7 +321,7 @@ private final class LiveChromeLiquidGlassView: NSView {
 				case .clear:
 					Glass.clear
 				}
-			glass = glass.tint(.clear).interactive(false)
+			glass = glass.tint(liquidGlassTint(settings: settings)).interactive(false)
 			return AnyView(
 				GlassEffectContainer(spacing: 0) {
 					Color.clear
@@ -400,187 +331,21 @@ private final class LiveChromeLiquidGlassView: NSView {
 				.allowsHitTesting(false)
 			)
 		}
+
+		@available(macOS 26.0, *)
+		private static func liquidGlassTint(settings: NativeHostSettings) -> Color? {
+			let strength = settings.hudTint.clamped(to: 0...1)
+			guard strength > 0 else {
+				return nil
+			}
+			return Color(
+				hue: settings.hudTintHue.clamped(to: 0...1),
+				saturation: 0.48,
+				brightness: 1.0,
+				opacity: strength * 0.12
+			)
+		}
 	#endif
-}
-
-private final class LiveChromeOverlayWindow: NSWindow {
-	let kind: ChromeVisualKind
-	let renderView: LiveChromeRenderView
-	private let liquidGlassView: NSView?
-	private var isUsingLiquidGlassContent = false
-	private var lastLiquidGlassStyle: LiquidGlassStylePreference?
-	private var lastPresentedFrame: CGRect?
-	private var lastAppliedBlurAmount: CGFloat?
-	private var isPresented = false
-
-	init(kind: ChromeVisualKind) {
-		self.kind = kind
-		self.renderView = LiveChromeRenderView(kind: kind, frame: .zero)
-		self.liquidGlassView = LiveChromeLiquidGlassBridge.makeGlassView()
-		super.init(
-			contentRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-			styleMask: [.borderless],
-			backing: .buffered,
-			defer: false
-		)
-		contentView = renderView
-		renderView.autoresizingMask = [.width, .height]
-		liquidGlassView?.autoresizingMask = [.width, .height]
-		backgroundColor = .clear
-		collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-		hasShadow = false
-		ignoresMouseEvents = true
-		isMovable = false
-		animationBehavior = .none
-		isOpaque = false
-		level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
-		sharingType = .none
-		titleVisibility = .hidden
-		titlebarAppearsTransparent = true
-		orderOut(nil)
-	}
-
-	override var canBecomeKey: Bool { false }
-	override var canBecomeMain: Bool { false }
-
-	private var presentationScale: CGFloat {
-		max(
-			backingScaleFactor,
-			screen?.backingScaleFactor ?? 0,
-			NSScreen.main?.backingScaleFactor ?? 1,
-			1
-		)
-	}
-
-	private func presentationFrame(from frame: CGRect) -> CGRect {
-		let scale = presentationScale
-		return CGRect(
-			x: (frame.origin.x * scale).rounded() / scale,
-			y: (frame.origin.y * scale).rounded() / scale,
-			width: (frame.width * scale).rounded(.up) / scale,
-			height: (frame.height * scale).rounded(.up) / scale
-		)
-	}
-
-	func prewarmForPresentation(settings: NativeHostSettings) {
-		guard !isPresented else {
-			return
-		}
-
-		configureContentView(settings: settings)
-		let prewarmFrame = CGRect(x: -10_000, y: -10_000, width: 1, height: 1)
-		alphaValue = 0
-		setFrame(prewarmFrame, display: false, animate: false)
-		lastPresentedFrame = prewarmFrame
-		orderFrontRegardless()
-		isPresented = true
-		displayIfNeeded()
-
-		let blurAmount = windowBackgroundBlurAmount(settings: settings)
-		MacOSWindowBlurBridge.applyBlur(to: self, amount: blurAmount)
-		lastAppliedBlurAmount = blurAmount
-	}
-
-	func update(frame: CGRect, settings: NativeHostSettings) {
-		configureContentView(settings: settings)
-		let roundedFrame = presentationFrame(from: frame)
-		let tolerance: CGFloat = 0.001
-		if let lastPresentedFrame {
-			let sizeChanged =
-				abs(lastPresentedFrame.width - roundedFrame.width) > tolerance
-				|| abs(lastPresentedFrame.height - roundedFrame.height) > tolerance
-			let originChanged =
-				abs(lastPresentedFrame.minX - roundedFrame.minX) > tolerance
-				|| abs(lastPresentedFrame.minY - roundedFrame.minY) > tolerance
-			if sizeChanged {
-				setFrame(roundedFrame, display: false, animate: false)
-			} else if originChanged {
-				setFrameOrigin(roundedFrame.origin)
-			}
-		} else {
-			setFrame(roundedFrame, display: false, animate: false)
-		}
-		lastPresentedFrame = roundedFrame
-
-		let blurAmount = windowBackgroundBlurAmount(settings: settings)
-		if lastAppliedBlurAmount == nil || abs((lastAppliedBlurAmount ?? 0) - blurAmount) > 0.01 {
-			MacOSWindowBlurBridge.applyBlur(to: self, amount: blurAmount)
-			lastAppliedBlurAmount = blurAmount
-		}
-
-		if !isPresented {
-			orderFrontRegardless()
-			isPresented = true
-		}
-		if alphaValue != 1 {
-			alphaValue = 1
-		}
-	}
-
-	private func windowBackgroundBlurAmount(settings: NativeHostSettings) -> CGFloat {
-		if kind.usesClassicWindowGlass(settings: settings) {
-			return CGFloat(settings.hudBlur)
-		}
-		return 0
-	}
-
-	private func configureContentView(settings: NativeHostSettings) {
-		let shouldUseLiquidGlass = kind.usesLiquidGlassSurface(settings: settings)
-		if shouldUseLiquidGlass, let liquidGlassView {
-			if !isUsingLiquidGlassContent {
-				contentView = liquidGlassView
-				liquidGlassView.frame = contentView?.bounds ?? .zero
-				renderView.frame = liquidGlassView.bounds
-				LiveChromeLiquidGlassBridge.setContentView(renderView, on: liquidGlassView)
-				isUsingLiquidGlassContent = true
-			}
-			if lastLiquidGlassStyle != settings.liquidGlassStyle {
-				LiveChromeLiquidGlassBridge.update(liquidGlassView, settings: settings)
-				lastLiquidGlassStyle = settings.liquidGlassStyle
-			}
-			return
-		}
-
-		if isUsingLiquidGlassContent, let liquidGlassView {
-			LiveChromeLiquidGlassBridge.setContentView(nil, on: liquidGlassView)
-			contentView = renderView
-			isUsingLiquidGlassContent = false
-			lastLiquidGlassStyle = nil
-		}
-	}
-
-	func moveIfPossible(frame: CGRect) -> Bool {
-		guard let lastPresentedFrame else {
-			return false
-		}
-		let roundedFrame = presentationFrame(from: frame)
-		let tolerance: CGFloat = 0.001
-		let sizeMatches =
-			abs(lastPresentedFrame.width - roundedFrame.width) <= tolerance
-			&& abs(lastPresentedFrame.height - roundedFrame.height) <= tolerance
-		guard sizeMatches else {
-			return false
-		}
-		let originChanged =
-			abs(lastPresentedFrame.minX - roundedFrame.minX) > tolerance
-			|| abs(lastPresentedFrame.minY - roundedFrame.minY) > tolerance
-		guard originChanged else {
-			return false
-		}
-		setFrameOrigin(roundedFrame.origin)
-		self.lastPresentedFrame = roundedFrame
-		return true
-	}
-
-	func hide() {
-		guard isPresented else {
-			return
-		}
-		orderOut(nil)
-		isPresented = false
-		lastPresentedFrame = nil
-		alphaValue = 1
-	}
 }
 
 private final class LiveChromeBackdropWindow: NSWindow {
@@ -718,391 +483,6 @@ private final class LiveChromeBackdropView: NSView {
 		)
 		pillPath.fill()
 		context.restoreGState()
-	}
-}
-
-private final class LiveChromeRenderView: NSView {
-	private struct LoupeSnapshotKey: Equatable {
-		let theme: CaptureChromeTheme
-		let settings: NativeHostSettings
-		let patchIdentity: UInt
-	}
-
-	private let kind: ChromeVisualKind
-	private var hudSnapshot: LiveHudVisualSnapshot?
-	private var loupeSnapshot: LiveLoupeVisualSnapshot?
-	private var toolbarSnapshot: FrozenToolbarVisualSnapshot?
-	private var loupeSnapshotKey: LoupeSnapshotKey?
-
-	init(kind: ChromeVisualKind, frame: CGRect) {
-		self.kind = kind
-		super.init(frame: frame)
-		wantsLayer = true
-		layerContentsRedrawPolicy = .duringViewResize
-	}
-
-	@available(*, unavailable)
-	required init?(coder: NSCoder) {
-		fatalError("init(coder:) has not been implemented")
-	}
-
-	override var isOpaque: Bool { false }
-
-	func update(hud snapshot: LiveHudVisualSnapshot?) {
-		guard hudSnapshot != snapshot else {
-			return
-		}
-		hudSnapshot = snapshot
-		needsDisplay = true
-	}
-
-	func update(loupe snapshot: LiveLoupeVisualSnapshot?) {
-		let nextKey = snapshot.map {
-			LoupeSnapshotKey(
-				theme: $0.theme,
-				settings: $0.settings,
-				patchIdentity: UInt(bitPattern: Unmanaged.passUnretained($0.patch).toOpaque())
-			)
-		}
-		guard loupeSnapshotKey != nextKey else {
-			return
-		}
-		loupeSnapshotKey = nextKey
-		loupeSnapshot = snapshot
-		needsDisplay = true
-	}
-
-	func update(toolbar snapshot: FrozenToolbarVisualSnapshot?) {
-		guard toolbarSnapshot != snapshot else {
-			return
-		}
-		toolbarSnapshot = snapshot
-		needsDisplay = true
-	}
-
-	override func draw(_ dirtyRect: NSRect) {
-		super.draw(dirtyRect)
-		guard let context = NSGraphicsContext.current?.cgContext else {
-			return
-		}
-		switch kind {
-		case .hud:
-			drawHud(in: context)
-		case .loupe:
-			drawLoupe(in: context)
-		case .toolbar:
-			drawToolbar(in: context)
-		}
-	}
-
-	private func drawHud(in context: CGContext) {
-		guard let snapshot = hudSnapshot else {
-			return
-		}
-		let frame = bounds
-		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
-		let font = LiveChromeTypography.font
-		drawPill(
-			in: frame, context: context, palette: palette, settings: snapshot.settings,
-			strongShadow: true)
-
-		let commaSeparator = ","
-		let xGroupText = "x=\(snapshot.positionDisplay.xValueText)"
-		let yGroupText = "y=\(snapshot.positionDisplay.yValueText)"
-		let positionHeight = LiveChromeTypography.lineHeight
-		let itemSpacing: CGFloat = 8
-		var cursorX = CaptureChrome.hudInnerMarginX
-		let baselineY = (frame.height - positionHeight) / 2
-
-		drawText(
-			xGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
-		cursorX += snapshot.positionDisplay.xSlotWidth
-		drawText(
-			commaSeparator, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText,
-			font: font)
-		cursorX += LiveChromeTypography.commaWidth
-		drawText(
-			yGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
-		cursorX += snapshot.positionDisplay.ySlotWidth + itemSpacing
-
-		let swatchRect = CGRect(x: cursorX, y: frame.midY - 5, width: 10, height: 10)
-		let swatchColor =
-			snapshot.rgbSample.map {
-				NSColor(
-					calibratedRed: CGFloat($0.r) / 255, green: CGFloat($0.g) / 255,
-					blue: CGFloat($0.b) / 255, alpha: 1)
-			} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
-		context.setFillColor(swatchColor.cgColor)
-		context.fill(swatchRect)
-		context.setStrokeColor(palette.swatchStroke.cgColor)
-		context.setLineWidth(1)
-		context.stroke(swatchRect)
-		cursorX += 10 + itemSpacing
-
-		drawText(
-			snapshot.colorDisplay.hexText,
-			at: CGPoint(x: cursorX, y: baselineY),
-			color: palette.labelText,
-			font: font
-		)
-		cursorX += snapshot.colorDisplay.hexSlotWidth + itemSpacing
-
-		if snapshot.keycapVisible {
-			let keycapText = "Tab"
-			let keycapRect = CGRect(
-				x: cursorX,
-				y: frame.midY - LiveChromeTypography.keycapFrameSize.height / 2,
-				width: LiveChromeTypography.keycapFrameSize.width,
-				height: LiveChromeTypography.keycapFrameSize.height
-			)
-			context.setFillColor(palette.keycapFill.cgColor)
-			let keycapPath = NSBezierPath(roundedRect: keycapRect, xRadius: 6, yRadius: 6)
-			keycapPath.fill()
-			context.setStrokeColor(palette.keycapStroke.cgColor)
-			context.setLineWidth(1)
-			keycapPath.stroke()
-			drawText(
-				keycapText,
-				at: CGPoint(
-					x: keycapRect.midX - LiveChromeTypography.keycapTextSize.width / 2,
-					y: keycapRect.midY - LiveChromeTypography.keycapTextSize.height / 2
-				),
-				color: palette.keycapText,
-				font: font
-			)
-		}
-	}
-
-	private func drawLoupe(in context: CGContext) {
-		guard let snapshot = loupeSnapshot else {
-			return
-		}
-		let frame = bounds
-		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
-		drawPill(
-			in: frame, context: context, palette: palette, settings: snapshot.settings,
-			strongShadow: true)
-
-		let imageRect = frame.insetBy(dx: 10, dy: 10)
-		context.saveGState()
-		context.interpolationQuality = .none
-		context.draw(snapshot.patch, in: imageRect)
-		context.restoreGState()
-
-		let centerX =
-			imageRect.minX + floor(CGFloat(snapshot.patch.width) / 2) * CaptureChrome.loupeCellSize
-		let centerY =
-			imageRect.minY + floor(CGFloat(snapshot.patch.height) / 2) * CaptureChrome.loupeCellSize
-		let centerRect = CGRect(
-			x: centerX,
-			y: centerY,
-			width: CaptureChrome.loupeCellSize,
-			height: CaptureChrome.loupeCellSize
-		).insetBy(dx: 1, dy: 1)
-		context.setStrokeColor(NSColor.white.withAlphaComponent(0.9).cgColor)
-		context.setLineWidth(2)
-		context.stroke(centerRect)
-	}
-
-	private func drawToolbar(in context: CGContext) {
-		guard let snapshot = toolbarSnapshot else {
-			return
-		}
-		let frame = bounds
-		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
-		drawPill(
-			in: frame, context: context, palette: palette, settings: snapshot.settings,
-			strongShadow: false)
-
-		for item in snapshot.items {
-			if item.selected {
-				context.setFillColor(palette.toolbarSelectedBackground.cgColor)
-				let hoverPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
-				hoverPath.fill()
-			}
-
-			let symbolColor =
-				item.enabled
-				? (item.selected ? palette.toolbarSelectedIcon : palette.toolbarIcon)
-				: palette.toolbarDisabledIcon
-			drawToolbarGlyph(
-				item.kind,
-				selected: item.selected,
-				in: item.frame,
-				color: symbolColor,
-				context: context
-			)
-		}
-	}
-
-	private func drawPill(
-		in frame: CGRect,
-		context: CGContext,
-		palette: CaptureChromePalette,
-		settings: NativeHostSettings,
-		strongShadow: Bool
-	) {
-		let pillPath = NSBezierPath(
-			roundedRect: frame,
-			xRadius: CaptureChrome.hudCornerRadius,
-			yRadius: CaptureChrome.hudCornerRadius
-		)
-		context.saveGState()
-		let usesLiquidGlass = kind.usesLiquidGlassSurface(settings: settings)
-		if strongShadow, !usesLiquidGlass {
-			context.setShadow(offset: .zero, blur: 10, color: palette.shadow.cgColor)
-		}
-		let fillColor = CaptureChrome.effectiveBodyFill(
-			palette: palette,
-			settings: settings,
-			hasGlass: usesLiquidGlass || kind.usesClassicWindowGlass(settings: settings)
-		)
-		context.setFillColor(fillColor.cgColor)
-		pillPath.fill()
-		context.restoreGState()
-
-		context.setStrokeColor(palette.outerStroke.cgColor)
-		context.setLineWidth(1)
-		pillPath.stroke()
-	}
-
-	private func drawText(_ text: String, at point: CGPoint, color: NSColor, font: NSFont) {
-		(text as NSString).draw(
-			at: point,
-			withAttributes: [
-				.font: font,
-				.foregroundColor: color,
-			])
-	}
-
-	private func drawToolbarGlyph(
-		_ kind: ToolbarItemKind,
-		selected: Bool,
-		in rect: CGRect,
-		color: NSColor,
-		context: CGContext
-	) {
-		let glyph = PhosphorToolbarIcons.cachedGlyph(for: kind, selected: selected, size: 18)
-		let origin = CGPoint(
-			x: rect.midX - glyph.bounds.width * 0.5 - glyph.bounds.origin.x,
-			y: rect.midY - glyph.bounds.height * 0.5 - glyph.bounds.origin.y
-		)
-		context.saveGState()
-		context.setFillColor(color.cgColor)
-		context.textMatrix = .identity
-		context.textPosition = origin
-		CTLineDraw(glyph.line, context)
-		context.restoreGState()
-	}
-}
-
-@MainActor
-final class LiveChromeVisualWindowController {
-	private let hudWindow = LiveChromeOverlayWindow(kind: .hud)
-	private let loupeWindow = LiveChromeOverlayWindow(kind: .loupe)
-	private let toolbarWindow = LiveChromeOverlayWindow(kind: .toolbar)
-	private let updateDurationMetric = NativeHostTelemetry.distribution(
-		"live_chrome.update_duration",
-		category: "LiveChromeTelemetry"
-	)
-	private let hudApplyLatencyMetric = NativeHostTelemetry.distribution(
-		"live_chrome.hud.apply_latency",
-		category: "LiveChromeTelemetry"
-	)
-	private let hudWindowDurationMetric = NativeHostTelemetry.distribution(
-		"live_chrome.hud.window_update_duration",
-		category: "LiveChromeTelemetry"
-	)
-	private let loupeApplyLatencyMetric = NativeHostTelemetry.distribution(
-		"live_chrome.loupe.apply_latency",
-		category: "LiveChromeTelemetry"
-	)
-	private let loupeWindowDurationMetric = NativeHostTelemetry.distribution(
-		"live_chrome.loupe.window_update_duration",
-		category: "LiveChromeTelemetry"
-	)
-	private var lastHudLatencyInputSequence: UInt64?
-	private var lastLoupeLatencyInputSequence: UInt64?
-
-	func prepareForLivePresentation(settings: NativeHostSettings) {
-		hudWindow.prewarmForPresentation(settings: settings)
-		loupeWindow.prewarmForPresentation(settings: settings)
-	}
-
-	func update(snapshot: LiveChromeVisualSnapshot?, focusedWindowNumber: Int?) {
-		let updateStart = ProcessInfo.processInfo.systemUptime
-		defer {
-			updateDurationMetric.recordMillisecondsSince(updateStart)
-		}
-
-		guard let snapshot else {
-			hideAll()
-			return
-		}
-		guard snapshot.sourceWindowNumber == focusedWindowNumber else {
-			return
-		}
-
-		if let hud = snapshot.hud {
-			let hudStart = ProcessInfo.processInfo.systemUptime
-			hudWindow.renderView.update(hud: hud)
-			hudWindow.update(frame: hud.frame, settings: hud.settings)
-			hudWindowDurationMetric.recordMillisecondsSince(hudStart)
-			recordInputLatency(
-				inputUptime: hud.inputUptime,
-				inputSequence: hud.inputSequence,
-				lastInputSequence: &lastHudLatencyInputSequence,
-				metric: hudApplyLatencyMetric
-			)
-		} else {
-			hudWindow.hide()
-		}
-
-		if let loupe = snapshot.loupe {
-			let loupeStart = ProcessInfo.processInfo.systemUptime
-			loupeWindow.renderView.update(loupe: loupe)
-			loupeWindow.update(frame: loupe.frame, settings: loupe.settings)
-			loupeWindowDurationMetric.recordMillisecondsSince(loupeStart)
-			recordInputLatency(
-				inputUptime: loupe.inputUptime,
-				inputSequence: loupe.inputSequence,
-				lastInputSequence: &lastLoupeLatencyInputSequence,
-				metric: loupeApplyLatencyMetric
-			)
-		} else {
-			loupeWindow.hide()
-		}
-
-		if let toolbar = snapshot.toolbar {
-			toolbarWindow.renderView.update(toolbar: toolbar)
-			toolbarWindow.update(frame: toolbar.frame, settings: toolbar.settings)
-		} else {
-			toolbarWindow.hide()
-		}
-	}
-
-	private func recordInputLatency(
-		inputUptime: TimeInterval?,
-		inputSequence: UInt64,
-		lastInputSequence: inout UInt64?,
-		metric: NativeHostTelemetry.DistributionMetric
-	) {
-		guard inputSequence != 0, lastInputSequence != inputSequence else {
-			return
-		}
-		lastInputSequence = inputSequence
-		metric.recordLatencySince(inputUptime)
-	}
-
-	func hideAll() {
-		hudWindow.hide()
-		loupeWindow.hide()
-		toolbarWindow.hide()
-	}
-
-	func hideLiveWindows() {
-		hudWindow.hide()
-		loupeWindow.hide()
 	}
 }
 

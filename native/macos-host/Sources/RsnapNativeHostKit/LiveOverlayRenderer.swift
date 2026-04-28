@@ -26,6 +26,7 @@ struct LivePreviewSnapshot {
 	let colorDisplay: LiveColorDisplay
 	let rgbSample: RGBSample?
 	let keycapVisible: Bool
+	let inputUptime: TimeInterval?
 	let loupePatch: CGImage?
 	let glassPatches: [LiveGlassSurfaceKind: CGImage]
 }
@@ -146,15 +147,38 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private let backgroundSampler: BackgroundSampler
 	private let queue = DispatchQueue(
 		label: "ink.hack.rsnap.native-host.chrome-sample-feed", qos: .userInteractive)
+	private let backgroundQueue = DispatchQueue(
+		label: "ink.hack.rsnap.native-host.chrome-sample-feed.background", qos: .userInteractive)
 	private let stateLock = NSLock()
+	private let sampleRefreshGapMetric = NativeHostTelemetry.distribution(
+		"live_chrome.sample_refresh_gap",
+		category: "LiveChromeTelemetry",
+		batchSize: 60
+	)
+	private let sampleRefreshDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.sample_refresh_duration",
+		category: "LiveChromeTelemetry",
+		batchSize: 60
+	)
+	private let backgroundSampleDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.background_sample_duration",
+		category: "LiveChromeTelemetry",
+		batchSize: 20
+	)
+	private static let backgroundProbeMinimumInterval: TimeInterval = 0.25
 	private var timer: DispatchSourceTimer?
+	private var refreshQueued = false
+	private var backgroundRefreshQueued = false
+	private var backgroundCorrectionMode = false
+	private var whiteStreamRunHasProbed = false
+	private var lastBackgroundProbeUptime: TimeInterval = 0
 	private var desiredPoint: CGPoint?
 	private var desiredSidePixels: Int = 1
 	private var desiredIncludesLoupePatch = false
 	private var desiredSource: LiveColorSampleSource?
 	private var latestSample: LiveChromeSample?
-	private var lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
-	private var lastColorSampleUptime: TimeInterval = 0
+	private var latestSamplePoint: CGPoint?
+	private var lastRefreshUptime: TimeInterval?
 
 	init(
 		broker: LiveFrameStreamBroker,
@@ -164,12 +188,16 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		self.backgroundSampler = backgroundSampler
 	}
 
-	func start() {
+	func start(targetFramesPerSecond: Int = NativeHostDisplayRefresh.targetFramesPerSecond) {
 		stop()
 		let timer = DispatchSource.makeTimerSource(queue: queue)
 		let intervalNanoseconds = max(
 			1,
-			Int((NativeHostDisplayRefresh.frameInterval * 1_000_000_000.0).rounded())
+			Int(
+				(NativeHostDisplayRefresh.frameInterval(
+					forTargetFramesPerSecond: targetFramesPerSecond)
+					* NativeHostDisplayRefresh.timerWakeupLeadRatio
+					* 1_000_000_000.0).rounded())
 		)
 		timer.schedule(
 			deadline: .now(),
@@ -191,6 +219,13 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		desiredIncludesLoupePatch = false
 		desiredSource = nil
 		latestSample = nil
+		latestSamplePoint = nil
+		refreshQueued = false
+		backgroundRefreshQueued = false
+		backgroundCorrectionMode = false
+		whiteStreamRunHasProbed = false
+		lastBackgroundProbeUptime = 0
+		lastRefreshUptime = nil
 		stateLock.unlock()
 	}
 
@@ -218,55 +253,16 @@ final class ChromeSampleFeed: @unchecked Sendable {
 				LiveChromeSample(rgbSample: $0.rgbSample, loupePatch: nil)
 			}
 		}
-		if pointChanged || sourceChanged {
-			lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
-		}
-		if activating || sourceChanged || sidePixelsChanged || patchDemandChanged {
-			lastColorSampleUptime = 0
-		}
 		desiredPoint = point
 		desiredSidePixels = nextSidePixels
 		desiredIncludesLoupePatch = includeLoupePatch
 		desiredSource = source
+		let shouldRefresh =
+			pointChanged || activating || sourceChanged || sidePixelsChanged || patchDemandChanged
 		stateLock.unlock()
-		if activating || sidePixelsChanged || patchDemandChanged || sourceChanged {
-			queue.async { [weak self] in
-				self?.refresh()
-			}
+		if shouldRefresh {
+			enqueueRefresh()
 		}
-	}
-
-	func prime(
-		point: CGPoint?,
-		sidePixels: Int,
-		includeLoupePatch: Bool,
-		source: LiveColorSampleSource?
-	) {
-		updateDemand(
-			point: point,
-			sidePixels: sidePixels,
-			includeLoupePatch: includeLoupePatch,
-			source: source
-		)
-		guard let point else {
-			return
-		}
-		let streamSample =
-			includeLoupePatch ? broker.sample(at: point, sidePixels: max(1, sidePixels)) : nil
-		let rgbSample =
-			source.flatMap { backgroundSampler(point, $0) }
-			?? streamSample?.rgbSample
-			?? broker.rgbSample(at: point)
-		let sample = Self.sampleWithUpdatedPatch(
-			rgbSample: rgbSample,
-			patchSample: streamSample
-		)
-		stateLock.lock()
-		if let sample {
-			latestSample = sample
-			lastColorSampleUptime = ProcessInfo.processInfo.systemUptime
-		}
-		stateLock.unlock()
 	}
 
 	func snapshot() -> LiveChromeSample? {
@@ -276,54 +272,189 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		return latestSample
 	}
 
+	private func enqueueRefresh() {
+		stateLock.lock()
+		guard !refreshQueued else {
+			stateLock.unlock()
+			return
+		}
+		refreshQueued = true
+		stateLock.unlock()
+		queue.async { [weak self] in
+			self?.refresh()
+		}
+	}
+
 	private func refresh() {
 		let now = ProcessInfo.processInfo.systemUptime
+		let refreshStartedAt = now
 		stateLock.lock()
+		refreshQueued = false
 		let point = desiredPoint
 		let sidePixels = desiredSidePixels
 		let includeLoupePatch = desiredIncludesLoupePatch
 		let source = desiredSource
 		let previousSample = latestSample
-		let pointIdleDuration = now - lastPointChangeUptime
-		let colorSampleInterval =
-			pointIdleDuration >= LiveSamplingBudget.stationaryColorSampleIdleDelay
-			? LiveSamplingBudget.stationaryColorSampleInterval
-			: LiveSamplingBudget.movingColorSampleInterval
-		let colorSampleDue = now - lastColorSampleUptime >= colorSampleInterval
+		let previousPoint = latestSamplePoint
+		let lastRefreshUptime = self.lastRefreshUptime
+		self.lastRefreshUptime = now
 		stateLock.unlock()
+		if let lastRefreshUptime {
+			let gapMilliseconds = (now - lastRefreshUptime) * 1_000
+			if gapMilliseconds >= 0, gapMilliseconds < 250 {
+				sampleRefreshGapMetric.record(gapMilliseconds)
+			}
+		}
 		guard let point else {
 			stateLock.lock()
 			latestSample = nil
+			latestSamplePoint = nil
 			stateLock.unlock()
 			return
 		}
 		let streamSample =
-			includeLoupePatch ? broker.sample(at: point, sidePixels: sidePixels) : nil
-		var sample =
-			Self.sampleWithUpdatedPatch(
-				rgbSample: previousSample?.rgbSample,
-				patchSample: streamSample ?? previousSample
-			) ?? streamSample
-		if colorSampleDue, let source {
-			stateLock.lock()
-			lastColorSampleUptime = now
-			stateLock.unlock()
-			if let rgbSample = currentRgbSample(
+			includeLoupePatch
+			? broker.sample(at: point, sidePixels: sidePixels)
+			: nil
+		let streamRgbSample = streamSample?.rgbSample ?? broker.rgbSample(at: point)
+		let rgbSample =
+			streamRgbSample
+			?? Self.reusableRgbSample(
+				previousSample: previousSample, previousPoint: previousPoint, point: point)
+		if let source {
+			enqueueBackgroundSampleIfNeeded(
 				point: point,
 				source: source,
-				streamSample: streamSample,
-				prefersCachedStream: pointIdleDuration
-					< LiveSamplingBudget.stationaryColorSampleIdleDelay
-			) {
-				sample = Self.sampleWithUpdatedPatch(
-					rgbSample: rgbSample,
-					patchSample: streamSample ?? previousSample
-				)
-			}
+				streamRgbSample: streamRgbSample
+			)
 		}
+		let patchSample =
+			streamSample
+			?? Self.reusablePatchSample(
+				previousSample: previousSample,
+				previousPoint: previousPoint,
+				point: point,
+				includeLoupePatch: includeLoupePatch
+			)
+		let sample = Self.sampleWithUpdatedPatch(
+			rgbSample: rgbSample,
+			patchSample: patchSample
+		)
 		stateLock.lock()
 		latestSample = sample
+		latestSamplePoint = sample == nil ? nil : point
 		stateLock.unlock()
+		sampleRefreshDurationMetric.recordMillisecondsSince(refreshStartedAt)
+	}
+
+	private static func reusableRgbSample(
+		previousSample: LiveChromeSample?,
+		previousPoint: CGPoint?,
+		point: CGPoint
+	) -> RGBSample? {
+		guard let previousPoint, pointsEquivalent(previousPoint, point) else {
+			return nil
+		}
+		return previousSample?.rgbSample
+	}
+
+	private static func reusablePatchSample(
+		previousSample: LiveChromeSample?,
+		previousPoint: CGPoint?,
+		point: CGPoint,
+		includeLoupePatch: Bool
+	) -> LiveChromeSample? {
+		guard includeLoupePatch, let previousPoint, pointsEquivalent(previousPoint, point) else {
+			return nil
+		}
+		return previousSample
+	}
+
+	private static func pointsEquivalent(_ lhs: CGPoint, _ rhs: CGPoint) -> Bool {
+		abs(lhs.x - rhs.x) <= 0.5 && abs(lhs.y - rhs.y) <= 0.5
+	}
+
+	private func enqueueBackgroundSampleIfNeeded(
+		point: CGPoint,
+		source: LiveColorSampleSource,
+		streamRgbSample: RGBSample?
+	) {
+		let now = ProcessInfo.processInfo.systemUptime
+		let shouldProbe: Bool
+		stateLock.lock()
+		if let streamRgbSample, !Self.isLikelyOverlayWhite(streamRgbSample) {
+			backgroundCorrectionMode = false
+			whiteStreamRunHasProbed = false
+			stateLock.unlock()
+			return
+		}
+		if streamRgbSample == nil {
+			guard now - lastBackgroundProbeUptime >= Self.backgroundProbeMinimumInterval else {
+				stateLock.unlock()
+				return
+			}
+			lastBackgroundProbeUptime = now
+			shouldProbe = false
+		} else if backgroundCorrectionMode {
+			shouldProbe = false
+		} else if !whiteStreamRunHasProbed,
+			now - lastBackgroundProbeUptime >= Self.backgroundProbeMinimumInterval
+		{
+			whiteStreamRunHasProbed = true
+			lastBackgroundProbeUptime = now
+			shouldProbe = true
+		} else {
+			stateLock.unlock()
+			return
+		}
+		guard !backgroundRefreshQueued else {
+			stateLock.unlock()
+			return
+		}
+		backgroundRefreshQueued = true
+		stateLock.unlock()
+		backgroundQueue.async { [weak self] in
+			self?.refreshBackgroundSample(
+				point: point,
+				source: source,
+				shouldProbeForCorrection: shouldProbe
+			)
+		}
+	}
+
+	private func refreshBackgroundSample(
+		point: CGPoint,
+		source: LiveColorSampleSource,
+		shouldProbeForCorrection: Bool
+	) {
+		let startedAt = ProcessInfo.processInfo.systemUptime
+		let rgbSample = backgroundSampler(point, source)
+		backgroundSampleDurationMetric.recordMillisecondsSince(startedAt)
+		stateLock.lock()
+		backgroundRefreshQueued = false
+		defer {
+			stateLock.unlock()
+		}
+		guard
+			let desiredPoint,
+			let rgbSample,
+			desiredSource == source,
+			Self.pointsEquivalent(desiredPoint, point)
+		else {
+			return
+		}
+		if shouldProbeForCorrection {
+			backgroundCorrectionMode = !Self.isLikelyOverlayWhite(rgbSample)
+		}
+		latestSample = LiveChromeSample(
+			rgbSample: rgbSample,
+			loupePatch: latestSample?.loupePatch
+		)
+		latestSamplePoint = point
+	}
+
+	private static func isLikelyOverlayWhite(_ sample: RGBSample) -> Bool {
+		sample.r >= 250 && sample.g >= 250 && sample.b >= 250
 	}
 
 	private static func sampleWithUpdatedPatch(
@@ -339,27 +470,6 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		)
 	}
 
-	private func currentRgbSample(
-		point: CGPoint,
-		source: LiveColorSampleSource,
-		streamSample: LiveChromeSample?,
-		prefersCachedStream: Bool
-	) -> RGBSample? {
-		if prefersCachedStream,
-			let rgbSample = streamSample?.rgbSample ?? broker.rgbSample(at: point)
-		{
-			return rgbSample
-		}
-		if let rgbSample = backgroundSampler(point, source) {
-			return rgbSample
-		}
-		if !prefersCachedStream,
-			let rgbSample = streamSample?.rgbSample ?? broker.rgbSample(at: point)
-		{
-			return rgbSample
-		}
-		return nil
-	}
 }
 
 final class LiveFrameClockDriver: @unchecked Sendable {
@@ -369,7 +479,7 @@ final class LiveFrameClockDriver: @unchecked Sendable {
 		"live_chrome.frame_tick_gap",
 		category: "LiveChromeTelemetry"
 	)
-	private var timer: DispatchSourceTimer?
+	private var timer: Timer?
 	private var currentTargetFramesPerSecond: Int?
 	private var lastTickUptime: TimeInterval?
 
@@ -383,25 +493,21 @@ final class LiveFrameClockDriver: @unchecked Sendable {
 		}
 
 		stop()
-		let timer = DispatchSource.makeTimerSource(queue: .main)
-		let intervalNanoseconds = max(
-			1,
-			Int((1_000_000_000.0 / Double(sanitizedTarget)).rounded())
-		)
-		timer.schedule(
-			deadline: .now(),
-			repeating: .nanoseconds(intervalNanoseconds),
-			leeway: .nanoseconds(0)
-		)
-		timer.setEventHandler { [weak self] in
+		let timer = Timer(
+			timeInterval: NativeHostDisplayRefresh.timerInterval(
+				forTargetFramesPerSecond: sanitizedTarget),
+			repeats: true
+		) { [weak self] _ in
 			self?.tick()
 		}
+		timer.tolerance = 0
 		stateLock.lock()
 		self.timer = timer
 		currentTargetFramesPerSecond = sanitizedTarget
 		lastTickUptime = nil
 		stateLock.unlock()
-		timer.resume()
+		RunLoop.main.add(timer, forMode: .common)
+		timer.fire()
 	}
 
 	private func tick() {
@@ -428,7 +534,7 @@ final class LiveFrameClockDriver: @unchecked Sendable {
 		currentTargetFramesPerSecond = nil
 		lastTickUptime = nil
 		stateLock.unlock()
-		timer.cancel()
+		timer.invalidate()
 	}
 
 	deinit {
@@ -442,10 +548,16 @@ private final class SelectionFlowBandLayer: CALayer {
 		let progress: CGFloat
 	}
 
+	private struct Geometry {
+		let focusRect: CGRect
+		let samples: [SamplePoint]
+		let normals: [CGVector]
+	}
+
 	private static let cornerRadius: CGFloat = 9.0
-	private static let minSegments = 160
-	private static let maxSegments = 1_536
-	private static let sampleStep: CGFloat = 3.2
+	private static let minSegments = 64
+	private static let maxSegments = 256
+	private static let sampleStep: CGFloat = 12.0
 	private static let speed: CGFloat = 0.24
 	private static let bandWidth: CGFloat = 0.06
 	private static let flowBoost: CGFloat = 2.8
@@ -456,7 +568,11 @@ private final class SelectionFlowBandLayer: CALayer {
 		(228.0 / 255.0, 198.0 / 255.0, 1.0),
 		(176.0 / 255.0, 244.0 / 255.0, 224.0 / 255.0),
 	]
-	private static let lightPalette = darkPalette
+	private static let lightPalette: [(CGFloat, CGFloat, CGFloat)] = [
+		(0.0 / 255.0, 104.0 / 255.0, 226.0 / 255.0),
+		(124.0 / 255.0, 54.0 / 255.0, 214.0 / 255.0),
+		(0.0 / 255.0, 128.0 / 255.0, 104.0 / 255.0),
+	]
 	private static let passes: [(width: CGFloat, alphaScale: CGFloat)] = [
 		(2.4, 0.52)
 	]
@@ -464,6 +580,7 @@ private final class SelectionFlowBandLayer: CALayer {
 	private var focusRect: CGRect = .null
 	private var theme: CaptureChromeTheme = .dark
 	private var phase: CGFloat = 0
+	private var cachedGeometry: Geometry?
 
 	override init() {
 		super.init()
@@ -492,6 +609,7 @@ private final class SelectionFlowBandLayer: CALayer {
 		}
 		isHidden = true
 		focusRect = .null
+		cachedGeometry = nil
 	}
 
 	func update(
@@ -503,6 +621,10 @@ private final class SelectionFlowBandLayer: CALayer {
 	) {
 		self.frame = frame
 		self.contentsScale = contentsScale
+		rasterizationScale = contentsScale
+		if self.focusRect != focusRect {
+			cachedGeometry = nil
+		}
 		self.focusRect = focusRect
 		self.theme = theme
 		phase = CGFloat(timestamp) * Self.speed * Self.phaseMultiplier + Self.phaseOffset
@@ -514,22 +636,9 @@ private final class SelectionFlowBandLayer: CALayer {
 		guard !focusRect.isNull else {
 			return
 		}
-		let cornerRadius = selectionFlowCornerRadius(for: focusRect)
-		let perimeter = selectionFlowPerimeter(for: focusRect, cornerRadius: cornerRadius)
-		let sampleCount = selectionFlowSampleCount(for: perimeter)
-		let seamOffset: CGFloat
-		if focusRect.width > cornerRadius * 2 {
-			seamOffset = (focusRect.width - cornerRadius * 2) * 0.5
-		} else {
-			seamOffset = 0
-		}
-		let samples = selectionFlowSamples(
-			for: focusRect,
-			cornerRadius: cornerRadius,
-			sampleCount: sampleCount,
-			startOffset: seamOffset
-		)
-		let normals = selectionFlowNormals(for: samples)
+		let geometry = selectionFlowGeometry()
+		let samples = geometry.samples
+		let normals = geometry.normals
 		guard samples.count > 1, normals.count == samples.count else {
 			return
 		}
@@ -552,30 +661,37 @@ private final class SelectionFlowBandLayer: CALayer {
 				)
 				let currentIntensity = Self.flowBoost * currentMovement
 				let nextIntensity = Self.flowBoost * nextMovement
-				let currentColor = selectionFlowColor(
+				guard max(currentIntensity, nextIntensity) > 0.002 else {
+					continue
+				}
+				let currentColor = selectionFlowColorComponents(
 					progress: current.progress + phase,
 					alphaScale: pass.alphaScale,
 					intensity: currentIntensity
 				)
-				let nextColor = selectionFlowColor(
+				let nextColor = selectionFlowColorComponents(
 					progress: next.progress + phase,
 					alphaScale: pass.alphaScale,
 					intensity: nextIntensity
 				)
-				let color = averagedColor(currentColor, nextColor)
-				if color.alphaComponent <= 0.002 {
+				let color = averagedColorComponents(currentColor, nextColor)
+				if color.alpha <= 0.002 {
 					continue
 				}
 				let currentNormal = scaledVector(normals[index], by: half)
 				let nextNormal = scaledVector(normals[(index + 1) % normals.count], by: half)
-				let quad = CGMutablePath()
-				quad.move(to: offset(current.point, by: currentNormal))
-				quad.addLine(to: offset(next.point, by: nextNormal))
-				quad.addLine(to: offset(next.point, by: scaledVector(nextNormal, by: -1)))
-				quad.addLine(to: offset(current.point, by: scaledVector(currentNormal, by: -1)))
-				quad.closeSubpath()
-				ctx.setFillColor(color.cgColor)
-				ctx.addPath(quad)
+				ctx.setFillColor(
+					red: color.red,
+					green: color.green,
+					blue: color.blue,
+					alpha: color.alpha
+				)
+				ctx.beginPath()
+				ctx.move(to: offset(current.point, by: currentNormal))
+				ctx.addLine(to: offset(next.point, by: nextNormal))
+				ctx.addLine(to: offset(next.point, by: scaledVector(nextNormal, by: -1)))
+				ctx.addLine(to: offset(current.point, by: scaledVector(currentNormal, by: -1)))
+				ctx.closePath()
 				ctx.fillPath()
 			}
 		}
@@ -599,6 +715,34 @@ private final class SelectionFlowBandLayer: CALayer {
 		return min(max(byStep, Self.minSegments), Self.maxSegments)
 	}
 
+	private func selectionFlowGeometry() -> Geometry {
+		if let cachedGeometry, cachedGeometry.focusRect == focusRect {
+			return cachedGeometry
+		}
+		let cornerRadius = selectionFlowCornerRadius(for: focusRect)
+		let perimeter = selectionFlowPerimeter(for: focusRect, cornerRadius: cornerRadius)
+		let sampleCount = selectionFlowSampleCount(for: perimeter)
+		let seamOffset: CGFloat
+		if focusRect.width > cornerRadius * 2 {
+			seamOffset = (focusRect.width - cornerRadius * 2) * 0.5
+		} else {
+			seamOffset = 0
+		}
+		let samples = selectionFlowSamples(
+			for: focusRect,
+			cornerRadius: cornerRadius,
+			sampleCount: sampleCount,
+			startOffset: seamOffset
+		)
+		let geometry = Geometry(
+			focusRect: focusRect,
+			samples: samples,
+			normals: selectionFlowNormals(for: samples)
+		)
+		cachedGeometry = geometry
+		return geometry
+	}
+
 	private func selectionFlowBand(
 		progress: CGFloat,
 		phase: CGFloat,
@@ -612,11 +756,11 @@ private final class SelectionFlowBandLayer: CALayer {
 		return pow(1 - normalized, 2)
 	}
 
-	private func selectionFlowColor(
+	private func selectionFlowColorComponents(
 		progress: CGFloat,
 		alphaScale: CGFloat,
 		intensity: CGFloat
-	) -> NSColor {
+	) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
 		let palette = theme == .dark ? Self.darkPalette : Self.lightPalette
 		let normalized =
 			progress.truncatingRemainder(dividingBy: 1) >= 0
@@ -629,7 +773,7 @@ private final class SelectionFlowBandLayer: CALayer {
 		let next = palette[(bandIndex + 1) % palette.count]
 		let blend = { (lhs: CGFloat, rhs: CGFloat) in lhs + (rhs - lhs) * local }
 		let alpha = min(max(alphaScale * intensity, 0), 1)
-		return NSColor(
+		return (
 			red: blend(current.0, next.0),
 			green: blend(current.1, next.1),
 			blue: blend(current.2, next.2),
@@ -831,14 +975,15 @@ private final class SelectionFlowBandLayer: CALayer {
 		return CGPoint(x: x0 + cornerRadius, y: y0)
 	}
 
-	private func averagedColor(_ lhs: NSColor, _ rhs: NSColor) -> NSColor {
-		let left = lhs.usingColorSpace(.deviceRGB) ?? lhs
-		let right = rhs.usingColorSpace(.deviceRGB) ?? rhs
-		return NSColor(
-			red: (left.redComponent + right.redComponent) * 0.5,
-			green: (left.greenComponent + right.greenComponent) * 0.5,
-			blue: (left.blueComponent + right.blueComponent) * 0.5,
-			alpha: (left.alphaComponent + right.alphaComponent) * 0.5
+	private func averagedColorComponents(
+		_ lhs: (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat),
+		_ rhs: (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat)
+	) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
+		(
+			red: (lhs.red + rhs.red) * 0.5,
+			green: (lhs.green + rhs.green) * 0.5,
+			blue: (lhs.blue + rhs.blue) * 0.5,
+			alpha: (lhs.alpha + rhs.alpha) * 0.5
 		)
 	}
 
@@ -866,7 +1011,6 @@ private final class SelectionFlowBandLayer: CALayer {
 @MainActor
 final class LiveOverlayRenderer {
 	private weak var hostView: NSView?
-	var onTick: (() -> Void)?
 	private let rootLayer = CALayer()
 	private let frozenDisplayLayer = CALayer()
 	private let topScrimLayer = CALayer()
@@ -902,14 +1046,25 @@ final class LiveOverlayRenderer {
 		"live_chrome.layer_chrome_render_duration",
 		category: "LiveChromeTelemetry"
 	)
+	private let layerChromeRenderGapMetric = NativeHostTelemetry.distribution(
+		"live_chrome.layer_chrome_render_gap",
+		category: "LiveChromeTelemetry"
+	)
+	private let activeLayerChromeRenderGapMetric = NativeHostTelemetry.distribution(
+		"live_chrome.active_layer_chrome_render_gap",
+		category: "LiveChromeTelemetry"
+	)
+	private static let activeInputWindow: TimeInterval = 0.25
 	private var snapshotProvider: (() -> LivePreviewSnapshot?)?
+	private var lastRenderedFocusRect: CGRect?
+	private var lastChromeRenderUptime: TimeInterval?
+	private var lastActiveChromeRenderUptime: TimeInterval?
 
 	init(hostView: NSView) {
 		self.hostView = hostView
 		configureLayers()
 		frameClock.onTick = { [weak self] in
-			self?.renderCurrentSnapshot()
-			self?.onTick?()
+			self?.renderFrameTick()
 		}
 	}
 
@@ -940,20 +1095,24 @@ final class LiveOverlayRenderer {
 	func stop() {
 		frameClock.stop()
 		rootLayer.isHidden = true
+		lastRenderedFocusRect = nil
+		lastChromeRenderUptime = nil
+		lastActiveChromeRenderUptime = nil
 	}
 
 	func suspend() {
 		rootLayer.isHidden = true
+		lastRenderedFocusRect = nil
+		lastChromeRenderUptime = nil
+		lastActiveChromeRenderUptime = nil
 	}
 
 	func renderNow() {
 		renderCurrentSnapshot()
-		onTick?()
 	}
 
 	func renderLiveChromeNow() {
 		renderChromeSnapshot()
-		onTick?()
 	}
 
 	private func configureLayers() {
@@ -971,6 +1130,8 @@ final class LiveOverlayRenderer {
 		hoverGlowLayer.shadowRadius = 12
 		rootLayer.addSublayer(hoverGlowLayer)
 
+		hoverFlowLayer.shouldRasterize = true
+		hoverFlowLayer.rasterizationScale = hostView?.window?.screen?.backingScaleFactor ?? 2
 		rootLayer.addSublayer(hoverFlowLayer)
 
 		dragBorderOutlineLayer.fillColor = NSColor.clear.cgColor
@@ -1005,9 +1166,33 @@ final class LiveOverlayRenderer {
 	private func renderCurrentSnapshot() {
 		guard let snapshot = snapshotProvider?() else {
 			rootLayer.isHidden = true
+			lastRenderedFocusRect = nil
+			lastChromeRenderUptime = nil
 			return
 		}
+		renderFullSnapshot(snapshot)
+	}
+
+	private func renderFrameTick() {
+		guard let snapshot = snapshotProvider?() else {
+			rootLayer.isHidden = true
+			lastRenderedFocusRect = nil
+			lastChromeRenderUptime = nil
+			return
+		}
+		let focusRect = snapshot.dragSelectionLocal ?? snapshot.hoverSelectionLocal
+		if snapshot.frozenPending || snapshot.dragSelectionLocal != nil
+			|| focusRect != lastRenderedFocusRect
+		{
+			renderFullSnapshot(snapshot)
+		} else {
+			renderChromeSnapshot(snapshot)
+		}
+	}
+
+	private func renderFullSnapshot(_ snapshot: LivePreviewSnapshot) {
 		let renderStart = ProcessInfo.processInfo.systemUptime
+		recordChromeRenderGap(at: renderStart, snapshot: snapshot)
 		defer {
 			layerRenderDurationMetric.recordMillisecondsSince(renderStart)
 		}
@@ -1017,6 +1202,7 @@ final class LiveOverlayRenderer {
 		rootLayer.frame = snapshot.bounds
 		renderFrozenDisplay(snapshot)
 		renderFocus(snapshot)
+		lastRenderedFocusRect = snapshot.dragSelectionLocal ?? snapshot.hoverSelectionLocal
 		renderHud(snapshot)
 		renderLoupe(snapshot)
 		CATransaction.commit()
@@ -1025,9 +1211,16 @@ final class LiveOverlayRenderer {
 	private func renderChromeSnapshot() {
 		guard let snapshot = snapshotProvider?() else {
 			rootLayer.isHidden = true
+			lastRenderedFocusRect = nil
+			lastChromeRenderUptime = nil
 			return
 		}
+		renderChromeSnapshot(snapshot)
+	}
+
+	private func renderChromeSnapshot(_ snapshot: LivePreviewSnapshot) {
 		let renderStart = ProcessInfo.processInfo.systemUptime
+		recordChromeRenderGap(at: renderStart, snapshot: snapshot)
 		defer {
 			layerChromeRenderDurationMetric.recordMillisecondsSince(renderStart)
 		}
@@ -1038,6 +1231,29 @@ final class LiveOverlayRenderer {
 		renderHud(snapshot)
 		renderLoupe(snapshot)
 		CATransaction.commit()
+	}
+
+	private func recordChromeRenderGap(at now: TimeInterval, snapshot: LivePreviewSnapshot) {
+		if let lastChromeRenderUptime {
+			let gapMilliseconds = (now - lastChromeRenderUptime) * 1_000
+			if gapMilliseconds >= 0, gapMilliseconds < 250 {
+				layerChromeRenderGapMetric.record(gapMilliseconds)
+			}
+		}
+		lastChromeRenderUptime = now
+		guard let inputUptime = snapshot.inputUptime,
+			now - inputUptime <= Self.activeInputWindow
+		else {
+			lastActiveChromeRenderUptime = nil
+			return
+		}
+		if let lastActiveChromeRenderUptime {
+			let activeGapMilliseconds = (now - lastActiveChromeRenderUptime) * 1_000
+			if activeGapMilliseconds >= 0, activeGapMilliseconds < 250 {
+				activeLayerChromeRenderGapMetric.record(activeGapMilliseconds)
+			}
+		}
+		lastActiveChromeRenderUptime = now
 	}
 
 	private func renderFrozenDisplay(_ snapshot: LivePreviewSnapshot) {
@@ -1353,7 +1569,7 @@ final class LiveOverlayRenderer {
 		fillLayer.frame = frame
 		fillLayer.cornerRadius = cornerRadius
 		fillLayer.backgroundColor =
-			usesExternalGlass
+			usesExternalGlass || settings.usesLiquidHudGlass
 			? NSColor.clear.cgColor
 			: CaptureChrome.effectiveBodyFill(
 				palette: palette,
