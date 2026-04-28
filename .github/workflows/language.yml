@@ -138,7 +138,7 @@ jobs:
             --strict \
             --parallel \
             native/macos-host/Sources \
-            scripts/smoke/lib/live-loupe-mouse-path.swift
+            scripts/smoke/lib/live-hud-mouse-path.swift
 
       - name: Run SwiftLint and strict build
         run: |

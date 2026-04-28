@@ -291,7 +291,7 @@ private enum MacOSWindowBlurBridge {
 }
 
 @MainActor
-private enum LiveChromeLiquidGlassBridge {
+enum LiveChromeLiquidGlassBridge {
 	static func makeGlassView() -> NSView? {
 		guard LiveChromeGlassMaterialSupport.isLiquidGlassAvailable else {
 			return nil
@@ -317,10 +317,11 @@ private enum LiveChromeLiquidGlassBridge {
 }
 
 @MainActor
-private final class LiveChromeLiquidGlassView: NSView {
+final class LiveChromeLiquidGlassView: NSView {
 	private let glassHostView: NSHostingView<AnyView>
 	private let contentContainerView = NSView(frame: .zero)
 	private weak var currentContentView: NSView?
+	private var currentSettings: NativeHostSettings?
 
 	override var isOpaque: Bool { false }
 
@@ -354,6 +355,10 @@ private final class LiveChromeLiquidGlassView: NSView {
 	}
 
 	func update(settings: NativeHostSettings) {
+		guard currentSettings != settings else {
+			return
+		}
+		currentSettings = settings
 		glassHostView.rootView = Self.makeGlassRoot(settings: settings)
 	}
 
@@ -390,7 +395,7 @@ private final class LiveChromeLiquidGlassView: NSView {
 				case .clear:
 					Glass.clear
 				}
-			glass = glass.tint(.clear).interactive(false)
+			glass = glass.tint(liquidGlassTint(settings: settings)).interactive(false)
 			return AnyView(
 				GlassEffectContainer(spacing: 0) {
 					Color.clear
@@ -398,6 +403,20 @@ private final class LiveChromeLiquidGlassView: NSView {
 						.glassEffect(glass, in: .rect(cornerRadius: CaptureChrome.hudCornerRadius))
 				}
 				.allowsHitTesting(false)
+			)
+		}
+
+		@available(macOS 26.0, *)
+		private static func liquidGlassTint(settings: NativeHostSettings) -> Color? {
+			let strength = settings.hudTint.clamped(to: 0...1)
+			guard strength > 0 else {
+				return nil
+			}
+			return Color(
+				hue: settings.hudTintHue.clamped(to: 0...1),
+				saturation: 0.48,
+				brightness: 1.0,
+				opacity: strength * 0.12
 			)
 		}
 	#endif
@@ -547,29 +566,6 @@ private final class LiveChromeOverlayWindow: NSWindow {
 			isUsingLiquidGlassContent = false
 			lastLiquidGlassStyle = nil
 		}
-	}
-
-	func moveIfPossible(frame: CGRect) -> Bool {
-		guard let lastPresentedFrame else {
-			return false
-		}
-		let roundedFrame = presentationFrame(from: frame)
-		let tolerance: CGFloat = 0.001
-		let sizeMatches =
-			abs(lastPresentedFrame.width - roundedFrame.width) <= tolerance
-			&& abs(lastPresentedFrame.height - roundedFrame.height) <= tolerance
-		guard sizeMatches else {
-			return false
-		}
-		let originChanged =
-			abs(lastPresentedFrame.minX - roundedFrame.minX) > tolerance
-			|| abs(lastPresentedFrame.minY - roundedFrame.minY) > tolerance
-		guard originChanged else {
-			return false
-		}
-		setFrameOrigin(roundedFrame.origin)
-		self.lastPresentedFrame = roundedFrame
-		return true
 	}
 
 	func hide() {
@@ -1023,11 +1019,6 @@ final class LiveChromeVisualWindowController {
 	)
 	private var lastHudLatencyInputSequence: UInt64?
 	private var lastLoupeLatencyInputSequence: UInt64?
-
-	func prepareForLivePresentation(settings: NativeHostSettings) {
-		hudWindow.prewarmForPresentation(settings: settings)
-		loupeWindow.prewarmForPresentation(settings: settings)
-	}
 
 	func update(snapshot: LiveChromeVisualSnapshot?, focusedWindowNumber: Int?) {
 		let updateStart = ProcessInfo.processInfo.systemUptime

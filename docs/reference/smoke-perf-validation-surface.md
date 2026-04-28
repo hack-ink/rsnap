@@ -33,13 +33,12 @@ overlay runtime integration tests, and scroll-capture session semantics tests.
 | `scripts/smoke/replay-scroll-capture.sh` | Script entrypoint | deterministic replay | Runs the latest recorded trace through worker-pairwise replay. |
 | `scripts/smoke/replay-scroll-capture-self-check.sh` | Script entrypoint | deterministic replay | Runs the worker-pairwise replay self-check without a user trace. |
 | `scripts/smoke/analyze-scroll-capture-trace.sh` | Script entrypoint | deterministic replay | Emits summary-only replay analysis for semantic drift triage. |
-| `scripts/smoke/live-loupe-perf-macos.sh` | Script entrypoint | live macOS smoke | Drives the remaining live-loupe desktop smoke path. |
-| `scripts/smoke/live-loupe-perf-self-check-macos.sh` | Script entrypoint | smoke readiness | Runs the live-loupe macOS environment/tooling self-check directly. |
+| `scripts/smoke/native-hud-follow-macos.sh` | Script entrypoint | live macOS smoke | Drives the default native-host HUD-follow smoke with a smooth high-rate cursor path. |
 | `scripts/smoke/self-check-macos.sh` | Script entrypoint | smoke readiness | Verifies macOS smoke tooling and replay self-check without the real GUI run. |
-| `scripts/smoke/macos.sh` | Script entrypoint | smoke aggregation | Runs the macOS live-loupe smoke plus recorded-trace replay. |
+| `scripts/smoke/macos.sh` | Script entrypoint | smoke aggregation | Runs native HUD follow plus recorded-trace replay. |
 | `scripts/perf/local.sh` | Script entrypoint | deterministic benches | Runs the committed Criterion smoke-sized benchmark sweep. |
 | `scripts/perf/self-check-macos.sh` | Script entrypoint | perf aggregation | Runs local deterministic benches plus macOS smoke readiness. |
-| `scripts/perf/macos.sh` | Script entrypoint | perf aggregation | Runs local deterministic benches plus the real macOS smoke path. |
+| `scripts/perf/macos.sh` | Script entrypoint | perf aggregation | Runs local deterministic benches plus `scripts/smoke/macos.sh`. |
 | `packages/rsnap-overlay/src/overlay/replay_support.rs` tests | Deterministic replay / bench | replay harness | Trace round-trip, replay mode selection, and summary classification. |
 | `packages/rsnap-overlay/benches/scroll_capture.rs` | Deterministic replay / bench | hot-path perf | Stable fingerprint, overlap-match, and one-step session commit baselines. |
 | `packages/rsnap-overlay/src/overlay/tests/worker_tick_runtime.rs` | Overlay runtime integration | overlay runtime | Request issuance, retry timing, backoff, and fresh-input worker scheduling. |

@@ -374,7 +374,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		hudTintColorWell.target = self
 		hudTintColorWell.action = #selector(hudTintColorChanged)
 
-		let hint = NSTextField(labelWithString: "Tint strength still uses the Tint slider.")
+		let hint = NSTextField(
+			labelWithString: "Tint strength applies to Classic and Liquid Glass.")
 		hint.font = .systemFont(ofSize: 12)
 		hint.textColor = .secondaryLabelColor
 
