@@ -10,7 +10,7 @@ Usage: macos.sh
 
 Runs the full macOS performance sequence:
   1. local deterministic benchmarks
-  2. macOS live-loupe smoke
+  2. native-host HUD-follow smoke
   3. recorded live-trace replay
 EOF
     exit 0

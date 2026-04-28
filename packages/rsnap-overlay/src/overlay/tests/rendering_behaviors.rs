@@ -3483,6 +3483,23 @@ fn render_live_capture_affordances_draw_hover_flow_when_enabled() {
 }
 
 #[test]
+fn selection_flow_light_palette_uses_lower_luminance_colors() {
+	let dark_palette = WindowRenderer::selection_flow_palette(HudTheme::Dark);
+	let light_palette = WindowRenderer::selection_flow_palette(HudTheme::Light);
+
+	assert_ne!(dark_palette, light_palette);
+
+	for &(red, green, blue) in light_palette {
+		let channel_sum = u16::from(red) + u16::from(green) + u16::from(blue);
+
+		assert!(
+			channel_sum < 430,
+			"light theme flow colors should stay visible on light backgrounds"
+		);
+	}
+}
+
+#[test]
 fn render_live_capture_affordances_draw_drag_border_when_flow_disabled() {
 	let ctx = tests::test_egui_context();
 	let layer = LayerId::new(Order::Foreground, Id::new("live-drag-flow-disabled"));

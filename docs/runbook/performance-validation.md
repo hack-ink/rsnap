@@ -30,12 +30,12 @@ Use the smallest command that matches the regression surface:
 - Scroll-capture or image-processing hot-path regressions:
   `cargo bench -p rsnap-overlay --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1`
 - Native-host live chrome regressions:
-  `scripts/perf/macos.sh`
+  `scripts/smoke/native-hud-follow-macos.sh`
 - General local deterministic performance sweep before or after a change:
   `scripts/perf/local.sh`
 - Dedicated macOS environment validation without driving the real smoke scenario:
   `scripts/perf/self-check-macos.sh`
-- Dedicated macOS end-to-end GUI performance smoke on a logged-in desktop session:
+- Full macOS performance sweep on a logged-in desktop session:
   `scripts/perf/macos.sh`
 
 `scripts/smoke/replay-scroll-capture.sh` and
@@ -53,13 +53,13 @@ worker-pairwise self-check path when no recorded user trace is available.
   - Use this for routine local comparisons and for regressions that do not require a real desktop
     session.
 - `scripts/perf/self-check-macos.sh`
-  - Runs `scripts/perf/local.sh`, then runs the live-loupe self-check plus recorded-live-trace
-    scroll-capture replay.
+  - Runs `scripts/perf/local.sh`, then runs the native HUD-follow self-check plus
+    recorded-live-trace scroll-capture replay self-check.
   - Use this to validate that the dedicated macOS environment, permissions, and smoke harness are
     ready without treating it as an end-to-end performance assertion.
 - `scripts/perf/macos.sh`
-  - Runs `scripts/perf/local.sh`, then runs the real live-loupe GUI smoke task plus recorded-live-trace
-    scroll-capture replay.
+  - Runs `scripts/perf/local.sh`, then runs `scripts/smoke/macos.sh`.
+  - That means the native-host HUD-follow smoke plus recorded-live-trace scroll-capture replay.
   - Use this only on a dedicated logged-in macOS desktop session with the expected Screen
     Recording and automation permissions.
 
@@ -100,8 +100,10 @@ Dedicated macOS smoke:
 
 - Requires a logged-in macOS desktop session.
 - Requires the expected Screen Recording and automation permissions for the smoke scripts.
-- Only covers the remaining live-loupe desktop path; scroll-capture correctness is now exercised by
-  deterministic replay.
+- Covers the native-host HUD-follow desktop path. The hard follow gate uses active pointer-movement
+  cadence (`live_chrome.active_layer_chrome_render_gap`) rather than startup, Tab-expand, or close
+  transition gaps.
+- Scroll-capture correctness is now exercised by deterministic replay.
 - Is meant for dedicated-host or manual validation, not a flaky shared-runner PR gate.
 
 ## Interpreting failures
