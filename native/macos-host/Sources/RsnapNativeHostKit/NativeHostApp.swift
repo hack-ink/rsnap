@@ -1529,7 +1529,7 @@ final class CaptureSessionController: NSObject {
 
 	private func captureFrozenSelectionImage() throws -> CGImage? {
 		let captureStartedAt = ProcessInfo.processInfo.systemUptime
-		guard let selection = try session?.currentScene().frozenSelection else {
+		guard let selection = currentFrozenSelection() else {
 			NativeHostTelemetry.frozenSelectionImageTiming(
 				captureID: currentCaptureTelemetryID,
 				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
@@ -1553,13 +1553,12 @@ final class CaptureSessionController: NSObject {
 		let ensureStartedAt = ProcessInfo.processInfo.systemUptime
 		ensureFrozenBaseImageFromDisplayIfNeeded(for: selection)
 		let ensureMilliseconds = NativeHostTelemetry.milliseconds(since: ensureStartedAt)
-		var refreshedFromBelowOverlay = false
+		var refreshedFromFrozenDisplay = false
 		var refreshMilliseconds = 0.0
 		if chromeState.frozenSelectionSnapshot != selection || chromeState.frozenBaseImage == nil {
 			let refreshStartedAt = ProcessInfo.processInfo.systemUptime
-			refreshFrozenCaptureSnapshot(for: selection)
+			refreshedFromFrozenDisplay = refreshFrozenBaseImageFromDisplay(for: selection)
 			refreshMilliseconds = NativeHostTelemetry.milliseconds(since: refreshStartedAt)
-			refreshedFromBelowOverlay = true
 		}
 		guard let baseImage = chromeState.frozenBaseImage else {
 			NativeHostTelemetry.frozenSelectionImageTiming(
@@ -1581,8 +1580,8 @@ final class CaptureSessionController: NSObject {
 		let result = compositeFrozenOverlay(on: baseImage, selection: selection) ?? baseImage
 		let compositeMilliseconds = NativeHostTelemetry.milliseconds(since: compositeStartedAt)
 		let imageSource: String
-		if refreshedFromBelowOverlay {
-			imageSource = "below_overlay_refresh"
+		if refreshedFromFrozenDisplay {
+			imageSource = "frozen_display_refresh"
 		} else if snapshotMatchedBefore, hadBaseImageBefore {
 			imageSource = "cached_base"
 		} else if hadFrozenDisplayImageBefore {
@@ -1605,21 +1604,14 @@ final class CaptureSessionController: NSObject {
 		return result
 	}
 
-	private func refreshFrozenCaptureSnapshot(for selection: CGRect) {
-		guard let overlayController else {
-			chromeState.frozenSelectionSnapshot = selection
-			chromeState.frozenBaseImage = nil
-			chromeState.frozenMosaicImage = nil
-			return
-		}
-
-		let baseImage = overlayController.captureImageBelowOverlay(
-			in: selection,
-			near: CGPoint(x: selection.midX, y: selection.midY)
-		)
+	@discardableResult
+	private func refreshFrozenBaseImageFromDisplay(for selection: CGRect) -> Bool {
+		// Export must stay tied to the latched frozen display, not the live desktop.
+		let baseImage = frozenBaseImageFromDisplay(for: selection)
 		chromeState.frozenSelectionSnapshot = selection
 		chromeState.frozenBaseImage = baseImage
 		chromeState.frozenMosaicImage = nil
+		return baseImage != nil
 	}
 
 	private func ensureFrozenBaseImageFromDisplayIfNeeded(for selection: CGRect) {
