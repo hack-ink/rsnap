@@ -1011,7 +1011,6 @@ private final class SelectionFlowBandLayer: CALayer {
 @MainActor
 final class LiveOverlayRenderer {
 	private weak var hostView: NSView?
-	var onTick: (() -> Void)?
 	private let rootLayer = CALayer()
 	private let frozenDisplayLayer = CALayer()
 	private let topScrimLayer = CALayer()
@@ -1066,7 +1065,6 @@ final class LiveOverlayRenderer {
 		configureLayers()
 		frameClock.onTick = { [weak self] in
 			self?.renderFrameTick()
-			self?.onTick?()
 		}
 	}
 
@@ -1111,12 +1109,10 @@ final class LiveOverlayRenderer {
 
 	func renderNow() {
 		renderCurrentSnapshot()
-		onTick?()
 	}
 
 	func renderLiveChromeNow() {
 		renderChromeSnapshot()
-		onTick?()
 	}
 
 	private func configureLayers() {
