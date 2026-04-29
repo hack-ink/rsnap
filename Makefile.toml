@@ -262,14 +262,19 @@ swift run --package-path native/macos-host RsnapHostBridgeProbe
 [tasks.test-macos-native-host-stage]
 workspace = false
 script = '''
-RSNAP_NATIVE_HOST_SKIP_SIGN=1 ./scripts/build_and_run.sh stage
+./scripts/build_and_run.sh stage
 COMMON_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
 APP_PATH="${RSNAP_NATIVE_HOST_STAGE_DIR:-$COMMON_ROOT/target/rsnap-native-host}/rsnap.app"
+codesign --verify --deep --strict "$APP_PATH"
+codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -q '^TeamIdentifier='
 test -x "$APP_PATH/Contents/MacOS/RsnapNativeHost"
 test -f "$APP_PATH/Contents/Info.plist"
 test -f "$APP_PATH/Contents/Resources/AppIcon.icns"
 plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist" | grep -qx 'ink.hack.rsnap'
-plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true'
+if plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist" >/dev/null 2>&1; then
+  echo "LSUIElement must stay unset so Settings is a normal foreground window" >&2
+  exit 1
+fi
 '''
 
 
