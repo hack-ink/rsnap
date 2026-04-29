@@ -36,16 +36,24 @@ product level rather than binding itself to a particular window toolkit or shell
 
 ## Required behavior
 
-1. Menubar-only app (no Dock icon) on macOS.
+1. Background app shell on macOS: no Dock icon while Settings is closed and no other ordinary app
+   window is visible. Opening Settings may temporarily use a normal app/window activation policy;
+   closing Settings must return rsnap to the background menubar shell.
 2. Global hotkey starts capture session (default `Alt+X`, macOS: Option+X) and can be customized
    from Settings.
-3. When the capture session UI is visible, underlying desktop content MUST NOT be interactive.
-4. The visible capture UI should be transparent and non-dimming by default.
-5. On macOS, rsnap overlay, HUD, loupe, frozen toolbar, and scroll preview surfaces MUST remain
+3. The status menu's New Capture item must use the configured capture shortcut. Shortcut display
+   strings must use platform-native names such as `Option-X`, not raw event names such as
+   `alt+KeyX`.
+4. The status menu must not expose Cancel Capture or Permissions entries. Capture cancellation is
+   owned by in-session input such as `Esc` and secondary click; permission recovery is owned by
+   Settings.
+5. When the capture session UI is visible, underlying desktop content MUST NOT be interactive.
+6. The visible capture UI should be transparent and non-dimming by default.
+7. On macOS, rsnap overlay, HUD, loupe, frozen toolbar, and scroll preview surfaces MUST remain
    externally capturable by system screenshot and screen-recording tools. Internal self-capture
    correctness comes from rsnap's own capture filters and handoff logic, not window content
    protection.
-6. The product contract does not require any specific platform window implementation. Focus,
+8. The product contract does not require any specific platform window implementation. Focus,
    cursor, keyboard, and IME correctness are mandatory outcomes, regardless of how the native host
    achieves them.
 
@@ -55,14 +63,18 @@ product level rather than binding itself to a particular window toolkit or shell
 - Live mode shows a HUD near the cursor with:
   - global cursor coordinates `x,y`
   - pixel color `rgb(r,g,b)` under the cursor
+- During fast pointer movement, the live HUD and loupe must remain visually coherent; they MUST
+  NOT flash through a solid white, blank, or material-only intermediate state.
 - Hovering over a window in live mode shows an obvious targeting outline that follows the current
-  target.
+  target, remains legible in light and dark themes, and does not require moving away to another
+  window before the current target becomes active.
 - Left click + drag freezes a cropped region on the cursor monitor.
 - Live drag preview begins as soon as the pointer moves away from the press point; thin captures
   down to `1x1` pixels are valid frozen selections.
 - Left click without drag hit-tests the window under the cursor on the same monitor and freezes
   that window bounds.
 - If no window is hit, the click path falls back to freezing the current monitor fullscreen.
+- Secondary click cancels capture from live mode.
 - Capture scope is single-monitor only for now. Cross-monitor region selection and cross-monitor
   window capture remain out of scope.
 
@@ -81,7 +93,7 @@ product level rather than binding itself to a particular window toolkit or shell
 
 ## Frozen mode
 
-- `Esc` cancels capture.
+- `Esc` and secondary click cancel capture.
 - `Space` copies the frozen PNG of the selected region/window/fullscreen to the system clipboard,
   then exits.
 - Cmd+S (macOS) / Ctrl+S saves the frozen PNG to disk, then exits.
@@ -103,6 +115,8 @@ product level rather than binding itself to a particular window toolkit or shell
 
 - On macOS, Frozen entry is display-first: entering Frozen mode MUST commit a display image in a
   single visible handoff instead of waiting on a later visible capture swap.
+- The live-to-Frozen handoff MUST NOT flash through a blank surface, a mask/scrim-only state, or
+  any other intermediate mode-switch artifact.
 - Frozen-mode display readiness and export readiness are separate:
   - pointer drag/reposition, pen, arrow, text, spotlight, and toolbar visibility are
     display-driven
@@ -157,7 +171,7 @@ Default settings:
 - Tint amount: `50` (stored `0.5`)
 - Hue: `215` (stored `215.0 / 360.0`)
 - Loupe activation: `Hold` (`Tab`)
-- Loupe sample size: `Medium (21x21)`
+- Loupe sample size: `Small (15x15)`
 - Toolbar placement: `Bottom`
 
 Slider semantics:

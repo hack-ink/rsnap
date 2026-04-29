@@ -1,7 +1,5 @@
 //! Public macOS live-frame sampling bridge used by the native host FFI layer.
 
-use image::imageops;
-
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect};
 
@@ -68,12 +66,12 @@ impl HostMacLiveSampler {
 	}
 
 	#[must_use]
-	/// Returns a cached RGBA region from the latest monitor frame when one is already warm.
+	/// Returns a fresh RGBA region from the live monitor stream when possible.
 	///
-	/// This does not block on a fresh capture. When the latest frame is unavailable, the
-	/// underlying stream is primed and `None` is returned.
+	/// This keeps stationary native-host color sampling responsive to animated content
+	/// without falling back to slower window-list captures.
 	pub fn peek_region_rgba(
-		&self,
+		&mut self,
 		monitor: MonitorRect,
 		origin: GlobalPoint,
 		width: u32,
@@ -82,16 +80,8 @@ impl HostMacLiveSampler {
 		let width = i32::try_from(width).ok()?;
 		let height = i32::try_from(height).ok()?;
 		let rect = monitor.clip_global_rect(origin.x, origin.y, width, height)?;
-		let snapshot = self.stream.peek_latest_rgba_snapshot(monitor)?;
 		let rect_px = monitor.local_rect_to_pixels(rect);
-		let image = imageops::crop_imm(
-			snapshot.image.as_ref(),
-			rect_px.x,
-			rect_px.y,
-			rect_px.width.max(1),
-			rect_px.height.max(1),
-		)
-		.to_image();
+		let image = self.stream.latest_rgba_region(monitor, rect_px)?;
 
 		Some(HostRgbaRegion {
 			width: image.width(),

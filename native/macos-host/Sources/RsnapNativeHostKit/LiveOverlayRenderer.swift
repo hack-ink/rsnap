@@ -92,7 +92,7 @@ final class WindowSnapshotFeed {
 		for info in candidateWindows {
 			let isOnScreen = (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false
 			let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? -1
-			if !isOnScreen || ownerPID == ownPID {
+			if !isOnScreen {
 				continue
 			}
 			let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
@@ -101,6 +101,9 @@ final class WindowSnapshotFeed {
 			}
 			let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
 			if layer < 0 || layer > maxWindowLayerForTargeting {
+				continue
+			}
+			if ownerPID == ownPID && !Self.isTargetableOwnWindow(info, layer: layer) {
 				continue
 			}
 			guard let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary else {
@@ -125,6 +128,14 @@ final class WindowSnapshotFeed {
 		return snapshots
 	}
 
+	private static func isTargetableOwnWindow(_ info: [String: Any], layer: Int) -> Bool {
+		guard layer == 0 else {
+			return false
+		}
+		let name = (info[kCGWindowName as String] as? String) ?? ""
+		return name == "Settings"
+	}
+
 	static func window(at point: CGPoint, in snapshots: [WindowSnapshot]) -> WindowSnapshot? {
 		snapshots.first(where: { $0.frame.contains(point) })
 	}
@@ -142,9 +153,11 @@ final class WindowSnapshotFeed {
 
 final class ChromeSampleFeed: @unchecked Sendable {
 	typealias BackgroundSampler = @Sendable (CGPoint, LiveColorSampleSource) -> RGBSample?
+	typealias SampleUpdated = () -> Void
 
 	private let broker: LiveFrameStreamBroker
 	private let backgroundSampler: BackgroundSampler
+	private let sampleUpdated: SampleUpdated
 	private let queue = DispatchQueue(
 		label: "ink.hack.rsnap.native-host.chrome-sample-feed", qos: .userInteractive)
 	private let backgroundQueue = DispatchQueue(
@@ -166,6 +179,10 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		batchSize: 20
 	)
 	private static let backgroundProbeMinimumInterval: TimeInterval = 0.25
+	private static let backgroundProbeIdleDelay: TimeInterval = 0.08
+	private static let sampleUpdatedNotificationIdleDelay =
+		NativeHostDisplayRefresh.frameInterval(
+			forTargetFramesPerSecond: NativeHostDisplayRefresh.fallbackFramesPerSecond)
 	private var timer: DispatchSourceTimer?
 	private var refreshQueued = false
 	private var backgroundRefreshQueued = false
@@ -179,13 +196,16 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private var latestSample: LiveChromeSample?
 	private var latestSamplePoint: CGPoint?
 	private var lastRefreshUptime: TimeInterval?
+	private var lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
 
 	init(
 		broker: LiveFrameStreamBroker,
-		backgroundSampler: @escaping BackgroundSampler
+		backgroundSampler: @escaping BackgroundSampler,
+		sampleUpdated: @escaping SampleUpdated = {}
 	) {
 		self.broker = broker
 		self.backgroundSampler = backgroundSampler
+		self.sampleUpdated = sampleUpdated
 	}
 
 	func start(targetFramesPerSecond: Int = NativeHostDisplayRefresh.targetFramesPerSecond) {
@@ -226,6 +246,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		whiteStreamRunHasProbed = false
 		lastBackgroundProbeUptime = 0
 		lastRefreshUptime = nil
+		lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
 		stateLock.unlock()
 	}
 
@@ -252,6 +273,11 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			latestSample = latestSample.map {
 				LiveChromeSample(rgbSample: $0.rgbSample, loupePatch: nil)
 			}
+		}
+		if pointChanged || sourceChanged {
+			backgroundCorrectionMode = false
+			whiteStreamRunHasProbed = false
+			lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
 		}
 		desiredPoint = point
 		desiredSidePixels = nextSidePixels
@@ -297,6 +323,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		let previousSample = latestSample
 		let previousPoint = latestSamplePoint
 		let lastRefreshUptime = self.lastRefreshUptime
+		let pointIdleDuration = now - lastPointChangeUptime
 		self.lastRefreshUptime = now
 		stateLock.unlock()
 		if let lastRefreshUptime {
@@ -325,7 +352,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			enqueueBackgroundSampleIfNeeded(
 				point: point,
 				source: source,
-				streamRgbSample: streamRgbSample
+				streamRgbSample: streamRgbSample,
+				pointIdleDuration: pointIdleDuration
 			)
 		}
 		let patchSample =
@@ -352,10 +380,22 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		previousPoint: CGPoint?,
 		point: CGPoint
 	) -> RGBSample? {
+		reusableRgbSample(
+			rgbSample: previousSample?.rgbSample,
+			previousPoint: previousPoint,
+			point: point
+		)
+	}
+
+	private static func reusableRgbSample(
+		rgbSample: RGBSample?,
+		previousPoint: CGPoint?,
+		point: CGPoint
+	) -> RGBSample? {
 		guard let previousPoint, pointsEquivalent(previousPoint, point) else {
 			return nil
 		}
-		return previousSample?.rgbSample
+		return rgbSample
 	}
 
 	private static func reusablePatchSample(
@@ -377,8 +417,12 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private func enqueueBackgroundSampleIfNeeded(
 		point: CGPoint,
 		source: LiveColorSampleSource,
-		streamRgbSample: RGBSample?
+		streamRgbSample: RGBSample?,
+		pointIdleDuration: TimeInterval
 	) {
+		guard pointIdleDuration >= Self.backgroundProbeIdleDelay else {
+			return
+		}
 		let now = ProcessInfo.processInfo.systemUptime
 		let shouldProbe: Bool
 		stateLock.lock()
@@ -430,27 +474,40 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		let startedAt = ProcessInfo.processInfo.systemUptime
 		let rgbSample = backgroundSampler(point, source)
 		backgroundSampleDurationMetric.recordMillisecondsSince(startedAt)
+		let shouldNotify: Bool
 		stateLock.lock()
 		backgroundRefreshQueued = false
-		defer {
-			stateLock.unlock()
-		}
-		guard
-			let desiredPoint,
+		if let desiredPoint,
 			let rgbSample,
 			desiredSource == source,
 			Self.pointsEquivalent(desiredPoint, point)
-		else {
-			return
+		{
+			if shouldProbeForCorrection {
+				backgroundCorrectionMode = !Self.isLikelyOverlayWhite(rgbSample)
+			}
+			latestSample = LiveChromeSample(
+				rgbSample: rgbSample,
+				loupePatch: latestSample?.loupePatch
+			)
+			latestSamplePoint = point
+			shouldNotify = Self.shouldNotifySampleUpdated(
+				now: ProcessInfo.processInfo.systemUptime,
+				lastPointChangeUptime: lastPointChangeUptime
+			)
+		} else {
+			shouldNotify = false
 		}
-		if shouldProbeForCorrection {
-			backgroundCorrectionMode = !Self.isLikelyOverlayWhite(rgbSample)
+		stateLock.unlock()
+		if shouldNotify {
+			sampleUpdated()
 		}
-		latestSample = LiveChromeSample(
-			rgbSample: rgbSample,
-			loupePatch: latestSample?.loupePatch
-		)
-		latestSamplePoint = point
+	}
+
+	private static func shouldNotifySampleUpdated(
+		now: TimeInterval,
+		lastPointChangeUptime: TimeInterval
+	) -> Bool {
+		now - lastPointChangeUptime >= sampleUpdatedNotificationIdleDelay
 	}
 
 	private static func isLikelyOverlayWhite(_ sample: RGBSample) -> Bool {
@@ -543,59 +600,94 @@ final class LiveFrameClockDriver: @unchecked Sendable {
 }
 
 private final class SelectionFlowBandLayer: CALayer {
-	private struct SamplePoint {
-		let point: CGPoint
-		let progress: CGFloat
+	private enum Edge: CaseIterable {
+		case top
+		case right
+		case bottom
+		case left
+
+		var isHorizontal: Bool {
+			self == .top || self == .bottom
+		}
+
+		var animationKeyPath: String {
+			isHorizontal ? "transform.translation.x" : "transform.translation.y"
+		}
+
+		var flowDirection: CGFloat {
+			switch self {
+			case .top, .right:
+				return 1
+			case .bottom, .left:
+				return -1
+			}
+		}
+
+		var startPoint: CGPoint {
+			isHorizontal ? CGPoint(x: 0, y: 0.5) : CGPoint(x: 0.5, y: 0)
+		}
+
+		var endPoint: CGPoint {
+			isHorizontal ? CGPoint(x: 1, y: 0.5) : CGPoint(x: 0.5, y: 1)
+		}
 	}
 
-	private struct Geometry {
-		let focusRect: CGRect
-		let samples: [SamplePoint]
-		let normals: [CGVector]
+	private final class EdgeFlowLayers {
+		let edge: Edge
+		let clipLayer = CALayer()
+		let glowLayer = CAGradientLayer()
+		let lineLayer = CAGradientLayer()
+
+		init(edge: Edge) {
+			self.edge = edge
+		}
 	}
 
-	private static let cornerRadius: CGFloat = 9.0
-	private static let minSegments = 64
-	private static let maxSegments = 256
-	private static let sampleStep: CGFloat = 12.0
-	private static let speed: CGFloat = 0.24
-	private static let bandWidth: CGFloat = 0.06
-	private static let flowBoost: CGFloat = 2.8
-	private static let phaseMultiplier: CGFloat = 1.28
-	private static let phaseOffset: CGFloat = 0.72
-	private static let darkPalette: [(CGFloat, CGFloat, CGFloat)] = [
-		(196.0 / 255.0, 226.0 / 255.0, 1.0),
-		(228.0 / 255.0, 198.0 / 255.0, 1.0),
-		(176.0 / 255.0, 244.0 / 255.0, 224.0 / 255.0),
+	private static let pathOutset: CGFloat = 1.0
+	private static let darkLineWidth: CGFloat = 1.8
+	private static let lightLineWidth: CGFloat = 1.9
+	private static let darkGlowLineWidth: CGFloat = 5.0
+	private static let lightGlowLineWidth: CGFloat = 5.25
+	private static let flowAnimationKey = "rsnap.selection-flow.edge-translation"
+	private static let flowAnimationDuration: CFTimeInterval = 2.45
+	private static let gradientPeriod: CGFloat = 260
+	private static let darkPalette: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
+		(112.0 / 255.0, 215.0 / 255.0, 1.0, 0.98),
+		(176.0 / 255.0, 154.0 / 255.0, 1.0, 0.94),
+		(110.0 / 255.0, 245.0 / 255.0, 215.0 / 255.0, 0.90),
+		(65.0 / 255.0, 150.0 / 255.0, 1.0, 0.96),
 	]
-	private static let lightPalette: [(CGFloat, CGFloat, CGFloat)] = [
-		(0.0 / 255.0, 104.0 / 255.0, 226.0 / 255.0),
-		(124.0 / 255.0, 54.0 / 255.0, 214.0 / 255.0),
-		(0.0 / 255.0, 128.0 / 255.0, 104.0 / 255.0),
-	]
-	private static let passes: [(width: CGFloat, alphaScale: CGFloat)] = [
-		(2.4, 0.52)
+	private static let lightPalette: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
+		(0.0 / 255.0, 76.0 / 255.0, 196.0 / 255.0, 1.0),
+		(83.0 / 255.0, 44.0 / 255.0, 194.0 / 255.0, 0.98),
+		(0.0 / 255.0, 113.0 / 255.0, 98.0 / 255.0, 0.98),
+		(196.0 / 255.0, 82.0 / 255.0, 0.0 / 255.0, 0.96),
 	]
 
+	private let edgeLayers: [EdgeFlowLayers]
 	private var focusRect: CGRect = .null
 	private var theme: CaptureChromeTheme = .dark
-	private var phase: CGFloat = 0
-	private var cachedGeometry: Geometry?
+	private var flowAnimating = false
 
 	override init() {
+		edgeLayers = Edge.allCases.map { EdgeFlowLayers(edge: $0) }
 		super.init()
 		contentsScale = NSScreen.main?.backingScaleFactor ?? 2
 		isOpaque = false
-		needsDisplayOnBoundsChange = true
+		allowsEdgeAntialiasing = true
+		masksToBounds = false
+		configureLayers()
 	}
 
 	override init(layer: Any) {
+		edgeLayers = Edge.allCases.map { EdgeFlowLayers(edge: $0) }
 		super.init(layer: layer)
 		if let layer = layer as? SelectionFlowBandLayer {
 			focusRect = layer.focusRect
 			theme = layer.theme
-			phase = layer.phase
+			flowAnimating = layer.flowAnimating
 		}
+		configureLayers()
 	}
 
 	@available(*, unavailable)
@@ -609,402 +701,261 @@ private final class SelectionFlowBandLayer: CALayer {
 		}
 		isHidden = true
 		focusRect = .null
-		cachedGeometry = nil
+		flowAnimating = false
+		removeFlowAnimation()
 	}
 
 	func update(
 		frame: CGRect,
 		focusRect: CGRect,
 		theme: CaptureChromeTheme,
-		timestamp: CFTimeInterval,
-		contentsScale: CGFloat
+		timestamp _: CFTimeInterval,
+		contentsScale: CGFloat,
+		animates: Bool
 	) {
+		let focusChanged = self.focusRect != focusRect
+		let themeChanged = self.theme != theme
+		let frameChanged = self.frame != frame
+		let scaleChanged = self.contentsScale != contentsScale
+		let animationChanged = flowAnimating != animates
+		let wasHidden = isHidden
 		self.frame = frame
 		self.contentsScale = contentsScale
-		rasterizationScale = contentsScale
-		if self.focusRect != focusRect {
-			cachedGeometry = nil
-		}
 		self.focusRect = focusRect
 		self.theme = theme
-		phase = CGFloat(timestamp) * Self.speed * Self.phaseMultiplier + Self.phaseOffset
-		isHidden = false
-		setNeedsDisplay()
-	}
-
-	override func draw(in ctx: CGContext) {
-		guard !focusRect.isNull else {
-			return
+		flowAnimating = animates
+		if wasHidden || focusChanged || themeChanged || frameChanged || scaleChanged {
+			updateAppearance()
 		}
-		let geometry = selectionFlowGeometry()
-		let samples = geometry.samples
-		let normals = geometry.normals
-		guard samples.count > 1, normals.count == samples.count else {
-			return
-		}
-		ctx.setAllowsAntialiasing(true)
-		ctx.setShouldAntialias(true)
-		for pass in Self.passes {
-			let half = max(pass.width * 0.5, 0.1)
-			for index in samples.indices {
-				let current = samples[index]
-				let next = samples[(index + 1) % samples.count]
-				let currentMovement = selectionFlowBand(
-					progress: current.progress,
-					phase: phase,
-					bandWidth: Self.bandWidth
-				)
-				let nextMovement = selectionFlowBand(
-					progress: next.progress,
-					phase: phase,
-					bandWidth: Self.bandWidth
-				)
-				let currentIntensity = Self.flowBoost * currentMovement
-				let nextIntensity = Self.flowBoost * nextMovement
-				guard max(currentIntensity, nextIntensity) > 0.002 else {
-					continue
-				}
-				let currentColor = selectionFlowColorComponents(
-					progress: current.progress + phase,
-					alphaScale: pass.alphaScale,
-					intensity: currentIntensity
-				)
-				let nextColor = selectionFlowColorComponents(
-					progress: next.progress + phase,
-					alphaScale: pass.alphaScale,
-					intensity: nextIntensity
-				)
-				let color = averagedColorComponents(currentColor, nextColor)
-				if color.alpha <= 0.002 {
-					continue
-				}
-				let currentNormal = scaledVector(normals[index], by: half)
-				let nextNormal = scaledVector(normals[(index + 1) % normals.count], by: half)
-				ctx.setFillColor(
-					red: color.red,
-					green: color.green,
-					blue: color.blue,
-					alpha: color.alpha
-				)
-				ctx.beginPath()
-				ctx.move(to: offset(current.point, by: currentNormal))
-				ctx.addLine(to: offset(next.point, by: nextNormal))
-				ctx.addLine(to: offset(next.point, by: scaledVector(nextNormal, by: -1)))
-				ctx.addLine(to: offset(current.point, by: scaledVector(currentNormal, by: -1)))
-				ctx.closePath()
-				ctx.fillPath()
-			}
-		}
-	}
-
-	private func selectionFlowCornerRadius(for rect: CGRect) -> CGFloat {
-		max(
-			0,
-			min(
-				Self.cornerRadius,
-				min(rect.width / 2 - 0.25, rect.height / 2 - 0.25)
-			)
-		)
-	}
-
-	private func selectionFlowSampleCount(for perimeter: CGFloat) -> Int {
-		guard perimeter > 0, perimeter.isFinite else {
-			return Self.minSegments
-		}
-		let byStep = Int(ceil(perimeter / Self.sampleStep))
-		return min(max(byStep, Self.minSegments), Self.maxSegments)
-	}
-
-	private func selectionFlowGeometry() -> Geometry {
-		if let cachedGeometry, cachedGeometry.focusRect == focusRect {
-			return cachedGeometry
-		}
-		let cornerRadius = selectionFlowCornerRadius(for: focusRect)
-		let perimeter = selectionFlowPerimeter(for: focusRect, cornerRadius: cornerRadius)
-		let sampleCount = selectionFlowSampleCount(for: perimeter)
-		let seamOffset: CGFloat
-		if focusRect.width > cornerRadius * 2 {
-			seamOffset = (focusRect.width - cornerRadius * 2) * 0.5
+		if animates {
+			isHidden = false
+			installFlowAnimation(restartsAnimation: wasHidden || animationChanged)
 		} else {
-			seamOffset = 0
+			isHidden = true
+			removeFlowAnimation()
 		}
-		let samples = selectionFlowSamples(
-			for: focusRect,
-			cornerRadius: cornerRadius,
-			sampleCount: sampleCount,
-			startOffset: seamOffset
-		)
-		let geometry = Geometry(
-			focusRect: focusRect,
-			samples: samples,
-			normals: selectionFlowNormals(for: samples)
-		)
-		cachedGeometry = geometry
-		return geometry
 	}
 
-	private func selectionFlowBand(
-		progress: CGFloat,
-		phase: CGFloat,
-		bandWidth: CGFloat
-	) -> CGFloat {
-		let width = min(max(bandWidth, 0.001), 0.5)
-		let wrapped = (progress - phase).truncatingRemainder(dividingBy: 1)
-		let distance = wrapped >= 0 ? wrapped : wrapped + 1
-		let shortest = min(distance, 1 - distance)
-		let normalized = min(shortest / width, 1)
-		return pow(1 - normalized, 2)
+	private func configureLayers() {
+		for edgeLayer in edgeLayers {
+			edgeLayer.clipLayer.masksToBounds = true
+			edgeLayer.clipLayer.allowsEdgeAntialiasing = true
+			addSublayer(edgeLayer.clipLayer)
+
+			for gradientLayer in [edgeLayer.glowLayer, edgeLayer.lineLayer] {
+				gradientLayer.type = .axial
+				gradientLayer.startPoint = edgeLayer.edge.startPoint
+				gradientLayer.endPoint = edgeLayer.edge.endPoint
+				gradientLayer.allowsEdgeAntialiasing = true
+				edgeLayer.clipLayer.addSublayer(gradientLayer)
+			}
+			edgeLayer.glowLayer.opacity = selectionFlowGlowOpacity()
+		}
 	}
 
-	private func selectionFlowColorComponents(
-		progress: CGFloat,
-		alphaScale: CGFloat,
-		intensity: CGFloat
-	) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
+	private func updateAppearance() {
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		let strokeRect = focusRect.insetBy(dx: -Self.pathOutset, dy: -Self.pathOutset)
+		for edgeLayer in edgeLayers {
+			update(edgeLayer, strokeRect: strokeRect)
+		}
+		CATransaction.commit()
+	}
+
+	private func installFlowAnimation(restartsAnimation: Bool) {
+		let hasAnimations = edgeLayers.allSatisfy {
+			$0.lineLayer.animation(forKey: Self.flowAnimationKey) != nil
+				&& $0.glowLayer.animation(forKey: Self.flowAnimationKey) != nil
+		}
+		if !restartsAnimation, hasAnimations {
+			return
+		}
+		removeFlowAnimation()
+		for edgeLayer in edgeLayers {
+			installFlowAnimation(on: edgeLayer.lineLayer, edge: edgeLayer.edge)
+			installFlowAnimation(on: edgeLayer.glowLayer, edge: edgeLayer.edge)
+		}
+	}
+
+	private func installFlowAnimation(on layer: CALayer, edge: Edge) {
+		let keyPath = edge.animationKeyPath
+		let currentOffset = (layer.presentation()?.value(forKeyPath: keyPath) as? CGFloat) ?? 0
+		let travel = edge.flowDirection * Self.gradientPeriod
+		let animation = CABasicAnimation(keyPath: keyPath)
+		animation.fromValue = currentOffset
+		animation.toValue = currentOffset + travel
+		animation.duration = Self.flowAnimationDuration
+		animation.repeatCount = .infinity
+		animation.timingFunction = CAMediaTimingFunction(name: .linear)
+		layer.add(animation, forKey: Self.flowAnimationKey)
+	}
+
+	private func removeFlowAnimation() {
+		for edgeLayer in edgeLayers {
+			edgeLayer.lineLayer.removeAnimation(forKey: Self.flowAnimationKey)
+			edgeLayer.glowLayer.removeAnimation(forKey: Self.flowAnimationKey)
+		}
+	}
+
+	private func update(_ edgeLayer: EdgeFlowLayers, strokeRect: CGRect) {
+		let lineWidth = selectionFlowLineWidth()
+		let glowWidth = selectionFlowGlowLineWidth()
+		let frame = edgeFrame(for: edgeLayer.edge, strokeRect: strokeRect, glowWidth: glowWidth)
+		edgeLayer.clipLayer.frame = pixelAligned(frame)
+		edgeLayer.clipLayer.isHidden = frame.width <= 0 || frame.height <= 0
+		edgeLayer.glowLayer.opacity = selectionFlowGlowOpacity()
+		updateGradients(edgeLayer, lineWidth: lineWidth, glowWidth: glowWidth)
+	}
+
+	private func updateGradients(
+		_ edgeLayer: EdgeFlowLayers,
+		lineWidth: CGFloat,
+		glowWidth: CGFloat
+	) {
+		let clipBounds = edgeLayer.clipLayer.bounds
+		let gradientLength =
+			(edgeLayer.edge.isHorizontal ? clipBounds.width : clipBounds.height)
+			+ Self.gradientPeriod * 2
+		let gradientFrame: CGRect
+		let lineFrame: CGRect
+		if edgeLayer.edge.isHorizontal {
+			gradientFrame = CGRect(
+				x: -Self.gradientPeriod,
+				y: 0,
+				width: gradientLength,
+				height: glowWidth
+			)
+			lineFrame = CGRect(
+				x: -Self.gradientPeriod,
+				y: (glowWidth - lineWidth) / 2,
+				width: gradientLength,
+				height: lineWidth
+			)
+		} else {
+			gradientFrame = CGRect(
+				x: 0,
+				y: -Self.gradientPeriod,
+				width: glowWidth,
+				height: gradientLength
+			)
+			lineFrame = CGRect(
+				x: (glowWidth - lineWidth) / 2,
+				y: -Self.gradientPeriod,
+				width: lineWidth,
+				height: gradientLength
+			)
+		}
+		edgeLayer.glowLayer.frame = pixelAligned(gradientFrame)
+		edgeLayer.lineLayer.frame = pixelAligned(lineFrame)
+		configureGradient(edgeLayer.glowLayer, length: gradientLength, alphaScale: 0.24)
+		configureGradient(edgeLayer.lineLayer, length: gradientLength, alphaScale: 1.0)
+	}
+
+	private func configureGradient(
+		_ gradientLayer: CAGradientLayer,
+		length: CGFloat,
+		alphaScale: CGFloat
+	) {
+		let stops = gradientStops(length: length, alphaScale: alphaScale)
+		gradientLayer.colors = stops.colors
+		gradientLayer.locations = stops.locations
+	}
+
+	private func gradientStops(
+		length: CGFloat,
+		alphaScale: CGFloat
+	) -> (colors: [CGColor], locations: [NSNumber]) {
 		let palette = theme == .dark ? Self.darkPalette : Self.lightPalette
-		let normalized =
-			progress.truncatingRemainder(dividingBy: 1) >= 0
-			? progress.truncatingRemainder(dividingBy: 1)
-			: progress.truncatingRemainder(dividingBy: 1) + 1
-		let bandPosition = normalized * CGFloat(palette.count)
-		let bandIndex = Int(floor(bandPosition)) % palette.count
-		let local = bandPosition - CGFloat(bandIndex)
-		let current = palette[bandIndex]
-		let next = palette[(bandIndex + 1) % palette.count]
-		let blend = { (lhs: CGFloat, rhs: CGFloat) in lhs + (rhs - lhs) * local }
-		let alpha = min(max(alphaScale * intensity, 0), 1)
-		return (
-			red: blend(current.0, next.0),
-			green: blend(current.1, next.1),
-			blue: blend(current.2, next.2),
-			alpha: alpha
+		let step = Self.gradientPeriod / CGFloat(palette.count)
+		let safeLength = max(length, 1)
+		var colors: [CGColor] = []
+		var locations: [NSNumber] = []
+		var distance: CGFloat = 0
+		var index = 0
+		while distance < safeLength {
+			let color = palette[index % palette.count]
+			colors.append(cgColor(from: color, alphaScale: alphaScale))
+			locations.append(NSNumber(value: Double(distance / safeLength)))
+			distance += step
+			index += 1
+		}
+		let color = palette[index % palette.count]
+		colors.append(cgColor(from: color, alphaScale: alphaScale))
+		locations.append(1)
+		return (colors, locations)
+	}
+
+	private func cgColor(
+		from color: (CGFloat, CGFloat, CGFloat, CGFloat),
+		alphaScale: CGFloat
+	) -> CGColor {
+		NSColor(
+			calibratedRed: color.0,
+			green: color.1,
+			blue: color.2,
+			alpha: min(max(color.3 * alphaScale, 0), 1)
+		).cgColor
+	}
+
+	private func edgeFrame(
+		for edge: Edge,
+		strokeRect: CGRect,
+		glowWidth: CGFloat
+	) -> CGRect {
+		let half = glowWidth / 2
+		switch edge {
+		case .top:
+			return CGRect(
+				x: strokeRect.minX - half,
+				y: strokeRect.minY - half,
+				width: strokeRect.width + glowWidth,
+				height: glowWidth
+			)
+		case .right:
+			return CGRect(
+				x: strokeRect.maxX - half,
+				y: strokeRect.minY - half,
+				width: glowWidth,
+				height: strokeRect.height + glowWidth
+			)
+		case .bottom:
+			return CGRect(
+				x: strokeRect.minX - half,
+				y: strokeRect.maxY - half,
+				width: strokeRect.width + glowWidth,
+				height: glowWidth
+			)
+		case .left:
+			return CGRect(
+				x: strokeRect.minX - half,
+				y: strokeRect.minY - half,
+				width: glowWidth,
+				height: strokeRect.height + glowWidth
+			)
+		}
+	}
+
+	private func pixelAligned(_ rect: CGRect) -> CGRect {
+		let scale = max(contentsScale, 1)
+		return CGRect(
+			x: floor(rect.minX * scale) / scale,
+			y: floor(rect.minY * scale) / scale,
+			width: ceil(rect.width * scale) / scale,
+			height: ceil(rect.height * scale) / scale
 		)
 	}
 
-	private func selectionFlowSamples(
-		for rect: CGRect,
-		cornerRadius: CGFloat,
-		sampleCount: Int,
-		startOffset: CGFloat
-	) -> [SamplePoint] {
-		let perimeter = selectionFlowPerimeter(for: rect, cornerRadius: cornerRadius)
-		guard perimeter > 0 else {
-			return []
-		}
-		let start = (startOffset / perimeter).truncatingRemainder(dividingBy: 1)
-		return (0..<sampleCount).map { index in
-			let t = (CGFloat(index) + 0.5) / CGFloat(sampleCount)
-			let progress = (t + start).truncatingRemainder(dividingBy: 1)
-			return SamplePoint(
-				point: selectionFlowPoint(
-					for: rect,
-					cornerRadius: cornerRadius,
-					distance: perimeter * progress
-				),
-				progress: t
-			)
-		}
+	private func selectionFlowLineWidth() -> CGFloat {
+		theme == .dark ? Self.darkLineWidth : Self.lightLineWidth
 	}
 
-	private func selectionFlowNormals(for samples: [SamplePoint]) -> [CGVector] {
-		let count = samples.count
-		guard count > 0 else {
-			return []
-		}
-		var normals = Array(repeating: CGVector(dx: 0, dy: 0), count: count)
-		var firstNonZero: Int?
-		for index in 0..<count {
-			let current = samples[index].point
-			let previous = samples[(index + count - 1) % count].point
-			let next = samples[(index + 1) % count].point
-			let previousTangent = CGVector(dx: current.x - previous.x, dy: current.y - previous.y)
-			let nextTangent = CGVector(dx: next.x - current.x, dy: next.y - current.y)
-			var normal = CGVector(dx: 0, dy: 0)
-			if lengthSquared(previousTangent) > CGFloat.ulpOfOne {
-				let previousLength = length(previousTangent)
-				normal.dx += -previousTangent.dy / previousLength
-				normal.dy += previousTangent.dx / previousLength
-			}
-			if lengthSquared(nextTangent) > CGFloat.ulpOfOne {
-				let nextLength = length(nextTangent)
-				normal.dx += -nextTangent.dy / nextLength
-				normal.dy += nextTangent.dx / nextLength
-			}
-			if lengthSquared(normal) <= CGFloat.ulpOfOne {
-				if lengthSquared(nextTangent) > CGFloat.ulpOfOne {
-					let nextLength = length(nextTangent)
-					normal = CGVector(
-						dx: -nextTangent.dy / nextLength, dy: nextTangent.dx / nextLength)
-				} else if lengthSquared(previousTangent) > CGFloat.ulpOfOne {
-					let previousLength = length(previousTangent)
-					normal = CGVector(
-						dx: -previousTangent.dy / previousLength,
-						dy: previousTangent.dx / previousLength)
-				}
-			}
-			if lengthSquared(normal) > CGFloat.ulpOfOne {
-				let normalized = scaledVector(normal, by: 1 / length(normal))
-				if firstNonZero == nil {
-					firstNonZero = index
-				}
-				normals[index] = normalized
-			}
-		}
-		if let firstNonZero {
-			var previous = normals[firstNonZero]
-			if lengthSquared(previous) > CGFloat.ulpOfOne {
-				for index in (firstNonZero + 1)..<count {
-					if lengthSquared(normals[index]) > CGFloat.ulpOfOne,
-						dot(normals[index], previous) < 0
-					{
-						normals[index] = scaledVector(normals[index], by: -1)
-					}
-					if lengthSquared(normals[index]) > CGFloat.ulpOfOne {
-						previous = normals[index]
-					}
-				}
-				if firstNonZero > 0 {
-					for index in stride(from: firstNonZero - 1, through: 0, by: -1) {
-						if lengthSquared(normals[index]) > CGFloat.ulpOfOne,
-							dot(normals[index], previous) < 0
-						{
-							normals[index] = scaledVector(normals[index], by: -1)
-						}
-						if lengthSquared(normals[index]) > CGFloat.ulpOfOne {
-							previous = normals[index]
-						}
-					}
-				}
-			}
-		}
-		return normals
+	private func selectionFlowGlowLineWidth() -> CGFloat {
+		theme == .dark ? Self.darkGlowLineWidth : Self.lightGlowLineWidth
 	}
 
-	private func selectionFlowPerimeter(for rect: CGRect, cornerRadius: CGFloat) -> CGFloat {
-		let edgeTop = max(rect.width - cornerRadius * 2, 0)
-		let edgeRight = max(rect.height - cornerRadius * 2, 0)
-		let cornerLength = (.pi / 2) * cornerRadius
-		return 2 * (edgeTop + edgeRight) + 4 * cornerLength
-	}
-
-	private func selectionFlowPoint(
-		for rect: CGRect,
-		cornerRadius: CGFloat,
-		distance: CGFloat
-	) -> CGPoint {
-		if cornerRadius <= .ulpOfOne {
-			let perimeter = selectionFlowPerimeter(for: rect, cornerRadius: 0)
-			let keep = distance.truncatingRemainder(dividingBy: perimeter)
-			let edgeTop = rect.width
-			let edgeRight = rect.height
-			if keep < edgeTop {
-				return CGPoint(x: rect.minX + keep, y: rect.minY)
-			}
-			if keep < edgeTop + edgeRight {
-				return CGPoint(x: rect.maxX, y: rect.minY + (keep - edgeTop))
-			}
-			if keep < edgeTop * 2 + edgeRight {
-				return CGPoint(x: rect.maxX - (keep - edgeTop - edgeRight), y: rect.maxY)
-			}
-			return CGPoint(
-				x: rect.minX,
-				y: rect.maxY - (keep - edgeTop * 2 - edgeRight)
-			)
-		}
-
-		let x0 = rect.minX
-		let x1 = rect.maxX
-		let y0 = rect.minY
-		let y1 = rect.maxY
-		let perimeter = selectionFlowPerimeter(for: rect, cornerRadius: cornerRadius)
-		var remain = distance.truncatingRemainder(dividingBy: perimeter)
-		if remain < 0 {
-			remain += perimeter
-		}
-		let edgeTop = max(rect.width - cornerRadius * 2, 0)
-		let edgeRight = max(rect.height - cornerRadius * 2, 0)
-		let cornerLength = (.pi / 2) * cornerRadius
-
-		if remain < edgeTop {
-			return CGPoint(x: x0 + cornerRadius + remain, y: y0)
-		}
-		remain -= edgeTop
-		if remain < cornerLength {
-			let angle = -(.pi / 2) + remain / cornerRadius
-			return CGPoint(
-				x: x1 - cornerRadius + cornerRadius * cos(angle),
-				y: y0 + cornerRadius + cornerRadius * sin(angle)
-			)
-		}
-		remain -= cornerLength
-		if remain < edgeRight {
-			return CGPoint(x: x1, y: y0 + cornerRadius + remain)
-		}
-		remain -= edgeRight
-		if remain < cornerLength {
-			let angle = remain / cornerRadius
-			return CGPoint(
-				x: x1 - cornerRadius + cornerRadius * cos(angle),
-				y: y1 - cornerRadius + cornerRadius * sin(angle)
-			)
-		}
-		remain -= cornerLength
-		if remain < edgeTop {
-			return CGPoint(x: x1 - cornerRadius - remain, y: y1)
-		}
-		remain -= edgeTop
-		if remain < cornerLength {
-			let angle = (.pi / 2) + remain / cornerRadius
-			return CGPoint(
-				x: x0 + cornerRadius + cornerRadius * cos(angle),
-				y: y1 - cornerRadius + cornerRadius * sin(angle)
-			)
-		}
-		remain -= cornerLength
-		if remain < edgeRight {
-			return CGPoint(x: x0, y: y1 - cornerRadius - remain)
-		}
-		remain -= edgeRight
-		if remain < cornerLength {
-			let angle = .pi + remain / cornerRadius
-			return CGPoint(
-				x: x0 + cornerRadius + cornerRadius * cos(angle),
-				y: y0 + cornerRadius + cornerRadius * sin(angle)
-			)
-		}
-		return CGPoint(x: x0 + cornerRadius, y: y0)
-	}
-
-	private func averagedColorComponents(
-		_ lhs: (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat),
-		_ rhs: (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat)
-	) -> (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
-		(
-			red: (lhs.red + rhs.red) * 0.5,
-			green: (lhs.green + rhs.green) * 0.5,
-			blue: (lhs.blue + rhs.blue) * 0.5,
-			alpha: (lhs.alpha + rhs.alpha) * 0.5
-		)
-	}
-
-	private func offset(_ point: CGPoint, by vector: CGVector) -> CGPoint {
-		CGPoint(x: point.x + vector.dx, y: point.y + vector.dy)
-	}
-
-	private func scaledVector(_ vector: CGVector, by scalar: CGFloat) -> CGVector {
-		CGVector(dx: vector.dx * scalar, dy: vector.dy * scalar)
-	}
-
-	private func dot(_ lhs: CGVector, _ rhs: CGVector) -> CGFloat {
-		lhs.dx * rhs.dx + lhs.dy * rhs.dy
-	}
-
-	private func lengthSquared(_ vector: CGVector) -> CGFloat {
-		vector.dx * vector.dx + vector.dy * vector.dy
-	}
-
-	private func length(_ vector: CGVector) -> CGFloat {
-		sqrt(lengthSquared(vector))
+	private func selectionFlowGlowOpacity() -> Float {
+		theme == .dark ? 0.30 : 0.34
 	}
 }
 
@@ -1046,6 +997,10 @@ final class LiveOverlayRenderer {
 		"live_chrome.layer_chrome_render_duration",
 		category: "LiveChromeTelemetry"
 	)
+	private let snapshotDurationMetric = NativeHostTelemetry.distribution(
+		"live_chrome.snapshot_duration",
+		category: "LiveChromeTelemetry"
+	)
 	private let layerChromeRenderGapMetric = NativeHostTelemetry.distribution(
 		"live_chrome.layer_chrome_render_gap",
 		category: "LiveChromeTelemetry"
@@ -1055,8 +1010,17 @@ final class LiveOverlayRenderer {
 		category: "LiveChromeTelemetry"
 	)
 	private static let activeInputWindow: TimeInterval = 0.25
+	private enum LayerZ {
+		static let frozenDisplay: CGFloat = 0
+		static let scrim: CGFloat = 10
+		static let selectionChrome: CGFloat = 30
+		static let selectionSize: CGFloat = 40
+		static let hudChrome: CGFloat = 1000
+	}
+
 	private var snapshotProvider: (() -> LivePreviewSnapshot?)?
 	private var lastRenderedFocusRect: CGRect?
+	private var lastRenderedFocusFlowAnimates = false
 	private var lastChromeRenderUptime: TimeInterval?
 	private var lastActiveChromeRenderUptime: TimeInterval?
 
@@ -1088,23 +1052,13 @@ final class LiveOverlayRenderer {
 		frameClock.start(targetFramesPerSecond: targetFramesPerSecond)
 	}
 
-	func stopFrameClock() {
-		frameClock.stop()
-	}
-
 	func stop() {
 		frameClock.stop()
-		rootLayer.isHidden = true
-		lastRenderedFocusRect = nil
-		lastChromeRenderUptime = nil
-		lastActiveChromeRenderUptime = nil
+		hideRootAndResetRenderState()
 	}
 
 	func suspend() {
-		rootLayer.isHidden = true
-		lastRenderedFocusRect = nil
-		lastChromeRenderUptime = nil
-		lastActiveChromeRenderUptime = nil
+		hideRootAndResetRenderState()
 	}
 
 	func renderNow() {
@@ -1115,36 +1069,56 @@ final class LiveOverlayRenderer {
 		renderChromeSnapshot()
 	}
 
+	func moveLiveChrome(hudFrame: CGRect?, loupeFrame: CGRect?) {
+		CATransaction.begin()
+		CATransaction.setDisableActions(true)
+		if let hudFrame, !hudLayer.isHidden, layerFrameNeedsUpdate(hudLayer.frame, hudFrame) {
+			hudLayer.frame = hudFrame
+		}
+		if let loupeFrame, !loupeLayer.isHidden,
+			layerFrameNeedsUpdate(loupeLayer.frame, loupeFrame)
+		{
+			loupeLayer.frame = loupeFrame
+		}
+		CATransaction.commit()
+	}
+
 	private func configureLayers() {
 		rootLayer.zPosition = 100
 		rootLayer.masksToBounds = false
 		frozenDisplayLayer.isHidden = true
+		frozenDisplayLayer.zPosition = LayerZ.frozenDisplay
 		rootLayer.addSublayer(frozenDisplayLayer)
 		for scrimLayer in [topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer] {
 			rootLayer.addSublayer(scrimLayer)
 			scrimLayer.isHidden = true
+			scrimLayer.zPosition = LayerZ.scrim
 		}
 		hoverGlowLayer.fillColor = NSColor.clear.cgColor
 		hoverGlowLayer.lineWidth = 2.25
 		hoverGlowLayer.shadowOffset = .zero
 		hoverGlowLayer.shadowRadius = 12
+		hoverGlowLayer.zPosition = LayerZ.selectionChrome
 		rootLayer.addSublayer(hoverGlowLayer)
 
-		hoverFlowLayer.shouldRasterize = true
-		hoverFlowLayer.rasterizationScale = hostView?.window?.screen?.backingScaleFactor ?? 2
+		hoverFlowLayer.zPosition = LayerZ.selectionChrome
 		rootLayer.addSublayer(hoverFlowLayer)
 
 		dragBorderOutlineLayer.fillColor = NSColor.clear.cgColor
+		dragBorderOutlineLayer.zPosition = LayerZ.selectionChrome
 		rootLayer.addSublayer(dragBorderOutlineLayer)
 
 		dragBorderLayer.fillColor = NSColor.clear.cgColor
+		dragBorderLayer.zPosition = LayerZ.selectionChrome
 		rootLayer.addSublayer(dragBorderLayer)
 
 		selectionSizeLayer.contentsScale = 2
+		selectionSizeLayer.zPosition = LayerZ.selectionSize
 		rootLayer.addSublayer(selectionSizeLayer)
 
 		for chromeLayer in [hudLayer, loupeLayer] {
 			chromeLayer.masksToBounds = false
+			chromeLayer.zPosition = LayerZ.hudChrome
 			rootLayer.addSublayer(chromeLayer)
 		}
 		for hudSublayer in [
@@ -1164,25 +1138,23 @@ final class LiveOverlayRenderer {
 	}
 
 	private func renderCurrentSnapshot() {
-		guard let snapshot = snapshotProvider?() else {
-			rootLayer.isHidden = true
-			lastRenderedFocusRect = nil
-			lastChromeRenderUptime = nil
+		guard let snapshot = currentSnapshot() else {
+			hideRootAndResetRenderState()
 			return
 		}
 		renderFullSnapshot(snapshot)
 	}
 
 	private func renderFrameTick() {
-		guard let snapshot = snapshotProvider?() else {
-			rootLayer.isHidden = true
-			lastRenderedFocusRect = nil
-			lastChromeRenderUptime = nil
+		guard let snapshot = currentSnapshot() else {
+			hideRootAndResetRenderState()
 			return
 		}
 		let focusRect = snapshot.dragSelectionLocal ?? snapshot.hoverSelectionLocal
+		let focusFlowAnimates = shouldAnimateSelectionFlow(snapshot)
 		if snapshot.frozenPending || snapshot.dragSelectionLocal != nil
 			|| focusRect != lastRenderedFocusRect
+			|| focusFlowAnimates != lastRenderedFocusFlowAnimates
 		{
 			renderFullSnapshot(snapshot)
 		} else {
@@ -1203,19 +1175,35 @@ final class LiveOverlayRenderer {
 		renderFrozenDisplay(snapshot)
 		renderFocus(snapshot)
 		lastRenderedFocusRect = snapshot.dragSelectionLocal ?? snapshot.hoverSelectionLocal
+		lastRenderedFocusFlowAnimates = shouldAnimateSelectionFlow(snapshot)
 		renderHud(snapshot)
 		renderLoupe(snapshot)
 		CATransaction.commit()
 	}
 
 	private func renderChromeSnapshot() {
-		guard let snapshot = snapshotProvider?() else {
-			rootLayer.isHidden = true
-			lastRenderedFocusRect = nil
-			lastChromeRenderUptime = nil
+		guard let snapshot = currentSnapshot() else {
+			hideRootAndResetRenderState()
 			return
 		}
 		renderChromeSnapshot(snapshot)
+	}
+
+	private func hideRootAndResetRenderState() {
+		rootLayer.isHidden = true
+		lastRenderedFocusRect = nil
+		lastRenderedFocusFlowAnimates = false
+		lastChromeRenderUptime = nil
+		lastActiveChromeRenderUptime = nil
+		hoverFlowLayer.hide()
+	}
+
+	private func currentSnapshot() -> LivePreviewSnapshot? {
+		let snapshotStart = ProcessInfo.processInfo.systemUptime
+		defer {
+			snapshotDurationMetric.recordMillisecondsSince(snapshotStart)
+		}
+		return snapshotProvider?()
 	}
 
 	private func renderChromeSnapshot(_ snapshot: LivePreviewSnapshot) {
@@ -1231,6 +1219,13 @@ final class LiveOverlayRenderer {
 		renderHud(snapshot)
 		renderLoupe(snapshot)
 		CATransaction.commit()
+	}
+
+	private func layerFrameNeedsUpdate(_ current: CGRect, _ next: CGRect) -> Bool {
+		abs(current.minX - next.minX) > 0.001
+			|| abs(current.minY - next.minY) > 0.001
+			|| abs(current.width - next.width) > 0.001
+			|| abs(current.height - next.height) > 0.001
 	}
 
 	private func recordChromeRenderGap(at now: TimeInterval, snapshot: LivePreviewSnapshot) {
@@ -1397,12 +1392,37 @@ final class LiveOverlayRenderer {
 		).cgPath
 		hoverGlowLayer.path = hoverPath
 		hoverGlowLayer.isHidden = true
+		let contentsScale = hostView?.window?.screen?.backingScaleFactor ?? 2
+		let animatesFlow = shouldAnimateSelectionFlow(snapshot)
+		let flowFrame = flowLayerFrame(for: focusRect, scale: contentsScale)
 		hoverFlowLayer.update(
-			frame: snapshot.bounds,
-			focusRect: focusRect,
+			frame: flowFrame,
+			focusRect: focusRect.offsetBy(dx: -flowFrame.minX, dy: -flowFrame.minY),
 			theme: snapshot.theme,
 			timestamp: CACurrentMediaTime(),
-			contentsScale: hostView?.window?.screen?.backingScaleFactor ?? 2
+			contentsScale: contentsScale,
+			animates: animatesFlow
+		)
+	}
+
+	private func shouldAnimateSelectionFlow(_ snapshot: LivePreviewSnapshot) -> Bool {
+		guard snapshot.dragSelectionLocal == nil, snapshot.hoverSelectionLocal != nil,
+			!snapshot.frozenPending
+		else {
+			return false
+		}
+		return true
+	}
+
+	private func flowLayerFrame(for focusRect: CGRect, scale: CGFloat) -> CGRect {
+		let outset: CGFloat = 24
+		let expanded = focusRect.insetBy(dx: -outset, dy: -outset)
+		let safeScale = max(scale, 1)
+		return CGRect(
+			x: floor(expanded.minX * safeScale) / safeScale,
+			y: floor(expanded.minY * safeScale) / safeScale,
+			width: ceil(expanded.width * safeScale) / safeScale,
+			height: ceil(expanded.height * safeScale) / safeScale
 		)
 	}
 
@@ -1549,14 +1569,14 @@ final class LiveOverlayRenderer {
 		let glassEnabled = settings.usesClassicHudGlass
 		let opacity = CaptureChrome.effectiveHudOpacity(settings: settings)
 		let hasInlineGlass = glassEnabled && glassImage != nil
-		let usesExternalGlass = glassEnabled && glassImage == nil
-		let hasGlass = hasInlineGlass || usesExternalGlass
+		let hasGlass = hasInlineGlass || glassEnabled
 
 		container.cornerRadius = cornerRadius
 		container.shadowColor = palette.shadow.cgColor
 		container.shadowOffset = .zero
 		container.shadowRadius = 10
-		container.shadowOpacity = usesExternalGlass ? 0 : Float(max(0.12, opacity * 0.75))
+		container.shadowOpacity = Float(max(0.12, opacity * 0.75))
+		container.shadowPath = boundsPath
 
 		glassLayer.frame = frame
 		glassLayer.cornerRadius = cornerRadius
@@ -1569,9 +1589,7 @@ final class LiveOverlayRenderer {
 		fillLayer.frame = frame
 		fillLayer.cornerRadius = cornerRadius
 		fillLayer.backgroundColor =
-			usesExternalGlass || settings.usesLiquidHudGlass
-			? NSColor.clear.cgColor
-			: CaptureChrome.effectiveBodyFill(
+			CaptureChrome.effectiveBodyFill(
 				palette: palette,
 				settings: settings,
 				hasGlass: hasGlass
