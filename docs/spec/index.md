@@ -56,6 +56,8 @@ Then keep the body explicit:
 
 - `docs/spec/capture-session.md` for the product-level capture-flow, Frozen-mode, and
   scroll-capture contract
+- `docs/spec/settings.md` for Settings, status-menu, shortcut, permission, Dock, and Settings
+  window behavior
 - `docs/spec/platform-host-boundary.md` for the normative ownership boundary between native hosts
   and the Rust core
 - `docs/spec/host-core-protocol.md` for the canonical reset crates and semantic host/core protocol

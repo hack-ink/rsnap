@@ -72,7 +72,7 @@ sleep 0.4
 
 osascript <<'APPLESCRIPT' >/dev/null
 tell application "System Events"
-	keystroke "x" using option down
+	key code 7 using option down
 end tell
 APPLESCRIPT
 sleep 0.2
