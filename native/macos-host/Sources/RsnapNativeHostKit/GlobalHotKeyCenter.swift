@@ -132,11 +132,7 @@ final class GlobalHotKeyCenter {
 	)
 
 	private static func parseCaptureHotKey(_ raw: String) -> HotKeyDefinition? {
-		let tokens =
-			raw
-			.split(separator: "+")
-			.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-			.filter { !$0.isEmpty }
+		let tokens = NativeHostSettings.captureHotKeyTokens(from: raw)
 		guard !tokens.isEmpty else {
 			return nil
 		}

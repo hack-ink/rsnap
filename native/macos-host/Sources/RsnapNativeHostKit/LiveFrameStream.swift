@@ -12,6 +12,8 @@ final class LiveFrameStreamBroker {
 	}
 
 	private static let primeThrottleInterval: TimeInterval = 1.0 / 120.0
+	private static let seedSampleMaxAttempts = 4
+	private static let seedSampleRetryInterval: TimeInterval = 1.0 / 120.0
 
 	private let stateLock = NSLock()
 	private var sampler: RsnapLiveSampler?
@@ -106,16 +108,19 @@ final class LiveFrameStreamBroker {
 	}
 
 	func region(in rect: CGRect) -> CGImage? {
+		guard let monitor = monitor(containing: CGPoint(x: rect.midX, y: rect.midY)) else {
+			return nil
+		}
 		stateLock.lock()
 		let sampler = self.sampler
+		let mainDisplayHeight = self.mainDisplayHeight
+		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
 		stateLock.unlock()
-		guard
-			let sampler,
-			let monitor = monitor(containing: CGPoint(x: rect.midX, y: rect.midY)),
-			let snapshot = try? sampler.peekRegion(
-				monitor: samplerMonitorSnapshot(for: monitor),
-				rect: rect
-			)
+		guard let sampler else {
+			return nil
+		}
+		let quartzRect = Self.appKitRectToQuartz(rect, mainDisplayHeight: mainDisplayHeight)
+		guard let snapshot = try? sampler.peekRegion(monitor: encodedMonitor, rect: quartzRect)
 		else {
 			return nil
 		}
@@ -162,7 +167,22 @@ final class LiveFrameStreamBroker {
 		at point: CGPoint,
 		sidePixels: Int
 	) -> LiveChromeSample? {
-		return sample(at: point, sidePixels: sidePixels)
+		var latestSample: LiveChromeSample?
+		for attempt in 0..<Self.seedSampleMaxAttempts {
+			let sample = sample(at: point, sidePixels: sidePixels)
+			if sample?.rgbSample != nil {
+				return sample
+			}
+			if sample != nil {
+				latestSample = sample
+			}
+			guard attempt + 1 < Self.seedSampleMaxAttempts else {
+				break
+			}
+			prime(at: point)
+			Thread.sleep(forTimeInterval: Self.seedSampleRetryInterval)
+		}
+		return latestSample
 	}
 
 	private func monitor(containing point: CGPoint) -> SamplerMonitor? {

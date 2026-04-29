@@ -143,6 +143,8 @@ reported = [
     "live_chrome.sample_refresh_duration",
     "live_chrome.background_sample_duration",
     "live_chrome.update_duration",
+    "live_chrome.main_queue_tick_wait",
+    "live_chrome.snapshot_duration",
     "live_chrome.layer_render_duration",
     "live_chrome.layer_chrome_render_gap",
     "live_chrome.active_layer_chrome_render_gap",

@@ -129,7 +129,7 @@ struct NativeHostSettings: Equatable {
 
 	static var defaults: NativeHostSettings {
 		NativeHostSettings(
-			captureHotkey: "alt+KeyX",
+			captureHotkey: "Option-X",
 			outputDirectory: FileManager.default.homeDirectoryForCurrentUser
 				.appendingPathComponent("Desktop", isDirectory: true),
 			outputFilenamePrefix: "rsnap",
@@ -144,7 +144,7 @@ struct NativeHostSettings: Equatable {
 			hudTint: 0.5,
 			hudTintHue: 215.0 / 360.0,
 			liquidGlassStyle: .clear,
-			loupeSampleSize: .medium
+			loupeSampleSize: .small
 		)
 	}
 
@@ -179,8 +179,93 @@ struct NativeHostSettings: Equatable {
 
 	private static func sanitizeCaptureHotkey(_ raw: String) -> String {
 		let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-		return trimmed.isEmpty ? defaults.captureHotkey : trimmed
+		guard !trimmed.isEmpty else {
+			return defaults.captureHotkey
+		}
+		return captureHotKeyPresentation(for: trimmed).displayTitle
 	}
+
+	static func captureHotKeyPresentation(for raw: String) -> CaptureHotKeyPresentation {
+		parseCaptureHotKeyPresentation(raw)
+			?? parseCaptureHotKeyPresentation(defaults.captureHotkey)
+			?? CaptureHotKeyPresentation(
+				displayTitle: "Option-X",
+				keyEquivalent: "x",
+				modifierMask: [.option])
+	}
+
+	private static func parseCaptureHotKeyPresentation(_ raw: String) -> CaptureHotKeyPresentation?
+	{
+		let tokens = captureHotKeyTokens(from: raw)
+		guard !tokens.isEmpty else {
+			return nil
+		}
+
+		var modifiers = NSEvent.ModifierFlags()
+		var keyEquivalent: String?
+		for token in tokens {
+			switch token.lowercased() {
+			case "alt", "option":
+				modifiers.insert(.option)
+			case "ctrl", "control":
+				modifiers.insert(.control)
+			case "shift":
+				modifiers.insert(.shift)
+			case "cmd", "command", "super", "meta", "win":
+				modifiers.insert(.command)
+			default:
+				keyEquivalent = normalizedMenuKeyEquivalent(for: token)
+			}
+		}
+
+		guard let keyEquivalent else {
+			return nil
+		}
+
+		var titleParts: [String] = []
+		if modifiers.contains(.control) {
+			titleParts.append("Control")
+		}
+		if modifiers.contains(.option) {
+			titleParts.append("Option")
+		}
+		if modifiers.contains(.shift) {
+			titleParts.append("Shift")
+		}
+		if modifiers.contains(.command) {
+			titleParts.append("Command")
+		}
+		titleParts.append(keyEquivalent.uppercased())
+		return CaptureHotKeyPresentation(
+			displayTitle: titleParts.joined(separator: "-"),
+			keyEquivalent: keyEquivalent,
+			modifierMask: modifiers
+		)
+	}
+
+	private static func normalizedMenuKeyEquivalent(for token: String) -> String? {
+		let normalized = token.lowercased()
+		let key = normalized.hasPrefix("key") ? String(normalized.dropFirst(3)) : normalized
+		guard key.count == 1, key.unicodeScalars.allSatisfy(\.isASCII) else {
+			return nil
+		}
+		return key
+	}
+
+	static func captureHotKeyTokens(from raw: String) -> [String] {
+		raw
+			.split { character in
+				character == "+" || character == "-"
+			}
+			.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+			.filter { !$0.isEmpty }
+	}
+}
+
+struct CaptureHotKeyPresentation: Equatable {
+	let displayTitle: String
+	let keyEquivalent: String
+	let modifierMask: NSEvent.ModifierFlags
 }
 
 enum OutputNamingPreference: String, CaseIterable {
@@ -266,11 +351,11 @@ enum LoupeSampleSizePreference: String, CaseIterable {
 	var title: String {
 		switch self {
 		case .small:
-			return "Small (15×15)"
+			return "15×15"
 		case .medium:
-			return "Medium (21×21)"
+			return "21×21"
 		case .large:
-			return "Large (31×31)"
+			return "31×31"
 		}
 	}
 

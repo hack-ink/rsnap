@@ -203,8 +203,6 @@ stage_app_bundle() {
   <string>$APP_VERSION</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_SYSTEM_VERSION</string>
-  <key>LSUIElement</key>
-  <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSPrincipalClass</key>
@@ -232,10 +230,7 @@ PLIST
 }
 
 resolve_signing_identity() {
-	local requested_identity identity_list preferred_identity=""
-	if [[ "${RSNAP_NATIVE_HOST_SKIP_SIGN:-0}" == "1" ]]; then
-		return 1
-	fi
+	local requested_identity identity_list identity
 
 	requested_identity="${RSNAP_NATIVE_HOST_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
 	identity_list="$(security find-identity -v -p codesigning 2>/dev/null || true)"
@@ -257,15 +252,7 @@ resolve_signing_identity() {
 			RESOLVED_SIGN_IDENTITY="$identity"
 			return 0
 		fi
-		if [[ -z "$preferred_identity" && -n "$identity" && "$identity" == Sign\ to\ Run\ Locally* ]]; then
-			preferred_identity="$identity"
-		fi
 	done <<<"$identity_list"
-
-	if [[ -n "$preferred_identity" ]]; then
-		RESOLVED_SIGN_IDENTITY="$preferred_identity"
-		return 0
-	fi
 
 	return 1
 }
@@ -290,20 +277,9 @@ sign_staged_app_bundle() {
 		return
 	fi
 
-	if [[ "${RSNAP_NATIVE_HOST_SKIP_SIGN:-0}" == "1" ]]; then
-		echo "warning: skipping stable codesign identity; using ad-hoc signing for $APP_BUNDLE" >&2
-		codesign \
-			--force \
-			--deep \
-			--sign - \
-			"${entitlements_arg[@]}" \
-			"$APP_BUNDLE"
-		return
-	fi
-
 	echo "error: no valid macOS codesigning identity matching \"$requested_identity\" was found." >&2
 	echo "error: import the real signing certificate or set RSNAP_NATIVE_HOST_SIGN_IDENTITY to a valid identity." >&2
-	echo "error: use RSNAP_NATIVE_HOST_SKIP_SIGN=1 only for non-persistent local staging or CI packaging." >&2
+	echo "error: rsnap native host staging requires a stable codesigning identity." >&2
 	exit 1
 }
 

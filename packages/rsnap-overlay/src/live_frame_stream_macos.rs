@@ -675,7 +675,15 @@ struct SharedLatestFrame {
 	pending_stream_filter_complete_monitor: Mutex<Option<StreamGenerationStatus>>,
 }
 impl SharedLatestFrame {
-	fn reset(&self) {
+	fn reset(&self, retired_stream: Option<StreamGenerationStatus>) {
+		match self.frames.lock() {
+			Ok(mut guard) => *guard = None,
+			Err(poisoned) => {
+				let mut guard = poisoned.into_inner();
+
+				*guard = None;
+			},
+		}
 		match self.pending_monitor.lock() {
 			Ok(mut guard) => *guard = None,
 			Err(poisoned) => {
@@ -700,14 +708,20 @@ impl SharedLatestFrame {
 				*guard = None;
 			},
 		}
-		match self.active_stream_generation.lock() {
-			Ok(mut guard) => *guard = None,
-			Err(poisoned) => {
-				let mut guard = poisoned.into_inner();
 
-				*guard = None;
-			},
+		if let Some(retired_stream) = retired_stream {
+			match self.active_stream_generation.lock() {
+				Ok(mut guard) => {
+					*guard = Some(StreamGenerationStatus::retired_after(retired_stream))
+				},
+				Err(poisoned) => {
+					let mut guard = poisoned.into_inner();
+
+					*guard = Some(StreamGenerationStatus::retired_after(retired_stream));
+				},
+			}
 		}
+
 		match self.stream_filter_status.lock() {
 			Ok(mut guard) => *guard = None,
 			Err(poisoned) => {
@@ -1250,6 +1264,14 @@ struct StreamGenerationStatus {
 	monitor_id: u32,
 	stream_generation: u64,
 }
+impl StreamGenerationStatus {
+	fn retired_after(status: Self) -> Self {
+		Self {
+			monitor_id: status.monitor_id,
+			stream_generation: status.stream_generation.wrapping_add(1),
+		}
+	}
+}
 
 struct StoreFrameOutcome {
 	completed_ensure: bool,
@@ -1522,6 +1544,25 @@ fn stream_worker_loop(
 	teardown_stream(&mut state);
 }
 
+fn handle_reset_request(
+	state: &mut Option<StreamState>,
+	last_setup_attempt_at: &mut Option<Instant>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
+) -> bool {
+	let retired_stream = state.as_ref().map(|state| StreamGenerationStatus {
+		monitor_id: state.monitor_id,
+		stream_generation: state.stream_generation,
+	});
+
+	teardown_stream(state);
+
+	*last_setup_attempt_at = None;
+
+	shared_latest_frame.reset(retired_stream);
+
+	true
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_stream_worker_request(
 	request: WorkerRequest,
@@ -1548,13 +1589,7 @@ fn handle_stream_worker_request(
 			)
 		},
 		WorkerRequest::Reset => {
-			teardown_stream(state);
-
-			*last_setup_attempt_at = None;
-
-			shared_latest_frame.reset();
-
-			true
+			handle_reset_request(state, last_setup_attempt_at, shared_latest_frame)
 		},
 		WorkerRequest::RefreshMonitor { monitor } => handle_refresh_monitor_request(
 			state,
@@ -3427,6 +3462,38 @@ mod tests {
 			shared.latest_frame_for_monitor(7).map(|frame| frame.stream_generation),
 			Some(2)
 		);
+	}
+
+	#[test]
+	fn reset_discards_cached_frames_and_rejects_retired_stream_frames() {
+		let shared = live_frame_stream_macos::SharedLatestFrame::default();
+		let pixel_buffer = test_pixel_buffer();
+		let retired_frame = live_frame_stream_macos::QueuedPixelBufferFrame {
+			frame_seq: 1,
+			stream_generation: 1,
+			captured_at: std::time::Instant::now(),
+			pixel_buffer: pixel_buffer.clone(),
+		};
+
+		shared.activate_stream_generation(7, 1);
+
+		let _ = shared.store(7, &retired_frame);
+
+		assert_eq!(
+			shared.latest_frame_for_monitor(7).map(|frame| frame.stream_generation),
+			Some(1)
+		);
+
+		shared.reset(Some(live_frame_stream_macos::StreamGenerationStatus {
+			monitor_id: 7,
+			stream_generation: 1,
+		}));
+
+		assert!(shared.latest_frame_for_monitor(7).is_none());
+
+		let _ = shared.store(7, &retired_frame);
+
+		assert!(shared.latest_frame_for_monitor(7).is_none());
 	}
 
 	#[test]
