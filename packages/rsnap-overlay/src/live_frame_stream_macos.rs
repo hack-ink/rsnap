@@ -708,6 +708,7 @@ impl SharedLatestFrame {
 				*guard = None;
 			},
 		}
+
 		if let Some(retired_stream) = retired_stream {
 			match self.active_stream_generation.lock() {
 				Ok(mut guard) => {
@@ -720,6 +721,7 @@ impl SharedLatestFrame {
 				},
 			}
 		}
+
 		match self.stream_filter_status.lock() {
 			Ok(mut guard) => *guard = None,
 			Err(poisoned) => {
@@ -1542,6 +1544,25 @@ fn stream_worker_loop(
 	teardown_stream(&mut state);
 }
 
+fn handle_reset_request(
+	state: &mut Option<StreamState>,
+	last_setup_attempt_at: &mut Option<Instant>,
+	shared_latest_frame: Arc<SharedLatestFrame>,
+) -> bool {
+	let retired_stream = state.as_ref().map(|state| StreamGenerationStatus {
+		monitor_id: state.monitor_id,
+		stream_generation: state.stream_generation,
+	});
+
+	teardown_stream(state);
+
+	*last_setup_attempt_at = None;
+
+	shared_latest_frame.reset(retired_stream);
+
+	true
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_stream_worker_request(
 	request: WorkerRequest,
@@ -1568,17 +1589,7 @@ fn handle_stream_worker_request(
 			)
 		},
 		WorkerRequest::Reset => {
-			let retired_stream = state.as_ref().map(|state| StreamGenerationStatus {
-				monitor_id: state.monitor_id,
-				stream_generation: state.stream_generation,
-			});
-			teardown_stream(state);
-
-			*last_setup_attempt_at = None;
-
-			shared_latest_frame.reset(retired_stream);
-
-			true
+			handle_reset_request(state, last_setup_attempt_at, shared_latest_frame)
 		},
 		WorkerRequest::RefreshMonitor { monitor } => handle_refresh_monitor_request(
 			state,
@@ -3465,6 +3476,7 @@ mod tests {
 		};
 
 		shared.activate_stream_generation(7, 1);
+
 		let _ = shared.store(7, &retired_frame);
 
 		assert_eq!(
