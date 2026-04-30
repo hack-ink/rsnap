@@ -548,6 +548,12 @@ final class CaptureSessionController: NSObject {
 				focusPoint: startPoint,
 				initialWindowSnapshots: initialWindowSnapshots
 			)
+			frozenFrameAuthority.start(
+				for: NSScreen.screens,
+				captureID: captureID,
+				source: "capture_overlay_visible",
+				refreshContentFilter: true
+			)
 			let overlayShowMilliseconds =
 				NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
 			(NSApp.delegate as? NativeHostApplicationController)?.window =
@@ -2755,7 +2761,7 @@ final class CaptureOverlayWindow: NSPanel {
 		isMovable = false
 		isOpaque = false
 		level = .screenSaver
-		sharingType = .none
+		sharingType = .readOnly
 		titleVisibility = .hidden
 		titlebarAppearsTransparent = true
 	}
@@ -3117,12 +3123,18 @@ final class CaptureHostView: NSView {
 		}
 		window?.disableScreenUpdatesUntilFlush()
 		window?.displayIfNeeded()
+		finishFrozenFirstDisplayHandoff()
+	}
+
+	private func finishFrozenFirstDisplayHandoff() {
 		pendingFrozenFirstDisplay = false
 		frozenFirstDisplayCompletionQueued = false
 		lastLivePreviewSnapshot = nil
 		if scene.mode != .live {
 			liveRenderer.stop()
 		}
+		needsDisplay = true
+		displayIfNeeded()
 	}
 
 	fileprivate func seedInitialState(
@@ -3209,14 +3221,7 @@ final class CaptureHostView: NSView {
 			return
 		}
 		window?.disableScreenUpdatesUntilFlush()
-		frozenFirstDisplayCompletionQueued = false
-		pendingFrozenFirstDisplay = false
-		lastLivePreviewSnapshot = nil
-		needsDisplay = true
-		displayIfNeeded()
-		if scene.mode != .live {
-			liveRenderer.stop()
-		}
+		finishFrozenFirstDisplayHandoff()
 	}
 
 	override func layout() {

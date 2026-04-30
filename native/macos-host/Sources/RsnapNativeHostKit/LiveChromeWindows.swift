@@ -371,7 +371,7 @@ private final class LiveChromeBackdropWindow: NSWindow {
 		animationBehavior = .none
 		isOpaque = false
 		level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue - 1)
-		sharingType = .none
+		sharingType = .readOnly
 		titleVisibility = .hidden
 		titlebarAppearsTransparent = true
 		orderOut(nil)
