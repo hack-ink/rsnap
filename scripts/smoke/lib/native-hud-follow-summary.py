@@ -117,7 +117,7 @@ else:
     target_hz = 120
     latest_capture_id = None
 target_budget_ms = 1_000 / target_hz
-sample_target_hz = max(target_hz, min(target_hz * 2, 120))
+sample_target_hz = 120
 display_gap_budget_ms = target_budget_ms + 1.0
 sample_gap_budget_ms = (1_000 / sample_target_hz) + 1.0
 print(

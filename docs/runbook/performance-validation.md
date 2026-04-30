@@ -31,6 +31,8 @@ Use the smallest command that matches the regression surface:
   `cargo bench -p rsnap-overlay --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1`
 - Native-host live chrome regressions:
   `scripts/smoke/native-hud-follow-macos.sh`
+- Native-host visual/material or live-to-frozen handoff regressions:
+  `scripts/smoke/native-visual-contract-macos.sh`
 - General local deterministic performance sweep before or after a change:
   `scripts/perf/local.sh`
 - Dedicated macOS environment validation without driving the real smoke scenario:
@@ -59,7 +61,8 @@ worker-pairwise self-check path when no recorded user trace is available.
     ready without treating it as an end-to-end performance assertion.
 - `scripts/perf/macos.sh`
   - Runs `scripts/perf/local.sh`, then runs `scripts/smoke/macos.sh`.
-  - That means the native-host HUD-follow smoke plus recorded-live-trace scroll-capture replay.
+  - That means the native-host HUD-follow smoke, native visual contract smoke, plus
+    recorded-live-trace scroll-capture replay.
   - Use this only on a dedicated logged-in macOS desktop session with the expected Screen
     Recording and automation permissions.
 
@@ -103,6 +106,15 @@ Dedicated macOS smoke:
 - Covers the native-host HUD-follow desktop path. The hard follow gate uses active pointer-movement
   cadence (`live_chrome.active_layer_chrome_render_gap`) rather than startup, Tab-expand, or close
   transition gaps.
+- Interpret cadence metrics by class:
+  - display-bound visual presentation metrics are gated against
+    `min(active display maximum refresh rate, 120 Hz)`, so a `60 Hz` monitor has a `16.67 ms`
+    visible-frame budget.
+  - sampling metrics such as `live_chrome.sample_refresh_gap` are gated against fixed `120 Hz`
+    / `8.33 ms` while the live HUD/loupe is active, even on a `60 Hz` monitor.
+  - live-to-frozen handoff timing is a one-shot latency path: use `snapshotSource`,
+    `snapshotWaitMs`, `presentMs`, and `frozen_first_display_handoff` together, and do not treat a
+    delayed post-latch ScreenCaptureKit frame as permission to delay the toolbar.
 - Scroll-capture correctness is now exercised by deterministic replay.
 - Is meant for dedicated-host or manual validation, not a flaky shared-runner PR gate.
 
@@ -127,6 +139,19 @@ Dedicated macOS smoke:
   regressed.
 - `scripts/perf/macos.sh` failures with healthy local benches:
   suspect live overlay cadence, desktop-session conditions, or smoke-harness environment drift.
+- `scripts/smoke/native-visual-contract-macos.sh` failures:
+  treat them as native-host visual or behavior contract regressions. The smoke runs Liquid Glass and
+  Classic Glass cases, screenshots rsnap's own frozen overlay, and verifies frozen handoff timing,
+  toolbar visibility, Liquid toolbar content draw, material selection, and that live-to-frozen did
+  not display a pending half-frame before the complete frozen UI. It also samples outside the
+  selection during release so a disappearing/reappearing scrim fails even if the final screenshot
+  looks correct. The Liquid path keeps the stricter handoff threshold; the Classic path allows a
+  wider first-frame budget because blur/material work can be heavier while still catching material
+  disappearance and gross handoff regressions. The Classic blur may settle immediately after the
+  first visible frozen toolbar frame so toolbar availability stays responsive.
+  If toolbar visibility is correct but release feels delayed, compare `snapshotWaitMs` and
+  `presentMs`: `snapshotWaitMs` indicates frame-source waiting, while `presentMs` indicates
+  synchronous frozen-frame/material installation before the first visible frozen frame.
 
 ## Related docs
 
