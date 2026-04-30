@@ -210,11 +210,12 @@ enum NativeHostTelemetry {
 		frameAgeMilliseconds: Double,
 		displayID: UInt32,
 		sequence: UInt64,
+		snapshotSource: String,
 		hadLatchToken: Bool,
 		baseReady: Bool
 	) {
 		captureTimingLogger.info(
-			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.freeze_commit totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) snapshotWaitMs=\(snapshotWaitMilliseconds, format: .fixed(precision: 2), privacy: .public) baseImageMs=\(baseImageMilliseconds, format: .fixed(precision: 2), privacy: .public) presentMs=\(presentMilliseconds, format: .fixed(precision: 2), privacy: .public) frameAgeMs=\(frameAgeMilliseconds, format: .fixed(precision: 2), privacy: .public) displayID=\(displayID, privacy: .public) sequence=\(sequence, privacy: .public) hadLatchToken=\(hadLatchToken, privacy: .public) baseReady=\(baseReady, privacy: .public)"
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.freeze_commit totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) snapshotWaitMs=\(snapshotWaitMilliseconds, format: .fixed(precision: 2), privacy: .public) baseImageMs=\(baseImageMilliseconds, format: .fixed(precision: 2), privacy: .public) presentMs=\(presentMilliseconds, format: .fixed(precision: 2), privacy: .public) frameAgeMs=\(frameAgeMilliseconds, format: .fixed(precision: 2), privacy: .public) displayID=\(displayID, privacy: .public) sequence=\(sequence, privacy: .public) snapshotSource=\(snapshotSource, privacy: .public) hadLatchToken=\(hadLatchToken, privacy: .public) baseReady=\(baseReady, privacy: .public)"
 		)
 	}
 
@@ -226,6 +227,27 @@ enum NativeHostTelemetry {
 	) {
 		captureTimingLogger.warning(
 			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.freeze_commit_failed totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) snapshotWaitMs=\(snapshotWaitMilliseconds, format: .fixed(precision: 2), privacy: .public) hadLatchToken=\(hadLatchToken, privacy: .public)"
+		)
+	}
+
+	static func frozenFirstDisplayHandoffTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		materialMilliseconds: Double,
+		liveRendererStopMilliseconds: Double,
+		displayMilliseconds: Double,
+		toolbarVisible: Bool,
+		toolbarItemCount: Int,
+		usesLiquidHudGlass: Bool,
+		usesClassicHudGlass: Bool,
+		liquidGlassAvailable: Bool,
+		frozenToolbarLiquidGlassVisible: Bool,
+		frozenToolbarLiquidGlassContentDrawn: Bool,
+		frozenSelectionEditable: Bool,
+		pendingFrameDisplayed: Bool
+	) {
+		captureTimingLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.frozen_first_display_handoff totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) materialMs=\(materialMilliseconds, format: .fixed(precision: 2), privacy: .public) liveRendererStopMs=\(liveRendererStopMilliseconds, format: .fixed(precision: 2), privacy: .public) displayMs=\(displayMilliseconds, format: .fixed(precision: 2), privacy: .public) toolbarVisible=\(toolbarVisible, privacy: .public) toolbarItemCount=\(toolbarItemCount, privacy: .public) usesLiquidHudGlass=\(usesLiquidHudGlass, privacy: .public) usesClassicHudGlass=\(usesClassicHudGlass, privacy: .public) liquidGlassAvailable=\(liquidGlassAvailable, privacy: .public) frozenToolbarLiquidGlassVisible=\(frozenToolbarLiquidGlassVisible, privacy: .public) frozenToolbarLiquidGlassContentDrawn=\(frozenToolbarLiquidGlassContentDrawn, privacy: .public) frozenSelectionEditable=\(frozenSelectionEditable, privacy: .public) pendingFrameDisplayed=\(pendingFrameDisplayed, privacy: .public)"
 		)
 	}
 

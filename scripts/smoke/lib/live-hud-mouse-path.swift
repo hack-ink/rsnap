@@ -93,6 +93,19 @@ func sleepUntil(_ deadline: UInt64) {
 	_ = mach_wait_until(deadline)
 }
 
+func writeMaskProbePhase(_ phase: String) {
+	guard let path = ProcessInfo.processInfo.environment["MASK_PROBE_PHASE_PATH"], !path.isEmpty
+	else {
+		return
+	}
+	do {
+		try phase.write(toFile: path, atomically: true, encoding: .utf8)
+	} catch {
+		fputs("failed to write mask probe phase: \(error)\n", stderr)
+		exit(1)
+	}
+}
+
 func moveSmooth(points: [CGPoint], durationMs: Int, rateHz: Int, cycles: Int) {
 	let driver = MousePathDriver()
 	let minX = points.map(\.x).min() ?? 0
@@ -119,8 +132,56 @@ func moveSmooth(points: [CGPoint], durationMs: Int, rateHz: Int, cycles: Int) {
 	}
 }
 
+func dragRegion(points: [CGPoint], durationMs: Int, rateHz: Int) {
+	let driver = MousePathDriver()
+	let start = points[0]
+	let end = points[1]
+	let sampleCount = max(2, durationMs * max(rateHz, 1) / 1_000)
+	let stepTicks = machTicks(forNanoseconds: UInt64(1_000_000_000 / max(rateHz, 1)))
+	writeMaskProbePhase("pre")
+	driver.mouseEvent(.mouseMoved, at: start)
+	sleepMs(120)
+	driver.mouseEvent(.leftMouseDown, at: start)
+	writeMaskProbePhase("dragging")
+	sleepMs(16)
+	let dragStart = mach_absolute_time()
+
+	for index in 1...sampleCount {
+		let progress = CGFloat(index) / CGFloat(sampleCount)
+		let point = CGPoint(
+			x: start.x + (end.x - start.x) * progress,
+			y: start.y + (end.y - start.y) * progress
+		)
+		driver.mouseEvent(.leftMouseDragged, at: point)
+		sleepUntil(dragStart + UInt64(index) * stepTicks)
+	}
+	driver.mouseEvent(.leftMouseUp, at: end)
+	writeMaskProbePhase("released")
+	if ProcessInfo.processInfo.environment["MASK_PROBE_PHASE_PATH"] != nil {
+		sleepMs(useconds_t(readInt("MASK_PROBE_POST_RELEASE_MS", default: 360)))
+	}
+}
+
+func clickPoint(points: [CGPoint]) {
+	let driver = MousePathDriver()
+	let point = points[0]
+	driver.mouseEvent(.mouseMoved, at: point)
+	sleepMs(120)
+	driver.mouseEvent(.leftMouseDown, at: point)
+	sleepMs(24)
+	driver.mouseEvent(.leftMouseUp, at: point)
+}
+
 let points = readPoints("PATH_POINTS")
 switch readString("PATH_MODE", default: "smooth") {
+case "click-point":
+	clickPoint(points: points)
+case "drag-region":
+	dragRegion(
+		points: points,
+		durationMs: readInt("PATH_DURATION_MS", default: 260),
+		rateHz: readInt("PATH_RATE_HZ", default: 120)
+	)
 case "waypoints":
 	moveAlong(
 		points: points,
