@@ -113,7 +113,14 @@ warm sampling, window snapshots, or overlay show timing.
 
 If the chain stops at `capture_timing.freeze_commit_failed`, inspect
 `FrozenFrameAuthority` entries for ScreenCaptureKit content lookup, stream start, or first
-frame timing.
+frame timing. On static desktops, successful freezes may report `snapshotSource=latest_unchanged`;
+that is expected when no post-latch ScreenCaptureKit frame was emitted because the excluded overlay
+was the only thing moving.
+Fast freezes should usually report `snapshotSource=authority_latest` or `live_sampler_latest`.
+Those sources mean the release handoff used an already-warm frame instead of waiting for another
+ScreenCaptureKit frame. If `snapshotSource=window_list_below_overlay` appears in release-handoff
+telemetry, treat it as a regression: full-monitor window-list capture is too slow and visually
+inconsistent for the first frozen frame.
 
 If `capture_timing.copy_capture` is slow, compare `captureImageMs`, `makeImageMs`, and
 `writePasteboardMs` before changing capture code.

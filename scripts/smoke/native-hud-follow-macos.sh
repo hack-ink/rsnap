@@ -21,7 +21,7 @@ Useful overrides:
   PATH_RATE_HZ=120                 smooth path event rate
   PATH_DURATION_MS=2500            smooth path duration
   PATH_CYCLES=3                    smooth path lissajous cycles
-  HUD_FOLLOW_CASES=hud,loupe       run collapsed HUD and expanded loupe phases
+  HUD_FOLLOW_CASES=hud,loupe       run collapsed HUD and expanded loupe cases
   MAX_SAMPLE_REFRESH_GAP_P95_MS    default: pointer/sample target budget + 1ms
   MAX_ACTIVE_LAYER_CHROME_RENDER_GAP_P95_MS default: active display target budget + 1ms
   MAX_LAYER_CHROME_RENDER_DURATION_P95_MS default: active display target budget
@@ -64,19 +64,8 @@ HUD_FOLLOW_CASES="${USER_HUD_FOLLOW_CASES:-hud,loupe}"
 OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0.35}"
 POST_PATH_SETTLE_S="${POST_PATH_SETTLE_S:-0.6}"
 POST_CLOSE_SETTLE_S="${POST_CLOSE_SETTLE_S:-0.25}"
-RSNAP_TELEMETRY_LAST="${RSNAP_TELEMETRY_LAST:-3m}"
+RSNAP_TELEMETRY_LAST="${RSNAP_TELEMETRY_LAST:-10s}"
 export PATH_MODE PATH_DRIVER PATH_DURATION_MS PATH_RATE_HZ PATH_CYCLES RSNAP_TELEMETRY_LAST
-
-"$ROOT_DIR/scripts/build_and_run.sh" verify >/tmp/rsnap-native-hud-follow-build.out
-sleep 0.4
-
-osascript <<'APPLESCRIPT' >/dev/null
-tell application "System Events"
-	key code 7 using option down
-end tell
-APPLESCRIPT
-sleep 0.2
-live_hud_focus_rsnap_overlay
 
 if [[ -z "$DISPLAY_BOUNDS" ]]; then
 	DISPLAY_BOUNDS="$(live_hud_read_main_display_bounds | tr -d ' ')"
@@ -90,17 +79,33 @@ echo "[smoke] path mode: $PATH_MODE driver=$PATH_DRIVER rate_hz=$PATH_RATE_HZ du
 echo "[smoke] cases: $HUD_FOLLOW_CASES"
 echo "[smoke] path points: $PATH_POINTS"
 
-sleep "$OVERLAY_SETTLE_S"
-IFS=',' read -r -a HUD_FOLLOW_CASE_ARRAY <<<"$HUD_FOLLOW_CASES"
-for case_name in "${HUD_FOLLOW_CASE_ARRAY[@]}"; do
-	case_name="$(echo "$case_name" | tr -d '[:space:]')"
+press_capture_hotkey() {
+	osascript <<'APPLESCRIPT' >/dev/null
+tell application "System Events"
+	key code 7 using option down
+end tell
+APPLESCRIPT
+}
+
+run_hud_follow_case() {
+	local case_name="$1"
+
+	"$ROOT_DIR/scripts/build_and_run.sh" verify >/tmp/rsnap-native-hud-follow-build.out
+	sleep 1.0
+	press_capture_hotkey
+	sleep 0.4
+	press_capture_hotkey
+	sleep 0.2
+	live_hud_focus_rsnap_overlay
+	sleep "$OVERLAY_SETTLE_S"
+
 	case "$case_name" in
 		hud)
-			echo "[smoke] phase: hud"
+			echo "[smoke] case: hud"
 			live_hud_run_mouse_path
 			;;
 		loupe)
-			echo "[smoke] phase: loupe"
+			echo "[smoke] case: loupe"
 			live_hud_focus_rsnap_overlay
 			live_hud_press_tab
 			# Let the loupe patch populate once before testing expanded HUD rendering.
@@ -108,19 +113,26 @@ for case_name in "${HUD_FOLLOW_CASE_ARRAY[@]}"; do
 			live_hud_run_mouse_path
 			;;
 		"")
+			return 0
 			;;
 		*)
 			echo "unknown HUD follow case: $case_name" >&2
 			exit 2
 			;;
 	esac
-done
-sleep "$POST_PATH_SETTLE_S"
-live_hud_focus_rsnap_overlay
-live_hud_press_escape >/dev/null 2>&1 || true
-sleep "$POST_CLOSE_SETTLE_S"
+	sleep "$POST_PATH_SETTLE_S"
+	live_hud_focus_rsnap_overlay
+	live_hud_press_escape >/dev/null 2>&1 || true
+	sleep "$POST_CLOSE_SETTLE_S"
 
-OUT_DIR="$("$ROOT_DIR/scripts/telemetry/native-host.sh" collect)"
-echo "[smoke] telemetry: $OUT_DIR"
-python3 "$SCRIPT_DIR/lib/native-hud-follow-summary.py" "$OUT_DIR/all.log"
+	OUT_DIR="$("$ROOT_DIR/scripts/telemetry/native-host.sh" collect)"
+	echo "[smoke] telemetry: $OUT_DIR"
+	python3 "$SCRIPT_DIR/lib/native-hud-follow-summary.py" "$OUT_DIR/all.log"
+}
+
+IFS=',' read -r -a HUD_FOLLOW_CASE_ARRAY <<<"$HUD_FOLLOW_CASES"
+for case_name in "${HUD_FOLLOW_CASE_ARRAY[@]}"; do
+	case_name="$(echo "$case_name" | tr -d '[:space:]')"
+	run_hud_follow_case "$case_name"
+done
 echo "[smoke] PASS"

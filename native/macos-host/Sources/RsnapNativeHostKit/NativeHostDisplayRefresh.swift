@@ -20,9 +20,11 @@ enum NativeHostDisplayRefresh {
 	}
 
 	static func pointerFollowFramesPerSecond(for screen: NSScreen?) -> Int {
-		let screenFramesPerSecond = screenMaximumFramesPerSecond(screen)
-		return min(
-			maximumTargetFramesPerSecond, max(screenFramesPerSecond * 2, screenFramesPerSecond))
+		targetFramesPerSecond(for: screen)
+	}
+
+	static func samplingFramesPerSecond() -> Int {
+		maximumTargetFramesPerSecond
 	}
 
 	static func frameInterval(for screen: NSScreen?) -> TimeInterval {
