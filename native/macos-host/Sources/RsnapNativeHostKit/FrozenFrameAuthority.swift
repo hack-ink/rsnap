@@ -110,7 +110,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	private var telemetryContext = TelemetryContext(
 		captureID: 0, source: "capture", startedAtUptime: 0)
 
-	func start(for screens: [NSScreen], captureID: UInt64 = 0, source: String = "capture") {
+	func start(
+		for screens: [NSScreen],
+		captureID: UInt64 = 0,
+		source: String = "capture",
+		refreshContentFilter: Bool = false
+	) {
 		let setupStartedAt = ProcessInfo.processInfo.systemUptime
 		let targets = screens.compactMap(Self.displayTarget(for:))
 		guard !targets.isEmpty else {
@@ -123,7 +128,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		stateLock.lock()
 		let unchanged = activeDisplayIDs == targetIDs && displayTargets == nextTargets
 		displayTargets = nextTargets
-		if unchanged, !streams.isEmpty {
+		if unchanged, !streams.isEmpty, !refreshContentFilter {
 			updateTelemetryContextLocked(
 				captureID: captureID,
 				source: source,
@@ -137,7 +142,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let requestGeneration = generation
 		activeDisplayIDs = targetIDs
 		setupDisplayIDs = targetIDs
-		latestFrames = latestFrames.filter { targetIDs.contains($0.key) }
+		latestFrames =
+			refreshContentFilter ? [:] : latestFrames.filter { targetIDs.contains($0.key) }
 		updateTelemetryContextLocked(
 			captureID: captureID,
 			source: source,
