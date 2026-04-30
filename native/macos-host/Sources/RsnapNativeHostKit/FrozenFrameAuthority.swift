@@ -17,6 +17,7 @@ struct FrozenFrameSnapshot {
 	let image: CGImage
 	let sequence: UInt64
 	let capturedAtUptime: TimeInterval
+	let source: String
 
 	func ageMilliseconds(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double {
 		max(0, now - capturedAtUptime) * 1_000
@@ -127,23 +128,34 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 
 		stateLock.lock()
 		let unchanged = activeDisplayIDs == targetIDs && displayTargets == nextTargets
+		let streamsCoverTargets = Set(streams.keys) == targetIDs
+		let setupInProgressForTargets = setupDisplayIDs == targetIDs
 		displayTargets = nextTargets
-		if unchanged, !streams.isEmpty, !refreshContentFilter {
+		if unchanged, streamsCoverTargets || setupInProgressForTargets {
 			updateTelemetryContextLocked(
 				captureID: captureID,
 				source: source,
 				startedAtUptime: setupStartedAt,
 				targetIDs: targetIDs
 			)
+			let requestGeneration = generation
 			stateLock.unlock()
+			if refreshContentFilter, streamsCoverTargets {
+				refreshContentFilters(
+					for: targets,
+					generation: requestGeneration,
+					captureID: captureID,
+					source: source,
+					startedAtUptime: setupStartedAt
+				)
+			}
 			return
 		}
 		generation &+= 1
 		let requestGeneration = generation
 		activeDisplayIDs = targetIDs
 		setupDisplayIDs = targetIDs
-		latestFrames =
-			refreshContentFilter ? [:] : latestFrames.filter { targetIDs.contains($0.key) }
+		latestFrames = latestFrames.filter { targetIDs.contains($0.key) }
 		updateTelemetryContextLocked(
 			captureID: captureID,
 			source: source,
@@ -158,6 +170,22 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			staleStream.stop()
 		}
 
+		configureStreamsFromShareableContent(
+			targets: targets,
+			generation: requestGeneration,
+			captureID: captureID,
+			source: source,
+			startedAtUptime: setupStartedAt
+		)
+	}
+
+	private func configureStreamsFromShareableContent(
+		targets: [DisplayTarget],
+		generation requestGeneration: UInt64,
+		captureID: UInt64,
+		source: String,
+		startedAtUptime: TimeInterval
+	) {
 		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) {
 			[weak self] content, error in
 			guard let self else {
@@ -177,7 +205,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				NativeHostTelemetry.frozenAuthorityContentLookupTiming(
 					captureID: captureID,
 					source: source,
-					totalMilliseconds: NativeHostTelemetry.milliseconds(since: setupStartedAt),
+					totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
 					success: false,
 					displayCount: targets.count,
 					windowCount: 0
@@ -188,7 +216,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
 				captureID: captureID,
 				source: source,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: setupStartedAt),
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
 				success: true,
 				displayCount: content.displays.count,
 				windowCount: content.windows.count
@@ -199,6 +227,89 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				generation: requestGeneration,
 				captureID: captureID,
 				source: source
+			)
+		}
+	}
+
+	private func refreshContentFilters(
+		for targets: [DisplayTarget],
+		generation requestGeneration: UInt64,
+		captureID: UInt64,
+		source: String,
+		startedAtUptime: TimeInterval
+	) {
+		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) {
+			[weak self] content, error in
+			guard let self else {
+				return
+			}
+			guard self.isCurrentGeneration(requestGeneration) else {
+				return
+			}
+			guard let content else {
+				NativeHostTelemetry.frozenAuthorityWarning(
+					"frozen_authority.content_lookup_failed",
+					captureID: captureID,
+					source: source,
+					displayID: 0,
+					error: String(describing: error)
+				)
+				NativeHostTelemetry.frozenAuthorityContentLookupTiming(
+					captureID: captureID,
+					source: source,
+					totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
+					success: false,
+					displayCount: targets.count,
+					windowCount: 0
+				)
+				return
+			}
+			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
+				captureID: captureID,
+				source: source,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
+				success: true,
+				displayCount: content.displays.count,
+				windowCount: content.windows.count
+			)
+			for target in targets {
+				guard let filter = Self.contentFilter(for: target, in: content) else {
+					continue
+				}
+				self.updateContentFilter(
+					filter,
+					displayID: target.displayID,
+					generation: requestGeneration,
+					captureID: captureID,
+					source: source
+				)
+			}
+		}
+	}
+
+	private func updateContentFilter(
+		_ filter: SCContentFilter,
+		displayID: CGDirectDisplayID,
+		generation requestGeneration: UInt64,
+		captureID: UInt64,
+		source: String
+	) {
+		stateLock.lock()
+		let stream = generation == requestGeneration ? streams[displayID]?.stream : nil
+		stateLock.unlock()
+		guard let stream else {
+			return
+		}
+		stream.updateContentFilter(filter) { error in
+			guard let error else {
+				return
+			}
+			NativeHostTelemetry.frozenAuthorityWarning(
+				"frozen_authority.content_filter_update_failed",
+				captureID: captureID,
+				source: source,
+				displayID: displayID,
+				error: String(describing: error)
 			)
 		}
 	}
@@ -253,10 +364,20 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			return nil
 		}
 		let minimumSequence = token?.minSequence ?? 0
+		var source = "post_token"
 		var record = freshRecordLocked(displayID: displayID, minimumSequence: minimumSequence)
 		while record == nil, Date() < deadline {
 			stateLock.wait(until: deadline)
 			record = freshRecordLocked(displayID: displayID, minimumSequence: minimumSequence)
+		}
+		if record == nil,
+			let fallbackRecord = unchangedRecordLocked(
+				displayID: displayID,
+				minimumSequence: minimumSequence
+			)
+		{
+			record = fallbackRecord
+			source = "latest_unchanged"
 		}
 		stateLock.unlock()
 
@@ -268,7 +389,29 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			displayFrame: record.displayFrame,
 			image: image,
 			sequence: record.sequence,
-			capturedAtUptime: record.capturedAtUptime
+			capturedAtUptime: record.capturedAtUptime,
+			source: source
+		)
+	}
+
+	func latestSnapshot(containing point: CGPoint) -> FrozenFrameSnapshot? {
+		stateLock.lock()
+		let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		let record = displayID.flatMap {
+			freshRecordLocked(displayID: $0, minimumSequence: 0)
+		}
+		stateLock.unlock()
+
+		guard let record, let image = Self.makeImage(from: record.pixelBuffer) else {
+			return nil
+		}
+		return FrozenFrameSnapshot(
+			displayID: record.displayID,
+			displayFrame: record.displayFrame,
+			image: image,
+			sequence: record.sequence,
+			capturedAtUptime: record.capturedAtUptime,
+			source: "authority_latest"
 		)
 	}
 
@@ -287,6 +430,17 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		return nil
 	}
 
+	private func unchangedRecordLocked(displayID: CGDirectDisplayID, minimumSequence: UInt64)
+		-> FrameRecord?
+	{
+		guard minimumSequence > 0, let record = latestFrames[displayID],
+			record.sequence == minimumSequence
+		else {
+			return nil
+		}
+		return record
+	}
+
 	private func configureStreams(
 		content: SCShareableContent,
 		targets: [DisplayTarget],
@@ -294,26 +448,9 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		captureID: UInt64,
 		source: String
 	) {
-		let currentPID = getpid()
-		let excludedApplications = content.applications.filter { $0.processID == currentPID }
-		let excludedWindows = content.windows.filter {
-			$0.owningApplication?.processID == currentPID
-		}
-
 		for target in targets {
-			guard let display = content.displays.first(where: { $0.displayID == target.displayID })
-			else {
+			guard let filter = Self.contentFilter(for: target, in: content) else {
 				continue
-			}
-			let filter: SCContentFilter
-			if !excludedApplications.isEmpty {
-				filter = SCContentFilter(
-					display: display,
-					excludingApplications: excludedApplications,
-					exceptingWindows: []
-				)
-			} else {
-				filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
 			}
 
 			let output = FrozenFrameStreamOutput(
@@ -364,6 +501,29 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			}
 		}
 		finishSetup(generation: requestGeneration)
+	}
+
+	private static func contentFilter(
+		for target: DisplayTarget,
+		in content: SCShareableContent
+	) -> SCContentFilter? {
+		guard let display = content.displays.first(where: { $0.displayID == target.displayID })
+		else {
+			return nil
+		}
+		let currentPID = getpid()
+		let excludedApplications = content.applications.filter { $0.processID == currentPID }
+		if !excludedApplications.isEmpty {
+			return SCContentFilter(
+				display: display,
+				excludingApplications: excludedApplications,
+				exceptingWindows: []
+			)
+		}
+		let excludedWindows = content.windows.filter {
+			$0.owningApplication?.processID == currentPID
+		}
+		return SCContentFilter(display: display, excludingWindows: excludedWindows)
 	}
 
 	private func store(

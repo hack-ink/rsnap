@@ -536,7 +536,7 @@ final class LiveFrameClockDriver: @unchecked Sendable {
 		"live_chrome.frame_tick_gap",
 		category: "LiveChromeTelemetry"
 	)
-	private var timer: Timer?
+	private var timer: DispatchSourceTimer?
 	private var currentTargetFramesPerSecond: Int?
 	private var lastTickUptime: TimeInterval?
 
@@ -550,21 +550,28 @@ final class LiveFrameClockDriver: @unchecked Sendable {
 		}
 
 		stop()
-		let timer = Timer(
-			timeInterval: NativeHostDisplayRefresh.timerInterval(
-				forTargetFramesPerSecond: sanitizedTarget),
-			repeats: true
-		) { [weak self] _ in
+		let timer = DispatchSource.makeTimerSource(queue: .main)
+		let intervalNanoseconds = max(
+			1,
+			Int(
+				(NativeHostDisplayRefresh.timerInterval(
+					forTargetFramesPerSecond: sanitizedTarget) * 1_000_000_000.0)
+					.rounded())
+		)
+		timer.schedule(
+			deadline: .now(),
+			repeating: .nanoseconds(intervalNanoseconds),
+			leeway: .nanoseconds(0)
+		)
+		timer.setEventHandler { [weak self] in
 			self?.tick()
 		}
-		timer.tolerance = 0
 		stateLock.lock()
 		self.timer = timer
 		currentTargetFramesPerSecond = sanitizedTarget
 		lastTickUptime = nil
 		stateLock.unlock()
-		RunLoop.main.add(timer, forMode: .common)
-		timer.fire()
+		timer.resume()
 	}
 
 	private func tick() {
@@ -591,7 +598,7 @@ final class LiveFrameClockDriver: @unchecked Sendable {
 		currentTargetFramesPerSecond = nil
 		lastTickUptime = nil
 		stateLock.unlock()
-		timer.invalidate()
+		timer.cancel()
 	}
 
 	deinit {
@@ -1567,9 +1574,10 @@ final class LiveOverlayRenderer {
 			transform: nil
 		)
 		let glassEnabled = settings.usesClassicHudGlass
+		let hasNativeLiquidGlass = settings.usesLiquidHudGlass
 		let opacity = CaptureChrome.effectiveHudOpacity(settings: settings)
 		let hasInlineGlass = glassEnabled && glassImage != nil
-		let hasGlass = hasInlineGlass || glassEnabled
+		let hasGlass = hasInlineGlass || glassEnabled || hasNativeLiquidGlass
 
 		container.cornerRadius = cornerRadius
 		container.shadowColor = palette.shadow.cgColor

@@ -99,6 +99,14 @@ Do not encode values into the event name; emit values as fields.
 - Boolean values use `true` or `false`.
 - Pixel dimensions use `width` and `height`.
 - OS display identifiers use `displayID`.
+- Frozen capture frame provenance uses `snapshotSource`; `post_token` means ScreenCaptureKit
+  produced a frame after the frozen latch, `latest_unchanged` means no newer frame arrived
+  and the current stream's latest same-sequence frame was used for an unchanged/static desktop,
+  `authority_latest` means the frozen-authority stream's already-warm frame was used immediately
+  for the release handoff, `live_sampler_latest` means the already-warm live sampler supplied the
+  release-time monitor frame. The release handoff must not use a synchronous full-monitor
+  `CGWindowList` capture as a first-frame fallback because that path can add visible latency and
+  can differ subtly from the live ScreenCaptureKit frame in window shadow/framing treatment.
 - Rust identifiers use snake_case unless they are mirroring existing platform names.
 
 ## Capture Correlation
