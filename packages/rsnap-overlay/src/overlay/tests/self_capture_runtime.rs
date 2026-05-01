@@ -972,92 +972,102 @@ fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refre
 
 #[cfg(target_os = "macos")]
 #[test]
-fn captured_freeze_response_applies_deferred_worker_refresh() {
-	let monitor = tests::test_monitor();
-	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+fn completing_blocking_worker_response_applies_deferred_worker_refresh() {
+	fn arrange_freeze(session: &mut OverlaySession) {
+		tests::set_session_inflight_freeze_capture(session, Some(tests::test_monitor()));
+	}
 
-	tests::set_session_inflight_freeze_capture(&mut session, Some(monitor));
+	fn arrange_hit_test(session: &mut OverlaySession) {
+		session.pending_click_hit_test_request_id = Some(11);
+	}
 
-	session.pending_self_capture_exception_window_ids_worker_refresh = true;
+	fn arrange_window_list(session: &mut OverlaySession) {
+		session.window_list_refresh_inflight = true;
+	}
 
-	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::CapturedFreeze {
-		monitor,
-		image: tests::test_frozen_image(),
-		window_image: None,
-		captured_window_id: None,
-	});
+	fn arrange_png_encode(session: &mut OverlaySession) {
+		session.png_encode_inflight = true;
+	}
 
-	assert!(matches!(control, super::OverlayControl::Continue));
-	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
-}
+	fn captured_freeze_response() -> WorkerResponse {
+		WorkerResponse::CapturedFreeze {
+			monitor: tests::test_monitor(),
+			image: tests::test_frozen_image(),
+			window_image: None,
+			captured_window_id: None,
+		}
+	}
 
-#[cfg(target_os = "macos")]
-#[test]
-fn freeze_error_response_applies_deferred_worker_refresh() {
-	let monitor = tests::test_monitor();
-	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+	fn freeze_error_response() -> WorkerResponse {
+		WorkerResponse::Error {
+			source: WorkerErrorSource::FreezeCapture,
+			message: String::from("freeze failed"),
+		}
+	}
 
-	tests::set_session_inflight_freeze_capture(&mut session, Some(monitor));
+	fn hit_test_response() -> WorkerResponse {
+		WorkerResponse::HitTestWindow {
+			monitor: tests::test_monitor(),
+			point: GlobalPoint::new(24, 36),
+			request_id: 11,
+			hit: None,
+		}
+	}
 
-	session.pending_self_capture_exception_window_ids_worker_refresh = true;
+	fn window_list_response() -> WorkerResponse {
+		WorkerResponse::RefreshedWindowList {
+			snapshot: Arc::new(WindowListSnapshot {
+				captured_at: Instant::now(),
+				windows: Arc::new(vec![WindowRect {
+					window_id: Some(9),
+					x: 10,
+					y: 12,
+					width: 30,
+					height: 40,
+				}]),
+			}),
+		}
+	}
 
-	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
-		source: WorkerErrorSource::FreezeCapture,
-		message: String::from("freeze failed"),
-	});
+	fn png_error_response() -> WorkerResponse {
+		WorkerResponse::Error {
+			source: WorkerErrorSource::EncodePng,
+			message: String::from("encode failed"),
+		}
+	}
 
-	assert!(matches!(control, super::OverlayControl::Continue));
-	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
-	assert_eq!(session.state.error_message.as_deref(), Some("freeze failed"));
-}
+	for (label, arrange, response, expected_error) in [
+		(
+			"captured freeze",
+			arrange_freeze as fn(&mut OverlaySession),
+			captured_freeze_response as fn() -> WorkerResponse,
+			None,
+		),
+		("freeze error", arrange_freeze, freeze_error_response, Some("freeze failed")),
+		("hit test", arrange_hit_test, hit_test_response, None),
+		("window list refresh", arrange_window_list, window_list_response, None),
+		("png encode error", arrange_png_encode, png_error_response, None),
+	] {
+		let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
-#[cfg(target_os = "macos")]
-#[test]
-fn hit_test_response_applies_deferred_worker_refresh() {
-	let monitor = tests::test_monitor();
-	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+		arrange(&mut session);
 
-	session.pending_click_hit_test_request_id = Some(11);
-	session.pending_self_capture_exception_window_ids_worker_refresh = true;
+		session.pending_self_capture_exception_window_ids_worker_refresh = true;
 
-	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::HitTestWindow {
-		monitor,
-		point: GlobalPoint::new(24, 36),
-		request_id: 11,
-		hit: None,
-	});
+		let control = session.maybe_tick_worker_response_limiter(response());
 
-	assert!(matches!(control, super::OverlayControl::Continue));
-	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
-}
+		assert!(matches!(control, super::OverlayControl::Continue), "{label}");
+		assert_ne!(
+			session.worker.as_ref().unwrap().debug_id(),
+			original_worker_debug_id,
+			"{label}"
+		);
+		assert!(!session.pending_self_capture_exception_window_ids_worker_refresh, "{label}");
 
-#[cfg(target_os = "macos")]
-#[test]
-fn window_list_refresh_response_applies_deferred_worker_refresh() {
-	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
-
-	session.window_list_refresh_inflight = true;
-	session.pending_self_capture_exception_window_ids_worker_refresh = true;
-
-	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::RefreshedWindowList {
-		snapshot: Arc::new(WindowListSnapshot {
-			captured_at: Instant::now(),
-			windows: Arc::new(vec![WindowRect {
-				window_id: Some(9),
-				x: 10,
-				y: 12,
-				width: 30,
-				height: 40,
-			}]),
-		}),
-	});
-
-	assert!(matches!(control, super::OverlayControl::Continue));
-	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
+		if let Some(expected_error) = expected_error {
+			assert_eq!(session.state.error_message.as_deref(), Some(expected_error), "{label}");
+		}
+	}
 }
 
 #[cfg(target_os = "macos")]
@@ -1095,24 +1105,6 @@ fn stale_window_list_refresh_response_is_dropped_after_self_capture_filter_chang
 	assert!(!session.window_list_refresh_inflight);
 	assert!(!session.drop_next_window_list_refresh_snapshot);
 	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn png_error_response_applies_deferred_worker_refresh() {
-	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
-
-	session.png_encode_inflight = true;
-	session.pending_self_capture_exception_window_ids_worker_refresh = true;
-
-	let control = session.maybe_tick_worker_response_limiter(WorkerResponse::Error {
-		source: WorkerErrorSource::EncodePng,
-		message: String::from("encode failed"),
-	});
-
-	assert!(matches!(control, super::OverlayControl::Continue));
-	assert_ne!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-	assert!(!session.pending_self_capture_exception_window_ids_worker_refresh);
 }
 
 #[cfg(target_os = "macos")]
