@@ -9,56 +9,76 @@ use crate::overlay::tests::rendering_behaviors::{
 };
 
 #[test]
-fn selection_size_badge_rect_fits_below_capture_rect() {
-	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
-	let capture_rect = Rect::from_min_size(Pos2::new(120.0, 160.0), Vec2::new(320.0, 240.0));
-	let badge_rect =
-		WindowRenderer::selection_size_badge_rect(screen_rect, capture_rect, Vec2::new(92.0, 26.0));
-
-	assert_eq!(badge_rect.max.x, capture_rect.max.x);
-	assert_eq!(badge_rect.min.y, capture_rect.max.y + SELECTION_SIZE_BADGE_GAP_PX);
-}
-
-#[test]
-fn selection_size_badge_rect_falls_inside_when_no_space_below() {
-	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
-	let capture_rect = Rect::from_min_size(Pos2::new(120.0, 420.0), Vec2::new(320.0, 160.0));
-	let badge_rect =
-		WindowRenderer::selection_size_badge_rect(screen_rect, capture_rect, Vec2::new(92.0, 26.0));
-
-	assert_eq!(badge_rect.max.x, capture_rect.max.x);
-	assert_eq!(badge_rect.max.y, capture_rect.max.y - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX);
-	assert!(badge_rect.max.y <= screen_rect.max.y - SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX);
-}
-
-#[test]
-fn selection_size_badge_rect_clamps_left_narrow_capture_into_viewport() {
+fn selection_size_badge_rect_uses_visible_slot_for_common_edges() {
 	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 
-	for capture_min_x in [0.0, 20.0] {
-		let capture_rect =
-			Rect::from_min_size(Pos2::new(capture_min_x, 160.0), Vec2::new(40.0, 120.0));
+	for (label, capture_rect, expected_min_y, expected_max_y, expected_min_x) in [
+		(
+			"fits below",
+			Rect::from_min_size(Pos2::new(120.0, 160.0), Vec2::new(320.0, 240.0)),
+			Some(160.0 + 240.0 + SELECTION_SIZE_BADGE_GAP_PX),
+			None,
+			None,
+		),
+		(
+			"falls inside when no space below",
+			Rect::from_min_size(Pos2::new(120.0, 420.0), Vec2::new(320.0, 160.0)),
+			None,
+			Some(420.0 + 160.0 - SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX),
+			None,
+		),
+		(
+			"clamps left edge",
+			Rect::from_min_size(Pos2::new(0.0, 160.0), Vec2::new(40.0, 120.0)),
+			None,
+			None,
+			Some(screen_rect.min.x),
+		),
+		(
+			"clamps narrow near-left capture",
+			Rect::from_min_size(Pos2::new(20.0, 160.0), Vec2::new(40.0, 120.0)),
+			None,
+			None,
+			Some(screen_rect.min.x),
+		),
+		(
+			"keeps tiny bottom capture visible",
+			Rect::from_min_size(Pos2::new(120.0, 588.0), Vec2::new(140.0, 12.0)),
+			None,
+			Some(screen_rect.max.y),
+			None,
+		),
+	] {
 		let badge_rect = WindowRenderer::selection_size_badge_rect(
 			screen_rect,
 			capture_rect,
 			Vec2::new(92.0, 26.0),
 		);
 
-		assert_eq!(badge_rect.min.x, screen_rect.min.x);
-		assert!(badge_rect.max.x > capture_rect.max.x);
+		if let Some(expected_min_y) = expected_min_y {
+			assert_eq!(badge_rect.min.y, expected_min_y, "{label}");
+		}
+		if let Some(expected_max_y) = expected_max_y {
+			assert_eq!(badge_rect.max.y, expected_max_y, "{label}");
+		}
+		if let Some(expected_min_x) = expected_min_x {
+			assert_eq!(badge_rect.min.x, expected_min_x, "{label}");
+			assert!(badge_rect.max.x > capture_rect.max.x, "{label}");
+		} else {
+			assert_eq!(badge_rect.max.x, capture_rect.max.x, "{label}");
+		}
+
+		if label == "falls inside when no space below" {
+			assert!(
+				badge_rect.max.y <= screen_rect.max.y - SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+				"{label}",
+			);
+		}
+		if label == "keeps tiny bottom capture visible" {
+			assert!(badge_rect.min.y < capture_rect.min.y, "{label}");
+			assert!(badge_rect.min.y >= screen_rect.min.y, "{label}");
+		}
 	}
-}
-
-#[test]
-fn selection_size_badge_rect_keeps_tiny_bottom_capture_visible() {
-	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
-	let capture_rect = Rect::from_min_size(Pos2::new(120.0, 588.0), Vec2::new(140.0, 12.0));
-	let badge_rect =
-		WindowRenderer::selection_size_badge_rect(screen_rect, capture_rect, Vec2::new(92.0, 26.0));
-
-	assert_eq!(badge_rect.max.y, screen_rect.max.y);
-	assert!(badge_rect.min.y < capture_rect.min.y);
-	assert!(badge_rect.min.y >= screen_rect.min.y);
 }
 
 #[test]
@@ -295,37 +315,36 @@ fn selection_size_badge_text_uses_monitor_pixel_dimensions() {
 }
 
 #[test]
-fn selection_size_badge_layout_keeps_visual_bounds_within_right_edge_rect() {
+fn selection_size_badge_layout_keeps_visual_bounds_inside_badge_rect() {
 	let ctx = tests::test_egui_context();
 	let layout = WindowRenderer::selection_size_badge_layout(&ctx, "240x160", HudTheme::Light, 1.0);
 	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
-	let capture_rect = Rect::from_min_size(Pos2::new(760.0, 160.0), Vec2::new(40.0, 120.0));
-	let badge_rect =
-		WindowRenderer::selection_size_badge_rect(screen_rect, capture_rect, layout.badge_size);
-	let text_anchor = WindowRenderer::selection_size_badge_text_anchor(badge_rect, layout, 1.0);
-	let visual_bounds =
-		WindowRenderer::selection_size_badge_visual_bounds(text_anchor, layout.text_size, 1.0);
 
-	assert_eq!(badge_rect.max.x, capture_rect.max.x);
-	assert!(visual_bounds.min.x >= badge_rect.min.x);
-	assert!(visual_bounds.max.x <= badge_rect.max.x);
-}
+	for (label, capture_rect) in [
+		("right edge rect", Rect::from_min_size(Pos2::new(760.0, 160.0), Vec2::new(40.0, 120.0))),
+		(
+			"bottom fallback rect",
+			Rect::from_min_size(Pos2::new(120.0, 588.0), Vec2::new(140.0, 12.0)),
+		),
+	] {
+		let badge_rect =
+			WindowRenderer::selection_size_badge_rect(screen_rect, capture_rect, layout.badge_size);
+		let text_anchor = WindowRenderer::selection_size_badge_text_anchor(badge_rect, layout, 1.0);
+		let visual_bounds =
+			WindowRenderer::selection_size_badge_visual_bounds(text_anchor, layout.text_size, 1.0);
 
-#[test]
-fn selection_size_badge_layout_keeps_visual_bounds_within_bottom_fallback_rect() {
-	let ctx = tests::test_egui_context();
-	let layout = WindowRenderer::selection_size_badge_layout(&ctx, "240x160", HudTheme::Light, 1.0);
-	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
-	let capture_rect = Rect::from_min_size(Pos2::new(120.0, 588.0), Vec2::new(140.0, 12.0));
-	let badge_rect =
-		WindowRenderer::selection_size_badge_rect(screen_rect, capture_rect, layout.badge_size);
-	let text_anchor = WindowRenderer::selection_size_badge_text_anchor(badge_rect, layout, 1.0);
-	let visual_bounds =
-		WindowRenderer::selection_size_badge_visual_bounds(text_anchor, layout.text_size, 1.0);
+		if label == "right edge rect" {
+			assert_eq!(badge_rect.max.x, capture_rect.max.x, "{label}");
+		}
+		if label == "bottom fallback rect" {
+			assert_eq!(badge_rect.max.y, screen_rect.max.y, "{label}");
+		}
 
-	assert_eq!(badge_rect.max.y, screen_rect.max.y);
-	assert!(visual_bounds.min.y >= badge_rect.min.y);
-	assert!(visual_bounds.max.y <= badge_rect.max.y);
+		assert!(visual_bounds.min.x >= badge_rect.min.x, "{label}");
+		assert!(visual_bounds.max.x <= badge_rect.max.x, "{label}");
+		assert!(visual_bounds.min.y >= badge_rect.min.y, "{label}");
+		assert!(visual_bounds.max.y <= badge_rect.max.y, "{label}");
+	}
 }
 
 #[test]
@@ -392,37 +411,26 @@ fn live_capture_size_badge_target_skips_fullscreen_fallback_while_primary_down()
 }
 
 #[test]
-fn frozen_capture_size_badge_target_uses_frozen_rect() {
+fn frozen_capture_size_badge_target_uses_frozen_rect_even_when_tiny() {
 	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(1_000.0, 800.0));
-	let mut state = OverlayState::new();
 
-	state.mode = OverlayMode::Frozen;
-	state.frozen_capture_rect = Some(RectPoints::new(140, 180, 320, 240));
+	for frozen_rect in [RectPoints::new(140, 180, 320, 240), RectPoints::new(140, 180, 2, 1)] {
+		let mut state = OverlayState::new();
 
-	assert_eq!(
-		WindowRenderer::frozen_capture_size_badge_target(&state, screen_rect),
-		Some(SelectionSizeBadgeTarget {
-			rect: Rect::from_min_size(Pos2::new(140.0, 180.0), Vec2::new(320.0, 240.0)),
-			size_points: RectPoints::new(140, 180, 320, 240),
-		})
-	);
-}
+		state.mode = OverlayMode::Frozen;
+		state.frozen_capture_rect = Some(frozen_rect);
 
-#[test]
-fn frozen_capture_size_badge_target_keeps_tiny_frozen_rect() {
-	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(1_000.0, 800.0));
-	let mut state = OverlayState::new();
-
-	state.mode = OverlayMode::Frozen;
-	state.frozen_capture_rect = Some(RectPoints::new(140, 180, 2, 1));
-
-	assert_eq!(
-		WindowRenderer::frozen_capture_size_badge_target(&state, screen_rect),
-		Some(SelectionSizeBadgeTarget {
-			rect: Rect::from_min_size(Pos2::new(140.0, 180.0), Vec2::new(2.0, 1.0)),
-			size_points: RectPoints::new(140, 180, 2, 1),
-		})
-	);
+		assert_eq!(
+			WindowRenderer::frozen_capture_size_badge_target(&state, screen_rect),
+			Some(SelectionSizeBadgeTarget {
+				rect: Rect::from_min_size(
+					Pos2::new(frozen_rect.x as f32, frozen_rect.y as f32),
+					Vec2::new(frozen_rect.width as f32, frozen_rect.height as f32)
+				),
+				size_points: frozen_rect,
+			})
+		);
+	}
 }
 
 #[test]
@@ -467,70 +475,66 @@ fn render_frozen_capture_affordance_keeps_tiny_frozen_badge_path() {
 }
 
 #[test]
-fn render_live_capture_affordances_keep_hover_scrim_when_flow_disabled() {
+fn render_live_capture_affordances_updates_flow_or_dash_for_target() {
+	#[derive(Clone, Copy)]
+	enum TargetKind {
+		Hover,
+		Drag,
+		Fullscreen,
+	}
+
 	let ctx = tests::test_egui_context();
-	let layer = LayerId::new(Order::Foreground, Id::new("live-hover-flow-disabled"));
-	let painter = ctx.layer_painter(layer);
 	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
-	let mut state = OverlayState::new();
-	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
 
-	state.mode = OverlayMode::Live;
-	state.hovered_window_rect = Some(MonitorRectPoints {
-		monitor_id: monitor.id,
-		rect: RectPoints::new(100, 120, 240, 320),
-	});
+	for (label, target_kind, flow_enabled, theme, expected_flow, expected_dash) in [
+		("hover scrim with flow disabled", TargetKind::Hover, false, HudTheme::Light, false, false),
+		("hover flow when enabled", TargetKind::Hover, true, HudTheme::Light, true, false),
+		("drag border when flow disabled", TargetKind::Drag, false, HudTheme::Light, false, true),
+		("idle fullscreen skips flow", TargetKind::Fullscreen, true, HudTheme::Dark, false, false),
+	] {
+		let layer = LayerId::new(Order::Foreground, Id::new(label));
+		let painter = ctx.layer_painter(layer);
+		let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
+		let mut state = OverlayState::new();
+		let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
 
-	assert!(WindowRenderer::render_live_capture_affordances(
-		&ctx,
-		&painter,
-		&state,
-		monitor,
-		screen_rect,
-		HudTheme::Light,
-		false,
-		1.0,
-		&mut selection_flow_geometry_cache,
-		&mut selection_dashed_border_cache,
-	));
-	assert_eq!(selection_dashed_border_cache.key, None);
-}
+		state.mode = OverlayMode::Live;
 
-#[test]
-fn render_live_capture_affordances_draw_hover_flow_when_enabled() {
-	let ctx = tests::test_egui_context();
-	let layer = LayerId::new(Order::Foreground, Id::new("live-hover-flow-enabled"));
-	let painter = ctx.layer_painter(layer);
-	let monitor = tests::test_monitor();
-	let screen_rect =
-		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
-	let mut state = OverlayState::new();
-	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
+		match target_kind {
+			TargetKind::Hover => {
+				state.hovered_window_rect = Some(MonitorRectPoints {
+					monitor_id: monitor.id,
+					rect: RectPoints::new(100, 120, 240, 320),
+				});
+			},
+			TargetKind::Drag => {
+				state.drag_rect = Some(MonitorRectPoints {
+					monitor_id: monitor.id,
+					rect: RectPoints::new(100, 120, 240, 320),
+				});
+			},
+			TargetKind::Fullscreen => {
+				state.cursor = Some(GlobalPoint::new(240, 260));
+			},
+		}
 
-	state.mode = OverlayMode::Live;
-	state.hovered_window_rect = Some(MonitorRectPoints {
-		monitor_id: monitor.id,
-		rect: RectPoints::new(100, 120, 240, 320),
-	});
-
-	assert!(WindowRenderer::render_live_capture_affordances(
-		&ctx,
-		&painter,
-		&state,
-		monitor,
-		screen_rect,
-		HudTheme::Light,
-		true,
-		1.0,
-		&mut selection_flow_geometry_cache,
-		&mut selection_dashed_border_cache,
-	));
-	assert!(!selection_flow_geometry_cache.is_empty());
-	assert_eq!(selection_dashed_border_cache.key, None);
+		assert!(WindowRenderer::render_live_capture_affordances(
+			&ctx,
+			&painter,
+			&state,
+			monitor,
+			screen_rect,
+			theme,
+			flow_enabled,
+			1.0,
+			&mut selection_flow_geometry_cache,
+			&mut selection_dashed_border_cache,
+		));
+		assert_eq!(!selection_flow_geometry_cache.is_empty(), expected_flow, "{label}");
+		assert_eq!(selection_dashed_border_cache.key.is_some(), expected_dash, "{label}");
+	}
 }
 
 #[test]
@@ -548,70 +552,6 @@ fn selection_flow_light_palette_uses_lower_luminance_colors() {
 			"light theme flow colors should stay visible on light backgrounds"
 		);
 	}
-}
-
-#[test]
-fn render_live_capture_affordances_draw_drag_border_when_flow_disabled() {
-	let ctx = tests::test_egui_context();
-	let layer = LayerId::new(Order::Foreground, Id::new("live-drag-flow-disabled"));
-	let painter = ctx.layer_painter(layer);
-	let monitor = tests::test_monitor();
-	let screen_rect =
-		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
-	let mut state = OverlayState::new();
-	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
-
-	state.mode = OverlayMode::Live;
-	state.drag_rect = Some(MonitorRectPoints {
-		monitor_id: monitor.id,
-		rect: RectPoints::new(100, 120, 240, 320),
-	});
-
-	assert!(WindowRenderer::render_live_capture_affordances(
-		&ctx,
-		&painter,
-		&state,
-		monitor,
-		screen_rect,
-		HudTheme::Light,
-		false,
-		1.0,
-		&mut selection_flow_geometry_cache,
-		&mut selection_dashed_border_cache,
-	));
-	assert!(selection_dashed_border_cache.key.is_some());
-}
-
-#[test]
-fn render_live_capture_affordances_skips_fullscreen_flow_without_hover_or_drag() {
-	let ctx = tests::test_egui_context();
-	let layer = LayerId::new(Order::Foreground, Id::new("live-idle-no-flow"));
-	let painter = ctx.layer_painter(layer);
-	let monitor = tests::test_monitor();
-	let screen_rect =
-		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-	let mut selection_dashed_border_cache = SelectionDashedBorderCache::default();
-	let mut state = OverlayState::new();
-	let mut selection_flow_geometry_cache = SelectionFlowGeometryCache::default();
-
-	state.mode = OverlayMode::Live;
-	state.cursor = Some(GlobalPoint::new(240, 260));
-
-	assert!(WindowRenderer::render_live_capture_affordances(
-		&ctx,
-		&painter,
-		&state,
-		monitor,
-		screen_rect,
-		HudTheme::Dark,
-		true,
-		1.0,
-		&mut selection_flow_geometry_cache,
-		&mut selection_dashed_border_cache,
-	));
-	assert!(selection_flow_geometry_cache.is_empty());
-	assert_eq!(selection_dashed_border_cache.key, None);
 }
 
 #[test]

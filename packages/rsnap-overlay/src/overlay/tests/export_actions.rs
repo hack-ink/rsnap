@@ -150,60 +150,34 @@ fn complete_host_effect_request_runs_overlay_exit_cleanup() {
 }
 
 #[test]
-fn current_export_image_includes_frozen_brush_strokes() {
+fn current_export_image_includes_frozen_brush_strokes_with_selected_color() {
 	let monitor = tests::test_monitor();
-	let mut session = OverlaySession::new();
 
-	session.state.begin_freeze(monitor);
-	session
-		.state
-		.commit_frozen_final_image(monitor, RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255])));
+	for color in [FrozenAnnotationColor::Red, FrozenAnnotationColor::Green] {
+		let mut session = OverlaySession::new();
 
-	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
+		session.state.begin_freeze(monitor);
+		session.state.commit_frozen_final_image(
+			monitor,
+			RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255])),
+		);
 
-	tests::promote_session_export_authority_ready(&mut session);
+		session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
 
-	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+		tests::promote_session_export_authority_ready(&mut session);
 
-	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
-	assert!(session.update_frozen_brush_stroke(GlobalPoint::new(5, 2)));
-	assert!(session.finish_frozen_brush_stroke());
+		session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
+		session.toolbar_state.brush_style.color = color;
 
-	let export_image = session.current_export_image().expect("annotated export image");
+		assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
+		assert!(session.update_frozen_brush_stroke(GlobalPoint::new(5, 2)));
+		assert!(session.finish_frozen_brush_stroke());
 
-	assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
-	assert_eq!(
-		export_image.get_pixel(2, 2),
-		&Rgba(session.toolbar_state.brush_style.color.export_rgba())
-	);
-}
+		let export_image = session.current_export_image().expect("annotated export image");
 
-#[test]
-fn current_export_image_uses_selected_brush_color() {
-	let monitor = tests::test_monitor();
-	let mut session = OverlaySession::new();
-
-	session.state.begin_freeze(monitor);
-	session
-		.state
-		.commit_frozen_final_image(monitor, RgbaImage::from_pixel(8, 8, Rgba([12, 34, 56, 255])));
-
-	session.state.frozen_capture_rect = Some(RectPoints::new(0, 0, 8, 8));
-
-	tests::promote_session_export_authority_ready(&mut session);
-
-	session.toolbar_state.selected_tool = FrozenToolbarTool::Pen;
-	session.toolbar_state.brush_style.color = FrozenAnnotationColor::Green;
-
-	assert!(session.begin_frozen_brush_stroke(GlobalPoint::new(2, 2)));
-	assert!(session.finish_frozen_brush_stroke());
-
-	let export_image = session.current_export_image().expect("annotated export image");
-
-	assert_eq!(
-		export_image.get_pixel(2, 2),
-		&Rgba(session.toolbar_state.brush_style.color.export_rgba())
-	);
+		assert_eq!(export_image.get_pixel(7, 7), &Rgba([12, 34, 56, 255]));
+		assert_eq!(export_image.get_pixel(2, 2), &Rgba(color.export_rgba()));
+	}
 }
 
 #[test]

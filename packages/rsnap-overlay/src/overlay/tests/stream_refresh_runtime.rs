@@ -93,136 +93,149 @@ fn drain_external_scroll_input_worker_path_does_not_arm_live_stream_stale_grace(
 
 #[cfg(target_os = "macos")]
 #[test]
-fn force_stream_refresh_stays_disabled_while_downward_gesture_is_still_active() {
+fn force_stream_refresh_tracks_gesture_and_downward_input_freshness() {
 	let now = Instant::now();
-	let mut session = OverlaySession::new();
 
-	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
-	session.scroll_capture.input_direction_at = Some(now);
-	session.scroll_capture.input_gesture_active = true;
-	session.scroll_capture.downward_motion_rows_pending = 512.0;
+	for (label, input_at, gesture_active, expected) in [
+		("disabled while downward gesture is active", now, true, false),
+		(
+			"enabled for fresh pending downward motion after gesture end",
+			now - SCROLL_CAPTURE_INPUT_FRESHNESS + Duration::from_millis(50),
+			false,
+			true,
+		),
+		(
+			"disabled after downward input becomes stale",
+			now - SCROLL_CAPTURE_INPUT_FRESHNESS - Duration::from_millis(1),
+			false,
+			false,
+		),
+	] {
+		let mut session = OverlaySession::new();
 
-	assert!(!session.scroll_capture_should_force_stream_refresh_at(now));
+		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+		session.scroll_capture.input_direction_at = Some(input_at);
+		session.scroll_capture.input_gesture_active = gesture_active;
+		session.scroll_capture.downward_motion_rows_pending = 512.0;
+
+		assert_eq!(session.scroll_capture_should_force_stream_refresh_at(now), expected, "{label}");
+	}
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn stale_stream_refresh_stays_disabled_while_gesture_is_still_active() {
+fn stale_stream_refresh_tracks_gesture_and_dead_stream_deadline() {
 	let now = Instant::now();
-	let mut session = OverlaySession::new();
 
-	session.scroll_capture.input_gesture_active = true;
-	session.scroll_capture.last_stream_event_at = Some(
-		now - SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW + Duration::from_millis(1),
-	);
+	for (label, gesture_active, last_stream_event_at, expected) in [
+		(
+			"disabled while active gesture stream is still fresh",
+			true,
+			Some(
+				now - SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW
+					+ Duration::from_millis(1),
+			),
+			false,
+		),
+		("reenabled after gesture ends", false, None, true),
+		(
+			"reenabled during gesture after stream goes dead",
+			true,
+			Some(
+				now - SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW
+					- Duration::from_millis(1),
+			),
+			true,
+		),
+	] {
+		let mut session = OverlaySession::new();
 
-	assert!(!session.scroll_capture_should_schedule_stale_stream_refresh_at(now));
+		session.scroll_capture.input_gesture_active = gesture_active;
+		session.scroll_capture.last_stream_event_at = last_stream_event_at;
+
+		assert_eq!(
+			session.scroll_capture_should_schedule_stale_stream_refresh_at(now),
+			expected,
+			"{label}",
+		);
+	}
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn stale_stream_refresh_reenables_after_gesture_ends() {
+fn post_stall_burst_search_tracks_downward_backlog_freshness() {
 	let now = Instant::now();
-	let mut session = OverlaySession::new();
 
-	session.scroll_capture.input_gesture_active = false;
+	for (label, input_at, gesture_active, expected, verify_followup) in [
+		("enabled during active gesture when backlog is fresh", now, true, true, false),
+		("enabled while fresh backlog remains", now, false, true, true),
+		(
+			"disabled after downward backlog goes stale",
+			now - SCROLL_CAPTURE_INPUT_FRESHNESS - Duration::from_millis(1),
+			false,
+			false,
+			false,
+		),
+	] {
+		let mut session = OverlaySession::new();
 
-	assert!(session.scroll_capture_should_schedule_stale_stream_refresh_at(now));
+		session.scroll_capture.pending_post_stall_burst_after_seq = Some(80);
+		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+		session.scroll_capture.input_direction_at = Some(input_at);
+		session.scroll_capture.input_gesture_active = gesture_active;
+		session.scroll_capture.downward_motion_rows_pending = 512.0;
+
+		assert_eq!(
+			session.scroll_capture_should_allow_post_stall_burst_search_at(81, now),
+			expected,
+			"{label}",
+		);
+
+		if verify_followup {
+			assert!(
+				session.scroll_capture_should_allow_post_stall_burst_search_at(
+					82,
+					now + Duration::from_millis(50)
+				),
+				"{label} followup",
+			);
+		}
+	}
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn stale_stream_refresh_reenables_during_gesture_after_stream_goes_dead() {
+fn post_stall_burst_search_arms_only_for_large_capture_time_gap() {
 	let now = Instant::now();
-	let mut session = OverlaySession::new();
 
-	session.scroll_capture.input_gesture_active = true;
-	session.scroll_capture.last_stream_event_at = Some(
-		now - SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW - Duration::from_millis(1),
-	);
+	for (label, last_frame_at, expected) in [
+		(
+			"large capture time gap",
+			now - SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW
+				- Duration::from_millis(1),
+			true,
+		),
+		(
+			"small capture time gap",
+			now - SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW
+				+ Duration::from_millis(10),
+			false,
+		),
+	] {
+		let mut session = OverlaySession::new();
 
-	assert!(session.scroll_capture_should_schedule_stale_stream_refresh_at(now));
-}
+		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+		session.scroll_capture.input_direction_at = Some(now);
+		session.scroll_capture.input_gesture_active = true;
+		session.scroll_capture.downward_motion_rows_pending = 512.0;
+		session.scroll_capture.last_consumed_stream_frame_captured_at = Some(last_frame_at);
 
-#[cfg(target_os = "macos")]
-#[test]
-fn post_stall_burst_search_stays_enabled_during_active_gesture_when_downward_backlog_is_fresh() {
-	let now = Instant::now();
-	let mut session = OverlaySession::new();
-
-	session.scroll_capture.pending_post_stall_burst_after_seq = Some(80);
-	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
-	session.scroll_capture.input_direction_at = Some(now);
-	session.scroll_capture.input_gesture_active = true;
-	session.scroll_capture.downward_motion_rows_pending = 512.0;
-
-	assert!(session.scroll_capture_should_allow_post_stall_burst_search_at(81, now));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn force_stream_refresh_stays_enabled_for_fresh_pending_downward_motion_after_gesture_end() {
-	let now = Instant::now();
-	let mut session = OverlaySession::new();
-
-	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
-	session.scroll_capture.input_direction_at =
-		Some(now - SCROLL_CAPTURE_INPUT_FRESHNESS + Duration::from_millis(50));
-	session.scroll_capture.input_gesture_active = false;
-	session.scroll_capture.downward_motion_rows_pending = 512.0;
-
-	assert!(session.scroll_capture_should_force_stream_refresh_at(now));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn force_stream_refresh_stops_after_downward_input_becomes_stale() {
-	let now = Instant::now();
-	let mut session = OverlaySession::new();
-
-	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
-	session.scroll_capture.input_direction_at =
-		Some(now - SCROLL_CAPTURE_INPUT_FRESHNESS - Duration::from_millis(1));
-	session.scroll_capture.input_gesture_active = false;
-	session.scroll_capture.downward_motion_rows_pending = 512.0;
-
-	assert!(!session.scroll_capture_should_force_stream_refresh_at(now));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn post_stall_burst_search_stays_enabled_while_fresh_downward_backlog_remains() {
-	let now = Instant::now();
-	let mut session = OverlaySession::new();
-
-	session.scroll_capture.pending_post_stall_burst_after_seq = Some(80);
-	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
-	session.scroll_capture.input_direction_at = Some(now);
-	session.scroll_capture.input_gesture_active = false;
-	session.scroll_capture.downward_motion_rows_pending = 512.0;
-
-	assert!(session.scroll_capture_should_allow_post_stall_burst_search_at(81, now));
-	assert!(session.scroll_capture_should_allow_post_stall_burst_search_at(
-		82,
-		now + Duration::from_millis(50)
-	));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn post_stall_burst_search_arms_for_large_capture_time_gap_even_when_frame_seq_is_contiguous() {
-	let now = Instant::now();
-	let mut session = OverlaySession::new();
-
-	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
-	session.scroll_capture.input_direction_at = Some(now);
-	session.scroll_capture.input_gesture_active = true;
-	session.scroll_capture.downward_motion_rows_pending = 512.0;
-	session.scroll_capture.last_consumed_stream_frame_captured_at = Some(
-		now - SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW - Duration::from_millis(1),
-	);
-
-	assert!(session.scroll_capture_should_arm_post_stall_burst_for_time_gap_at(now));
+		assert_eq!(
+			session.scroll_capture_should_arm_post_stall_burst_for_time_gap_at(now),
+			expected,
+			"{label}",
+		);
+	}
 }
 
 #[cfg(target_os = "macos")]
@@ -282,37 +295,4 @@ fn consuming_live_frame_backlog_arms_time_gap_burst_after_draining_fresh_input()
 	assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Down));
 	assert_eq!(session.scroll_capture.last_external_scroll_input_seq, 1);
 	assert_eq!(session.scroll_capture.pending_post_stall_burst_after_seq, Some(8));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn post_stall_burst_search_does_not_arm_for_small_capture_time_gap() {
-	let now = Instant::now();
-	let mut session = OverlaySession::new();
-
-	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
-	session.scroll_capture.input_direction_at = Some(now);
-	session.scroll_capture.input_gesture_active = true;
-	session.scroll_capture.downward_motion_rows_pending = 512.0;
-	session.scroll_capture.last_consumed_stream_frame_captured_at = Some(
-		now - SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW + Duration::from_millis(10),
-	);
-
-	assert!(!session.scroll_capture_should_arm_post_stall_burst_for_time_gap_at(now));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn post_stall_burst_search_stops_after_downward_backlog_goes_stale() {
-	let now = Instant::now();
-	let mut session = OverlaySession::new();
-
-	session.scroll_capture.pending_post_stall_burst_after_seq = Some(80);
-	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
-	session.scroll_capture.input_direction_at =
-		Some(now - SCROLL_CAPTURE_INPUT_FRESHNESS - Duration::from_millis(1));
-	session.scroll_capture.input_gesture_active = false;
-	session.scroll_capture.downward_motion_rows_pending = 512.0;
-
-	assert!(!session.scroll_capture_should_allow_post_stall_burst_search_at(81, now));
 }

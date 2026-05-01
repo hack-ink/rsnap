@@ -363,47 +363,55 @@ fn frozen_toolbar_default_position_centers_on_capture_rect_midpoint() {
 }
 
 #[test]
-fn frozen_toolbar_default_position_fits_below_capture_rect() {
-	let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
-	let capture_rect = Rect::from_min_size(Pos2::new(50.0, 100.0), Vec2::new(300.0, 200.0));
+fn frozen_toolbar_default_position_places_or_falls_inside_for_configured_edge() {
 	let toolbar_size = Vec2::new(460.0, 54.0);
-	let pos = WindowRenderer::frozen_toolbar_default_window_pos(
-		monitor,
-		capture_rect,
-		toolbar_size,
-		toolbar_size,
-		ToolbarPlacement::Bottom,
-	);
-	let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
-		TOOLBAR_SCREEN_MARGIN_PX,
-		(monitor.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX).max(TOOLBAR_SCREEN_MARGIN_PX),
-	);
 
-	assert!((pos.x - expected_x).abs() < f32::EPSILON);
-	assert_eq!(pos.y, capture_rect.max.y + TOOLBAR_CAPTURE_GAP_PX);
-}
+	for (label, monitor, capture_rect, placement, expected_y) in [
+		(
+			"bottom placement fits below capture rect",
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0)),
+			Rect::from_min_size(Pos2::new(50.0, 100.0), Vec2::new(300.0, 200.0)),
+			ToolbarPlacement::Bottom,
+			100.0 + 200.0 + TOOLBAR_CAPTURE_GAP_PX,
+		),
+		(
+			"bottom placement falls inside when below overflows",
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 600.0)),
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 560.0)),
+			ToolbarPlacement::Bottom,
+			560.0 - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y,
+		),
+		(
+			"top placement fits above capture rect",
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0)),
+			Rect::from_min_size(Pos2::new(50.0, 180.0), Vec2::new(300.0, 200.0)),
+			ToolbarPlacement::Top,
+			180.0 - TOOLBAR_CAPTURE_GAP_PX - toolbar_size.y,
+		),
+		(
+			"top placement falls inside when above overflows",
+			Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 600.0)),
+			Rect::from_min_size(Pos2::new(0.0, 20.0), Vec2::new(500.0, 400.0)),
+			ToolbarPlacement::Top,
+			20.0 + TOOLBAR_SCREEN_MARGIN_PX,
+		),
+	] {
+		let pos = WindowRenderer::frozen_toolbar_default_window_pos(
+			monitor,
+			capture_rect,
+			toolbar_size,
+			toolbar_size,
+			placement,
+		);
+		let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
+			TOOLBAR_SCREEN_MARGIN_PX,
+			(monitor.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX)
+				.max(TOOLBAR_SCREEN_MARGIN_PX),
+		);
 
-#[test]
-fn frozen_toolbar_default_position_falls_inside_when_no_space_below_capture_rect() {
-	let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 600.0));
-	let toolbar_size = Vec2::new(460.0, 54.0);
-	let capture_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 560.0));
-	let pos = WindowRenderer::frozen_toolbar_default_window_pos(
-		monitor,
-		capture_rect,
-		toolbar_size,
-		toolbar_size,
-		ToolbarPlacement::Bottom,
-	);
-	let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
-		TOOLBAR_SCREEN_MARGIN_PX,
-		(monitor.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX).max(TOOLBAR_SCREEN_MARGIN_PX),
-	);
-	let expected_y = capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y;
-
-	assert_eq!(pos.x, expected_x);
-	assert_eq!(pos.y, capture_rect.max.y - TOOLBAR_SCREEN_MARGIN_PX - toolbar_size.y);
-	assert_eq!(pos.y, expected_y);
+		assert_eq!(pos.x, expected_x, "{label}");
+		assert_eq!(pos.y, expected_y, "{label}");
+	}
 }
 
 #[test]
@@ -429,48 +437,6 @@ fn frozen_toolbar_default_window_position_clamps_using_primary_anchor_width() {
 	assert_ne!(max_x, secondary_union_max_x);
 	assert_eq!(pos.x, max_x);
 	assert_eq!(pos.y, capture_rect.max.y + TOOLBAR_CAPTURE_GAP_PX);
-}
-
-#[test]
-fn frozen_toolbar_top_default_position_fits_above_capture_rect() {
-	let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
-	let capture_rect = Rect::from_min_size(Pos2::new(50.0, 180.0), Vec2::new(300.0, 200.0));
-	let toolbar_size = Vec2::new(460.0, 54.0);
-	let pos = WindowRenderer::frozen_toolbar_default_window_pos(
-		monitor,
-		capture_rect,
-		toolbar_size,
-		toolbar_size,
-		ToolbarPlacement::Top,
-	);
-	let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
-		TOOLBAR_SCREEN_MARGIN_PX,
-		(monitor.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX).max(TOOLBAR_SCREEN_MARGIN_PX),
-	);
-
-	assert_eq!(pos.x, expected_x);
-	assert_eq!(pos.y, capture_rect.min.y - TOOLBAR_CAPTURE_GAP_PX - toolbar_size.y);
-}
-
-#[test]
-fn frozen_toolbar_top_default_position_falls_inside_when_no_space_above_capture_rect() {
-	let monitor = Rect::from_min_size(Pos2::ZERO, Vec2::new(500.0, 600.0));
-	let capture_rect = Rect::from_min_size(Pos2::new(0.0, 20.0), Vec2::new(500.0, 400.0));
-	let toolbar_size = Vec2::new(460.0, 54.0);
-	let pos = WindowRenderer::frozen_toolbar_default_window_pos(
-		monitor,
-		capture_rect,
-		toolbar_size,
-		toolbar_size,
-		ToolbarPlacement::Top,
-	);
-	let expected_x = (capture_rect.center().x - toolbar_size.x / 2.0).clamp(
-		TOOLBAR_SCREEN_MARGIN_PX,
-		(monitor.max.x - toolbar_size.x - TOOLBAR_SCREEN_MARGIN_PX).max(TOOLBAR_SCREEN_MARGIN_PX),
-	);
-
-	assert_eq!(pos.x, expected_x);
-	assert_eq!(pos.y, capture_rect.min.y + TOOLBAR_SCREEN_MARGIN_PX);
 }
 
 #[test]
@@ -843,51 +809,36 @@ fn frozen_toolbar_overlay_viewport_sample_recovers_from_toolbar_window_pollution
 }
 
 #[test]
-fn live_loupe_default_position_hangs_below_hud_strip_when_space_exists() {
-	let monitor = MonitorRect {
-		id: 1,
-		origin: GlobalPoint::new(0, 0),
-		width: 800,
-		height: 600,
-		scale_factor_x1000: 1_000,
-	};
-	let hud_outer = GlobalPoint::new(220, 120);
-	let pos = OverlaySession::live_loupe_default_position(
-		monitor,
-		Some(GlobalPoint::new(100, 100)),
-		Some(hud_outer),
-		Some(52),
-		232,
-		232,
-	)
-	.unwrap();
+fn live_loupe_default_position_hangs_below_hud_or_falls_above_on_overflow() {
+	for (label, monitor_height, hud_outer, expected_y) in [
+		("space below hud", 600, GlobalPoint::new(220, 120), 120 + 52 + HUD_LOUPE_STRIP_GAP_POINTS),
+		(
+			"below hud overflows",
+			500,
+			GlobalPoint::new(220, 300),
+			300 - HUD_LOUPE_STRIP_GAP_POINTS - 232,
+		),
+	] {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 800,
+			height: monitor_height,
+			scale_factor_x1000: 1_000,
+		};
+		let pos = OverlaySession::live_loupe_default_position(
+			monitor,
+			Some(GlobalPoint::new(100, 100)),
+			Some(hud_outer),
+			Some(52),
+			232,
+			232,
+		)
+		.unwrap();
 
-	assert_eq!(pos.x, hud_outer.x);
-	assert_eq!(pos.y, hud_outer.y + 52 + HUD_LOUPE_STRIP_GAP_POINTS);
-}
-
-#[test]
-fn live_loupe_default_position_falls_above_hud_strip_when_below_overflows() {
-	let monitor = MonitorRect {
-		id: 1,
-		origin: GlobalPoint::new(0, 0),
-		width: 800,
-		height: 500,
-		scale_factor_x1000: 1_000,
-	};
-	let hud_outer = GlobalPoint::new(220, 300);
-	let pos = OverlaySession::live_loupe_default_position(
-		monitor,
-		Some(GlobalPoint::new(100, 100)),
-		Some(hud_outer),
-		Some(52),
-		232,
-		232,
-	)
-	.unwrap();
-
-	assert_eq!(pos.x, hud_outer.x);
-	assert_eq!(pos.y, hud_outer.y - HUD_LOUPE_STRIP_GAP_POINTS - 232);
+		assert_eq!(pos.x, hud_outer.x, "{label}");
+		assert_eq!(pos.y, expected_y, "{label}");
+	}
 }
 
 #[test]
