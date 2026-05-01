@@ -19,6 +19,7 @@ Runs the native macOS visual/behavior contract smoke:
 Useful overrides:
   VISUAL_CONTRACT_CASES=liquid          optional: liquid,classic
   REPEATED_CLICK_FREEZES=1
+  VERIFY_CLICK_FROZEN_MOVE=1
   REPEATED_DRAG_FREEZES=2
   DRAG_DURATION_MS=260
   DRAG_HOLD_BEFORE_RELEASE_MS=700
@@ -77,6 +78,7 @@ OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0.08}"
 POST_FREEZE_SETTLE_S="${POST_FREEZE_SETTLE_S:-0.08}"
 POST_CLOSE_SETTLE_S="${POST_CLOSE_SETTLE_S:-0.12}"
 REPEATED_CLICK_FREEZES="${REPEATED_CLICK_FREEZES:-1}"
+VERIFY_CLICK_FROZEN_MOVE="${VERIFY_CLICK_FROZEN_MOVE:-1}"
 REPEATED_DRAG_FREEZES="${REPEATED_DRAG_FREEZES:-2}"
 MASK_PROBE_MIN_PHASE_SAMPLES="${MASK_PROBE_MIN_PHASE_SAMPLES:-5}"
 MASK_PROBE_POLL_MS="${MASK_PROBE_POLL_MS:-20}"
@@ -245,6 +247,20 @@ print(f"{x},{y};{x},{y}")
 PY
 )"
 smoke_log "click point: ${CLICK_POINTS%%;*} repeated=$REPEATED_CLICK_FREEZES"
+CLICK_FROZEN_MOVE_POINTS="$(
+	python3 - "$DISPLAY_BOUNDS" "$CLICK_POINTS" <<'PY'
+import sys
+
+left, top, right, bottom = map(int, sys.argv[1].replace(" ", "").split(","))
+start_raw = sys.argv[2].split(";")[0]
+x, y = map(int, start_raw.split(","))
+dx = max(48, min(120, (right - left) // 18))
+dy = max(36, min(90, (bottom - top) // 20))
+end_x = min(max(x + dx, left + 24), right - 24)
+end_y = min(max(y + dy, top + 24), bottom - 24)
+print(f"{x},{y};{end_x},{end_y}")
+PY
+)"
 
 configure_case_preferences() {
 	local case_name="$1"
@@ -310,6 +326,18 @@ run_visual_case() {
 		"$cursor_helper_bin"
 		sleep "$POST_FREEZE_SETTLE_S"
 		live_hud_focus_rsnap_overlay
+		if [[ "$VERIFY_CLICK_FROZEN_MOVE" == "1" ]]; then
+			PATH_MODE=drag-region \
+			PATH_DRIVER=event \
+			PATH_POINTS="$CLICK_FROZEN_MOVE_POINTS" \
+			PATH_DURATION_MS=90 \
+			PATH_RATE_HZ=120 \
+			PATH_HOLD_BEFORE_RELEASE_MS=0 \
+			"$cursor_helper_bin"
+			sleep "$POST_FREEZE_SETTLE_S"
+			live_hud_focus_rsnap_overlay
+			smoke_log "click $click_index moved frozen selection"
+		fi
 		live_hud_press_escape >/dev/null 2>&1 || true
 		sleep "$POST_CLOSE_SETTLE_S"
 	done
@@ -484,6 +512,7 @@ PY
 	stop_visual_background
 
 	local expected_editability
+	local expected_transform_commits
 	expected_editability="$(
 		python3 - "$REPEATED_CLICK_FREEZES" "$REPEATED_DRAG_FREEZES" <<'PY'
 import sys
@@ -493,6 +522,11 @@ drag_count = int(sys.argv[2])
 print(",".join(["true"] * (click_count + drag_count)))
 PY
 	)"
+	if [[ "$VERIFY_CLICK_FROZEN_MOVE" == "1" ]]; then
+		expected_transform_commits="$REPEATED_CLICK_FREEZES"
+	else
+		expected_transform_commits=0
+	fi
 	local telemetry_last
 	telemetry_last="${RSNAP_TELEMETRY_LAST:-}"
 	if [[ -z "$telemetry_last" ]]; then
@@ -508,6 +542,7 @@ PY
 	smoke_log "telemetry: $out_dir"
 	EXPECTED_HUD_GLASS_MODE="$case_name" \
 	EXPECTED_MIN_FREEZE_COMMITS="$((REPEATED_CLICK_FREEZES + REPEATED_DRAG_FREEZES))" \
+	EXPECTED_MIN_FROZEN_TRANSFORM_COMMITS="$expected_transform_commits" \
 	EXPECTED_FREEZE_EDITABILITY="$expected_editability" \
 	VISUAL_DRAG_SCREENSHOT_PATH="$drag_screenshot_paths" \
 	VISUAL_DISPLAY_BOUNDS="$DISPLAY_BOUNDS" \

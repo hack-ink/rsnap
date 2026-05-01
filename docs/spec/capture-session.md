@@ -71,6 +71,9 @@ product level rather than binding itself to a particular window toolkit or shell
 - Hovering over a window in live mode shows an obvious targeting outline that follows the current
   target, remains legible in light and dark themes, and does not require moving away to another
   window before the current target becomes active.
+- Moving the pointer to live-mode desktop space with no recognized window MUST clear the window
+  targeting outline and mask immediately; the previous recognized window must not remain highlighted
+  as a stale target.
 - Pressing the primary button in live mode MUST NOT clear, flash, or remove the current
   targeting mask/scrim while the pointer is still below the drag threshold. The hover target may
   be replaced by a drag preview only after the drag preview exists; there must be no blank

@@ -606,6 +606,32 @@ mod tests {
 	}
 
 	#[test]
+	fn live_pointer_update_without_window_clears_previous_highlight() {
+		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
+		session.enter_live();
+
+		let _ = session.pop_host_request();
+
+		session.handle_host_event(HostEvent::PointerMoved {
+			point: GlobalPoint::new(120, 180),
+			rgb: None,
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+		session.handle_host_event(HostEvent::PointerMoved {
+			point: GlobalPoint::new(900, 700),
+			rgb: None,
+			active_monitor: Some(active_monitor()),
+			highlighted_window: None,
+		});
+
+		assert_eq!(session.scene_model().pointer, Some(GlobalPoint::new(900, 700)));
+		assert_eq!(session.scene_model().active_monitor, Some(active_monitor()));
+		assert_eq!(session.scene_model().highlighted_window, None);
+	}
+
+	#[test]
 	fn primary_click_freezes_highlighted_window_editable() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
@@ -633,6 +659,41 @@ mod tests {
 				selection_editable: true,
 			})
 		);
+	}
+
+	#[test]
+	fn primary_click_frozen_window_selection_keeps_grab_cursor() {
+		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
+		session.enter_live();
+
+		let _ = session.pop_host_request();
+
+		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
+			point: GlobalPoint::new(20, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
+			point: GlobalPoint::new(20, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+		let selection = highlighted_window().global_rect().unwrap();
+		assert_eq!(
+			session.pop_host_request(),
+			Some(HostRequest::RequestFreezeSnapshot { selection, selection_editable: true })
+		);
+
+		session.handle_host_report(HostReport::FreezeSnapshotCommitted { selection });
+		session.handle_host_event(HostEvent::PointerMoved {
+			point: GlobalPoint::new(80, 90),
+			rgb: None,
+			active_monitor: None,
+			highlighted_window: None,
+		});
+
+		assert_eq!(session.scene_model().cursor_intent, CursorIntent::Grab);
 	}
 
 	#[test]

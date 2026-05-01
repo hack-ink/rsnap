@@ -1002,6 +1002,10 @@ final class CaptureSessionController: NSObject {
 			do {
 				try self.session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 				try self.syncCore()
+				NativeHostTelemetry.captureEvent(
+					"capture.frozen_selection_transform_commit",
+					captureID: captureID
+				)
 			} catch {
 				NativeHostTelemetry.captureWarning(
 					"capture.frozen_selection_transform_commit_failed",
@@ -5079,10 +5083,10 @@ final class CaptureHostView: NSView {
 
 	private func refreshLiveHighlightedWindowPreview(at globalPoint: CGPoint?) {
 		guard let globalPoint else {
+			liveHighlightedWindowPreview = nil
 			return
 		}
-		liveHighlightedWindowPreview =
-			controller?.previewHighlightedWindow(at: globalPoint) ?? liveHighlightedWindowPreview
+		liveHighlightedWindowPreview = controller?.previewHighlightedWindow(at: globalPoint)
 	}
 
 	private func updateLiveChromeBackdrops() {
