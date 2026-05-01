@@ -79,29 +79,42 @@ fn frozen_selection_drag_starts_corner_resize_from_handle_hit_zone() {
 }
 
 #[test]
-fn frozen_selection_drag_updates_capture_rect_and_toolbar_position() {
+fn frozen_selection_drag_or_resize_updates_capture_rect_and_toolbar_position() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
-	let mut session = OverlaySession::new();
 
-	session.state.begin_freeze(monitor);
+	for (press, drag_to, expected_rect) in [
+		(
+			GlobalPoint::new(150, 180),
+			GlobalPoint::new(300, 360),
+			RectPoints::new(250, 300, 200, 240),
+		),
+		(
+			GlobalPoint::new(95, 115),
+			GlobalPoint::new(160, 190),
+			RectPoints::new(165, 195, 135, 165),
+		),
+	] {
+		let mut session = OverlaySession::new();
 
-	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+		session.state.begin_freeze(monitor);
 
-	session.state.frozen_capture_rect = Some(capture_rect);
-	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+		tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
 
-	session.seed_frozen_toolbar_default_position(monitor, capture_rect);
+		session.state.frozen_capture_rect = Some(capture_rect);
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
 
-	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(150, 180)));
-	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(300, 360)));
+		session.seed_frozen_toolbar_default_position(monitor, capture_rect);
 
-	let expected_rect = RectPoints::new(250, 300, 200, 240);
-	let expected_toolbar_pos =
-		session.frozen_toolbar_default_position_for_capture_rect(monitor, expected_rect);
+		assert!(session.begin_frozen_selection_drag(press));
+		assert!(session.update_frozen_selection_drag_rect(drag_to));
 
-	assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
-	assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
+		let expected_toolbar_pos =
+			session.frozen_toolbar_default_position_for_capture_rect(monitor, expected_rect);
+
+		assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
+		assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
+	}
 }
 
 #[test]
@@ -253,32 +266,6 @@ fn frozen_selection_drag_does_not_rearm_initial_frontmost_restore() {
 }
 
 #[test]
-fn frozen_selection_resize_updates_capture_rect_and_toolbar_position() {
-	let monitor = tests::test_monitor();
-	let capture_rect = RectPoints::new(100, 120, 200, 240);
-	let mut session = OverlaySession::new();
-
-	session.state.begin_freeze(monitor);
-
-	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
-
-	session.state.frozen_capture_rect = Some(capture_rect);
-	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-
-	session.seed_frozen_toolbar_default_position(monitor, capture_rect);
-
-	assert!(session.begin_frozen_selection_drag(GlobalPoint::new(95, 115)));
-	assert!(session.update_frozen_selection_drag_rect(GlobalPoint::new(160, 190)));
-
-	let expected_rect = RectPoints::new(165, 195, 135, 165);
-	let expected_toolbar_pos =
-		session.frozen_toolbar_default_position_for_capture_rect(monitor, expected_rect);
-
-	assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
-	assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
-}
-
-#[test]
 fn frozen_selection_resize_preserves_handle_press_offset() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(100, 120, 200, 240);
@@ -400,61 +387,53 @@ fn cropped_frozen_capture_image_uses_moved_capture_rect() {
 }
 
 #[test]
-fn auto_center_frozen_capture_rect_recenters_detected_content() {
+fn auto_center_frozen_capture_rect_recenters_detected_content_across_tools() {
 	let monitor = tests::test_monitor_with_scale(80, 60, 2_000);
 	let capture_rect = RectPoints::new(20, 16, 40, 24);
-	let mut image = RgbaImage::from_pixel(160, 120, Rgba([14, 16, 20, 255]));
-	let mut session = OverlaySession::new();
 
-	for y in 40..52 {
-		for x in 52..68 {
-			image.put_pixel(x, y, Rgba([228, 232, 240, 255]));
+	for (label, selected_tool, seed_toolbar) in [
+		("pointer tool recenters toolbar", FrozenToolbarTool::Pointer, true),
+		("annotation tool remains eligible", FrozenToolbarTool::Mosaic, false),
+	] {
+		let mut image = RgbaImage::from_pixel(160, 120, Rgba([14, 16, 20, 255]));
+		let mut session = OverlaySession::new();
+
+		for y in 40..52 {
+			for x in 52..68 {
+				image.put_pixel(x, y, Rgba([228, 232, 240, 255]));
+			}
+		}
+
+		session.state.begin_freeze(monitor);
+
+		tests::finish_frozen_ready_state(&mut session, monitor, image);
+
+		session.state.frozen_capture_rect = Some(capture_rect);
+		session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+		session.toolbar_state.selected_tool = selected_tool;
+
+		if seed_toolbar {
+			session.seed_frozen_toolbar_default_position(monitor, capture_rect);
+		}
+
+		assert!(session.frozen_auto_center_available(), "{label}");
+		assert!(session.auto_center_frozen_capture_rect(), "{label}");
+
+		let expected_rect = RectPoints::new(10, 11, 40, 24);
+
+		assert_eq!(session.state.frozen_capture_rect, Some(expected_rect), "{label}");
+
+		if seed_toolbar {
+			let expected_toolbar_pos =
+				session.frozen_toolbar_default_position_for_capture_rect(monitor, expected_rect);
+
+			assert_eq!(
+				session.toolbar_state.floating_position,
+				Some(expected_toolbar_pos),
+				"{label}",
+			);
 		}
 	}
-
-	session.state.begin_freeze(monitor);
-
-	tests::finish_frozen_ready_state(&mut session, monitor, image);
-
-	session.state.frozen_capture_rect = Some(capture_rect);
-	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-
-	session.seed_frozen_toolbar_default_position(monitor, capture_rect);
-
-	assert!(session.auto_center_frozen_capture_rect());
-
-	let expected_rect = RectPoints::new(10, 11, 40, 24);
-	let expected_toolbar_pos =
-		session.frozen_toolbar_default_position_for_capture_rect(monitor, expected_rect);
-
-	assert_eq!(session.state.frozen_capture_rect, Some(expected_rect));
-	assert_eq!(session.toolbar_state.floating_position, Some(expected_toolbar_pos));
-}
-
-#[test]
-fn auto_center_frozen_capture_rect_works_outside_pointer_mode() {
-	let monitor = tests::test_monitor_with_scale(80, 60, 2_000);
-	let capture_rect = RectPoints::new(20, 16, 40, 24);
-	let mut image = RgbaImage::from_pixel(160, 120, Rgba([14, 16, 20, 255]));
-	let mut session = OverlaySession::new();
-
-	for y in 40..52 {
-		for x in 52..68 {
-			image.put_pixel(x, y, Rgba([228, 232, 240, 255]));
-		}
-	}
-
-	session.state.begin_freeze(monitor);
-
-	tests::finish_frozen_ready_state(&mut session, monitor, image);
-
-	session.state.frozen_capture_rect = Some(capture_rect);
-	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
-	session.toolbar_state.selected_tool = FrozenToolbarTool::Mosaic;
-
-	assert!(session.frozen_auto_center_available());
-	assert!(session.auto_center_frozen_capture_rect());
-	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(10, 11, 40, 24)));
 }
 
 #[test]

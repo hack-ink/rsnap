@@ -31,41 +31,31 @@ fn toolbar_cursor_left_during_drag_keeps_drag_session_alive() {
 }
 
 #[test]
-fn toolbar_drag_start_eligibility_prefers_live_cursor_over_stale_cache() {
-	let mut session = OverlaySession::new();
+fn toolbar_drag_start_eligibility_uses_live_cursor_then_cached_pointer() {
 	#[cfg(target_os = "macos")]
 	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
 	#[cfg(not(target_os = "macos"))]
 	let primary_origin = Pos2::ZERO;
-	let primary_rect =
-		WindowRenderer::frozen_toolbar_primary_rect(&session.toolbar_state, primary_origin);
-	let stale_cursor = Pos2::new(primary_rect.right() + 12.0, primary_rect.center().y);
-	let live_cursor = primary_rect.center();
-
-	assert!(!primary_rect.contains(stale_cursor));
-	assert!(primary_rect.contains(live_cursor));
-
-	session.toolbar_pointer_local = Some(stale_cursor);
-
-	assert!(session.resolve_toolbar_drag_start_eligibility(Some(live_cursor)));
-}
-
-#[test]
-fn toolbar_drag_start_eligibility_falls_back_to_cached_pointer_when_live_cursor_is_missing() {
-	let mut session = OverlaySession::new();
-	#[cfg(target_os = "macos")]
-	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
-	#[cfg(not(target_os = "macos"))]
-	let primary_origin = Pos2::ZERO;
-	let primary_rect =
-		WindowRenderer::frozen_toolbar_primary_rect(&session.toolbar_state, primary_origin);
+	let primary_rect = WindowRenderer::frozen_toolbar_primary_rect(
+		&OverlaySession::new().toolbar_state,
+		primary_origin,
+	);
 	let cached_cursor = primary_rect.center();
+	let stale_cursor = Pos2::new(primary_rect.right() + 12.0, primary_rect.center().y);
 
 	assert!(primary_rect.contains(cached_cursor));
+	assert!(!primary_rect.contains(stale_cursor));
 
-	session.toolbar_pointer_local = Some(cached_cursor);
+	for (label, cached_pointer, live_pointer) in [
+		("live cursor wins over stale cache", stale_cursor, Some(cached_cursor)),
+		("cached pointer wins when live cursor is missing", cached_cursor, None),
+	] {
+		let mut session = OverlaySession::new();
 
-	assert!(session.resolve_toolbar_drag_start_eligibility(None));
+		session.toolbar_pointer_local = Some(cached_pointer);
+
+		assert!(session.resolve_toolbar_drag_start_eligibility(live_pointer), "{label}");
+	}
 }
 
 #[test]
@@ -144,22 +134,31 @@ fn frozen_toolbar_selected_mode_uses_fill_without_border() {
 }
 
 #[test]
-fn toolbar_window_hides_until_frozen_pixels_exist() {
+fn toolbar_window_visibility_tracks_frozen_display_readiness() {
 	let monitor = tests::test_monitor();
-	let mut session = OverlaySession::new();
 
-	session.state.begin_freeze(monitor);
+	for (label, has_display_pixels, expected_hide) in
+		[("no frozen pixels", false, true), ("seeded preview pixels", true, false)]
+	{
+		let mut session = OverlaySession::new();
 
-	assert!(session.should_hide_toolbar_window(monitor));
+		session.state.begin_freeze(monitor);
 
-	tests::set_session_pending_freeze_capture(&mut session, Some(monitor));
+		if has_display_pixels {
+			tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
+		}
 
-	assert!(session.should_hide_toolbar_window(monitor));
+		assert_eq!(session.should_hide_toolbar_window(monitor), expected_hide, "{label}");
 
-	tests::set_session_pending_freeze_capture(&mut session, None);
-	tests::set_session_inflight_freeze_capture(&mut session, Some(monitor));
+		tests::set_session_pending_freeze_capture(&mut session, Some(monitor));
 
-	assert!(session.should_hide_toolbar_window(monitor));
+		assert_eq!(session.should_hide_toolbar_window(monitor), expected_hide, "{label} pending");
+
+		tests::set_session_pending_freeze_capture(&mut session, None);
+		tests::set_session_inflight_freeze_capture(&mut session, Some(monitor));
+
+		assert_eq!(session.should_hide_toolbar_window(monitor), expected_hide, "{label} inflight");
+	}
 }
 
 #[cfg(target_os = "macos")]
@@ -178,27 +177,6 @@ fn toolbar_window_is_needed_for_seeded_preview_before_final_capture_ready() {
 
 	assert!(session.startup_aux_window_creation_pending);
 	assert!(!tests::session_export_authority_ready(&session));
-}
-
-#[test]
-fn toolbar_window_stays_visible_while_final_capture_is_pending() {
-	let monitor = tests::test_monitor();
-	let mut session = OverlaySession::new();
-
-	session.state.begin_freeze(monitor);
-
-	tests::finish_frozen_display_state(&mut session, monitor, tests::test_frozen_image());
-
-	assert!(!session.should_hide_toolbar_window(monitor));
-
-	tests::set_session_pending_freeze_capture(&mut session, Some(monitor));
-
-	assert!(!session.should_hide_toolbar_window(monitor));
-
-	tests::set_session_pending_freeze_capture(&mut session, None);
-	tests::set_session_inflight_freeze_capture(&mut session, Some(monitor));
-
-	assert!(!session.should_hide_toolbar_window(monitor));
 }
 
 #[test]
