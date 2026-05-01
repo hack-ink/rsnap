@@ -927,63 +927,47 @@ fn apply_self_capture_exception_window_ids_to_active_streams_keeps_scroll_live_s
 
 #[cfg(target_os = "macos")]
 #[test]
-fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_freeze_is_inflight()
- {
-	let monitor = tests::test_monitor();
-	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_blocked() {
+	fn set_freeze_inflight(session: &mut OverlaySession) {
+		tests::set_session_inflight_freeze_capture(session, Some(tests::test_monitor()));
+	}
 
-	tests::set_session_inflight_freeze_capture(&mut session, Some(monitor));
+	fn set_hit_test_inflight(session: &mut OverlaySession) {
+		session.pending_click_hit_test_request_id = Some(7);
+	}
 
-	session.apply_self_capture_exception_window_ids_to_active_streams();
+	fn set_window_list_inflight(session: &mut OverlaySession) {
+		session.window_list_refresh_inflight = true;
+	}
 
-	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-	assert!(session.pending_self_capture_exception_window_ids_worker_refresh);
-	assert_eq!(
-		session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
-		&[17]
-	);
-}
+	fn set_png_encode_inflight(session: &mut OverlaySession) {
+		session.png_encode_inflight = true;
+	}
 
-#[cfg(target_os = "macos")]
-#[test]
-fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_hit_test_is_inflight()
- {
-	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
+	for (label, arrange) in [
+		("freeze capture", set_freeze_inflight as fn(&mut OverlaySession)),
+		("hit test", set_hit_test_inflight),
+		("window list refresh", set_window_list_inflight),
+		("png encode", set_png_encode_inflight),
+	] {
+		let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
 
-	session.pending_click_hit_test_request_id = Some(7);
+		arrange(&mut session);
 
-	session.apply_self_capture_exception_window_ids_to_active_streams();
+		session.apply_self_capture_exception_window_ids_to_active_streams();
 
-	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-	assert!(session.pending_self_capture_exception_window_ids_worker_refresh);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_window_list_refresh_is_inflight()
- {
-	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
-
-	session.window_list_refresh_inflight = true;
-
-	session.apply_self_capture_exception_window_ids_to_active_streams();
-
-	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-	assert!(session.pending_self_capture_exception_window_ids_worker_refresh);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn apply_self_capture_exception_window_ids_to_active_streams_defers_worker_refresh_while_png_encode_is_inflight()
- {
-	let (mut session, original_worker_debug_id) = tests::configured_session_with_macos_worker();
-
-	session.png_encode_inflight = true;
-
-	session.apply_self_capture_exception_window_ids_to_active_streams();
-
-	assert_eq!(session.worker.as_ref().unwrap().debug_id(), original_worker_debug_id);
-	assert!(session.pending_self_capture_exception_window_ids_worker_refresh);
+		assert_eq!(
+			session.worker.as_ref().unwrap().debug_id(),
+			original_worker_debug_id,
+			"{label}"
+		);
+		assert!(session.pending_self_capture_exception_window_ids_worker_refresh, "{label}");
+		assert_eq!(
+			session.live_sample_stream.as_ref().unwrap().debug_self_capture_exception_window_ids(),
+			&[17],
+			"{label}",
+		);
+	}
 }
 
 #[cfg(target_os = "macos")]
