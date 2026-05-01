@@ -15,27 +15,19 @@ fn wrapped_pixel_delta_normalizes_back_to_signed_values() {
 }
 
 #[test]
-fn positive_vertical_wheel_delta_maps_to_upward_scroll_capture() {
-	assert_eq!(
-		OverlaySession::scroll_capture_direction_from_wheel_delta(&MouseScrollDelta::LineDelta(
-			0.0, 1.0
-		)),
-		Some(ScrollDirection::Up)
-	);
+fn vertical_wheel_delta_maps_to_scroll_capture_direction() {
+	for (delta_y, expected) in [(1.0, ScrollDirection::Up), (-1.0, ScrollDirection::Down)] {
+		assert_eq!(
+			OverlaySession::scroll_capture_direction_from_wheel_delta(
+				&MouseScrollDelta::LineDelta(0.0, delta_y,)
+			),
+			Some(expected)
+		);
+	}
 }
 
 #[test]
-fn negative_vertical_wheel_delta_maps_to_downward_scroll_capture() {
-	assert_eq!(
-		OverlaySession::scroll_capture_direction_from_wheel_delta(&MouseScrollDelta::LineDelta(
-			0.0, -1.0
-		)),
-		Some(ScrollDirection::Down)
-	);
-}
-
-#[test]
-fn external_scroll_input_inside_capture_rect_uses_upward_observation_for_positive_delta() {
+fn external_scroll_input_inside_capture_rect_tracks_direction_and_downward_backlog() {
 	let monitor = MonitorRect {
 		id: 1,
 		origin: GlobalPoint::new(0, 0),
@@ -43,62 +35,32 @@ fn external_scroll_input_inside_capture_rect_uses_upward_observation_for_positiv
 		height: 800,
 		scale_factor_x1000: 1_000,
 	};
-	let mut session = OverlaySession::new();
 
-	session.scroll_capture.active = true;
-	session.scroll_capture.monitor = Some(monitor);
-	session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
+	for (label, delta_y, initial_downward_motion, expected_direction, expected_downward_motion) in [
+		("positive delta", 4.0, 0.0, ScrollDirection::Up, Some(0.0)),
+		("negative delta", -4.0, 0.0, ScrollDirection::Down, None),
+		("positive delta clears downward backlog", 12.0, 128.0, ScrollDirection::Up, Some(0.0)),
+	] {
+		let mut session = OverlaySession::new();
 
-	session.handle_external_scroll_input_delta_y(150.0, 160.0, 4.0, true, false);
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
+		session.scroll_capture.downward_motion_rows_pending = initial_downward_motion;
 
-	assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Up));
-	assert!(session.scroll_capture.input_direction_at.is_some());
-	assert!(session.scroll_capture.input_gesture_active);
-	assert_eq!(session.scroll_capture.downward_motion_rows_pending, 0.0);
-}
+		session.handle_external_scroll_input_delta_y(150.0, 160.0, delta_y, true, false);
 
-#[test]
-fn external_scroll_input_inside_capture_rect_uses_downward_observation_for_negative_delta() {
-	let monitor = MonitorRect {
-		id: 1,
-		origin: GlobalPoint::new(0, 0),
-		width: 1_000,
-		height: 800,
-		scale_factor_x1000: 1_000,
-	};
-	let mut session = OverlaySession::new();
+		assert_eq!(session.scroll_capture.input_direction, Some(expected_direction), "{label}");
+		assert!(session.scroll_capture.input_direction_at.is_some(), "{label}");
+		assert!(session.scroll_capture.input_gesture_active, "{label}");
 
-	session.scroll_capture.active = true;
-	session.scroll_capture.monitor = Some(monitor);
-	session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
-
-	session.handle_external_scroll_input_delta_y(150.0, 160.0, -4.0, true, false);
-
-	assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Down));
-	assert!(session.scroll_capture.input_direction_at.is_some());
-	assert!(session.scroll_capture.input_gesture_active);
-}
-
-#[test]
-fn upward_external_scroll_input_clears_existing_downward_motion_backlog() {
-	let monitor = MonitorRect {
-		id: 1,
-		origin: GlobalPoint::new(0, 0),
-		width: 1_000,
-		height: 800,
-		scale_factor_x1000: 1_000,
-	};
-	let mut session = OverlaySession::new();
-
-	session.scroll_capture.active = true;
-	session.scroll_capture.monitor = Some(monitor);
-	session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
-	session.scroll_capture.downward_motion_rows_pending = 128.0;
-
-	session.handle_external_scroll_input_delta_y(150.0, 160.0, 12.0, true, false);
-
-	assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Up));
-	assert_eq!(session.scroll_capture.downward_motion_rows_pending, 0.0);
+		if let Some(expected_downward_motion) = expected_downward_motion {
+			assert_eq!(
+				session.scroll_capture.downward_motion_rows_pending, expected_downward_motion,
+				"{label}",
+			);
+		}
+	}
 }
 
 #[test]
@@ -292,7 +254,7 @@ fn external_scroll_input_extends_passthrough_window_inside_capture_rect() {
 }
 
 #[test]
-fn terminal_positive_scroll_event_sets_upward_observation_before_finishing() {
+fn terminal_scroll_event_sets_direction_before_finishing() {
 	let monitor = MonitorRect {
 		id: 1,
 		origin: GlobalPoint::new(0, 0),
@@ -300,41 +262,22 @@ fn terminal_positive_scroll_event_sets_upward_observation_before_finishing() {
 		height: 800,
 		scale_factor_x1000: 1_000,
 	};
-	let mut session = OverlaySession::new();
 
-	session.scroll_capture.active = true;
-	session.scroll_capture.monitor = Some(monitor);
-	session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
+	for (delta_y, expected_direction) in [(4.0, ScrollDirection::Up), (-4.0, ScrollDirection::Down)]
+	{
+		let mut session = OverlaySession::new();
 
-	session.handle_external_scroll_input_delta_y(150.0, 160.0, 4.0, false, true);
+		session.scroll_capture.active = true;
+		session.scroll_capture.monitor = Some(monitor);
+		session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
 
-	assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Up));
-	assert!(session.scroll_capture.input_direction_at.is_some());
-	assert!(!session.scroll_capture.input_gesture_active);
-	assert!(session.scroll_capture_input_allows_growth());
-}
+		session.handle_external_scroll_input_delta_y(150.0, 160.0, delta_y, false, true);
 
-#[test]
-fn terminal_negative_scroll_event_still_allows_downward_growth() {
-	let monitor = MonitorRect {
-		id: 1,
-		origin: GlobalPoint::new(0, 0),
-		width: 1_000,
-		height: 800,
-		scale_factor_x1000: 1_000,
-	};
-	let mut session = OverlaySession::new();
-
-	session.scroll_capture.active = true;
-	session.scroll_capture.monitor = Some(monitor);
-	session.scroll_capture.capture_rect_pixels = Some(RectPoints::new(100, 120, 200, 240));
-
-	session.handle_external_scroll_input_delta_y(150.0, 160.0, -4.0, false, true);
-
-	assert_eq!(session.scroll_capture.input_direction, Some(ScrollDirection::Down));
-	assert!(session.scroll_capture.input_direction_at.is_some());
-	assert!(!session.scroll_capture.input_gesture_active);
-	assert!(session.scroll_capture_input_allows_growth());
+		assert_eq!(session.scroll_capture.input_direction, Some(expected_direction));
+		assert!(session.scroll_capture.input_direction_at.is_some());
+		assert!(!session.scroll_capture.input_gesture_active);
+		assert!(session.scroll_capture_input_allows_growth());
+	}
 }
 
 #[cfg(target_os = "macos")]
@@ -386,18 +329,6 @@ fn fresh_downward_direction_allows_growth_without_active_gesture() {
 	session.scroll_capture.input_direction = Some(ScrollDirection::Down);
 	session.scroll_capture.input_direction_at = Some(Instant::now());
 	session.scroll_capture.input_gesture_active = false;
-
-	assert!(session.scroll_capture_input_allows_growth());
-}
-
-#[test]
-fn upward_direction_still_allows_growth_gate() {
-	let mut session = OverlaySession::new();
-
-	session.scroll_capture.active = true;
-	session.scroll_capture.input_direction = Some(ScrollDirection::Up);
-	session.scroll_capture.input_direction_at = Some(Instant::now());
-	session.scroll_capture.input_gesture_active = true;
 
 	assert!(session.scroll_capture_input_allows_growth());
 }

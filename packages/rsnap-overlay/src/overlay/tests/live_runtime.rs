@@ -1757,28 +1757,17 @@ fn wants_global_frozen_hotkeys_only_in_plain_frozen_mode() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn global_escape_hotkey_cancels_live_capture() {
-	let mut session = OverlaySession::new();
+fn global_escape_hotkey_cancels_active_capture_modes() {
+	for mode in [OverlayMode::Live, OverlayMode::Frozen] {
+		let mut session = OverlaySession::new();
 
-	session.state.mode = OverlayMode::Live;
+		session.state.mode = mode;
 
-	assert!(matches!(
-		session.handle_global_escape_hotkey(),
-		OverlayControl::Exit(OverlayExit::Cancelled)
-	));
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn global_escape_hotkey_cancels_frozen_capture() {
-	let mut session = OverlaySession::new();
-
-	session.state.mode = OverlayMode::Frozen;
-
-	assert!(matches!(
-		session.handle_global_escape_hotkey(),
-		OverlayControl::Exit(OverlayExit::Cancelled)
-	));
+		assert!(matches!(
+			session.handle_global_escape_hotkey(),
+			OverlayControl::Exit(OverlayExit::Cancelled)
+		));
+	}
 }
 
 #[cfg(target_os = "macos")]
@@ -1799,44 +1788,33 @@ fn global_loupe_hotkey_tracks_live_hold_state() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn global_frozen_copy_hotkey_queues_copy_without_key_window() {
+fn global_frozen_copy_hotkey_queues_copy_unless_text_edit_is_active() {
 	let monitor = tests::test_monitor();
-	let mut session = OverlaySession::new();
 
-	session.session_active = true;
+	for (label, active_text_edit, expected_action) in
+		[("no active text edit", false, Some(PngAction::Copy)), ("active text edit", true, None)]
+	{
+		let mut session = OverlaySession::new();
 
-	session.state.begin_freeze(monitor);
+		session.session_active = true;
 
-	tests::finish_frozen_ready_state(&mut session, monitor, tests::test_frozen_image());
+		session.state.begin_freeze(monitor);
 
-	assert!(matches!(
-		session.handle_global_frozen_hotkey(FrozenGlobalHotkey::Copy),
-		OverlayControl::Continue
-	));
-	assert_eq!(session.pending_png_action, Some(PngAction::Copy));
-}
+		tests::finish_frozen_ready_state(&mut session, monitor, tests::test_frozen_image());
 
-#[cfg(target_os = "macos")]
-#[test]
-fn global_frozen_copy_hotkey_ignores_active_text_edit() {
-	let monitor = tests::test_monitor();
-	let mut session = OverlaySession::new();
+		if active_text_edit {
+			session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
+			session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
 
-	session.session_active = true;
+			assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
+		}
 
-	session.state.begin_freeze(monitor);
-
-	tests::finish_frozen_ready_state(&mut session, monitor, tests::test_frozen_image());
-
-	session.state.frozen_capture_rect = Some(RectPoints::new(100, 120, 220, 180));
-	session.toolbar_state.selected_tool = FrozenToolbarTool::Text;
-
-	assert!(session.begin_frozen_text_edit_at(monitor, GlobalPoint::new(140, 160)));
-	assert!(matches!(
-		session.handle_global_frozen_hotkey(FrozenGlobalHotkey::Copy),
-		OverlayControl::Continue
-	));
-	assert_eq!(session.pending_png_action, None);
+		assert!(matches!(
+			session.handle_global_frozen_hotkey(FrozenGlobalHotkey::Copy),
+			OverlayControl::Continue
+		));
+		assert_eq!(session.pending_png_action, expected_action, "{label}");
+	}
 }
 
 #[test]
@@ -2202,29 +2180,18 @@ fn live_hud_rgb_text_uses_fixed_width_placeholders() {
 }
 
 #[test]
-fn stable_live_loupe_side_prefers_configured_patch_side() {
-	let mut state = OverlayState::new();
+fn stable_live_loupe_side_prefers_configured_patch_side_over_runtime_patch() {
+	for (patch_width, patch_height) in [(17, 19), (25, 25)] {
+		let mut state = OverlayState::new();
 
-	state.loupe_patch_side_px = 21;
-	state.loupe = Some(LoupeSample {
-		center: GlobalPoint::new(100, 120),
-		patch: RgbaImage::from_pixel(17, 19, image::Rgba([0, 0, 0, 255])),
-	});
+		state.loupe_patch_side_px = 21;
+		state.loupe = Some(LoupeSample {
+			center: GlobalPoint::new(100, 120),
+			patch: RgbaImage::from_pixel(patch_width, patch_height, image::Rgba([0, 0, 0, 255])),
+		});
 
-	assert_eq!(hud_helpers::stable_live_loupe_side_px(&state), 21);
-}
-
-#[test]
-fn stable_live_loupe_side_ignores_larger_runtime_patch() {
-	let mut state = OverlayState::new();
-
-	state.loupe_patch_side_px = 21;
-	state.loupe = Some(LoupeSample {
-		center: GlobalPoint::new(100, 120),
-		patch: RgbaImage::from_pixel(25, 25, image::Rgba([0, 0, 0, 255])),
-	});
-
-	assert_eq!(hud_helpers::stable_live_loupe_side_px(&state), 21);
+		assert_eq!(hud_helpers::stable_live_loupe_side_px(&state), 21);
+	}
 }
 
 #[test]
