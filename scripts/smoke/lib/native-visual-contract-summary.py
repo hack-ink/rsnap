@@ -374,6 +374,7 @@ for index, commit in enumerate(freeze_commits, start=1):
         f"[smoke] freeze_commit[{index}] "
         f"totalMs={total_ms:.2f} presentMs={present_ms:.2f} "
         f"snapshotWaitMs={snapshot_wait_ms:.2f} snapshotSource={commit_source} "
+        f"frameAgeMs={commit_frame_age_ms:.2f} "
         f"selfCaptureSafe={self_capture_safe} "
         f"selfCaptureFilterComplete={commit_filter_complete} baseReady={base_ready}"
     )
@@ -396,7 +397,7 @@ for index, commit in enumerate(freeze_commits, start=1):
         )
     if commit_source == "window_list_below_overlay":
         window_list_below_overlay_commits += 1
-    if commit_source == "latest_unchanged" and not commit_filter_complete and (
+    if commit_source == "latest_unchanged" and (
         commit_frame_age_ms > max_latest_unchanged_frame_age_ms
     ):
         failures.append(
