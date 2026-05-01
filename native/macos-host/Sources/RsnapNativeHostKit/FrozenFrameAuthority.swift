@@ -31,7 +31,7 @@ struct FrozenFrameSnapshot {
 final class FrozenFrameAuthority: @unchecked Sendable {
 	private static let maximumSnapshotAgeMilliseconds = 150.0
 	private static let selfCaptureFilterRetryInterval: TimeInterval = 0.035
-	private static let selfCaptureFilterRetryWindow: TimeInterval = 1.0
+	private static let selfCaptureFilterRetryWindow: TimeInterval = 2.5
 
 	private struct DisplayTarget: Equatable {
 		let displayID: CGDirectDisplayID
@@ -438,6 +438,26 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			minSequence: tokenRecord?.sequence ?? 0,
 			startedAtUptime: ProcessInfo.processInfo.systemUptime
 		)
+	}
+
+	func needsSelfCaptureCompleteFrame(containing point: CGPoint) -> Bool {
+		stateLock.lock()
+		defer {
+			stateLock.unlock()
+		}
+		guard selfCaptureFilterRequired else {
+			return false
+		}
+		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		else {
+			return false
+		}
+		guard let record = latestFrames[displayID],
+			let eligibleRecord = snapshotEligibleRecordLocked(record)
+		else {
+			return true
+		}
+		return !eligibleRecord.selfCaptureFilterComplete
 	}
 
 	func snapshot(
