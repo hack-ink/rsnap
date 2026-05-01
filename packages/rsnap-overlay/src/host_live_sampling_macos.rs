@@ -95,6 +95,8 @@ impl HostMacLiveSampler {
 	///
 	/// This does not block on a fresh capture. When the latest frame is unavailable, the
 	/// underlying stream is primed and `None` is returned.
+	/// The returned payload intentionally does not carry frame age or sequence metadata, so it
+	/// must not be used as the first frozen screenshot frame.
 	pub fn peek_latest_monitor_rgba(&self, monitor: MonitorRect) -> Option<HostRgbaRegion> {
 		let snapshot = self.stream.peek_latest_rgba_snapshot(monitor)?;
 		let image = snapshot.image.as_ref();

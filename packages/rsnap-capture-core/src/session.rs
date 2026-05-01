@@ -23,6 +23,8 @@ pub struct CaptureSessionCore {
 	selected_toolbar_item: ToolbarItemKind,
 	live_press_start: Option<GlobalPoint>,
 	live_press_target: Option<crate::geometry::GlobalRect>,
+	pending_frozen_selection_editable: bool,
+	frozen_selection_editable: bool,
 	pending_requests: VecDeque<HostRequest>,
 }
 impl CaptureSessionCore {
@@ -35,6 +37,8 @@ impl CaptureSessionCore {
 			selected_toolbar_item: ToolbarItemKind::Pointer,
 			live_press_start: None,
 			live_press_target: None,
+			pending_frozen_selection_editable: false,
+			frozen_selection_editable: false,
 			pending_requests: VecDeque::new(),
 		}
 	}
@@ -64,6 +68,8 @@ impl CaptureSessionCore {
 		self.selected_toolbar_item = ToolbarItemKind::Pointer;
 		self.live_press_start = None;
 		self.live_press_target = None;
+		self.pending_frozen_selection_editable = false;
+		self.frozen_selection_editable = false;
 
 		self.refresh_toolbar_actions();
 		self.pending_requests.push_back(HostRequest::StartLiveCapture);
@@ -146,7 +152,13 @@ impl CaptureSessionCore {
 				self.scene.frozen_selection = Some(selection);
 				self.scene.active_monitor = None;
 				self.scene.highlighted_window = None;
-				self.scene.cursor_intent = CursorIntent::Grab;
+				self.frozen_selection_editable = self.pending_frozen_selection_editable;
+				self.pending_frozen_selection_editable = false;
+				self.scene.cursor_intent = if self.frozen_selection_editable {
+					CursorIntent::Grab
+				} else {
+					CursorIntent::Default
+				};
 				self.scene.status_message = None;
 
 				self.refresh_toolbar_actions();
@@ -301,23 +313,40 @@ impl CaptureSessionCore {
 	}
 
 	fn finalize_live_selection(&mut self, point: GlobalPoint, active_monitor: Option<MonitorRect>) {
-		let selection = self
-			.scene
-			.live_selection_preview
-			.or(self.live_press_target)
-			.or_else(|| {
-				resolve_live_target(self.scene.active_monitor, self.scene.highlighted_window)
-			})
-			.or_else(|| Some(default_live_selection(point, active_monitor)));
+		let had_live_press = self.live_press_start.is_some();
+		let release_drag_selection = if had_live_press {
+			self.compute_live_selection_preview(point, active_monitor)
+		} else {
+			None
+		};
+		let selection_editable = release_drag_selection.is_some();
+		let selection = if had_live_press {
+			release_drag_selection
+				.or(self.live_press_target)
+				.or_else(|| {
+					resolve_live_target(self.scene.active_monitor, self.scene.highlighted_window)
+				})
+				.or_else(|| Some(default_live_selection(point, active_monitor)))
+		} else {
+			self.scene
+				.live_selection_preview
+				.or(self.live_press_target)
+				.or_else(|| {
+					resolve_live_target(self.scene.active_monitor, self.scene.highlighted_window)
+				})
+				.or_else(|| Some(default_live_selection(point, active_monitor)))
+		};
 
 		self.live_press_start = None;
 		self.live_press_target = None;
 
 		if let Some(selection) = selection {
+			self.pending_frozen_selection_editable = selection_editable;
 			self.scene.live_selection_preview = Some(selection);
 			self.scene.status_message = None;
 
-			self.pending_requests.push_back(HostRequest::RequestFreezeSnapshot { selection });
+			self.pending_requests
+				.push_back(HostRequest::RequestFreezeSnapshot { selection, selection_editable });
 		}
 	}
 
@@ -326,9 +355,13 @@ impl CaptureSessionCore {
 			CaptureMode::Hidden => CursorIntent::Default,
 			CaptureMode::Live => CursorIntent::Default,
 			CaptureMode::Frozen => {
-				self.scene.frozen_selection.map_or(CursorIntent::Default, |selection| {
-					self.frozen_cursor_intent(point, selection)
-				})
+				if !self.frozen_selection_editable {
+					CursorIntent::Default
+				} else {
+					self.scene.frozen_selection.map_or(CursorIntent::Default, |selection| {
+						self.frozen_cursor_intent(point, selection)
+					})
+				}
 			},
 		};
 	}
@@ -483,6 +516,35 @@ mod tests {
 		WindowRect { window_id: Some(42), x: 10, y: 20, width: 320, height: 240 }
 	}
 
+	fn enter_frozen_with_drag_selection(session: &mut CaptureSessionCore, selection: GlobalRect) {
+		session.enter_live();
+
+		let _ = session.pop_host_request();
+		let start = GlobalPoint::new(selection.x, selection.y);
+		let end = GlobalPoint::new(
+			selection.x.saturating_add_unsigned(selection.width),
+			selection.y.saturating_add_unsigned(selection.height),
+		);
+
+		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
+			point: start,
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
+			point: end,
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+
+		assert_eq!(
+			session.pop_host_request(),
+			Some(HostRequest::RequestFreezeSnapshot { selection, selection_editable: true })
+		);
+
+		session.handle_host_report(HostReport::FreezeSnapshotCommitted { selection });
+	}
+
 	#[test]
 	fn enter_live_requests_capture_and_default_cursor() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
@@ -498,18 +560,7 @@ mod tests {
 	fn freeze_commit_enables_frozen_actions() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
-		session.enter_live();
-
-		let _ = session.pop_host_request();
-
-		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
-			point: GlobalPoint::new(40, 60),
-			active_monitor: Some(active_monitor()),
-			highlighted_window: Some(highlighted_window()),
-		});
-		session.handle_host_report(HostReport::FreezeSnapshotCommitted {
-			selection: GlobalRect::new(10, 20, 100, 50),
-		});
+		enter_frozen_with_drag_selection(&mut session, GlobalRect::new(10, 20, 100, 50));
 
 		assert_eq!(session.scene_model().mode, CaptureMode::Frozen);
 		assert_eq!(session.scene_model().cursor_intent, CursorIntent::Grab);
@@ -520,13 +571,8 @@ mod tests {
 	fn pointer_update_tracks_rgb_and_frozen_grab() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
-		session.enter_live();
+		enter_frozen_with_drag_selection(&mut session, GlobalRect::new(10, 20, 100, 50));
 
-		let _ = session.pop_host_request();
-
-		session.handle_host_report(HostReport::FreezeSnapshotCommitted {
-			selection: GlobalRect::new(10, 20, 100, 50),
-		});
 		session.handle_host_event(HostEvent::PointerMoved {
 			point: GlobalPoint::new(40, 40),
 			rgb: Some(Rgb::new(1, 2, 3)),
@@ -542,13 +588,8 @@ mod tests {
 	fn frozen_pointer_cursor_tracks_resize_edges() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
-		session.enter_live();
+		enter_frozen_with_drag_selection(&mut session, GlobalRect::new(10, 20, 100, 50));
 
-		let _ = session.pop_host_request();
-
-		session.handle_host_report(HostReport::FreezeSnapshotCommitted {
-			selection: GlobalRect::new(10, 20, 100, 50),
-		});
 		session.handle_host_event(HostEvent::PointerMoved {
 			point: GlobalPoint::new(110, 45),
 			rgb: None,
@@ -589,7 +630,33 @@ mod tests {
 	}
 
 	#[test]
-	fn primary_drag_updates_live_preview_and_freezes_with_preview_selection() {
+	fn live_pointer_update_without_window_clears_previous_highlight() {
+		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
+		session.enter_live();
+
+		let _ = session.pop_host_request();
+
+		session.handle_host_event(HostEvent::PointerMoved {
+			point: GlobalPoint::new(120, 180),
+			rgb: None,
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+		session.handle_host_event(HostEvent::PointerMoved {
+			point: GlobalPoint::new(900, 700),
+			rgb: None,
+			active_monitor: Some(active_monitor()),
+			highlighted_window: None,
+		});
+
+		assert_eq!(session.scene_model().pointer, Some(GlobalPoint::new(900, 700)));
+		assert_eq!(session.scene_model().active_monitor, Some(active_monitor()));
+		assert_eq!(session.scene_model().highlighted_window, None);
+	}
+
+	#[test]
+	fn primary_click_freezes_highlighted_window_not_editable() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
@@ -601,36 +668,102 @@ mod tests {
 			active_monitor: Some(active_monitor()),
 			highlighted_window: Some(highlighted_window()),
 		});
-		session.handle_host_event(HostEvent::PrimaryInteractionUpdated {
-			point: GlobalPoint::new(80, 110),
-			active_monitor: Some(active_monitor()),
-			highlighted_window: Some(highlighted_window()),
-		});
 
-		assert_eq!(
-			session.scene_model().live_selection_preview,
-			Some(GlobalRect::new(20, 30, 60, 80))
-		);
+		assert_eq!(session.scene_model().live_selection_preview, None);
 
 		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
-			point: GlobalPoint::new(80, 110),
+			point: GlobalPoint::new(20, 30),
 			active_monitor: Some(active_monitor()),
 			highlighted_window: Some(highlighted_window()),
 		});
 
-		assert_eq!(session.scene_model().mode, CaptureMode::Live);
-		assert_eq!(
-			session.scene_model().live_selection_preview,
-			Some(GlobalRect::new(20, 30, 60, 80))
-		);
 		assert_eq!(
 			session.pop_host_request(),
-			Some(HostRequest::RequestFreezeSnapshot { selection: GlobalRect::new(20, 30, 60, 80) })
+			Some(HostRequest::RequestFreezeSnapshot {
+				selection: highlighted_window().global_rect().unwrap(),
+				selection_editable: false,
+			})
 		);
 	}
 
 	#[test]
-	fn primary_drag_allows_thin_preview_once_drag_threshold_is_crossed() {
+	fn primary_click_frozen_window_selection_keeps_default_cursor() {
+		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
+		session.enter_live();
+
+		let _ = session.pop_host_request();
+
+		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
+			point: GlobalPoint::new(20, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
+			point: GlobalPoint::new(20, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: Some(highlighted_window()),
+		});
+
+		let selection = highlighted_window().global_rect().unwrap();
+
+		assert_eq!(
+			session.pop_host_request(),
+			Some(HostRequest::RequestFreezeSnapshot { selection, selection_editable: false })
+		);
+
+		session.handle_host_report(HostReport::FreezeSnapshotCommitted { selection });
+		session.handle_host_event(HostEvent::PointerMoved {
+			point: GlobalPoint::new(80, 90),
+			rgb: None,
+			active_monitor: None,
+			highlighted_window: None,
+		});
+
+		assert_eq!(session.scene_model().cursor_intent, CursorIntent::Default);
+	}
+
+	#[test]
+	fn primary_click_fullscreen_fallback_is_not_editable() {
+		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
+		session.enter_live();
+
+		let _ = session.pop_host_request();
+
+		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
+			point: GlobalPoint::new(20, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: None,
+		});
+		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
+			point: GlobalPoint::new(20, 30),
+			active_monitor: Some(active_monitor()),
+			highlighted_window: None,
+		});
+
+		let monitor = active_monitor();
+		let selection =
+			GlobalRect::new(monitor.origin.x, monitor.origin.y, monitor.width, monitor.height);
+
+		assert_eq!(
+			session.pop_host_request(),
+			Some(HostRequest::RequestFreezeSnapshot { selection, selection_editable: false })
+		);
+
+		session.handle_host_report(HostReport::FreezeSnapshotCommitted { selection });
+		session.handle_host_event(HostEvent::PointerMoved {
+			point: GlobalPoint::new(80, 90),
+			rgb: None,
+			active_monitor: None,
+			highlighted_window: None,
+		});
+
+		assert_eq!(session.scene_model().cursor_intent, CursorIntent::Default);
+	}
+
+	#[test]
+	fn primary_drag_freezes_release_rect_editable_with_thin_preview_allowed() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		session.enter_live();
@@ -654,40 +787,7 @@ mod tests {
 		);
 
 		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
-			point: GlobalPoint::new(21, 30),
-			active_monitor: Some(active_monitor()),
-			highlighted_window: Some(highlighted_window()),
-		});
-
-		assert_eq!(
-			session.pop_host_request(),
-			Some(HostRequest::RequestFreezeSnapshot { selection: GlobalRect::new(20, 30, 1, 1) })
-		);
-	}
-
-	#[test]
-	fn primary_interaction_below_drag_threshold_stays_click_targeted() {
-		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
-
-		session.enter_live();
-
-		let _ = session.pop_host_request();
-
-		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
-			point: GlobalPoint::new(20, 30),
-			active_monitor: Some(active_monitor()),
-			highlighted_window: Some(highlighted_window()),
-		});
-		session.handle_host_event(HostEvent::PrimaryInteractionUpdated {
-			point: GlobalPoint::new(20, 30),
-			active_monitor: Some(active_monitor()),
-			highlighted_window: Some(highlighted_window()),
-		});
-
-		assert_eq!(session.scene_model().live_selection_preview, None);
-
-		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
-			point: GlobalPoint::new(20, 30),
+			point: GlobalPoint::new(90, 130),
 			active_monitor: Some(active_monitor()),
 			highlighted_window: Some(highlighted_window()),
 		});
@@ -695,7 +795,8 @@ mod tests {
 		assert_eq!(
 			session.pop_host_request(),
 			Some(HostRequest::RequestFreezeSnapshot {
-				selection: highlighted_window().global_rect().unwrap(),
+				selection: GlobalRect::new(20, 30, 70, 100),
+				selection_editable: true,
 			})
 		);
 	}

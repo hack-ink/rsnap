@@ -7,6 +7,7 @@ import ScreenCaptureKit
 
 struct FrozenFrameLatchToken {
 	let displayID: CGDirectDisplayID
+	let generation: UInt64
 	let minSequence: UInt64
 	let startedAtUptime: TimeInterval
 }
@@ -15,9 +16,12 @@ struct FrozenFrameSnapshot {
 	let displayID: CGDirectDisplayID
 	let displayFrame: CGRect
 	let image: CGImage
+	let generation: UInt64
 	let sequence: UInt64
 	let capturedAtUptime: TimeInterval
 	let source: String
+	let selfCaptureSafe: Bool
+	let selfCaptureFilterComplete: Bool
 
 	func ageMilliseconds(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double {
 		max(0, now - capturedAtUptime) * 1_000
@@ -25,6 +29,10 @@ struct FrozenFrameSnapshot {
 }
 
 final class FrozenFrameAuthority: @unchecked Sendable {
+	private static let maximumSnapshotAgeMilliseconds = 150.0
+	private static let selfCaptureFilterRetryInterval: TimeInterval = 0.035
+	private static let selfCaptureFilterRetryWindow: TimeInterval = 2.5
+
 	private struct DisplayTarget: Equatable {
 		let displayID: CGDirectDisplayID
 		let frame: CGRect
@@ -37,8 +45,10 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let displayID: CGDirectDisplayID
 		let displayFrame: CGRect
 		let pixelBuffer: CVPixelBuffer
+		let generation: UInt64
 		let sequence: UInt64
 		let capturedAtUptime: TimeInterval
+		let selfCaptureFilterComplete: Bool
 
 		func ageMilliseconds(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double {
 			max(0, now - capturedAtUptime) * 1_000
@@ -95,13 +105,23 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		}
 	}
 
+	private struct PreparedContentFilter {
+		let filter: SCContentFilter
+		let selfCaptureFilterComplete: Bool
+		let expectedWindowCount: Int
+		let matchedWindowCount: Int
+	}
+
 	private let stateLock = NSCondition()
 	private let outputQueue = DispatchQueue(
 		label: "ink.hack.rsnap.native-host.frozen-frame-authority-output",
 		qos: .userInteractive
 	)
 	private var generation: UInt64 = 0
+	private var setupRequestID: UInt64 = 0
 	private var setupDisplayIDs: Set<CGDirectDisplayID>?
+	private var selfCaptureFilterRequired = false
+	private var selfCaptureUnsafeAfterUptime: TimeInterval?
 	private var activeDisplayIDs: Set<CGDirectDisplayID> = []
 	private var displayTargets: [CGDirectDisplayID: DisplayTarget] = [:]
 	private var streams: [CGDirectDisplayID: DisplayStream] = [:]
@@ -115,7 +135,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		for screens: [NSScreen],
 		captureID: UInt64 = 0,
 		source: String = "capture",
-		refreshContentFilter: Bool = false
+		rebuildContentFilter: Bool = false,
+		selfCaptureExceptionWindowIDs: Set<CGWindowID> = []
 	) {
 		let setupStartedAt = ProcessInfo.processInfo.systemUptime
 		let targets = screens.compactMap(Self.displayTarget(for:))
@@ -131,30 +152,56 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let streamsCoverTargets = Set(streams.keys) == targetIDs
 		let setupInProgressForTargets = setupDisplayIDs == targetIDs
 		displayTargets = nextTargets
-		if unchanged, streamsCoverTargets || setupInProgressForTargets {
+		if rebuildContentFilter {
+			selfCaptureFilterRequired = true
+			selfCaptureUnsafeAfterUptime = setupStartedAt
+		}
+		// When overlay windows become visible, discard pre-overlay streams instead of updating
+		// filters in place. Keep the old stream running until the replacement is configured so a
+		// fast click can still freeze a fresh frame, but only if that frame came from a complete
+		// self-capture-excluding filter.
+		if rebuildContentFilter, unchanged, streamsCoverTargets {
+			setupRequestID &+= 1
+			let requestID = setupRequestID
+			setupDisplayIDs = targetIDs
 			updateTelemetryContextLocked(
 				captureID: captureID,
 				source: source,
 				startedAtUptime: setupStartedAt,
 				targetIDs: targetIDs
 			)
-			let requestGeneration = generation
 			stateLock.unlock()
-			if refreshContentFilter, streamsCoverTargets {
-				refreshContentFilters(
-					for: targets,
-					generation: requestGeneration,
-					captureID: captureID,
-					source: source,
-					startedAtUptime: setupStartedAt
-				)
-			}
+			rebuildStreamsFromShareableContent(
+				targets: targets,
+				targetIDs: targetIDs,
+				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+				captureID: captureID,
+				source: source,
+				startedAtUptime: setupStartedAt,
+				retryUntilUptime: setupStartedAt + Self.selfCaptureFilterRetryWindow,
+				requestID: requestID
+			)
+			return
+		}
+		if unchanged, streamsCoverTargets || setupInProgressForTargets, !rebuildContentFilter {
+			updateTelemetryContextLocked(
+				captureID: captureID,
+				source: source,
+				startedAtUptime: setupStartedAt,
+				targetIDs: targetIDs
+			)
+			stateLock.unlock()
 			return
 		}
 		generation &+= 1
+		setupRequestID &+= 1
 		let requestGeneration = generation
 		activeDisplayIDs = targetIDs
 		setupDisplayIDs = targetIDs
+		if !rebuildContentFilter {
+			selfCaptureFilterRequired = false
+			selfCaptureUnsafeAfterUptime = nil
+		}
 		latestFrames = latestFrames.filter { targetIDs.contains($0.key) }
 		updateTelemetryContextLocked(
 			captureID: captureID,
@@ -172,6 +219,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 
 		configureStreamsFromShareableContent(
 			targets: targets,
+			selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
 			generation: requestGeneration,
 			captureID: captureID,
 			source: source,
@@ -179,14 +227,127 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		)
 	}
 
+	private func rebuildStreamsFromShareableContent(
+		targets: [DisplayTarget],
+		targetIDs: Set<CGDirectDisplayID>,
+		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
+		captureID: UInt64,
+		source: String,
+		startedAtUptime: TimeInterval,
+		retryUntilUptime: TimeInterval,
+		requestID: UInt64
+	) {
+		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) {
+			[weak self] content, error in
+			guard let self else {
+				return
+			}
+			guard let content else {
+				NativeHostTelemetry.frozenAuthorityWarning(
+					"frozen_authority.content_lookup_failed",
+					captureID: captureID,
+					source: source,
+					displayID: 0,
+					error: String(describing: error)
+				)
+				NativeHostTelemetry.frozenAuthorityContentLookupTiming(
+					captureID: captureID,
+					source: source,
+					totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
+					success: false,
+					displayCount: targets.count,
+					windowCount: 0
+				)
+				self.finishSetup(targetIDs: targetIDs)
+				return
+			}
+
+			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
+				captureID: captureID,
+				source: source,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
+				success: true,
+				displayCount: content.displays.count,
+				windowCount: content.windows.count
+			)
+			guard self.isCurrentSetupRequest(requestID, targetIDs: targetIDs) else {
+				return
+			}
+			let preparedFilters = Self.contentFilters(
+				for: targets,
+				in: content,
+				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs
+			)
+			guard Self.filtersAreComplete(preparedFilters, for: targets) else {
+				if ProcessInfo.processInfo.systemUptime < retryUntilUptime {
+					DispatchQueue.global(qos: .userInteractive).asyncAfter(
+						deadline: .now() + Self.selfCaptureFilterRetryInterval
+					) { [weak self] in
+						self?.rebuildStreamsFromShareableContent(
+							targets: targets,
+							targetIDs: targetIDs,
+							selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+							captureID: captureID,
+							source: source,
+							startedAtUptime: startedAtUptime,
+							retryUntilUptime: retryUntilUptime,
+							requestID: requestID
+						)
+					}
+					return
+				}
+				self.logIncompleteFilters(
+					preparedFilters,
+					targets: targets,
+					captureID: captureID,
+					source: source
+				)
+				self.finishSetup(targetIDs: targetIDs)
+				return
+			}
+
+			self.stateLock.lock()
+			guard self.setupRequestID == requestID, self.activeDisplayIDs == targetIDs else {
+				self.stateLock.unlock()
+				return
+			}
+			self.generation &+= 1
+			let requestGeneration = self.generation
+			self.setupDisplayIDs = targetIDs
+			self.latestFrames = self.latestFrames.filter { targetIDs.contains($0.key) }
+			self.updateTelemetryContextLocked(
+				captureID: captureID,
+				source: source,
+				startedAtUptime: startedAtUptime,
+				targetIDs: targetIDs
+			)
+			let staleStreams = self.streams.values
+			self.streams.removeAll()
+			self.stateLock.unlock()
+
+			for staleStream in staleStreams {
+				staleStream.stop()
+			}
+
+			self.configureStreams(
+				targets: targets,
+				preparedFilters: preparedFilters,
+				generation: requestGeneration,
+				captureID: captureID,
+				source: source
+			)
+		}
+	}
+
 	private func configureStreamsFromShareableContent(
 		targets: [DisplayTarget],
+		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
 		generation requestGeneration: UInt64,
 		captureID: UInt64,
 		source: String,
 		startedAtUptime: TimeInterval
 	) {
-		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) {
+		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) {
 			[weak self] content, error in
 			guard let self else {
 				return
@@ -221,9 +382,14 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				displayCount: content.displays.count,
 				windowCount: content.windows.count
 			)
+			let preparedFilters = Self.contentFilters(
+				for: targets,
+				in: content,
+				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs
+			)
 			self.configureStreams(
-				content: content,
 				targets: targets,
+				preparedFilters: preparedFilters,
 				generation: requestGeneration,
 				captureID: captureID,
 				source: source
@@ -231,94 +397,14 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		}
 	}
 
-	private func refreshContentFilters(
-		for targets: [DisplayTarget],
-		generation requestGeneration: UInt64,
-		captureID: UInt64,
-		source: String,
-		startedAtUptime: TimeInterval
-	) {
-		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) {
-			[weak self] content, error in
-			guard let self else {
-				return
-			}
-			guard self.isCurrentGeneration(requestGeneration) else {
-				return
-			}
-			guard let content else {
-				NativeHostTelemetry.frozenAuthorityWarning(
-					"frozen_authority.content_lookup_failed",
-					captureID: captureID,
-					source: source,
-					displayID: 0,
-					error: String(describing: error)
-				)
-				NativeHostTelemetry.frozenAuthorityContentLookupTiming(
-					captureID: captureID,
-					source: source,
-					totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-					success: false,
-					displayCount: targets.count,
-					windowCount: 0
-				)
-				return
-			}
-			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
-				captureID: captureID,
-				source: source,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-				success: true,
-				displayCount: content.displays.count,
-				windowCount: content.windows.count
-			)
-			for target in targets {
-				guard let filter = Self.contentFilter(for: target, in: content) else {
-					continue
-				}
-				self.updateContentFilter(
-					filter,
-					displayID: target.displayID,
-					generation: requestGeneration,
-					captureID: captureID,
-					source: source
-				)
-			}
-		}
-	}
-
-	private func updateContentFilter(
-		_ filter: SCContentFilter,
-		displayID: CGDirectDisplayID,
-		generation requestGeneration: UInt64,
-		captureID: UInt64,
-		source: String
-	) {
-		stateLock.lock()
-		let stream = generation == requestGeneration ? streams[displayID]?.stream : nil
-		stateLock.unlock()
-		guard let stream else {
-			return
-		}
-		stream.updateContentFilter(filter) { error in
-			guard let error else {
-				return
-			}
-			NativeHostTelemetry.frozenAuthorityWarning(
-				"frozen_authority.content_filter_update_failed",
-				captureID: captureID,
-				source: source,
-				displayID: displayID,
-				error: String(describing: error)
-			)
-		}
-	}
-
 	func stop() {
 		stateLock.lock()
 		generation &+= 1
+		setupRequestID &+= 1
 		activeDisplayIDs.removeAll()
 		setupDisplayIDs = nil
+		selfCaptureFilterRequired = false
+		selfCaptureUnsafeAfterUptime = nil
 		displayTargets.removeAll()
 		latestFrames.removeAll()
 		firstFrameStartUptimes.removeAll()
@@ -343,11 +429,49 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		else {
 			return nil
 		}
+		let latestRecord = latestFrames[displayID]
+		let tokenRecord =
+			latestRecord.flatMap { snapshotEligibleRecordLocked($0) }
 		return FrozenFrameLatchToken(
 			displayID: displayID,
-			minSequence: latestFrames[displayID]?.sequence ?? 0,
+			generation: tokenRecord?.generation ?? 0,
+			minSequence: tokenRecord?.sequence ?? 0,
 			startedAtUptime: ProcessInfo.processInfo.systemUptime
 		)
+	}
+
+	func needsSelfCaptureCompleteFrame(containing point: CGPoint) -> Bool {
+		stateLock.lock()
+		defer {
+			stateLock.unlock()
+		}
+		guard selfCaptureFilterRequired else {
+			return false
+		}
+		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		else {
+			return false
+		}
+		guard let record = latestFrames[displayID],
+			let eligibleRecord = snapshotEligibleRecordLocked(record)
+		else {
+			return true
+		}
+		return !eligibleRecord.selfCaptureFilterComplete
+	}
+
+	func hasSelfCaptureCompleteFrame(containing point: CGPoint) -> Bool {
+		stateLock.lock()
+		defer {
+			stateLock.unlock()
+		}
+		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key,
+			let record = latestFrames[displayID],
+			let eligibleRecord = snapshotEligibleRecordLocked(record)
+		else {
+			return false
+		}
+		return eligibleRecord.selfCaptureFilterComplete
 	}
 
 	func snapshot(
@@ -363,42 +487,29 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			stateLock.unlock()
 			return nil
 		}
-		let minimumSequence = token?.minSequence ?? 0
 		var source = "post_token"
-		var record = freshRecordLocked(displayID: displayID, minimumSequence: minimumSequence)
-		while record == nil, Date() < deadline {
-			stateLock.wait(until: deadline)
-			record = freshRecordLocked(displayID: displayID, minimumSequence: minimumSequence)
-		}
+		var record = freshRecordLocked(displayID: displayID, token: token)
 		if record == nil,
 			let fallbackRecord = unchangedRecordLocked(
 				displayID: displayID,
-				minimumSequence: minimumSequence
+				token: token
 			)
 		{
 			record = fallbackRecord
 			source = "latest_unchanged"
 		}
-		stateLock.unlock()
-
-		guard let record, let image = Self.makeImage(from: record.pixelBuffer) else {
-			return nil
-		}
-		return FrozenFrameSnapshot(
-			displayID: record.displayID,
-			displayFrame: record.displayFrame,
-			image: image,
-			sequence: record.sequence,
-			capturedAtUptime: record.capturedAtUptime,
-			source: source
-		)
-	}
-
-	func latestSnapshot(containing point: CGPoint) -> FrozenFrameSnapshot? {
-		stateLock.lock()
-		let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
-		let record = displayID.flatMap {
-			freshRecordLocked(displayID: $0, minimumSequence: 0)
+		while record == nil, Date() < deadline {
+			stateLock.wait(until: deadline)
+			record = freshRecordLocked(displayID: displayID, token: token)
+			if record == nil,
+				let fallbackRecord = unchangedRecordLocked(
+					displayID: displayID,
+					token: token
+				)
+			{
+				record = fallbackRecord
+				source = "latest_unchanged"
+			}
 		}
 		stateLock.unlock()
 
@@ -409,60 +520,112 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			displayID: record.displayID,
 			displayFrame: record.displayFrame,
 			image: image,
+			generation: record.generation,
 			sequence: record.sequence,
 			capturedAtUptime: record.capturedAtUptime,
-			source: "authority_latest"
+			source: source,
+			selfCaptureSafe: true,
+			selfCaptureFilterComplete: record.selfCaptureFilterComplete
 		)
 	}
 
-	private func freshRecordLocked(displayID: CGDirectDisplayID, minimumSequence: UInt64)
+	private func freshRecordLocked(displayID: CGDirectDisplayID, token: FrozenFrameLatchToken?)
 		-> FrameRecord?
 	{
-		guard let record = latestFrames[displayID] else {
+		guard let record = latestFrames[displayID],
+			let eligibleRecord = snapshotEligibleRecordLocked(record)
+		else {
 			return nil
 		}
-		if record.sequence > minimumSequence {
-			return record
+		guard eligibleRecord.selfCaptureFilterComplete || Self.isFreshForSnapshot(record) else {
+			return nil
 		}
-		if minimumSequence == 0, record.ageMilliseconds() <= 150 {
-			return record
+		guard let token else {
+			return eligibleRecord
+		}
+		if eligibleRecord.capturedAtUptime >= token.startedAtUptime {
+			return eligibleRecord
+		}
+		if eligibleRecord.generation == token.generation,
+			eligibleRecord.sequence > token.minSequence
+		{
+			return eligibleRecord
+		}
+		if token.minSequence == 0 {
+			return eligibleRecord
 		}
 		return nil
 	}
 
-	private func unchangedRecordLocked(displayID: CGDirectDisplayID, minimumSequence: UInt64)
+	private func unchangedRecordLocked(displayID: CGDirectDisplayID, token: FrozenFrameLatchToken?)
 		-> FrameRecord?
 	{
-		guard minimumSequence > 0, let record = latestFrames[displayID],
-			record.sequence == minimumSequence
+		guard let token, token.minSequence > 0, let record = latestFrames[displayID],
+			let eligibleRecord = snapshotEligibleRecordLocked(record),
+			eligibleRecord.generation == token.generation,
+			eligibleRecord.sequence == token.minSequence
 		else {
+			return nil
+		}
+		if !eligibleRecord.selfCaptureFilterComplete, !Self.isFreshForSnapshot(eligibleRecord) {
+			return nil
+		}
+		// ScreenCaptureKit display streams may not emit another frame while the display is
+		// visually unchanged. A complete self-capture-excluding stream may stand in for a
+		// post-token frame on a static desktop; pre-overlay frames may do that only while still
+		// inside the freshness budget, because older pre-overlay pixels are indistinguishable from
+		// a stale video frame.
+		return eligibleRecord
+	}
+
+	private func snapshotEligibleRecordLocked(_ record: FrameRecord) -> FrameRecord? {
+		if !isSelfCaptureSafeLocked(record) {
 			return nil
 		}
 		return record
 	}
 
+	private func isSelfCaptureSafeLocked(_ record: FrameRecord) -> Bool {
+		if record.selfCaptureFilterComplete {
+			return true
+		}
+		guard selfCaptureFilterRequired else {
+			return true
+		}
+		guard let unsafeAfterUptime = selfCaptureUnsafeAfterUptime else {
+			return false
+		}
+		return record.capturedAtUptime < unsafeAfterUptime
+	}
+
+	private static func isFreshForSnapshot(_ record: FrameRecord) -> Bool {
+		record.ageMilliseconds() <= maximumSnapshotAgeMilliseconds
+	}
+
 	private func configureStreams(
-		content: SCShareableContent,
 		targets: [DisplayTarget],
+		preparedFilters: [CGDirectDisplayID: PreparedContentFilter],
 		generation requestGeneration: UInt64,
 		captureID: UInt64,
 		source: String
 	) {
 		for target in targets {
-			guard let filter = Self.contentFilter(for: target, in: content) else {
+			guard let preparedFilter = preparedFilters[target.displayID] else {
 				continue
 			}
 
 			let output = FrozenFrameStreamOutput(
 				displayID: target.displayID,
-				displayFrame: target.frame
+				displayFrame: target.frame,
+				generation: requestGeneration,
+				selfCaptureFilterComplete: preparedFilter.selfCaptureFilterComplete
 			) { [weak self] frame in
 				self?.store(frame: frame, generation: requestGeneration)
 			} telemetrySnapshot: { [weak self] in
 				self?.currentTelemetrySnapshot() ?? (captureID: captureID, source: source)
 			}
 			let stream = SCStream(
-				filter: filter, configuration: Self.streamConfiguration(for: target),
+				filter: preparedFilter.filter, configuration: Self.streamConfiguration(for: target),
 				delegate: output)
 			do {
 				try stream.addStreamOutput(
@@ -479,11 +642,23 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			}
 
 			stateLock.lock()
-			let shouldStart = generation == requestGeneration
+			let shouldStart =
+				generation == requestGeneration
+				&& (!selfCaptureFilterRequired || preparedFilter.selfCaptureFilterComplete)
 			if shouldStart {
 				streams[target.displayID] = DisplayStream(stream: stream, output: output)
 			}
 			stateLock.unlock()
+			if selfCaptureFilterRequired, !preparedFilter.selfCaptureFilterComplete {
+				NativeHostTelemetry.frozenAuthorityWarning(
+					"frozen_authority.self_capture_filter_incomplete",
+					captureID: captureID,
+					source: source,
+					displayID: target.displayID,
+					error:
+						"expectedWindowCount=\(preparedFilter.expectedWindowCount) matchedWindowCount=\(preparedFilter.matchedWindowCount)"
+				)
+			}
 			guard shouldStart else {
 				continue
 			}
@@ -503,10 +678,72 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		finishSetup(generation: requestGeneration)
 	}
 
+	private func logIncompleteFilters(
+		_ preparedFilters: [CGDirectDisplayID: PreparedContentFilter],
+		targets: [DisplayTarget],
+		captureID: UInt64,
+		source: String
+	) {
+		for target in targets {
+			guard let preparedFilter = preparedFilters[target.displayID] else {
+				NativeHostTelemetry.frozenAuthorityWarning(
+					"frozen_authority.self_capture_filter_incomplete",
+					captureID: captureID,
+					source: source,
+					displayID: target.displayID,
+					error: "missingFilter"
+				)
+				continue
+			}
+			guard !preparedFilter.selfCaptureFilterComplete else {
+				continue
+			}
+			NativeHostTelemetry.frozenAuthorityWarning(
+				"frozen_authority.self_capture_filter_incomplete",
+				captureID: captureID,
+				source: source,
+				displayID: target.displayID,
+				error:
+					"expectedWindowCount=\(preparedFilter.expectedWindowCount) matchedWindowCount=\(preparedFilter.matchedWindowCount)"
+			)
+		}
+	}
+
+	private static func filtersAreComplete(
+		_ preparedFilters: [CGDirectDisplayID: PreparedContentFilter],
+		for targets: [DisplayTarget]
+	) -> Bool {
+		targets.allSatisfy { target in
+			preparedFilters[target.displayID]?.selfCaptureFilterComplete == true
+		}
+	}
+
+	private static func contentFilters(
+		for targets: [DisplayTarget],
+		in content: SCShareableContent,
+		selfCaptureExceptionWindowIDs: Set<CGWindowID>
+	) -> [CGDirectDisplayID: PreparedContentFilter] {
+		Dictionary(
+			uniqueKeysWithValues: targets.compactMap { target in
+				guard
+					let filter = contentFilter(
+						for: target,
+						in: content,
+						selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs
+					)
+				else {
+					return nil
+				}
+				return (target.displayID, filter)
+			}
+		)
+	}
+
 	private static func contentFilter(
 		for target: DisplayTarget,
-		in content: SCShareableContent
-	) -> SCContentFilter? {
+		in content: SCShareableContent,
+		selfCaptureExceptionWindowIDs: Set<CGWindowID>
+	) -> PreparedContentFilter? {
 		guard let display = content.displays.first(where: { $0.displayID == target.displayID })
 		else {
 			return nil
@@ -514,16 +751,30 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let currentPID = getpid()
 		let excludedApplications = content.applications.filter { $0.processID == currentPID }
 		if !excludedApplications.isEmpty {
-			return SCContentFilter(
-				display: display,
-				excludingApplications: excludedApplications,
-				exceptingWindows: []
+			return PreparedContentFilter(
+				filter: SCContentFilter(
+					display: display,
+					excludingApplications: excludedApplications,
+					exceptingWindows: []
+				),
+				selfCaptureFilterComplete: true,
+				expectedWindowCount: selfCaptureExceptionWindowIDs.count,
+				matchedWindowCount: selfCaptureExceptionWindowIDs.count
 			)
 		}
 		let excludedWindows = content.windows.filter {
 			$0.owningApplication?.processID == currentPID
 		}
-		return SCContentFilter(display: display, excludingWindows: excludedWindows)
+		let matchedWindowIDs = Set(excludedWindows.map(\.windowID))
+		let missingWindowIDs = selfCaptureExceptionWindowIDs.subtracting(matchedWindowIDs)
+		let hasCompleteWindowExclusion =
+			!selfCaptureExceptionWindowIDs.isEmpty && missingWindowIDs.isEmpty
+		return PreparedContentFilter(
+			filter: SCContentFilter(display: display, excludingWindows: excludedWindows),
+			selfCaptureFilterComplete: hasCompleteWindowExclusion,
+			expectedWindowCount: selfCaptureExceptionWindowIDs.count,
+			matchedWindowCount: selfCaptureExceptionWindowIDs.count - missingWindowIDs.count
+		)
 	}
 
 	private func store(
@@ -532,7 +783,9 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	) {
 		var firstFrameTelemetry: TelemetryContext?
 		stateLock.lock()
-		if generation == requestGeneration, activeDisplayIDs.contains(frame.displayID) {
+		if generation == requestGeneration, activeDisplayIDs.contains(frame.displayID),
+			isSelfCaptureSafeLocked(frame)
+		{
 			if !firstFrameLoggedDisplayIDs.contains(frame.displayID) {
 				firstFrameLoggedDisplayIDs.insert(frame.displayID)
 				let startedAt =
@@ -555,7 +808,10 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				totalMilliseconds: NativeHostTelemetry.milliseconds(
 					since: firstFrameTelemetry.startedAtUptime),
 				frameAgeMilliseconds: frame.ageMilliseconds(),
-				sequence: frame.sequence
+				sequence: frame.sequence,
+				generation: frame.generation,
+				selfCaptureSafe: true,
+				selfCaptureFilterComplete: frame.selfCaptureFilterComplete
 			)
 		}
 	}
@@ -569,9 +825,27 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		stateLock.unlock()
 	}
 
+	private func finishSetup(targetIDs: Set<CGDirectDisplayID>) {
+		stateLock.lock()
+		if setupDisplayIDs == targetIDs {
+			setupDisplayIDs = nil
+			stateLock.broadcast()
+		}
+		stateLock.unlock()
+	}
+
 	private func isCurrentGeneration(_ requestGeneration: UInt64) -> Bool {
 		stateLock.lock()
 		let isCurrent = generation == requestGeneration
+		stateLock.unlock()
+		return isCurrent
+	}
+
+	private func isCurrentSetupRequest(_ requestID: UInt64, targetIDs: Set<CGDirectDisplayID>)
+		-> Bool
+	{
+		stateLock.lock()
+		let isCurrent = setupRequestID == requestID && activeDisplayIDs == targetIDs
 		stateLock.unlock()
 		return isCurrent
 	}
@@ -681,6 +955,8 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 {
 	private let displayID: CGDirectDisplayID
 	private let displayFrame: CGRect
+	private let generation: UInt64
+	private let selfCaptureFilterComplete: Bool
 	private let onFrame: (FrozenFrameAuthority.FrameRecord) -> Void
 	private let telemetrySnapshot: () -> (captureID: UInt64, source: String)
 	private var sequence: UInt64 = 0
@@ -688,11 +964,15 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 	init(
 		displayID: CGDirectDisplayID,
 		displayFrame: CGRect,
+		generation: UInt64,
+		selfCaptureFilterComplete: Bool,
 		onFrame: @escaping (FrozenFrameAuthority.FrameRecord) -> Void,
 		telemetrySnapshot: @escaping () -> (captureID: UInt64, source: String)
 	) {
 		self.displayID = displayID
 		self.displayFrame = displayFrame
+		self.generation = generation
+		self.selfCaptureFilterComplete = selfCaptureFilterComplete
 		self.onFrame = onFrame
 		self.telemetrySnapshot = telemetrySnapshot
 	}
@@ -712,8 +992,10 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 				displayID: displayID,
 				displayFrame: displayFrame,
 				pixelBuffer: pixelBuffer,
+				generation: generation,
 				sequence: sequence,
-				capturedAtUptime: ProcessInfo.processInfo.systemUptime
+				capturedAtUptime: ProcessInfo.processInfo.systemUptime,
+				selfCaptureFilterComplete: selfCaptureFilterComplete
 			)
 		)
 	}

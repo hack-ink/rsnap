@@ -155,6 +155,11 @@ func dragRegion(points: [CGPoint], durationMs: Int, rateHz: Int) {
 		driver.mouseEvent(.leftMouseDragged, at: point)
 		sleepUntil(dragStart + UInt64(index) * stepTicks)
 	}
+	let holdBeforeReleaseMs = readInt("PATH_HOLD_BEFORE_RELEASE_MS", default: 0)
+	if holdBeforeReleaseMs > 0 {
+		writeMaskProbePhase("holding")
+		sleepMs(useconds_t(holdBeforeReleaseMs))
+	}
 	driver.mouseEvent(.leftMouseUp, at: end)
 	writeMaskProbePhase("released")
 	if ProcessInfo.processInfo.environment["MASK_PROBE_PHASE_PATH"] != nil {

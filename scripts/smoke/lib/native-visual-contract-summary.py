@@ -4,6 +4,7 @@ import statistics
 import struct
 import sys
 import time
+import zlib
 from datetime import datetime
 
 
@@ -52,6 +53,178 @@ def png_dimensions(path: str) -> tuple[int, int] | None:
     return struct.unpack(">II", header[16:24])
 
 
+def png_rgb_rows(path: str) -> tuple[int, int, int, list[bytes]] | None:
+    with open(path, "rb") as handle:
+        data = handle.read()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+
+    offset = 8
+    width = height = channels = 0
+    idat = bytearray()
+    while offset + 8 <= len(data):
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        kind = data[offset + 4 : offset + 8]
+        payload = data[offset + 8 : offset + 8 + length]
+        offset += 12 + length
+        if kind == b"IHDR":
+            width, height = struct.unpack(">II", payload[:8])
+            bit_depth = payload[8]
+            color_type = payload[9]
+            interlace = payload[12]
+            if bit_depth != 8 or interlace != 0 or color_type not in {2, 6}:
+                return None
+            channels = 4 if color_type == 6 else 3
+        elif kind == b"IDAT":
+            idat.extend(payload)
+        elif kind == b"IEND":
+            break
+
+    if width <= 0 or height <= 0 or channels <= 0:
+        return None
+
+    raw = zlib.decompress(bytes(idat))
+    stride = width * channels
+    rows: list[bytes] = []
+    previous = bytearray(stride)
+    cursor = 0
+    for _ in range(height):
+        filter_type = raw[cursor]
+        cursor += 1
+        row = bytearray(raw[cursor : cursor + stride])
+        cursor += stride
+        for index in range(stride):
+            left = row[index - channels] if index >= channels else 0
+            up = previous[index]
+            up_left = previous[index - channels] if index >= channels else 0
+            if filter_type == 1:
+                row[index] = (row[index] + left) & 0xFF
+            elif filter_type == 2:
+                row[index] = (row[index] + up) & 0xFF
+            elif filter_type == 3:
+                row[index] = (row[index] + ((left + up) // 2)) & 0xFF
+            elif filter_type == 4:
+                row[index] = (row[index] + paeth(left, up, up_left)) & 0xFF
+            elif filter_type != 0:
+                return None
+        rows.append(bytes(row))
+        previous = row
+    return width, height, channels, rows
+
+
+def paeth(left: int, up: int, up_left: int) -> int:
+    estimate = left + up - up_left
+    left_distance = abs(estimate - left)
+    up_distance = abs(estimate - up)
+    up_left_distance = abs(estimate - up_left)
+    if left_distance <= up_distance and left_distance <= up_left_distance:
+        return left
+    if up_distance <= up_left_distance:
+        return up
+    return up_left
+
+
+def count_leaked_drag_border(
+    path: str, display_bounds: str, drag_points: str
+) -> tuple[float, int] | None:
+    decoded = png_rgb_rows(path)
+    if decoded is None:
+        return None
+    width, height, channels, rows = decoded
+    left, top, right, bottom = map(float, display_bounds.replace(" ", "").split(","))
+    start_raw, end_raw = drag_points.split(";")[:2]
+    sx, sy = map(float, start_raw.split(","))
+    ex, ey = map(float, end_raw.split(","))
+    scale_x = width / max(1.0, right - left)
+    scale_y = height / max(1.0, bottom - top)
+    min_x = int((min(sx, ex) - left) * scale_x)
+    max_x = int((max(sx, ex) - left) * scale_x)
+    min_y = int((min(sy, ey) - top) * scale_y)
+    max_y = int((max(sy, ey) - top) * scale_y)
+    margin = max(12, int(10 * max(scale_x, scale_y)))
+    spans = [
+        (0, max(0, min_x - margin)),
+        (min(width, max_x + margin), width),
+    ]
+    row_indexes = [
+        y
+        for edge_y in (min_y, max_y)
+        for y in range(max(0, edge_y - 2), min(height, edge_y + 3))
+    ]
+
+    border_pixels = 0
+    sampled = 0
+    for y in row_indexes:
+        row = rows[y]
+        for span_left, span_right in spans:
+            for x in range(span_left, span_right):
+                sampled += 1
+                base = x * channels
+                red, green, blue = row[base], row[base + 1], row[base + 2]
+                if blue >= 150 and green >= 140 and red >= 100 and blue - red >= 20:
+                    border_pixels += 1
+    if sampled == 0:
+        return 0.0, 0
+    return border_pixels / sampled, border_pixels
+
+
+def count_leaked_horizontal_seam(
+    path: str, display_bounds: str, drag_points: str
+) -> tuple[float, int] | None:
+    decoded = png_rgb_rows(path)
+    if decoded is None:
+        return None
+    width, height, channels, rows = decoded
+    left, top, right, bottom = map(float, display_bounds.replace(" ", "").split(","))
+    start_raw, end_raw = drag_points.split(";")[:2]
+    sx, sy = map(float, start_raw.split(","))
+    ex, ey = map(float, end_raw.split(","))
+    scale_x = width / max(1.0, right - left)
+    scale_y = height / max(1.0, bottom - top)
+    min_x = int((min(sx, ex) - left) * scale_x)
+    max_x = int((max(sx, ex) - left) * scale_x)
+    min_y = int((min(sy, ey) - top) * scale_y)
+    max_y = int((max(sy, ey) - top) * scale_y)
+    margin = max(12, int(10 * max(scale_x, scale_y)))
+    spans = [
+        (0, max(0, min_x - margin)),
+        (min(width, max_x + margin), width),
+    ]
+    edge_specs = [(min_y, -1), (max_y, 1)]
+
+    seam_pixels = 0
+    sampled = 0
+    for edge_y, outside_direction in edge_specs:
+        seam_rows = list(range(max(0, edge_y - 1), min(height, edge_y + 2)))
+        baseline_rows = [
+            edge_y + outside_direction * distance
+            for distance in range(6, 13)
+            if 0 <= edge_y + outside_direction * distance < height
+        ]
+        if not seam_rows or not baseline_rows:
+            continue
+        for span_left, span_right in spans:
+            for x in range(span_left, span_right):
+                sampled += 1
+                seam_luminance = max(
+                    pixel_luminance(rows[row_index], x, channels) for row_index in seam_rows
+                )
+                baseline_luminance = sum(
+                    pixel_luminance(rows[row_index], x, channels) for row_index in baseline_rows
+                ) / len(baseline_rows)
+                if seam_luminance >= 125 and seam_luminance - baseline_luminance >= 35:
+                    seam_pixels += 1
+    if sampled == 0:
+        return 0.0, 0
+    return seam_pixels / sampled, seam_pixels
+
+
+def pixel_luminance(row: bytes, x: int, channels: int) -> float:
+    base = x * channels
+    red, green, blue = row[base], row[base + 1], row[base + 2]
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
 def line_epoch(line: str) -> float | None:
     try:
         parsed = datetime.strptime(line[:23], "%Y-%m-%d %H:%M:%S.%f")
@@ -67,8 +240,27 @@ if len(sys.argv) != 2:
 log_path = sys.argv[1]
 expected_mode = os.environ.get("EXPECTED_HUD_GLASS_MODE", "liquid").strip().lower()
 screenshot_path = os.environ.get("VISUAL_SCREENSHOT_PATH", "").strip()
+drag_screenshot_path = os.environ.get("VISUAL_DRAG_SCREENSHOT_PATH", "").strip()
+visual_display_bounds = os.environ.get("VISUAL_DISPLAY_BOUNDS", "").strip()
+visual_drag_points = os.environ.get("VISUAL_DRAG_POINTS", "").strip()
 mask_probe_path = os.environ.get("MASK_PROBE_PATH", "").strip()
 expected_min_freeze_commits = int(os.environ.get("EXPECTED_MIN_FREEZE_COMMITS", "1") or "1")
+expected_min_frozen_transform_commits = int(
+    os.environ.get("EXPECTED_MIN_FROZEN_TRANSFORM_COMMITS", "0") or "0"
+)
+expected_max_frozen_transform_commits_raw = os.environ.get(
+    "EXPECTED_MAX_FROZEN_TRANSFORM_COMMITS", ""
+).strip()
+expected_max_frozen_transform_commits = (
+    int(expected_max_frozen_transform_commits_raw)
+    if expected_max_frozen_transform_commits_raw
+    else None
+)
+expected_freeze_editability = [
+    value.strip().lower() == "true"
+    for value in os.environ.get("EXPECTED_FREEZE_EDITABILITY", "").split(",")
+    if value.strip()
+]
 smoke_started_epoch = float(os.environ.get("SMOKE_STARTED_EPOCH", "0") or "0")
 run_id_re = re.compile(r"runID=([^ ]+)")
 event_re = re.compile(r"event=([^ ]+)")
@@ -120,9 +312,14 @@ for required_event in [
         failures.append(f"missing event {required_event}")
 
 freeze_commit = events.get("capture_timing.freeze_commit", [{}])[-1]
-handoff = events.get("capture_timing.frozen_first_display_handoff", [{}])[-1]
+handoffs = events.get("capture_timing.frozen_first_display_handoff", [])
+handoff = handoffs[-1] if handoffs else {}
 freeze_commits = events.get("capture_timing.freeze_commit", [])
 freeze_commit_failures = events.get("capture_timing.freeze_commit_failed", [])
+frozen_transform_commits = events.get("capture.frozen_selection_transform_commit", [])
+max_window_list_below_overlay_commits = int(
+    os.environ.get("MAX_WINDOW_LIST_BELOW_OVERLAY_COMMITS", "0") or "0"
+)
 
 if len(freeze_commits) < expected_min_freeze_commits:
     failures.append(
@@ -134,38 +331,99 @@ if freeze_commit_failures:
         "freeze commit failure events observed: "
         f"{len(freeze_commit_failures)}"
     )
-
-if freeze_commit:
-    total_ms = float_field(freeze_commit, "totalMs")
-    present_ms = float_field(freeze_commit, "presentMs")
-    snapshot_wait_ms = float_field(freeze_commit, "snapshotWaitMs")
-    base_ready = bool_field(freeze_commit, "baseReady")
-    snapshot_source = freeze_commit.get("snapshotSource", "unknown")
-    max_total_ms = threshold("MAX_FREEZE_COMMIT_MS", 90.0)
-    max_present_ms = mode_threshold(
-        "MAX_FREEZE_PRESENT_MS",
-        55.0 if expected_mode == "classic" else 35.0,
-    )
-    max_snapshot_wait_ms = threshold("MAX_FREEZE_SNAPSHOT_WAIT_MS", 45.0)
+if expected_min_frozen_transform_commits:
     print(
-        "[smoke] freeze_commit "
+        "[smoke] frozen_transform_commits "
+        f"expected>={expected_min_frozen_transform_commits} "
+        f"actual={len(frozen_transform_commits)}"
+    )
+    if len(frozen_transform_commits) < expected_min_frozen_transform_commits:
+        failures.append(
+            "frozen transform commit count too small: "
+            f"{len(frozen_transform_commits)} < {expected_min_frozen_transform_commits}"
+        )
+if expected_max_frozen_transform_commits is not None:
+    print(
+        "[smoke] frozen_transform_commits "
+        f"expected<={expected_max_frozen_transform_commits} "
+        f"actual={len(frozen_transform_commits)}"
+    )
+    if len(frozen_transform_commits) > expected_max_frozen_transform_commits:
+        failures.append(
+            "frozen transform commit count too large: "
+            f"{len(frozen_transform_commits)} > {expected_max_frozen_transform_commits}"
+        )
+max_latest_unchanged_frame_age_ms = threshold("MAX_LATEST_UNCHANGED_FRAME_AGE_MS", 150.0)
+max_total_ms = threshold("MAX_FREEZE_COMMIT_MS", 90.0)
+max_present_ms = mode_threshold(
+    "MAX_FREEZE_PRESENT_MS",
+    55.0 if expected_mode == "classic" else 35.0,
+)
+max_snapshot_wait_ms = threshold("MAX_FREEZE_SNAPSHOT_WAIT_MS", 45.0)
+window_list_below_overlay_commits = 0
+for index, commit in enumerate(freeze_commits, start=1):
+    commit_source = commit.get("snapshotSource", "unknown")
+    commit_frame_age_ms = float_field(commit, "frameAgeMs")
+    commit_filter_complete = bool_field(commit, "selfCaptureFilterComplete")
+    total_ms = float_field(commit, "totalMs")
+    present_ms = float_field(commit, "presentMs")
+    snapshot_wait_ms = float_field(commit, "snapshotWaitMs")
+    base_ready = bool_field(commit, "baseReady")
+    self_capture_safe = bool_field(commit, "selfCaptureSafe")
+    print(
+        f"[smoke] freeze_commit[{index}] "
         f"totalMs={total_ms:.2f} presentMs={present_ms:.2f} "
-        f"snapshotWaitMs={snapshot_wait_ms:.2f} snapshotSource={snapshot_source} "
-        f"baseReady={base_ready}"
+        f"snapshotWaitMs={snapshot_wait_ms:.2f} snapshotSource={commit_source} "
+        f"selfCaptureSafe={self_capture_safe} "
+        f"selfCaptureFilterComplete={commit_filter_complete} baseReady={base_ready}"
     )
     if total_ms > max_total_ms:
-        failures.append(f"freeze_commit totalMs={total_ms:.2f} exceeds {max_total_ms:.2f}")
+        failures.append(
+            f"freeze_commit[{index}] totalMs={total_ms:.2f} exceeds {max_total_ms:.2f}"
+        )
     if present_ms > max_present_ms:
-        failures.append(f"freeze_commit presentMs={present_ms:.2f} exceeds {max_present_ms:.2f}")
+        failures.append(
+            f"freeze_commit[{index}] presentMs={present_ms:.2f} exceeds {max_present_ms:.2f}"
+        )
     if snapshot_wait_ms > max_snapshot_wait_ms:
         failures.append(
-            f"freeze_commit snapshotWaitMs={snapshot_wait_ms:.2f} "
+            f"freeze_commit[{index}] snapshotWaitMs={snapshot_wait_ms:.2f} "
             f"exceeds {max_snapshot_wait_ms:.2f}"
         )
-    if snapshot_source == "window_list_below_overlay":
-        failures.append("freeze_commit used synchronous window-list fallback for frozen handoff")
+    if not bool_field(commit, "selfCaptureSafe"):
+        failures.append(
+            f"freeze_commit[{index}] used a frame that could contain rsnap's own capture UI"
+        )
+    if commit_source == "window_list_below_overlay":
+        window_list_below_overlay_commits += 1
+    if commit_source == "latest_unchanged" and not commit_filter_complete and (
+        commit_frame_age_ms > max_latest_unchanged_frame_age_ms
+    ):
+        failures.append(
+            f"freeze_commit[{index}] latest_unchanged frameAgeMs={commit_frame_age_ms:.2f} "
+            f"exceeds {max_latest_unchanged_frame_age_ms:.2f}"
+        )
     if not base_ready:
-        failures.append("freeze_commit did not prepare the frozen base image")
+        failures.append(f"freeze_commit[{index}] did not prepare the frozen base image")
+if window_list_below_overlay_commits > max_window_list_below_overlay_commits:
+    failures.append(
+        "window-list below-overlay freeze commits exceeded limit: "
+        f"{window_list_below_overlay_commits} > {max_window_list_below_overlay_commits}"
+    )
+if expected_freeze_editability:
+    actual_editability = [
+        bool_field(handoff_event, "frozenSelectionEditable")
+        for handoff_event in handoffs[-len(expected_freeze_editability) :]
+    ]
+    print(
+        "[smoke] freeze_editability "
+        f"expected={expected_freeze_editability} actual={actual_editability}"
+    )
+    if actual_editability != expected_freeze_editability:
+        failures.append(
+            "frozen editability sequence mismatch: "
+            f"expected {expected_freeze_editability}, got {actual_editability}"
+        )
 
 if handoff:
     total_ms = float_field(handoff, "totalMs")
@@ -222,6 +480,62 @@ if handoff:
     elif expected_mode not in {"liquid", "classic"}:
         failures.append(f"unknown EXPECTED_HUD_GLASS_MODE={expected_mode}")
 
+if drag_screenshot_path:
+    for drag_path in [path for path in drag_screenshot_path.split(":") if path]:
+        try:
+            size = os.path.getsize(drag_path)
+            dimensions = png_dimensions(drag_path)
+        except OSError as exc:
+            failures.append(f"drag screenshot missing: {exc}")
+        else:
+            if dimensions is None:
+                failures.append(f"drag screenshot is not a PNG: {drag_path}")
+            else:
+                width, height = dimensions
+                print(
+                    "[smoke] drag_screenshot "
+                    f"path={drag_path} width={width} height={height} bytes={size}"
+                )
+                if width < 500 or height < 400:
+                    failures.append(f"drag screenshot too small: {width}x{height}")
+                if visual_display_bounds and visual_drag_points:
+                    leak = count_leaked_drag_border(
+                        drag_path, visual_display_bounds, visual_drag_points
+                    )
+                    if leak is None:
+                        failures.append("drag screenshot could not be decoded for border-leak check")
+                    else:
+                        leak_ratio, leak_pixels = leak
+                        max_leak_ratio = threshold("MAX_DRAG_BORDER_LEAK_RATIO", 0.015)
+                        max_leak_pixels = int(threshold("MAX_DRAG_BORDER_LEAK_PIXELS", 80))
+                        print(
+                            "[smoke] drag_border_leak "
+                            f"ratio={leak_ratio:.5f} pixels={leak_pixels}"
+                        )
+                        if leak_ratio > max_leak_ratio and leak_pixels > max_leak_pixels:
+                            failures.append(
+                                "live drag border leaked outside the selection "
+                                f"(ratio={leak_ratio:.5f}, pixels={leak_pixels})"
+                            )
+                    seam = count_leaked_horizontal_seam(
+                        drag_path, visual_display_bounds, visual_drag_points
+                    )
+                    if seam is None:
+                        failures.append("drag screenshot could not be decoded for seam check")
+                    else:
+                        seam_ratio, seam_pixels = seam
+                        max_seam_ratio = threshold("MAX_DRAG_HORIZONTAL_SEAM_RATIO", 0.01)
+                        max_seam_pixels = int(threshold("MAX_DRAG_HORIZONTAL_SEAM_PIXELS", 80))
+                        print(
+                            "[smoke] drag_horizontal_seam "
+                            f"ratio={seam_ratio:.5f} pixels={seam_pixels}"
+                        )
+                        if seam_ratio > max_seam_ratio and seam_pixels > max_seam_pixels:
+                            failures.append(
+                                "live drag scrim leaked a horizontal seam outside the selection "
+                                f"(ratio={seam_ratio:.5f}, pixels={seam_pixels})"
+                            )
+
 if screenshot_path:
     try:
         size = os.path.getsize(screenshot_path)
@@ -251,10 +565,13 @@ if mask_probe_path:
     else:
         values: dict[str, list[float]] = {"dragging": [], "released": []}
         for row in rows[1:]:
-            if len(row) != 3 or row[0] not in values:
+            if len(row) != 3:
+                continue
+            phase = "dragging" if row[0] == "holding" else row[0]
+            if phase not in values:
                 continue
             try:
-                values[row[0]].append(float(row[2]))
+                values[phase].append(float(row[2]))
             except ValueError:
                 continue
         dragging = values["dragging"]

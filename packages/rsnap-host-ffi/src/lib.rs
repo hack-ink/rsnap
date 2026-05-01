@@ -21,7 +21,7 @@ use rsnap_capture_core::{
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 13;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 14;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -527,6 +527,8 @@ pub struct RsnapHostRequestValue {
 	pub selection: RsnapRect,
 	/// Non-zero when `selection` is populated.
 	pub has_selection: u8,
+	/// Non-zero when the frozen selection may be moved or resized after commit.
+	pub selection_editable: u8,
 }
 
 /// Creates a new opaque session handle.
@@ -973,6 +975,9 @@ pub unsafe extern "C" fn rsnap_live_sampler_peek_latest_monitor_rgba(
 
 /// Transfers ownership of the latest cached full-monitor RGBA snapshot buffer to the caller.
 ///
+/// This cache-only payload does not expose the original frame age or sequence, so callers must not
+/// use it as the first frozen screenshot frame.
+///
 /// # Safety
 ///
 /// `handle` must be a valid pointer returned by `rsnap_live_sampler_create`, and
@@ -1306,10 +1311,13 @@ fn encode_host_request(request: HostRequest) -> RsnapHostRequestValue {
 			kind: RsnapHostRequestKind::StopLiveCapture as u32,
 			..RsnapHostRequestValue::default()
 		},
-		HostRequest::RequestFreezeSnapshot { selection } => RsnapHostRequestValue {
-			kind: RsnapHostRequestKind::RequestFreezeSnapshot as u32,
-			selection: encode_rect(selection),
-			has_selection: 1,
+		HostRequest::RequestFreezeSnapshot { selection, selection_editable } => {
+			RsnapHostRequestValue {
+				kind: RsnapHostRequestKind::RequestFreezeSnapshot as u32,
+				selection: encode_rect(selection),
+				has_selection: 1,
+				selection_editable: u8::from(selection_editable),
+			}
 		},
 		HostRequest::PerformHostEffect(effect) => RsnapHostRequestValue {
 			kind: match effect {
@@ -1596,7 +1604,7 @@ mod tests {
 	}
 
 	#[test]
-	fn ffi_freeze_request_carries_selection_payload() {
+	fn ffi_click_freeze_request_carries_fixed_selection_payload() {
 		let handle = unsafe { crate::rsnap_session_create(default_config()) };
 		let mut request =
 			RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
@@ -1645,6 +1653,95 @@ mod tests {
 		assert_eq!(request.kind, RsnapHostRequestKind::RequestFreezeSnapshot as u32);
 		assert_eq!(request.has_selection, 1);
 		assert_eq!(request.selection, RsnapRect { x: 20, y: 30, width: 60, height: 80 });
+		assert_eq!(request.selection_editable, 0);
+
+		unsafe { crate::rsnap_session_destroy(handle) };
+	}
+
+	#[test]
+	fn ffi_drag_freeze_request_carries_editable_selection_payload() {
+		let handle = unsafe { crate::rsnap_session_create(default_config()) };
+		let mut request =
+			RsnapHostRequestValue { kind: u32::MAX, ..RsnapHostRequestValue::default() };
+
+		assert_eq!(unsafe { crate::rsnap_session_enter_live(handle) }, RsnapStatus::Ok);
+
+		let _ = unsafe { crate::rsnap_session_take_next_request(handle, &mut request) };
+
+		assert_eq!(
+			unsafe {
+				crate::rsnap_session_handle_host_event(
+					handle,
+					RsnapHostEvent {
+						kind: RsnapHostEventKind::PrimaryInteractionStarted as u32,
+						point: RsnapPoint { x: 80, y: 110 },
+						has_point: 1,
+						rgb: RsnapRgb::default(),
+						has_rgb: 0,
+						active_monitor: RsnapMonitorRect {
+							id: 9,
+							origin: RsnapPoint { x: 0, y: 0 },
+							width: 1_440,
+							height: 900,
+							scale_factor_x1000: 2_000,
+						},
+						has_active_monitor: 1,
+						highlighted_window: RsnapWindowRect {
+							window_id: 42,
+							has_window_id: 1,
+							x: 20,
+							y: 30,
+							width: 60,
+							height: 80,
+						},
+						has_highlighted_window: 1,
+						toolbar_item_kind: 0,
+					},
+				)
+			},
+			RsnapStatus::Ok
+		);
+		assert_eq!(
+			unsafe {
+				crate::rsnap_session_handle_host_event(
+					handle,
+					RsnapHostEvent {
+						kind: RsnapHostEventKind::PrimaryInteractionCompleted as u32,
+						point: RsnapPoint { x: 140, y: 190 },
+						has_point: 1,
+						rgb: RsnapRgb::default(),
+						has_rgb: 0,
+						active_monitor: RsnapMonitorRect {
+							id: 9,
+							origin: RsnapPoint { x: 0, y: 0 },
+							width: 1_440,
+							height: 900,
+							scale_factor_x1000: 2_000,
+						},
+						has_active_monitor: 1,
+						highlighted_window: RsnapWindowRect {
+							window_id: 42,
+							has_window_id: 1,
+							x: 20,
+							y: 30,
+							width: 60,
+							height: 80,
+						},
+						has_highlighted_window: 1,
+						toolbar_item_kind: 0,
+					},
+				)
+			},
+			RsnapStatus::Ok
+		);
+		assert_eq!(
+			unsafe { crate::rsnap_session_take_next_request(handle, &mut request) },
+			RsnapStatus::Ok
+		);
+		assert_eq!(request.kind, RsnapHostRequestKind::RequestFreezeSnapshot as u32);
+		assert_eq!(request.has_selection, 1);
+		assert_eq!(request.selection, RsnapRect { x: 80, y: 110, width: 60, height: 80 });
+		assert_eq!(request.selection_editable, 1);
 
 		unsafe { crate::rsnap_session_destroy(handle) };
 	}

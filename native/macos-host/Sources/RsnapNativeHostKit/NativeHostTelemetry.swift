@@ -194,10 +194,13 @@ enum NativeHostTelemetry {
 		displayID: UInt32,
 		totalMilliseconds: Double,
 		frameAgeMilliseconds: Double,
-		sequence: UInt64
+		sequence: UInt64,
+		generation: UInt64,
+		selfCaptureSafe: Bool,
+		selfCaptureFilterComplete: Bool
 	) {
 		frozenAuthorityLogger.info(
-			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) source=\(source, privacy: .public) event=capture_timing.frozen_authority_first_frame displayID=\(displayID, privacy: .public) totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) frameAgeMs=\(frameAgeMilliseconds, format: .fixed(precision: 2), privacy: .public) sequence=\(sequence, privacy: .public)"
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) source=\(source, privacy: .public) event=capture_timing.frozen_authority_first_frame displayID=\(displayID, privacy: .public) totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) frameAgeMs=\(frameAgeMilliseconds, format: .fixed(precision: 2), privacy: .public) generation=\(generation, privacy: .public) sequence=\(sequence, privacy: .public) selfCaptureSafe=\(selfCaptureSafe, privacy: .public) selfCaptureFilterComplete=\(selfCaptureFilterComplete, privacy: .public)"
 		)
 	}
 
@@ -211,11 +214,14 @@ enum NativeHostTelemetry {
 		displayID: UInt32,
 		sequence: UInt64,
 		snapshotSource: String,
+		snapshotGeneration: UInt64,
+		selfCaptureSafe: Bool,
+		selfCaptureFilterComplete: Bool,
 		hadLatchToken: Bool,
 		baseReady: Bool
 	) {
 		captureTimingLogger.info(
-			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.freeze_commit totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) snapshotWaitMs=\(snapshotWaitMilliseconds, format: .fixed(precision: 2), privacy: .public) baseImageMs=\(baseImageMilliseconds, format: .fixed(precision: 2), privacy: .public) presentMs=\(presentMilliseconds, format: .fixed(precision: 2), privacy: .public) frameAgeMs=\(frameAgeMilliseconds, format: .fixed(precision: 2), privacy: .public) displayID=\(displayID, privacy: .public) sequence=\(sequence, privacy: .public) snapshotSource=\(snapshotSource, privacy: .public) hadLatchToken=\(hadLatchToken, privacy: .public) baseReady=\(baseReady, privacy: .public)"
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.freeze_commit totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) snapshotWaitMs=\(snapshotWaitMilliseconds, format: .fixed(precision: 2), privacy: .public) baseImageMs=\(baseImageMilliseconds, format: .fixed(precision: 2), privacy: .public) presentMs=\(presentMilliseconds, format: .fixed(precision: 2), privacy: .public) frameAgeMs=\(frameAgeMilliseconds, format: .fixed(precision: 2), privacy: .public) displayID=\(displayID, privacy: .public) generation=\(snapshotGeneration, privacy: .public) sequence=\(sequence, privacy: .public) snapshotSource=\(snapshotSource, privacy: .public) selfCaptureSafe=\(selfCaptureSafe, privacy: .public) selfCaptureFilterComplete=\(selfCaptureFilterComplete, privacy: .public) hadLatchToken=\(hadLatchToken, privacy: .public) baseReady=\(baseReady, privacy: .public)"
 		)
 	}
 

@@ -84,7 +84,8 @@ enum RsnapHostBridgeProbe {
 		guard
 			try session.takeNextRequest()
 				== .requestFreezeSnapshot(
-					selection: CGRect(x: 120, y: 180, width: 140, height: 140))
+					selection: CGRect(x: 120, y: 180, width: 140, height: 140),
+					selectionEditable: true)
 		else {
 			fatalError("expected a freeze snapshot request")
 		}
@@ -165,6 +166,98 @@ enum RsnapHostBridgeProbe {
 
 		try session.enterLive()
 		_ = try session.takeNextRequest()
+		let clickSelection = CGRect(x: 300, y: 220, width: 360, height: 260)
+		let clickWindow = WindowSnapshot(windowID: 88, frame: clickSelection)
+		try session.send(
+			event: .primaryInteractionStarted(
+				point: CGPoint(x: 420, y: 340),
+				activeMonitor: MonitorSnapshot(
+					id: 9,
+					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					scaleFactorX1000: 2_000
+				),
+				highlightedWindow: clickWindow
+			)
+		)
+		try session.send(
+			event: .primaryInteractionCompleted(
+				point: CGPoint(x: 420, y: 340),
+				activeMonitor: MonitorSnapshot(
+					id: 9,
+					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					scaleFactorX1000: 2_000
+				),
+				highlightedWindow: clickWindow
+			)
+		)
+		guard
+			try session.takeNextRequest()
+				== .requestFreezeSnapshot(
+					selection: clickSelection,
+					selectionEditable: false)
+		else {
+			fatalError("expected a fixed click-window freeze request")
+		}
+		try session.send(report: .freezeSnapshotCommitted(selection: clickSelection))
+		try session.send(
+			event: .pointerMoved(
+				point: CGPoint(x: 420, y: 340),
+				rgb: nil,
+				activeMonitor: nil,
+				highlightedWindow: nil
+			)
+		)
+		scene = try session.currentScene()
+		guard scene.mode == .frozen, scene.cursorIntent == .default else {
+			fatalError("unexpected click-window frozen cursor: \(scene)")
+		}
+
+		try session.enterLive()
+		_ = try session.takeNextRequest()
+		let fullscreenMonitor = MonitorSnapshot(
+			id: 10,
+			frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+			scaleFactorX1000: 2_000
+		)
+		try session.send(
+			event: .primaryInteractionStarted(
+				point: CGPoint(x: 700, y: 500),
+				activeMonitor: fullscreenMonitor,
+				highlightedWindow: nil
+			)
+		)
+		try session.send(
+			event: .primaryInteractionCompleted(
+				point: CGPoint(x: 700, y: 500),
+				activeMonitor: fullscreenMonitor,
+				highlightedWindow: nil
+			)
+		)
+		let fullscreenSelection = fullscreenMonitor.frame
+		guard
+			try session.takeNextRequest()
+				== .requestFreezeSnapshot(
+					selection: fullscreenSelection,
+					selectionEditable: false)
+		else {
+			fatalError("expected a fixed fullscreen fallback freeze request")
+		}
+		try session.send(report: .freezeSnapshotCommitted(selection: fullscreenSelection))
+		try session.send(
+			event: .pointerMoved(
+				point: CGPoint(x: 700, y: 500),
+				rgb: nil,
+				activeMonitor: nil,
+				highlightedWindow: nil
+			)
+		)
+		scene = try session.currentScene()
+		guard scene.mode == .frozen, scene.cursorIntent == .default else {
+			fatalError("unexpected fullscreen frozen cursor: \(scene)")
+		}
+
+		try session.enterLive()
+		_ = try session.takeNextRequest()
 		try session.send(
 			event: .pointerMoved(
 				point: CGPoint(x: 200, y: 260),
@@ -189,6 +282,22 @@ enum RsnapHostBridgeProbe {
 			scene.highlightedWindow?.frame == CGRect(x: 1500, y: 100, width: 500, height: 400)
 		else {
 			fatalError("unexpected live monitor/window scene: \(scene)")
+		}
+		try session.send(
+			event: .pointerMoved(
+				point: CGPoint(x: 2600, y: 800),
+				rgb: nil,
+				activeMonitor: MonitorSnapshot(
+					id: 11,
+					frame: CGRect(x: 1440, y: 0, width: 1728, height: 1117),
+					scaleFactorX1000: 2_000
+				),
+				highlightedWindow: nil
+			)
+		)
+		scene = try session.currentScene()
+		guard scene.highlightedWindow == nil else {
+			fatalError("stale live highlighted window was not cleared: \(scene)")
 		}
 
 		print("rsnap-host-bridge probe ok")

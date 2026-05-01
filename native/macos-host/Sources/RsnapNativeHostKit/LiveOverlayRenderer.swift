@@ -971,6 +971,7 @@ final class LiveOverlayRenderer {
 	private weak var hostView: NSView?
 	private let rootLayer = CALayer()
 	private let frozenDisplayLayer = CALayer()
+	private let scrimLayer = CAShapeLayer()
 	private let topScrimLayer = CALayer()
 	private let leftScrimLayer = CALayer()
 	private let rightScrimLayer = CALayer()
@@ -1092,10 +1093,14 @@ final class LiveOverlayRenderer {
 
 	private func configureLayers() {
 		rootLayer.zPosition = 100
-		rootLayer.masksToBounds = false
+		rootLayer.masksToBounds = true
 		frozenDisplayLayer.isHidden = true
 		frozenDisplayLayer.zPosition = LayerZ.frozenDisplay
 		rootLayer.addSublayer(frozenDisplayLayer)
+		scrimLayer.fillRule = .evenOdd
+		scrimLayer.isHidden = true
+		scrimLayer.zPosition = LayerZ.scrim
+		rootLayer.addSublayer(scrimLayer)
 		for scrimLayer in [topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer] {
 			rootLayer.addSublayer(scrimLayer)
 			scrimLayer.isHidden = true
@@ -1275,6 +1280,7 @@ final class LiveOverlayRenderer {
 	private func renderFocus(_ snapshot: LivePreviewSnapshot) {
 		let focusRect = snapshot.dragSelectionLocal ?? snapshot.hoverSelectionLocal
 		guard let focusRect else {
+			scrimLayer.isHidden = true
 			for scrimLayer in [topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer] {
 				scrimLayer.isHidden = true
 			}
@@ -1289,27 +1295,10 @@ final class LiveOverlayRenderer {
 		let scrimAlpha = CGFloat(CaptureChrome.liveScrimAlpha)
 		let scrimColor = NSColor(calibratedWhite: 0, alpha: scrimAlpha).cgColor
 		let bounds = snapshot.bounds
-		let rects = [
-			CGRect(
-				x: bounds.minX, y: bounds.minY, width: bounds.width,
-				height: max(0, focusRect.minY - bounds.minY)),
-			CGRect(
-				x: bounds.minX, y: focusRect.minY, width: max(0, focusRect.minX - bounds.minX),
-				height: focusRect.height),
-			CGRect(
-				x: focusRect.maxX, y: focusRect.minY, width: max(0, bounds.maxX - focusRect.maxX),
-				height: focusRect.height),
-			CGRect(
-				x: bounds.minX, y: focusRect.maxY, width: bounds.width,
-				height: max(0, bounds.maxY - focusRect.maxY)),
-		]
-		for (layer, rect) in zip(
-			[topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer], rects)
-		{
-			layer.backgroundColor = scrimColor
-			layer.frame = rect
-			layer.isHidden = rect.width <= 0 || rect.height <= 0
+		for legacyScrimLayer in [topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer] {
+			legacyScrimLayer.isHidden = true
 		}
+		updateScrimLayer(bounds: bounds, focusRect: focusRect, color: scrimColor)
 
 		if snapshot.frozenPending {
 			hoverGlowLayer.isHidden = true
@@ -1323,7 +1312,19 @@ final class LiveOverlayRenderer {
 				pixelsPerPoint: pixelsPerPoint
 			)
 			let borderRect = focusRect.insetBy(dx: -borderOutset, dy: -borderOutset)
-			let frozenPath = CaptureChrome.dashedBorderPath(for: borderRect)
+			let layerFrame = dashedBorderLayerFrame(
+				for: borderRect,
+				lineWidth: CaptureChrome.frozenDashedBorderWidth + 0.75
+			)
+			let localBorderRect = borderRect.offsetBy(
+				dx: -layerFrame.minX,
+				dy: -layerFrame.minY
+			)
+			let frozenPath = CaptureChrome.dashedBorderPath(for: localBorderRect)
+			for layer in [dragBorderOutlineLayer, dragBorderLayer] {
+				layer.frame = layerFrame
+				layer.masksToBounds = true
+			}
 			dragBorderOutlineLayer.path = frozenPath
 			dragBorderOutlineLayer.strokeColor =
 				NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
@@ -1352,7 +1353,19 @@ final class LiveOverlayRenderer {
 				pixelsPerPoint: pixelsPerPoint
 			)
 			let borderRect = dragSelection.insetBy(dx: -borderOutset, dy: -borderOutset)
-			let dragPath = CaptureChrome.dashedBorderPath(for: borderRect)
+			let layerFrame = dashedBorderLayerFrame(
+				for: borderRect,
+				lineWidth: CaptureChrome.liveDashedBorderWidth + 0.75
+			)
+			let localBorderRect = borderRect.offsetBy(
+				dx: -layerFrame.minX,
+				dy: -layerFrame.minY
+			)
+			let dragPath = CaptureChrome.dashedBorderPath(for: localBorderRect)
+			for layer in [dragBorderOutlineLayer, dragBorderLayer] {
+				layer.frame = layerFrame
+				layer.masksToBounds = true
+			}
 			dragBorderOutlineLayer.path = dragPath
 			dragBorderOutlineLayer.strokeColor =
 				NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
@@ -1410,6 +1423,24 @@ final class LiveOverlayRenderer {
 			contentsScale: contentsScale,
 			animates: animatesFlow
 		)
+	}
+
+	private func dashedBorderLayerFrame(for borderRect: CGRect, lineWidth: CGFloat) -> CGRect {
+		let padding = max(lineWidth + 2, 4)
+		return borderRect.insetBy(dx: -padding, dy: -padding)
+	}
+
+	private func updateScrimLayer(bounds: CGRect, focusRect: CGRect, color: CGColor) {
+		let path = CGMutablePath()
+		path.addRect(bounds)
+		let visibleFocusRect = focusRect.intersection(bounds)
+		if !visibleFocusRect.isNull, visibleFocusRect.width > 0, visibleFocusRect.height > 0 {
+			path.addRect(visibleFocusRect)
+		}
+		scrimLayer.frame = bounds
+		scrimLayer.path = path
+		scrimLayer.fillColor = color
+		scrimLayer.isHidden = false
 	}
 
 	private func shouldAnimateSelectionFlow(_ snapshot: LivePreviewSnapshot) -> Bool {

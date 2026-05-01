@@ -17,7 +17,7 @@ Spec boundary: `docs/spec/capture-session.md`
 
 Governing performance contract: `docs/spec/performance.md`
 
-Date: 2026-03-02
+Date: 2026-05-01
 
 ## Active-lane note
 
@@ -79,7 +79,7 @@ Fallback behavior:
 - Live sampling is strict stream-only.
 - If stream sampling is unavailable (for example unavailable permission), live RGB/Loupe samples
   remain empty rather than triggering xcap-style full-frame capture.
-- Freeze/export still uses the existing still capture plane.
+- Freeze commit uses the frozen-frame authority stream, not the live-sampler latest-monitor cache.
 
 ## macOS implementation details
 
@@ -106,12 +106,42 @@ Fallback behavior:
   - Desktop layer
 - This keeps behavior stable and avoids false window outlines.
 
+## Frozen-frame freshness boundary
+
+The live sampler's latest-monitor APIs are cache-oriented. They can return the last warm stream
+frame without proving when that frame was captured, and the Swift FFI bridge does not currently
+carry the source frame age or sequence. That is acceptable for live RGB/Loupe sampling, where the
+next stream tick can correct the HUD, but it is not acceptable for the frozen screenshot first
+frame.
+
+Frozen commit must use `FrozenFrameAuthority` or another source with equivalent provenance:
+
+- The frame must carry a real capture timestamp and stream sequence.
+- `post_token` is preferred: the frame sequence advanced after the frozen latch.
+- `latest_unchanged` is allowed only for a fresh same-sequence frame on an unchanged/static
+  desktop.
+- Cache-only `peekLatestMonitorImage`, `take_latest_monitor_rgba`, or wrappers that synthesize
+  `capturedAt` at call time must not feed the frozen first frame.
+- A frozen-authority stream warmed before overlay windows became visible must be replaced after
+  those windows are on screen, but replacement must be a hot handoff: keep the previous
+  self-capture-excluding stream alive until the replacement stream is configured so fast click
+  selection cannot fail with `no_fresh_frame` solely because content-filter lookup is still
+  running. Once the replacement stream is ready, the first Frozen display frame must come from a
+  self-capture-excluding filter, not from a pre-overlay filter that can see rsnap's own live mask,
+  border, badge, or toolbar.
+- If no freshness-proven frame is available, fail the freeze with `no_fresh_frame` instead of
+  showing a screenshot from seconds earlier.
+
+This is the guard against the old regression where a quick drag could freeze a frame that came from
+seconds-old live-stream cache data while telemetry incorrectly reported it as current.
+
 ## Current capture-plane split
 
 The current implementation already keeps capture responsibilities split by quality profile:
 
 - `Live` plane: stream-first, low-latency RGB/Loupe and live outline updates.
-- `Freeze/export` plane: higher-cost still capture for full screenshot quality.
+- `Freeze first-frame` plane: freshness-proven frozen authority frames for the immediate handoff.
+- `Export` plane: higher-cost output capture after frozen mode is established.
 
 Linux/Windows details remain out of scope for the current macOS-first contract.
 
@@ -119,5 +149,5 @@ Linux/Windows details remain out of scope for the current macOS-first contract.
 
 - [x] Implemented macOS `SCStream` live path for cursor samples (RGB/Loupe).
 - [x] Removed live full-display refresh dependency from cursor path.
-- [x] Kept freeze/export on the existing still-capture flow.
-- [ ] Add opt-in diagnostics for frame age and sample latency.
+- [x] Kept frozen first-frame commit off cache-only live-sampler full-monitor snapshots.
+- [ ] Add opt-in diagnostics for live sample latency beyond frozen `frameAgeMs`.
