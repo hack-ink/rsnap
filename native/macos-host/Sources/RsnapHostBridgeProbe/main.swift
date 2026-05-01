@@ -145,6 +145,12 @@ enum RsnapHostBridgeProbe {
 		guard try session.takeNextRequest() == .recognizeText else {
 			fatalError("expected a recognize-text host request")
 		}
+		try session.send(report: .hostEffectCompleted(.recognizeText))
+		scene = try session.currentScene()
+		guard scene.statusMessage == "Recognized text." else {
+			fatalError(
+				"unexpected status message after OCR: \(String(describing: scene.statusMessage))")
+		}
 
 		try session.send(event: .toolbarItemInvoked(.copy))
 		guard try session.takeNextRequest() == .copyCapture else {
