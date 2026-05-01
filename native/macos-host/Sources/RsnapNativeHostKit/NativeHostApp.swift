@@ -547,6 +547,9 @@ final class CaptureSessionController: NSObject {
 				source: "start_capture",
 				captureID: captureID
 			)
+			let initialRgbSample =
+				initialSample?.rgbSample
+				?? frozenFrameAuthority.rgbSample(containing: startPoint)
 			let warmMilliseconds = NativeHostTelemetry.milliseconds(since: warmStartedAt)
 			frozenFrameLatchToken = nil
 			let desktopFrame = CaptureOverlayController.desktopFrame
@@ -556,7 +559,7 @@ final class CaptureSessionController: NSObject {
 				NativeHostTelemetry.milliseconds(since: windowSnapshotStartedAt)
 			let initialHighlightedWindow = WindowSnapshotFeed.window(
 				at: startPoint, in: initialWindowSnapshots)
-			chromeState.rgbSample = initialSample?.rgbSample
+			chromeState.rgbSample = initialRgbSample
 			let sessionSetupStartedAt = ProcessInfo.processInfo.systemUptime
 			let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
 			self.session = session
@@ -565,7 +568,7 @@ final class CaptureSessionController: NSObject {
 			try session.send(
 				event: .pointerMoved(
 					point: startPoint,
-					rgb: initialSample?.rgbSample,
+					rgb: initialRgbSample,
 					activeMonitor: activeMonitor(at: startPoint),
 					highlightedWindow: initialHighlightedWindow
 				)
@@ -577,7 +580,10 @@ final class CaptureSessionController: NSObject {
 
 			let overlayController = CaptureOverlayController(
 				controller: self,
-				liveFrameStream: liveFrameStream
+				liveFrameStream: liveFrameStream,
+				frameRgbSampler: { [frozenFrameAuthority] point in
+					frozenFrameAuthority.rgbSample(containing: point)
+				}
 			)
 			self.overlayController = overlayController
 			let overlayShowStartedAt = ProcessInfo.processInfo.systemUptime
@@ -617,7 +623,7 @@ final class CaptureSessionController: NSObject {
 				windowSnapshotMilliseconds: windowSnapshotMilliseconds,
 				sessionSetupMilliseconds: sessionSetupMilliseconds,
 				overlayShowMilliseconds: overlayShowMilliseconds,
-				initialSampleReady: initialSample?.rgbSample != nil,
+				initialSampleReady: initialRgbSample != nil,
 				screenCount: NSScreen.screens.count,
 				windowCount: initialWindowSnapshots.count
 			)
@@ -1824,7 +1830,11 @@ final class CaptureSessionController: NSObject {
 			settings: currentSettings,
 			includeLoupePatch: scene.loupeVisible
 		)
-		let rgbSample = chromeSample?.rgbSample ?? chromeState.rgbSample ?? scene.rgb
+		let rgbSample =
+			chromeSample?.rgbSample
+			?? frozenFrameAuthority.rgbSample(containing: point)
+			?? chromeState.rgbSample
+			?? scene.rgb
 		let highlightedWindow = highlightedWindow(at: point)
 		chromeState.rgbSample = rgbSample
 		chromeState.loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
@@ -2322,9 +2332,11 @@ final class CaptureOverlayController {
 	private var focusedWindowNumber: Int?
 	private var collapsedForFrozen = false
 	private let liveFrameStream: LiveFrameStreamBroker
+	private let frameRgbSampler: ChromeSampleFeed.FrameRgbSampler
 	private lazy var windowSnapshotFeed = WindowSnapshotFeed()
 	private lazy var chromeSampleFeed = ChromeSampleFeed(
 		broker: liveFrameStream,
+		frameRgbSampler: frameRgbSampler,
 		backgroundSampler: Self.rgbSampleAtDisplayPoint,
 		sampleUpdated: { [weak self] in
 			DispatchQueue.main.async { [weak self] in
@@ -2335,9 +2347,14 @@ final class CaptureOverlayController {
 	)
 	private let liveChromeBackdrops = LiveChromeBackdropWindowController()
 
-	init(controller: CaptureSessionController, liveFrameStream: LiveFrameStreamBroker) {
+	init(
+		controller: CaptureSessionController,
+		liveFrameStream: LiveFrameStreamBroker,
+		frameRgbSampler: @escaping ChromeSampleFeed.FrameRgbSampler
+	) {
 		self.controller = controller
 		self.liveFrameStream = liveFrameStream
+		self.frameRgbSampler = frameRgbSampler
 	}
 
 	var primaryWindow: NSWindow? {
@@ -2578,7 +2595,7 @@ final class CaptureOverlayController {
 		settings: NativeHostSettings,
 		includeLoupePatch: Bool
 	) -> LiveChromeSample? {
-		let latestSample = chromeSampleFeed.snapshot()
+		let latestSample = chromeSampleFeed.snapshot(for: point)
 		let wantsLoupePatch = includeLoupePatch
 		let wantsLoupePatchSide = settings.loupeSampleSize.sidePixels
 		let latestLoupePatchSatisfiesDemand =
@@ -3128,7 +3145,9 @@ final class CaptureHostView: NSView {
 	private var defersFrozenToolbarClassicGlassUntilAfterFirstDisplay = false
 	private var lastLivePreviewSnapshot: LivePreviewSnapshot?
 	private var latestLiveChromeSample: LiveChromeSample?
+	private var latestLiveChromeSamplePoint: CGPoint?
 	private var latestLiveRgbSample: RGBSample?
+	private var latestLiveRgbSamplePoint: CGPoint?
 	private var glassPatchCache: [GlassSurfaceKind: GlassPatchCache] = [:]
 	private lazy var liveRenderer = LiveOverlayRenderer(hostView: self)
 	private var liveRendererInstalled = false
@@ -3196,7 +3215,7 @@ final class CaptureHostView: NSView {
 			if previousMode != .live {
 				liveHoverChromeSuppressed = false
 				resetLiveChromeInputTelemetry()
-				seedLiveChromeSampleCache(from: chrome)
+				seedLiveChromeSampleCache(from: chrome, point: scene.pointer)
 			}
 			if livePointerPreviewGlobal == nil {
 				seedLivePointerPreview(scene.pointer, recordsInputLatency: false)
@@ -3211,7 +3230,9 @@ final class CaptureHostView: NSView {
 				pendingFrozenFirstDisplay = false
 				lastLivePreviewSnapshot = nil
 				latestLiveChromeSample = nil
+				latestLiveChromeSamplePoint = nil
 				latestLiveRgbSample = nil
+				latestLiveRgbSamplePoint = nil
 			}
 			resetLivePointerPreview()
 			liveHighlightedWindowPreview = nil
@@ -3374,7 +3395,7 @@ final class CaptureHostView: NSView {
 		updateChromeMaterialViews()
 		updateLiveRendererState()
 		if scene.mode == .live {
-			seedLiveChromeSampleCache(from: chrome)
+			seedLiveChromeSampleCache(from: chrome, point: scene.pointer)
 		}
 	}
 
@@ -3727,7 +3748,7 @@ final class CaptureHostView: NSView {
 		let metrics = Self.hudLayoutMetrics
 		let font = metrics.font
 		let positionDisplay = currentPositionDisplay()
-		let rgbSample = latestLiveRgbSample
+		let rgbSample = cachedLiveRgbSample(matching: livePointerPreviewGlobal ?? scene.pointer)
 		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
 		let itemSpacing: CGFloat = 8
 		let swatchSize = CGSize(width: 10, height: 10)
@@ -5010,7 +5031,7 @@ final class CaptureHostView: NSView {
 		guard let dragSelectionLocal = currentImmediateLiveDragSelectionLocal() else {
 			return nil
 		}
-		let rgbSample = latestLiveRgbSample
+		let rgbSample = cachedLiveRgbSample(matching: livePointerPreviewGlobal ?? scene.pointer)
 		return LivePreviewSnapshot(
 			bounds: bounds,
 			theme: chromeTheme(),
@@ -5091,8 +5112,9 @@ final class CaptureHostView: NSView {
 		refreshLiveHighlightedWindowPreview(at: livePointerPreviewGlobal ?? scene.pointer)
 		updateLivePreviewDemands()
 
-		let chromeSample = currentLiveChromeSample()
-		let rgbSample = liveRgbSample(from: chromeSample)
+		let point = livePointerPreviewGlobal ?? scene.pointer
+		let chromeSample = currentLiveChromeSample(at: point)
+		let rgbSample = liveRgbSample(from: chromeSample, at: point)
 		let loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
 		let dragSelectionLocal =
 			currentImmediateLiveDragSelectionLocal()
@@ -5358,49 +5380,98 @@ final class CaptureHostView: NSView {
 		NativeHostDisplayRefresh.pointerFollowFramesPerSecond(for: window?.screen)
 	}
 
-	private func currentLiveChromeSample() -> LiveChromeSample? {
+	private func currentLiveChromeSample(at point: CGPoint?) -> LiveChromeSample? {
 		let sample = controller?.liveChromeSnapshot(
-			point: livePointerPreviewGlobal ?? scene.pointer,
+			point: point,
 			settings: settings,
 			includeLoupePatch: scene.loupeVisible && !liveHoverChromeSuppressed
 		)
 		if let sample {
-			latestLiveChromeSample = sample
+			seedLiveChromeSampleCache(sample, point: point)
 			if let rgbSample = sample.rgbSample {
-				latestLiveRgbSample = rgbSample
+				seedLiveRgbSampleCache(rgbSample, point: point)
 			}
 			return sample
 		}
-		if chrome.rgbSample != nil || chrome.loupePatch != nil {
-			seedLiveChromeSampleCache(from: chrome)
-			return latestLiveChromeSample
+		if let cachedSample = cachedLiveChromeSample(matching: point) {
+			return cachedSample
+		}
+		if chrome.rgbSample != nil || chrome.loupePatch != nil,
+			liveSamplePoint(scene.pointer, matches: point)
+		{
+			seedLiveChromeSampleCache(from: chrome, point: scene.pointer)
+			return cachedLiveChromeSample(matching: point)
+		}
+		return nil
+	}
+
+	private func liveRgbSample(from sample: LiveChromeSample?, at point: CGPoint?) -> RGBSample? {
+		if let rgbSample = sample?.rgbSample {
+			seedLiveRgbSampleCache(rgbSample, point: point)
+			return rgbSample
+		}
+		if let rgbSample = chrome.rgbSample,
+			liveSamplePoint(scene.pointer, matches: point)
+		{
+			seedLiveRgbSampleCache(rgbSample, point: scene.pointer)
+			return rgbSample
+		}
+		return cachedLiveRgbSample(matching: point)
+	}
+
+	private func seedLiveChromeSampleCache(from chrome: CaptureChromeState, point: CGPoint?) {
+		guard chrome.rgbSample != nil || chrome.loupePatch != nil else {
+			return
+		}
+		seedLiveChromeSampleCache(
+			LiveChromeSample(
+				rgbSample: chrome.rgbSample,
+				loupePatch: chrome.loupePatch
+			),
+			point: point
+		)
+		if let rgbSample = chrome.rgbSample {
+			seedLiveRgbSampleCache(rgbSample, point: point)
+		}
+	}
+
+	private func seedLiveChromeSampleCache(_ sample: LiveChromeSample, point: CGPoint?) {
+		latestLiveChromeSample = sample
+		latestLiveChromeSamplePoint = point
+	}
+
+	private func seedLiveRgbSampleCache(_ rgbSample: RGBSample, point: CGPoint?) {
+		latestLiveRgbSample = rgbSample
+		latestLiveRgbSamplePoint = point
+	}
+
+	private func cachedLiveChromeSample(matching point: CGPoint?) -> LiveChromeSample? {
+		guard liveSamplePoint(latestLiveChromeSamplePoint, matches: point) else {
+			return nil
 		}
 		return latestLiveChromeSample
 	}
 
-	private func liveRgbSample(from sample: LiveChromeSample?) -> RGBSample? {
-		if let rgbSample = sample?.rgbSample {
-			latestLiveRgbSample = rgbSample
-			return rgbSample
-		}
-		if let rgbSample = chrome.rgbSample {
-			latestLiveRgbSample = rgbSample
-			return rgbSample
+	private func cachedLiveRgbSample(matching point: CGPoint?) -> RGBSample? {
+		guard liveSamplePoint(latestLiveRgbSamplePoint, matches: point) else {
+			return nil
 		}
 		return latestLiveRgbSample
 	}
 
-	private func seedLiveChromeSampleCache(from chrome: CaptureChromeState) {
-		guard chrome.rgbSample != nil || chrome.loupePatch != nil else {
-			return
+	private func liveSamplePoint(_ samplePoint: CGPoint?, matches point: CGPoint?) -> Bool {
+		switch (samplePoint, point) {
+		case (nil, nil):
+			return true
+		case (let samplePoint?, let point?):
+			return Self.liveSamplePointsEquivalent(samplePoint, point)
+		default:
+			return false
 		}
-		latestLiveChromeSample = LiveChromeSample(
-			rgbSample: chrome.rgbSample,
-			loupePatch: chrome.loupePatch
-		)
-		if let rgbSample = chrome.rgbSample {
-			latestLiveRgbSample = rgbSample
-		}
+	}
+
+	private static func liveSamplePointsEquivalent(_ lhs: CGPoint, _ rhs: CGPoint) -> Bool {
+		abs(lhs.x - rhs.x) <= 0.5 && abs(lhs.y - rhs.y) <= 0.5
 	}
 
 	private func selectionSizeText(for rect: CGRect) -> String {
