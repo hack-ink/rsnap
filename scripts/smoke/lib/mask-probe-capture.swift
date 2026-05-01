@@ -1,4 +1,6 @@
+import AppKit
 import CoreGraphics
+import CoreImage
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -47,22 +49,31 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 	private let outputPath: String
 	private let phasePath: String
 	private let readyPath: String?
+	private let screenshotPath: String?
+	private let releasedScreenshotPath: String?
 	private let point: CGPoint
 	private let displayFrame: CGRect
 	private let lock = NSLock()
 	private var samples: [Sample] = []
 	private var wroteReady = false
+	private var wroteScreenshot = false
+	private var wroteReleasedScreenshot = false
+	private var completedReleasedScreenshot = false
 
 	init(
 		outputPath: String,
 		phasePath: String,
 		readyPath: String?,
+		screenshotPath: String?,
+		releasedScreenshotPath: String?,
 		point: CGPoint,
 		displayFrame: CGRect
 	) {
 		self.outputPath = outputPath
 		self.phasePath = phasePath
 		self.readyPath = readyPath
+		self.screenshotPath = screenshotPath
+		self.releasedScreenshotPath = releasedScreenshotPath
 		self.point = point
 		self.displayFrame = displayFrame
 	}
@@ -79,16 +90,35 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 		else {
 			return
 		}
+		let phase = currentPhase()
+		let screenshotToWrite: (path: String, phase: String)?
 		lock.lock()
+		if phase == "holding", let screenshotPath, !wroteScreenshot {
+			wroteScreenshot = true
+			screenshotToWrite = (screenshotPath, phase)
+		} else if phase == "released", let releasedScreenshotPath, !wroteReleasedScreenshot {
+			wroteReleasedScreenshot = true
+			screenshotToWrite = (releasedScreenshotPath, phase)
+		} else {
+			screenshotToWrite = nil
+		}
 		samples.append(
 			Sample(
-				phase: currentPhase(),
+				phase: phase,
 				uptime: ProcessInfo.processInfo.systemUptime,
 				luminance: luminance
 			)
 		)
 		writeReadyIfNeeded()
 		lock.unlock()
+		if let screenshotToWrite {
+			let wroteScreenshot = writeScreenshot(pixelBuffer, to: screenshotToWrite.path)
+			if screenshotToWrite.phase == "released", wroteScreenshot {
+				lock.lock()
+				completedReleasedScreenshot = true
+				lock.unlock()
+			}
+		}
 	}
 
 	func writeSamples() {
@@ -107,6 +137,30 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 			fputs("failed to write mask probe samples: \(error)\n", stderr)
 			exit(1)
 		}
+	}
+
+	func hasRequiredSamples(minDraggingSamples: Int, minReleasedSamples: Int) -> Bool {
+		lock.lock()
+		let samples = self.samples
+		let releasedScreenshotComplete =
+			releasedScreenshotPath == nil || completedReleasedScreenshot
+		lock.unlock()
+
+		var draggingSamples = 0
+		var releasedSamples = 0
+		for sample in samples {
+			switch sample.phase {
+			case "dragging", "holding":
+				draggingSamples += 1
+			case "released":
+				releasedSamples += 1
+			default:
+				continue
+			}
+		}
+		return draggingSamples >= minDraggingSamples
+			&& releasedSamples >= minReleasedSamples
+			&& releasedScreenshotComplete
 	}
 
 	private func currentPhase() -> String {
@@ -129,6 +183,34 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 			try "ready\n".write(toFile: readyPath, atomically: true, encoding: .utf8)
 		} catch {
 			fputs("failed to write mask probe ready marker: \(error)\n", stderr)
+		}
+	}
+
+	private func writeScreenshot(_ pixelBuffer: CVPixelBuffer, to path: String) -> Bool {
+		let width = CVPixelBufferGetWidth(pixelBuffer)
+		let height = CVPixelBufferGetHeight(pixelBuffer)
+		let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+		let context = CIContext(options: nil)
+		guard
+			let cgImage = context.createCGImage(
+				ciImage,
+				from: CGRect(x: 0, y: 0, width: width, height: height)
+			)
+		else {
+			fputs("failed to create drag screenshot image\n", stderr)
+			return false
+		}
+		let bitmap = NSBitmapImageRep(cgImage: cgImage)
+		guard let data = bitmap.representation(using: .png, properties: [:]) else {
+			fputs("failed to encode drag screenshot PNG\n", stderr)
+			return false
+		}
+		do {
+			try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+			return true
+		} catch {
+			fputs("failed to write drag screenshot: \(error)\n", stderr)
+			return false
 		}
 	}
 
@@ -179,9 +261,14 @@ func runMaskProbe() async throws {
 	let outputPath = readRequiredString("MASK_PROBE_OUTPUT")
 	let phasePath = readRequiredString("MASK_PROBE_PHASE_PATH")
 	let readyPath = readOptionalString("MASK_PROBE_READY_PATH")
+	let screenshotPath = readOptionalString("MASK_PROBE_SCREENSHOT_PATH")
+	let releasedScreenshotPath = readOptionalString("MASK_PROBE_RELEASED_SCREENSHOT_PATH")
 	let point = readRequiredPoint("MASK_PROBE_POINT")
 	let durationMs = readInt("MASK_PROBE_DURATION_MS", default: 1_400)
 	let rateHz = readInt("MASK_PROBE_RATE_HZ", default: 60)
+	let minPhaseSamples = readInt("MASK_PROBE_MIN_PHASE_SAMPLES", default: 3)
+	let pollMs = readInt("MASK_PROBE_POLL_MS", default: 20)
+	let stopCapture = readInt("MASK_PROBE_STOP_CAPTURE", default: 0) == 1
 
 	let content = try await SCShareableContent.current
 	guard
@@ -204,6 +291,8 @@ func runMaskProbe() async throws {
 		outputPath: outputPath,
 		phasePath: phasePath,
 		readyPath: readyPath,
+		screenshotPath: screenshotPath,
+		releasedScreenshotPath: releasedScreenshotPath,
 		point: point,
 		displayFrame: display.frame
 	)
@@ -214,8 +303,19 @@ func runMaskProbe() async throws {
 		sampleHandlerQueue: DispatchQueue(label: "ink.hack.rsnap.mask-probe", qos: .userInteractive)
 	)
 	try await stream.startCapture()
-	try await Task.sleep(nanoseconds: UInt64(max(1, durationMs)) * 1_000_000)
-	try await stream.stopCapture()
+	let started = ProcessInfo.processInfo.systemUptime
+	while (ProcessInfo.processInfo.systemUptime - started) * 1_000 < Double(max(1, durationMs)) {
+		if capture.hasRequiredSamples(
+			minDraggingSamples: minPhaseSamples,
+			minReleasedSamples: minPhaseSamples
+		) {
+			break
+		}
+		try await Task.sleep(nanoseconds: UInt64(max(1, pollMs)) * 1_000_000)
+	}
+	if stopCapture {
+		try await stream.stopCapture()
+	}
 	capture.writeSamples()
 }
 

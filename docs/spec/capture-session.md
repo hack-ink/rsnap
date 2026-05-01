@@ -53,6 +53,9 @@ product level rather than binding itself to a particular window toolkit or shell
    externally capturable by system screenshot and screen-recording tools. Internal self-capture
    correctness comes from rsnap's own capture filters and handoff logic, not window content
    protection.
+   External tools being allowed to capture rsnap UI is only a debugging/export affordance. rsnap's
+   own Frozen first frame MUST NOT capture rsnap's live mask, dashed selection border, size badge,
+   toolbar, loupe, or transitional Frozen UI into the frozen display image.
 8. The product contract does not require any specific platform window implementation. Focus,
    cursor, keyboard, and IME correctness are mandatory outcomes, regardless of how the native host
    achieves them.
@@ -68,9 +71,28 @@ product level rather than binding itself to a particular window toolkit or shell
 - Hovering over a window in live mode shows an obvious targeting outline that follows the current
   target, remains legible in light and dark themes, and does not require moving away to another
   window before the current target becomes active.
+- Moving the pointer to live-mode desktop space with no recognized window MUST clear the window
+  targeting outline and mask immediately; the previous recognized window must not remain highlighted
+  as a stale target.
+- Pressing the primary button in live mode MUST NOT clear, flash, or remove the current
+  targeting mask/scrim while the pointer is still below the drag threshold. The hover target may
+  be replaced by a drag preview only after the drag preview exists; there must be no blank
+  mouse-down interval before release.
 - Left click + drag freezes a cropped region on the cursor monitor.
-- Live drag preview begins as soon as the pointer moves away from the press point; thin captures
-  down to `1x1` pixels are valid frozen selections.
+- Live drag preview begins only after the native host has observed enough held-pointer movement to
+  distinguish drag intent from ordinary click jitter. After that intent threshold is crossed, thin
+  captures down to `1x1` pixels are valid frozen selections.
+- Live drag preview chrome is owned by the overlay view that received the primary press. Other
+  overlay views must not render the canonical drag preview, and preview strokes/scrims must be
+  clipped to their owning overlay bounds; horizontal or vertical lines must never extend past the
+  selection or leak toward the desktop edge.
+- Releasing the primary button, canceling capture, or failing a freeze request MUST clear all
+  host-local live-drag state before the next pointer move. A stale `live_selection_preview` kept
+  for request handoff must not continue rendering as an active drag preview after release.
+- If the primary-button release is observed by a different overlay view than the one that began
+  the drag, the release still owns the whole live interaction: all overlay-local queued drag
+  updates must be canceled, the owner preview must stop following the mouse, and no later queued
+  `liveDragged` update may recreate the released preview.
 - Left click without drag hit-tests the window under the cursor on the same monitor and freezes
   that window bounds.
 - If no window is hit, the click path falls back to freezing the current monitor fullscreen.
@@ -101,12 +123,14 @@ product level rather than binding itself to a particular window toolkit or shell
   capture, copies the recognized text to the clipboard, and exits.
 - In Frozen mode, the toolbar remains part of the floating HUD set. The live loupe is hidden after
   freeze and may be recreated only when a later live-mode transition needs it.
-- In Frozen mode, a dragged-region capture may be repositioned by dragging inside the bright
-  selected area and may be resized from its edges and corners; all edits stay on the current
+- In Frozen mode, only drag-created region selections may be repositioned by dragging inside the
+  bright selected area and resized from edges and corners.
+- Window-click captures and the fullscreen fallback when no window is hit are fixed selections:
+  they MUST NOT show move/resize affordances, MUST NOT enter the open-hand/resize cursor state, and
+  MUST NOT commit a frozen selection transform when dragged.
+- Frozen editability is a property of the committed selection. It is true only for live drag region
+  captures and false for point-selected window/fullscreen captures. All edits stay on the current
   monitor, and thin edited captures down to `1x1` remain valid.
-- In Frozen mode, a window-click capture remains locked to the captured window bounds: it does not
-  expose resize handles and does not enter drag/resize pointer affordances while the pointer tool
-  is selected.
 - Frozen toolbar placement and expansion invariants are governed by
   `docs/spec/frozen-toolbar-layout.md`.
 - Pen behavior is governed by `docs/spec/annotation-pen.md`.
@@ -117,6 +141,10 @@ product level rather than binding itself to a particular window toolkit or shell
   single visible handoff instead of waiting on a later visible capture swap.
 - The live-to-Frozen handoff MUST NOT flash through a blank surface, a mask/scrim-only state, or
   any other intermediate mode-switch artifact.
+- The live-to-Frozen handoff MUST NOT show a doubled mask/scrim caused by capturing rsnap's own
+  capture UI into the frozen display image. Frozen-frame streams that were created before capture
+  overlay windows became visible must be rebuilt or invalidated before their frames can be used for
+  the first Frozen display image.
 - Frozen-mode display readiness and export readiness are separate:
   - pointer drag/reposition, pen, arrow, text, spotlight, and toolbar visibility are
     display-driven

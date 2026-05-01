@@ -211,6 +211,8 @@ pub enum HostRequest {
 	RequestFreezeSnapshot {
 		/// Selection rectangle that should become the first visible frozen frame.
 		selection: GlobalRect,
+		/// Whether the frozen selection may be moved or resized after commit.
+		selection_editable: bool,
 	},
 	/// Perform a host-owned effect.
 	PerformHostEffect(HostEffectKind),

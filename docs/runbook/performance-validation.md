@@ -31,7 +31,8 @@ Use the smallest command that matches the regression surface:
   `cargo bench -p rsnap-overlay --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1`
 - Native-host live chrome regressions:
   `scripts/smoke/native-hud-follow-macos.sh`
-- Native-host visual/material or live-to-frozen handoff regressions:
+- Native-host click/drag selection, border leakage, mask stability, visual/material, or
+  live-to-frozen handoff regressions:
   `scripts/smoke/native-visual-contract-macos.sh`
 - General local deterministic performance sweep before or after a change:
   `scripts/perf/local.sh`
@@ -60,11 +61,15 @@ worker-pairwise self-check path when no recorded user trace is available.
   - Use this to validate that the dedicated macOS environment, permissions, and smoke harness are
     ready without treating it as an end-to-end performance assertion.
 - `scripts/perf/macos.sh`
-  - Runs `scripts/perf/local.sh`, then runs `scripts/smoke/macos.sh`.
-  - That means the native-host HUD-follow smoke, native visual contract smoke, plus
-    recorded-live-trace scroll-capture replay.
+  - Runs `scripts/perf/local.sh`, the dedicated native-host HUD-follow perf smoke, the core native
+    visual contract smoke, plus recorded-live-trace scroll-capture replay.
   - Use this only on a dedicated logged-in macOS desktop session with the expected Screen
     Recording and automation permissions.
+- `scripts/smoke/macos.sh`
+  - Runs the core native visual contract smoke.
+  - Runs recorded-live-trace replay when a local `manifest.json` exists under the scroll-capture
+    trace directory; otherwise it runs `scripts/smoke/replay-scroll-capture-self-check.sh` so a
+    missing optional trace does not fail unrelated native-host validation.
 
 For the downward scroll-capture rebuild, the expected verification sequence is:
 
@@ -128,6 +133,10 @@ Dedicated macOS smoke:
   worker-pairwise overlay or session logic before attempting more desktop-session repro. If the
   command reports that no trace manifests were found, that is an operator/setup failure: record a
   fresh live trace first or rerun the example with `--trace <manifest-path>`.
+- `scripts/smoke/macos.sh` choosing replay self-check:
+  treat it as expected when the machine has no recorded scroll-capture trace. It is not evidence
+  for or against the latest user-recorded live trace; run `scripts/smoke/replay-scroll-capture.sh`
+  with a real trace when scroll-capture replay evidence is required.
 - `scripts/smoke/replay-scroll-capture-self-check.sh` failures:
   treat them as deterministic regressions in the replay harness itself, not as evidence about the
   latest user-recorded live trace.

@@ -91,6 +91,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private let globalHotKeys = GlobalHotKeyCenter()
 	private var lifecycleActivity: NSObjectProtocol?
 	private var liveSamplingPrewarmWorkItem: DispatchWorkItem?
+	private var selfCaptureRegistrationWindow: NSWindow?
 	private var didBootstrap = false
 	@objc public dynamic var window: NSWindow?
 	private lazy var sessionController: CaptureSessionController = {
@@ -127,6 +128,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		Self.applyApplicationIcon()
 		configureStatusItem()
 		configureGlobalHotKeys()
+		showSelfCaptureRegistrationWindow()
 		NotificationCenter.default.addObserver(
 			self,
 			selector: #selector(settingsDidChange),
@@ -144,6 +146,31 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 	public func applicationDidFinishLaunching(_ notification: Notification) {
 		finishLaunching()
+	}
+
+	private func showSelfCaptureRegistrationWindow() {
+		guard selfCaptureRegistrationWindow == nil else {
+			return
+		}
+		let screenFrame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+		let window = NSWindow(
+			contentRect: CGRect(x: screenFrame.minX, y: screenFrame.minY, width: 1, height: 1),
+			styleMask: [.borderless],
+			backing: .buffered,
+			defer: false
+		)
+		window.alphaValue = 0.001
+		window.backgroundColor = .clear
+		window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+		window.hasShadow = false
+		window.ignoresMouseEvents = true
+		window.isOpaque = false
+		window.isReleasedWhenClosed = false
+		window.level = .normal
+		window.sharingType = .readOnly
+		window.orderFrontRegardless()
+		selfCaptureRegistrationWindow = window
+		NativeHostTelemetry.lifecycleDebug("native_host.self_capture_registration_window_visible")
 	}
 
 	public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -353,6 +380,9 @@ final class CaptureSessionController: NSObject {
 		let desktopFrame: CGRect
 	}
 
+	private static let displayFirstFrameWait: TimeInterval = 0.025
+	private static let coldSelfCaptureRecoveryWait: TimeInterval = 3.5
+
 	private let settingsStore: NativeHostSettingsStore
 	private let liveFrameStream = LiveFrameStreamBroker()
 	private let frozenFrameAuthority = FrozenFrameAuthority()
@@ -430,7 +460,8 @@ final class CaptureSessionController: NSObject {
 	func warmLiveSamplingIfPossible(
 		at point: CGPoint,
 		source: String = "capture",
-		captureID: UInt64 = 0
+		captureID: UInt64 = 0,
+		excludeSelfFromFrozenAuthority: Bool = false
 	) -> LiveChromeSample? {
 		let warmStartedAt = ProcessInfo.processInfo.systemUptime
 		let screenCount = NSScreen.screens.count
@@ -449,7 +480,12 @@ final class CaptureSessionController: NSObject {
 		}
 		let screens = NSScreen.screens
 		let frozenAuthorityStartedAt = ProcessInfo.processInfo.systemUptime
-		frozenFrameAuthority.start(for: screens, captureID: captureID, source: source)
+		frozenFrameAuthority.start(
+			for: screens,
+			captureID: captureID,
+			source: source,
+			rebuildContentFilter: excludeSelfFromFrozenAuthority
+		)
 		let frozenAuthorityStartMilliseconds =
 			NativeHostTelemetry.milliseconds(since: frozenAuthorityStartedAt)
 		let liveStreamStartedAt = ProcessInfo.processInfo.systemUptime
@@ -507,7 +543,10 @@ final class CaptureSessionController: NSObject {
 			prepareLiveSamplingForCaptureStart()
 			let warmStartedAt = ProcessInfo.processInfo.systemUptime
 			let initialSample = warmLiveSamplingIfPossible(
-				at: startPoint, source: "start_capture", captureID: captureID)
+				at: startPoint,
+				source: "start_capture",
+				captureID: captureID
+			)
 			let warmMilliseconds = NativeHostTelemetry.milliseconds(since: warmStartedAt)
 			frozenFrameLatchToken = nil
 			let desktopFrame = CaptureOverlayController.desktopFrame
@@ -549,12 +588,21 @@ final class CaptureSessionController: NSObject {
 				focusPoint: startPoint,
 				initialWindowSnapshots: initialWindowSnapshots
 			)
-			frozenFrameAuthority.start(
-				for: NSScreen.screens,
-				captureID: captureID,
-				source: "capture_overlay_visible",
-				refreshContentFilter: true
-			)
+			if frozenFrameAuthority.hasSelfCaptureCompleteFrame(containing: startPoint) {
+				NativeHostTelemetry.captureEvent(
+					"capture.self_capture_rebuild_skipped",
+					captureID: captureID,
+					detail: "startup_complete_filter"
+				)
+			} else {
+				frozenFrameAuthority.start(
+					for: NSScreen.screens,
+					captureID: captureID,
+					source: "capture_overlay_visible",
+					rebuildContentFilter: true,
+					selfCaptureExceptionWindowIDs: overlayController.selfCaptureExceptionWindowIDs
+				)
+			}
 			let overlayShowMilliseconds =
 				NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
 			(NSApp.delegate as? NativeHostApplicationController)?.window =
@@ -710,6 +758,8 @@ final class CaptureSessionController: NSObject {
 			)
 			try syncCore()
 		} catch {
+			chromeState.endHostLocalFrozenSelecting()
+			refreshOverlay()
 			NativeHostTelemetry.captureWarning(
 				"capture.primary_interaction_begin_failed",
 				captureID: currentCaptureTelemetryID,
@@ -730,7 +780,6 @@ final class CaptureSessionController: NSObject {
 			if frozenFrameLatchToken == nil {
 				frozenFrameLatchToken = frozenFrameAuthority.latchToken(containing: point)
 			}
-			beginHostLocalFrozenSelectingIfPossible(at: point)
 			let liveInputs = currentLiveInputs(at: point)
 			try session?.send(
 				event: .pointerMoved(
@@ -764,12 +813,12 @@ final class CaptureSessionController: NSObject {
 			return
 		}
 
+		overlayController?.markLivePrimaryInteractionReleased(at: point)
 		do {
 			liveFrameStream.prime(at: point)
 			if frozenFrameLatchToken == nil {
 				frozenFrameLatchToken = frozenFrameAuthority.latchToken(containing: point)
 			}
-			beginHostLocalFrozenSelectingIfPossible(at: point)
 			let liveInputs = currentLiveInputs(at: point)
 			try session?.send(
 				event: .pointerMoved(
@@ -787,7 +836,13 @@ final class CaptureSessionController: NSObject {
 				)
 			)
 			try syncCore()
+			if scene.mode == .live {
+				chromeState.endHostLocalFrozenSelecting()
+				refreshOverlay()
+			}
 		} catch {
+			chromeState.endHostLocalFrozenSelecting()
+			refreshOverlay()
 			NativeHostTelemetry.captureWarning(
 				"capture.primary_interaction_complete_failed",
 				captureID: currentCaptureTelemetryID,
@@ -795,6 +850,14 @@ final class CaptureSessionController: NSObject {
 				error: String(describing: error)
 			)
 		}
+	}
+
+	func registerLivePrimaryInteractionOwner(_ owner: CaptureHostView) {
+		overlayController?.registerLivePrimaryInteractionOwner(owner)
+	}
+
+	func completeLivePrimaryInteraction(from sender: CaptureHostView, at point: CGPoint) {
+		overlayController?.completeLivePrimaryInteraction(from: sender, at: point)
 	}
 
 	func copySelection() {
@@ -975,6 +1038,10 @@ final class CaptureSessionController: NSObject {
 			do {
 				try self.session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 				try self.syncCore()
+				NativeHostTelemetry.captureEvent(
+					"capture.frozen_selection_transform_commit",
+					captureID: captureID
+				)
 			} catch {
 				NativeHostTelemetry.captureWarning(
 					"capture.frozen_selection_transform_commit_failed",
@@ -1274,10 +1341,10 @@ final class CaptureSessionController: NSObject {
 			break
 		case .stopLiveCapture:
 			tearDownCapture()
-		case .requestFreezeSnapshot(let selection):
+		case .requestFreezeSnapshot(let selection, let selectionEditable):
 			try commitFrozenSelection(
 				selection,
-				editable: scene.liveSelectionPreview == selection
+				editable: selectionEditable
 			)
 		case .copyCapture:
 			try performCopy()
@@ -1337,11 +1404,14 @@ final class CaptureSessionController: NSObject {
 		let frozenFrame = snapshotForFrozenCommit(
 			containing: selectionCenter,
 			after: token,
-			maxWait: frozenFrameLatchWait()
+			maxWait: frozenFrameLatchWait(containing: selectionCenter)
 		)
 		let snapshotWaitMilliseconds =
 			NativeHostTelemetry.milliseconds(since: snapshotStartedAt)
 		guard let frozenFrame else {
+			frozenFrameLatchToken = nil
+			chromeState.endHostLocalFrozenSelecting()
+			refreshOverlay()
 			NativeHostTelemetry.captureWarning(
 				"capture.freeze_commit_failed",
 				captureID: captureID,
@@ -1364,7 +1434,10 @@ final class CaptureSessionController: NSObject {
 		chromeState.frozenSelectionInteraction = nil
 		chromeState.frozenDisplayFrame = frozenFrame.displayFrame
 		chromeState.frozenDisplayImage = frozenFrame.image
-		let hostOwnedFrozenScene = hostOwnedFrozenPresentationScene(for: selection)
+		let hostOwnedFrozenScene = hostOwnedFrozenPresentationScene(
+			for: selection,
+			editable: editable
+		)
 		let presentStartedAt = ProcessInfo.processInfo.systemUptime
 		overlayController?.presentFrozenFirstFrame(
 			scene: hostOwnedFrozenScene,
@@ -1386,14 +1459,17 @@ final class CaptureSessionController: NSObject {
 			displayID: frozenFrame.displayID,
 			sequence: frozenFrame.sequence,
 			snapshotSource: frozenFrame.source,
+			snapshotGeneration: frozenFrame.generation,
+			selfCaptureSafe: frozenFrame.selfCaptureSafe,
+			selfCaptureFilterComplete: frozenFrame.selfCaptureFilterComplete,
 			hadLatchToken: hadLatchToken,
 			baseReady: chromeState.frozenBaseImage != nil
 		)
 		try session.send(report: .freezeSnapshotCommitted(selection: selection))
 	}
 
-	private func frozenFrameLatchWait() -> TimeInterval {
-		min(0.040, max(0.018, NativeHostDisplayRefresh.frameInterval * 2.5))
+	private func frozenFrameLatchWait(containing _: CGPoint) -> TimeInterval {
+		Self.displayFirstFrameWait
 	}
 
 	private func snapshotForFrozenCommit(
@@ -1401,59 +1477,29 @@ final class CaptureSessionController: NSObject {
 		after token: FrozenFrameLatchToken?,
 		maxWait: TimeInterval
 	) -> FrozenFrameSnapshot? {
-		if let snapshot = frozenFrameAuthority.latestSnapshot(containing: point) {
-			return snapshot
-		}
-		if let snapshot = liveSamplerSnapshotForFrozenCommit(near: point, allowsWait: false) {
-			return snapshot
-		}
-		if let snapshot = frozenFrameAuthority.snapshot(
+		if let frozenFrame = frozenFrameAuthority.snapshot(
 			containing: point,
 			after: token,
 			maxWait: maxWait
 		) {
-			return snapshot
+			return frozenFrame
 		}
-		if let snapshot = liveSamplerSnapshotForFrozenCommit(near: point, allowsWait: true) {
-			return snapshot
-		}
-		return nil
-	}
-
-	private func liveSamplerSnapshotForFrozenCommit(
-		near point: CGPoint,
-		allowsWait: Bool
-	) -> FrozenFrameSnapshot? {
-		let captured =
-			allowsWait
-			? overlayController?.latestMonitorImage(near: point)
-			: overlayController?.cachedMonitorImage(near: point)
-		guard let captured
-		else {
+		guard frozenFrameAuthority.needsSelfCaptureCompleteFrame(containing: point) else {
 			return nil
 		}
-		let displayID =
-			NSScreen.screens.first(where: { $0.frame.contains(point) })
-			.flatMap(Self.displayID(for:)) ?? 0
-		return FrozenFrameSnapshot(
-			displayID: displayID,
-			displayFrame: captured.frame,
-			image: captured.image,
-			sequence: 0,
-			capturedAtUptime: ProcessInfo.processInfo.systemUptime,
-			source: "live_sampler_latest"
+		return frozenFrameAuthority.snapshot(
+			containing: point,
+			after: token,
+			maxWait: max(0, Self.coldSelfCaptureRecoveryWait - maxWait)
 		)
 	}
 
-	private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
-		(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
-			.uint32Value
-	}
-
-	private func hostOwnedFrozenPresentationScene(for selection: CGRect) -> SceneSnapshot {
+	private func hostOwnedFrozenPresentationScene(for selection: CGRect, editable: Bool)
+		-> SceneSnapshot
+	{
 		SceneSnapshot(
 			mode: .frozen,
-			cursorIntent: .grab,
+			cursorIntent: editable ? .grab : .default,
 			pointer: scene.pointer,
 			activeMonitor: nil,
 			highlightedWindow: nil,
@@ -1754,15 +1800,16 @@ final class CaptureSessionController: NSObject {
 		guard let screen = screen(containing: point) else {
 			return nil
 		}
-		let screenNumber =
-			(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
-			.uint32Value
-			?? 0
 		return MonitorSnapshot(
-			id: screenNumber,
+			id: Self.displayID(for: screen) ?? 0,
 			frame: screen.frame,
 			scaleFactorX1000: UInt32((screen.backingScaleFactor * 1_000).rounded())
 		)
+	}
+
+	private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+		(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+			.uint32Value
 	}
 
 	private func highlightedWindow(at point: CGPoint) -> WindowSnapshot? {
@@ -2271,6 +2318,7 @@ final class CaptureOverlayController {
 	private weak var controller: CaptureSessionController?
 	private var windows: [CaptureOverlayWindow] = []
 	private var retiringWindows: [CaptureOverlayWindow] = []
+	private weak var livePrimaryInteractionOwner: CaptureHostView?
 	private var focusedWindowNumber: Int?
 	private var collapsedForFrozen = false
 	private let liveFrameStream: LiveFrameStreamBroker
@@ -2294,6 +2342,10 @@ final class CaptureOverlayController {
 
 	var primaryWindow: NSWindow? {
 		windows.first(where: { $0.windowNumber == focusedWindowNumber }) ?? windows.first
+	}
+
+	fileprivate var selfCaptureExceptionWindowIDs: Set<CGWindowID> {
+		Set(windows.map { CGWindowID($0.windowNumber) })
 	}
 
 	fileprivate func show(
@@ -2369,6 +2421,36 @@ final class CaptureOverlayController {
 		}
 	}
 
+	fileprivate func markLivePrimaryInteractionReleased(at point: CGPoint) {
+		if let owner = livePrimaryInteractionOwner, owner.hasLivePrimaryInteraction {
+			owner.markLivePrimaryInteractionReleased(at: point)
+			return
+		}
+		for window in windows where window.hostView.hasLivePrimaryInteraction {
+			window.hostView.markLivePrimaryInteractionReleased(at: point)
+		}
+	}
+
+	fileprivate func registerLivePrimaryInteractionOwner(_ owner: CaptureHostView) {
+		livePrimaryInteractionOwner = owner
+	}
+
+	fileprivate func completeLivePrimaryInteraction(from sender: CaptureHostView, at point: CGPoint)
+	{
+		guard
+			let owner = livePrimaryInteractionOwner,
+			owner.hasLivePrimaryInteraction
+		else {
+			if sender.hasLivePrimaryInteraction {
+				sender.completeOwnedLivePrimaryInteraction(at: point)
+				livePrimaryInteractionOwner = nil
+			}
+			return
+		}
+		owner.completeOwnedLivePrimaryInteraction(at: point)
+		livePrimaryInteractionOwner = nil
+	}
+
 	fileprivate func presentFrozenFirstFrame(
 		scene: SceneSnapshot,
 		chrome: CaptureChromeState,
@@ -2376,7 +2458,13 @@ final class CaptureOverlayController {
 	) {
 		guard
 			scene.mode == .frozen,
-			let selection = scene.frozenSelection,
+			let selection = scene.frozenSelection
+		else {
+			update(scene: scene, chrome: chrome, settings: settings)
+			return
+		}
+		prepareFrozenPresentation(for: selection)
+		guard
 			let primaryWindow = windows.first(where: {
 				$0.frame.contains(CGPoint(x: selection.midX, y: selection.midY))
 			}) ?? windows.first
@@ -2392,9 +2480,6 @@ final class CaptureOverlayController {
 			rendersPendingFrame: false
 		)
 		primaryWindow.hostView.finishFrozenFirstFrameInstall()
-		DispatchQueue.main.async { [weak self] in
-			self?.prepareFrozenPresentation(for: selection)
-		}
 	}
 
 	func focusWindow(at point: CGPoint) {
@@ -2428,11 +2513,13 @@ final class CaptureOverlayController {
 
 		let windowsToRetire = windows
 		windows.removeAll()
+		livePrimaryInteractionOwner = nil
 		focusedWindowNumber = nil
 		collapsedForFrozen = false
 		(NSApp.delegate as? NativeHostApplicationController)?.window = nil
 
 		for window in windowsToRetire {
+			window.hostView.clearLivePrimaryInteractionState(rendersImmediately: false)
 			window.hostView.finishLivePresentationTelemetry(reason: "close")
 			window.hostView.controller = nil
 			window.ignoresMouseEvents = true
@@ -2470,18 +2557,6 @@ final class CaptureOverlayController {
 
 	func cachedRegionImage(in rect: CGRect) -> CGImage? {
 		liveFrameStream.region(in: rect)
-	}
-
-	fileprivate func latestMonitorImage(
-		near point: CGPoint
-	) -> (frame: CGRect, image: CGImage)? {
-		liveFrameStream.latestMonitorImage(containing: point)
-	}
-
-	fileprivate func cachedMonitorImage(
-		near point: CGPoint
-	) -> (frame: CGRect, image: CGImage)? {
-		liveFrameStream.cachedMonitorImage(containing: point)
 	}
 
 	fileprivate func updateLivePreviewDemand(
@@ -2817,6 +2892,8 @@ final class CaptureOverlayWindow: NSPanel {
 
 @MainActor
 final class CaptureHostView: NSView {
+	private static let liveDragIntentThreshold: CGFloat = 3
+
 	private final class FrozenToolbarRenderView: NSView {
 		struct Item: Equatable {
 			let kind: ToolbarItemKind
@@ -3031,6 +3108,11 @@ final class CaptureHostView: NSView {
 	private var queuedPointerWorkItem: DispatchWorkItem?
 	private var lastHoverPointerDispatchUptime: TimeInterval = 0
 	private var lastDragPointerDispatchUptime: TimeInterval = 0
+	private var liveDragStartGlobal: CGPoint?
+	private var liveDragReleasedGlobal: CGPoint?
+	private var liveDragExceededThreshold = false
+	private var livePrimaryCompletionInFlight = false
+	private var liveMouseUpMonitor: Any?
 	private var livePointerPreviewGlobal: CGPoint?
 	private var livePointerPreviewInputUptime: TimeInterval?
 	private var livePointerPreviewInputSequence: UInt64 = 0
@@ -3090,6 +3172,8 @@ final class CaptureHostView: NSView {
 		let previousSettings = self.settings
 		let previousMode = self.scene.mode
 		let transitioningToFrozen = previousMode == .live && scene.mode == .frozen
+		let hostLocalFrozenSelectingEnded =
+			previousChrome.hostLocalFrozenSelecting && !chrome.hostLocalFrozenSelecting
 		if scene.mode != .frozen {
 			frozenFirstDisplayCompletionQueued = false
 			frozenFirstDisplayHandoffStartedAt = nil
@@ -3099,6 +3183,9 @@ final class CaptureHostView: NSView {
 		self.scene = scene
 		self.chrome = chrome
 		self.settings = settings
+		if hostLocalFrozenSelectingEnded {
+			clearLivePrimaryInteractionState(rendersImmediately: false)
+		}
 		if previousMode != scene.mode {
 			window?.acceptsMouseMovedEvents = true
 			updateTrackingAreas()
@@ -3117,6 +3204,7 @@ final class CaptureHostView: NSView {
 				liveHighlightedWindowPreview = scene.highlightedWindow
 			}
 		} else {
+			clearLivePrimaryInteractionState(rendersImmediately: false)
 			if scene.mode == .hidden {
 				liveHoverChromeSuppressed = false
 				pendingFrozenFirstDisplay = false
@@ -3149,6 +3237,7 @@ final class CaptureHostView: NSView {
 			}
 		} else {
 			if transitioningToFrozen {
+				liveRenderer.renderNow()
 				needsDisplay = true
 				completeFrozenFirstDisplayHandoff()
 			} else {
@@ -3276,6 +3365,7 @@ final class CaptureHostView: NSView {
 			seedLivePointerPreview(scene.pointer, recordsInputLatency: false)
 			liveHighlightedWindowPreview = scene.highlightedWindow
 		} else {
+			clearLivePrimaryInteractionState(rendersImmediately: false)
 			resetLivePointerPreview()
 			liveHighlightedWindowPreview = nil
 		}
@@ -3321,7 +3411,8 @@ final class CaptureHostView: NSView {
 		settings: NativeHostSettings,
 		rendersPendingFrame: Bool = true
 	) {
-		let retainedLivePreview = lastLivePreviewSnapshot ?? currentLivePreviewSnapshot()
+		let retainedLivePreview =
+			rendersPendingFrame ? (lastLivePreviewSnapshot ?? currentLivePreviewSnapshot()) : nil
 		self.scene = scene
 		self.chrome = chrome
 		self.settings = settings
@@ -3333,6 +3424,7 @@ final class CaptureHostView: NSView {
 		frozenFirstDisplayPendingFrameDisplayed = false
 		defersFrozenToolbarClassicGlassUntilAfterFirstDisplay = settings.usesClassicHudGlass
 		lastLivePreviewSnapshot = retainedLivePreview
+		clearLivePrimaryInteractionState(rendersImmediately: false)
 		resetLivePointerPreview()
 		liveHighlightedWindowPreview = nil
 		refreshHoveredToolbarAction()
@@ -3340,8 +3432,8 @@ final class CaptureHostView: NSView {
 		needsDisplay = true
 		controller?.updateLivePreviewDemand(
 			point: nil, settings: settings, includeLoupePatch: false)
-		if rendersPendingFrame {
-			frozenFirstDisplayPendingFrameDisplayed = pendingFrozenFirstDisplay
+		if rendersPendingFrame, pendingFrozenFirstDisplay {
+			frozenFirstDisplayPendingFrameDisplayed = true
 			liveRenderer.renderNow()
 		}
 	}
@@ -3403,6 +3495,9 @@ final class CaptureHostView: NSView {
 		}
 		let point = globalPoint(from: event)
 		if scene.mode == .live {
+			if recoverReleasedLivePrimaryInteractionIfNeeded(at: point) {
+				return
+			}
 			liveChromeMouseEventCount += 1
 			updateLivePointerPreview(to: point, rendersImmediately: true)
 			return
@@ -3418,8 +3513,14 @@ final class CaptureHostView: NSView {
 
 		if scene.mode == .live {
 			let point = globalPoint(from: event)
+			if recoverReleasedLivePrimaryInteractionIfNeeded(at: point) {
+				return
+			}
+			if liveDragDistance(from: point) >= Self.liveDragIntentThreshold {
+				liveDragExceededThreshold = true
+			}
 			updateLivePointerPreview(to: point, rendersImmediately: false)
-			queuePointerEvent(.liveDragged(point))
+			queuePointerEvent(liveDragExceededThreshold ? .liveDragged(point) : .moved(point))
 		} else {
 			controller?.continueFrozenInteraction(to: globalPoint(from: event))
 			syncVisibleCursor()
@@ -3434,6 +3535,12 @@ final class CaptureHostView: NSView {
 			break
 		case .live:
 			suppressLiveHoverChrome()
+			liveDragStartGlobal = point
+			liveDragReleasedGlobal = nil
+			liveDragExceededThreshold = false
+			livePrimaryCompletionInFlight = false
+			controller?.registerLivePrimaryInteractionOwner(self)
+			installLiveMouseUpMonitor()
 			updateLivePointerPreview(to: point, rendersImmediately: true)
 			controller?.beginPrimaryInteraction(at: point)
 		case .frozen:
@@ -3453,8 +3560,7 @@ final class CaptureHostView: NSView {
 	override func mouseUp(with event: NSEvent) {
 		let point = globalPoint(from: event)
 		if scene.mode == .live {
-			updateLivePointerPreview(to: point, rendersImmediately: true)
-			controller?.completePrimaryInteraction(at: point)
+			controller?.completeLivePrimaryInteraction(from: self, at: point)
 		} else if scene.mode == .frozen {
 			controller?.completeFrozenInteraction(at: point)
 			syncVisibleCursor()
@@ -3719,6 +3825,39 @@ final class CaptureHostView: NSView {
 		localRect(from: chrome.frozenDisplayFrame)
 	}
 
+	private func currentImmediateLiveDragSelectionLocal() -> CGRect? {
+		guard scene.mode == .live, let dragStart = liveDragStartGlobal, let window else {
+			return nil
+		}
+		guard liveDragExceededThreshold else {
+			return nil
+		}
+		let current =
+			liveDragReleasedGlobal ?? livePointerPreviewGlobal ?? scene.pointer ?? dragStart
+		let windowFrame = window.frame
+		guard windowFrame.contains(dragStart) else {
+			return nil
+		}
+		let normalized = windowFrame.normalizedRect(anchor: dragStart, current: current)
+		guard max(normalized.width, normalized.height) >= 1 else {
+			return nil
+		}
+		let globalRect = CGRect(
+			x: normalized.minX,
+			y: normalized.minY,
+			width: max(normalized.width, 1),
+			height: max(normalized.height, 1)
+		)
+		return localRect(from: globalRect)
+	}
+
+	private func liveDragDistance(from point: CGPoint) -> CGFloat {
+		guard let dragStart = liveDragStartGlobal else {
+			return 0
+		}
+		return max(abs(point.x - dragStart.x), abs(point.y - dragStart.y))
+	}
+
 	private func localPointer() -> CGPoint? {
 		guard let globalPoint = livePointerPreviewGlobal ?? scene.pointer else {
 			return nil
@@ -3767,9 +3906,112 @@ final class CaptureHostView: NSView {
 		lastLivePointerEventUptime = nil
 	}
 
+	fileprivate func markLivePrimaryInteractionReleased(at point: CGPoint) {
+		guard scene.mode == .live, liveDragStartGlobal != nil else {
+			return
+		}
+		let completionPoint = liveDragCompletionPoint(for: point)
+		livePrimaryCompletionInFlight = true
+		liveDragReleasedGlobal = completionPoint
+		liveHoverChromeSuppressed = false
+		removeLiveMouseUpMonitor()
+		cancelQueuedPointerDispatch()
+		updateLivePointerPreview(
+			to: completionPoint,
+			rendersImmediately: true,
+			rendersFullPreview: liveDragExceededThreshold
+		)
+	}
+
+	fileprivate var hasLivePrimaryInteraction: Bool {
+		scene.mode == .live && liveDragStartGlobal != nil
+	}
+
+	fileprivate func completeOwnedLivePrimaryInteraction(at point: CGPoint) {
+		guard scene.mode == .live, liveDragStartGlobal != nil, !livePrimaryCompletionInFlight else {
+			return
+		}
+		let completionPoint = liveDragCompletionPoint(for: point)
+		markLivePrimaryInteractionReleased(at: point)
+		if let controller {
+			controller.completePrimaryInteraction(at: completionPoint)
+		} else {
+			clearLivePrimaryInteractionState(rendersImmediately: true)
+		}
+	}
+
+	@discardableResult
+	private func recoverReleasedLivePrimaryInteractionIfNeeded(at point: CGPoint) -> Bool {
+		guard
+			scene.mode == .live,
+			liveDragStartGlobal != nil,
+			!livePrimaryCompletionInFlight,
+			!isPrimaryMouseButtonPressed()
+		else {
+			return false
+		}
+		controller?.completeLivePrimaryInteraction(from: self, at: point)
+		return true
+	}
+
+	private func liveDragCompletionPoint(for point: CGPoint) -> CGPoint {
+		liveDragExceededThreshold ? point : liveDragStartGlobal ?? point
+	}
+
+	private func isPrimaryMouseButtonPressed() -> Bool {
+		(NSEvent.pressedMouseButtons & 1) == 1
+	}
+
+	fileprivate func clearLivePrimaryInteractionState(rendersImmediately: Bool) {
+		cancelQueuedPointerDispatch()
+		liveHoverChromeSuppressed = false
+		liveDragStartGlobal = nil
+		liveDragReleasedGlobal = nil
+		liveDragExceededThreshold = false
+		livePrimaryCompletionInFlight = false
+		removeLiveMouseUpMonitor()
+		if rendersImmediately, scene.mode == .live {
+			liveRenderer.renderNow()
+		}
+	}
+
+	private func installLiveMouseUpMonitor() {
+		removeLiveMouseUpMonitor()
+		liveMouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) {
+			[weak self] event in
+			guard let self else {
+				return event
+			}
+			if self.scene.mode == .live,
+				self.liveDragStartGlobal != nil,
+				!self.livePrimaryCompletionInFlight
+			{
+				self.controller?.completeLivePrimaryInteraction(
+					from: self,
+					at: self.globalPoint(fromAnyEvent: event)
+				)
+			}
+			return event
+		}
+	}
+
+	private func removeLiveMouseUpMonitor() {
+		if let liveMouseUpMonitor {
+			NSEvent.removeMonitor(liveMouseUpMonitor)
+			self.liveMouseUpMonitor = nil
+		}
+	}
+
+	private func cancelQueuedPointerDispatch() {
+		queuedPointerWorkItem?.cancel()
+		queuedPointerWorkItem = nil
+		queuedPointerEvent = nil
+	}
+
 	private func updateLivePointerPreview(
 		to globalPoint: CGPoint,
-		rendersImmediately: Bool
+		rendersImmediately: Bool,
+		rendersFullPreview: Bool = false
 	) {
 		guard scene.mode == .live else {
 			return
@@ -3779,7 +4021,11 @@ final class CaptureHostView: NSView {
 		if pointerChanged || rendersImmediately {
 			updateLivePreviewSampleDemand()
 			moveLiveChromeLayers()
-			liveRenderer.renderLiveChromeNow()
+			if rendersFullPreview {
+				liveRenderer.renderNow()
+			} else {
+				liveRenderer.renderLiveChromeNow()
+			}
 		}
 	}
 
@@ -3878,19 +4124,16 @@ final class CaptureHostView: NSView {
 			if let interaction = chrome.frozenSelectionInteraction {
 				return cursorPresentation(for: cursorIntent(for: interaction.kind, active: true))
 			}
-			if let selectedModeTool = visibleToolbarItems().first(where: { $0.selected })?.kind,
-				selectedModeTool == .pointer,
-				!chrome.frozenSelectionEditable
-			{
-				return .arrow
-			}
 			if let selection = chrome.frozenSelectionSnapshot ?? scene.frozenSelection,
 				let selectedModeTool = visibleToolbarItems().first(where: { $0.selected })?.kind
 			{
 				if [ToolbarItemKind.pen, .arrow, .mosaic, .spotlight].contains(selectedModeTool) {
 					return .crosshair
 				}
-				if selectedModeTool == .pointer, chrome.frozenSelectionEditable,
+				if selectedModeTool == .pointer, !chrome.frozenSelectionEditable {
+					return .arrow
+				}
+				if selectedModeTool == .pointer,
 					let pointer = currentGlobalMousePoint(),
 					let intent = editableFrozenCursorIntent(at: pointer, selection: selection)
 				{
@@ -3995,6 +4238,13 @@ final class CaptureHostView: NSView {
 			return NSEvent.mouseLocation
 		}
 		return window.convertPoint(toScreen: event.locationInWindow)
+	}
+
+	private func globalPoint(fromAnyEvent event: NSEvent) -> CGPoint {
+		guard let eventWindow = event.window else {
+			return NSEvent.mouseLocation
+		}
+		return eventWindow.convertPoint(toScreen: event.locationInWindow)
 	}
 
 	private func currentGlobalMousePoint() -> CGPoint? {
@@ -4707,10 +4957,15 @@ final class CaptureHostView: NSView {
 
 	private func currentRendererPreviewSnapshot() -> LivePreviewSnapshot? {
 		if scene.mode == .live {
-			let snapshot =
-				chrome.hostLocalFrozenSelecting
-				? currentHostLocalFrozenSelectingPreviewSnapshot()
-				: currentLivePreviewSnapshot()
+			let snapshot: LivePreviewSnapshot?
+			if chrome.hostLocalFrozenSelecting {
+				snapshot =
+					currentHostLocalFrozenSelectingPreviewSnapshot()
+					?? lastLivePreviewSnapshot
+					?? currentLivePreviewSnapshot(usesSceneDragPreview: false)
+			} else {
+				snapshot = currentLivePreviewSnapshot()
+			}
 			lastLivePreviewSnapshot = snapshot
 			return snapshot
 		}
@@ -4725,11 +4980,9 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 
-		let dragSelectionLocal = localRect(from: scene.liveSelectionPreview)
-		let hoverSelectionLocal =
-			dragSelectionLocal == nil
-			? localRect(from: liveHighlightedWindowPreview?.frame ?? scene.highlightedWindow?.frame)
-			: nil
+		guard let dragSelectionLocal = currentImmediateLiveDragSelectionLocal() else {
+			return nil
+		}
 		let rgbSample = latestLiveRgbSample
 		return LivePreviewSnapshot(
 			bounds: bounds,
@@ -4740,8 +4993,8 @@ final class CaptureHostView: NSView {
 			frozenDisplayImage: chrome.frozenDisplayImage,
 			pointerLocal: nil,
 			dragSelectionLocal: dragSelectionLocal,
-			hoverSelectionLocal: hoverSelectionLocal,
-			selectionSizeText: dragSelectionLocal.map(selectionSizeText(for:)),
+			hoverSelectionLocal: nil,
+			selectionSizeText: selectionSizeText(for: dragSelectionLocal),
 			hudFrame: nil,
 			loupeFrame: nil,
 			positionDisplay: currentPositionDisplay(),
@@ -4788,18 +5041,24 @@ final class CaptureHostView: NSView {
 		)
 	}
 
-	private func currentLivePreviewSnapshot() -> LivePreviewSnapshot? {
+	private func currentLivePreviewSnapshot(
+		usesSceneDragPreview: Bool = true
+	) -> LivePreviewSnapshot? {
 		guard scene.mode == .live else {
 			return nil
 		}
 
-		let polledPoint = currentGlobalMousePoint() ?? NSEvent.mouseLocation
-		if let currentPreview = livePointerPreviewGlobal {
-			if hypot(currentPreview.x - polledPoint.x, currentPreview.y - polledPoint.y) >= 0.5 {
-				applyPolledLivePointerPreview(polledPoint)
+		if !livePrimaryCompletionInFlight {
+			let polledPoint = currentGlobalMousePoint() ?? NSEvent.mouseLocation
+			if let currentPreview = livePointerPreviewGlobal {
+				if hypot(currentPreview.x - polledPoint.x, currentPreview.y - polledPoint.y)
+					>= 0.5
+				{
+					applyPolledLivePointerPreview(polledPoint)
+				}
+			} else {
+				applyPolledLivePointerPreview(polledPoint, recordsInputLatency: false)
 			}
-		} else {
-			applyPolledLivePointerPreview(polledPoint, recordsInputLatency: false)
 		}
 
 		refreshLiveHighlightedWindowPreview(at: livePointerPreviewGlobal ?? scene.pointer)
@@ -4808,10 +5067,13 @@ final class CaptureHostView: NSView {
 		let chromeSample = currentLiveChromeSample()
 		let rgbSample = liveRgbSample(from: chromeSample)
 		let loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
-		let dragSelectionLocal = localRect(from: scene.liveSelectionPreview)
+		let dragSelectionLocal =
+			currentImmediateLiveDragSelectionLocal()
+			?? (usesSceneDragPreview && liveDragStartGlobal != nil && liveDragExceededThreshold
+				? localRect(from: scene.liveSelectionPreview) : nil)
 		let hoverSelectionLocal =
 			dragSelectionLocal == nil
-			? localRect(from: liveHighlightedWindowPreview?.frame ?? scene.highlightedWindow?.frame)
+			? localRect(from: liveHighlightedWindowPreview?.frame)
 			: nil
 		let positionDisplay = currentPositionDisplay()
 		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
@@ -4866,10 +5128,10 @@ final class CaptureHostView: NSView {
 
 	private func refreshLiveHighlightedWindowPreview(at globalPoint: CGPoint?) {
 		guard let globalPoint else {
+			liveHighlightedWindowPreview = nil
 			return
 		}
-		liveHighlightedWindowPreview =
-			controller?.previewHighlightedWindow(at: globalPoint) ?? liveHighlightedWindowPreview
+		liveHighlightedWindowPreview = controller?.previewHighlightedWindow(at: globalPoint)
 	}
 
 	private func updateLiveChromeBackdrops() {
@@ -5639,6 +5901,9 @@ final class CaptureHostView: NSView {
 		case .moved(let point):
 			controller?.pointerMoved(to: point)
 		case .liveDragged(let point):
+			if recoverReleasedLivePrimaryInteractionIfNeeded(at: point) {
+				return
+			}
 			controller?.continuePrimaryInteraction(to: point)
 		}
 	}
