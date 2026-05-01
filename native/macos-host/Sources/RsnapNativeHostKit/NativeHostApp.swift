@@ -3102,6 +3102,7 @@ final class CaptureHostView: NSView {
 	private var frozenToolbarLiquidGlassVisible = false
 	private var frozenToolbarLiquidGlassContentDrawn = false
 	private var trackingAreaRef: NSTrackingArea?
+	private var pointerOverFrozenToolbar = false
 	private var hoveredToolbarAction: ToolbarItemKind?
 	private var lastCursorPresentation: CursorPresentation?
 	private var queuedPointerEvent: QueuedPointerEvent?
@@ -3486,6 +3487,9 @@ final class CaptureHostView: NSView {
 	}
 
 	override func cursorUpdate(with event: NSEvent) {
+		if scene.mode == .frozen {
+			refreshHoveredToolbarAction(for: event.locationInWindow)
+		}
 		cursor(for: currentCursorPresentation()).set()
 	}
 
@@ -3544,6 +3548,7 @@ final class CaptureHostView: NSView {
 			updateLivePointerPreview(to: point, rendersImmediately: true)
 			controller?.beginPrimaryInteraction(at: point)
 		case .frozen:
+			refreshHoveredToolbarAction(for: localPoint)
 			if let action = toolbarAction(at: localPoint) {
 				performToolbarAction(action)
 				return
@@ -4116,8 +4121,16 @@ final class CaptureHostView: NSView {
 		return bounds.contains(local) ? local : nil
 	}
 
+	private func currentLocalMousePoint() -> CGPoint? {
+		guard let window else {
+			return nil
+		}
+		let localPoint = window.mouseLocationOutsideOfEventStream
+		return bounds.contains(localPoint) ? localPoint : nil
+	}
+
 	private func currentCursorPresentation() -> CursorPresentation {
-		if hoveredToolbarAction != nil {
+		if pointerOverFrozenToolbar || hoveredToolbarAction != nil {
 			return .arrow
 		}
 		if scene.mode == .frozen {
@@ -4784,6 +4797,15 @@ final class CaptureHostView: NSView {
 		return layout.items.first(where: { $0.frame.contains(point) && $0.enabled })?.kind
 	}
 
+	private func toolbarFrameContains(_ point: CGPoint) -> Bool {
+		guard scene.mode == .frozen, let selection = localFrozenSelectionRect(),
+			let layout = toolbarLayout(for: selection)
+		else {
+			return false
+		}
+		return layout.frame.contains(point)
+	}
+
 	private func performToolbarAction(_ action: ToolbarItemKind) {
 		switch action {
 		case .undo:
@@ -4798,8 +4820,13 @@ final class CaptureHostView: NSView {
 	}
 
 	private func refreshHoveredToolbarAction(for localPoint: CGPoint? = nil) {
-		let hoveredAction = localPoint.flatMap(toolbarAction(at:))
-		if hoveredToolbarAction != hoveredAction {
+		let probePoint = scene.mode == .frozen ? (localPoint ?? currentLocalMousePoint()) : nil
+		let pointerOverToolbar = probePoint.map(toolbarFrameContains) ?? false
+		let hoveredAction = probePoint.flatMap(toolbarAction(at:))
+		if hoveredToolbarAction != hoveredAction
+			|| pointerOverFrozenToolbar != pointerOverToolbar
+		{
+			pointerOverFrozenToolbar = pointerOverToolbar
 			hoveredToolbarAction = hoveredAction
 			syncVisibleCursor()
 			updateChromeMaterialViews()
