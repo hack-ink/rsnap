@@ -248,6 +248,14 @@ expected_min_freeze_commits = int(os.environ.get("EXPECTED_MIN_FREEZE_COMMITS", 
 expected_min_frozen_transform_commits = int(
     os.environ.get("EXPECTED_MIN_FROZEN_TRANSFORM_COMMITS", "0") or "0"
 )
+expected_max_frozen_transform_commits_raw = os.environ.get(
+    "EXPECTED_MAX_FROZEN_TRANSFORM_COMMITS", ""
+).strip()
+expected_max_frozen_transform_commits = (
+    int(expected_max_frozen_transform_commits_raw)
+    if expected_max_frozen_transform_commits_raw
+    else None
+)
 expected_freeze_editability = [
     value.strip().lower() == "true"
     for value in os.environ.get("EXPECTED_FREEZE_EDITABILITY", "").split(",")
@@ -333,6 +341,17 @@ if expected_min_frozen_transform_commits:
         failures.append(
             "frozen transform commit count too small: "
             f"{len(frozen_transform_commits)} < {expected_min_frozen_transform_commits}"
+        )
+if expected_max_frozen_transform_commits is not None:
+    print(
+        "[smoke] frozen_transform_commits "
+        f"expected<={expected_max_frozen_transform_commits} "
+        f"actual={len(frozen_transform_commits)}"
+    )
+    if len(frozen_transform_commits) > expected_max_frozen_transform_commits:
+        failures.append(
+            "frozen transform commit count too large: "
+            f"{len(frozen_transform_commits)} > {expected_max_frozen_transform_commits}"
         )
 max_latest_unchanged_frame_age_ms = threshold("MAX_LATEST_UNCHANGED_FRAME_AGE_MS", 150.0)
 max_total_ms = threshold("MAX_FREEZE_COMMIT_MS", 90.0)

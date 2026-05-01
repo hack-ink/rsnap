@@ -123,13 +123,14 @@ product level rather than binding itself to a particular window toolkit or shell
   capture, copies the recognized text to the clipboard, and exits.
 - In Frozen mode, the toolbar remains part of the floating HUD set. The live loupe is hidden after
   freeze and may be recreated only when a later live-mode transition needs it.
-- In Frozen mode, every successful live-mode selection may be repositioned by dragging inside the
-  bright selected area and resized from its edges and corners. This includes dragged regions,
-  window-click captures, and the fullscreen fallback when no window is hit.
-- Frozen editability is a property of the committed selection, not of the live entry gesture. The
-  system must not regress into a state where only drag-created regions can be moved while
-  point-selected window/fullscreen captures are locked. All edits stay on the current monitor, and
-  thin edited captures down to `1x1` remain valid.
+- In Frozen mode, only drag-created region selections may be repositioned by dragging inside the
+  bright selected area and resized from edges and corners.
+- Window-click captures and the fullscreen fallback when no window is hit are fixed selections:
+  they MUST NOT show move/resize affordances, MUST NOT enter the open-hand/resize cursor state, and
+  MUST NOT commit a frozen selection transform when dragged.
+- Frozen editability is a property of the committed selection. It is true only for live drag region
+  captures and false for point-selected window/fullscreen captures. All edits stay on the current
+  monitor, and thin edited captures down to `1x1` remain valid.
 - Frozen toolbar placement and expansion invariants are governed by
   `docs/spec/frozen-toolbar-layout.md`.
 - Pen behavior is governed by `docs/spec/annotation-pen.md`.
