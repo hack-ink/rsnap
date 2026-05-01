@@ -18,7 +18,7 @@ live_hud_self_check() {
     return 1
   fi
 
-  for cmd in osascript swift python3; do
+  for cmd in osascript swift swiftc python3; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       echo "missing required tool: $cmd" >&2
       return 1
@@ -45,13 +45,14 @@ APPLESCRIPT
 }
 
 live_hud_focus_rsnap_overlay() {
-  osascript <<'APPLESCRIPT'
+  local focus_settle_s="${RSNAP_FOCUS_SETTLE_S:-0.03}"
+  osascript <<APPLESCRIPT
 tell application "System Events"
     tell process "rsnap"
         set frontmost to true
     end tell
 end tell
-delay 0.15
+delay $focus_settle_s
 APPLESCRIPT
 }
 

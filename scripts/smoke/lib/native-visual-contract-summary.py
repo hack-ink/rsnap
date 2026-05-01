@@ -304,6 +304,22 @@ if freeze_commit_failures:
         "freeze commit failure events observed: "
         f"{len(freeze_commit_failures)}"
     )
+max_latest_unchanged_frame_age_ms = threshold("MAX_LATEST_UNCHANGED_FRAME_AGE_MS", 150.0)
+for index, commit in enumerate(freeze_commits, start=1):
+    commit_source = commit.get("snapshotSource", "unknown")
+    commit_frame_age_ms = float_field(commit, "frameAgeMs")
+    commit_filter_complete = bool_field(commit, "selfCaptureFilterComplete")
+    if not bool_field(commit, "selfCaptureSafe"):
+        failures.append(
+            f"freeze_commit[{index}] used a frame that could contain rsnap's own capture UI"
+        )
+    if commit_source == "latest_unchanged" and not commit_filter_complete and (
+        commit_frame_age_ms > max_latest_unchanged_frame_age_ms
+    ):
+        failures.append(
+            f"freeze_commit[{index}] latest_unchanged frameAgeMs={commit_frame_age_ms:.2f} "
+            f"exceeds {max_latest_unchanged_frame_age_ms:.2f}"
+        )
 if expected_freeze_editability:
     actual_editability = [
         bool_field(handoff_event, "frozenSelectionEditable")
@@ -324,6 +340,11 @@ if freeze_commit:
     present_ms = float_field(freeze_commit, "presentMs")
     snapshot_wait_ms = float_field(freeze_commit, "snapshotWaitMs")
     base_ready = bool_field(freeze_commit, "baseReady")
+    self_capture_filter_complete = bool_field(
+        freeze_commit,
+        "selfCaptureFilterComplete",
+    )
+    self_capture_safe = bool_field(freeze_commit, "selfCaptureSafe")
     snapshot_source = freeze_commit.get("snapshotSource", "unknown")
     max_total_ms = threshold("MAX_FREEZE_COMMIT_MS", 90.0)
     max_present_ms = mode_threshold(
@@ -335,7 +356,8 @@ if freeze_commit:
         "[smoke] freeze_commit "
         f"totalMs={total_ms:.2f} presentMs={present_ms:.2f} "
         f"snapshotWaitMs={snapshot_wait_ms:.2f} snapshotSource={snapshot_source} "
-        f"baseReady={base_ready}"
+        f"selfCaptureSafe={self_capture_safe} "
+        f"selfCaptureFilterComplete={self_capture_filter_complete} baseReady={base_ready}"
     )
     if total_ms > max_total_ms:
         failures.append(f"freeze_commit totalMs={total_ms:.2f} exceeds {max_total_ms:.2f}")
@@ -491,10 +513,13 @@ if mask_probe_path:
     else:
         values: dict[str, list[float]] = {"dragging": [], "released": []}
         for row in rows[1:]:
-            if len(row) != 3 or row[0] not in values:
+            if len(row) != 3:
+                continue
+            phase = "dragging" if row[0] == "holding" else row[0]
+            if phase not in values:
                 continue
             try:
-                values[row[0]].append(float(row[2]))
+                values[phase].append(float(row[2]))
             except ValueError:
                 continue
         dragging = values["dragging"]

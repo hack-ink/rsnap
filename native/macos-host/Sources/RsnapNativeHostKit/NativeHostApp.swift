@@ -430,7 +430,8 @@ final class CaptureSessionController: NSObject {
 	func warmLiveSamplingIfPossible(
 		at point: CGPoint,
 		source: String = "capture",
-		captureID: UInt64 = 0
+		captureID: UInt64 = 0,
+		excludeSelfFromFrozenAuthority: Bool = false
 	) -> LiveChromeSample? {
 		let warmStartedAt = ProcessInfo.processInfo.systemUptime
 		let screenCount = NSScreen.screens.count
@@ -449,7 +450,12 @@ final class CaptureSessionController: NSObject {
 		}
 		let screens = NSScreen.screens
 		let frozenAuthorityStartedAt = ProcessInfo.processInfo.systemUptime
-		frozenFrameAuthority.start(for: screens, captureID: captureID, source: source)
+		frozenFrameAuthority.start(
+			for: screens,
+			captureID: captureID,
+			source: source,
+			rebuildContentFilter: excludeSelfFromFrozenAuthority
+		)
 		let frozenAuthorityStartMilliseconds =
 			NativeHostTelemetry.milliseconds(since: frozenAuthorityStartedAt)
 		let liveStreamStartedAt = ProcessInfo.processInfo.systemUptime
@@ -507,7 +513,10 @@ final class CaptureSessionController: NSObject {
 			prepareLiveSamplingForCaptureStart()
 			let warmStartedAt = ProcessInfo.processInfo.systemUptime
 			let initialSample = warmLiveSamplingIfPossible(
-				at: startPoint, source: "start_capture", captureID: captureID)
+				at: startPoint,
+				source: "start_capture",
+				captureID: captureID
+			)
 			let warmMilliseconds = NativeHostTelemetry.milliseconds(since: warmStartedAt)
 			frozenFrameLatchToken = nil
 			let desktopFrame = CaptureOverlayController.desktopFrame
@@ -553,7 +562,8 @@ final class CaptureSessionController: NSObject {
 				for: NSScreen.screens,
 				captureID: captureID,
 				source: "capture_overlay_visible",
-				rebuildContentFilter: true
+				rebuildContentFilter: true,
+				selfCaptureExceptionWindowIDs: overlayController.selfCaptureExceptionWindowIDs
 			)
 			let overlayShowMilliseconds =
 				NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
@@ -1404,6 +1414,9 @@ final class CaptureSessionController: NSObject {
 			displayID: frozenFrame.displayID,
 			sequence: frozenFrame.sequence,
 			snapshotSource: frozenFrame.source,
+			snapshotGeneration: frozenFrame.generation,
+			selfCaptureSafe: frozenFrame.selfCaptureSafe,
+			selfCaptureFilterComplete: frozenFrame.selfCaptureFilterComplete,
 			hadLatchToken: hadLatchToken,
 			baseReady: chromeState.frozenBaseImage != nil
 		)
@@ -1411,7 +1424,7 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func frozenFrameLatchWait() -> TimeInterval {
-		min(0.040, max(0.018, NativeHostDisplayRefresh.frameInterval * 2.5))
+		max(1.5, NativeHostDisplayRefresh.frameInterval * 2.5)
 	}
 
 	private func snapshotForFrozenCommit(
@@ -2271,6 +2284,10 @@ final class CaptureOverlayController {
 
 	var primaryWindow: NSWindow? {
 		windows.first(where: { $0.windowNumber == focusedWindowNumber }) ?? windows.first
+	}
+
+	fileprivate var selfCaptureExceptionWindowIDs: Set<CGWindowID> {
+		Set(windows.map { CGWindowID($0.windowNumber) })
 	}
 
 	fileprivate func show(
