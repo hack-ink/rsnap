@@ -460,6 +460,20 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		return !eligibleRecord.selfCaptureFilterComplete
 	}
 
+	func hasSelfCaptureCompleteFrame(containing point: CGPoint) -> Bool {
+		stateLock.lock()
+		defer {
+			stateLock.unlock()
+		}
+		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key,
+			let record = latestFrames[displayID],
+			let eligibleRecord = snapshotEligibleRecordLocked(record)
+		else {
+			return false
+		}
+		return eligibleRecord.selfCaptureFilterComplete
+	}
+
 	func snapshot(
 		containing point: CGPoint,
 		after token: FrozenFrameLatchToken?,

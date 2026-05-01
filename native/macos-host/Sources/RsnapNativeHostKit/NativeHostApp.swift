@@ -91,6 +91,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private let globalHotKeys = GlobalHotKeyCenter()
 	private var lifecycleActivity: NSObjectProtocol?
 	private var liveSamplingPrewarmWorkItem: DispatchWorkItem?
+	private var selfCaptureRegistrationWindow: NSWindow?
 	private var didBootstrap = false
 	@objc public dynamic var window: NSWindow?
 	private lazy var sessionController: CaptureSessionController = {
@@ -127,6 +128,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		Self.applyApplicationIcon()
 		configureStatusItem()
 		configureGlobalHotKeys()
+		showSelfCaptureRegistrationWindow()
 		NotificationCenter.default.addObserver(
 			self,
 			selector: #selector(settingsDidChange),
@@ -144,6 +146,31 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 	public func applicationDidFinishLaunching(_ notification: Notification) {
 		finishLaunching()
+	}
+
+	private func showSelfCaptureRegistrationWindow() {
+		guard selfCaptureRegistrationWindow == nil else {
+			return
+		}
+		let screenFrame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+		let window = NSWindow(
+			contentRect: CGRect(x: screenFrame.minX, y: screenFrame.minY, width: 1, height: 1),
+			styleMask: [.borderless],
+			backing: .buffered,
+			defer: false
+		)
+		window.alphaValue = 0.001
+		window.backgroundColor = .clear
+		window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+		window.hasShadow = false
+		window.ignoresMouseEvents = true
+		window.isOpaque = false
+		window.isReleasedWhenClosed = false
+		window.level = .normal
+		window.sharingType = .readOnly
+		window.orderFrontRegardless()
+		selfCaptureRegistrationWindow = window
+		NativeHostTelemetry.lifecycleDebug("native_host.self_capture_registration_window_visible")
 	}
 
 	public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -353,7 +380,8 @@ final class CaptureSessionController: NSObject {
 		let desktopFrame: CGRect
 	}
 
-	private static let coldSelfCaptureCompleteFrameWait: TimeInterval = 3.5
+	private static let displayFirstFrameWait: TimeInterval = 0.025
+	private static let coldSelfCaptureRecoveryWait: TimeInterval = 3.5
 
 	private let settingsStore: NativeHostSettingsStore
 	private let liveFrameStream = LiveFrameStreamBroker()
@@ -560,13 +588,21 @@ final class CaptureSessionController: NSObject {
 				focusPoint: startPoint,
 				initialWindowSnapshots: initialWindowSnapshots
 			)
-			frozenFrameAuthority.start(
-				for: NSScreen.screens,
-				captureID: captureID,
-				source: "capture_overlay_visible",
-				rebuildContentFilter: true,
-				selfCaptureExceptionWindowIDs: overlayController.selfCaptureExceptionWindowIDs
-			)
+			if frozenFrameAuthority.hasSelfCaptureCompleteFrame(containing: startPoint) {
+				NativeHostTelemetry.captureEvent(
+					"capture.self_capture_rebuild_skipped",
+					captureID: captureID,
+					detail: "startup_complete_filter"
+				)
+			} else {
+				frozenFrameAuthority.start(
+					for: NSScreen.screens,
+					captureID: captureID,
+					source: "capture_overlay_visible",
+					rebuildContentFilter: true,
+					selfCaptureExceptionWindowIDs: overlayController.selfCaptureExceptionWindowIDs
+				)
+			}
 			let overlayShowMilliseconds =
 				NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
 			(NSApp.delegate as? NativeHostApplicationController)?.window =
@@ -1426,12 +1462,8 @@ final class CaptureSessionController: NSObject {
 		try session.send(report: .freezeSnapshotCommitted(selection: selection))
 	}
 
-	private func frozenFrameLatchWait(containing point: CGPoint) -> TimeInterval {
-		let hotWait = max(1.5, NativeHostDisplayRefresh.frameInterval * 2.5)
-		guard frozenFrameAuthority.needsSelfCaptureCompleteFrame(containing: point) else {
-			return hotWait
-		}
-		return max(hotWait, Self.coldSelfCaptureCompleteFrameWait)
+	private func frozenFrameLatchWait(containing _: CGPoint) -> TimeInterval {
+		Self.displayFirstFrameWait
 	}
 
 	private func snapshotForFrozenCommit(
@@ -1439,10 +1471,20 @@ final class CaptureSessionController: NSObject {
 		after token: FrozenFrameLatchToken?,
 		maxWait: TimeInterval
 	) -> FrozenFrameSnapshot? {
-		return frozenFrameAuthority.snapshot(
+		if let frozenFrame = frozenFrameAuthority.snapshot(
 			containing: point,
 			after: token,
 			maxWait: maxWait
+		) {
+			return frozenFrame
+		}
+		guard frozenFrameAuthority.needsSelfCaptureCompleteFrame(containing: point) else {
+			return nil
+		}
+		return frozenFrameAuthority.snapshot(
+			containing: point,
+			after: token,
+			maxWait: max(0, Self.coldSelfCaptureRecoveryWait - maxWait)
 		)
 	}
 
@@ -1750,15 +1792,16 @@ final class CaptureSessionController: NSObject {
 		guard let screen = screen(containing: point) else {
 			return nil
 		}
-		let screenNumber =
-			(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
-			.uint32Value
-			?? 0
 		return MonitorSnapshot(
-			id: screenNumber,
+			id: Self.displayID(for: screen) ?? 0,
 			frame: screen.frame,
 			scaleFactorX1000: UInt32((screen.backingScaleFactor * 1_000).rounded())
 		)
+	}
+
+	private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+		(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+			.uint32Value
 	}
 
 	private func highlightedWindow(at point: CGPoint) -> WindowSnapshot? {
