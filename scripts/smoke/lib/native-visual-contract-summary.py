@@ -309,6 +309,9 @@ handoff = handoffs[-1] if handoffs else {}
 freeze_commits = events.get("capture_timing.freeze_commit", [])
 freeze_commit_failures = events.get("capture_timing.freeze_commit_failed", [])
 frozen_transform_commits = events.get("capture.frozen_selection_transform_commit", [])
+max_window_list_below_overlay_commits = int(
+    os.environ.get("MAX_WINDOW_LIST_BELOW_OVERLAY_COMMITS", "0") or "0"
+)
 
 if len(freeze_commits) < expected_min_freeze_commits:
     failures.append(
@@ -332,14 +335,48 @@ if expected_min_frozen_transform_commits:
             f"{len(frozen_transform_commits)} < {expected_min_frozen_transform_commits}"
         )
 max_latest_unchanged_frame_age_ms = threshold("MAX_LATEST_UNCHANGED_FRAME_AGE_MS", 150.0)
+max_total_ms = threshold("MAX_FREEZE_COMMIT_MS", 90.0)
+max_present_ms = mode_threshold(
+    "MAX_FREEZE_PRESENT_MS",
+    55.0 if expected_mode == "classic" else 35.0,
+)
+max_snapshot_wait_ms = threshold("MAX_FREEZE_SNAPSHOT_WAIT_MS", 45.0)
+window_list_below_overlay_commits = 0
 for index, commit in enumerate(freeze_commits, start=1):
     commit_source = commit.get("snapshotSource", "unknown")
     commit_frame_age_ms = float_field(commit, "frameAgeMs")
     commit_filter_complete = bool_field(commit, "selfCaptureFilterComplete")
+    total_ms = float_field(commit, "totalMs")
+    present_ms = float_field(commit, "presentMs")
+    snapshot_wait_ms = float_field(commit, "snapshotWaitMs")
+    base_ready = bool_field(commit, "baseReady")
+    self_capture_safe = bool_field(commit, "selfCaptureSafe")
+    print(
+        f"[smoke] freeze_commit[{index}] "
+        f"totalMs={total_ms:.2f} presentMs={present_ms:.2f} "
+        f"snapshotWaitMs={snapshot_wait_ms:.2f} snapshotSource={commit_source} "
+        f"selfCaptureSafe={self_capture_safe} "
+        f"selfCaptureFilterComplete={commit_filter_complete} baseReady={base_ready}"
+    )
+    if total_ms > max_total_ms:
+        failures.append(
+            f"freeze_commit[{index}] totalMs={total_ms:.2f} exceeds {max_total_ms:.2f}"
+        )
+    if present_ms > max_present_ms:
+        failures.append(
+            f"freeze_commit[{index}] presentMs={present_ms:.2f} exceeds {max_present_ms:.2f}"
+        )
+    if snapshot_wait_ms > max_snapshot_wait_ms:
+        failures.append(
+            f"freeze_commit[{index}] snapshotWaitMs={snapshot_wait_ms:.2f} "
+            f"exceeds {max_snapshot_wait_ms:.2f}"
+        )
     if not bool_field(commit, "selfCaptureSafe"):
         failures.append(
             f"freeze_commit[{index}] used a frame that could contain rsnap's own capture UI"
         )
+    if commit_source == "window_list_below_overlay":
+        window_list_below_overlay_commits += 1
     if commit_source == "latest_unchanged" and not commit_filter_complete and (
         commit_frame_age_ms > max_latest_unchanged_frame_age_ms
     ):
@@ -347,6 +384,13 @@ for index, commit in enumerate(freeze_commits, start=1):
             f"freeze_commit[{index}] latest_unchanged frameAgeMs={commit_frame_age_ms:.2f} "
             f"exceeds {max_latest_unchanged_frame_age_ms:.2f}"
         )
+    if not base_ready:
+        failures.append(f"freeze_commit[{index}] did not prepare the frozen base image")
+if window_list_below_overlay_commits > max_window_list_below_overlay_commits:
+    failures.append(
+        "window-list below-overlay freeze commits exceeded limit: "
+        f"{window_list_below_overlay_commits} > {max_window_list_below_overlay_commits}"
+    )
 if expected_freeze_editability:
     actual_editability = [
         bool_field(handoff_event, "frozenSelectionEditable")
@@ -361,44 +405,6 @@ if expected_freeze_editability:
             "frozen editability sequence mismatch: "
             f"expected {expected_freeze_editability}, got {actual_editability}"
         )
-
-if freeze_commit:
-    total_ms = float_field(freeze_commit, "totalMs")
-    present_ms = float_field(freeze_commit, "presentMs")
-    snapshot_wait_ms = float_field(freeze_commit, "snapshotWaitMs")
-    base_ready = bool_field(freeze_commit, "baseReady")
-    self_capture_filter_complete = bool_field(
-        freeze_commit,
-        "selfCaptureFilterComplete",
-    )
-    self_capture_safe = bool_field(freeze_commit, "selfCaptureSafe")
-    snapshot_source = freeze_commit.get("snapshotSource", "unknown")
-    max_total_ms = threshold("MAX_FREEZE_COMMIT_MS", 90.0)
-    max_present_ms = mode_threshold(
-        "MAX_FREEZE_PRESENT_MS",
-        55.0 if expected_mode == "classic" else 35.0,
-    )
-    max_snapshot_wait_ms = threshold("MAX_FREEZE_SNAPSHOT_WAIT_MS", 45.0)
-    print(
-        "[smoke] freeze_commit "
-        f"totalMs={total_ms:.2f} presentMs={present_ms:.2f} "
-        f"snapshotWaitMs={snapshot_wait_ms:.2f} snapshotSource={snapshot_source} "
-        f"selfCaptureSafe={self_capture_safe} "
-        f"selfCaptureFilterComplete={self_capture_filter_complete} baseReady={base_ready}"
-    )
-    if total_ms > max_total_ms:
-        failures.append(f"freeze_commit totalMs={total_ms:.2f} exceeds {max_total_ms:.2f}")
-    if present_ms > max_present_ms:
-        failures.append(f"freeze_commit presentMs={present_ms:.2f} exceeds {max_present_ms:.2f}")
-    if snapshot_wait_ms > max_snapshot_wait_ms:
-        failures.append(
-            f"freeze_commit snapshotWaitMs={snapshot_wait_ms:.2f} "
-            f"exceeds {max_snapshot_wait_ms:.2f}"
-        )
-    if snapshot_source == "window_list_below_overlay":
-        failures.append("freeze_commit used synchronous window-list fallback for frozen handoff")
-    if not base_ready:
-        failures.append("freeze_commit did not prepare the frozen base image")
 
 if handoff:
     total_ms = float_field(handoff, "totalMs")
