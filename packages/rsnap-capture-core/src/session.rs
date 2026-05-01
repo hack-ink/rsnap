@@ -518,13 +518,14 @@ mod tests {
 
 	fn enter_frozen_with_drag_selection(session: &mut CaptureSessionCore, selection: GlobalRect) {
 		session.enter_live();
-		let _ = session.pop_host_request();
 
+		let _ = session.pop_host_request();
 		let start = GlobalPoint::new(selection.x, selection.y);
 		let end = GlobalPoint::new(
 			selection.x.saturating_add_unsigned(selection.width),
 			selection.y.saturating_add_unsigned(selection.height),
 		);
+
 		session.handle_host_event(HostEvent::PrimaryInteractionStarted {
 			point: start,
 			active_monitor: Some(active_monitor()),
@@ -535,6 +536,7 @@ mod tests {
 			active_monitor: Some(active_monitor()),
 			highlighted_window: Some(highlighted_window()),
 		});
+
 		assert_eq!(
 			session.pop_host_request(),
 			Some(HostRequest::RequestFreezeSnapshot { selection, selection_editable: true })
@@ -557,6 +559,7 @@ mod tests {
 	#[test]
 	fn freeze_commit_enables_frozen_actions() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
 		enter_frozen_with_drag_selection(&mut session, GlobalRect::new(10, 20, 100, 50));
 
 		assert_eq!(session.scene_model().mode, CaptureMode::Frozen);
@@ -567,7 +570,9 @@ mod tests {
 	#[test]
 	fn pointer_update_tracks_rgb_and_frozen_grab() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
 		enter_frozen_with_drag_selection(&mut session, GlobalRect::new(10, 20, 100, 50));
+
 		session.handle_host_event(HostEvent::PointerMoved {
 			point: GlobalPoint::new(40, 40),
 			rgb: Some(Rgb::new(1, 2, 3)),
@@ -582,7 +587,9 @@ mod tests {
 	#[test]
 	fn frozen_pointer_cursor_tracks_resize_edges() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
 		enter_frozen_with_drag_selection(&mut session, GlobalRect::new(10, 20, 100, 50));
+
 		session.handle_host_event(HostEvent::PointerMoved {
 			point: GlobalPoint::new(110, 45),
 			rgb: None,
@@ -661,6 +668,7 @@ mod tests {
 			active_monitor: Some(active_monitor()),
 			highlighted_window: Some(highlighted_window()),
 		});
+
 		assert_eq!(session.scene_model().live_selection_preview, None);
 
 		session.handle_host_event(HostEvent::PrimaryInteractionCompleted {
@@ -696,7 +704,9 @@ mod tests {
 			active_monitor: Some(active_monitor()),
 			highlighted_window: Some(highlighted_window()),
 		});
+
 		let selection = highlighted_window().global_rect().unwrap();
+
 		assert_eq!(
 			session.pop_host_request(),
 			Some(HostRequest::RequestFreezeSnapshot { selection, selection_editable: false })
@@ -731,9 +741,11 @@ mod tests {
 			active_monitor: Some(active_monitor()),
 			highlighted_window: None,
 		});
+
 		let monitor = active_monitor();
 		let selection =
 			GlobalRect::new(monitor.origin.x, monitor.origin.y, monitor.width, monitor.height);
+
 		assert_eq!(
 			session.pop_host_request(),
 			Some(HostRequest::RequestFreezeSnapshot { selection, selection_editable: false })
