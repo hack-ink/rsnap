@@ -18,4 +18,6 @@ EOF
 esac
 
 "$SCRIPT_DIR/local.sh"
-"$SCRIPT_DIR/../smoke/macos.sh"
+"$SCRIPT_DIR/../smoke/native-hud-follow-macos.sh"
+"$SCRIPT_DIR/../smoke/native-visual-contract-macos.sh"
+"$SCRIPT_DIR/../smoke/replay-scroll-capture.sh"

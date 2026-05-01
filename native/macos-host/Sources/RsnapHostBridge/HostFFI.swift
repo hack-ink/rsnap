@@ -182,7 +182,7 @@ public struct SceneSnapshot: Equatable, Sendable {
 public enum HostRequest: Equatable, Sendable {
 	case startLiveCapture
 	case stopLiveCapture
-	case requestFreezeSnapshot(selection: CGRect)
+	case requestFreezeSnapshot(selection: CGRect, selectionEditable: Bool)
 	case copyCapture
 	case saveCapture
 	case recognizeText
@@ -547,7 +547,10 @@ public final class RsnapHostSession {
 			guard request.has_selection != 0 else {
 				throw HostBridgeError.invalidRequestKind(request.kind)
 			}
-			return .requestFreezeSnapshot(selection: decode(rect: request.selection))
+			return .requestFreezeSnapshot(
+				selection: decode(rect: request.selection),
+				selectionEditable: request.selection_editable != 0
+			)
 		case RSNAP_HOST_REQUEST_COPY_CAPTURE.rawValue:
 			return .copyCapture
 		case RSNAP_HOST_REQUEST_SAVE_CAPTURE.rawValue:
@@ -829,6 +832,10 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 		)
 	}
 
+	/// Returns the live sampler's cache-only full-monitor snapshot.
+	///
+	/// This API does not expose the original frame capture time or stream sequence. Do not use it
+	/// as a frozen screenshot source unless the FFI contract is extended to prove freshness.
 	public func peekLatestMonitorImage(
 		monitor: MonitorSnapshot
 	) throws -> RGBARegionSnapshot? {

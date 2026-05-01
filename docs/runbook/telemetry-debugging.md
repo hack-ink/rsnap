@@ -22,6 +22,11 @@ Use the signed release path when testing user-visible native-host behavior:
 RSNAP_NATIVE_HOST_FORCE_REBUILD=1 ./scripts/build_and_run.sh run
 ```
 
+`scripts/build_and_run.sh` is the authority for launched native-host builds. It rebuilds
+`rsnap-host-ffi` and removes the cached Swift executable before `swift build` so changed Rust ABI
+or core semantics are relinked into the `.app`; do not validate native-host behavior with a raw
+`swift build` product.
+
 Use the streaming mode when you need live logs while reproducing:
 
 ```sh
@@ -116,11 +121,14 @@ If the chain stops at `capture_timing.freeze_commit_failed`, inspect
 frame timing. On static desktops, successful freezes may report `snapshotSource=latest_unchanged`;
 that is expected when no post-latch ScreenCaptureKit frame was emitted because the excluded overlay
 was the only thing moving.
-Fast freezes should usually report `snapshotSource=authority_latest` or `live_sampler_latest`.
-Those sources mean the release handoff used an already-warm frame instead of waiting for another
-ScreenCaptureKit frame. If `snapshotSource=window_list_below_overlay` appears in release-handoff
-telemetry, treat it as a regression: full-monitor window-list capture is too slow and visually
-inconsistent for the first frozen frame.
+Fast freezes should usually report `snapshotSource=post_token`; fresh static handoffs may report
+`snapshotSource=latest_unchanged`. In both cases, check `frameAgeMs`: it must reflect the actual
+source frame age and should stay within the frozen authority freshness guard. If
+`snapshotSource=live_sampler_latest`, `authority_latest`, or `window_list_below_overlay` appears in
+release-handoff telemetry, treat it as a regression. The first two sources mean the frozen handoff
+has fallen back to an obsolete cache-only/latest-frame shortcut; the last means full-monitor
+window-list capture has returned to the handoff path, which is too slow and visually inconsistent
+for the first frozen frame.
 
 If `capture_timing.copy_capture` is slow, compare `captureImageMs`, `makeImageMs`, and
 `writePasteboardMs` before changing capture code.

@@ -1,4 +1,6 @@
+import AppKit
 import CoreGraphics
+import CoreImage
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -47,22 +49,26 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 	private let outputPath: String
 	private let phasePath: String
 	private let readyPath: String?
+	private let screenshotPath: String?
 	private let point: CGPoint
 	private let displayFrame: CGRect
 	private let lock = NSLock()
 	private var samples: [Sample] = []
 	private var wroteReady = false
+	private var wroteScreenshot = false
 
 	init(
 		outputPath: String,
 		phasePath: String,
 		readyPath: String?,
+		screenshotPath: String?,
 		point: CGPoint,
 		displayFrame: CGRect
 	) {
 		self.outputPath = outputPath
 		self.phasePath = phasePath
 		self.readyPath = readyPath
+		self.screenshotPath = screenshotPath
 		self.point = point
 		self.displayFrame = displayFrame
 	}
@@ -79,16 +85,27 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 		else {
 			return
 		}
+		let phase = currentPhase()
+		let screenshotPathToWrite: String?
 		lock.lock()
+		if phase == "holding", let screenshotPath, !wroteScreenshot {
+			wroteScreenshot = true
+			screenshotPathToWrite = screenshotPath
+		} else {
+			screenshotPathToWrite = nil
+		}
 		samples.append(
 			Sample(
-				phase: currentPhase(),
+				phase: phase,
 				uptime: ProcessInfo.processInfo.systemUptime,
 				luminance: luminance
 			)
 		)
 		writeReadyIfNeeded()
 		lock.unlock()
+		if let screenshotPathToWrite {
+			writeScreenshot(pixelBuffer, to: screenshotPathToWrite)
+		}
 	}
 
 	func writeSamples() {
@@ -129,6 +146,32 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 			try "ready\n".write(toFile: readyPath, atomically: true, encoding: .utf8)
 		} catch {
 			fputs("failed to write mask probe ready marker: \(error)\n", stderr)
+		}
+	}
+
+	private func writeScreenshot(_ pixelBuffer: CVPixelBuffer, to path: String) {
+		let width = CVPixelBufferGetWidth(pixelBuffer)
+		let height = CVPixelBufferGetHeight(pixelBuffer)
+		let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+		let context = CIContext(options: nil)
+		guard
+			let cgImage = context.createCGImage(
+				ciImage,
+				from: CGRect(x: 0, y: 0, width: width, height: height)
+			)
+		else {
+			fputs("failed to create drag screenshot image\n", stderr)
+			return
+		}
+		let bitmap = NSBitmapImageRep(cgImage: cgImage)
+		guard let data = bitmap.representation(using: .png, properties: [:]) else {
+			fputs("failed to encode drag screenshot PNG\n", stderr)
+			return
+		}
+		do {
+			try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+		} catch {
+			fputs("failed to write drag screenshot: \(error)\n", stderr)
 		}
 	}
 
@@ -179,6 +222,7 @@ func runMaskProbe() async throws {
 	let outputPath = readRequiredString("MASK_PROBE_OUTPUT")
 	let phasePath = readRequiredString("MASK_PROBE_PHASE_PATH")
 	let readyPath = readOptionalString("MASK_PROBE_READY_PATH")
+	let screenshotPath = readOptionalString("MASK_PROBE_SCREENSHOT_PATH")
 	let point = readRequiredPoint("MASK_PROBE_POINT")
 	let durationMs = readInt("MASK_PROBE_DURATION_MS", default: 1_400)
 	let rateHz = readInt("MASK_PROBE_RATE_HZ", default: 60)
@@ -204,6 +248,7 @@ func runMaskProbe() async throws {
 		outputPath: outputPath,
 		phasePath: phasePath,
 		readyPath: readyPath,
+		screenshotPath: screenshotPath,
 		point: point,
 		displayFrame: display.frame
 	)

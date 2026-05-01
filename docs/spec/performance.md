@@ -90,12 +90,17 @@ must still be refreshed at the fixed sampling cadence so dynamic content does no
 ### One-shot handoff latency
 
 Mode transitions are not continuous cadence loops, but they are user-visible. The live-to-frozen
-release handoff must avoid waiting for a future ScreenCaptureKit frame when an already-warm frame
-is available. The intended path is:
+release handoff must avoid waiting for a future ScreenCaptureKit frame when a freshness-proven
+frozen authority frame is already available. The intended path is:
 
-1. use an already-warm frozen-authority or live-sampler frame immediately,
+1. use a `post_token` frozen authority frame, or a fresh `latest_unchanged` authority frame for an
+   unchanged/static desktop,
 2. present the frozen frame, toolbar, and scrim in one continuous handoff,
 3. perform cleanup such as secondary-window collapse after the first frozen frame is installed.
+
+The handoff must not use cache-only live-sampler latest-monitor snapshots unless they carry real
+source frame age and sequence metadata. A wrapper that stamps cached pixels with the current call
+time can hide seconds-stale screenshots and is a correctness regression.
 
 The handoff must not show a pending half-frame, remove/re-add the outside-selection scrim, or
 delay toolbar visibility on a static desktop just because ScreenCaptureKit has not emitted a new

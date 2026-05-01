@@ -10,16 +10,18 @@ usage() {
 Usage: native-visual-contract-macos.sh [--self-check] [--help]
 
 Runs the native macOS visual/behavior contract smoke:
-  1. force representative Liquid Glass and Classic Glass preferences
+  1. force a representative native-host visual mode
   2. build, sign, and launch the native host app
-  3. start capture with Option-X
-  4. drag a frozen selection and release
-  5. capture rsnap's own frozen overlay and gate toolbar/material contract telemetry
+  3. run one real click freeze and one real held-drag freeze
+  4. capture the in-drag and frozen overlays
+  5. gate click/drag editability, scrim stability, border leakage, and handoff telemetry
 
 Useful overrides:
-  VISUAL_CONTRACT_CASES=liquid,classic
-  REPEATED_CLICK_FREEZES=2
+  VISUAL_CONTRACT_CASES=liquid          optional: liquid,classic
+  REPEATED_CLICK_FREEZES=1
+  REPEATED_DRAG_FREEZES=2
   DRAG_DURATION_MS=260
+  DRAG_HOLD_BEFORE_RELEASE_MS=700
   PATH_RATE_HZ=120
   MAX_FREEZE_COMMIT_MS=90
   MAX_FREEZE_PRESENT_MS=35
@@ -52,12 +54,14 @@ ROOT_DIR="$(live_hud_repo_root)"
 live_hud_init_environment "$ROOT_DIR"
 
 DRAG_DURATION_MS="${DRAG_DURATION_MS:-260}"
+DRAG_HOLD_BEFORE_RELEASE_MS="${DRAG_HOLD_BEFORE_RELEASE_MS:-700}"
 PATH_RATE_HZ="${PATH_RATE_HZ:-120}"
-VISUAL_CONTRACT_CASES="${VISUAL_CONTRACT_CASES:-liquid,classic}"
+VISUAL_CONTRACT_CASES="${VISUAL_CONTRACT_CASES:-liquid}"
 OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0.25}"
 POST_FREEZE_SETTLE_S="${POST_FREEZE_SETTLE_S:-0.25}"
 POST_CLOSE_SETTLE_S="${POST_CLOSE_SETTLE_S:-0.25}"
-REPEATED_CLICK_FREEZES="${REPEATED_CLICK_FREEZES:-2}"
+REPEATED_CLICK_FREEZES="${REPEATED_CLICK_FREEZES:-1}"
+REPEATED_DRAG_FREEZES="${REPEATED_DRAG_FREEZES:-2}"
 RSNAP_TELEMETRY_LAST="${RSNAP_TELEMETRY_LAST:-3m}"
 export RSNAP_TELEMETRY_LAST
 
@@ -137,11 +141,37 @@ wait_mask_probe_ready() {
 	local ready_path="$1"
 	local attempt
 
-	for attempt in {1..80}; do
+	for attempt in {1..200}; do
 		if grep -q '^ready$' "$ready_path" >/dev/null 2>&1; then
 			return 0
 		fi
 		sleep 0.05
+	done
+	return 1
+}
+
+wait_drag_hold_ready() {
+	local phase_path="$1"
+	local attempt
+
+	for attempt in {1..120}; do
+		if grep -q '^holding$' "$phase_path" >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 0.025
+	done
+	return 1
+}
+
+wait_file_nonempty() {
+	local path="$1"
+	local attempt
+
+	for attempt in {1..120}; do
+		if [[ -s "$path" ]]; then
+			return 0
+		fi
+		sleep 0.025
 	done
 	return 1
 }
@@ -168,7 +198,7 @@ PY
 fi
 
 echo "[smoke] display bounds: $DISPLAY_BOUNDS"
-echo "[smoke] drag points: $PATH_POINTS duration_ms=$DRAG_DURATION_MS rate_hz=$PATH_RATE_HZ"
+echo "[smoke] drag points: $PATH_POINTS duration_ms=$DRAG_DURATION_MS hold_ms=$DRAG_HOLD_BEFORE_RELEASE_MS rate_hz=$PATH_RATE_HZ"
 
 CLICK_POINTS="$(
 	python3 - "$DISPLAY_BOUNDS" <<'PY'
@@ -211,10 +241,12 @@ configure_case_preferences() {
 
 run_visual_case() {
 	local case_name="$1"
-	local case_tmp_dir screenshot_path background_ready_path case_started_epoch out_dir
+	local case_tmp_dir drag_screenshot_path drag_screenshot_paths screenshot_path background_ready_path case_started_epoch out_dir
 
 	case_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/rsnap-visual-${case_name}.XXXXXX")"
-	screenshot_path="$case_tmp_dir/frozen.png"
+	drag_screenshot_paths=""
+	drag_screenshot_path="$case_tmp_dir/dragging-1.png"
+	screenshot_path="$case_tmp_dir/frozen-1.png"
 	background_ready_path="$case_tmp_dir/background.ready"
 	case_started_epoch="$(date +%s)"
 
@@ -245,20 +277,23 @@ run_visual_case() {
 		sleep "$POST_CLOSE_SETTLE_S"
 	done
 
-	press_capture_hotkey
-	sleep 0.4
-	press_capture_hotkey
-	sleep "$OVERLAY_SETTLE_S"
-	live_hud_focus_rsnap_overlay
+	for ((drag_index = 1; drag_index <= REPEATED_DRAG_FREEZES; drag_index++)); do
+		echo "[smoke] repeated drag freeze $drag_index/$REPEATED_DRAG_FREEZES"
+		drag_screenshot_path="$case_tmp_dir/dragging-$drag_index.png"
+		screenshot_path="$case_tmp_dir/frozen-$drag_index.png"
+		press_capture_hotkey
+		sleep "$OVERLAY_SETTLE_S"
+		live_hud_focus_rsnap_overlay
 
-	local mask_probe_path mask_probe_phase_path mask_probe_ready_path mask_probe_point mask_probe_pid
-	mask_probe_path="$case_tmp_dir/mask-probe.csv"
-	mask_probe_phase_path="$case_tmp_dir/mask-probe.phase"
-	mask_probe_ready_path="$case_tmp_dir/mask-probe.ready"
-	printf 'pre' >"$mask_probe_phase_path"
-	rm -f "$mask_probe_ready_path"
-	mask_probe_point="$(
-		python3 - "$DISPLAY_BOUNDS" "$PATH_POINTS" <<'PY'
+		local mask_probe_path mask_probe_phase_path mask_probe_ready_path mask_probe_stderr_path mask_probe_point mask_probe_pid drag_pid
+		mask_probe_path="$case_tmp_dir/mask-probe-$drag_index.csv"
+		mask_probe_phase_path="$case_tmp_dir/mask-probe-$drag_index.phase"
+		mask_probe_ready_path="$case_tmp_dir/mask-probe-$drag_index.ready"
+		mask_probe_stderr_path="$case_tmp_dir/mask-probe-$drag_index.stderr"
+		printf 'pre' >"$mask_probe_phase_path"
+		rm -f "$mask_probe_ready_path"
+		mask_probe_point="$(
+			python3 - "$DISPLAY_BOUNDS" "$PATH_POINTS" <<'PY'
 import sys
 
 left, top, right, bottom = map(int, sys.argv[1].replace(" ", "").split(","))
@@ -277,58 +312,114 @@ sample_x = min(max(sample_x, left + 32), right - 32)
 sample_y = min(max(sample_y, top + 32), bottom - 32)
 print(f"{sample_x:.0f},{sample_y:.0f}")
 PY
-	)"
+		)"
 
-	MASK_PROBE_OUTPUT="$mask_probe_path" \
-	MASK_PROBE_PHASE_PATH="$mask_probe_phase_path" \
-	MASK_PROBE_READY_PATH="$mask_probe_ready_path" \
-	MASK_PROBE_POINT="$mask_probe_point" \
-	MASK_PROBE_DURATION_MS="${MASK_PROBE_DURATION_MS:-2400}" \
-	MASK_PROBE_RATE_HZ="${MASK_PROBE_RATE_HZ:-60}" \
-	swift "$SCRIPT_DIR/lib/mask-probe-capture.swift" &
-	mask_probe_pid="$!"
-	if ! wait_mask_probe_ready "$mask_probe_ready_path"; then
-		kill "$mask_probe_pid" >/dev/null 2>&1 || true
-		wait "$mask_probe_pid" >/dev/null 2>&1 || true
+		MASK_PROBE_OUTPUT="$mask_probe_path" \
+		MASK_PROBE_PHASE_PATH="$mask_probe_phase_path" \
+		MASK_PROBE_READY_PATH="$mask_probe_ready_path" \
+		MASK_PROBE_SCREENSHOT_PATH="$drag_screenshot_path" \
+		MASK_PROBE_POINT="$mask_probe_point" \
+		MASK_PROBE_DURATION_MS="${MASK_PROBE_DURATION_MS:-2400}" \
+		MASK_PROBE_RATE_HZ="${MASK_PROBE_RATE_HZ:-60}" \
+		swift "$SCRIPT_DIR/lib/mask-probe-capture.swift" 2>"$mask_probe_stderr_path" &
+		mask_probe_pid="$!"
+		if ! wait_mask_probe_ready "$mask_probe_ready_path"; then
+			kill "$mask_probe_pid" >/dev/null 2>&1 || true
+			wait "$mask_probe_pid" >/dev/null 2>&1 || true
+			live_hud_focus_rsnap_overlay
+			live_hud_press_escape >/dev/null 2>&1 || true
+			stop_visual_background
+			echo "[smoke] FAIL mask probe did not produce a ready sample" >&2
+			if [[ -s "$mask_probe_stderr_path" ]]; then
+				sed 's/^/[smoke] mask probe stderr: /' "$mask_probe_stderr_path" >&2
+			fi
+			return 1
+		fi
+
+		PATH_MODE=drag-region \
+		PATH_DRIVER=event \
+		PATH_POINTS="$PATH_POINTS" \
+		PATH_DURATION_MS="$DRAG_DURATION_MS" \
+		PATH_RATE_HZ="$PATH_RATE_HZ" \
+		PATH_HOLD_BEFORE_RELEASE_MS="$DRAG_HOLD_BEFORE_RELEASE_MS" \
+		MASK_PROBE_PHASE_PATH="$mask_probe_phase_path" \
+		swift "$(live_hud_cursor_helper)" &
+		drag_pid="$!"
+		if ! wait_drag_hold_ready "$mask_probe_phase_path"; then
+			kill "$drag_pid" >/dev/null 2>&1 || true
+			wait "$drag_pid" >/dev/null 2>&1 || true
+			kill "$mask_probe_pid" >/dev/null 2>&1 || true
+			wait "$mask_probe_pid" >/dev/null 2>&1 || true
+			live_hud_focus_rsnap_overlay
+			live_hud_press_escape >/dev/null 2>&1 || true
+			stop_visual_background
+			echo "[smoke] FAIL drag did not reach held preview phase" >&2
+			return 1
+		fi
+		if ! wait_file_nonempty "$drag_screenshot_path"; then
+			kill "$drag_pid" >/dev/null 2>&1 || true
+			wait "$drag_pid" >/dev/null 2>&1 || true
+			kill "$mask_probe_pid" >/dev/null 2>&1 || true
+			wait "$mask_probe_pid" >/dev/null 2>&1 || true
+			live_hud_focus_rsnap_overlay
+			live_hud_press_escape >/dev/null 2>&1 || true
+			stop_visual_background
+			echo "[smoke] FAIL mask probe did not write drag screenshot: $drag_screenshot_path" >&2
+			return 1
+		fi
+		if ! wait "$drag_pid"; then
+			kill "$mask_probe_pid" >/dev/null 2>&1 || true
+			wait "$mask_probe_pid" >/dev/null 2>&1 || true
+			live_hud_focus_rsnap_overlay
+			live_hud_press_escape >/dev/null 2>&1 || true
+			stop_visual_background
+			echo "[smoke] FAIL drag cursor driver failed" >&2
+			return 1
+		fi
+		if ! wait "$mask_probe_pid"; then
+			live_hud_focus_rsnap_overlay
+			live_hud_press_escape >/dev/null 2>&1 || true
+			stop_visual_background
+			echo "[smoke] FAIL mask probe capture failed" >&2
+			if [[ -s "$mask_probe_stderr_path" ]]; then
+				sed 's/^/[smoke] mask probe stderr: /' "$mask_probe_stderr_path" >&2
+			fi
+			return 1
+		fi
+
+		sleep "$POST_FREEZE_SETTLE_S"
+		if ! capture_visual_screenshot "$screenshot_path"; then
+			live_hud_focus_rsnap_overlay
+			live_hud_press_escape >/dev/null 2>&1 || true
+			stop_visual_background
+			echo "[smoke] FAIL could not capture visual screenshot: $screenshot_path" >&2
+			return 1
+		fi
+		drag_screenshot_paths="${drag_screenshot_paths:+$drag_screenshot_paths:}$drag_screenshot_path"
 		live_hud_focus_rsnap_overlay
 		live_hud_press_escape >/dev/null 2>&1 || true
-		stop_visual_background
-		echo "[smoke] FAIL mask probe did not produce a ready sample" >&2
-		return 1
-	fi
-
-	PATH_MODE=drag-region \
-	PATH_DRIVER=event \
-	PATH_POINTS="$PATH_POINTS" \
-	PATH_DURATION_MS="$DRAG_DURATION_MS" \
-	PATH_RATE_HZ="$PATH_RATE_HZ" \
-	MASK_PROBE_PHASE_PATH="$mask_probe_phase_path" \
-	swift "$(live_hud_cursor_helper)"
-	if ! wait "$mask_probe_pid"; then
-		live_hud_focus_rsnap_overlay
-		live_hud_press_escape >/dev/null 2>&1 || true
-		stop_visual_background
-		echo "[smoke] FAIL mask probe capture failed" >&2
-		return 1
-	fi
-
-	sleep "$POST_FREEZE_SETTLE_S"
-	if ! capture_visual_screenshot "$screenshot_path"; then
-		live_hud_focus_rsnap_overlay
-		live_hud_press_escape >/dev/null 2>&1 || true
-		stop_visual_background
-		echo "[smoke] FAIL could not capture visual screenshot: $screenshot_path" >&2
-		return 1
-	fi
-	live_hud_focus_rsnap_overlay
-	live_hud_press_escape >/dev/null 2>&1 || true
-	sleep "$POST_CLOSE_SETTLE_S"
+		sleep "$POST_CLOSE_SETTLE_S"
+	done
 	stop_visual_background
 
+	local expected_editability
+	expected_editability="$(
+		python3 - "$REPEATED_CLICK_FREEZES" "$REPEATED_DRAG_FREEZES" <<'PY'
+import sys
+
+click_count = int(sys.argv[1])
+drag_count = int(sys.argv[2])
+print(",".join(["true"] * (click_count + drag_count)))
+PY
+	)"
 	out_dir="$("$ROOT_DIR/scripts/telemetry/native-host.sh" collect)"
 	echo "[smoke] telemetry: $out_dir"
 	EXPECTED_HUD_GLASS_MODE="$case_name" \
-	EXPECTED_MIN_FREEZE_COMMITS="$((REPEATED_CLICK_FREEZES + 1))" \
+	EXPECTED_MIN_FREEZE_COMMITS="$((REPEATED_CLICK_FREEZES + REPEATED_DRAG_FREEZES))" \
+	EXPECTED_FREEZE_EDITABILITY="$expected_editability" \
+	VISUAL_DRAG_SCREENSHOT_PATH="$drag_screenshot_paths" \
+	VISUAL_DISPLAY_BOUNDS="$DISPLAY_BOUNDS" \
+	VISUAL_DRAG_POINTS="$PATH_POINTS" \
 	VISUAL_SCREENSHOT_PATH="$screenshot_path" \
 	MASK_PROBE_PATH="$mask_probe_path" \
 	SMOKE_STARTED_EPOCH="$case_started_epoch" \

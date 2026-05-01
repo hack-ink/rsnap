@@ -49,6 +49,8 @@ The live capture contract now also requires:
 - explicit primary-interaction events for `started`, `updated`, and `completed` so the Rust core
   owns live drag preview and freeze-target selection semantics
 - `SceneModel.live_selection_preview` for the canonical live drag rectangle prior to frozen commit
+- `HostRequest::RequestFreezeSnapshot.selection_editable` for the core-owned decision about
+  whether the committed Frozen selection may be moved or resized after commit
 - `SceneModel.active_monitor`, `SceneModel.highlighted_window`, and `SceneModel.cursor_intent` as
   the only semantic inputs the native host uses for live hover glow and frozen cursor mapping
 
@@ -56,13 +58,17 @@ The host must not retain its own product-state copy of:
 
 - pending frozen selection rectangles
 - live drag preview rectangles
+- whether the next frozen selection should be movable/resizable
 - frozen resize-cursor hit testing
 
 Those semantics belong to `rsnap-capture-core` and must cross the native boundary through
-`SceneModel` / `HostEvent`, not through host-local shadow state.
+`SceneModel` / `HostEvent` / `HostRequest`, not through host-local shadow state. In particular,
+native hosts must not infer Frozen editability from `SceneModel.live_selection_preview == selection`;
+click-targeted window/fullscreen selections can also occupy that field during request handoff and
+must remain editable when `selection_editable` is set.
 
-The one allowed exception is transient host-local frozen transform presentation while a dragged
-region is being interactively moved or resized after Frozen entry. In that case the native host may
+The one allowed exception is transient host-local frozen transform presentation while a committed
+selection is being interactively moved or resized after Frozen entry. In that case the native host may
 hold a short-lived display snapshot, editability flag, and in-progress selection rect derived from
 the last committed `SceneModel.frozen_selection`, but it must publish the committed rect back
 through `HostReport::FreezeSnapshotCommitted` and must not invent a second durable product state for
@@ -95,6 +101,7 @@ The ABI surface must mirror the semantic models above, including:
 - active monitor and highlighted window snapshots on pointer and primary-interaction events
 - live selection preview rectangles on copied-out scene snapshots
 - primary-interaction host events as distinct ABI event kinds
+- frozen snapshot request editability as an explicit field on `RsnapHostRequestValue`
 
 The ABI layer must stay thin:
 

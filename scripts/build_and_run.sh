@@ -378,10 +378,13 @@ else
 	if [[ "${RSNAP_NATIVE_HOST_SWIFT_CLEAN:-0}" == "1" ]]; then
 		swift package --package-path "$PACKAGE_DIR" clean
 	fi
-	RSNAP_HOST_FFI_LIB_DIR="$RUST_LIB_DIR" \
-		swift build --package-path "$PACKAGE_DIR" "${SWIFT_BUILD_FLAGS[@]}" --product "$EXECUTABLE_NAME"
 	BUILD_ROOT="$(RSNAP_HOST_FFI_LIB_DIR="$RUST_LIB_DIR" swift build --package-path "$PACKAGE_DIR" "${SWIFT_BUILD_FLAGS[@]}" --show-bin-path)"
 	BUILD_BINARY="$BUILD_ROOT/$EXECUTABLE_NAME"
+	# SwiftPM does not track the external Rust static library as a product input. Remove the
+	# executable before building so Rust host-FFI changes are always relinked into the app bundle.
+	rm -f "$BUILD_BINARY"
+	RSNAP_HOST_FFI_LIB_DIR="$RUST_LIB_DIR" \
+		swift build --package-path "$PACKAGE_DIR" "${SWIFT_BUILD_FLAGS[@]}" --product "$EXECUTABLE_NAME"
 
 	if [[ ! -x "$BUILD_BINARY" ]]; then
 		relink_native_host_if_missing

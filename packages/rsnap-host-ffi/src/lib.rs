@@ -21,7 +21,7 @@ use rsnap_capture_core::{
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 13;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 14;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -527,6 +527,8 @@ pub struct RsnapHostRequestValue {
 	pub selection: RsnapRect,
 	/// Non-zero when `selection` is populated.
 	pub has_selection: u8,
+	/// Non-zero when the frozen selection may be moved or resized after commit.
+	pub selection_editable: u8,
 }
 
 /// Creates a new opaque session handle.
@@ -973,6 +975,9 @@ pub unsafe extern "C" fn rsnap_live_sampler_peek_latest_monitor_rgba(
 
 /// Transfers ownership of the latest cached full-monitor RGBA snapshot buffer to the caller.
 ///
+/// This cache-only payload does not expose the original frame age or sequence, so callers must not
+/// use it as the first frozen screenshot frame.
+///
 /// # Safety
 ///
 /// `handle` must be a valid pointer returned by `rsnap_live_sampler_create`, and
@@ -1306,10 +1311,13 @@ fn encode_host_request(request: HostRequest) -> RsnapHostRequestValue {
 			kind: RsnapHostRequestKind::StopLiveCapture as u32,
 			..RsnapHostRequestValue::default()
 		},
-		HostRequest::RequestFreezeSnapshot { selection } => RsnapHostRequestValue {
-			kind: RsnapHostRequestKind::RequestFreezeSnapshot as u32,
-			selection: encode_rect(selection),
-			has_selection: 1,
+		HostRequest::RequestFreezeSnapshot { selection, selection_editable } => {
+			RsnapHostRequestValue {
+				kind: RsnapHostRequestKind::RequestFreezeSnapshot as u32,
+				selection: encode_rect(selection),
+				has_selection: 1,
+				selection_editable: u8::from(selection_editable),
+			}
 		},
 		HostRequest::PerformHostEffect(effect) => RsnapHostRequestValue {
 			kind: match effect {
@@ -1645,6 +1653,7 @@ mod tests {
 		assert_eq!(request.kind, RsnapHostRequestKind::RequestFreezeSnapshot as u32);
 		assert_eq!(request.has_selection, 1);
 		assert_eq!(request.selection, RsnapRect { x: 20, y: 30, width: 60, height: 80 });
+		assert_eq!(request.selection_editable, 1);
 
 		unsafe { crate::rsnap_session_destroy(handle) };
 	}
