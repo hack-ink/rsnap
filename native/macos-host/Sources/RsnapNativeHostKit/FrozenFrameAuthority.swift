@@ -4,6 +4,7 @@ import CoreMedia
 import CoreVideo
 import Darwin
 import Foundation
+import RsnapHostBridge
 import ScreenCaptureKit
 
 struct FrozenFrameLatchToken {
@@ -473,6 +474,21 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			return false
 		}
 		return eligibleRecord.selfCaptureFilterComplete
+	}
+
+	func rgbSample(containing point: CGPoint) -> RGBSample? {
+		stateLock.lock()
+		let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		let record = displayID.flatMap { latestFrames[$0] }.flatMap(snapshotEligibleRecordLocked)
+		stateLock.unlock()
+		guard let record else {
+			return nil
+		}
+		return Self.rgbSample(
+			from: record.pixelBuffer,
+			point: point,
+			displayFrame: record.displayFrame
+		)
 	}
 
 	func snapshot(
@@ -946,6 +962,38 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			shouldInterpolate: false,
 			intent: .defaultIntent
 		)
+	}
+
+	private static func rgbSample(
+		from pixelBuffer: CVPixelBuffer,
+		point: CGPoint,
+		displayFrame: CGRect
+	) -> RGBSample? {
+		guard displayFrame.width > 0, displayFrame.height > 0, displayFrame.contains(point) else {
+			return nil
+		}
+		let width = CVPixelBufferGetWidth(pixelBuffer)
+		let height = CVPixelBufferGetHeight(pixelBuffer)
+		let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+		guard width > 0, height > 0, bytesPerRow >= width * 4 else {
+			return nil
+		}
+		let xRatio = (point.x - displayFrame.minX) / displayFrame.width
+		let yRatio = (displayFrame.maxY - point.y) / displayFrame.height
+		let x = min(max(Int((xRatio * CGFloat(width)).rounded(.down)), 0), width - 1)
+		let y = min(max(Int((yRatio * CGFloat(height)).rounded(.down)), 0), height - 1)
+		guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else {
+			return nil
+		}
+		defer {
+			CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+		}
+		guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+			return nil
+		}
+		let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+		let offset = y * bytesPerRow + x * 4
+		return RGBSample(r: bytes[offset + 2], g: bytes[offset + 1], b: bytes[offset])
 	}
 }
 

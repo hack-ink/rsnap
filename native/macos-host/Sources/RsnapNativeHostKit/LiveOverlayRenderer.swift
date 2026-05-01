@@ -153,9 +153,11 @@ final class WindowSnapshotFeed {
 
 final class ChromeSampleFeed: @unchecked Sendable {
 	typealias BackgroundSampler = @Sendable (CGPoint, LiveColorSampleSource) -> RGBSample?
+	typealias FrameRgbSampler = @Sendable (CGPoint) -> RGBSample?
 	typealias SampleUpdated = () -> Void
 
 	private let broker: LiveFrameStreamBroker
+	private let frameRgbSampler: FrameRgbSampler
 	private let backgroundSampler: BackgroundSampler
 	private let sampleUpdated: SampleUpdated
 	private let queue = DispatchQueue(
@@ -200,10 +202,12 @@ final class ChromeSampleFeed: @unchecked Sendable {
 
 	init(
 		broker: LiveFrameStreamBroker,
+		frameRgbSampler: @escaping FrameRgbSampler = { _ in nil },
 		backgroundSampler: @escaping BackgroundSampler,
 		sampleUpdated: @escaping SampleUpdated = {}
 	) {
 		self.broker = broker
+		self.frameRgbSampler = frameRgbSampler
 		self.backgroundSampler = backgroundSampler
 		self.sampleUpdated = sampleUpdated
 	}
@@ -291,11 +295,26 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		}
 	}
 
-	func snapshot() -> LiveChromeSample? {
+	func snapshot(for point: CGPoint?) -> LiveChromeSample? {
 		stateLock.lock()
 		let latestSample = self.latestSample
+		let latestSamplePoint = self.latestSamplePoint
 		stateLock.unlock()
-		return latestSample
+		guard let point else {
+			return latestSample
+		}
+		if let latestSamplePoint, Self.pointsEquivalent(latestSamplePoint, point) {
+			return latestSample
+		}
+		guard let rgbSample = frameRgbSampler(point) else {
+			return nil
+		}
+		let sample = LiveChromeSample(rgbSample: rgbSample, loupePatch: nil)
+		stateLock.lock()
+		self.latestSample = sample
+		self.latestSamplePoint = point
+		stateLock.unlock()
+		return sample
 	}
 
 	private func enqueueRefresh() {
@@ -343,12 +362,14 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			includeLoupePatch
 			? broker.sample(at: point, sidePixels: sidePixels)
 			: nil
+		let frameRgbSample = frameRgbSampler(point)
 		let streamRgbSample = streamSample?.rgbSample ?? broker.rgbSample(at: point)
 		let rgbSample =
-			streamRgbSample
+			frameRgbSample
+			?? streamRgbSample
 			?? Self.reusableRgbSample(
 				previousSample: previousSample, previousPoint: previousPoint, point: point)
-		if let source {
+		if frameRgbSample == nil, let source {
 			enqueueBackgroundSampleIfNeeded(
 				point: point,
 				source: source,
