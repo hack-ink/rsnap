@@ -63,9 +63,10 @@ The host must not retain its own product-state copy of:
 
 Those semantics belong to `rsnap-capture-core` and must cross the native boundary through
 `SceneModel` / `HostEvent` / `HostRequest`, not through host-local shadow state. In particular,
-native hosts must not infer Frozen editability from `SceneModel.live_selection_preview == selection`;
-click-targeted window/fullscreen selections can also occupy that field during request handoff and
-must remain editable when `selection_editable` is set.
+native hosts must not infer Frozen editability from `SceneModel.live_selection_preview == selection`.
+Only `HostRequest::RequestFreezeSnapshot.selection_editable` may decide whether the committed
+Frozen selection can be moved or resized; click-targeted window/fullscreen selections must remain
+fixed when that field is false.
 
 The one allowed exception is transient host-local frozen transform presentation while a committed
 selection is being interactively moved or resized after Frozen entry. In that case the native host may

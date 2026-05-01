@@ -969,6 +969,9 @@ final class CaptureSessionController: NSObject {
 		at point: CGPoint,
 		selection: CGRect
 	) -> Bool {
+		guard chromeState.frozenSelectionEditable else {
+			return false
+		}
 		guard
 			let monitorFrame = screen(containing: CGPoint(x: selection.midX, y: selection.midY))?
 				.frame
@@ -1431,7 +1434,10 @@ final class CaptureSessionController: NSObject {
 		chromeState.frozenSelectionInteraction = nil
 		chromeState.frozenDisplayFrame = frozenFrame.displayFrame
 		chromeState.frozenDisplayImage = frozenFrame.image
-		let hostOwnedFrozenScene = hostOwnedFrozenPresentationScene(for: selection)
+		let hostOwnedFrozenScene = hostOwnedFrozenPresentationScene(
+			for: selection,
+			editable: editable
+		)
 		let presentStartedAt = ProcessInfo.processInfo.systemUptime
 		overlayController?.presentFrozenFirstFrame(
 			scene: hostOwnedFrozenScene,
@@ -1488,10 +1494,12 @@ final class CaptureSessionController: NSObject {
 		)
 	}
 
-	private func hostOwnedFrozenPresentationScene(for selection: CGRect) -> SceneSnapshot {
+	private func hostOwnedFrozenPresentationScene(for selection: CGRect, editable: Bool)
+		-> SceneSnapshot
+	{
 		SceneSnapshot(
 			mode: .frozen,
-			cursorIntent: .grab,
+			cursorIntent: editable ? .grab : .default,
 			pointer: scene.pointer,
 			activeMonitor: nil,
 			highlightedWindow: nil,
@@ -4121,6 +4129,9 @@ final class CaptureHostView: NSView {
 			{
 				if [ToolbarItemKind.pen, .arrow, .mosaic, .spotlight].contains(selectedModeTool) {
 					return .crosshair
+				}
+				if selectedModeTool == .pointer, !chrome.frozenSelectionEditable {
+					return .arrow
 				}
 				if selectedModeTool == .pointer,
 					let pointer = currentGlobalMousePoint(),

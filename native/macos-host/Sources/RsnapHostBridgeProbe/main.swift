@@ -194,9 +194,9 @@ enum RsnapHostBridgeProbe {
 			try session.takeNextRequest()
 				== .requestFreezeSnapshot(
 					selection: clickSelection,
-					selectionEditable: true)
+					selectionEditable: false)
 		else {
-			fatalError("expected an editable click-window freeze request")
+			fatalError("expected a fixed click-window freeze request")
 		}
 		try session.send(report: .freezeSnapshotCommitted(selection: clickSelection))
 		try session.send(
@@ -208,8 +208,52 @@ enum RsnapHostBridgeProbe {
 			)
 		)
 		scene = try session.currentScene()
-		guard scene.mode == .frozen, scene.cursorIntent == .grab else {
+		guard scene.mode == .frozen, scene.cursorIntent == .default else {
 			fatalError("unexpected click-window frozen cursor: \(scene)")
+		}
+
+		try session.enterLive()
+		_ = try session.takeNextRequest()
+		let fullscreenMonitor = MonitorSnapshot(
+			id: 10,
+			frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+			scaleFactorX1000: 2_000
+		)
+		try session.send(
+			event: .primaryInteractionStarted(
+				point: CGPoint(x: 700, y: 500),
+				activeMonitor: fullscreenMonitor,
+				highlightedWindow: nil
+			)
+		)
+		try session.send(
+			event: .primaryInteractionCompleted(
+				point: CGPoint(x: 700, y: 500),
+				activeMonitor: fullscreenMonitor,
+				highlightedWindow: nil
+			)
+		)
+		let fullscreenSelection = fullscreenMonitor.frame
+		guard
+			try session.takeNextRequest()
+				== .requestFreezeSnapshot(
+					selection: fullscreenSelection,
+					selectionEditable: false)
+		else {
+			fatalError("expected a fixed fullscreen fallback freeze request")
+		}
+		try session.send(report: .freezeSnapshotCommitted(selection: fullscreenSelection))
+		try session.send(
+			event: .pointerMoved(
+				point: CGPoint(x: 700, y: 500),
+				rgb: nil,
+				activeMonitor: nil,
+				highlightedWindow: nil
+			)
+		)
+		scene = try session.currentScene()
+		guard scene.mode == .frozen, scene.cursorIntent == .default else {
+			fatalError("unexpected fullscreen frozen cursor: \(scene)")
 		}
 
 		try session.enterLive()

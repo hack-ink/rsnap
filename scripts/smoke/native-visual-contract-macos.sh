@@ -19,7 +19,7 @@ Runs the native macOS visual/behavior contract smoke:
 Useful overrides:
   VISUAL_CONTRACT_CASES=liquid          optional: liquid,classic
   REPEATED_CLICK_FREEZES=1
-  VERIFY_CLICK_FROZEN_MOVE=1
+  VERIFY_CLICK_FROZEN_MOVE=1       attempts a forbidden fixed-selection frozen move
   REPEATED_DRAG_FREEZES=2
   DRAG_DURATION_MS=260
   DRAG_HOLD_BEFORE_RELEASE_MS=700
@@ -336,7 +336,7 @@ run_visual_case() {
 			"$cursor_helper_bin"
 			sleep "$POST_FREEZE_SETTLE_S"
 			live_hud_focus_rsnap_overlay
-			smoke_log "click $click_index moved frozen selection"
+			smoke_log "click $click_index attempted forbidden frozen move"
 		fi
 		live_hud_press_escape >/dev/null 2>&1 || true
 		sleep "$POST_CLOSE_SETTLE_S"
@@ -513,19 +513,21 @@ PY
 
 	local expected_editability
 	local expected_transform_commits
+	local max_transform_commits
 	expected_editability="$(
 		python3 - "$REPEATED_CLICK_FREEZES" "$REPEATED_DRAG_FREEZES" <<'PY'
 import sys
 
 click_count = int(sys.argv[1])
 drag_count = int(sys.argv[2])
-print(",".join(["true"] * (click_count + drag_count)))
+print(",".join((["false"] * click_count) + (["true"] * drag_count)))
 PY
 	)"
+	expected_transform_commits=0
 	if [[ "$VERIFY_CLICK_FROZEN_MOVE" == "1" ]]; then
-		expected_transform_commits="$REPEATED_CLICK_FREEZES"
+		max_transform_commits=0
 	else
-		expected_transform_commits=0
+		max_transform_commits=""
 	fi
 	local telemetry_last
 	telemetry_last="${RSNAP_TELEMETRY_LAST:-}"
@@ -537,17 +539,23 @@ PY
 		fi
 		telemetry_last="${elapsed_seconds}s"
 	fi
+	local summary_screenshot_path
+	summary_screenshot_path="$screenshot_path"
+	if ((REPEATED_DRAG_FREEZES == 0)); then
+		summary_screenshot_path=""
+	fi
 	smoke_log "collect telemetry last=$telemetry_last"
 	out_dir="$(RSNAP_TELEMETRY_LAST="$telemetry_last" "$ROOT_DIR/scripts/telemetry/native-host.sh" collect)"
 	smoke_log "telemetry: $out_dir"
 	EXPECTED_HUD_GLASS_MODE="$case_name" \
 	EXPECTED_MIN_FREEZE_COMMITS="$((REPEATED_CLICK_FREEZES + REPEATED_DRAG_FREEZES))" \
 	EXPECTED_MIN_FROZEN_TRANSFORM_COMMITS="$expected_transform_commits" \
+	EXPECTED_MAX_FROZEN_TRANSFORM_COMMITS="$max_transform_commits" \
 	EXPECTED_FREEZE_EDITABILITY="$expected_editability" \
 	VISUAL_DRAG_SCREENSHOT_PATH="$drag_screenshot_paths" \
 	VISUAL_DISPLAY_BOUNDS="$DISPLAY_BOUNDS" \
 	VISUAL_DRAG_POINTS="$PATH_POINTS" \
-	VISUAL_SCREENSHOT_PATH="$screenshot_path" \
+	VISUAL_SCREENSHOT_PATH="$summary_screenshot_path" \
 	MASK_PROBE_PATH="$mask_probe_path" \
 	SMOKE_STARTED_EPOCH="$case_started_epoch" \
 	python3 "$SCRIPT_DIR/lib/native-visual-contract-summary.py" "$out_dir/all.log"
