@@ -636,6 +636,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				selfCaptureFilterComplete: preparedFilter.selfCaptureFilterComplete
 			) { [weak self] frame in
 				self?.store(frame: frame, generation: requestGeneration)
+			} onStop: { [weak self] displayID, generation in
+				self?.handleStreamStopped(displayID: displayID, generation: generation)
 			} telemetrySnapshot: { [weak self] in
 				self?.currentTelemetrySnapshot() ?? (captureID: captureID, source: source)
 			}
@@ -678,7 +680,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				continue
 			}
 
-			stream.startCapture { error in
+			stream.startCapture { [weak self] error in
 				if let error {
 					NativeHostTelemetry.frozenAuthorityWarning(
 						"frozen_authority.stream_start_failed",
@@ -686,6 +688,10 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 						source: source,
 						displayID: target.displayID,
 						error: String(describing: error)
+					)
+					self?.handleStreamStopped(
+						displayID: target.displayID,
+						generation: requestGeneration
 					)
 				}
 			}
@@ -829,6 +835,20 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				selfCaptureFilterComplete: frame.selfCaptureFilterComplete
 			)
 		}
+	}
+
+	private func handleStreamStopped(
+		displayID: CGDirectDisplayID,
+		generation stoppedGeneration: UInt64
+	) {
+		stateLock.lock()
+		if generation == stoppedGeneration {
+			streams.removeValue(forKey: displayID)
+			latestFrames.removeValue(forKey: displayID)
+			firstFrameLoggedDisplayIDs.remove(displayID)
+			stateLock.broadcast()
+		}
+		stateLock.unlock()
 	}
 
 	private func finishSetup(generation requestGeneration: UInt64) {
@@ -1014,6 +1034,7 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 	private let generation: UInt64
 	private let selfCaptureFilterComplete: Bool
 	private let onFrame: (FrozenFrameAuthority.FrameRecord) -> Void
+	private let onStop: (CGDirectDisplayID, UInt64) -> Void
 	private let telemetrySnapshot: () -> (captureID: UInt64, source: String)
 	private var sequence: UInt64 = 0
 
@@ -1023,6 +1044,7 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 		generation: UInt64,
 		selfCaptureFilterComplete: Bool,
 		onFrame: @escaping (FrozenFrameAuthority.FrameRecord) -> Void,
+		onStop: @escaping (CGDirectDisplayID, UInt64) -> Void,
 		telemetrySnapshot: @escaping () -> (captureID: UInt64, source: String)
 	) {
 		self.displayID = displayID
@@ -1030,6 +1052,7 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 		self.generation = generation
 		self.selfCaptureFilterComplete = selfCaptureFilterComplete
 		self.onFrame = onFrame
+		self.onStop = onStop
 		self.telemetrySnapshot = telemetrySnapshot
 	}
 
@@ -1067,6 +1090,7 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 			displayID: displayID,
 			error: String(describing: error)
 		)
+		onStop(displayID, generation)
 	}
 
 	private static func isUsableFrame(
