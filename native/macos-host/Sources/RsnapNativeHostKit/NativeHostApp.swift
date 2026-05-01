@@ -353,6 +353,8 @@ final class CaptureSessionController: NSObject {
 		let desktopFrame: CGRect
 	}
 
+	private static let coldSelfCaptureCompleteFrameWait: TimeInterval = 3.5
+
 	private let settingsStore: NativeHostSettingsStore
 	private let liveFrameStream = LiveFrameStreamBroker()
 	private let frozenFrameAuthority = FrozenFrameAuthority()
@@ -1362,7 +1364,7 @@ final class CaptureSessionController: NSObject {
 		let frozenFrame = snapshotForFrozenCommit(
 			containing: selectionCenter,
 			after: token,
-			maxWait: frozenFrameLatchWait()
+			maxWait: frozenFrameLatchWait(containing: selectionCenter)
 		)
 		let snapshotWaitMilliseconds =
 			NativeHostTelemetry.milliseconds(since: snapshotStartedAt)
@@ -1423,8 +1425,12 @@ final class CaptureSessionController: NSObject {
 		try session.send(report: .freezeSnapshotCommitted(selection: selection))
 	}
 
-	private func frozenFrameLatchWait() -> TimeInterval {
-		max(1.5, NativeHostDisplayRefresh.frameInterval * 2.5)
+	private func frozenFrameLatchWait(containing point: CGPoint) -> TimeInterval {
+		let hotWait = max(1.5, NativeHostDisplayRefresh.frameInterval * 2.5)
+		guard frozenFrameAuthority.needsSelfCaptureCompleteFrame(containing: point) else {
+			return hotWait
+		}
+		return max(hotWait, Self.coldSelfCaptureCompleteFrameWait)
 	}
 
 	private func snapshotForFrozenCommit(

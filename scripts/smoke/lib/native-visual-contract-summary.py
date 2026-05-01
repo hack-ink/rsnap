@@ -190,27 +190,39 @@ def count_leaked_horizontal_seam(
         (0, max(0, min_x - margin)),
         (min(width, max_x + margin), width),
     ]
-    row_indexes = [
-        y
-        for edge_y in (min_y, max_y)
-        for y in range(max(0, edge_y - 1), min(height, edge_y + 2))
-    ]
+    edge_specs = [(min_y, -1), (max_y, 1)]
 
-    bright_pixels = 0
+    seam_pixels = 0
     sampled = 0
-    for y in row_indexes:
-        row = rows[y]
+    for edge_y, outside_direction in edge_specs:
+        seam_rows = list(range(max(0, edge_y - 1), min(height, edge_y + 2)))
+        baseline_rows = [
+            edge_y + outside_direction * distance
+            for distance in range(6, 13)
+            if 0 <= edge_y + outside_direction * distance < height
+        ]
+        if not seam_rows or not baseline_rows:
+            continue
         for span_left, span_right in spans:
             for x in range(span_left, span_right):
                 sampled += 1
-                base = x * channels
-                red, green, blue = row[base], row[base + 1], row[base + 2]
-                luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
-                if luminance >= 120:
-                    bright_pixels += 1
+                seam_luminance = max(
+                    pixel_luminance(rows[row_index], x, channels) for row_index in seam_rows
+                )
+                baseline_luminance = sum(
+                    pixel_luminance(rows[row_index], x, channels) for row_index in baseline_rows
+                ) / len(baseline_rows)
+                if seam_luminance >= 125 and seam_luminance - baseline_luminance >= 35:
+                    seam_pixels += 1
     if sampled == 0:
         return 0.0, 0
-    return bright_pixels / sampled, bright_pixels
+    return seam_pixels / sampled, seam_pixels
+
+
+def pixel_luminance(row: bytes, x: int, channels: int) -> float:
+    base = x * channels
+    red, green, blue = row[base], row[base + 1], row[base + 2]
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
 
 
 def line_epoch(line: str) -> float | None:
