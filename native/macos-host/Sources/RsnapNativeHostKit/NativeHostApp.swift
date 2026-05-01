@@ -957,7 +957,7 @@ final class CaptureSessionController: NSObject {
 
 	func recognizeText() {
 		let _ = chromeState.frozenOverlay.commitTextEdit()
-		sendFrozenAction(.recognizeTextRequested)
+		sendFrozenAction(.recognizeTextRequested, exitAfter: .recognizeText)
 	}
 
 	func startScrollCapture() {
@@ -984,6 +984,8 @@ final class CaptureSessionController: NSObject {
 			sendFrozenAction(.toolbarItemInvoked(item), exitAfter: .copyCapture)
 		case .save:
 			sendFrozenAction(.toolbarItemInvoked(item), exitAfter: .saveCapture)
+		case .ocr:
+			sendFrozenAction(.toolbarItemInvoked(item), exitAfter: .recognizeText)
 		case .scroll:
 			startScrollCapture()
 		default:
@@ -1727,16 +1729,30 @@ final class CaptureSessionController: NSObject {
 
 		let request = VNRecognizeTextRequest()
 		request.recognitionLevel = .accurate
+		request.usesLanguageCorrection = true
+		request.automaticallyDetectsLanguage = true
 		let handler = VNImageRequestHandler(cgImage: cgImage)
 		try handler.perform([request])
 
 		let text = (request.results ?? [])
-			.compactMap { $0.topCandidates(1).first?.string }
+			.compactMap { observation -> String? in
+				guard let line = observation.topCandidates(1).first?.string,
+					!line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+				else {
+					return nil
+				}
+				return line
+			}
 			.joined(separator: "\n")
 
-		let pasteboard = NSPasteboard.general
-		pasteboard.clearContents()
-		pasteboard.setString(text, forType: .string)
+		if !text.isEmpty {
+			let pasteboard = NSPasteboard.general
+			pasteboard.clearContents()
+			guard pasteboard.setString(text, forType: .string) else {
+				try sendHostStatusMessage("Could not copy recognized text.")
+				return
+			}
+		}
 
 		try session.send(report: .hostEffectCompleted(.recognizeText))
 		let message =
@@ -1744,6 +1760,7 @@ final class CaptureSessionController: NSObject {
 			? "No text was recognized."
 			: "Recognized text copied to clipboard."
 		try session.send(report: .statusMessage(message))
+		completedHostEffect = .recognizeText
 	}
 
 	private func captureFrozenSelectionImage() throws -> CGImage? {
