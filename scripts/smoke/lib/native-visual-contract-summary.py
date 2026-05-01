@@ -245,6 +245,9 @@ visual_display_bounds = os.environ.get("VISUAL_DISPLAY_BOUNDS", "").strip()
 visual_drag_points = os.environ.get("VISUAL_DRAG_POINTS", "").strip()
 mask_probe_path = os.environ.get("MASK_PROBE_PATH", "").strip()
 expected_min_freeze_commits = int(os.environ.get("EXPECTED_MIN_FREEZE_COMMITS", "1") or "1")
+expected_min_frozen_transform_commits = int(
+    os.environ.get("EXPECTED_MIN_FROZEN_TRANSFORM_COMMITS", "0") or "0"
+)
 expected_freeze_editability = [
     value.strip().lower() == "true"
     for value in os.environ.get("EXPECTED_FREEZE_EDITABILITY", "").split(",")
@@ -305,6 +308,7 @@ handoffs = events.get("capture_timing.frozen_first_display_handoff", [])
 handoff = handoffs[-1] if handoffs else {}
 freeze_commits = events.get("capture_timing.freeze_commit", [])
 freeze_commit_failures = events.get("capture_timing.freeze_commit_failed", [])
+frozen_transform_commits = events.get("capture.frozen_selection_transform_commit", [])
 
 if len(freeze_commits) < expected_min_freeze_commits:
     failures.append(
@@ -316,6 +320,17 @@ if freeze_commit_failures:
         "freeze commit failure events observed: "
         f"{len(freeze_commit_failures)}"
     )
+if expected_min_frozen_transform_commits:
+    print(
+        "[smoke] frozen_transform_commits "
+        f"expected>={expected_min_frozen_transform_commits} "
+        f"actual={len(frozen_transform_commits)}"
+    )
+    if len(frozen_transform_commits) < expected_min_frozen_transform_commits:
+        failures.append(
+            "frozen transform commit count too small: "
+            f"{len(frozen_transform_commits)} < {expected_min_frozen_transform_commits}"
+        )
 max_latest_unchanged_frame_age_ms = threshold("MAX_LATEST_UNCHANGED_FRAME_AGE_MS", 150.0)
 for index, commit in enumerate(freeze_commits, start=1):
     commit_source = commit.get("snapshotSource", "unknown")
