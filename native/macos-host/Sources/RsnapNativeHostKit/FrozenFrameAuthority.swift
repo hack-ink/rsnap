@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import CoreMedia
 import CoreVideo
+import Darwin
 import Foundation
 import ScreenCaptureKit
 
@@ -537,7 +538,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		else {
 			return nil
 		}
-		guard eligibleRecord.selfCaptureFilterComplete || Self.isFreshForSnapshot(record) else {
+		guard Self.isFreshForSnapshot(eligibleRecord) else {
 			return nil
 		}
 		guard let token else {
@@ -567,14 +568,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		else {
 			return nil
 		}
-		if !eligibleRecord.selfCaptureFilterComplete, !Self.isFreshForSnapshot(eligibleRecord) {
+		guard Self.isFreshForSnapshot(eligibleRecord) else {
 			return nil
 		}
 		// ScreenCaptureKit display streams may not emit another frame while the display is
-		// visually unchanged. A complete self-capture-excluding stream may stand in for a
-		// post-token frame on a static desktop; pre-overlay frames may do that only while still
-		// inside the freshness budget, because older pre-overlay pixels are indistinguishable from
-		// a stale video frame.
+		// visually unchanged. Even then, same-sequence frames must stay inside the freshness
+		// budget; a complete self-capture-excluding filter proves visibility safety, not age.
 		return eligibleRecord
 	}
 
@@ -953,6 +952,15 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate,
 	@unchecked Sendable
 {
+	private static let machTimebaseInfo: mach_timebase_info_data_t = {
+		var info = mach_timebase_info_data_t()
+		mach_timebase_info(&info)
+		if info.denom == 0 {
+			info.denom = 1
+		}
+		return info
+	}()
+
 	private let displayID: CGDirectDisplayID
 	private let displayFrame: CGRect
 	private let generation: UInt64
@@ -981,8 +989,10 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 		_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
 		of type: SCStreamOutputType
 	) {
-		guard type == .screen, Self.isUsableFrame(sampleBuffer),
-			let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
+		let frameInfo = Self.frameInfo(from: sampleBuffer)
+		guard type == .screen, Self.isUsableFrame(sampleBuffer, frameInfo: frameInfo),
+			let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
+			let capturedAtUptime = Self.capturedAtUptime(frameInfo: frameInfo)
 		else {
 			return
 		}
@@ -994,7 +1004,7 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 				pixelBuffer: pixelBuffer,
 				generation: generation,
 				sequence: sequence,
-				capturedAtUptime: ProcessInfo.processInfo.systemUptime,
+				capturedAtUptime: capturedAtUptime,
 				selfCaptureFilterComplete: selfCaptureFilterComplete
 			)
 		)
@@ -1011,21 +1021,75 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 		)
 	}
 
-	private static func isUsableFrame(_ sampleBuffer: CMSampleBuffer) -> Bool {
+	private static func isUsableFrame(
+		_ sampleBuffer: CMSampleBuffer,
+		frameInfo: [SCStreamFrameInfo: Any]?
+	) -> Bool {
 		guard CMSampleBufferDataIsReady(sampleBuffer) else {
 			return false
 		}
+		guard let rawStatus = frameInfo?[.status], let status = frameStatus(from: rawStatus) else {
+			return true
+		}
+		return status == .complete
+	}
+
+	private static func frameInfo(from sampleBuffer: CMSampleBuffer) -> [SCStreamFrameInfo: Any]? {
 		guard
 			let attachments = CMSampleBufferGetSampleAttachmentsArray(
 				sampleBuffer,
 				createIfNecessary: false
-			) as? [[SCStreamFrameInfo: Any]],
-			let rawStatus = attachments.first?[.status] as? Int,
-			let status = SCFrameStatus(rawValue: rawStatus)
+			) as? [[SCStreamFrameInfo: Any]]
 		else {
-			return true
+			return nil
 		}
-		return status == .complete
+		return attachments.first
+	}
+
+	private static func frameStatus(from value: Any) -> SCFrameStatus? {
+		if let status = value as? Int {
+			return SCFrameStatus(rawValue: status)
+		}
+		if let status = value as? NSNumber {
+			return SCFrameStatus(rawValue: status.intValue)
+		}
+		return nil
+	}
+
+	private static func capturedAtUptime(frameInfo: [SCStreamFrameInfo: Any]?) -> TimeInterval? {
+		guard let displayTime = machAbsoluteDisplayTime(from: frameInfo) else {
+			return nil
+		}
+		return uptimeSeconds(fromMachAbsoluteTime: displayTime)
+	}
+
+	private static func machAbsoluteDisplayTime(
+		from frameInfo: [SCStreamFrameInfo: Any]?
+	) -> UInt64? {
+		guard let displayTime = frameInfo?[.displayTime] else {
+			return nil
+		}
+		if let value = displayTime as? UInt64, value > 0 {
+			return value
+		}
+		if let value = displayTime as? Int, value > 0 {
+			return UInt64(value)
+		}
+		if let value = displayTime as? Int64, value > 0 {
+			return UInt64(value)
+		}
+		if let value = displayTime as? NSNumber {
+			let machTime = value.uint64Value
+			return machTime > 0 ? machTime : nil
+		}
+		return nil
+	}
+
+	private static func uptimeSeconds(fromMachAbsoluteTime machTime: UInt64) -> TimeInterval {
+		let timebase = machTimebaseInfo
+		let nanoseconds =
+			Double(machTime) * Double(timebase.numer) / Double(timebase.denom)
+		return nanoseconds / 1_000_000_000
 	}
 }
 
