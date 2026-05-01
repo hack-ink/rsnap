@@ -72,17 +72,96 @@ private enum CaptureSuccessSound {
 	}
 }
 
-@MainActor private func makeFrozenMosaicImage(from image: CGImage) -> CGImage? {
-	let ciImage = CIImage(cgImage: image)
-	guard let filter = CIFilter(name: "CIPixellate") else {
+private let frozenMosaicBlockSizePixels: CGFloat = 10.0
+
+private func makeFrozenMosaicPatch(from image: CGImage, sourceRect: CGRect) -> CGImage? {
+	let imageRect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+	let cropRect = sourceRect.integral.intersection(imageRect)
+	guard
+		!cropRect.isNull,
+		cropRect.width >= 1,
+		cropRect.height >= 1
+	else {
 		return nil
 	}
-	filter.setValue(ciImage, forKey: kCIInputImageKey)
-	filter.setValue(18.0, forKey: kCIInputScaleKey)
-	guard let outputImage = filter.outputImage?.cropped(to: ciImage.extent) else {
+
+	let pixelWidth = max(1, Int(ceil(cropRect.width / frozenMosaicBlockSizePixels)))
+	let pixelHeight = max(1, Int(ceil(cropRect.height / frozenMosaicBlockSizePixels)))
+	let bytesPerRow = pixelWidth * 4
+	let seedX = Int(floor(cropRect.minX / frozenMosaicBlockSizePixels))
+	let seedY = Int(floor(cropRect.minY / frozenMosaicBlockSizePixels))
+	guard
+		let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+		let context = CGContext(
+			data: nil,
+			width: pixelWidth,
+			height: pixelHeight,
+			bitsPerComponent: 8,
+			bytesPerRow: bytesPerRow,
+			space: colorSpace,
+			bitmapInfo: CGBitmapInfo.byteOrder32Big
+				.union(CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue))
+				.rawValue
+		)
+	else {
 		return nil
 	}
-	return frozenEffectCIContext.createCGImage(outputImage, from: outputImage.extent)
+
+	if let rawData = context.data {
+		let pixels = rawData.assumingMemoryBound(to: UInt8.self)
+		for y in 0..<pixelHeight {
+			for x in 0..<pixelWidth {
+				let offset = y * bytesPerRow + x * 4
+				let color = frozenMosaicLightPrivacyColor(
+					x: x + seedX,
+					y: y + seedY,
+					width: pixelWidth,
+					height: pixelHeight
+				)
+				pixels[offset] = color.red
+				pixels[offset + 1] = color.green
+				pixels[offset + 2] = color.blue
+				pixels[offset + 3] = 255
+			}
+		}
+	}
+	return context.makeImage()
+}
+
+private func frozenMosaicLightPrivacyColor(
+	x: Int,
+	y: Int,
+	width: Int,
+	height: Int
+) -> (red: UInt8, green: UInt8, blue: UInt8) {
+	let hash = frozenMosaicHash(x: x, y: y, width: width, height: height)
+	let groupHash = frozenMosaicHash(x: x / 2, y: y / 2, width: width, height: height)
+	let base: CGFloat = 0.74 + CGFloat(Int(groupHash & 3)) * 0.035
+	let variation = (CGFloat(Int((hash >> 8) & 3)) - 1.5) * 0.012
+	let warmth = CGFloat(Int((groupHash >> 3) & 1)) * 0.012
+	return (
+		frozenMosaicByte(base + variation + warmth),
+		frozenMosaicByte(base + variation + warmth * 0.5),
+		frozenMosaicByte(base + variation)
+	)
+}
+
+private func frozenMosaicHash(x: Int, y: Int, width: Int, height: Int) -> UInt32 {
+	var hash =
+		UInt32(truncatingIfNeeded: x) &* 0x45d9_f3b
+		^ UInt32(truncatingIfNeeded: y) &* 0x119d_e1f3
+		^ UInt32(truncatingIfNeeded: width) &* 0x27d4_eb2d
+		^ UInt32(truncatingIfNeeded: height) &* 0x1656_67b1
+	hash ^= hash >> 16
+	hash &*= 0x7feb_352d
+	hash ^= hash >> 15
+	hash &*= 0x846c_a68b
+	hash ^= hash >> 16
+	return hash
+}
+
+private func frozenMosaicByte(_ value: CGFloat) -> UInt8 {
+	UInt8((min(max(value, 0), 1) * 255).rounded())
 }
 
 @MainActor
@@ -975,7 +1054,7 @@ final class CaptureSessionController: NSObject {
 		at point: CGPoint,
 		selection: CGRect
 	) -> Bool {
-		guard chromeState.frozenSelectionEditable else {
+		guard chromeState.frozenSelectionTransformAllowed else {
 			return false
 		}
 		guard
@@ -1031,7 +1110,6 @@ final class CaptureSessionController: NSObject {
 		let generation = frozenSnapshotGeneration
 		let captureID = currentCaptureTelemetryID
 		chromeState.frozenBaseImage = nil
-		chromeState.frozenMosaicImage = nil
 		ensureFrozenBaseImageFromDisplayIfNeeded(for: nextSelection)
 		refreshOverlay()
 		DispatchQueue.main.async { [weak self] in
@@ -1158,13 +1236,12 @@ final class CaptureSessionController: NSObject {
 		guard let selection = currentFrozenSelection() else {
 			return
 		}
-		if chromeState.frozenOverlay.canUndo || chromeState.frozenOverlay.activeTextEdit != nil {
+		if chromeState.frozenOverlay.keepsFrozenSelectionFixed {
 			return
 		}
 		if chromeState.frozenSelectionSnapshot != selection || chromeState.frozenBaseImage == nil {
 			chromeState.frozenSelectionSnapshot = selection
 			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
-			chromeState.frozenMosaicImage = nil
 		}
 		guard
 			let baseImage = chromeState.frozenBaseImage,
@@ -1202,7 +1279,6 @@ final class CaptureSessionController: NSObject {
 			frozenSnapshotGeneration &+= 1
 			chromeState.frozenSelectionSnapshot = nextSelection
 			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: nextSelection)
-			chromeState.frozenMosaicImage = nil
 			try session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 			try syncCore()
 		} catch {
@@ -1753,7 +1829,6 @@ final class CaptureSessionController: NSObject {
 		let baseImage = frozenBaseImageFromDisplay(for: selection)
 		chromeState.frozenSelectionSnapshot = selection
 		chromeState.frozenBaseImage = baseImage
-		chromeState.frozenMosaicImage = nil
 		return baseImage != nil
 	}
 
@@ -1890,23 +1965,22 @@ final class CaptureSessionController: NSObject {
 		func mapRect(_ rect: CGRect) -> CGRect {
 			CGRect(
 				x: (rect.minX - selection.minX) * scaleX,
-				y: (rect.minY - selection.minY) * scaleY,
+				y: (selection.maxY - rect.maxY) * scaleY,
 				width: rect.width * scaleX,
 				height: rect.height * scaleY
 			)
 		}
 
 		let mosaicRects = chromeState.frozenOverlay.mosaicRects.map(mapRect)
-		if chromeState.frozenMosaicImage == nil, !mosaicRects.isEmpty {
-			chromeState.frozenMosaicImage = makeFrozenMosaicImage(from: image)
-		}
-		if let mosaicImage = chromeState.frozenMosaicImage, !mosaicRects.isEmpty {
+		if !mosaicRects.isEmpty {
+			context.saveGState()
+			context.interpolationQuality = .high
 			for rect in mosaicRects {
-				if let mosaicPatch = mosaicImage.cropping(to: rect.integral.intersection(imageRect))
-				{
-					context.draw(mosaicPatch, in: rect)
+				if let mosaicPatch = makeFrozenMosaicPatch(from: image, sourceRect: rect) {
+					context.draw(mosaicPatch, in: rect.integral.intersection(imageRect))
 				}
 			}
+			context.restoreGState()
 		}
 
 		let spotlightRects = chromeState.frozenOverlay.spotlightRects.map(mapRect)
@@ -3688,7 +3762,7 @@ final class CaptureHostView: NSView {
 					in: context,
 					lineWidth: CaptureChrome.frozenDashedBorderWidth
 				)
-				if chrome.frozenSelectionEditable {
+				if chrome.frozenSelectionTransformAllowed {
 					drawFrozenResizeHandles(for: selection, in: context)
 				}
 				drawFrozenOverlays(for: selection, in: context)
@@ -4164,14 +4238,23 @@ final class CaptureHostView: NSView {
 				if [ToolbarItemKind.pen, .arrow, .mosaic, .spotlight].contains(selectedModeTool) {
 					return .crosshair
 				}
-				if selectedModeTool == .pointer, !chrome.frozenSelectionEditable {
-					return .arrow
-				}
-				if selectedModeTool == .pointer,
-					let pointer = currentGlobalMousePoint(),
-					let intent = editableFrozenCursorIntent(at: pointer, selection: selection)
-				{
-					return cursorPresentation(for: intent)
+				if selectedModeTool == .pointer {
+					if chrome.frozenOverlay.isMovingMosaic {
+						return .closedHand
+					}
+					if let pointer = currentGlobalMousePoint(),
+						chrome.frozenOverlay.containsMosaic(at: pointer)
+					{
+						return .openHand
+					}
+					if !chrome.frozenSelectionTransformAllowed {
+						return .arrow
+					}
+					if let pointer = currentGlobalMousePoint(),
+						let intent = editableFrozenCursorIntent(at: pointer, selection: selection)
+					{
+						return cursorPresentation(for: intent)
+					}
 				}
 			}
 		}
@@ -4307,7 +4390,7 @@ final class CaptureHostView: NSView {
 
 		let imageRect = frame.insetBy(dx: 10, dy: 10)
 		context.saveGState()
-		context.interpolationQuality = .none
+		context.interpolationQuality = .high
 		context.draw(patch, in: imageRect)
 		context.restoreGState()
 
@@ -4527,33 +4610,29 @@ final class CaptureHostView: NSView {
 		let mosaicRects = chrome.frozenOverlay.mosaicRects.compactMap(localRect(from:))
 		let previewRect = chrome.frozenOverlay.previewMosaicRect.flatMap(localRect(from:))
 		let allRects = mosaicRects + (previewRect.map { [$0] } ?? [])
-		if chrome.frozenMosaicImage == nil, !allRects.isEmpty,
-			let baseImage = chrome.frozenBaseImage
-		{
-			chrome.frozenMosaicImage = makeFrozenMosaicImage(from: baseImage)
-		}
-		guard !allRects.isEmpty, let mosaicImage = chrome.frozenMosaicImage else {
+		guard !allRects.isEmpty, let baseImage = chrome.frozenBaseImage else {
 			return
 		}
+		let imageSize = CGSize(width: CGFloat(baseImage.width), height: CGFloat(baseImage.height))
 
+		context.saveGState()
+		context.interpolationQuality = .none
 		for rect in allRects {
 			let imageRect = CGRect(
 				x: ((rect.minX - selection.minX) / max(selection.width, 1))
-					* CGFloat(mosaicImage.width),
-				y: ((rect.minY - selection.minY) / max(selection.height, 1))
-					* CGFloat(mosaicImage.height),
-				width: (rect.width / max(selection.width, 1)) * CGFloat(mosaicImage.width),
-				height: (rect.height / max(selection.height, 1)) * CGFloat(mosaicImage.height)
-			).integral
-			guard let patch = mosaicImage.cropping(to: imageRect) else {
+					* imageSize.width,
+				y: ((selection.maxY - rect.maxY) / max(selection.height, 1))
+					* imageSize.height,
+				width: (rect.width / max(selection.width, 1)) * imageSize.width,
+				height: (rect.height / max(selection.height, 1)) * imageSize.height
+			)
+			guard let patch = makeFrozenMosaicPatch(from: baseImage, sourceRect: imageRect)
+			else {
 				continue
 			}
 			context.draw(patch, in: rect)
-			context.setStrokeColor(
-				NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.84).cgColor)
-			context.setLineWidth(1.5)
-			context.stroke(rect.insetBy(dx: 1, dy: 1))
 		}
+		context.restoreGState()
 	}
 
 	private func drawFrozenSpotlights(for selection: CGRect, in context: CGContext) {
@@ -4794,8 +4873,7 @@ final class CaptureHostView: NSView {
 			case .autoCenter:
 				item.enabled =
 					scene.frozenSelection != nil
-					&& chrome.frozenOverlay.activeTextEdit == nil
-					&& !chrome.frozenOverlay.canUndo
+					&& !chrome.frozenOverlay.keepsFrozenSelectionFixed
 			case .scroll:
 				item.enabled = false
 			default:
@@ -6176,8 +6254,11 @@ private struct CaptureChromeState {
 	var frozenDisplayFrame: CGRect?
 	var frozenDisplayImage: CGImage?
 	var frozenBaseImage: CGImage?
-	var frozenMosaicImage: CGImage?
 	var frozenOverlay = FrozenOverlayState()
+
+	var frozenSelectionTransformAllowed: Bool {
+		frozenSelectionEditable && !frozenOverlay.keepsFrozenSelectionFixed
+	}
 
 	mutating func resetLiveChrome() {
 		loupePatch = nil
@@ -6191,7 +6272,6 @@ private struct CaptureChromeState {
 		frozenDisplayFrame = nil
 		frozenDisplayImage = nil
 		frozenBaseImage = nil
-		frozenMosaicImage = nil
 		frozenOverlay.reset()
 	}
 
@@ -6207,7 +6287,6 @@ private struct CaptureChromeState {
 		frozenDisplayFrame = nil
 		frozenDisplayImage = nil
 		frozenBaseImage = nil
-		frozenMosaicImage = nil
 		frozenOverlay.reset()
 	}
 }
@@ -6225,6 +6304,7 @@ private struct FrozenOverlayState {
 		case pen(points: [CGPoint])
 		case arrow(start: CGPoint, current: CGPoint)
 		case mosaic(anchor: CGPoint, current: CGPoint)
+		case mosaicMove(index: Int, currentRect: CGRect, dragOffset: CGSize)
 		case spotlight(anchor: CGPoint, current: CGPoint)
 	}
 
@@ -6235,6 +6315,15 @@ private struct FrozenOverlayState {
 
 	var canUndo: Bool { !edits.isEmpty }
 	var canRedo: Bool { !redoEdits.isEmpty }
+	var keepsFrozenSelectionFixed: Bool {
+		!edits.isEmpty || !redoEdits.isEmpty || activeInteraction != nil || activeTextEdit != nil
+	}
+	var isMovingMosaic: Bool {
+		if case .mosaicMove? = activeInteraction {
+			return true
+		}
+		return false
+	}
 
 	mutating func reset() {
 		edits.removeAll()
@@ -6255,6 +6344,16 @@ private struct FrozenOverlayState {
 			activeInteraction = .arrow(start: point, current: point)
 		case .mosaic:
 			activeInteraction = .mosaic(anchor: point, current: point)
+		case .pointer:
+			guard let target = Self.mosaicMoveTarget(in: edits, at: point) else {
+				return false
+			}
+			activeInteraction = .mosaicMove(
+				index: target.index,
+				currentRect: target.rect,
+				dragOffset: CGSize(
+					width: point.x - target.rect.minX, height: point.y - target.rect.minY)
+			)
 		case .spotlight:
 			activeInteraction = .spotlight(anchor: point, current: point)
 		case .text:
@@ -6287,6 +6386,17 @@ private struct FrozenOverlayState {
 			self.activeInteraction = .arrow(start: start, current: selection.clamp(point))
 		case .mosaic(let anchor, _):
 			self.activeInteraction = .mosaic(anchor: anchor, current: selection.clamp(point))
+		case .mosaicMove(let index, let currentRect, let dragOffset):
+			self.activeInteraction = .mosaicMove(
+				index: index,
+				currentRect: Self.movedMosaicRect(
+					rect: currentRect,
+					dragOffset: dragOffset,
+					point: point,
+					selection: selection
+				),
+				dragOffset: dragOffset
+			)
 		case .spotlight(let anchor, _):
 			self.activeInteraction = .spotlight(anchor: anchor, current: selection.clamp(point))
 		}
@@ -6300,6 +6410,7 @@ private struct FrozenOverlayState {
 		}
 		defer { self.activeInteraction = nil }
 
+		var changed = true
 		switch activeInteraction {
 		case .pen(let points):
 			guard points.count >= 2 else {
@@ -6317,6 +6428,15 @@ private struct FrozenOverlayState {
 				return false
 			}
 			edits.append(.mosaic(rect))
+		case .mosaicMove(let index, let currentRect, _):
+			guard edits.indices.contains(index), case .mosaic(let oldRect) = edits[index] else {
+				return false
+			}
+			if oldRect == currentRect {
+				changed = false
+			} else {
+				edits[index] = .mosaic(currentRect)
+			}
 		case .spotlight(let anchor, let current):
 			let rect = selection.normalizedRect(anchor: anchor, current: current)
 			guard rect.width >= 6, rect.height >= 6 else {
@@ -6325,8 +6445,42 @@ private struct FrozenOverlayState {
 			edits.append(.spotlight(rect))
 		}
 
-		redoEdits.removeAll()
+		if changed {
+			redoEdits.removeAll()
+		}
 		return true
+	}
+
+	private static func mosaicMoveTarget(
+		in edits: [Edit],
+		at point: CGPoint
+	) -> (index: Int, rect: CGRect)? {
+		for index in edits.indices.reversed() {
+			if case .mosaic(let rect) = edits[index], rect.contains(point) {
+				return (index, rect)
+			}
+		}
+		return nil
+	}
+
+	func containsMosaic(at point: CGPoint) -> Bool {
+		Self.mosaicMoveTarget(in: edits, at: point) != nil
+	}
+
+	private static func movedMosaicRect(
+		rect: CGRect,
+		dragOffset: CGSize,
+		point: CGPoint,
+		selection: CGRect
+	) -> CGRect {
+		let maxMinX = max(selection.minX, selection.maxX - rect.width)
+		let maxMinY = max(selection.minY, selection.maxY - rect.height)
+		return CGRect(
+			x: min(max(point.x - dragOffset.width, selection.minX), maxMinX),
+			y: min(max(point.y - dragOffset.height, selection.minY), maxMinY),
+			width: rect.width,
+			height: rect.height
+		)
 	}
 
 	mutating func appendText(_ text: String) -> Bool {
@@ -6409,8 +6563,12 @@ private struct FrozenOverlayState {
 	}
 
 	var mosaicRects: [CGRect] {
-		edits.compactMap {
-			if case .mosaic(let rect) = $0 {
+		let movingIndex = movingMosaicEditIndex
+		return edits.indices.compactMap { index in
+			if index == movingIndex {
+				return nil
+			}
+			if case .mosaic(let rect) = edits[index] {
 				return rect
 			}
 			return nil
@@ -6449,6 +6607,13 @@ private struct FrozenOverlayState {
 		return nil
 	}
 
+	var movingMosaicEditIndex: Int? {
+		if case .mosaicMove(let index, _, _)? = activeInteraction {
+			return index
+		}
+		return nil
+	}
+
 	var previewMosaicRect: CGRect? {
 		if case .mosaic(let anchor, let current)? = activeInteraction {
 			return CGRect(
@@ -6457,6 +6622,9 @@ private struct FrozenOverlayState {
 				width: abs(current.x - anchor.x),
 				height: abs(current.y - anchor.y)
 			)
+		}
+		if case .mosaicMove(_, let currentRect, _)? = activeInteraction {
+			return currentRect
 		}
 		return nil
 	}
