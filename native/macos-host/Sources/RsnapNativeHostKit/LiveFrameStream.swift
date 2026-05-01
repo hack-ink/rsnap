@@ -132,49 +132,6 @@ final class LiveFrameStreamBroker {
 		)
 	}
 
-	func latestMonitorImage(containing point: CGPoint) -> (frame: CGRect, image: CGImage)? {
-		guard let monitor = monitor(containing: point) else {
-			return nil
-		}
-		stateLock.lock()
-		let sampler = self.sampler
-		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
-		stateLock.unlock()
-		guard let sampler else {
-			return nil
-		}
-		for _ in 0..<3 {
-			if let snapshot = try? sampler.peekLatestMonitorImage(monitor: encodedMonitor),
-				let image = cgImage(
-					width: snapshot.width, height: snapshot.height, rgba: snapshot.rgba)
-			{
-				return (frame: monitor.appKitFrame, image: image)
-			}
-			prime(monitor: monitor)
-			Thread.sleep(forTimeInterval: 1.0 / 120.0)
-		}
-		return nil
-	}
-
-	func cachedMonitorImage(containing point: CGPoint) -> (frame: CGRect, image: CGImage)? {
-		guard let monitor = monitor(containing: point) else {
-			return nil
-		}
-		stateLock.lock()
-		let sampler = self.sampler
-		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
-		stateLock.unlock()
-		guard let sampler else {
-			return nil
-		}
-		guard let snapshot = try? sampler.peekLatestMonitorImage(monitor: encodedMonitor),
-			let image = cgImage(width: snapshot.width, height: snapshot.height, rgba: snapshot.rgba)
-		else {
-			return nil
-		}
-		return (frame: monitor.appKitFrame, image: image)
-	}
-
 	func prime(at point: CGPoint?) {
 		guard let point, let monitor = monitor(containing: point) else {
 			return

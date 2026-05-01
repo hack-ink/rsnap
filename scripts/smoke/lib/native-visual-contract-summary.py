@@ -4,6 +4,7 @@ import statistics
 import struct
 import sys
 import time
+import zlib
 from datetime import datetime
 
 
@@ -52,6 +53,166 @@ def png_dimensions(path: str) -> tuple[int, int] | None:
     return struct.unpack(">II", header[16:24])
 
 
+def png_rgb_rows(path: str) -> tuple[int, int, int, list[bytes]] | None:
+    with open(path, "rb") as handle:
+        data = handle.read()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+
+    offset = 8
+    width = height = channels = 0
+    idat = bytearray()
+    while offset + 8 <= len(data):
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        kind = data[offset + 4 : offset + 8]
+        payload = data[offset + 8 : offset + 8 + length]
+        offset += 12 + length
+        if kind == b"IHDR":
+            width, height = struct.unpack(">II", payload[:8])
+            bit_depth = payload[8]
+            color_type = payload[9]
+            interlace = payload[12]
+            if bit_depth != 8 or interlace != 0 or color_type not in {2, 6}:
+                return None
+            channels = 4 if color_type == 6 else 3
+        elif kind == b"IDAT":
+            idat.extend(payload)
+        elif kind == b"IEND":
+            break
+
+    if width <= 0 or height <= 0 or channels <= 0:
+        return None
+
+    raw = zlib.decompress(bytes(idat))
+    stride = width * channels
+    rows: list[bytes] = []
+    previous = bytearray(stride)
+    cursor = 0
+    for _ in range(height):
+        filter_type = raw[cursor]
+        cursor += 1
+        row = bytearray(raw[cursor : cursor + stride])
+        cursor += stride
+        for index in range(stride):
+            left = row[index - channels] if index >= channels else 0
+            up = previous[index]
+            up_left = previous[index - channels] if index >= channels else 0
+            if filter_type == 1:
+                row[index] = (row[index] + left) & 0xFF
+            elif filter_type == 2:
+                row[index] = (row[index] + up) & 0xFF
+            elif filter_type == 3:
+                row[index] = (row[index] + ((left + up) // 2)) & 0xFF
+            elif filter_type == 4:
+                row[index] = (row[index] + paeth(left, up, up_left)) & 0xFF
+            elif filter_type != 0:
+                return None
+        rows.append(bytes(row))
+        previous = row
+    return width, height, channels, rows
+
+
+def paeth(left: int, up: int, up_left: int) -> int:
+    estimate = left + up - up_left
+    left_distance = abs(estimate - left)
+    up_distance = abs(estimate - up)
+    up_left_distance = abs(estimate - up_left)
+    if left_distance <= up_distance and left_distance <= up_left_distance:
+        return left
+    if up_distance <= up_left_distance:
+        return up
+    return up_left
+
+
+def count_leaked_drag_border(
+    path: str, display_bounds: str, drag_points: str
+) -> tuple[float, int] | None:
+    decoded = png_rgb_rows(path)
+    if decoded is None:
+        return None
+    width, height, channels, rows = decoded
+    left, top, right, bottom = map(float, display_bounds.replace(" ", "").split(","))
+    start_raw, end_raw = drag_points.split(";")[:2]
+    sx, sy = map(float, start_raw.split(","))
+    ex, ey = map(float, end_raw.split(","))
+    scale_x = width / max(1.0, right - left)
+    scale_y = height / max(1.0, bottom - top)
+    min_x = int((min(sx, ex) - left) * scale_x)
+    max_x = int((max(sx, ex) - left) * scale_x)
+    min_y = int((min(sy, ey) - top) * scale_y)
+    max_y = int((max(sy, ey) - top) * scale_y)
+    margin = max(12, int(10 * max(scale_x, scale_y)))
+    spans = [
+        (0, max(0, min_x - margin)),
+        (min(width, max_x + margin), width),
+    ]
+    row_indexes = [
+        y
+        for edge_y in (min_y, max_y)
+        for y in range(max(0, edge_y - 2), min(height, edge_y + 3))
+    ]
+
+    border_pixels = 0
+    sampled = 0
+    for y in row_indexes:
+        row = rows[y]
+        for span_left, span_right in spans:
+            for x in range(span_left, span_right):
+                sampled += 1
+                base = x * channels
+                red, green, blue = row[base], row[base + 1], row[base + 2]
+                if blue >= 150 and green >= 140 and red >= 100 and blue - red >= 20:
+                    border_pixels += 1
+    if sampled == 0:
+        return 0.0, 0
+    return border_pixels / sampled, border_pixels
+
+
+def count_leaked_horizontal_seam(
+    path: str, display_bounds: str, drag_points: str
+) -> tuple[float, int] | None:
+    decoded = png_rgb_rows(path)
+    if decoded is None:
+        return None
+    width, height, channels, rows = decoded
+    left, top, right, bottom = map(float, display_bounds.replace(" ", "").split(","))
+    start_raw, end_raw = drag_points.split(";")[:2]
+    sx, sy = map(float, start_raw.split(","))
+    ex, ey = map(float, end_raw.split(","))
+    scale_x = width / max(1.0, right - left)
+    scale_y = height / max(1.0, bottom - top)
+    min_x = int((min(sx, ex) - left) * scale_x)
+    max_x = int((max(sx, ex) - left) * scale_x)
+    min_y = int((min(sy, ey) - top) * scale_y)
+    max_y = int((max(sy, ey) - top) * scale_y)
+    margin = max(12, int(10 * max(scale_x, scale_y)))
+    spans = [
+        (0, max(0, min_x - margin)),
+        (min(width, max_x + margin), width),
+    ]
+    row_indexes = [
+        y
+        for edge_y in (min_y, max_y)
+        for y in range(max(0, edge_y - 1), min(height, edge_y + 2))
+    ]
+
+    bright_pixels = 0
+    sampled = 0
+    for y in row_indexes:
+        row = rows[y]
+        for span_left, span_right in spans:
+            for x in range(span_left, span_right):
+                sampled += 1
+                base = x * channels
+                red, green, blue = row[base], row[base + 1], row[base + 2]
+                luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+                if luminance >= 120:
+                    bright_pixels += 1
+    if sampled == 0:
+        return 0.0, 0
+    return bright_pixels / sampled, bright_pixels
+
+
 def line_epoch(line: str) -> float | None:
     try:
         parsed = datetime.strptime(line[:23], "%Y-%m-%d %H:%M:%S.%f")
@@ -67,8 +228,16 @@ if len(sys.argv) != 2:
 log_path = sys.argv[1]
 expected_mode = os.environ.get("EXPECTED_HUD_GLASS_MODE", "liquid").strip().lower()
 screenshot_path = os.environ.get("VISUAL_SCREENSHOT_PATH", "").strip()
+drag_screenshot_path = os.environ.get("VISUAL_DRAG_SCREENSHOT_PATH", "").strip()
+visual_display_bounds = os.environ.get("VISUAL_DISPLAY_BOUNDS", "").strip()
+visual_drag_points = os.environ.get("VISUAL_DRAG_POINTS", "").strip()
 mask_probe_path = os.environ.get("MASK_PROBE_PATH", "").strip()
 expected_min_freeze_commits = int(os.environ.get("EXPECTED_MIN_FREEZE_COMMITS", "1") or "1")
+expected_freeze_editability = [
+    value.strip().lower() == "true"
+    for value in os.environ.get("EXPECTED_FREEZE_EDITABILITY", "").split(",")
+    if value.strip()
+]
 smoke_started_epoch = float(os.environ.get("SMOKE_STARTED_EPOCH", "0") or "0")
 run_id_re = re.compile(r"runID=([^ ]+)")
 event_re = re.compile(r"event=([^ ]+)")
@@ -120,7 +289,8 @@ for required_event in [
         failures.append(f"missing event {required_event}")
 
 freeze_commit = events.get("capture_timing.freeze_commit", [{}])[-1]
-handoff = events.get("capture_timing.frozen_first_display_handoff", [{}])[-1]
+handoffs = events.get("capture_timing.frozen_first_display_handoff", [])
+handoff = handoffs[-1] if handoffs else {}
 freeze_commits = events.get("capture_timing.freeze_commit", [])
 freeze_commit_failures = events.get("capture_timing.freeze_commit_failed", [])
 
@@ -134,6 +304,20 @@ if freeze_commit_failures:
         "freeze commit failure events observed: "
         f"{len(freeze_commit_failures)}"
     )
+if expected_freeze_editability:
+    actual_editability = [
+        bool_field(handoff_event, "frozenSelectionEditable")
+        for handoff_event in handoffs[-len(expected_freeze_editability) :]
+    ]
+    print(
+        "[smoke] freeze_editability "
+        f"expected={expected_freeze_editability} actual={actual_editability}"
+    )
+    if actual_editability != expected_freeze_editability:
+        failures.append(
+            "frozen editability sequence mismatch: "
+            f"expected {expected_freeze_editability}, got {actual_editability}"
+        )
 
 if freeze_commit:
     total_ms = float_field(freeze_commit, "totalMs")
@@ -221,6 +405,62 @@ if handoff:
             failures.append("Classic Glass mode unexpectedly used Liquid Glass toolbar chrome")
     elif expected_mode not in {"liquid", "classic"}:
         failures.append(f"unknown EXPECTED_HUD_GLASS_MODE={expected_mode}")
+
+if drag_screenshot_path:
+    for drag_path in [path for path in drag_screenshot_path.split(":") if path]:
+        try:
+            size = os.path.getsize(drag_path)
+            dimensions = png_dimensions(drag_path)
+        except OSError as exc:
+            failures.append(f"drag screenshot missing: {exc}")
+        else:
+            if dimensions is None:
+                failures.append(f"drag screenshot is not a PNG: {drag_path}")
+            else:
+                width, height = dimensions
+                print(
+                    "[smoke] drag_screenshot "
+                    f"path={drag_path} width={width} height={height} bytes={size}"
+                )
+                if width < 500 or height < 400:
+                    failures.append(f"drag screenshot too small: {width}x{height}")
+                if visual_display_bounds and visual_drag_points:
+                    leak = count_leaked_drag_border(
+                        drag_path, visual_display_bounds, visual_drag_points
+                    )
+                    if leak is None:
+                        failures.append("drag screenshot could not be decoded for border-leak check")
+                    else:
+                        leak_ratio, leak_pixels = leak
+                        max_leak_ratio = threshold("MAX_DRAG_BORDER_LEAK_RATIO", 0.015)
+                        max_leak_pixels = int(threshold("MAX_DRAG_BORDER_LEAK_PIXELS", 80))
+                        print(
+                            "[smoke] drag_border_leak "
+                            f"ratio={leak_ratio:.5f} pixels={leak_pixels}"
+                        )
+                        if leak_ratio > max_leak_ratio and leak_pixels > max_leak_pixels:
+                            failures.append(
+                                "live drag border leaked outside the selection "
+                                f"(ratio={leak_ratio:.5f}, pixels={leak_pixels})"
+                            )
+                    seam = count_leaked_horizontal_seam(
+                        drag_path, visual_display_bounds, visual_drag_points
+                    )
+                    if seam is None:
+                        failures.append("drag screenshot could not be decoded for seam check")
+                    else:
+                        seam_ratio, seam_pixels = seam
+                        max_seam_ratio = threshold("MAX_DRAG_HORIZONTAL_SEAM_RATIO", 0.01)
+                        max_seam_pixels = int(threshold("MAX_DRAG_HORIZONTAL_SEAM_PIXELS", 80))
+                        print(
+                            "[smoke] drag_horizontal_seam "
+                            f"ratio={seam_ratio:.5f} pixels={seam_pixels}"
+                        )
+                        if seam_ratio > max_seam_ratio and seam_pixels > max_seam_pixels:
+                            failures.append(
+                                "live drag scrim leaked a horizontal seam outside the selection "
+                                f"(ratio={seam_ratio:.5f}, pixels={seam_pixels})"
+                            )
 
 if screenshot_path:
     try:

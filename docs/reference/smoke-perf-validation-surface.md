@@ -33,13 +33,13 @@ overlay runtime integration tests, and scroll-capture session semantics tests.
 | `scripts/smoke/replay-scroll-capture.sh` | Script entrypoint | deterministic replay | Runs the latest recorded trace through worker-pairwise replay. |
 | `scripts/smoke/replay-scroll-capture-self-check.sh` | Script entrypoint | deterministic replay | Runs the worker-pairwise replay self-check without a user trace. |
 | `scripts/smoke/analyze-scroll-capture-trace.sh` | Script entrypoint | deterministic replay | Emits summary-only replay analysis for semantic drift triage. |
-| `scripts/smoke/native-hud-follow-macos.sh` | Script entrypoint | live macOS smoke | Drives the default native-host HUD-follow smoke with a smooth high-rate cursor path. |
-| `scripts/smoke/native-visual-contract-macos.sh` | Script entrypoint | live macOS smoke | Drives Option-X, a drag-region frozen handoff, screenshots rsnap itself, and gates no-pending-frame/no-scrim-drop toolbar content/material contract telemetry. |
+| `scripts/smoke/native-hud-follow-macos.sh` | Script entrypoint | live macOS perf smoke | Dedicated HUD/loupe follow-cadence smoke for performance work, not part of the default macOS smoke aggregation. |
+| `scripts/smoke/native-visual-contract-macos.sh` | Script entrypoint | live macOS smoke | Core native-host behavior contract: repeated real click freezes, repeated held drag freezes, in-drag and frozen screenshots, click/drag editability, border-leak, scrim, and handoff telemetry gates. |
 | `scripts/smoke/self-check-macos.sh` | Script entrypoint | smoke readiness | Verifies macOS smoke tooling and replay self-check without the real GUI run. |
-| `scripts/smoke/macos.sh` | Script entrypoint | smoke aggregation | Runs native HUD follow, native visual contract, and recorded-trace replay. |
+| `scripts/smoke/macos.sh` | Script entrypoint | smoke aggregation | Runs the core native visual contract, then recorded-trace replay when a local trace exists or replay self-check when it does not. |
 | `scripts/perf/local.sh` | Script entrypoint | deterministic benches | Runs the committed Criterion smoke-sized benchmark sweep. |
 | `scripts/perf/self-check-macos.sh` | Script entrypoint | perf aggregation | Runs local deterministic benches plus macOS smoke readiness. |
-| `scripts/perf/macos.sh` | Script entrypoint | perf aggregation | Runs local deterministic benches plus `scripts/smoke/macos.sh`. |
+| `scripts/perf/macos.sh` | Script entrypoint | perf aggregation | Runs local deterministic benches, the dedicated HUD-follow perf smoke, the core native visual contract, and recorded-trace replay. |
 | `packages/rsnap-overlay/src/overlay/replay_support.rs` tests | Deterministic replay / bench | replay harness | Trace round-trip, replay mode selection, and summary classification. |
 | `packages/rsnap-overlay/benches/scroll_capture.rs` | Deterministic replay / bench | hot-path perf | Stable fingerprint, overlap-match, and one-step session commit baselines. |
 | `packages/rsnap-overlay/src/overlay/tests/worker_tick_runtime.rs` | Overlay runtime integration | overlay runtime | Request issuance, retry timing, backoff, and fresh-input worker scheduling. |
@@ -50,6 +50,8 @@ overlay runtime integration tests, and scroll-capture session semantics tests.
 
 - Prefer deleting or merging a script only when another remaining script still provides the same
   stable entrypoint value.
+- Keep native-host smoke entrypoints on `scripts/build_and_run.sh`; raw `swift build` is not a
+  substitute because the Swift executable must be relinked after Rust `rsnap-host-ffi` changes.
 - Prefer deleting or merging a runtime test only when its remaining assertions are already owned by
   `scroll_capture/tests.rs` and it no longer proves runtime state-machine behavior.
 - Prefer extracting shared fixtures when two layers intentionally cover different behavior with the

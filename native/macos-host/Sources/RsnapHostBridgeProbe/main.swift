@@ -84,7 +84,8 @@ enum RsnapHostBridgeProbe {
 		guard
 			try session.takeNextRequest()
 				== .requestFreezeSnapshot(
-					selection: CGRect(x: 120, y: 180, width: 140, height: 140))
+					selection: CGRect(x: 120, y: 180, width: 140, height: 140),
+					selectionEditable: true)
 		else {
 			fatalError("expected a freeze snapshot request")
 		}

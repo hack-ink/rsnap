@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 13u
+#define RSNAP_HOST_FFI_ABI_VERSION 14u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -211,6 +211,7 @@ typedef struct RsnapHostRequestValue {
 	uint32_t kind;
 	struct RsnapRect selection;
 	uint8_t has_selection;
+	uint8_t selection_editable;
 } RsnapHostRequestValue;
 
 typedef struct RsnapLiveSample {
