@@ -933,9 +933,6 @@ final class CaptureSessionController: NSObject {
 		at point: CGPoint,
 		selection: CGRect
 	) -> Bool {
-		guard chromeState.frozenSelectionEditable else {
-			return false
-		}
 		guard
 			let monitorFrame = screen(containing: CGPoint(x: selection.midX, y: selection.midY))?
 				.frame
@@ -4076,19 +4073,13 @@ final class CaptureHostView: NSView {
 			if let interaction = chrome.frozenSelectionInteraction {
 				return cursorPresentation(for: cursorIntent(for: interaction.kind, active: true))
 			}
-			if let selectedModeTool = visibleToolbarItems().first(where: { $0.selected })?.kind,
-				selectedModeTool == .pointer,
-				!chrome.frozenSelectionEditable
-			{
-				return .arrow
-			}
 			if let selection = chrome.frozenSelectionSnapshot ?? scene.frozenSelection,
 				let selectedModeTool = visibleToolbarItems().first(where: { $0.selected })?.kind
 			{
 				if [ToolbarItemKind.pen, .arrow, .mosaic, .spotlight].contains(selectedModeTool) {
 					return .crosshair
 				}
-				if selectedModeTool == .pointer, chrome.frozenSelectionEditable,
+				if selectedModeTool == .pointer,
 					let pointer = currentGlobalMousePoint(),
 					let intent = editableFrozenCursorIntent(at: pointer, selection: selection)
 				{
@@ -5028,7 +5019,7 @@ final class CaptureHostView: NSView {
 				? localRect(from: scene.liveSelectionPreview) : nil)
 		let hoverSelectionLocal =
 			dragSelectionLocal == nil
-			? localRect(from: liveHighlightedWindowPreview?.frame ?? scene.highlightedWindow?.frame)
+			? localRect(from: liveHighlightedWindowPreview?.frame)
 			: nil
 		let positionDisplay = currentPositionDisplay()
 		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
