@@ -105,6 +105,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		NSApp.activate(ignoringOtherApps: true)
 	}
 
+	var captureExceptionWindowIDs: Set<CGWindowID> {
+		guard window?.isVisible == true, let windowNumber = window?.windowNumber,
+			windowNumber > 0
+		else {
+			return []
+		}
+		return [CGWindowID(windowNumber)]
+	}
+
 	func windowWillClose(_: Notification) {
 		onClose()
 	}
