@@ -580,11 +580,13 @@ pub unsafe extern "C" fn rsnap_live_sampler_create_with_self_capture_exception_w
 	if window_id_count > 0 && window_ids.is_null() {
 		return ptr::null_mut();
 	}
+
 	let exception_window_ids = if window_id_count == 0 {
 		Vec::new()
 	} else {
 		unsafe { slice::from_raw_parts(window_ids, window_id_count) }.to_vec()
 	};
+
 	Box::into_raw(Box::new(RsnapLiveSamplerHandle {
 		sampler: HostMacLiveSampler::with_self_capture_exception_window_ids(exception_window_ids),
 	}))
