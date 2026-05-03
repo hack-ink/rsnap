@@ -177,6 +177,7 @@ pub(super) fn classify_vision_downward_sample_motion_against(
 	None
 }
 
+#[cfg(test)]
 pub(super) fn estimate_pairwise_downward_shift_rows(
 	previous: &RgbaImage,
 	current: &RgbaImage,
@@ -201,6 +202,23 @@ pub(super) fn estimate_pairwise_downward_shift_rows(
 		worker_pairwise_overlap_search_config(),
 	)
 	.map(|matched| matched.motion_rows)
+}
+
+pub(super) fn trusted_pairwise_downward_shift_rows_near_motion(
+	previous: &RgbaImage,
+	current: &RgbaImage,
+	motion_rows: u32,
+	tolerance_rows: u32,
+) -> Option<u32> {
+	match classify_pairwise_downward_shift_near_motion(
+		previous,
+		current,
+		motion_rows,
+		tolerance_rows,
+	) {
+		DownwardRegistration::Matched(matched) => Some(matched.motion_rows),
+		DownwardRegistration::Ambiguous { .. } | DownwardRegistration::NoMatch => None,
+	}
 }
 
 pub(super) fn select_downward_viewport_candidate(
@@ -693,6 +711,36 @@ pub(super) fn evenly_spaced_sample(start: u32, end_exclusive: u32, index: u32, c
 		(u64::from(index) * u64::from(span.saturating_sub(1))) / u64::from(count.saturating_sub(1));
 
 	start.saturating_add(numerator as u32).min(end_exclusive.saturating_sub(1))
+}
+
+fn classify_pairwise_downward_shift_near_motion(
+	previous: &RgbaImage,
+	current: &RgbaImage,
+	motion_rows: u32,
+	tolerance_rows: u32,
+) -> DownwardRegistration {
+	if previous.dimensions() != current.dimensions() {
+		return DownwardRegistration::NoMatch;
+	}
+
+	let (_width, height) = previous.dimensions();
+
+	if height < 3 {
+		return DownwardRegistration::NoMatch;
+	}
+
+	let max_shift = height.saturating_sub(1);
+	let start = motion_rows.saturating_sub(tolerance_rows).max(1);
+	let end = motion_rows.saturating_add(tolerance_rows).min(max_shift).max(start);
+	let candidates = collect_overlap_direction_matches(
+		previous,
+		current,
+		ScrollDirection::Down,
+		start..=end,
+		worker_pairwise_overlap_search_config(),
+	);
+
+	classify_downward_registration_candidates(&candidates)
 }
 
 fn worker_pairwise_overlap_search_config() -> OverlapSearchConfig {

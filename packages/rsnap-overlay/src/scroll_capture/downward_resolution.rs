@@ -1,3 +1,5 @@
+use color_eyre::eyre::Result;
+
 use crate::scroll_capture::support;
 use crate::scroll_capture::{
 	BlockedPreviewOnlyLocalCandidate, CommittedDownwardViewportCandidateMode,
@@ -12,7 +14,7 @@ use crate::scroll_capture::{
 	LOCAL_DOWNWARD_SEARCH_MOTION_TOLERANCE_ROWS, MotionObservation, OverlapSearchConfig,
 	OverlapSearchRange, PREVIEW_ONLY_LOCAL_NEAR_CONTINUITY_ROWS,
 	PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS, PREVIEW_ONLY_LOCAL_RECOVERY_MAX_TOLERANCE_ROWS,
-	REPEATED_PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS, RangeInclusive, Result, RgbaImage,
+	REPEATED_PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS, RangeInclusive, RgbaImage,
 	ScrollDirection, ScrollObserveOutcome, ScrollSession,
 	TINY_PREVIEW_ONLY_LOCAL_BURST_RECOVERY_MAX_MOTION_ROWS,
 	UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS, eyre,

@@ -9,7 +9,7 @@ pub(crate) use self::support::{
 
 use std::ops::RangeInclusive;
 
-use color_eyre::eyre::{self, Result};
+use color_eyre::eyre::{self};
 use image::RgbaImage;
 
 #[cfg(test)]
@@ -44,7 +44,6 @@ const FALLBACK_DOWNWARD_GROWTH_MIN_ROWS: u32 = 8;
 const FALLBACK_DOWNWARD_GROWTH_MAX_ROWS: u32 = 16;
 const TRANSIENT_MOTION_HINT_MAX_MULTIPLIER: u32 = 3;
 const TRANSIENT_MOTION_HINT_MIN_CAP_ROWS: u32 = 12;
-const WORKER_PAIRWISE_CORROBORATION_MIN_ROWS: u32 = 32;
 const WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS: u32 = 24;
 const DIRECTION_WARNING_MARGIN_X100: u32 = 90;
 const RESUME_DIRECT_PROOF_MAX_MEAN_ABS_DIFF_X100: u32 = 320;
@@ -252,7 +251,10 @@ pub(crate) struct ScrollSession {
 	preview_width_px: u32,
 }
 impl ScrollSession {
-	pub(crate) fn new(base_frame: RgbaImage, preview_width_px: u32) -> Result<Self> {
+	pub(crate) fn new(
+		base_frame: RgbaImage,
+		preview_width_px: u32,
+	) -> color_eyre::eyre::Result<Self> {
 		let fingerprint = scroll_capture_fingerprint(&base_frame);
 		let anchor_preview =
 			self::support::resize_strip_to_preview_width(&base_frame, preview_width_px.max(1));
@@ -320,7 +322,7 @@ impl ScrollSession {
 	pub(crate) fn observe_downward_sample(
 		&mut self,
 		frame: RgbaImage,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		self.observe_downward_sample_with_motion_hint(frame, None)
 	}
 
@@ -328,7 +330,7 @@ impl ScrollSession {
 		&mut self,
 		frame: RgbaImage,
 		motion_rows_hint: Option<u32>,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		self.observe_downward_sample_with_motion_hint_and_burst(frame, motion_rows_hint, false)
 	}
 
@@ -337,7 +339,7 @@ impl ScrollSession {
 		frame: RgbaImage,
 		motion_rows_hint: Option<u32>,
 		allow_burst_search: bool,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		self.observe_sample_with_motion_context(
 			frame,
 			ScrollDirection::Down,
@@ -350,14 +352,14 @@ impl ScrollSession {
 	pub(crate) fn observe_upward_sample(
 		&mut self,
 		frame: RgbaImage,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		self.observe_sample_with_motion_context(frame, ScrollDirection::Up, None, false)
 	}
 
 	pub(crate) fn observe_worker_pairwise_vision_frame(
 		&mut self,
 		frame: RgbaImage,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		self.clear_last_downward_sample_registration();
 
 		if frame.width() != self.anchor_frame.width() {
@@ -372,81 +374,83 @@ impl ScrollSession {
 		let previous_worker_frame = self.worker_pairwise_previous_frame.clone();
 
 		if frame == previous_worker_frame {
-			self.update_worker_pairwise_reference_frame(frame, fingerprint);
-			self.log_decision(
-				"scroll_capture.worker_pairwise_no_change",
-				ScrollDirection::Down,
-				None,
-				Some(self.observed_viewport_top_y),
-				Some(0),
-				Some("frame_matches_last_committed_frame"),
-			);
-
-			return Ok(ScrollObserveOutcome::NoChange);
+			return Ok(self.observe_worker_pairwise_no_change(
+				frame,
+				fingerprint,
+				"frame_matches_last_committed_frame",
+			));
 		}
 
 		let Some(matched) = self::support::classify_vision_downward_sample_motion_against(
 			&previous_worker_frame,
 			&frame,
 		) else {
-			self.update_worker_pairwise_reference_frame(frame, fingerprint);
-			self.log_decision(
-				"scroll_capture.worker_pairwise_no_change",
-				ScrollDirection::Down,
-				None,
-				Some(self.observed_viewport_top_y),
-				Some(0),
-				Some("worker_pairwise_vision_no_downward_offset"),
-			);
-
-			return Ok(ScrollObserveOutcome::NoChange);
+			return Ok(self.observe_worker_pairwise_no_change(
+				frame,
+				fingerprint,
+				"worker_pairwise_vision_no_downward_offset",
+			));
 		};
 		let corroborated_shift_rows =
-			self::support::estimate_pairwise_downward_shift_rows(&previous_worker_frame, &frame);
-
-		if matched.motion_rows >= WORKER_PAIRWISE_CORROBORATION_MIN_ROWS
-			&& corroborated_shift_rows.is_none_or(|estimated| {
-				estimated == 0
-					|| matched.motion_rows.abs_diff(estimated)
-						> WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS
-			}) {
-			self.update_worker_pairwise_reference_frame(frame, fingerprint);
-			self.log_decision(
-				"scroll_capture.worker_pairwise_growth_blocked",
-				ScrollDirection::Down,
-				Some(MotionObservation {
-					direction: ScrollDirection::Down,
-					motion_rows: matched.motion_rows,
-				}),
-				Some(self.current_viewport_top_y),
-				Some(0),
-				Some("worker_pairwise_large_growth_missing_corroboration"),
+			self::support::trusted_pairwise_downward_shift_rows_near_motion(
+				&previous_worker_frame,
+				&frame,
+				matched.motion_rows,
+				WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS,
 			);
+		let effective_motion_rows = match Self::resolve_worker_pairwise_motion_rows(
+			matched.motion_rows,
+			corroborated_shift_rows,
+		) {
+			Ok(motion_rows) => motion_rows,
+			Err(block_reason) => {
+				return Ok(self.block_worker_pairwise_growth(
+					frame,
+					fingerprint,
+					matched.motion_rows,
+					self.current_viewport_top_y,
+					0,
+					block_reason,
+				));
+			},
+		};
 
-			return Ok(ScrollObserveOutcome::NoChange);
+		tracing::debug!(
+			op = "scroll_capture.worker_pairwise_motion_resolved",
+			vision_motion_rows = matched.motion_rows,
+			corroborated_motion_rows = corroborated_shift_rows,
+			effective_motion_rows,
+			current_viewport_top_y = self.current_viewport_top_y,
+			observed_viewport_top_y = self.observed_viewport_top_y,
+			"Scroll-capture worker pairwise motion resolved against pixel overlap."
+		);
+
+		if effective_motion_rows == 0 {
+			return Ok(self.block_worker_pairwise_growth(
+				frame,
+				fingerprint,
+				effective_motion_rows,
+				self.current_viewport_top_y,
+				0,
+				"worker_pairwise_zero_effective_motion",
+			));
 		}
 
 		let candidate_viewport_top_y = self
 			.current_viewport_top_y
-			.saturating_add(i32::try_from(matched.motion_rows).unwrap_or_default());
+			.saturating_add(i32::try_from(effective_motion_rows).unwrap_or_default());
 		let growth_rows = self.growth_rows_for_candidate_viewport_top_y(candidate_viewport_top_y);
 		let frame_max_growth_rows = frame.height().saturating_sub(1).max(1);
 
 		if growth_rows == 0 || growth_rows > frame_max_growth_rows {
-			self.update_worker_pairwise_reference_frame(frame, fingerprint);
-			self.log_decision(
-				"scroll_capture.worker_pairwise_growth_blocked",
-				ScrollDirection::Down,
-				Some(MotionObservation {
-					direction: ScrollDirection::Down,
-					motion_rows: matched.motion_rows,
-				}),
-				Some(candidate_viewport_top_y),
-				Some(growth_rows),
-				Some("worker_pairwise_growth_exceeded_frame_bounds"),
-			);
-
-			return Ok(ScrollObserveOutcome::NoChange);
+			return Ok(self.block_worker_pairwise_growth(
+				frame,
+				fingerprint,
+				effective_motion_rows,
+				candidate_viewport_top_y,
+				growth_rows,
+				"worker_pairwise_growth_exceeded_frame_bounds",
+			));
 		}
 
 		self.log_decision(
@@ -454,7 +458,7 @@ impl ScrollSession {
 			ScrollDirection::Down,
 			Some(MotionObservation {
 				direction: ScrollDirection::Down,
-				motion_rows: matched.motion_rows,
+				motion_rows: effective_motion_rows,
 			}),
 			Some(candidate_viewport_top_y),
 			Some(growth_rows),
@@ -471,9 +475,70 @@ impl ScrollSession {
 			candidate_viewport_top_y,
 			"worker_pairwise_vision",
 			Some(matched.motion_rows),
-			None,
+			Some(effective_motion_rows),
 			None,
 		)
+	}
+
+	fn observe_worker_pairwise_no_change(
+		&mut self,
+		frame: RgbaImage,
+		fingerprint: Vec<u8>,
+		reason: &'static str,
+	) -> ScrollObserveOutcome {
+		self.update_worker_pairwise_reference_frame(frame, fingerprint);
+		self.log_decision(
+			"scroll_capture.worker_pairwise_no_change",
+			ScrollDirection::Down,
+			None,
+			Some(self.observed_viewport_top_y),
+			Some(0),
+			Some(reason),
+		);
+
+		ScrollObserveOutcome::NoChange
+	}
+
+	fn block_worker_pairwise_growth(
+		&mut self,
+		frame: RgbaImage,
+		fingerprint: Vec<u8>,
+		motion_rows: u32,
+		candidate_viewport_top_y: i32,
+		growth_rows: u32,
+		reason: &'static str,
+	) -> ScrollObserveOutcome {
+		self.update_worker_pairwise_reference_frame(frame, fingerprint);
+		self.log_decision(
+			"scroll_capture.worker_pairwise_growth_blocked",
+			ScrollDirection::Down,
+			Some(MotionObservation { direction: ScrollDirection::Down, motion_rows }),
+			Some(candidate_viewport_top_y),
+			Some(growth_rows),
+			Some(reason),
+		);
+
+		ScrollObserveOutcome::NoChange
+	}
+
+	fn resolve_worker_pairwise_motion_rows(
+		vision_motion_rows: u32,
+		corroborated_shift_rows: Option<u32>,
+	) -> std::result::Result<u32, &'static str> {
+		let Some(corroborated_shift_rows) = corroborated_shift_rows else {
+			return Err("worker_pairwise_missing_or_ambiguous_overlap_corroboration");
+		};
+
+		if corroborated_shift_rows == 0 {
+			return Err("worker_pairwise_zero_overlap_corroboration");
+		}
+		if vision_motion_rows.abs_diff(corroborated_shift_rows)
+			> WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS
+		{
+			return Err("worker_pairwise_vision_overlap_motion_mismatch");
+		}
+
+		Ok(corroborated_shift_rows)
 	}
 
 	fn update_worker_pairwise_reference_frame(&mut self, frame: RgbaImage, fingerprint: Vec<u8>) {
@@ -491,7 +556,7 @@ impl ScrollSession {
 		input_direction: ScrollDirection,
 		motion_rows_hint: Option<u32>,
 		allow_burst_search: bool,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		let previous_hint = self.transient_motion_rows_hint;
 		let previous_burst = self.transient_burst_search_enabled;
 
@@ -512,7 +577,7 @@ impl ScrollSession {
 		&mut self,
 		frame: RgbaImage,
 		input_direction: ScrollDirection,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		self.clear_last_downward_sample_registration();
 
 		if frame.width() != self.anchor_frame.width() {
@@ -724,7 +789,7 @@ impl ScrollSession {
 		sample_motion: Option<MotionObservation>,
 		downward_sample_match: Option<DownwardSampleMatch>,
 		preview_changed: bool,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		self.last_unconfirmed_upward_fingerprint = None;
 
 		if let Some(motion) = sample_motion {
@@ -797,7 +862,7 @@ impl ScrollSession {
 		sample_delta: Option<u32>,
 		sample_motion: Option<MotionObservation>,
 		_preview_changed: bool,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		let diagnostics = self.diagnose_upward_input(&frame);
 
 		self.log_upward_input_diagnostics(&diagnostics, sample_delta, sample_motion, &frame);
@@ -1416,7 +1481,7 @@ impl ScrollSession {
 		frame: RgbaImage,
 		observed_match: DownwardSampleMatch,
 		preview_changed: bool,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		let motion_rows = observed_match.matched.motion_rows;
 
 		if self.resume_frontier_top_y.is_some() {
@@ -1543,7 +1608,7 @@ impl ScrollSession {
 		observed_match: DownwardSampleMatch,
 		motion_rows: u32,
 		preview_changed: bool,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		let reset_preview_only_local_baseline =
 			self.should_reset_preview_only_local_baseline_after_huge_far_committed_block();
 		let preview_only_local_viewport_top_y = if self
@@ -1623,7 +1688,7 @@ impl ScrollSession {
 		candidate: DownwardViewportCandidate,
 		preview_changed: bool,
 		block_reason: &'static str,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
 
 		self.refresh_local_downward_sample(frame);
@@ -1790,7 +1855,7 @@ impl ScrollSession {
 		frame: RgbaImage,
 		motion_rows: u32,
 		preview_changed: bool,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		let candidate_observed_viewport_top_y = self
 			.observed_viewport_top_y
 			.saturating_add(i32::try_from(motion_rows).unwrap_or_default());
@@ -1963,7 +2028,7 @@ impl ScrollSession {
 		preview_changed: bool,
 		frame_reacquires_last_committed_viewport: bool,
 		context: ResumeFrontierDirectMatchContext,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		let direct_match_hint_rows = Some(self.resume_frontier_direct_match_hint_rows(context));
 		let raw_committed_down_match = self.evaluate_reference_overlap_direction_preferred_only(
 			&self.last_committed_frame,
@@ -2151,7 +2216,7 @@ impl ScrollSession {
 		preview_changed: bool,
 		down: DirectionMatch,
 		context: ResumeFrontierDirectMatchContext,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		let candidate_viewport_top_y = if self.resume_frontier_requires_reacquire {
 			let resume_frontier_top_y =
 				self.resume_frontier_top_y.unwrap_or(self.current_viewport_top_y);
@@ -2204,7 +2269,7 @@ impl ScrollSession {
 		preview_changed: bool,
 		detected_motion: Option<MotionObservation>,
 		decision_source: &'static str,
-	) -> Result<ScrollObserveOutcome> {
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
 		let growth_rows = self.growth_rows_for_candidate_viewport_top_y(candidate_viewport_top_y);
 		let effective_motion_rows_hint = self.effective_motion_rows_hint();
 

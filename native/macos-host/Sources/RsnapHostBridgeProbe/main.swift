@@ -104,10 +104,15 @@ enum RsnapHostBridgeProbe {
 			scene.statusMessage == nil,
 			scene.toolbarItems.contains(where: { $0.kind == .pointer && $0.selected }),
 			scene.toolbarItems.contains(where: { $0.kind == .ocr && $0.enabled }),
+			scene.toolbarItems.contains(where: { $0.kind == .scroll && $0.enabled }),
 			scene.toolbarItems.contains(where: { $0.kind == .copy && $0.enabled }),
 			scene.toolbarItems.contains(where: { $0.kind == .save && $0.enabled })
 		else {
 			fatalError("unexpected frozen scene: \(scene)")
+		}
+		try session.send(event: .toolbarItemInvoked(.scroll))
+		guard try session.takeNextRequest() == .startScrollCapture else {
+			fatalError("expected a start-scroll-capture host request")
 		}
 
 		try session.send(
@@ -306,6 +311,45 @@ enum RsnapHostBridgeProbe {
 			fatalError("stale live highlighted window was not cleared: \(scene)")
 		}
 
+		let baseScrollFrame = makeScrollFrame(width: 16, height: 96, topRow: 0)
+		let movedScrollFrame = makeScrollFrame(width: 16, height: 96, topRow: 24)
+		let scrollSession = try RsnapScrollCaptureSession(
+			baseImage: baseScrollFrame,
+			previewWidthPixels: baseScrollFrame.width
+		)
+		let scrollResult = try scrollSession.observeDownwardFrame(movedScrollFrame)
+		guard
+			scrollResult.outcome == .committed,
+			scrollResult.growthRows == 24,
+			scrollResult.exportWidth == 16,
+			scrollResult.exportHeight == 120,
+			scrollResult.currentViewportTopY == 24
+		else {
+			fatalError("unexpected scroll observe result: \(scrollResult)")
+		}
+		guard let scrollExport = try scrollSession.exportImage(), scrollExport.height == 120 else {
+			fatalError("unexpected scroll export image")
+		}
+
 		print("rsnap-host-bridge probe ok")
+	}
+
+	private static func makeScrollFrame(
+		width: Int,
+		height: Int,
+		topRow: Int
+	) -> RGBARegionSnapshot {
+		var rgba = Data()
+		rgba.reserveCapacity(width * height * 4)
+		for y in 0..<height {
+			let documentRow = topRow + y
+			for x in 0..<width {
+				rgba.append(UInt8((documentRow * 17 + x * 13) % 251))
+				rgba.append(UInt8((documentRow * 29 + x * 7) % 251))
+				rgba.append(UInt8((documentRow * 5 + x * 31) % 251))
+				rgba.append(255)
+			}
+		}
+		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
 	}
 }
