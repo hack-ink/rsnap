@@ -67,6 +67,8 @@ Then structure the body for execution:
 - `docs/runbook/scroll-capture-benchmarks.md` for deterministic scroll-capture benchmark usage
 - `docs/runbook/telemetry-debugging.md` for collecting and summarizing native-host OSLog plus
   Rust rolling logs during runtime debugging
+- `docs/runbook/validate-release.md` for the formal release-candidate and published-artifact
+  validation sequence
 
 Historical validation material is archived outside the active runbook lane and should not be used
 as the default validation route for reset work.
