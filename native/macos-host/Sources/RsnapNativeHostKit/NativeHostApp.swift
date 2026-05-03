@@ -270,7 +270,8 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 	@objc
 	private func startCapture(_ sender: Any?) {
-		sessionController.startCapture()
+		sessionController.startCapture(
+			capturableOwnWindowIDs: settingsWindowController.captureExceptionWindowIDs)
 	}
 
 	@objc
@@ -540,7 +541,8 @@ final class CaptureSessionController: NSObject {
 		at point: CGPoint,
 		source: String = "capture",
 		captureID: UInt64 = 0,
-		excludeSelfFromFrozenAuthority: Bool = false
+		excludeSelfFromFrozenAuthority: Bool = false,
+		includedCurrentProcessWindowIDs: Set<CGWindowID> = []
 	) -> LiveChromeSample? {
 		let warmStartedAt = ProcessInfo.processInfo.systemUptime
 		let screenCount = NSScreen.screens.count
@@ -563,7 +565,8 @@ final class CaptureSessionController: NSObject {
 			for: screens,
 			captureID: captureID,
 			source: source,
-			rebuildContentFilter: excludeSelfFromFrozenAuthority
+			rebuildContentFilter: excludeSelfFromFrozenAuthority,
+			includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
 		)
 		let frozenAuthorityStartMilliseconds =
 			NativeHostTelemetry.milliseconds(since: frozenAuthorityStartedAt)
@@ -588,7 +591,7 @@ final class CaptureSessionController: NSObject {
 		return sample
 	}
 
-	func startCapture() {
+	func startCapture(capturableOwnWindowIDs: Set<CGWindowID> = []) {
 		if session != nil {
 			NativeHostTelemetry.captureEvent(
 				"capture.focus_existing",
@@ -620,11 +623,13 @@ final class CaptureSessionController: NSObject {
 		do {
 			let startPoint = NSEvent.mouseLocation
 			prepareLiveSamplingForCaptureStart()
+			liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
 			let warmStartedAt = ProcessInfo.processInfo.systemUptime
 			let initialSample = warmLiveSamplingIfPossible(
 				at: startPoint,
 				source: "start_capture",
-				captureID: captureID
+				captureID: captureID,
+				includedCurrentProcessWindowIDs: capturableOwnWindowIDs
 			)
 			let initialRgbSample =
 				initialSample?.rgbSample
@@ -685,7 +690,8 @@ final class CaptureSessionController: NSObject {
 					captureID: captureID,
 					source: "capture_overlay_visible",
 					rebuildContentFilter: true,
-					selfCaptureExceptionWindowIDs: overlayController.selfCaptureExceptionWindowIDs
+					selfCaptureExceptionWindowIDs: overlayController.selfCaptureExceptionWindowIDs,
+					includedCurrentProcessWindowIDs: capturableOwnWindowIDs
 				)
 			}
 			let overlayShowMilliseconds =
@@ -2128,6 +2134,7 @@ final class CaptureSessionController: NSObject {
 	private func tearDownCapture() {
 		let captureID = currentCaptureTelemetryID
 		liveFrameStream.stop()
+		liveFrameStream.updateSelfCaptureExceptionWindowIDs([])
 		liveStreamPrimedByStartupPrewarm = false
 		frozenFrameLatchToken = nil
 		frozenSnapshotGeneration &+= 1

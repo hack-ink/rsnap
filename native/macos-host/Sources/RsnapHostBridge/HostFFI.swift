@@ -671,7 +671,7 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 	private let handle: OpaquePointer
 	private let stateLock = NSLock()
 
-	public init() throws {
+	public init(selfCaptureExceptionWindowIDs: [UInt32] = []) throws {
 		let actualAbi = rsnap_host_ffi_abi_version()
 		if actualAbi != RSNAP_HOST_FFI_ABI_VERSION {
 			throw HostBridgeError.abiVersionMismatch(
@@ -679,7 +679,18 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 				actual: actualAbi
 			)
 		}
-		guard let handle = rsnap_live_sampler_create() else {
+		let handle: OpaquePointer?
+		if selfCaptureExceptionWindowIDs.isEmpty {
+			handle = rsnap_live_sampler_create()
+		} else {
+			handle = selfCaptureExceptionWindowIDs.withUnsafeBufferPointer { buffer in
+				rsnap_live_sampler_create_with_self_capture_exception_window_ids(
+					buffer.baseAddress,
+					buffer.count
+				)
+			}
+		}
+		guard let handle else {
 			throw HostBridgeError.sessionCreationFailed
 		}
 		self.handle = handle

@@ -7,6 +7,8 @@
 #[cfg(target_os = "macos")]
 use std::mem;
 use std::ptr::{self, NonNull};
+#[cfg(target_os = "macos")]
+use std::slice;
 
 #[cfg(not(target_os = "macos"))]
 use rsnap_overlay as _;
@@ -21,7 +23,7 @@ use rsnap_capture_core::{
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 14;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 15;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -560,6 +562,32 @@ pub extern "C" fn rsnap_host_ffi_abi_version() -> u32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rsnap_live_sampler_create() -> *mut RsnapLiveSamplerHandle {
 	Box::into_raw(Box::new(RsnapLiveSamplerHandle { sampler: HostMacLiveSampler::new() }))
+}
+
+/// Creates a live sampler that keeps selected current-process windows capturable.
+///
+/// # Safety
+///
+/// `window_ids` must point to `window_id_count` valid `u32` values, or be null when
+/// `window_id_count` is zero. The returned pointer must be released by calling
+/// `rsnap_live_sampler_destroy`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_create_with_self_capture_exception_window_ids(
+	window_ids: *const u32,
+	window_id_count: usize,
+) -> *mut RsnapLiveSamplerHandle {
+	if window_id_count > 0 && window_ids.is_null() {
+		return ptr::null_mut();
+	}
+	let exception_window_ids = if window_id_count == 0 {
+		Vec::new()
+	} else {
+		unsafe { slice::from_raw_parts(window_ids, window_id_count) }.to_vec()
+	};
+	Box::into_raw(Box::new(RsnapLiveSamplerHandle {
+		sampler: HostMacLiveSampler::with_self_capture_exception_window_ids(exception_window_ids),
+	}))
 }
 
 /// Starts warming the live sampler for the requested monitor without blocking on the
