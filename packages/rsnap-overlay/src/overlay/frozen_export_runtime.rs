@@ -32,6 +32,7 @@ impl OverlaySession {
 			.state
 			.frozen_capture_rect
 			.unwrap_or_else(|| RectPoints::new(0, 0, monitor.width, monitor.height));
+
 		self.cropped_frozen_capture_image_for_rect(monitor, capture_rect)
 	}
 
