@@ -291,6 +291,31 @@ enum NativeHostTelemetry {
 		)
 	}
 
+	static func recognizeTextTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		captureImageMilliseconds: Double,
+		visionRequestMilliseconds: Double,
+		resultProcessingMilliseconds: Double,
+		clearPasteboardMilliseconds: Double,
+		writePasteboardMilliseconds: Double,
+		success: Bool,
+		outcome: String,
+		failureStage: String,
+		width: Int,
+		height: Int,
+		observationCount: Int,
+		recognizedLines: Int,
+		recognizedCharacters: Int,
+		recognitionLevel: String,
+		languageCorrection: Bool,
+		automaticLanguageDetection: Bool
+	) {
+		captureTimingLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.recognize_text totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) visionRequestMs=\(visionRequestMilliseconds, format: .fixed(precision: 2), privacy: .public) resultProcessingMs=\(resultProcessingMilliseconds, format: .fixed(precision: 2), privacy: .public) clearPasteboardMs=\(clearPasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) writePasteboardMs=\(writePasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) outcome=\(outcome, privacy: .public) failureStage=\(failureStage, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public) observationCount=\(observationCount, privacy: .public) recognizedLines=\(recognizedLines, privacy: .public) recognizedCharacters=\(recognizedCharacters, privacy: .public) recognitionLevel=\(recognitionLevel, privacy: .public) languageCorrection=\(languageCorrection, privacy: .public) automaticLanguageDetection=\(automaticLanguageDetection, privacy: .public)"
+		)
+	}
+
 	final class DistributionMetric: @unchecked Sendable {
 		private let name: String
 		private let unit: String
