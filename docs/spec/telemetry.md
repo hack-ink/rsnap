@@ -85,6 +85,7 @@ Use dotted lowercase names:
 - `capture_timing.start_capture`
 - `capture_timing.freeze_commit`
 - `capture_timing.copy_capture`
+- `capture_timing.recognize_text`
 - `frozen_authority.stream_start_failed`
 - `live_chrome.refresh_target`
 - `logging.file_initialized`
@@ -125,6 +126,9 @@ Expected capture-session chain:
 5. `capture_timing.copy_capture`
 6. `capture.teardown`
 
+Optional host-effect timing events include `capture_timing.recognize_text` when the user requests
+OCR from a frozen capture.
+
 Missing events in the chain are evidence of the next failing phase and should be treated as
 debug signal, not as logging noise.
 
@@ -148,3 +152,7 @@ rendering path can change without `targetHz` changing.
 Native-host telemetry can mark diagnostic fields public when they are needed for debugging.
 Do not log captured image contents, OCR text, clipboard contents, or user-entered annotation
 text. Paths may be logged only when they identify app resources or log artifacts.
+
+OCR telemetry may log timing, image dimensions, Vision request configuration, observation counts,
+non-empty line counts, character counts, and final outcome labels. It must not log recognized text,
+candidate strings, image contents, clipboard contents, or annotation text.

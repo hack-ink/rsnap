@@ -2130,19 +2130,78 @@ final class CaptureSessionController: NSObject {
 		guard let session else {
 			return
 		}
+		let captureID = currentCaptureTelemetryID
+		let recognizeStartedAt = ProcessInfo.processInfo.systemUptime
+		let captureImageStartedAt = ProcessInfo.processInfo.systemUptime
+		let recognitionLevel = "accurate"
+		let usesLanguageCorrection = true
+		let automaticallyDetectsLanguage = true
 		guard let cgImage = try captureFrozenSelectionImage() else {
+			NativeHostTelemetry.recognizeTextTiming(
+				captureID: captureID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: recognizeStartedAt),
+				captureImageMilliseconds: NativeHostTelemetry.milliseconds(
+					since: captureImageStartedAt),
+				visionRequestMilliseconds: 0,
+				resultProcessingMilliseconds: 0,
+				clearPasteboardMilliseconds: 0,
+				writePasteboardMilliseconds: 0,
+				success: false,
+				outcome: "recognize_error",
+				failureStage: "capture_image",
+				width: 0,
+				height: 0,
+				observationCount: 0,
+				recognizedLines: 0,
+				recognizedCharacters: 0,
+				recognitionLevel: recognitionLevel,
+				languageCorrection: usesLanguageCorrection,
+				automaticLanguageDetection: automaticallyDetectsLanguage
+			)
 			try sendHostStatusMessage("Could not capture the frozen selection.")
 			return
 		}
+		let captureImageMilliseconds =
+			NativeHostTelemetry.milliseconds(since: captureImageStartedAt)
 
 		let request = VNRecognizeTextRequest()
 		request.recognitionLevel = .accurate
-		request.usesLanguageCorrection = true
-		request.automaticallyDetectsLanguage = true
+		request.usesLanguageCorrection = usesLanguageCorrection
+		request.automaticallyDetectsLanguage = automaticallyDetectsLanguage
 		let handler = VNImageRequestHandler(cgImage: cgImage)
-		try handler.perform([request])
+		let visionStartedAt = ProcessInfo.processInfo.systemUptime
+		do {
+			try handler.perform([request])
+		} catch {
+			NativeHostTelemetry.recognizeTextTiming(
+				captureID: captureID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: recognizeStartedAt),
+				captureImageMilliseconds: captureImageMilliseconds,
+				visionRequestMilliseconds: NativeHostTelemetry.milliseconds(
+					since: visionStartedAt),
+				resultProcessingMilliseconds: 0,
+				clearPasteboardMilliseconds: 0,
+				writePasteboardMilliseconds: 0,
+				success: false,
+				outcome: "recognize_error",
+				failureStage: "vision_request",
+				width: cgImage.width,
+				height: cgImage.height,
+				observationCount: 0,
+				recognizedLines: 0,
+				recognizedCharacters: 0,
+				recognitionLevel: recognitionLevel,
+				languageCorrection: usesLanguageCorrection,
+				automaticLanguageDetection: automaticallyDetectsLanguage
+			)
+			throw error
+		}
+		let visionRequestMilliseconds = NativeHostTelemetry.milliseconds(since: visionStartedAt)
 
-		let text = (request.results ?? [])
+		let resultProcessingStartedAt = ProcessInfo.processInfo.systemUptime
+		let observations = request.results ?? []
+		let recognizedLines =
+			observations
 			.compactMap { observation -> String? in
 				guard let line = observation.topCandidates(1).first?.string,
 					!line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -2151,16 +2210,70 @@ final class CaptureSessionController: NSObject {
 				}
 				return line
 			}
-			.joined(separator: "\n")
+		let text = recognizedLines.joined(separator: "\n")
+		let resultProcessingMilliseconds =
+			NativeHostTelemetry.milliseconds(since: resultProcessingStartedAt)
 
+		var clearPasteboardMilliseconds = 0.0
+		var writePasteboardMilliseconds = 0.0
 		if !text.isEmpty {
 			let pasteboard = NSPasteboard.general
+			let clearPasteboardStartedAt = ProcessInfo.processInfo.systemUptime
 			pasteboard.clearContents()
+			clearPasteboardMilliseconds =
+				NativeHostTelemetry.milliseconds(since: clearPasteboardStartedAt)
+			let writePasteboardStartedAt = ProcessInfo.processInfo.systemUptime
 			guard pasteboard.setString(text, forType: .string) else {
+				writePasteboardMilliseconds =
+					NativeHostTelemetry.milliseconds(since: writePasteboardStartedAt)
+				NativeHostTelemetry.recognizeTextTiming(
+					captureID: captureID,
+					totalMilliseconds: NativeHostTelemetry.milliseconds(
+						since: recognizeStartedAt),
+					captureImageMilliseconds: captureImageMilliseconds,
+					visionRequestMilliseconds: visionRequestMilliseconds,
+					resultProcessingMilliseconds: resultProcessingMilliseconds,
+					clearPasteboardMilliseconds: clearPasteboardMilliseconds,
+					writePasteboardMilliseconds: writePasteboardMilliseconds,
+					success: false,
+					outcome: "recognize_error",
+					failureStage: "pasteboard_write",
+					width: cgImage.width,
+					height: cgImage.height,
+					observationCount: observations.count,
+					recognizedLines: recognizedLines.count,
+					recognizedCharacters: text.count,
+					recognitionLevel: recognitionLevel,
+					languageCorrection: usesLanguageCorrection,
+					automaticLanguageDetection: automaticallyDetectsLanguage
+				)
 				try sendHostStatusMessage("Could not copy recognized text.")
 				return
 			}
+			writePasteboardMilliseconds =
+				NativeHostTelemetry.milliseconds(since: writePasteboardStartedAt)
 		}
+
+		NativeHostTelemetry.recognizeTextTiming(
+			captureID: captureID,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: recognizeStartedAt),
+			captureImageMilliseconds: captureImageMilliseconds,
+			visionRequestMilliseconds: visionRequestMilliseconds,
+			resultProcessingMilliseconds: resultProcessingMilliseconds,
+			clearPasteboardMilliseconds: clearPasteboardMilliseconds,
+			writePasteboardMilliseconds: writePasteboardMilliseconds,
+			success: true,
+			outcome: text.isEmpty ? "no_text" : "text_ready",
+			failureStage: "none",
+			width: cgImage.width,
+			height: cgImage.height,
+			observationCount: observations.count,
+			recognizedLines: recognizedLines.count,
+			recognizedCharacters: text.count,
+			recognitionLevel: recognitionLevel,
+			languageCorrection: usesLanguageCorrection,
+			automaticLanguageDetection: automaticallyDetectsLanguage
+		)
 
 		try session.send(report: .hostEffectCompleted(.recognizeText))
 		let message =
