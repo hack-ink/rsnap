@@ -117,6 +117,51 @@ package func frozenExportSourceImageRect(
 	)
 }
 
+package func scrollCaptureMinimapFrame(
+	for selection: CGRect,
+	exportSize: CGSize,
+	in bounds: CGRect,
+	preferredWidth: CGFloat,
+	minimumWidth: CGFloat,
+	gap: CGFloat,
+	margin: CGFloat
+) -> CGRect? {
+	guard exportSize.width > 0, exportSize.height > 0, bounds.width > margin * 2,
+		bounds.height > margin * 2
+	else {
+		return nil
+	}
+
+	let rightSpace = bounds.maxX - selection.maxX - gap - margin
+	let leftSpace = selection.minX - bounds.minX - gap - margin
+	let useRight: Bool
+	let sideSpace: CGFloat
+	if rightSpace >= minimumWidth {
+		useRight = true
+		sideSpace = rightSpace
+	} else if leftSpace >= minimumWidth {
+		useRight = false
+		sideSpace = leftSpace
+	} else {
+		useRight = rightSpace >= leftSpace
+		sideSpace = max(rightSpace, leftSpace)
+	}
+
+	let maxHeight = bounds.height - margin * 2
+	let aspectHeightPerWidth = exportSize.height / exportSize.width
+	let heightLimitedWidth = maxHeight / max(aspectHeightPerWidth, .leastNonzeroMagnitude)
+	let width = min(preferredWidth, sideSpace, heightLimitedWidth)
+	guard width >= min(minimumWidth, preferredWidth) * 0.55 else {
+		return nil
+	}
+
+	let height = width * aspectHeightPerWidth
+	let maxY = max(margin, bounds.maxY - margin - height)
+	let y = (selection.midY - height / 2).clamped(to: margin...maxY)
+	let x = useRight ? selection.maxX + gap : selection.minX - gap - width
+	return CGRect(x: x, y: y, width: width, height: height)
+}
+
 private func makeFrozenMosaicPatch(from image: CGImage, sourceRect: CGRect) -> CGImage? {
 	let imageRect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
 	let cropRect = sourceRect.integral.intersection(imageRect)
@@ -544,6 +589,8 @@ final class CaptureSessionController: NSObject {
 	private static let autoCenterMaxIterations = 6
 	private static let displayFirstFrameWait: TimeInterval = 0.025
 	private static let coldSelfCaptureRecoveryWait: TimeInterval = 3.5
+	private static let scrollCaptureForwardingPassthrough: TimeInterval = 0.055
+	private static let scrollCaptureSampleDelay: TimeInterval = 0.04
 
 	private let settingsStore: NativeHostSettingsStore
 	private let liveFrameStream = LiveFrameStreamBroker()
@@ -554,6 +601,8 @@ final class CaptureSessionController: NSObject {
 	private var frozenFrameLatchToken: FrozenFrameLatchToken?
 	private var frozenSnapshotGeneration: UInt64 = 0
 	private var completedHostEffect: HostEffectKind?
+	private var scrollCaptureState: NativeScrollCaptureState?
+	private var scrollCaptureGlobalMonitor: Any?
 	private var liveStreamPrimedByStartupPrewarm = false
 	private var nextCaptureTelemetryID: UInt64 = 1
 	private var activeCaptureTelemetryID: UInt64?
@@ -1054,17 +1103,7 @@ final class CaptureSessionController: NSObject {
 	func startScrollCapture() {
 		let _ = chromeState.frozenOverlay.commitTextEdit(
 			style: chromeState.annotationStyle.textStyle)
-		do {
-			try sendHostStatusMessage("Scroll capture is not available in the native host yet.")
-			try syncCore()
-		} catch {
-			NativeHostTelemetry.captureWarning(
-				"capture.scroll_unavailable_report_failed",
-				captureID: currentCaptureTelemetryID,
-				stage: "send_or_sync",
-				error: String(describing: error)
-			)
-		}
+		sendFrozenAction(.toolbarItemInvoked(.scroll))
 	}
 
 	func invokeToolbarItem(_ item: ToolbarItemKind) {
@@ -1586,6 +1625,8 @@ final class CaptureSessionController: NSObject {
 				selection,
 				editable: selectionEditable
 			)
+		case .startScrollCapture:
+			try beginNativeScrollCapture()
 		case .copyCapture:
 			try performCopy()
 		case .saveCapture:
@@ -1747,12 +1788,12 @@ final class CaptureSessionController: NSObject {
 			frozenSelection: selection,
 			rgb: scene.rgb,
 			loupeVisible: false,
-			toolbarItems: hostOwnedFrozenToolbarItems(),
+			toolbarItems: hostOwnedFrozenToolbarItems(scrollEnabled: editable),
 			statusMessage: nil
 		)
 	}
 
-	private func hostOwnedFrozenToolbarItems() -> [ToolbarItem] {
+	private func hostOwnedFrozenToolbarItems(scrollEnabled: Bool) -> [ToolbarItem] {
 		let allowTextInput =
 			session?.configuration.allowTextInput
 			?? settingsStore.sessionConfiguration.allowTextInput
@@ -1766,7 +1807,7 @@ final class CaptureSessionController: NSObject {
 			ToolbarItem(kind: .undo, enabled: false, selected: false),
 			ToolbarItem(kind: .redo, enabled: false, selected: false),
 			ToolbarItem(kind: .autoCenter, enabled: true, selected: false),
-			ToolbarItem(kind: .scroll, enabled: false, selected: false),
+			ToolbarItem(kind: .scroll, enabled: scrollEnabled, selected: false),
 		]
 		if allowTextInput {
 			items.append(ToolbarItem(kind: .ocr, enabled: true, selected: false))
@@ -1774,6 +1815,214 @@ final class CaptureSessionController: NSObject {
 		items.append(ToolbarItem(kind: .copy, enabled: true, selected: false))
 		items.append(ToolbarItem(kind: .save, enabled: true, selected: false))
 		return items
+	}
+
+	var scrollCaptureToolbarEnabled: Bool {
+		scene.mode == .frozen
+			&& scrollCaptureState == nil
+			&& currentFrozenSelection() != nil
+	}
+
+	func handleScrollCaptureWheel(_ event: NSEvent, at point: CGPoint) -> Bool {
+		guard var state = scrollCaptureState else {
+			return false
+		}
+		guard state.viewportRect.contains(point) else {
+			return false
+		}
+
+		let targetPoint = CGPoint(
+			x: point.x.clamped(to: state.viewportRect.minX...state.viewportRect.maxX),
+			y: point.y.clamped(to: state.viewportRect.minY...state.viewportRect.maxY)
+		)
+		let posted =
+			overlayController?.withPrimaryMousePassthrough(
+				duration: Self.scrollCaptureForwardingPassthrough
+			) {
+				Self.postScrollWheelEvent(matching: event, at: targetPoint)
+			} ?? Self.postScrollWheelEvent(matching: event, at: targetPoint)
+
+		guard posted else {
+			try? setHostStatusMessage("Could not forward scroll input.")
+			refreshOverlay()
+			return true
+		}
+
+		state.sampleGeneration &+= 1
+		let generation = state.sampleGeneration
+		scrollCaptureState = state
+		DispatchQueue.main.asyncAfter(deadline: .now() + Self.scrollCaptureSampleDelay) {
+			[weak self] in
+			self?.observeNativeScrollCaptureFrame(generation: generation)
+		}
+
+		return true
+	}
+
+	private func installNativeScrollCaptureMonitor() {
+		removeNativeScrollCaptureMonitor()
+		scrollCaptureGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) {
+			[weak self] _ in
+			DispatchQueue.main.async { [weak self] in
+				self?.scheduleNativeScrollCaptureSampleIfPointerIsInViewport()
+			}
+		}
+	}
+
+	private func removeNativeScrollCaptureMonitor() {
+		if let monitor = scrollCaptureGlobalMonitor {
+			NSEvent.removeMonitor(monitor)
+			scrollCaptureGlobalMonitor = nil
+		}
+		overlayController?.setScrollCaptureMousePassthroughActive(false)
+	}
+
+	private func scheduleNativeScrollCaptureSampleIfPointerIsInViewport() {
+		guard let state = scrollCaptureState else {
+			return
+		}
+		guard state.viewportRect.contains(NSEvent.mouseLocation) else {
+			return
+		}
+		scheduleNativeScrollCaptureSample()
+	}
+
+	private func scheduleNativeScrollCaptureSample() {
+		guard var state = scrollCaptureState else {
+			return
+		}
+		state.sampleGeneration &+= 1
+		let generation = state.sampleGeneration
+		scrollCaptureState = state
+		DispatchQueue.main.asyncAfter(deadline: .now() + Self.scrollCaptureSampleDelay) {
+			[weak self] in
+			self?.observeNativeScrollCaptureFrame(generation: generation)
+		}
+	}
+
+	private func beginNativeScrollCapture() throws {
+		guard scrollCaptureState == nil else {
+			try setHostStatusMessage("Scroll capture is already active.")
+			refreshOverlay()
+			return
+		}
+		guard scene.mode == .frozen, let selection = currentFrozenSelection() else {
+			try setHostStatusMessage("Scroll capture requires a frozen selection.")
+			refreshOverlay()
+			return
+		}
+		guard chromeState.frozenSelectionEditable else {
+			try setHostStatusMessage("Scroll capture requires a dragged region selection.")
+			refreshOverlay()
+			return
+		}
+
+		ensureFrozenBaseImageFromDisplayIfNeeded(for: selection)
+		let baseImage = chromeState.frozenBaseImage ?? frozenBaseImageFromDisplay(for: selection)
+		guard let baseImage, let baseSnapshot = Self.rgbaSnapshot(from: baseImage) else {
+			try setHostStatusMessage("Scroll capture could not read the selected region.")
+			refreshOverlay()
+			return
+		}
+
+		let stitcher = try RsnapScrollCaptureSession(
+			baseImage: baseSnapshot,
+			previewWidthPixels: baseSnapshot.width
+		)
+		scrollCaptureState = NativeScrollCaptureState(
+			stitcher: stitcher,
+			viewportRect: selection
+		)
+		installNativeScrollCaptureMonitor()
+		overlayController?.setScrollCaptureMousePassthroughActive(true)
+		chromeState.frozenOverlay.reset()
+		chromeState.frozenSelectionEditable = false
+		chromeState.frozenSelectionInteraction = nil
+		chromeState.frozenSelectionSnapshot = selection
+		chromeState.frozenDisplayFrame = nil
+		chromeState.frozenDisplayImage = nil
+		chromeState.frozenBaseImage = baseImage
+		chromeState.scrollMinimapPreview = ScrollCaptureMinimapSnapshot(
+			image: baseImage,
+			exportSizePixels: CGSize(
+				width: CGFloat(baseSnapshot.width),
+				height: CGFloat(baseSnapshot.height)
+			),
+			viewportTopYPixels: 0,
+			viewportHeightPixels: CGFloat(baseSnapshot.height)
+		)
+		try setHostStatusMessage(
+			"Scroll capture started. Scroll inside the selection, then copy or save.")
+		refreshOverlay()
+	}
+
+	private func observeNativeScrollCaptureFrame(generation: UInt64) {
+		guard let state = scrollCaptureState, generation <= state.sampleGeneration else {
+			return
+		}
+		guard
+			let sampleImage = overlayController?.backgroundPatch(in: state.viewportRect),
+			let sample = Self.rgbaSnapshot(from: sampleImage)
+		else {
+			try? setHostStatusMessage("Scroll capture could not sample the scrolled region.")
+			refreshOverlay()
+			return
+		}
+
+		do {
+			let result = try state.stitcher.observeDownwardFrame(sample)
+			try refreshNativeScrollCapturePreview(
+				result: result,
+				currentViewportSnapshot: sample
+			)
+		} catch {
+			NativeHostTelemetry.captureWarning(
+				"capture.scroll_observe_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: "observe_frame",
+				error: String(describing: error)
+			)
+			try? setHostStatusMessage("Scroll capture could not stitch that frame.")
+			refreshOverlay()
+		}
+	}
+
+	private func refreshNativeScrollCapturePreview(
+		result: ScrollObserveResult,
+		currentViewportSnapshot: RGBARegionSnapshot
+	) throws {
+		guard let state = scrollCaptureState else {
+			return
+		}
+		guard
+			let export = try state.stitcher.exportImage(),
+			let exportImage = Self.cgImage(from: export)
+		else {
+			try setHostStatusMessage("Scroll capture could not render the stitched image.")
+			refreshOverlay()
+			return
+		}
+
+		chromeState.frozenSelectionSnapshot = state.viewportRect
+		chromeState.frozenSelectionEditable = false
+		chromeState.frozenSelectionInteraction = nil
+		chromeState.frozenDisplayFrame = nil
+		chromeState.frozenDisplayImage = nil
+		chromeState.scrollMinimapPreview = ScrollCaptureMinimapSnapshot(
+			image: exportImage,
+			exportSizePixels: CGSize(width: CGFloat(export.width), height: CGFloat(export.height)),
+			viewportTopYPixels: CGFloat(result.currentViewportTopY),
+			viewportHeightPixels: CGFloat(currentViewportSnapshot.height)
+		)
+
+		if result.outcome == .committed {
+			try setHostStatusMessage(
+				"Scroll capture appended \(result.growthRows) px. Copy or save exports the stitched image."
+			)
+		} else if result.outcome == .unsupportedDirection {
+			try setHostStatusMessage("Scroll capture only appends downward motion.")
+		}
+		refreshOverlay()
 	}
 
 	private func performCopy() throws {
@@ -1919,6 +2168,19 @@ final class CaptureSessionController: NSObject {
 		completedHostEffect = .recognizeText
 	}
 
+	private func activeScrollCaptureExportImage() throws -> CGImage? {
+		guard let state = scrollCaptureState else {
+			return nil
+		}
+		guard
+			let export = try state.stitcher.exportImage(),
+			let exportImage = Self.cgImage(from: export)
+		else {
+			return nil
+		}
+		return exportImage
+	}
+
 	private func captureFrozenSelectionImage() throws -> CGImage? {
 		let captureStartedAt = ProcessInfo.processInfo.systemUptime
 		guard let selection = currentFrozenSelection() else {
@@ -1935,6 +2197,22 @@ final class CaptureSessionController: NSObject {
 				hasOverlayEdits: false
 			)
 			return nil
+		}
+
+		if let scrollExport = try activeScrollCaptureExportImage() {
+			NativeHostTelemetry.frozenSelectionImageTiming(
+				captureID: currentCaptureTelemetryID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
+				ensureMilliseconds: 0,
+				refreshMilliseconds: 0,
+				compositeMilliseconds: 0,
+				source: "scroll_capture_export",
+				success: true,
+				width: scrollExport.width,
+				height: scrollExport.height,
+				hasOverlayEdits: false
+			)
+			return scrollExport
 		}
 
 		let snapshotMatchedBefore = chromeState.frozenSelectionSnapshot == selection
@@ -2046,6 +2324,101 @@ final class CaptureSessionController: NSObject {
 		return image.cropping(to: cropRect)
 	}
 
+	private static func rgbaSnapshot(from image: CGImage) -> RGBARegionSnapshot? {
+		let width = image.width
+		let height = image.height
+		guard width > 0, height > 0 else {
+			return nil
+		}
+
+		let bytesPerPixel = 4
+		let bytesPerRow = width * bytesPerPixel
+		var rgba = Data(count: bytesPerRow * height)
+		let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+		let bitmapInfo =
+			CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+		let rendered = rgba.withUnsafeMutableBytes { buffer -> Bool in
+			guard
+				let baseAddress = buffer.baseAddress,
+				let context = CGContext(
+					data: baseAddress,
+					width: width,
+					height: height,
+					bitsPerComponent: 8,
+					bytesPerRow: bytesPerRow,
+					space: colorSpace,
+					bitmapInfo: bitmapInfo
+				)
+			else {
+				return false
+			}
+			context.interpolationQuality = .none
+			context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+			return true
+		}
+		guard rendered else {
+			return nil
+		}
+
+		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
+	}
+
+	private static func cgImage(from snapshot: RGBARegionSnapshot) -> CGImage? {
+		guard snapshot.width > 0, snapshot.height > 0 else {
+			return nil
+		}
+		let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+		let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
+		guard
+			let provider = CGDataProvider(data: snapshot.rgba as CFData),
+			let image = CGImage(
+				width: snapshot.width,
+				height: snapshot.height,
+				bitsPerComponent: 8,
+				bitsPerPixel: 32,
+				bytesPerRow: snapshot.width * 4,
+				space: colorSpace,
+				bitmapInfo: bitmapInfo,
+				provider: provider,
+				decode: nil,
+				shouldInterpolate: false,
+				intent: .defaultIntent
+			)
+		else {
+			return nil
+		}
+
+		return image
+	}
+
+	private static func postScrollWheelEvent(matching event: NSEvent, at point: CGPoint) -> Bool {
+		let deltaX = Int32(event.scrollingDeltaX.rounded())
+		let deltaY = Int32(event.scrollingDeltaY.rounded())
+		guard deltaX != 0 || deltaY != 0 else {
+			return false
+		}
+
+		let units: CGScrollEventUnit = event.hasPreciseScrollingDeltas ? .pixel : .line
+		let wheelCount: UInt32 = deltaX == 0 ? 1 : 2
+		guard
+			let source = CGEventSource(stateID: .hidSystemState),
+			let scrollEvent = CGEvent(
+				scrollWheelEvent2Source: source,
+				units: units,
+				wheelCount: wheelCount,
+				wheel1: deltaY,
+				wheel2: deltaX,
+				wheel3: 0
+			)
+		else {
+			return false
+		}
+
+		scrollEvent.location = point
+		scrollEvent.post(tap: .cghidEventTap)
+		return true
+	}
+
 	private func screen(containing point: CGPoint) -> NSScreen? {
 		NSScreen.screens.first(where: { $0.frame.contains(point) })
 	}
@@ -2098,6 +2471,11 @@ final class CaptureSessionController: NSObject {
 			return
 		}
 		try session.send(report: .statusMessage(message))
+	}
+
+	private func setHostStatusMessage(_ message: String) throws {
+		try sendHostStatusMessage(message)
+		scene.statusMessage = message
 	}
 
 	private func compositeFrozenOverlay(on image: CGImage, selection: CGRect) -> CGImage? {
@@ -2270,6 +2648,8 @@ final class CaptureSessionController: NSObject {
 		frozenFrameLatchToken = nil
 		frozenSnapshotGeneration &+= 1
 		completedHostEffect = nil
+		removeNativeScrollCaptureMonitor()
+		scrollCaptureState = nil
 		chromeState = CaptureChromeState()
 		overlayController?.close()
 		overlayController = nil
@@ -2756,6 +3136,25 @@ final class CaptureOverlayController {
 		liveChromeBackdrops.hideAll()
 		targetWindow.hostView.refreshLivePresentationNow()
 		targetWindow.displayIfNeeded()
+	}
+
+	func withPrimaryMousePassthrough<T>(duration: TimeInterval, perform: () -> T) -> T {
+		guard let window = primaryWindow as? CaptureOverlayWindow else {
+			return perform()
+		}
+		let previousIgnoresMouseEvents = window.ignoresMouseEvents
+		window.ignoresMouseEvents = true
+		let result = perform()
+		DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak window] in
+			window?.ignoresMouseEvents = previousIgnoresMouseEvents
+		}
+		return result
+	}
+
+	func setScrollCaptureMousePassthroughActive(_ active: Bool) {
+		for window in windows {
+			window.ignoresMouseEvents = active
+		}
 	}
 
 	func close() {
@@ -3427,6 +3826,16 @@ final class CaptureHostView: NSView {
 	override var acceptsFirstResponder: Bool { true }
 	override var isOpaque: Bool { false }
 
+	override func hitTest(_ point: NSPoint) -> NSView? {
+		guard scene.mode == .frozen, chrome.scrollMinimapPreview != nil,
+			let selection = localFrozenSelectionRect(), selection.contains(point),
+			!toolbarFrameContains(point), annotationStyleAction(at: point) == nil
+		else {
+			return super.hitTest(point)
+		}
+		return nil
+	}
+
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
 		wantsLayer = true
@@ -3853,6 +4262,10 @@ final class CaptureHostView: NSView {
 			super.scrollWheel(with: event)
 			return
 		}
+		if controller?.handleScrollCaptureWheel(event, at: globalPoint(from: event)) == true {
+			resetAnnotationStyleWheelGate()
+			return
+		}
 		let localPoint = event.locationInWindow
 		guard annotationStyleSizeControlContains(localPoint) else {
 			resetAnnotationStyleWheelGate()
@@ -4019,6 +4432,7 @@ final class CaptureHostView: NSView {
 					drawFrozenResizeHandles(for: selection, in: context)
 				}
 				drawFrozenOverlays(for: selection, in: context)
+				drawScrollCaptureMinimap(for: selection, in: context)
 				drawSelectionSizeBadge(for: selection, in: context)
 				drawFrozenToolbar(for: selection, in: context)
 			}
@@ -4064,6 +4478,94 @@ final class CaptureHostView: NSView {
 		context.clip(to: bounds)
 		context.draw(image, in: frame)
 		context.restoreGState()
+	}
+
+	private func drawScrollCaptureMinimap(for selection: CGRect, in context: CGContext) {
+		guard let preview = chrome.scrollMinimapPreview else {
+			return
+		}
+		guard
+			let frame = scrollCaptureMinimapFrame(
+				for: selection,
+				exportSize: preview.exportSizePixels,
+				in: bounds,
+				preferredWidth: CaptureChrome.scrollMinimapPreferredWidth,
+				minimumWidth: CaptureChrome.scrollMinimapMinimumWidth,
+				gap: CaptureChrome.scrollMinimapGap,
+				margin: CaptureChrome.scrollMinimapScreenMargin
+			)
+		else {
+			return
+		}
+
+		let theme = chromeTheme()
+		let palette = CaptureChrome.palette(for: theme, settings: settings)
+		let imageFrame = frame.insetBy(
+			dx: CaptureChrome.scrollMinimapImageInset,
+			dy: CaptureChrome.scrollMinimapImageInset
+		)
+		let backgroundPath = NSBezierPath(
+			roundedRect: frame,
+			xRadius: CaptureChrome.scrollMinimapCornerRadius,
+			yRadius: CaptureChrome.scrollMinimapCornerRadius
+		)
+
+		context.saveGState()
+		context.setShadow(
+			offset: CGSize(width: 0, height: -2),
+			blur: 12,
+			color: NSColor.black.withAlphaComponent(0.32).cgColor
+		)
+		context.setFillColor(NSColor.black.withAlphaComponent(0.72).cgColor)
+		backgroundPath.fill()
+		context.restoreGState()
+
+		context.saveGState()
+		let imageClipPath = NSBezierPath(
+			roundedRect: imageFrame,
+			xRadius: max(CaptureChrome.scrollMinimapCornerRadius - 3, 1),
+			yRadius: max(CaptureChrome.scrollMinimapCornerRadius - 3, 1)
+		)
+		imageClipPath.addClip()
+		context.interpolationQuality = .high
+		context.draw(preview.image, in: imageFrame)
+		context.restoreGState()
+
+		if let viewportFrame = scrollCaptureMinimapViewportFrame(
+			for: preview,
+			in: imageFrame
+		) {
+			context.setFillColor(NSColor.white.withAlphaComponent(0.13).cgColor)
+			context.fill(viewportFrame)
+			context.setStrokeColor(NSColor.white.withAlphaComponent(0.88).cgColor)
+			context.setLineWidth(1)
+			context.stroke(viewportFrame)
+		}
+
+		context.setStrokeColor(palette.keycapStroke.withAlphaComponent(0.88).cgColor)
+		context.setLineWidth(1)
+		backgroundPath.stroke()
+	}
+
+	private func scrollCaptureMinimapViewportFrame(
+		for preview: ScrollCaptureMinimapSnapshot,
+		in frame: CGRect
+	) -> CGRect? {
+		let exportHeight = max(preview.exportSizePixels.height, 1)
+		let viewportHeight = preview.viewportHeightPixels.clamped(to: 1...exportHeight)
+		let maxTop = max(exportHeight - viewportHeight, 0)
+		let viewportTop = preview.viewportTopYPixels.clamped(to: 0...maxTop)
+		let markerHeight = max(2, frame.height * viewportHeight / exportHeight)
+		let markerY =
+			frame.maxY - frame.height * (viewportTop + viewportHeight) / exportHeight
+		let marker = CGRect(
+			x: frame.minX,
+			y: markerY,
+			width: frame.width,
+			height: markerHeight
+		)
+		let clippedMarker = marker.intersection(frame)
+		return clippedMarker.isNull ? nil : clippedMarker
 	}
 
 	private func drawHud(in context: CGContext) {
@@ -5226,7 +5728,7 @@ final class CaptureHostView: NSView {
 					scene.frozenSelection != nil
 					&& !chrome.frozenOverlay.keepsFrozenSelectionFixed
 			case .scroll:
-				item.enabled = false
+				item.enabled = controller?.scrollCaptureToolbarEnabled ?? false
 			default:
 				break
 			}
@@ -6979,6 +7481,7 @@ private struct CaptureChromeState {
 	var frozenDisplayFrame: CGRect?
 	var frozenDisplayImage: CGImage?
 	var frozenBaseImage: CGImage?
+	var scrollMinimapPreview: ScrollCaptureMinimapSnapshot?
 	var frozenOverlay = FrozenOverlayState()
 	var annotationStyle = FrozenAnnotationStyleState()
 
@@ -6998,6 +7501,7 @@ private struct CaptureChromeState {
 		frozenDisplayFrame = nil
 		frozenDisplayImage = nil
 		frozenBaseImage = nil
+		scrollMinimapPreview = nil
 		frozenOverlay.reset()
 		annotationStyle = FrozenAnnotationStyleState()
 	}
@@ -7014,9 +7518,23 @@ private struct CaptureChromeState {
 		frozenDisplayFrame = nil
 		frozenDisplayImage = nil
 		frozenBaseImage = nil
+		scrollMinimapPreview = nil
 		frozenOverlay.reset()
 		annotationStyle = FrozenAnnotationStyleState()
 	}
+}
+
+private struct NativeScrollCaptureState {
+	let stitcher: RsnapScrollCaptureSession
+	let viewportRect: CGRect
+	var sampleGeneration: UInt64 = 0
+}
+
+private struct ScrollCaptureMinimapSnapshot {
+	let image: CGImage
+	let exportSizePixels: CGSize
+	let viewportTopYPixels: CGFloat
+	let viewportHeightPixels: CGFloat
 }
 
 private struct FrozenOverlayState {
@@ -7588,6 +8106,12 @@ enum CaptureChrome {
 	static let toolbarVerticalPadding: CGFloat = 5
 	static let toolbarGap: CGFloat = 10
 	static let toolbarScreenMargin: CGFloat = 10
+	static let scrollMinimapPreferredWidth: CGFloat = 96
+	static let scrollMinimapMinimumWidth: CGFloat = 44
+	static let scrollMinimapGap: CGFloat = 10
+	static let scrollMinimapScreenMargin: CGFloat = 10
+	static let scrollMinimapImageInset: CGFloat = 3
+	static let scrollMinimapCornerRadius: CGFloat = 9
 	static let annotationStyleRowGap: CGFloat = 4
 	static let annotationStyleRowHeight: CGFloat = 24
 	static let annotationStyleControlGap: CGFloat = 4

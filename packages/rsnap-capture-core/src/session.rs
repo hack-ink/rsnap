@@ -216,10 +216,10 @@ impl CaptureSessionCore {
 				self.selected_toolbar_item = item;
 				self.scene.status_message = None;
 			},
-			ToolbarItemKind::Undo
-			| ToolbarItemKind::Redo
-			| ToolbarItemKind::AutoCenter
-			| ToolbarItemKind::Scroll => {},
+			ToolbarItemKind::Undo | ToolbarItemKind::Redo | ToolbarItemKind::AutoCenter => {},
+			ToolbarItemKind::Scroll => {
+				self.pending_requests.push_back(HostRequest::StartScrollCapture);
+			},
 			ToolbarItemKind::Ocr => {
 				if self.config.allow_text_input {
 					self.pending_requests
@@ -252,7 +252,7 @@ impl CaptureSessionCore {
 				self.toolbar_item(ToolbarItemKind::Undo, false),
 				self.toolbar_item(ToolbarItemKind::Redo, false),
 				self.toolbar_item(ToolbarItemKind::AutoCenter, true),
-				self.toolbar_item(ToolbarItemKind::Scroll, false),
+				self.toolbar_item(ToolbarItemKind::Scroll, self.frozen_selection_editable),
 			];
 
 			if self.config.allow_text_input {
@@ -565,6 +565,13 @@ mod tests {
 		assert_eq!(session.scene_model().mode, CaptureMode::Frozen);
 		assert_eq!(session.scene_model().cursor_intent, CursorIntent::Grab);
 		assert_eq!(session.scene_model().toolbar_items.len(), 13);
+		assert!(
+			session
+				.scene_model()
+				.toolbar_items
+				.iter()
+				.any(|item| item.kind == ToolbarItemKind::Scroll && item.enabled)
+		);
 	}
 
 	#[test]
@@ -870,6 +877,39 @@ mod tests {
 			session.pop_host_request(),
 			Some(HostRequest::PerformHostEffect(HostEffectKind::CopyCapture))
 		);
+	}
+
+	#[test]
+	fn scroll_toolbar_invocation_requests_native_scroll_capture_for_drag_region() {
+		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
+		enter_frozen_with_drag_selection(&mut session, GlobalRect::new(10, 20, 100, 50));
+
+		session.handle_host_event(HostEvent::ToolbarItemInvoked { item: ToolbarItemKind::Scroll });
+
+		assert_eq!(session.pop_host_request(), Some(HostRequest::StartScrollCapture));
+	}
+
+	#[test]
+	fn scroll_toolbar_requests_native_host_feedback_for_non_editable_frozen_selection() {
+		let selection = GlobalRect::new(10, 20, 100, 50);
+		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
+		session.enter_live();
+
+		let _ = session.pop_host_request();
+
+		session.handle_host_report(HostReport::FreezeSnapshotCommitted { selection });
+		session.handle_host_event(HostEvent::ToolbarItemInvoked { item: ToolbarItemKind::Scroll });
+
+		assert!(
+			session
+				.scene_model()
+				.toolbar_items
+				.iter()
+				.any(|item| item.kind == ToolbarItemKind::Scroll && !item.enabled)
+		);
+		assert_eq!(session.pop_host_request(), Some(HostRequest::StartScrollCapture));
 	}
 
 	#[test]
