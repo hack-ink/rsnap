@@ -4,8 +4,8 @@ import SwiftUI
 
 enum NativeHostSettingsWindowMetrics {
 	static let width: CGFloat = 620
-	static let minHeight: CGFloat = 320
-	static let idealHeight: CGFloat = 336
+	static let minHeight: CGFloat = 288
+	static let idealHeight: CGFloat = 304
 }
 
 @MainActor
@@ -488,21 +488,14 @@ private struct OutputInspector: View {
 }
 
 private struct PermissionsInspector: View {
-	private let requiredKinds = [
-		PermissionKind.screenRecording,
-		.accessibility,
-		.inputMonitoring,
-	]
-
 	var body: some View {
-		let required = requiredKinds.filter { NativePermissions.requiredForCurrentNativeHost($0) }
-		let granted = required.filter { NativePermissions.status(for: $0) }.count
+		let granted = NativePermissions.status(for: .screenRecording) ? 1 : 0
 
 		VStack(alignment: .leading, spacing: 12) {
-			PermissionProgressBadge(granted: granted, total: required.count)
+			PermissionProgressBadge(granted: granted, total: 1)
 			InspectorMetric(
 				title: "Required",
-				value: "\(required.count)",
+				value: "1",
 				symbolName: "lock.shield"
 			)
 			InspectorMetric(
@@ -1422,7 +1415,7 @@ private struct PermissionsSettingsPanel: View {
 	private let primaryKind = PermissionKind.screenRecording
 
 	var body: some View {
-		VStack(spacing: 6) {
+		VStack(spacing: 0) {
 			PermissionGrantCard(
 				kind: primaryKind,
 				refreshID: refreshID,
@@ -1435,19 +1428,6 @@ private struct PermissionsSettingsPanel: View {
 					refreshID += 1
 				}
 			)
-
-			VStack(spacing: 0) {
-				ForEach(Self.rows) { row in
-					PermissionStatusTile(
-						row: row,
-						refreshID: refreshID,
-						openSettings: { kind in
-							NativePermissions.openSystemSettings(for: kind)
-							refreshID += 1
-						}
-					)
-				}
-			}
 		}
 	}
 
@@ -1458,27 +1438,6 @@ private struct PermissionsSettingsPanel: View {
 	private static var appIcon: NSImage {
 		NSWorkspace.shared.icon(forFile: appBundleURL.path)
 	}
-
-	private static let rows: [PermissionSettingsRow] = [
-		PermissionSettingsRow(
-			kind: .accessibility,
-			title: "Accessibility",
-			symbolName: "accessibility"
-		),
-		PermissionSettingsRow(
-			kind: .inputMonitoring,
-			title: "Input Monitoring",
-			symbolName: "keyboard"
-		),
-	]
-}
-
-private struct PermissionSettingsRow: Identifiable {
-	let kind: PermissionKind
-	let title: String
-	let symbolName: String
-
-	var id: PermissionKind { kind }
 }
 
 private struct PermissionGrantCard: View {
@@ -1594,86 +1553,10 @@ private struct PermissionGrantCard: View {
 
 }
 
-private struct PermissionStatusTile: View {
-	let row: PermissionSettingsRow
-	let refreshID: Int
-	let openSettings: (PermissionKind) -> Void
-
-	var body: some View {
-		HStack(alignment: .center, spacing: 10) {
-			SettingsTileIcon(symbolName: row.symbolName, size: 19)
-			VStack(alignment: .leading, spacing: 2) {
-				Text(row.title)
-					.font(.system(size: 13, weight: .semibold))
-					.lineLimit(1)
-					.minimumScaleFactor(0.9)
-				Text(subtitle)
-					.font(.system(size: 10.5, weight: .medium))
-					.foregroundStyle(.secondary)
-					.lineLimit(2)
-					.fixedSize(horizontal: false, vertical: true)
-			}
-			.layoutPriority(1)
-			Spacer(minLength: 8)
-			HStack(spacing: 7) {
-				PermissionStateBadge(title: badgeTitle, style: badgeStyle)
-				if canOpen {
-					Button {
-						openSettings(row.kind)
-					} label: {
-						Image(systemName: "arrow.up.forward.app")
-							.frame(width: 13, height: 13)
-					}
-					.rsnapGlassButton(prominent: false)
-					.controlSize(.small)
-					.help("Open \(row.title)")
-				}
-			}
-		}
-		.padding(.vertical, 4)
-		.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-	}
-
-	private var isGranted: Bool {
-		_ = refreshID
-		return NativePermissions.status(for: row.kind)
-	}
-
-	private var isRequired: Bool {
-		NativePermissions.requiredForCurrentNativeHost(row.kind)
-	}
-
-	private var subtitle: String {
-		if isGranted {
-			return "Granted."
-		}
-		return isRequired ? "Required for native capture." : "Not used by current host."
-	}
-
-	private var badgeTitle: String {
-		if isGranted {
-			return "Granted"
-		}
-		return isRequired ? "Required" : "Not Used"
-	}
-
-	private var badgeStyle: PermissionStateBadge.Style {
-		if isGranted {
-			return .granted
-		}
-		return isRequired ? .required : .muted
-	}
-
-	private var canOpen: Bool {
-		isRequired && !isGranted
-	}
-}
-
 private struct PermissionStateBadge: View {
 	enum Style {
 		case granted
 		case required
-		case muted
 	}
 
 	let title: String
@@ -1701,8 +1584,6 @@ private struct PermissionStateBadge: View {
 			return Color.green
 		case .required:
 			return Color.accentColor
-		case .muted:
-			return Color.secondary
 		}
 	}
 
@@ -1712,8 +1593,6 @@ private struct PermissionStateBadge: View {
 			return Color.green.opacity(colorScheme == .light ? 0.10 : 0.16)
 		case .required:
 			return Color.accentColor.opacity(colorScheme == .light ? 0.10 : 0.18)
-		case .muted:
-			return Color.secondary.opacity(colorScheme == .light ? 0.08 : 0.12)
 		}
 	}
 
@@ -1723,8 +1602,6 @@ private struct PermissionStateBadge: View {
 			return Color.green.opacity(colorScheme == .light ? 0.20 : 0.26)
 		case .required:
 			return Color.accentColor.opacity(colorScheme == .light ? 0.20 : 0.28)
-		case .muted:
-			return Color.secondary.opacity(colorScheme == .light ? 0.14 : 0.20)
 		}
 	}
 }
