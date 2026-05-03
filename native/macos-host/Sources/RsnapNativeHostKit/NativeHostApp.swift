@@ -3187,13 +3187,6 @@ final class CaptureHostView: NSView {
 		case iBeam
 	}
 
-	private struct PositionSlotWidthKey: Hashable {
-		let minX: Int
-		let maxX: Int
-		let minY: Int
-		let maxY: Int
-	}
-
 	private struct HudLayoutMetrics {
 		let font: NSFont
 		let lineHeight: CGFloat
@@ -3220,9 +3213,6 @@ final class CaptureHostView: NSView {
 			placeholderYSlotWidth: "y=?".size(using: font).width
 		)
 	}()
-
-	private static var positionSlotWidthCache: [PositionSlotWidthKey: (x: CGFloat, y: CGFloat)] =
-		[:]
 
 	weak var controller: CaptureSessionController?
 
@@ -5295,12 +5285,11 @@ final class CaptureHostView: NSView {
 		let keycapVisible = settings.showAltHintKeycap
 		let keycapFrame = keycapVisible ? metrics.keycapFrameSize : .zero
 		let contentHeight = max(metrics.lineHeight, swatchSize.height, keycapFrame.height)
-		let screenFrame = window?.screen?.frame ?? NSScreen.main?.frame ?? bounds
-		let positionSlotWidths = Self.cachedPositionSlotWidths(for: screenFrame)
+		let positionDisplay = currentPositionDisplay()
 		let contentWidth =
-			positionSlotWidths.x
+			positionDisplay.xSlotWidth
 			+ metrics.commaWidth
-			+ positionSlotWidths.y
+			+ positionDisplay.ySlotWidth
 			+ CaptureChrome.hudGroupSpacing
 			+ swatchSize.width
 			+ CaptureChrome.hudColorItemSpacing
@@ -5822,26 +5811,6 @@ final class CaptureHostView: NSView {
 		return "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))"
 	}
 
-	private static func cachedPositionSlotWidths(for screenFrame: CGRect) -> (
-		x: CGFloat, y: CGFloat
-	) {
-		let minX = Int(screenFrame.minX.rounded())
-		let maxX = Int(screenFrame.maxX.rounded()) - 1
-		let minY = Int(screenFrame.minY.rounded())
-		let maxY = Int(screenFrame.maxY.rounded()) - 1
-		let key = PositionSlotWidthKey(minX: minX, maxX: maxX, minY: minY, maxY: maxY)
-		if let cached = positionSlotWidthCache[key] {
-			return cached
-		}
-		let font = hudLayoutMetrics.font
-		let slotWidths = (
-			x: ["x=\(minX)", "x=\(maxX)"].map { $0.size(using: font).width }.max() ?? 0,
-			y: ["y=\(minY)", "y=\(maxY)"].map { $0.size(using: font).width }.max() ?? 0
-		)
-		positionSlotWidthCache[key] = slotWidths
-		return slotWidths
-	}
-
 	private func currentPositionDisplay() -> LivePositionDisplay {
 		let metrics = Self.hudLayoutMetrics
 		guard let pointer = livePointerPreviewGlobal ?? scene.pointer else {
@@ -5852,13 +5821,13 @@ final class CaptureHostView: NSView {
 				ySlotWidth: metrics.placeholderYSlotWidth
 			)
 		}
-		let screenFrame = window?.screen?.frame ?? .zero
-		let slotWidths = Self.cachedPositionSlotWidths(for: screenFrame)
+		let xValueText = String(Int(pointer.x.rounded()))
+		let yValueText = String(Int(pointer.y.rounded()))
 		return LivePositionDisplay(
-			xValueText: String(Int(pointer.x.rounded())),
-			yValueText: String(Int(pointer.y.rounded())),
-			xSlotWidth: slotWidths.x,
-			ySlotWidth: slotWidths.y
+			xValueText: xValueText,
+			yValueText: yValueText,
+			xSlotWidth: "x=\(xValueText)".size(using: metrics.font).width,
+			ySlotWidth: "y=\(yValueText)".size(using: metrics.font).width
 		)
 	}
 
