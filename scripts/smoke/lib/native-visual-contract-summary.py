@@ -393,7 +393,7 @@ for index, commit in enumerate(freeze_commits, start=1):
         )
     if not bool_field(commit, "selfCaptureSafe"):
         failures.append(
-            f"freeze_commit[{index}] used a frame that could contain rsnap's own capture UI"
+            f"freeze_commit[{index}] used a frame that could contain Rsnap's own capture UI"
         )
     if commit_source == "window_list_below_overlay":
         window_list_below_overlay_commits += 1

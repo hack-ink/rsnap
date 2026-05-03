@@ -1,6 +1,6 @@
 # Live Sampling Reference
 
-Purpose: Describe the current stream-first live RGB/loupe sampling path and why rsnap uses it.
+Purpose: Describe the current stream-first live RGB/loupe sampling path and why Rsnap uses it.
 
 Read this when: You are working on live HUD updates, loupe behavior, cursor-path performance, or
 hovered-window outline responsiveness.
@@ -27,7 +27,7 @@ architecture. For the reset architecture route, start with `docs/reference/host-
 
 ## Why this doc exists
 
-rsnap current UX requires instant updates on cursor movement:
+Rsnap current UX requires instant updates on cursor movement:
 
 - RGB under cursor
 - Loupe patch under cursor
@@ -43,7 +43,7 @@ This reference records the current stream-first implementation and why it is use
 Even after moving hover outline + sampling to overlay-local caches, fast cursor movement could
 still stall the HUD/Loupe UI (for example, circling quickly across window corners).
 
-Key observation: system cursor tracking remains smooth while rsnap updates lag, indicating
+Key observation: system cursor tracking remains smooth while Rsnap updates lag, indicating
 app-side stalls in the live path.
 
 ## Root causes that were observed
@@ -62,7 +62,7 @@ Window refresh and sampling work in the same high-frequency path increases jitte
 
 ## Implemented stream path
 
-rsnap now uses the following live model on macOS:
+Rsnap now uses the following live model on macOS:
 
 - Keep a per-monitor `SCStream` alive while in live mode.
 - Store the latest frame in shared state.
@@ -127,7 +127,7 @@ Frozen commit must use `FrozenFrameAuthority` or another source with equivalent 
   self-capture-excluding stream alive until the replacement stream is configured so fast click
   selection cannot fail with `no_fresh_frame` solely because content-filter lookup is still
   running. Once the replacement stream is ready, the first Frozen display frame must come from a
-  self-capture-excluding filter, not from a pre-overlay filter that can see rsnap's own live mask,
+  self-capture-excluding filter, not from a pre-overlay filter that can see Rsnap's own live mask,
   border, badge, or toolbar.
 - If no freshness-proven frame is available, fail the freeze with `no_fresh_frame` instead of
   showing a screenshot from seconds earlier.

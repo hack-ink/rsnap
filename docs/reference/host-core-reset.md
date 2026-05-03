@@ -1,6 +1,6 @@
 # Host/Core Reset Reference
 
-Purpose: Describe the active target architecture for the rsnap reset lane and how new work should
+Purpose: Describe the active target architecture for the Rsnap reset lane and how new work should
 behave while the checked-in codebase is still transitional.
 
 Read this when: You are planning architecture work, deciding whether a change deepens the right

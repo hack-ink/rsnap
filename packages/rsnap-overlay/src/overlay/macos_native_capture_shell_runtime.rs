@@ -192,8 +192,8 @@ impl MacOSCaptureHost {
 		self.frontmost_application_before_start = super::macos_frontmost_application();
 		self.last_synced_frozen_mode = false;
 
-		// AppKit only keeps native cursor ownership stable while rsnap is the active app. Capture
-		// the prior frontmost app for teardown restore, then activate rsnap for the overlay session.
+		// AppKit only keeps native cursor ownership stable while Rsnap is the active app. Capture
+		// the prior frontmost app for teardown restore, then activate Rsnap for the overlay session.
 		super::macos_activate_app();
 
 		tracing::info!(
@@ -362,7 +362,7 @@ impl MacOSCaptureHost {
 	fn maybe_preserve_frontmost_application(&mut self, _state: &MacOSCaptureHostSyncState) {
 		// Do not hand focus back during an active overlay session. Live crosshair and frozen hover
 		// cursors are native AppKit cursors; restoring the previous frontmost app during capture
-		// hands visible cursor ownership back to that app and leaves rsnap showing an arrow until
+		// hands visible cursor ownership back to that app and leaves Rsnap showing an arrow until
 		// the next direct interaction. The original app is restored when the session exits.
 	}
 

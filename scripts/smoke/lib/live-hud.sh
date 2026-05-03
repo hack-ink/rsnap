@@ -48,7 +48,7 @@ live_hud_focus_rsnap_overlay() {
   local focus_settle_s="${RSNAP_FOCUS_SETTLE_S:-0.03}"
   osascript <<APPLESCRIPT
 tell application "System Events"
-    tell process "rsnap"
+    tell process "Rsnap"
         set frontmost to true
     end tell
 end tell

@@ -4,7 +4,7 @@ Status: accepted
 Date: 2026-04-07
 Context:
 
-- `rsnap` uses the pen tool for screenshot annotation, not for professional drawing.
+- Rsnap uses the pen tool for screenshot annotation, not for professional drawing.
 - Users prefer a polished handwritten annotation look over faithful reproduction of every mouse
   wobble.
 - The governing behavior contract for this decision is `docs/spec/annotation-pen.md`.

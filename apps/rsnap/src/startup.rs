@@ -66,7 +66,7 @@ pub fn init_logging() -> Option<WorkerGuard> {
 
 	let appender = match RollingFileAppender::builder()
 		.rotation(Rotation::DAILY)
-		.filename_prefix("rsnap")
+		.filename_prefix("Rsnap")
 		.filename_suffix("log")
 		.max_log_files(15)
 		.build(&log_dir)

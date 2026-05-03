@@ -1,7 +1,7 @@
 # Settings and App Shell Contract
 
 Purpose: Define the normative Settings, status-menu, shortcut, permission, and macOS app-shell
-behavior for rsnap.
+behavior for Rsnap.
 
 Status: normative
 
@@ -21,11 +21,11 @@ Defines:
 
 ## App Shell
 
-- rsnap is a background menubar app while Settings is closed: it must not keep a Dock icon visible
+- Rsnap is a background menubar app while Settings is closed: it must not keep a Dock icon visible
   in the idle menubar state.
-- Opening Settings may temporarily promote rsnap to an ordinary app-window activation state so the
+- Opening Settings may temporarily promote Rsnap to an ordinary app-window activation state so the
   Settings window participates in normal macOS focus, keyboard, and window management.
-- Closing Settings must return rsnap to the background menubar state when no other ordinary app
+- Closing Settings must return Rsnap to the background menubar state when no other ordinary app
   window is visible.
 - Capture sessions must not require visible Dock activation artifacts to begin, complete, cancel,
   copy, save, or restore focus.
@@ -42,10 +42,10 @@ Defines:
 ## Settings Window
 
 - Settings must be an ordinary top-level platform window, not only an overlay surface.
-- Settings must be selectable by system screenshot/window-picking tools and by rsnap's own window
+- Settings must be selectable by system screenshot/window-picking tools and by Rsnap's own window
   selector so normal selection effects can apply to it.
 - Settings must support standard macOS shortcuts: `Command-W` closes the Settings window and
-  `Command-Q` quits rsnap.
+  `Command-Q` quits Rsnap.
 - The Settings window background must not globally hijack drag gestures. Draggable controls and
   component hit testing must receive their own pointer gestures.
 
@@ -63,7 +63,7 @@ Defines:
 
 - Capture shortcut: `Option-X`.
 - Output directory: `~/Desktop`.
-- Output filename prefix: `rsnap`.
+- Output filename prefix: `Rsnap`.
 - Output naming: timestamp.
 - Frozen toolbar placement: bottom.
 - Frozen resize handles: outward.
@@ -79,14 +79,14 @@ Defines:
 
 - Settings must include a Permissions section.
 - Screen Recording permission is required for the current native macOS capture host.
-- When Screen Recording is missing at launch or at capture start, rsnap must open the macOS Screen
-  Recording privacy page and present a small rsnap-owned floating drag guide near System Settings.
+- When Screen Recording is missing at launch or at capture start, Rsnap must open the macOS Screen
+  Recording privacy page and present a small Rsnap-owned floating drag guide near System Settings.
 - Accessibility and Input Monitoring may be displayed as diagnostic permissions, but they must not
   be presented as required when the current native host does not need them.
-- Permission recovery should provide a visible drag-the-app affordance for adding rsnap to System
+- Permission recovery should provide a visible drag-the-app affordance for adding Rsnap to System
   Settings where macOS allows that workflow, including a directional guide from the floating window
   toward System Settings and an Open System Settings fallback.
-- Permission status refresh must be available without restarting rsnap.
+- Permission status refresh must be available without restarting Rsnap.
 
 ## Default-Size Usability
 
