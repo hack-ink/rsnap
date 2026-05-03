@@ -135,14 +135,14 @@ struct NativeHostSettings: Equatable {
 			outputFilenamePrefix: "rsnap",
 			outputNaming: .timestamp,
 			toolbarPlacement: .bottom,
-			frozenResizeHandleOrientation: .inward,
+			frozenResizeHandleOrientation: .outward,
 			showAltHintKeycap: true,
 			hudGlassEnabled: true,
-			hudGlassMode: HudGlassModePreference.defaultForCurrentSystem,
-			hudOpacity: 0.5,
-			hudBlur: 0.5,
-			hudTint: 0.5,
-			hudTintHue: 215.0 / 360.0,
+			hudGlassMode: .liquidGlass,
+			hudOpacity: 0.4999747693194925,
+			hudBlur: 0.5032628676470589,
+			hudTint: 0.4990234375,
+			hudTintHue: 0.6074879184861536,
 			liquidGlassStyle: .clear,
 			loupeSampleSize: .small
 		)
@@ -313,10 +313,6 @@ enum FrozenResizeHandleOrientationPreference: String, CaseIterable {
 enum HudGlassModePreference: String, CaseIterable {
 	case classicGlass = "classic_glass"
 	case liquidGlass = "liquid_glass"
-
-	static var defaultForCurrentSystem: Self {
-		.classicGlass
-	}
 
 	var title: String {
 		switch self {

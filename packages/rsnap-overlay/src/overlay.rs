@@ -501,17 +501,6 @@ pub enum OverlayControl {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-/// Controls how the Tab-triggered loupe interaction is activated.
-pub enum AltActivationMode {
-	#[default]
-	/// Enable the loupe only while Tab is held.
-	Hold,
-	/// Toggle the loupe on and off with Tab presses.
-	Toggle,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
 /// Chooses where the frozen toolbar is anchored relative to the capture.
 pub enum ToolbarPlacement {
 	/// Render the toolbar above the frozen capture.
@@ -974,8 +963,6 @@ pub struct OverlayConfig {
 	pub hud_milk_amount: f32,
 	/// Hue value for tint, 0..=1.
 	pub hud_tint_hue: f32,
-	/// Selects whether Tab must be held or can toggle the loupe.
-	pub alt_activation: AltActivationMode,
 	/// Chooses where the frozen toolbar is placed.
 	pub toolbar_placement: ToolbarPlacement,
 	/// Sets the loupe sample size in source pixels.
@@ -1006,7 +993,6 @@ impl Default for OverlayConfig {
 			hud_fog_amount: 0.16,
 			hud_milk_amount: 0.0,
 			hud_tint_hue: 0.585,
-			alt_activation: AltActivationMode::Hold,
 			toolbar_placement: ToolbarPlacement::Bottom,
 			loupe_sample_side_px: 21,
 			theme_mode: ThemeMode::System,

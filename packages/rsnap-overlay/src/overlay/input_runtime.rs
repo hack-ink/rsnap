@@ -9,8 +9,8 @@ use winit::keyboard::ModifiersState;
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenGlobalHotkey;
 use crate::overlay::{
-	AltActivationMode, CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource,
-	ElementState, FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
+	CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource, ElementState,
+	FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarTool, GlobalPoint, Ime, Key, LiveCaptureInteraction, LiveClickCaptureTarget,
 	Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl, OverlayKeyboardInputEvent,
 	OverlayMode, OverlaySession, PhysicalPosition, PhysicalSize, PngAction, Pos2, Vec2, WindowId,
@@ -263,7 +263,7 @@ impl OverlaySession {
 			return;
 		}
 
-		let Some((monitor, cursor)) = self.alt_activation_cursor_context() else {
+		let Some((monitor, cursor)) = self.loupe_activation_cursor_context() else {
 			return;
 		};
 
@@ -279,13 +279,8 @@ impl OverlaySession {
 	pub(super) fn apply_loupe_activation_input(&mut self, pressed: bool, repeat: bool) -> bool {
 		let previous_alt_held = self.state.alt_held;
 
-		match self.config.alt_activation {
-			AltActivationMode::Hold => self.set_alt_held(pressed),
-			AltActivationMode::Toggle => {
-				if pressed && !repeat {
-					self.set_alt_held(!self.state.alt_held);
-				}
-			},
+		if pressed && !repeat {
+			self.set_alt_held(!self.state.alt_held);
 		}
 
 		previous_alt_held != self.state.alt_held
@@ -314,19 +309,11 @@ impl OverlaySession {
 	}
 
 	pub(super) fn clear_loupe_activation_on_focus_loss(&mut self) {
-		let should_reset = self.loupe_activation_key_down
-			|| (matches!(self.config.alt_activation, AltActivationMode::Hold)
-				&& self.state.alt_held);
-
-		if !should_reset {
+		if !self.loupe_activation_key_down {
 			return;
 		}
 
 		self.loupe_activation_key_down = false;
-
-		if self.apply_loupe_activation_input(false, false) {
-			let _ = self.request_redraw_for_alt_state_change();
-		}
 	}
 
 	pub(super) fn maybe_clear_loupe_activation_after_focus_loss(&mut self) {
@@ -353,9 +340,9 @@ impl OverlaySession {
 		OverlayControl::Continue
 	}
 
-	pub(super) fn alt_activation_cursor_context(&mut self) -> Option<(MonitorRect, GlobalPoint)> {
+	pub(super) fn loupe_activation_cursor_context(&mut self) -> Option<(MonitorRect, GlobalPoint)> {
 		if let Some((monitor, cursor)) = self.last_fresh_event_cursor() {
-			self.seed_alt_activation_cursor_context(monitor, cursor);
+			self.seed_loupe_activation_cursor_context(monitor, cursor);
 
 			return Some((monitor, cursor));
 		}
@@ -369,12 +356,12 @@ impl OverlaySession {
 			return self.active_cursor_monitor().zip(self.state.cursor);
 		};
 
-		self.seed_alt_activation_cursor_context(monitor, cursor);
+		self.seed_loupe_activation_cursor_context(monitor, cursor);
 
 		Some((monitor, cursor))
 	}
 
-	pub(super) fn seed_alt_activation_cursor_context(
+	pub(super) fn seed_loupe_activation_cursor_context(
 		&mut self,
 		monitor: MonitorRect,
 		cursor: GlobalPoint,

@@ -27,16 +27,16 @@ use crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT;
 use crate::overlay::tests;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerResponse;
-#[cfg(target_os = "macos")]
-use crate::overlay::tests::{
-	AltActivationMode, HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, Ime, Key, LiveCursorSample,
-	LiveSampleApplyResult, ModifiersState, NamedKey, OverlayExit, StartupLiveRgbPlan, WindowId,
-	WindowListSnapshot,
-};
 use crate::overlay::tests::{
 	Duration, GlobalPoint, HudRedrawSummary, Instant, LoupeSample, MonitorRect, MonitorRectPoints,
 	OverlayMode, OverlaySession, OverlayState, Pos2, Rect, RectPoints, Rgb, Vec2, WindowRenderer,
 	hud_helpers,
+};
+#[cfg(target_os = "macos")]
+use crate::overlay::tests::{
+	HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, Ime, Key, LiveCursorSample,
+	LiveSampleApplyResult, ModifiersState, NamedKey, OverlayExit, StartupLiveRgbPlan, WindowId,
+	WindowListSnapshot,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{FrozenGlobalHotkey, PngAction};
@@ -551,8 +551,6 @@ fn live_sample_request_redraw_intent_only_redraws_immediate_hover_changes() {
 fn apply_loupe_activation_input_toggle_ignores_release_and_repeat() {
 	let mut session = OverlaySession::new();
 
-	session.config.alt_activation = AltActivationMode::Toggle;
-
 	assert!(session.apply_loupe_activation_input(true, false));
 	assert!(session.state.alt_held);
 	assert!(!session.apply_loupe_activation_input(true, true));
@@ -565,16 +563,14 @@ fn apply_loupe_activation_input_toggle_ignores_release_and_repeat() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn apply_loupe_activation_input_hold_tracks_pressed_state() {
+fn apply_loupe_activation_input_next_press_toggles_loupe_off() {
 	let mut session = OverlaySession::new();
-
-	session.config.alt_activation = AltActivationMode::Hold;
 
 	assert!(session.apply_loupe_activation_input(true, false));
 	assert!(session.state.alt_held);
-	assert!(!session.apply_loupe_activation_input(true, false));
+	assert!(!session.apply_loupe_activation_input(false, false));
 	assert!(session.state.alt_held);
-	assert!(session.apply_loupe_activation_input(false, false));
+	assert!(session.apply_loupe_activation_input(true, false));
 	assert!(!session.state.alt_held);
 }
 
@@ -582,8 +578,6 @@ fn apply_loupe_activation_input_hold_tracks_pressed_state() {
 #[test]
 fn plain_character_shortcut_available_blocks_loupe_activation_key_while_pressed() {
 	let mut session = OverlaySession::new();
-
-	session.config.alt_activation = AltActivationMode::Toggle;
 
 	assert!(session.plain_character_shortcut_available());
 	assert!(session.apply_loupe_activation_key_event(true, false));
@@ -595,10 +589,8 @@ fn plain_character_shortcut_available_blocks_loupe_activation_key_while_pressed(
 
 #[cfg(target_os = "macos")]
 #[test]
-fn clear_loupe_activation_on_focus_loss_releases_hold_mode_state() {
+fn clear_loupe_activation_on_focus_loss_releases_toggle_press_without_toggling_off() {
 	let mut session = OverlaySession::new();
-
-	session.config.alt_activation = AltActivationMode::Hold;
 
 	assert!(session.apply_loupe_activation_key_event(true, false));
 	assert!(session.state.alt_held);
@@ -606,21 +598,20 @@ fn clear_loupe_activation_on_focus_loss_releases_hold_mode_state() {
 
 	session.clear_loupe_activation_on_focus_loss();
 
-	assert!(!session.state.alt_held);
+	assert!(session.state.alt_held);
 	assert!(!session.loupe_activation_key_down);
 	assert!(session.plain_character_shortcut_available());
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn clear_loupe_activation_on_focus_loss_releases_toggle_press_without_toggling_off() {
+fn clear_loupe_activation_on_focus_loss_ignores_released_toggle_state() {
 	let mut session = OverlaySession::new();
-
-	session.config.alt_activation = AltActivationMode::Toggle;
 
 	assert!(session.apply_loupe_activation_key_event(true, false));
 	assert!(session.state.alt_held);
-	assert!(session.loupe_activation_key_down);
+	assert!(!session.apply_loupe_activation_key_event(false, false));
+	assert!(!session.loupe_activation_key_down);
 
 	session.clear_loupe_activation_on_focus_loss();
 
@@ -647,7 +638,6 @@ fn duplicate_loupe_activation_key_events_do_not_double_toggle() {
 	let mut session = OverlaySession::new();
 
 	session.state.mode = OverlayMode::Live;
-	session.config.alt_activation = AltActivationMode::Toggle;
 
 	assert!(session.apply_loupe_activation_key_event(true, false));
 	assert!(session.state.alt_held);
@@ -664,7 +654,7 @@ fn duplicate_loupe_activation_key_events_do_not_double_toggle() {
 }
 
 #[test]
-fn live_drag_alt_activation_does_not_reopen_loupe() {
+fn live_drag_loupe_toggle_does_not_reopen_loupe() {
 	let mut session = OverlaySession::new();
 
 	session.state.mode = OverlayMode::Live;
@@ -729,8 +719,6 @@ fn pending_focus_loss_cleanup_does_not_clear_loupe_during_internal_focus_transfe
 	let toolbar_window_id = WindowId::from(2);
 	let mut session = OverlaySession::new();
 
-	session.config.alt_activation = AltActivationMode::Hold;
-
 	session.note_window_focus_change(overlay_window_id, true);
 
 	assert!(session.apply_loupe_activation_key_event(true, false));
@@ -746,11 +734,9 @@ fn pending_focus_loss_cleanup_does_not_clear_loupe_during_internal_focus_transfe
 
 #[cfg(target_os = "macos")]
 #[test]
-fn pending_focus_loss_cleanup_clears_loupe_after_all_overlay_windows_blur() {
+fn pending_focus_loss_cleanup_releases_toggle_press_after_all_overlay_windows_blur() {
 	let overlay_window_id = WindowId::from(1);
 	let mut session = OverlaySession::new();
-
-	session.config.alt_activation = AltActivationMode::Hold;
 
 	session.note_window_focus_change(overlay_window_id, true);
 
@@ -760,7 +746,7 @@ fn pending_focus_loss_cleanup_clears_loupe_after_all_overlay_windows_blur() {
 	session.note_window_focus_change(overlay_window_id, false);
 	session.maybe_clear_loupe_activation_after_focus_loss();
 
-	assert!(!session.state.alt_held);
+	assert!(session.state.alt_held);
 	assert!(!session.loupe_activation_key_down);
 	assert!(session.plain_character_shortcut_available());
 }
@@ -772,7 +758,6 @@ fn initial_unfocused_window_blur_does_not_cancel_first_global_loupe_press() {
 	let mut session = OverlaySession::new();
 
 	session.state.mode = OverlayMode::Live;
-	session.config.alt_activation = AltActivationMode::Hold;
 
 	session.note_window_focus_change(overlay_window_id, false);
 
@@ -1772,14 +1757,19 @@ fn global_escape_hotkey_cancels_active_capture_modes() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn global_loupe_hotkey_tracks_live_hold_state() {
+fn global_loupe_hotkey_toggles_live_loupe_on_press() {
 	let mut session = OverlaySession::new();
 
 	session.state.mode = OverlayMode::Live;
-	session.config.alt_activation = AltActivationMode::Hold;
 
 	assert!(matches!(session.handle_global_loupe_hotkey(true), OverlayControl::Continue));
 	assert!(session.state.alt_held);
+	assert!(session.loupe_activation_key_down);
+	assert!(matches!(session.handle_global_loupe_hotkey(false), OverlayControl::Continue));
+	assert!(session.state.alt_held);
+	assert!(!session.loupe_activation_key_down);
+	assert!(matches!(session.handle_global_loupe_hotkey(true), OverlayControl::Continue));
+	assert!(!session.state.alt_held);
 	assert!(session.loupe_activation_key_down);
 	assert!(matches!(session.handle_global_loupe_hotkey(false), OverlayControl::Continue));
 	assert!(!session.state.alt_held);

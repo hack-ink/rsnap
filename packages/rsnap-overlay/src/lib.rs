@@ -26,8 +26,8 @@ pub mod session {
 	//! Rust-core session, protocol, and shared state exports consumed by the native app host.
 
 	pub use crate::overlay::{
-		AltActivationMode, FrozenGlobalHotkey, HudAnchor, OverlayConfig, OverlayControl,
-		OverlayExit, OverlayKeyboardInputEvent, OverlaySession, ThemeMode, ToolbarPlacement,
+		FrozenGlobalHotkey, HudAnchor, OverlayConfig, OverlayControl, OverlayExit,
+		OverlayKeyboardInputEvent, OverlaySession, ThemeMode, ToolbarPlacement,
 		WindowCaptureAlphaMode,
 	};
 	#[cfg(target_os = "macos")]
