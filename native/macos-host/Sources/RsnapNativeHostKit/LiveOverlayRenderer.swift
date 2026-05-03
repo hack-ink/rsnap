@@ -1505,8 +1505,10 @@ final class LiveOverlayRenderer {
 		)
 
 		let font = LiveOverlayTypography.font
+		let itemSpacing: CGFloat = 8
+		let swatchSize = CGSize(width: 10, height: 10)
 		let positionText =
-			"x=\(snapshot.positionDisplay.xValueText), y=\(snapshot.positionDisplay.yValueText)"
+			"x=\(snapshot.positionDisplay.xValueText),y=\(snapshot.positionDisplay.yValueText)"
 		let positionSize = CGSize(
 			width: snapshot.positionDisplay.xSlotWidth
 				+ LiveOverlayTypography.commaWidth
@@ -1525,10 +1527,14 @@ final class LiveOverlayRenderer {
 				height: ceil(positionSize.height)),
 			alignment: .left
 		)
-		cursorX += positionSize.width + 10
+		cursorX += positionSize.width + itemSpacing
 
 		hudSwatchLayer.frame = CGRect(
-			x: cursorX, y: hudLayer.bounds.midY - 5, width: 10, height: 10)
+			x: cursorX,
+			y: hudLayer.bounds.midY - swatchSize.height / 2,
+			width: swatchSize.width,
+			height: swatchSize.height
+		)
 		hudSwatchLayer.cornerRadius = 0
 		let swatchColor =
 			snapshot.rgbSample.map {
@@ -1539,14 +1545,14 @@ final class LiveOverlayRenderer {
 		hudSwatchLayer.backgroundColor = swatchColor.cgColor
 		hudSwatchLayer.borderColor = palette.swatchStroke.cgColor
 		hudSwatchLayer.borderWidth = 1
-		cursorX += 20
+		cursorX += swatchSize.width + itemSpacing
 
 		applyText(
 			hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: palette.labelText,
 			frame: CGRect(
 				x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth),
 				height: ceil(LiveOverlayTypography.lineHeight)), alignment: .left)
-		cursorX += snapshot.colorDisplay.hexSlotWidth + 10
+		cursorX += snapshot.colorDisplay.hexSlotWidth + itemSpacing
 
 		if snapshot.keycapVisible {
 			let keycapText = "Tab"
