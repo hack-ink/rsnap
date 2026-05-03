@@ -74,6 +74,49 @@ private enum CaptureSuccessSound {
 
 private let frozenMosaicBlockSizePixels: CGFloat = 10.0
 
+package func frozenExportOverlayPoint(
+	_ point: CGPoint,
+	selection: CGRect,
+	imageSize: CGSize
+) -> CGPoint {
+	let scaleX = imageSize.width / max(selection.width, 1)
+	let scaleY = imageSize.height / max(selection.height, 1)
+	return CGPoint(
+		x: (point.x - selection.minX) * scaleX,
+		y: (point.y - selection.minY) * scaleY
+	)
+}
+
+package func frozenExportOverlayRect(
+	_ rect: CGRect,
+	selection: CGRect,
+	imageSize: CGSize
+) -> CGRect {
+	let scaleX = imageSize.width / max(selection.width, 1)
+	let scaleY = imageSize.height / max(selection.height, 1)
+	return CGRect(
+		x: (rect.minX - selection.minX) * scaleX,
+		y: (rect.minY - selection.minY) * scaleY,
+		width: rect.width * scaleX,
+		height: rect.height * scaleY
+	)
+}
+
+package func frozenExportSourceImageRect(
+	_ rect: CGRect,
+	selection: CGRect,
+	imageSize: CGSize
+) -> CGRect {
+	let scaleX = imageSize.width / max(selection.width, 1)
+	let scaleY = imageSize.height / max(selection.height, 1)
+	return CGRect(
+		x: (rect.minX - selection.minX) * scaleX,
+		y: (selection.maxY - rect.maxY) * scaleY,
+		width: rect.width * scaleX,
+		height: rect.height * scaleY
+	)
+}
+
 private func makeFrozenMosaicPatch(from image: CGImage, sourceRect: CGRect) -> CGImage? {
 	let imageRect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
 	let cropRect = sourceRect.integral.intersection(imageRect)
@@ -2025,32 +2068,42 @@ final class CaptureSessionController: NSObject {
 		}
 
 		let imageRect = CGRect(x: 0, y: 0, width: width, height: height)
+		let imageSize = CGSize(width: CGFloat(width), height: CGFloat(height))
+		let scaleX = imageSize.width / max(selection.width, 1)
+		let scaleY = imageSize.height / max(selection.height, 1)
 		context.draw(image, in: imageRect)
 
-		let scaleX = CGFloat(width) / max(selection.width, 1)
-		let scaleY = CGFloat(height) / max(selection.height, 1)
 		func mapPoint(_ point: CGPoint) -> CGPoint {
-			CGPoint(
-				x: (point.x - selection.minX) * scaleX,
-				y: (point.y - selection.minY) * scaleY
+			frozenExportOverlayPoint(
+				point,
+				selection: selection,
+				imageSize: imageSize
 			)
 		}
 		func mapRect(_ rect: CGRect) -> CGRect {
-			CGRect(
-				x: (rect.minX - selection.minX) * scaleX,
-				y: (selection.maxY - rect.maxY) * scaleY,
-				width: rect.width * scaleX,
-				height: rect.height * scaleY
+			frozenExportOverlayRect(
+				rect,
+				selection: selection,
+				imageSize: imageSize
+			)
+		}
+		func sourceImageRect(_ rect: CGRect) -> CGRect {
+			frozenExportSourceImageRect(
+				rect,
+				selection: selection,
+				imageSize: imageSize
 			)
 		}
 
-		let mosaicRects = chromeState.frozenOverlay.mosaicRects.map(mapRect)
+		let mosaicRects = chromeState.frozenOverlay.mosaicRects.map {
+			(source: sourceImageRect($0), destination: mapRect($0))
+		}
 		if !mosaicRects.isEmpty {
 			context.saveGState()
 			context.interpolationQuality = .high
 			for rect in mosaicRects {
-				if let mosaicPatch = makeFrozenMosaicPatch(from: image, sourceRect: rect) {
-					context.draw(mosaicPatch, in: rect.integral.intersection(imageRect))
+				if let mosaicPatch = makeFrozenMosaicPatch(from: image, sourceRect: rect.source) {
+					context.draw(mosaicPatch, in: rect.destination.integral.intersection(imageRect))
 				}
 			}
 			context.restoreGState()

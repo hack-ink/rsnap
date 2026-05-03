@@ -259,6 +259,8 @@ script = '''
 swift package --package-path native/macos-host clean
 RSNAP_HOST_FFI_LIB_DIR="$PWD/target/debug" \
 swift run --package-path native/macos-host RsnapHostBridgeProbe
+RSNAP_HOST_FFI_LIB_DIR="$PWD/target/debug" \
+swift run --package-path native/macos-host RsnapNativeHostKitProbe
 '''
 
 [tasks.test-macos-native-host-stage]

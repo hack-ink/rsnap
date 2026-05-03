@@ -17,6 +17,7 @@ let package = Package(
 		.library(name: "RsnapHostBridge", targets: ["RsnapHostBridge"]),
 		.library(name: "RsnapNativeHostKit", targets: ["RsnapNativeHostKit"]),
 		.executable(name: "RsnapHostBridgeProbe", targets: ["RsnapHostBridgeProbe"]),
+		.executable(name: "RsnapNativeHostKitProbe", targets: ["RsnapNativeHostKitProbe"]),
 		.executable(name: "RsnapNativeHost", targets: ["RsnapNativeHost"]),
 	],
 	dependencies: [
@@ -65,6 +66,10 @@ let package = Package(
 		.executableTarget(
 			name: "RsnapHostBridgeProbe",
 			dependencies: ["RsnapHostBridge"]
+		),
+		.executableTarget(
+			name: "RsnapNativeHostKitProbe",
+			dependencies: ["RsnapNativeHostKit"]
 		),
 		.executableTarget(
 			name: "RsnapNativeHost",
