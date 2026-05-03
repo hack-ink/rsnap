@@ -8,19 +8,21 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 15u
+#define RSNAP_HOST_FFI_ABI_VERSION 16u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
 
 typedef struct RsnapSessionHandle RsnapSessionHandle;
 typedef struct RsnapLiveSamplerHandle RsnapLiveSamplerHandle;
+typedef struct RsnapScrollSessionHandle RsnapScrollSessionHandle;
 
 typedef enum RsnapStatus {
 	RSNAP_STATUS_OK = 0,
 	RSNAP_STATUS_NULL_HANDLE = 1,
 	RSNAP_STATUS_NULL_OUTPUT = 2,
 	RSNAP_STATUS_EMPTY = 3,
+	RSNAP_STATUS_INVALID_INPUT = 4,
 } RsnapStatus;
 
 typedef enum RsnapPlatformTag {
@@ -205,6 +207,7 @@ typedef enum RsnapHostRequestKind {
 	RSNAP_HOST_REQUEST_REQUEST_SCREEN_RECORDING_PERMISSION = 6,
 	RSNAP_HOST_REQUEST_REQUEST_ACCESSIBILITY_PERMISSION = 7,
 	RSNAP_HOST_REQUEST_REQUEST_INPUT_MONITORING_PERMISSION = 8,
+	RSNAP_HOST_REQUEST_START_SCROLL_CAPTURE = 9,
 } RsnapHostRequestKind;
 
 typedef struct RsnapHostRequestValue {
@@ -239,8 +242,30 @@ typedef struct RsnapOwnedRgbaRegion {
 	uint8_t *rgba;
 } RsnapOwnedRgbaRegion;
 
+typedef enum RsnapScrollObserveOutcomeKind {
+	RSNAP_SCROLL_OBSERVE_NO_CHANGE = 0,
+	RSNAP_SCROLL_OBSERVE_PREVIEW_UPDATED = 1,
+	RSNAP_SCROLL_OBSERVE_COMMITTED = 2,
+	RSNAP_SCROLL_OBSERVE_UNSUPPORTED_DIRECTION = 3,
+} RsnapScrollObserveOutcomeKind;
+
+typedef struct RsnapScrollObserveResult {
+	uint32_t kind;
+	uint32_t growth_rows;
+	uint32_t export_width;
+	uint32_t export_height;
+	int32_t current_viewport_top_y;
+} RsnapScrollObserveResult;
+
 uint32_t rsnap_host_ffi_abi_version(void);
 RsnapSessionHandle *rsnap_session_create(struct RsnapSessionConfig config);
+RsnapScrollSessionHandle *rsnap_scroll_session_create(
+	uint32_t width,
+	uint32_t height,
+	const uint8_t *rgba,
+	size_t rgba_len,
+	uint32_t preview_width_px
+);
 RsnapLiveSamplerHandle *rsnap_live_sampler_create(void);
 RsnapLiveSamplerHandle *rsnap_live_sampler_create_with_self_capture_exception_window_ids(
 	const uint32_t *window_ids,
@@ -254,7 +279,24 @@ enum RsnapStatus rsnap_live_sampler_reset(
 	RsnapLiveSamplerHandle *handle
 );
 void rsnap_session_destroy(RsnapSessionHandle *handle);
+void rsnap_scroll_session_destroy(RsnapScrollSessionHandle *handle);
 void rsnap_live_sampler_destroy(RsnapLiveSamplerHandle *handle);
+enum RsnapStatus rsnap_scroll_session_observe_downward_frame(
+	RsnapScrollSessionHandle *handle,
+	uint32_t width,
+	uint32_t height,
+	const uint8_t *rgba,
+	size_t rgba_len,
+	struct RsnapScrollObserveResult *out_result
+);
+enum RsnapStatus rsnap_scroll_session_take_export_rgba(
+	RsnapScrollSessionHandle *handle,
+	struct RsnapOwnedRgbaRegion *out_region
+);
+enum RsnapStatus rsnap_scroll_session_undo_last_append(
+	RsnapScrollSessionHandle *handle,
+	struct RsnapScrollObserveResult *out_result
+);
 enum RsnapStatus rsnap_session_enter_live(RsnapSessionHandle *handle);
 enum RsnapStatus rsnap_session_handle_host_event(
 	RsnapSessionHandle *handle,

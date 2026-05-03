@@ -275,6 +275,51 @@ fn pairwise_downward_shift_estimate_tracks_successive_browser_like_steps() {
 	}
 }
 
+#[test]
+fn trusted_pairwise_downward_shift_blocks_periodic_ambiguity_near_vision_motion() {
+	let document: Vec<[u8; 4]> = (0..256)
+		.map(|row| {
+			let bucket = (row % 24) as u8;
+
+			[
+				bucket.saturating_mul(7),
+				255_u8.saturating_sub(bucket.saturating_mul(3)),
+				bucket.saturating_mul(5),
+				255,
+			]
+		})
+		.collect();
+	let base = make_window(&document, 8, 0, 96);
+	let moved = make_window(&document, 8, 24, 96);
+
+	assert!(support::estimate_pairwise_downward_shift_rows(&base, &moved).is_some());
+	assert_eq!(
+		support::trusted_pairwise_downward_shift_rows_near_motion(&base, &moved, 24, 24),
+		None
+	);
+}
+
+#[test]
+fn worker_pairwise_motion_resolution_prefers_overlap_rows_for_stitch_boundary() {
+	assert_eq!(ScrollSession::resolve_worker_pairwise_motion_rows(180, Some(168)), Ok(168));
+}
+
+#[test]
+fn worker_pairwise_motion_resolution_blocks_uncorroborated_or_conflicting_motion() {
+	assert_eq!(
+		ScrollSession::resolve_worker_pairwise_motion_rows(20, None),
+		Err("worker_pairwise_missing_or_ambiguous_overlap_corroboration")
+	);
+	assert_eq!(
+		ScrollSession::resolve_worker_pairwise_motion_rows(20, Some(0)),
+		Err("worker_pairwise_zero_overlap_corroboration")
+	);
+	assert_eq!(
+		ScrollSession::resolve_worker_pairwise_motion_rows(180, Some(220)),
+		Err("worker_pairwise_vision_overlap_motion_mismatch")
+	);
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn worker_pairwise_vision_uses_latest_committed_live_frame_for_followup_growth() {

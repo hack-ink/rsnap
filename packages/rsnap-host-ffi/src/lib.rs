@@ -4,10 +4,8 @@
 //! new host/core direction with an opaque session handle, FFI-safe config/event
 //! structs, and copy-out scene/request snapshots.
 
-#[cfg(target_os = "macos")]
 use std::mem;
 use std::ptr::{self, NonNull};
-#[cfg(target_os = "macos")]
 use std::slice;
 
 #[cfg(not(target_os = "macos"))]
@@ -21,9 +19,12 @@ use rsnap_capture_core::{
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
+use rsnap_overlay::scroll_stitching::{
+	ScrollStitchImage, ScrollStitchObserveOutcome, ScrollStitchSession,
+};
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 15;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 16;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -32,6 +33,11 @@ const RSNAP_LIVE_SAMPLE_PATCH_CAPACITY: usize = 4_096;
 /// Opaque session handle owned by the native host through the C ABI.
 pub struct RsnapSessionHandle {
 	session: CaptureSessionCore,
+}
+
+/// Opaque scroll-capture stitching handle owned by the native host through the C ABI.
+pub struct RsnapScrollSessionHandle {
+	session: ScrollStitchSession,
 }
 
 #[cfg(target_os = "macos")]
@@ -52,6 +58,8 @@ pub enum RsnapStatus {
 	NullOutput = 2,
 	/// No queued value was available.
 	Empty = 3,
+	/// The provided input payload was invalid.
+	InvalidInput = 4,
 }
 
 /// FFI-safe live cursor sample copied out of the native Rust sampler.
@@ -123,6 +131,47 @@ pub struct RsnapOwnedRgbaRegion {
 impl Default for RsnapOwnedRgbaRegion {
 	fn default() -> Self {
 		Self { width: 0, height: 0, len: 0, capacity: 0, rgba: ptr::null_mut() }
+	}
+}
+
+/// FFI-safe scroll-capture observation discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapScrollObserveOutcomeKind {
+	/// The candidate did not change committed output.
+	NoChange = 0,
+	/// Preview-only state changed.
+	PreviewUpdated = 1,
+	/// Downward growth was committed.
+	Committed = 2,
+	/// The candidate proved motion in a direction not appended by this wrapper.
+	UnsupportedDirection = 3,
+}
+
+/// FFI-safe result for one scroll-capture frame observation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RsnapScrollObserveResult {
+	/// Observation outcome.
+	pub kind: u32,
+	/// Appended row count when `kind` is committed.
+	pub growth_rows: u32,
+	/// Current committed export width in pixels.
+	pub export_width: u32,
+	/// Current committed export height in pixels.
+	pub export_height: u32,
+	/// Current committed viewport top in pixels.
+	pub current_viewport_top_y: i32,
+}
+impl Default for RsnapScrollObserveResult {
+	fn default() -> Self {
+		Self {
+			kind: RsnapScrollObserveOutcomeKind::NoChange as u32,
+			growth_rows: 0,
+			export_width: 0,
+			export_height: 0,
+			current_viewport_top_y: 0,
+		}
 	}
 }
 
@@ -517,6 +566,8 @@ pub enum RsnapHostRequestKind {
 	RequestAccessibilityPermission = 7,
 	/// Request input monitoring permission.
 	RequestInputMonitoringPermission = 8,
+	/// Start native scroll capture.
+	StartScrollCapture = 9,
 }
 
 /// FFI-safe queued host request.
@@ -545,6 +596,152 @@ pub unsafe extern "C" fn rsnap_session_create(
 	let session = CaptureSessionCore::with_config(decode_session_config(config));
 
 	Box::into_raw(Box::new(RsnapSessionHandle { session }))
+}
+
+/// Creates a scroll-capture stitcher from the first frozen viewport frame.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data. The returned pointer must be released by calling
+/// `rsnap_scroll_session_destroy`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_scroll_session_create(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	preview_width_px: u32,
+) -> *mut RsnapScrollSessionHandle {
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return ptr::null_mut();
+	};
+	let Ok(session) = ScrollStitchSession::new_from_rgba(width, height, bytes, preview_width_px)
+	else {
+		return ptr::null_mut();
+	};
+
+	Box::into_raw(Box::new(RsnapScrollSessionHandle { session }))
+}
+
+/// Destroys a scroll-capture stitcher returned by `rsnap_scroll_session_create`.
+///
+/// # Safety
+///
+/// The pointer must either be null or a pointer returned by
+/// `rsnap_scroll_session_create` that has not already been destroyed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_scroll_session_destroy(handle: *mut RsnapScrollSessionHandle) {
+	if handle.is_null() {
+		return;
+	}
+
+	unsafe {
+		drop(Box::from_raw(handle));
+	}
+}
+
+/// Observes one discrete viewport screenshot for downward scroll-capture stitching.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_scroll_session_create`.
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data, and `out_result` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_scroll_session_observe_downward_frame(
+	handle: *mut RsnapScrollSessionHandle,
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	out_result: *mut RsnapScrollObserveResult,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { scroll_session_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	if out_result.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let outcome = match handle.session.observe_worker_pairwise_rgba(width, height, bytes) {
+		Ok(outcome) => outcome,
+		Err(_err) => return RsnapStatus::InvalidInput,
+	};
+	let export = handle.session.export_image();
+
+	unsafe {
+		ptr::write(out_result, encode_scroll_observe_result(outcome, &export, &handle.session));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Copies the current committed scroll-capture export into a Rust-owned RGBA buffer.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_scroll_session_create`, and
+/// `out_region` must be writable. The returned buffer must be released with
+/// `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_scroll_session_take_export_rgba(
+	handle: *mut RsnapScrollSessionHandle,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { scroll_session_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let export = handle.session.export_image();
+
+	unsafe {
+		ptr::write(out_region, owned_region_from_scroll_image(export));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Reverts the most recent committed scroll-capture append when possible.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_scroll_session_create`, and
+/// `out_result` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_scroll_session_undo_last_append(
+	handle: *mut RsnapScrollSessionHandle,
+	out_result: *mut RsnapScrollObserveResult,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { scroll_session_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	if out_result.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let did_undo = handle.session.undo_last_append();
+	let export = handle.session.export_image();
+	let kind = if did_undo {
+		ScrollStitchObserveOutcome::PreviewUpdated
+	} else {
+		ScrollStitchObserveOutcome::NoChange
+	};
+
+	unsafe {
+		ptr::write(out_result, encode_scroll_observe_result(kind, &export, &handle.session));
+	}
+
+	RsnapStatus::Ok
 }
 
 /// Returns the current C ABI version for the native host bridge.
@@ -1054,13 +1251,12 @@ pub unsafe extern "C" fn rsnap_live_sampler_take_latest_monitor_rgba(
 	RsnapStatus::Ok
 }
 
-/// Releases a buffer previously returned by `rsnap_live_sampler_take_latest_monitor_rgba`.
+/// Releases a buffer previously returned by an RGBA export function.
 ///
 /// # Safety
 ///
-/// `region` must point to a struct returned by `rsnap_live_sampler_take_latest_monitor_rgba`
-/// that has not already been released.
-#[cfg(target_os = "macos")]
+/// `region` must point to a struct returned by a `*_take_*_rgba` function that has not already
+/// been released.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rsnap_owned_rgba_region_release(region: *mut RsnapOwnedRgbaRegion) {
 	let Some(region) = (unsafe { region.as_mut() }) else {
@@ -1082,11 +1278,25 @@ unsafe fn handle_ref<'a>(handle: *const RsnapSessionHandle) -> Option<&'a RsnapS
 	unsafe { handle.as_ref() }
 }
 
+unsafe fn scroll_session_handle_mut<'a>(
+	handle: *mut RsnapScrollSessionHandle,
+) -> Option<&'a mut RsnapScrollSessionHandle> {
+	unsafe { handle.as_mut() }
+}
+
 #[cfg(target_os = "macos")]
 unsafe fn live_sampler_handle_mut<'a>(
 	handle: *mut RsnapLiveSamplerHandle,
 ) -> Option<&'a mut RsnapLiveSamplerHandle> {
 	unsafe { handle.as_mut() }
+}
+
+unsafe fn rgba_bytes<'a>(rgba: *const u8, rgba_len: usize) -> Option<&'a [u8]> {
+	if rgba.is_null() || rgba_len == 0 {
+		return None;
+	}
+
+	Some(unsafe { slice::from_raw_parts(rgba, rgba_len) })
 }
 
 fn decode_session_config(config: RsnapSessionConfig) -> SessionConfig {
@@ -1349,6 +1559,10 @@ fn encode_host_request(request: HostRequest) -> RsnapHostRequestValue {
 				selection_editable: u8::from(selection_editable),
 			}
 		},
+		HostRequest::StartScrollCapture => RsnapHostRequestValue {
+			kind: RsnapHostRequestKind::StartScrollCapture as u32,
+			..RsnapHostRequestValue::default()
+		},
 		HostRequest::PerformHostEffect(effect) => RsnapHostRequestValue {
 			kind: match effect {
 				HostEffectKind::CopyCapture => RsnapHostRequestKind::CopyCapture,
@@ -1372,6 +1586,48 @@ fn encode_host_request(request: HostRequest) -> RsnapHostRequestValue {
 			..RsnapHostRequestValue::default()
 		},
 	}
+}
+
+fn encode_scroll_observe_result(
+	outcome: ScrollStitchObserveOutcome,
+	export: &ScrollStitchImage,
+	session: &ScrollStitchSession,
+) -> RsnapScrollObserveResult {
+	let (kind, growth_rows) = match outcome {
+		ScrollStitchObserveOutcome::NoChange => (RsnapScrollObserveOutcomeKind::NoChange, 0),
+		ScrollStitchObserveOutcome::PreviewUpdated => {
+			(RsnapScrollObserveOutcomeKind::PreviewUpdated, 0)
+		},
+		ScrollStitchObserveOutcome::Committed { growth_rows } => {
+			(RsnapScrollObserveOutcomeKind::Committed, growth_rows)
+		},
+		ScrollStitchObserveOutcome::UnsupportedDirection => {
+			(RsnapScrollObserveOutcomeKind::UnsupportedDirection, 0)
+		},
+	};
+
+	RsnapScrollObserveResult {
+		kind: kind as u32,
+		growth_rows,
+		export_width: export.width,
+		export_height: export.height,
+		current_viewport_top_y: session.current_viewport_top_y(),
+	}
+}
+
+fn owned_region_from_scroll_image(image: ScrollStitchImage) -> RsnapOwnedRgbaRegion {
+	let mut rgba = image.rgba;
+	let out = RsnapOwnedRgbaRegion {
+		width: image.width,
+		height: image.height,
+		len: rgba.len(),
+		capacity: rgba.capacity(),
+		rgba: rgba.as_mut_ptr(),
+	};
+
+	mem::forget(rgba);
+
+	out
 }
 
 fn decode_effect_kind(effect_kind: u32) -> HostEffectKind {
@@ -1498,6 +1754,8 @@ mod tests {
 		RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapSessionConfig,
 		RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
 	};
+	#[cfg(target_os = "macos")]
+	use crate::{RsnapOwnedRgbaRegion, RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
 
 	fn default_config() -> RsnapSessionConfig {
 		RsnapSessionConfig {
@@ -1505,6 +1763,24 @@ mod tests {
 			allow_text_input: 1,
 			prefers_toolbar_above_selection: 0,
 		}
+	}
+
+	#[cfg(target_os = "macos")]
+	fn scroll_frame(width: u32, height: u32, top_row: u32) -> Vec<u8> {
+		let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+
+		for y in 0..height {
+			let document_row = top_row + y;
+
+			for x in 0..width {
+				rgba.push(((document_row * 17 + x * 13) % 251) as u8);
+				rgba.push(((document_row * 29 + x * 7) % 251) as u8);
+				rgba.push(((document_row * 5 + x * 31) % 251) as u8);
+				rgba.push(255);
+			}
+		}
+
+		rgba
 	}
 
 	#[test]
@@ -1631,6 +1907,51 @@ mod tests {
 		let handle: *mut RsnapSessionHandle = ptr::null_mut();
 
 		unsafe { crate::rsnap_session_destroy(handle) };
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn ffi_scroll_session_observes_downward_frame_and_exports() {
+		let base = scroll_frame(16, 96, 0);
+		let moved = scroll_frame(16, 96, 24);
+		let handle =
+			unsafe { crate::rsnap_scroll_session_create(16, 96, base.as_ptr(), base.len(), 16) };
+
+		assert!(!handle.is_null());
+
+		let mut result = RsnapScrollObserveResult::default();
+		let observe_status = unsafe {
+			crate::rsnap_scroll_session_observe_downward_frame(
+				handle,
+				16,
+				96,
+				moved.as_ptr(),
+				moved.len(),
+				&mut result,
+			)
+		};
+
+		assert_eq!(observe_status, RsnapStatus::Ok);
+		assert_eq!(result.kind, RsnapScrollObserveOutcomeKind::Committed as u32);
+		assert_eq!(result.growth_rows, 24);
+		assert_eq!(result.export_width, 16);
+		assert_eq!(result.export_height, 120);
+		assert_eq!(result.current_viewport_top_y, 24);
+
+		let mut export = RsnapOwnedRgbaRegion::default();
+
+		assert_eq!(
+			unsafe { crate::rsnap_scroll_session_take_export_rgba(handle, &mut export) },
+			RsnapStatus::Ok
+		);
+		assert_eq!(export.width, 16);
+		assert_eq!(export.height, 120);
+		assert_eq!(export.len, 16 * 120 * 4);
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut export);
+			crate::rsnap_scroll_session_destroy(handle);
+		}
 	}
 
 	#[test]

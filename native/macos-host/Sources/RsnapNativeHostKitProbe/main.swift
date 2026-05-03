@@ -40,6 +40,43 @@ enum RsnapNativeHostKitProbe {
 			selection: selection,
 			imageSize: imageSize
 		)
+		let minimapExportSize = CGSize(width: 100, height: 200)
+		guard
+			let rightMinimap = scrollCaptureMinimapFrame(
+				for: CGRect(x: 100, y: 100, width: 100, height: 100),
+				exportSize: minimapExportSize,
+				in: CGRect(x: 0, y: 0, width: 500, height: 500),
+				preferredWidth: 96,
+				minimumWidth: 44,
+				gap: 10,
+				margin: 10
+			)
+		else {
+			fatalError("expected right-side scroll minimap frame")
+		}
+		assertRectEqual(
+			rightMinimap,
+			CGRect(x: 210, y: 54, width: 96, height: 192),
+			"scroll minimap should prefer the right side when space is available"
+		)
+		guard
+			let leftMinimap = scrollCaptureMinimapFrame(
+				for: CGRect(x: 130, y: 100, width: 100, height: 100),
+				exportSize: minimapExportSize,
+				in: CGRect(x: 0, y: 0, width: 250, height: 500),
+				preferredWidth: 96,
+				minimumWidth: 44,
+				gap: 10,
+				margin: 10
+			)
+		else {
+			fatalError("expected left-side scroll minimap frame")
+		}
+		assertRectEqual(
+			leftMinimap,
+			CGRect(x: 24, y: 54, width: 96, height: 192),
+			"scroll minimap should fall back to the left when the right side is constrained"
+		)
 	}
 
 	private static func assertRectEqual(_ actual: CGRect, _ expected: CGRect, _ message: String) {

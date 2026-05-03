@@ -214,6 +214,8 @@ pub enum HostRequest {
 		/// Whether the frozen selection may be moved or resized after commit.
 		selection_editable: bool,
 	},
+	/// Start a native scroll-capture session for the current dragged-region freeze.
+	StartScrollCapture,
 	/// Perform a host-owned effect.
 	PerformHostEffect(HostEffectKind),
 	/// Request a host-owned permission flow.

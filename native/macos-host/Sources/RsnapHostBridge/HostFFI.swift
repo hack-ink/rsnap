@@ -58,6 +58,35 @@ public struct RGBARegionSnapshot: Equatable, Sendable {
 	}
 }
 
+public enum ScrollObserveOutcome: UInt32, Equatable, Sendable {
+	case noChange = 0
+	case previewUpdated = 1
+	case committed = 2
+	case unsupportedDirection = 3
+}
+
+public struct ScrollObserveResult: Equatable, Sendable {
+	public var outcome: ScrollObserveOutcome
+	public var growthRows: Int
+	public var exportWidth: Int
+	public var exportHeight: Int
+	public var currentViewportTopY: Int
+
+	public init(
+		outcome: ScrollObserveOutcome,
+		growthRows: Int,
+		exportWidth: Int,
+		exportHeight: Int,
+		currentViewportTopY: Int
+	) {
+		self.outcome = outcome
+		self.growthRows = growthRows
+		self.exportWidth = exportWidth
+		self.exportHeight = exportHeight
+		self.currentViewportTopY = currentViewportTopY
+	}
+}
+
 public struct MonitorSnapshot: Equatable, Sendable {
 	public var id: UInt32
 	public var frame: CGRect
@@ -183,6 +212,7 @@ public enum HostRequest: Equatable, Sendable {
 	case startLiveCapture
 	case stopLiveCapture
 	case requestFreezeSnapshot(selection: CGRect, selectionEditable: Bool)
+	case startScrollCapture
 	case copyCapture
 	case saveCapture
 	case recognizeText
@@ -563,6 +593,8 @@ public final class RsnapHostSession {
 			return .requestAccessibilityPermission
 		case RSNAP_HOST_REQUEST_REQUEST_INPUT_MONITORING_PERMISSION.rawValue:
 			return .requestInputMonitoringPermission
+		case RSNAP_HOST_REQUEST_START_SCROLL_CAPTURE.rawValue:
+			return .startScrollCapture
 		default:
 			throw HostBridgeError.invalidRequestKind(request.kind)
 		}
@@ -663,6 +695,124 @@ public final class RsnapHostSession {
 				width: Int(window.width),
 				height: Int(window.height)
 			)
+		)
+	}
+}
+
+public final class RsnapScrollCaptureSession: @unchecked Sendable {
+	private let handle: OpaquePointer
+	private let stateLock = NSLock()
+
+	public init(baseImage: RGBARegionSnapshot, previewWidthPixels: Int) throws {
+		let actualAbi = rsnap_host_ffi_abi_version()
+		if actualAbi != RSNAP_HOST_FFI_ABI_VERSION {
+			throw HostBridgeError.abiVersionMismatch(
+				expected: RSNAP_HOST_FFI_ABI_VERSION,
+				actual: actualAbi
+			)
+		}
+
+		let width = UInt32(max(baseImage.width, 0))
+		let height = UInt32(max(baseImage.height, 0))
+		let previewWidth = UInt32(max(previewWidthPixels, 1))
+		let maybeHandle = baseImage.rgba.withUnsafeBytes { buffer -> OpaquePointer? in
+			guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
+				return nil
+			}
+			return rsnap_scroll_session_create(
+				width,
+				height,
+				baseAddress,
+				baseImage.rgba.count,
+				previewWidth
+			)
+		}
+		guard let handle = maybeHandle else {
+			throw HostBridgeError.sessionCreationFailed
+		}
+		self.handle = handle
+	}
+
+	deinit {
+		rsnap_scroll_session_destroy(handle)
+	}
+
+	public func observeDownwardFrame(_ frame: RGBARegionSnapshot) throws -> ScrollObserveResult {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		var outResult = RsnapScrollObserveResult()
+		let status = frame.rgba.withUnsafeBytes { buffer -> RsnapStatus in
+			guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
+				return RSNAP_STATUS_INVALID_INPUT
+			}
+			return rsnap_scroll_session_observe_downward_frame(
+				handle,
+				UInt32(max(frame.width, 0)),
+				UInt32(max(frame.height, 0)),
+				baseAddress,
+				frame.rgba.count,
+				&outResult
+			)
+		}
+		try requireOk(status, context: "observing scroll-capture frame")
+
+		return try decode(result: outResult)
+	}
+
+	public func exportImage() throws -> RGBARegionSnapshot? {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		var outRegion = RsnapOwnedRgbaRegion()
+		let status = rsnap_scroll_session_take_export_rgba(handle, &outRegion)
+		let code = rsnap_status_code(status)
+		if code == 3 {
+			return nil
+		}
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(
+				context: "taking scroll-capture export RGBA", code: code)
+		}
+		guard outRegion.len > 0, let rgba = outRegion.rgba else {
+			return nil
+		}
+		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
+		ownedRegion.initialize(to: outRegion)
+		let data = Data(
+			bytesNoCopy: rgba,
+			count: outRegion.len,
+			deallocator: .custom { _, _ in
+				rsnap_owned_rgba_region_release(ownedRegion)
+				ownedRegion.deinitialize(count: 1)
+				ownedRegion.deallocate()
+			}
+		)
+		return RGBARegionSnapshot(
+			width: Int(outRegion.width),
+			height: Int(outRegion.height),
+			rgba: data
+		)
+	}
+
+	private func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private func decode(result: RsnapScrollObserveResult) throws -> ScrollObserveResult {
+		guard let outcome = ScrollObserveOutcome(rawValue: result.kind) else {
+			throw HostBridgeError.ffiStatus(
+				context: "decoding scroll observation", code: result.kind)
+		}
+		return ScrollObserveResult(
+			outcome: outcome,
+			growthRows: Int(result.growth_rows),
+			exportWidth: Int(result.export_width),
+			exportHeight: Int(result.export_height),
+			currentViewportTopY: Int(result.current_viewport_top_y)
 		)
 	}
 }
