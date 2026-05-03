@@ -40,83 +40,33 @@ final class NativeHostSettingsViewModel: ObservableObject {
 
 struct NativeHostSettingsView: View {
 	@ObservedObject var model: NativeHostSettingsViewModel
-	@Environment(\.colorScheme) private var colorScheme
 	@State private var selectedSection: NativeHostSettingsSection = .appearance
+	private let sidebarWidth: CGFloat = 142
 
 	var body: some View {
 		ZStack {
-			SettingsAtmosphere()
+			SettingsAtmosphere(tintHue: model.settings.hudTintHue)
 
-			HStack(spacing: 0) {
-				SettingsSidebarBackdrop()
-					.frame(width: 164)
-					.overlay(alignment: .trailing) {
-						Rectangle()
-							.fill(sidebarDividerColor)
-							.frame(width: 1)
-					}
-				Color.clear
+			HStack(alignment: .top, spacing: 10) {
+				SettingsRail(selectedSection: $selectedSection)
+					.frame(width: sidebarWidth)
+					.padding(.top, 24)
+
+				SettingsDashboard(
+					model: model,
+					section: selectedSection,
+					restoreDefaults: model.restoreDefaults
+				)
+				.frame(maxWidth: .infinity, alignment: .topLeading)
 			}
-			.ignoresSafeArea(.container, edges: .top)
-
-			HStack(spacing: 0) {
-				ZStack {
-					SettingsSidebarBackdrop()
-					SettingsRail(selectedSection: $selectedSection)
-				}
-				.frame(width: 164)
-				.overlay(alignment: .trailing) {
-					Rectangle()
-						.fill(sidebarDividerColor)
-						.frame(width: 1)
-				}
-
-				VStack(alignment: .leading, spacing: 9) {
-					SettingsContentHeader(
-						section: selectedSection,
-						restoreDefaults: model.restoreDefaults
-					)
-
-					SettingsSectionPreview(model: model, section: selectedSection)
-						.id("preview-\(selectedSection.rawValue)")
-						.transition(.opacity)
-
-					ScrollView {
-						Group {
-							switch selectedSection {
-							case .appearance:
-								AppearanceSettingsPanel(model: model)
-							case .capture:
-								CaptureSettingsPanel(model: model)
-							case .output:
-								OutputSettingsPanel(model: model)
-							case .permissions:
-								PermissionsSettingsPanel()
-							}
-						}
-						.id(selectedSection)
-						.transition(
-							.asymmetric(
-								insertion: .opacity.combined(with: .move(edge: .bottom)),
-								removal: .opacity.combined(with: .move(edge: .top))
-							)
-						)
-						.padding(.bottom, 10)
-					}
-					.scrollIndicators(.automatic)
-				}
-				.padding(.top, 9)
-				.padding(.horizontal, 18)
-				.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-			}
+			.padding(.top, 12)
+			.padding(.horizontal, 14)
+			.padding(.bottom, 12)
 		}
+		.ignoresSafeArea(.container, edges: .top)
 		.controlSize(.small)
 		.animation(.spring(response: 0.34, dampingFraction: 0.86), value: selectedSection)
-		.frame(minWidth: 690, idealWidth: 690, minHeight: 420, idealHeight: 430)
-	}
-
-	private var sidebarDividerColor: Color {
-		colorScheme == .light ? Color.black.opacity(0.055) : Color.white.opacity(0.07)
+		.frame(minWidth: 620, idealWidth: 620, minHeight: 306, idealHeight: 318)
 	}
 }
 
@@ -168,37 +118,32 @@ private enum NativeHostSettingsSection: String, CaseIterable, Identifiable {
 	}
 }
 
-private struct SettingsSidebarBackdrop: View {
-	@Environment(\.colorScheme) private var colorScheme
-
-	var body: some View {
-		ZStack {
-			Rectangle()
-				.fill(Color(nsColor: .controlBackgroundColor))
-			if colorScheme == .light {
-				Color.white.opacity(0.18)
-			} else {
-				Color.black.opacity(0.08)
-			}
-		}
-	}
+private enum SettingsControlLayout {
+	static let controlColumnWidth: CGFloat = 178
+	static let sliderValueWidth: CGFloat = 34
+	static let sliderTrackWidth: CGFloat = 136
+	static let compactSliderLabelWidth: CGFloat = 44
+	static let compactSliderTrackWidth: CGFloat = 88
 }
 
 private struct SettingsRail: View {
 	@Binding var selectedSection: NativeHostSettingsSection
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 11) {
-			VStack(alignment: .leading, spacing: 3) {
-				Text("rsnap")
-					.font(.system(size: 18, weight: .semibold, design: .rounded))
-				Text("Settings")
-					.font(.system(size: 10, weight: .medium))
-					.foregroundStyle(.secondary)
+		VStack(alignment: .leading, spacing: 14) {
+			HStack(spacing: 8) {
+				SettingsBrandIcon()
+				VStack(alignment: .leading, spacing: 2) {
+					Text("rsnap")
+						.font(.system(size: 17, weight: .semibold, design: .rounded))
+					Text("Settings")
+						.font(.system(size: 10.5, weight: .medium))
+						.foregroundStyle(.secondary)
+				}
 			}
-			.padding(.top, 17)
+			.padding(.horizontal, 2)
 
-			VStack(spacing: 4) {
+			VStack(spacing: 5) {
 				ForEach(NativeHostSettingsSection.allCases) { section in
 					SettingsRailButton(
 						section: section,
@@ -210,12 +155,31 @@ private struct SettingsRail: View {
 					}
 				}
 			}
-
-			Spacer(minLength: 12)
 		}
-		.padding(.horizontal, 10)
-		.padding(.bottom, 12)
-		.frame(maxHeight: .infinity, alignment: .topLeading)
+		.padding(.top, 2)
+	}
+}
+
+private struct SettingsBrandIcon: View {
+	@Environment(\.colorScheme) private var colorScheme
+
+	var body: some View {
+		Image(nsImage: NSApp.applicationIconImage)
+			.resizable()
+			.interpolation(.high)
+			.scaledToFit()
+			.padding(1)
+			.frame(width: 28, height: 28)
+			.clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+			.overlay {
+				RoundedRectangle(cornerRadius: 7, style: .continuous)
+					.stroke(
+						colorScheme == .light
+							? Color.black.opacity(0.08)
+							: Color.white.opacity(0.16),
+						lineWidth: 1
+					)
+			}
 	}
 }
 
@@ -231,20 +195,24 @@ private struct SettingsRailButton: View {
 			HStack(spacing: 8) {
 				Image(systemName: section.symbolName)
 					.symbolRenderingMode(.hierarchical)
-					.font(.system(size: 12, weight: .semibold))
+					.font(.system(size: 12.5, weight: .semibold))
 					.foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-					.frame(width: 17, height: 17)
+					.frame(width: 23, height: 23)
+
 				VStack(alignment: .leading, spacing: 2) {
 					Text(section.title)
-						.font(.system(size: 11.6, weight: .semibold))
+						.font(.system(size: 12.5, weight: .semibold))
 						.foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(0.88))
+						.lineLimit(1)
+						.minimumScaleFactor(0.88)
 					Text(section.subtitle)
-						.font(.system(size: 9.2, weight: .medium))
+						.font(.system(size: 10, weight: .medium))
 						.foregroundStyle(.secondary)
+						.lineLimit(1)
 				}
 				Spacer(minLength: 0)
 			}
-			.padding(.horizontal, 9)
+			.padding(.horizontal, 8)
 			.padding(.vertical, 5)
 			.frame(maxWidth: .infinity)
 			.contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -253,8 +221,8 @@ private struct SettingsRailButton: View {
 					RoundedRectangle(cornerRadius: 9, style: .continuous)
 						.fill(
 							colorScheme == .light
-								? Color.black.opacity(0.055)
-								: Color.white.opacity(0.070)
+								? Color.black.opacity(0.040)
+								: Color.white.opacity(0.058)
 						)
 					HStack {
 						Capsule()
@@ -267,8 +235,8 @@ private struct SettingsRailButton: View {
 					RoundedRectangle(cornerRadius: 9, style: .continuous)
 						.fill(
 							colorScheme == .light
-								? Color.black.opacity(0.020)
-								: Color.white.opacity(0.030)
+								? Color.black.opacity(0.022)
+								: Color.white.opacity(0.034)
 						)
 				}
 			}
@@ -283,148 +251,146 @@ private struct SettingsRailButton: View {
 	}
 }
 
+private struct SettingsDashboard: View {
+	@ObservedObject var model: NativeHostSettingsViewModel
+	let section: NativeHostSettingsSection
+	let restoreDefaults: () -> Void
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 6) {
+			SettingsContentHeader(
+				section: section,
+				restoreDefaults: restoreDefaults
+			)
+
+			ScrollView {
+				activePanel
+					.id(section)
+					.transition(
+						.asymmetric(
+							insertion: .opacity.combined(with: .move(edge: .bottom)),
+							removal: .opacity.combined(with: .move(edge: .top))
+						)
+					)
+					.padding(.trailing, 8)
+					.padding(.bottom, 6)
+			}
+			.scrollIndicators(.automatic)
+			.frame(maxWidth: .infinity, alignment: .topLeading)
+		}
+		.padding(.horizontal, 13)
+		.padding(.vertical, 9)
+		.settingsGlassSurface(cornerRadius: 18, role: .panel)
+	}
+
+	@ViewBuilder
+	private var activePanel: some View {
+		switch section {
+		case .appearance:
+			AppearanceSettingsPanel(model: model)
+		case .capture:
+			CaptureSettingsPanel(model: model)
+		case .output:
+			OutputSettingsPanel(model: model)
+		case .permissions:
+			PermissionsSettingsPanel()
+		}
+	}
+}
+
 private struct SettingsContentHeader: View {
 	let section: NativeHostSettingsSection
 	let restoreDefaults: () -> Void
 
 	var body: some View {
-		HStack(alignment: .center, spacing: 18) {
-			VStack(alignment: .leading, spacing: 5) {
+		HStack(alignment: .firstTextBaseline, spacing: 10) {
+			VStack(alignment: .leading, spacing: 2) {
 				Text(section.title)
-					.font(.system(size: 20, weight: .semibold))
+					.font(.system(size: 18, weight: .semibold))
 				Text(section.subtitle)
-					.font(.system(size: 10.5, weight: .medium))
+					.font(.system(size: 11, weight: .medium))
 					.foregroundStyle(.secondary)
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 
 			if section != .permissions {
-				Button("Restore Defaults", action: restoreDefaults)
-					.rsnapGlassButton(prominent: false)
-					.controlSize(.small)
+				Button(action: restoreDefaults) {
+					Label("Restore Defaults", systemImage: "arrow.counterclockwise")
+						.labelStyle(.titleAndIcon)
+				}
+				.rsnapGlassButton(prominent: false)
+				.controlSize(.small)
 			}
 		}
-		.frame(height: 36)
+		.padding(.bottom, 2)
 	}
 }
 
-private struct SettingsSectionPreview: View {
+private struct SettingsSectionInspector: View {
 	@ObservedObject var model: NativeHostSettingsViewModel
 	let section: NativeHostSettingsSection
-	@Environment(\.colorScheme) private var colorScheme
 
 	var body: some View {
-		ZStack {
-			RoundedRectangle(cornerRadius: 16, style: .continuous)
-				.fill(Color.clear)
-			RoundedRectangle(cornerRadius: 16, style: .continuous)
-				.fill(previewOverlay)
-			LinearGradient(
-				colors: [
-					tintColor.opacity(colorScheme == .light ? 0.045 : 0.060),
-					Color.clear,
-				],
-				startPoint: .topLeading,
-				endPoint: .bottomTrailing
-			)
-
-			HStack(spacing: 12) {
-				previewContent
+		VStack(alignment: .leading, spacing: 12) {
+			switch section {
+			case .appearance:
+				AppearanceInspector(settings: model.settings)
+			case .capture:
+				CaptureInspector(settings: model.settings)
+			case .output:
+				OutputInspector(settings: model.settings)
+			case .permissions:
+				PermissionsInspector()
 			}
-			.padding(.horizontal, 16)
-			.padding(.vertical, 9)
 		}
-		.frame(height: 58)
-		.settingsGlassSurface(cornerRadius: 13, role: .preview)
+		.padding(14)
+		.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+		.settingsGlassSurface(cornerRadius: 18, role: .panel)
 	}
+}
 
-	private var previewOverlay: Color {
-		colorScheme == .light ? Color.white.opacity(0.30) : Color.black.opacity(0.05)
+private func abbreviatedPath(_ url: URL) -> String {
+	let path = url.path
+	let home = FileManager.default.homeDirectoryForCurrentUser.path
+	if path == home {
+		return "~"
 	}
+	if path.hasPrefix(home + "/") {
+		return "~" + path.dropFirst(home.count)
+	}
+	return path
+}
 
-	@ViewBuilder
-	private var previewContent: some View {
-		switch section {
-		case .appearance:
-			RoundedRectangle(cornerRadius: 11, style: .continuous)
-				.fill(tintColor.gradient)
-				.frame(width: 30, height: 30)
-				.overlay {
-					RoundedRectangle(cornerRadius: 11, style: .continuous)
-						.stroke(Color.white.opacity(0.55), lineWidth: 1)
-				}
-			VStack(alignment: .leading, spacing: 2) {
-				Text("Live HUD")
-					.font(.system(size: 12.5, weight: .semibold))
-				Text("\(tintHex) · \(Int((model.settings.hudTint * 100).rounded()))% tint")
-					.font(.system(size: 9.5, weight: .medium, design: .monospaced))
-					.foregroundStyle(.secondary)
-			}
-			Spacer(minLength: 8)
-			SettingsPreviewPill(model.settings.resolvedHudGlassMode.title)
-			SettingsPreviewPill(model.settings.liquidGlassStyle.title)
+private struct AppearanceInspector: View {
+	let settings: NativeHostSettings
 
-		case .capture:
-			Image(systemName: "viewfinder")
-				.font(.system(size: 21, weight: .semibold))
-				.foregroundStyle(Color.accentColor)
-				.frame(width: 30, height: 30)
-			VStack(alignment: .leading, spacing: 2) {
-				Text(shortcutTitle)
-					.font(.system(size: 12.5, weight: .semibold, design: .rounded))
-				Text(
-					"\(model.settings.toolbarPlacement.title) toolbar · \(model.settings.loupeSampleSize.title)"
+	var body: some View {
+		VStack(alignment: .leading, spacing: 12) {
+			MiniHudPreview(settings: settings)
+
+			VStack(spacing: 8) {
+				InspectorMetric(
+					title: "Material",
+					value: settings.resolvedHudGlassMode.title,
+					symbolName: "square.stack.3d.down.right"
 				)
-				.font(.system(size: 9.5, weight: .medium))
-				.foregroundStyle(.secondary)
-				.lineLimit(1)
-			}
-			Spacer(minLength: 8)
-			SettingsPreviewPill("Right-click exits")
-
-		case .output:
-			Image(systemName: "folder")
-				.font(.system(size: 21, weight: .semibold))
-				.foregroundStyle(Color.accentColor)
-				.frame(width: 30, height: 30)
-			VStack(alignment: .leading, spacing: 2) {
-				Text(abbreviatedPath(model.settings.outputDirectory))
-					.font(.system(size: 12, weight: .semibold))
-					.lineLimit(1)
-				Text(
-					"\(model.settings.outputFilenamePrefix) · \(model.settings.outputNaming.title)"
+				InspectorMetric(
+					title: "Tint",
+					value: "\(Int((settings.hudTint * 100).rounded()))%",
+					symbolName: "eyedropper"
 				)
-				.font(.system(size: 9.5, weight: .medium))
-				.foregroundStyle(.secondary)
-				.lineLimit(1)
+				InspectorMetric(
+					title: "Color",
+					value: tintHex,
+					symbolName: "paintpalette"
+				)
 			}
-			Spacer(minLength: 8)
-			SettingsPreviewPill("Ready")
-
-		case .permissions:
-			Image(systemName: "lock.shield")
-				.font(.system(size: 21, weight: .semibold))
-				.foregroundStyle(Color.accentColor)
-				.frame(width: 30, height: 30)
-			VStack(alignment: .leading, spacing: 2) {
-				Text("Native access")
-					.font(.system(size: 12, weight: .semibold))
-				Text("Required permissions for capture.")
-					.font(.system(size: 9.5, weight: .medium))
-					.foregroundStyle(.secondary)
-			}
-			Spacer(minLength: 8)
-			SettingsPreviewPill(permissionSummary)
 		}
-	}
-
-	private var tintColor: Color {
-		Color(hue: model.settings.hudTintHue, saturation: 0.72, brightness: 0.95)
 	}
 
 	private var tintHex: String {
 		let color = NSColor(
-			hue: CGFloat(model.settings.hudTintHue),
+			hue: CGFloat(settings.hudTintHue),
 			saturation: 0.72,
 			brightness: 0.95,
 			alpha: 1
@@ -437,62 +403,264 @@ private struct SettingsSectionPreview: View {
 			Int((converted.blueComponent * 255).rounded())
 		)
 	}
+}
 
-	private var shortcutTitle: String {
-		NativeHostSettings.captureHotKeyPresentation(for: model.settings.captureHotkey)
-			.displayTitle
-	}
+private struct CaptureInspector: View {
+	let settings: NativeHostSettings
 
-	private var permissionSummary: String {
-		let required = [
-			PermissionKind.screenRecording,
-			.accessibility,
-			.inputMonitoring,
-		].filter { NativePermissions.requiredForCurrentNativeHost($0) }
-		let granted = required.filter { NativePermissions.status(for: $0) }.count
-		return "\(granted)/\(required.count) granted"
-	}
-
-	private func abbreviatedPath(_ url: URL) -> String {
-		let path = url.path
-		let home = FileManager.default.homeDirectoryForCurrentUser.path
-		if path == home {
-			return "~"
+	var body: some View {
+		VStack(alignment: .leading, spacing: 12) {
+			ShortcutHero(
+				title: NativeHostSettings.captureHotKeyPresentation(for: settings.captureHotkey)
+					.displayTitle
+			)
+			InspectorMetric(
+				title: "Toolbar",
+				value: settings.toolbarPlacement.title,
+				symbolName: "rectangle.bottomthird.inset.filled"
+			)
+			InspectorMetric(
+				title: "Loupe",
+				value: settings.loupeSampleSize.title,
+				symbolName: "plus.magnifyingglass"
+			)
+			InspectorMetric(
+				title: "Handles",
+				value: settings.frozenResizeHandleOrientation.title,
+				symbolName: "crop"
+			)
 		}
-		if path.hasPrefix(home + "/") {
-			return "~" + path.dropFirst(home.count)
-		}
-		return path
 	}
 }
 
-private struct SettingsPreviewPill: View {
-	let title: String
-	@Environment(\.colorScheme) private var colorScheme
-
-	init(_ title: String) {
-		self.title = title
-	}
+private struct OutputInspector: View {
+	let settings: NativeHostSettings
 
 	var body: some View {
-		Text(title)
-			.font(.system(size: 9.5, weight: .semibold))
-			.lineLimit(1)
-			.padding(.horizontal, 7)
-			.padding(.vertical, 4)
-			.background(
-				colorScheme == .light ? Color.white.opacity(0.72) : Color.white.opacity(0.10),
-				in: Capsule()
+		VStack(alignment: .leading, spacing: 12) {
+			OutputFilePreview(settings: settings)
+			InspectorMetric(
+				title: "Folder",
+				value: abbreviatedPath(settings.outputDirectory),
+				symbolName: "folder"
 			)
-			.overlay {
+			InspectorMetric(
+				title: "Naming",
+				value: settings.outputNaming.title,
+				symbolName: "number"
+			)
+		}
+	}
+}
+
+private struct PermissionsInspector: View {
+	private let requiredKinds = [
+		PermissionKind.screenRecording,
+		.accessibility,
+		.inputMonitoring,
+	]
+
+	var body: some View {
+		let required = requiredKinds.filter { NativePermissions.requiredForCurrentNativeHost($0) }
+		let granted = required.filter { NativePermissions.status(for: $0) }.count
+
+		VStack(alignment: .leading, spacing: 12) {
+			PermissionProgressBadge(granted: granted, total: required.count)
+			InspectorMetric(
+				title: "Required",
+				value: "\(required.count)",
+				symbolName: "lock.shield"
+			)
+			InspectorMetric(
+				title: "Granted",
+				value: "\(granted)",
+				symbolName: "checkmark.seal"
+			)
+		}
+	}
+}
+
+private struct MiniHudPreview: View {
+	let settings: NativeHostSettings
+	@Environment(\.colorScheme) private var colorScheme
+
+	var body: some View {
+		ZStack(alignment: .bottomLeading) {
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.fill(previewFill)
+			LinearGradient(
+				colors: [
+					tintColor.opacity(settings.hudTint.clamped(to: 0...1) * 0.42 + 0.10),
+					Color.clear,
+				],
+				startPoint: .topLeading,
+				endPoint: .bottomTrailing
+			)
+			.clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+			HStack(spacing: 7) {
+				PreviewDot()
 				Capsule()
-					.stroke(
-						colorScheme == .light
-							? Color.black.opacity(0.06)
-							: Color.white.opacity(0.10),
-						lineWidth: 1
-					)
+					.fill(Color.primary.opacity(0.62))
+					.frame(width: 44, height: 5)
+				Capsule()
+					.fill(Color.primary.opacity(0.24))
+					.frame(width: 22, height: 5)
 			}
+			.padding(14)
+		}
+		.frame(height: 112)
+		.overlay(alignment: .topLeading) {
+			Text("HUD Preview")
+				.font(.system(size: 10.5, weight: .semibold))
+				.foregroundStyle(.secondary)
+				.padding(14)
+		}
+		.overlay {
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.stroke(Color.white.opacity(colorScheme == .light ? 0.52 : 0.10), lineWidth: 1)
+		}
+	}
+
+	private var tintColor: Color {
+		Color(hue: settings.hudTintHue, saturation: 0.72, brightness: 0.95)
+	}
+
+	private var previewFill: Color {
+		colorScheme == .light ? Color.white.opacity(0.46) : Color.black.opacity(0.18)
+	}
+}
+
+private struct PreviewDot: View {
+	var body: some View {
+		ZStack {
+			Circle()
+				.fill(Color.accentColor.opacity(0.22))
+			Image(systemName: "sparkles")
+				.font(.system(size: 11, weight: .semibold))
+				.foregroundStyle(Color.accentColor)
+		}
+		.frame(width: 26, height: 26)
+	}
+}
+
+private struct ShortcutHero: View {
+	let title: String
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 10) {
+			Text("Global Shortcut")
+				.font(.system(size: 10.5, weight: .semibold))
+				.foregroundStyle(.secondary)
+			HStack(spacing: 6) {
+				ForEach(title.split(separator: "-").map(String.init), id: \.self) { token in
+					Text(token)
+						.font(.system(size: 12, weight: .bold, design: .rounded))
+						.padding(.horizontal, 9)
+						.padding(.vertical, 7)
+						.background(Color.primary.opacity(0.10), in: .rect(cornerRadius: 8))
+				}
+			}
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(12)
+		.background(Color.primary.opacity(0.050), in: .rect(cornerRadius: 14))
+	}
+}
+
+private struct OutputFilePreview: View {
+	let settings: NativeHostSettings
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 9) {
+			HStack(spacing: 8) {
+				Image(systemName: "doc.richtext")
+					.font(.system(size: 17, weight: .semibold))
+					.foregroundStyle(Color.accentColor)
+				Text(sampleName)
+					.font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+					.lineLimit(1)
+			}
+			Text(abbreviatedPath(settings.outputDirectory))
+				.font(.system(size: 10, weight: .medium))
+				.foregroundStyle(.secondary)
+				.lineLimit(2)
+		}
+		.padding(12)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.background(Color.primary.opacity(0.050), in: .rect(cornerRadius: 14))
+	}
+
+	private var sampleName: String {
+		switch settings.outputNaming {
+		case .timestamp:
+			return "\(settings.outputFilenamePrefix)-20260503.png"
+		case .sequence:
+			return "\(settings.outputFilenamePrefix)-0038.png"
+		}
+	}
+}
+
+private struct PermissionProgressBadge: View {
+	let granted: Int
+	let total: Int
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 9) {
+			ZStack {
+				Circle()
+					.stroke(Color.primary.opacity(0.10), lineWidth: 8)
+				Circle()
+					.trim(from: 0, to: progress)
+					.stroke(Color.accentColor, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+					.rotationEffect(.degrees(-90))
+				Text("\(granted)/\(max(total, 1))")
+					.font(.system(size: 15, weight: .bold, design: .rounded))
+			}
+			.frame(width: 74, height: 74)
+
+			Text(total == granted ? "Capture access ready" : "Permission setup needed")
+				.font(.system(size: 11.5, weight: .semibold))
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(12)
+		.background(Color.primary.opacity(0.050), in: .rect(cornerRadius: 14))
+	}
+
+	private var progress: CGFloat {
+		guard total > 0 else {
+			return 1
+		}
+		return CGFloat(granted) / CGFloat(total)
+	}
+}
+
+private struct InspectorMetric: View {
+	let title: String
+	let value: String
+	let symbolName: String
+
+	var body: some View {
+		HStack(spacing: 9) {
+			Image(systemName: symbolName)
+				.symbolRenderingMode(.hierarchical)
+				.font(.system(size: 11.5, weight: .semibold))
+				.foregroundStyle(.secondary)
+				.frame(width: 18, height: 18)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(title)
+					.font(.system(size: 9.5, weight: .medium))
+					.foregroundStyle(.secondary)
+				Text(value)
+					.font(.system(size: 11, weight: .semibold))
+					.lineLimit(1)
+					.minimumScaleFactor(0.76)
+			}
+			Spacer(minLength: 0)
+		}
+		.padding(.horizontal, 10)
+		.padding(.vertical, 8)
+		.background(Color.primary.opacity(0.045), in: .rect(cornerRadius: 12))
 	}
 }
 
@@ -502,7 +670,7 @@ private struct HudGlassModePicker: View {
 	let onSelect: (HudGlassModePreference) -> Void
 
 	var body: some View {
-		HStack(spacing: 4) {
+		HStack(spacing: 8) {
 			ForEach(HudGlassModePreference.allCases, id: \.rawValue) { mode in
 				let available =
 					mode != .liquidGlass || LiveChromeGlassMaterialSupport.isLiquidGlassAvailable
@@ -516,8 +684,8 @@ private struct HudGlassModePicker: View {
 				.help(available ? mode.title : "Requires Liquid Glass support.")
 			}
 		}
-		.padding(2)
-		.frame(width: 164)
+		.padding(.horizontal, 1)
+		.frame(width: SettingsControlLayout.controlColumnWidth)
 		.segmentedGlassBackground()
 	}
 }
@@ -528,7 +696,7 @@ private struct LiquidGlassStylePicker: View {
 	let onSelect: (LiquidGlassStylePreference) -> Void
 
 	var body: some View {
-		HStack(spacing: 4) {
+		HStack(spacing: 8) {
 			ForEach(LiquidGlassStylePreference.allCases, id: \.rawValue) { style in
 				ModernSegmentButton(
 					title: style.title,
@@ -539,8 +707,8 @@ private struct LiquidGlassStylePicker: View {
 				}
 			}
 		}
-		.padding(2)
-		.frame(width: 124)
+		.padding(.horizontal, 1)
+		.frame(width: SettingsControlLayout.controlColumnWidth)
 		.segmentedGlassBackground()
 	}
 }
@@ -550,7 +718,7 @@ private struct ToolbarPlacementPicker: View {
 	let onSelect: (ToolbarPlacementPreference) -> Void
 
 	var body: some View {
-		HStack(spacing: 4) {
+		HStack(spacing: 8) {
 			ForEach(ToolbarPlacementPreference.allCases, id: \.rawValue) { placement in
 				ModernSegmentButton(
 					title: placement.title,
@@ -561,8 +729,8 @@ private struct ToolbarPlacementPicker: View {
 				}
 			}
 		}
-		.padding(2)
-		.frame(width: 124)
+		.padding(.horizontal, 1)
+		.frame(width: SettingsControlLayout.controlColumnWidth)
 		.segmentedGlassBackground()
 	}
 }
@@ -572,7 +740,7 @@ private struct FrozenResizeHandleOrientationPicker: View {
 	let onSelect: (FrozenResizeHandleOrientationPreference) -> Void
 
 	var body: some View {
-		HStack(spacing: 4) {
+		HStack(spacing: 8) {
 			ForEach(FrozenResizeHandleOrientationPreference.allCases, id: \.rawValue) {
 				orientation in
 				ModernSegmentButton(
@@ -584,8 +752,8 @@ private struct FrozenResizeHandleOrientationPicker: View {
 				}
 			}
 		}
-		.padding(2)
-		.frame(width: 186)
+		.padding(.horizontal, 1)
+		.frame(width: SettingsControlLayout.controlColumnWidth)
 		.segmentedGlassBackground()
 	}
 }
@@ -595,7 +763,7 @@ private struct LoupeSampleSizePicker: View {
 	let onSelect: (LoupeSampleSizePreference) -> Void
 
 	var body: some View {
-		HStack(spacing: 4) {
+		HStack(spacing: 8) {
 			ForEach(LoupeSampleSizePreference.allCases, id: \.rawValue) { size in
 				ModernSegmentButton(
 					title: size.title,
@@ -606,8 +774,8 @@ private struct LoupeSampleSizePicker: View {
 				}
 			}
 		}
-		.padding(2)
-		.frame(width: 160)
+		.padding(.horizontal, 1)
+		.frame(width: SettingsControlLayout.controlColumnWidth)
 		.segmentedGlassBackground()
 	}
 }
@@ -617,7 +785,7 @@ private struct OutputNamingPicker: View {
 	let onSelect: (OutputNamingPreference) -> Void
 
 	var body: some View {
-		HStack(spacing: 4) {
+		HStack(spacing: 8) {
 			ForEach(OutputNamingPreference.allCases, id: \.rawValue) { naming in
 				ModernSegmentButton(
 					title: naming.title,
@@ -628,8 +796,8 @@ private struct OutputNamingPicker: View {
 				}
 			}
 		}
-		.padding(2)
-		.frame(width: 140)
+		.padding(.horizontal, 1)
+		.frame(width: SettingsControlLayout.controlColumnWidth)
 		.segmentedGlassBackground()
 	}
 }
@@ -643,55 +811,53 @@ private struct ModernSegmentButton: View {
 	@State private var isHovered = false
 
 	var body: some View {
-		Button(action: action) {
-			ZStack {
-				Color.clear
-
-				if isHovered && !isSelected && isEnabled {
-					RoundedRectangle(cornerRadius: 6, style: .continuous)
-						.fill(
-							colorScheme == .light
-								? Color.black.opacity(0.035)
-								: Color.white.opacity(0.045)
-						)
-				}
-
-				if isSelected {
-					RoundedRectangle(cornerRadius: 6, style: .continuous)
-						.fill(
-							colorScheme == .light
-								? Color(nsColor: .controlBackgroundColor)
-								: Color.white.opacity(0.105)
-						)
-						.overlay {
-							RoundedRectangle(cornerRadius: 6, style: .continuous)
-								.stroke(
-									colorScheme == .light
-										? Color.black.opacity(0.055)
-										: Color.white.opacity(0.082),
-									lineWidth: 1
-								)
-						}
-				}
-
+		Button {
+			withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+				action()
+			}
+		} label: {
+			VStack(spacing: 3) {
 				Text(title)
-					.font(.system(size: 9.3, weight: .semibold))
+					.font(.system(size: 10.2, weight: .semibold))
 					.lineLimit(1)
 					.minimumScaleFactor(0.9)
-					.foregroundStyle(isEnabled ? Color.primary : Color.secondary.opacity(0.54))
-					.padding(.horizontal, 7)
+					.foregroundStyle(textColor)
+					.padding(.horizontal, 6)
+
+				Capsule()
+					.fill(isSelected ? Color.accentColor : Color.clear)
+					.frame(width: 14, height: 2)
 			}
-			.frame(maxWidth: .infinity, minHeight: 20)
+			.padding(.vertical, 2)
+			.frame(maxWidth: .infinity, minHeight: 22)
+			.background(hoverBackground, in: .rect(cornerRadius: 6, style: .continuous))
 			.contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 		}
 		.buttonStyle(.plain)
 		.disabled(!isEnabled)
 		.frame(maxWidth: .infinity)
-		.animation(.spring(response: 0.22, dampingFraction: 0.78), value: isSelected)
+		.animation(.spring(response: 0.22, dampingFraction: 0.84), value: isSelected)
 		.animation(.easeOut(duration: 0.12), value: isHovered)
 		.onHover { hovering in
 			isHovered = hovering
 		}
+	}
+
+	private var hoverBackground: Color {
+		if isHovered && !isSelected && isEnabled {
+			return colorScheme == .light ? Color.black.opacity(0.035) : Color.white.opacity(0.050)
+		}
+		return .clear
+	}
+
+	private var textColor: Color {
+		if !isEnabled {
+			return Color.secondary.opacity(0.54)
+		}
+		if isSelected {
+			return Color.accentColor
+		}
+		return Color.primary.opacity(colorScheme == .light ? 0.88 : 0.92)
 	}
 }
 
@@ -699,8 +865,8 @@ private struct AppearanceSettingsPanel: View {
 	@ObservedObject var model: NativeHostSettingsViewModel
 
 	var body: some View {
-		SettingsPanel {
-			ModernSettingRow(
+		VStack(spacing: 8) {
+			SettingsHeroControlTile(
 				symbolName: "sparkles",
 				title: "Glass HUD",
 				subtitle: "Translucent capture chrome."
@@ -713,94 +879,100 @@ private struct AppearanceSettingsPanel: View {
 					)
 				)
 				.labelsHidden()
-				.toggleStyle(.switch)
+				.toggleStyle(SettingsToggleStyle())
 			}
 
-			ModernSettingRow(
-				symbolName: "rectangle.3.group.bubble",
-				title: "Material",
-				subtitle: materialSubtitle
-			) {
-				HudGlassModePicker(
-					selection: model.settings.resolvedHudGlassMode,
-					isEnabled: model.settings.hudGlassEnabled,
-					onSelect: updateGlassMode
-				)
-				.disabled(!model.settings.hudGlassEnabled)
-			}
-
-			if model.settings.resolvedHudGlassMode == .liquidGlass {
-				ModernSettingRow(
-					symbolName: "circle.hexagongrid",
-					title: "Liquid Glass style",
-					subtitle: "Clear or Regular."
+			VStack(spacing: 0) {
+				SettingsControlTile(
+					symbolName: "rectangle.3.group.bubble",
+					title: "Material",
+					subtitle: materialSubtitle
 				) {
-					LiquidGlassStylePicker(
-						selection: model.settings.liquidGlassStyle,
-						isEnabled: model.settings.hudGlassEnabled
-					) { value in
-						model.update { $0.liquidGlassStyle = value }
-					}
+					HudGlassModePicker(
+						selection: model.settings.resolvedHudGlassMode,
+						isEnabled: model.settings.hudGlassEnabled,
+						onSelect: updateGlassMode
+					)
 					.disabled(!model.settings.hudGlassEnabled)
+				}
+
+				if model.settings.resolvedHudGlassMode == .liquidGlass {
+					SettingsControlTile(
+						symbolName: "circle.hexagongrid",
+						title: "Liquid style",
+						subtitle: "Material profile."
+					) {
+						LiquidGlassStylePicker(
+							selection: model.settings.liquidGlassStyle,
+							isEnabled: model.settings.hudGlassEnabled
+						) { value in
+							model.update { $0.liquidGlassStyle = value }
+						}
+						.disabled(!model.settings.hudGlassEnabled)
+					}
 				}
 			}
 
 			if model.settings.resolvedHudGlassMode == .classicGlass {
-				ModernSliderRow(
-					symbolName: "circle.lefthalf.filled",
-					title: "Opacity",
-					subtitle: "Background weight.",
-					value: Binding(
-						get: { model.settings.hudOpacity },
-						set: { value in model.update { $0.hudOpacity = value } }
-					),
-					isEnabled: model.settings.hudGlassEnabled
-				)
-
-				ModernSliderRow(
-					symbolName: "camera.filters",
-					title: "Blur",
-					subtitle: "Background separation.",
-					value: Binding(
-						get: { model.settings.hudBlur },
-						set: { value in model.update { $0.hudBlur = value } }
-					),
-					isEnabled: model.settings.hudGlassEnabled
-				)
+				SettingsControlTile(
+					symbolName: "slider.horizontal.3",
+					title: "Classic tuning",
+					subtitle: "Opacity and blur."
+				) {
+					SettingsCompactSliderStack(
+						primaryValue: Binding(
+							get: { model.settings.hudOpacity },
+							set: { value in model.update { $0.hudOpacity = value } }
+						),
+						primaryLabel: "Opacity",
+						secondaryValue: Binding(
+							get: { model.settings.hudBlur },
+							set: { value in model.update { $0.hudBlur = value } }
+						),
+						secondaryLabel: "Blur",
+						isEnabled: model.settings.hudGlassEnabled
+					)
+				}
+				.transition(.opacity.combined(with: .move(edge: .top)))
 			}
 
-			ModernSliderRow(
-				symbolName: "eyedropper.halffull",
-				title: "Tint strength",
-				subtitle: "HUD accent weight.",
-				value: Binding(
-					get: { model.settings.hudTint },
-					set: { value in model.update { $0.hudTint = value } }
-				),
-				isEnabled: model.settings.hudGlassEnabled
-			)
+			VStack(spacing: 0) {
+				SettingsControlTile(
+					symbolName: "eyedropper.halffull",
+					title: "Tint strength",
+					subtitle: "Accent weight."
+				) {
+					SettingsTileSlider(
+						value: Binding(
+							get: { model.settings.hudTint },
+							set: { value in model.update { $0.hudTint = value } }
+						),
+						isEnabled: model.settings.hudGlassEnabled
+					)
+				}
 
-			ModernSettingRow(
-				symbolName: "paintpalette",
-				title: "Tint color",
-				subtitle: "HUD accent."
-			) {
-				ColorPicker(
-					"",
-					selection: tintColorBinding,
-					supportsOpacity: false
-				)
-				.labelsHidden()
-				.frame(width: 52)
-				.disabled(!model.settings.hudGlassEnabled)
+				SettingsControlTile(
+					symbolName: "paintpalette",
+					title: "Tint color",
+					subtitle: "HUD accent."
+				) {
+					FlatColorSwatch(
+						selection: tintColorBinding,
+						isEnabled: model.settings.hudGlassEnabled
+					)
+				}
 			}
 		}
+		.animation(
+			.spring(response: 0.26, dampingFraction: 0.86),
+			value: model.settings.resolvedHudGlassMode
+		)
 	}
 
 	private var materialSubtitle: String {
 		LiveChromeGlassMaterialSupport.isLiquidGlassAvailable
-			? "Liquid Glass or blur."
-			: "Classic Glass fallback."
+			? "Liquid or blur."
+			: "Classic fallback."
 	}
 
 	private var tintColorBinding: Binding<Color> {
@@ -827,15 +999,211 @@ private struct AppearanceSettingsPanel: View {
 		}
 		model.update { $0.hudGlassMode = mode }
 	}
+}
 
+private struct SettingsHeroControlTile<Control: View>: View {
+	let symbolName: String
+	let title: String
+	let subtitle: String
+	let control: Control
+
+	init(
+		symbolName: String,
+		title: String,
+		subtitle: String,
+		@ViewBuilder control: () -> Control
+	) {
+		self.symbolName = symbolName
+		self.title = title
+		self.subtitle = subtitle
+		self.control = control()
+	}
+
+	var body: some View {
+		HStack(spacing: 10) {
+			SettingsTileIcon(symbolName: symbolName, size: 20)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(title)
+					.font(.system(size: 13, weight: .semibold))
+				Text(subtitle)
+					.font(.system(size: 10.8, weight: .medium))
+					.foregroundStyle(.secondary)
+					.lineLimit(1)
+					.minimumScaleFactor(0.86)
+			}
+			.layoutPriority(1)
+			Spacer(minLength: 8)
+			control
+				.frame(width: SettingsControlLayout.controlColumnWidth, alignment: .trailing)
+		}
+		.padding(.vertical, 6)
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+}
+
+private struct SettingsControlTile<Control: View>: View {
+	let symbolName: String
+	let title: String
+	let subtitle: String
+	let control: Control
+
+	init(
+		symbolName: String,
+		title: String,
+		subtitle: String,
+		@ViewBuilder control: () -> Control
+	) {
+		self.symbolName = symbolName
+		self.title = title
+		self.subtitle = subtitle
+		self.control = control()
+	}
+
+	var body: some View {
+		HStack(spacing: 10) {
+			SettingsTileIcon(symbolName: symbolName, size: 19)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(title)
+					.font(.system(size: 13, weight: .semibold))
+					.lineLimit(1)
+				Text(subtitle)
+					.font(.system(size: 10.5, weight: .medium))
+					.foregroundStyle(.secondary)
+					.lineLimit(1)
+					.minimumScaleFactor(0.86)
+			}
+			.layoutPriority(1)
+			Spacer(minLength: 10)
+			control
+				.frame(width: SettingsControlLayout.controlColumnWidth, alignment: .trailing)
+		}
+		.padding(.vertical, 5)
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+}
+
+private struct SettingsTileIcon: View {
+	let symbolName: String
+	let size: CGFloat
+	@Environment(\.colorScheme) private var colorScheme
+
+	var body: some View {
+		Image(systemName: symbolName)
+			.symbolRenderingMode(.hierarchical)
+			.font(.system(size: size * 0.86, weight: .semibold))
+			.foregroundStyle(Color.accentColor.opacity(colorScheme == .light ? 0.88 : 0.95))
+			.frame(width: size + 8, height: size + 8)
+			.contentShape(Rectangle())
+	}
+}
+
+private struct SettingsTileSlider: View {
+	@Binding var value: Double
+	let isEnabled: Bool
+
+	var body: some View {
+		HStack(spacing: 8) {
+			GlassSlider(value: $value, isEnabled: isEnabled)
+				.frame(width: SettingsControlLayout.sliderTrackWidth, height: 24)
+			Text("\(Int((value * 100).rounded()))%")
+				.font(.system(size: 10.6, weight: .semibold, design: .monospaced))
+				.foregroundStyle(.secondary)
+				.frame(width: SettingsControlLayout.sliderValueWidth, alignment: .trailing)
+		}
+		.frame(width: SettingsControlLayout.controlColumnWidth, alignment: .trailing)
+	}
+}
+
+private struct SettingsCompactSliderStack: View {
+	@Binding var primaryValue: Double
+	let primaryLabel: String
+	@Binding var secondaryValue: Double
+	let secondaryLabel: String
+	let isEnabled: Bool
+
+	var body: some View {
+		VStack(spacing: 2) {
+			SettingsCompactSliderLine(
+				label: primaryLabel,
+				value: $primaryValue,
+				isEnabled: isEnabled
+			)
+			SettingsCompactSliderLine(
+				label: secondaryLabel,
+				value: $secondaryValue,
+				isEnabled: isEnabled
+			)
+		}
+		.frame(width: SettingsControlLayout.controlColumnWidth)
+		.opacity(isEnabled ? 1 : 0.46)
+		.animation(.easeOut(duration: 0.14), value: isEnabled)
+	}
+}
+
+private struct SettingsCompactSliderLine: View {
+	let label: String
+	@Binding var value: Double
+	let isEnabled: Bool
+
+	var body: some View {
+		HStack(spacing: 6) {
+			Text(label)
+				.font(.system(size: 10.3, weight: .medium))
+				.foregroundStyle(.secondary)
+				.lineLimit(1)
+				.frame(width: SettingsControlLayout.compactSliderLabelWidth, alignment: .leading)
+			GlassSlider(value: $value, isEnabled: isEnabled)
+				.frame(width: SettingsControlLayout.compactSliderTrackWidth, height: 16)
+			Text("\(Int((value * 100).rounded()))%")
+				.font(.system(size: 10.3, weight: .semibold, design: .monospaced))
+				.foregroundStyle(.secondary)
+				.frame(width: SettingsControlLayout.sliderValueWidth, alignment: .trailing)
+		}
+	}
+}
+
+private struct FlatColorSwatch: View {
+	@Binding var selection: Color
+	let isEnabled: Bool
+	@Environment(\.colorScheme) private var colorScheme
+	@State private var isHovered = false
+
+	var body: some View {
+		ZStack {
+			RoundedRectangle(cornerRadius: 6, style: .continuous)
+				.fill(selection)
+				.frame(width: 30, height: 18)
+				.overlay {
+					RoundedRectangle(cornerRadius: 6, style: .continuous)
+						.stroke(borderColor, lineWidth: 1)
+				}
+
+			ColorPicker("", selection: $selection, supportsOpacity: false)
+				.labelsHidden()
+				.frame(width: 30, height: 18)
+				.opacity(0.02)
+		}
+		.frame(width: 30, height: 18)
+		.opacity(isEnabled ? 1 : 0.45)
+		.scaleEffect(isHovered && isEnabled ? 1.04 : 1)
+		.animation(.easeOut(duration: 0.12), value: isHovered)
+		.onHover { hovering in
+			isHovered = hovering
+		}
+		.disabled(!isEnabled)
+	}
+
+	private var borderColor: Color {
+		colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18)
+	}
 }
 
 private struct CaptureSettingsPanel: View {
 	@ObservedObject var model: NativeHostSettingsViewModel
 
 	var body: some View {
-		SettingsPanel {
-			ModernSettingRow(
+		VStack(spacing: 8) {
+			SettingsHeroControlTile(
 				symbolName: "keyboard",
 				title: "New capture shortcut",
 				subtitle: "Current: \(shortcutPresentation.displayTitle)."
@@ -843,52 +1211,56 @@ private struct CaptureSettingsPanel: View {
 				CaptureHotKeyField(model: model)
 			}
 
-			ModernSettingRow(
-				symbolName: "rectangle.bottomthird.inset.filled",
-				title: "Frozen toolbar",
-				subtitle: "Command bar position."
-			) {
-				ToolbarPlacementPicker(selection: model.settings.toolbarPlacement) { value in
-					model.update { $0.toolbarPlacement = value }
+			VStack(spacing: 0) {
+				SettingsControlTile(
+					symbolName: "rectangle.bottomthird.inset.filled",
+					title: "Frozen toolbar",
+					subtitle: "Command bar."
+				) {
+					ToolbarPlacementPicker(selection: model.settings.toolbarPlacement) { value in
+						model.update { $0.toolbarPlacement = value }
+					}
+				}
+
+				SettingsControlTile(
+					symbolName: "crop",
+					title: "Corner handles",
+					subtitle: "Resize direction."
+				) {
+					FrozenResizeHandleOrientationPicker(
+						selection: model.settings.frozenResizeHandleOrientation
+					) { value in
+						model.update { $0.frozenResizeHandleOrientation = value }
+					}
 				}
 			}
 
-			ModernSettingRow(
-				symbolName: "crop",
-				title: "Corner handles",
-				subtitle: "Resize bracket direction."
-			) {
-				FrozenResizeHandleOrientationPicker(
-					selection: model.settings.frozenResizeHandleOrientation
-				) { value in
-					model.update { $0.frozenResizeHandleOrientation = value }
+			VStack(spacing: 0) {
+				SettingsControlTile(
+					symbolName: "plus.magnifyingglass",
+					title: "Loupe sample",
+					subtitle: "Patch size."
+				) {
+					LoupeSampleSizePicker(selection: model.settings.loupeSampleSize) { value in
+						model.update { $0.loupeSampleSize = value }
+					}
 				}
-			}
 
-			ModernSettingRow(
-				symbolName: "plus.magnifyingglass",
-				title: "Loupe sample",
-				subtitle: "Color patch size."
-			) {
-				LoupeSampleSizePicker(selection: model.settings.loupeSampleSize) { value in
-					model.update { $0.loupeSampleSize = value }
-				}
-			}
-
-			ModernSettingRow(
-				symbolName: "lightbulb",
-				title: "HUD hint",
-				subtitle: "Show Tab keycap."
-			) {
-				Toggle(
-					"",
-					isOn: Binding(
-						get: { model.settings.showAltHintKeycap },
-						set: { value in model.update { $0.showAltHintKeycap = value } }
+				SettingsControlTile(
+					symbolName: "lightbulb",
+					title: "HUD hint",
+					subtitle: "Tab keycap."
+				) {
+					Toggle(
+						"",
+						isOn: Binding(
+							get: { model.settings.showAltHintKeycap },
+							set: { value in model.update { $0.showAltHintKeycap = value } }
+						)
 					)
-				)
-				.labelsHidden()
-				.toggleStyle(.switch)
+					.labelsHidden()
+					.toggleStyle(SettingsToggleStyle())
+				}
 			}
 		}
 	}
@@ -906,8 +1278,15 @@ private struct CaptureHotKeyField: View {
 	var body: some View {
 		TextField("Option-X", text: $draft)
 			.font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-			.textFieldStyle(.roundedBorder)
-			.frame(width: 116)
+			.textFieldStyle(.plain)
+			.padding(.horizontal, 10)
+			.padding(.vertical, 6)
+			.background(Color.primary.opacity(0.070), in: .rect(cornerRadius: 9))
+			.overlay {
+				RoundedRectangle(cornerRadius: 9, style: .continuous)
+					.stroke(Color.primary.opacity(0.075), lineWidth: 1)
+			}
+			.frame(width: SettingsControlLayout.controlColumnWidth)
 			.focused($isFocused)
 			.onAppear(perform: syncDraft)
 			.onSubmit(commitDraft)
@@ -946,7 +1325,7 @@ private struct PermissionsSettingsPanel: View {
 	private let primaryKind = PermissionKind.screenRecording
 
 	var body: some View {
-		VStack(spacing: 10) {
+		VStack(spacing: 8) {
 			PermissionGrantCard(
 				kind: primaryKind,
 				refreshID: refreshID,
@@ -960,9 +1339,22 @@ private struct PermissionsSettingsPanel: View {
 				}
 			)
 
-			SettingsPanel {
-				ForEach(Self.rows) { row in
-					PermissionStatusRow(
+			VStack(spacing: 8) {
+				VStack(spacing: 0) {
+					ForEach(Self.rows.prefix(2)) { row in
+						PermissionStatusTile(
+							row: row,
+							refreshID: refreshID,
+							openSettings: { kind in
+								NativePermissions.openSystemSettings(for: kind)
+								refreshID += 1
+							}
+						)
+					}
+				}
+
+				ForEach(Self.rows.dropFirst(2)) { row in
+					PermissionStatusTile(
 						row: row,
 						refreshID: refreshID,
 						openSettings: { kind in
@@ -1061,6 +1453,7 @@ private struct PermissionGrantCard: View {
 						openSettings()
 					} label: {
 						Label("Open", systemImage: "gearshape")
+							.labelStyle(.titleAndIcon)
 					}
 					.rsnapGlassButton(prominent: false)
 					.controlSize(.small)
@@ -1074,11 +1467,10 @@ private struct PermissionGrantCard: View {
 					.help("Refresh status")
 				}
 			}
+			.frame(width: SettingsControlLayout.controlColumnWidth, alignment: .trailing)
 		}
-		.padding(.horizontal, 14)
-		.padding(.vertical, 12)
-		.frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
-		.settingsGlassSurface(cornerRadius: 13, role: .panel)
+		.padding(.vertical, 8)
+		.frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
 	}
 
 	private var isGranted: Bool {
@@ -1106,13 +1498,13 @@ private struct PermissionGrantCard: View {
 
 }
 
-private struct PermissionStatusRow: View {
+private struct PermissionStatusTile: View {
 	let row: PermissionSettingsRow
 	let refreshID: Int
 	let openSettings: (PermissionKind) -> Void
 
 	var body: some View {
-		ModernSettingRow(
+		SettingsControlTile(
 			symbolName: row.symbolName,
 			title: row.title,
 			subtitle: subtitle
@@ -1232,40 +1624,53 @@ private struct OutputSettingsPanel: View {
 	@ObservedObject var model: NativeHostSettingsViewModel
 
 	var body: some View {
-		SettingsPanel {
-			ModernSettingRow(
+		VStack(spacing: 8) {
+			SettingsHeroControlTile(
 				symbolName: "folder",
 				title: "Save location",
 				subtitle: abbreviatedPath(model.settings.outputDirectory)
 			) {
-				Button("Choose", action: model.chooseOutputDirectory)
-					.rsnapGlassButton(prominent: false)
-					.controlSize(.small)
+				Button(action: model.chooseOutputDirectory) {
+					Label("Choose", systemImage: "folder.badge.plus")
+						.labelStyle(.titleAndIcon)
+				}
+				.rsnapGlassButton(prominent: false)
+				.controlSize(.small)
 			}
 
-			ModernSettingRow(
-				symbolName: "textformat.abc",
-				title: "Filename prefix",
-				subtitle: "Safe filename text."
-			) {
-				TextField(
-					"rsnap",
-					text: Binding(
-						get: { model.settings.outputFilenamePrefix },
-						set: { value in model.update { $0.outputFilenamePrefix = value } }
+			VStack(spacing: 0) {
+				SettingsControlTile(
+					symbolName: "textformat.abc",
+					title: "Filename prefix",
+					subtitle: "Safe text."
+				) {
+					TextField(
+						"rsnap",
+						text: Binding(
+							get: { model.settings.outputFilenamePrefix },
+							set: { value in model.update { $0.outputFilenamePrefix = value } }
+						)
 					)
-				)
-				.textFieldStyle(.roundedBorder)
-				.frame(width: 172)
-			}
+					.textFieldStyle(.plain)
+					.font(.system(size: 10.8, weight: .semibold, design: .monospaced))
+					.padding(.horizontal, 10)
+					.padding(.vertical, 7)
+					.background(Color.primary.opacity(0.070), in: .rect(cornerRadius: 10))
+					.overlay {
+						RoundedRectangle(cornerRadius: 10, style: .continuous)
+							.stroke(Color.primary.opacity(0.075), lineWidth: 1)
+					}
+					.frame(width: SettingsControlLayout.controlColumnWidth)
+				}
 
-			ModernSettingRow(
-				symbolName: "number",
-				title: "Naming",
-				subtitle: "Filename style."
-			) {
-				OutputNamingPicker(selection: model.settings.outputNaming) { value in
-					model.update { $0.outputNaming = value }
+				SettingsControlTile(
+					symbolName: "number",
+					title: "Naming",
+					subtitle: "Filename style."
+				) {
+					OutputNamingPicker(selection: model.settings.outputNaming) { value in
+						model.update { $0.outputNaming = value }
+					}
 				}
 			}
 		}
@@ -1296,7 +1701,8 @@ private struct SettingsPanel<Content: View>: View {
 			content
 		}
 		.frame(maxWidth: .infinity, alignment: .topLeading)
-		.settingsGlassSurface(cornerRadius: 10, role: .panel)
+		.clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+		.settingsGlassSurface(cornerRadius: 13, role: .panel)
 	}
 }
 
@@ -1322,17 +1728,21 @@ private struct ModernSettingRow<Control: View>: View {
 
 	var body: some View {
 		HStack(alignment: .center, spacing: 12) {
-			Image(systemName: symbolName)
-				.symbolRenderingMode(.hierarchical)
-				.font(.system(size: 12.5, weight: .semibold))
-				.foregroundStyle(Color.secondary.opacity(colorScheme == .light ? 0.78 : 0.90))
-				.frame(width: 20, height: 20)
+			ZStack {
+				RoundedRectangle(cornerRadius: 8, style: .continuous)
+					.fill(rowIconFill)
+				Image(systemName: symbolName)
+					.symbolRenderingMode(.hierarchical)
+					.font(.system(size: 12.2, weight: .semibold))
+					.foregroundStyle(rowIconForeground)
+			}
+			.frame(width: 25, height: 25)
 
 			VStack(alignment: .leading, spacing: 3) {
 				Text(title)
-					.font(.system(size: 11, weight: .semibold))
+					.font(.system(size: 11.5, weight: .semibold))
 				Text(subtitle)
-					.font(.system(size: 9.2, weight: .medium))
+					.font(.system(size: 9.5, weight: .medium))
 					.foregroundStyle(.secondary)
 					.lineLimit(1)
 					.minimumScaleFactor(0.92)
@@ -1343,16 +1753,16 @@ private struct ModernSettingRow<Control: View>: View {
 
 			control
 		}
-		.padding(.horizontal, 12)
-		.padding(.vertical, 5)
-		.frame(minHeight: 42)
+		.padding(.horizontal, 13)
+		.padding(.vertical, 6)
+		.frame(minHeight: 46)
 		.background {
 			if isHovered {
 				Rectangle()
 					.fill(
 						colorScheme == .light
-							? Color.black.opacity(0.018)
-							: Color.white.opacity(0.026)
+							? Color.black.opacity(0.020)
+							: Color.white.opacity(0.030)
 					)
 			}
 		}
@@ -1364,7 +1774,7 @@ private struct ModernSettingRow<Control: View>: View {
 						: Color.white.opacity(0.052)
 				)
 				.frame(height: 1)
-				.padding(.leading, 44)
+				.padding(.leading, 51)
 		}
 		.contentShape(Rectangle())
 		.onHover { hovering in
@@ -1372,6 +1782,14 @@ private struct ModernSettingRow<Control: View>: View {
 				isHovered = hovering
 			}
 		}
+	}
+
+	private var rowIconFill: Color {
+		colorScheme == .light ? Color.black.opacity(0.038) : Color.white.opacity(0.055)
+	}
+
+	private var rowIconForeground: Color {
+		Color.secondary.opacity(colorScheme == .light ? 0.82 : 0.95)
 	}
 }
 
@@ -1384,160 +1802,305 @@ private struct ModernSliderRow: View {
 
 	var body: some View {
 		ModernSettingRow(symbolName: symbolName, title: title, subtitle: subtitle) {
-			HStack(spacing: 12) {
-				Slider(value: $value, in: 0...1)
-					.frame(width: 116)
+			HStack(spacing: 10) {
+				GlassSlider(value: $value, isEnabled: isEnabled)
+					.frame(width: SettingsControlLayout.sliderTrackWidth, height: 24)
 				Text("\(Int((value * 100).rounded()))")
 					.font(.system(size: 11, weight: .semibold, design: .monospaced))
 					.foregroundStyle(.secondary)
-					.frame(width: 30, alignment: .trailing)
+					.frame(width: SettingsControlLayout.sliderValueWidth, alignment: .trailing)
 			}
+			.frame(width: SettingsControlLayout.controlColumnWidth, alignment: .trailing)
 			.disabled(!isEnabled)
 		}
 	}
 }
 
-private struct SettingsAtmosphere: View {
+private struct GlassSlider: View {
+	@Binding var value: Double
+	let isEnabled: Bool
 	@Environment(\.colorScheme) private var colorScheme
+	@State private var isHovered = false
 
 	var body: some View {
-		ZStack {
-			Rectangle()
-				.fill(Color(nsColor: .windowBackgroundColor))
-			if colorScheme == .light {
-				Color.white.opacity(0.16)
-			} else {
-				Color.black.opacity(0.08)
+		GeometryReader { proxy in
+			let width = max(proxy.size.width, 1)
+			let clampedValue = value.clamped(to: 0...1)
+			let progress = CGFloat(clampedValue)
+			let knobSize: CGFloat = isHovered && isEnabled ? 14 : 13
+			let knobOffset = min(max(0, width * progress - knobSize / 2), max(0, width - knobSize))
+
+			ZStack(alignment: .leading) {
+				Capsule()
+					.fill(trackFill)
+					.frame(height: 6)
+				Capsule()
+					.fill(fillGradient)
+					.frame(width: min(width, max(8, width * progress)), height: 6)
+				Circle()
+					.fill(knobFill)
+					.frame(width: knobSize, height: knobSize)
+					.overlay {
+						Circle()
+							.stroke(knobBorder, lineWidth: 1)
+					}
+					.offset(x: knobOffset)
 			}
-		}
-		.ignoresSafeArea()
-	}
-}
-
-extension View {
-	@ViewBuilder
-	fileprivate func rsnapGlassButton(prominent: Bool) -> some View {
-		if prominent {
-			self.buttonStyle(.borderedProminent)
-		} else {
-			self.buttonStyle(.bordered)
-		}
-	}
-
-	fileprivate func segmentedGlassBackground() -> some View {
-		self.modifier(SegmentedGlassBackgroundModifier())
-	}
-
-	fileprivate func settingsGlassSurface(cornerRadius: CGFloat, role: SettingsGlassRole)
-		-> some View
-	{
-		self.modifier(SettingsGlassSurfaceModifier(cornerRadius: cornerRadius, role: role))
-	}
-}
-
-private struct SegmentedGlassBackgroundModifier: ViewModifier {
-	@Environment(\.colorScheme) private var colorScheme
-
-	func body(content: Content) -> some View {
-		content
-			.background(
-				colorScheme == .light ? Color.black.opacity(0.040) : Color.white.opacity(0.052),
-				in: .rect(cornerRadius: 8, style: .continuous)
+			.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+			.contentShape(Rectangle())
+			.animation(.spring(response: 0.18, dampingFraction: 0.82), value: isHovered)
+			.gesture(
+				DragGesture(minimumDistance: 0)
+					.onChanged { gesture in
+						guard isEnabled else {
+							return
+						}
+						let nextValue = min(max(gesture.location.x / width, 0), 1)
+						value = Double(nextValue)
+					}
 			)
-			.overlay {
-				RoundedRectangle(cornerRadius: 8, style: .continuous)
-					.stroke(
-						colorScheme == .light
-							? Color.black.opacity(0.048)
-							: Color.white.opacity(0.074),
-						lineWidth: 1
-					)
-			}
-	}
-}
-
-private enum SettingsGlassRole {
-	case panel
-	case preview
-}
-
-private struct SettingsGlassSurfaceModifier: ViewModifier {
-	let cornerRadius: CGFloat
-	let role: SettingsGlassRole
-	@Environment(\.colorScheme) private var colorScheme
-
-	@ViewBuilder
-	func body(content: Content) -> some View {
-		switch role {
-		case .panel:
-			content
-				.background(panelFill, in: shape)
-				.overlay {
-					RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-						.stroke(panelBorderColor, lineWidth: 1)
-						.allowsHitTesting(false)
-				}
-		case .preview:
-			content
-				.background(.regularMaterial, in: shape)
-				.background(baseTint, in: shape)
-				.overlay(alignment: .top) {
-					LinearGradient(
-						colors: [
-							Color.white.opacity(colorScheme == .light ? 0.54 : 0.12),
-							Color.white.opacity(0),
-						],
-						startPoint: .top,
-						endPoint: .bottom
-					)
-					.frame(height: 34)
-					.clipShape(shape)
-					.allowsHitTesting(false)
-				}
-				.overlay {
-					RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-						.stroke(borderGradient, lineWidth: 1)
-						.allowsHitTesting(false)
-				}
-				.shadow(color: shadowColor, radius: 7, y: 2)
+		}
+		.opacity(isEnabled ? 1 : 0.48)
+		.animation(.easeOut(duration: 0.12), value: isEnabled)
+		.onHover { hovering in
+			isHovered = hovering
 		}
 	}
 
-	private var shape: RoundedRectangle {
-		RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+	private var trackFill: Color {
+		colorScheme == .light ? Color.black.opacity(0.09) : Color.white.opacity(0.10)
 	}
 
-	private var baseTint: Color {
-		switch role {
-		case .panel:
-			return panelFill
-		case .preview:
-			return colorScheme == .light ? Color.white.opacity(0.28) : Color.black.opacity(0.035)
-		}
-	}
-
-	private var panelFill: Color {
-		colorScheme == .light
-			? Color(nsColor: .controlBackgroundColor)
-			: Color.white.opacity(0.032)
-	}
-
-	private var panelBorderColor: Color {
-		colorScheme == .light ? Color.black.opacity(0.062) : Color.white.opacity(0.058)
-	}
-
-	private var borderGradient: LinearGradient {
+	private var fillGradient: LinearGradient {
 		LinearGradient(
 			colors: [
-				colorScheme == .light ? Color.white.opacity(0.72) : Color.white.opacity(0.12),
-				colorScheme == .light ? Color.black.opacity(0.050) : Color.white.opacity(0.065),
+				Color.accentColor.opacity(colorScheme == .light ? 0.86 : 0.72),
+				Color.accentColor.opacity(colorScheme == .light ? 0.86 : 0.72),
+			],
+			startPoint: .leading,
+			endPoint: .trailing
+		)
+	}
+
+	private var knobFill: LinearGradient {
+		LinearGradient(
+			colors: [
+				Color.accentColor.opacity(colorScheme == .light ? 0.95 : 0.82),
+				Color.accentColor.opacity(colorScheme == .light ? 0.95 : 0.82),
 			],
 			startPoint: .topLeading,
 			endPoint: .bottomTrailing
 		)
 	}
 
-	private var shadowColor: Color {
-		colorScheme == .light ? Color.black.opacity(0.045) : Color.black.opacity(0.14)
+	private var knobBorder: Color {
+		Color.accentColor.opacity(colorScheme == .light ? 0.95 : 0.82)
+	}
+}
+
+private struct SettingsAtmosphere: View {
+	let tintHue: Double
+	@Environment(\.colorScheme) private var colorScheme
+
+	var body: some View {
+		ZStack {
+			Rectangle()
+				.fill(Color(nsColor: .windowBackgroundColor))
+			Rectangle()
+				.fill(.ultraThinMaterial)
+			LinearGradient(
+				colors: [
+					tintColor.opacity(colorScheme == .light ? 0.16 : 0.22),
+					Color.clear,
+					Color.accentColor.opacity(colorScheme == .light ? 0.08 : 0.14),
+				],
+				startPoint: .topLeading,
+				endPoint: .bottomTrailing
+			)
+			if colorScheme == .light {
+				Color.white.opacity(0.20)
+			} else {
+				Color.black.opacity(0.14)
+			}
+		}
+		.ignoresSafeArea()
+	}
+
+	private var tintColor: Color {
+		Color(hue: tintHue, saturation: 0.58, brightness: 0.94)
+	}
+}
+
+extension View {
+	@ViewBuilder
+	fileprivate func rsnapGlassButton(prominent: Bool) -> some View {
+		self.buttonStyle(SettingsCommandButtonStyle(prominent: prominent))
+	}
+
+	fileprivate func segmentedGlassBackground() -> some View {
+		self.modifier(SegmentedGlassBackgroundModifier())
+	}
+
+	fileprivate func settingsGlassSurface(cornerRadius: CGFloat, role _: SettingsGlassRole)
+		-> some View
+	{
+		self.modifier(SettingsGlassSurfaceModifier(cornerRadius: cornerRadius))
+	}
+}
+
+private struct SettingsCommandButtonStyle: ButtonStyle {
+	let prominent: Bool
+	@Environment(\.colorScheme) private var colorScheme
+	@Environment(\.isEnabled) private var isEnabled
+
+	func makeBody(configuration: Configuration) -> some View {
+		configuration.label
+			.labelStyle(.titleAndIcon)
+			.font(.system(size: 10.5, weight: .semibold))
+			.foregroundStyle(foregroundColor)
+			.symbolRenderingMode(.hierarchical)
+			.padding(.horizontal, 9)
+			.padding(.vertical, 4.5)
+			.background(
+				background(isPressed: configuration.isPressed),
+				in: .rect(cornerRadius: 7, style: .continuous)
+			)
+			.opacity(isEnabled ? 1 : 0.55)
+			.scaleEffect(configuration.isPressed ? 0.97 : 1)
+			.animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+	}
+
+	private var foregroundColor: Color {
+		if prominent {
+			return Color.accentColor
+		}
+		return Color.primary.opacity(colorScheme == .light ? 0.72 : 0.76)
+	}
+
+	private func background(isPressed: Bool) -> Color {
+		if prominent {
+			return Color.accentColor.opacity(isPressed ? 0.12 : 0.08)
+		}
+
+		return colorScheme == .light
+			? Color.black.opacity(isPressed ? 0.045 : 0)
+			: Color.white.opacity(isPressed ? 0.050 : 0)
+	}
+}
+
+private struct SettingsToggleStyle: ToggleStyle {
+	@Environment(\.colorScheme) private var colorScheme
+
+	func makeBody(configuration: Configuration) -> some View {
+		Button {
+			withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+				configuration.isOn.toggle()
+			}
+		} label: {
+			ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+				Capsule()
+					.fill(trackFill(isOn: configuration.isOn))
+					.overlay {
+						Capsule()
+							.stroke(trackBorder(isOn: configuration.isOn), lineWidth: 1)
+					}
+				Circle()
+					.fill(knobFill(isOn: configuration.isOn))
+					.frame(width: 16, height: 16)
+					.overlay {
+						Circle()
+							.stroke(knobBorder(isOn: configuration.isOn), lineWidth: 1)
+					}
+					.padding(2)
+			}
+			.frame(width: 38, height: 20)
+			.animation(
+				.spring(response: 0.22, dampingFraction: 0.82),
+				value: configuration.isOn
+			)
+		}
+		.buttonStyle(.plain)
+	}
+
+	private func trackFill(isOn: Bool) -> LinearGradient {
+		let colors =
+			isOn
+			? [Color.accentColor.opacity(0.24), Color.accentColor.opacity(0.24)]
+			: [
+				colorScheme == .light ? Color.black.opacity(0.13) : Color.white.opacity(0.12),
+				colorScheme == .light ? Color.black.opacity(0.13) : Color.white.opacity(0.12),
+			]
+		return LinearGradient(colors: colors, startPoint: .leading, endPoint: .trailing)
+	}
+
+	private func trackBorder(isOn: Bool) -> Color {
+		isOn ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.08)
+	}
+
+	private func knobFill(isOn: Bool) -> LinearGradient {
+		LinearGradient(
+			colors: [
+				isOn
+					? Color.accentColor.opacity(colorScheme == .light ? 0.90 : 0.78)
+					: (colorScheme == .light ? Color.white : Color.white.opacity(0.92)),
+				isOn
+					? Color.accentColor.opacity(colorScheme == .light ? 0.90 : 0.78)
+					: (colorScheme == .light ? Color.white : Color.white.opacity(0.92)),
+			],
+			startPoint: .topLeading,
+			endPoint: .bottomTrailing
+		)
+	}
+
+	private func knobBorder(isOn: Bool) -> Color {
+		isOn
+			? Color.accentColor.opacity(0.90)
+			: (colorScheme == .light ? Color.black.opacity(0.10) : Color.white.opacity(0.20))
+	}
+}
+
+private struct SegmentedGlassBackgroundModifier: ViewModifier {
+	func body(content: Content) -> some View {
+		content
+	}
+}
+
+private enum SettingsGlassRole {
+	case panel
+}
+
+private struct SettingsGlassSurfaceModifier: ViewModifier {
+	let cornerRadius: CGFloat
+	@Environment(\.colorScheme) private var colorScheme
+
+	@ViewBuilder
+	func body(content: Content) -> some View {
+		content
+			.background(.thinMaterial, in: shape)
+			.background(panelFill, in: shape)
+			.overlay {
+				RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+					.stroke(panelBorderColor, lineWidth: 1)
+					.allowsHitTesting(false)
+			}
+			.shadow(color: panelShadowColor, radius: 12, y: 4)
+	}
+
+	private var shape: RoundedRectangle {
+		RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+	}
+
+	private var panelFill: Color {
+		colorScheme == .light
+			? Color.white.opacity(0.54)
+			: Color.white.opacity(0.050)
+	}
+
+	private var panelBorderColor: Color {
+		colorScheme == .light ? Color.white.opacity(0.62) : Color.white.opacity(0.090)
+	}
+
+	private var panelShadowColor: Color {
+		colorScheme == .light ? Color.black.opacity(0.075) : Color.black.opacity(0.28)
 	}
 }

@@ -60,7 +60,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		self.viewModel = NativeHostSettingsViewModel(settingsStore: settingsStore)
 		self.onClose = onClose
 
-		let contentRect = NSRect(x: 0, y: 0, width: 690, height: 430)
+		let contentRect = NSRect(x: 0, y: 0, width: 620, height: 320)
 		let window = SettingsWindow(
 			contentRect: contentRect,
 			styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
@@ -77,7 +77,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 			window.titlebarSeparatorStyle = .none
 		}
 		window.isReleasedWhenClosed = false
-		window.contentMinSize = NSSize(width: 680, height: 420)
+		window.contentMinSize = NSSize(width: 620, height: 300)
 		window.collectionBehavior.insert(.moveToActiveSpace)
 		super.init(window: window)
 
