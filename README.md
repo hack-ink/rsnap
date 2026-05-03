@@ -90,16 +90,13 @@ cargo run -p rsnap
 Rsnap currently relies on **Screen Recording** permission to capture other apps/windows.
 - ScreenCaptureKit live sampling on macOS requires macOS 12.3+ and Screen Recording permission.
 - Normal region/window/monitor capture does not require Accessibility or Input Monitoring.
-- Scroll capture currently requires **Accessibility** because Rsnap forwards scroll into the target app.
-- Scroll capture currently requires **Input Monitoring** because Rsnap listens for global scroll-wheel input via a native macOS listen-event tap.
-- The native host currently disables scroll capture, so the active native feature set only requests Screen Recording.
-- macOS may phrase the Input Monitoring prompt as receiving keystrokes from any application even though Rsnap only listens for scroll-wheel input in this path.
+- Scroll capture is available from dragged-region freezes on the current native host and uses
+  Screen Recording-backed screenshots plus forwarded wheel input.
 - macOS may describe Screen Recording as `Screen & System Audio Recording` or as direct screen/audio access when Rsnap bypasses the system picker.
-- The native menubar host exposes `Permissions…`, which shows Screen Recording, Accessibility, and Input Monitoring status. It marks Accessibility and Input Monitoring as not needed until native scroll automation is enabled.
+- The native menubar host exposes `Permissions…`, which shows Screen Recording, Accessibility, and Input Monitoring status. It marks Accessibility and Input Monitoring as diagnostic/not required for the current native host.
 - Normal native capture depends on Screen Recording; if access is missing, Rsnap opens the Screen Recording page in System Settings and shows a floating drag-to-grant guide.
 - You can reopen `Permissions…` from the tray or menubar menu at any time.
 - Base capture path: `System Settings` -> `Privacy & Security` -> `Screen Recording`.
-- Scroll capture paths: `System Settings` -> `Privacy & Security` -> `Accessibility` and `Input Monitoring`.
 - Enable `Rsnap.app`, then retry capture. If macOS still keeps capture blocked after changing a permission, relaunch the app.
 
 ### HUD settings behavior
