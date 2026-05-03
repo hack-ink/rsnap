@@ -215,6 +215,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private var liveSamplingPrewarmWorkItem: DispatchWorkItem?
 	private var selfCaptureRegistrationWindow: NSWindow?
 	private var didBootstrap = false
+	private var didPresentLaunchPermissionOnboarding = false
 	@objc public dynamic var window: NSWindow?
 	private lazy var sessionController: CaptureSessionController = {
 		let controller = CaptureSessionController(settingsStore: settingsStore)
@@ -228,6 +229,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}()
 	private var statusItem: NSStatusItem?
 	private weak var captureMenuItem: NSMenuItem?
+	private lazy var permissionRecoveryWindowController = PermissionRecoveryGuideWindowController()
 	private lazy var settingsWindowController = SettingsWindowController(
 		settingsStore: settingsStore,
 		onClose: { [weak self] in
@@ -260,6 +262,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		refreshStatusMenuState()
 		scheduleLiveSamplingPrewarm()
+		scheduleLaunchPermissionOnboardingIfNeeded()
 		NativeHostTelemetry.lifecycleEvent(
 			"native_host.finish_launching_end",
 			detail: "statusItemPresent=\(statusItem != nil)"
@@ -313,6 +316,9 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 	@objc
 	private func startCapture(_ sender: Any?) {
+		if presentPermissionRecoveryIfNeeded(source: "start_capture") {
+			return
+		}
 		sessionController.startCapture(
 			capturableOwnWindowIDs: settingsWindowController.captureExceptionWindowIDs)
 	}
@@ -325,6 +331,38 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	@objc
 	private func openSettings(_ sender: Any?) {
 		settingsWindowController.present()
+	}
+
+	private func scheduleLaunchPermissionOnboardingIfNeeded() {
+		DispatchQueue.main.async { [weak self] in
+			_ = self?.presentPermissionRecoveryIfNeeded(
+				source: "launch",
+				oncePerLaunch: true
+			)
+		}
+	}
+
+	@discardableResult
+	private func presentPermissionRecoveryIfNeeded(
+		source: String,
+		oncePerLaunch: Bool = false
+	) -> Bool {
+		guard !NativePermissions.status(for: .screenRecording) else {
+			permissionRecoveryWindowController.close()
+			return false
+		}
+		if oncePerLaunch {
+			guard !didPresentLaunchPermissionOnboarding else {
+				return true
+			}
+			didPresentLaunchPermissionOnboarding = true
+		}
+		permissionRecoveryWindowController.present(kind: .screenRecording)
+		NativeHostTelemetry.lifecycleEvent(
+			"native_host.permission_recovery_presented",
+			detail: "source=\(source)"
+		)
+		return true
 	}
 
 	private func settingsWindowDidClose() {

@@ -1532,14 +1532,14 @@ private struct PermissionGrantCard: View {
 	}
 
 	private var title: String {
-		isGranted ? "Screen Recording ready" : "Drag rsnap into Screen Recording"
+		isGranted ? "Screen Recording ready" : "Screen Recording access needed"
 	}
 
 	private var subtitle: String {
 		if isGranted {
 			return "The native capture host can see the screen."
 		}
-		return "Open System Settings, then drop the app chip into the allowed apps list."
+		return "Open System Settings, then drag rsnap into the Screen Recording app list."
 	}
 
 	private var iconBackgroundColor: Color {
