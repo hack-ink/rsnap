@@ -258,22 +258,28 @@ resolve_signing_identity() {
 }
 
 sign_staged_app_bundle() {
-	local entitlements_arg=() requested_identity
+	local requested_identity
 	requested_identity="${RSNAP_NATIVE_HOST_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
 	if [[ "$STAGED_APP_DIRTY" != "1" ]] && codesign --verify --deep --strict "$APP_BUNDLE" >/dev/null 2>&1; then
 		return
 	fi
-	if [[ -f "$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist" ]]; then
-		entitlements_arg=(--entitlements "$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist")
-	fi
 	if resolve_signing_identity; then
-		codesign \
-			--force \
-			--deep \
-			--options runtime \
-			--sign "$RESOLVED_SIGN_IDENTITY" \
-			"${entitlements_arg[@]}" \
-			"$APP_BUNDLE"
+		if [[ -f "$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist" ]]; then
+			codesign \
+				--force \
+				--deep \
+				--options runtime \
+				--sign "$RESOLVED_SIGN_IDENTITY" \
+				--entitlements "$BUILD_ROOT/$EXECUTABLE_NAME-entitlement.plist" \
+				"$APP_BUNDLE"
+		else
+			codesign \
+				--force \
+				--deep \
+				--options runtime \
+				--sign "$RESOLVED_SIGN_IDENTITY" \
+				"$APP_BUNDLE"
+		fi
 		return
 	fi
 

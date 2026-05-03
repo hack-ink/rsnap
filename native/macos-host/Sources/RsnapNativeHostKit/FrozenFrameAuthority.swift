@@ -138,7 +138,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		captureID: UInt64 = 0,
 		source: String = "capture",
 		rebuildContentFilter: Bool = false,
-		selfCaptureExceptionWindowIDs: Set<CGWindowID> = []
+		selfCaptureExceptionWindowIDs: Set<CGWindowID> = [],
+		includedCurrentProcessWindowIDs: Set<CGWindowID> = []
 	) {
 		let setupStartedAt = ProcessInfo.processInfo.systemUptime
 		let targets = screens.compactMap(Self.displayTarget(for:))
@@ -177,6 +178,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				targets: targets,
 				targetIDs: targetIDs,
 				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+				includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
 				captureID: captureID,
 				source: source,
 				startedAtUptime: setupStartedAt,
@@ -222,6 +224,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		configureStreamsFromShareableContent(
 			targets: targets,
 			selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+			includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
 			generation: requestGeneration,
 			captureID: captureID,
 			source: source,
@@ -233,6 +236,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		targets: [DisplayTarget],
 		targetIDs: Set<CGDirectDisplayID>,
 		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
+		includedCurrentProcessWindowIDs: Set<CGWindowID>,
 		captureID: UInt64,
 		source: String,
 		startedAtUptime: TimeInterval,
@@ -278,7 +282,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			let preparedFilters = Self.contentFilters(
 				for: targets,
 				in: content,
-				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs
+				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+				includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
 			)
 			guard Self.filtersAreComplete(preparedFilters, for: targets) else {
 				if ProcessInfo.processInfo.systemUptime < retryUntilUptime {
@@ -289,6 +294,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 							targets: targets,
 							targetIDs: targetIDs,
 							selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+							includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
 							captureID: captureID,
 							source: source,
 							startedAtUptime: startedAtUptime,
@@ -344,6 +350,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	private func configureStreamsFromShareableContent(
 		targets: [DisplayTarget],
 		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
+		includedCurrentProcessWindowIDs: Set<CGWindowID>,
 		generation requestGeneration: UInt64,
 		captureID: UInt64,
 		source: String,
@@ -387,7 +394,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			let preparedFilters = Self.contentFilters(
 				for: targets,
 				in: content,
-				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs
+				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+				includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
 			)
 			self.configureStreams(
 				targets: targets,
@@ -742,7 +750,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	private static func contentFilters(
 		for targets: [DisplayTarget],
 		in content: SCShareableContent,
-		selfCaptureExceptionWindowIDs: Set<CGWindowID>
+		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
+		includedCurrentProcessWindowIDs: Set<CGWindowID>
 	) -> [CGDirectDisplayID: PreparedContentFilter] {
 		Dictionary(
 			uniqueKeysWithValues: targets.compactMap { target in
@@ -750,7 +759,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 					let filter = contentFilter(
 						for: target,
 						in: content,
-						selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs
+						selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+						includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
 					)
 				else {
 					return nil
@@ -763,7 +773,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	private static func contentFilter(
 		for target: DisplayTarget,
 		in content: SCShareableContent,
-		selfCaptureExceptionWindowIDs: Set<CGWindowID>
+		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
+		includedCurrentProcessWindowIDs: Set<CGWindowID>
 	) -> PreparedContentFilter? {
 		guard let display = content.displays.first(where: { $0.displayID == target.displayID })
 		else {
@@ -772,29 +783,48 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let currentPID = getpid()
 		let excludedApplications = content.applications.filter { $0.processID == currentPID }
 		if !excludedApplications.isEmpty {
+			let includedWindows = content.windows.filter {
+				includedCurrentProcessWindowIDs.contains($0.windowID)
+			}
+			let matchedIncludedWindowIDs = Set(includedWindows.map(\.windowID))
+			let missingIncludedWindowIDs =
+				includedCurrentProcessWindowIDs.subtracting(matchedIncludedWindowIDs)
 			return PreparedContentFilter(
 				filter: SCContentFilter(
 					display: display,
 					excludingApplications: excludedApplications,
-					exceptingWindows: []
+					exceptingWindows: includedWindows
 				),
-				selfCaptureFilterComplete: true,
-				expectedWindowCount: selfCaptureExceptionWindowIDs.count,
+				selfCaptureFilterComplete: missingIncludedWindowIDs.isEmpty,
+				expectedWindowCount: selfCaptureExceptionWindowIDs.count
+					+ includedCurrentProcessWindowIDs.count,
 				matchedWindowCount: selfCaptureExceptionWindowIDs.count
+					+ matchedIncludedWindowIDs.count
 			)
 		}
 		let excludedWindows = content.windows.filter {
 			$0.owningApplication?.processID == currentPID
+				&& !includedCurrentProcessWindowIDs.contains($0.windowID)
 		}
-		let matchedWindowIDs = Set(excludedWindows.map(\.windowID))
-		let missingWindowIDs = selfCaptureExceptionWindowIDs.subtracting(matchedWindowIDs)
+		let matchedExcludedWindowIDs = Set(excludedWindows.map(\.windowID))
+		let matchedIncludedWindowIDs = Set(
+			content.windows.filter {
+				$0.owningApplication?.processID == currentPID
+					&& includedCurrentProcessWindowIDs.contains($0.windowID)
+			}.map(\.windowID))
+		let missingExcludedWindowIDs =
+			selfCaptureExceptionWindowIDs.subtracting(matchedExcludedWindowIDs)
+		let missingIncludedWindowIDs =
+			includedCurrentProcessWindowIDs.subtracting(matchedIncludedWindowIDs)
 		let hasCompleteWindowExclusion =
-			!selfCaptureExceptionWindowIDs.isEmpty && missingWindowIDs.isEmpty
+			missingExcludedWindowIDs.isEmpty && missingIncludedWindowIDs.isEmpty
 		return PreparedContentFilter(
 			filter: SCContentFilter(display: display, excludingWindows: excludedWindows),
 			selfCaptureFilterComplete: hasCompleteWindowExclusion,
-			expectedWindowCount: selfCaptureExceptionWindowIDs.count,
-			matchedWindowCount: selfCaptureExceptionWindowIDs.count - missingWindowIDs.count
+			expectedWindowCount: selfCaptureExceptionWindowIDs.count
+				+ includedCurrentProcessWindowIDs.count,
+			matchedWindowCount: selfCaptureExceptionWindowIDs.count
+				- missingExcludedWindowIDs.count + matchedIncludedWindowIDs.count
 		)
 	}
 

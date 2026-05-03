@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 14u
+#define RSNAP_HOST_FFI_ABI_VERSION 15u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -242,6 +242,10 @@ typedef struct RsnapOwnedRgbaRegion {
 uint32_t rsnap_host_ffi_abi_version(void);
 RsnapSessionHandle *rsnap_session_create(struct RsnapSessionConfig config);
 RsnapLiveSamplerHandle *rsnap_live_sampler_create(void);
+RsnapLiveSamplerHandle *rsnap_live_sampler_create_with_self_capture_exception_window_ids(
+	const uint32_t *window_ids,
+	size_t window_id_count
+);
 enum RsnapStatus rsnap_live_sampler_prime_monitor(
 	RsnapLiveSamplerHandle *handle,
 	struct RsnapMonitorRect monitor
