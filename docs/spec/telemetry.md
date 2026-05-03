@@ -1,7 +1,7 @@
 # Telemetry Schema
 
 Purpose: Define the required telemetry fields, source boundaries, and naming rules for
-rsnap runtime debugging.
+Rsnap runtime debugging.
 
 Status: normative
 
@@ -15,7 +15,7 @@ metric names, and correlation identifiers.
 
 ## Sources
 
-rsnap has two active telemetry sources.
+Rsnap has two active telemetry sources.
 
 | Source | Transport | Schema | Primary file |
 | --- | --- | --- | --- |

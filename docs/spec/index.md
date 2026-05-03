@@ -56,6 +56,8 @@ Then keep the body explicit:
 
 - `docs/spec/capture-session.md` for the product-level capture-flow, Frozen-mode, and
   scroll-capture contract
+- `docs/spec/app-identity.md` for the Rsnap product display name, macOS `Rsnap.app` bundle
+  identity, and stable lower-case technical identifiers
 - `docs/spec/settings.md` for Settings, status-menu, shortcut, permission, Dock, and Settings
   window behavior
 - `docs/spec/platform-host-boundary.md` for the normative ownership boundary between native hosts

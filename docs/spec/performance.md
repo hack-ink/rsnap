@@ -1,6 +1,6 @@
-# rsnap Performance Contract
+# Rsnap Performance Contract
 
-Purpose: Define the normative performance-tracking contract for rsnap so render cadence,
+Purpose: Define the normative performance-tracking contract for Rsnap so render cadence,
 measurement surfaces, thresholds, and known contract gaps are explicit and shared across code,
 benchmarks, smoke harnesses, and tracker issues.
 
@@ -19,14 +19,14 @@ Primary procedures:
   use
 
 Defines:
-- the active render cadence contract for rsnap UI and overlay paths
+- the active render cadence contract for Rsnap UI and overlay paths
 - the tracked performance scenarios and their primary metrics
 - the distinction between target cadence, diagnostic thresholds, and coarse smoke gates
 - the current cadence implementation status and any known gap against the agreed contract
 
 ## Scope
 
-This contract applies to performance tracking for actively rendered rsnap surfaces:
+This contract applies to performance tracking for actively rendered Rsnap surfaces:
 
 - live overlay redraw
 - HUD and loupe movement while live
@@ -40,7 +40,7 @@ or animation.
 
 ## Cadence classes
 
-rsnap tracks two different cadence classes. They must not be collapsed into one number during
+Rsnap tracks two different cadence classes. They must not be collapsed into one number during
 implementation, telemetry review, or smoke interpretation.
 
 ### Display-bound presentation cadence
@@ -54,7 +54,7 @@ Practical meaning:
 
 - On a `120 Hz` or faster display, the target frame budget is `8.33 ms`.
 - On a `60 Hz` display, the target frame budget is `16.67 ms`.
-- If the display refresh rate is unavailable, rsnap uses the conservative `60 Hz` fallback.
+- If the display refresh rate is unavailable, Rsnap uses the conservative `60 Hz` fallback.
 - A `60 Hz` panel cannot physically display `120` distinct visual updates per second. On that
   hardware, the visual contract is one responsive update per display frame, not impossible
   `8.33 ms` presentation.
@@ -254,7 +254,7 @@ metrics before claiming contract compliance.
 
 ## Minimum artifact set for contract compliance
 
-The rsnap performance-tracking project should maintain all of the following:
+The Rsnap performance-tracking project should maintain all of the following:
 
 - one normative spec for cadence, scenarios, metrics, and known gaps
 - one or more direct benchmark surfaces for render-heavy components

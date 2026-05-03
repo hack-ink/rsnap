@@ -1,4 +1,4 @@
-//! Library surface for the `rsnap` native host crate.
+//! Library surface for the Rsnap native host crate.
 
 #![allow(unused_crate_dependencies)]
 

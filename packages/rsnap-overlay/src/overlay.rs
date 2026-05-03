@@ -977,7 +977,7 @@ pub struct OverlayConfig {
 	pub output_naming: OutputNaming,
 	/// Selects how transparent window captures are flattened.
 	pub window_capture_alpha_mode: WindowCaptureAlphaMode,
-	/// Current-process windows that should remain capturable while the rest of rsnap stays excluded.
+	/// Current-process windows that should remain capturable while the rest of Rsnap stays excluded.
 	pub self_capture_exception_window_ids: Vec<u32>,
 }
 impl Default for OverlayConfig {
@@ -997,7 +997,7 @@ impl Default for OverlayConfig {
 			loupe_sample_side_px: 21,
 			theme_mode: ThemeMode::System,
 			output_dir: PathBuf::from("."),
-			output_filename_prefix: String::from("rsnap"),
+			output_filename_prefix: String::from("Rsnap"),
 			output_naming: OutputNaming::Timestamp,
 			window_capture_alpha_mode: WindowCaptureAlphaMode::Background,
 			self_capture_exception_window_ids: Vec::new(),
@@ -2773,7 +2773,7 @@ impl OverlaySession {
 		self.skip_toolbar_focus_on_next_show = true;
 		#[cfg(target_os = "macos")]
 		{
-			// Keep rsnap active for the entire overlay session so AppKit continues to honor native
+			// Keep Rsnap active for the entire overlay session so AppKit continues to honor native
 			// crosshair / grab / resize cursors. The pre-capture frontmost app is restored on exit.
 			self.preserve_frontmost_on_next_toolbar_show = false;
 		}

@@ -243,11 +243,11 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		didBootstrap = true
 		NativeHostTelemetry.lifecycleEvent("native_host.finish_launching_begin")
 		NSApp.setActivationPolicy(.accessory)
-		ProcessInfo.processInfo.disableAutomaticTermination("rsnap menubar host")
+		ProcessInfo.processInfo.disableAutomaticTermination("Rsnap menubar host")
 		ProcessInfo.processInfo.disableSuddenTermination()
 		lifecycleActivity = ProcessInfo.processInfo.beginActivity(
 			options: [.automaticTerminationDisabled, .suddenTerminationDisabled],
-			reason: "rsnap menubar host"
+			reason: "Rsnap menubar host"
 		)
 		Self.applyApplicationIcon()
 		configureStatusItem()
@@ -405,7 +405,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			}
 		}
 
-		let menu = NSMenu(title: "Rsnap Native Host")
+		let menu = NSMenu(title: NativeHostBrand.displayName)
 		let captureItem = menu.addItem(
 			withTitle: "New Capture",
 			action: #selector(startCapture(_:)),

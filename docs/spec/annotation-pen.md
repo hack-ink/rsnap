@@ -1,4 +1,4 @@
-# rsnap Annotation Pen Contract
+# Rsnap Annotation Pen Contract
 
 Purpose: Define the normative behavior contract for the Frozen-mode pen tool used for screenshot
 annotation.

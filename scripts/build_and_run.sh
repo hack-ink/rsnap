@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="rsnap"
+APP_NAME="Rsnap"
 EXECUTABLE_NAME="RsnapNativeHost"
 BUNDLE_ID="ink.hack.rsnap"
 MIN_SYSTEM_VERSION="14.0"
@@ -153,7 +153,30 @@ write_if_changed() {
 	return 0
 }
 
+canonicalize_app_bundle_name() {
+	local desired_name="$APP_NAME.app"
+	local existing_bundle existing_name tmp_bundle
+
+	mkdir -p "$STAGE_DIR"
+	while IFS= read -r existing_bundle; do
+		[[ -n "$existing_bundle" ]] || continue
+		existing_name="$(basename "$existing_bundle")"
+		[[ "$existing_name" == "$desired_name" ]] && continue
+
+		if [[ -e "$APP_BUNDLE" ]]; then
+			rm -rf "$existing_bundle"
+		else
+			tmp_bundle="$STAGE_DIR/.$desired_name.rename.$$"
+			rm -rf "$tmp_bundle"
+			mv "$existing_bundle" "$tmp_bundle"
+			mv "$tmp_bundle" "$APP_BUNDLE"
+		fi
+		STAGED_APP_DIRTY=1
+	done < <(find "$STAGE_DIR" -maxdepth 1 -type d -iname "$desired_name" -print)
+}
+
 stage_app_bundle() {
+	canonicalize_app_bundle_name
 	mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 	if [[ ! -x "$APP_BINARY" ]] || copy_if_changed "$BUILD_BINARY" "$APP_SOURCE_BINARY_CACHE"; then
 		mkdir -p "$(dirname "$APP_SOURCE_BINARY_CACHE")"
@@ -285,7 +308,7 @@ sign_staged_app_bundle() {
 
 	echo "error: no valid macOS codesigning identity matching \"$requested_identity\" was found." >&2
 	echo "error: import the real signing certificate or set RSNAP_NATIVE_HOST_SIGN_IDENTITY to a valid identity." >&2
-	echo "error: rsnap native host staging requires a stable codesigning identity." >&2
+	echo "error: Rsnap native host staging requires a stable codesigning identity." >&2
 	exit 1
 }
 
@@ -376,6 +399,7 @@ if [[ "$MODE" != "stage" ]]; then
 	terminate_running_host
 fi
 
+canonicalize_app_bundle_name
 if [[ "${RSNAP_NATIVE_HOST_FORCE_REBUILD:-0}" != "1" ]] && staged_bundle_is_current; then
 	BUILD_ROOT=""
 	BUILD_BINARY="$APP_BINARY"

@@ -5,7 +5,7 @@ Date: 2026-04-18
 
 Context:
 
-- The existing rsnap implementation accumulated repeated ownership conflicts across platform
+- The existing Rsnap implementation accumulated repeated ownership conflicts across platform
   windows, focus/activation, cursor handling, IME, wheel routing, and fallback-heavy capture
   lifecycle behavior.
 - Earlier work attempted to repair those problems with mixed ownership, including passive shells,
@@ -13,12 +13,12 @@ Context:
   for more of the capture-window lifecycle than it should have.
 - That path did not produce a durable architecture for macOS, and it would make future platforms
   harder rather than easier.
-- At the same time, rsnap still benefits from keeping cross-platform product semantics, replay,
+- At the same time, Rsnap still benefits from keeping cross-platform product semantics, replay,
   geometry, annotation logic, stitching, and export composition in Rust.
 
 Decision:
 
-- rsnap will be reset around native platform hosts plus a Rust core.
+- Rsnap will be reset around native platform hosts plus a Rust core.
 - Native platform hosts own operating-system semantics:
   - capture-window lifecycle
   - focus/activation

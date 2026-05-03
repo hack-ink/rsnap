@@ -1,6 +1,6 @@
-# rsnap Capture Session Contract
+# Rsnap Capture Session Contract
 
-Purpose: Define the product-level normative contract for rsnap capture flow, Frozen-mode
+Purpose: Define the product-level normative contract for Rsnap capture flow, Frozen-mode
 behavior, export readiness, and macOS-first scroll capture.
 
 Status: normative
@@ -26,7 +26,7 @@ product level rather than binding itself to a particular window toolkit or shell
 
 ## Architecture posture
 
-- rsnap product behavior must remain valid independently from any specific capture-window
+- Rsnap product behavior must remain valid independently from any specific capture-window
   implementation strategy.
 - Platform-native ownership of windows, focus, activation, cursor, IME, permissions, clipboard,
   save panels, OCR, and native capture capabilities is governed by
@@ -38,7 +38,7 @@ product level rather than binding itself to a particular window toolkit or shell
 
 1. Background app shell on macOS: no Dock icon while Settings is closed and no other ordinary app
    window is visible. Opening Settings may temporarily use a normal app/window activation policy;
-   closing Settings must return rsnap to the background menubar shell.
+   closing Settings must return Rsnap to the background menubar shell.
 2. Global hotkey starts capture session (default `Alt+X`, macOS: Option+X) and can be customized
    from Settings.
 3. The status menu's New Capture item must use the configured capture shortcut. Shortcut display
@@ -49,12 +49,12 @@ product level rather than binding itself to a particular window toolkit or shell
    Settings.
 5. When the capture session UI is visible, underlying desktop content MUST NOT be interactive.
 6. The visible capture UI should be transparent and non-dimming by default.
-7. On macOS, rsnap overlay, HUD, loupe, frozen toolbar, and scroll preview surfaces MUST remain
+7. On macOS, Rsnap overlay, HUD, loupe, frozen toolbar, and scroll preview surfaces MUST remain
    externally capturable by system screenshot and screen-recording tools. Internal self-capture
-   correctness comes from rsnap's own capture filters and handoff logic, not window content
+   correctness comes from Rsnap's own capture filters and handoff logic, not window content
    protection.
-   External tools being allowed to capture rsnap UI is only a debugging/export affordance. rsnap's
-   own Frozen first frame MUST NOT capture rsnap's live mask, dashed selection border, size badge,
+   External tools being allowed to capture Rsnap UI is only a debugging/export affordance. Rsnap's
+   own Frozen first frame MUST NOT capture Rsnap's live mask, dashed selection border, size badge,
    toolbar, loupe, or transitional Frozen UI into the frozen display image.
 8. The product contract does not require any specific platform window implementation. Focus,
    cursor, keyboard, and IME correctness are mandatory outcomes, regardless of how the native host
@@ -105,7 +105,7 @@ product level rather than binding itself to a particular window toolkit or shell
 - Entering capture MUST NOT leave the target app permanently deactivated after the selection
   completes.
 - On macOS, live drag and window-click entry into Frozen mode must restore the pre-capture target
-  after selection instead of leaving rsnap focused.
+  after selection instead of leaving Rsnap focused.
 - Exiting capture must restore the originally captured frontmost application where the platform
   allows that behavior.
 - Normal interaction must not require a visible Dock activation or an implementation artifact such
@@ -141,7 +141,7 @@ product level rather than binding itself to a particular window toolkit or shell
   single visible handoff instead of waiting on a later visible capture swap.
 - The live-to-Frozen handoff MUST NOT flash through a blank surface, a mask/scrim-only state, or
   any other intermediate mode-switch artifact.
-- The live-to-Frozen handoff MUST NOT show a doubled mask/scrim caused by capturing rsnap's own
+- The live-to-Frozen handoff MUST NOT show a doubled mask/scrim caused by capturing Rsnap's own
   capture UI into the frozen display image. Frozen-frame streams that were created before capture
   overlay windows became visible must be rebuilt or invalidated before their frames can be used for
   the first Frozen display image.
