@@ -56,6 +56,24 @@ Defines:
 - Raw event spellings such as `alt+KeyX` must not appear in user-facing shortcut fields,
   summaries, or menu shortcut labels.
 - The default capture shortcut is `Option-X`.
+- In live capture, plain `Tab` toggles the loupe on and off. Hold-to-show Tab behavior is not a
+  supported setting.
+
+## Default Configuration
+
+- Capture shortcut: `Option-X`.
+- Output directory: `~/Desktop`.
+- Output filename prefix: `rsnap`.
+- Output naming: timestamp.
+- Frozen toolbar placement: bottom.
+- Frozen resize handles: outward.
+- Live HUD hint keycap: enabled.
+- HUD glass: enabled, `liquid_glass`, `clear`.
+- HUD opacity: `0.4999747693194925`.
+- HUD blur: `0.5032628676470589`.
+- HUD tint: `0.4990234375`.
+- HUD tint hue: `0.6074879184861536`.
+- Loupe sample size: small.
 
 ## Permission Settings
 
