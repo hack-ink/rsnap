@@ -32,6 +32,15 @@ impl OverlaySession {
 			.state
 			.frozen_capture_rect
 			.unwrap_or_else(|| RectPoints::new(0, 0, monitor.width, monitor.height));
+		self.cropped_frozen_capture_image_for_rect(monitor, capture_rect)
+	}
+
+	pub(super) fn cropped_frozen_capture_image_for_rect(
+		&self,
+		monitor: MonitorRect,
+		capture_rect: RectPoints,
+	) -> Option<RgbaImage> {
+		let export_image = self.state.frozen_export_image.as_ref()?;
 		let capture_rect = monitor.local_rect_to_pixels(capture_rect);
 		let x = capture_rect.x.min(export_image.width());
 		let y = capture_rect.y.min(export_image.height());

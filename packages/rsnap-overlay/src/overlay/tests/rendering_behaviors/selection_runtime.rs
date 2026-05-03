@@ -437,6 +437,30 @@ fn auto_center_frozen_capture_rect_recenters_detected_content_across_tools() {
 }
 
 #[test]
+fn auto_center_frozen_capture_rect_repeats_until_content_margins_balance() {
+	let monitor = tests::test_monitor_with_scale(80, 60, 1_000);
+	let capture_rect = RectPoints::new(20, 16, 40, 24);
+	let mut image = RgbaImage::from_pixel(80, 60, Rgba([14, 16, 20, 255]));
+	let mut session = OverlaySession::new();
+
+	for y in 24..36 {
+		for x in 38..68 {
+			image.put_pixel(x, y, Rgba([228, 232, 240, 255]));
+		}
+	}
+
+	session.state.begin_freeze(monitor);
+
+	tests::finish_frozen_ready_state(&mut session, monitor, image);
+
+	session.state.frozen_capture_rect = Some(capture_rect);
+	session.frozen_capture_source = FrozenCaptureSource::DragRegion;
+
+	assert!(session.auto_center_frozen_capture_rect());
+	assert_eq!(session.state.frozen_capture_rect, Some(RectPoints::new(33, 18, 40, 24)));
+}
+
+#[test]
 fn frozen_selection_resize_hit_test_prefers_corner_handles() {
 	let capture_rect = RectPoints::new(100, 120, 8, 8);
 
