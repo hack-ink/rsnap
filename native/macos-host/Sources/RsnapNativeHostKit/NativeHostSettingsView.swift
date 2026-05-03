@@ -85,6 +85,7 @@ private enum NativeHostSettingsSection: String, CaseIterable, Identifiable {
 	case capture
 	case output
 	case permissions
+	case about
 
 	var id: Self { self }
 
@@ -98,6 +99,8 @@ private enum NativeHostSettingsSection: String, CaseIterable, Identifiable {
 			return "Output"
 		case .permissions:
 			return "Permissions"
+		case .about:
+			return "About"
 		}
 	}
 
@@ -111,6 +114,8 @@ private enum NativeHostSettingsSection: String, CaseIterable, Identifiable {
 			return "Files"
 		case .permissions:
 			return "Access"
+		case .about:
+			return "Project"
 		}
 	}
 
@@ -124,8 +129,24 @@ private enum NativeHostSettingsSection: String, CaseIterable, Identifiable {
 			return "folder"
 		case .permissions:
 			return "lock.shield"
+		case .about:
+			return "info.circle"
 		}
 	}
+
+	var allowsRestoreDefaults: Bool {
+		switch self {
+		case .appearance, .capture, .output:
+			return true
+		case .permissions, .about:
+			return false
+		}
+	}
+}
+
+private enum NativeHostAboutLinks {
+	static let source = "https://github.com/hack-ink/rsnap"
+	static let creator = "https://x.com/YvetteCipher"
 }
 
 private enum SettingsControlLayout {
@@ -303,6 +324,8 @@ private struct SettingsDashboard: View {
 			OutputSettingsPanel(model: model)
 		case .permissions:
 			PermissionsSettingsPanel()
+		case .about:
+			AboutSettingsPanel()
 		}
 	}
 }
@@ -322,7 +345,7 @@ private struct SettingsContentHeader: View {
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 
-			if section != .permissions {
+			if section.allowsRestoreDefaults {
 				Button(action: restoreDefaults) {
 					Label("Restore Defaults", systemImage: "arrow.counterclockwise")
 						.labelStyle(.titleAndIcon)
@@ -350,6 +373,8 @@ private struct SettingsSectionInspector: View {
 				OutputInspector(settings: model.settings)
 			case .permissions:
 				PermissionsInspector()
+			case .about:
+				AboutInspector()
 			}
 		}
 		.padding(14)
@@ -484,6 +509,25 @@ private struct PermissionsInspector: View {
 				title: "Granted",
 				value: "\(granted)",
 				symbolName: "checkmark.seal"
+			)
+		}
+	}
+}
+
+private struct AboutInspector: View {
+	var body: some View {
+		VStack(alignment: .leading, spacing: 12) {
+			SettingsBrandIcon()
+				.frame(width: 42, height: 42)
+			InspectorMetric(
+				title: "Source",
+				value: "Open",
+				symbolName: "curlybraces.square"
+			)
+			InspectorMetric(
+				title: "Creator",
+				value: "@YvetteCipher",
+				symbolName: "person.crop.circle"
 			)
 		}
 	}
@@ -1682,6 +1726,100 @@ private struct PermissionStateBadge: View {
 		case .muted:
 			return Color.secondary.opacity(colorScheme == .light ? 0.14 : 0.20)
 		}
+	}
+}
+
+private struct AboutSettingsPanel: View {
+	var body: some View {
+		VStack(alignment: .leading, spacing: 8) {
+			AboutIntroBlock()
+
+			VStack(spacing: 0) {
+				AboutLinkTile(
+					symbolName: "curlybraces.square",
+					title: "Open source",
+					subtitle: NativeHostAboutLinks.source,
+					buttonTitle: "GitHub",
+					urlString: NativeHostAboutLinks.source
+				)
+
+				AboutLinkTile(
+					symbolName: "person.crop.circle",
+					title: "Yvette Cipher",
+					subtitle: "Follow @YvetteCipher for Rsnap updates.",
+					buttonTitle: "Follow on X",
+					urlString: NativeHostAboutLinks.creator
+				)
+			}
+		}
+	}
+}
+
+private struct AboutIntroBlock: View {
+	var body: some View {
+		HStack(alignment: .top, spacing: 10) {
+			SettingsTileIcon(symbolName: "sparkles", size: 20)
+			VStack(alignment: .leading, spacing: 5) {
+				Text("Built by Yvette Cipher")
+					.font(.system(size: 13, weight: .semibold))
+				Text(
+					"Rsnap is an open-source macOS capture tool. I keep sharing progress, design notes, and release updates on X; following helps support future work through X creator rewards."
+				)
+				.font(.system(size: 10.8, weight: .medium))
+				.foregroundStyle(.secondary)
+				.lineLimit(4)
+				.fixedSize(horizontal: false, vertical: true)
+			}
+			.layoutPriority(1)
+		}
+		.padding(.vertical, 6)
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+}
+
+private struct AboutLinkTile: View {
+	let symbolName: String
+	let title: String
+	let subtitle: String
+	let buttonTitle: String
+	let urlString: String
+
+	var body: some View {
+		HStack(spacing: 10) {
+			SettingsTileIcon(symbolName: symbolName, size: 19)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(title)
+					.font(.system(size: 13, weight: .semibold))
+					.lineLimit(1)
+				Text(subtitle)
+					.font(.system(size: 10.5, weight: .medium))
+					.foregroundStyle(.secondary)
+					.lineLimit(1)
+					.minimumScaleFactor(0.82)
+			}
+			.layoutPriority(1)
+			Spacer(minLength: 10)
+			HStack {
+				Spacer(minLength: 0)
+				Button(action: openURL) {
+					Label(buttonTitle, systemImage: "arrow.up.forward")
+						.labelStyle(.titleAndIcon)
+				}
+				.rsnapGlassButton(prominent: false)
+				.controlSize(.small)
+				.help(urlString)
+			}
+			.frame(width: SettingsControlLayout.controlColumnWidth, alignment: .trailing)
+		}
+		.padding(.vertical, 5)
+		.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+	}
+
+	private func openURL() {
+		guard let url = URL(string: urlString) else {
+			return
+		}
+		NSWorkspace.shared.open(url)
 	}
 }
 
