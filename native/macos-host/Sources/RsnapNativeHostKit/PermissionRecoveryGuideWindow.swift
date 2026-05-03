@@ -366,14 +366,16 @@ private struct PermissionRecoveryGuideView: View {
 	}
 
 	private var appDragChip: some View {
-		PermissionAppDragSource(bundleURL: bundleURL, icon: appIcon, label: "rsnap")
-			.frame(width: 114, height: 31)
-			.overlay {
-				Capsule()
-					.stroke(Color.accentColor.opacity(pulse ? 0.58 : 0.20), lineWidth: 1.2)
-					.scaleEffect(reduceMotion ? 1 : (pulse ? 1.055 : 1))
-					.allowsHitTesting(false)
-			}
+		PermissionAppDragSource(
+			bundleURL: bundleURL, icon: appIcon, label: NativeHostBrand.appBundleName
+		)
+		.frame(width: 114, height: 31)
+		.overlay {
+			Capsule()
+				.stroke(Color.accentColor.opacity(pulse ? 0.58 : 0.20), lineWidth: 1.2)
+				.scaleEffect(reduceMotion ? 1 : (pulse ? 1.055 : 1))
+				.allowsHitTesting(false)
+		}
 	}
 
 	private var instructionText: some View {

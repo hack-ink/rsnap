@@ -132,7 +132,7 @@ struct NativeHostSettings: Equatable {
 			captureHotkey: "Option-X",
 			outputDirectory: FileManager.default.homeDirectoryForCurrentUser
 				.appendingPathComponent("Desktop", isDirectory: true),
-			outputFilenamePrefix: "rsnap",
+			outputFilenamePrefix: NativeHostBrand.defaultFilenamePrefix,
 			outputNaming: .timestamp,
 			toolbarPlacement: .bottom,
 			frozenResizeHandleOrientation: .outward,
@@ -174,7 +174,7 @@ struct NativeHostSettings: Equatable {
 			return "_"
 		}
 		let collapsed = String(sanitized).trimmingCharacters(in: CharacterSet(charactersIn: "_"))
-		return collapsed.isEmpty ? "rsnap" : collapsed
+		return collapsed.isEmpty ? NativeHostBrand.defaultFilenamePrefix : collapsed
 	}
 
 	private static func sanitizeCaptureHotkey(_ raw: String) -> String {

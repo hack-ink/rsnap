@@ -1,7 +1,7 @@
 # Platform Host Boundary
 
 Purpose: Define the normative ownership boundary between native platform hosts and the Rust core
-for the rsnap architecture reset.
+for the Rsnap architecture reset.
 
 Status: normative
 
@@ -21,7 +21,7 @@ Defines:
 
 ## Architecture rule
 
-rsnap must be organized around:
+Rsnap must be organized around:
 
 - native platform hosts that own operating-system semantics
 - a Rust core that owns cross-platform product semantics

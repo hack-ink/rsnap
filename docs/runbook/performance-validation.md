@@ -150,7 +150,7 @@ Dedicated macOS smoke:
   suspect live overlay cadence, desktop-session conditions, or smoke-harness environment drift.
 - `scripts/smoke/native-visual-contract-macos.sh` failures:
   treat them as native-host visual or behavior contract regressions. The smoke runs Liquid Glass and
-  Classic Glass cases, screenshots rsnap's own frozen overlay, and verifies frozen handoff timing,
+  Classic Glass cases, screenshots Rsnap's own frozen overlay, and verifies frozen handoff timing,
   toolbar visibility, Liquid toolbar content draw, material selection, and that live-to-frozen did
   not display a pending half-frame before the complete frozen UI. It also samples outside the
   selection during release so a disappearing/reappearing scrim fails even if the final screenshot

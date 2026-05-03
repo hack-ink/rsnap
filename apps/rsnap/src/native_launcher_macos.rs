@@ -4,7 +4,7 @@ use std::process::Command;
 
 use color_eyre::eyre::{self, Context as _, Result};
 
-const APP_NAME: &str = "rsnap.app";
+const APP_NAME: &str = "Rsnap.app";
 const STAGE_DIR_NAME: &str = "rsnap-native-host";
 
 /// Launches the staged native macOS host bundle for the current worktree.
@@ -105,5 +105,10 @@ mod tests {
 			.expect("worktree root should resolve");
 
 		assert_eq!(worktree_root, Path::new("/tmp/rsnap/.worktrees/native"));
+	}
+
+	#[test]
+	fn staged_native_host_bundle_uses_product_case() {
+		assert_eq!(native_launcher_macos::APP_NAME, "Rsnap.app");
 	}
 }

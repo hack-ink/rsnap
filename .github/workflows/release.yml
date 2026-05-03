@@ -120,11 +120,16 @@ jobs:
           RSNAP_NATIVE_HOST_SKIP_SIGN=1 \
           ./scripts/build_and_run.sh stage
 
-          APP_PATH="target/rsnap-native-host/rsnap.app"
+          APP_PATH="target/rsnap-native-host/Rsnap.app"
           if [[ ! -d "${APP_PATH}" ]]; then
             echo "Failed to find staged native host app at ${APP_PATH}" >&2
             exit 1
           fi
+          ACTUAL_APP_BUNDLE="$(find "target/rsnap-native-host" -maxdepth 1 -type d -iname 'Rsnap.app' -print -quit)"
+          test -n "${ACTUAL_APP_BUNDLE}"
+          test "$(basename "${ACTUAL_APP_BUNDLE}")" = "Rsnap.app"
+          test "$(plutil -extract CFBundleName raw "${APP_PATH}/Contents/Info.plist")" = "Rsnap"
+          test "$(plutil -extract CFBundleDisplayName raw "${APP_PATH}/Contents/Info.plist")" = "Rsnap"
 
           codesign \
             --force \
@@ -134,7 +139,7 @@ jobs:
             "${APP_PATH}"
           codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 
-          NOTARY_ZIP="${RUNNER_TEMP}/rsnap-notary.zip"
+          NOTARY_ZIP="${RUNNER_TEMP}/Rsnap-notary.zip"
           ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${NOTARY_ZIP}"
 
           NOTARY_ARGS=(

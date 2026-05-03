@@ -6,7 +6,7 @@ assumptions.
 Read this when: You changed docs, boundaries, native-host code, or Rust-core code under the host /
 core reset and need a bounded validation sequence.
 
-Inputs: A build of `rsnap`, the touched change set, and the governing specs:
+Inputs: A build of Rsnap, the touched change set, and the governing specs:
 `docs/spec/capture-session.md`, `docs/spec/platform-host-boundary.md`, and
 `docs/spec/performance.md`.
 

@@ -1,6 +1,6 @@
 # Workspace Layout Reference
 
-Purpose: Explain the current rsnap workspace layout, which crate owns which behavior today, and
+Purpose: Explain the current Rsnap workspace layout, which crate owns which behavior today, and
 which directories are source versus generated or runtime-local.
 
 Read this when: You are deciding where a change belongs in the current tree, checking whether the
@@ -162,7 +162,7 @@ Rust core.
 These paths are intentionally ignored and should not be treated as tracked repository structure:
 
 - `target/`: Rust build products, benchmark outputs, and local analysis artifacts
-- `target/rsnap-native-host/`: locally staged native-host `.app` bundles from
+- `target/rsnap-native-host/`: locally staged native-host `Rsnap.app` bundles from
   `scripts/build_and_run.sh`
 - `.worktrees/`: local git worktree lanes
 - `.workspaces/`: local clone-backed workspace lanes from older workflows
