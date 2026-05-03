@@ -2,6 +2,12 @@ import AppKit
 import RsnapHostBridge
 import SwiftUI
 
+enum NativeHostSettingsWindowMetrics {
+	static let width: CGFloat = 620
+	static let minHeight: CGFloat = 348
+	static let idealHeight: CGFloat = 360
+}
+
 @MainActor
 final class NativeHostSettingsViewModel: ObservableObject {
 	@Published private(set) var settings: NativeHostSettings
@@ -65,8 +71,12 @@ struct NativeHostSettingsView: View {
 		}
 		.ignoresSafeArea(.container, edges: .top)
 		.controlSize(.small)
-		.animation(.spring(response: 0.34, dampingFraction: 0.86), value: selectedSection)
-		.frame(minWidth: 620, idealWidth: 620, minHeight: 306, idealHeight: 318)
+		.frame(
+			minWidth: NativeHostSettingsWindowMetrics.width,
+			idealWidth: NativeHostSettingsWindowMetrics.width,
+			minHeight: NativeHostSettingsWindowMetrics.minHeight,
+			idealHeight: NativeHostSettingsWindowMetrics.idealHeight
+		)
 	}
 }
 
@@ -149,9 +159,7 @@ private struct SettingsRail: View {
 						section: section,
 						isSelected: selectedSection == section
 					) {
-						withAnimation(.easeOut(duration: 0.16)) {
-							selectedSection = section
-						}
+						selectedSection = section
 					}
 				}
 			}
@@ -275,8 +283,9 @@ private struct SettingsDashboard: View {
 					.padding(.trailing, 8)
 					.padding(.bottom, 6)
 			}
-			.scrollIndicators(.automatic)
+			.scrollIndicators(.hidden)
 			.frame(maxWidth: .infinity, alignment: .topLeading)
+			.animation(.spring(response: 0.34, dampingFraction: 0.86), value: section)
 		}
 		.padding(.horizontal, 13)
 		.padding(.vertical, 9)
@@ -1169,32 +1178,76 @@ private struct FlatColorSwatch: View {
 	@State private var isHovered = false
 
 	var body: some View {
-		ZStack {
-			RoundedRectangle(cornerRadius: 6, style: .continuous)
-				.fill(selection)
-				.frame(width: 30, height: 18)
-				.overlay {
-					RoundedRectangle(cornerRadius: 6, style: .continuous)
-						.stroke(borderColor, lineWidth: 1)
-				}
-
-			ColorPicker("", selection: $selection, supportsOpacity: false)
-				.labelsHidden()
-				.frame(width: 30, height: 18)
-				.opacity(0.02)
-		}
-		.frame(width: 30, height: 18)
-		.opacity(isEnabled ? 1 : 0.45)
-		.scaleEffect(isHovered && isEnabled ? 1.04 : 1)
-		.animation(.easeOut(duration: 0.12), value: isHovered)
-		.onHover { hovering in
-			isHovered = hovering
-		}
-		.disabled(!isEnabled)
+		SettingsColorWell(selection: $selection, isEnabled: isEnabled)
+			.clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+			.overlay {
+				RoundedRectangle(cornerRadius: 6, style: .continuous)
+					.stroke(borderColor, lineWidth: 1)
+					.allowsHitTesting(false)
+			}
+			.frame(width: 30, height: 18)
+			.opacity(isEnabled ? 1 : 0.45)
+			.scaleEffect(isHovered && isEnabled ? 1.04 : 1)
+			.animation(.easeOut(duration: 0.12), value: isHovered)
+			.onHover { hovering in
+				isHovered = hovering
+			}
+			.disabled(!isEnabled)
 	}
 
 	private var borderColor: Color {
 		colorScheme == .light ? Color.black.opacity(0.12) : Color.white.opacity(0.18)
+	}
+}
+
+private struct SettingsColorWell: NSViewRepresentable {
+	@Binding var selection: Color
+	let isEnabled: Bool
+
+	func makeNSView(context: Context) -> NSColorWell {
+		let colorWell = NSColorWell(frame: .zero)
+		colorWell.isBordered = false
+		colorWell.supportsAlpha = false
+		colorWell.target = context.coordinator
+		colorWell.action = #selector(Coordinator.colorChanged(_:))
+		return colorWell
+	}
+
+	func updateNSView(_ colorWell: NSColorWell, context: Context) {
+		context.coordinator.selection = $selection
+		colorWell.isEnabled = isEnabled
+		let nextColor = NSColor(selection).usingColorSpace(.deviceRGB) ?? NSColor(selection)
+		if !Self.matches(colorWell.color, nextColor) {
+			colorWell.color = nextColor
+		}
+	}
+
+	func makeCoordinator() -> Coordinator {
+		Coordinator(selection: $selection)
+	}
+
+	private static func matches(_ lhs: NSColor, _ rhs: NSColor) -> Bool {
+		let left = lhs.usingColorSpace(.deviceRGB) ?? lhs
+		let right = rhs.usingColorSpace(.deviceRGB) ?? rhs
+		return abs(left.redComponent - right.redComponent) < 0.001
+			&& abs(left.greenComponent - right.greenComponent) < 0.001
+			&& abs(left.blueComponent - right.blueComponent) < 0.001
+			&& abs(left.alphaComponent - right.alphaComponent) < 0.001
+	}
+
+	final class Coordinator: NSObject {
+		var selection: Binding<Color>
+
+		init(selection: Binding<Color>) {
+			self.selection = selection
+		}
+
+		@MainActor
+		@objc
+		func colorChanged(_ sender: NSColorWell) {
+			NSColorPanel.shared.showsAlpha = false
+			selection.wrappedValue = Color(nsColor: sender.color)
+		}
 	}
 }
 

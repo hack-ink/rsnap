@@ -108,8 +108,6 @@ run_hud_follow_case() {
 			echo "[smoke] case: loupe"
 			live_hud_focus_rsnap_overlay
 			live_hud_press_tab
-			# Let the loupe patch populate once before testing expanded HUD rendering.
-			sleep 0.2
 			live_hud_run_mouse_path
 			;;
 		"")

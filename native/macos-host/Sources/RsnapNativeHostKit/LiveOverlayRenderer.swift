@@ -1652,10 +1652,13 @@ final class LiveOverlayRenderer {
 		glassLayer.opacity = hasInlineGlass ? CaptureChrome.glassOpacity(settings: settings) : 0
 		glassLayer.isHidden = !hasInlineGlass
 
+		let usesNativeLiquidGlass = settings.usesLiquidHudGlass
 		fillLayer.frame = frame
 		fillLayer.cornerRadius = cornerRadius
 		fillLayer.backgroundColor =
-			CaptureChrome.effectiveBodyFill(
+			usesNativeLiquidGlass
+			? NSColor.clear.cgColor
+			: CaptureChrome.effectiveBodyFill(
 				palette: palette,
 				settings: settings,
 				hasGlass: hasGlass
