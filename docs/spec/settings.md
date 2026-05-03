@@ -88,6 +88,17 @@ Defines:
   toward System Settings and an Open System Settings fallback.
 - Permission status refresh must be available without restarting Rsnap.
 
+## About Settings
+
+- Settings must include an About section.
+- The About section must identify Yvette Cipher as the creator and describe Rsnap as an
+  open-source macOS capture tool.
+- The About section must include external links to `https://github.com/hack-ink/rsnap` and
+  `https://x.com/YvetteCipher`.
+- The creator link may encourage following for ongoing Rsnap updates and may state that follows
+  help support future work through X creator rewards.
+- The About section must not expose capture defaults or a Restore Defaults action.
+
 ## Default-Size Usability
 
 - At the default Settings window size, primary setting labels, selected option labels, and current
