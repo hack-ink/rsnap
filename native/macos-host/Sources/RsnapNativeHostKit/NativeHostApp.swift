@@ -5291,8 +5291,7 @@ final class CaptureHostView: NSView {
 
 	private func currentHudSize() -> CGSize {
 		let metrics = Self.hudLayoutMetrics
-		let itemSpacing: CGFloat = 8
-		let swatchSize = CGSize(width: 10, height: 10)
+		let swatchSize = CaptureChrome.hudSwatchSize
 		let keycapVisible = settings.showAltHintKeycap
 		let keycapFrame = keycapVisible ? metrics.keycapFrameSize : .zero
 		let contentHeight = max(metrics.lineHeight, swatchSize.height, keycapFrame.height)
@@ -5302,10 +5301,13 @@ final class CaptureHostView: NSView {
 			positionSlotWidths.x
 			+ metrics.commaWidth
 			+ positionSlotWidths.y
+			+ CaptureChrome.hudGroupSpacing
 			+ swatchSize.width
+			+ CaptureChrome.hudColorItemSpacing
 			+ metrics.hexSlotWidth
-			+ keycapFrame.width
-			+ itemSpacing * (keycapVisible ? 3 : 2)
+			+ (keycapVisible
+				? CaptureChrome.hudGroupSpacing + keycapFrame.width
+				: 0)
 		let size = CGSize(
 			width: contentWidth + CaptureChrome.hudInnerMarginX * 2,
 			height: contentHeight + CaptureChrome.hudInnerMarginY * 2
@@ -7421,6 +7423,9 @@ enum CaptureChrome {
 
 	static let hudInnerMarginX: CGFloat = 12
 	static let hudInnerMarginY: CGFloat = 8
+	static let hudGroupSpacing: CGFloat = 12
+	static let hudColorItemSpacing: CGFloat = 6
+	static let hudSwatchSize = CGSize(width: 10, height: 10)
 	static let hudCornerRadius: CGFloat = 18
 	static let hudLoupeGap: CGFloat = 8
 	static let loupeCellSize: CGFloat = 10
