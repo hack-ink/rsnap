@@ -459,6 +459,7 @@ final class CaptureSessionController: NSObject {
 		let desktopFrame: CGRect
 	}
 
+	private static let autoCenterMaxIterations = 6
 	private static let displayFirstFrameWait: TimeInterval = 0.025
 	private static let coldSelfCaptureRecoveryWait: TimeInterval = 3.5
 
@@ -1268,38 +1269,57 @@ final class CaptureSessionController: NSObject {
 		if chromeState.frozenOverlay.keepsFrozenSelectionFixed {
 			return
 		}
-		if chromeState.frozenSelectionSnapshot != selection || chromeState.frozenBaseImage == nil {
-			chromeState.frozenSelectionSnapshot = selection
-			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: selection)
-		}
-		guard
-			let baseImage = chromeState.frozenBaseImage,
-			let contentBounds = Self.detectAutoCenterContentBounds(in: baseImage),
-			let screen = screen(containing: CGPoint(x: selection.midX, y: selection.midY))
-		else {
+		guard let screen = screen(containing: CGPoint(x: selection.midX, y: selection.midY)) else {
 			return
 		}
 
-		let deltaX = Self.autoCenterShiftPoints(
-			contentOriginPx: contentBounds.minX,
-			contentSizePx: contentBounds.width,
-			cropSizePx: CGFloat(baseImage.width),
-			captureSizePoints: selection.width
-		)
-		let deltaY = Self.autoCenterShiftPoints(
-			contentOriginPx: contentBounds.minY,
-			contentSizePx: contentBounds.height,
-			cropSizePx: CGFloat(baseImage.height),
-			captureSizePoints: selection.height
-		)
-		let nextSelection = Self.clampedSelectionRect(
-			width: selection.width,
-			height: selection.height,
-			x: selection.minX + deltaX,
-			// Content bounds are in top-down CGImage coordinates; AppKit screen coordinates are bottom-up.
-			y: selection.minY - deltaY,
-			monitorFrame: screen.frame
-		)
+		var nextSelection = selection
+		var nextBaseImage =
+			(chromeState.frozenSelectionSnapshot == selection) ? chromeState.frozenBaseImage : nil
+		if nextBaseImage == nil {
+			nextBaseImage = frozenBaseImageFromDisplay(for: selection)
+		}
+
+		for _ in 0..<Self.autoCenterMaxIterations {
+			guard
+				let baseImage = nextBaseImage,
+				let contentBounds = Self.detectAutoCenterContentBounds(in: baseImage)
+			else {
+				break
+			}
+
+			let deltaX = Self.autoCenterMarginBalanceShiftPoints(
+				contentOriginPx: contentBounds.minX,
+				contentSizePx: contentBounds.width,
+				cropSizePx: CGFloat(baseImage.width),
+				captureSizePoints: nextSelection.width
+			)
+			let deltaY = Self.autoCenterMarginBalanceShiftPoints(
+				contentOriginPx: contentBounds.minY,
+				contentSizePx: contentBounds.height,
+				cropSizePx: CGFloat(baseImage.height),
+				captureSizePoints: nextSelection.height
+			)
+			guard deltaX != 0 || deltaY != 0 else {
+				break
+			}
+
+			let candidateSelection = Self.clampedSelectionRect(
+				width: nextSelection.width,
+				height: nextSelection.height,
+				x: nextSelection.minX + deltaX,
+				// Content bounds are in top-down CGImage coordinates; AppKit screen coordinates are bottom-up.
+				y: nextSelection.minY - deltaY,
+				monitorFrame: screen.frame
+			)
+			guard candidateSelection != nextSelection else {
+				break
+			}
+
+			nextSelection = candidateSelection
+			nextBaseImage = frozenBaseImageFromDisplay(for: nextSelection)
+		}
+
 		guard nextSelection != selection else {
 			return
 		}
@@ -1307,7 +1327,8 @@ final class CaptureSessionController: NSObject {
 		do {
 			frozenSnapshotGeneration &+= 1
 			chromeState.frozenSelectionSnapshot = nextSelection
-			chromeState.frozenBaseImage = frozenBaseImageFromDisplay(for: nextSelection)
+			chromeState.frozenBaseImage =
+				nextBaseImage ?? frozenBaseImageFromDisplay(for: nextSelection)
 			try session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 			try syncCore()
 		} catch {
@@ -2223,7 +2244,7 @@ final class CaptureSessionController: NSObject {
 		)
 	}
 
-	private static func autoCenterShiftPoints(
+	private static func autoCenterMarginBalanceShiftPoints(
 		contentOriginPx: CGFloat,
 		contentSizePx: CGFloat,
 		cropSizePx: CGFloat,
@@ -2232,9 +2253,9 @@ final class CaptureSessionController: NSObject {
 		guard cropSizePx > 0, captureSizePoints > 0 else {
 			return 0
 		}
-		let contentCenterPx = contentOriginPx + (contentSizePx * 0.5)
-		let cropCenterPx = cropSizePx * 0.5
-		let deltaPx = contentCenterPx - cropCenterPx
+		let leadingMarginPx = contentOriginPx
+		let trailingMarginPx = cropSizePx - (contentOriginPx + contentSizePx)
+		let deltaPx = (leadingMarginPx - trailingMarginPx) * 0.5
 		return (deltaPx * captureSizePoints / cropSizePx).rounded()
 	}
 
