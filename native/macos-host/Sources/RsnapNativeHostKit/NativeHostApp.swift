@@ -270,7 +270,8 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 	@objc
 	private func startCapture(_ sender: Any?) {
-		sessionController.startCapture()
+		sessionController.startCapture(
+			capturableOwnWindowIDs: settingsWindowController.captureExceptionWindowIDs)
 	}
 
 	@objc
@@ -540,7 +541,8 @@ final class CaptureSessionController: NSObject {
 		at point: CGPoint,
 		source: String = "capture",
 		captureID: UInt64 = 0,
-		excludeSelfFromFrozenAuthority: Bool = false
+		excludeSelfFromFrozenAuthority: Bool = false,
+		includedCurrentProcessWindowIDs: Set<CGWindowID> = []
 	) -> LiveChromeSample? {
 		let warmStartedAt = ProcessInfo.processInfo.systemUptime
 		let screenCount = NSScreen.screens.count
@@ -563,7 +565,8 @@ final class CaptureSessionController: NSObject {
 			for: screens,
 			captureID: captureID,
 			source: source,
-			rebuildContentFilter: excludeSelfFromFrozenAuthority
+			rebuildContentFilter: excludeSelfFromFrozenAuthority,
+			includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
 		)
 		let frozenAuthorityStartMilliseconds =
 			NativeHostTelemetry.milliseconds(since: frozenAuthorityStartedAt)
@@ -588,7 +591,7 @@ final class CaptureSessionController: NSObject {
 		return sample
 	}
 
-	func startCapture() {
+	func startCapture(capturableOwnWindowIDs: Set<CGWindowID> = []) {
 		if session != nil {
 			NativeHostTelemetry.captureEvent(
 				"capture.focus_existing",
@@ -620,11 +623,13 @@ final class CaptureSessionController: NSObject {
 		do {
 			let startPoint = NSEvent.mouseLocation
 			prepareLiveSamplingForCaptureStart()
+			liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
 			let warmStartedAt = ProcessInfo.processInfo.systemUptime
 			let initialSample = warmLiveSamplingIfPossible(
 				at: startPoint,
 				source: "start_capture",
-				captureID: captureID
+				captureID: captureID,
+				includedCurrentProcessWindowIDs: capturableOwnWindowIDs
 			)
 			let initialRgbSample =
 				initialSample?.rgbSample
@@ -685,7 +690,8 @@ final class CaptureSessionController: NSObject {
 					captureID: captureID,
 					source: "capture_overlay_visible",
 					rebuildContentFilter: true,
-					selfCaptureExceptionWindowIDs: overlayController.selfCaptureExceptionWindowIDs
+					selfCaptureExceptionWindowIDs: overlayController.selfCaptureExceptionWindowIDs,
+					includedCurrentProcessWindowIDs: capturableOwnWindowIDs
 				)
 			}
 			let overlayShowMilliseconds =
@@ -2128,6 +2134,7 @@ final class CaptureSessionController: NSObject {
 	private func tearDownCapture() {
 		let captureID = currentCaptureTelemetryID
 		liveFrameStream.stop()
+		liveFrameStream.updateSelfCaptureExceptionWindowIDs([])
 		liveStreamPrimedByStartupPrewarm = false
 		frozenFrameLatchToken = nil
 		frozenSnapshotGeneration &+= 1
@@ -3180,13 +3187,6 @@ final class CaptureHostView: NSView {
 		case iBeam
 	}
 
-	private struct PositionSlotWidthKey: Hashable {
-		let minX: Int
-		let maxX: Int
-		let minY: Int
-		let maxY: Int
-	}
-
 	private struct HudLayoutMetrics {
 		let font: NSFont
 		let lineHeight: CGFloat
@@ -3213,9 +3213,6 @@ final class CaptureHostView: NSView {
 			placeholderYSlotWidth: "y=?".size(using: font).width
 		)
 	}()
-
-	private static var positionSlotWidthCache: [PositionSlotWidthKey: (x: CGFloat, y: CGFloat)] =
-		[:]
 
 	weak var controller: CaptureSessionController?
 
@@ -5284,21 +5281,22 @@ final class CaptureHostView: NSView {
 
 	private func currentHudSize() -> CGSize {
 		let metrics = Self.hudLayoutMetrics
-		let itemSpacing: CGFloat = 8
-		let swatchSize = CGSize(width: 10, height: 10)
+		let swatchSize = CaptureChrome.hudSwatchSize
 		let keycapVisible = settings.showAltHintKeycap
 		let keycapFrame = keycapVisible ? metrics.keycapFrameSize : .zero
 		let contentHeight = max(metrics.lineHeight, swatchSize.height, keycapFrame.height)
-		let screenFrame = window?.screen?.frame ?? NSScreen.main?.frame ?? bounds
-		let positionSlotWidths = Self.cachedPositionSlotWidths(for: screenFrame)
+		let positionDisplay = currentPositionDisplay()
 		let contentWidth =
-			positionSlotWidths.x
+			positionDisplay.xSlotWidth
 			+ metrics.commaWidth
-			+ positionSlotWidths.y
+			+ positionDisplay.ySlotWidth
+			+ CaptureChrome.hudGroupSpacing
 			+ swatchSize.width
+			+ CaptureChrome.hudColorItemSpacing
 			+ metrics.hexSlotWidth
-			+ keycapFrame.width
-			+ itemSpacing * (keycapVisible ? 3 : 2)
+			+ (keycapVisible
+				? CaptureChrome.hudGroupSpacing + keycapFrame.width
+				: 0)
 		let size = CGSize(
 			width: contentWidth + CaptureChrome.hudInnerMarginX * 2,
 			height: contentHeight + CaptureChrome.hudInnerMarginY * 2
@@ -5813,26 +5811,6 @@ final class CaptureHostView: NSView {
 		return "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))"
 	}
 
-	private static func cachedPositionSlotWidths(for screenFrame: CGRect) -> (
-		x: CGFloat, y: CGFloat
-	) {
-		let minX = Int(screenFrame.minX.rounded())
-		let maxX = Int(screenFrame.maxX.rounded()) - 1
-		let minY = Int(screenFrame.minY.rounded())
-		let maxY = Int(screenFrame.maxY.rounded()) - 1
-		let key = PositionSlotWidthKey(minX: minX, maxX: maxX, minY: minY, maxY: maxY)
-		if let cached = positionSlotWidthCache[key] {
-			return cached
-		}
-		let font = hudLayoutMetrics.font
-		let slotWidths = (
-			x: ["x=\(minX)", "x=\(maxX)"].map { $0.size(using: font).width }.max() ?? 0,
-			y: ["y=\(minY)", "y=\(maxY)"].map { $0.size(using: font).width }.max() ?? 0
-		)
-		positionSlotWidthCache[key] = slotWidths
-		return slotWidths
-	}
-
 	private func currentPositionDisplay() -> LivePositionDisplay {
 		let metrics = Self.hudLayoutMetrics
 		guard let pointer = livePointerPreviewGlobal ?? scene.pointer else {
@@ -5843,13 +5821,13 @@ final class CaptureHostView: NSView {
 				ySlotWidth: metrics.placeholderYSlotWidth
 			)
 		}
-		let screenFrame = window?.screen?.frame ?? .zero
-		let slotWidths = Self.cachedPositionSlotWidths(for: screenFrame)
+		let xValueText = String(Int(pointer.x.rounded()))
+		let yValueText = String(Int(pointer.y.rounded()))
 		return LivePositionDisplay(
-			xValueText: String(Int(pointer.x.rounded())),
-			yValueText: String(Int(pointer.y.rounded())),
-			xSlotWidth: slotWidths.x,
-			ySlotWidth: slotWidths.y
+			xValueText: xValueText,
+			yValueText: yValueText,
+			xSlotWidth: "x=\(xValueText)".size(using: metrics.font).width,
+			ySlotWidth: "y=\(yValueText)".size(using: metrics.font).width
 		)
 	}
 
@@ -7414,6 +7392,9 @@ enum CaptureChrome {
 
 	static let hudInnerMarginX: CGFloat = 12
 	static let hudInnerMarginY: CGFloat = 8
+	static let hudGroupSpacing: CGFloat = 12
+	static let hudColorItemSpacing: CGFloat = 6
+	static let hudSwatchSize = CGSize(width: 10, height: 10)
 	static let hudCornerRadius: CGFloat = 18
 	static let hudLoupeGap: CGFloat = 8
 	static let loupeCellSize: CGFloat = 10

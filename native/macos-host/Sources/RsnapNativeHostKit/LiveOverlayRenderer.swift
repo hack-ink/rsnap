@@ -1505,8 +1505,9 @@ final class LiveOverlayRenderer {
 		)
 
 		let font = LiveOverlayTypography.font
+		let swatchSize = CaptureChrome.hudSwatchSize
 		let positionText =
-			"x=\(snapshot.positionDisplay.xValueText), y=\(snapshot.positionDisplay.yValueText)"
+			"x=\(snapshot.positionDisplay.xValueText),y=\(snapshot.positionDisplay.yValueText)"
 		let positionSize = CGSize(
 			width: snapshot.positionDisplay.xSlotWidth
 				+ LiveOverlayTypography.commaWidth
@@ -1525,10 +1526,14 @@ final class LiveOverlayRenderer {
 				height: ceil(positionSize.height)),
 			alignment: .left
 		)
-		cursorX += positionSize.width + 10
+		cursorX += positionSize.width + CaptureChrome.hudGroupSpacing
 
 		hudSwatchLayer.frame = CGRect(
-			x: cursorX, y: hudLayer.bounds.midY - 5, width: 10, height: 10)
+			x: cursorX,
+			y: hudLayer.bounds.midY - swatchSize.height / 2,
+			width: swatchSize.width,
+			height: swatchSize.height
+		)
 		hudSwatchLayer.cornerRadius = 0
 		let swatchColor =
 			snapshot.rgbSample.map {
@@ -1539,14 +1544,14 @@ final class LiveOverlayRenderer {
 		hudSwatchLayer.backgroundColor = swatchColor.cgColor
 		hudSwatchLayer.borderColor = palette.swatchStroke.cgColor
 		hudSwatchLayer.borderWidth = 1
-		cursorX += 20
+		cursorX += swatchSize.width + CaptureChrome.hudColorItemSpacing
 
 		applyText(
 			hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: palette.labelText,
 			frame: CGRect(
 				x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth),
 				height: ceil(LiveOverlayTypography.lineHeight)), alignment: .left)
-		cursorX += snapshot.colorDisplay.hexSlotWidth + 10
+		cursorX += snapshot.colorDisplay.hexSlotWidth + CaptureChrome.hudGroupSpacing
 
 		if snapshot.keycapVisible {
 			let keycapText = "Tab"
@@ -1566,7 +1571,8 @@ final class LiveOverlayRenderer {
 			hudKeycapLayer.borderWidth = 1
 			applyText(
 				hudKeycapTextLayer, text: keycapText, font: keycapFont, color: palette.keycapText,
-				frame: keycapFrame, alignment: .center)
+				frame: centeredTextFrame(for: keycapText, font: keycapFont, in: keycapFrame),
+				alignment: .center)
 		} else {
 			hudKeycapLayer.isHidden = true
 			hudKeycapTextLayer.isHidden = true
@@ -1678,5 +1684,17 @@ final class LiveOverlayRenderer {
 		layer.alignmentMode = alignment
 		layer.frame = frame
 		layer.isWrapped = false
+	}
+
+	private func centeredTextFrame(for text: String, font: NSFont, in frame: CGRect) -> CGRect {
+		let textSize = text.size(using: font)
+		let width = ceil(textSize.width)
+		let height = ceil(textSize.height)
+		return CGRect(
+			x: frame.midX - width / 2,
+			y: frame.midY - height / 2,
+			width: width,
+			height: height
+		)
 	}
 }

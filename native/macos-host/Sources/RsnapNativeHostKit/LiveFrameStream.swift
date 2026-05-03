@@ -17,6 +17,7 @@ final class LiveFrameStreamBroker {
 
 	private let stateLock = NSLock()
 	private var sampler: RsnapLiveSampler?
+	private var selfCaptureExceptionWindowIDs: Set<CGWindowID> = []
 	private var monitors: [SamplerMonitor] = []
 	private var mainDisplayHeight: CGFloat = 0
 	private var streamGeneration: UInt64 = 0
@@ -25,13 +26,32 @@ final class LiveFrameStreamBroker {
 	private var lastPrimeUptime: TimeInterval = 0
 
 	init() {
-		sampler = try? RsnapLiveSampler()
+		sampler = Self.makeSampler(exceptionWindowIDs: [])
+	}
+
+	func updateSelfCaptureExceptionWindowIDs(_ windowIDs: Set<CGWindowID>) {
+		stateLock.lock()
+		guard windowIDs != selfCaptureExceptionWindowIDs else {
+			stateLock.unlock()
+			return
+		}
+		selfCaptureExceptionWindowIDs = windowIDs
+		streamGeneration &+= 1
+		monitors.removeAll()
+		mainDisplayHeight = 0
+		lastPrimedMonitorID = nil
+		lastPrimeGeneration = 0
+		lastPrimeUptime = 0
+		let oldSampler = sampler
+		sampler = Self.makeSampler(exceptionWindowIDs: windowIDs)
+		stateLock.unlock()
+		try? oldSampler?.reset()
 	}
 
 	func start(for screens: [NSScreen], prewarmPoint: CGPoint? = nil) {
 		stateLock.lock()
 		if sampler == nil {
-			sampler = try? RsnapLiveSampler()
+			sampler = Self.makeSampler(exceptionWindowIDs: selfCaptureExceptionWindowIDs)
 		}
 		let mainDisplayHeight = Self.mainDisplayHeight(for: screens)
 		self.mainDisplayHeight = mainDisplayHeight
@@ -166,6 +186,10 @@ final class LiveFrameStreamBroker {
 		let monitors = self.monitors
 		stateLock.unlock()
 		return monitors.first(where: { $0.appKitFrame.contains(point) })
+	}
+
+	private static func makeSampler(exceptionWindowIDs: Set<CGWindowID>) -> RsnapLiveSampler? {
+		try? RsnapLiveSampler(selfCaptureExceptionWindowIDs: exceptionWindowIDs.sorted())
 	}
 
 	private func prime(monitor: SamplerMonitor) {
