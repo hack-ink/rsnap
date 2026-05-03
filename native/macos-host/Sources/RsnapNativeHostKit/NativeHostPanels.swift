@@ -105,18 +105,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		NSApp.activate(ignoringOtherApps: true)
 	}
 
-	var isVisible: Bool {
-		window?.isVisible == true
-	}
-
-	func hideForCapture() {
-		window?.orderOut(nil)
-	}
-
-	func restoreAfterCapture() {
-		present()
-	}
-
 	func windowWillClose(_: Notification) {
 		onClose()
 	}
