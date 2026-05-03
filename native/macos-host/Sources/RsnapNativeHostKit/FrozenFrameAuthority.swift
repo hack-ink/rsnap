@@ -499,6 +499,22 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		)
 	}
 
+	func loupePatch(containing point: CGPoint, sidePixels: Int) -> CGImage? {
+		stateLock.lock()
+		let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		let record = displayID.flatMap { latestFrames[$0] }.flatMap(snapshotEligibleRecordLocked)
+		stateLock.unlock()
+		guard let record else {
+			return nil
+		}
+		return Self.loupePatch(
+			from: record.pixelBuffer,
+			point: point,
+			displayFrame: record.displayFrame,
+			sidePixels: sidePixels
+		)
+	}
+
 	func snapshot(
 		containing point: CGPoint,
 		after token: FrozenFrameLatchToken?,
@@ -1044,6 +1060,87 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
 		let offset = y * bytesPerRow + x * 4
 		return RGBSample(r: bytes[offset + 2], g: bytes[offset + 1], b: bytes[offset])
+	}
+
+	private static func loupePatch(
+		from pixelBuffer: CVPixelBuffer,
+		point: CGPoint,
+		displayFrame: CGRect,
+		sidePixels: Int
+	) -> CGImage? {
+		guard displayFrame.width > 0, displayFrame.height > 0, displayFrame.contains(point) else {
+			return nil
+		}
+		let width = CVPixelBufferGetWidth(pixelBuffer)
+		let height = CVPixelBufferGetHeight(pixelBuffer)
+		let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+		let side = max(sidePixels, 1)
+		guard width > 0, height > 0, bytesPerRow >= width * 4 else {
+			return nil
+		}
+		let xRatio = (point.x - displayFrame.minX) / displayFrame.width
+		let yRatio = (displayFrame.maxY - point.y) / displayFrame.height
+		let centerX = min(max(Int((xRatio * CGFloat(width)).rounded(.down)), 0), width - 1)
+		let centerY = min(max(Int((yRatio * CGFloat(height)).rounded(.down)), 0), height - 1)
+		guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else {
+			return nil
+		}
+		defer {
+			CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
+		}
+		guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+			return nil
+		}
+		let sourceBytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+		let outputBytesPerPixel = 4
+		let outputBytesPerRow = side * outputBytesPerPixel
+		let half = side / 2
+		var rgba = [UInt8](repeating: 0, count: outputBytesPerRow * side)
+		for outputY in 0..<side {
+			let sourceY = min(max(centerY - half + outputY, 0), height - 1)
+			for outputX in 0..<side {
+				let sourceX = min(max(centerX - half + outputX, 0), width - 1)
+				let sourceOffset = sourceY * bytesPerRow + sourceX * 4
+				let outputOffset = outputY * outputBytesPerRow + outputX * outputBytesPerPixel
+				rgba[outputOffset] = sourceBytes[sourceOffset + 2]
+				rgba[outputOffset + 1] = sourceBytes[sourceOffset + 1]
+				rgba[outputOffset + 2] = sourceBytes[sourceOffset]
+				rgba[outputOffset + 3] = sourceBytes[sourceOffset + 3]
+			}
+		}
+		return rgbaImage(width: side, height: side, rgba: rgba)
+	}
+
+	private static func rgbaImage(width: Int, height: Int, rgba: [UInt8]) -> CGImage? {
+		guard width > 0, height > 0 else {
+			return nil
+		}
+		let bytesPerRow = width * 4
+		let expectedByteCount = bytesPerRow * height
+		guard rgba.count >= expectedByteCount else {
+			return nil
+		}
+		let data = Data(rgba.prefix(expectedByteCount))
+		let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
+		guard
+			let provider = CGDataProvider(data: data as CFData),
+			let image = CGImage(
+				width: width,
+				height: height,
+				bitsPerComponent: 8,
+				bitsPerPixel: 32,
+				bytesPerRow: bytesPerRow,
+				space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+				bitmapInfo: bitmapInfo,
+				provider: provider,
+				decode: nil,
+				shouldInterpolate: false,
+				intent: .defaultIntent
+			)
+		else {
+			return nil
+		}
+		return image
 	}
 }
 
