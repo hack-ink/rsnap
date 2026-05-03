@@ -19,12 +19,15 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 		}
 	}
 
-	private static let windowSize = NSSize(width: 314, height: 118)
+	private static let windowSize = NSSize(width: 318, height: 50)
+	private static let cornerRadius: CGFloat = 17
 	private static let windowGap: CGFloat = 14
 	private var kind: PermissionKind = .screenRecording
 	private var positionWorkItem: DispatchWorkItem?
 	private var statusPollWorkItem: DispatchWorkItem?
 	private var guideDirection: GuideDirection = .left
+	private let materialView = NSVisualEffectView()
+	private var hostingController: NSHostingController<PermissionRecoveryGuideView>?
 
 	init() {
 		let panel = NSPanel(
@@ -43,6 +46,7 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 		panel.isReleasedWhenClosed = false
 		panel.level = .floating
 		super.init(window: panel)
+		configureMaterialView()
 		updateRootView()
 	}
 
@@ -55,9 +59,7 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 		self.kind = kind
 		NativePermissions.openSystemSettings(for: kind)
 		updateRootView()
-		positionAtFallbackLocation()
-		showWindow(nil)
-		window?.orderFrontRegardless()
+		window?.orderOut(nil)
 		scheduleSystemSettingsPositioning()
 		schedulePermissionStatusPolling()
 	}
@@ -73,25 +75,68 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 	private func updateRootView() {
 		let bundleURL = Bundle.main.bundleURL
 		let appIcon = NSWorkspace.shared.icon(forFile: bundleURL.path)
-		window?.contentViewController = NSHostingController(
-			rootView: PermissionRecoveryGuideView(
-				directionSymbolName: guideDirection.symbolName,
-				bundleURL: bundleURL,
-				appIcon: appIcon,
-				openSettings: { [weak self] in
-					guard let self else {
-						return
-					}
-					NativePermissions.openSystemSettings(for: self.kind)
-					self.scheduleSystemSettingsPositioning()
-				},
-				close: { [weak self] in
-					self?.close()
+		let rootView = PermissionRecoveryGuideView(
+			directionSymbolName: guideDirection.symbolName,
+			bundleURL: bundleURL,
+			appIcon: appIcon,
+			openSettings: { [weak self] in
+				guard let self else {
+					return
 				}
-			)
+				NativePermissions.openSystemSettings(for: self.kind)
+				self.scheduleSystemSettingsPositioning()
+			}
 		)
-		window?.contentViewController?.view.wantsLayer = true
-		window?.contentViewController?.view.layer?.backgroundColor = NSColor.clear.cgColor
+		if let hostingController {
+			hostingController.rootView = rootView
+			return
+		}
+
+		let hostingController = NSHostingController(rootView: rootView)
+		hostingController.view.translatesAutoresizingMaskIntoConstraints = false
+		hostingController.view.wantsLayer = true
+		hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
+		materialView.addSubview(hostingController.view)
+		NSLayoutConstraint.activate([
+			hostingController.view.leadingAnchor.constraint(equalTo: materialView.leadingAnchor),
+			hostingController.view.trailingAnchor.constraint(equalTo: materialView.trailingAnchor),
+			hostingController.view.topAnchor.constraint(equalTo: materialView.topAnchor),
+			hostingController.view.bottomAnchor.constraint(equalTo: materialView.bottomAnchor),
+		])
+		self.hostingController = hostingController
+	}
+
+	private func configureMaterialView() {
+		materialView.frame = NSRect(origin: .zero, size: Self.windowSize)
+		materialView.autoresizingMask = [.width, .height]
+		materialView.blendingMode = .withinWindow
+		materialView.material = .popover
+		materialView.state = .active
+		materialView.wantsLayer = true
+		materialView.layer?.cornerRadius = Self.cornerRadius
+		if #available(macOS 10.15, *) {
+			materialView.layer?.cornerCurve = .continuous
+		}
+		materialView.layer?.masksToBounds = true
+		materialView.maskImage = Self.roundedMaskImage(
+			size: Self.windowSize,
+			cornerRadius: Self.cornerRadius
+		)
+		window?.contentView = materialView
+	}
+
+	private static func roundedMaskImage(size: NSSize, cornerRadius: CGFloat) -> NSImage {
+		let image = NSImage(size: size)
+		image.lockFocus()
+		NSColor.black.setFill()
+		NSBezierPath(
+			roundedRect: NSRect(origin: .zero, size: size),
+			xRadius: cornerRadius,
+			yRadius: cornerRadius
+		)
+		.fill()
+		image.unlockFocus()
+		return image
 	}
 
 	private func scheduleSystemSettingsPositioning() {
@@ -106,12 +151,17 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 				guideDirection = direction
 				updateRootView()
 			}
-			window?.orderFrontRegardless()
+			revealGuideWindow()
 			return
 		}
 
 		guard remainingAttempts > 0 else {
-			window?.orderFrontRegardless()
+			positionAtFallbackLocation()
+			if guideDirection != .left {
+				guideDirection = .left
+				updateRootView()
+			}
+			revealGuideWindow()
 			return
 		}
 		let workItem = DispatchWorkItem { [weak self] in
@@ -127,9 +177,6 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 	}
 
 	private func pollPermissionStatus(remainingAttempts: Int) {
-		guard window?.isVisible == true else {
-			return
-		}
 		if NativePermissions.status(for: kind) {
 			close()
 			return
@@ -142,6 +189,11 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 		}
 		statusPollWorkItem = workItem
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: workItem)
+	}
+
+	private func revealGuideWindow() {
+		showWindow(nil)
+		window?.orderFrontRegardless()
 	}
 
 	private func positionAtFallbackLocation() {
@@ -266,74 +318,26 @@ private struct PermissionRecoveryGuideView: View {
 	let bundleURL: URL
 	let appIcon: NSImage
 	let openSettings: () -> Void
-	let close: () -> Void
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.colorScheme) private var colorScheme
 	@State private var pulse = false
 
 	var body: some View {
-		HStack(spacing: 12) {
-			PermissionGuideArrow(symbolName: directionSymbolName, pulse: pulse)
-				.frame(width: 38, height: 52)
-
-			VStack(alignment: .leading, spacing: 8) {
-				HStack(alignment: .center, spacing: 8) {
-					Text("Drag rsnap here")
-						.font(.system(size: 12.5, weight: .semibold))
-						.lineLimit(1)
-					Spacer(minLength: 6)
-					Button(action: close) {
-						Image(systemName: "xmark")
-							.font(.system(size: 9.5, weight: .bold))
-							.frame(width: 18, height: 18)
-					}
-					.buttonStyle(.plain)
-					.foregroundStyle(.secondary)
-					.help("Close")
-				}
-
-				HStack(spacing: 9) {
-					PermissionAppDragSource(bundleURL: bundleURL, icon: appIcon, label: "rsnap")
-						.frame(width: 116, height: 36)
-						.overlay {
-							Capsule()
-								.stroke(
-									Color.accentColor.opacity(pulse ? 0.58 : 0.20), lineWidth: 1.2
-								)
-								.scaleEffect(reduceMotion ? 1 : (pulse ? 1.06 : 1))
-								.allowsHitTesting(false)
-						}
-					Button(action: openSettings) {
-						Image(systemName: "gearshape")
-							.font(.system(size: 12.5, weight: .semibold))
-							.frame(width: 30, height: 30)
-					}
-					.buttonStyle(.plain)
-					.foregroundStyle(Color.accentColor)
-					.background(
-						Color.accentColor.opacity(colorScheme == .light ? 0.075 : 0.13),
-						in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-					)
-					.help("Open Screen Recording settings")
-				}
-
-				Text("Drop it into Screen Recording, then turn it on.")
-					.font(.system(size: 10, weight: .medium))
-					.foregroundStyle(.secondary)
-					.lineLimit(1)
-					.minimumScaleFactor(0.9)
+		HStack(alignment: .center, spacing: 8) {
+			if pointsLeft {
+				arrowGuide
+				appDragChip
+				instructionText
+				openSettingsButton
+			} else {
+				openSettingsButton
+				instructionText
+				appDragChip
+				arrowGuide
 			}
 		}
-		.padding(.horizontal, 13)
-		.padding(.vertical, 11)
-		.frame(width: 314, height: 118)
-		.background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-		.background(panelFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-		.overlay {
-			RoundedRectangle(cornerRadius: 18, style: .continuous)
-				.stroke(panelBorder, lineWidth: 1)
-		}
-		.shadow(color: .black.opacity(colorScheme == .light ? 0.16 : 0.34), radius: 18, y: 8)
+		.padding(.horizontal, 11)
+		.frame(width: 318, height: 50)
 		.onAppear {
 			guard !reduceMotion else {
 				return
@@ -344,12 +348,58 @@ private struct PermissionRecoveryGuideView: View {
 		}
 	}
 
-	private var panelFill: Color {
-		colorScheme == .light ? Color.white.opacity(0.42) : Color.black.opacity(0.20)
+	private var pointsLeft: Bool {
+		directionSymbolName == "arrow.left"
 	}
 
-	private var panelBorder: Color {
-		colorScheme == .light ? Color.black.opacity(0.10) : Color.white.opacity(0.16)
+	private var guideTextFont: Font {
+		.system(size: 11.2, weight: .semibold)
+	}
+
+	private var guideTextColor: Color {
+		Color.primary.opacity(colorScheme == .light ? 0.78 : 0.86)
+	}
+
+	private var arrowGuide: some View {
+		PermissionGuideArrow(symbolName: directionSymbolName, pulse: pulse)
+			.frame(width: 40, height: 31)
+	}
+
+	private var appDragChip: some View {
+		PermissionAppDragSource(bundleURL: bundleURL, icon: appIcon, label: "rsnap")
+			.frame(width: 114, height: 31)
+			.overlay {
+				Capsule()
+					.stroke(Color.accentColor.opacity(pulse ? 0.58 : 0.20), lineWidth: 1.2)
+					.scaleEffect(reduceMotion ? 1 : (pulse ? 1.055 : 1))
+					.allowsHitTesting(false)
+			}
+	}
+
+	private var instructionText: some View {
+		Text("Drop in, turn on")
+			.font(guideTextFont)
+			.foregroundStyle(guideTextColor)
+			.lineLimit(1)
+			.minimumScaleFactor(0.88)
+			.frame(maxWidth: .infinity, alignment: .leading)
+			.layoutPriority(1)
+	}
+
+	private var openSettingsButton: some View {
+		Button(action: openSettings) {
+			Image(systemName: "arrow.up.forward.app")
+				.font(.system(size: 11.4, weight: .semibold))
+				.frame(width: 24, height: 24)
+		}
+		.buttonStyle(.plain)
+		.foregroundStyle(Color.accentColor)
+		.background(
+			Color.accentColor.opacity(colorScheme == .light ? 0.075 : 0.13),
+			in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+		)
+		.frame(width: 28, height: 31)
+		.help("Open Screen Recording settings")
 	}
 }
 
@@ -359,16 +409,31 @@ private struct PermissionGuideArrow: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	var body: some View {
-		VStack(spacing: 4) {
+		HStack(spacing: 3) {
+			if pointsLeft {
+				arrow
+				dots
+			} else {
+				dots
+				arrow
+			}
+		}
+	}
+
+	private var arrow: some View {
+		Image(systemName: symbolName)
+			.font(.system(size: 19, weight: .bold))
+			.foregroundStyle(Color.accentColor)
+			.offset(x: arrowOffset)
+	}
+
+	private var dots: some View {
+		HStack(spacing: 3) {
 			ForEach(0..<3) { index in
 				Circle()
 					.fill(Color.accentColor.opacity(dotOpacity(index: index)))
-					.frame(width: 4.5, height: 4.5)
+					.frame(width: 3.8, height: 3.8)
 			}
-			Image(systemName: symbolName)
-				.font(.system(size: 22, weight: .bold))
-				.foregroundStyle(Color.accentColor)
-				.offset(x: arrowOffset)
 		}
 	}
 
@@ -392,5 +457,9 @@ private struct PermissionGuideArrow: View {
 		default:
 			return 0
 		}
+	}
+
+	private var pointsLeft: Bool {
+		symbolName == "arrow.left"
 	}
 }
