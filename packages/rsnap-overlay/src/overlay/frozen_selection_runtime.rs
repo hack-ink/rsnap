@@ -1156,36 +1156,60 @@ impl OverlaySession {
 		let Some((monitor, capture_rect)) = self.frozen_capture_rect_drag_target() else {
 			return false;
 		};
-		let Some(capture_image) = self.cropped_frozen_capture_image() else {
+		let mut next_rect = capture_rect;
+
+		for _ in 0..Self::AUTO_CENTER_MAX_ITERATIONS {
+			let Some(capture_image) =
+				self.cropped_frozen_capture_image_for_rect(monitor, next_rect)
+			else {
+				break;
+			};
+			let Some(content_bounds) = Self::detect_auto_center_content_bounds(&capture_image)
+			else {
+				break;
+			};
+			let delta_x_points = Self::auto_center_margin_balance_shift_points(
+				content_bounds.x,
+				content_bounds.width,
+				capture_image.width(),
+				next_rect.width,
+			);
+			let delta_y_points = Self::auto_center_margin_balance_shift_points(
+				content_bounds.y,
+				content_bounds.height,
+				capture_image.height(),
+				next_rect.height,
+			);
+
+			if delta_x_points == 0 && delta_y_points == 0 {
+				break;
+			}
+
+			let candidate_rect = Self::clamp_frozen_capture_rect_to_monitor(
+				monitor,
+				next_rect.width,
+				next_rect.height,
+				i64::from(next_rect.x) + delta_x_points,
+				i64::from(next_rect.y) + delta_y_points,
+			);
+
+			if candidate_rect == next_rect {
+				break;
+			}
+
+			next_rect = candidate_rect;
+		}
+
+		if next_rect == capture_rect {
 			return false;
-		};
-		let Some(content_bounds) = Self::detect_auto_center_content_bounds(&capture_image) else {
-			return false;
-		};
-		let delta_x_points = Self::auto_center_shift_points(
-			content_bounds.x,
-			content_bounds.width,
-			capture_image.width(),
-			capture_rect.width,
-		);
-		let delta_y_points = Self::auto_center_shift_points(
-			content_bounds.y,
-			content_bounds.height,
-			capture_image.height(),
-			capture_rect.height,
-		);
-		let next_rect = Self::clamp_frozen_capture_rect_to_monitor(
-			monitor,
-			capture_rect.width,
-			capture_rect.height,
-			i64::from(capture_rect.x) + delta_x_points,
-			i64::from(capture_rect.y) + delta_y_points,
-		);
+		}
 
 		self.apply_frozen_capture_rect_update(monitor, next_rect)
 	}
 
-	fn auto_center_shift_points(
+	const AUTO_CENTER_MAX_ITERATIONS: usize = 6;
+
+	fn auto_center_margin_balance_shift_points(
 		content_origin_px: u32,
 		content_size_px: u32,
 		crop_size_px: u32,
@@ -1195,9 +1219,10 @@ impl OverlaySession {
 			return 0;
 		}
 
-		let content_center_px = content_origin_px as f32 + (content_size_px as f32 * 0.5);
-		let crop_center_px = crop_size_px as f32 * 0.5;
-		let delta_px = content_center_px - crop_center_px;
+		let leading_margin_px = content_origin_px as f32;
+		let trailing_margin_px =
+			crop_size_px.saturating_sub(content_origin_px.saturating_add(content_size_px)) as f32;
+		let delta_px = (leading_margin_px - trailing_margin_px) * 0.5;
 
 		((delta_px * capture_size_points as f32) / crop_size_px as f32).round() as i64
 	}
