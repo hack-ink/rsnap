@@ -176,7 +176,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private lazy var sessionController: CaptureSessionController = {
 		let controller = CaptureSessionController(settingsStore: settingsStore)
 		controller.captureStateDidChange = { [weak self] in
-			self?.refreshStatusMenuState()
+			self?.captureStateDidChange()
 		}
 		controller.sceneDidChange = { [weak self] scene in
 			self?.refreshHotKeyBindings(for: scene.mode)
@@ -185,6 +185,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}()
 	private var statusItem: NSStatusItem?
 	private weak var captureMenuItem: NSMenuItem?
+	private var shouldRestoreSettingsAfterCapture = false
 	private lazy var settingsWindowController = SettingsWindowController(
 		settingsStore: settingsStore,
 		onClose: { [weak self] in
@@ -270,7 +271,16 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 	@objc
 	private func startCapture(_ sender: Any?) {
+		let shouldHideSettings =
+			!sessionController.isCaptureActive && settingsWindowController.isVisible
+		if shouldHideSettings {
+			shouldRestoreSettingsAfterCapture = true
+			settingsWindowController.hideForCapture()
+		}
 		sessionController.startCapture()
+		if shouldHideSettings && !sessionController.isCaptureActive {
+			restoreSettingsAfterCaptureIfNeeded()
+		}
 	}
 
 	@objc
@@ -363,6 +373,21 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	fileprivate func refreshStatusMenuState() {
 		let isCaptureActive = sessionController.isCaptureActive
 		captureMenuItem?.isEnabled = !isCaptureActive
+	}
+
+	private func captureStateDidChange() {
+		refreshStatusMenuState()
+		if !sessionController.isCaptureActive {
+			restoreSettingsAfterCaptureIfNeeded()
+		}
+	}
+
+	private func restoreSettingsAfterCaptureIfNeeded() {
+		guard shouldRestoreSettingsAfterCapture else {
+			return
+		}
+		shouldRestoreSettingsAfterCapture = false
+		settingsWindowController.restoreAfterCapture()
 	}
 
 	private func updateCaptureMenuShortcut() {
