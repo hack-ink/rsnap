@@ -4,8 +4,8 @@ import SwiftUI
 
 enum NativeHostSettingsWindowMetrics {
 	static let width: CGFloat = 620
-	static let minHeight: CGFloat = 348
-	static let idealHeight: CGFloat = 360
+	static let minHeight: CGFloat = 320
+	static let idealHeight: CGFloat = 336
 }
 
 @MainActor
@@ -1378,7 +1378,7 @@ private struct PermissionsSettingsPanel: View {
 	private let primaryKind = PermissionKind.screenRecording
 
 	var body: some View {
-		VStack(spacing: 8) {
+		VStack(spacing: 6) {
 			PermissionGrantCard(
 				kind: primaryKind,
 				refreshID: refreshID,
@@ -1392,7 +1392,7 @@ private struct PermissionsSettingsPanel: View {
 				}
 			)
 
-			VStack(spacing: 8) {
+			VStack(spacing: 6) {
 				VStack(spacing: 0) {
 					ForEach(Self.rows.prefix(2)) { row in
 						PermissionStatusTile(
@@ -1463,67 +1463,72 @@ private struct PermissionGrantCard: View {
 	let openSettings: () -> Void
 	let refresh: () -> Void
 	@Environment(\.colorScheme) private var colorScheme
+	@State private var didRefresh = false
 
 	var body: some View {
-		HStack(alignment: .center, spacing: 12) {
-			ZStack {
-				Circle()
-					.fill(iconBackgroundColor)
-				Image(systemName: isGranted ? "checkmark.seal.fill" : "hand.draw.fill")
-					.symbolRenderingMode(.hierarchical)
-					.font(.system(size: 17, weight: .semibold))
-					.foregroundStyle(isGranted ? Color.green : Color.accentColor)
-			}
-			.frame(width: 34, height: 34)
-
-			VStack(alignment: .leading, spacing: 5) {
-				HStack(spacing: 7) {
-					Text(title)
-						.font(.system(size: 12.5, weight: .semibold))
-						.lineLimit(2)
-					PermissionStateBadge(
-						title: isGranted ? "Granted" : "Required",
-						style: isGranted ? .granted : .required
-					)
+		VStack(alignment: .leading, spacing: 7) {
+			HStack(alignment: .top, spacing: 11) {
+				ZStack {
+					Circle()
+						.fill(iconBackgroundColor)
+					Image(systemName: isGranted ? "checkmark.seal.fill" : "hand.draw.fill")
+						.symbolRenderingMode(.hierarchical)
+						.font(.system(size: 17, weight: .semibold))
+						.foregroundStyle(isGranted ? Color.green : Color.accentColor)
 				}
-				Text(subtitle)
-					.font(.system(size: 10, weight: .medium))
-					.foregroundStyle(.secondary)
-					.lineLimit(2)
-					.fixedSize(horizontal: false, vertical: true)
+				.frame(width: 34, height: 34)
+
+				VStack(alignment: .leading, spacing: 5) {
+					HStack(alignment: .firstTextBaseline, spacing: 7) {
+						Text(title)
+							.font(.system(size: 12.5, weight: .semibold))
+							.lineLimit(2)
+							.fixedSize(horizontal: false, vertical: true)
+							.layoutPriority(1)
+						PermissionStateBadge(
+							title: isGranted ? "Granted" : "Required",
+							style: isGranted ? .granted : .required
+						)
+					}
+					Text(subtitle)
+						.font(.system(size: 10.5, weight: .medium))
+						.foregroundStyle(.secondary)
+						.lineLimit(2)
+						.fixedSize(horizontal: false, vertical: true)
+				}
 			}
-			.layoutPriority(1)
 
-			Spacer(minLength: 8)
-
-			VStack(alignment: .trailing, spacing: 7) {
+			HStack(alignment: .center, spacing: 8) {
 				PermissionAppDragSource(bundleURL: bundleURL, icon: appIcon, label: "rsnap")
-					.frame(width: 112, height: 34)
+					.frame(width: 108, height: 31)
 					.opacity(isGranted ? 0.76 : 1)
 
-				HStack(spacing: 6) {
-					Button {
-						openSettings()
-					} label: {
-						Label("Open", systemImage: "gearshape")
-							.labelStyle(.titleAndIcon)
-					}
-					.rsnapGlassButton(prominent: false)
-					.controlSize(.small)
+				Spacer(minLength: 6)
 
-					Button(action: refresh) {
-						Image(systemName: "arrow.clockwise")
-							.frame(width: 13, height: 13)
-					}
-					.rsnapGlassButton(prominent: false)
-					.controlSize(.small)
-					.help("Refresh status")
+				Button {
+					openSettings()
+				} label: {
+					Label("Settings", systemImage: "gearshape")
+						.labelStyle(.titleAndIcon)
 				}
+				.rsnapGlassButton(prominent: false)
+				.controlSize(.small)
+				.help("Open Screen Recording settings")
+
+				Button(action: refreshStatus) {
+					Label(
+						didRefresh ? "Updated" : "Refresh",
+						systemImage: didRefresh ? "checkmark" : "arrow.clockwise"
+					)
+					.labelStyle(.titleAndIcon)
+				}
+				.rsnapGlassButton(prominent: false)
+				.controlSize(.small)
+				.help("Refresh permission status")
 			}
-			.frame(width: SettingsControlLayout.controlColumnWidth, alignment: .trailing)
 		}
-		.padding(.vertical, 8)
-		.frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+		.padding(.vertical, 7)
+		.frame(maxWidth: .infinity, minHeight: 98, alignment: .leading)
 	}
 
 	private var isGranted: Bool {
@@ -1532,14 +1537,14 @@ private struct PermissionGrantCard: View {
 	}
 
 	private var title: String {
-		isGranted ? "Screen Recording ready" : "Drag rsnap into Screen Recording"
+		isGranted ? "Screen Recording ready" : "Screen Recording access needed"
 	}
 
 	private var subtitle: String {
 		if isGranted {
 			return "The native capture host can see the screen."
 		}
-		return "Open System Settings, then drop the app chip into the allowed apps list."
+		return "Open System Settings, then drag rsnap into the Screen Recording app list."
 	}
 
 	private var iconBackgroundColor: Color {
@@ -1547,6 +1552,14 @@ private struct PermissionGrantCard: View {
 			return Color.green.opacity(colorScheme == .light ? 0.12 : 0.18)
 		}
 		return Color.accentColor.opacity(colorScheme == .light ? 0.12 : 0.20)
+	}
+
+	private func refreshStatus() {
+		refresh()
+		didRefresh = true
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+			didRefresh = false
+		}
 	}
 
 }
@@ -1557,11 +1570,21 @@ private struct PermissionStatusTile: View {
 	let openSettings: (PermissionKind) -> Void
 
 	var body: some View {
-		SettingsControlTile(
-			symbolName: row.symbolName,
-			title: row.title,
-			subtitle: subtitle
-		) {
+		HStack(alignment: .center, spacing: 10) {
+			SettingsTileIcon(symbolName: row.symbolName, size: 19)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(row.title)
+					.font(.system(size: 13, weight: .semibold))
+					.lineLimit(1)
+					.minimumScaleFactor(0.9)
+				Text(subtitle)
+					.font(.system(size: 10.5, weight: .medium))
+					.foregroundStyle(.secondary)
+					.lineLimit(2)
+					.fixedSize(horizontal: false, vertical: true)
+			}
+			.layoutPriority(1)
+			Spacer(minLength: 8)
 			HStack(spacing: 7) {
 				PermissionStateBadge(title: badgeTitle, style: badgeStyle)
 				if canOpen {
@@ -1577,6 +1600,8 @@ private struct PermissionStatusTile: View {
 				}
 			}
 		}
+		.padding(.vertical, 4)
+		.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
 	}
 
 	private var isGranted: Bool {
@@ -1629,6 +1654,7 @@ private struct PermissionStateBadge: View {
 		Text(title)
 			.font(.system(size: 9.2, weight: .semibold))
 			.lineLimit(1)
+			.fixedSize(horizontal: true, vertical: false)
 			.padding(.horizontal, 7)
 			.padding(.vertical, 4)
 			.foregroundStyle(foregroundColor)
