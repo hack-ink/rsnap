@@ -1,7 +1,7 @@
 # Window Hit-Testing Reference
 
 Purpose: Describe the current live-mode window hit-testing strategy and the default choice used by
-rsnap.
+Rsnap.
 
 Read this when: You are changing hovered-window outline behavior, evaluating live hit-test
 latency, or comparing candidate hit-testing strategies.
@@ -24,7 +24,7 @@ boundary for the reset lane. For the active target architecture, start with
 
 ## Current Strategy Scope
 
-This reference describes the current window-outline strategy used by rsnap live mode as of March
+This reference describes the current window-outline strategy used by Rsnap live mode as of March
 2026.
 
 ## Strategy A (current, default)

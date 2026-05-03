@@ -2494,7 +2494,7 @@ fn build_stream_content_filter(
 					monitor_id,
 					pid = process::id(),
 					excepting_window_count,
-					"Configured ScreenCaptureKit to exclude rsnap windows from the live stream."
+					"Configured ScreenCaptureKit to exclude Rsnap windows from the live stream."
 				);
 
 				PreparedStreamFilter {
@@ -2567,7 +2567,7 @@ fn build_shareable_window_filter(
 			excepting_window_count,
 			fallback_excluded_window_count,
 			missing_window_ids = ?missing_window_ids,
-			"ScreenCaptureKit omitted at least one requested self-capture exception window; falling back to excluding only rsnap's currently shareable windows."
+			"ScreenCaptureKit omitted at least one requested self-capture exception window; falling back to excluding only Rsnap's currently shareable windows."
 		);
 	}
 
@@ -2603,7 +2603,7 @@ fn log_missing_current_process_fallback(
 		pid = process::id(),
 		excepting_window_count,
 		fallback_excluded_window_count,
-		"ScreenCaptureKit omitted rsnap's running application during stream setup; falling back to excluding only rsnap's currently shareable windows."
+		"ScreenCaptureKit omitted Rsnap's running application during stream setup; falling back to excluding only Rsnap's currently shareable windows."
 	);
 }
 

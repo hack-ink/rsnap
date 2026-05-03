@@ -1,6 +1,6 @@
 # Telemetry Debugging
 
-Goal: Collect and summarize rsnap native-host and Rust telemetry for screenshot,
+Goal: Collect and summarize Rsnap native-host and Rust telemetry for screenshot,
 ScreenCaptureKit, live chrome, and capture-output debugging.
 
 Read this when: A local run has a performance, startup, frozen-frame, pasteboard, live

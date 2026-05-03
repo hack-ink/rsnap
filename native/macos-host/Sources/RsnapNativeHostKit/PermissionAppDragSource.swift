@@ -28,7 +28,7 @@ final class PermissionAppDragSourceView: NSView, NSDraggingSource {
 		super.init(frame: .zero)
 		wantsLayer = true
 		layer?.cornerCurve = .continuous
-		toolTip = "Drag rsnap to System Settings"
+		toolTip = "Drag \(label) to System Settings"
 	}
 
 	@available(*, unavailable)
@@ -48,6 +48,7 @@ final class PermissionAppDragSourceView: NSView, NSDraggingSource {
 		self.bundleURL = bundleURL
 		self.icon = icon
 		self.label = label
+		toolTip = "Drag \(label) to System Settings"
 		needsDisplay = true
 		invalidateIntrinsicContentSize()
 	}
@@ -125,32 +126,41 @@ final class PermissionAppDragSourceView: NSView, NSDraggingSource {
 		path.lineWidth = 1
 		path.stroke()
 
+		let paragraph = NSMutableParagraphStyle()
+		paragraph.lineBreakMode = .byTruncatingTail
+		let labelAttributes: [NSAttributedString.Key: Any] = [
+			.font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+			.foregroundColor: isDark
+				? NSColor.white.withAlphaComponent(0.92)
+				: NSColor.black.withAlphaComponent(0.78),
+			.paragraphStyle: paragraph,
+		]
 		let iconSize: CGFloat = 20
+		let iconLabelGap: CGFloat = 7
+		let horizontalPadding: CGFloat = 12
+		let maxLabelWidth = max(0, chipRect.width - horizontalPadding * 2 - iconSize - iconLabelGap)
+		let measuredLabelSize = (label as NSString).size(withAttributes: labelAttributes)
+		let labelWidth = min(ceil(measuredLabelSize.width), maxLabelWidth)
+		let labelHeight = ceil(measuredLabelSize.height)
+		let contentWidth = iconSize + iconLabelGap + labelWidth
+		let contentOriginX = chipRect.midX - contentWidth / 2
 		let iconRect = NSRect(
-			x: 8,
-			y: (rect.height - iconSize) / 2,
+			x: contentOriginX,
+			y: chipRect.midY - iconSize / 2,
 			width: iconSize,
 			height: iconSize
 		)
 		icon.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1)
 
-		let paragraph = NSMutableParagraphStyle()
-		paragraph.lineBreakMode = .byTruncatingTail
 		let labelRect = NSRect(
-			x: iconRect.maxX + 6,
-			y: (rect.height - 16) / 2,
-			width: max(0, rect.width - iconRect.maxX - 16),
-			height: 17
+			x: iconRect.maxX + iconLabelGap,
+			y: chipRect.midY - labelHeight / 2,
+			width: labelWidth,
+			height: labelHeight
 		)
 		(label as NSString).draw(
 			in: labelRect,
-			withAttributes: [
-				.font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-				.foregroundColor: isDark
-					? NSColor.white.withAlphaComponent(0.92)
-					: NSColor.black.withAlphaComponent(0.78),
-				.paragraphStyle: paragraph,
-			]
+			withAttributes: labelAttributes
 		)
 	}
 }

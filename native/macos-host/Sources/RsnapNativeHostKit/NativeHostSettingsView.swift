@@ -144,7 +144,7 @@ private struct SettingsRail: View {
 			HStack(spacing: 8) {
 				SettingsBrandIcon()
 				VStack(alignment: .leading, spacing: 2) {
-					Text("rsnap")
+					Text(NativeHostBrand.displayName)
 						.font(.system(size: 17, weight: .semibold, design: .rounded))
 					Text("Settings")
 						.font(.system(size: 10.5, weight: .medium))
@@ -1392,21 +1392,8 @@ private struct PermissionsSettingsPanel: View {
 				}
 			)
 
-			VStack(spacing: 6) {
-				VStack(spacing: 0) {
-					ForEach(Self.rows.prefix(2)) { row in
-						PermissionStatusTile(
-							row: row,
-							refreshID: refreshID,
-							openSettings: { kind in
-								NativePermissions.openSystemSettings(for: kind)
-								refreshID += 1
-							}
-						)
-					}
-				}
-
-				ForEach(Self.rows.dropFirst(2)) { row in
+			VStack(spacing: 0) {
+				ForEach(Self.rows) { row in
 					PermissionStatusTile(
 						row: row,
 						refreshID: refreshID,
@@ -1429,11 +1416,6 @@ private struct PermissionsSettingsPanel: View {
 	}
 
 	private static let rows: [PermissionSettingsRow] = [
-		PermissionSettingsRow(
-			kind: .screenRecording,
-			title: "Screen Recording",
-			symbolName: "rectangle.on.rectangle"
-		),
 		PermissionSettingsRow(
 			kind: .accessibility,
 			title: "Accessibility",
@@ -1499,9 +1481,13 @@ private struct PermissionGrantCard: View {
 			}
 
 			HStack(alignment: .center, spacing: 8) {
-				PermissionAppDragSource(bundleURL: bundleURL, icon: appIcon, label: "rsnap")
-					.frame(width: 108, height: 31)
-					.opacity(isGranted ? 0.76 : 1)
+				PermissionAppDragSource(
+					bundleURL: bundleURL,
+					icon: appIcon,
+					label: NativeHostBrand.appBundleName
+				)
+				.frame(width: 108, height: 31)
+				.opacity(isGranted ? 0.76 : 1)
 
 				Spacer(minLength: 6)
 
@@ -1544,7 +1530,7 @@ private struct PermissionGrantCard: View {
 		if isGranted {
 			return "The native capture host can see the screen."
 		}
-		return "Open System Settings, then drag rsnap into the Screen Recording app list."
+		return "Open System Settings, then drag Rsnap.app into the Screen Recording app list."
 	}
 
 	private var iconBackgroundColor: Color {
@@ -1724,7 +1710,7 @@ private struct OutputSettingsPanel: View {
 					subtitle: "Safe text."
 				) {
 					TextField(
-						"rsnap",
+						NativeHostBrand.defaultFilenamePrefix,
 						text: Binding(
 							get: { model.settings.outputFilenamePrefix },
 							set: { value in model.update { $0.outputFilenamePrefix = value } }

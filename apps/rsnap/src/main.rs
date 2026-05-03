@@ -1,4 +1,4 @@
-//! Desktop binary entrypoint for the `rsnap` application.
+//! Desktop binary entrypoint for the Rsnap application.
 
 #![allow(unused_crate_dependencies)]
 
@@ -16,7 +16,7 @@ fn main() -> Result<()> {
 		op = "rsnap.starting",
 		version = build_info.version,
 		git_commit = build_info.git_commit,
-		"Starting rsnap."
+		"Starting Rsnap."
 	);
 
 	rsnap::run()

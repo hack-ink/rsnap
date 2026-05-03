@@ -1,6 +1,6 @@
 [package]
 authors.workspace    = true
-description          = "Thin C ABI bridge for the rsnap native host reset"
+description          = "Thin C ABI bridge for the Rsnap native host reset"
 edition.workspace    = true
 homepage.workspace   = true
 license.workspace    = true
