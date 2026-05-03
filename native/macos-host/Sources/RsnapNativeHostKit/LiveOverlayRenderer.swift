@@ -1566,7 +1566,8 @@ final class LiveOverlayRenderer {
 			hudKeycapLayer.borderWidth = 1
 			applyText(
 				hudKeycapTextLayer, text: keycapText, font: keycapFont, color: palette.keycapText,
-				frame: keycapFrame, alignment: .center)
+				frame: centeredTextFrame(for: keycapText, font: keycapFont, in: keycapFrame),
+				alignment: .center)
 		} else {
 			hudKeycapLayer.isHidden = true
 			hudKeycapTextLayer.isHidden = true
@@ -1678,5 +1679,17 @@ final class LiveOverlayRenderer {
 		layer.alignmentMode = alignment
 		layer.frame = frame
 		layer.isWrapped = false
+	}
+
+	private func centeredTextFrame(for text: String, font: NSFont, in frame: CGRect) -> CGRect {
+		let textSize = text.size(using: font)
+		let width = ceil(textSize.width)
+		let height = ceil(textSize.height)
+		return CGRect(
+			x: frame.midX - width / 2,
+			y: frame.midY - height / 2,
+			width: width,
+			height: height
+		)
 	}
 }
