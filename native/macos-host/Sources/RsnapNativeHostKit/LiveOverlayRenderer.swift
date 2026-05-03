@@ -152,12 +152,15 @@ final class WindowSnapshotFeed {
 }
 
 final class ChromeSampleFeed: @unchecked Sendable {
-	typealias BackgroundSampler = @Sendable (CGPoint, LiveColorSampleSource) -> RGBSample?
 	typealias FrameRgbSampler = @Sendable (CGPoint) -> RGBSample?
+	typealias FramePatchSampler = @Sendable (CGPoint, Int) -> CGImage?
+	typealias BackgroundSampler =
+		@Sendable (CGPoint, LiveColorSampleSource, Int, Bool) -> LiveChromeSample?
 	typealias SampleUpdated = () -> Void
 
 	private let broker: LiveFrameStreamBroker
 	private let frameRgbSampler: FrameRgbSampler
+	private let framePatchSampler: FramePatchSampler
 	private let backgroundSampler: BackgroundSampler
 	private let sampleUpdated: SampleUpdated
 	private let queue = DispatchQueue(
@@ -203,11 +206,13 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	init(
 		broker: LiveFrameStreamBroker,
 		frameRgbSampler: @escaping FrameRgbSampler = { _ in nil },
+		framePatchSampler: @escaping FramePatchSampler = { _, _ in nil },
 		backgroundSampler: @escaping BackgroundSampler,
 		sampleUpdated: @escaping SampleUpdated = {}
 	) {
 		self.broker = broker
 		self.frameRgbSampler = frameRgbSampler
+		self.framePatchSampler = framePatchSampler
 		self.backgroundSampler = backgroundSampler
 		self.sampleUpdated = sampleUpdated
 	}
@@ -358,12 +363,19 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			stateLock.unlock()
 			return
 		}
-		let streamSample =
+		let frameRgbSample = frameRgbSampler(point)
+		let framePatchSample =
 			includeLoupePatch
+			? framePatchSampler(point, sidePixels)
+			: nil
+		let streamSample =
+			includeLoupePatch && framePatchSample == nil
 			? broker.sample(at: point, sidePixels: sidePixels)
 			: nil
-		let frameRgbSample = frameRgbSampler(point)
-		let streamRgbSample = streamSample?.rgbSample ?? broker.rgbSample(at: point)
+		let streamRgbSample =
+			frameRgbSample == nil
+			? (streamSample?.rgbSample ?? broker.rgbSample(at: point))
+			: nil
 		let rgbSample =
 			frameRgbSample
 			?? streamRgbSample
@@ -373,12 +385,15 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			enqueueBackgroundSampleIfNeeded(
 				point: point,
 				source: source,
+				sidePixels: sidePixels,
+				includeLoupePatch: includeLoupePatch,
 				streamRgbSample: streamRgbSample,
 				pointIdleDuration: pointIdleDuration
 			)
 		}
 		let patchSample =
-			streamSample
+			Self.sampleWithUpdatedPatch(rgbSample: nil, loupePatch: framePatchSample)
+			?? streamSample
 			?? Self.reusablePatchSample(
 				previousSample: previousSample,
 				previousPoint: previousPoint,
@@ -438,6 +453,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private func enqueueBackgroundSampleIfNeeded(
 		point: CGPoint,
 		source: LiveColorSampleSource,
+		sidePixels: Int,
+		includeLoupePatch: Bool,
 		streamRgbSample: RGBSample?,
 		pointIdleDuration: TimeInterval
 	) {
@@ -482,6 +499,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			self?.refreshBackgroundSample(
 				point: point,
 				source: source,
+				sidePixels: sidePixels,
+				includeLoupePatch: includeLoupePatch,
 				shouldProbeForCorrection: shouldProbe
 			)
 		}
@@ -490,25 +509,27 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private func refreshBackgroundSample(
 		point: CGPoint,
 		source: LiveColorSampleSource,
+		sidePixels: Int,
+		includeLoupePatch: Bool,
 		shouldProbeForCorrection: Bool
 	) {
 		let startedAt = ProcessInfo.processInfo.systemUptime
-		let rgbSample = backgroundSampler(point, source)
+		let sample = backgroundSampler(point, source, sidePixels, includeLoupePatch)
 		backgroundSampleDurationMetric.recordMillisecondsSince(startedAt)
 		let shouldNotify: Bool
 		stateLock.lock()
 		backgroundRefreshQueued = false
 		if let desiredPoint,
-			let rgbSample,
+			let sample,
 			desiredSource == source,
 			Self.pointsEquivalent(desiredPoint, point)
 		{
-			if shouldProbeForCorrection {
+			if shouldProbeForCorrection, let rgbSample = sample.rgbSample {
 				backgroundCorrectionMode = !Self.isLikelyOverlayWhite(rgbSample)
 			}
 			latestSample = LiveChromeSample(
-				rgbSample: rgbSample,
-				loupePatch: latestSample?.loupePatch
+				rgbSample: sample.rgbSample ?? latestSample?.rgbSample,
+				loupePatch: sample.loupePatch ?? latestSample?.loupePatch
 			)
 			latestSamplePoint = point
 			shouldNotify = Self.shouldNotifySampleUpdated(
@@ -539,12 +560,19 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		rgbSample: RGBSample?,
 		patchSample: LiveChromeSample?
 	) -> LiveChromeSample? {
-		guard rgbSample != nil || patchSample != nil else {
+		sampleWithUpdatedPatch(rgbSample: rgbSample, loupePatch: patchSample?.loupePatch)
+	}
+
+	private static func sampleWithUpdatedPatch(
+		rgbSample: RGBSample?,
+		loupePatch: CGImage?
+	) -> LiveChromeSample? {
+		guard rgbSample != nil || loupePatch != nil else {
 			return nil
 		}
 		return LiveChromeSample(
 			rgbSample: rgbSample,
-			loupePatch: patchSample?.loupePatch
+			loupePatch: loupePatch
 		)
 	}
 
