@@ -798,6 +798,9 @@ final class CaptureSessionController: NSObject {
 				liveFrameStream: liveFrameStream,
 				frameRgbSampler: { [frozenFrameAuthority] point in
 					frozenFrameAuthority.rgbSample(containing: point)
+				},
+				framePatchSampler: { [frozenFrameAuthority] point, sidePixels in
+					frozenFrameAuthority.loupePatch(containing: point, sidePixels: sidePixels)
 				}
 			)
 			self.overlayController = overlayController
@@ -2953,11 +2956,13 @@ final class CaptureOverlayController {
 	private var collapsedForFrozen = false
 	private let liveFrameStream: LiveFrameStreamBroker
 	private let frameRgbSampler: ChromeSampleFeed.FrameRgbSampler
+	private let framePatchSampler: ChromeSampleFeed.FramePatchSampler
 	private lazy var windowSnapshotFeed = WindowSnapshotFeed()
 	private lazy var chromeSampleFeed = ChromeSampleFeed(
 		broker: liveFrameStream,
 		frameRgbSampler: frameRgbSampler,
-		backgroundSampler: Self.rgbSampleAtDisplayPoint,
+		framePatchSampler: framePatchSampler,
+		backgroundSampler: Self.chromeSampleAtDisplayPoint,
 		sampleUpdated: { [weak self] in
 			DispatchQueue.main.async { [weak self] in
 				(self?.primaryWindow as? CaptureOverlayWindow)?.hostView
@@ -2970,11 +2975,13 @@ final class CaptureOverlayController {
 	init(
 		controller: CaptureSessionController,
 		liveFrameStream: LiveFrameStreamBroker,
-		frameRgbSampler: @escaping ChromeSampleFeed.FrameRgbSampler
+		frameRgbSampler: @escaping ChromeSampleFeed.FrameRgbSampler,
+		framePatchSampler: @escaping ChromeSampleFeed.FramePatchSampler
 	) {
 		self.controller = controller
 		self.liveFrameStream = liveFrameStream
 		self.frameRgbSampler = frameRgbSampler
+		self.framePatchSampler = framePatchSampler
 	}
 
 	var primaryWindow: NSWindow? {
@@ -3325,6 +3332,25 @@ final class CaptureOverlayController {
 		)
 	}
 
+	nonisolated private static func chromeSampleAtDisplayPoint(
+		_ point: CGPoint,
+		source: LiveColorSampleSource,
+		sidePixels: Int,
+		includeLoupePatch: Bool
+	) -> LiveChromeSample? {
+		let loupePatch =
+			includeLoupePatch
+			? loupePatchAtDisplayPoint(point, source: source, sidePixels: sidePixels)
+			: nil
+		let rgbSample =
+			loupePatch.flatMap(rgbSample(from:))
+			?? rgbSampleAtDisplayPoint(point, source: source)
+		guard rgbSample != nil || loupePatch != nil else {
+			return nil
+		}
+		return LiveChromeSample(rgbSample: rgbSample, loupePatch: loupePatch)
+	}
+
 	nonisolated private static func rgbSampleAtDisplayPoint(
 		_ point: CGPoint,
 		source: LiveColorSampleSource
@@ -3346,6 +3372,29 @@ final class CaptureOverlayController {
 			return sample
 		}
 		return nil
+	}
+
+	nonisolated private static func loupePatchAtDisplayPoint(
+		_ point: CGPoint,
+		source: LiveColorSampleSource,
+		sidePixels: Int
+	) -> CGImage? {
+		let scaleFactor = max(source.scaleFactor, 1)
+		let sidePixels = max(sidePixels, 1)
+		let sampleSide = max(CGFloat(sidePixels) / scaleFactor, 1 / scaleFactor)
+		let sampleRect = CGRect(
+			x: point.x - sampleSide / 2,
+			y: point.y - sampleSide / 2,
+			width: sampleSide,
+			height: sampleSide
+		).intersection(source.screenFrame)
+		guard !sampleRect.isNull, sampleRect.width > 0, sampleRect.height > 0 else {
+			return nil
+		}
+		guard let image = captureImageBelowOverlay(in: sampleRect, source: source) else {
+			return nil
+		}
+		return normalizedPatchImage(image, sidePixels: sidePixels)
 	}
 
 	nonisolated private static func captureImageBelowOverlay(
@@ -3394,6 +3443,44 @@ final class CaptureOverlayController {
 				g: bytes[centerOffset + 1],
 				b: bytes[centerOffset + 2]
 			)
+		}
+	}
+
+	nonisolated private static func normalizedPatchImage(
+		_ image: CGImage,
+		sidePixels: Int
+	) -> CGImage? {
+		let sidePixels = max(sidePixels, 1)
+		if image.width == sidePixels, image.height == sidePixels {
+			return image
+		}
+		let bytesPerPixel = 4
+		let bytesPerRow = sidePixels * bytesPerPixel
+		var pixels = [UInt8](repeating: 0, count: bytesPerRow * sidePixels)
+		let colorSpace = CGColorSpaceCreateDeviceRGB()
+		let bitmapInfo =
+			CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+		return pixels.withUnsafeMutableBytes { buffer -> CGImage? in
+			guard
+				let baseAddress = buffer.baseAddress,
+				let context = CGContext(
+					data: baseAddress,
+					width: sidePixels,
+					height: sidePixels,
+					bitsPerComponent: 8,
+					bytesPerRow: bytesPerRow,
+					space: colorSpace,
+					bitmapInfo: bitmapInfo
+				)
+			else {
+				return nil
+			}
+			context.interpolationQuality = .none
+			context.draw(
+				image,
+				in: CGRect(x: 0, y: 0, width: sidePixels, height: sidePixels)
+			)
+			return context.makeImage()
 		}
 	}
 
