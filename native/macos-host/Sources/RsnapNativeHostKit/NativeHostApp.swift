@@ -1388,7 +1388,12 @@ final class CaptureSessionController: NSObject {
 
 	func toggleLoupe() {
 		do {
+			let shouldPrimeLoupePatch = scene.mode == .live && !scene.loupeVisible
+			let loupePoint = scene.pointer ?? NSEvent.mouseLocation
 			try session?.send(event: .toggleLoupe)
+			if shouldPrimeLoupePatch {
+				primeLoupePatchForToggle(at: loupePoint)
+			}
 			try syncCore()
 		} catch {
 			NativeHostTelemetry.captureWarning(
@@ -1397,6 +1402,20 @@ final class CaptureSessionController: NSObject {
 				stage: "send_or_sync",
 				error: String(describing: error)
 			)
+		}
+	}
+
+	private func primeLoupePatchForToggle(at point: CGPoint) {
+		let sample = overlayController?.immediateLiveChromeSample(
+			point: point,
+			settings: currentSettings,
+			includeLoupePatch: true
+		)
+		if let rgbSample = sample?.rgbSample {
+			chromeState.rgbSample = rgbSample
+		}
+		if let loupePatch = sample?.loupePatch {
+			chromeState.loupePatch = loupePatch
 		}
 	}
 
@@ -2745,6 +2764,16 @@ final class CaptureOverlayController {
 			return LiveChromeSample(rgbSample: latestSample.rgbSample, loupePatch: nil)
 		}
 		return latestSample
+	}
+
+	fileprivate func immediateLiveChromeSample(
+		point: CGPoint,
+		settings: NativeHostSettings,
+		includeLoupePatch: Bool
+	) -> LiveChromeSample? {
+		let samplePixels = includeLoupePatch ? settings.loupeSampleSize.sidePixels : 1
+		return liveFrameStream.sample(at: point, sidePixels: samplePixels)
+			?? chromeSampleFeed.snapshot(for: point)
 	}
 
 	fileprivate func updateLiveChromeBackdrops(
@@ -5734,17 +5763,23 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentLiveChromeSample(at point: CGPoint?) -> LiveChromeSample? {
+		let wantsLoupePatch = scene.loupeVisible && !liveHoverChromeSuppressed
 		let sample = controller?.liveChromeSnapshot(
 			point: point,
 			settings: settings,
-			includeLoupePatch: scene.loupeVisible && !liveHoverChromeSuppressed
+			includeLoupePatch: wantsLoupePatch
 		)
 		if let sample {
-			seedLiveChromeSampleCache(sample, point: point)
-			if let rgbSample = sample.rgbSample {
+			let resolvedSample = sampleWithCachedLoupePatch(
+				sample,
+				point: point,
+				wantsLoupePatch: wantsLoupePatch
+			)
+			seedLiveChromeSampleCache(resolvedSample, point: point)
+			if let rgbSample = resolvedSample.rgbSample {
 				seedLiveRgbSampleCache(rgbSample, point: point)
 			}
-			return sample
+			return resolvedSample
 		}
 		if let cachedSample = cachedLiveChromeSample(matching: point) {
 			return cachedSample
@@ -5756,6 +5791,31 @@ final class CaptureHostView: NSView {
 			return cachedLiveChromeSample(matching: point)
 		}
 		return nil
+	}
+
+	private func sampleWithCachedLoupePatch(
+		_ sample: LiveChromeSample,
+		point: CGPoint?,
+		wantsLoupePatch: Bool
+	) -> LiveChromeSample {
+		guard wantsLoupePatch, sample.loupePatch == nil else {
+			return sample
+		}
+		if let cachedSample = cachedLiveChromeSample(matching: point),
+			let cachedPatch = cachedSample.loupePatch
+		{
+			return LiveChromeSample(
+				rgbSample: sample.rgbSample ?? cachedSample.rgbSample,
+				loupePatch: cachedPatch
+			)
+		}
+		if liveSamplePoint(scene.pointer, matches: point), let chromePatch = chrome.loupePatch {
+			return LiveChromeSample(
+				rgbSample: sample.rgbSample ?? chrome.rgbSample,
+				loupePatch: chromePatch
+			)
+		}
+		return sample
 	}
 
 	private func liveRgbSample(from sample: LiveChromeSample?, at point: CGPoint?) -> RGBSample? {
