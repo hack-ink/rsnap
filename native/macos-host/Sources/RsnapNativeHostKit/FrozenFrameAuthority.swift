@@ -38,6 +38,7 @@ struct FrozenFrameSnapshot: @unchecked Sendable {
 /// screenshots just because a pixel buffer happens to exist.
 final class FrozenFrameAuthority: @unchecked Sendable {
 	private static let maximumSnapshotAgeMilliseconds = 150.0
+	private static let maximumLiveRgbAgeMilliseconds = 100.0
 	private static let selfCaptureFilterRetryInterval: TimeInterval = 0.035
 	private static let selfCaptureFilterRetryWindow: TimeInterval = 2.5
 
@@ -638,7 +639,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		guard let record else {
 			return nil
 		}
-		guard record.ageMilliseconds() <= LiveRgbSample.maximumDisplayAge * 1_000 else {
+		guard record.ageMilliseconds() <= Self.maximumLiveRgbAgeMilliseconds else {
 			return nil
 		}
 		guard
