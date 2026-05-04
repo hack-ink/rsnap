@@ -9,7 +9,9 @@ import RsnapHostBridge
 import Vision
 
 struct LiveRgbSample: Sendable {
-	static let maximumDisplayAge: TimeInterval = 0.10
+	// SCStream may stop emitting while the captured display is static; FrozenFrameAuthority
+	// applies its own strict age budget for authoritative screenshot frames.
+	static let maximumDisplayAge: TimeInterval = 60.0
 	static let maximumReusableAge: TimeInterval = 0.04
 
 	let rgb: RGBSample
@@ -368,7 +370,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}
 
 	public func applicationWillTerminate(_ notification: Notification) {
-		sessionController.releaseScreenCaptureStreams()
+		sessionController.releaseScreenCaptureStreams(immediate: true)
 	}
 
 	private func showSelfCaptureRegistrationWindow() {
@@ -633,6 +635,7 @@ final class CaptureSessionController: NSObject {
 	private static let coldSelfCaptureRecoveryWait: TimeInterval = 3.5
 	private static let scrollCaptureForwardingPassthrough: TimeInterval = 0.055
 	private static let scrollCaptureSampleDelay: TimeInterval = 0.04
+	private static let liveFrameStreamReleaseGrace: TimeInterval = 0.75
 
 	private let settingsStore: NativeHostSettingsStore
 	private let liveFrameStream = LiveFrameStreamBroker()
@@ -653,6 +656,7 @@ final class CaptureSessionController: NSObject {
 	private var scrollCaptureGlobalMonitor: Any?
 	private var nextCaptureTelemetryID: UInt64 = 1
 	private var activeCaptureTelemetryID: UInt64?
+	private var pendingLiveFrameStreamRelease: DispatchWorkItem?
 	var captureStateDidChange: (() -> Void)?
 	private var scene = SceneSnapshot(
 		mode: .hidden,
@@ -819,7 +823,14 @@ final class CaptureSessionController: NSObject {
 			// The Rust live sampler treats these IDs as current-process windows to
 			// include through the app-level exclusion. Overlay windows must stay out
 			// of this list so color sampling sees the desktop under the capture UI.
+			pendingLiveFrameStreamRelease?.cancel()
+			pendingLiveFrameStreamRelease = nil
 			liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
+			liveFrameStream.start(
+				for: NSScreen.screens,
+				prewarmPoint: startPoint,
+				captureID: captureID
+			)
 			let windowSnapshotStartedAt = ProcessInfo.processInfo.systemUptime
 			let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
 			let windowSnapshotMilliseconds =
@@ -869,6 +880,11 @@ final class CaptureSessionController: NSObject {
 					}
 					let selfCaptureExceptionWindowIDs =
 						overlayController.selfCaptureExceptionWindowIDs
+					self.liveFrameStream.start(
+						for: NSScreen.screens,
+						prewarmPoint: startPoint,
+						captureID: captureID
+					)
 					_ = self.warmLiveSamplingIfPossible(
 						at: startPoint,
 						source: "capture_overlay_preflight",
@@ -2935,7 +2951,6 @@ final class CaptureSessionController: NSObject {
 	private func tearDownCapture() {
 		let captureID = currentCaptureTelemetryID
 		releaseScreenCaptureStreams()
-		liveFrameStream.updateSelfCaptureExceptionWindowIDs([])
 		pendingFrozenCommit = nil
 		frozenFrameLatchToken = nil
 		frozenSnapshotGeneration &+= 1
@@ -2970,9 +2985,28 @@ final class CaptureSessionController: NSObject {
 		activeCaptureTelemetryID = nil
 	}
 
-	fileprivate func releaseScreenCaptureStreams() {
-		liveFrameStream.stop()
+	fileprivate func releaseScreenCaptureStreams(immediate: Bool = false) {
+		pendingLiveFrameStreamRelease?.cancel()
+		pendingLiveFrameStreamRelease = nil
 		frozenFrameAuthority.stop()
+		let releaseLiveFrameStream = { [weak self] in
+			guard let self else {
+				return
+			}
+			self.liveFrameStream.stop()
+			self.liveFrameStream.updateSelfCaptureExceptionWindowIDs([])
+			self.pendingLiveFrameStreamRelease = nil
+		}
+		if immediate {
+			releaseLiveFrameStream()
+			return
+		}
+		let workItem = DispatchWorkItem(block: releaseLiveFrameStream)
+		pendingLiveFrameStreamRelease = workItem
+		DispatchQueue.main.asyncAfter(
+			deadline: .now() + Self.liveFrameStreamReleaseGrace,
+			execute: workItem
+		)
 	}
 
 	@objc
@@ -3329,34 +3363,30 @@ final class CaptureOverlayController {
 		collapsedForFrozen = false
 		if let prepareCaptureStreams {
 			pendingCaptureStreamPreparation = prepareCaptureStreams
-		} else {
-			liveFrameStream.start(for: NSScreen.screens, prewarmPoint: focusPoint)
 		}
+		liveFrameStream.start(
+			for: NSScreen.screens,
+			prewarmPoint: focusPoint,
+			captureID: controller?.activeTelemetryCaptureID ?? 0
+		)
 		for window in windows {
 			window.displayIfNeeded()
 		}
 		windowSnapshotFeed.start(
 			desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
 		let captureID = controller?.activeTelemetryCaptureID ?? 0
-		DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(12)) { [weak self] in
-			guard let self, !self.windows.isEmpty,
-				self.controller?.activeTelemetryCaptureID == captureID
-			else {
-				return
-			}
-			self.chromeSampleFeed.start(
-				targetFramesPerSecond: NativeHostDisplayRefresh.samplingFramesPerSecond(),
-				captureID: captureID)
-			self.chromeSampleFeed.updateDemand(
-				point: focusPoint,
-				sidePixels: 1,
-				includeLoupePatch: false,
-				source: self.liveColorSampleSource(near: focusPoint)
-			)
-			if let focusedWindow {
-				focusedWindow.hostView.refreshLivePresentationNow()
-				focusedWindow.displayIfNeeded()
-			}
+		chromeSampleFeed.start(
+			targetFramesPerSecond: NativeHostDisplayRefresh.samplingFramesPerSecond(),
+			captureID: captureID)
+		chromeSampleFeed.updateDemand(
+			point: focusPoint,
+			sidePixels: 1,
+			includeLoupePatch: false,
+			source: liveColorSampleSource(near: focusPoint)
+		)
+		if let focusedWindow {
+			focusedWindow.hostView.refreshLivePresentationNow()
+			focusedWindow.displayIfNeeded()
 		}
 	}
 
@@ -3673,6 +3703,12 @@ final class CaptureOverlayController {
 		sidePixels: Int,
 		includeLoupePatch: Bool
 	) -> LiveChromeSample? {
+		guard displayPointSampleGate.wait(timeout: .now()) == .success else {
+			return nil
+		}
+		defer {
+			displayPointSampleGate.signal()
+		}
 		let rgbSample = rgbSampleAtDisplayPoint(point, source: source)
 		let loupePatch =
 			includeLoupePatch
@@ -3705,11 +3741,7 @@ final class CaptureOverlayController {
 			return nil
 		}
 		guard
-			let image = captureImageBelowOverlay(
-				in: sampleRect,
-				source: source,
-				imageOption: [.boundsIgnoreFraming]
-			)
+			let image = captureImageOnDisplay(in: sampleRect, source: source)
 		else {
 			return nil
 		}
@@ -3757,6 +3789,18 @@ final class CaptureOverlayController {
 			windowID: source.referenceWindowID,
 			imageOption: imageOption
 		)
+	}
+
+	nonisolated private static func captureImageOnDisplay(
+		in rect: CGRect,
+		source: LiveColorSampleSource
+	) -> CGImage? {
+		let displayRect = appKitRectToQuartz(rect, desktopFrame: source.desktopFrame)
+		guard !displayRect.isNull, displayRect.width > 0, displayRect.height > 0 else {
+			return nil
+		}
+		return displayCreateImageForRect?(source.displayID, displayRect)?
+			.takeRetainedValue()
 	}
 
 	nonisolated private static func rgbSample(from image: CGImage) -> RGBSample? {
@@ -3840,6 +3884,30 @@ final class CaptureOverlayController {
 			CGWindowID,
 			UInt32
 		) -> Unmanaged<CGImage>?
+
+	private typealias DisplayCreateImageForRect =
+		@convention(c) (
+			CGDirectDisplayID,
+			CGRect
+		) -> Unmanaged<CGImage>?
+
+	nonisolated private static let displayPointSampleGate = DispatchSemaphore(value: 1)
+
+	nonisolated private static let displayCreateImageForRect: DisplayCreateImageForRect? = {
+		guard
+			let coreGraphics = dlopen(
+				"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+				RTLD_LAZY
+			)
+		else {
+			return nil
+		}
+		guard let symbol = dlsym(coreGraphics, "CGDisplayCreateImageForRect") else {
+			dlclose(coreGraphics)
+			return nil
+		}
+		return unsafeBitCast(symbol, to: DisplayCreateImageForRect.self)
+	}()
 
 	nonisolated private static let legacyWindowListCreateImage: LegacyWindowListCreateImage? = {
 		guard
@@ -3986,7 +4054,7 @@ final class CaptureOverlayWindow: NSPanel {
 		isMovable = false
 		isOpaque = false
 		level = .screenSaver
-		sharingType = .readOnly
+		sharingType = .none
 		titleVisibility = .hidden
 		titlebarAppearsTransparent = true
 	}
