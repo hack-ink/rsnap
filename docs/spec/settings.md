@@ -79,14 +79,27 @@ Defines:
 
 - Settings must include a Permissions section.
 - Screen Recording permission is required for the current native macOS capture host.
+- Settings must present Screen Recording as the only permission needed by the current native macOS
+  capture host.
 - When Screen Recording is missing at launch or at capture start, Rsnap must open the macOS Screen
   Recording privacy page and present a small Rsnap-owned floating drag guide near System Settings.
-- Accessibility and Input Monitoring may be displayed as diagnostic permissions, but they must not
-  be presented as required when the current native host does not need them.
+- Accessibility and Input Monitoring must not be displayed in Settings while the current native host
+  does not need them.
 - Permission recovery should provide a visible drag-the-app affordance for adding Rsnap to System
   Settings where macOS allows that workflow, including a directional guide from the floating window
   toward System Settings and an Open System Settings fallback.
 - Permission status refresh must be available without restarting Rsnap.
+
+## About Settings
+
+- Settings must include an About section.
+- The About section must identify Yvette Cipher as the creator and describe Rsnap as an
+  open-source macOS capture tool.
+- The About section must include external links to `https://github.com/hack-ink/rsnap` and
+  `https://x.com/YvetteCipher`.
+- The creator link may encourage following for ongoing Rsnap updates and may state that follows
+  help support future work through X creator rewards.
+- The About section must not expose capture defaults or a Restore Defaults action.
 
 ## Default-Size Usability
 
