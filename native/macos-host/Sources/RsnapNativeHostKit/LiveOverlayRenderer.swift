@@ -152,7 +152,16 @@ final class WindowSnapshotFeed {
 }
 
 final class ChromeSampleFeed: @unchecked Sendable {
-	typealias FrameRgbSampler = @Sendable (CGPoint) -> RGBSample?
+	private struct FirstRgbTelemetry {
+		let captureID: UInt64
+		let totalMilliseconds: Double
+		let refreshCount: UInt64
+		let source: String
+		let hasPatch: Bool
+		let includeLoupePatch: Bool
+	}
+
+	typealias FrameRgbSampler = @Sendable (CGPoint) -> LiveRgbSample?
 	typealias FramePatchSampler = @Sendable (CGPoint, Int) -> CGImage?
 	typealias BackgroundSampler =
 		@Sendable (CGPoint, LiveColorSampleSource, Int, Bool) -> LiveChromeSample?
@@ -202,6 +211,10 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private var latestSamplePoint: CGPoint?
 	private var lastRefreshUptime: TimeInterval?
 	private var lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
+	private var activeCaptureID: UInt64 = 0
+	private var activationStartedAtUptime: TimeInterval?
+	private var refreshCount: UInt64 = 0
+	private var didEmitFirstRgbSample = false
 
 	init(
 		broker: LiveFrameStreamBroker,
@@ -217,8 +230,18 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		self.sampleUpdated = sampleUpdated
 	}
 
-	func start(targetFramesPerSecond: Int = NativeHostDisplayRefresh.targetFramesPerSecond) {
+	func start(
+		targetFramesPerSecond: Int = NativeHostDisplayRefresh.targetFramesPerSecond,
+		captureID: UInt64 = 0
+	) {
 		stop()
+		let startedAt = ProcessInfo.processInfo.systemUptime
+		stateLock.lock()
+		activeCaptureID = captureID
+		activationStartedAtUptime = startedAt
+		refreshCount = 0
+		didEmitFirstRgbSample = false
+		stateLock.unlock()
 		let timer = DispatchSource.makeTimerSource(queue: queue)
 		let intervalNanoseconds = max(
 			1,
@@ -238,6 +261,10 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		}
 		self.timer = timer
 		timer.resume()
+		NativeHostTelemetry.liveChromeSampleFeedStarted(
+			captureID: captureID,
+			targetHz: targetFramesPerSecond
+		)
 	}
 
 	func stop() {
@@ -256,6 +283,10 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		lastBackgroundProbeUptime = 0
 		lastRefreshUptime = nil
 		lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
+		activeCaptureID = 0
+		activationStartedAtUptime = nil
+		refreshCount = 0
+		didEmitFirstRgbSample = false
 		stateLock.unlock()
 	}
 
@@ -280,7 +311,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			} ?? (point != nil)
 		if sidePixelsChanged || patchDemandChanged {
 			latestSample = latestSample.map {
-				LiveChromeSample(rgbSample: $0.rgbSample, loupePatch: nil)
+				LiveChromeSample(rgb: $0.rgb, loupePatch: nil)
 			}
 		}
 		if pointChanged || sourceChanged {
@@ -314,7 +345,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		guard let rgbSample = frameRgbSampler(point) else {
 			return nil
 		}
-		let sample = LiveChromeSample(rgbSample: rgbSample, loupePatch: nil)
+		let sample = LiveChromeSample(rgb: rgbSample, loupePatch: nil)
 		stateLock.lock()
 		self.latestSample = sample
 		self.latestSamplePoint = point
@@ -348,6 +379,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		let previousPoint = latestSamplePoint
 		let lastRefreshUptime = self.lastRefreshUptime
 		let pointIdleDuration = now - lastPointChangeUptime
+		refreshCount &+= 1
+		let currentRefreshCount = refreshCount
 		self.lastRefreshUptime = now
 		stateLock.unlock()
 		if let lastRefreshUptime {
@@ -374,25 +407,32 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			: nil
 		let streamRgbSample =
 			frameRgbSample == nil
-			? (streamSample?.rgbSample ?? broker.rgbSample(at: point))
+			? (streamSample?.rgb ?? broker.rgbSample(at: point))
 			: nil
+		let reusableRgbSample = Self.reusableRgbSample(
+			previousSample: previousSample, previousPoint: previousPoint, point: point, now: now)
 		let rgbSample =
 			frameRgbSample
 			?? streamRgbSample
-			?? Self.reusableRgbSample(
-				previousSample: previousSample, previousPoint: previousPoint, point: point)
+			?? reusableRgbSample
+		let rgbSource =
+			Self.rgbSampleSource(
+				frameRgbSample: frameRgbSample,
+				streamRgbSample: streamRgbSample,
+				reusableRgbSample: reusableRgbSample
+			)
 		if frameRgbSample == nil, let source {
 			enqueueBackgroundSampleIfNeeded(
 				point: point,
 				source: source,
 				sidePixels: sidePixels,
 				includeLoupePatch: includeLoupePatch,
-				streamRgbSample: streamRgbSample,
+				streamRgbSample: streamRgbSample?.rgb,
 				pointIdleDuration: pointIdleDuration
 			)
 		}
 		let patchSample =
-			Self.sampleWithUpdatedPatch(rgbSample: nil, loupePatch: framePatchSample)
+			Self.sampleWithUpdatedPatch(rgb: nil, loupePatch: framePatchSample)
 			?? streamSample
 			?? Self.reusablePatchSample(
 				previousSample: previousSample,
@@ -401,34 +441,103 @@ final class ChromeSampleFeed: @unchecked Sendable {
 				includeLoupePatch: includeLoupePatch
 			)
 		let sample = Self.sampleWithUpdatedPatch(
-			rgbSample: rgbSample,
+			rgb: rgbSample,
 			patchSample: patchSample
 		)
 		stateLock.lock()
 		latestSample = sample
 		latestSamplePoint = sample == nil ? nil : point
+		let firstRgbTelemetry = makeFirstRgbTelemetryLocked(
+			rgbSample: rgbSample?.rgb,
+			source: rgbSource,
+			refreshCount: currentRefreshCount,
+			hasPatch: sample?.loupePatch != nil,
+			includeLoupePatch: includeLoupePatch
+		)
 		stateLock.unlock()
+		emit(firstRgbTelemetry)
 		sampleRefreshDurationMetric.recordMillisecondsSince(refreshStartedAt)
+	}
+
+	private static func rgbSampleSource(
+		frameRgbSample: LiveRgbSample?,
+		streamRgbSample: LiveRgbSample?,
+		reusableRgbSample: LiveRgbSample?
+	) -> String {
+		if frameRgbSample != nil {
+			return "frame_authority"
+		}
+		if streamRgbSample != nil {
+			return "live_stream"
+		}
+		if reusableRgbSample != nil {
+			return "reusable_cache"
+		}
+		return "none"
+	}
+
+	private func makeFirstRgbTelemetryLocked(
+		rgbSample: RGBSample?,
+		source: String,
+		refreshCount: UInt64,
+		hasPatch: Bool,
+		includeLoupePatch: Bool
+	) -> FirstRgbTelemetry? {
+		guard rgbSample != nil, !didEmitFirstRgbSample else {
+			return nil
+		}
+		didEmitFirstRgbSample = true
+		return FirstRgbTelemetry(
+			captureID: activeCaptureID,
+			totalMilliseconds: activationStartedAtUptime.map {
+				NativeHostTelemetry.milliseconds(since: $0)
+			} ?? 0,
+			refreshCount: refreshCount,
+			source: source,
+			hasPatch: hasPatch,
+			includeLoupePatch: includeLoupePatch
+		)
+	}
+
+	private func emit(_ telemetry: FirstRgbTelemetry?) {
+		guard let telemetry else {
+			return
+		}
+		NativeHostTelemetry.liveChromeFirstRgbSample(
+			captureID: telemetry.captureID,
+			totalMilliseconds: telemetry.totalMilliseconds,
+			refreshCount: telemetry.refreshCount,
+			source: telemetry.source,
+			hasPatch: telemetry.hasPatch,
+			includeLoupePatch: telemetry.includeLoupePatch
+		)
 	}
 
 	private static func reusableRgbSample(
 		previousSample: LiveChromeSample?,
 		previousPoint: CGPoint?,
-		point: CGPoint
-	) -> RGBSample? {
+		point: CGPoint,
+		now: TimeInterval
+	) -> LiveRgbSample? {
 		reusableRgbSample(
-			rgbSample: previousSample?.rgbSample,
+			rgbSample: previousSample?.rgb,
 			previousPoint: previousPoint,
-			point: point
+			point: point,
+			now: now
 		)
 	}
 
 	private static func reusableRgbSample(
-		rgbSample: RGBSample?,
+		rgbSample: LiveRgbSample?,
 		previousPoint: CGPoint?,
-		point: CGPoint
-	) -> RGBSample? {
+		point: CGPoint,
+		now: TimeInterval
+	) -> LiveRgbSample? {
 		guard let previousPoint, pointsEquivalent(previousPoint, point) else {
+			return nil
+		}
+		guard rgbSample?.isFresh(maximumAge: LiveRgbSample.maximumReusableAge, now: now) == true
+		else {
 			return nil
 		}
 		return rgbSample
@@ -515,34 +624,48 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	) {
 		let startedAt = ProcessInfo.processInfo.systemUptime
 		let sample = backgroundSampler(point, source, sidePixels, includeLoupePatch)
+		let sampleRgb = sample?.rgb
+		let sampleRgbValue = sampleRgb?.rgb
+		let sampleLoupePatch = sample?.loupePatch
 		backgroundSampleDurationMetric.recordMillisecondsSince(startedAt)
-		let shouldNotify: Bool
 		stateLock.lock()
 		backgroundRefreshQueued = false
-		if let desiredPoint,
-			let sample,
+		let currentRefreshCount = refreshCount
+		guard let desiredPoint,
+			sample != nil,
 			desiredSource == source,
 			Self.pointsEquivalent(desiredPoint, point)
-		{
-			if shouldProbeForCorrection, let rgbSample = sample.rgbSample {
-				backgroundCorrectionMode = !Self.isLikelyOverlayWhite(rgbSample)
-			}
-			latestSample = LiveChromeSample(
-				rgbSample: sample.rgbSample ?? latestSample?.rgbSample,
-				loupePatch: sample.loupePatch ?? latestSample?.loupePatch
-			)
-			latestSamplePoint = point
-			shouldNotify = Self.shouldNotifySampleUpdated(
-				now: ProcessInfo.processInfo.systemUptime,
-				lastPointChangeUptime: lastPointChangeUptime
-			)
-		} else {
-			shouldNotify = false
+		else {
+			stateLock.unlock()
+			return
 		}
+		if shouldProbeForCorrection, let rgbSample = sampleRgbValue {
+			backgroundCorrectionMode = !Self.isLikelyOverlayWhite(rgbSample)
+		}
+		let previousRgb = latestSample?.rgb
+		let previousLoupePatch = latestSample?.loupePatch
+		latestSample = LiveChromeSample(
+			rgb: sampleRgb ?? previousRgb,
+			loupePatch: sampleLoupePatch ?? previousLoupePatch
+		)
+		latestSamplePoint = point
+		let firstRgbTelemetry = makeFirstRgbTelemetryLocked(
+			rgbSample: sampleRgbValue,
+			source: "background_fallback",
+			refreshCount: currentRefreshCount,
+			hasPatch: sampleLoupePatch != nil,
+			includeLoupePatch: includeLoupePatch
+		)
+		let shouldNotify = Self.shouldNotifySampleUpdated(
+			now: ProcessInfo.processInfo.systemUptime,
+			lastPointChangeUptime: lastPointChangeUptime
+		)
 		stateLock.unlock()
+		emit(firstRgbTelemetry)
 		if shouldNotify {
 			sampleUpdated()
 		}
+		return
 	}
 
 	private static func shouldNotifySampleUpdated(
@@ -557,21 +680,21 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	}
 
 	private static func sampleWithUpdatedPatch(
-		rgbSample: RGBSample?,
+		rgb: LiveRgbSample?,
 		patchSample: LiveChromeSample?
 	) -> LiveChromeSample? {
-		sampleWithUpdatedPatch(rgbSample: rgbSample, loupePatch: patchSample?.loupePatch)
+		sampleWithUpdatedPatch(rgb: rgb, loupePatch: patchSample?.loupePatch)
 	}
 
 	private static func sampleWithUpdatedPatch(
-		rgbSample: RGBSample?,
+		rgb: LiveRgbSample?,
 		loupePatch: CGImage?
 	) -> LiveChromeSample? {
-		guard rgbSample != nil || loupePatch != nil else {
+		guard rgb != nil || loupePatch != nil else {
 			return nil
 		}
 		return LiveChromeSample(
-			rgbSample: rgbSample,
+			rgb: rgb,
 			loupePatch: loupePatch
 		)
 	}
