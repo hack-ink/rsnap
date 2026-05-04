@@ -208,9 +208,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	)
 	private static let backgroundProbeMinimumInterval: TimeInterval = 0.25
 	private static let backgroundProbeIdleDelay: TimeInterval = 0.08
-	private static let missingRgbProbeMinimumInterval: TimeInterval = 1.0 / 120.0
-	private static let maximumInitialBackgroundSamplesInFlight = 2
-	private static let maximumSteadyBackgroundSamplesInFlight = 2
+	private static let maximumBackgroundSamplesInFlight = 1
 	private static let sampleUpdatedNotificationIdleDelay =
 		NativeHostDisplayRefresh.frameInterval(
 			forTargetFramesPerSecond: NativeHostDisplayRefresh.fallbackFramesPerSecond)
@@ -632,15 +630,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			return
 		}
 		if streamRgbSample == nil {
-			guard now - lastBackgroundProbeUptime >= Self.missingRgbProbeMinimumInterval else {
-				stateLock.unlock()
-				return
-			}
-			lastBackgroundProbeUptime = now
-			shouldProbe = false
-			shouldNotifyImmediately = true
-			sampleSidePixels = 1
-			sampleIncludesLoupePatch = false
+			stateLock.unlock()
+			return
 		} else if backgroundCorrectionMode {
 			guard pointIdleDuration >= Self.backgroundProbeIdleDelay else {
 				stateLock.unlock()
@@ -667,7 +658,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			stateLock.unlock()
 			return
 		}
-		guard backgroundSamplesInFlight < maximumBackgroundSamplesInFlightLocked() else {
+		guard backgroundSamplesInFlight < Self.maximumBackgroundSamplesInFlight else {
 			backgroundRefreshPending = true
 			stateLock.unlock()
 			return
@@ -711,6 +702,13 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		}
 		let shouldRefreshPending = finishBackgroundSampleLocked()
 		let currentRefreshCount = refreshCount
+		if liveStreamRgbReady, sampleLoupePatch == nil {
+			stateLock.unlock()
+			if shouldRefreshPending {
+				enqueueRefresh()
+			}
+			return
+		}
 		guard let desiredPoint,
 			sample != nil,
 			desiredSource == source,
@@ -790,19 +788,13 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private func finishBackgroundSampleLocked() -> Bool {
 		backgroundSamplesInFlight = max(0, backgroundSamplesInFlight - 1)
 		guard backgroundRefreshPending,
-			backgroundSamplesInFlight < maximumBackgroundSamplesInFlightLocked(),
+			backgroundSamplesInFlight < Self.maximumBackgroundSamplesInFlight,
 			desiredPoint != nil
 		else {
 			return false
 		}
 		backgroundRefreshPending = false
 		return true
-	}
-
-	private func maximumBackgroundSamplesInFlightLocked() -> Int {
-		didEmitFirstRgbSample
-			? Self.maximumSteadyBackgroundSamplesInFlight
-			: Self.maximumInitialBackgroundSamplesInFlight
 	}
 
 	private static func backgroundSampleOutcome(hasRgb: Bool, hasPatch: Bool) -> String {
