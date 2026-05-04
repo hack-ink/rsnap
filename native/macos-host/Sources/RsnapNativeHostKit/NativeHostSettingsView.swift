@@ -4,8 +4,9 @@ import SwiftUI
 
 enum NativeHostSettingsWindowMetrics {
 	static let width: CGFloat = 620
-	static let minHeight: CGFloat = 320
-	static let idealHeight: CGFloat = 336
+	static let minHeight: CGFloat = 304
+	static let idealHeight: CGFloat = 304
+	static let cornerRadius: CGFloat = 18
 }
 
 @MainActor
@@ -85,6 +86,7 @@ private enum NativeHostSettingsSection: String, CaseIterable, Identifiable {
 	case capture
 	case output
 	case permissions
+	case about
 
 	var id: Self { self }
 
@@ -98,6 +100,8 @@ private enum NativeHostSettingsSection: String, CaseIterable, Identifiable {
 			return "Output"
 		case .permissions:
 			return "Permissions"
+		case .about:
+			return "About"
 		}
 	}
 
@@ -111,6 +115,8 @@ private enum NativeHostSettingsSection: String, CaseIterable, Identifiable {
 			return "Files"
 		case .permissions:
 			return "Access"
+		case .about:
+			return "Project"
 		}
 	}
 
@@ -124,8 +130,24 @@ private enum NativeHostSettingsSection: String, CaseIterable, Identifiable {
 			return "folder"
 		case .permissions:
 			return "lock.shield"
+		case .about:
+			return "info.circle"
 		}
 	}
+
+	var allowsRestoreDefaults: Bool {
+		switch self {
+		case .appearance, .capture, .output:
+			return true
+		case .permissions, .about:
+			return false
+		}
+	}
+}
+
+private enum NativeHostAboutLinks {
+	static let source = "https://github.com/hack-ink/rsnap"
+	static let creator = "https://x.com/YvetteCipher"
 }
 
 private enum SettingsControlLayout {
@@ -143,13 +165,9 @@ private struct SettingsRail: View {
 		VStack(alignment: .leading, spacing: 14) {
 			HStack(spacing: 8) {
 				SettingsBrandIcon()
-				VStack(alignment: .leading, spacing: 2) {
-					Text(NativeHostBrand.displayName)
-						.font(.system(size: 17, weight: .semibold, design: .rounded))
-					Text("Settings")
-						.font(.system(size: 10.5, weight: .medium))
-						.foregroundStyle(.secondary)
-				}
+				Text(NativeHostBrand.displayName)
+					.font(.system(size: 17, weight: .semibold, design: .rounded))
+					.lineLimit(1)
 			}
 			.padding(.horizontal, 2)
 
@@ -303,6 +321,8 @@ private struct SettingsDashboard: View {
 			OutputSettingsPanel(model: model)
 		case .permissions:
 			PermissionsSettingsPanel()
+		case .about:
+			AboutSettingsPanel()
 		}
 	}
 }
@@ -322,7 +342,7 @@ private struct SettingsContentHeader: View {
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 
-			if section != .permissions {
+			if section.allowsRestoreDefaults {
 				Button(action: restoreDefaults) {
 					Label("Restore Defaults", systemImage: "arrow.counterclockwise")
 						.labelStyle(.titleAndIcon)
@@ -350,6 +370,8 @@ private struct SettingsSectionInspector: View {
 				OutputInspector(settings: model.settings)
 			case .permissions:
 				PermissionsInspector()
+			case .about:
+				AboutInspector()
 			}
 		}
 		.padding(14)
@@ -400,8 +422,8 @@ private struct AppearanceInspector: View {
 	private var tintHex: String {
 		let color = NSColor(
 			hue: CGFloat(settings.hudTintHue),
-			saturation: 0.72,
-			brightness: 0.95,
+			saturation: CGFloat(settings.hudTintSaturation),
+			brightness: CGFloat(settings.hudTintBrightness),
 			alpha: 1
 		)
 		let converted = color.usingColorSpace(.deviceRGB) ?? color
@@ -463,27 +485,34 @@ private struct OutputInspector: View {
 }
 
 private struct PermissionsInspector: View {
-	private let requiredKinds = [
-		PermissionKind.screenRecording,
-		.accessibility,
-		.inputMonitoring,
-	]
-
 	var body: some View {
-		let required = requiredKinds.filter { NativePermissions.requiredForCurrentNativeHost($0) }
-		let granted = required.filter { NativePermissions.status(for: $0) }.count
+		let granted = NativePermissions.status(for: .screenRecording) ? 1 : 0
 
 		VStack(alignment: .leading, spacing: 12) {
-			PermissionProgressBadge(granted: granted, total: required.count)
+			PermissionProgressBadge(granted: granted, total: 1)
 			InspectorMetric(
 				title: "Required",
-				value: "\(required.count)",
+				value: "1",
 				symbolName: "lock.shield"
 			)
 			InspectorMetric(
 				title: "Granted",
 				value: "\(granted)",
 				symbolName: "checkmark.seal"
+			)
+		}
+	}
+}
+
+private struct AboutInspector: View {
+	var body: some View {
+		VStack(alignment: .leading, spacing: 12) {
+			SettingsBrandIcon()
+				.frame(width: 42, height: 42)
+			InspectorMetric(
+				title: "Source",
+				value: "Open",
+				symbolName: "curlybraces.square"
 			)
 		}
 	}
@@ -532,7 +561,11 @@ private struct MiniHudPreview: View {
 	}
 
 	private var tintColor: Color {
-		Color(hue: settings.hudTintHue, saturation: 0.72, brightness: 0.95)
+		Color(
+			hue: settings.hudTintHue,
+			saturation: settings.hudTintSaturation,
+			brightness: settings.hudTintBrightness
+		)
 	}
 
 	private var previewFill: Color {
@@ -919,6 +952,7 @@ private struct AppearanceSettingsPanel: View {
 						}
 						.disabled(!model.settings.hudGlassEnabled)
 					}
+					.transition(.opacity)
 				}
 			}
 
@@ -942,7 +976,7 @@ private struct AppearanceSettingsPanel: View {
 						isEnabled: model.settings.hudGlassEnabled
 					)
 				}
-				.transition(.opacity.combined(with: .move(edge: .top)))
+				.transition(.opacity)
 			}
 
 			VStack(spacing: 0) {
@@ -989,14 +1023,22 @@ private struct AppearanceSettingsPanel: View {
 			get: {
 				Color(
 					hue: model.settings.hudTintHue,
-					saturation: 0.72,
-					brightness: 0.95
+					saturation: model.settings.hudTintSaturation,
+					brightness: model.settings.hudTintBrightness
 				)
 			},
 			set: { color in
 				let nsColor = NSColor(color)
 				let converted = nsColor.usingColorSpace(.deviceRGB) ?? nsColor
-				model.update { $0.hudTintHue = Double(converted.hueComponent) }
+				var hue: CGFloat = 0
+				var saturation: CGFloat = 0
+				var brightness: CGFloat = 0
+				converted.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: nil)
+				model.update {
+					$0.hudTintHue = Double(hue)
+					$0.hudTintSaturation = Double(saturation)
+					$0.hudTintBrightness = Double(brightness)
+				}
 			}
 		)
 	}
@@ -1178,21 +1220,24 @@ private struct FlatColorSwatch: View {
 	@State private var isHovered = false
 
 	var body: some View {
-		SettingsColorWell(selection: $selection, isEnabled: isEnabled)
-			.clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-			.overlay {
-				RoundedRectangle(cornerRadius: 6, style: .continuous)
-					.stroke(borderColor, lineWidth: 1)
-					.allowsHitTesting(false)
-			}
-			.frame(width: 30, height: 18)
-			.opacity(isEnabled ? 1 : 0.45)
-			.scaleEffect(isHovered && isEnabled ? 1.04 : 1)
-			.animation(.easeOut(duration: 0.12), value: isHovered)
-			.onHover { hovering in
-				isHovered = hovering
-			}
-			.disabled(!isEnabled)
+		ZStack {
+			RoundedRectangle(cornerRadius: 6, style: .continuous)
+				.fill(selection)
+			SettingsColorWell(selection: $selection, isEnabled: isEnabled)
+		}
+		.overlay {
+			RoundedRectangle(cornerRadius: 6, style: .continuous)
+				.stroke(borderColor, lineWidth: 1)
+				.allowsHitTesting(false)
+		}
+		.frame(width: 30, height: 18)
+		.opacity(isEnabled ? 1 : 0.45)
+		.scaleEffect(isHovered && isEnabled ? 1.04 : 1)
+		.animation(.easeOut(duration: 0.12), value: isHovered)
+		.onHover { hovering in
+			isHovered = hovering
+		}
+		.allowsHitTesting(isEnabled)
 	}
 
 	private var borderColor: Color {
@@ -1204,21 +1249,19 @@ private struct SettingsColorWell: NSViewRepresentable {
 	@Binding var selection: Color
 	let isEnabled: Bool
 
-	func makeNSView(context: Context) -> NSColorWell {
-		let colorWell = NSColorWell(frame: .zero)
-		colorWell.isBordered = false
-		colorWell.supportsAlpha = false
-		colorWell.target = context.coordinator
-		colorWell.action = #selector(Coordinator.colorChanged(_:))
-		return colorWell
+	func makeNSView(context: Context) -> ColorPanelTriggerView {
+		let view = ColorPanelTriggerView()
+		view.coordinator = context.coordinator
+		return view
 	}
 
-	func updateNSView(_ colorWell: NSColorWell, context: Context) {
+	func updateNSView(_ view: ColorPanelTriggerView, context: Context) {
 		context.coordinator.selection = $selection
-		colorWell.isEnabled = isEnabled
-		let nextColor = NSColor(selection).usingColorSpace(.deviceRGB) ?? NSColor(selection)
-		if !Self.matches(colorWell.color, nextColor) {
-			colorWell.color = nextColor
+		view.allowsColorPanel = isEnabled
+		view.color = NSColor(selection).usingColorSpace(.deviceRGB) ?? NSColor(selection)
+		view.coordinator = context.coordinator
+		if NSColorPanel.sharedColorPanelExists, NSColorPanel.shared.isVisible {
+			NSColorPanel.shared.color = view.color
 		}
 	}
 
@@ -1226,13 +1269,28 @@ private struct SettingsColorWell: NSViewRepresentable {
 		Coordinator(selection: $selection)
 	}
 
-	private static func matches(_ lhs: NSColor, _ rhs: NSColor) -> Bool {
-		let left = lhs.usingColorSpace(.deviceRGB) ?? lhs
-		let right = rhs.usingColorSpace(.deviceRGB) ?? rhs
-		return abs(left.redComponent - right.redComponent) < 0.001
-			&& abs(left.greenComponent - right.greenComponent) < 0.001
-			&& abs(left.blueComponent - right.blueComponent) < 0.001
-			&& abs(left.alphaComponent - right.alphaComponent) < 0.001
+	final class ColorPanelTriggerView: NSView {
+		var allowsColorPanel = true
+		var color = NSColor.systemBlue
+		weak var coordinator: Coordinator?
+
+		override var acceptsFirstResponder: Bool {
+			false
+		}
+
+		override func mouseDown(with event: NSEvent) {
+			guard allowsColorPanel else {
+				return
+			}
+			NSApp.activate(ignoringOtherApps: true)
+			let panel = NSColorPanel.shared
+			panel.showsAlpha = false
+			panel.isContinuous = true
+			panel.color = color
+			panel.setTarget(coordinator)
+			panel.setAction(#selector(Coordinator.colorChanged(_:)))
+			panel.orderFront(self)
+		}
 	}
 
 	final class Coordinator: NSObject {
@@ -1244,7 +1302,7 @@ private struct SettingsColorWell: NSViewRepresentable {
 
 		@MainActor
 		@objc
-		func colorChanged(_ sender: NSColorWell) {
+		func colorChanged(_ sender: NSColorPanel) {
 			NSColorPanel.shared.showsAlpha = false
 			selection.wrappedValue = Color(nsColor: sender.color)
 		}
@@ -1378,7 +1436,7 @@ private struct PermissionsSettingsPanel: View {
 	private let primaryKind = PermissionKind.screenRecording
 
 	var body: some View {
-		VStack(spacing: 6) {
+		VStack(spacing: 0) {
 			PermissionGrantCard(
 				kind: primaryKind,
 				refreshID: refreshID,
@@ -1391,19 +1449,6 @@ private struct PermissionsSettingsPanel: View {
 					refreshID += 1
 				}
 			)
-
-			VStack(spacing: 0) {
-				ForEach(Self.rows) { row in
-					PermissionStatusTile(
-						row: row,
-						refreshID: refreshID,
-						openSettings: { kind in
-							NativePermissions.openSystemSettings(for: kind)
-							refreshID += 1
-						}
-					)
-				}
-			}
 		}
 	}
 
@@ -1414,27 +1459,6 @@ private struct PermissionsSettingsPanel: View {
 	private static var appIcon: NSImage {
 		NSWorkspace.shared.icon(forFile: appBundleURL.path)
 	}
-
-	private static let rows: [PermissionSettingsRow] = [
-		PermissionSettingsRow(
-			kind: .accessibility,
-			title: "Accessibility",
-			symbolName: "accessibility"
-		),
-		PermissionSettingsRow(
-			kind: .inputMonitoring,
-			title: "Input Monitoring",
-			symbolName: "keyboard"
-		),
-	]
-}
-
-private struct PermissionSettingsRow: Identifiable {
-	let kind: PermissionKind
-	let title: String
-	let symbolName: String
-
-	var id: PermissionKind { kind }
 }
 
 private struct PermissionGrantCard: View {
@@ -1550,86 +1574,10 @@ private struct PermissionGrantCard: View {
 
 }
 
-private struct PermissionStatusTile: View {
-	let row: PermissionSettingsRow
-	let refreshID: Int
-	let openSettings: (PermissionKind) -> Void
-
-	var body: some View {
-		HStack(alignment: .center, spacing: 10) {
-			SettingsTileIcon(symbolName: row.symbolName, size: 19)
-			VStack(alignment: .leading, spacing: 2) {
-				Text(row.title)
-					.font(.system(size: 13, weight: .semibold))
-					.lineLimit(1)
-					.minimumScaleFactor(0.9)
-				Text(subtitle)
-					.font(.system(size: 10.5, weight: .medium))
-					.foregroundStyle(.secondary)
-					.lineLimit(2)
-					.fixedSize(horizontal: false, vertical: true)
-			}
-			.layoutPriority(1)
-			Spacer(minLength: 8)
-			HStack(spacing: 7) {
-				PermissionStateBadge(title: badgeTitle, style: badgeStyle)
-				if canOpen {
-					Button {
-						openSettings(row.kind)
-					} label: {
-						Image(systemName: "arrow.up.forward.app")
-							.frame(width: 13, height: 13)
-					}
-					.rsnapGlassButton(prominent: false)
-					.controlSize(.small)
-					.help("Open \(row.title)")
-				}
-			}
-		}
-		.padding(.vertical, 4)
-		.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-	}
-
-	private var isGranted: Bool {
-		_ = refreshID
-		return NativePermissions.status(for: row.kind)
-	}
-
-	private var isRequired: Bool {
-		NativePermissions.requiredForCurrentNativeHost(row.kind)
-	}
-
-	private var subtitle: String {
-		if isGranted {
-			return "Granted."
-		}
-		return isRequired ? "Required for native capture." : "Not used by current host."
-	}
-
-	private var badgeTitle: String {
-		if isGranted {
-			return "Granted"
-		}
-		return isRequired ? "Required" : "Not Used"
-	}
-
-	private var badgeStyle: PermissionStateBadge.Style {
-		if isGranted {
-			return .granted
-		}
-		return isRequired ? .required : .muted
-	}
-
-	private var canOpen: Bool {
-		isRequired && !isGranted
-	}
-}
-
 private struct PermissionStateBadge: View {
 	enum Style {
 		case granted
 		case required
-		case muted
 	}
 
 	let title: String
@@ -1657,8 +1605,6 @@ private struct PermissionStateBadge: View {
 			return Color.green
 		case .required:
 			return Color.accentColor
-		case .muted:
-			return Color.secondary
 		}
 	}
 
@@ -1668,8 +1614,6 @@ private struct PermissionStateBadge: View {
 			return Color.green.opacity(colorScheme == .light ? 0.10 : 0.16)
 		case .required:
 			return Color.accentColor.opacity(colorScheme == .light ? 0.10 : 0.18)
-		case .muted:
-			return Color.secondary.opacity(colorScheme == .light ? 0.08 : 0.12)
 		}
 	}
 
@@ -1679,9 +1623,132 @@ private struct PermissionStateBadge: View {
 			return Color.green.opacity(colorScheme == .light ? 0.20 : 0.26)
 		case .required:
 			return Color.accentColor.opacity(colorScheme == .light ? 0.20 : 0.28)
-		case .muted:
-			return Color.secondary.opacity(colorScheme == .light ? 0.14 : 0.20)
 		}
+	}
+}
+
+private struct AboutSettingsPanel: View {
+	var body: some View {
+		VStack(alignment: .leading, spacing: 8) {
+			AboutIntroBlock()
+
+			VStack(spacing: 0) {
+				AboutLinkTile(
+					symbolName: "curlybraces.square",
+					title: "Open Source",
+					buttonTitle: "GitHub",
+					urlString: NativeHostAboutLinks.source
+				)
+			}
+		}
+	}
+}
+
+private struct AboutIntroBlock: View {
+	var body: some View {
+		HStack(alignment: .top, spacing: 10) {
+			SettingsTileIcon(symbolName: "sparkles", size: 20)
+			VStack(alignment: .leading, spacing: 5) {
+				HStack(alignment: .firstTextBaseline, spacing: 8) {
+					Text("Built by Yvette Cipher")
+						.font(.system(size: 13, weight: .semibold))
+					Spacer(minLength: 8)
+					Button(action: openCreator) {
+						Label("Follow on X", systemImage: "arrow.up.forward")
+							.labelStyle(.titleAndIcon)
+					}
+					.rsnapGlassButton(prominent: false)
+					.controlSize(.small)
+					.help(NativeHostAboutLinks.creator)
+				}
+				Text(
+					"Rsnap is an open-source macOS capture tool. I keep sharing progress, design notes, and release updates on X; following helps support future work through X creator rewards."
+				)
+				.font(.system(size: 10.8, weight: .medium))
+				.foregroundStyle(.secondary)
+				.lineLimit(4)
+				.fixedSize(horizontal: false, vertical: true)
+			}
+			.layoutPriority(1)
+		}
+		.padding(.vertical, 6)
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	private func openCreator() {
+		guard let url = URL(string: NativeHostAboutLinks.creator) else {
+			return
+		}
+		NSWorkspace.shared.open(url)
+	}
+}
+
+private struct AboutLinkTile: View {
+	let symbolName: String
+	let title: String
+	let subtitle: String?
+	let buttonTitle: String
+	let urlString: String
+
+	init(
+		symbolName: String,
+		title: String,
+		subtitle: String? = nil,
+		buttonTitle: String,
+		urlString: String
+	) {
+		self.symbolName = symbolName
+		self.title = title
+		self.subtitle = subtitle
+		self.buttonTitle = buttonTitle
+		self.urlString = urlString
+	}
+
+	var body: some View {
+		HStack(spacing: 10) {
+			SettingsTileIcon(symbolName: symbolName, size: 19)
+			VStack(alignment: .leading, spacing: hasSubtitle ? 2 : 0) {
+				Text(title)
+					.font(.system(size: 13, weight: .semibold))
+					.lineLimit(1)
+				if let subtitle, !subtitle.isEmpty {
+					Text(subtitle)
+						.font(.system(size: 10.5, weight: .medium))
+						.foregroundStyle(.secondary)
+						.lineLimit(2)
+						.fixedSize(horizontal: false, vertical: true)
+				}
+			}
+			.layoutPriority(1)
+			Spacer(minLength: 10)
+			HStack {
+				Spacer(minLength: 0)
+				Button(action: openURL) {
+					Label(buttonTitle, systemImage: "arrow.up.forward")
+						.labelStyle(.titleAndIcon)
+				}
+				.rsnapGlassButton(prominent: false)
+				.controlSize(.small)
+				.help(urlString)
+			}
+			.frame(width: SettingsControlLayout.controlColumnWidth, alignment: .trailing)
+		}
+		.padding(.vertical, 5)
+		.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+	}
+
+	private func openURL() {
+		guard let url = URL(string: urlString) else {
+			return
+		}
+		NSWorkspace.shared.open(url)
+	}
+
+	private var hasSubtitle: Bool {
+		guard let subtitle else {
+			return false
+		}
+		return !subtitle.isEmpty
 	}
 }
 
@@ -1988,11 +2055,28 @@ private struct SettingsAtmosphere: View {
 				Color.black.opacity(0.14)
 			}
 		}
+		.clipShape(windowShape)
+		.overlay {
+			windowShape
+				.stroke(windowBorderColor, lineWidth: 1)
+				.allowsHitTesting(false)
+		}
 		.ignoresSafeArea()
+	}
+
+	private var windowShape: RoundedRectangle {
+		RoundedRectangle(
+			cornerRadius: NativeHostSettingsWindowMetrics.cornerRadius,
+			style: .continuous
+		)
 	}
 
 	private var tintColor: Color {
 		Color(hue: tintHue, saturation: 0.58, brightness: 0.94)
+	}
+
+	private var windowBorderColor: Color {
+		colorScheme == .light ? Color.white.opacity(0.58) : Color.white.opacity(0.10)
 	}
 }
 
@@ -2148,7 +2232,6 @@ private struct SettingsGlassSurfaceModifier: ViewModifier {
 					.stroke(panelBorderColor, lineWidth: 1)
 					.allowsHitTesting(false)
 			}
-			.shadow(color: panelShadowColor, radius: 12, y: 4)
 	}
 
 	private var shape: RoundedRectangle {
@@ -2163,9 +2246,5 @@ private struct SettingsGlassSurfaceModifier: ViewModifier {
 
 	private var panelBorderColor: Color {
 		colorScheme == .light ? Color.white.opacity(0.62) : Color.white.opacity(0.090)
-	}
-
-	private var panelShadowColor: Color {
-		colorScheme == .light ? Color.black.opacity(0.075) : Color.black.opacity(0.28)
 	}
 }

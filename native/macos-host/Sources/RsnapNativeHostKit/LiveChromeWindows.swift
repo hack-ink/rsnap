@@ -340,8 +340,8 @@ final class LiveChromeLiquidGlassView: NSView {
 			}
 			return Color(
 				hue: settings.hudTintHue.clamped(to: 0...1),
-				saturation: 0.48,
-				brightness: 1.0,
+				saturation: settings.hudTintSaturation.clamped(to: 0...1),
+				brightness: settings.hudTintBrightness.clamped(to: 0...1),
 				opacity: strength * 0.12
 			)
 		}
