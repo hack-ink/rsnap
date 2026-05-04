@@ -355,6 +355,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		)
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		refreshStatusMenuState()
+		sessionController.prepareLiveFrameStreamSampler(reason: "launch")
 		scheduleLaunchPermissionOnboardingIfNeeded()
 		DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
 			self?.sessionController.refreshShareableContentCacheIfPermitted(source: "launch")
@@ -707,6 +708,10 @@ final class CaptureSessionController: NSObject {
 
 	var activeTelemetryCaptureID: UInt64 {
 		currentCaptureTelemetryID
+	}
+
+	func prepareLiveFrameStreamSampler(reason: String) {
+		liveFrameStream.prepareSampler(reason: reason)
 	}
 
 	private func allocateCaptureTelemetryID() -> UInt64 {
@@ -2994,7 +2999,6 @@ final class CaptureSessionController: NSObject {
 				return
 			}
 			self.liveFrameStream.stop()
-			self.liveFrameStream.updateSelfCaptureExceptionWindowIDs([])
 			self.pendingLiveFrameStreamRelease = nil
 		}
 		if immediate {
