@@ -6364,13 +6364,25 @@ final class CaptureHostView: NSView {
 	}
 
 	private func updateLiveChromeBackdrops(hudFrame: CGRect?, loupeFrame: CGRect?) {
-		controller?.updateLiveChromeBackdrops(nil)
 		hideClassicGlassMaterialViews()
+		guard scene.mode == .live, settings.usesClassicHudGlass else {
+			controller?.updateLiveChromeBackdrops(nil)
+			return
+		}
+		controller?.updateLiveChromeBackdrops(
+			LiveChromeBackdropSnapshot(
+				sourceWindowNumber: window?.windowNumber,
+				hudFrame: hudFrame.flatMap(globalRect(from:)),
+				loupeFrame: loupeFrame.flatMap(globalRect(from:)),
+				theme: chromeTheme(),
+				settings: settings
+			)
+		)
 	}
 
 	private func moveLiveChromeLayers() {
 		let frames = currentLiveChromeLayerFrames()
-		hideClassicGlassMaterialViews()
+		updateLiveChromeBackdrops(hudFrame: frames.hud, loupeFrame: frames.loupe)
 		moveExistingLiveLiquidGlassViews(hudFrame: frames.hud, loupeFrame: frames.loupe)
 		liveRenderer.moveLiveChrome(hudFrame: frames.hud, loupeFrame: frames.loupe)
 	}
