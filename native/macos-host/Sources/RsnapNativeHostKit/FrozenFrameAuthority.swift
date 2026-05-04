@@ -7,14 +7,14 @@ import Foundation
 import RsnapHostBridge
 import ScreenCaptureKit
 
-struct FrozenFrameLatchToken {
+struct FrozenFrameLatchToken: Sendable {
 	let displayID: CGDirectDisplayID
 	let generation: UInt64
 	let minSequence: UInt64
 	let startedAtUptime: TimeInterval
 }
 
-struct FrozenFrameSnapshot {
+struct FrozenFrameSnapshot: @unchecked Sendable {
 	let displayID: CGDirectDisplayID
 	let displayFrame: CGRect
 	let image: CGImage
@@ -485,6 +485,10 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	}
 
 	func rgbSample(containing point: CGPoint) -> RGBSample? {
+		liveRgbSample(containing: point)?.rgb
+	}
+
+	func liveRgbSample(containing point: CGPoint) -> LiveRgbSample? {
 		stateLock.lock()
 		let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
 		let record = displayID.flatMap { latestFrames[$0] }.flatMap(snapshotEligibleRecordLocked)
@@ -492,10 +496,22 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		guard let record else {
 			return nil
 		}
-		return Self.rgbSample(
-			from: record.pixelBuffer,
-			point: point,
-			displayFrame: record.displayFrame
+		guard record.ageMilliseconds() <= LiveRgbSample.maximumDisplayAge * 1_000 else {
+			return nil
+		}
+		guard
+			let rgb = Self.rgbSample(
+				from: record.pixelBuffer,
+				point: point,
+				displayFrame: record.displayFrame
+			)
+		else {
+			return nil
+		}
+		return LiveRgbSample(
+			rgb: rgb,
+			capturedAtUptime: record.capturedAtUptime,
+			source: "frame_authority"
 		)
 	}
 

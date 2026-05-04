@@ -8,9 +8,56 @@ import QuartzCore
 import RsnapHostBridge
 import Vision
 
+struct LiveRgbSample: Sendable {
+	static let maximumDisplayAge: TimeInterval = 0.18
+	static let maximumReusableAge: TimeInterval = 0.08
+
+	let rgb: RGBSample
+	let capturedAtUptime: TimeInterval
+	let source: String
+
+	func ageMilliseconds(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double {
+		max(0, now - capturedAtUptime) * 1_000
+	}
+
+	func isFresh(
+		maximumAge: TimeInterval = Self.maximumDisplayAge,
+		now: TimeInterval = ProcessInfo.processInfo.systemUptime
+	) -> Bool {
+		now - capturedAtUptime <= maximumAge
+	}
+}
+
 struct LiveChromeSample {
-	let rgbSample: RGBSample?
+	let rgb: LiveRgbSample?
 	let loupePatch: CGImage?
+
+	var rgbSample: RGBSample? {
+		rgb?.rgb
+	}
+
+	init(rgb: LiveRgbSample?, loupePatch: CGImage?) {
+		self.rgb = rgb
+		self.loupePatch = loupePatch
+	}
+
+	init(
+		rgbSample: RGBSample?,
+		rgbCapturedAtUptime: TimeInterval? = nil,
+		rgbSource: String = "unqualified",
+		loupePatch: CGImage?
+	) {
+		if let rgbSample, let rgbCapturedAtUptime {
+			rgb = LiveRgbSample(
+				rgb: rgbSample,
+				capturedAtUptime: rgbCapturedAtUptime,
+				source: rgbSource
+			)
+		} else {
+			rgb = nil
+		}
+		self.loupePatch = loupePatch
+	}
 }
 
 enum LiveSamplingBudget {
@@ -257,7 +304,6 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private let settingsStore = NativeHostSettingsStore()
 	private let globalHotKeys = GlobalHotKeyCenter()
 	private var lifecycleActivity: NSObjectProtocol?
-	private var liveSamplingPrewarmWorkItem: DispatchWorkItem?
 	private var selfCaptureRegistrationWindow: NSWindow?
 	private var didBootstrap = false
 	private var didPresentLaunchPermissionOnboarding = false
@@ -306,7 +352,6 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		)
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		refreshStatusMenuState()
-		scheduleLiveSamplingPrewarm()
 		scheduleLaunchPermissionOnboardingIfNeeded()
 		NativeHostTelemetry.lifecycleEvent(
 			"native_host.finish_launching_end",
@@ -316,6 +361,10 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 	public func applicationDidFinishLaunching(_ notification: Notification) {
 		finishLaunching()
+	}
+
+	public func applicationWillTerminate(_ notification: Notification) {
+		sessionController.releaseScreenCaptureStreams()
 	}
 
 	private func showSelfCaptureRegistrationWindow() {
@@ -509,29 +558,6 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		)
 	}
 
-	private func scheduleLiveSamplingPrewarm() {
-		liveSamplingPrewarmWorkItem?.cancel()
-		let workItem = DispatchWorkItem { [weak self] in
-			self?.liveSamplingPrewarmWorkItem = nil
-			self?.prewarmLiveSamplingIfPossible()
-		}
-		liveSamplingPrewarmWorkItem = workItem
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
-	}
-
-	private func prewarmLiveSamplingIfPossible() {
-		guard !sessionController.isCaptureActive else {
-			return
-		}
-		let point = NSEvent.mouseLocation
-		let sample = sessionController.warmLiveSamplingIfPossible(
-			at: point, source: "startup_prewarm", captureID: 0)
-		NativeHostTelemetry.lifecycleDebug(
-			"native_host.live_sampling_prewarm",
-			detail: "sampleReady=\(sample?.rgbSample != nil)"
-		)
-	}
-
 	@objc
 	private func settingsDidChange() {
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
@@ -586,6 +612,18 @@ final class CaptureSessionController: NSObject {
 		let desktopFrame: CGRect
 	}
 
+	private struct PendingFrozenCommit: Sendable {
+		let id: UInt64
+		let captureID: UInt64
+		let generation: UInt64
+		let selection: CGRect
+		let editable: Bool
+		let token: FrozenFrameLatchToken?
+		let startedAtUptime: TimeInterval
+		let snapshotStartedAtUptime: TimeInterval
+		let hadLatchToken: Bool
+	}
+
 	private static let autoCenterMaxIterations = 6
 	private static let displayFirstFrameWait: TimeInterval = 0.025
 	private static let coldSelfCaptureRecoveryWait: TimeInterval = 3.5
@@ -595,15 +633,20 @@ final class CaptureSessionController: NSObject {
 	private let settingsStore: NativeHostSettingsStore
 	private let liveFrameStream = LiveFrameStreamBroker()
 	private let frozenFrameAuthority = FrozenFrameAuthority()
+	private let frozenCommitQueue = DispatchQueue(
+		label: "ink.hack.rsnap.frozen-commit",
+		qos: .userInitiated
+	)
 	private let captureSuccessSound = CaptureSuccessSound.load()
 	private var session: RsnapHostSession?
 	private var overlayController: CaptureOverlayController?
 	private var frozenFrameLatchToken: FrozenFrameLatchToken?
+	private var pendingFrozenCommit: PendingFrozenCommit?
+	private var nextPendingFrozenCommitID: UInt64 = 1
 	private var frozenSnapshotGeneration: UInt64 = 0
 	private var completedHostEffect: HostEffectKind?
 	private var scrollCaptureState: NativeScrollCaptureState?
 	private var scrollCaptureGlobalMonitor: Any?
-	private var liveStreamPrimedByStartupPrewarm = false
 	private var nextCaptureTelemetryID: UInt64 = 1
 	private var activeCaptureTelemetryID: UInt64?
 	var captureStateDidChange: (() -> Void)?
@@ -673,6 +716,7 @@ final class CaptureSessionController: NSObject {
 		source: String = "capture",
 		captureID: UInt64 = 0,
 		excludeSelfFromFrozenAuthority: Bool = false,
+		selfCaptureExceptionWindowIDs: Set<CGWindowID> = [],
 		includedCurrentProcessWindowIDs: Set<CGWindowID> = []
 	) -> LiveChromeSample? {
 		let warmStartedAt = ProcessInfo.processInfo.systemUptime
@@ -691,35 +735,32 @@ final class CaptureSessionController: NSObject {
 			return nil
 		}
 		let screens = NSScreen.screens
+		let liveStreamStartedAt = ProcessInfo.processInfo.systemUptime
+		liveFrameStream.start(for: screens, prewarmPoint: point, captureID: captureID)
+		let liveStreamStartMilliseconds =
+			NativeHostTelemetry.milliseconds(since: liveStreamStartedAt)
 		let frozenAuthorityStartedAt = ProcessInfo.processInfo.systemUptime
 		frozenFrameAuthority.start(
 			for: screens,
 			captureID: captureID,
 			source: source,
 			rebuildContentFilter: excludeSelfFromFrozenAuthority,
+			selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
 			includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
 		)
 		let frozenAuthorityStartMilliseconds =
 			NativeHostTelemetry.milliseconds(since: frozenAuthorityStartedAt)
-		let liveStreamStartedAt = ProcessInfo.processInfo.systemUptime
-		liveFrameStream.start(for: screens, prewarmPoint: point)
-		liveStreamPrimedByStartupPrewarm = source == "startup_prewarm"
-		let liveStreamStartMilliseconds =
-			NativeHostTelemetry.milliseconds(since: liveStreamStartedAt)
-		let seedStartedAt = ProcessInfo.processInfo.systemUptime
-		let sample = liveFrameStream.seedSample(at: point, sidePixels: 1)
-		let seedSampleMilliseconds = NativeHostTelemetry.milliseconds(since: seedStartedAt)
 		NativeHostTelemetry.liveSamplingWarmTiming(
 			captureID: captureID,
 			source: source,
 			totalMilliseconds: NativeHostTelemetry.milliseconds(since: warmStartedAt),
 			frozenAuthorityStartMilliseconds: frozenAuthorityStartMilliseconds,
 			liveStreamStartMilliseconds: liveStreamStartMilliseconds,
-			seedSampleMilliseconds: seedSampleMilliseconds,
-			sampleReady: sample?.rgbSample != nil,
+			seedSampleMilliseconds: 0,
+			sampleReady: false,
 			screenCount: screenCount
 		)
-		return sample
+		return nil
 	}
 
 	func startCapture(capturableOwnWindowIDs: Set<CGWindowID> = []) {
@@ -753,20 +794,18 @@ final class CaptureSessionController: NSObject {
 
 		do {
 			let startPoint = NSEvent.mouseLocation
-			prepareLiveSamplingForCaptureStart()
-			liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
-			let warmStartedAt = ProcessInfo.processInfo.systemUptime
-			let initialSample = warmLiveSamplingIfPossible(
-				at: startPoint,
-				source: "start_capture",
-				captureID: captureID,
-				includedCurrentProcessWindowIDs: capturableOwnWindowIDs
-			)
-			let initialRgbSample =
-				initialSample?.rgbSample
-				?? frozenFrameAuthority.rgbSample(containing: startPoint)
-			let warmMilliseconds = NativeHostTelemetry.milliseconds(since: warmStartedAt)
+			var warmMilliseconds = 0.0
+			let initialRgbSample: RGBSample? = nil
 			frozenFrameLatchToken = nil
+			// The Rust live sampler treats these IDs as current-process windows to
+			// include through the app-level exclusion. Overlay windows must stay out
+			// of this list so color sampling sees the desktop under the capture UI.
+			liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
+			liveFrameStream.start(
+				for: NSScreen.screens,
+				prewarmPoint: startPoint,
+				captureID: captureID
+			)
 			let desktopFrame = CaptureOverlayController.desktopFrame
 			let windowSnapshotStartedAt = ProcessInfo.processInfo.systemUptime
 			let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
@@ -797,7 +836,7 @@ final class CaptureSessionController: NSObject {
 				controller: self,
 				liveFrameStream: liveFrameStream,
 				frameRgbSampler: { [frozenFrameAuthority] point in
-					frozenFrameAuthority.rgbSample(containing: point)
+					frozenFrameAuthority.liveRgbSample(containing: point)
 				},
 				framePatchSampler: { [frozenFrameAuthority] point, sidePixels in
 					frozenFrameAuthority.loupePatch(containing: point, sidePixels: sidePixels)
@@ -810,24 +849,26 @@ final class CaptureSessionController: NSObject {
 				chrome: chromeState,
 				settings: settingsStore.settings,
 				focusPoint: startPoint,
-				initialWindowSnapshots: initialWindowSnapshots
+				initialWindowSnapshots: initialWindowSnapshots,
+				prepareCaptureStreams: { [weak self, weak overlayController] in
+					guard let self, let overlayController else {
+						return
+					}
+					let selfCaptureExceptionWindowIDs =
+						overlayController.selfCaptureExceptionWindowIDs
+					let warmStartedAt = ProcessInfo.processInfo.systemUptime
+					_ = self.warmLiveSamplingIfPossible(
+						at: startPoint,
+						source: "capture_overlay_preflight",
+						captureID: captureID,
+						excludeSelfFromFrozenAuthority: true,
+						selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+						includedCurrentProcessWindowIDs: capturableOwnWindowIDs
+					)
+					warmMilliseconds =
+						NativeHostTelemetry.milliseconds(since: warmStartedAt)
+				}
 			)
-			if frozenFrameAuthority.hasSelfCaptureCompleteFrame(containing: startPoint) {
-				NativeHostTelemetry.captureEvent(
-					"capture.self_capture_rebuild_skipped",
-					captureID: captureID,
-					detail: "startup_complete_filter"
-				)
-			} else {
-				frozenFrameAuthority.start(
-					for: NSScreen.screens,
-					captureID: captureID,
-					source: "capture_overlay_visible",
-					rebuildContentFilter: true,
-					selfCaptureExceptionWindowIDs: overlayController.selfCaptureExceptionWindowIDs,
-					includedCurrentProcessWindowIDs: capturableOwnWindowIDs
-				)
-			}
 			let overlayShowMilliseconds =
 				NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
 			(NSApp.delegate as? NativeHostApplicationController)?.window =
@@ -860,14 +901,6 @@ final class CaptureSessionController: NSObject {
 			)
 			tearDownCapture()
 		}
-	}
-
-	private func prepareLiveSamplingForCaptureStart() {
-		guard liveStreamPrimedByStartupPrewarm else {
-			return
-		}
-		liveFrameStream.stop()
-		liveStreamPrimedByStartupPrewarm = false
 	}
 
 	private func ensureCapturePermissions() -> Bool {
@@ -960,6 +993,9 @@ final class CaptureSessionController: NSObject {
 			pointerMoved(to: point)
 			return
 		}
+		guard pendingFrozenCommit == nil else {
+			return
+		}
 
 		do {
 			liveFrameStream.prime(at: point)
@@ -997,6 +1033,9 @@ final class CaptureSessionController: NSObject {
 	func continuePrimaryInteraction(to point: CGPoint) {
 		guard scene.mode == .live else {
 			pointerMoved(to: point)
+			return
+		}
+		guard pendingFrozenCommit == nil else {
 			return
 		}
 
@@ -1037,6 +1076,9 @@ final class CaptureSessionController: NSObject {
 			pointerMoved(to: point)
 			return
 		}
+		guard pendingFrozenCommit == nil else {
+			return
+		}
 
 		overlayController?.markLivePrimaryInteractionReleased(at: point)
 		do {
@@ -1062,8 +1104,10 @@ final class CaptureSessionController: NSObject {
 			)
 			try syncCore()
 			if scene.mode == .live {
-				chromeState.endHostLocalFrozenSelecting()
-				refreshOverlay()
+				if pendingFrozenCommit == nil {
+					chromeState.endHostLocalFrozenSelecting()
+					refreshOverlay()
+				}
 			}
 		} catch {
 			chromeState.endHostLocalFrozenSelecting()
@@ -1674,18 +1718,19 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func commitFrozenSelection(_ selection: CGRect, editable: Bool) throws {
-		guard let session else {
+		guard session != nil else {
 			return
 		}
 		let captureID = currentCaptureTelemetryID
 		let commitStartedAt = ProcessInfo.processInfo.systemUptime
 		frozenSnapshotGeneration &+= 1
+		let generation = frozenSnapshotGeneration
 		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
 		let hadLatchToken = frozenFrameLatchToken != nil
 		let token =
 			frozenFrameLatchToken ?? frozenFrameAuthority.latchToken(containing: selectionCenter)
 		let snapshotStartedAt = ProcessInfo.processInfo.systemUptime
-		let frozenFrame = snapshotForFrozenCommit(
+		let frozenFrame = frozenFrameAuthority.snapshot(
 			containing: selectionCenter,
 			after: token,
 			maxWait: frozenFrameLatchWait(containing: selectionCenter)
@@ -1693,24 +1738,166 @@ final class CaptureSessionController: NSObject {
 		let snapshotWaitMilliseconds =
 			NativeHostTelemetry.milliseconds(since: snapshotStartedAt)
 		guard let frozenFrame else {
-			frozenFrameLatchToken = nil
-			chromeState.endHostLocalFrozenSelecting()
-			refreshOverlay()
-			NativeHostTelemetry.captureWarning(
-				"capture.freeze_commit_failed",
+			guard frozenFrameAuthority.needsSelfCaptureCompleteFrame(containing: selectionCenter)
+			else {
+				try failFrozenCommit(
+					captureID: captureID,
+					commitStartedAt: commitStartedAt,
+					snapshotWaitMilliseconds: snapshotWaitMilliseconds,
+					hadLatchToken: hadLatchToken
+				)
+				return
+			}
+			let pendingCommit = PendingFrozenCommit(
+				id: nextPendingFrozenCommitID,
 				captureID: captureID,
-				stage: "authority_snapshot",
-				error: "no_fresh_frame"
-			)
-			NativeHostTelemetry.freezeCommitFailureTiming(
-				captureID: captureID,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: commitStartedAt),
-				snapshotWaitMilliseconds: snapshotWaitMilliseconds,
+				generation: generation,
+				selection: selection,
+				editable: editable,
+				token: token,
+				startedAtUptime: commitStartedAt,
+				snapshotStartedAtUptime: snapshotStartedAt,
 				hadLatchToken: hadLatchToken
 			)
-			try sendHostStatusMessage("Could not freeze the current frame.")
+			nextPendingFrozenCommitID &+= 1
+			schedulePendingFrozenCommit(
+				pendingCommit,
+				selectionCenter: selectionCenter
+			)
 			return
 		}
+		try finishFrozenCommit(
+			captureID: captureID,
+			selection: selection,
+			editable: editable,
+			frozenFrame: frozenFrame,
+			commitStartedAt: commitStartedAt,
+			snapshotWaitMilliseconds: snapshotWaitMilliseconds,
+			hadLatchToken: hadLatchToken,
+			syncAfterReport: false
+		)
+	}
+
+	private func schedulePendingFrozenCommit(
+		_ pendingCommit: PendingFrozenCommit,
+		selectionCenter: CGPoint
+	) {
+		pendingFrozenCommit = pendingCommit
+		refreshOverlay()
+		let authority = frozenFrameAuthority
+		let remainingWait = max(
+			0,
+			Self.coldSelfCaptureRecoveryWait
+				- (ProcessInfo.processInfo.systemUptime - pendingCommit.snapshotStartedAtUptime)
+		)
+		frozenCommitQueue.async { [weak self] in
+			let frozenFrame = authority.snapshot(
+				containing: selectionCenter,
+				after: pendingCommit.token,
+				maxWait: remainingWait
+			)
+			DispatchQueue.main.async {
+				self?.finishPendingFrozenCommit(
+					pendingCommit,
+					frozenFrame: frozenFrame
+				)
+			}
+		}
+	}
+
+	private func finishPendingFrozenCommit(
+		_ pendingCommit: PendingFrozenCommit,
+		frozenFrame: FrozenFrameSnapshot?
+	) {
+		guard
+			let currentPending = pendingFrozenCommit,
+			currentPending.id == pendingCommit.id,
+			currentPending.generation == pendingCommit.generation,
+			scene.mode == .live
+		else {
+			return
+		}
+		let snapshotWaitMilliseconds =
+			NativeHostTelemetry.milliseconds(since: pendingCommit.snapshotStartedAtUptime)
+		guard let frozenFrame else {
+			do {
+				try failFrozenCommit(
+					captureID: pendingCommit.captureID,
+					commitStartedAt: pendingCommit.startedAtUptime,
+					snapshotWaitMilliseconds: snapshotWaitMilliseconds,
+					hadLatchToken: pendingCommit.hadLatchToken
+				)
+			} catch {
+				NativeHostTelemetry.captureWarning(
+					"capture.freeze_commit_failed",
+					captureID: pendingCommit.captureID,
+					stage: "authority_snapshot_status",
+					error: String(describing: error)
+				)
+			}
+			return
+		}
+		do {
+			try finishFrozenCommit(
+				captureID: pendingCommit.captureID,
+				selection: pendingCommit.selection,
+				editable: pendingCommit.editable,
+				frozenFrame: frozenFrame,
+				commitStartedAt: pendingCommit.startedAtUptime,
+				snapshotWaitMilliseconds: snapshotWaitMilliseconds,
+				hadLatchToken: pendingCommit.hadLatchToken,
+				syncAfterReport: true
+			)
+		} catch {
+			NativeHostTelemetry.captureWarning(
+				"capture.freeze_commit_failed",
+				captureID: pendingCommit.captureID,
+				stage: "finish_pending_commit",
+				error: String(describing: error)
+			)
+			tearDownCapture()
+		}
+	}
+
+	private func failFrozenCommit(
+		captureID: UInt64,
+		commitStartedAt: TimeInterval,
+		snapshotWaitMilliseconds: Double,
+		hadLatchToken: Bool
+	) throws {
+		pendingFrozenCommit = nil
+		frozenFrameLatchToken = nil
+		chromeState.endHostLocalFrozenSelecting()
+		refreshOverlay()
+		NativeHostTelemetry.captureWarning(
+			"capture.freeze_commit_failed",
+			captureID: captureID,
+			stage: "authority_snapshot",
+			error: "no_fresh_frame"
+		)
+		NativeHostTelemetry.freezeCommitFailureTiming(
+			captureID: captureID,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: commitStartedAt),
+			snapshotWaitMilliseconds: snapshotWaitMilliseconds,
+			hadLatchToken: hadLatchToken
+		)
+		try sendHostStatusMessage("Could not freeze the current frame.")
+	}
+
+	private func finishFrozenCommit(
+		captureID: UInt64,
+		selection: CGRect,
+		editable: Bool,
+		frozenFrame: FrozenFrameSnapshot,
+		commitStartedAt: TimeInterval,
+		snapshotWaitMilliseconds: Double,
+		hadLatchToken: Bool,
+		syncAfterReport: Bool
+	) throws {
+		guard let session else {
+			return
+		}
+		pendingFrozenCommit = nil
 		frozenFrameLatchToken = nil
 		chromeState.resetFrozenChrome()
 		chromeState.frozenSelectionSnapshot = selection
@@ -1750,32 +1937,13 @@ final class CaptureSessionController: NSObject {
 			baseReady: chromeState.frozenBaseImage != nil
 		)
 		try session.send(report: .freezeSnapshotCommitted(selection: selection))
+		if syncAfterReport {
+			try syncCore()
+		}
 	}
 
 	private func frozenFrameLatchWait(containing _: CGPoint) -> TimeInterval {
 		Self.displayFirstFrameWait
-	}
-
-	private func snapshotForFrozenCommit(
-		containing point: CGPoint,
-		after token: FrozenFrameLatchToken?,
-		maxWait: TimeInterval
-	) -> FrozenFrameSnapshot? {
-		if let frozenFrame = frozenFrameAuthority.snapshot(
-			containing: point,
-			after: token,
-			maxWait: maxWait
-		) {
-			return frozenFrame
-		}
-		guard frozenFrameAuthority.needsSelfCaptureCompleteFrame(containing: point) else {
-			return nil
-		}
-		return frozenFrameAuthority.snapshot(
-			containing: point,
-			after: token,
-			maxWait: max(0, Self.coldSelfCaptureRecoveryWait - maxWait)
-		)
 	}
 
 	private func hostOwnedFrozenPresentationScene(for selection: CGRect, editable: Bool)
@@ -2570,8 +2738,6 @@ final class CaptureSessionController: NSObject {
 		let rgbSample =
 			chromeSample?.rgbSample
 			?? frozenFrameAuthority.rgbSample(containing: point)
-			?? chromeState.rgbSample
-			?? scene.rgb
 		let highlightedWindow = highlightedWindow(at: point)
 		chromeState.rgbSample = rgbSample
 		chromeState.loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
@@ -2758,9 +2924,9 @@ final class CaptureSessionController: NSObject {
 
 	private func tearDownCapture() {
 		let captureID = currentCaptureTelemetryID
-		liveFrameStream.stop()
+		releaseScreenCaptureStreams()
 		liveFrameStream.updateSelfCaptureExceptionWindowIDs([])
-		liveStreamPrimedByStartupPrewarm = false
+		pendingFrozenCommit = nil
 		frozenFrameLatchToken = nil
 		frozenSnapshotGeneration &+= 1
 		completedHostEffect = nil
@@ -2792,6 +2958,11 @@ final class CaptureSessionController: NSObject {
 			NativeHostTelemetry.captureEvent("capture.teardown", captureID: captureID)
 		}
 		activeCaptureTelemetryID = nil
+	}
+
+	fileprivate func releaseScreenCaptureStreams() {
+		liveFrameStream.stop()
+		frozenFrameAuthority.stop()
 	}
 
 	@objc
@@ -3110,7 +3281,8 @@ final class CaptureOverlayController {
 		chrome: CaptureChromeState,
 		settings: NativeHostSettings,
 		focusPoint: CGPoint,
-		initialWindowSnapshots: [WindowSnapshot]
+		initialWindowSnapshots: [WindowSnapshot],
+		prepareCaptureStreams: (() -> Void)? = nil
 	) {
 		close()
 		var targetWindow: CaptureOverlayWindow?
@@ -3144,11 +3316,16 @@ final class CaptureOverlayController {
 			}
 		}
 		collapsedForFrozen = false
-		liveFrameStream.start(for: NSScreen.screens, prewarmPoint: focusPoint)
+		if let prepareCaptureStreams {
+			prepareCaptureStreams()
+		} else {
+			liveFrameStream.start(for: NSScreen.screens, prewarmPoint: focusPoint)
+		}
 		windowSnapshotFeed.start(
 			desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
 		chromeSampleFeed.start(
-			targetFramesPerSecond: NativeHostDisplayRefresh.samplingFramesPerSecond())
+			targetFramesPerSecond: NativeHostDisplayRefresh.samplingFramesPerSecond(),
+			captureID: controller?.activeTelemetryCaptureID ?? 0)
 		chromeSampleFeed.updateDemand(
 			point: focusPoint,
 			sidePixels: 1,
@@ -3371,7 +3548,7 @@ final class CaptureOverlayController {
 
 		let _ = point
 		if wantsLoupePatch, let latestSample {
-			return LiveChromeSample(rgbSample: latestSample.rgbSample, loupePatch: nil)
+			return LiveChromeSample(rgb: latestSample.rgb, loupePatch: nil)
 		}
 		return latestSample
 	}
@@ -3461,7 +3638,12 @@ final class CaptureOverlayController {
 		guard rgbSample != nil || loupePatch != nil else {
 			return nil
 		}
-		return LiveChromeSample(rgbSample: rgbSample, loupePatch: loupePatch)
+		return LiveChromeSample(
+			rgbSample: rgbSample,
+			rgbCapturedAtUptime: ProcessInfo.processInfo.systemUptime,
+			rgbSource: "background_fallback",
+			loupePatch: loupePatch
+		)
 	}
 
 	nonisolated private static func rgbSampleAtDisplayPoint(
@@ -4009,7 +4191,7 @@ final class CaptureHostView: NSView {
 	private var lastLivePreviewSnapshot: LivePreviewSnapshot?
 	private var latestLiveChromeSample: LiveChromeSample?
 	private var latestLiveChromeSamplePoint: CGPoint?
-	private var latestLiveRgbSample: RGBSample?
+	private var latestLiveRgbSample: LiveRgbSample?
 	private var latestLiveRgbSamplePoint: CGPoint?
 	private var glassPatchCache: [GlassSurfaceKind: GlassPatchCache] = [:]
 	private lazy var liveRenderer = LiveOverlayRenderer(hostView: self)
@@ -4777,7 +4959,8 @@ final class CaptureHostView: NSView {
 		let metrics = Self.hudLayoutMetrics
 		let font = metrics.font
 		let positionDisplay = currentPositionDisplay()
-		let rgbSample = cachedLiveRgbSample(matching: livePointerPreviewGlobal ?? scene.pointer)
+		let rgbSample = cachedLiveRgbSample(matching: livePointerPreviewGlobal ?? scene.pointer)?
+			.rgb
 		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
 		let itemSpacing: CGFloat = 8
 		let swatchSize = CGSize(width: 10, height: 10)
@@ -6206,7 +6389,8 @@ final class CaptureHostView: NSView {
 		guard let dragSelectionLocal = currentImmediateLiveDragSelectionLocal() else {
 			return nil
 		}
-		let rgbSample = cachedLiveRgbSample(matching: livePointerPreviewGlobal ?? scene.pointer)
+		let rgbSample = cachedLiveRgbSample(matching: livePointerPreviewGlobal ?? scene.pointer)?
+			.rgb
 		return LivePreviewSnapshot(
 			bounds: bounds,
 			theme: chromeTheme(),
@@ -6255,8 +6439,8 @@ final class CaptureHostView: NSView {
 			hudFrame: nil,
 			loupeFrame: nil,
 			positionDisplay: currentPositionDisplay(),
-			colorDisplay: currentLiveColorDisplay(for: latestLiveRgbSample),
-			rgbSample: latestLiveRgbSample,
+			colorDisplay: currentLiveColorDisplay(for: latestLiveRgbSample?.rgb),
+			rgbSample: latestLiveRgbSample?.rgb,
 			keycapVisible: false,
 			inputUptime: nil,
 			loupePatch: nil,
@@ -6581,7 +6765,7 @@ final class CaptureHostView: NSView {
 				wantsLoupePatch: wantsLoupePatch
 			)
 			seedLiveChromeSampleCache(resolvedSample, point: point)
-			if let rgbSample = resolvedSample.rgbSample {
+			if let rgbSample = resolvedSample.rgb {
 				seedLiveRgbSampleCache(rgbSample, point: point)
 			}
 			return resolvedSample
@@ -6589,7 +6773,7 @@ final class CaptureHostView: NSView {
 		if let cachedSample = cachedLiveChromeSample(matching: point) {
 			return cachedSample
 		}
-		if chrome.rgbSample != nil || chrome.loupePatch != nil,
+		if chrome.loupePatch != nil,
 			liveSamplePoint(scene.pointer, matches: point)
 		{
 			seedLiveChromeSampleCache(from: chrome, point: scene.pointer)
@@ -6610,13 +6794,13 @@ final class CaptureHostView: NSView {
 			let cachedPatch = cachedSample.loupePatch
 		{
 			return LiveChromeSample(
-				rgbSample: sample.rgbSample ?? cachedSample.rgbSample,
+				rgb: sample.rgb,
 				loupePatch: cachedPatch
 			)
 		}
 		if liveSamplePoint(scene.pointer, matches: point), let chromePatch = chrome.loupePatch {
 			return LiveChromeSample(
-				rgbSample: sample.rgbSample ?? chrome.rgbSample,
+				rgb: sample.rgb,
 				loupePatch: chromePatch
 			)
 		}
@@ -6624,33 +6808,26 @@ final class CaptureHostView: NSView {
 	}
 
 	private func liveRgbSample(from sample: LiveChromeSample?, at point: CGPoint?) -> RGBSample? {
-		if let rgbSample = sample?.rgbSample {
-			seedLiveRgbSampleCache(rgbSample, point: point)
-			return rgbSample
-		}
-		if let rgbSample = chrome.rgbSample,
-			liveSamplePoint(scene.pointer, matches: point)
+		if let rgbSample = sample?.rgb,
+			rgbSample.isFresh()
 		{
-			seedLiveRgbSampleCache(rgbSample, point: scene.pointer)
-			return rgbSample
+			seedLiveRgbSampleCache(rgbSample, point: point)
+			return rgbSample.rgb
 		}
-		return cachedLiveRgbSample(matching: point)
+		return cachedLiveRgbSample(matching: point)?.rgb
 	}
 
 	private func seedLiveChromeSampleCache(from chrome: CaptureChromeState, point: CGPoint?) {
-		guard chrome.rgbSample != nil || chrome.loupePatch != nil else {
+		guard chrome.loupePatch != nil else {
 			return
 		}
 		seedLiveChromeSampleCache(
 			LiveChromeSample(
-				rgbSample: chrome.rgbSample,
+				rgb: nil,
 				loupePatch: chrome.loupePatch
 			),
 			point: point
 		)
-		if let rgbSample = chrome.rgbSample {
-			seedLiveRgbSampleCache(rgbSample, point: point)
-		}
 	}
 
 	private func seedLiveChromeSampleCache(_ sample: LiveChromeSample, point: CGPoint?) {
@@ -6658,7 +6835,7 @@ final class CaptureHostView: NSView {
 		latestLiveChromeSamplePoint = point
 	}
 
-	private func seedLiveRgbSampleCache(_ rgbSample: RGBSample, point: CGPoint?) {
+	private func seedLiveRgbSampleCache(_ rgbSample: LiveRgbSample, point: CGPoint?) {
 		latestLiveRgbSample = rgbSample
 		latestLiveRgbSamplePoint = point
 	}
@@ -6667,11 +6844,22 @@ final class CaptureHostView: NSView {
 		guard liveSamplePoint(latestLiveChromeSamplePoint, matches: point) else {
 			return nil
 		}
+		guard let latestLiveChromeSample else {
+			return nil
+		}
+		guard latestLiveChromeSample.rgb == nil || latestLiveChromeSample.rgb?.isFresh() == true
+		else {
+			return LiveChromeSample(rgb: nil, loupePatch: latestLiveChromeSample.loupePatch)
+		}
 		return latestLiveChromeSample
 	}
 
-	private func cachedLiveRgbSample(matching point: CGPoint?) -> RGBSample? {
+	private func cachedLiveRgbSample(matching point: CGPoint?) -> LiveRgbSample? {
 		guard liveSamplePoint(latestLiveRgbSamplePoint, matches: point) else {
+			return nil
+		}
+		guard latestLiveRgbSample?.isFresh(maximumAge: LiveRgbSample.maximumReusableAge) == true
+		else {
 			return nil
 		}
 		return latestLiveRgbSample
