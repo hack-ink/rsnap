@@ -148,6 +148,16 @@ enum NativeHostTelemetry {
 		)
 	}
 
+	static func liveStreamSamplerPrepared(
+		totalMilliseconds: Double,
+		created: Bool,
+		reason: String
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) event=live_chrome.live_stream_sampler_prepared totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) created=\(created, privacy: .public) reason=\(reason, privacy: .public)"
+		)
+	}
+
 	static func liveStreamSample(
 		captureID: UInt64,
 		totalMilliseconds: Double,

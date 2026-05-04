@@ -29,6 +29,24 @@ final class LiveFrameStreamBroker {
 	private var didEmitRgbDiagnosticSample = false
 	private var issueDiagnosticSamplesRemaining = 0
 
+	func prepareSampler(reason: String = "unspecified") {
+		let startedAt = ProcessInfo.processInfo.systemUptime
+		stateLock.lock()
+		let created: Bool
+		if sampler == nil {
+			sampler = Self.makeSampler(exceptionWindowIDs: selfCaptureExceptionWindowIDs)
+			created = sampler != nil
+		} else {
+			created = false
+		}
+		stateLock.unlock()
+		NativeHostTelemetry.liveStreamSamplerPrepared(
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAt),
+			created: created,
+			reason: reason
+		)
+	}
+
 	func updateSelfCaptureExceptionWindowIDs(_ windowIDs: Set<CGWindowID>) {
 		stateLock.lock()
 		guard windowIDs != selfCaptureExceptionWindowIDs else {
@@ -105,7 +123,6 @@ final class LiveFrameStreamBroker {
 		didEmitRgbDiagnosticSample = false
 		issueDiagnosticSamplesRemaining = 0
 		let sampler = self.sampler
-		self.sampler = nil
 		stateLock.unlock()
 		guard let sampler else {
 			return
