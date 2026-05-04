@@ -110,6 +110,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 		showWindow(nil)
 		NSRunningApplication.current.activate(options: [.activateAllWindows])
 		window?.makeKeyAndOrderFront(nil)
+		window?.invalidateShadow()
 		NSApp.activate(ignoringOtherApps: true)
 	}
 

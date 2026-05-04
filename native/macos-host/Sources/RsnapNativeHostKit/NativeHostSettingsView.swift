@@ -4,8 +4,9 @@ import SwiftUI
 
 enum NativeHostSettingsWindowMetrics {
 	static let width: CGFloat = 620
-	static let minHeight: CGFloat = 288
+	static let minHeight: CGFloat = 304
 	static let idealHeight: CGFloat = 304
+	static let cornerRadius: CGFloat = 18
 }
 
 @MainActor
@@ -164,13 +165,9 @@ private struct SettingsRail: View {
 		VStack(alignment: .leading, spacing: 14) {
 			HStack(spacing: 8) {
 				SettingsBrandIcon()
-				VStack(alignment: .leading, spacing: 2) {
-					Text(NativeHostBrand.displayName)
-						.font(.system(size: 17, weight: .semibold, design: .rounded))
-					Text("Settings")
-						.font(.system(size: 10.5, weight: .medium))
-						.foregroundStyle(.secondary)
-				}
+				Text(NativeHostBrand.displayName)
+					.font(.system(size: 17, weight: .semibold, design: .rounded))
+					.lineLimit(1)
 			}
 			.padding(.horizontal, 2)
 
@@ -956,6 +953,7 @@ private struct AppearanceSettingsPanel: View {
 						}
 						.disabled(!model.settings.hudGlassEnabled)
 					}
+					.transition(.opacity)
 				}
 			}
 
@@ -979,7 +977,7 @@ private struct AppearanceSettingsPanel: View {
 						isEnabled: model.settings.hudGlassEnabled
 					)
 				}
-				.transition(.opacity.combined(with: .move(edge: .top)))
+				.transition(.opacity)
 			}
 
 			VStack(spacing: 0) {
@@ -1613,19 +1611,19 @@ private struct AboutSettingsPanel: View {
 
 			VStack(spacing: 0) {
 				AboutLinkTile(
-					symbolName: "curlybraces.square",
-					title: "Open source",
-					subtitle: NativeHostAboutLinks.source,
-					buttonTitle: "GitHub",
-					urlString: NativeHostAboutLinks.source
-				)
-
-				AboutLinkTile(
 					symbolName: "person.crop.circle",
 					title: "Yvette Cipher",
 					subtitle: "Follow @YvetteCipher for Rsnap updates.",
 					buttonTitle: "Follow on X",
 					urlString: NativeHostAboutLinks.creator
+				)
+
+				AboutLinkTile(
+					symbolName: "curlybraces.square",
+					title: "Open source",
+					subtitle: NativeHostAboutLinks.source,
+					buttonTitle: "GitHub",
+					urlString: NativeHostAboutLinks.source
 				)
 			}
 		}
@@ -1671,8 +1669,8 @@ private struct AboutLinkTile: View {
 				Text(subtitle)
 					.font(.system(size: 10.5, weight: .medium))
 					.foregroundStyle(.secondary)
-					.lineLimit(1)
-					.minimumScaleFactor(0.82)
+					.lineLimit(2)
+					.fixedSize(horizontal: false, vertical: true)
 			}
 			.layoutPriority(1)
 			Spacer(minLength: 10)
@@ -2003,11 +2001,28 @@ private struct SettingsAtmosphere: View {
 				Color.black.opacity(0.14)
 			}
 		}
+		.clipShape(windowShape)
+		.overlay {
+			windowShape
+				.stroke(windowBorderColor, lineWidth: 1)
+				.allowsHitTesting(false)
+		}
 		.ignoresSafeArea()
+	}
+
+	private var windowShape: RoundedRectangle {
+		RoundedRectangle(
+			cornerRadius: NativeHostSettingsWindowMetrics.cornerRadius,
+			style: .continuous
+		)
 	}
 
 	private var tintColor: Color {
 		Color(hue: tintHue, saturation: 0.58, brightness: 0.94)
+	}
+
+	private var windowBorderColor: Color {
+		colorScheme == .light ? Color.white.opacity(0.58) : Color.white.opacity(0.10)
 	}
 }
 
@@ -2163,7 +2178,6 @@ private struct SettingsGlassSurfaceModifier: ViewModifier {
 					.stroke(panelBorderColor, lineWidth: 1)
 					.allowsHitTesting(false)
 			}
-			.shadow(color: panelShadowColor, radius: 12, y: 4)
 	}
 
 	private var shape: RoundedRectangle {
@@ -2178,9 +2192,5 @@ private struct SettingsGlassSurfaceModifier: ViewModifier {
 
 	private var panelBorderColor: Color {
 		colorScheme == .light ? Color.white.opacity(0.62) : Color.white.opacity(0.090)
-	}
-
-	private var panelShadowColor: Color {
-		colorScheme == .light ? Color.black.opacity(0.075) : Color.black.opacity(0.28)
 	}
 }
