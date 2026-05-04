@@ -84,10 +84,20 @@ final class GlobalHotKeyCenter {
 			&hotKeyRef
 		)
 		guard status == noErr else {
+			NativeHostTelemetry.lifecycleWarning(
+				"native_host.hotkey_register_failed",
+				detail:
+					"binding=\(binding.rawValue),keyCode=\(definition.keyCode),modifiers=\(definition.modifiers),status=\(status)"
+			)
 			return
 		}
 		hotKeyRefs[binding] = hotKeyRef
 		registeredBindings.insert(binding)
+		NativeHostTelemetry.lifecycleEvent(
+			"native_host.hotkey_registered",
+			detail:
+				"binding=\(binding.rawValue),keyCode=\(definition.keyCode),modifiers=\(definition.modifiers)"
+		)
 	}
 
 	private func unregister(_ binding: Binding) {
