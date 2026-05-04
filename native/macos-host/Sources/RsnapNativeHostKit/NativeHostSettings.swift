@@ -20,6 +20,8 @@ final class NativeHostSettingsStore {
 		static let hudBlur = "hudBlur"
 		static let hudTint = "hudTint"
 		static let hudTintHue = "hudTintHue"
+		static let hudTintSaturation = "hudTintSaturation"
+		static let hudTintBrightness = "hudTintBrightness"
 		static let liquidGlassStyle = "liquidGlassStyle"
 		static let loupeSampleSize = "loupeSampleSize"
 	}
@@ -62,6 +64,10 @@ final class NativeHostSettingsStore {
 				?? baseSettings.hudTint,
 			hudTintHue: defaults.object(forKey: DefaultsKey.hudTintHue) as? Double
 				?? baseSettings.hudTintHue,
+			hudTintSaturation: defaults.object(forKey: DefaultsKey.hudTintSaturation) as? Double
+				?? baseSettings.hudTintSaturation,
+			hudTintBrightness: defaults.object(forKey: DefaultsKey.hudTintBrightness) as? Double
+				?? baseSettings.hudTintBrightness,
 			liquidGlassStyle: LiquidGlassStylePreference(
 				rawValue: defaults.string(forKey: DefaultsKey.liquidGlassStyle) ?? "")
 				?? baseSettings.liquidGlassStyle,
@@ -105,6 +111,8 @@ final class NativeHostSettingsStore {
 		defaults.set(settings.hudBlur, forKey: DefaultsKey.hudBlur)
 		defaults.set(settings.hudTint, forKey: DefaultsKey.hudTint)
 		defaults.set(settings.hudTintHue, forKey: DefaultsKey.hudTintHue)
+		defaults.set(settings.hudTintSaturation, forKey: DefaultsKey.hudTintSaturation)
+		defaults.set(settings.hudTintBrightness, forKey: DefaultsKey.hudTintBrightness)
 		defaults.set(settings.liquidGlassStyle.rawValue, forKey: DefaultsKey.liquidGlassStyle)
 		defaults.set(settings.loupeSampleSize.rawValue, forKey: DefaultsKey.loupeSampleSize)
 	}
@@ -124,6 +132,8 @@ struct NativeHostSettings: Equatable {
 	var hudBlur: Double
 	var hudTint: Double
 	var hudTintHue: Double
+	var hudTintSaturation: Double
+	var hudTintBrightness: Double
 	var liquidGlassStyle: LiquidGlassStylePreference
 	var loupeSampleSize: LoupeSampleSizePreference
 
@@ -143,6 +153,8 @@ struct NativeHostSettings: Equatable {
 			hudBlur: 0.5032628676470589,
 			hudTint: 0.4990234375,
 			hudTintHue: 0.6074879184861536,
+			hudTintSaturation: 0.72,
+			hudTintBrightness: 0.95,
 			liquidGlassStyle: .clear,
 			loupeSampleSize: .small
 		)
@@ -159,6 +171,8 @@ struct NativeHostSettings: Equatable {
 		copy.hudBlur = copy.hudBlur.clamped(to: 0...1)
 		copy.hudTint = copy.hudTint.clamped(to: 0...1)
 		copy.hudTintHue = copy.hudTintHue.clamped(to: 0...1)
+		copy.hudTintSaturation = copy.hudTintSaturation.clamped(to: 0...1)
+		copy.hudTintBrightness = copy.hudTintBrightness.clamped(to: 0...1)
 		return copy
 	}
 

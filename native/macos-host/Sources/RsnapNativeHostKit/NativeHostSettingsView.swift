@@ -422,8 +422,8 @@ private struct AppearanceInspector: View {
 	private var tintHex: String {
 		let color = NSColor(
 			hue: CGFloat(settings.hudTintHue),
-			saturation: 0.72,
-			brightness: 0.95,
+			saturation: CGFloat(settings.hudTintSaturation),
+			brightness: CGFloat(settings.hudTintBrightness),
 			alpha: 1
 		)
 		let converted = color.usingColorSpace(.deviceRGB) ?? color
@@ -514,11 +514,6 @@ private struct AboutInspector: View {
 				value: "Open",
 				symbolName: "curlybraces.square"
 			)
-			InspectorMetric(
-				title: "Creator",
-				value: "@YvetteCipher",
-				symbolName: "person.crop.circle"
-			)
 		}
 	}
 }
@@ -566,7 +561,11 @@ private struct MiniHudPreview: View {
 	}
 
 	private var tintColor: Color {
-		Color(hue: settings.hudTintHue, saturation: 0.72, brightness: 0.95)
+		Color(
+			hue: settings.hudTintHue,
+			saturation: settings.hudTintSaturation,
+			brightness: settings.hudTintBrightness
+		)
 	}
 
 	private var previewFill: Color {
@@ -1024,14 +1023,22 @@ private struct AppearanceSettingsPanel: View {
 			get: {
 				Color(
 					hue: model.settings.hudTintHue,
-					saturation: 0.72,
-					brightness: 0.95
+					saturation: model.settings.hudTintSaturation,
+					brightness: model.settings.hudTintBrightness
 				)
 			},
 			set: { color in
 				let nsColor = NSColor(color)
 				let converted = nsColor.usingColorSpace(.deviceRGB) ?? nsColor
-				model.update { $0.hudTintHue = Double(converted.hueComponent) }
+				var hue: CGFloat = 0
+				var saturation: CGFloat = 0
+				var brightness: CGFloat = 0
+				converted.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: nil)
+				model.update {
+					$0.hudTintHue = Double(hue)
+					$0.hudTintSaturation = Double(saturation)
+					$0.hudTintBrightness = Double(brightness)
+				}
 			}
 		)
 	}
@@ -1213,21 +1220,24 @@ private struct FlatColorSwatch: View {
 	@State private var isHovered = false
 
 	var body: some View {
-		SettingsColorWell(selection: $selection, isEnabled: isEnabled)
-			.clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-			.overlay {
-				RoundedRectangle(cornerRadius: 6, style: .continuous)
-					.stroke(borderColor, lineWidth: 1)
-					.allowsHitTesting(false)
-			}
-			.frame(width: 30, height: 18)
-			.opacity(isEnabled ? 1 : 0.45)
-			.scaleEffect(isHovered && isEnabled ? 1.04 : 1)
-			.animation(.easeOut(duration: 0.12), value: isHovered)
-			.onHover { hovering in
-				isHovered = hovering
-			}
-			.disabled(!isEnabled)
+		ZStack {
+			RoundedRectangle(cornerRadius: 6, style: .continuous)
+				.fill(selection)
+			SettingsColorWell(selection: $selection, isEnabled: isEnabled)
+		}
+		.overlay {
+			RoundedRectangle(cornerRadius: 6, style: .continuous)
+				.stroke(borderColor, lineWidth: 1)
+				.allowsHitTesting(false)
+		}
+		.frame(width: 30, height: 18)
+		.opacity(isEnabled ? 1 : 0.45)
+		.scaleEffect(isHovered && isEnabled ? 1.04 : 1)
+		.animation(.easeOut(duration: 0.12), value: isHovered)
+		.onHover { hovering in
+			isHovered = hovering
+		}
+		.allowsHitTesting(isEnabled)
 	}
 
 	private var borderColor: Color {
@@ -1239,21 +1249,19 @@ private struct SettingsColorWell: NSViewRepresentable {
 	@Binding var selection: Color
 	let isEnabled: Bool
 
-	func makeNSView(context: Context) -> NSColorWell {
-		let colorWell = NSColorWell(frame: .zero)
-		colorWell.isBordered = false
-		colorWell.supportsAlpha = false
-		colorWell.target = context.coordinator
-		colorWell.action = #selector(Coordinator.colorChanged(_:))
-		return colorWell
+	func makeNSView(context: Context) -> ColorPanelTriggerView {
+		let view = ColorPanelTriggerView()
+		view.coordinator = context.coordinator
+		return view
 	}
 
-	func updateNSView(_ colorWell: NSColorWell, context: Context) {
+	func updateNSView(_ view: ColorPanelTriggerView, context: Context) {
 		context.coordinator.selection = $selection
-		colorWell.isEnabled = isEnabled
-		let nextColor = NSColor(selection).usingColorSpace(.deviceRGB) ?? NSColor(selection)
-		if !Self.matches(colorWell.color, nextColor) {
-			colorWell.color = nextColor
+		view.allowsColorPanel = isEnabled
+		view.color = NSColor(selection).usingColorSpace(.deviceRGB) ?? NSColor(selection)
+		view.coordinator = context.coordinator
+		if NSColorPanel.sharedColorPanelExists, NSColorPanel.shared.isVisible {
+			NSColorPanel.shared.color = view.color
 		}
 	}
 
@@ -1261,13 +1269,28 @@ private struct SettingsColorWell: NSViewRepresentable {
 		Coordinator(selection: $selection)
 	}
 
-	private static func matches(_ lhs: NSColor, _ rhs: NSColor) -> Bool {
-		let left = lhs.usingColorSpace(.deviceRGB) ?? lhs
-		let right = rhs.usingColorSpace(.deviceRGB) ?? rhs
-		return abs(left.redComponent - right.redComponent) < 0.001
-			&& abs(left.greenComponent - right.greenComponent) < 0.001
-			&& abs(left.blueComponent - right.blueComponent) < 0.001
-			&& abs(left.alphaComponent - right.alphaComponent) < 0.001
+	final class ColorPanelTriggerView: NSView {
+		var allowsColorPanel = true
+		var color = NSColor.systemBlue
+		weak var coordinator: Coordinator?
+
+		override var acceptsFirstResponder: Bool {
+			false
+		}
+
+		override func mouseDown(with event: NSEvent) {
+			guard allowsColorPanel else {
+				return
+			}
+			NSApp.activate(ignoringOtherApps: true)
+			let panel = NSColorPanel.shared
+			panel.showsAlpha = false
+			panel.isContinuous = true
+			panel.color = color
+			panel.setTarget(coordinator)
+			panel.setAction(#selector(Coordinator.colorChanged(_:)))
+			panel.orderFront(self)
+		}
 	}
 
 	final class Coordinator: NSObject {
@@ -1279,7 +1302,7 @@ private struct SettingsColorWell: NSViewRepresentable {
 
 		@MainActor
 		@objc
-		func colorChanged(_ sender: NSColorWell) {
+		func colorChanged(_ sender: NSColorPanel) {
 			NSColorPanel.shared.showsAlpha = false
 			selection.wrappedValue = Color(nsColor: sender.color)
 		}
@@ -1611,17 +1634,8 @@ private struct AboutSettingsPanel: View {
 
 			VStack(spacing: 0) {
 				AboutLinkTile(
-					symbolName: "person.crop.circle",
-					title: "Yvette Cipher",
-					subtitle: "Follow @YvetteCipher for Rsnap updates.",
-					buttonTitle: "Follow on X",
-					urlString: NativeHostAboutLinks.creator
-				)
-
-				AboutLinkTile(
 					symbolName: "curlybraces.square",
-					title: "Open source",
-					subtitle: NativeHostAboutLinks.source,
+					title: "Open Source",
 					buttonTitle: "GitHub",
 					urlString: NativeHostAboutLinks.source
 				)
@@ -1635,8 +1649,18 @@ private struct AboutIntroBlock: View {
 		HStack(alignment: .top, spacing: 10) {
 			SettingsTileIcon(symbolName: "sparkles", size: 20)
 			VStack(alignment: .leading, spacing: 5) {
-				Text("Built by Yvette Cipher")
-					.font(.system(size: 13, weight: .semibold))
+				HStack(alignment: .firstTextBaseline, spacing: 8) {
+					Text("Built by Yvette Cipher")
+						.font(.system(size: 13, weight: .semibold))
+					Spacer(minLength: 8)
+					Button(action: openCreator) {
+						Label("Follow on X", systemImage: "arrow.up.forward")
+							.labelStyle(.titleAndIcon)
+					}
+					.rsnapGlassButton(prominent: false)
+					.controlSize(.small)
+					.help(NativeHostAboutLinks.creator)
+				}
 				Text(
 					"Rsnap is an open-source macOS capture tool. I keep sharing progress, design notes, and release updates on X; following helps support future work through X creator rewards."
 				)
@@ -1650,27 +1674,50 @@ private struct AboutIntroBlock: View {
 		.padding(.vertical, 6)
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
+
+	private func openCreator() {
+		guard let url = URL(string: NativeHostAboutLinks.creator) else {
+			return
+		}
+		NSWorkspace.shared.open(url)
+	}
 }
 
 private struct AboutLinkTile: View {
 	let symbolName: String
 	let title: String
-	let subtitle: String
+	let subtitle: String?
 	let buttonTitle: String
 	let urlString: String
+
+	init(
+		symbolName: String,
+		title: String,
+		subtitle: String? = nil,
+		buttonTitle: String,
+		urlString: String
+	) {
+		self.symbolName = symbolName
+		self.title = title
+		self.subtitle = subtitle
+		self.buttonTitle = buttonTitle
+		self.urlString = urlString
+	}
 
 	var body: some View {
 		HStack(spacing: 10) {
 			SettingsTileIcon(symbolName: symbolName, size: 19)
-			VStack(alignment: .leading, spacing: 2) {
+			VStack(alignment: .leading, spacing: hasSubtitle ? 2 : 0) {
 				Text(title)
 					.font(.system(size: 13, weight: .semibold))
 					.lineLimit(1)
-				Text(subtitle)
-					.font(.system(size: 10.5, weight: .medium))
-					.foregroundStyle(.secondary)
-					.lineLimit(2)
-					.fixedSize(horizontal: false, vertical: true)
+				if let subtitle, !subtitle.isEmpty {
+					Text(subtitle)
+						.font(.system(size: 10.5, weight: .medium))
+						.foregroundStyle(.secondary)
+						.lineLimit(2)
+						.fixedSize(horizontal: false, vertical: true)
+				}
 			}
 			.layoutPriority(1)
 			Spacer(minLength: 10)
@@ -1695,6 +1742,13 @@ private struct AboutLinkTile: View {
 			return
 		}
 		NSWorkspace.shared.open(url)
+	}
+
+	private var hasSubtitle: Bool {
+		guard let subtitle else {
+			return false
+		}
+		return !subtitle.isEmpty
 	}
 }
 

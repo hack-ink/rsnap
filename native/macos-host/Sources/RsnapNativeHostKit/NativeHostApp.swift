@@ -8754,10 +8754,12 @@ enum CaptureChrome {
 		for theme: CaptureChromeTheme, settings: NativeHostSettings
 	) -> NSColor {
 		let hue = CGFloat(settings.hudTintHue.clamped(to: 0...1))
+		let saturation = CGFloat(settings.hudTintSaturation.clamped(to: 0...1))
+		let brightness = CGFloat(settings.hudTintBrightness.clamped(to: 0...1))
 		return NSColor(
 			calibratedHue: hue,
-			saturation: theme == .dark ? 0.48 : 0.34,
-			brightness: theme == .dark ? 0.62 : 0.94,
+			saturation: saturation,
+			brightness: brightness,
 			alpha: 1
 		)
 	}
