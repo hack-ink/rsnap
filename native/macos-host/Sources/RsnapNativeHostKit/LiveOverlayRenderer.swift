@@ -161,21 +161,35 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		let includeLoupePatch: Bool
 	}
 
+	private struct BackgroundSampleTelemetry {
+		let captureID: UInt64
+		let totalMilliseconds: Double
+		let outcome: String
+		let source: String
+		let includeLoupePatch: Bool
+		let immediate: Bool
+	}
+
 	typealias FrameRgbSampler = @Sendable (CGPoint) -> LiveRgbSample?
 	typealias FramePatchSampler = @Sendable (CGPoint, Int) -> CGImage?
 	typealias BackgroundSampler =
 		@Sendable (CGPoint, LiveColorSampleSource, Int, Bool) -> LiveChromeSample?
+	typealias FirstRgbSampled = @Sendable () -> Void
 	typealias SampleUpdated = () -> Void
 
 	private let broker: LiveFrameStreamBroker
 	private let frameRgbSampler: FrameRgbSampler
 	private let framePatchSampler: FramePatchSampler
 	private let backgroundSampler: BackgroundSampler
+	private let firstRgbSampled: FirstRgbSampled
 	private let sampleUpdated: SampleUpdated
 	private let queue = DispatchQueue(
 		label: "ink.hack.rsnap.native-host.chrome-sample-feed", qos: .userInteractive)
 	private let backgroundQueue = DispatchQueue(
-		label: "ink.hack.rsnap.native-host.chrome-sample-feed.background", qos: .userInteractive)
+		label: "ink.hack.rsnap.native-host.chrome-sample-feed.background",
+		qos: .userInteractive,
+		attributes: .concurrent
+	)
 	private let stateLock = NSLock()
 	private let sampleRefreshGapMetric = NativeHostTelemetry.distribution(
 		"live_chrome.sample_refresh_gap",
@@ -194,12 +208,15 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	)
 	private static let backgroundProbeMinimumInterval: TimeInterval = 0.25
 	private static let backgroundProbeIdleDelay: TimeInterval = 0.08
+	private static let missingRgbProbeMinimumInterval: TimeInterval = 1.0 / 120.0
+	private static let maximumBackgroundSamplesInFlight = 1
 	private static let sampleUpdatedNotificationIdleDelay =
 		NativeHostDisplayRefresh.frameInterval(
 			forTargetFramesPerSecond: NativeHostDisplayRefresh.fallbackFramesPerSecond)
 	private var timer: DispatchSourceTimer?
 	private var refreshQueued = false
-	private var backgroundRefreshQueued = false
+	private var backgroundSamplesInFlight = 0
+	private var backgroundRefreshPending = false
 	private var backgroundCorrectionMode = false
 	private var whiteStreamRunHasProbed = false
 	private var lastBackgroundProbeUptime: TimeInterval = 0
@@ -215,18 +232,22 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private var activationStartedAtUptime: TimeInterval?
 	private var refreshCount: UInt64 = 0
 	private var didEmitFirstRgbSample = false
+	private var didEmitEmptyBackgroundSample = false
+	private var liveStreamRgbReady = false
 
 	init(
 		broker: LiveFrameStreamBroker,
 		frameRgbSampler: @escaping FrameRgbSampler = { _ in nil },
 		framePatchSampler: @escaping FramePatchSampler = { _, _ in nil },
 		backgroundSampler: @escaping BackgroundSampler,
+		firstRgbSampled: @escaping FirstRgbSampled = {},
 		sampleUpdated: @escaping SampleUpdated = {}
 	) {
 		self.broker = broker
 		self.frameRgbSampler = frameRgbSampler
 		self.framePatchSampler = framePatchSampler
 		self.backgroundSampler = backgroundSampler
+		self.firstRgbSampled = firstRgbSampled
 		self.sampleUpdated = sampleUpdated
 	}
 
@@ -241,6 +262,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		activationStartedAtUptime = startedAt
 		refreshCount = 0
 		didEmitFirstRgbSample = false
+		didEmitEmptyBackgroundSample = false
+		liveStreamRgbReady = false
 		stateLock.unlock()
 		let timer = DispatchSource.makeTimerSource(queue: queue)
 		let intervalNanoseconds = max(
@@ -277,7 +300,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		latestSample = nil
 		latestSamplePoint = nil
 		refreshQueued = false
-		backgroundRefreshQueued = false
+		backgroundSamplesInFlight = 0
+		backgroundRefreshPending = false
 		backgroundCorrectionMode = false
 		whiteStreamRunHasProbed = false
 		lastBackgroundProbeUptime = 0
@@ -287,6 +311,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		activationStartedAtUptime = nil
 		refreshCount = 0
 		didEmitFirstRgbSample = false
+		didEmitEmptyBackgroundSample = false
+		liveStreamRgbReady = false
 		stateLock.unlock()
 	}
 
@@ -421,7 +447,14 @@ final class ChromeSampleFeed: @unchecked Sendable {
 				streamRgbSample: streamRgbSample,
 				reusableRgbSample: reusableRgbSample
 			)
-		if frameRgbSample == nil, let source {
+		let shouldUseDisplayPointSampler: Bool
+		stateLock.lock()
+		if frameRgbSample != nil || streamRgbSample != nil {
+			liveStreamRgbReady = true
+		}
+		shouldUseDisplayPointSampler = !liveStreamRgbReady
+		stateLock.unlock()
+		if frameRgbSample == nil, let source, shouldUseDisplayPointSampler {
 			enqueueBackgroundSampleIfNeeded(
 				point: point,
 				source: source,
@@ -511,6 +544,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			hasPatch: telemetry.hasPatch,
 			includeLoupePatch: telemetry.includeLoupePatch
 		)
+		firstRgbSampled()
 	}
 
 	private static func reusableRgbSample(
@@ -567,11 +601,11 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		streamRgbSample: RGBSample?,
 		pointIdleDuration: TimeInterval
 	) {
-		guard pointIdleDuration >= Self.backgroundProbeIdleDelay else {
-			return
-		}
 		let now = ProcessInfo.processInfo.systemUptime
 		let shouldProbe: Bool
+		let shouldNotifyImmediately: Bool
+		let sampleSidePixels: Int
+		let sampleIncludesLoupePatch: Bool
 		stateLock.lock()
 		if let streamRgbSample, !Self.isLikelyOverlayWhite(streamRgbSample) {
 			backgroundCorrectionMode = false
@@ -580,37 +614,56 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			return
 		}
 		if streamRgbSample == nil {
-			guard now - lastBackgroundProbeUptime >= Self.backgroundProbeMinimumInterval else {
+			guard now - lastBackgroundProbeUptime >= Self.missingRgbProbeMinimumInterval else {
 				stateLock.unlock()
 				return
 			}
 			lastBackgroundProbeUptime = now
 			shouldProbe = false
+			shouldNotifyImmediately = true
+			sampleSidePixels = 1
+			sampleIncludesLoupePatch = false
 		} else if backgroundCorrectionMode {
+			guard pointIdleDuration >= Self.backgroundProbeIdleDelay else {
+				stateLock.unlock()
+				return
+			}
 			shouldProbe = false
+			shouldNotifyImmediately = false
+			sampleSidePixels = sidePixels
+			sampleIncludesLoupePatch = includeLoupePatch
 		} else if !whiteStreamRunHasProbed,
 			now - lastBackgroundProbeUptime >= Self.backgroundProbeMinimumInterval
 		{
+			guard pointIdleDuration >= Self.backgroundProbeIdleDelay else {
+				stateLock.unlock()
+				return
+			}
 			whiteStreamRunHasProbed = true
 			lastBackgroundProbeUptime = now
 			shouldProbe = true
+			shouldNotifyImmediately = false
+			sampleSidePixels = sidePixels
+			sampleIncludesLoupePatch = includeLoupePatch
 		} else {
 			stateLock.unlock()
 			return
 		}
-		guard !backgroundRefreshQueued else {
+		guard backgroundSamplesInFlight < Self.maximumBackgroundSamplesInFlight else {
+			backgroundRefreshPending = true
 			stateLock.unlock()
 			return
 		}
-		backgroundRefreshQueued = true
+		backgroundSamplesInFlight += 1
 		stateLock.unlock()
 		backgroundQueue.async { [weak self] in
 			self?.refreshBackgroundSample(
 				point: point,
 				source: source,
-				sidePixels: sidePixels,
-				includeLoupePatch: includeLoupePatch,
-				shouldProbeForCorrection: shouldProbe
+				sidePixels: sampleSidePixels,
+				includeLoupePatch: sampleIncludesLoupePatch,
+				shouldProbeForCorrection: shouldProbe,
+				shouldNotifyImmediately: shouldNotifyImmediately
 			)
 		}
 	}
@@ -620,23 +673,44 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		source: LiveColorSampleSource,
 		sidePixels: Int,
 		includeLoupePatch: Bool,
-		shouldProbeForCorrection: Bool
+		shouldProbeForCorrection: Bool,
+		shouldNotifyImmediately: Bool
 	) {
 		let startedAt = ProcessInfo.processInfo.systemUptime
 		let sample = backgroundSampler(point, source, sidePixels, includeLoupePatch)
 		let sampleRgb = sample?.rgb
 		let sampleRgbValue = sampleRgb?.rgb
 		let sampleLoupePatch = sample?.loupePatch
-		backgroundSampleDurationMetric.recordMillisecondsSince(startedAt)
+		let sampleMilliseconds = NativeHostTelemetry.milliseconds(since: startedAt)
+		backgroundSampleDurationMetric.record(sampleMilliseconds)
 		stateLock.lock()
-		backgroundRefreshQueued = false
+		let shouldRefreshPending = finishBackgroundSampleLocked()
 		let currentRefreshCount = refreshCount
 		guard let desiredPoint,
 			sample != nil,
 			desiredSource == source,
 			Self.pointsEquivalent(desiredPoint, point)
 		else {
+			let shouldLogEmptyBackgroundSample =
+				sample == nil && (!didEmitEmptyBackgroundSample || sampleMilliseconds >= 20)
+			if shouldLogEmptyBackgroundSample {
+				didEmitEmptyBackgroundSample = true
+			}
+			let backgroundSampleTelemetry =
+				shouldLogEmptyBackgroundSample
+				? BackgroundSampleTelemetry(
+					captureID: activeCaptureID,
+					totalMilliseconds: sampleMilliseconds,
+					outcome: "empty",
+					source: "display_point",
+					includeLoupePatch: includeLoupePatch,
+					immediate: shouldNotifyImmediately
+				) : nil
 			stateLock.unlock()
+			emit(backgroundSampleTelemetry)
+			if shouldRefreshPending {
+				enqueueRefresh()
+			}
 			return
 		}
 		if shouldProbeForCorrection, let rgbSample = sampleRgbValue {
@@ -651,21 +725,80 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		latestSamplePoint = point
 		let firstRgbTelemetry = makeFirstRgbTelemetryLocked(
 			rgbSample: sampleRgbValue,
-			source: "background_fallback",
+			source: sampleRgb?.source ?? "background_sample",
 			refreshCount: currentRefreshCount,
 			hasPatch: sampleLoupePatch != nil,
 			includeLoupePatch: includeLoupePatch
 		)
-		let shouldNotify = Self.shouldNotifySampleUpdated(
-			now: ProcessInfo.processInfo.systemUptime,
-			lastPointChangeUptime: lastPointChangeUptime
-		)
+		let shouldLogBackgroundSample =
+			firstRgbTelemetry != nil || sampleMilliseconds >= 20
+		let backgroundSampleTelemetry =
+			shouldLogBackgroundSample
+			? BackgroundSampleTelemetry(
+				captureID: activeCaptureID,
+				totalMilliseconds: sampleMilliseconds,
+				outcome: Self.backgroundSampleOutcome(
+					hasRgb: sampleRgbValue != nil,
+					hasPatch: sampleLoupePatch != nil
+				),
+				source: sampleRgb?.source ?? "background_sample",
+				includeLoupePatch: includeLoupePatch,
+				immediate: shouldNotifyImmediately
+			) : nil
+		let shouldNotify =
+			shouldNotifyImmediately
+			|| Self.shouldNotifySampleUpdated(
+				now: ProcessInfo.processInfo.systemUptime,
+				lastPointChangeUptime: lastPointChangeUptime
+			)
 		stateLock.unlock()
+		emit(backgroundSampleTelemetry)
 		emit(firstRgbTelemetry)
 		if shouldNotify {
 			sampleUpdated()
 		}
-		return
+		if shouldRefreshPending {
+			enqueueRefresh()
+		}
+	}
+
+	private func finishBackgroundSampleLocked() -> Bool {
+		backgroundSamplesInFlight = max(0, backgroundSamplesInFlight - 1)
+		guard backgroundRefreshPending,
+			backgroundSamplesInFlight < Self.maximumBackgroundSamplesInFlight,
+			desiredPoint != nil
+		else {
+			return false
+		}
+		backgroundRefreshPending = false
+		return true
+	}
+
+	private static func backgroundSampleOutcome(hasRgb: Bool, hasPatch: Bool) -> String {
+		if hasRgb, hasPatch {
+			return "rgb_patch"
+		}
+		if hasRgb {
+			return "rgb"
+		}
+		if hasPatch {
+			return "patch"
+		}
+		return "empty"
+	}
+
+	private func emit(_ telemetry: BackgroundSampleTelemetry?) {
+		guard let telemetry else {
+			return
+		}
+		NativeHostTelemetry.liveChromeBackgroundSample(
+			captureID: telemetry.captureID,
+			totalMilliseconds: telemetry.totalMilliseconds,
+			outcome: telemetry.outcome,
+			source: telemetry.source,
+			includeLoupePatch: telemetry.includeLoupePatch,
+			immediate: telemetry.immediate
+		)
 	}
 
 	private static func shouldNotifySampleUpdated(
