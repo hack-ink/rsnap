@@ -209,7 +209,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private static let backgroundProbeMinimumInterval: TimeInterval = 0.25
 	private static let backgroundProbeIdleDelay: TimeInterval = 0.08
 	private static let missingRgbProbeMinimumInterval: TimeInterval = 1.0 / 120.0
-	private static let maximumBackgroundSamplesInFlight = 1
+	private static let maximumInitialBackgroundSamplesInFlight = 2
+	private static let maximumSteadyBackgroundSamplesInFlight = 2
 	private static let sampleUpdatedNotificationIdleDelay =
 		NativeHostDisplayRefresh.frameInterval(
 			forTargetFramesPerSecond: NativeHostDisplayRefresh.fallbackFramesPerSecond)
@@ -228,8 +229,10 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private var latestSamplePoint: CGPoint?
 	private var lastRefreshUptime: TimeInterval?
 	private var lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
+	private var running = false
 	private var activeCaptureID: UInt64 = 0
 	private var activationStartedAtUptime: TimeInterval?
+	private var generation: UInt64 = 0
 	private var refreshCount: UInt64 = 0
 	private var didEmitFirstRgbSample = false
 	private var didEmitEmptyBackgroundSample = false
@@ -258,6 +261,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		stop()
 		let startedAt = ProcessInfo.processInfo.systemUptime
 		stateLock.lock()
+		generation &+= 1
+		running = true
 		activeCaptureID = captureID
 		activationStartedAtUptime = startedAt
 		refreshCount = 0
@@ -294,6 +299,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		timer?.cancel()
 		timer = nil
 		stateLock.lock()
+		generation &+= 1
+		running = false
 		desiredPoint = nil
 		desiredIncludesLoupePatch = false
 		desiredSource = nil
@@ -351,8 +358,9 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		desiredSource = source
 		let shouldRefresh =
 			pointChanged || activating || sourceChanged || sidePixelsChanged || patchDemandChanged
+		let running = self.running
 		stateLock.unlock()
-		if shouldRefresh {
+		if shouldRefresh, running {
 			enqueueRefresh()
 		}
 	}
@@ -361,7 +369,11 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		stateLock.lock()
 		let latestSample = self.latestSample
 		let latestSamplePoint = self.latestSamplePoint
+		let running = self.running
 		stateLock.unlock()
+		guard running else {
+			return nil
+		}
 		guard let point else {
 			return latestSample
 		}
@@ -396,6 +408,11 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		let now = ProcessInfo.processInfo.systemUptime
 		let refreshStartedAt = now
 		stateLock.lock()
+		guard running else {
+			refreshQueued = false
+			stateLock.unlock()
+			return
+		}
 		refreshQueued = false
 		let point = desiredPoint
 		let sidePixels = desiredSidePixels
@@ -606,6 +623,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		let shouldNotifyImmediately: Bool
 		let sampleSidePixels: Int
 		let sampleIncludesLoupePatch: Bool
+		let sampleGeneration: UInt64
 		stateLock.lock()
 		if let streamRgbSample, !Self.isLikelyOverlayWhite(streamRgbSample) {
 			backgroundCorrectionMode = false
@@ -649,12 +667,13 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			stateLock.unlock()
 			return
 		}
-		guard backgroundSamplesInFlight < Self.maximumBackgroundSamplesInFlight else {
+		guard backgroundSamplesInFlight < maximumBackgroundSamplesInFlightLocked() else {
 			backgroundRefreshPending = true
 			stateLock.unlock()
 			return
 		}
 		backgroundSamplesInFlight += 1
+		sampleGeneration = generation
 		stateLock.unlock()
 		backgroundQueue.async { [weak self] in
 			self?.refreshBackgroundSample(
@@ -663,7 +682,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 				sidePixels: sampleSidePixels,
 				includeLoupePatch: sampleIncludesLoupePatch,
 				shouldProbeForCorrection: shouldProbe,
-				shouldNotifyImmediately: shouldNotifyImmediately
+				shouldNotifyImmediately: shouldNotifyImmediately,
+				generation: sampleGeneration
 			)
 		}
 	}
@@ -674,7 +694,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		sidePixels: Int,
 		includeLoupePatch: Bool,
 		shouldProbeForCorrection: Bool,
-		shouldNotifyImmediately: Bool
+		shouldNotifyImmediately: Bool,
+		generation sampleGeneration: UInt64
 	) {
 		let startedAt = ProcessInfo.processInfo.systemUptime
 		let sample = backgroundSampler(point, source, sidePixels, includeLoupePatch)
@@ -684,6 +705,10 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		let sampleMilliseconds = NativeHostTelemetry.milliseconds(since: startedAt)
 		backgroundSampleDurationMetric.record(sampleMilliseconds)
 		stateLock.lock()
+		guard generation == sampleGeneration else {
+			stateLock.unlock()
+			return
+		}
 		let shouldRefreshPending = finishBackgroundSampleLocked()
 		let currentRefreshCount = refreshCount
 		guard let desiredPoint,
@@ -765,13 +790,19 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private func finishBackgroundSampleLocked() -> Bool {
 		backgroundSamplesInFlight = max(0, backgroundSamplesInFlight - 1)
 		guard backgroundRefreshPending,
-			backgroundSamplesInFlight < Self.maximumBackgroundSamplesInFlight,
+			backgroundSamplesInFlight < maximumBackgroundSamplesInFlightLocked(),
 			desiredPoint != nil
 		else {
 			return false
 		}
 		backgroundRefreshPending = false
 		return true
+	}
+
+	private func maximumBackgroundSamplesInFlightLocked() -> Int {
+		didEmitFirstRgbSample
+			? Self.maximumSteadyBackgroundSamplesInFlight
+			: Self.maximumInitialBackgroundSamplesInFlight
 	}
 
 	private static func backgroundSampleOutcome(hasRgb: Bool, hasPatch: Bool) -> String {

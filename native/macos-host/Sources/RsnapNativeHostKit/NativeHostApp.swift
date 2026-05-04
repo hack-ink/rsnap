@@ -80,33 +80,6 @@ private struct LiveChromeRefreshTelemetryKey: Equatable {
 	let liquidGlassAvailable: Bool
 }
 
-private final class DisplayPointImageRace: @unchecked Sendable {
-	private let lock = NSLock()
-	let finished = DispatchSemaphore(value: 0)
-	private var result: CGImage?
-
-	func complete(_ image: CGImage?) {
-		guard let image else {
-			return
-		}
-		lock.lock()
-		let shouldSignal = result == nil
-		if shouldSignal {
-			result = image
-		}
-		lock.unlock()
-		if shouldSignal {
-			finished.signal()
-		}
-	}
-
-	func image() -> CGImage? {
-		lock.lock()
-		defer { lock.unlock() }
-		return result
-	}
-}
-
 @MainActor private let frozenEffectCIContext = CIContext(options: nil)
 
 private enum CaptureSuccessSound {
@@ -381,7 +354,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		refreshStatusMenuState()
 		scheduleLaunchPermissionOnboardingIfNeeded()
-		DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(2)) { [weak self] in
+		DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
 			self?.sessionController.refreshShareableContentCacheIfPermitted(source: "launch")
 		}
 		NativeHostTelemetry.lifecycleEvent(
@@ -840,13 +813,13 @@ final class CaptureSessionController: NSObject {
 		}
 		do {
 			let startPoint = NSEvent.mouseLocation
+			let desktopFrame = CaptureOverlayController.desktopFrame
 			let initialRgbSample: RGBSample? = nil
 			frozenFrameLatchToken = nil
 			// The Rust live sampler treats these IDs as current-process windows to
 			// include through the app-level exclusion. Overlay windows must stay out
 			// of this list so color sampling sees the desktop under the capture UI.
 			liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
-			let desktopFrame = CaptureOverlayController.desktopFrame
 			let windowSnapshotStartedAt = ProcessInfo.processInfo.systemUptime
 			let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
 			let windowSnapshotMilliseconds =
@@ -3284,11 +3257,6 @@ final class CaptureOverlayController {
 		frameRgbSampler: frameRgbSampler,
 		framePatchSampler: framePatchSampler,
 		backgroundSampler: Self.chromeSampleAtDisplayPoint,
-		firstRgbSampled: { [weak self] in
-			DispatchQueue.main.async { [weak self] in
-				self?.prepareCaptureStreamsNow(trigger: "first_rgb")
-			}
-		},
 		sampleUpdated: { [weak self] in
 			DispatchQueue.main.async { [weak self] in
 				(self?.primaryWindow as? CaptureOverlayWindow)?.hostView
@@ -3364,26 +3332,31 @@ final class CaptureOverlayController {
 		} else {
 			liveFrameStream.start(for: NSScreen.screens, prewarmPoint: focusPoint)
 		}
-		if controller?.hasFreshShareableContentCache() == true {
-			prepareCaptureStreamsNow(trigger: "activation_cached")
+		for window in windows {
+			window.displayIfNeeded()
 		}
 		windowSnapshotFeed.start(
 			desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
-		chromeSampleFeed.start(
-			targetFramesPerSecond: NativeHostDisplayRefresh.samplingFramesPerSecond(),
-			captureID: controller?.activeTelemetryCaptureID ?? 0)
-		chromeSampleFeed.updateDemand(
-			point: focusPoint,
-			sidePixels: 1,
-			includeLoupePatch: false,
-			source: liveColorSampleSource(near: focusPoint)
-		)
-		if let focusedWindow {
-			focusedWindow.hostView.refreshLivePresentationNow()
-			focusedWindow.displayIfNeeded()
-		}
-		DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(35)) { [weak self] in
-			self?.prepareCaptureStreamsNow(trigger: "first_rgb_timeout")
+		let captureID = controller?.activeTelemetryCaptureID ?? 0
+		DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(12)) { [weak self] in
+			guard let self, !self.windows.isEmpty,
+				self.controller?.activeTelemetryCaptureID == captureID
+			else {
+				return
+			}
+			self.chromeSampleFeed.start(
+				targetFramesPerSecond: NativeHostDisplayRefresh.samplingFramesPerSecond(),
+				captureID: captureID)
+			self.chromeSampleFeed.updateDemand(
+				point: focusPoint,
+				sidePixels: 1,
+				includeLoupePatch: false,
+				source: self.liveColorSampleSource(near: focusPoint)
+			)
+			if let focusedWindow {
+				focusedWindow.hostView.refreshLivePresentationNow()
+				focusedWindow.displayIfNeeded()
+			}
 		}
 	}
 
@@ -3731,7 +3704,13 @@ final class CaptureOverlayController {
 		guard !sampleRect.isNull, sampleRect.width > 0, sampleRect.height > 0 else {
 			return nil
 		}
-		guard let image = captureImageOnDisplay(in: sampleRect, source: source) else {
+		guard
+			let image = captureImageBelowOverlay(
+				in: sampleRect,
+				source: source,
+				imageOption: [.boundsIgnoreFraming]
+			)
+		else {
 			return nil
 		}
 		return rgbSample(from: image)
@@ -3754,7 +3733,13 @@ final class CaptureOverlayController {
 		guard !sampleRect.isNull, sampleRect.width > 0, sampleRect.height > 0 else {
 			return nil
 		}
-		guard let image = captureImageBelowOverlay(in: sampleRect, source: source) else {
+		guard
+			let image = captureImageBelowOverlay(
+				in: sampleRect,
+				source: source,
+				imageOption: [.boundsIgnoreFraming, .bestResolution]
+			)
+		else {
 			return nil
 		}
 		return normalizedPatchImage(image, sidePixels: sidePixels)
@@ -3762,36 +3747,16 @@ final class CaptureOverlayController {
 
 	nonisolated private static func captureImageBelowOverlay(
 		in rect: CGRect,
-		source: LiveColorSampleSource
+		source: LiveColorSampleSource,
+		imageOption: CGWindowImageOption
 	) -> CGImage? {
 		let quartzRect = appKitRectToQuartz(rect, desktopFrame: source.desktopFrame)
 		return legacyWindowListImage(
 			quartzRect: quartzRect,
 			windowListOption: .optionOnScreenBelowWindow,
 			windowID: source.referenceWindowID,
-			imageOption: [.boundsIgnoreFraming, .bestResolution]
+			imageOption: imageOption
 		)
-	}
-
-	nonisolated private static func captureImageOnDisplay(
-		in rect: CGRect,
-		source: LiveColorSampleSource
-	) -> CGImage? {
-		let displayRect = appKitRectToQuartz(rect, desktopFrame: source.desktopFrame)
-		guard !displayRect.isNull, displayRect.width > 0, displayRect.height > 0 else {
-			return nil
-		}
-		return firstDisplayPointImage {
-			displayCreateImageForRect?(source.displayID, displayRect)?
-				.takeRetainedValue()
-		} windowListCapture: {
-			legacyWindowListImage(
-				quartzRect: displayRect,
-				windowListOption: .optionOnScreenOnly,
-				windowID: kCGNullWindowID,
-				imageOption: [.boundsIgnoreFraming, .bestResolution]
-			)
-		}
 	}
 
 	nonisolated private static func rgbSample(from image: CGImage) -> RGBSample? {
@@ -3875,57 +3840,6 @@ final class CaptureOverlayController {
 			CGWindowID,
 			UInt32
 		) -> Unmanaged<CGImage>?
-
-	private typealias DisplayCreateImageForRect =
-		@convention(c) (
-			CGDirectDisplayID,
-			CGRect
-		) -> Unmanaged<CGImage>?
-
-	nonisolated private static let displayCreateImageForRect: DisplayCreateImageForRect? = {
-		guard
-			let coreGraphics = dlopen(
-				"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
-				RTLD_LAZY
-			)
-		else {
-			return nil
-		}
-		guard let symbol = dlsym(coreGraphics, "CGDisplayCreateImageForRect") else {
-			dlclose(coreGraphics)
-			return nil
-		}
-		return unsafeBitCast(symbol, to: DisplayCreateImageForRect.self)
-	}()
-
-	nonisolated private static let displayPointRaceQueue = DispatchQueue(
-		label: "ink.hack.rsnap.native-host.display-point-race",
-		qos: .userInteractive,
-		attributes: .concurrent
-	)
-
-	nonisolated private static func firstDisplayPointImage(
-		displayCapture: @escaping @Sendable () -> CGImage?,
-		windowListCapture: @escaping @Sendable () -> CGImage?
-	) -> CGImage? {
-		let group = DispatchGroup()
-		let race = DisplayPointImageRace()
-		group.enter()
-		displayPointRaceQueue.async {
-			race.complete(displayCapture())
-			group.leave()
-		}
-		group.enter()
-		displayPointRaceQueue.async {
-			race.complete(windowListCapture())
-			group.leave()
-		}
-		group.notify(queue: displayPointRaceQueue) {
-			race.finished.signal()
-		}
-		race.finished.wait()
-		return race.image()
-	}
 
 	nonisolated private static let legacyWindowListCreateImage: LegacyWindowListCreateImage? = {
 		guard
