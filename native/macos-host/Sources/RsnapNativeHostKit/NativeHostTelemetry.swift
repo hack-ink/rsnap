@@ -148,6 +148,31 @@ enum NativeHostTelemetry {
 		)
 	}
 
+	static func liveStreamSample(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		outcome: String,
+		frameAgeMilliseconds: Double,
+		hasPatch: Bool
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.live_stream_sample totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) outcome=\(outcome, privacy: .public) frameAgeMs=\(frameAgeMilliseconds, format: .fixed(precision: 2), privacy: .public) hasPatch=\(hasPatch, privacy: .public)"
+		)
+	}
+
+	static func liveChromeBackgroundSample(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		outcome: String,
+		source: String,
+		includeLoupePatch: Bool,
+		immediate: Bool
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.background_sample totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) outcome=\(outcome, privacy: .public) source=\(source, privacy: .public) includeLoupePatch=\(includeLoupePatch, privacy: .public) immediate=\(immediate, privacy: .public)"
+		)
+	}
+
 	static func liveChromeInputSummary(
 		captureID: UInt64,
 		reason: String,

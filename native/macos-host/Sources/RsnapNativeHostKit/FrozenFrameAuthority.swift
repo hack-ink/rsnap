@@ -30,6 +30,12 @@ struct FrozenFrameSnapshot: @unchecked Sendable {
 	}
 }
 
+/// Owns the screenshot consistency protocol around ScreenCaptureKit's asynchronous frame stream.
+///
+/// The controller asks this type to prepare an overlay-safe filter, latch a commit point, and
+/// resolve that latch into either a fresh frame, a pending self-capture-safe frame, or failure.
+/// Keeping those states here prevents cached stream frames from being treated as authoritative
+/// screenshots just because a pixel buffer happens to exist.
 final class FrozenFrameAuthority: @unchecked Sendable {
 	private static let maximumSnapshotAgeMilliseconds = 150.0
 	private static let selfCaptureFilterRetryInterval: TimeInterval = 0.035
@@ -55,6 +61,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		func ageMilliseconds(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double {
 			max(0, now - capturedAtUptime) * 1_000
 		}
+	}
+
+	enum SnapshotResolution: Sendable {
+		case resolved(FrozenFrameSnapshot)
+		case pendingSelfCaptureFrame
+		case noFreshFrame
 	}
 
 	private final class DisplayStream: @unchecked Sendable {
@@ -114,11 +126,34 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let matchedWindowCount: Int
 	}
 
+	private final class ShareableContentCache: @unchecked Sendable {
+		private let lock = NSLock()
+		private var content: SCShareableContent?
+		private var cachedAtUptime: TimeInterval = 0
+
+		func store(_ content: SCShareableContent) {
+			lock.lock()
+			self.content = content
+			cachedAtUptime = ProcessInfo.processInfo.systemUptime
+			lock.unlock()
+		}
+
+		func fresh(maxAge: TimeInterval) -> SCShareableContent? {
+			let now = ProcessInfo.processInfo.systemUptime
+			lock.lock()
+			let content = now - cachedAtUptime <= maxAge ? self.content : nil
+			lock.unlock()
+			return content
+		}
+	}
+
 	private let stateLock = NSCondition()
 	private let outputQueue = DispatchQueue(
 		label: "ink.hack.rsnap.native-host.frozen-frame-authority-output",
 		qos: .userInteractive
 	)
+	private static let shareableContentCacheMaxAge: TimeInterval = 3_600
+	private static let shareableContentCache = ShareableContentCache()
 	private var generation: UInt64 = 0
 	private var setupRequestID: UInt64 = 0
 	private var setupDisplayIDs: Set<CGDirectDisplayID>?
@@ -132,6 +167,40 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	private var firstFrameLoggedDisplayIDs: Set<CGDirectDisplayID> = []
 	private var telemetryContext = TelemetryContext(
 		captureID: 0, source: "capture", startedAtUptime: 0)
+
+	func refreshShareableContentCache(captureID: UInt64 = 0, source: String = "cache") {
+		let startedAtUptime = ProcessInfo.processInfo.systemUptime
+		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) {
+			content, error in
+			guard let content else {
+				NativeHostTelemetry.frozenAuthorityWarning(
+					"frozen_authority.content_cache_refresh_failed",
+					captureID: captureID,
+					source: source,
+					displayID: 0,
+					error: String(describing: error)
+				)
+				return
+			}
+			Self.shareableContentCache.store(content)
+			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
+				captureID: captureID,
+				source: source,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
+				success: true,
+				displayCount: content.displays.count,
+				windowCount: content.windows.count
+			)
+		}
+	}
+
+	private static func cachedShareableContent() -> SCShareableContent? {
+		shareableContentCache.fresh(maxAge: shareableContentCacheMaxAge)
+	}
+
+	func hasFreshShareableContentCache() -> Bool {
+		Self.cachedShareableContent() != nil
+	}
 
 	func start(
 		for screens: [NSScreen],
@@ -243,6 +312,55 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		retryUntilUptime: TimeInterval,
 		requestID: UInt64
 	) {
+		if let content = Self.cachedShareableContent() {
+			let preparedFilters = Self.contentFilters(
+				for: targets,
+				in: content,
+				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+				includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
+			)
+			if Self.filtersAreComplete(preparedFilters, for: targets) {
+				NativeHostTelemetry.frozenAuthorityContentLookupTiming(
+					captureID: captureID,
+					source: source,
+					totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
+					success: true,
+					displayCount: content.displays.count,
+					windowCount: content.windows.count
+				)
+				stateLock.lock()
+				guard setupRequestID == requestID, activeDisplayIDs == targetIDs else {
+					stateLock.unlock()
+					return
+				}
+				generation &+= 1
+				let requestGeneration = generation
+				setupDisplayIDs = targetIDs
+				latestFrames = latestFrames.filter { targetIDs.contains($0.key) }
+				updateTelemetryContextLocked(
+					captureID: captureID,
+					source: source,
+					startedAtUptime: startedAtUptime,
+					targetIDs: targetIDs
+				)
+				let staleStreams = streams.values
+				streams.removeAll()
+				stateLock.unlock()
+
+				for staleStream in staleStreams {
+					staleStream.stop()
+				}
+
+				configureStreams(
+					targets: targets,
+					preparedFilters: preparedFilters,
+					generation: requestGeneration,
+					captureID: captureID,
+					source: source
+				)
+				return
+			}
+		}
 		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) {
 			[weak self] content, error in
 			guard let self else {
@@ -356,6 +474,30 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		source: String,
 		startedAtUptime: TimeInterval
 	) {
+		if let content = Self.cachedShareableContent() {
+			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
+				captureID: captureID,
+				source: source,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
+				success: true,
+				displayCount: content.displays.count,
+				windowCount: content.windows.count
+			)
+			let preparedFilters = Self.contentFilters(
+				for: targets,
+				in: content,
+				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+				includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
+			)
+			configureStreams(
+				targets: targets,
+				preparedFilters: preparedFilters,
+				generation: requestGeneration,
+				captureID: captureID,
+				source: source
+			)
+			return
+		}
 		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) {
 			[weak self] content, error in
 			guard let self else {
@@ -584,6 +726,20 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			selfCaptureSafe: true,
 			selfCaptureFilterComplete: record.selfCaptureFilterComplete
 		)
+	}
+
+	func resolveSnapshot(
+		containing point: CGPoint,
+		after token: FrozenFrameLatchToken?,
+		maxWait: TimeInterval
+	) -> SnapshotResolution {
+		if let snapshot = snapshot(containing: point, after: token, maxWait: maxWait) {
+			return .resolved(snapshot)
+		}
+		if needsSelfCaptureCompleteFrame(containing: point) {
+			return .pendingSelfCaptureFrame
+		}
+		return .noFreshFrame
 	}
 
 	private func freshRecordLocked(displayID: CGDirectDisplayID, token: FrozenFrameLatchToken?)
