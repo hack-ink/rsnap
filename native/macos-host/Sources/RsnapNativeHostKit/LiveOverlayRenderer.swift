@@ -1368,6 +1368,7 @@ final class LiveOverlayRenderer {
 	private var lastChromeRenderUptime: TimeInterval?
 	private var lastActiveChromeRenderUptime: TimeInterval?
 	private var lastHudColorPending: Bool?
+	private var hudColorRevealArmed = true
 	private var activeHudHexRollTarget: String?
 	private var hudHexRollAnimationEndUptime: TimeInterval?
 
@@ -1930,13 +1931,19 @@ final class LiveOverlayRenderer {
 			hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
 			hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveBackgroundAnimationKey)
 			hudHexLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
-			ensureHudColorPendingPulse(on: hudSwatchLayer, from: 0.44, to: 0.78)
-			ensureHudColorPendingPulse(on: hudHexLayer, from: 0.48, to: 0.86)
+			if hudColorRevealArmed {
+				ensureHudColorPendingPulse(on: hudSwatchLayer, from: 0.44, to: 0.78)
+				ensureHudColorPendingPulse(on: hudHexLayer, from: 0.48, to: 0.86)
+			} else {
+				hudSwatchLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+				hudHexLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+			}
 			lastHudColorPending = true
 			return
 		}
 
 		let wasPending = lastHudColorPending == true
+		let shouldAnimateReveal = wasPending && hudColorRevealArmed
 		let priorSwatchColor =
 			wasPending ? hudSwatchLayer.presentation()?.backgroundColor : nil
 		let priorSwatchOpacity =
@@ -1945,8 +1952,9 @@ final class LiveOverlayRenderer {
 		hudSwatchLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
 		hudHexLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
 		lastHudColorPending = false
+		hudColorRevealArmed = false
 
-		guard wasPending else {
+		guard shouldAnimateReveal else {
 			updateHudHexRollVisibility(target: resolvedHexText, frame: hexFrame)
 			return
 		}
@@ -2035,26 +2043,28 @@ final class LiveOverlayRenderer {
 		hudHexRollLayer.isHidden = false
 		hudHexRollLayer.frame = frame
 
-		let hashWidth = ceil("#".size(using: font).width)
-		let digitWidth = ceil("0".size(using: font).width)
 		let lineHeight = ceil(LiveOverlayTypography.lineHeight)
+		let characterFrames = hudHexCharacterFrames(
+			for: target,
+			font: font,
+			lineHeight: lineHeight
+		)
 		let hashLayer = makeHudHexRollTextLayer(
 			text: "#",
 			font: font,
 			color: textColor.withAlphaComponent(0.72),
-			frame: CGRect(x: 0, y: 0, width: hashWidth, height: lineHeight)
+			frame: characterFrames.first ?? CGRect(x: 0, y: 0, width: 0, height: lineHeight)
 		)
 		hudHexRollLayer.addSublayer(hashLayer)
 
 		for (index, targetDigit) in targetDigits.enumerated() {
+			let characterFrame =
+				index + 1 < characterFrames.count
+				? characterFrames[index + 1]
+				: CGRect(x: 0, y: 0, width: 0, height: lineHeight)
 			let columnLayer = CALayer()
 			columnLayer.masksToBounds = true
-			columnLayer.frame = CGRect(
-				x: hashWidth + CGFloat(index) * digitWidth,
-				y: 0,
-				width: digitWidth,
-				height: lineHeight
-			)
+			columnLayer.frame = characterFrame
 			hudHexRollLayer.addSublayer(columnLayer)
 			addHudHexRollDigit(
 				to: columnLayer,
@@ -2064,7 +2074,25 @@ final class LiveOverlayRenderer {
 				textColor: textColor,
 				initialOpacity: initialOpacity,
 				lineHeight: lineHeight,
-				digitWidth: digitWidth
+				digitWidth: characterFrame.width
+			)
+		}
+	}
+
+	private func hudHexCharacterFrames(
+		for text: String,
+		font: NSFont,
+		lineHeight: CGFloat
+	) -> [CGRect] {
+		let characters = Array(text)
+		return characters.indices.map { index in
+			let prefixStart = String(characters.prefix(index)).size(using: font).width
+			let prefixEnd = String(characters.prefix(index + 1)).size(using: font).width
+			return CGRect(
+				x: prefixStart,
+				y: 0,
+				width: max(prefixEnd - prefixStart, 1),
+				height: lineHeight
 			)
 		}
 	}
@@ -2174,7 +2202,7 @@ final class LiveOverlayRenderer {
 		layer.font = font
 		layer.fontSize = font.pointSize
 		layer.foregroundColor = color.cgColor
-		layer.alignmentMode = .center
+		layer.alignmentMode = .left
 		layer.frame = frame
 		layer.isWrapped = false
 		return layer
@@ -2224,6 +2252,7 @@ final class LiveOverlayRenderer {
 
 	private func resetHudColorAnimationState() {
 		lastHudColorPending = nil
+		hudColorRevealArmed = true
 		activeHudHexRollTarget = nil
 		hudHexRollAnimationEndUptime = nil
 		hudSwatchLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
