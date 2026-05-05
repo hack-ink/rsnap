@@ -75,6 +75,12 @@ Prototype / in active development.
 
 ### Installation
 
+#### Download macOS Build
+
+Download the latest macOS zip from the
+[GitHub Releases](https://github.com/hack-ink/rsnap/releases) page, unzip it, and move
+`Rsnap.app` to `/Applications`.
+
 #### Build from Source
 
 ```sh
@@ -84,6 +90,24 @@ cd rsnap
 cargo build --workspace
 cargo run -p rsnap
 ```
+
+#### macOS Gatekeeper approval for unsigned builds
+
+Current preview builds may not be notarized by a certified Apple Developer account. If macOS
+blocks `Rsnap.app` after you unzip a downloaded build, use the quarantine override only for a
+bundle you built yourself or downloaded from this repository's GitHub Releases page.
+
+Move the app to `/Applications`, then run:
+
+```sh
+xattr -rd com.apple.quarantine /Applications/Rsnap.app
+```
+
+If Terminal reports a permission error, grant Terminal Full Disk Access in `System Settings` ->
+`Privacy & Security` -> `Full Disk Access`, then rerun the command. If you keep the app in a
+different location, replace `/Applications/Rsnap.app` with that bundle path.
+
+After Gatekeeper allows the app to open, continue with Screen Recording permission below.
 
 ### macOS permissions
 
