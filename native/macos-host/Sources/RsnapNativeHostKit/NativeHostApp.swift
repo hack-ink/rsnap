@@ -7033,7 +7033,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentLiveColorDisplay(for sample: RGBSample?) -> LiveColorDisplay {
-		let placeholderHex = "#------"
+		let placeholderHex = "#000000"
 		let hexText =
 			sample.map { String(format: "#%02X%02X%02X", $0.r, $0.g, $0.b) }
 			?? placeholderHex
