@@ -1009,15 +1009,16 @@ pub unsafe extern "C" fn rsnap_live_sampler_sample_cursor(
 		patch_width_px,
 		patch_height_px,
 	);
-	let mut out = RsnapLiveSample::default();
-
 	let Some(sample) = sample else {
 		return RsnapStatus::Empty;
 	};
-	out.has_frame_metadata = 1;
-	out.frame_age_micros = sample.frame_age_micros;
-	out.frame_seq = sample.frame_seq;
-	out.stream_generation = sample.stream_generation;
+	let mut out = RsnapLiveSample {
+		has_frame_metadata: 1,
+		frame_age_micros: sample.frame_age_micros,
+		frame_seq: sample.frame_seq,
+		stream_generation: sample.stream_generation,
+		..Default::default()
+	};
 
 	if let Some(rgb) = sample.sample.rgb {
 		out.rgb = RsnapRgb { r: rgb.r, g: rgb.g, b: rgb.b };

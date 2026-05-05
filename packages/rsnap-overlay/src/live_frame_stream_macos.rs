@@ -407,6 +407,7 @@ impl MacLiveFrameStream {
 					request.patch_width_px,
 					request.patch_height_px,
 				)?;
+
 				Some(LiveCursorFrameSample {
 					sample,
 					frame_age: Instant::now().saturating_duration_since(frame.captured_at),
