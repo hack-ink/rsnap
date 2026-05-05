@@ -70,6 +70,45 @@ replay_scroll_capture_assert_self_check_only() {
   return 0
 }
 
+replay_scroll_capture_has_trace_arg() {
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--trace" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+replay_scroll_capture_default_trace_root() {
+  case "$(uname -s)" in
+    Darwin)
+      printf '%s/Library/Application Support/ink.hack.rsnap/scroll-capture-traces\n' "$HOME"
+      ;;
+    *)
+      printf '%s/.local/share/ink.hack.rsnap/scroll-capture-traces\n' "$HOME"
+      ;;
+  esac
+}
+
+replay_scroll_capture_maybe_skip_without_traces() {
+  replay_scroll_capture_has_trace_arg "$@" && return 0
+  replay_scroll_capture_has_flag "--list" "$@" && return 0
+
+  local trace_root latest_manifest
+  trace_root="$(replay_scroll_capture_default_trace_root)"
+  latest_manifest="$(
+    find "$trace_root" -mindepth 2 -maxdepth 2 -name manifest.json -print -quit 2>/dev/null || true
+  )"
+  if [[ -n "$latest_manifest" ]]; then
+    return 0
+  fi
+
+  printf '[replay] SKIP no recorded scroll-capture traces under %s; pass --trace <manifest-path> to replay a specific trace.\n' "$trace_root"
+  return 1
+}
+
 replay_scroll_capture_run() {
   local mode="$1"
   shift
@@ -96,6 +135,10 @@ replay_scroll_capture_run() {
       return 2
       ;;
   esac
+
+  if ! replay_scroll_capture_maybe_skip_without_traces "$@"; then
+    return 0
+  fi
 
   cd "$(replay_scroll_capture_repo_root)"
   exec cargo run -p rsnap-overlay --example scroll_capture_replay -- \

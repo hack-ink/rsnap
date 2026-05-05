@@ -115,3 +115,10 @@ live_hud_run_mouse_path() {
   PATH_CYCLES="$PATH_CYCLES" \
   swift "$(live_hud_cursor_helper)"
 }
+
+live_hud_release_primary_button() {
+  PATH_POINTS="$PATH_POINTS" \
+  PATH_MODE="release-primary" \
+  PATH_DRIVER="$PATH_DRIVER" \
+  swift "$(live_hud_cursor_helper)"
+}
