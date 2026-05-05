@@ -24,7 +24,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 16;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 17;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -70,6 +70,14 @@ pub struct RsnapLiveSample {
 	pub rgb: RsnapRgb,
 	/// Non-zero when `rgb` is present.
 	pub has_rgb: u8,
+	/// Non-zero when frame provenance fields are present.
+	pub has_frame_metadata: u8,
+	/// Age of the sampled ScreenCaptureKit frame in microseconds.
+	pub frame_age_micros: u64,
+	/// Monotonic sequence of the sampled ScreenCaptureKit frame.
+	pub frame_seq: u64,
+	/// Live stream generation that produced the sampled frame.
+	pub stream_generation: u64,
 	/// Sampled loupe patch width in pixels.
 	pub patch_width: u32,
 	/// Sampled loupe patch height in pixels.
@@ -84,6 +92,10 @@ impl Default for RsnapLiveSample {
 		Self {
 			rgb: RsnapRgb::default(),
 			has_rgb: 0,
+			has_frame_metadata: 0,
+			frame_age_micros: 0,
+			frame_seq: 0,
+			stream_generation: 0,
 			patch_width: 0,
 			patch_height: 0,
 			patch_len: 0,
@@ -991,19 +1003,28 @@ pub unsafe extern "C" fn rsnap_live_sampler_sample_cursor(
 		return RsnapStatus::NullOutput;
 	}
 
-	let sample = handle.sampler.sample_cursor(
+	let sample = handle.sampler.sample_cursor_with_metadata(
 		decode_overlay_monitor(monitor),
 		decode_overlay_point(point),
 		patch_width_px,
 		patch_height_px,
 	);
-	let mut out = RsnapLiveSample::default();
+	let Some(sample) = sample else {
+		return RsnapStatus::Empty;
+	};
+	let mut out = RsnapLiveSample {
+		has_frame_metadata: 1,
+		frame_age_micros: sample.frame_age_micros,
+		frame_seq: sample.frame_seq,
+		stream_generation: sample.stream_generation,
+		..Default::default()
+	};
 
-	if let Some(rgb) = sample.rgb {
+	if let Some(rgb) = sample.sample.rgb {
 		out.rgb = RsnapRgb { r: rgb.r, g: rgb.g, b: rgb.b };
 		out.has_rgb = 1;
 	}
-	if let Some(patch) = sample.patch {
+	if let Some(patch) = sample.sample.patch {
 		let bytes = patch.as_raw();
 		let len = bytes.len().min(RSNAP_LIVE_SAMPLE_PATCH_CAPACITY);
 

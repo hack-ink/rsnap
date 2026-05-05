@@ -116,6 +116,73 @@ enum NativeHostTelemetry {
 		)
 	}
 
+	static func liveChromeFirstRgbSample(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		refreshCount: UInt64,
+		source: String,
+		hasPatch: Bool,
+		includeLoupePatch: Bool
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.first_rgb_sample totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) refreshCount=\(refreshCount, privacy: .public) source=\(source, privacy: .public) hasPatch=\(hasPatch, privacy: .public) includeLoupePatch=\(includeLoupePatch, privacy: .public)"
+		)
+	}
+
+	static func liveChromeSampleFeedStarted(
+		captureID: UInt64,
+		targetHz: Int
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.sample_feed_started targetHz=\(targetHz, privacy: .public)"
+		)
+	}
+
+	static func liveStreamFirstRgbSample(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		hasPatch: Bool
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.live_stream_first_rgb_sample totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) hasPatch=\(hasPatch, privacy: .public)"
+		)
+	}
+
+	static func liveStreamSamplerPrepared(
+		totalMilliseconds: Double,
+		created: Bool,
+		reason: String
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) event=live_chrome.live_stream_sampler_prepared totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) created=\(created, privacy: .public) reason=\(reason, privacy: .public)"
+		)
+	}
+
+	static func liveStreamSample(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		outcome: String,
+		frameAgeMilliseconds: Double,
+		hasPatch: Bool
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.live_stream_sample totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) outcome=\(outcome, privacy: .public) frameAgeMs=\(frameAgeMilliseconds, format: .fixed(precision: 2), privacy: .public) hasPatch=\(hasPatch, privacy: .public)"
+		)
+	}
+
+	static func liveChromeBackgroundSample(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		outcome: String,
+		source: String,
+		includeLoupePatch: Bool,
+		immediate: Bool
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.background_sample totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) outcome=\(outcome, privacy: .public) source=\(source, privacy: .public) includeLoupePatch=\(includeLoupePatch, privacy: .public) immediate=\(immediate, privacy: .public)"
+		)
+	}
+
 	static func liveChromeInputSummary(
 		captureID: UInt64,
 		reason: String,

@@ -16,6 +16,7 @@ struct LivePositionDisplay: Equatable {
 struct LiveColorDisplay: Equatable {
 	let hexText: String
 	let hexSlotWidth: CGFloat
+	let isPending: Bool
 }
 
 struct LiveChromeBackdropSnapshot {
@@ -371,7 +372,7 @@ private final class LiveChromeBackdropWindow: NSWindow {
 		animationBehavior = .none
 		isOpaque = false
 		level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue - 1)
-		sharingType = .readOnly
+		sharingType = .none
 		titleVisibility = .hidden
 		titlebarAppearsTransparent = true
 		orderOut(nil)
