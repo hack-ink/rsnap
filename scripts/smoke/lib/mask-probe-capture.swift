@@ -51,6 +51,7 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 	private let readyPath: String?
 	private let screenshotPath: String?
 	private let releasedScreenshotPath: String?
+	private let screenshotDelaySeconds: TimeInterval
 	private let point: CGPoint
 	private let displayFrame: CGRect
 	private let lock = NSLock()
@@ -59,6 +60,8 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 	private var wroteScreenshot = false
 	private var wroteReleasedScreenshot = false
 	private var completedReleasedScreenshot = false
+	private var observedPhase = ""
+	private var observedPhaseStartedAt: TimeInterval = 0
 
 	init(
 		outputPath: String,
@@ -66,6 +69,7 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 		readyPath: String?,
 		screenshotPath: String?,
 		releasedScreenshotPath: String?,
+		screenshotDelayMilliseconds: Int,
 		point: CGPoint,
 		displayFrame: CGRect
 	) {
@@ -74,6 +78,8 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 		self.readyPath = readyPath
 		self.screenshotPath = screenshotPath
 		self.releasedScreenshotPath = releasedScreenshotPath
+		self.screenshotDelaySeconds =
+			TimeInterval(max(0, screenshotDelayMilliseconds)) / 1_000.0
 		self.point = point
 		self.displayFrame = displayFrame
 	}
@@ -91,12 +97,16 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 			return
 		}
 		let phase = currentPhase()
+		let now = ProcessInfo.processInfo.systemUptime
 		let screenshotToWrite: (path: String, phase: String)?
 		lock.lock()
-		if phase == "holding", let screenshotPath, !wroteScreenshot {
+		let phaseIsStable = updateObservedPhase(phase, now: now)
+		if phase == "holding", let screenshotPath, !wroteScreenshot, phaseIsStable {
 			wroteScreenshot = true
 			screenshotToWrite = (screenshotPath, phase)
-		} else if phase == "released", let releasedScreenshotPath, !wroteReleasedScreenshot {
+		} else if phase == "released", let releasedScreenshotPath, !wroteReleasedScreenshot,
+			phaseIsStable
+		{
 			wroteReleasedScreenshot = true
 			screenshotToWrite = (releasedScreenshotPath, phase)
 		} else {
@@ -105,7 +115,7 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 		samples.append(
 			Sample(
 				phase: phase,
-				uptime: ProcessInfo.processInfo.systemUptime,
+				uptime: now,
 				luminance: luminance
 			)
 		)
@@ -119,6 +129,15 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 				lock.unlock()
 			}
 		}
+	}
+
+	private func updateObservedPhase(_ phase: String, now: TimeInterval) -> Bool {
+		guard phase == observedPhase else {
+			observedPhase = phase
+			observedPhaseStartedAt = now
+			return screenshotDelaySeconds <= 0
+		}
+		return now - observedPhaseStartedAt >= screenshotDelaySeconds
 	}
 
 	func writeSamples() {
@@ -263,6 +282,7 @@ func runMaskProbe() async throws {
 	let readyPath = readOptionalString("MASK_PROBE_READY_PATH")
 	let screenshotPath = readOptionalString("MASK_PROBE_SCREENSHOT_PATH")
 	let releasedScreenshotPath = readOptionalString("MASK_PROBE_RELEASED_SCREENSHOT_PATH")
+	let screenshotDelayMs = readInt("MASK_PROBE_SCREENSHOT_DELAY_MS", default: 120)
 	let point = readRequiredPoint("MASK_PROBE_POINT")
 	let durationMs = readInt("MASK_PROBE_DURATION_MS", default: 1_400)
 	let rateHz = readInt("MASK_PROBE_RATE_HZ", default: 60)
@@ -293,6 +313,7 @@ func runMaskProbe() async throws {
 		readyPath: readyPath,
 		screenshotPath: screenshotPath,
 		releasedScreenshotPath: releasedScreenshotPath,
+		screenshotDelayMilliseconds: screenshotDelayMs,
 		point: point,
 		displayFrame: display.frame
 	)

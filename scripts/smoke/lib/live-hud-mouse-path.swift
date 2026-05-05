@@ -106,6 +106,14 @@ func writeMaskProbePhase(_ phase: String) {
 	}
 }
 
+func releasePrimaryButton(with driver: MousePathDriver, at point: CGPoint) {
+	driver.mouseEvent(.leftMouseUp, at: point)
+	sleepMs(20)
+	driver.mouseEvent(.leftMouseUp, at: point)
+	sleepMs(20)
+	driver.mouseEvent(.mouseMoved, at: point)
+}
+
 func moveSmooth(points: [CGPoint], durationMs: Int, rateHz: Int, cycles: Int) {
 	let driver = MousePathDriver()
 	let minX = points.map(\.x).min() ?? 0
@@ -160,7 +168,7 @@ func dragRegion(points: [CGPoint], durationMs: Int, rateHz: Int) {
 		writeMaskProbePhase("holding")
 		sleepMs(useconds_t(holdBeforeReleaseMs))
 	}
-	driver.mouseEvent(.leftMouseUp, at: end)
+	releasePrimaryButton(with: driver, at: end)
 	writeMaskProbePhase("released")
 	if ProcessInfo.processInfo.environment["MASK_PROBE_PHASE_PATH"] != nil {
 		sleepMs(useconds_t(readInt("MASK_PROBE_POST_RELEASE_MS", default: 360)))
@@ -174,7 +182,12 @@ func clickPoint(points: [CGPoint]) {
 	sleepMs(120)
 	driver.mouseEvent(.leftMouseDown, at: point)
 	sleepMs(24)
-	driver.mouseEvent(.leftMouseUp, at: point)
+	releasePrimaryButton(with: driver, at: point)
+}
+
+func releasePrimaryButton(points: [CGPoint]) {
+	let driver = MousePathDriver()
+	releasePrimaryButton(with: driver, at: points[0])
 }
 
 let points = readPoints("PATH_POINTS")
@@ -194,6 +207,8 @@ case "waypoints":
 		delayMs: useconds_t(readInt("PATH_STEP_DELAY_MS", default: 10)),
 		cycles: readInt("PATH_CYCLES", default: 2)
 	)
+case "release-primary":
+	releasePrimaryButton(points: points)
 default:
 	moveSmooth(
 		points: points,

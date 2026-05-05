@@ -558,12 +558,14 @@ if screenshot_path:
                 failures.append(f"visual screenshot suspiciously small: {size} bytes")
 
 if mask_probe_path:
-    try:
-        with open(mask_probe_path, "r", encoding="utf-8", errors="replace") as handle:
-            rows = [line.strip().split(",") for line in handle if line.strip()]
-    except OSError as exc:
-        failures.append(f"mask probe missing: {exc}")
-    else:
+    for probe_path in [path for path in mask_probe_path.split(":") if path]:
+        try:
+            with open(probe_path, "r", encoding="utf-8", errors="replace") as handle:
+                rows = [line.strip().split(",") for line in handle if line.strip()]
+        except OSError as exc:
+            failures.append(f"mask probe missing: {exc}")
+            continue
+
         values: dict[str, list[float]] = {"dragging": [], "released": []}
         for row in rows[1:]:
             if len(row) != 3:
@@ -581,36 +583,37 @@ if mask_probe_path:
             failures.append(
                 f"mask probe sample count too small: dragging={len(dragging)} released={len(released)}"
             )
-        else:
-            stable_dragging = dragging[len(dragging) // 3 :]
-            baseline = statistics.median(stable_dragging)
-            released_min = min(released)
-            released_max = max(released)
-            rise = released_max - baseline
-            drop = baseline - released_min
-            ratio = released_max / max(0.05, baseline)
-            drop_ratio = baseline / max(0.05, released_min)
-            max_rise = threshold("MAX_MASK_LUMINANCE_RISE", 0.12)
-            max_drop = threshold("MAX_MASK_LUMINANCE_DROP", 0.12)
-            max_ratio = threshold("MAX_MASK_LUMINANCE_RATIO", 1.35)
-            print(
-                "[smoke] mask_probe "
-                f"path={mask_probe_path} baseline={baseline:.4f} "
-                f"releasedMin={released_min:.4f} releasedMax={released_max:.4f} "
-                f"drop={drop:.4f} rise={rise:.4f} "
-                f"dropRatio={drop_ratio:.2f} riseRatio={ratio:.2f} "
-                f"draggingSamples={len(dragging)} releasedSamples={len(released)}"
+            continue
+
+        stable_dragging = dragging[len(dragging) // 3 :]
+        baseline = statistics.median(stable_dragging)
+        released_min = min(released)
+        released_max = max(released)
+        rise = released_max - baseline
+        drop = baseline - released_min
+        ratio = released_max / max(0.05, baseline)
+        drop_ratio = baseline / max(0.05, released_min)
+        max_rise = threshold("MAX_MASK_LUMINANCE_RISE", 0.12)
+        max_drop = threshold("MAX_MASK_LUMINANCE_DROP", 0.12)
+        max_ratio = threshold("MAX_MASK_LUMINANCE_RATIO", 1.35)
+        print(
+            "[smoke] mask_probe "
+            f"path={probe_path} baseline={baseline:.4f} "
+            f"releasedMin={released_min:.4f} releasedMax={released_max:.4f} "
+            f"drop={drop:.4f} rise={rise:.4f} "
+            f"dropRatio={drop_ratio:.2f} riseRatio={ratio:.2f} "
+            f"draggingSamples={len(dragging)} releasedSamples={len(released)}"
+        )
+        if rise > max_rise and ratio > max_ratio:
+            failures.append(
+                "live-to-frozen handoff let the outside-selection scrim brighten "
+                f"(rise={rise:.4f}, ratio={ratio:.2f})"
             )
-            if rise > max_rise and ratio > max_ratio:
-                failures.append(
-                    "live-to-frozen handoff let the outside-selection scrim brighten "
-                    f"(rise={rise:.4f}, ratio={ratio:.2f})"
-                )
-            if drop > max_drop and drop_ratio > max_ratio:
-                failures.append(
-                    "live-to-frozen handoff double-darkened the outside-selection scrim "
-                    f"(drop={drop:.4f}, ratio={drop_ratio:.2f})"
-                )
+        if drop > max_drop and drop_ratio > max_ratio:
+            failures.append(
+                "live-to-frozen handoff double-darkened the outside-selection scrim "
+                f"(drop={drop:.4f}, ratio={drop_ratio:.2f})"
+            )
 
 if failures:
     for failure in failures:
