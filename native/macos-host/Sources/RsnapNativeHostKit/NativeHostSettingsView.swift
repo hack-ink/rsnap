@@ -1260,9 +1260,6 @@ private struct SettingsColorWell: NSViewRepresentable {
 		view.allowsColorPanel = isEnabled
 		view.color = NSColor(selection).usingColorSpace(.deviceRGB) ?? NSColor(selection)
 		view.coordinator = context.coordinator
-		if NSColorPanel.sharedColorPanelExists, NSColorPanel.shared.isVisible {
-			NSColorPanel.shared.color = view.color
-		}
 	}
 
 	func makeCoordinator() -> Coordinator {
