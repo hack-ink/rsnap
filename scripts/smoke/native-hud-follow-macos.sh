@@ -22,6 +22,7 @@ Useful overrides:
   PATH_DURATION_MS=2500            smooth path duration
   PATH_CYCLES=3                    smooth path lissajous cycles
   HUD_FOLLOW_CASES=hud,loupe       run collapsed HUD and expanded loupe cases
+  LOUPE_TOGGLE_SETTLE_S=0.8        settle after Tab before measuring loupe follow
   MAX_SAMPLE_REFRESH_GAP_P95_MS    default: pointer/sample target budget + 1ms
   MAX_ACTIVE_LAYER_CHROME_RENDER_GAP_P95_MS default: active display target budget + 1ms
   MAX_LAYER_CHROME_RENDER_DURATION_P95_MS default: active display target budget
@@ -62,6 +63,7 @@ PATH_RATE_HZ="${USER_PATH_RATE_HZ:-120}"
 PATH_CYCLES="${USER_PATH_CYCLES:-3}"
 HUD_FOLLOW_CASES="${USER_HUD_FOLLOW_CASES:-hud,loupe}"
 OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0.35}"
+LOUPE_TOGGLE_SETTLE_S="${LOUPE_TOGGLE_SETTLE_S:-0.8}"
 POST_PATH_SETTLE_S="${POST_PATH_SETTLE_S:-0.6}"
 POST_CLOSE_SETTLE_S="${POST_CLOSE_SETTLE_S:-0.25}"
 RSNAP_TELEMETRY_LAST="${RSNAP_TELEMETRY_LAST:-10s}"
@@ -92,12 +94,16 @@ run_hud_follow_case() {
 
 	"$ROOT_DIR/scripts/build_and_run.sh" verify >/tmp/rsnap-native-hud-follow-build.out
 	sleep 1.0
+	live_hud_release_primary_button
+	sleep 0.05
 	press_capture_hotkey
 	sleep 0.4
 	press_capture_hotkey
 	sleep 0.2
 	live_hud_focus_rsnap_overlay
 	sleep "$OVERLAY_SETTLE_S"
+	live_hud_release_primary_button
+	sleep 0.05
 
 	case "$case_name" in
 		hud)
@@ -108,6 +114,7 @@ run_hud_follow_case() {
 			echo "[smoke] case: loupe"
 			live_hud_focus_rsnap_overlay
 			live_hud_press_tab
+			sleep "$LOUPE_TOGGLE_SETTLE_S"
 			live_hud_run_mouse_path
 			;;
 		"")

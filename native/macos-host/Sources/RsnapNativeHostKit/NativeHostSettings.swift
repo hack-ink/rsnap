@@ -155,7 +155,7 @@ struct NativeHostSettings: Equatable {
 			hudTintHue: 0.6074879184861536,
 			hudTintSaturation: 0.72,
 			hudTintBrightness: 0.95,
-			liquidGlassStyle: .clear,
+			liquidGlassStyle: .regular,
 			loupeSampleSize: .small
 		)
 	}
@@ -382,14 +382,14 @@ enum LoupeSampleSizePreference: String, CaseIterable {
 }
 
 enum LiveChromeGlassMaterialSupport {
-	static var isLiquidGlassAvailable: Bool {
+	static let isLiquidGlassAvailable: Bool = {
 		#if compiler(>=6.2)
 			if #available(macOS 26.0, *) {
 				return true
 			}
 		#endif
 		return false
-	}
+	}()
 }
 
 extension NativeHostSettings {

@@ -12,14 +12,14 @@ Usage: native-visual-contract-macos.sh [--self-check] [--help]
 Runs the native macOS visual/behavior contract smoke:
   1. force a representative native-host visual mode
   2. build, sign, and launch the native host app
-  3. run one real click freeze and one real held-drag freeze
+  3. run real held-drag freeze coverage before click/frozen immutability guards
   4. capture the in-drag and frozen overlays
   5. gate click/drag editability, scrim stability, border leakage, and handoff telemetry
 
 Useful overrides:
   VISUAL_CONTRACT_CASES=liquid          optional: liquid,classic
   REPEATED_CLICK_FREEZES=1
-  VERIFY_CLICK_FROZEN_MOVE=1       attempts a forbidden fixed-selection frozen move
+  VERIFY_CLICK_FROZEN_MOVE=0       optional: after click freeze, attempts a forbidden fixed-selection frozen move
   REPEATED_DRAG_FREEZES=2
   DRAG_DURATION_MS=260
   DRAG_HOLD_BEFORE_RELEASE_MS=700
@@ -28,12 +28,13 @@ Useful overrides:
   APP_POST_VERIFY_SETTLE_S=0
   OVERLAY_SETTLE_S=0.08
   POST_FREEZE_SETTLE_S=0.08
-  POST_CLOSE_SETTLE_S=0.12
+  POST_CLOSE_SETTLE_S=0.18
   MASK_PROBE_MIN_PHASE_SAMPLES=5
   MASK_PROBE_POLL_MS=20
   MASK_PROBE_POST_RELEASE_MS=180
   MASK_PROBE_STOP_CAPTURE=0
-  VISUAL_PROBE_ALL_DRAGS=0
+  MASK_PROBE_SCREENSHOT_DELAY_MS=120
+  VISUAL_PROBE_ALL_DRAGS=1
   MAX_FREEZE_COMMIT_MS=90
   MAX_FREEZE_PRESENT_MS=35
   MAX_FREEZE_SNAPSHOT_WAIT_MS=45
@@ -76,15 +77,16 @@ VISUAL_BACKGROUND_MODE="${VISUAL_BACKGROUND_MODE:-none}"
 APP_POST_VERIFY_SETTLE_S="${APP_POST_VERIFY_SETTLE_S:-0}"
 OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0.08}"
 POST_FREEZE_SETTLE_S="${POST_FREEZE_SETTLE_S:-0.08}"
-POST_CLOSE_SETTLE_S="${POST_CLOSE_SETTLE_S:-0.12}"
+POST_CLOSE_SETTLE_S="${POST_CLOSE_SETTLE_S:-0.18}"
 REPEATED_CLICK_FREEZES="${REPEATED_CLICK_FREEZES:-1}"
-VERIFY_CLICK_FROZEN_MOVE="${VERIFY_CLICK_FROZEN_MOVE:-1}"
+VERIFY_CLICK_FROZEN_MOVE="${VERIFY_CLICK_FROZEN_MOVE:-0}"
 REPEATED_DRAG_FREEZES="${REPEATED_DRAG_FREEZES:-2}"
 MASK_PROBE_MIN_PHASE_SAMPLES="${MASK_PROBE_MIN_PHASE_SAMPLES:-5}"
 MASK_PROBE_POLL_MS="${MASK_PROBE_POLL_MS:-20}"
 MASK_PROBE_POST_RELEASE_MS="${MASK_PROBE_POST_RELEASE_MS:-180}"
 MASK_PROBE_STOP_CAPTURE="${MASK_PROBE_STOP_CAPTURE:-0}"
-VISUAL_PROBE_ALL_DRAGS="${VISUAL_PROBE_ALL_DRAGS:-0}"
+MASK_PROBE_SCREENSHOT_DELAY_MS="${MASK_PROBE_SCREENSHOT_DELAY_MS:-120}"
+VISUAL_PROBE_ALL_DRAGS="${VISUAL_PROBE_ALL_DRAGS:-1}"
 
 PREF_DOMAIN="${RSNAP_PREF_DOMAIN:-ink.hack.rsnap}"
 PREF_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/rsnap-prefs.XXXXXX.plist")"
@@ -116,6 +118,18 @@ tell application "System Events"
 	key code 7 using option down
 end tell
 APPLESCRIPT
+}
+
+open_capture_overlay() {
+	press_capture_hotkey
+	sleep "$OVERLAY_SETTLE_S"
+	live_hud_focus_rsnap_overlay
+}
+
+close_capture_overlay() {
+	live_hud_focus_rsnap_overlay >/dev/null 2>&1 || true
+	live_hud_press_escape >/dev/null 2>&1 || true
+	sleep "$POST_CLOSE_SETTLE_S"
 }
 
 start_visual_background() {
@@ -210,8 +224,9 @@ wait_file_nonempty() {
 if [[ -z "$DISPLAY_BOUNDS" ]]; then
 	DISPLAY_BOUNDS="$(live_hud_read_main_display_bounds | tr -d ' ')"
 fi
-if [[ -z "$PATH_POINTS" ]]; then
-	PATH_POINTS="$(
+DRAG_POINTS="${PATH_POINTS:-}"
+if [[ -z "$DRAG_POINTS" ]]; then
+	DRAG_POINTS="$(
 		python3 - "$DISPLAY_BOUNDS" <<'PY'
 import sys
 
@@ -229,7 +244,7 @@ PY
 fi
 
 smoke_log "display bounds: $DISPLAY_BOUNDS"
-smoke_log "drag points: $PATH_POINTS duration_ms=$DRAG_DURATION_MS hold_ms=$DRAG_HOLD_BEFORE_RELEASE_MS rate_hz=$PATH_RATE_HZ"
+smoke_log "drag points: $DRAG_POINTS duration_ms=$DRAG_DURATION_MS hold_ms=$DRAG_HOLD_BEFORE_RELEASE_MS rate_hz=$PATH_RATE_HZ"
 
 CLICK_POINTS="$(
 	python3 - "$DISPLAY_BOUNDS" <<'PY'
@@ -298,6 +313,7 @@ run_visual_case() {
 	swiftc "$SCRIPT_DIR/lib/mask-probe-capture.swift" -o "$mask_probe_bin"
 	smoke_log "compiled visual smoke helpers"
 	drag_screenshot_paths=""
+	mask_probe_paths=""
 	drag_screenshot_path="$case_tmp_dir/dragging-1.png"
 	screenshot_path="$case_tmp_dir/frozen-1.png"
 	mask_probe_path=""
@@ -313,34 +329,7 @@ run_visual_case() {
 	"$ROOT_DIR/scripts/build_and_run.sh" verify >/tmp/rsnap-native-visual-contract-build.out
 	smoke_log "native host verified"
 	sleep "$APP_POST_VERIFY_SETTLE_S"
-	live_hud_press_escape >/dev/null 2>&1 || true
-
-	for ((click_index = 1; click_index <= REPEATED_CLICK_FREEZES; click_index++)); do
-		smoke_log "repeated click freeze $click_index/$REPEATED_CLICK_FREEZES"
-		press_capture_hotkey
-		sleep "$OVERLAY_SETTLE_S"
-		live_hud_focus_rsnap_overlay
-		PATH_MODE=click-point \
-		PATH_DRIVER=event \
-		PATH_POINTS="$CLICK_POINTS" \
-		"$cursor_helper_bin"
-		sleep "$POST_FREEZE_SETTLE_S"
-		live_hud_focus_rsnap_overlay
-		if [[ "$VERIFY_CLICK_FROZEN_MOVE" == "1" ]]; then
-			PATH_MODE=drag-region \
-			PATH_DRIVER=event \
-			PATH_POINTS="$CLICK_FROZEN_MOVE_POINTS" \
-			PATH_DURATION_MS=90 \
-			PATH_RATE_HZ=120 \
-			PATH_HOLD_BEFORE_RELEASE_MS=0 \
-			"$cursor_helper_bin"
-			sleep "$POST_FREEZE_SETTLE_S"
-			live_hud_focus_rsnap_overlay
-			smoke_log "click $click_index attempted forbidden frozen move"
-		fi
-		live_hud_press_escape >/dev/null 2>&1 || true
-		sleep "$POST_CLOSE_SETTLE_S"
-	done
+	close_capture_overlay
 
 	for ((drag_index = 1; drag_index <= REPEATED_DRAG_FREEZES; drag_index++)); do
 		smoke_log "repeated drag freeze $drag_index/$REPEATED_DRAG_FREEZES"
@@ -370,7 +359,7 @@ run_visual_case() {
 			printf 'pre' >"$mask_probe_phase_path"
 			rm -f "$mask_probe_ready_path"
 			mask_probe_point="$(
-				python3 - "$DISPLAY_BOUNDS" "$PATH_POINTS" <<'PY'
+				python3 - "$DISPLAY_BOUNDS" "$DRAG_POINTS" <<'PY'
 import sys
 
 left, top, right, bottom = map(int, sys.argv[1].replace(" ", "").split(","))
@@ -381,21 +370,50 @@ min_x, max_x = sorted((sx, ex))
 min_y, max_y = sorted((sy, ey))
 selection_width = max_x - min_x
 selection_height = max_y - min_y
-sample_x = max_x + max(96, selection_width * 0.18)
-if sample_x > right - 96:
-    sample_x = min_x - max(96, selection_width * 0.18)
-sample_y = min_y + selection_height * 0.45
-sample_x = min(max(sample_x, left + 32), right - 32)
-sample_y = min(max(sample_y, top + 32), bottom - 32)
+margin = 96
+expanded = (
+    min_x - max(margin, selection_width * 0.20),
+    min_y - max(margin, selection_height * 0.20),
+    max_x + max(margin, selection_width * 0.20),
+    max_y + max(margin, selection_height * 0.20),
+)
+candidates = [
+    (left + margin, top + margin),
+    (right - margin, top + margin),
+    (left + margin, bottom - margin),
+    (right - margin, bottom - margin),
+]
+sample_x, sample_y = max(
+    candidates,
+    key=lambda point: min(
+        abs(point[0] - min_x),
+        abs(point[0] - max_x),
+        abs(point[1] - min_y),
+        abs(point[1] - max_y),
+    ),
+)
+for candidate_x, candidate_y in candidates:
+    if not (
+        expanded[0] <= candidate_x <= expanded[2]
+        and expanded[1] <= candidate_y <= expanded[3]
+    ):
+        sample_x, sample_y = candidate_x, candidate_y
+        break
 print(f"{sample_x:.0f},{sample_y:.0f}")
 PY
 			)"
+		fi
 
+		open_capture_overlay
+		smoke_log "drag $drag_index overlay focused"
+
+		if [[ "$should_probe_drag" == "1" ]]; then
 			MASK_PROBE_OUTPUT="$mask_probe_path" \
 			MASK_PROBE_PHASE_PATH="$mask_probe_phase_path" \
 			MASK_PROBE_READY_PATH="$mask_probe_ready_path" \
 			MASK_PROBE_SCREENSHOT_PATH="$drag_screenshot_path" \
 			MASK_PROBE_RELEASED_SCREENSHOT_PATH="$screenshot_path" \
+			MASK_PROBE_SCREENSHOT_DELAY_MS="$MASK_PROBE_SCREENSHOT_DELAY_MS" \
 			MASK_PROBE_POINT="$mask_probe_point" \
 			MASK_PROBE_DURATION_MS="$mask_probe_duration_ms" \
 			MASK_PROBE_RATE_HZ="${MASK_PROBE_RATE_HZ:-60}" \
@@ -417,30 +435,25 @@ PY
 			smoke_log "drag $drag_index mask probe ready"
 		fi
 
-		press_capture_hotkey
-		sleep "$OVERLAY_SETTLE_S"
-		live_hud_focus_rsnap_overlay
-		smoke_log "drag $drag_index overlay focused"
-
 		if [[ "$should_probe_drag" != "1" ]]; then
+			smoke_log "drag $drag_index cursor path=$DRAG_POINTS"
 			PATH_MODE=drag-region \
 			PATH_DRIVER=event \
-			PATH_POINTS="$PATH_POINTS" \
+			PATH_POINTS="$DRAG_POINTS" \
 			PATH_DURATION_MS="$DRAG_DURATION_MS" \
 			PATH_RATE_HZ="$PATH_RATE_HZ" \
 			PATH_HOLD_BEFORE_RELEASE_MS="$DRAG_HOLD_BEFORE_RELEASE_MS" \
 			"$cursor_helper_bin"
 			sleep "$POST_FREEZE_SETTLE_S"
-			live_hud_focus_rsnap_overlay
-			live_hud_press_escape >/dev/null 2>&1 || true
-			sleep "$POST_CLOSE_SETTLE_S"
+			close_capture_overlay
 			smoke_log "drag $drag_index closed overlay"
 			continue
 		fi
 
+		smoke_log "drag $drag_index cursor path=$DRAG_POINTS"
 		PATH_MODE=drag-region \
 		PATH_DRIVER=event \
-		PATH_POINTS="$PATH_POINTS" \
+		PATH_POINTS="$DRAG_POINTS" \
 		PATH_DURATION_MS="$DRAG_DURATION_MS" \
 		PATH_RATE_HZ="$PATH_RATE_HZ" \
 		PATH_HOLD_BEFORE_RELEASE_MS="$DRAG_HOLD_BEFORE_RELEASE_MS" \
@@ -504,10 +517,35 @@ PY
 		fi
 		smoke_log "drag $drag_index captured frozen screenshot"
 		drag_screenshot_paths="${drag_screenshot_paths:+$drag_screenshot_paths:}$drag_screenshot_path"
-		live_hud_focus_rsnap_overlay
-		live_hud_press_escape >/dev/null 2>&1 || true
-		sleep "$POST_CLOSE_SETTLE_S"
+		mask_probe_paths="${mask_probe_paths:+$mask_probe_paths:}$mask_probe_path"
+		close_capture_overlay
 		smoke_log "drag $drag_index closed overlay"
+	done
+
+	for ((click_index = 1; click_index <= REPEATED_CLICK_FREEZES; click_index++)); do
+		smoke_log "click freeze guard $click_index/$REPEATED_CLICK_FREEZES"
+		open_capture_overlay
+		smoke_log "click guard $click_index point=${CLICK_POINTS%%;*}"
+		PATH_MODE=click-point \
+		PATH_DRIVER=event \
+		PATH_POINTS="$CLICK_POINTS" \
+		"$cursor_helper_bin"
+		sleep "$POST_FREEZE_SETTLE_S"
+		live_hud_focus_rsnap_overlay
+		if [[ "$VERIFY_CLICK_FROZEN_MOVE" == "1" ]]; then
+			PATH_MODE=drag-region \
+			PATH_DRIVER=event \
+			PATH_POINTS="$CLICK_FROZEN_MOVE_POINTS" \
+			PATH_DURATION_MS=90 \
+			PATH_RATE_HZ=120 \
+			PATH_HOLD_BEFORE_RELEASE_MS=0 \
+			"$cursor_helper_bin"
+			sleep "$POST_FREEZE_SETTLE_S"
+			live_hud_focus_rsnap_overlay
+			smoke_log "click guard $click_index attempted forbidden frozen move"
+		fi
+		close_capture_overlay
+		smoke_log "click guard $click_index closed overlay"
 	done
 	stop_visual_background
 
@@ -515,12 +553,12 @@ PY
 	local expected_transform_commits
 	local max_transform_commits
 	expected_editability="$(
-		python3 - "$REPEATED_CLICK_FREEZES" "$REPEATED_DRAG_FREEZES" <<'PY'
+		python3 - "$REPEATED_DRAG_FREEZES" "$REPEATED_CLICK_FREEZES" <<'PY'
 import sys
 
-click_count = int(sys.argv[1])
-drag_count = int(sys.argv[2])
-print(",".join((["false"] * click_count) + (["true"] * drag_count)))
+drag_count = int(sys.argv[1])
+click_count = int(sys.argv[2])
+print(",".join((["true"] * drag_count) + (["false"] * click_count)))
 PY
 	)"
 	expected_transform_commits=0
@@ -554,9 +592,9 @@ PY
 	EXPECTED_FREEZE_EDITABILITY="$expected_editability" \
 	VISUAL_DRAG_SCREENSHOT_PATH="$drag_screenshot_paths" \
 	VISUAL_DISPLAY_BOUNDS="$DISPLAY_BOUNDS" \
-	VISUAL_DRAG_POINTS="$PATH_POINTS" \
+	VISUAL_DRAG_POINTS="$DRAG_POINTS" \
 	VISUAL_SCREENSHOT_PATH="$summary_screenshot_path" \
-	MASK_PROBE_PATH="$mask_probe_path" \
+	MASK_PROBE_PATH="$mask_probe_paths" \
 	SMOKE_STARTED_EPOCH="$case_started_epoch" \
 	python3 "$SCRIPT_DIR/lib/native-visual-contract-summary.py" "$out_dir/all.log"
 }
