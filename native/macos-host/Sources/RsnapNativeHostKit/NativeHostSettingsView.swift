@@ -723,7 +723,7 @@ private struct HudGlassModePicker: View {
 				) {
 					onSelect(mode)
 				}
-				.help(available ? mode.title : "Requires Liquid Glass support.")
+				.help(available ? mode.title : "Requires macOS 26.")
 			}
 		}
 		.padding(.horizontal, 1)
@@ -1015,7 +1015,7 @@ private struct AppearanceSettingsPanel: View {
 	private var materialSubtitle: String {
 		LiveChromeGlassMaterialSupport.isLiquidGlassAvailable
 			? "Liquid or blur."
-			: "Classic fallback."
+			: "Classic fallback before macOS 26."
 	}
 
 	private var tintColorBinding: Binding<Color> {

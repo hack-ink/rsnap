@@ -710,6 +710,10 @@ final class CaptureSessionController: NSObject {
 		currentCaptureTelemetryID
 	}
 
+	private func pointTelemetryDetail(_ point: CGPoint) -> String {
+		"x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded()))"
+	}
+
 	func prepareLiveFrameStreamSampler(reason: String) {
 		liveFrameStream.prepareSampler(reason: reason)
 	}
@@ -823,7 +827,6 @@ final class CaptureSessionController: NSObject {
 		do {
 			let startPoint = NSEvent.mouseLocation
 			let desktopFrame = CaptureOverlayController.desktopFrame
-			let initialRgbSample: RGBSample? = nil
 			frozenFrameLatchToken = nil
 			// The Rust live sampler treats these IDs as current-process windows to
 			// include through the app-level exclusion. Overlay windows must stay out
@@ -831,6 +834,17 @@ final class CaptureSessionController: NSObject {
 			pendingLiveFrameStreamRelease?.cancel()
 			pendingLiveFrameStreamRelease = nil
 			liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
+			let warmStartedAt = ProcessInfo.processInfo.systemUptime
+			let initialSample = warmLiveSamplingIfPossible(
+				at: startPoint,
+				source: "start_capture",
+				captureID: captureID,
+				includedCurrentProcessWindowIDs: capturableOwnWindowIDs
+			)
+			let initialRgbSample =
+				initialSample?.rgbSample
+				?? frozenFrameAuthority.rgbSample(containing: startPoint)
+			let warmMilliseconds = NativeHostTelemetry.milliseconds(since: warmStartedAt)
 			liveFrameStream.start(
 				for: NSScreen.screens,
 				prewarmPoint: startPoint,
@@ -890,16 +904,27 @@ final class CaptureSessionController: NSObject {
 						prewarmPoint: startPoint,
 						captureID: captureID
 					)
-					_ = self.warmLiveSamplingIfPossible(
-						at: startPoint,
-						source: "capture_overlay_preflight",
-						captureID: captureID,
-						excludeSelfFromFrozenAuthority: true,
-						selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-						includedCurrentProcessWindowIDs: capturableOwnWindowIDs
-					)
+					if self.frozenFrameAuthority.hasSelfCaptureCompleteFrame(
+						containing: startPoint)
+					{
+						NativeHostTelemetry.captureEvent(
+							"capture.self_capture_rebuild_skipped",
+							captureID: captureID,
+							detail: "start_capture_complete_filter"
+						)
+					} else {
+						_ = self.warmLiveSamplingIfPossible(
+							at: startPoint,
+							source: "capture_overlay_preflight",
+							captureID: captureID,
+							excludeSelfFromFrozenAuthority: true,
+							selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+							includedCurrentProcessWindowIDs: capturableOwnWindowIDs
+						)
+					}
 				}
 			)
+			overlayController.prepareCaptureStreamsNow(trigger: "overlay_show")
 			let overlayShowMilliseconds =
 				NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
 			(NSApp.delegate as? NativeHostApplicationController)?.window =
@@ -910,7 +935,7 @@ final class CaptureSessionController: NSObject {
 			NativeHostTelemetry.captureStartTiming(
 				captureID: captureID,
 				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
-				warmMilliseconds: 0,
+				warmMilliseconds: warmMilliseconds,
 				windowSnapshotMilliseconds: windowSnapshotMilliseconds,
 				sessionSetupMilliseconds: sessionSetupMilliseconds,
 				overlayShowMilliseconds: overlayShowMilliseconds,
@@ -1114,6 +1139,11 @@ final class CaptureSessionController: NSObject {
 
 		overlayController?.markLivePrimaryInteractionReleased(at: point)
 		do {
+			NativeHostTelemetry.captureEvent(
+				"capture.live_primary_complete_requested",
+				captureID: currentCaptureTelemetryID,
+				detail: pointTelemetryDetail(point)
+			)
 			liveFrameStream.prime(at: point)
 			if frozenFrameLatchToken == nil {
 				frozenFrameLatchToken = frozenFrameAuthority.latchToken(containing: point)
@@ -1135,6 +1165,11 @@ final class CaptureSessionController: NSObject {
 				)
 			)
 			try syncCore()
+			NativeHostTelemetry.captureEvent(
+				"capture.live_primary_complete_synced",
+				captureID: currentCaptureTelemetryID,
+				detail: "mode=\(scene.mode)"
+			)
 			if scene.mode == .live {
 				if pendingFrozenCommit == nil {
 					chromeState.endHostLocalFrozenSelecting()
@@ -1700,6 +1735,12 @@ final class CaptureSessionController: NSObject {
 		case .stopLiveCapture:
 			tearDownCapture()
 		case .requestFreezeSnapshot(let selection, let selectionEditable):
+			NativeHostTelemetry.captureEvent(
+				"capture.freeze_snapshot_requested",
+				captureID: currentCaptureTelemetryID,
+				detail:
+					"editable=\(selectionEditable) x=\(Int(selection.minX.rounded())) y=\(Int(selection.minY.rounded())) w=\(Int(selection.width.rounded())) h=\(Int(selection.height.rounded()))"
+			)
 			try commitFrozenSelection(
 				selection,
 				editable: selectionEditable
@@ -2993,19 +3034,19 @@ final class CaptureSessionController: NSObject {
 	fileprivate func releaseScreenCaptureStreams(immediate: Bool = false) {
 		pendingLiveFrameStreamRelease?.cancel()
 		pendingLiveFrameStreamRelease = nil
-		frozenFrameAuthority.stop()
-		let releaseLiveFrameStream = { [weak self] in
+		let releaseScreenCaptureStreams = { [weak self] in
 			guard let self else {
 				return
 			}
+			self.frozenFrameAuthority.stop()
 			self.liveFrameStream.stop()
 			self.pendingLiveFrameStreamRelease = nil
 		}
 		if immediate {
-			releaseLiveFrameStream()
+			releaseScreenCaptureStreams()
 			return
 		}
-		let workItem = DispatchWorkItem(block: releaseLiveFrameStream)
+		let workItem = DispatchWorkItem(block: releaseScreenCaptureStreams)
 		pendingLiveFrameStreamRelease = workItem
 		DispatchQueue.main.asyncAfter(
 			deadline: .now() + Self.liveFrameStreamReleaseGrace,
@@ -4058,7 +4099,7 @@ final class CaptureOverlayWindow: NSPanel {
 		isMovable = false
 		isOpaque = false
 		level = .screenSaver
-		sharingType = .none
+		sharingType = .readOnly
 		titleVisibility = .hidden
 		titlebarAppearsTransparent = true
 	}
@@ -4261,6 +4302,7 @@ final class CaptureHostView: NSView {
 			placeholderYSlotWidth: "y=?".size(using: font).width
 		)
 	}()
+	private static let pendingHudHexWheel = Array("0123456789ABCDEF")
 
 	weak var controller: CaptureSessionController?
 
@@ -4302,6 +4344,10 @@ final class CaptureHostView: NSView {
 	private var liveDragExceededThreshold = false
 	private var livePrimaryCompletionInFlight = false
 	private var liveMouseUpMonitor: Any?
+	private var liveGlobalMouseUpMonitor: Any?
+	private var liveMouseUpEventTap: CFMachPort?
+	private var liveMouseUpEventTapRunLoopSource: CFRunLoopSource?
+	private var liveMouseReleaseWatchdog: DispatchWorkItem?
 	private var livePointerPreviewGlobal: CGPoint?
 	private var livePointerPreviewInputUptime: TimeInterval?
 	private var livePointerPreviewInputSequence: UInt64 = 0
@@ -4722,8 +4768,11 @@ final class CaptureHostView: NSView {
 			if recoverReleasedLivePrimaryInteractionIfNeeded(at: point) {
 				return
 			}
-			if liveDragDistance(from: point) >= Self.liveDragIntentThreshold {
+			if !liveDragExceededThreshold,
+				liveDragDistance(from: point) >= Self.liveDragIntentThreshold
+			{
 				liveDragExceededThreshold = true
+				logLivePrimaryInputEvent("capture.live_primary_drag_threshold", point: point)
 			}
 			updateLivePointerPreview(to: point, rendersImmediately: false)
 			queuePointerEvent(liveDragExceededThreshold ? .liveDragged(point) : .moved(point))
@@ -4745,8 +4794,10 @@ final class CaptureHostView: NSView {
 			liveDragReleasedGlobal = nil
 			liveDragExceededThreshold = false
 			livePrimaryCompletionInFlight = false
+			logLivePrimaryInputEvent("capture.live_primary_mouse_down", point: point)
 			controller?.registerLivePrimaryInteractionOwner(self)
 			installLiveMouseUpMonitor()
+			installLiveMouseReleaseWatchdog()
 			updateLivePointerPreview(to: point, rendersImmediately: true)
 			controller?.beginPrimaryInteraction(at: point)
 		case .frozen:
@@ -4795,6 +4846,7 @@ final class CaptureHostView: NSView {
 	override func mouseUp(with event: NSEvent) {
 		let point = globalPoint(from: event)
 		if scene.mode == .live {
+			logLivePrimaryInputEvent("capture.live_primary_mouse_up", point: point)
 			controller?.completeLivePrimaryInteraction(from: self, at: point)
 		} else if scene.mode == .frozen {
 			controller?.completeFrozenInteraction(at: point)
@@ -5276,6 +5328,11 @@ final class CaptureHostView: NSView {
 			return
 		}
 		let completionPoint = liveDragCompletionPoint(for: point)
+		logLivePrimaryInputEvent(
+			"capture.live_primary_release_marked",
+			point: completionPoint,
+			detail: "dragExceeded=\(liveDragExceededThreshold)"
+		)
 		livePrimaryCompletionInFlight = true
 		liveDragReleasedGlobal = completionPoint
 		liveHoverChromeSuppressed = false
@@ -5297,6 +5354,11 @@ final class CaptureHostView: NSView {
 			return
 		}
 		let completionPoint = liveDragCompletionPoint(for: point)
+		logLivePrimaryInputEvent(
+			"capture.live_primary_complete_owned",
+			point: completionPoint,
+			detail: "dragExceeded=\(liveDragExceededThreshold)"
+		)
 		markLivePrimaryInteractionReleased(at: point)
 		if let controller {
 			controller.completePrimaryInteraction(at: completionPoint)
@@ -5315,6 +5377,7 @@ final class CaptureHostView: NSView {
 		else {
 			return false
 		}
+		logLivePrimaryInputEvent("capture.live_primary_release_recovered", point: point)
 		controller?.completeLivePrimaryInteraction(from: self, at: point)
 		return true
 	}
@@ -5344,27 +5407,183 @@ final class CaptureHostView: NSView {
 		removeLiveMouseUpMonitor()
 		liveMouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) {
 			[weak self] event in
-			guard let self else {
-				return event
-			}
-			if self.scene.mode == .live,
-				self.liveDragStartGlobal != nil,
-				!self.livePrimaryCompletionInFlight
-			{
-				self.controller?.completeLivePrimaryInteraction(
-					from: self,
-					at: self.globalPoint(fromAnyEvent: event)
-				)
-			}
+			self?.completeLivePrimaryInteractionFromMouseUp(event, source: "local")
 			return event
 		}
+		liveGlobalMouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) {
+			[weak self] event in
+			let point = NSEvent.mouseLocation
+			DispatchQueue.main.async {
+				self?.completeLivePrimaryInteractionFromMouseUp(
+					event,
+					source: "global",
+					fallbackPoint: point
+				)
+			}
+		}
+		installLiveMouseUpEventTap()
 	}
 
 	private func removeLiveMouseUpMonitor() {
+		cancelLiveMouseReleaseWatchdog()
 		if let liveMouseUpMonitor {
 			NSEvent.removeMonitor(liveMouseUpMonitor)
 			self.liveMouseUpMonitor = nil
 		}
+		if let liveGlobalMouseUpMonitor {
+			NSEvent.removeMonitor(liveGlobalMouseUpMonitor)
+			self.liveGlobalMouseUpMonitor = nil
+		}
+		removeLiveMouseUpEventTap()
+	}
+
+	private func completeLivePrimaryInteractionFromMouseUp(
+		_ event: NSEvent,
+		source: String,
+		fallbackPoint: CGPoint? = nil
+	) {
+		completeLivePrimaryInteractionFromSystemMouseUp(
+			at: fallbackPoint ?? globalPoint(fromAnyEvent: event),
+			source: source
+		)
+	}
+
+	private func completeLivePrimaryInteractionFromSystemMouseUp(
+		at point: CGPoint,
+		source: String
+	) {
+		guard
+			scene.mode == .live,
+			liveDragStartGlobal != nil,
+			!livePrimaryCompletionInFlight
+		else {
+			return
+		}
+		logLivePrimaryInputEvent(
+			"capture.live_primary_mouse_up_monitor",
+			point: point,
+			detail: "source=\(source)"
+		)
+		controller?.completeLivePrimaryInteraction(
+			from: self,
+			at: point
+		)
+	}
+
+	private func installLiveMouseUpEventTap() {
+		guard liveMouseUpEventTap == nil else {
+			return
+		}
+		let mask = CGEventMask(1 << CGEventType.leftMouseUp.rawValue)
+		let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+		guard
+			let eventTap = CGEvent.tapCreate(
+				tap: .cgSessionEventTap,
+				place: .headInsertEventTap,
+				options: .listenOnly,
+				eventsOfInterest: mask,
+				callback: Self.liveMouseUpEventTapCallback,
+				userInfo: refcon
+			),
+			let source = CFMachPortCreateRunLoopSource(nil, eventTap, 0)
+		else {
+			NativeHostTelemetry.captureEvent(
+				"capture.live_primary_mouse_up_event_tap",
+				captureID: controller?.activeTelemetryCaptureID ?? 0,
+				outcome: "unavailable"
+			)
+			return
+		}
+		liveMouseUpEventTap = eventTap
+		liveMouseUpEventTapRunLoopSource = source
+		CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+		CGEvent.tapEnable(tap: eventTap, enable: true)
+	}
+
+	private func removeLiveMouseUpEventTap() {
+		if let source = liveMouseUpEventTapRunLoopSource {
+			CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+			liveMouseUpEventTapRunLoopSource = nil
+		}
+		if let eventTap = liveMouseUpEventTap {
+			CFMachPortInvalidate(eventTap)
+			liveMouseUpEventTap = nil
+		}
+	}
+
+	private static let liveMouseUpEventTapCallback: CGEventTapCallBack = {
+		_, type, event, userInfo in
+		guard type == .leftMouseUp, let userInfo else {
+			return Unmanaged.passUnretained(event)
+		}
+		let view = Unmanaged<CaptureHostView>.fromOpaque(userInfo).takeUnretainedValue()
+		let point = view.appKitPoint(fromQuartzPoint: event.location)
+		DispatchQueue.main.async {
+			view.completeLivePrimaryInteractionFromSystemMouseUp(
+				at: point,
+				source: "event_tap"
+			)
+		}
+		return Unmanaged.passUnretained(event)
+	}
+
+	private func appKitPoint(fromQuartzPoint point: CGPoint) -> CGPoint {
+		let desktopFrame = CaptureOverlayController.desktopFrame
+		return CGPoint(x: point.x, y: desktopFrame.maxY - point.y)
+	}
+
+	private func installLiveMouseReleaseWatchdog() {
+		cancelLiveMouseReleaseWatchdog()
+		scheduleLiveMouseReleaseWatchdog()
+	}
+
+	private func scheduleLiveMouseReleaseWatchdog() {
+		let workItem = DispatchWorkItem { [weak self] in
+			self?.pollLiveMouseReleaseWatchdog()
+		}
+		liveMouseReleaseWatchdog = workItem
+		DispatchQueue.main.asyncAfter(
+			deadline: .now()
+				+ NativeHostDisplayRefresh.frameInterval(
+					forTargetFramesPerSecond: NativeHostDisplayRefresh.maximumTargetFramesPerSecond),
+			execute: workItem
+		)
+	}
+
+	private func pollLiveMouseReleaseWatchdog() {
+		liveMouseReleaseWatchdog = nil
+		guard
+			scene.mode == .live,
+			liveDragStartGlobal != nil,
+			!livePrimaryCompletionInFlight
+		else {
+			return
+		}
+		if !isPrimaryMouseButtonPressed() {
+			let point = NSEvent.mouseLocation
+			logLivePrimaryInputEvent("capture.live_primary_release_watchdog", point: point)
+			completeLivePrimaryInteractionFromSystemMouseUp(at: point, source: "watchdog")
+			return
+		}
+		scheduleLiveMouseReleaseWatchdog()
+	}
+
+	private func logLivePrimaryInputEvent(
+		_ event: String,
+		point: CGPoint,
+		detail: String = "none"
+	) {
+		NativeHostTelemetry.captureEvent(
+			event,
+			captureID: controller?.activeTelemetryCaptureID ?? 0,
+			detail:
+				"\(detail) x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded())) inFlight=\(livePrimaryCompletionInFlight)"
+		)
+	}
+
+	private func cancelLiveMouseReleaseWatchdog() {
+		liveMouseReleaseWatchdog?.cancel()
+		liveMouseReleaseWatchdog = nil
 	}
 
 	private func cancelQueuedPointerDispatch() {
@@ -7033,15 +7252,29 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentLiveColorDisplay(for sample: RGBSample?) -> LiveColorDisplay {
-		let placeholderHex = "#000000"
 		let hexText =
 			sample.map { String(format: "#%02X%02X%02X", $0.r, $0.g, $0.b) }
-			?? placeholderHex
+			?? pendingLiveColorHexText()
 		return LiveColorDisplay(
 			hexText: hexText,
 			hexSlotWidth: Self.hudLayoutMetrics.hexSlotWidth,
 			isPending: sample == nil
 		)
+	}
+
+	private func pendingLiveColorHexText() -> String {
+		let uptime = ProcessInfo.processInfo.systemUptime
+		let digits = (0..<6).map { index -> Character in
+			let rate = 9 + ((index * 7) % 6)
+			let phase = Double((index * 23) % 31) / 31.0
+			let tick = Int(((uptime + phase) * Double(rate)).rounded(.down))
+			var seed =
+				UInt64(tick + 1) &* 1_099_511_628_211
+				^ UInt64(index + 1) &* 0x9E37_79B9_7F4A_7C15
+			seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+			return Self.pendingHudHexWheel[Int((seed >> 58) & 0xF)]
+		}
+		return "#" + String(digits)
 	}
 
 	private func drawPill(
