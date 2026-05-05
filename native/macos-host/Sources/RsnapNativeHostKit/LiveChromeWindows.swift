@@ -16,6 +16,7 @@ struct LivePositionDisplay: Equatable {
 struct LiveColorDisplay: Equatable {
 	let hexText: String
 	let hexSlotWidth: CGFloat
+	let isPending: Bool
 }
 
 struct LiveChromeBackdropSnapshot {
