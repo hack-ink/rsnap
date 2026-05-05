@@ -5144,7 +5144,7 @@ final class CaptureHostView: NSView {
 					blue: CGFloat($0.b) / 255,
 					alpha: 1
 				)
-			} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
+			} ?? palette.labelText.withAlphaComponent(0.16)
 		context.setFillColor(swatchColor.cgColor)
 		context.fill(swatchRect)
 		context.setStrokeColor(palette.swatchStroke.cgColor)
@@ -5155,7 +5155,8 @@ final class CaptureHostView: NSView {
 		drawText(
 			colorDisplay.hexText,
 			at: CGPoint(x: cursorX, y: baselineY),
-			color: palette.labelText,
+			color: colorDisplay.isPending
+				? palette.labelText.withAlphaComponent(0.46) : palette.labelText,
 			font: font
 		)
 		cursorX += colorDisplay.hexSlotWidth + itemSpacing
@@ -7032,12 +7033,14 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentLiveColorDisplay(for sample: RGBSample?) -> LiveColorDisplay {
-		let placeholderHex = ""
+		let placeholderHex = "#------"
 		let hexText =
-			sample.map { String(format: "#%02X%02X%02X", $0.r, $0.g, $0.b) } ?? placeholderHex
+			sample.map { String(format: "#%02X%02X%02X", $0.r, $0.g, $0.b) }
+			?? placeholderHex
 		return LiveColorDisplay(
 			hexText: hexText,
-			hexSlotWidth: Self.hudLayoutMetrics.hexSlotWidth
+			hexSlotWidth: Self.hudLayoutMetrics.hexSlotWidth,
+			isPending: sample == nil
 		)
 	}
 

@@ -1346,6 +1346,9 @@ final class LiveOverlayRenderer {
 		category: "LiveChromeTelemetry"
 	)
 	private static let activeInputWindow: TimeInterval = 0.25
+	private static let hudColorPendingAnimationKey = "rsnap.hud.color.pending"
+	private static let hudColorResolveAnimationKey = "rsnap.hud.color.resolve"
+	private static let hudColorResolveBackgroundAnimationKey = "rsnap.hud.color.resolve.background"
 	private enum LayerZ {
 		static let frozenDisplay: CGFloat = 0
 		static let scrim: CGFloat = 10
@@ -1359,6 +1362,7 @@ final class LiveOverlayRenderer {
 	private var lastRenderedFocusFlowAnimates = false
 	private var lastChromeRenderUptime: TimeInterval?
 	private var lastActiveChromeRenderUptime: TimeInterval?
+	private var lastHudColorPending: Bool?
 
 	init(hostView: NSView) {
 		self.hostView = hostView
@@ -1535,6 +1539,7 @@ final class LiveOverlayRenderer {
 		lastRenderedFocusFlowAnimates = false
 		lastChromeRenderUptime = nil
 		lastActiveChromeRenderUptime = nil
+		resetHudColorAnimationState()
 		hoverFlowLayer.hide()
 	}
 
@@ -1795,6 +1800,7 @@ final class LiveOverlayRenderer {
 	private func renderHud(_ snapshot: LivePreviewSnapshot) {
 		guard let hudFrame = snapshot.hudFrame else {
 			hudLayer.isHidden = true
+			resetHudColorAnimationState()
 			return
 		}
 		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
@@ -1842,22 +1848,31 @@ final class LiveOverlayRenderer {
 			height: swatchSize.height
 		)
 		hudSwatchLayer.cornerRadius = 0
+		let pendingSwatchColor = palette.labelText.withAlphaComponent(0.16)
 		let swatchColor =
 			snapshot.rgbSample.map {
 				NSColor(
 					calibratedRed: CGFloat($0.r) / 255, green: CGFloat($0.g) / 255,
 					blue: CGFloat($0.b) / 255, alpha: 1)
-			} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
+			} ?? pendingSwatchColor
 		hudSwatchLayer.backgroundColor = swatchColor.cgColor
 		hudSwatchLayer.borderColor = palette.swatchStroke.cgColor
 		hudSwatchLayer.borderWidth = 1
 		cursorX += swatchSize.width + CaptureChrome.hudColorItemSpacing
 
+		let hexTextColor =
+			snapshot.colorDisplay.isPending
+			? palette.labelText.withAlphaComponent(0.46) : palette.labelText
 		applyText(
-			hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: palette.labelText,
+			hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: hexTextColor,
 			frame: CGRect(
 				x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth),
 				height: ceil(LiveOverlayTypography.lineHeight)), alignment: .left)
+		updateHudColorAnimation(
+			isPending: snapshot.colorDisplay.isPending,
+			pendingSwatchColor: pendingSwatchColor,
+			resolvedSwatchColor: swatchColor
+		)
 		cursorX += snapshot.colorDisplay.hexSlotWidth + CaptureChrome.hudGroupSpacing
 
 		if snapshot.keycapVisible {
@@ -1884,6 +1899,90 @@ final class LiveOverlayRenderer {
 			hudKeycapLayer.isHidden = true
 			hudKeycapTextLayer.isHidden = true
 		}
+	}
+
+	private func updateHudColorAnimation(
+		isPending: Bool,
+		pendingSwatchColor: NSColor,
+		resolvedSwatchColor: NSColor
+	) {
+		if isPending {
+			hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
+			hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveBackgroundAnimationKey)
+			hudHexLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
+			ensureHudColorPendingPulse(on: hudSwatchLayer, from: 0.44, to: 0.78)
+			ensureHudColorPendingPulse(on: hudHexLayer, from: 0.48, to: 0.86)
+			lastHudColorPending = true
+			return
+		}
+
+		let wasPending = lastHudColorPending == true
+		let priorSwatchColor =
+			wasPending ? hudSwatchLayer.presentation()?.backgroundColor : nil
+		let priorSwatchOpacity =
+			wasPending ? hudSwatchLayer.presentation()?.opacity : nil
+		let priorHexOpacity = wasPending ? hudHexLayer.presentation()?.opacity : nil
+		hudSwatchLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+		hudHexLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+		lastHudColorPending = false
+
+		guard wasPending else {
+			return
+		}
+
+		addHudColorResolveAnimation(
+			to: hudSwatchLayer,
+			fromOpacity: priorSwatchOpacity.map(CGFloat.init) ?? 0.62
+		)
+		addHudColorResolveAnimation(
+			to: hudHexLayer,
+			fromOpacity: priorHexOpacity.map(CGFloat.init) ?? 0.62
+		)
+		let colorAnimation = CABasicAnimation(keyPath: "backgroundColor")
+		colorAnimation.fromValue = priorSwatchColor ?? pendingSwatchColor.cgColor
+		colorAnimation.toValue = resolvedSwatchColor.cgColor
+		colorAnimation.duration = 0.16
+		colorAnimation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+		hudSwatchLayer.add(
+			colorAnimation,
+			forKey: Self.hudColorResolveBackgroundAnimationKey
+		)
+	}
+
+	private func ensureHudColorPendingPulse(
+		on layer: CALayer,
+		from fromOpacity: Float,
+		to toOpacity: Float
+	) {
+		guard layer.animation(forKey: Self.hudColorPendingAnimationKey) == nil else {
+			return
+		}
+		let animation = CABasicAnimation(keyPath: "opacity")
+		animation.fromValue = fromOpacity
+		animation.toValue = toOpacity
+		animation.duration = 0.42
+		animation.autoreverses = true
+		animation.repeatCount = .infinity
+		animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+		layer.add(animation, forKey: Self.hudColorPendingAnimationKey)
+	}
+
+	private func addHudColorResolveAnimation(to layer: CALayer, fromOpacity: CGFloat) {
+		let animation = CABasicAnimation(keyPath: "opacity")
+		animation.fromValue = fromOpacity
+		animation.toValue = 1
+		animation.duration = 0.16
+		animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+		layer.add(animation, forKey: Self.hudColorResolveAnimationKey)
+	}
+
+	private func resetHudColorAnimationState() {
+		lastHudColorPending = nil
+		hudSwatchLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+		hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
+		hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveBackgroundAnimationKey)
+		hudHexLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+		hudHexLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
 	}
 
 	private func renderLoupe(_ snapshot: LivePreviewSnapshot) {
