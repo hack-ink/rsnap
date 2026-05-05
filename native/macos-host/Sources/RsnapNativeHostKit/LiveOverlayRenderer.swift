@@ -152,21 +152,44 @@ final class WindowSnapshotFeed {
 }
 
 final class ChromeSampleFeed: @unchecked Sendable {
-	typealias FrameRgbSampler = @Sendable (CGPoint) -> RGBSample?
+	private struct FirstRgbTelemetry {
+		let captureID: UInt64
+		let totalMilliseconds: Double
+		let refreshCount: UInt64
+		let source: String
+		let hasPatch: Bool
+		let includeLoupePatch: Bool
+	}
+
+	private struct BackgroundSampleTelemetry {
+		let captureID: UInt64
+		let totalMilliseconds: Double
+		let outcome: String
+		let source: String
+		let includeLoupePatch: Bool
+		let immediate: Bool
+	}
+
+	typealias FrameRgbSampler = @Sendable (CGPoint) -> LiveRgbSample?
 	typealias FramePatchSampler = @Sendable (CGPoint, Int) -> CGImage?
 	typealias BackgroundSampler =
 		@Sendable (CGPoint, LiveColorSampleSource, Int, Bool) -> LiveChromeSample?
+	typealias FirstRgbSampled = @Sendable () -> Void
 	typealias SampleUpdated = () -> Void
 
 	private let broker: LiveFrameStreamBroker
 	private let frameRgbSampler: FrameRgbSampler
 	private let framePatchSampler: FramePatchSampler
 	private let backgroundSampler: BackgroundSampler
+	private let firstRgbSampled: FirstRgbSampled
 	private let sampleUpdated: SampleUpdated
 	private let queue = DispatchQueue(
 		label: "ink.hack.rsnap.native-host.chrome-sample-feed", qos: .userInteractive)
 	private let backgroundQueue = DispatchQueue(
-		label: "ink.hack.rsnap.native-host.chrome-sample-feed.background", qos: .userInteractive)
+		label: "ink.hack.rsnap.native-host.chrome-sample-feed.background",
+		qos: .userInteractive,
+		attributes: .concurrent
+	)
 	private let stateLock = NSLock()
 	private let sampleRefreshGapMetric = NativeHostTelemetry.distribution(
 		"live_chrome.sample_refresh_gap",
@@ -185,12 +208,14 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	)
 	private static let backgroundProbeMinimumInterval: TimeInterval = 0.25
 	private static let backgroundProbeIdleDelay: TimeInterval = 0.08
+	private static let maximumBackgroundSamplesInFlight = 1
 	private static let sampleUpdatedNotificationIdleDelay =
 		NativeHostDisplayRefresh.frameInterval(
 			forTargetFramesPerSecond: NativeHostDisplayRefresh.fallbackFramesPerSecond)
 	private var timer: DispatchSourceTimer?
 	private var refreshQueued = false
-	private var backgroundRefreshQueued = false
+	private var backgroundSamplesInFlight = 0
+	private var backgroundRefreshPending = false
 	private var backgroundCorrectionMode = false
 	private var whiteStreamRunHasProbed = false
 	private var lastBackgroundProbeUptime: TimeInterval = 0
@@ -202,23 +227,47 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	private var latestSamplePoint: CGPoint?
 	private var lastRefreshUptime: TimeInterval?
 	private var lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
+	private var running = false
+	private var activeCaptureID: UInt64 = 0
+	private var activationStartedAtUptime: TimeInterval?
+	private var generation: UInt64 = 0
+	private var refreshCount: UInt64 = 0
+	private var didEmitFirstRgbSample = false
+	private var didEmitEmptyBackgroundSample = false
+	private var liveStreamRgbReady = false
 
 	init(
 		broker: LiveFrameStreamBroker,
 		frameRgbSampler: @escaping FrameRgbSampler = { _ in nil },
 		framePatchSampler: @escaping FramePatchSampler = { _, _ in nil },
 		backgroundSampler: @escaping BackgroundSampler,
+		firstRgbSampled: @escaping FirstRgbSampled = {},
 		sampleUpdated: @escaping SampleUpdated = {}
 	) {
 		self.broker = broker
 		self.frameRgbSampler = frameRgbSampler
 		self.framePatchSampler = framePatchSampler
 		self.backgroundSampler = backgroundSampler
+		self.firstRgbSampled = firstRgbSampled
 		self.sampleUpdated = sampleUpdated
 	}
 
-	func start(targetFramesPerSecond: Int = NativeHostDisplayRefresh.targetFramesPerSecond) {
+	func start(
+		targetFramesPerSecond: Int = NativeHostDisplayRefresh.targetFramesPerSecond,
+		captureID: UInt64 = 0
+	) {
 		stop()
+		let startedAt = ProcessInfo.processInfo.systemUptime
+		stateLock.lock()
+		generation &+= 1
+		running = true
+		activeCaptureID = captureID
+		activationStartedAtUptime = startedAt
+		refreshCount = 0
+		didEmitFirstRgbSample = false
+		didEmitEmptyBackgroundSample = false
+		liveStreamRgbReady = false
+		stateLock.unlock()
 		let timer = DispatchSource.makeTimerSource(queue: queue)
 		let intervalNanoseconds = max(
 			1,
@@ -238,24 +287,37 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		}
 		self.timer = timer
 		timer.resume()
+		NativeHostTelemetry.liveChromeSampleFeedStarted(
+			captureID: captureID,
+			targetHz: targetFramesPerSecond
+		)
 	}
 
 	func stop() {
 		timer?.cancel()
 		timer = nil
 		stateLock.lock()
+		generation &+= 1
+		running = false
 		desiredPoint = nil
 		desiredIncludesLoupePatch = false
 		desiredSource = nil
 		latestSample = nil
 		latestSamplePoint = nil
 		refreshQueued = false
-		backgroundRefreshQueued = false
+		backgroundSamplesInFlight = 0
+		backgroundRefreshPending = false
 		backgroundCorrectionMode = false
 		whiteStreamRunHasProbed = false
 		lastBackgroundProbeUptime = 0
 		lastRefreshUptime = nil
 		lastPointChangeUptime = ProcessInfo.processInfo.systemUptime
+		activeCaptureID = 0
+		activationStartedAtUptime = nil
+		refreshCount = 0
+		didEmitFirstRgbSample = false
+		didEmitEmptyBackgroundSample = false
+		liveStreamRgbReady = false
 		stateLock.unlock()
 	}
 
@@ -280,7 +342,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			} ?? (point != nil)
 		if sidePixelsChanged || patchDemandChanged {
 			latestSample = latestSample.map {
-				LiveChromeSample(rgbSample: $0.rgbSample, loupePatch: nil)
+				LiveChromeSample(rgb: $0.rgb, loupePatch: nil)
 			}
 		}
 		if pointChanged || sourceChanged {
@@ -294,8 +356,9 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		desiredSource = source
 		let shouldRefresh =
 			pointChanged || activating || sourceChanged || sidePixelsChanged || patchDemandChanged
+		let running = self.running
 		stateLock.unlock()
-		if shouldRefresh {
+		if shouldRefresh, running {
 			enqueueRefresh()
 		}
 	}
@@ -304,7 +367,11 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		stateLock.lock()
 		let latestSample = self.latestSample
 		let latestSamplePoint = self.latestSamplePoint
+		let running = self.running
 		stateLock.unlock()
+		guard running else {
+			return nil
+		}
 		guard let point else {
 			return latestSample
 		}
@@ -314,7 +381,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		guard let rgbSample = frameRgbSampler(point) else {
 			return nil
 		}
-		let sample = LiveChromeSample(rgbSample: rgbSample, loupePatch: nil)
+		let sample = LiveChromeSample(rgb: rgbSample, loupePatch: nil)
 		stateLock.lock()
 		self.latestSample = sample
 		self.latestSamplePoint = point
@@ -339,6 +406,11 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		let now = ProcessInfo.processInfo.systemUptime
 		let refreshStartedAt = now
 		stateLock.lock()
+		guard running else {
+			refreshQueued = false
+			stateLock.unlock()
+			return
+		}
 		refreshQueued = false
 		let point = desiredPoint
 		let sidePixels = desiredSidePixels
@@ -348,6 +420,8 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		let previousPoint = latestSamplePoint
 		let lastRefreshUptime = self.lastRefreshUptime
 		let pointIdleDuration = now - lastPointChangeUptime
+		refreshCount &+= 1
+		let currentRefreshCount = refreshCount
 		self.lastRefreshUptime = now
 		stateLock.unlock()
 		if let lastRefreshUptime {
@@ -374,25 +448,39 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			: nil
 		let streamRgbSample =
 			frameRgbSample == nil
-			? (streamSample?.rgbSample ?? broker.rgbSample(at: point))
+			? (streamSample?.rgb ?? broker.rgbSample(at: point))
 			: nil
+		let reusableRgbSample = Self.reusableRgbSample(
+			previousSample: previousSample, previousPoint: previousPoint, point: point, now: now)
 		let rgbSample =
 			frameRgbSample
 			?? streamRgbSample
-			?? Self.reusableRgbSample(
-				previousSample: previousSample, previousPoint: previousPoint, point: point)
-		if frameRgbSample == nil, let source {
+			?? reusableRgbSample
+		let rgbSource =
+			Self.rgbSampleSource(
+				frameRgbSample: frameRgbSample,
+				streamRgbSample: streamRgbSample,
+				reusableRgbSample: reusableRgbSample
+			)
+		let shouldUseDisplayPointSampler: Bool
+		stateLock.lock()
+		if frameRgbSample != nil || streamRgbSample != nil {
+			liveStreamRgbReady = true
+		}
+		shouldUseDisplayPointSampler = !liveStreamRgbReady
+		stateLock.unlock()
+		if frameRgbSample == nil, let source, shouldUseDisplayPointSampler {
 			enqueueBackgroundSampleIfNeeded(
 				point: point,
 				source: source,
 				sidePixels: sidePixels,
 				includeLoupePatch: includeLoupePatch,
-				streamRgbSample: streamRgbSample,
+				streamRgbSample: streamRgbSample?.rgb,
 				pointIdleDuration: pointIdleDuration
 			)
 		}
 		let patchSample =
-			Self.sampleWithUpdatedPatch(rgbSample: nil, loupePatch: framePatchSample)
+			Self.sampleWithUpdatedPatch(rgb: nil, loupePatch: framePatchSample)
 			?? streamSample
 			?? Self.reusablePatchSample(
 				previousSample: previousSample,
@@ -401,34 +489,104 @@ final class ChromeSampleFeed: @unchecked Sendable {
 				includeLoupePatch: includeLoupePatch
 			)
 		let sample = Self.sampleWithUpdatedPatch(
-			rgbSample: rgbSample,
+			rgb: rgbSample,
 			patchSample: patchSample
 		)
 		stateLock.lock()
 		latestSample = sample
 		latestSamplePoint = sample == nil ? nil : point
+		let firstRgbTelemetry = makeFirstRgbTelemetryLocked(
+			rgbSample: rgbSample?.rgb,
+			source: rgbSource,
+			refreshCount: currentRefreshCount,
+			hasPatch: sample?.loupePatch != nil,
+			includeLoupePatch: includeLoupePatch
+		)
 		stateLock.unlock()
+		emit(firstRgbTelemetry)
 		sampleRefreshDurationMetric.recordMillisecondsSince(refreshStartedAt)
+	}
+
+	private static func rgbSampleSource(
+		frameRgbSample: LiveRgbSample?,
+		streamRgbSample: LiveRgbSample?,
+		reusableRgbSample: LiveRgbSample?
+	) -> String {
+		if frameRgbSample != nil {
+			return "frame_authority"
+		}
+		if streamRgbSample != nil {
+			return "live_stream"
+		}
+		if reusableRgbSample != nil {
+			return "reusable_cache"
+		}
+		return "none"
+	}
+
+	private func makeFirstRgbTelemetryLocked(
+		rgbSample: RGBSample?,
+		source: String,
+		refreshCount: UInt64,
+		hasPatch: Bool,
+		includeLoupePatch: Bool
+	) -> FirstRgbTelemetry? {
+		guard rgbSample != nil, !didEmitFirstRgbSample else {
+			return nil
+		}
+		didEmitFirstRgbSample = true
+		return FirstRgbTelemetry(
+			captureID: activeCaptureID,
+			totalMilliseconds: activationStartedAtUptime.map {
+				NativeHostTelemetry.milliseconds(since: $0)
+			} ?? 0,
+			refreshCount: refreshCount,
+			source: source,
+			hasPatch: hasPatch,
+			includeLoupePatch: includeLoupePatch
+		)
+	}
+
+	private func emit(_ telemetry: FirstRgbTelemetry?) {
+		guard let telemetry else {
+			return
+		}
+		NativeHostTelemetry.liveChromeFirstRgbSample(
+			captureID: telemetry.captureID,
+			totalMilliseconds: telemetry.totalMilliseconds,
+			refreshCount: telemetry.refreshCount,
+			source: telemetry.source,
+			hasPatch: telemetry.hasPatch,
+			includeLoupePatch: telemetry.includeLoupePatch
+		)
+		firstRgbSampled()
 	}
 
 	private static func reusableRgbSample(
 		previousSample: LiveChromeSample?,
 		previousPoint: CGPoint?,
-		point: CGPoint
-	) -> RGBSample? {
+		point: CGPoint,
+		now: TimeInterval
+	) -> LiveRgbSample? {
 		reusableRgbSample(
-			rgbSample: previousSample?.rgbSample,
+			rgbSample: previousSample?.rgb,
 			previousPoint: previousPoint,
-			point: point
+			point: point,
+			now: now
 		)
 	}
 
 	private static func reusableRgbSample(
-		rgbSample: RGBSample?,
+		rgbSample: LiveRgbSample?,
 		previousPoint: CGPoint?,
-		point: CGPoint
-	) -> RGBSample? {
+		point: CGPoint,
+		now: TimeInterval
+	) -> LiveRgbSample? {
 		guard let previousPoint, pointsEquivalent(previousPoint, point) else {
+			return nil
+		}
+		guard rgbSample?.isFresh(maximumAge: LiveRgbSample.maximumReusableAge, now: now) == true
+		else {
 			return nil
 		}
 		return rgbSample
@@ -458,11 +616,12 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		streamRgbSample: RGBSample?,
 		pointIdleDuration: TimeInterval
 	) {
-		guard pointIdleDuration >= Self.backgroundProbeIdleDelay else {
-			return
-		}
 		let now = ProcessInfo.processInfo.systemUptime
 		let shouldProbe: Bool
+		let shouldNotifyImmediately: Bool
+		let sampleSidePixels: Int
+		let sampleIncludesLoupePatch: Bool
+		let sampleGeneration: UInt64
 		stateLock.lock()
 		if let streamRgbSample, !Self.isLikelyOverlayWhite(streamRgbSample) {
 			backgroundCorrectionMode = false
@@ -471,37 +630,51 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			return
 		}
 		if streamRgbSample == nil {
-			guard now - lastBackgroundProbeUptime >= Self.backgroundProbeMinimumInterval else {
+			stateLock.unlock()
+			return
+		} else if backgroundCorrectionMode {
+			guard pointIdleDuration >= Self.backgroundProbeIdleDelay else {
 				stateLock.unlock()
 				return
 			}
-			lastBackgroundProbeUptime = now
 			shouldProbe = false
-		} else if backgroundCorrectionMode {
-			shouldProbe = false
+			shouldNotifyImmediately = false
+			sampleSidePixels = sidePixels
+			sampleIncludesLoupePatch = includeLoupePatch
 		} else if !whiteStreamRunHasProbed,
 			now - lastBackgroundProbeUptime >= Self.backgroundProbeMinimumInterval
 		{
+			guard pointIdleDuration >= Self.backgroundProbeIdleDelay else {
+				stateLock.unlock()
+				return
+			}
 			whiteStreamRunHasProbed = true
 			lastBackgroundProbeUptime = now
 			shouldProbe = true
+			shouldNotifyImmediately = false
+			sampleSidePixels = sidePixels
+			sampleIncludesLoupePatch = includeLoupePatch
 		} else {
 			stateLock.unlock()
 			return
 		}
-		guard !backgroundRefreshQueued else {
+		guard backgroundSamplesInFlight < Self.maximumBackgroundSamplesInFlight else {
+			backgroundRefreshPending = true
 			stateLock.unlock()
 			return
 		}
-		backgroundRefreshQueued = true
+		backgroundSamplesInFlight += 1
+		sampleGeneration = generation
 		stateLock.unlock()
 		backgroundQueue.async { [weak self] in
 			self?.refreshBackgroundSample(
 				point: point,
 				source: source,
-				sidePixels: sidePixels,
-				includeLoupePatch: includeLoupePatch,
-				shouldProbeForCorrection: shouldProbe
+				sidePixels: sampleSidePixels,
+				includeLoupePatch: sampleIncludesLoupePatch,
+				shouldProbeForCorrection: shouldProbe,
+				shouldNotifyImmediately: shouldNotifyImmediately,
+				generation: sampleGeneration
 			)
 		}
 	}
@@ -511,38 +684,144 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		source: LiveColorSampleSource,
 		sidePixels: Int,
 		includeLoupePatch: Bool,
-		shouldProbeForCorrection: Bool
+		shouldProbeForCorrection: Bool,
+		shouldNotifyImmediately: Bool,
+		generation sampleGeneration: UInt64
 	) {
 		let startedAt = ProcessInfo.processInfo.systemUptime
 		let sample = backgroundSampler(point, source, sidePixels, includeLoupePatch)
-		backgroundSampleDurationMetric.recordMillisecondsSince(startedAt)
-		let shouldNotify: Bool
+		let sampleRgb = sample?.rgb
+		let sampleRgbValue = sampleRgb?.rgb
+		let sampleLoupePatch = sample?.loupePatch
+		let sampleMilliseconds = NativeHostTelemetry.milliseconds(since: startedAt)
+		backgroundSampleDurationMetric.record(sampleMilliseconds)
 		stateLock.lock()
-		backgroundRefreshQueued = false
-		if let desiredPoint,
-			let sample,
+		guard generation == sampleGeneration else {
+			stateLock.unlock()
+			return
+		}
+		let shouldRefreshPending = finishBackgroundSampleLocked()
+		let currentRefreshCount = refreshCount
+		if liveStreamRgbReady, sampleLoupePatch == nil {
+			stateLock.unlock()
+			if shouldRefreshPending {
+				enqueueRefresh()
+			}
+			return
+		}
+		guard let desiredPoint,
+			sample != nil,
 			desiredSource == source,
 			Self.pointsEquivalent(desiredPoint, point)
-		{
-			if shouldProbeForCorrection, let rgbSample = sample.rgbSample {
-				backgroundCorrectionMode = !Self.isLikelyOverlayWhite(rgbSample)
+		else {
+			let shouldLogEmptyBackgroundSample =
+				sample == nil && (!didEmitEmptyBackgroundSample || sampleMilliseconds >= 20)
+			if shouldLogEmptyBackgroundSample {
+				didEmitEmptyBackgroundSample = true
 			}
-			latestSample = LiveChromeSample(
-				rgbSample: sample.rgbSample ?? latestSample?.rgbSample,
-				loupePatch: sample.loupePatch ?? latestSample?.loupePatch
-			)
-			latestSamplePoint = point
-			shouldNotify = Self.shouldNotifySampleUpdated(
+			let backgroundSampleTelemetry =
+				shouldLogEmptyBackgroundSample
+				? BackgroundSampleTelemetry(
+					captureID: activeCaptureID,
+					totalMilliseconds: sampleMilliseconds,
+					outcome: "empty",
+					source: "display_point",
+					includeLoupePatch: includeLoupePatch,
+					immediate: shouldNotifyImmediately
+				) : nil
+			stateLock.unlock()
+			emit(backgroundSampleTelemetry)
+			if shouldRefreshPending {
+				enqueueRefresh()
+			}
+			return
+		}
+		if shouldProbeForCorrection, let rgbSample = sampleRgbValue {
+			backgroundCorrectionMode = !Self.isLikelyOverlayWhite(rgbSample)
+		}
+		let previousRgb = latestSample?.rgb
+		let previousLoupePatch = latestSample?.loupePatch
+		latestSample = LiveChromeSample(
+			rgb: sampleRgb ?? previousRgb,
+			loupePatch: sampleLoupePatch ?? previousLoupePatch
+		)
+		latestSamplePoint = point
+		let firstRgbTelemetry = makeFirstRgbTelemetryLocked(
+			rgbSample: sampleRgbValue,
+			source: sampleRgb?.source ?? "background_sample",
+			refreshCount: currentRefreshCount,
+			hasPatch: sampleLoupePatch != nil,
+			includeLoupePatch: includeLoupePatch
+		)
+		let shouldLogBackgroundSample =
+			firstRgbTelemetry != nil || sampleMilliseconds >= 20
+		let backgroundSampleTelemetry =
+			shouldLogBackgroundSample
+			? BackgroundSampleTelemetry(
+				captureID: activeCaptureID,
+				totalMilliseconds: sampleMilliseconds,
+				outcome: Self.backgroundSampleOutcome(
+					hasRgb: sampleRgbValue != nil,
+					hasPatch: sampleLoupePatch != nil
+				),
+				source: sampleRgb?.source ?? "background_sample",
+				includeLoupePatch: includeLoupePatch,
+				immediate: shouldNotifyImmediately
+			) : nil
+		let shouldNotify =
+			shouldNotifyImmediately
+			|| Self.shouldNotifySampleUpdated(
 				now: ProcessInfo.processInfo.systemUptime,
 				lastPointChangeUptime: lastPointChangeUptime
 			)
-		} else {
-			shouldNotify = false
-		}
 		stateLock.unlock()
+		emit(backgroundSampleTelemetry)
+		emit(firstRgbTelemetry)
 		if shouldNotify {
 			sampleUpdated()
 		}
+		if shouldRefreshPending {
+			enqueueRefresh()
+		}
+	}
+
+	private func finishBackgroundSampleLocked() -> Bool {
+		backgroundSamplesInFlight = max(0, backgroundSamplesInFlight - 1)
+		guard backgroundRefreshPending,
+			backgroundSamplesInFlight < Self.maximumBackgroundSamplesInFlight,
+			desiredPoint != nil
+		else {
+			return false
+		}
+		backgroundRefreshPending = false
+		return true
+	}
+
+	private static func backgroundSampleOutcome(hasRgb: Bool, hasPatch: Bool) -> String {
+		if hasRgb, hasPatch {
+			return "rgb_patch"
+		}
+		if hasRgb {
+			return "rgb"
+		}
+		if hasPatch {
+			return "patch"
+		}
+		return "empty"
+	}
+
+	private func emit(_ telemetry: BackgroundSampleTelemetry?) {
+		guard let telemetry else {
+			return
+		}
+		NativeHostTelemetry.liveChromeBackgroundSample(
+			captureID: telemetry.captureID,
+			totalMilliseconds: telemetry.totalMilliseconds,
+			outcome: telemetry.outcome,
+			source: telemetry.source,
+			includeLoupePatch: telemetry.includeLoupePatch,
+			immediate: telemetry.immediate
+		)
 	}
 
 	private static func shouldNotifySampleUpdated(
@@ -557,21 +836,21 @@ final class ChromeSampleFeed: @unchecked Sendable {
 	}
 
 	private static func sampleWithUpdatedPatch(
-		rgbSample: RGBSample?,
+		rgb: LiveRgbSample?,
 		patchSample: LiveChromeSample?
 	) -> LiveChromeSample? {
-		sampleWithUpdatedPatch(rgbSample: rgbSample, loupePatch: patchSample?.loupePatch)
+		sampleWithUpdatedPatch(rgb: rgb, loupePatch: patchSample?.loupePatch)
 	}
 
 	private static func sampleWithUpdatedPatch(
-		rgbSample: RGBSample?,
+		rgb: LiveRgbSample?,
 		loupePatch: CGImage?
 	) -> LiveChromeSample? {
-		guard rgbSample != nil || loupePatch != nil else {
+		guard rgb != nil || loupePatch != nil else {
 			return nil
 		}
 		return LiveChromeSample(
-			rgbSample: rgbSample,
+			rgb: rgb,
 			loupePatch: loupePatch
 		)
 	}
@@ -1036,6 +1315,7 @@ final class LiveOverlayRenderer {
 	private let hudStrokeLayer = CAShapeLayer()
 	private let hudPositionLayer = CATextLayer()
 	private let hudHexLayer = CATextLayer()
+	private let hudHexRollLayer = CALayer()
 	private let hudSwatchLayer = CALayer()
 	private let hudKeycapLayer = CALayer()
 	private let hudKeycapTextLayer = CATextLayer()
@@ -1067,6 +1347,13 @@ final class LiveOverlayRenderer {
 		category: "LiveChromeTelemetry"
 	)
 	private static let activeInputWindow: TimeInterval = 0.25
+	private static let hudColorPendingAnimationKey = "rsnap.hud.color.pending"
+	private static let hudColorResolveAnimationKey = "rsnap.hud.color.resolve"
+	private static let hudColorResolveBackgroundAnimationKey = "rsnap.hud.color.resolve.background"
+	private static let hudColorRollAnimationKey = "rsnap.hud.color.roll"
+	private static let hudColorRollDuration: TimeInterval = 0.52
+	private static let hudColorRollDigitStagger: TimeInterval = 0.032
+	private static let hexWheel = Array("0123456789ABCDEF")
 	private enum LayerZ {
 		static let frozenDisplay: CGFloat = 0
 		static let scrim: CGFloat = 10
@@ -1080,6 +1367,10 @@ final class LiveOverlayRenderer {
 	private var lastRenderedFocusFlowAnimates = false
 	private var lastChromeRenderUptime: TimeInterval?
 	private var lastActiveChromeRenderUptime: TimeInterval?
+	private var lastHudColorPending: Bool?
+	private var hudColorRevealArmed = true
+	private var activeHudHexRollTarget: String?
+	private var hudHexRollAnimationEndUptime: TimeInterval?
 
 	init(hostView: NSView) {
 		self.hostView = hostView
@@ -1184,10 +1475,12 @@ final class LiveOverlayRenderer {
 		}
 		for hudSublayer in [
 			hudGlassLayer, hudFillLayer, hudStrokeLayer, hudSwatchLayer, hudPositionLayer,
-			hudHexLayer, hudKeycapLayer, hudKeycapTextLayer,
+			hudHexLayer, hudHexRollLayer, hudKeycapLayer, hudKeycapTextLayer,
 		] {
 			hudLayer.addSublayer(hudSublayer)
 		}
+		hudHexRollLayer.masksToBounds = false
+		hudHexRollLayer.isHidden = true
 		for loupeSublayer in [
 			loupeGlassLayer, loupeFillLayer, loupeStrokeLayer, loupePatchLayer, loupeCenterLayer,
 		] {
@@ -1256,6 +1549,7 @@ final class LiveOverlayRenderer {
 		lastRenderedFocusFlowAnimates = false
 		lastChromeRenderUptime = nil
 		lastActiveChromeRenderUptime = nil
+		resetHudColorAnimationState()
 		hoverFlowLayer.hide()
 	}
 
@@ -1516,6 +1810,7 @@ final class LiveOverlayRenderer {
 	private func renderHud(_ snapshot: LivePreviewSnapshot) {
 		guard let hudFrame = snapshot.hudFrame else {
 			hudLayer.isHidden = true
+			resetHudColorAnimationState()
 			return
 		}
 		let palette = CaptureChrome.palette(for: snapshot.theme, settings: snapshot.settings)
@@ -1563,22 +1858,36 @@ final class LiveOverlayRenderer {
 			height: swatchSize.height
 		)
 		hudSwatchLayer.cornerRadius = 0
+		let pendingSwatchColor = palette.labelText.withAlphaComponent(0.16)
 		let swatchColor =
 			snapshot.rgbSample.map {
 				NSColor(
 					calibratedRed: CGFloat($0.r) / 255, green: CGFloat($0.g) / 255,
 					blue: CGFloat($0.b) / 255, alpha: 1)
-			} ?? NSColor(calibratedWhite: 1, alpha: 0.12)
+			} ?? pendingSwatchColor
 		hudSwatchLayer.backgroundColor = swatchColor.cgColor
 		hudSwatchLayer.borderColor = palette.swatchStroke.cgColor
 		hudSwatchLayer.borderWidth = 1
 		cursorX += swatchSize.width + CaptureChrome.hudColorItemSpacing
 
+		let hexTextColor =
+			snapshot.colorDisplay.isPending
+			? palette.labelText.withAlphaComponent(0.46) : palette.labelText
+		let hexFrame = CGRect(
+			x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth),
+			height: ceil(LiveOverlayTypography.lineHeight))
 		applyText(
-			hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: palette.labelText,
-			frame: CGRect(
-				x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth),
-				height: ceil(LiveOverlayTypography.lineHeight)), alignment: .left)
+			hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: hexTextColor,
+			frame: hexFrame, alignment: .left)
+		updateHudColorAnimation(
+			isPending: snapshot.colorDisplay.isPending,
+			pendingSwatchColor: pendingSwatchColor,
+			resolvedSwatchColor: swatchColor,
+			resolvedHexText: snapshot.colorDisplay.hexText,
+			hexFrame: hexFrame,
+			font: font,
+			textColor: palette.labelText
+		)
 		cursorX += snapshot.colorDisplay.hexSlotWidth + CaptureChrome.hudGroupSpacing
 
 		if snapshot.keycapVisible {
@@ -1605,6 +1914,354 @@ final class LiveOverlayRenderer {
 			hudKeycapLayer.isHidden = true
 			hudKeycapTextLayer.isHidden = true
 		}
+	}
+
+	private func updateHudColorAnimation(
+		isPending: Bool,
+		pendingSwatchColor: NSColor,
+		resolvedSwatchColor: NSColor,
+		resolvedHexText: String,
+		hexFrame: CGRect,
+		font: NSFont,
+		textColor: NSColor
+	) {
+		if isPending {
+			clearHudHexRollAnimation()
+			hudHexLayer.isHidden = false
+			hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
+			hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveBackgroundAnimationKey)
+			hudHexLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
+			if hudColorRevealArmed {
+				ensureHudColorPendingPulse(on: hudSwatchLayer, from: 0.44, to: 0.78)
+				ensureHudColorPendingPulse(on: hudHexLayer, from: 0.48, to: 0.86)
+			} else {
+				hudSwatchLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+				hudHexLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+			}
+			lastHudColorPending = true
+			return
+		}
+
+		let wasPending = lastHudColorPending == true
+		let shouldAnimateReveal = wasPending && hudColorRevealArmed
+		let priorSwatchColor =
+			wasPending ? hudSwatchLayer.presentation()?.backgroundColor : nil
+		let priorSwatchOpacity =
+			wasPending ? hudSwatchLayer.presentation()?.opacity : nil
+		let priorHexOpacity = wasPending ? hudHexLayer.presentation()?.opacity : nil
+		hudSwatchLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+		hudHexLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+		lastHudColorPending = false
+		hudColorRevealArmed = false
+
+		guard shouldAnimateReveal else {
+			updateHudHexRollVisibility(target: resolvedHexText, frame: hexFrame)
+			return
+		}
+
+		addHudColorResolveAnimation(
+			to: hudSwatchLayer,
+			fromOpacity: priorSwatchOpacity.map(CGFloat.init) ?? 0.62
+		)
+		beginHudHexRollAnimation(
+			target: resolvedHexText,
+			frame: hexFrame,
+			font: font,
+			textColor: textColor,
+			initialOpacity: priorHexOpacity.map(CGFloat.init) ?? 0.62
+		)
+		let colorAnimation = CABasicAnimation(keyPath: "backgroundColor")
+		colorAnimation.fromValue = priorSwatchColor ?? pendingSwatchColor.cgColor
+		colorAnimation.toValue = resolvedSwatchColor.cgColor
+		colorAnimation.duration = 0.16
+		colorAnimation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+		hudSwatchLayer.add(
+			colorAnimation,
+			forKey: Self.hudColorResolveBackgroundAnimationKey
+		)
+	}
+
+	private func ensureHudColorPendingPulse(
+		on layer: CALayer,
+		from fromOpacity: Float,
+		to toOpacity: Float
+	) {
+		guard layer.animation(forKey: Self.hudColorPendingAnimationKey) == nil else {
+			return
+		}
+		let animation = CABasicAnimation(keyPath: "opacity")
+		animation.fromValue = fromOpacity
+		animation.toValue = toOpacity
+		animation.duration = 0.42
+		animation.autoreverses = true
+		animation.repeatCount = .infinity
+		animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+		layer.add(animation, forKey: Self.hudColorPendingAnimationKey)
+	}
+
+	private func addHudColorResolveAnimation(to layer: CALayer, fromOpacity: CGFloat) {
+		let animation = CABasicAnimation(keyPath: "opacity")
+		animation.fromValue = fromOpacity
+		animation.toValue = 1
+		animation.duration = 0.16
+		animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+		layer.add(animation, forKey: Self.hudColorResolveAnimationKey)
+	}
+
+	private func updateHudHexRollVisibility(target: String, frame: CGRect) {
+		guard let animationEnd = hudHexRollAnimationEndUptime,
+			ProcessInfo.processInfo.systemUptime < animationEnd,
+			activeHudHexRollTarget == target
+		else {
+			clearHudHexRollAnimation()
+			hudHexLayer.isHidden = false
+			return
+		}
+
+		hudHexLayer.isHidden = true
+		hudHexRollLayer.isHidden = false
+		hudHexRollLayer.frame = frame
+	}
+
+	private func beginHudHexRollAnimation(
+		target: String,
+		frame: CGRect,
+		font: NSFont,
+		textColor: NSColor,
+		initialOpacity: CGFloat
+	) {
+		clearHudHexRollAnimation()
+		activeHudHexRollTarget = target
+		let now = ProcessInfo.processInfo.systemUptime
+		let targetDigits = Array(target.dropFirst())
+		let digitCount = max(targetDigits.count, 0)
+		hudHexRollAnimationEndUptime =
+			now + Self.hudColorRollDuration
+			+ (Double(max(digitCount - 1, 0)) * Self.hudColorRollDigitStagger)
+			+ 0.08
+		hudHexLayer.isHidden = true
+		hudHexRollLayer.isHidden = false
+		hudHexRollLayer.frame = frame
+
+		let lineHeight = ceil(LiveOverlayTypography.lineHeight)
+		let characterFrames = hudHexCharacterFrames(
+			for: target,
+			font: font,
+			lineHeight: lineHeight
+		)
+		let hashLayer = makeHudHexRollTextLayer(
+			text: "#",
+			font: font,
+			color: textColor.withAlphaComponent(0.72),
+			frame: characterFrames.first ?? CGRect(x: 0, y: 0, width: 0, height: lineHeight)
+		)
+		hudHexRollLayer.addSublayer(hashLayer)
+
+		for (index, targetDigit) in targetDigits.enumerated() {
+			let characterFrame =
+				index + 1 < characterFrames.count
+				? characterFrames[index + 1]
+				: CGRect(x: 0, y: 0, width: 0, height: lineHeight)
+			let columnLayer = CALayer()
+			columnLayer.masksToBounds = true
+			columnLayer.frame = characterFrame
+			hudHexRollLayer.addSublayer(columnLayer)
+			addHudHexRollDigit(
+				to: columnLayer,
+				targetDigit: String(targetDigit),
+				index: index,
+				font: font,
+				textColor: textColor,
+				initialOpacity: initialOpacity,
+				lineHeight: lineHeight,
+				digitWidth: characterFrame.width
+			)
+		}
+	}
+
+	private func hudHexCharacterFrames(
+		for text: String,
+		font: NSFont,
+		lineHeight: CGFloat
+	) -> [CGRect] {
+		let characters = Array(text)
+		return characters.indices.map { index in
+			let prefixStart = String(characters.prefix(index)).size(using: font).width
+			let prefixEnd = String(characters.prefix(index + 1)).size(using: font).width
+			return CGRect(
+				x: prefixStart,
+				y: 0,
+				width: max(prefixEnd - prefixStart, 1),
+				height: lineHeight
+			)
+		}
+	}
+
+	private func addHudHexRollDigit(
+		to columnLayer: CALayer,
+		targetDigit: String,
+		index: Int,
+		font: NSFont,
+		textColor: NSColor,
+		initialOpacity: CGFloat,
+		lineHeight: CGFloat,
+		digitWidth: CGFloat
+	) {
+		let baseFrame = CGRect(x: 0, y: 0, width: digitWidth, height: lineHeight)
+		let startLayer = makeHudHexRollTextLayer(
+			text: "0",
+			font: font,
+			color: textColor.withAlphaComponent(0.58),
+			frame: baseFrame
+		)
+		startLayer.opacity = 0
+		columnLayer.addSublayer(startLayer)
+
+		let firstTumblerLayer = makeHudHexRollTextLayer(
+			text: tumblerDigit(for: targetDigit, index: index, offset: 5),
+			font: font,
+			color: textColor.withAlphaComponent(0.62),
+			frame: baseFrame
+		)
+		firstTumblerLayer.opacity = 0
+		columnLayer.addSublayer(firstTumblerLayer)
+
+		let secondTumblerLayer = makeHudHexRollTextLayer(
+			text: tumblerDigit(for: targetDigit, index: index, offset: 11),
+			font: font,
+			color: textColor.withAlphaComponent(0.72),
+			frame: baseFrame
+		)
+		secondTumblerLayer.opacity = 0
+		columnLayer.addSublayer(secondTumblerLayer)
+
+		let targetLayer = makeHudHexRollTextLayer(
+			text: targetDigit,
+			font: font,
+			color: textColor,
+			frame: baseFrame
+		)
+		targetLayer.opacity = 0
+		columnLayer.addSublayer(targetLayer)
+
+		let stagger = Double(index) * Self.hudColorRollDigitStagger
+		addHudRollAnimation(
+			to: startLayer,
+			fromY: 0,
+			toY: -lineHeight * 0.92,
+			opacityValues: [max(initialOpacity, 0.52), 0],
+			keyTimes: [0, 1],
+			beginOffset: stagger,
+			duration: 0.18
+		)
+		addHudRollAnimation(
+			to: firstTumblerLayer,
+			fromY: lineHeight * 1.05,
+			toY: -lineHeight * 0.78,
+			opacityValues: [0, 0.58, 0],
+			keyTimes: [0, 0.48, 1],
+			beginOffset: stagger + 0.045,
+			duration: 0.22
+		)
+		addHudRollAnimation(
+			to: secondTumblerLayer,
+			fromY: lineHeight * 0.98,
+			toY: -lineHeight * 0.55,
+			opacityValues: [0, 0.72, 0],
+			keyTimes: [0, 0.55, 1],
+			beginOffset: stagger + 0.15,
+			duration: 0.24
+		)
+		addHudRollAnimation(
+			to: targetLayer,
+			fromY: lineHeight * 0.9,
+			toY: 0,
+			opacityValues: [0, 1, 1],
+			keyTimes: [0, 0.7, 1],
+			beginOffset: stagger + 0.28,
+			duration: 0.24,
+			timing: .easeOut
+		)
+	}
+
+	private func tumblerDigit(for targetDigit: String, index: Int, offset: Int) -> String {
+		let targetIndex = Self.hexWheel.firstIndex(of: Character(targetDigit)) ?? 0
+		let wheelIndex = (targetIndex + index + offset) % Self.hexWheel.count
+		return String(Self.hexWheel[wheelIndex])
+	}
+
+	private func makeHudHexRollTextLayer(
+		text: String,
+		font: NSFont,
+		color: NSColor,
+		frame: CGRect
+	) -> CATextLayer {
+		let layer = CATextLayer()
+		layer.contentsScale = hostView?.window?.backingScaleFactor ?? 2
+		layer.string = text
+		layer.font = font
+		layer.fontSize = font.pointSize
+		layer.foregroundColor = color.cgColor
+		layer.alignmentMode = .left
+		layer.frame = frame
+		layer.isWrapped = false
+		return layer
+	}
+
+	private func addHudRollAnimation(
+		to layer: CALayer,
+		fromY: CGFloat,
+		toY: CGFloat,
+		opacityValues: [CGFloat],
+		keyTimes: [CGFloat],
+		beginOffset: TimeInterval,
+		duration: TimeInterval,
+		timing: CAMediaTimingFunctionName = .easeInEaseOut
+	) {
+		let translation = CABasicAnimation(keyPath: "transform.translation.y")
+		translation.fromValue = fromY
+		translation.toValue = toY
+
+		let opacity = CAKeyframeAnimation(keyPath: "opacity")
+		opacity.values = opacityValues.map { NSNumber(value: Double($0)) }
+		opacity.keyTimes = keyTimes.map { NSNumber(value: Double($0)) }
+
+		let group = CAAnimationGroup()
+		group.animations = [translation, opacity]
+		group.beginTime = CACurrentMediaTime() + beginOffset
+		group.duration = duration
+		group.timingFunction = CAMediaTimingFunction(name: timing)
+		group.fillMode = .both
+		group.isRemovedOnCompletion = false
+		layer.add(group, forKey: Self.hudColorRollAnimationKey)
+	}
+
+	private func clearHudHexRollAnimation() {
+		activeHudHexRollTarget = nil
+		hudHexRollAnimationEndUptime = nil
+		hudHexRollLayer.removeAllAnimations()
+		for sublayer in hudHexRollLayer.sublayers ?? [] {
+			sublayer.removeAllAnimations()
+			for childLayer in sublayer.sublayers ?? [] {
+				childLayer.removeAllAnimations()
+			}
+			sublayer.removeFromSuperlayer()
+		}
+		hudHexRollLayer.isHidden = true
+	}
+
+	private func resetHudColorAnimationState() {
+		lastHudColorPending = nil
+		hudColorRevealArmed = true
+		activeHudHexRollTarget = nil
+		hudHexRollAnimationEndUptime = nil
+		hudSwatchLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+		hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
+		hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveBackgroundAnimationKey)
+		hudHexLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
+		hudHexLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
+		hudHexLayer.isHidden = false
+		clearHudHexRollAnimation()
 	}
 
 	private func renderLoupe(_ snapshot: LivePreviewSnapshot) {
