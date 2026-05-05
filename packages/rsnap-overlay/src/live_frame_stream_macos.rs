@@ -135,6 +135,13 @@ pub(crate) struct OrderedRegionFrame {
 	pub(crate) image: RgbaImage,
 }
 
+pub(crate) struct LiveCursorFrameSample {
+	pub(crate) sample: LiveCursorSample,
+	pub(crate) frame_age: Duration,
+	pub(crate) frame_seq: u64,
+	pub(crate) stream_generation: u64,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct CursorSampleRequest {
 	pub(crate) x_px: u32,
@@ -382,16 +389,31 @@ impl MacLiveFrameStream {
 		monitor: MonitorRect,
 		request: CursorSampleRequest,
 	) -> Option<LiveCursorSample> {
+		self.latest_cursor_frame_sample(monitor, request).map(|sample| sample.sample)
+	}
+
+	pub(crate) fn latest_cursor_frame_sample(
+		&self,
+		monitor: MonitorRect,
+		request: CursorSampleRequest,
+	) -> Option<LiveCursorFrameSample> {
 		let sample =
 			self.shared_latest_frame.latest_frame_for_monitor(monitor.id).and_then(|frame| {
-				sample_cursor_from_pixel_buffer(
+				let sample = sample_cursor_from_pixel_buffer(
 					&frame.pixel_buffer,
 					request.x_px,
 					request.y_px,
 					request.want_patch,
 					request.patch_width_px,
 					request.patch_height_px,
-				)
+				)?;
+
+				Some(LiveCursorFrameSample {
+					sample,
+					frame_age: Instant::now().saturating_duration_since(frame.captured_at),
+					frame_seq: frame.frame_seq,
+					stream_generation: frame.stream_generation,
+				})
 			});
 
 		if sample.is_none() {

@@ -29,17 +29,29 @@ public struct RGBSample: Equatable, Sendable {
 
 public struct LiveSampleSnapshot: Equatable, Sendable {
 	public var rgb: RGBSample?
+	public var capturedAtUptime: TimeInterval?
+	public var frameAgeMicroseconds: UInt64?
+	public var frameSequence: UInt64?
+	public var streamGeneration: UInt64?
 	public var patchWidth: Int
 	public var patchHeight: Int
 	public var patchRGBA: Data?
 
 	public init(
 		rgb: RGBSample?,
+		capturedAtUptime: TimeInterval? = nil,
+		frameAgeMicroseconds: UInt64? = nil,
+		frameSequence: UInt64? = nil,
+		streamGeneration: UInt64? = nil,
 		patchWidth: Int = 0,
 		patchHeight: Int = 0,
 		patchRGBA: Data? = nil
 	) {
 		self.rgb = rgb
+		self.capturedAtUptime = capturedAtUptime
+		self.frameAgeMicroseconds = frameAgeMicroseconds
+		self.frameSequence = frameSequence
+		self.streamGeneration = streamGeneration
 		self.patchWidth = patchWidth
 		self.patchHeight = patchHeight
 		self.patchRGBA = patchRGBA
@@ -892,9 +904,21 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 			return Data(rawBuffer.prefix(count))
 		}
 
+		let frameAgeMicroseconds =
+			outSample.has_frame_metadata == 0 ? nil : UInt64(outSample.frame_age_micros)
+		let capturedAtUptime = frameAgeMicroseconds.map {
+			ProcessInfo.processInfo.systemUptime - (Double($0) / 1_000_000.0)
+		}
+
 		return LiveSampleSnapshot(
 			rgb: outSample.has_rgb == 0
 				? nil : RGBSample(r: outSample.rgb.r, g: outSample.rgb.g, b: outSample.rgb.b),
+			capturedAtUptime: capturedAtUptime,
+			frameAgeMicroseconds: frameAgeMicroseconds,
+			frameSequence: outSample.has_frame_metadata == 0
+				? nil : UInt64(outSample.frame_seq),
+			streamGeneration: outSample.has_frame_metadata == 0
+				? nil : UInt64(outSample.stream_generation),
 			patchWidth: Int(outSample.patch_width),
 			patchHeight: Int(outSample.patch_height),
 			patchRGBA: patchData

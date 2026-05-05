@@ -3,6 +3,18 @@
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
 use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect};
 
+/// Live cursor sample plus the ScreenCaptureKit frame metadata that produced it.
+pub struct HostLiveCursorSample {
+	/// Sampled RGB and optional patch payload.
+	pub sample: LiveCursorSample,
+	/// Age of the sampled ScreenCaptureKit frame in microseconds.
+	pub frame_age_micros: u64,
+	/// Monotonic live stream frame sequence.
+	pub frame_seq: u64,
+	/// Live stream generation for the active monitor stream.
+	pub stream_generation: u64,
+}
+
 /// Thin public wrapper around the proven macOS live frame stream used by the
 /// native host for RGB and loupe sampling.
 pub struct HostMacLiveSampler {
@@ -52,6 +64,35 @@ impl HostMacLiveSampler {
 				),
 			)
 			.unwrap_or(LiveCursorSample { rgb: None, patch: None })
+	}
+
+	#[must_use]
+	/// Samples the current RGB value and optional loupe patch with frame provenance.
+	pub fn sample_cursor_with_metadata(
+		&mut self,
+		monitor: MonitorRect,
+		point: GlobalPoint,
+		patch_width_px: u32,
+		patch_height_px: u32,
+	) -> Option<HostLiveCursorSample> {
+		let (x_px, y_px) = monitor.local_u32_pixels(point)?;
+		let sample = self.stream.latest_cursor_frame_sample(
+			monitor,
+			CursorSampleRequest::with_optional_patch(
+				x_px,
+				y_px,
+				patch_width_px > 0 && patch_height_px > 0,
+				patch_width_px,
+				patch_height_px,
+			),
+		)?;
+
+		Some(HostLiveCursorSample {
+			sample: sample.sample,
+			frame_age_micros: sample.frame_age.as_micros().min(u128::from(u64::MAX)) as u64,
+			frame_seq: sample.frame_seq,
+			stream_generation: sample.stream_generation,
+		})
 	}
 
 	/// Starts warming the ScreenCaptureKit stream for the requested monitor without
