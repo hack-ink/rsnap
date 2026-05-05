@@ -1315,6 +1315,7 @@ final class LiveOverlayRenderer {
 	private let hudStrokeLayer = CAShapeLayer()
 	private let hudPositionLayer = CATextLayer()
 	private let hudHexLayer = CATextLayer()
+	private let hudHexRollLayer = CALayer()
 	private let hudSwatchLayer = CALayer()
 	private let hudKeycapLayer = CALayer()
 	private let hudKeycapTextLayer = CATextLayer()
@@ -1349,6 +1350,10 @@ final class LiveOverlayRenderer {
 	private static let hudColorPendingAnimationKey = "rsnap.hud.color.pending"
 	private static let hudColorResolveAnimationKey = "rsnap.hud.color.resolve"
 	private static let hudColorResolveBackgroundAnimationKey = "rsnap.hud.color.resolve.background"
+	private static let hudColorRollAnimationKey = "rsnap.hud.color.roll"
+	private static let hudColorRollDuration: TimeInterval = 0.52
+	private static let hudColorRollDigitStagger: TimeInterval = 0.032
+	private static let hexWheel = Array("0123456789ABCDEF")
 	private enum LayerZ {
 		static let frozenDisplay: CGFloat = 0
 		static let scrim: CGFloat = 10
@@ -1363,6 +1368,8 @@ final class LiveOverlayRenderer {
 	private var lastChromeRenderUptime: TimeInterval?
 	private var lastActiveChromeRenderUptime: TimeInterval?
 	private var lastHudColorPending: Bool?
+	private var activeHudHexRollTarget: String?
+	private var hudHexRollAnimationEndUptime: TimeInterval?
 
 	init(hostView: NSView) {
 		self.hostView = hostView
@@ -1467,10 +1474,12 @@ final class LiveOverlayRenderer {
 		}
 		for hudSublayer in [
 			hudGlassLayer, hudFillLayer, hudStrokeLayer, hudSwatchLayer, hudPositionLayer,
-			hudHexLayer, hudKeycapLayer, hudKeycapTextLayer,
+			hudHexLayer, hudHexRollLayer, hudKeycapLayer, hudKeycapTextLayer,
 		] {
 			hudLayer.addSublayer(hudSublayer)
 		}
+		hudHexRollLayer.masksToBounds = false
+		hudHexRollLayer.isHidden = true
 		for loupeSublayer in [
 			loupeGlassLayer, loupeFillLayer, loupeStrokeLayer, loupePatchLayer, loupeCenterLayer,
 		] {
@@ -1863,15 +1872,20 @@ final class LiveOverlayRenderer {
 		let hexTextColor =
 			snapshot.colorDisplay.isPending
 			? palette.labelText.withAlphaComponent(0.46) : palette.labelText
+		let hexFrame = CGRect(
+			x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth),
+			height: ceil(LiveOverlayTypography.lineHeight))
 		applyText(
 			hudHexLayer, text: snapshot.colorDisplay.hexText, font: font, color: hexTextColor,
-			frame: CGRect(
-				x: cursorX, y: baselineY, width: ceil(snapshot.colorDisplay.hexSlotWidth),
-				height: ceil(LiveOverlayTypography.lineHeight)), alignment: .left)
+			frame: hexFrame, alignment: .left)
 		updateHudColorAnimation(
 			isPending: snapshot.colorDisplay.isPending,
 			pendingSwatchColor: pendingSwatchColor,
-			resolvedSwatchColor: swatchColor
+			resolvedSwatchColor: swatchColor,
+			resolvedHexText: snapshot.colorDisplay.hexText,
+			hexFrame: hexFrame,
+			font: font,
+			textColor: palette.labelText
 		)
 		cursorX += snapshot.colorDisplay.hexSlotWidth + CaptureChrome.hudGroupSpacing
 
@@ -1904,9 +1918,15 @@ final class LiveOverlayRenderer {
 	private func updateHudColorAnimation(
 		isPending: Bool,
 		pendingSwatchColor: NSColor,
-		resolvedSwatchColor: NSColor
+		resolvedSwatchColor: NSColor,
+		resolvedHexText: String,
+		hexFrame: CGRect,
+		font: NSFont,
+		textColor: NSColor
 	) {
 		if isPending {
+			clearHudHexRollAnimation()
+			hudHexLayer.isHidden = false
 			hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
 			hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveBackgroundAnimationKey)
 			hudHexLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
@@ -1927,6 +1947,7 @@ final class LiveOverlayRenderer {
 		lastHudColorPending = false
 
 		guard wasPending else {
+			updateHudHexRollVisibility(target: resolvedHexText, frame: hexFrame)
 			return
 		}
 
@@ -1934,9 +1955,12 @@ final class LiveOverlayRenderer {
 			to: hudSwatchLayer,
 			fromOpacity: priorSwatchOpacity.map(CGFloat.init) ?? 0.62
 		)
-		addHudColorResolveAnimation(
-			to: hudHexLayer,
-			fromOpacity: priorHexOpacity.map(CGFloat.init) ?? 0.62
+		beginHudHexRollAnimation(
+			target: resolvedHexText,
+			frame: hexFrame,
+			font: font,
+			textColor: textColor,
+			initialOpacity: priorHexOpacity.map(CGFloat.init) ?? 0.62
 		)
 		let colorAnimation = CABasicAnimation(keyPath: "backgroundColor")
 		colorAnimation.fromValue = priorSwatchColor ?? pendingSwatchColor.cgColor
@@ -1976,13 +2000,239 @@ final class LiveOverlayRenderer {
 		layer.add(animation, forKey: Self.hudColorResolveAnimationKey)
 	}
 
+	private func updateHudHexRollVisibility(target: String, frame: CGRect) {
+		guard let animationEnd = hudHexRollAnimationEndUptime,
+			ProcessInfo.processInfo.systemUptime < animationEnd,
+			activeHudHexRollTarget == target
+		else {
+			clearHudHexRollAnimation()
+			hudHexLayer.isHidden = false
+			return
+		}
+
+		hudHexLayer.isHidden = true
+		hudHexRollLayer.isHidden = false
+		hudHexRollLayer.frame = frame
+	}
+
+	private func beginHudHexRollAnimation(
+		target: String,
+		frame: CGRect,
+		font: NSFont,
+		textColor: NSColor,
+		initialOpacity: CGFloat
+	) {
+		clearHudHexRollAnimation()
+		activeHudHexRollTarget = target
+		let now = ProcessInfo.processInfo.systemUptime
+		let targetDigits = Array(target.dropFirst())
+		let digitCount = max(targetDigits.count, 0)
+		hudHexRollAnimationEndUptime =
+			now + Self.hudColorRollDuration
+			+ (Double(max(digitCount - 1, 0)) * Self.hudColorRollDigitStagger)
+			+ 0.08
+		hudHexLayer.isHidden = true
+		hudHexRollLayer.isHidden = false
+		hudHexRollLayer.frame = frame
+
+		let hashWidth = ceil("#".size(using: font).width)
+		let digitWidth = ceil("0".size(using: font).width)
+		let lineHeight = ceil(LiveOverlayTypography.lineHeight)
+		let hashLayer = makeHudHexRollTextLayer(
+			text: "#",
+			font: font,
+			color: textColor.withAlphaComponent(0.72),
+			frame: CGRect(x: 0, y: 0, width: hashWidth, height: lineHeight)
+		)
+		hudHexRollLayer.addSublayer(hashLayer)
+
+		for (index, targetDigit) in targetDigits.enumerated() {
+			let columnLayer = CALayer()
+			columnLayer.masksToBounds = true
+			columnLayer.frame = CGRect(
+				x: hashWidth + CGFloat(index) * digitWidth,
+				y: 0,
+				width: digitWidth,
+				height: lineHeight
+			)
+			hudHexRollLayer.addSublayer(columnLayer)
+			addHudHexRollDigit(
+				to: columnLayer,
+				targetDigit: String(targetDigit),
+				index: index,
+				font: font,
+				textColor: textColor,
+				initialOpacity: initialOpacity,
+				lineHeight: lineHeight,
+				digitWidth: digitWidth
+			)
+		}
+	}
+
+	private func addHudHexRollDigit(
+		to columnLayer: CALayer,
+		targetDigit: String,
+		index: Int,
+		font: NSFont,
+		textColor: NSColor,
+		initialOpacity: CGFloat,
+		lineHeight: CGFloat,
+		digitWidth: CGFloat
+	) {
+		let baseFrame = CGRect(x: 0, y: 0, width: digitWidth, height: lineHeight)
+		let startLayer = makeHudHexRollTextLayer(
+			text: "0",
+			font: font,
+			color: textColor.withAlphaComponent(0.58),
+			frame: baseFrame
+		)
+		startLayer.opacity = 0
+		columnLayer.addSublayer(startLayer)
+
+		let firstTumblerLayer = makeHudHexRollTextLayer(
+			text: tumblerDigit(for: targetDigit, index: index, offset: 5),
+			font: font,
+			color: textColor.withAlphaComponent(0.62),
+			frame: baseFrame
+		)
+		firstTumblerLayer.opacity = 0
+		columnLayer.addSublayer(firstTumblerLayer)
+
+		let secondTumblerLayer = makeHudHexRollTextLayer(
+			text: tumblerDigit(for: targetDigit, index: index, offset: 11),
+			font: font,
+			color: textColor.withAlphaComponent(0.72),
+			frame: baseFrame
+		)
+		secondTumblerLayer.opacity = 0
+		columnLayer.addSublayer(secondTumblerLayer)
+
+		let targetLayer = makeHudHexRollTextLayer(
+			text: targetDigit,
+			font: font,
+			color: textColor,
+			frame: baseFrame
+		)
+		targetLayer.opacity = 0
+		columnLayer.addSublayer(targetLayer)
+
+		let stagger = Double(index) * Self.hudColorRollDigitStagger
+		addHudRollAnimation(
+			to: startLayer,
+			fromY: 0,
+			toY: -lineHeight * 0.92,
+			opacityValues: [max(initialOpacity, 0.52), 0],
+			keyTimes: [0, 1],
+			beginOffset: stagger,
+			duration: 0.18
+		)
+		addHudRollAnimation(
+			to: firstTumblerLayer,
+			fromY: lineHeight * 1.05,
+			toY: -lineHeight * 0.78,
+			opacityValues: [0, 0.58, 0],
+			keyTimes: [0, 0.48, 1],
+			beginOffset: stagger + 0.045,
+			duration: 0.22
+		)
+		addHudRollAnimation(
+			to: secondTumblerLayer,
+			fromY: lineHeight * 0.98,
+			toY: -lineHeight * 0.55,
+			opacityValues: [0, 0.72, 0],
+			keyTimes: [0, 0.55, 1],
+			beginOffset: stagger + 0.15,
+			duration: 0.24
+		)
+		addHudRollAnimation(
+			to: targetLayer,
+			fromY: lineHeight * 0.9,
+			toY: 0,
+			opacityValues: [0, 1, 1],
+			keyTimes: [0, 0.7, 1],
+			beginOffset: stagger + 0.28,
+			duration: 0.24,
+			timing: .easeOut
+		)
+	}
+
+	private func tumblerDigit(for targetDigit: String, index: Int, offset: Int) -> String {
+		let targetIndex = Self.hexWheel.firstIndex(of: Character(targetDigit)) ?? 0
+		let wheelIndex = (targetIndex + index + offset) % Self.hexWheel.count
+		return String(Self.hexWheel[wheelIndex])
+	}
+
+	private func makeHudHexRollTextLayer(
+		text: String,
+		font: NSFont,
+		color: NSColor,
+		frame: CGRect
+	) -> CATextLayer {
+		let layer = CATextLayer()
+		layer.contentsScale = hostView?.window?.backingScaleFactor ?? 2
+		layer.string = text
+		layer.font = font
+		layer.fontSize = font.pointSize
+		layer.foregroundColor = color.cgColor
+		layer.alignmentMode = .center
+		layer.frame = frame
+		layer.isWrapped = false
+		return layer
+	}
+
+	private func addHudRollAnimation(
+		to layer: CALayer,
+		fromY: CGFloat,
+		toY: CGFloat,
+		opacityValues: [CGFloat],
+		keyTimes: [CGFloat],
+		beginOffset: TimeInterval,
+		duration: TimeInterval,
+		timing: CAMediaTimingFunctionName = .easeInEaseOut
+	) {
+		let translation = CABasicAnimation(keyPath: "transform.translation.y")
+		translation.fromValue = fromY
+		translation.toValue = toY
+
+		let opacity = CAKeyframeAnimation(keyPath: "opacity")
+		opacity.values = opacityValues.map { NSNumber(value: Double($0)) }
+		opacity.keyTimes = keyTimes.map { NSNumber(value: Double($0)) }
+
+		let group = CAAnimationGroup()
+		group.animations = [translation, opacity]
+		group.beginTime = CACurrentMediaTime() + beginOffset
+		group.duration = duration
+		group.timingFunction = CAMediaTimingFunction(name: timing)
+		group.fillMode = .both
+		group.isRemovedOnCompletion = false
+		layer.add(group, forKey: Self.hudColorRollAnimationKey)
+	}
+
+	private func clearHudHexRollAnimation() {
+		activeHudHexRollTarget = nil
+		hudHexRollAnimationEndUptime = nil
+		hudHexRollLayer.removeAllAnimations()
+		for sublayer in hudHexRollLayer.sublayers ?? [] {
+			sublayer.removeAllAnimations()
+			for childLayer in sublayer.sublayers ?? [] {
+				childLayer.removeAllAnimations()
+			}
+			sublayer.removeFromSuperlayer()
+		}
+		hudHexRollLayer.isHidden = true
+	}
+
 	private func resetHudColorAnimationState() {
 		lastHudColorPending = nil
+		activeHudHexRollTarget = nil
+		hudHexRollAnimationEndUptime = nil
 		hudSwatchLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
 		hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
 		hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveBackgroundAnimationKey)
 		hudHexLayer.removeAnimation(forKey: Self.hudColorPendingAnimationKey)
 		hudHexLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
+		hudHexLayer.isHidden = false
+		clearHudHexRollAnimation()
 	}
 
 	private func renderLoupe(_ snapshot: LivePreviewSnapshot) {
