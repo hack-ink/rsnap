@@ -46,6 +46,23 @@ def int_field(summary: dict, key: str) -> int:
     except ValueError:
         return 0
 
+
+def expected_min_mouse_events() -> int:
+    explicit = os.environ.get("MIN_MOUSE_EVENTS")
+    if explicit not in (None, ""):
+        return max(0, int(explicit))
+    if os.environ.get("PATH_DRIVER", "event") != "event":
+        return 0
+    if os.environ.get("PATH_MODE", "smooth") != "smooth":
+        return 1
+    try:
+        duration_ms = float(os.environ.get("PATH_DURATION_MS", "2500"))
+        rate_hz = float(os.environ.get("PATH_RATE_HZ", "120"))
+    except ValueError:
+        return 1
+    return max(1, int(duration_ms * rate_hz / 1000 * 0.5))
+
+
 with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
     lines = handle.readlines()
 
@@ -132,6 +149,7 @@ required = {
     "live_chrome.active_layer_chrome_render_gap": threshold(
         "MAX_ACTIVE_LAYER_CHROME_RENDER_GAP_P95_MS", display_gap_budget_ms
     ),
+    "live_chrome.frame_tick_gap": threshold("MAX_FRAME_TICK_GAP_P95_MS", display_gap_budget_ms),
     "live_chrome.layer_render_duration": threshold("MAX_LAYER_RENDER_DURATION_P95_MS", None),
     "live_chrome.layer_chrome_render_duration": threshold(
         "MAX_LAYER_CHROME_RENDER_DURATION_P95_MS", target_budget_ms
@@ -176,6 +194,7 @@ else:
     predicted_moves = int_field(summary, "predictedMoves")
     fallback_refreshes = int_field(summary, "fallbackRefreshes")
     immediate_refreshes = int_field(summary, "immediateRefreshes")
+    min_mouse_events = expected_min_mouse_events()
     print(
         "[smoke] input summary "
         f"mouseEvents={mouse_events} followTicks={follow_ticks} "
@@ -184,10 +203,14 @@ else:
         f"loupeFastMoveSuccesses={loupe_fast_successes} "
         f"predictedMoves={predicted_moves} "
         f"fallbackRefreshes={fallback_refreshes} "
-        f"immediateRefreshes={immediate_refreshes}"
+        f"immediateRefreshes={immediate_refreshes} "
+        f"minMouseEvents={min_mouse_events}"
     )
-    if mouse_events == 0:
-        failures.append("live HUD smoke did not deliver mouse movement events")
+    if mouse_events < min_mouse_events:
+        failures.append(
+            f"live HUD smoke delivered {mouse_events} mouse movement events, "
+            f"expected at least {min_mouse_events}"
+        )
 
 for name in reported:
     if name not in metrics:
