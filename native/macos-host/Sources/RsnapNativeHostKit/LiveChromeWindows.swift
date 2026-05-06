@@ -230,20 +230,11 @@ enum LiveChromeLiquidGlassBridge {
 		}
 		glassView.update(settings: settings)
 	}
-
-	static func setContentView(_ contentView: NSView?, on glassView: NSView) {
-		guard let glassView = glassView as? LiveChromeLiquidGlassView else {
-			return
-		}
-		glassView.setContentView(contentView)
-	}
 }
 
 @MainActor
 final class LiveChromeLiquidGlassView: NSView {
 	private let glassHostView: NSHostingView<AnyView>
-	private let contentContainerView = NSView(frame: .zero)
-	private weak var currentContentView: NSView?
 	private var currentSettings: NativeHostSettings?
 
 	override var isOpaque: Bool { false }
@@ -267,13 +258,6 @@ final class LiveChromeLiquidGlassView: NSView {
 		glassHostView.layer?.backgroundColor = NSColor.clear.cgColor
 		glassHostView.layer?.isOpaque = false
 		addSubview(glassHostView)
-
-		contentContainerView.frame = bounds
-		contentContainerView.autoresizingMask = [.width, .height]
-		contentContainerView.wantsLayer = true
-		contentContainerView.layer?.backgroundColor = NSColor.clear.cgColor
-		contentContainerView.layer?.isOpaque = false
-		addSubview(contentContainerView)
 	}
 
 	@available(*, unavailable)
@@ -287,20 +271,6 @@ final class LiveChromeLiquidGlassView: NSView {
 		}
 		currentSettings = settings
 		glassHostView.rootView = Self.makeGlassRoot(settings: settings)
-	}
-
-	func setContentView(_ contentView: NSView?) {
-		guard currentContentView !== contentView else {
-			return
-		}
-		currentContentView?.removeFromSuperview()
-		currentContentView = contentView
-		guard let contentView else {
-			return
-		}
-		contentView.frame = contentContainerView.bounds
-		contentView.autoresizingMask = [.width, .height]
-		contentContainerView.addSubview(contentView)
 	}
 
 	private static func makeGlassRoot(settings: NativeHostSettings) -> AnyView {
@@ -325,9 +295,21 @@ final class LiveChromeLiquidGlassView: NSView {
 			glass = glass.tint(liquidGlassTint(settings: settings)).interactive(false)
 			return AnyView(
 				GlassEffectContainer(spacing: 0) {
-					Color.clear
-						.frame(maxWidth: .infinity, maxHeight: .infinity)
-						.glassEffect(glass, in: .rect(cornerRadius: CaptureChrome.hudCornerRadius))
+					ZStack {
+						Color.clear
+							.frame(maxWidth: .infinity, maxHeight: .infinity)
+							.glassEffect(
+								glass, in: .rect(cornerRadius: CaptureChrome.hudCornerRadius))
+						if let fill = liquidGlassTintFill(settings: settings) {
+							RoundedRectangle(
+								cornerRadius: CaptureChrome.hudCornerRadius,
+								style: .continuous
+							)
+							.fill(fill)
+							.allowsHitTesting(false)
+						}
+					}
+					.frame(maxWidth: .infinity, maxHeight: .infinity)
 				}
 				.allowsHitTesting(false)
 			)
@@ -339,11 +321,35 @@ final class LiveChromeLiquidGlassView: NSView {
 			guard strength > 0 else {
 				return nil
 			}
+			let maximumOpacity =
+				switch settings.liquidGlassStyle {
+				case .regular:
+					0.12
+				case .clear:
+					0.38
+				}
 			return Color(
 				hue: settings.hudTintHue.clamped(to: 0...1),
 				saturation: settings.hudTintSaturation.clamped(to: 0...1),
 				brightness: settings.hudTintBrightness.clamped(to: 0...1),
-				opacity: strength * 0.12
+				opacity: strength * maximumOpacity
+			)
+		}
+
+		@available(macOS 26.0, *)
+		private static func liquidGlassTintFill(settings: NativeHostSettings) -> Color? {
+			guard settings.liquidGlassStyle == .clear else {
+				return nil
+			}
+			let strength = settings.hudTint.clamped(to: 0...1)
+			guard strength > 0 else {
+				return nil
+			}
+			return Color(
+				hue: settings.hudTintHue.clamped(to: 0...1),
+				saturation: settings.hudTintSaturation.clamped(to: 0...1),
+				brightness: settings.hudTintBrightness.clamped(to: 0...1),
+				opacity: strength * 0.22
 			)
 		}
 	#endif
