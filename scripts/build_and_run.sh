@@ -330,6 +330,7 @@ targets = [
 	"native/macos-host",
 	"packages/rsnap-capture-core",
 	"packages/rsnap-host-ffi",
+	"packages/rsnap-overlay",
 	"scripts/build_and_run.sh",
 ]
 skip_dirs = {".git", ".worktrees", "target", ".build"}

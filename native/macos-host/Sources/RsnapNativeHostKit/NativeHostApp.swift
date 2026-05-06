@@ -305,7 +305,7 @@ private func frozenMosaicByte(_ value: CGFloat) -> UInt8 {
 @MainActor
 public final class NativeHostApplicationController: NSObject, NSApplicationDelegate {
 	private let settingsStore = NativeHostSettingsStore()
-	private let globalHotKeys = GlobalHotKeyCenter()
+	private let hotKeyCoordinator = HotKeyBindingCoordinator()
 	private var lifecycleActivity: NSObjectProtocol?
 	private var selfCaptureRegistrationWindow: NSWindow?
 	private var didBootstrap = false
@@ -371,6 +371,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}
 
 	public func applicationWillTerminate(_ notification: Notification) {
+		hotKeyCoordinator.invalidate()
 		sessionController.releaseScreenCaptureStreams(immediate: true)
 	}
 
@@ -532,14 +533,23 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}
 
 	private func configureGlobalHotKeys() {
-		globalHotKeys.onCaptureRequested = { [weak self] in
+		hotKeyCoordinator.onCaptureRequested = { [weak self] in
 			self?.startCapture(nil)
 		}
-		globalHotKeys.onCancelRequested = { [weak self] in
+		hotKeyCoordinator.onCancelRequested = { [weak self] in
 			self?.cancelCapture(nil)
 		}
-		globalHotKeys.onToggleLoupeRequested = { [weak self] in
+		hotKeyCoordinator.onToggleLoupeRequested = { [weak self] in
 			self?.sessionController.toggleLoupe()
+		}
+		hotKeyCoordinator.onCopyRequested = { [weak self] in
+			self?.sessionController.copySelection()
+		}
+		hotKeyCoordinator.onAutoCenterRequested = { [weak self] in
+			self?.sessionController.performFrozenAutoCenter()
+		}
+		hotKeyCoordinator.onSaveRequested = { [weak self] in
+			self?.sessionController.saveSelection()
 		}
 	}
 
@@ -559,9 +569,10 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}
 
 	private func refreshHotKeyBindings(for mode: SceneKind) {
-		globalHotKeys.updateBindings(
+		hotKeyCoordinator.update(
 			captureHotKey: settingsStore.settings.captureHotkey,
-			sceneMode: mode
+			sceneMode: mode,
+			plainFrozenShortcutsEnabled: sessionController.plainFrozenShortcutHotkeysEnabled
 		)
 	}
 
@@ -634,6 +645,7 @@ final class CaptureSessionController: NSObject {
 	private static let autoCenterMaxIterations = 6
 	private static let displayFirstFrameWait: TimeInterval = 0.025
 	private static let coldSelfCaptureRecoveryWait: TimeInterval = 3.5
+	private static let scrollCaptureEnabled = false
 	private static let scrollCaptureForwardingPassthrough: TimeInterval = 0.055
 	private static let scrollCaptureSampleDelay: TimeInterval = 0.04
 	private static let liveFrameStreamReleaseGrace: TimeInterval = 0.75
@@ -1215,6 +1227,9 @@ final class CaptureSessionController: NSObject {
 	}
 
 	func startScrollCapture() {
+		guard Self.scrollCaptureEnabled else {
+			return
+		}
 		let _ = chromeState.frozenOverlay.commitTextEdit(
 			style: chromeState.annotationStyle.textStyle)
 		sendFrozenAction(.toolbarItemInvoked(.scroll))
@@ -1746,6 +1761,11 @@ final class CaptureSessionController: NSObject {
 				editable: selectionEditable
 			)
 		case .startScrollCapture:
+			guard Self.scrollCaptureEnabled else {
+				try setHostStatusMessage("Scroll capture is temporarily disabled.")
+				refreshOverlay()
+				return
+			}
 			try beginNativeScrollCapture()
 		case .copyCapture:
 			try performCopy()
@@ -2050,8 +2070,10 @@ final class CaptureSessionController: NSObject {
 			ToolbarItem(kind: .undo, enabled: false, selected: false),
 			ToolbarItem(kind: .redo, enabled: false, selected: false),
 			ToolbarItem(kind: .autoCenter, enabled: true, selected: false),
-			ToolbarItem(kind: .scroll, enabled: scrollEnabled, selected: false),
 		]
+		if Self.scrollCaptureEnabled {
+			items.append(ToolbarItem(kind: .scroll, enabled: scrollEnabled, selected: false))
+		}
 		if allowTextInput {
 			items.append(ToolbarItem(kind: .ocr, enabled: true, selected: false))
 		}
@@ -2061,12 +2083,22 @@ final class CaptureSessionController: NSObject {
 	}
 
 	var scrollCaptureToolbarEnabled: Bool {
-		scene.mode == .frozen
+		Self.scrollCaptureEnabled
+			&& scene.mode == .frozen
 			&& scrollCaptureState == nil
 			&& currentFrozenSelection() != nil
 	}
 
+	var plainFrozenShortcutHotkeysEnabled: Bool {
+		scene.mode == .frozen
+			&& scrollCaptureState == nil
+			&& chromeState.frozenOverlay.activeTextEdit == nil
+	}
+
 	func handleScrollCaptureWheel(_ event: NSEvent, at point: CGPoint) -> Bool {
+		guard Self.scrollCaptureEnabled else {
+			return false
+		}
 		guard var state = scrollCaptureState else {
 			return false
 		}
@@ -2144,6 +2176,11 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func beginNativeScrollCapture() throws {
+		guard Self.scrollCaptureEnabled else {
+			try setHostStatusMessage("Scroll capture is temporarily disabled.")
+			refreshOverlay()
+			return
+		}
 		guard scrollCaptureState == nil else {
 			try setHostStatusMessage("Scroll capture is already active.")
 			refreshOverlay()
@@ -2525,6 +2562,9 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func activeScrollCaptureExportImage() throws -> CGImage? {
+		guard Self.scrollCaptureEnabled else {
+			return nil
+		}
 		guard let state = scrollCaptureState else {
 			return nil
 		}
@@ -2992,6 +3032,7 @@ final class CaptureSessionController: NSObject {
 			chrome: chromeState,
 			settings: settingsStore.settings
 		)
+		sceneDidChange?(scene)
 	}
 
 	private func tearDownCapture() {
@@ -4280,6 +4321,10 @@ final class CaptureHostView: NSView {
 		let font: NSFont
 		let lineHeight: CGFloat
 		let commaWidth: CGFloat
+		let xPrefixWidth: CGFloat
+		let yPrefixWidth: CGFloat
+		let digitWidth: CGFloat
+		let minusWidth: CGFloat
 		let keycapTextSize: CGSize
 		let keycapFrameSize: CGSize
 		let hexSlotWidth: CGFloat
@@ -4294,6 +4339,10 @@ final class CaptureHostView: NSView {
 			font: font,
 			lineHeight: ceil("x=0".size(using: font).height),
 			commaWidth: ",".size(using: font).width,
+			xPrefixWidth: "x=".size(using: font).width,
+			yPrefixWidth: "y=".size(using: font).width,
+			digitWidth: "0".size(using: font).width,
+			minusWidth: "-".size(using: font).width,
 			keycapTextSize: keycapTextSize,
 			keycapFrameSize: CGSize(
 				width: keycapTextSize.width + 12, height: keycapTextSize.height + 4),
@@ -4335,6 +4384,7 @@ final class CaptureHostView: NSView {
 	private var hoveredAnnotationStyleAction: FrozenAnnotationStyleAction?
 	private var annotationStyleWheelLastStepTimestamp: TimeInterval?
 	private var lastCursorPresentation: CursorPresentation?
+	private var lastAppliedCursorPresentation: CursorPresentation?
 	private var queuedPointerEvent: QueuedPointerEvent?
 	private var queuedPointerWorkItem: DispatchWorkItem?
 	private var lastHoverPointerDispatchUptime: TimeInterval = 0
@@ -4387,7 +4437,7 @@ final class CaptureHostView: NSView {
 		else {
 			return super.hitTest(point)
 		}
-		return nil
+		return self
 	}
 
 	override init(frame frameRect: NSRect) {
@@ -4738,7 +4788,7 @@ final class CaptureHostView: NSView {
 		if scene.mode == .frozen {
 			refreshHoveredToolbarAction(for: event.locationInWindow)
 		}
-		cursor(for: currentCursorPresentation()).set()
+		applyVisibleCursorIfNeeded(currentCursorPresentation())
 	}
 
 	override func mouseMoved(with event: NSEvent) {
@@ -4893,9 +4943,6 @@ final class CaptureHostView: NSView {
 				case "c":
 					controller?.performFrozenAutoCenter()
 					return
-				case "s":
-					controller?.startScrollCapture()
-					return
 				case "r":
 					guard toolbarItem(.ocr)?.enabled == true else {
 						return
@@ -4915,6 +4962,7 @@ final class CaptureHostView: NSView {
 		return !flags.contains(.command)
 			&& !flags.contains(.control)
 			&& !flags.contains(.option)
+			&& !flags.contains(.shift)
 	}
 
 	private static let annotationStyleWheelDeadZone: CGFloat = 0.05
@@ -5602,10 +5650,11 @@ final class CaptureHostView: NSView {
 		}
 		recordLivePointerEventGap()
 		let pointerChanged = setLivePointerPreview(to: globalPoint)
-		if pointerChanged || rendersImmediately {
+		let hoverTargetChanged = refreshLiveHighlightedWindowPreviewForFastPath(at: globalPoint)
+		if pointerChanged || rendersImmediately || hoverTargetChanged {
 			updateLivePreviewSampleDemand()
 			moveLiveChromeLayers()
-			if rendersFullPreview {
+			if rendersFullPreview || hoverTargetChanged {
 				liveRenderer.renderNow()
 			} else {
 				liveRenderer.renderLiveChromeNow()
@@ -6412,7 +6461,9 @@ final class CaptureHostView: NSView {
 	}
 
 	private func frozenToolbarScrimExclusionPath(for selection: CGRect) -> CGPath? {
-		guard settings.usesLiquidHudGlass, frozenToolbarLiquidGlassVisible,
+		guard settings.usesLiquidHudGlass,
+			frozenToolbarLiquidGlassVisible,
+			frozenToolbarLiquidGlassContentDrawn,
 			let toolbarFrame = toolbarLayout(for: selection)?.frame
 		else {
 			return nil
@@ -6443,7 +6494,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func visibleToolbarItems() -> [ToolbarItem] {
-		scene.toolbarItems.map { item in
+		scene.toolbarItems.compactMap { item in
 			var item = item
 			switch item.kind {
 			case .pen, .arrow, .mosaic, .spotlight, .text:
@@ -6457,6 +6508,9 @@ final class CaptureHostView: NSView {
 					scene.frozenSelection != nil
 					&& !chrome.frozenOverlay.keepsFrozenSelectionFixed
 			case .scroll:
+				guard controller?.scrollCaptureToolbarEnabled == true else {
+					return nil
+				}
 				item.enabled = controller?.scrollCaptureToolbarEnabled ?? false
 			default:
 				break
@@ -6634,8 +6688,16 @@ final class CaptureHostView: NSView {
 		lastCursorPresentation = cursorPresentation
 		window?.invalidateCursorRects(for: self)
 		if scene.mode == .frozen {
-			cursor(for: cursorPresentation).set()
+			applyVisibleCursorIfNeeded(cursorPresentation)
 		}
+	}
+
+	private func applyVisibleCursorIfNeeded(_ cursorPresentation: CursorPresentation) {
+		guard cursorPresentation != lastAppliedCursorPresentation else {
+			return
+		}
+		lastAppliedCursorPresentation = cursorPresentation
+		cursor(for: cursorPresentation).set()
 	}
 
 	private func currentHudPlacement() -> LiveFloatingPlacement? {
@@ -6886,6 +6948,35 @@ final class CaptureHostView: NSView {
 			return
 		}
 		liveHighlightedWindowPreview = controller?.previewHighlightedWindow(at: globalPoint)
+	}
+
+	private func refreshLiveHighlightedWindowPreviewForFastPath(at globalPoint: CGPoint) -> Bool {
+		guard liveDragStartGlobal == nil, !liveHoverChromeSuppressed else {
+			return false
+		}
+		let previousPreview = liveHighlightedWindowPreview
+		refreshLiveHighlightedWindowPreview(at: globalPoint)
+		return !Self.windowSnapshotsEquivalent(previousPreview, liveHighlightedWindowPreview)
+	}
+
+	private static func windowSnapshotsEquivalent(_ lhs: WindowSnapshot?, _ rhs: WindowSnapshot?)
+		-> Bool
+	{
+		switch (lhs, rhs) {
+		case (nil, nil):
+			return true
+		case (let lhs?, let rhs?):
+			return lhs.windowID == rhs.windowID && windowFramesEquivalent(lhs.frame, rhs.frame)
+		default:
+			return false
+		}
+	}
+
+	private static func windowFramesEquivalent(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+		abs(lhs.minX - rhs.minX) <= 0.5
+			&& abs(lhs.minY - rhs.minY) <= 0.5
+			&& abs(lhs.width - rhs.width) <= 0.5
+			&& abs(lhs.height - rhs.height) <= 0.5
 	}
 
 	private func updateLiveChromeBackdrops() {
@@ -7246,9 +7337,28 @@ final class CaptureHostView: NSView {
 		return LivePositionDisplay(
 			xValueText: xValueText,
 			yValueText: yValueText,
-			xSlotWidth: "x=\(xValueText)".size(using: metrics.font).width,
-			ySlotWidth: "y=\(yValueText)".size(using: metrics.font).width
+			xSlotWidth: Self.coordinateSlotWidth(
+				prefixWidth: metrics.xPrefixWidth,
+				valueText: xValueText,
+				metrics: metrics
+			),
+			ySlotWidth: Self.coordinateSlotWidth(
+				prefixWidth: metrics.yPrefixWidth,
+				valueText: yValueText,
+				metrics: metrics
+			)
 		)
+	}
+
+	private static func coordinateSlotWidth(
+		prefixWidth: CGFloat,
+		valueText: String,
+		metrics: HudLayoutMetrics
+	) -> CGFloat {
+		prefixWidth
+			+ valueText.reduce(CGFloat(0)) { width, character in
+				width + (character == "-" ? metrics.minusWidth : metrics.digitWidth)
+			}
 	}
 
 	private func currentLiveColorDisplay(for sample: RGBSample?) -> LiveColorDisplay {
