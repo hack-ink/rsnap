@@ -625,7 +625,6 @@ function onScroll() {
 function revealElements() {
   const targets = [
     document.querySelector(".hero-copy"),
-    document.querySelector(".hero-spec"),
     ...document.querySelectorAll(".section-inner > *"),
     ...document.querySelectorAll(".flow-steps article"),
   ].filter(Boolean);
