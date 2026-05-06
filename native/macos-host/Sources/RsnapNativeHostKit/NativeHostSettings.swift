@@ -151,11 +151,11 @@ struct NativeHostSettings: Equatable {
 			hudGlassMode: .liquidGlass,
 			hudOpacity: 0.4999747693194925,
 			hudBlur: 0.5032628676470589,
-			hudTint: 0.4990234375,
+			hudTint: 1.0,
 			hudTintHue: 0.6074879184861536,
 			hudTintSaturation: 0.72,
 			hudTintBrightness: 0.95,
-			liquidGlassStyle: .regular,
+			liquidGlassStyle: .clear,
 			loupeSampleSize: .small
 		)
 	}
