@@ -13,6 +13,8 @@ macOS-first screenshot app built with a native host and Rust core.
 
 </div>
 
+https://github.com/user-attachments/assets/ff2fe84f-f551-40e8-919c-66ae8a61f8e7
+
 ## Feature Highlights
 
 - Menubar-only app (no Dock icon) on macOS.
