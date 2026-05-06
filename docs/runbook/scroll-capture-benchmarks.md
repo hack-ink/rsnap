@@ -14,6 +14,10 @@ Depends on: `docs/spec/performance.md`
 Outputs: A repeatable local benchmark run, an optional saved Criterion baseline, and a clear
 understanding of what the synthetic fixture is intended to cover.
 
+Current release status: v0.1.0 hides user-facing scroll capture in the native host. This runbook
+still applies to the retained internal scroll-capture engine, replay, and future re-enablement
+work.
+
 If you are debugging correctness rather than hot-path speed, route through
 `docs/runbook/performance-validation.md` first. That runbook owns replay,
 self-check, semantic analysis, and macOS smoke command selection.
@@ -31,8 +35,7 @@ Properties:
 
 - Each scenario builds a synthetic RGBA document with deterministic row and column structure.
 - The document deliberately includes low-information side margins and more informative interior
-  bands so the same informative-span and overlap-selection logic used in shipping scroll capture is
-  exercised in benchmarks.
+  bands so the retained informative-span and overlap-selection logic is exercised in benchmarks.
 - Benchmark windows are cropped from that document at fixed offsets, so repeated runs always feed
   the same base frame, shifted comparison frame, and fingerprint frame.
 - The current scenarios are `baseline` and `wide`.

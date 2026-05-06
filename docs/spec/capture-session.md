@@ -1,12 +1,12 @@
 # Rsnap Capture Session Contract
 
 Purpose: Define the product-level normative contract for Rsnap capture flow, Frozen-mode
-behavior, export readiness, and macOS-first scroll capture.
+behavior, export readiness, and scroll-capture availability.
 
 Status: normative
 
 Read this when: You are implementing, reviewing, or validating capture behavior, live-mode
-feedback, export flow, or scroll-capture behavior.
+feedback, export flow, or scroll-capture availability.
 
 Not this document: Platform window ownership, native host implementation strategy, or historical
 macOS shell design. Use `docs/spec/platform-host-boundary.md` for the host/core boundary,
@@ -17,7 +17,7 @@ Defines:
 - capture-session entry, live-mode, frozen-mode, and export invariants
 - the display-first Frozen contract
 - the distinction between display readiness and export readiness
-- the current macOS-first scroll-capture contract
+- the current scroll-capture exposure gate and internal contract when the feature is enabled
 - the presence of Frozen-mode annotation state in session output
 - the existence of a separate Frozen-toolbar layout contract for primary-toolbar anchoring
 
@@ -148,8 +148,8 @@ product level rather than binding itself to a particular window toolkit or shell
 - Frozen-mode display readiness and export readiness are separate:
   - pointer drag/reposition, pen, arrow, text, spotlight, and toolbar visibility are
     display-driven
-  - copy, save, OCR, scroll capture, mosaic, and any final-byte-dependent action are gated on
-    export readiness
+  - copy, save, OCR, mosaic, scroll capture when enabled, and any final-byte-dependent action are
+    gated on export readiness
 - Background region/fullscreen/window-background freezes SHOULD complete directly from a fresh
   live-stream snapshot when one is available.
 - If no usable display-first path is available yet, the session may wait briefly for a follow-up
@@ -162,9 +162,12 @@ product level rather than binding itself to a particular window toolkit or shell
 
 ## Scroll capture
 
-- On macOS, scroll capture is available only from a dragged-region freeze.
-- The frozen toolbar may expose `Scroll Capture Down`, and plain `s` may start scroll capture,
-  whenever the frozen capture source is a dragged region on macOS.
+- The v0.1.0 native-host release does not expose scroll capture. The frozen toolbar MUST NOT show a
+  scroll-capture item while the native-host scroll-capture gate is disabled, and plain `s` MUST NOT
+  enter scroll capture in that state.
+- When scroll capture is re-enabled, it is available only from a dragged-region freeze on macOS.
+- When scroll capture is re-enabled, the frozen toolbar may expose `Scroll Capture Down`, and plain
+  `s` may start scroll capture, whenever the frozen capture source is a dragged region on macOS.
 - Scroll capture uses discrete monitor-region screenshots from the native platform capture API as
   the source of truth for committed downward growth.
 - Pairwise image registration plus overlap proof between adjacent discrete screenshots is the
@@ -182,7 +185,8 @@ product level rather than binding itself to a particular window toolkit or shell
 - `Space` copies the stitched image and exits. Cmd+S (macOS) / Ctrl+S saves it and exits.
   `Esc` / `Back` stops scroll capture and restores the original Frozen capture.
 - Verification order is part of the contract: deterministic and replay entrypoints must pass
-  before any final live touchpad acceptance run is treated as authoritative.
+  before any final live touchpad acceptance run is treated as authoritative for re-enabling the
+  feature.
 
 ## HUD and control defaults
 

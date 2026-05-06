@@ -172,14 +172,15 @@ args = [
 
 
 # Test
-# | task      | type      | cwd |
-# | --------- | --------- | --- |
-# | test      | composite |     |
-# | test-rust | command   |     |
-# | test-host-reset | composite | |
-# | test-rust-host-reset | command | |
-# | test-host-ffi-header | command | |
-# | test-macos-native-host-stage | command | |
+# | task                         | type      | purpose |
+# | ---------------------------- | --------- | ------- |
+# | test                         | composite | default Rust suite |
+# | test-rust                    | command   | workspace nextest |
+# | test-host-reset              | composite | reset boundary probes |
+# | test-rust-host-reset         | command   | Rust core/FFI tests |
+# | test-host-ffi-header         | command   | exported C header smoke |
+# | test-macos-native-host       | command   | Swift bridge probes |
+# | test-macos-native-host-stage | command   | staged app bundle smoke |
 
 [tasks.test]
 workspace = false
@@ -197,6 +198,8 @@ args = [
 	"--all-targets",
 	"--all-features",
 ]
+
+# Host/core reset tests.
 
 [tasks.test-host-reset]
 workspace = false
@@ -228,27 +231,7 @@ args = [
 	"packages/rsnap-host-ffi/tests/header_smoke.c",
 ]
 
-[tasks.build-host-ffi-staticlib]
-workspace = false
-command = "cargo"
-args = [
-	"build",
-	"-p",
-	"rsnap-host-ffi",
-]
-
-[tasks.build-swift-strict]
-workspace = false
-dependencies = [
-	"build-host-ffi-staticlib",
-]
-script = '''
-RSNAP_HOST_FFI_LIB_DIR="$PWD/target/debug" \
-swift build --package-path native/macos-host \
-	--explicit-target-dependency-import-check error \
-	-Xswiftc -warnings-as-errors \
-	-Xswiftc -strict-concurrency=complete
-'''
+# Native host probes.
 
 [tasks.test-macos-native-host]
 workspace = false
@@ -285,6 +268,34 @@ if plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist" >/dev/null 2>
   echo "LSUIElement must stay unset so Settings is a normal foreground window" >&2
   exit 1
 fi
+'''
+
+# Build
+# | task                     | type    | purpose |
+# | ------------------------ | ------- | ------- |
+# | build-host-ffi-staticlib | command | Rust static library for Swift |
+# | build-swift-strict       | command | Swift strict-concurrency build |
+
+[tasks.build-host-ffi-staticlib]
+workspace = false
+command = "cargo"
+args = [
+	"build",
+	"-p",
+	"rsnap-host-ffi",
+]
+
+[tasks.build-swift-strict]
+workspace = false
+dependencies = [
+	"build-host-ffi-staticlib",
+]
+script = '''
+RSNAP_HOST_FFI_LIB_DIR="$PWD/target/debug" \
+swift build --package-path native/macos-host \
+	--explicit-target-dependency-import-check error \
+	-Xswiftc -warnings-as-errors \
+	-Xswiftc -strict-concurrency=complete
 '''
 
 
