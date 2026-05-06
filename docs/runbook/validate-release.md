@@ -74,9 +74,9 @@ user-entered annotation text.
 2. Watch the Release workflow for the exact tag.
 3. Treat a build, signing, or packaging failure as a release blocker.
 4. Treat notarization failure as a release blocker only when notary credentials are configured.
-5. The Release workflow publishes the signed macOS zip plus checksum files to the GitHub release.
-   It notarizes and staples the app only when notary credentials are configured. It does not
-   publish crates.io packages or non-macOS desktop archives for v0.1.0.
+5. The Release workflow publishes the signed macOS zip to the GitHub release. It notarizes and
+   staples the app only when notary credentials are configured. It does not publish crates.io
+   packages or non-macOS desktop archives for v0.1.0.
 
 ## Published Artifact Check
 
@@ -105,4 +105,4 @@ quarantine override documented in `README.md` only for a bundle built locally or
 this repository's GitHub Releases page.
 
 5. Launch the downloaded app and repeat a minimal capture, toolbar, OCR, copy, and save check.
-6. Confirm release notes and checksums were published with the artifacts.
+6. Confirm release notes and the macOS zip were published.
