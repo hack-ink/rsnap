@@ -93,11 +93,11 @@ cargo build --workspace
 cargo run -p rsnap
 ```
 
-#### macOS Gatekeeper approval for unsigned builds
+#### macOS Gatekeeper approval for signed but unnotarized builds
 
-Current preview builds may not be notarized by a certified Apple Developer account. If macOS
-blocks `Rsnap.app` after you unzip a downloaded build, use the quarantine override only for a
-bundle you built yourself or downloaded from this repository's GitHub Releases page.
+Current preview release builds are signed, but may not be notarized by Apple. If macOS blocks
+`Rsnap.app` after you unzip a downloaded build, use the quarantine override only for a bundle you
+built yourself or downloaded from this repository's GitHub Releases page.
 
 Move the app to `/Applications`, then run:
 

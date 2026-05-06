@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   build-macos:
-    name: Build notarized macOS package
+    name: Build signed macOS package
     runs-on: macos-latest
     steps:
       - name: Fetch latest code
@@ -46,7 +46,7 @@ jobs:
         with:
           cache: true
 
-      - name: Bundle, sign, notarize, and pack (macOS)
+      - name: Bundle, sign, optionally notarize, and pack (macOS)
         env:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -60,19 +60,24 @@ jobs:
           for required_secret in \
             APPLE_CERTIFICATE_P12_BASE64 \
             APPLE_CERTIFICATE_PASSWORD \
-            APPLE_SIGNING_IDENTITY \
-            APPLE_NOTARY_KEY_ID \
-            APPLE_NOTARY_KEY_P8; do
+            APPLE_SIGNING_IDENTITY; do
             if [[ -z "${!required_secret:-}" ]]; then
               echo "Missing required secret: ${required_secret}" >&2
               exit 1
             fi
           done
 
+          NOTARY_ENABLED=0
+          if [[ -n "${APPLE_NOTARY_KEY_ID:-}" && -n "${APPLE_NOTARY_KEY_P8:-}" ]]; then
+            NOTARY_ENABLED=1
+          else
+            echo "::warning::Apple notary credentials are incomplete; publishing a signed but unnotarized macOS zip."
+          fi
+
           CERT_PATH="${RUNNER_TEMP}/apple-cert.p12"
           KEYCHAIN_PATH="${RUNNER_TEMP}/build.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
-          NOTARY_KEY_PATH="${RUNNER_TEMP}/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+          NOTARY_KEY_PATH=""
 
           CERT_PATH="${CERT_PATH}" python - <<'PY'
           import base64
@@ -83,7 +88,10 @@ jobs:
           )
           PY
 
-          printf '%s' "${APPLE_NOTARY_KEY_P8}" > "${NOTARY_KEY_PATH}"
+          if [[ "${NOTARY_ENABLED}" == "1" ]]; then
+            NOTARY_KEY_PATH="${RUNNER_TEMP}/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+            printf '%s' "${APPLE_NOTARY_KEY_P8}" > "${NOTARY_KEY_PATH}"
+          fi
 
           security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
           security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
@@ -100,7 +108,7 @@ jobs:
 
           RSNAP_NATIVE_HOST_RUST_PROFILE=final-release \
           RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION=release \
-          RSNAP_NATIVE_HOST_SKIP_SIGN=1 \
+          RSNAP_NATIVE_HOST_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY}" \
           ./scripts/build_and_run.sh stage
 
           APP_PATH="target/rsnap-native-host/Rsnap.app"
@@ -114,32 +122,29 @@ jobs:
           test "$(plutil -extract CFBundleName raw "${APP_PATH}/Contents/Info.plist")" = "Rsnap"
           test "$(plutil -extract CFBundleDisplayName raw "${APP_PATH}/Contents/Info.plist")" = "Rsnap"
 
-          codesign \
-            --force \
-            --options runtime \
-            --timestamp \
-            --sign "${APPLE_SIGNING_IDENTITY}" \
-            "${APP_PATH}"
           codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+          codesign -dv --verbose=4 "${APP_PATH}"
 
-          NOTARY_ZIP="${RUNNER_TEMP}/Rsnap-notary.zip"
-          ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${NOTARY_ZIP}"
+          if [[ "${NOTARY_ENABLED}" == "1" ]]; then
+            NOTARY_ZIP="${RUNNER_TEMP}/Rsnap-notary.zip"
+            ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${NOTARY_ZIP}"
 
-          NOTARY_ARGS=(
-            submit
-            "${NOTARY_ZIP}"
-            --wait
-            --timeout 30m
-            --key "${NOTARY_KEY_PATH}"
-            --key-id "${APPLE_NOTARY_KEY_ID}"
-          )
-          if [[ -n "${APPLE_NOTARY_ISSUER:-}" ]]; then
-            NOTARY_ARGS+=(--issuer "${APPLE_NOTARY_ISSUER}")
+            NOTARY_ARGS=(
+              submit
+              "${NOTARY_ZIP}"
+              --wait
+              --timeout 30m
+              --key "${NOTARY_KEY_PATH}"
+              --key-id "${APPLE_NOTARY_KEY_ID}"
+            )
+            if [[ -n "${APPLE_NOTARY_ISSUER:-}" ]]; then
+              NOTARY_ARGS+=(--issuer "${APPLE_NOTARY_ISSUER}")
+            fi
+            xcrun notarytool "${NOTARY_ARGS[@]}"
+
+            xcrun stapler staple "${APP_PATH}"
+            spctl -a -vvv --type exec "${APP_PATH}"
           fi
-          xcrun notarytool "${NOTARY_ARGS[@]}"
-
-          xcrun stapler staple "${APP_PATH}"
-          spctl -a -vvv --type exec "${APP_PATH}"
 
           ditto -c -k --sequesterRsrc --keepParent \
             "${APP_PATH}" \
