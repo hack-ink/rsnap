@@ -24,7 +24,7 @@ manual first-run/user-flow validation.
    - No existing local or remote tag already uses `v<version>`.
 2. Confirm release credentials:
    - Apple signing certificate secrets are available to the Release workflow.
-   - Apple notary credentials are optional for v0.1.1; when absent, the Release workflow still
+   - Apple notary credentials are optional for v0.1.2; when absent, the Release workflow still
      publishes a signed but unnotarized macOS zip.
 3. Confirm local gates:
    - `cargo make checks`
@@ -53,7 +53,7 @@ Validate these user-visible flows:
   fullscreen fallback.
 - Frozen toolbar tools: pointer, pen, arrow, text, mosaic, spotlight, undo, redo, auto-center,
   Recognize Text, copy, and save.
-- Scroll capture is hidden in the v0.1.1 native-host release: the toolbar must not show a scroll
+- Scroll capture is hidden in the v0.1.2 native-host release: the toolbar must not show a scroll
   capture item, and pressing `s` must not enter scroll capture.
 - Light and dark appearance; Classic Glass and Liquid Glass where the OS supports Liquid Glass.
 - Output directory, filename prefix, sequence/timestamp naming, clipboard copy, and save failure
@@ -76,7 +76,7 @@ user-entered annotation text.
 4. Treat notarization failure as a release blocker only when notary credentials are configured.
 5. The Release workflow publishes the signed macOS zip to the GitHub release. It notarizes and
    staples the app only when notary credentials are configured. It does not publish crates.io
-   packages or non-macOS desktop archives for v0.1.1.
+   packages or non-macOS desktop archives for v0.1.2.
 
 ## Published Artifact Check
 
