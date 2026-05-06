@@ -11,7 +11,6 @@ Usage: self-check-macos.sh
 Runs the macOS performance readiness sequence:
   1. local deterministic benchmarks
   2. macOS smoke self-check
-  3. deterministic replay self-check
 EOF
     exit 0
     ;;

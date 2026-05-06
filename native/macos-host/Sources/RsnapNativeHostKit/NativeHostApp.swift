@@ -305,14 +305,7 @@ private func frozenMosaicByte(_ value: CGFloat) -> UInt8 {
 @MainActor
 public final class NativeHostApplicationController: NSObject, NSApplicationDelegate {
 	private let settingsStore = NativeHostSettingsStore()
-	private let globalHotKeys = GlobalHotKeyCenter()
-	private struct HotKeyBindingState: Equatable {
-		let captureHotKey: String
-		let sceneMode: SceneKind
-		let plainFrozenShortcutsEnabled: Bool
-	}
-
-	private var appliedHotKeyBindingState: HotKeyBindingState?
+	private let hotKeyCoordinator = HotKeyBindingCoordinator()
 	private var lifecycleActivity: NSObjectProtocol?
 	private var selfCaptureRegistrationWindow: NSWindow?
 	private var didBootstrap = false
@@ -378,7 +371,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}
 
 	public func applicationWillTerminate(_ notification: Notification) {
-		globalHotKeys.invalidate()
+		hotKeyCoordinator.invalidate()
 		sessionController.releaseScreenCaptureStreams(immediate: true)
 	}
 
@@ -540,22 +533,22 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}
 
 	private func configureGlobalHotKeys() {
-		globalHotKeys.onCaptureRequested = { [weak self] in
+		hotKeyCoordinator.onCaptureRequested = { [weak self] in
 			self?.startCapture(nil)
 		}
-		globalHotKeys.onCancelRequested = { [weak self] in
+		hotKeyCoordinator.onCancelRequested = { [weak self] in
 			self?.cancelCapture(nil)
 		}
-		globalHotKeys.onToggleLoupeRequested = { [weak self] in
+		hotKeyCoordinator.onToggleLoupeRequested = { [weak self] in
 			self?.sessionController.toggleLoupe()
 		}
-		globalHotKeys.onCopyRequested = { [weak self] in
+		hotKeyCoordinator.onCopyRequested = { [weak self] in
 			self?.sessionController.copySelection()
 		}
-		globalHotKeys.onAutoCenterRequested = { [weak self] in
+		hotKeyCoordinator.onAutoCenterRequested = { [weak self] in
 			self?.sessionController.performFrozenAutoCenter()
 		}
-		globalHotKeys.onSaveRequested = { [weak self] in
+		hotKeyCoordinator.onSaveRequested = { [weak self] in
 			self?.sessionController.saveSelection()
 		}
 	}
@@ -576,20 +569,11 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}
 
 	private func refreshHotKeyBindings(for mode: SceneKind) {
-		let bindingState = HotKeyBindingState(
+		hotKeyCoordinator.update(
 			captureHotKey: settingsStore.settings.captureHotkey,
 			sceneMode: mode,
 			plainFrozenShortcutsEnabled: sessionController.plainFrozenShortcutHotkeysEnabled
 		)
-		guard bindingState != appliedHotKeyBindingState else {
-			return
-		}
-		let didApplyBindings = globalHotKeys.updateBindings(
-			captureHotKey: bindingState.captureHotKey,
-			sceneMode: bindingState.sceneMode,
-			plainFrozenShortcutsEnabled: bindingState.plainFrozenShortcutsEnabled
-		)
-		appliedHotKeyBindingState = didApplyBindings ? bindingState : nil
 	}
 
 	@objc
