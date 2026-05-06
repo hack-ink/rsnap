@@ -6,8 +6,8 @@ permissions:
 env:
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
   CARGO_TERM_COLOR: always
-
   RUST_BACKTRACE: full
+  MACOS_RELEASE_ASSET: rsnap-aarch64-apple-darwin.zip
 
 on:
   push:
@@ -19,51 +19,34 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  build:
-    name: Build ${{ matrix.target.name }} package
-    runs-on: ${{ matrix.target.os }}
-    strategy:
-      matrix:
-        target:
-          [
-            { name: aarch64-apple-darwin, os: macos-latest },
-            { name: x86_64-unknown-linux-gnu, os: ubuntu-latest },
-            { name: x86_64-pc-windows-msvc, os: windows-latest },
-          ]
+  build-macos:
+    name: Build notarized macOS package
+    runs-on: macos-latest
     steps:
       - name: Fetch latest code
         uses: actions/checkout@v6
 
-      - name: Install Linux desktop build dependencies
-        if: matrix.target.os == 'ubuntu-latest'
+      - name: Verify release tag and runner
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libayatana-appindicator3-dev \
-            libdbus-1-dev \
-            libegl-dev \
-            libgtk-3-dev \
-            libpipewire-0.3-dev \
-            libwayland-dev \
-            libxcb1-dev \
-            libxdo-dev \
-            libxrandr-dev
+          set -euo pipefail
+
+          VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [[ "v${VERSION}" != "${GITHUB_REF_NAME}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match Cargo workspace version ${VERSION}" >&2
+            exit 1
+          fi
+
+          if [[ "$(uname -m)" != "arm64" ]]; then
+            echo "The macOS release asset is named for aarch64; expected an arm64 runner." >&2
+            exit 1
+          fi
 
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: true
-          components: rustfmt, clippy
-
-      - name: Add target
-        run: rustup target add ${{ matrix.target.name }}
-
-      - name: Build
-        if: matrix.target.os != 'macos-latest'
-        run: cargo build --profile final-release --locked --target ${{ matrix.target.name }}
 
       - name: Bundle, sign, notarize, and pack (macOS)
-        if: matrix.target.os == 'macos-latest'
         env:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -71,9 +54,9 @@ jobs:
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
           APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
-          RSNAP_BUNDLE_PROFILE: final-release
-          RSNAP_BUNDLE_TARGET: ${{ matrix.target.name }}
         run: |
+          set -euo pipefail
+
           for required_secret in \
             APPLE_CERTIFICATE_P12_BASE64 \
             APPLE_CERTIFICATE_PASSWORD \
@@ -160,31 +143,20 @@ jobs:
 
           ditto -c -k --sequesterRsrc --keepParent \
             "${APP_PATH}" \
-            "rsnap-${{ matrix.target.name }}.zip"
-
-      - name: Pack (Windows)
-        if: matrix.target.os == 'windows-latest'
-        run: |
-          mv target/${{ matrix.target.name }}/final-release/rsnap.exe .
-          Compress-Archive -Path rsnap.exe -DestinationPath rsnap-${{ matrix.target.name }}.zip
-
-      - name: Pack (Linux)
-        if: matrix.target.os == 'ubuntu-latest'
-        run: |
-          mv target/${{ matrix.target.name }}/final-release/rsnap .
-          tar -czvf rsnap-${{ matrix.target.name }}.tar.gz rsnap
+            "${MACOS_RELEASE_ASSET}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: rsnap-${{ matrix.target.name }}
-          path: rsnap-${{ matrix.target.name }}.*
+          name: rsnap-aarch64-apple-darwin
+          path: ${{ env.MACOS_RELEASE_ASSET }}
+          if-no-files-found: error
           retention-days: 1
 
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [build-macos]
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v8
@@ -205,70 +177,3 @@ jobs:
           discussion_category_name: Announcements
           generate_release_notes: true
           files: artifacts/*
-
-  publish-on-crates-io:
-    name: Publish on crates.io
-    runs-on: ubuntu-latest
-    needs: [build]
-    steps:
-      - name: Fetch latest code
-        uses: actions/checkout@v6
-
-      - name: Install Linux desktop build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libayatana-appindicator3-dev \
-            libdbus-1-dev \
-            libegl-dev \
-            libgtk-3-dev \
-            libpipewire-0.3-dev \
-            libwayland-dev \
-            libxcb1-dev \
-            libxdo-dev \
-            libxrandr-dev
-
-      - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          cache: true
-          components: rustfmt, clippy
-
-      - name: Login
-        run: cargo login ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Publish rsnap-capture-core
-        run: |
-          cargo publish -p rsnap-capture-core --locked
-
-      - name: Wait for rsnap-capture-core publication
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          for _ in $(seq 1 24); do
-            if curl -fsSL "https://crates.io/api/v1/crates/rsnap-capture-core/${VERSION}" > /dev/null; then
-              exit 0
-            fi
-            sleep 20
-          done
-          echo "Timed out waiting for rsnap-capture-core ${VERSION} on crates.io"
-          exit 1
-
-      - name: Publish rsnap-overlay
-        run: |
-          cargo publish -p rsnap-overlay --locked
-
-      - name: Wait for rsnap-overlay publication
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          for _ in $(seq 1 24); do
-            if curl -fsSL "https://crates.io/api/v1/crates/rsnap-overlay/${VERSION}" > /dev/null; then
-              exit 0
-            fi
-            sleep 20
-          done
-          echo "Timed out waiting for rsnap-overlay ${VERSION} on crates.io"
-          exit 1
-
-      - name: Publish rsnap
-        run: |
-          cargo publish -p rsnap --locked
