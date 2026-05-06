@@ -165,16 +165,9 @@ jobs:
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v8
-
-      - name: Hash
-        run: |
-          mkdir -p artifacts
-          mv -- rsnap-*/* artifacts/
-          cd artifacts
-          sha256sum -- * | tee ../SHA256
-          md5sum -- * | tee ../MD5
-          mv ../SHA256 .
-          mv ../MD5 .
+        with:
+          name: rsnap-aarch64-apple-darwin
+          path: artifacts
 
       - name: Publish
         uses: softprops/action-gh-release@v3
