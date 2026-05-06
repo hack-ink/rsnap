@@ -6,14 +6,16 @@ Read this when: You are preparing a formal Rsnap release tag or verifying the pu
 artifacts immediately after the tag workflow completes.
 
 Preconditions: `main` is clean and synced, the intended release version is committed in
-`Cargo.toml`, GitHub Actions macOS signing/notary release secrets are configured, and a logged-in
-macOS desktop session is available for native-host smoke and manual checks.
+`Cargo.toml`, GitHub Actions macOS signing release secrets are configured, optional Apple notary
+credentials are configured only when a notarized build is required, and a logged-in macOS desktop
+session is available for native-host smoke and manual checks.
 
 Depends on: `docs/spec/app-identity.md`; `docs/spec/settings.md`; `docs/spec/telemetry.md`;
 `docs/runbook/performance-validation.md`; `.github/workflows/release.yml`
 
 Verification: Local checks, dedicated macOS smoke/perf evidence, release workflow success, signed
-and notarized macOS zip acceptance, and manual first-run/user-flow validation.
+macOS zip acceptance, optional notarization evidence when notary credentials are configured, and
+manual first-run/user-flow validation.
 
 ## Before Tagging
 
@@ -21,7 +23,9 @@ and notarized macOS zip acceptance, and manual first-run/user-flow validation.
    - `Cargo.toml` `workspace.package.version` matches the intended tag without a leading `v`.
    - No existing local or remote tag already uses `v<version>`.
 2. Confirm release credentials:
-   - Apple signing certificate and notary credentials are available to the Release workflow.
+   - Apple signing certificate secrets are available to the Release workflow.
+   - Apple notary credentials are optional for v0.1.0; when absent, the Release workflow still
+     publishes a signed but unnotarized macOS zip.
 3. Confirm local gates:
    - `cargo make checks`
    - `cargo make test-host-reset`
@@ -68,9 +72,11 @@ user-entered annotation text.
 
 1. Push the annotated release tag only after local and manual RC validation pass.
 2. Watch the Release workflow for the exact tag.
-3. Treat a build, signing, notarization, or packaging failure as a release blocker.
-4. The Release workflow publishes the notarized macOS zip plus checksum files to the GitHub
-   release. It does not publish crates.io packages or non-macOS desktop archives for v0.1.0.
+3. Treat a build, signing, or packaging failure as a release blocker.
+4. Treat notarization failure as a release blocker only when notary credentials are configured.
+5. The Release workflow publishes the signed macOS zip plus checksum files to the GitHub release.
+   It notarizes and staples the app only when notary credentials are configured. It does not
+   publish crates.io packages or non-macOS desktop archives for v0.1.0.
 
 ## Published Artifact Check
 
@@ -82,12 +88,21 @@ After the Release workflow succeeds:
    - The app bundle is `Rsnap.app`.
    - `CFBundleName` and `CFBundleDisplayName` are `Rsnap`.
    - `CFBundleIdentifier` is `ink.hack.rsnap`.
-3. Verify signature and Gatekeeper acceptance:
+3. Verify the signature:
 
 ```sh
 codesign --verify --deep --strict /path/to/Rsnap.app
+```
+
+4. For a notarized build, verify Gatekeeper acceptance:
+
+```sh
 spctl -a -vvv --type exec /path/to/Rsnap.app
 ```
 
-4. Launch the downloaded app and repeat a minimal capture, toolbar, OCR, copy, and save check.
-5. Confirm release notes and checksums were published with the artifacts.
+For a signed but unnotarized build, Gatekeeper may still block a quarantined download. Use the
+quarantine override documented in `README.md` only for a bundle built locally or downloaded from
+this repository's GitHub Releases page.
+
+5. Launch the downloaded app and repeat a minimal capture, toolbar, OCR, copy, and save check.
+6. Confirm release notes and checksums were published with the artifacts.
