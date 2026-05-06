@@ -56,7 +56,7 @@ if [[ "$SWIFT_CONFIGURATION" == "release" ]]; then
 fi
 
 APP_VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1)"
-APP_VERSION="${APP_VERSION:-0.1.0}"
+APP_VERSION="${APP_VERSION:-0.1.2}"
 
 relink_native_host_if_missing() {
 	local product_dir link_file swift_frameworks sdk swiftc
