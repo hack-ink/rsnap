@@ -2,7 +2,7 @@
 
 # Rsnap
 
-macOS-first screenshot prototype in native-host / Rust-core reset.
+macOS-first screenshot app built with a native host and Rust core.
 
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Language Checks](https://github.com/hack-ink/rsnap/actions/workflows/language.yml/badge.svg?branch=main)](https://github.com/hack-ink/rsnap/actions/workflows/language.yml)
@@ -25,10 +25,9 @@ macOS-first screenshot prototype in native-host / Rust-core reset.
 - In Frozen mode, `Space` copies the current frozen PNG to the clipboard and exits.
 - In Frozen mode, Cmd+S (macOS) / Ctrl+S saves the current PNG to disk and exits.
 - On macOS, Frozen mode can recognize text from the current capture and copy the result to the clipboard from the toolbar.
-- After a dragged region freeze, press `s` or use the frozen toolbar `Scroll Capture ↓` action to enter scroll capture.
-- Scroll capture is currently implemented on macOS for dragged-region freezes and uses image-first downward stitching with a live side preview.
-- Upward scrolling may be observed for rewind/reacquire, but it never appends stitched rows.
-- `Esc` cancels capture; during scroll capture, `Esc` / `Back` returns to normal Frozen mode.
+- Frozen toolbar tools include pointer, pen, arrow, text, mosaic, spotlight, undo, redo, auto-center,
+  OCR, copy, and save.
+- `Esc` cancels capture.
 - Glass HUD with Classic Glass by default and Liquid Glass on supported macOS.
 - Tab-triggered loupe sample and frozen-mode toolbar for quick action access.
 
@@ -63,13 +62,14 @@ Prototype / in active development.
 ## Capture platform support
 
 - Live sampling path: **macOS 12.3+** via ScreenCaptureKit. Live loupe/window
-  sampling uses `SCStream`; downward scroll capture uses discrete
-  `SCScreenshotManager` region screenshots plus pairwise registration.
+  sampling uses `SCStream`.
 - Live mode is stream-first and does not capture full display on cursor movement.
-- Frozen capture and scroll-capture imagery on macOS use the native capture stack;
+- Frozen capture imagery on macOS uses the native capture stack;
   `docs/spec/capture-session.md` is the current contract source of truth.
 - Menubar and Dock are not included in live window-outline targeting.
 - Windows support is planned (minimum Windows 10), but not implemented yet.
+- The scroll-capture engine, deterministic replay, and benchmark surfaces remain in the repository,
+  but the v0.1.0 native-host release does not expose scroll capture in the toolbar.
 
 ## Usage
 
@@ -77,9 +77,11 @@ Prototype / in active development.
 
 #### Download macOS Build
 
-Download the latest macOS zip from the
-[GitHub Releases](https://github.com/hack-ink/rsnap/releases) page, unzip it, and move
-`Rsnap.app` to `/Applications`.
+Download the latest macOS zip:
+
+<https://github.com/hack-ink/rsnap/releases/latest/download/rsnap-aarch64-apple-darwin.zip>
+
+Unzip it and move `Rsnap.app` to `/Applications`.
 
 #### Build from Source
 
@@ -141,22 +143,21 @@ Rsnap currently relies on **Screen Recording** permission to capture other apps/
 
 - In Frozen mode, use Cmd+S (macOS) / Ctrl+S to save a PNG to disk and exit.
 - On macOS, use the frozen toolbar `Recognize Text` action to copy recognized text from the current frozen capture and exit.
-- After entering scroll capture from a dragged region on macOS, downward scrolling may append newly proven rows into the side preview.
-  Upward scrolling never appends. Returning to already-stitched content should not grow the export; only newly proven content may be added.
-  The scroll-capture commit path uses discrete region screenshots plus pairwise image registration; clipboard and save must match the committed preview the user sees.
-  `Space` copies the stitched image, Cmd+S (macOS) / Ctrl+S saves it, and `Esc` / `Back`
-  returns to the original Frozen capture without exiting.
 - Output is configured in the native `Settings…` window:
   - `output directory` (default: Desktop)
   - `filename prefix` (default: `Rsnap`, sanitized to `[A-Za-z0-9_-]`)
   - `output naming` (`timestamp` or `sequence`)
 
+### Current scroll-capture status
+
+Scroll capture is temporarily hidden in the v0.1.0 native-host release. The retained Rust
+scroll-capture session, deterministic replay, and benchmark surfaces remain for validation and
+future re-enablement, but users should not expect a `Scroll Capture` toolbar item in this release.
+
 ## Development
 
 ```sh
-cargo make fmt
-cargo make lint
-cargo make test
+cargo make checks
 cargo make test-host-reset
 cargo make test-macos-native-host-stage
 ./scripts/build_and_run.sh --verify
@@ -198,6 +199,7 @@ For durable command selection, verification order, baseline workflow, and asset 
 
 - `docs/runbook/performance-validation.md`
 - `docs/reference/smoke-perf-validation-surface.md`
+- `docs/runbook/validate-release.md`
 
 The capture-session contract lives at `docs/spec/capture-session.md`.
 
