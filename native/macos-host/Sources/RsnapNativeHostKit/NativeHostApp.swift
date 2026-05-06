@@ -2938,28 +2938,33 @@ final class CaptureSessionController: NSObject {
 			context.restoreGState()
 		}
 
-		let spotlightRects = chromeState.frozenOverlay.spotlightRects.map(mapRect)
-		if !spotlightRects.isEmpty {
+		let spotlightAnnotations = chromeState.frozenOverlay.spotlightAnnotations.map {
+			(rect: mapRect($0.rect), style: $0.style)
+		}
+		let averageScale = (scaleX + scaleY) / 2
+		if !spotlightAnnotations.isEmpty {
 			context.saveGState()
 			context.setFillColor(NSColor.black.withAlphaComponent(0.32).cgColor)
 			context.fill(imageRect)
-			for rect in spotlightRects {
+			for annotation in spotlightAnnotations {
 				context.saveGState()
-				context.clip(to: rect)
+				context.clip(to: annotation.rect)
 				context.draw(image, in: imageRect)
 				context.restoreGState()
 			}
 			context.restoreGState()
 
-			context.setStrokeColor(
-				NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor)
-			context.setLineWidth(2 * ((scaleX + scaleY) / 2))
-			for rect in spotlightRects {
-				context.stroke(rect.insetBy(dx: scaleX, dy: scaleY))
+			for annotation in spotlightAnnotations {
+				drawFrozenSpotlightBorder(
+					for: annotation.rect,
+					style: annotation.style,
+					scale: averageScale,
+					alpha: 0.96,
+					in: context
+				)
 			}
 		}
 
-		let averageScale = (scaleX + scaleY) / 2
 		for stroke in chromeState.frozenOverlay.penStrokes {
 			guard let first = stroke.points.first else {
 				continue
@@ -6035,10 +6040,21 @@ final class CaptureHostView: NSView {
 	}
 
 	private func drawFrozenSpotlights(for selection: CGRect, in context: CGContext) {
-		let spotlightRects = chrome.frozenOverlay.spotlightRects.compactMap(localRect(from:))
-		let previewRect = chrome.frozenOverlay.previewSpotlightRect.flatMap(localRect(from:))
-		let allRects = spotlightRects + (previewRect.map { [$0] } ?? [])
-		guard !allRects.isEmpty else {
+		let spotlightAnnotations: [(rect: CGRect, style: FrozenSpotlightStyle)] =
+			chrome.frozenOverlay.spotlightAnnotations.compactMap { annotation in
+				guard let rect = localRect(from: annotation.rect) else {
+					return nil
+				}
+				return (rect: rect, style: annotation.style)
+			}
+		let previewAnnotation =
+			chrome.frozenOverlay.previewSpotlightAnnotation.flatMap { annotation in
+				localRect(from: annotation.rect).map { rect in
+					(rect: rect, style: annotation.style)
+				}
+			}
+		let allAnnotations = spotlightAnnotations + (previewAnnotation.map { [$0] } ?? [])
+		guard !allAnnotations.isEmpty else {
 			return
 		}
 
@@ -6046,16 +6062,19 @@ final class CaptureHostView: NSView {
 		context.setFillColor(NSColor.black.withAlphaComponent(0.32).cgColor)
 		context.fill(selection)
 		context.setBlendMode(.clear)
-		for rect in allRects {
-			context.fill(rect)
+		for annotation in allAnnotations {
+			context.fill(annotation.rect)
 		}
 		context.restoreGState()
 
-		context.setStrokeColor(
-			NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.92).cgColor)
-		context.setLineWidth(2)
-		for rect in allRects {
-			context.stroke(rect.insetBy(dx: 1, dy: 1))
+		for annotation in allAnnotations {
+			drawFrozenSpotlightBorder(
+				for: annotation.rect,
+				style: annotation.style,
+				scale: 1,
+				alpha: 0.92,
+				in: context
+			)
 		}
 	}
 
@@ -6179,7 +6198,7 @@ final class CaptureHostView: NSView {
 		let styleKind =
 			items.first(where: { $0.selected })
 			.flatMap { FrozenAnnotationStyleToolbarKind(selectedTool: $0.kind) }
-		let metrics = CaptureChrome.toolbarMetrics(hasAnnotationStyle: styleKind != nil)
+		let metrics = CaptureChrome.toolbarMetrics()
 		let itemCount = CGFloat(items.count)
 		let primaryContentWidth =
 			itemCount * metrics.buttonSize
@@ -6188,11 +6207,8 @@ final class CaptureHostView: NSView {
 			styleKind.map { annotationStyleContentWidth(for: $0, metrics: metrics) } ?? 0
 		let contentWidth = max(primaryContentWidth, styleContentWidth)
 		let width = contentWidth + metrics.horizontalPadding * 2
-		let height =
-			metrics.verticalPadding * 2
-			+ metrics.buttonSize
-			+ (styleKind == nil
-				? 0 : metrics.annotationStyleRowGap + metrics.annotationStyleRowHeight)
+		let primaryRowHeight = metrics.verticalPadding * 2 + metrics.buttonSize
+		let height = styleKind == nil ? primaryRowHeight : primaryRowHeight * 2
 		let desiredY = selection.maxY + metrics.gap
 		let wantsTop = settings.toolbarPlacement == .top
 		let placedAbove =
@@ -7874,7 +7890,7 @@ private enum FrozenAnnotationColor: CaseIterable, Equatable {
 }
 
 private struct FrozenBrushStyle: Equatable {
-	private static let defaultStrokeWidth: CGFloat = 3.5
+	private static let defaultStrokeWidth: CGFloat = 3.0
 	private static let minStrokeWidth: CGFloat = 1.0
 	private static let maxStrokeWidth: CGFloat = 24.0
 	private static let strokeWidthStep: CGFloat = 0.25
@@ -7902,6 +7918,39 @@ private struct FrozenBrushStyle: Equatable {
 			return false
 		}
 		strokeWidthPoints = clamped
+		return true
+	}
+}
+
+private struct FrozenSpotlightStyle: Equatable {
+	private static let defaultBorderWidth: CGFloat = 0.0
+	private static let minBorderWidth: CGFloat = 0.0
+	private static let maxBorderWidth: CGFloat = 24.0
+	private static let borderWidthStep: CGFloat = 0.25
+
+	var borderWidthPoints = defaultBorderWidth
+	var borderColor: FrozenAnnotationColor = .blue
+
+	mutating func applySizeSteps(_ steps: Int) -> Bool {
+		guard steps != 0 else {
+			return false
+		}
+		let direction = steps.signum()
+		var changed = false
+		for _ in 0..<abs(steps) {
+			changed =
+				setBorderWidth(borderWidthPoints + CGFloat(direction) * Self.borderWidthStep)
+				|| changed
+		}
+		return changed
+	}
+
+	private mutating func setBorderWidth(_ value: CGFloat) -> Bool {
+		let clamped = value.clamped(to: Self.minBorderWidth...Self.maxBorderWidth)
+		guard abs(clamped - borderWidthPoints) > .ulpOfOne else {
+			return false
+		}
+		borderWidthPoints = clamped
 		return true
 	}
 }
@@ -7953,15 +8002,18 @@ private enum FrozenAnnotationStyleAction: Equatable {
 
 private enum FrozenAnnotationStyleToolbarKind: Equatable {
 	case brush
+	case spotlight
 	case text
 
 	init?(selectedTool: ToolbarItemKind) {
 		switch selectedTool {
 		case .pen, .arrow:
 			self = .brush
+		case .spotlight:
+			self = .spotlight
 		case .text:
 			self = .text
-		case .pointer, .mosaic, .spotlight, .undo, .redo, .autoCenter, .scroll, .ocr, .copy, .save:
+		case .pointer, .mosaic, .undo, .redo, .autoCenter, .scroll, .ocr, .copy, .save:
 			return nil
 		}
 	}
@@ -7970,6 +8022,8 @@ private enum FrozenAnnotationStyleToolbarKind: Equatable {
 		switch self {
 		case .brush:
 			return 84
+		case .spotlight:
+			return 58
 		case .text:
 			return 58
 		}
@@ -7988,6 +8042,8 @@ private enum FrozenAnnotationStyleToolbarKind: Equatable {
 		switch self {
 		case .brush:
 			return state.brushStyle.color
+		case .spotlight:
+			return state.spotlightStyle.borderColor
 		case .text:
 			return state.textStyle.color
 		}
@@ -7996,15 +8052,9 @@ private enum FrozenAnnotationStyleToolbarKind: Equatable {
 	func sizeLabel(in state: FrozenAnnotationStyleState) -> String {
 		switch self {
 		case .brush:
-			let size = state.brushStyle.strokeWidthPoints
-			var text = String(format: "%.2f", Double(size))
-			while text.contains(".") && text.hasSuffix("0") {
-				text.removeLast()
-			}
-			if text.hasSuffix(".") {
-				text.removeLast()
-			}
-			return text
+			return Self.trimmedDecimalLabel(state.brushStyle.strokeWidthPoints)
+		case .spotlight:
+			return Self.trimmedDecimalLabel(state.spotlightStyle.borderWidthPoints)
 		case .text:
 			let size = state.textStyle.fontSizePoints
 			let text =
@@ -8014,10 +8064,22 @@ private enum FrozenAnnotationStyleToolbarKind: Equatable {
 			return "\(text) pt"
 		}
 	}
+
+	private static func trimmedDecimalLabel(_ value: CGFloat) -> String {
+		var text = String(format: "%.2f", Double(value))
+		while text.contains(".") && text.hasSuffix("0") {
+			text.removeLast()
+		}
+		if text.hasSuffix(".") {
+			text.removeLast()
+		}
+		return text
+	}
 }
 
 private struct FrozenAnnotationStyleState: Equatable {
 	var brushStyle = FrozenBrushStyle()
+	var spotlightStyle = FrozenSpotlightStyle()
 	var textStyle = FrozenTextStyle()
 
 	mutating func apply(
@@ -8037,6 +8099,16 @@ private struct FrozenAnnotationStyleState: Equatable {
 				return false
 			}
 			brushStyle.color = color
+			return true
+		case (.spotlight, .decreaseSize):
+			return spotlightStyle.applySizeSteps(-1)
+		case (.spotlight, .increaseSize):
+			return spotlightStyle.applySizeSteps(1)
+		case (.spotlight, .color(let color)):
+			guard spotlightStyle.borderColor != color else {
+				return false
+			}
+			spotlightStyle.borderColor = color
 			return true
 		case (.text, .decreaseSize):
 			return textStyle.applySizeSteps(-1)
@@ -8058,6 +8130,8 @@ private struct FrozenAnnotationStyleState: Equatable {
 		switch kind {
 		case .brush:
 			return brushStyle.applySizeSteps(steps)
+		case .spotlight:
+			return spotlightStyle.applySizeSteps(steps)
 		case .text:
 			return textStyle.applySizeSteps(steps)
 		}
@@ -8075,6 +8149,11 @@ private struct FrozenArrowAnnotation: Equatable {
 	var style: FrozenBrushStyle
 }
 
+private struct FrozenSpotlightAnnotation: Equatable {
+	var rect: CGRect
+	var style: FrozenSpotlightStyle
+}
+
 private struct FrozenTextAnnotation: Equatable {
 	var anchor: CGPoint
 	var text: String
@@ -8084,6 +8163,24 @@ private struct FrozenTextAnnotation: Equatable {
 private struct FrozenTextEditState {
 	var anchor: CGPoint
 	var text: String
+}
+
+private func drawFrozenSpotlightBorder(
+	for rect: CGRect,
+	style: FrozenSpotlightStyle,
+	scale: CGFloat,
+	alpha: CGFloat,
+	in context: CGContext
+) {
+	let lineWidth = style.borderWidthPoints * scale
+	guard lineWidth > .ulpOfOne else {
+		return
+	}
+	context.saveGState()
+	context.setStrokeColor(style.borderColor.nsColor(alpha: alpha).cgColor)
+	context.setLineWidth(lineWidth)
+	context.stroke(rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2))
+	context.restoreGState()
 }
 
 private func drawFrozenArrow(
@@ -8097,7 +8194,7 @@ private func drawFrozenArrow(
 	guard distance > .ulpOfOne else {
 		return
 	}
-	let strokeWidth = max(style.strokeWidthPoints * 1.4 * scale, 4.5 * scale)
+	let strokeWidth = style.strokeWidthPoints * 1.4 * scale
 	let headLength = min(max(strokeWidth * 4.2, 16 * scale), distance * 0.9)
 	let headSpread: CGFloat = .pi / 7
 	let angle = atan2(end.y - start.y, end.x - start.x)
@@ -8266,7 +8363,7 @@ private struct FrozenOverlayState {
 		case pen(FrozenBrushStroke)
 		case arrow(FrozenArrowAnnotation)
 		case mosaic(CGRect)
-		case spotlight(CGRect)
+		case spotlight(FrozenSpotlightAnnotation)
 		case text(FrozenTextAnnotation)
 	}
 
@@ -8276,7 +8373,7 @@ private struct FrozenOverlayState {
 		case mosaic(anchor: CGPoint, current: CGPoint)
 		case mosaicMove(index: Int, currentRect: CGRect, dragOffset: CGSize)
 		case textMove(index: Int, currentAnnotation: FrozenTextAnnotation, dragOffset: CGSize)
-		case spotlight(anchor: CGPoint, current: CGPoint)
+		case spotlight(anchor: CGPoint, current: CGPoint, style: FrozenSpotlightStyle)
 	}
 
 	private enum MoveTarget {
@@ -8349,7 +8446,11 @@ private struct FrozenOverlayState {
 				)
 			}
 		case .spotlight:
-			activeInteraction = .spotlight(anchor: point, current: point)
+			activeInteraction = .spotlight(
+				anchor: point,
+				current: point,
+				style: style.spotlightStyle
+			)
 		case .text:
 			let _ = commitTextEdit(style: style.textStyle)
 			activeTextEdit = FrozenTextEditState(anchor: selection.clamp(point), text: "")
@@ -8403,8 +8504,12 @@ private struct FrozenOverlayState {
 				),
 				dragOffset: dragOffset
 			)
-		case .spotlight(let anchor, _):
-			self.activeInteraction = .spotlight(anchor: anchor, current: selection.clamp(point))
+		case .spotlight(let anchor, _, let style):
+			self.activeInteraction = .spotlight(
+				anchor: anchor,
+				current: selection.clamp(point),
+				style: style
+			)
 		}
 
 		return true
@@ -8454,12 +8559,12 @@ private struct FrozenOverlayState {
 			} else {
 				edits[index] = .text(currentAnnotation)
 			}
-		case .spotlight(let anchor, let current):
+		case .spotlight(let anchor, let current, let style):
 			let rect = selection.normalizedRect(anchor: anchor, current: current)
 			guard rect.width >= 6, rect.height >= 6 else {
 				return false
 			}
-			edits.append(.spotlight(rect))
+			edits.append(.spotlight(FrozenSpotlightAnnotation(rect: rect, style: style)))
 		}
 
 		if changed {
@@ -8653,10 +8758,10 @@ private struct FrozenOverlayState {
 		}
 	}
 
-	var spotlightRects: [CGRect] {
+	var spotlightAnnotations: [FrozenSpotlightAnnotation] {
 		edits.compactMap {
-			if case .spotlight(let rect) = $0 {
-				return rect
+			if case .spotlight(let annotation) = $0 {
+				return annotation
 			}
 			return nil
 		}
@@ -8725,13 +8830,16 @@ private struct FrozenOverlayState {
 		return nil
 	}
 
-	var previewSpotlightRect: CGRect? {
-		if case .spotlight(let anchor, let current)? = activeInteraction {
-			return CGRect(
-				x: min(anchor.x, current.x),
-				y: min(anchor.y, current.y),
-				width: abs(current.x - anchor.x),
-				height: abs(current.y - anchor.y)
+	var previewSpotlightAnnotation: FrozenSpotlightAnnotation? {
+		if case .spotlight(let anchor, let current, let style)? = activeInteraction {
+			return FrozenSpotlightAnnotation(
+				rect: CGRect(
+					x: min(anchor.x, current.x),
+					y: min(anchor.y, current.y),
+					width: abs(current.x - anchor.x),
+					height: abs(current.y - anchor.y)
+				),
+				style: style
 			)
 		}
 		return nil
@@ -8811,7 +8919,6 @@ enum CaptureChrome {
 		let horizontalPadding: CGFloat
 		let verticalPadding: CGFloat
 		let gap: CGFloat
-		let annotationStyleRowGap: CGFloat
 		let annotationStyleRowHeight: CGFloat
 		let annotationStyleControlGap: CGFloat
 		let annotationSizeButtonWidth: CGFloat
@@ -8858,7 +8965,6 @@ enum CaptureChrome {
 	static let scrollMinimapScreenMargin: CGFloat = 10
 	static let scrollMinimapImageInset: CGFloat = 3
 	static let scrollMinimapCornerRadius: CGFloat = 9
-	static let annotationStyleRowGap: CGFloat = 4
 	static let annotationStyleRowHeight: CGFloat = 24
 	static let annotationStyleControlGap: CGFloat = 4
 	static let annotationSizeButtonWidth: CGFloat = 20
@@ -8870,11 +8976,10 @@ enum CaptureChrome {
 	static let selectionSizeBadgeInset: CGFloat = 8
 	static let selectionSizeBadgeToolbarAvoidance: CGFloat = 4
 
-	static func toolbarMetrics(hasAnnotationStyle: Bool) -> ToolbarMetrics {
+	static func toolbarMetrics() -> ToolbarMetrics {
 		let baseHeight =
 			toolbarVerticalPadding * 2
 			+ toolbarButtonSize
-			+ (hasAnnotationStyle ? annotationStyleRowGap + annotationStyleRowHeight : 0)
 		let targetHeight = toolbarTargetHeight
 		let scale = min(1, targetHeight / max(baseHeight, 1))
 		return ToolbarMetrics(
@@ -8884,7 +8989,6 @@ enum CaptureChrome {
 			horizontalPadding: hudInnerMarginX * scale,
 			verticalPadding: toolbarVerticalPadding * scale,
 			gap: toolbarGap * scale,
-			annotationStyleRowGap: annotationStyleRowGap * scale,
 			annotationStyleRowHeight: annotationStyleRowHeight * scale,
 			annotationStyleControlGap: annotationStyleControlGap * scale,
 			annotationSizeButtonWidth: annotationSizeButtonWidth * scale,
@@ -9430,7 +9534,7 @@ private enum FrozenToolbarDrawing {
 				color: palette.labelText,
 				context: context
 			)
-		case .text:
+		case .spotlight, .text:
 			drawCenteredText(
 				layout.kind.sizeLabel(in: state),
 				in: layout.displayFrame,
