@@ -69,7 +69,7 @@ Prototype / in active development.
 - Menubar and Dock are not included in live window-outline targeting.
 - Windows support is planned (minimum Windows 10), but not implemented yet.
 - The scroll-capture engine, deterministic replay, and benchmark surfaces remain in the repository,
-  but the v0.1.0 native-host release does not expose scroll capture in the toolbar.
+  but the v0.1.1 native-host release does not expose scroll capture in the toolbar.
 
 ## Usage
 
@@ -150,7 +150,7 @@ Rsnap currently relies on **Screen Recording** permission to capture other apps/
 
 ### Current scroll-capture status
 
-Scroll capture is temporarily hidden in the v0.1.0 native-host release. The retained Rust
+Scroll capture is temporarily hidden in the v0.1.1 native-host release. The retained Rust
 scroll-capture session, deterministic replay, and benchmark surfaces remain for validation and
 future re-enablement, but users should not expect a `Scroll Capture` toolbar item in this release.
 
