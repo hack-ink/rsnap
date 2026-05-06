@@ -1406,6 +1406,9 @@ final class LiveOverlayRenderer {
 	private var lastActiveChromeRenderUptime: TimeInterval?
 	private var lastHudColorPending: Bool?
 	private var hudColorRevealArmed = true
+	private var hasResolvedHudColor = false
+	private var lastResolvedHudHexText: String?
+	private var lastResolvedHudSwatchColor: CGColor?
 	private var activeHudHexRollTarget: String?
 	private var activeHudHexRollSwatchColor: CGColor?
 	private var hudHexRollAnimationEndUptime: TimeInterval?
@@ -1970,6 +1973,26 @@ final class LiveOverlayRenderer {
 			hudSwatchLayer.removeAnimation(forKey: Self.hudColorResolveBackgroundAnimationKey)
 			hudSwatchLayer.opacity = 1
 			hudHexLayer.removeAnimation(forKey: Self.hudColorResolveAnimationKey)
+			if hasResolvedHudColor {
+				clearHudHexRollAnimation()
+				if let lastResolvedHudSwatchColor {
+					hudSwatchLayer.backgroundColor = lastResolvedHudSwatchColor
+				}
+				if let lastResolvedHudHexText {
+					applyText(
+						hudHexLayer,
+						text: lastResolvedHudHexText,
+						font: font,
+						color: textColor,
+						frame: hexFrame,
+						alignment: .left
+					)
+				}
+				hudHexLayer.isHidden = false
+				lastHudColorPending = false
+				hudColorRevealArmed = false
+				return
+			}
 			beginOrUpdateHudHexPendingRollAnimation(
 				frame: hexFrame,
 				font: font,
@@ -1980,12 +2003,15 @@ final class LiveOverlayRenderer {
 		}
 
 		let wasPending = lastHudColorPending == true
-		let shouldAnimateReveal = wasPending && hudColorRevealArmed
+		let shouldAnimateReveal = wasPending && hudColorRevealArmed && !hasResolvedHudColor
 		let priorSwatchColor =
 			wasPending ? hudSwatchLayer.presentation()?.backgroundColor : nil
 		let priorSwatchOpacity =
 			wasPending ? hudSwatchLayer.presentation()?.opacity : nil
 		let priorHexOpacity = wasPending ? hudHexLayer.presentation()?.opacity : nil
+		lastResolvedHudHexText = resolvedHexText
+		lastResolvedHudSwatchColor = resolvedSwatchColor.cgColor
+		hasResolvedHudColor = true
 		lastHudColorPending = false
 		hudColorRevealArmed = false
 
@@ -2614,6 +2640,9 @@ final class LiveOverlayRenderer {
 	private func resetHudColorAnimationState() {
 		lastHudColorPending = nil
 		hudColorRevealArmed = true
+		hasResolvedHudColor = false
+		lastResolvedHudHexText = nil
+		lastResolvedHudSwatchColor = nil
 		activeHudHexRollTarget = nil
 		activeHudHexRollSwatchColor = nil
 		hudHexRollAnimationEndUptime = nil
@@ -2685,11 +2714,16 @@ final class LiveOverlayRenderer {
 		let hasGlass = hasInlineGlass || glassEnabled || hasNativeLiquidGlass
 
 		container.cornerRadius = cornerRadius
-		container.shadowColor = palette.shadow.cgColor
-		container.shadowOffset = .zero
-		container.shadowRadius = 10
-		container.shadowOpacity = Float(max(0.12, opacity * 0.75))
-		container.shadowPath = boundsPath
+		if hasNativeLiquidGlass {
+			container.shadowOpacity = 0
+			container.shadowPath = nil
+		} else {
+			container.shadowColor = palette.shadow.cgColor
+			container.shadowOffset = .zero
+			container.shadowRadius = 10
+			container.shadowOpacity = Float(max(0.12, opacity * 0.75))
+			container.shadowPath = boundsPath
+		}
 
 		glassLayer.frame = frame
 		glassLayer.cornerRadius = cornerRadius
@@ -2702,6 +2736,7 @@ final class LiveOverlayRenderer {
 		let usesNativeLiquidGlass = settings.usesLiquidHudGlass
 		fillLayer.frame = frame
 		fillLayer.cornerRadius = cornerRadius
+		fillLayer.isHidden = usesNativeLiquidGlass
 		fillLayer.backgroundColor =
 			usesNativeLiquidGlass
 			? NSColor.clear.cgColor
