@@ -2714,11 +2714,16 @@ final class LiveOverlayRenderer {
 		let hasGlass = hasInlineGlass || glassEnabled || hasNativeLiquidGlass
 
 		container.cornerRadius = cornerRadius
-		container.shadowColor = palette.shadow.cgColor
-		container.shadowOffset = .zero
-		container.shadowRadius = 10
-		container.shadowOpacity = Float(max(0.12, opacity * 0.75))
-		container.shadowPath = boundsPath
+		if hasNativeLiquidGlass {
+			container.shadowOpacity = 0
+			container.shadowPath = nil
+		} else {
+			container.shadowColor = palette.shadow.cgColor
+			container.shadowOffset = .zero
+			container.shadowRadius = 10
+			container.shadowOpacity = Float(max(0.12, opacity * 0.75))
+			container.shadowPath = boundsPath
+		}
 
 		glassLayer.frame = frame
 		glassLayer.cornerRadius = cornerRadius
@@ -2731,6 +2736,7 @@ final class LiveOverlayRenderer {
 		let usesNativeLiquidGlass = settings.usesLiquidHudGlass
 		fillLayer.frame = frame
 		fillLayer.cornerRadius = cornerRadius
+		fillLayer.isHidden = usesNativeLiquidGlass
 		fillLayer.backgroundColor =
 			usesNativeLiquidGlass
 			? NSColor.clear.cgColor
