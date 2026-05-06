@@ -104,15 +104,15 @@ enum RsnapHostBridgeProbe {
 			scene.statusMessage == nil,
 			scene.toolbarItems.contains(where: { $0.kind == .pointer && $0.selected }),
 			scene.toolbarItems.contains(where: { $0.kind == .ocr && $0.enabled }),
-			scene.toolbarItems.contains(where: { $0.kind == .scroll && $0.enabled }),
+			!scene.toolbarItems.contains(where: { $0.kind == .scroll }),
 			scene.toolbarItems.contains(where: { $0.kind == .copy && $0.enabled }),
 			scene.toolbarItems.contains(where: { $0.kind == .save && $0.enabled })
 		else {
 			fatalError("unexpected frozen scene: \(scene)")
 		}
 		try session.send(event: .toolbarItemInvoked(.scroll))
-		guard try session.takeNextRequest() == .startScrollCapture else {
-			fatalError("expected a start-scroll-capture host request")
+		guard try session.takeNextRequest() == nil else {
+			fatalError("scroll toolbar invocation should stay disabled")
 		}
 
 		try session.send(
