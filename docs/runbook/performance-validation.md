@@ -17,6 +17,11 @@ Depends on: `docs/spec/performance.md`
 Outputs: A clear command choice for the regression class you are testing, plus a repeatable local
 baseline workflow for the committed Criterion benchmark targets.
 
+Current release status: v0.1.0 hides user-facing scroll capture in the native host. The replay and
+benchmark commands in this runbook still own retained internal scroll-capture engine validation and
+future re-enablement work, but they are not evidence that the v0.1.0 toolbar exposes scroll
+capture.
+
 ## Command selection
 
 Use the smallest command that matches the regression surface:
@@ -69,7 +74,7 @@ worker-pairwise self-check path when no recorded user trace is available.
   - Runs the core native visual contract smoke.
   - Runs the native HUD-follow responsiveness smoke.
 
-For the downward scroll-capture rebuild, the expected verification sequence is:
+For a future downward scroll-capture re-enablement, the expected verification sequence is:
 
 1. `cargo make checks`
 2. `scripts/smoke/replay-scroll-capture.sh`
