@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rsnap - macOS-first screenshot capture</title>
+    <meta
+      name="description"
+      content="Rsnap is a macOS-first screenshot tool for frozen regions, pixel inspection, OCR, and scroll stitching."
+    />
+    <meta name="theme-color" content="#050506" />
+    <meta property="og:title" content="Rsnap" />
+    <meta
+      property="og:description"
+      content="A native screenshot workflow for the moment before it moves."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="./assets/app-icon/generated/app-icon-default-preview.png" />
+    <link rel="apple-touch-icon" href="./assets/app-icon/generated/app-icon-default-preview.png" />
+    <link rel="stylesheet" href="./site/styles.css" />
+  </head>
+  <body>
+    <canvas id="capture-field" aria-hidden="true"></canvas>
+
+    <header class="site-header" aria-label="Primary">
+      <a class="brand-lockup" href="#top" aria-label="Rsnap home">
+        <img src="./assets/app-icon/generated/app-icon-default-preview.png" alt="" />
+        <span>Rsnap</span>
+      </a>
+      <nav class="nav-links" aria-label="Site">
+        <a href="#flow">Flow</a>
+        <a href="#details">Details</a>
+        <a href="https://github.com/hack-ink/rsnap" rel="noreferrer">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">Option + X / native macOS capture</p>
+          <h1 id="hero-title">Rsnap</h1>
+          <p class="hero-line">Capture before the moment moves.</p>
+          <p class="hero-text">
+            A menubar screenshot tool for frozen regions, exact pixels, OCR, and long scrolls.
+          </p>
+          <div class="hero-actions" aria-label="Primary actions">
+            <a class="button button-primary" href="https://github.com/hack-ink/rsnap/releases">
+              Download for macOS
+            </a>
+            <a class="button button-secondary" href="https://github.com/hack-ink/rsnap">
+              View source
+            </a>
+          </div>
+        </div>
+
+        <div class="hero-spec" aria-hidden="true">
+          <span>Live RGB</span>
+          <span>Frozen copy</span>
+          <span>Scroll stitch</span>
+        </div>
+      </section>
+
+      <section class="intro-band" aria-labelledby="intro-title">
+        <div class="section-inner intro-grid">
+          <p class="section-number">01</p>
+          <h2 id="intro-title">A capture surface built around the instant between seeing and saving.</h2>
+          <p>
+            Rsnap stays out of the dock, starts from the keyboard, and keeps the result ready for
+            copy, save, text recognition, or a longer stitched capture.
+          </p>
+        </div>
+      </section>
+
+      <section class="flow-section" id="flow" aria-labelledby="flow-title">
+        <div class="section-inner">
+          <p class="section-number">02</p>
+          <h2 id="flow-title">The workflow stays short.</h2>
+          <div class="flow-steps">
+            <article>
+              <span>01</span>
+              <h3>Trigger from anywhere.</h3>
+              <p>Open capture without changing apps or breaking concentration.</p>
+            </article>
+            <article>
+              <span>02</span>
+              <h3>Freeze the region.</h3>
+              <p>Hold the selected pixels in place while the desktop keeps moving behind you.</p>
+            </article>
+            <article>
+              <span>03</span>
+              <h3>Extract the output.</h3>
+              <p>Copy pixels, recognize text, save a file, or continue into scroll stitching.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="details-section" id="details" aria-labelledby="details-title">
+        <div class="section-inner detail-grid">
+          <div>
+            <p class="section-number">03</p>
+            <h2 id="details-title">Native where timing and pixels matter.</h2>
+          </div>
+          <div class="detail-copy">
+            <p>
+              The macOS host owns the capture surface while the Rust core keeps geometry, protocol,
+              and image semantics precise.
+            </p>
+            <dl>
+              <div>
+                <dt>Live</dt>
+                <dd>Cursor position and RGB sampling stay visible while aiming.</dd>
+              </div>
+              <div>
+                <dt>Frozen</dt>
+                <dd>Space copies, Cmd+S saves, and OCR extracts text from the result.</dd>
+              </div>
+              <div>
+                <dt>Scroll</dt>
+                <dd>Dragged-region freezes can stitch downward scrolling into one image.</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta" aria-labelledby="final-title">
+        <div class="section-inner">
+          <h2 id="final-title">Keep the screenshot step invisible.</h2>
+          <a class="button button-primary" href="https://github.com/hack-ink/rsnap/releases">
+            Get the latest build
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Rsnap</span>
+      <a href="https://github.com/hack-ink/rsnap/blob/main/LICENSE">GPL-3.0</a>
+      <a href="https://github.com/hack-ink/rsnap">hack-ink/rsnap</a>
+    </footer>
+
+    <noscript>
+      <div class="noscript">
+        Rsnap's homepage uses Three.js for the hero scene. Enable JavaScript to see the full
+        interactive page.
+      </div>
+    </noscript>
+
+    <script type="module" src="./site/main.js"></script>
+  </body>
+</html>
