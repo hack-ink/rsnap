@@ -9,9 +9,10 @@ final class GlobalHotKeyCenter {
 		case capture = 1
 		case cancel = 2
 		case loupe = 3
+		case save = 4
 	}
 
-	private struct HotKeyDefinition {
+	private struct HotKeyDefinition: Equatable {
 		let keyCode: UInt32
 		let modifiers: UInt32
 	}
@@ -21,10 +22,15 @@ final class GlobalHotKeyCenter {
 	var onCaptureRequested: (() -> Void)?
 	var onCancelRequested: (() -> Void)?
 	var onToggleLoupeRequested: (() -> Void)?
+	var onCopyRequested: (() -> Void)?
+	var onAutoCenterRequested: (() -> Void)?
+	var onSaveRequested: (() -> Void)?
 
 	private var handlerRef: EventHandlerRef?
 	private var hotKeyRefs: [Binding: EventHotKeyRef?] = [:]
-	private var registeredBindings: Set<Binding> = []
+	private var registeredDefinitions: [Binding: HotKeyDefinition] = [:]
+	private var plainFrozenLocalMonitor: Any?
+	private var plainFrozenGlobalMonitor: Any?
 
 	init() {
 		var eventType = EventTypeSpec(
@@ -48,28 +54,69 @@ final class GlobalHotKeyCenter {
 		)
 	}
 
-	func updateBindings(captureHotKey: String, sceneMode: SceneKind) {
+	func invalidate() {
+		removePlainFrozenShortcutMonitors()
+		for binding in Binding.allCases {
+			unregister(binding)
+		}
+		if let handlerRef {
+			RemoveEventHandler(handlerRef)
+			self.handlerRef = nil
+		}
+	}
+
+	func updateBindings(
+		captureHotKey: String,
+		sceneMode: SceneKind,
+		plainFrozenShortcutsEnabled: Bool
+	) -> Bool {
+		var allRequestedBindingsRegistered = true
 		let captureDefinition = Self.parseCaptureHotKey(captureHotKey) ?? Self.defaultCaptureHotKey
-		register(.capture, definition: captureDefinition)
+		allRequestedBindingsRegistered =
+			register(.capture, definition: captureDefinition) && allRequestedBindingsRegistered
 
 		let wantsCancel = sceneMode != .hidden
 		let wantsLoupe = sceneMode == .live
+		let wantsFrozen = sceneMode == .frozen
 
 		if wantsCancel {
-			register(.cancel, definition: HotKeyDefinition(keyCode: 53, modifiers: 0))
+			allRequestedBindingsRegistered =
+				register(.cancel, definition: HotKeyDefinition(keyCode: 53, modifiers: 0))
+				&& allRequestedBindingsRegistered
 		} else {
 			unregister(.cancel)
 		}
 
 		if wantsLoupe {
-			register(.loupe, definition: HotKeyDefinition(keyCode: 48, modifiers: 0))
+			allRequestedBindingsRegistered =
+				register(.loupe, definition: HotKeyDefinition(keyCode: 48, modifiers: 0))
+				&& allRequestedBindingsRegistered
 		} else {
 			unregister(.loupe)
 		}
+
+		if wantsFrozen && plainFrozenShortcutsEnabled {
+			installPlainFrozenShortcutMonitors()
+		} else {
+			removePlainFrozenShortcutMonitors()
+		}
+
+		if wantsFrozen {
+			allRequestedBindingsRegistered =
+				register(.save, definition: HotKeyDefinition(keyCode: 1, modifiers: UInt32(cmdKey)))
+				&& allRequestedBindingsRegistered
+		} else {
+			unregister(.save)
+		}
+
+		return allRequestedBindingsRegistered
 	}
 
-	private func register(_ binding: Binding, definition: HotKeyDefinition) {
-		if registeredBindings.contains(binding) {
+	private func register(_ binding: Binding, definition: HotKeyDefinition) -> Bool {
+		if registeredDefinitions[binding] == definition {
+			return true
+		}
+		if registeredDefinitions[binding] != nil {
 			unregister(binding)
 		}
 
@@ -89,23 +136,27 @@ final class GlobalHotKeyCenter {
 				detail:
 					"binding=\(binding.rawValue),keyCode=\(definition.keyCode),modifiers=\(definition.modifiers),status=\(status)"
 			)
-			return
+			return false
 		}
 		hotKeyRefs[binding] = hotKeyRef
-		registeredBindings.insert(binding)
+		registeredDefinitions[binding] = definition
 		NativeHostTelemetry.lifecycleEvent(
 			"native_host.hotkey_registered",
 			detail:
 				"binding=\(binding.rawValue),keyCode=\(definition.keyCode),modifiers=\(definition.modifiers)"
 		)
+		return true
 	}
 
 	private func unregister(_ binding: Binding) {
+		guard registeredDefinitions[binding] != nil || hotKeyRefs[binding] != nil else {
+			return
+		}
 		if let hotKeyRef = hotKeyRefs[binding] {
 			UnregisterEventHotKey(hotKeyRef)
 		}
 		hotKeyRefs[binding] = nil
-		registeredBindings.remove(binding)
+		registeredDefinitions.removeValue(forKey: binding)
 	}
 
 	private func handleHotKey(_ eventRef: EventRef) -> OSStatus {
@@ -132,8 +183,66 @@ final class GlobalHotKeyCenter {
 			onCancelRequested?()
 		case .loupe:
 			onToggleLoupeRequested?()
+		case .save:
+			onSaveRequested?()
 		}
 		return noErr
+	}
+
+	private func installPlainFrozenShortcutMonitors() {
+		guard plainFrozenLocalMonitor == nil, plainFrozenGlobalMonitor == nil else {
+			return
+		}
+		plainFrozenLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+			[weak self] event in
+			self?.handlePlainFrozenShortcut(event) == true ? nil : event
+		}
+		plainFrozenGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
+			[weak self] event in
+			DispatchQueue.main.async {
+				_ = self?.handlePlainFrozenShortcut(event)
+			}
+		}
+	}
+
+	private func removePlainFrozenShortcutMonitors() {
+		if let monitor = plainFrozenLocalMonitor {
+			NSEvent.removeMonitor(monitor)
+			plainFrozenLocalMonitor = nil
+		}
+		if let monitor = plainFrozenGlobalMonitor {
+			NSEvent.removeMonitor(monitor)
+			plainFrozenGlobalMonitor = nil
+		}
+	}
+
+	private func handlePlainFrozenShortcut(_ event: NSEvent) -> Bool {
+		guard !event.isARepeat else {
+			return false
+		}
+		let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+		guard !flags.contains(.command), !flags.contains(.control), !flags.contains(.option),
+			!flags.contains(.shift)
+		else {
+			return false
+		}
+		switch event.keyCode {
+		case 49:
+			NativeHostTelemetry.lifecycleEvent(
+				"native_host.plain_frozen_hotkey",
+				detail: "keyCode=49,action=copy"
+			)
+			onCopyRequested?()
+		case 8:
+			NativeHostTelemetry.lifecycleEvent(
+				"native_host.plain_frozen_hotkey",
+				detail: "keyCode=8,action=auto_center"
+			)
+			onAutoCenterRequested?()
+		default:
+			return false
+		}
+		return true
 	}
 
 	private static let defaultCaptureHotKey = HotKeyDefinition(

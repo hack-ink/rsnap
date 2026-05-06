@@ -9,9 +9,9 @@ case "${1:-}" in
 Usage: macos.sh
 
 Runs the full macOS performance sequence:
-  1. local deterministic benchmarks
+  1. local non-scroll performance checks
   2. native-host HUD-follow smoke
-  3. recorded live-trace replay
+  3. native-host visual/behavior contract smoke
 EOF
     exit 0
     ;;
@@ -20,4 +20,3 @@ esac
 "$SCRIPT_DIR/local.sh"
 "$SCRIPT_DIR/../smoke/native-hud-follow-macos.sh"
 "$SCRIPT_DIR/../smoke/native-visual-contract-macos.sh"
-"$SCRIPT_DIR/../smoke/replay-scroll-capture.sh"
