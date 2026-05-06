@@ -140,11 +140,27 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			lock.unlock()
 		}
 
-		func fresh(maxAge: TimeInterval) -> SCShareableContent? {
+		func fresh(
+			maxAge: TimeInterval,
+			covering displayIDs: Set<CGDirectDisplayID>? = nil
+		) -> SCShareableContent? {
 			let now = ProcessInfo.processInfo.systemUptime
 			lock.lock()
 			let content = now - cachedAtUptime <= maxAge ? self.content : nil
 			lock.unlock()
+			guard let content else {
+				return nil
+			}
+			guard !content.displays.isEmpty else {
+				return nil
+			}
+			guard let displayIDs else {
+				return content
+			}
+			let availableDisplayIDs = Set(content.displays.map(\.displayID))
+			guard displayIDs.isSubset(of: availableDisplayIDs) else {
+				return nil
+			}
 			return content
 		}
 	}
@@ -184,6 +200,27 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				)
 				return
 			}
+			guard Self.shareableContentHasDisplays(content) else {
+				NativeHostTelemetry.frozenAuthorityWarning(
+					"frozen_authority.content_cache_refresh_invalid",
+					captureID: captureID,
+					source: source,
+					displayID: 0,
+					error: Self.shareableContentDisplayDetail(
+						content,
+						requiredDisplayIDs: []
+					)
+				)
+				NativeHostTelemetry.frozenAuthorityContentLookupTiming(
+					captureID: captureID,
+					source: source,
+					totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
+					success: false,
+					displayCount: content.displays.count,
+					windowCount: content.windows.count
+				)
+				return
+			}
 			Self.shareableContentCache.store(content)
 			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
 				captureID: captureID,
@@ -196,8 +233,13 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		}
 	}
 
-	private static func cachedShareableContent() -> SCShareableContent? {
-		shareableContentCache.fresh(maxAge: shareableContentCacheMaxAge)
+	private static func cachedShareableContent(
+		covering displayIDs: Set<CGDirectDisplayID>? = nil
+	) -> SCShareableContent? {
+		shareableContentCache.fresh(
+			maxAge: shareableContentCacheMaxAge,
+			covering: displayIDs
+		)
 	}
 
 	func hasFreshShareableContentCache() -> Bool {
@@ -314,7 +356,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		retryUntilUptime: TimeInterval,
 		requestID: UInt64
 	) {
-		if let content = Self.cachedShareableContent() {
+		if let content = Self.cachedShareableContent(covering: targetIDs) {
 			let preparedFilters = Self.contentFilters(
 				for: targets,
 				in: content,
@@ -388,17 +430,51 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				return
 			}
 
+			let contentCoversTargets = Self.shareableContent(content, covers: targetIDs)
 			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
 				captureID: captureID,
 				source: source,
 				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-				success: true,
+				success: contentCoversTargets,
 				displayCount: content.displays.count,
 				windowCount: content.windows.count
 			)
 			guard self.isCurrentSetupRequest(requestID, targetIDs: targetIDs) else {
 				return
 			}
+			guard contentCoversTargets else {
+				NativeHostTelemetry.frozenAuthorityWarning(
+					"frozen_authority.content_lookup_invalid",
+					captureID: captureID,
+					source: source,
+					displayID: 0,
+					error: Self.shareableContentDisplayDetail(
+						content,
+						requiredDisplayIDs: targetIDs
+					)
+				)
+				if ProcessInfo.processInfo.systemUptime < retryUntilUptime {
+					DispatchQueue.global(qos: .userInteractive).asyncAfter(
+						deadline: .now() + Self.selfCaptureFilterRetryInterval
+					) { [weak self] in
+						self?.rebuildStreamsFromShareableContent(
+							targets: targets,
+							targetIDs: targetIDs,
+							selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+							includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
+							captureID: captureID,
+							source: source,
+							startedAtUptime: startedAtUptime,
+							retryUntilUptime: retryUntilUptime,
+							requestID: requestID
+						)
+					}
+					return
+				}
+				self.finishSetup(targetIDs: targetIDs)
+				return
+			}
+			Self.shareableContentCache.store(content)
 			let preparedFilters = Self.contentFilters(
 				for: targets,
 				in: content,
@@ -476,7 +552,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		source: String,
 		startedAtUptime: TimeInterval
 	) {
-		if let content = Self.cachedShareableContent() {
+		let targetIDs = Set(targets.map(\.displayID))
+		if let content = Self.cachedShareableContent(covering: targetIDs) {
 			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
 				captureID: captureID,
 				source: source,
@@ -500,6 +577,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			)
 			return
 		}
+		let retryUntilUptime = startedAtUptime + Self.selfCaptureFilterRetryWindow
 		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) {
 			[weak self] content, error in
 			guard let self else {
@@ -527,14 +605,46 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				self.finishSetup(generation: requestGeneration)
 				return
 			}
+			let contentCoversTargets = Self.shareableContent(content, covers: targetIDs)
 			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
 				captureID: captureID,
 				source: source,
 				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-				success: true,
+				success: contentCoversTargets,
 				displayCount: content.displays.count,
 				windowCount: content.windows.count
 			)
+			guard contentCoversTargets else {
+				NativeHostTelemetry.frozenAuthorityWarning(
+					"frozen_authority.content_lookup_invalid",
+					captureID: captureID,
+					source: source,
+					displayID: 0,
+					error: Self.shareableContentDisplayDetail(
+						content,
+						requiredDisplayIDs: targetIDs
+					)
+				)
+				if ProcessInfo.processInfo.systemUptime < retryUntilUptime {
+					DispatchQueue.global(qos: .userInteractive).asyncAfter(
+						deadline: .now() + Self.selfCaptureFilterRetryInterval
+					) { [weak self] in
+						self?.configureStreamsFromShareableContent(
+							targets: targets,
+							selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+							includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
+							generation: requestGeneration,
+							captureID: captureID,
+							source: source,
+							startedAtUptime: startedAtUptime
+						)
+					}
+					return
+				}
+				self.finishSetup(generation: requestGeneration)
+				return
+			}
+			Self.shareableContentCache.store(content)
 			let preparedFilters = Self.contentFilters(
 				for: targets,
 				in: content,
@@ -1128,6 +1238,31 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let snapshot = (captureID: telemetryContext.captureID, source: telemetryContext.source)
 		stateLock.unlock()
 		return snapshot
+	}
+
+	private static func shareableContentHasDisplays(_ content: SCShareableContent) -> Bool {
+		!content.displays.isEmpty
+	}
+
+	private static func shareableContent(
+		_ content: SCShareableContent,
+		covers displayIDs: Set<CGDirectDisplayID>
+	) -> Bool {
+		guard shareableContentHasDisplays(content) else {
+			return false
+		}
+		let availableDisplayIDs = Set(content.displays.map(\.displayID))
+		return displayIDs.isSubset(of: availableDisplayIDs)
+	}
+
+	private static func shareableContentDisplayDetail(
+		_ content: SCShareableContent,
+		requiredDisplayIDs: Set<CGDirectDisplayID>
+	) -> String {
+		let required = requiredDisplayIDs.sorted().map { String($0) }.joined(separator: ",")
+		let available = content.displays.map(\.displayID).sorted().map { String($0) }.joined(
+			separator: ",")
+		return "requiredDisplayIDs=\(required) availableDisplayIDs=\(available)"
 	}
 
 	private static func streamConfiguration(for target: DisplayTarget) -> SCStreamConfiguration {

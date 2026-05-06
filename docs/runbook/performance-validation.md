@@ -56,20 +56,18 @@ worker-pairwise self-check path when no recorded user trace is available.
   - Use this for routine local comparisons and for regressions that do not require a real desktop
     session.
 - `scripts/perf/self-check-macos.sh`
-  - Runs `scripts/perf/local.sh`, then runs the native HUD-follow self-check plus
-    recorded-live-trace scroll-capture replay self-check.
+  - Runs `scripts/perf/local.sh`, then runs the native HUD-follow self-check through
+    `scripts/smoke/self-check-macos.sh`.
   - Use this to validate that the dedicated macOS environment, permissions, and smoke harness are
     ready without treating it as an end-to-end performance assertion.
 - `scripts/perf/macos.sh`
   - Runs `scripts/perf/local.sh`, the dedicated native-host HUD-follow perf smoke, the core native
-    visual contract smoke, plus recorded-live-trace scroll-capture replay.
+    visual contract smoke.
   - Use this only on a dedicated logged-in macOS desktop session with the expected Screen
     Recording and automation permissions.
 - `scripts/smoke/macos.sh`
   - Runs the core native visual contract smoke.
-  - Runs recorded-live-trace replay when a local `manifest.json` exists under the scroll-capture
-    trace directory; otherwise it runs `scripts/smoke/replay-scroll-capture-self-check.sh` so a
-    missing optional trace does not fail unrelated native-host validation.
+  - Runs the native HUD-follow responsiveness smoke.
 
 For the downward scroll-capture rebuild, the expected verification sequence is:
 
@@ -109,8 +107,12 @@ Dedicated macOS smoke:
 - Requires a logged-in macOS desktop session.
 - Requires the expected Screen Recording and automation permissions for the smoke scripts.
 - Covers the native-host HUD-follow desktop path. The hard follow gate uses active pointer-movement
-  cadence (`live_chrome.active_layer_chrome_render_gap`) rather than startup, Tab-expand, or close
-  transition gaps.
+  cadence (`live_chrome.active_layer_chrome_render_gap`) and frame-tick cadence
+  (`live_chrome.frame_tick_gap`) rather than startup, Tab-expand, or close transition gaps.
+- Requires the smoke harness to deliver enough mouse-movement input. For the default smooth event
+  path, `native-hud-follow-macos.sh` expects at least half of the requested
+  `(PATH_DURATION_MS / 1000) * PATH_RATE_HZ` event count; override with `MIN_MOUSE_EVENTS` only
+  when validating a different input driver or intentionally degraded environment.
 - Interpret cadence metrics by class:
   - display-bound visual presentation metrics are gated against
     `min(active display maximum refresh rate, 120 Hz)`, so a `60 Hz` monitor has a `16.67 ms`
@@ -133,10 +135,6 @@ Dedicated macOS smoke:
   worker-pairwise overlay or session logic before attempting more desktop-session repro. If the
   command reports that no trace manifests were found, that is an operator/setup failure: record a
   fresh live trace first or rerun the example with `--trace <manifest-path>`.
-- `scripts/smoke/macos.sh` choosing replay self-check:
-  treat it as expected when the machine has no recorded scroll-capture trace. It is not evidence
-  for or against the latest user-recorded live trace; run `scripts/smoke/replay-scroll-capture.sh`
-  with a real trace when scroll-capture replay evidence is required.
 - `scripts/smoke/replay-scroll-capture-self-check.sh` failures:
   treat them as deterministic regressions in the replay harness itself, not as evidence about the
   latest user-recorded live trace.

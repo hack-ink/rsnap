@@ -1,7 +1,7 @@
 //! Public macOS live-frame sampling bridge used by the native host FFI layer.
 
 use crate::live_frame_stream_macos::{CursorSampleRequest, MacLiveFrameStream};
-use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect};
+use crate::state::{GlobalPoint, LiveCursorSample, MonitorRect, RectPoints};
 
 /// Live cursor sample plus the ScreenCaptureKit frame metadata that produced it.
 pub struct HostLiveCursorSample {
@@ -118,9 +118,7 @@ impl HostMacLiveSampler {
 		width: u32,
 		height: u32,
 	) -> Option<HostRgbaRegion> {
-		let width = i32::try_from(width).ok()?;
-		let height = i32::try_from(height).ok()?;
-		let rect = monitor.clip_global_rect(origin.x, origin.y, width, height)?;
+		let rect = clipped_region_rect(monitor, origin, width, height)?;
 		let rect_px = monitor.local_rect_to_pixels(rect);
 		let image = self.stream.latest_rgba_region(monitor, rect_px)?;
 
@@ -164,4 +162,54 @@ pub struct HostRgbaRegion {
 	pub height: u32,
 	/// Packed RGBA8 pixels in row-major order.
 	pub rgba: Vec<u8>,
+}
+
+fn clipped_region_rect(
+	monitor: MonitorRect,
+	origin: GlobalPoint,
+	width: u32,
+	height: u32,
+) -> Option<RectPoints> {
+	let width = i32::try_from(width).ok()?;
+	let height = i32::try_from(height).ok()?;
+	let right = origin.x.checked_add(width)?;
+	let bottom = origin.y.checked_add(height)?;
+
+	monitor.clip_global_rect(origin.x, origin.y, right, bottom)
+}
+
+#[cfg(test)]
+mod tests {
+	use crate::state::{GlobalPoint, MonitorRect, RectPoints};
+
+	#[test]
+	fn live_region_rect_treats_size_as_extent_not_bottom_right() {
+		let monitor = MonitorRect {
+			id: 1,
+			origin: GlobalPoint::new(0, 0),
+			width: 1_440,
+			height: 900,
+			scale_factor_x1000: 2_000,
+		};
+		let rect = super::clipped_region_rect(monitor, GlobalPoint::new(280, 120), 724, 632)
+			.expect("region should be inside monitor");
+
+		assert_eq!(rect, RectPoints::new(280, 120, 724, 632));
+		assert_eq!(monitor.local_rect_to_pixels(rect), RectPoints::new(560, 240, 1_448, 1_264));
+	}
+
+	#[test]
+	fn live_region_rect_clips_against_nonzero_monitor_origin() {
+		let monitor = MonitorRect {
+			id: 2,
+			origin: GlobalPoint::new(-100, -50),
+			width: 400,
+			height: 300,
+			scale_factor_x1000: 1_000,
+		};
+		let rect = super::clipped_region_rect(monitor, GlobalPoint::new(-150, -60), 120, 100)
+			.expect("partially visible region should clip");
+
+		assert_eq!(rect, RectPoints::new(0, 0, 70, 90));
+	}
 }
