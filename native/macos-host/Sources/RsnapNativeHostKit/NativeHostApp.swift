@@ -648,7 +648,7 @@ final class CaptureSessionController: NSObject {
 	private static let scrollCaptureEnabled = false
 	private static let scrollCaptureForwardingPassthrough: TimeInterval = 0.055
 	private static let scrollCaptureSampleDelay: TimeInterval = 0.04
-	private static let liveFrameStreamReleaseGrace: TimeInterval = 0.75
+	private static let liveFrameStreamReleaseGrace: TimeInterval = 1.5
 
 	private let settingsStore: NativeHostSettingsStore
 	private let liveFrameStream = LiveFrameStreamBroker()
@@ -4162,10 +4162,10 @@ final class CaptureHostView: NSView {
 		private var settings = NativeHostSettings.defaults
 		private var hoveredToolbarAction: ToolbarItemKind?
 		private var hoveredAnnotationStyleAction: FrozenAnnotationStyleAction?
+		private var toolbarScale: CGFloat = 1
 		private var annotationStyleState = FrozenAnnotationStyleState()
 		private var annotationStyleLayout: FrozenAnnotationStyleLayout?
 		private var items: [Item] = []
-		var didDraw: (() -> Void)?
 
 		override var isOpaque: Bool { false }
 
@@ -4179,6 +4179,7 @@ final class CaptureHostView: NSView {
 			settings: NativeHostSettings,
 			hoveredToolbarAction: ToolbarItemKind?,
 			hoveredAnnotationStyleAction: FrozenAnnotationStyleAction?,
+			toolbarScale: CGFloat,
 			annotationStyleState: FrozenAnnotationStyleState,
 			annotationStyleLayout: FrozenAnnotationStyleLayout?,
 			items: [Item]
@@ -4187,12 +4188,14 @@ final class CaptureHostView: NSView {
 				self.theme != theme || self.settings != settings
 				|| self.hoveredToolbarAction != hoveredToolbarAction
 				|| self.hoveredAnnotationStyleAction != hoveredAnnotationStyleAction
+				|| self.toolbarScale != toolbarScale
 				|| self.annotationStyleState != annotationStyleState
 				|| self.annotationStyleLayout != annotationStyleLayout || self.items != items
 			self.theme = theme
 			self.settings = settings
 			self.hoveredToolbarAction = hoveredToolbarAction
 			self.hoveredAnnotationStyleAction = hoveredAnnotationStyleAction
+			self.toolbarScale = toolbarScale
 			self.annotationStyleState = annotationStyleState
 			self.annotationStyleLayout = annotationStyleLayout
 			self.items = items
@@ -4207,6 +4210,10 @@ final class CaptureHostView: NSView {
 			guard let context = NSGraphicsContext.current?.cgContext else {
 				return
 			}
+			drawToolbarContent(in: context)
+		}
+
+		private func drawToolbarContent(in context: CGContext) {
 			let palette = CaptureChrome.palette(for: theme, settings: settings)
 			let pillPath = NSBezierPath(
 				roundedRect: bounds,
@@ -4220,12 +4227,22 @@ final class CaptureHostView: NSView {
 			for item in items {
 				if hoveredToolbarAction == item.kind, item.enabled, !item.selected {
 					context.setFillColor(palette.toolbarHoverBackground.cgColor)
-					let hoverPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
+					let radius = CaptureChrome.toolbarControlCornerRadius * toolbarScale
+					let hoverPath = NSBezierPath(
+						roundedRect: item.frame,
+						xRadius: radius,
+						yRadius: radius
+					)
 					hoverPath.fill()
 				}
 				if item.selected {
 					context.setFillColor(palette.toolbarSelectedBackground.cgColor)
-					let selectedPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
+					let radius = CaptureChrome.toolbarControlCornerRadius * toolbarScale
+					let selectedPath = NSBezierPath(
+						roundedRect: item.frame,
+						xRadius: radius,
+						yRadius: radius
+					)
 					selectedPath.fill()
 				}
 
@@ -4237,6 +4254,7 @@ final class CaptureHostView: NSView {
 					item.kind,
 					selected: item.selected,
 					in: item.frame,
+					scale: toolbarScale,
 					color: symbolColor,
 					context: context
 				)
@@ -4251,17 +4269,21 @@ final class CaptureHostView: NSView {
 					in: context
 				)
 			}
-			didDraw?()
 		}
 
 		private func drawToolbarGlyph(
 			_ kind: ToolbarItemKind,
 			selected: Bool,
 			in rect: CGRect,
+			scale: CGFloat,
 			color: NSColor,
 			context: CGContext
 		) {
-			let glyph = PhosphorToolbarIcons.cachedGlyph(for: kind, selected: selected, size: 18)
+			let glyph = PhosphorToolbarIcons.cachedGlyph(
+				for: kind,
+				selected: selected,
+				size: CaptureChrome.toolbarGlyphSize * scale
+			)
 			let origin = CGPoint(
 				x: rect.midX - glyph.bounds.width * 0.5 - glyph.bounds.origin.x,
 				y: rect.midY - glyph.bounds.height * 0.5 - glyph.bounds.origin.y
@@ -4272,12 +4294,6 @@ final class CaptureHostView: NSView {
 			context.textPosition = origin
 			CTLineDraw(glyph.line, context)
 			context.restoreGState()
-		}
-	}
-
-	private final class PassthroughVisualEffectView: NSVisualEffectView {
-		override func hitTest(_ point: NSPoint) -> NSView? {
-			nil
 		}
 	}
 
@@ -4370,8 +4386,6 @@ final class CaptureHostView: NSView {
 	)
 	private var chrome = CaptureChromeState()
 	private var settings = NativeHostSettings.defaults
-	private let hudMaterialView = PassthroughVisualEffectView(frame: .zero)
-	private let loupeMaterialView = PassthroughVisualEffectView(frame: .zero)
 	private var hudLiquidGlassView: NSView?
 	private var loupeLiquidGlassView: NSView?
 	private var toolbarLiquidGlassView: NSView?
@@ -4444,10 +4458,6 @@ final class CaptureHostView: NSView {
 		super.init(frame: frameRect)
 		wantsLayer = true
 		layerContentsRedrawPolicy = .duringViewResize
-		for materialView in [hudMaterialView, loupeMaterialView] {
-			configureChromeMaterialView(materialView)
-			addSubview(materialView, positioned: .below, relativeTo: nil)
-		}
 		liveRenderer.install { [weak self] in
 			self?.currentRendererPreviewSnapshot()
 		}
@@ -5176,116 +5186,6 @@ final class CaptureHostView: NSView {
 		return clippedMarker.isNull ? nil : clippedMarker
 	}
 
-	private func drawHud(in context: CGContext) {
-		guard scene.mode == .live, let anchor = localPointer() else {
-			return
-		}
-		let theme = chromeTheme()
-		let palette = CaptureChrome.palette(for: theme, settings: settings)
-		let metrics = Self.hudLayoutMetrics
-		let font = metrics.font
-		let positionDisplay = currentPositionDisplay()
-		let rgbSample = cachedLiveRgbSample(matching: livePointerPreviewGlobal ?? scene.pointer)?
-			.rgb
-		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
-		let itemSpacing: CGFloat = 8
-		let swatchSize = CGSize(width: 10, height: 10)
-		let commaSeparator = ","
-		let xGroupText = "x=\(positionDisplay.xValueText)"
-		let yGroupText = "y=\(positionDisplay.yValueText)"
-		let positionHeight = metrics.lineHeight
-		let keycapVisible = settings.showAltHintKeycap
-		let keycapFrame = keycapVisible ? metrics.keycapFrameSize : .zero
-		let contentHeight = max(positionHeight, swatchSize.height, keycapFrame.height)
-		let contentWidth =
-			positionDisplay.xSlotWidth
-			+ metrics.commaWidth
-			+ positionDisplay.ySlotWidth
-			+ swatchSize.width
-			+ colorDisplay.hexSlotWidth
-			+ keycapFrame.width
-			+ itemSpacing * (keycapVisible ? 3 : 2)
-		let hudFrame = CGRect(
-			x: (anchor.x + 14).clamped(
-				to: 6...(bounds.width - contentWidth - CaptureChrome.hudInnerMarginX * 2 - 6)),
-			y: (anchor.y + 14).clamped(
-				to: 6...(bounds.height - contentHeight - CaptureChrome.hudInnerMarginY * 2 - 6)),
-			width: contentWidth + CaptureChrome.hudInnerMarginX * 2,
-			height: contentHeight + CaptureChrome.hudInnerMarginY * 2
-		)
-
-		drawPill(
-			in: hudFrame, context: context, theme: theme, strongShadow: true, surfaceKind: .hud)
-
-		var cursorX = hudFrame.minX + CaptureChrome.hudInnerMarginX
-		let baselineY = hudFrame.midY - positionHeight / 2
-		drawText(
-			xGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
-		cursorX += positionDisplay.xSlotWidth
-		drawText(
-			commaSeparator, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText,
-			font: font)
-		cursorX += metrics.commaWidth
-		drawText(
-			yGroupText, at: CGPoint(x: cursorX, y: baselineY), color: palette.labelText, font: font)
-		cursorX += positionDisplay.ySlotWidth + itemSpacing
-
-		let swatchRect = CGRect(
-			x: cursorX,
-			y: hudFrame.midY - swatchSize.height / 2,
-			width: swatchSize.width,
-			height: swatchSize.height
-		)
-		let swatchColor =
-			rgbSample.map {
-				NSColor(
-					calibratedRed: CGFloat($0.r) / 255,
-					green: CGFloat($0.g) / 255,
-					blue: CGFloat($0.b) / 255,
-					alpha: 1
-				)
-			} ?? palette.labelText.withAlphaComponent(0.16)
-		context.setFillColor(swatchColor.cgColor)
-		context.fill(swatchRect)
-		context.setStrokeColor(palette.swatchStroke.cgColor)
-		context.setLineWidth(1)
-		context.stroke(swatchRect)
-		cursorX += swatchSize.width + itemSpacing
-
-		drawText(
-			colorDisplay.hexText,
-			at: CGPoint(x: cursorX, y: baselineY),
-			color: colorDisplay.isPending
-				? palette.labelText.withAlphaComponent(0.46) : palette.labelText,
-			font: font
-		)
-		cursorX += colorDisplay.hexSlotWidth + itemSpacing
-
-		if keycapVisible {
-			let keycapRect = CGRect(
-				x: cursorX,
-				y: hudFrame.midY - keycapFrame.height / 2,
-				width: keycapFrame.width,
-				height: keycapFrame.height
-			)
-			context.setFillColor(palette.keycapFill.cgColor)
-			let keycapPath = NSBezierPath(roundedRect: keycapRect, xRadius: 6, yRadius: 6)
-			keycapPath.fill()
-			context.setStrokeColor(palette.keycapStroke.cgColor)
-			context.setLineWidth(1)
-			keycapPath.stroke()
-			drawText(
-				"Tab",
-				at: CGPoint(
-					x: keycapRect.midX - metrics.keycapTextSize.width / 2,
-					y: keycapRect.midY - metrics.keycapTextSize.height / 2
-				),
-				color: palette.keycapText,
-				font: font
-			)
-		}
-	}
-
 	private func localFrozenDisplayFrame() -> CGRect? {
 		localRect(from: chrome.frozenDisplayFrame)
 	}
@@ -5907,40 +5807,6 @@ final class CaptureHostView: NSView {
 			? globalPoint : nil
 	}
 
-	private func drawLoupe(in context: CGContext) {
-		guard
-			scene.mode == .live,
-			scene.loupeVisible,
-			let hudFrame = currentHudFrame(),
-			let patch = chrome.loupePatch,
-			let frame = currentLoupeFrame(hudFrame: hudFrame)
-		else {
-			return
-		}
-
-		let theme = chromeTheme()
-		drawPill(in: frame, context: context, theme: theme, strongShadow: true, surfaceKind: .loupe)
-
-		let imageRect = frame.insetBy(dx: 10, dy: 10)
-		context.saveGState()
-		context.interpolationQuality = .high
-		context.draw(patch, in: imageRect)
-		context.restoreGState()
-
-		let centerX = imageRect.minX + floor(CGFloat(patch.width) / 2) * CaptureChrome.loupeCellSize
-		let centerY =
-			imageRect.minY + floor(CGFloat(patch.height) / 2) * CaptureChrome.loupeCellSize
-		let centerRect = CGRect(
-			x: centerX,
-			y: centerY,
-			width: CaptureChrome.loupeCellSize,
-			height: CaptureChrome.loupeCellSize
-		).insetBy(dx: 1, dy: 1)
-		context.setStrokeColor(NSColor.white.withAlphaComponent(0.9).cgColor)
-		context.setLineWidth(2)
-		context.stroke(centerRect)
-	}
-
 	private func drawSelectionScrim(
 		for focusRect: CGRect,
 		in context: CGContext,
@@ -6310,22 +6176,24 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 
-		let itemCount = CGFloat(items.count)
-		let primaryContentWidth =
-			itemCount * CaptureChrome.toolbarButtonSize
-			+ max(0, itemCount - 1) * CaptureChrome.toolbarItemSpacing
 		let styleKind =
 			items.first(where: { $0.selected })
 			.flatMap { FrozenAnnotationStyleToolbarKind(selectedTool: $0.kind) }
-		let styleContentWidth = styleKind.map(annotationStyleContentWidth(for:)) ?? 0
+		let metrics = CaptureChrome.toolbarMetrics(hasAnnotationStyle: styleKind != nil)
+		let itemCount = CGFloat(items.count)
+		let primaryContentWidth =
+			itemCount * metrics.buttonSize
+			+ max(0, itemCount - 1) * metrics.itemSpacing
+		let styleContentWidth =
+			styleKind.map { annotationStyleContentWidth(for: $0, metrics: metrics) } ?? 0
 		let contentWidth = max(primaryContentWidth, styleContentWidth)
-		let width = contentWidth + CaptureChrome.hudInnerMarginX * 2
+		let width = contentWidth + metrics.horizontalPadding * 2
 		let height =
-			CaptureChrome.toolbarVerticalPadding * 2
-			+ CaptureChrome.toolbarButtonSize
+			metrics.verticalPadding * 2
+			+ metrics.buttonSize
 			+ (styleKind == nil
-				? 0 : CaptureChrome.annotationStyleRowGap + CaptureChrome.annotationStyleRowHeight)
-		let desiredY = selection.maxY + CaptureChrome.toolbarGap
+				? 0 : metrics.annotationStyleRowGap + metrics.annotationStyleRowHeight)
+		let desiredY = selection.maxY + metrics.gap
 		let wantsTop = settings.toolbarPlacement == .top
 		let placedAbove =
 			wantsTop || desiredY + height > bounds.maxY - CaptureChrome.toolbarScreenMargin
@@ -6333,7 +6201,7 @@ final class CaptureHostView: NSView {
 			placedAbove
 			? max(
 				bounds.minY + CaptureChrome.toolbarScreenMargin,
-				selection.minY - CaptureChrome.toolbarGap - height)
+				selection.minY - metrics.gap - height)
 			: min(bounds.maxY - CaptureChrome.toolbarScreenMargin - height, desiredY)
 		let minX = bounds.minX + CaptureChrome.toolbarScreenMargin
 		let maxX = max(minX, bounds.maxX - CaptureChrome.toolbarScreenMargin - width)
@@ -6342,12 +6210,11 @@ final class CaptureHostView: NSView {
 		let toolbarAboveSelection = frame.midY >= selection.midY
 		let primaryY =
 			if styleKind == nil {
-				frame.midY - CaptureChrome.toolbarButtonSize / 2
+				frame.midY - metrics.buttonSize / 2
 			} else if toolbarAboveSelection {
-				frame.minY + CaptureChrome.toolbarVerticalPadding
+				frame.minY + metrics.verticalPadding
 			} else {
-				frame.maxY - CaptureChrome.toolbarVerticalPadding
-					- CaptureChrome.toolbarButtonSize
+				frame.maxY - metrics.verticalPadding - metrics.buttonSize
 			}
 		var itemFrames: [FrozenToolbarItemLayout] = []
 		var cursorX = frame.midX - primaryContentWidth / 2
@@ -6355,8 +6222,8 @@ final class CaptureHostView: NSView {
 			let itemFrame = CGRect(
 				x: cursorX,
 				y: primaryY,
-				width: CaptureChrome.toolbarButtonSize,
-				height: CaptureChrome.toolbarButtonSize
+				width: metrics.buttonSize,
+				height: metrics.buttonSize
 			)
 			itemFrames.append(
 				FrozenToolbarItemLayout(
@@ -6366,7 +6233,7 @@ final class CaptureHostView: NSView {
 					selected: item.selected
 				)
 			)
-			cursorX += CaptureChrome.toolbarButtonSize + CaptureChrome.toolbarItemSpacing
+			cursorX += metrics.buttonSize + metrics.itemSpacing
 		}
 
 		let styleLayout = styleKind.map {
@@ -6374,56 +6241,65 @@ final class CaptureHostView: NSView {
 				for: $0,
 				in: frame,
 				contentWidth: styleContentWidth,
+				metrics: metrics,
 				toolbarAboveSelection: toolbarAboveSelection
 			)
 		}
 
-		return FrozenToolbarLayout(frame: frame, items: itemFrames, annotationStyle: styleLayout)
+		return FrozenToolbarLayout(
+			scale: metrics.scale,
+			frame: frame,
+			items: itemFrames,
+			annotationStyle: styleLayout
+		)
 	}
 
 	private func annotationStyleContentWidth(
-		for kind: FrozenAnnotationStyleToolbarKind
+		for kind: FrozenAnnotationStyleToolbarKind,
+		metrics: CaptureChrome.ToolbarMetrics
 	) -> CGFloat {
 		let swatchCount = CGFloat(FrozenAnnotationColor.allCases.count)
 		let swatchesWidth =
-			swatchCount * CaptureChrome.annotationSwatchSize
-			+ max(0, swatchCount - 1) * CaptureChrome.annotationSwatchGap
-		return kind.sizeControlWidth + CaptureChrome.annotationStyleControlGap + swatchesWidth
+			swatchCount * metrics.annotationSwatchSize
+			+ max(0, swatchCount - 1) * metrics.annotationSwatchGap
+		return kind.sizeControlWidth(scale: metrics.scale)
+			+ metrics.annotationStyleControlGap
+			+ swatchesWidth
 	}
 
 	private func annotationStyleLayout(
 		for kind: FrozenAnnotationStyleToolbarKind,
 		in frame: CGRect,
 		contentWidth: CGFloat,
+		metrics: CaptureChrome.ToolbarMetrics,
 		toolbarAboveSelection: Bool
 	) -> FrozenAnnotationStyleLayout {
 		let rowY =
 			toolbarAboveSelection
-			? frame.maxY - CaptureChrome.toolbarVerticalPadding
-				- CaptureChrome.annotationStyleRowHeight
-			: frame.minY + CaptureChrome.toolbarVerticalPadding
+			? frame.maxY - metrics.verticalPadding - metrics.annotationStyleRowHeight
+			: frame.minY + metrics.verticalPadding
 		let rowFrame = CGRect(
 			x: frame.midX - contentWidth / 2,
 			y: rowY,
 			width: contentWidth,
-			height: CaptureChrome.annotationStyleRowHeight
+			height: metrics.annotationStyleRowHeight
 		)
 		let sizeControlFrame = CGRect(
 			x: rowFrame.minX,
 			y: rowFrame.minY,
-			width: kind.sizeControlWidth,
+			width: kind.sizeControlWidth(scale: metrics.scale),
 			height: rowFrame.height
 		)
 		let decreaseFrame = CGRect(
 			x: sizeControlFrame.minX,
 			y: sizeControlFrame.minY,
-			width: CaptureChrome.annotationSizeButtonWidth,
+			width: metrics.annotationSizeButtonWidth,
 			height: sizeControlFrame.height
 		)
 		let increaseFrame = CGRect(
-			x: sizeControlFrame.maxX - CaptureChrome.annotationSizeButtonWidth,
+			x: sizeControlFrame.maxX - metrics.annotationSizeButtonWidth,
 			y: sizeControlFrame.minY,
-			width: CaptureChrome.annotationSizeButtonWidth,
+			width: metrics.annotationSizeButtonWidth,
 			height: sizeControlFrame.height
 		)
 		let displayFrame = CGRect(
@@ -6433,13 +6309,13 @@ final class CaptureHostView: NSView {
 			height: sizeControlFrame.height
 		)
 		var swatches: [FrozenAnnotationColorSwatchLayout] = []
-		var swatchX = sizeControlFrame.maxX + CaptureChrome.annotationStyleControlGap
+		var swatchX = sizeControlFrame.maxX + metrics.annotationStyleControlGap
 		for color in FrozenAnnotationColor.allCases {
 			let swatchFrame = CGRect(
 				x: swatchX,
-				y: rowFrame.midY - CaptureChrome.annotationSwatchSize / 2,
-				width: CaptureChrome.annotationSwatchSize,
-				height: CaptureChrome.annotationSwatchSize
+				y: rowFrame.midY - metrics.annotationSwatchSize / 2,
+				width: metrics.annotationSwatchSize,
+				height: metrics.annotationSwatchSize
 			)
 			swatches.append(
 				FrozenAnnotationColorSwatchLayout(
@@ -6447,10 +6323,11 @@ final class CaptureHostView: NSView {
 					frame: swatchFrame,
 					selected: kind.selectedColor(in: chrome.annotationStyle) == color
 				))
-			swatchX += CaptureChrome.annotationSwatchSize + CaptureChrome.annotationSwatchGap
+			swatchX += metrics.annotationSwatchSize + metrics.annotationSwatchGap
 		}
 		return FrozenAnnotationStyleLayout(
 			kind: kind,
+			scale: metrics.scale,
 			frame: rowFrame,
 			sizeControlFrame: sizeControlFrame,
 			decreaseFrame: decreaseFrame,
@@ -6620,19 +6497,28 @@ final class CaptureHostView: NSView {
 			theme: theme,
 			strongShadow: false,
 			surfaceKind: .toolbar,
-			allowsLiquidGlassClearFill: false,
 			allowsClassicGlass: !defersFrozenToolbarClassicGlassUntilAfterFirstDisplay
 		)
 
 		for item in layout.items {
 			if hoveredToolbarAction == item.kind, item.enabled, !item.selected {
 				context.setFillColor(palette.toolbarHoverBackground.cgColor)
-				let hoverPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
+				let radius = CaptureChrome.toolbarControlCornerRadius * layout.scale
+				let hoverPath = NSBezierPath(
+					roundedRect: item.frame,
+					xRadius: radius,
+					yRadius: radius
+				)
 				hoverPath.fill()
 			}
 			if item.selected {
 				context.setFillColor(palette.toolbarSelectedBackground.cgColor)
-				let selectedPath = NSBezierPath(roundedRect: item.frame, xRadius: 8, yRadius: 8)
+				let radius = CaptureChrome.toolbarControlCornerRadius * layout.scale
+				let selectedPath = NSBezierPath(
+					roundedRect: item.frame,
+					xRadius: radius,
+					yRadius: radius
+				)
 				selectedPath.fill()
 			}
 
@@ -6644,6 +6530,7 @@ final class CaptureHostView: NSView {
 				item.kind,
 				selected: item.selected,
 				in: item.frame,
+				scale: layout.scale,
 				color: symbolColor,
 				context: context
 			)
@@ -6664,10 +6551,15 @@ final class CaptureHostView: NSView {
 		_ kind: ToolbarItemKind,
 		selected: Bool,
 		in rect: CGRect,
+		scale: CGFloat,
 		color: NSColor,
 		context: CGContext
 	) {
-		let glyph = PhosphorToolbarIcons.cachedGlyph(for: kind, selected: selected, size: 18)
+		let glyph = PhosphorToolbarIcons.cachedGlyph(
+			for: kind,
+			selected: selected,
+			size: CaptureChrome.toolbarGlyphSize * scale
+		)
 		let origin = CGPoint(
 			x: rect.midX - glyph.bounds.width * 0.5 - glyph.bounds.origin.x,
 			y: rect.midY - glyph.bounds.height * 0.5 - glyph.bounds.origin.y
@@ -6905,7 +6797,6 @@ final class CaptureHostView: NSView {
 				)
 			}
 			: nil
-		hideClassicGlassMaterialViews()
 		updateLiveLiquidGlassViews(hudFrame: hudFrame, loupeFrame: loupeFrame)
 
 		return LivePreviewSnapshot(
@@ -6985,7 +6876,6 @@ final class CaptureHostView: NSView {
 	}
 
 	private func updateLiveChromeBackdrops(hudFrame: CGRect?, loupeFrame: CGRect?) {
-		hideClassicGlassMaterialViews()
 		guard scene.mode == .live, settings.usesClassicHudGlass else {
 			controller?.updateLiveChromeBackdrops(nil)
 			return
@@ -7551,24 +7441,13 @@ final class CaptureHostView: NSView {
 		effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua ? .light : .dark
 	}
 
-	private func configureChromeMaterialView(_ view: NSVisualEffectView) {
-		view.blendingMode = .behindWindow
-		view.material = .hudWindow
-		view.state = .active
-		view.isHidden = true
-		view.wantsLayer = true
-		view.layer?.cornerRadius = CaptureChrome.hudCornerRadius
-		if #available(macOS 10.15, *) {
-			view.layer?.cornerCurve = .continuous
-		}
-		view.layer?.masksToBounds = true
-	}
-
 	private func configureChromeLiquidGlassView(_ view: NSView) {
 		view.isHidden = true
 		view.wantsLayer = true
 		view.layer?.cornerRadius = CaptureChrome.hudCornerRadius
 		view.layer?.masksToBounds = true
+		view.layer?.shadowOpacity = 0
+		view.layer?.shadowPath = nil
 		view.layer?.zPosition = 50
 	}
 
@@ -7577,13 +7456,10 @@ final class CaptureHostView: NSView {
 		view.wantsLayer = true
 		view.layer?.backgroundColor = NSColor.clear.cgColor
 		view.layer?.isOpaque = false
-		view.layer?.zPosition = 310
+		view.layer?.zPosition = 320
 	}
 
 	private func updateChromeMaterialViews() {
-		if scene.mode != .live || !settings.usesClassicHudGlass || chrome.hostLocalFrozenSelecting {
-			hideClassicGlassMaterialViews()
-		}
 		if scene.mode != .live || !settings.usesLiquidHudGlass || chrome.hostLocalFrozenSelecting {
 			hideLiveLiquidGlassViews(removing: false)
 		}
@@ -7599,11 +7475,6 @@ final class CaptureHostView: NSView {
 		} else {
 			controller?.updateLiveChromeBackdrops(nil)
 		}
-	}
-
-	private func hideClassicGlassMaterialViews() {
-		hudMaterialView.isHidden = true
-		loupeMaterialView.isHidden = true
 	}
 
 	private func updateLiveLiquidGlassViews(hudFrame: CGRect?, loupeFrame: CGRect?) {
@@ -7664,7 +7535,9 @@ final class CaptureHostView: NSView {
 	}
 
 	private func prewarmFrozenToolbarLiquidGlassViewIfNeeded() {
-		guard toolbarLiquidGlassView == nil else {
+		if let toolbarLiquidGlassView {
+			LiveChromeLiquidGlassBridge.update(toolbarLiquidGlassView, settings: settings)
+			ensureFrozenToolbarContentView(above: toolbarLiquidGlassView)
 			return
 		}
 		guard let createdView = LiveChromeLiquidGlassBridge.makeGlassView() else {
@@ -7677,18 +7550,58 @@ final class CaptureHostView: NSView {
 		createdView.layer?.zPosition = 300
 		addSubview(createdView, positioned: .below, relativeTo: nil)
 		toolbarLiquidGlassView = createdView
+		ensureFrozenToolbarContentView(above: createdView)
+	}
 
+	@discardableResult
+	private func ensureFrozenToolbarContentView(above glassView: NSView) -> FrozenToolbarRenderView
+	{
+		if let toolbarLiquidGlassContentView {
+			toolbarLiquidGlassContentView.layer?.zPosition = 320
+			return toolbarLiquidGlassContentView
+		}
 		let contentView = FrozenToolbarRenderView(frame: .zero)
 		configureFrozenToolbarContentView(contentView)
-		contentView.didDraw = { [weak self] in
-			guard let self, !self.frozenToolbarLiquidGlassContentDrawn else {
-				return
-			}
-			self.frozenToolbarLiquidGlassContentDrawn = true
-			self.needsDisplay = true
-		}
-		LiveChromeLiquidGlassBridge.setContentView(contentView, on: createdView)
+		addSubview(contentView, positioned: .above, relativeTo: glassView)
 		toolbarLiquidGlassContentView = contentView
+		return contentView
+	}
+
+	private func localAnnotationStyleLayout(
+		_ layout: FrozenAnnotationStyleLayout,
+		relativeTo toolbarFrame: CGRect
+	) -> FrozenAnnotationStyleLayout {
+		FrozenAnnotationStyleLayout(
+			kind: layout.kind,
+			scale: layout.scale,
+			frame: layout.frame.offsetBy(dx: -toolbarFrame.minX, dy: -toolbarFrame.minY),
+			sizeControlFrame: layout.sizeControlFrame.offsetBy(
+				dx: -toolbarFrame.minX,
+				dy: -toolbarFrame.minY
+			),
+			decreaseFrame: layout.decreaseFrame.offsetBy(
+				dx: -toolbarFrame.minX,
+				dy: -toolbarFrame.minY
+			),
+			increaseFrame: layout.increaseFrame.offsetBy(
+				dx: -toolbarFrame.minX,
+				dy: -toolbarFrame.minY
+			),
+			displayFrame: layout.displayFrame.offsetBy(
+				dx: -toolbarFrame.minX,
+				dy: -toolbarFrame.minY
+			),
+			swatches: layout.swatches.map { swatch in
+				FrozenAnnotationColorSwatchLayout(
+					color: swatch.color,
+					frame: swatch.frame.offsetBy(
+						dx: -toolbarFrame.minX,
+						dy: -toolbarFrame.minY
+					),
+					selected: swatch.selected
+				)
+			}
+		)
 	}
 
 	private func hideLiveLiquidGlassViews(removing: Bool = true) {
@@ -7718,122 +7631,56 @@ final class CaptureHostView: NSView {
 		guard let toolbarLiquidGlassView else {
 			frozenToolbarLiquidGlassVisible = false
 			frozenToolbarLiquidGlassContentDrawn = false
-			toolbarLiquidGlassContentView?.removeFromSuperview()
-			toolbarLiquidGlassContentView = nil
+			toolbarLiquidGlassContentView?.isHidden = true
 			if wasVisible {
 				needsDisplay = true
 			}
 			return
 		}
 		toolbarLiquidGlassView.layer?.zPosition = 300
-		if toolbarLiquidGlassContentView == nil {
-			toolbarLiquidGlassContentView = FrozenToolbarRenderView(
-				frame: CGRect(origin: .zero, size: layout.frame.size))
-			if let toolbarLiquidGlassContentView {
-				configureFrozenToolbarContentView(toolbarLiquidGlassContentView)
-			}
-			toolbarLiquidGlassContentView?.didDraw = { [weak self] in
-				guard let self, !self.frozenToolbarLiquidGlassContentDrawn else {
-					return
-				}
-				self.frozenToolbarLiquidGlassContentDrawn = true
-				self.needsDisplay = true
-			}
-			frozenToolbarLiquidGlassContentDrawn = false
+		let contentView = ensureFrozenToolbarContentView(above: toolbarLiquidGlassView)
+		let frameChanged = contentView.frame != layout.frame
+		if contentView.frame != layout.frame {
+			contentView.frame = layout.frame
+			contentView.needsDisplay = true
 		}
-		guard let toolbarLiquidGlassContentView else {
-			return
-		}
-		let contentFrame = CGRect(origin: .zero, size: layout.frame.size)
-		if toolbarLiquidGlassContentView.frame != contentFrame {
-			let previousSize = toolbarLiquidGlassContentView.frame.size
-			toolbarLiquidGlassContentView.frame = contentFrame
-			if previousSize != contentFrame.size {
-				frozenToolbarLiquidGlassContentDrawn = false
-				toolbarLiquidGlassContentView.needsDisplay = true
-			}
-		}
-		if toolbarLiquidGlassContentView.update(
+		contentView.isHidden = false
+		let changed = contentView.update(
 			theme: chromeTheme(),
 			settings: settings,
 			hoveredToolbarAction: hoveredToolbarAction,
 			hoveredAnnotationStyleAction: hoveredAnnotationStyleAction,
+			toolbarScale: layout.scale,
 			annotationStyleState: chrome.annotationStyle,
-			annotationStyleLayout: layout.annotationStyle.map { styleLayout in
-				FrozenAnnotationStyleLayout(
-					kind: styleLayout.kind,
-					frame: styleLayout.frame.offsetBy(
-						dx: -layout.frame.minX,
-						dy: -layout.frame.minY
-					),
-					sizeControlFrame: styleLayout.sizeControlFrame.offsetBy(
-						dx: -layout.frame.minX,
-						dy: -layout.frame.minY
-					),
-					decreaseFrame: styleLayout.decreaseFrame.offsetBy(
-						dx: -layout.frame.minX,
-						dy: -layout.frame.minY
-					),
-					increaseFrame: styleLayout.increaseFrame.offsetBy(
-						dx: -layout.frame.minX,
-						dy: -layout.frame.minY
-					),
-					displayFrame: styleLayout.displayFrame.offsetBy(
-						dx: -layout.frame.minX,
-						dy: -layout.frame.minY
-					),
-					swatches: styleLayout.swatches.map { swatch in
-						FrozenAnnotationColorSwatchLayout(
-							color: swatch.color,
-							frame: swatch.frame.offsetBy(
-								dx: -layout.frame.minX,
-								dy: -layout.frame.minY
-							),
-							selected: swatch.selected
-						)
-					}
-				)
+			annotationStyleLayout: layout.annotationStyle.map {
+				localAnnotationStyleLayout($0, relativeTo: layout.frame)
 			},
 			items: layout.items.map { item in
 				FrozenToolbarRenderView.Item(
 					kind: item.kind,
-					frame: item.frame.offsetBy(
-						dx: -layout.frame.minX,
-						dy: -layout.frame.minY
-					),
+					frame: item.frame.offsetBy(dx: -layout.frame.minX, dy: -layout.frame.minY),
 					enabled: item.enabled,
 					selected: item.selected
 				)
 			}
-		) {
-			frozenToolbarLiquidGlassContentDrawn = false
+		)
+		if changed {
+			contentView.needsDisplay = true
 		}
-		LiveChromeLiquidGlassBridge.setContentView(
-			toolbarLiquidGlassContentView, on: toolbarLiquidGlassView)
-		toolbarLiquidGlassContentView.isHidden = false
-		flushFrozenToolbarLiquidGlassContentIfNeeded()
+		if frameChanged || changed || !wasVisible || !frozenToolbarLiquidGlassContentDrawn {
+			contentView.display()
+		}
 		frozenToolbarLiquidGlassVisible = true
+		frozenToolbarLiquidGlassContentDrawn = true
 		if !wasVisible {
 			needsDisplay = true
-		}
-	}
-
-	private func flushFrozenToolbarLiquidGlassContentIfNeeded() {
-		guard !frozenToolbarLiquidGlassContentDrawn, let toolbarLiquidGlassContentView else {
-			return
-		}
-		toolbarLiquidGlassContentView.displayIfNeeded()
-		if !frozenToolbarLiquidGlassContentDrawn {
-			toolbarLiquidGlassContentView.display()
 		}
 	}
 
 	private func hideFrozenToolbarLiquidGlassView() {
 		let wasVisible = frozenToolbarLiquidGlassVisible
 		frozenToolbarLiquidGlassVisible = false
-		if let toolbarLiquidGlassView {
-			LiveChromeLiquidGlassBridge.setContentView(nil, on: toolbarLiquidGlassView)
-		}
+		frozenToolbarLiquidGlassContentDrawn = false
 		toolbarLiquidGlassView?.isHidden = true
 		toolbarLiquidGlassContentView?.isHidden = true
 		if wasVisible {
@@ -8119,7 +7966,7 @@ private enum FrozenAnnotationStyleToolbarKind: Equatable {
 		}
 	}
 
-	var sizeDisplayWidth: CGFloat {
+	private var baseSizeDisplayWidth: CGFloat {
 		switch self {
 		case .brush:
 			return 84
@@ -8128,8 +7975,13 @@ private enum FrozenAnnotationStyleToolbarKind: Equatable {
 		}
 	}
 
-	var sizeControlWidth: CGFloat {
-		sizeDisplayWidth + CaptureChrome.annotationSizeButtonWidth * 2
+	func sizeDisplayWidth(scale: CGFloat) -> CGFloat {
+		baseSizeDisplayWidth * scale
+	}
+
+	func sizeControlWidth(scale: CGFloat) -> CGFloat {
+		sizeDisplayWidth(scale: scale)
+			+ CaptureChrome.annotationSizeButtonWidth * scale * 2
 	}
 
 	func selectedColor(in state: FrozenAnnotationStyleState) -> FrozenAnnotationColor {
@@ -8901,6 +8753,7 @@ private struct FrozenAnnotationColorSwatchLayout: Equatable {
 
 private struct FrozenAnnotationStyleLayout: Equatable {
 	let kind: FrozenAnnotationStyleToolbarKind
+	let scale: CGFloat
 	let frame: CGRect
 	let sizeControlFrame: CGRect
 	let decreaseFrame: CGRect
@@ -8910,6 +8763,7 @@ private struct FrozenAnnotationStyleLayout: Equatable {
 }
 
 private struct FrozenToolbarLayout {
+	let scale: CGFloat
 	let frame: CGRect
 	let items: [FrozenToolbarItemLayout]
 	let annotationStyle: FrozenAnnotationStyleLayout?
@@ -8950,6 +8804,21 @@ struct CaptureChromeForegroundPalette {
 }
 
 enum CaptureChrome {
+	struct ToolbarMetrics {
+		let scale: CGFloat
+		let buttonSize: CGFloat
+		let itemSpacing: CGFloat
+		let horizontalPadding: CGFloat
+		let verticalPadding: CGFloat
+		let gap: CGFloat
+		let annotationStyleRowGap: CGFloat
+		let annotationStyleRowHeight: CGFloat
+		let annotationStyleControlGap: CGFloat
+		let annotationSizeButtonWidth: CGFloat
+		let annotationSwatchSize: CGFloat
+		let annotationSwatchGap: CGFloat
+	}
+
 	private static let liquidGlassBodyOpacity: CGFloat = 0.5
 
 	static let hudInnerMarginX: CGFloat = 12
@@ -8976,6 +8845,11 @@ enum CaptureChrome {
 	static let toolbarButtonSize: CGFloat = 24
 	static let toolbarItemSpacing: CGFloat = 4
 	static let toolbarVerticalPadding: CGFloat = 5
+	static let toolbarGlyphSize: CGFloat = 18
+	static let toolbarControlFontSize: CGFloat = 13
+	static let toolbarControlCornerRadius: CGFloat = 8
+	// Keep the toolbar visually closer to the slim live HUD chrome.
+	static let toolbarTargetHeight: CGFloat = 30
 	static let toolbarGap: CGFloat = 10
 	static let toolbarScreenMargin: CGFloat = 10
 	static let scrollMinimapPreferredWidth: CGFloat = 96
@@ -8995,6 +8869,29 @@ enum CaptureChrome {
 	static let selectionSizeBadgeGap: CGFloat = 8
 	static let selectionSizeBadgeInset: CGFloat = 8
 	static let selectionSizeBadgeToolbarAvoidance: CGFloat = 4
+
+	static func toolbarMetrics(hasAnnotationStyle: Bool) -> ToolbarMetrics {
+		let baseHeight =
+			toolbarVerticalPadding * 2
+			+ toolbarButtonSize
+			+ (hasAnnotationStyle ? annotationStyleRowGap + annotationStyleRowHeight : 0)
+		let targetHeight = toolbarTargetHeight
+		let scale = min(1, targetHeight / max(baseHeight, 1))
+		return ToolbarMetrics(
+			scale: scale,
+			buttonSize: toolbarButtonSize * scale,
+			itemSpacing: toolbarItemSpacing * scale,
+			horizontalPadding: hudInnerMarginX * scale,
+			verticalPadding: toolbarVerticalPadding * scale,
+			gap: toolbarGap * scale,
+			annotationStyleRowGap: annotationStyleRowGap * scale,
+			annotationStyleRowHeight: annotationStyleRowHeight * scale,
+			annotationStyleControlGap: annotationStyleControlGap * scale,
+			annotationSizeButtonWidth: annotationSizeButtonWidth * scale,
+			annotationSwatchSize: annotationSwatchSize * scale,
+			annotationSwatchGap: annotationSwatchGap * scale
+		)
+	}
 
 	static func dashedBorderOutset(strokeWidth: CGFloat, pixelsPerPoint: CGFloat) -> CGFloat {
 		let feathering = 1.0 / max(pixelsPerPoint, .leastNonzeroMagnitude)
@@ -9466,8 +9363,13 @@ private enum FrozenToolbarDrawing {
 		in context: CGContext
 	) {
 		let sizeHovered = hoveredAction == .decreaseSize || hoveredAction == .increaseSize
-		let capsuleRect = layout.sizeControlFrame.insetBy(dx: 0, dy: 3)
-		let capsulePath = NSBezierPath(roundedRect: capsuleRect, xRadius: 8, yRadius: 8)
+		let scale = layout.scale
+		let capsuleRect = layout.sizeControlFrame.insetBy(dx: 0, dy: 3 * scale)
+		let capsulePath = NSBezierPath(
+			roundedRect: capsuleRect,
+			xRadius: CaptureChrome.toolbarControlCornerRadius * scale,
+			yRadius: CaptureChrome.toolbarControlCornerRadius * scale
+		)
 		context.setFillColor(
 			(sizeHovered
 				? palette.toolbarHoverBackground.withAlphaComponent(0.72)
@@ -9475,7 +9377,7 @@ private enum FrozenToolbarDrawing {
 		capsulePath.fill()
 		context.setStrokeColor(
 			palette.outerStroke.withAlphaComponent(sizeHovered ? 0.52 : 0.36).cgColor)
-		context.setLineWidth(1)
+		context.setLineWidth(max(0.5, scale))
 		capsulePath.stroke()
 
 		for (action, frame) in [
@@ -9484,22 +9386,25 @@ private enum FrozenToolbarDrawing {
 		] where hoveredAction == action {
 			context.setFillColor(palette.toolbarHoverBackground.cgColor)
 			NSBezierPath(
-				roundedRect: frame.insetBy(dx: 2, dy: 4),
-				xRadius: 6,
-				yRadius: 6
+				roundedRect: frame.insetBy(dx: 2 * scale, dy: 4 * scale),
+				xRadius: 6 * scale,
+				yRadius: 6 * scale
 			).fill()
 		}
 
 		context.setStrokeColor(palette.outerStroke.withAlphaComponent(0.34).cgColor)
-		context.setLineWidth(1)
+		context.setLineWidth(max(0.5, scale))
 		for dividerX in [layout.displayFrame.minX, layout.displayFrame.maxX] {
 			context.beginPath()
-			context.move(to: CGPoint(x: dividerX, y: capsuleRect.minY + 5))
-			context.addLine(to: CGPoint(x: dividerX, y: capsuleRect.maxY - 5))
+			context.move(to: CGPoint(x: dividerX, y: capsuleRect.minY + 5 * scale))
+			context.addLine(to: CGPoint(x: dividerX, y: capsuleRect.maxY - 5 * scale))
 			context.strokePath()
 		}
 
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
+		let font = NSFont.monospacedSystemFont(
+			ofSize: max(1, CaptureChrome.toolbarControlFontSize * scale),
+			weight: .medium
+		)
 		drawCenteredText(
 			"-",
 			in: layout.decreaseFrame,
@@ -9520,6 +9425,7 @@ private enum FrozenToolbarDrawing {
 			drawBrushSizeDisplay(
 				in: layout.displayFrame,
 				state: state,
+				scale: scale,
 				font: font,
 				color: palette.labelText,
 				context: context
@@ -9538,14 +9444,15 @@ private enum FrozenToolbarDrawing {
 	private static func drawBrushSizeDisplay(
 		in frame: CGRect,
 		state: FrozenAnnotationStyleState,
+		scale: CGFloat,
 		font: NSFont,
 		color: NSColor,
 		context: CGContext
 	) {
 		let previewColor = state.brushStyle.color.nsColor(alpha: 0.96)
-		let previewWidth = state.brushStyle.strokeWidthPoints.clamped(to: 1...10)
-		let previewHalfLength = CaptureChrome.annotationPenPreviewLength / 2
-		let previewCenter = CGPoint(x: frame.minX + 10 + previewHalfLength, y: frame.midY)
+		let previewWidth = (state.brushStyle.strokeWidthPoints * scale).clamped(to: 0.5...10)
+		let previewHalfLength = CaptureChrome.annotationPenPreviewLength * scale / 2
+		let previewCenter = CGPoint(x: frame.minX + 10 * scale + previewHalfLength, y: frame.midY)
 		let previewStart = CGPoint(x: previewCenter.x - previewHalfLength, y: previewCenter.y)
 		let previewEnd = CGPoint(x: previewCenter.x + previewHalfLength, y: previewCenter.y)
 
@@ -9564,7 +9471,7 @@ private enum FrozenToolbarDrawing {
 		drawText(
 			label,
 			at: CGPoint(
-				x: previewEnd.x + CaptureChrome.annotationSizePreviewGap,
+				x: previewEnd.x + CaptureChrome.annotationSizePreviewGap * scale,
 				y: frame.midY - labelSize.height / 2
 			),
 			font: font,
@@ -9592,7 +9499,8 @@ private enum FrozenToolbarDrawing {
 		context.setStrokeColor(
 			(swatch.selected ? palette.toolbarSelectedIcon : palette.toolbarIcon)
 				.withAlphaComponent(swatch.selected ? 0.95 : 0.56).cgColor)
-		context.setLineWidth(swatch.selected ? 2 : 1)
+		let scale = max(0.5, swatch.frame.width / max(CaptureChrome.annotationSwatchSize, 1))
+		context.setLineWidth(swatch.selected ? 2 * scale : scale)
 		path.stroke()
 	}
 
