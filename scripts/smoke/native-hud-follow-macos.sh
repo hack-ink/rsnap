@@ -25,7 +25,9 @@ Useful overrides:
   LOUPE_TOGGLE_SETTLE_S=0.8        settle after Tab before measuring loupe follow
   MAX_SAMPLE_REFRESH_GAP_P95_MS    default: pointer/sample target budget + 1ms
   MAX_ACTIVE_LAYER_CHROME_RENDER_GAP_P95_MS default: active display target budget + 1ms
+  MAX_FRAME_TICK_GAP_P95_MS        default: active display target budget + 1ms
   MAX_LAYER_CHROME_RENDER_DURATION_P95_MS default: active display target budget
+  MIN_MOUSE_EVENTS                 default: 50% of smooth event path target count
 EOF
 }
 

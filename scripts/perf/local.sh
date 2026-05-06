@@ -8,12 +8,12 @@ case "${1:-}" in
     cat <<'EOF'
 Usage: local.sh
 
-Runs the local deterministic performance sweep:
-  1. scroll-capture benchmark
+Runs the local deterministic performance sweep.
+No local deterministic benchmarks are enabled while scroll capture is disabled.
 EOF
     exit 0
     ;;
 esac
 
 cd "$ROOT_DIR"
-cargo bench -p rsnap-overlay --bench scroll_capture -- --sample-size 10 --warm-up-time 0.1 --measurement-time 0.1
+echo "[perf] no local deterministic benchmarks are enabled while scroll capture is disabled."
