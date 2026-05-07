@@ -6,7 +6,8 @@ behavior for Rsnap.
 Status: normative
 
 Read this when: You are implementing, reviewing, or validating Settings, status-menu commands,
-shortcut presentation, permission recovery, Dock activation policy, or Settings window behavior.
+shortcut presentation, launch-at-login configuration, permission recovery, Dock activation policy,
+or Settings window behavior.
 
 Not this document: Detailed visual styling, implementation-specific AppKit/SwiftUI structure, or
 capture-session behavior once capture has started. Use `docs/spec/capture-session.md` for
@@ -16,6 +17,7 @@ Defines:
 - Settings window and app-shell behavior
 - status-menu command placement
 - shortcut configuration and presentation rules
+- launch-at-login configuration
 - permission recovery placement
 - Settings interaction and default-size usability invariants
 
@@ -29,6 +31,10 @@ Defines:
   window is visible.
 - Capture sessions must not require visible Dock activation artifacts to begin, complete, cancel,
   copy, save, or restore focus.
+- Settings must expose an Open at Login control that registers or unregisters Rsnap with macOS
+  Login Items.
+- The Open at Login control must reflect system Login Items state, including pending approval or an
+  unavailable packaged-app context, instead of only reflecting a stored user default.
 
 ## Status Menu
 
@@ -62,6 +68,7 @@ Defines:
 ## Default Configuration
 
 - Capture shortcut: `Option-X`.
+- Open at Login: off, until the user enables the macOS Login Items registration.
 - Output directory: `~/Desktop`.
 - Output filename prefix: `Rsnap`.
 - Output naming: timestamp.
@@ -81,6 +88,8 @@ Defines:
 - Screen Recording permission is required for the current native macOS capture host.
 - Settings must present Screen Recording as the only permission needed by the current native macOS
   capture host.
+- The Open at Login control must live at the bottom of the Permissions section so OS-owned app
+  access controls remain first.
 - When Screen Recording is missing at launch or at capture start, Rsnap must open the macOS Screen
   Recording privacy page and present a small Rsnap-owned floating drag guide near System Settings.
 - Accessibility and Input Monitoring must not be displayed in Settings while the current native host

@@ -96,6 +96,7 @@ relink_native_host_if_missing() {
 		-Xlinker /Library/Developer/CommandLineTools/usr/lib/swift-6.2/macosx \
 		-target arm64-apple-macosx14.0 \
 		-framework AppKit \
+		-framework ServiceManagement \
 		-framework Vision \
 		-L "$RUST_LIB_DIR" \
 		-lrsnap_host_ffi \
