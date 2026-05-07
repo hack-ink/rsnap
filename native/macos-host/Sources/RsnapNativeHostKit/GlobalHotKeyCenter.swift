@@ -22,15 +22,11 @@ final class GlobalHotKeyCenter {
 	var onCaptureRequested: (() -> Void)?
 	var onCancelRequested: (() -> Void)?
 	var onToggleLoupeRequested: (() -> Void)?
-	var onCopyRequested: (() -> Void)?
-	var onAutoCenterRequested: (() -> Void)?
 	var onSaveRequested: (() -> Void)?
 
 	private var handlerRef: EventHandlerRef?
 	private var hotKeyRefs: [Binding: EventHotKeyRef?] = [:]
 	private var registeredDefinitions: [Binding: HotKeyDefinition] = [:]
-	private var plainFrozenLocalMonitor: Any?
-	private var plainFrozenGlobalMonitor: Any?
 
 	init() {
 		var eventType = EventTypeSpec(
@@ -55,7 +51,6 @@ final class GlobalHotKeyCenter {
 	}
 
 	func invalidate() {
-		removePlainFrozenShortcutMonitors()
 		for binding in Binding.allCases {
 			unregister(binding)
 		}
@@ -67,8 +62,7 @@ final class GlobalHotKeyCenter {
 
 	func updateBindings(
 		captureHotKey: String,
-		sceneMode: SceneKind,
-		plainFrozenShortcutsEnabled: Bool
+		sceneMode: SceneKind
 	) -> Bool {
 		var allRequestedBindingsRegistered = true
 		let captureDefinition = Self.parseCaptureHotKey(captureHotKey) ?? Self.defaultCaptureHotKey
@@ -93,12 +87,6 @@ final class GlobalHotKeyCenter {
 				&& allRequestedBindingsRegistered
 		} else {
 			unregister(.loupe)
-		}
-
-		if wantsFrozen && plainFrozenShortcutsEnabled {
-			installPlainFrozenShortcutMonitors()
-		} else {
-			removePlainFrozenShortcutMonitors()
 		}
 
 		if wantsFrozen {
@@ -187,62 +175,6 @@ final class GlobalHotKeyCenter {
 			onSaveRequested?()
 		}
 		return noErr
-	}
-
-	private func installPlainFrozenShortcutMonitors() {
-		guard plainFrozenLocalMonitor == nil, plainFrozenGlobalMonitor == nil else {
-			return
-		}
-		plainFrozenLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
-			[weak self] event in
-			self?.handlePlainFrozenShortcut(event) == true ? nil : event
-		}
-		plainFrozenGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
-			[weak self] event in
-			DispatchQueue.main.async {
-				_ = self?.handlePlainFrozenShortcut(event)
-			}
-		}
-	}
-
-	private func removePlainFrozenShortcutMonitors() {
-		if let monitor = plainFrozenLocalMonitor {
-			NSEvent.removeMonitor(monitor)
-			plainFrozenLocalMonitor = nil
-		}
-		if let monitor = plainFrozenGlobalMonitor {
-			NSEvent.removeMonitor(monitor)
-			plainFrozenGlobalMonitor = nil
-		}
-	}
-
-	private func handlePlainFrozenShortcut(_ event: NSEvent) -> Bool {
-		guard !event.isARepeat else {
-			return false
-		}
-		let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-		guard !flags.contains(.command), !flags.contains(.control), !flags.contains(.option),
-			!flags.contains(.shift)
-		else {
-			return false
-		}
-		switch event.keyCode {
-		case 49:
-			NativeHostTelemetry.lifecycleEvent(
-				"native_host.plain_frozen_hotkey",
-				detail: "keyCode=49,action=copy"
-			)
-			onCopyRequested?()
-		case 8:
-			NativeHostTelemetry.lifecycleEvent(
-				"native_host.plain_frozen_hotkey",
-				detail: "keyCode=8,action=auto_center"
-			)
-			onAutoCenterRequested?()
-		default:
-			return false
-		}
-		return true
 	}
 
 	private static let defaultCaptureHotKey = HotKeyDefinition(
