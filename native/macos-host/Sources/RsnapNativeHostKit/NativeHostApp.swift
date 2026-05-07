@@ -5826,16 +5826,14 @@ final class CaptureHostView: NSView {
 			return
 		}
 
-		let path = CGMutablePath()
-		path.addRect(bounds)
-		path.addRect(visibleFocusRect)
-		if let exclusionPath {
-			path.addPath(exclusionPath)
-		}
 		context.saveGState()
-		context.setFillColor(scrimColor.cgColor)
-		context.addPath(path)
-		context.drawPath(using: .eoFill)
+		OverlayMaskGeometry.drawScrim(
+			in: context,
+			bounds: bounds,
+			focusRect: visibleFocusRect,
+			color: scrimColor.cgColor,
+			pathExclusions: [exclusionPath].compactMap { $0 }
+		)
 		context.restoreGState()
 	}
 
@@ -6911,7 +6909,31 @@ final class CaptureHostView: NSView {
 		let frames = currentLiveChromeLayerFrames()
 		updateLiveChromeBackdrops(hudFrame: frames.hud, loupeFrame: frames.loupe)
 		moveExistingLiveLiquidGlassViews(hudFrame: frames.hud, loupeFrame: frames.loupe)
-		liveRenderer.moveLiveChrome(hudFrame: frames.hud, loupeFrame: frames.loupe)
+		liveRenderer.moveLiveChrome(
+			hudFrame: frames.hud,
+			loupeFrame: frames.loupe,
+			chromeExclusions: liveChromeRoundedExclusions(
+				hudFrame: frames.hud,
+				loupeFrame: frames.loupe
+			)
+		)
+	}
+
+	private func liveChromeRoundedExclusions(
+		hudFrame: CGRect?,
+		loupeFrame: CGRect?
+	) -> [OverlayMaskGeometry.RoundedExclusion] {
+		guard settings.hudGlassEnabled else {
+			return []
+		}
+		return [hudFrame, loupeFrame].compactMap { frame in
+			frame.map {
+				OverlayMaskGeometry.RoundedExclusion(
+					rect: $0,
+					cornerRadius: CaptureChrome.hudCornerRadius
+				)
+			}
+		}
 	}
 
 	private func currentLiveChromeLayerFrames() -> (hud: CGRect?, loupe: CGRect?) {
