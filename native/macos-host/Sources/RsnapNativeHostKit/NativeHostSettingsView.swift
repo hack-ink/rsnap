@@ -12,6 +12,7 @@ enum NativeHostSettingsWindowMetrics {
 @MainActor
 final class NativeHostSettingsViewModel: ObservableObject {
 	@Published private(set) var settings: NativeHostSettings
+	@Published private(set) var launchAtLoginState = LaunchAtLoginState.current()
 
 	private let settingsStore: NativeHostSettingsStore
 
@@ -22,6 +23,7 @@ final class NativeHostSettingsViewModel: ObservableObject {
 
 	func refresh() {
 		settings = settingsStore.settings
+		launchAtLoginState = LaunchAtLoginState.current()
 	}
 
 	func update(_ mutate: (inout NativeHostSettings) -> Void) {
@@ -31,6 +33,16 @@ final class NativeHostSettingsViewModel: ObservableObject {
 
 	func restoreDefaults() {
 		update { $0 = NativeHostSettings.defaults }
+	}
+
+	func setLaunchAtLoginEnabled(_ isEnabled: Bool) {
+		do {
+			try LaunchAtLoginController.setEnabled(isEnabled)
+			launchAtLoginState = LaunchAtLoginState.current()
+		} catch {
+			launchAtLoginState = LaunchAtLoginState.current(
+				errorMessage: error.localizedDescription)
+		}
 	}
 
 	func chooseOutputDirectory() {
@@ -320,7 +332,7 @@ private struct SettingsDashboard: View {
 		case .output:
 			OutputSettingsPanel(model: model)
 		case .permissions:
-			PermissionsSettingsPanel()
+			PermissionsSettingsPanel(model: model)
 		case .about:
 			AboutSettingsPanel()
 		}
@@ -903,6 +915,24 @@ private struct ModernSegmentButton: View {
 	}
 }
 
+private struct LaunchAtLoginToggle: View {
+	@ObservedObject var model: NativeHostSettingsViewModel
+
+	var body: some View {
+		Toggle(
+			"",
+			isOn: Binding(
+				get: { model.launchAtLoginState.isOn },
+				set: { value in model.setLaunchAtLoginEnabled(value) }
+			)
+		)
+		.labelsHidden()
+		.toggleStyle(SettingsToggleStyle())
+		.disabled(!model.launchAtLoginState.isControlEnabled)
+		.help(model.launchAtLoginState.helpText)
+	}
+}
+
 private struct AppearanceSettingsPanel: View {
 	@ObservedObject var model: NativeHostSettingsViewModel
 
@@ -1427,23 +1457,35 @@ private struct CaptureHotKeyField: View {
 }
 
 private struct PermissionsSettingsPanel: View {
+	@ObservedObject var model: NativeHostSettingsViewModel
 	@State private var refreshID = 0
 	private let primaryKind = PermissionKind.screenRecording
 
 	var body: some View {
-		VStack(spacing: 0) {
-			PermissionGrantCard(
-				kind: primaryKind,
-				refreshID: refreshID,
-				bundleURL: Self.appBundleURL,
-				appIcon: Self.appIcon,
-				openSettings: {
-					NativePermissions.openSystemSettings(for: primaryKind)
-				},
-				refresh: {
-					refreshID += 1
-				}
-			)
+		VStack(spacing: 8) {
+			VStack(spacing: 0) {
+				PermissionGrantCard(
+					kind: primaryKind,
+					refreshID: refreshID,
+					bundleURL: Self.appBundleURL,
+					appIcon: Self.appIcon,
+					openSettings: {
+						NativePermissions.openSystemSettings(for: primaryKind)
+					},
+					refresh: {
+						refreshID += 1
+						model.refresh()
+					}
+				)
+			}
+
+			SettingsHeroControlTile(
+				symbolName: "power",
+				title: "Open at Login",
+				subtitle: model.launchAtLoginState.subtitle
+			) {
+				LaunchAtLoginToggle(model: model)
+			}
 		}
 	}
 
