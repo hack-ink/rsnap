@@ -40,6 +40,8 @@ enum RsnapNativeHostKitProbe {
 			selection: selection,
 			imageSize: imageSize
 		)
+		assertScrimRoundedExclusionKeepsCornersMasked()
+		assertRoundedExclusionMaskKeepsCornersFilled()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapFrame(
@@ -170,6 +172,107 @@ enum RsnapNativeHostKitProbe {
 		}
 	}
 
+	private static func assertScrimRoundedExclusionKeepsCornersMasked() {
+		let width = 80
+		let height = 80
+		let byteCount = width * height * 4
+		let data = UnsafeMutablePointer<UInt8>.allocate(capacity: byteCount)
+		data.initialize(repeating: 0, count: byteCount)
+		defer {
+			data.deinitialize(count: byteCount)
+			data.deallocate()
+		}
+		guard
+			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+			let context = CGContext(
+				data: data,
+				width: width,
+				height: height,
+				bitsPerComponent: 8,
+				bytesPerRow: width * 4,
+				space: colorSpace,
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
+			fatalError("could not create scrim geometry probe context")
+		}
+
+		OverlayMaskGeometry.drawScrim(
+			in: context,
+			bounds: CGRect(x: 0, y: 0, width: width, height: height),
+			focusRect: CGRect(x: 48, y: 48, width: 16, height: 16),
+			color: CGColor(red: 0, green: 0, blue: 0, alpha: 1),
+			roundedExclusions: [
+				OverlayMaskGeometry.RoundedExclusion(
+					rect: CGRect(x: 10, y: 10, width: 40, height: 24),
+					cornerRadius: 12
+				)
+			]
+		)
+
+		guard clearPixel(in: data, width: width, height: height, x: 30, yFromBottom: 22)
+		else {
+			fatalError("rounded scrim exclusion did not clear the HUD body")
+		}
+		guard opaquePixel(in: data, width: width, height: height, x: 10, yFromBottom: 10)
+		else {
+			fatalError("rounded scrim exclusion cleared a square corner")
+		}
+		guard clearPixel(in: data, width: width, height: height, x: 56, yFromBottom: 56)
+		else {
+			fatalError("selection focus rect was not cleared")
+		}
+	}
+
+	private static func assertRoundedExclusionMaskKeepsCornersFilled() {
+		let width = 80
+		let height = 80
+		let byteCount = width * height * 4
+		let data = UnsafeMutablePointer<UInt8>.allocate(capacity: byteCount)
+		data.initialize(repeating: 0, count: byteCount)
+		defer {
+			data.deinitialize(count: byteCount)
+			data.deallocate()
+		}
+		guard
+			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+			let context = CGContext(
+				data: data,
+				width: width,
+				height: height,
+				bitsPerComponent: 8,
+				bytesPerRow: width * 4,
+				space: colorSpace,
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
+			fatalError("could not create rounded mask probe context")
+		}
+
+		context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+		context.addPath(
+			OverlayMaskGeometry.evenOddMaskPath(
+				bounds: CGRect(x: 0, y: 0, width: width, height: height),
+				roundedExclusions: [
+					OverlayMaskGeometry.RoundedExclusion(
+						rect: CGRect(x: 10, y: 10, width: 40, height: 24),
+						cornerRadius: 12
+					)
+				]
+			)
+		)
+		context.drawPath(using: .eoFill)
+
+		guard clearPixel(in: data, width: width, height: height, x: 30, yFromBottom: 22)
+		else {
+			fatalError("rounded mask did not exclude the HUD body")
+		}
+		guard opaquePixel(in: data, width: width, height: height, x: 11, yFromBottom: 11)
+		else {
+			fatalError("rounded mask excluded a square corner")
+		}
+	}
+
 	private static func redPixel(
 		in data: UnsafePointer<UInt8>,
 		width: Int,
@@ -181,5 +284,31 @@ enum RsnapNativeHostKitProbe {
 			&& data[offset + 1] < 80
 			&& data[offset + 2] < 20
 			&& data[offset + 3] > 200
+	}
+
+	private static func opaquePixel(
+		in data: UnsafePointer<UInt8>,
+		width: Int,
+		height: Int,
+		x: Int,
+		yFromBottom: Int
+	) -> Bool {
+		let offset = (rowIndex(fromBottom: yFromBottom, height: height) * width + x) * 4
+		return data[offset + 3] > 200
+	}
+
+	private static func clearPixel(
+		in data: UnsafePointer<UInt8>,
+		width: Int,
+		height: Int,
+		x: Int,
+		yFromBottom: Int
+	) -> Bool {
+		let offset = (rowIndex(fromBottom: yFromBottom, height: height) * width + x) * 4
+		return data[offset + 3] < 20
+	}
+
+	private static func rowIndex(fromBottom y: Int, height: Int) -> Int {
+		max(0, min(height - 1, height - y - 1))
 	}
 }
