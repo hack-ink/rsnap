@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/ff2fe84f-f551-40e8-919c-66ae8a61f8e7
 - Frozen toolbar tools include pointer, pen, arrow, text, mosaic, spotlight, undo, redo, auto-center,
   OCR, copy, and save.
 - `Esc` cancels capture.
-- Glass HUD with Classic Glass by default and Liquid Glass on supported macOS.
+- Glass HUD with Classic Glass fallback and Liquid Glass in release builds on supported macOS.
 - Tab-triggered loupe sample and frozen-mode toolbar for quick action access.
 
 ## Status
@@ -132,7 +132,7 @@ Rsnap currently relies on **Screen Recording** permission to capture other apps/
 - The native `Settings…` window currently owns:
   - HUD glass enable/disable
   - HUD glass style (`Classic Glass` / `Liquid Glass`)
-  - Liquid Glass style (`Regular` / `Clear`) when supported by macOS
+  - Liquid Glass style (`Regular` / `Clear`) when supported by macOS and the current build
   - shared HUD tint / color, plus Classic Glass opacity / blur
   - HUD `Tab` hint visibility
   - loupe sample size (`small` / `medium` / `large`)
