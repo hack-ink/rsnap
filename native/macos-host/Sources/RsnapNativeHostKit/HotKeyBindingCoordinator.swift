@@ -5,7 +5,6 @@ final class HotKeyBindingCoordinator {
 	private struct BindingState: Equatable {
 		let captureHotKey: String
 		let sceneMode: SceneKind
-		let plainFrozenShortcutsEnabled: Bool
 	}
 
 	var onCaptureRequested: (() -> Void)? {
@@ -23,16 +22,6 @@ final class HotKeyBindingCoordinator {
 		set { hotKeys.onToggleLoupeRequested = newValue }
 	}
 
-	var onCopyRequested: (() -> Void)? {
-		get { hotKeys.onCopyRequested }
-		set { hotKeys.onCopyRequested = newValue }
-	}
-
-	var onAutoCenterRequested: (() -> Void)? {
-		get { hotKeys.onAutoCenterRequested }
-		set { hotKeys.onAutoCenterRequested = newValue }
-	}
-
 	var onSaveRequested: (() -> Void)? {
 		get { hotKeys.onSaveRequested }
 		set { hotKeys.onSaveRequested = newValue }
@@ -43,21 +32,18 @@ final class HotKeyBindingCoordinator {
 
 	func update(
 		captureHotKey: String,
-		sceneMode: SceneKind,
-		plainFrozenShortcutsEnabled: Bool
+		sceneMode: SceneKind
 	) {
 		let state = BindingState(
 			captureHotKey: captureHotKey,
-			sceneMode: sceneMode,
-			plainFrozenShortcutsEnabled: plainFrozenShortcutsEnabled
+			sceneMode: sceneMode
 		)
 		guard state != appliedState else {
 			return
 		}
 		let didApply = hotKeys.updateBindings(
 			captureHotKey: state.captureHotKey,
-			sceneMode: state.sceneMode,
-			plainFrozenShortcutsEnabled: state.plainFrozenShortcutsEnabled
+			sceneMode: state.sceneMode
 		)
 		appliedState = didApply ? state : nil
 	}

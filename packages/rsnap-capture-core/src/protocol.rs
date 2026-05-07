@@ -71,10 +71,6 @@ pub enum CursorIntent {
 pub enum PermissionKind {
 	/// Screen recording or equivalent display-capture access.
 	ScreenRecording,
-	/// Accessibility APIs for synthetic input or focused automation.
-	Accessibility,
-	/// Input-monitoring or global event tap access.
-	InputMonitoring,
 }
 
 /// Host-owned effect surface that remains outside the Rust core.
