@@ -26,7 +26,10 @@ manual first-run/user-flow validation.
    - No existing local or remote tag already uses `v<version>`.
 2. Confirm release credentials:
    - Apple signing certificate secrets are available to the Release workflow.
-   - Apple notary credentials are optional for v0.1.2; when absent, the Release workflow still
+   - Sparkle update signing secrets are available to the Release workflow:
+     `SPARKLE_PUBLIC_ED_KEY` for `SUPublicEDKey` and `SPARKLE_PRIVATE_ED_KEY` for signing the
+     published update archive.
+   - Apple notary credentials are optional for v0.1.3; when absent, the Release workflow still
      publishes a signed but unnotarized macOS zip.
 3. Confirm local gates:
    - `cargo make checks`
@@ -55,10 +58,24 @@ Validate these user-visible flows:
   fullscreen fallback.
 - Frozen toolbar tools: pointer, pen, arrow, text, mosaic, spotlight, undo, redo, auto-center,
   Recognize Text, copy, and save.
-- Scroll capture is hidden in the v0.1.2 native-host release: the toolbar must not show a scroll
+- Scroll capture is hidden in the v0.1.3 native-host release: the toolbar must not show a scroll
   capture item, and pressing `s` must not enter scroll capture.
 - Light and dark appearance; Classic Glass and Liquid Glass where the OS and current build support
   Liquid Glass.
+- Settings -> About update rows: `Auto Update` and `Release Version` must use Title Case for row
+  titles. The Auto Update mode control must show `Off`, `Notify`, and `Install`; secondary text must use
+  sentence case, must not look like download progress, and the release-configured build must not
+  report that the Sparkle appcast is missing.
+- Sparkle local update smoke:
+
+```sh
+scripts/smoke/sparkle-update-local.sh
+```
+
+  The script builds a disposable old app, a higher-version update archive, a local signed appcast,
+  and a local HTTP server. The final Sparkle `Install and Relaunch` confirmation remains manual;
+  after confirming it, return to the script and press Enter so it can verify the old bundle's
+  `CFBundleVersion` changed to the update version.
 - Output directory, filename prefix, sequence/timestamp naming, clipboard copy, and save failure
   handling where practical.
 
@@ -77,9 +94,9 @@ user-entered annotation text.
 2. Watch the Release workflow for the exact tag.
 3. Treat a build, signing, or packaging failure as a release blocker.
 4. Treat notarization failure as a release blocker only when notary credentials are configured.
-5. The Release workflow publishes the signed macOS zip to the GitHub release. It notarizes and
-   staples the app only when notary credentials are configured. It does not publish crates.io
-   packages or non-macOS desktop archives for v0.1.2.
+5. The Release workflow publishes the signed macOS zip and `appcast.xml` to the GitHub release.
+   It notarizes and staples the app only when notary credentials are configured. It does not
+   publish crates.io packages or non-macOS desktop archives for v0.1.3.
 
 ## Published Artifact Check
 
@@ -91,6 +108,10 @@ After the Release workflow succeeds:
    - The app bundle is `Rsnap.app`.
    - `CFBundleName` and `CFBundleDisplayName` are `Rsnap`.
    - `CFBundleIdentifier` is `ink.hack.rsnap`.
+   - `SUFeedURL` is
+     `https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml`.
+   - `SUPublicEDKey` is present.
+   - `Sparkle.framework` is present in `Contents/Frameworks`.
 3. Verify the signature:
 
 ```sh
@@ -107,5 +128,13 @@ For a signed but unnotarized build, Gatekeeper may still block a quarantined dow
 quarantine override documented in `README.md` only for a bundle built locally or downloaded from
 this repository's GitHub Releases page.
 
-5. Launch the downloaded app and repeat a minimal capture, toolbar, OCR, copy, and save check.
-6. Confirm release notes and the macOS zip were published.
+5. Confirm the appcast asset was published:
+
+```sh
+curl -fsSL https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml \
+  | grep -q 'sparkle:edSignature'
+```
+
+6. Launch the downloaded app and repeat a minimal capture, toolbar, OCR, copy, save, and About
+   update check.
+7. Confirm release notes, the macOS zip, and the appcast were published.

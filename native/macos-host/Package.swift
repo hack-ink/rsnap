@@ -21,6 +21,7 @@ let package = Package(
 		.executable(name: "RsnapNativeHost", targets: ["RsnapNativeHost"]),
 	],
 	dependencies: [
+		.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.1"),
 		.package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", exact: "0.63.2"),
 	],
 	targets: [
@@ -50,7 +51,10 @@ let package = Package(
 		),
 		.target(
 			name: "RsnapNativeHostKit",
-			dependencies: ["RsnapHostBridge"],
+			dependencies: [
+				"RsnapHostBridge",
+				.product(name: "Sparkle", package: "Sparkle"),
+			],
 			resources: [
 				.process("Resources"),
 			],

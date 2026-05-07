@@ -83,6 +83,7 @@ Defines:
 - HUD tint: `0.4990234375`.
 - HUD tint hue: `0.6074879184861536`.
 - Loupe sample size: small.
+- Sparkle update mode: install in release builds.
 
 ## Permission Settings
 
@@ -110,6 +111,27 @@ Defines:
   `https://x.com/YvetteCipher`.
 - The creator link may encourage following for ongoing Rsnap updates and may state that follows
   help support future work through X creator rewards.
+- Release builds must use Sparkle's standard updater UI and appcast format for macOS self-updates.
+  GitHub Releases remains the distribution surface, but the Sparkle appcast at
+  `https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml` is the update-version
+  authority for in-app update checks.
+- The appcast must compare against the running app bundle's `CFBundleVersion`. The user-visible
+  version should remain `CFBundleShortVersionString`.
+- The About section must expose a Check for Updates action backed by Sparkle's standard check
+  flow. When an installable update is available, Sparkle owns the native update window, download
+  progress, install authorization if needed, and final install-and-relaunch action.
+- The About section must expose one Auto Update mode control rather than separate Automatic Checks
+  and Automatic Updates rows. The visible modes are Off, Notify, and Install.
+- Off must disable Sparkle automatic checks and automatic downloads. Notify must enable Sparkle
+  automatic checks without automatic downloads. Install must enable automatic checks and Sparkle's
+  `automaticallyDownloadsUpdates` setting when automatic updates are available.
+- Sparkle must use a 24-hour scheduled check interval, and each fresh app launch should request one
+  immediate background check after the updater starts when the selected mode is Notify or Install.
+- The Auto Update secondary text must use sentence case, must not read like download or install
+  progress, and should display Sparkle's last successful check time while Notify or Install is
+  selected. When Sparkle is not configured in a development build, the secondary text may state
+  that the signed appcast is not configured.
+- The About section must not display last checked as a separate row.
 - The About section must not expose capture defaults or a Restore Defaults action.
 
 ## Default-Size Usability
