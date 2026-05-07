@@ -16,6 +16,7 @@ APP_BUNDLE="$STAGE_DIR/$APP_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
+APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_BINARY="$APP_MACOS/$EXECUTABLE_NAME"
 APP_SOURCE_BINARY_CACHE="$STAGE_DIR/.${EXECUTABLE_NAME}.source-bin"
 STAGE_FINGERPRINT_FILE="$STAGE_DIR/.stage-fingerprint"
@@ -24,6 +25,8 @@ APP_ICON_SOURCE="$ROOT_DIR/assets/app-icon/generated/app-icon.icns"
 APP_ICON_NAME="AppIcon.icns"
 STATUS_ICON_SOURCE="$ROOT_DIR/assets/tray-icon/generated/tray-icon-template.png"
 STATUS_ICON_NAME="StatusBarIcon.png"
+SPARKLE_APPCAST_URL="${RSNAP_SPARKLE_APPCAST_URL:-https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml}"
+SPARKLE_PUBLIC_ED_KEY="${RSNAP_SPARKLE_PUBLIC_ED_KEY:-}"
 BUILD_ROOT=""
 BUILD_BINARY=""
 SWIFT_BUILD_FLAGS=()
@@ -55,8 +58,11 @@ if [[ "$SWIFT_CONFIGURATION" == "release" ]]; then
 	SWIFT_BUILD_FLAGS=(-c release)
 fi
 
-APP_VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1)"
-APP_VERSION="${APP_VERSION:-0.1.2}"
+APP_VERSION="${RSNAP_NATIVE_HOST_APP_VERSION:-}"
+if [[ -z "$APP_VERSION" ]]; then
+	APP_VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1)"
+fi
+APP_VERSION="${APP_VERSION:-0.1.3}"
 
 require_liquid_glass_capable_swift_for_release() {
 	[[ "$SWIFT_CONFIGURATION" == "release" ]] || return 0
@@ -168,6 +174,40 @@ sync_bundle_dir() {
 	return 0
 }
 
+sync_framework_dir() {
+	local source_dir="$1"
+	local destination_dir="$2"
+	if [[ ! -d "$source_dir" ]]; then
+		return 1
+	fi
+
+	mkdir -p "$(dirname "$destination_dir")"
+	rm -rf "$destination_dir"
+	ditto "$source_dir" "$destination_dir"
+	return 0
+}
+
+stage_sparkle_framework() {
+	local source_framework=""
+	if [[ -d "$PACKAGE_DIR/.build/artifacts" ]]; then
+		source_framework="$(
+			find "$PACKAGE_DIR/.build/artifacts" \
+				-type d \
+				-name 'Sparkle.framework' \
+				-print \
+				-quit
+		)"
+	fi
+	if [[ -z "$source_framework" ]]; then
+		echo "error: Sparkle.framework was not found in native/macos-host/.build/artifacts." >&2
+		echo "error: run swift package resolve/build for the Sparkle SwiftPM artifact first." >&2
+		exit 1
+	fi
+	if sync_framework_dir "$source_framework" "$APP_FRAMEWORKS/Sparkle.framework"; then
+		STAGED_APP_DIRTY=1
+	fi
+}
+
 write_if_changed() {
 	local destination="$1"
 	local contents="$2"
@@ -207,12 +247,18 @@ canonicalize_app_bundle_name() {
 
 stage_app_bundle() {
 	canonicalize_app_bundle_name
-	mkdir -p "$APP_MACOS" "$APP_RESOURCES"
+	mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
 	if [[ ! -x "$APP_BINARY" ]] || copy_if_changed "$BUILD_BINARY" "$APP_SOURCE_BINARY_CACHE"; then
 		mkdir -p "$(dirname "$APP_SOURCE_BINARY_CACHE")"
 		cp "$BUILD_BINARY" "$APP_BINARY"
 		STAGED_APP_DIRTY=1
 		chmod +x "$APP_BINARY"
+	fi
+
+	if otool -L "$APP_BINARY" | grep -q 'Sparkle.framework' \
+		&& ! otool -l "$APP_BINARY" | grep -q '@executable_path/../Frameworks'; then
+		install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP_BINARY"
+		STAGED_APP_DIRTY=1
 	fi
 
 	if [[ -f "$APP_ICON_SOURCE" ]]; then
@@ -233,6 +279,8 @@ stage_app_bundle() {
 			STAGED_APP_DIRTY=1
 		fi
 	done < <(find "$BUILD_ROOT" -maxdepth 1 -name '*.bundle' -type d | sort)
+
+	stage_sparkle_framework
 
 	local info_plist_contents
 	info_plist_contents="$(cat <<PLIST
@@ -260,8 +308,26 @@ stage_app_bundle() {
   <true/>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <key>SUFeedURL</key>
+  <string>$SPARKLE_APPCAST_URL</string>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUScheduledCheckInterval</key>
+  <integer>86400</integer>
+  <key>SUAutomaticallyUpdate</key>
+  <true/>
+  <key>SUAllowsAutomaticUpdates</key>
+  <true/>
 PLIST
 )"
+
+	if [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+		info_plist_contents+="$(cat <<PLIST
+  <key>SUPublicEDKey</key>
+  <string>$SPARKLE_PUBLIC_ED_KEY</string>
+PLIST
+)"
+	fi
 
 	if [[ -f "$APP_RESOURCES/$APP_ICON_NAME" ]]; then
 		info_plist_contents+="$(cat <<PLIST

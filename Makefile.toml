@@ -261,9 +261,17 @@ codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -q '^TeamIdentifier='
 test -x "$APP_PATH/Contents/MacOS/RsnapNativeHost"
 test -f "$APP_PATH/Contents/Info.plist"
 test -f "$APP_PATH/Contents/Resources/AppIcon.icns"
+test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework"
+otool -L "$APP_PATH/Contents/MacOS/RsnapNativeHost" | grep -q '@rpath/Sparkle.framework'
+otool -l "$APP_PATH/Contents/MacOS/RsnapNativeHost" | grep -q '@executable_path/../Frameworks'
 plutil -extract CFBundleName raw "$APP_PATH/Contents/Info.plist" | grep -qx 'Rsnap'
 plutil -extract CFBundleDisplayName raw "$APP_PATH/Contents/Info.plist" | grep -qx 'Rsnap'
 plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist" | grep -qx 'ink.hack.rsnap'
+plutil -extract SUFeedURL raw "$APP_PATH/Contents/Info.plist" \
+  | grep -qx 'https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml'
+plutil -extract SUEnableAutomaticChecks raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true'
+plutil -extract SUAutomaticallyUpdate raw "$APP_PATH/Contents/Info.plist" | grep -qx 'true'
+plutil -extract SUScheduledCheckInterval raw "$APP_PATH/Contents/Info.plist" | grep -qx '86400'
 if plutil -extract LSUIElement raw "$APP_PATH/Contents/Info.plist" >/dev/null 2>&1; then
   echo "LSUIElement must stay unset so Settings is a normal foreground window" >&2
   exit 1

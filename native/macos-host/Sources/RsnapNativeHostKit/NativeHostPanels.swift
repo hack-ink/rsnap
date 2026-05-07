@@ -55,8 +55,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 	private let viewModel: NativeHostSettingsViewModel
 	private let onClose: () -> Void
 
-	init(settingsStore: NativeHostSettingsStore, onClose: @escaping () -> Void = {}) {
-		self.viewModel = NativeHostSettingsViewModel(settingsStore: settingsStore)
+	init(
+		settingsStore: NativeHostSettingsStore,
+		softwareUpdater: NativeHostSoftwareUpdater,
+		onClose: @escaping () -> Void = {}
+	) {
+		self.viewModel = NativeHostSettingsViewModel(
+			settingsStore: settingsStore,
+			softwareUpdater: softwareUpdater)
 		self.onClose = onClose
 
 		let contentRect = NSRect(

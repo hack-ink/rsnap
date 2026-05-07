@@ -13,17 +13,25 @@ enum NativeHostSettingsWindowMetrics {
 final class NativeHostSettingsViewModel: ObservableObject {
 	@Published private(set) var settings: NativeHostSettings
 	@Published private(set) var launchAtLoginState = LaunchAtLoginState.current()
+	@Published private(set) var softwareUpdateSettings: NativeHostSoftwareUpdater.Snapshot
 
 	private let settingsStore: NativeHostSettingsStore
+	private let softwareUpdater: NativeHostSoftwareUpdater
 
-	init(settingsStore: NativeHostSettingsStore) {
+	init(
+		settingsStore: NativeHostSettingsStore,
+		softwareUpdater: NativeHostSoftwareUpdater
+	) {
 		self.settingsStore = settingsStore
+		self.softwareUpdater = softwareUpdater
 		self.settings = settingsStore.settings
+		self.softwareUpdateSettings = softwareUpdater.snapshot()
 	}
 
 	func refresh() {
 		settings = settingsStore.settings
 		launchAtLoginState = LaunchAtLoginState.current()
+		softwareUpdateSettings = softwareUpdater.snapshot()
 	}
 
 	func update(_ mutate: (inout NativeHostSettings) -> Void) {
@@ -43,6 +51,16 @@ final class NativeHostSettingsViewModel: ObservableObject {
 			launchAtLoginState = LaunchAtLoginState.current(
 				errorMessage: error.localizedDescription)
 		}
+	}
+
+	func setSoftwareUpdateMode(_ mode: NativeHostSoftwareUpdater.Mode) {
+		softwareUpdater.setMode(mode)
+		refresh()
+	}
+
+	func checkForUpdates() {
+		softwareUpdater.checkForUpdates(nil)
+		refresh()
 	}
 
 	func chooseOutputDirectory() {
@@ -334,7 +352,7 @@ private struct SettingsDashboard: View {
 		case .permissions:
 			PermissionsSettingsPanel(model: model)
 		case .about:
-			AboutSettingsPanel()
+			AboutSettingsPanel(model: model)
 		}
 	}
 }
@@ -831,6 +849,60 @@ private struct LoupeSampleSizePicker: View {
 		.padding(.horizontal, 1)
 		.frame(width: SettingsControlLayout.controlColumnWidth)
 		.segmentedGlassBackground()
+	}
+}
+
+private struct SoftwareUpdateModePicker: View {
+	let snapshot: NativeHostSoftwareUpdater.Snapshot
+	let onSelect: (NativeHostSoftwareUpdater.Mode) -> Void
+
+	var body: some View {
+		HStack(spacing: 8) {
+			ForEach(NativeHostSoftwareUpdater.Mode.allCases, id: \.rawValue) { mode in
+				let enabled = isEnabled(mode)
+				ModernSegmentButton(
+					title: mode.title,
+					isSelected: snapshot.mode == mode,
+					isEnabled: enabled
+				) {
+					onSelect(mode)
+				}
+				.help(helpText(for: mode, isEnabled: enabled))
+			}
+		}
+		.padding(.horizontal, 1)
+		.frame(width: SettingsControlLayout.controlColumnWidth)
+		.segmentedGlassBackground()
+	}
+
+	private func isEnabled(_ mode: NativeHostSoftwareUpdater.Mode) -> Bool {
+		guard snapshot.isConfigured else {
+			return false
+		}
+		if mode == .install {
+			return snapshot.allowsAutomaticUpdates
+		}
+		return true
+	}
+
+	private func helpText(
+		for mode: NativeHostSoftwareUpdater.Mode,
+		isEnabled: Bool
+	) -> String {
+		if !snapshot.isConfigured {
+			return "Sparkle appcast not configured."
+		}
+		if mode == .install, !isEnabled {
+			return "Automatic install is unavailable."
+		}
+		switch mode {
+		case .off:
+			return "Turn off automatic update checks."
+		case .check:
+			return "Check automatically and notify when an update is available."
+		case .install:
+			return "Download updates automatically and install after confirmation."
+		}
 	}
 }
 
@@ -1662,6 +1734,8 @@ private struct PermissionStateBadge: View {
 }
 
 private struct AboutSettingsPanel: View {
+	@ObservedObject var model: NativeHostSettingsViewModel
+
 	var body: some View {
 		VStack(alignment: .leading, spacing: 8) {
 			AboutIntroBlock()
@@ -1674,6 +1748,46 @@ private struct AboutSettingsPanel: View {
 					urlString: NativeHostAboutLinks.source
 				)
 			}
+
+			VStack(spacing: 0) {
+				SettingsControlTile(
+					symbolName: "arrow.triangle.2.circlepath",
+					title: "Auto Update",
+					subtitle: model.softwareUpdateSettings.modeSubtitle
+				) {
+					SoftwareUpdateModePicker(snapshot: model.softwareUpdateSettings) { mode in
+						model.setSoftwareUpdateMode(mode)
+					}
+				}
+
+				SettingsControlTile(
+					symbolName: "tag",
+					title: model.softwareUpdateSettings.releaseVersionTitle,
+					subtitle: model.softwareUpdateSettings.releaseVersionSubtitle
+				) {
+					UpdateCheckButtonGroup(model: model)
+				}
+			}
+		}
+	}
+}
+
+private struct UpdateCheckButtonGroup: View {
+	@ObservedObject var model: NativeHostSettingsViewModel
+
+	var body: some View {
+		HStack(spacing: 6) {
+			Button {
+				model.checkForUpdates()
+			} label: {
+				Label("Check", systemImage: "arrow.clockwise")
+					.labelStyle(.titleAndIcon)
+			}
+			.rsnapGlassButton(prominent: false)
+			.controlSize(.small)
+			.disabled(
+				model.softwareUpdateSettings.isConfigured
+					&& !model.softwareUpdateSettings.canCheckForUpdates)
 		}
 	}
 }
