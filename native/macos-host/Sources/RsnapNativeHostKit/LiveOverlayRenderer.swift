@@ -1257,7 +1257,8 @@ private final class SelectionFlowBandLayer: CALayer {
 	}
 }
 
-private final class LiveScrimLayer: CALayer {
+private final class LiveScrimLayer: CAShapeLayer {
+	private var renderedBounds = CGRect.null
 	private var focusRect = CGRect.null
 	private var roundedExclusions: [OverlayMaskGeometry.RoundedExclusion] = []
 	var scrimColor: CGColor =
@@ -1265,19 +1266,26 @@ private final class LiveScrimLayer: CALayer {
 
 	override init() {
 		super.init()
-		isOpaque = false
-		needsDisplayOnBoundsChange = true
+		configureShape()
 	}
 
 	override init(layer: Any) {
 		if let layer = layer as? LiveScrimLayer {
+			renderedBounds = layer.renderedBounds
 			focusRect = layer.focusRect
 			roundedExclusions = layer.roundedExclusions
 			scrimColor = layer.scrimColor
 		}
 		super.init(layer: layer)
+		configureShape()
+	}
+
+	private func configureShape() {
 		isOpaque = false
-		needsDisplayOnBoundsChange = true
+		fillRule = .evenOdd
+		fillColor = scrimColor
+		strokeColor = nil
+		needsDisplayOnBoundsChange = false
 	}
 
 	@available(*, unavailable)
@@ -1290,26 +1298,23 @@ private final class LiveScrimLayer: CALayer {
 		color: CGColor,
 		roundedExclusions: [OverlayMaskGeometry.RoundedExclusion]
 	) {
+		let currentBounds = bounds
 		guard
-			self.focusRect != focusRect
+			renderedBounds != currentBounds
+				|| self.focusRect != focusRect
 				|| !CFEqual(scrimColor, color)
 				|| self.roundedExclusions != roundedExclusions
 		else {
 			return
 		}
+		renderedBounds = currentBounds
 		self.focusRect = focusRect
 		self.scrimColor = color
 		self.roundedExclusions = roundedExclusions
-		setNeedsDisplay()
-	}
-
-	override func draw(in context: CGContext) {
-		context.clear(bounds)
-		OverlayMaskGeometry.drawScrim(
-			in: context,
-			bounds: bounds,
+		fillColor = color
+		path = OverlayMaskGeometry.scrimPath(
+			bounds: currentBounds,
 			focusRect: focusRect,
-			color: scrimColor,
 			roundedExclusions: roundedExclusions
 		)
 	}
