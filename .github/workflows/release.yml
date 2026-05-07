@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build-macos:
     name: Build signed macOS package
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - name: Fetch latest code
         uses: actions/checkout@v6
@@ -40,6 +40,10 @@ jobs:
             echo "The macOS release asset is named for aarch64; expected an arm64 runner." >&2
             exit 1
           fi
+
+          sw_vers
+          swift --version
+          xcodebuild -version
 
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1

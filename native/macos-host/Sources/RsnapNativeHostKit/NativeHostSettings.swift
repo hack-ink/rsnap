@@ -382,14 +382,39 @@ enum LoupeSampleSizePreference: String, CaseIterable {
 }
 
 enum LiveChromeGlassMaterialSupport {
-	static let isLiquidGlassAvailable: Bool = {
+	static let isLiquidGlassBuildSupported: Bool = {
 		#if compiler(>=6.2)
-			if #available(macOS 26.0, *) {
-				return true
-			}
+			return true
+		#else
+			return false
 		#endif
-		return false
 	}()
+
+	static let isMacOSRuntimeSupported: Bool = {
+		let version = ProcessInfo.processInfo.operatingSystemVersion
+		return version.majorVersion >= 26
+	}()
+
+	static var isLiquidGlassAvailable: Bool {
+		isLiquidGlassBuildSupported && isMacOSRuntimeSupported
+	}
+
+	static var unavailableHelpText: String {
+		if isMacOSRuntimeSupported {
+			return "This build was made without Liquid Glass support."
+		}
+		return "Requires macOS 26."
+	}
+
+	static var settingsSubtitle: String {
+		if isLiquidGlassAvailable {
+			return "Liquid or blur."
+		}
+		if isMacOSRuntimeSupported {
+			return "Classic fallback in this build."
+		}
+		return "Classic fallback before macOS 26."
+	}
 }
 
 extension NativeHostSettings {

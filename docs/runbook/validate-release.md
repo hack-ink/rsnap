@@ -7,8 +7,10 @@ artifacts immediately after the tag workflow completes.
 
 Preconditions: `main` is clean and synced, the intended release version is committed in
 `Cargo.toml`, GitHub Actions macOS signing release secrets are configured, optional Apple notary
-credentials are configured only when a notarized build is required, and a logged-in macOS desktop
-session is available for native-host smoke and manual checks.
+credentials are configured only when a notarized build is required, the Release workflow runs the
+macOS package job on `macos-26` with Apple Swift 6.2 or newer so Liquid Glass API support is
+compiled into the app, and a logged-in macOS desktop session is available for native-host smoke and
+manual checks.
 
 Depends on: `docs/spec/app-identity.md`; `docs/spec/settings.md`; `docs/spec/telemetry.md`;
 `docs/runbook/performance-validation.md`; `.github/workflows/release.yml`
@@ -55,7 +57,8 @@ Validate these user-visible flows:
   Recognize Text, copy, and save.
 - Scroll capture is hidden in the v0.1.2 native-host release: the toolbar must not show a scroll
   capture item, and pressing `s` must not enter scroll capture.
-- Light and dark appearance; Classic Glass and Liquid Glass where the OS supports Liquid Glass.
+- Light and dark appearance; Classic Glass and Liquid Glass where the OS and current build support
+  Liquid Glass.
 - Output directory, filename prefix, sequence/timestamp naming, clipboard copy, and save failure
   handling where practical.
 
