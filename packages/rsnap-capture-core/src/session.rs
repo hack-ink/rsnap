@@ -173,8 +173,6 @@ impl CaptureSessionCore {
 			HostReport::PermissionChanged { kind, granted } => {
 				let permission = match kind {
 					PermissionKind::ScreenRecording => "Screen Recording",
-					PermissionKind::Accessibility => "Accessibility",
-					PermissionKind::InputMonitoring => "Input Monitoring",
 				};
 				let verb = if granted { "granted" } else { "revoked" };
 

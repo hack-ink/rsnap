@@ -498,7 +498,7 @@ private struct OutputInspector: View {
 
 private struct PermissionsInspector: View {
 	var body: some View {
-		let granted = NativePermissions.status(for: .screenRecording) ? 1 : 0
+		let granted = NativePermissions.screenRecordingGranted ? 1 : 0
 
 		VStack(alignment: .leading, spacing: 12) {
 			PermissionProgressBadge(granted: granted, total: 1)
@@ -1459,18 +1459,16 @@ private struct CaptureHotKeyField: View {
 private struct PermissionsSettingsPanel: View {
 	@ObservedObject var model: NativeHostSettingsViewModel
 	@State private var refreshID = 0
-	private let primaryKind = PermissionKind.screenRecording
 
 	var body: some View {
 		VStack(spacing: 8) {
 			VStack(spacing: 0) {
 				PermissionGrantCard(
-					kind: primaryKind,
 					refreshID: refreshID,
 					bundleURL: Self.appBundleURL,
 					appIcon: Self.appIcon,
 					openSettings: {
-						NativePermissions.openSystemSettings(for: primaryKind)
+						NativePermissions.openScreenRecordingSettings()
 					},
 					refresh: {
 						refreshID += 1
@@ -1499,7 +1497,6 @@ private struct PermissionsSettingsPanel: View {
 }
 
 private struct PermissionGrantCard: View {
-	let kind: PermissionKind
 	let refreshID: Int
 	let bundleURL: URL
 	let appIcon: NSImage
@@ -1580,7 +1577,7 @@ private struct PermissionGrantCard: View {
 
 	private var isGranted: Bool {
 		_ = refreshID
-		return NativePermissions.status(for: kind)
+		return NativePermissions.screenRecordingGranted
 	}
 
 	private var title: String {

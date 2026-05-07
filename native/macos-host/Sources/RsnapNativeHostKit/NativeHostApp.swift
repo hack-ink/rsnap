@@ -449,7 +449,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		source: String,
 		oncePerLaunch: Bool = false
 	) -> Bool {
-		guard !NativePermissions.status(for: .screenRecording) else {
+		guard !NativePermissions.screenRecordingGranted else {
 			permissionRecoveryWindowController.close()
 			return false
 		}
@@ -459,7 +459,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			}
 			didPresentLaunchPermissionOnboarding = true
 		}
-		permissionRecoveryWindowController.present(kind: .screenRecording)
+		permissionRecoveryWindowController.present()
 		NativeHostTelemetry.lifecycleEvent(
 			"native_host.permission_recovery_presented",
 			detail: "source=\(source)"
@@ -542,12 +542,6 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		hotKeyCoordinator.onToggleLoupeRequested = { [weak self] in
 			self?.sessionController.toggleLoupe()
 		}
-		hotKeyCoordinator.onCopyRequested = { [weak self] in
-			self?.sessionController.copySelection()
-		}
-		hotKeyCoordinator.onAutoCenterRequested = { [weak self] in
-			self?.sessionController.performFrozenAutoCenter()
-		}
 		hotKeyCoordinator.onSaveRequested = { [weak self] in
 			self?.sessionController.saveSelection()
 		}
@@ -571,8 +565,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private func refreshHotKeyBindings(for mode: SceneKind) {
 		hotKeyCoordinator.update(
 			captureHotKey: settingsStore.settings.captureHotkey,
-			sceneMode: mode,
-			plainFrozenShortcutsEnabled: sessionController.plainFrozenShortcutHotkeysEnabled
+			sceneMode: mode
 		)
 	}
 
@@ -746,7 +739,7 @@ final class CaptureSessionController: NSObject {
 			}
 			return
 		}
-		guard NativePermissions.status(for: .screenRecording) else {
+		guard NativePermissions.screenRecordingGranted else {
 			return
 		}
 		frozenFrameAuthority.refreshShareableContentCache(
@@ -770,7 +763,7 @@ final class CaptureSessionController: NSObject {
 	) -> LiveChromeSample? {
 		let warmStartedAt = ProcessInfo.processInfo.systemUptime
 		let screenCount = NSScreen.screens.count
-		guard NativePermissions.status(for: .screenRecording) else {
+		guard NativePermissions.screenRecordingGranted else {
 			NativeHostTelemetry.liveSamplingWarmTiming(
 				captureID: captureID,
 				source: source,
@@ -972,11 +965,10 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func ensureCapturePermissions() -> Bool {
-		let granted = NativePermissions.status(for: .screenRecording)
-		guard !granted else {
+		guard !NativePermissions.screenRecordingGranted else {
 			return true
 		}
-		return NativePermissions.request(.screenRecording)
+		return NativePermissions.requestScreenRecording()
 	}
 
 	func backgroundPatch(in rect: CGRect) -> CGImage? {
@@ -1774,38 +1766,10 @@ final class CaptureSessionController: NSObject {
 		case .recognizeText:
 			try performRecognizeText()
 		case .requestScreenRecordingPermission:
-			let granted = NativePermissions.request(.screenRecording)
+			let granted = NativePermissions.requestScreenRecording()
 			try session?.send(report: .permissionChanged(.screenRecording, granted: granted))
 			if !granted {
 				try sendHostStatusMessage("Screen recording permission is required.")
-			}
-		case .requestAccessibilityPermission:
-			guard NativePermissions.requiredForCurrentNativeHost(.accessibility) else {
-				try session?.send(
-					report: .permissionChanged(
-						.accessibility, granted: NativePermissions.status(for: .accessibility)))
-				try sendHostStatusMessage(
-					"Accessibility is not required by the current native host.")
-				return
-			}
-			let granted = NativePermissions.request(.accessibility)
-			try session?.send(report: .permissionChanged(.accessibility, granted: granted))
-			if !granted {
-				try sendHostStatusMessage("Accessibility permission is required.")
-			}
-		case .requestInputMonitoringPermission:
-			guard NativePermissions.requiredForCurrentNativeHost(.inputMonitoring) else {
-				try session?.send(
-					report: .permissionChanged(
-						.inputMonitoring, granted: NativePermissions.status(for: .inputMonitoring)))
-				try sendHostStatusMessage(
-					"Input Monitoring is not required by the current native host.")
-				return
-			}
-			let granted = NativePermissions.request(.inputMonitoring)
-			try session?.send(report: .permissionChanged(.inputMonitoring, granted: granted))
-			if !granted {
-				try sendHostStatusMessage("Input monitoring permission is required.")
 			}
 		}
 	}
@@ -2087,12 +2051,6 @@ final class CaptureSessionController: NSObject {
 			&& scene.mode == .frozen
 			&& scrollCaptureState == nil
 			&& currentFrozenSelection() != nil
-	}
-
-	var plainFrozenShortcutHotkeysEnabled: Bool {
-		scene.mode == .frozen
-			&& scrollCaptureState == nil
-			&& chromeState.frozenOverlay.activeTextEdit == nil
 	}
 
 	func handleScrollCaptureWheel(_ event: NSEvent, at point: CGPoint) -> Bool {
@@ -4413,9 +4371,6 @@ final class CaptureHostView: NSView {
 	private var liveDragExceededThreshold = false
 	private var livePrimaryCompletionInFlight = false
 	private var liveMouseUpMonitor: Any?
-	private var liveGlobalMouseUpMonitor: Any?
-	private var liveMouseUpEventTap: CFMachPort?
-	private var liveMouseUpEventTapRunLoopSource: CFRunLoopSource?
 	private var liveMouseReleaseWatchdog: DispatchWorkItem?
 	private var livePointerPreviewGlobal: CGPoint?
 	private var livePointerPreviewInputUptime: TimeInterval?
@@ -5360,21 +5315,9 @@ final class CaptureHostView: NSView {
 		removeLiveMouseUpMonitor()
 		liveMouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) {
 			[weak self] event in
-			self?.completeLivePrimaryInteractionFromMouseUp(event, source: "local")
+			self?.completeLivePrimaryInteractionFromMouseUp(event)
 			return event
 		}
-		liveGlobalMouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) {
-			[weak self] event in
-			let point = NSEvent.mouseLocation
-			DispatchQueue.main.async {
-				self?.completeLivePrimaryInteractionFromMouseUp(
-					event,
-					source: "global",
-					fallbackPoint: point
-				)
-			}
-		}
-		installLiveMouseUpEventTap()
 	}
 
 	private func removeLiveMouseUpMonitor() {
@@ -5383,21 +5326,12 @@ final class CaptureHostView: NSView {
 			NSEvent.removeMonitor(liveMouseUpMonitor)
 			self.liveMouseUpMonitor = nil
 		}
-		if let liveGlobalMouseUpMonitor {
-			NSEvent.removeMonitor(liveGlobalMouseUpMonitor)
-			self.liveGlobalMouseUpMonitor = nil
-		}
-		removeLiveMouseUpEventTap()
 	}
 
-	private func completeLivePrimaryInteractionFromMouseUp(
-		_ event: NSEvent,
-		source: String,
-		fallbackPoint: CGPoint? = nil
-	) {
+	private func completeLivePrimaryInteractionFromMouseUp(_ event: NSEvent) {
 		completeLivePrimaryInteractionFromSystemMouseUp(
-			at: fallbackPoint ?? globalPoint(fromAnyEvent: event),
-			source: source
+			at: globalPoint(from: event),
+			source: "local"
 		)
 	}
 
@@ -5421,68 +5355,6 @@ final class CaptureHostView: NSView {
 			from: self,
 			at: point
 		)
-	}
-
-	private func installLiveMouseUpEventTap() {
-		guard liveMouseUpEventTap == nil else {
-			return
-		}
-		let mask = CGEventMask(1 << CGEventType.leftMouseUp.rawValue)
-		let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-		guard
-			let eventTap = CGEvent.tapCreate(
-				tap: .cgSessionEventTap,
-				place: .headInsertEventTap,
-				options: .listenOnly,
-				eventsOfInterest: mask,
-				callback: Self.liveMouseUpEventTapCallback,
-				userInfo: refcon
-			),
-			let source = CFMachPortCreateRunLoopSource(nil, eventTap, 0)
-		else {
-			NativeHostTelemetry.captureEvent(
-				"capture.live_primary_mouse_up_event_tap",
-				captureID: controller?.activeTelemetryCaptureID ?? 0,
-				outcome: "unavailable"
-			)
-			return
-		}
-		liveMouseUpEventTap = eventTap
-		liveMouseUpEventTapRunLoopSource = source
-		CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-		CGEvent.tapEnable(tap: eventTap, enable: true)
-	}
-
-	private func removeLiveMouseUpEventTap() {
-		if let source = liveMouseUpEventTapRunLoopSource {
-			CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-			liveMouseUpEventTapRunLoopSource = nil
-		}
-		if let eventTap = liveMouseUpEventTap {
-			CFMachPortInvalidate(eventTap)
-			liveMouseUpEventTap = nil
-		}
-	}
-
-	private static let liveMouseUpEventTapCallback: CGEventTapCallBack = {
-		_, type, event, userInfo in
-		guard type == .leftMouseUp, let userInfo else {
-			return Unmanaged.passUnretained(event)
-		}
-		let view = Unmanaged<CaptureHostView>.fromOpaque(userInfo).takeUnretainedValue()
-		let point = view.appKitPoint(fromQuartzPoint: event.location)
-		DispatchQueue.main.async {
-			view.completeLivePrimaryInteractionFromSystemMouseUp(
-				at: point,
-				source: "event_tap"
-			)
-		}
-		return Unmanaged.passUnretained(event)
-	}
-
-	private func appKitPoint(fromQuartzPoint point: CGPoint) -> CGPoint {
-		let desktopFrame = CaptureOverlayController.desktopFrame
-		return CGPoint(x: point.x, y: desktopFrame.maxY - point.y)
 	}
 
 	private func installLiveMouseReleaseWatchdog() {
@@ -5793,13 +5665,6 @@ final class CaptureHostView: NSView {
 			return NSEvent.mouseLocation
 		}
 		return window.convertPoint(toScreen: event.locationInWindow)
-	}
-
-	private func globalPoint(fromAnyEvent event: NSEvent) -> CGPoint {
-		guard let eventWindow = event.window else {
-			return NSEvent.mouseLocation
-		}
-		return eventWindow.convertPoint(toScreen: event.locationInWindow)
 	}
 
 	private func currentGlobalMousePoint() -> CGPoint? {

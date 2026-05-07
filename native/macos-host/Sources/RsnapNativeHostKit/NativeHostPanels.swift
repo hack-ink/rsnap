@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import CoreGraphics
 import Foundation
 import RsnapHostBridge
@@ -130,56 +129,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
 @MainActor
 enum NativePermissions {
-	static func requiredForCurrentNativeHost(_ kind: PermissionKind) -> Bool {
-		switch kind {
-		case .screenRecording:
-			return true
-		case .accessibility, .inputMonitoring:
-			return false
-		}
+	static var screenRecordingGranted: Bool {
+		CGPreflightScreenCaptureAccess()
 	}
 
-	static func status(for kind: PermissionKind) -> Bool {
-		switch kind {
-		case .screenRecording:
-			return CGPreflightScreenCaptureAccess()
-		case .accessibility:
-			return AXIsProcessTrusted()
-		case .inputMonitoring:
-			return CGPreflightListenEventAccess()
-		}
-	}
-
-	static func request(_ kind: PermissionKind) -> Bool {
-		let granted: Bool
-		switch kind {
-		case .screenRecording:
-			granted = CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
-		case .accessibility:
-			let promptKey = "AXTrustedCheckOptionPrompt"
-			let options = [promptKey: true] as CFDictionary
-			granted = AXIsProcessTrustedWithOptions(options)
-		case .inputMonitoring:
-			granted = CGPreflightListenEventAccess() || CGRequestListenEventAccess()
-		}
+	static func requestScreenRecording() -> Bool {
+		let granted = screenRecordingGranted || CGRequestScreenCaptureAccess()
 		if !granted {
-			openSystemSettings(for: kind)
+			openScreenRecordingSettings()
 		}
 		return granted
 	}
 
 	@discardableResult
-	static func openSystemSettings(for kind: PermissionKind) -> Bool {
-		let privacyQuery: String
-		switch kind {
-		case .screenRecording:
-			privacyQuery = "Privacy_ScreenCapture"
-		case .accessibility:
-			privacyQuery = "Privacy_Accessibility"
-		case .inputMonitoring:
-			privacyQuery = "Privacy_ListenEvent"
-		}
-
+	static func openScreenRecordingSettings() -> Bool {
+		let privacyQuery = "Privacy_ScreenCapture"
 		let modernURLString =
 			"x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(privacyQuery)"
 		if let modernURL = URL(string: modernURLString), NSWorkspace.shared.open(modernURL) {
