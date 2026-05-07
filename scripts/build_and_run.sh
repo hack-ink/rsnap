@@ -58,6 +58,35 @@ fi
 APP_VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1)"
 APP_VERSION="${APP_VERSION:-0.1.2}"
 
+require_liquid_glass_capable_swift_for_release() {
+	[[ "$SWIFT_CONFIGURATION" == "release" ]] || return 0
+
+	local swift_version_output
+	swift_version_output="$(swift --version 2>/dev/null || true)"
+	if python3 - "$swift_version_output" <<'PY'
+import re
+import sys
+
+match = re.search(r"Apple Swift version\s+(\d+)\.(\d+)", sys.argv[1])
+if not match:
+    sys.exit(1)
+
+major, minor = (int(match.group(1)), int(match.group(2)))
+sys.exit(0 if (major, minor) >= (6, 2) else 1)
+PY
+	then
+		return 0
+	fi
+
+	echo "error: release Rsnap native host builds require Apple Swift 6.2 or newer for Liquid Glass support." >&2
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		echo "error: found $line" >&2
+	done <<<"$swift_version_output"
+	echo "error: select a newer Xcode or set RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION=debug for a local non-release fallback build." >&2
+	exit 1
+}
+
 relink_native_host_if_missing() {
 	local product_dir link_file swift_frameworks sdk swiftc
 	product_dir="$BUILD_ROOT/$EXECUTABLE_NAME.product"
@@ -313,12 +342,19 @@ sign_staged_app_bundle() {
 }
 
 compute_stage_fingerprint() {
-	python3 - "$ROOT_DIR" "$RUST_PROFILE" "$SWIFT_CONFIGURATION" "$APP_VERSION" <<'PY'
+	local swift_toolchain
+	swift_toolchain="$(
+		{
+			command -v swift
+			swift --version
+		} 2>/dev/null | tr '\n' ' '
+	)"
+	python3 - "$ROOT_DIR" "$RUST_PROFILE" "$SWIFT_CONFIGURATION" "$APP_VERSION" "$swift_toolchain" <<'PY'
 import hashlib
 import os
 import sys
 
-root, rust_profile, swift_configuration, app_version = sys.argv[1:]
+root, rust_profile, swift_configuration, app_version, swift_toolchain = sys.argv[1:]
 targets = [
 	"Cargo.toml",
 	"Cargo.lock",
@@ -336,7 +372,8 @@ targets = [
 skip_dirs = {".git", ".worktrees", "target", ".build"}
 
 hasher = hashlib.sha256()
-for value in (rust_profile, swift_configuration, app_version):
+# Toolchain changes can flip Swift compile-time availability gates, including Liquid Glass.
+for value in (rust_profile, swift_configuration, app_version, swift_toolchain):
 	hasher.update(value.encode("utf-8"))
 	hasher.update(b"\0")
 
@@ -400,6 +437,7 @@ if [[ "$MODE" != "stage" ]]; then
 	terminate_running_host
 fi
 
+require_liquid_glass_capable_swift_for_release
 canonicalize_app_bundle_name
 if [[ "${RSNAP_NATIVE_HOST_FORCE_REBUILD:-0}" != "1" ]] && staged_bundle_is_current; then
 	BUILD_ROOT=""

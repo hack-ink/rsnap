@@ -102,10 +102,16 @@ jobs:
 
   swift:
     name: Swift checks
-    runs-on: macos-latest
+    runs-on: macos-26
     steps:
       - name: Fetch latest code
         uses: actions/checkout@v6
+
+      - name: Print Apple toolchain
+        run: |
+          sw_vers
+          swift --version
+          xcodebuild -version
 
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7
@@ -119,26 +125,7 @@ jobs:
           tool: cargo-make
 
       - name: Run Swift format lint
-        run: |
-          set -euo pipefail
-
-          SWIFT_FORMAT_REF="603.0.0-prerelease-2026-02-09"
-          SWIFT_FORMAT_REVISION="374ca240478f740794c1e60ea1693c439ee0b317"
-          SWIFT_FORMAT_DIR="$RUNNER_TEMP/swift-format"
-
-          git init "$SWIFT_FORMAT_DIR"
-          git -C "$SWIFT_FORMAT_DIR" remote add origin https://github.com/apple/swift-format.git
-          git -C "$SWIFT_FORMAT_DIR" fetch --depth 1 origin "refs/tags/$SWIFT_FORMAT_REF"
-          git -C "$SWIFT_FORMAT_DIR" checkout --detach FETCH_HEAD
-          test "$(git -C "$SWIFT_FORMAT_DIR" rev-parse HEAD)" = "$SWIFT_FORMAT_REVISION"
-
-          swift run --package-path "$SWIFT_FORMAT_DIR" swift-format \
-            lint \
-            --recursive \
-            --strict \
-            --parallel \
-            native/macos-host/Sources \
-            scripts/smoke/lib/live-hud-mouse-path.swift
+        run: cargo make lint-swift-format
 
       - name: Run SwiftLint and strict build
         run: |

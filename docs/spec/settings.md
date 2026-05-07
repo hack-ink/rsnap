@@ -69,6 +69,8 @@ Defines:
 - Frozen resize handles: outward.
 - Live HUD hint keycap: enabled.
 - HUD glass: enabled, `liquid_glass`, `clear`.
+- `liquid_glass` resolves to Classic Glass when the native host is running before macOS 26 or
+  was built without Liquid Glass API support.
 - HUD opacity: `0.4999747693194925`.
 - HUD blur: `0.5032628676470589`.
 - HUD tint: `0.4990234375`.
