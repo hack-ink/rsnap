@@ -64,6 +64,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+
           for required_secret in \
             APPLE_CERTIFICATE_P12_BASE64 \
             APPLE_CERTIFICATE_PASSWORD \
