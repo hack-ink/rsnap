@@ -373,6 +373,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		stateLock.lock()
 		let latestSample = self.latestSample
 		let latestSamplePoint = self.latestSamplePoint
+		let includeLoupePatch = desiredIncludesLoupePatch
 		let running = self.running
 		stateLock.unlock()
 		guard running else {
@@ -387,7 +388,10 @@ final class ChromeSampleFeed: @unchecked Sendable {
 		guard let rgbSample = frameRgbSampler(point) else {
 			return nil
 		}
-		let sample = LiveChromeSample(rgb: rgbSample, loupePatch: nil)
+		let sample = LiveChromeSample(
+			rgb: rgbSample,
+			loupePatch: includeLoupePatch ? latestSample?.loupePatch : nil
+		)
 		stateLock.lock()
 		self.latestSample = sample
 		self.latestSamplePoint = point
@@ -1315,6 +1319,7 @@ private final class LiveScrimLayer: CALayer {
 final class LiveOverlayRenderer {
 	private weak var hostView: NSView?
 	private let rootLayer = CALayer()
+	private let chromeRootLayer = CALayer()
 	private let frozenDisplayLayer = CALayer()
 	private let scrimLayer = LiveScrimLayer()
 	private let topScrimLayer = CALayer()
@@ -1378,6 +1383,8 @@ final class LiveOverlayRenderer {
 		let contentLayer: CALayer
 	}
 	private enum LayerZ {
+		static let root: CGFloat = 100
+		static let chromeRoot: CGFloat = 300
 		static let frozenDisplay: CGFloat = 0
 		static let scrim: CGFloat = 10
 		static let selectionChrome: CGFloat = 30
@@ -1418,7 +1425,9 @@ final class LiveOverlayRenderer {
 			hostView.wantsLayer = true
 		}
 		hostView.layer?.addSublayer(rootLayer)
+		hostView.layer?.addSublayer(chromeRootLayer)
 		rootLayer.isHidden = true
+		chromeRootLayer.isHidden = true
 	}
 
 	func updateDisplayID(_ displayID: CGDirectDisplayID?, targetFramesPerSecond: Int) {
@@ -1467,8 +1476,10 @@ final class LiveOverlayRenderer {
 	}
 
 	private func configureLayers() {
-		rootLayer.zPosition = 100
+		rootLayer.zPosition = LayerZ.root
 		rootLayer.masksToBounds = true
+		chromeRootLayer.zPosition = LayerZ.chromeRoot
+		chromeRootLayer.masksToBounds = true
 		frozenDisplayLayer.isHidden = true
 		frozenDisplayLayer.zPosition = LayerZ.frozenDisplay
 		rootLayer.addSublayer(frozenDisplayLayer)
@@ -1505,7 +1516,7 @@ final class LiveOverlayRenderer {
 		for chromeLayer in [hudLayer, loupeLayer] {
 			chromeLayer.masksToBounds = false
 			chromeLayer.zPosition = LayerZ.hudChrome
-			rootLayer.addSublayer(chromeLayer)
+			chromeRootLayer.addSublayer(chromeLayer)
 		}
 		for hudSublayer in [
 			hudGlassLayer, hudFillLayer, hudStrokeLayer, hudSwatchLayer, hudPositionLayer,
@@ -1560,6 +1571,8 @@ final class LiveOverlayRenderer {
 		CATransaction.setDisableActions(true)
 		rootLayer.isHidden = false
 		rootLayer.frame = snapshot.bounds
+		chromeRootLayer.isHidden = false
+		chromeRootLayer.frame = snapshot.bounds
 		renderFrozenDisplay(snapshot)
 		renderFocus(snapshot)
 		lastRenderedFocusRect = snapshot.dragSelectionLocal ?? snapshot.hoverSelectionLocal
@@ -1579,6 +1592,7 @@ final class LiveOverlayRenderer {
 
 	private func hideRootAndResetRenderState() {
 		rootLayer.isHidden = true
+		chromeRootLayer.isHidden = true
 		lastRenderedFocusRect = nil
 		lastRenderedFocusFlowAnimates = false
 		lastChromeRenderUptime = nil
@@ -1605,6 +1619,8 @@ final class LiveOverlayRenderer {
 		CATransaction.setDisableActions(true)
 		rootLayer.isHidden = false
 		rootLayer.frame = snapshot.bounds
+		chromeRootLayer.isHidden = false
+		chromeRootLayer.frame = snapshot.bounds
 		let chromeExclusions = liveChromeRoundedExclusions(for: snapshot)
 		updateLiveScrimExclusions(excluding: chromeExclusions)
 		updateLiveFlowExclusions(excluding: chromeExclusions)
