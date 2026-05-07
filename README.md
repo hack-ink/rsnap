@@ -118,12 +118,12 @@ After Gatekeeper allows the app to open, continue with Screen Recording permissi
 Rsnap currently relies on **Screen Recording** permission to capture other apps/windows.
 - ScreenCaptureKit live sampling on macOS requires macOS 12.3+ and Screen Recording permission.
 - Normal region/window/monitor capture does not require Accessibility or Input Monitoring.
-- Scroll capture is available from dragged-region freezes on the current native host and uses
-  Screen Recording-backed screenshots plus forwarded wheel input.
+- The retained scroll-capture path uses Screen Recording-backed screenshots plus forwarded wheel
+  input, but the v0.1.2 native-host release does not expose scroll capture in the toolbar.
 - macOS may describe Screen Recording as `Screen & System Audio Recording` or as direct screen/audio access when Rsnap bypasses the system picker.
-- The native menubar host exposes `Permissions…`, which shows Screen Recording, Accessibility, and Input Monitoring status. It marks Accessibility and Input Monitoring as diagnostic/not required for the current native host.
+- Settings -> Permissions shows Screen Recording as the only required permission.
 - Normal native capture depends on Screen Recording; if access is missing, Rsnap opens the Screen Recording page in System Settings and shows a floating drag-to-grant guide.
-- You can reopen `Permissions…` from the tray or menubar menu at any time.
+- You can reopen the Permissions section from `Settings…` in the tray or menubar menu at any time.
 - Base capture path: `System Settings` -> `Privacy & Security` -> `Screen Recording`.
 - Enable `Rsnap.app`, then retry capture. If macOS still keeps capture blocked after changing a permission, relaunch the app.
 

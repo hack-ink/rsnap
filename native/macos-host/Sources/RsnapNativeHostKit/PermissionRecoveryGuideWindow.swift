@@ -1,6 +1,5 @@
 import AppKit
 import CoreGraphics
-import RsnapHostBridge
 import SwiftUI
 
 @MainActor
@@ -22,7 +21,6 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 	private static let windowSize = NSSize(width: 318, height: 50)
 	private static let cornerRadius: CGFloat = 17
 	private static let windowGap: CGFloat = 14
-	private var kind: PermissionKind = .screenRecording
 	private var positionWorkItem: DispatchWorkItem?
 	private var statusPollWorkItem: DispatchWorkItem?
 	private var guideDirection: GuideDirection = .left
@@ -55,9 +53,8 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 		fatalError("init(coder:) has not been implemented")
 	}
 
-	func present(kind: PermissionKind) {
-		self.kind = kind
-		NativePermissions.openSystemSettings(for: kind)
+	func present() {
+		NativePermissions.openScreenRecordingSettings()
 		updateRootView()
 		window?.orderOut(nil)
 		scheduleSystemSettingsPositioning()
@@ -83,7 +80,7 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 				guard let self else {
 					return
 				}
-				NativePermissions.openSystemSettings(for: self.kind)
+				NativePermissions.openScreenRecordingSettings()
 				self.scheduleSystemSettingsPositioning()
 			}
 		)
@@ -177,7 +174,7 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 	}
 
 	private func pollPermissionStatus(remainingAttempts: Int) {
-		if NativePermissions.status(for: kind) {
+		if NativePermissions.screenRecordingGranted {
 			close()
 			return
 		}

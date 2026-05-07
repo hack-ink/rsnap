@@ -229,8 +229,6 @@ public enum HostRequest: Equatable, Sendable {
 	case saveCapture
 	case recognizeText
 	case requestScreenRecordingPermission
-	case requestAccessibilityPermission
-	case requestInputMonitoringPermission
 }
 
 public enum HostEffectKind: UInt32, Equatable, Sendable {
@@ -241,8 +239,6 @@ public enum HostEffectKind: UInt32, Equatable, Sendable {
 
 public enum PermissionKind: UInt32, Equatable, Sendable {
 	case screenRecording = 0
-	case accessibility = 1
-	case inputMonitoring = 2
 }
 
 public enum HostEvent: Sendable {
@@ -601,10 +597,6 @@ public final class RsnapHostSession {
 			return .recognizeText
 		case RSNAP_HOST_REQUEST_REQUEST_SCREEN_RECORDING_PERMISSION.rawValue:
 			return .requestScreenRecordingPermission
-		case RSNAP_HOST_REQUEST_REQUEST_ACCESSIBILITY_PERMISSION.rawValue:
-			return .requestAccessibilityPermission
-		case RSNAP_HOST_REQUEST_REQUEST_INPUT_MONITORING_PERMISSION.rawValue:
-			return .requestInputMonitoringPermission
 		case RSNAP_HOST_REQUEST_START_SCROLL_CAPTURE.rawValue:
 			return .startScrollCapture
 		default:

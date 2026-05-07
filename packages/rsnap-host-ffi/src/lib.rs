@@ -24,7 +24,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 17;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 18;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -401,10 +401,6 @@ pub enum RsnapHostEffectKind {
 pub enum RsnapPermissionKind {
 	/// Screen recording or equivalent display capture access.
 	ScreenRecording = 0,
-	/// Accessibility access.
-	Accessibility = 1,
-	/// Input monitoring access.
-	InputMonitoring = 2,
 }
 
 /// FFI-safe host report payload.
@@ -574,10 +570,6 @@ pub enum RsnapHostRequestKind {
 	RecognizeText = 5,
 	/// Request screen recording permission.
 	RequestScreenRecordingPermission = 6,
-	/// Request accessibility permission.
-	RequestAccessibilityPermission = 7,
-	/// Request input monitoring permission.
-	RequestInputMonitoringPermission = 8,
 	/// Start native scroll capture.
 	StartScrollCapture = 9,
 }
@@ -1592,18 +1584,8 @@ fn encode_host_request(request: HostRequest) -> RsnapHostRequestValue {
 			} as u32,
 			..RsnapHostRequestValue::default()
 		},
-		HostRequest::RequestPermission(permission) => RsnapHostRequestValue {
-			kind: match permission {
-				PermissionKind::ScreenRecording => {
-					RsnapHostRequestKind::RequestScreenRecordingPermission
-				},
-				PermissionKind::Accessibility => {
-					RsnapHostRequestKind::RequestAccessibilityPermission
-				},
-				PermissionKind::InputMonitoring => {
-					RsnapHostRequestKind::RequestInputMonitoringPermission
-				},
-			} as u32,
+		HostRequest::RequestPermission(PermissionKind::ScreenRecording) => RsnapHostRequestValue {
+			kind: RsnapHostRequestKind::RequestScreenRecordingPermission as u32,
 			..RsnapHostRequestValue::default()
 		},
 	}
@@ -1664,10 +1646,6 @@ fn decode_permission_kind(permission_kind: u32) -> PermissionKind {
 	match permission_kind {
 		kind if kind == RsnapPermissionKind::ScreenRecording as u32 => {
 			PermissionKind::ScreenRecording
-		},
-		kind if kind == RsnapPermissionKind::Accessibility as u32 => PermissionKind::Accessibility,
-		kind if kind == RsnapPermissionKind::InputMonitoring as u32 => {
-			PermissionKind::InputMonitoring
 		},
 		_ => PermissionKind::ScreenRecording,
 	}
