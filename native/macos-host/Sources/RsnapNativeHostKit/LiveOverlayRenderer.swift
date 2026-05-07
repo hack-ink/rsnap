@@ -966,46 +966,14 @@ final class LiveFrameClockDriver: @unchecked Sendable {
 }
 
 private final class SelectionFlowBandLayer: CALayer {
-	private enum Edge: CaseIterable {
-		case top
-		case right
-		case bottom
-		case left
+	private final class FlowPassLayers {
+		let containerLayer = CALayer()
+		let gradientLayer = CAGradientLayer()
+		let maskLayer = CAShapeLayer()
+		let alphaScale: CGFloat
 
-		var isHorizontal: Bool {
-			self == .top || self == .bottom
-		}
-
-		var animationKeyPath: String {
-			isHorizontal ? "transform.translation.x" : "transform.translation.y"
-		}
-
-		var flowDirection: CGFloat {
-			switch self {
-			case .top, .right:
-				return 1
-			case .bottom, .left:
-				return -1
-			}
-		}
-
-		var startPoint: CGPoint {
-			isHorizontal ? CGPoint(x: 0, y: 0.5) : CGPoint(x: 0.5, y: 0)
-		}
-
-		var endPoint: CGPoint {
-			isHorizontal ? CGPoint(x: 1, y: 0.5) : CGPoint(x: 0.5, y: 1)
-		}
-	}
-
-	private final class EdgeFlowLayers {
-		let edge: Edge
-		let clipLayer = CALayer()
-		let glowLayer = CAGradientLayer()
-		let lineLayer = CAGradientLayer()
-
-		init(edge: Edge) {
-			self.edge = edge
+		init(alphaScale: CGFloat) {
+			self.alphaScale = alphaScale
 		}
 	}
 
@@ -1014,9 +982,8 @@ private final class SelectionFlowBandLayer: CALayer {
 	private static let lightLineWidth: CGFloat = 1.9
 	private static let darkGlowLineWidth: CGFloat = 5.0
 	private static let lightGlowLineWidth: CGFloat = 5.25
-	private static let flowAnimationKey = "rsnap.selection-flow.edge-translation"
+	private static let flowAnimationKey = "rsnap.selection-flow.rotation"
 	private static let flowAnimationDuration: CFTimeInterval = 2.45
-	private static let gradientPeriod: CGFloat = 260
 	private static let darkPalette: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
 		(112.0 / 255.0, 215.0 / 255.0, 1.0, 0.98),
 		(176.0 / 255.0, 154.0 / 255.0, 1.0, 0.94),
@@ -1030,13 +997,13 @@ private final class SelectionFlowBandLayer: CALayer {
 		(196.0 / 255.0, 82.0 / 255.0, 0.0 / 255.0, 0.96),
 	]
 
-	private let edgeLayers: [EdgeFlowLayers]
+	private let glowPass = FlowPassLayers(alphaScale: 0.24)
+	private let linePass = FlowPassLayers(alphaScale: 1.0)
 	private var focusRect: CGRect = .null
 	private var theme: CaptureChromeTheme = .dark
 	private var flowAnimating = false
 
 	override init() {
-		edgeLayers = Edge.allCases.map { EdgeFlowLayers(edge: $0) }
 		super.init()
 		contentsScale = NSScreen.main?.backingScaleFactor ?? 2
 		isOpaque = false
@@ -1046,7 +1013,6 @@ private final class SelectionFlowBandLayer: CALayer {
 	}
 
 	override init(layer: Any) {
-		edgeLayers = Edge.allCases.map { EdgeFlowLayers(edge: $0) }
 		super.init(layer: layer)
 		if let layer = layer as? SelectionFlowBandLayer {
 			focusRect = layer.focusRect
@@ -1103,54 +1069,56 @@ private final class SelectionFlowBandLayer: CALayer {
 	}
 
 	private func configureLayers() {
-		for edgeLayer in edgeLayers {
-			edgeLayer.clipLayer.masksToBounds = true
-			edgeLayer.clipLayer.allowsEdgeAntialiasing = true
-			addSublayer(edgeLayer.clipLayer)
+		for pass in [glowPass, linePass] {
+			pass.containerLayer.masksToBounds = false
+			pass.containerLayer.allowsEdgeAntialiasing = true
+			pass.containerLayer.addSublayer(pass.gradientLayer)
+			pass.containerLayer.mask = pass.maskLayer
+			addSublayer(pass.containerLayer)
 
-			for gradientLayer in [edgeLayer.glowLayer, edgeLayer.lineLayer] {
-				gradientLayer.type = .axial
-				gradientLayer.startPoint = edgeLayer.edge.startPoint
-				gradientLayer.endPoint = edgeLayer.edge.endPoint
-				gradientLayer.allowsEdgeAntialiasing = true
-				edgeLayer.clipLayer.addSublayer(gradientLayer)
-			}
-			edgeLayer.glowLayer.opacity = selectionFlowGlowOpacity()
+			pass.gradientLayer.type = .conic
+			pass.gradientLayer.startPoint = CGPoint(x: 0.5, y: 0.5)
+			pass.gradientLayer.endPoint = CGPoint(x: 1.0, y: 0.5)
+			pass.gradientLayer.allowsEdgeAntialiasing = true
+
+			pass.maskLayer.fillColor = NSColor.clear.cgColor
+			pass.maskLayer.strokeColor = NSColor.white.cgColor
+			pass.maskLayer.lineCap = .round
+			pass.maskLayer.lineJoin = .round
+			pass.maskLayer.allowsEdgeAntialiasing = true
 		}
+		glowPass.containerLayer.opacity = selectionFlowGlowOpacity()
 	}
 
 	private func updateAppearance() {
 		CATransaction.begin()
 		CATransaction.setDisableActions(true)
 		let strokeRect = focusRect.insetBy(dx: -Self.pathOutset, dy: -Self.pathOutset)
-		for edgeLayer in edgeLayers {
-			update(edgeLayer, strokeRect: strokeRect)
-		}
+		update(glowPass, strokeRect: strokeRect, lineWidth: selectionFlowGlowLineWidth())
+		update(linePass, strokeRect: strokeRect, lineWidth: selectionFlowLineWidth())
 		CATransaction.commit()
 	}
 
 	private func installFlowAnimation(restartsAnimation: Bool) {
-		let hasAnimations = edgeLayers.allSatisfy {
-			$0.lineLayer.animation(forKey: Self.flowAnimationKey) != nil
-				&& $0.glowLayer.animation(forKey: Self.flowAnimationKey) != nil
+		let hasAnimations = [glowPass, linePass].allSatisfy {
+			$0.gradientLayer.animation(forKey: Self.flowAnimationKey) != nil
 		}
 		if !restartsAnimation, hasAnimations {
 			return
 		}
 		removeFlowAnimation()
-		for edgeLayer in edgeLayers {
-			installFlowAnimation(on: edgeLayer.lineLayer, edge: edgeLayer.edge)
-			installFlowAnimation(on: edgeLayer.glowLayer, edge: edgeLayer.edge)
+		for pass in [glowPass, linePass] {
+			installFlowAnimation(on: pass.gradientLayer)
 		}
 	}
 
-	private func installFlowAnimation(on layer: CALayer, edge: Edge) {
-		let keyPath = edge.animationKeyPath
-		let currentOffset = (layer.presentation()?.value(forKeyPath: keyPath) as? CGFloat) ?? 0
-		let travel = edge.flowDirection * Self.gradientPeriod
+	private func installFlowAnimation(on layer: CALayer) {
+		let keyPath = "transform.rotation.z"
+		let currentRotation =
+			(layer.presentation()?.value(forKeyPath: keyPath) as? CGFloat) ?? 0
 		let animation = CABasicAnimation(keyPath: keyPath)
-		animation.fromValue = currentOffset
-		animation.toValue = currentOffset + travel
+		animation.fromValue = currentRotation
+		animation.toValue = currentRotation + CGFloat.pi * 2
 		animation.duration = Self.flowAnimationDuration
 		animation.repeatCount = .infinity
 		animation.timingFunction = CAMediaTimingFunction(name: .linear)
@@ -1158,98 +1126,56 @@ private final class SelectionFlowBandLayer: CALayer {
 	}
 
 	private func removeFlowAnimation() {
-		for edgeLayer in edgeLayers {
-			edgeLayer.lineLayer.removeAnimation(forKey: Self.flowAnimationKey)
-			edgeLayer.glowLayer.removeAnimation(forKey: Self.flowAnimationKey)
+		for pass in [glowPass, linePass] {
+			pass.gradientLayer.removeAnimation(forKey: Self.flowAnimationKey)
 		}
 	}
 
-	private func update(_ edgeLayer: EdgeFlowLayers, strokeRect: CGRect) {
-		let lineWidth = selectionFlowLineWidth()
-		let glowWidth = selectionFlowGlowLineWidth()
-		let frame = edgeFrame(for: edgeLayer.edge, strokeRect: strokeRect, glowWidth: glowWidth)
-		edgeLayer.clipLayer.frame = pixelAligned(frame)
-		edgeLayer.clipLayer.isHidden = frame.width <= 0 || frame.height <= 0
-		edgeLayer.glowLayer.opacity = selectionFlowGlowOpacity()
-		updateGradients(edgeLayer, lineWidth: lineWidth, glowWidth: glowWidth)
+	private func update(_ pass: FlowPassLayers, strokeRect: CGRect, lineWidth: CGFloat) {
+		let layerBounds = bounds
+		pass.containerLayer.frame = layerBounds
+		pass.containerLayer.isHidden = layerBounds.width <= 0 || layerBounds.height <= 0
+		pass.containerLayer.opacity = pass === glowPass ? selectionFlowGlowOpacity() : 1.0
+		pass.gradientLayer.frame = pixelAligned(conicGradientFrame(in: layerBounds))
+		pass.gradientLayer.colors = gradientColors(alphaScale: pass.alphaScale)
+		pass.gradientLayer.locations = gradientLocations()
+
+		let cornerRadius = selectionFlowCornerRadius(for: strokeRect)
+		pass.maskLayer.frame = layerBounds
+		pass.maskLayer.contentsScale = contentsScale
+		pass.maskLayer.lineWidth = lineWidth
+		pass.maskLayer.path =
+			NSBezierPath(
+				roundedRect: strokeRect,
+				xRadius: cornerRadius,
+				yRadius: cornerRadius
+			).cgPath
 	}
 
-	private func updateGradients(
-		_ edgeLayer: EdgeFlowLayers,
-		lineWidth: CGFloat,
-		glowWidth: CGFloat
-	) {
-		let clipBounds = edgeLayer.clipLayer.bounds
-		let gradientLength =
-			(edgeLayer.edge.isHorizontal ? clipBounds.width : clipBounds.height)
-			+ Self.gradientPeriod * 2
-		let gradientFrame: CGRect
-		let lineFrame: CGRect
-		if edgeLayer.edge.isHorizontal {
-			gradientFrame = CGRect(
-				x: -Self.gradientPeriod,
-				y: 0,
-				width: gradientLength,
-				height: glowWidth
-			)
-			lineFrame = CGRect(
-				x: -Self.gradientPeriod,
-				y: (glowWidth - lineWidth) / 2,
-				width: gradientLength,
-				height: lineWidth
-			)
-		} else {
-			gradientFrame = CGRect(
-				x: 0,
-				y: -Self.gradientPeriod,
-				width: glowWidth,
-				height: gradientLength
-			)
-			lineFrame = CGRect(
-				x: (glowWidth - lineWidth) / 2,
-				y: -Self.gradientPeriod,
-				width: lineWidth,
-				height: gradientLength
-			)
-		}
-		edgeLayer.glowLayer.frame = pixelAligned(gradientFrame)
-		edgeLayer.lineLayer.frame = pixelAligned(lineFrame)
-		configureGradient(edgeLayer.glowLayer, length: gradientLength, alphaScale: 0.24)
-		configureGradient(edgeLayer.lineLayer, length: gradientLength, alphaScale: 1.0)
+	private func conicGradientFrame(in layerBounds: CGRect) -> CGRect {
+		let side = max(hypot(layerBounds.width, layerBounds.height), 1)
+		return CGRect(
+			x: layerBounds.midX - side / 2,
+			y: layerBounds.midY - side / 2,
+			width: side,
+			height: side
+		)
 	}
 
-	private func configureGradient(
-		_ gradientLayer: CAGradientLayer,
-		length: CGFloat,
-		alphaScale: CGFloat
-	) {
-		let stops = gradientStops(length: length, alphaScale: alphaScale)
-		gradientLayer.colors = stops.colors
-		gradientLayer.locations = stops.locations
-	}
-
-	private func gradientStops(
-		length: CGFloat,
-		alphaScale: CGFloat
-	) -> (colors: [CGColor], locations: [NSNumber]) {
+	private func gradientColors(alphaScale: CGFloat) -> [CGColor] {
 		let palette = theme == .dark ? Self.darkPalette : Self.lightPalette
-		let step = Self.gradientPeriod / CGFloat(palette.count)
-		let safeLength = max(length, 1)
-		var colors: [CGColor] = []
-		var locations: [NSNumber] = []
-		var distance: CGFloat = 0
-		var index = 0
-		while distance < safeLength {
-			let color = palette[index % palette.count]
-			colors.append(cgColor(from: color, alphaScale: alphaScale))
-			locations.append(NSNumber(value: Double(distance / safeLength)))
-			distance += step
-			index += 1
+		var colors = palette.map { cgColor(from: $0, alphaScale: alphaScale) }
+		if let first = palette.first {
+			colors.append(cgColor(from: first, alphaScale: alphaScale))
 		}
-		let color = palette[index % palette.count]
-		colors.append(cgColor(from: color, alphaScale: alphaScale))
-		locations.append(1)
-		return (colors, locations)
+		return colors
+	}
+
+	private func gradientLocations() -> [NSNumber] {
+		let paletteCount = max((theme == .dark ? Self.darkPalette : Self.lightPalette).count, 1)
+		return (0...paletteCount).map { index in
+			NSNumber(value: Double(index) / Double(paletteCount))
+		}
 	}
 
 	private func cgColor(
@@ -1264,42 +1190,14 @@ private final class SelectionFlowBandLayer: CALayer {
 		).cgColor
 	}
 
-	private func edgeFrame(
-		for edge: Edge,
-		strokeRect: CGRect,
-		glowWidth: CGFloat
-	) -> CGRect {
-		let half = glowWidth / 2
-		switch edge {
-		case .top:
-			return CGRect(
-				x: strokeRect.minX - half,
-				y: strokeRect.minY - half,
-				width: strokeRect.width + glowWidth,
-				height: glowWidth
+	private func selectionFlowCornerRadius(for rect: CGRect) -> CGFloat {
+		max(
+			0,
+			min(
+				CaptureChrome.liveSelectionCornerRadius + Self.pathOutset,
+				min(rect.width / 2 - 0.25, rect.height / 2 - 0.25)
 			)
-		case .right:
-			return CGRect(
-				x: strokeRect.maxX - half,
-				y: strokeRect.minY - half,
-				width: glowWidth,
-				height: strokeRect.height + glowWidth
-			)
-		case .bottom:
-			return CGRect(
-				x: strokeRect.minX - half,
-				y: strokeRect.maxY - half,
-				width: strokeRect.width + glowWidth,
-				height: glowWidth
-			)
-		case .left:
-			return CGRect(
-				x: strokeRect.minX - half,
-				y: strokeRect.minY - half,
-				width: glowWidth,
-				height: strokeRect.height + glowWidth
-			)
-		}
+		)
 	}
 
 	private func pixelAligned(_ rect: CGRect) -> CGRect {
