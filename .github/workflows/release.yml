@@ -8,6 +8,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
   MACOS_RELEASE_ASSET: rsnap-aarch64-apple-darwin.zip
+  MACOS_APPCAST_ASSET: appcast.xml
 
 on:
   push:
@@ -58,13 +59,17 @@ jobs:
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
           APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
         run: |
           set -euo pipefail
 
           for required_secret in \
             APPLE_CERTIFICATE_P12_BASE64 \
             APPLE_CERTIFICATE_PASSWORD \
-            APPLE_SIGNING_IDENTITY; do
+            APPLE_SIGNING_IDENTITY \
+            SPARKLE_PUBLIC_ED_KEY \
+            SPARKLE_PRIVATE_ED_KEY; do
             if [[ -z "${!required_secret:-}" ]]; then
               echo "Missing required secret: ${required_secret}" >&2
               exit 1
@@ -113,6 +118,7 @@ jobs:
           RSNAP_NATIVE_HOST_RUST_PROFILE=final-release \
           RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION=release \
           RSNAP_NATIVE_HOST_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY}" \
+          RSNAP_SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY}" \
           ./scripts/build_and_run.sh stage
 
           APP_PATH="target/rsnap-native-host/Rsnap.app"
@@ -154,11 +160,19 @@ jobs:
             "${APP_PATH}" \
             "${MACOS_RELEASE_ASSET}"
 
+          scripts/release/sparkle-appcast.sh \
+            --archive "${MACOS_RELEASE_ASSET}" \
+            --appcast "${MACOS_APPCAST_ASSET}" \
+            --version "${VERSION}" \
+            --tag "${GITHUB_REF_NAME}"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: rsnap-aarch64-apple-darwin
-          path: ${{ env.MACOS_RELEASE_ASSET }}
+          path: |
+            ${{ env.MACOS_RELEASE_ASSET }}
+            ${{ env.MACOS_APPCAST_ASSET }}
           if-no-files-found: error
           retention-days: 1
 

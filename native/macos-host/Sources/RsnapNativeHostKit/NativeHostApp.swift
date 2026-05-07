@@ -310,6 +310,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private var selfCaptureRegistrationWindow: NSWindow?
 	private var didBootstrap = false
 	private var didPresentLaunchPermissionOnboarding = false
+	private let softwareUpdater = NativeHostSoftwareUpdater()
 	@objc public dynamic var window: NSWindow?
 	private lazy var sessionController: CaptureSessionController = {
 		let controller = CaptureSessionController(settingsStore: settingsStore)
@@ -326,6 +327,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private lazy var permissionRecoveryWindowController = PermissionRecoveryGuideWindowController()
 	private lazy var settingsWindowController = SettingsWindowController(
 		settingsStore: settingsStore,
+		softwareUpdater: softwareUpdater,
 		onClose: { [weak self] in
 			self?.settingsWindowDidClose()
 		})
@@ -357,6 +359,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		refreshStatusMenuState()
 		sessionController.prepareLiveFrameStreamSampler(reason: "launch")
 		scheduleLaunchPermissionOnboardingIfNeeded()
+		scheduleLaunchUpdateCheckIfEnabled()
 		DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
 			self?.sessionController.refreshShareableContentCacheIfPermitted(source: "launch")
 		}
@@ -441,6 +444,12 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 				source: "launch",
 				oncePerLaunch: true
 			)
+		}
+	}
+
+	private func scheduleLaunchUpdateCheckIfEnabled() {
+		Task { @MainActor [weak self] in
+			self?.softwareUpdater.checkForUpdatesInBackgroundOnLaunchIfEnabled()
 		}
 	}
 
