@@ -25,53 +25,53 @@ package enum OverlayMaskGeometry {
 	) {
 		context.saveGState()
 		context.setFillColor(color)
-		context.fill(bounds)
 		context.clip(to: bounds)
-		context.setBlendMode(.clear)
-		clearRect(focusRect, in: context)
-		for exclusion in roundedExclusions {
-			clearRoundedRect(exclusion, in: context)
-		}
-		for path in pathExclusions {
-			context.addPath(path)
-			context.fillPath()
-		}
+		context.addPath(
+			scrimPath(
+				bounds: bounds,
+				focusRect: focusRect,
+				roundedExclusions: roundedExclusions,
+				pathExclusions: pathExclusions
+			)
+		)
+		context.fillPath(using: .evenOdd)
 		context.restoreGState()
+	}
+
+	package static func scrimPath(
+		bounds: CGRect,
+		focusRect: CGRect,
+		roundedExclusions: [RoundedExclusion] = [],
+		pathExclusions: [CGPath] = []
+	) -> CGPath {
+		let path = CGMutablePath()
+		guard bounds.isRenderableMaskRect else {
+			return path
+		}
+		path.addRect(bounds)
+		if focusRect.isRenderableMaskRect {
+			path.addRect(focusRect)
+		}
+		for exclusion in roundedExclusions {
+			if let exclusionPath = roundedPath(for: exclusion) {
+				path.addPath(exclusionPath)
+			}
+		}
+		for exclusionPath in pathExclusions {
+			path.addPath(exclusionPath)
+		}
+		return path
 	}
 
 	package static func evenOddMaskPath(
 		bounds: CGRect,
 		roundedExclusions: [RoundedExclusion]
 	) -> CGPath {
-		let maskPath = CGMutablePath()
-		guard bounds.isRenderableMaskRect else {
-			return maskPath
-		}
-		maskPath.addRect(bounds)
-		for exclusion in roundedExclusions {
-			if let path = roundedPath(for: exclusion) {
-				maskPath.addPath(path)
-			}
-		}
-		return maskPath
-	}
-
-	private static func clearRect(_ rect: CGRect, in context: CGContext) {
-		guard rect.isRenderableMaskRect else {
-			return
-		}
-		context.fill(rect)
-	}
-
-	private static func clearRoundedRect(
-		_ exclusion: RoundedExclusion,
-		in context: CGContext
-	) {
-		guard let path = roundedPath(for: exclusion) else {
-			return
-		}
-		context.addPath(path)
-		context.fillPath()
+		scrimPath(
+			bounds: bounds,
+			focusRect: .null,
+			roundedExclusions: roundedExclusions
+		)
 	}
 
 	private static func roundedPath(for exclusion: RoundedExclusion) -> CGPath? {

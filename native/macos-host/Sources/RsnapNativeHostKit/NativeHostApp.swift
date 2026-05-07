@@ -3660,6 +3660,9 @@ final class CaptureOverlayController {
 		if latestSampleSatisfiesDemand {
 			return latestSample
 		}
+		if wantsLoupePatch, latestLoupePatchSatisfiesDemand {
+			return latestSample
+		}
 
 		let _ = point
 		if wantsLoupePatch, let latestSample {
@@ -4331,6 +4334,9 @@ final class CaptureHostView: NSView {
 		)
 	}()
 	private static let pendingHudHexWheel = Array("0123456789ABCDEF")
+	private static let liveChromeLiquidGlassZ: CGFloat = 200
+	private static let frozenToolbarLiquidGlassZ: CGFloat = 300
+	private static let frozenToolbarContentZ: CGFloat = 320
 
 	weak var controller: CaptureSessionController?
 
@@ -6535,7 +6541,7 @@ final class CaptureHostView: NSView {
 	private func currentLoupeFrame(hudFrame: CGRect) -> CGRect? {
 		currentLoupeFrame(
 			hudFrame: hudFrame,
-			patch: chrome.loupePatch,
+			patch: reusableLiveLoupePatch(),
 			alignTrailing: currentHudPlacement()?.flippedHorizontally ?? false
 		)
 	}
@@ -6809,7 +6815,7 @@ final class CaptureHostView: NSView {
 			? hudPlacement.flatMap {
 				currentLoupeFrame(
 					hudFrame: $0.frame,
-					patch: chrome.loupePatch,
+					patch: reusableLiveLoupePatch(),
 					alignTrailing: $0.flippedHorizontally
 				)
 			}
@@ -7009,6 +7015,9 @@ final class CaptureHostView: NSView {
 			seedLiveChromeSampleCache(from: chrome, point: scene.pointer)
 			return cachedLiveChromeSample(matching: point)
 		}
+		if wantsLoupePatch, let cachedPatch = reusableLiveLoupePatch() {
+			return LiveChromeSample(rgb: nil, loupePatch: cachedPatch)
+		}
 		return nil
 	}
 
@@ -7028,13 +7037,40 @@ final class CaptureHostView: NSView {
 				loupePatch: cachedPatch
 			)
 		}
-		if liveSamplePoint(scene.pointer, matches: point), let chromePatch = chrome.loupePatch {
+		if let cachedPatch = reusableLiveLoupePatch() {
+			return LiveChromeSample(
+				rgb: sample.rgb,
+				loupePatch: cachedPatch
+			)
+		}
+		if liveSamplePoint(scene.pointer, matches: point), let chromePatch = chrome.loupePatch,
+			liveLoupePatchMatchesCurrentSize(chromePatch)
+		{
 			return LiveChromeSample(
 				rgb: sample.rgb,
 				loupePatch: chromePatch
 			)
 		}
 		return sample
+	}
+
+	private func reusableLiveLoupePatch() -> CGImage? {
+		if let patch = latestLiveChromeSample?.loupePatch,
+			liveLoupePatchMatchesCurrentSize(patch)
+		{
+			return patch
+		}
+		if let patch = chrome.loupePatch,
+			liveLoupePatchMatchesCurrentSize(patch)
+		{
+			return patch
+		}
+		return nil
+	}
+
+	private func liveLoupePatchMatchesCurrentSize(_ patch: CGImage) -> Bool {
+		let sidePixels = settings.loupeSampleSize.sidePixels
+		return patch.width == sidePixels && patch.height == sidePixels
 	}
 
 	private func liveRgbSample(from sample: LiveChromeSample?, at point: CGPoint?) -> RGBSample? {
@@ -7344,14 +7380,14 @@ final class CaptureHostView: NSView {
 		effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua ? .light : .dark
 	}
 
-	private func configureChromeLiquidGlassView(_ view: NSView) {
+	private func configureChromeLiquidGlassView(_ view: NSView, zPosition: CGFloat) {
 		view.isHidden = true
 		view.wantsLayer = true
 		view.layer?.cornerRadius = CaptureChrome.hudCornerRadius
 		view.layer?.masksToBounds = true
 		view.layer?.shadowOpacity = 0
 		view.layer?.shadowPath = nil
-		view.layer?.zPosition = 50
+		view.layer?.zPosition = zPosition
 	}
 
 	private func configureFrozenToolbarContentView(_ view: FrozenToolbarRenderView) {
@@ -7359,7 +7395,7 @@ final class CaptureHostView: NSView {
 		view.wantsLayer = true
 		view.layer?.backgroundColor = NSColor.clear.cgColor
 		view.layer?.isOpaque = false
-		view.layer?.zPosition = 320
+		view.layer?.zPosition = Self.frozenToolbarContentZ
 	}
 
 	private func updateChromeMaterialViews() {
@@ -7386,8 +7422,16 @@ final class CaptureHostView: NSView {
 			hideLiveLiquidGlassViews(removing: false)
 			return
 		}
-		updateLiveLiquidGlassView(&hudLiquidGlassView, frame: hudFrame)
-		updateLiveLiquidGlassView(&loupeLiquidGlassView, frame: loupeFrame)
+		updateLiveLiquidGlassView(
+			&hudLiquidGlassView,
+			frame: hudFrame,
+			zPosition: Self.liveChromeLiquidGlassZ
+		)
+		updateLiveLiquidGlassView(
+			&loupeLiquidGlassView,
+			frame: loupeFrame,
+			zPosition: Self.liveChromeLiquidGlassZ
+		)
 	}
 
 	private func moveExistingLiveLiquidGlassViews(hudFrame: CGRect?, loupeFrame: CGRect?) {
@@ -7414,7 +7458,11 @@ final class CaptureHostView: NSView {
 		view.isHidden = false
 	}
 
-	private func updateLiveLiquidGlassView(_ view: inout NSView?, frame: CGRect?) {
+	private func updateLiveLiquidGlassView(
+		_ view: inout NSView?,
+		frame: CGRect?,
+		zPosition: CGFloat
+	) {
 		guard let frame else {
 			view?.isHidden = true
 			return
@@ -7423,13 +7471,14 @@ final class CaptureHostView: NSView {
 			guard let createdView = LiveChromeLiquidGlassBridge.makeGlassView() else {
 				return
 			}
-			configureChromeLiquidGlassView(createdView)
+			configureChromeLiquidGlassView(createdView, zPosition: zPosition)
 			addSubview(createdView, positioned: .below, relativeTo: nil)
 			view = createdView
 		}
 		guard let activeView = view else {
 			return
 		}
+		activeView.layer?.zPosition = zPosition
 		LiveChromeLiquidGlassBridge.update(activeView, settings: settings)
 		if activeView.frame != frame {
 			activeView.frame = frame
@@ -7446,11 +7495,13 @@ final class CaptureHostView: NSView {
 		guard let createdView = LiveChromeLiquidGlassBridge.makeGlassView() else {
 			return
 		}
-		configureChromeLiquidGlassView(createdView)
+		configureChromeLiquidGlassView(
+			createdView,
+			zPosition: Self.frozenToolbarLiquidGlassZ
+		)
 		LiveChromeLiquidGlassBridge.update(createdView, settings: settings)
 		createdView.frame = .zero
 		createdView.isHidden = true
-		createdView.layer?.zPosition = 300
 		addSubview(createdView, positioned: .below, relativeTo: nil)
 		toolbarLiquidGlassView = createdView
 		ensureFrozenToolbarContentView(above: createdView)
@@ -7460,7 +7511,7 @@ final class CaptureHostView: NSView {
 	private func ensureFrozenToolbarContentView(above glassView: NSView) -> FrozenToolbarRenderView
 	{
 		if let toolbarLiquidGlassContentView {
-			toolbarLiquidGlassContentView.layer?.zPosition = 320
+			toolbarLiquidGlassContentView.layer?.zPosition = Self.frozenToolbarContentZ
 			return toolbarLiquidGlassContentView
 		}
 		let contentView = FrozenToolbarRenderView(frame: .zero)
@@ -7530,7 +7581,11 @@ final class CaptureHostView: NSView {
 			hideFrozenToolbarLiquidGlassView()
 			return
 		}
-		updateLiveLiquidGlassView(&toolbarLiquidGlassView, frame: layout.frame)
+		updateLiveLiquidGlassView(
+			&toolbarLiquidGlassView,
+			frame: layout.frame,
+			zPosition: Self.frozenToolbarLiquidGlassZ
+		)
 		guard let toolbarLiquidGlassView else {
 			frozenToolbarLiquidGlassVisible = false
 			frozenToolbarLiquidGlassContentDrawn = false
@@ -7540,7 +7595,7 @@ final class CaptureHostView: NSView {
 			}
 			return
 		}
-		toolbarLiquidGlassView.layer?.zPosition = 300
+		toolbarLiquidGlassView.layer?.zPosition = Self.frozenToolbarLiquidGlassZ
 		let contentView = ensureFrozenToolbarContentView(above: toolbarLiquidGlassView)
 		let frameChanged = contentView.frame != layout.frame
 		if contentView.frame != layout.frame {
