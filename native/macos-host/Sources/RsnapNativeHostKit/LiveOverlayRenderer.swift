@@ -999,6 +999,7 @@ private final class SelectionFlowBandLayer: CALayer {
 
 	private let glowPass = FlowPassLayers(alphaScale: 0.24)
 	private let linePass = FlowPassLayers(alphaScale: 1.0)
+	private let cornerAccentLayer = CAShapeLayer()
 	private var focusRect: CGRect = .null
 	private var theme: CaptureChromeTheme = .dark
 	private var flowAnimating = false
@@ -1043,7 +1044,8 @@ private final class SelectionFlowBandLayer: CALayer {
 		theme: CaptureChromeTheme,
 		timestamp _: CFTimeInterval,
 		contentsScale: CGFloat,
-		animates: Bool
+		animates: Bool,
+		roundedExclusions _: [OverlayMaskGeometry.RoundedExclusion]
 	) {
 		let focusChanged = self.focusRect != focusRect
 		let themeChanged = self.theme != theme
@@ -1068,6 +1070,8 @@ private final class SelectionFlowBandLayer: CALayer {
 		}
 	}
 
+	func updateRoundedExclusions(_: [OverlayMaskGeometry.RoundedExclusion]) {}
+
 	private func configureLayers() {
 		for pass in [glowPass, linePass] {
 			pass.containerLayer.masksToBounds = false
@@ -1083,11 +1087,17 @@ private final class SelectionFlowBandLayer: CALayer {
 
 			pass.maskLayer.fillColor = NSColor.clear.cgColor
 			pass.maskLayer.strokeColor = NSColor.white.cgColor
-			pass.maskLayer.lineCap = .round
-			pass.maskLayer.lineJoin = .round
+			pass.maskLayer.lineCap = .butt
+			pass.maskLayer.lineJoin = .miter
 			pass.maskLayer.allowsEdgeAntialiasing = true
 		}
 		glowPass.containerLayer.opacity = selectionFlowGlowOpacity()
+
+		cornerAccentLayer.fillColor = NSColor.clear.cgColor
+		cornerAccentLayer.lineCap = .butt
+		cornerAccentLayer.lineJoin = .miter
+		cornerAccentLayer.allowsEdgeAntialiasing = true
+		addSublayer(cornerAccentLayer)
 	}
 
 	private func updateAppearance() {
@@ -1096,20 +1106,17 @@ private final class SelectionFlowBandLayer: CALayer {
 		let strokeRect = focusRect.insetBy(dx: -Self.pathOutset, dy: -Self.pathOutset)
 		update(glowPass, strokeRect: strokeRect, lineWidth: selectionFlowGlowLineWidth())
 		update(linePass, strokeRect: strokeRect, lineWidth: selectionFlowLineWidth())
+		updateCornerAccent(strokeRect: strokeRect)
 		CATransaction.commit()
 	}
 
 	private func installFlowAnimation(restartsAnimation: Bool) {
-		let hasAnimations = [glowPass, linePass].allSatisfy {
-			$0.gradientLayer.animation(forKey: Self.flowAnimationKey) != nil
-		}
+		let hasAnimations = linePass.gradientLayer.animation(forKey: Self.flowAnimationKey) != nil
 		if !restartsAnimation, hasAnimations {
 			return
 		}
 		removeFlowAnimation()
-		for pass in [glowPass, linePass] {
-			installFlowAnimation(on: pass.gradientLayer)
-		}
+		installFlowAnimation(on: linePass.gradientLayer)
 	}
 
 	private func installFlowAnimation(on layer: CALayer) {
@@ -1140,16 +1147,10 @@ private final class SelectionFlowBandLayer: CALayer {
 		pass.gradientLayer.colors = gradientColors(alphaScale: pass.alphaScale)
 		pass.gradientLayer.locations = gradientLocations()
 
-		let cornerRadius = selectionFlowCornerRadius(for: strokeRect)
 		pass.maskLayer.frame = layerBounds
 		pass.maskLayer.contentsScale = contentsScale
 		pass.maskLayer.lineWidth = lineWidth
-		pass.maskLayer.path =
-			NSBezierPath(
-				roundedRect: strokeRect,
-				xRadius: cornerRadius,
-				yRadius: cornerRadius
-			).cgPath
+		pass.maskLayer.path = NSBezierPath(rect: strokeRect).cgPath
 	}
 
 	private func conicGradientFrame(in layerBounds: CGRect) -> CGRect {
@@ -1160,6 +1161,41 @@ private final class SelectionFlowBandLayer: CALayer {
 			width: side,
 			height: side
 		)
+	}
+
+	private func updateCornerAccent(strokeRect: CGRect) {
+		cornerAccentLayer.frame = bounds
+		cornerAccentLayer.contentsScale = contentsScale
+		cornerAccentLayer.lineWidth = selectionFlowLineWidth()
+		cornerAccentLayer.opacity = theme == .dark ? 0.86 : 0.72
+		cornerAccentLayer.strokeColor = cgColor(
+			from: (theme == .dark ? Self.darkPalette[0] : Self.lightPalette[0]),
+			alphaScale: 0.90
+		)
+		cornerAccentLayer.path = selectionFlowCornerAccentPath(for: strokeRect)
+	}
+
+	private func selectionFlowCornerAccentPath(for rect: CGRect) -> CGPath {
+		let overhang = selectionFlowCornerOverhang()
+		let inset = overhang * 1.4
+		let path = CGMutablePath()
+		path.move(to: CGPoint(x: rect.minX - overhang, y: rect.minY))
+		path.addLine(to: CGPoint(x: rect.minX + inset, y: rect.minY))
+		path.move(to: CGPoint(x: rect.maxX, y: rect.minY - overhang))
+		path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + inset))
+		path.move(to: CGPoint(x: rect.maxX + overhang, y: rect.maxY))
+		path.addLine(to: CGPoint(x: rect.maxX - inset, y: rect.maxY))
+		path.move(to: CGPoint(x: rect.minX, y: rect.maxY + overhang))
+		path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - inset))
+		path.move(to: CGPoint(x: rect.maxX + overhang, y: rect.minY))
+		path.addLine(to: CGPoint(x: rect.maxX - inset, y: rect.minY))
+		path.move(to: CGPoint(x: rect.maxX, y: rect.maxY + overhang))
+		path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - inset))
+		path.move(to: CGPoint(x: rect.minX - overhang, y: rect.maxY))
+		path.addLine(to: CGPoint(x: rect.minX + inset, y: rect.maxY))
+		path.move(to: CGPoint(x: rect.minX, y: rect.minY - overhang))
+		path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + inset))
+		return path
 	}
 
 	private func gradientColors(alphaScale: CGFloat) -> [CGColor] {
@@ -1190,16 +1226,6 @@ private final class SelectionFlowBandLayer: CALayer {
 		).cgColor
 	}
 
-	private func selectionFlowCornerRadius(for rect: CGRect) -> CGFloat {
-		max(
-			0,
-			min(
-				CaptureChrome.liveSelectionCornerRadius + Self.pathOutset,
-				min(rect.width / 2 - 0.25, rect.height / 2 - 0.25)
-			)
-		)
-	}
-
 	private func pixelAligned(_ rect: CGRect) -> CGRect {
 		let scale = max(contentsScale, 1)
 		return CGRect(
@@ -1221,6 +1247,68 @@ private final class SelectionFlowBandLayer: CALayer {
 	private func selectionFlowGlowOpacity() -> Float {
 		theme == .dark ? 0.30 : 0.34
 	}
+
+	private func selectionFlowCornerOverhang() -> CGFloat {
+		max(selectionFlowGlowLineWidth() / 2, 3)
+	}
+}
+
+private final class LiveScrimLayer: CALayer {
+	private var focusRect = CGRect.null
+	private var roundedExclusions: [OverlayMaskGeometry.RoundedExclusion] = []
+	var scrimColor: CGColor =
+		NSColor(calibratedWhite: 0, alpha: CGFloat(CaptureChrome.liveScrimAlpha)).cgColor
+
+	override init() {
+		super.init()
+		isOpaque = false
+		needsDisplayOnBoundsChange = true
+	}
+
+	override init(layer: Any) {
+		if let layer = layer as? LiveScrimLayer {
+			focusRect = layer.focusRect
+			roundedExclusions = layer.roundedExclusions
+			scrimColor = layer.scrimColor
+		}
+		super.init(layer: layer)
+		isOpaque = false
+		needsDisplayOnBoundsChange = true
+	}
+
+	@available(*, unavailable)
+	required init?(coder: NSCoder) {
+		fatalError("init(coder:) has not been implemented")
+	}
+
+	func update(
+		focusRect: CGRect,
+		color: CGColor,
+		roundedExclusions: [OverlayMaskGeometry.RoundedExclusion]
+	) {
+		guard
+			self.focusRect != focusRect
+				|| !CFEqual(scrimColor, color)
+				|| self.roundedExclusions != roundedExclusions
+		else {
+			return
+		}
+		self.focusRect = focusRect
+		self.scrimColor = color
+		self.roundedExclusions = roundedExclusions
+		setNeedsDisplay()
+	}
+
+	override func draw(in context: CGContext) {
+		context.clear(bounds)
+		OverlayMaskGeometry.drawScrim(
+			in: context,
+			bounds: bounds,
+			focusRect: focusRect,
+			color: scrimColor,
+			roundedExclusions: roundedExclusions
+		)
+	}
 }
 
 @MainActor
@@ -1228,7 +1316,7 @@ final class LiveOverlayRenderer {
 	private weak var hostView: NSView?
 	private let rootLayer = CALayer()
 	private let frozenDisplayLayer = CALayer()
-	private let scrimLayer = CAShapeLayer()
+	private let scrimLayer = LiveScrimLayer()
 	private let topScrimLayer = CALayer()
 	private let leftScrimLayer = CALayer()
 	private let rightScrimLayer = CALayer()
@@ -1358,7 +1446,11 @@ final class LiveOverlayRenderer {
 		renderChromeSnapshot()
 	}
 
-	func moveLiveChrome(hudFrame: CGRect?, loupeFrame: CGRect?) {
+	func moveLiveChrome(
+		hudFrame: CGRect?,
+		loupeFrame: CGRect?,
+		chromeExclusions: [OverlayMaskGeometry.RoundedExclusion]
+	) {
 		CATransaction.begin()
 		CATransaction.setDisableActions(true)
 		if let hudFrame, !hudLayer.isHidden, layerFrameNeedsUpdate(hudLayer.frame, hudFrame) {
@@ -1369,6 +1461,8 @@ final class LiveOverlayRenderer {
 		{
 			loupeLayer.frame = loupeFrame
 		}
+		updateLiveScrimExclusions(excluding: chromeExclusions)
+		updateLiveFlowExclusions(excluding: chromeExclusions)
 		CATransaction.commit()
 	}
 
@@ -1378,7 +1472,6 @@ final class LiveOverlayRenderer {
 		frozenDisplayLayer.isHidden = true
 		frozenDisplayLayer.zPosition = LayerZ.frozenDisplay
 		rootLayer.addSublayer(frozenDisplayLayer)
-		scrimLayer.fillRule = .evenOdd
 		scrimLayer.isHidden = true
 		scrimLayer.zPosition = LayerZ.scrim
 		rootLayer.addSublayer(scrimLayer)
@@ -1512,6 +1605,9 @@ final class LiveOverlayRenderer {
 		CATransaction.setDisableActions(true)
 		rootLayer.isHidden = false
 		rootLayer.frame = snapshot.bounds
+		let chromeExclusions = liveChromeRoundedExclusions(for: snapshot)
+		updateLiveScrimExclusions(excluding: chromeExclusions)
+		updateLiveFlowExclusions(excluding: chromeExclusions)
 		renderHud(snapshot)
 		renderLoupe(snapshot)
 		CATransaction.commit()
@@ -1579,10 +1675,16 @@ final class LiveOverlayRenderer {
 		let scrimAlpha = CGFloat(CaptureChrome.liveScrimAlpha)
 		let scrimColor = NSColor(calibratedWhite: 0, alpha: scrimAlpha).cgColor
 		let bounds = snapshot.bounds
+		let chromeExclusions = liveChromeRoundedExclusions(for: snapshot)
 		for legacyScrimLayer in [topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer] {
 			legacyScrimLayer.isHidden = true
 		}
-		updateScrimLayer(bounds: bounds, focusRect: focusRect, color: scrimColor)
+		updateScrimLayer(
+			bounds: bounds,
+			focusRect: focusRect,
+			color: scrimColor,
+			excluding: chromeExclusions
+		)
 
 		if snapshot.frozenPending {
 			hoverGlowLayer.isHidden = true
@@ -1705,7 +1807,8 @@ final class LiveOverlayRenderer {
 			theme: snapshot.theme,
 			timestamp: CACurrentMediaTime(),
 			contentsScale: contentsScale,
-			animates: animatesFlow
+			animates: animatesFlow,
+			roundedExclusions: chromeExclusions
 		)
 	}
 
@@ -1714,17 +1817,83 @@ final class LiveOverlayRenderer {
 		return borderRect.insetBy(dx: -padding, dy: -padding)
 	}
 
-	private func updateScrimLayer(bounds: CGRect, focusRect: CGRect, color: CGColor) {
-		let path = CGMutablePath()
-		path.addRect(bounds)
-		let visibleFocusRect = focusRect.intersection(bounds)
-		if !visibleFocusRect.isNull, visibleFocusRect.width > 0, visibleFocusRect.height > 0 {
-			path.addRect(visibleFocusRect)
-		}
+	private func updateScrimLayer(
+		bounds: CGRect,
+		focusRect: CGRect,
+		color: CGColor,
+		excluding roundedExclusions: [OverlayMaskGeometry.RoundedExclusion] = []
+	) {
+		let effectiveExclusions = Self.visibleScrimExclusions(
+			roundedExclusions,
+			bounds: bounds,
+			focusRect: focusRect
+		)
 		scrimLayer.frame = bounds
-		scrimLayer.path = path
-		scrimLayer.fillColor = color
+		scrimLayer.contentsScale = hostView?.window?.screen?.backingScaleFactor ?? 2
+		scrimLayer.update(
+			focusRect: focusRect,
+			color: color,
+			roundedExclusions: effectiveExclusions
+		)
 		scrimLayer.isHidden = false
+	}
+
+	private static func visibleScrimExclusions(
+		_ roundedExclusions: [OverlayMaskGeometry.RoundedExclusion],
+		bounds: CGRect,
+		focusRect: CGRect
+	) -> [OverlayMaskGeometry.RoundedExclusion] {
+		roundedExclusions.compactMap { exclusion in
+			let visibleRect = exclusion.rect.intersection(bounds)
+			guard !visibleRect.isNull, visibleRect.width > 0, visibleRect.height > 0,
+				!focusRect.contains(visibleRect)
+			else {
+				return nil
+			}
+			return OverlayMaskGeometry.RoundedExclusion(
+				rect: visibleRect,
+				cornerRadius: exclusion.cornerRadius
+			)
+		}
+	}
+
+	private func liveChromeRoundedExclusions(
+		for snapshot: LivePreviewSnapshot
+	) -> [OverlayMaskGeometry.RoundedExclusion] {
+		guard snapshot.settings.hudGlassEnabled else {
+			return []
+		}
+		return [snapshot.hudFrame, snapshot.loupeFrame].compactMap { frame in
+			frame.map {
+				OverlayMaskGeometry.RoundedExclusion(
+					rect: $0,
+					cornerRadius: CaptureChrome.hudCornerRadius
+				)
+			}
+		}
+	}
+
+	private func updateLiveScrimExclusions(
+		excluding exclusions: [OverlayMaskGeometry.RoundedExclusion]
+	) {
+		guard !scrimLayer.isHidden, let focusRect = lastRenderedFocusRect else {
+			return
+		}
+		updateScrimLayer(
+			bounds: rootLayer.bounds,
+			focusRect: focusRect,
+			color: scrimLayer.scrimColor,
+			excluding: exclusions
+		)
+	}
+
+	private func updateLiveFlowExclusions(
+		excluding exclusions: [OverlayMaskGeometry.RoundedExclusion]
+	) {
+		guard !hoverFlowLayer.isHidden else {
+			return
+		}
+		hoverFlowLayer.updateRoundedExclusions(exclusions)
 	}
 
 	private func shouldAnimateSelectionFlow(_ snapshot: LivePreviewSnapshot) -> Bool {
