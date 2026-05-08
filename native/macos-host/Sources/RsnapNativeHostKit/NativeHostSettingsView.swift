@@ -513,7 +513,7 @@ private struct OutputInspector: View {
 			InspectorMetric(
 				title: "Frame",
 				value: settings.captureFrameEffectEnabled
-					? settings.captureFrameBackground.title : "Off",
+					? settings.captureFrameBackground.title : CaptureFramePresetOption.off.title,
 				symbolName: "photo.on.rectangle.angled"
 			)
 		}
@@ -934,10 +934,32 @@ private struct OutputNamingPicker: View {
 	}
 }
 
-private struct CaptureFrameBackgroundPicker: View {
-	let selection: CaptureFrameBackgroundPreference
-	let isEnabled: Bool
-	let onSelect: (CaptureFrameBackgroundPreference) -> Void
+private enum CaptureFramePresetOption: Hashable, Identifiable {
+	case off
+	case background(CaptureFrameBackgroundPreference)
+
+	var id: String {
+		switch self {
+		case .off:
+			return "off"
+		case .background(let background):
+			return background.rawValue
+		}
+	}
+
+	var title: String {
+		switch self {
+		case .off:
+			return "Off"
+		case .background(let background):
+			return background.title
+		}
+	}
+}
+
+private struct CaptureFramePresetPicker: View {
+	let selection: CaptureFramePresetOption
+	let onSelect: (CaptureFramePresetOption) -> Void
 
 	var body: some View {
 		Picker(
@@ -947,14 +969,15 @@ private struct CaptureFrameBackgroundPicker: View {
 				set: { value in onSelect(value) }
 			)
 		) {
+			Text(CaptureFramePresetOption.off.title).tag(CaptureFramePresetOption.off)
 			ForEach(CaptureFrameBackgroundPreference.allCases, id: \.rawValue) { background in
-				Text(background.title).tag(background)
+				let option = CaptureFramePresetOption.background(background)
+				Text(option.title).tag(option)
 			}
 		}
 		.labelsHidden()
 		.pickerStyle(.menu)
 		.frame(width: SettingsControlLayout.controlColumnWidth)
-		.disabled(!isEnabled)
 	}
 }
 
@@ -1097,7 +1120,7 @@ private struct AppearanceSettingsPanel: View {
 				if model.settings.resolvedHudGlassMode == .liquidGlass {
 					SettingsControlTile(
 						symbolName: "circle.hexagongrid",
-						title: "Liquid style",
+						title: "Liquid Style",
 						subtitle: "Material profile."
 					) {
 						LiquidGlassStylePicker(
@@ -1115,7 +1138,7 @@ private struct AppearanceSettingsPanel: View {
 			if model.settings.resolvedHudGlassMode == .classicGlass {
 				SettingsControlTile(
 					symbolName: "slider.horizontal.3",
-					title: "Classic tuning",
+					title: "Classic Tuning",
 					subtitle: "Opacity and blur."
 				) {
 					SettingsCompactSliderStack(
@@ -1138,7 +1161,7 @@ private struct AppearanceSettingsPanel: View {
 			VStack(spacing: 0) {
 				SettingsControlTile(
 					symbolName: "eyedropper.halffull",
-					title: "Tint strength",
+					title: "Tint Strength",
 					subtitle: "Accent weight."
 				) {
 					SettingsTileSlider(
@@ -1152,7 +1175,7 @@ private struct AppearanceSettingsPanel: View {
 
 				SettingsControlTile(
 					symbolName: "paintpalette",
-					title: "Tint color",
+					title: "Tint Color",
 					subtitle: "HUD accent."
 				) {
 					FlatColorSwatch(
@@ -1467,7 +1490,7 @@ private struct CaptureSettingsPanel: View {
 		VStack(spacing: 8) {
 			SettingsHeroControlTile(
 				symbolName: "keyboard",
-				title: "New capture shortcut",
+				title: "New Capture Shortcut",
 				subtitle: "Current: \(shortcutPresentation.displayTitle)."
 			) {
 				CaptureHotKeyField(model: model)
@@ -1476,7 +1499,7 @@ private struct CaptureSettingsPanel: View {
 			VStack(spacing: 0) {
 				SettingsControlTile(
 					symbolName: "rectangle.bottomthird.inset.filled",
-					title: "Frozen toolbar",
+					title: "Frozen Toolbar",
 					subtitle: "Command bar."
 				) {
 					ToolbarPlacementPicker(selection: model.settings.toolbarPlacement) { value in
@@ -1486,7 +1509,7 @@ private struct CaptureSettingsPanel: View {
 
 				SettingsControlTile(
 					symbolName: "crop",
-					title: "Corner handles",
+					title: "Corner Handles",
 					subtitle: "Resize direction."
 				) {
 					FrozenResizeHandleOrientationPicker(
@@ -1500,7 +1523,7 @@ private struct CaptureSettingsPanel: View {
 			VStack(spacing: 0) {
 				SettingsControlTile(
 					symbolName: "plus.magnifyingglass",
-					title: "Loupe sample",
+					title: "Loupe Sample",
 					subtitle: "Patch size."
 				) {
 					LoupeSampleSizePicker(selection: model.settings.loupeSampleSize) { value in
@@ -1510,7 +1533,7 @@ private struct CaptureSettingsPanel: View {
 
 				SettingsControlTile(
 					symbolName: "lightbulb",
-					title: "HUD hint",
+					title: "HUD Hint",
 					subtitle: "Tab keycap."
 				) {
 					Toggle(
@@ -1605,7 +1628,7 @@ private struct PermissionsSettingsPanel: View {
 
 			SettingsHeroControlTile(
 				symbolName: "power",
-				title: "Open at Login",
+				title: "Open At Login",
 				subtitle: model.launchAtLoginState.subtitle
 			) {
 				LaunchAtLoginToggle(model: model)
@@ -1961,7 +1984,7 @@ private struct OutputSettingsPanel: View {
 		VStack(spacing: 8) {
 			SettingsHeroControlTile(
 				symbolName: "folder",
-				title: "Save location",
+				title: "Save Location",
 				subtitle: abbreviatedPath(model.settings.outputDirectory)
 			) {
 				Button(action: model.chooseOutputDirectory) {
@@ -1975,7 +1998,7 @@ private struct OutputSettingsPanel: View {
 			VStack(spacing: 0) {
 				SettingsControlTile(
 					symbolName: "textformat.abc",
-					title: "Filename prefix",
+					title: "Filename Prefix",
 					subtitle: "Safe text."
 				) {
 					TextField(
@@ -2010,48 +2033,49 @@ private struct OutputSettingsPanel: View {
 
 			VStack(spacing: 0) {
 				SettingsControlTile(
-					symbolName: "photo.on.rectangle.angled",
-					title: "Export frame",
-					subtitle: "Wallpaper canvas."
-				) {
-					Toggle(
-						"",
-						isOn: Binding(
-							get: { model.settings.captureFrameEffectEnabled },
-							set: { value in
-								model.update { $0.captureFrameEffectEnabled = value }
-							}
-						)
-					)
-					.labelsHidden()
-					.toggleStyle(SettingsToggleStyle())
-				}
-
-				SettingsControlTile(
 					symbolName: "rectangle.on.rectangle",
-					title: "Frame preset",
+					title: "Frame Preset",
 					subtitle: "Background style."
 				) {
-					CaptureFrameBackgroundPicker(
-						selection: model.settings.captureFrameBackground,
-						isEnabled: model.settings.captureFrameEffectEnabled
-					) { value in
-						model.update { $0.captureFrameBackground = value }
+					CaptureFramePresetPicker(selection: captureFramePresetSelection) {
+						option in
+						updateCaptureFramePreset(option)
 					}
 				}
 
 				SettingsControlTile(
 					symbolName: "viewfinder",
-					title: "Apply to",
+					title: "Apply To",
 					subtitle: "Fullscreen excluded."
 				) {
 					CaptureFrameApplicabilityPicker(
 						selection: model.settings.captureFrameApplicability,
-						isEnabled: model.settings.captureFrameEffectEnabled
+						isEnabled: captureFrameApplyToEnabled
 					) { value in
 						model.update { $0.captureFrameApplicability = value }
 					}
 				}
+			}
+		}
+	}
+
+	private var captureFramePresetSelection: CaptureFramePresetOption {
+		model.settings.captureFrameEffectEnabled
+			? .background(model.settings.captureFrameBackground) : .off
+	}
+
+	private var captureFrameApplyToEnabled: Bool {
+		model.settings.captureFrameEffectEnabled
+	}
+
+	private func updateCaptureFramePreset(_ option: CaptureFramePresetOption) {
+		model.update { settings in
+			switch option {
+			case .off:
+				settings.captureFrameEffectEnabled = false
+			case .background(let background):
+				settings.captureFrameEffectEnabled = true
+				settings.captureFrameBackground = background
 			}
 		}
 	}
