@@ -14,7 +14,7 @@ Depends on: `docs/spec/performance.md`
 Outputs: A repeatable local benchmark run, an optional saved Criterion baseline, and a clear
 understanding of what the synthetic fixture is intended to cover.
 
-Current release status: v0.1.3 hides user-facing scroll capture in the native host. This runbook
+Current release status: v0.1.4 hides user-facing scroll capture in the native host. This runbook
 still applies to the retained internal scroll-capture engine, replay, and future re-enablement
 work.
 
