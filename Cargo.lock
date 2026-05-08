@@ -3378,6 +3378,7 @@ dependencies = [
 name = "rsnap-capture-core"
 version = "0.1.7"
 dependencies = [
+ "color-eyre",
  "image",
  "serde",
 ]

@@ -2,10 +2,11 @@
 
 use std::path::PathBuf;
 
-use image::{RgbaImage, imageops};
+use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 
 use crate::RectPoints;
+use crate::export::crop_export_image;
 use crate::geometry::{GlobalPoint, GlobalRect, MonitorRect, Rgb, WindowRect};
 
 /// Supported platform families for the host/core boundary.
@@ -301,7 +302,7 @@ impl DeferredTextRecognitionImageSource {
 		match self {
 			Self::Prepared { image } => Some(image.clone()),
 			Self::FrozenCrop { export_image, crop_rect } => {
-				export_image_from_frozen_crop(export_image, *crop_rect)
+				crop_export_image(export_image, *crop_rect)
 			},
 		}
 	}
@@ -310,7 +311,7 @@ impl DeferredTextRecognitionImageSource {
 		match self {
 			Self::Prepared { image } => Some(image),
 			Self::FrozenCrop { export_image, crop_rect } => {
-				export_image_from_frozen_crop(&export_image, crop_rect)
+				crop_export_image(&export_image, crop_rect)
 			},
 		}
 	}
@@ -470,31 +471,6 @@ pub struct DeferredTextRecognitionOutcome {
 	pub recognized_chars: usize,
 	/// Recognized text to publish through the host-owned clipboard effect.
 	pub recognized_text: Option<String>,
-}
-
-fn export_image_from_frozen_crop(
-	export_image: &RgbaImage,
-	crop_rect: Option<RectPoints>,
-) -> Option<RgbaImage> {
-	match crop_rect {
-		Some(crop_rect) => {
-			if crop_rect.width == 0 || crop_rect.height == 0 {
-				return None;
-			}
-
-			Some(
-				imageops::crop_imm(
-					export_image,
-					crop_rect.x,
-					crop_rect.y,
-					crop_rect.width,
-					crop_rect.height,
-				)
-				.to_image(),
-			)
-		},
-		None => Some(export_image.clone()),
-	}
 }
 
 #[cfg(test)]
