@@ -2406,16 +2406,36 @@ final class CaptureSessionController: NSObject {
 		let captureImageMilliseconds =
 			NativeHostTelemetry.milliseconds(since: captureImageStartedAt)
 
+		let makeImageStartedAt = ProcessInfo.processInfo.systemUptime
+		guard let pngData = try Self.losslessPNGData(from: cgImage) else {
+			let makeImageMilliseconds = NativeHostTelemetry.milliseconds(since: makeImageStartedAt)
+			NativeHostTelemetry.copyCaptureTiming(
+				captureID: currentCaptureTelemetryID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: copyStartedAt),
+				captureImageMilliseconds: captureImageMilliseconds,
+				clearPasteboardMilliseconds: 0,
+				makeImageMilliseconds: makeImageMilliseconds,
+				writePasteboardMilliseconds: 0,
+				success: false,
+				failureStage: "encode_image",
+				width: cgImage.width,
+				height: cgImage.height
+			)
+			try sendHostStatusMessage("Could not encode the captured image.")
+			return
+		}
+		let makeImageMilliseconds = NativeHostTelemetry.milliseconds(since: makeImageStartedAt)
+
 		let pasteboard = NSPasteboard.general
 		let clearPasteboardStartedAt = ProcessInfo.processInfo.systemUptime
 		pasteboard.clearContents()
 		let clearPasteboardMilliseconds =
 			NativeHostTelemetry.milliseconds(since: clearPasteboardStartedAt)
-		let makeImageStartedAt = ProcessInfo.processInfo.systemUptime
-		let image = NSImage(cgImage: cgImage, size: .zero)
-		let makeImageMilliseconds = NativeHostTelemetry.milliseconds(since: makeImageStartedAt)
 		let writePasteboardStartedAt = ProcessInfo.processInfo.systemUptime
-		let didWritePasteboard = pasteboard.writeObjects([image])
+		let pasteboardItem = NSPasteboardItem()
+		let didWritePasteboard =
+			pasteboardItem.setData(pngData, forType: .png)
+			&& pasteboard.writeObjects([pasteboardItem])
 		let writePasteboardMilliseconds =
 			NativeHostTelemetry.milliseconds(since: writePasteboardStartedAt)
 		guard didWritePasteboard else {

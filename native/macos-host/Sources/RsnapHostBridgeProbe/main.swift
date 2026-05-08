@@ -339,7 +339,8 @@ enum RsnapHostBridgeProbe {
 			crop: CGRect(x: 1, y: 2, width: 4, height: 8)
 		)
 		guard let croppedPNGDimensions = pngDimensions(croppedPNG),
-		      croppedPNGDimensions == (4, 8) else {
+			croppedPNGDimensions == (4, 8)
+		else {
 			fatalError("unexpected cropped PNG export dimensions")
 		}
 
@@ -354,11 +355,13 @@ enum RsnapHostBridgeProbe {
 		else {
 			return nil
 		}
-		let width = Int(UInt32(bytes[16]) << 24)
+		let width =
+			Int(UInt32(bytes[16]) << 24)
 			| Int(UInt32(bytes[17]) << 16)
 			| Int(UInt32(bytes[18]) << 8)
 			| Int(UInt32(bytes[19]))
-		let height = Int(UInt32(bytes[20]) << 24)
+		let height =
+			Int(UInt32(bytes[20]) << 24)
 			| Int(UInt32(bytes[21]) << 16)
 			| Int(UInt32(bytes[22]) << 8)
 			| Int(UInt32(bytes[23]))
