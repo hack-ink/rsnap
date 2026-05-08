@@ -175,6 +175,41 @@ public struct ScrollMinimapLayoutPlan: Equatable, Sendable {
 	public var viewportFrame: CGRect?
 }
 
+public enum FrozenSelectionTransformKind: UInt32, Equatable, Sendable {
+	case move = 0
+	case resizeLeft = 1
+	case resizeRight = 2
+	case resizeTop = 3
+	case resizeBottom = 4
+	case resizeTopLeft = 5
+	case resizeTopRight = 6
+	case resizeBottomLeft = 7
+	case resizeBottomRight = 8
+
+	fileprivate var ffiKind: RsnapFrozenSelectionTransformKind {
+		switch self {
+		case .move:
+			RSNAP_FROZEN_SELECTION_TRANSFORM_MOVE
+		case .resizeLeft:
+			RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_LEFT
+		case .resizeRight:
+			RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_RIGHT
+		case .resizeTop:
+			RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_TOP
+		case .resizeBottom:
+			RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_BOTTOM
+		case .resizeTopLeft:
+			RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_TOP_LEFT
+		case .resizeTopRight:
+			RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_TOP_RIGHT
+		case .resizeBottomLeft:
+			RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_BOTTOM_LEFT
+		case .resizeBottomRight:
+			RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_BOTTOM_RIGHT
+		}
+	}
+}
+
 public enum RsnapCaptureFramePlanner {
 	public static func plan(
 		imageWidth: Int,
@@ -366,6 +401,108 @@ public enum RsnapScrollMinimapPlanner {
 
 	private static func decode(rect: RsnapFloatRect) -> CGRect {
 		CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
+	}
+}
+
+public enum RsnapFrozenSelectionTransformPlanner {
+	public static func hitTest(
+		point: CGPoint,
+		selection: CGRect,
+		handleRadius: CGFloat,
+		edgeTolerance: CGFloat
+	) throws -> FrozenSelectionTransformKind? {
+		var outKind = RSNAP_FROZEN_SELECTION_TRANSFORM_MOVE
+		let status = rsnap_frozen_selection_transform_hit_test(
+			Double(point.x),
+			Double(point.y),
+			encode(rect: selection),
+			Double(handleRadius),
+			Double(edgeTolerance),
+			&outKind
+		)
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_EMPTY.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "hit-testing frozen selection transform")
+
+		return decode(kind: outKind)
+	}
+
+	public static func transformedRect(
+		kind: FrozenSelectionTransformKind,
+		initialSelection: CGRect,
+		monitorFrame: CGRect,
+		initialPointer: CGPoint,
+		point: CGPoint,
+		minimumSize: CGFloat
+	) throws -> CGRect? {
+		var outRect = RsnapFloatRect()
+		let status = rsnap_frozen_selection_transform_rect(
+			kind.ffiKind,
+			encode(rect: initialSelection),
+			encode(rect: monitorFrame),
+			Double(initialPointer.x),
+			Double(initialPointer.y),
+			Double(point.x),
+			Double(point.y),
+			Double(minimumSize),
+			&outRect
+		)
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_EMPTY.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "resolving frozen selection transform")
+
+		return decode(rect: outRect)
+	}
+
+	private static func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private static func encode(rect: CGRect) -> RsnapFloatRect {
+		RsnapFloatRect(
+			x: Double(rect.minX),
+			y: Double(rect.minY),
+			width: Double(rect.width),
+			height: Double(rect.height)
+		)
+	}
+
+	private static func decode(rect: RsnapFloatRect) -> CGRect {
+		CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
+	}
+
+	private static func decode(kind: RsnapFrozenSelectionTransformKind)
+		-> FrozenSelectionTransformKind
+	{
+		return switch kind {
+		case RSNAP_FROZEN_SELECTION_TRANSFORM_MOVE:
+			.move
+		case RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_LEFT:
+			.resizeLeft
+		case RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_RIGHT:
+			.resizeRight
+		case RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_TOP:
+			.resizeTop
+		case RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_BOTTOM:
+			.resizeBottom
+		case RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_TOP_LEFT:
+			.resizeTopLeft
+		case RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_TOP_RIGHT:
+			.resizeTopRight
+		case RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_BOTTOM_LEFT:
+			.resizeBottomLeft
+		case RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_BOTTOM_RIGHT:
+			.resizeBottomRight
+		default:
+			.move
+		}
 	}
 }
 

@@ -9,11 +9,13 @@ use color_eyre::eyre::{Result, ensure, eyre};
 use image::{Rgba, RgbaImage};
 use rsnap_capture_core::{
 	BgraFrameView, CaptureFrameBackgroundKind, CaptureFrameSourceKind, DisplayPointRect,
-	RectPoints, ScrollMinimapInput, auto_center_margin_balance_shift_points,
-	capture_frame_aspect_fill_crop_rect, capture_frame_background_plan, capture_frame_plan,
-	capture_frame_wallpaper_request_plan, crop_rgba_image, detect_auto_center_content_bounds_rgba,
-	encode_png_lossless_fast, frozen_mosaic_light_privacy_patch, loupe_patch_rgba_from_bgra_frame,
-	sample_rgb_from_bgra_frame, scroll_minimap_plan,
+	FrozenSelectionTransformInput, FrozenSelectionTransformKind, RectPoints, ScrollMinimapInput,
+	auto_center_margin_balance_shift_points, capture_frame_aspect_fill_crop_rect,
+	capture_frame_background_plan, capture_frame_plan, capture_frame_wallpaper_request_plan,
+	crop_rgba_image, detect_auto_center_content_bounds_rgba, encode_png_lossless_fast,
+	frozen_mosaic_light_privacy_patch, frozen_selection_transform_hit_test,
+	frozen_selection_transform_rect, loupe_patch_rgba_from_bgra_frame, sample_rgb_from_bgra_frame,
+	scroll_minimap_plan,
 };
 use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
@@ -50,6 +52,7 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	verify_bgra_frame_sampling(&bgra_frame, bgra_bytes_per_row)?;
 	verify_capture_frame_plan()?;
 	verify_scroll_minimap_plan()?;
+	verify_frozen_selection_transform()?;
 	verify_auto_center_content_bounds(&auto_center_image)?;
 
 	results.push(time_case(
@@ -91,6 +94,7 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	run_capture_frame_perf_case(results)?;
 
 	run_scroll_minimap_perf_case(results)?;
+	run_frozen_selection_transform_perf_case(results)?;
 
 	results.push(time_case(
 		"auto_center_content_bounds_rgba_1440x900",
@@ -233,6 +237,22 @@ fn run_bgra_frame_perf_case(
 			.ok_or_else(|| eyre!("BGRA loupe patch performance fixture is invalid"))?;
 
 			Ok(checksum_bytes(patch.as_raw()))
+		},
+	)?);
+
+	Ok(())
+}
+
+fn run_frozen_selection_transform_perf_case(results: &mut Vec<PerfCaseResult>) -> Result<()> {
+	results.push(time_case(
+		"frozen_selection_transform_rect",
+		10_000,
+		Duration::from_millis(60),
+		|| {
+			let rect = frozen_selection_transform_rect(selection_transform_fixture())
+				.ok_or_else(|| eyre!("selection transform performance fixture is invalid"))?;
+
+			Ok(checksum_f64s(&[rect.x, rect.y, rect.width, rect.height]))
 		},
 	)?);
 
@@ -410,6 +430,21 @@ fn verify_scroll_minimap_plan() -> Result<()> {
 	Ok(())
 }
 
+fn verify_frozen_selection_transform() -> Result<()> {
+	let selection = DisplayPointRect::new(100.0, 80.0, 240.0, 160.0);
+	let hit = frozen_selection_transform_hit_test(102.0, 238.0, selection, 12.0, 4.0)
+		.ok_or_else(|| eyre!("selection transform hit fixture is invalid"))?;
+	ensure!(hit == FrozenSelectionTransformKind::ResizeTopLeft, "selection hit changed");
+	let rect = frozen_selection_transform_rect(selection_transform_fixture())
+		.ok_or_else(|| eyre!("selection transform fixture is invalid"))?;
+	ensure!(
+		rect == DisplayPointRect::new(100.0, 228.0, 12.0, 12.0),
+		"selection transform rect changed"
+	);
+
+	Ok(())
+}
+
 fn verify_auto_center_content_bounds(image: &RgbaImage) -> Result<()> {
 	let bounds =
 		detect_auto_center_content_bounds_rgba(image.width(), image.height(), image.as_raw())
@@ -569,6 +604,19 @@ fn scroll_minimap_fixture() -> ScrollMinimapInput {
 		image_inset: 3.0,
 		viewport_top_pixels: 20.0,
 		viewport_height_pixels: 100.0,
+	}
+}
+
+fn selection_transform_fixture() -> FrozenSelectionTransformInput {
+	FrozenSelectionTransformInput {
+		kind: FrozenSelectionTransformKind::ResizeBottomRight,
+		initial_selection: DisplayPointRect::new(100.0, 80.0, 240.0, 160.0),
+		monitor_frame: DisplayPointRect::new(0.0, 0.0, 500.0, 400.0),
+		initial_pointer_x: 340.0,
+		initial_pointer_y: 80.0,
+		point_x: 50.0,
+		point_y: 300.0,
+		minimum_size: 12.0,
 	}
 }
 

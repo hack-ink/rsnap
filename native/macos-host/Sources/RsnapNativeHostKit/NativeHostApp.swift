@@ -1324,7 +1324,13 @@ final class CaptureSessionController: NSObject {
 		else {
 			return false
 		}
-		guard let kind = FrozenSelectionTransformKind.hitTest(at: point, selection: selection)
+		guard
+			let kind = try? RsnapFrozenSelectionTransformPlanner.hitTest(
+				point: point,
+				selection: selection,
+				handleRadius: 12,
+				edgeTolerance: 4
+			)
 		else {
 			return false
 		}
@@ -1405,78 +1411,14 @@ final class CaptureSessionController: NSObject {
 		interaction: FrozenSelectionInteractionState,
 		point: CGPoint
 	) -> CGRect? {
-		let minSize = CaptureChrome.frozenSelectionMinimumSize
-		let selection = interaction.initialSelection
-		let monitor = interaction.monitorFrame
-		let deltaX = point.x - interaction.initialPointer.x
-		let deltaY = point.y - interaction.initialPointer.y
-
-		switch interaction.kind {
-		case .move:
-			return Self.clampedSelectionRect(
-				width: selection.width,
-				height: selection.height,
-				x: selection.minX + deltaX,
-				y: selection.minY + deltaY,
-				monitorFrame: monitor
-			)
-		case .resizeLeft:
-			let newMinX = (selection.minX + deltaX).clamped(
-				to: monitor.minX...(selection.maxX - minSize))
-			return CGRect(
-				x: newMinX, y: selection.minY, width: selection.maxX - newMinX,
-				height: selection.height)
-		case .resizeRight:
-			let newMaxX = (selection.maxX + deltaX).clamped(
-				to: (selection.minX + minSize)...monitor.maxX)
-			return CGRect(
-				x: selection.minX, y: selection.minY, width: newMaxX - selection.minX,
-				height: selection.height)
-		case .resizeTop:
-			let newMaxY = (selection.maxY + deltaY).clamped(
-				to: (selection.minY + minSize)...monitor.maxY)
-			return CGRect(
-				x: selection.minX, y: selection.minY, width: selection.width,
-				height: newMaxY - selection.minY)
-		case .resizeBottom:
-			let newMinY = (selection.minY + deltaY).clamped(
-				to: monitor.minY...(selection.maxY - minSize))
-			return CGRect(
-				x: selection.minX, y: newMinY, width: selection.width,
-				height: selection.maxY - newMinY)
-		case .resizeTopLeft:
-			let newMinX = (selection.minX + deltaX).clamped(
-				to: monitor.minX...(selection.maxX - minSize))
-			let newMaxY = (selection.maxY + deltaY).clamped(
-				to: (selection.minY + minSize)...monitor.maxY)
-			return CGRect(
-				x: newMinX, y: selection.minY, width: selection.maxX - newMinX,
-				height: newMaxY - selection.minY)
-		case .resizeTopRight:
-			let newMaxX = (selection.maxX + deltaX).clamped(
-				to: (selection.minX + minSize)...monitor.maxX)
-			let newMaxY = (selection.maxY + deltaY).clamped(
-				to: (selection.minY + minSize)...monitor.maxY)
-			return CGRect(
-				x: selection.minX, y: selection.minY, width: newMaxX - selection.minX,
-				height: newMaxY - selection.minY)
-		case .resizeBottomLeft:
-			let newMinX = (selection.minX + deltaX).clamped(
-				to: monitor.minX...(selection.maxX - minSize))
-			let newMinY = (selection.minY + deltaY).clamped(
-				to: monitor.minY...(selection.maxY - minSize))
-			return CGRect(
-				x: newMinX, y: newMinY, width: selection.maxX - newMinX,
-				height: selection.maxY - newMinY)
-		case .resizeBottomRight:
-			let newMaxX = (selection.maxX + deltaX).clamped(
-				to: (selection.minX + minSize)...monitor.maxX)
-			let newMinY = (selection.minY + deltaY).clamped(
-				to: monitor.minY...(selection.maxY - minSize))
-			return CGRect(
-				x: selection.minX, y: newMinY, width: newMaxX - selection.minX,
-				height: selection.maxY - newMinY)
-		}
+		try? RsnapFrozenSelectionTransformPlanner.transformedRect(
+			kind: interaction.kind,
+			initialSelection: interaction.initialSelection,
+			monitorFrame: interaction.monitorFrame,
+			initialPointer: interaction.initialPointer,
+			point: point,
+			minimumSize: CaptureChrome.frozenSelectionMinimumSize
+		)
 	}
 
 	func performFrozenUndo() {
@@ -5582,7 +5524,13 @@ final class CaptureHostView: NSView {
 	}
 
 	private func editableFrozenCursorIntent(at point: CGPoint, selection: CGRect) -> CursorIntent? {
-		guard let kind = FrozenSelectionTransformKind.hitTest(at: point, selection: selection)
+		guard
+			let kind = try? RsnapFrozenSelectionTransformPlanner.hitTest(
+				point: point,
+				selection: selection,
+				handleRadius: 12,
+				edgeTolerance: 4
+			)
 		else {
 			return nil
 		}
@@ -8165,61 +8113,6 @@ private func drawFrozenArrow(
 	context.addLine(to: right)
 	context.strokePath()
 	context.restoreGState()
-}
-
-private enum FrozenSelectionTransformKind {
-	case move
-	case resizeLeft
-	case resizeRight
-	case resizeTop
-	case resizeBottom
-	case resizeTopLeft
-	case resizeTopRight
-	case resizeBottomLeft
-	case resizeBottomRight
-}
-
-extension FrozenSelectionTransformKind {
-	fileprivate static func hitTest(
-		at point: CGPoint,
-		selection: CGRect
-	) -> FrozenSelectionTransformKind? {
-		let handleRadius = CGFloat(12)
-		let edgeTolerance = CGFloat(4)
-		let left = selection.minX
-		let right = selection.maxX
-		let top = selection.maxY
-		let bottom = selection.minY
-
-		if abs(point.x - left) <= handleRadius, abs(point.y - top) <= handleRadius {
-			return .resizeTopLeft
-		}
-		if abs(point.x - right) <= handleRadius, abs(point.y - top) <= handleRadius {
-			return .resizeTopRight
-		}
-		if abs(point.x - left) <= handleRadius, abs(point.y - bottom) <= handleRadius {
-			return .resizeBottomLeft
-		}
-		if abs(point.x - right) <= handleRadius, abs(point.y - bottom) <= handleRadius {
-			return .resizeBottomRight
-		}
-		if point.y >= bottom, point.y <= top, abs(point.x - left) <= edgeTolerance {
-			return .resizeLeft
-		}
-		if point.y >= bottom, point.y <= top, abs(point.x - right) <= edgeTolerance {
-			return .resizeRight
-		}
-		if point.x >= left, point.x <= right, abs(point.y - top) <= edgeTolerance {
-			return .resizeTop
-		}
-		if point.x >= left, point.x <= right, abs(point.y - bottom) <= edgeTolerance {
-			return .resizeBottom
-		}
-		if selection.contains(point) {
-			return .move
-		}
-		return nil
-	}
 }
 
 private struct FrozenSelectionInteractionState {

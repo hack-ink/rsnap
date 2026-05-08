@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 27u
+#define RSNAP_HOST_FFI_ABI_VERSION 28u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -318,6 +318,18 @@ typedef struct RsnapScrollMinimapPlan {
 	struct RsnapFloatRect viewport_frame;
 } RsnapScrollMinimapPlan;
 
+typedef enum RsnapFrozenSelectionTransformKind {
+	RSNAP_FROZEN_SELECTION_TRANSFORM_MOVE = 0,
+	RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_LEFT = 1,
+	RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_RIGHT = 2,
+	RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_TOP = 3,
+	RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_BOTTOM = 4,
+	RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_TOP_LEFT = 5,
+	RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_TOP_RIGHT = 6,
+	RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_BOTTOM_LEFT = 7,
+	RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_BOTTOM_RIGHT = 8,
+} RsnapFrozenSelectionTransformKind;
+
 typedef enum RsnapScrollObserveOutcomeKind {
 	RSNAP_SCROLL_OBSERVE_NO_CHANGE = 0,
 	RSNAP_SCROLL_OBSERVE_PREVIEW_UPDATED = 1,
@@ -461,6 +473,25 @@ enum RsnapStatus rsnap_scroll_minimap_plan(
 	double viewport_top_pixels,
 	double viewport_height_pixels,
 	struct RsnapScrollMinimapPlan *out_plan
+);
+enum RsnapStatus rsnap_frozen_selection_transform_hit_test(
+	double point_x,
+	double point_y,
+	struct RsnapFloatRect selection,
+	double handle_radius,
+	double edge_tolerance,
+	enum RsnapFrozenSelectionTransformKind *out_kind
+);
+enum RsnapStatus rsnap_frozen_selection_transform_rect(
+	enum RsnapFrozenSelectionTransformKind kind,
+	struct RsnapFloatRect initial_selection,
+	struct RsnapFloatRect monitor_frame,
+	double initial_pointer_x,
+	double initial_pointer_y,
+	double point_x,
+	double point_y,
+	double minimum_size,
+	struct RsnapFloatRect *out_rect
 );
 enum RsnapStatus rsnap_auto_center_content_bounds_rgba(
 	uint32_t width,
