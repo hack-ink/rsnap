@@ -63,6 +63,15 @@ pub struct CaptureFrameBackgroundPlan {
 	pub wallpaper_overlay_alpha: f64,
 }
 
+/// Platform wallpaper thumbnail request planned by the Rust product core.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CaptureFrameWallpaperRequest {
+	/// Maximum thumbnail dimension requested from the platform image pipeline.
+	pub target_pixel_size: u32,
+	/// Overlay alpha applied after drawing the wallpaper thumbnail.
+	pub overlay_alpha: f64,
+}
+
 /// One capture-frame shadow pass.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CaptureFrameShadow {
@@ -214,6 +223,35 @@ pub fn capture_frame_background_plan(
 	}
 }
 
+/// Resolves whether a platform wallpaper thumbnail should be requested for a destination.
+#[must_use]
+pub fn capture_frame_wallpaper_request_plan(
+	kind: CaptureFrameBackgroundKind,
+	destination_width: f64,
+	destination_height: f64,
+) -> Option<CaptureFrameWallpaperRequest> {
+	if !destination_width.is_finite()
+		|| !destination_height.is_finite()
+		|| destination_width <= 0.0
+		|| destination_height <= 0.0
+	{
+		return None;
+	}
+
+	let background = capture_frame_background_plan(kind);
+	if !background.prefers_wallpaper {
+		return None;
+	}
+
+	let target_pixel_size =
+		destination_width.max(destination_height).ceil().clamp(1.0, f64::from(u32::MAX)) as u32;
+
+	Some(CaptureFrameWallpaperRequest {
+		target_pixel_size,
+		overlay_alpha: background.wallpaper_overlay_alpha,
+	})
+}
+
 fn capture_frame_padding(image_width: f64, image_height: f64) -> f64 {
 	let short_side = image_width.min(image_height);
 	let long_side = image_width.max(image_height);
@@ -272,7 +310,7 @@ mod tests {
 	use super::{
 		CaptureFrameBackgroundKind, CaptureFrameColorStop, CaptureFrameShadow,
 		CaptureFrameSourceKind, capture_frame_aspect_fill_crop_rect, capture_frame_background_plan,
-		capture_frame_plan,
+		capture_frame_plan, capture_frame_wallpaper_request_plan,
 	};
 	use crate::DisplayPointRect;
 
@@ -362,6 +400,39 @@ mod tests {
 				CaptureFrameColorStop::new(0.58, 0.70, 0.71, 1.0),
 				CaptureFrameColorStop::new(0.24, 0.36, 0.47, 1.0),
 			]
+		);
+	}
+
+	#[test]
+	fn capture_frame_wallpaper_request_plan_matches_native_thumbnail_policy() {
+		let request = capture_frame_wallpaper_request_plan(
+			CaptureFrameBackgroundKind::SystemWallpaper,
+			1535.2,
+			996.0,
+		)
+		.expect("wallpaper request");
+
+		assert_eq!(request.target_pixel_size, 1536);
+		assert_eq!(request.overlay_alpha, 0.10);
+	}
+
+	#[test]
+	fn capture_frame_wallpaper_request_plan_skips_non_wallpaper_backgrounds() {
+		assert_eq!(
+			capture_frame_wallpaper_request_plan(CaptureFrameBackgroundKind::Aurora, 1536.0, 996.0),
+			None
+		);
+	}
+
+	#[test]
+	fn capture_frame_wallpaper_request_plan_rejects_empty_destination() {
+		assert_eq!(
+			capture_frame_wallpaper_request_plan(
+				CaptureFrameBackgroundKind::SystemWallpaper,
+				0.0,
+				996.0
+			),
+			None
 		);
 	}
 

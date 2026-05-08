@@ -11,8 +11,8 @@ use rsnap_capture_core::{
 	CaptureFrameBackgroundKind, CaptureFrameSourceKind, DisplayPointRect, RectPoints,
 	ScrollMinimapInput, auto_center_margin_balance_shift_points,
 	capture_frame_aspect_fill_crop_rect, capture_frame_background_plan, capture_frame_plan,
-	crop_rgba_image, detect_auto_center_content_bounds_rgba, encode_png_lossless_fast,
-	frozen_mosaic_light_privacy_patch, scroll_minimap_plan,
+	capture_frame_wallpaper_request_plan, crop_rgba_image, detect_auto_center_content_bounds_rgba,
+	encode_png_lossless_fast, frozen_mosaic_light_privacy_patch, scroll_minimap_plan,
 };
 use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
@@ -98,6 +98,14 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 			.ok_or_else(|| eyre!("capture frame aspect-fill performance fixture is invalid"))?;
 			let background =
 				capture_frame_background_plan(CaptureFrameBackgroundKind::SystemWallpaper);
+			let wallpaper_request = capture_frame_wallpaper_request_plan(
+				CaptureFrameBackgroundKind::SystemWallpaper,
+				plan.canvas_width,
+				plan.canvas_height,
+			)
+			.ok_or_else(|| {
+				eyre!("capture frame wallpaper request performance fixture is invalid")
+			})?;
 
 			Ok(checksum_f64s(&[
 				plan.canvas_width,
@@ -114,6 +122,8 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 				background.colors[1].green,
 				background.locations[1],
 				background.wallpaper_overlay_alpha,
+				f64::from(wallpaper_request.target_pixel_size),
+				wallpaper_request.overlay_alpha,
 			]))
 		},
 	)?);
@@ -301,6 +311,14 @@ fn verify_capture_frame_plan() -> Result<()> {
 		background.colors[2].red == 0.95 && background.locations == [0.0, 0.54, 1.0],
 		"capture frame background gradient changed"
 	);
+	let wallpaper_request = capture_frame_wallpaper_request_plan(
+		CaptureFrameBackgroundKind::SystemWallpaper,
+		1535.2,
+		996.0,
+	)
+	.ok_or_else(|| eyre!("capture frame wallpaper request fixture is invalid"))?;
+	ensure!(wallpaper_request.target_pixel_size == 1536, "capture frame wallpaper target changed");
+	ensure!(wallpaper_request.overlay_alpha == 0.10, "capture frame wallpaper overlay changed");
 
 	Ok(())
 }
