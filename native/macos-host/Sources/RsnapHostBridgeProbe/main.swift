@@ -375,6 +375,41 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected frozen mosaic privacy patch")
 		}
+		let bgraFrame = makeBgraFrame(width: 4, height: 3)
+		try bgraFrame.withUnsafeBytes { buffer in
+			guard let baseAddress = buffer.baseAddress else {
+				fatalError("missing BGRA fixture storage")
+			}
+			let rgb = try RsnapBgraFrameSampler.rgbSample(
+				width: 4,
+				height: 3,
+				bytesPerRow: 16,
+				baseAddress: baseAddress,
+				byteCount: bgraFrame.count,
+				displayFrame: CGRect(x: 0, y: 0, width: 4, height: 3),
+				point: CGPoint(x: 1, y: 2.5)
+			)
+			guard rgb == RGBSample(r: 11, g: 21, b: 31) else {
+				fatalError("unexpected BGRA RGB sample")
+			}
+			guard
+				let patch = try RsnapBgraFrameSampler.loupePatch(
+					width: 4,
+					height: 3,
+					bytesPerRow: 16,
+					baseAddress: baseAddress,
+					byteCount: bgraFrame.count,
+					displayFrame: CGRect(x: 0, y: 0, width: 4, height: 3),
+					point: CGPoint(x: 0, y: 2),
+					sidePixels: 3
+				),
+				patch.width == 3,
+				patch.height == 3,
+				Array(patch.rgba.prefix(8)) == [10, 20, 30, 200, 10, 20, 30, 200]
+			else {
+				fatalError("unexpected BGRA loupe patch")
+			}
+		}
 		guard
 			let framePlan = try RsnapCaptureFramePlanner.plan(
 				imageWidth: 320,
@@ -527,5 +562,19 @@ enum RsnapHostBridgeProbe {
 		}
 
 		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
+	}
+
+	private static func makeBgraFrame(width: Int, height: Int) -> Data {
+		var bgra = Data(repeating: 0xEE, count: width * height * 4)
+		for y in 0..<height {
+			for x in 0..<width {
+				let offset = (y * width + x) * 4
+				bgra[offset] = UInt8(30 + y * 15 + x)
+				bgra[offset + 1] = UInt8(20 + y * 10 + x)
+				bgra[offset + 2] = UInt8(10 + y * 5 + x)
+				bgra[offset + 3] = UInt8(200 + y + x)
+			}
+		}
+		return bgra
 	}
 }
