@@ -3434,6 +3434,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsnap-perf"
+version = "0.1.7"
+dependencies = [
+ "color-eyre",
+ "image",
+ "rsnap-capture-core",
+ "rsnap-overlay",
+]
+
+[[package]]
 name = "rustc-demangle"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
