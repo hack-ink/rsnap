@@ -266,6 +266,63 @@ public enum RsnapCaptureFramePlanner {
 	}
 }
 
+public enum RsnapAutoCenterPlanner {
+	public static func contentBounds(in image: RGBARegionSnapshot) throws -> CGRect? {
+		var outRect = RsnapPixelRect()
+		let status = image.rgba.withUnsafeBytes { buffer -> RsnapStatus in
+			guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
+				return RSNAP_STATUS_INVALID_INPUT
+			}
+			return rsnap_auto_center_content_bounds_rgba(
+				UInt32(max(image.width, 0)),
+				UInt32(max(image.height, 0)),
+				baseAddress,
+				image.rgba.count,
+				&outRect
+			)
+		}
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_EMPTY.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "detecting auto-center content bounds")
+
+		return decode(pixelRect: outRect)
+	}
+
+	public static func marginBalanceShiftPoints(
+		contentOriginPixels: CGFloat,
+		contentSizePixels: CGFloat,
+		cropSizePixels: CGFloat,
+		captureSizePoints: CGFloat
+	) -> CGFloat {
+		CGFloat(
+			rsnap_auto_center_margin_balance_shift_points(
+				Double(contentOriginPixels),
+				Double(contentSizePixels),
+				Double(cropSizePixels),
+				Double(captureSizePoints)
+			)
+		)
+	}
+
+	private static func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private static func decode(pixelRect: RsnapPixelRect) -> CGRect {
+		CGRect(
+			x: Int(pixelRect.x),
+			y: Int(pixelRect.y),
+			width: Int(pixelRect.width),
+			height: Int(pixelRect.height)
+		)
+	}
+}
+
 public enum RsnapExportEncoder {
 	public static func pngData(from image: RGBARegionSnapshot) throws -> Data {
 		var outPNG = RsnapOwnedBytes()

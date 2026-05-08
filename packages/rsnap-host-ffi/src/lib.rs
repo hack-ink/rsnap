@@ -13,11 +13,11 @@ use rsnap_overlay as _;
 
 use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
-	self, CaptureFrameBackgroundKind, CaptureFrameBackgroundPlan, CaptureFrameColorStop,
-	CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind, CaptureMode, CaptureSessionCore,
-	CursorIntent, DisplayPointRect, GlobalRect, HostEffectKind, HostEvent, HostReport, HostRequest,
-	PermissionKind, PlatformTag, RectPoints, Rgb, RgbaExportImage, SessionConfig, ToolbarItemKind,
-	ToolbarItemModel, WindowRect,
+	self, AutoCenterImageError, CaptureFrameBackgroundKind, CaptureFrameBackgroundPlan,
+	CaptureFrameColorStop, CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind,
+	CaptureMode, CaptureSessionCore, CursorIntent, DisplayPointRect, GlobalRect, HostEffectKind,
+	HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints, Rgb,
+	RgbaExportImage, SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -26,7 +26,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 23;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 24;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -1113,6 +1113,61 @@ pub unsafe extern "C" fn rsnap_capture_frame_background_plan(
 	}
 
 	RsnapStatus::Ok
+}
+
+/// Detects salient content bounds for frozen auto-center from row-major RGBA.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data, and `out_rect` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_auto_center_content_bounds_rgba(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	out_rect: *mut RsnapPixelRect,
+) -> RsnapStatus {
+	if out_rect.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let bounds =
+		match rsnap_capture_core::detect_auto_center_content_bounds_rgba(width, height, bytes) {
+			Ok(Some(bounds)) => bounds,
+			Ok(None) => return RsnapStatus::Empty,
+			Err(
+				AutoCenterImageError::InvalidDimensions | AutoCenterImageError::InvalidRgbaLength,
+			) => {
+				return RsnapStatus::InvalidInput;
+			},
+		};
+
+	unsafe {
+		ptr::write(out_rect, encode_pixel_rect(bounds));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves the point shift that balances content margins inside a frozen crop.
+#[unsafe(no_mangle)]
+pub extern "C" fn rsnap_auto_center_margin_balance_shift_points(
+	content_origin_px: f64,
+	content_size_px: f64,
+	crop_size_px: f64,
+	capture_size_points: f64,
+) -> f64 {
+	rsnap_capture_core::auto_center_margin_balance_shift_points(
+		content_origin_px,
+		content_size_px,
+		crop_size_px,
+		capture_size_points,
+	)
 }
 
 /// Returns the current C ABI version for the native host bridge.
@@ -2599,6 +2654,49 @@ mod tests {
 		);
 	}
 
+	#[test]
+	fn ffi_auto_center_content_bounds_returns_core_rect() {
+		let rgba = auto_center_frame(
+			100,
+			80,
+			Some(RsnapPixelRect { x: 30, y: 20, width: 24, height: 18 }),
+		);
+		let mut rect = RsnapPixelRect::default();
+		let status = unsafe {
+			crate::rsnap_auto_center_content_bounds_rgba(
+				100,
+				80,
+				rgba.as_ptr(),
+				rgba.len(),
+				&mut rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(rect, RsnapPixelRect { x: 30, y: 20, width: 24, height: 18 });
+		assert_eq!(
+			crate::rsnap_auto_center_margin_balance_shift_points(30.0, 24.0, 100.0, 50.0),
+			-4.0
+		);
+	}
+
+	#[test]
+	fn ffi_auto_center_content_bounds_returns_empty_for_uniform_image() {
+		let rgba = auto_center_frame(100, 80, None);
+		let mut rect = RsnapPixelRect::default();
+		let status = unsafe {
+			crate::rsnap_auto_center_content_bounds_rgba(
+				100,
+				80,
+				rgba.as_ptr(),
+				rgba.len(),
+				&mut rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Empty);
+	}
+
 	#[cfg(target_os = "macos")]
 	#[test]
 	fn ffi_scroll_session_observes_downward_frame_and_exports() {
@@ -2790,5 +2888,24 @@ mod tests {
 	#[test]
 	fn abi_version_matches_constant() {
 		assert_eq!(crate::rsnap_host_ffi_abi_version(), RSNAP_HOST_FFI_ABI_VERSION);
+	}
+
+	fn auto_center_frame(width: u32, height: u32, content: Option<RsnapPixelRect>) -> Vec<u8> {
+		let mut rgba = vec![180_u8; (width * height * 4) as usize];
+		for pixel in rgba.chunks_exact_mut(4) {
+			pixel[3] = 255;
+		}
+		if let Some(content) = content {
+			for y in content.y..content.y + content.height {
+				for x in content.x..content.x + content.width {
+					let offset = ((y * width + x) * 4) as usize;
+					rgba[offset] = 24;
+					rgba[offset + 1] = 32;
+					rgba[offset + 2] = 40;
+				}
+			}
+		}
+
+		rgba
 	}
 }

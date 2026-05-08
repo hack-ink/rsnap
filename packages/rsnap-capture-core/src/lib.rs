@@ -4,6 +4,7 @@
 //! the native-host reset. It intentionally contains no window toolkit, AppKit, or
 //! `winit` ownership.
 
+pub mod auto_center;
 pub mod capture_frame;
 pub mod export;
 pub mod geometry;
@@ -12,6 +13,10 @@ pub mod protocol;
 pub mod session;
 
 pub use self::{
+	auto_center::{
+		AutoCenterImageError, auto_center_margin_balance_shift_points,
+		detect_auto_center_content_bounds_rgba,
+	},
 	capture_frame::{
 		CaptureFrameBackgroundKind, CaptureFrameBackgroundPlan, CaptureFrameColorStop,
 		CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind,

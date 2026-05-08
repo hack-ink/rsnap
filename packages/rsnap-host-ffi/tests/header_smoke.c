@@ -16,14 +16,25 @@ int main(void) {
 	RsnapPixelRect display_crop = {0};
 	RsnapCaptureFramePlan frame_plan = {0};
 	RsnapCaptureFrameBackgroundPlan background_plan = {0};
+	RsnapPixelRect auto_center_rect = {0};
 	RsnapFloatRect aspect_crop = {0};
 	RsnapFloatRect display_frame = {.x = 0.0, .y = 0.0, .width = 1440.0, .height = 900.0};
 	RsnapFloatRect selection = {.x = 100.0, .y = 200.0, .width = 300.0, .height = 150.0};
 	RsnapFloatRect mosaic_source = {.x = 4.2, .y = 9.1, .width = 28.4, .height = 21.0};
 	uint8_t rgba[4 * 4 * 4] = {0};
+	uint8_t auto_center_rgba[4 * 4 * 4] = {0};
 	RsnapSessionHandle *handle = rsnap_session_create(config);
 	RsnapScrollSessionHandle *scroll_handle =
 		rsnap_scroll_session_create(4, 4, rgba, sizeof(rgba), 4);
+	for (size_t index = 0; index < sizeof(auto_center_rgba); index += 4) {
+		auto_center_rgba[index] = 180;
+		auto_center_rgba[index + 1] = 180;
+		auto_center_rgba[index + 2] = 180;
+		auto_center_rgba[index + 3] = 255;
+	}
+	auto_center_rgba[(1 * 4 + 1) * 4] = 24;
+	auto_center_rgba[(1 * 4 + 1) * 4 + 1] = 32;
+	auto_center_rgba[(1 * 4 + 1) * 4 + 2] = 40;
 
 	if (handle == 0) {
 		return 1;
@@ -134,6 +145,24 @@ int main(void) {
 		rsnap_scroll_session_destroy(scroll_handle);
 		rsnap_session_destroy(handle);
 		return 22;
+	}
+	if (rsnap_auto_center_content_bounds_rgba(
+			4,
+			4,
+			auto_center_rgba,
+			sizeof(auto_center_rgba),
+			&auto_center_rect
+		) != RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 23;
+	}
+	if (auto_center_rect.x != 1 || auto_center_rect.y != 1 || auto_center_rect.width != 1 ||
+		auto_center_rect.height != 1 ||
+		rsnap_auto_center_margin_balance_shift_points(1.0, 1.0, 4.0, 40.0) != -5.0) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 24;
 	}
 	if (rsnap_session_enter_live(handle) != RSNAP_STATUS_OK) {
 		rsnap_scroll_session_destroy(scroll_handle);

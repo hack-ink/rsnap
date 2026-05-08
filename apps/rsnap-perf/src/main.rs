@@ -9,8 +9,10 @@ use color_eyre::eyre::{Result, ensure, eyre};
 use image::{Rgba, RgbaImage};
 use rsnap_capture_core::{
 	CaptureFrameBackgroundKind, CaptureFrameSourceKind, DisplayPointRect, RectPoints,
-	capture_frame_aspect_fill_crop_rect, capture_frame_background_plan, capture_frame_plan,
-	crop_rgba_image, encode_png_lossless_fast, frozen_mosaic_light_privacy_patch,
+	auto_center_margin_balance_shift_points, capture_frame_aspect_fill_crop_rect,
+	capture_frame_background_plan, capture_frame_plan, crop_rgba_image,
+	detect_auto_center_content_bounds_rgba, encode_png_lossless_fast,
+	frozen_mosaic_light_privacy_patch,
 };
 use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
@@ -37,10 +39,13 @@ fn main() -> Result<()> {
 
 fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	let image = build_export_fixture(1_440, 900);
+	let auto_center_image =
+		build_auto_center_fixture(1_440, 900, RectPoints::new(420, 240, 360, 220));
 	verify_export_round_trip(&image)?;
 	verify_crop_exactness(&image)?;
 	verify_mosaic_patch()?;
 	verify_capture_frame_plan()?;
+	verify_auto_center_content_bounds(&auto_center_image)?;
 
 	results.push(time_case(
 		"export_png_lossless_fast_1440x900",
@@ -108,6 +113,42 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 				background.colors[1].green,
 				background.locations[1],
 				background.wallpaper_overlay_alpha,
+			]))
+		},
+	)?);
+
+	results.push(time_case(
+		"auto_center_content_bounds_rgba_1440x900",
+		50,
+		Duration::from_millis(900),
+		|| {
+			let bounds = detect_auto_center_content_bounds_rgba(
+				auto_center_image.width(),
+				auto_center_image.height(),
+				auto_center_image.as_raw(),
+			)
+			.map_err(|error| eyre!("auto-center performance fixture is invalid: {error:?}"))?
+			.ok_or_else(|| eyre!("auto-center performance fixture did not detect content"))?;
+			let shift_x = auto_center_margin_balance_shift_points(
+				f64::from(bounds.x),
+				f64::from(bounds.width),
+				f64::from(auto_center_image.width()),
+				720.0,
+			);
+			let shift_y = auto_center_margin_balance_shift_points(
+				f64::from(bounds.y),
+				f64::from(bounds.height),
+				f64::from(auto_center_image.height()),
+				450.0,
+			);
+
+			Ok(checksum_f64s(&[
+				f64::from(bounds.x),
+				f64::from(bounds.y),
+				f64::from(bounds.width),
+				f64::from(bounds.height),
+				shift_x,
+				shift_y,
 			]))
 		},
 	)?);
@@ -234,6 +275,24 @@ fn verify_capture_frame_plan() -> Result<()> {
 	Ok(())
 }
 
+fn verify_auto_center_content_bounds(image: &RgbaImage) -> Result<()> {
+	let bounds =
+		detect_auto_center_content_bounds_rgba(image.width(), image.height(), image.as_raw())
+			.map_err(|error| eyre!("auto-center fixture is invalid: {error:?}"))?
+			.ok_or_else(|| eyre!("auto-center fixture did not detect content"))?;
+	ensure!(bounds == RectPoints::new(420, 240, 360, 220), "auto-center bounds changed");
+	ensure!(
+		auto_center_margin_balance_shift_points(420.0, 360.0, 1_440.0, 720.0) == -60.0,
+		"auto-center horizontal shift changed"
+	);
+	ensure!(
+		auto_center_margin_balance_shift_points(240.0, 220.0, 900.0, 450.0) == -50.0,
+		"auto-center vertical shift changed"
+	);
+
+	Ok(())
+}
+
 fn verify_scroll_fingerprint(
 	scenario: ScrollCaptureBenchScenario,
 	metrics: ScrollCaptureFingerprintMetrics,
@@ -330,6 +389,20 @@ fn build_export_fixture(width: u32, height: u32) -> RgbaImage {
 		let a = if (x / 32 + y / 32).is_multiple_of(7) { 220 } else { 255 };
 
 		Rgba([r, g, b, a])
+	})
+}
+
+fn build_auto_center_fixture(width: u32, height: u32, content: RectPoints) -> RgbaImage {
+	RgbaImage::from_fn(width, height, |x, y| {
+		if x >= content.x
+			&& x < content.x + content.width
+			&& y >= content.y
+			&& y < content.y + content.height
+		{
+			return Rgba([24, 32, 40, 255]);
+		}
+
+		Rgba([180, 180, 180, 255])
 	})
 }
 
