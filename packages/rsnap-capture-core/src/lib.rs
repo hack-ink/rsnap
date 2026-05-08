@@ -4,11 +4,13 @@
 //! the native-host reset. It intentionally contains no window toolkit, AppKit, or
 //! `winit` ownership.
 
+pub mod export;
 pub mod geometry;
 pub mod protocol;
 pub mod session;
 
 pub use self::{
+	export::{RgbaExportImage, crop_export_image, crop_rgba_image, encode_png_lossless_fast},
 	geometry::{
 		GlobalPoint, GlobalRect, MonitorRect, MonitorRectPoints, RectPoints, Rgb, WindowHit,
 		WindowRect,

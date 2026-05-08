@@ -13,5 +13,6 @@ version.workspace    = true
 path = "src/lib.rs"
 
 [dependencies]
+color-eyre = { workspace = true }
 image = { workspace = true }
 serde = { workspace = true }
