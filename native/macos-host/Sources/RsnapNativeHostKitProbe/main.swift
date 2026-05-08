@@ -41,6 +41,7 @@ enum RsnapNativeHostKitProbe {
 			imageSize: imageSize
 		)
 		assertScrimRoundedExclusionKeepsCornersMasked()
+		assertScrimOverlappingRoundedExclusionStaysClear()
 		assertRoundedExclusionMaskKeepsCornersFilled()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
@@ -221,6 +222,58 @@ enum RsnapNativeHostKitProbe {
 		guard clearPixel(in: data, width: width, height: height, x: 56, yFromBottom: 56)
 		else {
 			fatalError("selection focus rect was not cleared")
+		}
+	}
+
+	private static func assertScrimOverlappingRoundedExclusionStaysClear() {
+		let width = 96
+		let height = 80
+		let byteCount = width * height * 4
+		let data = UnsafeMutablePointer<UInt8>.allocate(capacity: byteCount)
+		data.initialize(repeating: 0, count: byteCount)
+		defer {
+			data.deinitialize(count: byteCount)
+			data.deallocate()
+		}
+		guard
+			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+			let context = CGContext(
+				data: data,
+				width: width,
+				height: height,
+				bitsPerComponent: 8,
+				bytesPerRow: width * 4,
+				space: colorSpace,
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
+			fatalError("could not create overlapping scrim geometry probe context")
+		}
+
+		OverlayMaskGeometry.drawScrim(
+			in: context,
+			bounds: CGRect(x: 0, y: 0, width: width, height: height),
+			focusRect: CGRect(x: 42, y: 18, width: 28, height: 28),
+			color: CGColor(red: 0, green: 0, blue: 0, alpha: 1),
+			roundedExclusions: [
+				OverlayMaskGeometry.RoundedExclusion(
+					rect: CGRect(x: 24, y: 18, width: 40, height: 24),
+					cornerRadius: 12
+				)
+			]
+		)
+
+		guard clearPixel(in: data, width: width, height: height, x: 36, yFromBottom: 30)
+		else {
+			fatalError("rounded scrim exclusion did not clear the HUD body outside focus")
+		}
+		guard clearPixel(in: data, width: width, height: height, x: 52, yFromBottom: 30)
+		else {
+			fatalError("overlapping focus and HUD exclusions refilled the scrim")
+		}
+		guard opaquePixel(in: data, width: width, height: height, x: 12, yFromBottom: 12)
+		else {
+			fatalError("overlapping scrim probe did not leave ordinary scrim opaque")
 		}
 	}
 

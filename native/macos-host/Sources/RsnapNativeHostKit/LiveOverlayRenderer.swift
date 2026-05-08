@@ -1258,6 +1258,7 @@ private final class SelectionFlowBandLayer: CALayer {
 }
 
 private final class LiveScrimLayer: CAShapeLayer {
+	private let exclusionMaskLayer = CAShapeLayer()
 	private var renderedBounds = CGRect.null
 	private var focusRect = CGRect.null
 	private var roundedExclusions: [OverlayMaskGeometry.RoundedExclusion] = []
@@ -1286,6 +1287,9 @@ private final class LiveScrimLayer: CAShapeLayer {
 		fillColor = scrimColor
 		strokeColor = nil
 		needsDisplayOnBoundsChange = false
+		exclusionMaskLayer.fillRule = .evenOdd
+		exclusionMaskLayer.fillColor = NSColor.black.cgColor
+		exclusionMaskLayer.strokeColor = nil
 	}
 
 	@available(*, unavailable)
@@ -1314,9 +1318,26 @@ private final class LiveScrimLayer: CAShapeLayer {
 		fillColor = color
 		path = OverlayMaskGeometry.scrimPath(
 			bounds: currentBounds,
-			focusRect: focusRect,
+			focusRect: focusRect
+		)
+		updateExclusionMask(bounds: currentBounds, roundedExclusions: roundedExclusions)
+	}
+
+	private func updateExclusionMask(
+		bounds: CGRect,
+		roundedExclusions: [OverlayMaskGeometry.RoundedExclusion]
+	) {
+		guard !roundedExclusions.isEmpty else {
+			mask = nil
+			return
+		}
+		exclusionMaskLayer.frame = bounds
+		exclusionMaskLayer.contentsScale = contentsScale
+		exclusionMaskLayer.path = OverlayMaskGeometry.evenOddMaskPath(
+			bounds: bounds,
 			roundedExclusions: roundedExclusions
 		)
+		mask = exclusionMaskLayer
 	}
 }
 
