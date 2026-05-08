@@ -4,6 +4,7 @@
 //! the native-host reset. It intentionally contains no window toolkit, AppKit, or
 //! `winit` ownership.
 
+pub mod capture_frame;
 pub mod export;
 pub mod geometry;
 pub mod mosaic;
@@ -11,6 +12,10 @@ pub mod protocol;
 pub mod session;
 
 pub use self::{
+	capture_frame::{
+		CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind,
+		capture_frame_aspect_fill_crop_rect, capture_frame_plan,
+	},
 	export::{DisplayPointRect, frozen_display_crop_rect},
 	export::{RgbaExportImage, crop_export_image, crop_rgba_image, encode_png_lossless_fast},
 	geometry::{

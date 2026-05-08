@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 21u
+#define RSNAP_HOST_FFI_ABI_VERSION 22u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -262,6 +262,29 @@ typedef struct RsnapFloatRect {
 	double height;
 } RsnapFloatRect;
 
+typedef enum RsnapCaptureFrameSourceKind {
+	RSNAP_CAPTURE_FRAME_SOURCE_DRAG_REGION = 0,
+	RSNAP_CAPTURE_FRAME_SOURCE_WINDOW = 1,
+	RSNAP_CAPTURE_FRAME_SOURCE_FULL_SCREEN = 2,
+	RSNAP_CAPTURE_FRAME_SOURCE_SCROLL_CAPTURE = 3,
+	RSNAP_CAPTURE_FRAME_SOURCE_UNKNOWN = 4,
+} RsnapCaptureFrameSourceKind;
+
+typedef struct RsnapCaptureFrameShadow {
+	double offset_x;
+	double offset_y;
+	double blur;
+	double alpha;
+} RsnapCaptureFrameShadow;
+
+typedef struct RsnapCaptureFramePlan {
+	double canvas_width;
+	double canvas_height;
+	struct RsnapFloatRect image_rect;
+	double corner_radius;
+	struct RsnapCaptureFrameShadow shadows[3];
+} RsnapCaptureFramePlan;
+
 typedef enum RsnapScrollObserveOutcomeKind {
 	RSNAP_SCROLL_OBSERVE_NO_CHANGE = 0,
 	RSNAP_SCROLL_OBSERVE_PREVIEW_UPDATED = 1,
@@ -344,6 +367,20 @@ enum RsnapStatus rsnap_frozen_mosaic_light_privacy_patch_rgba(
 	uint32_t image_height,
 	struct RsnapFloatRect source_rect,
 	struct RsnapOwnedRgbaRegion *out_region
+);
+enum RsnapStatus rsnap_capture_frame_plan(
+	uint32_t image_width,
+	uint32_t image_height,
+	double screen_scale_factor,
+	enum RsnapCaptureFrameSourceKind source_kind,
+	struct RsnapCaptureFramePlan *out_plan
+);
+enum RsnapStatus rsnap_capture_frame_aspect_fill_crop_rect(
+	uint32_t source_width,
+	uint32_t source_height,
+	double destination_width,
+	double destination_height,
+	struct RsnapFloatRect *out_rect
 );
 enum RsnapStatus rsnap_session_enter_live(RsnapSessionHandle *handle);
 enum RsnapStatus rsnap_session_handle_host_event(

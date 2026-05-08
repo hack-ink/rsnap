@@ -375,6 +375,31 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected frozen mosaic privacy patch")
 		}
+		guard
+			let framePlan = try RsnapCaptureFramePlanner.plan(
+				imageWidth: 320,
+				imageHeight: 180,
+				screenScaleFactor: 2,
+				source: .window
+			),
+			framePlan.canvasSize == CGSize(width: 416, height: 276),
+			framePlan.imageRect == CGRect(x: 48, y: 48, width: 320, height: 180),
+			framePlan.cornerRadius == 9.9,
+			framePlan.shadows.count == 3,
+			framePlan.shadows[0].blur == 80,
+			framePlan.shadows[1].offset.height == -22
+		else {
+			fatalError("unexpected capture frame layout plan")
+		}
+		guard
+			try RsnapCaptureFramePlanner.aspectFillCropRect(
+				sourceWidth: 1600,
+				sourceHeight: 900,
+				destinationSize: CGSize(width: 1000, height: 1000)
+			) == CGRect(x: 350, y: 0, width: 900, height: 900)
+		else {
+			fatalError("unexpected capture frame aspect-fill crop rect")
+		}
 
 		print("rsnap-host-bridge probe ok")
 	}

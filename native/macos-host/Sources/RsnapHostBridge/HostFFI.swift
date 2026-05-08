@@ -70,6 +70,117 @@ public struct RGBARegionSnapshot: Equatable, Sendable {
 	}
 }
 
+public enum CaptureFrameSourceKind: UInt32, Equatable, Sendable {
+	case dragRegion = 0
+	case window = 1
+	case fullScreen = 2
+	case scrollCapture = 3
+	case unknown = 4
+
+	fileprivate var ffiKind: RsnapCaptureFrameSourceKind {
+		switch self {
+		case .dragRegion:
+			RSNAP_CAPTURE_FRAME_SOURCE_DRAG_REGION
+		case .window:
+			RSNAP_CAPTURE_FRAME_SOURCE_WINDOW
+		case .fullScreen:
+			RSNAP_CAPTURE_FRAME_SOURCE_FULL_SCREEN
+		case .scrollCapture:
+			RSNAP_CAPTURE_FRAME_SOURCE_SCROLL_CAPTURE
+		case .unknown:
+			RSNAP_CAPTURE_FRAME_SOURCE_UNKNOWN
+		}
+	}
+}
+
+public struct CaptureFrameShadowPlan: Equatable, Sendable {
+	public var offset: CGSize
+	public var blur: CGFloat
+	public var alpha: CGFloat
+}
+
+public struct CaptureFrameLayoutPlan: Equatable, Sendable {
+	public var canvasSize: CGSize
+	public var imageRect: CGRect
+	public var cornerRadius: CGFloat
+	public var shadows: [CaptureFrameShadowPlan]
+}
+
+public enum RsnapCaptureFramePlanner {
+	public static func plan(
+		imageWidth: Int,
+		imageHeight: Int,
+		screenScaleFactor: CGFloat,
+		source: CaptureFrameSourceKind
+	) throws -> CaptureFrameLayoutPlan? {
+		var outPlan = RsnapCaptureFramePlan()
+		let status = rsnap_capture_frame_plan(
+			UInt32(max(imageWidth, 0)),
+			UInt32(max(imageHeight, 0)),
+			Double(screenScaleFactor),
+			source.ffiKind,
+			&outPlan
+		)
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_INVALID_INPUT.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "resolving capture frame layout plan")
+
+		return CaptureFrameLayoutPlan(
+			canvasSize: CGSize(width: outPlan.canvas_width, height: outPlan.canvas_height),
+			imageRect: decode(rect: outPlan.image_rect),
+			cornerRadius: CGFloat(outPlan.corner_radius),
+			shadows: [
+				decode(shadow: outPlan.shadows.0),
+				decode(shadow: outPlan.shadows.1),
+				decode(shadow: outPlan.shadows.2),
+			]
+		)
+	}
+
+	public static func aspectFillCropRect(
+		sourceWidth: Int,
+		sourceHeight: Int,
+		destinationSize: CGSize
+	) throws -> CGRect? {
+		var outRect = RsnapFloatRect()
+		let status = rsnap_capture_frame_aspect_fill_crop_rect(
+			UInt32(max(sourceWidth, 0)),
+			UInt32(max(sourceHeight, 0)),
+			Double(destinationSize.width),
+			Double(destinationSize.height),
+			&outRect
+		)
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_INVALID_INPUT.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "resolving capture frame aspect-fill crop")
+
+		return decode(rect: outRect)
+	}
+
+	private static func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private static func decode(rect: RsnapFloatRect) -> CGRect {
+		CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
+	}
+
+	private static func decode(shadow: RsnapCaptureFrameShadow) -> CaptureFrameShadowPlan {
+		CaptureFrameShadowPlan(
+			offset: CGSize(width: shadow.offset_x, height: shadow.offset_y),
+			blur: CGFloat(shadow.blur),
+			alpha: CGFloat(shadow.alpha)
+		)
+	}
+}
+
 public enum RsnapExportEncoder {
 	public static func pngData(from image: RGBARegionSnapshot) throws -> Data {
 		var outPNG = RsnapOwnedBytes()

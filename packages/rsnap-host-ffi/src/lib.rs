@@ -13,9 +13,10 @@ use rsnap_overlay as _;
 
 use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
-	self, CaptureMode, CaptureSessionCore, CursorIntent, DisplayPointRect, GlobalRect,
-	HostEffectKind, HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints,
-	Rgb, RgbaExportImage, SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
+	self, CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind, CaptureMode,
+	CaptureSessionCore, CursorIntent, DisplayPointRect, GlobalRect, HostEffectKind, HostEvent,
+	HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints, Rgb, RgbaExportImage,
+	SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -24,7 +25,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 21;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 22;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -189,6 +190,52 @@ pub struct RsnapFloatRect {
 	pub width: f64,
 	/// Rectangle height in display points.
 	pub height: f64,
+}
+
+/// FFI-safe capture-frame source discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapCaptureFrameSourceKind {
+	/// User-dragged region capture.
+	DragRegion = 0,
+	/// Single-window capture.
+	Window = 1,
+	/// Full-screen capture.
+	FullScreen = 2,
+	/// Scroll-capture export.
+	ScrollCapture = 3,
+	/// Unknown or future capture source.
+	Unknown = 4,
+}
+
+/// FFI-safe capture-frame shadow pass.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapCaptureFrameShadow {
+	/// Horizontal shadow offset in output pixels.
+	pub offset_x: f64,
+	/// Vertical shadow offset in output pixels.
+	pub offset_y: f64,
+	/// Shadow blur radius in output pixels.
+	pub blur: f64,
+	/// Shadow alpha.
+	pub alpha: f64,
+}
+
+/// FFI-safe capture-frame drawing plan.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapCaptureFramePlan {
+	/// Canvas width in output pixels.
+	pub canvas_width: f64,
+	/// Canvas height in output pixels.
+	pub canvas_height: f64,
+	/// Image placement inside the canvas.
+	pub image_rect: RsnapFloatRect,
+	/// Rounded capture corner radius.
+	pub corner_radius: f64,
+	/// Ordered shadow passes behind the framed capture.
+	pub shadows: [RsnapCaptureFrameShadow; 3],
 }
 
 /// FFI-safe scroll-capture observation discriminator.
@@ -935,6 +982,72 @@ pub unsafe extern "C" fn rsnap_frozen_mosaic_light_privacy_patch_rgba(
 	RsnapStatus::Ok
 }
 
+/// Resolves capture-frame layout and shadow parameters.
+///
+/// # Safety
+///
+/// `out_plan` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_plan(
+	image_width: u32,
+	image_height: u32,
+	screen_scale_factor: f64,
+	source_kind: RsnapCaptureFrameSourceKind,
+	out_plan: *mut RsnapCaptureFramePlan,
+) -> RsnapStatus {
+	if out_plan.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(plan) = rsnap_capture_core::capture_frame_plan(
+		image_width,
+		image_height,
+		screen_scale_factor,
+		decode_capture_frame_source_kind(source_kind),
+	) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_plan, encode_capture_frame_plan(plan));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves the source crop rect for aspect-fill drawing.
+///
+/// # Safety
+///
+/// `out_rect` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_aspect_fill_crop_rect(
+	source_width: u32,
+	source_height: u32,
+	destination_width: f64,
+	destination_height: f64,
+	out_rect: *mut RsnapFloatRect,
+) -> RsnapStatus {
+	if out_rect.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(rect) = rsnap_capture_core::capture_frame_aspect_fill_crop_rect(
+		source_width,
+		source_height,
+		destination_width,
+		destination_height,
+	) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_rect, encode_float_rect(rect));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Returns the current C ABI version for the native host bridge.
 #[unsafe(no_mangle)]
 pub extern "C" fn rsnap_host_ffi_abi_version() -> u32 {
@@ -1526,8 +1639,41 @@ fn decode_float_rect(rect: RsnapFloatRect) -> DisplayPointRect {
 	DisplayPointRect::new(rect.x, rect.y, rect.width, rect.height)
 }
 
+fn encode_float_rect(rect: DisplayPointRect) -> RsnapFloatRect {
+	RsnapFloatRect { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+}
+
 fn encode_pixel_rect(rect: RectPoints) -> RsnapPixelRect {
 	RsnapPixelRect { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+}
+
+fn decode_capture_frame_source_kind(kind: RsnapCaptureFrameSourceKind) -> CaptureFrameSourceKind {
+	match kind {
+		RsnapCaptureFrameSourceKind::DragRegion => CaptureFrameSourceKind::DragRegion,
+		RsnapCaptureFrameSourceKind::Window => CaptureFrameSourceKind::Window,
+		RsnapCaptureFrameSourceKind::FullScreen => CaptureFrameSourceKind::FullScreen,
+		RsnapCaptureFrameSourceKind::ScrollCapture => CaptureFrameSourceKind::ScrollCapture,
+		RsnapCaptureFrameSourceKind::Unknown => CaptureFrameSourceKind::Unknown,
+	}
+}
+
+fn encode_capture_frame_plan(plan: CaptureFramePlan) -> RsnapCaptureFramePlan {
+	RsnapCaptureFramePlan {
+		canvas_width: plan.canvas_width,
+		canvas_height: plan.canvas_height,
+		image_rect: encode_float_rect(plan.image_rect),
+		corner_radius: plan.corner_radius,
+		shadows: plan.shadows.map(encode_capture_frame_shadow),
+	}
+}
+
+fn encode_capture_frame_shadow(shadow: CaptureFrameShadow) -> RsnapCaptureFrameShadow {
+	RsnapCaptureFrameShadow {
+		offset_x: shadow.offset_x,
+		offset_y: shadow.offset_y,
+		blur: shadow.blur,
+		alpha: shadow.alpha,
+	}
 }
 
 fn decode_session_config(config: RsnapSessionConfig) -> SessionConfig {
@@ -1977,11 +2123,12 @@ mod tests {
 	use std::ptr;
 
 	use crate::{
-		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCursorIntent,
-		RsnapFloatRect, RsnapHostEvent, RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind,
-		RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes,
-		RsnapPixelRect, RsnapPlatformTag, RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind,
-		RsnapSceneModel, RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
+		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCaptureFramePlan,
+		RsnapCaptureFrameSourceKind, RsnapCursorIntent, RsnapFloatRect, RsnapHostEvent,
+		RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind,
+		RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes, RsnapPixelRect, RsnapPlatformTag,
+		RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapSessionConfig,
+		RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
 	};
 	#[cfg(target_os = "macos")]
 	use crate::{RsnapOwnedRgbaRegion, RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
@@ -2289,6 +2436,42 @@ mod tests {
 		};
 
 		assert_eq!(status, RsnapStatus::Empty);
+	}
+
+	#[test]
+	fn ffi_capture_frame_plan_returns_core_geometry() {
+		let mut plan = RsnapCaptureFramePlan::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_plan(
+				320,
+				180,
+				2.0,
+				RsnapCaptureFrameSourceKind::Window,
+				&mut plan,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(plan.canvas_width, 416.0);
+		assert_eq!(plan.canvas_height, 276.0);
+		assert_eq!(
+			plan.image_rect,
+			RsnapFloatRect { x: 48.0, y: 48.0, width: 320.0, height: 180.0 }
+		);
+		assert_eq!(plan.corner_radius, 9.9);
+		assert_eq!(plan.shadows[0].blur, 80.0);
+		assert_eq!(plan.shadows[1].offset_y, -22.0);
+	}
+
+	#[test]
+	fn ffi_capture_frame_aspect_fill_crop_rect_returns_core_rect() {
+		let mut rect = RsnapFloatRect::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_aspect_fill_crop_rect(1600, 900, 1000.0, 1000.0, &mut rect)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(rect, RsnapFloatRect { x: 350.0, y: 0.0, width: 900.0, height: 900.0 });
 	}
 
 	#[cfg(target_os = "macos")]
