@@ -42,6 +42,7 @@ enum RsnapNativeHostKitProbe {
 		)
 		assertScrimRoundedExclusionKeepsCornersMasked()
 		assertScrimOverlappingRoundedExclusionStaysClear()
+		assertScrimExclusionPreservesExistingPixels()
 		assertRoundedExclusionMaskKeepsCornersFilled()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
@@ -277,6 +278,62 @@ enum RsnapNativeHostKitProbe {
 		}
 	}
 
+	private static func assertScrimExclusionPreservesExistingPixels() {
+		let width = 80
+		let height = 80
+		let byteCount = width * height * 4
+		let data = UnsafeMutablePointer<UInt8>.allocate(capacity: byteCount)
+		for index in stride(from: 0, to: byteCount, by: 4) {
+			data[index] = 24
+			data[index + 1] = 96
+			data[index + 2] = 180
+			data[index + 3] = 255
+		}
+		defer {
+			data.deinitialize(count: byteCount)
+			data.deallocate()
+		}
+		guard
+			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+			let context = CGContext(
+				data: data,
+				width: width,
+				height: height,
+				bitsPerComponent: 8,
+				bytesPerRow: width * 4,
+				space: colorSpace,
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
+			fatalError("could not create scrim preservation probe context")
+		}
+
+		let exclusionPath = CGPath(
+			roundedRect: CGRect(x: 10, y: 10, width: 40, height: 24),
+			cornerWidth: 12,
+			cornerHeight: 12,
+			transform: nil
+		)
+		OverlayMaskGeometry.drawScrim(
+			in: context,
+			bounds: CGRect(x: 0, y: 0, width: width, height: height),
+			focusRect: CGRect(x: 50, y: 50, width: 16, height: 16),
+			color: CGColor(red: 0, green: 0, blue: 0, alpha: 1),
+			pathExclusions: [exclusionPath]
+		)
+
+		guard
+			rgbaPixel(in: data, width: width, height: height, x: 30, yFromBottom: 22)
+				== (24, 96, 180, 255)
+		else {
+			fatalError("scrim exclusion cleared existing toolbar backing pixels")
+		}
+		guard opaquePixel(in: data, width: width, height: height, x: 4, yFromBottom: 4)
+		else {
+			fatalError("ordinary scrim pixel became transparent")
+		}
+	}
+
 	private static func assertRoundedExclusionMaskKeepsCornersFilled() {
 		let width = 80
 		let height = 80
@@ -359,6 +416,17 @@ enum RsnapNativeHostKitProbe {
 	) -> Bool {
 		let offset = (rowIndex(fromBottom: yFromBottom, height: height) * width + x) * 4
 		return data[offset + 3] < 20
+	}
+
+	private static func rgbaPixel(
+		in data: UnsafePointer<UInt8>,
+		width: Int,
+		height: Int,
+		x: Int,
+		yFromBottom: Int
+	) -> (UInt8, UInt8, UInt8, UInt8) {
+		let offset = (rowIndex(fromBottom: yFromBottom, height: height) * width + x) * 4
+		return (data[offset], data[offset + 1], data[offset + 2], data[offset + 3])
 	}
 
 	private static func rowIndex(fromBottom y: Int, height: Int) -> Int {
