@@ -65,7 +65,7 @@ APP_VERSION="${RSNAP_NATIVE_HOST_APP_VERSION:-}"
 if [[ -z "$APP_VERSION" ]]; then
 	APP_VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1)"
 fi
-APP_VERSION="${APP_VERSION:-0.1.5}"
+APP_VERSION="${APP_VERSION:-0.1.6}"
 
 require_liquid_glass_capable_swift_for_release() {
 	[[ "$SWIFT_CONFIGURATION" == "release" ]] || return 0
