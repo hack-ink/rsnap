@@ -24,7 +24,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 20;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 21;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -897,6 +897,39 @@ pub unsafe extern "C" fn rsnap_frozen_display_crop_rect(
 
 	unsafe {
 		ptr::write(out_rect, encode_pixel_rect(crop_rect));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Builds a light privacy mosaic patch as row-major RGBA bytes.
+///
+/// # Safety
+///
+/// `out_region` must be writable. The returned buffer must be released with
+/// `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_mosaic_light_privacy_patch_rgba(
+	image_width: u32,
+	image_height: u32,
+	source_rect: RsnapFloatRect,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(patch) = rsnap_capture_core::frozen_mosaic_light_privacy_patch(
+		image_width,
+		image_height,
+		decode_float_rect(source_rect),
+	) else {
+		return RsnapStatus::Empty;
+	};
+
+	let (width, height) = patch.dimensions();
+	unsafe {
+		ptr::write(out_region, owned_region_from_raw_rgba(width, height, patch.into_raw()));
 	}
 
 	RsnapStatus::Ok
@@ -1804,10 +1837,13 @@ fn encode_scroll_observe_result(
 }
 
 fn owned_region_from_scroll_image(image: ScrollStitchImage) -> RsnapOwnedRgbaRegion {
-	let mut rgba = image.rgba;
+	owned_region_from_raw_rgba(image.width, image.height, image.rgba)
+}
+
+fn owned_region_from_raw_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> RsnapOwnedRgbaRegion {
 	let out = RsnapOwnedRgbaRegion {
-		width: image.width,
-		height: image.height,
+		width,
+		height,
 		len: rgba.len(),
 		capacity: rgba.capacity(),
 		rgba: rgba.as_mut_ptr(),
@@ -2210,6 +2246,45 @@ mod tests {
 				RsnapFloatRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
 				RsnapFloatRect { x: 120.0, y: 10.0, width: 10.0, height: 20.0 },
 				&mut out_rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Empty);
+	}
+
+	#[test]
+	fn ffi_frozen_mosaic_light_privacy_patch_returns_rgba_region() {
+		let mut patch = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_frozen_mosaic_light_privacy_patch_rgba(
+				100,
+				80,
+				RsnapFloatRect { x: 4.2, y: 9.1, width: 28.4, height: 21.0 },
+				&mut patch,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(patch.width, 3);
+		assert_eq!(patch.height, 3);
+		assert_eq!(patch.len, 36);
+		let bytes = unsafe { std::slice::from_raw_parts(patch.rgba, patch.len) };
+		assert_eq!(&bytes[..12], &[211, 211, 211, 255, 205, 205, 205, 255, 202, 201, 199, 255]);
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut patch);
+		}
+	}
+
+	#[test]
+	fn ffi_frozen_mosaic_light_privacy_patch_returns_empty_for_outside_rect() {
+		let mut patch = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_frozen_mosaic_light_privacy_patch_rgba(
+				100,
+				80,
+				RsnapFloatRect { x: 120.0, y: 10.0, width: 10.0, height: 20.0 },
+				&mut patch,
 			)
 		};
 

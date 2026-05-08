@@ -158,8 +158,6 @@ private enum OcrCompletionSound {
 	}
 }
 
-private let frozenMosaicBlockSizePixels: CGFloat = 10.0
-
 package func frozenExportOverlayPoint(
 	_ point: CGPoint,
 	selection: CGRect,
@@ -249,93 +247,39 @@ package func scrollCaptureMinimapFrame(
 }
 
 private func makeFrozenMosaicPatch(from image: CGImage, sourceRect: CGRect) -> CGImage? {
-	let imageRect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-	let cropRect = sourceRect.integral.intersection(imageRect)
 	guard
-		!cropRect.isNull,
-		cropRect.width >= 1,
-		cropRect.height >= 1
-	else {
-		return nil
-	}
-
-	let pixelWidth = max(1, Int(ceil(cropRect.width / frozenMosaicBlockSizePixels)))
-	let pixelHeight = max(1, Int(ceil(cropRect.height / frozenMosaicBlockSizePixels)))
-	let bytesPerRow = pixelWidth * 4
-	let seedX = Int(floor(cropRect.minX / frozenMosaicBlockSizePixels))
-	let seedY = Int(floor(cropRect.minY / frozenMosaicBlockSizePixels))
-	guard
-		let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-		let context = CGContext(
-			data: nil,
-			width: pixelWidth,
-			height: pixelHeight,
-			bitsPerComponent: 8,
-			bytesPerRow: bytesPerRow,
-			space: colorSpace,
-			bitmapInfo: CGBitmapInfo.byteOrder32Big
-				.union(CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue))
-				.rawValue
+		let patch = try? RsnapExportEncoder.frozenMosaicLightPrivacyPatch(
+			imageWidth: image.width,
+			imageHeight: image.height,
+			sourceRect: sourceRect
 		)
 	else {
 		return nil
 	}
 
-	if let rawData = context.data {
-		let pixels = rawData.assumingMemoryBound(to: UInt8.self)
-		for y in 0..<pixelHeight {
-			for x in 0..<pixelWidth {
-				let offset = y * bytesPerRow + x * 4
-				let color = frozenMosaicLightPrivacyColor(
-					x: x + seedX,
-					y: y + seedY,
-					width: pixelWidth,
-					height: pixelHeight
-				)
-				pixels[offset] = color.red
-				pixels[offset + 1] = color.green
-				pixels[offset + 2] = color.blue
-				pixels[offset + 3] = 255
-			}
-		}
+	let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+	let bitmapInfo =
+		CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+	guard
+		let provider = CGDataProvider(data: patch.rgba as CFData),
+		let patchImage = CGImage(
+			width: patch.width,
+			height: patch.height,
+			bitsPerComponent: 8,
+			bitsPerPixel: 32,
+			bytesPerRow: patch.width * 4,
+			space: colorSpace,
+			bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo),
+			provider: provider,
+			decode: nil,
+			shouldInterpolate: false,
+			intent: .defaultIntent
+		)
+	else {
+		return nil
 	}
-	return context.makeImage()
-}
 
-private func frozenMosaicLightPrivacyColor(
-	x: Int,
-	y: Int,
-	width: Int,
-	height: Int
-) -> (red: UInt8, green: UInt8, blue: UInt8) {
-	let hash = frozenMosaicHash(x: x, y: y, width: width, height: height)
-	let groupHash = frozenMosaicHash(x: x / 2, y: y / 2, width: width, height: height)
-	let base: CGFloat = 0.74 + CGFloat(Int(groupHash & 3)) * 0.035
-	let variation = (CGFloat(Int((hash >> 8) & 3)) - 1.5) * 0.012
-	let warmth = CGFloat(Int((groupHash >> 3) & 1)) * 0.012
-	return (
-		frozenMosaicByte(base + variation + warmth),
-		frozenMosaicByte(base + variation + warmth * 0.5),
-		frozenMosaicByte(base + variation)
-	)
-}
-
-private func frozenMosaicHash(x: Int, y: Int, width: Int, height: Int) -> UInt32 {
-	var hash =
-		UInt32(truncatingIfNeeded: x) &* 0x45d9_f3b
-		^ UInt32(truncatingIfNeeded: y) &* 0x119d_e1f3
-		^ UInt32(truncatingIfNeeded: width) &* 0x27d4_eb2d
-		^ UInt32(truncatingIfNeeded: height) &* 0x1656_67b1
-	hash ^= hash >> 16
-	hash &*= 0x7feb_352d
-	hash ^= hash >> 15
-	hash &*= 0x846c_a68b
-	hash ^= hash >> 16
-	return hash
-}
-
-private func frozenMosaicByte(_ value: CGFloat) -> UInt8 {
-	UInt8((min(max(value, 0), 1) * 255).rounded())
+	return patchImage
 }
 
 @MainActor

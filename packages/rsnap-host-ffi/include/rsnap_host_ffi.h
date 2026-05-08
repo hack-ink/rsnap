@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 20u
+#define RSNAP_HOST_FFI_ABI_VERSION 21u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -338,6 +338,12 @@ enum RsnapStatus rsnap_frozen_display_crop_rect(
 	struct RsnapFloatRect display_frame,
 	struct RsnapFloatRect selection,
 	struct RsnapPixelRect *out_rect
+);
+enum RsnapStatus rsnap_frozen_mosaic_light_privacy_patch_rgba(
+	uint32_t image_width,
+	uint32_t image_height,
+	struct RsnapFloatRect source_rect,
+	struct RsnapOwnedRgbaRegion *out_region
 );
 enum RsnapStatus rsnap_session_enter_live(RsnapSessionHandle *handle);
 enum RsnapStatus rsnap_session_handle_host_event(

@@ -7,7 +7,10 @@ use std::{
 
 use color_eyre::eyre::{Result, ensure, eyre};
 use image::{Rgba, RgbaImage};
-use rsnap_capture_core::{RectPoints, crop_rgba_image, encode_png_lossless_fast};
+use rsnap_capture_core::{
+	DisplayPointRect, RectPoints, crop_rgba_image, encode_png_lossless_fast,
+	frozen_mosaic_light_privacy_patch,
+};
 use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
 	ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
@@ -35,6 +38,7 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	let image = build_export_fixture(1_440, 900);
 	verify_export_round_trip(&image)?;
 	verify_crop_exactness(&image)?;
+	verify_mosaic_patch()?;
 
 	results.push(time_case(
 		"export_png_lossless_fast_1440x900",
@@ -53,6 +57,22 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 
 		Ok(checksum_bytes(crop.as_raw()))
 	})?);
+
+	results.push(time_case(
+		"frozen_mosaic_light_privacy_patch_960x540",
+		1_000,
+		Duration::from_millis(120),
+		|| {
+			let patch = frozen_mosaic_light_privacy_patch(
+				1_440,
+				900,
+				DisplayPointRect::new(240.5, 160.25, 960.0, 540.0),
+			)
+			.ok_or_else(|| eyre!("mosaic patch performance fixture is invalid"))?;
+
+			Ok(checksum_bytes(patch.as_raw()))
+		},
+	)?);
 
 	Ok(())
 }
@@ -128,6 +148,20 @@ fn verify_crop_exactness(image: &RgbaImage) -> Result<()> {
 		crop.get_pixel(rect.width - 1, rect.height - 1)
 			== image.get_pixel(rect.x + rect.width - 1, rect.y + rect.height - 1),
 		"crop tail pixel mismatch"
+	);
+
+	Ok(())
+}
+
+fn verify_mosaic_patch() -> Result<()> {
+	let patch =
+		frozen_mosaic_light_privacy_patch(100, 80, DisplayPointRect::new(4.2, 9.1, 28.4, 21.0))
+			.ok_or_else(|| eyre!("mosaic patch fixture is invalid"))?;
+
+	ensure!(patch.dimensions() == (3, 3), "mosaic patch dimensions changed");
+	ensure!(
+		patch.as_raw()[..12] == [211, 211, 211, 255, 205, 205, 205, 255, 202, 201, 199, 255],
+		"mosaic patch seeded color bytes changed"
 	);
 
 	Ok(())

@@ -10,11 +10,13 @@ int main(void) {
 	RsnapSceneModel scene = {0};
 	RsnapScrollObserveResult scroll_result = {0};
 	RsnapOwnedRgbaRegion scroll_export = {0};
+	RsnapOwnedRgbaRegion mosaic_patch = {0};
 	RsnapOwnedBytes png_export = {0};
 	RsnapPixelRect crop = {.x = 0, .y = 0, .width = 2, .height = 2};
 	RsnapPixelRect display_crop = {0};
 	RsnapFloatRect display_frame = {.x = 0.0, .y = 0.0, .width = 1440.0, .height = 900.0};
 	RsnapFloatRect selection = {.x = 100.0, .y = 200.0, .width = 300.0, .height = 150.0};
+	RsnapFloatRect mosaic_source = {.x = 4.2, .y = 9.1, .width = 28.4, .height = 21.0};
 	uint8_t rgba[4 * 4 * 4] = {0};
 	RsnapSessionHandle *handle = rsnap_session_create(config);
 	RsnapScrollSessionHandle *scroll_handle =
@@ -74,6 +76,19 @@ int main(void) {
 		rsnap_session_destroy(handle);
 		return 14;
 	}
+	if (rsnap_frozen_mosaic_light_privacy_patch_rgba(100, 80, mosaic_source, &mosaic_patch) !=
+		RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 15;
+	}
+	if (mosaic_patch.width != 3 || mosaic_patch.height != 3 || mosaic_patch.len != 36) {
+		rsnap_owned_rgba_region_release(&mosaic_patch);
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 16;
+	}
+	rsnap_owned_rgba_region_release(&mosaic_patch);
 	if (rsnap_session_enter_live(handle) != RSNAP_STATUS_OK) {
 		rsnap_scroll_session_destroy(scroll_handle);
 		rsnap_session_destroy(handle);

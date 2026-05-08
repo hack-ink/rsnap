@@ -361,6 +361,20 @@ enum RsnapHostBridgeProbe {
 		guard emptyFrozenDisplayCrop == nil else {
 			fatalError("unexpected out-of-bounds frozen display crop rect")
 		}
+		guard
+			let mosaicPatch = try RsnapExportEncoder.frozenMosaicLightPrivacyPatch(
+				imageWidth: 100,
+				imageHeight: 80,
+				sourceRect: CGRect(x: 4.2, y: 9.1, width: 28.4, height: 21.0)
+			),
+			mosaicPatch.width == 3,
+			mosaicPatch.height == 3,
+			Array(mosaicPatch.rgba.prefix(12)) == [
+				211, 211, 211, 255, 205, 205, 205, 255, 202, 201, 199, 255,
+			]
+		else {
+			fatalError("unexpected frozen mosaic privacy patch")
+		}
 
 		print("rsnap-host-bridge probe ok")
 	}
