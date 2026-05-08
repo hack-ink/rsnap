@@ -70,6 +70,103 @@ public struct RGBARegionSnapshot: Equatable, Sendable {
 	}
 }
 
+public enum RsnapExportEncoder {
+	public static func pngData(from image: RGBARegionSnapshot) throws -> Data {
+		var outPNG = RsnapOwnedBytes()
+		let status = image.rgba.withUnsafeBytes { buffer -> RsnapStatus in
+			guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
+				return RSNAP_STATUS_INVALID_INPUT
+			}
+			return rsnap_export_rgba_to_png(
+				UInt32(max(image.width, 0)),
+				UInt32(max(image.height, 0)),
+				baseAddress,
+				image.rgba.count,
+				&outPNG
+			)
+		}
+		try requireOk(status, context: "encoding export PNG")
+
+		return try data(from: outPNG, context: "taking encoded export PNG")
+	}
+
+	public static func pngData(from image: RGBARegionSnapshot, crop: CGRect) throws -> Data {
+		let cropRect = try encode(crop: crop)
+		var outPNG = RsnapOwnedBytes()
+		let status = image.rgba.withUnsafeBytes { buffer -> RsnapStatus in
+			guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
+				return RSNAP_STATUS_INVALID_INPUT
+			}
+			return rsnap_export_rgba_crop_to_png(
+				UInt32(max(image.width, 0)),
+				UInt32(max(image.height, 0)),
+				baseAddress,
+				image.rgba.count,
+				cropRect,
+				&outPNG
+			)
+		}
+		try requireOk(status, context: "encoding cropped export PNG")
+
+		return try data(from: outPNG, context: "taking encoded cropped export PNG")
+	}
+
+	private static func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private static func encode(crop: CGRect) throws -> RsnapPixelRect {
+		let x = crop.origin.x.rounded()
+		let y = crop.origin.y.rounded()
+		let width = crop.width.rounded()
+		let height = crop.height.rounded()
+		let maxValue = CGFloat(UInt32.max)
+
+		guard
+			x >= 0,
+			y >= 0,
+			width >= 0,
+			height >= 0,
+			x <= maxValue,
+			y <= maxValue,
+			width <= maxValue,
+			height <= maxValue
+		else {
+			throw HostBridgeError.ffiStatus(
+				context: "encoding export crop rectangle",
+				code: RSNAP_STATUS_INVALID_INPUT.rawValue)
+		}
+
+		return RsnapPixelRect(
+			x: UInt32(x),
+			y: UInt32(y),
+			width: UInt32(width),
+			height: UInt32(height)
+		)
+	}
+
+	private static func data(from outPNG: RsnapOwnedBytes, context: String) throws -> Data {
+		guard outPNG.len > 0, let bytes = outPNG.bytes else {
+			throw HostBridgeError.ffiStatus(context: context, code: RSNAP_STATUS_EMPTY.rawValue)
+		}
+
+		let ownedBytes = UnsafeMutablePointer<RsnapOwnedBytes>.allocate(capacity: 1)
+		ownedBytes.initialize(to: outPNG)
+		return Data(
+			bytesNoCopy: bytes,
+			count: outPNG.len,
+			deallocator: .custom { _, _ in
+				rsnap_owned_bytes_release(ownedBytes)
+				ownedBytes.deinitialize(count: 1)
+				ownedBytes.deallocate()
+			}
+		)
+	}
+}
+
 public enum ScrollObserveOutcome: UInt32, Equatable, Sendable {
 	case noChange = 0
 	case previewUpdated = 1
