@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 22u
+#define RSNAP_HOST_FFI_ABI_VERSION 23u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -270,6 +270,27 @@ typedef enum RsnapCaptureFrameSourceKind {
 	RSNAP_CAPTURE_FRAME_SOURCE_UNKNOWN = 4,
 } RsnapCaptureFrameSourceKind;
 
+typedef enum RsnapCaptureFrameBackgroundKind {
+	RSNAP_CAPTURE_FRAME_BACKGROUND_SYSTEM_WALLPAPER = 0,
+	RSNAP_CAPTURE_FRAME_BACKGROUND_AURORA = 1,
+	RSNAP_CAPTURE_FRAME_BACKGROUND_GRAPHITE = 2,
+	RSNAP_CAPTURE_FRAME_BACKGROUND_LINEN = 3,
+} RsnapCaptureFrameBackgroundKind;
+
+typedef struct RsnapCaptureFrameColorStop {
+	double red;
+	double green;
+	double blue;
+	double alpha;
+} RsnapCaptureFrameColorStop;
+
+typedef struct RsnapCaptureFrameBackgroundPlan {
+	struct RsnapCaptureFrameColorStop colors[3];
+	double locations[3];
+	uint8_t prefers_wallpaper;
+	double wallpaper_overlay_alpha;
+} RsnapCaptureFrameBackgroundPlan;
+
 typedef struct RsnapCaptureFrameShadow {
 	double offset_x;
 	double offset_y;
@@ -381,6 +402,10 @@ enum RsnapStatus rsnap_capture_frame_aspect_fill_crop_rect(
 	double destination_width,
 	double destination_height,
 	struct RsnapFloatRect *out_rect
+);
+enum RsnapStatus rsnap_capture_frame_background_plan(
+	enum RsnapCaptureFrameBackgroundKind background_kind,
+	struct RsnapCaptureFrameBackgroundPlan *out_plan
 );
 enum RsnapStatus rsnap_session_enter_live(RsnapSessionHandle *handle);
 enum RsnapStatus rsnap_session_handle_host_event(
