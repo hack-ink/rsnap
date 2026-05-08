@@ -413,6 +413,23 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected capture frame background plan")
 		}
+		let autoCenterFrame = makeAutoCenterFrame(
+			width: 100,
+			height: 80,
+			content: CGRect(x: 30, y: 20, width: 24, height: 18)
+		)
+		guard
+			try RsnapAutoCenterPlanner.contentBounds(in: autoCenterFrame)
+				== CGRect(x: 30, y: 20, width: 24, height: 18),
+			RsnapAutoCenterPlanner.marginBalanceShiftPoints(
+				contentOriginPixels: 30,
+				contentSizePixels: 24,
+				cropSizePixels: 100,
+				captureSizePoints: 50
+			) == -4
+		else {
+			fatalError("unexpected auto-center plan")
+		}
 
 		print("rsnap-host-bridge probe ok")
 	}
@@ -455,6 +472,29 @@ enum RsnapHostBridgeProbe {
 				rgba.append(255)
 			}
 		}
+		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
+	}
+
+	private static func makeAutoCenterFrame(
+		width: Int,
+		height: Int,
+		content: CGRect
+	) -> RGBARegionSnapshot {
+		var rgba = Data(repeating: 180, count: width * height * 4)
+		for index in stride(from: 3, to: rgba.count, by: 4) {
+			rgba[index] = 255
+		}
+		let xRange = Int(content.minX)..<Int(content.maxX)
+		let yRange = Int(content.minY)..<Int(content.maxY)
+		for y in yRange {
+			for x in xRange {
+				let offset = (y * width + x) * 4
+				rgba[offset] = 24
+				rgba[offset + 1] = 32
+				rgba[offset + 2] = 40
+			}
+		}
+
 		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
 	}
 }
