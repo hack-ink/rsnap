@@ -24,8 +24,9 @@ package enum OverlayMaskGeometry {
 		pathExclusions: [CGPath] = []
 	) {
 		context.saveGState()
-		context.setFillColor(color)
 		context.clip(to: bounds)
+		context.beginTransparencyLayer(auxiliaryInfo: nil)
+		context.setFillColor(color)
 		context.addPath(
 			scrimPath(
 				bounds: bounds,
@@ -41,6 +42,7 @@ package enum OverlayMaskGeometry {
 			context.addPath(path)
 			context.fillPath()
 		}
+		context.endTransparencyLayer()
 		context.restoreGState()
 	}
 
