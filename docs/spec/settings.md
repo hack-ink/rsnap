@@ -75,6 +75,8 @@ Defines:
 - Output directory: `~/Desktop`.
 - Output filename prefix: `Rsnap`.
 - Output naming: timestamp.
+- Capture frame preset: Off.
+- Capture frame apply-to: window.
 - Frozen toolbar placement: bottom.
 - Frozen resize handles: outward.
 - Live HUD hint keycap: enabled.
@@ -87,6 +89,16 @@ Defines:
 - HUD tint hue: `0.6074879184861536`.
 - Loupe sample size: small.
 - Sparkle update mode: install in release builds.
+
+## Output Settings
+
+- The Output section must expose save location, filename prefix, naming, frame preset, and frame
+  applicability controls.
+- Frame Preset must be a single control with Off and the available background presets. Off disables
+  the capture frame effect without requiring a separate Export Frame toggle.
+- Apply To must be disabled while Frame Preset is Off.
+- Capture frame effects may apply to drag-region captures, window captures, or both. Fullscreen
+  captures are excluded from this setting.
 
 ## Permission Settings
 

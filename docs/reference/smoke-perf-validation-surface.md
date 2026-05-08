@@ -17,7 +17,7 @@ Depends on: `docs/runbook/performance-validation.md`; `docs/spec/performance.md`
 Covers: The current layer map for smoke/perf entrypoints, deterministic replay/bench surfaces,
 overlay runtime integration tests, and scroll-capture session semantics tests.
 
-Release exposure note: v0.1.6 hides user-facing scroll capture in the native host. The
+Release exposure note: v0.1.7 hides user-facing scroll capture in the native host. The
 scroll-capture entries in this reference describe retained internal validation assets, not a
 visible toolbar feature in that release.
 
