@@ -510,6 +510,12 @@ private struct OutputInspector: View {
 				value: settings.outputNaming.title,
 				symbolName: "number"
 			)
+			InspectorMetric(
+				title: "Frame",
+				value: settings.captureFrameEffectEnabled
+					? settings.captureFrameBackground.title : "Off",
+				symbolName: "photo.on.rectangle.angled"
+			)
 		}
 	}
 }
@@ -925,6 +931,54 @@ private struct OutputNamingPicker: View {
 		.padding(.horizontal, 1)
 		.frame(width: SettingsControlLayout.controlColumnWidth)
 		.segmentedGlassBackground()
+	}
+}
+
+private struct CaptureFrameBackgroundPicker: View {
+	let selection: CaptureFrameBackgroundPreference
+	let isEnabled: Bool
+	let onSelect: (CaptureFrameBackgroundPreference) -> Void
+
+	var body: some View {
+		Picker(
+			"",
+			selection: Binding(
+				get: { selection },
+				set: { value in onSelect(value) }
+			)
+		) {
+			ForEach(CaptureFrameBackgroundPreference.allCases, id: \.rawValue) { background in
+				Text(background.title).tag(background)
+			}
+		}
+		.labelsHidden()
+		.pickerStyle(.menu)
+		.frame(width: SettingsControlLayout.controlColumnWidth)
+		.disabled(!isEnabled)
+	}
+}
+
+private struct CaptureFrameApplicabilityPicker: View {
+	let selection: CaptureFrameApplicabilityPreference
+	let isEnabled: Bool
+	let onSelect: (CaptureFrameApplicabilityPreference) -> Void
+
+	var body: some View {
+		HStack(spacing: 8) {
+			ForEach(CaptureFrameApplicabilityPreference.allCases, id: \.rawValue) { target in
+				ModernSegmentButton(
+					title: target.title,
+					isSelected: selection == target,
+					isEnabled: isEnabled
+				) {
+					onSelect(target)
+				}
+			}
+		}
+		.padding(.horizontal, 1)
+		.frame(width: SettingsControlLayout.controlColumnWidth)
+		.segmentedGlassBackground()
+		.disabled(!isEnabled)
 	}
 }
 
@@ -1950,6 +2004,52 @@ private struct OutputSettingsPanel: View {
 				) {
 					OutputNamingPicker(selection: model.settings.outputNaming) { value in
 						model.update { $0.outputNaming = value }
+					}
+				}
+			}
+
+			VStack(spacing: 0) {
+				SettingsControlTile(
+					symbolName: "photo.on.rectangle.angled",
+					title: "Export frame",
+					subtitle: "Wallpaper canvas."
+				) {
+					Toggle(
+						"",
+						isOn: Binding(
+							get: { model.settings.captureFrameEffectEnabled },
+							set: { value in
+								model.update { $0.captureFrameEffectEnabled = value }
+							}
+						)
+					)
+					.labelsHidden()
+					.toggleStyle(SettingsToggleStyle())
+				}
+
+				SettingsControlTile(
+					symbolName: "rectangle.on.rectangle",
+					title: "Frame preset",
+					subtitle: "Background style."
+				) {
+					CaptureFrameBackgroundPicker(
+						selection: model.settings.captureFrameBackground,
+						isEnabled: model.settings.captureFrameEffectEnabled
+					) { value in
+						model.update { $0.captureFrameBackground = value }
+					}
+				}
+
+				SettingsControlTile(
+					symbolName: "viewfinder",
+					title: "Apply to",
+					subtitle: "Fullscreen excluded."
+				) {
+					CaptureFrameApplicabilityPicker(
+						selection: model.settings.captureFrameApplicability,
+						isEnabled: model.settings.captureFrameEffectEnabled
+					) { value in
+						model.update { $0.captureFrameApplicability = value }
 					}
 				}
 			}
