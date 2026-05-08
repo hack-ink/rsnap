@@ -84,41 +84,77 @@ private struct LiveChromeRefreshTelemetryKey: Equatable {
 
 @MainActor private let frozenEffectCIContext = CIContext(options: nil)
 
-private enum CaptureSuccessSound {
-	private static let candidatePaths = [
-		"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif",
-		"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Shutter.aif",
-	]
+private struct NativeHostFeedbackSound {
+	let sound: NSSound?
+	let playFailedEvent: String
 
-	static func load() -> NSSound? {
+	static func load(
+		candidatePaths: [String],
+		loadedEvent: String,
+		loadFailedEvent: String,
+		playFailedEvent: String
+	) -> Self {
 		for path in candidatePaths {
 			if let sound = NSSound(contentsOfFile: path, byReference: true) {
 				NativeHostTelemetry.lifecycleEvent(
-					"native_host.capture_success_sound_loaded",
+					loadedEvent,
 					detail: "path=\(path)"
 				)
-				return sound
+				return Self(sound: sound, playFailedEvent: playFailedEvent)
 			}
 		}
 
 		let candidates = candidatePaths.joined(separator: ",")
 		NativeHostTelemetry.lifecycleWarning(
-			"native_host.capture_success_sound_load_failed",
+			loadFailedEvent,
 			detail: "candidates=\(candidates)"
 		)
-		return nil
+		return Self(sound: nil, playFailedEvent: playFailedEvent)
 	}
 
-	static func play(_ sound: NSSound?) {
+	func play() {
 		guard let sound else {
 			return
 		}
 		sound.stop()
 		sound.currentTime = 0
 		if !sound.play() {
-			NativeHostTelemetry.lifecycleWarning(
-				"native_host.capture_success_sound_play_failed")
+			NativeHostTelemetry.lifecycleWarning(playFailedEvent)
 		}
+	}
+}
+
+private enum CaptureSuccessSound {
+	private static let candidatePaths = [
+		"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif",
+		"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Shutter.aif",
+	]
+
+	static func load() -> NativeHostFeedbackSound {
+		NativeHostFeedbackSound.load(
+			candidatePaths: candidatePaths,
+			loadedEvent: "native_host.capture_success_sound_loaded",
+			loadFailedEvent: "native_host.capture_success_sound_load_failed",
+			playFailedEvent: "native_host.capture_success_sound_play_failed"
+		)
+	}
+}
+
+private enum OcrCompletionSound {
+	private static let candidatePaths = [
+		"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/accessibility/Sticky Keys ON.aif",
+		"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/siri/jbl_confirm.caf",
+		"/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Volume Mount.aif",
+		"/System/Library/Sounds/Glass.aiff",
+	]
+
+	static func load() -> NativeHostFeedbackSound {
+		NativeHostFeedbackSound.load(
+			candidatePaths: candidatePaths,
+			loadedEvent: "native_host.ocr_completion_sound_loaded",
+			loadFailedEvent: "native_host.ocr_completion_sound_load_failed",
+			playFailedEvent: "native_host.ocr_completion_sound_play_failed"
+		)
 	}
 }
 
@@ -690,6 +726,7 @@ final class CaptureSessionController: NSObject {
 		qos: .userInitiated
 	)
 	private let captureSuccessSound = CaptureSuccessSound.load()
+	private let ocrCompletionSound = OcrCompletionSound.load()
 	private var session: RsnapHostSession?
 	private var overlayController: CaptureOverlayController?
 	private var frozenFrameLatchToken: FrozenFrameLatchToken?
@@ -2369,7 +2406,7 @@ final class CaptureSessionController: NSObject {
 			height: cgImage.height
 		)
 
-		CaptureSuccessSound.play(captureSuccessSound)
+		captureSuccessSound.play()
 
 		try session.send(report: .hostEffectCompleted(.copyCapture))
 		try session.send(report: .statusMessage("Copied capture to clipboard."))
@@ -2393,7 +2430,7 @@ final class CaptureSessionController: NSObject {
 		let outputURL = try nextOutputURL()
 		try pngData.write(to: outputURL, options: .atomic)
 
-		CaptureSuccessSound.play(captureSuccessSound)
+		captureSuccessSound.play()
 
 		try session.send(report: .hostEffectCompleted(.saveCapture))
 		try session.send(report: .statusMessage("Saved capture to \(outputURL.lastPathComponent)."))
@@ -2548,6 +2585,10 @@ final class CaptureSessionController: NSObject {
 			languageCorrection: usesLanguageCorrection,
 			automaticLanguageDetection: automaticallyDetectsLanguage
 		)
+
+		if !text.isEmpty {
+			ocrCompletionSound.play()
+		}
 
 		try session.send(report: .hostEffectCompleted(.recognizeText))
 		let message =
