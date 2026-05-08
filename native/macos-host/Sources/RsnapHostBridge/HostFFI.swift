@@ -146,6 +146,16 @@ public struct CaptureFrameBackgroundPlan: Equatable, Sendable {
 	}
 }
 
+public struct CaptureFrameWallpaperRequest: Equatable, Sendable {
+	public var targetPixelSize: Int
+	public var overlayAlpha: CGFloat
+
+	public init(targetPixelSize: Int, overlayAlpha: CGFloat) {
+		self.targetPixelSize = targetPixelSize
+		self.overlayAlpha = overlayAlpha
+	}
+}
+
 public struct CaptureFrameShadowPlan: Equatable, Sendable {
 	public var offset: CGSize
 	public var blur: CGFloat
@@ -240,6 +250,29 @@ public enum RsnapCaptureFramePlanner {
 			],
 			prefersWallpaper: outPlan.prefers_wallpaper != 0,
 			wallpaperOverlayAlpha: CGFloat(outPlan.wallpaper_overlay_alpha)
+		)
+	}
+
+	public static func wallpaperRequestPlan(
+		for background: CaptureFrameBackgroundKind,
+		destinationSize: CGSize
+	) throws -> CaptureFrameWallpaperRequest? {
+		var outRequest = RsnapCaptureFrameWallpaperRequest()
+		let status = rsnap_capture_frame_wallpaper_request_plan(
+			background.ffiKind,
+			Double(destinationSize.width),
+			Double(destinationSize.height),
+			&outRequest
+		)
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_EMPTY.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "resolving capture frame wallpaper request")
+
+		return CaptureFrameWallpaperRequest(
+			targetPixelSize: Int(outRequest.target_pixel_size),
+			overlayAlpha: CGFloat(outRequest.overlay_alpha)
 		)
 	}
 

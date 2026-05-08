@@ -15,10 +15,10 @@ use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
 	self, AutoCenterImageError, CaptureFrameBackgroundKind, CaptureFrameBackgroundPlan,
 	CaptureFrameColorStop, CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind,
-	CaptureMode, CaptureSessionCore, CursorIntent, DisplayPointRect, GlobalRect, HostEffectKind,
-	HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints, Rgb,
-	RgbaExportImage, ScrollMinimapInput, ScrollMinimapPlan, SessionConfig, ToolbarItemKind,
-	ToolbarItemModel, WindowRect,
+	CaptureFrameWallpaperRequest, CaptureMode, CaptureSessionCore, CursorIntent, DisplayPointRect,
+	GlobalRect, HostEffectKind, HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag,
+	RectPoints, Rgb, RgbaExportImage, ScrollMinimapInput, ScrollMinimapPlan, SessionConfig,
+	ToolbarItemKind, ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -27,7 +27,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 25;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 26;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -280,6 +280,16 @@ pub struct RsnapCaptureFramePlan {
 	pub corner_radius: f64,
 	/// Ordered shadow passes behind the framed capture.
 	pub shadows: [RsnapCaptureFrameShadow; 3],
+}
+
+/// FFI-safe platform wallpaper thumbnail request.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapCaptureFrameWallpaperRequest {
+	/// Maximum thumbnail dimension requested from the platform image pipeline.
+	pub target_pixel_size: u32,
+	/// Overlay alpha applied after drawing the wallpaper thumbnail.
+	pub overlay_alpha: f64,
 }
 
 /// FFI-safe scroll-capture minimap layout plan.
@@ -1130,6 +1140,37 @@ pub unsafe extern "C" fn rsnap_capture_frame_background_plan(
 	RsnapStatus::Ok
 }
 
+/// Resolves a platform wallpaper thumbnail request for a capture-frame destination.
+///
+/// # Safety
+///
+/// `out_request` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_wallpaper_request_plan(
+	background_kind: RsnapCaptureFrameBackgroundKind,
+	destination_width: f64,
+	destination_height: f64,
+	out_request: *mut RsnapCaptureFrameWallpaperRequest,
+) -> RsnapStatus {
+	if out_request.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(request) = rsnap_capture_core::capture_frame_wallpaper_request_plan(
+		decode_capture_frame_background_kind(background_kind),
+		destination_width,
+		destination_height,
+	) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_request, encode_capture_frame_wallpaper_request(request));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Resolves scroll-capture minimap layout and viewport marker geometry.
 ///
 /// # Safety
@@ -1894,6 +1935,15 @@ fn encode_capture_frame_shadow(shadow: CaptureFrameShadow) -> RsnapCaptureFrameS
 	}
 }
 
+fn encode_capture_frame_wallpaper_request(
+	request: CaptureFrameWallpaperRequest,
+) -> RsnapCaptureFrameWallpaperRequest {
+	RsnapCaptureFrameWallpaperRequest {
+		target_pixel_size: request.target_pixel_size,
+		overlay_alpha: request.overlay_alpha,
+	}
+}
+
 fn encode_scroll_minimap_plan(plan: ScrollMinimapPlan) -> RsnapScrollMinimapPlan {
 	RsnapScrollMinimapPlan {
 		frame: encode_float_rect(plan.frame),
@@ -2352,11 +2402,12 @@ mod tests {
 	use crate::{
 		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCaptureFrameBackgroundKind,
 		RsnapCaptureFrameBackgroundPlan, RsnapCaptureFrameColorStop, RsnapCaptureFramePlan,
-		RsnapCaptureFrameSourceKind, RsnapCursorIntent, RsnapFloatRect, RsnapHostEvent,
-		RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind,
-		RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes, RsnapPixelRect, RsnapPlatformTag,
-		RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan,
-		RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
+		RsnapCaptureFrameSourceKind, RsnapCaptureFrameWallpaperRequest, RsnapCursorIntent,
+		RsnapFloatRect, RsnapHostEvent, RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind,
+		RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes,
+		RsnapPixelRect, RsnapPlatformTag, RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind,
+		RsnapSceneModel, RsnapScrollMinimapPlan, RsnapSessionConfig, RsnapSessionHandle,
+		RsnapStatus, RsnapWindowRect,
 	};
 	#[cfg(target_os = "macos")]
 	use crate::{RsnapOwnedRgbaRegion, RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
@@ -2724,6 +2775,38 @@ mod tests {
 			plan.colors[2],
 			RsnapCaptureFrameColorStop { red: 0.56, green: 0.59, blue: 0.64, alpha: 1.0 }
 		);
+	}
+
+	#[test]
+	fn ffi_capture_frame_wallpaper_request_returns_core_thumbnail_policy() {
+		let mut request = RsnapCaptureFrameWallpaperRequest::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_wallpaper_request_plan(
+				RsnapCaptureFrameBackgroundKind::SystemWallpaper,
+				1535.2,
+				996.0,
+				&mut request,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(request.target_pixel_size, 1536);
+		assert_eq!(request.overlay_alpha, 0.10);
+	}
+
+	#[test]
+	fn ffi_capture_frame_wallpaper_request_returns_empty_for_gradient_background() {
+		let mut request = RsnapCaptureFrameWallpaperRequest::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_wallpaper_request_plan(
+				RsnapCaptureFrameBackgroundKind::Aurora,
+				1536.0,
+				996.0,
+				&mut request,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Empty);
 	}
 
 	#[test]

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 25u
+#define RSNAP_HOST_FFI_ABI_VERSION 26u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -306,6 +306,11 @@ typedef struct RsnapCaptureFramePlan {
 	struct RsnapCaptureFrameShadow shadows[3];
 } RsnapCaptureFramePlan;
 
+typedef struct RsnapCaptureFrameWallpaperRequest {
+	uint32_t target_pixel_size;
+	double overlay_alpha;
+} RsnapCaptureFrameWallpaperRequest;
+
 typedef struct RsnapScrollMinimapPlan {
 	struct RsnapFloatRect frame;
 	struct RsnapFloatRect image_frame;
@@ -413,6 +418,12 @@ enum RsnapStatus rsnap_capture_frame_aspect_fill_crop_rect(
 enum RsnapStatus rsnap_capture_frame_background_plan(
 	enum RsnapCaptureFrameBackgroundKind background_kind,
 	struct RsnapCaptureFrameBackgroundPlan *out_plan
+);
+enum RsnapStatus rsnap_capture_frame_wallpaper_request_plan(
+	enum RsnapCaptureFrameBackgroundKind background_kind,
+	double destination_width,
+	double destination_height,
+	struct RsnapCaptureFrameWallpaperRequest *out_request
 );
 enum RsnapStatus rsnap_scroll_minimap_plan(
 	struct RsnapFloatRect selection,

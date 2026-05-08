@@ -414,6 +414,18 @@ enum RsnapHostBridgeProbe {
 			fatalError("unexpected capture frame background plan")
 		}
 		guard
+			try RsnapCaptureFramePlanner.wallpaperRequestPlan(
+				for: .systemWallpaper,
+				destinationSize: CGSize(width: 1535.2, height: 996)
+			) == CaptureFrameWallpaperRequest(targetPixelSize: 1536, overlayAlpha: 0.10),
+			try RsnapCaptureFramePlanner.wallpaperRequestPlan(
+				for: .aurora,
+				destinationSize: CGSize(width: 1536, height: 996)
+			) == nil
+		else {
+			fatalError("unexpected capture frame wallpaper request")
+		}
+		guard
 			let minimapPlan = try RsnapScrollMinimapPlanner.plan(
 				selection: CGRect(x: 100, y: 100, width: 100, height: 100),
 				exportSize: CGSize(width: 100, height: 200),

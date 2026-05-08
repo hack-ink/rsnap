@@ -16,6 +16,7 @@ int main(void) {
 	RsnapPixelRect display_crop = {0};
 	RsnapCaptureFramePlan frame_plan = {0};
 	RsnapCaptureFrameBackgroundPlan background_plan = {0};
+	RsnapCaptureFrameWallpaperRequest wallpaper_request = {0};
 	RsnapScrollMinimapPlan minimap_plan = {0};
 	RsnapPixelRect auto_center_rect = {0};
 	RsnapFloatRect aspect_crop = {0};
@@ -146,6 +147,22 @@ int main(void) {
 		rsnap_scroll_session_destroy(scroll_handle);
 		rsnap_session_destroy(handle);
 		return 22;
+	}
+	if (rsnap_capture_frame_wallpaper_request_plan(
+			RSNAP_CAPTURE_FRAME_BACKGROUND_SYSTEM_WALLPAPER,
+			1535.2,
+			996.0,
+			&wallpaper_request
+		) != RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 27;
+	}
+	if (wallpaper_request.target_pixel_size != 1536 ||
+		wallpaper_request.overlay_alpha != 0.10) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 28;
 	}
 	if (rsnap_scroll_minimap_plan(
 			(RsnapFloatRect){.x = 100.0, .y = 100.0, .width = 100.0, .height = 100.0},

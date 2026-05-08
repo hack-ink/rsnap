@@ -102,15 +102,18 @@ package enum CaptureFrameEffectRenderer {
 			return
 		}
 
-		if plan.prefersWallpaper,
+		if let wallpaperRequest = captureFrameWallpaperRequest(
+			for: background,
+			destinationSize: rect.size
+		),
 			let wallpaper = systemWallpaperImage(
 				screen: screen,
-				targetPixelSize: Int(max(rect.width, rect.height).rounded(.up))
+				targetPixelSize: wallpaperRequest.targetPixelSize
 			)
 		{
 			drawAspectFill(wallpaper, in: rect, context: context)
 			context.setFillColor(
-				NSColor.black.withAlphaComponent(plan.wallpaperOverlayAlpha).cgColor)
+				NSColor.black.withAlphaComponent(wallpaperRequest.overlayAlpha).cgColor)
 			context.fill(rect)
 			return
 		}
@@ -266,6 +269,16 @@ package enum CaptureFrameEffectRenderer {
 		for background: CaptureFrameBackgroundPreference
 	) -> CaptureFrameBackgroundPlan? {
 		try? RsnapCaptureFramePlanner.backgroundPlan(for: background.planKind)
+	}
+
+	private static func captureFrameWallpaperRequest(
+		for background: CaptureFrameBackgroundPreference,
+		destinationSize: CGSize
+	) -> CaptureFrameWallpaperRequest? {
+		try? RsnapCaptureFramePlanner.wallpaperRequestPlan(
+			for: background.planKind,
+			destinationSize: destinationSize
+		)
 	}
 }
 
