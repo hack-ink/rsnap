@@ -134,6 +134,27 @@ public enum RsnapExportEncoder {
 		return decode(pixelRect: outRect)
 	}
 
+	public static func frozenMosaicLightPrivacyPatch(
+		imageWidth: Int,
+		imageHeight: Int,
+		sourceRect: CGRect
+	) throws -> RGBARegionSnapshot? {
+		var outRegion = RsnapOwnedRgbaRegion()
+		let status = rsnap_frozen_mosaic_light_privacy_patch_rgba(
+			UInt32(max(imageWidth, 0)),
+			UInt32(max(imageHeight, 0)),
+			encode(rect: sourceRect),
+			&outRegion
+		)
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_EMPTY.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "rendering frozen mosaic privacy patch")
+
+		return rgbaSnapshot(from: outRegion)
+	}
+
 	private static func requireOk(_ status: RsnapStatus, context: String) throws {
 		let code = rsnap_status_code(status)
 		if code != 0 {
@@ -205,6 +226,26 @@ public enum RsnapExportEncoder {
 				ownedBytes.deallocate()
 			}
 		)
+	}
+
+	private static func rgbaSnapshot(from outRegion: RsnapOwnedRgbaRegion) -> RGBARegionSnapshot? {
+		guard outRegion.len > 0, let rgba = outRegion.rgba else {
+			return nil
+		}
+
+		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
+		ownedRegion.initialize(to: outRegion)
+		let data = Data(
+			bytesNoCopy: rgba,
+			count: outRegion.len,
+			deallocator: .custom { _, _ in
+				rsnap_owned_rgba_region_release(ownedRegion)
+				ownedRegion.deinitialize(count: 1)
+				ownedRegion.deallocate()
+			}
+		)
+		return RGBARegionSnapshot(
+			width: Int(outRegion.width), height: Int(outRegion.height), rgba: data)
 	}
 }
 
