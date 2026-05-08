@@ -330,8 +330,40 @@ enum RsnapHostBridgeProbe {
 		guard let scrollExport = try scrollSession.exportImage(), scrollExport.height == 120 else {
 			fatalError("unexpected scroll export image")
 		}
+		let png = try RsnapExportEncoder.pngData(from: scrollExport)
+		guard let fullPNGDimensions = pngDimensions(png), fullPNGDimensions == (16, 120) else {
+			fatalError("unexpected PNG export dimensions")
+		}
+		let croppedPNG = try RsnapExportEncoder.pngData(
+			from: scrollExport,
+			crop: CGRect(x: 1, y: 2, width: 4, height: 8)
+		)
+		guard let croppedPNGDimensions = pngDimensions(croppedPNG),
+		      croppedPNGDimensions == (4, 8) else {
+			fatalError("unexpected cropped PNG export dimensions")
+		}
 
 		print("rsnap-host-bridge probe ok")
+	}
+
+	private static func pngDimensions(_ data: Data) -> (Int, Int)? {
+		let bytes = [UInt8](data)
+		guard
+			bytes.count >= 24,
+			bytes[0..<8].elementsEqual([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+		else {
+			return nil
+		}
+		let width = Int(UInt32(bytes[16]) << 24)
+			| Int(UInt32(bytes[17]) << 16)
+			| Int(UInt32(bytes[18]) << 8)
+			| Int(UInt32(bytes[19]))
+		let height = Int(UInt32(bytes[20]) << 24)
+			| Int(UInt32(bytes[21]) << 16)
+			| Int(UInt32(bytes[22]) << 8)
+			| Int(UInt32(bytes[23]))
+
+		return (width, height)
 	}
 
 	private static func makeScrollFrame(

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 18u
+#define RSNAP_HOST_FFI_ABI_VERSION 19u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -242,6 +242,19 @@ typedef struct RsnapOwnedRgbaRegion {
 	uint8_t *rgba;
 } RsnapOwnedRgbaRegion;
 
+typedef struct RsnapOwnedBytes {
+	size_t len;
+	size_t capacity;
+	uint8_t *bytes;
+} RsnapOwnedBytes;
+
+typedef struct RsnapPixelRect {
+	uint32_t x;
+	uint32_t y;
+	uint32_t width;
+	uint32_t height;
+} RsnapPixelRect;
+
 typedef enum RsnapScrollObserveOutcomeKind {
 	RSNAP_SCROLL_OBSERVE_NO_CHANGE = 0,
 	RSNAP_SCROLL_OBSERVE_PREVIEW_UPDATED = 1,
@@ -297,6 +310,21 @@ enum RsnapStatus rsnap_scroll_session_undo_last_append(
 	RsnapScrollSessionHandle *handle,
 	struct RsnapScrollObserveResult *out_result
 );
+enum RsnapStatus rsnap_export_rgba_to_png(
+	uint32_t width,
+	uint32_t height,
+	const uint8_t *rgba,
+	size_t rgba_len,
+	struct RsnapOwnedBytes *out_png
+);
+enum RsnapStatus rsnap_export_rgba_crop_to_png(
+	uint32_t width,
+	uint32_t height,
+	const uint8_t *rgba,
+	size_t rgba_len,
+	struct RsnapPixelRect crop_rect,
+	struct RsnapOwnedBytes *out_png
+);
 enum RsnapStatus rsnap_session_enter_live(RsnapSessionHandle *handle);
 enum RsnapStatus rsnap_session_handle_host_event(
 	RsnapSessionHandle *handle,
@@ -345,6 +373,7 @@ enum RsnapStatus rsnap_live_sampler_take_latest_monitor_rgba(
 	struct RsnapOwnedRgbaRegion *out_region
 );
 void rsnap_owned_rgba_region_release(struct RsnapOwnedRgbaRegion *region);
+void rsnap_owned_bytes_release(struct RsnapOwnedBytes *bytes);
 
 #ifdef __cplusplus
 }

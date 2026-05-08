@@ -14,8 +14,8 @@ use rsnap_overlay as _;
 use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
 	self, CaptureMode, CaptureSessionCore, CursorIntent, GlobalRect, HostEffectKind, HostEvent,
-	HostReport, HostRequest, PermissionKind, PlatformTag, Rgb, SessionConfig, ToolbarItemKind,
-	ToolbarItemModel, WindowRect,
+	HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints, Rgb, RgbaExportImage,
+	SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -24,7 +24,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 18;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 19;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -144,6 +144,37 @@ impl Default for RsnapOwnedRgbaRegion {
 	fn default() -> Self {
 		Self { width: 0, height: 0, len: 0, capacity: 0, rgba: ptr::null_mut() }
 	}
+}
+
+/// FFI-safe owned byte buffer retained by Rust until explicitly freed.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RsnapOwnedBytes {
+	/// Byte count in `bytes`.
+	pub len: usize,
+	/// Reserved buffer capacity in bytes.
+	pub capacity: usize,
+	/// Owned byte buffer.
+	pub bytes: *mut u8,
+}
+impl Default for RsnapOwnedBytes {
+	fn default() -> Self {
+		Self { len: 0, capacity: 0, bytes: ptr::null_mut() }
+	}
+}
+
+/// FFI-safe pixel-space rectangle.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RsnapPixelRect {
+	/// Left coordinate in pixels.
+	pub x: u32,
+	/// Top coordinate in pixels.
+	pub y: u32,
+	/// Rectangle width in pixels.
+	pub width: u32,
+	/// Rectangle height in pixels.
+	pub height: u32,
 }
 
 /// FFI-safe scroll-capture observation discriminator.
@@ -748,6 +779,82 @@ pub unsafe extern "C" fn rsnap_scroll_session_undo_last_append(
 	RsnapStatus::Ok
 }
 
+/// Encodes a full RGBA export image as lossless PNG through the Rust product core.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data, and `out_png` must be writable. The returned buffer must
+/// be released with `rsnap_owned_bytes_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_export_rgba_to_png(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	out_png: *mut RsnapOwnedBytes,
+) -> RsnapStatus {
+	if out_png.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(image) = RgbaExportImage::from_raw(width, height, bytes.to_vec()) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(png) = image.to_png_bytes() else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_png, owned_bytes_from_vec(png));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Encodes a pixel-space RGBA export crop as lossless PNG through the Rust product core.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data, and `out_png` must be writable. The returned buffer must
+/// be released with `rsnap_owned_bytes_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_export_rgba_crop_to_png(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	crop_rect: RsnapPixelRect,
+	out_png: *mut RsnapOwnedBytes,
+) -> RsnapStatus {
+	if out_png.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(image) = RgbaExportImage::from_raw(width, height, bytes.to_vec()) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(cropped) = image.crop(decode_pixel_rect(crop_rect)) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(png) = cropped.to_png_bytes() else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_png, owned_bytes_from_vec(png));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Returns the current C ABI version for the native host bridge.
 #[unsafe(no_mangle)]
 pub extern "C" fn rsnap_host_ffi_abi_version() -> u32 {
@@ -1283,6 +1390,25 @@ pub unsafe extern "C" fn rsnap_owned_rgba_region_release(region: *mut RsnapOwned
 	*region = RsnapOwnedRgbaRegion::default();
 }
 
+/// Releases a byte buffer previously returned by an export function.
+///
+/// # Safety
+///
+/// `bytes` must point to a struct returned by a `*_to_png` function that has not already
+/// been released, or be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_owned_bytes_release(bytes: *mut RsnapOwnedBytes) {
+	let Some(bytes) = (unsafe { bytes.as_mut() }) else {
+		return;
+	};
+
+	if !bytes.bytes.is_null() && bytes.capacity > 0 {
+		let _ = unsafe { Vec::from_raw_parts(bytes.bytes, bytes.len, bytes.capacity) };
+	}
+
+	*bytes = RsnapOwnedBytes::default();
+}
+
 unsafe fn handle_mut<'a>(handle: *mut RsnapSessionHandle) -> Option<&'a mut RsnapSessionHandle> {
 	unsafe { handle.as_mut() }
 }
@@ -1310,6 +1436,10 @@ unsafe fn rgba_bytes<'a>(rgba: *const u8, rgba_len: usize) -> Option<&'a [u8]> {
 	}
 
 	Some(unsafe { slice::from_raw_parts(rgba, rgba_len) })
+}
+
+fn decode_pixel_rect(rect: RsnapPixelRect) -> RectPoints {
+	RectPoints::new(rect.x, rect.y, rect.width, rect.height)
 }
 
 fn decode_session_config(config: RsnapSessionConfig) -> SessionConfig {
@@ -1633,6 +1763,15 @@ fn owned_region_from_scroll_image(image: ScrollStitchImage) -> RsnapOwnedRgbaReg
 	out
 }
 
+fn owned_bytes_from_vec(mut bytes: Vec<u8>) -> RsnapOwnedBytes {
+	let out =
+		RsnapOwnedBytes { len: bytes.len(), capacity: bytes.capacity(), bytes: bytes.as_mut_ptr() };
+
+	mem::forget(bytes);
+
+	out
+}
+
 fn decode_effect_kind(effect_kind: u32) -> HostEffectKind {
 	match effect_kind {
 		kind if kind == RsnapHostEffectKind::CopyCapture as u32 => HostEffectKind::CopyCapture,
@@ -1749,9 +1888,9 @@ mod tests {
 	use crate::{
 		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCursorIntent,
 		RsnapHostEvent, RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind,
-		RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect, RsnapPlatformTag,
-		RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapSessionConfig,
-		RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
+		RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes,
+		RsnapPixelRect, RsnapPlatformTag, RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind,
+		RsnapSceneModel, RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
 	};
 	#[cfg(target_os = "macos")]
 	use crate::{RsnapOwnedRgbaRegion, RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
@@ -1764,7 +1903,6 @@ mod tests {
 		}
 	}
 
-	#[cfg(target_os = "macos")]
 	fn scroll_frame(width: u32, height: u32, top_row: u32) -> Vec<u8> {
 		let mut rgba = Vec::with_capacity((width * height * 4) as usize);
 
@@ -1780,6 +1918,14 @@ mod tests {
 		}
 
 		rgba
+	}
+
+	fn png_dimensions(png: &[u8]) -> (u32, u32) {
+		assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+		let width = u32::from_be_bytes(png[16..20].try_into().expect("PNG width bytes"));
+		let height = u32::from_be_bytes(png[20..24].try_into().expect("PNG height bytes"));
+
+		(width, height)
 	}
 
 	#[test]
@@ -1906,6 +2052,80 @@ mod tests {
 		let handle: *mut RsnapSessionHandle = ptr::null_mut();
 
 		unsafe { crate::rsnap_session_destroy(handle) };
+	}
+
+	#[test]
+	fn ffi_export_rgba_to_png_returns_owned_png() {
+		let rgba = scroll_frame(4, 4, 0);
+		let mut png = RsnapOwnedBytes::default();
+
+		assert_eq!(
+			unsafe { crate::rsnap_export_rgba_to_png(4, 4, rgba.as_ptr(), rgba.len(), &mut png) },
+			RsnapStatus::Ok
+		);
+		assert!(png.len > 0);
+		assert_eq!(
+			png_dimensions(unsafe { std::slice::from_raw_parts(png.bytes, png.len) }),
+			(4, 4)
+		);
+
+		unsafe {
+			crate::rsnap_owned_bytes_release(&mut png);
+		}
+		assert!(png.bytes.is_null());
+		assert_eq!(png.len, 0);
+		assert_eq!(png.capacity, 0);
+	}
+
+	#[test]
+	fn ffi_export_rgba_crop_to_png_crops_dimensions() {
+		let rgba = scroll_frame(4, 4, 0);
+		let mut png = RsnapOwnedBytes::default();
+		let crop = RsnapPixelRect { x: 1, y: 0, width: 2, height: 3 };
+
+		assert_eq!(
+			unsafe {
+				crate::rsnap_export_rgba_crop_to_png(
+					4,
+					4,
+					rgba.as_ptr(),
+					rgba.len(),
+					crop,
+					&mut png,
+				)
+			},
+			RsnapStatus::Ok
+		);
+		assert_eq!(
+			png_dimensions(unsafe { std::slice::from_raw_parts(png.bytes, png.len) }),
+			(2, 3)
+		);
+
+		unsafe {
+			crate::rsnap_owned_bytes_release(&mut png);
+		}
+	}
+
+	#[test]
+	fn ffi_export_rgba_crop_to_png_rejects_out_of_bounds_crop() {
+		let rgba = scroll_frame(4, 4, 0);
+		let mut png = RsnapOwnedBytes::default();
+		let crop = RsnapPixelRect { x: 3, y: 3, width: 2, height: 2 };
+
+		assert_eq!(
+			unsafe {
+				crate::rsnap_export_rgba_crop_to_png(
+					4,
+					4,
+					rgba.as_ptr(),
+					rgba.len(),
+					crop,
+					&mut png,
+				)
+			},
+			RsnapStatus::InvalidInput
+		);
+		assert!(png.bytes.is_null());
 	}
 
 	#[cfg(target_os = "macos")]
