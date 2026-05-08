@@ -8,6 +8,7 @@ pub mod auto_center;
 pub mod capture_frame;
 pub mod export;
 pub mod geometry;
+pub mod minimap;
 pub mod mosaic;
 pub mod protocol;
 pub mod session;
@@ -28,6 +29,7 @@ pub use self::{
 		GlobalPoint, GlobalRect, MonitorRect, MonitorRectPoints, RectPoints, Rgb, WindowHit,
 		WindowRect,
 	},
+	minimap::{ScrollMinimapInput, ScrollMinimapPlan, scroll_minimap_plan},
 	mosaic::frozen_mosaic_light_privacy_patch,
 	protocol::{
 		CaptureMode, CursorIntent, DeferredTextRecognitionOutcome,

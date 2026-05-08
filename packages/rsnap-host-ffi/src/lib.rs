@@ -17,7 +17,8 @@ use rsnap_capture_core::{
 	CaptureFrameColorStop, CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind,
 	CaptureMode, CaptureSessionCore, CursorIntent, DisplayPointRect, GlobalRect, HostEffectKind,
 	HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints, Rgb,
-	RgbaExportImage, SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
+	RgbaExportImage, ScrollMinimapInput, ScrollMinimapPlan, SessionConfig, ToolbarItemKind,
+	ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -26,7 +27,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 24;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 25;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -279,6 +280,20 @@ pub struct RsnapCaptureFramePlan {
 	pub corner_radius: f64,
 	/// Ordered shadow passes behind the framed capture.
 	pub shadows: [RsnapCaptureFrameShadow; 3],
+}
+
+/// FFI-safe scroll-capture minimap layout plan.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapScrollMinimapPlan {
+	/// Outer minimap frame.
+	pub frame: RsnapFloatRect,
+	/// Preview image frame inside `frame`.
+	pub image_frame: RsnapFloatRect,
+	/// Non-zero when `viewport_frame` contains a visible marker.
+	pub has_viewport_frame: u8,
+	/// Viewport marker frame inside `image_frame`.
+	pub viewport_frame: RsnapFloatRect,
 }
 
 /// FFI-safe scroll-capture observation discriminator.
@@ -1115,6 +1130,54 @@ pub unsafe extern "C" fn rsnap_capture_frame_background_plan(
 	RsnapStatus::Ok
 }
 
+/// Resolves scroll-capture minimap layout and viewport marker geometry.
+///
+/// # Safety
+///
+/// `out_plan` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_scroll_minimap_plan(
+	selection: RsnapFloatRect,
+	export_width: f64,
+	export_height: f64,
+	bounds: RsnapFloatRect,
+	preferred_width: f64,
+	minimum_width: f64,
+	gap: f64,
+	margin: f64,
+	image_inset: f64,
+	viewport_top_pixels: f64,
+	viewport_height_pixels: f64,
+	out_plan: *mut RsnapScrollMinimapPlan,
+) -> RsnapStatus {
+	if out_plan.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let input = ScrollMinimapInput {
+		selection: decode_float_rect(selection),
+		export_width,
+		export_height,
+		bounds: decode_float_rect(bounds),
+		preferred_width,
+		minimum_width,
+		gap,
+		margin,
+		image_inset,
+		viewport_top_pixels,
+		viewport_height_pixels,
+	};
+	let Some(plan) = rsnap_capture_core::scroll_minimap_plan(input) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_plan, encode_scroll_minimap_plan(plan));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Detects salient content bounds for frozen auto-center from row-major RGBA.
 ///
 /// # Safety
@@ -1831,6 +1894,15 @@ fn encode_capture_frame_shadow(shadow: CaptureFrameShadow) -> RsnapCaptureFrameS
 	}
 }
 
+fn encode_scroll_minimap_plan(plan: ScrollMinimapPlan) -> RsnapScrollMinimapPlan {
+	RsnapScrollMinimapPlan {
+		frame: encode_float_rect(plan.frame),
+		image_frame: encode_float_rect(plan.image_frame),
+		has_viewport_frame: u8::from(plan.viewport_frame.is_some()),
+		viewport_frame: plan.viewport_frame.map_or_else(RsnapFloatRect::default, encode_float_rect),
+	}
+}
+
 fn decode_session_config(config: RsnapSessionConfig) -> SessionConfig {
 	SessionConfig {
 		platform: match config.platform {
@@ -2283,8 +2355,8 @@ mod tests {
 		RsnapCaptureFrameSourceKind, RsnapCursorIntent, RsnapFloatRect, RsnapHostEvent,
 		RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind,
 		RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes, RsnapPixelRect, RsnapPlatformTag,
-		RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapSessionConfig,
-		RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
+		RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan,
+		RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
 	};
 	#[cfg(target_os = "macos")]
 	use crate::{RsnapOwnedRgbaRegion, RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
@@ -2652,6 +2724,62 @@ mod tests {
 			plan.colors[2],
 			RsnapCaptureFrameColorStop { red: 0.56, green: 0.59, blue: 0.64, alpha: 1.0 }
 		);
+	}
+
+	#[test]
+	fn ffi_scroll_minimap_plan_returns_core_geometry() {
+		let mut plan = RsnapScrollMinimapPlan::default();
+		let status = unsafe {
+			crate::rsnap_scroll_minimap_plan(
+				RsnapFloatRect { x: 100.0, y: 100.0, width: 100.0, height: 100.0 },
+				100.0,
+				200.0,
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 500.0, height: 500.0 },
+				96.0,
+				44.0,
+				10.0,
+				10.0,
+				3.0,
+				20.0,
+				100.0,
+				&mut plan,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(plan.frame, RsnapFloatRect { x: 210.0, y: 54.0, width: 96.0, height: 192.0 });
+		assert_eq!(
+			plan.image_frame,
+			RsnapFloatRect { x: 213.0, y: 57.0, width: 90.0, height: 186.0 }
+		);
+		assert_eq!(plan.has_viewport_frame, 1);
+		assert_eq!(
+			plan.viewport_frame,
+			RsnapFloatRect { x: 213.0, y: 131.4, width: 90.0, height: 93.0 }
+		);
+	}
+
+	#[test]
+	fn ffi_scroll_minimap_plan_returns_empty_when_too_tight() {
+		let mut plan = RsnapScrollMinimapPlan::default();
+		let status = unsafe {
+			crate::rsnap_scroll_minimap_plan(
+				RsnapFloatRect { x: 100.0, y: 100.0, width: 100.0, height: 100.0 },
+				100.0,
+				200.0,
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 230.0, height: 60.0 },
+				96.0,
+				44.0,
+				10.0,
+				10.0,
+				3.0,
+				20.0,
+				100.0,
+				&mut plan,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Empty);
 	}
 
 	#[test]
