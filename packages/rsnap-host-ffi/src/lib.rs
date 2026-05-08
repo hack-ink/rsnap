@@ -13,10 +13,11 @@ use rsnap_overlay as _;
 
 use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
-	self, CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind, CaptureMode,
-	CaptureSessionCore, CursorIntent, DisplayPointRect, GlobalRect, HostEffectKind, HostEvent,
-	HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints, Rgb, RgbaExportImage,
-	SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
+	self, CaptureFrameBackgroundKind, CaptureFrameBackgroundPlan, CaptureFrameColorStop,
+	CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind, CaptureMode, CaptureSessionCore,
+	CursorIntent, DisplayPointRect, GlobalRect, HostEffectKind, HostEvent, HostReport, HostRequest,
+	PermissionKind, PlatformTag, RectPoints, Rgb, RgbaExportImage, SessionConfig, ToolbarItemKind,
+	ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -25,7 +26,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 22;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 23;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -206,6 +207,48 @@ pub enum RsnapCaptureFrameSourceKind {
 	ScrollCapture = 3,
 	/// Unknown or future capture source.
 	Unknown = 4,
+}
+
+/// FFI-safe capture-frame background discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapCaptureFrameBackgroundKind {
+	/// Prefer system wallpaper with gradient fallback.
+	SystemWallpaper = 0,
+	/// Blue-to-warm product gradient.
+	Aurora = 1,
+	/// Neutral graphite gradient.
+	Graphite = 2,
+	/// Light linen gradient.
+	Linen = 3,
+}
+
+/// FFI-safe sRGB capture-frame color stop.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapCaptureFrameColorStop {
+	/// Red component in sRGB space.
+	pub red: f64,
+	/// Green component in sRGB space.
+	pub green: f64,
+	/// Blue component in sRGB space.
+	pub blue: f64,
+	/// Alpha component.
+	pub alpha: f64,
+}
+
+/// FFI-safe capture-frame background drawing plan.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapCaptureFrameBackgroundPlan {
+	/// Ordered sRGB gradient color stops.
+	pub colors: [RsnapCaptureFrameColorStop; 3],
+	/// Gradient locations matching `colors`.
+	pub locations: [f64; 3],
+	/// Non-zero when the host should first try drawing system wallpaper.
+	pub prefers_wallpaper: u8,
+	/// Overlay alpha applied when wallpaper drawing succeeds.
+	pub wallpaper_overlay_alpha: f64,
 }
 
 /// FFI-safe capture-frame shadow pass.
@@ -1048,6 +1091,30 @@ pub unsafe extern "C" fn rsnap_capture_frame_aspect_fill_crop_rect(
 	RsnapStatus::Ok
 }
 
+/// Resolves capture-frame background colors and wallpaper fallback behavior.
+///
+/// # Safety
+///
+/// `out_plan` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_background_plan(
+	background_kind: RsnapCaptureFrameBackgroundKind,
+	out_plan: *mut RsnapCaptureFrameBackgroundPlan,
+) -> RsnapStatus {
+	if out_plan.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let plan = rsnap_capture_core::capture_frame_background_plan(
+		decode_capture_frame_background_kind(background_kind),
+	);
+	unsafe {
+		ptr::write(out_plan, encode_capture_frame_background_plan(plan));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Returns the current C ABI version for the native host bridge.
 #[unsafe(no_mangle)]
 pub extern "C" fn rsnap_host_ffi_abi_version() -> u32 {
@@ -1657,6 +1724,19 @@ fn decode_capture_frame_source_kind(kind: RsnapCaptureFrameSourceKind) -> Captur
 	}
 }
 
+fn decode_capture_frame_background_kind(
+	kind: RsnapCaptureFrameBackgroundKind,
+) -> CaptureFrameBackgroundKind {
+	match kind {
+		RsnapCaptureFrameBackgroundKind::SystemWallpaper => {
+			CaptureFrameBackgroundKind::SystemWallpaper
+		},
+		RsnapCaptureFrameBackgroundKind::Aurora => CaptureFrameBackgroundKind::Aurora,
+		RsnapCaptureFrameBackgroundKind::Graphite => CaptureFrameBackgroundKind::Graphite,
+		RsnapCaptureFrameBackgroundKind::Linen => CaptureFrameBackgroundKind::Linen,
+	}
+}
+
 fn encode_capture_frame_plan(plan: CaptureFramePlan) -> RsnapCaptureFramePlan {
 	RsnapCaptureFramePlan {
 		canvas_width: plan.canvas_width,
@@ -1664,6 +1744,26 @@ fn encode_capture_frame_plan(plan: CaptureFramePlan) -> RsnapCaptureFramePlan {
 		image_rect: encode_float_rect(plan.image_rect),
 		corner_radius: plan.corner_radius,
 		shadows: plan.shadows.map(encode_capture_frame_shadow),
+	}
+}
+
+fn encode_capture_frame_background_plan(
+	plan: CaptureFrameBackgroundPlan,
+) -> RsnapCaptureFrameBackgroundPlan {
+	RsnapCaptureFrameBackgroundPlan {
+		colors: plan.colors.map(encode_capture_frame_color_stop),
+		locations: plan.locations,
+		prefers_wallpaper: u8::from(plan.prefers_wallpaper),
+		wallpaper_overlay_alpha: plan.wallpaper_overlay_alpha,
+	}
+}
+
+fn encode_capture_frame_color_stop(color: CaptureFrameColorStop) -> RsnapCaptureFrameColorStop {
+	RsnapCaptureFrameColorStop {
+		red: color.red,
+		green: color.green,
+		blue: color.blue,
+		alpha: color.alpha,
 	}
 }
 
@@ -2123,7 +2223,8 @@ mod tests {
 	use std::ptr;
 
 	use crate::{
-		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCaptureFramePlan,
+		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCaptureFrameBackgroundKind,
+		RsnapCaptureFrameBackgroundPlan, RsnapCaptureFrameColorStop, RsnapCaptureFramePlan,
 		RsnapCaptureFrameSourceKind, RsnapCursorIntent, RsnapFloatRect, RsnapHostEvent,
 		RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind,
 		RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes, RsnapPixelRect, RsnapPlatformTag,
@@ -2472,6 +2573,30 @@ mod tests {
 
 		assert_eq!(status, RsnapStatus::Ok);
 		assert_eq!(rect, RsnapFloatRect { x: 350.0, y: 0.0, width: 900.0, height: 900.0 });
+	}
+
+	#[test]
+	fn ffi_capture_frame_background_plan_returns_core_preset() {
+		let mut plan = RsnapCaptureFrameBackgroundPlan::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_background_plan(
+				RsnapCaptureFrameBackgroundKind::Graphite,
+				&mut plan,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(plan.prefers_wallpaper, 0);
+		assert_eq!(plan.wallpaper_overlay_alpha, 0.0);
+		assert_eq!(plan.locations, [0.0, 0.54, 1.0]);
+		assert_eq!(
+			plan.colors[0],
+			RsnapCaptureFrameColorStop { red: 0.08, green: 0.09, blue: 0.11, alpha: 1.0 }
+		);
+		assert_eq!(
+			plan.colors[2],
+			RsnapCaptureFrameColorStop { red: 0.56, green: 0.59, blue: 0.64, alpha: 1.0 }
+		);
 	}
 
 	#[cfg(target_os = "macos")]

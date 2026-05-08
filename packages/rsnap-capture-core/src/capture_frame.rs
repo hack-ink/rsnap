@@ -17,6 +17,52 @@ pub enum CaptureFrameSourceKind {
 	Unknown,
 }
 
+/// Capture-frame background preset chosen by the user.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureFrameBackgroundKind {
+	/// Prefer the current system wallpaper with a subtle dark overlay, falling back to Aurora.
+	SystemWallpaper,
+	/// Blue-to-warm product gradient.
+	Aurora,
+	/// Neutral graphite gradient.
+	Graphite,
+	/// Light linen gradient.
+	Linen,
+}
+
+/// One sRGB capture-frame background color stop.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CaptureFrameColorStop {
+	/// Red component in sRGB space.
+	pub red: f64,
+	/// Green component in sRGB space.
+	pub green: f64,
+	/// Blue component in sRGB space.
+	pub blue: f64,
+	/// Alpha component.
+	pub alpha: f64,
+}
+impl CaptureFrameColorStop {
+	/// Creates an sRGB color stop.
+	#[must_use]
+	pub const fn new(red: f64, green: f64, blue: f64, alpha: f64) -> Self {
+		Self { red, green, blue, alpha }
+	}
+}
+
+/// Capture-frame background plan consumed by native hosts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CaptureFrameBackgroundPlan {
+	/// Ordered sRGB gradient color stops.
+	pub colors: [CaptureFrameColorStop; 3],
+	/// Gradient locations matching `colors`.
+	pub locations: [f64; 3],
+	/// Whether the host should first try drawing the system wallpaper.
+	pub prefers_wallpaper: bool,
+	/// Overlay alpha applied when wallpaper drawing succeeds.
+	pub wallpaper_overlay_alpha: f64,
+}
+
 /// One capture-frame shadow pass.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CaptureFrameShadow {
@@ -118,6 +164,56 @@ pub fn capture_frame_aspect_fill_crop_rect(
 	Some(DisplayPointRect::new(0.0, (source_height - height) / 2.0, source_width, height))
 }
 
+/// Resolves capture-frame background colors and wallpaper fallback behavior.
+#[must_use]
+pub fn capture_frame_background_plan(
+	kind: CaptureFrameBackgroundKind,
+) -> CaptureFrameBackgroundPlan {
+	const LOCATIONS: [f64; 3] = [0.0, 0.54, 1.0];
+	const AURORA: [CaptureFrameColorStop; 3] = [
+		CaptureFrameColorStop::new(0.10, 0.16, 0.28, 1.0),
+		CaptureFrameColorStop::new(0.30, 0.47, 0.71, 1.0),
+		CaptureFrameColorStop::new(0.95, 0.61, 0.43, 1.0),
+	];
+	const GRAPHITE: [CaptureFrameColorStop; 3] = [
+		CaptureFrameColorStop::new(0.08, 0.09, 0.11, 1.0),
+		CaptureFrameColorStop::new(0.24, 0.26, 0.30, 1.0),
+		CaptureFrameColorStop::new(0.56, 0.59, 0.64, 1.0),
+	];
+	const LINEN: [CaptureFrameColorStop; 3] = [
+		CaptureFrameColorStop::new(0.83, 0.87, 0.82, 1.0),
+		CaptureFrameColorStop::new(0.58, 0.70, 0.71, 1.0),
+		CaptureFrameColorStop::new(0.24, 0.36, 0.47, 1.0),
+	];
+
+	match kind {
+		CaptureFrameBackgroundKind::SystemWallpaper => CaptureFrameBackgroundPlan {
+			colors: AURORA,
+			locations: LOCATIONS,
+			prefers_wallpaper: true,
+			wallpaper_overlay_alpha: 0.10,
+		},
+		CaptureFrameBackgroundKind::Aurora => CaptureFrameBackgroundPlan {
+			colors: AURORA,
+			locations: LOCATIONS,
+			prefers_wallpaper: false,
+			wallpaper_overlay_alpha: 0.0,
+		},
+		CaptureFrameBackgroundKind::Graphite => CaptureFrameBackgroundPlan {
+			colors: GRAPHITE,
+			locations: LOCATIONS,
+			prefers_wallpaper: false,
+			wallpaper_overlay_alpha: 0.0,
+		},
+		CaptureFrameBackgroundKind::Linen => CaptureFrameBackgroundPlan {
+			colors: LINEN,
+			locations: LOCATIONS,
+			prefers_wallpaper: false,
+			wallpaper_overlay_alpha: 0.0,
+		},
+	}
+}
+
 fn capture_frame_padding(image_width: f64, image_height: f64) -> f64 {
 	let short_side = image_width.min(image_height);
 	let long_side = image_width.max(image_height);
@@ -174,7 +270,8 @@ fn capture_frame_shadows(canvas_width: f64, canvas_height: f64) -> [CaptureFrame
 #[cfg(test)]
 mod tests {
 	use super::{
-		CaptureFrameShadow, CaptureFrameSourceKind, capture_frame_aspect_fill_crop_rect,
+		CaptureFrameBackgroundKind, CaptureFrameColorStop, CaptureFrameShadow,
+		CaptureFrameSourceKind, capture_frame_aspect_fill_crop_rect, capture_frame_background_plan,
 		capture_frame_plan,
 	};
 	use crate::DisplayPointRect;
@@ -232,6 +329,40 @@ mod tests {
 			capture_frame_aspect_fill_crop_rect(800, 1200, 1600.0, 900.0).expect("valid crop rect");
 
 		assert_eq!(rect, DisplayPointRect::new(0.0, 375.0, 800.0, 450.0));
+	}
+
+	#[test]
+	fn capture_frame_background_plan_matches_native_wallpaper_fallback() {
+		let plan = capture_frame_background_plan(CaptureFrameBackgroundKind::SystemWallpaper);
+
+		assert!(plan.prefers_wallpaper);
+		assert_eq!(plan.wallpaper_overlay_alpha, 0.10);
+		assert_eq!(plan.locations, [0.0, 0.54, 1.0]);
+		assert_eq!(
+			plan.colors,
+			[
+				CaptureFrameColorStop::new(0.10, 0.16, 0.28, 1.0),
+				CaptureFrameColorStop::new(0.30, 0.47, 0.71, 1.0),
+				CaptureFrameColorStop::new(0.95, 0.61, 0.43, 1.0),
+			]
+		);
+	}
+
+	#[test]
+	fn capture_frame_background_plan_matches_native_linen_gradient() {
+		let plan = capture_frame_background_plan(CaptureFrameBackgroundKind::Linen);
+
+		assert!(!plan.prefers_wallpaper);
+		assert_eq!(plan.wallpaper_overlay_alpha, 0.0);
+		assert_eq!(plan.locations, [0.0, 0.54, 1.0]);
+		assert_eq!(
+			plan.colors,
+			[
+				CaptureFrameColorStop::new(0.83, 0.87, 0.82, 1.0),
+				CaptureFrameColorStop::new(0.58, 0.70, 0.71, 1.0),
+				CaptureFrameColorStop::new(0.24, 0.36, 0.47, 1.0),
+			]
+		);
 	}
 
 	fn assert_shadow_near(actual: CaptureFrameShadow, expected: CaptureFrameShadow) {

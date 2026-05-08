@@ -8,9 +8,9 @@ use std::{
 use color_eyre::eyre::{Result, ensure, eyre};
 use image::{Rgba, RgbaImage};
 use rsnap_capture_core::{
-	CaptureFrameSourceKind, DisplayPointRect, RectPoints, capture_frame_aspect_fill_crop_rect,
-	capture_frame_plan, crop_rgba_image, encode_png_lossless_fast,
-	frozen_mosaic_light_privacy_patch,
+	CaptureFrameBackgroundKind, CaptureFrameSourceKind, DisplayPointRect, RectPoints,
+	capture_frame_aspect_fill_crop_rect, capture_frame_background_plan, capture_frame_plan,
+	crop_rgba_image, encode_png_lossless_fast, frozen_mosaic_light_privacy_patch,
 };
 use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
@@ -77,7 +77,7 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	)?);
 
 	results.push(time_case(
-		"capture_frame_plan_1440x900",
+		"capture_frame_plan_and_background_1440x900",
 		10_000,
 		Duration::from_millis(60),
 		|| {
@@ -90,6 +90,8 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 				plan.canvas_height,
 			)
 			.ok_or_else(|| eyre!("capture frame aspect-fill performance fixture is invalid"))?;
+			let background =
+				capture_frame_background_plan(CaptureFrameBackgroundKind::SystemWallpaper);
 
 			Ok(checksum_f64s(&[
 				plan.canvas_width,
@@ -102,6 +104,10 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 				crop.y,
 				crop.width,
 				crop.height,
+				background.colors[0].red,
+				background.colors[1].green,
+				background.locations[1],
+				background.wallpaper_overlay_alpha,
 			]))
 		},
 	)?);
@@ -215,6 +221,14 @@ fn verify_capture_frame_plan() -> Result<()> {
 	ensure!(
 		crop == DisplayPointRect::new(350.0, 0.0, 900.0, 900.0),
 		"capture frame aspect-fill crop changed"
+	);
+
+	let background = capture_frame_background_plan(CaptureFrameBackgroundKind::SystemWallpaper);
+	ensure!(background.prefers_wallpaper, "capture frame wallpaper flag changed");
+	ensure!(background.wallpaper_overlay_alpha == 0.10, "capture frame wallpaper overlay changed");
+	ensure!(
+		background.colors[2].red == 0.95 && background.locations == [0.0, 0.54, 1.0],
+		"capture frame background gradient changed"
 	);
 
 	Ok(())

@@ -93,6 +93,59 @@ public enum CaptureFrameSourceKind: UInt32, Equatable, Sendable {
 	}
 }
 
+public enum CaptureFrameBackgroundKind: UInt32, Equatable, Sendable {
+	case systemWallpaper = 0
+	case aurora = 1
+	case graphite = 2
+	case linen = 3
+
+	fileprivate var ffiKind: RsnapCaptureFrameBackgroundKind {
+		switch self {
+		case .systemWallpaper:
+			RSNAP_CAPTURE_FRAME_BACKGROUND_SYSTEM_WALLPAPER
+		case .aurora:
+			RSNAP_CAPTURE_FRAME_BACKGROUND_AURORA
+		case .graphite:
+			RSNAP_CAPTURE_FRAME_BACKGROUND_GRAPHITE
+		case .linen:
+			RSNAP_CAPTURE_FRAME_BACKGROUND_LINEN
+		}
+	}
+}
+
+public struct CaptureFrameColorStop: Equatable, Sendable {
+	public var red: CGFloat
+	public var green: CGFloat
+	public var blue: CGFloat
+	public var alpha: CGFloat
+
+	public init(red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) {
+		self.red = red
+		self.green = green
+		self.blue = blue
+		self.alpha = alpha
+	}
+}
+
+public struct CaptureFrameBackgroundPlan: Equatable, Sendable {
+	public var colorStops: [CaptureFrameColorStop]
+	public var locations: [CGFloat]
+	public var prefersWallpaper: Bool
+	public var wallpaperOverlayAlpha: CGFloat
+
+	public init(
+		colorStops: [CaptureFrameColorStop],
+		locations: [CGFloat],
+		prefersWallpaper: Bool,
+		wallpaperOverlayAlpha: CGFloat
+	) {
+		self.colorStops = colorStops
+		self.locations = locations
+		self.prefersWallpaper = prefersWallpaper
+		self.wallpaperOverlayAlpha = wallpaperOverlayAlpha
+	}
+}
+
 public struct CaptureFrameShadowPlan: Equatable, Sendable {
 	public var offset: CGSize
 	public var blur: CGFloat
@@ -161,6 +214,29 @@ public enum RsnapCaptureFramePlanner {
 		return decode(rect: outRect)
 	}
 
+	public static func backgroundPlan(
+		for background: CaptureFrameBackgroundKind
+	) throws -> CaptureFrameBackgroundPlan {
+		var outPlan = RsnapCaptureFrameBackgroundPlan()
+		let status = rsnap_capture_frame_background_plan(background.ffiKind, &outPlan)
+		try requireOk(status, context: "resolving capture frame background plan")
+
+		return CaptureFrameBackgroundPlan(
+			colorStops: [
+				decode(color: outPlan.colors.0),
+				decode(color: outPlan.colors.1),
+				decode(color: outPlan.colors.2),
+			],
+			locations: [
+				CGFloat(outPlan.locations.0),
+				CGFloat(outPlan.locations.1),
+				CGFloat(outPlan.locations.2),
+			],
+			prefersWallpaper: outPlan.prefers_wallpaper != 0,
+			wallpaperOverlayAlpha: CGFloat(outPlan.wallpaper_overlay_alpha)
+		)
+	}
+
 	private static func requireOk(_ status: RsnapStatus, context: String) throws {
 		let code = rsnap_status_code(status)
 		if code != 0 {
@@ -170,6 +246,15 @@ public enum RsnapCaptureFramePlanner {
 
 	private static func decode(rect: RsnapFloatRect) -> CGRect {
 		CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
+	}
+
+	private static func decode(color: RsnapCaptureFrameColorStop) -> CaptureFrameColorStop {
+		CaptureFrameColorStop(
+			red: CGFloat(color.red),
+			green: CGFloat(color.green),
+			blue: CGFloat(color.blue),
+			alpha: CGFloat(color.alpha)
+		)
 	}
 
 	private static func decode(shadow: RsnapCaptureFrameShadow) -> CaptureFrameShadowPlan {

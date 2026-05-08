@@ -96,24 +96,31 @@ package enum CaptureFrameEffectRenderer {
 		in rect: CGRect,
 		context: CGContext
 	) {
-		if background == .systemWallpaper,
+		guard let plan = captureFrameBackgroundPlan(for: background) else {
+			context.setFillColor(NSColor.windowBackgroundColor.cgColor)
+			context.fill(rect)
+			return
+		}
+
+		if plan.prefersWallpaper,
 			let wallpaper = systemWallpaperImage(
 				screen: screen,
 				targetPixelSize: Int(max(rect.width, rect.height).rounded(.up))
 			)
 		{
 			drawAspectFill(wallpaper, in: rect, context: context)
-			context.setFillColor(NSColor.black.withAlphaComponent(0.10).cgColor)
+			context.setFillColor(
+				NSColor.black.withAlphaComponent(plan.wallpaperOverlayAlpha).cgColor)
 			context.fill(rect)
 			return
 		}
 
-		let colors = gradientColors(for: background)
+		let colors = plan.colorStops.map(\.cgColor)
 		guard
 			let gradient = CGGradient(
 				colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
 				colors: colors as CFArray,
-				locations: [0, 0.54, 1]
+				locations: plan.locations
 			)
 		else {
 			context.setFillColor(colors.first ?? NSColor.windowBackgroundColor.cgColor)
@@ -126,31 +133,6 @@ package enum CaptureFrameEffectRenderer {
 			end: CGPoint(x: rect.maxX, y: rect.minY),
 			options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
 		)
-	}
-
-	private static func gradientColors(for background: CaptureFrameBackgroundPreference)
-		-> [CGColor]
-	{
-		switch background {
-		case .systemWallpaper, .aurora:
-			return [
-				NSColor(calibratedRed: 0.10, green: 0.16, blue: 0.28, alpha: 1).cgColor,
-				NSColor(calibratedRed: 0.30, green: 0.47, blue: 0.71, alpha: 1).cgColor,
-				NSColor(calibratedRed: 0.95, green: 0.61, blue: 0.43, alpha: 1).cgColor,
-			]
-		case .graphite:
-			return [
-				NSColor(calibratedRed: 0.08, green: 0.09, blue: 0.11, alpha: 1).cgColor,
-				NSColor(calibratedRed: 0.24, green: 0.26, blue: 0.30, alpha: 1).cgColor,
-				NSColor(calibratedRed: 0.56, green: 0.59, blue: 0.64, alpha: 1).cgColor,
-			]
-		case .linen:
-			return [
-				NSColor(calibratedRed: 0.83, green: 0.87, blue: 0.82, alpha: 1).cgColor,
-				NSColor(calibratedRed: 0.58, green: 0.70, blue: 0.71, alpha: 1).cgColor,
-				NSColor(calibratedRed: 0.24, green: 0.36, blue: 0.47, alpha: 1).cgColor,
-			]
-		}
 	}
 
 	private static func drawFramedCapture(
@@ -279,6 +261,12 @@ package enum CaptureFrameEffectRenderer {
 			source: source.planKind
 		)
 	}
+
+	private static func captureFrameBackgroundPlan(
+		for background: CaptureFrameBackgroundPreference
+	) -> CaptureFrameBackgroundPlan? {
+		try? RsnapCaptureFramePlanner.backgroundPlan(for: background.planKind)
+	}
 }
 
 extension CaptureFrameSource {
@@ -295,6 +283,32 @@ extension CaptureFrameSource {
 		case .unknown:
 			return .unknown
 		}
+	}
+}
+
+extension CaptureFrameBackgroundPreference {
+	fileprivate var planKind: CaptureFrameBackgroundKind {
+		switch self {
+		case .systemWallpaper:
+			return .systemWallpaper
+		case .aurora:
+			return .aurora
+		case .graphite:
+			return .graphite
+		case .linen:
+			return .linen
+		}
+	}
+}
+
+extension CaptureFrameColorStop {
+	fileprivate var cgColor: CGColor {
+		NSColor(
+			calibratedRed: red,
+			green: green,
+			blue: blue,
+			alpha: alpha
+		).cgColor
 	}
 }
 

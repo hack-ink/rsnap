@@ -13,8 +13,9 @@ pub mod session;
 
 pub use self::{
 	capture_frame::{
+		CaptureFrameBackgroundKind, CaptureFrameBackgroundPlan, CaptureFrameColorStop,
 		CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind,
-		capture_frame_aspect_fill_crop_rect, capture_frame_plan,
+		capture_frame_aspect_fill_crop_rect, capture_frame_background_plan, capture_frame_plan,
 	},
 	export::{DisplayPointRect, frozen_display_crop_rect},
 	export::{RgbaExportImage, crop_export_image, crop_rgba_image, encode_png_lossless_fast},

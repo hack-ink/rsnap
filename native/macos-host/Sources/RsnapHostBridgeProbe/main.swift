@@ -400,6 +400,19 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected capture frame aspect-fill crop rect")
 		}
+		let backgroundPlan = try RsnapCaptureFramePlanner.backgroundPlan(for: .systemWallpaper)
+		guard
+			backgroundPlan.prefersWallpaper,
+			backgroundPlan.wallpaperOverlayAlpha == 0.10,
+			backgroundPlan.locations == [0, 0.54, 1],
+			backgroundPlan.colorStops.count == 3,
+			backgroundPlan.colorStops[0]
+				== CaptureFrameColorStop(red: 0.10, green: 0.16, blue: 0.28, alpha: 1),
+			backgroundPlan.colorStops[2]
+				== CaptureFrameColorStop(red: 0.95, green: 0.61, blue: 0.43, alpha: 1)
+		else {
+			fatalError("unexpected capture frame background plan")
+		}
 
 		print("rsnap-host-bridge probe ok")
 	}
