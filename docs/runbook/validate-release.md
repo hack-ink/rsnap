@@ -26,9 +26,9 @@ manual first-run/user-flow validation.
    - No existing local or remote tag already uses `v<version>`.
 2. Confirm release credentials:
    - Apple signing certificate secrets are available to the Release workflow.
-   - Sparkle update signing secrets are available to the Release workflow:
-     `SPARKLE_PUBLIC_ED_KEY` for `SUPublicEDKey` and `SPARKLE_PRIVATE_ED_KEY` for signing the
-     published update archive.
+   - Sparkle update signing is configured: `SUPublicEDKey` is checked into
+     `scripts/build_and_run.sh`, and `SPARKLE_PRIVATE_ED_KEY` is available to the Release workflow
+     for signing the published update archive.
    - Apple notary credentials are optional for v0.1.4; when absent, the Release workflow still
      publishes a signed but unnotarized macOS zip.
 3. Confirm local gates:
