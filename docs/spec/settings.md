@@ -38,7 +38,10 @@ Defines:
 
 ## Status Menu
 
-- The status menu must expose New Capture, Settings, and Quit.
+- The status menu must expose New Capture, Open Screenshots Folder, Check for Updates, Settings,
+  and Quit.
+- Open Screenshots Folder must open the configured output directory, creating it first when needed.
+- Check for Updates must invoke the same Sparkle-backed update check flow as the About section.
 - The status menu must not expose Cancel Capture. Capture cancellation is handled in-session by
   `Esc` and secondary click in both live and Frozen modes.
 - The status menu must not expose Permissions as a separate menu item. Permission status and
