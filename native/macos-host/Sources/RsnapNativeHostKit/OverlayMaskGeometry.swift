@@ -29,12 +29,18 @@ package enum OverlayMaskGeometry {
 		context.addPath(
 			scrimPath(
 				bounds: bounds,
-				focusRect: focusRect,
-				roundedExclusions: roundedExclusions,
-				pathExclusions: pathExclusions
+				focusRect: focusRect
 			)
 		)
 		context.fillPath(using: .evenOdd)
+		context.setBlendMode(.clear)
+		for exclusion in roundedExclusions {
+			clearRoundedRect(exclusion, in: context)
+		}
+		for path in pathExclusions {
+			context.addPath(path)
+			context.fillPath()
+		}
 		context.restoreGState()
 	}
 
@@ -89,6 +95,17 @@ package enum OverlayMaskGeometry {
 			cornerHeight: radius,
 			transform: nil
 		)
+	}
+
+	private static func clearRoundedRect(
+		_ exclusion: RoundedExclusion,
+		in context: CGContext
+	) {
+		guard let path = roundedPath(for: exclusion) else {
+			return
+		}
+		context.addPath(path)
+		context.fillPath()
 	}
 }
 
