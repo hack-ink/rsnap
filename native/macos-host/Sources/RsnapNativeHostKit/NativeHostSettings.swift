@@ -24,6 +24,9 @@ final class NativeHostSettingsStore {
 		static let hudTintBrightness = "hudTintBrightness"
 		static let liquidGlassStyle = "liquidGlassStyle"
 		static let loupeSampleSize = "loupeSampleSize"
+		static let captureFrameEffectEnabled = "captureFrameEffectEnabled"
+		static let captureFrameBackground = "captureFrameBackground"
+		static let captureFrameApplicability = "captureFrameApplicability"
 	}
 
 	private let defaults: UserDefaults
@@ -73,7 +76,16 @@ final class NativeHostSettingsStore {
 				?? baseSettings.liquidGlassStyle,
 			loupeSampleSize: LoupeSampleSizePreference(
 				rawValue: defaults.string(forKey: DefaultsKey.loupeSampleSize) ?? "")
-				?? baseSettings.loupeSampleSize
+				?? baseSettings.loupeSampleSize,
+			captureFrameEffectEnabled: defaults.object(
+				forKey: DefaultsKey.captureFrameEffectEnabled) as? Bool
+				?? baseSettings.captureFrameEffectEnabled,
+			captureFrameBackground: CaptureFrameBackgroundPreference(
+				rawValue: defaults.string(forKey: DefaultsKey.captureFrameBackground) ?? "")
+				?? baseSettings.captureFrameBackground,
+			captureFrameApplicability: CaptureFrameApplicabilityPreference(
+				rawValue: defaults.string(forKey: DefaultsKey.captureFrameApplicability) ?? "")
+				?? baseSettings.captureFrameApplicability
 		)
 		self.settings = settings.sanitized()
 		Self.persist(self.settings, into: defaults)
@@ -115,6 +127,15 @@ final class NativeHostSettingsStore {
 		defaults.set(settings.hudTintBrightness, forKey: DefaultsKey.hudTintBrightness)
 		defaults.set(settings.liquidGlassStyle.rawValue, forKey: DefaultsKey.liquidGlassStyle)
 		defaults.set(settings.loupeSampleSize.rawValue, forKey: DefaultsKey.loupeSampleSize)
+		defaults.set(
+			settings.captureFrameEffectEnabled,
+			forKey: DefaultsKey.captureFrameEffectEnabled)
+		defaults.set(
+			settings.captureFrameBackground.rawValue,
+			forKey: DefaultsKey.captureFrameBackground)
+		defaults.set(
+			settings.captureFrameApplicability.rawValue,
+			forKey: DefaultsKey.captureFrameApplicability)
 	}
 }
 
@@ -136,6 +157,9 @@ struct NativeHostSettings: Equatable {
 	var hudTintBrightness: Double
 	var liquidGlassStyle: LiquidGlassStylePreference
 	var loupeSampleSize: LoupeSampleSizePreference
+	var captureFrameEffectEnabled: Bool
+	var captureFrameBackground: CaptureFrameBackgroundPreference
+	var captureFrameApplicability: CaptureFrameApplicabilityPreference
 
 	static var defaults: NativeHostSettings {
 		NativeHostSettings(
@@ -156,7 +180,10 @@ struct NativeHostSettings: Equatable {
 			hudTintSaturation: 0.72,
 			hudTintBrightness: 0.95,
 			liquidGlassStyle: .clear,
-			loupeSampleSize: .small
+			loupeSampleSize: .small,
+			captureFrameEffectEnabled: false,
+			captureFrameBackground: .systemWallpaper,
+			captureFrameApplicability: .window
 		)
 	}
 
@@ -377,6 +404,54 @@ enum LoupeSampleSizePreference: String, CaseIterable {
 			return 21
 		case .large:
 			return 31
+		}
+	}
+}
+
+package enum CaptureFrameBackgroundPreference: String, CaseIterable {
+	case systemWallpaper = "system_wallpaper"
+	case aurora
+	case graphite
+	case linen
+
+	var title: String {
+		switch self {
+		case .systemWallpaper:
+			return "Wallpaper"
+		case .aurora:
+			return "Aurora"
+		case .graphite:
+			return "Graphite"
+		case .linen:
+			return "Linen"
+		}
+	}
+}
+
+enum CaptureFrameApplicabilityPreference: String, CaseIterable {
+	case dragRegion = "drag_region"
+	case window
+	case both
+
+	var title: String {
+		switch self {
+		case .dragRegion:
+			return "Drag"
+		case .window:
+			return "Window"
+		case .both:
+			return "Both"
+		}
+	}
+
+	func includes(_ source: CaptureFrameSource) -> Bool {
+		switch (self, source) {
+		case (.dragRegion, .dragRegion), (.window, .window), (.both, .dragRegion),
+			(.both, .window):
+			return true
+		case (.dragRegion, .window), (.window, .dragRegion), (_, .fullScreen),
+			(_, .scrollCapture), (_, .unknown):
+			return false
 		}
 	}
 }

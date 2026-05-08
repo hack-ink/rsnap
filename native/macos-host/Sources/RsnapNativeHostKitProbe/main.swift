@@ -44,6 +44,7 @@ enum RsnapNativeHostKitProbe {
 		assertScrimOverlappingRoundedExclusionStaysClear()
 		assertScrimExclusionPreservesExistingPixels()
 		assertRoundedExclusionMaskKeepsCornersFilled()
+		assertCaptureFrameEffectExpandsExportCanvas()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapFrame(
@@ -127,6 +128,128 @@ enum RsnapNativeHostKitProbe {
 		guard !failed.isOn, failed.subtitle.contains("failed") else {
 			fatalError("failed login item update should keep current state and surface failure")
 		}
+	}
+
+	private static func assertCaptureFrameEffectExpandsExportCanvas() {
+		let imageSize = CGSize(width: 320, height: 180)
+		let canvasSize = CaptureFrameEffectRenderer.canvasSize(for: imageSize)
+		guard canvasSize.width > imageSize.width, canvasSize.height > imageSize.height else {
+			fatalError("capture frame canvas should add room for wallpaper and shadow")
+		}
+		let imageRect = CaptureFrameEffectRenderer.imageRect(for: imageSize)
+		guard imageRect.minX > 0, imageRect.minY > 0 else {
+			fatalError("capture frame image rect should be inset from the canvas edge")
+		}
+		guard let source = solidImage(width: 320, height: 180) else {
+			fatalError("could not build capture frame probe image")
+		}
+		guard
+			let rendered = CaptureFrameEffectRenderer.render(
+				image: source,
+				background: .aurora,
+				screen: nil,
+				source: .window
+			)
+		else {
+			fatalError("capture frame renderer should produce an image for gradient presets")
+		}
+		guard rendered.width == Int(canvasSize.width), rendered.height == Int(canvasSize.height)
+		else {
+			fatalError("capture frame renderer size should match layout geometry")
+		}
+		guard
+			let renderedWindowSnapshot = CaptureFrameEffectRenderer.renderWindowSnapshot(
+				image: source,
+				background: .aurora,
+				screen: nil
+			),
+			renderedWindowSnapshot.width == Int(canvasSize.width),
+			renderedWindowSnapshot.height == Int(canvasSize.height)
+		else {
+			fatalError("window snapshot frame renderer should preserve layout geometry")
+		}
+		guard let pixels = rgbaPixels(from: rendered) else {
+			fatalError("could not read capture frame rendered pixels")
+		}
+		let center = pixel(
+			in: pixels,
+			width: rendered.width,
+			height: rendered.height,
+			x: Int(imageRect.midX),
+			yFromBottom: Int(imageRect.midY)
+		)
+		guard center.0 > 20, center.1 > 35, center.2 > 60, center.3 > 240 else {
+			fatalError("capture frame should draw the source image inside the framed rect")
+		}
+		let background = pixel(
+			in: pixels,
+			width: rendered.width,
+			height: rendered.height,
+			x: 8,
+			yFromBottom: 8
+		)
+		guard background.3 > 240 else {
+			fatalError("capture frame background should be opaque")
+		}
+	}
+
+	private static func solidImage(width: Int, height: Int) -> CGImage? {
+		guard
+			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+			let context = CGContext(
+				data: nil,
+				width: width,
+				height: height,
+				bitsPerComponent: 8,
+				bytesPerRow: width * 4,
+				space: colorSpace,
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
+			return nil
+		}
+		context.setFillColor(CGColor(red: 0.14, green: 0.22, blue: 0.32, alpha: 1))
+		context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+		return context.makeImage()
+	}
+
+	private static func rgbaPixels(from image: CGImage) -> [UInt8]? {
+		let width = image.width
+		let height = image.height
+		var pixels = [UInt8](repeating: 0, count: width * height * 4)
+		let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+			guard
+				let data = buffer.baseAddress,
+				let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+				let context = CGContext(
+					data: data,
+					width: width,
+					height: height,
+					bitsPerComponent: 8,
+					bytesPerRow: width * 4,
+					space: colorSpace,
+					bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+				)
+			else {
+				return false
+			}
+			context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+			return true
+		}
+		return rendered ? pixels : nil
+	}
+
+	private static func pixel(
+		in data: [UInt8],
+		width: Int,
+		height: Int,
+		x: Int,
+		yFromBottom: Int
+	) -> (UInt8, UInt8, UInt8, UInt8) {
+		let clampedX = max(0, min(width - 1, x))
+		let y = rowIndex(fromBottom: yFromBottom, height: height)
+		let offset = (y * width + clampedX) * 4
+		return (data[offset], data[offset + 1], data[offset + 2], data[offset + 3])
 	}
 
 	private static func assertRectOverlayDrawsAtVisualTop(
