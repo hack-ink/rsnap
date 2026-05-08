@@ -20,6 +20,8 @@ int main(void) {
 	RsnapCaptureFrameBackgroundPlan background_plan = {0};
 	RsnapCaptureFrameWallpaperRequest wallpaper_request = {0};
 	RsnapScrollMinimapPlan minimap_plan = {0};
+	RsnapFrozenSelectionTransformKind transform_kind = RSNAP_FROZEN_SELECTION_TRANSFORM_MOVE;
+	RsnapFloatRect transformed_selection = {0};
 	RsnapPixelRect auto_center_rect = {0};
 	RsnapFloatRect aspect_crop = {0};
 	RsnapFloatRect display_frame = {.x = 0.0, .y = 0.0, .width = 1440.0, .height = 900.0};
@@ -244,6 +246,44 @@ int main(void) {
 		rsnap_scroll_session_destroy(scroll_handle);
 		rsnap_session_destroy(handle);
 		return 26;
+	}
+	if (rsnap_frozen_selection_transform_hit_test(
+			102.0,
+			238.0,
+			(RsnapFloatRect){.x = 100.0, .y = 80.0, .width = 240.0, .height = 160.0},
+			12.0,
+			4.0,
+			&transform_kind
+		) != RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 33;
+	}
+	if (transform_kind != RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_TOP_LEFT) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 34;
+	}
+	if (rsnap_frozen_selection_transform_rect(
+			RSNAP_FROZEN_SELECTION_TRANSFORM_RESIZE_BOTTOM_RIGHT,
+			(RsnapFloatRect){.x = 100.0, .y = 80.0, .width = 240.0, .height = 160.0},
+			(RsnapFloatRect){.x = 0.0, .y = 0.0, .width = 500.0, .height = 400.0},
+			340.0,
+			80.0,
+			50.0,
+			300.0,
+			12.0,
+			&transformed_selection
+		) != RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 35;
+	}
+	if (transformed_selection.x != 100.0 || transformed_selection.y != 228.0 ||
+		transformed_selection.width != 12.0 || transformed_selection.height != 12.0) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 36;
 	}
 	if (rsnap_auto_center_content_bounds_rgba(
 			4,

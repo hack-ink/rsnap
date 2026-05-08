@@ -16,9 +16,10 @@ use rsnap_capture_core::{
 	self, AutoCenterImageError, BgraFrameView, CaptureFrameBackgroundKind,
 	CaptureFrameBackgroundPlan, CaptureFrameColorStop, CaptureFramePlan, CaptureFrameShadow,
 	CaptureFrameSourceKind, CaptureFrameWallpaperRequest, CaptureMode, CaptureSessionCore,
-	CursorIntent, DisplayPointRect, GlobalRect, HostEffectKind, HostEvent, HostReport, HostRequest,
-	PermissionKind, PlatformTag, RectPoints, Rgb, RgbaExportImage, ScrollMinimapInput,
-	ScrollMinimapPlan, SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
+	CursorIntent, DisplayPointRect, FrozenSelectionTransformInput, FrozenSelectionTransformKind,
+	GlobalRect, HostEffectKind, HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag,
+	RectPoints, Rgb, RgbaExportImage, ScrollMinimapInput, ScrollMinimapPlan, SessionConfig,
+	ToolbarItemKind, ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -27,7 +28,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 27;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 28;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -304,6 +305,30 @@ pub struct RsnapScrollMinimapPlan {
 	pub has_viewport_frame: u8,
 	/// Viewport marker frame inside `image_frame`.
 	pub viewport_frame: RsnapFloatRect,
+}
+
+/// FFI-safe frozen selection transform discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapFrozenSelectionTransformKind {
+	/// Move the whole selection rectangle.
+	Move = 0,
+	/// Resize the left edge.
+	ResizeLeft = 1,
+	/// Resize the right edge.
+	ResizeRight = 2,
+	/// Resize the top edge.
+	ResizeTop = 3,
+	/// Resize the bottom edge.
+	ResizeBottom = 4,
+	/// Resize the top-left corner.
+	ResizeTopLeft = 5,
+	/// Resize the top-right corner.
+	ResizeTopRight = 6,
+	/// Resize the bottom-left corner.
+	ResizeBottomLeft = 7,
+	/// Resize the bottom-right corner.
+	ResizeBottomRight = 8,
 }
 
 /// FFI-safe scroll-capture observation discriminator.
@@ -1310,6 +1335,83 @@ pub unsafe extern "C" fn rsnap_scroll_minimap_plan(
 	RsnapStatus::Ok
 }
 
+/// Hit-tests a pointer against frozen selection transform handles.
+///
+/// # Safety
+///
+/// `out_kind` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_selection_transform_hit_test(
+	point_x: f64,
+	point_y: f64,
+	selection: RsnapFloatRect,
+	handle_radius: f64,
+	edge_tolerance: f64,
+	out_kind: *mut RsnapFrozenSelectionTransformKind,
+) -> RsnapStatus {
+	if out_kind.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(kind) = rsnap_capture_core::frozen_selection_transform_hit_test(
+		point_x,
+		point_y,
+		decode_float_rect(selection),
+		handle_radius,
+		edge_tolerance,
+	) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_kind, encode_frozen_selection_transform_kind(kind));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves a frozen selection transform rectangle.
+///
+/// # Safety
+///
+/// `out_rect` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_selection_transform_rect(
+	kind: RsnapFrozenSelectionTransformKind,
+	initial_selection: RsnapFloatRect,
+	monitor_frame: RsnapFloatRect,
+	initial_pointer_x: f64,
+	initial_pointer_y: f64,
+	point_x: f64,
+	point_y: f64,
+	minimum_size: f64,
+	out_rect: *mut RsnapFloatRect,
+) -> RsnapStatus {
+	if out_rect.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let input = FrozenSelectionTransformInput {
+		kind: decode_frozen_selection_transform_kind(kind),
+		initial_selection: decode_float_rect(initial_selection),
+		monitor_frame: decode_float_rect(monitor_frame),
+		initial_pointer_x,
+		initial_pointer_y,
+		point_x,
+		point_y,
+		minimum_size,
+	};
+	let Some(rect) = rsnap_capture_core::frozen_selection_transform_rect(input) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_rect, encode_float_rect(rect));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Detects salient content bounds for frozen auto-center from row-major RGBA.
 ///
 /// # Safety
@@ -2013,6 +2115,58 @@ fn encode_capture_frame_plan(plan: CaptureFramePlan) -> RsnapCaptureFramePlan {
 	}
 }
 
+fn decode_frozen_selection_transform_kind(
+	kind: RsnapFrozenSelectionTransformKind,
+) -> FrozenSelectionTransformKind {
+	match kind {
+		RsnapFrozenSelectionTransformKind::Move => FrozenSelectionTransformKind::Move,
+		RsnapFrozenSelectionTransformKind::ResizeLeft => FrozenSelectionTransformKind::ResizeLeft,
+		RsnapFrozenSelectionTransformKind::ResizeRight => FrozenSelectionTransformKind::ResizeRight,
+		RsnapFrozenSelectionTransformKind::ResizeTop => FrozenSelectionTransformKind::ResizeTop,
+		RsnapFrozenSelectionTransformKind::ResizeBottom => {
+			FrozenSelectionTransformKind::ResizeBottom
+		},
+		RsnapFrozenSelectionTransformKind::ResizeTopLeft => {
+			FrozenSelectionTransformKind::ResizeTopLeft
+		},
+		RsnapFrozenSelectionTransformKind::ResizeTopRight => {
+			FrozenSelectionTransformKind::ResizeTopRight
+		},
+		RsnapFrozenSelectionTransformKind::ResizeBottomLeft => {
+			FrozenSelectionTransformKind::ResizeBottomLeft
+		},
+		RsnapFrozenSelectionTransformKind::ResizeBottomRight => {
+			FrozenSelectionTransformKind::ResizeBottomRight
+		},
+	}
+}
+
+fn encode_frozen_selection_transform_kind(
+	kind: FrozenSelectionTransformKind,
+) -> RsnapFrozenSelectionTransformKind {
+	match kind {
+		FrozenSelectionTransformKind::Move => RsnapFrozenSelectionTransformKind::Move,
+		FrozenSelectionTransformKind::ResizeLeft => RsnapFrozenSelectionTransformKind::ResizeLeft,
+		FrozenSelectionTransformKind::ResizeRight => RsnapFrozenSelectionTransformKind::ResizeRight,
+		FrozenSelectionTransformKind::ResizeTop => RsnapFrozenSelectionTransformKind::ResizeTop,
+		FrozenSelectionTransformKind::ResizeBottom => {
+			RsnapFrozenSelectionTransformKind::ResizeBottom
+		},
+		FrozenSelectionTransformKind::ResizeTopLeft => {
+			RsnapFrozenSelectionTransformKind::ResizeTopLeft
+		},
+		FrozenSelectionTransformKind::ResizeTopRight => {
+			RsnapFrozenSelectionTransformKind::ResizeTopRight
+		},
+		FrozenSelectionTransformKind::ResizeBottomLeft => {
+			RsnapFrozenSelectionTransformKind::ResizeBottomLeft
+		},
+		FrozenSelectionTransformKind::ResizeBottomRight => {
+			RsnapFrozenSelectionTransformKind::ResizeBottomRight
+		},
+	}
+}
+
 fn encode_capture_frame_background_plan(
 	plan: CaptureFrameBackgroundPlan,
 ) -> RsnapCaptureFrameBackgroundPlan {
@@ -2510,11 +2664,11 @@ mod tests {
 		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCaptureFrameBackgroundKind,
 		RsnapCaptureFrameBackgroundPlan, RsnapCaptureFrameColorStop, RsnapCaptureFramePlan,
 		RsnapCaptureFrameSourceKind, RsnapCaptureFrameWallpaperRequest, RsnapCursorIntent,
-		RsnapFloatRect, RsnapHostEvent, RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind,
-		RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes,
-		RsnapPixelRect, RsnapPlatformTag, RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind,
-		RsnapSceneModel, RsnapScrollMinimapPlan, RsnapSessionConfig, RsnapSessionHandle,
-		RsnapStatus, RsnapWindowRect,
+		RsnapFloatRect, RsnapFrozenSelectionTransformKind, RsnapHostEvent, RsnapHostEventKind,
+		RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind, RsnapHostRequestValue,
+		RsnapMonitorRect, RsnapOwnedBytes, RsnapPixelRect, RsnapPlatformTag, RsnapPoint, RsnapRect,
+		RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan, RsnapSessionConfig,
+		RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
 	};
 	#[cfg(target_os = "macos")]
 	use crate::{RsnapOwnedRgbaRegion, RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
@@ -3046,6 +3200,45 @@ mod tests {
 		};
 
 		assert_eq!(status, RsnapStatus::Empty);
+	}
+
+	#[test]
+	fn ffi_frozen_selection_transform_hit_test_returns_core_kind() {
+		let mut kind = RsnapFrozenSelectionTransformKind::Move;
+		let status = unsafe {
+			crate::rsnap_frozen_selection_transform_hit_test(
+				102.0,
+				238.0,
+				RsnapFloatRect { x: 100.0, y: 80.0, width: 240.0, height: 160.0 },
+				12.0,
+				4.0,
+				&mut kind,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(kind, RsnapFrozenSelectionTransformKind::ResizeTopLeft);
+	}
+
+	#[test]
+	fn ffi_frozen_selection_transform_rect_returns_core_rect() {
+		let mut rect = RsnapFloatRect::default();
+		let status = unsafe {
+			crate::rsnap_frozen_selection_transform_rect(
+				RsnapFrozenSelectionTransformKind::ResizeBottomRight,
+				RsnapFloatRect { x: 100.0, y: 80.0, width: 240.0, height: 160.0 },
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 500.0, height: 400.0 },
+				340.0,
+				80.0,
+				50.0,
+				300.0,
+				12.0,
+				&mut rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(rect, RsnapFloatRect { x: 100.0, y: 228.0, width: 12.0, height: 12.0 });
 	}
 
 	#[test]

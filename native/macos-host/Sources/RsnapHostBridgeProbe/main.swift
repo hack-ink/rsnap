@@ -479,6 +479,24 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected scroll minimap layout plan")
 		}
+		guard
+			try RsnapFrozenSelectionTransformPlanner.hitTest(
+				point: CGPoint(x: 102, y: 238),
+				selection: CGRect(x: 100, y: 80, width: 240, height: 160),
+				handleRadius: 12,
+				edgeTolerance: 4
+			) == .resizeTopLeft,
+			try RsnapFrozenSelectionTransformPlanner.transformedRect(
+				kind: .resizeBottomRight,
+				initialSelection: CGRect(x: 100, y: 80, width: 240, height: 160),
+				monitorFrame: CGRect(x: 0, y: 0, width: 500, height: 400),
+				initialPointer: CGPoint(x: 340, y: 80),
+				point: CGPoint(x: 50, y: 300),
+				minimumSize: 12
+			) == CGRect(x: 100, y: 228, width: 12, height: 12)
+		else {
+			fatalError("unexpected frozen selection transform plan")
+		}
 		let autoCenterFrame = makeAutoCenterFrame(
 			width: 100,
 			height: 80,

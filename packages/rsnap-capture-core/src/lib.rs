@@ -12,6 +12,7 @@ pub mod geometry;
 pub mod minimap;
 pub mod mosaic;
 pub mod protocol;
+pub mod selection_transform;
 pub mod session;
 
 pub use self::{
@@ -39,6 +40,10 @@ pub use self::{
 		DeferredTextRecognitionOutcomeKind, DeferredTextRecognitionRequest, HostEffectKind,
 		HostEvent, HostReport, HostRequest, HudModel, OutputNaming, PermissionKind, PlatformTag,
 		PreparedHostEffectRequest, SceneModel, SessionConfig, ToolbarItemKind, ToolbarItemModel,
+	},
+	selection_transform::{
+		FrozenSelectionTransformInput, FrozenSelectionTransformKind,
+		frozen_selection_transform_hit_test, frozen_selection_transform_rect,
 	},
 	session::CaptureSessionCore,
 };
