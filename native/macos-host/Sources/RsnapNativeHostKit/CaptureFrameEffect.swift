@@ -13,6 +13,8 @@ package enum CaptureFrameSource: Equatable {
 }
 
 package enum CaptureFrameEffectRenderer {
+	private static let wallpaperCache = CaptureFrameWallpaperCache(capacity: 4)
+
 	package static func render(
 		image: CGImage,
 		background: CaptureFrameBackgroundPreference,
@@ -208,6 +210,11 @@ package enum CaptureFrameEffectRenderer {
 		else {
 			return nil
 		}
+		let maxPixelSize = max(1, targetPixelSize)
+		let cacheKey = CaptureFrameWallpaperCacheKey(url: url, targetPixelSize: maxPixelSize)
+		if let cached = wallpaperCache.image(for: cacheKey) {
+			return cached
+		}
 		guard
 			let source = CGImageSourceCreateWithURL(
 				url as CFURL,
@@ -216,7 +223,6 @@ package enum CaptureFrameEffectRenderer {
 		else {
 			return nil
 		}
-		let maxPixelSize = max(1, targetPixelSize)
 		let options =
 			[
 				kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -224,7 +230,11 @@ package enum CaptureFrameEffectRenderer {
 				kCGImageSourceShouldCacheImmediately: true,
 				kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
 			] as CFDictionary
-		return CGImageSourceCreateThumbnailAtIndex(source, 0, options)
+		guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
+			return nil
+		}
+		wallpaperCache.store(image, for: cacheKey)
+		return image
 	}
 
 	private static func drawAspectFill(
@@ -279,6 +289,52 @@ package enum CaptureFrameEffectRenderer {
 			for: background.planKind,
 			destinationSize: destinationSize
 		)
+	}
+}
+
+private struct CaptureFrameWallpaperCacheKey: Hashable {
+	let path: String
+	let targetPixelSize: Int
+	let fileSize: Int
+	let modifiedAt: TimeInterval
+
+	init(url: URL, targetPixelSize: Int) {
+		let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+		path = url.standardizedFileURL.path
+		self.targetPixelSize = targetPixelSize
+		fileSize = values?.fileSize ?? -1
+		modifiedAt = values?.contentModificationDate?.timeIntervalSinceReferenceDate ?? -1
+	}
+}
+
+private final class CaptureFrameWallpaperCache: @unchecked Sendable {
+	private let lock = NSLock()
+	private let capacity: Int
+	private var images: [CaptureFrameWallpaperCacheKey: CGImage] = [:]
+	private var order: [CaptureFrameWallpaperCacheKey] = []
+
+	init(capacity: Int) {
+		self.capacity = max(1, capacity)
+	}
+
+	func image(for key: CaptureFrameWallpaperCacheKey) -> CGImage? {
+		lock.lock()
+		defer { lock.unlock() }
+		return images[key]
+	}
+
+	func store(_ image: CGImage, for key: CaptureFrameWallpaperCacheKey) {
+		lock.lock()
+		defer { lock.unlock() }
+
+		if images[key] == nil {
+			order.append(key)
+		}
+		images[key] = image
+		while order.count > capacity {
+			let removed = order.removeFirst()
+			images[removed] = nil
+		}
 	}
 }
 
