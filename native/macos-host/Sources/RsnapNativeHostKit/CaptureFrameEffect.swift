@@ -3,7 +3,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 
-enum CaptureFrameSource: Equatable {
+package enum CaptureFrameSource: Equatable {
 	case dragRegion
 	case window
 	case fullScreen
@@ -13,6 +13,45 @@ enum CaptureFrameSource: Equatable {
 
 package enum CaptureFrameEffectRenderer {
 	package static func render(
+		image: CGImage,
+		background: CaptureFrameBackgroundPreference,
+		screen: NSScreen?,
+		source: CaptureFrameSource
+	) -> CGImage? {
+		let imageSize = CGSize(width: image.width, height: image.height)
+		guard imageSize.width > 0, imageSize.height > 0 else {
+			return nil
+		}
+		let canvasSize = canvasSize(for: imageSize)
+		guard
+			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+			let context = CGContext(
+				data: nil,
+				width: Int(canvasSize.width.rounded()),
+				height: Int(canvasSize.height.rounded()),
+				bitsPerComponent: 8,
+				bytesPerRow: 0,
+				space: colorSpace,
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
+			return nil
+		}
+
+		let canvasRect = CGRect(origin: .zero, size: canvasSize)
+		drawBackground(background, screen: screen, in: canvasRect, context: context)
+		drawFramedCapture(
+			image,
+			imageSize: imageSize,
+			in: canvasRect,
+			screen: screen,
+			source: source,
+			context: context
+		)
+		return context.makeImage()
+	}
+
+	package static func renderWindowSnapshot(
 		image: CGImage,
 		background: CaptureFrameBackgroundPreference,
 		screen: NSScreen?
@@ -39,7 +78,7 @@ package enum CaptureFrameEffectRenderer {
 
 		let canvasRect = CGRect(origin: .zero, size: canvasSize)
 		drawBackground(background, screen: screen, in: canvasRect, context: context)
-		drawFramedCapture(image, imageSize: imageSize, in: canvasRect, context: context)
+		drawFloatingWindowSnapshot(image, imageSize: imageSize, context: context)
 		return context.makeImage()
 	}
 
@@ -69,8 +108,21 @@ package enum CaptureFrameEffectRenderer {
 		return min(max(visualPadding, 48), maximumPadding)
 	}
 
-	private static func cornerRadius(for imageSize: CGSize) -> CGFloat {
-		min(32, max(10, min(imageSize.width, imageSize.height) * 0.035))
+	private static func cornerRadius(
+		for imageSize: CGSize,
+		screen: NSScreen?,
+		source: CaptureFrameSource
+	) -> CGFloat {
+		let shortSide = min(imageSize.width, imageSize.height)
+		switch source {
+		case .window:
+			let scaleFactor = screen?.backingScaleFactor ?? 2
+			return min(max(20 * scaleFactor, 24), shortSide * 0.055)
+		case .dragRegion:
+			return min(24, max(8, shortSide * 0.025))
+		case .fullScreen, .scrollCapture, .unknown:
+			return min(28, max(8, shortSide * 0.025))
+		}
 	}
 
 	private static func drawBackground(
@@ -140,10 +192,12 @@ package enum CaptureFrameEffectRenderer {
 		_ image: CGImage,
 		imageSize: CGSize,
 		in canvasRect: CGRect,
+		screen: NSScreen?,
+		source: CaptureFrameSource,
 		context: CGContext
 	) {
 		let imageRect = imageRect(for: imageSize)
-		let cornerRadius = cornerRadius(for: imageSize)
+		let cornerRadius = cornerRadius(for: imageSize, screen: screen, source: source)
 		let capturePath = CGPath(
 			roundedRect: imageRect,
 			cornerWidth: cornerRadius,
@@ -151,27 +205,27 @@ package enum CaptureFrameEffectRenderer {
 			transform: nil
 		)
 
-		context.saveGState()
-		context.addPath(capturePath)
-		context.setShadow(
+		drawShadow(
+			path: capturePath,
 			offset: .zero,
-			blur: max(48, min(canvasRect.width, canvasRect.height) * 0.065),
-			color: NSColor.black.withAlphaComponent(0.34).cgColor
+			blur: max(80, min(canvasRect.width, canvasRect.height) * 0.085),
+			alpha: 0.30,
+			context: context
 		)
-		context.setFillColor(NSColor.black.withAlphaComponent(0.24).cgColor)
-		context.fillPath()
-		context.restoreGState()
-
-		context.saveGState()
-		context.addPath(capturePath)
-		context.setShadow(
-			offset: CGSize(width: 0, height: -max(18, canvasRect.height * 0.026)),
-			blur: max(28, min(canvasRect.width, canvasRect.height) * 0.04),
-			color: NSColor.black.withAlphaComponent(0.40).cgColor
+		drawShadow(
+			path: capturePath,
+			offset: CGSize(width: 0, height: -max(22, canvasRect.height * 0.030)),
+			blur: max(46, min(canvasRect.width, canvasRect.height) * 0.050),
+			alpha: 0.36,
+			context: context
 		)
-		context.setFillColor(NSColor.black.withAlphaComponent(0.28).cgColor)
-		context.fillPath()
-		context.restoreGState()
+		drawShadow(
+			path: capturePath,
+			offset: CGSize(width: 0, height: -max(4, canvasRect.height * 0.006)),
+			blur: max(10, min(canvasRect.width, canvasRect.height) * 0.014),
+			alpha: 0.22,
+			context: context
+		)
 
 		context.saveGState()
 		context.addPath(capturePath)
@@ -179,12 +233,36 @@ package enum CaptureFrameEffectRenderer {
 		context.interpolationQuality = .high
 		context.draw(image, in: imageRect)
 		context.restoreGState()
+	}
 
+	private static func drawFloatingWindowSnapshot(
+		_ image: CGImage,
+		imageSize: CGSize,
+		context: CGContext
+	) {
+		let imageRect = imageRect(for: imageSize)
 		context.saveGState()
-		context.addPath(capturePath)
-		context.setStrokeColor(NSColor.black.withAlphaComponent(0.22).cgColor)
-		context.setLineWidth(max(1, min(imageSize.width, imageSize.height) * 0.0015))
-		context.strokePath()
+		context.interpolationQuality = .high
+		context.draw(image, in: imageRect)
+		context.restoreGState()
+	}
+
+	private static func drawShadow(
+		path: CGPath,
+		offset: CGSize,
+		blur: CGFloat,
+		alpha: CGFloat,
+		context: CGContext
+	) {
+		context.saveGState()
+		context.addPath(path)
+		context.setShadow(
+			offset: offset,
+			blur: blur,
+			color: NSColor.black.withAlphaComponent(alpha).cgColor
+		)
+		context.setFillColor(NSColor.black.cgColor)
+		context.fillPath()
 		context.restoreGState()
 	}
 

@@ -2035,10 +2035,13 @@ final class CaptureSessionController: NSObject {
 		chromeState.frozenSelectionSnapshot = selection
 		chromeState.frozenSelectionEditable = editable
 		chromeState.frozenSelectionInteraction = nil
-		chromeState.captureFrameSource = captureFrameSource(
+		let frameSource = captureFrameSource(
 			for: selection,
 			editable: editable
 		)
+		chromeState.captureFrameSource = frameSource
+		chromeState.captureFrameWindowID =
+			frameSource == .window ? scene.highlightedWindow?.windowID : nil
 		chromeState.frozenDisplayFrame = frozenFrame.displayFrame
 		chromeState.frozenDisplayImage = frozenFrame.image
 		let hostOwnedFrozenScene = hostOwnedFrozenPresentationScene(
@@ -2289,6 +2292,7 @@ final class CaptureSessionController: NSObject {
 		chromeState.frozenSelectionInteraction = nil
 		chromeState.frozenSelectionSnapshot = selection
 		chromeState.captureFrameSource = .scrollCapture
+		chromeState.captureFrameWindowID = nil
 		chromeState.frozenDisplayFrame = nil
 		chromeState.frozenDisplayImage = nil
 		chromeState.frozenBaseImage = baseImage
@@ -2724,7 +2728,11 @@ final class CaptureSessionController: NSObject {
 		let composited = compositeFrozenOverlay(on: baseImage, selection: selection) ?? baseImage
 		let result =
 			applyingCaptureFrameEffect
-			? applyCaptureFrameEffectIfNeeded(to: composited, selection: selection)
+			? applyCaptureFrameEffectIfNeeded(
+				to: composited,
+				selection: selection,
+				hasOverlayEdits: hasOverlayEdits
+			)
 			: composited
 		let compositeMilliseconds = NativeHostTelemetry.milliseconds(since: compositeStartedAt)
 		let imageSource: String
@@ -2752,18 +2760,75 @@ final class CaptureSessionController: NSObject {
 		return result
 	}
 
-	private func applyCaptureFrameEffectIfNeeded(to image: CGImage, selection: CGRect) -> CGImage {
+	private func applyCaptureFrameEffectIfNeeded(
+		to image: CGImage,
+		selection: CGRect,
+		hasOverlayEdits: Bool
+	) -> CGImage {
 		let settings = settingsStore.settings
 		guard settings.shouldApplyCaptureFrameEffect(to: chromeState.captureFrameSource) else {
 			return image
 		}
 		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
+		let screen = screen(containing: selectionCenter)
+		if !hasOverlayEdits,
+			chromeState.captureFrameSource == .window,
+			let windowImage = captureFrameWindowImage()
+		{
+			return CaptureFrameEffectRenderer.renderWindowSnapshot(
+				image: windowImage,
+				background: settings.captureFrameBackground,
+				screen: screen
+			) ?? image
+		}
 		return CaptureFrameEffectRenderer.render(
 			image: image,
 			background: settings.captureFrameBackground,
-			screen: screen(containing: selectionCenter)
+			screen: screen,
+			source: chromeState.captureFrameSource
 		) ?? image
 	}
+
+	private func captureFrameWindowImage() -> CGImage? {
+		guard let windowID = chromeState.captureFrameWindowID else {
+			return nil
+		}
+		guard let createImage = Self.captureFrameWindowListCreateImage else {
+			return nil
+		}
+		return createImage(
+			CGRect.null,
+			CGWindowListOption.optionIncludingWindow.rawValue,
+			windowID,
+			CGWindowImageOption.bestResolution.rawValue
+		)?
+		.takeRetainedValue()
+	}
+
+	private typealias CaptureFrameWindowListCreateImage =
+		@convention(c) (
+			CGRect,
+			UInt32,
+			CGWindowID,
+			UInt32
+		) -> Unmanaged<CGImage>?
+
+	nonisolated private static let captureFrameWindowListCreateImage:
+		CaptureFrameWindowListCreateImage? = {
+			guard
+				let coreGraphics = dlopen(
+					"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+					RTLD_LAZY
+				)
+			else {
+				return nil
+			}
+			guard let symbol = dlsym(coreGraphics, "CGWindowListCreateImage") else {
+				dlclose(coreGraphics)
+				return nil
+			}
+			return unsafeBitCast(symbol, to: CaptureFrameWindowListCreateImage.self)
+		}()
 
 	@discardableResult
 	private func refreshFrozenBaseImageFromDisplay(for selection: CGRect) -> Bool {
@@ -8427,6 +8492,7 @@ private struct CaptureChromeState {
 	var frozenDisplayImage: CGImage?
 	var frozenBaseImage: CGImage?
 	var captureFrameSource: CaptureFrameSource = .unknown
+	var captureFrameWindowID: CGWindowID?
 	var scrollMinimapPreview: ScrollCaptureMinimapSnapshot?
 	var frozenOverlay = FrozenOverlayState()
 	var annotationStyle = FrozenAnnotationStyleState()
@@ -8448,6 +8514,7 @@ private struct CaptureChromeState {
 		frozenDisplayImage = nil
 		frozenBaseImage = nil
 		captureFrameSource = .unknown
+		captureFrameWindowID = nil
 		scrollMinimapPreview = nil
 		frozenOverlay.reset()
 		annotationStyle = FrozenAnnotationStyleState()
@@ -8466,6 +8533,7 @@ private struct CaptureChromeState {
 		frozenDisplayImage = nil
 		frozenBaseImage = nil
 		captureFrameSource = .unknown
+		captureFrameWindowID = nil
 		scrollMinimapPreview = nil
 		frozenOverlay.reset()
 		annotationStyle = FrozenAnnotationStyleState()
