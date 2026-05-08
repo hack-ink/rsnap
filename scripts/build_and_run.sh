@@ -7,6 +7,7 @@ EXECUTABLE_NAME="RsnapNativeHost"
 BUNDLE_ID="ink.hack.rsnap"
 MIN_SYSTEM_VERSION="14.0"
 DEFAULT_SIGN_IDENTITY="x@acg.box"
+DEFAULT_SPARKLE_PUBLIC_ED_KEY="X2EaTv6mCzkYxz75Hh+ldMkKlpzNlHRg5l7Kn9ke8Ow="
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/native/macos-host"
@@ -26,7 +27,9 @@ APP_ICON_NAME="AppIcon.icns"
 STATUS_ICON_SOURCE="$ROOT_DIR/assets/tray-icon/generated/tray-icon-template.png"
 STATUS_ICON_NAME="StatusBarIcon.png"
 SPARKLE_APPCAST_URL="${RSNAP_SPARKLE_APPCAST_URL:-https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml}"
-SPARKLE_PUBLIC_ED_KEY="${RSNAP_SPARKLE_PUBLIC_ED_KEY:-}"
+# The public update key is safe to ship in source. The override exists only for
+# local Sparkle smoke tests that generate a disposable key pair and appcast.
+SPARKLE_PUBLIC_ED_KEY="${RSNAP_SPARKLE_PUBLIC_ED_KEY:-$DEFAULT_SPARKLE_PUBLIC_ED_KEY}"
 BUILD_ROOT=""
 BUILD_BINARY=""
 SWIFT_BUILD_FLAGS=()
@@ -318,16 +321,10 @@ stage_app_bundle() {
   <true/>
   <key>SUAllowsAutomaticUpdates</key>
   <true/>
-PLIST
-)"
-
-	if [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]; then
-		info_plist_contents+="$(cat <<PLIST
   <key>SUPublicEDKey</key>
   <string>$SPARKLE_PUBLIC_ED_KEY</string>
 PLIST
 )"
-	fi
 
 	if [[ -f "$APP_RESOURCES/$APP_ICON_NAME" ]]; then
 		info_plist_contents+="$(cat <<PLIST
