@@ -4782,7 +4782,7 @@ final class CaptureHostView: NSView {
 		clearLivePrimaryInteractionState(rendersImmediately: false)
 		resetLivePointerPreview()
 		liveHighlightedWindowPreview = nil
-		refreshHoveredToolbarAction()
+		clearHoveredToolbarAction()
 		syncVisibleCursor()
 		needsDisplay = true
 		controller?.updateLivePreviewDemand(
@@ -6144,9 +6144,13 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 
-		let styleKind =
-			items.first(where: { $0.selected })
-			.flatMap { FrozenAnnotationStyleToolbarKind(selectedTool: $0.kind) }
+		var styleKind: FrozenAnnotationStyleToolbarKind?
+		for item in items where item.selected {
+			if let kind = FrozenAnnotationStyleToolbarKind(selectedTool: item.kind) {
+				styleKind = kind
+				break
+			}
+		}
 		let metrics = CaptureChrome.toolbarMetrics()
 		let itemCount = CGFloat(items.count)
 		let primaryContentWidth =
@@ -6201,14 +6205,17 @@ final class CaptureHostView: NSView {
 			cursorX += metrics.buttonSize + metrics.itemSpacing
 		}
 
-		let styleLayout = styleKind.map {
-			annotationStyleLayout(
-				for: $0,
+		let styleLayout: FrozenAnnotationStyleLayout?
+		if let styleKind {
+			styleLayout = annotationStyleLayout(
+				for: styleKind,
 				in: frame,
 				contentWidth: styleContentWidth,
 				metrics: metrics,
 				toolbarAboveSelection: toolbarAboveSelection
 			)
+		} else {
+			styleLayout = nil
 		}
 
 		return FrozenToolbarLayout(
@@ -6336,8 +6343,9 @@ final class CaptureHostView: NSView {
 	}
 
 	private func visibleToolbarItems() -> [ToolbarItem] {
-		scene.toolbarItems.compactMap { item in
-			var item = item
+		var items: [ToolbarItem] = []
+		for originalItem in scene.toolbarItems {
+			var item = originalItem
 			switch item.kind {
 			case .pen, .arrow, .mosaic, .spotlight, .text:
 				item.enabled = true
@@ -6351,14 +6359,15 @@ final class CaptureHostView: NSView {
 					&& !chrome.frozenOverlay.keepsFrozenSelectionFixed
 			case .scroll:
 				guard controller?.scrollCaptureToolbarEnabled == true else {
-					return nil
+					continue
 				}
 				item.enabled = controller?.scrollCaptureToolbarEnabled ?? false
 			default:
 				break
 			}
-			return item
+			items.append(item)
 		}
+		return items
 	}
 
 	private func toolbarItem(_ kind: ToolbarItemKind) -> ToolbarItem? {
@@ -6366,29 +6375,11 @@ final class CaptureHostView: NSView {
 	}
 
 	private func toolbarAction(at point: CGPoint) -> ToolbarItemKind? {
-		guard scene.mode == .frozen, let selection = localFrozenSelectionRect(),
-			let layout = toolbarLayout(for: selection)
-		else {
-			return nil
-		}
-		return layout.items.first(where: { $0.frame.contains(point) && $0.enabled })?.kind
+		frozenToolbarHitState(at: point).toolbarAction
 	}
 
 	private func annotationStyleAction(at point: CGPoint) -> FrozenAnnotationStyleAction? {
-		guard scene.mode == .frozen, let selection = localFrozenSelectionRect(),
-			let styleLayout = toolbarLayout(for: selection)?.annotationStyle
-		else {
-			return nil
-		}
-		if styleLayout.decreaseFrame.contains(point) {
-			return .decreaseSize
-		}
-		if styleLayout.increaseFrame.contains(point) {
-			return .increaseSize
-		}
-		return styleLayout.swatches.first(where: { $0.frame.contains(point) }).map {
-			.color($0.color)
-		}
+		frozenToolbarHitState(at: point).annotationStyleAction
 	}
 
 	private func annotationStyleSizeControlContains(_ point: CGPoint) -> Bool {
@@ -6401,12 +6392,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func toolbarFrameContains(_ point: CGPoint) -> Bool {
-		guard scene.mode == .frozen, let selection = localFrozenSelectionRect(),
-			let layout = toolbarLayout(for: selection)
-		else {
-			return false
-		}
-		return layout.frame.contains(point)
+		frozenToolbarHitState(at: point).pointerOverToolbar
 	}
 
 	private func performToolbarAction(_ action: ToolbarItemKind) {
@@ -6426,11 +6412,70 @@ final class CaptureHostView: NSView {
 		controller?.performFrozenAnnotationStyleAction(action)
 	}
 
+	private func frozenToolbarHitState(at point: CGPoint) -> (
+		pointerOverToolbar: Bool,
+		toolbarAction: ToolbarItemKind?,
+		annotationStyleAction: FrozenAnnotationStyleAction?
+	) {
+		guard scene.mode == .frozen, let selection = localFrozenSelectionRect(),
+			let layout = toolbarLayout(for: selection)
+		else {
+			return (false, nil, nil)
+		}
+
+		var hoveredAction: ToolbarItemKind?
+		for item in layout.items where item.enabled {
+			if item.frame.contains(point) {
+				hoveredAction = item.kind
+				break
+			}
+		}
+
+		var hoveredStyleAction: FrozenAnnotationStyleAction?
+		if let styleLayout = layout.annotationStyle {
+			if styleLayout.decreaseFrame.contains(point) {
+				hoveredStyleAction = .decreaseSize
+			} else if styleLayout.increaseFrame.contains(point) {
+				hoveredStyleAction = .increaseSize
+			} else {
+				for swatch in styleLayout.swatches where swatch.frame.contains(point) {
+					hoveredStyleAction = .color(swatch.color)
+					break
+				}
+			}
+		}
+
+		return (layout.frame.contains(point), hoveredAction, hoveredStyleAction)
+	}
+
+	private func clearHoveredToolbarAction() {
+		guard
+			pointerOverFrozenToolbar || hoveredToolbarAction != nil
+				|| hoveredAnnotationStyleAction != nil
+		else {
+			return
+		}
+		pointerOverFrozenToolbar = false
+		hoveredToolbarAction = nil
+		hoveredAnnotationStyleAction = nil
+	}
+
 	private func refreshHoveredToolbarAction(for localPoint: CGPoint? = nil) {
 		let probePoint = scene.mode == .frozen ? (localPoint ?? currentLocalMousePoint()) : nil
-		let pointerOverToolbar = probePoint.map(toolbarFrameContains) ?? false
-		let hoveredAction = probePoint.flatMap(toolbarAction(at:))
-		let hoveredStyleAction = probePoint.flatMap(annotationStyleAction(at:))
+		let hitState:
+			(
+				pointerOverToolbar: Bool,
+				toolbarAction: ToolbarItemKind?,
+				annotationStyleAction: FrozenAnnotationStyleAction?
+			)
+		if let probePoint {
+			hitState = frozenToolbarHitState(at: probePoint)
+		} else {
+			hitState = (false, nil, nil)
+		}
+		let pointerOverToolbar = hitState.pointerOverToolbar
+		let hoveredAction = hitState.toolbarAction
+		let hoveredStyleAction = hitState.annotationStyleAction
 		if hoveredToolbarAction != hoveredAction
 			|| hoveredAnnotationStyleAction != hoveredStyleAction
 			|| pointerOverFrozenToolbar != pointerOverToolbar
