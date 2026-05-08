@@ -147,7 +147,8 @@ enum RsnapNativeHostKitProbe {
 			let rendered = CaptureFrameEffectRenderer.render(
 				image: source,
 				background: .aurora,
-				screen: nil
+				screen: nil,
+				source: .window
 			)
 		else {
 			fatalError("capture frame renderer should produce an image for gradient presets")
@@ -155,6 +156,17 @@ enum RsnapNativeHostKitProbe {
 		guard rendered.width == Int(canvasSize.width), rendered.height == Int(canvasSize.height)
 		else {
 			fatalError("capture frame renderer size should match layout geometry")
+		}
+		guard
+			let renderedWindowSnapshot = CaptureFrameEffectRenderer.renderWindowSnapshot(
+				image: source,
+				background: .aurora,
+				screen: nil
+			),
+			renderedWindowSnapshot.width == Int(canvasSize.width),
+			renderedWindowSnapshot.height == Int(canvasSize.height)
+		else {
+			fatalError("window snapshot frame renderer should preserve layout geometry")
 		}
 		guard let pixels = rgbaPixels(from: rendered) else {
 			fatalError("could not read capture frame rendered pixels")
