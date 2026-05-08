@@ -9,11 +9,12 @@ case "${1:-}" in
 Usage: local.sh
 
 Runs the local deterministic performance sweep.
-No local deterministic benchmarks are enabled while scroll capture is disabled.
+Checks the Rust export and scroll-capture hot paths against deterministic fixtures
+and conservative local budgets.
 EOF
     exit 0
     ;;
 esac
 
 cd "$ROOT_DIR"
-echo "[perf] no local deterministic benchmarks are enabled while scroll capture is disabled."
+cargo run -p rsnap-perf --release --quiet
