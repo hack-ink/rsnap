@@ -10,7 +10,7 @@ homepage    = "https://hack.ink/rsnap"
 license     = "GPL-3.0"
 readme      = "README.md"
 repository  = "https://github.com/hack-ink/rsnap"
-version     = "0.1.4"
+version     = "0.1.5"
 
 [workspace.dependencies]
 arboard                  = { version = "3.6" }
@@ -52,9 +52,9 @@ wgpu                     = { version = "29.0" }
 winit                    = { version = "0.30", features = ["rwh_06"] }
 xcap                     = { version = "0.9" }
 
-rsnap-capture-core = { version = "0.1.4", path = "packages/rsnap-capture-core" }
-rsnap-host-ffi     = { version = "0.1.4", path = "packages/rsnap-host-ffi" }
-rsnap-overlay      = { version = "0.1.4", path = "packages/rsnap-overlay" }
+rsnap-capture-core = { version = "0.1.5", path = "packages/rsnap-capture-core" }
+rsnap-host-ffi     = { version = "0.1.5", path = "packages/rsnap-host-ffi" }
+rsnap-overlay      = { version = "0.1.5", path = "packages/rsnap-overlay" }
 
 [profile.final-release]
 inherits = "release"
