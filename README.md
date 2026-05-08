@@ -71,7 +71,7 @@ Prototype / in active development.
 - Menubar and Dock are not included in live window-outline targeting.
 - Windows support is planned (minimum Windows 10), but not implemented yet.
 - The scroll-capture engine, deterministic replay, and benchmark surfaces remain in the repository,
-  but the v0.1.4 native-host release does not expose scroll capture in the toolbar.
+  but the v0.1.5 native-host release does not expose scroll capture in the toolbar.
 
 ## Usage
 
@@ -123,7 +123,7 @@ Rsnap currently relies on **Screen Recording** permission to capture other apps/
 - ScreenCaptureKit live sampling on macOS requires macOS 12.3+ and Screen Recording permission.
 - Normal region/window/monitor capture does not require Accessibility or Input Monitoring.
 - The retained scroll-capture path uses Screen Recording-backed screenshots plus forwarded wheel
-  input, but the v0.1.4 native-host release does not expose scroll capture in the toolbar.
+  input, but the v0.1.5 native-host release does not expose scroll capture in the toolbar.
 - macOS may describe Screen Recording as `Screen & System Audio Recording` or as direct screen/audio access when Rsnap bypasses the system picker.
 - Settings -> Permissions shows Screen Recording as the only required permission.
 - Normal native capture depends on Screen Recording; if access is missing, Rsnap opens the Screen Recording page in System Settings and shows a floating drag-to-grant guide.
@@ -156,7 +156,7 @@ Rsnap currently relies on **Screen Recording** permission to capture other apps/
 
 ### Current scroll-capture status
 
-Scroll capture is temporarily hidden in the v0.1.4 native-host release. The retained Rust
+Scroll capture is temporarily hidden in the v0.1.5 native-host release. The retained Rust
 scroll-capture session, deterministic replay, and benchmark surfaces remain for validation and
 future re-enablement, but users should not expect a `Scroll Capture` toolbar item in this release.
 

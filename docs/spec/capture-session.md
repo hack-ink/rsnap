@@ -162,7 +162,7 @@ product level rather than binding itself to a particular window toolkit or shell
 
 ## Scroll capture
 
-- The v0.1.4 native-host release does not expose scroll capture. The frozen toolbar MUST NOT show a
+- The v0.1.5 native-host release does not expose scroll capture. The frozen toolbar MUST NOT show a
   scroll-capture item while the native-host scroll-capture gate is disabled, and plain `s` MUST NOT
   enter scroll capture in that state.
 - When scroll capture is re-enabled, it is available only from a dragged-region freeze on macOS.

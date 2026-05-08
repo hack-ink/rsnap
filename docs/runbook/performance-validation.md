@@ -17,9 +17,9 @@ Depends on: `docs/spec/performance.md`
 Outputs: A clear command choice for the regression class you are testing, plus a repeatable local
 baseline workflow for the committed Criterion benchmark targets.
 
-Current release status: v0.1.4 hides user-facing scroll capture in the native host. The replay and
+Current release status: v0.1.5 hides user-facing scroll capture in the native host. The replay and
 benchmark commands in this runbook still own retained internal scroll-capture engine validation and
-future re-enablement work, but they are not evidence that the v0.1.4 toolbar exposes scroll
+future re-enablement work, but they are not evidence that the v0.1.5 toolbar exposes scroll
 capture.
 
 ## Command selection
