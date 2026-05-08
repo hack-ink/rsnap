@@ -438,6 +438,27 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		settingsWindowController.present()
 	}
 
+	@objc
+	private func openScreenshotsFolder(_ sender: Any?) {
+		let outputDirectory = settingsStore.settings.outputDirectory
+		do {
+			try FileManager.default.createDirectory(
+				at: outputDirectory,
+				withIntermediateDirectories: true)
+			NSWorkspace.shared.open(outputDirectory)
+			NativeHostTelemetry.lifecycleEvent("native_host.output_directory_opened")
+		} catch {
+			NativeHostTelemetry.lifecycleWarning(
+				"native_host.output_directory_open_failed",
+				detail: "reason=create_or_open_failed")
+		}
+	}
+
+	@objc
+	private func checkForUpdates(_ sender: Any?) {
+		softwareUpdater.checkForUpdates(sender)
+	}
+
 	private func scheduleLaunchPermissionOnboardingIfNeeded() {
 		DispatchQueue.main.async { [weak self] in
 			_ = self?.presentPermissionRecoveryIfNeeded(
@@ -522,6 +543,15 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			action: #selector(startCapture(_:)),
 			keyEquivalent: ""
 		)
+		menu.addItem(.separator())
+		menu.addItem(
+			withTitle: "Open Screenshots Folder",
+			action: #selector(openScreenshotsFolder(_:)),
+			keyEquivalent: "")
+		menu.addItem(
+			withTitle: "Check for Updates…",
+			action: #selector(checkForUpdates(_:)),
+			keyEquivalent: "")
 		menu.addItem(.separator())
 		menu.addItem(
 			withTitle: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
