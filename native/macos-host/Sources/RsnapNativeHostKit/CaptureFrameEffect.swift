@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import ImageIO
+import RsnapHostBridge
 
 package enum CaptureFrameSource: Equatable {
 	case dragRegion
@@ -22,7 +23,10 @@ package enum CaptureFrameEffectRenderer {
 		guard imageSize.width > 0, imageSize.height > 0 else {
 			return nil
 		}
-		let canvasSize = canvasSize(for: imageSize)
+		guard let plan = captureFramePlan(for: imageSize, screen: screen, source: source) else {
+			return nil
+		}
+		let canvasSize = plan.canvasSize
 		guard
 			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
 			let context = CGContext(
@@ -40,14 +44,7 @@ package enum CaptureFrameEffectRenderer {
 
 		let canvasRect = CGRect(origin: .zero, size: canvasSize)
 		drawBackground(background, screen: screen, in: canvasRect, context: context)
-		drawFramedCapture(
-			image,
-			imageSize: imageSize,
-			in: canvasRect,
-			screen: screen,
-			source: source,
-			context: context
-		)
+		drawFramedCapture(image, plan: plan, context: context)
 		return context.makeImage()
 	}
 
@@ -60,7 +57,10 @@ package enum CaptureFrameEffectRenderer {
 		guard imageSize.width > 0, imageSize.height > 0 else {
 			return nil
 		}
-		let canvasSize = canvasSize(for: imageSize)
+		guard let plan = captureFramePlan(for: imageSize, screen: screen, source: .window) else {
+			return nil
+		}
+		let canvasSize = plan.canvasSize
 		guard
 			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
 			let context = CGContext(
@@ -78,51 +78,16 @@ package enum CaptureFrameEffectRenderer {
 
 		let canvasRect = CGRect(origin: .zero, size: canvasSize)
 		drawBackground(background, screen: screen, in: canvasRect, context: context)
-		drawFloatingWindowSnapshot(image, imageSize: imageSize, context: context)
+		drawFloatingWindowSnapshot(image, plan: plan, context: context)
 		return context.makeImage()
 	}
 
 	package static func canvasSize(for imageSize: CGSize) -> CGSize {
-		let padding = padding(for: imageSize)
-		return CGSize(
-			width: ceil(imageSize.width + padding * 2),
-			height: ceil(imageSize.height + padding * 2)
-		)
+		captureFramePlan(for: imageSize, screen: nil, source: .unknown)?.canvasSize ?? .zero
 	}
 
 	package static func imageRect(for imageSize: CGSize) -> CGRect {
-		let padding = padding(for: imageSize)
-		return CGRect(
-			x: padding,
-			y: padding,
-			width: imageSize.width,
-			height: imageSize.height
-		)
-	}
-
-	private static func padding(for imageSize: CGSize) -> CGFloat {
-		let shortSide = min(imageSize.width, imageSize.height)
-		let longSide = max(imageSize.width, imageSize.height)
-		let visualPadding = shortSide * 0.115
-		let maximumPadding = max(72, longSide * 0.18)
-		return min(max(visualPadding, 48), maximumPadding)
-	}
-
-	private static func cornerRadius(
-		for imageSize: CGSize,
-		screen: NSScreen?,
-		source: CaptureFrameSource
-	) -> CGFloat {
-		let shortSide = min(imageSize.width, imageSize.height)
-		switch source {
-		case .window:
-			let scaleFactor = screen?.backingScaleFactor ?? 2
-			return min(max(20 * scaleFactor, 24), shortSide * 0.055)
-		case .dragRegion:
-			return min(24, max(8, shortSide * 0.025))
-		case .fullScreen, .scrollCapture, .unknown:
-			return min(28, max(8, shortSide * 0.025))
-		}
+		captureFramePlan(for: imageSize, screen: nil, source: .unknown)?.imageRect ?? .zero
 	}
 
 	private static func drawBackground(
@@ -190,60 +155,42 @@ package enum CaptureFrameEffectRenderer {
 
 	private static func drawFramedCapture(
 		_ image: CGImage,
-		imageSize: CGSize,
-		in canvasRect: CGRect,
-		screen: NSScreen?,
-		source: CaptureFrameSource,
+		plan: CaptureFrameLayoutPlan,
 		context: CGContext
 	) {
-		let imageRect = imageRect(for: imageSize)
-		let cornerRadius = cornerRadius(for: imageSize, screen: screen, source: source)
 		let capturePath = CGPath(
-			roundedRect: imageRect,
-			cornerWidth: cornerRadius,
-			cornerHeight: cornerRadius,
+			roundedRect: plan.imageRect,
+			cornerWidth: plan.cornerRadius,
+			cornerHeight: plan.cornerRadius,
 			transform: nil
 		)
 
-		drawShadow(
-			path: capturePath,
-			offset: .zero,
-			blur: max(80, min(canvasRect.width, canvasRect.height) * 0.085),
-			alpha: 0.30,
-			context: context
-		)
-		drawShadow(
-			path: capturePath,
-			offset: CGSize(width: 0, height: -max(22, canvasRect.height * 0.030)),
-			blur: max(46, min(canvasRect.width, canvasRect.height) * 0.050),
-			alpha: 0.36,
-			context: context
-		)
-		drawShadow(
-			path: capturePath,
-			offset: CGSize(width: 0, height: -max(4, canvasRect.height * 0.006)),
-			blur: max(10, min(canvasRect.width, canvasRect.height) * 0.014),
-			alpha: 0.22,
-			context: context
-		)
+		for shadow in plan.shadows {
+			drawShadow(
+				path: capturePath,
+				offset: shadow.offset,
+				blur: shadow.blur,
+				alpha: shadow.alpha,
+				context: context
+			)
+		}
 
 		context.saveGState()
 		context.addPath(capturePath)
 		context.clip()
 		context.interpolationQuality = .high
-		context.draw(image, in: imageRect)
+		context.draw(image, in: plan.imageRect)
 		context.restoreGState()
 	}
 
 	private static func drawFloatingWindowSnapshot(
 		_ image: CGImage,
-		imageSize: CGSize,
+		plan: CaptureFrameLayoutPlan,
 		context: CGContext
 	) {
-		let imageRect = imageRect(for: imageSize)
 		context.saveGState()
 		context.interpolationQuality = .high
-		context.draw(image, in: imageRect)
+		context.draw(image, in: plan.imageRect)
 		context.restoreGState()
 	}
 
@@ -300,35 +247,54 @@ package enum CaptureFrameEffectRenderer {
 		in destination: CGRect,
 		context: CGContext
 	) {
-		let imageSize = CGSize(width: image.width, height: image.height)
-		let source = aspectFillCropRect(sourceSize: imageSize, destinationSize: destination.size)
+		let source: CGRect?
+		do {
+			source = try RsnapCaptureFramePlanner.aspectFillCropRect(
+				sourceWidth: image.width,
+				sourceHeight: image.height,
+				destinationSize: destination.size
+			)
+		} catch {
+			source = nil
+		}
+		guard let source else {
+			context.interpolationQuality = .high
+			context.draw(image, in: destination)
+			return
+		}
 		let cropped = image.cropping(to: source.integral) ?? image
 		context.interpolationQuality = .high
 		context.draw(cropped, in: destination)
 	}
 
-	private static func aspectFillCropRect(
-		sourceSize: CGSize,
-		destinationSize: CGSize
-	) -> CGRect {
-		let sourceAspect = sourceSize.width / max(sourceSize.height, 1)
-		let destinationAspect = destinationSize.width / max(destinationSize.height, 1)
-		if sourceAspect > destinationAspect {
-			let width = sourceSize.height * destinationAspect
-			return CGRect(
-				x: (sourceSize.width - width) / 2,
-				y: 0,
-				width: width,
-				height: sourceSize.height
-			)
-		}
-		let height = sourceSize.width / max(destinationAspect, .leastNonzeroMagnitude)
-		return CGRect(
-			x: 0,
-			y: (sourceSize.height - height) / 2,
-			width: sourceSize.width,
-			height: height
+	private static func captureFramePlan(
+		for imageSize: CGSize,
+		screen: NSScreen?,
+		source: CaptureFrameSource
+	) -> CaptureFrameLayoutPlan? {
+		try? RsnapCaptureFramePlanner.plan(
+			imageWidth: Int(max(imageSize.width.rounded(), 0)),
+			imageHeight: Int(max(imageSize.height.rounded(), 0)),
+			screenScaleFactor: screen?.backingScaleFactor ?? 2,
+			source: source.planKind
 		)
+	}
+}
+
+extension CaptureFrameSource {
+	fileprivate var planKind: CaptureFrameSourceKind {
+		switch self {
+		case .dragRegion:
+			return .dragRegion
+		case .window:
+			return .window
+		case .fullScreen:
+			return .fullScreen
+		case .scrollCapture:
+			return .scrollCapture
+		case .unknown:
+			return .unknown
+		}
 	}
 }
 

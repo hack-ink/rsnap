@@ -14,6 +14,8 @@ int main(void) {
 	RsnapOwnedBytes png_export = {0};
 	RsnapPixelRect crop = {.x = 0, .y = 0, .width = 2, .height = 2};
 	RsnapPixelRect display_crop = {0};
+	RsnapCaptureFramePlan frame_plan = {0};
+	RsnapFloatRect aspect_crop = {0};
 	RsnapFloatRect display_frame = {.x = 0.0, .y = 0.0, .width = 1440.0, .height = 900.0};
 	RsnapFloatRect selection = {.x = 100.0, .y = 200.0, .width = 300.0, .height = 150.0};
 	RsnapFloatRect mosaic_source = {.x = 4.2, .y = 9.1, .width = 28.4, .height = 21.0};
@@ -89,6 +91,35 @@ int main(void) {
 		return 16;
 	}
 	rsnap_owned_rgba_region_release(&mosaic_patch);
+	if (rsnap_capture_frame_plan(
+			320,
+			180,
+			2.0,
+			RSNAP_CAPTURE_FRAME_SOURCE_WINDOW,
+			&frame_plan
+		) != RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 17;
+	}
+	if (frame_plan.canvas_width != 416.0 || frame_plan.canvas_height != 276.0 ||
+		frame_plan.image_rect.x != 48.0 || frame_plan.corner_radius != 9.9) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 18;
+	}
+	if (rsnap_capture_frame_aspect_fill_crop_rect(1600, 900, 1000.0, 1000.0, &aspect_crop) !=
+		RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 19;
+	}
+	if (aspect_crop.x != 350.0 || aspect_crop.y != 0.0 || aspect_crop.width != 900.0 ||
+		aspect_crop.height != 900.0) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 20;
+	}
 	if (rsnap_session_enter_live(handle) != RSNAP_STATUS_OK) {
 		rsnap_scroll_session_destroy(scroll_handle);
 		rsnap_session_destroy(handle);

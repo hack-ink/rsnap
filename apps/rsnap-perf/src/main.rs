@@ -8,7 +8,8 @@ use std::{
 use color_eyre::eyre::{Result, ensure, eyre};
 use image::{Rgba, RgbaImage};
 use rsnap_capture_core::{
-	DisplayPointRect, RectPoints, crop_rgba_image, encode_png_lossless_fast,
+	CaptureFrameSourceKind, DisplayPointRect, RectPoints, capture_frame_aspect_fill_crop_rect,
+	capture_frame_plan, crop_rgba_image, encode_png_lossless_fast,
 	frozen_mosaic_light_privacy_patch,
 };
 use rsnap_overlay::bench_support::{
@@ -39,6 +40,7 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	verify_export_round_trip(&image)?;
 	verify_crop_exactness(&image)?;
 	verify_mosaic_patch()?;
+	verify_capture_frame_plan()?;
 
 	results.push(time_case(
 		"export_png_lossless_fast_1440x900",
@@ -71,6 +73,36 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 			.ok_or_else(|| eyre!("mosaic patch performance fixture is invalid"))?;
 
 			Ok(checksum_bytes(patch.as_raw()))
+		},
+	)?);
+
+	results.push(time_case(
+		"capture_frame_plan_1440x900",
+		10_000,
+		Duration::from_millis(60),
+		|| {
+			let plan = capture_frame_plan(1_440, 900, 2.0, CaptureFrameSourceKind::Window)
+				.ok_or_else(|| eyre!("capture frame plan performance fixture is invalid"))?;
+			let crop = capture_frame_aspect_fill_crop_rect(
+				2_400,
+				1_600,
+				plan.canvas_width,
+				plan.canvas_height,
+			)
+			.ok_or_else(|| eyre!("capture frame aspect-fill performance fixture is invalid"))?;
+
+			Ok(checksum_f64s(&[
+				plan.canvas_width,
+				plan.canvas_height,
+				plan.image_rect.x,
+				plan.corner_radius,
+				plan.shadows[0].blur,
+				plan.shadows[1].offset_y,
+				crop.x,
+				crop.y,
+				crop.width,
+				crop.height,
+			]))
 		},
 	)?);
 
@@ -162,6 +194,27 @@ fn verify_mosaic_patch() -> Result<()> {
 	ensure!(
 		patch.as_raw()[..12] == [211, 211, 211, 255, 205, 205, 205, 255, 202, 201, 199, 255],
 		"mosaic patch seeded color bytes changed"
+	);
+
+	Ok(())
+}
+
+fn verify_capture_frame_plan() -> Result<()> {
+	let plan = capture_frame_plan(320, 180, 2.0, CaptureFrameSourceKind::Window)
+		.ok_or_else(|| eyre!("capture frame plan fixture is invalid"))?;
+	ensure!(plan.canvas_width == 416.0, "capture frame canvas width changed");
+	ensure!(plan.canvas_height == 276.0, "capture frame canvas height changed");
+	ensure!(
+		plan.image_rect == DisplayPointRect::new(48.0, 48.0, 320.0, 180.0),
+		"capture frame image rect changed"
+	);
+	ensure!(plan.corner_radius == 9.9, "capture frame corner radius changed");
+
+	let crop = capture_frame_aspect_fill_crop_rect(1600, 900, 1000.0, 1000.0)
+		.ok_or_else(|| eyre!("capture frame aspect-fill fixture is invalid"))?;
+	ensure!(
+		crop == DisplayPointRect::new(350.0, 0.0, 900.0, 900.0),
+		"capture frame aspect-fill crop changed"
 	);
 
 	Ok(())
@@ -275,6 +328,12 @@ fn pattern_byte(value: u32) -> u8 {
 fn checksum_bytes(bytes: &[u8]) -> u64 {
 	bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |acc, byte| {
 		acc.wrapping_mul(0x0000_0001_0000_01b3).wrapping_add(u64::from(*byte) + 1)
+	})
+}
+
+fn checksum_f64s(values: &[f64]) -> u64 {
+	values.iter().fold(0xcbf2_9ce4_8422_2325_u64, |acc, value| {
+		acc.wrapping_mul(0x0000_0001_0000_01b3).wrapping_add(value.to_bits())
 	})
 }
 
