@@ -11,7 +11,9 @@ int main(void) {
 	RsnapScrollObserveResult scroll_result = {0};
 	RsnapOwnedRgbaRegion scroll_export = {0};
 	RsnapOwnedRgbaRegion mosaic_patch = {0};
+	RsnapOwnedRgbaRegion bgra_patch = {0};
 	RsnapOwnedBytes png_export = {0};
+	RsnapRgb bgra_rgb = {0};
 	RsnapPixelRect crop = {.x = 0, .y = 0, .width = 2, .height = 2};
 	RsnapPixelRect display_crop = {0};
 	RsnapCaptureFramePlan frame_plan = {0};
@@ -25,6 +27,7 @@ int main(void) {
 	RsnapFloatRect mosaic_source = {.x = 4.2, .y = 9.1, .width = 28.4, .height = 21.0};
 	uint8_t rgba[4 * 4 * 4] = {0};
 	uint8_t auto_center_rgba[4 * 4 * 4] = {0};
+	uint8_t bgra[4 * 3 * 4] = {0};
 	RsnapSessionHandle *handle = rsnap_session_create(config);
 	RsnapScrollSessionHandle *scroll_handle =
 		rsnap_scroll_session_create(4, 4, rgba, sizeof(rgba), 4);
@@ -37,6 +40,15 @@ int main(void) {
 	auto_center_rgba[(1 * 4 + 1) * 4] = 24;
 	auto_center_rgba[(1 * 4 + 1) * 4 + 1] = 32;
 	auto_center_rgba[(1 * 4 + 1) * 4 + 2] = 40;
+	for (uint32_t y = 0; y < 3; y++) {
+		for (uint32_t x = 0; x < 4; x++) {
+			size_t offset = (y * 4 + x) * 4;
+			bgra[offset] = (uint8_t)(30 + y * 15 + x);
+			bgra[offset + 1] = (uint8_t)(20 + y * 10 + x);
+			bgra[offset + 2] = (uint8_t)(10 + y * 5 + x);
+			bgra[offset + 3] = (uint8_t)(200 + y + x);
+		}
+	}
 
 	if (handle == 0) {
 		return 1;
@@ -105,6 +117,49 @@ int main(void) {
 		return 16;
 	}
 	rsnap_owned_rgba_region_release(&mosaic_patch);
+	if (rsnap_bgra_frame_sample_rgb(
+			4,
+			3,
+			16,
+			bgra,
+			sizeof(bgra),
+			(RsnapFloatRect){.x = 0.0, .y = 0.0, .width = 4.0, .height = 3.0},
+			1.0,
+			2.5,
+			&bgra_rgb
+		) != RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 29;
+	}
+	if (bgra_rgb.r != 11 || bgra_rgb.g != 21 || bgra_rgb.b != 31) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 30;
+	}
+	if (rsnap_bgra_frame_loupe_patch_rgba(
+			4,
+			3,
+			16,
+			bgra,
+			sizeof(bgra),
+			(RsnapFloatRect){.x = 0.0, .y = 0.0, .width = 4.0, .height = 3.0},
+			0.0,
+			2.0,
+			3,
+			&bgra_patch
+		) != RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 31;
+	}
+	if (bgra_patch.width != 3 || bgra_patch.height != 3 || bgra_patch.len != 36) {
+		rsnap_owned_rgba_region_release(&bgra_patch);
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 32;
+	}
+	rsnap_owned_rgba_region_release(&bgra_patch);
 	if (rsnap_capture_frame_plan(
 			320,
 			180,

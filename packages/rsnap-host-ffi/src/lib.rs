@@ -13,12 +13,12 @@ use rsnap_overlay as _;
 
 use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
-	self, AutoCenterImageError, CaptureFrameBackgroundKind, CaptureFrameBackgroundPlan,
-	CaptureFrameColorStop, CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind,
-	CaptureFrameWallpaperRequest, CaptureMode, CaptureSessionCore, CursorIntent, DisplayPointRect,
-	GlobalRect, HostEffectKind, HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag,
-	RectPoints, Rgb, RgbaExportImage, ScrollMinimapInput, ScrollMinimapPlan, SessionConfig,
-	ToolbarItemKind, ToolbarItemModel, WindowRect,
+	self, AutoCenterImageError, BgraFrameView, CaptureFrameBackgroundKind,
+	CaptureFrameBackgroundPlan, CaptureFrameColorStop, CaptureFramePlan, CaptureFrameShadow,
+	CaptureFrameSourceKind, CaptureFrameWallpaperRequest, CaptureMode, CaptureSessionCore,
+	CursorIntent, DisplayPointRect, GlobalRect, HostEffectKind, HostEvent, HostReport, HostRequest,
+	PermissionKind, PlatformTag, RectPoints, Rgb, RgbaExportImage, ScrollMinimapInput,
+	ScrollMinimapPlan, SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -27,7 +27,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 26;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 27;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -1050,6 +1050,97 @@ pub unsafe extern "C" fn rsnap_frozen_mosaic_light_privacy_patch_rgba(
 	RsnapStatus::Ok
 }
 
+/// Samples an RGB value from a borrowed BGRA frame.
+///
+/// # Safety
+///
+/// `bgra` must point to `bgra_len` readable bytes while this function runs, and
+/// `out_rgb` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_bgra_frame_sample_rgb(
+	width: u32,
+	height: u32,
+	bytes_per_row: usize,
+	bgra: *const u8,
+	bgra_len: usize,
+	display_frame: RsnapFloatRect,
+	point_x: f64,
+	point_y: f64,
+	out_rgb: *mut RsnapRgb,
+) -> RsnapStatus {
+	if out_rgb.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+	let Some(frame) = (unsafe { decode_bgra_frame(width, height, bytes_per_row, bgra, bgra_len) })
+	else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	let Some(rgb) = rsnap_capture_core::sample_rgb_from_bgra_frame(
+		frame,
+		decode_float_rect(display_frame),
+		point_x,
+		point_y,
+	) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_rgb, RsnapRgb { r: rgb.r, g: rgb.g, b: rgb.b });
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Builds a square RGBA loupe patch from a borrowed BGRA frame.
+///
+/// # Safety
+///
+/// `bgra` must point to `bgra_len` readable bytes while this function runs. `out_region`
+/// must be writable, and the returned buffer must be released with
+/// `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_bgra_frame_loupe_patch_rgba(
+	width: u32,
+	height: u32,
+	bytes_per_row: usize,
+	bgra: *const u8,
+	bgra_len: usize,
+	display_frame: RsnapFloatRect,
+	point_x: f64,
+	point_y: f64,
+	side_pixels: u32,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+	let Some(frame) = (unsafe { decode_bgra_frame(width, height, bytes_per_row, bgra, bgra_len) })
+	else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	let Some(patch) = rsnap_capture_core::loupe_patch_rgba_from_bgra_frame(
+		frame,
+		decode_float_rect(display_frame),
+		point_x,
+		point_y,
+		side_pixels,
+	) else {
+		unsafe {
+			ptr::write(out_region, RsnapOwnedRgbaRegion::default());
+		}
+		return RsnapStatus::Empty;
+	};
+
+	let (width, height) = patch.dimensions();
+	unsafe {
+		ptr::write(out_region, owned_region_from_raw_rgba(width, height, patch.into_raw()));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Resolves capture-frame layout and shadow parameters.
 ///
 /// # Safety
@@ -1863,6 +1954,22 @@ fn decode_pixel_rect(rect: RsnapPixelRect) -> RectPoints {
 
 fn decode_float_rect(rect: RsnapFloatRect) -> DisplayPointRect {
 	DisplayPointRect::new(rect.x, rect.y, rect.width, rect.height)
+}
+
+unsafe fn decode_bgra_frame<'a>(
+	width: u32,
+	height: u32,
+	bytes_per_row: usize,
+	bgra: *const u8,
+	bgra_len: usize,
+) -> Option<BgraFrameView<'a>> {
+	if bgra.is_null() {
+		return None;
+	}
+	let bytes = unsafe { slice::from_raw_parts(bgra, bgra_len) };
+	let frame = BgraFrameView { width, height, bytes_per_row, bytes };
+
+	frame.is_valid().then_some(frame)
 }
 
 fn encode_float_rect(rect: DisplayPointRect) -> RsnapFloatRect {
@@ -2718,6 +2825,82 @@ mod tests {
 	}
 
 	#[test]
+	fn ffi_bgra_frame_sample_rgb_returns_core_sample() {
+		let bgra = bgra_frame(4, 3, 16);
+		let mut rgb = RsnapRgb::default();
+		let status = unsafe {
+			crate::rsnap_bgra_frame_sample_rgb(
+				4,
+				3,
+				16,
+				bgra.as_ptr(),
+				bgra.len(),
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 4.0, height: 3.0 },
+				1.0,
+				2.5,
+				&mut rgb,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(rgb, RsnapRgb { r: 11, g: 21, b: 31 });
+	}
+
+	#[test]
+	fn ffi_bgra_frame_loupe_patch_returns_rgba_region() {
+		let bgra = bgra_frame(4, 3, 16);
+		let mut patch = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_bgra_frame_loupe_patch_rgba(
+				4,
+				3,
+				16,
+				bgra.as_ptr(),
+				bgra.len(),
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 4.0, height: 3.0 },
+				0.0,
+				2.0,
+				3,
+				&mut patch,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(patch.width, 3);
+		assert_eq!(patch.height, 3);
+		assert_eq!(patch.len, 36);
+		let bytes = unsafe { std::slice::from_raw_parts(patch.rgba, patch.len) };
+		assert_eq!(&bytes[..8], &[10, 20, 30, 200, 10, 20, 30, 200]);
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut patch);
+		}
+	}
+
+	#[test]
+	fn ffi_bgra_frame_loupe_patch_rejects_invalid_storage() {
+		let bgra = bgra_frame(4, 3, 16);
+		let mut patch = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_bgra_frame_loupe_patch_rgba(
+				4,
+				3,
+				12,
+				bgra.as_ptr(),
+				bgra.len(),
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 4.0, height: 3.0 },
+				0.0,
+				2.0,
+				3,
+				&mut patch,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::InvalidInput);
+		assert!(patch.rgba.is_null());
+	}
+
+	#[test]
 	fn ffi_capture_frame_plan_returns_core_geometry() {
 		let mut plan = RsnapCaptureFramePlan::default();
 		let status = unsafe {
@@ -3118,5 +3301,20 @@ mod tests {
 		}
 
 		rgba
+	}
+
+	fn bgra_frame(width: u32, height: u32, bytes_per_row: usize) -> Vec<u8> {
+		let mut bytes = vec![0xEE; bytes_per_row * height as usize];
+		for y in 0..height {
+			for x in 0..width {
+				let offset = y as usize * bytes_per_row + x as usize * 4;
+				bytes[offset] = 30 + y as u8 * 15 + x as u8;
+				bytes[offset + 1] = 20 + y as u8 * 10 + x as u8;
+				bytes[offset + 2] = 10 + y as u8 * 5 + x as u8;
+				bytes[offset + 3] = 200 + y as u8 + x as u8;
+			}
+		}
+
+		bytes
 	}
 }

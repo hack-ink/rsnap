@@ -426,6 +426,109 @@ public enum RsnapAutoCenterPlanner {
 	}
 }
 
+public enum RsnapBgraFrameSampler {
+	public static func rgbSample(
+		width: Int,
+		height: Int,
+		bytesPerRow: Int,
+		baseAddress: UnsafeRawPointer,
+		byteCount: Int,
+		displayFrame: CGRect,
+		point: CGPoint
+	) throws -> RGBSample? {
+		var outRGB = RsnapRgb()
+		let status = rsnap_bgra_frame_sample_rgb(
+			UInt32(max(width, 0)),
+			UInt32(max(height, 0)),
+			max(bytesPerRow, 0),
+			baseAddress.assumingMemoryBound(to: UInt8.self),
+			max(byteCount, 0),
+			encode(rect: displayFrame),
+			Double(point.x),
+			Double(point.y),
+			&outRGB
+		)
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_EMPTY.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "sampling BGRA frame RGB")
+
+		return RGBSample(r: outRGB.r, g: outRGB.g, b: outRGB.b)
+	}
+
+	public static func loupePatch(
+		width: Int,
+		height: Int,
+		bytesPerRow: Int,
+		baseAddress: UnsafeRawPointer,
+		byteCount: Int,
+		displayFrame: CGRect,
+		point: CGPoint,
+		sidePixels: Int
+	) throws -> RGBARegionSnapshot? {
+		var outRegion = RsnapOwnedRgbaRegion()
+		let status = rsnap_bgra_frame_loupe_patch_rgba(
+			UInt32(max(width, 0)),
+			UInt32(max(height, 0)),
+			max(bytesPerRow, 0),
+			baseAddress.assumingMemoryBound(to: UInt8.self),
+			max(byteCount, 0),
+			encode(rect: displayFrame),
+			Double(point.x),
+			Double(point.y),
+			UInt32(max(sidePixels, 0)),
+			&outRegion
+		)
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_EMPTY.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "sampling BGRA frame loupe patch")
+
+		return rgbaSnapshot(from: outRegion)
+	}
+
+	private static func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private static func encode(rect: CGRect) -> RsnapFloatRect {
+		RsnapFloatRect(
+			x: Double(rect.origin.x),
+			y: Double(rect.origin.y),
+			width: Double(rect.width),
+			height: Double(rect.height)
+		)
+	}
+
+	private static func rgbaSnapshot(from outRegion: RsnapOwnedRgbaRegion) -> RGBARegionSnapshot? {
+		guard outRegion.len > 0, let rgba = outRegion.rgba else {
+			return nil
+		}
+
+		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
+		ownedRegion.initialize(to: outRegion)
+		let data = Data(
+			bytesNoCopy: rgba,
+			count: outRegion.len,
+			deallocator: .custom { _, _ in
+				rsnap_owned_rgba_region_release(ownedRegion)
+				ownedRegion.deinitialize(count: 1)
+				ownedRegion.deallocate()
+			}
+		)
+		return RGBARegionSnapshot(
+			width: Int(outRegion.width),
+			height: Int(outRegion.height),
+			rgba: data
+		)
+	}
+}
+
 public enum RsnapExportEncoder {
 	public static func pngData(from image: RGBARegionSnapshot) throws -> Data {
 		var outPNG = RsnapOwnedBytes()

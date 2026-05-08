@@ -8,11 +8,12 @@ use std::{
 use color_eyre::eyre::{Result, ensure, eyre};
 use image::{Rgba, RgbaImage};
 use rsnap_capture_core::{
-	CaptureFrameBackgroundKind, CaptureFrameSourceKind, DisplayPointRect, RectPoints,
-	ScrollMinimapInput, auto_center_margin_balance_shift_points,
+	BgraFrameView, CaptureFrameBackgroundKind, CaptureFrameSourceKind, DisplayPointRect,
+	RectPoints, ScrollMinimapInput, auto_center_margin_balance_shift_points,
 	capture_frame_aspect_fill_crop_rect, capture_frame_background_plan, capture_frame_plan,
 	capture_frame_wallpaper_request_plan, crop_rgba_image, detect_auto_center_content_bounds_rgba,
-	encode_png_lossless_fast, frozen_mosaic_light_privacy_patch, scroll_minimap_plan,
+	encode_png_lossless_fast, frozen_mosaic_light_privacy_patch, loupe_patch_rgba_from_bgra_frame,
+	sample_rgb_from_bgra_frame, scroll_minimap_plan,
 };
 use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
@@ -41,9 +42,12 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	let image = build_export_fixture(1_440, 900);
 	let auto_center_image =
 		build_auto_center_fixture(1_440, 900, RectPoints::new(420, 240, 360, 220));
+	let bgra_bytes_per_row = 640 * 4 + 16;
+	let bgra_frame = build_bgra_fixture(640, 480, bgra_bytes_per_row);
 	verify_export_round_trip(&image)?;
 	verify_crop_exactness(&image)?;
 	verify_mosaic_patch()?;
+	verify_bgra_frame_sampling(&bgra_frame, bgra_bytes_per_row)?;
 	verify_capture_frame_plan()?;
 	verify_scroll_minimap_plan()?;
 	verify_auto_center_content_bounds(&auto_center_image)?;
@@ -82,51 +86,9 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 		},
 	)?);
 
-	results.push(time_case(
-		"capture_frame_plan_and_background_1440x900",
-		10_000,
-		Duration::from_millis(60),
-		|| {
-			let plan = capture_frame_plan(1_440, 900, 2.0, CaptureFrameSourceKind::Window)
-				.ok_or_else(|| eyre!("capture frame plan performance fixture is invalid"))?;
-			let crop = capture_frame_aspect_fill_crop_rect(
-				2_400,
-				1_600,
-				plan.canvas_width,
-				plan.canvas_height,
-			)
-			.ok_or_else(|| eyre!("capture frame aspect-fill performance fixture is invalid"))?;
-			let background =
-				capture_frame_background_plan(CaptureFrameBackgroundKind::SystemWallpaper);
-			let wallpaper_request = capture_frame_wallpaper_request_plan(
-				CaptureFrameBackgroundKind::SystemWallpaper,
-				plan.canvas_width,
-				plan.canvas_height,
-			)
-			.ok_or_else(|| {
-				eyre!("capture frame wallpaper request performance fixture is invalid")
-			})?;
+	run_bgra_frame_perf_case(results, &bgra_frame, bgra_bytes_per_row)?;
 
-			Ok(checksum_f64s(&[
-				plan.canvas_width,
-				plan.canvas_height,
-				plan.image_rect.x,
-				plan.corner_radius,
-				plan.shadows[0].blur,
-				plan.shadows[1].offset_y,
-				crop.x,
-				crop.y,
-				crop.width,
-				crop.height,
-				background.colors[0].red,
-				background.colors[1].green,
-				background.locations[1],
-				background.wallpaper_overlay_alpha,
-				f64::from(wallpaper_request.target_pixel_size),
-				wallpaper_request.overlay_alpha,
-			]))
-		},
-	)?);
+	run_capture_frame_perf_case(results)?;
 
 	run_scroll_minimap_perf_case(results)?;
 
@@ -190,6 +152,87 @@ fn run_scroll_minimap_perf_case(results: &mut Vec<PerfCaseResult>) -> Result<()>
 				plan.viewport_frame.map_or(0.0, |rect| rect.y),
 				plan.viewport_frame.map_or(0.0, |rect| rect.height),
 			]))
+		},
+	)?);
+
+	Ok(())
+}
+
+fn run_capture_frame_perf_case(results: &mut Vec<PerfCaseResult>) -> Result<()> {
+	results.push(time_case(
+		"capture_frame_plan_and_background_1440x900",
+		10_000,
+		Duration::from_millis(60),
+		|| {
+			let plan = capture_frame_plan(1_440, 900, 2.0, CaptureFrameSourceKind::Window)
+				.ok_or_else(|| eyre!("capture frame plan performance fixture is invalid"))?;
+			let crop = capture_frame_aspect_fill_crop_rect(
+				2_400,
+				1_600,
+				plan.canvas_width,
+				plan.canvas_height,
+			)
+			.ok_or_else(|| eyre!("capture frame aspect-fill performance fixture is invalid"))?;
+			let background =
+				capture_frame_background_plan(CaptureFrameBackgroundKind::SystemWallpaper);
+			let wallpaper_request = capture_frame_wallpaper_request_plan(
+				CaptureFrameBackgroundKind::SystemWallpaper,
+				plan.canvas_width,
+				plan.canvas_height,
+			)
+			.ok_or_else(|| {
+				eyre!("capture frame wallpaper request performance fixture is invalid")
+			})?;
+
+			Ok(checksum_f64s(&[
+				plan.canvas_width,
+				plan.canvas_height,
+				plan.image_rect.x,
+				plan.corner_radius,
+				plan.shadows[0].blur,
+				plan.shadows[1].offset_y,
+				crop.x,
+				crop.y,
+				crop.width,
+				crop.height,
+				background.colors[0].red,
+				background.colors[1].green,
+				background.locations[1],
+				background.wallpaper_overlay_alpha,
+				f64::from(wallpaper_request.target_pixel_size),
+				wallpaper_request.overlay_alpha,
+			]))
+		},
+	)?);
+
+	Ok(())
+}
+
+fn run_bgra_frame_perf_case(
+	results: &mut Vec<PerfCaseResult>,
+	bgra_frame: &[u8],
+	bgra_bytes_per_row: usize,
+) -> Result<()> {
+	results.push(time_case(
+		"bgra_loupe_patch_rgba_64x64",
+		4_000,
+		Duration::from_millis(120),
+		|| {
+			let patch = loupe_patch_rgba_from_bgra_frame(
+				BgraFrameView {
+					width: 640,
+					height: 480,
+					bytes_per_row: bgra_bytes_per_row,
+					bytes: bgra_frame,
+				},
+				DisplayPointRect::new(0.0, 0.0, 640.0, 480.0),
+				24.0,
+				470.0,
+				64,
+			)
+			.ok_or_else(|| eyre!("BGRA loupe patch performance fixture is invalid"))?;
+
+			Ok(checksum_bytes(patch.as_raw()))
 		},
 	)?);
 
@@ -282,6 +325,30 @@ fn verify_mosaic_patch() -> Result<()> {
 		patch.as_raw()[..12] == [211, 211, 211, 255, 205, 205, 205, 255, 202, 201, 199, 255],
 		"mosaic patch seeded color bytes changed"
 	);
+
+	Ok(())
+}
+
+fn verify_bgra_frame_sampling(bgra: &[u8], bytes_per_row: usize) -> Result<()> {
+	let frame = BgraFrameView { width: 640, height: 480, bytes_per_row, bytes: bgra };
+	let rgb = sample_rgb_from_bgra_frame(
+		frame,
+		DisplayPointRect::new(0.0, 0.0, 640.0, 480.0),
+		17.2,
+		479.5,
+	)
+	.ok_or_else(|| eyre!("BGRA RGB fixture is invalid"))?;
+	ensure!(rgb.r == 27 && rgb.g == 37 && rgb.b == 47, "BGRA RGB sample changed");
+	let patch = loupe_patch_rgba_from_bgra_frame(
+		frame,
+		DisplayPointRect::new(0.0, 0.0, 640.0, 480.0),
+		0.0,
+		479.0,
+		3,
+	)
+	.ok_or_else(|| eyre!("BGRA loupe fixture is invalid"))?;
+	ensure!(patch.dimensions() == (3, 3), "BGRA loupe dimensions changed");
+	ensure!(patch.as_raw()[..8] == [10, 20, 30, 200, 10, 20, 30, 200], "BGRA loupe bytes changed");
 
 	Ok(())
 }
@@ -472,6 +539,21 @@ fn build_auto_center_fixture(width: u32, height: u32, content: RectPoints) -> Rg
 
 		Rgba([180, 180, 180, 255])
 	})
+}
+
+fn build_bgra_fixture(width: u32, height: u32, bytes_per_row: usize) -> Vec<u8> {
+	let mut bytes = vec![0xEE; bytes_per_row * height as usize];
+	for y in 0..height {
+		for x in 0..width {
+			let offset = y as usize * bytes_per_row + x as usize * 4;
+			bytes[offset] = pattern_byte(30 + y * 15 + x);
+			bytes[offset + 1] = pattern_byte(20 + y * 10 + x);
+			bytes[offset + 2] = pattern_byte(10 + y * 5 + x);
+			bytes[offset + 3] = 200 + pattern_byte((x + y) % 55);
+		}
+	}
+
+	bytes
 }
 
 fn scroll_minimap_fixture() -> ScrollMinimapInput {

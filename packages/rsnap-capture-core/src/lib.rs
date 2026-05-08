@@ -5,6 +5,7 @@
 //! `winit` ownership.
 
 pub mod auto_center;
+pub mod bgra_frame;
 pub mod capture_frame;
 pub mod export;
 pub mod geometry;
@@ -18,6 +19,7 @@ pub use self::{
 		AutoCenterImageError, auto_center_margin_balance_shift_points,
 		detect_auto_center_content_bounds_rgba,
 	},
+	bgra_frame::{BgraFrameView, loupe_patch_rgba_from_bgra_frame, sample_rgb_from_bgra_frame},
 	capture_frame::{
 		CaptureFrameBackgroundKind, CaptureFrameBackgroundPlan, CaptureFrameColorStop,
 		CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind, CaptureFrameWallpaperRequest,

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 26u
+#define RSNAP_HOST_FFI_ABI_VERSION 27u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -399,6 +399,29 @@ enum RsnapStatus rsnap_frozen_mosaic_light_privacy_patch_rgba(
 	uint32_t image_width,
 	uint32_t image_height,
 	struct RsnapFloatRect source_rect,
+	struct RsnapOwnedRgbaRegion *out_region
+);
+enum RsnapStatus rsnap_bgra_frame_sample_rgb(
+	uint32_t width,
+	uint32_t height,
+	size_t bytes_per_row,
+	const uint8_t *bgra,
+	size_t bgra_len,
+	struct RsnapFloatRect display_frame,
+	double point_x,
+	double point_y,
+	struct RsnapRgb *out_rgb
+);
+enum RsnapStatus rsnap_bgra_frame_loupe_patch_rgba(
+	uint32_t width,
+	uint32_t height,
+	size_t bytes_per_row,
+	const uint8_t *bgra,
+	size_t bgra_len,
+	struct RsnapFloatRect display_frame,
+	double point_x,
+	double point_y,
+	uint32_t side_pixels,
 	struct RsnapOwnedRgbaRegion *out_region
 );
 enum RsnapStatus rsnap_capture_frame_plan(
