@@ -343,6 +343,24 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected cropped PNG export dimensions")
 		}
+		let frozenDisplayCrop = try RsnapExportEncoder.frozenDisplayCropRect(
+			imageWidth: 2880,
+			imageHeight: 1800,
+			displayFrame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+			selection: CGRect(x: 100, y: 200, width: 300, height: 150)
+		)
+		guard frozenDisplayCrop == CGRect(x: 200, y: 1100, width: 600, height: 300) else {
+			fatalError("unexpected frozen display crop rect")
+		}
+		let emptyFrozenDisplayCrop = try RsnapExportEncoder.frozenDisplayCropRect(
+			imageWidth: 200,
+			imageHeight: 200,
+			displayFrame: CGRect(x: 0, y: 0, width: 100, height: 100),
+			selection: CGRect(x: 120, y: 10, width: 10, height: 20)
+		)
+		guard emptyFrozenDisplayCrop == nil else {
+			fatalError("unexpected out-of-bounds frozen display crop rect")
+		}
 
 		print("rsnap-host-bridge probe ok")
 	}

@@ -6,6 +6,39 @@ use image::{ExtendedColorType, ImageEncoder, RgbaImage, imageops};
 
 use crate::RectPoints;
 
+/// Rectangle in display point space used for export geometry decisions.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DisplayPointRect {
+	/// Left coordinate in display points.
+	pub x: f64,
+	/// Top coordinate in display points.
+	pub y: f64,
+	/// Rectangle width in display points.
+	pub width: f64,
+	/// Rectangle height in display points.
+	pub height: f64,
+}
+impl DisplayPointRect {
+	/// Creates a display-space rectangle.
+	#[must_use]
+	pub const fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
+		Self { x, y, width, height }
+	}
+
+	fn max_y(self) -> f64 {
+		self.y + self.height
+	}
+
+	fn is_valid(self) -> bool {
+		self.x.is_finite()
+			&& self.y.is_finite()
+			&& self.width.is_finite()
+			&& self.height.is_finite()
+			&& self.width > 0.0
+			&& self.height > 0.0
+	}
+}
+
 /// RGBA export image prepared by the product core.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RgbaExportImage {
@@ -110,6 +143,34 @@ pub fn crop_export_image(
 	)
 }
 
+/// Resolves a frozen display selection into an image-local pixel crop rectangle.
+///
+/// `display_frame` and `selection` use the same global display point coordinate
+/// space. The returned rectangle mirrors CoreGraphics' integral crop semantics:
+/// fractional source rectangles are expanded to the smallest containing integer
+/// pixel rectangle and then clipped to the display image bounds.
+#[must_use]
+pub fn frozen_display_crop_rect(
+	image_width: u32,
+	image_height: u32,
+	display_frame: DisplayPointRect,
+	selection: DisplayPointRect,
+) -> Option<RectPoints> {
+	if image_width == 0 || image_height == 0 || !display_frame.is_valid() || !selection.is_valid() {
+		return None;
+	}
+
+	let image_width_f64 = f64::from(image_width);
+	let image_height_f64 = f64::from(image_height);
+	let left = ((selection.x - display_frame.x) / display_frame.width) * image_width_f64;
+	let top =
+		((display_frame.max_y() - selection.max_y()) / display_frame.height) * image_height_f64;
+	let width = (selection.width / display_frame.width) * image_width_f64;
+	let height = (selection.height / display_frame.height) * image_height_f64;
+
+	integral_image_intersection(left, top, width, height, image_width, image_height)
+}
+
 /// Encodes an RGBA export image as lossless PNG using the fast capture-output profile.
 ///
 /// The encoder uses PNG's uncompressed mode and disables filtering. That keeps
@@ -137,6 +198,57 @@ pub fn encode_png_lossless_fast(image: &RgbaImage) -> Result<Vec<u8>> {
 	Ok(bytes)
 }
 
+fn integral_image_intersection(
+	left: f64,
+	top: f64,
+	width: f64,
+	height: f64,
+	image_width: u32,
+	image_height: u32,
+) -> Option<RectPoints> {
+	let right = left + width;
+	let bottom = top + height;
+
+	if !left.is_finite()
+		|| !top.is_finite()
+		|| !right.is_finite()
+		|| !bottom.is_finite()
+		|| width <= 0.0
+		|| height <= 0.0
+	{
+		return None;
+	}
+
+	let clipped_left = left.floor().max(0.0);
+	let clipped_top = top.floor().max(0.0);
+	let clipped_right = right.ceil().min(f64::from(image_width));
+	let clipped_bottom = bottom.ceil().min(f64::from(image_height));
+
+	if clipped_left >= clipped_right || clipped_top >= clipped_bottom {
+		return None;
+	}
+
+	let x = integral_f64_to_u32(clipped_left)?;
+	let y = integral_f64_to_u32(clipped_top)?;
+	let max_x = integral_f64_to_u32(clipped_right)?;
+	let max_y = integral_f64_to_u32(clipped_bottom)?;
+	let rect = RectPoints::new(x, y, max_x.checked_sub(x)?, max_y.checked_sub(y)?);
+
+	if rect.is_empty() {
+		return None;
+	}
+
+	Some(rect)
+}
+
+fn integral_f64_to_u32(value: f64) -> Option<u32> {
+	if !value.is_finite() || value < 0.0 || value > f64::from(u32::MAX) {
+		return None;
+	}
+
+	Some(value as u32)
+}
+
 fn expected_rgba_len(width: u32, height: u32) -> Result<usize> {
 	if width == 0 || height == 0 {
 		return Err(eyre!(
@@ -157,7 +269,8 @@ mod tests {
 	use image::{Rgba, RgbaImage};
 
 	use crate::{
-		RectPoints, RgbaExportImage, crop_export_image, crop_rgba_image, encode_png_lossless_fast,
+		DisplayPointRect, RectPoints, RgbaExportImage, crop_export_image, crop_rgba_image,
+		encode_png_lossless_fast, frozen_display_crop_rect,
 	};
 
 	#[test]
@@ -200,6 +313,54 @@ mod tests {
 		let image = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
 
 		assert_eq!(crop_export_image(&image, None), Some(image));
+	}
+
+	#[test]
+	fn frozen_display_crop_rect_maps_global_selection_to_image_pixels() {
+		let crop = frozen_display_crop_rect(
+			2880,
+			1800,
+			DisplayPointRect::new(0.0, 0.0, 1440.0, 900.0),
+			DisplayPointRect::new(100.0, 200.0, 300.0, 150.0),
+		);
+
+		assert_eq!(crop, Some(RectPoints::new(200, 1100, 600, 300)));
+	}
+
+	#[test]
+	fn frozen_display_crop_rect_integral_expands_and_clips() {
+		let crop = frozen_display_crop_rect(
+			200,
+			200,
+			DisplayPointRect::new(0.0, 0.0, 100.0, 100.0),
+			DisplayPointRect::new(-1.2, 10.25, 12.5, 20.25),
+		);
+
+		assert_eq!(crop, Some(RectPoints::new(0, 139, 23, 41)));
+	}
+
+	#[test]
+	fn frozen_display_crop_rect_rejects_empty_or_outside_selection() {
+		let display_frame = DisplayPointRect::new(0.0, 0.0, 100.0, 100.0);
+
+		assert_eq!(
+			frozen_display_crop_rect(
+				200,
+				200,
+				display_frame,
+				DisplayPointRect::new(10.0, 10.0, 0.0, 20.0)
+			),
+			None
+		);
+		assert_eq!(
+			frozen_display_crop_rect(
+				200,
+				200,
+				display_frame,
+				DisplayPointRect::new(120.0, 10.0, 10.0, 20.0)
+			),
+			None
+		);
 	}
 
 	#[test]
