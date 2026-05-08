@@ -413,6 +413,25 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected capture frame background plan")
 		}
+		guard
+			let minimapPlan = try RsnapScrollMinimapPlanner.plan(
+				selection: CGRect(x: 100, y: 100, width: 100, height: 100),
+				exportSize: CGSize(width: 100, height: 200),
+				bounds: CGRect(x: 0, y: 0, width: 500, height: 500),
+				preferredWidth: 96,
+				minimumWidth: 44,
+				gap: 10,
+				margin: 10,
+				imageInset: 3,
+				viewportTopPixels: 20,
+				viewportHeightPixels: 100
+			),
+			minimapPlan.frame == CGRect(x: 210, y: 54, width: 96, height: 192),
+			minimapPlan.imageFrame == CGRect(x: 213, y: 57, width: 90, height: 186),
+			minimapPlan.viewportFrame == CGRect(x: 213, y: 131.4, width: 90, height: 93)
+		else {
+			fatalError("unexpected scroll minimap layout plan")
+		}
 		let autoCenterFrame = makeAutoCenterFrame(
 			width: 100,
 			height: 80,

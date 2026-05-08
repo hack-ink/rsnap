@@ -47,38 +47,54 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureFrameEffectExpandsExportCanvas()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
-			let rightMinimap = scrollCaptureMinimapFrame(
+			let rightMinimap = scrollCaptureMinimapPlan(
 				for: CGRect(x: 100, y: 100, width: 100, height: 100),
 				exportSize: minimapExportSize,
 				in: CGRect(x: 0, y: 0, width: 500, height: 500),
 				preferredWidth: 96,
 				minimumWidth: 44,
 				gap: 10,
-				margin: 10
+				margin: 10,
+				imageInset: 3,
+				viewportTopPixels: 20,
+				viewportHeightPixels: 100
 			)
 		else {
-			fatalError("expected right-side scroll minimap frame")
+			fatalError("expected right-side scroll minimap plan")
 		}
 		assertRectEqual(
-			rightMinimap,
+			rightMinimap.frame,
 			CGRect(x: 210, y: 54, width: 96, height: 192),
 			"scroll minimap should prefer the right side when space is available"
 		)
+		assertRectEqual(
+			rightMinimap.imageFrame,
+			CGRect(x: 213, y: 57, width: 90, height: 186),
+			"scroll minimap image frame should be planned by Rust"
+		)
+		assertRectEqual(
+			rightMinimap.viewportFrame ?? .null,
+			CGRect(x: 213, y: 131.4, width: 90, height: 93),
+			"scroll minimap viewport frame should be planned by Rust"
+		)
 		guard
-			let leftMinimap = scrollCaptureMinimapFrame(
+			let leftMinimap = scrollCaptureMinimapPlan(
 				for: CGRect(x: 130, y: 100, width: 100, height: 100),
 				exportSize: minimapExportSize,
 				in: CGRect(x: 0, y: 0, width: 250, height: 500),
 				preferredWidth: 96,
 				minimumWidth: 44,
 				gap: 10,
-				margin: 10
+				margin: 10,
+				imageInset: 3,
+				viewportTopPixels: 20,
+				viewportHeightPixels: 100
 			)
 		else {
-			fatalError("expected left-side scroll minimap frame")
+			fatalError("expected left-side scroll minimap plan")
 		}
 		assertRectEqual(
-			leftMinimap,
+			leftMinimap.frame,
 			CGRect(x: 24, y: 54, width: 96, height: 192),
 			"scroll minimap should fall back to the left when the right side is constrained"
 		)

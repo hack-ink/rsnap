@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 24u
+#define RSNAP_HOST_FFI_ABI_VERSION 25u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -306,6 +306,13 @@ typedef struct RsnapCaptureFramePlan {
 	struct RsnapCaptureFrameShadow shadows[3];
 } RsnapCaptureFramePlan;
 
+typedef struct RsnapScrollMinimapPlan {
+	struct RsnapFloatRect frame;
+	struct RsnapFloatRect image_frame;
+	uint8_t has_viewport_frame;
+	struct RsnapFloatRect viewport_frame;
+} RsnapScrollMinimapPlan;
+
 typedef enum RsnapScrollObserveOutcomeKind {
 	RSNAP_SCROLL_OBSERVE_NO_CHANGE = 0,
 	RSNAP_SCROLL_OBSERVE_PREVIEW_UPDATED = 1,
@@ -406,6 +413,20 @@ enum RsnapStatus rsnap_capture_frame_aspect_fill_crop_rect(
 enum RsnapStatus rsnap_capture_frame_background_plan(
 	enum RsnapCaptureFrameBackgroundKind background_kind,
 	struct RsnapCaptureFrameBackgroundPlan *out_plan
+);
+enum RsnapStatus rsnap_scroll_minimap_plan(
+	struct RsnapFloatRect selection,
+	double export_width,
+	double export_height,
+	struct RsnapFloatRect bounds,
+	double preferred_width,
+	double minimum_width,
+	double gap,
+	double margin,
+	double image_inset,
+	double viewport_top_pixels,
+	double viewport_height_pixels,
+	struct RsnapScrollMinimapPlan *out_plan
 );
 enum RsnapStatus rsnap_auto_center_content_bounds_rgba(
 	uint32_t width,

@@ -159,6 +159,12 @@ public struct CaptureFrameLayoutPlan: Equatable, Sendable {
 	public var shadows: [CaptureFrameShadowPlan]
 }
 
+public struct ScrollMinimapLayoutPlan: Equatable, Sendable {
+	public var frame: CGRect
+	public var imageFrame: CGRect
+	public var viewportFrame: CGRect?
+}
+
 public enum RsnapCaptureFramePlanner {
 	public static func plan(
 		imageWidth: Int,
@@ -263,6 +269,70 @@ public enum RsnapCaptureFramePlanner {
 			blur: CGFloat(shadow.blur),
 			alpha: CGFloat(shadow.alpha)
 		)
+	}
+}
+
+public enum RsnapScrollMinimapPlanner {
+	public static func plan(
+		selection: CGRect,
+		exportSize: CGSize,
+		bounds: CGRect,
+		preferredWidth: CGFloat,
+		minimumWidth: CGFloat,
+		gap: CGFloat,
+		margin: CGFloat,
+		imageInset: CGFloat,
+		viewportTopPixels: CGFloat,
+		viewportHeightPixels: CGFloat
+	) throws -> ScrollMinimapLayoutPlan? {
+		var outPlan = RsnapScrollMinimapPlan()
+		let status = rsnap_scroll_minimap_plan(
+			encode(rect: selection),
+			Double(exportSize.width),
+			Double(exportSize.height),
+			encode(rect: bounds),
+			Double(preferredWidth),
+			Double(minimumWidth),
+			Double(gap),
+			Double(margin),
+			Double(imageInset),
+			Double(viewportTopPixels),
+			Double(viewportHeightPixels),
+			&outPlan
+		)
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_EMPTY.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "resolving scroll minimap layout plan")
+		let viewportFrame =
+			outPlan.has_viewport_frame != 0 ? decode(rect: outPlan.viewport_frame) : nil
+
+		return ScrollMinimapLayoutPlan(
+			frame: decode(rect: outPlan.frame),
+			imageFrame: decode(rect: outPlan.image_frame),
+			viewportFrame: viewportFrame
+		)
+	}
+
+	private static func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private static func encode(rect: CGRect) -> RsnapFloatRect {
+		RsnapFloatRect(
+			x: Double(rect.minX),
+			y: Double(rect.minY),
+			width: Double(rect.width),
+			height: Double(rect.height)
+		)
+	}
+
+	private static func decode(rect: RsnapFloatRect) -> CGRect {
+		CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
 	}
 }
 

@@ -16,6 +16,7 @@ int main(void) {
 	RsnapPixelRect display_crop = {0};
 	RsnapCaptureFramePlan frame_plan = {0};
 	RsnapCaptureFrameBackgroundPlan background_plan = {0};
+	RsnapScrollMinimapPlan minimap_plan = {0};
 	RsnapPixelRect auto_center_rect = {0};
 	RsnapFloatRect aspect_crop = {0};
 	RsnapFloatRect display_frame = {.x = 0.0, .y = 0.0, .width = 1440.0, .height = 900.0};
@@ -145,6 +146,32 @@ int main(void) {
 		rsnap_scroll_session_destroy(scroll_handle);
 		rsnap_session_destroy(handle);
 		return 22;
+	}
+	if (rsnap_scroll_minimap_plan(
+			(RsnapFloatRect){.x = 100.0, .y = 100.0, .width = 100.0, .height = 100.0},
+			100.0,
+			200.0,
+			(RsnapFloatRect){.x = 0.0, .y = 0.0, .width = 500.0, .height = 500.0},
+			96.0,
+			44.0,
+			10.0,
+			10.0,
+			3.0,
+			20.0,
+			100.0,
+			&minimap_plan
+		) != RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 25;
+	}
+	if (minimap_plan.frame.x != 210.0 || minimap_plan.frame.y != 54.0 ||
+		minimap_plan.frame.width != 96.0 || minimap_plan.frame.height != 192.0 ||
+		minimap_plan.image_frame.x != 213.0 || minimap_plan.has_viewport_frame != 1 ||
+		minimap_plan.viewport_frame.height != 93.0) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 26;
 	}
 	if (rsnap_auto_center_content_bounds_rgba(
 			4,

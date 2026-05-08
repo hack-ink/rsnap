@@ -9,10 +9,10 @@ use color_eyre::eyre::{Result, ensure, eyre};
 use image::{Rgba, RgbaImage};
 use rsnap_capture_core::{
 	CaptureFrameBackgroundKind, CaptureFrameSourceKind, DisplayPointRect, RectPoints,
-	auto_center_margin_balance_shift_points, capture_frame_aspect_fill_crop_rect,
-	capture_frame_background_plan, capture_frame_plan, crop_rgba_image,
-	detect_auto_center_content_bounds_rgba, encode_png_lossless_fast,
-	frozen_mosaic_light_privacy_patch,
+	ScrollMinimapInput, auto_center_margin_balance_shift_points,
+	capture_frame_aspect_fill_crop_rect, capture_frame_background_plan, capture_frame_plan,
+	crop_rgba_image, detect_auto_center_content_bounds_rgba, encode_png_lossless_fast,
+	frozen_mosaic_light_privacy_patch, scroll_minimap_plan,
 };
 use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
@@ -45,6 +45,7 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	verify_crop_exactness(&image)?;
 	verify_mosaic_patch()?;
 	verify_capture_frame_plan()?;
+	verify_scroll_minimap_plan()?;
 	verify_auto_center_content_bounds(&auto_center_image)?;
 
 	results.push(time_case(
@@ -117,6 +118,8 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 		},
 	)?);
 
+	run_scroll_minimap_perf_case(results)?;
+
 	results.push(time_case(
 		"auto_center_content_bounds_rgba_1440x900",
 		50,
@@ -149,6 +152,33 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 				f64::from(bounds.height),
 				shift_x,
 				shift_y,
+			]))
+		},
+	)?);
+
+	Ok(())
+}
+
+fn run_scroll_minimap_perf_case(results: &mut Vec<PerfCaseResult>) -> Result<()> {
+	results.push(time_case(
+		"scroll_minimap_plan_100x200",
+		10_000,
+		Duration::from_millis(60),
+		|| {
+			let plan = scroll_minimap_plan(scroll_minimap_fixture())
+				.ok_or_else(|| eyre!("scroll minimap plan performance fixture is invalid"))?;
+
+			Ok(checksum_f64s(&[
+				plan.frame.x,
+				plan.frame.y,
+				plan.frame.width,
+				plan.frame.height,
+				plan.image_frame.x,
+				plan.image_frame.y,
+				plan.image_frame.width,
+				plan.image_frame.height,
+				plan.viewport_frame.map_or(0.0, |rect| rect.y),
+				plan.viewport_frame.map_or(0.0, |rect| rect.height),
 			]))
 		},
 	)?);
@@ -270,6 +300,26 @@ fn verify_capture_frame_plan() -> Result<()> {
 	ensure!(
 		background.colors[2].red == 0.95 && background.locations == [0.0, 0.54, 1.0],
 		"capture frame background gradient changed"
+	);
+
+	Ok(())
+}
+
+fn verify_scroll_minimap_plan() -> Result<()> {
+	let plan = scroll_minimap_plan(scroll_minimap_fixture())
+		.ok_or_else(|| eyre!("scroll minimap plan fixture is invalid"))?;
+
+	ensure!(
+		plan.frame == DisplayPointRect::new(210.0, 54.0, 96.0, 192.0),
+		"scroll minimap frame changed"
+	);
+	ensure!(
+		plan.image_frame == DisplayPointRect::new(213.0, 57.0, 90.0, 186.0),
+		"scroll minimap image frame changed"
+	);
+	ensure!(
+		plan.viewport_frame == Some(DisplayPointRect::new(213.0, 131.4, 90.0, 93.0)),
+		"scroll minimap viewport frame changed"
 	);
 
 	Ok(())
@@ -404,6 +454,22 @@ fn build_auto_center_fixture(width: u32, height: u32, content: RectPoints) -> Rg
 
 		Rgba([180, 180, 180, 255])
 	})
+}
+
+fn scroll_minimap_fixture() -> ScrollMinimapInput {
+	ScrollMinimapInput {
+		selection: DisplayPointRect::new(100.0, 100.0, 100.0, 100.0),
+		export_width: 100.0,
+		export_height: 200.0,
+		bounds: DisplayPointRect::new(0.0, 0.0, 500.0, 500.0),
+		preferred_width: 96.0,
+		minimum_width: 44.0,
+		gap: 10.0,
+		margin: 10.0,
+		image_inset: 3.0,
+		viewport_top_pixels: 20.0,
+		viewport_height_pixels: 100.0,
+	}
 }
 
 fn pattern_byte(value: u32) -> u8 {

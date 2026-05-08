@@ -201,49 +201,30 @@ package func frozenExportSourceImageRect(
 	)
 }
 
-package func scrollCaptureMinimapFrame(
+package func scrollCaptureMinimapPlan(
 	for selection: CGRect,
 	exportSize: CGSize,
 	in bounds: CGRect,
 	preferredWidth: CGFloat,
 	minimumWidth: CGFloat,
 	gap: CGFloat,
-	margin: CGFloat
-) -> CGRect? {
-	guard exportSize.width > 0, exportSize.height > 0, bounds.width > margin * 2,
-		bounds.height > margin * 2
-	else {
-		return nil
-	}
-
-	let rightSpace = bounds.maxX - selection.maxX - gap - margin
-	let leftSpace = selection.minX - bounds.minX - gap - margin
-	let useRight: Bool
-	let sideSpace: CGFloat
-	if rightSpace >= minimumWidth {
-		useRight = true
-		sideSpace = rightSpace
-	} else if leftSpace >= minimumWidth {
-		useRight = false
-		sideSpace = leftSpace
-	} else {
-		useRight = rightSpace >= leftSpace
-		sideSpace = max(rightSpace, leftSpace)
-	}
-
-	let maxHeight = bounds.height - margin * 2
-	let aspectHeightPerWidth = exportSize.height / exportSize.width
-	let heightLimitedWidth = maxHeight / max(aspectHeightPerWidth, .leastNonzeroMagnitude)
-	let width = min(preferredWidth, sideSpace, heightLimitedWidth)
-	guard width >= min(minimumWidth, preferredWidth) * 0.55 else {
-		return nil
-	}
-
-	let height = width * aspectHeightPerWidth
-	let maxY = max(margin, bounds.maxY - margin - height)
-	let y = (selection.midY - height / 2).clamped(to: margin...maxY)
-	let x = useRight ? selection.maxX + gap : selection.minX - gap - width
-	return CGRect(x: x, y: y, width: width, height: height)
+	margin: CGFloat,
+	imageInset: CGFloat,
+	viewportTopPixels: CGFloat,
+	viewportHeightPixels: CGFloat
+) -> ScrollMinimapLayoutPlan? {
+	try? RsnapScrollMinimapPlanner.plan(
+		selection: selection,
+		exportSize: exportSize,
+		bounds: bounds,
+		preferredWidth: preferredWidth,
+		minimumWidth: minimumWidth,
+		gap: gap,
+		margin: margin,
+		imageInset: imageInset,
+		viewportTopPixels: viewportTopPixels,
+		viewportHeightPixels: viewportHeightPixels
+	)
 }
 
 private func makeFrozenMosaicPatch(from image: CGImage, sourceRect: CGRect) -> CGImage? {
@@ -5061,14 +5042,17 @@ final class CaptureHostView: NSView {
 			return
 		}
 		guard
-			let frame = scrollCaptureMinimapFrame(
+			let minimapPlan = scrollCaptureMinimapPlan(
 				for: selection,
 				exportSize: preview.exportSizePixels,
 				in: bounds,
 				preferredWidth: CaptureChrome.scrollMinimapPreferredWidth,
 				minimumWidth: CaptureChrome.scrollMinimapMinimumWidth,
 				gap: CaptureChrome.scrollMinimapGap,
-				margin: CaptureChrome.scrollMinimapScreenMargin
+				margin: CaptureChrome.scrollMinimapScreenMargin,
+				imageInset: CaptureChrome.scrollMinimapImageInset,
+				viewportTopPixels: preview.viewportTopYPixels,
+				viewportHeightPixels: preview.viewportHeightPixels
 			)
 		else {
 			return
@@ -5076,10 +5060,8 @@ final class CaptureHostView: NSView {
 
 		let theme = chromeTheme()
 		let palette = CaptureChrome.palette(for: theme, settings: settings)
-		let imageFrame = frame.insetBy(
-			dx: CaptureChrome.scrollMinimapImageInset,
-			dy: CaptureChrome.scrollMinimapImageInset
-		)
+		let frame = minimapPlan.frame
+		let imageFrame = minimapPlan.imageFrame
 		let backgroundPath = NSBezierPath(
 			roundedRect: frame,
 			xRadius: CaptureChrome.scrollMinimapCornerRadius,
@@ -5107,10 +5089,7 @@ final class CaptureHostView: NSView {
 		context.draw(preview.image, in: imageFrame)
 		context.restoreGState()
 
-		if let viewportFrame = scrollCaptureMinimapViewportFrame(
-			for: preview,
-			in: imageFrame
-		) {
+		if let viewportFrame = minimapPlan.viewportFrame {
 			context.setFillColor(NSColor.white.withAlphaComponent(0.13).cgColor)
 			context.fill(viewportFrame)
 			context.setStrokeColor(NSColor.white.withAlphaComponent(0.88).cgColor)
@@ -5121,27 +5100,6 @@ final class CaptureHostView: NSView {
 		context.setStrokeColor(palette.keycapStroke.withAlphaComponent(0.88).cgColor)
 		context.setLineWidth(1)
 		backgroundPath.stroke()
-	}
-
-	private func scrollCaptureMinimapViewportFrame(
-		for preview: ScrollCaptureMinimapSnapshot,
-		in frame: CGRect
-	) -> CGRect? {
-		let exportHeight = max(preview.exportSizePixels.height, 1)
-		let viewportHeight = preview.viewportHeightPixels.clamped(to: 1...exportHeight)
-		let maxTop = max(exportHeight - viewportHeight, 0)
-		let viewportTop = preview.viewportTopYPixels.clamped(to: 0...maxTop)
-		let markerHeight = max(2, frame.height * viewportHeight / exportHeight)
-		let markerY =
-			frame.maxY - frame.height * (viewportTop + viewportHeight) / exportHeight
-		let marker = CGRect(
-			x: frame.minX,
-			y: markerY,
-			width: frame.width,
-			height: markerHeight
-		)
-		let clippedMarker = marker.intersection(frame)
-		return clippedMarker.isNull ? nil : clippedMarker
 	}
 
 	private func localFrozenDisplayFrame() -> CGRect? {
