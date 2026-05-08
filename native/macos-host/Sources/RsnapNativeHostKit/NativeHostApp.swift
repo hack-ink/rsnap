@@ -2463,8 +2463,7 @@ final class CaptureSessionController: NSObject {
 			try sendHostStatusMessage("Could not capture the frozen selection.")
 			return
 		}
-		let bitmap = NSBitmapImageRep(cgImage: cgImage)
-		guard let pngData = bitmap.representation(using: .png, properties: [:]) else {
+		guard let pngData = try Self.losslessPNGData(from: cgImage) else {
 			try sendHostStatusMessage("Could not encode the captured image.")
 			return
 		}
@@ -2917,6 +2916,14 @@ final class CaptureSessionController: NSObject {
 		}
 
 		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
+	}
+
+	private static func losslessPNGData(from image: CGImage) throws -> Data? {
+		guard let snapshot = rgbaSnapshot(from: image) else {
+			return nil
+		}
+
+		return try RsnapExportEncoder.pngData(from: snapshot)
 	}
 
 	private static func cgImage(from snapshot: RGBARegionSnapshot) -> CGImage? {
