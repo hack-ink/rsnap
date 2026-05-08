@@ -2885,15 +2885,14 @@ final class CaptureSessionController: NSObject {
 		displayFrame: CGRect,
 		selection: CGRect
 	) -> CGImage? {
-		let cropRect = CGRect(
-			x: ((selection.minX - displayFrame.minX) / max(displayFrame.width, 1))
-				* CGFloat(image.width),
-			y: ((displayFrame.maxY - selection.maxY) / max(displayFrame.height, 1))
-				* CGFloat(image.height),
-			width: (selection.width / max(displayFrame.width, 1)) * CGFloat(image.width),
-			height: (selection.height / max(displayFrame.height, 1)) * CGFloat(image.height)
-		).integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
-		guard cropRect.width > 0, cropRect.height > 0 else {
+		guard
+			let cropRect = try? RsnapExportEncoder.frozenDisplayCropRect(
+				imageWidth: image.width,
+				imageHeight: image.height,
+				displayFrame: displayFrame,
+				selection: selection
+			)
+		else {
 			return nil
 		}
 		return image.cropping(to: cropRect)

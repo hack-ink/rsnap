@@ -111,6 +111,29 @@ public enum RsnapExportEncoder {
 		return try data(from: outPNG, context: "taking encoded cropped export PNG")
 	}
 
+	public static func frozenDisplayCropRect(
+		imageWidth: Int,
+		imageHeight: Int,
+		displayFrame: CGRect,
+		selection: CGRect
+	) throws -> CGRect? {
+		var outRect = RsnapPixelRect()
+		let status = rsnap_frozen_display_crop_rect(
+			UInt32(max(imageWidth, 0)),
+			UInt32(max(imageHeight, 0)),
+			encode(rect: displayFrame),
+			encode(rect: selection),
+			&outRect
+		)
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_EMPTY.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "resolving frozen display export crop")
+
+		return decode(pixelRect: outRect)
+	}
+
 	private static func requireOk(_ status: RsnapStatus, context: String) throws {
 		let code = rsnap_status_code(status)
 		if code != 0 {
@@ -145,6 +168,24 @@ public enum RsnapExportEncoder {
 			y: UInt32(y),
 			width: UInt32(width),
 			height: UInt32(height)
+		)
+	}
+
+	private static func encode(rect: CGRect) -> RsnapFloatRect {
+		RsnapFloatRect(
+			x: Double(rect.origin.x),
+			y: Double(rect.origin.y),
+			width: Double(rect.width),
+			height: Double(rect.height)
+		)
+	}
+
+	private static func decode(pixelRect: RsnapPixelRect) -> CGRect {
+		CGRect(
+			x: Int(pixelRect.x),
+			y: Int(pixelRect.y),
+			width: Int(pixelRect.width),
+			height: Int(pixelRect.height)
 		)
 	}
 

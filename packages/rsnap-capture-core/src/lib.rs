@@ -10,6 +10,7 @@ pub mod protocol;
 pub mod session;
 
 pub use self::{
+	export::{DisplayPointRect, frozen_display_crop_rect},
 	export::{RgbaExportImage, crop_export_image, crop_rgba_image, encode_png_lossless_fast},
 	geometry::{
 		GlobalPoint, GlobalRect, MonitorRect, MonitorRectPoints, RectPoints, Rgb, WindowHit,

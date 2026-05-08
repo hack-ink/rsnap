@@ -12,6 +12,9 @@ int main(void) {
 	RsnapOwnedRgbaRegion scroll_export = {0};
 	RsnapOwnedBytes png_export = {0};
 	RsnapPixelRect crop = {.x = 0, .y = 0, .width = 2, .height = 2};
+	RsnapPixelRect display_crop = {0};
+	RsnapFloatRect display_frame = {.x = 0.0, .y = 0.0, .width = 1440.0, .height = 900.0};
+	RsnapFloatRect selection = {.x = 100.0, .y = 200.0, .width = 300.0, .height = 150.0};
 	uint8_t rgba[4 * 4 * 4] = {0};
 	RsnapSessionHandle *handle = rsnap_session_create(config);
 	RsnapScrollSessionHandle *scroll_handle =
@@ -59,6 +62,18 @@ int main(void) {
 		return 12;
 	}
 	rsnap_owned_bytes_release(&png_export);
+	if (rsnap_frozen_display_crop_rect(2880, 1800, display_frame, selection, &display_crop) !=
+		RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 13;
+	}
+	if (display_crop.x != 200 || display_crop.y != 1100 || display_crop.width != 600 ||
+		display_crop.height != 300) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 14;
+	}
 	if (rsnap_session_enter_live(handle) != RSNAP_STATUS_OK) {
 		rsnap_scroll_session_destroy(scroll_handle);
 		rsnap_session_destroy(handle);

@@ -13,9 +13,9 @@ use rsnap_overlay as _;
 
 use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
-	self, CaptureMode, CaptureSessionCore, CursorIntent, GlobalRect, HostEffectKind, HostEvent,
-	HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints, Rgb, RgbaExportImage,
-	SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
+	self, CaptureMode, CaptureSessionCore, CursorIntent, DisplayPointRect, GlobalRect,
+	HostEffectKind, HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints,
+	Rgb, RgbaExportImage, SessionConfig, ToolbarItemKind, ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -24,7 +24,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 19;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 20;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -175,6 +175,20 @@ pub struct RsnapPixelRect {
 	pub width: u32,
 	/// Rectangle height in pixels.
 	pub height: u32,
+}
+
+/// FFI-safe display-space rectangle.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapFloatRect {
+	/// Left coordinate in display points.
+	pub x: f64,
+	/// Top coordinate in display points.
+	pub y: f64,
+	/// Rectangle width in display points.
+	pub width: f64,
+	/// Rectangle height in display points.
+	pub height: f64,
 }
 
 /// FFI-safe scroll-capture observation discriminator.
@@ -855,6 +869,39 @@ pub unsafe extern "C" fn rsnap_export_rgba_crop_to_png(
 	RsnapStatus::Ok
 }
 
+/// Resolves a frozen display selection into an image-local pixel crop rectangle.
+///
+/// # Safety
+///
+/// `out_rect` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_display_crop_rect(
+	image_width: u32,
+	image_height: u32,
+	display_frame: RsnapFloatRect,
+	selection: RsnapFloatRect,
+	out_rect: *mut RsnapPixelRect,
+) -> RsnapStatus {
+	if out_rect.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(crop_rect) = rsnap_capture_core::frozen_display_crop_rect(
+		image_width,
+		image_height,
+		decode_float_rect(display_frame),
+		decode_float_rect(selection),
+	) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_rect, encode_pixel_rect(crop_rect));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Returns the current C ABI version for the native host bridge.
 #[unsafe(no_mangle)]
 pub extern "C" fn rsnap_host_ffi_abi_version() -> u32 {
@@ -1442,6 +1489,14 @@ fn decode_pixel_rect(rect: RsnapPixelRect) -> RectPoints {
 	RectPoints::new(rect.x, rect.y, rect.width, rect.height)
 }
 
+fn decode_float_rect(rect: RsnapFloatRect) -> DisplayPointRect {
+	DisplayPointRect::new(rect.x, rect.y, rect.width, rect.height)
+}
+
+fn encode_pixel_rect(rect: RectPoints) -> RsnapPixelRect {
+	RsnapPixelRect { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+}
+
 fn decode_session_config(config: RsnapSessionConfig) -> SessionConfig {
 	SessionConfig {
 		platform: match config.platform {
@@ -1887,7 +1942,7 @@ mod tests {
 
 	use crate::{
 		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCursorIntent,
-		RsnapHostEvent, RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind,
+		RsnapFloatRect, RsnapHostEvent, RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind,
 		RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes,
 		RsnapPixelRect, RsnapPlatformTag, RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind,
 		RsnapSceneModel, RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
@@ -2126,6 +2181,39 @@ mod tests {
 			RsnapStatus::InvalidInput
 		);
 		assert!(png.bytes.is_null());
+	}
+
+	#[test]
+	fn ffi_frozen_display_crop_rect_returns_core_pixel_rect() {
+		let mut out_rect = RsnapPixelRect::default();
+		let status = unsafe {
+			crate::rsnap_frozen_display_crop_rect(
+				2880,
+				1800,
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 1440.0, height: 900.0 },
+				RsnapFloatRect { x: 100.0, y: 200.0, width: 300.0, height: 150.0 },
+				&mut out_rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(out_rect, RsnapPixelRect { x: 200, y: 1100, width: 600, height: 300 });
+	}
+
+	#[test]
+	fn ffi_frozen_display_crop_rect_returns_empty_for_outside_selection() {
+		let mut out_rect = RsnapPixelRect::default();
+		let status = unsafe {
+			crate::rsnap_frozen_display_crop_rect(
+				200,
+				200,
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
+				RsnapFloatRect { x: 120.0, y: 10.0, width: 10.0, height: 20.0 },
+				&mut out_rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Empty);
 	}
 
 	#[cfg(target_os = "macos")]
