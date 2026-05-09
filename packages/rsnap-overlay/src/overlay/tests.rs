@@ -34,6 +34,7 @@ use winit::window::WindowId;
 use crate::backend;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
+#[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::STREAM_REGION_FRAME_MAX_AGE;
 use crate::overlay::FrozenCaptureSource;
 #[cfg(target_os = "macos")]
