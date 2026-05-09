@@ -1,35 +1,28 @@
 # Rsnap workspace tasks.
 
 # Check
-# | task              | type      | purpose |
-# | ----------------- | --------- | ------- |
-# | check             | composite | full read-only verification |
-# | check-rust        | composite | Rust format, style, clippy, and tests |
-# | check-rust-clippy | command   | Rust clippy, no cargo check |
-# | check-swift       | composite | Swift format, SwiftLint, strict build, and probes |
-# | check-swiftlint   | command   | SwiftLint plugin, read-only |
-# | check-toml        | composite | TOML format check |
-# | check-vstyle      | command   | Rust vibe-style curate |
+# | task               | type      | cwd |
+# | ------------------ | --------- | --- |
+# | check              | composite |     |
+# | check-rust         | command   |     |
+# | check-swift        | composite |     |
+# | check-swiftlint    | command   |     |
+# | check-vstyle       | composite |     |
+# | check-vstyle-rust  | command   |     |
+# | check-vstyle-swift | command   |     |
 
 [tasks.check]
 clear = true
 workspace = false
 dependencies = [
+	"fmt-check",
 	"check-rust",
 	"check-swift",
-	"check-toml",
+	"check-vstyle",
+	"test",
 ]
 
 [tasks.check-rust]
-workspace = false
-dependencies = [
-	"fmt-rust-check",
-	"check-vstyle",
-	"check-rust-clippy",
-	"test-rust",
-]
-
-[tasks.check-rust-clippy]
 workspace = false
 command = "cargo"
 args = [
@@ -59,10 +52,8 @@ args = [
 [tasks.check-swift]
 workspace = false
 dependencies = [
-	"fmt-swift-check",
 	"check-swiftlint",
 	"build-swift-strict",
-	"test-macos-native-host",
 ]
 
 [tasks.check-swiftlint]
@@ -84,6 +75,13 @@ swift package \
 
 [tasks.check-vstyle]
 workspace = false
+dependencies = [
+	"check-vstyle-rust",
+	"check-vstyle-swift",
+]
+
+[tasks.check-vstyle-rust]
+workspace = false
 command = "cargo"
 args = [
 	"vstyle",
@@ -94,20 +92,106 @@ args = [
 	"--all-features",
 ]
 
-[tasks.check-toml]
+[tasks.check-vstyle-swift]
+workspace = false
+command = "cargo"
+args = [
+	"vstyle",
+	"curate",
+	"--language",
+	"swift",
+	"--workspace",
+	"--all-features",
+]
+
+# Format
+# | task            | type      | cwd |
+# | --------------- | --------- | --- |
+# | fmt             | composite |     |
+# | fmt-check       | composite |     |
+# | fmt-rust        | command   |     |
+# | fmt-rust-check  | extend    |     |
+# | fmt-swift       | command   |     |
+# | fmt-swift-check | command   |     |
+# | fmt-toml        | command   |     |
+# | fmt-toml-check  | extend    |     |
+
+[tasks.fmt]
 workspace = false
 dependencies = [
+	"fmt-rust",
+	"fmt-swift",
+	"fmt-toml",
+]
+
+[tasks.fmt-check]
+workspace = false
+dependencies = [
+	"fmt-rust-check",
+	"fmt-swift-check",
 	"fmt-toml-check",
 ]
 
+[tasks.fmt-rust]
+workspace = false
+script = "cargo +nightly fmt --all"
+
+[tasks.fmt-rust-check]
+extend = "fmt-rust"
+script = "cargo +nightly fmt --all -- --check"
+
+[tasks.fmt-swift]
+workspace = false
+command = "swift"
+args = [
+	"format",
+	"format",
+	"--in-place",
+	"--recursive",
+	"--parallel",
+	"native/macos-host/Sources",
+	"scripts/smoke/lib/live-hud-mouse-path.swift",
+	"scripts/smoke/lib/mask-probe-capture.swift",
+	"scripts/smoke/lib/visual-background-window.swift",
+]
+
+[tasks.fmt-swift-check]
+workspace = false
+command = "swift"
+args = [
+	"format",
+	"lint",
+	"--recursive",
+	"--strict",
+	"--parallel",
+	"native/macos-host/Sources",
+	"scripts/smoke/lib/live-hud-mouse-path.swift",
+	"scripts/smoke/lib/mask-probe-capture.swift",
+	"scripts/smoke/lib/visual-background-window.swift",
+]
+
+[tasks.fmt-toml]
+workspace = false
+command = "taplo"
+args = [
+	"fmt",
+]
+
+[tasks.fmt-toml-check]
+extend = "fmt-toml"
+args = [
+	"fmt",
+	"--check",
+]
+
 # Lint
-# | task          | type      | purpose |
-# | ------------- | --------- | ------- |
-# | lint          | composite | apply safe fixes |
-# | lint-rust     | command   | cargo clippy --fix |
-# | lint-swift    | composite | Swift format and SwiftLint fixes |
-# | lint-swiftlint| command   | SwiftLint plugin fixes |
-# | lint-vstyle   | command   | Rust vibe-style tune |
+# | task           | type      | cwd |
+# | -------------- | --------- | --- |
+# | lint           | composite |     |
+# | lint-rust      | command   |     |
+# | lint-swift     | composite |     |
+# | lint-swiftlint | command   |     |
+# | lint-vstyle    | composite |     |
 
 [tasks.lint]
 workspace = false
@@ -118,7 +202,8 @@ dependencies = [
 ]
 
 [tasks.lint-rust]
-extend = "check-rust-clippy"
+workspace = false
+command = "cargo"
 args = [
 	"clippy",
 	"--fix",
@@ -150,8 +235,6 @@ workspace = false
 dependencies = [
 	"fmt-swift",
 	"lint-swiftlint",
-	"check-swiftlint",
-	"build-swift-strict",
 ]
 
 [tasks.lint-swiftlint]
@@ -173,6 +256,13 @@ swift package \
 
 [tasks.lint-vstyle]
 workspace = false
+dependencies = [
+	"lint-vstyle-rust",
+	"lint-vstyle-swift",
+]
+
+[tasks.lint-vstyle-rust]
+workspace = false
 command = "cargo"
 args = [
 	"vstyle",
@@ -184,22 +274,37 @@ args = [
 	"--strict",
 ]
 
+[tasks.lint-vstyle-swift]
+workspace = false
+command = "cargo"
+args = [
+	"vstyle",
+	"tune",
+	"--language",
+	"swift",
+	"--workspace",
+	"--all-features",
+	"--strict",
+]
 
 # Test
-# | task                         | type      | purpose |
-# | ---------------------------- | --------- | ------- |
-# | test                         | composite | default Rust suite |
-# | test-rust                    | command   | workspace nextest |
-# | test-host-reset              | composite | reset boundary probes |
-# | test-rust-host-reset         | command   | Rust core/FFI tests |
-# | test-host-ffi-header         | command   | exported C header smoke |
-# | test-macos-native-host       | command   | Swift bridge probes |
-# | test-macos-native-host-stage | command   | staged app bundle smoke |
+# | task                         | type      | cwd |
+# | ---------------------------- | --------- | --- |
+# | test                         | composite |     |
+# | test-rust                    | command   |     |
+# | test-swift                   | composite |     |
+# | test-host-reset              | composite |     |
+# | test-rust-host-reset         | command   |     |
+# | test-host-ffi-header         | command   |     |
+# | test-macos-native-host       | command   |     |
+# | test-macos-native-host-stage | command   |     |
 
 [tasks.test]
+clear = true
 workspace = false
 dependencies = [
 	"test-rust",
+	"test-swift",
 ]
 
 [tasks.test-rust]
@@ -213,7 +318,11 @@ args = [
 	"--all-features",
 ]
 
-# Host/core reset tests.
+[tasks.test-swift]
+workspace = false
+dependencies = [
+	"test-macos-native-host",
+]
 
 [tasks.test-host-reset]
 workspace = false
@@ -244,8 +353,6 @@ args = [
 	"packages/rsnap-host-ffi/include",
 	"packages/rsnap-host-ffi/tests/header_smoke.c",
 ]
-
-# Native host probes.
 
 [tasks.test-macos-native-host]
 workspace = false
@@ -295,10 +402,10 @@ fi
 '''
 
 # Build
-# | task                     | type    | purpose |
-# | ------------------------ | ------- | ------- |
-# | build-host-ffi-staticlib | command | Rust static library for Swift |
-# | build-swift-strict       | command | Swift strict-concurrency build |
+# | task                     | type    | cwd |
+# | ------------------------ | ------- | --- |
+# | build-host-ffi-staticlib | command |     |
+# | build-swift-strict       | command |     |
 
 [tasks.build-host-ffi-staticlib]
 workspace = false
@@ -321,88 +428,6 @@ swift build --package-path native/macos-host \
 	-Xswiftc -warnings-as-errors \
 	-Xswiftc -strict-concurrency=complete
 '''
-
-
-# Format
-# | task           | type      | cwd |
-# | -------------- | --------- | --- |
-# | fmt            | composite |     |
-# | fmt-check      | composite |     |
-# | fmt-rust       | command   |     |
-# | fmt-rust-check | extend    |     |
-# | fmt-swift      | command   |     |
-# | fmt-swift-check| command   |     |
-# | fmt-toml       | command   |     |
-# | fmt-toml-check | extend    |     |
-
-[tasks.fmt]
-workspace = false
-dependencies = [
-	"fmt-rust",
-	"fmt-swift",
-	"fmt-toml",
-]
-
-[tasks.fmt-check]
-workspace = false
-dependencies = [
-	"fmt-rust-check",
-	"fmt-swift-check",
-	"fmt-toml-check",
-]
-
-[tasks.fmt-rust]
-workspace = false
-script = "cargo +nightly fmt --all"
-
-[tasks.fmt-rust-check]
-extend = "fmt-rust"
-script = "cargo +nightly fmt --all -- --check"
-
-[tasks.fmt-toml]
-workspace = false
-command = "taplo"
-args = [
-	"fmt",
-]
-
-[tasks.fmt-toml-check]
-extend = "fmt-toml"
-args = [
-	"fmt",
-	"--check",
-]
-
-[tasks.fmt-swift]
-workspace = false
-command = "swift"
-args = [
-	"format",
-	"format",
-	"--in-place",
-	"--recursive",
-	"--parallel",
-	"native/macos-host/Sources",
-	"scripts/smoke/lib/live-hud-mouse-path.swift",
-	"scripts/smoke/lib/mask-probe-capture.swift",
-	"scripts/smoke/lib/visual-background-window.swift",
-]
-
-[tasks.fmt-swift-check]
-workspace = false
-command = "swift"
-args = [
-	"format",
-	"lint",
-	"--recursive",
-	"--strict",
-	"--parallel",
-	"native/macos-host/Sources",
-	"scripts/smoke/lib/live-hud-mouse-path.swift",
-	"scripts/smoke/lib/mask-probe-capture.swift",
-	"scripts/smoke/lib/visual-background-window.swift",
-]
-
 
 # Meta
 # | task   | type      | cwd |
