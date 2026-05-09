@@ -65,9 +65,17 @@ where Swift is still holding deterministic product logic that belongs in Rust.
 
 The current native-host Swift split is:
 
-- `NativeHostApp.swift`: app delegate, menu bar lifecycle, settings/hotkey wiring, launch and
-  permission orchestration, and the `CaptureSessionController` bridge that routes host events,
-  host requests, and host-owned side effects.
+- `NativeHostApp.swift`: app delegate, menu bar lifecycle, settings/hotkey wiring, launch,
+  permission orchestration, onboarding, software-update wiring, and status-menu state.
+- `CaptureSessionController.swift` plus `CaptureSessionController+*.swift`: the Swift host-session
+  coordinator around the Rust `RsnapHostSession`. The base file owns shared controller state and
+  lifecycle hooks; the extensions split live capture/input, frozen selection interactions,
+  host-request draining, native scroll-capture sampling, copy/save/export effects, Vision OCR, and
+  runtime teardown/window helpers.
+- `CaptureChrome.swift`: shared native chrome metrics, palette, dashed-border geometry, and
+  AppKit color/image helpers used by live and frozen capture UI.
+- `CaptureOverlayWindow.swift`: the AppKit `NSPanel` wrapper that embeds `CaptureHostView` for each
+  capture overlay window.
 - `CaptureOverlayController.swift`: AppKit overlay-window set management, focus/first-responder
   routing, capture-stream preparation, mouse passthrough, and CoreGraphics capture sources needed
   to sample below native overlay windows.
@@ -76,6 +84,8 @@ The current native-host Swift split is:
   session controller.
 - `FrozenCaptureModels.swift`: Swift view-adapter state for Rust-owned frozen overlay editing,
   including conversion from Rust edit snapshots into AppKit draw models.
+- `NativeHostFeedbackSound.swift`: host-side `NSSound` lookup/playback for capture and OCR
+  completion effects.
 - `NativeHostImageBridge.swift` and `RsnapHostBridge`: conversion and FFI glue between
   CoreGraphics/AppKit images and Rust-owned RGBA snapshots.
 
