@@ -32,9 +32,9 @@ For the active target architecture and migration direction, read:
 | --- | --- |
 | `native/macos-host/` | SwiftPM AppKit-first macOS host shell: menu bar entry, full-screen capture windows, in-window HUD/toolbar, and native bridging into `rsnap-host-ffi` |
 | `apps/rsnap/` | Thin launcher/bootstrap crate: startup logging, build metadata, stable-bundle resolution, and `cargo run -p rsnap` handoff into the staged native macOS host |
-| `packages/rsnap-overlay/` | Rust-core session/rendering crate: capture-session logic, overlay rendering, capture backend integration, worker runtime, and scroll-capture stitching/replay semantics, with any remaining macOS host adapters quarantined behind explicit host modules |
-| `packages/rsnap-capture-core/` | New durable product-semantics crate: shared geometry, semantic scene model, host/core protocol enums, and the first reset-native session core |
-| `packages/rsnap-host-ffi/` | New thin C ABI bridge crate for future native hosts that call the Rust product core |
+| `packages/rsnap-overlay/` | Transitional Rust runtime and implementation reservoir: legacy overlay runtime, retained scroll-capture logic, frozen edit/export logic, and macOS adapters that have not yet moved into `rsnap-capture-core` |
+| `packages/rsnap-capture-core/` | Durable Rust product-semantics and image-algorithm crate: shared geometry, semantic scene model, host/core protocol enums, reset-native session core, export/crop/PNG encoding, capture-frame rendering, wallpaper thumbnail, minimap, mosaic, selection transform, auto-center, and live-sample helpers |
+| `packages/rsnap-host-ffi/` | Thin C ABI bridge crate used by the native macOS host to call the Rust product core and retained Rust transition modules |
 | `docs/` | Agent-facing repository docs split into `spec`, `runbook`, `reference`, and `decisions` |
 | `assets/` | Shared app-icon source plus generated bundle/runtime assets |
 | `scripts/` | Packaging helpers plus structured smoke/perf entrypoints under `scripts/smoke/` and `scripts/perf/` |
@@ -67,18 +67,15 @@ Key paths:
 ### `packages/rsnap-overlay/`
 
 Treat `packages/rsnap-overlay/` as the current transitional container for most capture-session and
-overlay behavior.
+legacy overlay behavior.
 
 Today it owns:
 
-- capture-session lifecycle
-- overlay, HUD, loupe, and toolbar rendering
-- frozen-mode behavior and output flow
-- text annotation semantics, text model, edit intent, caret and selection semantics, and rendered
-  text state
-- capture backend abstraction and worker coordination
-- macOS live frame streaming and OCR support
-- scroll-capture session logic, replay support, and benchmarks
+- legacy capture-session lifecycle and overlay runtime paths not yet used by the native-host reset
+- retained scroll-capture session logic, replay support, and benchmarks
+- frozen edit/export logic that is still Rust-owned but has not yet moved into `rsnap-capture-core`
+- text annotation rendering helpers reused by Rust export paths
+- macOS capture and live-frame adapter code that remains quarantined behind explicit host modules
 
 Important:
 
@@ -108,6 +105,14 @@ It owns:
 - semantic scene snapshots
 - explicit host/core protocol enums and structs
 - the first reset-native reference session core
+- RGBA/BGRA pixel helpers used by host bridge code
+- export crop mapping and lossless PNG encoding
+- capture-frame layout, background planning, shadowing, wallpaper thumbnail decode/cache, and final
+  RGBA composition
+- scroll minimap planning
+- mosaic patch generation
+- frozen selection hit-testing and transform geometry
+- auto-center content-bound detection and margin-balance rules
 
 This crate must stay free of:
 
@@ -125,7 +130,9 @@ It owns:
 - opaque session handles for foreign hosts
 - FFI-safe config, event, report, scene, and request types
 - exported `extern "C"` functions that forward into `rsnap-capture-core`
-- the checked-in C header consumed by future native hosts:
+- exported `extern "C"` functions that bridge retained Rust transition modules while they migrate
+  toward `rsnap-capture-core`
+- the checked-in C header consumed by the native macOS host:
   `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
 
 It does not own product behavior beyond ABI adaptation.
@@ -139,6 +146,9 @@ It owns:
 - the SwiftPM-built `.app` host shell
 - the AppKit window/view tree used for live and frozen capture UI
 - native cursor, focus, event routing, menu bar entry, and host-side effects
+- OS-only resource discovery such as the current wallpaper path
+- conversion between AppKit/CoreGraphics image objects and bridgeable RGBA buffers
+- presentation of Rust-rendered images and models in native windows
 - the checked-in bridge probe used by `cargo make test-host-reset`
 
 It depends on:
@@ -146,8 +156,9 @@ It depends on:
 - `packages/rsnap-host-ffi/` for the C ABI contract
 - `packages/rsnap-capture-core/` indirectly through that ABI
 
-It must not grow a second product-semantic model. Scene state and host requests still come from the
-Rust core.
+It must not grow a second product-semantic model or duplicate Rust-owned image algorithms. Scene
+state, host requests, export bytes, capture-frame renders, minimap plans, selection transforms,
+auto-center decisions, and similar deterministic outputs come from the Rust side.
 
 ## Documentation placement
 
