@@ -173,10 +173,10 @@ struct NativeHostSettings: Equatable {
 			showAltHintKeycap: true,
 			hudGlassEnabled: true,
 			hudGlassMode: .liquidGlass,
-			hudOpacity: 0.4999747693194925,
-			hudBlur: 0.5032628676470589,
+			hudOpacity: 0.499_974_769_319_492_5,
+			hudBlur: 0.503_262_867_647_058_9,
 			hudTint: 1.0,
-			hudTintHue: 0.6074879184861536,
+			hudTintHue: 0.607_487_918_486_153_6,
 			hudTintSaturation: 0.72,
 			hudTintBrightness: 0.95,
 			liquidGlassStyle: .clear,
@@ -220,7 +220,7 @@ struct NativeHostSettings: Equatable {
 
 	private static func sanitizeCaptureHotkey(_ raw: String) -> String {
 		let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !trimmed.isEmpty else {
+		guard trimmed.isEmpty == false else {
 			return defaults.captureHotkey
 		}
 		return captureHotKeyPresentation(for: trimmed).displayTitle
@@ -238,7 +238,7 @@ struct NativeHostSettings: Equatable {
 	private static func parseCaptureHotKeyPresentation(_ raw: String) -> CaptureHotKeyPresentation?
 	{
 		let tokens = captureHotKeyTokens(from: raw)
-		guard !tokens.isEmpty else {
+		guard tokens.isEmpty == false else {
 			return nil
 		}
 

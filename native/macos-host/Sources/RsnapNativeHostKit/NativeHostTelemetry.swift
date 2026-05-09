@@ -445,7 +445,7 @@ enum NativeHostTelemetry {
 		}
 
 		private func percentile(_ sorted: [Double], _ percentile: Double) -> Double {
-			guard !sorted.isEmpty else {
+			guard sorted.isEmpty == false else {
 				return 0
 			}
 			let fraction = min(max(percentile, 0), 1)

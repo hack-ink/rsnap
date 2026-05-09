@@ -895,10 +895,10 @@ private struct SoftwareUpdateModePicker: View {
 		for mode: NativeHostSoftwareUpdater.Mode,
 		isEnabled: Bool
 	) -> String {
-		if !snapshot.isConfigured {
+		if snapshot.isConfigured == false {
 			return "Sparkle appcast not configured."
 		}
-		if mode == .install, !isEnabled {
+		if mode == .install, isEnabled == false {
 			return "Automatic install is unavailable."
 		}
 		switch mode {
@@ -1047,14 +1047,14 @@ private struct ModernSegmentButton: View {
 	}
 
 	private var hoverBackground: Color {
-		if isHovered && !isSelected && isEnabled {
+		if isHovered && isSelected == false && isEnabled {
 			return colorScheme == .light ? Color.black.opacity(0.035) : Color.white.opacity(0.050)
 		}
 		return .clear
 	}
 
 	private var textColor: Color {
-		if !isEnabled {
+		if isEnabled == false {
 			return Color.secondary.opacity(0.54)
 		}
 		if isSelected {
@@ -1583,7 +1583,7 @@ private struct CaptureHotKeyField: View {
 				}
 			}
 			.onChange(of: model.settings.captureHotkey) { _, _ in
-				if !isFocused {
+				if isFocused == false {
 					syncDraft()
 				}
 			}
@@ -1973,7 +1973,7 @@ private struct AboutLinkTile: View {
 		guard let subtitle else {
 			return false
 		}
-		return !subtitle.isEmpty
+		return subtitle.isEmpty == false
 	}
 }
 

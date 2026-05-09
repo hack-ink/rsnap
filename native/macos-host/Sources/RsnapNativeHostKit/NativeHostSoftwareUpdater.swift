@@ -30,7 +30,7 @@ final class NativeHostSoftwareUpdater {
 		let lastCheckSummary: String
 
 		var modeSubtitle: String {
-			if !isConfigured {
+			if isConfigured == false {
 				return "Sparkle appcast not configured."
 			}
 			switch mode {

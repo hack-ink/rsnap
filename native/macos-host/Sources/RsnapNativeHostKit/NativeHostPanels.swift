@@ -141,7 +141,7 @@ enum NativePermissions {
 
 	static func requestScreenRecording() -> Bool {
 		let granted = screenRecordingGranted || CGRequestScreenCaptureAccess()
-		if !granted {
+		if granted == false {
 			openScreenRecordingSettings()
 		}
 		return granted

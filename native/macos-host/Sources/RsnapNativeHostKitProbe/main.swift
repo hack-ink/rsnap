@@ -91,14 +91,14 @@ enum RsnapNativeHostKitProbe {
 		}
 
 		let missingBundle = LaunchAtLoginController.state(for: .notFound)
-		guard !missingBundle.isOn, missingBundle.isControlEnabled else {
+		guard missingBundle.isOn == false, missingBundle.isControlEnabled else {
 			fatalError("missing app bundle should keep the login item toggle clickable")
 		}
 
 		let failed = LaunchAtLoginController.state(
 			for: .notRegistered,
 			errorMessage: "registration failed")
-		guard !failed.isOn, failed.subtitle.contains("failed") else {
+		guard failed.isOn == false, failed.subtitle.contains("failed") else {
 			fatalError("failed login item update should keep current state and surface failure")
 		}
 	}

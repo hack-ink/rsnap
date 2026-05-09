@@ -92,7 +92,7 @@ final class WindowSnapshotFeed {
 		for info in candidateWindows {
 			let isOnScreen = (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false
 			let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? -1
-			if !isOnScreen {
+			if isOnScreen == false {
 				continue
 			}
 			let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
@@ -401,7 +401,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 
 	private func enqueueRefresh() {
 		stateLock.lock()
-		guard !refreshQueued else {
+		guard refreshQueued == false else {
 			stateLock.unlock()
 			return
 		}
@@ -676,7 +676,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			shouldNotifyImmediately = false
 			sampleSidePixels = sidePixels
 			sampleIncludesLoupePatch = includeLoupePatch
-		} else if !whiteStreamRunHasProbed,
+		} else if whiteStreamRunHasProbed == false,
 			now - lastBackgroundProbeUptime >= Self.backgroundProbeMinimumInterval
 		{
 			guard pointIdleDuration >= Self.backgroundProbeIdleDelay else {
@@ -908,7 +908,7 @@ final class LiveFrameClockDriver: @unchecked Sendable {
 		stateLock.lock()
 		let alreadyRunning = timer != nil && currentTargetFramesPerSecond == sanitizedTarget
 		stateLock.unlock()
-		guard !alreadyRunning else {
+		guard alreadyRunning == false else {
 			return
 		}
 
@@ -1033,7 +1033,7 @@ private final class SelectionFlowBandLayer: CALayer {
 	}
 
 	func hide() {
-		guard !isHidden || !focusRect.isNull else {
+		guard isHidden == false || focusRect.isNull == false else {
 			return
 		}
 		isHidden = true
@@ -1116,7 +1116,7 @@ private final class SelectionFlowBandLayer: CALayer {
 
 	private func installFlowAnimation(restartsAnimation: Bool) {
 		let hasAnimations = linePass.gradientLayer.animation(forKey: Self.flowAnimationKey) != nil
-		if !restartsAnimation, hasAnimations {
+		if restartsAnimation == false, hasAnimations {
 			return
 		}
 		removeFlowAnimation()
@@ -1327,7 +1327,7 @@ private final class LiveScrimLayer: CAShapeLayer {
 		bounds: CGRect,
 		roundedExclusions: [OverlayMaskGeometry.RoundedExclusion]
 	) {
-		guard !roundedExclusions.isEmpty else {
+		guard roundedExclusions.isEmpty == false else {
 			mask = nil
 			return
 		}
@@ -1415,7 +1415,7 @@ final class LiveOverlayRenderer {
 		static let scrim: CGFloat = 10
 		static let selectionChrome: CGFloat = 30
 		static let selectionSize: CGFloat = 40
-		static let hudChrome: CGFloat = 1000
+		static let hudChrome: CGFloat = 1_000
 	}
 
 	private var snapshotProvider: (() -> LivePreviewSnapshot?)?
@@ -1887,8 +1887,8 @@ final class LiveOverlayRenderer {
 	) -> [OverlayMaskGeometry.RoundedExclusion] {
 		roundedExclusions.compactMap { exclusion in
 			let visibleRect = exclusion.rect.intersection(bounds)
-			guard !visibleRect.isNull, visibleRect.width > 0, visibleRect.height > 0,
-				!focusRect.contains(visibleRect)
+			guard visibleRect.isNull == false, visibleRect.width > 0, visibleRect.height > 0,
+				focusRect.contains(visibleRect) == false
 			else {
 				return nil
 			}
@@ -1918,7 +1918,7 @@ final class LiveOverlayRenderer {
 	private func updateLiveScrimExclusions(
 		excluding exclusions: [OverlayMaskGeometry.RoundedExclusion]
 	) {
-		guard !scrimLayer.isHidden, let focusRect = lastRenderedFocusRect else {
+		guard scrimLayer.isHidden == false, let focusRect = lastRenderedFocusRect else {
 			return
 		}
 		updateScrimLayer(
@@ -1932,7 +1932,7 @@ final class LiveOverlayRenderer {
 	private func updateLiveFlowExclusions(
 		excluding exclusions: [OverlayMaskGeometry.RoundedExclusion]
 	) {
-		guard !hoverFlowLayer.isHidden else {
+		guard hoverFlowLayer.isHidden == false else {
 			return
 		}
 		hoverFlowLayer.updateRoundedExclusions(exclusions)
@@ -2222,7 +2222,7 @@ final class LiveOverlayRenderer {
 		hudHexLayer.isHidden = true
 		hudHexRollLayer.isHidden = false
 		hudHexRollLayer.frame = frame
-		guard !hudHexPendingRollActive else {
+		guard hudHexPendingRollActive == false else {
 			return
 		}
 
@@ -2485,7 +2485,7 @@ final class LiveOverlayRenderer {
 	) -> HudHexPendingRollColumnState {
 		var digits = Self.pendingHexRollSequence(index: index)
 		let scrollsUp = Self.pendingHexRollColumnScrollsUp(index: index)
-		if !scrollsUp {
+		if scrollsUp == false {
 			digits.reverse()
 		}
 		let contentText = digits.map(String.init).joined(separator: "\n")
@@ -2529,7 +2529,7 @@ final class LiveOverlayRenderer {
 
 	private func currentPendingHudHexDigits(lineHeight: CGFloat) -> [Character?] {
 		hudHexPendingRollColumns.map { column in
-			guard !column.digits.isEmpty else {
+			guard column.digits.isEmpty == false else {
 				return nil
 			}
 			let presentationLayer = column.contentLayer.presentation() ?? column.contentLayer
