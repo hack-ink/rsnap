@@ -48,6 +48,23 @@ package enum CaptureFrameEffectRenderer {
 		captureFramePlan(for: imageSize, screen: nil, source: .unknown)?.imageRect ?? .zero
 	}
 
+	package static func backgroundPlan(
+		for background: CaptureFrameBackgroundPreference
+	) -> CaptureFrameBackgroundPlan? {
+		try? RsnapCaptureFramePlanner.backgroundPlan(for: background.planKind)
+	}
+
+	package static func systemWallpaperPath(screen: NSScreen?) -> String? {
+		guard
+			let screen = screen ?? NSScreen.main,
+			let url = NSWorkspace.shared.desktopImageURL(for: screen)
+		else {
+			return nil
+		}
+
+		return url.standardizedFileURL.path
+	}
+
 	private static func renderWithRust(
 		image: CGImage,
 		background: CaptureFrameBackgroundPreference,
@@ -87,14 +104,7 @@ package enum CaptureFrameEffectRenderer {
 		guard background == .systemWallpaper else {
 			return nil
 		}
-		guard
-			let screen = screen ?? NSScreen.main,
-			let url = NSWorkspace.shared.desktopImageURL(for: screen)
-		else {
-			return nil
-		}
-
-		return url.standardizedFileURL.path
+		return systemWallpaperPath(screen: screen)
 	}
 
 	private static func captureFramePlan(
