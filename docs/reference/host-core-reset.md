@@ -25,9 +25,12 @@ The active reset target is:
 In practical terms:
 
 - native hosts own capture-window lifecycle, focus/activation, cursor, IME, permissions, and
-  native capture capabilities
-- Rust owns capture-session state, geometry, annotations, export composition, scroll stitching,
-  replay, and deterministic product logic
+  native capture capabilities. On macOS, Swift also discovers OS-only resources such as the current
+  wallpaper path, converts captured images into bridgeable buffers, presents returned pixels, and
+  performs host-side effects such as clipboard, save-panel, OCR, and update UI.
+- Rust owns capture-session state, geometry, annotations, export composition, capture-frame
+  planning/rendering, wallpaper thumbnail decoding/caching, scroll stitching, minimap planning,
+  selection transforms, auto-centering, replay, and deterministic product logic.
 - host and core communicate through an explicit protocol instead of sharing ownership of OS-facing
   behavior
 
@@ -42,12 +45,15 @@ Today:
   now centers on session/replay surfaces while remaining macOS host adapters stay behind explicit
   host modules
 - `packages/rsnap-capture-core/` is now the checked-in landing zone for portable geometry,
-  semantic scene models, and the first durable host/core protocol types
-- `packages/rsnap-host-ffi/` is now the checked-in thin C ABI bridge for future native hosts and
-  ships the first checked-in header at `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
+  semantic scene models, host/core protocol types, export/crop/PNG encoding, capture-frame
+  planning/rendering, wallpaper thumbnail decode/cache, minimap planning, mosaic generation,
+  frozen-selection transforms, auto-centering, and live-sample pixel helpers
+- `packages/rsnap-host-ffi/` is now the checked-in thin C ABI bridge for the native macOS host and
+  ships the checked-in header at `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
 - `native/macos-host/` is now the visible app shell and owns clipboard, save, and deferred OCR
-  publication for the reset lane, while the Rust core continues to prepare authoritative semantic
-  host-effect requests
+  publication for the reset lane. It calls `RsnapHostBridge` for Rust-owned session, export,
+  capture-frame, wallpaper thumbnail, minimap, selection-transform, auto-center, and sampling
+  algorithms rather than keeping parallel Swift implementations.
 
 During the reset, treat these as implementation containers rather than the final architecture
 story.
@@ -81,6 +87,9 @@ Current reset posture for the boundary slice:
 
 - durable geometry and scene protocol types now belong in `rsnap-capture-core`
 - native-host ABI entry points now belong in `rsnap-host-ffi`
+- final-byte and performance-sensitive image algorithms should move behind Rust ABI entry points as
+  reusable cross-platform core work, while Swift stays limited to OS acquisition, presentation, and
+  host-side effects
 - targeted reset-slice validation now lives at `cargo make test-host-reset`
 - `apps/rsnap/` and `rsnap-overlay/` should treat those crates as the migration target instead of
   inventing parallel durable protocol types inside legacy containers

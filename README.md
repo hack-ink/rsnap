@@ -55,8 +55,9 @@ Prototype / in active development.
     slices that have not yet moved into `rsnap-capture-core` / the native host.
 - The active reset target is no longer a pure-Rust UI stack. New boundary crates now live in:
   - `packages/rsnap-capture-core/` for platform-neutral session semantics and host/core protocol
-    models
-  - `packages/rsnap-host-ffi/` for the thin C ABI that a future native macOS host will call
+    models, plus Rust-owned export, capture-frame rendering, wallpaper thumbnail, minimap,
+    selection-transform, and image-analysis algorithms
+  - `packages/rsnap-host-ffi/` for the thin C ABI that the native macOS host calls
     through `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
 - Current version support remains **macOS only**. Windows and Linux stay out of scope for this
   version beyond protocol and abstraction design.
@@ -185,6 +186,10 @@ Native-host local loop:
 - The live native-host path is now driven by `primary interaction -> scene.liveSelectionPreview ->
   requestFreezeSnapshot`, so the host no longer keeps its own pending freeze-selection shadow
   state.
+- The native host keeps OS-facing ownership. It captures or discovers platform resources, passes
+  source pixels and resource paths through `RsnapHostBridge`, displays returned images, and performs
+  clipboard, save-panel, OCR, and update side effects. Rust owns the final-byte and image-planning
+  algorithms exposed through `rsnap-host-ffi`.
 
 Smoke/perf entrypoints:
 
@@ -219,8 +224,8 @@ The tracked workspace currently keeps:
 - `native/macos-host/` as the new AppKit-first macOS host shell and local run target
 - `apps/rsnap/` as the thin launcher/bootstrap crate for the native host bundle
 - `packages/rsnap-overlay/` as the large transitional overlay/runtime container
-- `packages/rsnap-capture-core/` as the new durable product-semantics layer
-- `packages/rsnap-host-ffi/` as the new thin C ABI bridge for future native hosts
+- `packages/rsnap-capture-core/` as the durable product-semantics and image-algorithm layer
+- `packages/rsnap-host-ffi/` as the thin C ABI bridge used by the native macOS host
 
 Generated or local-only directories such as `target/`, `.worktrees/`, and `.workspaces/` are not
 part of the tracked repository structure. For the authoritative layout and ownership map, read

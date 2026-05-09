@@ -41,7 +41,9 @@ The native platform host owns:
 - global hotkey registration
 - permissions and permission recovery flows
 - native screenshot / live-stream / window-list / OCR capability acquisition
+- OS resource discovery that has no portable API, such as the current desktop wallpaper path
 - clipboard, save-panel, notification, sound, and similar host-side effects
+- presenting rendered pixels returned by the core inside native windows and controls
 
 ## Rust core ownership
 
@@ -53,6 +55,9 @@ The Rust core owns:
 - annotation state, undo/redo, and export composition rules
 - display-authority versus export-authority semantics
 - scroll-capture overlap proof, stitching, and fail-closed rules
+- final-byte image algorithms: crop mapping, lossless PNG export encoding, capture-frame planning
+  and compositing, wallpaper thumbnail decoding/caching, mosaic patch generation, minimap planning,
+  selection transforms, auto-centering analysis, and live-sample pixel extraction
 - deterministic replay, test fixtures, and product-level validation logic
 - cross-platform product data models and behavior contracts
 
@@ -65,6 +70,8 @@ Host to core messages include:
 - user-intent events such as pointer, keyboard, and IME events
 - capability results such as live-frame delivery, freeze snapshot delivery, and window snapshot
   updates
+- source pixels and narrow OS resource references, such as a wallpaper file path, when Rust owns the
+  portable planning, decode, cache, resize, composition, or export algorithm
 - lifecycle and environment signals such as permission changes or host teardown
 
 Core to host messages include:
@@ -72,6 +79,8 @@ Core to host messages include:
 - host commands such as show/hide/update capture UI
 - capability requests such as start/stop live capture or request freeze snapshots
 - side-effect requests such as copy, save, OCR, or other host-owned effects
+- rendered pixels, PNG bytes, geometry plans, hit-test results, and other deterministic outputs from
+  Rust-owned product algorithms
 
 The boundary must avoid leaking platform-native event types or platform-native window handles into
 the Rust product model except through narrow adapter types owned by the host layer.
@@ -87,6 +96,8 @@ The following are out of bounds for new architecture work:
 - allowing Rust session code to directly own top-level platform window focus or activation policy
 - coupling product correctness to a legacy fallback-heavy lifecycle when that concern belongs in a
   host capability adapter
+- reimplementing Rust-owned image planning, export, geometry, or analysis algorithms in Swift after
+  an FFI entrypoint exists for that responsibility
 
 ## Portability rule
 
