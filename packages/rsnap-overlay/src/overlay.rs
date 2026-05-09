@@ -73,7 +73,16 @@ use egui::{
 	Area, CentralPanel, ClippedPrimitive, Id, LayerId, Order, RichText, Sense, Shape, Stroke,
 	StrokeKind, UiBuilder, ViewportId, Visuals,
 };
-use egui_phosphor::{Variant, regular};
+#[cfg(target_os = "macos")]
+use egui_phosphor::regular::FILE_TEXT;
+use egui_phosphor::{
+	Variant,
+	regular::{
+		self, ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, ARROW_UP_RIGHT, ARROWS_DOWN_UP,
+		ARROWS_IN_CARDINAL, CHECKERBOARD, COPY, CURSOR, FLOPPY_DISK, FRAME_CORNERS, PENCIL_SIMPLE,
+		TEXT_T,
+	},
+};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use image::RgbaImage;
 #[cfg(target_os = "macos")]
@@ -720,20 +729,20 @@ impl FrozenToolbarTool {
 
 	const fn icon(self) -> &'static str {
 		match self {
-			Self::Pointer => regular::CURSOR,
-			Self::Pen => regular::PENCIL_SIMPLE,
-			Self::Arrow => regular::ARROW_UP_RIGHT,
-			Self::Text => regular::TEXT_T,
-			Self::Mosaic => regular::CHECKERBOARD,
-			Self::Spotlight => regular::FRAME_CORNERS,
-			Self::Undo => regular::ARROW_COUNTER_CLOCKWISE,
-			Self::Redo => regular::ARROW_CLOCKWISE,
-			Self::AutoCenter => regular::ARROWS_IN_CARDINAL,
-			Self::Scroll => regular::ARROWS_DOWN_UP,
+			Self::Pointer => CURSOR,
+			Self::Pen => PENCIL_SIMPLE,
+			Self::Arrow => ARROW_UP_RIGHT,
+			Self::Text => TEXT_T,
+			Self::Mosaic => CHECKERBOARD,
+			Self::Spotlight => FRAME_CORNERS,
+			Self::Undo => ARROW_COUNTER_CLOCKWISE,
+			Self::Redo => ARROW_CLOCKWISE,
+			Self::AutoCenter => ARROWS_IN_CARDINAL,
+			Self::Scroll => ARROWS_DOWN_UP,
 			#[cfg(target_os = "macos")]
-			Self::Ocr => regular::FILE_TEXT,
-			Self::Copy => regular::COPY,
-			Self::Save => regular::FLOPPY_DISK,
+			Self::Ocr => FILE_TEXT,
+			Self::Copy => COPY,
+			Self::Save => FLOPPY_DISK,
 		}
 	}
 

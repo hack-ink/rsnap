@@ -6,6 +6,27 @@ import RsnapHostBridge
 enum RsnapHostBridgeProbe {
 	static func main() throws {
 		let session = try RsnapHostSession()
+		try verifyLiveDragFreezeLifecycle(session)
+		try verifyClickWindowFreezeLifecycle(session)
+		try verifyFullscreenFreezeLifecycle(session)
+		try verifyLiveWindowClearing(session)
+		try verifyScrollExportPlanning()
+		try verifyBgraFrameSampler()
+		try verifyCaptureFramePlanning()
+		try verifyWallpaperRendering()
+		try verifyMinimapAndTransformPlanning()
+		try verifyFrozenOverlayExport()
+		try verifyFrozenOverlayEditSession()
+
+		print("rsnap-host-bridge probe ok")
+	}
+
+	private static func verifyLiveDragFreezeLifecycle(_ session: RsnapHostSession) throws {
+		try verifyLiveDragSelection(session)
+		try verifyFrozenToolbarInteractions(session)
+	}
+
+	private static func verifyLiveDragSelection(_ session: RsnapHostSession) throws {
 		try session.enterLive()
 
 		let liveRequests = try session.drainRequests()
@@ -19,7 +40,7 @@ enum RsnapHostBridgeProbe {
 				rgb: RGBSample(r: 1, g: 2, b: 3),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: WindowSnapshot(
@@ -33,7 +54,7 @@ enum RsnapHostBridgeProbe {
 				point: CGPoint(x: 120, y: 180),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: WindowSnapshot(
@@ -47,7 +68,7 @@ enum RsnapHostBridgeProbe {
 				point: CGPoint(x: 260, y: 320),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: WindowSnapshot(
@@ -65,7 +86,7 @@ enum RsnapHostBridgeProbe {
 				point: CGPoint(x: 260, y: 320),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: WindowSnapshot(
@@ -104,12 +125,15 @@ enum RsnapHostBridgeProbe {
 			scene.statusMessage == nil,
 			scene.toolbarItems.contains(where: { $0.kind == .pointer && $0.selected }),
 			scene.toolbarItems.contains(where: { $0.kind == .ocr && $0.enabled }),
-			!scene.toolbarItems.contains(where: { $0.kind == .scroll }),
+			scene.toolbarItems.contains(where: { $0.kind == .scroll }) == false,
 			scene.toolbarItems.contains(where: { $0.kind == .copy && $0.enabled }),
 			scene.toolbarItems.contains(where: { $0.kind == .save && $0.enabled })
 		else {
 			fatalError("unexpected frozen scene: \(scene)")
 		}
+	}
+
+	private static func verifyFrozenToolbarInteractions(_ session: RsnapHostSession) throws {
 		try session.send(event: .toolbarItemInvoked(.scroll))
 		guard try session.takeNextRequest() == nil else {
 			fatalError("scroll toolbar invocation should stay disabled")
@@ -123,7 +147,7 @@ enum RsnapHostBridgeProbe {
 				highlightedWindow: nil
 			)
 		)
-		scene = try session.currentScene()
+		var scene = try session.currentScene()
 		guard scene.cursorIntent == .resizeEast else {
 			fatalError("unexpected frozen resize cursor: \(scene)")
 		}
@@ -141,7 +165,7 @@ enum RsnapHostBridgeProbe {
 		guard
 			scene.cursorIntent == .text,
 			scene.toolbarItems.contains(where: { $0.kind == .text && $0.selected }),
-			!scene.toolbarItems.contains(where: { $0.kind == .pointer && $0.selected })
+			scene.toolbarItems.contains(where: { $0.kind == .pointer && $0.selected }) == false
 		else {
 			fatalError("unexpected text-tool scene: \(scene)")
 		}
@@ -174,7 +198,9 @@ enum RsnapHostBridgeProbe {
 		guard scene.statusMessage == "Host-only status" else {
 			fatalError("unexpected host status message: \(String(describing: scene.statusMessage))")
 		}
+	}
 
+	private static func verifyClickWindowFreezeLifecycle(_ session: RsnapHostSession) throws {
 		try session.enterLive()
 		_ = try session.takeNextRequest()
 		let clickSelection = CGRect(x: 300, y: 220, width: 360, height: 260)
@@ -184,7 +210,7 @@ enum RsnapHostBridgeProbe {
 				point: CGPoint(x: 420, y: 340),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: clickWindow
@@ -195,7 +221,7 @@ enum RsnapHostBridgeProbe {
 				point: CGPoint(x: 420, y: 340),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: clickWindow
@@ -218,16 +244,18 @@ enum RsnapHostBridgeProbe {
 				highlightedWindow: nil
 			)
 		)
-		scene = try session.currentScene()
+		let scene = try session.currentScene()
 		guard scene.mode == .frozen, scene.cursorIntent == .default else {
 			fatalError("unexpected click-window frozen cursor: \(scene)")
 		}
+	}
 
+	private static func verifyFullscreenFreezeLifecycle(_ session: RsnapHostSession) throws {
 		try session.enterLive()
 		_ = try session.takeNextRequest()
 		let fullscreenMonitor = MonitorSnapshot(
 			id: 10,
-			frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+			frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 			scaleFactorX1000: 2_000
 		)
 		try session.send(
@@ -262,11 +290,13 @@ enum RsnapHostBridgeProbe {
 				highlightedWindow: nil
 			)
 		)
-		scene = try session.currentScene()
+		let scene = try session.currentScene()
 		guard scene.mode == .frozen, scene.cursorIntent == .default else {
 			fatalError("unexpected fullscreen frozen cursor: \(scene)")
 		}
+	}
 
+	private static func verifyLiveWindowClearing(_ session: RsnapHostSession) throws {
 		try session.enterLive()
 		_ = try session.takeNextRequest()
 		try session.send(
@@ -275,32 +305,32 @@ enum RsnapHostBridgeProbe {
 				rgb: nil,
 				activeMonitor: MonitorSnapshot(
 					id: 11,
-					frame: CGRect(x: 1440, y: 0, width: 1728, height: 1117),
+					frame: CGRect(x: 1_440, y: 0, width: 1_728, height: 1_117),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: WindowSnapshot(
 					windowID: 77,
-					frame: CGRect(x: 1500, y: 100, width: 500, height: 400)
+					frame: CGRect(x: 1_500, y: 100, width: 500, height: 400)
 				)
 			)
 		)
-		scene = try session.currentScene()
+		var scene = try session.currentScene()
 		guard
 			scene.mode == .live,
 			scene.activeMonitor?.id == 11,
-			scene.activeMonitor?.frame == CGRect(x: 1440, y: 0, width: 1728, height: 1117),
+			scene.activeMonitor?.frame == CGRect(x: 1_440, y: 0, width: 1_728, height: 1_117),
 			scene.highlightedWindow?.windowID == 77,
-			scene.highlightedWindow?.frame == CGRect(x: 1500, y: 100, width: 500, height: 400)
+			scene.highlightedWindow?.frame == CGRect(x: 1_500, y: 100, width: 500, height: 400)
 		else {
 			fatalError("unexpected live monitor/window scene: \(scene)")
 		}
 		try session.send(
 			event: .pointerMoved(
-				point: CGPoint(x: 2600, y: 800),
+				point: CGPoint(x: 2_600, y: 800),
 				rgb: nil,
 				activeMonitor: MonitorSnapshot(
 					id: 11,
-					frame: CGRect(x: 1440, y: 0, width: 1728, height: 1117),
+					frame: CGRect(x: 1_440, y: 0, width: 1_728, height: 1_117),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: nil
@@ -310,7 +340,9 @@ enum RsnapHostBridgeProbe {
 		guard scene.highlightedWindow == nil else {
 			fatalError("stale live highlighted window was not cleared: \(scene)")
 		}
+	}
 
+	private static func verifyScrollExportPlanning() throws {
 		let baseScrollFrame = makeScrollFrame(width: 16, height: 96, topRow: 0)
 		let movedScrollFrame = makeScrollFrame(width: 16, height: 96, topRow: 24)
 		let scrollSession = try RsnapScrollCaptureSession(
@@ -330,8 +362,391 @@ enum RsnapHostBridgeProbe {
 		guard let scrollExport = try scrollSession.exportImage(), scrollExport.height == 120 else {
 			fatalError("unexpected scroll export image")
 		}
+		let png = try RsnapExportEncoder.pngData(from: scrollExport)
+		guard let fullPNGDimensions = pngDimensions(png), fullPNGDimensions == (16, 120) else {
+			fatalError("unexpected PNG export dimensions")
+		}
+		let croppedPNG = try RsnapExportEncoder.pngData(
+			from: scrollExport,
+			crop: CGRect(x: 1, y: 2, width: 4, height: 8)
+		)
+		guard let croppedPNGDimensions = pngDimensions(croppedPNG),
+			croppedPNGDimensions == (4, 8)
+		else {
+			fatalError("unexpected cropped PNG export dimensions")
+		}
+		let frozenDisplayCrop = try RsnapExportEncoder.frozenDisplayCropRect(
+			imageWidth: 2_880,
+			imageHeight: 1_800,
+			displayFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
+			selection: CGRect(x: 100, y: 200, width: 300, height: 150)
+		)
+		guard frozenDisplayCrop == CGRect(x: 200, y: 1_100, width: 600, height: 300) else {
+			fatalError("unexpected frozen display crop rect")
+		}
+		let emptyFrozenDisplayCrop = try RsnapExportEncoder.frozenDisplayCropRect(
+			imageWidth: 200,
+			imageHeight: 200,
+			displayFrame: CGRect(x: 0, y: 0, width: 100, height: 100),
+			selection: CGRect(x: 120, y: 10, width: 10, height: 20)
+		)
+		guard emptyFrozenDisplayCrop == nil else {
+			fatalError("unexpected out-of-bounds frozen display crop rect")
+		}
+		guard
+			let mosaicPatch = try RsnapExportEncoder.frozenMosaicLightPrivacyPatch(
+				imageWidth: 100,
+				imageHeight: 80,
+				sourceRect: CGRect(x: 4.2, y: 9.1, width: 28.4, height: 21.0)
+			),
+			mosaicPatch.width == 3,
+			mosaicPatch.height == 3,
+			Array(mosaicPatch.rgba.prefix(12)) == [
+				211, 211, 211, 255, 205, 205, 205, 255, 202, 201, 199, 255,
+			]
+		else {
+			fatalError("unexpected frozen mosaic privacy patch")
+		}
+	}
 
-		print("rsnap-host-bridge probe ok")
+	private static func verifyBgraFrameSampler() throws {
+		let bgraFrame = makeBgraFrame(width: 4, height: 3)
+		try bgraFrame.withUnsafeBytes { buffer in
+			guard let baseAddress = buffer.baseAddress else {
+				fatalError("missing BGRA fixture storage")
+			}
+			let rgb = try RsnapBgraFrameSampler.rgbSample(
+				width: 4,
+				height: 3,
+				bytesPerRow: 16,
+				baseAddress: baseAddress,
+				byteCount: bgraFrame.count,
+				displayFrame: CGRect(x: 0, y: 0, width: 4, height: 3),
+				point: CGPoint(x: 1, y: 2.5)
+			)
+			guard rgb == RGBSample(r: 11, g: 21, b: 31) else {
+				fatalError("unexpected BGRA RGB sample")
+			}
+			guard
+				let patch = try RsnapBgraFrameSampler.loupePatch(
+					width: 4,
+					height: 3,
+					bytesPerRow: 16,
+					baseAddress: baseAddress,
+					byteCount: bgraFrame.count,
+					displayFrame: CGRect(x: 0, y: 0, width: 4, height: 3),
+					point: CGPoint(x: 0, y: 2),
+					sidePixels: 3
+				),
+				patch.width == 3,
+				patch.height == 3,
+				Array(patch.rgba.prefix(8)) == [10, 20, 30, 200, 10, 20, 30, 200]
+			else {
+				fatalError("unexpected BGRA loupe patch")
+			}
+		}
+	}
+
+	private static func verifyCaptureFramePlanning() throws {
+		guard
+			let framePlan = try RsnapCaptureFramePlanner.plan(
+				imageWidth: 320,
+				imageHeight: 180,
+				screenScaleFactor: 2,
+				source: .window
+			),
+			framePlan.canvasSize == CGSize(width: 416, height: 276),
+			framePlan.imageRect == CGRect(x: 48, y: 48, width: 320, height: 180),
+			framePlan.cornerRadius == 9.9,
+			framePlan.shadows.count == 3,
+			framePlan.shadows[0].blur == 80,
+			framePlan.shadows[1].offset.height == -22
+		else {
+			fatalError("unexpected capture frame layout plan")
+		}
+		guard
+			try RsnapCaptureFramePlanner.aspectFillCropRect(
+				sourceWidth: 1_600,
+				sourceHeight: 900,
+				destinationSize: CGSize(width: 1_000, height: 1_000)
+			) == CGRect(x: 350, y: 0, width: 900, height: 900)
+		else {
+			fatalError("unexpected capture frame aspect-fill crop rect")
+		}
+		let backgroundPlan = try RsnapCaptureFramePlanner.backgroundPlan(for: .systemWallpaper)
+		guard
+			backgroundPlan.prefersWallpaper,
+			backgroundPlan.wallpaperOverlayAlpha == 0.10,
+			backgroundPlan.locations == [0, 0.54, 1],
+			backgroundPlan.colorStops.count == 3,
+			backgroundPlan.colorStops[0]
+				== CaptureFrameColorStop(red: 0.10, green: 0.16, blue: 0.28, alpha: 1),
+			backgroundPlan.colorStops[2]
+				== CaptureFrameColorStop(red: 0.95, green: 0.61, blue: 0.43, alpha: 1)
+		else {
+			fatalError("unexpected capture frame background plan")
+		}
+		guard
+			try RsnapCaptureFramePlanner.wallpaperRequestPlan(
+				for: .systemWallpaper,
+				destinationSize: CGSize(width: 1_535.2, height: 996)
+			) == CaptureFrameWallpaperRequest(targetPixelSize: 1_536, overlayAlpha: 0.10),
+			try RsnapCaptureFramePlanner.wallpaperRequestPlan(
+				for: .aurora,
+				destinationSize: CGSize(width: 1_536, height: 996)
+			) == nil
+		else {
+			fatalError("unexpected capture frame wallpaper request")
+		}
+	}
+
+	private static func verifyWallpaperRendering() throws {
+		let wallpaperFilename =
+			"rsnap-bridge-wallpaper-thumb-\(ProcessInfo.processInfo.processIdentifier).png"
+		let wallpaperPath = FileManager.default.temporaryDirectory
+			.appendingPathComponent(wallpaperFilename)
+		let wallpaperPNG = try RsnapExportEncoder.pngData(
+			from: RGBARegionSnapshot(
+				width: 4,
+				height: 2,
+				rgba: Data([
+					255, 0, 0, 255, 0, 255, 0, 255,
+					0, 0, 255, 255, 255, 255, 255, 255,
+					255, 255, 0, 255, 0, 255, 255, 255,
+					255, 0, 255, 255, 20, 30, 40, 255,
+				])
+			)
+		)
+		try wallpaperPNG.write(to: wallpaperPath)
+		defer {
+			try? FileManager.default.removeItem(at: wallpaperPath)
+		}
+		guard
+			let wallpaperThumbnail = try RsnapWallpaperThumbnailDecoder.pngThumbnail(
+				path: wallpaperPath.path,
+				targetPixelSize: 64
+			),
+			wallpaperThumbnail.width <= 64,
+			wallpaperThumbnail.height <= 64,
+			wallpaperThumbnail.rgba.count
+				== wallpaperThumbnail.width * wallpaperThumbnail.height * 4,
+			try RsnapWallpaperThumbnailDecoder.pngThumbnail(
+				path: "/tmp/rsnap-missing-wallpaper.png",
+				targetPixelSize: 64
+			) == nil
+		else {
+			fatalError("unexpected PNG wallpaper thumbnail decode")
+		}
+		guard
+			let renderedFrame = try RsnapCaptureFrameRenderer.render(
+				source: RGBARegionSnapshot(
+					width: 4, height: 2, rgba: Data(repeating: 255, count: 32)),
+				background: .aurora,
+				screenScaleFactor: 2,
+				sourceKind: .dragRegion,
+				renderKind: .windowSnapshot,
+				wallpaperPath: nil
+			),
+			renderedFrame.width == 100,
+			renderedFrame.height == 98,
+			renderedFrame.rgba.count == 100 * 98 * 4,
+			Array(renderedFrame.rgba[((48 * 100 + 48) * 4)..<((48 * 100 + 49) * 4)])
+				== [255, 255, 255, 255]
+		else {
+			fatalError("unexpected capture frame render")
+		}
+	}
+
+	private static func verifyMinimapAndTransformPlanning() throws {
+		guard
+			let minimapPlan = try RsnapScrollMinimapPlanner.plan(
+				selection: CGRect(x: 100, y: 100, width: 100, height: 100),
+				exportSize: CGSize(width: 100, height: 200),
+				bounds: CGRect(x: 0, y: 0, width: 500, height: 500),
+				preferredWidth: 96,
+				minimumWidth: 44,
+				gap: 10,
+				margin: 10,
+				imageInset: 3,
+				viewportTopPixels: 20,
+				viewportHeightPixels: 100
+			),
+			minimapPlan.frame == CGRect(x: 210, y: 54, width: 96, height: 192),
+			minimapPlan.imageFrame == CGRect(x: 213, y: 57, width: 90, height: 186),
+			minimapPlan.viewportFrame == CGRect(x: 213, y: 131.4, width: 90, height: 93)
+		else {
+			fatalError("unexpected scroll minimap layout plan")
+		}
+		guard
+			try RsnapFrozenSelectionTransformPlanner.hitTest(
+				point: CGPoint(x: 102, y: 238),
+				selection: CGRect(x: 100, y: 80, width: 240, height: 160),
+				handleRadius: 12,
+				edgeTolerance: 4
+			) == .resizeTopLeft,
+			try RsnapFrozenSelectionTransformPlanner.transformedRect(
+				kind: .resizeBottomRight,
+				initialSelection: CGRect(x: 100, y: 80, width: 240, height: 160),
+				monitorFrame: CGRect(x: 0, y: 0, width: 500, height: 400),
+				initialPointer: CGPoint(x: 340, y: 80),
+				point: CGPoint(x: 50, y: 300),
+				minimumSize: 12
+			) == CGRect(x: 100, y: 228, width: 12, height: 12)
+		else {
+			fatalError("unexpected frozen selection transform plan")
+		}
+		let autoCenterFrame = makeAutoCenterFrame(
+			width: 100,
+			height: 80,
+			content: CGRect(x: 30, y: 20, width: 24, height: 18)
+		)
+		guard
+			try RsnapAutoCenterPlanner.contentBounds(in: autoCenterFrame)
+				== CGRect(x: 30, y: 20, width: 24, height: 18),
+			RsnapAutoCenterPlanner.marginBalanceShiftPoints(
+				contentOriginPixels: 30,
+				contentSizePixels: 24,
+				cropSizePixels: 100,
+				captureSizePoints: 50
+			) == -4
+		else {
+			fatalError("unexpected auto-center plan")
+		}
+	}
+
+	private static func verifyFrozenOverlayExport() throws {
+		let overlayBase = makeAutoCenterFrame(
+			width: 64,
+			height: 40,
+			content: CGRect(x: 0, y: 0, width: 64, height: 40)
+		)
+		let overlayExport = try RsnapExportEncoder.frozenOverlayExportImage(
+			from: overlayBase,
+			selection: CGRect(x: 0, y: 0, width: 64, height: 40),
+			elements: [
+				.mosaic(rect: CGRect(x: 4, y: 4, width: 16, height: 10)),
+				.spotlight(
+					rect: CGRect(x: 24, y: 4, width: 16, height: 10),
+					style: FrozenOverlayExportSpotlightStyle(
+						borderWidthPoints: 1,
+						borderColor: .white
+					)
+				),
+				.pen(
+					points: [CGPoint(x: 2, y: 2), CGPoint(x: 24, y: 18)],
+					style: FrozenOverlayExportStrokeStyle(strokeWidthPoints: 2, color: .blue)
+				),
+				.arrow(
+					start: CGPoint(x: 10, y: 30),
+					end: CGPoint(x: 48, y: 22),
+					style: FrozenOverlayExportStrokeStyle(strokeWidthPoints: 3, color: .red)
+				),
+				.text(
+					anchor: CGPoint(x: 6, y: 24),
+					text: "Hi",
+					style: FrozenOverlayExportTextStyle(fontSizePoints: 12, color: .white)
+				),
+			]
+		)
+		guard
+			overlayExport.width == overlayBase.width,
+			overlayExport.height == overlayBase.height,
+			overlayExport.rgba.count == overlayBase.rgba.count,
+			overlayExport.rgba != overlayBase.rgba
+		else {
+			fatalError("unexpected frozen overlay export render")
+		}
+	}
+
+	private static func verifyFrozenOverlayEditSession() throws {
+		let editSession = try RsnapFrozenOverlayEditSession()
+		let selection = CGRect(x: 10, y: 20, width: 220, height: 120)
+		let style = FrozenOverlayEditStyle(
+			strokeWidthPoints: 3,
+			strokeColor: .blue,
+			spotlightBorderWidthPoints: 1.5,
+			spotlightColor: .white,
+			textFontSizePoints: 16,
+			textColor: .white
+		)
+
+		guard
+			try editSession.begin(
+				tool: .text,
+				at: CGPoint(x: 40, y: 50),
+				selection: selection,
+				style: style
+			),
+			try editSession.appendText("Hello"),
+			try editSession.commitText(style: style)
+		else {
+			fatalError("unexpected frozen edit text lifecycle result")
+		}
+		var snapshot = try editSession.snapshot()
+		guard
+			snapshot.canUndo,
+			snapshot.canRedo == false,
+			snapshot.keepsFrozenSelectionFixed,
+			snapshot.activeTextEdit == nil,
+			snapshot.elements.count == 1,
+			try editSession.containsMovableAnnotation(at: CGPoint(x: 42, y: 52))
+		else {
+			fatalError("unexpected committed frozen edit snapshot: \(snapshot)")
+		}
+		guard
+			try editSession.begin(
+				tool: .pointer,
+				at: CGPoint(x: 42, y: 52),
+				selection: selection,
+				style: style
+			),
+			try editSession.update(to: CGPoint(x: 70, y: 82), selection: selection)
+		else {
+			fatalError("unexpected frozen edit move lifecycle result")
+		}
+		snapshot = try editSession.snapshot()
+		guard
+			snapshot.isMovingMovableAnnotation,
+			snapshot.elements.isEmpty,
+			snapshot.previewText != nil
+		else {
+			fatalError("unexpected active frozen edit move snapshot: \(snapshot)")
+		}
+		guard try editSession.finish(selection: selection) else {
+			fatalError("frozen edit move did not finish")
+		}
+		snapshot = try editSession.snapshot()
+		guard
+			snapshot.elements.count == 1,
+			try editSession.undo(),
+			try editSession.snapshot().canRedo,
+			try editSession.redo(),
+			try editSession.snapshot().elements.count == 1
+		else {
+			fatalError("unexpected frozen edit undo/redo state")
+		}
+	}
+
+	private static func pngDimensions(_ data: Data) -> (Int, Int)? {
+		let bytes = [UInt8](data)
+		guard
+			bytes.count >= 24,
+			bytes[0..<8].elementsEqual([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+		else {
+			return nil
+		}
+		let width =
+			Int(UInt32(bytes[16]) << 24)
+			| Int(UInt32(bytes[17]) << 16)
+			| Int(UInt32(bytes[18]) << 8)
+			| Int(UInt32(bytes[19]))
+		let height =
+			Int(UInt32(bytes[20]) << 24)
+			| Int(UInt32(bytes[21]) << 16)
+			| Int(UInt32(bytes[22]) << 8)
+			| Int(UInt32(bytes[23]))
+
+		return (width, height)
 	}
 
 	private static func makeScrollFrame(
@@ -351,5 +766,42 @@ enum RsnapHostBridgeProbe {
 			}
 		}
 		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
+	}
+
+	private static func makeAutoCenterFrame(
+		width: Int,
+		height: Int,
+		content: CGRect
+	) -> RGBARegionSnapshot {
+		var rgba = Data(repeating: 180, count: width * height * 4)
+		for index in stride(from: 3, to: rgba.count, by: 4) {
+			rgba[index] = 255
+		}
+		let xRange = Int(content.minX)..<Int(content.maxX)
+		let yRange = Int(content.minY)..<Int(content.maxY)
+		for y in yRange {
+			for x in xRange {
+				let offset = (y * width + x) * 4
+				rgba[offset] = 24
+				rgba[offset + 1] = 32
+				rgba[offset + 2] = 40
+			}
+		}
+
+		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
+	}
+
+	private static func makeBgraFrame(width: Int, height: Int) -> Data {
+		var bgra = Data(repeating: 0xEE, count: width * height * 4)
+		for y in 0..<height {
+			for x in 0..<width {
+				let offset = (y * width + x) * 4
+				bgra[offset] = UInt8(30 + y * 15 + x)
+				bgra[offset + 1] = UInt8(20 + y * 10 + x)
+				bgra[offset + 2] = UInt8(10 + y * 5 + x)
+				bgra[offset + 3] = UInt8(200 + y + x)
+			}
+		}
+		return bgra
 	}
 }

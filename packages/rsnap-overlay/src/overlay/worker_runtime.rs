@@ -1,3 +1,4 @@
+use crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT;
 use crate::overlay::{
 	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, FrozenCaptureWorkerState,
 	GlobalPoint, Instant, LiveCaptureInteraction, LiveClickCaptureTarget, LiveCursorSample,
@@ -7,6 +8,7 @@ use crate::overlay::{
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{CursorSampleRequest, mem};
+use crate::state::LoupeSample;
 
 pub(super) const FREEZE_CAPTURE_SEND_FULL_RETRY_LIMIT: u64 = 8;
 
@@ -24,7 +26,7 @@ impl OverlaySession {
 			return false;
 		};
 
-		if elapsed < crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT {
+		if elapsed < PENDING_CLICK_HIT_TEST_TIMEOUT {
 			return false;
 		}
 
@@ -462,8 +464,7 @@ impl OverlaySession {
 			changed.hud_changed = true;
 		}
 		if self.state.alt_held {
-			let loupe =
-				sample.patch.map(|patch| crate::state::LoupeSample { center: point, patch });
+			let loupe = sample.patch.map(|patch| LoupeSample { center: point, patch });
 			let loupe_changed = match (&self.state.loupe, &loupe) {
 				(Some(current), Some(next)) => {
 					current.center != next.center || current.patch != next.patch
@@ -864,7 +865,7 @@ impl OverlaySession {
 				self.pending_click_hit_test_request_id = Some(request_id);
 				self.pending_click_hit_test_requested_at = Some(Instant::now());
 
-				self.schedule_egui_repaint_after(crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT);
+				self.schedule_egui_repaint_after(PENDING_CLICK_HIT_TEST_TIMEOUT);
 			},
 			Err(WorkerRequestSendError::Full) => {
 				self.hit_test_send_full_count = self.hit_test_send_full_count.saturating_add(1);

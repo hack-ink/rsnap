@@ -303,7 +303,7 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 
 	private static func intersectionArea(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
 		let intersection = lhs.intersection(rhs)
-		guard !intersection.isNull, !intersection.isInfinite else {
+		guard intersection.isNull == false, intersection.isInfinite == false else {
 			return 0
 		}
 		return max(0, intersection.width) * max(0, intersection.height)
@@ -336,7 +336,7 @@ private struct PermissionRecoveryGuideView: View {
 		.padding(.horizontal, 11)
 		.frame(width: 318, height: 50)
 		.onAppear {
-			guard !reduceMotion else {
+			guard reduceMotion == false else {
 				return
 			}
 			withAnimation(.easeInOut(duration: 0.78).repeatForever(autoreverses: true)) {
@@ -437,7 +437,7 @@ private struct PermissionGuideArrow: View {
 	}
 
 	private func dotOpacity(index: Int) -> Double {
-		guard !reduceMotion else {
+		guard reduceMotion == false else {
 			return 0.34
 		}
 		let activeIndex = pulse ? 2 : 0
@@ -445,7 +445,7 @@ private struct PermissionGuideArrow: View {
 	}
 
 	private var arrowOffset: CGFloat {
-		guard !reduceMotion else {
+		guard reduceMotion == false else {
 			return 0
 		}
 		switch symbolName {

@@ -1,5 +1,12 @@
+use egui_wgpu::RendererOptions;
+use wgpu::Color;
+use wgpu::CommandEncoderDescriptor;
+use wgpu::Operations;
+use wgpu::RenderPassColorAttachment;
+use wgpu::RenderPassDescriptor;
 use wgpu::SurfaceConfiguration;
 
+use crate::overlay::rendering::overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED;
 use crate::overlay::rendering::{GpuContext, ScrollPreviewView, WindowRenderer};
 use crate::overlay::{
 	AcquiredSurfaceFrame, ActiveEventLoop, Align, Arc, CentralPanel, Color32, ColorImage,
@@ -31,7 +38,7 @@ impl ScrollPreviewWindow {
 			.with_visible(false)
 			.with_resizable(false)
 			.with_decorations(false)
-			.with_content_protected(super::overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
+			.with_content_protected(CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
 			.with_transparent(true)
 			.with_inner_size(LogicalSize::new(
 				SCROLL_PREVIEW_WINDOW_WIDTH_POINTS,
@@ -69,7 +76,7 @@ impl ScrollPreviewWindow {
 		let renderer = Renderer::new(
 			&gpu.device,
 			surface_config.format,
-			egui_wgpu::RendererOptions {
+			RendererOptions {
 				msaa_samples: 1,
 				depth_stencil_format: None,
 				dithering: false,
@@ -221,7 +228,7 @@ impl ScrollPreviewWindow {
 			},
 		};
 		let view = frame.texture.create_view(&TextureViewDescriptor::default());
-		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+		let mut encoder = gpu.device.create_command_encoder(&CommandEncoderDescriptor {
 			label: Some("rsnap-scroll-preview encoder"),
 		});
 		let _ = self.renderer.update_buffers(
@@ -233,14 +240,14 @@ impl ScrollPreviewWindow {
 		);
 
 		{
-			let rpass_desc = wgpu::RenderPassDescriptor {
+			let rpass_desc = RenderPassDescriptor {
 				label: Some("rsnap-scroll-preview rpass"),
-				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+				color_attachments: &[Some(RenderPassColorAttachment {
 					view: &view,
 					depth_slice: None,
 					resolve_target: None,
-					ops: wgpu::Operations {
-						load: LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
+					ops: Operations {
+						load: LoadOp::Clear(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
 						store: StoreOp::Store,
 					},
 				})],

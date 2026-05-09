@@ -194,7 +194,7 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 	}
 
 	private func writeReadyIfNeeded() {
-		guard !wroteReady, let readyPath else {
+		guard wroteReady == false, let readyPath else {
 			return
 		}
 		wroteReady = true
@@ -267,7 +267,7 @@ final class MaskProbeCapture: NSObject, SCStreamOutput {
 				let blue = Double(pointer[index]) / 255.0
 				let green = Double(pointer[index + 1]) / 255.0
 				let red = Double(pointer[index + 2]) / 255.0
-				total += 0.2126 * red + 0.7152 * green + 0.0722 * blue
+				total += 0.212_6 * red + 0.715_2 * green + 0.072_2 * blue
 				count += 1
 			}
 		}

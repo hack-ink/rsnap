@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use image::{Rgba, RgbaImage};
 
+use crate::overlay::LIVE_DRAG_START_THRESHOLD_PX;
 use crate::overlay::{
 	CursorIcon, FrozenCaptureSource, FrozenMosaicDragState, FrozenSelectionCorner,
 	FrozenSelectionDragState, FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint,
@@ -151,8 +152,8 @@ impl OverlaySession {
 		current_global: GlobalPoint,
 	) -> bool {
 		monitor.local_rect_from_points(press_global, current_global).is_some_and(|rect| {
-			rect.width as f32 >= crate::overlay::LIVE_DRAG_START_THRESHOLD_PX
-				&& rect.height as f32 >= crate::overlay::LIVE_DRAG_START_THRESHOLD_PX
+			rect.width as f32 >= LIVE_DRAG_START_THRESHOLD_PX
+				&& rect.height as f32 >= LIVE_DRAG_START_THRESHOLD_PX
 		})
 	}
 

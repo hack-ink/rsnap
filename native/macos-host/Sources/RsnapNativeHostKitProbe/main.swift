@@ -4,42 +4,6 @@ import RsnapNativeHostKit
 @main
 enum RsnapNativeHostKitProbe {
 	static func main() {
-		let selection = CGRect(x: 100, y: 200, width: 50, height: 100)
-		let imageSize = CGSize(width: 100, height: 200)
-		let rectNearTop = CGRect(x: 110, y: 270, width: 20, height: 20)
-
-		assertRectEqual(
-			frozenExportOverlayRect(
-				rectNearTop,
-				selection: selection,
-				imageSize: imageSize
-			),
-			CGRect(x: 20, y: 140, width: 40, height: 40),
-			"rect overlay export must stay in bottom-left drawing coordinates"
-		)
-		assertRectEqual(
-			frozenExportSourceImageRect(
-				rectNearTop,
-				selection: selection,
-				imageSize: imageSize
-			),
-			CGRect(x: 20, y: 20, width: 40, height: 40),
-			"source image rect must stay in top-down CGImage coordinates"
-		)
-		assertPointEqual(
-			frozenExportOverlayPoint(
-				CGPoint(x: 125, y: 280),
-				selection: selection,
-				imageSize: imageSize
-			),
-			CGPoint(x: 50, y: 160),
-			"point annotation export must match bottom-left drawing coordinates"
-		)
-		assertRectOverlayDrawsAtVisualTop(
-			rectNearTop,
-			selection: selection,
-			imageSize: imageSize
-		)
 		assertScrimRoundedExclusionKeepsCornersMasked()
 		assertScrimOverlappingRoundedExclusionStaysClear()
 		assertScrimExclusionPreservesExistingPixels()
@@ -47,38 +11,54 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureFrameEffectExpandsExportCanvas()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
-			let rightMinimap = scrollCaptureMinimapFrame(
+			let rightMinimap = scrollCaptureMinimapPlan(
 				for: CGRect(x: 100, y: 100, width: 100, height: 100),
 				exportSize: minimapExportSize,
 				in: CGRect(x: 0, y: 0, width: 500, height: 500),
 				preferredWidth: 96,
 				minimumWidth: 44,
 				gap: 10,
-				margin: 10
+				margin: 10,
+				imageInset: 3,
+				viewportTopPixels: 20,
+				viewportHeightPixels: 100
 			)
 		else {
-			fatalError("expected right-side scroll minimap frame")
+			fatalError("expected right-side scroll minimap plan")
 		}
 		assertRectEqual(
-			rightMinimap,
+			rightMinimap.frame,
 			CGRect(x: 210, y: 54, width: 96, height: 192),
 			"scroll minimap should prefer the right side when space is available"
 		)
+		assertRectEqual(
+			rightMinimap.imageFrame,
+			CGRect(x: 213, y: 57, width: 90, height: 186),
+			"scroll minimap image frame should be planned by Rust"
+		)
+		assertRectEqual(
+			rightMinimap.viewportFrame ?? .null,
+			CGRect(x: 213, y: 131.4, width: 90, height: 93),
+			"scroll minimap viewport frame should be planned by Rust"
+		)
 		guard
-			let leftMinimap = scrollCaptureMinimapFrame(
+			let leftMinimap = scrollCaptureMinimapPlan(
 				for: CGRect(x: 130, y: 100, width: 100, height: 100),
 				exportSize: minimapExportSize,
 				in: CGRect(x: 0, y: 0, width: 250, height: 500),
 				preferredWidth: 96,
 				minimumWidth: 44,
 				gap: 10,
-				margin: 10
+				margin: 10,
+				imageInset: 3,
+				viewportTopPixels: 20,
+				viewportHeightPixels: 100
 			)
 		else {
-			fatalError("expected left-side scroll minimap frame")
+			fatalError("expected left-side scroll minimap plan")
 		}
 		assertRectEqual(
-			leftMinimap,
+			leftMinimap.frame,
 			CGRect(x: 24, y: 54, width: 96, height: 192),
 			"scroll minimap should fall back to the left when the right side is constrained"
 		)
@@ -91,13 +71,6 @@ enum RsnapNativeHostKitProbe {
 			nearlyEqual(actual.width, expected.width),
 			nearlyEqual(actual.height, expected.height)
 		else {
-			fatalError("\(message): expected \(expected), got \(actual)")
-		}
-	}
-
-	private static func assertPointEqual(_ actual: CGPoint, _ expected: CGPoint, _ message: String)
-	{
-		guard nearlyEqual(actual.x, expected.x), nearlyEqual(actual.y, expected.y) else {
 			fatalError("\(message): expected \(expected), got \(actual)")
 		}
 	}
@@ -118,14 +91,14 @@ enum RsnapNativeHostKitProbe {
 		}
 
 		let missingBundle = LaunchAtLoginController.state(for: .notFound)
-		guard !missingBundle.isOn, missingBundle.isControlEnabled else {
+		guard missingBundle.isOn == false, missingBundle.isControlEnabled else {
 			fatalError("missing app bundle should keep the login item toggle clickable")
 		}
 
 		let failed = LaunchAtLoginController.state(
 			for: .notRegistered,
 			errorMessage: "registration failed")
-		guard !failed.isOn, failed.subtitle.contains("failed") else {
+		guard failed.isOn == false, failed.subtitle.contains("failed") else {
 			fatalError("failed login item update should keep current state and surface failure")
 		}
 	}
@@ -250,51 +223,6 @@ enum RsnapNativeHostKitProbe {
 		let y = rowIndex(fromBottom: yFromBottom, height: height)
 		let offset = (y * width + clampedX) * 4
 		return (data[offset], data[offset + 1], data[offset + 2], data[offset + 3])
-	}
-
-	private static func assertRectOverlayDrawsAtVisualTop(
-		_ rect: CGRect,
-		selection: CGRect,
-		imageSize: CGSize
-	) {
-		let width = Int(imageSize.width)
-		let height = Int(imageSize.height)
-		let byteCount = width * height * 4
-		let data = UnsafeMutablePointer<UInt8>.allocate(capacity: byteCount)
-		data.initialize(repeating: 0, count: byteCount)
-		defer {
-			data.deinitialize(count: byteCount)
-			data.deallocate()
-		}
-		guard
-			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-			let context = CGContext(
-				data: data,
-				width: width,
-				height: height,
-				bitsPerComponent: 8,
-				bytesPerRow: width * 4,
-				space: colorSpace,
-				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-			)
-		else {
-			fatalError("could not create geometry probe context")
-		}
-
-		context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
-		context.fill(
-			frozenExportOverlayRect(
-				rect,
-				selection: selection,
-				imageSize: imageSize
-			))
-
-		guard redPixel(in: data, width: width, x: 25, yFromTop: 30) else {
-			fatalError("rect overlay export did not mark the visual top rows")
-		}
-		guard !redPixel(in: data, width: width, x: 25, yFromTop: 170) else {
-			fatalError("rect overlay export marked the mirrored bottom rows")
-		}
 	}
 
 	private static func assertScrimRoundedExclusionKeepsCornersMasked() {
@@ -504,19 +432,6 @@ enum RsnapNativeHostKitProbe {
 		else {
 			fatalError("rounded mask excluded a square corner")
 		}
-	}
-
-	private static func redPixel(
-		in data: UnsafePointer<UInt8>,
-		width: Int,
-		x: Int,
-		yFromTop: Int
-	) -> Bool {
-		let offset = (yFromTop * width + x) * 4
-		return data[offset] > 200
-			&& data[offset + 1] < 80
-			&& data[offset + 2] < 20
-			&& data[offset + 3] > 200
 	}
 
 	private static func opaquePixel(

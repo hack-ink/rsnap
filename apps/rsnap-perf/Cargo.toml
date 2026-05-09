@@ -1,0 +1,20 @@
+[package]
+authors.workspace    = true
+description          = "Local deterministic performance checks for Rsnap Rust core paths"
+edition.workspace    = true
+homepage.workspace   = true
+license.workspace    = true
+name                 = "rsnap-perf"
+readme.workspace     = true
+repository.workspace = true
+version.workspace    = true
+
+[[bin]]
+name = "rsnap-perf"
+path = "src/main.rs"
+
+[dependencies]
+color-eyre         = { workspace = true }
+image              = { workspace = true }
+rsnap-capture-core = { workspace = true }
+rsnap-overlay      = { workspace = true }

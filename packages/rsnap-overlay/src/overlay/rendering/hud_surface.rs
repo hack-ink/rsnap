@@ -1,4 +1,12 @@
 use egui::RawInput;
+use egui::epaint::Shadow;
+use wgpu::BindGroupDescriptor;
+use wgpu::BindGroupEntry;
+use wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+use wgpu::Extent3d;
+use wgpu::TexelCopyBufferLayout;
+use wgpu::TexelCopyTextureInfo;
+use wgpu::TextureDescriptor;
 use wgpu::{BindGroup, TextureFormat};
 
 use crate::overlay::rendering::{GpuContext, WindowRenderer, WindowRendererPhaseTimings};
@@ -281,7 +289,7 @@ impl WindowRenderer {
 				HudTheme::Light => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
 			};
 			let outer_stroke = Stroke::new(1.0, outer_stroke_color);
-			let shadow = egui::epaint::Shadow {
+			let shadow = Shadow {
 				offset: [0, 0],
 				blur: 10,
 				spread: 0,
@@ -485,9 +493,9 @@ impl WindowRenderer {
 
 		debug_assert!(width <= max_side && height <= max_side);
 
-		let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+		let texture = gpu.device.create_texture(&TextureDescriptor {
 			label: Some("rsnap-frozen-bg texture"),
-			size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+			size: Extent3d { width, height, depth_or_array_layers: 1 },
 			mip_level_count,
 			sample_count: 1,
 			dimension: TextureDimension::D2,
@@ -500,7 +508,7 @@ impl WindowRenderer {
 		let upload_bytes = upload_image.as_raw();
 		let bytes_per_pixel = 4_usize;
 		let unpadded_bytes_per_row = (width as usize) * bytes_per_pixel;
-		let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+		let align = COPY_BYTES_PER_ROW_ALIGNMENT as usize;
 		let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
 		let rgba_padded;
 		let rgba_bytes: &[u8] = if padded_bytes_per_row == unpadded_bytes_per_row {
@@ -519,19 +527,19 @@ impl WindowRenderer {
 		};
 
 		gpu.queue.write_texture(
-			wgpu::TexelCopyTextureInfo {
+			TexelCopyTextureInfo {
 				texture: &texture,
 				mip_level: 0,
 				origin: Origin3d::ZERO,
 				aspect: TextureAspect::All,
 			},
 			rgba_bytes,
-			wgpu::TexelCopyBufferLayout {
+			TexelCopyBufferLayout {
 				offset: 0,
 				bytes_per_row: Some(padded_bytes_per_row as u32),
 				rows_per_image: Some(height),
 			},
-			wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+			Extent3d { width, height, depth_or_array_layers: 1 },
 		);
 
 		if generate_mipmaps {
@@ -539,30 +547,21 @@ impl WindowRenderer {
 		}
 
 		let view = texture.create_view(&TextureViewDescriptor::default());
-		let hud_blur_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+		let hud_blur_bind_group = gpu.device.create_bind_group(&BindGroupDescriptor {
 			label: Some("rsnap-hud-blur bind group"),
 			layout: &self.hud_blur_bind_group_layout,
 			entries: &[
-				wgpu::BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&view) },
-				wgpu::BindGroupEntry {
-					binding: 1,
-					resource: BindingResource::Sampler(&self.bg_sampler),
-				},
-				wgpu::BindGroupEntry {
-					binding: 2,
-					resource: self.hud_blur_uniform.as_entire_binding(),
-				},
+				BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&view) },
+				BindGroupEntry { binding: 1, resource: BindingResource::Sampler(&self.bg_sampler) },
+				BindGroupEntry { binding: 2, resource: self.hud_blur_uniform.as_entire_binding() },
 			],
 		});
-		let mipgen_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+		let mipgen_bind_group = gpu.device.create_bind_group(&BindGroupDescriptor {
 			label: Some("rsnap-mipgen fullscreen bind group"),
 			layout: &self.mipgen_bind_group_layout,
 			entries: &[
-				wgpu::BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&view) },
-				wgpu::BindGroupEntry {
-					binding: 1,
-					resource: BindingResource::Sampler(&self.bg_sampler),
-				},
+				BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&view) },
+				BindGroupEntry { binding: 1, resource: BindingResource::Sampler(&self.bg_sampler) },
 			],
 		});
 		let max_lod = (mip_level_count.saturating_sub(1)) as f32;

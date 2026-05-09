@@ -4,7 +4,9 @@
 //! new host/core direction with an opaque session handle, FFI-safe config/event
 //! structs, and copy-out scene/request snapshots.
 
+use std::ffi::{CStr, CString};
 use std::mem;
+use std::os::raw::c_char;
 use std::ptr::{self, NonNull};
 use std::slice;
 
@@ -13,9 +15,27 @@ use rsnap_overlay as _;
 
 use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
-	self, CaptureMode, CaptureSessionCore, CursorIntent, GlobalRect, HostEffectKind, HostEvent,
-	HostReport, HostRequest, PermissionKind, PlatformTag, Rgb, SessionConfig, ToolbarItemKind,
+	self, AutoCenterImageError, BgraFrameView, CaptureFrameBackgroundKind,
+	CaptureFrameBackgroundPlan, CaptureFrameColorStop, CaptureFramePlan,
+	CaptureFrameRenderImageRef, CaptureFrameRenderKind, CaptureFrameShadow, CaptureFrameSourceKind,
+	CaptureFrameWallpaperRequest, CaptureMode, CaptureSessionCore, CursorIntent, DisplayPointRect,
+	FrozenSelectionTransformInput, FrozenSelectionTransformKind, GlobalRect, HostEffectKind,
+	HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints, Rgb,
+	RgbaExportImage, ScrollMinimapInput, ScrollMinimapPlan, SessionConfig, ToolbarItemKind,
 	ToolbarItemModel, WindowRect,
+};
+use rsnap_overlay::frozen_edit::{
+	FrozenOverlayEditArrow, FrozenOverlayEditColor, FrozenOverlayEditElement,
+	FrozenOverlayEditMosaic, FrozenOverlayEditPen, FrozenOverlayEditPoint, FrozenOverlayEditRect,
+	FrozenOverlayEditSession, FrozenOverlayEditSnapshot, FrozenOverlayEditSpotlight,
+	FrozenOverlayEditSpotlightStyle, FrozenOverlayEditStrokeStyle, FrozenOverlayEditStyle,
+	FrozenOverlayEditText, FrozenOverlayEditTextStyle, FrozenOverlayTextEdit,
+};
+use rsnap_overlay::frozen_export::{
+	self, FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
+	FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
+	FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
+	FrozenOverlayExportTextStyle,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -24,7 +44,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 18;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 32;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -38,6 +58,11 @@ pub struct RsnapSessionHandle {
 /// Opaque scroll-capture stitching handle owned by the native host through the C ABI.
 pub struct RsnapScrollSessionHandle {
 	session: ScrollStitchSession,
+}
+
+/// Opaque frozen-overlay edit handle owned by the native host through the C ABI.
+pub struct RsnapFrozenOverlayEditSessionHandle {
+	session: FrozenOverlayEditSession,
 }
 
 #[cfg(target_os = "macos")]
@@ -144,6 +169,368 @@ impl Default for RsnapOwnedRgbaRegion {
 	fn default() -> Self {
 		Self { width: 0, height: 0, len: 0, capacity: 0, rgba: ptr::null_mut() }
 	}
+}
+
+/// FFI-safe owned byte buffer retained by Rust until explicitly freed.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RsnapOwnedBytes {
+	/// Byte count in `bytes`.
+	pub len: usize,
+	/// Reserved buffer capacity in bytes.
+	pub capacity: usize,
+	/// Owned byte buffer.
+	pub bytes: *mut u8,
+}
+impl Default for RsnapOwnedBytes {
+	fn default() -> Self {
+		Self { len: 0, capacity: 0, bytes: ptr::null_mut() }
+	}
+}
+
+/// FFI-safe pixel-space rectangle.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RsnapPixelRect {
+	/// Left coordinate in pixels.
+	pub x: u32,
+	/// Top coordinate in pixels.
+	pub y: u32,
+	/// Rectangle width in pixels.
+	pub width: u32,
+	/// Rectangle height in pixels.
+	pub height: u32,
+}
+
+/// FFI-safe display-space rectangle.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapFloatRect {
+	/// Left coordinate in display points.
+	pub x: f64,
+	/// Top coordinate in display points.
+	pub y: f64,
+	/// Rectangle width in display points.
+	pub width: f64,
+	/// Rectangle height in display points.
+	pub height: f64,
+}
+
+/// FFI-safe display-space point.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapFloatPoint {
+	/// X coordinate in display points.
+	pub x: f64,
+	/// Y coordinate in display points.
+	pub y: f64,
+}
+
+/// FFI-safe frozen annotation color discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapFrozenAnnotationColor {
+	/// White annotation color.
+	White = 0,
+	/// Yellow annotation color.
+	Yellow = 1,
+	/// Green annotation color.
+	Green = 2,
+	/// Blue annotation color.
+	Blue = 3,
+	/// Red annotation color.
+	Red = 4,
+	/// Black annotation color.
+	Black = 5,
+}
+
+/// FFI-safe frozen-overlay export element discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapFrozenOverlayExportElementKind {
+	/// Pen stroke annotation.
+	Pen = 0,
+	/// Arrow annotation.
+	Arrow = 1,
+	/// Mosaic privacy rectangle.
+	Mosaic = 2,
+	/// Spotlight annotation.
+	Spotlight = 3,
+	/// Text annotation.
+	Text = 4,
+}
+
+/// FFI-safe frozen-overlay export element.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RsnapFrozenOverlayExportElement {
+	/// Element kind.
+	pub kind: RsnapFrozenOverlayExportElementKind,
+	/// Rectangle payload for mosaic or spotlight annotations.
+	pub rect: RsnapFloatRect,
+	/// Start point, arrow tail, or text anchor.
+	pub start: RsnapFloatPoint,
+	/// Arrow tip.
+	pub end: RsnapFloatPoint,
+	/// Optional point buffer for pen strokes.
+	pub points: *const RsnapFloatPoint,
+	/// Number of points in `points`.
+	pub points_len: usize,
+	/// Optional null-terminated UTF-8 text payload.
+	pub text: *const c_char,
+	/// Stroke width in points for pen and arrow annotations.
+	pub stroke_width_points: f64,
+	/// Border width in points for spotlight annotations.
+	pub border_width_points: f64,
+	/// Font size in points for text annotations.
+	pub font_size_points: f64,
+	/// Annotation color.
+	pub color: RsnapFrozenAnnotationColor,
+}
+
+/// FFI-safe frozen-overlay edit style payload.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RsnapFrozenOverlayEditStyle {
+	/// Stroke width in points for pen and arrow annotations.
+	pub stroke_width_points: f64,
+	/// Stroke color for pen and arrow annotations.
+	pub stroke_color: RsnapFrozenAnnotationColor,
+	/// Border width in points for spotlight annotations.
+	pub spotlight_border_width_points: f64,
+	/// Border color for spotlight annotations.
+	pub spotlight_color: RsnapFrozenAnnotationColor,
+	/// Font size in points for text annotations.
+	pub text_font_size_points: f64,
+	/// Text color.
+	pub text_color: RsnapFrozenAnnotationColor,
+}
+impl Default for RsnapFrozenOverlayEditStyle {
+	fn default() -> Self {
+		Self {
+			stroke_width_points: 3.0,
+			stroke_color: RsnapFrozenAnnotationColor::Blue,
+			spotlight_border_width_points: 0.0,
+			spotlight_color: RsnapFrozenAnnotationColor::Blue,
+			text_font_size_points: 16.0,
+			text_color: RsnapFrozenAnnotationColor::Blue,
+		}
+	}
+}
+
+/// FFI-safe owned frozen-overlay edit snapshot.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RsnapFrozenOverlayEditSnapshot {
+	/// Non-zero when undo is available.
+	pub can_undo: u8,
+	/// Non-zero when redo is available.
+	pub can_redo: u8,
+	/// Non-zero when selection transforms should be locked out.
+	pub keeps_frozen_selection_fixed: u8,
+	/// Non-zero when a movable annotation is being dragged.
+	pub is_moving_movable_annotation: u8,
+	/// Non-zero when any pointer interaction is active.
+	pub has_active_interaction: u8,
+	/// Owned visible committed elements.
+	pub elements: *mut RsnapFrozenOverlayExportElement,
+	/// Number of visible committed elements.
+	pub elements_len: usize,
+	/// Non-zero when `preview_pen` is present.
+	pub has_preview_pen: u8,
+	/// Active pen preview.
+	pub preview_pen: RsnapFrozenOverlayExportElement,
+	/// Non-zero when `preview_arrow` is present.
+	pub has_preview_arrow: u8,
+	/// Active arrow preview.
+	pub preview_arrow: RsnapFrozenOverlayExportElement,
+	/// Non-zero when `preview_mosaic` is present.
+	pub has_preview_mosaic: u8,
+	/// Active mosaic preview.
+	pub preview_mosaic: RsnapFrozenOverlayExportElement,
+	/// Non-zero when `preview_spotlight` is present.
+	pub has_preview_spotlight: u8,
+	/// Active spotlight preview.
+	pub preview_spotlight: RsnapFrozenOverlayExportElement,
+	/// Non-zero when `preview_text` is present.
+	pub has_preview_text: u8,
+	/// Active moved text preview.
+	pub preview_text: RsnapFrozenOverlayExportElement,
+	/// Non-zero when `active_text_edit` is present.
+	pub has_active_text_edit: u8,
+	/// Active text edit payload.
+	pub active_text_edit: RsnapFrozenOverlayExportElement,
+}
+impl Default for RsnapFrozenOverlayEditSnapshot {
+	fn default() -> Self {
+		Self {
+			can_undo: 0,
+			can_redo: 0,
+			keeps_frozen_selection_fixed: 0,
+			is_moving_movable_annotation: 0,
+			has_active_interaction: 0,
+			elements: ptr::null_mut(),
+			elements_len: 0,
+			has_preview_pen: 0,
+			preview_pen: frozen_overlay_empty_element(),
+			has_preview_arrow: 0,
+			preview_arrow: frozen_overlay_empty_element(),
+			has_preview_mosaic: 0,
+			preview_mosaic: frozen_overlay_empty_element(),
+			has_preview_spotlight: 0,
+			preview_spotlight: frozen_overlay_empty_element(),
+			has_preview_text: 0,
+			preview_text: frozen_overlay_empty_element(),
+			has_active_text_edit: 0,
+			active_text_edit: frozen_overlay_empty_element(),
+		}
+	}
+}
+
+/// FFI-safe capture-frame source discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapCaptureFrameSourceKind {
+	/// User-dragged region capture.
+	DragRegion = 0,
+	/// Single-window capture.
+	Window = 1,
+	/// Full-screen capture.
+	FullScreen = 2,
+	/// Scroll-capture export.
+	ScrollCapture = 3,
+	/// Unknown or future capture source.
+	Unknown = 4,
+}
+
+/// FFI-safe capture-frame background discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapCaptureFrameBackgroundKind {
+	/// Prefer system wallpaper with gradient fallback.
+	SystemWallpaper = 0,
+	/// Blue-to-warm product gradient.
+	Aurora = 1,
+	/// Neutral graphite gradient.
+	Graphite = 2,
+	/// Light linen gradient.
+	Linen = 3,
+}
+
+/// FFI-safe capture-frame render mode.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapCaptureFrameRenderKind {
+	/// Draw shadows and rounded clipping around the capture.
+	FramedCapture = 0,
+	/// Draw a floating full-window snapshot without added clipping.
+	WindowSnapshot = 1,
+}
+
+/// FFI-safe sRGB capture-frame color stop.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapCaptureFrameColorStop {
+	/// Red component in sRGB space.
+	pub red: f64,
+	/// Green component in sRGB space.
+	pub green: f64,
+	/// Blue component in sRGB space.
+	pub blue: f64,
+	/// Alpha component.
+	pub alpha: f64,
+}
+
+/// FFI-safe capture-frame background drawing plan.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapCaptureFrameBackgroundPlan {
+	/// Ordered sRGB gradient color stops.
+	pub colors: [RsnapCaptureFrameColorStop; 3],
+	/// Gradient locations matching `colors`.
+	pub locations: [f64; 3],
+	/// Non-zero when the host should first try drawing system wallpaper.
+	pub prefers_wallpaper: u8,
+	/// Overlay alpha applied when wallpaper drawing succeeds.
+	pub wallpaper_overlay_alpha: f64,
+}
+
+/// FFI-safe capture-frame shadow pass.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapCaptureFrameShadow {
+	/// Horizontal shadow offset in output pixels.
+	pub offset_x: f64,
+	/// Vertical shadow offset in output pixels.
+	pub offset_y: f64,
+	/// Shadow blur radius in output pixels.
+	pub blur: f64,
+	/// Shadow alpha.
+	pub alpha: f64,
+}
+
+/// FFI-safe capture-frame drawing plan.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapCaptureFramePlan {
+	/// Canvas width in output pixels.
+	pub canvas_width: f64,
+	/// Canvas height in output pixels.
+	pub canvas_height: f64,
+	/// Image placement inside the canvas.
+	pub image_rect: RsnapFloatRect,
+	/// Rounded capture corner radius.
+	pub corner_radius: f64,
+	/// Ordered shadow passes behind the framed capture.
+	pub shadows: [RsnapCaptureFrameShadow; 3],
+}
+
+/// FFI-safe platform wallpaper thumbnail request.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapCaptureFrameWallpaperRequest {
+	/// Maximum thumbnail dimension requested from the platform image pipeline.
+	pub target_pixel_size: u32,
+	/// Overlay alpha applied after drawing the wallpaper thumbnail.
+	pub overlay_alpha: f64,
+}
+
+/// FFI-safe scroll-capture minimap layout plan.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapScrollMinimapPlan {
+	/// Outer minimap frame.
+	pub frame: RsnapFloatRect,
+	/// Preview image frame inside `frame`.
+	pub image_frame: RsnapFloatRect,
+	/// Non-zero when `viewport_frame` contains a visible marker.
+	pub has_viewport_frame: u8,
+	/// Viewport marker frame inside `image_frame`.
+	pub viewport_frame: RsnapFloatRect,
+}
+
+/// FFI-safe frozen selection transform discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapFrozenSelectionTransformKind {
+	/// Move the whole selection rectangle.
+	Move = 0,
+	/// Resize the left edge.
+	ResizeLeft = 1,
+	/// Resize the right edge.
+	ResizeRight = 2,
+	/// Resize the top edge.
+	ResizeTop = 3,
+	/// Resize the bottom edge.
+	ResizeBottom = 4,
+	/// Resize the top-left corner.
+	ResizeTopLeft = 5,
+	/// Resize the top-right corner.
+	ResizeTopRight = 6,
+	/// Resize the bottom-left corner.
+	ResizeBottomLeft = 7,
+	/// Resize the bottom-right corner.
+	ResizeBottomRight = 8,
 }
 
 /// FFI-safe scroll-capture observation discriminator.
@@ -645,6 +1032,375 @@ pub unsafe extern "C" fn rsnap_scroll_session_destroy(handle: *mut RsnapScrollSe
 	}
 }
 
+/// Creates a Rust-owned frozen-overlay edit session.
+///
+/// The returned pointer must be released by calling
+/// `rsnap_frozen_overlay_edit_session_destroy`.
+#[unsafe(no_mangle)]
+pub extern "C" fn rsnap_frozen_overlay_edit_session_create()
+-> *mut RsnapFrozenOverlayEditSessionHandle {
+	Box::into_raw(Box::new(RsnapFrozenOverlayEditSessionHandle {
+		session: FrozenOverlayEditSession::default(),
+	}))
+}
+
+/// Destroys a frozen-overlay edit session.
+///
+/// # Safety
+///
+/// The pointer must either be null or a pointer returned by
+/// `rsnap_frozen_overlay_edit_session_create` that has not already been destroyed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_destroy(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+) {
+	if let Some(handle) = NonNull::new(handle) {
+		unsafe {
+			drop(Box::from_raw(handle.as_ptr()));
+		}
+	}
+}
+
+/// Resets a frozen-overlay edit session.
+///
+/// # Safety
+///
+/// `handle` must be null or a valid pointer returned by
+/// `rsnap_frozen_overlay_edit_session_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_reset(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	handle.session.reset();
+
+	RsnapStatus::Ok
+}
+
+/// Starts a Rust-owned frozen-overlay interaction.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_begin(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	tool: RsnapToolbarItemKind,
+	point: RsnapFloatPoint,
+	selection: RsnapFloatRect,
+	style: RsnapFrozenOverlayEditStyle,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	let Some(point) = decode_frozen_edit_point(point) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(selection) = decode_frozen_edit_rect(selection) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(style) = decode_frozen_overlay_edit_style(style) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_changed = u8::from(handle.session.begin(
+		decode_toolbar_item_kind(tool as u32),
+		point,
+		selection,
+		style,
+	));
+
+	RsnapStatus::Ok
+}
+
+/// Updates a Rust-owned frozen-overlay interaction.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_update(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	point: RsnapFloatPoint,
+	selection: RsnapFloatRect,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	let Some(point) = decode_frozen_edit_point(point) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(selection) = decode_frozen_edit_rect(selection) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_changed = u8::from(handle.session.update(point, selection));
+
+	RsnapStatus::Ok
+}
+
+/// Finishes a Rust-owned frozen-overlay interaction.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_finish(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	selection: RsnapFloatRect,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	let Some(selection) = decode_frozen_edit_rect(selection) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_changed = u8::from(handle.session.finish(selection));
+
+	RsnapStatus::Ok
+}
+
+/// Appends UTF-8 text to the active frozen text edit.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle, `text` must point to a valid
+/// null-terminated UTF-8 string, and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_append_text(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	text: *const c_char,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+
+	if text.is_null() {
+		return RsnapStatus::InvalidInput;
+	}
+
+	let Ok(text) = (unsafe { CStr::from_ptr(text) }).to_str() else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_changed = u8::from(handle.session.append_text(text));
+
+	RsnapStatus::Ok
+}
+
+/// Deletes one scalar from the active frozen text edit.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_backspace_text(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+
+	*out_changed = u8::from(handle.session.backspace_text());
+
+	RsnapStatus::Ok
+}
+
+/// Commits the active frozen text edit.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_commit_text(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	style: RsnapFrozenOverlayEditStyle,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	let Some(style) = decode_frozen_overlay_edit_style(style) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_changed = u8::from(handle.session.commit_text_edit(style.text));
+
+	RsnapStatus::Ok
+}
+
+/// Cancels the active frozen text edit.
+///
+/// # Safety
+///
+/// `handle` must be null or a valid frozen-overlay edit handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_cancel_text(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	handle.session.cancel_text_edit();
+
+	RsnapStatus::Ok
+}
+
+/// Undoes the latest frozen-overlay edit.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_undo(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+
+	*out_changed = u8::from(handle.session.undo());
+
+	RsnapStatus::Ok
+}
+
+/// Redoes the latest frozen-overlay edit.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_redo(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+
+	*out_changed = u8::from(handle.session.redo());
+
+	RsnapStatus::Ok
+}
+
+/// Tests whether a movable frozen-overlay annotation is under a point.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_contains` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_contains_movable_annotation(
+	handle: *const RsnapFrozenOverlayEditSessionHandle,
+	point: RsnapFloatPoint,
+	out_contains: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_ref(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_contains) = (unsafe { out_contains.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	let Some(point) = decode_frozen_edit_point(point) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_contains = u8::from(handle.session.contains_movable_annotation(point));
+
+	RsnapStatus::Ok
+}
+
+/// Copies an owned frozen-overlay edit snapshot for native-host rendering.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_snapshot` must be writable.
+/// Release a successful snapshot with `rsnap_frozen_overlay_edit_snapshot_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_copy_snapshot(
+	handle: *const RsnapFrozenOverlayEditSessionHandle,
+	out_snapshot: *mut RsnapFrozenOverlayEditSnapshot,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_ref(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	if out_snapshot.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(snapshot) = encode_frozen_overlay_edit_snapshot(handle.session.snapshot()) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_snapshot, snapshot);
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Releases an owned frozen-overlay edit snapshot.
+///
+/// # Safety
+///
+/// `snapshot` must point to a snapshot returned by
+/// `rsnap_frozen_overlay_edit_session_copy_snapshot`, or be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_snapshot_release(
+	snapshot: *mut RsnapFrozenOverlayEditSnapshot,
+) {
+	let Some(snapshot) = (unsafe { snapshot.as_mut() }) else {
+		return;
+	};
+
+	unsafe {
+		release_frozen_overlay_snapshot_elements(snapshot.elements, snapshot.elements_len);
+		release_frozen_overlay_snapshot_element(&mut snapshot.preview_pen);
+		release_frozen_overlay_snapshot_element(&mut snapshot.preview_arrow);
+		release_frozen_overlay_snapshot_element(&mut snapshot.preview_mosaic);
+		release_frozen_overlay_snapshot_element(&mut snapshot.preview_spotlight);
+		release_frozen_overlay_snapshot_element(&mut snapshot.preview_text);
+		release_frozen_overlay_snapshot_element(&mut snapshot.active_text_edit);
+	}
+
+	*snapshot = RsnapFrozenOverlayEditSnapshot::default();
+}
+
 /// Observes one discrete viewport screenshot for downward scroll-capture stitching.
 ///
 /// # Safety
@@ -746,6 +1502,713 @@ pub unsafe extern "C" fn rsnap_scroll_session_undo_last_append(
 	}
 
 	RsnapStatus::Ok
+}
+
+/// Encodes a full RGBA export image as lossless PNG through the Rust product core.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data, and `out_png` must be writable. The returned buffer must
+/// be released with `rsnap_owned_bytes_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_export_rgba_to_png(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	out_png: *mut RsnapOwnedBytes,
+) -> RsnapStatus {
+	if out_png.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(image) = RgbaExportImage::from_raw(width, height, bytes.to_vec()) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(png) = image.to_png_bytes() else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_png, owned_bytes_from_vec(png));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Encodes a pixel-space RGBA export crop as lossless PNG through the Rust product core.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data, and `out_png` must be writable. The returned buffer must
+/// be released with `rsnap_owned_bytes_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_export_rgba_crop_to_png(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	crop_rect: RsnapPixelRect,
+	out_png: *mut RsnapOwnedBytes,
+) -> RsnapStatus {
+	if out_png.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(image) = RgbaExportImage::from_raw(width, height, bytes.to_vec()) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(cropped) = image.crop(decode_pixel_rect(crop_rect)) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(png) = cropped.to_png_bytes() else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_png, owned_bytes_from_vec(png));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Composites frozen-overlay annotations into a full RGBA export image through Rust.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data. `elements` must either be null with `elements_len == 0`, or point
+/// to `elements_len` readable element records whose nested point and text pointers stay
+/// valid for the duration of the call. The returned buffer must be released with
+/// `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_export_render_rgba(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	selection: RsnapFloatRect,
+	elements: *const RsnapFrozenOverlayExportElement,
+	elements_len: usize,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(elements) = (unsafe { decode_frozen_overlay_export_elements(elements, elements_len) })
+	else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(image) = frozen_export::render_frozen_overlay_export_rgba(
+		width,
+		height,
+		bytes,
+		decode_float_rect(selection),
+		&elements,
+	) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_region, owned_region_from_raw_rgba(width, height, image.into_raw()));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves a frozen display selection into an image-local pixel crop rectangle.
+///
+/// # Safety
+///
+/// `out_rect` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_display_crop_rect(
+	image_width: u32,
+	image_height: u32,
+	display_frame: RsnapFloatRect,
+	selection: RsnapFloatRect,
+	out_rect: *mut RsnapPixelRect,
+) -> RsnapStatus {
+	if out_rect.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(crop_rect) = rsnap_capture_core::frozen_display_crop_rect(
+		image_width,
+		image_height,
+		decode_float_rect(display_frame),
+		decode_float_rect(selection),
+	) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_rect, encode_pixel_rect(crop_rect));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Builds a light privacy mosaic patch as row-major RGBA bytes.
+///
+/// # Safety
+///
+/// `out_region` must be writable. The returned buffer must be released with
+/// `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_mosaic_light_privacy_patch_rgba(
+	image_width: u32,
+	image_height: u32,
+	source_rect: RsnapFloatRect,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(patch) = rsnap_capture_core::frozen_mosaic_light_privacy_patch(
+		image_width,
+		image_height,
+		decode_float_rect(source_rect),
+	) else {
+		return RsnapStatus::Empty;
+	};
+	let (width, height) = patch.dimensions();
+
+	unsafe {
+		ptr::write(out_region, owned_region_from_raw_rgba(width, height, patch.into_raw()));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Samples an RGB value from a borrowed BGRA frame.
+///
+/// # Safety
+///
+/// `bgra` must point to `bgra_len` readable bytes while this function runs, and
+/// `out_rgb` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_bgra_frame_sample_rgb(
+	width: u32,
+	height: u32,
+	bytes_per_row: usize,
+	bgra: *const u8,
+	bgra_len: usize,
+	display_frame: RsnapFloatRect,
+	point_x: f64,
+	point_y: f64,
+	out_rgb: *mut RsnapRgb,
+) -> RsnapStatus {
+	if out_rgb.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(frame) = (unsafe { decode_bgra_frame(width, height, bytes_per_row, bgra, bgra_len) })
+	else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(rgb) = rsnap_capture_core::sample_rgb_from_bgra_frame(
+		frame,
+		decode_float_rect(display_frame),
+		point_x,
+		point_y,
+	) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_rgb, RsnapRgb { r: rgb.r, g: rgb.g, b: rgb.b });
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Builds a square RGBA loupe patch from a borrowed BGRA frame.
+///
+/// # Safety
+///
+/// `bgra` must point to `bgra_len` readable bytes while this function runs. `out_region`
+/// must be writable, and the returned buffer must be released with
+/// `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_bgra_frame_loupe_patch_rgba(
+	width: u32,
+	height: u32,
+	bytes_per_row: usize,
+	bgra: *const u8,
+	bgra_len: usize,
+	display_frame: RsnapFloatRect,
+	point_x: f64,
+	point_y: f64,
+	side_pixels: u32,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(frame) = (unsafe { decode_bgra_frame(width, height, bytes_per_row, bgra, bgra_len) })
+	else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(patch) = rsnap_capture_core::loupe_patch_rgba_from_bgra_frame(
+		frame,
+		decode_float_rect(display_frame),
+		point_x,
+		point_y,
+		side_pixels,
+	) else {
+		unsafe {
+			ptr::write(out_region, RsnapOwnedRgbaRegion::default());
+		}
+
+		return RsnapStatus::Empty;
+	};
+	let (width, height) = patch.dimensions();
+
+	unsafe {
+		ptr::write(out_region, owned_region_from_raw_rgba(width, height, patch.into_raw()));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves capture-frame layout and shadow parameters.
+///
+/// # Safety
+///
+/// `out_plan` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_plan(
+	image_width: u32,
+	image_height: u32,
+	screen_scale_factor: f64,
+	source_kind: RsnapCaptureFrameSourceKind,
+	out_plan: *mut RsnapCaptureFramePlan,
+) -> RsnapStatus {
+	if out_plan.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(plan) = rsnap_capture_core::capture_frame_plan(
+		image_width,
+		image_height,
+		screen_scale_factor,
+		decode_capture_frame_source_kind(source_kind),
+	) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_plan, encode_capture_frame_plan(plan));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves the source crop rect for aspect-fill drawing.
+///
+/// # Safety
+///
+/// `out_rect` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_aspect_fill_crop_rect(
+	source_width: u32,
+	source_height: u32,
+	destination_width: f64,
+	destination_height: f64,
+	out_rect: *mut RsnapFloatRect,
+) -> RsnapStatus {
+	if out_rect.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(rect) = rsnap_capture_core::capture_frame_aspect_fill_crop_rect(
+		source_width,
+		source_height,
+		destination_width,
+		destination_height,
+	) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_rect, encode_float_rect(rect));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves capture-frame background colors and wallpaper fallback behavior.
+///
+/// # Safety
+///
+/// `out_plan` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_background_plan(
+	background_kind: RsnapCaptureFrameBackgroundKind,
+	out_plan: *mut RsnapCaptureFrameBackgroundPlan,
+) -> RsnapStatus {
+	if out_plan.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let plan = rsnap_capture_core::capture_frame_background_plan(
+		decode_capture_frame_background_kind(background_kind),
+	);
+
+	unsafe {
+		ptr::write(out_plan, encode_capture_frame_background_plan(plan));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves a platform wallpaper thumbnail request for a capture-frame destination.
+///
+/// # Safety
+///
+/// `out_request` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_wallpaper_request_plan(
+	background_kind: RsnapCaptureFrameBackgroundKind,
+	destination_width: f64,
+	destination_height: f64,
+	out_request: *mut RsnapCaptureFrameWallpaperRequest,
+) -> RsnapStatus {
+	if out_request.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(request) = rsnap_capture_core::capture_frame_wallpaper_request_plan(
+		decode_capture_frame_background_kind(background_kind),
+		destination_width,
+		destination_height,
+	) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_request, encode_capture_frame_wallpaper_request(request));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Decodes a PNG wallpaper thumbnail with Rust's streaming low-memory path.
+///
+/// Non-PNG paths and decode failures return `Empty` so native hosts can skip wallpaper drawing.
+///
+/// # Safety
+///
+/// `path` must be a valid null-terminated UTF-8 string, and `out_region` must be a valid writable
+/// pointer. When `Ok` is returned, the caller must release the returned buffer with
+/// `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_wallpaper_png_thumbnail(
+	path: *const c_char,
+	target_pixel_size: u32,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	unsafe {
+		ptr::write(out_region, RsnapOwnedRgbaRegion::default());
+	}
+
+	if path.is_null() || target_pixel_size == 0 {
+		return RsnapStatus::InvalidInput;
+	}
+
+	let Ok(path) = (unsafe { CStr::from_ptr(path) }).to_str() else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(Some(thumbnail)) =
+		rsnap_capture_core::capture_frame_wallpaper_png_thumbnail(path, target_pixel_size)
+	else {
+		return RsnapStatus::Empty;
+	};
+	let image = thumbnail.into_image();
+	let out = owned_region_from_raw_rgba(image.width(), image.height(), image.into_raw());
+
+	unsafe {
+		ptr::write(out_region, out);
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Renders the complete capture-frame effect as Rust-owned RGBA bytes.
+///
+/// Swift/native hosts only pass source pixels and an optional platform wallpaper path. Rust owns
+/// wallpaper thumbnail planning/cache/decode, background drawing, shadows, clipping, and final
+/// composition.
+///
+/// # Safety
+///
+/// `source_rgba` must point to `source_rgba_len` readable bytes containing
+/// `source_width * source_height * 4` row-major RGBA data. `wallpaper_path` may be null or a valid
+/// null-terminated UTF-8 string. `out_region` must be writable, and the returned buffer must be
+/// released with `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_render_rgba(
+	source_width: u32,
+	source_height: u32,
+	source_rgba: *const u8,
+	source_rgba_len: usize,
+	screen_scale_factor: f64,
+	source_kind: RsnapCaptureFrameSourceKind,
+	background_kind: RsnapCaptureFrameBackgroundKind,
+	render_kind: RsnapCaptureFrameRenderKind,
+	wallpaper_path: *const c_char,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	unsafe {
+		ptr::write(out_region, RsnapOwnedRgbaRegion::default());
+	}
+
+	let Some(source_bytes) = (unsafe { rgba_bytes(source_rgba, source_rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(source) = CaptureFrameRenderImageRef::new(source_width, source_height, source_bytes)
+	else {
+		return RsnapStatus::InvalidInput;
+	};
+	let background_kind = decode_capture_frame_background_kind(background_kind);
+	let source_kind = decode_capture_frame_source_kind(source_kind);
+	let render_kind = decode_capture_frame_render_kind(render_kind);
+	let wallpaper = match unsafe {
+		capture_frame_wallpaper_for_render(
+			source,
+			screen_scale_factor,
+			source_kind,
+			background_kind,
+			wallpaper_path,
+		)
+	} {
+		Ok(wallpaper) => wallpaper,
+		Err(_err) => return RsnapStatus::InvalidInput,
+	};
+	let wallpaper_ref = wallpaper.as_ref().map(CaptureFrameRenderImageRef::from_export);
+	let Ok(Some(rendered)) = rsnap_capture_core::render_capture_frame_effect(
+		source,
+		background_kind,
+		screen_scale_factor,
+		source_kind,
+		render_kind,
+		wallpaper_ref,
+	) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let image = rendered.into_image();
+
+	unsafe {
+		ptr::write(
+			out_region,
+			owned_region_from_raw_rgba(image.width(), image.height(), image.into_raw()),
+		);
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves scroll-capture minimap layout and viewport marker geometry.
+///
+/// # Safety
+///
+/// `out_plan` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_scroll_minimap_plan(
+	selection: RsnapFloatRect,
+	export_width: f64,
+	export_height: f64,
+	bounds: RsnapFloatRect,
+	preferred_width: f64,
+	minimum_width: f64,
+	gap: f64,
+	margin: f64,
+	image_inset: f64,
+	viewport_top_pixels: f64,
+	viewport_height_pixels: f64,
+	out_plan: *mut RsnapScrollMinimapPlan,
+) -> RsnapStatus {
+	if out_plan.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let input = ScrollMinimapInput {
+		selection: decode_float_rect(selection),
+		export_width,
+		export_height,
+		bounds: decode_float_rect(bounds),
+		preferred_width,
+		minimum_width,
+		gap,
+		margin,
+		image_inset,
+		viewport_top_pixels,
+		viewport_height_pixels,
+	};
+	let Some(plan) = rsnap_capture_core::scroll_minimap_plan(input) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_plan, encode_scroll_minimap_plan(plan));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Hit-tests a pointer against frozen selection transform handles.
+///
+/// # Safety
+///
+/// `out_kind` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_selection_transform_hit_test(
+	point_x: f64,
+	point_y: f64,
+	selection: RsnapFloatRect,
+	handle_radius: f64,
+	edge_tolerance: f64,
+	out_kind: *mut RsnapFrozenSelectionTransformKind,
+) -> RsnapStatus {
+	if out_kind.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(kind) = rsnap_capture_core::frozen_selection_transform_hit_test(
+		point_x,
+		point_y,
+		decode_float_rect(selection),
+		handle_radius,
+		edge_tolerance,
+	) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_kind, encode_frozen_selection_transform_kind(kind));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves a frozen selection transform rectangle.
+///
+/// # Safety
+///
+/// `out_rect` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_selection_transform_rect(
+	kind: RsnapFrozenSelectionTransformKind,
+	initial_selection: RsnapFloatRect,
+	monitor_frame: RsnapFloatRect,
+	initial_pointer_x: f64,
+	initial_pointer_y: f64,
+	point_x: f64,
+	point_y: f64,
+	minimum_size: f64,
+	out_rect: *mut RsnapFloatRect,
+) -> RsnapStatus {
+	if out_rect.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let input = FrozenSelectionTransformInput {
+		kind: decode_frozen_selection_transform_kind(kind),
+		initial_selection: decode_float_rect(initial_selection),
+		monitor_frame: decode_float_rect(monitor_frame),
+		initial_pointer_x,
+		initial_pointer_y,
+		point_x,
+		point_y,
+		minimum_size,
+	};
+	let Some(rect) = rsnap_capture_core::frozen_selection_transform_rect(input) else {
+		return RsnapStatus::Empty;
+	};
+
+	unsafe {
+		ptr::write(out_rect, encode_float_rect(rect));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Detects salient content bounds for frozen auto-center from row-major RGBA.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data, and `out_rect` must be writable when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_auto_center_content_bounds_rgba(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	out_rect: *mut RsnapPixelRect,
+) -> RsnapStatus {
+	if out_rect.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let bounds =
+		match rsnap_capture_core::detect_auto_center_content_bounds_rgba(width, height, bytes) {
+			Ok(Some(bounds)) => bounds,
+			Ok(None) => return RsnapStatus::Empty,
+			Err(
+				AutoCenterImageError::InvalidDimensions | AutoCenterImageError::InvalidRgbaLength,
+			) => {
+				return RsnapStatus::InvalidInput;
+			},
+		};
+
+	unsafe {
+		ptr::write(out_rect, encode_pixel_rect(bounds));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Resolves the point shift that balances content margins inside a frozen crop.
+#[unsafe(no_mangle)]
+pub extern "C" fn rsnap_auto_center_margin_balance_shift_points(
+	content_origin_px: f64,
+	content_size_px: f64,
+	crop_size_px: f64,
+	capture_size_points: f64,
+) -> f64 {
+	rsnap_capture_core::auto_center_margin_balance_shift_points(
+		content_origin_px,
+		content_size_px,
+		crop_size_px,
+		capture_size_points,
+	)
 }
 
 /// Returns the current C ABI version for the native host bridge.
@@ -1283,6 +2746,25 @@ pub unsafe extern "C" fn rsnap_owned_rgba_region_release(region: *mut RsnapOwned
 	*region = RsnapOwnedRgbaRegion::default();
 }
 
+/// Releases a byte buffer previously returned by an export function.
+///
+/// # Safety
+///
+/// `bytes` must point to a struct returned by a `*_to_png` function that has not already
+/// been released, or be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_owned_bytes_release(bytes: *mut RsnapOwnedBytes) {
+	let Some(bytes) = (unsafe { bytes.as_mut() }) else {
+		return;
+	};
+
+	if !bytes.bytes.is_null() && bytes.capacity > 0 {
+		let _ = unsafe { Vec::from_raw_parts(bytes.bytes, bytes.len, bytes.capacity) };
+	}
+
+	*bytes = RsnapOwnedBytes::default();
+}
+
 unsafe fn handle_mut<'a>(handle: *mut RsnapSessionHandle) -> Option<&'a mut RsnapSessionHandle> {
 	unsafe { handle.as_mut() }
 }
@@ -1295,6 +2777,18 @@ unsafe fn scroll_session_handle_mut<'a>(
 	handle: *mut RsnapScrollSessionHandle,
 ) -> Option<&'a mut RsnapScrollSessionHandle> {
 	unsafe { handle.as_mut() }
+}
+
+unsafe fn frozen_edit_handle_mut<'a>(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+) -> Option<&'a mut RsnapFrozenOverlayEditSessionHandle> {
+	unsafe { handle.as_mut() }
+}
+
+unsafe fn frozen_edit_handle_ref<'a>(
+	handle: *const RsnapFrozenOverlayEditSessionHandle,
+) -> Option<&'a RsnapFrozenOverlayEditSessionHandle> {
+	unsafe { handle.as_ref() }
 }
 
 #[cfg(target_os = "macos")]
@@ -1310,6 +2804,645 @@ unsafe fn rgba_bytes<'a>(rgba: *const u8, rgba_len: usize) -> Option<&'a [u8]> {
 	}
 
 	Some(unsafe { slice::from_raw_parts(rgba, rgba_len) })
+}
+
+fn decode_pixel_rect(rect: RsnapPixelRect) -> RectPoints {
+	RectPoints::new(rect.x, rect.y, rect.width, rect.height)
+}
+
+fn decode_float_rect(rect: RsnapFloatRect) -> DisplayPointRect {
+	DisplayPointRect::new(rect.x, rect.y, rect.width, rect.height)
+}
+
+unsafe fn decode_frozen_overlay_export_elements(
+	elements: *const RsnapFrozenOverlayExportElement,
+	elements_len: usize,
+) -> Option<Vec<FrozenOverlayExportElement>> {
+	if elements_len == 0 {
+		return Some(Vec::new());
+	}
+	if elements.is_null() {
+		return None;
+	}
+
+	let elements = unsafe { slice::from_raw_parts(elements, elements_len) };
+
+	elements
+		.iter()
+		.map(|element| unsafe { decode_frozen_overlay_export_element(element) })
+		.collect()
+}
+
+unsafe fn decode_frozen_overlay_export_element(
+	element: &RsnapFrozenOverlayExportElement,
+) -> Option<FrozenOverlayExportElement> {
+	let color = decode_frozen_annotation_color(element.color);
+
+	match element.kind {
+		RsnapFrozenOverlayExportElementKind::Pen => {
+			Some(FrozenOverlayExportElement::Pen(FrozenOverlayExportPen {
+				points: unsafe {
+					decode_frozen_overlay_points(element.points, element.points_len)
+				}?,
+				style: FrozenOverlayExportStrokeStyle {
+					stroke_width_points: decode_f32(element.stroke_width_points)?,
+					rgba: color,
+				},
+			}))
+		},
+		RsnapFrozenOverlayExportElementKind::Arrow => {
+			Some(FrozenOverlayExportElement::Arrow(FrozenOverlayExportArrow {
+				start: decode_frozen_overlay_point(element.start)?,
+				end: decode_frozen_overlay_point(element.end)?,
+				style: FrozenOverlayExportStrokeStyle {
+					stroke_width_points: decode_f32(element.stroke_width_points)?,
+					rgba: color,
+				},
+			}))
+		},
+		RsnapFrozenOverlayExportElementKind::Mosaic => {
+			Some(FrozenOverlayExportElement::Mosaic(FrozenOverlayExportMosaic {
+				rect: decode_float_rect(element.rect),
+			}))
+		},
+		RsnapFrozenOverlayExportElementKind::Spotlight => {
+			Some(FrozenOverlayExportElement::Spotlight(FrozenOverlayExportSpotlight {
+				rect: decode_float_rect(element.rect),
+				style: FrozenOverlayExportSpotlightStyle {
+					border_width_points: decode_f32(element.border_width_points)?,
+					border_rgba: color,
+				},
+			}))
+		},
+		RsnapFrozenOverlayExportElementKind::Text => {
+			Some(FrozenOverlayExportElement::Text(FrozenOverlayExportText {
+				anchor: decode_frozen_overlay_point(element.start)?,
+				text: unsafe { decode_optional_utf8(element.text) }?,
+				style: FrozenOverlayExportTextStyle {
+					font_size_points: decode_f32(element.font_size_points)?,
+					rgba: color,
+				},
+			}))
+		},
+	}
+}
+
+unsafe fn decode_frozen_overlay_points(
+	points: *const RsnapFloatPoint,
+	points_len: usize,
+) -> Option<Vec<FrozenOverlayExportPoint>> {
+	if points_len == 0 {
+		return Some(Vec::new());
+	}
+	if points.is_null() {
+		return None;
+	}
+
+	unsafe { slice::from_raw_parts(points, points_len) }
+		.iter()
+		.map(|point| decode_frozen_overlay_point(*point))
+		.collect()
+}
+
+fn decode_frozen_overlay_point(point: RsnapFloatPoint) -> Option<FrozenOverlayExportPoint> {
+	if point.x.is_finite() && point.y.is_finite() {
+		Some(FrozenOverlayExportPoint::new(point.x, point.y))
+	} else {
+		None
+	}
+}
+
+unsafe fn decode_optional_utf8(text: *const c_char) -> Option<String> {
+	if text.is_null() {
+		return Some(String::new());
+	}
+
+	unsafe { CStr::from_ptr(text) }.to_str().ok().map(ToOwned::to_owned)
+}
+
+fn decode_f32(value: f64) -> Option<f32> {
+	(value.is_finite() && value >= f64::from(f32::MIN) && value <= f64::from(f32::MAX))
+		.then_some(value as f32)
+}
+
+fn decode_frozen_annotation_color(color: RsnapFrozenAnnotationColor) -> [u8; 4] {
+	match color {
+		RsnapFrozenAnnotationColor::White => [255, 255, 255, 255],
+		RsnapFrozenAnnotationColor::Yellow => [255, 219, 77, 255],
+		RsnapFrozenAnnotationColor::Green => [92, 214, 149, 255],
+		RsnapFrozenAnnotationColor::Blue => [102, 178, 255, 255],
+		RsnapFrozenAnnotationColor::Red => [255, 107, 107, 255],
+		RsnapFrozenAnnotationColor::Black => [24, 24, 24, 255],
+	}
+}
+
+fn frozen_overlay_empty_element() -> RsnapFrozenOverlayExportElement {
+	RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Mosaic,
+		rect: RsnapFloatRect::default(),
+		start: RsnapFloatPoint::default(),
+		end: RsnapFloatPoint::default(),
+		points: ptr::null(),
+		points_len: 0,
+		text: ptr::null(),
+		stroke_width_points: 0.0,
+		border_width_points: 0.0,
+		font_size_points: 0.0,
+		color: RsnapFrozenAnnotationColor::Blue,
+	}
+}
+
+fn decode_frozen_overlay_edit_style(
+	style: RsnapFrozenOverlayEditStyle,
+) -> Option<FrozenOverlayEditStyle> {
+	Some(FrozenOverlayEditStyle {
+		stroke: FrozenOverlayEditStrokeStyle {
+			stroke_width_points: finite_nonnegative(style.stroke_width_points)?,
+			color: decode_frozen_edit_color(style.stroke_color),
+		},
+		spotlight: FrozenOverlayEditSpotlightStyle {
+			border_width_points: finite_nonnegative(style.spotlight_border_width_points)?,
+			border_color: decode_frozen_edit_color(style.spotlight_color),
+		},
+		text: FrozenOverlayEditTextStyle {
+			font_size_points: finite_positive(style.text_font_size_points)?,
+			color: decode_frozen_edit_color(style.text_color),
+		},
+	})
+}
+
+fn decode_frozen_edit_color(color: RsnapFrozenAnnotationColor) -> FrozenOverlayEditColor {
+	match color {
+		RsnapFrozenAnnotationColor::White => FrozenOverlayEditColor::White,
+		RsnapFrozenAnnotationColor::Yellow => FrozenOverlayEditColor::Yellow,
+		RsnapFrozenAnnotationColor::Green => FrozenOverlayEditColor::Green,
+		RsnapFrozenAnnotationColor::Blue => FrozenOverlayEditColor::Blue,
+		RsnapFrozenAnnotationColor::Red => FrozenOverlayEditColor::Red,
+		RsnapFrozenAnnotationColor::Black => FrozenOverlayEditColor::Black,
+	}
+}
+
+fn encode_frozen_edit_color(color: FrozenOverlayEditColor) -> RsnapFrozenAnnotationColor {
+	match color {
+		FrozenOverlayEditColor::White => RsnapFrozenAnnotationColor::White,
+		FrozenOverlayEditColor::Yellow => RsnapFrozenAnnotationColor::Yellow,
+		FrozenOverlayEditColor::Green => RsnapFrozenAnnotationColor::Green,
+		FrozenOverlayEditColor::Blue => RsnapFrozenAnnotationColor::Blue,
+		FrozenOverlayEditColor::Red => RsnapFrozenAnnotationColor::Red,
+		FrozenOverlayEditColor::Black => RsnapFrozenAnnotationColor::Black,
+	}
+}
+
+fn decode_frozen_edit_point(point: RsnapFloatPoint) -> Option<FrozenOverlayEditPoint> {
+	(point.x.is_finite() && point.y.is_finite())
+		.then_some(FrozenOverlayEditPoint { x: point.x, y: point.y })
+}
+
+fn decode_frozen_edit_rect(rect: RsnapFloatRect) -> Option<FrozenOverlayEditRect> {
+	let rect = FrozenOverlayEditRect::new(rect.x, rect.y, rect.width, rect.height);
+
+	rect.is_valid().then_some(rect)
+}
+
+fn finite_nonnegative(value: f64) -> Option<f64> {
+	(value.is_finite() && value >= 0.0).then_some(value)
+}
+
+fn finite_positive(value: f64) -> Option<f64> {
+	(value.is_finite() && value > 0.0).then_some(value)
+}
+
+fn encode_frozen_overlay_edit_snapshot(
+	snapshot: FrozenOverlayEditSnapshot,
+) -> Option<RsnapFrozenOverlayEditSnapshot> {
+	let mut elements = snapshot
+		.elements
+		.iter()
+		.map(encode_frozen_overlay_edit_element)
+		.collect::<Option<Vec<_>>>()?;
+	let elements_len = elements.len();
+	let elements_ptr = if elements.is_empty() {
+		ptr::null_mut()
+	} else {
+		let ptr = elements.as_mut_ptr();
+
+		mem::forget(elements);
+
+		ptr
+	};
+
+	Some(RsnapFrozenOverlayEditSnapshot {
+		can_undo: u8::from(snapshot.can_undo),
+		can_redo: u8::from(snapshot.can_redo),
+		keeps_frozen_selection_fixed: u8::from(snapshot.keeps_frozen_selection_fixed),
+		is_moving_movable_annotation: u8::from(snapshot.is_moving_movable_annotation),
+		has_active_interaction: u8::from(snapshot.has_active_interaction),
+		elements: elements_ptr,
+		elements_len,
+		has_preview_pen: u8::from(snapshot.preview_pen.is_some()),
+		preview_pen: encode_optional_frozen_overlay_edit_pen(snapshot.preview_pen.as_ref())?,
+		has_preview_arrow: u8::from(snapshot.preview_arrow.is_some()),
+		preview_arrow: snapshot
+			.preview_arrow
+			.map(encode_frozen_overlay_edit_arrow)
+			.unwrap_or_else(frozen_overlay_empty_element),
+		has_preview_mosaic: u8::from(snapshot.preview_mosaic.is_some()),
+		preview_mosaic: snapshot
+			.preview_mosaic
+			.map(encode_frozen_overlay_edit_mosaic)
+			.unwrap_or_else(frozen_overlay_empty_element),
+		has_preview_spotlight: u8::from(snapshot.preview_spotlight.is_some()),
+		preview_spotlight: snapshot
+			.preview_spotlight
+			.map(encode_frozen_overlay_edit_spotlight)
+			.unwrap_or_else(frozen_overlay_empty_element),
+		has_preview_text: u8::from(snapshot.preview_text.is_some()),
+		preview_text: encode_optional_frozen_overlay_edit_text(snapshot.preview_text.as_ref())?,
+		has_active_text_edit: u8::from(snapshot.active_text_edit.is_some()),
+		active_text_edit: encode_optional_frozen_overlay_active_text_edit(
+			snapshot.active_text_edit.as_ref(),
+		)?,
+	})
+}
+
+fn encode_frozen_overlay_edit_element(
+	element: &FrozenOverlayEditElement,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	match element {
+		FrozenOverlayEditElement::Pen(annotation) => encode_frozen_overlay_edit_pen(annotation),
+		FrozenOverlayEditElement::Arrow(annotation) => {
+			Some(encode_frozen_overlay_edit_arrow(*annotation))
+		},
+		FrozenOverlayEditElement::Mosaic(annotation) => {
+			Some(encode_frozen_overlay_edit_mosaic(*annotation))
+		},
+		FrozenOverlayEditElement::Spotlight(annotation) => {
+			Some(encode_frozen_overlay_edit_spotlight(*annotation))
+		},
+		FrozenOverlayEditElement::Text(annotation) => encode_frozen_overlay_edit_text(annotation),
+	}
+}
+
+fn encode_frozen_overlay_edit_pen(
+	annotation: &FrozenOverlayEditPen,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	let (points, points_len) = owned_frozen_overlay_points(&annotation.points);
+
+	Some(RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Pen,
+		points,
+		points_len,
+		stroke_width_points: annotation.style.stroke_width_points,
+		color: encode_frozen_edit_color(annotation.style.color),
+		..frozen_overlay_empty_element()
+	})
+}
+
+fn encode_optional_frozen_overlay_edit_pen(
+	annotation: Option<&FrozenOverlayEditPen>,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	annotation.map_or_else(|| Some(frozen_overlay_empty_element()), encode_frozen_overlay_edit_pen)
+}
+
+fn encode_frozen_overlay_edit_arrow(
+	annotation: FrozenOverlayEditArrow,
+) -> RsnapFrozenOverlayExportElement {
+	RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Arrow,
+		start: encode_frozen_edit_point(annotation.start),
+		end: encode_frozen_edit_point(annotation.end),
+		stroke_width_points: annotation.style.stroke_width_points,
+		color: encode_frozen_edit_color(annotation.style.color),
+		..frozen_overlay_empty_element()
+	}
+}
+
+fn encode_frozen_overlay_edit_mosaic(
+	annotation: FrozenOverlayEditMosaic,
+) -> RsnapFrozenOverlayExportElement {
+	RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Mosaic,
+		rect: encode_frozen_edit_rect(annotation.rect),
+		..frozen_overlay_empty_element()
+	}
+}
+
+fn encode_frozen_overlay_edit_spotlight(
+	annotation: FrozenOverlayEditSpotlight,
+) -> RsnapFrozenOverlayExportElement {
+	RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Spotlight,
+		rect: encode_frozen_edit_rect(annotation.rect),
+		border_width_points: annotation.style.border_width_points,
+		color: encode_frozen_edit_color(annotation.style.border_color),
+		..frozen_overlay_empty_element()
+	}
+}
+
+fn encode_frozen_overlay_edit_text(
+	annotation: &FrozenOverlayEditText,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	let text = owned_c_string(&annotation.text)?;
+
+	Some(RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Text,
+		start: encode_frozen_edit_point(annotation.anchor),
+		text,
+		font_size_points: annotation.style.font_size_points,
+		color: encode_frozen_edit_color(annotation.style.color),
+		..frozen_overlay_empty_element()
+	})
+}
+
+fn encode_optional_frozen_overlay_edit_text(
+	annotation: Option<&FrozenOverlayEditText>,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	annotation.map_or_else(|| Some(frozen_overlay_empty_element()), encode_frozen_overlay_edit_text)
+}
+
+fn encode_frozen_overlay_active_text_edit(
+	edit: &FrozenOverlayTextEdit,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	let text = owned_c_string(&edit.text)?;
+
+	Some(RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Text,
+		start: encode_frozen_edit_point(edit.anchor),
+		text,
+		..frozen_overlay_empty_element()
+	})
+}
+
+fn encode_optional_frozen_overlay_active_text_edit(
+	edit: Option<&FrozenOverlayTextEdit>,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	edit.map_or_else(
+		|| Some(frozen_overlay_empty_element()),
+		encode_frozen_overlay_active_text_edit,
+	)
+}
+
+fn owned_frozen_overlay_points(
+	points: &[FrozenOverlayEditPoint],
+) -> (*const RsnapFloatPoint, usize) {
+	if points.is_empty() {
+		return (ptr::null(), 0);
+	}
+
+	let mut owned: Vec<_> = points.iter().copied().map(encode_frozen_edit_point).collect();
+	let ptr = owned.as_mut_ptr();
+	let len = owned.len();
+
+	mem::forget(owned);
+
+	(ptr, len)
+}
+
+fn owned_c_string(text: &str) -> Option<*const c_char> {
+	CString::new(text).ok().map(|text| text.into_raw() as *const c_char)
+}
+
+fn encode_frozen_edit_point(point: FrozenOverlayEditPoint) -> RsnapFloatPoint {
+	RsnapFloatPoint { x: point.x, y: point.y }
+}
+
+fn encode_frozen_edit_rect(rect: FrozenOverlayEditRect) -> RsnapFloatRect {
+	RsnapFloatRect { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+}
+
+unsafe fn release_frozen_overlay_snapshot_elements(
+	elements: *mut RsnapFrozenOverlayExportElement,
+	elements_len: usize,
+) {
+	if elements.is_null() || elements_len == 0 {
+		return;
+	}
+
+	let mut elements = unsafe { Vec::from_raw_parts(elements, elements_len, elements_len) };
+
+	for element in &mut elements {
+		unsafe {
+			release_frozen_overlay_snapshot_element(element);
+		}
+	}
+}
+
+unsafe fn release_frozen_overlay_snapshot_element(element: &mut RsnapFrozenOverlayExportElement) {
+	if !element.points.is_null() && element.points_len > 0 {
+		let _ = unsafe {
+			Vec::from_raw_parts(
+				element.points as *mut RsnapFloatPoint,
+				element.points_len,
+				element.points_len,
+			)
+		};
+	}
+	if !element.text.is_null() {
+		let _ = unsafe { CString::from_raw(element.text as *mut c_char) };
+	}
+
+	*element = frozen_overlay_empty_element();
+}
+
+unsafe fn decode_bgra_frame<'a>(
+	width: u32,
+	height: u32,
+	bytes_per_row: usize,
+	bgra: *const u8,
+	bgra_len: usize,
+) -> Option<BgraFrameView<'a>> {
+	if bgra.is_null() {
+		return None;
+	}
+
+	let bytes = unsafe { slice::from_raw_parts(bgra, bgra_len) };
+	let frame = BgraFrameView { width, height, bytes_per_row, bytes };
+
+	frame.is_valid().then_some(frame)
+}
+
+fn encode_float_rect(rect: DisplayPointRect) -> RsnapFloatRect {
+	RsnapFloatRect { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+}
+
+fn encode_pixel_rect(rect: RectPoints) -> RsnapPixelRect {
+	RsnapPixelRect { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+}
+
+fn decode_capture_frame_source_kind(kind: RsnapCaptureFrameSourceKind) -> CaptureFrameSourceKind {
+	match kind {
+		RsnapCaptureFrameSourceKind::DragRegion => CaptureFrameSourceKind::DragRegion,
+		RsnapCaptureFrameSourceKind::Window => CaptureFrameSourceKind::Window,
+		RsnapCaptureFrameSourceKind::FullScreen => CaptureFrameSourceKind::FullScreen,
+		RsnapCaptureFrameSourceKind::ScrollCapture => CaptureFrameSourceKind::ScrollCapture,
+		RsnapCaptureFrameSourceKind::Unknown => CaptureFrameSourceKind::Unknown,
+	}
+}
+
+fn decode_capture_frame_background_kind(
+	kind: RsnapCaptureFrameBackgroundKind,
+) -> CaptureFrameBackgroundKind {
+	match kind {
+		RsnapCaptureFrameBackgroundKind::SystemWallpaper => {
+			CaptureFrameBackgroundKind::SystemWallpaper
+		},
+		RsnapCaptureFrameBackgroundKind::Aurora => CaptureFrameBackgroundKind::Aurora,
+		RsnapCaptureFrameBackgroundKind::Graphite => CaptureFrameBackgroundKind::Graphite,
+		RsnapCaptureFrameBackgroundKind::Linen => CaptureFrameBackgroundKind::Linen,
+	}
+}
+
+fn decode_capture_frame_render_kind(kind: RsnapCaptureFrameRenderKind) -> CaptureFrameRenderKind {
+	match kind {
+		RsnapCaptureFrameRenderKind::FramedCapture => CaptureFrameRenderKind::FramedCapture,
+		RsnapCaptureFrameRenderKind::WindowSnapshot => CaptureFrameRenderKind::WindowSnapshot,
+	}
+}
+
+unsafe fn capture_frame_wallpaper_for_render(
+	source: CaptureFrameRenderImageRef<'_>,
+	screen_scale_factor: f64,
+	source_kind: CaptureFrameSourceKind,
+	background_kind: CaptureFrameBackgroundKind,
+	wallpaper_path: *const c_char,
+) -> Result<Option<RgbaExportImage>, ()> {
+	if wallpaper_path.is_null() {
+		return Ok(None);
+	}
+
+	let Some(plan) = rsnap_capture_core::capture_frame_plan(
+		source.width(),
+		source.height(),
+		screen_scale_factor,
+		source_kind,
+	) else {
+		return Ok(None);
+	};
+	let Some(request) = rsnap_capture_core::capture_frame_wallpaper_request_plan(
+		background_kind,
+		plan.canvas_width,
+		plan.canvas_height,
+	) else {
+		return Ok(None);
+	};
+	let path = unsafe { CStr::from_ptr(wallpaper_path) }.to_str().map_err(|_| ())?;
+
+	match rsnap_capture_core::capture_frame_wallpaper_png_thumbnail_cached(
+		path,
+		request.target_pixel_size,
+	) {
+		Ok(thumbnail) => Ok(thumbnail),
+		Err(_err) => Ok(None),
+	}
+}
+
+fn encode_capture_frame_plan(plan: CaptureFramePlan) -> RsnapCaptureFramePlan {
+	RsnapCaptureFramePlan {
+		canvas_width: plan.canvas_width,
+		canvas_height: plan.canvas_height,
+		image_rect: encode_float_rect(plan.image_rect),
+		corner_radius: plan.corner_radius,
+		shadows: plan.shadows.map(encode_capture_frame_shadow),
+	}
+}
+
+fn decode_frozen_selection_transform_kind(
+	kind: RsnapFrozenSelectionTransformKind,
+) -> FrozenSelectionTransformKind {
+	match kind {
+		RsnapFrozenSelectionTransformKind::Move => FrozenSelectionTransformKind::Move,
+		RsnapFrozenSelectionTransformKind::ResizeLeft => FrozenSelectionTransformKind::ResizeLeft,
+		RsnapFrozenSelectionTransformKind::ResizeRight => FrozenSelectionTransformKind::ResizeRight,
+		RsnapFrozenSelectionTransformKind::ResizeTop => FrozenSelectionTransformKind::ResizeTop,
+		RsnapFrozenSelectionTransformKind::ResizeBottom => {
+			FrozenSelectionTransformKind::ResizeBottom
+		},
+		RsnapFrozenSelectionTransformKind::ResizeTopLeft => {
+			FrozenSelectionTransformKind::ResizeTopLeft
+		},
+		RsnapFrozenSelectionTransformKind::ResizeTopRight => {
+			FrozenSelectionTransformKind::ResizeTopRight
+		},
+		RsnapFrozenSelectionTransformKind::ResizeBottomLeft => {
+			FrozenSelectionTransformKind::ResizeBottomLeft
+		},
+		RsnapFrozenSelectionTransformKind::ResizeBottomRight => {
+			FrozenSelectionTransformKind::ResizeBottomRight
+		},
+	}
+}
+
+fn encode_frozen_selection_transform_kind(
+	kind: FrozenSelectionTransformKind,
+) -> RsnapFrozenSelectionTransformKind {
+	match kind {
+		FrozenSelectionTransformKind::Move => RsnapFrozenSelectionTransformKind::Move,
+		FrozenSelectionTransformKind::ResizeLeft => RsnapFrozenSelectionTransformKind::ResizeLeft,
+		FrozenSelectionTransformKind::ResizeRight => RsnapFrozenSelectionTransformKind::ResizeRight,
+		FrozenSelectionTransformKind::ResizeTop => RsnapFrozenSelectionTransformKind::ResizeTop,
+		FrozenSelectionTransformKind::ResizeBottom => {
+			RsnapFrozenSelectionTransformKind::ResizeBottom
+		},
+		FrozenSelectionTransformKind::ResizeTopLeft => {
+			RsnapFrozenSelectionTransformKind::ResizeTopLeft
+		},
+		FrozenSelectionTransformKind::ResizeTopRight => {
+			RsnapFrozenSelectionTransformKind::ResizeTopRight
+		},
+		FrozenSelectionTransformKind::ResizeBottomLeft => {
+			RsnapFrozenSelectionTransformKind::ResizeBottomLeft
+		},
+		FrozenSelectionTransformKind::ResizeBottomRight => {
+			RsnapFrozenSelectionTransformKind::ResizeBottomRight
+		},
+	}
+}
+
+fn encode_capture_frame_background_plan(
+	plan: CaptureFrameBackgroundPlan,
+) -> RsnapCaptureFrameBackgroundPlan {
+	RsnapCaptureFrameBackgroundPlan {
+		colors: plan.colors.map(encode_capture_frame_color_stop),
+		locations: plan.locations,
+		prefers_wallpaper: u8::from(plan.prefers_wallpaper),
+		wallpaper_overlay_alpha: plan.wallpaper_overlay_alpha,
+	}
+}
+
+fn encode_capture_frame_color_stop(color: CaptureFrameColorStop) -> RsnapCaptureFrameColorStop {
+	RsnapCaptureFrameColorStop {
+		red: color.red,
+		green: color.green,
+		blue: color.blue,
+		alpha: color.alpha,
+	}
+}
+
+fn encode_capture_frame_shadow(shadow: CaptureFrameShadow) -> RsnapCaptureFrameShadow {
+	RsnapCaptureFrameShadow {
+		offset_x: shadow.offset_x,
+		offset_y: shadow.offset_y,
+		blur: shadow.blur,
+		alpha: shadow.alpha,
+	}
+}
+
+fn encode_capture_frame_wallpaper_request(
+	request: CaptureFrameWallpaperRequest,
+) -> RsnapCaptureFrameWallpaperRequest {
+	RsnapCaptureFrameWallpaperRequest {
+		target_pixel_size: request.target_pixel_size,
+		overlay_alpha: request.overlay_alpha,
+	}
+}
+
+fn encode_scroll_minimap_plan(plan: ScrollMinimapPlan) -> RsnapScrollMinimapPlan {
+	RsnapScrollMinimapPlan {
+		frame: encode_float_rect(plan.frame),
+		image_frame: encode_float_rect(plan.image_frame),
+		has_viewport_frame: u8::from(plan.viewport_frame.is_some()),
+		viewport_frame: plan.viewport_frame.map_or_else(RsnapFloatRect::default, encode_float_rect),
+	}
 }
 
 fn decode_session_config(config: RsnapSessionConfig) -> SessionConfig {
@@ -1619,16 +3752,28 @@ fn encode_scroll_observe_result(
 }
 
 fn owned_region_from_scroll_image(image: ScrollStitchImage) -> RsnapOwnedRgbaRegion {
-	let mut rgba = image.rgba;
+	owned_region_from_raw_rgba(image.width, image.height, image.rgba)
+}
+
+fn owned_region_from_raw_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> RsnapOwnedRgbaRegion {
 	let out = RsnapOwnedRgbaRegion {
-		width: image.width,
-		height: image.height,
+		width,
+		height,
 		len: rgba.len(),
 		capacity: rgba.capacity(),
 		rgba: rgba.as_mut_ptr(),
 	};
 
 	mem::forget(rgba);
+
+	out
+}
+
+fn owned_bytes_from_vec(mut bytes: Vec<u8>) -> RsnapOwnedBytes {
+	let out =
+		RsnapOwnedBytes { len: bytes.len(), capacity: bytes.capacity(), bytes: bytes.as_mut_ptr() };
+
+	mem::forget(bytes);
 
 	out
 }
@@ -1744,17 +3889,28 @@ fn encode_window(window: WindowRect) -> RsnapWindowRect {
 
 #[cfg(test)]
 mod tests {
+	use std::env;
+	use std::ffi::CString;
+	use std::fs;
+	use std::process;
 	use std::ptr;
+	use std::slice;
 
 	use crate::{
-		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCursorIntent,
-		RsnapHostEvent, RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind,
-		RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect, RsnapPlatformTag,
-		RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapSessionConfig,
-		RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
+		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCaptureFrameBackgroundKind,
+		RsnapCaptureFrameBackgroundPlan, RsnapCaptureFrameColorStop, RsnapCaptureFramePlan,
+		RsnapCaptureFrameRenderKind, RsnapCaptureFrameSourceKind,
+		RsnapCaptureFrameWallpaperRequest, RsnapCursorIntent, RsnapFloatPoint, RsnapFloatRect,
+		RsnapFrozenAnnotationColor, RsnapFrozenOverlayEditSnapshot, RsnapFrozenOverlayEditStyle,
+		RsnapFrozenOverlayExportElement, RsnapFrozenOverlayExportElementKind,
+		RsnapFrozenSelectionTransformKind, RsnapHostEvent, RsnapHostEventKind, RsnapHostReport,
+		RsnapHostReportKind, RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect,
+		RsnapOwnedBytes, RsnapOwnedRgbaRegion, RsnapPixelRect, RsnapPlatformTag, RsnapPoint,
+		RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan,
+		RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapToolbarItemKind, RsnapWindowRect,
 	};
 	#[cfg(target_os = "macos")]
-	use crate::{RsnapOwnedRgbaRegion, RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
+	use crate::{RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
 
 	fn default_config() -> RsnapSessionConfig {
 		RsnapSessionConfig {
@@ -1764,7 +3920,6 @@ mod tests {
 		}
 	}
 
-	#[cfg(target_os = "macos")]
 	fn scroll_frame(width: u32, height: u32, top_row: u32) -> Vec<u8> {
 		let mut rgba = Vec::with_capacity((width * height * 4) as usize);
 
@@ -1780,6 +3935,15 @@ mod tests {
 		}
 
 		rgba
+	}
+
+	fn png_dimensions(png: &[u8]) -> (u32, u32) {
+		assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+
+		let width = u32::from_be_bytes(png[16..20].try_into().expect("PNG width bytes"));
+		let height = u32::from_be_bytes(png[20..24].try_into().expect("PNG height bytes"));
+
+		(width, height)
 	}
 
 	#[test]
@@ -1906,6 +4070,678 @@ mod tests {
 		let handle: *mut RsnapSessionHandle = ptr::null_mut();
 
 		unsafe { crate::rsnap_session_destroy(handle) };
+	}
+
+	#[test]
+	fn ffi_export_rgba_to_png_returns_owned_png() {
+		let rgba = scroll_frame(4, 4, 0);
+		let mut png = RsnapOwnedBytes::default();
+
+		assert_eq!(
+			unsafe { crate::rsnap_export_rgba_to_png(4, 4, rgba.as_ptr(), rgba.len(), &mut png) },
+			RsnapStatus::Ok
+		);
+		assert!(png.len > 0);
+		assert_eq!(png_dimensions(unsafe { slice::from_raw_parts(png.bytes, png.len) }), (4, 4));
+
+		unsafe {
+			crate::rsnap_owned_bytes_release(&mut png);
+		}
+
+		assert!(png.bytes.is_null());
+		assert_eq!(png.len, 0);
+		assert_eq!(png.capacity, 0);
+	}
+
+	#[test]
+	fn ffi_export_rgba_crop_to_png_crops_dimensions() {
+		let rgba = scroll_frame(4, 4, 0);
+		let crop = RsnapPixelRect { x: 1, y: 0, width: 2, height: 3 };
+		let mut png = RsnapOwnedBytes::default();
+
+		assert_eq!(
+			unsafe {
+				crate::rsnap_export_rgba_crop_to_png(
+					4,
+					4,
+					rgba.as_ptr(),
+					rgba.len(),
+					crop,
+					&mut png,
+				)
+			},
+			RsnapStatus::Ok
+		);
+		assert_eq!(png_dimensions(unsafe { slice::from_raw_parts(png.bytes, png.len) }), (2, 3));
+
+		unsafe {
+			crate::rsnap_owned_bytes_release(&mut png);
+		}
+	}
+
+	#[test]
+	fn ffi_export_rgba_crop_to_png_rejects_out_of_bounds_crop() {
+		let rgba = scroll_frame(4, 4, 0);
+		let crop = RsnapPixelRect { x: 3, y: 3, width: 2, height: 2 };
+		let mut png = RsnapOwnedBytes::default();
+
+		assert_eq!(
+			unsafe {
+				crate::rsnap_export_rgba_crop_to_png(
+					4,
+					4,
+					rgba.as_ptr(),
+					rgba.len(),
+					crop,
+					&mut png,
+				)
+			},
+			RsnapStatus::InvalidInput
+		);
+		assert!(png.bytes.is_null());
+	}
+
+	#[test]
+	fn ffi_frozen_display_crop_rect_returns_core_pixel_rect() {
+		let mut out_rect = RsnapPixelRect::default();
+		let status = unsafe {
+			crate::rsnap_frozen_display_crop_rect(
+				2_880,
+				1_800,
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 1_440.0, height: 900.0 },
+				RsnapFloatRect { x: 100.0, y: 200.0, width: 300.0, height: 150.0 },
+				&mut out_rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(out_rect, RsnapPixelRect { x: 200, y: 1_100, width: 600, height: 300 });
+	}
+
+	#[test]
+	fn ffi_frozen_display_crop_rect_returns_empty_for_outside_selection() {
+		let mut out_rect = RsnapPixelRect::default();
+		let status = unsafe {
+			crate::rsnap_frozen_display_crop_rect(
+				200,
+				200,
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
+				RsnapFloatRect { x: 120.0, y: 10.0, width: 10.0, height: 20.0 },
+				&mut out_rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Empty);
+	}
+
+	#[test]
+	fn ffi_frozen_mosaic_light_privacy_patch_returns_rgba_region() {
+		let mut patch = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_frozen_mosaic_light_privacy_patch_rgba(
+				100,
+				80,
+				RsnapFloatRect { x: 4.2, y: 9.1, width: 28.4, height: 21.0 },
+				&mut patch,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(patch.width, 3);
+		assert_eq!(patch.height, 3);
+		assert_eq!(patch.len, 36);
+
+		let bytes = unsafe { slice::from_raw_parts(patch.rgba, patch.len) };
+
+		assert_eq!(&bytes[..12], &[211, 211, 211, 255, 205, 205, 205, 255, 202, 201, 199, 255]);
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut patch);
+		}
+	}
+
+	#[test]
+	fn ffi_frozen_mosaic_light_privacy_patch_returns_empty_for_outside_rect() {
+		let mut patch = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_frozen_mosaic_light_privacy_patch_rgba(
+				100,
+				80,
+				RsnapFloatRect { x: 120.0, y: 10.0, width: 10.0, height: 20.0 },
+				&mut patch,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Empty);
+	}
+
+	#[test]
+	fn ffi_frozen_overlay_export_render_rgba_returns_composited_region() {
+		let mut rgba = vec![180_u8; 64 * 40 * 4];
+
+		for alpha in (3..rgba.len()).step_by(4) {
+			rgba[alpha] = 255;
+		}
+
+		let points = [RsnapFloatPoint { x: 2.0, y: 2.0 }, RsnapFloatPoint { x: 24.0, y: 18.0 }];
+		let text = CString::new("Hi").expect("text has no interior nul");
+		let elements = [
+			RsnapFrozenOverlayExportElement {
+				kind: RsnapFrozenOverlayExportElementKind::Mosaic,
+				rect: RsnapFloatRect { x: 4.0, y: 4.0, width: 16.0, height: 10.0 },
+				start: RsnapFloatPoint::default(),
+				end: RsnapFloatPoint::default(),
+				points: ptr::null(),
+				points_len: 0,
+				text: ptr::null(),
+				stroke_width_points: 0.0,
+				border_width_points: 0.0,
+				font_size_points: 0.0,
+				color: RsnapFrozenAnnotationColor::Blue,
+			},
+			RsnapFrozenOverlayExportElement {
+				kind: RsnapFrozenOverlayExportElementKind::Pen,
+				rect: RsnapFloatRect::default(),
+				start: RsnapFloatPoint::default(),
+				end: RsnapFloatPoint::default(),
+				points: points.as_ptr(),
+				points_len: points.len(),
+				text: ptr::null(),
+				stroke_width_points: 2.0,
+				border_width_points: 0.0,
+				font_size_points: 0.0,
+				color: RsnapFrozenAnnotationColor::Blue,
+			},
+			RsnapFrozenOverlayExportElement {
+				kind: RsnapFrozenOverlayExportElementKind::Text,
+				rect: RsnapFloatRect::default(),
+				start: RsnapFloatPoint { x: 6.0, y: 24.0 },
+				end: RsnapFloatPoint::default(),
+				points: ptr::null(),
+				points_len: 0,
+				text: text.as_ptr(),
+				stroke_width_points: 0.0,
+				border_width_points: 0.0,
+				font_size_points: 12.0,
+				color: RsnapFrozenAnnotationColor::White,
+			},
+		];
+		let mut out = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_frozen_overlay_export_render_rgba(
+				64,
+				40,
+				rgba.as_ptr(),
+				rgba.len(),
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 64.0, height: 40.0 },
+				elements.as_ptr(),
+				elements.len(),
+				&mut out,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(out.width, 64);
+		assert_eq!(out.height, 40);
+		assert_eq!(out.len, rgba.len());
+
+		let bytes = unsafe { slice::from_raw_parts(out.rgba, out.len) };
+
+		assert_ne!(bytes, rgba.as_slice());
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut out);
+		}
+	}
+
+	#[test]
+	fn ffi_frozen_overlay_edit_session_copies_rust_owned_snapshot() {
+		let handle = crate::rsnap_frozen_overlay_edit_session_create();
+
+		assert!(!handle.is_null());
+
+		let style = RsnapFrozenOverlayEditStyle {
+			stroke_width_points: 3.0,
+			stroke_color: RsnapFrozenAnnotationColor::Blue,
+			spotlight_border_width_points: 0.0,
+			spotlight_color: RsnapFrozenAnnotationColor::Blue,
+			text_font_size_points: 16.0,
+			text_color: RsnapFrozenAnnotationColor::White,
+		};
+		let selection = RsnapFloatRect { x: 0.0, y: 0.0, width: 200.0, height: 120.0 };
+		let mut changed = 0;
+		let status = unsafe {
+			crate::rsnap_frozen_overlay_edit_session_begin(
+				handle,
+				RsnapToolbarItemKind::Text,
+				RsnapFloatPoint { x: 12.0, y: 18.0 },
+				selection,
+				style,
+				&mut changed,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(changed, 1);
+
+		let text = CString::new("Hello").expect("text has no interior nul");
+		let status = unsafe {
+			crate::rsnap_frozen_overlay_edit_session_append_text(
+				handle,
+				text.as_ptr(),
+				&mut changed,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(changed, 1);
+
+		let status = unsafe {
+			crate::rsnap_frozen_overlay_edit_session_commit_text(handle, style, &mut changed)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(changed, 1);
+
+		let mut snapshot = RsnapFrozenOverlayEditSnapshot::default();
+		let status = unsafe {
+			crate::rsnap_frozen_overlay_edit_session_copy_snapshot(handle, &mut snapshot)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(snapshot.can_undo, 1);
+		assert_eq!(snapshot.elements_len, 1);
+
+		let elements = unsafe { slice::from_raw_parts(snapshot.elements, snapshot.elements_len) };
+
+		assert_eq!(elements[0].kind, RsnapFrozenOverlayExportElementKind::Text);
+		assert_eq!(unsafe { std::ffi::CStr::from_ptr(elements[0].text) }.to_str(), Ok("Hello"));
+
+		unsafe {
+			crate::rsnap_frozen_overlay_edit_snapshot_release(&mut snapshot);
+			crate::rsnap_frozen_overlay_edit_session_destroy(handle);
+		}
+	}
+
+	#[test]
+	fn ffi_bgra_frame_sample_rgb_returns_core_sample() {
+		let bgra = bgra_frame(4, 3, 16);
+		let mut rgb = RsnapRgb::default();
+		let status = unsafe {
+			crate::rsnap_bgra_frame_sample_rgb(
+				4,
+				3,
+				16,
+				bgra.as_ptr(),
+				bgra.len(),
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 4.0, height: 3.0 },
+				1.0,
+				2.5,
+				&mut rgb,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(rgb, RsnapRgb { r: 11, g: 21, b: 31 });
+	}
+
+	#[test]
+	fn ffi_bgra_frame_loupe_patch_returns_rgba_region() {
+		let bgra = bgra_frame(4, 3, 16);
+		let mut patch = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_bgra_frame_loupe_patch_rgba(
+				4,
+				3,
+				16,
+				bgra.as_ptr(),
+				bgra.len(),
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 4.0, height: 3.0 },
+				0.0,
+				2.0,
+				3,
+				&mut patch,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(patch.width, 3);
+		assert_eq!(patch.height, 3);
+		assert_eq!(patch.len, 36);
+
+		let bytes = unsafe { slice::from_raw_parts(patch.rgba, patch.len) };
+
+		assert_eq!(&bytes[..8], &[10, 20, 30, 200, 10, 20, 30, 200]);
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut patch);
+		}
+	}
+
+	#[test]
+	fn ffi_bgra_frame_loupe_patch_rejects_invalid_storage() {
+		let bgra = bgra_frame(4, 3, 16);
+		let mut patch = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_bgra_frame_loupe_patch_rgba(
+				4,
+				3,
+				12,
+				bgra.as_ptr(),
+				bgra.len(),
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 4.0, height: 3.0 },
+				0.0,
+				2.0,
+				3,
+				&mut patch,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::InvalidInput);
+		assert!(patch.rgba.is_null());
+	}
+
+	#[test]
+	fn ffi_capture_frame_plan_returns_core_geometry() {
+		let mut plan = RsnapCaptureFramePlan::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_plan(
+				320,
+				180,
+				2.0,
+				RsnapCaptureFrameSourceKind::Window,
+				&mut plan,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(plan.canvas_width, 416.0);
+		assert_eq!(plan.canvas_height, 276.0);
+		assert_eq!(
+			plan.image_rect,
+			RsnapFloatRect { x: 48.0, y: 48.0, width: 320.0, height: 180.0 }
+		);
+		assert_eq!(plan.corner_radius, 9.9);
+		assert_eq!(plan.shadows[0].blur, 80.0);
+		assert_eq!(plan.shadows[1].offset_y, -22.0);
+	}
+
+	#[test]
+	fn ffi_capture_frame_aspect_fill_crop_rect_returns_core_rect() {
+		let mut rect = RsnapFloatRect::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_aspect_fill_crop_rect(
+				1_600, 900, 1_000.0, 1_000.0, &mut rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(rect, RsnapFloatRect { x: 350.0, y: 0.0, width: 900.0, height: 900.0 });
+	}
+
+	#[test]
+	fn ffi_capture_frame_background_plan_returns_core_preset() {
+		let mut plan = RsnapCaptureFrameBackgroundPlan::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_background_plan(
+				RsnapCaptureFrameBackgroundKind::Graphite,
+				&mut plan,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(plan.prefers_wallpaper, 0);
+		assert_eq!(plan.wallpaper_overlay_alpha, 0.0);
+		assert_eq!(plan.locations, [0.0, 0.54, 1.0]);
+		assert_eq!(
+			plan.colors[0],
+			RsnapCaptureFrameColorStop { red: 0.08, green: 0.09, blue: 0.11, alpha: 1.0 }
+		);
+		assert_eq!(
+			plan.colors[2],
+			RsnapCaptureFrameColorStop { red: 0.56, green: 0.59, blue: 0.64, alpha: 1.0 }
+		);
+	}
+
+	#[test]
+	fn ffi_capture_frame_wallpaper_request_returns_core_thumbnail_policy() {
+		let mut request = RsnapCaptureFrameWallpaperRequest::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_wallpaper_request_plan(
+				RsnapCaptureFrameBackgroundKind::SystemWallpaper,
+				1_535.2,
+				996.0,
+				&mut request,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(request.target_pixel_size, 1_536);
+		assert_eq!(request.overlay_alpha, 0.10);
+	}
+
+	#[test]
+	fn ffi_capture_frame_wallpaper_request_returns_empty_for_gradient_background() {
+		let mut request = RsnapCaptureFrameWallpaperRequest::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_wallpaper_request_plan(
+				RsnapCaptureFrameBackgroundKind::Aurora,
+				1_536.0,
+				996.0,
+				&mut request,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Empty);
+	}
+
+	#[test]
+	fn ffi_capture_frame_wallpaper_png_thumbnail_returns_owned_region() {
+		let path_buf =
+			env::temp_dir().join(format!("rsnap-ffi-wallpaper-thumb-{}-rgba.png", process::id()));
+		let png = rsnap_capture_core::RgbaExportImage::from_raw(
+			4,
+			2,
+			vec![
+				255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 0,
+				255, 0, 255, 255, 255, 255, 0, 255, 255, 20, 30, 40, 255,
+			],
+		)
+		.expect("test RGBA payload should create an image")
+		.to_png_bytes()
+		.expect("test RGBA image should encode as PNG");
+
+		fs::write(&path_buf, png).expect("test PNG should be written");
+
+		let path = CString::new(path_buf.to_string_lossy().as_bytes())
+			.expect("test PNG path should not contain interior NUL bytes");
+		let mut thumbnail = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_wallpaper_png_thumbnail(path.as_ptr(), 64, &mut thumbnail)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert!(thumbnail.width <= 64);
+		assert!(thumbnail.height <= 64);
+		assert_eq!(thumbnail.len, thumbnail.width as usize * thumbnail.height as usize * 4);
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut thumbnail);
+		}
+
+		let _ = fs::remove_file(path_buf);
+	}
+
+	#[test]
+	fn ffi_capture_frame_render_rgba_returns_owned_composition() {
+		let rgba = [255; 4 * 2 * 4];
+		let mut rendered = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_render_rgba(
+				4,
+				2,
+				rgba.as_ptr(),
+				rgba.len(),
+				2.0,
+				RsnapCaptureFrameSourceKind::DragRegion,
+				RsnapCaptureFrameBackgroundKind::Aurora,
+				RsnapCaptureFrameRenderKind::WindowSnapshot,
+				ptr::null(),
+				&mut rendered,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(rendered.width, 100);
+		assert_eq!(rendered.height, 98);
+		assert_eq!(rendered.len, 100 * 98 * 4);
+
+		let bytes = unsafe { slice::from_raw_parts(rendered.rgba, rendered.len) };
+		let first_source_pixel = ((48 * rendered.width as usize) + 48) * 4;
+
+		assert_eq!(&bytes[first_source_pixel..first_source_pixel + 4], &[255, 255, 255, 255]);
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut rendered);
+		}
+	}
+
+	#[test]
+	fn ffi_scroll_minimap_plan_returns_core_geometry() {
+		let mut plan = RsnapScrollMinimapPlan::default();
+		let status = unsafe {
+			crate::rsnap_scroll_minimap_plan(
+				RsnapFloatRect { x: 100.0, y: 100.0, width: 100.0, height: 100.0 },
+				100.0,
+				200.0,
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 500.0, height: 500.0 },
+				96.0,
+				44.0,
+				10.0,
+				10.0,
+				3.0,
+				20.0,
+				100.0,
+				&mut plan,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(plan.frame, RsnapFloatRect { x: 210.0, y: 54.0, width: 96.0, height: 192.0 });
+		assert_eq!(
+			plan.image_frame,
+			RsnapFloatRect { x: 213.0, y: 57.0, width: 90.0, height: 186.0 }
+		);
+		assert_eq!(plan.has_viewport_frame, 1);
+		assert_eq!(
+			plan.viewport_frame,
+			RsnapFloatRect { x: 213.0, y: 131.4, width: 90.0, height: 93.0 }
+		);
+	}
+
+	#[test]
+	fn ffi_scroll_minimap_plan_returns_empty_when_too_tight() {
+		let mut plan = RsnapScrollMinimapPlan::default();
+		let status = unsafe {
+			crate::rsnap_scroll_minimap_plan(
+				RsnapFloatRect { x: 100.0, y: 100.0, width: 100.0, height: 100.0 },
+				100.0,
+				200.0,
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 230.0, height: 60.0 },
+				96.0,
+				44.0,
+				10.0,
+				10.0,
+				3.0,
+				20.0,
+				100.0,
+				&mut plan,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Empty);
+	}
+
+	#[test]
+	fn ffi_frozen_selection_transform_hit_test_returns_core_kind() {
+		let mut kind = RsnapFrozenSelectionTransformKind::Move;
+		let status = unsafe {
+			crate::rsnap_frozen_selection_transform_hit_test(
+				102.0,
+				238.0,
+				RsnapFloatRect { x: 100.0, y: 80.0, width: 240.0, height: 160.0 },
+				12.0,
+				4.0,
+				&mut kind,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(kind, RsnapFrozenSelectionTransformKind::ResizeTopLeft);
+	}
+
+	#[test]
+	fn ffi_frozen_selection_transform_rect_returns_core_rect() {
+		let mut rect = RsnapFloatRect::default();
+		let status = unsafe {
+			crate::rsnap_frozen_selection_transform_rect(
+				RsnapFrozenSelectionTransformKind::ResizeBottomRight,
+				RsnapFloatRect { x: 100.0, y: 80.0, width: 240.0, height: 160.0 },
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 500.0, height: 400.0 },
+				340.0,
+				80.0,
+				50.0,
+				300.0,
+				12.0,
+				&mut rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(rect, RsnapFloatRect { x: 100.0, y: 228.0, width: 12.0, height: 12.0 });
+	}
+
+	#[test]
+	fn ffi_auto_center_content_bounds_returns_core_rect() {
+		let rgba = auto_center_frame(
+			100,
+			80,
+			Some(RsnapPixelRect { x: 30, y: 20, width: 24, height: 18 }),
+		);
+		let mut rect = RsnapPixelRect::default();
+		let status = unsafe {
+			crate::rsnap_auto_center_content_bounds_rgba(
+				100,
+				80,
+				rgba.as_ptr(),
+				rgba.len(),
+				&mut rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(rect, RsnapPixelRect { x: 30, y: 20, width: 24, height: 18 });
+		assert_eq!(
+			crate::rsnap_auto_center_margin_balance_shift_points(30.0, 24.0, 100.0, 50.0),
+			-4.0
+		);
+	}
+
+	#[test]
+	fn ffi_auto_center_content_bounds_returns_empty_for_uniform_image() {
+		let rgba = auto_center_frame(100, 80, None);
+		let mut rect = RsnapPixelRect::default();
+		let status = unsafe {
+			crate::rsnap_auto_center_content_bounds_rgba(
+				100,
+				80,
+				rgba.as_ptr(),
+				rgba.len(),
+				&mut rect,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Empty);
 	}
 
 	#[cfg(target_os = "macos")]
@@ -2099,5 +4935,44 @@ mod tests {
 	#[test]
 	fn abi_version_matches_constant() {
 		assert_eq!(crate::rsnap_host_ffi_abi_version(), RSNAP_HOST_FFI_ABI_VERSION);
+	}
+
+	fn auto_center_frame(width: u32, height: u32, content: Option<RsnapPixelRect>) -> Vec<u8> {
+		let mut rgba = vec![180_u8; (width * height * 4) as usize];
+
+		for pixel in rgba.chunks_exact_mut(4) {
+			pixel[3] = 255;
+		}
+
+		if let Some(content) = content {
+			for y in content.y..content.y + content.height {
+				for x in content.x..content.x + content.width {
+					let offset = ((y * width + x) * 4) as usize;
+
+					rgba[offset] = 24;
+					rgba[offset + 1] = 32;
+					rgba[offset + 2] = 40;
+				}
+			}
+		}
+
+		rgba
+	}
+
+	fn bgra_frame(width: u32, height: u32, bytes_per_row: usize) -> Vec<u8> {
+		let mut bytes = vec![0xEE; bytes_per_row * height as usize];
+
+		for y in 0..height {
+			for x in 0..width {
+				let offset = y as usize * bytes_per_row + x as usize * 4;
+
+				bytes[offset] = 30 + y as u8 * 15 + x as u8;
+				bytes[offset + 1] = 20 + y as u8 * 10 + x as u8;
+				bytes[offset + 2] = 10 + y as u8 * 5 + x as u8;
+				bytes[offset + 3] = 200 + y as u8 + x as u8;
+			}
+		}
+
+		bytes
 	}
 }

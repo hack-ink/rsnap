@@ -10,9 +10,9 @@ use objc2_foundation::NSArray;
 use winit::window::{Window, WindowId};
 
 use crate::backend;
-use crate::overlay;
 #[cfg(target_os = "macos")]
 use crate::overlay::MacOSHudWindowConfigState;
+use crate::overlay::{self, CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED};
 use crate::overlay::{
 	ActiveEventLoop, GlobalPoint, GpuContext, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS,
 	LiveSampleApplyResult, LogicalPosition, LogicalSize, MonitorRect, OverlayMode, OverlaySession,
@@ -680,7 +680,7 @@ impl OverlaySession {
 				.with_title("rsnap-overlay")
 				.with_decorations(false)
 				.with_resizable(false)
-				.with_content_protected(overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
+				.with_content_protected(CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
 				.with_transparent(true)
 				.with_window_level(WindowLevel::AlwaysOnTop)
 				.with_inner_size(LogicalSize::new(
@@ -828,7 +828,7 @@ impl OverlaySession {
 			.with_title("rsnap-hud")
 			.with_decorations(false)
 			.with_resizable(false)
-			.with_content_protected(overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
+			.with_content_protected(CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
 			.with_transparent(true)
 			.with_visible(false)
 			.with_window_level(WindowLevel::AlwaysOnTop)
@@ -862,7 +862,7 @@ impl OverlaySession {
 			.with_title("rsnap-loupe")
 			.with_decorations(false)
 			.with_resizable(false)
-			.with_content_protected(overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
+			.with_content_protected(CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
 			.with_transparent(true)
 			.with_visible(false)
 			.with_window_level(WindowLevel::AlwaysOnTop)
@@ -899,7 +899,7 @@ impl OverlaySession {
 			.with_title("rsnap-toolbar")
 			.with_decorations(false)
 			.with_resizable(false)
-			.with_content_protected(overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
+			.with_content_protected(CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED)
 			.with_inner_size(LogicalSize::new(
 				startup_size.x as f64,
 				f64::from(startup_size.y.max(TOOLBAR_EXPANDED_HEIGHT_PX)),

@@ -273,7 +273,7 @@ final class LiveFrameStreamBroker {
 		let captureID: UInt64
 		let totalMilliseconds: Double
 		stateLock.lock()
-		guard !didEmitFirstRgbSample, activeTelemetryCaptureID != 0 else {
+		guard didEmitFirstRgbSample == false, activeTelemetryCaptureID != 0 else {
 			stateLock.unlock()
 			return
 		}
@@ -371,7 +371,7 @@ final class LiveFrameStreamBroker {
 			id: displayID,
 			appKitFrame: appKitFrame,
 			quartzFrame: appKitRectToQuartz(appKitFrame, mainDisplayHeight: mainDisplayHeight),
-			scaleFactorX1000: UInt32(max((screen.backingScaleFactor * 1000).rounded(), 1000))
+			scaleFactorX1000: UInt32(max((screen.backingScaleFactor * 1_000).rounded(), 1_000))
 		)
 	}
 

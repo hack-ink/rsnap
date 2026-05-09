@@ -1,3 +1,5 @@
+use std::f32::consts::FRAC_PI_2;
+use std::f32::consts::PI;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
@@ -16,7 +18,8 @@ use crate::overlay::rendering::{
 };
 use crate::overlay::session_state::FrozenAnnotationStyleCapsulePlacement;
 use crate::overlay::{
-	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX,
+	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
+	FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX,
 	FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_CORNER_KEEPOUT_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_HIT_OFFSET_POINTS,
@@ -24,27 +27,29 @@ use crate::overlay::{
 	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FROZEN_SELECTION_SCRIM_ALPHA_DARK,
-	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TEXT_PREVIEW_PLACEHOLDER,
-	FROZEN_TOOLBAR_BUTTON_SIZE_POINTS, FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId,
-	FrozenAnnotationColor, FrozenArrowAnnotation, FrozenBrushState, FrozenCaptureSource,
-	FrozenCommittedOverlay, FrozenEditKind, FrozenSelectionCorner, FrozenSpotlightAnnotation,
-	FrozenTextAnnotation, FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState,
-	FrozenToolbarState, FrozenToolbarTool, HUD_PILL_INNER_MARGIN_X_POINTS,
-	HUD_PILL_STROKE_WIDTH_POINTS, HudPillGeometry, HudTheme, Id,
-	LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK, LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT,
-	LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh, MonitorRect, Order, OverlayMode,
-	OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints, SELECTION_DASHED_BORDER_ALPHA,
-	SELECTION_DASHED_BORDER_DASH_LENGTH_PX, SELECTION_DASHED_BORDER_GAP_LENGTH_PX,
-	SELECTION_DASHED_BORDER_WIDTH_PX, SELECTION_FLOW_CORE_FLOW_WIDTH,
-	SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST, SELECTION_FLOW_LIGHT_PALETTE,
-	SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS, SELECTION_FLOW_PALETTE,
-	SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED, SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX,
-	SELECTION_SIZE_BADGE_FONT_SIZE_POINTS, SELECTION_SIZE_BADGE_GAP_PX,
-	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX,
-	SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
-	SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS, SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind,
-	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
-	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder, Vec2, regular,
+	FROZEN_SELECTION_SCRIM_ALPHA_LIGHT, FROZEN_TEXT_CARET_BLINK_PERIOD_SECS,
+	FROZEN_TEXT_PREVIEW_PLACEHOLDER, FROZEN_TOOLBAR_BUTTON_SIZE_POINTS,
+	FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId, FrozenAnnotationColor,
+	FrozenArrowAnnotation, FrozenBrushState, FrozenCaptureSource, FrozenCommittedOverlay,
+	FrozenEditKind, FrozenSelectionCorner, FrozenSpotlightAnnotation, FrozenTextAnnotation,
+	FrozenTextEditState, FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState,
+	FrozenToolbarTool, HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_STROKE_WIDTH_POINTS,
+	HudPillGeometry, HudTheme, Id, LIVE_DRAG_SELECTION_SCRIM_ALPHA_DARK,
+	LIVE_DRAG_SELECTION_SCRIM_ALPHA_LIGHT, LIVE_DRAG_START_THRESHOLD_PX, LayerId, Layout, Mesh,
+	MonitorRect, Order, OverlayMode, OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints,
+	SELECTION_DASHED_BORDER_ALPHA, SELECTION_DASHED_BORDER_DASH_LENGTH_PX,
+	SELECTION_DASHED_BORDER_GAP_LENGTH_PX, SELECTION_DASHED_BORDER_WIDTH_PX,
+	SELECTION_FLOW_CORE_FLOW_WIDTH, SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST,
+	SELECTION_FLOW_LIGHT_PALETTE, SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS,
+	SELECTION_FLOW_PALETTE, SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED,
+	SELECTION_SIZE_BADGE_FAR_SHADOW_OFFSET_PX, SELECTION_SIZE_BADGE_FONT_SIZE_POINTS,
+	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
+	SELECTION_SIZE_BADGE_NEAR_SHADOW_OFFSET_PX, SELECTION_SIZE_BADGE_OUTLINE_OFFSET_PX,
+	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS,
+	SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind, TOOLBAR_CAPTURE_GAP_PX,
+	TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_PILL_INNER_MARGIN_Y_POINTS, TOOLBAR_SCREEN_MARGIN_PX,
+	ToolbarPlacement, Ui, UiBuilder, Vec2,
+	regular::{MINUS, PLUS},
 };
 
 const FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS: f32 = 4.0;
@@ -719,7 +724,7 @@ impl WindowRenderer {
 	) -> bool {
 		let rendered_points = OverlaySession::rendered_frozen_brush_points(
 			points,
-			overlay::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
+			FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
 		);
 
 		match rendered_points.as_slice() {
@@ -1007,8 +1012,8 @@ impl WindowRenderer {
 	}
 
 	pub(in crate::overlay) fn frozen_text_caret_visible(time_secs: f64) -> bool {
-		(time_secs.rem_euclid(crate::overlay::FROZEN_TEXT_CARET_BLINK_PERIOD_SECS))
-			< crate::overlay::FROZEN_TEXT_CARET_BLINK_PERIOD_SECS * 0.5
+		(time_secs.rem_euclid(FROZEN_TEXT_CARET_BLINK_PERIOD_SECS))
+			< FROZEN_TEXT_CARET_BLINK_PERIOD_SECS * 0.5
 	}
 
 	pub(in crate::overlay) fn frozen_capture_focus_rect(
@@ -2462,7 +2467,7 @@ impl WindowRenderer {
 		let remain = distance.rem_euclid(perimeter);
 		let edge_top_len = (rect.width() - corner_radius * 2.0).max(0.0);
 		let edge_right_len = (rect.height() - corner_radius * 2.0).max(0.0);
-		let corner_len = std::f32::consts::FRAC_PI_2 * corner_radius;
+		let corner_len = FRAC_PI_2 * corner_radius;
 
 		if remain < edge_top_len {
 			return Pos2::new(x0 + corner_radius + remain, y0);
@@ -2471,7 +2476,7 @@ impl WindowRenderer {
 		let mut offset = remain - edge_top_len;
 
 		if offset < corner_len {
-			let angle = -std::f32::consts::FRAC_PI_2 + offset / corner_radius;
+			let angle = -FRAC_PI_2 + offset / corner_radius;
 
 			return Pos2::new(
 				x1 - corner_radius + corner_radius * angle.cos(),
@@ -2505,7 +2510,7 @@ impl WindowRenderer {
 		offset -= edge_top_len;
 
 		if offset < corner_len {
-			let angle = std::f32::consts::FRAC_PI_2 + offset / corner_radius;
+			let angle = FRAC_PI_2 + offset / corner_radius;
 
 			return Pos2::new(
 				x0 + corner_radius + corner_radius * angle.cos(),
@@ -2522,7 +2527,7 @@ impl WindowRenderer {
 		offset -= edge_right_len;
 
 		if offset < corner_len {
-			let angle = std::f32::consts::PI + offset / corner_radius;
+			let angle = PI + offset / corner_radius;
 
 			return Pos2::new(
 				x0 + corner_radius + corner_radius * angle.cos(),
@@ -2536,7 +2541,7 @@ impl WindowRenderer {
 	pub(in crate::overlay) fn selection_flow_perimeter(rect: Rect, corner_radius: f32) -> f32 {
 		let edge_top_len = (rect.width() - corner_radius * 2.0).max(0.0);
 		let edge_right_len = (rect.height() - corner_radius * 2.0).max(0.0);
-		let corner_len = std::f32::consts::FRAC_PI_2 * corner_radius;
+		let corner_len = FRAC_PI_2 * corner_radius;
 
 		2.0 * (edge_top_len + edge_right_len) + 4.0 * corner_len
 	}
@@ -3386,8 +3391,8 @@ impl WindowRenderer {
 			&plus_response,
 			appearance,
 		);
-		Self::paint_frozen_annotation_size_step_button(ui, theme, &minus_response, regular::MINUS);
-		Self::paint_frozen_annotation_size_step_button(ui, theme, &plus_response, regular::PLUS);
+		Self::paint_frozen_annotation_size_step_button(ui, theme, &minus_response, MINUS);
+		Self::paint_frozen_annotation_size_step_button(ui, theme, &plus_response, PLUS);
 		Self::apply_frozen_annotation_size_control_clicks(
 			toolbar_state,
 			style_kind,
