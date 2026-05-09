@@ -8,6 +8,7 @@ use winit::keyboard::ModifiersState;
 
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenGlobalHotkey;
+#[cfg(target_os = "macos")]
 use crate::overlay::SLOW_OP_WARN_CURSOR_LOCATION;
 use crate::overlay::{
 	CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource, ElementState,

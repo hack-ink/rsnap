@@ -10,11 +10,13 @@ use crate::live_frame_stream_macos::MacLiveFrameStream;
 #[cfg(target_os = "macos")]
 use crate::overlay::SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL;
 use crate::overlay::SCROLL_CAPTURE_SAMPLE_INTERVAL;
+#[cfg(target_os = "macos")]
 use crate::overlay::SCROLL_CAPTURE_STREAM_BACKLOG_MAX_FRAMES;
 #[cfg(target_os = "macos")]
 use crate::overlay::ScrollCaptureHostFrameRequestError;
 #[cfg(target_os = "macos")]
 use crate::overlay::ScrollCaptureTraceInputRecord;
+#[cfg(target_os = "macos")]
 use crate::overlay::session_state::InflightScrollCaptureObservation;
 #[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
