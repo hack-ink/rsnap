@@ -98,6 +98,14 @@ Defines:
   applicability controls.
 - Frame Preset must be a single control with Off and the available background presets. Off disables
   the capture frame effect without requiring a separate Export Frame toggle.
+- Frame Preset must render as a compact horizontal swatch selector. Off is represented by an empty
+  slash swatch, and background presets are represented by small background thumbnails without
+  visible option labels. Preset growth must preserve swatch size instead of shrinking cards to fit;
+  overflow must remain mouse-accessible through lightweight step controls, including click-and-hold
+  repeated movement for long preset lists.
+- Wallpaper swatches must not synchronously decode full wallpaper files in Swift. Swift may discover
+  the current wallpaper path and present pixels, but bounded wallpaper thumbnail decoding and caching
+  are Rust-owned.
 - Apply To must be disabled while Frame Preset is Off.
 - Capture frame effects may apply to drag-region captures, window captures, or both. Fullscreen
   captures are excluded from this setting.
