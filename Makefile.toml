@@ -1,34 +1,26 @@
-# Rust workspace tasks.
+# Rsnap workspace tasks.
 
-# Lint
-# | task            | type      | cwd |
-# | --------------- | --------- | --- |
-# | lint            | composite |     |
-# | lint-fix        | composite |     |
-# | lint-rust       | command   |     |
-# | lint-fix-rust   | extend    |     |
-# | lint-swift      | composite |     |
-# | lint-fix-swift  | composite |     |
-# | lint-vstyle     | command   |     |
-# | lint-fix-vstyle | command   |     |
+# Check
+# | task             | type      | purpose |
+# | ---------------- | --------- | ------- |
+# | check            | composite | full read-only verification |
+# | check-rust       | command   | Rust clippy, no cargo check |
+# | check-swift      | composite | SwiftLint and strict build |
+# | check-swiftlint  | command   | SwiftLint plugin, read-only |
+# | check-vstyle     | command   | Rust vibe-style curate |
 
-[tasks.lint]
+[tasks.check]
+clear = true
 workspace = false
 dependencies = [
-	"lint-rust",
-	"lint-swift",
-	"lint-vstyle",
+	"fmt-check",
+	"check-rust",
+	"check-vstyle",
+	"check-swift",
+	"test",
 ]
 
-[tasks.lint-fix]
-workspace = false
-dependencies = [
-	"lint-fix-rust",
-	"lint-fix-swift",
-	"lint-fix-vstyle",
-]
-
-[tasks.lint-rust]
+[tasks.check-rust]
 workspace = false
 command = "cargo"
 args = [
@@ -55,8 +47,61 @@ args = [
 	"warnings",
 ]
 
-[tasks.lint-fix-rust]
-extend = "lint-rust"
+[tasks.check-swift]
+workspace = false
+dependencies = [
+	"check-swiftlint",
+	"build-swift-strict",
+]
+
+[tasks.check-swiftlint]
+workspace = false
+script = '''
+SWIFT_PATH="$(xcrun --find swift)"
+export TOOLCHAIN_DIR="${TOOLCHAIN_DIR:-${SWIFT_PATH%/usr/bin/swift}}"
+swift package \
+	--package-path native/macos-host \
+	--disable-automatic-resolution \
+	plugin \
+	--allow-writing-to-package-directory \
+	swiftlint \
+	-- \
+	--strict \
+	--quiet \
+	--no-cache
+'''
+
+[tasks.check-vstyle]
+workspace = false
+command = "cargo"
+args = [
+	"vstyle",
+	"curate",
+	"--language",
+	"rust",
+	"--workspace",
+	"--all-features",
+]
+
+# Lint
+# | task          | type      | purpose |
+# | ------------- | --------- | ------- |
+# | lint          | composite | apply safe fixes |
+# | lint-rust     | command   | cargo clippy --fix |
+# | lint-swift    | composite | Swift format and SwiftLint fixes |
+# | lint-swiftlint| command   | SwiftLint plugin fixes |
+# | lint-vstyle   | command   | Rust vibe-style tune |
+
+[tasks.lint]
+workspace = false
+dependencies = [
+	"lint-rust",
+	"lint-swift",
+	"lint-vstyle",
+]
+
+[tasks.lint-rust]
+extend = "check-rust"
 args = [
 	"clippy",
 	"--fix",
@@ -86,53 +131,13 @@ args = [
 [tasks.lint-swift]
 workspace = false
 dependencies = [
-	"lint-swift-format",
-	"lint-swiftlint",
-	"build-swift-strict",
-]
-
-[tasks.lint-fix-swift]
-workspace = false
-dependencies = [
 	"fmt-swift",
-	"lint-fix-swiftlint",
 	"lint-swiftlint",
+	"check-swiftlint",
 	"build-swift-strict",
-]
-
-[tasks.lint-swift-format]
-workspace = false
-command = "swift"
-args = [
-	"format",
-	"lint",
-	"--recursive",
-	"--strict",
-	"--parallel",
-	"native/macos-host/Sources",
-	"scripts/smoke/lib/live-hud-mouse-path.swift",
-	"scripts/smoke/lib/mask-probe-capture.swift",
-	"scripts/smoke/lib/visual-background-window.swift",
 ]
 
 [tasks.lint-swiftlint]
-workspace = false
-script = '''
-SWIFT_PATH="$(xcrun --find swift)"
-export TOOLCHAIN_DIR="${TOOLCHAIN_DIR:-${SWIFT_PATH%/usr/bin/swift}}"
-swift package \
-	--package-path native/macos-host \
-	--disable-automatic-resolution \
-	plugin \
-	--allow-writing-to-package-directory \
-	swiftlint \
-	-- \
-	--strict \
-	--quiet \
-	--no-cache
-'''
-
-[tasks.lint-fix-swiftlint]
 workspace = false
 script = '''
 SWIFT_PATH="$(xcrun --find swift)"
@@ -154,17 +159,9 @@ workspace = false
 command = "cargo"
 args = [
 	"vstyle",
-	"curate",
-	"--workspace",
-	"--all-features"
-]
-
-[tasks.lint-fix-vstyle]
-workspace = false
-command = "cargo"
-args = [
-	"vstyle",
 	"tune",
+	"--language",
+	"rust",
 	"--workspace",
 	"--all-features",
 	"--strict",
@@ -376,7 +373,18 @@ args = [
 
 [tasks.fmt-swift-check]
 workspace = false
-extend = "lint-swift-format"
+command = "swift"
+args = [
+	"format",
+	"lint",
+	"--recursive",
+	"--strict",
+	"--parallel",
+	"native/macos-host/Sources",
+	"scripts/smoke/lib/live-hud-mouse-path.swift",
+	"scripts/smoke/lib/mask-probe-capture.swift",
+	"scripts/smoke/lib/visual-background-window.swift",
+]
 
 
 # Meta
@@ -387,7 +395,5 @@ extend = "lint-swift-format"
 [tasks.checks]
 workspace = false
 dependencies = [
-	"lint",
-	"test",
-	"fmt-check",
+	"check",
 ]
