@@ -19,19 +19,19 @@ on:
       - '**/*.md'
       - '.gitignore'
       - 'docs/**'
-  merge_group: {}
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  rust:
-    name: Rust checks
+  rust-check:
+    name: Rust check
     runs-on: ubuntu-latest
     steps:
       - name: Fetch latest code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install Linux desktop build dependencies
         run: |
@@ -49,7 +49,7 @@ jobs:
             libxrandr-dev
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
           cache: true
           rustflags: ''
@@ -59,53 +59,38 @@ jobs:
         run: rustup toolchain install nightly --component rustfmt
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@7769b73c2ec98c38dfcf2e18c83cfd4880c038c1
+        uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96 # v2.77.2
         with:
           tool: cargo-make
 
-      - name: Install vibe-style (latest release)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          VERSION="$(gh release view --repo hack-ink/vibe-style --json tagName --jq '.tagName')"
-          TARGET="x86_64-unknown-linux-gnu"
-          ASSET="vibe-style-${TARGET}-${VERSION}.tgz"
-
-          gh release download "${VERSION}" \
-            --repo hack-ink/vibe-style \
-            --pattern "${ASSET}" \
-            --dir .
-          tar -xzf "${ASSET}"
-
-          mkdir -p "$HOME/.cargo/bin"
-          install -m 0755 "vibe-style-${TARGET}-${VERSION}/vstyle" "$HOME/.cargo/bin/vstyle"
-          install -m 0755 "vibe-style-${TARGET}-${VERSION}/cargo-vstyle" "$HOME/.cargo/bin/cargo-vstyle"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
       - name: Install nextest
-        uses: taiki-e/install-action@7769b73c2ec98c38dfcf2e18c83cfd4880c038c1
+        uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96 # v2.77.2
         with:
           tool: nextest
 
-      - name: Run Rust lint
-        run: cargo make lint-rust
-
-      - name: Run vibe-style lint
-        run: cargo make lint-vstyle
-
-      - name: Run Rust format checks
+      - name: Run Rust format check
         run: cargo make fmt-rust-check
+
+      - name: Run Rust style check
+        uses: hack-ink/vibe-style@bfb4d2d2f5e4b5e5ce8de4ed1d708b3a2f0e61fe # v0.2.1
+        with:
+          language: rust
+          workspace: true
+          args: --all-features
+          version: v0.2.1
+
+      - name: Run Rust clippy
+        run: cargo make check-rust
 
       - name: Run tests
         run: cargo make test-rust
 
-  swift:
-    name: Swift checks
+  swift-check:
+    name: Swift check
     runs-on: macos-26
     steps:
       - name: Fetch latest code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Print Apple toolchain
         run: |
@@ -114,48 +99,44 @@ jobs:
           xcodebuild -version
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
           cache: true
           rustflags: ''
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@7769b73c2ec98c38dfcf2e18c83cfd4880c038c1
+        uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96 # v2.77.2
         with:
           tool: cargo-make
 
-      - name: Run Swift format lint
-        run: cargo make lint-swift-format
+      - name: Run Swift format check
+        run: cargo make fmt-swift-check
 
       - name: Run SwiftLint and strict build
-        run: |
-          set -euo pipefail
+        run: cargo make check-swift
 
-          cargo make lint-swiftlint
-          cargo make build-swift-strict
-
-  toml:
-    name: TOML checks
+  toml-check:
+    name: TOML check
     runs-on: ubuntu-latest
     steps:
       - name: Fetch latest code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
           cache: true
           rustflags: ''
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@7769b73c2ec98c38dfcf2e18c83cfd4880c038c1
+        uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96 # v2.77.2
         with:
           tool: cargo-make
 
       - name: Install taplo
-        uses: taiki-e/install-action@7769b73c2ec98c38dfcf2e18c83cfd4880c038c1
+        uses: taiki-e/install-action@3fa6878dc4ae603f73960271565a082bf196ab96 # v2.77.2
         with:
           tool: taplo
 
-      - name: Run TOML format checks
+      - name: Run TOML format check
         run: cargo make fmt-toml-check
