@@ -2,7 +2,9 @@
 
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::UNIX_EPOCH;
 
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use fast_image_resize::images::{Image, ImageRef};
@@ -12,6 +14,9 @@ use png::{BitDepth, ColorType, Decoder, Transformations};
 use crate::RgbaExportImage;
 
 const MAX_LANCZOS_INTERMEDIATE_PIXEL_SIZE: u32 = 6_000;
+const WALLPAPER_THUMBNAIL_CACHE_CAPACITY: usize = 4;
+
+static WALLPAPER_THUMBNAIL_CACHE: OnceLock<Mutex<WallpaperThumbnailCache>> = OnceLock::new();
 
 /// Decodes a PNG wallpaper and downsamples it into a bounded RGBA thumbnail.
 ///
@@ -33,6 +38,39 @@ pub fn capture_frame_wallpaper_png_thumbnail(
 		})?;
 	let thumbnail = resize_rgba_lanczos_to_fit(thumbnail, target_pixel_size)?;
 	Ok(Some(thumbnail))
+}
+
+/// Decodes a PNG wallpaper thumbnail through the shared Rust cache.
+///
+/// Cache invalidation is based on path, target size, file size, and modification time.
+pub fn capture_frame_wallpaper_png_thumbnail_cached(
+	path: impl AsRef<Path>,
+	target_pixel_size: u32,
+) -> Result<Option<RgbaExportImage>> {
+	let path = path.as_ref();
+	if target_pixel_size == 0 || !is_png_path(path) {
+		return Ok(None);
+	}
+
+	let key = WallpaperThumbnailCacheKey::from_path(path, target_pixel_size);
+	let cache = WALLPAPER_THUMBNAIL_CACHE.get_or_init(|| {
+		Mutex::new(WallpaperThumbnailCache::new(WALLPAPER_THUMBNAIL_CACHE_CAPACITY))
+	});
+	if let Some(image) =
+		cache.lock().map_err(|_| eyre!("wallpaper thumbnail cache lock was poisoned"))?.image(&key)
+	{
+		return Ok(Some(image));
+	}
+
+	let thumbnail = capture_frame_wallpaper_png_thumbnail(path, target_pixel_size)?;
+	if let Some(image) = thumbnail.as_ref() {
+		cache
+			.lock()
+			.map_err(|_| eyre!("wallpaper thumbnail cache lock was poisoned"))?
+			.store(key, image.clone());
+	}
+
+	Ok(thumbnail)
 }
 
 fn decode_png_streaming_area_thumbnail(
@@ -279,6 +317,60 @@ fn intermediate_target_pixel_size(target_pixel_size: u32) -> u32 {
 		.max(target_pixel_size)
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct WallpaperThumbnailCacheKey {
+	path: PathBuf,
+	target_pixel_size: u32,
+	file_size: Option<u64>,
+	modified_nanos: Option<u128>,
+}
+impl WallpaperThumbnailCacheKey {
+	fn from_path(path: &Path, target_pixel_size: u32) -> Self {
+		let metadata = path.metadata().ok();
+		let modified_nanos = metadata
+			.as_ref()
+			.and_then(|metadata| metadata.modified().ok())
+			.and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+			.map(|duration| duration.as_nanos());
+
+		Self {
+			path: path.to_path_buf(),
+			target_pixel_size,
+			file_size: metadata.map(|metadata| metadata.len()),
+			modified_nanos,
+		}
+	}
+}
+
+#[derive(Debug)]
+struct WallpaperThumbnailCache {
+	capacity: usize,
+	images: Vec<(WallpaperThumbnailCacheKey, RgbaExportImage)>,
+}
+impl WallpaperThumbnailCache {
+	fn new(capacity: usize) -> Self {
+		Self { capacity: capacity.max(1), images: Vec::new() }
+	}
+
+	fn image(&mut self, key: &WallpaperThumbnailCacheKey) -> Option<RgbaExportImage> {
+		let index = self.images.iter().position(|(candidate, _)| candidate == key)?;
+		let (key, image) = self.images.remove(index);
+		let cloned = image.clone();
+		self.images.push((key, image));
+		Some(cloned)
+	}
+
+	fn store(&mut self, key: WallpaperThumbnailCacheKey, image: RgbaExportImage) {
+		if let Some(index) = self.images.iter().position(|(candidate, _)| *candidate == key) {
+			self.images.remove(index);
+		}
+		self.images.push((key, image));
+		while self.images.len() > self.capacity {
+			self.images.remove(0);
+		}
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use std::fs;
@@ -348,6 +440,26 @@ mod tests {
 		assert_eq!(intermediate_target_pixel_size(1536), 3072);
 		assert_eq!(intermediate_target_pixel_size(3000), 6000);
 		assert_eq!(intermediate_target_pixel_size(6000), 6000);
+	}
+
+	#[test]
+	fn png_thumbnail_cached_reuses_valid_cached_thumbnail() {
+		let path = std::env::temp_dir().join(format!(
+			"rsnap-wallpaper-thumb-{}-{}.png",
+			std::process::id(),
+			"cache"
+		));
+		write_test_png(&path, 8, 4);
+
+		let first = capture_frame_wallpaper_png_thumbnail_cached(&path, 4)
+			.expect("test PNG should decode")
+			.expect("cached PNG thumbnail should be produced");
+		let second = capture_frame_wallpaper_png_thumbnail_cached(&path, 4)
+			.expect("test PNG should decode through cache")
+			.expect("cached PNG thumbnail should be produced");
+		let _ = fs::remove_file(path);
+
+		assert_eq!(first, second);
 	}
 
 	fn write_test_png(path: &Path, width: u32, height: u32) {

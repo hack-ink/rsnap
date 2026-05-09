@@ -497,6 +497,24 @@ enum RsnapHostBridgeProbe {
 			fatalError("unexpected PNG wallpaper thumbnail decode")
 		}
 		guard
+			let renderedFrame = try RsnapCaptureFrameRenderer.render(
+				source: RGBARegionSnapshot(
+					width: 4, height: 2, rgba: Data(repeating: 255, count: 32)),
+				background: .aurora,
+				screenScaleFactor: 2,
+				sourceKind: .dragRegion,
+				renderKind: .windowSnapshot,
+				wallpaperPath: nil
+			),
+			renderedFrame.width == 100,
+			renderedFrame.height == 98,
+			renderedFrame.rgba.count == 100 * 98 * 4,
+			Array(renderedFrame.rgba[((48 * 100 + 48) * 4)..<((48 * 100 + 49) * 4)])
+				== [255, 255, 255, 255]
+		else {
+			fatalError("unexpected capture frame render")
+		}
+		guard
 			let minimapPlan = try RsnapScrollMinimapPlanner.plan(
 				selection: CGRect(x: 100, y: 100, width: 100, height: 100),
 				exportSize: CGSize(width: 100, height: 200),

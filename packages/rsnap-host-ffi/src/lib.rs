@@ -16,12 +16,13 @@ use rsnap_overlay as _;
 use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
 	self, AutoCenterImageError, BgraFrameView, CaptureFrameBackgroundKind,
-	CaptureFrameBackgroundPlan, CaptureFrameColorStop, CaptureFramePlan, CaptureFrameShadow,
-	CaptureFrameSourceKind, CaptureFrameWallpaperRequest, CaptureMode, CaptureSessionCore,
-	CursorIntent, DisplayPointRect, FrozenSelectionTransformInput, FrozenSelectionTransformKind,
-	GlobalRect, HostEffectKind, HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag,
-	RectPoints, Rgb, RgbaExportImage, ScrollMinimapInput, ScrollMinimapPlan, SessionConfig,
-	ToolbarItemKind, ToolbarItemModel, WindowRect,
+	CaptureFrameBackgroundPlan, CaptureFrameColorStop, CaptureFramePlan,
+	CaptureFrameRenderImageRef, CaptureFrameRenderKind, CaptureFrameShadow, CaptureFrameSourceKind,
+	CaptureFrameWallpaperRequest, CaptureMode, CaptureSessionCore, CursorIntent, DisplayPointRect,
+	FrozenSelectionTransformInput, FrozenSelectionTransformKind, GlobalRect, HostEffectKind,
+	HostEvent, HostReport, HostRequest, PermissionKind, PlatformTag, RectPoints, Rgb,
+	RgbaExportImage, ScrollMinimapInput, ScrollMinimapPlan, SessionConfig, ToolbarItemKind,
+	ToolbarItemModel, WindowRect,
 };
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
@@ -30,7 +31,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 29;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 30;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -225,6 +226,16 @@ pub enum RsnapCaptureFrameBackgroundKind {
 	Graphite = 2,
 	/// Light linen gradient.
 	Linen = 3,
+}
+
+/// FFI-safe capture-frame render mode.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapCaptureFrameRenderKind {
+	/// Draw shadows and rounded clipping around the capture.
+	FramedCapture = 0,
+	/// Draw a floating full-window snapshot without added clipping.
+	WindowSnapshot = 1,
 }
 
 /// FFI-safe sRGB capture-frame color stop.
@@ -1335,6 +1346,84 @@ pub unsafe extern "C" fn rsnap_capture_frame_wallpaper_png_thumbnail(
 	RsnapStatus::Ok
 }
 
+/// Renders the complete capture-frame effect as Rust-owned RGBA bytes.
+///
+/// Swift/native hosts only pass source pixels and an optional platform wallpaper path. Rust owns
+/// wallpaper thumbnail planning/cache/decode, background drawing, shadows, clipping, and final
+/// composition.
+///
+/// # Safety
+///
+/// `source_rgba` must point to `source_rgba_len` readable bytes containing
+/// `source_width * source_height * 4` row-major RGBA data. `wallpaper_path` may be null or a valid
+/// null-terminated UTF-8 string. `out_region` must be writable, and the returned buffer must be
+/// released with `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_render_rgba(
+	source_width: u32,
+	source_height: u32,
+	source_rgba: *const u8,
+	source_rgba_len: usize,
+	screen_scale_factor: f64,
+	source_kind: RsnapCaptureFrameSourceKind,
+	background_kind: RsnapCaptureFrameBackgroundKind,
+	render_kind: RsnapCaptureFrameRenderKind,
+	wallpaper_path: *const c_char,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	unsafe {
+		ptr::write(out_region, RsnapOwnedRgbaRegion::default());
+	}
+
+	let Some(source_bytes) = (unsafe { rgba_bytes(source_rgba, source_rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(source) = CaptureFrameRenderImageRef::new(source_width, source_height, source_bytes)
+	else {
+		return RsnapStatus::InvalidInput;
+	};
+	let background_kind = decode_capture_frame_background_kind(background_kind);
+	let source_kind = decode_capture_frame_source_kind(source_kind);
+	let render_kind = decode_capture_frame_render_kind(render_kind);
+	let wallpaper = match unsafe {
+		capture_frame_wallpaper_for_render(
+			source,
+			screen_scale_factor,
+			source_kind,
+			background_kind,
+			wallpaper_path,
+		)
+	} {
+		Ok(wallpaper) => wallpaper,
+		Err(_err) => return RsnapStatus::InvalidInput,
+	};
+	let wallpaper_ref = wallpaper.as_ref().map(CaptureFrameRenderImageRef::from_export);
+	let Ok(Some(rendered)) = rsnap_capture_core::render_capture_frame_effect(
+		source,
+		background_kind,
+		screen_scale_factor,
+		source_kind,
+		render_kind,
+		wallpaper_ref,
+	) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let image = rendered.into_image();
+
+	unsafe {
+		ptr::write(
+			out_region,
+			owned_region_from_raw_rgba(image.width(), image.height(), image.into_raw()),
+		);
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Resolves scroll-capture minimap layout and viewport marker geometry.
 ///
 /// # Safety
@@ -2153,6 +2242,49 @@ fn decode_capture_frame_background_kind(
 	}
 }
 
+fn decode_capture_frame_render_kind(kind: RsnapCaptureFrameRenderKind) -> CaptureFrameRenderKind {
+	match kind {
+		RsnapCaptureFrameRenderKind::FramedCapture => CaptureFrameRenderKind::FramedCapture,
+		RsnapCaptureFrameRenderKind::WindowSnapshot => CaptureFrameRenderKind::WindowSnapshot,
+	}
+}
+
+unsafe fn capture_frame_wallpaper_for_render(
+	source: CaptureFrameRenderImageRef<'_>,
+	screen_scale_factor: f64,
+	source_kind: CaptureFrameSourceKind,
+	background_kind: CaptureFrameBackgroundKind,
+	wallpaper_path: *const c_char,
+) -> Result<Option<RgbaExportImage>, ()> {
+	if wallpaper_path.is_null() {
+		return Ok(None);
+	}
+	let Some(plan) = rsnap_capture_core::capture_frame_plan(
+		source.width(),
+		source.height(),
+		screen_scale_factor,
+		source_kind,
+	) else {
+		return Ok(None);
+	};
+	let Some(request) = rsnap_capture_core::capture_frame_wallpaper_request_plan(
+		background_kind,
+		plan.canvas_width,
+		plan.canvas_height,
+	) else {
+		return Ok(None);
+	};
+	let path = unsafe { CStr::from_ptr(wallpaper_path) }.to_str().map_err(|_| ())?;
+
+	match rsnap_capture_core::capture_frame_wallpaper_png_thumbnail_cached(
+		path,
+		request.target_pixel_size,
+	) {
+		Ok(thumbnail) => Ok(thumbnail),
+		Err(_err) => Ok(None),
+	}
+}
+
 fn encode_capture_frame_plan(plan: CaptureFramePlan) -> RsnapCaptureFramePlan {
 	RsnapCaptureFramePlan {
 		canvas_width: plan.canvas_width,
@@ -2713,11 +2845,12 @@ mod tests {
 	use crate::{
 		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCaptureFrameBackgroundKind,
 		RsnapCaptureFrameBackgroundPlan, RsnapCaptureFrameColorStop, RsnapCaptureFramePlan,
-		RsnapCaptureFrameSourceKind, RsnapCaptureFrameWallpaperRequest, RsnapCursorIntent,
-		RsnapFloatRect, RsnapFrozenSelectionTransformKind, RsnapHostEvent, RsnapHostEventKind,
-		RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind, RsnapHostRequestValue,
-		RsnapMonitorRect, RsnapOwnedBytes, RsnapOwnedRgbaRegion, RsnapPixelRect, RsnapPlatformTag,
-		RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan,
+		RsnapCaptureFrameRenderKind, RsnapCaptureFrameSourceKind,
+		RsnapCaptureFrameWallpaperRequest, RsnapCursorIntent, RsnapFloatRect,
+		RsnapFrozenSelectionTransformKind, RsnapHostEvent, RsnapHostEventKind, RsnapHostReport,
+		RsnapHostReportKind, RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect,
+		RsnapOwnedBytes, RsnapOwnedRgbaRegion, RsnapPixelRect, RsnapPlatformTag, RsnapPoint,
+		RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan,
 		RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
 	};
 	#[cfg(target_os = "macos")]
@@ -3228,6 +3361,38 @@ mod tests {
 			crate::rsnap_owned_rgba_region_release(&mut thumbnail);
 		}
 		let _ = fs::remove_file(path_buf);
+	}
+
+	#[test]
+	fn ffi_capture_frame_render_rgba_returns_owned_composition() {
+		let rgba = [255; 4 * 2 * 4];
+		let mut rendered = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_render_rgba(
+				4,
+				2,
+				rgba.as_ptr(),
+				rgba.len(),
+				2.0,
+				RsnapCaptureFrameSourceKind::DragRegion,
+				RsnapCaptureFrameBackgroundKind::Aurora,
+				RsnapCaptureFrameRenderKind::WindowSnapshot,
+				ptr::null(),
+				&mut rendered,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(rendered.width, 100);
+		assert_eq!(rendered.height, 98);
+		assert_eq!(rendered.len, 100 * 98 * 4);
+		let bytes = unsafe { std::slice::from_raw_parts(rendered.rgba, rendered.len) };
+		let first_source_pixel = ((48 * rendered.width as usize) + 48) * 4;
+		assert_eq!(&bytes[first_source_pixel..first_source_pixel + 4], &[255, 255, 255, 255]);
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut rendered);
+		}
 	}
 
 	#[test]
