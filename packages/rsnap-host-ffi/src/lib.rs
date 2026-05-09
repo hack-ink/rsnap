@@ -1908,7 +1908,7 @@ pub unsafe extern "C" fn rsnap_capture_frame_wallpaper_request_plan(
 	RsnapStatus::Ok
 }
 
-/// Decodes a PNG wallpaper thumbnail with Rust's streaming low-memory path.
+/// Decodes a PNG wallpaper thumbnail through Rust's streaming low-memory cached path.
 ///
 /// Non-PNG paths and decode failures return `Empty` so native hosts can skip wallpaper drawing.
 ///
@@ -1939,7 +1939,7 @@ pub unsafe extern "C" fn rsnap_capture_frame_wallpaper_png_thumbnail(
 		return RsnapStatus::InvalidInput;
 	};
 	let Ok(Some(thumbnail)) =
-		rsnap_capture_core::capture_frame_wallpaper_png_thumbnail(path, target_pixel_size)
+		rsnap_capture_core::capture_frame_wallpaper_png_thumbnail_cached(path, target_pixel_size)
 	else {
 		return RsnapStatus::Empty;
 	};
