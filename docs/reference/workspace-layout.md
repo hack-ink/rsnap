@@ -151,6 +151,16 @@ It owns:
 - presentation of Rust-rendered images and models in native windows
 - the checked-in bridge probe used by `cargo make test-host-reset`
 
+The main host-kit files are split by responsibility:
+
+- `NativeHostApp.swift`: app delegate and capture-session bridge orchestration
+- `CaptureOverlayController.swift`: overlay window set, focus, stream preparation, and below-overlay
+  capture source management
+- `CaptureHostView.swift`: AppKit view rendering, hit testing, cursor presentation, and native
+  pointer/key routing
+- `FrozenCaptureModels.swift`: Swift adapter models for Rust-owned frozen overlay editing
+- `NativeHostImageBridge.swift`: RGBA/CoreGraphics image conversion used by the FFI bridge
+
 It depends on:
 
 - `packages/rsnap-host-ffi/` for the C ABI contract
