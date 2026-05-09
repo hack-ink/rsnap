@@ -58,6 +58,33 @@ Today:
 During the reset, treat these as implementation containers rather than the final architecture
 story.
 
+## Current macOS Swift residual map
+
+The remaining Swift code is not expected to collapse to zero during the reset. It should shrink only
+where Swift is still holding deterministic product logic that belongs in Rust.
+
+The current native-host Swift split is:
+
+- `NativeHostApp.swift`: app delegate, menu bar lifecycle, settings/hotkey wiring, launch and
+  permission orchestration, and the `CaptureSessionController` bridge that routes host events,
+  host requests, and host-owned side effects.
+- `CaptureOverlayController.swift`: AppKit overlay-window set management, focus/first-responder
+  routing, capture-stream preparation, mouse passthrough, and CoreGraphics capture sources needed
+  to sample below native overlay windows.
+- `CaptureHostView.swift`: AppKit/Quartz drawing, hit testing, cursor presentation, Liquid Glass
+  surfaces, live/frozen HUD and toolbar rendering, and native pointer/key event routing into the
+  session controller.
+- `FrozenCaptureModels.swift`: Swift view-adapter state for Rust-owned frozen overlay editing,
+  including conversion from Rust edit snapshots into AppKit draw models.
+- `NativeHostImageBridge.swift` and `RsnapHostBridge`: conversion and FFI glue between
+  CoreGraphics/AppKit images and Rust-owned RGBA snapshots.
+
+This means a large Swift line count can still be reasonable when those lines are AppKit,
+CoreGraphics, ScreenCaptureKit, Vision, pasteboard, save-panel, sound, update, or window lifecycle
+glue. A large Swift line count is suspicious only when it reintroduces product-state machines,
+portable geometry decisions, export byte generation, image algorithms, or duplicate planning logic
+that already has a Rust entrypoint.
+
 ## Migration posture
 
 New work in the reset lane should prefer changes that:
@@ -93,6 +120,16 @@ Current reset posture for the boundary slice:
 - targeted reset-slice validation now lives at `cargo make test-host-reset`
 - `apps/rsnap/` and `rsnap-overlay/` should treat those crates as the migration target instead of
   inventing parallel durable protocol types inside legacy containers
+
+If further optimization is needed, prefer this order:
+
+1. Continue structure-only Swift splits when a file mixes app lifecycle, capture-session
+   orchestration, and AppKit rendering in a way that makes review risky.
+2. Move deterministic planners or pixel algorithms to `rsnap-capture-core` and expose them through
+   `rsnap-host-ffi` only when Swift still owns the decision or byte generation.
+3. Keep OS acquisition, AppKit presentation, Vision OCR, pasteboard/save-panel, focus, cursor,
+   permissions, and update UI in Swift unless a future platform host supplies an equivalent native
+   adapter.
 
 ## Vertical-slice model
 
