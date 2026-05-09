@@ -153,12 +153,32 @@ It owns:
 
 The main host-kit files are split by responsibility:
 
-- `NativeHostApp.swift`: app delegate and capture-session bridge orchestration
+- `NativeHostApp.swift`: app delegate, menu bar lifecycle, settings/hotkey wiring, launch,
+  permission, onboarding, update, and status-menu orchestration
+- `CaptureSessionController.swift`: shared state and lifecycle hooks for the Swift host-session
+  coordinator around `RsnapHostSession`
+- `CaptureSessionController+Live.swift`: live capture startup, live sampling warmup, pointer
+  movement, and live primary interaction routing
+- `CaptureSessionController+FrozenInteraction.swift`: frozen selection movement/resizing,
+  annotation commands, auto-center, loupe, and toolbar command forwarding
+- `CaptureSessionController+HostRequests.swift`: Rust host-request draining, freeze-snapshot
+  commit handling, host-owned frozen scene preparation, and host-effect dispatch
+- `CaptureSessionController+ScrollCapture.swift`: native scroll monitor lifecycle, scroll-event
+  forwarding, viewport sampling, and scroll minimap preview refresh
+- `CaptureSessionController+Export.swift`: copy/save host effects, output naming, capture-image
+  export, capture-frame effect application, and Rust-backed PNG encoding
+- `CaptureSessionController+TextRecognition.swift`: Vision OCR request execution and recognized
+  text pasteboard publication
+- `CaptureSessionController+Runtime.swift`: shared monitor/window lookup, overlay refresh,
+  teardown, status message, and capture-stream release helpers
+- `CaptureChrome.swift`: shared native chrome metrics, palette, and drawing geometry
+- `CaptureOverlayWindow.swift`: AppKit `NSPanel` wrapper for capture overlay windows
 - `CaptureOverlayController.swift`: overlay window set, focus, stream preparation, and below-overlay
   capture source management
 - `CaptureHostView.swift`: AppKit view rendering, hit testing, cursor presentation, and native
   pointer/key routing
 - `FrozenCaptureModels.swift`: Swift adapter models for Rust-owned frozen overlay editing
+- `NativeHostFeedbackSound.swift`: host-side sound lookup/playback for completion effects
 - `NativeHostImageBridge.swift`: RGBA/CoreGraphics image conversion used by the FFI bridge
 
 It depends on:
