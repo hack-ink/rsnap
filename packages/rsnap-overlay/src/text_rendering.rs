@@ -22,6 +22,12 @@ pub(crate) struct RasterTextAnnotation<'a> {
 	pub(crate) text: &'a str,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TextBounds {
+	pub(crate) width: f32,
+	pub(crate) height: f32,
+}
+
 #[derive(Debug)]
 struct ExportTextFont {
 	font_data: Arc<FontData>,
@@ -56,6 +62,22 @@ impl ExportTextFont {
 struct TextFontRun<'a> {
 	font_index: usize,
 	text: &'a str,
+}
+
+pub(crate) fn measure_text_bounds(text: &str, font_size_px: f32) -> Option<TextBounds> {
+	if text.is_empty() {
+		return None;
+	}
+
+	let fonts = export_text_fonts();
+
+	if let Some(runs) = build_text_font_runs(fonts, text)
+		&& let Some(bounds) = measure_with_font_stack(text, font_size_px, fonts, &runs)
+	{
+		return Some(bounds);
+	}
+
+	Some(measure_bitmap_text_bounds(text, font_size_px))
 }
 
 pub(crate) fn render_text_annotations(
@@ -147,6 +169,78 @@ fn build_text_font_runs<'a>(
 	}
 
 	Some(runs)
+}
+
+fn measure_with_font_stack(
+	text: &str,
+	font_size_px: f32,
+	fonts: &[ExportTextFont],
+	runs: &[TextFontRun<'_>],
+) -> Option<TextBounds> {
+	let parsed_fonts: Vec<_> = fonts.iter().filter_map(ExportTextFont::font).collect();
+
+	if parsed_fonts.is_empty() || parsed_fonts.len() != fonts.len() {
+		return None;
+	}
+
+	let mut layout = Layout::new(CoordinateSystem::PositiveYDown);
+
+	layout.reset(&LayoutSettings::default());
+
+	for run in runs {
+		layout.append(
+			&parsed_fonts,
+			&TextStyle::new(run.text, font_size_px.max(8.0), run.font_index),
+		);
+	}
+
+	let mut max_x = 0.0_f32;
+	let mut max_y = 0.0_f32;
+
+	for glyph in layout.glyphs() {
+		max_x = max_x.max(glyph.x + glyph.width as f32);
+		max_y = max_y.max(glyph.y + glyph.height as f32);
+	}
+
+	if max_x <= 0.0 && max_y <= 0.0 {
+		return None;
+	}
+
+	let line_count = text.lines().count().max(1) as f32;
+	let line_height = font_size_px.max(8.0) * 1.2;
+
+	Some(TextBounds {
+		width: max_x.ceil().max(1.0),
+		height: max_y.ceil().max(line_height * line_count).max(1.0),
+	})
+}
+
+fn measure_bitmap_text_bounds(text: &str, font_size_px: f32) -> TextBounds {
+	let scale = (font_size_px.max(8.0) / BITMAP_GLYPH_SIDE_PX as f32).round().max(1.0) as u32;
+	let glyph_advance = BITMAP_GLYPH_ADVANCE_PX.saturating_mul(scale) as f32;
+	let line_height = BITMAP_GLYPH_SIDE_PX
+		.saturating_mul(scale)
+		.saturating_add(BITMAP_LINE_GAP_PX.saturating_mul(scale)) as f32;
+	let mut line_width = 0.0_f32;
+	let mut max_width = 0.0_f32;
+	let mut line_count = 1_u32;
+
+	for ch in text.chars() {
+		if ch == '\n' {
+			max_width = max_width.max(line_width);
+			line_width = 0.0;
+			line_count = line_count.saturating_add(1);
+		} else {
+			line_width += glyph_advance;
+		}
+	}
+
+	max_width = max_width.max(line_width);
+
+	TextBounds {
+		width: max_width.ceil().max(1.0),
+		height: (line_height * line_count as f32).ceil().max(1.0),
+	}
 }
 
 fn font_index_for_char(

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 31u
+#define RSNAP_HOST_FFI_ABI_VERSION 32u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -16,6 +16,7 @@ extern "C" {
 typedef struct RsnapSessionHandle RsnapSessionHandle;
 typedef struct RsnapLiveSamplerHandle RsnapLiveSamplerHandle;
 typedef struct RsnapScrollSessionHandle RsnapScrollSessionHandle;
+typedef struct RsnapFrozenOverlayEditSessionHandle RsnapFrozenOverlayEditSessionHandle;
 
 typedef enum RsnapStatus {
 	RSNAP_STATUS_OK = 0,
@@ -298,6 +299,37 @@ typedef struct RsnapFrozenOverlayExportElement {
 	enum RsnapFrozenAnnotationColor color;
 } RsnapFrozenOverlayExportElement;
 
+typedef struct RsnapFrozenOverlayEditStyle {
+	double stroke_width_points;
+	enum RsnapFrozenAnnotationColor stroke_color;
+	double spotlight_border_width_points;
+	enum RsnapFrozenAnnotationColor spotlight_color;
+	double text_font_size_points;
+	enum RsnapFrozenAnnotationColor text_color;
+} RsnapFrozenOverlayEditStyle;
+
+typedef struct RsnapFrozenOverlayEditSnapshot {
+	uint8_t can_undo;
+	uint8_t can_redo;
+	uint8_t keeps_frozen_selection_fixed;
+	uint8_t is_moving_movable_annotation;
+	uint8_t has_active_interaction;
+	struct RsnapFrozenOverlayExportElement *elements;
+	size_t elements_len;
+	uint8_t has_preview_pen;
+	struct RsnapFrozenOverlayExportElement preview_pen;
+	uint8_t has_preview_arrow;
+	struct RsnapFrozenOverlayExportElement preview_arrow;
+	uint8_t has_preview_mosaic;
+	struct RsnapFrozenOverlayExportElement preview_mosaic;
+	uint8_t has_preview_spotlight;
+	struct RsnapFrozenOverlayExportElement preview_spotlight;
+	uint8_t has_preview_text;
+	struct RsnapFrozenOverlayExportElement preview_text;
+	uint8_t has_active_text_edit;
+	struct RsnapFrozenOverlayExportElement active_text_edit;
+} RsnapFrozenOverlayEditSnapshot;
+
 typedef enum RsnapCaptureFrameSourceKind {
 	RSNAP_CAPTURE_FRAME_SOURCE_DRAG_REGION = 0,
 	RSNAP_CAPTURE_FRAME_SOURCE_WINDOW = 1,
@@ -395,6 +427,7 @@ RsnapScrollSessionHandle *rsnap_scroll_session_create(
 	size_t rgba_len,
 	uint32_t preview_width_px
 );
+RsnapFrozenOverlayEditSessionHandle *rsnap_frozen_overlay_edit_session_create(void);
 RsnapLiveSamplerHandle *rsnap_live_sampler_create(void);
 RsnapLiveSamplerHandle *rsnap_live_sampler_create_with_self_capture_exception_window_ids(
 	const uint32_t *window_ids,
@@ -409,7 +442,67 @@ enum RsnapStatus rsnap_live_sampler_reset(
 );
 void rsnap_session_destroy(RsnapSessionHandle *handle);
 void rsnap_scroll_session_destroy(RsnapScrollSessionHandle *handle);
+void rsnap_frozen_overlay_edit_session_destroy(RsnapFrozenOverlayEditSessionHandle *handle);
 void rsnap_live_sampler_destroy(RsnapLiveSamplerHandle *handle);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_reset(
+	RsnapFrozenOverlayEditSessionHandle *handle
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_begin(
+	RsnapFrozenOverlayEditSessionHandle *handle,
+	enum RsnapToolbarItemKind tool,
+	struct RsnapFloatPoint point,
+	struct RsnapFloatRect selection,
+	struct RsnapFrozenOverlayEditStyle style,
+	uint8_t *out_changed
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_update(
+	RsnapFrozenOverlayEditSessionHandle *handle,
+	struct RsnapFloatPoint point,
+	struct RsnapFloatRect selection,
+	uint8_t *out_changed
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_finish(
+	RsnapFrozenOverlayEditSessionHandle *handle,
+	struct RsnapFloatRect selection,
+	uint8_t *out_changed
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_append_text(
+	RsnapFrozenOverlayEditSessionHandle *handle,
+	const char *text,
+	uint8_t *out_changed
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_backspace_text(
+	RsnapFrozenOverlayEditSessionHandle *handle,
+	uint8_t *out_changed
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_commit_text(
+	RsnapFrozenOverlayEditSessionHandle *handle,
+	struct RsnapFrozenOverlayEditStyle style,
+	uint8_t *out_changed
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_cancel_text(
+	RsnapFrozenOverlayEditSessionHandle *handle
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_undo(
+	RsnapFrozenOverlayEditSessionHandle *handle,
+	uint8_t *out_changed
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_redo(
+	RsnapFrozenOverlayEditSessionHandle *handle,
+	uint8_t *out_changed
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_contains_movable_annotation(
+	const RsnapFrozenOverlayEditSessionHandle *handle,
+	struct RsnapFloatPoint point,
+	uint8_t *out_contains
+);
+enum RsnapStatus rsnap_frozen_overlay_edit_session_copy_snapshot(
+	const RsnapFrozenOverlayEditSessionHandle *handle,
+	struct RsnapFrozenOverlayEditSnapshot *out_snapshot
+);
+void rsnap_frozen_overlay_edit_snapshot_release(
+	struct RsnapFrozenOverlayEditSnapshot *snapshot
+);
 enum RsnapStatus rsnap_scroll_session_observe_downward_frame(
 	RsnapScrollSessionHandle *handle,
 	uint32_t width,

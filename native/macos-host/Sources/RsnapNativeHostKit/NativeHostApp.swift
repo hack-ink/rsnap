@@ -2540,7 +2540,7 @@ final class CaptureSessionController: NSObject {
 		let hadBaseImageBefore = chromeState.frozenBaseImage != nil
 		let hadFrozenDisplayImageBefore = chromeState.frozenDisplayImage != nil
 		let hasOverlayEdits =
-			chromeState.frozenOverlay.canUndo || chromeState.frozenOverlay.activeInteraction != nil
+			chromeState.frozenOverlay.canUndo || chromeState.frozenOverlay.hasActiveInteraction
 		let ensureStartedAt = ProcessInfo.processInfo.systemUptime
 		ensureFrozenBaseImageFromDisplayIfNeeded(for: selection)
 		let ensureMilliseconds = NativeHostTelemetry.milliseconds(since: ensureStartedAt)
@@ -7775,6 +7775,59 @@ extension FrozenTextStyle {
 	}
 }
 
+extension FrozenOverlayExportColor {
+	fileprivate var annotationColor: FrozenAnnotationColor {
+		switch self {
+		case .white:
+			.white
+		case .yellow:
+			.yellow
+		case .green:
+			.green
+		case .blue:
+			.blue
+		case .red:
+			.red
+		case .black:
+			.black
+		}
+	}
+}
+
+extension FrozenOverlayExportStrokeStyle {
+	fileprivate var frozenBrushStyle: FrozenBrushStyle {
+		FrozenBrushStyle(strokeWidthPoints: strokeWidthPoints, color: color.annotationColor)
+	}
+}
+
+extension FrozenOverlayExportSpotlightStyle {
+	fileprivate var frozenSpotlightStyle: FrozenSpotlightStyle {
+		FrozenSpotlightStyle(
+			borderWidthPoints: borderWidthPoints,
+			borderColor: borderColor.annotationColor
+		)
+	}
+}
+
+extension FrozenOverlayExportTextStyle {
+	fileprivate var frozenTextStyle: FrozenTextStyle {
+		FrozenTextStyle(fontSizePoints: fontSizePoints, color: color.annotationColor)
+	}
+}
+
+extension FrozenAnnotationStyleState {
+	fileprivate var editStyle: FrozenOverlayEditStyle {
+		FrozenOverlayEditStyle(
+			strokeWidthPoints: brushStyle.strokeWidthPoints,
+			strokeColor: brushStyle.color.exportColor,
+			spotlightBorderWidthPoints: spotlightStyle.borderWidthPoints,
+			spotlightColor: spotlightStyle.borderColor.exportColor,
+			textFontSizePoints: textStyle.fontSizePoints,
+			textColor: textStyle.color.exportColor
+		)
+	}
+}
+
 private enum FrozenAnnotationStyleAction: Equatable {
 	case decreaseSize
 	case increaseSize
@@ -8090,523 +8143,214 @@ private struct ScrollCaptureMinimapSnapshot {
 	let viewportHeightPixels: CGFloat
 }
 
-private struct FrozenOverlayState {
-	enum Edit {
-		case pen(FrozenBrushStroke)
-		case arrow(FrozenArrowAnnotation)
-		case mosaic(CGRect)
-		case spotlight(FrozenSpotlightAnnotation)
-		case text(FrozenTextAnnotation)
-	}
+private final class FrozenOverlayState {
+	private let session: RsnapFrozenOverlayEditSession
+	private var snapshot: FrozenOverlayEditSnapshot
 
-	enum ActiveInteraction {
-		case pen(points: [CGPoint], style: FrozenBrushStyle)
-		case arrow(start: CGPoint, current: CGPoint, style: FrozenBrushStyle)
-		case mosaic(anchor: CGPoint, current: CGPoint)
-		case mosaicMove(index: Int, currentRect: CGRect, dragOffset: CGSize)
-		case textMove(index: Int, currentAnnotation: FrozenTextAnnotation, dragOffset: CGSize)
-		case spotlight(anchor: CGPoint, current: CGPoint, style: FrozenSpotlightStyle)
-	}
-
-	private enum MoveTarget {
-		case mosaic(index: Int, rect: CGRect)
-		case text(index: Int, annotation: FrozenTextAnnotation)
-	}
-
-	var edits: [Edit] = []
-	var redoEdits: [Edit] = []
-	var activeInteraction: ActiveInteraction?
-	var activeTextEdit: FrozenTextEditState?
-
-	var canUndo: Bool { !edits.isEmpty }
-	var canRedo: Bool { !redoEdits.isEmpty }
-	var keepsFrozenSelectionFixed: Bool {
-		!edits.isEmpty || !redoEdits.isEmpty || activeInteraction != nil || activeTextEdit != nil
-	}
-	var isMovingMovableAnnotation: Bool {
-		switch activeInteraction {
-		case .mosaicMove?, .textMove?:
-			return true
-		case nil, .pen?, .arrow?, .mosaic?, .spotlight?:
-			return false
+	init() {
+		do {
+			let session = try RsnapFrozenOverlayEditSession()
+			self.session = session
+			self.snapshot = try session.snapshot()
+		} catch {
+			fatalError("Failed to create Rust frozen overlay edit session: \(error)")
 		}
 	}
 
-	mutating func reset() {
-		edits.removeAll()
-		redoEdits.removeAll()
-		activeInteraction = nil
-		activeTextEdit = nil
+	var canUndo: Bool { snapshot.canUndo }
+	var canRedo: Bool { snapshot.canRedo }
+	var keepsFrozenSelectionFixed: Bool { snapshot.keepsFrozenSelectionFixed }
+	var isMovingMovableAnnotation: Bool { snapshot.isMovingMovableAnnotation }
+	var hasActiveInteraction: Bool { snapshot.hasActiveInteraction }
+	var activeTextEdit: FrozenTextEditState? {
+		snapshot.activeTextEdit.map { FrozenTextEditState(anchor: $0.anchor, text: $0.text) }
+	}
+	var exportElements: [FrozenOverlayExportElement] { snapshot.elements }
+
+	var penStrokes: [FrozenBrushStroke] {
+		snapshot.elements.compactMap(Self.penStroke(from:))
 	}
 
-	mutating func begin(
+	var arrowAnnotations: [FrozenArrowAnnotation] {
+		snapshot.elements.compactMap(Self.arrowAnnotation(from:))
+	}
+
+	var mosaicRects: [CGRect] {
+		snapshot.elements.compactMap(Self.mosaicRect(from:))
+	}
+
+	var spotlightAnnotations: [FrozenSpotlightAnnotation] {
+		snapshot.elements.compactMap(Self.spotlightAnnotation(from:))
+	}
+
+	var textAnnotations: [FrozenTextAnnotation] {
+		snapshot.elements.compactMap(Self.textAnnotation(from:))
+	}
+
+	var previewPenStroke: FrozenBrushStroke? {
+		snapshot.previewPen.flatMap(Self.penStroke(from:))
+	}
+
+	var previewArrow: FrozenArrowAnnotation? {
+		snapshot.previewArrow.flatMap(Self.arrowAnnotation(from:))
+	}
+
+	var previewMosaicRect: CGRect? {
+		snapshot.previewMosaic.flatMap(Self.mosaicRect(from:))
+	}
+
+	var previewTextAnnotation: FrozenTextAnnotation? {
+		snapshot.previewText.flatMap(Self.textAnnotation(from:))
+	}
+
+	var previewSpotlightAnnotation: FrozenSpotlightAnnotation? {
+		snapshot.previewSpotlight.flatMap(Self.spotlightAnnotation(from:))
+	}
+
+	func reset() {
+		do {
+			try session.reset()
+			try refreshSnapshot()
+		} catch {
+			fatalError("Failed to reset Rust frozen overlay state: \(error)")
+		}
+	}
+
+	func begin(
 		tool: ToolbarItemKind,
 		at point: CGPoint,
 		selection: CGRect,
 		style: FrozenAnnotationStyleState
 	) -> Bool {
-		guard selection.contains(point) else {
-			return false
+		performRefreshingWhenChanged {
+			try session.begin(tool: tool, at: point, selection: selection, style: style.editStyle)
 		}
+	}
 
-		switch tool {
-		case .pen:
-			activeInteraction = .pen(points: [point], style: style.brushStyle)
-		case .arrow:
-			activeInteraction = .arrow(start: point, current: point, style: style.brushStyle)
-		case .mosaic:
-			activeInteraction = .mosaic(anchor: point, current: point)
-		case .pointer:
-			guard let target = Self.moveTarget(in: edits, at: point) else {
-				return false
-			}
-			switch target {
-			case .mosaic(let index, let rect):
-				activeInteraction = .mosaicMove(
-					index: index,
-					currentRect: rect,
-					dragOffset: CGSize(width: point.x - rect.minX, height: point.y - rect.minY)
+	func update(to point: CGPoint, selection: CGRect) -> Bool {
+		performRefreshingWhenChanged {
+			try session.update(to: point, selection: selection)
+		}
+	}
+
+	func finish(selection: CGRect) -> Bool {
+		performRefreshingAlways {
+			try session.finish(selection: selection)
+		}
+	}
+
+	func appendText(_ text: String) -> Bool {
+		performRefreshingWhenChanged {
+			try session.appendText(text)
+		}
+	}
+
+	func backspaceText() -> Bool {
+		performRefreshingWhenChanged {
+			try session.backspaceText()
+		}
+	}
+
+	func commitTextEdit(style: FrozenTextStyle) -> Bool {
+		performRefreshingAlways {
+			try session.commitText(
+				style: FrozenOverlayEditStyle(
+					strokeWidthPoints: 3,
+					strokeColor: .blue,
+					spotlightBorderWidthPoints: 0,
+					spotlightColor: .blue,
+					textFontSizePoints: style.fontSizePoints,
+					textColor: style.color.exportColor
 				)
-			case .text(let index, let annotation):
-				activeInteraction = .textMove(
-					index: index,
-					currentAnnotation: annotation,
-					dragOffset: CGSize(
-						width: point.x - annotation.anchor.x,
-						height: point.y - annotation.anchor.y
-					)
-				)
-			}
-		case .spotlight:
-			activeInteraction = .spotlight(
-				anchor: point,
-				current: point,
-				style: style.spotlightStyle
-			)
-		case .text:
-			let _ = commitTextEdit(style: style.textStyle)
-			activeTextEdit = FrozenTextEditState(anchor: selection.clamp(point), text: "")
-			return true
-		default:
-			return false
-		}
-
-		return true
-	}
-
-	mutating func update(to point: CGPoint, selection: CGRect) -> Bool {
-		guard let activeInteraction else {
-			return false
-		}
-
-		switch activeInteraction {
-		case .pen(var points, let style):
-			let clamped = selection.clamp(point)
-			if let lastPoint = points.last,
-				hypot(lastPoint.x - clamped.x, lastPoint.y - clamped.y) < 1.5
-			{
-				return false
-			}
-			points.append(clamped)
-			self.activeInteraction = .pen(points: points, style: style)
-		case .arrow(let start, _, let style):
-			self.activeInteraction = .arrow(
-				start: start, current: selection.clamp(point), style: style)
-		case .mosaic(let anchor, _):
-			self.activeInteraction = .mosaic(anchor: anchor, current: selection.clamp(point))
-		case .mosaicMove(let index, let currentRect, let dragOffset):
-			self.activeInteraction = .mosaicMove(
-				index: index,
-				currentRect: Self.movedMosaicRect(
-					rect: currentRect,
-					dragOffset: dragOffset,
-					point: point,
-					selection: selection
-				),
-				dragOffset: dragOffset
-			)
-		case .textMove(let index, let currentAnnotation, let dragOffset):
-			self.activeInteraction = .textMove(
-				index: index,
-				currentAnnotation: Self.movedTextAnnotation(
-					currentAnnotation,
-					dragOffset: dragOffset,
-					point: point,
-					selection: selection
-				),
-				dragOffset: dragOffset
-			)
-		case .spotlight(let anchor, _, let style):
-			self.activeInteraction = .spotlight(
-				anchor: anchor,
-				current: selection.clamp(point),
-				style: style
 			)
 		}
-
-		return true
 	}
 
-	mutating func finish(selection: CGRect) -> Bool {
-		guard let activeInteraction else {
-			return false
+	func undo() -> Bool {
+		performRefreshingAlways {
+			try session.undo()
 		}
-		defer { self.activeInteraction = nil }
-
-		var changed = true
-		switch activeInteraction {
-		case .pen(let points, let style):
-			guard points.count >= 2 else {
-				return false
-			}
-			edits.append(.pen(FrozenBrushStroke(points: points, style: style)))
-		case .arrow(let start, let current, let style):
-			guard hypot(start.x - current.x, start.y - current.y) >= 6 else {
-				return false
-			}
-			edits.append(.arrow(FrozenArrowAnnotation(start: start, end: current, style: style)))
-		case .mosaic(let anchor, let current):
-			let rect = selection.normalizedRect(anchor: anchor, current: current)
-			guard rect.width >= 6, rect.height >= 6 else {
-				return false
-			}
-			edits.append(.mosaic(rect))
-		case .mosaicMove(let index, let currentRect, _):
-			guard edits.indices.contains(index), case .mosaic(let oldRect) = edits[index] else {
-				return false
-			}
-			if oldRect == currentRect {
-				changed = false
-			} else {
-				edits[index] = .mosaic(currentRect)
-			}
-		case .textMove(let index, let currentAnnotation, _):
-			guard edits.indices.contains(index),
-				case .text(let oldAnnotation) = edits[index]
-			else {
-				return false
-			}
-			if oldAnnotation == currentAnnotation {
-				changed = false
-			} else {
-				edits[index] = .text(currentAnnotation)
-			}
-		case .spotlight(let anchor, let current, let style):
-			let rect = selection.normalizedRect(anchor: anchor, current: current)
-			guard rect.width >= 6, rect.height >= 6 else {
-				return false
-			}
-			edits.append(.spotlight(FrozenSpotlightAnnotation(rect: rect, style: style)))
-		}
-
-		if changed {
-			redoEdits.removeAll()
-		}
-		return true
 	}
 
-	private static func moveTarget(in edits: [Edit], at point: CGPoint) -> MoveTarget? {
-		for index in edits.indices.reversed() {
-			switch edits[index] {
-			case .mosaic(let rect) where rect.contains(point):
-				return .mosaic(index: index, rect: rect)
-			case .text(let annotation) where textHitBounds(for: annotation).contains(point):
-				return .text(index: index, annotation: annotation)
-			case .pen, .arrow, .mosaic, .spotlight, .text:
-				continue
-			}
+	func redo() -> Bool {
+		performRefreshingAlways {
+			try session.redo()
 		}
-		return nil
-	}
-
-	private static func mosaicMoveTarget(
-		in edits: [Edit],
-		at point: CGPoint
-	) -> (index: Int, rect: CGRect)? {
-		for index in edits.indices.reversed() {
-			if case .mosaic(let rect) = edits[index], rect.contains(point) {
-				return (index, rect)
-			}
-		}
-		return nil
 	}
 
 	func containsMovableAnnotation(at point: CGPoint) -> Bool {
-		Self.moveTarget(in: edits, at: point) != nil
-	}
-
-	private static func movedMosaicRect(
-		rect: CGRect,
-		dragOffset: CGSize,
-		point: CGPoint,
-		selection: CGRect
-	) -> CGRect {
-		let maxMinX = max(selection.minX, selection.maxX - rect.width)
-		let maxMinY = max(selection.minY, selection.maxY - rect.height)
-		return CGRect(
-			x: min(max(point.x - dragOffset.width, selection.minX), maxMinX),
-			y: min(max(point.y - dragOffset.height, selection.minY), maxMinY),
-			width: rect.width,
-			height: rect.height
-		)
-	}
-
-	private static func movedTextAnnotation(
-		_ annotation: FrozenTextAnnotation,
-		dragOffset: CGSize,
-		point: CGPoint,
-		selection: CGRect
-	) -> FrozenTextAnnotation {
-		let size = textBounds(for: annotation).size
-		let maxAnchorX = max(selection.minX, selection.maxX - size.width)
-		let maxAnchorY = max(selection.minY, selection.maxY - size.height)
-		let anchor = CGPoint(
-			x: min(max(point.x - dragOffset.width, selection.minX), maxAnchorX),
-			y: min(max(point.y - dragOffset.height, selection.minY), maxAnchorY)
-		)
-		return FrozenTextAnnotation(anchor: anchor, text: annotation.text, style: annotation.style)
-	}
-
-	private static func textHitBounds(for annotation: FrozenTextAnnotation) -> CGRect {
-		textBounds(for: annotation).insetBy(dx: -4, dy: -4)
-	}
-
-	private static func textBounds(for annotation: FrozenTextAnnotation) -> CGRect {
-		let font = NSFont.systemFont(
-			ofSize: max(1, annotation.style.fontSizePoints), weight: .medium)
-		let attributed = NSAttributedString(
-			string: annotation.text,
-			attributes: [.font: font]
-		)
-		let size = attributed.boundingRect(
-			with: CGSize(
-				width: CGFloat.greatestFiniteMagnitude,
-				height: CGFloat.greatestFiniteMagnitude
-			),
-			options: [.usesLineFragmentOrigin, .usesFontLeading]
-		).size
-		return CGRect(
-			x: annotation.anchor.x,
-			y: annotation.anchor.y,
-			width: max(1, ceil(size.width)),
-			height: max(ceil(font.ascender - font.descender + font.leading), ceil(size.height))
-		)
-	}
-
-	mutating func appendText(_ text: String) -> Bool {
-		guard var activeTextEdit else {
-			return false
+		do {
+			return try session.containsMovableAnnotation(at: point)
+		} catch {
+			fatalError("Failed to hit-test Rust frozen overlay annotation: \(error)")
 		}
-		let sanitized = text.replacingOccurrences(of: "\r", with: "")
-		guard !sanitized.isEmpty else {
-			return false
-		}
-		activeTextEdit.text.append(sanitized)
-		self.activeTextEdit = activeTextEdit
-		return true
 	}
 
-	mutating func backspaceText() -> Bool {
-		guard var activeTextEdit else {
-			return false
-		}
-		guard activeTextEdit.text.popLast() != nil else {
-			return false
-		}
-		self.activeTextEdit = activeTextEdit
-		return true
-	}
-
-	mutating func commitTextEdit(style: FrozenTextStyle) -> Bool {
-		guard let activeTextEdit else {
-			return false
-		}
-		self.activeTextEdit = nil
-		let trimmed = activeTextEdit.text.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !trimmed.isEmpty else {
-			return false
-		}
-		edits.append(
-			.text(
-				FrozenTextAnnotation(
-					anchor: activeTextEdit.anchor,
-					text: activeTextEdit.text,
-					style: style
-				)))
-		redoEdits.removeAll()
-		return true
-	}
-
-	mutating func cancelTextEdit() {
-		activeTextEdit = nil
-	}
-
-	mutating func undo() -> Bool {
-		activeTextEdit = nil
-		guard let edit = edits.popLast() else {
-			return false
-		}
-		redoEdits.append(edit)
-		return true
-	}
-
-	mutating func redo() -> Bool {
-		activeTextEdit = nil
-		guard let edit = redoEdits.popLast() else {
-			return false
-		}
-		edits.append(edit)
-		return true
-	}
-
-	var exportElements: [FrozenOverlayExportElement] {
-		let movingMosaicIndex = movingMosaicEditIndex
-		let movingTextIndex = movingTextEditIndex
-		return edits.indices.compactMap { index in
-			switch edits[index] {
-			case .pen(let stroke):
-				.pen(points: stroke.points, style: stroke.style.exportStrokeStyle)
-			case .arrow(let annotation):
-				.arrow(
-					start: annotation.start,
-					end: annotation.end,
-					style: annotation.style.exportStrokeStyle
-				)
-			case .mosaic(let rect) where index != movingMosaicIndex:
-				.mosaic(rect: rect)
-			case .spotlight(let annotation):
-				.spotlight(
-					rect: annotation.rect,
-					style: annotation.style.exportSpotlightStyle
-				)
-			case .text(let annotation) where index != movingTextIndex:
-				.text(
-					anchor: annotation.anchor,
-					text: annotation.text,
-					style: annotation.style.exportTextStyle
-				)
-			case .mosaic, .text:
-				nil
+	private func performRefreshingWhenChanged(_ operation: () throws -> Bool) -> Bool {
+		do {
+			let changed = try operation()
+			if changed {
+				try refreshSnapshot()
 			}
+			return changed
+		} catch {
+			fatalError("Failed to update Rust frozen overlay state: \(error)")
 		}
 	}
 
-	var penStrokes: [FrozenBrushStroke] {
-		edits.compactMap {
-			if case .pen(let stroke) = $0 {
-				return stroke
-			}
+	private func performRefreshingAlways(_ operation: () throws -> Bool) -> Bool {
+		do {
+			let changed = try operation()
+			try refreshSnapshot()
+			return changed
+		} catch {
+			fatalError("Failed to update Rust frozen overlay state: \(error)")
+		}
+	}
+
+	private func refreshSnapshot() throws {
+		snapshot = try session.snapshot()
+	}
+
+	private static func penStroke(from element: FrozenOverlayExportElement) -> FrozenBrushStroke? {
+		guard case .pen(let points, let style) = element else {
 			return nil
 		}
+		return FrozenBrushStroke(points: points, style: style.frozenBrushStyle)
 	}
 
-	var arrowAnnotations: [FrozenArrowAnnotation] {
-		edits.compactMap {
-			if case .arrow(let annotation) = $0 {
-				return annotation
-			}
+	private static func arrowAnnotation(from element: FrozenOverlayExportElement)
+		-> FrozenArrowAnnotation?
+	{
+		guard case .arrow(let start, let end, let style) = element else {
 			return nil
 		}
+		return FrozenArrowAnnotation(start: start, end: end, style: style.frozenBrushStyle)
 	}
 
-	var mosaicRects: [CGRect] {
-		let movingIndex = movingMosaicEditIndex
-		return edits.indices.compactMap { index in
-			if index == movingIndex {
-				return nil
-			}
-			if case .mosaic(let rect) = edits[index] {
-				return rect
-			}
+	private static func mosaicRect(from element: FrozenOverlayExportElement) -> CGRect? {
+		guard case .mosaic(let rect) = element else {
 			return nil
 		}
+		return rect
 	}
 
-	var spotlightAnnotations: [FrozenSpotlightAnnotation] {
-		edits.compactMap {
-			if case .spotlight(let annotation) = $0 {
-				return annotation
-			}
+	private static func spotlightAnnotation(from element: FrozenOverlayExportElement)
+		-> FrozenSpotlightAnnotation?
+	{
+		guard case .spotlight(let rect, let style) = element else {
 			return nil
 		}
+		return FrozenSpotlightAnnotation(rect: rect, style: style.frozenSpotlightStyle)
 	}
 
-	var textAnnotations: [FrozenTextAnnotation] {
-		let movingIndex = movingTextEditIndex
-		return edits.indices.compactMap { index in
-			if index == movingIndex {
-				return nil
-			}
-			if case .text(let annotation) = edits[index] {
-				return annotation
-			}
+	private static func textAnnotation(from element: FrozenOverlayExportElement)
+		-> FrozenTextAnnotation?
+	{
+		guard case .text(let anchor, let text, let style) = element else {
 			return nil
 		}
-	}
-
-	var previewPenStroke: FrozenBrushStroke? {
-		if case .pen(let points, let style)? = activeInteraction {
-			return FrozenBrushStroke(points: points, style: style)
-		}
-		return nil
-	}
-
-	var previewArrow: FrozenArrowAnnotation? {
-		if case .arrow(let start, let current, let style)? = activeInteraction {
-			return FrozenArrowAnnotation(start: start, end: current, style: style)
-		}
-		return nil
-	}
-
-	var movingMosaicEditIndex: Int? {
-		if case .mosaicMove(let index, _, _)? = activeInteraction {
-			return index
-		}
-		return nil
-	}
-
-	var movingTextEditIndex: Int? {
-		if case .textMove(let index, _, _)? = activeInteraction {
-			return index
-		}
-		return nil
-	}
-
-	var previewMosaicRect: CGRect? {
-		if case .mosaic(let anchor, let current)? = activeInteraction {
-			return CGRect(
-				x: min(anchor.x, current.x),
-				y: min(anchor.y, current.y),
-				width: abs(current.x - anchor.x),
-				height: abs(current.y - anchor.y)
-			)
-		}
-		if case .mosaicMove(_, let currentRect, _)? = activeInteraction {
-			return currentRect
-		}
-		return nil
-	}
-
-	var previewTextAnnotation: FrozenTextAnnotation? {
-		if case .textMove(_, let annotation, _)? = activeInteraction {
-			return annotation
-		}
-		return nil
-	}
-
-	var previewSpotlightAnnotation: FrozenSpotlightAnnotation? {
-		if case .spotlight(let anchor, let current, let style)? = activeInteraction {
-			return FrozenSpotlightAnnotation(
-				rect: CGRect(
-					x: min(anchor.x, current.x),
-					y: min(anchor.y, current.y),
-					width: abs(current.x - anchor.x),
-					height: abs(current.y - anchor.y)
-				),
-				style: style
-			)
-		}
-		return nil
+		return FrozenTextAnnotation(anchor: anchor, text: text, style: style.frozenTextStyle)
 	}
 }
 

@@ -134,6 +134,84 @@ public enum FrozenOverlayExportElement: Equatable {
 	case text(anchor: CGPoint, text: String, style: FrozenOverlayExportTextStyle)
 }
 
+public struct FrozenOverlayEditStyle: Equatable {
+	public var strokeWidthPoints: CGFloat
+	public var strokeColor: FrozenOverlayExportColor
+	public var spotlightBorderWidthPoints: CGFloat
+	public var spotlightColor: FrozenOverlayExportColor
+	public var textFontSizePoints: CGFloat
+	public var textColor: FrozenOverlayExportColor
+
+	public init(
+		strokeWidthPoints: CGFloat,
+		strokeColor: FrozenOverlayExportColor,
+		spotlightBorderWidthPoints: CGFloat,
+		spotlightColor: FrozenOverlayExportColor,
+		textFontSizePoints: CGFloat,
+		textColor: FrozenOverlayExportColor
+	) {
+		self.strokeWidthPoints = strokeWidthPoints
+		self.strokeColor = strokeColor
+		self.spotlightBorderWidthPoints = spotlightBorderWidthPoints
+		self.spotlightColor = spotlightColor
+		self.textFontSizePoints = textFontSizePoints
+		self.textColor = textColor
+	}
+}
+
+public struct FrozenOverlayActiveTextEdit: Equatable {
+	public var anchor: CGPoint
+	public var text: String
+
+	public init(anchor: CGPoint, text: String) {
+		self.anchor = anchor
+		self.text = text
+	}
+}
+
+public struct FrozenOverlayEditSnapshot: Equatable {
+	public var canUndo: Bool
+	public var canRedo: Bool
+	public var keepsFrozenSelectionFixed: Bool
+	public var isMovingMovableAnnotation: Bool
+	public var hasActiveInteraction: Bool
+	public var elements: [FrozenOverlayExportElement]
+	public var previewPen: FrozenOverlayExportElement?
+	public var previewArrow: FrozenOverlayExportElement?
+	public var previewMosaic: FrozenOverlayExportElement?
+	public var previewSpotlight: FrozenOverlayExportElement?
+	public var previewText: FrozenOverlayExportElement?
+	public var activeTextEdit: FrozenOverlayActiveTextEdit?
+
+	public init(
+		canUndo: Bool,
+		canRedo: Bool,
+		keepsFrozenSelectionFixed: Bool,
+		isMovingMovableAnnotation: Bool,
+		hasActiveInteraction: Bool,
+		elements: [FrozenOverlayExportElement],
+		previewPen: FrozenOverlayExportElement?,
+		previewArrow: FrozenOverlayExportElement?,
+		previewMosaic: FrozenOverlayExportElement?,
+		previewSpotlight: FrozenOverlayExportElement?,
+		previewText: FrozenOverlayExportElement?,
+		activeTextEdit: FrozenOverlayActiveTextEdit?
+	) {
+		self.canUndo = canUndo
+		self.canRedo = canRedo
+		self.keepsFrozenSelectionFixed = keepsFrozenSelectionFixed
+		self.isMovingMovableAnnotation = isMovingMovableAnnotation
+		self.hasActiveInteraction = hasActiveInteraction
+		self.elements = elements
+		self.previewPen = previewPen
+		self.previewArrow = previewArrow
+		self.previewMosaic = previewMosaic
+		self.previewSpotlight = previewSpotlight
+		self.previewText = previewText
+		self.activeTextEdit = activeTextEdit
+	}
+}
+
 private final class FrozenOverlayExportFFIStorage {
 	var elements: [RsnapFrozenOverlayExportElement] = []
 	private var pointBuffers: [UnsafeMutableBufferPointer<RsnapFloatPoint>] = []
@@ -287,6 +365,297 @@ private final class FrozenOverlayExportFFIStorage {
 			width: Double(rect.width),
 			height: Double(rect.height)
 		)
+	}
+}
+
+public final class RsnapFrozenOverlayEditSession {
+	private let handle: OpaquePointer
+
+	public init() throws {
+		guard let handle = rsnap_frozen_overlay_edit_session_create() else {
+			throw HostBridgeError.sessionCreationFailed
+		}
+		self.handle = handle
+	}
+
+	deinit {
+		rsnap_frozen_overlay_edit_session_destroy(handle)
+	}
+
+	public func reset() throws {
+		try Self.requireOk(
+			rsnap_frozen_overlay_edit_session_reset(handle),
+			context: "resetting frozen overlay edit session"
+		)
+	}
+
+	public func begin(
+		tool: ToolbarItemKind,
+		at point: CGPoint,
+		selection: CGRect,
+		style: FrozenOverlayEditStyle
+	) throws -> Bool {
+		try boolResult { outChanged in
+			rsnap_frozen_overlay_edit_session_begin(
+				handle,
+				tool.ffiKind,
+				Self.encode(point: point),
+				Self.encode(rect: selection),
+				Self.encode(style: style),
+				outChanged
+			)
+		}
+	}
+
+	public func update(to point: CGPoint, selection: CGRect) throws -> Bool {
+		try boolResult { outChanged in
+			rsnap_frozen_overlay_edit_session_update(
+				handle,
+				Self.encode(point: point),
+				Self.encode(rect: selection),
+				outChanged
+			)
+		}
+	}
+
+	public func finish(selection: CGRect) throws -> Bool {
+		try boolResult { outChanged in
+			rsnap_frozen_overlay_edit_session_finish(
+				handle,
+				Self.encode(rect: selection),
+				outChanged
+			)
+		}
+	}
+
+	public func appendText(_ text: String) throws -> Bool {
+		try text.withCString { textPointer in
+			try boolResult { outChanged in
+				rsnap_frozen_overlay_edit_session_append_text(handle, textPointer, outChanged)
+			}
+		}
+	}
+
+	public func backspaceText() throws -> Bool {
+		try boolResult { outChanged in
+			rsnap_frozen_overlay_edit_session_backspace_text(handle, outChanged)
+		}
+	}
+
+	public func commitText(style: FrozenOverlayEditStyle) throws -> Bool {
+		try boolResult { outChanged in
+			rsnap_frozen_overlay_edit_session_commit_text(
+				handle,
+				Self.encode(style: style),
+				outChanged
+			)
+		}
+	}
+
+	public func cancelText() throws {
+		try Self.requireOk(
+			rsnap_frozen_overlay_edit_session_cancel_text(handle),
+			context: "canceling frozen overlay text edit"
+		)
+	}
+
+	public func undo() throws -> Bool {
+		try boolResult { outChanged in
+			rsnap_frozen_overlay_edit_session_undo(handle, outChanged)
+		}
+	}
+
+	public func redo() throws -> Bool {
+		try boolResult { outChanged in
+			rsnap_frozen_overlay_edit_session_redo(handle, outChanged)
+		}
+	}
+
+	public func containsMovableAnnotation(at point: CGPoint) throws -> Bool {
+		try boolResult { outContains in
+			rsnap_frozen_overlay_edit_session_contains_movable_annotation(
+				handle,
+				Self.encode(point: point),
+				outContains
+			)
+		}
+	}
+
+	public func snapshot() throws -> FrozenOverlayEditSnapshot {
+		var rawSnapshot = RsnapFrozenOverlayEditSnapshot()
+		try Self.requireOk(
+			rsnap_frozen_overlay_edit_session_copy_snapshot(handle, &rawSnapshot),
+			context: "copying frozen overlay edit snapshot"
+		)
+		defer {
+			rsnap_frozen_overlay_edit_snapshot_release(&rawSnapshot)
+		}
+
+		return FrozenOverlayEditSnapshot(
+			canUndo: rawSnapshot.can_undo != 0,
+			canRedo: rawSnapshot.can_redo != 0,
+			keepsFrozenSelectionFixed: rawSnapshot.keeps_frozen_selection_fixed != 0,
+			isMovingMovableAnnotation: rawSnapshot.is_moving_movable_annotation != 0,
+			hasActiveInteraction: rawSnapshot.has_active_interaction != 0,
+			elements: Self.decodeElements(rawSnapshot.elements, count: rawSnapshot.elements_len),
+			previewPen: rawSnapshot.has_preview_pen == 0
+				? nil : Self.decode(element: rawSnapshot.preview_pen),
+			previewArrow: rawSnapshot.has_preview_arrow == 0
+				? nil : Self.decode(element: rawSnapshot.preview_arrow),
+			previewMosaic: rawSnapshot.has_preview_mosaic == 0
+				? nil : Self.decode(element: rawSnapshot.preview_mosaic),
+			previewSpotlight: rawSnapshot.has_preview_spotlight == 0
+				? nil : Self.decode(element: rawSnapshot.preview_spotlight),
+			previewText: rawSnapshot.has_preview_text == 0
+				? nil : Self.decode(element: rawSnapshot.preview_text),
+			activeTextEdit: rawSnapshot.has_active_text_edit == 0
+				? nil : Self.decode(activeTextEdit: rawSnapshot.active_text_edit)
+		)
+	}
+
+	private func boolResult(_ body: (UnsafeMutablePointer<UInt8>) -> RsnapStatus) throws -> Bool {
+		var changed: UInt8 = 0
+		try Self.requireOk(body(&changed), context: "running frozen overlay edit operation")
+		return changed != 0
+	}
+
+	private static func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private static func decodeElements(
+		_ elements: UnsafeMutablePointer<RsnapFrozenOverlayExportElement>?,
+		count: Int
+	) -> [FrozenOverlayExportElement] {
+		guard let elements, count > 0 else {
+			return []
+		}
+		return UnsafeBufferPointer(start: elements, count: count).compactMap(decode(element:))
+	}
+
+	private static func decode(element: RsnapFrozenOverlayExportElement)
+		-> FrozenOverlayExportElement?
+	{
+		switch element.kind {
+		case RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_PEN:
+			return .pen(
+				points: decodePoints(element.points, count: element.points_len),
+				style: FrozenOverlayExportStrokeStyle(
+					strokeWidthPoints: element.stroke_width_points,
+					color: decode(color: element.color)
+				)
+			)
+		case RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_ARROW:
+			return .arrow(
+				start: decode(point: element.start),
+				end: decode(point: element.end),
+				style: FrozenOverlayExportStrokeStyle(
+					strokeWidthPoints: element.stroke_width_points,
+					color: decode(color: element.color)
+				)
+			)
+		case RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_MOSAIC:
+			return .mosaic(rect: decode(rect: element.rect))
+		case RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_SPOTLIGHT:
+			return .spotlight(
+				rect: decode(rect: element.rect),
+				style: FrozenOverlayExportSpotlightStyle(
+					borderWidthPoints: element.border_width_points,
+					borderColor: decode(color: element.color)
+				)
+			)
+		case RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_TEXT:
+			return .text(
+				anchor: decode(point: element.start),
+				text: decode(text: element.text),
+				style: FrozenOverlayExportTextStyle(
+					fontSizePoints: element.font_size_points,
+					color: decode(color: element.color)
+				)
+			)
+		default:
+			return nil
+		}
+	}
+
+	private static func decode(activeTextEdit element: RsnapFrozenOverlayExportElement)
+		-> FrozenOverlayActiveTextEdit
+	{
+		FrozenOverlayActiveTextEdit(
+			anchor: decode(point: element.start),
+			text: decode(text: element.text)
+		)
+	}
+
+	private static func decodePoints(
+		_ points: UnsafePointer<RsnapFloatPoint>?,
+		count: Int
+	) -> [CGPoint] {
+		guard let points, count > 0 else {
+			return []
+		}
+		return UnsafeBufferPointer(start: points, count: count).map(decode(point:))
+	}
+
+	private static func decode(text: UnsafePointer<CChar>?) -> String {
+		guard let text else {
+			return ""
+		}
+		return String(cString: text)
+	}
+
+	private static func encode(style: FrozenOverlayEditStyle) -> RsnapFrozenOverlayEditStyle {
+		RsnapFrozenOverlayEditStyle(
+			stroke_width_points: Double(style.strokeWidthPoints),
+			stroke_color: style.strokeColor.ffiColor,
+			spotlight_border_width_points: Double(style.spotlightBorderWidthPoints),
+			spotlight_color: style.spotlightColor.ffiColor,
+			text_font_size_points: Double(style.textFontSizePoints),
+			text_color: style.textColor.ffiColor
+		)
+	}
+
+	private static func encode(point: CGPoint) -> RsnapFloatPoint {
+		RsnapFloatPoint(x: Double(point.x), y: Double(point.y))
+	}
+
+	private static func decode(point: RsnapFloatPoint) -> CGPoint {
+		CGPoint(x: point.x, y: point.y)
+	}
+
+	private static func encode(rect: CGRect) -> RsnapFloatRect {
+		RsnapFloatRect(
+			x: Double(rect.origin.x),
+			y: Double(rect.origin.y),
+			width: Double(rect.width),
+			height: Double(rect.height)
+		)
+	}
+
+	private static func decode(rect: RsnapFloatRect) -> CGRect {
+		CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
+	}
+
+	private static func decode(color: RsnapFrozenAnnotationColor) -> FrozenOverlayExportColor {
+		switch color {
+		case RSNAP_FROZEN_ANNOTATION_COLOR_WHITE:
+			.white
+		case RSNAP_FROZEN_ANNOTATION_COLOR_YELLOW:
+			.yellow
+		case RSNAP_FROZEN_ANNOTATION_COLOR_GREEN:
+			.green
+		case RSNAP_FROZEN_ANNOTATION_COLOR_BLUE:
+			.blue
+		case RSNAP_FROZEN_ANNOTATION_COLOR_RED:
+			.red
+		case RSNAP_FROZEN_ANNOTATION_COLOR_BLACK:
+			.black
+		default:
+			.blue
+		}
 	}
 }
 
@@ -1350,6 +1719,37 @@ public enum ToolbarItemKind: UInt32, Equatable, Sendable {
 			return true
 		case .undo, .redo, .autoCenter, .scroll, .ocr, .copy, .save:
 			return false
+		}
+	}
+
+	fileprivate var ffiKind: RsnapToolbarItemKind {
+		switch self {
+		case .pointer:
+			RSNAP_TOOLBAR_ITEM_POINTER
+		case .pen:
+			RSNAP_TOOLBAR_ITEM_PEN
+		case .arrow:
+			RSNAP_TOOLBAR_ITEM_ARROW
+		case .text:
+			RSNAP_TOOLBAR_ITEM_TEXT
+		case .mosaic:
+			RSNAP_TOOLBAR_ITEM_MOSAIC
+		case .spotlight:
+			RSNAP_TOOLBAR_ITEM_SPOTLIGHT
+		case .undo:
+			RSNAP_TOOLBAR_ITEM_UNDO
+		case .redo:
+			RSNAP_TOOLBAR_ITEM_REDO
+		case .autoCenter:
+			RSNAP_TOOLBAR_ITEM_AUTO_CENTER
+		case .scroll:
+			RSNAP_TOOLBAR_ITEM_SCROLL
+		case .ocr:
+			RSNAP_TOOLBAR_ITEM_OCR
+		case .copy:
+			RSNAP_TOOLBAR_ITEM_COPY
+		case .save:
+			RSNAP_TOOLBAR_ITEM_SAVE
 		}
 	}
 }

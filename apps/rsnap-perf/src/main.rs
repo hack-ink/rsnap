@@ -11,7 +11,7 @@ use image::{Rgba, RgbaImage};
 use rsnap_capture_core::{
 	BgraFrameView, CaptureFrameBackgroundKind, CaptureFrameRenderImageRef, CaptureFrameRenderKind,
 	CaptureFrameSourceKind, DisplayPointRect, FrozenSelectionTransformInput,
-	FrozenSelectionTransformKind, RectPoints, ScrollMinimapInput,
+	FrozenSelectionTransformKind, RectPoints, ScrollMinimapInput, ToolbarItemKind,
 	auto_center_margin_balance_shift_points, capture_frame_aspect_fill_crop_rect,
 	capture_frame_background_plan, capture_frame_plan, capture_frame_wallpaper_png_thumbnail,
 	capture_frame_wallpaper_request_plan, crop_rgba_image, detect_auto_center_content_bounds_rgba,
@@ -23,6 +23,11 @@ use rsnap_capture_core::{
 use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
 	ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
+};
+use rsnap_overlay::frozen_edit::{
+	FrozenOverlayEditColor, FrozenOverlayEditPoint, FrozenOverlayEditRect,
+	FrozenOverlayEditSession, FrozenOverlayEditSpotlightStyle, FrozenOverlayEditStrokeStyle,
+	FrozenOverlayEditStyle, FrozenOverlayEditTextStyle,
 };
 use rsnap_overlay::frozen_export::{
 	FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
@@ -63,6 +68,7 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	verify_capture_frame_plan()?;
 	verify_scroll_minimap_plan()?;
 	verify_frozen_selection_transform()?;
+	verify_frozen_overlay_edit_session()?;
 	verify_auto_center_content_bounds(&auto_center_image)?;
 	let wallpaper_fixture = write_wallpaper_fixture_png()?;
 	verify_wallpaper_png_thumbnail(&wallpaper_fixture)?;
@@ -124,6 +130,7 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 
 	run_scroll_minimap_perf_case(results)?;
 	run_frozen_selection_transform_perf_case(results)?;
+	run_frozen_overlay_edit_perf_case(results)?;
 
 	results.push(time_case(
 		"auto_center_content_bounds_rgba_1440x900",
@@ -323,6 +330,17 @@ fn run_frozen_selection_transform_perf_case(results: &mut Vec<PerfCaseResult>) -
 
 			Ok(checksum_f64s(&[rect.x, rect.y, rect.width, rect.height]))
 		},
+	)?);
+
+	Ok(())
+}
+
+fn run_frozen_overlay_edit_perf_case(results: &mut Vec<PerfCaseResult>) -> Result<()> {
+	results.push(time_case(
+		"frozen_overlay_edit_session_lifecycle",
+		2_000,
+		Duration::from_millis(120),
+		|| Ok(run_frozen_overlay_edit_lifecycle()),
 	)?);
 
 	Ok(())
@@ -543,6 +561,14 @@ fn verify_frozen_selection_transform() -> Result<()> {
 		rect == DisplayPointRect::new(100.0, 228.0, 12.0, 12.0),
 		"selection transform rect changed"
 	);
+
+	Ok(())
+}
+
+fn verify_frozen_overlay_edit_session() -> Result<()> {
+	let checksum = run_frozen_overlay_edit_lifecycle();
+
+	ensure!(checksum != 0, "frozen overlay edit lifecycle checksum is empty");
 
 	Ok(())
 }
@@ -788,6 +814,93 @@ fn selection_transform_fixture() -> FrozenSelectionTransformInput {
 		point_y: 300.0,
 		minimum_size: 12.0,
 	}
+}
+
+fn frozen_overlay_edit_selection() -> FrozenOverlayEditRect {
+	FrozenOverlayEditRect::new(10.0, 20.0, 420.0, 260.0)
+}
+
+fn frozen_overlay_edit_style() -> FrozenOverlayEditStyle {
+	FrozenOverlayEditStyle {
+		stroke: FrozenOverlayEditStrokeStyle {
+			stroke_width_points: 3.0,
+			color: FrozenOverlayEditColor::Blue,
+		},
+		spotlight: FrozenOverlayEditSpotlightStyle {
+			border_width_points: 1.5,
+			border_color: FrozenOverlayEditColor::White,
+		},
+		text: FrozenOverlayEditTextStyle {
+			font_size_points: 16.0,
+			color: FrozenOverlayEditColor::White,
+		},
+	}
+}
+
+fn run_frozen_overlay_edit_lifecycle() -> u64 {
+	let selection = frozen_overlay_edit_selection();
+	let style = frozen_overlay_edit_style();
+	let mut session = FrozenOverlayEditSession::default();
+
+	let mut checksum = bool_bit(session.begin(
+		ToolbarItemKind::Pen,
+		FrozenOverlayEditPoint::new(20.0, 30.0),
+		selection,
+		style,
+	));
+	for offset in 1..=12 {
+		checksum = checksum.wrapping_add(bool_bit(session.update(
+			FrozenOverlayEditPoint::new(20.0 + f64::from(offset * 4), 30.0 + f64::from(offset * 3)),
+			selection,
+		)));
+	}
+	checksum = checksum.wrapping_add(bool_bit(session.finish(selection)));
+
+	checksum = checksum.wrapping_add(bool_bit(session.begin(
+		ToolbarItemKind::Mosaic,
+		FrozenOverlayEditPoint::new(90.0, 80.0),
+		selection,
+		style,
+	)));
+	checksum = checksum.wrapping_add(bool_bit(
+		session.update(FrozenOverlayEditPoint::new(180.0, 150.0), selection),
+	));
+	checksum = checksum.wrapping_add(bool_bit(session.finish(selection)));
+
+	checksum = checksum.wrapping_add(bool_bit(session.begin(
+		ToolbarItemKind::Text,
+		FrozenOverlayEditPoint::new(210.0, 110.0),
+		selection,
+		style,
+	)));
+	checksum = checksum.wrapping_add(bool_bit(session.append_text("Rsnap")));
+	checksum = checksum.wrapping_add(bool_bit(session.commit_text_edit(style.text)));
+	checksum = checksum.wrapping_add(bool_bit(
+		session.contains_movable_annotation(FrozenOverlayEditPoint::new(212.0, 112.0)),
+	));
+	checksum = checksum.wrapping_add(bool_bit(session.begin(
+		ToolbarItemKind::Pointer,
+		FrozenOverlayEditPoint::new(212.0, 112.0),
+		selection,
+		style,
+	)));
+	checksum = checksum.wrapping_add(bool_bit(
+		session.update(FrozenOverlayEditPoint::new(260.0, 160.0), selection),
+	));
+	let moving_snapshot = session.snapshot();
+	checksum = checksum
+		.wrapping_add(bool_bit(moving_snapshot.is_moving_movable_annotation))
+		.wrapping_add(moving_snapshot.elements.len() as u64)
+		.wrapping_add(bool_bit(moving_snapshot.preview_text.is_some()) << 8);
+	checksum = checksum.wrapping_add(bool_bit(session.finish(selection)));
+	checksum = checksum.wrapping_add(bool_bit(session.undo()) << 16);
+	checksum = checksum.wrapping_add(bool_bit(session.redo()) << 24);
+	let snapshot = session.snapshot();
+
+	checksum
+		.wrapping_add(snapshot.elements.len() as u64)
+		.wrapping_add(bool_bit(snapshot.can_undo) << 32)
+		.wrapping_add(bool_bit(snapshot.can_redo) << 40)
 }
 
 fn pattern_byte(value: u32) -> u8 {

@@ -609,8 +609,78 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected frozen overlay export render")
 		}
+		try verifyFrozenOverlayEditSession()
 
 		print("rsnap-host-bridge probe ok")
+	}
+
+	private static func verifyFrozenOverlayEditSession() throws {
+		let editSession = try RsnapFrozenOverlayEditSession()
+		let selection = CGRect(x: 10, y: 20, width: 220, height: 120)
+		let style = FrozenOverlayEditStyle(
+			strokeWidthPoints: 3,
+			strokeColor: .blue,
+			spotlightBorderWidthPoints: 1.5,
+			spotlightColor: .white,
+			textFontSizePoints: 16,
+			textColor: .white
+		)
+
+		guard
+			try editSession.begin(
+				tool: .text,
+				at: CGPoint(x: 40, y: 50),
+				selection: selection,
+				style: style
+			),
+			try editSession.appendText("Hello"),
+			try editSession.commitText(style: style)
+		else {
+			fatalError("unexpected frozen edit text lifecycle result")
+		}
+		var snapshot = try editSession.snapshot()
+		guard
+			snapshot.canUndo,
+			!snapshot.canRedo,
+			snapshot.keepsFrozenSelectionFixed,
+			snapshot.activeTextEdit == nil,
+			snapshot.elements.count == 1,
+			try editSession.containsMovableAnnotation(at: CGPoint(x: 42, y: 52))
+		else {
+			fatalError("unexpected committed frozen edit snapshot: \(snapshot)")
+		}
+		guard
+			try editSession.begin(
+				tool: .pointer,
+				at: CGPoint(x: 42, y: 52),
+				selection: selection,
+				style: style
+			),
+			try editSession.update(to: CGPoint(x: 70, y: 82), selection: selection)
+		else {
+			fatalError("unexpected frozen edit move lifecycle result")
+		}
+		snapshot = try editSession.snapshot()
+		guard
+			snapshot.isMovingMovableAnnotation,
+			snapshot.elements.isEmpty,
+			snapshot.previewText != nil
+		else {
+			fatalError("unexpected active frozen edit move snapshot: \(snapshot)")
+		}
+		guard try editSession.finish(selection: selection) else {
+			fatalError("frozen edit move did not finish")
+		}
+		snapshot = try editSession.snapshot()
+		guard
+			snapshot.elements.count == 1,
+			try editSession.undo(),
+			try editSession.snapshot().canRedo,
+			try editSession.redo(),
+			try editSession.snapshot().elements.count == 1
+		else {
+			fatalError("unexpected frozen edit undo/redo state")
+		}
 	}
 
 	private static func pngDimensions(_ data: Data) -> (Int, Int)? {

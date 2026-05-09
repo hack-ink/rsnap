@@ -4,7 +4,7 @@
 //! new host/core direction with an opaque session handle, FFI-safe config/event
 //! structs, and copy-out scene/request snapshots.
 
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::mem;
 use std::os::raw::c_char;
 use std::ptr::{self, NonNull};
@@ -24,6 +24,13 @@ use rsnap_capture_core::{
 	RgbaExportImage, ScrollMinimapInput, ScrollMinimapPlan, SessionConfig, ToolbarItemKind,
 	ToolbarItemModel, WindowRect,
 };
+use rsnap_overlay::frozen_edit::{
+	FrozenOverlayEditArrow, FrozenOverlayEditColor, FrozenOverlayEditElement,
+	FrozenOverlayEditMosaic, FrozenOverlayEditPen, FrozenOverlayEditPoint, FrozenOverlayEditRect,
+	FrozenOverlayEditSession, FrozenOverlayEditSnapshot, FrozenOverlayEditSpotlight,
+	FrozenOverlayEditSpotlightStyle, FrozenOverlayEditStrokeStyle, FrozenOverlayEditStyle,
+	FrozenOverlayEditText, FrozenOverlayEditTextStyle, FrozenOverlayTextEdit,
+};
 use rsnap_overlay::frozen_export::{
 	FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
 	FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
@@ -37,7 +44,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 31;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 32;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -51,6 +58,11 @@ pub struct RsnapSessionHandle {
 /// Opaque scroll-capture stitching handle owned by the native host through the C ABI.
 pub struct RsnapScrollSessionHandle {
 	session: ScrollStitchSession,
+}
+
+/// Opaque frozen-overlay edit handle owned by the native host through the C ABI.
+pub struct RsnapFrozenOverlayEditSessionHandle {
+	session: FrozenOverlayEditSession,
 }
 
 #[cfg(target_os = "macos")]
@@ -274,6 +286,107 @@ pub struct RsnapFrozenOverlayExportElement {
 	pub font_size_points: f64,
 	/// Annotation color.
 	pub color: RsnapFrozenAnnotationColor,
+}
+
+/// FFI-safe frozen-overlay edit style payload.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RsnapFrozenOverlayEditStyle {
+	/// Stroke width in points for pen and arrow annotations.
+	pub stroke_width_points: f64,
+	/// Stroke color for pen and arrow annotations.
+	pub stroke_color: RsnapFrozenAnnotationColor,
+	/// Border width in points for spotlight annotations.
+	pub spotlight_border_width_points: f64,
+	/// Border color for spotlight annotations.
+	pub spotlight_color: RsnapFrozenAnnotationColor,
+	/// Font size in points for text annotations.
+	pub text_font_size_points: f64,
+	/// Text color.
+	pub text_color: RsnapFrozenAnnotationColor,
+}
+
+impl Default for RsnapFrozenOverlayEditStyle {
+	fn default() -> Self {
+		Self {
+			stroke_width_points: 3.0,
+			stroke_color: RsnapFrozenAnnotationColor::Blue,
+			spotlight_border_width_points: 0.0,
+			spotlight_color: RsnapFrozenAnnotationColor::Blue,
+			text_font_size_points: 16.0,
+			text_color: RsnapFrozenAnnotationColor::Blue,
+		}
+	}
+}
+
+/// FFI-safe owned frozen-overlay edit snapshot.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RsnapFrozenOverlayEditSnapshot {
+	/// Non-zero when undo is available.
+	pub can_undo: u8,
+	/// Non-zero when redo is available.
+	pub can_redo: u8,
+	/// Non-zero when selection transforms should be locked out.
+	pub keeps_frozen_selection_fixed: u8,
+	/// Non-zero when a movable annotation is being dragged.
+	pub is_moving_movable_annotation: u8,
+	/// Non-zero when any pointer interaction is active.
+	pub has_active_interaction: u8,
+	/// Owned visible committed elements.
+	pub elements: *mut RsnapFrozenOverlayExportElement,
+	/// Number of visible committed elements.
+	pub elements_len: usize,
+	/// Non-zero when `preview_pen` is present.
+	pub has_preview_pen: u8,
+	/// Active pen preview.
+	pub preview_pen: RsnapFrozenOverlayExportElement,
+	/// Non-zero when `preview_arrow` is present.
+	pub has_preview_arrow: u8,
+	/// Active arrow preview.
+	pub preview_arrow: RsnapFrozenOverlayExportElement,
+	/// Non-zero when `preview_mosaic` is present.
+	pub has_preview_mosaic: u8,
+	/// Active mosaic preview.
+	pub preview_mosaic: RsnapFrozenOverlayExportElement,
+	/// Non-zero when `preview_spotlight` is present.
+	pub has_preview_spotlight: u8,
+	/// Active spotlight preview.
+	pub preview_spotlight: RsnapFrozenOverlayExportElement,
+	/// Non-zero when `preview_text` is present.
+	pub has_preview_text: u8,
+	/// Active moved text preview.
+	pub preview_text: RsnapFrozenOverlayExportElement,
+	/// Non-zero when `active_text_edit` is present.
+	pub has_active_text_edit: u8,
+	/// Active text edit payload.
+	pub active_text_edit: RsnapFrozenOverlayExportElement,
+}
+
+impl Default for RsnapFrozenOverlayEditSnapshot {
+	fn default() -> Self {
+		Self {
+			can_undo: 0,
+			can_redo: 0,
+			keeps_frozen_selection_fixed: 0,
+			is_moving_movable_annotation: 0,
+			has_active_interaction: 0,
+			elements: ptr::null_mut(),
+			elements_len: 0,
+			has_preview_pen: 0,
+			preview_pen: frozen_overlay_empty_element(),
+			has_preview_arrow: 0,
+			preview_arrow: frozen_overlay_empty_element(),
+			has_preview_mosaic: 0,
+			preview_mosaic: frozen_overlay_empty_element(),
+			has_preview_spotlight: 0,
+			preview_spotlight: frozen_overlay_empty_element(),
+			has_preview_text: 0,
+			preview_text: frozen_overlay_empty_element(),
+			has_active_text_edit: 0,
+			active_text_edit: frozen_overlay_empty_element(),
+		}
+	}
 }
 
 /// FFI-safe capture-frame source discriminator.
@@ -919,6 +1032,371 @@ pub unsafe extern "C" fn rsnap_scroll_session_destroy(handle: *mut RsnapScrollSe
 	unsafe {
 		drop(Box::from_raw(handle));
 	}
+}
+
+/// Creates a Rust-owned frozen-overlay edit session.
+///
+/// The returned pointer must be released by calling
+/// `rsnap_frozen_overlay_edit_session_destroy`.
+#[unsafe(no_mangle)]
+pub extern "C" fn rsnap_frozen_overlay_edit_session_create()
+-> *mut RsnapFrozenOverlayEditSessionHandle {
+	Box::into_raw(Box::new(RsnapFrozenOverlayEditSessionHandle {
+		session: FrozenOverlayEditSession::default(),
+	}))
+}
+
+/// Destroys a frozen-overlay edit session.
+///
+/// # Safety
+///
+/// The pointer must either be null or a pointer returned by
+/// `rsnap_frozen_overlay_edit_session_create` that has not already been destroyed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_destroy(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+) {
+	if let Some(handle) = NonNull::new(handle) {
+		unsafe {
+			drop(Box::from_raw(handle.as_ptr()));
+		}
+	}
+}
+
+/// Resets a frozen-overlay edit session.
+///
+/// # Safety
+///
+/// `handle` must be null or a valid pointer returned by
+/// `rsnap_frozen_overlay_edit_session_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_reset(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	handle.session.reset();
+
+	RsnapStatus::Ok
+}
+
+/// Starts a Rust-owned frozen-overlay interaction.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_begin(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	tool: RsnapToolbarItemKind,
+	point: RsnapFloatPoint,
+	selection: RsnapFloatRect,
+	style: RsnapFrozenOverlayEditStyle,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	let Some(point) = decode_frozen_edit_point(point) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(selection) = decode_frozen_edit_rect(selection) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(style) = decode_frozen_overlay_edit_style(style) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_changed = u8::from(handle.session.begin(
+		decode_toolbar_item_kind(tool as u32),
+		point,
+		selection,
+		style,
+	));
+
+	RsnapStatus::Ok
+}
+
+/// Updates a Rust-owned frozen-overlay interaction.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_update(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	point: RsnapFloatPoint,
+	selection: RsnapFloatRect,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	let Some(point) = decode_frozen_edit_point(point) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(selection) = decode_frozen_edit_rect(selection) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_changed = u8::from(handle.session.update(point, selection));
+
+	RsnapStatus::Ok
+}
+
+/// Finishes a Rust-owned frozen-overlay interaction.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_finish(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	selection: RsnapFloatRect,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	let Some(selection) = decode_frozen_edit_rect(selection) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_changed = u8::from(handle.session.finish(selection));
+
+	RsnapStatus::Ok
+}
+
+/// Appends UTF-8 text to the active frozen text edit.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle, `text` must point to a valid
+/// null-terminated UTF-8 string, and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_append_text(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	text: *const c_char,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	if text.is_null() {
+		return RsnapStatus::InvalidInput;
+	}
+	let Ok(text) = (unsafe { CStr::from_ptr(text) }).to_str() else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_changed = u8::from(handle.session.append_text(text));
+
+	RsnapStatus::Ok
+}
+
+/// Deletes one scalar from the active frozen text edit.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_backspace_text(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+
+	*out_changed = u8::from(handle.session.backspace_text());
+
+	RsnapStatus::Ok
+}
+
+/// Commits the active frozen text edit.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_commit_text(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	style: RsnapFrozenOverlayEditStyle,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	let Some(style) = decode_frozen_overlay_edit_style(style) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_changed = u8::from(handle.session.commit_text_edit(style.text));
+
+	RsnapStatus::Ok
+}
+
+/// Cancels the active frozen text edit.
+///
+/// # Safety
+///
+/// `handle` must be null or a valid frozen-overlay edit handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_cancel_text(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	handle.session.cancel_text_edit();
+
+	RsnapStatus::Ok
+}
+
+/// Undoes the latest frozen-overlay edit.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_undo(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+
+	*out_changed = u8::from(handle.session.undo());
+
+	RsnapStatus::Ok
+}
+
+/// Redoes the latest frozen-overlay edit.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_changed` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_redo(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+	out_changed: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+
+	*out_changed = u8::from(handle.session.redo());
+
+	RsnapStatus::Ok
+}
+
+/// Tests whether a movable frozen-overlay annotation is under a point.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_contains` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_contains_movable_annotation(
+	handle: *const RsnapFrozenOverlayEditSessionHandle,
+	point: RsnapFloatPoint,
+	out_contains: *mut u8,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_ref(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	let Some(out_contains) = (unsafe { out_contains.as_mut() }) else {
+		return RsnapStatus::NullOutput;
+	};
+	let Some(point) = decode_frozen_edit_point(point) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	*out_contains = u8::from(handle.session.contains_movable_annotation(point));
+
+	RsnapStatus::Ok
+}
+
+/// Copies an owned frozen-overlay edit snapshot for native-host rendering.
+///
+/// # Safety
+///
+/// `handle` must be a valid frozen-overlay edit handle and `out_snapshot` must be writable.
+/// Release a successful snapshot with `rsnap_frozen_overlay_edit_snapshot_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_copy_snapshot(
+	handle: *const RsnapFrozenOverlayEditSessionHandle,
+	out_snapshot: *mut RsnapFrozenOverlayEditSnapshot,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { frozen_edit_handle_ref(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+	if out_snapshot.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+	let Some(snapshot) = encode_frozen_overlay_edit_snapshot(handle.session.snapshot()) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_snapshot, snapshot);
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Releases an owned frozen-overlay edit snapshot.
+///
+/// # Safety
+///
+/// `snapshot` must point to a snapshot returned by
+/// `rsnap_frozen_overlay_edit_session_copy_snapshot`, or be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_edit_snapshot_release(
+	snapshot: *mut RsnapFrozenOverlayEditSnapshot,
+) {
+	let Some(snapshot) = (unsafe { snapshot.as_mut() }) else {
+		return;
+	};
+
+	unsafe {
+		release_frozen_overlay_snapshot_elements(snapshot.elements, snapshot.elements_len);
+		release_frozen_overlay_snapshot_element(&mut snapshot.preview_pen);
+		release_frozen_overlay_snapshot_element(&mut snapshot.preview_arrow);
+		release_frozen_overlay_snapshot_element(&mut snapshot.preview_mosaic);
+		release_frozen_overlay_snapshot_element(&mut snapshot.preview_spotlight);
+		release_frozen_overlay_snapshot_element(&mut snapshot.preview_text);
+		release_frozen_overlay_snapshot_element(&mut snapshot.active_text_edit);
+	}
+
+	*snapshot = RsnapFrozenOverlayEditSnapshot::default();
 }
 
 /// Observes one discrete viewport screenshot for downward scroll-capture stitching.
@@ -2298,6 +2776,18 @@ unsafe fn scroll_session_handle_mut<'a>(
 	unsafe { handle.as_mut() }
 }
 
+unsafe fn frozen_edit_handle_mut<'a>(
+	handle: *mut RsnapFrozenOverlayEditSessionHandle,
+) -> Option<&'a mut RsnapFrozenOverlayEditSessionHandle> {
+	unsafe { handle.as_mut() }
+}
+
+unsafe fn frozen_edit_handle_ref<'a>(
+	handle: *const RsnapFrozenOverlayEditSessionHandle,
+) -> Option<&'a RsnapFrozenOverlayEditSessionHandle> {
+	unsafe { handle.as_ref() }
+}
+
 #[cfg(target_os = "macos")]
 unsafe fn live_sampler_handle_mut<'a>(
 	handle: *mut RsnapLiveSamplerHandle,
@@ -2441,6 +2931,310 @@ fn decode_frozen_annotation_color(color: RsnapFrozenAnnotationColor) -> [u8; 4] 
 		RsnapFrozenAnnotationColor::Red => [255, 107, 107, 255],
 		RsnapFrozenAnnotationColor::Black => [24, 24, 24, 255],
 	}
+}
+
+fn frozen_overlay_empty_element() -> RsnapFrozenOverlayExportElement {
+	RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Mosaic,
+		rect: RsnapFloatRect::default(),
+		start: RsnapFloatPoint::default(),
+		end: RsnapFloatPoint::default(),
+		points: ptr::null(),
+		points_len: 0,
+		text: ptr::null(),
+		stroke_width_points: 0.0,
+		border_width_points: 0.0,
+		font_size_points: 0.0,
+		color: RsnapFrozenAnnotationColor::Blue,
+	}
+}
+
+fn decode_frozen_overlay_edit_style(
+	style: RsnapFrozenOverlayEditStyle,
+) -> Option<FrozenOverlayEditStyle> {
+	Some(FrozenOverlayEditStyle {
+		stroke: FrozenOverlayEditStrokeStyle {
+			stroke_width_points: finite_nonnegative(style.stroke_width_points)?,
+			color: decode_frozen_edit_color(style.stroke_color),
+		},
+		spotlight: FrozenOverlayEditSpotlightStyle {
+			border_width_points: finite_nonnegative(style.spotlight_border_width_points)?,
+			border_color: decode_frozen_edit_color(style.spotlight_color),
+		},
+		text: FrozenOverlayEditTextStyle {
+			font_size_points: finite_positive(style.text_font_size_points)?,
+			color: decode_frozen_edit_color(style.text_color),
+		},
+	})
+}
+
+fn decode_frozen_edit_color(color: RsnapFrozenAnnotationColor) -> FrozenOverlayEditColor {
+	match color {
+		RsnapFrozenAnnotationColor::White => FrozenOverlayEditColor::White,
+		RsnapFrozenAnnotationColor::Yellow => FrozenOverlayEditColor::Yellow,
+		RsnapFrozenAnnotationColor::Green => FrozenOverlayEditColor::Green,
+		RsnapFrozenAnnotationColor::Blue => FrozenOverlayEditColor::Blue,
+		RsnapFrozenAnnotationColor::Red => FrozenOverlayEditColor::Red,
+		RsnapFrozenAnnotationColor::Black => FrozenOverlayEditColor::Black,
+	}
+}
+
+fn encode_frozen_edit_color(color: FrozenOverlayEditColor) -> RsnapFrozenAnnotationColor {
+	match color {
+		FrozenOverlayEditColor::White => RsnapFrozenAnnotationColor::White,
+		FrozenOverlayEditColor::Yellow => RsnapFrozenAnnotationColor::Yellow,
+		FrozenOverlayEditColor::Green => RsnapFrozenAnnotationColor::Green,
+		FrozenOverlayEditColor::Blue => RsnapFrozenAnnotationColor::Blue,
+		FrozenOverlayEditColor::Red => RsnapFrozenAnnotationColor::Red,
+		FrozenOverlayEditColor::Black => RsnapFrozenAnnotationColor::Black,
+	}
+}
+
+fn decode_frozen_edit_point(point: RsnapFloatPoint) -> Option<FrozenOverlayEditPoint> {
+	(point.x.is_finite() && point.y.is_finite())
+		.then_some(FrozenOverlayEditPoint { x: point.x, y: point.y })
+}
+
+fn decode_frozen_edit_rect(rect: RsnapFloatRect) -> Option<FrozenOverlayEditRect> {
+	let rect = FrozenOverlayEditRect::new(rect.x, rect.y, rect.width, rect.height);
+
+	rect.is_valid().then_some(rect)
+}
+
+fn finite_nonnegative(value: f64) -> Option<f64> {
+	(value.is_finite() && value >= 0.0).then_some(value)
+}
+
+fn finite_positive(value: f64) -> Option<f64> {
+	(value.is_finite() && value > 0.0).then_some(value)
+}
+
+fn encode_frozen_overlay_edit_snapshot(
+	snapshot: FrozenOverlayEditSnapshot,
+) -> Option<RsnapFrozenOverlayEditSnapshot> {
+	let mut elements = snapshot
+		.elements
+		.iter()
+		.map(encode_frozen_overlay_edit_element)
+		.collect::<Option<Vec<_>>>()?;
+	let elements_len = elements.len();
+	let elements_ptr = if elements.is_empty() {
+		ptr::null_mut()
+	} else {
+		let ptr = elements.as_mut_ptr();
+		mem::forget(elements);
+		ptr
+	};
+
+	Some(RsnapFrozenOverlayEditSnapshot {
+		can_undo: u8::from(snapshot.can_undo),
+		can_redo: u8::from(snapshot.can_redo),
+		keeps_frozen_selection_fixed: u8::from(snapshot.keeps_frozen_selection_fixed),
+		is_moving_movable_annotation: u8::from(snapshot.is_moving_movable_annotation),
+		has_active_interaction: u8::from(snapshot.has_active_interaction),
+		elements: elements_ptr,
+		elements_len,
+		has_preview_pen: u8::from(snapshot.preview_pen.is_some()),
+		preview_pen: encode_optional_frozen_overlay_edit_pen(snapshot.preview_pen.as_ref())?,
+		has_preview_arrow: u8::from(snapshot.preview_arrow.is_some()),
+		preview_arrow: snapshot
+			.preview_arrow
+			.map(encode_frozen_overlay_edit_arrow)
+			.unwrap_or_else(frozen_overlay_empty_element),
+		has_preview_mosaic: u8::from(snapshot.preview_mosaic.is_some()),
+		preview_mosaic: snapshot
+			.preview_mosaic
+			.map(encode_frozen_overlay_edit_mosaic)
+			.unwrap_or_else(frozen_overlay_empty_element),
+		has_preview_spotlight: u8::from(snapshot.preview_spotlight.is_some()),
+		preview_spotlight: snapshot
+			.preview_spotlight
+			.map(encode_frozen_overlay_edit_spotlight)
+			.unwrap_or_else(frozen_overlay_empty_element),
+		has_preview_text: u8::from(snapshot.preview_text.is_some()),
+		preview_text: encode_optional_frozen_overlay_edit_text(snapshot.preview_text.as_ref())?,
+		has_active_text_edit: u8::from(snapshot.active_text_edit.is_some()),
+		active_text_edit: encode_optional_frozen_overlay_active_text_edit(
+			snapshot.active_text_edit.as_ref(),
+		)?,
+	})
+}
+
+fn encode_frozen_overlay_edit_element(
+	element: &FrozenOverlayEditElement,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	match element {
+		FrozenOverlayEditElement::Pen(annotation) => encode_frozen_overlay_edit_pen(annotation),
+		FrozenOverlayEditElement::Arrow(annotation) => {
+			Some(encode_frozen_overlay_edit_arrow(*annotation))
+		},
+		FrozenOverlayEditElement::Mosaic(annotation) => {
+			Some(encode_frozen_overlay_edit_mosaic(*annotation))
+		},
+		FrozenOverlayEditElement::Spotlight(annotation) => {
+			Some(encode_frozen_overlay_edit_spotlight(*annotation))
+		},
+		FrozenOverlayEditElement::Text(annotation) => encode_frozen_overlay_edit_text(annotation),
+	}
+}
+
+fn encode_frozen_overlay_edit_pen(
+	annotation: &FrozenOverlayEditPen,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	let (points, points_len) = owned_frozen_overlay_points(&annotation.points);
+
+	Some(RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Pen,
+		points,
+		points_len,
+		stroke_width_points: annotation.style.stroke_width_points,
+		color: encode_frozen_edit_color(annotation.style.color),
+		..frozen_overlay_empty_element()
+	})
+}
+
+fn encode_optional_frozen_overlay_edit_pen(
+	annotation: Option<&FrozenOverlayEditPen>,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	annotation.map_or_else(|| Some(frozen_overlay_empty_element()), encode_frozen_overlay_edit_pen)
+}
+
+fn encode_frozen_overlay_edit_arrow(
+	annotation: FrozenOverlayEditArrow,
+) -> RsnapFrozenOverlayExportElement {
+	RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Arrow,
+		start: encode_frozen_edit_point(annotation.start),
+		end: encode_frozen_edit_point(annotation.end),
+		stroke_width_points: annotation.style.stroke_width_points,
+		color: encode_frozen_edit_color(annotation.style.color),
+		..frozen_overlay_empty_element()
+	}
+}
+
+fn encode_frozen_overlay_edit_mosaic(
+	annotation: FrozenOverlayEditMosaic,
+) -> RsnapFrozenOverlayExportElement {
+	RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Mosaic,
+		rect: encode_frozen_edit_rect(annotation.rect),
+		..frozen_overlay_empty_element()
+	}
+}
+
+fn encode_frozen_overlay_edit_spotlight(
+	annotation: FrozenOverlayEditSpotlight,
+) -> RsnapFrozenOverlayExportElement {
+	RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Spotlight,
+		rect: encode_frozen_edit_rect(annotation.rect),
+		border_width_points: annotation.style.border_width_points,
+		color: encode_frozen_edit_color(annotation.style.border_color),
+		..frozen_overlay_empty_element()
+	}
+}
+
+fn encode_frozen_overlay_edit_text(
+	annotation: &FrozenOverlayEditText,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	let text = owned_c_string(&annotation.text)?;
+
+	Some(RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Text,
+		start: encode_frozen_edit_point(annotation.anchor),
+		text,
+		font_size_points: annotation.style.font_size_points,
+		color: encode_frozen_edit_color(annotation.style.color),
+		..frozen_overlay_empty_element()
+	})
+}
+
+fn encode_optional_frozen_overlay_edit_text(
+	annotation: Option<&FrozenOverlayEditText>,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	annotation.map_or_else(|| Some(frozen_overlay_empty_element()), encode_frozen_overlay_edit_text)
+}
+
+fn encode_frozen_overlay_active_text_edit(
+	edit: &FrozenOverlayTextEdit,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	let text = owned_c_string(&edit.text)?;
+
+	Some(RsnapFrozenOverlayExportElement {
+		kind: RsnapFrozenOverlayExportElementKind::Text,
+		start: encode_frozen_edit_point(edit.anchor),
+		text,
+		..frozen_overlay_empty_element()
+	})
+}
+
+fn encode_optional_frozen_overlay_active_text_edit(
+	edit: Option<&FrozenOverlayTextEdit>,
+) -> Option<RsnapFrozenOverlayExportElement> {
+	edit.map_or_else(
+		|| Some(frozen_overlay_empty_element()),
+		encode_frozen_overlay_active_text_edit,
+	)
+}
+
+fn owned_frozen_overlay_points(
+	points: &[FrozenOverlayEditPoint],
+) -> (*const RsnapFloatPoint, usize) {
+	if points.is_empty() {
+		return (ptr::null(), 0);
+	}
+
+	let mut owned: Vec<_> = points.iter().copied().map(encode_frozen_edit_point).collect();
+	let ptr = owned.as_mut_ptr();
+	let len = owned.len();
+	mem::forget(owned);
+
+	(ptr, len)
+}
+
+fn owned_c_string(text: &str) -> Option<*const c_char> {
+	CString::new(text).ok().map(|text| text.into_raw() as *const c_char)
+}
+
+fn encode_frozen_edit_point(point: FrozenOverlayEditPoint) -> RsnapFloatPoint {
+	RsnapFloatPoint { x: point.x, y: point.y }
+}
+
+fn encode_frozen_edit_rect(rect: FrozenOverlayEditRect) -> RsnapFloatRect {
+	RsnapFloatRect { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+}
+
+unsafe fn release_frozen_overlay_snapshot_elements(
+	elements: *mut RsnapFrozenOverlayExportElement,
+	elements_len: usize,
+) {
+	if elements.is_null() || elements_len == 0 {
+		return;
+	}
+
+	let mut elements = unsafe { Vec::from_raw_parts(elements, elements_len, elements_len) };
+
+	for element in &mut elements {
+		unsafe {
+			release_frozen_overlay_snapshot_element(element);
+		}
+	}
+}
+
+unsafe fn release_frozen_overlay_snapshot_element(element: &mut RsnapFrozenOverlayExportElement) {
+	if !element.points.is_null() && element.points_len > 0 {
+		let _ = unsafe {
+			Vec::from_raw_parts(
+				element.points as *mut RsnapFloatPoint,
+				element.points_len,
+				element.points_len,
+			)
+		};
+	}
+	if !element.text.is_null() {
+		let _ = unsafe { CString::from_raw(element.text as *mut c_char) };
+	}
+	*element = frozen_overlay_empty_element();
 }
 
 unsafe fn decode_bgra_frame<'a>(
@@ -3095,13 +3889,13 @@ mod tests {
 		RsnapCaptureFrameBackgroundPlan, RsnapCaptureFrameColorStop, RsnapCaptureFramePlan,
 		RsnapCaptureFrameRenderKind, RsnapCaptureFrameSourceKind,
 		RsnapCaptureFrameWallpaperRequest, RsnapCursorIntent, RsnapFloatPoint, RsnapFloatRect,
-		RsnapFrozenAnnotationColor, RsnapFrozenOverlayExportElement,
-		RsnapFrozenOverlayExportElementKind, RsnapFrozenSelectionTransformKind, RsnapHostEvent,
-		RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind,
-		RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes, RsnapOwnedRgbaRegion,
-		RsnapPixelRect, RsnapPlatformTag, RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind,
-		RsnapSceneModel, RsnapScrollMinimapPlan, RsnapSessionConfig, RsnapSessionHandle,
-		RsnapStatus, RsnapWindowRect,
+		RsnapFrozenAnnotationColor, RsnapFrozenOverlayEditSnapshot, RsnapFrozenOverlayEditStyle,
+		RsnapFrozenOverlayExportElement, RsnapFrozenOverlayExportElementKind,
+		RsnapFrozenSelectionTransformKind, RsnapHostEvent, RsnapHostEventKind, RsnapHostReport,
+		RsnapHostReportKind, RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect,
+		RsnapOwnedBytes, RsnapOwnedRgbaRegion, RsnapPixelRect, RsnapPlatformTag, RsnapPoint,
+		RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan,
+		RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapToolbarItemKind, RsnapWindowRect,
 	};
 	#[cfg(target_os = "macos")]
 	use crate::{RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
@@ -3483,6 +4277,67 @@ mod tests {
 
 		unsafe {
 			crate::rsnap_owned_rgba_region_release(&mut out);
+		}
+	}
+
+	#[test]
+	fn ffi_frozen_overlay_edit_session_copies_rust_owned_snapshot() {
+		let handle = crate::rsnap_frozen_overlay_edit_session_create();
+		assert!(!handle.is_null());
+
+		let style = RsnapFrozenOverlayEditStyle {
+			stroke_width_points: 3.0,
+			stroke_color: RsnapFrozenAnnotationColor::Blue,
+			spotlight_border_width_points: 0.0,
+			spotlight_color: RsnapFrozenAnnotationColor::Blue,
+			text_font_size_points: 16.0,
+			text_color: RsnapFrozenAnnotationColor::White,
+		};
+		let selection = RsnapFloatRect { x: 0.0, y: 0.0, width: 200.0, height: 120.0 };
+		let mut changed = 0;
+		let status = unsafe {
+			crate::rsnap_frozen_overlay_edit_session_begin(
+				handle,
+				RsnapToolbarItemKind::Text,
+				RsnapFloatPoint { x: 12.0, y: 18.0 },
+				selection,
+				style,
+				&mut changed,
+			)
+		};
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(changed, 1);
+		let text = CString::new("Hello").expect("text has no interior nul");
+		let status = unsafe {
+			crate::rsnap_frozen_overlay_edit_session_append_text(
+				handle,
+				text.as_ptr(),
+				&mut changed,
+			)
+		};
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(changed, 1);
+		let status = unsafe {
+			crate::rsnap_frozen_overlay_edit_session_commit_text(handle, style, &mut changed)
+		};
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(changed, 1);
+
+		let mut snapshot = RsnapFrozenOverlayEditSnapshot::default();
+		let status = unsafe {
+			crate::rsnap_frozen_overlay_edit_session_copy_snapshot(handle, &mut snapshot)
+		};
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(snapshot.can_undo, 1);
+		assert_eq!(snapshot.elements_len, 1);
+		let elements =
+			unsafe { std::slice::from_raw_parts(snapshot.elements, snapshot.elements_len) };
+		assert_eq!(elements[0].kind, RsnapFrozenOverlayExportElementKind::Text);
+		assert_eq!(unsafe { std::ffi::CStr::from_ptr(elements[0].text) }.to_str(), Ok("Hello"));
+
+		unsafe {
+			crate::rsnap_frozen_overlay_edit_snapshot_release(&mut snapshot);
+			crate::rsnap_frozen_overlay_edit_session_destroy(handle);
 		}
 	}
 
