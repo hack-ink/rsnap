@@ -10,10 +10,12 @@ use crate::live_frame_stream_macos::MacLiveFrameStream;
 #[cfg(target_os = "macos")]
 use crate::overlay::SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL;
 use crate::overlay::SCROLL_CAPTURE_SAMPLE_INTERVAL;
+use crate::overlay::SCROLL_CAPTURE_STREAM_BACKLOG_MAX_FRAMES;
 #[cfg(target_os = "macos")]
 use crate::overlay::ScrollCaptureHostFrameRequestError;
 #[cfg(target_os = "macos")]
 use crate::overlay::ScrollCaptureTraceInputRecord;
+use crate::overlay::session_state::InflightScrollCaptureObservation;
 #[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 #[cfg(target_os = "macos")]
@@ -107,7 +109,7 @@ impl OverlaySession {
 				#[cfg(target_os = "macos")]
 				{
 					self.scroll_capture.inflight_request_observation =
-						Some(crate::overlay::session_state::InflightScrollCaptureObservation {
+						Some(InflightScrollCaptureObservation {
 							was_observable: self
 								.scroll_capture_observation_block_reason_at(now)
 								.is_none(),
@@ -181,7 +183,7 @@ impl OverlaySession {
 					#[cfg(target_os = "macos")]
 					{
 						self.scroll_capture.inflight_request_observation =
-							Some(crate::overlay::session_state::InflightScrollCaptureObservation {
+							Some(InflightScrollCaptureObservation {
 								was_observable: self
 									.scroll_capture_observation_block_reason_at(now)
 									.is_none(),
@@ -633,7 +635,7 @@ impl OverlaySession {
 	fn push_scroll_capture_live_frame(&mut self, frame: ScrollCaptureLiveFrame) {
 		let backlog = &mut self.scroll_capture.live_stream_backlog;
 
-		if backlog.len() >= super::SCROLL_CAPTURE_STREAM_BACKLOG_MAX_FRAMES {
+		if backlog.len() >= SCROLL_CAPTURE_STREAM_BACKLOG_MAX_FRAMES {
 			backlog.pop_front();
 		}
 

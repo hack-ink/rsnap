@@ -48,6 +48,7 @@ fn integral_image_intersection(
 
 	let right = rect.x + rect.width;
 	let bottom = rect.y + rect.height;
+
 	if !right.is_finite() || !bottom.is_finite() {
 		return None;
 	}
@@ -105,11 +106,13 @@ fn frozen_mosaic_hash(x: u32, y: u32, width: u32, height: u32) -> u32 {
 		^ y.wrapping_mul(0x119d_e1f3)
 		^ width.wrapping_mul(0x27d4_eb2d)
 		^ height.wrapping_mul(0x1656_67b1);
+
 	hash ^= hash >> 16;
 	hash = hash.wrapping_mul(0x7feb_352d);
 	hash ^= hash >> 15;
 	hash = hash.wrapping_mul(0x846c_a68b);
 	hash ^= hash >> 16;
+
 	hash
 }
 
@@ -119,13 +122,16 @@ fn frozen_mosaic_byte(value: f64) -> u8 {
 
 #[cfg(test)]
 mod tests {
-	use super::{DisplayPointRect, frozen_mosaic_light_privacy_patch};
+	use crate::mosaic::{self, DisplayPointRect};
 
 	#[test]
 	fn mosaic_light_privacy_patch_matches_native_dimensions_and_seeded_colors() {
-		let patch =
-			frozen_mosaic_light_privacy_patch(100, 80, DisplayPointRect::new(4.2, 9.1, 28.4, 21.0))
-				.expect("valid patch");
+		let patch = mosaic::frozen_mosaic_light_privacy_patch(
+			100,
+			80,
+			DisplayPointRect::new(4.2, 9.1, 28.4, 21.0),
+		)
+		.expect("valid patch");
 
 		assert_eq!(patch.dimensions(), (3, 3));
 		assert_eq!(patch.get_pixel(0, 0).0, [211, 211, 211, 255]);
@@ -136,7 +142,7 @@ mod tests {
 
 	#[test]
 	fn mosaic_light_privacy_patch_clips_to_image_bounds() {
-		let patch = frozen_mosaic_light_privacy_patch(
+		let patch = mosaic::frozen_mosaic_light_privacy_patch(
 			32,
 			24,
 			DisplayPointRect::new(25.5, 18.2, 20.0, 20.0),
@@ -150,7 +156,7 @@ mod tests {
 	#[test]
 	fn mosaic_light_privacy_patch_rejects_empty_or_outside_rects() {
 		assert!(
-			frozen_mosaic_light_privacy_patch(
+			mosaic::frozen_mosaic_light_privacy_patch(
 				100,
 				80,
 				DisplayPointRect::new(10.0, 10.0, 0.0, 20.0)
@@ -158,7 +164,7 @@ mod tests {
 			.is_none()
 		);
 		assert!(
-			frozen_mosaic_light_privacy_patch(
+			mosaic::frozen_mosaic_light_privacy_patch(
 				100,
 				80,
 				DisplayPointRect::new(120.0, 10.0, 10.0, 20.0)

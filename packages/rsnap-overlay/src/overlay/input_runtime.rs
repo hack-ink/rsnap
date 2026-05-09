@@ -8,6 +8,7 @@ use winit::keyboard::ModifiersState;
 
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenGlobalHotkey;
+use crate::overlay::SLOW_OP_WARN_CURSOR_LOCATION;
 use crate::overlay::{
 	CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource, ElementState,
 	FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
@@ -215,7 +216,7 @@ impl OverlaySession {
 		self.slow_op_logger.warn_if_slow(
 			"overlay.macos_cursor_location",
 			elapsed,
-			super::SLOW_OP_WARN_CURSOR_LOCATION,
+			SLOW_OP_WARN_CURSOR_LOCATION,
 			|| format!("sample point=({}, {})", point.x, point.y),
 		);
 

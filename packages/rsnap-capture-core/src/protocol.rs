@@ -6,7 +6,7 @@ use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 
 use crate::RectPoints;
-use crate::export::crop_export_image;
+use crate::export;
 use crate::geometry::{GlobalPoint, GlobalRect, MonitorRect, Rgb, WindowRect};
 
 /// Supported platform families for the host/core boundary.
@@ -302,7 +302,7 @@ impl DeferredTextRecognitionImageSource {
 		match self {
 			Self::Prepared { image } => Some(image.clone()),
 			Self::FrozenCrop { export_image, crop_rect } => {
-				crop_export_image(export_image, *crop_rect)
+				export::crop_export_image(export_image, *crop_rect)
 			},
 		}
 	}
@@ -311,7 +311,7 @@ impl DeferredTextRecognitionImageSource {
 		match self {
 			Self::Prepared { image } => Some(image),
 			Self::FrozenCrop { export_image, crop_rect } => {
-				crop_export_image(&export_image, crop_rect)
+				export::crop_export_image(&export_image, crop_rect)
 			},
 		}
 	}

@@ -5,7 +5,7 @@
 # | ---------------- | --------- | ------- |
 # | check            | composite | full read-only verification |
 # | check-rust       | command   | Rust clippy, no cargo check |
-# | check-swift      | composite | SwiftLint and strict build |
+# | check-swift      | composite | Swift format, SwiftLint, strict build, and probes |
 # | check-swiftlint  | command   | SwiftLint plugin, read-only |
 # | check-vstyle     | command   | Rust vibe-style curate |
 
@@ -50,8 +50,10 @@ args = [
 [tasks.check-swift]
 workspace = false
 dependencies = [
+	"fmt-swift-check",
 	"check-swiftlint",
 	"build-swift-strict",
+	"test-macos-native-host",
 ]
 
 [tasks.check-swiftlint]

@@ -62,6 +62,7 @@ pub fn frozen_selection_transform_hit_test(
 	{
 		return None;
 	}
+
 	let handle_radius = handle_radius.max(0.0);
 	let edge_tolerance = edge_tolerance.max(0.0);
 	let left = selection.x;
@@ -114,6 +115,7 @@ pub fn frozen_selection_transform_rect(
 	{
 		return None;
 	}
+
 	let selection = input.initial_selection;
 	let monitor = input.monitor_frame;
 	let min_size = input.minimum_size;
@@ -130,6 +132,7 @@ pub fn frozen_selection_transform_rect(
 		),
 		FrozenSelectionTransformKind::ResizeLeft => {
 			let new_min_x = clamp(selection.x + delta_x, monitor.x, max_x(selection) - min_size);
+
 			Some(DisplayPointRect::new(
 				new_min_x,
 				selection.y,
@@ -140,6 +143,7 @@ pub fn frozen_selection_transform_rect(
 		FrozenSelectionTransformKind::ResizeRight => {
 			let new_max_x =
 				clamp(max_x(selection) + delta_x, selection.x + min_size, max_x(monitor));
+
 			Some(DisplayPointRect::new(
 				selection.x,
 				selection.y,
@@ -150,6 +154,7 @@ pub fn frozen_selection_transform_rect(
 		FrozenSelectionTransformKind::ResizeTop => {
 			let new_max_y =
 				clamp(max_y(selection) + delta_y, selection.y + min_size, max_y(monitor));
+
 			Some(DisplayPointRect::new(
 				selection.x,
 				selection.y,
@@ -159,6 +164,7 @@ pub fn frozen_selection_transform_rect(
 		},
 		FrozenSelectionTransformKind::ResizeBottom => {
 			let new_min_y = clamp(selection.y + delta_y, monitor.y, max_y(selection) - min_size);
+
 			Some(DisplayPointRect::new(
 				selection.x,
 				new_min_y,
@@ -170,6 +176,7 @@ pub fn frozen_selection_transform_rect(
 			let new_min_x = clamp(selection.x + delta_x, monitor.x, max_x(selection) - min_size);
 			let new_max_y =
 				clamp(max_y(selection) + delta_y, selection.y + min_size, max_y(monitor));
+
 			Some(DisplayPointRect::new(
 				new_min_x,
 				selection.y,
@@ -182,6 +189,7 @@ pub fn frozen_selection_transform_rect(
 				clamp(max_x(selection) + delta_x, selection.x + min_size, max_x(monitor));
 			let new_max_y =
 				clamp(max_y(selection) + delta_y, selection.y + min_size, max_y(monitor));
+
 			Some(DisplayPointRect::new(
 				selection.x,
 				selection.y,
@@ -192,6 +200,7 @@ pub fn frozen_selection_transform_rect(
 		FrozenSelectionTransformKind::ResizeBottomLeft => {
 			let new_min_x = clamp(selection.x + delta_x, monitor.x, max_x(selection) - min_size);
 			let new_min_y = clamp(selection.y + delta_y, monitor.y, max_y(selection) - min_size);
+
 			Some(DisplayPointRect::new(
 				new_min_x,
 				new_min_y,
@@ -203,6 +212,7 @@ pub fn frozen_selection_transform_rect(
 			let new_max_x =
 				clamp(max_x(selection) + delta_x, selection.x + min_size, max_x(monitor));
 			let new_min_y = clamp(selection.y + delta_y, monitor.y, max_y(selection) - min_size);
+
 			Some(DisplayPointRect::new(
 				selection.x,
 				new_min_y,
@@ -223,6 +233,7 @@ fn clamped_rect(
 	if width <= 0.0 || height <= 0.0 || !point_is_finite(x, y) {
 		return None;
 	}
+
 	let max_rect_x = monitor.x.max(max_x(monitor) - width);
 	let max_rect_y = monitor.y.max(max_y(monitor) - height);
 
@@ -261,74 +272,82 @@ fn clamp(value: f64, min: f64, max: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-	use super::{
-		FrozenSelectionTransformInput, FrozenSelectionTransformKind,
-		frozen_selection_transform_hit_test, frozen_selection_transform_rect,
-	};
 	use crate::DisplayPointRect;
+	use crate::selection_transform::{
+		self, FrozenSelectionTransformInput, FrozenSelectionTransformKind,
+	};
 
 	#[test]
 	fn hit_test_prefers_corner_handles_before_edges() {
 		let selection = DisplayPointRect::new(100.0, 80.0, 240.0, 160.0);
 
 		assert_eq!(
-			frozen_selection_transform_hit_test(102.0, 238.0, selection, 12.0, 4.0),
+			selection_transform::frozen_selection_transform_hit_test(
+				102.0, 238.0, selection, 12.0, 4.0
+			),
 			Some(FrozenSelectionTransformKind::ResizeTopLeft)
 		);
 		assert_eq!(
-			frozen_selection_transform_hit_test(220.0, 240.0, selection, 12.0, 4.0),
+			selection_transform::frozen_selection_transform_hit_test(
+				220.0, 240.0, selection, 12.0, 4.0
+			),
 			Some(FrozenSelectionTransformKind::ResizeTop)
 		);
 		assert_eq!(
-			frozen_selection_transform_hit_test(180.0, 120.0, selection, 12.0, 4.0),
+			selection_transform::frozen_selection_transform_hit_test(
+				180.0, 120.0, selection, 12.0, 4.0
+			),
 			Some(FrozenSelectionTransformKind::Move)
 		);
 	}
 
 	#[test]
 	fn transform_move_clamps_to_monitor() {
-		let rect = frozen_selection_transform_rect(FrozenSelectionTransformInput {
-			kind: FrozenSelectionTransformKind::Move,
-			initial_selection: DisplayPointRect::new(100.0, 80.0, 240.0, 160.0),
-			monitor_frame: DisplayPointRect::new(0.0, 0.0, 500.0, 400.0),
-			initial_pointer_x: 150.0,
-			initial_pointer_y: 120.0,
-			point_x: -100.0,
-			point_y: 500.0,
-			minimum_size: 1.0,
-		});
+		let rect =
+			selection_transform::frozen_selection_transform_rect(FrozenSelectionTransformInput {
+				kind: FrozenSelectionTransformKind::Move,
+				initial_selection: DisplayPointRect::new(100.0, 80.0, 240.0, 160.0),
+				monitor_frame: DisplayPointRect::new(0.0, 0.0, 500.0, 400.0),
+				initial_pointer_x: 150.0,
+				initial_pointer_y: 120.0,
+				point_x: -100.0,
+				point_y: 500.0,
+				minimum_size: 1.0,
+			});
 
 		assert_eq!(rect, Some(DisplayPointRect::new(0.0, 240.0, 240.0, 160.0)));
 	}
 
 	#[test]
 	fn transform_resize_bottom_right_preserves_minimum_size() {
-		let rect = frozen_selection_transform_rect(FrozenSelectionTransformInput {
-			kind: FrozenSelectionTransformKind::ResizeBottomRight,
-			initial_selection: DisplayPointRect::new(100.0, 80.0, 240.0, 160.0),
-			monitor_frame: DisplayPointRect::new(0.0, 0.0, 500.0, 400.0),
-			initial_pointer_x: 340.0,
-			initial_pointer_y: 80.0,
-			point_x: 50.0,
-			point_y: 300.0,
-			minimum_size: 12.0,
-		});
+		let rect =
+			selection_transform::frozen_selection_transform_rect(FrozenSelectionTransformInput {
+				kind: FrozenSelectionTransformKind::ResizeBottomRight,
+				initial_selection: DisplayPointRect::new(100.0, 80.0, 240.0, 160.0),
+				monitor_frame: DisplayPointRect::new(0.0, 0.0, 500.0, 400.0),
+				initial_pointer_x: 340.0,
+				initial_pointer_y: 80.0,
+				point_x: 50.0,
+				point_y: 300.0,
+				minimum_size: 12.0,
+			});
 
 		assert_eq!(rect, Some(DisplayPointRect::new(100.0, 228.0, 12.0, 12.0)));
 	}
 
 	#[test]
 	fn rejects_invalid_transform_input() {
-		let rect = frozen_selection_transform_rect(FrozenSelectionTransformInput {
-			kind: FrozenSelectionTransformKind::ResizeRight,
-			initial_selection: DisplayPointRect::new(100.0, 80.0, 240.0, 160.0),
-			monitor_frame: DisplayPointRect::new(0.0, 0.0, 500.0, 400.0),
-			initial_pointer_x: 340.0,
-			initial_pointer_y: 80.0,
-			point_x: f64::NAN,
-			point_y: 80.0,
-			minimum_size: 12.0,
-		});
+		let rect =
+			selection_transform::frozen_selection_transform_rect(FrozenSelectionTransformInput {
+				kind: FrozenSelectionTransformKind::ResizeRight,
+				initial_selection: DisplayPointRect::new(100.0, 80.0, 240.0, 160.0),
+				monitor_frame: DisplayPointRect::new(0.0, 0.0, 500.0, 400.0),
+				initial_pointer_x: 340.0,
+				initial_pointer_y: 80.0,
+				point_x: f64::NAN,
+				point_y: 80.0,
+				minimum_size: 12.0,
+			});
 
 		assert_eq!(rect, None);
 	}

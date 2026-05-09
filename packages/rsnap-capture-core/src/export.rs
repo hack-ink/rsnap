@@ -1,6 +1,6 @@
 //! Lossless export-image primitives owned by the Rust product core.
 
-use color_eyre::eyre::{Result, WrapErr, eyre};
+use color_eyre::eyre::{self, Result, WrapErr};
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ExtendedColorType, ImageEncoder, RgbaImage, imageops};
 
@@ -44,7 +44,6 @@ impl DisplayPointRect {
 pub struct RgbaExportImage {
 	image: RgbaImage,
 }
-
 impl RgbaExportImage {
 	/// Wraps an existing RGBA image as a product-core export image.
 	#[must_use]
@@ -61,13 +60,13 @@ impl RgbaExportImage {
 		let actual = rgba.len();
 
 		if actual != expected {
-			return Err(eyre!(
+			return Err(eyre::eyre!(
 				"RGBA export image byte length mismatch: expected {expected}, got {actual}"
 			));
 		}
 
 		let image = RgbaImage::from_raw(width, height, rgba)
-			.ok_or_else(|| eyre!("failed to create RGBA export image from raw bytes"))?;
+			.ok_or_else(|| eyre::eyre!("failed to create RGBA export image from raw bytes"))?;
 
 		Ok(Self { image })
 	}
@@ -177,8 +176,8 @@ pub fn frozen_display_crop_rect(
 /// the image byte-exact after decoding while avoiding expensive deflate work on
 /// the capture hot path.
 pub fn encode_png_lossless_fast(image: &RgbaImage) -> Result<Vec<u8>> {
-	let mut bytes = Vec::new();
 	let raw_len = image.as_raw().len();
+	let mut bytes = Vec::new();
 
 	if raw_len >= 16 * 1_024 * 1_024 {
 		let extra = (image.height() as usize).saturating_add(1_024);
@@ -251,7 +250,7 @@ fn integral_f64_to_u32(value: f64) -> Option<u32> {
 
 fn expected_rgba_len(width: u32, height: u32) -> Result<usize> {
 	if width == 0 || height == 0 {
-		return Err(eyre!(
+		return Err(eyre::eyre!(
 			"RGBA export image dimensions must be non-zero: width={width}, height={height}"
 		));
 	}
@@ -260,7 +259,7 @@ fn expected_rgba_len(width: u32, height: u32) -> Result<usize> {
 	let height = usize::try_from(height).wrap_err("failed to convert RGBA image height")?;
 
 	width.checked_mul(height).and_then(|pixel_count| pixel_count.checked_mul(4)).ok_or_else(|| {
-		eyre!("RGBA export image byte length overflow: width={width}, height={height}")
+		eyre::eyre!("RGBA export image byte length overflow: width={width}, height={height}")
 	})
 }
 
@@ -268,10 +267,7 @@ fn expected_rgba_len(width: u32, height: u32) -> Result<usize> {
 mod tests {
 	use image::{Rgba, RgbaImage};
 
-	use crate::{
-		DisplayPointRect, RectPoints, RgbaExportImage, crop_export_image, crop_rgba_image,
-		encode_png_lossless_fast, frozen_display_crop_rect,
-	};
+	use crate::{DisplayPointRect, RectPoints, RgbaExportImage};
 
 	#[test]
 	fn raw_export_image_validates_byte_length() {
@@ -294,7 +290,7 @@ mod tests {
 	#[test]
 	fn crop_rgba_image_copies_exact_pixels() {
 		let image = RgbaImage::from_fn(4, 4, |x, y| Rgba([x as u8, y as u8, (x + y) as u8, 255]));
-		let crop = crop_rgba_image(&image, RectPoints::new(1, 1, 2, 2)).expect("valid crop");
+		let crop = crate::crop_rgba_image(&image, RectPoints::new(1, 1, 2, 2)).expect("valid crop");
 
 		assert_eq!(crop.dimensions(), (2, 2));
 		assert_eq!(crop.get_pixel(0, 0), image.get_pixel(1, 1));
@@ -305,31 +301,31 @@ mod tests {
 	fn crop_rgba_image_rejects_out_of_bounds_rect() {
 		let image = RgbaImage::new(4, 4);
 
-		assert!(crop_rgba_image(&image, RectPoints::new(3, 3, 2, 2)).is_none());
+		assert!(crate::crop_rgba_image(&image, RectPoints::new(3, 3, 2, 2)).is_none());
 	}
 
 	#[test]
 	fn crop_export_image_clones_full_image_without_rect() {
 		let image = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
 
-		assert_eq!(crop_export_image(&image, None), Some(image));
+		assert_eq!(crate::crop_export_image(&image, None), Some(image));
 	}
 
 	#[test]
 	fn frozen_display_crop_rect_maps_global_selection_to_image_pixels() {
-		let crop = frozen_display_crop_rect(
-			2880,
-			1800,
-			DisplayPointRect::new(0.0, 0.0, 1440.0, 900.0),
+		let crop = crate::frozen_display_crop_rect(
+			2_880,
+			1_800,
+			DisplayPointRect::new(0.0, 0.0, 1_440.0, 900.0),
 			DisplayPointRect::new(100.0, 200.0, 300.0, 150.0),
 		);
 
-		assert_eq!(crop, Some(RectPoints::new(200, 1100, 600, 300)));
+		assert_eq!(crop, Some(RectPoints::new(200, 1_100, 600, 300)));
 	}
 
 	#[test]
 	fn frozen_display_crop_rect_integral_expands_and_clips() {
-		let crop = frozen_display_crop_rect(
+		let crop = crate::frozen_display_crop_rect(
 			200,
 			200,
 			DisplayPointRect::new(0.0, 0.0, 100.0, 100.0),
@@ -344,7 +340,7 @@ mod tests {
 		let display_frame = DisplayPointRect::new(0.0, 0.0, 100.0, 100.0);
 
 		assert_eq!(
-			frozen_display_crop_rect(
+			crate::frozen_display_crop_rect(
 				200,
 				200,
 				display_frame,
@@ -353,7 +349,7 @@ mod tests {
 			None
 		);
 		assert_eq!(
-			frozen_display_crop_rect(
+			crate::frozen_display_crop_rect(
 				200,
 				200,
 				display_frame,
@@ -366,7 +362,7 @@ mod tests {
 	#[test]
 	fn encode_png_lossless_fast_writes_png_payload() {
 		let image = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
-		let png = encode_png_lossless_fast(&image).expect("PNG encode should succeed");
+		let png = crate::encode_png_lossless_fast(&image).expect("PNG encode should succeed");
 
 		assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
 	}

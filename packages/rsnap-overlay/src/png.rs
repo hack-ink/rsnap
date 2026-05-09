@@ -1,9 +1,8 @@
 use color_eyre::eyre::Result;
 use image::RgbaImage;
-use rsnap_capture_core::encode_png_lossless_fast;
 
 pub(crate) fn rgba_image_to_png_bytes(image: &RgbaImage) -> Result<Vec<u8>> {
-	encode_png_lossless_fast(image)
+	rsnap_capture_core::encode_png_lossless_fast(image)
 }
 
 #[cfg(test)]

@@ -85,8 +85,10 @@ fn display_point_to_pixel(
 	if !frame_is_valid(frame) || !display_frame_is_valid(display_frame) {
 		return None;
 	}
+
 	let display_max_x = display_frame.x + display_frame.width;
 	let display_max_y = display_frame.y + display_frame.height;
+
 	if !(point_x.is_finite()
 		&& point_y.is_finite()
 		&& point_x >= display_frame.x
@@ -111,13 +113,16 @@ fn frame_is_valid(frame: BgraFrameView<'_>) -> bool {
 	if frame.width == 0 || frame.height == 0 {
 		return false;
 	}
+
 	let width_bytes = usize::try_from(frame.width).ok().and_then(|width| width.checked_mul(4));
 	let Some(width_bytes) = width_bytes else {
 		return false;
 	};
+
 	if frame.bytes_per_row < width_bytes {
 		return false;
 	}
+
 	let required_len = usize::try_from(frame.height)
 		.ok()
 		.and_then(|height| height.checked_mul(frame.bytes_per_row));
@@ -141,6 +146,7 @@ fn pixel_offset(frame: BgraFrameView<'_>, x: usize, y: usize) -> Option<usize> {
 	if x >= usize::try_from(frame.width).ok()? || y >= usize::try_from(frame.height).ok()? {
 		return None;
 	}
+
 	let row = y.checked_mul(frame.bytes_per_row)?;
 	let column = x.checked_mul(4)?;
 	let offset = row.checked_add(column)?;
@@ -160,13 +166,13 @@ const fn clamp_i64(value: i64, min: i64, max: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
-	use super::{BgraFrameView, loupe_patch_rgba_from_bgra_frame, sample_rgb_from_bgra_frame};
+	use crate::bgra_frame::{self, BgraFrameView};
 	use crate::{DisplayPointRect, Rgb};
 
 	#[test]
 	fn samples_rgb_from_bgra_display_point() {
 		let bytes = bgra_fixture(4, 3, 20);
-		let rgb = sample_rgb_from_bgra_frame(
+		let rgb = bgra_frame::sample_rgb_from_bgra_frame(
 			BgraFrameView { width: 4, height: 3, bytes_per_row: 20, bytes: &bytes },
 			DisplayPointRect::new(10.0, 20.0, 40.0, 30.0),
 			25.0,
@@ -179,7 +185,7 @@ mod tests {
 	#[test]
 	fn samples_bottom_edge_like_native_mapping() {
 		let bytes = bgra_fixture(4, 3, 16);
-		let rgb = sample_rgb_from_bgra_frame(
+		let rgb = bgra_frame::sample_rgb_from_bgra_frame(
 			BgraFrameView { width: 4, height: 3, bytes_per_row: 16, bytes: &bytes },
 			DisplayPointRect::new(0.0, 0.0, 4.0, 3.0),
 			0.0,
@@ -192,7 +198,7 @@ mod tests {
 	#[test]
 	fn loupe_patch_clamps_edges_and_converts_bgra_to_rgba() {
 		let bytes = bgra_fixture(4, 3, 16);
-		let patch = loupe_patch_rgba_from_bgra_frame(
+		let patch = bgra_frame::loupe_patch_rgba_from_bgra_frame(
 			BgraFrameView { width: 4, height: 3, bytes_per_row: 16, bytes: &bytes },
 			DisplayPointRect::new(0.0, 0.0, 4.0, 3.0),
 			0.0,
@@ -209,8 +215,9 @@ mod tests {
 	#[test]
 	fn rejects_invalid_frame_inputs() {
 		let bytes = bgra_fixture(4, 3, 16);
+
 		assert_eq!(
-			sample_rgb_from_bgra_frame(
+			bgra_frame::sample_rgb_from_bgra_frame(
 				BgraFrameView { width: 4, height: 3, bytes_per_row: 12, bytes: &bytes },
 				DisplayPointRect::new(0.0, 0.0, 4.0, 3.0),
 				1.0,
@@ -219,7 +226,7 @@ mod tests {
 			None
 		);
 		assert_eq!(
-			loupe_patch_rgba_from_bgra_frame(
+			bgra_frame::loupe_patch_rgba_from_bgra_frame(
 				BgraFrameView { width: 4, height: 3, bytes_per_row: 16, bytes: &bytes[..12] },
 				DisplayPointRect::new(0.0, 0.0, 4.0, 3.0),
 				1.0,
@@ -232,15 +239,18 @@ mod tests {
 
 	fn bgra_fixture(width: u32, height: u32, bytes_per_row: usize) -> Vec<u8> {
 		let mut bytes = vec![0xEE; bytes_per_row * height as usize];
+
 		for y in 0..height {
 			for x in 0..width {
 				let offset = y as usize * bytes_per_row + x as usize * 4;
+
 				bytes[offset] = 30 + y as u8 * 15 + x as u8;
 				bytes[offset + 1] = 20 + y as u8 * 10 + x as u8;
 				bytes[offset + 2] = 10 + y as u8 * 5 + x as u8;
 				bytes[offset + 3] = 200 + y as u8 + x as u8;
 			}
 		}
+
 		bytes
 	}
 }

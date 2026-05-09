@@ -56,11 +56,11 @@ pub fn scroll_minimap_plan(input: ScrollMinimapInput) -> Option<ScrollMinimapPla
 	} else {
 		(right_space >= left_space, right_space.max(left_space))
 	};
-
 	let max_height = input.bounds.height - input.margin * 2.0;
 	let aspect_height_per_width = input.export_height / input.export_width;
 	let height_limited_width = max_height / aspect_height_per_width.max(f64::MIN_POSITIVE);
 	let width = input.preferred_width.min(side_space).min(height_limited_width);
+
 	if width < input.minimum_width.min(input.preferred_width) * 0.55 {
 		return None;
 	}
@@ -75,9 +75,11 @@ pub fn scroll_minimap_plan(input: ScrollMinimapInput) -> Option<ScrollMinimapPla
 	};
 	let frame = DisplayPointRect::new(x, y, width, height);
 	let image_frame = inset_rect(frame, input.image_inset);
+
 	if !rect_is_valid(image_frame) {
 		return None;
 	}
+
 	let viewport_frame = scroll_minimap_viewport_frame(
 		image_frame,
 		input.export_height,
@@ -160,6 +162,7 @@ fn intersect_rect(a: DisplayPointRect, b: DisplayPointRect) -> Option<DisplayPoi
 	let max_y = max_y(a).min(max_y(b));
 	let width = max_x - min_x;
 	let height = max_y - min_y;
+
 	if width <= 0.0 || height <= 0.0 {
 		return None;
 	}
@@ -181,14 +184,15 @@ fn mid_y(rect: DisplayPointRect) -> f64 {
 
 #[cfg(test)]
 mod tests {
-	use super::{ScrollMinimapInput, scroll_minimap_plan};
 	use crate::DisplayPointRect;
+	use crate::minimap::{self, ScrollMinimapInput};
 
 	#[test]
 	fn scroll_minimap_prefers_right_side_when_space_exists() {
-		let plan =
-			scroll_minimap_plan(test_input(DisplayPointRect::new(100.0, 100.0, 100.0, 100.0)))
-				.expect("right-side minimap plan");
+		let plan = minimap::scroll_minimap_plan(test_input(DisplayPointRect::new(
+			100.0, 100.0, 100.0, 100.0,
+		)))
+		.expect("right-side minimap plan");
 
 		assert_eq!(plan.frame, DisplayPointRect::new(210.0, 54.0, 96.0, 192.0));
 		assert_eq!(plan.image_frame, DisplayPointRect::new(213.0, 57.0, 90.0, 186.0));
@@ -198,8 +202,10 @@ mod tests {
 	#[test]
 	fn scroll_minimap_falls_back_to_left_when_right_side_is_tight() {
 		let mut input = test_input(DisplayPointRect::new(130.0, 100.0, 100.0, 100.0));
+
 		input.bounds = DisplayPointRect::new(0.0, 0.0, 250.0, 500.0);
-		let plan = scroll_minimap_plan(input).expect("left-side minimap plan");
+
+		let plan = minimap::scroll_minimap_plan(input).expect("left-side minimap plan");
 
 		assert_eq!(plan.frame, DisplayPointRect::new(24.0, 54.0, 96.0, 192.0));
 	}
@@ -207,9 +213,10 @@ mod tests {
 	#[test]
 	fn scroll_minimap_rejects_tiny_available_space() {
 		let mut input = test_input(DisplayPointRect::new(100.0, 100.0, 100.0, 100.0));
+
 		input.bounds = DisplayPointRect::new(0.0, 0.0, 230.0, 60.0);
 
-		assert_eq!(scroll_minimap_plan(input), None);
+		assert_eq!(minimap::scroll_minimap_plan(input), None);
 	}
 
 	fn test_input(selection: DisplayPointRect) -> ScrollMinimapInput {
