@@ -5,6 +5,10 @@ use std::ptr;
 use image::{Rgba, RgbaImage};
 
 #[cfg(target_os = "macos")]
+use crate::overlay::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT;
+#[cfg(target_os = "macos")]
+use crate::overlay::LiveClickCaptureTarget;
+#[cfg(target_os = "macos")]
 use crate::overlay::OverlayMode;
 #[cfg(target_os = "macos")]
 use crate::overlay::RectPoints;
@@ -245,7 +249,7 @@ fn pending_frozen_handoff_keeps_live_mode_and_hover_until_first_display_image_ar
 
 	session.begin_frozen_capture_from_click(
 		monitor,
-		crate::overlay::LiveClickCaptureTarget {
+		LiveClickCaptureTarget {
 			capture_rect: Some(capture_rect),
 			window_target: Some(WindowFreezeCaptureTarget {
 				monitor,
@@ -654,11 +658,8 @@ fn window_matte_capture_without_live_preview_escalates_to_hidden_fallback_after_
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_display_image.is_none());
 
-	session.frozen_transition_started_at = Some(
-		Instant::now()
-			- crate::overlay::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT
-			- Duration::from_millis(1),
-	);
+	session.frozen_transition_started_at =
+		Some(Instant::now() - DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT - Duration::from_millis(1));
 
 	let _ = session.about_to_wait();
 
@@ -760,11 +761,8 @@ fn background_capture_without_live_snapshot_escalates_to_hidden_fallback_after_t
 	assert!(!session.capture_windows_hidden);
 	assert!(session.state.frozen_display_image.is_none());
 
-	session.frozen_transition_started_at = Some(
-		Instant::now()
-			- crate::overlay::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT
-			- Duration::from_millis(1),
-	);
+	session.frozen_transition_started_at =
+		Some(Instant::now() - DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT - Duration::from_millis(1));
 
 	let _ = session.about_to_wait();
 
@@ -789,11 +787,8 @@ fn hidden_fallback_capture_response_commits_frozen_images_while_mode_is_still_li
 		Some(cursor),
 	);
 
-	session.frozen_transition_started_at = Some(
-		Instant::now()
-			- crate::overlay::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT
-			- Duration::from_millis(1),
-	);
+	session.frozen_transition_started_at =
+		Some(Instant::now() - DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT - Duration::from_millis(1));
 
 	let _ = session.about_to_wait();
 

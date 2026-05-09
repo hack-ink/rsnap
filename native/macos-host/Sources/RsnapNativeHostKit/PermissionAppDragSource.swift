@@ -58,7 +58,7 @@ final class PermissionAppDragSourceView: NSView, NSDraggingSource {
 	}
 
 	override func mouseDragged(with event: NSEvent) {
-		guard !dragStarted else {
+		guard dragStarted == false else {
 			return
 		}
 		dragStarted = true

@@ -1215,6 +1215,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fast_image_resize"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12dd43e5011e8d8411a3215a0d57a2ec5c68282fb90eb5d7221fab0113442174"
+dependencies = [
+ "cfg-if",
+ "document-features",
+ "num-traits",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3378,7 +3390,10 @@ dependencies = [
 name = "rsnap-capture-core"
 version = "0.1.7"
 dependencies = [
+ "color-eyre",
+ "fast_image_resize",
  "image",
+ "png",
  "serde",
 ]
 
@@ -3430,6 +3445,16 @@ dependencies = [
  "wgpu",
  "winit",
  "xcap",
+]
+
+[[package]]
+name = "rsnap-perf"
+version = "0.1.7"
+dependencies = [
+ "color-eyre",
+ "image",
+ "rsnap-capture-core",
+ "rsnap-overlay",
 ]
 
 [[package]]

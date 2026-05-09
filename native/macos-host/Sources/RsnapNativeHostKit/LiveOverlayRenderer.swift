@@ -92,7 +92,7 @@ final class WindowSnapshotFeed {
 		for info in candidateWindows {
 			let isOnScreen = (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false
 			let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? -1
-			if !isOnScreen {
+			if isOnScreen == false {
 				continue
 			}
 			let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1
@@ -401,7 +401,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 
 	private func enqueueRefresh() {
 		stateLock.lock()
-		guard !refreshQueued else {
+		guard refreshQueued == false else {
 			stateLock.unlock()
 			return
 		}
@@ -676,7 +676,7 @@ final class ChromeSampleFeed: @unchecked Sendable {
 			shouldNotifyImmediately = false
 			sampleSidePixels = sidePixels
 			sampleIncludesLoupePatch = includeLoupePatch
-		} else if !whiteStreamRunHasProbed,
+		} else if whiteStreamRunHasProbed == false,
 			now - lastBackgroundProbeUptime >= Self.backgroundProbeMinimumInterval
 		{
 			guard pointIdleDuration >= Self.backgroundProbeIdleDelay else {
@@ -908,7 +908,7 @@ final class LiveFrameClockDriver: @unchecked Sendable {
 		stateLock.lock()
 		let alreadyRunning = timer != nil && currentTargetFramesPerSecond == sanitizedTarget
 		stateLock.unlock()
-		guard !alreadyRunning else {
+		guard alreadyRunning == false else {
 			return
 		}
 
@@ -1033,7 +1033,7 @@ private final class SelectionFlowBandLayer: CALayer {
 	}
 
 	func hide() {
-		guard !isHidden || !focusRect.isNull else {
+		guard isHidden == false || focusRect.isNull == false else {
 			return
 		}
 		isHidden = true
@@ -1116,7 +1116,7 @@ private final class SelectionFlowBandLayer: CALayer {
 
 	private func installFlowAnimation(restartsAnimation: Bool) {
 		let hasAnimations = linePass.gradientLayer.animation(forKey: Self.flowAnimationKey) != nil
-		if !restartsAnimation, hasAnimations {
+		if restartsAnimation == false, hasAnimations {
 			return
 		}
 		removeFlowAnimation()
@@ -1327,7 +1327,7 @@ private final class LiveScrimLayer: CAShapeLayer {
 		bounds: CGRect,
 		roundedExclusions: [OverlayMaskGeometry.RoundedExclusion]
 	) {
-		guard !roundedExclusions.isEmpty else {
+		guard roundedExclusions.isEmpty == false else {
 			mask = nil
 			return
 		}
@@ -1415,7 +1415,7 @@ final class LiveOverlayRenderer {
 		static let scrim: CGFloat = 10
 		static let selectionChrome: CGFloat = 30
 		static let selectionSize: CGFloat = 40
-		static let hudChrome: CGFloat = 1000
+		static let hudChrome: CGFloat = 1_000
 	}
 
 	private var snapshotProvider: (() -> LivePreviewSnapshot?)?
@@ -1702,15 +1702,7 @@ final class LiveOverlayRenderer {
 	private func renderFocus(_ snapshot: LivePreviewSnapshot) {
 		let focusRect = snapshot.dragSelectionLocal ?? snapshot.hoverSelectionLocal
 		guard let focusRect else {
-			scrimLayer.isHidden = true
-			for scrimLayer in [topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer] {
-				scrimLayer.isHidden = true
-			}
-			hoverGlowLayer.isHidden = true
-			hoverFlowLayer.hide()
-			dragBorderOutlineLayer.isHidden = true
-			dragBorderLayer.isHidden = true
-			selectionSizeLayer.isHidden = true
+			hideFocusLayers()
 			return
 		}
 
@@ -1718,9 +1710,7 @@ final class LiveOverlayRenderer {
 		let scrimColor = NSColor(calibratedWhite: 0, alpha: scrimAlpha).cgColor
 		let bounds = snapshot.bounds
 		let chromeExclusions = liveChromeRoundedExclusions(for: snapshot)
-		for legacyScrimLayer in [topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer] {
-			legacyScrimLayer.isHidden = true
-		}
+		hideLegacyScrimLayers()
 		updateScrimLayer(
 			bounds: bounds,
 			focusRect: focusRect,
@@ -1729,107 +1719,146 @@ final class LiveOverlayRenderer {
 		)
 
 		if snapshot.frozenPending {
-			hoverGlowLayer.isHidden = true
-			hoverFlowLayer.hide()
-			dragBorderOutlineLayer.isHidden = false
-			dragBorderLayer.isHidden = false
-			selectionSizeLayer.isHidden = true
-			let pixelsPerPoint = hostView?.window?.screen?.backingScaleFactor ?? 1
-			let borderOutset = CaptureChrome.dashedBorderOutset(
-				strokeWidth: CaptureChrome.frozenDashedBorderWidth,
-				pixelsPerPoint: pixelsPerPoint
-			)
-			let borderRect = focusRect.insetBy(dx: -borderOutset, dy: -borderOutset)
-			let layerFrame = dashedBorderLayerFrame(
-				for: borderRect,
-				lineWidth: CaptureChrome.frozenDashedBorderWidth + 0.75
-			)
-			let localBorderRect = borderRect.offsetBy(
-				dx: -layerFrame.minX,
-				dy: -layerFrame.minY
-			)
-			let frozenPath = CaptureChrome.dashedBorderPath(for: localBorderRect)
-			for layer in [dragBorderOutlineLayer, dragBorderLayer] {
-				layer.frame = layerFrame
-				layer.masksToBounds = true
-			}
-			dragBorderOutlineLayer.path = frozenPath
-			dragBorderOutlineLayer.strokeColor =
-				NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
-				.cgColor
-			dragBorderOutlineLayer.lineWidth = CaptureChrome.frozenDashedBorderWidth + 0.75
-			dragBorderOutlineLayer.lineCap = .butt
-			dragBorderOutlineLayer.lineJoin = .miter
-			dragBorderLayer.path = frozenPath
-			dragBorderLayer.strokeColor =
-				NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 248 / 255)
-				.cgColor
-			dragBorderLayer.lineWidth = CaptureChrome.frozenDashedBorderWidth
-			dragBorderLayer.lineCap = .butt
-			dragBorderLayer.lineJoin = .miter
+			renderFrozenPendingFocus(focusRect)
 			return
 		}
 
 		if let dragSelection = snapshot.dragSelectionLocal {
-			hoverGlowLayer.isHidden = true
-			hoverFlowLayer.hide()
-			dragBorderOutlineLayer.isHidden = false
-			dragBorderLayer.isHidden = false
-			let pixelsPerPoint = hostView?.window?.screen?.backingScaleFactor ?? 1
-			let borderOutset = CaptureChrome.dashedBorderOutset(
-				strokeWidth: CaptureChrome.liveDashedBorderWidth,
-				pixelsPerPoint: pixelsPerPoint
-			)
-			let borderRect = dragSelection.insetBy(dx: -borderOutset, dy: -borderOutset)
-			let layerFrame = dashedBorderLayerFrame(
-				for: borderRect,
-				lineWidth: CaptureChrome.liveDashedBorderWidth + 0.75
-			)
-			let localBorderRect = borderRect.offsetBy(
-				dx: -layerFrame.minX,
-				dy: -layerFrame.minY
-			)
-			let dragPath = CaptureChrome.dashedBorderPath(for: localBorderRect)
-			for layer in [dragBorderOutlineLayer, dragBorderLayer] {
-				layer.frame = layerFrame
-				layer.masksToBounds = true
-			}
-			dragBorderOutlineLayer.path = dragPath
-			dragBorderOutlineLayer.strokeColor =
-				NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
-				.cgColor
-			dragBorderOutlineLayer.lineWidth = CaptureChrome.liveDashedBorderWidth + 0.75
-			dragBorderOutlineLayer.lineCap = .butt
-			dragBorderOutlineLayer.lineJoin = .miter
-			dragBorderLayer.path = dragPath
-			dragBorderLayer.strokeColor =
-				NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor
-			dragBorderLayer.lineWidth = CaptureChrome.liveDashedBorderWidth
-			dragBorderLayer.lineCap = .butt
-			dragBorderLayer.lineJoin = .miter
-			if let selectionSizeText = snapshot.selectionSizeText {
-				let font = LiveOverlayTypography.font
-				let textSize = selectionSizeText.size(using: font)
-				let frame = CaptureChrome.selectionSizeBadgeFrame(
-					for: dragSelection,
-					textSize: textSize,
-					in: bounds
-				)
-				applyText(
-					selectionSizeLayer,
-					text: selectionSizeText,
-					font: font,
-					color: NSColor.white.withAlphaComponent(0.98),
-					frame: frame,
-					alignment: .left
-				)
-				selectionSizeLayer.isHidden = false
-			} else {
-				selectionSizeLayer.isHidden = true
-			}
+			renderDragSelectionFocus(dragSelection, snapshot: snapshot, bounds: bounds)
 			return
 		}
 
+		renderHoverFocus(focusRect, snapshot: snapshot, chromeExclusions: chromeExclusions)
+	}
+
+	private func hideFocusLayers() {
+		scrimLayer.isHidden = true
+		hideLegacyScrimLayers()
+		hoverGlowLayer.isHidden = true
+		hoverFlowLayer.hide()
+		dragBorderOutlineLayer.isHidden = true
+		dragBorderLayer.isHidden = true
+		selectionSizeLayer.isHidden = true
+	}
+
+	private func hideLegacyScrimLayers() {
+		for scrimLayer in [topScrimLayer, leftScrimLayer, rightScrimLayer, bottomScrimLayer] {
+			scrimLayer.isHidden = true
+		}
+	}
+
+	private func renderFrozenPendingFocus(_ focusRect: CGRect) {
+		hoverGlowLayer.isHidden = true
+		hoverFlowLayer.hide()
+		dragBorderOutlineLayer.isHidden = false
+		dragBorderLayer.isHidden = false
+		selectionSizeLayer.isHidden = true
+		let pixelsPerPoint = hostView?.window?.screen?.backingScaleFactor ?? 1
+		let borderOutset = CaptureChrome.dashedBorderOutset(
+			strokeWidth: CaptureChrome.frozenDashedBorderWidth,
+			pixelsPerPoint: pixelsPerPoint
+		)
+		let borderRect = focusRect.insetBy(dx: -borderOutset, dy: -borderOutset)
+		let layerFrame = dashedBorderLayerFrame(
+			for: borderRect,
+			lineWidth: CaptureChrome.frozenDashedBorderWidth + 0.75
+		)
+		let localBorderRect = borderRect.offsetBy(dx: -layerFrame.minX, dy: -layerFrame.minY)
+		let frozenPath = CaptureChrome.dashedBorderPath(for: localBorderRect)
+		for layer in [dragBorderOutlineLayer, dragBorderLayer] {
+			layer.frame = layerFrame
+			layer.masksToBounds = true
+		}
+		dragBorderOutlineLayer.path = frozenPath
+		dragBorderOutlineLayer.strokeColor =
+			NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
+			.cgColor
+		dragBorderOutlineLayer.lineWidth = CaptureChrome.frozenDashedBorderWidth + 0.75
+		dragBorderOutlineLayer.lineCap = .butt
+		dragBorderOutlineLayer.lineJoin = .miter
+		dragBorderLayer.path = frozenPath
+		dragBorderLayer.strokeColor =
+			NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 248 / 255)
+			.cgColor
+		dragBorderLayer.lineWidth = CaptureChrome.frozenDashedBorderWidth
+		dragBorderLayer.lineCap = .butt
+		dragBorderLayer.lineJoin = .miter
+	}
+
+	private func renderDragSelectionFocus(
+		_ dragSelection: CGRect,
+		snapshot: LivePreviewSnapshot,
+		bounds: CGRect
+	) {
+		hoverGlowLayer.isHidden = true
+		hoverFlowLayer.hide()
+		dragBorderOutlineLayer.isHidden = false
+		dragBorderLayer.isHidden = false
+		let pixelsPerPoint = hostView?.window?.screen?.backingScaleFactor ?? 1
+		let borderOutset = CaptureChrome.dashedBorderOutset(
+			strokeWidth: CaptureChrome.liveDashedBorderWidth,
+			pixelsPerPoint: pixelsPerPoint
+		)
+		let borderRect = dragSelection.insetBy(dx: -borderOutset, dy: -borderOutset)
+		let layerFrame = dashedBorderLayerFrame(
+			for: borderRect,
+			lineWidth: CaptureChrome.liveDashedBorderWidth + 0.75
+		)
+		let localBorderRect = borderRect.offsetBy(dx: -layerFrame.minX, dy: -layerFrame.minY)
+		let dragPath = CaptureChrome.dashedBorderPath(for: localBorderRect)
+		for layer in [dragBorderOutlineLayer, dragBorderLayer] {
+			layer.frame = layerFrame
+			layer.masksToBounds = true
+		}
+		dragBorderOutlineLayer.path = dragPath
+		dragBorderOutlineLayer.strokeColor =
+			NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
+			.cgColor
+		dragBorderOutlineLayer.lineWidth = CaptureChrome.liveDashedBorderWidth + 0.75
+		dragBorderOutlineLayer.lineCap = .butt
+		dragBorderOutlineLayer.lineJoin = .miter
+		dragBorderLayer.path = dragPath
+		dragBorderLayer.strokeColor =
+			NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.96).cgColor
+		dragBorderLayer.lineWidth = CaptureChrome.liveDashedBorderWidth
+		dragBorderLayer.lineCap = .butt
+		dragBorderLayer.lineJoin = .miter
+		renderSelectionSizeBadge(
+			snapshot.selectionSizeText, selection: dragSelection, bounds: bounds)
+	}
+
+	private func renderSelectionSizeBadge(
+		_ selectionSizeText: String?,
+		selection: CGRect,
+		bounds: CGRect
+	) {
+		guard let selectionSizeText else {
+			selectionSizeLayer.isHidden = true
+			return
+		}
+		let font = LiveOverlayTypography.font
+		let textSize = selectionSizeText.size(using: font)
+		let frame = CaptureChrome.selectionSizeBadgeFrame(
+			for: selection,
+			textSize: textSize,
+			in: bounds
+		)
+		applyText(
+			selectionSizeLayer,
+			text: selectionSizeText,
+			font: font,
+			color: NSColor.white.withAlphaComponent(0.98),
+			frame: frame,
+			alignment: .left
+		)
+		selectionSizeLayer.isHidden = false
+	}
+
+	private func renderHoverFocus(
+		_ focusRect: CGRect,
+		snapshot: LivePreviewSnapshot,
+		chromeExclusions: [OverlayMaskGeometry.RoundedExclusion]
+	) {
 		dragBorderOutlineLayer.isHidden = true
 		dragBorderLayer.isHidden = true
 		selectionSizeLayer.isHidden = true
@@ -1887,8 +1916,8 @@ final class LiveOverlayRenderer {
 	) -> [OverlayMaskGeometry.RoundedExclusion] {
 		roundedExclusions.compactMap { exclusion in
 			let visibleRect = exclusion.rect.intersection(bounds)
-			guard !visibleRect.isNull, visibleRect.width > 0, visibleRect.height > 0,
-				!focusRect.contains(visibleRect)
+			guard visibleRect.isNull == false, visibleRect.width > 0, visibleRect.height > 0,
+				focusRect.contains(visibleRect) == false
 			else {
 				return nil
 			}
@@ -1918,7 +1947,7 @@ final class LiveOverlayRenderer {
 	private func updateLiveScrimExclusions(
 		excluding exclusions: [OverlayMaskGeometry.RoundedExclusion]
 	) {
-		guard !scrimLayer.isHidden, let focusRect = lastRenderedFocusRect else {
+		guard scrimLayer.isHidden == false, let focusRect = lastRenderedFocusRect else {
 			return
 		}
 		updateScrimLayer(
@@ -1932,7 +1961,7 @@ final class LiveOverlayRenderer {
 	private func updateLiveFlowExclusions(
 		excluding exclusions: [OverlayMaskGeometry.RoundedExclusion]
 	) {
-		guard !hoverFlowLayer.isHidden else {
+		guard hoverFlowLayer.isHidden == false else {
 			return
 		}
 		hoverFlowLayer.updateRoundedExclusions(exclusions)
@@ -2222,7 +2251,7 @@ final class LiveOverlayRenderer {
 		hudHexLayer.isHidden = true
 		hudHexRollLayer.isHidden = false
 		hudHexRollLayer.frame = frame
-		guard !hudHexPendingRollActive else {
+		guard hudHexPendingRollActive == false else {
 			return
 		}
 
@@ -2485,7 +2514,7 @@ final class LiveOverlayRenderer {
 	) -> HudHexPendingRollColumnState {
 		var digits = Self.pendingHexRollSequence(index: index)
 		let scrollsUp = Self.pendingHexRollColumnScrollsUp(index: index)
-		if !scrollsUp {
+		if scrollsUp == false {
 			digits.reverse()
 		}
 		let contentText = digits.map(String.init).joined(separator: "\n")
@@ -2529,7 +2558,7 @@ final class LiveOverlayRenderer {
 
 	private func currentPendingHudHexDigits(lineHeight: CGFloat) -> [Character?] {
 		hudHexPendingRollColumns.map { column in
-			guard !column.digits.isEmpty else {
+			guard column.digits.isEmpty == false else {
 				return nil
 			}
 			let presentationLayer = column.contentLayer.presentation() ?? column.contentLayer

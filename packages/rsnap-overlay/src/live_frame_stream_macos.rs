@@ -19,12 +19,16 @@ use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
+use image::Rgba;
 use image::RgbaImage;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass, Message};
 use objc2_core_foundation::{self, CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_media::{CMSampleBuffer, kCMTimeZero};
+use objc2_core_video::CVPixelBufferCreate;
+use objc2_core_video::CVPixelBufferGetHeight;
+use objc2_core_video::CVPixelBufferGetWidth;
 use objc2_core_video::{
 	CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
 	CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
@@ -332,7 +336,7 @@ impl MacLiveFrameStream {
 	fn debug_test_pixel_buffer() -> SharedPixelBuffer {
 		let mut buffer = ptr::null_mut();
 		let res = unsafe {
-			objc2_core_video::CVPixelBufferCreate(
+			CVPixelBufferCreate(
 				None,
 				1,
 				1,
@@ -3037,8 +3041,8 @@ fn sample_handler_queue_label(monitor_id: u32) -> String {
 }
 
 fn pixel_buffer_size_px(pixel_buffer: &CFRetained<CVPixelBuffer>) -> Option<(u32, u32)> {
-	let width = objc2_core_video::CVPixelBufferGetWidth(pixel_buffer);
-	let height = objc2_core_video::CVPixelBufferGetHeight(pixel_buffer);
+	let width = CVPixelBufferGetWidth(pixel_buffer);
+	let height = CVPixelBufferGetHeight(pixel_buffer);
 	let width = u32::try_from(width).ok()?;
 	let height = u32::try_from(height).ok()?;
 
@@ -3135,7 +3139,7 @@ fn sample_cursor_from_bgra_bytes(
 				let r = *bytes.get(offset + 2)?;
 				let a = *bytes.get(offset + 3)?;
 
-				out_patch.put_pixel(ox as u32, oy as u32, image::Rgba([r, g, b, a]));
+				out_patch.put_pixel(ox as u32, oy as u32, Rgba([r, g, b, a]));
 			}
 		}
 
@@ -3191,7 +3195,7 @@ fn rgba_image_from_pixel_buffer(
 				let r = row.get(idx + 2).copied().unwrap_or(0);
 				let a = row.get(idx + 3).copied().unwrap_or(255);
 
-				out.put_pixel(x as u32, y as u32, image::Rgba([r, g, b, a]));
+				out.put_pixel(x as u32, y as u32, Rgba([r, g, b, a]));
 			}
 		}
 
@@ -3244,7 +3248,7 @@ fn rgba_region_from_pixel_buffer(
 				let r = row.get(idx + 2).copied().unwrap_or(0);
 				let a = row.get(idx + 3).copied().unwrap_or(255);
 
-				out.put_pixel(x as u32, y as u32, image::Rgba([r, g, b, a]));
+				out.put_pixel(x as u32, y as u32, Rgba([r, g, b, a]));
 			}
 		}
 

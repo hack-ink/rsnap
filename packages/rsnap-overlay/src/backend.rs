@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]
 use block2::RcBlock;
 use color_eyre::eyre::{self, Result, WrapErr};
+use image::Rgba;
 use image::RgbaImage;
 use image::imageops;
 #[cfg(target_os = "macos")]
@@ -29,6 +30,14 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 #[cfg(target_os = "macos")]
 use objc2_core_graphics::{
 	CGDataProvider, CGImage, CGRectNull, CGWindowID, CGWindowImageOption, CGWindowListOption,
+};
+#[allow(
+	deprecated,
+	reason = "Legacy CG capture remains as the macOS fallback while ScreenCaptureKit owns the primary capture path."
+)]
+#[cfg(target_os = "macos")]
+use objc2_core_graphics::{
+	CGDisplayCreateImage, CGDisplayCreateImageForRect, CGWindowListCreateImage,
 };
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSError, NSOperatingSystemVersion, NSProcessInfo};
@@ -380,7 +389,7 @@ impl XcapCaptureBackend {
 		reason = "CoreGraphics monitor capture remains the verified macOS fallback until XY-74/XY-75 replace this path."
 	)]
 	fn capture_monitor_image(&mut self, monitor: MonitorRect) -> Result<RgbaImage> {
-		let cg_image = objc2_core_graphics::CGDisplayCreateImage(monitor.id)
+		let cg_image = CGDisplayCreateImage(monitor.id)
 			.ok_or_else(|| eyre::eyre!("CGDisplayCreateImage returned null"))?;
 
 		rgba_image_from_cg_image_for_display(cg_image.as_ref(), Some(monitor.id))
@@ -401,7 +410,7 @@ impl XcapCaptureBackend {
 		let cg_rect: CGRect = unsafe { CGRectNull };
 		let image_option =
 			CGWindowImageOption::BoundsIgnoreFraming | CGWindowImageOption::BestResolution;
-		let cg_image = objc2_core_graphics::CGWindowListCreateImage(
+		let cg_image = CGWindowListCreateImage(
 			cg_rect,
 			CGWindowListOption::OptionIncludingWindow,
 			window_id as CGWindowID,
@@ -1070,7 +1079,7 @@ fn capture_monitor_region_with_core_graphics(
 		CGPoint::new(rect_px.x as f64, rect_px.y as f64),
 		CGSize::new(rect_px.width.max(1) as f64, rect_px.height.max(1) as f64),
 	);
-	let image = objc2_core_graphics::CGDisplayCreateImageForRect(monitor.id, cg_rect)
+	let image = CGDisplayCreateImageForRect(monitor.id, cg_rect)
 		.ok_or_else(|| eyre::eyre!("CGDisplayCreateImageForRect returned null"))?;
 	let image = rgba_image_from_cg_image_for_display(image.as_ref(), Some(monitor.id))
 		.wrap_err("failed to decode CGDisplay rect capture")?;
@@ -1079,7 +1088,7 @@ fn capture_monitor_region_with_core_graphics(
 		return Ok(image);
 	}
 
-	let full_image = objc2_core_graphics::CGDisplayCreateImage(monitor.id)
+	let full_image = CGDisplayCreateImage(monitor.id)
 		.ok_or_else(|| eyre::eyre!("CGDisplayCreateImage returned null"))?;
 	let full_image = rgba_image_from_cg_image_for_display(full_image.as_ref(), Some(monitor.id))
 		.wrap_err("failed to decode CGDisplay full-monitor capture")?;
@@ -1115,7 +1124,7 @@ fn copy_rgba_patch(
 
 				out.put_pixel(ox, oy, *pixel);
 			} else {
-				out.put_pixel(ox, oy, image::Rgba([0, 0, 0, 0]));
+				out.put_pixel(ox, oy, Rgba([0, 0, 0, 0]));
 			}
 		}
 	}

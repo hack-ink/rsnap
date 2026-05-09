@@ -13,5 +13,8 @@ version.workspace    = true
 path = "src/lib.rs"
 
 [dependencies]
-image = { workspace = true }
-serde = { workspace = true }
+color-eyre        = { workspace = true }
+fast_image_resize = { workspace = true }
+image             = { workspace = true }
+png               = { workspace = true }
+serde             = { workspace = true }

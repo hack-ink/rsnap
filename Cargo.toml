@@ -24,6 +24,7 @@ egui                     = { version = "0.34" }
 egui-phosphor            = { version = "0.12", features = ["fill"] }
 egui-wgpu                = { version = "0.34" }
 egui-winit               = { version = "0.34" }
+fast_image_resize        = { version = "6.0" }
 font8x8                  = { version = "0.3" }
 fontdb                   = { version = "0.23" }
 fontdue                  = { version = "0.9" }
@@ -38,6 +39,7 @@ objc2-core-video         = { version = "0.3" }
 objc2-foundation         = { version = "0.3" }
 objc2-screen-capture-kit = { version = "0.3" }
 objc2-vision             = { version = "0.3" }
+png                      = { version = "0.18" }
 pollster                 = { version = "0.4" }
 raw-window-handle        = { version = "0.6" }
 serde                    = { version = "1.0", features = ["derive"] }

@@ -6,6 +6,27 @@ mod scroll_preview_window;
 pub(super) use self::{hud_surface::HudPillGeometry, scroll_preview_window::ScrollPreviewWindow};
 
 use egui::Modifiers;
+use egui_wgpu::RendererOptions;
+use wgpu::BindGroupDescriptor;
+use wgpu::BindGroupEntry;
+use wgpu::BindGroupLayoutDescriptor;
+use wgpu::BindGroupLayoutEntry;
+use wgpu::BufferDescriptor;
+use wgpu::Color;
+use wgpu::ColorTargetState;
+use wgpu::CommandEncoderDescriptor;
+use wgpu::DeviceDescriptor;
+use wgpu::FragmentState;
+use wgpu::Operations;
+use wgpu::PipelineLayoutDescriptor;
+use wgpu::PrimitiveState;
+use wgpu::RenderPassColorAttachment;
+use wgpu::RenderPassDescriptor;
+use wgpu::RenderPipelineDescriptor;
+use wgpu::RequestAdapterOptions;
+use wgpu::SamplerDescriptor;
+use wgpu::ShaderModuleDescriptor;
+use wgpu::VertexState;
 use winit::window::Window;
 
 use self::hud_rendering::LiveLoupeTexture;
@@ -181,14 +202,14 @@ pub(super) struct GpuContext {
 impl GpuContext {
 	pub(super) fn new() -> Result<Self> {
 		let instance = wgpu::Instance::default();
-		let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+		let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
 			power_preference: PowerPreference::LowPower,
 			compatible_surface: None,
 			force_fallback_adapter: false,
 		}))
 		.map_err(|err| eyre::eyre!("Failed to request GPU adapter: {err}"))?;
 		let adapter_limits = adapter.limits();
-		let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+		let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
 			label: Some("rsnap-overlay device"),
 			required_features: Features::empty(),
 			// Use the adapter's actual limits. Using `downlevel_defaults()` caps max texture
@@ -246,47 +267,46 @@ impl WindowRenderer {
 		gpu: &GpuContext,
 		format: wgpu::TextureFormat,
 	) -> (RenderPipeline, BindGroupLayout) {
-		let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+		let shader = gpu.device.create_shader_module(ShaderModuleDescriptor {
 			label: Some("rsnap-mipgen shader"),
 			source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("../mipgen.wgsl"))),
 		});
-		let bind_group_layout =
-			gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-				label: Some("rsnap-mipgen bgl"),
-				entries: &[
-					wgpu::BindGroupLayoutEntry {
-						binding: 0,
-						visibility: ShaderStages::FRAGMENT,
-						ty: BindingType::Texture {
-							multisampled: false,
-							view_dimension: TextureViewDimension::D2,
-							sample_type: TextureSampleType::Float { filterable: true },
-						},
-						count: None,
+		let bind_group_layout = gpu.device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+			label: Some("rsnap-mipgen bgl"),
+			entries: &[
+				BindGroupLayoutEntry {
+					binding: 0,
+					visibility: ShaderStages::FRAGMENT,
+					ty: BindingType::Texture {
+						multisampled: false,
+						view_dimension: TextureViewDimension::D2,
+						sample_type: TextureSampleType::Float { filterable: true },
 					},
-					wgpu::BindGroupLayoutEntry {
-						binding: 1,
-						visibility: ShaderStages::FRAGMENT,
-						ty: BindingType::Sampler(SamplerBindingType::Filtering),
-						count: None,
-					},
-				],
-			});
-		let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+					count: None,
+				},
+				BindGroupLayoutEntry {
+					binding: 1,
+					visibility: ShaderStages::FRAGMENT,
+					ty: BindingType::Sampler(SamplerBindingType::Filtering),
+					count: None,
+				},
+			],
+		});
+		let pipeline_layout = gpu.device.create_pipeline_layout(&PipelineLayoutDescriptor {
 			label: Some("rsnap-mipgen pipeline layout"),
 			bind_group_layouts: &[Some(&bind_group_layout)],
 			immediate_size: 0,
 		});
-		let pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+		let pipeline = gpu.device.create_render_pipeline(&RenderPipelineDescriptor {
 			label: Some("rsnap-mipgen pipeline"),
 			layout: Some(&pipeline_layout),
-			vertex: wgpu::VertexState {
+			vertex: VertexState {
 				module: &shader,
 				entry_point: Some("vs_main"),
 				compilation_options: PipelineCompilationOptions::default(),
 				buffers: &[],
 			},
-			primitive: wgpu::PrimitiveState {
+			primitive: PrimitiveState {
 				topology: PrimitiveTopology::TriangleList,
 				strip_index_format: None,
 				front_face: FrontFace::Ccw,
@@ -297,11 +317,11 @@ impl WindowRenderer {
 			},
 			depth_stencil: None,
 			multisample: MultisampleState::default(),
-			fragment: Some(wgpu::FragmentState {
+			fragment: Some(FragmentState {
 				module: &shader,
 				entry_point: Some("fs_main"),
 				compilation_options: PipelineCompilationOptions::default(),
-				targets: &[Some(wgpu::ColorTargetState {
+				targets: &[Some(ColorTargetState {
 					format,
 					blend: None,
 					write_mask: ColorWrites::ALL,
@@ -319,26 +339,26 @@ impl WindowRenderer {
 		format: wgpu::TextureFormat,
 		bind_group_layout: &BindGroupLayout,
 	) -> RenderPipeline {
-		let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+		let shader = gpu.device.create_shader_module(ShaderModuleDescriptor {
 			label: Some("rsnap-mipgen fullscreen shader"),
 			source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("../mipgen.wgsl"))),
 		});
-		let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+		let pipeline_layout = gpu.device.create_pipeline_layout(&PipelineLayoutDescriptor {
 			label: Some("rsnap-mipgen fullscreen pipeline layout"),
 			bind_group_layouts: &[Some(bind_group_layout)],
 			immediate_size: 0,
 		});
 
-		gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+		gpu.device.create_render_pipeline(&RenderPipelineDescriptor {
 			label: Some("rsnap-mipgen fullscreen pipeline"),
 			layout: Some(&pipeline_layout),
-			vertex: wgpu::VertexState {
+			vertex: VertexState {
 				module: &shader,
 				entry_point: Some("vs_main"),
 				compilation_options: PipelineCompilationOptions::default(),
 				buffers: &[],
 			},
-			primitive: wgpu::PrimitiveState {
+			primitive: PrimitiveState {
 				topology: PrimitiveTopology::TriangleList,
 				strip_index_format: None,
 				front_face: FrontFace::Ccw,
@@ -349,11 +369,11 @@ impl WindowRenderer {
 			},
 			depth_stencil: None,
 			multisample: MultisampleState::default(),
-			fragment: Some(wgpu::FragmentState {
+			fragment: Some(FragmentState {
 				module: &shader,
 				entry_point: Some("fs_main"),
 				compilation_options: PipelineCompilationOptions::default(),
-				targets: &[Some(wgpu::ColorTargetState {
+				targets: &[Some(ColorTargetState {
 					format,
 					blend: None,
 					write_mask: ColorWrites::ALL,
@@ -369,7 +389,7 @@ impl WindowRenderer {
 			return;
 		}
 
-		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+		let mut encoder = gpu.device.create_command_encoder(&CommandEncoderDescriptor {
 			label: Some("rsnap-mipgen encoder"),
 		});
 
@@ -396,28 +416,28 @@ impl WindowRenderer {
 				base_array_layer: 0,
 				array_layer_count: Some(1),
 			});
-			let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+			let bind_group = gpu.device.create_bind_group(&BindGroupDescriptor {
 				label: Some("rsnap-mipgen bind group"),
 				layout: &self.mipgen_bind_group_layout,
 				entries: &[
-					wgpu::BindGroupEntry {
+					BindGroupEntry {
 						binding: 0,
 						resource: BindingResource::TextureView(&src_view),
 					},
-					wgpu::BindGroupEntry {
+					BindGroupEntry {
 						binding: 1,
 						resource: BindingResource::Sampler(&self.bg_sampler),
 					},
 				],
 			});
-			let rpass_desc = wgpu::RenderPassDescriptor {
+			let rpass_desc = RenderPassDescriptor {
 				label: Some("rsnap-mipgen pass"),
-				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+				color_attachments: &[Some(RenderPassColorAttachment {
 					view: &dst_view,
 					depth_slice: None,
 					resolve_target: None,
-					ops: wgpu::Operations {
-						load: LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+					ops: Operations {
+						load: LoadOp::Clear(Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
 						store: StoreOp::Store,
 					},
 				})],
@@ -489,7 +509,7 @@ impl WindowRenderer {
 	}
 
 	fn create_bg_sampler(gpu: &GpuContext) -> Sampler {
-		gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+		gpu.device.create_sampler(&SamplerDescriptor {
 			label: Some("rsnap-frozen-bg sampler"),
 			address_mode_u: AddressMode::ClampToEdge,
 			address_mode_v: AddressMode::ClampToEdge,
@@ -505,59 +525,58 @@ impl WindowRenderer {
 		gpu: &GpuContext,
 		surface_format: wgpu::TextureFormat,
 	) -> (RenderPipeline, BindGroupLayout) {
-		let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+		let shader = gpu.device.create_shader_module(ShaderModuleDescriptor {
 			label: Some("rsnap-hud-blur shader"),
 			source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("../hud_blur.wgsl"))),
 		});
-		let bind_group_layout =
-			gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-				label: Some("rsnap-hud-blur bgl"),
-				entries: &[
-					wgpu::BindGroupLayoutEntry {
-						binding: 0,
-						visibility: ShaderStages::FRAGMENT,
-						ty: BindingType::Texture {
-							multisampled: false,
-							view_dimension: TextureViewDimension::D2,
-							sample_type: TextureSampleType::Float { filterable: true },
-						},
-						count: None,
+		let bind_group_layout = gpu.device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+			label: Some("rsnap-hud-blur bgl"),
+			entries: &[
+				BindGroupLayoutEntry {
+					binding: 0,
+					visibility: ShaderStages::FRAGMENT,
+					ty: BindingType::Texture {
+						multisampled: false,
+						view_dimension: TextureViewDimension::D2,
+						sample_type: TextureSampleType::Float { filterable: true },
 					},
-					wgpu::BindGroupLayoutEntry {
-						binding: 1,
-						visibility: ShaderStages::FRAGMENT,
-						ty: BindingType::Sampler(SamplerBindingType::Filtering),
-						count: None,
+					count: None,
+				},
+				BindGroupLayoutEntry {
+					binding: 1,
+					visibility: ShaderStages::FRAGMENT,
+					ty: BindingType::Sampler(SamplerBindingType::Filtering),
+					count: None,
+				},
+				BindGroupLayoutEntry {
+					binding: 2,
+					visibility: ShaderStages::FRAGMENT,
+					ty: BindingType::Buffer {
+						ty: BufferBindingType::Uniform,
+						has_dynamic_offset: false,
+						min_binding_size: BufferSize::new(
+							mem::size_of::<HudBlurUniformRaw>() as u64
+						),
 					},
-					wgpu::BindGroupLayoutEntry {
-						binding: 2,
-						visibility: ShaderStages::FRAGMENT,
-						ty: BindingType::Buffer {
-							ty: BufferBindingType::Uniform,
-							has_dynamic_offset: false,
-							min_binding_size: BufferSize::new(
-								mem::size_of::<HudBlurUniformRaw>() as u64
-							),
-						},
-						count: None,
-					},
-				],
-			});
-		let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+					count: None,
+				},
+			],
+		});
+		let pipeline_layout = gpu.device.create_pipeline_layout(&PipelineLayoutDescriptor {
 			label: Some("rsnap-hud-blur pipeline layout"),
 			bind_group_layouts: &[Some(&bind_group_layout)],
 			immediate_size: 0,
 		});
-		let pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+		let pipeline = gpu.device.create_render_pipeline(&RenderPipelineDescriptor {
 			label: Some("rsnap-hud-blur pipeline"),
 			layout: Some(&pipeline_layout),
-			vertex: wgpu::VertexState {
+			vertex: VertexState {
 				module: &shader,
 				entry_point: Some("vs_main"),
 				compilation_options: PipelineCompilationOptions::default(),
 				buffers: &[],
 			},
-			primitive: wgpu::PrimitiveState {
+			primitive: PrimitiveState {
 				topology: PrimitiveTopology::TriangleList,
 				strip_index_format: None,
 				front_face: FrontFace::Ccw,
@@ -568,11 +587,11 @@ impl WindowRenderer {
 			},
 			depth_stencil: None,
 			multisample: MultisampleState::default(),
-			fragment: Some(wgpu::FragmentState {
+			fragment: Some(FragmentState {
 				module: &shader,
 				entry_point: Some("fs_main"),
 				compilation_options: PipelineCompilationOptions::default(),
-				targets: &[Some(wgpu::ColorTargetState {
+				targets: &[Some(ColorTargetState {
 					format: surface_format,
 					blend: Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
 					write_mask: ColorWrites::ALL,
@@ -1032,7 +1051,7 @@ impl WindowRenderer {
 	) -> Result<()> {
 		let started_at = Instant::now();
 		let view = frame.texture.create_view(&TextureViewDescriptor::default());
-		let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+		let mut encoder = gpu.device.create_command_encoder(&CommandEncoderDescriptor {
 			label: Some("rsnap-overlay encoder"),
 		});
 		let _user_cmds = self.egui_renderer.update_buffers(
@@ -1044,14 +1063,14 @@ impl WindowRenderer {
 		);
 
 		{
-			let rpass_desc = wgpu::RenderPassDescriptor {
+			let rpass_desc = RenderPassDescriptor {
 				label: Some("rsnap-overlay renderpass"),
-				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+				color_attachments: &[Some(RenderPassColorAttachment {
 					view: &view,
 					depth_slice: None,
 					resolve_target: None,
-					ops: wgpu::Operations {
-						load: LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
+					ops: Operations {
+						load: LoadOp::Clear(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
 						store: StoreOp::Store,
 					},
 				})],
@@ -1164,7 +1183,7 @@ impl WindowRenderer {
 		let egui_renderer = Renderer::new(
 			&gpu.device,
 			surface_format,
-			egui_wgpu::RendererOptions {
+			RendererOptions {
 				msaa_samples: 1,
 				depth_stencil_format: None,
 				dithering: false,
@@ -1178,7 +1197,7 @@ impl WindowRenderer {
 			Self::create_mipgen_surface_pipeline(gpu, surface_format, &mipgen_bind_group_layout);
 		let (hud_blur_pipeline, hud_blur_bind_group_layout) =
 			Self::create_hud_blur_pipeline(gpu, surface_format);
-		let hud_blur_uniform = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+		let hud_blur_uniform = gpu.device.create_buffer(&BufferDescriptor {
 			label: Some("rsnap-hud-blur uniform"),
 			size: mem::size_of::<HudBlurUniformRaw>() as u64,
 			usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,

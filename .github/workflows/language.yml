@@ -82,7 +82,7 @@ jobs:
       - name: Run Rust clippy
         run: cargo make check-rust
 
-      - name: Run tests
+      - name: Run Rust tests
         run: cargo make test-rust
 
   swift-check:
@@ -112,8 +112,19 @@ jobs:
       - name: Run Swift format check
         run: cargo make fmt-swift-check
 
+      - name: Run Swift style check
+        uses: hack-ink/vibe-style@bfb4d2d2f5e4b5e5ce8de4ed1d708b3a2f0e61fe # v0.2.1
+        with:
+          language: swift
+          workspace: true
+          args: --all-features
+          version: v0.2.1
+
       - name: Run SwiftLint and strict build
         run: cargo make check-swift
+
+      - name: Run Swift tests
+        run: cargo make test-swift
 
   toml-check:
     name: TOML check

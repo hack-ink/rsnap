@@ -5,7 +5,7 @@ final class VisualBackgroundDelegate: NSObject, NSApplicationDelegate {
 	private var window: NSWindow?
 
 	func applicationDidFinishLaunching(_: Notification) {
-		let frame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1280, height: 720)
+		let frame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1_280, height: 720)
 		let window = NSWindow(
 			contentRect: frame,
 			styleMask: [.borderless],

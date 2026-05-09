@@ -37,7 +37,7 @@ func readString(_ key: String, default value: String) -> String {
 }
 
 func sleepMs(_ ms: useconds_t) {
-	usleep(ms * 1000)
+	usleep(ms * 1_000)
 }
 
 final class MousePathDriver {

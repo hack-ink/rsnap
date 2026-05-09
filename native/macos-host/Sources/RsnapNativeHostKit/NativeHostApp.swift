@@ -118,7 +118,7 @@ private struct NativeHostFeedbackSound {
 		}
 		sound.stop()
 		sound.currentTime = 0
-		if !sound.play() {
+		if sound.play() == false {
 			NativeHostTelemetry.lifecycleWarning(playFailedEvent)
 		}
 	}
@@ -158,184 +158,66 @@ private enum OcrCompletionSound {
 	}
 }
 
-private let frozenMosaicBlockSizePixels: CGFloat = 10.0
-
-package func frozenExportOverlayPoint(
-	_ point: CGPoint,
-	selection: CGRect,
-	imageSize: CGSize
-) -> CGPoint {
-	let scaleX = imageSize.width / max(selection.width, 1)
-	let scaleY = imageSize.height / max(selection.height, 1)
-	return CGPoint(
-		x: (point.x - selection.minX) * scaleX,
-		y: (point.y - selection.minY) * scaleY
-	)
-}
-
-package func frozenExportOverlayRect(
-	_ rect: CGRect,
-	selection: CGRect,
-	imageSize: CGSize
-) -> CGRect {
-	let scaleX = imageSize.width / max(selection.width, 1)
-	let scaleY = imageSize.height / max(selection.height, 1)
-	return CGRect(
-		x: (rect.minX - selection.minX) * scaleX,
-		y: (rect.minY - selection.minY) * scaleY,
-		width: rect.width * scaleX,
-		height: rect.height * scaleY
-	)
-}
-
-package func frozenExportSourceImageRect(
-	_ rect: CGRect,
-	selection: CGRect,
-	imageSize: CGSize
-) -> CGRect {
-	let scaleX = imageSize.width / max(selection.width, 1)
-	let scaleY = imageSize.height / max(selection.height, 1)
-	return CGRect(
-		x: (rect.minX - selection.minX) * scaleX,
-		y: (selection.maxY - rect.maxY) * scaleY,
-		width: rect.width * scaleX,
-		height: rect.height * scaleY
-	)
-}
-
-package func scrollCaptureMinimapFrame(
+package func scrollCaptureMinimapPlan(
 	for selection: CGRect,
 	exportSize: CGSize,
 	in bounds: CGRect,
 	preferredWidth: CGFloat,
 	minimumWidth: CGFloat,
 	gap: CGFloat,
-	margin: CGFloat
-) -> CGRect? {
-	guard exportSize.width > 0, exportSize.height > 0, bounds.width > margin * 2,
-		bounds.height > margin * 2
-	else {
-		return nil
-	}
-
-	let rightSpace = bounds.maxX - selection.maxX - gap - margin
-	let leftSpace = selection.minX - bounds.minX - gap - margin
-	let useRight: Bool
-	let sideSpace: CGFloat
-	if rightSpace >= minimumWidth {
-		useRight = true
-		sideSpace = rightSpace
-	} else if leftSpace >= minimumWidth {
-		useRight = false
-		sideSpace = leftSpace
-	} else {
-		useRight = rightSpace >= leftSpace
-		sideSpace = max(rightSpace, leftSpace)
-	}
-
-	let maxHeight = bounds.height - margin * 2
-	let aspectHeightPerWidth = exportSize.height / exportSize.width
-	let heightLimitedWidth = maxHeight / max(aspectHeightPerWidth, .leastNonzeroMagnitude)
-	let width = min(preferredWidth, sideSpace, heightLimitedWidth)
-	guard width >= min(minimumWidth, preferredWidth) * 0.55 else {
-		return nil
-	}
-
-	let height = width * aspectHeightPerWidth
-	let maxY = max(margin, bounds.maxY - margin - height)
-	let y = (selection.midY - height / 2).clamped(to: margin...maxY)
-	let x = useRight ? selection.maxX + gap : selection.minX - gap - width
-	return CGRect(x: x, y: y, width: width, height: height)
+	margin: CGFloat,
+	imageInset: CGFloat,
+	viewportTopPixels: CGFloat,
+	viewportHeightPixels: CGFloat
+) -> ScrollMinimapLayoutPlan? {
+	try? RsnapScrollMinimapPlanner.plan(
+		selection: selection,
+		exportSize: exportSize,
+		bounds: bounds,
+		preferredWidth: preferredWidth,
+		minimumWidth: minimumWidth,
+		gap: gap,
+		margin: margin,
+		imageInset: imageInset,
+		viewportTopPixels: viewportTopPixels,
+		viewportHeightPixels: viewportHeightPixels
+	)
 }
 
 private func makeFrozenMosaicPatch(from image: CGImage, sourceRect: CGRect) -> CGImage? {
-	let imageRect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-	let cropRect = sourceRect.integral.intersection(imageRect)
 	guard
-		!cropRect.isNull,
-		cropRect.width >= 1,
-		cropRect.height >= 1
-	else {
-		return nil
-	}
-
-	let pixelWidth = max(1, Int(ceil(cropRect.width / frozenMosaicBlockSizePixels)))
-	let pixelHeight = max(1, Int(ceil(cropRect.height / frozenMosaicBlockSizePixels)))
-	let bytesPerRow = pixelWidth * 4
-	let seedX = Int(floor(cropRect.minX / frozenMosaicBlockSizePixels))
-	let seedY = Int(floor(cropRect.minY / frozenMosaicBlockSizePixels))
-	guard
-		let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-		let context = CGContext(
-			data: nil,
-			width: pixelWidth,
-			height: pixelHeight,
-			bitsPerComponent: 8,
-			bytesPerRow: bytesPerRow,
-			space: colorSpace,
-			bitmapInfo: CGBitmapInfo.byteOrder32Big
-				.union(CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue))
-				.rawValue
+		let patch = try? RsnapExportEncoder.frozenMosaicLightPrivacyPatch(
+			imageWidth: image.width,
+			imageHeight: image.height,
+			sourceRect: sourceRect
 		)
 	else {
 		return nil
 	}
 
-	if let rawData = context.data {
-		let pixels = rawData.assumingMemoryBound(to: UInt8.self)
-		for y in 0..<pixelHeight {
-			for x in 0..<pixelWidth {
-				let offset = y * bytesPerRow + x * 4
-				let color = frozenMosaicLightPrivacyColor(
-					x: x + seedX,
-					y: y + seedY,
-					width: pixelWidth,
-					height: pixelHeight
-				)
-				pixels[offset] = color.red
-				pixels[offset + 1] = color.green
-				pixels[offset + 2] = color.blue
-				pixels[offset + 3] = 255
-			}
-		}
+	let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+	let bitmapInfo =
+		CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+	guard
+		let provider = CGDataProvider(data: patch.rgba as CFData),
+		let patchImage = CGImage(
+			width: patch.width,
+			height: patch.height,
+			bitsPerComponent: 8,
+			bitsPerPixel: 32,
+			bytesPerRow: patch.width * 4,
+			space: colorSpace,
+			bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo),
+			provider: provider,
+			decode: nil,
+			shouldInterpolate: false,
+			intent: .defaultIntent
+		)
+	else {
+		return nil
 	}
-	return context.makeImage()
-}
 
-private func frozenMosaicLightPrivacyColor(
-	x: Int,
-	y: Int,
-	width: Int,
-	height: Int
-) -> (red: UInt8, green: UInt8, blue: UInt8) {
-	let hash = frozenMosaicHash(x: x, y: y, width: width, height: height)
-	let groupHash = frozenMosaicHash(x: x / 2, y: y / 2, width: width, height: height)
-	let base: CGFloat = 0.74 + CGFloat(Int(groupHash & 3)) * 0.035
-	let variation = (CGFloat(Int((hash >> 8) & 3)) - 1.5) * 0.012
-	let warmth = CGFloat(Int((groupHash >> 3) & 1)) * 0.012
-	return (
-		frozenMosaicByte(base + variation + warmth),
-		frozenMosaicByte(base + variation + warmth * 0.5),
-		frozenMosaicByte(base + variation)
-	)
-}
-
-private func frozenMosaicHash(x: Int, y: Int, width: Int, height: Int) -> UInt32 {
-	var hash =
-		UInt32(truncatingIfNeeded: x) &* 0x45d9_f3b
-		^ UInt32(truncatingIfNeeded: y) &* 0x119d_e1f3
-		^ UInt32(truncatingIfNeeded: width) &* 0x27d4_eb2d
-		^ UInt32(truncatingIfNeeded: height) &* 0x1656_67b1
-	hash ^= hash >> 16
-	hash &*= 0x7feb_352d
-	hash ^= hash >> 15
-	hash &*= 0x846c_a68b
-	hash ^= hash >> 16
-	return hash
-}
-
-private func frozenMosaicByte(_ value: CGFloat) -> UInt8 {
-	UInt8((min(max(value, 0), 1) * 255).rounded())
+	return patchImage
 }
 
 @MainActor
@@ -369,7 +251,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		})
 
 	public func finishLaunching() {
-		guard !didBootstrap else {
+		guard didBootstrap == false else {
 			return
 		}
 		didBootstrap = true
@@ -515,12 +397,12 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		source: String,
 		oncePerLaunch: Bool = false
 	) -> Bool {
-		guard !NativePermissions.screenRecordingGranted else {
+		guard NativePermissions.screenRecordingGranted == false else {
 			permissionRecoveryWindowController.close()
 			return false
 		}
 		if oncePerLaunch {
-			guard !didPresentLaunchPermissionOnboarding else {
+			guard didPresentLaunchPermissionOnboarding == false else {
 				return true
 			}
 			didPresentLaunchPermissionOnboarding = true
@@ -906,123 +788,10 @@ final class CaptureSessionController: NSObject {
 			return
 		}
 		do {
-			let startPoint = NSEvent.mouseLocation
-			let desktopFrame = CaptureOverlayController.desktopFrame
-			frozenFrameLatchToken = nil
-			// The Rust live sampler treats these IDs as current-process windows to
-			// include through the app-level exclusion. Overlay windows must stay out
-			// of this list so color sampling sees the desktop under the capture UI.
-			pendingLiveFrameStreamRelease?.cancel()
-			pendingLiveFrameStreamRelease = nil
-			liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
-			let warmStartedAt = ProcessInfo.processInfo.systemUptime
-			let initialSample = warmLiveSamplingIfPossible(
-				at: startPoint,
-				source: "start_capture",
+			try startCaptureSession(
 				captureID: captureID,
-				includedCurrentProcessWindowIDs: capturableOwnWindowIDs
-			)
-			let initialRgbSample =
-				initialSample?.rgbSample
-				?? frozenFrameAuthority.rgbSample(containing: startPoint)
-			let warmMilliseconds = NativeHostTelemetry.milliseconds(since: warmStartedAt)
-			liveFrameStream.start(
-				for: NSScreen.screens,
-				prewarmPoint: startPoint,
-				captureID: captureID
-			)
-			let windowSnapshotStartedAt = ProcessInfo.processInfo.systemUptime
-			let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
-			let windowSnapshotMilliseconds =
-				NativeHostTelemetry.milliseconds(since: windowSnapshotStartedAt)
-			let initialHighlightedWindow = WindowSnapshotFeed.window(
-				at: startPoint, in: initialWindowSnapshots)
-			chromeState.rgbSample = initialRgbSample
-			let sessionSetupStartedAt = ProcessInfo.processInfo.systemUptime
-			let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
-			self.session = session
-
-			try session.enterLive()
-			try session.send(
-				event: .pointerMoved(
-					point: startPoint,
-					rgb: initialRgbSample,
-					activeMonitor: activeMonitor(at: startPoint),
-					highlightedWindow: initialHighlightedWindow
-				)
-			)
-			let initialScene = try session.currentScene()
-			self.scene = initialScene
-			let sessionSetupMilliseconds =
-				NativeHostTelemetry.milliseconds(since: sessionSetupStartedAt)
-
-			let overlayController = CaptureOverlayController(
-				controller: self,
-				liveFrameStream: liveFrameStream,
-				frameRgbSampler: { [frozenFrameAuthority] point in
-					frozenFrameAuthority.liveRgbSample(containing: point)
-				},
-				framePatchSampler: { [frozenFrameAuthority] point, sidePixels in
-					frozenFrameAuthority.loupePatch(containing: point, sidePixels: sidePixels)
-				}
-			)
-			self.overlayController = overlayController
-			let overlayShowStartedAt = ProcessInfo.processInfo.systemUptime
-			overlayController.show(
-				initialScene: initialScene,
-				chrome: chromeState,
-				settings: settingsStore.settings,
-				focusPoint: startPoint,
-				initialWindowSnapshots: initialWindowSnapshots,
-				prepareCaptureStreams: { [weak self, weak overlayController] in
-					guard let self, let overlayController else {
-						return
-					}
-					let selfCaptureExceptionWindowIDs =
-						overlayController.selfCaptureExceptionWindowIDs
-					self.liveFrameStream.start(
-						for: NSScreen.screens,
-						prewarmPoint: startPoint,
-						captureID: captureID
-					)
-					if self.frozenFrameAuthority.hasSelfCaptureCompleteFrame(
-						containing: startPoint)
-					{
-						NativeHostTelemetry.captureEvent(
-							"capture.self_capture_rebuild_skipped",
-							captureID: captureID,
-							detail: "start_capture_complete_filter"
-						)
-					} else {
-						_ = self.warmLiveSamplingIfPossible(
-							at: startPoint,
-							source: "capture_overlay_preflight",
-							captureID: captureID,
-							excludeSelfFromFrozenAuthority: true,
-							selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-							includedCurrentProcessWindowIDs: capturableOwnWindowIDs
-						)
-					}
-				}
-			)
-			overlayController.prepareCaptureStreamsNow(trigger: "overlay_show")
-			let overlayShowMilliseconds =
-				NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
-			(NSApp.delegate as? NativeHostApplicationController)?.window =
-				overlayController.primaryWindow
-			sceneDidChange?(initialScene)
-
-			captureStateDidChange?()
-			NativeHostTelemetry.captureStartTiming(
-				captureID: captureID,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
-				warmMilliseconds: warmMilliseconds,
-				windowSnapshotMilliseconds: windowSnapshotMilliseconds,
-				sessionSetupMilliseconds: sessionSetupMilliseconds,
-				overlayShowMilliseconds: overlayShowMilliseconds,
-				initialSampleReady: initialRgbSample != nil,
-				screenCount: NSScreen.screens.count,
-				windowCount: initialWindowSnapshots.count
+				captureStartedAt: captureStartedAt,
+				capturableOwnWindowIDs: capturableOwnWindowIDs
 			)
 		} catch {
 			NativeHostTelemetry.captureWarning(
@@ -1040,8 +809,133 @@ final class CaptureSessionController: NSObject {
 		}
 	}
 
+	private func startCaptureSession(
+		captureID: UInt64,
+		captureStartedAt: TimeInterval,
+		capturableOwnWindowIDs: Set<CGWindowID>
+	) throws {
+		let startPoint = NSEvent.mouseLocation
+		let desktopFrame = CaptureOverlayController.desktopFrame
+		frozenFrameLatchToken = nil
+		// The Rust live sampler treats these IDs as current-process windows to
+		// include through the app-level exclusion. Overlay windows must stay out
+		// of this list so color sampling sees the desktop under the capture UI.
+		pendingLiveFrameStreamRelease?.cancel()
+		pendingLiveFrameStreamRelease = nil
+		liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
+		let warmStartedAt = ProcessInfo.processInfo.systemUptime
+		let initialSample = warmLiveSamplingIfPossible(
+			at: startPoint,
+			source: "start_capture",
+			captureID: captureID,
+			includedCurrentProcessWindowIDs: capturableOwnWindowIDs
+		)
+		let initialRgbSample =
+			initialSample?.rgbSample
+			?? frozenFrameAuthority.rgbSample(containing: startPoint)
+		let warmMilliseconds = NativeHostTelemetry.milliseconds(since: warmStartedAt)
+		liveFrameStream.start(
+			for: NSScreen.screens,
+			prewarmPoint: startPoint,
+			captureID: captureID
+		)
+		let windowSnapshotStartedAt = ProcessInfo.processInfo.systemUptime
+		let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
+		let windowSnapshotMilliseconds =
+			NativeHostTelemetry.milliseconds(since: windowSnapshotStartedAt)
+		let initialHighlightedWindow = WindowSnapshotFeed.window(
+			at: startPoint, in: initialWindowSnapshots)
+		chromeState.rgbSample = initialRgbSample
+		let sessionSetupStartedAt = ProcessInfo.processInfo.systemUptime
+		let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
+		self.session = session
+
+		try session.enterLive()
+		try session.send(
+			event: .pointerMoved(
+				point: startPoint,
+				rgb: initialRgbSample,
+				activeMonitor: activeMonitor(at: startPoint),
+				highlightedWindow: initialHighlightedWindow
+			)
+		)
+		let initialScene = try session.currentScene()
+		self.scene = initialScene
+		let sessionSetupMilliseconds =
+			NativeHostTelemetry.milliseconds(since: sessionSetupStartedAt)
+
+		let overlayController = CaptureOverlayController(
+			controller: self,
+			liveFrameStream: liveFrameStream,
+			frameRgbSampler: { [frozenFrameAuthority] point in
+				frozenFrameAuthority.liveRgbSample(containing: point)
+			},
+			framePatchSampler: { [frozenFrameAuthority] point, sidePixels in
+				frozenFrameAuthority.loupePatch(containing: point, sidePixels: sidePixels)
+			}
+		)
+		self.overlayController = overlayController
+		let overlayShowStartedAt = ProcessInfo.processInfo.systemUptime
+		overlayController.show(
+			initialScene: initialScene,
+			chrome: chromeState,
+			settings: settingsStore.settings,
+			focusPoint: startPoint,
+			initialWindowSnapshots: initialWindowSnapshots,
+			prepareCaptureStreams: { [weak self, weak overlayController] in
+				guard let self, let overlayController else {
+					return
+				}
+				let selfCaptureExceptionWindowIDs =
+					overlayController.selfCaptureExceptionWindowIDs
+				self.liveFrameStream.start(
+					for: NSScreen.screens,
+					prewarmPoint: startPoint,
+					captureID: captureID
+				)
+				if self.frozenFrameAuthority.hasSelfCaptureCompleteFrame(
+					containing: startPoint)
+				{
+					NativeHostTelemetry.captureEvent(
+						"capture.self_capture_rebuild_skipped",
+						captureID: captureID,
+						detail: "start_capture_complete_filter"
+					)
+				} else {
+					_ = self.warmLiveSamplingIfPossible(
+						at: startPoint,
+						source: "capture_overlay_preflight",
+						captureID: captureID,
+						excludeSelfFromFrozenAuthority: true,
+						selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+						includedCurrentProcessWindowIDs: capturableOwnWindowIDs
+					)
+				}
+			}
+		)
+		overlayController.prepareCaptureStreamsNow(trigger: "overlay_show")
+		let overlayShowMilliseconds =
+			NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
+		(NSApp.delegate as? NativeHostApplicationController)?.window =
+			overlayController.primaryWindow
+		sceneDidChange?(initialScene)
+
+		captureStateDidChange?()
+		NativeHostTelemetry.captureStartTiming(
+			captureID: captureID,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
+			warmMilliseconds: warmMilliseconds,
+			windowSnapshotMilliseconds: windowSnapshotMilliseconds,
+			sessionSetupMilliseconds: sessionSetupMilliseconds,
+			overlayShowMilliseconds: overlayShowMilliseconds,
+			initialSampleReady: initialRgbSample != nil,
+			screenCount: NSScreen.screens.count,
+			windowCount: initialWindowSnapshots.count
+		)
+	}
+
 	private func ensureCapturePermissions() -> Bool {
-		guard !NativePermissions.screenRecordingGranted else {
+		guard NativePermissions.screenRecordingGranted == false else {
 			return true
 		}
 		return NativePermissions.requestScreenRecording()
@@ -1399,7 +1293,13 @@ final class CaptureSessionController: NSObject {
 		else {
 			return false
 		}
-		guard let kind = FrozenSelectionTransformKind.hitTest(at: point, selection: selection)
+		guard
+			let kind = try? RsnapFrozenSelectionTransformPlanner.hitTest(
+				point: point,
+				selection: selection,
+				handleRadius: 12,
+				edgeTolerance: 4
+			)
 		else {
 			return false
 		}
@@ -1480,78 +1380,14 @@ final class CaptureSessionController: NSObject {
 		interaction: FrozenSelectionInteractionState,
 		point: CGPoint
 	) -> CGRect? {
-		let minSize = CaptureChrome.frozenSelectionMinimumSize
-		let selection = interaction.initialSelection
-		let monitor = interaction.monitorFrame
-		let deltaX = point.x - interaction.initialPointer.x
-		let deltaY = point.y - interaction.initialPointer.y
-
-		switch interaction.kind {
-		case .move:
-			return Self.clampedSelectionRect(
-				width: selection.width,
-				height: selection.height,
-				x: selection.minX + deltaX,
-				y: selection.minY + deltaY,
-				monitorFrame: monitor
-			)
-		case .resizeLeft:
-			let newMinX = (selection.minX + deltaX).clamped(
-				to: monitor.minX...(selection.maxX - minSize))
-			return CGRect(
-				x: newMinX, y: selection.minY, width: selection.maxX - newMinX,
-				height: selection.height)
-		case .resizeRight:
-			let newMaxX = (selection.maxX + deltaX).clamped(
-				to: (selection.minX + minSize)...monitor.maxX)
-			return CGRect(
-				x: selection.minX, y: selection.minY, width: newMaxX - selection.minX,
-				height: selection.height)
-		case .resizeTop:
-			let newMaxY = (selection.maxY + deltaY).clamped(
-				to: (selection.minY + minSize)...monitor.maxY)
-			return CGRect(
-				x: selection.minX, y: selection.minY, width: selection.width,
-				height: newMaxY - selection.minY)
-		case .resizeBottom:
-			let newMinY = (selection.minY + deltaY).clamped(
-				to: monitor.minY...(selection.maxY - minSize))
-			return CGRect(
-				x: selection.minX, y: newMinY, width: selection.width,
-				height: selection.maxY - newMinY)
-		case .resizeTopLeft:
-			let newMinX = (selection.minX + deltaX).clamped(
-				to: monitor.minX...(selection.maxX - minSize))
-			let newMaxY = (selection.maxY + deltaY).clamped(
-				to: (selection.minY + minSize)...monitor.maxY)
-			return CGRect(
-				x: newMinX, y: selection.minY, width: selection.maxX - newMinX,
-				height: newMaxY - selection.minY)
-		case .resizeTopRight:
-			let newMaxX = (selection.maxX + deltaX).clamped(
-				to: (selection.minX + minSize)...monitor.maxX)
-			let newMaxY = (selection.maxY + deltaY).clamped(
-				to: (selection.minY + minSize)...monitor.maxY)
-			return CGRect(
-				x: selection.minX, y: selection.minY, width: newMaxX - selection.minX,
-				height: newMaxY - selection.minY)
-		case .resizeBottomLeft:
-			let newMinX = (selection.minX + deltaX).clamped(
-				to: monitor.minX...(selection.maxX - minSize))
-			let newMinY = (selection.minY + deltaY).clamped(
-				to: monitor.minY...(selection.maxY - minSize))
-			return CGRect(
-				x: newMinX, y: newMinY, width: selection.maxX - newMinX,
-				height: selection.maxY - newMinY)
-		case .resizeBottomRight:
-			let newMaxX = (selection.maxX + deltaX).clamped(
-				to: (selection.minX + minSize)...monitor.maxX)
-			let newMinY = (selection.minY + deltaY).clamped(
-				to: monitor.minY...(selection.maxY - minSize))
-			return CGRect(
-				x: selection.minX, y: newMinY, width: newMaxX - selection.minX,
-				height: selection.maxY - newMinY)
-		}
+		try? RsnapFrozenSelectionTransformPlanner.transformedRect(
+			kind: interaction.kind,
+			initialSelection: interaction.initialSelection,
+			monitorFrame: interaction.monitorFrame,
+			initialPointer: interaction.initialPointer,
+			point: point,
+			minimumSize: CaptureChrome.frozenSelectionMinimumSize
+		)
 	}
 
 	func performFrozenUndo() {
@@ -1689,7 +1525,9 @@ final class CaptureSessionController: NSObject {
 		}
 
 		let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-		guard !flags.contains(.command), !flags.contains(.control), !flags.contains(.option) else {
+		guard flags.contains(.command) == false, flags.contains(.control) == false,
+			flags.contains(.option) == false
+		else {
 			return false
 		}
 		guard let characters = event.characters else {
@@ -1760,7 +1598,7 @@ final class CaptureSessionController: NSObject {
 		guard scene.mode == .live else {
 			return
 		}
-		guard !chromeState.hostLocalFrozenSelecting else {
+		guard chromeState.hostLocalFrozenSelecting == false else {
 			return
 		}
 		chromeState.beginHostLocalFrozenSelecting()
@@ -1772,7 +1610,7 @@ final class CaptureSessionController: NSObject {
 		}
 
 		var pendingRequests = try session.drainRequests()
-		while !pendingRequests.isEmpty {
+		while pendingRequests.isEmpty == false {
 			for request in pendingRequests {
 				try handle(request: request)
 			}
@@ -1787,7 +1625,7 @@ final class CaptureSessionController: NSObject {
 			chromeState.resetLiveChrome()
 		}
 		if scene.mode != .frozen {
-			if !chromeState.hostLocalFrozenSelecting {
+			if chromeState.hostLocalFrozenSelecting == false {
 				chromeState.resetFrozenChrome()
 			}
 		} else if previousMode != .frozen
@@ -1844,7 +1682,7 @@ final class CaptureSessionController: NSObject {
 		case .requestScreenRecordingPermission:
 			let granted = NativePermissions.requestScreenRecording()
 			try session?.send(report: .permissionChanged(.screenRecording, granted: granted))
-			if !granted {
+			if granted == false {
 				try sendHostStatusMessage("Screen recording permission is required.")
 			}
 		}
@@ -2406,16 +2244,36 @@ final class CaptureSessionController: NSObject {
 		let captureImageMilliseconds =
 			NativeHostTelemetry.milliseconds(since: captureImageStartedAt)
 
+		let makeImageStartedAt = ProcessInfo.processInfo.systemUptime
+		guard let pngData = try Self.losslessPNGData(from: cgImage) else {
+			let makeImageMilliseconds = NativeHostTelemetry.milliseconds(since: makeImageStartedAt)
+			NativeHostTelemetry.copyCaptureTiming(
+				captureID: currentCaptureTelemetryID,
+				totalMilliseconds: NativeHostTelemetry.milliseconds(since: copyStartedAt),
+				captureImageMilliseconds: captureImageMilliseconds,
+				clearPasteboardMilliseconds: 0,
+				makeImageMilliseconds: makeImageMilliseconds,
+				writePasteboardMilliseconds: 0,
+				success: false,
+				failureStage: "encode_image",
+				width: cgImage.width,
+				height: cgImage.height
+			)
+			try sendHostStatusMessage("Could not encode the captured image.")
+			return
+		}
+		let makeImageMilliseconds = NativeHostTelemetry.milliseconds(since: makeImageStartedAt)
+
 		let pasteboard = NSPasteboard.general
 		let clearPasteboardStartedAt = ProcessInfo.processInfo.systemUptime
 		pasteboard.clearContents()
 		let clearPasteboardMilliseconds =
 			NativeHostTelemetry.milliseconds(since: clearPasteboardStartedAt)
-		let makeImageStartedAt = ProcessInfo.processInfo.systemUptime
-		let image = NSImage(cgImage: cgImage, size: .zero)
-		let makeImageMilliseconds = NativeHostTelemetry.milliseconds(since: makeImageStartedAt)
 		let writePasteboardStartedAt = ProcessInfo.processInfo.systemUptime
-		let didWritePasteboard = pasteboard.writeObjects([image])
+		let pasteboardItem = NSPasteboardItem()
+		let didWritePasteboard =
+			pasteboardItem.setData(pngData, forType: .png)
+			&& pasteboard.writeObjects([pasteboardItem])
 		let writePasteboardMilliseconds =
 			NativeHostTelemetry.milliseconds(since: writePasteboardStartedAt)
 		guard didWritePasteboard else {
@@ -2463,8 +2321,7 @@ final class CaptureSessionController: NSObject {
 			try sendHostStatusMessage("Could not capture the frozen selection.")
 			return
 		}
-		let bitmap = NSBitmapImageRep(cgImage: cgImage)
-		guard let pngData = bitmap.representation(using: .png, properties: [:]) else {
+		guard let pngData = try Self.losslessPNGData(from: cgImage) else {
 			try sendHostStatusMessage("Could not encode the captured image.")
 			return
 		}
@@ -2479,20 +2336,106 @@ final class CaptureSessionController: NSObject {
 		completedHostEffect = .saveCapture
 	}
 
+	private struct RecognizeTextRun {
+		let captureID: UInt64
+		let startedAt: TimeInterval
+		let recognitionLevel: String
+		let usesLanguageCorrection: Bool
+		let automaticallyDetectsLanguage: Bool
+	}
+
+	private struct RecognizeTextResult {
+		let observations: [VNRecognizedTextObservation]
+		let recognizedLines: [String]
+		let text: String
+		let processingMilliseconds: Double
+	}
+
+	private struct RecognizeTextPasteboardTiming {
+		let clearMilliseconds: Double
+		let writeMilliseconds: Double
+	}
+
 	private func performRecognizeText() throws {
 		guard let session else {
 			return
 		}
-		let captureID = currentCaptureTelemetryID
-		let recognizeStartedAt = ProcessInfo.processInfo.systemUptime
+		let run = RecognizeTextRun(
+			captureID: currentCaptureTelemetryID,
+			startedAt: ProcessInfo.processInfo.systemUptime,
+			recognitionLevel: "accurate",
+			usesLanguageCorrection: true,
+			automaticallyDetectsLanguage: true
+		)
 		let captureImageStartedAt = ProcessInfo.processInfo.systemUptime
-		let recognitionLevel = "accurate"
-		let usesLanguageCorrection = true
-		let automaticallyDetectsLanguage = true
+		guard
+			let cgImage = try recognizeTextCaptureImage(
+				run: run,
+				captureImageStartedAt: captureImageStartedAt
+			)
+		else {
+			return
+		}
+		let captureImageMilliseconds =
+			NativeHostTelemetry.milliseconds(since: captureImageStartedAt)
+		let request = recognizeTextRequest(run: run)
+		let visionRequestMilliseconds = try performRecognizeTextRequest(
+			request,
+			cgImage: cgImage,
+			run: run,
+			captureImageMilliseconds: captureImageMilliseconds
+		)
+		let result = recognizeTextResult(from: request)
+		guard
+			let pasteboardTiming = try writeRecognizedTextIfNeeded(
+				result.text,
+				run: run,
+				cgImage: cgImage,
+				captureImageMilliseconds: captureImageMilliseconds,
+				visionRequestMilliseconds: visionRequestMilliseconds,
+				result: result
+			)
+		else {
+			return
+		}
+
+		recordRecognizeTextTiming(
+			run: run,
+			captureImageMilliseconds: captureImageMilliseconds,
+			visionRequestMilliseconds: visionRequestMilliseconds,
+			resultProcessingMilliseconds: result.processingMilliseconds,
+			clearPasteboardMilliseconds: pasteboardTiming.clearMilliseconds,
+			writePasteboardMilliseconds: pasteboardTiming.writeMilliseconds,
+			success: true,
+			outcome: result.text.isEmpty ? "no_text" : "text_ready",
+			failureStage: "none",
+			width: cgImage.width,
+			height: cgImage.height,
+			observationCount: result.observations.count,
+			recognizedLines: result.recognizedLines.count,
+			recognizedCharacters: result.text.count
+		)
+
+		if result.text.isEmpty == false {
+			ocrCompletionSound.play()
+		}
+
+		try session.send(report: .hostEffectCompleted(.recognizeText))
+		let message =
+			result.text.isEmpty
+			? "No text was recognized."
+			: "Recognized text copied to clipboard."
+		try session.send(report: .statusMessage(message))
+		completedHostEffect = .recognizeText
+	}
+
+	private func recognizeTextCaptureImage(
+		run: RecognizeTextRun,
+		captureImageStartedAt: TimeInterval
+	) throws -> CGImage? {
 		guard let cgImage = try captureFrozenSelectionImage() else {
-			NativeHostTelemetry.recognizeTextTiming(
-				captureID: captureID,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: recognizeStartedAt),
+			recordRecognizeTextTiming(
+				run: run,
 				captureImageMilliseconds: NativeHostTelemetry.milliseconds(
 					since: captureImageStartedAt),
 				visionRequestMilliseconds: 0,
@@ -2506,32 +2449,38 @@ final class CaptureSessionController: NSObject {
 				height: 0,
 				observationCount: 0,
 				recognizedLines: 0,
-				recognizedCharacters: 0,
-				recognitionLevel: recognitionLevel,
-				languageCorrection: usesLanguageCorrection,
-				automaticLanguageDetection: automaticallyDetectsLanguage
+				recognizedCharacters: 0
 			)
 			try sendHostStatusMessage("Could not capture the frozen selection.")
-			return
+			return nil
 		}
-		let captureImageMilliseconds =
-			NativeHostTelemetry.milliseconds(since: captureImageStartedAt)
+		return cgImage
+	}
 
+	private func recognizeTextRequest(run: RecognizeTextRun) -> VNRecognizeTextRequest {
 		let request = VNRecognizeTextRequest()
 		request.recognitionLevel = .accurate
-		request.usesLanguageCorrection = usesLanguageCorrection
-		request.automaticallyDetectsLanguage = automaticallyDetectsLanguage
+		request.usesLanguageCorrection = run.usesLanguageCorrection
+		request.automaticallyDetectsLanguage = run.automaticallyDetectsLanguage
+		return request
+	}
+
+	private func performRecognizeTextRequest(
+		_ request: VNRecognizeTextRequest,
+		cgImage: CGImage,
+		run: RecognizeTextRun,
+		captureImageMilliseconds: Double
+	) throws -> Double {
 		let handler = VNImageRequestHandler(cgImage: cgImage)
 		let visionStartedAt = ProcessInfo.processInfo.systemUptime
 		do {
 			try handler.perform([request])
 		} catch {
-			NativeHostTelemetry.recognizeTextTiming(
-				captureID: captureID,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: recognizeStartedAt),
+			let visionRequestMilliseconds = NativeHostTelemetry.milliseconds(since: visionStartedAt)
+			recordRecognizeTextTiming(
+				run: run,
 				captureImageMilliseconds: captureImageMilliseconds,
-				visionRequestMilliseconds: NativeHostTelemetry.milliseconds(
-					since: visionStartedAt),
+				visionRequestMilliseconds: visionRequestMilliseconds,
 				resultProcessingMilliseconds: 0,
 				clearPasteboardMilliseconds: 0,
 				writePasteboardMilliseconds: 0,
@@ -2542,103 +2491,114 @@ final class CaptureSessionController: NSObject {
 				height: cgImage.height,
 				observationCount: 0,
 				recognizedLines: 0,
-				recognizedCharacters: 0,
-				recognitionLevel: recognitionLevel,
-				languageCorrection: usesLanguageCorrection,
-				automaticLanguageDetection: automaticallyDetectsLanguage
+				recognizedCharacters: 0
 			)
 			throw error
 		}
-		let visionRequestMilliseconds = NativeHostTelemetry.milliseconds(since: visionStartedAt)
+		return NativeHostTelemetry.milliseconds(since: visionStartedAt)
+	}
 
+	private func recognizeTextResult(from request: VNRecognizeTextRequest) -> RecognizeTextResult {
 		let resultProcessingStartedAt = ProcessInfo.processInfo.systemUptime
 		let observations = request.results ?? []
-		let recognizedLines =
-			observations
-			.compactMap { observation -> String? in
-				guard let line = observation.topCandidates(1).first?.string,
-					!line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-				else {
-					return nil
-				}
-				return line
+		let recognizedLines = observations.compactMap { observation -> String? in
+			guard let line = observation.topCandidates(1).first?.string,
+				line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+			else {
+				return nil
 			}
-		let text = recognizedLines.joined(separator: "\n")
-		let resultProcessingMilliseconds =
-			NativeHostTelemetry.milliseconds(since: resultProcessingStartedAt)
-
-		var clearPasteboardMilliseconds = 0.0
-		var writePasteboardMilliseconds = 0.0
-		if !text.isEmpty {
-			let pasteboard = NSPasteboard.general
-			let clearPasteboardStartedAt = ProcessInfo.processInfo.systemUptime
-			pasteboard.clearContents()
-			clearPasteboardMilliseconds =
-				NativeHostTelemetry.milliseconds(since: clearPasteboardStartedAt)
-			let writePasteboardStartedAt = ProcessInfo.processInfo.systemUptime
-			guard pasteboard.setString(text, forType: .string) else {
-				writePasteboardMilliseconds =
-					NativeHostTelemetry.milliseconds(since: writePasteboardStartedAt)
-				NativeHostTelemetry.recognizeTextTiming(
-					captureID: captureID,
-					totalMilliseconds: NativeHostTelemetry.milliseconds(
-						since: recognizeStartedAt),
-					captureImageMilliseconds: captureImageMilliseconds,
-					visionRequestMilliseconds: visionRequestMilliseconds,
-					resultProcessingMilliseconds: resultProcessingMilliseconds,
-					clearPasteboardMilliseconds: clearPasteboardMilliseconds,
-					writePasteboardMilliseconds: writePasteboardMilliseconds,
-					success: false,
-					outcome: "recognize_error",
-					failureStage: "pasteboard_write",
-					width: cgImage.width,
-					height: cgImage.height,
-					observationCount: observations.count,
-					recognizedLines: recognizedLines.count,
-					recognizedCharacters: text.count,
-					recognitionLevel: recognitionLevel,
-					languageCorrection: usesLanguageCorrection,
-					automaticLanguageDetection: automaticallyDetectsLanguage
-				)
-				try sendHostStatusMessage("Could not copy recognized text.")
-				return
-			}
-			writePasteboardMilliseconds =
-				NativeHostTelemetry.milliseconds(since: writePasteboardStartedAt)
+			return line
 		}
+		return RecognizeTextResult(
+			observations: observations,
+			recognizedLines: recognizedLines,
+			text: recognizedLines.joined(separator: "\n"),
+			processingMilliseconds: NativeHostTelemetry.milliseconds(
+				since: resultProcessingStartedAt)
+		)
+	}
 
+	private func writeRecognizedTextIfNeeded(
+		_ text: String,
+		run: RecognizeTextRun,
+		cgImage: CGImage,
+		captureImageMilliseconds: Double,
+		visionRequestMilliseconds: Double,
+		result: RecognizeTextResult
+	) throws -> RecognizeTextPasteboardTiming? {
+		guard text.isEmpty == false else {
+			return RecognizeTextPasteboardTiming(clearMilliseconds: 0, writeMilliseconds: 0)
+		}
+		let pasteboard = NSPasteboard.general
+		let clearPasteboardStartedAt = ProcessInfo.processInfo.systemUptime
+		pasteboard.clearContents()
+		let clearPasteboardMilliseconds =
+			NativeHostTelemetry.milliseconds(since: clearPasteboardStartedAt)
+		let writePasteboardStartedAt = ProcessInfo.processInfo.systemUptime
+		guard pasteboard.setString(text, forType: .string) else {
+			let writePasteboardMilliseconds =
+				NativeHostTelemetry.milliseconds(since: writePasteboardStartedAt)
+			recordRecognizeTextTiming(
+				run: run,
+				captureImageMilliseconds: captureImageMilliseconds,
+				visionRequestMilliseconds: visionRequestMilliseconds,
+				resultProcessingMilliseconds: result.processingMilliseconds,
+				clearPasteboardMilliseconds: clearPasteboardMilliseconds,
+				writePasteboardMilliseconds: writePasteboardMilliseconds,
+				success: false,
+				outcome: "recognize_error",
+				failureStage: "pasteboard_write",
+				width: cgImage.width,
+				height: cgImage.height,
+				observationCount: result.observations.count,
+				recognizedLines: result.recognizedLines.count,
+				recognizedCharacters: text.count
+			)
+			try sendHostStatusMessage("Could not copy recognized text.")
+			return nil
+		}
+		return RecognizeTextPasteboardTiming(
+			clearMilliseconds: clearPasteboardMilliseconds,
+			writeMilliseconds: NativeHostTelemetry.milliseconds(since: writePasteboardStartedAt)
+		)
+	}
+
+	private func recordRecognizeTextTiming(
+		run: RecognizeTextRun,
+		captureImageMilliseconds: Double,
+		visionRequestMilliseconds: Double,
+		resultProcessingMilliseconds: Double,
+		clearPasteboardMilliseconds: Double,
+		writePasteboardMilliseconds: Double,
+		success: Bool,
+		outcome: String,
+		failureStage: String,
+		width: Int,
+		height: Int,
+		observationCount: Int,
+		recognizedLines: Int,
+		recognizedCharacters: Int
+	) {
 		NativeHostTelemetry.recognizeTextTiming(
-			captureID: captureID,
-			totalMilliseconds: NativeHostTelemetry.milliseconds(since: recognizeStartedAt),
+			captureID: run.captureID,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: run.startedAt),
 			captureImageMilliseconds: captureImageMilliseconds,
 			visionRequestMilliseconds: visionRequestMilliseconds,
 			resultProcessingMilliseconds: resultProcessingMilliseconds,
 			clearPasteboardMilliseconds: clearPasteboardMilliseconds,
 			writePasteboardMilliseconds: writePasteboardMilliseconds,
-			success: true,
-			outcome: text.isEmpty ? "no_text" : "text_ready",
-			failureStage: "none",
-			width: cgImage.width,
-			height: cgImage.height,
-			observationCount: observations.count,
-			recognizedLines: recognizedLines.count,
-			recognizedCharacters: text.count,
-			recognitionLevel: recognitionLevel,
-			languageCorrection: usesLanguageCorrection,
-			automaticLanguageDetection: automaticallyDetectsLanguage
+			success: success,
+			outcome: outcome,
+			failureStage: failureStage,
+			width: width,
+			height: height,
+			observationCount: observationCount,
+			recognizedLines: recognizedLines,
+			recognizedCharacters: recognizedCharacters,
+			recognitionLevel: run.recognitionLevel,
+			languageCorrection: run.usesLanguageCorrection,
+			automaticLanguageDetection: run.automaticallyDetectsLanguage
 		)
-
-		if !text.isEmpty {
-			ocrCompletionSound.play()
-		}
-
-		try session.send(report: .hostEffectCompleted(.recognizeText))
-		let message =
-			text.isEmpty
-			? "No text was recognized."
-			: "Recognized text copied to clipboard."
-		try session.send(report: .statusMessage(message))
-		completedHostEffect = .recognizeText
 	}
 
 	private func activeScrollCaptureExportImage() throws -> CGImage? {
@@ -2697,7 +2657,7 @@ final class CaptureSessionController: NSObject {
 		let hadBaseImageBefore = chromeState.frozenBaseImage != nil
 		let hadFrozenDisplayImageBefore = chromeState.frozenDisplayImage != nil
 		let hasOverlayEdits =
-			chromeState.frozenOverlay.canUndo || chromeState.frozenOverlay.activeInteraction != nil
+			chromeState.frozenOverlay.canUndo || chromeState.frozenOverlay.hasActiveInteraction
 		let ensureStartedAt = ProcessInfo.processInfo.systemUptime
 		ensureFrozenBaseImageFromDisplayIfNeeded(for: selection)
 		let ensureMilliseconds = NativeHostTelemetry.milliseconds(since: ensureStartedAt)
@@ -2725,7 +2685,7 @@ final class CaptureSessionController: NSObject {
 		}
 
 		let compositeStartedAt = ProcessInfo.processInfo.systemUptime
-		let composited = compositeFrozenOverlay(on: baseImage, selection: selection) ?? baseImage
+		let composited = try compositeFrozenOverlay(on: baseImage, selection: selection)
 		let result =
 			applyingCaptureFrameEffect
 			? applyCaptureFrameEffectIfNeeded(
@@ -2771,7 +2731,7 @@ final class CaptureSessionController: NSObject {
 		}
 		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
 		let screen = screen(containing: selectionCenter)
-		if !hasOverlayEdits,
+		if hasOverlayEdits == false,
 			chromeState.captureFrameSource == .window,
 			let windowImage = captureFrameWindowImage()
 		{
@@ -2866,15 +2826,14 @@ final class CaptureSessionController: NSObject {
 		displayFrame: CGRect,
 		selection: CGRect
 	) -> CGImage? {
-		let cropRect = CGRect(
-			x: ((selection.minX - displayFrame.minX) / max(displayFrame.width, 1))
-				* CGFloat(image.width),
-			y: ((displayFrame.maxY - selection.maxY) / max(displayFrame.height, 1))
-				* CGFloat(image.height),
-			width: (selection.width / max(displayFrame.width, 1)) * CGFloat(image.width),
-			height: (selection.height / max(displayFrame.height, 1)) * CGFloat(image.height)
-		).integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
-		guard cropRect.width > 0, cropRect.height > 0 else {
+		guard
+			let cropRect = try? RsnapExportEncoder.frozenDisplayCropRect(
+				imageWidth: image.width,
+				imageHeight: image.height,
+				displayFrame: displayFrame,
+				selection: selection
+			)
+		else {
 			return nil
 		}
 		return image.cropping(to: cropRect)
@@ -2917,6 +2876,14 @@ final class CaptureSessionController: NSObject {
 		}
 
 		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
+	}
+
+	private static func losslessPNGData(from image: CGImage) throws -> Data? {
+		guard let snapshot = rgbaSnapshot(from: image) else {
+			return nil
+		}
+
+		return try RsnapExportEncoder.pngData(from: snapshot)
 	}
 
 	private static func cgImage(from snapshot: RGBARegionSnapshot) -> CGImage? {
@@ -3032,134 +2999,27 @@ final class CaptureSessionController: NSObject {
 		scene.statusMessage = message
 	}
 
-	private func compositeFrozenOverlay(on image: CGImage, selection: CGRect) -> CGImage? {
-		guard
-			chromeState.frozenOverlay.canUndo || chromeState.frozenOverlay.activeInteraction != nil
-		else {
+	private func compositeFrozenOverlay(on image: CGImage, selection: CGRect) throws -> CGImage {
+		let elements = chromeState.frozenOverlay.exportElements
+		guard elements.isEmpty == false else {
 			return image
 		}
 
-		let width = image.width
-		let height = image.height
 		guard
-			let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
-			let context = CGContext(
-				data: nil,
-				width: width,
-				height: height,
-				bitsPerComponent: 8,
-				bytesPerRow: 0,
-				space: colorSpace,
-				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-			)
+			let snapshot = Self.rgbaSnapshot(from: image),
+			let rendered = Self.cgImage(
+				from: try RsnapExportEncoder.frozenOverlayExportImage(
+					from: snapshot,
+					selection: selection,
+					elements: elements
+				))
 		else {
-			return image
+			throw HostBridgeError.ffiStatus(
+				context: "converting frozen overlay export image",
+				code: 4)
 		}
 
-		let imageRect = CGRect(x: 0, y: 0, width: width, height: height)
-		let imageSize = CGSize(width: CGFloat(width), height: CGFloat(height))
-		let scaleX = imageSize.width / max(selection.width, 1)
-		let scaleY = imageSize.height / max(selection.height, 1)
-		context.draw(image, in: imageRect)
-
-		func mapPoint(_ point: CGPoint) -> CGPoint {
-			frozenExportOverlayPoint(
-				point,
-				selection: selection,
-				imageSize: imageSize
-			)
-		}
-		func mapRect(_ rect: CGRect) -> CGRect {
-			frozenExportOverlayRect(
-				rect,
-				selection: selection,
-				imageSize: imageSize
-			)
-		}
-		func sourceImageRect(_ rect: CGRect) -> CGRect {
-			frozenExportSourceImageRect(
-				rect,
-				selection: selection,
-				imageSize: imageSize
-			)
-		}
-
-		let mosaicRects = chromeState.frozenOverlay.mosaicRects.map {
-			(source: sourceImageRect($0), destination: mapRect($0))
-		}
-		if !mosaicRects.isEmpty {
-			context.saveGState()
-			context.interpolationQuality = .high
-			for rect in mosaicRects {
-				if let mosaicPatch = makeFrozenMosaicPatch(from: image, sourceRect: rect.source) {
-					context.draw(mosaicPatch, in: rect.destination.integral.intersection(imageRect))
-				}
-			}
-			context.restoreGState()
-		}
-
-		let spotlightAnnotations = chromeState.frozenOverlay.spotlightAnnotations.map {
-			(rect: mapRect($0.rect), style: $0.style)
-		}
-		let averageScale = (scaleX + scaleY) / 2
-		if !spotlightAnnotations.isEmpty {
-			context.saveGState()
-			context.setFillColor(NSColor.black.withAlphaComponent(0.32).cgColor)
-			context.fill(imageRect)
-			for annotation in spotlightAnnotations {
-				context.saveGState()
-				context.clip(to: annotation.rect)
-				context.draw(image, in: imageRect)
-				context.restoreGState()
-			}
-			context.restoreGState()
-
-			for annotation in spotlightAnnotations {
-				drawFrozenSpotlightBorder(
-					for: annotation.rect,
-					style: annotation.style,
-					scale: averageScale,
-					alpha: 0.96,
-					in: context
-				)
-			}
-		}
-
-		for stroke in chromeState.frozenOverlay.penStrokes {
-			guard let first = stroke.points.first else {
-				continue
-			}
-			context.setStrokeColor(stroke.style.color.nsColor(alpha: 0.96).cgColor)
-			context.setLineWidth(stroke.style.strokeWidthPoints * averageScale)
-			context.setLineCap(.round)
-			context.setLineJoin(.round)
-			context.beginPath()
-			context.move(to: mapPoint(first))
-			for point in stroke.points.dropFirst() {
-				context.addLine(to: mapPoint(point))
-			}
-			context.strokePath()
-		}
-		for annotation in chromeState.frozenOverlay.arrowAnnotations {
-			drawFrozenArrow(
-				from: mapPoint(annotation.start),
-				to: mapPoint(annotation.end),
-				style: annotation.style,
-				scale: averageScale,
-				in: context
-			)
-		}
-		for annotation in chromeState.frozenOverlay.textAnnotations {
-			drawExportText(
-				annotation.text,
-				at: mapPoint(annotation.anchor),
-				style: annotation.style,
-				scale: averageScale,
-				in: context
-			)
-		}
-
-		return context.makeImage()
+		return rendered
 	}
 
 	private func drawExportText(
@@ -3169,7 +3029,7 @@ final class CaptureSessionController: NSObject {
 		scale: CGFloat,
 		in context: CGContext
 	) {
-		guard !text.isEmpty else {
+		guard text.isEmpty == false else {
 			return
 		}
 
@@ -3329,199 +3189,19 @@ final class CaptureSessionController: NSObject {
 		cropSizePx: CGFloat,
 		captureSizePoints: CGFloat
 	) -> CGFloat {
-		guard cropSizePx > 0, captureSizePoints > 0 else {
-			return 0
-		}
-		let leadingMarginPx = contentOriginPx
-		let trailingMarginPx = cropSizePx - (contentOriginPx + contentSizePx)
-		let deltaPx = (leadingMarginPx - trailingMarginPx) * 0.5
-		return (deltaPx * captureSizePoints / cropSizePx).rounded()
+		RsnapAutoCenterPlanner.marginBalanceShiftPoints(
+			contentOriginPixels: contentOriginPx,
+			contentSizePixels: contentSizePx,
+			cropSizePixels: cropSizePx,
+			captureSizePoints: captureSizePoints
+		)
 	}
 
 	private static func detectAutoCenterContentBounds(in image: CGImage) -> CGRect? {
-		let bitmap = NSBitmapImageRep(cgImage: image)
-		let width = bitmap.pixelsWide
-		let height = bitmap.pixelsHigh
-		guard width >= 2, height >= 2 else {
+		guard let snapshot = rgbaSnapshot(from: image) else {
 			return nil
 		}
-		guard
-			bitmap.bitsPerSample == 8,
-			!bitmap.isPlanar,
-			bitmap.samplesPerPixel >= 3,
-			!bitmap.bitmapFormat.contains(.floatingPointSamples),
-			let bitmapData = bitmap.bitmapData
-		else {
-			return nil
-		}
-
-		let edgeStrip = max(1, min(24, Int((CGFloat(min(width, height)) * 0.08).rounded())))
-		guard
-			let topMean = regionRGBMean(
-				bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: 0, y1: edgeStrip),
-			let bottomMean = regionRGBMean(
-				bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: height - edgeStrip, y1: height),
-			let leftMean = regionRGBMean(
-				bitmapData, bitmap: bitmap, x0: 0, x1: edgeStrip, y0: 0, y1: height),
-			let rightMean = regionRGBMean(
-				bitmapData, bitmap: bitmap, x0: width - edgeStrip, x1: width, y0: 0, y1: height)
-		else {
-			return nil
-		}
-
-		let threshold = max(
-			24,
-			min(
-				96,
-				Int(
-					round(
-						max(
-							regionRGBMeanDistance(
-								bitmapData, bitmap: bitmap, x0: 0, x1: width, y0: 0, y1: edgeStrip,
-								mean: topMean),
-							regionRGBMeanDistance(
-								bitmapData, bitmap: bitmap, x0: 0, x1: width,
-								y0: height - edgeStrip, y1: height, mean: bottomMean),
-							regionRGBMeanDistance(
-								bitmapData, bitmap: bitmap, x0: 0, x1: edgeStrip, y0: 0, y1: height,
-								mean: leftMean),
-							regionRGBMeanDistance(
-								bitmapData, bitmap: bitmap, x0: width - edgeStrip, x1: width, y0: 0,
-								y1: height, mean: rightMean)
-						) * 3
-					)
-				)
-			)
-		)
-		let minSalientPerRow = max(1, width / 64)
-		let minSalientPerColumn = max(1, height / 64)
-		var rowCounts = Array(repeating: 0, count: height)
-		var columnCounts = Array(repeating: 0, count: width)
-
-		for y in 0..<height {
-			for x in 0..<width {
-				let rgb = rgbComponents(bitmapData, bitmap: bitmap, x: x, y: y)
-				let salientDistance = min(
-					rgbDistanceToMean(rgb, mean: topMean),
-					rgbDistanceToMean(rgb, mean: bottomMean),
-					rgbDistanceToMean(rgb, mean: leftMean),
-					rgbDistanceToMean(rgb, mean: rightMean)
-				)
-				guard salientDistance >= CGFloat(threshold) else {
-					continue
-				}
-				rowCounts[y] += 1
-				columnCounts[x] += 1
-			}
-		}
-
-		guard
-			let top = rowCounts.firstIndex(where: { $0 >= minSalientPerRow }),
-			let bottom = rowCounts.lastIndex(where: { $0 >= minSalientPerRow }),
-			let left = columnCounts.firstIndex(where: { $0 >= minSalientPerColumn }),
-			let right = columnCounts.lastIndex(where: { $0 >= minSalientPerColumn }),
-			left <= right,
-			top <= bottom
-		else {
-			return nil
-		}
-
-		let bounds = CGRect(
-			x: left,
-			y: top,
-			width: right - left + 1,
-			height: bottom - top + 1
-		)
-		let fillsCropWidth = bounds.width * 100 >= CGFloat(width) * 92
-		let fillsCropHeight = bounds.height * 100 >= CGFloat(height) * 92
-		return (fillsCropWidth && fillsCropHeight) ? nil : bounds
-	}
-
-	private static func regionRGBMean(
-		_ bitmapData: UnsafeMutablePointer<UInt8>,
-		bitmap: NSBitmapImageRep,
-		x0: Int,
-		x1: Int,
-		y0: Int,
-		y1: Int
-	) -> [CGFloat]? {
-		guard x0 < x1, y0 < y1 else {
-			return nil
-		}
-		var rTotal: CGFloat = 0
-		var gTotal: CGFloat = 0
-		var bTotal: CGFloat = 0
-		var count: CGFloat = 0
-		for y in y0..<y1 {
-			for x in x0..<x1 {
-				let rgb = rgbComponents(bitmapData, bitmap: bitmap, x: x, y: y)
-				rTotal += rgb.r
-				gTotal += rgb.g
-				bTotal += rgb.b
-				count += 1
-			}
-		}
-		guard count > 0 else {
-			return nil
-		}
-		return [rTotal / count, gTotal / count, bTotal / count]
-	}
-
-	private static func regionRGBMeanDistance(
-		_ bitmapData: UnsafeMutablePointer<UInt8>,
-		bitmap: NSBitmapImageRep,
-		x0: Int,
-		x1: Int,
-		y0: Int,
-		y1: Int,
-		mean: [CGFloat]
-	) -> CGFloat {
-		guard x0 < x1, y0 < y1 else {
-			return 0
-		}
-		var total: CGFloat = 0
-		var count: CGFloat = 0
-		for y in y0..<y1 {
-			for x in x0..<x1 {
-				total += rgbDistanceToMean(
-					rgbComponents(bitmapData, bitmap: bitmap, x: x, y: y),
-					mean: mean
-				)
-				count += 1
-			}
-		}
-		return count == 0 ? 0 : total / count
-	}
-
-	private static func rgbComponents(
-		_ bitmapData: UnsafeMutablePointer<UInt8>,
-		bitmap: NSBitmapImageRep,
-		x: Int,
-		y: Int
-	) -> (r: CGFloat, g: CGFloat, b: CGFloat) {
-		let bytesPerPixel = max(3, bitmap.bitsPerPixel / 8)
-		let offset = y * bitmap.bytesPerRow + x * bytesPerPixel
-		if bitmap.bitmapFormat.contains(.alphaFirst), bytesPerPixel >= 4 {
-			return (
-				r: CGFloat(bitmapData[offset + 1]),
-				g: CGFloat(bitmapData[offset + 2]),
-				b: CGFloat(bitmapData[offset + 3])
-			)
-		}
-		return (
-			r: CGFloat(bitmapData[offset]),
-			g: CGFloat(bitmapData[offset + 1]),
-			b: CGFloat(bitmapData[offset + 2])
-		)
-	}
-
-	private static func rgbDistanceToMean(
-		_ rgb: (r: CGFloat, g: CGFloat, b: CGFloat),
-		mean: [CGFloat]
-	) -> CGFloat {
-		abs(rgb.r - mean[0]).rounded()
-			+ abs(rgb.g - mean[1]).rounded()
-			+ abs(rgb.b - mean[2]).rounded()
+		return try? RsnapAutoCenterPlanner.contentBounds(in: snapshot)
 	}
 }
 
@@ -3775,7 +3455,7 @@ final class CaptureOverlayController {
 		windowSnapshotFeed.stop()
 		chromeSampleFeed.stop()
 		liveChromeBackdrops.hideAll()
-		guard !windows.isEmpty else {
+		guard windows.isEmpty == false else {
 			focusedWindowNumber = nil
 			collapsedForFrozen = false
 			return
@@ -3991,7 +3671,7 @@ final class CaptureOverlayController {
 			width: sampleSide,
 			height: sampleSide
 		).intersection(source.screenFrame)
-		guard !sampleRect.isNull, sampleRect.width > 0, sampleRect.height > 0 else {
+		guard sampleRect.isNull == false, sampleRect.width > 0, sampleRect.height > 0 else {
 			return nil
 		}
 		guard
@@ -4016,7 +3696,7 @@ final class CaptureOverlayController {
 			width: sampleSide,
 			height: sampleSide
 		).intersection(source.screenFrame)
-		guard !sampleRect.isNull, sampleRect.width > 0, sampleRect.height > 0 else {
+		guard sampleRect.isNull == false, sampleRect.width > 0, sampleRect.height > 0 else {
 			return nil
 		}
 		guard
@@ -4050,7 +3730,7 @@ final class CaptureOverlayController {
 		source: LiveColorSampleSource
 	) -> CGImage? {
 		let displayRect = appKitRectToQuartz(rect, desktopFrame: source.desktopFrame)
-		guard !displayRect.isNull, displayRect.width > 0, displayRect.height > 0 else {
+		guard displayRect.isNull == false, displayRect.width > 0, displayRect.height > 0 else {
 			return nil
 		}
 		return displayCreateImageForRect?(source.displayID, displayRect)?
@@ -4224,11 +3904,11 @@ final class CaptureOverlayController {
 	}
 
 	private func prepareFrozenPresentation(for selection: CGRect) {
-		guard !collapsedForFrozen else {
+		guard collapsedForFrozen == false else {
 			return
 		}
 		collapsedForFrozen = true
-		guard collapsedForFrozen, !windows.isEmpty else {
+		guard collapsedForFrozen, windows.isEmpty == false else {
 			return
 		}
 		windowSnapshotFeed.stop()
@@ -4996,7 +4676,7 @@ final class CaptureHostView: NSView {
 			if recoverReleasedLivePrimaryInteractionIfNeeded(at: point) {
 				return
 			}
-			if !liveDragExceededThreshold,
+			if liveDragExceededThreshold == false,
 				liveDragDistance(from: point) >= Self.liveDragIntentThreshold
 			{
 				liveDragExceededThreshold = true
@@ -5137,10 +4817,10 @@ final class CaptureHostView: NSView {
 
 	private func plainFrozenShortcutAvailable(_ event: NSEvent) -> Bool {
 		let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-		return !flags.contains(.command)
-			&& !flags.contains(.control)
-			&& !flags.contains(.option)
-			&& !flags.contains(.shift)
+		return flags.contains(.command) == false
+			&& flags.contains(.control) == false
+			&& flags.contains(.option) == false
+			&& flags.contains(.shift) == false
 	}
 
 	private static let annotationStyleWheelDeadZone: CGFloat = 0.05
@@ -5271,14 +4951,17 @@ final class CaptureHostView: NSView {
 			return
 		}
 		guard
-			let frame = scrollCaptureMinimapFrame(
+			let minimapPlan = scrollCaptureMinimapPlan(
 				for: selection,
 				exportSize: preview.exportSizePixels,
 				in: bounds,
 				preferredWidth: CaptureChrome.scrollMinimapPreferredWidth,
 				minimumWidth: CaptureChrome.scrollMinimapMinimumWidth,
 				gap: CaptureChrome.scrollMinimapGap,
-				margin: CaptureChrome.scrollMinimapScreenMargin
+				margin: CaptureChrome.scrollMinimapScreenMargin,
+				imageInset: CaptureChrome.scrollMinimapImageInset,
+				viewportTopPixels: preview.viewportTopYPixels,
+				viewportHeightPixels: preview.viewportHeightPixels
 			)
 		else {
 			return
@@ -5286,10 +4969,8 @@ final class CaptureHostView: NSView {
 
 		let theme = chromeTheme()
 		let palette = CaptureChrome.palette(for: theme, settings: settings)
-		let imageFrame = frame.insetBy(
-			dx: CaptureChrome.scrollMinimapImageInset,
-			dy: CaptureChrome.scrollMinimapImageInset
-		)
+		let frame = minimapPlan.frame
+		let imageFrame = minimapPlan.imageFrame
 		let backgroundPath = NSBezierPath(
 			roundedRect: frame,
 			xRadius: CaptureChrome.scrollMinimapCornerRadius,
@@ -5317,10 +4998,7 @@ final class CaptureHostView: NSView {
 		context.draw(preview.image, in: imageFrame)
 		context.restoreGState()
 
-		if let viewportFrame = scrollCaptureMinimapViewportFrame(
-			for: preview,
-			in: imageFrame
-		) {
+		if let viewportFrame = minimapPlan.viewportFrame {
 			context.setFillColor(NSColor.white.withAlphaComponent(0.13).cgColor)
 			context.fill(viewportFrame)
 			context.setStrokeColor(NSColor.white.withAlphaComponent(0.88).cgColor)
@@ -5331,27 +5009,6 @@ final class CaptureHostView: NSView {
 		context.setStrokeColor(palette.keycapStroke.withAlphaComponent(0.88).cgColor)
 		context.setLineWidth(1)
 		backgroundPath.stroke()
-	}
-
-	private func scrollCaptureMinimapViewportFrame(
-		for preview: ScrollCaptureMinimapSnapshot,
-		in frame: CGRect
-	) -> CGRect? {
-		let exportHeight = max(preview.exportSizePixels.height, 1)
-		let viewportHeight = preview.viewportHeightPixels.clamped(to: 1...exportHeight)
-		let maxTop = max(exportHeight - viewportHeight, 0)
-		let viewportTop = preview.viewportTopYPixels.clamped(to: 0...maxTop)
-		let markerHeight = max(2, frame.height * viewportHeight / exportHeight)
-		let markerY =
-			frame.maxY - frame.height * (viewportTop + viewportHeight) / exportHeight
-		let marker = CGRect(
-			x: frame.minX,
-			y: markerY,
-			width: frame.width,
-			height: markerHeight
-		)
-		let clippedMarker = marker.intersection(frame)
-		return clippedMarker.isNull ? nil : clippedMarker
 	}
 
 	private func localFrozenDisplayFrame() -> CGRect? {
@@ -5550,7 +5207,7 @@ final class CaptureHostView: NSView {
 		guard
 			scene.mode == .live,
 			liveDragStartGlobal != nil,
-			!livePrimaryCompletionInFlight
+			livePrimaryCompletionInFlight == false
 		else {
 			return
 		}
@@ -5592,7 +5249,7 @@ final class CaptureHostView: NSView {
 		else {
 			return
 		}
-		if !isPrimaryMouseButtonPressed() {
+		if isPrimaryMouseButtonPressed() == false {
 			let point = NSEvent.mouseLocation
 			logLivePrimaryInputEvent("capture.live_primary_release_watchdog", point: point)
 			completeLivePrimaryInteractionFromSystemMouseUp(at: point, source: "watchdog")
@@ -5668,7 +5325,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func emitLiveChromeInputSummary(reason: String) {
-		guard !didEmitLiveChromeInputSummary else {
+		guard didEmitLiveChromeInputSummary == false else {
 			return
 		}
 		let observedMouseEvents = max(
@@ -5765,7 +5422,7 @@ final class CaptureHostView: NSView {
 					{
 						return .openHand
 					}
-					if !chrome.frozenSelectionTransformAllowed {
+					if chrome.frozenSelectionTransformAllowed == false {
 						return .arrow
 					}
 					if let pointer = currentGlobalMousePoint(),
@@ -5834,7 +5491,13 @@ final class CaptureHostView: NSView {
 	}
 
 	private func editableFrozenCursorIntent(at point: CGPoint, selection: CGRect) -> CursorIntent? {
-		guard let kind = FrozenSelectionTransformKind.hitTest(at: point, selection: selection)
+		guard
+			let kind = try? RsnapFrozenSelectionTransformPlanner.hitTest(
+				point: point,
+				selection: selection,
+				handleRadius: 12,
+				edgeTolerance: 4
+			)
 		else {
 			return nil
 		}
@@ -6085,7 +5748,7 @@ final class CaptureHostView: NSView {
 		let mosaicRects = chrome.frozenOverlay.mosaicRects.compactMap(localRect(from:))
 		let previewRect = chrome.frozenOverlay.previewMosaicRect.flatMap(localRect(from:))
 		let allRects = mosaicRects + (previewRect.map { [$0] } ?? [])
-		guard !allRects.isEmpty, let baseImage = chrome.frozenBaseImage else {
+		guard allRects.isEmpty == false, let baseImage = chrome.frozenBaseImage else {
 			return
 		}
 		let imageSize = CGSize(width: CGFloat(baseImage.width), height: CGFloat(baseImage.height))
@@ -6125,7 +5788,7 @@ final class CaptureHostView: NSView {
 				}
 			}
 		let allAnnotations = spotlightAnnotations + (previewAnnotation.map { [$0] } ?? [])
-		guard !allAnnotations.isEmpty else {
+		guard allAnnotations.isEmpty == false else {
 			return
 		}
 
@@ -6153,7 +5816,7 @@ final class CaptureHostView: NSView {
 		let allStrokes =
 			chrome.frozenOverlay.penStrokes
 			+ (chrome.frozenOverlay.previewPenStroke.map { [$0] } ?? [])
-		guard !allStrokes.isEmpty else {
+		guard allStrokes.isEmpty == false else {
 			return
 		}
 
@@ -6183,7 +5846,7 @@ final class CaptureHostView: NSView {
 		let arrows =
 			chrome.frozenOverlay.arrowAnnotations
 			+ (chrome.frozenOverlay.previewArrow.map { [$0] } ?? [])
-		guard !arrows.isEmpty else {
+		guard arrows.isEmpty == false else {
 			return
 		}
 
@@ -6238,7 +5901,7 @@ final class CaptureHostView: NSView {
 		scale: CGFloat,
 		in context: CGContext
 	) {
-		guard !text.isEmpty else {
+		guard text.isEmpty == false else {
 			return
 		}
 
@@ -6262,7 +5925,7 @@ final class CaptureHostView: NSView {
 
 	private func toolbarLayout(for selection: CGRect) -> FrozenToolbarLayout? {
 		let items = visibleToolbarItems()
-		guard !items.isEmpty else {
+		guard items.isEmpty == false else {
 			return nil
 		}
 
@@ -6440,7 +6103,7 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 		let visibleSelection = selection.intersection(bounds)
-		if !visibleSelection.isNull, toolbarFrame.intersects(visibleSelection) {
+		if visibleSelection.isNull == false, toolbarFrame.intersects(visibleSelection) {
 			return nil
 		}
 		return CGPath(
@@ -6887,7 +6550,7 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 
-		if !livePrimaryCompletionInFlight {
+		if livePrimaryCompletionInFlight == false {
 			let polledPoint = currentGlobalMousePoint() ?? NSEvent.mouseLocation
 			if let currentPreview = livePointerPreviewGlobal {
 				if hypot(currentPreview.x - polledPoint.x, currentPreview.y - polledPoint.y)
@@ -6979,7 +6642,8 @@ final class CaptureHostView: NSView {
 		}
 		let previousPreview = liveHighlightedWindowPreview
 		refreshLiveHighlightedWindowPreview(at: globalPoint)
-		return !Self.windowSnapshotsEquivalent(previousPreview, liveHighlightedWindowPreview)
+		return Self.windowSnapshotsEquivalent(previousPreview, liveHighlightedWindowPreview)
+			== false
 	}
 
 	private static func windowSnapshotsEquivalent(_ lhs: WindowSnapshot?, _ rhs: WindowSnapshot?)
@@ -7121,7 +6785,7 @@ final class CaptureHostView: NSView {
 		let maxY = max(bounds.height - size.height - 6, minY)
 
 		var x = alignTrailing ? (referenceFrame.maxX - size.width) : referenceFrame.minX
-		if !alignTrailing, x + size.width > bounds.width - 6 {
+		if alignTrailing == false, x + size.width > bounds.width - 6 {
 			x = referenceFrame.maxX - size.width
 		}
 		x = x.clamped(to: minX...maxX)
@@ -7877,7 +7541,7 @@ final class CaptureHostView: NSView {
 		}
 		frozenToolbarLiquidGlassVisible = true
 		frozenToolbarLiquidGlassContentDrawn = true
-		if !wasVisible {
+		if wasVisible == false {
 			needsDisplay = true
 		}
 	}
@@ -8183,6 +7847,105 @@ private struct FrozenTextStyle: Equatable {
 	}
 }
 
+extension FrozenAnnotationColor {
+	fileprivate var exportColor: FrozenOverlayExportColor {
+		switch self {
+		case .white:
+			.white
+		case .yellow:
+			.yellow
+		case .green:
+			.green
+		case .blue:
+			.blue
+		case .red:
+			.red
+		case .black:
+			.black
+		}
+	}
+}
+
+extension FrozenBrushStyle {
+	fileprivate var exportStrokeStyle: FrozenOverlayExportStrokeStyle {
+		FrozenOverlayExportStrokeStyle(
+			strokeWidthPoints: strokeWidthPoints,
+			color: color.exportColor
+		)
+	}
+}
+
+extension FrozenSpotlightStyle {
+	fileprivate var exportSpotlightStyle: FrozenOverlayExportSpotlightStyle {
+		FrozenOverlayExportSpotlightStyle(
+			borderWidthPoints: borderWidthPoints,
+			borderColor: borderColor.exportColor
+		)
+	}
+}
+
+extension FrozenTextStyle {
+	fileprivate var exportTextStyle: FrozenOverlayExportTextStyle {
+		FrozenOverlayExportTextStyle(
+			fontSizePoints: fontSizePoints,
+			color: color.exportColor
+		)
+	}
+}
+
+extension FrozenOverlayExportColor {
+	fileprivate var annotationColor: FrozenAnnotationColor {
+		switch self {
+		case .white:
+			.white
+		case .yellow:
+			.yellow
+		case .green:
+			.green
+		case .blue:
+			.blue
+		case .red:
+			.red
+		case .black:
+			.black
+		}
+	}
+}
+
+extension FrozenOverlayExportStrokeStyle {
+	fileprivate var frozenBrushStyle: FrozenBrushStyle {
+		FrozenBrushStyle(strokeWidthPoints: strokeWidthPoints, color: color.annotationColor)
+	}
+}
+
+extension FrozenOverlayExportSpotlightStyle {
+	fileprivate var frozenSpotlightStyle: FrozenSpotlightStyle {
+		FrozenSpotlightStyle(
+			borderWidthPoints: borderWidthPoints,
+			borderColor: borderColor.annotationColor
+		)
+	}
+}
+
+extension FrozenOverlayExportTextStyle {
+	fileprivate var frozenTextStyle: FrozenTextStyle {
+		FrozenTextStyle(fontSizePoints: fontSizePoints, color: color.annotationColor)
+	}
+}
+
+extension FrozenAnnotationStyleState {
+	fileprivate var editStyle: FrozenOverlayEditStyle {
+		FrozenOverlayEditStyle(
+			strokeWidthPoints: brushStyle.strokeWidthPoints,
+			strokeColor: brushStyle.color.exportColor,
+			spotlightBorderWidthPoints: spotlightStyle.borderWidthPoints,
+			spotlightColor: spotlightStyle.borderColor.exportColor,
+			textFontSizePoints: textStyle.fontSizePoints,
+			textColor: textStyle.color.exportColor
+		)
+	}
+}
+
 private enum FrozenAnnotationStyleAction: Equatable {
 	case decreaseSize
 	case increaseSize
@@ -8419,61 +8182,6 @@ private func drawFrozenArrow(
 	context.restoreGState()
 }
 
-private enum FrozenSelectionTransformKind {
-	case move
-	case resizeLeft
-	case resizeRight
-	case resizeTop
-	case resizeBottom
-	case resizeTopLeft
-	case resizeTopRight
-	case resizeBottomLeft
-	case resizeBottomRight
-}
-
-extension FrozenSelectionTransformKind {
-	fileprivate static func hitTest(
-		at point: CGPoint,
-		selection: CGRect
-	) -> FrozenSelectionTransformKind? {
-		let handleRadius = CGFloat(12)
-		let edgeTolerance = CGFloat(4)
-		let left = selection.minX
-		let right = selection.maxX
-		let top = selection.maxY
-		let bottom = selection.minY
-
-		if abs(point.x - left) <= handleRadius, abs(point.y - top) <= handleRadius {
-			return .resizeTopLeft
-		}
-		if abs(point.x - right) <= handleRadius, abs(point.y - top) <= handleRadius {
-			return .resizeTopRight
-		}
-		if abs(point.x - left) <= handleRadius, abs(point.y - bottom) <= handleRadius {
-			return .resizeBottomLeft
-		}
-		if abs(point.x - right) <= handleRadius, abs(point.y - bottom) <= handleRadius {
-			return .resizeBottomRight
-		}
-		if point.y >= bottom, point.y <= top, abs(point.x - left) <= edgeTolerance {
-			return .resizeLeft
-		}
-		if point.y >= bottom, point.y <= top, abs(point.x - right) <= edgeTolerance {
-			return .resizeRight
-		}
-		if point.x >= left, point.x <= right, abs(point.y - top) <= edgeTolerance {
-			return .resizeTop
-		}
-		if point.x >= left, point.x <= right, abs(point.y - bottom) <= edgeTolerance {
-			return .resizeBottom
-		}
-		if selection.contains(point) {
-			return .move
-		}
-		return nil
-	}
-}
-
 private struct FrozenSelectionInteractionState {
 	let kind: FrozenSelectionTransformKind
 	let initialPointer: CGPoint
@@ -8553,491 +8261,214 @@ private struct ScrollCaptureMinimapSnapshot {
 	let viewportHeightPixels: CGFloat
 }
 
-private struct FrozenOverlayState {
-	enum Edit {
-		case pen(FrozenBrushStroke)
-		case arrow(FrozenArrowAnnotation)
-		case mosaic(CGRect)
-		case spotlight(FrozenSpotlightAnnotation)
-		case text(FrozenTextAnnotation)
-	}
+private final class FrozenOverlayState {
+	private let session: RsnapFrozenOverlayEditSession
+	private var snapshot: FrozenOverlayEditSnapshot
 
-	enum ActiveInteraction {
-		case pen(points: [CGPoint], style: FrozenBrushStyle)
-		case arrow(start: CGPoint, current: CGPoint, style: FrozenBrushStyle)
-		case mosaic(anchor: CGPoint, current: CGPoint)
-		case mosaicMove(index: Int, currentRect: CGRect, dragOffset: CGSize)
-		case textMove(index: Int, currentAnnotation: FrozenTextAnnotation, dragOffset: CGSize)
-		case spotlight(anchor: CGPoint, current: CGPoint, style: FrozenSpotlightStyle)
-	}
-
-	private enum MoveTarget {
-		case mosaic(index: Int, rect: CGRect)
-		case text(index: Int, annotation: FrozenTextAnnotation)
-	}
-
-	var edits: [Edit] = []
-	var redoEdits: [Edit] = []
-	var activeInteraction: ActiveInteraction?
-	var activeTextEdit: FrozenTextEditState?
-
-	var canUndo: Bool { !edits.isEmpty }
-	var canRedo: Bool { !redoEdits.isEmpty }
-	var keepsFrozenSelectionFixed: Bool {
-		!edits.isEmpty || !redoEdits.isEmpty || activeInteraction != nil || activeTextEdit != nil
-	}
-	var isMovingMovableAnnotation: Bool {
-		switch activeInteraction {
-		case .mosaicMove?, .textMove?:
-			return true
-		case nil, .pen?, .arrow?, .mosaic?, .spotlight?:
-			return false
+	init() {
+		do {
+			let session = try RsnapFrozenOverlayEditSession()
+			self.session = session
+			self.snapshot = try session.snapshot()
+		} catch {
+			fatalError("Failed to create Rust frozen overlay edit session: \(error)")
 		}
 	}
 
-	mutating func reset() {
-		edits.removeAll()
-		redoEdits.removeAll()
-		activeInteraction = nil
-		activeTextEdit = nil
+	var canUndo: Bool { snapshot.canUndo }
+	var canRedo: Bool { snapshot.canRedo }
+	var keepsFrozenSelectionFixed: Bool { snapshot.keepsFrozenSelectionFixed }
+	var isMovingMovableAnnotation: Bool { snapshot.isMovingMovableAnnotation }
+	var hasActiveInteraction: Bool { snapshot.hasActiveInteraction }
+	var activeTextEdit: FrozenTextEditState? {
+		snapshot.activeTextEdit.map { FrozenTextEditState(anchor: $0.anchor, text: $0.text) }
+	}
+	var exportElements: [FrozenOverlayExportElement] { snapshot.elements }
+
+	var penStrokes: [FrozenBrushStroke] {
+		snapshot.elements.compactMap(Self.penStroke(from:))
 	}
 
-	mutating func begin(
+	var arrowAnnotations: [FrozenArrowAnnotation] {
+		snapshot.elements.compactMap(Self.arrowAnnotation(from:))
+	}
+
+	var mosaicRects: [CGRect] {
+		snapshot.elements.compactMap(Self.mosaicRect(from:))
+	}
+
+	var spotlightAnnotations: [FrozenSpotlightAnnotation] {
+		snapshot.elements.compactMap(Self.spotlightAnnotation(from:))
+	}
+
+	var textAnnotations: [FrozenTextAnnotation] {
+		snapshot.elements.compactMap(Self.textAnnotation(from:))
+	}
+
+	var previewPenStroke: FrozenBrushStroke? {
+		snapshot.previewPen.flatMap(Self.penStroke(from:))
+	}
+
+	var previewArrow: FrozenArrowAnnotation? {
+		snapshot.previewArrow.flatMap(Self.arrowAnnotation(from:))
+	}
+
+	var previewMosaicRect: CGRect? {
+		snapshot.previewMosaic.flatMap(Self.mosaicRect(from:))
+	}
+
+	var previewTextAnnotation: FrozenTextAnnotation? {
+		snapshot.previewText.flatMap(Self.textAnnotation(from:))
+	}
+
+	var previewSpotlightAnnotation: FrozenSpotlightAnnotation? {
+		snapshot.previewSpotlight.flatMap(Self.spotlightAnnotation(from:))
+	}
+
+	func reset() {
+		do {
+			try session.reset()
+			try refreshSnapshot()
+		} catch {
+			fatalError("Failed to reset Rust frozen overlay state: \(error)")
+		}
+	}
+
+	func begin(
 		tool: ToolbarItemKind,
 		at point: CGPoint,
 		selection: CGRect,
 		style: FrozenAnnotationStyleState
 	) -> Bool {
-		guard selection.contains(point) else {
-			return false
+		performRefreshingWhenChanged {
+			try session.begin(tool: tool, at: point, selection: selection, style: style.editStyle)
 		}
+	}
 
-		switch tool {
-		case .pen:
-			activeInteraction = .pen(points: [point], style: style.brushStyle)
-		case .arrow:
-			activeInteraction = .arrow(start: point, current: point, style: style.brushStyle)
-		case .mosaic:
-			activeInteraction = .mosaic(anchor: point, current: point)
-		case .pointer:
-			guard let target = Self.moveTarget(in: edits, at: point) else {
-				return false
-			}
-			switch target {
-			case .mosaic(let index, let rect):
-				activeInteraction = .mosaicMove(
-					index: index,
-					currentRect: rect,
-					dragOffset: CGSize(width: point.x - rect.minX, height: point.y - rect.minY)
+	func update(to point: CGPoint, selection: CGRect) -> Bool {
+		performRefreshingWhenChanged {
+			try session.update(to: point, selection: selection)
+		}
+	}
+
+	func finish(selection: CGRect) -> Bool {
+		performRefreshingAlways {
+			try session.finish(selection: selection)
+		}
+	}
+
+	func appendText(_ text: String) -> Bool {
+		performRefreshingWhenChanged {
+			try session.appendText(text)
+		}
+	}
+
+	func backspaceText() -> Bool {
+		performRefreshingWhenChanged {
+			try session.backspaceText()
+		}
+	}
+
+	func commitTextEdit(style: FrozenTextStyle) -> Bool {
+		performRefreshingAlways {
+			try session.commitText(
+				style: FrozenOverlayEditStyle(
+					strokeWidthPoints: 3,
+					strokeColor: .blue,
+					spotlightBorderWidthPoints: 0,
+					spotlightColor: .blue,
+					textFontSizePoints: style.fontSizePoints,
+					textColor: style.color.exportColor
 				)
-			case .text(let index, let annotation):
-				activeInteraction = .textMove(
-					index: index,
-					currentAnnotation: annotation,
-					dragOffset: CGSize(
-						width: point.x - annotation.anchor.x,
-						height: point.y - annotation.anchor.y
-					)
-				)
-			}
-		case .spotlight:
-			activeInteraction = .spotlight(
-				anchor: point,
-				current: point,
-				style: style.spotlightStyle
-			)
-		case .text:
-			let _ = commitTextEdit(style: style.textStyle)
-			activeTextEdit = FrozenTextEditState(anchor: selection.clamp(point), text: "")
-			return true
-		default:
-			return false
-		}
-
-		return true
-	}
-
-	mutating func update(to point: CGPoint, selection: CGRect) -> Bool {
-		guard let activeInteraction else {
-			return false
-		}
-
-		switch activeInteraction {
-		case .pen(var points, let style):
-			let clamped = selection.clamp(point)
-			if let lastPoint = points.last,
-				hypot(lastPoint.x - clamped.x, lastPoint.y - clamped.y) < 1.5
-			{
-				return false
-			}
-			points.append(clamped)
-			self.activeInteraction = .pen(points: points, style: style)
-		case .arrow(let start, _, let style):
-			self.activeInteraction = .arrow(
-				start: start, current: selection.clamp(point), style: style)
-		case .mosaic(let anchor, _):
-			self.activeInteraction = .mosaic(anchor: anchor, current: selection.clamp(point))
-		case .mosaicMove(let index, let currentRect, let dragOffset):
-			self.activeInteraction = .mosaicMove(
-				index: index,
-				currentRect: Self.movedMosaicRect(
-					rect: currentRect,
-					dragOffset: dragOffset,
-					point: point,
-					selection: selection
-				),
-				dragOffset: dragOffset
-			)
-		case .textMove(let index, let currentAnnotation, let dragOffset):
-			self.activeInteraction = .textMove(
-				index: index,
-				currentAnnotation: Self.movedTextAnnotation(
-					currentAnnotation,
-					dragOffset: dragOffset,
-					point: point,
-					selection: selection
-				),
-				dragOffset: dragOffset
-			)
-		case .spotlight(let anchor, _, let style):
-			self.activeInteraction = .spotlight(
-				anchor: anchor,
-				current: selection.clamp(point),
-				style: style
 			)
 		}
-
-		return true
 	}
 
-	mutating func finish(selection: CGRect) -> Bool {
-		guard let activeInteraction else {
-			return false
+	func undo() -> Bool {
+		performRefreshingAlways {
+			try session.undo()
 		}
-		defer { self.activeInteraction = nil }
-
-		var changed = true
-		switch activeInteraction {
-		case .pen(let points, let style):
-			guard points.count >= 2 else {
-				return false
-			}
-			edits.append(.pen(FrozenBrushStroke(points: points, style: style)))
-		case .arrow(let start, let current, let style):
-			guard hypot(start.x - current.x, start.y - current.y) >= 6 else {
-				return false
-			}
-			edits.append(.arrow(FrozenArrowAnnotation(start: start, end: current, style: style)))
-		case .mosaic(let anchor, let current):
-			let rect = selection.normalizedRect(anchor: anchor, current: current)
-			guard rect.width >= 6, rect.height >= 6 else {
-				return false
-			}
-			edits.append(.mosaic(rect))
-		case .mosaicMove(let index, let currentRect, _):
-			guard edits.indices.contains(index), case .mosaic(let oldRect) = edits[index] else {
-				return false
-			}
-			if oldRect == currentRect {
-				changed = false
-			} else {
-				edits[index] = .mosaic(currentRect)
-			}
-		case .textMove(let index, let currentAnnotation, _):
-			guard edits.indices.contains(index),
-				case .text(let oldAnnotation) = edits[index]
-			else {
-				return false
-			}
-			if oldAnnotation == currentAnnotation {
-				changed = false
-			} else {
-				edits[index] = .text(currentAnnotation)
-			}
-		case .spotlight(let anchor, let current, let style):
-			let rect = selection.normalizedRect(anchor: anchor, current: current)
-			guard rect.width >= 6, rect.height >= 6 else {
-				return false
-			}
-			edits.append(.spotlight(FrozenSpotlightAnnotation(rect: rect, style: style)))
-		}
-
-		if changed {
-			redoEdits.removeAll()
-		}
-		return true
 	}
 
-	private static func moveTarget(in edits: [Edit], at point: CGPoint) -> MoveTarget? {
-		for index in edits.indices.reversed() {
-			switch edits[index] {
-			case .mosaic(let rect) where rect.contains(point):
-				return .mosaic(index: index, rect: rect)
-			case .text(let annotation) where textHitBounds(for: annotation).contains(point):
-				return .text(index: index, annotation: annotation)
-			case .pen, .arrow, .mosaic, .spotlight, .text:
-				continue
-			}
+	func redo() -> Bool {
+		performRefreshingAlways {
+			try session.redo()
 		}
-		return nil
-	}
-
-	private static func mosaicMoveTarget(
-		in edits: [Edit],
-		at point: CGPoint
-	) -> (index: Int, rect: CGRect)? {
-		for index in edits.indices.reversed() {
-			if case .mosaic(let rect) = edits[index], rect.contains(point) {
-				return (index, rect)
-			}
-		}
-		return nil
 	}
 
 	func containsMovableAnnotation(at point: CGPoint) -> Bool {
-		Self.moveTarget(in: edits, at: point) != nil
-	}
-
-	private static func movedMosaicRect(
-		rect: CGRect,
-		dragOffset: CGSize,
-		point: CGPoint,
-		selection: CGRect
-	) -> CGRect {
-		let maxMinX = max(selection.minX, selection.maxX - rect.width)
-		let maxMinY = max(selection.minY, selection.maxY - rect.height)
-		return CGRect(
-			x: min(max(point.x - dragOffset.width, selection.minX), maxMinX),
-			y: min(max(point.y - dragOffset.height, selection.minY), maxMinY),
-			width: rect.width,
-			height: rect.height
-		)
-	}
-
-	private static func movedTextAnnotation(
-		_ annotation: FrozenTextAnnotation,
-		dragOffset: CGSize,
-		point: CGPoint,
-		selection: CGRect
-	) -> FrozenTextAnnotation {
-		let size = textBounds(for: annotation).size
-		let maxAnchorX = max(selection.minX, selection.maxX - size.width)
-		let maxAnchorY = max(selection.minY, selection.maxY - size.height)
-		let anchor = CGPoint(
-			x: min(max(point.x - dragOffset.width, selection.minX), maxAnchorX),
-			y: min(max(point.y - dragOffset.height, selection.minY), maxAnchorY)
-		)
-		return FrozenTextAnnotation(anchor: anchor, text: annotation.text, style: annotation.style)
-	}
-
-	private static func textHitBounds(for annotation: FrozenTextAnnotation) -> CGRect {
-		textBounds(for: annotation).insetBy(dx: -4, dy: -4)
-	}
-
-	private static func textBounds(for annotation: FrozenTextAnnotation) -> CGRect {
-		let font = NSFont.systemFont(
-			ofSize: max(1, annotation.style.fontSizePoints), weight: .medium)
-		let attributed = NSAttributedString(
-			string: annotation.text,
-			attributes: [.font: font]
-		)
-		let size = attributed.boundingRect(
-			with: CGSize(
-				width: CGFloat.greatestFiniteMagnitude,
-				height: CGFloat.greatestFiniteMagnitude
-			),
-			options: [.usesLineFragmentOrigin, .usesFontLeading]
-		).size
-		return CGRect(
-			x: annotation.anchor.x,
-			y: annotation.anchor.y,
-			width: max(1, ceil(size.width)),
-			height: max(ceil(font.ascender - font.descender + font.leading), ceil(size.height))
-		)
-	}
-
-	mutating func appendText(_ text: String) -> Bool {
-		guard var activeTextEdit else {
-			return false
+		do {
+			return try session.containsMovableAnnotation(at: point)
+		} catch {
+			fatalError("Failed to hit-test Rust frozen overlay annotation: \(error)")
 		}
-		let sanitized = text.replacingOccurrences(of: "\r", with: "")
-		guard !sanitized.isEmpty else {
-			return false
-		}
-		activeTextEdit.text.append(sanitized)
-		self.activeTextEdit = activeTextEdit
-		return true
 	}
 
-	mutating func backspaceText() -> Bool {
-		guard var activeTextEdit else {
-			return false
-		}
-		guard activeTextEdit.text.popLast() != nil else {
-			return false
-		}
-		self.activeTextEdit = activeTextEdit
-		return true
-	}
-
-	mutating func commitTextEdit(style: FrozenTextStyle) -> Bool {
-		guard let activeTextEdit else {
-			return false
-		}
-		self.activeTextEdit = nil
-		let trimmed = activeTextEdit.text.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !trimmed.isEmpty else {
-			return false
-		}
-		edits.append(
-			.text(
-				FrozenTextAnnotation(
-					anchor: activeTextEdit.anchor,
-					text: activeTextEdit.text,
-					style: style
-				)))
-		redoEdits.removeAll()
-		return true
-	}
-
-	mutating func cancelTextEdit() {
-		activeTextEdit = nil
-	}
-
-	mutating func undo() -> Bool {
-		activeTextEdit = nil
-		guard let edit = edits.popLast() else {
-			return false
-		}
-		redoEdits.append(edit)
-		return true
-	}
-
-	mutating func redo() -> Bool {
-		activeTextEdit = nil
-		guard let edit = redoEdits.popLast() else {
-			return false
-		}
-		edits.append(edit)
-		return true
-	}
-
-	var penStrokes: [FrozenBrushStroke] {
-		edits.compactMap {
-			if case .pen(let stroke) = $0 {
-				return stroke
+	private func performRefreshingWhenChanged(_ operation: () throws -> Bool) -> Bool {
+		do {
+			let changed = try operation()
+			if changed {
+				try refreshSnapshot()
 			}
+			return changed
+		} catch {
+			fatalError("Failed to update Rust frozen overlay state: \(error)")
+		}
+	}
+
+	private func performRefreshingAlways(_ operation: () throws -> Bool) -> Bool {
+		do {
+			let changed = try operation()
+			try refreshSnapshot()
+			return changed
+		} catch {
+			fatalError("Failed to update Rust frozen overlay state: \(error)")
+		}
+	}
+
+	private func refreshSnapshot() throws {
+		snapshot = try session.snapshot()
+	}
+
+	private static func penStroke(from element: FrozenOverlayExportElement) -> FrozenBrushStroke? {
+		guard case .pen(let points, let style) = element else {
 			return nil
 		}
+		return FrozenBrushStroke(points: points, style: style.frozenBrushStyle)
 	}
 
-	var arrowAnnotations: [FrozenArrowAnnotation] {
-		edits.compactMap {
-			if case .arrow(let annotation) = $0 {
-				return annotation
-			}
+	private static func arrowAnnotation(from element: FrozenOverlayExportElement)
+		-> FrozenArrowAnnotation?
+	{
+		guard case .arrow(let start, let end, let style) = element else {
 			return nil
 		}
+		return FrozenArrowAnnotation(start: start, end: end, style: style.frozenBrushStyle)
 	}
 
-	var mosaicRects: [CGRect] {
-		let movingIndex = movingMosaicEditIndex
-		return edits.indices.compactMap { index in
-			if index == movingIndex {
-				return nil
-			}
-			if case .mosaic(let rect) = edits[index] {
-				return rect
-			}
+	private static func mosaicRect(from element: FrozenOverlayExportElement) -> CGRect? {
+		guard case .mosaic(let rect) = element else {
 			return nil
 		}
+		return rect
 	}
 
-	var spotlightAnnotations: [FrozenSpotlightAnnotation] {
-		edits.compactMap {
-			if case .spotlight(let annotation) = $0 {
-				return annotation
-			}
+	private static func spotlightAnnotation(from element: FrozenOverlayExportElement)
+		-> FrozenSpotlightAnnotation?
+	{
+		guard case .spotlight(let rect, let style) = element else {
 			return nil
 		}
+		return FrozenSpotlightAnnotation(rect: rect, style: style.frozenSpotlightStyle)
 	}
 
-	var textAnnotations: [FrozenTextAnnotation] {
-		let movingIndex = movingTextEditIndex
-		return edits.indices.compactMap { index in
-			if index == movingIndex {
-				return nil
-			}
-			if case .text(let annotation) = edits[index] {
-				return annotation
-			}
+	private static func textAnnotation(from element: FrozenOverlayExportElement)
+		-> FrozenTextAnnotation?
+	{
+		guard case .text(let anchor, let text, let style) = element else {
 			return nil
 		}
-	}
-
-	var previewPenStroke: FrozenBrushStroke? {
-		if case .pen(let points, let style)? = activeInteraction {
-			return FrozenBrushStroke(points: points, style: style)
-		}
-		return nil
-	}
-
-	var previewArrow: FrozenArrowAnnotation? {
-		if case .arrow(let start, let current, let style)? = activeInteraction {
-			return FrozenArrowAnnotation(start: start, end: current, style: style)
-		}
-		return nil
-	}
-
-	var movingMosaicEditIndex: Int? {
-		if case .mosaicMove(let index, _, _)? = activeInteraction {
-			return index
-		}
-		return nil
-	}
-
-	var movingTextEditIndex: Int? {
-		if case .textMove(let index, _, _)? = activeInteraction {
-			return index
-		}
-		return nil
-	}
-
-	var previewMosaicRect: CGRect? {
-		if case .mosaic(let anchor, let current)? = activeInteraction {
-			return CGRect(
-				x: min(anchor.x, current.x),
-				y: min(anchor.y, current.y),
-				width: abs(current.x - anchor.x),
-				height: abs(current.y - anchor.y)
-			)
-		}
-		if case .mosaicMove(_, let currentRect, _)? = activeInteraction {
-			return currentRect
-		}
-		return nil
-	}
-
-	var previewTextAnnotation: FrozenTextAnnotation? {
-		if case .textMove(_, let annotation, _)? = activeInteraction {
-			return annotation
-		}
-		return nil
-	}
-
-	var previewSpotlightAnnotation: FrozenSpotlightAnnotation? {
-		if case .spotlight(let anchor, let current, let style)? = activeInteraction {
-			return FrozenSpotlightAnnotation(
-				rect: CGRect(
-					x: min(anchor.x, current.x),
-					y: min(anchor.y, current.y),
-					width: abs(current.x - anchor.x),
-					height: abs(current.y - anchor.y)
-				),
-				style: style
-			)
-		}
-		return nil
+		return FrozenTextAnnotation(anchor: anchor, text: text, style: style.frozenTextStyle)
 	}
 }
 
