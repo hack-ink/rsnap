@@ -195,29 +195,14 @@ private func makeFrozenMosaicPatch(from image: CGImage, sourceRect: CGRect) -> C
 		return nil
 	}
 
-	let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
 	let bitmapInfo =
 		CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
-	guard
-		let provider = CGDataProvider(data: patch.rgba as CFData),
-		let patchImage = CGImage(
-			width: patch.width,
-			height: patch.height,
-			bitsPerComponent: 8,
-			bitsPerPixel: 32,
-			bytesPerRow: patch.width * 4,
-			space: colorSpace,
-			bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo),
-			provider: provider,
-			decode: nil,
-			shouldInterpolate: false,
-			intent: .defaultIntent
-		)
-	else {
-		return nil
-	}
-
-	return patchImage
+	return NativeHostImageBridge.cgImage(
+		width: patch.width,
+		height: patch.height,
+		rgba: patch.rgba,
+		bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo)
+	)
 }
 
 @MainActor
@@ -2109,7 +2094,8 @@ final class CaptureSessionController: NSObject {
 
 		ensureFrozenBaseImageFromDisplayIfNeeded(for: selection)
 		let baseImage = chromeState.frozenBaseImage ?? frozenBaseImageFromDisplay(for: selection)
-		guard let baseImage, let baseSnapshot = Self.rgbaSnapshot(from: baseImage) else {
+		guard let baseImage, let baseSnapshot = NativeHostImageBridge.rgbaSnapshot(from: baseImage)
+		else {
 			try setHostStatusMessage("Scroll capture could not read the selected region.")
 			refreshOverlay()
 			return
@@ -2154,7 +2140,7 @@ final class CaptureSessionController: NSObject {
 		}
 		guard
 			let sampleImage = overlayController?.backgroundPatch(in: state.viewportRect),
-			let sample = Self.rgbaSnapshot(from: sampleImage)
+			let sample = NativeHostImageBridge.rgbaSnapshot(from: sampleImage)
 		else {
 			try? setHostStatusMessage("Scroll capture could not sample the scrolled region.")
 			refreshOverlay()
@@ -2188,7 +2174,7 @@ final class CaptureSessionController: NSObject {
 		}
 		guard
 			let export = try state.stitcher.exportImage(),
-			let exportImage = Self.cgImage(from: export)
+			let exportImage = NativeHostImageBridge.cgImage(from: export)
 		else {
 			try setHostStatusMessage("Scroll capture could not render the stitched image.")
 			refreshOverlay()
@@ -2610,7 +2596,7 @@ final class CaptureSessionController: NSObject {
 		}
 		guard
 			let export = try state.stitcher.exportImage(),
-			let exportImage = Self.cgImage(from: export)
+			let exportImage = NativeHostImageBridge.cgImage(from: export)
 		else {
 			return nil
 		}
@@ -2839,79 +2825,12 @@ final class CaptureSessionController: NSObject {
 		return image.cropping(to: cropRect)
 	}
 
-	private static func rgbaSnapshot(from image: CGImage) -> RGBARegionSnapshot? {
-		let width = image.width
-		let height = image.height
-		guard width > 0, height > 0 else {
-			return nil
-		}
-
-		let bytesPerPixel = 4
-		let bytesPerRow = width * bytesPerPixel
-		var rgba = Data(count: bytesPerRow * height)
-		let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-		let bitmapInfo =
-			CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
-		let rendered = rgba.withUnsafeMutableBytes { buffer -> Bool in
-			guard
-				let baseAddress = buffer.baseAddress,
-				let context = CGContext(
-					data: baseAddress,
-					width: width,
-					height: height,
-					bitsPerComponent: 8,
-					bytesPerRow: bytesPerRow,
-					space: colorSpace,
-					bitmapInfo: bitmapInfo
-				)
-			else {
-				return false
-			}
-			context.interpolationQuality = .none
-			context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-			return true
-		}
-		guard rendered else {
-			return nil
-		}
-
-		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
-	}
-
 	private static func losslessPNGData(from image: CGImage) throws -> Data? {
-		guard let snapshot = rgbaSnapshot(from: image) else {
+		guard let snapshot = NativeHostImageBridge.rgbaSnapshot(from: image) else {
 			return nil
 		}
 
 		return try RsnapExportEncoder.pngData(from: snapshot)
-	}
-
-	private static func cgImage(from snapshot: RGBARegionSnapshot) -> CGImage? {
-		guard snapshot.width > 0, snapshot.height > 0 else {
-			return nil
-		}
-		let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-		let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
-		guard
-			let provider = CGDataProvider(data: snapshot.rgba as CFData),
-			let image = CGImage(
-				width: snapshot.width,
-				height: snapshot.height,
-				bitsPerComponent: 8,
-				bitsPerPixel: 32,
-				bytesPerRow: snapshot.width * 4,
-				space: colorSpace,
-				bitmapInfo: bitmapInfo,
-				provider: provider,
-				decode: nil,
-				shouldInterpolate: false,
-				intent: .defaultIntent
-			)
-		else {
-			return nil
-		}
-
-		return image
 	}
 
 	private static func postScrollWheelEvent(matching event: NSEvent, at point: CGPoint) -> Bool {
@@ -3006,8 +2925,8 @@ final class CaptureSessionController: NSObject {
 		}
 
 		guard
-			let snapshot = Self.rgbaSnapshot(from: image),
-			let rendered = Self.cgImage(
+			let snapshot = NativeHostImageBridge.rgbaSnapshot(from: image),
+			let rendered = NativeHostImageBridge.cgImage(
 				from: try RsnapExportEncoder.frozenOverlayExportImage(
 					from: snapshot,
 					selection: selection,
@@ -3198,7 +3117,7 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private static func detectAutoCenterContentBounds(in image: CGImage) -> CGRect? {
-		guard let snapshot = rgbaSnapshot(from: image) else {
+		guard let snapshot = NativeHostImageBridge.rgbaSnapshot(from: image) else {
 			return nil
 		}
 		return try? RsnapAutoCenterPlanner.contentBounds(in: snapshot)

@@ -241,7 +241,7 @@ final class LiveFrameStreamBroker {
 			return nil
 		}
 
-		return cgImage(
+		return NativeHostImageBridge.cgImage(
 			width: snapshot.width,
 			height: snapshot.height,
 			rgba: snapshot.rgba
@@ -408,39 +408,11 @@ final class LiveFrameStreamBroker {
 			return nil
 		}
 
-		return cgImage(
+		return NativeHostImageBridge.cgImage(
 			width: sample.patchWidth,
 			height: sample.patchHeight,
 			rgba: patchRGBA
 		)
-	}
-
-	private func cgImage(width: Int, height: Int, rgba: Data) -> CGImage? {
-		guard width > 0, height > 0 else {
-			return nil
-		}
-		let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-		let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
-		guard
-			let provider = CGDataProvider(data: rgba as CFData),
-			let image = CGImage(
-				width: width,
-				height: height,
-				bitsPerComponent: 8,
-				bitsPerPixel: 32,
-				bytesPerRow: width * 4,
-				space: colorSpace,
-				bitmapInfo: bitmapInfo,
-				provider: provider,
-				decode: nil,
-				shouldInterpolate: false,
-				intent: .defaultIntent
-			)
-		else {
-			return nil
-		}
-
-		return image
 	}
 }
 
