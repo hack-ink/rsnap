@@ -24,6 +24,12 @@ use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
 	ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
 };
+use rsnap_overlay::frozen_export::{
+	FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
+	FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
+	FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
+	FrozenOverlayExportTextStyle, render_frozen_overlay_export_rgba,
+};
 
 fn main() -> Result<()> {
 	color_eyre::install()?;
@@ -52,6 +58,7 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	verify_export_round_trip(&image)?;
 	verify_crop_exactness(&image)?;
 	verify_mosaic_patch()?;
+	verify_frozen_overlay_export(&image)?;
 	verify_bgra_frame_sampling(&bgra_frame, bgra_bytes_per_row)?;
 	verify_capture_frame_plan()?;
 	verify_scroll_minimap_plan()?;
@@ -91,6 +98,23 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 			.ok_or_else(|| eyre!("mosaic patch performance fixture is invalid"))?;
 
 			Ok(checksum_bytes(patch.as_raw()))
+		},
+	)?);
+
+	results.push(time_case(
+		"frozen_overlay_export_rgba_1440x900",
+		10,
+		Duration::from_millis(900),
+		|| {
+			let rendered = render_frozen_overlay_export_rgba(
+				image.width(),
+				image.height(),
+				image.as_raw(),
+				DisplayPointRect::new(0.0, 0.0, 1_440.0, 900.0),
+				&frozen_overlay_export_fixture(),
+			)?;
+
+			Ok(checksum_bytes(rendered.as_raw()))
 		},
 	)?);
 
@@ -394,6 +418,21 @@ fn verify_mosaic_patch() -> Result<()> {
 	Ok(())
 }
 
+fn verify_frozen_overlay_export(image: &RgbaImage) -> Result<()> {
+	let rendered = render_frozen_overlay_export_rgba(
+		image.width(),
+		image.height(),
+		image.as_raw(),
+		DisplayPointRect::new(0.0, 0.0, 1_440.0, 900.0),
+		&frozen_overlay_export_fixture(),
+	)?;
+
+	ensure!(rendered.dimensions() == image.dimensions(), "frozen overlay dimensions changed");
+	ensure!(rendered.as_raw() != image.as_raw(), "frozen overlay did not change pixels");
+
+	Ok(())
+}
+
 fn verify_bgra_frame_sampling(bgra: &[u8], bytes_per_row: usize) -> Result<()> {
 	let frame = BgraFrameView { width: 640, height: 480, bytes_per_row, bytes: bgra };
 	let rgb = sample_rgb_from_bgra_frame(
@@ -637,6 +676,48 @@ fn build_export_fixture(width: u32, height: u32) -> RgbaImage {
 
 		Rgba([r, g, b, a])
 	})
+}
+
+fn frozen_overlay_export_fixture() -> Vec<FrozenOverlayExportElement> {
+	vec![
+		FrozenOverlayExportElement::Mosaic(FrozenOverlayExportMosaic {
+			rect: DisplayPointRect::new(180.0, 160.0, 320.0, 180.0),
+		}),
+		FrozenOverlayExportElement::Spotlight(FrozenOverlayExportSpotlight {
+			rect: DisplayPointRect::new(760.0, 180.0, 360.0, 240.0),
+			style: FrozenOverlayExportSpotlightStyle {
+				border_width_points: 1.5,
+				border_rgba: [255, 255, 255, 255],
+			},
+		}),
+		FrozenOverlayExportElement::Pen(FrozenOverlayExportPen {
+			points: vec![
+				FrozenOverlayExportPoint::new(120.0, 120.0),
+				FrozenOverlayExportPoint::new(360.0, 260.0),
+				FrozenOverlayExportPoint::new(520.0, 220.0),
+			],
+			style: FrozenOverlayExportStrokeStyle {
+				stroke_width_points: 3.0,
+				rgba: [102, 178, 255, 255],
+			},
+		}),
+		FrozenOverlayExportElement::Arrow(FrozenOverlayExportArrow {
+			start: FrozenOverlayExportPoint::new(520.0, 650.0),
+			end: FrozenOverlayExportPoint::new(980.0, 520.0),
+			style: FrozenOverlayExportStrokeStyle {
+				stroke_width_points: 4.0,
+				rgba: [255, 107, 107, 255],
+			},
+		}),
+		FrozenOverlayExportElement::Text(FrozenOverlayExportText {
+			anchor: FrozenOverlayExportPoint::new(120.0, 720.0),
+			text: "Rsnap".to_owned(),
+			style: FrozenOverlayExportTextStyle {
+				font_size_points: 20.0,
+				rgba: [255, 255, 255, 255],
+			},
+		}),
+	]
 }
 
 fn write_wallpaper_fixture_png() -> Result<std::path::PathBuf> {

@@ -22,6 +22,7 @@ pub mod replay_support {
 		replay_recorded_scroll_capture_trace, replay_recorded_scroll_capture_trace_with_mode,
 	};
 }
+pub mod frozen_export;
 pub mod scroll_stitching {
 	//! Narrow native-host wrapper around the existing scroll-capture stitching engine.
 

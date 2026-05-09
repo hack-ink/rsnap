@@ -70,6 +70,226 @@ public struct RGBARegionSnapshot: Equatable, Sendable {
 	}
 }
 
+public enum FrozenOverlayExportColor: UInt32, Equatable {
+	case white = 0
+	case yellow = 1
+	case green = 2
+	case blue = 3
+	case red = 4
+	case black = 5
+
+	fileprivate var ffiColor: RsnapFrozenAnnotationColor {
+		switch self {
+		case .white:
+			RSNAP_FROZEN_ANNOTATION_COLOR_WHITE
+		case .yellow:
+			RSNAP_FROZEN_ANNOTATION_COLOR_YELLOW
+		case .green:
+			RSNAP_FROZEN_ANNOTATION_COLOR_GREEN
+		case .blue:
+			RSNAP_FROZEN_ANNOTATION_COLOR_BLUE
+		case .red:
+			RSNAP_FROZEN_ANNOTATION_COLOR_RED
+		case .black:
+			RSNAP_FROZEN_ANNOTATION_COLOR_BLACK
+		}
+	}
+}
+
+public struct FrozenOverlayExportStrokeStyle: Equatable {
+	public var strokeWidthPoints: CGFloat
+	public var color: FrozenOverlayExportColor
+
+	public init(strokeWidthPoints: CGFloat, color: FrozenOverlayExportColor) {
+		self.strokeWidthPoints = strokeWidthPoints
+		self.color = color
+	}
+}
+
+public struct FrozenOverlayExportSpotlightStyle: Equatable {
+	public var borderWidthPoints: CGFloat
+	public var borderColor: FrozenOverlayExportColor
+
+	public init(borderWidthPoints: CGFloat, borderColor: FrozenOverlayExportColor) {
+		self.borderWidthPoints = borderWidthPoints
+		self.borderColor = borderColor
+	}
+}
+
+public struct FrozenOverlayExportTextStyle: Equatable {
+	public var fontSizePoints: CGFloat
+	public var color: FrozenOverlayExportColor
+
+	public init(fontSizePoints: CGFloat, color: FrozenOverlayExportColor) {
+		self.fontSizePoints = fontSizePoints
+		self.color = color
+	}
+}
+
+public enum FrozenOverlayExportElement: Equatable {
+	case pen(points: [CGPoint], style: FrozenOverlayExportStrokeStyle)
+	case arrow(start: CGPoint, end: CGPoint, style: FrozenOverlayExportStrokeStyle)
+	case mosaic(rect: CGRect)
+	case spotlight(rect: CGRect, style: FrozenOverlayExportSpotlightStyle)
+	case text(anchor: CGPoint, text: String, style: FrozenOverlayExportTextStyle)
+}
+
+private final class FrozenOverlayExportFFIStorage {
+	var elements: [RsnapFrozenOverlayExportElement] = []
+	private var pointBuffers: [UnsafeMutableBufferPointer<RsnapFloatPoint>] = []
+	private var textBuffers: [UnsafeMutableBufferPointer<CChar>] = []
+
+	init(_ elements: [FrozenOverlayExportElement]) {
+		self.elements = elements.map { element in
+			switch element {
+			case .pen(let points, let style):
+				return encodePen(points: points, style: style)
+			case .arrow(let start, let end, let style):
+				return encodeArrow(start: start, end: end, style: style)
+			case .mosaic(let rect):
+				return encodeMosaic(rect: rect)
+			case .spotlight(let rect, let style):
+				return encodeSpotlight(rect: rect, style: style)
+			case .text(let anchor, let text, let style):
+				return encodeText(anchor: anchor, text: text, style: style)
+			}
+		}
+	}
+
+	deinit {
+		for buffer in pointBuffers {
+			buffer.baseAddress?.deinitialize(count: buffer.count)
+			buffer.baseAddress?.deallocate()
+		}
+		for buffer in textBuffers {
+			buffer.baseAddress?.deinitialize(count: buffer.count)
+			buffer.baseAddress?.deallocate()
+		}
+	}
+
+	private func encodePen(
+		points: [CGPoint],
+		style: FrozenOverlayExportStrokeStyle
+	) -> RsnapFrozenOverlayExportElement {
+		let buffer = allocatePoints(points)
+		return element(
+			kind: RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_PEN,
+			points: buffer.baseAddress,
+			pointsLen: buffer.count,
+			strokeWidthPoints: style.strokeWidthPoints,
+			color: style.color
+		)
+	}
+
+	private func encodeArrow(
+		start: CGPoint,
+		end: CGPoint,
+		style: FrozenOverlayExportStrokeStyle
+	) -> RsnapFrozenOverlayExportElement {
+		element(
+			kind: RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_ARROW,
+			start: Self.encode(point: start),
+			end: Self.encode(point: end),
+			strokeWidthPoints: style.strokeWidthPoints,
+			color: style.color
+		)
+	}
+
+	private func encodeMosaic(rect: CGRect) -> RsnapFrozenOverlayExportElement {
+		element(kind: RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_MOSAIC, rect: Self.encode(rect: rect))
+	}
+
+	private func encodeSpotlight(
+		rect: CGRect,
+		style: FrozenOverlayExportSpotlightStyle
+	) -> RsnapFrozenOverlayExportElement {
+		element(
+			kind: RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_SPOTLIGHT,
+			rect: Self.encode(rect: rect),
+			borderWidthPoints: style.borderWidthPoints,
+			color: style.borderColor
+		)
+	}
+
+	private func encodeText(
+		anchor: CGPoint,
+		text: String,
+		style: FrozenOverlayExportTextStyle
+	) -> RsnapFrozenOverlayExportElement {
+		let buffer = allocateText(text)
+		return element(
+			kind: RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_TEXT,
+			start: Self.encode(point: anchor),
+			text: buffer.baseAddress,
+			fontSizePoints: style.fontSizePoints,
+			color: style.color
+		)
+	}
+
+	private func allocatePoints(_ points: [CGPoint]) -> UnsafeMutableBufferPointer<RsnapFloatPoint>
+	{
+		guard !points.isEmpty else {
+			return UnsafeMutableBufferPointer(start: nil, count: 0)
+		}
+		let encoded = points.map(Self.encode(point:))
+		let pointer = UnsafeMutablePointer<RsnapFloatPoint>.allocate(capacity: encoded.count)
+		pointer.initialize(from: encoded, count: encoded.count)
+		let buffer = UnsafeMutableBufferPointer(start: pointer, count: encoded.count)
+		pointBuffers.append(buffer)
+		return buffer
+	}
+
+	private func allocateText(_ text: String) -> UnsafeMutableBufferPointer<CChar> {
+		let encoded = Array(text.utf8CString)
+		let pointer = UnsafeMutablePointer<CChar>.allocate(capacity: encoded.count)
+		pointer.initialize(from: encoded, count: encoded.count)
+		let buffer = UnsafeMutableBufferPointer(start: pointer, count: encoded.count)
+		textBuffers.append(buffer)
+		return buffer
+	}
+
+	private func element(
+		kind: RsnapFrozenOverlayExportElementKind,
+		rect: RsnapFloatRect = RsnapFloatRect(),
+		start: RsnapFloatPoint = RsnapFloatPoint(),
+		end: RsnapFloatPoint = RsnapFloatPoint(),
+		points: UnsafePointer<RsnapFloatPoint>? = nil,
+		pointsLen: Int = 0,
+		text: UnsafePointer<CChar>? = nil,
+		strokeWidthPoints: CGFloat = 0,
+		borderWidthPoints: CGFloat = 0,
+		fontSizePoints: CGFloat = 0,
+		color: FrozenOverlayExportColor = .blue
+	) -> RsnapFrozenOverlayExportElement {
+		RsnapFrozenOverlayExportElement(
+			kind: kind,
+			rect: rect,
+			start: start,
+			end: end,
+			points: points,
+			points_len: pointsLen,
+			text: text,
+			stroke_width_points: Double(strokeWidthPoints),
+			border_width_points: Double(borderWidthPoints),
+			font_size_points: Double(fontSizePoints),
+			color: color.ffiColor
+		)
+	}
+
+	private static func encode(point: CGPoint) -> RsnapFloatPoint {
+		RsnapFloatPoint(x: Double(point.x), y: Double(point.y))
+	}
+
+	private static func encode(rect: CGRect) -> RsnapFloatRect {
+		RsnapFloatRect(
+			x: Double(rect.origin.x),
+			y: Double(rect.origin.y),
+			width: Double(rect.width),
+			height: Double(rect.height)
+		)
+	}
+}
+
 public enum CaptureFrameSourceKind: UInt32, Equatable, Sendable {
 	case dragRegion = 0
 	case window = 1
@@ -906,6 +1126,40 @@ public enum RsnapExportEncoder {
 		try requireOk(status, context: "rendering frozen mosaic privacy patch")
 
 		return rgbaSnapshot(from: outRegion)
+	}
+
+	public static func frozenOverlayExportImage(
+		from image: RGBARegionSnapshot,
+		selection: CGRect,
+		elements: [FrozenOverlayExportElement]
+	) throws -> RGBARegionSnapshot {
+		let storage = FrozenOverlayExportFFIStorage(elements)
+		var outRegion = RsnapOwnedRgbaRegion()
+		let status = image.rgba.withUnsafeBytes { buffer -> RsnapStatus in
+			guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
+				return RSNAP_STATUS_INVALID_INPUT
+			}
+			return storage.elements.withUnsafeBufferPointer { elementBuffer in
+				rsnap_frozen_overlay_export_render_rgba(
+					UInt32(max(image.width, 0)),
+					UInt32(max(image.height, 0)),
+					baseAddress,
+					image.rgba.count,
+					encode(rect: selection),
+					elementBuffer.baseAddress,
+					elementBuffer.count,
+					&outRegion
+				)
+			}
+		}
+		try requireOk(status, context: "rendering frozen overlay export image")
+		guard let snapshot = rgbaSnapshot(from: outRegion) else {
+			throw HostBridgeError.ffiStatus(
+				context: "taking frozen overlay export image",
+				code: RSNAP_STATUS_EMPTY.rawValue)
+		}
+
+		return snapshot
 	}
 
 	private static func requireOk(_ status: RsnapStatus, context: String) throws {
