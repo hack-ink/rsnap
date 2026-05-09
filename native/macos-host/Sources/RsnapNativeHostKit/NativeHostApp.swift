@@ -788,123 +788,10 @@ final class CaptureSessionController: NSObject {
 			return
 		}
 		do {
-			let startPoint = NSEvent.mouseLocation
-			let desktopFrame = CaptureOverlayController.desktopFrame
-			frozenFrameLatchToken = nil
-			// The Rust live sampler treats these IDs as current-process windows to
-			// include through the app-level exclusion. Overlay windows must stay out
-			// of this list so color sampling sees the desktop under the capture UI.
-			pendingLiveFrameStreamRelease?.cancel()
-			pendingLiveFrameStreamRelease = nil
-			liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
-			let warmStartedAt = ProcessInfo.processInfo.systemUptime
-			let initialSample = warmLiveSamplingIfPossible(
-				at: startPoint,
-				source: "start_capture",
+			try startCaptureSession(
 				captureID: captureID,
-				includedCurrentProcessWindowIDs: capturableOwnWindowIDs
-			)
-			let initialRgbSample =
-				initialSample?.rgbSample
-				?? frozenFrameAuthority.rgbSample(containing: startPoint)
-			let warmMilliseconds = NativeHostTelemetry.milliseconds(since: warmStartedAt)
-			liveFrameStream.start(
-				for: NSScreen.screens,
-				prewarmPoint: startPoint,
-				captureID: captureID
-			)
-			let windowSnapshotStartedAt = ProcessInfo.processInfo.systemUptime
-			let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
-			let windowSnapshotMilliseconds =
-				NativeHostTelemetry.milliseconds(since: windowSnapshotStartedAt)
-			let initialHighlightedWindow = WindowSnapshotFeed.window(
-				at: startPoint, in: initialWindowSnapshots)
-			chromeState.rgbSample = initialRgbSample
-			let sessionSetupStartedAt = ProcessInfo.processInfo.systemUptime
-			let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
-			self.session = session
-
-			try session.enterLive()
-			try session.send(
-				event: .pointerMoved(
-					point: startPoint,
-					rgb: initialRgbSample,
-					activeMonitor: activeMonitor(at: startPoint),
-					highlightedWindow: initialHighlightedWindow
-				)
-			)
-			let initialScene = try session.currentScene()
-			self.scene = initialScene
-			let sessionSetupMilliseconds =
-				NativeHostTelemetry.milliseconds(since: sessionSetupStartedAt)
-
-			let overlayController = CaptureOverlayController(
-				controller: self,
-				liveFrameStream: liveFrameStream,
-				frameRgbSampler: { [frozenFrameAuthority] point in
-					frozenFrameAuthority.liveRgbSample(containing: point)
-				},
-				framePatchSampler: { [frozenFrameAuthority] point, sidePixels in
-					frozenFrameAuthority.loupePatch(containing: point, sidePixels: sidePixels)
-				}
-			)
-			self.overlayController = overlayController
-			let overlayShowStartedAt = ProcessInfo.processInfo.systemUptime
-			overlayController.show(
-				initialScene: initialScene,
-				chrome: chromeState,
-				settings: settingsStore.settings,
-				focusPoint: startPoint,
-				initialWindowSnapshots: initialWindowSnapshots,
-				prepareCaptureStreams: { [weak self, weak overlayController] in
-					guard let self, let overlayController else {
-						return
-					}
-					let selfCaptureExceptionWindowIDs =
-						overlayController.selfCaptureExceptionWindowIDs
-					self.liveFrameStream.start(
-						for: NSScreen.screens,
-						prewarmPoint: startPoint,
-						captureID: captureID
-					)
-					if self.frozenFrameAuthority.hasSelfCaptureCompleteFrame(
-						containing: startPoint)
-					{
-						NativeHostTelemetry.captureEvent(
-							"capture.self_capture_rebuild_skipped",
-							captureID: captureID,
-							detail: "start_capture_complete_filter"
-						)
-					} else {
-						_ = self.warmLiveSamplingIfPossible(
-							at: startPoint,
-							source: "capture_overlay_preflight",
-							captureID: captureID,
-							excludeSelfFromFrozenAuthority: true,
-							selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-							includedCurrentProcessWindowIDs: capturableOwnWindowIDs
-						)
-					}
-				}
-			)
-			overlayController.prepareCaptureStreamsNow(trigger: "overlay_show")
-			let overlayShowMilliseconds =
-				NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
-			(NSApp.delegate as? NativeHostApplicationController)?.window =
-				overlayController.primaryWindow
-			sceneDidChange?(initialScene)
-
-			captureStateDidChange?()
-			NativeHostTelemetry.captureStartTiming(
-				captureID: captureID,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
-				warmMilliseconds: warmMilliseconds,
-				windowSnapshotMilliseconds: windowSnapshotMilliseconds,
-				sessionSetupMilliseconds: sessionSetupMilliseconds,
-				overlayShowMilliseconds: overlayShowMilliseconds,
-				initialSampleReady: initialRgbSample != nil,
-				screenCount: NSScreen.screens.count,
-				windowCount: initialWindowSnapshots.count
+				captureStartedAt: captureStartedAt,
+				capturableOwnWindowIDs: capturableOwnWindowIDs
 			)
 		} catch {
 			NativeHostTelemetry.captureWarning(
@@ -920,6 +807,131 @@ final class CaptureSessionController: NSObject {
 			)
 			tearDownCapture()
 		}
+	}
+
+	private func startCaptureSession(
+		captureID: UInt64,
+		captureStartedAt: TimeInterval,
+		capturableOwnWindowIDs: Set<CGWindowID>
+	) throws {
+		let startPoint = NSEvent.mouseLocation
+		let desktopFrame = CaptureOverlayController.desktopFrame
+		frozenFrameLatchToken = nil
+		// The Rust live sampler treats these IDs as current-process windows to
+		// include through the app-level exclusion. Overlay windows must stay out
+		// of this list so color sampling sees the desktop under the capture UI.
+		pendingLiveFrameStreamRelease?.cancel()
+		pendingLiveFrameStreamRelease = nil
+		liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
+		let warmStartedAt = ProcessInfo.processInfo.systemUptime
+		let initialSample = warmLiveSamplingIfPossible(
+			at: startPoint,
+			source: "start_capture",
+			captureID: captureID,
+			includedCurrentProcessWindowIDs: capturableOwnWindowIDs
+		)
+		let initialRgbSample =
+			initialSample?.rgbSample
+			?? frozenFrameAuthority.rgbSample(containing: startPoint)
+		let warmMilliseconds = NativeHostTelemetry.milliseconds(since: warmStartedAt)
+		liveFrameStream.start(
+			for: NSScreen.screens,
+			prewarmPoint: startPoint,
+			captureID: captureID
+		)
+		let windowSnapshotStartedAt = ProcessInfo.processInfo.systemUptime
+		let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
+		let windowSnapshotMilliseconds =
+			NativeHostTelemetry.milliseconds(since: windowSnapshotStartedAt)
+		let initialHighlightedWindow = WindowSnapshotFeed.window(
+			at: startPoint, in: initialWindowSnapshots)
+		chromeState.rgbSample = initialRgbSample
+		let sessionSetupStartedAt = ProcessInfo.processInfo.systemUptime
+		let session = try RsnapHostSession(configuration: settingsStore.sessionConfiguration)
+		self.session = session
+
+		try session.enterLive()
+		try session.send(
+			event: .pointerMoved(
+				point: startPoint,
+				rgb: initialRgbSample,
+				activeMonitor: activeMonitor(at: startPoint),
+				highlightedWindow: initialHighlightedWindow
+			)
+		)
+		let initialScene = try session.currentScene()
+		self.scene = initialScene
+		let sessionSetupMilliseconds =
+			NativeHostTelemetry.milliseconds(since: sessionSetupStartedAt)
+
+		let overlayController = CaptureOverlayController(
+			controller: self,
+			liveFrameStream: liveFrameStream,
+			frameRgbSampler: { [frozenFrameAuthority] point in
+				frozenFrameAuthority.liveRgbSample(containing: point)
+			},
+			framePatchSampler: { [frozenFrameAuthority] point, sidePixels in
+				frozenFrameAuthority.loupePatch(containing: point, sidePixels: sidePixels)
+			}
+		)
+		self.overlayController = overlayController
+		let overlayShowStartedAt = ProcessInfo.processInfo.systemUptime
+		overlayController.show(
+			initialScene: initialScene,
+			chrome: chromeState,
+			settings: settingsStore.settings,
+			focusPoint: startPoint,
+			initialWindowSnapshots: initialWindowSnapshots,
+			prepareCaptureStreams: { [weak self, weak overlayController] in
+				guard let self, let overlayController else {
+					return
+				}
+				let selfCaptureExceptionWindowIDs =
+					overlayController.selfCaptureExceptionWindowIDs
+				self.liveFrameStream.start(
+					for: NSScreen.screens,
+					prewarmPoint: startPoint,
+					captureID: captureID
+				)
+				if self.frozenFrameAuthority.hasSelfCaptureCompleteFrame(
+					containing: startPoint)
+				{
+					NativeHostTelemetry.captureEvent(
+						"capture.self_capture_rebuild_skipped",
+						captureID: captureID,
+						detail: "start_capture_complete_filter"
+					)
+				} else {
+					_ = self.warmLiveSamplingIfPossible(
+						at: startPoint,
+						source: "capture_overlay_preflight",
+						captureID: captureID,
+						excludeSelfFromFrozenAuthority: true,
+						selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+						includedCurrentProcessWindowIDs: capturableOwnWindowIDs
+					)
+				}
+			}
+		)
+		overlayController.prepareCaptureStreamsNow(trigger: "overlay_show")
+		let overlayShowMilliseconds =
+			NativeHostTelemetry.milliseconds(since: overlayShowStartedAt)
+		(NSApp.delegate as? NativeHostApplicationController)?.window =
+			overlayController.primaryWindow
+		sceneDidChange?(initialScene)
+
+		captureStateDidChange?()
+		NativeHostTelemetry.captureStartTiming(
+			captureID: captureID,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
+			warmMilliseconds: warmMilliseconds,
+			windowSnapshotMilliseconds: windowSnapshotMilliseconds,
+			sessionSetupMilliseconds: sessionSetupMilliseconds,
+			overlayShowMilliseconds: overlayShowMilliseconds,
+			initialSampleReady: initialRgbSample != nil,
+			screenCount: NSScreen.screens.count,
+			windowCount: initialWindowSnapshots.count
+		)
 	}
 
 	private func ensureCapturePermissions() -> Bool {
