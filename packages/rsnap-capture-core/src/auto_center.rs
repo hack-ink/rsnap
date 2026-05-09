@@ -11,6 +11,14 @@ pub enum AutoCenterImageError {
 	InvalidRgbaLength,
 }
 
+#[derive(Clone, Copy)]
+struct EdgeMeans {
+	top: [f64; 3],
+	bottom: [f64; 3],
+	left: [f64; 3],
+	right: [f64; 3],
+}
+
 /// Detects the salient content bounds used by frozen auto-center.
 pub fn detect_auto_center_content_bounds_rgba(
 	width: u32,
@@ -20,6 +28,7 @@ pub fn detect_auto_center_content_bounds_rgba(
 	let width = usize::try_from(width).map_err(|_error| AutoCenterImageError::InvalidDimensions)?;
 	let height =
 		usize::try_from(height).map_err(|_error| AutoCenterImageError::InvalidDimensions)?;
+
 	if width < 2 || height < 2 {
 		return Ok(None);
 	}
@@ -28,6 +37,7 @@ pub fn detect_auto_center_content_bounds_rgba(
 		.checked_mul(height)
 		.and_then(|pixels| pixels.checked_mul(4))
 		.ok_or(AutoCenterImageError::InvalidDimensions)?;
+
 	if rgba.len() != expected_len {
 		return Err(AutoCenterImageError::InvalidRgbaLength);
 	}
@@ -42,7 +52,6 @@ pub fn detect_auto_center_content_bounds_rgba(
 	let threshold = salient_threshold(rgba, width, height, edge_strip, edge_means);
 	let min_salient_per_row = 1_usize.max(width / 64);
 	let min_salient_per_column = 1_usize.max(height / 64);
-
 	let Some(bounds) = salient_bounds(
 		rgba,
 		width,
@@ -54,9 +63,9 @@ pub fn detect_auto_center_content_bounds_rgba(
 	) else {
 		return Ok(None);
 	};
-
 	let fills_crop_width = bounds.width as usize * 100 >= width * 92;
 	let fills_crop_height = bounds.height as usize * 100 >= height * 92;
+
 	if fills_crop_width && fills_crop_height {
 		return Ok(None);
 	}
@@ -81,14 +90,6 @@ pub fn auto_center_margin_balance_shift_points(
 	let delta_px = (leading_margin_px - trailing_margin_px) * 0.5;
 
 	(delta_px * capture_size_points / crop_size_px).round()
-}
-
-#[derive(Clone, Copy)]
-struct EdgeMeans {
-	top: [f64; 3],
-	bottom: [f64; 3],
-	left: [f64; 3],
-	right: [f64; 3],
 }
 
 fn edge_strip_pixels(width: usize, height: usize) -> usize {
@@ -148,9 +149,11 @@ fn salient_bounds(
 				.min(rgb_distance_to_mean(rgb, means.bottom))
 				.min(rgb_distance_to_mean(rgb, means.left))
 				.min(rgb_distance_to_mean(rgb, means.right));
+
 			if salient_distance < threshold {
 				continue;
 			}
+
 			*row_count += 1;
 			*column_count += 1;
 		}
@@ -160,6 +163,7 @@ fn salient_bounds(
 	let bottom = row_counts.iter().rposition(|count| *count >= min_salient_per_row)?;
 	let left = column_counts.iter().position(|count| *count >= min_salient_per_column)?;
 	let right = column_counts.iter().rposition(|count| *count >= min_salient_per_column)?;
+
 	if left > right || top > bottom {
 		return None;
 	}
@@ -188,6 +192,7 @@ fn region_rgb_mean(
 	for y in y0..y1 {
 		for x in x0..x1 {
 			let rgb = rgb_at(rgba, width, x, y);
+
 			r_total += rgb[0];
 			g_total += rgb[1];
 			b_total += rgb[2];
@@ -209,6 +214,7 @@ fn region_rgb_mean_distance(
 ) -> f64 {
 	let mut total = 0.0;
 	let mut count = 0.0;
+
 	for y in y0..y1 {
 		for x in x0..x1 {
 			total += rgb_distance_to_mean(rgb_at(rgba, width, x, y), mean);
@@ -233,17 +239,14 @@ fn rgb_distance_to_mean(rgb: [f64; 3], mean: [f64; 3]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-	use super::{
-		AutoCenterImageError, auto_center_margin_balance_shift_points,
-		detect_auto_center_content_bounds_rgba,
-	};
 	use crate::RectPoints;
+	use crate::auto_center::{self, AutoCenterImageError};
 
 	#[test]
 	fn detects_centered_content_bounds_from_rgba() {
 		let rgba = auto_center_fixture(100, 80, Some(RectPoints::new(30, 20, 24, 18)));
-		let bounds =
-			detect_auto_center_content_bounds_rgba(100, 80, &rgba).expect("valid RGBA fixture");
+		let bounds = auto_center::detect_auto_center_content_bounds_rgba(100, 80, &rgba)
+			.expect("valid RGBA fixture");
 
 		assert_eq!(bounds, Some(RectPoints::new(30, 20, 24, 18)));
 	}
@@ -254,12 +257,13 @@ mod tests {
 		let full = auto_center_fixture(100, 80, Some(RectPoints::new(2, 2, 96, 76)));
 
 		assert_eq!(
-			detect_auto_center_content_bounds_rgba(100, 80, &uniform)
+			auto_center::detect_auto_center_content_bounds_rgba(100, 80, &uniform)
 				.expect("valid uniform fixture"),
 			None
 		);
 		assert_eq!(
-			detect_auto_center_content_bounds_rgba(100, 80, &full).expect("valid full fixture"),
+			auto_center::detect_auto_center_content_bounds_rgba(100, 80, &full)
+				.expect("valid full fixture"),
 			None
 		);
 	}
@@ -267,20 +271,30 @@ mod tests {
 	#[test]
 	fn rejects_invalid_rgba_length() {
 		assert!(matches!(
-			detect_auto_center_content_bounds_rgba(100, 80, &[0, 1, 2, 3]),
+			auto_center::detect_auto_center_content_bounds_rgba(100, 80, &[0, 1, 2, 3]),
 			Err(AutoCenterImageError::InvalidRgbaLength)
 		));
 	}
 
 	#[test]
 	fn margin_balance_shift_matches_native_math() {
-		assert_eq!(auto_center_margin_balance_shift_points(30.0, 24.0, 100.0, 50.0), -4.0);
-		assert_eq!(auto_center_margin_balance_shift_points(0.0, 24.0, 100.0, 50.0), -19.0);
-		assert_eq!(auto_center_margin_balance_shift_points(30.0, 24.0, 0.0, 50.0), 0.0);
+		assert_eq!(
+			auto_center::auto_center_margin_balance_shift_points(30.0, 24.0, 100.0, 50.0),
+			-4.0
+		);
+		assert_eq!(
+			auto_center::auto_center_margin_balance_shift_points(0.0, 24.0, 100.0, 50.0),
+			-19.0
+		);
+		assert_eq!(
+			auto_center::auto_center_margin_balance_shift_points(30.0, 24.0, 0.0, 50.0),
+			0.0
+		);
 	}
 
 	fn auto_center_fixture(width: u32, height: u32, content: Option<RectPoints>) -> Vec<u8> {
 		let mut rgba = vec![180_u8; (width * height * 4) as usize];
+
 		for pixel in rgba.chunks_exact_mut(4) {
 			pixel[3] = 255;
 		}
@@ -289,6 +303,7 @@ mod tests {
 			for y in content.y..content.y + content.height {
 				for x in content.x..content.x + content.width {
 					let offset = ((y * width + x) * 4) as usize;
+
 					rgba[offset] = 24;
 					rgba[offset + 1] = 32;
 					rgba[offset + 2] = 40;

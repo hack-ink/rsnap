@@ -109,10 +109,7 @@ jobs:
         with:
           tool: cargo-make
 
-      - name: Run Swift format check
-        run: cargo make fmt-swift-check
-
-      - name: Run SwiftLint and strict build
+      - name: Run Swift checks
         run: cargo make check-swift
 
   toml-check:

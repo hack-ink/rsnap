@@ -34,6 +34,7 @@ use winit::window::WindowId;
 use crate::backend;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
+use crate::live_frame_stream_macos::STREAM_REGION_FRAME_MAX_AGE;
 use crate::overlay::FrozenCaptureSource;
 #[cfg(target_os = "macos")]
 use crate::overlay::LiveCaptureInteraction;
@@ -501,9 +502,7 @@ fn fresh_live_stream_snapshot_captured_at() -> Instant {
 
 #[cfg(target_os = "macos")]
 fn stale_live_stream_snapshot_captured_at() -> Instant {
-	Instant::now()
-		- crate::live_frame_stream_macos::STREAM_REGION_FRAME_MAX_AGE
-		- Duration::from_millis(1)
+	Instant::now() - STREAM_REGION_FRAME_MAX_AGE - Duration::from_millis(1)
 }
 
 #[cfg(target_os = "macos")]

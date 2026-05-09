@@ -1,14 +1,13 @@
 //! Portable frozen-overlay edit state owned by Rust.
 
-use rsnap_capture_core::{DisplayPointRect, ToolbarItemKind};
-
 use crate::frozen_export::{
 	FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
 	FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
 	FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
 	FrozenOverlayExportTextStyle,
 };
-use crate::text_rendering;
+use crate::text_rendering::{self, TextBounds};
+use rsnap_capture_core::{DisplayPointRect, ToolbarItemKind};
 
 const PEN_SAMPLE_MIN_DISTANCE_POINTS: f64 = 1.5;
 const ARROW_MIN_DISTANCE_POINTS: f64 = 6.0;
@@ -443,6 +442,7 @@ impl FrozenOverlayEditSession {
 	pub fn reset(&mut self) {
 		self.edits.clear();
 		self.redo_edits.clear();
+
 		self.active_interaction = None;
 		self.active_text_edit = None;
 	}
@@ -467,10 +467,12 @@ impl FrozenOverlayEditSession {
 			ToolbarItemKind::Spotlight => self.begin_spotlight(point, style.spotlight),
 			ToolbarItemKind::Text => {
 				let _ = self.commit_text_edit(style.text);
+
 				self.active_text_edit = Some(FrozenOverlayTextEdit {
 					anchor: selection.clamp_point(point),
 					text: String::new(),
 				});
+
 				true
 			},
 			ToolbarItemKind::Undo
@@ -495,13 +497,17 @@ impl FrozenOverlayEditSession {
 		let next = match active {
 			ActiveFrozenOverlayEdit::Pen { mut points, style } => {
 				let clamped = selection.clamp_point(point);
+
 				if points.last().is_some_and(|last_point| {
 					last_point.distance_to(clamped) < PEN_SAMPLE_MIN_DISTANCE_POINTS
 				}) {
 					self.active_interaction = Some(ActiveFrozenOverlayEdit::Pen { points, style });
+
 					return false;
 				}
+
 				points.push(clamped);
+
 				ActiveFrozenOverlayEdit::Pen { points, style }
 			},
 			ActiveFrozenOverlayEdit::Arrow { start, style, .. } => ActiveFrozenOverlayEdit::Arrow {
@@ -541,6 +547,7 @@ impl FrozenOverlayEditSession {
 		};
 
 		self.active_interaction = Some(next);
+
 		true
 	}
 
@@ -562,14 +569,18 @@ impl FrozenOverlayEditSession {
 				let Some(moved) = self.finish_mosaic_move(index, current_rect) else {
 					return false;
 				};
+
 				changed = moved;
+
 				true
 			},
 			ActiveFrozenOverlayEdit::TextMove { index, current_annotation, .. } => {
 				let Some(moved) = self.finish_text_move(index, current_annotation) else {
 					return false;
 				};
+
 				changed = moved;
+
 				true
 			},
 			ActiveFrozenOverlayEdit::Spotlight { anchor, current, style } => {
@@ -590,10 +601,13 @@ impl FrozenOverlayEditSession {
 			return false;
 		};
 		let sanitized = text.replace('\r', "");
+
 		if sanitized.is_empty() {
 			return false;
 		}
+
 		active_text_edit.text.push_str(&sanitized);
+
 		true
 	}
 
@@ -609,15 +623,18 @@ impl FrozenOverlayEditSession {
 		let Some(active_text_edit) = self.active_text_edit.take() else {
 			return false;
 		};
+
 		if active_text_edit.text.trim().is_empty() {
 			return false;
 		}
+
 		self.edits.push(FrozenOverlayEditElement::Text(FrozenOverlayEditText {
 			anchor: active_text_edit.anchor,
 			text: active_text_edit.text,
 			style,
 		}));
 		self.redo_edits.clear();
+
 		true
 	}
 
@@ -629,20 +646,26 @@ impl FrozenOverlayEditSession {
 	/// Moves the last committed edit to the redo stack.
 	pub fn undo(&mut self) -> bool {
 		self.active_text_edit = None;
+
 		let Some(edit) = self.edits.pop() else {
 			return false;
 		};
+
 		self.redo_edits.push(edit);
+
 		true
 	}
 
 	/// Restores the last redo edit.
 	pub fn redo(&mut self) -> bool {
 		self.active_text_edit = None;
+
 		let Some(edit) = self.redo_edits.pop() else {
 			return false;
 		};
+
 		self.edits.push(edit);
+
 		true
 	}
 
@@ -680,6 +703,7 @@ impl FrozenOverlayEditSession {
 		style: FrozenOverlayEditStrokeStyle,
 	) -> bool {
 		self.active_interaction = Some(ActiveFrozenOverlayEdit::Pen { points: vec![point], style });
+
 		true
 	}
 
@@ -690,12 +714,14 @@ impl FrozenOverlayEditSession {
 	) -> bool {
 		self.active_interaction =
 			Some(ActiveFrozenOverlayEdit::Arrow { start: point, current: point, style });
+
 		true
 	}
 
 	fn begin_mosaic(&mut self, point: FrozenOverlayEditPoint) -> bool {
 		self.active_interaction =
 			Some(ActiveFrozenOverlayEdit::Mosaic { anchor: point, current: point });
+
 		true
 	}
 
@@ -706,6 +732,7 @@ impl FrozenOverlayEditSession {
 	) -> bool {
 		self.active_interaction =
 			Some(ActiveFrozenOverlayEdit::Spotlight { anchor: point, current: point, style });
+
 		true
 	}
 
@@ -713,6 +740,7 @@ impl FrozenOverlayEditSession {
 		let Some(target) = self.move_target(point) else {
 			return false;
 		};
+
 		self.active_interaction = Some(match target {
 			FrozenOverlayMoveTarget::Mosaic { index, rect } => {
 				ActiveFrozenOverlayEdit::MosaicMove {
@@ -732,6 +760,7 @@ impl FrozenOverlayEditSession {
 				}
 			},
 		});
+
 		true
 	}
 
@@ -743,7 +772,9 @@ impl FrozenOverlayEditSession {
 		if points.len() < 2 {
 			return false;
 		}
+
 		self.edits.push(FrozenOverlayEditElement::Pen(FrozenOverlayEditPen { points, style }));
+
 		true
 	}
 
@@ -756,11 +787,13 @@ impl FrozenOverlayEditSession {
 		if start.distance_to(current) < ARROW_MIN_DISTANCE_POINTS {
 			return false;
 		}
+
 		self.edits.push(FrozenOverlayEditElement::Arrow(FrozenOverlayEditArrow {
 			start,
 			end: current,
 			style,
 		}));
+
 		true
 	}
 
@@ -771,10 +804,13 @@ impl FrozenOverlayEditSession {
 		current: FrozenOverlayEditPoint,
 	) -> bool {
 		let rect = selection.normalized_rect(anchor, current);
+
 		if rect.width < RECT_MIN_SIZE_POINTS || rect.height < RECT_MIN_SIZE_POINTS {
 			return false;
 		}
+
 		self.edits.push(FrozenOverlayEditElement::Mosaic(FrozenOverlayEditMosaic { rect }));
+
 		true
 	}
 
@@ -786,11 +822,14 @@ impl FrozenOverlayEditSession {
 		style: FrozenOverlayEditSpotlightStyle,
 	) -> bool {
 		let rect = selection.normalized_rect(anchor, current);
+
 		if rect.width < RECT_MIN_SIZE_POINTS || rect.height < RECT_MIN_SIZE_POINTS {
 			return false;
 		}
+
 		self.edits
 			.push(FrozenOverlayEditElement::Spotlight(FrozenOverlayEditSpotlight { rect, style }));
+
 		true
 	}
 
@@ -802,10 +841,13 @@ impl FrozenOverlayEditSession {
 		let Some(FrozenOverlayEditElement::Mosaic(annotation)) = self.edits.get_mut(index) else {
 			return None;
 		};
+
 		if annotation.rect == current_rect {
 			return Some(false);
 		}
+
 		annotation.rect = current_rect;
+
 		Some(true)
 	}
 
@@ -817,10 +859,13 @@ impl FrozenOverlayEditSession {
 		let Some(FrozenOverlayEditElement::Text(annotation)) = self.edits.get_mut(index) else {
 			return None;
 		};
+
 		if *annotation == current_annotation {
 			return Some(false);
 		}
+
 		*annotation = current_annotation;
+
 		Some(true)
 	}
 
@@ -845,6 +890,7 @@ impl FrozenOverlayEditSession {
 				| FrozenOverlayEditElement::Text(_) => {},
 			}
 		}
+
 		None
 	}
 
@@ -1037,7 +1083,8 @@ fn text_bounds(annotation: &FrozenOverlayEditText) -> FrozenOverlayEditRect {
 	let bounds =
 		text_rendering::measure_text_bounds(&annotation.text, font_size).unwrap_or_else(|| {
 			let width = annotation.text.chars().count().max(1) as f32 * font_size * 0.6;
-			text_rendering::TextBounds { width, height: font_size * 1.2 }
+
+			TextBounds { width, height: font_size * 1.2 }
 		});
 
 	FrozenOverlayEditRect::new(
@@ -1050,7 +1097,7 @@ fn text_bounds(annotation: &FrozenOverlayEditText) -> FrozenOverlayEditRect {
 
 #[cfg(test)]
 mod tests {
-	use super::{
+	use crate::frozen_edit::{
 		FrozenOverlayEditColor, FrozenOverlayEditElement, FrozenOverlayEditPoint,
 		FrozenOverlayEditRect, FrozenOverlayEditSession, FrozenOverlayEditStyle,
 		FrozenOverlayEditTextStyle, FrozenOverlayTextEdit,
@@ -1063,8 +1110,8 @@ mod tests {
 
 	#[test]
 	fn pen_lifecycle_exports_visible_stroke() {
-		let mut session = FrozenOverlayEditSession::default();
 		let style = FrozenOverlayEditStyle::default();
+		let mut session = FrozenOverlayEditSession::default();
 
 		assert!(session.begin(
 			ToolbarItemKind::Pen,
@@ -1076,6 +1123,7 @@ mod tests {
 		assert!(session.finish(selection()));
 
 		let snapshot = session.snapshot();
+
 		assert!(snapshot.can_undo);
 		assert_eq!(snapshot.elements.len(), 1);
 		assert!(matches!(snapshot.elements[0], FrozenOverlayEditElement::Pen(_)));
@@ -1083,8 +1131,8 @@ mod tests {
 
 	#[test]
 	fn undo_and_redo_move_committed_elements_between_stacks() {
-		let mut session = FrozenOverlayEditSession::default();
 		let style = FrozenOverlayEditStyle::default();
+		let mut session = FrozenOverlayEditSession::default();
 
 		assert!(session.begin(
 			ToolbarItemKind::Mosaic,
@@ -1094,7 +1142,6 @@ mod tests {
 		));
 		assert!(session.update(FrozenOverlayEditPoint::new(80.0, 100.0), selection()));
 		assert!(session.finish(selection()));
-
 		assert!(session.undo());
 		assert!(session.snapshot().can_redo);
 		assert!(session.snapshot().elements.is_empty());
@@ -1104,8 +1151,8 @@ mod tests {
 
 	#[test]
 	fn mosaic_move_hides_original_while_preview_is_active() {
-		let mut session = FrozenOverlayEditSession::default();
 		let style = FrozenOverlayEditStyle::default();
+		let mut session = FrozenOverlayEditSession::default();
 
 		assert!(session.begin(
 			ToolbarItemKind::Mosaic,
@@ -1123,6 +1170,7 @@ mod tests {
 		));
 
 		let snapshot = session.snapshot();
+
 		assert!(snapshot.is_moving_movable_annotation);
 		assert!(snapshot.elements.is_empty());
 		assert!(snapshot.preview_mosaic.is_some());
@@ -1130,8 +1178,8 @@ mod tests {
 
 	#[test]
 	fn text_lifecycle_commits_and_trims_empty_edits() {
-		let mut session = FrozenOverlayEditSession::default();
 		let style = FrozenOverlayEditStyle::default();
+		let mut session = FrozenOverlayEditSession::default();
 
 		assert!(session.begin(
 			ToolbarItemKind::Text,
@@ -1154,7 +1202,6 @@ mod tests {
 			color: FrozenOverlayEditColor::White,
 			..FrozenOverlayEditTextStyle::default()
 		}));
-
 		assert_eq!(session.snapshot().active_text_edit, None);
 		assert!(matches!(session.snapshot().elements[0], FrozenOverlayEditElement::Text(_)));
 	}
@@ -1170,7 +1217,6 @@ mod tests {
 			FrozenOverlayEditStyle::default(),
 		));
 		assert!(session.append_text("Text"));
-
 		assert_eq!(
 			session.snapshot().active_text_edit,
 			Some(FrozenOverlayTextEdit {

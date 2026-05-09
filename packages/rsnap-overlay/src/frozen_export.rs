@@ -1,14 +1,16 @@
 //! Portable frozen-overlay export compositing used by native hosts.
 
-use color_eyre::eyre::{self, Result, ensure};
+use std::f32::consts::PI;
+
+use color_eyre::eyre::{self, Result};
 use egui::Pos2;
 use image::{
 	Rgba, RgbaImage,
 	imageops::{self, FilterType},
 };
-use rsnap_capture_core::{DisplayPointRect, frozen_mosaic_light_privacy_patch};
 
 use crate::text_rendering::{self, RasterTextAnnotation};
+use rsnap_capture_core::{self, DisplayPointRect};
 
 const SPOTLIGHT_VISIBLE_NUMERATOR: u16 = 173;
 const STROKE_EXPORT_ALPHA: f32 = 0.96;
@@ -58,21 +60,6 @@ pub struct FrozenOverlayExportTextStyle {
 	pub rgba: [u8; 4],
 }
 
-/// One committed frozen-overlay edit to composite into an exported image.
-#[derive(Clone, Debug, PartialEq)]
-pub enum FrozenOverlayExportElement {
-	/// Pen stroke annotation.
-	Pen(FrozenOverlayExportPen),
-	/// Arrow annotation.
-	Arrow(FrozenOverlayExportArrow),
-	/// Mosaic privacy rectangle.
-	Mosaic(FrozenOverlayExportMosaic),
-	/// Spotlight annotation.
-	Spotlight(FrozenOverlayExportSpotlight),
-	/// Text annotation.
-	Text(FrozenOverlayExportText),
-}
-
 /// Pen stroke export annotation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrozenOverlayExportPen {
@@ -120,6 +107,139 @@ pub struct FrozenOverlayExportText {
 	pub style: FrozenOverlayExportTextStyle,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ArrowGeometry {
+	shaft_end: Pos2,
+	head_left: Pos2,
+	head_right: Pos2,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PixelRect {
+	x: u32,
+	y: u32,
+	width: u32,
+	height: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FloatRect {
+	x: f32,
+	y: f32,
+	width: f32,
+	height: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ExportTransform {
+	selection: DisplayPointRect,
+	image_width: u32,
+	image_height: u32,
+	scale_x: f64,
+	scale_y: f64,
+}
+impl ExportTransform {
+	fn new(selection: DisplayPointRect, image_width: u32, image_height: u32) -> Result<Self> {
+		eyre::ensure!(
+			image_width > 0 && image_height > 0,
+			"frozen-overlay export image dimensions must be non-empty"
+		);
+		eyre::ensure!(
+			valid_rect(selection),
+			"frozen-overlay export selection must be finite and non-empty"
+		);
+
+		Ok(Self {
+			selection,
+			image_width,
+			image_height,
+			scale_x: f64::from(image_width) / selection.width,
+			scale_y: f64::from(image_height) / selection.height,
+		})
+	}
+
+	fn scalar_scale(self) -> f32 {
+		((self.scale_x + self.scale_y) * 0.5) as f32
+	}
+
+	fn point_to_pixels(self, point: FrozenOverlayExportPoint) -> Option<Pos2> {
+		if !point.x.is_finite() || !point.y.is_finite() {
+			return None;
+		}
+
+		let x = (point.x - self.selection.x) * self.scale_x;
+		let y = (point.y - self.selection.y) * self.scale_y;
+
+		f64_pair_to_pos2(x, y)
+	}
+
+	fn float_rect(self, rect: DisplayPointRect) -> Option<FloatRect> {
+		if !valid_rect(rect) {
+			return None;
+		}
+
+		let x = (rect.x - self.selection.x) * self.scale_x;
+		let y = (rect.y - self.selection.y) * self.scale_y;
+		let width = rect.width * self.scale_x;
+		let height = rect.height * self.scale_y;
+		let origin = f64_pair_to_pos2(x, y)?;
+		let size = f64_pair_to_pos2(width, height)?;
+
+		Some(FloatRect { x: origin.x, y: origin.y, width: size.x, height: size.y })
+	}
+
+	fn integral_image_rect(self, rect: DisplayPointRect) -> Option<PixelRect> {
+		let rect = self.float_rect(rect)?;
+		let left = rect.x.floor().max(0.0);
+		let top = rect.y.floor().max(0.0);
+		let right = (rect.x + rect.width).ceil().min(self.image_width as f32);
+		let bottom = (rect.y + rect.height).ceil().min(self.image_height as f32);
+
+		if left >= right || top >= bottom {
+			return None;
+		}
+
+		Some(PixelRect {
+			x: left as u32,
+			y: top as u32,
+			width: (right - left) as u32,
+			height: (bottom - top) as u32,
+		})
+	}
+
+	fn source_image_rect(self, rect: DisplayPointRect) -> Option<DisplayPointRect> {
+		if !valid_rect(rect) {
+			return None;
+		}
+
+		let right = rect.x + rect.width;
+		let bottom = rect.y + rect.height;
+		let selection_bottom = self.selection.y + self.selection.height;
+
+		Some(DisplayPointRect::new(
+			(rect.x - self.selection.x) * self.scale_x,
+			(selection_bottom - bottom) * self.scale_y,
+			(right - rect.x) * self.scale_x,
+			(bottom - rect.y) * self.scale_y,
+		))
+	}
+}
+
+/// One committed frozen-overlay edit to composite into an exported image.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FrozenOverlayExportElement {
+	/// Pen stroke annotation.
+	Pen(FrozenOverlayExportPen),
+	/// Arrow annotation.
+	Arrow(FrozenOverlayExportArrow),
+	/// Mosaic privacy rectangle.
+	Mosaic(FrozenOverlayExportMosaic),
+	/// Spotlight annotation.
+	Spotlight(FrozenOverlayExportSpotlight),
+	/// Text annotation.
+	Text(FrozenOverlayExportText),
+}
+
 /// Composites committed frozen-overlay annotations into a row-major RGBA export image.
 ///
 /// The compositor intentionally mirrors the native host's previous export order:
@@ -152,7 +272,7 @@ fn rgba_image_from_bytes(width: u32, height: u32, rgba: &[u8]) -> Result<RgbaIma
 		.and_then(|pixels| pixels.checked_mul(4))
 		.ok_or_else(|| eyre::eyre!("frozen-overlay export dimensions overflow"))?;
 
-	ensure!(
+	eyre::ensure!(
 		rgba.len() == expected_len,
 		"frozen-overlay export byte length mismatch: expected {} got {}",
 		expected_len,
@@ -184,8 +304,11 @@ fn apply_mosaic(image: &mut RgbaImage, transform: ExportTransform, rect: Display
 	let Some(source_rect) = transform.source_image_rect(rect) else {
 		return;
 	};
-	let Some(patch) = frozen_mosaic_light_privacy_patch(image.width(), image.height(), source_rect)
-	else {
+	let Some(patch) = rsnap_capture_core::frozen_mosaic_light_privacy_patch(
+		image.width(),
+		image.height(),
+		source_rect,
+	) else {
 		return;
 	};
 	let patch = if patch.width() == destination.width && patch.height() == destination.height {
@@ -220,7 +343,6 @@ fn apply_spotlights(
 	for spotlight in &spotlights {
 		restore_spotlight_rect(image, original, transform, spotlight.rect);
 	}
-
 	for spotlight in spotlights {
 		render_spotlight_border(image, transform, spotlight.rect, spotlight.style);
 	}
@@ -263,9 +385,11 @@ fn render_spotlight_border(
 	style: FrozenOverlayExportSpotlightStyle,
 ) {
 	let line_width = style.border_width_points * transform.scalar_scale();
+
 	if line_width <= f32::EPSILON {
 		return;
 	}
+
 	let Some(rect) = transform.float_rect(rect) else {
 		return;
 	};
@@ -377,6 +501,7 @@ fn render_text_annotation(
 	if annotation.text.trim().is_empty() {
 		return;
 	}
+
 	let Some(anchor) = transform.point_to_pixels(annotation.anchor) else {
 		return;
 	};
@@ -412,8 +537,10 @@ fn draw_polyline(image: &mut RgbaImage, points: &[Pos2], line_width: f32, color:
 	}
 	if points.len() == 1 {
 		draw_segments(image, &[(points[0], points[0])], line_width, color);
+
 		return;
 	}
+
 	let segments = points.windows(2).map(|points| (points[0], points[1])).collect::<Vec<_>>();
 
 	draw_segments(image, &segments, line_width, color);
@@ -428,6 +555,7 @@ fn draw_segments(
 	if segments.is_empty() || image.width() == 0 || image.height() == 0 {
 		return;
 	}
+
 	let radius = (line_width * 0.5).max(0.5);
 	let mut coverage_mask = vec![0_u8; image.width() as usize * image.height() as usize];
 
@@ -451,6 +579,7 @@ fn rasterize_segment(
 
 	if delta_len_sq <= f32::EPSILON {
 		rasterize_circle(coverage_mask, width, height, start, radius);
+
 		return;
 	}
 
@@ -513,6 +642,7 @@ fn update_coverage_mask(coverage_mask: &mut [u8], width: u32, x: u32, y: u32, co
 	}
 
 	let index = y as usize * width as usize + x as usize;
+
 	coverage_mask[index] = coverage_mask[index].max(coverage);
 }
 
@@ -551,14 +681,8 @@ fn blend_pixel(pixel: &mut Rgba<u8>, color: Rgba<u8>, src_a: f32) {
 
 fn with_scaled_alpha(mut rgba: [u8; 4], scale: f32) -> [u8; 4] {
 	rgba[3] = (f32::from(rgba[3]) * scale).round().clamp(0.0, 255.0) as u8;
-	rgba
-}
 
-#[derive(Clone, Copy, Debug)]
-struct ArrowGeometry {
-	shaft_end: Pos2,
-	head_left: Pos2,
-	head_right: Pos2,
+	rgba
 }
 
 fn arrow_geometry(
@@ -568,12 +692,14 @@ fn arrow_geometry(
 	transform: ExportTransform,
 ) -> Option<ArrowGeometry> {
 	let distance = start.distance(end);
+
 	if distance <= f32::EPSILON {
 		return None;
 	}
+
 	let stroke_width = stroke_width_points * 1.4 * transform.scalar_scale();
 	let head_length = (stroke_width * 4.2).max(16.0 * transform.scalar_scale()).min(distance * 0.9);
-	let head_spread = std::f32::consts::PI / 7.0;
+	let head_spread = PI / 7.0;
 	let angle = (end.y - start.y).atan2(end.x - start.x);
 	let direction = Pos2::new(angle.cos(), angle.sin());
 	let shaft_end = Pos2::new(
@@ -592,114 +718,6 @@ fn arrow_geometry(
 			end.y - (angle + head_spread).sin() * head_length,
 		),
 	})
-}
-
-#[derive(Clone, Copy, Debug)]
-struct PixelRect {
-	x: u32,
-	y: u32,
-	width: u32,
-	height: u32,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct FloatRect {
-	x: f32,
-	y: f32,
-	width: f32,
-	height: f32,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ExportTransform {
-	selection: DisplayPointRect,
-	image_width: u32,
-	image_height: u32,
-	scale_x: f64,
-	scale_y: f64,
-}
-impl ExportTransform {
-	fn new(selection: DisplayPointRect, image_width: u32, image_height: u32) -> Result<Self> {
-		ensure!(
-			image_width > 0 && image_height > 0,
-			"frozen-overlay export image dimensions must be non-empty"
-		);
-		ensure!(
-			valid_rect(selection),
-			"frozen-overlay export selection must be finite and non-empty"
-		);
-
-		Ok(Self {
-			selection,
-			image_width,
-			image_height,
-			scale_x: f64::from(image_width) / selection.width,
-			scale_y: f64::from(image_height) / selection.height,
-		})
-	}
-
-	fn scalar_scale(self) -> f32 {
-		((self.scale_x + self.scale_y) * 0.5) as f32
-	}
-
-	fn point_to_pixels(self, point: FrozenOverlayExportPoint) -> Option<Pos2> {
-		if !point.x.is_finite() || !point.y.is_finite() {
-			return None;
-		}
-		let x = (point.x - self.selection.x) * self.scale_x;
-		let y = (point.y - self.selection.y) * self.scale_y;
-
-		f64_pair_to_pos2(x, y)
-	}
-
-	fn float_rect(self, rect: DisplayPointRect) -> Option<FloatRect> {
-		if !valid_rect(rect) {
-			return None;
-		}
-		let x = (rect.x - self.selection.x) * self.scale_x;
-		let y = (rect.y - self.selection.y) * self.scale_y;
-		let width = rect.width * self.scale_x;
-		let height = rect.height * self.scale_y;
-		let origin = f64_pair_to_pos2(x, y)?;
-		let size = f64_pair_to_pos2(width, height)?;
-
-		Some(FloatRect { x: origin.x, y: origin.y, width: size.x, height: size.y })
-	}
-
-	fn integral_image_rect(self, rect: DisplayPointRect) -> Option<PixelRect> {
-		let rect = self.float_rect(rect)?;
-		let left = rect.x.floor().max(0.0);
-		let top = rect.y.floor().max(0.0);
-		let right = (rect.x + rect.width).ceil().min(self.image_width as f32);
-		let bottom = (rect.y + rect.height).ceil().min(self.image_height as f32);
-
-		if left >= right || top >= bottom {
-			return None;
-		}
-
-		Some(PixelRect {
-			x: left as u32,
-			y: top as u32,
-			width: (right - left) as u32,
-			height: (bottom - top) as u32,
-		})
-	}
-
-	fn source_image_rect(self, rect: DisplayPointRect) -> Option<DisplayPointRect> {
-		if !valid_rect(rect) {
-			return None;
-		}
-		let right = rect.x + rect.width;
-		let bottom = rect.y + rect.height;
-		let selection_bottom = self.selection.y + self.selection.height;
-
-		Some(DisplayPointRect::new(
-			(rect.x - self.selection.x) * self.scale_x,
-			(selection_bottom - bottom) * self.scale_y,
-			(right - rect.x) * self.scale_x,
-			(bottom - rect.y) * self.scale_y,
-		))
-	}
 }
 
 fn valid_rect(rect: DisplayPointRect) -> bool {
@@ -728,14 +746,14 @@ fn f64_pair_to_pos2(x: f64, y: f64) -> Option<Pos2> {
 #[cfg(test)]
 mod tests {
 	use image::{Rgba, RgbaImage};
-	use rsnap_capture_core::DisplayPointRect;
 
-	use super::{
-		FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
+	use crate::frozen_export::{
+		self, FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
 		FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
 		FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
-		FrozenOverlayExportTextStyle, render_frozen_overlay_export_rgba,
+		FrozenOverlayExportTextStyle,
 	};
+	use rsnap_capture_core::DisplayPointRect;
 
 	#[test]
 	fn export_compositor_applies_mosaic_spotlight_and_stroke() {
@@ -762,7 +780,7 @@ mod tests {
 				},
 			}),
 		];
-		let rendered = render_frozen_overlay_export_rgba(
+		let rendered = frozen_export::render_frozen_overlay_export_rgba(
 			image.width(),
 			image.height(),
 			image.as_raw(),
@@ -798,7 +816,7 @@ mod tests {
 				},
 			}),
 		];
-		let rendered = render_frozen_overlay_export_rgba(
+		let rendered = frozen_export::render_frozen_overlay_export_rgba(
 			image.width(),
 			image.height(),
 			image.as_raw(),

@@ -1,6 +1,6 @@
 //! Capture-frame layout and rendering owned by the Rust product core.
 
-use color_eyre::eyre::{Result, WrapErr, eyre};
+use color_eyre::eyre::{self, Result, WrapErr};
 use fast_image_resize::images::{Image, ImageRef};
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 
@@ -54,8 +54,9 @@ impl<'a> CaptureFrameRenderImageRef<'a> {
 	/// Creates a borrowed RGBA image after validating dimensions and byte count.
 	pub fn new(width: u32, height: u32, rgba: &'a [u8]) -> Result<Self> {
 		let expected = expected_rgba_len(width, height)?;
+
 		if rgba.len() != expected {
-			return Err(eyre!(
+			return Err(eyre::eyre!(
 				"capture-frame RGBA byte length mismatch: expected {expected}, got {}",
 				rgba.len()
 			));
@@ -218,8 +219,10 @@ pub fn capture_frame_aspect_fill_crop_rect(
 	let source_height = f64::from(source_height);
 	let source_aspect = source_width / source_height.max(1.0);
 	let destination_aspect = destination_width / destination_height.max(1.0);
+
 	if source_aspect > destination_aspect {
 		let width = source_height * destination_aspect;
+
 		return Some(DisplayPointRect::new(
 			(source_width - width) / 2.0,
 			0.0,
@@ -229,6 +232,7 @@ pub fn capture_frame_aspect_fill_crop_rect(
 	}
 
 	let height = source_width / destination_aspect.max(f64::MIN_POSITIVE);
+
 	Some(DisplayPointRect::new(0.0, (source_height - height) / 2.0, source_width, height))
 }
 
@@ -298,6 +302,7 @@ pub fn capture_frame_wallpaper_request_plan(
 	}
 
 	let background = capture_frame_background_plan(kind);
+
 	if !background.prefers_wallpaper {
 		return None;
 	}
@@ -332,7 +337,7 @@ pub fn render_capture_frame_effect(
 	let canvas_width = finite_canvas_dimension(plan.canvas_width)?;
 	let canvas_height = finite_canvas_dimension(plan.canvas_height)?;
 	let canvas_len = expected_rgba_len(canvas_width, canvas_height)?;
-	let mut canvas = vec![0u8; canvas_len];
+	let mut canvas = vec![0_u8; canvas_len];
 
 	draw_capture_frame_background(
 		&mut canvas,
@@ -354,6 +359,7 @@ pub fn render_capture_frame_effect(
 					shadow,
 				);
 			}
+
 			draw_capture_source(
 				&mut canvas,
 				canvas_width,
@@ -394,6 +400,7 @@ fn capture_frame_corner_radius(
 	source: CaptureFrameSourceKind,
 ) -> f64 {
 	let short_side = image_width.min(image_height);
+
 	match source {
 		CaptureFrameSourceKind::Window => {
 			let scale_factor = if screen_scale_factor.is_finite() && screen_scale_factor > 0.0 {
@@ -433,7 +440,7 @@ fn capture_frame_shadows(canvas_width: f64, canvas_height: f64) -> [CaptureFrame
 
 fn finite_canvas_dimension(value: f64) -> Result<u32> {
 	if !value.is_finite() || value <= 0.0 || value > f64::from(u32::MAX) {
-		return Err(eyre!("capture-frame canvas dimension is invalid: {value}"));
+		return Err(eyre::eyre!("capture-frame canvas dimension is invalid: {value}"));
 	}
 
 	Ok(value.ceil() as u32)
@@ -447,6 +454,7 @@ fn draw_capture_frame_background(
 	wallpaper: Option<CaptureFrameRenderImageRef<'_>>,
 ) -> Result<()> {
 	let background = capture_frame_background_plan(background_kind);
+
 	if background.prefers_wallpaper
 		&& let Some(wallpaper) = wallpaper
 	{
@@ -457,10 +465,12 @@ fn draw_capture_frame_background(
 			wallpaper,
 			background.wallpaper_overlay_alpha,
 		)?;
+
 		return Ok(());
 	}
 
 	draw_gradient_background(canvas, canvas_width, canvas_height, background);
+
 	Ok(())
 }
 
@@ -472,6 +482,7 @@ fn draw_gradient_background(
 ) {
 	let width = usize::try_from(canvas_width).unwrap_or(0);
 	let height = usize::try_from(canvas_height).unwrap_or(0);
+
 	if width == 0 || height == 0 {
 		return;
 	}
@@ -487,6 +498,7 @@ fn draw_gradient_background(
 			let projection = (px * dx + (py - f64::from(canvas_height)) * dy) / length_squared;
 			let color = gradient_color_at(background, projection.clamp(0.0, 1.0));
 			let index = (y * width + x) * 4;
+
 			canvas[index] = color[0];
 			canvas[index + 1] = color[1];
 			canvas[index + 2] = color[2];
@@ -525,21 +537,24 @@ fn draw_wallpaper_background(
 		f64::from(canvas_width),
 		f64::from(canvas_height),
 	)
-	.ok_or_else(|| eyre!("capture-frame wallpaper crop is invalid"))?;
+	.ok_or_else(|| eyre::eyre!("capture-frame wallpaper crop is invalid"))?;
 	let (crop_x, crop_y, crop_width, crop_height) =
 		integral_crop_rect(crop, wallpaper.width(), wallpaper.height())
-			.ok_or_else(|| eyre!("capture-frame wallpaper crop is empty"))?;
+			.ok_or_else(|| eyre::eyre!("capture-frame wallpaper crop is empty"))?;
 	let cropped = crop_rgba_to_vec(wallpaper, crop_x, crop_y, crop_width, crop_height)?;
 	let fitted = resize_rgba_exact(crop_width, crop_height, &cropped, canvas_width, canvas_height)
 		.wrap_err("failed to resize capture-frame wallpaper background")?;
 
 	canvas.copy_from_slice(&fitted);
+
 	apply_black_overlay(canvas, overlay_alpha);
+
 	Ok(())
 }
 
 fn apply_black_overlay(canvas: &mut [u8], alpha: f64) {
 	let alpha = alpha.clamp(0.0, 1.0) as f32;
+
 	if alpha <= 0.0 {
 		return;
 	}
@@ -575,9 +590,9 @@ fn draw_capture_source(
 				destination_height,
 			)
 			.wrap_err("failed to resize capture source into capture frame")?;
+
 			&resized_source
 		};
-
 	let canvas_width_usize =
 		usize::try_from(canvas_width).wrap_err("failed to convert canvas width")?;
 	let destination_width_usize =
@@ -606,6 +621,7 @@ fn draw_capture_source(
 
 			if coverage > 0.0 {
 				let source_alpha = (f32::from(source_rgba[source_index + 3]) / 255.0) * coverage;
+
 				blend_rgba_pixel(
 					&mut canvas[canvas_index..canvas_index + 4],
 					&source_rgba[source_index..source_index + 4],
@@ -662,12 +678,15 @@ fn draw_soft_rounded_shadow(
 			)
 			.max(0.0);
 			let softness = (1.0 - distance / (blur * 1.6)).clamp(0.0, 1.0);
+
 			if softness <= 0.0 {
 				continue;
 			}
+
 			let eased = softness * softness * (3.0 - 2.0 * softness);
 			let alpha = (shadow.alpha * eased).clamp(0.0, 1.0) as f32;
 			let index = ((y as usize) * canvas_width_usize + (x as usize)) * 4;
+
 			blend_black_alpha(&mut canvas[index..index + 4], alpha);
 		}
 	}
@@ -735,12 +754,13 @@ fn crop_rgba_to_vec(
 	let y = usize::try_from(y).wrap_err("failed to convert crop y")?;
 	let width = usize::try_from(width).wrap_err("failed to convert crop width")?;
 	let height = usize::try_from(height).wrap_err("failed to convert crop height")?;
-	let mut cropped = vec![0u8; width * height * 4];
+	let mut cropped = vec![0_u8; width * height * 4];
 
 	for row in 0..height {
 		let source_start = ((y + row) * source_width + x) * 4;
 		let source_end = source_start + width * 4;
 		let destination_start = row * width * 4;
+
 		cropped[destination_start..destination_start + width * 4]
 			.copy_from_slice(&image.rgba()[source_start..source_end]);
 	}
@@ -756,8 +776,9 @@ fn resize_rgba_exact(
 	destination_height: u32,
 ) -> Result<Vec<u8>> {
 	let expected = expected_rgba_len(source_width, source_height)?;
+
 	if source_rgba.len() != expected {
-		return Err(eyre!(
+		return Err(eyre::eyre!(
 			"capture-frame resize byte length mismatch: expected {expected}, got {}",
 			source_rgba.len()
 		));
@@ -768,9 +789,10 @@ fn resize_rgba_exact(
 
 	let source_ref = ImageRef::new(source_width, source_height, source_rgba, PixelType::U8x4)
 		.wrap_err("failed to prepare capture-frame source image")?;
-	let mut destination_image = Image::new(destination_width, destination_height, PixelType::U8x4);
 	let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
+	let mut destination_image = Image::new(destination_width, destination_height, PixelType::U8x4);
 	let mut resizer = Resizer::new();
+
 	resizer
 		.resize(&source_ref, &mut destination_image, &options)
 		.wrap_err("failed to Lanczos-resize capture-frame image")?;
@@ -800,10 +822,13 @@ fn rounded_rect_signed_distance(px: f64, py: f64, rect: DisplayPointRect, radius
 
 fn blend_rgba_pixel(destination: &mut [u8], source: &[u8], alpha: f32) {
 	let alpha = alpha.clamp(0.0, 1.0);
+
 	if alpha <= 0.0 {
 		return;
 	}
+
 	let inverse = 1.0 - alpha;
+
 	destination[0] = blend_channel(source[0], destination[0], alpha, inverse);
 	destination[1] = blend_channel(source[1], destination[1], alpha, inverse);
 	destination[2] = blend_channel(source[2], destination[2], alpha, inverse);
@@ -812,6 +837,7 @@ fn blend_rgba_pixel(destination: &mut [u8], source: &[u8], alpha: f32) {
 
 fn blend_black_alpha(destination: &mut [u8], alpha: f32) {
 	let inverse = 1.0 - alpha.clamp(0.0, 1.0);
+
 	destination[0] = (f32::from(destination[0]) * inverse).round().clamp(0.0, 255.0) as u8;
 	destination[1] = (f32::from(destination[1]) * inverse).round().clamp(0.0, 255.0) as u8;
 	destination[2] = (f32::from(destination[2]) * inverse).round().clamp(0.0, 255.0) as u8;
@@ -832,7 +858,7 @@ fn unit_to_u8(value: f64) -> u8 {
 
 fn expected_rgba_len(width: u32, height: u32) -> Result<usize> {
 	if width == 0 || height == 0 {
-		return Err(eyre!(
+		return Err(eyre::eyre!(
 			"capture-frame RGBA dimensions must be non-zero: width={width}, height={height}"
 		));
 	}
@@ -840,23 +866,21 @@ fn expected_rgba_len(width: u32, height: u32) -> Result<usize> {
 	(width as usize)
 		.checked_mul(height as usize)
 		.and_then(|pixels| pixels.checked_mul(4))
-		.ok_or_else(|| eyre!("capture-frame RGBA byte length overflow"))
+		.ok_or_else(|| eyre::eyre!("capture-frame RGBA byte length overflow"))
 }
 
 #[cfg(test)]
 mod tests {
-	use super::{
-		CaptureFrameBackgroundKind, CaptureFrameColorStop, CaptureFrameRenderImageRef,
-		CaptureFrameRenderKind, CaptureFrameShadow, CaptureFrameSourceKind,
-		capture_frame_aspect_fill_crop_rect, capture_frame_background_plan, capture_frame_plan,
-		capture_frame_wallpaper_request_plan, render_capture_frame_effect,
-	};
 	use crate::DisplayPointRect;
+	use crate::capture_frame::{
+		self, CaptureFrameBackgroundKind, CaptureFrameColorStop, CaptureFrameRenderImageRef,
+		CaptureFrameRenderKind, CaptureFrameShadow, CaptureFrameSourceKind,
+	};
 
 	#[test]
 	fn capture_frame_plan_matches_native_window_geometry() {
-		let plan =
-			capture_frame_plan(320, 180, 2.0, CaptureFrameSourceKind::Window).expect("valid plan");
+		let plan = capture_frame::capture_frame_plan(320, 180, 2.0, CaptureFrameSourceKind::Window)
+			.expect("valid plan");
 
 		assert_eq!(plan.canvas_width, 416.0);
 		assert_eq!(plan.canvas_height, 276.0);
@@ -874,13 +898,15 @@ mod tests {
 
 	#[test]
 	fn capture_frame_plan_scales_large_shadow_geometry() {
-		let plan = capture_frame_plan(1440, 900, 2.0, CaptureFrameSourceKind::DragRegion)
-			.expect("valid plan");
+		let plan =
+			capture_frame::capture_frame_plan(1_440, 900, 2.0, CaptureFrameSourceKind::DragRegion)
+				.expect("valid plan");
 
-		assert_eq!(plan.canvas_width, 1647.0);
-		assert_eq!(plan.canvas_height, 1107.0);
-		assert_eq!(plan.image_rect, DisplayPointRect::new(103.5, 103.5, 1440.0, 900.0));
+		assert_eq!(plan.canvas_width, 1_647.0);
+		assert_eq!(plan.canvas_height, 1_107.0);
+		assert_eq!(plan.image_rect, DisplayPointRect::new(103.5, 103.5, 1_440.0, 900.0));
 		assert_eq!(plan.corner_radius, 22.5);
+
 		assert_shadow_near(plan.shadows[0], CaptureFrameShadow::new(0.0, 0.0, 94.095, 0.30));
 		assert_shadow_near(plan.shadows[1], CaptureFrameShadow::new(0.0, -33.21, 55.35, 0.36));
 		assert_shadow_near(plan.shadows[2], CaptureFrameShadow::new(0.0, -6.642, 15.498, 0.22));
@@ -888,13 +914,19 @@ mod tests {
 
 	#[test]
 	fn capture_frame_plan_rejects_empty_input() {
-		assert!(capture_frame_plan(0, 180, 2.0, CaptureFrameSourceKind::Window).is_none());
-		assert!(capture_frame_plan(320, 0, 2.0, CaptureFrameSourceKind::Window).is_none());
+		assert!(
+			capture_frame::capture_frame_plan(0, 180, 2.0, CaptureFrameSourceKind::Window)
+				.is_none()
+		);
+		assert!(
+			capture_frame::capture_frame_plan(320, 0, 2.0, CaptureFrameSourceKind::Window)
+				.is_none()
+		);
 	}
 
 	#[test]
 	fn capture_frame_aspect_fill_crop_matches_native_wide_source() {
-		let rect = capture_frame_aspect_fill_crop_rect(1600, 900, 1000.0, 1000.0)
+		let rect = capture_frame::capture_frame_aspect_fill_crop_rect(1_600, 900, 1_000.0, 1_000.0)
 			.expect("valid crop rect");
 
 		assert_eq!(rect, DisplayPointRect::new(350.0, 0.0, 900.0, 900.0));
@@ -902,15 +934,17 @@ mod tests {
 
 	#[test]
 	fn capture_frame_aspect_fill_crop_matches_native_tall_source() {
-		let rect =
-			capture_frame_aspect_fill_crop_rect(800, 1200, 1600.0, 900.0).expect("valid crop rect");
+		let rect = capture_frame::capture_frame_aspect_fill_crop_rect(800, 1_200, 1_600.0, 900.0)
+			.expect("valid crop rect");
 
 		assert_eq!(rect, DisplayPointRect::new(0.0, 375.0, 800.0, 450.0));
 	}
 
 	#[test]
 	fn capture_frame_background_plan_matches_native_wallpaper_fallback() {
-		let plan = capture_frame_background_plan(CaptureFrameBackgroundKind::SystemWallpaper);
+		let plan = capture_frame::capture_frame_background_plan(
+			CaptureFrameBackgroundKind::SystemWallpaper,
+		);
 
 		assert!(plan.prefers_wallpaper);
 		assert_eq!(plan.wallpaper_overlay_alpha, 0.10);
@@ -927,7 +961,7 @@ mod tests {
 
 	#[test]
 	fn capture_frame_background_plan_matches_native_linen_gradient() {
-		let plan = capture_frame_background_plan(CaptureFrameBackgroundKind::Linen);
+		let plan = capture_frame::capture_frame_background_plan(CaptureFrameBackgroundKind::Linen);
 
 		assert!(!plan.prefers_wallpaper);
 		assert_eq!(plan.wallpaper_overlay_alpha, 0.0);
@@ -944,21 +978,25 @@ mod tests {
 
 	#[test]
 	fn capture_frame_wallpaper_request_plan_matches_native_thumbnail_policy() {
-		let request = capture_frame_wallpaper_request_plan(
+		let request = capture_frame::capture_frame_wallpaper_request_plan(
 			CaptureFrameBackgroundKind::SystemWallpaper,
-			1535.2,
+			1_535.2,
 			996.0,
 		)
 		.expect("wallpaper request");
 
-		assert_eq!(request.target_pixel_size, 1536);
+		assert_eq!(request.target_pixel_size, 1_536);
 		assert_eq!(request.overlay_alpha, 0.10);
 	}
 
 	#[test]
 	fn capture_frame_wallpaper_request_plan_skips_non_wallpaper_backgrounds() {
 		assert_eq!(
-			capture_frame_wallpaper_request_plan(CaptureFrameBackgroundKind::Aurora, 1536.0, 996.0),
+			capture_frame::capture_frame_wallpaper_request_plan(
+				CaptureFrameBackgroundKind::Aurora,
+				1_536.0,
+				996.0
+			),
 			None
 		);
 	}
@@ -966,7 +1004,7 @@ mod tests {
 	#[test]
 	fn capture_frame_wallpaper_request_plan_rejects_empty_destination() {
 		assert_eq!(
-			capture_frame_wallpaper_request_plan(
+			capture_frame::capture_frame_wallpaper_request_plan(
 				CaptureFrameBackgroundKind::SystemWallpaper,
 				0.0,
 				996.0
@@ -983,7 +1021,7 @@ mod tests {
 		];
 		let source = CaptureFrameRenderImageRef::new(4, 2, &source_rgba)
 			.expect("source fixture should be valid");
-		let rendered = render_capture_frame_effect(
+		let rendered = capture_frame::render_capture_frame_effect(
 			source,
 			CaptureFrameBackgroundKind::Aurora,
 			2.0,
@@ -996,7 +1034,9 @@ mod tests {
 
 		assert_eq!(rendered.width(), 100);
 		assert_eq!(rendered.height(), 98);
+
 		let first_source_pixel = ((48 * rendered.width() as usize) + 48) * 4;
+
 		assert_eq!(
 			&rendered.as_raw()[first_source_pixel..first_source_pixel + 4],
 			&[255, 0, 0, 255]
@@ -1011,7 +1051,7 @@ mod tests {
 			.expect("source fixture should be valid");
 		let wallpaper = CaptureFrameRenderImageRef::new(8, 8, &wallpaper_rgba)
 			.expect("wallpaper fixture should be valid");
-		let rendered = render_capture_frame_effect(
+		let rendered = capture_frame::render_capture_frame_effect(
 			source,
 			CaptureFrameBackgroundKind::SystemWallpaper,
 			2.0,

@@ -32,7 +32,7 @@ use rsnap_overlay::frozen_edit::{
 	FrozenOverlayEditText, FrozenOverlayEditTextStyle, FrozenOverlayTextEdit,
 };
 use rsnap_overlay::frozen_export::{
-	FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
+	self, FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
 	FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
 	FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
 	FrozenOverlayExportTextStyle,
@@ -305,7 +305,6 @@ pub struct RsnapFrozenOverlayEditStyle {
 	/// Text color.
 	pub text_color: RsnapFrozenAnnotationColor,
 }
-
 impl Default for RsnapFrozenOverlayEditStyle {
 	fn default() -> Self {
 		Self {
@@ -362,7 +361,6 @@ pub struct RsnapFrozenOverlayEditSnapshot {
 	/// Active text edit payload.
 	pub active_text_edit: RsnapFrozenOverlayExportElement,
 }
-
 impl Default for RsnapFrozenOverlayEditSnapshot {
 	fn default() -> Self {
 		Self {
@@ -1196,9 +1194,11 @@ pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_append_text(
 	let Some(out_changed) = (unsafe { out_changed.as_mut() }) else {
 		return RsnapStatus::NullOutput;
 	};
+
 	if text.is_null() {
 		return RsnapStatus::InvalidInput;
 	}
+
 	let Ok(text) = (unsafe { CStr::from_ptr(text) }).to_str() else {
 		return RsnapStatus::InvalidInput;
 	};
@@ -1358,9 +1358,11 @@ pub unsafe extern "C" fn rsnap_frozen_overlay_edit_session_copy_snapshot(
 	let Some(handle) = (unsafe { frozen_edit_handle_ref(handle) }) else {
 		return RsnapStatus::NullHandle;
 	};
+
 	if out_snapshot.is_null() {
 		return RsnapStatus::NullOutput;
 	}
+
 	let Some(snapshot) = encode_frozen_overlay_edit_snapshot(handle.session.snapshot()) else {
 		return RsnapStatus::InvalidInput;
 	};
@@ -1609,7 +1611,7 @@ pub unsafe extern "C" fn rsnap_frozen_overlay_export_render_rgba(
 	else {
 		return RsnapStatus::InvalidInput;
 	};
-	let Ok(image) = rsnap_overlay::frozen_export::render_frozen_overlay_export_rgba(
+	let Ok(image) = frozen_export::render_frozen_overlay_export_rgba(
 		width,
 		height,
 		bytes,
@@ -1683,8 +1685,8 @@ pub unsafe extern "C" fn rsnap_frozen_mosaic_light_privacy_patch_rgba(
 	) else {
 		return RsnapStatus::Empty;
 	};
-
 	let (width, height) = patch.dimensions();
+
 	unsafe {
 		ptr::write(out_region, owned_region_from_raw_rgba(width, height, patch.into_raw()));
 	}
@@ -1713,11 +1715,11 @@ pub unsafe extern "C" fn rsnap_bgra_frame_sample_rgb(
 	if out_rgb.is_null() {
 		return RsnapStatus::NullOutput;
 	}
+
 	let Some(frame) = (unsafe { decode_bgra_frame(width, height, bytes_per_row, bgra, bgra_len) })
 	else {
 		return RsnapStatus::InvalidInput;
 	};
-
 	let Some(rgb) = rsnap_capture_core::sample_rgb_from_bgra_frame(
 		frame,
 		decode_float_rect(display_frame),
@@ -1757,11 +1759,11 @@ pub unsafe extern "C" fn rsnap_bgra_frame_loupe_patch_rgba(
 	if out_region.is_null() {
 		return RsnapStatus::NullOutput;
 	}
+
 	let Some(frame) = (unsafe { decode_bgra_frame(width, height, bytes_per_row, bgra, bgra_len) })
 	else {
 		return RsnapStatus::InvalidInput;
 	};
-
 	let Some(patch) = rsnap_capture_core::loupe_patch_rgba_from_bgra_frame(
 		frame,
 		decode_float_rect(display_frame),
@@ -1772,10 +1774,11 @@ pub unsafe extern "C" fn rsnap_bgra_frame_loupe_patch_rgba(
 		unsafe {
 			ptr::write(out_region, RsnapOwnedRgbaRegion::default());
 		}
+
 		return RsnapStatus::Empty;
 	};
-
 	let (width, height) = patch.dimensions();
+
 	unsafe {
 		ptr::write(out_region, owned_region_from_raw_rgba(width, height, patch.into_raw()));
 	}
@@ -1866,6 +1869,7 @@ pub unsafe extern "C" fn rsnap_capture_frame_background_plan(
 	let plan = rsnap_capture_core::capture_frame_background_plan(
 		decode_capture_frame_background_kind(background_kind),
 	);
+
 	unsafe {
 		ptr::write(out_plan, encode_capture_frame_background_plan(plan));
 	}
@@ -1934,7 +1938,6 @@ pub unsafe extern "C" fn rsnap_capture_frame_wallpaper_png_thumbnail(
 	let Ok(path) = (unsafe { CStr::from_ptr(path) }).to_str() else {
 		return RsnapStatus::InvalidInput;
 	};
-
 	let Ok(Some(thumbnail)) =
 		rsnap_capture_core::capture_frame_wallpaper_png_thumbnail(path, target_pixel_size)
 	else {
@@ -3022,7 +3025,9 @@ fn encode_frozen_overlay_edit_snapshot(
 		ptr::null_mut()
 	} else {
 		let ptr = elements.as_mut_ptr();
+
 		mem::forget(elements);
+
 		ptr
 	};
 
@@ -3187,6 +3192,7 @@ fn owned_frozen_overlay_points(
 	let mut owned: Vec<_> = points.iter().copied().map(encode_frozen_edit_point).collect();
 	let ptr = owned.as_mut_ptr();
 	let len = owned.len();
+
 	mem::forget(owned);
 
 	(ptr, len)
@@ -3234,6 +3240,7 @@ unsafe fn release_frozen_overlay_snapshot_element(element: &mut RsnapFrozenOverl
 	if !element.text.is_null() {
 		let _ = unsafe { CString::from_raw(element.text as *mut c_char) };
 	}
+
 	*element = frozen_overlay_empty_element();
 }
 
@@ -3247,6 +3254,7 @@ unsafe fn decode_bgra_frame<'a>(
 	if bgra.is_null() {
 		return None;
 	}
+
 	let bytes = unsafe { slice::from_raw_parts(bgra, bgra_len) };
 	let frame = BgraFrameView { width, height, bytes_per_row, bytes };
 
@@ -3301,6 +3309,7 @@ unsafe fn capture_frame_wallpaper_for_render(
 	if wallpaper_path.is_null() {
 		return Ok(None);
 	}
+
 	let Some(plan) = rsnap_capture_core::capture_frame_plan(
 		source.width(),
 		source.height(),
@@ -3880,9 +3889,12 @@ fn encode_window(window: WindowRect) -> RsnapWindowRect {
 
 #[cfg(test)]
 mod tests {
+	use std::env;
 	use std::ffi::CString;
 	use std::fs;
+	use std::process;
 	use std::ptr;
+	use std::slice;
 
 	use crate::{
 		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCaptureFrameBackgroundKind,
@@ -3927,6 +3939,7 @@ mod tests {
 
 	fn png_dimensions(png: &[u8]) -> (u32, u32) {
 		assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+
 		let width = u32::from_be_bytes(png[16..20].try_into().expect("PNG width bytes"));
 		let height = u32::from_be_bytes(png[20..24].try_into().expect("PNG height bytes"));
 
@@ -4069,14 +4082,12 @@ mod tests {
 			RsnapStatus::Ok
 		);
 		assert!(png.len > 0);
-		assert_eq!(
-			png_dimensions(unsafe { std::slice::from_raw_parts(png.bytes, png.len) }),
-			(4, 4)
-		);
+		assert_eq!(png_dimensions(unsafe { slice::from_raw_parts(png.bytes, png.len) }), (4, 4));
 
 		unsafe {
 			crate::rsnap_owned_bytes_release(&mut png);
 		}
+
 		assert!(png.bytes.is_null());
 		assert_eq!(png.len, 0);
 		assert_eq!(png.capacity, 0);
@@ -4085,8 +4096,8 @@ mod tests {
 	#[test]
 	fn ffi_export_rgba_crop_to_png_crops_dimensions() {
 		let rgba = scroll_frame(4, 4, 0);
-		let mut png = RsnapOwnedBytes::default();
 		let crop = RsnapPixelRect { x: 1, y: 0, width: 2, height: 3 };
+		let mut png = RsnapOwnedBytes::default();
 
 		assert_eq!(
 			unsafe {
@@ -4101,10 +4112,7 @@ mod tests {
 			},
 			RsnapStatus::Ok
 		);
-		assert_eq!(
-			png_dimensions(unsafe { std::slice::from_raw_parts(png.bytes, png.len) }),
-			(2, 3)
-		);
+		assert_eq!(png_dimensions(unsafe { slice::from_raw_parts(png.bytes, png.len) }), (2, 3));
 
 		unsafe {
 			crate::rsnap_owned_bytes_release(&mut png);
@@ -4114,8 +4122,8 @@ mod tests {
 	#[test]
 	fn ffi_export_rgba_crop_to_png_rejects_out_of_bounds_crop() {
 		let rgba = scroll_frame(4, 4, 0);
-		let mut png = RsnapOwnedBytes::default();
 		let crop = RsnapPixelRect { x: 3, y: 3, width: 2, height: 2 };
+		let mut png = RsnapOwnedBytes::default();
 
 		assert_eq!(
 			unsafe {
@@ -4138,16 +4146,16 @@ mod tests {
 		let mut out_rect = RsnapPixelRect::default();
 		let status = unsafe {
 			crate::rsnap_frozen_display_crop_rect(
-				2880,
-				1800,
-				RsnapFloatRect { x: 0.0, y: 0.0, width: 1440.0, height: 900.0 },
+				2_880,
+				1_800,
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 1_440.0, height: 900.0 },
 				RsnapFloatRect { x: 100.0, y: 200.0, width: 300.0, height: 150.0 },
 				&mut out_rect,
 			)
 		};
 
 		assert_eq!(status, RsnapStatus::Ok);
-		assert_eq!(out_rect, RsnapPixelRect { x: 200, y: 1100, width: 600, height: 300 });
+		assert_eq!(out_rect, RsnapPixelRect { x: 200, y: 1_100, width: 600, height: 300 });
 	}
 
 	#[test]
@@ -4182,7 +4190,9 @@ mod tests {
 		assert_eq!(patch.width, 3);
 		assert_eq!(patch.height, 3);
 		assert_eq!(patch.len, 36);
-		let bytes = unsafe { std::slice::from_raw_parts(patch.rgba, patch.len) };
+
+		let bytes = unsafe { slice::from_raw_parts(patch.rgba, patch.len) };
+
 		assert_eq!(&bytes[..12], &[211, 211, 211, 255, 205, 205, 205, 255, 202, 201, 199, 255]);
 
 		unsafe {
@@ -4208,9 +4218,11 @@ mod tests {
 	#[test]
 	fn ffi_frozen_overlay_export_render_rgba_returns_composited_region() {
 		let mut rgba = vec![180_u8; 64 * 40 * 4];
+
 		for alpha in (3..rgba.len()).step_by(4) {
 			rgba[alpha] = 255;
 		}
+
 		let points = [RsnapFloatPoint { x: 2.0, y: 2.0 }, RsnapFloatPoint { x: 24.0, y: 18.0 }];
 		let text = CString::new("Hi").expect("text has no interior nul");
 		let elements = [
@@ -4272,7 +4284,9 @@ mod tests {
 		assert_eq!(out.width, 64);
 		assert_eq!(out.height, 40);
 		assert_eq!(out.len, rgba.len());
-		let bytes = unsafe { std::slice::from_raw_parts(out.rgba, out.len) };
+
+		let bytes = unsafe { slice::from_raw_parts(out.rgba, out.len) };
+
 		assert_ne!(bytes, rgba.as_slice());
 
 		unsafe {
@@ -4283,6 +4297,7 @@ mod tests {
 	#[test]
 	fn ffi_frozen_overlay_edit_session_copies_rust_owned_snapshot() {
 		let handle = crate::rsnap_frozen_overlay_edit_session_create();
+
 		assert!(!handle.is_null());
 
 		let style = RsnapFrozenOverlayEditStyle {
@@ -4305,8 +4320,10 @@ mod tests {
 				&mut changed,
 			)
 		};
+
 		assert_eq!(status, RsnapStatus::Ok);
 		assert_eq!(changed, 1);
+
 		let text = CString::new("Hello").expect("text has no interior nul");
 		let status = unsafe {
 			crate::rsnap_frozen_overlay_edit_session_append_text(
@@ -4315,11 +4332,14 @@ mod tests {
 				&mut changed,
 			)
 		};
+
 		assert_eq!(status, RsnapStatus::Ok);
 		assert_eq!(changed, 1);
+
 		let status = unsafe {
 			crate::rsnap_frozen_overlay_edit_session_commit_text(handle, style, &mut changed)
 		};
+
 		assert_eq!(status, RsnapStatus::Ok);
 		assert_eq!(changed, 1);
 
@@ -4327,11 +4347,13 @@ mod tests {
 		let status = unsafe {
 			crate::rsnap_frozen_overlay_edit_session_copy_snapshot(handle, &mut snapshot)
 		};
+
 		assert_eq!(status, RsnapStatus::Ok);
 		assert_eq!(snapshot.can_undo, 1);
 		assert_eq!(snapshot.elements_len, 1);
-		let elements =
-			unsafe { std::slice::from_raw_parts(snapshot.elements, snapshot.elements_len) };
+
+		let elements = unsafe { slice::from_raw_parts(snapshot.elements, snapshot.elements_len) };
+
 		assert_eq!(elements[0].kind, RsnapFrozenOverlayExportElementKind::Text);
 		assert_eq!(unsafe { std::ffi::CStr::from_ptr(elements[0].text) }.to_str(), Ok("Hello"));
 
@@ -4386,7 +4408,9 @@ mod tests {
 		assert_eq!(patch.width, 3);
 		assert_eq!(patch.height, 3);
 		assert_eq!(patch.len, 36);
-		let bytes = unsafe { std::slice::from_raw_parts(patch.rgba, patch.len) };
+
+		let bytes = unsafe { slice::from_raw_parts(patch.rgba, patch.len) };
+
 		assert_eq!(&bytes[..8], &[10, 20, 30, 200, 10, 20, 30, 200]);
 
 		unsafe {
@@ -4446,7 +4470,9 @@ mod tests {
 	fn ffi_capture_frame_aspect_fill_crop_rect_returns_core_rect() {
 		let mut rect = RsnapFloatRect::default();
 		let status = unsafe {
-			crate::rsnap_capture_frame_aspect_fill_crop_rect(1600, 900, 1000.0, 1000.0, &mut rect)
+			crate::rsnap_capture_frame_aspect_fill_crop_rect(
+				1_600, 900, 1_000.0, 1_000.0, &mut rect,
+			)
 		};
 
 		assert_eq!(status, RsnapStatus::Ok);
@@ -4483,14 +4509,14 @@ mod tests {
 		let status = unsafe {
 			crate::rsnap_capture_frame_wallpaper_request_plan(
 				RsnapCaptureFrameBackgroundKind::SystemWallpaper,
-				1535.2,
+				1_535.2,
 				996.0,
 				&mut request,
 			)
 		};
 
 		assert_eq!(status, RsnapStatus::Ok);
-		assert_eq!(request.target_pixel_size, 1536);
+		assert_eq!(request.target_pixel_size, 1_536);
 		assert_eq!(request.overlay_alpha, 0.10);
 	}
 
@@ -4500,7 +4526,7 @@ mod tests {
 		let status = unsafe {
 			crate::rsnap_capture_frame_wallpaper_request_plan(
 				RsnapCaptureFrameBackgroundKind::Aurora,
-				1536.0,
+				1_536.0,
 				996.0,
 				&mut request,
 			)
@@ -4511,8 +4537,8 @@ mod tests {
 
 	#[test]
 	fn ffi_capture_frame_wallpaper_png_thumbnail_returns_owned_region() {
-		let path_buf = std::env::temp_dir()
-			.join(format!("rsnap-ffi-wallpaper-thumb-{}-rgba.png", std::process::id()));
+		let path_buf =
+			env::temp_dir().join(format!("rsnap-ffi-wallpaper-thumb-{}-rgba.png", process::id()));
 		let png = rsnap_capture_core::RgbaExportImage::from_raw(
 			4,
 			2,
@@ -4524,7 +4550,9 @@ mod tests {
 		.expect("test RGBA payload should create an image")
 		.to_png_bytes()
 		.expect("test RGBA image should encode as PNG");
+
 		fs::write(&path_buf, png).expect("test PNG should be written");
+
 		let path = CString::new(path_buf.to_string_lossy().as_bytes())
 			.expect("test PNG path should not contain interior NUL bytes");
 		let mut thumbnail = RsnapOwnedRgbaRegion::default();
@@ -4540,6 +4568,7 @@ mod tests {
 		unsafe {
 			crate::rsnap_owned_rgba_region_release(&mut thumbnail);
 		}
+
 		let _ = fs::remove_file(path_buf);
 	}
 
@@ -4566,8 +4595,10 @@ mod tests {
 		assert_eq!(rendered.width, 100);
 		assert_eq!(rendered.height, 98);
 		assert_eq!(rendered.len, 100 * 98 * 4);
-		let bytes = unsafe { std::slice::from_raw_parts(rendered.rgba, rendered.len) };
+
+		let bytes = unsafe { slice::from_raw_parts(rendered.rgba, rendered.len) };
 		let first_source_pixel = ((48 * rendered.width as usize) + 48) * 4;
+
 		assert_eq!(&bytes[first_source_pixel..first_source_pixel + 4], &[255, 255, 255, 255]);
 
 		unsafe {
@@ -4908,13 +4939,16 @@ mod tests {
 
 	fn auto_center_frame(width: u32, height: u32, content: Option<RsnapPixelRect>) -> Vec<u8> {
 		let mut rgba = vec![180_u8; (width * height * 4) as usize];
+
 		for pixel in rgba.chunks_exact_mut(4) {
 			pixel[3] = 255;
 		}
+
 		if let Some(content) = content {
 			for y in content.y..content.y + content.height {
 				for x in content.x..content.x + content.width {
 					let offset = ((y * width + x) * 4) as usize;
+
 					rgba[offset] = 24;
 					rgba[offset + 1] = 32;
 					rgba[offset + 2] = 40;
@@ -4927,9 +4961,11 @@ mod tests {
 
 	fn bgra_frame(width: u32, height: u32, bytes_per_row: usize) -> Vec<u8> {
 		let mut bytes = vec![0xEE; bytes_per_row * height as usize];
+
 		for y in 0..height {
 			for x in 0..width {
 				let offset = y as usize * bytes_per_row + x as usize * 4;
+
 				bytes[offset] = 30 + y as u8 * 15 + x as u8;
 				bytes[offset + 1] = 20 + y as u8 * 10 + x as u8;
 				bytes[offset + 2] = 10 + y as u8 * 5 + x as u8;

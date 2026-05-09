@@ -10,7 +10,11 @@ use crate::overlay::tests::{
 	FrozenBrushStroke, FrozenBrushStyle, FrozenCommittedOverlay, FrozenEditKind,
 	FrozenExportTransform, FrozenTextAnnotation, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarTool, GlobalPoint, Ime, Instant, Key, MonitorRect, MouseScrollDelta, NamedKey,
-	OverlaySession, PhysicalPosition, Pos2, RectPoints, Rgba, Vec2, overlay,
+	OverlaySession, PhysicalPosition, Pos2, RectPoints, Rgba, Vec2,
+	overlay::{
+		self, FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
+		FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
+	},
 };
 
 #[test]
@@ -73,7 +77,7 @@ fn rendered_frozen_brush_points_round_corners_into_a_curve() {
 	let points = [Pos2::new(1.0, 1.0), Pos2::new(1.0, 5.0), Pos2::new(5.0, 5.0)];
 	let rendered = OverlaySession::rendered_frozen_brush_points(
 		&points,
-		overlay::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
+		FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
 	);
 
 	assert_eq!(rendered.first().copied(), Some(points[0]));
@@ -265,7 +269,7 @@ fn rendered_live_frozen_brush_wave_preview_avoids_hard_inflection_kinks() {
 	for (index, point) in raw_points.iter().copied().enumerate().skip(1) {
 		let sampled_at = started_at
 			+ Duration::from_secs_f32(
-				index as f32 * overlay::FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
+				index as f32 * FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
 			);
 
 		OverlaySession::append_frozen_brush_raw_sample(&mut stroke, point, sampled_at);
@@ -274,7 +278,7 @@ fn rendered_live_frozen_brush_wave_preview_avoids_hard_inflection_kinks() {
 	let preview = OverlaySession::preview_frozen_brush_points(&stroke);
 	let rendered = OverlaySession::rendered_frozen_brush_points(
 		&preview,
-		overlay::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
+		FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
 	);
 	let max_turn_angle = rendered.windows(3).fold(0.0_f32, |max_turn, window| {
 		max_turn.max(OverlaySession::frozen_brush_turn_angle(window[0], window[1], window[2]))
@@ -312,7 +316,7 @@ fn rendered_live_frozen_brush_arc_preview_avoids_corner_snap() {
 	for (index, point) in raw_points.iter().copied().enumerate().skip(1) {
 		let sampled_at = started_at
 			+ Duration::from_secs_f32(
-				index as f32 * overlay::FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
+				index as f32 * FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
 			);
 
 		OverlaySession::append_frozen_brush_raw_sample(&mut stroke, point, sampled_at);
@@ -321,7 +325,7 @@ fn rendered_live_frozen_brush_arc_preview_avoids_corner_snap() {
 	let preview = OverlaySession::preview_frozen_brush_points(&stroke);
 	let rendered = OverlaySession::rendered_frozen_brush_points(
 		&preview,
-		overlay::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
+		FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
 	);
 	let max_turn_angle = rendered.windows(3).fold(0.0_f32, |max_turn, window| {
 		max_turn.max(OverlaySession::frozen_brush_turn_angle(window[0], window[1], window[2]))
@@ -366,7 +370,7 @@ fn rendered_live_frozen_brush_suppresses_slow_straight_wobble() {
 	for (index, point) in raw_points.iter().copied().enumerate().skip(1) {
 		let sampled_at = started_at
 			+ Duration::from_secs_f32(
-				index as f32 * overlay::FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
+				index as f32 * FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
 			);
 
 		OverlaySession::append_frozen_brush_raw_sample(&mut stroke, point, sampled_at);
@@ -375,7 +379,7 @@ fn rendered_live_frozen_brush_suppresses_slow_straight_wobble() {
 	let preview = OverlaySession::preview_frozen_brush_points(&stroke);
 	let rendered = OverlaySession::rendered_frozen_brush_points(
 		&preview,
-		overlay::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
+		FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
 	);
 	let (min_y, max_y) = rendered.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |acc, point| {
 		(acc.0.min(point.y), acc.1.max(point.y))
