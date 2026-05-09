@@ -85,8 +85,10 @@ Defines:
   was built without Liquid Glass API support.
 - HUD opacity: `0.4999747693194925`.
 - HUD blur: `0.5032628676470589`.
-- HUD tint: `0.4990234375`.
-- HUD tint hue: `0.6074879184861536`.
+- HUD tint: `0.3034524356617647`.
+- HUD tint hue: `0.6399984993939073`.
+- HUD tint saturation: `0.9915479812300032`.
+- HUD tint brightness: `0.5749928951`.
 - Loupe sample size: small.
 - Sparkle update mode: install in release builds.
 
