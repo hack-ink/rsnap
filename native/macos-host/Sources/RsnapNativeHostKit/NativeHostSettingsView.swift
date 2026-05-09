@@ -1362,24 +1362,25 @@ private struct CaptureFramePresetSwatch: View {
 		for background: CaptureFrameBackgroundPreference
 	) -> LinearGradient {
 		let plan = CaptureFrameEffectRenderer.backgroundPlan(for: background)
-		let stops = zip(
-			plan?.colorStops ?? fallbackColorStops,
-			plan?.locations ?? fallbackLocations
-		)
-		.map { color, location in
-			Gradient.Stop(
-				color: Color(
-					red: Double(color.red),
-					green: Double(color.green),
-					blue: Double(color.blue),
-					opacity: Double(color.alpha)
-				),
-				location: location.clamped(to: 0...1)
+		let colorStops: [CaptureFrameColorStop] = plan?.colorStops ?? fallbackColorStops
+		let locations: [CGFloat] = plan?.locations ?? fallbackLocations
+		var gradientStops: [Gradient.Stop] = []
+
+		for index in colorStops.indices {
+			let colorStop = colorStops[index]
+			let location = locations.indices.contains(index) ? locations[index] : CGFloat(index)
+			let color = Color(
+				red: Double(colorStop.red),
+				green: Double(colorStop.green),
+				blue: Double(colorStop.blue),
+				opacity: Double(colorStop.alpha)
 			)
+			gradientStops.append(
+				Gradient.Stop(color: color, location: location.clamped(to: 0...1)))
 		}
 
 		return LinearGradient(
-			gradient: Gradient(stops: stops),
+			gradient: Gradient(stops: gradientStops),
 			startPoint: .topLeading,
 			endPoint: .bottomTrailing
 		)
