@@ -4,7 +4,9 @@
 //! new host/core direction with an opaque session handle, FFI-safe config/event
 //! structs, and copy-out scene/request snapshots.
 
+use std::ffi::CStr;
 use std::mem;
+use std::os::raw::c_char;
 use std::ptr::{self, NonNull};
 use std::slice;
 
@@ -28,7 +30,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 28;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 29;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -1282,6 +1284,52 @@ pub unsafe extern "C" fn rsnap_capture_frame_wallpaper_request_plan(
 
 	unsafe {
 		ptr::write(out_request, encode_capture_frame_wallpaper_request(request));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Decodes a PNG wallpaper thumbnail with Rust's streaming low-memory path.
+///
+/// Non-PNG paths and decode failures return `Empty` so native hosts can skip wallpaper drawing.
+///
+/// # Safety
+///
+/// `path` must be a valid null-terminated UTF-8 string, and `out_region` must be a valid writable
+/// pointer. When `Ok` is returned, the caller must release the returned buffer with
+/// `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_capture_frame_wallpaper_png_thumbnail(
+	path: *const c_char,
+	target_pixel_size: u32,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	unsafe {
+		ptr::write(out_region, RsnapOwnedRgbaRegion::default());
+	}
+
+	if path.is_null() || target_pixel_size == 0 {
+		return RsnapStatus::InvalidInput;
+	}
+
+	let Ok(path) = (unsafe { CStr::from_ptr(path) }).to_str() else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	let Ok(Some(thumbnail)) =
+		rsnap_capture_core::capture_frame_wallpaper_png_thumbnail(path, target_pixel_size)
+	else {
+		return RsnapStatus::Empty;
+	};
+	let image = thumbnail.into_image();
+	let out = owned_region_from_raw_rgba(image.width(), image.height(), image.into_raw());
+
+	unsafe {
+		ptr::write(out_region, out);
 	}
 
 	RsnapStatus::Ok
@@ -2658,6 +2706,8 @@ fn encode_window(window: WindowRect) -> RsnapWindowRect {
 
 #[cfg(test)]
 mod tests {
+	use std::ffi::CString;
+	use std::fs;
 	use std::ptr;
 
 	use crate::{
@@ -2666,12 +2716,12 @@ mod tests {
 		RsnapCaptureFrameSourceKind, RsnapCaptureFrameWallpaperRequest, RsnapCursorIntent,
 		RsnapFloatRect, RsnapFrozenSelectionTransformKind, RsnapHostEvent, RsnapHostEventKind,
 		RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind, RsnapHostRequestValue,
-		RsnapMonitorRect, RsnapOwnedBytes, RsnapPixelRect, RsnapPlatformTag, RsnapPoint, RsnapRect,
-		RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan, RsnapSessionConfig,
-		RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
+		RsnapMonitorRect, RsnapOwnedBytes, RsnapOwnedRgbaRegion, RsnapPixelRect, RsnapPlatformTag,
+		RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan,
+		RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
 	};
 	#[cfg(target_os = "macos")]
-	use crate::{RsnapOwnedRgbaRegion, RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
+	use crate::{RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
 
 	fn default_config() -> RsnapSessionConfig {
 		RsnapSessionConfig {
@@ -3144,6 +3194,40 @@ mod tests {
 		};
 
 		assert_eq!(status, RsnapStatus::Empty);
+	}
+
+	#[test]
+	fn ffi_capture_frame_wallpaper_png_thumbnail_returns_owned_region() {
+		let path_buf = std::env::temp_dir()
+			.join(format!("rsnap-ffi-wallpaper-thumb-{}-rgba.png", std::process::id()));
+		let png = rsnap_capture_core::RgbaExportImage::from_raw(
+			4,
+			2,
+			vec![
+				255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 0,
+				255, 0, 255, 255, 255, 255, 0, 255, 255, 20, 30, 40, 255,
+			],
+		)
+		.expect("test RGBA payload should create an image")
+		.to_png_bytes()
+		.expect("test RGBA image should encode as PNG");
+		fs::write(&path_buf, png).expect("test PNG should be written");
+		let path = CString::new(path_buf.to_string_lossy().as_bytes())
+			.expect("test PNG path should not contain interior NUL bytes");
+		let mut thumbnail = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_capture_frame_wallpaper_png_thumbnail(path.as_ptr(), 64, &mut thumbnail)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert!(thumbnail.width <= 64);
+		assert!(thumbnail.height <= 64);
+		assert_eq!(thumbnail.len, thumbnail.width as usize * thumbnail.height as usize * 4);
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut thumbnail);
+		}
+		let _ = fs::remove_file(path_buf);
 	}
 
 	#[test]

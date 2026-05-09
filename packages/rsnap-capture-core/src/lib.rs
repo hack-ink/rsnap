@@ -14,6 +14,7 @@ pub mod mosaic;
 pub mod protocol;
 pub mod selection_transform;
 pub mod session;
+pub mod wallpaper;
 
 pub use self::{
 	auto_center::{
@@ -46,4 +47,5 @@ pub use self::{
 		frozen_selection_transform_hit_test, frozen_selection_transform_rect,
 	},
 	session::CaptureSessionCore,
+	wallpaper::capture_frame_wallpaper_png_thumbnail,
 };

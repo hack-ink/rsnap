@@ -460,6 +460,42 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected capture frame wallpaper request")
 		}
+		let wallpaperFilename =
+			"rsnap-bridge-wallpaper-thumb-\(ProcessInfo.processInfo.processIdentifier).png"
+		let wallpaperPath = FileManager.default.temporaryDirectory
+			.appendingPathComponent(wallpaperFilename)
+		let wallpaperPNG = try RsnapExportEncoder.pngData(
+			from: RGBARegionSnapshot(
+				width: 4,
+				height: 2,
+				rgba: Data([
+					255, 0, 0, 255, 0, 255, 0, 255,
+					0, 0, 255, 255, 255, 255, 255, 255,
+					255, 255, 0, 255, 0, 255, 255, 255,
+					255, 0, 255, 255, 20, 30, 40, 255,
+				])
+			)
+		)
+		try wallpaperPNG.write(to: wallpaperPath)
+		defer {
+			try? FileManager.default.removeItem(at: wallpaperPath)
+		}
+		guard
+			let wallpaperThumbnail = try RsnapWallpaperThumbnailDecoder.pngThumbnail(
+				path: wallpaperPath.path,
+				targetPixelSize: 64
+			),
+			wallpaperThumbnail.width <= 64,
+			wallpaperThumbnail.height <= 64,
+			wallpaperThumbnail.rgba.count
+				== wallpaperThumbnail.width * wallpaperThumbnail.height * 4,
+			try RsnapWallpaperThumbnailDecoder.pngThumbnail(
+				path: "/tmp/rsnap-missing-wallpaper.png",
+				targetPixelSize: 64
+			) == nil
+		else {
+			fatalError("unexpected PNG wallpaper thumbnail decode")
+		}
 		guard
 			let minimapPlan = try RsnapScrollMinimapPlanner.plan(
 				selection: CGRect(x: 100, y: 100, width: 100, height: 100),

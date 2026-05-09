@@ -1,7 +1,8 @@
 #![allow(missing_docs)]
 
 use std::{
-	hint,
+	fs, hint,
+	path::Path,
 	time::{Duration, Instant},
 };
 
@@ -11,11 +12,11 @@ use rsnap_capture_core::{
 	BgraFrameView, CaptureFrameBackgroundKind, CaptureFrameSourceKind, DisplayPointRect,
 	FrozenSelectionTransformInput, FrozenSelectionTransformKind, RectPoints, ScrollMinimapInput,
 	auto_center_margin_balance_shift_points, capture_frame_aspect_fill_crop_rect,
-	capture_frame_background_plan, capture_frame_plan, capture_frame_wallpaper_request_plan,
-	crop_rgba_image, detect_auto_center_content_bounds_rgba, encode_png_lossless_fast,
-	frozen_mosaic_light_privacy_patch, frozen_selection_transform_hit_test,
-	frozen_selection_transform_rect, loupe_patch_rgba_from_bgra_frame, sample_rgb_from_bgra_frame,
-	scroll_minimap_plan,
+	capture_frame_background_plan, capture_frame_plan, capture_frame_wallpaper_png_thumbnail,
+	capture_frame_wallpaper_request_plan, crop_rgba_image, detect_auto_center_content_bounds_rgba,
+	encode_png_lossless_fast, frozen_mosaic_light_privacy_patch,
+	frozen_selection_transform_hit_test, frozen_selection_transform_rect,
+	loupe_patch_rgba_from_bgra_frame, sample_rgb_from_bgra_frame, scroll_minimap_plan,
 };
 use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
@@ -54,6 +55,8 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 	verify_scroll_minimap_plan()?;
 	verify_frozen_selection_transform()?;
 	verify_auto_center_content_bounds(&auto_center_image)?;
+	let wallpaper_fixture = write_wallpaper_fixture_png()?;
+	verify_wallpaper_png_thumbnail(&wallpaper_fixture)?;
 
 	results.push(time_case(
 		"export_png_lossless_fast_1440x900",
@@ -131,6 +134,20 @@ fn run_export_cases(results: &mut Vec<PerfCaseResult>) -> Result<()> {
 			]))
 		},
 	)?);
+
+	results.push(time_case(
+		"wallpaper_png_thumbnail_stream_lanczos_512x288_to_128",
+		20,
+		Duration::from_millis(500),
+		|| {
+			let thumbnail = capture_frame_wallpaper_png_thumbnail(&wallpaper_fixture, 128)?
+				.ok_or_else(|| eyre!("wallpaper thumbnail performance fixture is invalid"))?;
+
+			Ok(checksum_bytes(thumbnail.as_raw()))
+		},
+	)?);
+
+	let _ = fs::remove_file(wallpaper_fixture);
 
 	Ok(())
 }
@@ -463,6 +480,20 @@ fn verify_auto_center_content_bounds(image: &RgbaImage) -> Result<()> {
 	Ok(())
 }
 
+fn verify_wallpaper_png_thumbnail(path: &Path) -> Result<()> {
+	let thumbnail = capture_frame_wallpaper_png_thumbnail(path, 128)?
+		.ok_or_else(|| eyre!("wallpaper thumbnail fixture did not decode"))?;
+
+	ensure!(thumbnail.width() <= 128, "wallpaper thumbnail width exceeded target");
+	ensure!(thumbnail.height() <= 128, "wallpaper thumbnail height exceeded target");
+	ensure!(
+		thumbnail.as_raw().len() == thumbnail.width() as usize * thumbnail.height() as usize * 4,
+		"wallpaper thumbnail byte length changed"
+	);
+
+	Ok(())
+}
+
 fn verify_scroll_fingerprint(
 	scenario: ScrollCaptureBenchScenario,
 	metrics: ScrollCaptureFingerprintMetrics,
@@ -560,6 +591,18 @@ fn build_export_fixture(width: u32, height: u32) -> RgbaImage {
 
 		Rgba([r, g, b, a])
 	})
+}
+
+fn write_wallpaper_fixture_png() -> Result<std::path::PathBuf> {
+	let image = build_export_fixture(512, 288);
+	let png = encode_png_lossless_fast(&image)?;
+	let path = std::env::temp_dir()
+		.join(format!("rsnap-perf-wallpaper-fixture-{}.png", std::process::id()));
+	fs::write(&path, png).map_err(|error| {
+		eyre!("failed to write wallpaper performance fixture {}: {error}", path.display())
+	})?;
+
+	Ok(path)
 }
 
 fn build_auto_center_fixture(width: u32, height: u32, content: RectPoints) -> RgbaImage {
