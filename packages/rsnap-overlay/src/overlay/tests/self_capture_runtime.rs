@@ -4,7 +4,9 @@ use std::ptr;
 #[cfg(target_os = "macos")]
 use image::{Rgba, RgbaImage};
 
+#[cfg(target_os = "macos")]
 use crate::overlay::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT;
+#[cfg(target_os = "macos")]
 use crate::overlay::LiveClickCaptureTarget;
 #[cfg(target_os = "macos")]
 use crate::overlay::OverlayMode;
