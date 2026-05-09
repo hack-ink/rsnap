@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 29u
+#define RSNAP_HOST_FFI_ABI_VERSION 30u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -277,6 +277,11 @@ typedef enum RsnapCaptureFrameBackgroundKind {
 	RSNAP_CAPTURE_FRAME_BACKGROUND_LINEN = 3,
 } RsnapCaptureFrameBackgroundKind;
 
+typedef enum RsnapCaptureFrameRenderKind {
+	RSNAP_CAPTURE_FRAME_RENDER_FRAMED_CAPTURE = 0,
+	RSNAP_CAPTURE_FRAME_RENDER_WINDOW_SNAPSHOT = 1,
+} RsnapCaptureFrameRenderKind;
+
 typedef struct RsnapCaptureFrameColorStop {
 	double red;
 	double green;
@@ -463,6 +468,18 @@ enum RsnapStatus rsnap_capture_frame_wallpaper_request_plan(
 enum RsnapStatus rsnap_capture_frame_wallpaper_png_thumbnail(
 	const char *path,
 	uint32_t target_pixel_size,
+	struct RsnapOwnedRgbaRegion *out_region
+);
+enum RsnapStatus rsnap_capture_frame_render_rgba(
+	uint32_t source_width,
+	uint32_t source_height,
+	const uint8_t *source_rgba,
+	size_t source_rgba_len,
+	double screen_scale_factor,
+	enum RsnapCaptureFrameSourceKind source_kind,
+	enum RsnapCaptureFrameBackgroundKind background_kind,
+	enum RsnapCaptureFrameRenderKind render_kind,
+	const char *wallpaper_path,
 	struct RsnapOwnedRgbaRegion *out_region
 );
 enum RsnapStatus rsnap_scroll_minimap_plan(

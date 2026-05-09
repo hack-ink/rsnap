@@ -24,9 +24,10 @@ pub use self::{
 	bgra_frame::{BgraFrameView, loupe_patch_rgba_from_bgra_frame, sample_rgb_from_bgra_frame},
 	capture_frame::{
 		CaptureFrameBackgroundKind, CaptureFrameBackgroundPlan, CaptureFrameColorStop,
-		CaptureFramePlan, CaptureFrameShadow, CaptureFrameSourceKind, CaptureFrameWallpaperRequest,
-		capture_frame_aspect_fill_crop_rect, capture_frame_background_plan, capture_frame_plan,
-		capture_frame_wallpaper_request_plan,
+		CaptureFramePlan, CaptureFrameRenderImageRef, CaptureFrameRenderKind, CaptureFrameShadow,
+		CaptureFrameSourceKind, CaptureFrameWallpaperRequest, capture_frame_aspect_fill_crop_rect,
+		capture_frame_background_plan, capture_frame_plan, capture_frame_wallpaper_request_plan,
+		render_capture_frame_effect,
 	},
 	export::{DisplayPointRect, frozen_display_crop_rect},
 	export::{RgbaExportImage, crop_export_image, crop_rgba_image, encode_png_lossless_fast},
@@ -47,5 +48,7 @@ pub use self::{
 		frozen_selection_transform_hit_test, frozen_selection_transform_rect,
 	},
 	session::CaptureSessionCore,
-	wallpaper::capture_frame_wallpaper_png_thumbnail,
+	wallpaper::{
+		capture_frame_wallpaper_png_thumbnail, capture_frame_wallpaper_png_thumbnail_cached,
+	},
 };

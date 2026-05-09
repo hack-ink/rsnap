@@ -9,14 +9,16 @@ use std::{
 use color_eyre::eyre::{Result, ensure, eyre};
 use image::{Rgba, RgbaImage};
 use rsnap_capture_core::{
-	BgraFrameView, CaptureFrameBackgroundKind, CaptureFrameSourceKind, DisplayPointRect,
-	FrozenSelectionTransformInput, FrozenSelectionTransformKind, RectPoints, ScrollMinimapInput,
+	BgraFrameView, CaptureFrameBackgroundKind, CaptureFrameRenderImageRef, CaptureFrameRenderKind,
+	CaptureFrameSourceKind, DisplayPointRect, FrozenSelectionTransformInput,
+	FrozenSelectionTransformKind, RectPoints, ScrollMinimapInput,
 	auto_center_margin_balance_shift_points, capture_frame_aspect_fill_crop_rect,
 	capture_frame_background_plan, capture_frame_plan, capture_frame_wallpaper_png_thumbnail,
 	capture_frame_wallpaper_request_plan, crop_rgba_image, detect_auto_center_content_bounds_rgba,
 	encode_png_lossless_fast, frozen_mosaic_light_privacy_patch,
 	frozen_selection_transform_hit_test, frozen_selection_transform_rect,
-	loupe_patch_rgba_from_bgra_frame, sample_rgb_from_bgra_frame, scroll_minimap_plan,
+	loupe_patch_rgba_from_bgra_frame, render_capture_frame_effect, sample_rgb_from_bgra_frame,
+	scroll_minimap_plan,
 };
 use rsnap_overlay::bench_support::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
@@ -180,6 +182,13 @@ fn run_scroll_minimap_perf_case(results: &mut Vec<PerfCaseResult>) -> Result<()>
 }
 
 fn run_capture_frame_perf_case(results: &mut Vec<PerfCaseResult>) -> Result<()> {
+	let source_image = build_export_fixture(1_440, 900);
+	let source = CaptureFrameRenderImageRef::new(
+		source_image.width(),
+		source_image.height(),
+		source_image.as_raw(),
+	)?;
+
 	results.push(time_case(
 		"capture_frame_plan_and_background_1440x900",
 		10_000,
@@ -223,6 +232,25 @@ fn run_capture_frame_perf_case(results: &mut Vec<PerfCaseResult>) -> Result<()> 
 				f64::from(wallpaper_request.target_pixel_size),
 				wallpaper_request.overlay_alpha,
 			]))
+		},
+	)?);
+
+	results.push(time_case(
+		"capture_frame_render_rgba_1440x900",
+		4,
+		Duration::from_millis(1_200),
+		|| {
+			let rendered = render_capture_frame_effect(
+				source,
+				CaptureFrameBackgroundKind::Aurora,
+				2.0,
+				CaptureFrameSourceKind::Window,
+				CaptureFrameRenderKind::FramedCapture,
+				None,
+			)?
+			.ok_or_else(|| eyre!("capture frame render performance fixture is invalid"))?;
+
+			Ok(checksum_bytes(rendered.as_raw()))
 		},
 	)?);
 
@@ -423,6 +451,24 @@ fn verify_capture_frame_plan() -> Result<()> {
 	.ok_or_else(|| eyre!("capture frame wallpaper request fixture is invalid"))?;
 	ensure!(wallpaper_request.target_pixel_size == 1536, "capture frame wallpaper target changed");
 	ensure!(wallpaper_request.overlay_alpha == 0.10, "capture frame wallpaper overlay changed");
+
+	let source_rgba = vec![255; 4 * 2 * 4];
+	let source = CaptureFrameRenderImageRef::new(4, 2, &source_rgba)?;
+	let rendered = render_capture_frame_effect(
+		source,
+		CaptureFrameBackgroundKind::Aurora,
+		2.0,
+		CaptureFrameSourceKind::DragRegion,
+		CaptureFrameRenderKind::WindowSnapshot,
+		None,
+	)?
+	.ok_or_else(|| eyre!("capture frame render fixture is invalid"))?;
+	ensure!(rendered.width() == 100, "capture frame render width changed");
+	ensure!(rendered.height() == 98, "capture frame render height changed");
+	ensure!(
+		rendered.as_raw()[((48 * 100 + 48) * 4)..((48 * 100 + 49) * 4)] == [255, 255, 255, 255],
+		"capture frame render source pixels changed"
+	);
 
 	Ok(())
 }

@@ -113,6 +113,20 @@ public enum CaptureFrameBackgroundKind: UInt32, Equatable, Sendable {
 	}
 }
 
+public enum CaptureFrameRenderKind: UInt32, Equatable, Sendable {
+	case framedCapture = 0
+	case windowSnapshot = 1
+
+	fileprivate var ffiKind: RsnapCaptureFrameRenderKind {
+		switch self {
+		case .framedCapture:
+			RSNAP_CAPTURE_FRAME_RENDER_FRAMED_CAPTURE
+		case .windowSnapshot:
+			RSNAP_CAPTURE_FRAME_RENDER_WINDOW_SNAPSHOT
+		}
+	}
+}
+
 public struct CaptureFrameColorStop: Equatable, Sendable {
 	public var red: CGFloat
 	public var green: CGFloat
@@ -336,6 +350,91 @@ public enum RsnapCaptureFramePlanner {
 			offset: CGSize(width: shadow.offset_x, height: shadow.offset_y),
 			blur: CGFloat(shadow.blur),
 			alpha: CGFloat(shadow.alpha)
+		)
+	}
+}
+
+public enum RsnapCaptureFrameRenderer {
+	public static func render(
+		source: RGBARegionSnapshot,
+		background: CaptureFrameBackgroundKind,
+		screenScaleFactor: CGFloat,
+		sourceKind: CaptureFrameSourceKind,
+		renderKind: CaptureFrameRenderKind,
+		wallpaperPath: String?
+	) throws -> RGBARegionSnapshot? {
+		var outRegion = RsnapOwnedRgbaRegion()
+		let status = source.rgba.withUnsafeBytes { buffer -> RsnapStatus in
+			guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
+				return RSNAP_STATUS_INVALID_INPUT
+			}
+
+			if let wallpaperPath {
+				return wallpaperPath.withCString { wallpaperPathPointer in
+					rsnap_capture_frame_render_rgba(
+						UInt32(max(source.width, 0)),
+						UInt32(max(source.height, 0)),
+						baseAddress,
+						source.rgba.count,
+						Double(screenScaleFactor),
+						sourceKind.ffiKind,
+						background.ffiKind,
+						renderKind.ffiKind,
+						wallpaperPathPointer,
+						&outRegion
+					)
+				}
+			}
+
+			return rsnap_capture_frame_render_rgba(
+				UInt32(max(source.width, 0)),
+				UInt32(max(source.height, 0)),
+				baseAddress,
+				source.rgba.count,
+				Double(screenScaleFactor),
+				sourceKind.ffiKind,
+				background.ffiKind,
+				renderKind.ffiKind,
+				nil,
+				&outRegion
+			)
+		}
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_INVALID_INPUT.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "rendering capture frame")
+
+		return rgbaSnapshot(from: outRegion)
+	}
+
+	private static func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private static func rgbaSnapshot(from outRegion: RsnapOwnedRgbaRegion) -> RGBARegionSnapshot? {
+		guard outRegion.len > 0, let rgba = outRegion.rgba else {
+			return nil
+		}
+
+		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
+		ownedRegion.initialize(to: outRegion)
+		let data = Data(
+			bytesNoCopy: rgba,
+			count: outRegion.len,
+			deallocator: .custom { _, _ in
+				rsnap_owned_rgba_region_release(ownedRegion)
+				ownedRegion.deinitialize(count: 1)
+				ownedRegion.deallocate()
+			}
+		)
+		return RGBARegionSnapshot(
+			width: Int(outRegion.width),
+			height: Int(outRegion.height),
+			rgba: data
 		)
 	}
 }
