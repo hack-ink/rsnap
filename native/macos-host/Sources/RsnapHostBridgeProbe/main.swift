@@ -6,6 +6,27 @@ import RsnapHostBridge
 enum RsnapHostBridgeProbe {
 	static func main() throws {
 		let session = try RsnapHostSession()
+		try verifyLiveDragFreezeLifecycle(session)
+		try verifyClickWindowFreezeLifecycle(session)
+		try verifyFullscreenFreezeLifecycle(session)
+		try verifyLiveWindowClearing(session)
+		try verifyScrollExportPlanning()
+		try verifyBgraFrameSampler()
+		try verifyCaptureFramePlanning()
+		try verifyWallpaperRendering()
+		try verifyMinimapAndTransformPlanning()
+		try verifyFrozenOverlayExport()
+		try verifyFrozenOverlayEditSession()
+
+		print("rsnap-host-bridge probe ok")
+	}
+
+	private static func verifyLiveDragFreezeLifecycle(_ session: RsnapHostSession) throws {
+		try verifyLiveDragSelection(session)
+		try verifyFrozenToolbarInteractions(session)
+	}
+
+	private static func verifyLiveDragSelection(_ session: RsnapHostSession) throws {
 		try session.enterLive()
 
 		let liveRequests = try session.drainRequests()
@@ -110,6 +131,9 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected frozen scene: \(scene)")
 		}
+	}
+
+	private static func verifyFrozenToolbarInteractions(_ session: RsnapHostSession) throws {
 		try session.send(event: .toolbarItemInvoked(.scroll))
 		guard try session.takeNextRequest() == nil else {
 			fatalError("scroll toolbar invocation should stay disabled")
@@ -123,7 +147,7 @@ enum RsnapHostBridgeProbe {
 				highlightedWindow: nil
 			)
 		)
-		scene = try session.currentScene()
+		var scene = try session.currentScene()
 		guard scene.cursorIntent == .resizeEast else {
 			fatalError("unexpected frozen resize cursor: \(scene)")
 		}
@@ -174,7 +198,9 @@ enum RsnapHostBridgeProbe {
 		guard scene.statusMessage == "Host-only status" else {
 			fatalError("unexpected host status message: \(String(describing: scene.statusMessage))")
 		}
+	}
 
+	private static func verifyClickWindowFreezeLifecycle(_ session: RsnapHostSession) throws {
 		try session.enterLive()
 		_ = try session.takeNextRequest()
 		let clickSelection = CGRect(x: 300, y: 220, width: 360, height: 260)
@@ -218,11 +244,13 @@ enum RsnapHostBridgeProbe {
 				highlightedWindow: nil
 			)
 		)
-		scene = try session.currentScene()
+		let scene = try session.currentScene()
 		guard scene.mode == .frozen, scene.cursorIntent == .default else {
 			fatalError("unexpected click-window frozen cursor: \(scene)")
 		}
+	}
 
+	private static func verifyFullscreenFreezeLifecycle(_ session: RsnapHostSession) throws {
 		try session.enterLive()
 		_ = try session.takeNextRequest()
 		let fullscreenMonitor = MonitorSnapshot(
@@ -262,11 +290,13 @@ enum RsnapHostBridgeProbe {
 				highlightedWindow: nil
 			)
 		)
-		scene = try session.currentScene()
+		let scene = try session.currentScene()
 		guard scene.mode == .frozen, scene.cursorIntent == .default else {
 			fatalError("unexpected fullscreen frozen cursor: \(scene)")
 		}
+	}
 
+	private static func verifyLiveWindowClearing(_ session: RsnapHostSession) throws {
 		try session.enterLive()
 		_ = try session.takeNextRequest()
 		try session.send(
@@ -284,7 +314,7 @@ enum RsnapHostBridgeProbe {
 				)
 			)
 		)
-		scene = try session.currentScene()
+		var scene = try session.currentScene()
 		guard
 			scene.mode == .live,
 			scene.activeMonitor?.id == 11,
@@ -310,7 +340,9 @@ enum RsnapHostBridgeProbe {
 		guard scene.highlightedWindow == nil else {
 			fatalError("stale live highlighted window was not cleared: \(scene)")
 		}
+	}
 
+	private static func verifyScrollExportPlanning() throws {
 		let baseScrollFrame = makeScrollFrame(width: 16, height: 96, topRow: 0)
 		let movedScrollFrame = makeScrollFrame(width: 16, height: 96, topRow: 24)
 		let scrollSession = try RsnapScrollCaptureSession(
@@ -375,6 +407,9 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected frozen mosaic privacy patch")
 		}
+	}
+
+	private static func verifyBgraFrameSampler() throws {
 		let bgraFrame = makeBgraFrame(width: 4, height: 3)
 		try bgraFrame.withUnsafeBytes { buffer in
 			guard let baseAddress = buffer.baseAddress else {
@@ -410,6 +445,9 @@ enum RsnapHostBridgeProbe {
 				fatalError("unexpected BGRA loupe patch")
 			}
 		}
+	}
+
+	private static func verifyCaptureFramePlanning() throws {
 		guard
 			let framePlan = try RsnapCaptureFramePlanner.plan(
 				imageWidth: 320,
@@ -460,6 +498,9 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected capture frame wallpaper request")
 		}
+	}
+
+	private static func verifyWallpaperRendering() throws {
 		let wallpaperFilename =
 			"rsnap-bridge-wallpaper-thumb-\(ProcessInfo.processInfo.processIdentifier).png"
 		let wallpaperPath = FileManager.default.temporaryDirectory
@@ -514,6 +555,9 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected capture frame render")
 		}
+	}
+
+	private static func verifyMinimapAndTransformPlanning() throws {
 		guard
 			let minimapPlan = try RsnapScrollMinimapPlanner.plan(
 				selection: CGRect(x: 100, y: 100, width: 100, height: 100),
@@ -568,6 +612,9 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected auto-center plan")
 		}
+	}
+
+	private static func verifyFrozenOverlayExport() throws {
 		let overlayBase = makeAutoCenterFrame(
 			width: 64,
 			height: 40,
@@ -609,9 +656,6 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected frozen overlay export render")
 		}
-		try verifyFrozenOverlayEditSession()
-
-		print("rsnap-host-bridge probe ok")
 	}
 
 	private static func verifyFrozenOverlayEditSession() throws {
