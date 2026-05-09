@@ -19,7 +19,7 @@ enum RsnapHostBridgeProbe {
 				rgb: RGBSample(r: 1, g: 2, b: 3),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: WindowSnapshot(
@@ -33,7 +33,7 @@ enum RsnapHostBridgeProbe {
 				point: CGPoint(x: 120, y: 180),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: WindowSnapshot(
@@ -47,7 +47,7 @@ enum RsnapHostBridgeProbe {
 				point: CGPoint(x: 260, y: 320),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: WindowSnapshot(
@@ -65,7 +65,7 @@ enum RsnapHostBridgeProbe {
 				point: CGPoint(x: 260, y: 320),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: WindowSnapshot(
@@ -104,7 +104,7 @@ enum RsnapHostBridgeProbe {
 			scene.statusMessage == nil,
 			scene.toolbarItems.contains(where: { $0.kind == .pointer && $0.selected }),
 			scene.toolbarItems.contains(where: { $0.kind == .ocr && $0.enabled }),
-			!scene.toolbarItems.contains(where: { $0.kind == .scroll }),
+			scene.toolbarItems.contains(where: { $0.kind == .scroll }) == false,
 			scene.toolbarItems.contains(where: { $0.kind == .copy && $0.enabled }),
 			scene.toolbarItems.contains(where: { $0.kind == .save && $0.enabled })
 		else {
@@ -141,7 +141,7 @@ enum RsnapHostBridgeProbe {
 		guard
 			scene.cursorIntent == .text,
 			scene.toolbarItems.contains(where: { $0.kind == .text && $0.selected }),
-			!scene.toolbarItems.contains(where: { $0.kind == .pointer && $0.selected })
+			scene.toolbarItems.contains(where: { $0.kind == .pointer && $0.selected }) == false
 		else {
 			fatalError("unexpected text-tool scene: \(scene)")
 		}
@@ -184,7 +184,7 @@ enum RsnapHostBridgeProbe {
 				point: CGPoint(x: 420, y: 340),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: clickWindow
@@ -195,7 +195,7 @@ enum RsnapHostBridgeProbe {
 				point: CGPoint(x: 420, y: 340),
 				activeMonitor: MonitorSnapshot(
 					id: 9,
-					frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+					frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: clickWindow
@@ -227,7 +227,7 @@ enum RsnapHostBridgeProbe {
 		_ = try session.takeNextRequest()
 		let fullscreenMonitor = MonitorSnapshot(
 			id: 10,
-			frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+			frame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 			scaleFactorX1000: 2_000
 		)
 		try session.send(
@@ -275,12 +275,12 @@ enum RsnapHostBridgeProbe {
 				rgb: nil,
 				activeMonitor: MonitorSnapshot(
 					id: 11,
-					frame: CGRect(x: 1440, y: 0, width: 1728, height: 1117),
+					frame: CGRect(x: 1_440, y: 0, width: 1_728, height: 1_117),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: WindowSnapshot(
 					windowID: 77,
-					frame: CGRect(x: 1500, y: 100, width: 500, height: 400)
+					frame: CGRect(x: 1_500, y: 100, width: 500, height: 400)
 				)
 			)
 		)
@@ -288,19 +288,19 @@ enum RsnapHostBridgeProbe {
 		guard
 			scene.mode == .live,
 			scene.activeMonitor?.id == 11,
-			scene.activeMonitor?.frame == CGRect(x: 1440, y: 0, width: 1728, height: 1117),
+			scene.activeMonitor?.frame == CGRect(x: 1_440, y: 0, width: 1_728, height: 1_117),
 			scene.highlightedWindow?.windowID == 77,
-			scene.highlightedWindow?.frame == CGRect(x: 1500, y: 100, width: 500, height: 400)
+			scene.highlightedWindow?.frame == CGRect(x: 1_500, y: 100, width: 500, height: 400)
 		else {
 			fatalError("unexpected live monitor/window scene: \(scene)")
 		}
 		try session.send(
 			event: .pointerMoved(
-				point: CGPoint(x: 2600, y: 800),
+				point: CGPoint(x: 2_600, y: 800),
 				rgb: nil,
 				activeMonitor: MonitorSnapshot(
 					id: 11,
-					frame: CGRect(x: 1440, y: 0, width: 1728, height: 1117),
+					frame: CGRect(x: 1_440, y: 0, width: 1_728, height: 1_117),
 					scaleFactorX1000: 2_000
 				),
 				highlightedWindow: nil
@@ -344,12 +344,12 @@ enum RsnapHostBridgeProbe {
 			fatalError("unexpected cropped PNG export dimensions")
 		}
 		let frozenDisplayCrop = try RsnapExportEncoder.frozenDisplayCropRect(
-			imageWidth: 2880,
-			imageHeight: 1800,
-			displayFrame: CGRect(x: 0, y: 0, width: 1440, height: 900),
+			imageWidth: 2_880,
+			imageHeight: 1_800,
+			displayFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
 			selection: CGRect(x: 100, y: 200, width: 300, height: 150)
 		)
-		guard frozenDisplayCrop == CGRect(x: 200, y: 1100, width: 600, height: 300) else {
+		guard frozenDisplayCrop == CGRect(x: 200, y: 1_100, width: 600, height: 300) else {
 			fatalError("unexpected frozen display crop rect")
 		}
 		let emptyFrozenDisplayCrop = try RsnapExportEncoder.frozenDisplayCropRect(
@@ -428,9 +428,9 @@ enum RsnapHostBridgeProbe {
 		}
 		guard
 			try RsnapCaptureFramePlanner.aspectFillCropRect(
-				sourceWidth: 1600,
+				sourceWidth: 1_600,
 				sourceHeight: 900,
-				destinationSize: CGSize(width: 1000, height: 1000)
+				destinationSize: CGSize(width: 1_000, height: 1_000)
 			) == CGRect(x: 350, y: 0, width: 900, height: 900)
 		else {
 			fatalError("unexpected capture frame aspect-fill crop rect")
@@ -451,11 +451,11 @@ enum RsnapHostBridgeProbe {
 		guard
 			try RsnapCaptureFramePlanner.wallpaperRequestPlan(
 				for: .systemWallpaper,
-				destinationSize: CGSize(width: 1535.2, height: 996)
-			) == CaptureFrameWallpaperRequest(targetPixelSize: 1536, overlayAlpha: 0.10),
+				destinationSize: CGSize(width: 1_535.2, height: 996)
+			) == CaptureFrameWallpaperRequest(targetPixelSize: 1_536, overlayAlpha: 0.10),
 			try RsnapCaptureFramePlanner.wallpaperRequestPlan(
 				for: .aurora,
-				destinationSize: CGSize(width: 1536, height: 996)
+				destinationSize: CGSize(width: 1_536, height: 996)
 			) == nil
 		else {
 			fatalError("unexpected capture frame wallpaper request")
@@ -641,7 +641,7 @@ enum RsnapHostBridgeProbe {
 		var snapshot = try editSession.snapshot()
 		guard
 			snapshot.canUndo,
-			!snapshot.canRedo,
+			snapshot.canRedo == false,
 			snapshot.keepsFrozenSelectionFixed,
 			snapshot.activeTextEdit == nil,
 			snapshot.elements.count == 1,

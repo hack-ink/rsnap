@@ -306,7 +306,7 @@ private final class FrozenOverlayExportFFIStorage {
 
 	private func allocatePoints(_ points: [CGPoint]) -> UnsafeMutableBufferPointer<RsnapFloatPoint>
 	{
-		guard !points.isEmpty else {
+		guard points.isEmpty == false else {
 			return UnsafeMutableBufferPointer(start: nil, count: 0)
 		}
 		let encoded = points.map(Self.encode(point:))

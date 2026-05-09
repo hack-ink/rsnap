@@ -114,7 +114,7 @@ enum PhosphorToolbarIcons {
 	}
 
 	private static func ensureRegistered() {
-		guard !didAttemptRegisterFonts else {
+		guard didAttemptRegisterFonts == false else {
 			return
 		}
 		didAttemptRegisterFonts = true
@@ -433,7 +433,7 @@ private final class LiveChromeBackdropWindow: NSWindow {
 		}
 
 		renderView.update(theme: theme, settings: settings)
-		if !isPresented {
+		if isPresented == false {
 			orderFrontRegardless()
 			isPresented = true
 		}

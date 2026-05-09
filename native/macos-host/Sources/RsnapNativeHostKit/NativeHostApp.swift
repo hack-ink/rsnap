@@ -118,7 +118,7 @@ private struct NativeHostFeedbackSound {
 		}
 		sound.stop()
 		sound.currentTime = 0
-		if !sound.play() {
+		if sound.play() == false {
 			NativeHostTelemetry.lifecycleWarning(playFailedEvent)
 		}
 	}
@@ -251,7 +251,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		})
 
 	public func finishLaunching() {
-		guard !didBootstrap else {
+		guard didBootstrap == false else {
 			return
 		}
 		didBootstrap = true
@@ -397,12 +397,12 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		source: String,
 		oncePerLaunch: Bool = false
 	) -> Bool {
-		guard !NativePermissions.screenRecordingGranted else {
+		guard NativePermissions.screenRecordingGranted == false else {
 			permissionRecoveryWindowController.close()
 			return false
 		}
 		if oncePerLaunch {
-			guard !didPresentLaunchPermissionOnboarding else {
+			guard didPresentLaunchPermissionOnboarding == false else {
 				return true
 			}
 			didPresentLaunchPermissionOnboarding = true
@@ -923,7 +923,7 @@ final class CaptureSessionController: NSObject {
 	}
 
 	private func ensureCapturePermissions() -> Bool {
-		guard !NativePermissions.screenRecordingGranted else {
+		guard NativePermissions.screenRecordingGranted == false else {
 			return true
 		}
 		return NativePermissions.requestScreenRecording()
@@ -1513,7 +1513,9 @@ final class CaptureSessionController: NSObject {
 		}
 
 		let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-		guard !flags.contains(.command), !flags.contains(.control), !flags.contains(.option) else {
+		guard flags.contains(.command) == false, flags.contains(.control) == false,
+			flags.contains(.option) == false
+		else {
 			return false
 		}
 		guard let characters = event.characters else {
@@ -1584,7 +1586,7 @@ final class CaptureSessionController: NSObject {
 		guard scene.mode == .live else {
 			return
 		}
-		guard !chromeState.hostLocalFrozenSelecting else {
+		guard chromeState.hostLocalFrozenSelecting == false else {
 			return
 		}
 		chromeState.beginHostLocalFrozenSelecting()
@@ -1596,7 +1598,7 @@ final class CaptureSessionController: NSObject {
 		}
 
 		var pendingRequests = try session.drainRequests()
-		while !pendingRequests.isEmpty {
+		while pendingRequests.isEmpty == false {
 			for request in pendingRequests {
 				try handle(request: request)
 			}
@@ -1611,7 +1613,7 @@ final class CaptureSessionController: NSObject {
 			chromeState.resetLiveChrome()
 		}
 		if scene.mode != .frozen {
-			if !chromeState.hostLocalFrozenSelecting {
+			if chromeState.hostLocalFrozenSelecting == false {
 				chromeState.resetFrozenChrome()
 			}
 		} else if previousMode != .frozen
@@ -1668,7 +1670,7 @@ final class CaptureSessionController: NSObject {
 		case .requestScreenRecordingPermission:
 			let granted = NativePermissions.requestScreenRecording()
 			try session?.send(report: .permissionChanged(.screenRecording, granted: granted))
-			if !granted {
+			if granted == false {
 				try sendHostStatusMessage("Screen recording permission is required.")
 			}
 		}
@@ -2412,7 +2414,7 @@ final class CaptureSessionController: NSObject {
 
 		var clearPasteboardMilliseconds = 0.0
 		var writePasteboardMilliseconds = 0.0
-		if !text.isEmpty {
+		if text.isEmpty == false {
 			let pasteboard = NSPasteboard.general
 			let clearPasteboardStartedAt = ProcessInfo.processInfo.systemUptime
 			pasteboard.clearContents()
@@ -2471,7 +2473,7 @@ final class CaptureSessionController: NSObject {
 			automaticLanguageDetection: automaticallyDetectsLanguage
 		)
 
-		if !text.isEmpty {
+		if text.isEmpty == false {
 			ocrCompletionSound.play()
 		}
 
@@ -2614,7 +2616,7 @@ final class CaptureSessionController: NSObject {
 		}
 		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
 		let screen = screen(containing: selectionCenter)
-		if !hasOverlayEdits,
+		if hasOverlayEdits == false,
 			chromeState.captureFrameSource == .window,
 			let windowImage = captureFrameWindowImage()
 		{
@@ -2884,7 +2886,7 @@ final class CaptureSessionController: NSObject {
 
 	private func compositeFrozenOverlay(on image: CGImage, selection: CGRect) throws -> CGImage {
 		let elements = chromeState.frozenOverlay.exportElements
-		guard !elements.isEmpty else {
+		guard elements.isEmpty == false else {
 			return image
 		}
 
@@ -2912,7 +2914,7 @@ final class CaptureSessionController: NSObject {
 		scale: CGFloat,
 		in context: CGContext
 	) {
-		guard !text.isEmpty else {
+		guard text.isEmpty == false else {
 			return
 		}
 
@@ -3338,7 +3340,7 @@ final class CaptureOverlayController {
 		windowSnapshotFeed.stop()
 		chromeSampleFeed.stop()
 		liveChromeBackdrops.hideAll()
-		guard !windows.isEmpty else {
+		guard windows.isEmpty == false else {
 			focusedWindowNumber = nil
 			collapsedForFrozen = false
 			return
@@ -3554,7 +3556,7 @@ final class CaptureOverlayController {
 			width: sampleSide,
 			height: sampleSide
 		).intersection(source.screenFrame)
-		guard !sampleRect.isNull, sampleRect.width > 0, sampleRect.height > 0 else {
+		guard sampleRect.isNull == false, sampleRect.width > 0, sampleRect.height > 0 else {
 			return nil
 		}
 		guard
@@ -3579,7 +3581,7 @@ final class CaptureOverlayController {
 			width: sampleSide,
 			height: sampleSide
 		).intersection(source.screenFrame)
-		guard !sampleRect.isNull, sampleRect.width > 0, sampleRect.height > 0 else {
+		guard sampleRect.isNull == false, sampleRect.width > 0, sampleRect.height > 0 else {
 			return nil
 		}
 		guard
@@ -3613,7 +3615,7 @@ final class CaptureOverlayController {
 		source: LiveColorSampleSource
 	) -> CGImage? {
 		let displayRect = appKitRectToQuartz(rect, desktopFrame: source.desktopFrame)
-		guard !displayRect.isNull, displayRect.width > 0, displayRect.height > 0 else {
+		guard displayRect.isNull == false, displayRect.width > 0, displayRect.height > 0 else {
 			return nil
 		}
 		return displayCreateImageForRect?(source.displayID, displayRect)?
@@ -3787,11 +3789,11 @@ final class CaptureOverlayController {
 	}
 
 	private func prepareFrozenPresentation(for selection: CGRect) {
-		guard !collapsedForFrozen else {
+		guard collapsedForFrozen == false else {
 			return
 		}
 		collapsedForFrozen = true
-		guard collapsedForFrozen, !windows.isEmpty else {
+		guard collapsedForFrozen, windows.isEmpty == false else {
 			return
 		}
 		windowSnapshotFeed.stop()
@@ -4559,7 +4561,7 @@ final class CaptureHostView: NSView {
 			if recoverReleasedLivePrimaryInteractionIfNeeded(at: point) {
 				return
 			}
-			if !liveDragExceededThreshold,
+			if liveDragExceededThreshold == false,
 				liveDragDistance(from: point) >= Self.liveDragIntentThreshold
 			{
 				liveDragExceededThreshold = true
@@ -4700,10 +4702,10 @@ final class CaptureHostView: NSView {
 
 	private func plainFrozenShortcutAvailable(_ event: NSEvent) -> Bool {
 		let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-		return !flags.contains(.command)
-			&& !flags.contains(.control)
-			&& !flags.contains(.option)
-			&& !flags.contains(.shift)
+		return flags.contains(.command) == false
+			&& flags.contains(.control) == false
+			&& flags.contains(.option) == false
+			&& flags.contains(.shift) == false
 	}
 
 	private static let annotationStyleWheelDeadZone: CGFloat = 0.05
@@ -5090,7 +5092,7 @@ final class CaptureHostView: NSView {
 		guard
 			scene.mode == .live,
 			liveDragStartGlobal != nil,
-			!livePrimaryCompletionInFlight
+			livePrimaryCompletionInFlight == false
 		else {
 			return
 		}
@@ -5132,7 +5134,7 @@ final class CaptureHostView: NSView {
 		else {
 			return
 		}
-		if !isPrimaryMouseButtonPressed() {
+		if isPrimaryMouseButtonPressed() == false {
 			let point = NSEvent.mouseLocation
 			logLivePrimaryInputEvent("capture.live_primary_release_watchdog", point: point)
 			completeLivePrimaryInteractionFromSystemMouseUp(at: point, source: "watchdog")
@@ -5208,7 +5210,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func emitLiveChromeInputSummary(reason: String) {
-		guard !didEmitLiveChromeInputSummary else {
+		guard didEmitLiveChromeInputSummary == false else {
 			return
 		}
 		let observedMouseEvents = max(
@@ -5305,7 +5307,7 @@ final class CaptureHostView: NSView {
 					{
 						return .openHand
 					}
-					if !chrome.frozenSelectionTransformAllowed {
+					if chrome.frozenSelectionTransformAllowed == false {
 						return .arrow
 					}
 					if let pointer = currentGlobalMousePoint(),
@@ -5631,7 +5633,7 @@ final class CaptureHostView: NSView {
 		let mosaicRects = chrome.frozenOverlay.mosaicRects.compactMap(localRect(from:))
 		let previewRect = chrome.frozenOverlay.previewMosaicRect.flatMap(localRect(from:))
 		let allRects = mosaicRects + (previewRect.map { [$0] } ?? [])
-		guard !allRects.isEmpty, let baseImage = chrome.frozenBaseImage else {
+		guard allRects.isEmpty == false, let baseImage = chrome.frozenBaseImage else {
 			return
 		}
 		let imageSize = CGSize(width: CGFloat(baseImage.width), height: CGFloat(baseImage.height))
@@ -5671,7 +5673,7 @@ final class CaptureHostView: NSView {
 				}
 			}
 		let allAnnotations = spotlightAnnotations + (previewAnnotation.map { [$0] } ?? [])
-		guard !allAnnotations.isEmpty else {
+		guard allAnnotations.isEmpty == false else {
 			return
 		}
 
@@ -5699,7 +5701,7 @@ final class CaptureHostView: NSView {
 		let allStrokes =
 			chrome.frozenOverlay.penStrokes
 			+ (chrome.frozenOverlay.previewPenStroke.map { [$0] } ?? [])
-		guard !allStrokes.isEmpty else {
+		guard allStrokes.isEmpty == false else {
 			return
 		}
 
@@ -5729,7 +5731,7 @@ final class CaptureHostView: NSView {
 		let arrows =
 			chrome.frozenOverlay.arrowAnnotations
 			+ (chrome.frozenOverlay.previewArrow.map { [$0] } ?? [])
-		guard !arrows.isEmpty else {
+		guard arrows.isEmpty == false else {
 			return
 		}
 
@@ -5784,7 +5786,7 @@ final class CaptureHostView: NSView {
 		scale: CGFloat,
 		in context: CGContext
 	) {
-		guard !text.isEmpty else {
+		guard text.isEmpty == false else {
 			return
 		}
 
@@ -5808,7 +5810,7 @@ final class CaptureHostView: NSView {
 
 	private func toolbarLayout(for selection: CGRect) -> FrozenToolbarLayout? {
 		let items = visibleToolbarItems()
-		guard !items.isEmpty else {
+		guard items.isEmpty == false else {
 			return nil
 		}
 
@@ -5986,7 +5988,7 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 		let visibleSelection = selection.intersection(bounds)
-		if !visibleSelection.isNull, toolbarFrame.intersects(visibleSelection) {
+		if visibleSelection.isNull == false, toolbarFrame.intersects(visibleSelection) {
 			return nil
 		}
 		return CGPath(
@@ -6433,7 +6435,7 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 
-		if !livePrimaryCompletionInFlight {
+		if livePrimaryCompletionInFlight == false {
 			let polledPoint = currentGlobalMousePoint() ?? NSEvent.mouseLocation
 			if let currentPreview = livePointerPreviewGlobal {
 				if hypot(currentPreview.x - polledPoint.x, currentPreview.y - polledPoint.y)
@@ -6525,7 +6527,8 @@ final class CaptureHostView: NSView {
 		}
 		let previousPreview = liveHighlightedWindowPreview
 		refreshLiveHighlightedWindowPreview(at: globalPoint)
-		return !Self.windowSnapshotsEquivalent(previousPreview, liveHighlightedWindowPreview)
+		return Self.windowSnapshotsEquivalent(previousPreview, liveHighlightedWindowPreview)
+			== false
 	}
 
 	private static func windowSnapshotsEquivalent(_ lhs: WindowSnapshot?, _ rhs: WindowSnapshot?)
@@ -6667,7 +6670,7 @@ final class CaptureHostView: NSView {
 		let maxY = max(bounds.height - size.height - 6, minY)
 
 		var x = alignTrailing ? (referenceFrame.maxX - size.width) : referenceFrame.minX
-		if !alignTrailing, x + size.width > bounds.width - 6 {
+		if alignTrailing == false, x + size.width > bounds.width - 6 {
 			x = referenceFrame.maxX - size.width
 		}
 		x = x.clamped(to: minX...maxX)
@@ -7423,7 +7426,7 @@ final class CaptureHostView: NSView {
 		}
 		frozenToolbarLiquidGlassVisible = true
 		frozenToolbarLiquidGlassContentDrawn = true
-		if !wasVisible {
+		if wasVisible == false {
 			needsDisplay = true
 		}
 	}

@@ -151,7 +151,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			guard let content else {
 				return nil
 			}
-			guard !content.displays.isEmpty else {
+			guard content.displays.isEmpty == false else {
 				return nil
 			}
 			guard let displayIDs else {
@@ -256,7 +256,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	) {
 		let setupStartedAt = ProcessInfo.processInfo.systemUptime
 		let targets = screens.compactMap(Self.displayTarget(for:))
-		guard !targets.isEmpty else {
+		guard targets.isEmpty == false else {
 			stop()
 			return
 		}
@@ -300,7 +300,9 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			)
 			return
 		}
-		if unchanged, streamsCoverTargets || setupInProgressForTargets, !rebuildContentFilter {
+		if unchanged, streamsCoverTargets || setupInProgressForTargets,
+			rebuildContentFilter == false
+		{
 			updateTelemetryContextLocked(
 				captureID: captureID,
 				source: source,
@@ -315,7 +317,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let requestGeneration = generation
 		activeDisplayIDs = targetIDs
 		setupDisplayIDs = targetIDs
-		if !rebuildContentFilter {
+		if rebuildContentFilter == false {
 			selfCaptureFilterRequired = false
 			selfCaptureUnsafeAfterUptime = nil
 		}
@@ -721,7 +723,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		else {
 			return true
 		}
-		return !eligibleRecord.selfCaptureFilterComplete
+		return eligibleRecord.selfCaptureFilterComplete == false
 	}
 
 	func hasSelfCaptureCompleteFrame(containing point: CGPoint) -> Bool {
@@ -902,7 +904,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	}
 
 	private func snapshotEligibleRecordLocked(_ record: FrameRecord) -> FrameRecord? {
-		if !isSelfCaptureSafeLocked(record) {
+		if isSelfCaptureSafeLocked(record) == false {
 			return nil
 		}
 		return record
@@ -1024,7 +1026,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				)
 				continue
 			}
-			guard !preparedFilter.selfCaptureFilterComplete else {
+			guard preparedFilter.selfCaptureFilterComplete == false else {
 				continue
 			}
 			NativeHostTelemetry.frozenAuthorityWarning(
@@ -1082,7 +1084,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		}
 		let currentPID = getpid()
 		let excludedApplications = content.applications.filter { $0.processID == currentPID }
-		if !excludedApplications.isEmpty {
+		if excludedApplications.isEmpty == false {
 			let includedWindows = content.windows.filter {
 				includedCurrentProcessWindowIDs.contains($0.windowID)
 			}
@@ -1137,7 +1139,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		if generation == requestGeneration, activeDisplayIDs.contains(frame.displayID),
 			isSelfCaptureSafeLocked(frame)
 		{
-			if !firstFrameLoggedDisplayIDs.contains(frame.displayID) {
+			if firstFrameLoggedDisplayIDs.contains(frame.displayID) == false {
 				firstFrameLoggedDisplayIDs.insert(frame.displayID)
 				let startedAt =
 					firstFrameStartUptimes[frame.displayID] ?? telemetryContext.startedAtUptime
