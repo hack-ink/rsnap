@@ -73,12 +73,14 @@ use egui::{
 	Area, CentralPanel, ClippedPrimitive, Id, LayerId, Order, RichText, Sense, Shape, Stroke,
 	StrokeKind, UiBuilder, ViewportId, Visuals,
 };
+#[cfg(target_os = "macos")]
+use egui_phosphor::regular::FILE_TEXT;
 use egui_phosphor::{
 	Variant,
 	regular::{
 		self, ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, ARROW_UP_RIGHT, ARROWS_DOWN_UP,
-		ARROWS_IN_CARDINAL, CHECKERBOARD, COPY, CURSOR, FILE_TEXT, FLOPPY_DISK, FRAME_CORNERS,
-		PENCIL_SIMPLE, TEXT_T,
+		ARROWS_IN_CARDINAL, CHECKERBOARD, COPY, CURSOR, FLOPPY_DISK, FRAME_CORNERS, PENCIL_SIMPLE,
+		TEXT_T,
 	},
 };
 use egui_wgpu::{Renderer, ScreenDescriptor};
