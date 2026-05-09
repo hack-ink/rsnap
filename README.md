@@ -13,7 +13,17 @@ macOS-first screenshot app built with a native host and Rust core.
 
 </div>
 
+## Showcase
+
+### Capture flow
+
 https://github.com/user-attachments/assets/ff2fe84f-f551-40e8-919c-66ae8a61f8e7
+
+### Output settings
+
+<p align="center">
+  <img src="assets/readme/rsnap-settings-output.jpg" alt="Rsnap Settings Output view" width="860">
+</p>
 
 ## Feature Highlights
 
