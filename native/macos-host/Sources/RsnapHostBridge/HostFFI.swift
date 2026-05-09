@@ -70,6 +70,73 @@ public struct RGBARegionSnapshot: Equatable, Sendable {
 	}
 }
 
+private func rsnapOwnedRgbaSnapshot(from outRegion: RsnapOwnedRgbaRegion)
+	-> RGBARegionSnapshot?
+{
+	guard outRegion.len > 0, let rgba = outRegion.rgba else {
+		return nil
+	}
+
+	let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
+	ownedRegion.initialize(to: outRegion)
+	let data = Data(
+		bytesNoCopy: rgba,
+		count: outRegion.len,
+		deallocator: .custom { _, _ in
+			rsnap_owned_rgba_region_release(ownedRegion)
+			ownedRegion.deinitialize(count: 1)
+			ownedRegion.deallocate()
+		}
+	)
+	return RGBARegionSnapshot(
+		width: Int(outRegion.width),
+		height: Int(outRegion.height),
+		rgba: data
+	)
+}
+
+private func rsnapRequireOk(_ status: RsnapStatus, context: String) throws {
+	let code = rsnap_status_code(status)
+	if code != 0 {
+		throw HostBridgeError.ffiStatus(context: context, code: code)
+	}
+}
+
+private func rsnapFloatPoint(from point: CGPoint) -> RsnapFloatPoint {
+	RsnapFloatPoint(x: Double(point.x), y: Double(point.y))
+}
+
+private func cgPoint(from point: RsnapFloatPoint) -> CGPoint {
+	CGPoint(x: point.x, y: point.y)
+}
+
+private func rsnapFloatRect(from rect: CGRect) -> RsnapFloatRect {
+	RsnapFloatRect(
+		x: Double(rect.origin.x),
+		y: Double(rect.origin.y),
+		width: Double(rect.width),
+		height: Double(rect.height)
+	)
+}
+
+private func cgRect(from rect: RsnapFloatRect) -> CGRect {
+	CGRect(
+		x: rect.x,
+		y: rect.y,
+		width: rect.width,
+		height: rect.height
+	)
+}
+
+private func cgRect(from rect: RsnapPixelRect) -> CGRect {
+	CGRect(
+		x: Int(rect.x),
+		y: Int(rect.y),
+		width: Int(rect.width),
+		height: Int(rect.height)
+	)
+}
+
 public enum FrozenOverlayExportColor: UInt32, Equatable {
 	case white = 0
 	case yellow = 1
@@ -266,15 +333,15 @@ private final class FrozenOverlayExportFFIStorage {
 	) -> RsnapFrozenOverlayExportElement {
 		element(
 			kind: RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_ARROW,
-			start: Self.encode(point: start),
-			end: Self.encode(point: end),
+			start: rsnapFloatPoint(from: start),
+			end: rsnapFloatPoint(from: end),
 			strokeWidthPoints: style.strokeWidthPoints,
 			color: style.color
 		)
 	}
 
 	private func encodeMosaic(rect: CGRect) -> RsnapFrozenOverlayExportElement {
-		element(kind: RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_MOSAIC, rect: Self.encode(rect: rect))
+		element(kind: RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_MOSAIC, rect: rsnapFloatRect(from: rect))
 	}
 
 	private func encodeSpotlight(
@@ -283,7 +350,7 @@ private final class FrozenOverlayExportFFIStorage {
 	) -> RsnapFrozenOverlayExportElement {
 		element(
 			kind: RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_SPOTLIGHT,
-			rect: Self.encode(rect: rect),
+			rect: rsnapFloatRect(from: rect),
 			borderWidthPoints: style.borderWidthPoints,
 			color: style.borderColor
 		)
@@ -297,7 +364,7 @@ private final class FrozenOverlayExportFFIStorage {
 		let buffer = allocateText(text)
 		return element(
 			kind: RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_TEXT,
-			start: Self.encode(point: anchor),
+			start: rsnapFloatPoint(from: anchor),
 			text: buffer.baseAddress,
 			fontSizePoints: style.fontSizePoints,
 			color: style.color
@@ -309,7 +376,7 @@ private final class FrozenOverlayExportFFIStorage {
 		guard points.isEmpty == false else {
 			return UnsafeMutableBufferPointer(start: nil, count: 0)
 		}
-		let encoded = points.map(Self.encode(point:))
+		let encoded = points.map(rsnapFloatPoint(from:))
 		let pointer = UnsafeMutablePointer<RsnapFloatPoint>.allocate(capacity: encoded.count)
 		pointer.initialize(from: encoded, count: encoded.count)
 		let buffer = UnsafeMutableBufferPointer(start: pointer, count: encoded.count)
@@ -354,18 +421,6 @@ private final class FrozenOverlayExportFFIStorage {
 		)
 	}
 
-	private static func encode(point: CGPoint) -> RsnapFloatPoint {
-		RsnapFloatPoint(x: Double(point.x), y: Double(point.y))
-	}
-
-	private static func encode(rect: CGRect) -> RsnapFloatRect {
-		RsnapFloatRect(
-			x: Double(rect.origin.x),
-			y: Double(rect.origin.y),
-			width: Double(rect.width),
-			height: Double(rect.height)
-		)
-	}
 }
 
 public final class RsnapFrozenOverlayEditSession {
@@ -383,7 +438,7 @@ public final class RsnapFrozenOverlayEditSession {
 	}
 
 	public func reset() throws {
-		try Self.requireOk(
+		try rsnapRequireOk(
 			rsnap_frozen_overlay_edit_session_reset(handle),
 			context: "resetting frozen overlay edit session"
 		)
@@ -399,8 +454,8 @@ public final class RsnapFrozenOverlayEditSession {
 			rsnap_frozen_overlay_edit_session_begin(
 				handle,
 				tool.ffiKind,
-				Self.encode(point: point),
-				Self.encode(rect: selection),
+				rsnapFloatPoint(from: point),
+				rsnapFloatRect(from: selection),
 				Self.encode(style: style),
 				outChanged
 			)
@@ -411,8 +466,8 @@ public final class RsnapFrozenOverlayEditSession {
 		try boolResult { outChanged in
 			rsnap_frozen_overlay_edit_session_update(
 				handle,
-				Self.encode(point: point),
-				Self.encode(rect: selection),
+				rsnapFloatPoint(from: point),
+				rsnapFloatRect(from: selection),
 				outChanged
 			)
 		}
@@ -422,7 +477,7 @@ public final class RsnapFrozenOverlayEditSession {
 		try boolResult { outChanged in
 			rsnap_frozen_overlay_edit_session_finish(
 				handle,
-				Self.encode(rect: selection),
+				rsnapFloatRect(from: selection),
 				outChanged
 			)
 		}
@@ -453,7 +508,7 @@ public final class RsnapFrozenOverlayEditSession {
 	}
 
 	public func cancelText() throws {
-		try Self.requireOk(
+		try rsnapRequireOk(
 			rsnap_frozen_overlay_edit_session_cancel_text(handle),
 			context: "canceling frozen overlay text edit"
 		)
@@ -475,7 +530,7 @@ public final class RsnapFrozenOverlayEditSession {
 		try boolResult { outContains in
 			rsnap_frozen_overlay_edit_session_contains_movable_annotation(
 				handle,
-				Self.encode(point: point),
+				rsnapFloatPoint(from: point),
 				outContains
 			)
 		}
@@ -483,7 +538,7 @@ public final class RsnapFrozenOverlayEditSession {
 
 	public func snapshot() throws -> FrozenOverlayEditSnapshot {
 		var rawSnapshot = RsnapFrozenOverlayEditSnapshot()
-		try Self.requireOk(
+		try rsnapRequireOk(
 			rsnap_frozen_overlay_edit_session_copy_snapshot(handle, &rawSnapshot),
 			context: "copying frozen overlay edit snapshot"
 		)
@@ -515,15 +570,8 @@ public final class RsnapFrozenOverlayEditSession {
 
 	private func boolResult(_ body: (UnsafeMutablePointer<UInt8>) -> RsnapStatus) throws -> Bool {
 		var changed: UInt8 = 0
-		try Self.requireOk(body(&changed), context: "running frozen overlay edit operation")
+		try rsnapRequireOk(body(&changed), context: "running frozen overlay edit operation")
 		return changed != 0
-	}
-
-	private static func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
 	}
 
 	private static func decodeElements(
@@ -550,18 +598,18 @@ public final class RsnapFrozenOverlayEditSession {
 			)
 		case RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_ARROW:
 			return .arrow(
-				start: decode(point: element.start),
-				end: decode(point: element.end),
+				start: cgPoint(from: element.start),
+				end: cgPoint(from: element.end),
 				style: FrozenOverlayExportStrokeStyle(
 					strokeWidthPoints: element.stroke_width_points,
 					color: decode(color: element.color)
 				)
 			)
 		case RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_MOSAIC:
-			return .mosaic(rect: decode(rect: element.rect))
+			return .mosaic(rect: cgRect(from: element.rect))
 		case RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_SPOTLIGHT:
 			return .spotlight(
-				rect: decode(rect: element.rect),
+				rect: cgRect(from: element.rect),
 				style: FrozenOverlayExportSpotlightStyle(
 					borderWidthPoints: element.border_width_points,
 					borderColor: decode(color: element.color)
@@ -569,7 +617,7 @@ public final class RsnapFrozenOverlayEditSession {
 			)
 		case RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_TEXT:
 			return .text(
-				anchor: decode(point: element.start),
+				anchor: cgPoint(from: element.start),
 				text: decode(text: element.text),
 				style: FrozenOverlayExportTextStyle(
 					fontSizePoints: element.font_size_points,
@@ -585,7 +633,7 @@ public final class RsnapFrozenOverlayEditSession {
 		-> FrozenOverlayActiveTextEdit
 	{
 		FrozenOverlayActiveTextEdit(
-			anchor: decode(point: element.start),
+			anchor: cgPoint(from: element.start),
 			text: decode(text: element.text)
 		)
 	}
@@ -597,7 +645,7 @@ public final class RsnapFrozenOverlayEditSession {
 		guard let points, count > 0 else {
 			return []
 		}
-		return UnsafeBufferPointer(start: points, count: count).map(decode(point:))
+		return UnsafeBufferPointer(start: points, count: count).map(cgPoint(from:))
 	}
 
 	private static func decode(text: UnsafePointer<CChar>?) -> String {
@@ -616,27 +664,6 @@ public final class RsnapFrozenOverlayEditSession {
 			text_font_size_points: Double(style.textFontSizePoints),
 			text_color: style.textColor.ffiColor
 		)
-	}
-
-	private static func encode(point: CGPoint) -> RsnapFloatPoint {
-		RsnapFloatPoint(x: Double(point.x), y: Double(point.y))
-	}
-
-	private static func decode(point: RsnapFloatPoint) -> CGPoint {
-		CGPoint(x: point.x, y: point.y)
-	}
-
-	private static func encode(rect: CGRect) -> RsnapFloatRect {
-		RsnapFloatRect(
-			x: Double(rect.origin.x),
-			y: Double(rect.origin.y),
-			width: Double(rect.width),
-			height: Double(rect.height)
-		)
-	}
-
-	private static func decode(rect: RsnapFloatRect) -> CGRect {
-		CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
 	}
 
 	private static func decode(color: RsnapFrozenAnnotationColor) -> FrozenOverlayExportColor {
@@ -832,11 +859,11 @@ public enum RsnapCaptureFramePlanner {
 		if code == RSNAP_STATUS_INVALID_INPUT.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "resolving capture frame layout plan")
+		try rsnapRequireOk(status, context: "resolving capture frame layout plan")
 
 		return CaptureFrameLayoutPlan(
 			canvasSize: CGSize(width: outPlan.canvas_width, height: outPlan.canvas_height),
-			imageRect: decode(rect: outPlan.image_rect),
+			imageRect: cgRect(from: outPlan.image_rect),
 			cornerRadius: CGFloat(outPlan.corner_radius),
 			shadows: [
 				decode(shadow: outPlan.shadows.0),
@@ -863,9 +890,9 @@ public enum RsnapCaptureFramePlanner {
 		if code == RSNAP_STATUS_INVALID_INPUT.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "resolving capture frame aspect-fill crop")
+		try rsnapRequireOk(status, context: "resolving capture frame aspect-fill crop")
 
-		return decode(rect: outRect)
+		return cgRect(from: outRect)
 	}
 
 	public static func backgroundPlan(
@@ -873,7 +900,7 @@ public enum RsnapCaptureFramePlanner {
 	) throws -> CaptureFrameBackgroundPlan {
 		var outPlan = RsnapCaptureFrameBackgroundPlan()
 		let status = rsnap_capture_frame_background_plan(background.ffiKind, &outPlan)
-		try requireOk(status, context: "resolving capture frame background plan")
+		try rsnapRequireOk(status, context: "resolving capture frame background plan")
 
 		return CaptureFrameBackgroundPlan(
 			colorStops: [
@@ -906,23 +933,12 @@ public enum RsnapCaptureFramePlanner {
 		if code == RSNAP_STATUS_EMPTY.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "resolving capture frame wallpaper request")
+		try rsnapRequireOk(status, context: "resolving capture frame wallpaper request")
 
 		return CaptureFrameWallpaperRequest(
 			targetPixelSize: Int(outRequest.target_pixel_size),
 			overlayAlpha: CGFloat(outRequest.overlay_alpha)
 		)
-	}
-
-	private static func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
-	}
-
-	private static func decode(rect: RsnapFloatRect) -> CGRect {
-		CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
 	}
 
 	private static func decode(color: RsnapCaptureFrameColorStop) -> CaptureFrameColorStop {
@@ -992,40 +1008,11 @@ public enum RsnapCaptureFrameRenderer {
 		if code == RSNAP_STATUS_INVALID_INPUT.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "rendering capture frame")
+		try rsnapRequireOk(status, context: "rendering capture frame")
 
-		return rgbaSnapshot(from: outRegion)
+		return rsnapOwnedRgbaSnapshot(from: outRegion)
 	}
 
-	private static func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
-	}
-
-	private static func rgbaSnapshot(from outRegion: RsnapOwnedRgbaRegion) -> RGBARegionSnapshot? {
-		guard outRegion.len > 0, let rgba = outRegion.rgba else {
-			return nil
-		}
-
-		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
-		ownedRegion.initialize(to: outRegion)
-		let data = Data(
-			bytesNoCopy: rgba,
-			count: outRegion.len,
-			deallocator: .custom { _, _ in
-				rsnap_owned_rgba_region_release(ownedRegion)
-				ownedRegion.deinitialize(count: 1)
-				ownedRegion.deallocate()
-			}
-		)
-		return RGBARegionSnapshot(
-			width: Int(outRegion.width),
-			height: Int(outRegion.height),
-			rgba: data
-		)
-	}
 }
 
 public enum RsnapWallpaperThumbnailDecoder {
@@ -1050,40 +1037,11 @@ public enum RsnapWallpaperThumbnailDecoder {
 		if code == RSNAP_STATUS_EMPTY.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "decoding PNG wallpaper thumbnail")
+		try rsnapRequireOk(status, context: "decoding PNG wallpaper thumbnail")
 
-		return rgbaSnapshot(from: outRegion)
+		return rsnapOwnedRgbaSnapshot(from: outRegion)
 	}
 
-	private static func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
-	}
-
-	private static func rgbaSnapshot(from outRegion: RsnapOwnedRgbaRegion) -> RGBARegionSnapshot? {
-		guard outRegion.len > 0, let rgba = outRegion.rgba else {
-			return nil
-		}
-
-		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
-		ownedRegion.initialize(to: outRegion)
-		let data = Data(
-			bytesNoCopy: rgba,
-			count: outRegion.len,
-			deallocator: .custom { _, _ in
-				rsnap_owned_rgba_region_release(ownedRegion)
-				ownedRegion.deinitialize(count: 1)
-				ownedRegion.deallocate()
-			}
-		)
-		return RGBARegionSnapshot(
-			width: Int(outRegion.width),
-			height: Int(outRegion.height),
-			rgba: data
-		)
-	}
 }
 
 public enum RsnapScrollMinimapPlanner {
@@ -1101,10 +1059,10 @@ public enum RsnapScrollMinimapPlanner {
 	) throws -> ScrollMinimapLayoutPlan? {
 		var outPlan = RsnapScrollMinimapPlan()
 		let status = rsnap_scroll_minimap_plan(
-			encode(rect: selection),
+			rsnapFloatRect(from: selection),
 			Double(exportSize.width),
 			Double(exportSize.height),
-			encode(rect: bounds),
+			rsnapFloatRect(from: bounds),
 			Double(preferredWidth),
 			Double(minimumWidth),
 			Double(gap),
@@ -1118,35 +1076,15 @@ public enum RsnapScrollMinimapPlanner {
 		if code == RSNAP_STATUS_EMPTY.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "resolving scroll minimap layout plan")
+		try rsnapRequireOk(status, context: "resolving scroll minimap layout plan")
 		let viewportFrame =
-			outPlan.has_viewport_frame != 0 ? decode(rect: outPlan.viewport_frame) : nil
+			outPlan.has_viewport_frame != 0 ? cgRect(from: outPlan.viewport_frame) : nil
 
 		return ScrollMinimapLayoutPlan(
-			frame: decode(rect: outPlan.frame),
-			imageFrame: decode(rect: outPlan.image_frame),
+			frame: cgRect(from: outPlan.frame),
+			imageFrame: cgRect(from: outPlan.image_frame),
 			viewportFrame: viewportFrame
 		)
-	}
-
-	private static func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
-	}
-
-	private static func encode(rect: CGRect) -> RsnapFloatRect {
-		RsnapFloatRect(
-			x: Double(rect.minX),
-			y: Double(rect.minY),
-			width: Double(rect.width),
-			height: Double(rect.height)
-		)
-	}
-
-	private static func decode(rect: RsnapFloatRect) -> CGRect {
-		CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
 	}
 }
 
@@ -1161,7 +1099,7 @@ public enum RsnapFrozenSelectionTransformPlanner {
 		let status = rsnap_frozen_selection_transform_hit_test(
 			Double(point.x),
 			Double(point.y),
-			encode(rect: selection),
+			rsnapFloatRect(from: selection),
 			Double(handleRadius),
 			Double(edgeTolerance),
 			&outKind
@@ -1170,7 +1108,7 @@ public enum RsnapFrozenSelectionTransformPlanner {
 		if code == RSNAP_STATUS_EMPTY.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "hit-testing frozen selection transform")
+		try rsnapRequireOk(status, context: "hit-testing frozen selection transform")
 
 		return decode(kind: outKind)
 	}
@@ -1186,8 +1124,8 @@ public enum RsnapFrozenSelectionTransformPlanner {
 		var outRect = RsnapFloatRect()
 		let status = rsnap_frozen_selection_transform_rect(
 			kind.ffiKind,
-			encode(rect: initialSelection),
-			encode(rect: monitorFrame),
+			rsnapFloatRect(from: initialSelection),
+			rsnapFloatRect(from: monitorFrame),
 			Double(initialPointer.x),
 			Double(initialPointer.y),
 			Double(point.x),
@@ -1199,29 +1137,9 @@ public enum RsnapFrozenSelectionTransformPlanner {
 		if code == RSNAP_STATUS_EMPTY.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "resolving frozen selection transform")
+		try rsnapRequireOk(status, context: "resolving frozen selection transform")
 
-		return decode(rect: outRect)
-	}
-
-	private static func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
-	}
-
-	private static func encode(rect: CGRect) -> RsnapFloatRect {
-		RsnapFloatRect(
-			x: Double(rect.minX),
-			y: Double(rect.minY),
-			width: Double(rect.width),
-			height: Double(rect.height)
-		)
-	}
-
-	private static func decode(rect: RsnapFloatRect) -> CGRect {
-		CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
+		return cgRect(from: outRect)
 	}
 
 	private static func decode(kind: RsnapFrozenSelectionTransformKind)
@@ -1271,9 +1189,9 @@ public enum RsnapAutoCenterPlanner {
 		if code == RSNAP_STATUS_EMPTY.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "detecting auto-center content bounds")
+		try rsnapRequireOk(status, context: "detecting auto-center content bounds")
 
-		return decode(pixelRect: outRect)
+		return cgRect(from: outRect)
 	}
 
 	public static func marginBalanceShiftPoints(
@@ -1292,21 +1210,6 @@ public enum RsnapAutoCenterPlanner {
 		)
 	}
 
-	private static func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
-	}
-
-	private static func decode(pixelRect: RsnapPixelRect) -> CGRect {
-		CGRect(
-			x: Int(pixelRect.x),
-			y: Int(pixelRect.y),
-			width: Int(pixelRect.width),
-			height: Int(pixelRect.height)
-		)
-	}
 }
 
 public enum RsnapBgraFrameSampler {
@@ -1326,7 +1229,7 @@ public enum RsnapBgraFrameSampler {
 			max(bytesPerRow, 0),
 			baseAddress.assumingMemoryBound(to: UInt8.self),
 			max(byteCount, 0),
-			encode(rect: displayFrame),
+			rsnapFloatRect(from: displayFrame),
 			Double(point.x),
 			Double(point.y),
 			&outRGB
@@ -1335,7 +1238,7 @@ public enum RsnapBgraFrameSampler {
 		if code == RSNAP_STATUS_EMPTY.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "sampling BGRA frame RGB")
+		try rsnapRequireOk(status, context: "sampling BGRA frame RGB")
 
 		return RGBSample(r: outRGB.r, g: outRGB.g, b: outRGB.b)
 	}
@@ -1357,7 +1260,7 @@ public enum RsnapBgraFrameSampler {
 			max(bytesPerRow, 0),
 			baseAddress.assumingMemoryBound(to: UInt8.self),
 			max(byteCount, 0),
-			encode(rect: displayFrame),
+			rsnapFloatRect(from: displayFrame),
 			Double(point.x),
 			Double(point.y),
 			UInt32(max(sidePixels, 0)),
@@ -1367,49 +1270,11 @@ public enum RsnapBgraFrameSampler {
 		if code == RSNAP_STATUS_EMPTY.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "sampling BGRA frame loupe patch")
+		try rsnapRequireOk(status, context: "sampling BGRA frame loupe patch")
 
-		return rgbaSnapshot(from: outRegion)
+		return rsnapOwnedRgbaSnapshot(from: outRegion)
 	}
 
-	private static func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
-	}
-
-	private static func encode(rect: CGRect) -> RsnapFloatRect {
-		RsnapFloatRect(
-			x: Double(rect.origin.x),
-			y: Double(rect.origin.y),
-			width: Double(rect.width),
-			height: Double(rect.height)
-		)
-	}
-
-	private static func rgbaSnapshot(from outRegion: RsnapOwnedRgbaRegion) -> RGBARegionSnapshot? {
-		guard outRegion.len > 0, let rgba = outRegion.rgba else {
-			return nil
-		}
-
-		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
-		ownedRegion.initialize(to: outRegion)
-		let data = Data(
-			bytesNoCopy: rgba,
-			count: outRegion.len,
-			deallocator: .custom { _, _ in
-				rsnap_owned_rgba_region_release(ownedRegion)
-				ownedRegion.deinitialize(count: 1)
-				ownedRegion.deallocate()
-			}
-		)
-		return RGBARegionSnapshot(
-			width: Int(outRegion.width),
-			height: Int(outRegion.height),
-			rgba: data
-		)
-	}
 }
 
 public enum RsnapExportEncoder {
@@ -1427,7 +1292,7 @@ public enum RsnapExportEncoder {
 				&outPNG
 			)
 		}
-		try requireOk(status, context: "encoding export PNG")
+		try rsnapRequireOk(status, context: "encoding export PNG")
 
 		return try data(from: outPNG, context: "taking encoded export PNG")
 	}
@@ -1448,7 +1313,7 @@ public enum RsnapExportEncoder {
 				&outPNG
 			)
 		}
-		try requireOk(status, context: "encoding cropped export PNG")
+		try rsnapRequireOk(status, context: "encoding cropped export PNG")
 
 		return try data(from: outPNG, context: "taking encoded cropped export PNG")
 	}
@@ -1463,17 +1328,17 @@ public enum RsnapExportEncoder {
 		let status = rsnap_frozen_display_crop_rect(
 			UInt32(max(imageWidth, 0)),
 			UInt32(max(imageHeight, 0)),
-			encode(rect: displayFrame),
-			encode(rect: selection),
+			rsnapFloatRect(from: displayFrame),
+			rsnapFloatRect(from: selection),
 			&outRect
 		)
 		let code = rsnap_status_code(status)
 		if code == RSNAP_STATUS_EMPTY.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "resolving frozen display export crop")
+		try rsnapRequireOk(status, context: "resolving frozen display export crop")
 
-		return decode(pixelRect: outRect)
+		return cgRect(from: outRect)
 	}
 
 	public static func frozenMosaicLightPrivacyPatch(
@@ -1485,16 +1350,16 @@ public enum RsnapExportEncoder {
 		let status = rsnap_frozen_mosaic_light_privacy_patch_rgba(
 			UInt32(max(imageWidth, 0)),
 			UInt32(max(imageHeight, 0)),
-			encode(rect: sourceRect),
+			rsnapFloatRect(from: sourceRect),
 			&outRegion
 		)
 		let code = rsnap_status_code(status)
 		if code == RSNAP_STATUS_EMPTY.rawValue {
 			return nil
 		}
-		try requireOk(status, context: "rendering frozen mosaic privacy patch")
+		try rsnapRequireOk(status, context: "rendering frozen mosaic privacy patch")
 
-		return rgbaSnapshot(from: outRegion)
+		return rsnapOwnedRgbaSnapshot(from: outRegion)
 	}
 
 	public static func frozenOverlayExportImage(
@@ -1514,28 +1379,21 @@ public enum RsnapExportEncoder {
 					UInt32(max(image.height, 0)),
 					baseAddress,
 					image.rgba.count,
-					encode(rect: selection),
+					rsnapFloatRect(from: selection),
 					elementBuffer.baseAddress,
 					elementBuffer.count,
 					&outRegion
 				)
 			}
 		}
-		try requireOk(status, context: "rendering frozen overlay export image")
-		guard let snapshot = rgbaSnapshot(from: outRegion) else {
+		try rsnapRequireOk(status, context: "rendering frozen overlay export image")
+		guard let snapshot = rsnapOwnedRgbaSnapshot(from: outRegion) else {
 			throw HostBridgeError.ffiStatus(
 				context: "taking frozen overlay export image",
 				code: RSNAP_STATUS_EMPTY.rawValue)
 		}
 
 		return snapshot
-	}
-
-	private static func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
 	}
 
 	private static func encode(crop: CGRect) throws -> RsnapPixelRect {
@@ -1568,24 +1426,6 @@ public enum RsnapExportEncoder {
 		)
 	}
 
-	private static func encode(rect: CGRect) -> RsnapFloatRect {
-		RsnapFloatRect(
-			x: Double(rect.origin.x),
-			y: Double(rect.origin.y),
-			width: Double(rect.width),
-			height: Double(rect.height)
-		)
-	}
-
-	private static func decode(pixelRect: RsnapPixelRect) -> CGRect {
-		CGRect(
-			x: Int(pixelRect.x),
-			y: Int(pixelRect.y),
-			width: Int(pixelRect.width),
-			height: Int(pixelRect.height)
-		)
-	}
-
 	private static func data(from outPNG: RsnapOwnedBytes, context: String) throws -> Data {
 		guard outPNG.len > 0, let bytes = outPNG.bytes else {
 			throw HostBridgeError.ffiStatus(context: context, code: RSNAP_STATUS_EMPTY.rawValue)
@@ -1604,25 +1444,6 @@ public enum RsnapExportEncoder {
 		)
 	}
 
-	private static func rgbaSnapshot(from outRegion: RsnapOwnedRgbaRegion) -> RGBARegionSnapshot? {
-		guard outRegion.len > 0, let rgba = outRegion.rgba else {
-			return nil
-		}
-
-		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
-		ownedRegion.initialize(to: outRegion)
-		let data = Data(
-			bytesNoCopy: rgba,
-			count: outRegion.len,
-			deallocator: .custom { _, _ in
-				rsnap_owned_rgba_region_release(ownedRegion)
-				ownedRegion.deinitialize(count: 1)
-				ownedRegion.deallocate()
-			}
-		)
-		return RGBARegionSnapshot(
-			width: Int(outRegion.width), height: Int(outRegion.height), rgba: data)
-	}
 }
 
 public enum ScrollObserveOutcome: UInt32, Equatable, Sendable {
@@ -1922,21 +1743,21 @@ public final class RsnapHostSession {
 	}
 
 	public func enterLive() throws {
-		try requireOk(
+		try rsnapRequireOk(
 			rsnap_session_enter_live(handle),
 			context: "entering live mode"
 		)
 	}
 
 	public func send(event: HostEvent) throws {
-		try requireOk(
+		try rsnapRequireOk(
 			rsnap_session_handle_host_event(handle, encode(event: event)),
 			context: "sending host event"
 		)
 	}
 
 	public func send(report: HostReport) throws {
-		try requireOk(
+		try rsnapRequireOk(
 			rsnap_session_handle_host_report(handle, encode(report: report)),
 			context: "sending host report"
 		)
@@ -1944,7 +1765,7 @@ public final class RsnapHostSession {
 
 	public func currentScene() throws -> SceneSnapshot {
 		var outScene = RsnapSceneModel()
-		try requireOk(
+		try rsnapRequireOk(
 			rsnap_session_copy_scene_model(handle, &outScene),
 			context: "copying scene model"
 		)
@@ -1959,7 +1780,7 @@ public final class RsnapHostSession {
 		if code == 3 {
 			return nil
 		}
-		try requireOk(status, context: "draining queued host request")
+		try rsnapRequireOk(status, context: "draining queued host request")
 
 		return try decode(request: outRequest)
 	}
@@ -1970,13 +1791,6 @@ public final class RsnapHostSession {
 			requests.append(request)
 		}
 		return requests
-	}
-
-	private func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
 	}
 
 	private func encode(event: HostEvent) -> RsnapHostEvent {
@@ -2345,7 +2159,7 @@ public final class RsnapScrollCaptureSession: @unchecked Sendable {
 				&outResult
 			)
 		}
-		try requireOk(status, context: "observing scroll-capture frame")
+		try rsnapRequireOk(status, context: "observing scroll-capture frame")
 
 		return try decode(result: outResult)
 	}
@@ -2364,32 +2178,7 @@ public final class RsnapScrollCaptureSession: @unchecked Sendable {
 			throw HostBridgeError.ffiStatus(
 				context: "taking scroll-capture export RGBA", code: code)
 		}
-		guard outRegion.len > 0, let rgba = outRegion.rgba else {
-			return nil
-		}
-		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
-		ownedRegion.initialize(to: outRegion)
-		let data = Data(
-			bytesNoCopy: rgba,
-			count: outRegion.len,
-			deallocator: .custom { _, _ in
-				rsnap_owned_rgba_region_release(ownedRegion)
-				ownedRegion.deinitialize(count: 1)
-				ownedRegion.deallocate()
-			}
-		)
-		return RGBARegionSnapshot(
-			width: Int(outRegion.width),
-			height: Int(outRegion.height),
-			rgba: data
-		)
-	}
-
-	private func requireOk(_ status: RsnapStatus, context: String) throws {
-		let code = rsnap_status_code(status)
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: context, code: code)
-		}
+		return rsnapOwnedRgbaSnapshot(from: outRegion)
 	}
 
 	private func decode(result: RsnapScrollObserveResult) throws -> ScrollObserveResult {
@@ -2574,25 +2363,7 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 		if takeCode != 0 {
 			throw HostBridgeError.ffiStatus(context: "taking live RGBA region", code: takeCode)
 		}
-		guard ownedRegion.len > 0, let rgba = ownedRegion.rgba else {
-			return nil
-		}
-		let regionHandle = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
-		regionHandle.initialize(to: ownedRegion)
-		let data = Data(
-			bytesNoCopy: rgba,
-			count: ownedRegion.len,
-			deallocator: .custom { _, _ in
-				rsnap_owned_rgba_region_release(regionHandle)
-				regionHandle.deinitialize(count: 1)
-				regionHandle.deallocate()
-			}
-		)
-		return RGBARegionSnapshot(
-			width: Int(ownedRegion.width),
-			height: Int(ownedRegion.height),
-			rgba: data
-		)
+		return rsnapOwnedRgbaSnapshot(from: ownedRegion)
 	}
 
 	/// Returns the live sampler's cache-only full-monitor snapshot.
@@ -2629,24 +2400,6 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 			throw HostBridgeError.ffiStatus(
 				context: "peeking latest monitor RGBA snapshot", code: code)
 		}
-		guard outRegion.len > 0, let rgba = outRegion.rgba else {
-			return nil
-		}
-		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
-		ownedRegion.initialize(to: outRegion)
-		let data = Data(
-			bytesNoCopy: rgba,
-			count: outRegion.len,
-			deallocator: .custom { _, _ in
-				rsnap_owned_rgba_region_release(ownedRegion)
-				ownedRegion.deinitialize(count: 1)
-				ownedRegion.deallocate()
-			}
-		)
-		return RGBARegionSnapshot(
-			width: Int(outRegion.width),
-			height: Int(outRegion.height),
-			rgba: data
-		)
+		return rsnapOwnedRgbaSnapshot(from: outRegion)
 	}
 }

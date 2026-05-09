@@ -1471,38 +1471,11 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		else {
 			return nil
 		}
-		return rgbaImage(width: patch.width, height: patch.height, rgba: patch.rgba)
-	}
-
-	private static func rgbaImage(width: Int, height: Int, rgba: Data) -> CGImage? {
-		guard width > 0, height > 0 else {
-			return nil
-		}
-		let bytesPerRow = width * 4
-		let expectedByteCount = bytesPerRow * height
-		guard rgba.count == expectedByteCount else {
-			return nil
-		}
-		let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)
-		guard
-			let provider = CGDataProvider(data: rgba as CFData),
-			let image = CGImage(
-				width: width,
-				height: height,
-				bitsPerComponent: 8,
-				bitsPerPixel: 32,
-				bytesPerRow: bytesPerRow,
-				space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
-				bitmapInfo: bitmapInfo,
-				provider: provider,
-				decode: nil,
-				shouldInterpolate: false,
-				intent: .defaultIntent
-			)
-		else {
-			return nil
-		}
-		return image
+		return NativeHostImageBridge.cgImage(
+			width: patch.width,
+			height: patch.height,
+			rgba: patch.rgba
+		)
 	}
 }
 
