@@ -1,6 +1,5 @@
 import AppKit
 import CoreGraphics
-import Foundation
 import RsnapHostBridge
 
 package enum CaptureFrameSource: Equatable {
@@ -56,7 +55,13 @@ package enum CaptureFrameEffectRenderer {
 		source: CaptureFrameSource,
 		renderKind: CaptureFrameRenderKind
 	) -> CGImage? {
-		guard let sourceSnapshot = rgbaSnapshot(from: image) else {
+		guard
+			let sourceSnapshot = NativeHostImageBridge.rgbaSnapshot(
+				from: image,
+				interpolationQuality: .high,
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
 			return nil
 		}
 		guard
@@ -72,74 +77,7 @@ package enum CaptureFrameEffectRenderer {
 			return nil
 		}
 
-		return cgImage(from: rendered)
-	}
-
-	private static func rgbaSnapshot(from image: CGImage) -> RGBARegionSnapshot? {
-		let width = image.width
-		let height = image.height
-		guard
-			width > 0,
-			height > 0,
-			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
-		else {
-			return nil
-		}
-
-		let bytesPerRow = width * 4
-		var rgba = Data(count: bytesPerRow * height)
-		let didDraw = rgba.withUnsafeMutableBytes { buffer -> Bool in
-			guard
-				let baseAddress = buffer.baseAddress,
-				let context = CGContext(
-					data: baseAddress,
-					width: width,
-					height: height,
-					bitsPerComponent: 8,
-					bytesPerRow: bytesPerRow,
-					space: colorSpace,
-					bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-				)
-			else {
-				return false
-			}
-
-			context.interpolationQuality = .high
-			context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-			return true
-		}
-		guard didDraw else {
-			return nil
-		}
-
-		return RGBARegionSnapshot(width: width, height: height, rgba: rgba)
-	}
-
-	private static func cgImage(from snapshot: RGBARegionSnapshot) -> CGImage? {
-		let expectedByteCount = snapshot.width * snapshot.height * 4
-		guard
-			snapshot.width > 0,
-			snapshot.height > 0,
-			snapshot.rgba.count == expectedByteCount,
-			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-			let provider = CGDataProvider(data: snapshot.rgba as CFData)
-		else {
-			return nil
-		}
-
-		return CGImage(
-			width: snapshot.width,
-			height: snapshot.height,
-			bitsPerComponent: 8,
-			bitsPerPixel: 32,
-			bytesPerRow: snapshot.width * 4,
-			space: colorSpace,
-			bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
-			provider: provider,
-			decode: nil,
-			shouldInterpolate: true,
-			intent: .defaultIntent
-		)
+		return NativeHostImageBridge.cgImage(from: rendered, shouldInterpolate: true)
 	}
 
 	private static func systemWallpaperPath(
