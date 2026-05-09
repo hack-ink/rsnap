@@ -1,26 +1,35 @@
 # Rsnap workspace tasks.
 
 # Check
-# | task             | type      | purpose |
-# | ---------------- | --------- | ------- |
-# | check            | composite | full read-only verification |
-# | check-rust       | command   | Rust clippy, no cargo check |
-# | check-swift      | composite | Swift format, SwiftLint, strict build, and probes |
-# | check-swiftlint  | command   | SwiftLint plugin, read-only |
-# | check-vstyle     | command   | Rust vibe-style curate |
+# | task              | type      | purpose |
+# | ----------------- | --------- | ------- |
+# | check             | composite | full read-only verification |
+# | check-rust        | composite | Rust format, style, clippy, and tests |
+# | check-rust-clippy | command   | Rust clippy, no cargo check |
+# | check-swift       | composite | Swift format, SwiftLint, strict build, and probes |
+# | check-swiftlint   | command   | SwiftLint plugin, read-only |
+# | check-toml        | composite | TOML format check |
+# | check-vstyle      | command   | Rust vibe-style curate |
 
 [tasks.check]
 clear = true
 workspace = false
 dependencies = [
-	"fmt-check",
 	"check-rust",
-	"check-vstyle",
 	"check-swift",
-	"test",
+	"check-toml",
 ]
 
 [tasks.check-rust]
+workspace = false
+dependencies = [
+	"fmt-rust-check",
+	"check-vstyle",
+	"check-rust-clippy",
+	"test-rust",
+]
+
+[tasks.check-rust-clippy]
 workspace = false
 command = "cargo"
 args = [
@@ -85,6 +94,12 @@ args = [
 	"--all-features",
 ]
 
+[tasks.check-toml]
+workspace = false
+dependencies = [
+	"fmt-toml-check",
+]
+
 # Lint
 # | task          | type      | purpose |
 # | ------------- | --------- | ------- |
@@ -103,7 +118,7 @@ dependencies = [
 ]
 
 [tasks.lint-rust]
-extend = "check-rust"
+extend = "check-rust-clippy"
 args = [
 	"clippy",
 	"--fix",

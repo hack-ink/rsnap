@@ -68,22 +68,26 @@ jobs:
         with:
           tool: nextest
 
-      - name: Run Rust format check
-        run: cargo make fmt-rust-check
+      - name: Install vibe-style
+        env:
+          VSTYLE_VERSION: v0.2.1
+        run: |
+          set -euo pipefail
 
-      - name: Run Rust style check
-        uses: hack-ink/vibe-style@bfb4d2d2f5e4b5e5ce8de4ed1d708b3a2f0e61fe # v0.2.1
-        with:
-          language: rust
-          workspace: true
-          args: --all-features
-          version: v0.2.1
+          target="x86_64-unknown-linux-gnu"
+          asset="vibe-style-${target}-${VSTYLE_VERSION}.tgz"
+          install_dir="${RUNNER_TEMP}/vibe-style/bin"
 
-      - name: Run Rust clippy
+          curl -fsSLO "https://github.com/hack-ink/vibe-style/releases/download/${VSTYLE_VERSION}/${asset}"
+          tar -xzf "${asset}"
+
+          mkdir -p "${install_dir}"
+          install -m 0755 "vibe-style-${target}-${VSTYLE_VERSION}/vstyle" "${install_dir}/vstyle"
+          install -m 0755 "vibe-style-${target}-${VSTYLE_VERSION}/cargo-vstyle" "${install_dir}/cargo-vstyle"
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+
+      - name: Run Rust checks
         run: cargo make check-rust
-
-      - name: Run tests
-        run: cargo make test-rust
 
   swift-check:
     name: Swift check
@@ -135,5 +139,5 @@ jobs:
         with:
           tool: taplo
 
-      - name: Run TOML format check
-        run: cargo make fmt-toml-check
+      - name: Run TOML checks
+        run: cargo make check-toml
