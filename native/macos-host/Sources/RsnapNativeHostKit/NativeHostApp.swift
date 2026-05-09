@@ -158,49 +158,6 @@ private enum OcrCompletionSound {
 	}
 }
 
-package func frozenExportOverlayPoint(
-	_ point: CGPoint,
-	selection: CGRect,
-	imageSize: CGSize
-) -> CGPoint {
-	let scaleX = imageSize.width / max(selection.width, 1)
-	let scaleY = imageSize.height / max(selection.height, 1)
-	return CGPoint(
-		x: (point.x - selection.minX) * scaleX,
-		y: (point.y - selection.minY) * scaleY
-	)
-}
-
-package func frozenExportOverlayRect(
-	_ rect: CGRect,
-	selection: CGRect,
-	imageSize: CGSize
-) -> CGRect {
-	let scaleX = imageSize.width / max(selection.width, 1)
-	let scaleY = imageSize.height / max(selection.height, 1)
-	return CGRect(
-		x: (rect.minX - selection.minX) * scaleX,
-		y: (rect.minY - selection.minY) * scaleY,
-		width: rect.width * scaleX,
-		height: rect.height * scaleY
-	)
-}
-
-package func frozenExportSourceImageRect(
-	_ rect: CGRect,
-	selection: CGRect,
-	imageSize: CGSize
-) -> CGRect {
-	let scaleX = imageSize.width / max(selection.width, 1)
-	let scaleY = imageSize.height / max(selection.height, 1)
-	return CGRect(
-		x: (rect.minX - selection.minX) * scaleX,
-		y: (selection.maxY - rect.maxY) * scaleY,
-		width: rect.width * scaleX,
-		height: rect.height * scaleY
-	)
-}
-
 package func scrollCaptureMinimapPlan(
 	for selection: CGRect,
 	exportSize: CGSize,
@@ -2611,7 +2568,7 @@ final class CaptureSessionController: NSObject {
 		}
 
 		let compositeStartedAt = ProcessInfo.processInfo.systemUptime
-		let composited = compositeFrozenOverlay(on: baseImage, selection: selection) ?? baseImage
+		let composited = try compositeFrozenOverlay(on: baseImage, selection: selection)
 		let result =
 			applyingCaptureFrameEffect
 			? applyCaptureFrameEffectIfNeeded(
@@ -2925,134 +2882,27 @@ final class CaptureSessionController: NSObject {
 		scene.statusMessage = message
 	}
 
-	private func compositeFrozenOverlay(on image: CGImage, selection: CGRect) -> CGImage? {
-		guard
-			chromeState.frozenOverlay.canUndo || chromeState.frozenOverlay.activeInteraction != nil
-		else {
+	private func compositeFrozenOverlay(on image: CGImage, selection: CGRect) throws -> CGImage {
+		let elements = chromeState.frozenOverlay.exportElements
+		guard !elements.isEmpty else {
 			return image
 		}
 
-		let width = image.width
-		let height = image.height
 		guard
-			let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
-			let context = CGContext(
-				data: nil,
-				width: width,
-				height: height,
-				bitsPerComponent: 8,
-				bytesPerRow: 0,
-				space: colorSpace,
-				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-			)
+			let snapshot = Self.rgbaSnapshot(from: image),
+			let rendered = Self.cgImage(
+				from: try RsnapExportEncoder.frozenOverlayExportImage(
+					from: snapshot,
+					selection: selection,
+					elements: elements
+				))
 		else {
-			return image
+			throw HostBridgeError.ffiStatus(
+				context: "converting frozen overlay export image",
+				code: 4)
 		}
 
-		let imageRect = CGRect(x: 0, y: 0, width: width, height: height)
-		let imageSize = CGSize(width: CGFloat(width), height: CGFloat(height))
-		let scaleX = imageSize.width / max(selection.width, 1)
-		let scaleY = imageSize.height / max(selection.height, 1)
-		context.draw(image, in: imageRect)
-
-		func mapPoint(_ point: CGPoint) -> CGPoint {
-			frozenExportOverlayPoint(
-				point,
-				selection: selection,
-				imageSize: imageSize
-			)
-		}
-		func mapRect(_ rect: CGRect) -> CGRect {
-			frozenExportOverlayRect(
-				rect,
-				selection: selection,
-				imageSize: imageSize
-			)
-		}
-		func sourceImageRect(_ rect: CGRect) -> CGRect {
-			frozenExportSourceImageRect(
-				rect,
-				selection: selection,
-				imageSize: imageSize
-			)
-		}
-
-		let mosaicRects = chromeState.frozenOverlay.mosaicRects.map {
-			(source: sourceImageRect($0), destination: mapRect($0))
-		}
-		if !mosaicRects.isEmpty {
-			context.saveGState()
-			context.interpolationQuality = .high
-			for rect in mosaicRects {
-				if let mosaicPatch = makeFrozenMosaicPatch(from: image, sourceRect: rect.source) {
-					context.draw(mosaicPatch, in: rect.destination.integral.intersection(imageRect))
-				}
-			}
-			context.restoreGState()
-		}
-
-		let spotlightAnnotations = chromeState.frozenOverlay.spotlightAnnotations.map {
-			(rect: mapRect($0.rect), style: $0.style)
-		}
-		let averageScale = (scaleX + scaleY) / 2
-		if !spotlightAnnotations.isEmpty {
-			context.saveGState()
-			context.setFillColor(NSColor.black.withAlphaComponent(0.32).cgColor)
-			context.fill(imageRect)
-			for annotation in spotlightAnnotations {
-				context.saveGState()
-				context.clip(to: annotation.rect)
-				context.draw(image, in: imageRect)
-				context.restoreGState()
-			}
-			context.restoreGState()
-
-			for annotation in spotlightAnnotations {
-				drawFrozenSpotlightBorder(
-					for: annotation.rect,
-					style: annotation.style,
-					scale: averageScale,
-					alpha: 0.96,
-					in: context
-				)
-			}
-		}
-
-		for stroke in chromeState.frozenOverlay.penStrokes {
-			guard let first = stroke.points.first else {
-				continue
-			}
-			context.setStrokeColor(stroke.style.color.nsColor(alpha: 0.96).cgColor)
-			context.setLineWidth(stroke.style.strokeWidthPoints * averageScale)
-			context.setLineCap(.round)
-			context.setLineJoin(.round)
-			context.beginPath()
-			context.move(to: mapPoint(first))
-			for point in stroke.points.dropFirst() {
-				context.addLine(to: mapPoint(point))
-			}
-			context.strokePath()
-		}
-		for annotation in chromeState.frozenOverlay.arrowAnnotations {
-			drawFrozenArrow(
-				from: mapPoint(annotation.start),
-				to: mapPoint(annotation.end),
-				style: annotation.style,
-				scale: averageScale,
-				in: context
-			)
-		}
-		for annotation in chromeState.frozenOverlay.textAnnotations {
-			drawExportText(
-				annotation.text,
-				at: mapPoint(annotation.anchor),
-				style: annotation.style,
-				scale: averageScale,
-				in: context
-			)
-		}
-
-		return context.makeImage()
+		return rendered
 	}
 
 	private func drawExportText(
@@ -7879,6 +7729,52 @@ private struct FrozenTextStyle: Equatable {
 	}
 }
 
+extension FrozenAnnotationColor {
+	fileprivate var exportColor: FrozenOverlayExportColor {
+		switch self {
+		case .white:
+			.white
+		case .yellow:
+			.yellow
+		case .green:
+			.green
+		case .blue:
+			.blue
+		case .red:
+			.red
+		case .black:
+			.black
+		}
+	}
+}
+
+extension FrozenBrushStyle {
+	fileprivate var exportStrokeStyle: FrozenOverlayExportStrokeStyle {
+		FrozenOverlayExportStrokeStyle(
+			strokeWidthPoints: strokeWidthPoints,
+			color: color.exportColor
+		)
+	}
+}
+
+extension FrozenSpotlightStyle {
+	fileprivate var exportSpotlightStyle: FrozenOverlayExportSpotlightStyle {
+		FrozenOverlayExportSpotlightStyle(
+			borderWidthPoints: borderWidthPoints,
+			borderColor: borderColor.exportColor
+		)
+	}
+}
+
+extension FrozenTextStyle {
+	fileprivate var exportTextStyle: FrozenOverlayExportTextStyle {
+		FrozenOverlayExportTextStyle(
+			fontSizePoints: fontSizePoints,
+			color: color.exportColor
+		)
+	}
+}
+
 private enum FrozenAnnotationStyleAction: Equatable {
 	case decreaseSize
 	case increaseSize
@@ -8561,6 +8457,38 @@ private struct FrozenOverlayState {
 		}
 		edits.append(edit)
 		return true
+	}
+
+	var exportElements: [FrozenOverlayExportElement] {
+		let movingMosaicIndex = movingMosaicEditIndex
+		let movingTextIndex = movingTextEditIndex
+		return edits.indices.compactMap { index in
+			switch edits[index] {
+			case .pen(let stroke):
+				.pen(points: stroke.points, style: stroke.style.exportStrokeStyle)
+			case .arrow(let annotation):
+				.arrow(
+					start: annotation.start,
+					end: annotation.end,
+					style: annotation.style.exportStrokeStyle
+				)
+			case .mosaic(let rect) where index != movingMosaicIndex:
+				.mosaic(rect: rect)
+			case .spotlight(let annotation):
+				.spotlight(
+					rect: annotation.rect,
+					style: annotation.style.exportSpotlightStyle
+				)
+			case .text(let annotation) where index != movingTextIndex:
+				.text(
+					anchor: annotation.anchor,
+					text: annotation.text,
+					style: annotation.style.exportTextStyle
+				)
+			case .mosaic, .text:
+				nil
+			}
+		}
 	}
 
 	var penStrokes: [FrozenBrushStroke] {

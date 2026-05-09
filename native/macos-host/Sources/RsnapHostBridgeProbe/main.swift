@@ -568,6 +568,47 @@ enum RsnapHostBridgeProbe {
 		else {
 			fatalError("unexpected auto-center plan")
 		}
+		let overlayBase = makeAutoCenterFrame(
+			width: 64,
+			height: 40,
+			content: CGRect(x: 0, y: 0, width: 64, height: 40)
+		)
+		let overlayExport = try RsnapExportEncoder.frozenOverlayExportImage(
+			from: overlayBase,
+			selection: CGRect(x: 0, y: 0, width: 64, height: 40),
+			elements: [
+				.mosaic(rect: CGRect(x: 4, y: 4, width: 16, height: 10)),
+				.spotlight(
+					rect: CGRect(x: 24, y: 4, width: 16, height: 10),
+					style: FrozenOverlayExportSpotlightStyle(
+						borderWidthPoints: 1,
+						borderColor: .white
+					)
+				),
+				.pen(
+					points: [CGPoint(x: 2, y: 2), CGPoint(x: 24, y: 18)],
+					style: FrozenOverlayExportStrokeStyle(strokeWidthPoints: 2, color: .blue)
+				),
+				.arrow(
+					start: CGPoint(x: 10, y: 30),
+					end: CGPoint(x: 48, y: 22),
+					style: FrozenOverlayExportStrokeStyle(strokeWidthPoints: 3, color: .red)
+				),
+				.text(
+					anchor: CGPoint(x: 6, y: 24),
+					text: "Hi",
+					style: FrozenOverlayExportTextStyle(fontSizePoints: 12, color: .white)
+				),
+			]
+		)
+		guard
+			overlayExport.width == overlayBase.width,
+			overlayExport.height == overlayBase.height,
+			overlayExport.rgba.count == overlayBase.rgba.count,
+			overlayExport.rgba != overlayBase.rgba
+		else {
+			fatalError("unexpected frozen overlay export render")
+		}
 
 		print("rsnap-host-bridge probe ok")
 	}

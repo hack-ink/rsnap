@@ -24,6 +24,12 @@ use rsnap_capture_core::{
 	RgbaExportImage, ScrollMinimapInput, ScrollMinimapPlan, SessionConfig, ToolbarItemKind,
 	ToolbarItemModel, WindowRect,
 };
+use rsnap_overlay::frozen_export::{
+	FrozenOverlayExportArrow, FrozenOverlayExportElement, FrozenOverlayExportMosaic,
+	FrozenOverlayExportPen, FrozenOverlayExportPoint, FrozenOverlayExportSpotlight,
+	FrozenOverlayExportSpotlightStyle, FrozenOverlayExportStrokeStyle, FrozenOverlayExportText,
+	FrozenOverlayExportTextStyle,
+};
 #[cfg(target_os = "macos")]
 use rsnap_overlay::host_live_sampling_macos::HostMacLiveSampler;
 use rsnap_overlay::scroll_stitching::{
@@ -31,7 +37,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 30;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 31;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -196,6 +202,78 @@ pub struct RsnapFloatRect {
 	pub width: f64,
 	/// Rectangle height in display points.
 	pub height: f64,
+}
+
+/// FFI-safe display-space point.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RsnapFloatPoint {
+	/// X coordinate in display points.
+	pub x: f64,
+	/// Y coordinate in display points.
+	pub y: f64,
+}
+
+/// FFI-safe frozen annotation color discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapFrozenAnnotationColor {
+	/// White annotation color.
+	White = 0,
+	/// Yellow annotation color.
+	Yellow = 1,
+	/// Green annotation color.
+	Green = 2,
+	/// Blue annotation color.
+	Blue = 3,
+	/// Red annotation color.
+	Red = 4,
+	/// Black annotation color.
+	Black = 5,
+}
+
+/// FFI-safe frozen-overlay export element discriminator.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RsnapFrozenOverlayExportElementKind {
+	/// Pen stroke annotation.
+	Pen = 0,
+	/// Arrow annotation.
+	Arrow = 1,
+	/// Mosaic privacy rectangle.
+	Mosaic = 2,
+	/// Spotlight annotation.
+	Spotlight = 3,
+	/// Text annotation.
+	Text = 4,
+}
+
+/// FFI-safe frozen-overlay export element.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RsnapFrozenOverlayExportElement {
+	/// Element kind.
+	pub kind: RsnapFrozenOverlayExportElementKind,
+	/// Rectangle payload for mosaic or spotlight annotations.
+	pub rect: RsnapFloatRect,
+	/// Start point, arrow tail, or text anchor.
+	pub start: RsnapFloatPoint,
+	/// Arrow tip.
+	pub end: RsnapFloatPoint,
+	/// Optional point buffer for pen strokes.
+	pub points: *const RsnapFloatPoint,
+	/// Number of points in `points`.
+	pub points_len: usize,
+	/// Optional null-terminated UTF-8 text payload.
+	pub text: *const c_char,
+	/// Stroke width in points for pen and arrow annotations.
+	pub stroke_width_points: f64,
+	/// Border width in points for spotlight annotations.
+	pub border_width_points: f64,
+	/// Font size in points for text annotations.
+	pub font_size_points: f64,
+	/// Annotation color.
+	pub color: RsnapFrozenAnnotationColor,
 }
 
 /// FFI-safe capture-frame source discriminator.
@@ -1017,6 +1095,54 @@ pub unsafe extern "C" fn rsnap_export_rgba_crop_to_png(
 
 	unsafe {
 		ptr::write(out_png, owned_bytes_from_vec(png));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Composites frozen-overlay annotations into a full RGBA export image through Rust.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data. `elements` must either be null with `elements_len == 0`, or point
+/// to `elements_len` readable element records whose nested point and text pointers stay
+/// valid for the duration of the call. The returned buffer must be released with
+/// `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_frozen_overlay_export_render_rgba(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	selection: RsnapFloatRect,
+	elements: *const RsnapFrozenOverlayExportElement,
+	elements_len: usize,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(elements) = (unsafe { decode_frozen_overlay_export_elements(elements, elements_len) })
+	else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(image) = rsnap_overlay::frozen_export::render_frozen_overlay_export_rgba(
+		width,
+		height,
+		bytes,
+		decode_float_rect(selection),
+		&elements,
+	) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_region, owned_region_from_raw_rgba(width, height, image.into_raw()));
 	}
 
 	RsnapStatus::Ok
@@ -2195,6 +2321,128 @@ fn decode_float_rect(rect: RsnapFloatRect) -> DisplayPointRect {
 	DisplayPointRect::new(rect.x, rect.y, rect.width, rect.height)
 }
 
+unsafe fn decode_frozen_overlay_export_elements(
+	elements: *const RsnapFrozenOverlayExportElement,
+	elements_len: usize,
+) -> Option<Vec<FrozenOverlayExportElement>> {
+	if elements_len == 0 {
+		return Some(Vec::new());
+	}
+	if elements.is_null() {
+		return None;
+	}
+
+	let elements = unsafe { slice::from_raw_parts(elements, elements_len) };
+
+	elements
+		.iter()
+		.map(|element| unsafe { decode_frozen_overlay_export_element(element) })
+		.collect()
+}
+
+unsafe fn decode_frozen_overlay_export_element(
+	element: &RsnapFrozenOverlayExportElement,
+) -> Option<FrozenOverlayExportElement> {
+	let color = decode_frozen_annotation_color(element.color);
+
+	match element.kind {
+		RsnapFrozenOverlayExportElementKind::Pen => {
+			Some(FrozenOverlayExportElement::Pen(FrozenOverlayExportPen {
+				points: unsafe {
+					decode_frozen_overlay_points(element.points, element.points_len)
+				}?,
+				style: FrozenOverlayExportStrokeStyle {
+					stroke_width_points: decode_f32(element.stroke_width_points)?,
+					rgba: color,
+				},
+			}))
+		},
+		RsnapFrozenOverlayExportElementKind::Arrow => {
+			Some(FrozenOverlayExportElement::Arrow(FrozenOverlayExportArrow {
+				start: decode_frozen_overlay_point(element.start)?,
+				end: decode_frozen_overlay_point(element.end)?,
+				style: FrozenOverlayExportStrokeStyle {
+					stroke_width_points: decode_f32(element.stroke_width_points)?,
+					rgba: color,
+				},
+			}))
+		},
+		RsnapFrozenOverlayExportElementKind::Mosaic => {
+			Some(FrozenOverlayExportElement::Mosaic(FrozenOverlayExportMosaic {
+				rect: decode_float_rect(element.rect),
+			}))
+		},
+		RsnapFrozenOverlayExportElementKind::Spotlight => {
+			Some(FrozenOverlayExportElement::Spotlight(FrozenOverlayExportSpotlight {
+				rect: decode_float_rect(element.rect),
+				style: FrozenOverlayExportSpotlightStyle {
+					border_width_points: decode_f32(element.border_width_points)?,
+					border_rgba: color,
+				},
+			}))
+		},
+		RsnapFrozenOverlayExportElementKind::Text => {
+			Some(FrozenOverlayExportElement::Text(FrozenOverlayExportText {
+				anchor: decode_frozen_overlay_point(element.start)?,
+				text: unsafe { decode_optional_utf8(element.text) }?,
+				style: FrozenOverlayExportTextStyle {
+					font_size_points: decode_f32(element.font_size_points)?,
+					rgba: color,
+				},
+			}))
+		},
+	}
+}
+
+unsafe fn decode_frozen_overlay_points(
+	points: *const RsnapFloatPoint,
+	points_len: usize,
+) -> Option<Vec<FrozenOverlayExportPoint>> {
+	if points_len == 0 {
+		return Some(Vec::new());
+	}
+	if points.is_null() {
+		return None;
+	}
+
+	unsafe { slice::from_raw_parts(points, points_len) }
+		.iter()
+		.map(|point| decode_frozen_overlay_point(*point))
+		.collect()
+}
+
+fn decode_frozen_overlay_point(point: RsnapFloatPoint) -> Option<FrozenOverlayExportPoint> {
+	if point.x.is_finite() && point.y.is_finite() {
+		Some(FrozenOverlayExportPoint::new(point.x, point.y))
+	} else {
+		None
+	}
+}
+
+unsafe fn decode_optional_utf8(text: *const c_char) -> Option<String> {
+	if text.is_null() {
+		return Some(String::new());
+	}
+
+	unsafe { CStr::from_ptr(text) }.to_str().ok().map(ToOwned::to_owned)
+}
+
+fn decode_f32(value: f64) -> Option<f32> {
+	(value.is_finite() && value >= f64::from(f32::MIN) && value <= f64::from(f32::MAX))
+		.then_some(value as f32)
+}
+
+fn decode_frozen_annotation_color(color: RsnapFrozenAnnotationColor) -> [u8; 4] {
+	match color {
+		RsnapFrozenAnnotationColor::White => [255, 255, 255, 255],
+		RsnapFrozenAnnotationColor::Yellow => [255, 219, 77, 255],
+		RsnapFrozenAnnotationColor::Green => [92, 214, 149, 255],
+		RsnapFrozenAnnotationColor::Blue => [102, 178, 255, 255],
+		RsnapFrozenAnnotationColor::Red => [255, 107, 107, 255],
+		RsnapFrozenAnnotationColor::Black => [24, 24, 24, 255],
+	}
+}
+
 unsafe fn decode_bgra_frame<'a>(
 	width: u32,
 	height: u32,
@@ -2846,12 +3094,14 @@ mod tests {
 		RSNAP_HOST_FFI_ABI_VERSION, RSNAP_STATUS_MESSAGE_CAPACITY, RsnapCaptureFrameBackgroundKind,
 		RsnapCaptureFrameBackgroundPlan, RsnapCaptureFrameColorStop, RsnapCaptureFramePlan,
 		RsnapCaptureFrameRenderKind, RsnapCaptureFrameSourceKind,
-		RsnapCaptureFrameWallpaperRequest, RsnapCursorIntent, RsnapFloatRect,
-		RsnapFrozenSelectionTransformKind, RsnapHostEvent, RsnapHostEventKind, RsnapHostReport,
-		RsnapHostReportKind, RsnapHostRequestKind, RsnapHostRequestValue, RsnapMonitorRect,
-		RsnapOwnedBytes, RsnapOwnedRgbaRegion, RsnapPixelRect, RsnapPlatformTag, RsnapPoint,
-		RsnapRect, RsnapRgb, RsnapSceneKind, RsnapSceneModel, RsnapScrollMinimapPlan,
-		RsnapSessionConfig, RsnapSessionHandle, RsnapStatus, RsnapWindowRect,
+		RsnapCaptureFrameWallpaperRequest, RsnapCursorIntent, RsnapFloatPoint, RsnapFloatRect,
+		RsnapFrozenAnnotationColor, RsnapFrozenOverlayExportElement,
+		RsnapFrozenOverlayExportElementKind, RsnapFrozenSelectionTransformKind, RsnapHostEvent,
+		RsnapHostEventKind, RsnapHostReport, RsnapHostReportKind, RsnapHostRequestKind,
+		RsnapHostRequestValue, RsnapMonitorRect, RsnapOwnedBytes, RsnapOwnedRgbaRegion,
+		RsnapPixelRect, RsnapPlatformTag, RsnapPoint, RsnapRect, RsnapRgb, RsnapSceneKind,
+		RsnapSceneModel, RsnapScrollMinimapPlan, RsnapSessionConfig, RsnapSessionHandle,
+		RsnapStatus, RsnapWindowRect,
 	};
 	#[cfg(target_os = "macos")]
 	use crate::{RsnapScrollObserveOutcomeKind, RsnapScrollObserveResult};
@@ -3159,6 +3409,81 @@ mod tests {
 		};
 
 		assert_eq!(status, RsnapStatus::Empty);
+	}
+
+	#[test]
+	fn ffi_frozen_overlay_export_render_rgba_returns_composited_region() {
+		let mut rgba = vec![180_u8; 64 * 40 * 4];
+		for alpha in (3..rgba.len()).step_by(4) {
+			rgba[alpha] = 255;
+		}
+		let points = [RsnapFloatPoint { x: 2.0, y: 2.0 }, RsnapFloatPoint { x: 24.0, y: 18.0 }];
+		let text = CString::new("Hi").expect("text has no interior nul");
+		let elements = [
+			RsnapFrozenOverlayExportElement {
+				kind: RsnapFrozenOverlayExportElementKind::Mosaic,
+				rect: RsnapFloatRect { x: 4.0, y: 4.0, width: 16.0, height: 10.0 },
+				start: RsnapFloatPoint::default(),
+				end: RsnapFloatPoint::default(),
+				points: ptr::null(),
+				points_len: 0,
+				text: ptr::null(),
+				stroke_width_points: 0.0,
+				border_width_points: 0.0,
+				font_size_points: 0.0,
+				color: RsnapFrozenAnnotationColor::Blue,
+			},
+			RsnapFrozenOverlayExportElement {
+				kind: RsnapFrozenOverlayExportElementKind::Pen,
+				rect: RsnapFloatRect::default(),
+				start: RsnapFloatPoint::default(),
+				end: RsnapFloatPoint::default(),
+				points: points.as_ptr(),
+				points_len: points.len(),
+				text: ptr::null(),
+				stroke_width_points: 2.0,
+				border_width_points: 0.0,
+				font_size_points: 0.0,
+				color: RsnapFrozenAnnotationColor::Blue,
+			},
+			RsnapFrozenOverlayExportElement {
+				kind: RsnapFrozenOverlayExportElementKind::Text,
+				rect: RsnapFloatRect::default(),
+				start: RsnapFloatPoint { x: 6.0, y: 24.0 },
+				end: RsnapFloatPoint::default(),
+				points: ptr::null(),
+				points_len: 0,
+				text: text.as_ptr(),
+				stroke_width_points: 0.0,
+				border_width_points: 0.0,
+				font_size_points: 12.0,
+				color: RsnapFrozenAnnotationColor::White,
+			},
+		];
+		let mut out = RsnapOwnedRgbaRegion::default();
+		let status = unsafe {
+			crate::rsnap_frozen_overlay_export_render_rgba(
+				64,
+				40,
+				rgba.as_ptr(),
+				rgba.len(),
+				RsnapFloatRect { x: 0.0, y: 0.0, width: 64.0, height: 40.0 },
+				elements.as_ptr(),
+				elements.len(),
+				&mut out,
+			)
+		};
+
+		assert_eq!(status, RsnapStatus::Ok);
+		assert_eq!(out.width, 64);
+		assert_eq!(out.height, 40);
+		assert_eq!(out.len, rgba.len());
+		let bytes = unsafe { std::slice::from_raw_parts(out.rgba, out.len) };
+		assert_ne!(bytes, rgba.as_slice());
+
+		unsafe {
+			crate::rsnap_owned_rgba_region_release(&mut out);
+		}
 	}
 
 	#[test]

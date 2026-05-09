@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 30u
+#define RSNAP_HOST_FFI_ABI_VERSION 31u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -262,6 +262,42 @@ typedef struct RsnapFloatRect {
 	double height;
 } RsnapFloatRect;
 
+typedef struct RsnapFloatPoint {
+	double x;
+	double y;
+} RsnapFloatPoint;
+
+typedef enum RsnapFrozenAnnotationColor {
+	RSNAP_FROZEN_ANNOTATION_COLOR_WHITE = 0,
+	RSNAP_FROZEN_ANNOTATION_COLOR_YELLOW = 1,
+	RSNAP_FROZEN_ANNOTATION_COLOR_GREEN = 2,
+	RSNAP_FROZEN_ANNOTATION_COLOR_BLUE = 3,
+	RSNAP_FROZEN_ANNOTATION_COLOR_RED = 4,
+	RSNAP_FROZEN_ANNOTATION_COLOR_BLACK = 5,
+} RsnapFrozenAnnotationColor;
+
+typedef enum RsnapFrozenOverlayExportElementKind {
+	RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_PEN = 0,
+	RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_ARROW = 1,
+	RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_MOSAIC = 2,
+	RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_SPOTLIGHT = 3,
+	RSNAP_FROZEN_OVERLAY_EXPORT_ELEMENT_TEXT = 4,
+} RsnapFrozenOverlayExportElementKind;
+
+typedef struct RsnapFrozenOverlayExportElement {
+	enum RsnapFrozenOverlayExportElementKind kind;
+	struct RsnapFloatRect rect;
+	struct RsnapFloatPoint start;
+	struct RsnapFloatPoint end;
+	const struct RsnapFloatPoint *points;
+	size_t points_len;
+	const char *text;
+	double stroke_width_points;
+	double border_width_points;
+	double font_size_points;
+	enum RsnapFrozenAnnotationColor color;
+} RsnapFrozenOverlayExportElement;
+
 typedef enum RsnapCaptureFrameSourceKind {
 	RSNAP_CAPTURE_FRAME_SOURCE_DRAG_REGION = 0,
 	RSNAP_CAPTURE_FRAME_SOURCE_WINDOW = 1,
@@ -404,6 +440,16 @@ enum RsnapStatus rsnap_export_rgba_crop_to_png(
 	size_t rgba_len,
 	struct RsnapPixelRect crop_rect,
 	struct RsnapOwnedBytes *out_png
+);
+enum RsnapStatus rsnap_frozen_overlay_export_render_rgba(
+	uint32_t width,
+	uint32_t height,
+	const uint8_t *rgba,
+	size_t rgba_len,
+	struct RsnapFloatRect selection,
+	const struct RsnapFrozenOverlayExportElement *elements,
+	size_t elements_len,
+	struct RsnapOwnedRgbaRegion *out_region
 );
 enum RsnapStatus rsnap_frozen_display_crop_rect(
 	uint32_t image_width,
