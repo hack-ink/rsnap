@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 28u
+#define RSNAP_HOST_FFI_ABI_VERSION 29u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -459,6 +459,11 @@ enum RsnapStatus rsnap_capture_frame_wallpaper_request_plan(
 	double destination_width,
 	double destination_height,
 	struct RsnapCaptureFrameWallpaperRequest *out_request
+);
+enum RsnapStatus rsnap_capture_frame_wallpaper_png_thumbnail(
+	const char *path,
+	uint32_t target_pixel_size,
+	struct RsnapOwnedRgbaRegion *out_region
 );
 enum RsnapStatus rsnap_scroll_minimap_plan(
 	struct RsnapFloatRect selection,

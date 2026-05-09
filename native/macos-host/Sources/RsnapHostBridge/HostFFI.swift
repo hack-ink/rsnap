@@ -340,6 +340,64 @@ public enum RsnapCaptureFramePlanner {
 	}
 }
 
+public enum RsnapWallpaperThumbnailDecoder {
+	public static func pngThumbnail(
+		path: String,
+		targetPixelSize: Int
+	) throws -> RGBARegionSnapshot? {
+		let clampedTarget = min(max(targetPixelSize, 0), Int(UInt32.max))
+		if clampedTarget == 0 {
+			return nil
+		}
+
+		var outRegion = RsnapOwnedRgbaRegion()
+		let status = path.withCString { pathPointer in
+			rsnap_capture_frame_wallpaper_png_thumbnail(
+				pathPointer,
+				UInt32(clampedTarget),
+				&outRegion
+			)
+		}
+		let code = rsnap_status_code(status)
+		if code == RSNAP_STATUS_EMPTY.rawValue {
+			return nil
+		}
+		try requireOk(status, context: "decoding PNG wallpaper thumbnail")
+
+		return rgbaSnapshot(from: outRegion)
+	}
+
+	private static func requireOk(_ status: RsnapStatus, context: String) throws {
+		let code = rsnap_status_code(status)
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(context: context, code: code)
+		}
+	}
+
+	private static func rgbaSnapshot(from outRegion: RsnapOwnedRgbaRegion) -> RGBARegionSnapshot? {
+		guard outRegion.len > 0, let rgba = outRegion.rgba else {
+			return nil
+		}
+
+		let ownedRegion = UnsafeMutablePointer<RsnapOwnedRgbaRegion>.allocate(capacity: 1)
+		ownedRegion.initialize(to: outRegion)
+		let data = Data(
+			bytesNoCopy: rgba,
+			count: outRegion.len,
+			deallocator: .custom { _, _ in
+				rsnap_owned_rgba_region_release(ownedRegion)
+				ownedRegion.deinitialize(count: 1)
+				ownedRegion.deallocate()
+			}
+		)
+		return RGBARegionSnapshot(
+			width: Int(outRegion.width),
+			height: Int(outRegion.height),
+			rgba: data
+		)
+	}
+}
+
 public enum RsnapScrollMinimapPlanner {
 	public static func plan(
 		selection: CGRect,

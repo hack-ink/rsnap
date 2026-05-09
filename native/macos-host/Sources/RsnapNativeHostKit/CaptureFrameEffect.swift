@@ -1,7 +1,6 @@
 import AppKit
 import CoreGraphics
 import Foundation
-import ImageIO
 import RsnapHostBridge
 
 package enum CaptureFrameSource: Equatable {
@@ -215,26 +214,51 @@ package enum CaptureFrameEffectRenderer {
 		if let cached = wallpaperCache.image(for: cacheKey) {
 			return cached
 		}
+		if let image = rustPngWallpaperImage(url: url, targetPixelSize: maxPixelSize) {
+			wallpaperCache.store(image, for: cacheKey)
+			return image
+		}
+		return nil
+	}
+
+	private static func rustPngWallpaperImage(url: URL, targetPixelSize: Int) -> CGImage? {
 		guard
-			let source = CGImageSourceCreateWithURL(
-				url as CFURL,
-				[kCGImageSourceShouldCache: false] as CFDictionary
+			let snapshot = try? RsnapWallpaperThumbnailDecoder.pngThumbnail(
+				path: url.standardizedFileURL.path,
+				targetPixelSize: targetPixelSize
 			)
 		else {
 			return nil
 		}
-		let options =
-			[
-				kCGImageSourceCreateThumbnailFromImageAlways: true,
-				kCGImageSourceCreateThumbnailWithTransform: true,
-				kCGImageSourceShouldCacheImmediately: true,
-				kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-			] as CFDictionary
-		guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options) else {
+
+		return cgImage(from: snapshot)
+	}
+
+	private static func cgImage(from snapshot: RGBARegionSnapshot) -> CGImage? {
+		let expectedByteCount = snapshot.width * snapshot.height * 4
+		guard
+			snapshot.width > 0,
+			snapshot.height > 0,
+			snapshot.rgba.count == expectedByteCount,
+			let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+			let provider = CGDataProvider(data: snapshot.rgba as CFData)
+		else {
 			return nil
 		}
-		wallpaperCache.store(image, for: cacheKey)
-		return image
+
+		return CGImage(
+			width: snapshot.width,
+			height: snapshot.height,
+			bitsPerComponent: 8,
+			bitsPerPixel: 32,
+			bytesPerRow: snapshot.width * 4,
+			space: colorSpace,
+			bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+			provider: provider,
+			decode: nil,
+			shouldInterpolate: true,
+			intent: .defaultIntent
+		)
 	}
 
 	private static func drawAspectFill(
