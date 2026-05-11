@@ -29,13 +29,14 @@ use crate::scroll_capture::{
 	DIRECTION_WARNING_MARGIN_X100, DOWNWARD_REGISTRATION_AMBIGUOUS_GAP_ROWS,
 	DOWNWARD_REGISTRATION_MIN_OVERLAP_DIVISOR, DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS,
 	DirectionMatch, DownwardRegistration, DownwardViewportCandidate,
-	DownwardViewportCandidateSource, DownwardViewportResolution,
-	INFORMATIVE_SPAN_HORIZONTAL_PADDING_PX, INFORMATIVE_SPAN_ROW_SAMPLES,
-	INFORMATIVE_SPAN_SCORE_FLOOR_X100, InformativeSpan, OverlapSearchConfig,
-	RESUME_DIRECT_PROOF_MAX_MEAN_ABS_DIFF_X100, ScrollDirection, ScrollFrameFingerprint,
-	ScrollObserveOutcome,
+	DownwardViewportCandidateSource, DownwardViewportResolution, InformativeSpan,
+	OverlapSearchConfig, RESUME_DIRECT_PROOF_MAX_MEAN_ABS_DIFF_X100, ScrollDirection,
+	ScrollFrameFingerprint, ScrollObserveOutcome,
 };
 
+const INFORMATIVE_SPAN_ROW_SAMPLES: u32 = 24;
+const INFORMATIVE_SPAN_SCORE_FLOOR_X100: u32 = 24;
+const INFORMATIVE_SPAN_HORIZONTAL_PADDING_PX: u32 = 16;
 const MOTION_COVERAGE_MIN_PERCENT: u32 = 20;
 const MOTION_COVERAGE_MIN_INFORMATIVE_COLUMNS: u32 = 1;
 const MOTION_COVERAGE_STATIC_EDGE_MAX_LEADING_COLUMNS: u32 = 48;

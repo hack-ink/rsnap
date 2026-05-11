@@ -1,11 +1,26 @@
 pub mod bench_support;
 
 mod downward_resolution;
+mod fingerprint;
 mod support;
+mod types;
 mod worker_pairwise;
 
+pub(crate) use self::fingerprint::ScrollFrameFingerprint;
 pub(crate) use self::support::{
 	compose_provisional_preview_image, scroll_capture_fingerprint, scroll_capture_fingerprint_delta,
+};
+#[cfg(test)]
+pub(crate) use self::types::OverlapMatch;
+pub(crate) use self::types::{
+	BlockedPreviewOnlyLocalCandidate, CommittedDownwardViewportCandidateMode, DirectionMatch,
+	DirectionMatchEval, DownwardRegistration, DownwardRegistrationWithSource, DownwardSampleMatch,
+	DownwardSampleMatchSource, DownwardViewportCandidate, DownwardViewportCandidateSource,
+	DownwardViewportResolution, GrowthCommit, InformativeSpan, MotionObservation,
+	OverlapSearchConfig, OverlapSearchRange, PreviewOnlyDownwardLocalSample,
+	ResumeFrontierDirectMatchContext, ResumeFrontierMatchLog, ScrollCommitTelemetry,
+	ScrollDirection, ScrollObserveOutcome, UpInputMatchLog, UpInputSearchWindowLog,
+	UpwardInputDiagnostics,
 };
 
 use std::ops::RangeInclusive;
@@ -21,8 +36,6 @@ pub(crate) const PREVIEW_ONLY_LOCAL_RECOVERY_MAX_TOLERANCE_ROWS: u32 = 12;
 pub(crate) const UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS: u32 = 8;
 pub(crate) const TRANSIENT_BURST_UNDERCONSUMED_HINT_MIN_ROWS: u32 = 48;
 
-const FINGERPRINT_GRID_COLUMNS: u32 = 12;
-const FINGERPRINT_GRID_ROWS: u32 = 16;
 const DOWNWARD_SEARCH_MOTION_TOLERANCE_ROWS: u32 = 48;
 const DOWNWARD_KEYFRAME_SEARCH_MOTION_TOLERANCE_ROWS: u32 = 4;
 const DOWNWARD_KEYFRAME_SEARCH_MAX_TOLERANCE_ROWS: u32 = 48;
@@ -48,150 +61,6 @@ const TRANSIENT_MOTION_HINT_MAX_MULTIPLIER: u32 = 3;
 const TRANSIENT_MOTION_HINT_MIN_CAP_ROWS: u32 = 12;
 const DIRECTION_WARNING_MARGIN_X100: u32 = 90;
 const RESUME_DIRECT_PROOF_MAX_MEAN_ABS_DIFF_X100: u32 = 320;
-const INFORMATIVE_SPAN_ROW_SAMPLES: u32 = 24;
-const INFORMATIVE_SPAN_SCORE_FLOOR_X100: u32 = 24;
-const INFORMATIVE_SPAN_HORIZONTAL_PADDING_PX: u32 = 16;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ScrollFrameFingerprint {
-	grid_columns: u32,
-	grid_rows: u32,
-	samples: Vec<[u8; 4]>,
-}
-impl ScrollFrameFingerprint {
-	#[must_use]
-	pub(crate) fn from_image(image: &RgbaImage) -> Self {
-		let width = image.width().max(1);
-		let height = image.height().max(1);
-		let informative_span = self::support::informative_column_span(image, 0, height);
-		let informative_left =
-			informative_span.map_or(0, |span| span.start_x.min(width.saturating_sub(1)));
-		let informative_right = informative_span
-			.map_or(width, |span| span.end_exclusive_x.min(width).max(informative_left + 1));
-		let informative_width = informative_right.saturating_sub(informative_left).max(1);
-		let margin_x = ((informative_width as f32) * 0.05).round() as u32;
-		let margin_y = ((height as f32) * 0.05).round() as u32;
-		let left =
-			informative_left.saturating_add(margin_x).min(informative_right.saturating_sub(1));
-		let right = informative_right.saturating_sub(margin_x).max(left + 1);
-		let top = margin_y.min(height.saturating_sub(1));
-		let bottom = height.saturating_sub(margin_y).max(top + 1);
-		let mut samples =
-			Vec::with_capacity((FINGERPRINT_GRID_COLUMNS * FINGERPRINT_GRID_ROWS) as usize);
-
-		for row in 0..FINGERPRINT_GRID_ROWS {
-			let y = self::support::evenly_spaced_sample(top, bottom, row, FINGERPRINT_GRID_ROWS);
-
-			for column in 0..FINGERPRINT_GRID_COLUMNS {
-				let x = self::support::evenly_spaced_sample(
-					left,
-					right,
-					column,
-					FINGERPRINT_GRID_COLUMNS,
-				);
-				let pixel = image.get_pixel(x, y).0;
-
-				samples.push(pixel);
-			}
-		}
-
-		Self { grid_columns: FINGERPRINT_GRID_COLUMNS, grid_rows: FINGERPRINT_GRID_ROWS, samples }
-	}
-
-	#[must_use]
-	pub(crate) fn into_bytes(self) -> Vec<u8> {
-		let mut bytes = Vec::with_capacity(self.samples.len().saturating_mul(4));
-
-		for sample in self.samples {
-			bytes.extend_from_slice(&sample);
-		}
-
-		bytes
-	}
-
-	#[must_use]
-	#[cfg(test)]
-	pub(crate) fn distance(&self, other: &Self) -> u64 {
-		if self.grid_columns != other.grid_columns || self.grid_rows != other.grid_rows {
-			return u64::MAX;
-		}
-
-		self.samples
-			.iter()
-			.zip(&other.samples)
-			.map(|(left, right)| {
-				u64::from(left[0].abs_diff(right[0]))
-					+ u64::from(left[1].abs_diff(right[1]))
-					+ u64::from(left[2].abs_diff(right[2]))
-					+ u64::from(left[3].abs_diff(right[3]))
-			})
-			.sum()
-	}
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct OverlapMatch {
-	pub(crate) rows: u32,
-	pub(crate) matched: bool,
-	pub(crate) mean_abs_diff_x100: u32,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ScrollCommitTelemetry {
-	pub(crate) current_viewport_top_y: i32,
-	pub(crate) preview_dimensions: (u32, u32),
-	pub(crate) export_dimensions: (u32, u32),
-	pub(crate) growth_commit_count: usize,
-	pub(crate) preview_segment_count: usize,
-	pub(crate) export_segment_count: usize,
-	pub(crate) preview_export_segments_aligned: bool,
-	pub(crate) last_commit_decision_source: Option<&'static str>,
-	pub(crate) last_commit_detected_motion_rows: Option<u32>,
-	pub(crate) last_commit_effective_motion_rows_hint: Option<u32>,
-	pub(crate) last_block_reason: Option<&'static str>,
-	pub(crate) last_downward_sample_registration_result: Option<&'static str>,
-	pub(crate) last_downward_sample_registration_source: Option<&'static str>,
-	pub(crate) last_downward_sample_registration_motion_rows: Option<u32>,
-	pub(crate) last_downward_sample_registration_provisional_viewport_top_y: Option<i32>,
-	pub(crate) observed_sample_registration_result: Option<&'static str>,
-	pub(crate) observed_sample_registration_reason: Option<&'static str>,
-	pub(crate) observed_sample_registration_motion_rows: Option<u32>,
-	pub(crate) observed_sample_registration_mean_abs_diff_x100: Option<u32>,
-	pub(crate) preview_only_local_registration_result: Option<&'static str>,
-	pub(crate) preview_only_local_registration_reason: Option<&'static str>,
-	pub(crate) preview_only_local_registration_motion_rows: Option<u32>,
-	pub(crate) preview_only_local_registration_mean_abs_diff_x100: Option<u32>,
-	pub(crate) last_downward_viewport_candidate_count: Option<usize>,
-	pub(crate) last_downward_viewport_candidates_before_prune: Option<String>,
-	pub(crate) last_downward_viewport_candidates_after_prune: Option<String>,
-	pub(crate) sample_eval_last_motion_rows_hint: Option<u32>,
-	pub(crate) sample_eval_transient_motion_rows_hint: Option<u32>,
-	pub(crate) sample_eval_effective_motion_rows_hint: Option<u32>,
-	pub(crate) sample_eval_transient_burst_search_enabled: bool,
-	pub(crate) preview_only_local_viewport_top_y: Option<i32>,
-	pub(crate) last_preview_segment_height_px: Option<u32>,
-	pub(crate) last_export_segment_height_px: Option<u32>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct OverlapSearchConfig {
-	pub(crate) min_overlap_rows: u32,
-	pub(crate) max_column_samples: u32,
-	pub(crate) max_row_samples: u32,
-	pub(crate) max_mean_abs_diff_x100: u32,
-}
-impl Default for OverlapSearchConfig {
-	fn default() -> Self {
-		Self {
-			min_overlap_rows: 24,
-			max_column_samples: 160,
-			max_row_samples: 64,
-			max_mean_abs_diff_x100: 850,
-		}
-	}
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct ScrollSession {
 	anchor_frame: RgbaImage,
@@ -2953,261 +2822,6 @@ impl ScrollSession {
 
 		true
 	}
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PreviewOnlyDownwardLocalSample {
-	frame: RgbaImage,
-	viewport_top_y: i32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct DirectionMatch {
-	mean_abs_diff_x100: u32,
-	motion_rows: u32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct DownwardSampleMatch {
-	matched: DirectionMatch,
-	source: DownwardSampleMatchSource,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct DownwardViewportCandidate {
-	source: DownwardViewportCandidateSource,
-	viewport_top_y: i32,
-	motion_rows: u32,
-	mean_abs_diff_x100: u32,
-}
-impl DownwardViewportCandidate {
-	fn competing_block_reason(self, competing: Self) -> &'static str {
-		match (self.source, competing.source) {
-			(
-				DownwardViewportCandidateSource::CommittedKeyframe,
-				DownwardViewportCandidateSource::CommittedKeyframe,
-			) => "conflicting_committed_keyframe_authority",
-			_ => "conflicting_downward_viewport_authority",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct BlockedPreviewOnlyLocalCandidate {
-	candidate: DownwardViewportCandidate,
-	repeats: u8,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct OverlapSearchRange {
-	start: u32,
-	end: u32,
-}
-impl OverlapSearchRange {
-	fn as_range(self) -> RangeInclusive<u32> {
-		self.start..=self.end
-	}
-}
-
-impl From<RangeInclusive<u32>> for OverlapSearchRange {
-	fn from(range: RangeInclusive<u32>) -> Self {
-		Self { start: *range.start(), end: *range.end() }
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct DirectionMatchEval {
-	preferred_range: Option<OverlapSearchRange>,
-	max_motion_rows: u32,
-	preferred_only_match: Option<DirectionMatch>,
-	final_match: Option<DirectionMatch>,
-	used_full_range_fallback: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MotionObservation {
-	direction: ScrollDirection,
-	motion_rows: u32,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct UpInputMatchLog {
-	sample_motion: Option<MotionObservation>,
-	sample_down_match: Option<DirectionMatch>,
-	sample_up_match: Option<DirectionMatch>,
-	committed_down_match: Option<DirectionMatch>,
-	committed_up_match: Option<DirectionMatch>,
-	sample_override_wins: bool,
-	committed_override_wins: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct UpInputSearchWindowLog<'a> {
-	sample_delta: Option<u32>,
-	sample_down_match_eval: &'a DirectionMatchEval,
-	sample_up_match_eval: &'a DirectionMatchEval,
-	committed_down_match_eval: &'a DirectionMatchEval,
-	committed_up_match_eval: &'a DirectionMatchEval,
-	frame_equals_last_sample: bool,
-	frame_equals_last_committed: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct UpwardInputDiagnostics {
-	sample_down_match_eval: DirectionMatchEval,
-	sample_up_match_eval: DirectionMatchEval,
-	committed_down_match_eval: DirectionMatchEval,
-	committed_up_match_eval: DirectionMatchEval,
-	sample_override_match: Option<DirectionMatch>,
-	committed_override_match: Option<DirectionMatch>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ResumeFrontierMatchLog {
-	motion_rows: u32,
-	candidate_observed_viewport_top_y: i32,
-	residual_growth_rows: u32,
-	raw_committed_down_match: Option<DirectionMatch>,
-	trusted_committed_down_match: Option<DirectionMatch>,
-	committed_up_match: Option<DirectionMatch>,
-	frame_reacquires_last_committed_viewport: bool,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ResumeFrontierDirectMatchContext {
-	motion_rows: u32,
-	candidate_observed_viewport_top_y: i32,
-	residual_growth_rows: u32,
-}
-
-#[derive(Clone, Debug)]
-struct GrowthCommit {
-	frame: RgbaImage,
-	growth_rows: u32,
-	viewport_top_y: i32,
-	decision_source: &'static str,
-	detected_motion_rows: Option<u32>,
-	effective_motion_rows_hint: Option<u32>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct InformativeSpan {
-	start_x: u32,
-	end_exclusive_x: u32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ScrollDirection {
-	Up,
-	Down,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ScrollObserveOutcome {
-	NoChange,
-	PreviewUpdated,
-	UnsupportedDirection { direction: ScrollDirection },
-	Committed { direction: ScrollDirection, growth_rows: u32 },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DownwardRegistration {
-	NoMatch,
-	Matched(DirectionMatch),
-	Ambiguous { best: DirectionMatch, competing: DirectionMatch },
-}
-impl DownwardRegistration {
-	fn map_source(self, source: DownwardSampleMatchSource) -> DownwardRegistrationWithSource {
-		match self {
-			Self::NoMatch => DownwardRegistrationWithSource::NoMatch,
-			Self::Matched(matched) => {
-				DownwardRegistrationWithSource::Matched(DownwardSampleMatch { matched, source })
-			},
-			Self::Ambiguous { best, competing } => DownwardRegistrationWithSource::Ambiguous {
-				best: DownwardSampleMatch { matched: best, source },
-				competing: DownwardSampleMatch { matched: competing, source },
-			},
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DownwardSampleMatchSource {
-	ObservedSample,
-	PreviewOnlyLocalSample,
-}
-impl DownwardSampleMatchSource {
-	const fn label(self) -> &'static str {
-		match self {
-			Self::ObservedSample => "observed_sample",
-			Self::PreviewOnlyLocalSample => "preview_only_local_sample",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DownwardRegistrationWithSource {
-	NoMatch,
-	Matched(DownwardSampleMatch),
-	Ambiguous { best: DownwardSampleMatch, competing: DownwardSampleMatch },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DownwardViewportCandidateSource {
-	ObservedSample,
-	PreviewOnlyLocalSample,
-	CommittedKeyframe,
-}
-impl DownwardViewportCandidateSource {
-	const fn priority(self) -> u8 {
-		match self {
-			Self::CommittedKeyframe => 0,
-			Self::ObservedSample => 1,
-			Self::PreviewOnlyLocalSample => 2,
-		}
-	}
-
-	const fn decision_source(self) -> &'static str {
-		match self {
-			Self::ObservedSample => "sample_motion_downward_growth_from_observed_keyframe",
-			Self::PreviewOnlyLocalSample => {
-				"sample_motion_downward_growth_from_preview_only_local_sample"
-			},
-			Self::CommittedKeyframe => "sample_motion_downward_growth_from_committed_keyframe",
-		}
-	}
-
-	const fn fallback_decision_source(self) -> &'static str {
-		match self {
-			Self::ObservedSample => "fallback_downward_registration_from_observed_keyframe",
-			Self::PreviewOnlyLocalSample => {
-				"fallback_downward_registration_from_preview_only_local_sample"
-			},
-			Self::CommittedKeyframe => "fallback_downward_registration_from_committed_keyframe",
-		}
-	}
-}
-
-impl From<DownwardSampleMatchSource> for DownwardViewportCandidateSource {
-	fn from(value: DownwardSampleMatchSource) -> Self {
-		match value {
-			DownwardSampleMatchSource::ObservedSample => Self::ObservedSample,
-			DownwardSampleMatchSource::PreviewOnlyLocalSample => Self::PreviewOnlyLocalSample,
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CommittedDownwardViewportCandidateMode {
-	LastCommittedOnly,
-	IncludeRecentHistory,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DownwardViewportResolution {
-	NoMatch,
-	Selected(DownwardViewportCandidate),
-	Ambiguous { preferred: DownwardViewportCandidate, competing: DownwardViewportCandidate },
 }
 
 #[cfg(test)]
