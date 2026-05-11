@@ -193,7 +193,7 @@ pub fn capture_frame_plan(
 		canvas_height,
 		image_rect,
 		corner_radius,
-		shadows: capture_frame_shadows(canvas_width, canvas_height),
+		shadows: capture_frame_shadows(canvas_width, canvas_height, source),
 	})
 }
 
@@ -418,7 +418,21 @@ fn capture_frame_corner_radius(
 	}
 }
 
-fn capture_frame_shadows(canvas_width: f64, canvas_height: f64) -> [CaptureFrameShadow; 3] {
+fn capture_frame_shadows(
+	canvas_width: f64,
+	canvas_height: f64,
+	source: CaptureFrameSourceKind,
+) -> [CaptureFrameShadow; 3] {
+	match source {
+		CaptureFrameSourceKind::Window => window_capture_frame_shadows(canvas_width, canvas_height),
+		CaptureFrameSourceKind::DragRegion
+		| CaptureFrameSourceKind::FullScreen
+		| CaptureFrameSourceKind::ScrollCapture
+		| CaptureFrameSourceKind::Unknown => document_capture_frame_shadows(canvas_width, canvas_height),
+	}
+}
+
+fn window_capture_frame_shadows(canvas_width: f64, canvas_height: f64) -> [CaptureFrameShadow; 3] {
 	let short_side = canvas_width.min(canvas_height);
 
 	[
@@ -434,6 +448,34 @@ fn capture_frame_shadows(canvas_width: f64, canvas_height: f64) -> [CaptureFrame
 			-4.0_f64.max(canvas_height * 0.006),
 			10.0_f64.max(short_side * 0.014),
 			0.22,
+		),
+	]
+}
+
+fn document_capture_frame_shadows(
+	canvas_width: f64,
+	canvas_height: f64,
+) -> [CaptureFrameShadow; 3] {
+	let short_side = canvas_width.min(canvas_height);
+
+	[
+		CaptureFrameShadow::new(
+			0.0,
+			(canvas_height * 0.008).clamp(4.0, 10.0),
+			(short_side * 0.055).clamp(32.0, 72.0),
+			0.16,
+		),
+		CaptureFrameShadow::new(
+			0.0,
+			(canvas_height * 0.026).clamp(18.0, 34.0),
+			(short_side * 0.038).clamp(24.0, 50.0),
+			0.18,
+		),
+		CaptureFrameShadow::new(
+			0.0,
+			(canvas_height * 0.006).clamp(4.0, 8.0),
+			(short_side * 0.012).clamp(7.0, 13.0),
+			0.10,
 		),
 	]
 }
@@ -897,7 +939,7 @@ mod tests {
 	}
 
 	#[test]
-	fn capture_frame_plan_scales_large_shadow_geometry() {
+	fn capture_frame_plan_uses_document_shadow_for_drag_regions() {
 		let plan =
 			capture_frame::capture_frame_plan(1_440, 900, 2.0, CaptureFrameSourceKind::DragRegion)
 				.expect("valid plan");
@@ -907,9 +949,43 @@ mod tests {
 		assert_eq!(plan.image_rect, DisplayPointRect::new(103.5, 103.5, 1_440.0, 900.0));
 		assert_eq!(plan.corner_radius, 22.5);
 
-		assert_shadow_near(plan.shadows[0], CaptureFrameShadow::new(0.0, 0.0, 94.095, 0.30));
-		assert_shadow_near(plan.shadows[1], CaptureFrameShadow::new(0.0, -33.21, 55.35, 0.36));
-		assert_shadow_near(plan.shadows[2], CaptureFrameShadow::new(0.0, -6.642, 15.498, 0.22));
+		assert_shadow_near(plan.shadows[0], CaptureFrameShadow::new(0.0, 8.856, 60.885, 0.16));
+		assert_shadow_near(plan.shadows[1], CaptureFrameShadow::new(0.0, 28.782, 42.066, 0.18));
+		assert_shadow_near(plan.shadows[2], CaptureFrameShadow::new(0.0, 6.642, 13.0, 0.10));
+	}
+
+	#[test]
+	fn drag_region_frame_keeps_top_shadow_lighter_than_bottom_shadow() {
+		let source_rgba = vec![255; 1_440 * 900 * 4];
+		let wallpaper_rgba = [200, 200, 200, 255].repeat(64);
+		let source = CaptureFrameRenderImageRef::new(1_440, 900, &source_rgba)
+			.expect("source fixture should be valid");
+		let wallpaper = CaptureFrameRenderImageRef::new(8, 8, &wallpaper_rgba)
+			.expect("wallpaper fixture should be valid");
+		let plan =
+			capture_frame::capture_frame_plan(1_440, 900, 2.0, CaptureFrameSourceKind::DragRegion)
+				.expect("valid plan");
+		let rendered = capture_frame::render_capture_frame_effect(
+			source,
+			CaptureFrameBackgroundKind::SystemWallpaper,
+			2.0,
+			CaptureFrameSourceKind::DragRegion,
+			CaptureFrameRenderKind::FramedCapture,
+			Some(wallpaper),
+		)
+		.expect("render should succeed")
+		.expect("render should produce an image");
+		let center_x = (plan.image_rect.x + plan.image_rect.width * 0.5).round() as usize;
+		let top_y = (plan.image_rect.y - 12.0).round() as usize;
+		let bottom_y = (plan.image_rect.y + plan.image_rect.height + 12.0).round() as usize;
+		let width = rendered.width() as usize;
+		let top_red = rendered.as_raw()[(top_y * width + center_x) * 4];
+		let bottom_red = rendered.as_raw()[(bottom_y * width + center_x) * 4];
+
+		assert!(
+			top_red > bottom_red,
+			"drag-region frame should not render a darker top band than bottom lift shadow"
+		);
 	}
 
 	#[test]
