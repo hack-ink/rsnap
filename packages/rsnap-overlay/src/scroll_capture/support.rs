@@ -221,6 +221,23 @@ pub(super) fn trusted_pairwise_downward_shift_rows_near_motion(
 	}
 }
 
+pub(super) fn trusted_pairwise_upward_shift_rows(
+	previous: &RgbaImage,
+	current: &RgbaImage,
+) -> Option<u32> {
+	let up_match = trusted_pairwise_shift_match(previous, current, ScrollDirection::Up)?;
+	let down_match = trusted_pairwise_shift_match(previous, current, ScrollDirection::Down);
+
+	if down_match.is_some_and(|down_match| {
+		down_match.mean_abs_diff_x100
+			<= up_match.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+	}) {
+		return None;
+	}
+
+	Some(up_match.motion_rows)
+}
+
 pub(super) fn select_downward_viewport_candidate(
 	candidates: &mut [DownwardViewportCandidate],
 ) -> DownwardViewportResolution {
@@ -229,14 +246,13 @@ pub(super) fn select_downward_viewport_candidate(
 	}
 
 	if let Some(preferred_local) = prefer_local_downward_viewport_candidate(candidates) {
+		let ambiguity_margin = downward_viewport_competing_margin(candidates, preferred_local);
 		let competing = candidates.iter().copied().find(|candidate| {
 			candidate != &preferred_local
 				&& candidate.viewport_top_y.abs_diff(preferred_local.viewport_top_y)
 					>= DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS
 				&& candidate.mean_abs_diff_x100
-					<= preferred_local
-						.mean_abs_diff_x100
-						.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+					<= preferred_local.mean_abs_diff_x100.saturating_add(ambiguity_margin)
 		});
 
 		return match competing {
@@ -255,11 +271,12 @@ pub(super) fn select_downward_viewport_candidate(
 	});
 
 	let preferred = candidates[0];
+	let ambiguity_margin = downward_viewport_competing_margin(candidates, preferred);
 	let competing = candidates.iter().copied().skip(1).find(|candidate| {
 		candidate.viewport_top_y.abs_diff(preferred.viewport_top_y)
 			>= DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS
 			&& candidate.mean_abs_diff_x100
-				<= preferred.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+				<= preferred.mean_abs_diff_x100.saturating_add(ambiguity_margin)
 	});
 
 	match competing {
@@ -713,6 +730,21 @@ pub(super) fn evenly_spaced_sample(start: u32, end_exclusive: u32, index: u32, c
 	start.saturating_add(numerator as u32).min(end_exclusive.saturating_sub(1))
 }
 
+fn downward_viewport_competing_margin(
+	candidates: &[DownwardViewportCandidate],
+	preferred: DownwardViewportCandidate,
+) -> u32 {
+	let exact_corroborated = candidates.iter().any(|candidate| {
+		candidate != &preferred
+			&& candidate.viewport_top_y == preferred.viewport_top_y
+			&& candidate.motion_rows == preferred.motion_rows
+			&& candidate.mean_abs_diff_x100
+				<= preferred.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+	});
+
+	if exact_corroborated { 0 } else { DIRECTION_WARNING_MARGIN_X100 }
+}
+
 fn classify_pairwise_downward_shift_near_motion(
 	previous: &RgbaImage,
 	current: &RgbaImage,
@@ -741,6 +773,32 @@ fn classify_pairwise_downward_shift_near_motion(
 	);
 
 	classify_downward_registration_candidates(&candidates)
+}
+
+fn trusted_pairwise_shift_match(
+	previous: &RgbaImage,
+	current: &RgbaImage,
+	direction: ScrollDirection,
+) -> Option<DirectionMatch> {
+	if previous.dimensions() != current.dimensions() {
+		return None;
+	}
+
+	let (_width, height) = previous.dimensions();
+
+	if height < 3 {
+		return None;
+	}
+
+	let config = worker_pairwise_overlap_search_config();
+	let max_shift = max_directional_motion_rows(previous, current, config);
+	let candidates =
+		collect_overlap_direction_matches(previous, current, direction, 1..=max_shift, config);
+
+	match classify_downward_registration_candidates(&candidates) {
+		DownwardRegistration::Matched(matched) => Some(matched),
+		DownwardRegistration::Ambiguous { .. } | DownwardRegistration::NoMatch => None,
+	}
 }
 
 fn worker_pairwise_overlap_search_config() -> OverlapSearchConfig {

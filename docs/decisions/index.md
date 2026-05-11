@@ -49,3 +49,5 @@ Then keep the body decision-oriented:
   screenshot annotation over faithful pointer-path reproduction
 - `docs/decisions/frozen-toolbar-anchor.md` for the stable-anchor layout choice that prevents
   style-capsule expansion from moving the primary Frozen toolbar
+- `docs/decisions/scroll-capture-architecture.md` for the accepted layered scroll-capture target
+  architecture based on CleanShot/Xnip/Snagit/Shottr/ScrollSnap prior art and Rsnap live failures

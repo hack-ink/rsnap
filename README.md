@@ -29,8 +29,8 @@ https://github.com/user-attachments/assets/ff2fe84f-f551-40e8-919c-66ae8a61f8e7
 - In Frozen mode, `Space` copies the current frozen PNG to the clipboard and exits.
 - In Frozen mode, Cmd+S (macOS) / Ctrl+S saves the current PNG to disk and exits.
 - On macOS, Frozen mode can recognize text from the current capture and copy the result to the clipboard from the toolbar.
-- Frozen toolbar tools include pointer, pen, arrow, text, mosaic, spotlight, undo, redo, auto-center,
-  OCR, copy, and save.
+- Frozen toolbar tools include pointer, pen, arrow, text, mosaic, spotlight, undo, redo,
+  auto-center, OCR, Scroll Capture for dragged-region freezes, copy, and save.
 - `Esc` cancels capture.
 - Glass HUD with Classic Glass fallback and Liquid Glass in release builds on supported macOS.
 - Tab-triggered loupe sample and frozen-mode toolbar for quick action access.
@@ -74,7 +74,10 @@ Prototype / in active development.
 - Menubar and Dock are not included in live window-outline targeting.
 - Windows support is planned (minimum Windows 10), but not implemented yet.
 - The scroll-capture engine, deterministic replay, and benchmark surfaces remain in the repository,
-  but the v0.2.1 native-host release does not expose scroll capture in the toolbar.
+  but the v0.2.1 native-host release does not expose scroll capture in the toolbar. On this
+  development branch, scroll capture uses ordered ScreenCaptureKit region frames, overlay-local
+  wheel forwarding, and Rust-owned fail-closed stitching on macOS. Release readiness for broader
+  target apps is governed by `docs/runbook/scroll-capture-recovery-plan.md`.
 
 ## Usage
 
@@ -122,13 +125,15 @@ After Gatekeeper allows the app to open, continue with Screen Recording permissi
 
 ### macOS permissions
 
-Rsnap currently relies on **Screen Recording** permission to capture other apps/windows.
+Rsnap requires **Screen Recording** permission to capture other apps/windows.
 - ScreenCaptureKit live sampling on macOS requires macOS 12.3+ and Screen Recording permission.
 - Normal region/window/monitor capture does not require Accessibility or Input Monitoring.
-- The retained scroll-capture path uses Screen Recording-backed screenshots plus forwarded wheel
-  input, but the v0.2.1 native-host release does not expose scroll capture in the toolbar.
+- The retained scroll-capture path uses Screen Recording-backed screenshots plus overlay-local
+  wheel forwarding; it does not require Accessibility, Input Monitoring, Accessibility target
+  acquisition, app scripting, or browser/DOM access. The v0.2.1 native-host release does not expose
+  scroll capture in the toolbar.
 - macOS may describe Screen Recording as `Screen & System Audio Recording` or as direct screen/audio access when Rsnap bypasses the system picker.
-- Settings -> Permissions shows Screen Recording as the only required permission.
+- Settings -> Permissions shows Screen Recording as the required capture permission.
 - Normal native capture depends on Screen Recording; if access is missing, Rsnap opens the Screen Recording page in System Settings and shows a floating drag-to-grant guide.
 - You can reopen the Permissions section from `Settings…` in the tray or menubar menu at any time.
 - Base capture path: `System Settings` -> `Privacy & Security` -> `Screen Recording`.
@@ -163,7 +168,13 @@ Rsnap currently relies on **Screen Recording** permission to capture other apps/
 
 Scroll capture is temporarily hidden in the v0.2.1 native-host release. The retained Rust
 scroll-capture session, deterministic replay, and benchmark surfaces remain for validation and
-future re-enablement, but users should not expect a `Scroll Capture` toolbar item in this release.
+future re-enablement, but users should not expect a `Scroll Capture` toolbar item in that release.
+
+On this development branch, scroll capture targets dragged-region Frozen capture on macOS. The
+implementation commits downward growth only after ordered-frame pairwise registration plus overlap
+proof, fails closed on weak registration or rewind, and forwards wheel input to target apps through
+one universal path. Follow `docs/runbook/scroll-capture-recovery-plan.md` for release-scope
+validation.
 
 ## Development
 

@@ -248,6 +248,31 @@ final class LiveFrameStreamBroker {
 		)
 	}
 
+	func nextRegionFrame(
+		in rect: CGRect,
+		afterFrameSequence: UInt64,
+		waitForFresh: Bool
+	) -> RGBARegionFrameSnapshot? {
+		guard let monitor = monitor(containing: CGPoint(x: rect.midX, y: rect.midY)) else {
+			return nil
+		}
+		stateLock.lock()
+		let sampler = self.sampler
+		let mainDisplayHeight = self.mainDisplayHeight
+		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
+		stateLock.unlock()
+		guard let sampler else {
+			return nil
+		}
+		let quartzRect = Self.appKitRectToQuartz(rect, mainDisplayHeight: mainDisplayHeight)
+		return try? sampler.nextRegionFrame(
+			monitor: encodedMonitor,
+			rect: quartzRect,
+			afterFrameSequence: afterFrameSequence,
+			waitForFresh: waitForFresh
+		)
+	}
+
 	func prime(at point: CGPoint?) {
 		guard let point, let monitor = monitor(containing: point) else {
 			return

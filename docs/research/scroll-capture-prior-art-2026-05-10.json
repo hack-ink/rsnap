@@ -1,0 +1,232 @@
+{
+  "schema": "research-run/2",
+  "run_id": "scroll-capture-prior-art-2026-05-10",
+  "question": "Which scroll screenshot architecture should Rsnap implement after comparing open-source scroll capture projects and mature product behavior?",
+  "success_criteria": [
+    "Separate source-code evidence from proprietary product behavior.",
+    "Choose an architecture that can work across arbitrary macOS apps without false joins, sparse appends, or rewind corruption.",
+    "Record the permission consequence so implementation and Settings do not drift."
+  ],
+  "constraints": [
+    "Do not infer proprietary internals from CleanShot X or Xnip beyond public behavior and docs.",
+    "Prefer open-source code and local runtime evidence for implementation details.",
+    "Keep Rsnap's Rust stitcher as the durable confidence gate; Swift remains macOS integration glue."
+  ],
+  "stop_rule": "Stop once the evidence can justify one concrete product path and its failure boundaries.",
+  "primary_hypothesis": "A universal scroll screenshot path should forward overlay-local wheel input to the target app through short passthrough windows, sample selected-region frames around input bursts with a live-stream-first path plus below-overlay fallback, and commit only Rust-proven monotonic downward growth.",
+  "rival_hypotheses": [
+    "An AX-controlled product path is necessary for smooth capture.",
+    "A ScrollSnap-style timer plus Vision registration is enough by itself.",
+    "Wheel deltas can be used as movement authority.",
+    "A browser/DOM-specific capture path is the only reliable approach."
+  ],
+  "falsifiers": [
+    "If open-source implementations require app-specific Accessibility control to work across apps, the universal manual path is weaker.",
+    "If Rsnap's Rust pairwise path cannot reject overshot and rewind cases, user-driven capture is unsafe.",
+    "If overlay-local wheel forwarding cannot move the target app during short passthrough windows, the chosen Swift input path is not viable."
+  ],
+  "coverage": {
+    "mode": "standard",
+    "min_source_families": 0
+  },
+  "continuation": {
+    "mode": "stop",
+    "attempt": 1,
+    "max_attempts": 1,
+    "session_id": "019e0d6e-5a55-7e72-a666-5dd687d422d2"
+  },
+  "events": [
+    {
+      "seq": 1,
+      "type": "probe_completed",
+      "remaining_option_count": 4,
+      "independent_option_questions": [
+        "Can user-driven capture be the one product path instead of AX control?",
+        "Which parts of ScrollSnap, wayscrollshot, and ShareX should Rsnap copy or reject?",
+        "What state must the Rust stitcher preserve to avoid sparse appends and rewind false joins?"
+      ],
+      "external_slices": []
+    },
+    {
+      "seq": 2,
+      "type": "evidence_recorded",
+      "evidence": [
+        {
+          "id": "E1",
+          "kind": "observation",
+          "summary": "ScrollSnap uses ScreenCaptureKit region capture, overlay mouse passthrough, a 0.25s repeating capture timer, and Vision translational registration against the previous screenshot.",
+          "source_family": "open_source_code",
+          "source_locator": "https://github.com/Brkgng/ScrollSnap"
+        },
+        {
+          "id": "E2",
+          "kind": "observation",
+          "summary": "ScrollSnap advances previousImage even when offset detection fails and crops the running image on upward offsets, which can lose the committed frontier or mutate committed output during rewind.",
+          "source_family": "open_source_code",
+          "source_locator": "ScrollSnap/Managers/StitchingManager.swift"
+        },
+        {
+          "id": "E3",
+          "kind": "observation",
+          "summary": "wayscrollshot captures the selected region continuously every 45ms while the user scrolls, skips duplicate signatures, and appends only the new bottom slice after overlap matching.",
+          "source_family": "open_source_code",
+          "source_locator": "https://github.com/jswysnemc/wayscrollshot"
+        },
+        {
+          "id": "E4",
+          "kind": "observation",
+          "summary": "wayscrollshot's stitcher treats failed confidence as NoMatch, insufficient positive offset as NoProgress, and only appends when overlap proof produces enough new height.",
+          "source_family": "open_source_code",
+          "source_locator": "wayscrollshot/src/stitch.rs"
+        },
+        {
+          "id": "E5",
+          "kind": "observation",
+          "summary": "ShareX's scrolling capture loop repeatedly captures a selected rectangle, detects duplicate images for stopping, searches overlap against the accumulated result, ignores unstable bottom edge rows, and reports success or partial success.",
+          "source_family": "open_source_code",
+          "source_locator": "https://github.com/ShareX/ShareX"
+        },
+        {
+          "id": "E6",
+          "kind": "observation",
+          "summary": "Xnip documents same-portion matching and pause/failure causes including fast scroll, dynamic content, nonvertical scroll, and upward scroll.",
+          "source_family": "product_docs",
+          "source_locator": "https://www.xnipapp.com/scrolling-capture/"
+        },
+        {
+          "id": "E7",
+          "kind": "observation",
+          "summary": "CleanShot exposes scrolling capture as a first-class URL action with start and autoscroll parameters, but the public API does not prove a specific internal stitching implementation.",
+          "source_family": "product_docs",
+          "source_locator": "https://cleanshot.com/docs-api"
+        },
+        {
+          "id": "E8",
+          "kind": "observation",
+          "summary": "Rsnap's previous AX-gated path made Scroll Capture usable only in targets exposing controllable accessibility scroll bars, which violated the goal of one generic mode across arbitrary apps.",
+          "source_family": "repo_runtime",
+          "source_locator": "manual user acceptance feedback, 2026-05-10"
+        },
+        {
+          "id": "E9",
+          "kind": "observation",
+          "summary": "Rsnap's Rust worker-pairwise tests cover successive growth, overshot blocked frames that must not append tails, and rewind/reacquire before growth resumes.",
+          "source_family": "repo_tests",
+          "source_locator": "packages/rsnap-overlay/src/scroll_capture/tests.rs"
+        },
+        {
+          "id": "E10",
+          "kind": "observation",
+          "summary": "Live wheel smoke showed permanent overlay passthrough can make the toolbar unreachable and can let the target jump beyond capturable overlap; the current product path uses short all-overlay passthrough windows for each forwarded wheel event instead.",
+          "source_family": "repo_runtime",
+          "source_locator": "target/telemetry/native-host-20260511-002448/native-host.oslog"
+        }
+      ]
+    },
+    {
+      "seq": 3,
+      "type": "tradeoffs_recorded",
+      "tradeoffs": [
+        {
+          "id": "T1",
+          "summary": "AX control can automate scrolling when target apps expose usable accessibility state, but it cannot be the one generic product path because many apps do not expose settable scroll bars.",
+          "supporting_evidence_ids": [
+            "E7",
+            "E8"
+          ],
+          "disconfirming_evidence_ids": []
+        },
+        {
+          "id": "T2",
+          "summary": "User-driven wheel input is the broadest macOS app strategy, but release-quality capture must keep toolbar control responsive while sampling ordered frames around real forwarded input.",
+          "supporting_evidence_ids": [
+            "E1",
+            "E3",
+            "E4",
+            "E5",
+            "E6",
+            "E9",
+            "E10"
+          ],
+          "disconfirming_evidence_ids": []
+        },
+        {
+          "id": "T3",
+          "summary": "Vision or template matching may propose offsets, but committed output must stay monotonic and append-only; failed registration must not advance the committed comparison frontier.",
+          "supporting_evidence_ids": [
+            "E1",
+            "E2",
+            "E4",
+            "E9"
+          ],
+          "disconfirming_evidence_ids": []
+        },
+        {
+          "id": "T4",
+          "summary": "Wheel deltas are useful as input pacing and sampling signals but unsafe as movement authority because device acceleration, app behavior, rubber-banding, and scroll position can change the resulting content motion.",
+          "supporting_evidence_ids": [
+            "E3",
+            "E4",
+            "E6",
+            "E9",
+            "E10"
+          ],
+          "disconfirming_evidence_ids": []
+        }
+      ]
+    },
+    {
+      "seq": 4,
+      "type": "judgment_candidate_created",
+      "judgment_payload": {
+        "judgment_type": "recommend",
+        "preferred_option": "universal_overlay_wheel_ordered_sck_rust_fail_closed",
+        "rejected_options": [
+          "ax_controlled_product_path",
+          "latest_frame_debounce",
+          "scrollsnap_timer_without_committed_frontier",
+          "pure_overlay_passthrough",
+          "wheel_delta_motion_authority",
+          "browser_dom_only"
+        ],
+        "decision_claim": "Rsnap should implement one universal product path: overlay-local wheel forwarding through short passthrough windows, selected-region frame sampling around input bursts with a live-stream-first path plus below-overlay fallback, and Rust worker-pairwise fail-closed registration. Accessibility is not required and must not be used for target acquisition, settable AX scroll bars, or target-app-specific automation.",
+        "key_evidence_ids": [
+          "E1",
+          "E2",
+          "E3",
+          "E4",
+          "E5",
+          "E6",
+          "E8",
+          "E9",
+          "E10"
+        ],
+        "key_tradeoff_ids": [
+          "T1",
+          "T2",
+          "T3",
+          "T4"
+        ]
+      },
+      "judgment_hash": "sha256:32be7c91e2b543d6cc56bea72bd6f09688373ba370bb2ba3eaee447b584e61f2"
+    },
+    {
+      "seq": 5,
+      "type": "worker_completed",
+      "worker": "skeptic",
+      "target_judgment_hash": "sha256:32be7c91e2b543d6cc56bea72bd6f09688373ba370bb2ba3eaee447b584e61f2",
+      "summary": "Skeptic found the universal path decision-ready only if wheel events remain non-authoritative, the input path forwards real target scrolling without blocking toolbar control, and docs do not reintroduce AX target control.",
+      "objections": []
+    },
+    {
+      "seq": 6,
+      "type": "finalized_decision_ready",
+      "confidence": "medium",
+      "judgment_hash": "sha256:32be7c91e2b543d6cc56bea72bd6f09688373ba370bb2ba3eaee447b584e61f2",
+      "missing_evidence": [
+        "Live keyboard-start and toolbar-start smokes must pass with real wheel input after implementation.",
+        "Representative app coverage beyond the deterministic native scroll smoke remains a product acceptance task."
+      ]
+    }
+  ]
+}

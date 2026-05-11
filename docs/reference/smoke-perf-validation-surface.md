@@ -17,9 +17,11 @@ Depends on: `docs/runbook/performance-validation.md`; `docs/spec/performance.md`
 Covers: The current layer map for smoke/perf entrypoints, deterministic replay/bench surfaces,
 overlay runtime integration tests, and scroll-capture session semantics tests.
 
-Release exposure note: v0.2.1 hides user-facing scroll capture in the native host. The
-scroll-capture entries in this reference describe retained internal validation assets, not a
-visible toolbar feature in that release.
+Release exposure note: v0.2.1 hides user-facing scroll capture in the native host. On this
+development branch, scroll capture is implemented behind the current validation contract. The
+scroll-capture entries in this reference describe retained validation assets and recovery surfaces;
+follow `docs/runbook/scroll-capture-recovery-plan.md` before making a release-scope readiness claim
+for broader target apps.
 
 ## Layer definitions
 
@@ -39,6 +41,7 @@ visible toolbar feature in that release.
 | `scripts/smoke/analyze-scroll-capture-trace.sh` | Script entrypoint | deterministic replay | Emits summary-only replay analysis for semantic drift triage. |
 | `scripts/smoke/native-hud-follow-macos.sh` | Script entrypoint | live macOS perf smoke | HUD/loupe follow-cadence smoke for performance work, including delivered mouse-event count, sample refresh cadence, active-layer chrome cadence, and frame-tick cadence. |
 | `scripts/smoke/native-visual-contract-macos.sh` | Script entrypoint | live macOS smoke | Core native-host behavior contract: repeated real click freezes, repeated held drag freezes, in-drag and frozen screenshots, click/drag editability, border-leak, scrim, and handoff telemetry gates. |
+| `scripts/smoke/native-scroll-capture-macos.sh` | Script entrypoint | live macOS scroll smoke | Real frozen-region scroll-capture smoke on a deterministic scrollable native window; asserts the session is unlocked, ScreenCaptureKit exposes a display, drag freeze occurs, Scroll Capture starts in `manual_universal` mode, overlay-local wheel forwarding is the input path, real wheel input moves the target through short all-overlay passthrough windows, selected-region frames sample through the live stream or below-overlay fallback, no legacy auto-scroll telemetry appears, and multiple committed growth events append before copy/export. The default driver is `SCROLL_DRIVER=wheel`; `SCROLL_DRIVER=notification` is retained for direct background-control diagnosis. |
 | `scripts/smoke/self-check-macos.sh` | Script entrypoint | smoke readiness | Verifies native HUD-follow smoke tooling readiness without the real GUI run. |
 | `scripts/smoke/macos.sh` | Script entrypoint | smoke aggregation | Runs the core native visual contract and HUD-follow responsiveness smoke. |
 | `scripts/perf/local.sh` | Script entrypoint | deterministic benches | Runs the committed Criterion smoke-sized benchmark sweep. |

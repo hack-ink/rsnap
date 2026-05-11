@@ -64,6 +64,8 @@ Then structure the body for execution:
 - `docs/runbook/architecture-reset-validation.md` for validating host/core reset work without
   routing through superseded shell-specific assumptions
 - `docs/runbook/performance-validation.md` for repo-native performance and smoke command routing
+- `docs/runbook/scroll-capture-recovery-plan.md` for recovering macOS scroll capture without
+  treating deterministic checks as product readiness
 - `docs/runbook/scroll-capture-benchmarks.md` for deterministic scroll-capture benchmark usage
 - `docs/runbook/telemetry-debugging.md` for collecting and summarizing native-host OSLog plus
   Rust rolling logs during runtime debugging
