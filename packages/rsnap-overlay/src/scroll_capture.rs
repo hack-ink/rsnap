@@ -18,6 +18,7 @@ use self::support::detect_vertical_overlap;
 pub(crate) const PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS: u32 = 24;
 pub(crate) const PREVIEW_ONLY_LOCAL_RECOVERY_MAX_TOLERANCE_ROWS: u32 = 12;
 pub(crate) const UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS: u32 = 8;
+pub(crate) const TRANSIENT_BURST_UNDERCONSUMED_HINT_MIN_ROWS: u32 = 48;
 
 const FINGERPRINT_GRID_COLUMNS: u32 = 12;
 const FINGERPRINT_GRID_ROWS: u32 = 16;
@@ -45,6 +46,7 @@ const FALLBACK_DOWNWARD_GROWTH_MAX_ROWS: u32 = 16;
 const TRANSIENT_MOTION_HINT_MAX_MULTIPLIER: u32 = 3;
 const TRANSIENT_MOTION_HINT_MIN_CAP_ROWS: u32 = 12;
 const WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS: u32 = 24;
+const WORKER_PAIRWISE_COMMITTED_CATCHUP_MIN_MOTION_ROWS: u32 = 24;
 const DIRECTION_WARNING_MARGIN_X100: u32 = 90;
 const RESUME_DIRECT_PROOF_MAX_MEAN_ABS_DIFF_X100: u32 = 320;
 const INFORMATIVE_SPAN_ROW_SAMPLES: u32 = 24;
@@ -184,8 +186,8 @@ impl Default for OverlapSearchConfig {
 	fn default() -> Self {
 		Self {
 			min_overlap_rows: 24,
-			max_column_samples: 32,
-			max_row_samples: 16,
+			max_column_samples: 160,
+			max_row_samples: 64,
 			max_mean_abs_diff_x100: 850,
 		}
 	}
@@ -386,6 +388,17 @@ impl ScrollSession {
 				));
 			}
 
+			if let Some(motion_rows) = self.worker_pairwise_committed_catchup_motion_rows(&frame) {
+				self.worker_pairwise_requires_committed_reacquire = false;
+
+				return self.observe_resolved_worker_pairwise_downward_motion(
+					frame,
+					fingerprint,
+					motion_rows,
+					Some(motion_rows),
+				);
+			}
+
 			return Ok(self.block_worker_pairwise_until_committed_reacquire(frame, fingerprint));
 		}
 		if frame == previous_worker_frame {
@@ -398,10 +411,45 @@ impl ScrollSession {
 			return Ok(self.observe_worker_pairwise_no_change(frame, fingerprint, reason));
 		}
 
-		let Some(matched) = self::support::classify_vision_downward_sample_motion_against(
+		let vision_match = self::support::classify_vision_downward_sample_motion_against(
 			&previous_worker_frame,
 			&frame,
-		) else {
+		);
+		let (matched, corroborated_shift_rows) = if let Some(matched) = vision_match {
+			(
+				matched,
+				self::support::trusted_pairwise_downward_shift_rows_near_motion(
+					&previous_worker_frame,
+					&frame,
+					matched.motion_rows,
+					WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS,
+				),
+			)
+		} else if let Some(matched) =
+			self::support::trusted_pairwise_downward_shift_match(&previous_worker_frame, &frame)
+		{
+			let max_pixel_fallback_motion_rows =
+				previous_worker_frame.height().saturating_div(2).max(1);
+
+			if matched.motion_rows > max_pixel_fallback_motion_rows {
+				let candidate_viewport_top_y = self
+					.current_viewport_top_y
+					.saturating_add(i32::try_from(matched.motion_rows).unwrap_or_default());
+				let growth_rows =
+					self.growth_rows_for_candidate_viewport_top_y(candidate_viewport_top_y);
+
+				return Ok(self.block_worker_pairwise_growth(
+					frame,
+					fingerprint,
+					matched.motion_rows,
+					candidate_viewport_top_y,
+					growth_rows,
+					"worker_pairwise_pixel_overlap_exceeded_fallback_budget",
+				));
+			}
+
+			(matched, Some(matched.motion_rows))
+		} else {
 			if let Some(upward_motion_rows) =
 				self::support::trusted_pairwise_upward_shift_rows(&previous_worker_frame, &frame)
 			{
@@ -411,20 +459,21 @@ impl ScrollSession {
 					upward_motion_rows,
 				));
 			}
+			if let Some(motion_rows) = self.worker_pairwise_committed_catchup_motion_rows(&frame) {
+				return self.observe_resolved_worker_pairwise_downward_motion(
+					frame,
+					fingerprint,
+					motion_rows,
+					Some(motion_rows),
+				);
+			}
 
 			return Ok(self.observe_worker_pairwise_no_change(
 				frame,
 				fingerprint,
-				"worker_pairwise_vision_no_downward_offset",
+				"worker_pairwise_no_downward_offset",
 			));
 		};
-		let corroborated_shift_rows =
-			self::support::trusted_pairwise_downward_shift_rows_near_motion(
-				&previous_worker_frame,
-				&frame,
-				matched.motion_rows,
-				WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS,
-			);
 
 		self.observe_resolved_worker_pairwise_downward_motion(
 			frame,
@@ -432,6 +481,52 @@ impl ScrollSession {
 			matched.motion_rows,
 			corroborated_shift_rows,
 		)
+	}
+
+	pub(crate) fn observe_worker_pairwise_vision_frame_with_motion_hint(
+		&mut self,
+		frame: RgbaImage,
+		motion_rows_hint: Option<u32>,
+	) -> color_eyre::eyre::Result<ScrollObserveOutcome> {
+		let previous_hint = self.transient_motion_rows_hint;
+
+		self.transient_motion_rows_hint = motion_rows_hint;
+
+		self.record_last_sample_eval_context();
+
+		let result = self.observe_worker_pairwise_vision_frame(frame);
+
+		self.transient_motion_rows_hint = previous_hint;
+
+		result
+	}
+
+	fn worker_pairwise_committed_catchup_motion_rows(&self, frame: &RgbaImage) -> Option<u32> {
+		if frame == &self.last_committed_frame {
+			return None;
+		}
+
+		let hinted_match = self.normalized_transient_motion_rows_hint().and_then(|hint| {
+			let tolerance = (hint / 2).clamp(
+				WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS,
+				INITIAL_DOWNWARD_MAX_MOTION_ROWS,
+			);
+
+			self::support::trusted_pairwise_downward_shift_rows_near_motion(
+				&self.last_committed_frame,
+				frame,
+				hint,
+				tolerance,
+			)
+		});
+		let fallback_match = || {
+			self::support::trusted_pairwise_downward_shift_match(&self.last_committed_frame, frame)
+				.map(|matched| matched.motion_rows)
+		};
+
+		hinted_match
+			.or_else(fallback_match)
+			.filter(|motion_rows| *motion_rows >= WORKER_PAIRWISE_COMMITTED_CATCHUP_MIN_MOTION_ROWS)
 	}
 
 	fn observe_resolved_worker_pairwise_downward_motion(
@@ -547,9 +642,7 @@ impl ScrollSession {
 		fingerprint: Vec<u8>,
 		reason: &'static str,
 	) -> ScrollObserveOutcome {
-		if reason == "worker_pairwise_vision_no_downward_offset"
-			&& frame != self.last_committed_frame
-		{
+		if reason == "worker_pairwise_no_downward_offset" && frame != self.last_committed_frame {
 			self.record_last_sample(&frame, fingerprint);
 			self.clear_preview_only_downward_recovery_carryover();
 
@@ -1622,7 +1715,6 @@ impl ScrollSession {
 			self.observed_viewport_top_y.min(frontier_top_y.saturating_sub(1));
 	}
 
-	#[allow(clippy::too_many_lines)]
 	fn observe_downward_motion(
 		&mut self,
 		frame: RgbaImage,
@@ -1675,66 +1767,10 @@ impl ScrollSession {
 			},
 		};
 
-		if self.should_fail_closed_tiny_observed_recovery_in_burst(candidate) {
-			return self.block_downward_growth_candidate(
-				&frame,
-				motion_rows,
-				candidate,
-				preview_changed,
-				"tiny_observed_recovery_under_transient_burst",
-			);
-		}
-		if self.should_fail_closed_outsized_observed_recovery_after_one_pixel_preview_local_commit(
-			candidate,
-		) {
-			return self.block_downward_growth_candidate(
-				&frame,
-				motion_rows,
-				candidate,
-				preview_changed,
-				"outsized_observed_recovery_after_one_pixel_preview_local_commit",
-			);
-		}
-		if self.should_fail_closed_tiny_preview_only_local_recovery_in_burst(candidate) {
-			return self.block_downward_growth_candidate(
-				&frame,
-				motion_rows,
-				candidate,
-				preview_changed,
-				"tiny_preview_only_local_recovery_under_transient_burst",
-			);
-		}
-		if self
-			.should_fail_closed_exactly_corroborated_preview_local_tail_in_extreme_burst(candidate)
+		if let Some(outcome) =
+			self.block_invalid_downward_candidate(&frame, motion_rows, candidate, preview_changed)?
 		{
-			self.pending_extreme_preview_only_local_tail_followup = Some(candidate);
-			self.pending_extreme_preview_only_local_tail_followup_remaining_blocks = 1;
-
-			return self.block_downward_growth_candidate(
-				&frame,
-				motion_rows,
-				candidate,
-				preview_changed,
-				"exactly_corroborated_preview_local_tail_under_extreme_transient_burst",
-			);
-		}
-		if self.should_fail_closed_preview_only_local_tail_after_unresolved_burst(candidate) {
-			return self.block_downward_growth_candidate(
-				&frame,
-				motion_rows,
-				candidate,
-				preview_changed,
-				"preview_only_local_tail_after_unresolved_transient_burst",
-			);
-		}
-		if self.should_fail_closed_tiny_committed_keyframe_recovery_in_burst(candidate) {
-			return self.block_downward_growth_candidate(
-				&frame,
-				motion_rows,
-				candidate,
-				preview_changed,
-				"tiny_committed_keyframe_recovery_under_transient_burst",
-			);
+			return Ok(outcome);
 		}
 
 		self.observe_downward_growth_to_viewport(
@@ -1747,6 +1783,87 @@ impl ScrollSession {
 			}),
 			candidate.source.decision_source(),
 		)
+	}
+
+	fn block_invalid_downward_candidate(
+		&mut self,
+		frame: &RgbaImage,
+		motion_rows: u32,
+		candidate: DownwardViewportCandidate,
+		preview_changed: bool,
+	) -> color_eyre::eyre::Result<Option<ScrollObserveOutcome>> {
+		if self.transient_burst_candidate_underconsumes_input_hint(candidate) {
+			return Ok(Some(self.block_downward_growth_candidate(
+				frame,
+				motion_rows,
+				candidate,
+				preview_changed,
+				"visual_motion_underconsumed_input_hint",
+			)?));
+		}
+		if self.should_fail_closed_tiny_observed_recovery_in_burst(candidate) {
+			return Ok(Some(self.block_downward_growth_candidate(
+				frame,
+				motion_rows,
+				candidate,
+				preview_changed,
+				"tiny_observed_recovery_under_transient_burst",
+			)?));
+		}
+		if self.should_fail_closed_outsized_observed_recovery_after_one_pixel_preview_local_commit(
+			candidate,
+		) {
+			return Ok(Some(self.block_downward_growth_candidate(
+				frame,
+				motion_rows,
+				candidate,
+				preview_changed,
+				"outsized_observed_recovery_after_one_pixel_preview_local_commit",
+			)?));
+		}
+		if self.should_fail_closed_tiny_preview_only_local_recovery_in_burst(candidate) {
+			return Ok(Some(self.block_downward_growth_candidate(
+				frame,
+				motion_rows,
+				candidate,
+				preview_changed,
+				"tiny_preview_only_local_recovery_under_transient_burst",
+			)?));
+		}
+		if self
+			.should_fail_closed_exactly_corroborated_preview_local_tail_in_extreme_burst(candidate)
+		{
+			self.pending_extreme_preview_only_local_tail_followup = Some(candidate);
+			self.pending_extreme_preview_only_local_tail_followup_remaining_blocks = 1;
+
+			return Ok(Some(self.block_downward_growth_candidate(
+				frame,
+				motion_rows,
+				candidate,
+				preview_changed,
+				"exactly_corroborated_preview_local_tail_under_extreme_transient_burst",
+			)?));
+		}
+		if self.should_fail_closed_preview_only_local_tail_after_unresolved_burst(candidate) {
+			return Ok(Some(self.block_downward_growth_candidate(
+				frame,
+				motion_rows,
+				candidate,
+				preview_changed,
+				"preview_only_local_tail_after_unresolved_transient_burst",
+			)?));
+		}
+		if self.should_fail_closed_tiny_committed_keyframe_recovery_in_burst(candidate) {
+			return Ok(Some(self.block_downward_growth_candidate(
+				frame,
+				motion_rows,
+				candidate,
+				preview_changed,
+				"tiny_committed_keyframe_recovery_under_transient_burst",
+			)?));
+		}
+
+		Ok(None)
 	}
 
 	fn handle_missing_downward_viewport_authority(
@@ -1795,13 +1912,8 @@ impl ScrollSession {
 		} else {
 			None
 		};
-		self.consecutive_transient_burst_missing_downward_candidate_frames =
-			if self.transient_burst_search_enabled && preview_only_local_viewport_top_y.is_some() {
-				self.consecutive_transient_burst_missing_downward_candidate_frames.saturating_add(1)
-			} else {
-				0
-			};
 
+		self.record_transient_burst_missing_downward_candidate_frame(preview_changed);
 		self.refresh_local_downward_sample(frame);
 
 		if self.should_refresh_downward_observed_baseline_after_huge_suppressed_jump() {
@@ -2513,7 +2625,13 @@ impl ScrollSession {
 			return self
 				.transient_motion_rows_hint
 				.map(|hint| {
-					frame_max_growth_rows.min(hint.max(INITIAL_DOWNWARD_MAX_MOTION_ROWS)).max(1)
+					if self.initial_downward_bootstrap_active()
+						&& self.last_motion_rows_hint.is_none()
+					{
+						frame_max_growth_rows
+					} else {
+						frame_max_growth_rows.min(hint.max(INITIAL_DOWNWARD_MAX_MOTION_ROWS)).max(1)
+					}
 				})
 				.unwrap_or(frame_max_growth_rows.clamp(1, INITIAL_DOWNWARD_MAX_MOTION_ROWS));
 		}
@@ -2805,7 +2923,8 @@ impl ScrollSession {
 
 		match registration {
 			DownwardRegistration::Matched(matched)
-				if self.bootstrap_motion_exceeds_pending_hint(matched.motion_rows) =>
+				if self.bootstrap_motion_exceeds_pending_hint(matched.motion_rows)
+					&& !self.bootstrap_hint_exceeded_match_can_commit(matched) =>
 			{
 				(DownwardRegistration::NoMatch, Some("bootstrap_hint_exceeded"))
 			},
@@ -2835,7 +2954,8 @@ impl ScrollSession {
 
 		match registration {
 			DownwardRegistration::Matched(matched)
-				if self.bootstrap_motion_exceeds_pending_hint(matched.motion_rows) =>
+				if self.bootstrap_motion_exceeds_pending_hint(matched.motion_rows)
+					&& !self.bootstrap_hint_exceeded_match_can_commit(matched) =>
 			{
 				(DownwardRegistration::NoMatch, Some("bootstrap_hint_exceeded"))
 			},
@@ -2847,6 +2967,9 @@ impl ScrollSession {
 		let transient = self.normalized_transient_motion_rows_hint();
 
 		match (self.last_motion_rows_hint, transient) {
+			(Some(last), Some(transient)) if self.transient_burst_search_enabled => {
+				Some(last.max(transient))
+			},
 			(Some(last), Some(_transient)) => Some(last),
 			(Some(last), None) => Some(last),
 			(None, Some(transient)) => Some(transient),
@@ -3096,8 +3219,18 @@ impl ScrollSession {
 		self.bootstrap_motion_cap_from_pending_hint().is_some_and(|cap| motion_rows > cap)
 	}
 
+	fn bootstrap_hint_exceeded_match_can_commit(&self, matched: DirectionMatch) -> bool {
+		self.initial_downward_bootstrap_active()
+			&& self.transient_burst_search_enabled
+			&& self.last_motion_rows_hint.is_none()
+			&& matched.mean_abs_diff_x100 <= DIRECTION_WARNING_MARGIN_X100.saturating_mul(4)
+	}
+
 	fn bootstrap_initial_growth_cap_rows(&self) -> Option<u32> {
 		if !self.initial_downward_bootstrap_active() || self.last_motion_rows_hint.is_some() {
+			return None;
+		}
+		if self.transient_burst_search_enabled {
 			return None;
 		}
 

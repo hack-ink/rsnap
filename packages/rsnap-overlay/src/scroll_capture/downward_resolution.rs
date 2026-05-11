@@ -17,7 +17,8 @@ use crate::scroll_capture::{
 	REPEATED_PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS, RangeInclusive, RgbaImage,
 	ScrollDirection, ScrollObserveOutcome, ScrollSession,
 	TINY_PREVIEW_ONLY_LOCAL_BURST_RECOVERY_MAX_MOTION_ROWS,
-	UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS, eyre,
+	TRANSIENT_BURST_UNDERCONSUMED_HINT_MIN_ROWS, UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS,
+	eyre,
 };
 
 impl ScrollSession {
@@ -1738,6 +1739,48 @@ impl ScrollSession {
 		growth_rows > max_growth_rows
 	}
 
+	pub(super) fn record_transient_burst_missing_downward_candidate_frame(
+		&mut self,
+		preview_changed: bool,
+	) {
+		if self.transient_burst_search_enabled && preview_changed {
+			self.consecutive_transient_burst_missing_downward_candidate_frames = self
+				.consecutive_transient_burst_missing_downward_candidate_frames
+				.saturating_add(1);
+		} else {
+			self.consecutive_transient_burst_missing_downward_candidate_frames = 0;
+		}
+	}
+
+	pub(super) fn transient_burst_candidate_underconsumes_input_hint(
+		&self,
+		candidate: DownwardViewportCandidate,
+	) -> bool {
+		if !self.transient_burst_search_enabled || self.resume_frontier_top_y.is_some() {
+			return false;
+		}
+
+		let Some(hint) = self.normalized_transient_motion_rows_hint() else {
+			return false;
+		};
+
+		if hint < TRANSIENT_BURST_UNDERCONSUMED_HINT_MIN_ROWS {
+			return false;
+		}
+
+		let growth_rows = self.growth_rows_for_candidate_viewport_top_y(candidate.viewport_top_y);
+		let visibly_underconsumed =
+			growth_rows.saturating_add(UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS) < hint;
+		let severely_underconsumed = growth_rows <= DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS
+			|| growth_rows.saturating_mul(3) < hint;
+
+		visibly_underconsumed
+			&& (severely_underconsumed
+				|| self.transient_burst_motion_hint_exceeds_local_authority(
+					growth_rows.max(candidate.motion_rows),
+				))
+	}
+
 	pub(super) fn observe_fallback_downward_growth(
 		&mut self,
 		frame: RgbaImage,
@@ -1749,6 +1792,7 @@ impl ScrollSession {
 
 		match support::select_downward_viewport_candidate(&mut candidates) {
 			DownwardViewportResolution::NoMatch => {
+				self.record_transient_burst_missing_downward_candidate_frame(preview_changed);
 				self.refresh_preview_only_downward_local_sample(
 					&frame,
 					self.stable_preview_only_downward_local_viewport_top_y(),
@@ -1765,6 +1809,15 @@ impl ScrollSession {
 				Ok(support::preview_update_outcome(preview_changed))
 			},
 			DownwardViewportResolution::Selected(candidate) => {
+				if self.transient_burst_candidate_underconsumes_input_hint(candidate) {
+					return self.block_downward_growth_candidate(
+						&frame,
+						candidate.motion_rows,
+						candidate,
+						preview_changed,
+						"visual_motion_underconsumed_input_hint",
+					);
+				}
 				if self.fallback_downward_growth_exceeds_continuity_budget(candidate.viewport_top_y)
 				{
 					self.refresh_preview_only_downward_local_sample(

@@ -42,7 +42,6 @@ private struct NativeScrollCaptureSampleFrame: Sendable {
 	let source: String
 	let frameSequence: UInt64
 	let frameAgeMicroseconds: UInt64
-	let prefersPairwiseRegistration: Bool
 }
 
 private struct NativeScrollCaptureFallbackRequest: Sendable {
@@ -58,13 +57,14 @@ private struct NativeScrollCaptureObservation: Sendable {
 	let errorDescription: String?
 }
 
-private let nativeScrollCaptureMinimumHintRowsForHintedRegistration = 1
+private let nativeScrollCaptureMinimumNonzeroWheelMotionHintRows = 12.0
 
 private struct NativeScrollCapturePreviewUpdate: @unchecked Sendable {
 	let image: CGImage
 	let exportWidth: Int
 	let exportHeight: Int
 	let result: ScrollObserveResult
+	let viewportTopYPixels: Int
 	let viewportHeightPixels: Int
 }
 
@@ -94,8 +94,11 @@ private func writeNativeScrollCaptureDebugDump(_ snapshot: RGBARegionSnapshot, n
 
 extension CaptureSessionController {
 	private static let scrollCaptureForwardedEventMarker: Int64 = 0x5253_4E41_5053_4352
-	private static let scrollCapturePreciseWheelDeltaLimit = 120.0
+	private static let scrollCapturePreciseWheelDeltaLimit = 72.0
+	private static let scrollCapturePreciseWheelDeltaMinimum = 36.0
 	private static let scrollCaptureLineWheelDeltaLimit = 12.0
+	private static let scrollCaptureLineWheelDeltaMinimum = 1.0
+	private static let scrollCaptureQueuedWheelDeltaLimitMultiplier = 32.0
 
 	var scrollCaptureToolbarEnabled: Bool {
 		Self.scrollCaptureEnabled
@@ -142,6 +145,10 @@ extension CaptureSessionController {
 			x: viewportPoint.x.clamped(to: state.viewportRect.minX...state.viewportRect.maxX),
 			y: viewportPoint.y.clamped(to: state.viewportRect.minY...state.viewportRect.maxY)
 		)
+		if state.controlledScrollInFlight {
+			queueNativeScrollCaptureWheel(event, at: targetPoint)
+			return true
+		}
 		guard nativeScrollCaptureAcceptsManualInput(state: state) else {
 			return true
 		}
@@ -165,8 +172,6 @@ extension CaptureSessionController {
 			refreshOverlay()
 			return true
 		}
-
-		scheduleNativeScrollCaptureSample()
 
 		return true
 	}
@@ -274,15 +279,21 @@ extension CaptureSessionController {
 			return true
 		}
 
-		guard var state = scrollCaptureState else {
-			return false
-		}
-		state.lastForwardedWheelUptime = ProcessInfo.processInfo.systemUptime
-		scrollCaptureState = state
-
 		let precise = event.hasPreciseScrollingDeltas
-		let forwardedDeltaY = Self.forwardedScrollDelta(rawDeltaY, precise: precise)
-		let postedDeltaY = -forwardedDeltaY
+		let totalForwardedDeltaY = Self.forwardedScrollQueuedDelta(rawDeltaY, precise: precise)
+		let forwardedDeltaY = Self.scrollCaptureCommandDelta(
+			totalForwardedDeltaY,
+			precise: precise
+		)
+		let overflowDeltaY = totalForwardedDeltaY - forwardedDeltaY
+		if overflowDeltaY != 0 {
+			queueNativeScrollCaptureForwardedDelta(
+				overflowDeltaY,
+				precise: precise,
+				at: targetPoint,
+				source: "overflow"
+			)
+		}
 		if nativeScrollCaptureShouldLogWheelTelemetry(
 			\.lastWheelForwardedTelemetryUptime
 		) {
@@ -290,9 +301,30 @@ extension CaptureSessionController {
 				"capture.scroll_wheel_forwarded",
 				captureID: currentCaptureTelemetryID,
 				detail:
-					"rawDeltaX=\(Int(rawDeltaX.rounded())),rawDeltaY=\(Int(rawDeltaY.rounded())),forwardedDeltaY=\(Int(forwardedDeltaY.rounded())),postedDeltaY=\(Int(postedDeltaY.rounded())),precise=\(precise)"
+					"rawDeltaX=\(Int(rawDeltaX.rounded())),rawDeltaY=\(Int(rawDeltaY.rounded())),totalForwardedDeltaY=\(Int(totalForwardedDeltaY.rounded())),forwardedDeltaY=\(Int(forwardedDeltaY.rounded())),queuedOverflowDeltaY=\(Int(overflowDeltaY.rounded())),postedDeltaY=\(Int((-forwardedDeltaY).rounded())),precise=\(precise)"
 			)
 		}
+		return postNativeScrollCaptureForwardedDelta(
+			forwardedDeltaY,
+			precise: precise,
+			at: targetPoint
+		)
+	}
+
+	func postNativeScrollCaptureForwardedDelta(
+		_ forwardedDeltaY: Double,
+		precise: Bool,
+		at targetPoint: CGPoint
+	) -> Bool {
+		let postedDeltaY = -forwardedDeltaY
+		guard postedDeltaY != 0, var state = scrollCaptureState else {
+			return false
+		}
+
+		state.lastForwardedWheelUptime = ProcessInfo.processInfo.systemUptime
+		state.controlledScrollInFlight = true
+		scrollCaptureState = state
+
 		let postWheelEvent = {
 			Self.postScrollWheelEvent(
 				deltaX: 0,
@@ -305,17 +337,91 @@ extension CaptureSessionController {
 			overlayController?.withAllMousePassthrough(
 				duration: Self.scrollCaptureForwardingPassthrough
 			) {
-				DispatchQueue.main.async {
-					_ = postWheelEvent()
-				}
-				return true
+				postWheelEvent()
 			}
 			?? postWheelEvent()
 		if posted {
 			recordNativeScrollCaptureMotionHint(deltaY: abs(postedDeltaY))
-			scheduleNativeScrollCaptureSample()
+			scheduleNativeScrollCaptureSample(
+				delay: Self.scrollCaptureControlledScrollSettleDelay
+			)
+		} else if var latestState = scrollCaptureState {
+			latestState.controlledScrollInFlight = false
+			scrollCaptureState = latestState
 		}
 		return posted
+	}
+
+	func queueNativeScrollCaptureWheel(_ event: NSEvent, at targetPoint: CGPoint) {
+		let rawDeltaY = Double(event.scrollingDeltaY)
+		guard rawDeltaY != 0 else {
+			return
+		}
+		let precise = event.hasPreciseScrollingDeltas
+		let forwardedDeltaY = Self.forwardedScrollQueuedDelta(rawDeltaY, precise: precise)
+		queueNativeScrollCaptureForwardedDelta(
+			forwardedDeltaY,
+			precise: precise,
+			at: targetPoint,
+			source: "in_flight"
+		)
+	}
+
+	func queueNativeScrollCaptureForwardedDelta(
+		_ forwardedDeltaY: Double,
+		precise: Bool,
+		at targetPoint: CGPoint,
+		source: String
+	) {
+		guard forwardedDeltaY != 0, var state = scrollCaptureState else {
+			return
+		}
+		let limit = Self.scrollCaptureQueuedWheelDeltaLimit(precise: precise)
+
+		state.queuedForwardedWheelDeltaY = (state.queuedForwardedWheelDeltaY + forwardedDeltaY)
+			.clamped(to: -limit...limit)
+		state.queuedForwardedWheelPrecise = precise
+		state.queuedForwardedWheelTargetPoint = targetPoint
+		scrollCaptureState = state
+		if nativeScrollCaptureShouldLogWheelTelemetry(
+			\.lastWheelInterceptTelemetryUptime
+		) {
+			NativeHostTelemetry.captureEvent(
+				"capture.scroll_wheel_queued",
+				captureID: currentCaptureTelemetryID,
+				detail:
+					"source=\(source),forwardedDeltaY=\(Int(forwardedDeltaY.rounded())),queuedDeltaY=\(Int(state.queuedForwardedWheelDeltaY.rounded())),precise=\(precise)"
+			)
+		}
+	}
+
+	func drainNativeScrollCaptureQueuedWheelIfNeeded() {
+		guard var state = scrollCaptureState,
+			state.controlledScrollInFlight == false,
+			state.queuedForwardedWheelDeltaY != 0
+		else {
+			return
+		}
+
+		let precise = state.queuedForwardedWheelPrecise
+		let limit = Self.scrollCaptureCommandWheelDeltaLimit(precise: precise)
+		let forwardedDeltaY = state.queuedForwardedWheelDeltaY.clamped(to: -limit...limit)
+		let targetPoint =
+			state.queuedForwardedWheelTargetPoint
+			?? CGPoint(x: state.viewportRect.midX, y: state.viewportRect.midY)
+
+		state.queuedForwardedWheelDeltaY -= forwardedDeltaY
+		if abs(state.queuedForwardedWheelDeltaY) < 1 {
+			state.queuedForwardedWheelDeltaY = 0
+			state.queuedForwardedWheelTargetPoint = nil
+		}
+		scrollCaptureState = state
+
+		_ = postNativeScrollCaptureForwardedDelta(
+			forwardedDeltaY,
+			precise: precise,
+			at: targetPoint
+		)
 	}
 
 	func recordNativeScrollCaptureMotionHint(deltaY: Double, multiplier: Double = 1) {
@@ -325,7 +431,13 @@ extension CaptureSessionController {
 		let viewportHeightRows =
 			state.viewportRect.height * CGFloat(state.viewportPixelsPerPointY)
 		let maxHintRows = max(Double(viewportHeightRows) * 0.85, 1)
-		let hintRows = deltaY * state.viewportPixelsPerPointY * max(multiplier, 0)
+		let scaledHintRows = deltaY * state.viewportPixelsPerPointY * max(multiplier, 0)
+		let hintRows =
+			if scaledHintRows > 0 {
+				max(scaledHintRows, nativeScrollCaptureMinimumNonzeroWheelMotionHintRows)
+			} else {
+				0.0
+			}
 		state.pendingDownwardMotionHintRows = min(
 			state.pendingDownwardMotionHintRows + hintRows,
 			maxHintRows
@@ -335,7 +447,8 @@ extension CaptureSessionController {
 
 	func scheduleNativeScrollCaptureSample(
 		extendingWindowBy window: TimeInterval =
-			CaptureSessionController.scrollCaptureInputSampleWindow
+			CaptureSessionController.scrollCaptureInputSampleWindow,
+		delay: TimeInterval = CaptureSessionController.scrollCaptureSampleInterval
 	) {
 		guard var state = scrollCaptureState else {
 			return
@@ -352,7 +465,7 @@ extension CaptureSessionController {
 		state.sampleLoopScheduled = true
 		scrollCaptureState = state
 		scheduleNativeScrollCaptureToolbarBackdropRefresh()
-		DispatchQueue.main.asyncAfter(deadline: .now() + Self.scrollCaptureSampleInterval) {
+		DispatchQueue.main.asyncAfter(deadline: .now() + max(delay, 0)) {
 			[weak self] in
 			self?.observeNativeScrollCaptureFrame()
 		}
@@ -428,7 +541,8 @@ extension CaptureSessionController {
 		}
 
 		ensureFrozenBaseImageFromDisplayIfNeeded(for: selection)
-		let frozenBaseImage = chromeState.frozenBaseImage ?? frozenBaseImageFromDisplay(for: selection)
+		let frozenBaseImage =
+			chromeState.frozenBaseImage ?? frozenBaseImageFromDisplay(for: selection)
 		guard let frozenBaseImage,
 			let frozenBaseSnapshot = NativeHostImageBridge.rgbaSnapshot(from: frozenBaseImage)
 		else {
@@ -436,28 +550,9 @@ extension CaptureSessionController {
 			refreshOverlay()
 			return
 		}
-		let liveBaseImage = CaptureOverlayController.captureImageBelowOverlay(
-			in: selection,
-			source: captureSource
-		)
-		let liveBaseSnapshot = liveBaseImage.flatMap {
-			NativeHostImageBridge.rgbaSnapshot(from: $0)
-		}
-		let liveBaseMatchesFrozenSize =
-			liveBaseSnapshot?.width == frozenBaseSnapshot.width
-			&& liveBaseSnapshot?.height == frozenBaseSnapshot.height
-		let baseImage: CGImage
-		let baseSnapshot: RGBARegionSnapshot
-		let baseSource: String
-		if let liveBaseImage, let liveBaseSnapshot, liveBaseMatchesFrozenSize {
-			baseImage = liveBaseImage
-			baseSnapshot = liveBaseSnapshot
-			baseSource = "below_overlay_capture_region"
-		} else {
-			baseImage = frozenBaseImage
-			baseSnapshot = frozenBaseSnapshot
-			baseSource = "frozen_display_region"
-		}
+		let baseImage = frozenBaseImage
+		let baseSnapshot = frozenBaseSnapshot
+		let baseSource = "frozen_display_region"
 		debugDumpNativeScrollCaptureSnapshot(baseSnapshot, name: "base-\(baseSource)")
 		let stitcher = try RsnapScrollCaptureSession(
 			baseImage: baseSnapshot,
@@ -474,6 +569,47 @@ extension CaptureSessionController {
 		scrollCaptureState = initialState
 		installNativeScrollCaptureMonitor()
 		overlayController?.prepareCaptureStreamsNow(trigger: "scroll_capture_start")
+		configureNativeScrollCaptureChrome(
+			baseImage: baseImage,
+			baseSnapshot: baseSnapshot,
+			selection: selection
+		)
+		try setHostStatusMessage("Scroll capture started. Scroll inside the selection.")
+		NativeHostTelemetry.captureEvent(
+			"capture.scroll_capture_started",
+			captureID: currentCaptureTelemetryID,
+			detail:
+				"width=\(baseSnapshot.width),height=\(baseSnapshot.height),x=\(Int(selection.minX.rounded())),y=\(Int(selection.minY.rounded())),mode=manual_universal,baseSource=\(baseSource),liveBaseMatched=false"
+		)
+		NativeHostTelemetry.captureEvent(
+			"capture.scroll_capture_mode",
+			captureID: currentCaptureTelemetryID,
+			outcome: "manual_universal",
+			detail:
+				"input=selection_passthrough_global_monitor,permission=screen_recording,accessibility_required=false"
+		)
+		overlayController?.focusWindow(at: CGPoint(x: selection.midX, y: selection.midY))
+		overlayController?.setScrollCaptureMousePassthroughActive(true)
+		NativeHostTelemetry.captureEvent(
+			"capture.scroll_input_ready",
+			captureID: currentCaptureTelemetryID,
+			detail:
+				"input=selection_passthrough_global_monitor,overlay=focused,passthrough=window"
+		)
+		DispatchQueue.main.async { [weak self] in
+			self?.refreshOverlay()
+		}
+		scheduleNativeScrollCaptureSample(
+			extendingWindowBy: Self.scrollCaptureInitialSampleWindow
+		)
+		scheduleNativeScrollCaptureToolbarBackdropRefresh()
+	}
+
+	private func configureNativeScrollCaptureChrome(
+		baseImage: CGImage,
+		baseSnapshot: RGBARegionSnapshot,
+		selection: CGRect
+	) {
 		chromeState.frozenOverlay.reset()
 		chromeState.frozenSelectionEditable = false
 		chromeState.frozenSelectionInteraction = nil
@@ -492,33 +628,6 @@ extension CaptureSessionController {
 			viewportTopYPixels: 0,
 			viewportHeightPixels: CGFloat(baseSnapshot.height)
 		)
-		try setHostStatusMessage("Scroll capture started. Scroll inside the selection.")
-		NativeHostTelemetry.captureEvent(
-			"capture.scroll_capture_started",
-			captureID: currentCaptureTelemetryID,
-			detail:
-				"width=\(baseSnapshot.width),height=\(baseSnapshot.height),x=\(Int(selection.minX.rounded())),y=\(Int(selection.minY.rounded())),mode=manual_universal,baseSource=\(baseSource),liveBaseMatched=\(liveBaseMatchesFrozenSize)"
-		)
-		NativeHostTelemetry.captureEvent(
-			"capture.scroll_capture_mode",
-			captureID: currentCaptureTelemetryID,
-			outcome: "manual_universal",
-			detail:
-				"input=selection_passthrough_global_monitor,permission=screen_recording,accessibility_required=false"
-		)
-		refreshOverlay()
-		overlayController?.focusWindow(at: CGPoint(x: selection.midX, y: selection.midY))
-		overlayController?.setScrollCaptureMousePassthroughActive(true)
-		NativeHostTelemetry.captureEvent(
-			"capture.scroll_input_ready",
-			captureID: currentCaptureTelemetryID,
-			detail:
-				"input=selection_passthrough_global_monitor,overlay=focused,passthrough=window"
-		)
-		scheduleNativeScrollCaptureSample(
-			extendingWindowBy: Self.scrollCaptureInitialSampleWindow
-		)
-		scheduleNativeScrollCaptureToolbarBackdropRefresh()
 	}
 
 	func observeNativeScrollCaptureFrame() {
@@ -532,6 +641,14 @@ extension CaptureSessionController {
 			return
 		}
 		state.sampleLoopScheduled = false
+		if let settleDelay = nativeScrollCaptureControlledSettleDelayRemaining(state: state) {
+			scrollCaptureState = state
+			scheduleNativeScrollCaptureSample(
+				extendingWindowBy: settleDelay + Self.scrollCaptureSampleInterval,
+				delay: settleDelay
+			)
+			return
+		}
 		state.sampleProcessing = true
 		state.sampleSequence &+= 1
 		let sampleSequence = state.sampleSequence
@@ -552,7 +669,8 @@ extension CaptureSessionController {
 
 		let sampledFrames = nativeScrollCaptureSampleFrames(
 			in: state.viewportRect,
-			afterFrameSequence: state.lastStreamFrameSequence
+			afterFrameSequence: state.lastStreamFrameSequence,
+			maximumFrameAgeMicroseconds: nativeScrollCaptureMaximumStreamFrameAge(state: state)
 		)
 		let fallbackRequest =
 			sampledFrames.isEmpty
@@ -624,8 +742,7 @@ extension CaptureSessionController {
 						region: snapshot,
 						source: "below_overlay_capture_region",
 						frameSequence: fallbackRequest.frameSequence,
-						frameAgeMicroseconds: 0,
-						prefersPairwiseRegistration: true
+						frameAgeMicroseconds: 0
 					))
 			}
 			let batch = Self.nativeScrollCaptureObservationBatch(
@@ -683,22 +800,12 @@ extension CaptureSessionController {
 		stitcher: RsnapScrollCaptureSession,
 		motionRowsHint: Int?
 	) -> NativeScrollCaptureObservation {
-		let usesHintedRegistration = nativeScrollCaptureUsesHintedRegistration(
-			for: sampledFrame,
-			motionRowsHint: motionRowsHint
-		)
-		let registrationStrategy = usesHintedRegistration ? "hinted_motion" : "pairwise"
+		let registrationStrategy = "pairwise"
 		do {
-			let result =
-				if usesHintedRegistration, let motionRowsHint {
-					try stitcher.observeDownwardFrame(
-						sampledFrame.region,
-						motionRowsHint: motionRowsHint,
-						allowBurstSearch: true
-					)
-				} else {
-					try stitcher.observeDownwardFrame(sampledFrame.region)
-				}
+			let result = try stitcher.observeDownwardFrame(
+				sampledFrame.region,
+				motionRowsHint: motionRowsHint
+			)
 			return NativeScrollCaptureObservation(
 				sampledFrame: sampledFrame,
 				registrationStrategy: registrationStrategy,
@@ -715,19 +822,6 @@ extension CaptureSessionController {
 		}
 	}
 
-	nonisolated private static func nativeScrollCaptureUsesHintedRegistration(
-		for sampledFrame: NativeScrollCaptureSampleFrame,
-		motionRowsHint: Int?
-	) -> Bool {
-		guard sampledFrame.prefersPairwiseRegistration == false,
-			let motionRowsHint,
-			motionRowsHint >= nativeScrollCaptureMinimumHintRowsForHintedRegistration
-		else {
-			return false
-		}
-		return true
-	}
-
 	nonisolated private static func nativeScrollCapturePreviewUpdate(
 		stitcher: RsnapScrollCaptureSession,
 		candidate: NativeScrollCaptureObservation?,
@@ -742,15 +836,21 @@ extension CaptureSessionController {
 		}
 		let previewStartedAt = ProcessInfo.processInfo.systemUptime
 		do {
-			if let export = try stitcher.exportImage(),
-				let exportImage = NativeHostImageBridge.cgImage(from: export)
-			{
+			if let export = try stitcher.exportImage() {
+				guard let exportImage = NativeHostImageBridge.cgImage(from: export) else {
+					return (
+						nil,
+						"scroll preview export returned no image",
+						NativeHostTelemetry.milliseconds(since: previewStartedAt)
+					)
+				}
 				return (
 					NativeScrollCapturePreviewUpdate(
 						image: exportImage,
 						exportWidth: export.width,
 						exportHeight: export.height,
 						result: result,
+						viewportTopYPixels: result.currentViewportTopY,
 						viewportHeightPixels: candidate.sampledFrame.region.height
 					),
 					nil,
@@ -787,6 +887,7 @@ extension CaptureSessionController {
 		state.sampleProcessing = false
 		scrollCaptureState = state
 		defer {
+			completeNativeScrollCaptureCommandIfNeeded()
 			scheduleNativeScrollCaptureSampleIfNeeded()
 		}
 		guard batch.observations.isEmpty == false else {
@@ -814,6 +915,8 @@ extension CaptureSessionController {
 				latestState.lastStreamFrameSequence = sampledFrame.frameSequence
 				if result.outcome == .committed {
 					latestState.committedSampleCount &+= 1
+					latestState.pendingDownwardMotionHintRows = 0
+				} else if result.outcome == .noChange, latestState.controlledScrollInFlight {
 					latestState.pendingDownwardMotionHintRows = 0
 				} else if result.outcome == .unsupportedDirection {
 					latestState.pendingDownwardMotionHintRows = 0
@@ -877,12 +980,36 @@ extension CaptureSessionController {
 		writeNativeScrollCaptureDebugDump(snapshot, name: name)
 	}
 
-	func nativeScrollCaptureAcceptsManualInput(state _: NativeScrollCaptureState) -> Bool {
-		true
+	func nativeScrollCaptureAcceptsManualInput(state: NativeScrollCaptureState) -> Bool {
+		state.controlledScrollInFlight == false
+	}
+
+	func nativeScrollCaptureControlledSettleDelayRemaining(
+		state: NativeScrollCaptureState
+	) -> TimeInterval? {
+		guard state.controlledScrollInFlight, state.lastForwardedWheelUptime > 0 else {
+			return nil
+		}
+		let elapsed = ProcessInfo.processInfo.systemUptime - state.lastForwardedWheelUptime
+		let remaining = Self.scrollCaptureControlledScrollSettleDelay - elapsed
+		return remaining > 0 ? remaining : nil
+	}
+
+	func completeNativeScrollCaptureCommandIfNeeded() {
+		guard var state = scrollCaptureState, state.controlledScrollInFlight else {
+			drainNativeScrollCaptureQueuedWheelIfNeeded()
+			return
+		}
+
+		state.controlledScrollInFlight = false
+		scrollCaptureState = state
+		drainNativeScrollCaptureQueuedWheelIfNeeded()
 	}
 
 	func nativeScrollCaptureShouldKeepSampling(state: NativeScrollCaptureState) -> Bool {
 		ProcessInfo.processInfo.systemUptime < state.sampleUntilUptime
+			|| state.controlledScrollInFlight
+			|| state.queuedForwardedWheelDeltaY != 0
 	}
 
 	func recordNativeScrollCaptureMissingSample(
@@ -909,7 +1036,8 @@ extension CaptureSessionController {
 
 	private func nativeScrollCaptureSampleFrames(
 		in rect: CGRect,
-		afterFrameSequence: UInt64
+		afterFrameSequence: UInt64,
+		maximumFrameAgeMicroseconds: UInt64?
 	) -> [NativeScrollCaptureSampleFrame] {
 		var frames: [NativeScrollCaptureSampleFrame] = []
 		var nextAfterFrameSequence = afterFrameSequence
@@ -924,17 +1052,31 @@ extension CaptureSessionController {
 			else {
 				break
 			}
+			if let maximumFrameAgeMicroseconds,
+				frame.frameAgeMicroseconds > maximumFrameAgeMicroseconds
+			{
+				nextAfterFrameSequence = frame.frameSequence
+				continue
+			}
 			frames.append(
 				NativeScrollCaptureSampleFrame(
 					region: frame.region,
 					source: "ordered_live_stream_region",
 					frameSequence: frame.frameSequence,
-					frameAgeMicroseconds: frame.frameAgeMicroseconds,
-					prefersPairwiseRegistration: false
+					frameAgeMicroseconds: frame.frameAgeMicroseconds
 				))
 			nextAfterFrameSequence = frame.frameSequence
 		}
 		return frames
+	}
+
+	private func nativeScrollCaptureMaximumStreamFrameAge(
+		state: NativeScrollCaptureState
+	) -> UInt64? {
+		guard nativeScrollCaptureFallbackReadyForInput(state: state) else {
+			return nil
+		}
+		return UInt64(Self.scrollCaptureInputLiveFrameMaxAge * 1_000_000)
 	}
 
 	private func nativeScrollCaptureFallbackAllowed(at uptime: TimeInterval) -> Bool {
@@ -1011,7 +1153,7 @@ extension CaptureSessionController {
 				width: CGFloat(preview.exportWidth),
 				height: CGFloat(preview.exportHeight)
 			),
-			viewportTopYPixels: CGFloat(preview.result.currentViewportTopY),
+			viewportTopYPixels: CGFloat(preview.viewportTopYPixels),
 			viewportHeightPixels: CGFloat(preview.viewportHeightPixels)
 		)
 
@@ -1061,8 +1203,36 @@ extension CaptureSessionController {
 		return true
 	}
 
-	private static func forwardedScrollDelta(_ delta: Double, precise: Bool) -> Double {
-		let limit = precise ? scrollCapturePreciseWheelDeltaLimit : scrollCaptureLineWheelDeltaLimit
+	private static func scrollCaptureCommandWheelDeltaLimit(precise: Bool) -> Double {
+		precise ? scrollCapturePreciseWheelDeltaLimit : scrollCaptureLineWheelDeltaLimit
+	}
+
+	private static func scrollCaptureQueuedWheelDeltaLimit(precise: Bool) -> Double {
+		scrollCaptureCommandWheelDeltaLimit(precise: precise)
+			* scrollCaptureQueuedWheelDeltaLimitMultiplier
+	}
+
+	private static func scrollCaptureCommandDelta(_ delta: Double, precise: Bool) -> Double {
+		let commandDelta = forwardedScrollDelta(
+			delta,
+			limit: scrollCaptureCommandWheelDeltaLimit(precise: precise)
+		)
+		let minimum =
+			precise ? scrollCapturePreciseWheelDeltaMinimum : scrollCaptureLineWheelDeltaMinimum
+		guard commandDelta != 0, abs(commandDelta) < minimum else {
+			return commandDelta
+		}
+		return commandDelta < 0 ? -minimum : minimum
+	}
+
+	private static func forwardedScrollQueuedDelta(_ delta: Double, precise: Bool) -> Double {
+		forwardedScrollDelta(
+			delta,
+			limit: scrollCaptureQueuedWheelDeltaLimit(precise: precise)
+		)
+	}
+
+	private static func forwardedScrollDelta(_ delta: Double, limit: Double) -> Double {
 		let clamped = delta.clamped(to: -limit...limit)
 		let rounded = clamped.rounded()
 		if abs(rounded) >= 1 {
