@@ -55,6 +55,7 @@ live_hud_assert_interactive_session
 live_hud_assert_shareable_display
 ROOT_DIR="$(live_hud_repo_root)"
 live_hud_init_environment "$ROOT_DIR"
+COMMON_ROOT="$(cd "$(git -C "$ROOT_DIR" rev-parse --git-common-dir)/.." && pwd)"
 
 smoke_log() {
 	printf '[smoke] +%ss %s\n' "$SECONDS" "$*"
@@ -65,6 +66,7 @@ PREF_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/rsnap-scroll-prefs.XXXXXX.plist")"
 PREF_SNAPSHOT_EXISTS=0
 SCROLL_BACKGROUND_PID=""
 SCROLL_BACKGROUND_READY="$(mktemp "${TMPDIR:-/tmp}/rsnap-scroll-bg.XXXXXX.ready")"
+RSNAP_SMOKE_APP_EXECUTABLE="${RSNAP_NATIVE_HOST_STAGE_DIR:-$COMMON_ROOT/target/rsnap-native-host}/Rsnap.app/Contents/MacOS/RsnapNativeHost"
 SCROLL_COUNT="${SCROLL_COUNT:-14}"
 SCROLL_DRIVER="${SCROLL_DRIVER:-wheel}"
 SCROLL_START_METHOD="${SCROLL_START_METHOD:-keyboard}"
@@ -114,6 +116,7 @@ export SCROLL_BACKGROUND_MODE SCROLL_BACKGROUND_PROOF_STRIPE
 restore_preferences() {
 	live_hud_stop_awake_assertion
 	live_hud_cancel_capture_if_present
+	stop_staged_rsnap_app
 	if [[ -n "$SCROLL_BACKGROUND_PID" ]]; then
 		kill "$SCROLL_BACKGROUND_PID" >/dev/null 2>&1 || true
 	fi
@@ -134,6 +137,32 @@ if defaults export "$PREF_DOMAIN" "$PREF_SNAPSHOT" >/dev/null 2>&1; then
 	PREF_SNAPSHOT_EXISTS=1
 fi
 trap restore_preferences EXIT
+
+stop_staged_rsnap_app() {
+	if [[ "${RSNAP_SMOKE_QUIT_APP_ON_EXIT:-1}" != "1" ]]; then
+		return 0
+	fi
+
+	local pids pid attempt
+
+	pids="$(pgrep -f "$RSNAP_SMOKE_APP_EXECUTABLE" 2>/dev/null || true)"
+	if [[ -z "$pids" ]]; then
+		return 0
+	fi
+	for pid in $pids; do
+		kill "$pid" >/dev/null 2>&1 || true
+	done
+	for attempt in {1..20}; do
+		pids="$(pgrep -f "$RSNAP_SMOKE_APP_EXECUTABLE" 2>/dev/null || true)"
+		if [[ -z "$pids" ]]; then
+			return 0
+		fi
+		sleep 0.10
+	done
+	for pid in $pids; do
+		kill -9 "$pid" >/dev/null 2>&1 || true
+	done
+}
 
 wait_ready_file() {
 	local path="$1"
