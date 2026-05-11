@@ -133,6 +133,7 @@ fn make_codex_like_right_static_rail_frame(
 	})
 }
 
+#[cfg(target_os = "macos")]
 fn make_dense_unique_scroll_frame(width: u32, height: u32, start_row: u32) -> image::RgbaImage {
 	image::RgbaImage::from_fn(width, height, |x, y| {
 		let document_row = start_row.saturating_add(y);
