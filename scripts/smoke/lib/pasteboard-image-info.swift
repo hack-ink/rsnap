@@ -8,6 +8,14 @@ while Date() <= deadline {
 	if let image = NSImage(pasteboard: .general) {
 		var proposedRect = CGRect(origin: .zero, size: image.size)
 		if let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) {
+			if let outputPath = ProcessInfo.processInfo.environment["PASTEBOARD_IMAGE_OUTPUT_PATH"],
+				outputPath.isEmpty == false
+			{
+				let bitmap = NSBitmapImageRep(cgImage: cgImage)
+				if let png = bitmap.representation(using: .png, properties: [:]) {
+					try? png.write(to: URL(fileURLWithPath: outputPath))
+				}
+			}
 			print("width=\(cgImage.width) height=\(cgImage.height)")
 			exit(0)
 		}

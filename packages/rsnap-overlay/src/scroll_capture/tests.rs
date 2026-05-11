@@ -39,6 +39,116 @@ fn make_browser_like_window(width: u32, height: u32, start_row: u32) -> image::R
 	test_support::make_browser_like_window(width, height, start_row)
 }
 
+fn make_unregistered_composited_frame(width: u32, height: u32, seed: u32) -> image::RgbaImage {
+	image::RgbaImage::from_fn(width, height, |x, y| {
+		let mut value = seed
+			.wrapping_add(x.wrapping_mul(0x045D_9F3B))
+			.wrapping_add(y.wrapping_mul(0x9E37_79B9));
+
+		value ^= value >> 16;
+		value = value.wrapping_mul(0x85EB_CA6B);
+		value ^= value >> 13;
+
+		Rgba([(value & 0xff) as u8, ((value >> 8) & 0xff) as u8, ((value >> 16) & 0xff) as u8, 255])
+	})
+}
+
+fn make_static_sidebar_center_frame(
+	width: u32,
+	height: u32,
+	center_start_x: u32,
+	center_width: u32,
+	center_start_row: u32,
+	center_seed: u32,
+	center_scrolls: bool,
+) -> image::RgbaImage {
+	image::RgbaImage::from_fn(width, height, |x, y| {
+		let in_center = x >= center_start_x && x < center_start_x.saturating_add(center_width);
+
+		if !in_center {
+			let stripe = (y % 32) as u8;
+
+			return Rgba([
+				stripe.saturating_mul(5),
+				80_u8.saturating_add(stripe),
+				180_u8.saturating_sub(stripe.saturating_mul(2)),
+				255,
+			]);
+		}
+
+		let document_row = if center_scrolls { center_start_row.saturating_add(y) } else { y };
+		let mut value = center_seed
+			.wrapping_add(document_row.wrapping_mul(0x9E37_79B9))
+			.wrapping_add(x.wrapping_mul(0x85EB_CA6B));
+
+		value ^= value >> 16;
+		value = value.wrapping_mul(0xC2B2_AE35);
+		value ^= value >> 13;
+
+		Rgba([(value & 0xff) as u8, ((value >> 8) & 0xff) as u8, ((value >> 16) & 0xff) as u8, 255])
+	})
+}
+
+fn make_codex_like_right_static_rail_frame(
+	width: u32,
+	height: u32,
+	center_start_row: u32,
+) -> image::RgbaImage {
+	let left_blank_width = width / 10;
+	let right_rail_width = width / 5;
+	let right_rail_start = width.saturating_sub(right_rail_width);
+
+	image::RgbaImage::from_fn(width, height, |x, y| {
+		if x < left_blank_width {
+			return Rgba([24, 24, 28, 255]);
+		}
+		if x >= right_rail_start {
+			let local_x = x.saturating_sub(right_rail_start);
+			let row = y / 34;
+			let y_in_row = y % 34;
+			let inside_block = local_x > 12
+				&& local_x < right_rail_width.saturating_sub(12)
+				&& (5..=25).contains(&y_in_row);
+			let text_marker = inside_block && (8..=15).contains(&y_in_row) && local_x % 29 < 14;
+			let base = if inside_block { 34 + ((row % 5) as u8).saturating_mul(5) } else { 25 };
+			let marker = if text_marker { 48 } else { 0 };
+			let value = base.saturating_add(marker);
+
+			return Rgba([value, value, value.saturating_add(4), 255]);
+		}
+
+		let document_row = center_start_row.saturating_add(y);
+		let local_x = x.saturating_sub(left_blank_width);
+		let band = ((document_row / 22) % 11) as u8;
+		let mut value = document_row
+			.wrapping_mul(0x9E37_79B9)
+			.wrapping_add(local_x.wrapping_mul(0x85EB_CA6B))
+			.wrapping_add((band as u32).wrapping_mul(0x045D_9F3B));
+
+		value ^= value >> 16;
+		value = value.wrapping_mul(0xC2B2_AE35);
+		value ^= value >> 13;
+
+		Rgba([(value & 0xff) as u8, ((value >> 8) & 0xff) as u8, ((value >> 16) & 0xff) as u8, 255])
+	})
+}
+
+fn make_dense_unique_scroll_frame(width: u32, height: u32, start_row: u32) -> image::RgbaImage {
+	image::RgbaImage::from_fn(width, height, |x, y| {
+		let document_row = start_row.saturating_add(y);
+		let mut value = document_row
+			.wrapping_mul(0x9E37_79B9)
+			.wrapping_add(x.wrapping_mul(0x85EB_CA6B))
+			.wrapping_add(document_row.rotate_left(13) ^ x.rotate_left(7));
+
+		value ^= value >> 16;
+		value = value.wrapping_mul(0xC2B2_AE35);
+		value ^= value >> 13;
+
+		Rgba([(value & 0xff) as u8, ((value >> 8) & 0xff) as u8, ((value >> 16) & 0xff) as u8, 255])
+	})
+}
+
 #[cfg(target_os = "macos")]
 fn build_worker_pairwise_session(frame: image::RgbaImage) -> ScrollSession {
 	ScrollSession::new(frame, 320).expect("worker pairwise test session should initialize")
@@ -278,6 +388,347 @@ fn session_tracks_large_slowdown_after_first_growth() {
 	assert_eq!(session.current_viewport_top_y(), 314);
 }
 
+#[test]
+fn burst_motion_hint_does_not_override_underconsumed_visual_authority() {
+	let mut session = ScrollSession::new(make_sparse_textlike_window(256, 240, 0), 320).unwrap();
+
+	assert_eq!(
+		session
+			.observe_downward_growth_to_viewport(
+				make_sparse_textlike_window(256, 240, 16),
+				16,
+				true,
+				Some(MotionObservation { direction: ScrollDirection::Down, motion_rows: 16 }),
+				"test_tiny_smooth_scroll_commit",
+			)
+			.unwrap(),
+		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 16 }
+	);
+
+	for start_row in [96, 112, 128, 144] {
+		let _ = session
+			.observe_downward_sample_with_motion_hint_and_burst(
+				make_sparse_textlike_window(256, 240, start_row),
+				Some(224),
+				true,
+			)
+			.unwrap();
+	}
+
+	let telemetry = session.commit_telemetry();
+
+	assert_eq!(telemetry.sample_eval_effective_motion_rows_hint, Some(224));
+	assert_eq!(session.current_viewport_top_y(), 16);
+	assert_eq!(session.export_image().height(), 256);
+}
+
+#[test]
+fn initial_smooth_scroll_burst_can_commit_strong_match_beyond_underreported_hint() {
+	let document = (0_u32..1_024)
+		.map(|row| {
+			let mut value = row.wrapping_mul(0x9E37_79B9);
+
+			value ^= value >> 16;
+			value = value.wrapping_mul(0x85EB_CA6B);
+			value ^= value >> 13;
+
+			[(value & 0xff) as u8, ((value >> 8) & 0xff) as u8, ((value >> 16) & 0xff) as u8, 255]
+		})
+		.collect::<Vec<_>>();
+	let mut session = ScrollSession::new(make_window(&document, 12, 0, 640), 320).unwrap();
+
+	assert_eq!(
+		session
+			.observe_downward_sample_with_motion_hint_and_burst(
+				make_window(&document, 12, 300, 640),
+				Some(42),
+				true,
+			)
+			.unwrap(),
+		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 300 }
+	);
+	assert_eq!(session.current_viewport_top_y(), 300);
+}
+
+#[test]
+fn transient_burst_input_hint_does_not_commit_without_visual_match() {
+	let mut session = ScrollSession::new(make_sparse_textlike_window(256, 240, 0), 320).unwrap();
+
+	assert_eq!(
+		session
+			.observe_downward_growth_to_viewport(
+				make_sparse_textlike_window(256, 240, 96),
+				96,
+				true,
+				Some(MotionObservation { direction: ScrollDirection::Down, motion_rows: 96 }),
+				"test_initial_committed_growth",
+			)
+			.unwrap(),
+		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 96 }
+	);
+
+	let composited_smooth_frame = make_unregistered_composited_frame(256, 240, 180);
+
+	for _ in 0..2 {
+		assert_eq!(
+			session
+				.observe_downward_sample_with_motion_hint_and_burst(
+					composited_smooth_frame.clone(),
+					Some(84),
+					true,
+				)
+				.unwrap(),
+			ScrollObserveOutcome::PreviewUpdated
+		);
+	}
+
+	assert_eq!(
+		session
+			.observe_downward_sample_with_motion_hint_and_burst(
+				composited_smooth_frame,
+				Some(84),
+				true,
+			)
+			.unwrap(),
+		ScrollObserveOutcome::PreviewUpdated
+	);
+
+	let telemetry = session.commit_telemetry();
+
+	assert_eq!(telemetry.last_commit_decision_source, Some("test_initial_committed_growth"));
+	assert_eq!(telemetry.growth_commit_count, 1);
+	assert_eq!(session.current_viewport_top_y(), 96);
+	assert_eq!(session.export_image().height(), 336);
+}
+
+#[test]
+fn initial_transient_burst_input_hint_waits_for_visual_match() {
+	let composited_smooth_frame = make_unregistered_composited_frame(256, 240, 180);
+	let mut session = ScrollSession::new(make_sparse_textlike_window(256, 240, 0), 320).unwrap();
+
+	for _ in 0..2 {
+		assert_eq!(
+			session
+				.observe_downward_sample_with_motion_hint_and_burst(
+					composited_smooth_frame.clone(),
+					Some(96),
+					true,
+				)
+				.unwrap(),
+			ScrollObserveOutcome::PreviewUpdated
+		);
+	}
+
+	assert_eq!(
+		session
+			.observe_downward_sample_with_motion_hint_and_burst(
+				composited_smooth_frame,
+				Some(96),
+				true,
+			)
+			.unwrap(),
+		ScrollObserveOutcome::PreviewUpdated
+	);
+
+	let telemetry = session.commit_telemetry();
+
+	assert_eq!(telemetry.last_commit_decision_source, None);
+	assert_eq!(telemetry.growth_commit_count, 0);
+	assert_eq!(session.current_viewport_top_y(), 0);
+	assert_eq!(session.export_image().height(), 240);
+}
+
+#[test]
+fn large_transient_burst_input_hint_waits_for_visual_match() {
+	let composited_smooth_frame = make_unregistered_composited_frame(256, 640, 520);
+	let mut session = ScrollSession::new(make_sparse_textlike_window(256, 640, 0), 320).unwrap();
+
+	for _ in 0..2 {
+		assert_eq!(
+			session
+				.observe_downward_sample_with_motion_hint_and_burst(
+					composited_smooth_frame.clone(),
+					Some(432),
+					true,
+				)
+				.unwrap(),
+			ScrollObserveOutcome::PreviewUpdated
+		);
+	}
+
+	assert_eq!(
+		session
+			.observe_downward_sample_with_motion_hint_and_burst(
+				composited_smooth_frame,
+				Some(432),
+				true,
+			)
+			.unwrap(),
+		ScrollObserveOutcome::PreviewUpdated
+	);
+
+	let telemetry = session.commit_telemetry();
+
+	assert_eq!(telemetry.last_commit_decision_source, None);
+	assert_eq!(telemetry.growth_commit_count, 0);
+	assert_eq!(session.current_viewport_top_y(), 0);
+	assert_eq!(session.export_image().height(), 640);
+}
+
+#[test]
+fn static_sidebars_do_not_drive_downward_stitching_without_center_match() {
+	let base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 1, false);
+	let unrelated_center = make_static_sidebar_center_frame(320, 240, 145, 30, 96, 2, false);
+	let mut session = ScrollSession::new(base.clone(), 320).unwrap();
+	let outcome = session
+		.observe_downward_sample_with_motion_hint_and_burst(unrelated_center, Some(96), true)
+		.unwrap();
+
+	assert!(matches!(
+		outcome,
+		ScrollObserveOutcome::PreviewUpdated | ScrollObserveOutcome::NoChange
+	));
+	assert_eq!(session.current_viewport_top_y(), 0);
+	assert_eq!(session.export_image(), &base);
+	assert_eq!(session.commit_telemetry().growth_commit_count, 0);
+}
+
+#[test]
+fn dynamic_scroll_center_does_not_stitch_when_static_sidebars_are_in_selection() {
+	let base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 7, true);
+	let moved = make_static_sidebar_center_frame(320, 240, 145, 30, 72, 7, true);
+	let mut session = ScrollSession::new(base.clone(), 320).unwrap();
+	let outcome =
+		session.observe_downward_sample_with_motion_hint_and_burst(moved, Some(72), true).unwrap();
+
+	assert!(matches!(
+		outcome,
+		ScrollObserveOutcome::PreviewUpdated | ScrollObserveOutcome::NoChange
+	));
+	assert_eq!(session.current_viewport_top_y(), 0);
+	assert_eq!(session.export_image(), &base);
+	assert_eq!(session.commit_telemetry().growth_commit_count, 0);
+}
+
+#[test]
+fn pairwise_shift_estimate_rejects_narrow_dynamic_center_with_static_sidebars_present() {
+	let base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 7, true);
+	let moved = make_static_sidebar_center_frame(320, 240, 145, 30, 72, 7, true);
+
+	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &moved), None);
+}
+
+#[test]
+fn pairwise_shift_estimate_rejects_wide_dynamic_center_with_static_right_rail_present() {
+	let base = make_codex_like_right_static_rail_frame(640, 360, 0);
+	let moved = make_codex_like_right_static_rail_frame(640, 360, 72);
+
+	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &moved), None);
+}
+
+#[test]
+fn pairwise_shift_estimate_ignores_static_sidebars_without_center_scroll_match() {
+	let base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 1, false);
+	let unrelated_center = make_static_sidebar_center_frame(320, 240, 145, 30, 72, 2, false);
+
+	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &unrelated_center), None);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn worker_pairwise_vision_rejects_narrow_dynamic_center_with_static_sidebars_present() {
+	let base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 7, true);
+	let moved = make_static_sidebar_center_frame(320, 240, 145, 30, 72, 7, true);
+	let mut session = ScrollSession::new(base.clone(), 320).unwrap();
+
+	assert_ne!(
+		session.observe_worker_pairwise_vision_frame(moved).unwrap(),
+		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 72 }
+	);
+	assert_eq!(session.current_viewport_top_y(), 0);
+	assert_eq!(session.export_image(), &base);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn worker_pairwise_vision_rejects_wide_dynamic_center_with_static_right_rail_present() {
+	let base = make_codex_like_right_static_rail_frame(640, 360, 0);
+	let moved = make_codex_like_right_static_rail_frame(640, 360, 72);
+	let mut session = ScrollSession::new(base.clone(), 320).unwrap();
+
+	assert_ne!(
+		session.observe_worker_pairwise_vision_frame(moved).unwrap(),
+		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 72 }
+	);
+	assert_eq!(session.current_viewport_top_y(), 0);
+	assert_eq!(session.export_image(), &base);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn worker_pairwise_vision_ignores_static_sidebars_without_center_scroll_match() {
+	let base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 1, false);
+	let unrelated_center = make_static_sidebar_center_frame(320, 240, 145, 30, 72, 2, false);
+	let mut session = ScrollSession::new(base.clone(), 320).unwrap();
+
+	assert_ne!(
+		session.observe_worker_pairwise_vision_frame(unrelated_center).unwrap(),
+		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 72 }
+	);
+	assert_eq!(session.current_viewport_top_y(), 0);
+	assert_eq!(session.export_image(), &base);
+}
+
+#[test]
+fn transient_burst_visual_match_underconsuming_large_input_hint_does_not_commit() {
+	let document = (0..512_u32)
+		.map(|row| {
+			let value = row.wrapping_mul(37).wrapping_add(row.rotate_left(5)) as u8;
+
+			[value, value.wrapping_mul(3), value.wrapping_add(91), 255]
+		})
+		.collect::<Vec<_>>();
+	let mut session = ScrollSession::new(make_window(&document, 256, 0, 240), 320).unwrap();
+
+	assert_eq!(
+		session
+			.observe_downward_growth_to_viewport(
+				make_window(&document, 256, 96, 240),
+				96,
+				true,
+				Some(MotionObservation { direction: ScrollDirection::Down, motion_rows: 96 }),
+				"test_initial_committed_growth",
+			)
+			.unwrap(),
+		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 96 }
+	);
+
+	session.transient_burst_search_enabled = true;
+	session.transient_motion_rows_hint = Some(168);
+
+	let candidate = DownwardViewportCandidate {
+		source: DownwardViewportCandidateSource::ObservedSample,
+		viewport_top_y: 97,
+		motion_rows: 1,
+		mean_abs_diff_x100: 0,
+	};
+
+	assert_eq!(
+		session
+			.block_invalid_downward_candidate(
+				&make_window(&document, 256, 97, 240),
+				1,
+				candidate,
+				true
+			)
+			.unwrap(),
+		Some(ScrollObserveOutcome::PreviewUpdated)
+	);
+	assert_eq!(session.current_viewport_top_y(), 96);
+	assert_eq!(session.export_image().height(), 336);
+	assert_eq!(session.last_block_reason(), Some("visual_motion_underconsumed_input_hint"));
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn worker_pairwise_vision_commits_substantial_downward_growth_with_corroboration() {
@@ -332,7 +783,7 @@ fn pairwise_downward_shift_estimate_tracks_successive_browser_like_steps() {
 }
 
 #[test]
-fn trusted_pairwise_downward_shift_blocks_periodic_ambiguity_near_vision_motion() {
+fn pairwise_shift_estimate_fails_closed_when_periodic_content_does_not_visibly_change() {
 	let document: Vec<[u8; 4]> = (0..256)
 		.map(|row| {
 			let bucket = (row % 24) as u8;
@@ -348,7 +799,7 @@ fn trusted_pairwise_downward_shift_blocks_periodic_ambiguity_near_vision_motion(
 	let base = make_window(&document, 8, 0, 96);
 	let moved = make_window(&document, 8, 24, 96);
 
-	assert!(support::estimate_pairwise_downward_shift_rows(&base, &moved).is_some());
+	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &moved), None);
 	assert_eq!(
 		support::trusted_pairwise_downward_shift_rows_near_motion(&base, &moved, 24, 24),
 		None
@@ -541,6 +992,46 @@ fn worker_pairwise_vision_handles_repeated_browser_like_frame_between_growth_ste
 		"first browser-like step should register downward motion",
 		"followup browser-like step should register downward motion",
 	);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn worker_pairwise_vision_catches_up_from_committed_frontier_after_reacquire_block() {
+	let base = make_dense_unique_scroll_frame(512, 640, 0);
+	let first = make_dense_unique_scroll_frame(512, 640, 180);
+	let first_reference = first.clone();
+	let catchup = make_dense_unique_scroll_frame(512, 640, 540);
+	let mut session = build_worker_pairwise_session(base.clone());
+	let first_growth = assert_worker_pairwise_commit(
+		&mut session,
+		&base,
+		first,
+		"initial pairwise registration should detect downward motion",
+	);
+
+	assert_eq!(
+		support::trusted_pairwise_downward_shift_rows_near_motion(
+			&first_reference,
+			&catchup,
+			360,
+			24
+		),
+		Some(360)
+	);
+
+	session.worker_pairwise_requires_committed_reacquire = true;
+
+	assert_eq!(session.current_viewport_top_y(), growth_rows_i32(first_growth));
+
+	let catchup_outcome =
+		session.observe_worker_pairwise_vision_frame_with_motion_hint(catchup, Some(360)).unwrap();
+
+	assert_eq!(
+		catchup_outcome,
+		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 360 }
+	);
+	assert_eq!(session.current_viewport_top_y(), 540);
+	assert_eq!(session.export_image().height(), 640 + first_growth + 360);
 }
 
 #[cfg(target_os = "macos")]

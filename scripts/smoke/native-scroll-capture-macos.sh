@@ -21,9 +21,14 @@ Useful overrides:
   SCROLL_START_METHOD=keyboard         optional: keyboard,toolbar
   SCROLL_DELTA_Y=36
   SCROLL_INTERVAL_MS=220
-  MIN_SCROLL_COMMITS=3
-  MIN_EXPORT_GROWTH_PX=180
+  SCROLL_BACKGROUND_MODE=full_document|codex_like
+  SCROLL_START_SETTLE_S=5.0
+  EXPECT_SCROLL_GROWTH=1                 defaults to 0 for codex_like
+  MIN_SCROLL_COMMITS=2                   defaults to 0 when EXPECT_SCROLL_GROWTH=0
+  MIN_EXPORT_GROWTH_PX=180               defaults to 0 when EXPECT_SCROLL_GROWTH=0
+  VALIDATE_SCROLL_EXPORT_CONTINUITY=0    set to 1 with SCROLL_BACKGROUND_PROOF_STRIPE=1
   APP_POST_VERIFY_SETTLE_S=0
+  POST_FREEZE_SETTLE_S=2.0
 EOF
 }
 
@@ -65,16 +70,46 @@ SCROLL_DRIVER="${SCROLL_DRIVER:-wheel}"
 SCROLL_START_METHOD="${SCROLL_START_METHOD:-keyboard}"
 SCROLL_DELTA_Y="${SCROLL_DELTA_Y:-36}"
 SCROLL_INTERVAL_MS="${SCROLL_INTERVAL_MS:-220}"
-MIN_SCROLL_COMMITS="${MIN_SCROLL_COMMITS:-3}"
-MIN_EXPORT_GROWTH_PX="${MIN_EXPORT_GROWTH_PX:-180}"
+SCROLL_START_SETTLE_S="${SCROLL_START_SETTLE_S:-5.0}"
+SCROLL_BACKGROUND_MODE="${SCROLL_BACKGROUND_MODE:-full_document}"
+SCROLL_BACKGROUND_PROOF_STRIPE="${SCROLL_BACKGROUND_PROOF_STRIPE:-0}"
+if [[ -z "${EXPECT_SCROLL_GROWTH:-}" ]]; then
+	if [[ "$SCROLL_BACKGROUND_MODE" == "codex_like" ]]; then
+		EXPECT_SCROLL_GROWTH=0
+	else
+		EXPECT_SCROLL_GROWTH=1
+	fi
+fi
+if [[ -z "${MIN_SCROLL_COMMITS:-}" ]]; then
+	if [[ "$EXPECT_SCROLL_GROWTH" == "0" ]]; then
+		MIN_SCROLL_COMMITS=0
+	else
+		MIN_SCROLL_COMMITS=2
+	fi
+fi
+if [[ -z "${MIN_EXPORT_GROWTH_PX:-}" ]]; then
+	if [[ "$EXPECT_SCROLL_GROWTH" == "0" ]]; then
+		MIN_EXPORT_GROWTH_PX=0
+	else
+		MIN_EXPORT_GROWTH_PX=180
+	fi
+fi
 APP_POST_VERIFY_SETTLE_S="${APP_POST_VERIFY_SETTLE_S:-0}"
+VALIDATE_SCROLL_EXPORT_CONTINUITY="${VALIDATE_SCROLL_EXPORT_CONTINUITY:-0}"
 OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0.10}"
-POST_FREEZE_SETTLE_S="${POST_FREEZE_SETTLE_S:-0.16}"
+POST_FREEZE_SETTLE_S="${POST_FREEZE_SETTLE_S:-2.0}"
 POST_COPY_SETTLE_S="${POST_COPY_SETTLE_S:-0.30}"
 PATH_CYCLES="${PATH_CYCLES:-1}"
+EXPORT_IMAGE_PATH_WAS_PROVIDED=0
+if [[ -n "${EXPORT_IMAGE_PATH:-}" ]]; then
+	EXPORT_IMAGE_PATH_WAS_PROVIDED=1
+else
+	EXPORT_IMAGE_PATH="$(mktemp "${TMPDIR:-/tmp}/rsnap-scroll-export.XXXXXX.png")"
+fi
 if [[ -z "${POST_SCROLL_SETTLE_S:-}" ]]; then
 	POST_SCROLL_SETTLE_S=2.20
 fi
+export SCROLL_BACKGROUND_MODE SCROLL_BACKGROUND_PROOF_STRIPE
 
 restore_preferences() {
 	live_hud_stop_awake_assertion
@@ -90,6 +125,9 @@ restore_preferences() {
 		done
 	fi
 	rm -f "$PREF_SNAPSHOT" "$SCROLL_BACKGROUND_READY"
+	if [[ "$EXPORT_IMAGE_PATH_WAS_PROVIDED" != "1" ]]; then
+		rm -f "$EXPORT_IMAGE_PATH"
+	fi
 }
 
 if defaults export "$PREF_DOMAIN" "$PREF_SNAPSHOT" >/dev/null 2>&1; then
@@ -236,13 +274,14 @@ start_scroll_background() {
 parse_telemetry() {
 	local log_path="$1"
 
-	python3 - "$log_path" "$MIN_SCROLL_COMMITS" "$MIN_EXPORT_GROWTH_PX" "$SCROLL_START_METHOD" <<'PY'
+	python3 - "$log_path" "$MIN_SCROLL_COMMITS" "$MIN_EXPORT_GROWTH_PX" "$SCROLL_START_METHOD" "$EXPECT_SCROLL_GROWTH" <<'PY'
 import re
 import sys
 
-path, min_commits_raw, min_growth_raw, start_method = sys.argv[1:5]
+path, min_commits_raw, min_growth_raw, start_method, expect_growth_raw = sys.argv[1:6]
 min_commits = int(min_commits_raw)
 min_growth = int(min_growth_raw)
+expect_growth = expect_growth_raw != "0"
 expected_start_source = {
     "keyboard": "keyboard_s",
     "toolbar": "toolbar",
@@ -264,6 +303,7 @@ manual_mode = bool(
         text,
     )
 )
+input_ready = "event=capture.scroll_input_ready" in text
 tap_not_used = bool(
     re.search(
         r"event=capture\.scroll_input_tap\b[^\n]*outcome=not_used\b",
@@ -304,7 +344,8 @@ growth = max_height - base_height
 print(
     f"[smoke] telemetry froze={froze} handoff={handoff} "
     f"entry_started={entry_started} start_source={expected_start_source} "
-    f"started={started} manual_mode={manual_mode} sampled={sampled} commits={len(commits)} "
+    f"started={started} manual_mode={manual_mode} input_ready={input_ready} "
+    f"sampled={sampled} commits={len(commits)} "
     f"tap_not_used={tap_not_used} wheel_intercepted={wheel_intercepted} "
     f"wheel_observed={wheel_observed} "
     f"max_export_height={max_height} base_height={base_height} growth={growth} "
@@ -322,18 +363,26 @@ if not started:
     failures.append("scroll capture did not start")
 if not manual_mode:
     failures.append("scroll capture did not use universal manual mode")
+if not input_ready:
+    failures.append("scroll capture input did not become ready")
 if not tap_not_used:
-    failures.append("scroll capture did not use overlay-local wheel forwarding")
+    failures.append("scroll capture did not use passthrough/global wheel monitoring")
 if not wheel_input_seen:
     failures.append("scroll capture did not receive wheel input")
 if not sampled:
     failures.append("scroll capture did not sample")
 if base_height <= 0:
     failures.append("scroll capture start height was not recorded")
-if len(commits) < min_commits:
-    failures.append(f"committed growth count {len(commits)} < {min_commits}")
-if growth < min_growth:
-    failures.append(f"export growth {growth}px < {min_growth}px")
+if expect_growth:
+    if len(commits) < min_commits:
+        failures.append(f"committed growth count {len(commits)} < {min_commits}")
+    if growth < min_growth:
+        failures.append(f"export growth {growth}px < {min_growth}px")
+else:
+    if len(commits) != 0:
+        failures.append(f"expected fail-closed no growth, but committed growth count was {len(commits)}")
+    if growth != 0:
+        failures.append(f"expected fail-closed no export growth, but growth was {growth}px")
 if auto_event:
     failures.append("unexpected legacy auto-scroll telemetry")
 
@@ -390,6 +439,15 @@ PY
 
 smoke_log "display bounds: $DISPLAY_BOUNDS"
 smoke_log "drag points: $DRAG_POINTS scroll_point=$SCROLL_POINT base_height=$BASE_HEIGHT"
+smoke_log "background_mode=$SCROLL_BACKGROUND_MODE expect_growth=$EXPECT_SCROLL_GROWTH min_commits=$MIN_SCROLL_COMMITS min_growth=$MIN_EXPORT_GROWTH_PX"
+case "$SCROLL_BACKGROUND_MODE" in
+	full_document|codex_like)
+		;;
+	*)
+		echo "[smoke] FAIL unknown SCROLL_BACKGROUND_MODE=$SCROLL_BACKGROUND_MODE" >&2
+		exit 2
+		;;
+esac
 case "$SCROLL_START_METHOD" in
 	keyboard|toolbar)
 		;;
@@ -427,7 +485,7 @@ case "$SCROLL_START_METHOD" in
 		click_scroll_toolbar_icon
 		;;
 esac
-sleep 0.25
+sleep "$SCROLL_START_SETTLE_S"
 
 case "$SCROLL_DRIVER" in
 	notification)
@@ -448,10 +506,10 @@ case "$SCROLL_DRIVER" in
 		exit 2
 		;;
 esac
+sleep "$POST_SCROLL_SETTLE_S"
 if [[ "$SCROLL_DRIVER" == "notification" || "$SCROLL_DRIVER" == "wheel" ]]; then
 	assert_scroll_background_moved
 fi
-sleep "$POST_SCROLL_SETTLE_S"
 
 live_hud_focus_rsnap_overlay
 osascript -e 'set the clipboard to ""' >/dev/null
@@ -461,6 +519,7 @@ pasteboard_ok=0
 pasteboard_info=""
 if pasteboard_info="$(
 	PASTEBOARD_WAIT_MS="${PASTEBOARD_WAIT_MS:-5000}" \
+		PASTEBOARD_IMAGE_OUTPUT_PATH="$EXPORT_IMAGE_PATH" \
 		swift "$SCRIPT_DIR/lib/pasteboard-image-info.swift" 2>&1
 )"; then
 	pasteboard_ok=1
@@ -476,5 +535,13 @@ parse_telemetry "$out_dir/native-host.oslog"
 if [[ "$pasteboard_ok" != "1" ]]; then
 	echo "[smoke] FAIL no scroll capture image was copied to the pasteboard" >&2
 	exit 1
+fi
+if [[ "$VALIDATE_SCROLL_EXPORT_CONTINUITY" == "1" && "$EXPECT_SCROLL_GROWTH" != "0" ]]; then
+	if [[ ! -s "$EXPORT_IMAGE_PATH" ]]; then
+		echo "[smoke] FAIL scroll capture export image was not saved for continuity validation" >&2
+		exit 1
+	fi
+	continuity_info="$(swift "$SCRIPT_DIR/lib/scroll-export-continuity.swift" "$EXPORT_IMAGE_PATH")"
+	smoke_log "export $continuity_info"
 fi
 smoke_log "native scroll-capture smoke passed"

@@ -36,6 +36,18 @@ use crate::scroll_capture::{
 	ScrollObserveOutcome,
 };
 
+const MOTION_COVERAGE_MIN_PERCENT: u32 = 20;
+const MOTION_COVERAGE_MIN_INFORMATIVE_COLUMNS: u32 = 1;
+const MOTION_COVERAGE_STATIC_EDGE_MAX_LEADING_COLUMNS: u32 = 48;
+const MOTION_COVERAGE_STATIC_EDGE_MIN_COLUMNS: u32 = 64;
+const MOTION_COVERAGE_STATIC_BAND_MIN_COLUMNS: usize = 64;
+const MOTION_COVERAGE_STATIC_BAND_MIN_PERCENT: u32 = 65;
+const MOTION_COVERAGE_STATIC_BAND_STRUCTURE_DIVISOR: u32 = 64;
+const MOTION_COVERAGE_STATIC_BAND_MOTION_DIVISOR: u32 = 16;
+const MOTION_OVERLAP_MIN_MATCHING_COLUMN_PERCENT: u32 = 80;
+const MOTION_OVERLAP_BAD_EDGE_SAMPLE_DIVISOR: usize = 10;
+const MOTION_OVERLAP_BAD_EDGE_MIN_SAMPLES: usize = 8;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OverlapOrientation {
 	PreviousBottomToNextTop,
@@ -221,6 +233,13 @@ pub(super) fn trusted_pairwise_downward_shift_rows_near_motion(
 	}
 }
 
+pub(super) fn trusted_pairwise_downward_shift_match(
+	previous: &RgbaImage,
+	current: &RgbaImage,
+) -> Option<DirectionMatch> {
+	trusted_pairwise_shift_match(previous, current, ScrollDirection::Down)
+}
+
 pub(super) fn trusted_pairwise_upward_shift_rows(
 	previous: &RgbaImage,
 	current: &RgbaImage,
@@ -348,6 +367,12 @@ pub(super) fn collect_overlap_direction_matches(
 		ScrollDirection::Down => OverlapOrientation::PreviousBottomToNextTop,
 		ScrollDirection::Up => OverlapOrientation::PreviousTopToNextBottom,
 	};
+	let sample_columns = motion_sample_columns_for_span(previous, next, informative_span, config);
+
+	if sample_columns.is_empty() {
+		return Vec::new();
+	}
+
 	let mut matches = Vec::with_capacity(search_end.saturating_sub(search_start) as usize + 1);
 
 	for motion_rows in search_start..=search_end {
@@ -363,7 +388,7 @@ pub(super) fn collect_overlap_direction_matches(
 			motion_rows,
 			config,
 			orientation,
-			informative_span,
+			&sample_columns,
 		);
 
 		if diff > config.max_mean_abs_diff_x100 {
@@ -804,8 +829,8 @@ fn trusted_pairwise_shift_match(
 fn worker_pairwise_overlap_search_config() -> OverlapSearchConfig {
 	OverlapSearchConfig {
 		min_overlap_rows: 24,
-		max_column_samples: 96,
-		max_row_samples: 96,
+		max_column_samples: 240,
+		max_row_samples: 128,
 		max_mean_abs_diff_x100: 850,
 	}
 }
@@ -895,7 +920,12 @@ fn detect_vertical_overlap_in_range(
 		ScrollDirection::Down => OverlapOrientation::PreviousBottomToNextTop,
 		ScrollDirection::Up => OverlapOrientation::PreviousTopToNextBottom,
 	};
+	let sample_columns = motion_sample_columns_for_span(previous, next, informative_span, config);
 	let mut best = OverlapMatch { rows: 0, matched: false, mean_abs_diff_x100: u32::MAX };
+
+	if sample_columns.is_empty() {
+		return best;
+	}
 
 	for motion_rows in search_start..=search_end {
 		let overlap_rows = max_overlap.saturating_sub(motion_rows);
@@ -910,7 +940,7 @@ fn detect_vertical_overlap_in_range(
 			motion_rows,
 			config,
 			orientation,
-			informative_span,
+			&sample_columns,
 		);
 
 		if diff > config.max_mean_abs_diff_x100 {
@@ -933,9 +963,8 @@ fn motion_mean_abs_diff_x100(
 	motion_rows: u32,
 	config: OverlapSearchConfig,
 	orientation: OverlapOrientation,
-	informative_span: InformativeSpan,
+	sample_columns: &[u32],
 ) -> u32 {
-	let width = previous.width().min(next.width());
 	let max_overlap = previous.height().min(next.height());
 	let overlap_rows = max_overlap.saturating_sub(motion_rows);
 
@@ -943,7 +972,6 @@ fn motion_mean_abs_diff_x100(
 		return u32::MAX;
 	}
 
-	let column_samples = width.min(config.max_column_samples).max(1);
 	let row_samples = overlap_rows.min(config.max_row_samples).max(1);
 	let previous_overlap_start_y = previous.height().saturating_sub(overlap_rows);
 	let next_overlap_start_y = next.height().saturating_sub(overlap_rows);
@@ -955,12 +983,10 @@ fn motion_mean_abs_diff_x100(
 		OverlapOrientation::PreviousBottomToNextTop => 0,
 		OverlapOrientation::PreviousTopToNextBottom => next_overlap_start_y,
 	};
-	let x_start = informative_span.start_x.min(width.saturating_sub(1));
-	let x_end = informative_span.end_exclusive_x.min(width).max(x_start + 1);
-	let effective_width = x_end.saturating_sub(x_start).max(1);
-	let column_samples = effective_width.min(column_samples).max(1);
 	let mut total_abs_diff = 0_u64;
 	let mut comparisons = 0_u64;
+	let mut column_abs_diff = vec![0_u64; sample_columns.len()];
+	let mut column_comparisons = 0_u64;
 
 	for row in 0..row_samples {
 		let local_y = evenly_spaced_sample(0, overlap_rows, row, row_samples);
@@ -968,45 +994,373 @@ fn motion_mean_abs_diff_x100(
 			previous_start_y.saturating_add(local_y).min(previous.height().saturating_sub(1));
 		let next_y = next_start_y.saturating_add(local_y).min(next.height().saturating_sub(1));
 
-		for column in 0..column_samples {
-			let x = evenly_spaced_sample(x_start, x_end, column, column_samples);
-			let previous_pixel = previous.get_pixel(x, previous_y).0;
-			let next_pixel = next.get_pixel(x, next_y).0;
-
-			total_abs_diff = total_abs_diff
-				.saturating_add(u64::from(previous_pixel[0].abs_diff(next_pixel[0])))
+		for (column_index, x) in sample_columns.iter().enumerate() {
+			let previous_pixel = previous.get_pixel(*x, previous_y).0;
+			let next_pixel = next.get_pixel(*x, next_y).0;
+			let pixel_abs_diff = u64::from(previous_pixel[0].abs_diff(next_pixel[0]))
 				.saturating_add(u64::from(previous_pixel[1].abs_diff(next_pixel[1])))
 				.saturating_add(u64::from(previous_pixel[2].abs_diff(next_pixel[2])));
+
+			total_abs_diff = total_abs_diff.saturating_add(pixel_abs_diff);
+			column_abs_diff[column_index] =
+				column_abs_diff[column_index].saturating_add(pixel_abs_diff);
 			comparisons = comparisons.saturating_add(3);
 		}
+
+		column_comparisons = column_comparisons.saturating_add(3);
 	}
 
 	if comparisons == 0 {
+		return u32::MAX;
+	}
+	if !motion_overlap_columns_support_span(&column_abs_diff, column_comparisons, config) {
 		return u32::MAX;
 	}
 
 	((total_abs_diff.saturating_mul(100)) / comparisons) as u32
 }
 
+fn motion_overlap_columns_support_span(
+	column_abs_diff: &[u64],
+	column_comparisons: u64,
+	config: OverlapSearchConfig,
+) -> bool {
+	if column_abs_diff.is_empty() || column_comparisons == 0 {
+		return false;
+	}
+
+	let bad_column_threshold = config
+		.max_mean_abs_diff_x100
+		.saturating_mul(4)
+		.max(config.max_mean_abs_diff_x100.saturating_add(1));
+	let mut matching_columns = 0_u32;
+	let mut bad_columns = Vec::with_capacity(column_abs_diff.len());
+
+	for total in column_abs_diff {
+		let column_mean_x100 = ((total.saturating_mul(100)) / column_comparisons) as u32;
+		let column_matches = column_mean_x100 <= bad_column_threshold;
+
+		if column_matches {
+			matching_columns = matching_columns.saturating_add(1);
+		}
+
+		bad_columns.push(!column_matches);
+	}
+
+	let total_columns = column_abs_diff.len() as u32;
+	let enough_matching_columns = matching_columns.saturating_mul(100)
+		>= total_columns.saturating_mul(MOTION_OVERLAP_MIN_MATCHING_COLUMN_PERCENT);
+	let min_bad_edge_columns = (column_abs_diff.len() / MOTION_OVERLAP_BAD_EDGE_SAMPLE_DIVISOR)
+		.max(MOTION_OVERLAP_BAD_EDGE_MIN_SAMPLES)
+		.min(column_abs_diff.len());
+
+	enough_matching_columns
+		&& leading_true_run_len(bad_columns.iter().copied()) < min_bad_edge_columns
+		&& leading_true_run_len(bad_columns.iter().rev().copied()) < min_bad_edge_columns
+}
+
+fn leading_true_run_len<I>(iter: I) -> usize
+where
+	I: IntoIterator<Item = bool>,
+{
+	let mut len = 0_usize;
+
+	for value in iter {
+		if !value {
+			break;
+		}
+
+		len = len.saturating_add(1);
+	}
+
+	len
+}
+
+fn motion_sample_columns_for_span(
+	previous: &RgbaImage,
+	next: &RgbaImage,
+	informative_span: InformativeSpan,
+	config: OverlapSearchConfig,
+) -> Vec<u32> {
+	let width = previous.width().min(next.width());
+
+	if width == 0 {
+		return Vec::new();
+	}
+
+	let x_start = informative_span.start_x.min(width.saturating_sub(1));
+	let x_end = informative_span.end_exclusive_x.min(width).max(x_start + 1);
+	let column_samples = width.min(config.max_column_samples).max(1);
+
+	evenly_sampled_columns(x_start, x_end, column_samples)
+}
+
+fn evenly_sampled_columns(x_start: u32, x_end: u32, max_column_samples: u32) -> Vec<u32> {
+	let effective_width = x_end.saturating_sub(x_start).max(1);
+	let column_samples = effective_width.min(max_column_samples).max(1);
+	let mut columns = Vec::with_capacity(column_samples as usize);
+
+	for column in 0..column_samples {
+		columns.push(evenly_spaced_sample(x_start, x_end, column, column_samples));
+	}
+
+	columns
+}
+
 fn overlap_global_informative_span(left: &RgbaImage, right: &RgbaImage) -> Option<InformativeSpan> {
 	let left_span = informative_column_span(left, 0, left.height());
 	let right_span = informative_column_span(right, 0, right.height());
 	let width = left.width().min(right.width());
-
-	match (left_span, right_span) {
+	let structural_span = match (left_span, right_span) {
 		(Some(left_span), Some(right_span)) => {
 			let start_x = left_span.start_x.max(right_span.start_x);
 			let end_exclusive_x =
 				left_span.end_exclusive_x.min(right_span.end_exclusive_x).min(width);
 
-			(end_exclusive_x > start_x).then_some(InformativeSpan { start_x, end_exclusive_x })
+			(end_exclusive_x > start_x).then_some(InformativeSpan { start_x, end_exclusive_x })?
 		},
 		(Some(span), None) | (None, Some(span)) => {
 			let end_exclusive_x = span.end_exclusive_x.min(width).max(span.start_x + 1);
 
 			(end_exclusive_x > span.start_x)
-				.then_some(InformativeSpan { start_x: span.start_x, end_exclusive_x })
+				.then_some(InformativeSpan { start_x: span.start_x, end_exclusive_x })?
 		},
-		(None, None) => None,
+		(None, None) => return None,
+	};
+
+	motion_coverage_supports_structural_span(left, right, structural_span)
+		.then_some(structural_span)
+}
+
+fn motion_coverage_supports_structural_span(
+	left: &RgbaImage,
+	right: &RgbaImage,
+	structural_span: InformativeSpan,
+) -> bool {
+	let width = left.width().min(right.width());
+	let height = left.height().min(right.height());
+	let x_start = structural_span.start_x.min(width.saturating_sub(1));
+	let x_end = structural_span.end_exclusive_x.min(width).max(x_start.saturating_add(1));
+
+	if width == 0 || height == 0 {
+		return false;
 	}
+
+	let row_samples = height.min(INFORMATIVE_SPAN_ROW_SAMPLES.max(2)).max(2);
+	let mut scores = Vec::with_capacity(width as usize);
+	let mut max_structure_score = 0_u32;
+	let mut max_motion_score = 0_u32;
+
+	for x in 0..width {
+		let mut structure_score = 0_u32;
+		let mut motion_score = 0_u32;
+
+		for row in 0..row_samples {
+			let y = evenly_spaced_sample(0, height, row, row_samples);
+			let next_y = y.saturating_add(1).min(height.saturating_sub(1));
+			let left_pixel = left.get_pixel(x, y).0;
+			let right_pixel = right.get_pixel(x, y).0;
+			let left_next_pixel = left.get_pixel(x, next_y).0;
+			let right_next_pixel = right.get_pixel(x, next_y).0;
+
+			motion_score = motion_score
+				.saturating_add(u32::from(left_pixel[0].abs_diff(right_pixel[0])))
+				.saturating_add(u32::from(left_pixel[1].abs_diff(right_pixel[1])))
+				.saturating_add(u32::from(left_pixel[2].abs_diff(right_pixel[2])));
+			structure_score = structure_score
+				.saturating_add(u32::from(left_pixel[0].abs_diff(left_next_pixel[0])))
+				.saturating_add(u32::from(left_pixel[1].abs_diff(left_next_pixel[1])))
+				.saturating_add(u32::from(left_pixel[2].abs_diff(left_next_pixel[2])))
+				.saturating_add(u32::from(right_pixel[0].abs_diff(right_next_pixel[0])))
+				.saturating_add(u32::from(right_pixel[1].abs_diff(right_next_pixel[1])))
+				.saturating_add(u32::from(right_pixel[2].abs_diff(right_next_pixel[2])));
+		}
+
+		max_structure_score = max_structure_score.max(structure_score);
+		max_motion_score = max_motion_score.max(motion_score);
+
+		scores.push((structure_score, motion_score));
+	}
+
+	if max_structure_score == 0 || max_motion_score == 0 {
+		return false;
+	}
+	if raw_frame_pair_has_static_informative_band(&scores, max_structure_score, max_motion_score) {
+		return false;
+	}
+
+	let structure_threshold = (max_structure_score / 8).max(1);
+	let motion_threshold = (max_motion_score / 8).max(1);
+	let span_scores = &scores[x_start as usize..x_end as usize];
+	let mut informative_columns = 0_u32;
+	let mut moving_informative_columns = 0_u32;
+
+	if raw_frame_pair_has_static_informative_edge(
+		span_scores,
+		structure_threshold,
+		motion_threshold,
+		x_start,
+		width.saturating_sub(x_end),
+	) {
+		return false;
+	}
+
+	for &(structure_score, motion_score) in span_scores {
+		if structure_score < structure_threshold {
+			continue;
+		}
+
+		informative_columns = informative_columns.saturating_add(1);
+
+		if motion_score >= motion_threshold {
+			moving_informative_columns = moving_informative_columns.saturating_add(1);
+		}
+	}
+
+	informative_columns >= MOTION_COVERAGE_MIN_INFORMATIVE_COLUMNS
+		&& moving_informative_columns.saturating_mul(100)
+			>= informative_columns.saturating_mul(MOTION_COVERAGE_MIN_PERCENT)
+}
+
+fn raw_frame_pair_has_static_informative_band(
+	scores: &[(u32, u32)],
+	max_structure_score: u32,
+	max_motion_score: u32,
+) -> bool {
+	if scores.len() < MOTION_COVERAGE_STATIC_BAND_MIN_COLUMNS
+		|| max_structure_score == 0
+		|| max_motion_score == 0
+	{
+		return false;
+	}
+
+	let structure_threshold =
+		(max_structure_score / MOTION_COVERAGE_STATIC_BAND_STRUCTURE_DIVISOR).max(1);
+	let motion_threshold = (max_motion_score / MOTION_COVERAGE_STATIC_BAND_MOTION_DIVISOR).max(1);
+	let moving_motion_threshold = motion_threshold.saturating_add(1);
+	let mut moving_start = None;
+	let mut moving_end = None;
+	let mut static_flags = Vec::with_capacity(scores.len());
+
+	for (column, (structure_score, motion_score)) in scores.iter().enumerate() {
+		if *structure_score >= structure_threshold && *motion_score >= moving_motion_threshold {
+			moving_start.get_or_insert(column);
+
+			moving_end = Some(column.saturating_add(1));
+		}
+
+		static_flags
+			.push(*structure_score >= structure_threshold && *motion_score <= motion_threshold);
+	}
+
+	let Some(moving_start) = moving_start else {
+		return false;
+	};
+	let Some(moving_end) = moving_end else {
+		return false;
+	};
+	let mut static_columns = static_flags[..MOTION_COVERAGE_STATIC_BAND_MIN_COLUMNS]
+		.iter()
+		.filter(|is_static| **is_static)
+		.count();
+
+	if static_side_band_has_enough_columns(static_columns, 0, moving_start, moving_end) {
+		return true;
+	}
+
+	for end in MOTION_COVERAGE_STATIC_BAND_MIN_COLUMNS..static_flags.len() {
+		if static_flags[end - MOTION_COVERAGE_STATIC_BAND_MIN_COLUMNS] {
+			static_columns = static_columns.saturating_sub(1);
+		}
+		if static_flags[end] {
+			static_columns = static_columns.saturating_add(1);
+		}
+
+		let start = end.saturating_add(1).saturating_sub(MOTION_COVERAGE_STATIC_BAND_MIN_COLUMNS);
+
+		if static_side_band_has_enough_columns(static_columns, start, moving_start, moving_end) {
+			return true;
+		}
+	}
+
+	false
+}
+
+fn static_side_band_has_enough_columns(
+	static_columns: usize,
+	start: usize,
+	moving_start: usize,
+	moving_end: usize,
+) -> bool {
+	let end = start.saturating_add(MOTION_COVERAGE_STATIC_BAND_MIN_COLUMNS);
+	let enough_static_columns = (static_columns as u32).saturating_mul(100)
+		>= (MOTION_COVERAGE_STATIC_BAND_MIN_COLUMNS as u32)
+			.saturating_mul(MOTION_COVERAGE_STATIC_BAND_MIN_PERCENT);
+	let side_of_moving_span = end <= moving_start || start >= moving_end;
+
+	enough_static_columns && side_of_moving_span
+}
+
+fn raw_frame_pair_has_static_informative_edge(
+	scores: &[(u32, u32)],
+	structure_threshold: u32,
+	motion_threshold: u32,
+	left_leading_columns: u32,
+	right_leading_columns: u32,
+) -> bool {
+	raw_static_edge_run_len(
+		scores.iter().copied(),
+		structure_threshold,
+		motion_threshold,
+		left_leading_columns,
+	) >= MOTION_COVERAGE_STATIC_EDGE_MIN_COLUMNS
+		|| raw_static_edge_run_len(
+			scores.iter().rev().copied(),
+			structure_threshold,
+			motion_threshold,
+			right_leading_columns,
+		) >= MOTION_COVERAGE_STATIC_EDGE_MIN_COLUMNS
+}
+
+fn raw_static_edge_run_len<I>(
+	iter: I,
+	structure_threshold: u32,
+	motion_threshold: u32,
+	leading_columns: u32,
+) -> u32
+where
+	I: IntoIterator<Item = (u32, u32)>,
+{
+	let mut skipped_columns = leading_columns;
+	let mut static_columns = 0_u32;
+	let mut seen_informative = false;
+
+	for (structure_score, motion_score) in iter {
+		if structure_score < structure_threshold {
+			if seen_informative {
+				break;
+			}
+
+			skipped_columns = skipped_columns.saturating_add(1);
+
+			if skipped_columns > MOTION_COVERAGE_STATIC_EDGE_MAX_LEADING_COLUMNS {
+				return 0;
+			}
+
+			continue;
+		}
+		if skipped_columns > MOTION_COVERAGE_STATIC_EDGE_MAX_LEADING_COLUMNS {
+			return 0;
+		}
+
+		seen_informative = true;
+
+		if motion_score >= motion_threshold {
+			break;
+		}
+
+		static_columns = static_columns.saturating_add(1);
+	}
+
+	static_columns
 }

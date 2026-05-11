@@ -560,6 +560,10 @@ struct NativeScrollCaptureState {
 	var lastStreamFrameSequence: UInt64 = 0
 	var lastMissingSampleStatusUptime: TimeInterval = 0
 	var lastForwardedWheelUptime: TimeInterval = 0
+	var controlledScrollInFlight = false
+	var queuedForwardedWheelDeltaY: Double = 0
+	var queuedForwardedWheelPrecise = true
+	var queuedForwardedWheelTargetPoint: CGPoint?
 	var lastFallbackCaptureUptime: TimeInterval = 0
 	var lastPreviewRefreshUptime: TimeInterval = 0
 	var lastWheelInterceptTelemetryUptime: TimeInterval = 0

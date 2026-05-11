@@ -1,9 +1,27 @@
 import AppKit
 import Foundation
 
+private enum ScrollBackgroundMode: String {
+	case fullDocument = "full_document"
+	case codexLike = "codex_like"
+}
+
+private func readMode() -> ScrollBackgroundMode {
+	let raw = ProcessInfo.processInfo.environment["SCROLL_BACKGROUND_MODE"] ?? ""
+
+	return ScrollBackgroundMode(rawValue: raw) ?? .fullDocument
+}
+
+private func readProofStripeEnabled() -> Bool {
+	let raw = ProcessInfo.processInfo.environment["SCROLL_BACKGROUND_PROOF_STRIPE"] ?? ""
+
+	return raw == "1" || raw.lowercased() == "true"
+}
+
 final class ScrollDocumentView: NSView {
 	private let rowHeight: CGFloat = 72
 	private let rows = 80
+	private let proofStripeEnabled = readProofStripeEnabled()
 	private let textAttributes: [NSAttributedString.Key: Any] = [
 		.font: NSFont.monospacedSystemFont(ofSize: 19, weight: .medium),
 		.foregroundColor: NSColor(calibratedWhite: 0.10, alpha: 1),
@@ -63,6 +81,7 @@ final class ScrollDocumentView: NSView {
 				withAttributes: smallTextAttributes
 			)
 		}
+		drawProofStripe(in: dirtyRect)
 	}
 
 	private func markerColumns(width: CGFloat) -> [CGFloat] {
@@ -79,6 +98,77 @@ final class ScrollDocumentView: NSView {
 			max(150, width * 0.36 + 54),
 			max(220, width * 0.64 + 54),
 		].filter { $0 < width - 360 }
+	}
+
+	private func drawProofStripe(in dirtyRect: NSRect) {
+		guard proofStripeEnabled else {
+			return
+		}
+		let stripeBandHeight: CGFloat = 8
+		let stripeWidth: CGFloat = 8
+		let stripeX = max(0, min(bounds.width - stripeWidth, bounds.midX - stripeWidth / 2))
+		let startY = max(0, Int(floor(dirtyRect.minY)))
+		let endY = min(Int(ceil(dirtyRect.maxY)), Int(ceil(bounds.height)))
+
+		guard startY < endY else {
+			return
+		}
+
+		for y in startY..<endY {
+			let encodedY = (y / Int(stripeBandHeight)) & 0xffff
+			NSColor(
+				deviceRed: CGFloat(encodedY & 0xff) / 255.0,
+				green: CGFloat((encodedY >> 8) & 0xff) / 255.0,
+				blue: 251.0 / 255.0,
+				alpha: 1
+			).setFill()
+			CGRect(x: stripeX, y: CGFloat(y), width: stripeWidth, height: 1).fill()
+		}
+	}
+}
+
+final class StaticSidebarView: NSView {
+	private let side: String
+	private let titleAttributes: [NSAttributedString.Key: Any] = [
+		.font: NSFont.monospacedSystemFont(ofSize: 17, weight: .semibold),
+		.foregroundColor: NSColor(calibratedWhite: 0.86, alpha: 1),
+	]
+	private let rowAttributes: [NSAttributedString.Key: Any] = [
+		.font: NSFont.monospacedSystemFont(ofSize: 13, weight: .medium),
+		.foregroundColor: NSColor(calibratedWhite: 0.62, alpha: 1),
+	]
+
+	init(frame frameRect: NSRect, side: String) {
+		self.side = side
+
+		super.init(frame: frameRect)
+		wantsLayer = true
+		layer?.backgroundColor = NSColor(calibratedWhite: 0.11, alpha: 1).cgColor
+	}
+
+	@available(*, unavailable)
+	required init?(coder: NSCoder) {
+		fatalError("init(coder:) has not been implemented")
+	}
+
+	override func draw(_ dirtyRect: NSRect) {
+		NSColor(calibratedWhite: 0.11, alpha: 1).setFill()
+		dirtyRect.fill()
+
+		"\(side) static rail".draw(at: CGPoint(x: 24, y: 32), withAttributes: titleAttributes)
+
+		for row in 0..<22 {
+			let y = 78 + CGFloat(row) * 34
+			let rect = CGRect(x: 20, y: y, width: max(40, bounds.width - 40), height: 22)
+			let brightness = 0.16 + CGFloat(row % 4) * 0.018
+
+			NSColor(calibratedWhite: brightness, alpha: 1).setFill()
+			NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
+			"item \(String(format: "%02d", row))".draw(
+				at: CGPoint(x: rect.minX + 12, y: rect.minY + 3),
+				withAttributes: rowAttributes
+			)
+		}
 	}
 }
 
@@ -101,7 +191,39 @@ final class ScrollBackgroundDelegate: NSObject, NSApplicationDelegate {
 		window.level = .floating
 		window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
 
-		let scrollView = NSScrollView(frame: CGRect(origin: .zero, size: frame.size))
+		let mode = readMode()
+		let rootView = NSView(frame: CGRect(origin: .zero, size: frame.size))
+		rootView.autoresizingMask = [.width, .height]
+		rootView.wantsLayer = true
+		rootView.layer?.backgroundColor = NSColor(calibratedWhite: 0.11, alpha: 1).cgColor
+
+		let scrollFrame: CGRect
+		if mode == .codexLike {
+			let centerWidth = max(360, min(frame.width * 0.34, 720))
+			let centerX = (frame.width - centerWidth) / 2
+			let leftView = StaticSidebarView(
+				frame: CGRect(x: 0, y: 0, width: centerX, height: frame.height),
+				side: "left"
+			)
+			let rightView = StaticSidebarView(
+				frame: CGRect(
+					x: centerX + centerWidth,
+					y: 0,
+					width: frame.width - centerX - centerWidth,
+					height: frame.height
+				),
+				side: "right"
+			)
+			leftView.autoresizingMask = [.height, .maxXMargin]
+			rightView.autoresizingMask = [.height, .minXMargin]
+			rootView.addSubview(leftView)
+			rootView.addSubview(rightView)
+			scrollFrame = CGRect(x: centerX, y: 0, width: centerWidth, height: frame.height)
+		} else {
+			scrollFrame = CGRect(origin: .zero, size: frame.size)
+		}
+
+		let scrollView = NSScrollView(frame: scrollFrame)
 		scrollView.autoresizingMask = [.width, .height]
 		scrollView.hasVerticalScroller = true
 		scrollView.hasHorizontalScroller = false
@@ -113,10 +235,11 @@ final class ScrollBackgroundDelegate: NSObject, NSApplicationDelegate {
 
 		let documentHeight = max(frame.height * 5, 5_760)
 		let documentView = ScrollDocumentView(
-			frame: CGRect(x: 0, y: 0, width: frame.width, height: documentHeight)
+			frame: CGRect(x: 0, y: 0, width: scrollFrame.width, height: documentHeight)
 		)
 		scrollView.documentView = documentView
-		window.contentView = scrollView
+		rootView.addSubview(scrollView)
+		window.contentView = rootView
 
 		DistributedNotificationCenter.default().addObserver(
 			self,

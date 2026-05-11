@@ -31,11 +31,13 @@ final class CaptureSessionController: NSObject {
 	static let displayFirstFrameWait: TimeInterval = 0.025
 	static let coldSelfCaptureRecoveryWait: TimeInterval = 3.5
 	static let scrollCaptureEnabled = true
-	static let scrollCaptureForwardingPassthrough: TimeInterval = 0.08
+	static let scrollCaptureForwardingPassthrough: TimeInterval = 0.012
+	static let scrollCaptureControlledScrollSettleDelay: TimeInterval = 0.18
+	static let scrollCaptureInputLiveFrameMaxAge: TimeInterval = 0.18
 	static let scrollCaptureSampleInterval: TimeInterval = 1.0 / 30.0
 	static let scrollCaptureMaxFramesPerSample = 3
 	static let scrollCaptureInitialSampleWindow: TimeInterval = 0.35
-	static let scrollCaptureInputSampleWindow: TimeInterval = 0.85
+	static let scrollCaptureInputSampleWindow: TimeInterval = 1.8
 	static let scrollCaptureFallbackCaptureInterval: TimeInterval = 0.08
 	static let scrollCapturePreviewRefreshInterval: TimeInterval = 0.18
 	static let scrollCaptureToolbarBackdropRefreshInterval: TimeInterval = 1.0 / 120.0
