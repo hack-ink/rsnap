@@ -72,6 +72,10 @@ The current native-host Swift split is:
   lifecycle hooks; the extensions split live capture/input, frozen selection interactions,
   host-request draining, native scroll-capture sampling, copy/save/export effects, Vision OCR, and
   runtime teardown/window helpers.
+- `NativeScrollCaptureObservationPipeline.swift`: native scroll-capture sample batching, fallback
+  sample adaptation, Rust scroll-observation calls, and preview export refresh packaging. It keeps
+  ordered frame acquisition and AppKit scheduling in Swift while leaving stitching decisions in
+  Rust.
 - `CaptureChrome.swift`: shared native chrome metrics, palette, dashed-border geometry, and
   AppKit color/image helpers used by live and frozen capture UI.
 - `CaptureOverlayWindow.swift`: the AppKit `NSPanel` wrapper that embeds `CaptureHostView` for each

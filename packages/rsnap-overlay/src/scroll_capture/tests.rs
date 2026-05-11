@@ -278,6 +278,36 @@ fn assert_worker_pairwise_blocked_overshot_does_not_commit_tail(
 	assert_eq!(session.current_viewport_top_y(), 0);
 }
 
+fn assert_pairwise_rejects_static_selection(previous: &image::RgbaImage, next: &image::RgbaImage) {
+	assert_eq!(support::estimate_pairwise_downward_shift_rows(previous, next), None);
+}
+
+#[cfg(target_os = "macos")]
+fn assert_worker_pairwise_rejects_static_selection(
+	base: image::RgbaImage,
+	next: image::RgbaImage,
+	rejected_growth_rows: u32,
+) {
+	let mut session = match ScrollSession::new(base.clone(), 320) {
+		Ok(session) => session,
+		Err(err) => panic!("static-selection fixture should create session: {err:#}"),
+	};
+	let outcome = match session.observe_worker_pairwise_vision_frame(next) {
+		Ok(outcome) => outcome,
+		Err(err) => panic!("static-selection fixture should observe frame: {err:#}"),
+	};
+
+	assert_ne!(
+		outcome,
+		ScrollObserveOutcome::Committed {
+			direction: ScrollDirection::Down,
+			growth_rows: rejected_growth_rows,
+		}
+	);
+	assert_eq!(session.current_viewport_top_y(), 0);
+	assert_eq!(session.export_image(), &base);
+}
+
 #[test]
 fn overlap_detection_prefers_largest_matching_suffix() {
 	let previous = make_test_image(
@@ -612,72 +642,37 @@ fn dynamic_scroll_center_does_not_stitch_when_static_sidebars_are_in_selection()
 }
 
 #[test]
-fn pairwise_shift_estimate_rejects_narrow_dynamic_center_with_static_sidebars_present() {
-	let base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 7, true);
-	let moved = make_static_sidebar_center_frame(320, 240, 145, 30, 72, 7, true);
-
-	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &moved), None);
-}
-
-#[test]
-fn pairwise_shift_estimate_rejects_wide_dynamic_center_with_static_right_rail_present() {
-	let base = make_codex_like_right_static_rail_frame(640, 360, 0);
-	let moved = make_codex_like_right_static_rail_frame(640, 360, 72);
-
-	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &moved), None);
-}
-
-#[test]
-fn pairwise_shift_estimate_ignores_static_sidebars_without_center_scroll_match() {
-	let base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 1, false);
+fn pairwise_shift_estimate_rejects_static_selection_cases() {
+	let narrow_base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 7, true);
+	let narrow_moved = make_static_sidebar_center_frame(320, 240, 145, 30, 72, 7, true);
+	let codex_base = make_codex_like_right_static_rail_frame(640, 360, 0);
+	let codex_moved = make_codex_like_right_static_rail_frame(640, 360, 72);
+	let unrelated_base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 1, false);
 	let unrelated_center = make_static_sidebar_center_frame(320, 240, 145, 30, 72, 2, false);
 
-	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &unrelated_center), None);
+	assert_pairwise_rejects_static_selection(&narrow_base, &narrow_moved);
+	assert_pairwise_rejects_static_selection(&codex_base, &codex_moved);
+	assert_pairwise_rejects_static_selection(&unrelated_base, &unrelated_center);
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn worker_pairwise_vision_rejects_narrow_dynamic_center_with_static_sidebars_present() {
-	let base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 7, true);
-	let moved = make_static_sidebar_center_frame(320, 240, 145, 30, 72, 7, true);
-	let mut session = ScrollSession::new(base.clone(), 320).unwrap();
-
-	assert_ne!(
-		session.observe_worker_pairwise_vision_frame(moved).unwrap(),
-		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 72 }
+fn worker_pairwise_vision_rejects_static_selection_cases() {
+	assert_worker_pairwise_rejects_static_selection(
+		make_static_sidebar_center_frame(320, 240, 145, 30, 0, 7, true),
+		make_static_sidebar_center_frame(320, 240, 145, 30, 72, 7, true),
+		72,
 	);
-	assert_eq!(session.current_viewport_top_y(), 0);
-	assert_eq!(session.export_image(), &base);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn worker_pairwise_vision_rejects_wide_dynamic_center_with_static_right_rail_present() {
-	let base = make_codex_like_right_static_rail_frame(640, 360, 0);
-	let moved = make_codex_like_right_static_rail_frame(640, 360, 72);
-	let mut session = ScrollSession::new(base.clone(), 320).unwrap();
-
-	assert_ne!(
-		session.observe_worker_pairwise_vision_frame(moved).unwrap(),
-		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 72 }
+	assert_worker_pairwise_rejects_static_selection(
+		make_codex_like_right_static_rail_frame(640, 360, 0),
+		make_codex_like_right_static_rail_frame(640, 360, 72),
+		72,
 	);
-	assert_eq!(session.current_viewport_top_y(), 0);
-	assert_eq!(session.export_image(), &base);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn worker_pairwise_vision_ignores_static_sidebars_without_center_scroll_match() {
-	let base = make_static_sidebar_center_frame(320, 240, 145, 30, 0, 1, false);
-	let unrelated_center = make_static_sidebar_center_frame(320, 240, 145, 30, 72, 2, false);
-	let mut session = ScrollSession::new(base.clone(), 320).unwrap();
-
-	assert_ne!(
-		session.observe_worker_pairwise_vision_frame(unrelated_center).unwrap(),
-		ScrollObserveOutcome::Committed { direction: ScrollDirection::Down, growth_rows: 72 }
+	assert_worker_pairwise_rejects_static_selection(
+		make_static_sidebar_center_frame(320, 240, 145, 30, 0, 1, false),
+		make_static_sidebar_center_frame(320, 240, 145, 30, 72, 2, false),
+		72,
 	);
-	assert_eq!(session.current_viewport_top_y(), 0);
-	assert_eq!(session.export_image(), &base);
 }
 
 #[test]
