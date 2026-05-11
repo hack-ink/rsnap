@@ -91,6 +91,30 @@ pub mod scroll_stitching {
 				.map(scroll_stitch_observe_outcome_from)
 		}
 
+		/// Observes a discrete native screenshot with an optional downward motion hint.
+		///
+		/// Native macOS auto-scroll knows the commanded AX scroll delta before the next
+		/// stable frame arrives. Feeding that as a hint lets the stitcher resolve bursty
+		/// or repeated-content frames without relaxing rewind safety for unhinted samples.
+		pub fn observe_downward_rgba_with_motion_hint(
+			&mut self,
+			width: u32,
+			height: u32,
+			rgba: &[u8],
+			motion_rows_hint: Option<u32>,
+			allow_burst_search: bool,
+		) -> Result<ScrollStitchObserveOutcome> {
+			let frame = rgba_image_from_bytes(width, height, rgba)?;
+
+			self.inner
+				.observe_downward_sample_with_motion_hint_and_burst(
+					frame,
+					motion_rows_hint,
+					allow_burst_search,
+				)
+				.map(scroll_stitch_observe_outcome_from)
+		}
+
 		/// Returns the committed stitched export image.
 		#[must_use]
 		pub fn export_image(&self) -> ScrollStitchImage {

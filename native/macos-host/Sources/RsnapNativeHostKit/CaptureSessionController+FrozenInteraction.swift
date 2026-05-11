@@ -22,13 +22,39 @@ extension CaptureSessionController {
 		sendFrozenAction(.recognizeTextRequested, exitAfter: .recognizeText)
 	}
 
-	func startScrollCapture() {
-		guard Self.scrollCaptureEnabled else {
-			return
-		}
+	func startScrollCapture(source: String = "unknown") {
 		let _ = chromeState.frozenOverlay.commitTextEdit(
 			style: chromeState.annotationStyle.textStyle)
-		sendFrozenAction(.toolbarItemInvoked(.scroll))
+		guard scrollCaptureToolbarEnabled else {
+			let reason = scrollCaptureEntryBlockedReason()
+			NativeHostTelemetry.captureEvent(
+				"capture.scroll_capture_entry",
+				captureID: currentCaptureTelemetryID,
+				outcome: "blocked",
+				detail: scrollCaptureEntryDetail(source: source, reason: reason)
+			)
+			try? setHostStatusMessage(scrollCaptureEntryBlockedMessage(reason: reason))
+			refreshOverlay()
+			return
+		}
+		NativeHostTelemetry.captureEvent(
+			"capture.scroll_capture_entry",
+			captureID: currentCaptureTelemetryID,
+			outcome: "requested",
+			detail: scrollCaptureEntryDetail(source: source, reason: "ready")
+		)
+		do {
+			try beginNativeScrollCapture()
+		} catch {
+			NativeHostTelemetry.captureWarning(
+				"capture.scroll_capture_entry_failed",
+				captureID: currentCaptureTelemetryID,
+				stage: source,
+				error: String(describing: error)
+			)
+			try? setHostStatusMessage("Scroll Capture could not start.")
+			refreshOverlay()
+		}
 	}
 
 	func invokeToolbarItem(_ item: ToolbarItemKind) {
@@ -44,10 +70,55 @@ extension CaptureSessionController {
 		case .ocr:
 			sendFrozenAction(.toolbarItemInvoked(item), exitAfter: .recognizeText)
 		case .scroll:
-			startScrollCapture()
+			startScrollCapture(source: "toolbar")
 		default:
 			sendFrozenAction(.toolbarItemInvoked(item))
 		}
+	}
+
+	private func scrollCaptureEntryBlockedReason() -> String {
+		if Self.scrollCaptureEnabled == false {
+			return "disabled"
+		}
+		if scene.mode != .frozen {
+			return "requires_frozen"
+		}
+		if scrollCaptureState != nil {
+			return "already_active"
+		}
+		if currentFrozenSelection() == nil {
+			return "no_selection"
+		}
+		if chromeState.frozenSelectionEditable == false {
+			return "not_dragged_region"
+		}
+		return "unavailable"
+	}
+
+	private func scrollCaptureEntryBlockedMessage(reason: String) -> String {
+		switch reason {
+		case "disabled":
+			return "Scroll Capture is disabled."
+		case "already_active":
+			return "Scroll Capture is already running."
+		case "not_dragged_region":
+			return "Scroll Capture requires a dragged region selection."
+		case "no_selection", "requires_frozen":
+			return "Select a dragged region before starting Scroll Capture."
+		default:
+			return "Scroll Capture is not available for this selection."
+		}
+	}
+
+	private func scrollCaptureEntryDetail(source: String, reason: String) -> String {
+		[
+			"source=\(source)",
+			"reason=\(reason)",
+			"scene=\(scene.mode)",
+			"editable=\(chromeState.frozenSelectionEditable)",
+			"has_selection=\(currentFrozenSelection() != nil)",
+			"active=\(scrollCaptureState != nil)",
+		].joined(separator: " ")
 	}
 
 	func beginFrozenInteraction(at point: CGPoint) {

@@ -219,6 +219,52 @@ def count_leaked_horizontal_seam(
     return seam_pixels / sampled, seam_pixels
 
 
+def toolbar_tint_dominance(
+    path: str, display_bounds: str, drag_points: str
+) -> tuple[float, int, int] | None:
+    decoded = png_rgb_rows(path)
+    if decoded is None:
+        return None
+    width, height, channels, rows = decoded
+    left, top, right, bottom = map(float, display_bounds.replace(" ", "").split(","))
+    start_raw, end_raw = drag_points.split(";")[:2]
+    sx, sy = map(float, start_raw.split(","))
+    ex, ey = map(float, end_raw.split(","))
+    scale_x = width / max(1.0, right - left)
+    scale_y = height / max(1.0, bottom - top)
+    min_x = int((min(sx, ex) - left) * scale_x)
+    max_x = int((max(sx, ex) - left) * scale_x)
+    max_y = int((max(sy, ey) - top) * scale_y)
+    margin_x = max(36, int(40 * scale_x))
+    toolbar_top = min(height, max_y + max(4, int(4 * scale_y)))
+    toolbar_bottom = min(height, max_y + max(80, int(96 * scale_y)))
+    toolbar_left = max(0, min_x - margin_x)
+    toolbar_right = min(width, max_x + margin_x)
+    if toolbar_bottom <= toolbar_top or toolbar_right <= toolbar_left:
+        return 0.0, 0, 0
+
+    buckets: dict[tuple[int, int, int], int] = {}
+    sampled = 0
+    step = max(1, int(max(scale_x, scale_y)))
+    for y in range(toolbar_top, toolbar_bottom, step):
+        row = rows[y]
+        for x in range(toolbar_left, toolbar_right, step):
+            sampled += 1
+            base = x * channels
+            red, green, blue = row[base], row[base + 1], row[base + 2]
+            rgb_max = max(red, green, blue)
+            rgb_min = min(red, green, blue)
+            if rgb_max < 120 or rgb_max - rgb_min < 48:
+                continue
+            buckets[(red // 16, green // 16, blue // 16)] = (
+                buckets.get((red // 16, green // 16, blue // 16), 0) + 1
+            )
+    if sampled == 0:
+        return 0.0, 0, 0
+    dominant_pixels = max(buckets.values(), default=0)
+    return dominant_pixels / sampled, dominant_pixels, sampled
+
+
 def pixel_luminance(row: bytes, x: int, channels: int) -> float:
     base = x * channels
     red, green, blue = row[base], row[base + 1], row[base + 2]
@@ -241,6 +287,7 @@ log_path = sys.argv[1]
 expected_mode = os.environ.get("EXPECTED_HUD_GLASS_MODE", "liquid").strip().lower()
 screenshot_path = os.environ.get("VISUAL_SCREENSHOT_PATH", "").strip()
 drag_screenshot_path = os.environ.get("VISUAL_DRAG_SCREENSHOT_PATH", "").strip()
+frozen_screenshot_paths = os.environ.get("VISUAL_FROZEN_SCREENSHOT_PATHS", "").strip()
 visual_display_bounds = os.environ.get("VISUAL_DISPLAY_BOUNDS", "").strip()
 visual_drag_points = os.environ.get("VISUAL_DRAG_POINTS", "").strip()
 mask_probe_path = os.environ.get("MASK_PROBE_PATH", "").strip()
@@ -536,6 +583,29 @@ if drag_screenshot_path:
                                 "live drag scrim leaked a horizontal seam outside the selection "
                                 f"(ratio={seam_ratio:.5f}, pixels={seam_pixels})"
                             )
+
+if frozen_screenshot_paths and visual_display_bounds and visual_drag_points:
+    for index, frozen_path in enumerate(
+        [path for path in frozen_screenshot_paths.split(":") if path], start=1
+    ):
+        dominance = toolbar_tint_dominance(
+            frozen_path, visual_display_bounds, visual_drag_points
+        )
+        if dominance is None:
+            failures.append(f"frozen screenshot could not be decoded for toolbar tint check: {frozen_path}")
+            continue
+        tint_ratio, tint_pixels, sampled_pixels = dominance
+        max_tint_ratio = threshold("MAX_FROZEN_TOOLBAR_TINT_DOMINANCE", 0.45)
+        min_tint_pixels = int(threshold("MIN_FROZEN_TOOLBAR_TINT_PIXELS", 1_500))
+        print(
+            "[smoke] frozen_toolbar_tint "
+            f"index={index} ratio={tint_ratio:.5f} pixels={tint_pixels} sampled={sampled_pixels}"
+        )
+        if tint_ratio > max_tint_ratio and tint_pixels > min_tint_pixels:
+            failures.append(
+                "frozen toolbar appears dominated by one tint color "
+                f"on screenshot {index} (ratio={tint_ratio:.5f}, pixels={tint_pixels})"
+            )
 
 if screenshot_path:
     try:

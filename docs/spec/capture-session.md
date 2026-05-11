@@ -17,7 +17,7 @@ Defines:
 - capture-session entry, live-mode, frozen-mode, and export invariants
 - the display-first Frozen contract
 - the distinction between display readiness and export readiness
-- the current scroll-capture exposure gate and internal contract when the feature is enabled
+- the scroll-capture exposure gate and internal stitching contract
 - the presence of Frozen-mode annotation state in session output
 - the existence of a separate Frozen-toolbar layout contract for primary-toolbar anchoring
 
@@ -162,15 +162,25 @@ product level rather than binding itself to a particular window toolkit or shell
 
 ## Scroll capture
 
+This section defines the target contract. The current development branch must follow
+`docs/runbook/scroll-capture-recovery-plan.md` before claiming that the implementation satisfies
+this contract.
+
 - The v0.2.1 native-host release does not expose scroll capture. The frozen toolbar MUST NOT show a
   scroll-capture item while the native-host scroll-capture gate is disabled, and plain `s` MUST NOT
   enter scroll capture in that state.
-- When scroll capture is re-enabled, it is available only from a dragged-region freeze on macOS.
-- When scroll capture is re-enabled, the frozen toolbar may expose `Scroll Capture Down`, and plain
-  `s` may start scroll capture, whenever the frozen capture source is a dragged region on macOS.
-- Scroll capture uses discrete monitor-region screenshots from the native platform capture API as
-  the source of truth for committed downward growth.
-- Pairwise image registration plus overlap proof between adjacent discrete screenshots is the
+- If scroll capture is exposed, it is available only from a dragged-region freeze on macOS.
+- The frozen toolbar may expose `Scroll Capture`, and plain `s` may start scroll capture, only when
+  the frozen capture source is a dragged region on macOS.
+- Scroll capture uses ordered monitor-region frames from the native platform capture API as the
+  source of truth for committed downward growth.
+- Product scroll capture must not depend on Accessibility target acquisition, settable AX scroll
+  bars, or target-app-specific automation. It starts one generic wheel-input path after the
+  dragged-region frozen frame becomes the stitch base.
+- While scroll capture is active, Rsnap should forward overlay-local wheel events inside the selected
+  viewport through short all-overlay passthrough windows. Wheel deltas are input and forwarding
+  signals only; they must not be treated as content-movement authority.
+- Pairwise image registration plus overlap proof between adjacent ordered frames is the
   source of truth for downward scroll progress, viewport reacquisition, and append eligibility.
 - Stitching is downward-only:
   - downward motion may append committed rows

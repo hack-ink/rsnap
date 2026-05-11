@@ -37,6 +37,8 @@ The active split below is by question type, not by human-versus-agent audience.
   `docs/runbook/`
 - Need native-host or Rust telemetry collection and summary steps ->
   `docs/runbook/telemetry-debugging.md`
+- Need to recover macOS scroll capture after live tearing, sparse stitching, or rollback failures
+  -> `docs/runbook/scroll-capture-recovery-plan.md`
 - Need the step-by-step execution sequence for a host/core reset slice ->
   `docs/runbook/architecture-reset-implementation.md`
 - Need the active architecture-reset target and migration posture ->
@@ -47,6 +49,10 @@ The active split below is by question type, not by human-versus-agent audience.
   `docs/reference/workspace-layout.md`
 - Need durable rationale for the architecture reset ->
   `docs/decisions/native-host-rust-core-reset.md`
+- Need the accepted layered scroll-capture architecture and prior-art analysis ->
+  `docs/decisions/scroll-capture-architecture.md`
+- Need the supporting machine-readable research run for scroll-capture prior-art analysis ->
+  `docs/research/scroll-capture-prior-art-2026-05-10.json`
 - Need generic repo gate names -> `Makefile.toml`
 - Need smoke or perf validation entrypoints -> `scripts/smoke/` and `scripts/perf/`
 - Need documentation placement or authoring rules -> `docs/policy.md`

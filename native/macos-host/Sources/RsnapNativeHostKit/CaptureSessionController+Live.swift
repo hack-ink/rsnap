@@ -276,6 +276,10 @@ extension CaptureSessionController {
 		overlayController?.streamPatch(in: rect)
 	}
 
+	func cachedRegionImage(in rect: CGRect) -> CGImage? {
+		overlayController?.cachedRegionImage(in: rect)
+	}
+
 	func updateLivePreviewDemand(
 		point: CGPoint?,
 		settings: NativeHostSettings,

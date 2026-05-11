@@ -111,10 +111,11 @@ impl ScrollSession {
 
 		match (classification, upward_veto) {
 			(DownwardRegistration::Matched(down), Some(up))
-				if up.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
-					<= down.mean_abs_diff_x100 =>
+				if down.motion_rows <= DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS
+					&& down.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+						>= up.mean_abs_diff_x100 =>
 			{
-				(DownwardRegistration::NoMatch, Some("upward_veto"))
+				(DownwardRegistration::NoMatch, Some("direction_ambiguous"))
 			},
 			(DownwardRegistration::NoMatch, _) => (DownwardRegistration::NoMatch, no_match_reason),
 			(other, _) => (other, None),
@@ -175,8 +176,9 @@ impl ScrollSession {
 
 		match (classification, upward_veto) {
 			(DownwardRegistration::Matched(down), Some(up))
-				if up.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
-					<= down.mean_abs_diff_x100 =>
+				if down.motion_rows <= DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS
+					&& down.mean_abs_diff_x100.saturating_add(DIRECTION_WARNING_MARGIN_X100)
+						>= up.mean_abs_diff_x100 =>
 			{
 				DownwardRegistration::NoMatch
 			},
@@ -304,8 +306,16 @@ impl ScrollSession {
 					LOCAL_DOWNWARD_SEARCH_MAX_TOLERANCE_ROWS,
 				)
 				.min(max_motion_rows);
+			let upper_tolerance =
+				if last_growth_rows >= PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS {
+					last_growth_rows.saturating_add(DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS)
+				} else {
+					tolerance
+				}
+				.min(max_motion_rows);
 			let min_motion_rows = last_growth_rows.saturating_sub(tolerance).max(1);
-			let max_motion_rows = last_growth_rows.saturating_add(tolerance).min(max_motion_rows);
+			let max_motion_rows =
+				last_growth_rows.saturating_add(upper_tolerance).min(max_motion_rows);
 
 			return Some(min_motion_rows..=max_motion_rows);
 		}
@@ -420,8 +430,16 @@ impl ScrollSession {
 					DOWNWARD_KEYFRAME_SEARCH_MAX_TOLERANCE_ROWS,
 				)
 				.min(max_motion_rows);
+			let upper_tolerance =
+				if last_growth_rows >= PREVIEW_ONLY_LOCAL_RECOVERY_MAX_MOTION_ROWS {
+					last_growth_rows.saturating_add(DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS)
+				} else {
+					tolerance
+				}
+				.min(max_motion_rows);
 			let min_motion_rows = last_growth_rows.saturating_sub(tolerance).max(1);
-			let max_motion_rows = last_growth_rows.saturating_add(tolerance).min(max_motion_rows);
+			let max_motion_rows =
+				last_growth_rows.saturating_add(upper_tolerance).min(max_motion_rows);
 
 			return Some(min_motion_rows..=max_motion_rows);
 		}

@@ -14,9 +14,10 @@ Depends on: `docs/spec/performance.md`
 Outputs: A repeatable local benchmark run, an optional saved Criterion baseline, and a clear
 understanding of what the synthetic fixture is intended to cover.
 
-Current release status: v0.2.1 hides user-facing scroll capture in the native host. This runbook
-still applies to the retained internal scroll-capture engine, replay, and future re-enablement
-work.
+Current release status: v0.2.1 hides user-facing scroll capture in the native host. On this
+development branch, scroll capture is implemented under the validation contract. This runbook
+applies to the retained internal scroll-capture engine, replay, and stitching validation work; it is
+not release-readiness evidence by itself.
 
 If you are debugging correctness rather than hot-path speed, route through
 `docs/runbook/performance-validation.md` first. That runbook owns replay,
