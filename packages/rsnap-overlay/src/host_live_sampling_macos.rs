@@ -130,6 +130,45 @@ impl HostMacLiveSampler {
 	}
 
 	#[must_use]
+	/// Returns the oldest queued RGBA region after `after_frame_seq`.
+	///
+	/// Callers that need scroll-capture continuity should update `after_frame_seq`
+	/// with the returned frame sequence and drain until this returns `None`.
+	pub fn next_region_rgba_after_seq(
+		&mut self,
+		monitor: MonitorRect,
+		origin: GlobalPoint,
+		width: u32,
+		height: u32,
+		after_frame_seq: u64,
+		wait_for_fresh: bool,
+	) -> Option<HostRgbaRegionFrame> {
+		let rect = clipped_region_rect(monitor, origin, width, height)?;
+		let rect_px = monitor.local_rect_to_pixels(rect);
+		let frames = if wait_for_fresh {
+			self.stream.ordered_rgba_regions_after_seq(monitor, rect_px, after_frame_seq)
+		} else {
+			self.stream.ordered_rgba_regions_after_seq_nonblocking(
+				monitor,
+				rect_px,
+				after_frame_seq,
+			)
+		}?;
+		let frame = frames.into_iter().next()?;
+
+		Some(HostRgbaRegionFrame {
+			frame_seq: frame.frame_seq,
+			frame_age_micros: frame.captured_at.elapsed().as_micros().min(u128::from(u64::MAX))
+				as u64,
+			region: HostRgbaRegion {
+				width: frame.image.width(),
+				height: frame.image.height(),
+				rgba: frame.image.into_raw(),
+			},
+		})
+	}
+
+	#[must_use]
 	/// Returns the latest cached full-monitor RGBA snapshot when one is already warm.
 	///
 	/// This does not block on a fresh capture. When the latest frame is unavailable, the
@@ -162,6 +201,16 @@ pub struct HostRgbaRegion {
 	pub height: u32,
 	/// Packed RGBA8 pixels in row-major order.
 	pub rgba: Vec<u8>,
+}
+
+/// Owned RGBA pixels plus ScreenCaptureKit frame provenance.
+pub struct HostRgbaRegionFrame {
+	/// Monotonic live stream frame sequence.
+	pub frame_seq: u64,
+	/// Age of the sampled ScreenCaptureKit frame in microseconds.
+	pub frame_age_micros: u64,
+	/// Region pixels for this frame.
+	pub region: HostRgbaRegion,
 }
 
 fn clipped_region_rect(

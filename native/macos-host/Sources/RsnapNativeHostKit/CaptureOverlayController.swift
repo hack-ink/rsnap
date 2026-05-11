@@ -30,6 +30,8 @@ final class CaptureOverlayController {
 	)
 	private let liveChromeBackdrops = LiveChromeBackdropWindowController()
 	private var pendingCaptureStreamPreparation: (() -> Void)?
+	private var primaryMousePassthroughToken: UInt64 = 0
+	private var allMousePassthroughActive = false
 
 	init(
 		controller: CaptureSessionController,
@@ -233,19 +235,91 @@ final class CaptureOverlayController {
 		guard let window = primaryWindow as? CaptureOverlayWindow else {
 			return perform()
 		}
-		let previousIgnoresMouseEvents = window.ignoresMouseEvents
+		primaryMousePassthroughToken &+= 1
+		let token = primaryMousePassthroughToken
 		window.ignoresMouseEvents = true
 		let result = perform()
-		DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak window] in
-			window?.ignoresMouseEvents = previousIgnoresMouseEvents
+		DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self, weak window] in
+			guard let self, self.primaryMousePassthroughToken == token else {
+				return
+			}
+			window?.ignoresMouseEvents = false
+		}
+		return result
+	}
+
+	func withAllMousePassthrough<T>(duration: TimeInterval, perform: () -> T) -> T {
+		let visibleWindows = windows.filter(\.isVisible)
+		guard visibleWindows.isEmpty == false else {
+			return perform()
+		}
+		primaryMousePassthroughToken &+= 1
+		let token = primaryMousePassthroughToken
+		if allMousePassthroughActive == false {
+			allMousePassthroughActive = true
+			for window in visibleWindows where window.ignoresMouseEvents == false {
+				window.ignoresMouseEvents = true
+			}
+			NSApp.updateWindows()
+		}
+		let result = perform()
+		DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+			guard let self, self.primaryMousePassthroughToken == token else {
+				return
+			}
+			self.allMousePassthroughActive = false
+			for window in visibleWindows {
+				window.ignoresMouseEvents = false
+			}
 		}
 		return result
 	}
 
 	func setScrollCaptureMousePassthroughActive(_ active: Bool) {
+		primaryMousePassthroughToken &+= 1
+		allMousePassthroughActive = active
 		for window in windows {
 			window.ignoresMouseEvents = active
 		}
+		guard active == false, let window = primaryWindow as? CaptureOverlayWindow else {
+			return
+		}
+		window.orderFrontRegardless()
+		window.makeKey()
+		window.makeFirstResponder(window.hostView)
+	}
+
+	func refreshScrollCaptureToolbarBackdropNow() {
+		for window in windows where window.isVisible {
+			window.hostView.refreshScrollCaptureToolbarBackdropNow()
+		}
+	}
+
+	func withOverlayHiddenForScrollTargetAcquisition<T>(perform: () -> T) -> T {
+		let visibleWindows = windows.filter(\.isVisible)
+		let previousIgnoresMouseEvents = visibleWindows.map { $0.ignoresMouseEvents }
+		let previousFocusedWindowNumber = focusedWindowNumber
+
+		for window in visibleWindows {
+			window.ignoresMouseEvents = true
+			window.orderOut(nil)
+		}
+		NSApp.updateWindows()
+		RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.08))
+
+		let result = perform()
+
+		for (index, window) in visibleWindows.enumerated() {
+			window.orderFrontRegardless()
+			if previousFocusedWindowNumber == window.windowNumber {
+				window.makeKey()
+				window.makeFirstResponder(window.hostView)
+				(NSApp.delegate as? NativeHostApplicationController)?.window = window
+			}
+			window.ignoresMouseEvents = previousIgnoresMouseEvents[index]
+		}
+
+		return result
 	}
 
 	func close() {
@@ -305,6 +379,18 @@ final class CaptureOverlayController {
 
 	func cachedRegionImage(in rect: CGRect) -> CGImage? {
 		liveFrameStream.region(in: rect)
+	}
+
+	func nextRegionFrame(
+		in rect: CGRect,
+		afterFrameSequence: UInt64,
+		waitForFresh: Bool
+	) -> RGBARegionFrameSnapshot? {
+		liveFrameStream.nextRegionFrame(
+			in: rect,
+			afterFrameSequence: afterFrameSequence,
+			waitForFresh: waitForFresh
+		)
 	}
 
 	func updateLivePreviewDemand(
@@ -382,6 +468,12 @@ final class CaptureOverlayController {
 		)
 	}
 
+	func scrollCaptureFallbackSource(
+		near point: CGPoint
+	) -> CaptureSessionController.FrozenCaptureJobSource? {
+		frozenCaptureJobSource(near: point)
+	}
+
 	fileprivate func liveColorSampleSource(near point: CGPoint) -> LiveColorSampleSource? {
 		guard
 			let referenceWindow = windows.first(where: { $0.frame.contains(point) })
@@ -416,7 +508,7 @@ final class CaptureOverlayController {
 		return Self.captureImageBelowOverlay(in: rect, source: source)
 	}
 
-	nonisolated fileprivate static func captureImageBelowOverlay(
+	nonisolated static func captureImageBelowOverlay(
 		in rect: CGRect,
 		source: CaptureSessionController.FrozenCaptureJobSource
 	) -> CGImage? {

@@ -70,6 +70,22 @@ public struct RGBARegionSnapshot: Equatable, Sendable {
 	}
 }
 
+public struct RGBARegionFrameSnapshot: Equatable, Sendable {
+	public var frameSequence: UInt64
+	public var frameAgeMicroseconds: UInt64
+	public var region: RGBARegionSnapshot
+
+	public init(
+		frameSequence: UInt64,
+		frameAgeMicroseconds: UInt64,
+		region: RGBARegionSnapshot
+	) {
+		self.frameSequence = frameSequence
+		self.frameAgeMicroseconds = frameAgeMicroseconds
+		self.region = region
+	}
+}
+
 private func rsnapOwnedRgbaSnapshot(from outRegion: RsnapOwnedRgbaRegion)
 	-> RGBARegionSnapshot?
 {
@@ -2164,6 +2180,36 @@ public final class RsnapScrollCaptureSession: @unchecked Sendable {
 		return try decode(result: outResult)
 	}
 
+	public func observeDownwardFrame(
+		_ frame: RGBARegionSnapshot,
+		motionRowsHint: Int?,
+		allowBurstSearch: Bool = true
+	) throws -> ScrollObserveResult {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		var outResult = RsnapScrollObserveResult()
+		let hint = UInt32(max(motionRowsHint ?? 0, 0))
+		let status = frame.rgba.withUnsafeBytes { buffer -> RsnapStatus in
+			guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
+				return RSNAP_STATUS_INVALID_INPUT
+			}
+			return rsnap_scroll_session_observe_downward_frame_with_motion_hint(
+				handle,
+				UInt32(max(frame.width, 0)),
+				UInt32(max(frame.height, 0)),
+				baseAddress,
+				frame.rgba.count,
+				hint,
+				allowBurstSearch ? 1 : 0,
+				&outResult
+			)
+		}
+		try rsnapRequireOk(status, context: "observing scroll-capture frame with motion hint")
+
+		return try decode(result: outResult)
+	}
+
 	public func exportImage() throws -> RGBARegionSnapshot? {
 		stateLock.lock()
 		defer { stateLock.unlock() }
@@ -2364,6 +2410,64 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 			throw HostBridgeError.ffiStatus(context: "taking live RGBA region", code: takeCode)
 		}
 		return rsnapOwnedRgbaSnapshot(from: ownedRegion)
+	}
+
+	public func nextRegionFrame(
+		monitor: MonitorSnapshot,
+		rect: CGRect,
+		afterFrameSequence: UInt64,
+		waitForFresh: Bool
+	) throws -> RGBARegionFrameSnapshot? {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		let encodedMonitor = RsnapMonitorRect(
+			id: monitor.id,
+			origin: RsnapPoint(
+				x: Int32(monitor.frame.origin.x.rounded()),
+				y: Int32(monitor.frame.origin.y.rounded())
+			),
+			width: UInt32(max(monitor.frame.width.rounded(), 0)),
+			height: UInt32(max(monitor.frame.height.rounded(), 0)),
+			scale_factor_x1000: monitor.scaleFactorX1000
+		)
+		let encodedRect = RsnapRect(
+			x: Int32(rect.origin.x.rounded()),
+			y: Int32(rect.origin.y.rounded()),
+			width: UInt32(max(rect.width.rounded(), 0)),
+			height: UInt32(max(rect.height.rounded(), 0))
+		)
+		var frameSequence: UInt64 = 0
+		var frameAgeMicroseconds: UInt64 = 0
+		var ownedRegion = RsnapOwnedRgbaRegion()
+		let status = rsnap_live_sampler_take_next_region_rgba_after_seq(
+			handle,
+			encodedMonitor,
+			encodedRect,
+			afterFrameSequence,
+			UInt8(waitForFresh ? 1 : 0),
+			&frameSequence,
+			&frameAgeMicroseconds,
+			&ownedRegion
+		)
+		let code = rsnap_status_code(status)
+		if code == 3 {
+			return nil
+		}
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(
+				context: "taking next live RGBA region frame",
+				code: code
+			)
+		}
+		guard let region = rsnapOwnedRgbaSnapshot(from: ownedRegion) else {
+			return nil
+		}
+		return RGBARegionFrameSnapshot(
+			frameSequence: frameSequence,
+			frameAgeMicroseconds: frameAgeMicroseconds,
+			region: region
+		)
 	}
 
 	/// Returns the live sampler's cache-only full-monitor snapshot.

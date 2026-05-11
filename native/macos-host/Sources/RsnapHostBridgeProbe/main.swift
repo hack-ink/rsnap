@@ -125,7 +125,7 @@ enum RsnapHostBridgeProbe {
 			scene.statusMessage == nil,
 			scene.toolbarItems.contains(where: { $0.kind == .pointer && $0.selected }),
 			scene.toolbarItems.contains(where: { $0.kind == .ocr && $0.enabled }),
-			scene.toolbarItems.contains(where: { $0.kind == .scroll }) == false,
+			scene.toolbarItems.contains(where: { $0.kind == .scroll && $0.enabled }),
 			scene.toolbarItems.contains(where: { $0.kind == .copy && $0.enabled }),
 			scene.toolbarItems.contains(where: { $0.kind == .save && $0.enabled })
 		else {
@@ -135,8 +135,8 @@ enum RsnapHostBridgeProbe {
 
 	private static func verifyFrozenToolbarInteractions(_ session: RsnapHostSession) throws {
 		try session.send(event: .toolbarItemInvoked(.scroll))
-		guard try session.takeNextRequest() == nil else {
-			fatalError("scroll toolbar invocation should stay disabled")
+		guard try session.takeNextRequest() == .startScrollCapture else {
+			fatalError("scroll toolbar invocation should request native scroll capture")
 		}
 
 		try session.send(

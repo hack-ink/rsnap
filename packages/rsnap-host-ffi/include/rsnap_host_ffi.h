@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 32u
+#define RSNAP_HOST_FFI_ABI_VERSION 34u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -511,6 +511,16 @@ enum RsnapStatus rsnap_scroll_session_observe_downward_frame(
 	size_t rgba_len,
 	struct RsnapScrollObserveResult *out_result
 );
+enum RsnapStatus rsnap_scroll_session_observe_downward_frame_with_motion_hint(
+	RsnapScrollSessionHandle *handle,
+	uint32_t width,
+	uint32_t height,
+	const uint8_t *rgba,
+	size_t rgba_len,
+	uint32_t motion_rows_hint,
+	uint8_t allow_burst_search,
+	struct RsnapScrollObserveResult *out_result
+);
 enum RsnapStatus rsnap_scroll_session_take_export_rgba(
 	RsnapScrollSessionHandle *handle,
 	struct RsnapOwnedRgbaRegion *out_region
@@ -702,6 +712,16 @@ enum RsnapStatus rsnap_live_sampler_take_region_rgba(
 	RsnapLiveSamplerHandle *handle,
 	struct RsnapMonitorRect monitor,
 	struct RsnapRect rect,
+	struct RsnapOwnedRgbaRegion *out_region
+);
+enum RsnapStatus rsnap_live_sampler_take_next_region_rgba_after_seq(
+	RsnapLiveSamplerHandle *handle,
+	struct RsnapMonitorRect monitor,
+	struct RsnapRect rect,
+	uint64_t after_frame_seq,
+	uint8_t wait_for_fresh,
+	uint64_t *out_frame_seq,
+	uint64_t *out_frame_age_micros,
 	struct RsnapOwnedRgbaRegion *out_region
 );
 enum RsnapStatus rsnap_live_sampler_peek_latest_monitor_rgba(

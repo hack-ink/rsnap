@@ -152,6 +152,10 @@ args = [
 	"native/macos-host/Sources",
 	"scripts/smoke/lib/live-hud-mouse-path.swift",
 	"scripts/smoke/lib/mask-probe-capture.swift",
+	"scripts/smoke/lib/pasteboard-image-info.swift",
+    "scripts/smoke/lib/scroll-background-window.swift",
+    "scripts/smoke/lib/scroll-background-command.swift",
+    "scripts/smoke/lib/scroll-wheel-burst.swift",
 	"scripts/smoke/lib/visual-background-window.swift",
 ]
 
@@ -167,6 +171,10 @@ args = [
 	"native/macos-host/Sources",
 	"scripts/smoke/lib/live-hud-mouse-path.swift",
 	"scripts/smoke/lib/mask-probe-capture.swift",
+	"scripts/smoke/lib/pasteboard-image-info.swift",
+    "scripts/smoke/lib/scroll-background-window.swift",
+    "scripts/smoke/lib/scroll-background-command.swift",
+    "scripts/smoke/lib/scroll-wheel-burst.swift",
 	"scripts/smoke/lib/visual-background-window.swift",
 ]
 

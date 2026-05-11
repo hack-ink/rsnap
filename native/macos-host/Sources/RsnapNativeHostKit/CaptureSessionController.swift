@@ -30,16 +30,30 @@ final class CaptureSessionController: NSObject {
 	static let autoCenterMaxIterations = 6
 	static let displayFirstFrameWait: TimeInterval = 0.025
 	static let coldSelfCaptureRecoveryWait: TimeInterval = 3.5
-	static let scrollCaptureEnabled = false
-	static let scrollCaptureForwardingPassthrough: TimeInterval = 0.055
-	static let scrollCaptureSampleDelay: TimeInterval = 0.04
-	static let liveFrameStreamReleaseGrace: TimeInterval = 1.5
+	static let scrollCaptureEnabled = true
+	static let scrollCaptureForwardingPassthrough: TimeInterval = 0.012
+	static let scrollCaptureControlledScrollSettleDelay: TimeInterval = 0.18
+	static let scrollCaptureInputLiveFrameMaxAge: TimeInterval = 0.18
+	static let scrollCaptureSampleInterval: TimeInterval = 1.0 / 30.0
+	static let scrollCaptureMaxFramesPerSample = 3
+	static let scrollCaptureInitialSampleWindow: TimeInterval = 0.35
+	static let scrollCaptureInputSampleWindow: TimeInterval = 1.8
+	static let scrollCaptureFallbackCaptureInterval: TimeInterval = 0.08
+	static let scrollCapturePreviewRefreshInterval: TimeInterval = 0.18
+	static let scrollCaptureToolbarBackdropRefreshInterval: TimeInterval = 1.0 / 120.0
+	static let scrollCaptureWheelTelemetryInterval: TimeInterval = 0.25
+	static let scrollCapturePassthroughWheelMotionHintMultiplier = 3.5
+	static let liveFrameStreamReleaseGrace: TimeInterval = 4.0
 
 	let settingsStore: NativeHostSettingsStore
 	let liveFrameStream = LiveFrameStreamBroker()
 	let frozenFrameAuthority = FrozenFrameAuthority()
 	let frozenCommitQueue = DispatchQueue(
 		label: "ink.hack.rsnap.frozen-commit",
+		qos: .userInitiated
+	)
+	let scrollCaptureStitchQueue = DispatchQueue(
+		label: "ink.hack.rsnap.scroll-capture-stitch",
 		qos: .userInitiated
 	)
 	let captureSuccessSound = CaptureSuccessSound.load()

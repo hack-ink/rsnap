@@ -62,6 +62,9 @@ case "${1:-}" in
 esac
 
 live_hud_self_check
+live_hud_start_awake_assertion
+live_hud_assert_interactive_session
+live_hud_assert_shareable_display
 ROOT_DIR="$(live_hud_repo_root)"
 live_hud_init_environment "$ROOT_DIR"
 
@@ -94,6 +97,8 @@ PREF_SNAPSHOT_EXISTS=0
 VISUAL_BACKGROUND_PID=""
 
 restore_preferences() {
+	live_hud_stop_awake_assertion
+	live_hud_cancel_capture_if_present
 	if [[ -n "$VISUAL_BACKGROUND_PID" ]]; then
 		kill "$VISUAL_BACKGROUND_PID" >/dev/null 2>&1 || true
 	fi
@@ -113,11 +118,7 @@ fi
 trap restore_preferences EXIT
 
 press_capture_hotkey() {
-	osascript <<'APPLESCRIPT' >/dev/null
-tell application "System Events"
-	key code 7 using option down
-end tell
-APPLESCRIPT
+	live_hud_start_new_capture
 }
 
 open_capture_overlay() {
@@ -301,7 +302,7 @@ configure_case_preferences() {
 
 run_visual_case() {
 	local case_name="$1"
-	local case_tmp_dir drag_screenshot_path drag_screenshot_paths screenshot_path background_ready_path case_started_epoch out_dir
+	local case_tmp_dir drag_screenshot_path drag_screenshot_paths frozen_screenshot_paths screenshot_path background_ready_path case_started_epoch out_dir
 	local mask_probe_path
 	local cursor_helper_bin mask_probe_bin
 
@@ -313,6 +314,7 @@ run_visual_case() {
 	swiftc "$SCRIPT_DIR/lib/mask-probe-capture.swift" -o "$mask_probe_bin"
 	smoke_log "compiled visual smoke helpers"
 	drag_screenshot_paths=""
+	frozen_screenshot_paths=""
 	mask_probe_paths=""
 	drag_screenshot_path="$case_tmp_dir/dragging-1.png"
 	screenshot_path="$case_tmp_dir/frozen-1.png"
@@ -517,6 +519,7 @@ PY
 		fi
 		smoke_log "drag $drag_index captured frozen screenshot"
 		drag_screenshot_paths="${drag_screenshot_paths:+$drag_screenshot_paths:}$drag_screenshot_path"
+		frozen_screenshot_paths="${frozen_screenshot_paths:+$frozen_screenshot_paths:}$screenshot_path"
 		mask_probe_paths="${mask_probe_paths:+$mask_probe_paths:}$mask_probe_path"
 		close_capture_overlay
 		smoke_log "drag $drag_index closed overlay"
@@ -591,6 +594,7 @@ PY
 	EXPECTED_MAX_FROZEN_TRANSFORM_COMMITS="$max_transform_commits" \
 	EXPECTED_FREEZE_EDITABILITY="$expected_editability" \
 	VISUAL_DRAG_SCREENSHOT_PATH="$drag_screenshot_paths" \
+	VISUAL_FROZEN_SCREENSHOT_PATHS="$frozen_screenshot_paths" \
 	VISUAL_DISPLAY_BOUNDS="$DISPLAY_BOUNDS" \
 	VISUAL_DRAG_POINTS="$DRAG_POINTS" \
 	VISUAL_SCREENSHOT_PATH="$summary_screenshot_path" \

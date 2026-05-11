@@ -91,6 +91,23 @@ pub mod scroll_stitching {
 				.map(scroll_stitch_observe_outcome_from)
 		}
 
+		/// Observes a discrete native screenshot with pairwise registration and an
+		/// optional downward motion hint for committed-frontier catch-up.
+		pub fn observe_downward_rgba_with_motion_hint(
+			&mut self,
+			width: u32,
+			height: u32,
+			rgba: &[u8],
+			motion_rows_hint: Option<u32>,
+			_allow_burst_search: bool,
+		) -> Result<ScrollStitchObserveOutcome> {
+			let frame = rgba_image_from_bytes(width, height, rgba)?;
+
+			self.inner
+				.observe_worker_pairwise_vision_frame_with_motion_hint(frame, motion_rows_hint)
+				.map(scroll_stitch_observe_outcome_from)
+		}
+
 		/// Returns the committed stitched export image.
 		#[must_use]
 		pub fn export_image(&self) -> ScrollStitchImage {

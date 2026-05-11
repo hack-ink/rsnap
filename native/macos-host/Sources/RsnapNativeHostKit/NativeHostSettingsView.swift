@@ -526,10 +526,10 @@ private struct OutputInspector: View {
 
 private struct PermissionsInspector: View {
 	var body: some View {
-		let granted = NativePermissions.screenRecordingGranted ? 1 : 0
+		let requiredGranted = NativePermissions.screenRecordingGranted ? 1 : 0
 
 		VStack(alignment: .leading, spacing: 12) {
-			PermissionProgressBadge(granted: granted, total: 1)
+			PermissionProgressBadge(granted: requiredGranted, total: 1)
 			InspectorMetric(
 				title: "Required",
 				value: "1",
@@ -537,8 +537,13 @@ private struct PermissionsInspector: View {
 			)
 			InspectorMetric(
 				title: "Granted",
-				value: "\(granted)",
+				value: "\(requiredGranted)",
 				symbolName: "checkmark.seal"
+			)
+			InspectorMetric(
+				title: "Scroll Capture",
+				value: NativePermissions.screenRecordingGranted ? "Ready" : "Waiting",
+				symbolName: "arrow.down.to.line.compact"
 			)
 		}
 	}
@@ -2120,7 +2125,17 @@ private struct PermissionsSettingsPanel: View {
 					refresh: {
 						refreshID += 1
 						model.refresh()
-					}
+					},
+					isGrantedProvider: {
+						NativePermissions.screenRecordingGranted
+					},
+					titleWhenGranted: "Screen Recording ready",
+					titleWhenMissing: "Screen Recording access needed",
+					subtitleWhenGranted: "The native capture host can see the screen.",
+					subtitleWhenMissing:
+						"Open System Settings, then drag Rsnap.app into the Screen Recording app list.",
+					missingBadgeTitle: "Required",
+					openSettingsHelp: "Open Screen Recording settings"
 				)
 			}
 
@@ -2149,6 +2164,13 @@ private struct PermissionGrantCard: View {
 	let appIcon: NSImage
 	let openSettings: () -> Void
 	let refresh: () -> Void
+	let isGrantedProvider: () -> Bool
+	let titleWhenGranted: String
+	let titleWhenMissing: String
+	let subtitleWhenGranted: String
+	let subtitleWhenMissing: String
+	let missingBadgeTitle: String
+	let openSettingsHelp: String
 	@Environment(\.colorScheme) private var colorScheme
 	@State private var didRefresh = false
 
@@ -2173,7 +2195,7 @@ private struct PermissionGrantCard: View {
 							.fixedSize(horizontal: false, vertical: true)
 							.layoutPriority(1)
 						PermissionStateBadge(
-							title: isGranted ? "Granted" : "Required",
+							title: isGranted ? "Granted" : missingBadgeTitle,
 							style: isGranted ? .granted : .required
 						)
 					}
@@ -2204,7 +2226,7 @@ private struct PermissionGrantCard: View {
 				}
 				.rsnapGlassButton(prominent: false)
 				.controlSize(.small)
-				.help("Open Screen Recording settings")
+				.help(openSettingsHelp)
 
 				Button(action: refreshStatus) {
 					Label(
@@ -2224,18 +2246,18 @@ private struct PermissionGrantCard: View {
 
 	private var isGranted: Bool {
 		_ = refreshID
-		return NativePermissions.screenRecordingGranted
+		return isGrantedProvider()
 	}
 
 	private var title: String {
-		isGranted ? "Screen Recording ready" : "Screen Recording access needed"
+		isGranted ? titleWhenGranted : titleWhenMissing
 	}
 
 	private var subtitle: String {
 		if isGranted {
-			return "The native capture host can see the screen."
+			return subtitleWhenGranted
 		}
-		return "Open System Settings, then drag Rsnap.app into the Screen Recording app list."
+		return subtitleWhenMissing
 	}
 
 	private var iconBackgroundColor: Color {
