@@ -26,6 +26,8 @@ Useful overrides:
   EXPECT_SCROLL_GROWTH=1                 defaults to 0 for codex_like
   MIN_SCROLL_COMMITS=2                   defaults to 0 when EXPECT_SCROLL_GROWTH=0
   MIN_EXPORT_GROWTH_PX=180               defaults to 0 when EXPECT_SCROLL_GROWTH=0
+  MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS=24
+  MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS=8
   VALIDATE_SCROLL_EXPORT_CONTINUITY=0    set to 1 with SCROLL_BACKGROUND_PROOF_STRIPE=1
   APP_POST_VERIFY_SETTLE_S=0
   POST_FREEZE_SETTLE_S=2.0
@@ -55,6 +57,7 @@ live_hud_assert_interactive_session
 live_hud_assert_shareable_display
 ROOT_DIR="$(live_hud_repo_root)"
 live_hud_init_environment "$ROOT_DIR"
+COMMON_ROOT="$(cd "$(git -C "$ROOT_DIR" rev-parse --git-common-dir)/.." && pwd)"
 
 smoke_log() {
 	printf '[smoke] +%ss %s\n' "$SECONDS" "$*"
@@ -65,6 +68,7 @@ PREF_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/rsnap-scroll-prefs.XXXXXX.plist")"
 PREF_SNAPSHOT_EXISTS=0
 SCROLL_BACKGROUND_PID=""
 SCROLL_BACKGROUND_READY="$(mktemp "${TMPDIR:-/tmp}/rsnap-scroll-bg.XXXXXX.ready")"
+RSNAP_SMOKE_APP_EXECUTABLE="${RSNAP_NATIVE_HOST_STAGE_DIR:-$COMMON_ROOT/target/rsnap-native-host}/Rsnap.app/Contents/MacOS/RsnapNativeHost"
 SCROLL_COUNT="${SCROLL_COUNT:-14}"
 SCROLL_DRIVER="${SCROLL_DRIVER:-wheel}"
 SCROLL_START_METHOD="${SCROLL_START_METHOD:-keyboard}"
@@ -95,6 +99,8 @@ if [[ -z "${MIN_EXPORT_GROWTH_PX:-}" ]]; then
 	fi
 fi
 APP_POST_VERIFY_SETTLE_S="${APP_POST_VERIFY_SETTLE_S:-0}"
+MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS="${MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS:-24}"
+MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS="${MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS:-8}"
 VALIDATE_SCROLL_EXPORT_CONTINUITY="${VALIDATE_SCROLL_EXPORT_CONTINUITY:-0}"
 OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0.10}"
 POST_FREEZE_SETTLE_S="${POST_FREEZE_SETTLE_S:-2.0}"
@@ -114,6 +120,7 @@ export SCROLL_BACKGROUND_MODE SCROLL_BACKGROUND_PROOF_STRIPE
 restore_preferences() {
 	live_hud_stop_awake_assertion
 	live_hud_cancel_capture_if_present
+	stop_staged_rsnap_app
 	if [[ -n "$SCROLL_BACKGROUND_PID" ]]; then
 		kill "$SCROLL_BACKGROUND_PID" >/dev/null 2>&1 || true
 	fi
@@ -134,6 +141,32 @@ if defaults export "$PREF_DOMAIN" "$PREF_SNAPSHOT" >/dev/null 2>&1; then
 	PREF_SNAPSHOT_EXISTS=1
 fi
 trap restore_preferences EXIT
+
+stop_staged_rsnap_app() {
+	if [[ "${RSNAP_SMOKE_QUIT_APP_ON_EXIT:-1}" != "1" ]]; then
+		return 0
+	fi
+
+	local pids pid attempt
+
+	pids="$(pgrep -f "$RSNAP_SMOKE_APP_EXECUTABLE" 2>/dev/null || true)"
+	if [[ -z "$pids" ]]; then
+		return 0
+	fi
+	for pid in $pids; do
+		kill "$pid" >/dev/null 2>&1 || true
+	done
+	for attempt in {1..20}; do
+		pids="$(pgrep -f "$RSNAP_SMOKE_APP_EXECUTABLE" 2>/dev/null || true)"
+		if [[ -z "$pids" ]]; then
+			return 0
+		fi
+		sleep 0.10
+	done
+	for pid in $pids; do
+		kill -9 "$pid" >/dev/null 2>&1 || true
+	done
+}
 
 wait_ready_file() {
 	local path="$1"
@@ -274,14 +307,24 @@ start_scroll_background() {
 parse_telemetry() {
 	local log_path="$1"
 
-	python3 - "$log_path" "$MIN_SCROLL_COMMITS" "$MIN_EXPORT_GROWTH_PX" "$SCROLL_START_METHOD" "$EXPECT_SCROLL_GROWTH" <<'PY'
+	python3 - "$log_path" "$MIN_SCROLL_COMMITS" "$MIN_EXPORT_GROWTH_PX" "$SCROLL_START_METHOD" "$EXPECT_SCROLL_GROWTH" "$MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS" "$MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS" <<'PY'
 import re
 import sys
 
-path, min_commits_raw, min_growth_raw, start_method, expect_growth_raw = sys.argv[1:6]
+(
+    path,
+    min_commits_raw,
+    min_growth_raw,
+    start_method,
+    expect_growth_raw,
+    max_toolbar_gap_p50_raw,
+    max_toolbar_duration_p95_raw,
+) = sys.argv[1:8]
 min_commits = int(min_commits_raw)
 min_growth = int(min_growth_raw)
 expect_growth = expect_growth_raw != "0"
+max_toolbar_gap_p50 = float(max_toolbar_gap_p50_raw)
+max_toolbar_duration_p95 = float(max_toolbar_duration_p95_raw)
 expected_start_source = {
     "keyboard": "keyboard_s",
     "toolbar": "toolbar",
@@ -340,6 +383,29 @@ missing = "event=capture.scroll_sample_missing" in text
 auto_event = bool(re.search(r"event=capture\.scroll_auto_", text))
 max_height = max(heights) if heights else 0
 growth = max_height - base_height
+toolbar_glass_expected = (
+    "usesLiquidHudGlass=true" in text
+    and "frozenToolbarLiquidGlassVisible=true" in text
+)
+toolbar_gap_metrics = [
+    (int(samples), float(p50), float(p95), float(max_value))
+    for samples, p50, p95, max_value in re.findall(
+        r"metric=scroll_capture\.toolbar_backdrop_refresh_gap\b[^\n]*samples=([0-9]+)[^\n]*p50=([0-9.]+)[^\n]*p95=([0-9.]+)[^\n]*max=([0-9.]+)",
+        text,
+    )
+]
+toolbar_duration_metrics = [
+    (int(samples), float(p50), float(p95), float(max_value))
+    for samples, p50, p95, max_value in re.findall(
+        r"metric=scroll_capture\.toolbar_backdrop_refresh_duration\b[^\n]*samples=([0-9]+)[^\n]*p50=([0-9.]+)[^\n]*p95=([0-9.]+)[^\n]*max=([0-9.]+)",
+        text,
+    )
+]
+toolbar_gap_samples = sum(samples for samples, _, _, _ in toolbar_gap_metrics)
+toolbar_duration_samples = sum(samples for samples, _, _, _ in toolbar_duration_metrics)
+toolbar_gap_p50 = max((p50 for _, p50, _, _ in toolbar_gap_metrics), default=None)
+toolbar_gap_p95 = max((p95 for _, _, p95, _ in toolbar_gap_metrics), default=None)
+toolbar_duration_p95 = max((p95 for _, _, p95, _ in toolbar_duration_metrics), default=None)
 
 print(
     f"[smoke] telemetry froze={froze} handoff={handoff} "
@@ -349,7 +415,13 @@ print(
     f"tap_not_used={tap_not_used} wheel_intercepted={wheel_intercepted} "
     f"wheel_observed={wheel_observed} "
     f"max_export_height={max_height} base_height={base_height} growth={growth} "
-    f"missing_live_frame={missing} auto_event={auto_event}"
+    f"missing_live_frame={missing} auto_event={auto_event} "
+    f"toolbar_glass_expected={toolbar_glass_expected} "
+    f"toolbar_backdrop_gap_samples={toolbar_gap_samples} "
+    f"toolbar_backdrop_gap_p50={toolbar_gap_p50 if toolbar_gap_p50 is not None else 'none'} "
+    f"toolbar_backdrop_gap_p95={toolbar_gap_p95 if toolbar_gap_p95 is not None else 'none'} "
+    f"toolbar_backdrop_duration_samples={toolbar_duration_samples} "
+    f"toolbar_backdrop_duration_p95={toolbar_duration_p95 if toolbar_duration_p95 is not None else 'none'}"
 )
 
 failures = []
@@ -385,6 +457,19 @@ else:
         failures.append(f"expected fail-closed no export growth, but growth was {growth}px")
 if auto_event:
     failures.append("unexpected legacy auto-scroll telemetry")
+if toolbar_glass_expected:
+    if toolbar_gap_p50 is None:
+        failures.append("scroll toolbar liquid-glass backdrop refresh gap metric was not emitted")
+    elif toolbar_gap_p50 > max_toolbar_gap_p50:
+        failures.append(
+            f"scroll toolbar backdrop refresh gap p50 {toolbar_gap_p50:.2f}ms > {max_toolbar_gap_p50:.2f}ms"
+        )
+    if toolbar_duration_p95 is None:
+        failures.append("scroll toolbar liquid-glass backdrop refresh duration metric was not emitted")
+    elif toolbar_duration_p95 > max_toolbar_duration_p95:
+        failures.append(
+            f"scroll toolbar backdrop refresh duration p95 {toolbar_duration_p95:.2f}ms > {max_toolbar_duration_p95:.2f}ms"
+        )
 
 if failures:
     for failure in failures:

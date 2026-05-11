@@ -290,6 +290,16 @@ final class CaptureHostView: NSView {
 	private var frozenToolbarLiquidGlassVisible = false
 	private var frozenToolbarLiquidGlassContentDrawn = false
 	private var lastScrollCaptureToolbarBackdropRefreshUptime: TimeInterval = 0
+	private let scrollToolbarBackdropRefreshGapMetric = NativeHostTelemetry.distribution(
+		"scroll_capture.toolbar_backdrop_refresh_gap",
+		category: "Capture",
+		batchSize: 30
+	)
+	private let scrollToolbarBackdropRefreshDurationMetric = NativeHostTelemetry.distribution(
+		"scroll_capture.toolbar_backdrop_refresh_duration",
+		category: "Capture",
+		batchSize: 30
+	)
 	private var trackingAreaRef: NSTrackingArea?
 	private var pointerOverFrozenToolbar = false
 	private var hoveredToolbarAction: ToolbarItemKind?
@@ -3568,8 +3578,14 @@ final class CaptureHostView: NSView {
 		guard now - lastScrollCaptureToolbarBackdropRefreshUptime >= interval else {
 			return
 		}
+		if lastScrollCaptureToolbarBackdropRefreshUptime > 0 {
+			scrollToolbarBackdropRefreshGapMetric.record(
+				(now - lastScrollCaptureToolbarBackdropRefreshUptime) * 1_000)
+		}
 		lastScrollCaptureToolbarBackdropRefreshUptime = now
+		let refreshStartedAt = now
 		updateFrozenToolbarLiquidGlassView()
+		scrollToolbarBackdropRefreshDurationMetric.recordMillisecondsSince(refreshStartedAt)
 	}
 
 	private func localAnnotationStyleLayout(
