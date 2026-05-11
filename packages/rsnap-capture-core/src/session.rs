@@ -215,7 +215,11 @@ impl CaptureSessionCore {
 				self.scene.status_message = None;
 			},
 			ToolbarItemKind::Undo | ToolbarItemKind::Redo | ToolbarItemKind::AutoCenter => {},
-			ToolbarItemKind::Scroll => {},
+			ToolbarItemKind::Scroll => {
+				if self.frozen_selection_editable {
+					self.pending_requests.push_back(HostRequest::StartScrollCapture);
+				}
+			},
 			ToolbarItemKind::Ocr => {
 				if self.config.allow_text_input {
 					self.pending_requests
@@ -250,6 +254,9 @@ impl CaptureSessionCore {
 				self.toolbar_item(ToolbarItemKind::AutoCenter, true),
 			];
 
+			if self.frozen_selection_editable {
+				items.push(self.toolbar_item(ToolbarItemKind::Scroll, true));
+			}
 			if self.config.allow_text_input {
 				items.push(self.toolbar_item(ToolbarItemKind::Ocr, true));
 			}
@@ -559,13 +566,13 @@ mod tests {
 
 		assert_eq!(session.scene_model().mode, CaptureMode::Frozen);
 		assert_eq!(session.scene_model().cursor_intent, CursorIntent::Grab);
-		assert_eq!(session.scene_model().toolbar_items.len(), 12);
+		assert_eq!(session.scene_model().toolbar_items.len(), 13);
 		assert!(
 			session
 				.scene_model()
 				.toolbar_items
 				.iter()
-				.all(|item| item.kind != ToolbarItemKind::Scroll)
+				.any(|item| item.kind == ToolbarItemKind::Scroll && item.enabled)
 		);
 	}
 
@@ -875,14 +882,22 @@ mod tests {
 	}
 
 	#[test]
-	fn scroll_toolbar_invocation_is_disabled_for_drag_region() {
+	fn scroll_toolbar_invocation_requests_scroll_capture_for_drag_region() {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		enter_frozen_with_drag_selection(&mut session, GlobalRect::new(10, 20, 100, 50));
 
+		assert!(
+			session
+				.scene_model()
+				.toolbar_items
+				.iter()
+				.any(|item| item.kind == ToolbarItemKind::Scroll && item.enabled)
+		);
+
 		session.handle_host_event(HostEvent::ToolbarItemInvoked { item: ToolbarItemKind::Scroll });
 
-		assert_eq!(session.pop_host_request(), None);
+		assert_eq!(session.pop_host_request(), Some(HostRequest::StartScrollCapture));
 	}
 
 	#[test]

@@ -9,6 +9,7 @@ enum RsnapNativeHostKitProbe {
 		assertScrimExclusionPreservesExistingPixels()
 		assertRoundedExclusionMaskKeepsCornersFilled()
 		assertCaptureFrameEffectExpandsExportCanvas()
+		assertScrollCaptureViewportPointAcceptsFlippedGlobalMouseCoordinates()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -100,6 +101,33 @@ enum RsnapNativeHostKitProbe {
 			errorMessage: "registration failed")
 		guard failed.isOn == false, failed.subtitle.contains("failed") else {
 			fatalError("failed login item update should keep current state and surface failure")
+		}
+	}
+
+	private static func assertScrollCaptureViewportPointAcceptsFlippedGlobalMouseCoordinates() {
+		let viewport = CGRect(x: 327, y: 941, width: 808, height: 295)
+		let desktop = CGRect(x: 0, y: 0, width: 3_008, height: 1_692)
+		let rawPoint = CGPoint(x: 1_006, y: 676)
+		guard
+			let viewportPoint = scrollCaptureViewportPoint(
+				for: rawPoint,
+				in: viewport,
+				desktopFrame: desktop
+			),
+			viewportPoint == CGPoint(x: 1_006, y: 1_016)
+		else {
+			fatalError("scroll capture should accept top-origin global wheel coordinates")
+		}
+
+		let nativePoint = CGPoint(x: 1_006, y: 1_016)
+		guard
+			scrollCaptureViewportPoint(
+				for: nativePoint,
+				in: viewport,
+				desktopFrame: desktop
+			) == nativePoint
+		else {
+			fatalError("scroll capture should preserve native bottom-origin wheel coordinates")
 		}
 	}
 

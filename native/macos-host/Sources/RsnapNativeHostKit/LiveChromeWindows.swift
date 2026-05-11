@@ -243,6 +243,13 @@ final class LiveChromeLiquidGlassView: NSView {
 		nil
 	}
 
+	override func layout() {
+		super.layout()
+		if glassHostView.frame != bounds {
+			glassHostView.frame = bounds
+		}
+	}
+
 	override init(frame frameRect: NSRect) {
 		self.glassHostView = NSHostingView(
 			rootView: Self.makeGlassRoot(settings: .defaults))
@@ -267,10 +274,14 @@ final class LiveChromeLiquidGlassView: NSView {
 
 	func update(settings: NativeHostSettings) {
 		guard currentSettings != settings else {
+			needsLayout = true
+			layoutSubtreeIfNeeded()
 			return
 		}
 		currentSettings = settings
 		glassHostView.rootView = Self.makeGlassRoot(settings: settings)
+		needsLayout = true
+		layoutSubtreeIfNeeded()
 	}
 
 	private static func makeGlassRoot(settings: NativeHostSettings) -> AnyView {

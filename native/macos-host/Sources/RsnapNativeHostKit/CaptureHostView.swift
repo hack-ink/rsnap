@@ -101,6 +101,7 @@ final class CaptureHostView: NSView {
 			guard let context = NSGraphicsContext.current?.cgContext else {
 				return
 			}
+			context.clear(bounds)
 			drawToolbarContent(in: context)
 		}
 
@@ -260,6 +261,7 @@ final class CaptureHostView: NSView {
 	}()
 	private static let pendingHudHexWheel = Array("0123456789ABCDEF")
 	private static let liveChromeLiquidGlassZ: CGFloat = 200
+	private static let frozenToolbarLiquidGlassBackdropZ: CGFloat = 295
 	private static let frozenToolbarLiquidGlassZ: CGFloat = 300
 	private static let frozenToolbarContentZ: CGFloat = 320
 
@@ -282,10 +284,12 @@ final class CaptureHostView: NSView {
 	private var settings = NativeHostSettings.defaults
 	private var hudLiquidGlassView: NSView?
 	private var loupeLiquidGlassView: NSView?
+	private var toolbarLiquidGlassBackdropView: NSImageView?
 	private var toolbarLiquidGlassView: NSView?
 	private var toolbarLiquidGlassContentView: FrozenToolbarRenderView?
 	private var frozenToolbarLiquidGlassVisible = false
 	private var frozenToolbarLiquidGlassContentDrawn = false
+	private var lastScrollCaptureToolbarBackdropRefreshUptime: TimeInterval = 0
 	private var trackingAreaRef: NSTrackingArea?
 	private var pointerOverFrozenToolbar = false
 	private var hoveredToolbarAction: ToolbarItemKind?
@@ -342,7 +346,7 @@ final class CaptureHostView: NSView {
 		else {
 			return super.hitTest(point)
 		}
-		return self
+		return nil
 	}
 
 	override init(frame frameRect: NSRect) {
@@ -594,6 +598,10 @@ final class CaptureHostView: NSView {
 	}
 
 	func refreshSampleUpdatedLiveChromeNow() {
+		if scene.mode == .frozen, chrome.scrollMinimapPreview != nil {
+			refreshScrollCaptureToolbarBackdropNow()
+			return
+		}
 		guard scene.mode == .live else {
 			return
 		}
@@ -761,6 +769,9 @@ final class CaptureHostView: NSView {
 				performToolbarAction(action)
 				return
 			}
+			guard chrome.scrollMinimapPreview == nil else {
+				return
+			}
 			controller?.beginFrozenInteraction(at: point)
 			syncVisibleCursor()
 		}
@@ -814,8 +825,14 @@ final class CaptureHostView: NSView {
 			switch event.charactersIgnoringModifiers?.lowercased() {
 			case "z":
 				if event.modifierFlags.contains(.shift) {
+					guard toolbarItem(.redo)?.enabled == true else {
+						return
+					}
 					controller?.performFrozenRedo()
 				} else {
+					guard toolbarItem(.undo)?.enabled == true else {
+						return
+					}
 					controller?.performFrozenUndo()
 				}
 				return
@@ -842,6 +859,9 @@ final class CaptureHostView: NSView {
 			if scene.mode == .frozen, plainFrozenShortcutAvailable(event) {
 				switch event.charactersIgnoringModifiers?.lowercased() {
 				case "c":
+					guard toolbarItem(.autoCenter)?.enabled == true else {
+						return
+					}
 					controller?.performFrozenAutoCenter()
 					return
 				case "r":
@@ -849,6 +869,9 @@ final class CaptureHostView: NSView {
 						return
 					}
 					controller?.recognizeText()
+					return
+				case "s":
+					controller?.startScrollCapture(source: "keyboard_s")
 					return
 				default:
 					break
@@ -1973,7 +1996,7 @@ final class CaptureHostView: NSView {
 		}
 
 		var styleKind: FrozenAnnotationStyleToolbarKind?
-		for item in items where item.selected {
+		for item in items where item.enabled && item.selected {
 			if let kind = FrozenAnnotationStyleToolbarKind(selectedTool: item.kind) {
 				styleKind = kind
 				break
@@ -2139,9 +2162,13 @@ final class CaptureHostView: NSView {
 
 	private func frozenToolbarScrimExclusionPath(for selection: CGRect) -> CGPath? {
 		guard settings.usesLiquidHudGlass,
-			frozenToolbarLiquidGlassVisible,
-			frozenToolbarLiquidGlassContentDrawn,
 			let toolbarFrame = toolbarLayout(for: selection)?.frame
+		else {
+			return nil
+		}
+		guard
+			chrome.scrollMinimapPreview != nil
+				|| (frozenToolbarLiquidGlassVisible && frozenToolbarLiquidGlassContentDrawn)
 		else {
 			return nil
 		}
@@ -2172,26 +2199,27 @@ final class CaptureHostView: NSView {
 
 	private func visibleToolbarItems() -> [ToolbarItem] {
 		var items: [ToolbarItem] = []
+		let scrollCaptureActive = chrome.scrollMinimapPreview != nil
 		for originalItem in scene.toolbarItems {
 			var item = originalItem
 			switch item.kind {
-			case .pen, .arrow, .mosaic, .spotlight, .text:
-				item.enabled = true
+			case .pointer, .pen, .arrow, .mosaic, .spotlight, .text:
+				item.enabled = originalItem.enabled && !scrollCaptureActive
 			case .undo:
-				item.enabled = chrome.frozenOverlay.canUndo
+				item.enabled = chrome.frozenOverlay.canUndo && !scrollCaptureActive
 			case .redo:
-				item.enabled = chrome.frozenOverlay.canRedo
+				item.enabled = chrome.frozenOverlay.canRedo && !scrollCaptureActive
 			case .autoCenter:
 				item.enabled =
 					scene.frozenSelection != nil
 					&& !chrome.frozenOverlay.keepsFrozenSelectionFixed
+					&& !scrollCaptureActive
 			case .scroll:
-				guard controller?.scrollCaptureToolbarEnabled == true else {
-					continue
-				}
 				item.enabled = controller?.scrollCaptureToolbarEnabled ?? false
-			default:
-				break
+			case .ocr:
+				item.enabled = originalItem.enabled && !scrollCaptureActive
+			case .copy, .save:
+				item.enabled = originalItem.enabled
 			}
 			items.append(item)
 		}
@@ -2199,7 +2227,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func toolbarItem(_ kind: ToolbarItemKind) -> ToolbarItem? {
-		scene.toolbarItems.first(where: { $0.kind == kind })
+		visibleToolbarItems().first(where: { $0.kind == kind })
 	}
 
 	private func toolbarAction(at point: CGPoint) -> ToolbarItemKind? {
@@ -3257,6 +3285,10 @@ final class CaptureHostView: NSView {
 		case .live:
 			return controller?.backgroundPatch(in: globalFrame)
 		case .frozen:
+			if chrome.scrollMinimapPreview != nil {
+				return controller?.backgroundPatch(in: globalFrame)
+					?? frozenDisplayPatch(in: globalFrame)
+			}
 			return frozenDisplayPatch(in: globalFrame)
 		case .hidden:
 			return nil
@@ -3342,6 +3374,17 @@ final class CaptureHostView: NSView {
 		view.layer?.shadowOpacity = 0
 		view.layer?.shadowPath = nil
 		view.layer?.zPosition = zPosition
+	}
+
+	private func configureFrozenToolbarBackdropView(_ view: NSImageView) {
+		view.isHidden = true
+		view.imageScaling = .scaleAxesIndependently
+		view.wantsLayer = true
+		view.layer?.backgroundColor = NSColor.clear.cgColor
+		view.layer?.cornerRadius = CaptureChrome.hudCornerRadius
+		view.layer?.masksToBounds = true
+		view.layer?.isOpaque = false
+		view.layer?.zPosition = Self.frozenToolbarLiquidGlassBackdropZ
 	}
 
 	private func configureFrozenToolbarContentView(_ view: FrozenToolbarRenderView) {
@@ -3437,6 +3480,8 @@ final class CaptureHostView: NSView {
 		if activeView.frame != frame {
 			activeView.frame = frame
 		}
+		activeView.needsLayout = true
+		activeView.layoutSubtreeIfNeeded()
 		activeView.isHidden = false
 	}
 
@@ -3462,9 +3507,24 @@ final class CaptureHostView: NSView {
 	}
 
 	@discardableResult
+	private func ensureFrozenToolbarBackdropView(below glassView: NSView) -> NSImageView {
+		if let toolbarLiquidGlassBackdropView {
+			addSubview(toolbarLiquidGlassBackdropView, positioned: .below, relativeTo: glassView)
+			toolbarLiquidGlassBackdropView.layer?.zPosition = Self.frozenToolbarLiquidGlassBackdropZ
+			return toolbarLiquidGlassBackdropView
+		}
+		let backdropView = NSImageView(frame: .zero)
+		configureFrozenToolbarBackdropView(backdropView)
+		addSubview(backdropView, positioned: .below, relativeTo: glassView)
+		toolbarLiquidGlassBackdropView = backdropView
+		return backdropView
+	}
+
+	@discardableResult
 	private func ensureFrozenToolbarContentView(above glassView: NSView) -> FrozenToolbarRenderView
 	{
 		if let toolbarLiquidGlassContentView {
+			addSubview(toolbarLiquidGlassContentView, positioned: .above, relativeTo: glassView)
 			toolbarLiquidGlassContentView.layer?.zPosition = Self.frozenToolbarContentZ
 			return toolbarLiquidGlassContentView
 		}
@@ -3473,6 +3533,43 @@ final class CaptureHostView: NSView {
 		addSubview(contentView, positioned: .above, relativeTo: glassView)
 		toolbarLiquidGlassContentView = contentView
 		return contentView
+	}
+
+	private func updateFrozenToolbarBackdrop(
+		for toolbarFrame: CGRect,
+		below glassView: NSView,
+		preparingFirstVisibleToolbar: Bool
+	) {
+		guard chrome.scrollMinimapPreview != nil,
+			let globalFrame = globalRect(from: toolbarFrame),
+			let patch =
+				controller?.streamPatch(in: globalFrame)
+				?? controller?.backgroundPatch(in: globalFrame)
+		else {
+			toolbarLiquidGlassBackdropView?.isHidden = true
+			toolbarLiquidGlassBackdropView?.image = nil
+			return
+		}
+		let backdropView = ensureFrozenToolbarBackdropView(below: glassView)
+		if backdropView.frame != toolbarFrame {
+			backdropView.frame = toolbarFrame
+		}
+		backdropView.image = NSImage(cgImage: patch, size: toolbarFrame.size)
+		backdropView.isHidden = preparingFirstVisibleToolbar
+	}
+
+	func refreshScrollCaptureToolbarBackdropNow() {
+		guard settings.usesLiquidHudGlass else {
+			return
+		}
+		let now = ProcessInfo.processInfo.systemUptime
+		let interval = NativeHostDisplayRefresh.frameInterval(
+			forTargetFramesPerSecond: currentDisplayTargetFramesPerSecond())
+		guard now - lastScrollCaptureToolbarBackdropRefreshUptime >= interval else {
+			return
+		}
+		lastScrollCaptureToolbarBackdropRefreshUptime = now
+		updateFrozenToolbarLiquidGlassView()
 	}
 
 	private func localAnnotationStyleLayout(
@@ -3550,13 +3647,23 @@ final class CaptureHostView: NSView {
 			return
 		}
 		toolbarLiquidGlassView.layer?.zPosition = Self.frozenToolbarLiquidGlassZ
+		let preparingFirstVisibleToolbar =
+			!wasVisible || !frozenToolbarLiquidGlassVisible || !frozenToolbarLiquidGlassContentDrawn
+		if preparingFirstVisibleToolbar {
+			toolbarLiquidGlassView.isHidden = true
+		}
+		updateFrozenToolbarBackdrop(
+			for: layout.frame,
+			below: toolbarLiquidGlassView,
+			preparingFirstVisibleToolbar: preparingFirstVisibleToolbar
+		)
 		let contentView = ensureFrozenToolbarContentView(above: toolbarLiquidGlassView)
 		let frameChanged = contentView.frame != layout.frame
 		if contentView.frame != layout.frame {
 			contentView.frame = layout.frame
 			contentView.needsDisplay = true
 		}
-		contentView.isHidden = false
+		contentView.isHidden = preparingFirstVisibleToolbar
 		let changed = contentView.update(
 			theme: chromeTheme(),
 			settings: settings,
@@ -3582,6 +3689,16 @@ final class CaptureHostView: NSView {
 		if frameChanged || changed || !wasVisible || !frozenToolbarLiquidGlassContentDrawn {
 			contentView.display()
 		}
+		if preparingFirstVisibleToolbar {
+			CATransaction.begin()
+			CATransaction.setDisableActions(true)
+			toolbarLiquidGlassView.isHidden = false
+			if chrome.scrollMinimapPreview != nil, toolbarLiquidGlassBackdropView?.image != nil {
+				toolbarLiquidGlassBackdropView?.isHidden = false
+			}
+			contentView.isHidden = false
+			CATransaction.commit()
+		}
 		frozenToolbarLiquidGlassVisible = true
 		frozenToolbarLiquidGlassContentDrawn = true
 		if wasVisible == false {
@@ -3593,6 +3710,8 @@ final class CaptureHostView: NSView {
 		let wasVisible = frozenToolbarLiquidGlassVisible
 		frozenToolbarLiquidGlassVisible = false
 		frozenToolbarLiquidGlassContentDrawn = false
+		toolbarLiquidGlassBackdropView?.isHidden = true
+		toolbarLiquidGlassBackdropView?.image = nil
 		toolbarLiquidGlassView?.isHidden = true
 		toolbarLiquidGlassContentView?.isHidden = true
 		if wasVisible {

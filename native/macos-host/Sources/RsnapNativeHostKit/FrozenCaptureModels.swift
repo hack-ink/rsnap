@@ -549,7 +549,28 @@ struct CaptureChromeState {
 struct NativeScrollCaptureState {
 	let stitcher: RsnapScrollCaptureSession
 	let viewportRect: CGRect
-	var sampleGeneration: UInt64 = 0
+	let captureSource: CaptureSessionController.FrozenCaptureJobSource
+	let viewportPixelsPerPointY: Double
+	var sampleLoopScheduled = false
+	var sampleProcessing = false
+	var toolbarBackdropLoopScheduled = false
+	var sampleSequence: UInt64 = 0
+	var observedWheelCount: UInt64 = 0
+	var committedSampleCount: UInt64 = 0
+	var lastStreamFrameSequence: UInt64 = 0
+	var lastMissingSampleStatusUptime: TimeInterval = 0
+	var lastForwardedWheelUptime: TimeInterval = 0
+	var controlledScrollInFlight = false
+	var queuedForwardedWheelDeltaY: Double = 0
+	var queuedForwardedWheelPrecise = true
+	var queuedForwardedWheelTargetPoint: CGPoint?
+	var lastFallbackCaptureUptime: TimeInterval = 0
+	var lastPreviewRefreshUptime: TimeInterval = 0
+	var lastWheelInterceptTelemetryUptime: TimeInterval = 0
+	var lastWheelObservedTelemetryUptime: TimeInterval = 0
+	var lastWheelForwardedTelemetryUptime: TimeInterval = 0
+	var sampleUntilUptime: TimeInterval = 0
+	var pendingDownwardMotionHintRows: Double = 0
 }
 
 struct ScrollCaptureMinimapSnapshot {

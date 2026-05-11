@@ -194,7 +194,7 @@ fn maybe_tick_scroll_capture_does_not_double_count_preview_growth_from_same_late
 
 #[cfg(target_os = "macos")]
 #[test]
-fn maybe_tick_scroll_capture_worker_path_recovers_after_blocked_overshot_frame() {
+fn maybe_tick_scroll_capture_worker_path_pauses_after_blocked_overshot_frame() {
 	let monitor = MonitorRect {
 		id: 1,
 		origin: GlobalPoint::new(0, 0),
@@ -238,13 +238,17 @@ fn maybe_tick_scroll_capture_worker_path_recovers_after_blocked_overshot_frame()
 
 	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
-	assert_eq!(tests::scroll_capture_export_height(&session), 724);
-	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
+	assert_eq!(tests::scroll_capture_export_height(&session), 640);
+	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 0);
+	assert_eq!(
+		session.scroll_capture.session.as_ref().unwrap().last_block_reason(),
+		Some("worker_pairwise_requires_committed_reacquire_after_blocked_gap")
+	);
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn maybe_tick_scroll_capture_worker_path_retries_immediately_after_blocked_overshot_frame_during_fresh_downward_input()
+fn maybe_tick_scroll_capture_worker_path_retries_without_tail_after_blocked_overshot_frame_during_fresh_downward_input()
  {
 	let monitor = tests::test_monitor();
 	let rect = RectPoints::new(100, 120, 512, 640);
@@ -287,14 +291,17 @@ fn maybe_tick_scroll_capture_worker_path_retries_immediately_after_blocked_overs
 
 	tests::drain_scroll_capture_worker_until_idle(&mut session);
 
-	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 84);
-	assert_eq!(tests::scroll_capture_export_height(&session), 724);
+	assert_eq!(session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(), 0);
+	assert_eq!(tests::scroll_capture_export_height(&session), 640);
+	assert_eq!(
+		session.scroll_capture.session.as_ref().unwrap().last_block_reason(),
+		Some("worker_pairwise_requires_committed_reacquire_after_blocked_gap")
+	);
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn maybe_tick_scroll_capture_worker_path_recovers_across_interleaved_no_frame_and_blocked_browser_steps()
- {
+fn maybe_tick_scroll_capture_worker_path_requires_reacquire_after_blocked_browser_gap() {
 	let monitor = tests::test_monitor();
 	let rect = RectPoints::new(100, 120, 512, 640);
 	let mut session = OverlaySession::new();
@@ -310,41 +317,29 @@ fn maybe_tick_scroll_capture_worker_path_recovers_across_interleaved_no_frame_an
 			Some(tests::make_browser_like_worker_capture_window(512, 640, 700)),
 			Some(tests::make_browser_like_worker_capture_window(512, 640, 784)),
 			None,
-			Some(tests::make_browser_like_worker_capture_window(512, 640, 868)),
+			Some(tests::make_browser_like_worker_capture_window(512, 640, 84)),
+			Some(tests::make_browser_like_worker_capture_window(512, 640, 168)),
 		],
 	);
 
-	for expected_top_y in [84_i32, 168, 252] {
-		let mut attempts = 0_u8;
+	for expected_top_y in [0_i32, 84, 84, 84, 84, 84, 168] {
+		tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
 
-		while session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y()
-			< expected_top_y
-		{
-			attempts = attempts.saturating_add(1);
+		session.scroll_capture.last_external_scroll_input_seq =
+			session.scroll_capture.last_external_scroll_input_seq.saturating_add(1);
+		session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
 
-			assert!(
-				attempts <= 4,
-				"worker path failed to recover to expected_top_y={expected_top_y}"
-			);
+		session.maybe_tick_scroll_capture();
 
-			tests::set_scroll_capture_input(&mut session, ScrollDirection::Down);
+		assert!(session.scroll_capture.inflight_request_id.is_some());
 
-			session.scroll_capture.last_external_scroll_input_seq =
-				session.scroll_capture.last_external_scroll_input_seq.saturating_add(1);
-			session.scroll_capture.next_sample_at = Some(Instant::now() - Duration::from_millis(1));
+		session.scroll_capture.last_external_scroll_input_seq =
+			session.scroll_capture.last_external_scroll_input_seq.saturating_add(1);
+		session.scroll_capture.input_direction = Some(ScrollDirection::Down);
+		session.scroll_capture.input_direction_at = Some(Instant::now());
+		session.scroll_capture.input_gesture_active = true;
 
-			session.maybe_tick_scroll_capture();
-
-			assert!(session.scroll_capture.inflight_request_id.is_some());
-
-			session.scroll_capture.last_external_scroll_input_seq =
-				session.scroll_capture.last_external_scroll_input_seq.saturating_add(1);
-			session.scroll_capture.input_direction = Some(ScrollDirection::Down);
-			session.scroll_capture.input_direction_at = Some(Instant::now());
-			session.scroll_capture.input_gesture_active = true;
-
-			tests::drain_scroll_capture_worker_until_idle(&mut session);
-		}
+		tests::drain_scroll_capture_worker_until_idle(&mut session);
 
 		assert_eq!(
 			session.scroll_capture.session.as_ref().unwrap().current_viewport_top_y(),

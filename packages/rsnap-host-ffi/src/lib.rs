@@ -44,7 +44,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 32;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 34;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -1441,6 +1441,55 @@ pub unsafe extern "C" fn rsnap_scroll_session_observe_downward_frame(
 	RsnapStatus::Ok
 }
 
+/// Observes one discrete viewport screenshot with an optional downward motion hint.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_scroll_session_create`.
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data, and `out_result` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_scroll_session_observe_downward_frame_with_motion_hint(
+	handle: *mut RsnapScrollSessionHandle,
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	motion_rows_hint: u32,
+	allow_burst_search: u8,
+	out_result: *mut RsnapScrollObserveResult,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { scroll_session_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	if out_result.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let hint = (motion_rows_hint > 0).then_some(motion_rows_hint);
+	let outcome = match handle.session.observe_downward_rgba_with_motion_hint(
+		width,
+		height,
+		bytes,
+		hint,
+		allow_burst_search != 0,
+	) {
+		Ok(outcome) => outcome,
+		Err(_err) => return RsnapStatus::InvalidInput,
+	};
+	let export = handle.session.export_image();
+
+	unsafe {
+		ptr::write(out_result, encode_scroll_observe_result(outcome, &export, &handle.session));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Copies the current committed scroll-capture export into a Rust-owned RGBA buffer.
 ///
 /// # Safety
@@ -2613,6 +2662,71 @@ pub unsafe extern "C" fn rsnap_live_sampler_take_region_rgba(
 	mem::forget(rgba);
 
 	unsafe {
+		ptr::write(out_region, out);
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Transfers ownership of the oldest queued RGBA region newer than `after_frame_seq`
+/// to the caller, preserving live-stream frame order.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_live_sampler_create`,
+/// `out_frame_seq` and `out_frame_age_micros` must be valid writable pointers, and
+/// `out_region` must be a valid writable pointer. The caller must later release the
+/// returned region buffer with `rsnap_owned_rgba_region_release`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_take_next_region_rgba_after_seq(
+	handle: *mut RsnapLiveSamplerHandle,
+	monitor: RsnapMonitorRect,
+	rect: RsnapRect,
+	after_frame_seq: u64,
+	wait_for_fresh: u8,
+	out_frame_seq: *mut u64,
+	out_frame_age_micros: *mut u64,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	if out_frame_seq.is_null() || out_frame_age_micros.is_null() || out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(frame) = handle.sampler.next_region_rgba_after_seq(
+		decode_overlay_monitor(monitor),
+		decode_overlay_point(RsnapPoint { x: rect.x, y: rect.y }),
+		rect.width,
+		rect.height,
+		after_frame_seq,
+		wait_for_fresh != 0,
+	) else {
+		unsafe {
+			ptr::write(out_frame_seq, after_frame_seq);
+			ptr::write(out_frame_age_micros, 0);
+			ptr::write(out_region, RsnapOwnedRgbaRegion::default());
+		}
+
+		return RsnapStatus::Empty;
+	};
+	let mut rgba = frame.region.rgba;
+	let out = RsnapOwnedRgbaRegion {
+		width: frame.region.width,
+		height: frame.region.height,
+		len: rgba.len(),
+		capacity: rgba.capacity(),
+		rgba: rgba.as_mut_ptr(),
+	};
+
+	mem::forget(rgba);
+
+	unsafe {
+		ptr::write(out_frame_seq, frame.frame_seq);
+		ptr::write(out_frame_age_micros, frame.frame_age_micros);
 		ptr::write(out_region, out);
 	}
 
@@ -4785,6 +4899,81 @@ mod tests {
 
 		unsafe {
 			crate::rsnap_owned_rgba_region_release(&mut export);
+			crate::rsnap_scroll_session_destroy(handle);
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	#[test]
+	fn ffi_scroll_session_blocks_rewind_until_frontier_is_reacquired() {
+		let base = scroll_frame(16, 128, 0);
+		let first = scroll_frame(16, 128, 48);
+		let rewind = scroll_frame(16, 128, 24);
+		let below_frontier = scroll_frame(16, 128, 36);
+		let reacquired = scroll_frame(16, 128, 48);
+		let beyond_frontier = scroll_frame(16, 128, 60);
+		let handle =
+			unsafe { crate::rsnap_scroll_session_create(16, 128, base.as_ptr(), base.len(), 16) };
+
+		assert!(!handle.is_null());
+
+		let mut result = RsnapScrollObserveResult::default();
+
+		assert_eq!(
+			unsafe {
+				crate::rsnap_scroll_session_observe_downward_frame(
+					handle,
+					16,
+					128,
+					first.as_ptr(),
+					first.len(),
+					&mut result,
+				)
+			},
+			RsnapStatus::Ok
+		);
+		assert_eq!(result.kind, RsnapScrollObserveOutcomeKind::Committed as u32);
+		assert_eq!(result.current_viewport_top_y, 48);
+		assert_eq!(result.export_height, 176);
+
+		for frame in [&rewind, &below_frontier, &reacquired] {
+			assert_eq!(
+				unsafe {
+					crate::rsnap_scroll_session_observe_downward_frame(
+						handle,
+						16,
+						128,
+						frame.as_ptr(),
+						frame.len(),
+						&mut result,
+					)
+				},
+				RsnapStatus::Ok
+			);
+			assert_ne!(result.kind, RsnapScrollObserveOutcomeKind::Committed as u32);
+			assert_eq!(result.current_viewport_top_y, 48);
+			assert_eq!(result.export_height, 176);
+		}
+
+		assert_eq!(
+			unsafe {
+				crate::rsnap_scroll_session_observe_downward_frame(
+					handle,
+					16,
+					128,
+					beyond_frontier.as_ptr(),
+					beyond_frontier.len(),
+					&mut result,
+				)
+			},
+			RsnapStatus::Ok
+		);
+		assert_eq!(result.kind, RsnapScrollObserveOutcomeKind::Committed as u32);
+		assert_eq!(result.growth_rows, 12);
+		assert_eq!(result.current_viewport_top_y, 60);
+		assert_eq!(result.export_height, 188);
+
+		unsafe {
 			crate::rsnap_scroll_session_destroy(handle);
 		}
 	}

@@ -4,8 +4,8 @@ Purpose: Define how agent-facing documentation is organized, updated, and kept c
 across this repository.
 
 Audience: All documentation under `docs/` is written for AI agents and LLM workflows.
-The active split between `spec`, `runbook`, `reference`, and `decisions` is by task shape, not by
-reader type.
+The active split between `spec`, `runbook`, `reference`, `decisions`, and supporting `research`
+artifacts is by task shape, not by reader type.
 
 ## Principles
 
@@ -25,6 +25,7 @@ reader type.
 | Runbook | `docs/runbook/` | Which sequence should I execute? | Runbooks, migrations, validation, troubleshooting | Any procedure or operational change |
 | Reference | `docs/reference/` | How is it currently organized or implemented? | Ownership maps, implementation-model notes, non-normative technical context | Any layout, ownership, or current-implementation explanation change |
 | Decisions | `docs/decisions/` | Why was this tradeoff accepted? | Durable rationale for accepted technical or product choices | Any accepted decision with long-lived consequences |
+| Research | `docs/research/` | What evidence supported a bounded investigation? | Machine-readable supporting research runs, not primary behavior authority | Any evidence-backed research run that must remain replayable |
 
 ## Placement rules
 
@@ -34,6 +35,9 @@ reader type.
   defining correctness, it belongs in `docs/reference/`.
 - If a document records why a durable tradeoff was accepted, which alternatives were considered,
   and what consequences follow from that choice, it belongs in `docs/decisions/`.
+- If a document records a bounded research method, evidence inventory, challenge, or decision
+  finalization, it belongs in `docs/research/` and must link to the authoritative spec, runbook,
+  reference, or decision it supports.
 - If a document becomes historical-only and no longer helps execute current work, remove it from
   `docs/` instead of keeping it in the active routing surface.
 - Do not duplicate the same authoritative content across documents. Link to the source

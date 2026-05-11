@@ -114,14 +114,14 @@ Defines:
 
 - Settings must include a Permissions section.
 - Screen Recording permission is required for the current native macOS capture host.
-- Settings must present Screen Recording as the only permission needed by the current native macOS
-  capture host.
+- Settings must present Screen Recording as required for native capture and Scroll Capture.
+- Settings must not present Accessibility or Input Monitoring as required for Scroll Capture; the
+  current product path uses overlay-local wheel forwarding rather than Accessibility target control
+  or a CGEvent tap.
 - The Open at Login control must live at the bottom of the Permissions section so OS-owned app
   access controls remain first.
 - When Screen Recording is missing at launch or at capture start, Rsnap must open the macOS Screen
   Recording privacy page and present a small Rsnap-owned floating drag guide near System Settings.
-- Accessibility and Input Monitoring must not be displayed in Settings while the current native host
-  does not need them.
 - Permission recovery should provide a visible drag-the-app affordance for adding Rsnap to System
   Settings where macOS allows that workflow, including a directional guide from the floating window
   toward System Settings and an Open System Settings fallback.

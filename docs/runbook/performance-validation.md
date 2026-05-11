@@ -17,10 +17,11 @@ Depends on: `docs/spec/performance.md`
 Outputs: A clear command choice for the regression class you are testing, plus a repeatable local
 baseline workflow for the committed Criterion benchmark targets.
 
-Current release status: v0.2.1 hides user-facing scroll capture in the native host. The replay and
-benchmark commands in this runbook still own retained internal scroll-capture engine validation and
-future re-enablement work, but they are not evidence that the v0.2.1 toolbar exposes scroll
-capture.
+Current release status: v0.2.1 hides user-facing scroll capture in the native host. On this
+development branch, scroll capture is implemented under the validation contract. The replay and
+benchmark commands in this runbook still own retained internal scroll-capture engine validation, but
+they do not prove that a release toolbar exposes scroll capture and do not replace the recovery plan
+or a final target-app acceptance run for broader release claims.
 
 ## Command selection
 
@@ -39,6 +40,8 @@ Use the smallest command that matches the regression surface:
 - Native-host click/drag selection, border leakage, mask stability, visual/material, or
   live-to-frozen handoff regressions:
   `scripts/smoke/native-visual-contract-macos.sh`
+- Native-host scroll capture start/sample/commit regressions on a deterministic scroll source:
+  `scripts/smoke/native-scroll-capture-macos.sh`
 - General local deterministic performance sweep before or after a change:
   `scripts/perf/local.sh`
 - Dedicated macOS environment validation without driving the real smoke scenario:
@@ -74,13 +77,18 @@ worker-pairwise self-check path when no recorded user trace is available.
   - Runs the core native visual contract smoke.
   - Runs the native HUD-follow responsiveness smoke.
 
-For a future downward scroll-capture re-enablement, the expected verification sequence is:
+For the current downward scroll-capture path, the expected verification sequence is:
 
 1. `cargo make checks`
-2. `scripts/smoke/replay-scroll-capture.sh`
-3. `scripts/smoke/analyze-scroll-capture-trace.sh`
+2. `scripts/smoke/replay-scroll-capture-self-check.sh`
+3. `scripts/smoke/replay-scroll-capture.sh` and
+   `scripts/smoke/analyze-scroll-capture-trace.sh` when a recorded trace is present
 4. any targeted deterministic `cargo test -p rsnap-overlay ...`
-5. one fresh release live touchpad run with a newly recorded trace
+5. `scripts/smoke/native-scroll-capture-macos.sh` with the default `SCROLL_DRIVER=wheel`; use
+   `SCROLL_DRIVER=notification` only when directly diagnosing background movement independent of
+   HID wheel delivery
+6. for release-scope claims, one fresh release live touchpad run on a target webpage/app, ideally
+   with a newly recorded trace
 
 For the current ownership map of those scripts versus replay, runtime, and
 session tests, read `docs/reference/smoke-perf-validation-surface.md`.
@@ -111,6 +119,8 @@ Dedicated macOS smoke:
 
 - Requires a logged-in macOS desktop session.
 - Requires the expected Screen Recording and automation permissions for the smoke scripts.
+- Fails before driving the app when the macOS session is locked or ScreenCaptureKit returns no
+  shareable display. Treat that as environment readiness, not scroll-capture correctness evidence.
 - Covers the native-host HUD-follow desktop path. The hard follow gate uses active pointer-movement
   cadence (`live_chrome.active_layer_chrome_render_gap`) and frame-tick cadence
   (`live_chrome.frame_tick_gap`) rather than startup, Tab-expand, or close transition gaps.
