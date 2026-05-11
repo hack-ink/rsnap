@@ -96,8 +96,13 @@ Key paths:
   focused support modules under `scroll_capture/`
 - `packages/rsnap-overlay/src/scroll_capture/worker_pairwise.rs`: ordered worker-pairwise frame
   registration, committed-frontier catchup, rewind/reacquire handling, and growth-block decisions
-- `packages/rsnap-overlay/src/scroll_capture/support.rs`: shared pixel matching, fingerprinting,
-  static-region rejection, and image-analysis helpers used by scroll capture
+- `packages/rsnap-overlay/src/scroll_capture/types.rs`: scroll-capture data model, observation
+  outcomes, registration candidates, and telemetry structs shared by the session modules
+- `packages/rsnap-overlay/src/scroll_capture/fingerprint.rs`: sampled frame fingerprinting used by
+  session duplicate detection and structural change tests
+- `packages/rsnap-overlay/src/scroll_capture/support.rs`: shared pixel matching,
+  static-region rejection, image stacking/resizing, and image-analysis helpers used by scroll
+  capture
 - `packages/rsnap-overlay/src/scroll_capture/downward_resolution.rs`: downward viewport candidate
   scoring and resolution helpers for session-owned stitching decisions
 
