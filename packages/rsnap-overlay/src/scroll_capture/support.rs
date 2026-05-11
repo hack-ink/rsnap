@@ -48,6 +48,25 @@ const MOTION_OVERLAP_MIN_MATCHING_COLUMN_PERCENT: u32 = 80;
 const MOTION_OVERLAP_BAD_EDGE_SAMPLE_DIVISOR: usize = 10;
 const MOTION_OVERLAP_BAD_EDGE_MIN_SAMPLES: usize = 8;
 
+#[derive(Clone, Copy, Debug)]
+struct MotionCoverageColumnScore {
+	structure_score: u32,
+	motion_score: u32,
+}
+impl MotionCoverageColumnScore {
+	fn has_structure(self, threshold: u32) -> bool {
+		self.structure_score >= threshold
+	}
+
+	fn has_motion(self, threshold: u32) -> bool {
+		self.motion_score >= threshold
+	}
+
+	fn is_static(self, structure_threshold: u32, motion_threshold: u32) -> bool {
+		self.has_structure(structure_threshold) && self.motion_score <= motion_threshold
+	}
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OverlapOrientation {
 	PreviousBottomToNextTop,
@@ -1179,7 +1198,7 @@ fn motion_coverage_supports_structural_span(
 		max_structure_score = max_structure_score.max(structure_score);
 		max_motion_score = max_motion_score.max(motion_score);
 
-		scores.push((structure_score, motion_score));
+		scores.push(MotionCoverageColumnScore { structure_score, motion_score });
 	}
 
 	if max_structure_score == 0 || max_motion_score == 0 {
@@ -1205,14 +1224,14 @@ fn motion_coverage_supports_structural_span(
 		return false;
 	}
 
-	for &(structure_score, motion_score) in span_scores {
-		if structure_score < structure_threshold {
+	for &score in span_scores {
+		if !score.has_structure(structure_threshold) {
 			continue;
 		}
 
 		informative_columns = informative_columns.saturating_add(1);
 
-		if motion_score >= motion_threshold {
+		if score.has_motion(motion_threshold) {
 			moving_informative_columns = moving_informative_columns.saturating_add(1);
 		}
 	}
@@ -1223,7 +1242,7 @@ fn motion_coverage_supports_structural_span(
 }
 
 fn raw_frame_pair_has_static_informative_band(
-	scores: &[(u32, u32)],
+	scores: &[MotionCoverageColumnScore],
 	max_structure_score: u32,
 	max_motion_score: u32,
 ) -> bool {
@@ -1242,15 +1261,14 @@ fn raw_frame_pair_has_static_informative_band(
 	let mut moving_end = None;
 	let mut static_flags = Vec::with_capacity(scores.len());
 
-	for (column, (structure_score, motion_score)) in scores.iter().enumerate() {
-		if *structure_score >= structure_threshold && *motion_score >= moving_motion_threshold {
+	for (column, score) in scores.iter().enumerate() {
+		if score.has_structure(structure_threshold) && score.has_motion(moving_motion_threshold) {
 			moving_start.get_or_insert(column);
 
 			moving_end = Some(column.saturating_add(1));
 		}
 
-		static_flags
-			.push(*structure_score >= structure_threshold && *motion_score <= motion_threshold);
+		static_flags.push(score.is_static(structure_threshold, motion_threshold));
 	}
 
 	let Some(moving_start) = moving_start else {
@@ -1302,7 +1320,7 @@ fn static_side_band_has_enough_columns(
 }
 
 fn raw_frame_pair_has_static_informative_edge(
-	scores: &[(u32, u32)],
+	scores: &[MotionCoverageColumnScore],
 	structure_threshold: u32,
 	motion_threshold: u32,
 	left_leading_columns: u32,
@@ -1329,14 +1347,14 @@ fn raw_static_edge_run_len<I>(
 	leading_columns: u32,
 ) -> u32
 where
-	I: IntoIterator<Item = (u32, u32)>,
+	I: IntoIterator<Item = MotionCoverageColumnScore>,
 {
 	let mut skipped_columns = leading_columns;
 	let mut static_columns = 0_u32;
 	let mut seen_informative = false;
 
-	for (structure_score, motion_score) in iter {
-		if structure_score < structure_threshold {
+	for score in iter {
+		if !score.has_structure(structure_threshold) {
 			if seen_informative {
 				break;
 			}
@@ -1355,7 +1373,7 @@ where
 
 		seen_informative = true;
 
-		if motion_score >= motion_threshold {
+		if score.has_motion(motion_threshold) {
 			break;
 		}
 
