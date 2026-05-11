@@ -64,11 +64,13 @@ final class NativeHostSoftwareUpdater {
 
 	init() {
 		if Self.hasSparkleConfiguration {
-			updaterController = SPUStandardUpdaterController(
+			let controller = SPUStandardUpdaterController(
 				startingUpdater: true,
 				updaterDelegate: nil,
 				userDriverDelegate: nil)
+			updaterController = controller
 			NativeHostTelemetry.lifecycleEvent("native_host.sparkle_updater_started")
+			requestImmediateLaunchUpdateCheckIfEnabled(using: controller.updater)
 		} else {
 			updaterController = nil
 			NativeHostTelemetry.lifecycleWarning(
@@ -132,14 +134,17 @@ final class NativeHostSoftwareUpdater {
 		updaterController.checkForUpdates(sender)
 	}
 
-	func checkForUpdatesInBackgroundOnLaunchIfEnabled() {
-		guard let updater = updaterController?.updater else {
-			return
-		}
+	private func requestImmediateLaunchUpdateCheckIfEnabled(using updater: SPUUpdater) {
 		guard updater.automaticallyChecksForUpdates else {
 			NativeHostTelemetry.lifecycleDebug(
 				"native_host.sparkle_update_check_skipped",
 				detail: "source=launch,reason=disabled")
+			return
+		}
+		guard updater.sessionInProgress == false else {
+			NativeHostTelemetry.lifecycleDebug(
+				"native_host.sparkle_update_check_skipped",
+				detail: "source=launch,reason=session_in_progress")
 			return
 		}
 		updater.checkForUpdatesInBackground()
@@ -174,7 +179,7 @@ final class NativeHostSoftwareUpdater {
 		guard let checkedAt else {
 			return "Never checked."
 		}
-		return "Last checked \(checkedAt.formatted(date: .abbreviated, time: .shortened))."
+		return "Checked \(checkedAt.formatted(date: .omitted, time: .shortened))."
 	}
 
 	private static func nonEmptyInfoValue(forKey key: String) -> String? {

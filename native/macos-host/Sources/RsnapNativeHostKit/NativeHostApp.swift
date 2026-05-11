@@ -157,7 +157,6 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		refreshStatusMenuState()
 		sessionController.prepareLiveFrameStreamSampler(reason: "launch")
 		scheduleLaunchPermissionOnboardingIfNeeded()
-		scheduleLaunchUpdateCheckIfEnabled()
 		DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
 			self?.sessionController.refreshShareableContentCacheIfPermitted(source: "launch")
 		}
@@ -263,12 +262,6 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 				source: "launch",
 				oncePerLaunch: true
 			)
-		}
-	}
-
-	private func scheduleLaunchUpdateCheckIfEnabled() {
-		Task { @MainActor [weak self] in
-			self?.softwareUpdater.checkForUpdatesInBackgroundOnLaunchIfEnabled()
 		}
 	}
 
