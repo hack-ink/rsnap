@@ -75,6 +75,8 @@ extension CaptureSessionController {
 		pendingFrozenCommit = nil
 		frozenFrameLatchToken = nil
 		frozenSnapshotGeneration &+= 1
+		hostEffectJobGeneration &+= 1
+		frozenPreparedExportStore.reset()
 		completedHostEffect = nil
 		removeNativeScrollCaptureMonitor()
 		scrollCaptureState = nil
@@ -131,6 +133,7 @@ extension CaptureSessionController {
 
 	@objc
 	func settingsDidChange() {
+		invalidatePreparedFrozenExport()
 		overlayController?.update(
 			scene: scene,
 			chrome: chromeState,

@@ -2,7 +2,12 @@ import AppKit
 import CoreGraphics
 import RsnapHostBridge
 
-package enum CaptureFrameSource: Equatable {
+package struct CaptureFrameRenderEnvironment: Equatable, Sendable {
+	let screenScaleFactor: CGFloat
+	let wallpaperPath: String?
+}
+
+package enum CaptureFrameSource: Equatable, Sendable {
 	case dragRegion
 	case window
 	case fullScreen
@@ -20,9 +25,69 @@ package enum CaptureFrameEffectRenderer {
 		renderWithRust(
 			image: image,
 			background: background,
-			screen: screen,
 			source: source,
-			renderKind: .framedCapture
+			renderKind: .framedCapture,
+			environment: environment(for: background, screen: screen)
+		)
+	}
+
+	package static func render(
+		image: CGImage,
+		background: CaptureFrameBackgroundPreference,
+		source: CaptureFrameSource,
+		environment: CaptureFrameRenderEnvironment
+	) -> CGImage? {
+		guard
+			let rendered = renderSnapshot(
+				image: image,
+				background: background,
+				source: source,
+				environment: environment
+			)
+		else {
+			return nil
+		}
+
+		return NativeHostImageBridge.cgImage(from: rendered, shouldInterpolate: true)
+	}
+
+	package static func renderSnapshot(
+		image: CGImage,
+		background: CaptureFrameBackgroundPreference,
+		source: CaptureFrameSource,
+		environment: CaptureFrameRenderEnvironment
+	) -> RGBARegionSnapshot? {
+		guard
+			let sourceSnapshot = NativeHostImageBridge.rgbaSnapshot(
+				from: image,
+				interpolationQuality: .high,
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
+			return nil
+		}
+
+		return renderWithRust(
+			sourceSnapshot: sourceSnapshot,
+			background: background,
+			sourceKind: source,
+			renderKind: .framedCapture,
+			environment: environment
+		)
+	}
+
+	package static func renderSnapshot(
+		source: RGBARegionSnapshot,
+		background: CaptureFrameBackgroundPreference,
+		sourceKind: CaptureFrameSource,
+		environment: CaptureFrameRenderEnvironment
+	) -> RGBARegionSnapshot? {
+		renderWithRust(
+			sourceSnapshot: source,
+			background: background,
+			sourceKind: sourceKind,
+			renderKind: .framedCapture,
+			environment: environment
 		)
 	}
 
@@ -34,9 +99,51 @@ package enum CaptureFrameEffectRenderer {
 		renderWithRust(
 			image: image,
 			background: background,
-			screen: screen,
 			source: .window,
-			renderKind: .windowSnapshot
+			renderKind: .windowSnapshot,
+			environment: environment(for: background, screen: screen)
+		)
+	}
+
+	package static func renderWindowSnapshot(
+		image: CGImage,
+		background: CaptureFrameBackgroundPreference,
+		environment: CaptureFrameRenderEnvironment
+	) -> CGImage? {
+		guard
+			let rendered = renderWindowSnapshotSnapshot(
+				image: image,
+				background: background,
+				environment: environment
+			)
+		else {
+			return nil
+		}
+
+		return NativeHostImageBridge.cgImage(from: rendered, shouldInterpolate: true)
+	}
+
+	package static func renderWindowSnapshotSnapshot(
+		image: CGImage,
+		background: CaptureFrameBackgroundPreference,
+		environment: CaptureFrameRenderEnvironment
+	) -> RGBARegionSnapshot? {
+		guard
+			let sourceSnapshot = NativeHostImageBridge.rgbaSnapshot(
+				from: image,
+				interpolationQuality: .high,
+				bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+			)
+		else {
+			return nil
+		}
+
+		return renderWithRust(
+			sourceSnapshot: sourceSnapshot,
+			background: background,
+			sourceKind: .window,
+			renderKind: .windowSnapshot,
+			environment: environment
 		)
 	}
 
@@ -68,10 +175,32 @@ package enum CaptureFrameEffectRenderer {
 	private static func renderWithRust(
 		image: CGImage,
 		background: CaptureFrameBackgroundPreference,
-		screen: NSScreen?,
 		source: CaptureFrameSource,
-		renderKind: CaptureFrameRenderKind
+		renderKind: CaptureFrameRenderKind,
+		environment: CaptureFrameRenderEnvironment
 	) -> CGImage? {
+		guard
+			let rendered = renderSnapshot(
+				from: image,
+				background: background,
+				source: source,
+				renderKind: renderKind,
+				environment: environment
+			)
+		else {
+			return nil
+		}
+
+		return NativeHostImageBridge.cgImage(from: rendered, shouldInterpolate: true)
+	}
+
+	private static func renderSnapshot(
+		from image: CGImage,
+		background: CaptureFrameBackgroundPreference,
+		source: CaptureFrameSource,
+		renderKind: CaptureFrameRenderKind,
+		environment: CaptureFrameRenderEnvironment
+	) -> RGBARegionSnapshot? {
 		guard
 			let sourceSnapshot = NativeHostImageBridge.rgbaSnapshot(
 				from: image,
@@ -81,20 +210,41 @@ package enum CaptureFrameEffectRenderer {
 		else {
 			return nil
 		}
-		guard
-			let rendered = try? RsnapCaptureFrameRenderer.render(
-				source: sourceSnapshot,
-				background: background.planKind,
-				screenScaleFactor: screen?.backingScaleFactor ?? 2,
-				sourceKind: source.planKind,
-				renderKind: renderKind,
-				wallpaperPath: systemWallpaperPath(for: background, screen: screen)
-			)
-		else {
-			return nil
-		}
 
-		return NativeHostImageBridge.cgImage(from: rendered, shouldInterpolate: true)
+		return renderWithRust(
+			sourceSnapshot: sourceSnapshot,
+			background: background,
+			sourceKind: source,
+			renderKind: renderKind,
+			environment: environment
+		)
+	}
+
+	private static func renderWithRust(
+		sourceSnapshot: RGBARegionSnapshot,
+		background: CaptureFrameBackgroundPreference,
+		sourceKind: CaptureFrameSource,
+		renderKind: CaptureFrameRenderKind,
+		environment: CaptureFrameRenderEnvironment
+	) -> RGBARegionSnapshot? {
+		try? RsnapCaptureFrameRenderer.render(
+			source: sourceSnapshot,
+			background: background.planKind,
+			screenScaleFactor: environment.screenScaleFactor,
+			sourceKind: sourceKind.planKind,
+			renderKind: renderKind,
+			wallpaperPath: environment.wallpaperPath
+		)
+	}
+
+	private static func environment(
+		for background: CaptureFrameBackgroundPreference,
+		screen: NSScreen?
+	) -> CaptureFrameRenderEnvironment {
+		CaptureFrameRenderEnvironment(
+			screenScaleFactor: screen?.backingScaleFactor ?? 2,
+			wallpaperPath: systemWallpaperPath(for: background, screen: screen)
+		)
 	}
 
 	private static func systemWallpaperPath(

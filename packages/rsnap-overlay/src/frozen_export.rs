@@ -168,7 +168,7 @@ impl ExportTransform {
 		}
 
 		let x = (point.x - self.selection.x) * self.scale_x;
-		let y = (point.y - self.selection.y) * self.scale_y;
+		let y = (self.selection.y + self.selection.height - point.y) * self.scale_y;
 
 		f64_pair_to_pos2(x, y)
 	}
@@ -179,7 +179,7 @@ impl ExportTransform {
 		}
 
 		let x = (rect.x - self.selection.x) * self.scale_x;
-		let y = (rect.y - self.selection.y) * self.scale_y;
+		let y = (self.selection.y + self.selection.height - (rect.y + rect.height)) * self.scale_y;
 		let width = rect.width * self.scale_x;
 		let height = rect.height * self.scale_y;
 		let origin = f64_pair_to_pos2(x, y)?;
@@ -791,8 +791,48 @@ mod tests {
 
 		assert_eq!(rendered.dimensions(), image.dimensions());
 		assert_ne!(rendered.as_raw(), image.as_raw());
-		assert_eq!(rendered.get_pixel(12, 3), image.get_pixel(12, 3));
-		assert!(rendered.get_pixel(0, 10)[0] < image.get_pixel(0, 10)[0] + 1);
+		assert_eq!(rendered.get_pixel(12, 8), image.get_pixel(12, 8));
+		assert!(rendered.get_pixel(1, 5)[1] < image.get_pixel(1, 5)[1]);
+	}
+
+	#[test]
+	fn export_compositor_maps_display_y_to_image_top_left_pixels() {
+		let image = RgbaImage::from_pixel(20, 20, Rgba([24, 24, 24, 255]));
+		let bottom_point = FrozenOverlayExportElement::Pen(FrozenOverlayExportPen {
+			points: vec![FrozenOverlayExportPoint::new(10.0, 0.0)],
+			style: FrozenOverlayExportStrokeStyle {
+				stroke_width_points: 2.0,
+				rgba: [255, 107, 107, 255],
+			},
+		});
+		let top_point = FrozenOverlayExportElement::Pen(FrozenOverlayExportPen {
+			points: vec![FrozenOverlayExportPoint::new(10.0, 20.0)],
+			style: FrozenOverlayExportStrokeStyle {
+				stroke_width_points: 2.0,
+				rgba: [255, 107, 107, 255],
+			},
+		});
+		let bottom_rendered = frozen_export::render_frozen_overlay_export_rgba(
+			image.width(),
+			image.height(),
+			image.as_raw(),
+			DisplayPointRect::new(0.0, 0.0, 20.0, 20.0),
+			&[bottom_point],
+		)
+		.expect("valid bottom-point export");
+		let top_rendered = frozen_export::render_frozen_overlay_export_rgba(
+			image.width(),
+			image.height(),
+			image.as_raw(),
+			DisplayPointRect::new(0.0, 0.0, 20.0, 20.0),
+			&[top_point],
+		)
+		.expect("valid top-point export");
+
+		assert_ne!(bottom_rendered.get_pixel(10, 19), image.get_pixel(10, 19));
+		assert_eq!(bottom_rendered.get_pixel(10, 0), image.get_pixel(10, 0));
+		assert_ne!(top_rendered.get_pixel(10, 0), image.get_pixel(10, 0));
+		assert_eq!(top_rendered.get_pixel(10, 19), image.get_pixel(10, 19));
 	}
 
 	#[test]
