@@ -200,6 +200,7 @@ struct NativeHostSettings: Equatable {
 		copy.hudTintHue = copy.hudTintHue.clamped(to: 0...1)
 		copy.hudTintSaturation = copy.hudTintSaturation.clamped(to: 0...1)
 		copy.hudTintBrightness = copy.hudTintBrightness.clamped(to: 0...1)
+		copy.captureFrameApplicability = copy.captureFrameApplicability.normalizedForStorage
 		return copy
 	}
 
@@ -431,7 +432,11 @@ package enum CaptureFrameBackgroundPreference: String, CaseIterable {
 enum CaptureFrameApplicabilityPreference: String, CaseIterable {
 	case dragRegion = "drag_region"
 	case window
+	case scrollCapture = "scroll_capture"
+	case all
 	case both
+
+	static let allCases: [Self] = [.dragRegion, .window, .all]
 
 	var title: String {
 		switch self {
@@ -439,18 +444,34 @@ enum CaptureFrameApplicabilityPreference: String, CaseIterable {
 			return "Drag"
 		case .window:
 			return "Window"
-		case .both:
+		case .scrollCapture:
+			return "Scroll"
+		case .all, .both:
 			return "Both"
+		}
+	}
+
+	var normalizedForStorage: Self {
+		switch self {
+		case .scrollCapture:
+			return .dragRegion
+		case .both:
+			return .all
+		case .dragRegion, .window, .all:
+			return self
 		}
 	}
 
 	func includes(_ source: CaptureFrameSource) -> Bool {
 		switch (self, source) {
-		case (.dragRegion, .dragRegion), (.window, .window), (.both, .dragRegion),
-			(.both, .window):
+		case (.dragRegion, .dragRegion), (.dragRegion, .scrollCapture),
+			(.window, .window), (.scrollCapture, .scrollCapture), (.all, .dragRegion),
+			(.all, .window), (.all, .scrollCapture), (.both, .dragRegion),
+			(.both, .window), (.both, .scrollCapture):
 			return true
-		case (.dragRegion, .window), (.window, .dragRegion), (_, .fullScreen),
-			(_, .scrollCapture), (_, .unknown):
+		case (.dragRegion, .window), (.window, .dragRegion), (.window, .scrollCapture),
+			(.scrollCapture, .dragRegion), (.scrollCapture, .window), (_, .fullScreen),
+			(_, .unknown):
 			return false
 		}
 	}

@@ -160,6 +160,14 @@ extension CaptureSessionController {
 		}
 
 		if let scrollExport = try activeScrollCaptureExportImage() {
+			let result =
+				applyingCaptureFrameEffect
+				? applyCaptureFrameEffectIfNeeded(
+					to: scrollExport,
+					selection: selection,
+					hasOverlayEdits: false
+				)
+				: scrollExport
 			NativeHostTelemetry.frozenSelectionImageTiming(
 				captureID: currentCaptureTelemetryID,
 				totalMilliseconds: NativeHostTelemetry.milliseconds(since: captureStartedAt),
@@ -168,11 +176,11 @@ extension CaptureSessionController {
 				compositeMilliseconds: 0,
 				source: "scroll_capture_export",
 				success: true,
-				width: scrollExport.width,
-				height: scrollExport.height,
+				width: result.width,
+				height: result.height,
 				hasOverlayEdits: false
 			)
-			return scrollExport
+			return result
 		}
 
 		let snapshotMatchedBefore = chromeState.frozenSelectionSnapshot == selection
