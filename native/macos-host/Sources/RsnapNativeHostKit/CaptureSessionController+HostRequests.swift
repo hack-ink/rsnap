@@ -269,6 +269,7 @@ extension CaptureSessionController {
 		}
 		pendingFrozenCommit = nil
 		frozenFrameLatchToken = nil
+		invalidatePreparedFrozenExport()
 		chromeState.resetFrozenChrome()
 		chromeState.frozenSelectionSnapshot = selection
 		chromeState.frozenSelectionEditable = editable
@@ -317,6 +318,7 @@ extension CaptureSessionController {
 		if syncAfterReport {
 			try syncCore()
 		}
+		schedulePreparedFrozenExport(reason: "freeze_commit")
 	}
 
 	func frozenFrameLatchWait(containing _: CGPoint) -> TimeInterval {
