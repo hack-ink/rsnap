@@ -393,6 +393,20 @@ final class CaptureOverlayController {
 		)
 	}
 
+	func nextRegionFrame(
+		in rect: CGRect,
+		pixelRect: CGRect,
+		afterFrameSequence: UInt64,
+		waitForFresh: Bool
+	) -> RGBARegionFrameSnapshot? {
+		liveFrameStream.nextRegionFrame(
+			in: rect,
+			pixelRect: pixelRect,
+			afterFrameSequence: afterFrameSequence,
+			waitForFresh: waitForFresh
+		)
+	}
+
 	func updateLivePreviewDemand(
 		point: CGPoint?,
 		settings: NativeHostSettings,

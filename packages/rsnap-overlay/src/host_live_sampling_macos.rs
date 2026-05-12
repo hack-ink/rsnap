@@ -169,6 +169,43 @@ impl HostMacLiveSampler {
 	}
 
 	#[must_use]
+	/// Returns the oldest queued RGBA region after `after_frame_seq` using an
+	/// already-authoritative monitor-local pixel rectangle.
+	pub fn next_region_rgba_after_seq_pixels(
+		&mut self,
+		monitor: MonitorRect,
+		rect_px: RectPoints,
+		after_frame_seq: u64,
+		wait_for_fresh: bool,
+	) -> Option<HostRgbaRegionFrame> {
+		if rect_px.is_empty() {
+			return None;
+		}
+
+		let frames = if wait_for_fresh {
+			self.stream.ordered_rgba_regions_after_seq(monitor, rect_px, after_frame_seq)
+		} else {
+			self.stream.ordered_rgba_regions_after_seq_nonblocking(
+				monitor,
+				rect_px,
+				after_frame_seq,
+			)
+		}?;
+		let frame = frames.into_iter().next()?;
+
+		Some(HostRgbaRegionFrame {
+			frame_seq: frame.frame_seq,
+			frame_age_micros: frame.captured_at.elapsed().as_micros().min(u128::from(u64::MAX))
+				as u64,
+			region: HostRgbaRegion {
+				width: frame.image.width(),
+				height: frame.image.height(),
+				rgba: frame.image.into_raw(),
+			},
+		})
+	}
+
+	#[must_use]
 	/// Returns the latest cached full-monitor RGBA snapshot when one is already warm.
 	///
 	/// This does not block on a fresh capture. When the latest frame is unavailable, the
