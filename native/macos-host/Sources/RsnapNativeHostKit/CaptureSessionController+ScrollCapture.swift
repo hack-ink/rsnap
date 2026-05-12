@@ -39,6 +39,13 @@ private func scrollCaptureViewportPointCandidates(
 
 private let nativeScrollCaptureMinimumNonzeroWheelMotionHintRows = 12.0
 
+private struct NativeScrollCaptureGeometry {
+	let baseImage: CGImage
+	let baseSnapshot: RGBARegionSnapshot
+	let pixelRect: CGRect
+	let samplingRect: CGRect
+}
+
 extension CaptureSessionController {
 	private static let scrollCaptureForwardedEventMarker: Int64 = 0x5253_4E41_5053_4352
 	private static let scrollCapturePreciseWheelDeltaLimit = 72.0
@@ -496,18 +503,14 @@ extension CaptureSessionController {
 			return
 		}
 
-		ensureFrozenBaseImageFromDisplayIfNeeded(for: selection)
-		let frozenBaseImage =
-			chromeState.frozenBaseImage ?? frozenBaseImageFromDisplay(for: selection)
-		guard let frozenBaseImage,
-			let frozenBaseSnapshot = NativeHostImageBridge.rgbaSnapshot(from: frozenBaseImage)
+		guard let geometry = nativeScrollCaptureGeometry(for: selection)
 		else {
 			try setHostStatusMessage("Scroll capture could not read the selected region.")
 			refreshOverlay()
 			return
 		}
-		let baseImage = frozenBaseImage
-		let baseSnapshot = frozenBaseSnapshot
+		let baseImage = geometry.baseImage
+		let baseSnapshot = geometry.baseSnapshot
 		let baseSource = "frozen_display_region"
 		debugDumpNativeScrollCaptureSnapshot(baseSnapshot, name: "base-\(baseSource)")
 		let stitcher = try RsnapScrollCaptureSession(
@@ -517,8 +520,11 @@ extension CaptureSessionController {
 		var initialState = NativeScrollCaptureState(
 			stitcher: stitcher,
 			viewportRect: selection,
+			viewportPixelRect: geometry.pixelRect,
+			viewportSamplingRect: geometry.samplingRect,
 			captureSource: captureSource,
-			viewportPixelsPerPointY: Double(baseSnapshot.height) / max(Double(selection.height), 1)
+			viewportPixelsPerPointY: Double(geometry.pixelRect.height)
+				/ max(Double(selection.height), 1)
 		)
 		initialState.sampleUntilUptime =
 			ProcessInfo.processInfo.systemUptime + Self.scrollCaptureInitialSampleWindow
@@ -535,7 +541,7 @@ extension CaptureSessionController {
 			"capture.scroll_capture_started",
 			captureID: currentCaptureTelemetryID,
 			detail:
-				"width=\(baseSnapshot.width),height=\(baseSnapshot.height),x=\(Int(selection.minX.rounded())),y=\(Int(selection.minY.rounded())),mode=manual_universal,baseSource=\(baseSource),liveBaseMatched=false"
+				"width=\(baseSnapshot.width),height=\(baseSnapshot.height),x=\(Int(selection.minX.rounded())),y=\(Int(selection.minY.rounded())),pixelX=\(Int(geometry.pixelRect.minX.rounded())),pixelY=\(Int(geometry.pixelRect.minY.rounded())),pixelWidth=\(Int(geometry.pixelRect.width.rounded())),pixelHeight=\(Int(geometry.pixelRect.height.rounded())),samplingX=\(Int(geometry.samplingRect.minX.rounded())),samplingY=\(Int(geometry.samplingRect.minY.rounded())),samplingWidth=\(Int(geometry.samplingRect.width.rounded())),samplingHeight=\(Int(geometry.samplingRect.height.rounded())),mode=manual_universal,baseSource=\(baseSource),liveBaseMatched=false"
 		)
 		NativeHostTelemetry.captureEvent(
 			"capture.scroll_capture_mode",
@@ -559,6 +565,57 @@ extension CaptureSessionController {
 			extendingWindowBy: Self.scrollCaptureInitialSampleWindow
 		)
 		scheduleNativeScrollCaptureToolbarBackdropRefresh()
+	}
+
+	private func nativeScrollCaptureGeometry(
+		for selection: CGRect
+	) -> NativeScrollCaptureGeometry? {
+		guard
+			let displayFrame = chromeState.frozenDisplayFrame,
+			let displayImage = chromeState.frozenDisplayImage,
+			let pixelRect = try? RsnapExportEncoder.frozenDisplayCropRect(
+				imageWidth: displayImage.width,
+				imageHeight: displayImage.height,
+				displayFrame: displayFrame,
+				selection: selection
+			),
+			let baseImage = displayImage.cropping(to: pixelRect),
+			let baseSnapshot = NativeHostImageBridge.rgbaSnapshot(from: baseImage)
+		else {
+			return nil
+		}
+		let samplingRect = Self.nativeScrollCaptureSamplingRect(
+			pixelRect: pixelRect,
+			displayFrame: displayFrame,
+			displayImageSize: CGSize(
+				width: CGFloat(displayImage.width),
+				height: CGFloat(displayImage.height)
+			)
+		)
+
+		return NativeScrollCaptureGeometry(
+			baseImage: baseImage,
+			baseSnapshot: baseSnapshot,
+			pixelRect: pixelRect,
+			samplingRect: samplingRect
+		)
+	}
+
+	private static func nativeScrollCaptureSamplingRect(
+		pixelRect: CGRect,
+		displayFrame: CGRect,
+		displayImageSize: CGSize
+	) -> CGRect {
+		let pointsPerPixelX = displayFrame.width / max(displayImageSize.width, 1)
+		let pointsPerPixelY = displayFrame.height / max(displayImageSize.height, 1)
+		let height = pixelRect.height * pointsPerPixelY
+		let maxY = displayFrame.maxY - pixelRect.minY * pointsPerPixelY
+		return CGRect(
+			x: displayFrame.minX + pixelRect.minX * pointsPerPixelX,
+			y: maxY - height,
+			width: pixelRect.width * pointsPerPixelX,
+			height: height
+		)
 	}
 
 	private func configureNativeScrollCaptureChrome(
@@ -625,6 +682,7 @@ extension CaptureSessionController {
 
 		let sampledFrames = nativeScrollCaptureSampleFrames(
 			in: state.viewportRect,
+			pixelRect: state.viewportPixelRect,
 			afterFrameSequence: state.lastStreamFrameSequence,
 			maximumFrameAgeMicroseconds: nativeScrollCaptureMaximumStreamFrameAge(state: state)
 		)
@@ -633,7 +691,8 @@ extension CaptureSessionController {
 				&& nativeScrollCaptureFallbackReadyForInput(state: state)
 				&& nativeScrollCaptureFallbackAllowed(at: sampleUptime)
 			? NativeScrollCaptureFallbackRequest(
-				rect: state.viewportRect,
+				rect: state.viewportSamplingRect,
+				pixelRect: state.viewportPixelRect,
 				source: state.captureSource,
 				frameSequence: state.lastStreamFrameSequence &+ 1
 			) : nil
@@ -687,7 +746,11 @@ extension CaptureSessionController {
 					in: fallbackRequest.rect,
 					source: fallbackRequest.source
 				),
-				let snapshot = NativeHostImageBridge.rgbaSnapshot(from: image)
+				let snapshot = NativeHostImageBridge.rgbaSnapshot(from: image),
+				Self.nativeScrollCaptureFrameMatchesPixelRect(
+					snapshot,
+					pixelRect: fallbackRequest.pixelRect
+				)
 			{
 				writeNativeScrollCaptureDebugDump(
 					snapshot,
@@ -884,6 +947,7 @@ extension CaptureSessionController {
 
 	private func nativeScrollCaptureSampleFrames(
 		in rect: CGRect,
+		pixelRect: CGRect,
 		afterFrameSequence: UInt64,
 		maximumFrameAgeMicroseconds: UInt64?
 	) -> [NativeScrollCaptureSampleFrame] {
@@ -894,6 +958,7 @@ extension CaptureSessionController {
 			guard
 				let frame = overlayController?.nextRegionFrame(
 					in: rect,
+					pixelRect: pixelRect,
 					afterFrameSequence: nextAfterFrameSequence,
 					waitForFresh: false
 				)
@@ -903,6 +968,18 @@ extension CaptureSessionController {
 			if let maximumFrameAgeMicroseconds,
 				frame.frameAgeMicroseconds > maximumFrameAgeMicroseconds
 			{
+				nextAfterFrameSequence = frame.frameSequence
+				continue
+			}
+			guard Self.nativeScrollCaptureFrameMatchesPixelRect(frame.region, pixelRect: pixelRect)
+			else {
+				NativeHostTelemetry.captureWarning(
+					"capture.scroll_observe_failed",
+					captureID: currentCaptureTelemetryID,
+					stage: "sample_frame",
+					error:
+						"live stream returned \(frame.region.width)x\(frame.region.height), expected \(Int(pixelRect.width.rounded()))x\(Int(pixelRect.height.rounded()))"
+				)
 				nextAfterFrameSequence = frame.frameSequence
 				continue
 			}
@@ -916,6 +993,14 @@ extension CaptureSessionController {
 			nextAfterFrameSequence = frame.frameSequence
 		}
 		return frames
+	}
+
+	nonisolated private static func nativeScrollCaptureFrameMatchesPixelRect(
+		_ snapshot: RGBARegionSnapshot,
+		pixelRect: CGRect
+	) -> Bool {
+		snapshot.width == Int(pixelRect.width.rounded())
+			&& snapshot.height == Int(pixelRect.height.rounded())
 	}
 
 	private func nativeScrollCaptureMaximumStreamFrameAge(

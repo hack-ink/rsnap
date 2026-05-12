@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 34u
+#define RSNAP_HOST_FFI_ABI_VERSION 35u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -718,6 +718,16 @@ enum RsnapStatus rsnap_live_sampler_take_next_region_rgba_after_seq(
 	RsnapLiveSamplerHandle *handle,
 	struct RsnapMonitorRect monitor,
 	struct RsnapRect rect,
+	uint64_t after_frame_seq,
+	uint8_t wait_for_fresh,
+	uint64_t *out_frame_seq,
+	uint64_t *out_frame_age_micros,
+	struct RsnapOwnedRgbaRegion *out_region
+);
+enum RsnapStatus rsnap_live_sampler_take_next_region_rgba_pixels_after_seq(
+	RsnapLiveSamplerHandle *handle,
+	struct RsnapMonitorRect monitor,
+	struct RsnapPixelRect rect,
 	uint64_t after_frame_seq,
 	uint8_t wait_for_fresh,
 	uint64_t *out_frame_seq,
