@@ -147,12 +147,15 @@ impl CaptureSessionCore {
 	pub fn handle_host_report(&mut self, report: HostReport) {
 		match report {
 			HostReport::FreezeSnapshotCommitted { selection } => {
+				let selection_editable = self.pending_frozen_selection_editable
+					|| (self.scene.mode == CaptureMode::Frozen && self.frozen_selection_editable);
+
 				self.scene.mode = CaptureMode::Frozen;
 				self.scene.live_selection_preview = None;
 				self.scene.frozen_selection = Some(selection);
 				self.scene.active_monitor = None;
 				self.scene.highlighted_window = None;
-				self.frozen_selection_editable = self.pending_frozen_selection_editable;
+				self.frozen_selection_editable = selection_editable;
 				self.pending_frozen_selection_editable = false;
 				self.scene.cursor_intent = if self.frozen_selection_editable {
 					CursorIntent::Grab
@@ -886,6 +889,29 @@ mod tests {
 		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
 
 		enter_frozen_with_drag_selection(&mut session, GlobalRect::new(10, 20, 100, 50));
+
+		assert!(
+			session
+				.scene_model()
+				.toolbar_items
+				.iter()
+				.any(|item| item.kind == ToolbarItemKind::Scroll && item.enabled)
+		);
+
+		session.handle_host_event(HostEvent::ToolbarItemInvoked { item: ToolbarItemKind::Scroll });
+
+		assert_eq!(session.pop_host_request(), Some(HostRequest::StartScrollCapture));
+	}
+
+	#[test]
+	fn scroll_toolbar_survives_drag_region_recommit() {
+		let mut session = CaptureSessionCore::with_config(SessionConfig::default());
+
+		enter_frozen_with_drag_selection(&mut session, GlobalRect::new(10, 20, 100, 50));
+
+		session.handle_host_report(HostReport::FreezeSnapshotCommitted {
+			selection: GlobalRect::new(20, 30, 100, 50),
+		});
 
 		assert!(
 			session
