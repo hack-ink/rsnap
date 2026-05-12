@@ -409,7 +409,7 @@ enum LoupeSampleSizePreference: String, CaseIterable {
 	}
 }
 
-package enum CaptureFrameBackgroundPreference: String, CaseIterable {
+package enum CaptureFrameBackgroundPreference: String, CaseIterable, Sendable {
 	case systemWallpaper = "system_wallpaper"
 	case aurora
 	case graphite
@@ -429,7 +429,7 @@ package enum CaptureFrameBackgroundPreference: String, CaseIterable {
 	}
 }
 
-enum CaptureFrameApplicabilityPreference: String, CaseIterable {
+enum CaptureFrameApplicabilityPreference: String, CaseIterable, Sendable {
 	case dragRegion = "drag_region"
 	case window
 	case scrollCapture = "scroll_capture"

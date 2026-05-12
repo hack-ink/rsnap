@@ -248,6 +248,7 @@ extension CaptureSessionController {
 		}
 
 		frozenSnapshotGeneration &+= 1
+		invalidatePreparedFrozenExport()
 		let generation = frozenSnapshotGeneration
 		let captureID = currentCaptureTelemetryID
 		chromeState.frozenBaseImage = nil
@@ -263,6 +264,7 @@ extension CaptureSessionController {
 			do {
 				try self.session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 				try self.syncCore()
+				self.schedulePreparedFrozenExport(reason: "selection_transform")
 				NativeHostTelemetry.captureEvent(
 					"capture.frozen_selection_transform_commit",
 					captureID: captureID
@@ -390,11 +392,13 @@ extension CaptureSessionController {
 
 		do {
 			frozenSnapshotGeneration &+= 1
+			invalidatePreparedFrozenExport()
 			chromeState.frozenSelectionSnapshot = nextSelection
 			chromeState.frozenBaseImage =
 				nextBaseImage ?? frozenBaseImageFromDisplay(for: nextSelection)
 			try session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 			try syncCore()
+			schedulePreparedFrozenExport(reason: "auto_center")
 		} catch {
 			NativeHostTelemetry.captureWarning(
 				"capture.frozen_auto_center_failed",

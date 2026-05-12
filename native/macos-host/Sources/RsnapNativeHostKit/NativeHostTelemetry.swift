@@ -351,10 +351,26 @@ enum NativeHostTelemetry {
 		success: Bool,
 		failureStage: String,
 		width: Int,
+		height: Int,
+		cacheHit: Bool = false
+	) {
+		captureTimingLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.copy_capture totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) clearPasteboardMs=\(clearPasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) makeImageMs=\(makeImageMilliseconds, format: .fixed(precision: 2), privacy: .public) writePasteboardMs=\(writePasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) failureStage=\(failureStage, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public) cacheHit=\(cacheHit, privacy: .public)"
+		)
+	}
+
+	static func preparedFrozenExportTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		captureImageMilliseconds: Double,
+		makeImageMilliseconds: Double,
+		success: Bool,
+		reason: String,
+		width: Int,
 		height: Int
 	) {
 		captureTimingLogger.info(
-			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.copy_capture totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) clearPasteboardMs=\(clearPasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) makeImageMs=\(makeImageMilliseconds, format: .fixed(precision: 2), privacy: .public) writePasteboardMs=\(writePasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) failureStage=\(failureStage, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public)"
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.prepared_frozen_export totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) makeImageMs=\(makeImageMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) reason=\(reason, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public)"
 		)
 	}
 
