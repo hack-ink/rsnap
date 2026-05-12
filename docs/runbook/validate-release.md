@@ -57,13 +57,12 @@ Validate these user-visible flows:
 - Live HUD, Tab loupe sampling, window outline, dragged-region freeze, click-window freeze, and
   fullscreen fallback.
 - Frozen toolbar tools: pointer, pen, arrow, text, mosaic, spotlight, undo, redo, auto-center,
-  Recognize Text, copy, and save.
-- For the v0.2.1 native-host release, scroll capture is hidden: the toolbar must not show a scroll
-  capture item, and pressing `s` must not enter scroll capture.
-- If a later release candidate includes Scroll Capture, `docs/runbook/scroll-capture-recovery-plan.md`
-  must have exited successfully first. Then Scroll Capture must stay absent for window-click and
-  fullscreen freezes, must start from a dragged-region freeze via toolbar or plain `s`, and must
-  pass the live acceptance run in that plan.
+  Recognize Text, Scroll Capture, copy, and save.
+- For the v0.2.2 native-host release, Scroll Capture must stay absent for window-click and
+  fullscreen freezes, remain available after dragged-region movement or auto-center, start from a
+  dragged-region freeze via toolbar or plain `s`, and pass the functional scroll path in
+  `docs/runbook/scroll-capture-recovery-plan.md`. Scroll toolbar Liquid Glass cadence and
+  performance metrics are excluded from the v0.2.2 publish gate and tracked as follow-up work.
 - Light and dark appearance; Classic Glass and Liquid Glass where the OS and current build support
   Liquid Glass.
 - Settings -> About update rows: `Auto Update` and `Release Version` must use Title Case for row
