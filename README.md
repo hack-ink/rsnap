@@ -162,7 +162,8 @@ Rsnap requires **Screen Recording** permission to capture other apps/windows.
   - `Filename Prefix` (default: `Rsnap`, sanitized to `[A-Za-z0-9_-]`)
   - `Naming` (`Timestamp` or `Sequence`)
   - `Frame Preset` (`Off`, wallpaper, or gradient backgrounds)
-  - `Apply To` for drag-region and window captures; fullscreen captures are excluded
+  - `Apply To` for drag-region and window captures; scroll capture follows drag-region, and
+    fullscreen captures are excluded
 
 ### Current scroll-capture status
 
