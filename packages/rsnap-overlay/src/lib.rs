@@ -120,6 +120,14 @@ pub mod scroll_stitching {
 			}
 		}
 
+		/// Returns the committed stitched export dimensions without cloning pixels.
+		#[must_use]
+		pub fn export_dimensions(&self) -> (u32, u32) {
+			let image = self.inner.export_image();
+
+			(image.width(), image.height())
+		}
+
 		/// Returns the current committed viewport top offset in pixels.
 		#[must_use]
 		pub fn current_viewport_top_y(&self) -> i32 {
