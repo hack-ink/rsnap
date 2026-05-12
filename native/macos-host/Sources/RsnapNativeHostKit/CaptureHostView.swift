@@ -2227,7 +2227,7 @@ final class CaptureHostView: NSView {
 			case .scroll:
 				item.enabled = controller?.scrollCaptureToolbarEnabled ?? false
 			case .ocr:
-				item.enabled = originalItem.enabled && !scrollCaptureActive
+				item.enabled = originalItem.enabled
 			case .copy, .save:
 				item.enabled = originalItem.enabled
 			}
