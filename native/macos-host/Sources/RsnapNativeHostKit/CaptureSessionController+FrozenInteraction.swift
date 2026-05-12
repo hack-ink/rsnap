@@ -92,6 +92,11 @@ extension CaptureSessionController {
 		if chromeState.frozenSelectionEditable == false {
 			return "not_dragged_region"
 		}
+		if let selection = currentFrozenSelection(),
+			scrollCaptureSelectionHasSufficientHeight(selection) == false
+		{
+			return "selection_too_short"
+		}
 		return "unavailable"
 	}
 
@@ -105,18 +110,24 @@ extension CaptureSessionController {
 			return "Scroll Capture requires a dragged region selection."
 		case "no_selection", "requires_frozen":
 			return "Select a dragged region before starting Scroll Capture."
+		case "selection_too_short":
+			return "Select a taller region before starting Scroll Capture."
 		default:
 			return "Scroll Capture is not available for this selection."
 		}
 	}
 
 	private func scrollCaptureEntryDetail(source: String, reason: String) -> String {
-		[
+		let selection = currentFrozenSelection()
+
+		return [
 			"source=\(source)",
 			"reason=\(reason)",
 			"scene=\(scene.mode)",
 			"editable=\(chromeState.frozenSelectionEditable)",
-			"has_selection=\(currentFrozenSelection() != nil)",
+			"has_selection=\(selection != nil)",
+			"selection_height_px=\(selection.map { scrollCaptureSelectionHeightPixels($0) } ?? 0)",
+			"minimum_height_px=\(Self.scrollCaptureMinimumSelectionHeightPixels)",
 			"active=\(scrollCaptureState != nil)",
 		].joined(separator: " ")
 	}

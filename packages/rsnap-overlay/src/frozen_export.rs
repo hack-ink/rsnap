@@ -251,12 +251,11 @@ pub fn render_frozen_overlay_export_rgba(
 	selection: DisplayPointRect,
 	elements: &[FrozenOverlayExportElement],
 ) -> Result<RgbaImage> {
-	let mut image = rgba_image_from_bytes(width, height, rgba)?;
-	let original = image.clone();
 	let transform = ExportTransform::new(selection, width, height)?;
+	let mut image = rgba_image_from_bytes(width, height, rgba)?;
 
 	apply_mosaics(&mut image, transform, elements);
-	apply_spotlights(&mut image, &original, transform, elements);
+	apply_spotlights(&mut image, transform, elements);
 	render_pen_annotations(&mut image, transform, elements);
 	render_arrow_annotations(&mut image, transform, elements);
 	render_text_annotations(&mut image, transform, elements);
@@ -322,7 +321,6 @@ fn apply_mosaic(image: &mut RgbaImage, transform: ExportTransform, rect: Display
 
 fn apply_spotlights(
 	image: &mut RgbaImage,
-	original: &RgbaImage,
 	transform: ExportTransform,
 	elements: &[FrozenOverlayExportElement],
 ) {
@@ -338,10 +336,12 @@ fn apply_spotlights(
 		return;
 	}
 
+	let original = image.clone();
+
 	dim_image_for_spotlight(image);
 
 	for spotlight in &spotlights {
-		restore_spotlight_rect(image, original, transform, spotlight.rect);
+		restore_spotlight_rect(image, &original, transform, spotlight.rect);
 	}
 	for spotlight in spotlights {
 		render_spotlight_border(image, transform, spotlight.rect, spotlight.style);
@@ -366,16 +366,18 @@ fn restore_spotlight_rect(
 	let Some(destination) = transform.integral_image_rect(rect) else {
 		return;
 	};
-	let source = imageops::crop_imm(
-		original,
-		destination.x,
-		destination.y,
-		destination.width,
-		destination.height,
-	)
-	.to_image();
+	let row_stride = image.width() as usize * 4;
+	let left_byte = destination.x as usize * 4;
+	let copy_len = destination.width as usize * 4;
+	let original_bytes = original.as_raw();
+	let image_bytes = image.as_mut();
 
-	imageops::replace(image, &source, i64::from(destination.x), i64::from(destination.y));
+	for row in destination.y..destination.y + destination.height {
+		let start = row as usize * row_stride + left_byte;
+		let end = start + copy_len;
+
+		image_bytes[start..end].copy_from_slice(&original_bytes[start..end]);
+	}
 }
 
 fn render_spotlight_border(
@@ -557,17 +559,30 @@ fn draw_segments(
 	}
 
 	let radius = (line_width * 0.5).max(0.5);
-	let mut coverage_mask = vec![0_u8; image.width() as usize * image.height() as usize];
+	let Some(mask_rect) = segments_pixel_bounds(segments, image.width(), image.height(), radius)
+	else {
+		return;
+	};
+	let mut coverage_mask = vec![0_u8; mask_rect.width as usize * mask_rect.height as usize];
 
 	for (start, end) in segments {
-		rasterize_segment(&mut coverage_mask, image.width(), image.height(), *start, *end, radius);
+		rasterize_segment(
+			&mut coverage_mask,
+			mask_rect,
+			image.width(),
+			image.height(),
+			*start,
+			*end,
+			radius,
+		);
 	}
 
-	blend_coverage_mask(image, &coverage_mask, color);
+	blend_coverage_mask(image, mask_rect, &coverage_mask, color);
 }
 
 fn rasterize_segment(
 	coverage_mask: &mut [u8],
+	mask_rect: PixelRect,
 	width: u32,
 	height: u32,
 	start: Pos2,
@@ -578,27 +593,26 @@ fn rasterize_segment(
 	let delta_len_sq = delta.length_sq();
 
 	if delta_len_sq <= f32::EPSILON {
-		rasterize_circle(coverage_mask, width, height, start, radius);
+		rasterize_circle(coverage_mask, mask_rect, width, height, start, radius);
 
 		return;
 	}
 
-	let min_x = ((start.x.min(end.x) - radius - 0.5).floor().max(0.0)) as u32;
-	let min_y = ((start.y.min(end.y) - radius - 0.5).floor().max(0.0)) as u32;
-	let max_x =
-		((start.x.max(end.x) + radius + 0.5).ceil().min(width.saturating_sub(1) as f32)) as u32;
-	let max_y =
-		((start.y.max(end.y) + radius + 0.5).ceil().min(height.saturating_sub(1) as f32)) as u32;
+	let Some(bounds) = segment_pixel_bounds(start, end, width, height, radius)
+		.and_then(|bounds| intersect_pixel_rect(bounds, mask_rect))
+	else {
+		return;
+	};
 
-	for y in min_y..=max_y {
-		for x in min_x..=max_x {
+	for y in bounds.y..bounds.y + bounds.height {
+		for x in bounds.x..bounds.x + bounds.width {
 			let sample = Pos2::new(x as f32 + 0.5, y as f32 + 0.5);
 			let projection = ((sample - start).dot(delta) / delta_len_sq).clamp(0.0, 1.0);
 			let nearest = start + delta * projection;
 
 			update_coverage_mask(
 				coverage_mask,
-				width,
+				mask_rect,
 				x,
 				y,
 				stroke_coverage(sample.distance(nearest), radius),
@@ -607,23 +621,27 @@ fn rasterize_segment(
 	}
 }
 
-fn rasterize_circle(coverage_mask: &mut [u8], width: u32, height: u32, center: Pos2, radius: f32) {
-	let min_x = ((center.x - radius - 0.5).floor().max(0.0)) as u32;
-	let min_y = ((center.y - radius - 0.5).floor().max(0.0)) as u32;
-	let max_x = ((center.x + radius + 0.5).ceil().min(width.saturating_sub(1) as f32)) as u32;
-	let max_y = ((center.y + radius + 0.5).ceil().min(height.saturating_sub(1) as f32)) as u32;
-
-	if min_x > max_x || min_y > max_y {
+fn rasterize_circle(
+	coverage_mask: &mut [u8],
+	mask_rect: PixelRect,
+	width: u32,
+	height: u32,
+	center: Pos2,
+	radius: f32,
+) {
+	let Some(bounds) = circle_pixel_bounds(center, width, height, radius)
+		.and_then(|bounds| intersect_pixel_rect(bounds, mask_rect))
+	else {
 		return;
-	}
+	};
 
-	for y in min_y..=max_y {
-		for x in min_x..=max_x {
+	for y in bounds.y..bounds.y + bounds.height {
+		for x in bounds.x..bounds.x + bounds.width {
 			let sample = Pos2::new(x as f32 + 0.5, y as f32 + 0.5);
 
 			update_coverage_mask(
 				coverage_mask,
-				width,
+				mask_rect,
 				x,
 				y,
 				stroke_coverage(sample.distance(center), radius),
@@ -632,35 +650,159 @@ fn rasterize_circle(coverage_mask: &mut [u8], width: u32, height: u32, center: P
 	}
 }
 
+fn segments_pixel_bounds(
+	segments: &[(Pos2, Pos2)],
+	width: u32,
+	height: u32,
+	radius: f32,
+) -> Option<PixelRect> {
+	let mut bounds = None;
+
+	for (start, end) in segments {
+		let Some(segment_bounds) = segment_pixel_bounds(*start, *end, width, height, radius) else {
+			continue;
+		};
+
+		bounds = Some(match bounds {
+			Some(bounds) => union_pixel_rect(bounds, segment_bounds),
+			None => segment_bounds,
+		});
+	}
+
+	bounds
+}
+
+fn segment_pixel_bounds(
+	start: Pos2,
+	end: Pos2,
+	width: u32,
+	height: u32,
+	radius: f32,
+) -> Option<PixelRect> {
+	pixel_bounds(
+		start.x.min(end.x) - radius - 0.5,
+		start.y.min(end.y) - radius - 0.5,
+		start.x.max(end.x) + radius + 0.5,
+		start.y.max(end.y) + radius + 0.5,
+		width,
+		height,
+	)
+}
+
+fn circle_pixel_bounds(center: Pos2, width: u32, height: u32, radius: f32) -> Option<PixelRect> {
+	pixel_bounds(
+		center.x - radius - 0.5,
+		center.y - radius - 0.5,
+		center.x + radius + 0.5,
+		center.y + radius + 0.5,
+		width,
+		height,
+	)
+}
+
+fn pixel_bounds(
+	min_x: f32,
+	min_y: f32,
+	max_x: f32,
+	max_y: f32,
+	width: u32,
+	height: u32,
+) -> Option<PixelRect> {
+	if !min_x.is_finite() || !min_y.is_finite() || !max_x.is_finite() || !max_y.is_finite() {
+		return None;
+	}
+
+	let left = min_x.floor().max(0.0) as u32;
+	let top = min_y.floor().max(0.0) as u32;
+	let right = (max_x.ceil() + 1.0).clamp(0.0, width as f32) as u32;
+	let bottom = (max_y.ceil() + 1.0).clamp(0.0, height as f32) as u32;
+
+	if left >= right || top >= bottom {
+		return None;
+	}
+
+	Some(PixelRect { x: left, y: top, width: right - left, height: bottom - top })
+}
+
+fn intersect_pixel_rect(first: PixelRect, second: PixelRect) -> Option<PixelRect> {
+	let left = first.x.max(second.x);
+	let top = first.y.max(second.y);
+	let right = (first.x + first.width).min(second.x + second.width);
+	let bottom = (first.y + first.height).min(second.y + second.height);
+
+	if left >= right || top >= bottom {
+		return None;
+	}
+
+	Some(PixelRect { x: left, y: top, width: right - left, height: bottom - top })
+}
+
+fn union_pixel_rect(first: PixelRect, second: PixelRect) -> PixelRect {
+	let left = first.x.min(second.x);
+	let top = first.y.min(second.y);
+	let right = (first.x + first.width).max(second.x + second.width);
+	let bottom = (first.y + first.height).max(second.y + second.height);
+
+	PixelRect { x: left, y: top, width: right - left, height: bottom - top }
+}
+
 fn stroke_coverage(distance: f32, radius: f32) -> u8 {
 	((radius + 0.5 - distance).clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-fn update_coverage_mask(coverage_mask: &mut [u8], width: u32, x: u32, y: u32, coverage: u8) {
+fn update_coverage_mask(
+	coverage_mask: &mut [u8],
+	mask_rect: PixelRect,
+	x: u32,
+	y: u32,
+	coverage: u8,
+) {
 	if coverage == 0 {
 		return;
 	}
 
-	let index = y as usize * width as usize + x as usize;
+	let index = (y - mask_rect.y) as usize * mask_rect.width as usize + (x - mask_rect.x) as usize;
 
 	coverage_mask[index] = coverage_mask[index].max(coverage);
 }
 
-fn blend_coverage_mask(image: &mut RgbaImage, coverage_mask: &[u8], color: Rgba<u8>) {
+fn blend_coverage_mask(
+	image: &mut RgbaImage,
+	mask_rect: PixelRect,
+	coverage_mask: &[u8],
+	color: Rgba<u8>,
+) {
 	let source_alpha = f32::from(color[3]) / 255.0;
+	let image_width = image.width() as usize;
+	let image_bytes = image.as_mut();
+	let mask_width = mask_rect.width as usize;
+	let left = mask_rect.x as usize;
+	let top = mask_rect.y as usize;
 
-	for (index, pixel) in image.pixels_mut().enumerate() {
-		let mask_alpha = coverage_mask[index];
+	for local_y in 0..mask_rect.height as usize {
+		let mask_row_start = local_y * mask_width;
+		let image_row_start = ((top + local_y) * image_width + left) * 4;
 
-		if mask_alpha == 0 {
-			continue;
+		for local_x in 0..mask_width {
+			let mask_alpha = coverage_mask[mask_row_start + local_x];
+
+			if mask_alpha == 0 {
+				continue;
+			}
+
+			let pixel_start = image_row_start + local_x * 4;
+			let pixel_end = pixel_start + 4;
+
+			blend_pixel_channels(
+				&mut image_bytes[pixel_start..pixel_end],
+				color,
+				f32::from(mask_alpha) / 255.0 * source_alpha,
+			);
 		}
-
-		blend_pixel(pixel, color, f32::from(mask_alpha) / 255.0 * source_alpha);
 	}
 }
 
-fn blend_pixel(pixel: &mut Rgba<u8>, color: Rgba<u8>, src_a: f32) {
+fn blend_pixel_channels(pixel: &mut [u8], color: Rgba<u8>, src_a: f32) {
 	let dst_a = f32::from(pixel[3]) / 255.0;
 	let out_a = src_a + dst_a * (1.0 - src_a);
 
@@ -833,6 +975,33 @@ mod tests {
 		assert_eq!(bottom_rendered.get_pixel(10, 0), image.get_pixel(10, 0));
 		assert_ne!(top_rendered.get_pixel(10, 0), image.get_pixel(10, 0));
 		assert_eq!(top_rendered.get_pixel(10, 19), image.get_pixel(10, 19));
+	}
+
+	#[test]
+	fn export_compositor_skips_offscreen_segments_without_dropping_visible_stroke() {
+		let image = RgbaImage::from_pixel(20, 20, Rgba([24, 24, 24, 255]));
+		let elements = vec![FrozenOverlayExportElement::Pen(FrozenOverlayExportPen {
+			points: vec![
+				FrozenOverlayExportPoint::new(-20.0, 10.0),
+				FrozenOverlayExportPoint::new(-10.0, 10.0),
+				FrozenOverlayExportPoint::new(10.0, 10.0),
+				FrozenOverlayExportPoint::new(12.0, 10.0),
+			],
+			style: FrozenOverlayExportStrokeStyle {
+				stroke_width_points: 2.0,
+				rgba: [255, 107, 107, 255],
+			},
+		})];
+		let rendered = frozen_export::render_frozen_overlay_export_rgba(
+			image.width(),
+			image.height(),
+			image.as_raw(),
+			DisplayPointRect::new(0.0, 0.0, 20.0, 20.0),
+			&elements,
+		)
+		.expect("valid export");
+
+		assert_ne!(rendered.get_pixel(10, 10), image.get_pixel(10, 10));
 	}
 
 	#[test]

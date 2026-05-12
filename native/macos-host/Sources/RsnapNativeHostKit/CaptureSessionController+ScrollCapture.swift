@@ -48,11 +48,15 @@ extension CaptureSessionController {
 	private static let scrollCaptureQueuedWheelDeltaLimitMultiplier = 32.0
 
 	var scrollCaptureToolbarEnabled: Bool {
-		Self.scrollCaptureEnabled
-			&& scene.mode == .frozen
-			&& scrollCaptureState == nil
-			&& chromeState.frozenSelectionEditable
-			&& currentFrozenSelection() != nil
+		guard Self.scrollCaptureEnabled,
+			scene.mode == .frozen,
+			scrollCaptureState == nil,
+			chromeState.frozenSelectionEditable,
+			let selection = currentFrozenSelection()
+		else {
+			return false
+		}
+		return scrollCaptureSelectionHasSufficientHeight(selection)
 	}
 
 	func handleScrollCaptureWheel(_ event: NSEvent, at point: CGPoint) -> Bool {
@@ -473,6 +477,11 @@ extension CaptureSessionController {
 		}
 		guard chromeState.frozenSelectionEditable else {
 			try setHostStatusMessage("Scroll capture requires a dragged region selection.")
+			refreshOverlay()
+			return
+		}
+		guard scrollCaptureSelectionHasSufficientHeight(selection) else {
+			try setHostStatusMessage("Select a taller region before starting Scroll Capture.")
 			refreshOverlay()
 			return
 		}
@@ -1098,6 +1107,24 @@ extension CaptureSessionController {
 		return scrollCaptureFlippedDesktopPoint(fallbackAppKitPoint)
 	}
 
+	func scrollCaptureSelectionHasSufficientHeight(_ selection: CGRect) -> Bool {
+		scrollCaptureSelectionHeightPixels(selection)
+			>= Self.scrollCaptureMinimumSelectionHeightPixels
+	}
+
+	func scrollCaptureSelectionHeightPixels(_ selection: CGRect) -> Int {
+		if chromeState.frozenSelectionSnapshot == selection,
+			let frozenBaseImage = chromeState.frozenBaseImage
+		{
+			return frozenBaseImage.height
+		}
+		let point = CGPoint(x: selection.midX, y: selection.midY)
+		let scale =
+			screen(containing: point)?.backingScaleFactor
+			?? NSScreen.main?.backingScaleFactor
+			?? 1
+		return Int((selection.height * scale).rounded())
+	}
 }
 
 private func scrollCaptureFlippedDesktopPoint(_ point: CGPoint) -> CGPoint {
