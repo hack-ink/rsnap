@@ -73,11 +73,10 @@ Prototype / in active development.
   `docs/spec/capture-session.md` is the current contract source of truth.
 - Menubar and Dock are not included in live window-outline targeting.
 - Windows support is planned (minimum Windows 10), but not implemented yet.
-- The scroll-capture engine, deterministic replay, and benchmark surfaces remain in the repository,
-  but the v0.2.1 native-host release does not expose scroll capture in the toolbar. On this
-  development branch, scroll capture uses ordered ScreenCaptureKit region frames, overlay-local
-  wheel forwarding, and Rust-owned fail-closed stitching on macOS. Release readiness for broader
-  target apps is governed by `docs/runbook/scroll-capture-recovery-plan.md`.
+- As of v0.2.2, the native-host release exposes Scroll Capture for dragged-region Frozen captures
+  on macOS. It uses ordered ScreenCaptureKit region frames, overlay-local wheel forwarding, and
+  Rust-owned fail-closed stitching. Release readiness for broader target apps is governed by
+  `docs/runbook/scroll-capture-recovery-plan.md`.
 
 ## Usage
 
@@ -130,8 +129,8 @@ Rsnap requires **Screen Recording** permission to capture other apps/windows.
 - Normal region/window/monitor capture does not require Accessibility or Input Monitoring.
 - The retained scroll-capture path uses Screen Recording-backed screenshots plus overlay-local
   wheel forwarding; it does not require Accessibility, Input Monitoring, Accessibility target
-  acquisition, app scripting, or browser/DOM access. The v0.2.1 native-host release does not expose
-  scroll capture in the toolbar.
+  acquisition, app scripting, or browser/DOM access. The v0.2.2 native-host release exposes Scroll
+  Capture from dragged-region Frozen captures only.
 - macOS may describe Screen Recording as `Screen & System Audio Recording` or as direct screen/audio access when Rsnap bypasses the system picker.
 - Settings -> Permissions shows Screen Recording as the required capture permission.
 - Normal native capture depends on Screen Recording; if access is missing, Rsnap opens the Screen Recording page in System Settings and shows a floating drag-to-grant guide.
@@ -167,15 +166,14 @@ Rsnap requires **Screen Recording** permission to capture other apps/windows.
 
 ### Current scroll-capture status
 
-Scroll capture is temporarily hidden in the v0.2.1 native-host release. The retained Rust
-scroll-capture session, deterministic replay, and benchmark surfaces remain for validation and
-future re-enablement, but users should not expect a `Scroll Capture` toolbar item in that release.
+As of v0.2.2, Scroll Capture is exposed for dragged-region Frozen captures on macOS. It remains
+absent for window-click and fullscreen freezes. The retained Rust scroll-capture session,
+deterministic replay, and benchmark surfaces remain the validation authority for stitching behavior.
 
-On this development branch, scroll capture targets dragged-region Frozen capture on macOS. The
-implementation commits downward growth only after ordered-frame pairwise registration plus overlap
-proof, fails closed on weak registration or rewind, and forwards wheel input to target apps through
-one universal path. Follow `docs/runbook/scroll-capture-recovery-plan.md` for release-scope
-validation.
+The implementation commits downward growth only after ordered-frame pairwise registration plus
+overlap proof, fails closed on weak registration or rewind, and forwards wheel input to target apps
+through one universal path. Follow `docs/runbook/scroll-capture-recovery-plan.md` for
+release-scope validation beyond the deterministic and native smoke surfaces.
 
 ## Development
 
