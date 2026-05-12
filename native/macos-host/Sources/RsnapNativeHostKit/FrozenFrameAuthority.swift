@@ -74,10 +74,16 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	private final class DisplayStream: @unchecked Sendable {
 		let stream: SCStream
 		let output: FrozenFrameStreamOutput
+		let selfCaptureFilterComplete: Bool
 
-		init(stream: SCStream, output: FrozenFrameStreamOutput) {
+		init(
+			stream: SCStream,
+			output: FrozenFrameStreamOutput,
+			selfCaptureFilterComplete: Bool
+		) {
 			self.stream = stream
 			self.output = output
+			self.selfCaptureFilterComplete = selfCaptureFilterComplete
 		}
 
 		func stop() {
@@ -803,6 +809,22 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		return eligibleRecord.selfCaptureFilterComplete
 	}
 
+	func hasSelfCaptureCompleteStream(containing point: CGPoint) -> Bool {
+		stateLock.lock()
+		defer {
+			stateLock.unlock()
+		}
+		guard selfCaptureFilterRequired else {
+			return false
+		}
+		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key,
+			let stream = streams[displayID]
+		else {
+			return false
+		}
+		return stream.selfCaptureFilterComplete
+	}
+
 	func rgbSample(containing point: CGPoint) -> RGBSample? {
 		liveRgbSample(containing: point)?.rgb
 	}
@@ -1036,7 +1058,11 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				generation == requestGeneration
 				&& (!selfCaptureFilterRequired || preparedFilter.selfCaptureFilterComplete)
 			if shouldStart {
-				streams[target.displayID] = DisplayStream(stream: stream, output: output)
+				streams[target.displayID] = DisplayStream(
+					stream: stream,
+					output: output,
+					selfCaptureFilterComplete: preparedFilter.selfCaptureFilterComplete
+				)
 			}
 			stateLock.unlock()
 			if selfCaptureFilterRequired, !preparedFilter.selfCaptureFilterComplete {

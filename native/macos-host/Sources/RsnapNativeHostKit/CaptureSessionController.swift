@@ -44,7 +44,7 @@ final class CaptureSessionController: NSObject {
 	static let scrollCaptureToolbarBackdropRefreshInterval: TimeInterval = 1.0 / 120.0
 	static let scrollCaptureWheelTelemetryInterval: TimeInterval = 0.25
 	static let scrollCapturePassthroughWheelMotionHintMultiplier = 3.5
-	static let liveFrameStreamReleaseGrace: TimeInterval = 4.0
+	static let liveFrameStreamReleaseGrace: TimeInterval = 3.0
 
 	let settingsStore: NativeHostSettingsStore
 	let liveFrameStream = LiveFrameStreamBroker()

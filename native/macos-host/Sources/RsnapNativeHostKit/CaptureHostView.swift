@@ -40,6 +40,7 @@ func makeFrozenMosaicPatch(from image: CGImage, sourceRect: CGRect) -> CGImage? 
 @MainActor
 final class CaptureHostView: NSView {
 	private static let liveDragIntentThreshold: CGFloat = 3
+	private static let scrollToolbarBackdropCaptureMinimumInterval: TimeInterval = 1.0 / 30.0
 
 	private final class FrozenToolbarRenderView: NSView {
 		struct Item: Equatable {
@@ -290,6 +291,7 @@ final class CaptureHostView: NSView {
 	private var frozenToolbarLiquidGlassVisible = false
 	private var frozenToolbarLiquidGlassContentDrawn = false
 	private var lastScrollCaptureToolbarBackdropRefreshUptime: TimeInterval = 0
+	private var lastScrollToolbarBackdropCaptureStartedUptime: TimeInterval = 0
 	private let scrollToolbarBackdropRefreshGapMetric = NativeHostTelemetry.distribution(
 		"scroll_capture.toolbar_backdrop_refresh_gap",
 		category: "Capture",
@@ -306,6 +308,8 @@ final class CaptureHostView: NSView {
 	)
 	private var scrollToolbarBackdropCaptureInFlight = false
 	private var scrollToolbarBackdropCaptureGeneration: UInt64 = 0
+	private var scrollToolbarBackdropSeedFrame: CGRect?
+	private var scrollToolbarBackdropSeedImage: CGImage?
 	private var trackingAreaRef: NSTrackingArea?
 	private var pointerOverFrozenToolbar = false
 	private var hoveredToolbarAction: ToolbarItemKind?
@@ -397,6 +401,14 @@ final class CaptureHostView: NSView {
 			frozenFirstDisplayHandoffStartedAt = nil
 			frozenFirstDisplayPendingFrameDisplayed = false
 			defersFrozenToolbarClassicGlassUntilAfterFirstDisplay = false
+			scrollToolbarBackdropSeedFrame = nil
+			scrollToolbarBackdropSeedImage = nil
+		} else if previousChrome.scrollMinimapPreview == nil, chrome.scrollMinimapPreview != nil {
+			scrollToolbarBackdropSeedFrame = previousChrome.frozenDisplayFrame
+			scrollToolbarBackdropSeedImage = previousChrome.frozenDisplayImage
+		} else if previousChrome.scrollMinimapPreview != nil, chrome.scrollMinimapPreview == nil {
+			scrollToolbarBackdropSeedFrame = nil
+			scrollToolbarBackdropSeedImage = nil
 		}
 		self.scene = scene
 		self.chrome = chrome
@@ -3315,9 +3327,29 @@ final class CaptureHostView: NSView {
 	}
 
 	private func frozenDisplayPatch(in globalFrame: CGRect) -> CGImage? {
+		frozenDisplayPatch(
+			in: globalFrame,
+			displayFrame: chrome.frozenDisplayFrame,
+			image: chrome.frozenDisplayImage
+		)
+	}
+
+	private func scrollToolbarBackdropSeedPatch(in globalFrame: CGRect) -> CGImage? {
+		frozenDisplayPatch(
+			in: globalFrame,
+			displayFrame: scrollToolbarBackdropSeedFrame,
+			image: scrollToolbarBackdropSeedImage
+		)
+	}
+
+	private func frozenDisplayPatch(
+		in globalFrame: CGRect,
+		displayFrame: CGRect?,
+		image: CGImage?
+	) -> CGImage? {
 		guard
-			let displayFrame = chrome.frozenDisplayFrame,
-			let image = chrome.frozenDisplayImage
+			let displayFrame,
+			let image
 		else {
 			return nil
 		}
@@ -3573,17 +3605,32 @@ final class CaptureHostView: NSView {
 		guard chrome.scrollMinimapPreview != nil,
 			let globalFrame = globalRect(from: toolbarFrame)
 		else {
+			lastScrollToolbarBackdropCaptureStartedUptime = 0
 			toolbarLiquidGlassBackdropView?.isHidden = true
 			toolbarLiquidGlassBackdropView?.image = nil
 			return
 		}
 		let existingFrameMatches = toolbarLiquidGlassBackdropView?.frame == toolbarFrame
 		let existingHasImage = toolbarLiquidGlassBackdropView?.image != nil
-		if existingFrameMatches, existingHasImage {
+		if existingHasImage {
+			if !existingFrameMatches {
+				toolbarLiquidGlassBackdropView?.frame = toolbarFrame
+			}
 			toolbarLiquidGlassBackdropView?.isHidden = preparingFirstVisibleToolbar
 		} else {
 			toolbarLiquidGlassBackdropView?.isHidden = true
 			toolbarLiquidGlassBackdropView?.image = nil
+		}
+		if !existingHasImage,
+			let toolbarLiquidGlassView,
+			let seedPatch = scrollToolbarBackdropSeedPatch(in: globalFrame)
+		{
+			let backdropView = ensureFrozenToolbarBackdropView(below: toolbarLiquidGlassView)
+			if backdropView.frame != toolbarFrame {
+				backdropView.frame = toolbarFrame
+			}
+			backdropView.image = NSImage(cgImage: seedPatch, size: toolbarFrame.size)
+			backdropView.isHidden = preparingFirstVisibleToolbar
 		}
 		scheduleScrollToolbarBackdropCapture(
 			toolbarFrame: toolbarFrame,
@@ -3600,20 +3647,36 @@ final class CaptureHostView: NSView {
 		else {
 			return
 		}
+		let now = ProcessInfo.processInfo.systemUptime
+		guard
+			lastScrollToolbarBackdropCaptureStartedUptime == 0
+				|| now - lastScrollToolbarBackdropCaptureStartedUptime
+					>= Self.scrollToolbarBackdropCaptureMinimumInterval
+		else {
+			return
+		}
+		lastScrollToolbarBackdropCaptureStartedUptime = now
 		scrollToolbarBackdropCaptureInFlight = true
 		scrollToolbarBackdropCaptureGeneration &+= 1
 		let generation = scrollToolbarBackdropCaptureGeneration
-		scrollToolbarBackdropCaptureQueue.async { [toolbarFrame, globalFrame, captureSource] in
-			let patch = CaptureOverlayController.captureImageBelowOverlay(
-				in: globalFrame,
-				source: captureSource
-			)
-			DispatchQueue.main.async { [weak self] in
-				self?.finishScrollToolbarBackdropCapture(
-					patch,
-					toolbarFrame: toolbarFrame,
-					generation: generation
+		DispatchQueue.main.async { [weak self] in
+			guard let self, self.scrollToolbarBackdropCaptureGeneration == generation else {
+				self?.scrollToolbarBackdropCaptureInFlight = false
+				return
+			}
+			self.scrollToolbarBackdropCaptureQueue.async {
+				[toolbarFrame, globalFrame, captureSource] in
+				let patch = CaptureOverlayController.captureImageBelowOverlay(
+					in: globalFrame,
+					source: captureSource
 				)
+				DispatchQueue.main.async { [weak self] in
+					self?.finishScrollToolbarBackdropCapture(
+						patch,
+						toolbarFrame: toolbarFrame,
+						generation: generation
+					)
+				}
 			}
 		}
 	}
@@ -3826,6 +3889,9 @@ final class CaptureHostView: NSView {
 		frozenToolbarLiquidGlassContentDrawn = false
 		scrollToolbarBackdropCaptureGeneration &+= 1
 		scrollToolbarBackdropCaptureInFlight = false
+		lastScrollToolbarBackdropCaptureStartedUptime = 0
+		scrollToolbarBackdropSeedFrame = nil
+		scrollToolbarBackdropSeedImage = nil
 		toolbarLiquidGlassBackdropView?.isHidden = true
 		toolbarLiquidGlassBackdropView?.image = nil
 		toolbarLiquidGlassView?.isHidden = true
