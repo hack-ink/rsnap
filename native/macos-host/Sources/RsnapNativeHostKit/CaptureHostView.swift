@@ -881,6 +881,9 @@ final class CaptureHostView: NSView {
 					controller?.recognizeText()
 					return
 				case "s":
+					guard toolbarItem(.scroll)?.enabled == true else {
+						return
+					}
 					controller?.startScrollCapture(source: "keyboard_s")
 					return
 				default:

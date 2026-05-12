@@ -7,7 +7,7 @@ import RsnapHostBridge
 private struct FrozenSelectionImageRenderRequest: @unchecked Sendable {
 	let captureID: UInt64
 	let selection: CGRect
-	let scrollExportImage: CGImage?
+	let scrollExportSnapshot: RGBARegionSnapshot?
 	let frozenDisplayFrame: CGRect?
 	let frozenDisplayImage: CGImage?
 	let frozenBaseImage: CGImage?
@@ -25,8 +25,8 @@ private struct FrozenSelectionImageRenderRequest: @unchecked Sendable {
 		FrozenPreparedExportKey(
 			captureID: captureID,
 			selection: selection,
-			scrollExportWidth: scrollExportImage?.width ?? 0,
-			scrollExportHeight: scrollExportImage?.height ?? 0,
+			scrollExportWidth: scrollExportSnapshot?.width ?? 0,
+			scrollExportHeight: scrollExportSnapshot?.height ?? 0,
 			frozenDisplayFrame: frozenDisplayFrame,
 			frozenBaseWidth: frozenBaseImage?.width ?? 0,
 			frozenBaseHeight: frozenBaseImage?.height ?? 0,
@@ -45,7 +45,7 @@ private struct FrozenSelectionImageRenderRequest: @unchecked Sendable {
 	var canPrepareExportInBackground: Bool {
 		// Scroll capture exports change as the stitched document grows; prepare those on demand
 		// until the scroll pipeline exposes a stable export revision.
-		scrollExportImage == nil
+		scrollExportSnapshot == nil
 	}
 }
 
@@ -273,8 +273,8 @@ extension CaptureSessionController {
 		guard let selection = currentFrozenSelection() else {
 			return nil
 		}
-		let scrollExportImage =
-			scrollCaptureState == nil ? nil : try activeScrollCaptureExportImage()
+		let scrollExportSnapshot =
+			scrollCaptureState == nil ? nil : try activeScrollCaptureExportSnapshot()
 		let settings = settingsStore.settings
 		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
 		let screen = screen(containing: selectionCenter)
@@ -285,7 +285,7 @@ extension CaptureSessionController {
 		return FrozenSelectionImageRenderRequest(
 			captureID: currentCaptureTelemetryID,
 			selection: selection,
-			scrollExportImage: scrollExportImage,
+			scrollExportSnapshot: scrollExportSnapshot,
 			frozenDisplayFrame: chromeState.frozenDisplayFrame,
 			frozenDisplayImage: chromeState.frozenDisplayImage,
 			frozenBaseImage: chromeState.frozenBaseImage,
@@ -603,20 +603,14 @@ extension CaptureSessionController {
 		)
 	}
 
-	func activeScrollCaptureExportImage() throws -> CGImage? {
+	func activeScrollCaptureExportSnapshot() throws -> RGBARegionSnapshot? {
 		guard Self.scrollCaptureEnabled else {
 			return nil
 		}
 		guard let state = scrollCaptureState else {
 			return nil
 		}
-		guard
-			let export = try state.stitcher.exportImage(),
-			let exportImage = NativeHostImageBridge.cgImage(from: export)
-		else {
-			return nil
-		}
-		return exportImage
+		return try state.stitcher.exportImage()
 	}
 
 	func captureFrozenSelectionImage(applyingCaptureFrameEffect: Bool = false) throws
@@ -658,7 +652,7 @@ extension CaptureSessionController {
 		prefersPixelSnapshot: Bool = false
 	) throws -> FrozenSelectionImageRenderResult {
 		let captureStartedAt = ProcessInfo.processInfo.systemUptime
-		if let scrollExport = request.scrollExportImage {
+		if let scrollExport = request.scrollExportSnapshot {
 			return renderScrollExportImage(
 				scrollExport,
 				request: request,
@@ -676,21 +670,22 @@ extension CaptureSessionController {
 	}
 
 	nonisolated private static func renderScrollExportImage(
-		_ scrollExport: CGImage,
+		_ scrollExport: RGBARegionSnapshot,
 		request: FrozenSelectionImageRenderRequest,
 		captureStartedAt: TimeInterval,
 		applyingCaptureFrameEffect: Bool,
 		prefersPixelSnapshot: Bool
 	) -> FrozenSelectionImageRenderResult {
+		let base = FrozenRenderedImage(image: nil, rgbaSnapshot: scrollExport)
 		let result =
 			applyingCaptureFrameEffect
 			? applyCaptureFrameEffectIfNeeded(
-				to: scrollExport,
+				to: base,
 				request: request,
 				hasOverlayEdits: false,
 				prefersPixelSnapshot: prefersPixelSnapshot
 			)
-			: FrozenRenderedImage(image: scrollExport, rgbaSnapshot: nil)
+			: resolvedRenderedImage(base, prefersPixelSnapshot: prefersPixelSnapshot)
 		logFrozenSelectionImageTiming(
 			request: request,
 			captureStartedAt: captureStartedAt,

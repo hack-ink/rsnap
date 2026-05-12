@@ -31,6 +31,7 @@ final class CaptureSessionController: NSObject {
 	static let displayFirstFrameWait: TimeInterval = 0.025
 	static let coldSelfCaptureRecoveryWait: TimeInterval = 3.5
 	static let scrollCaptureEnabled = true
+	static let scrollCaptureMinimumSelectionHeightPixels = 120
 	static let scrollCaptureForwardingPassthrough: TimeInterval = 0.012
 	static let scrollCaptureControlledScrollSettleDelay: TimeInterval = 0.18
 	static let scrollCaptureInputLiveFrameMaxAge: TimeInterval = 0.18

@@ -1432,10 +1432,13 @@ pub unsafe extern "C" fn rsnap_scroll_session_observe_downward_frame(
 		Ok(outcome) => outcome,
 		Err(_err) => return RsnapStatus::InvalidInput,
 	};
-	let export = handle.session.export_image();
+	let (export_width, export_height) = handle.session.export_dimensions();
 
 	unsafe {
-		ptr::write(out_result, encode_scroll_observe_result(outcome, &export, &handle.session));
+		ptr::write(
+			out_result,
+			encode_scroll_observe_result(outcome, export_width, export_height, &handle.session),
+		);
 	}
 
 	RsnapStatus::Ok
@@ -1481,10 +1484,13 @@ pub unsafe extern "C" fn rsnap_scroll_session_observe_downward_frame_with_motion
 		Ok(outcome) => outcome,
 		Err(_err) => return RsnapStatus::InvalidInput,
 	};
-	let export = handle.session.export_image();
+	let (export_width, export_height) = handle.session.export_dimensions();
 
 	unsafe {
-		ptr::write(out_result, encode_scroll_observe_result(outcome, &export, &handle.session));
+		ptr::write(
+			out_result,
+			encode_scroll_observe_result(outcome, export_width, export_height, &handle.session),
+		);
 	}
 
 	RsnapStatus::Ok
@@ -1539,7 +1545,7 @@ pub unsafe extern "C" fn rsnap_scroll_session_undo_last_append(
 	}
 
 	let did_undo = handle.session.undo_last_append();
-	let export = handle.session.export_image();
+	let (export_width, export_height) = handle.session.export_dimensions();
 	let kind = if did_undo {
 		ScrollStitchObserveOutcome::PreviewUpdated
 	} else {
@@ -1547,7 +1553,10 @@ pub unsafe extern "C" fn rsnap_scroll_session_undo_last_append(
 	};
 
 	unsafe {
-		ptr::write(out_result, encode_scroll_observe_result(kind, &export, &handle.session));
+		ptr::write(
+			out_result,
+			encode_scroll_observe_result(kind, export_width, export_height, &handle.session),
+		);
 	}
 
 	RsnapStatus::Ok
@@ -3840,7 +3849,8 @@ fn encode_host_request(request: HostRequest) -> RsnapHostRequestValue {
 
 fn encode_scroll_observe_result(
 	outcome: ScrollStitchObserveOutcome,
-	export: &ScrollStitchImage,
+	export_width: u32,
+	export_height: u32,
 	session: &ScrollStitchSession,
 ) -> RsnapScrollObserveResult {
 	let (kind, growth_rows) = match outcome {
@@ -3859,8 +3869,8 @@ fn encode_scroll_observe_result(
 	RsnapScrollObserveResult {
 		kind: kind as u32,
 		growth_rows,
-		export_width: export.width,
-		export_height: export.height,
+		export_width,
+		export_height,
 		current_viewport_top_y: session.current_viewport_top_y(),
 	}
 }
