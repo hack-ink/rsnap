@@ -8,6 +8,19 @@ extension CaptureSessionController {
 		liveFrameStream.prepareSampler(reason: reason)
 	}
 
+	func prepareLaunchCaptureStreams(reason: String) {
+		liveFrameStream.prepareSampler(reason: reason)
+		guard NativePermissions.screenRecordingGranted else {
+			return
+		}
+		_ = warmLiveSamplingIfPossible(
+			at: NSEvent.mouseLocation,
+			source: reason,
+			excludeSelfFromFrozenAuthority: true
+		)
+		releaseScreenCaptureStreams()
+	}
+
 	func allocateCaptureTelemetryID() -> UInt64 {
 		let captureID = nextCaptureTelemetryID
 		nextCaptureTelemetryID &+= 1
@@ -220,13 +233,23 @@ extension CaptureSessionController {
 					prewarmPoint: startPoint,
 					captureID: captureID
 				)
-				if self.frozenFrameAuthority.hasSelfCaptureCompleteFrame(
-					containing: startPoint)
+				if capturableOwnWindowIDs.isEmpty,
+					self.frozenFrameAuthority.hasSelfCaptureCompleteFrame(
+						containing: startPoint)
 				{
 					NativeHostTelemetry.captureEvent(
 						"capture.self_capture_rebuild_skipped",
 						captureID: captureID,
 						detail: "start_capture_complete_filter"
+					)
+				} else if capturableOwnWindowIDs.isEmpty,
+					self.frozenFrameAuthority.hasSelfCaptureCompleteStream(
+						containing: startPoint)
+				{
+					NativeHostTelemetry.captureEvent(
+						"capture.self_capture_rebuild_skipped",
+						captureID: captureID,
+						detail: "start_capture_complete_stream"
 					)
 				} else {
 					_ = self.warmLiveSamplingIfPossible(
