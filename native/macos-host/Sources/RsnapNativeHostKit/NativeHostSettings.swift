@@ -436,7 +436,7 @@ enum CaptureFrameApplicabilityPreference: String, CaseIterable {
 	case all
 	case both
 
-	static let allCases: [Self] = [.dragRegion, .window, .scrollCapture, .all]
+	static let allCases: [Self] = [.dragRegion, .window, .all]
 
 	var title: String {
 		switch self {
@@ -447,24 +447,31 @@ enum CaptureFrameApplicabilityPreference: String, CaseIterable {
 		case .scrollCapture:
 			return "Scroll"
 		case .all, .both:
-			return "All"
+			return "Both"
 		}
 	}
 
 	var normalizedForStorage: Self {
-		self == .both ? .all : self
+		switch self {
+		case .scrollCapture:
+			return .dragRegion
+		case .both:
+			return .all
+		case .dragRegion, .window, .all:
+			return self
+		}
 	}
 
 	func includes(_ source: CaptureFrameSource) -> Bool {
 		switch (self, source) {
-		case (.dragRegion, .dragRegion), (.window, .window),
-			(.scrollCapture, .scrollCapture), (.all, .dragRegion),
+		case (.dragRegion, .dragRegion), (.dragRegion, .scrollCapture),
+			(.window, .window), (.scrollCapture, .scrollCapture), (.all, .dragRegion),
 			(.all, .window), (.all, .scrollCapture), (.both, .dragRegion),
 			(.both, .window), (.both, .scrollCapture):
 			return true
-		case (.dragRegion, .window), (.dragRegion, .scrollCapture), (.window, .dragRegion),
-			(.window, .scrollCapture), (.scrollCapture, .dragRegion), (.scrollCapture, .window),
-			(_, .fullScreen), (_, .unknown):
+		case (.dragRegion, .window), (.window, .dragRegion), (.window, .scrollCapture),
+			(.scrollCapture, .dragRegion), (.scrollCapture, .window), (_, .fullScreen),
+			(_, .unknown):
 			return false
 		}
 	}
