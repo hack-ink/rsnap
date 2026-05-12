@@ -166,9 +166,8 @@ This section defines the target contract. The current development branch must fo
 `docs/runbook/scroll-capture-recovery-plan.md` before claiming that the implementation satisfies
 this contract.
 
-- The v0.2.1 native-host release does not expose scroll capture. The frozen toolbar MUST NOT show a
-  scroll-capture item while the native-host scroll-capture gate is disabled, and plain `s` MUST NOT
-  enter scroll capture in that state.
+- The frozen toolbar MUST NOT show a scroll-capture item while the native-host scroll-capture gate
+  is disabled, and plain `s` MUST NOT enter scroll capture in that state.
 - If scroll capture is exposed, it is available only from a dragged-region freeze on macOS.
 - The frozen toolbar may expose `Scroll Capture`, and plain `s` may start scroll capture, only when
   the frozen capture source is a dragged region on macOS.
