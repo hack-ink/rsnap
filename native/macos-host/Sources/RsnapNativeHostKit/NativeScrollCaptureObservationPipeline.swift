@@ -12,6 +12,7 @@ struct NativeScrollCaptureSampleFrame: Sendable {
 
 struct NativeScrollCaptureFallbackRequest: Sendable {
 	let rect: CGRect
+	let pixelRect: CGRect
 	let source: CaptureSessionController.FrozenCaptureJobSource
 	let frameSequence: UInt64
 }

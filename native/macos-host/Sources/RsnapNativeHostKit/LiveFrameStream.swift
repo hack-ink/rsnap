@@ -273,6 +273,30 @@ final class LiveFrameStreamBroker {
 		)
 	}
 
+	func nextRegionFrame(
+		in rect: CGRect,
+		pixelRect: CGRect,
+		afterFrameSequence: UInt64,
+		waitForFresh: Bool
+	) -> RGBARegionFrameSnapshot? {
+		guard let monitor = monitor(containing: CGPoint(x: rect.midX, y: rect.midY)) else {
+			return nil
+		}
+		stateLock.lock()
+		let sampler = self.sampler
+		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
+		stateLock.unlock()
+		guard let sampler else {
+			return nil
+		}
+		return try? sampler.nextRegionFrame(
+			monitor: encodedMonitor,
+			pixelRect: pixelRect,
+			afterFrameSequence: afterFrameSequence,
+			waitForFresh: waitForFresh
+		)
+	}
+
 	func prime(at point: CGPoint?) {
 		guard let point, let monitor = monitor(containing: point) else {
 			return

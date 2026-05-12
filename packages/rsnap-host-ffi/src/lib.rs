@@ -44,7 +44,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 34;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 35;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -2711,6 +2711,69 @@ pub unsafe extern "C" fn rsnap_live_sampler_take_next_region_rgba_after_seq(
 		decode_overlay_point(RsnapPoint { x: rect.x, y: rect.y }),
 		rect.width,
 		rect.height,
+		after_frame_seq,
+		wait_for_fresh != 0,
+	) else {
+		unsafe {
+			ptr::write(out_frame_seq, after_frame_seq);
+			ptr::write(out_frame_age_micros, 0);
+			ptr::write(out_region, RsnapOwnedRgbaRegion::default());
+		}
+
+		return RsnapStatus::Empty;
+	};
+	let mut rgba = frame.region.rgba;
+	let out = RsnapOwnedRgbaRegion {
+		width: frame.region.width,
+		height: frame.region.height,
+		len: rgba.len(),
+		capacity: rgba.capacity(),
+		rgba: rgba.as_mut_ptr(),
+	};
+
+	mem::forget(rgba);
+
+	unsafe {
+		ptr::write(out_frame_seq, frame.frame_seq);
+		ptr::write(out_frame_age_micros, frame.frame_age_micros);
+		ptr::write(out_region, out);
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Transfers ownership of the oldest queued RGBA region newer than `after_frame_seq`
+/// using a monitor-local pixel rectangle, preserving live-stream frame order.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_live_sampler_create`,
+/// `out_frame_seq` and `out_frame_age_micros` must be valid writable pointers, and
+/// `out_region` must be a valid writable pointer. The caller must later release the
+/// returned region buffer with `rsnap_owned_rgba_region_release`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_live_sampler_take_next_region_rgba_pixels_after_seq(
+	handle: *mut RsnapLiveSamplerHandle,
+	monitor: RsnapMonitorRect,
+	rect: RsnapPixelRect,
+	after_frame_seq: u64,
+	wait_for_fresh: u8,
+	out_frame_seq: *mut u64,
+	out_frame_age_micros: *mut u64,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { live_sampler_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	if out_frame_seq.is_null() || out_frame_age_micros.is_null() || out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(frame) = handle.sampler.next_region_rgba_after_seq_pixels(
+		decode_overlay_monitor(monitor),
+		decode_pixel_rect(rect),
 		after_frame_seq,
 		wait_for_fresh != 0,
 	) else {

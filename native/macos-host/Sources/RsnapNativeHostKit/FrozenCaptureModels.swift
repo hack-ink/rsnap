@@ -549,6 +549,8 @@ struct CaptureChromeState {
 struct NativeScrollCaptureState {
 	let stitcher: RsnapScrollCaptureSession
 	let viewportRect: CGRect
+	let viewportPixelRect: CGRect
+	let viewportSamplingRect: CGRect
 	let captureSource: CaptureSessionController.FrozenCaptureJobSource
 	let viewportPixelsPerPointY: Double
 	var sampleLoopScheduled = false
