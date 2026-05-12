@@ -107,8 +107,8 @@ Defines:
   the current wallpaper path and present pixels, but bounded wallpaper thumbnail decoding and caching
   are Rust-owned.
 - Apply To must be disabled while Frame Preset is Off.
-- Capture frame effects may apply to drag-region captures, window captures, scroll captures, or all
-  three. Fullscreen captures are excluded from this setting.
+- Capture frame effects may apply to drag-region captures, window captures, or both. Scroll capture
+  follows drag-region applicability, and fullscreen captures are excluded from this setting.
 
 ## Permission Settings
 
