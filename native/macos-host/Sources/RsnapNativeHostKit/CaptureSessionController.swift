@@ -56,6 +56,11 @@ final class CaptureSessionController: NSObject {
 		label: "ink.hack.rsnap.scroll-capture-stitch",
 		qos: .userInitiated
 	)
+	let frozenImageRenderQueue = DispatchQueue(
+		label: "ink.hack.rsnap.frozen-image-render",
+		qos: .userInitiated
+	)
+	let frozenPreparedExportStore = FrozenPreparedExportStore()
 	let captureSuccessSound = CaptureSuccessSound.load()
 	let ocrCompletionSound = OcrCompletionSound.load()
 	var session: RsnapHostSession?
@@ -64,6 +69,7 @@ final class CaptureSessionController: NSObject {
 	var pendingFrozenCommit: PendingFrozenCommit?
 	var nextPendingFrozenCommitID: UInt64 = 1
 	var frozenSnapshotGeneration: UInt64 = 0
+	var hostEffectJobGeneration: UInt64 = 0
 	var completedHostEffect: HostEffectKind?
 	var scrollCaptureState: NativeScrollCaptureState?
 	var scrollCaptureGlobalMonitor: Any?

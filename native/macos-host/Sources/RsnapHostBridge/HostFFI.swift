@@ -153,7 +153,7 @@ private func cgRect(from rect: RsnapPixelRect) -> CGRect {
 	)
 }
 
-public enum FrozenOverlayExportColor: UInt32, Equatable {
+public enum FrozenOverlayExportColor: UInt32, Equatable, Sendable {
 	case white = 0
 	case yellow = 1
 	case green = 2
@@ -179,7 +179,7 @@ public enum FrozenOverlayExportColor: UInt32, Equatable {
 	}
 }
 
-public struct FrozenOverlayExportStrokeStyle: Equatable {
+public struct FrozenOverlayExportStrokeStyle: Equatable, Sendable {
 	public var strokeWidthPoints: CGFloat
 	public var color: FrozenOverlayExportColor
 
@@ -189,7 +189,7 @@ public struct FrozenOverlayExportStrokeStyle: Equatable {
 	}
 }
 
-public struct FrozenOverlayExportSpotlightStyle: Equatable {
+public struct FrozenOverlayExportSpotlightStyle: Equatable, Sendable {
 	public var borderWidthPoints: CGFloat
 	public var borderColor: FrozenOverlayExportColor
 
@@ -199,7 +199,7 @@ public struct FrozenOverlayExportSpotlightStyle: Equatable {
 	}
 }
 
-public struct FrozenOverlayExportTextStyle: Equatable {
+public struct FrozenOverlayExportTextStyle: Equatable, Sendable {
 	public var fontSizePoints: CGFloat
 	public var color: FrozenOverlayExportColor
 
@@ -209,7 +209,7 @@ public struct FrozenOverlayExportTextStyle: Equatable {
 	}
 }
 
-public enum FrozenOverlayExportElement: Equatable {
+public enum FrozenOverlayExportElement: Equatable, Sendable {
 	case pen(points: [CGPoint], style: FrozenOverlayExportStrokeStyle)
 	case arrow(start: CGPoint, end: CGPoint, style: FrozenOverlayExportStrokeStyle)
 	case mosaic(rect: CGRect)
