@@ -58,18 +58,19 @@ Validate these user-visible flows:
   fullscreen fallback.
 - Frozen toolbar tools: pointer, pen, arrow, text, mosaic, spotlight, undo, redo, auto-center,
   Recognize Text, Scroll Capture, copy, and save.
-- For the v0.2.3 native-host release, Scroll Capture must stay absent for window-click and
+- For the v0.2.4 native-host release, Scroll Capture must stay absent for window-click and
   fullscreen freezes, remain available after dragged-region movement or auto-center, start from a
   dragged-region freeze via toolbar or plain `s`, and pass the functional scroll path in
   `docs/runbook/scroll-capture-recovery-plan.md`. Scroll toolbar Liquid Glass cadence, dynamic
   backdrop-change evidence, preview export latency, and cached copy/export timing are part of the
-  v0.2.3 publish gate.
+  v0.2.4 publish gate.
 - Light and dark appearance; Classic Glass and Liquid Glass where the OS and current build support
   Liquid Glass.
 - Settings -> About update rows: `Auto Update` and `Release Version` must use Title Case for row
   titles. The Auto Update mode control must show `Off`, `Notify`, and `Install`; secondary text must use
   sentence case, must not look like download progress, and the release-configured build must not
-  report that the Sparkle appcast is missing.
+  report that the Sparkle appcast is missing. The `Check` button must stay enabled after starting
+  an update from the status menu or while Sparkle has an active update session.
 - Settings -> Output frame rows: `Frame Preset` must include `Off`, selecting `Off` must disable
   `Apply To`, and selecting a background preset must re-enable `Apply To`.
 - Sparkle local update smoke:
