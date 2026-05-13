@@ -3,7 +3,7 @@ import CoreGraphics
 import Foundation
 import RsnapHostBridge
 
-final class LiveFrameStreamBroker {
+final class LiveFrameStreamBroker: @unchecked Sendable {
 	private struct SamplerMonitor: Equatable {
 		let id: UInt32
 		let appKitFrame: CGRect

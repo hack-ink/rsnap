@@ -155,7 +155,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		)
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		refreshStatusMenuState()
-		sessionController.prepareLiveFrameStreamSampler(reason: "launch")
+		sessionController.prepareLaunchCaptureStreams(reason: "launch")
 		scheduleLaunchPermissionOnboardingIfNeeded()
 		DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
 			self?.sessionController.refreshShareableContentCacheIfPermitted(source: "launch")

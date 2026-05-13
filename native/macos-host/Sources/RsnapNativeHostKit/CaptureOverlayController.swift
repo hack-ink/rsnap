@@ -369,7 +369,8 @@ final class CaptureOverlayController {
 	}
 
 	func backgroundPatch(in rect: CGRect) -> CGImage? {
-		captureImageBelowOverlay(in: rect, near: CGPoint(x: rect.midX, y: rect.midY))
+		liveFrameStream.region(in: rect)
+			?? captureImageBelowOverlay(in: rect, near: CGPoint(x: rect.midX, y: rect.midY))
 			?? liveFrameStream.patch(in: rect)
 	}
 
@@ -478,7 +479,8 @@ final class CaptureOverlayController {
 		}
 		return CaptureSessionController.FrozenCaptureJobSource(
 			referenceWindowID: CGWindowID(referenceWindow.windowNumber),
-			desktopFrame: Self.desktopFrame
+			desktopFrame: Self.desktopFrame,
+			referenceFrame: referenceWindow.frame
 		)
 	}
 

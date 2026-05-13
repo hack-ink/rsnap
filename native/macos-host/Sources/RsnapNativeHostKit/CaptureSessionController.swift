@@ -13,6 +13,7 @@ final class CaptureSessionController: NSObject {
 	struct FrozenCaptureJobSource: Sendable {
 		let referenceWindowID: CGWindowID
 		let desktopFrame: CGRect
+		let referenceFrame: CGRect
 	}
 
 	struct PendingFrozenCommit: Sendable {
@@ -35,16 +36,25 @@ final class CaptureSessionController: NSObject {
 	static let scrollCaptureForwardingPassthrough: TimeInterval = 0.012
 	static let scrollCaptureControlledScrollSettleDelay: TimeInterval = 0.18
 	static let scrollCaptureInputLiveFrameMaxAge: TimeInterval = 0.18
+	static let scrollCaptureActiveInputLiveFrameMaxAge: TimeInterval = 0.75
 	static let scrollCaptureSampleInterval: TimeInterval = 1.0 / 30.0
+	static let scrollCaptureActiveInputSampleInterval: TimeInterval = 1.0 / 120.0
+	static let scrollCaptureActiveInputTail: TimeInterval = 0.45
 	static let scrollCaptureMaxFramesPerSample = 3
+	static let scrollCaptureMaxPendingSampleFrames = 18
 	static let scrollCaptureInitialSampleWindow: TimeInterval = 0.35
 	static let scrollCaptureInputSampleWindow: TimeInterval = 1.8
-	static let scrollCaptureFallbackCaptureInterval: TimeInterval = 0.08
-	static let scrollCapturePreviewRefreshInterval: TimeInterval = 0.18
+	static let scrollCaptureFallbackCaptureInterval: TimeInterval = 1.0 / 60.0
+	static let scrollCapturePreviewRefreshInterval: TimeInterval = 1.0 / 30.0
+	static let scrollCapturePreviewImageWidthPixels = 192
+	static let scrollCapturePreparedExportDelay: TimeInterval = 0.30
+	static let frozenAnnotationPreparedExportDelay: TimeInterval = 0.25
+	static let frozenRecognizeTextImagePreparationDelay: TimeInterval = 0.35
 	static let scrollCaptureToolbarBackdropRefreshInterval: TimeInterval = 1.0 / 120.0
 	static let scrollCaptureWheelTelemetryInterval: TimeInterval = 0.25
+	static let scrollCaptureInputViewportPaddingPoints: CGFloat = 360
 	static let scrollCapturePassthroughWheelMotionHintMultiplier = 3.5
-	static let liveFrameStreamReleaseGrace: TimeInterval = 4.0
+	static let liveFrameStreamReleaseGrace: TimeInterval = 3.0
 
 	let settingsStore: NativeHostSettingsStore
 	let liveFrameStream = LiveFrameStreamBroker()
@@ -57,11 +67,16 @@ final class CaptureSessionController: NSObject {
 		label: "ink.hack.rsnap.scroll-capture-stitch",
 		qos: .userInitiated
 	)
+	let scrollCaptureSampleQueue = DispatchQueue(
+		label: "ink.hack.rsnap.scroll-capture-sample",
+		qos: .userInteractive
+	)
 	let frozenImageRenderQueue = DispatchQueue(
 		label: "ink.hack.rsnap.frozen-image-render",
 		qos: .userInitiated
 	)
 	let frozenPreparedExportStore = FrozenPreparedExportStore()
+	let frozenPreparedRecognizeTextImageStore = FrozenPreparedRecognizeTextImageStore()
 	let captureSuccessSound = CaptureSuccessSound.load()
 	let ocrCompletionSound = OcrCompletionSound.load()
 	var session: RsnapHostSession?
@@ -77,6 +92,9 @@ final class CaptureSessionController: NSObject {
 	var nextCaptureTelemetryID: UInt64 = 1
 	var activeCaptureTelemetryID: UInt64?
 	var pendingLiveFrameStreamRelease: DispatchWorkItem?
+	var pendingScrollCapturePreparedExport: DispatchWorkItem?
+	var pendingFrozenAnnotationPreparedExport: DispatchWorkItem?
+	var pendingFrozenRecognizeTextImagePreparation: DispatchWorkItem?
 	var captureStateDidChange: (() -> Void)?
 	var scene = SceneSnapshot(
 		mode: .hidden,

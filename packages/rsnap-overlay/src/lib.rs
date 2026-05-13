@@ -120,6 +120,18 @@ pub mod scroll_stitching {
 			}
 		}
 
+		/// Returns the lightweight committed stitched preview image.
+		#[must_use]
+		pub fn preview_image(&self) -> ScrollStitchImage {
+			let image = self.inner.preview_image();
+
+			ScrollStitchImage {
+				width: image.width(),
+				height: image.height(),
+				rgba: image.as_raw().clone(),
+			}
+		}
+
 		/// Returns the committed stitched export dimensions without cloning pixels.
 		#[must_use]
 		pub fn export_dimensions(&self) -> (u32, u32) {

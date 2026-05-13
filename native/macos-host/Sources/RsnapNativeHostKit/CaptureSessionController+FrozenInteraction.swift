@@ -16,10 +16,29 @@ extension CaptureSessionController {
 		sendFrozenAction(.saveRequested, exitAfter: .saveCapture)
 	}
 
+	var recognizeTextActionEnabled: Bool {
+		scene.mode == .frozen
+			&& currentFrozenSelection() != nil
+			&& scene.toolbarItems.contains { $0.kind == .ocr && $0.enabled }
+			&& chromeState.frozenOverlay.hasRecognizeTextBlockingEdits == false
+	}
+
 	func recognizeText() {
+		guard recognizeTextActionEnabled else {
+			try? setHostStatusMessage(recognizeTextBlockedMessage())
+			refreshOverlay()
+			return
+		}
 		let _ = chromeState.frozenOverlay.commitTextEdit(
 			style: chromeState.annotationStyle.textStyle)
 		sendFrozenAction(.recognizeTextRequested, exitAfter: .recognizeText)
+	}
+
+	func recognizeTextBlockedMessage() -> String {
+		if chromeState.frozenOverlay.hasRecognizeTextBlockingEdits {
+			return "Text recognition is unavailable after annotation edits."
+		}
+		return "Text recognition is not available for this selection."
 	}
 
 	func startScrollCapture(source: String = "unknown") {
@@ -68,6 +87,11 @@ extension CaptureSessionController {
 		case .save:
 			sendFrozenAction(.toolbarItemInvoked(item), exitAfter: .saveCapture)
 		case .ocr:
+			guard recognizeTextActionEnabled else {
+				try? setHostStatusMessage(recognizeTextBlockedMessage())
+				refreshOverlay()
+				return
+			}
 			sendFrozenAction(.toolbarItemInvoked(item), exitAfter: .recognizeText)
 		case .scroll:
 			startScrollCapture(source: "toolbar")
@@ -176,6 +200,10 @@ extension CaptureSessionController {
 		pointerMoved(to: point)
 	}
 
+	var hasFrozenOverlayActiveInteraction: Bool {
+		scene.mode == .frozen && chromeState.frozenOverlay.hasActiveInteraction
+	}
+
 	func completeFrozenInteraction(at point: CGPoint) {
 		guard scene.mode == .frozen, let selection = currentFrozenSelection() else {
 			pointerMoved(to: point)
@@ -187,6 +215,7 @@ extension CaptureSessionController {
 		let _ = chromeState.frozenOverlay.update(to: point, selection: selection)
 		if chromeState.frozenOverlay.finish(selection: selection) {
 			refreshOverlay()
+			schedulePreparedFrozenAnnotationExport(reason: "annotation_finish")
 			return
 		}
 		pointerMoved(to: point)
@@ -276,6 +305,7 @@ extension CaptureSessionController {
 				try self.session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 				try self.syncCore()
 				self.schedulePreparedFrozenExport(reason: "selection_transform")
+				self.schedulePreparedRecognizeTextImage(reason: "selection_transform")
 				NativeHostTelemetry.captureEvent(
 					"capture.frozen_selection_transform_commit",
 					captureID: captureID
@@ -313,6 +343,7 @@ extension CaptureSessionController {
 			return
 		}
 		refreshOverlay()
+		schedulePreparedFrozenAnnotationExport(reason: "annotation_undo")
 	}
 
 	func performFrozenRedo() {
@@ -320,6 +351,7 @@ extension CaptureSessionController {
 			return
 		}
 		refreshOverlay()
+		schedulePreparedFrozenAnnotationExport(reason: "annotation_redo")
 	}
 
 	func performFrozenAnnotationStyleAction(_ action: FrozenAnnotationStyleAction) {
@@ -410,6 +442,7 @@ extension CaptureSessionController {
 			try session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 			try syncCore()
 			schedulePreparedFrozenExport(reason: "auto_center")
+			schedulePreparedRecognizeTextImage(reason: "auto_center")
 		} catch {
 			NativeHostTelemetry.captureWarning(
 				"capture.frozen_auto_center_failed",
@@ -431,6 +464,7 @@ extension CaptureSessionController {
 				style: chromeState.annotationStyle.textStyle)
 			{
 				refreshOverlay()
+				schedulePreparedFrozenAnnotationExport(reason: "annotation_text_commit")
 				return true
 			}
 			return false

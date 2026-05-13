@@ -127,6 +127,7 @@ const STREAM_FRAME_QUEUE_CAPACITY: usize = 16;
 const STREAM_CONFIG_QUEUE_DEPTH: usize = 8;
 const STREAM_ACTIVE_GESTURE_FORCE_REFRESH_MIN_AGE: Duration = Duration::from_millis(60);
 const STREAM_REGION_FRAME_REFRESH_TIMEOUT: Duration = Duration::from_millis(180);
+const STREAM_REGION_FRAME_AHEAD_WAIT_TIMEOUT: Duration = Duration::from_millis(24);
 const STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL: Duration = Duration::from_millis(4);
 const STREAM_POST_SETUP_FRAME_GRACE: Duration = STREAM_SETUP_BACKOFF;
 const STREAM_ERROR_TIMEOUT_CODE: isize = 1;
@@ -522,8 +523,11 @@ impl MacLiveFrameStream {
 		#[cfg(test)]
 		self.record_debug_request_kind("ordered_rgba_regions_after_seq_nonblocking");
 
-		let frames =
-			self.shared_latest_frame.frames_after_seq_for_monitor(monitor.id, after_frame_seq);
+		let frames = self
+			.shared_latest_frame
+			.frames_after_seq_for_monitor(monitor.id, after_frame_seq)
+			.into_iter()
+			.collect::<Vec<_>>();
 
 		if frames.is_empty() {
 			if self.shared_latest_frame.latest_frame_for_monitor(monitor.id).is_none() {
@@ -2250,7 +2254,7 @@ fn ordered_queued_rgba_regions_after_seq_nonblocking(
 		shared_latest_frame,
 	);
 	let stream_state = state.as_ref()?;
-	let frames = stream_state.output.queued_frames_after_seq(after_frame_seq);
+	let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
 	let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
 
 	(!frames.is_empty()).then_some(frames)
@@ -2283,7 +2287,7 @@ fn ordered_fresh_rgba_regions_after_seq(
 		shared_latest_frame.clone(),
 	);
 	let stream_state = state.as_ref()?;
-	let frames = stream_state.output.queued_frames_after_seq(after_frame_seq);
+	let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
 	let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
 
 	if !frames.is_empty() {
@@ -2295,7 +2299,23 @@ fn ordered_fresh_rgba_regions_after_seq(
 	if Instant::now().saturating_duration_since(latest_frame.captured_at)
 		<= STREAM_REGION_FRAME_MAX_AGE
 	{
-		return None;
+		let deadline = Instant::now() + STREAM_REGION_FRAME_AHEAD_WAIT_TIMEOUT;
+
+		loop {
+			if Instant::now() >= deadline {
+				break;
+			}
+
+			thread::sleep(STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL);
+
+			let stream_state = state.as_ref()?;
+			let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
+			let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
+
+			if !frames.is_empty() {
+				return Some(frames);
+			}
+		}
 	}
 
 	let _ = refresh_stream(RefreshStreamArgs {
@@ -2313,7 +2333,7 @@ fn ordered_fresh_rgba_regions_after_seq(
 
 	loop {
 		let stream_state = state.as_ref()?;
-		let frames = stream_state.output.queued_frames_after_seq(after_frame_seq);
+		let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
 		let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
 
 		if !frames.is_empty() {
@@ -3274,6 +3294,21 @@ fn ordered_rgba_regions_from_frames(
 				captured_at: frame.captured_at,
 				image,
 			})
+		})
+		.collect()
+}
+
+fn fresh_queued_frames_after_seq(
+	output: &StreamOutput,
+	after_frame_seq: u64,
+) -> Vec<QueuedPixelBufferFrame> {
+	let now = Instant::now();
+
+	output
+		.queued_frames_after_seq(after_frame_seq)
+		.into_iter()
+		.filter(|frame| {
+			now.saturating_duration_since(frame.captured_at) <= STREAM_REGION_FRAME_MAX_AGE
 		})
 		.collect()
 }

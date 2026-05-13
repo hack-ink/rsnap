@@ -106,6 +106,10 @@ The handoff must not show a pending half-frame, remove/re-add the outside-select
 delay toolbar visibility on a static desktop just because ScreenCaptureKit has not emitted a new
 post-latch frame.
 
+The first capture after app launch is part of this contract. Initial stream prewarm may happen in
+the background, but it must not make the first Frozen toolbar appear visibly later than the frozen
+display image.
+
 This cadence contract is normative even when current logs or smoke harnesses use coarser warning
 thresholds.
 
@@ -185,6 +189,58 @@ Primary metrics:
 Required measurement style:
 - non-GUI benchmark coverage that does not depend on desktop automation
 
+### Scenario 4: active scroll-capture UI cadence
+
+Surface:
+- active scroll toolbar Liquid Glass backdrop sampling
+- scroll minimap/preview updates during wheel input
+- live-frame sampling used to feed visible scroll capture progress
+
+Primary metrics:
+- toolbar backdrop refresh gap against the display-bound target frame budget
+- toolbar backdrop refresh duration for the main-thread scheduling path
+- preview refresh cadence and preview export duration while committed scroll progress is changing
+- source frame age for live region frames consumed during active scroll capture
+
+Required behavior:
+- toolbar backdrop sampling targets the display-bound presentation cadence while scroll capture is
+  active and must not intentionally fall to seconds-apart updates
+- scroll preview targets at least `30 Hz` while committed progress is changing, subject to only
+  displaying proof-backed stitched state
+- smooth-scroll and dense wheel-input paths should continue producing incremental proof-backed
+  preview updates; if proof cannot keep up, Rsnap must fail closed for those frames instead of
+  showing guessed progress or waiting to jump the preview at the end
+- wheel input observed in the same target window but outside the selected viewport, for example in a
+  right gutter or page margin, must still drive toolbar and stitch sampling for the selected
+  viewport
+- active scroll-capture UI sampling must use fresh native live frames in the steady state; repeated
+  below-overlay screenshot capture is not an acceptable way to satisfy the cadence contract
+- stale source frames must be rejected by frame age or sequence metadata instead of being displayed
+  as current progress
+
+### Scenario 5: screen-monitoring stream lifecycle
+
+Surface:
+- macOS live screen-monitoring streams used for live RGB/loupe sampling, Frozen handoff, scroll
+  capture, and launch prewarm
+
+Primary metrics:
+- time from last active capture need to live/frozen stream release request
+- time from release request to stream stopped telemetry, when the platform exposes it
+- stream reuse/cancel events when a new capture starts during the release grace window
+
+Required behavior:
+- idle screen-monitoring streams are released after the configured `3s` grace window unless a new
+  capture need cancels the pending release
+- resource lifetime must be observable enough to distinguish intentional grace reuse from a leaked
+  stream or a platform stop that is delayed after Rsnap has requested release
+- stream lifecycle tuning must not regress first-capture Frozen toolbar latency or scroll-capture
+  entry responsiveness
+
+Current coarse smoke surface:
+- `scripts/smoke/native-scroll-capture-macos.sh` for keyboard and toolbar entry, scroll growth,
+  toolbar backdrop gap/duration metrics, and live desktop end-to-end regressions
+
 ## Execution environment classes
 
 The performance contract distinguishes between environment classes because the artifact type
@@ -230,6 +286,23 @@ The current overlay runtime already exposes several useful diagnostic thresholds
   live capture is active.
 - Native-host `live_chrome.sample_refresh_gap` is gated against the fixed `120 Hz` sampling target,
   even when the active display target is `60 Hz`.
+- Native-host `scroll_capture.toolbar_backdrop_refresh_gap` reports the active scroll toolbar
+  backdrop scheduling cadence.
+- Native-host `scroll_capture.toolbar_backdrop_refresh_duration` reports the main-thread cost of
+  scheduling or applying active scroll toolbar backdrop updates. It must stay low because slow
+  source capture belongs off the visible update path.
+- Native-host `scroll_capture.toolbar_backdrop_changed_gap` reports the cadence of actual sampled
+  toolbar backdrop image changes during scroll capture. The scroll smoke gates this separately from
+  refresh scheduling so a path that calls the refresh loop but leaves Liquid Glass visually frozen is
+  a regression.
+- Native-host `capture.scroll_preview_refreshed` reports committed stitched-preview exports during
+  scroll capture, including `exportMs` for the preview image generation step.
+- Scroll preview refreshes must use the lightweight preview image path and stay below the smoke
+  `MAX_SCROLL_PREVIEW_EXPORT_MS` gate. Preview generation must not clone or convert the full
+  committed export image during active scroll.
+- Native-host `capture.stream_release_scheduled`, `capture.stream_release_canceled`,
+  `capture.stream_release_requested`, and `capture.stream_release_completed` report the macOS
+  screen-monitoring release lifecycle and whether a new capture reused the pending release grace.
 
 These values are useful for diagnosis, but they are not the full performance contract:
 
