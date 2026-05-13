@@ -29,6 +29,11 @@ extension CaptureSessionController {
 		guard let session else {
 			return
 		}
+		guard recognizeTextActionEnabled else {
+			try setHostStatusMessage(recognizeTextBlockedMessage())
+			refreshOverlay()
+			return
+		}
 		let run = RecognizeTextRun(
 			captureID: currentCaptureTelemetryID,
 			startedAt: ProcessInfo.processInfo.systemUptime,

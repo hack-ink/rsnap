@@ -16,10 +16,29 @@ extension CaptureSessionController {
 		sendFrozenAction(.saveRequested, exitAfter: .saveCapture)
 	}
 
+	var recognizeTextActionEnabled: Bool {
+		scene.mode == .frozen
+			&& currentFrozenSelection() != nil
+			&& scene.toolbarItems.contains { $0.kind == .ocr && $0.enabled }
+			&& chromeState.frozenOverlay.hasRecognizeTextBlockingEdits == false
+	}
+
 	func recognizeText() {
+		guard recognizeTextActionEnabled else {
+			try? setHostStatusMessage(recognizeTextBlockedMessage())
+			refreshOverlay()
+			return
+		}
 		let _ = chromeState.frozenOverlay.commitTextEdit(
 			style: chromeState.annotationStyle.textStyle)
 		sendFrozenAction(.recognizeTextRequested, exitAfter: .recognizeText)
+	}
+
+	func recognizeTextBlockedMessage() -> String {
+		if chromeState.frozenOverlay.hasRecognizeTextBlockingEdits {
+			return "Text recognition is unavailable after annotation edits."
+		}
+		return "Text recognition is not available for this selection."
 	}
 
 	func startScrollCapture(source: String = "unknown") {
@@ -68,6 +87,11 @@ extension CaptureSessionController {
 		case .save:
 			sendFrozenAction(.toolbarItemInvoked(item), exitAfter: .saveCapture)
 		case .ocr:
+			guard recognizeTextActionEnabled else {
+				try? setHostStatusMessage(recognizeTextBlockedMessage())
+				refreshOverlay()
+				return
+			}
 			sendFrozenAction(.toolbarItemInvoked(item), exitAfter: .recognizeText)
 		case .scroll:
 			startScrollCapture(source: "toolbar")
