@@ -373,6 +373,10 @@ commits = re.findall(
     r"event=capture\.scroll_sample_observed\b[^\n]*outcome=committed\b[^\n]*",
     text,
 )
+preview_refreshes = re.findall(
+    r"event=capture\.scroll_preview_refreshed\b[^\n]*outcome=success\b[^\n]*",
+    text,
+)
 heights = []
 for line in re.findall(r"event=capture\.scroll_sample_observed\b[^\n]*", text):
     match = re.search(r"exportHeight=([0-9]+)", line)
@@ -412,6 +416,7 @@ print(
     f"entry_started={entry_started} start_source={expected_start_source} "
     f"started={started} manual_mode={manual_mode} input_ready={input_ready} "
     f"sampled={sampled} commits={len(commits)} "
+    f"preview_refreshes={len(preview_refreshes)} "
     f"tap_not_used={tap_not_used} wheel_intercepted={wheel_intercepted} "
     f"wheel_observed={wheel_observed} "
     f"max_export_height={max_height} base_height={base_height} growth={growth} "
@@ -448,6 +453,10 @@ if base_height <= 0:
 if expect_growth:
     if len(commits) < min_commits:
         failures.append(f"committed growth count {len(commits)} < {min_commits}")
+    if len(commits) >= 2 and len(preview_refreshes) < 2:
+        failures.append(
+            f"scroll preview refresh count {len(preview_refreshes)} < 2 for {len(commits)} committed growth samples"
+        )
     if growth < min_growth:
         failures.append(f"export growth {growth}px < {min_growth}px")
 else:

@@ -108,16 +108,47 @@ extension CaptureSessionController {
 		activeCaptureTelemetryID = nil
 	}
 
-	func releaseScreenCaptureStreams(immediate: Bool = false) {
-		pendingLiveFrameStreamRelease?.cancel()
+	func cancelPendingScreenCaptureStreamRelease(reason: String) {
+		guard let pendingRelease = pendingLiveFrameStreamRelease else {
+			return
+		}
+		pendingRelease.cancel()
 		pendingLiveFrameStreamRelease = nil
+		NativeHostTelemetry.captureEvent(
+			"capture.stream_release_canceled",
+			captureID: currentCaptureTelemetryID,
+			detail: "reason=\(reason)"
+		)
+	}
+
+	func releaseScreenCaptureStreams(immediate: Bool = false) {
+		cancelPendingScreenCaptureStreamRelease(reason: "reschedule_release")
+		let captureID = currentCaptureTelemetryID
+		let scheduledAtUptime = ProcessInfo.processInfo.systemUptime
+		let graceMilliseconds = immediate ? 0 : Int(Self.liveFrameStreamReleaseGrace * 1_000)
+		NativeHostTelemetry.captureEvent(
+			"capture.stream_release_scheduled",
+			captureID: captureID,
+			detail: "immediate=\(immediate) graceMs=\(graceMilliseconds)"
+		)
 		let releaseScreenCaptureStreams = { [weak self] in
 			guard let self else {
 				return
 			}
+			let elapsedMilliseconds = NativeHostTelemetry.milliseconds(since: scheduledAtUptime)
+			NativeHostTelemetry.captureEvent(
+				"capture.stream_release_requested",
+				captureID: captureID,
+				detail: "elapsedMs=\(String(format: "%.2f", elapsedMilliseconds))"
+			)
 			self.frozenFrameAuthority.stop()
 			self.liveFrameStream.stop()
 			self.pendingLiveFrameStreamRelease = nil
+			NativeHostTelemetry.captureEvent(
+				"capture.stream_release_completed",
+				captureID: captureID,
+				detail: "elapsedMs=\(String(format: "%.2f", elapsedMilliseconds))"
+			)
 		}
 		if immediate {
 			releaseScreenCaptureStreams()

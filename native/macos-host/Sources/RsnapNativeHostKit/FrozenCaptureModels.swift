@@ -554,14 +554,19 @@ struct NativeScrollCaptureState {
 	let captureSource: CaptureSessionController.FrozenCaptureJobSource
 	let viewportPixelsPerPointY: Double
 	var sampleLoopScheduled = false
+	var sampleDrainProcessing = false
 	var sampleProcessing = false
 	var toolbarBackdropLoopScheduled = false
 	var sampleSequence: UInt64 = 0
+	var sampleDrainSequence: UInt64 = 0
 	var observedWheelCount: UInt64 = 0
 	var committedSampleCount: UInt64 = 0
 	var lastStreamFrameSequence: UInt64 = 0
+	var lastQueuedStreamFrameSequence: UInt64 = 0
+	var pendingSampleFrames: [NativeScrollCaptureSampleFrame] = []
 	var lastMissingSampleStatusUptime: TimeInterval = 0
 	var lastForwardedWheelUptime: TimeInterval = 0
+	var lastObservedWheelUptime: TimeInterval = 0
 	var controlledScrollInFlight = false
 	var queuedForwardedWheelDeltaY: Double = 0
 	var queuedForwardedWheelPrecise = true

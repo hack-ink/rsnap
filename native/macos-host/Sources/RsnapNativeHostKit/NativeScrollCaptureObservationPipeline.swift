@@ -17,6 +17,21 @@ struct NativeScrollCaptureFallbackRequest: Sendable {
 	let frameSequence: UInt64
 }
 
+struct NativeScrollCaptureLiveFrameRequest: @unchecked Sendable {
+	let stream: LiveFrameStreamBroker
+	let rect: CGRect
+	let pixelRect: CGRect
+	let afterFrameSequence: UInt64
+	let maximumFrameAgeMicroseconds: UInt64?
+	let maxFrames: Int
+	let waitForFresh: Bool
+}
+
+struct NativeScrollCaptureSampleBatch: Sendable {
+	let frames: [NativeScrollCaptureSampleFrame]
+	let latestFrameSequence: UInt64?
+}
+
 struct NativeScrollCaptureObservation: Sendable {
 	let sampledFrame: NativeScrollCaptureSampleFrame
 	let registrationStrategy: String
@@ -41,6 +56,22 @@ struct NativeScrollCaptureObservationBatch: Sendable {
 }
 
 enum NativeScrollCaptureObservationPipeline {
+	static func sampleBatch(
+		liveFrameRequest: NativeScrollCaptureLiveFrameRequest?,
+		fallbackRequest: NativeScrollCaptureFallbackRequest?
+	) -> NativeScrollCaptureSampleBatch {
+		let liveSample = liveFrameRequest.map(sampleFrames(from:))
+		var sampledFrames = liveSample?.frames ?? []
+		if sampledFrames.isEmpty {
+			appendFallbackFrame(to: &sampledFrames, fallbackRequest: fallbackRequest)
+		}
+
+		return NativeScrollCaptureSampleBatch(
+			frames: sampledFrames,
+			latestFrameSequence: liveSample?.latestFrameSequence
+		)
+	}
+
 	static func makeBatch(
 		sampledFrames: [NativeScrollCaptureSampleFrame],
 		stitcher: RsnapScrollCaptureSession,
@@ -71,6 +102,89 @@ enum NativeScrollCaptureObservationPipeline {
 			previewErrorDescription: preview.errorDescription,
 			previewExportMilliseconds: preview.exportMilliseconds
 		)
+	}
+
+	private static func sampleFrames(
+		from request: NativeScrollCaptureLiveFrameRequest
+	) -> NativeScrollCaptureSampleBatch {
+		var frames: [NativeScrollCaptureSampleFrame] = []
+		var nextAfterFrameSequence = request.afterFrameSequence
+		var latestFrameSequence: UInt64?
+
+		for _ in 0..<request.maxFrames {
+			guard
+				let frame = request.stream.nextRegionFrame(
+					in: request.rect,
+					pixelRect: request.pixelRect,
+					afterFrameSequence: nextAfterFrameSequence,
+					waitForFresh: request.waitForFresh
+				)
+			else {
+				break
+			}
+			nextAfterFrameSequence = frame.frameSequence
+			latestFrameSequence = max(latestFrameSequence ?? 0, frame.frameSequence)
+			if let maximumFrameAgeMicroseconds = request.maximumFrameAgeMicroseconds,
+				frame.frameAgeMicroseconds > maximumFrameAgeMicroseconds
+			{
+				continue
+			}
+			guard frameMatchesPixelRect(frame.region, pixelRect: request.pixelRect) else {
+				continue
+			}
+			writeNativeScrollCaptureDebugDump(
+				frame.region,
+				name: "sample-\(frame.frameSequence)"
+			)
+			frames.append(
+				NativeScrollCaptureSampleFrame(
+					region: frame.region,
+					source: "ordered_live_stream_region",
+					frameSequence: frame.frameSequence,
+					frameAgeMicroseconds: frame.frameAgeMicroseconds
+				))
+		}
+
+		return NativeScrollCaptureSampleBatch(
+			frames: frames,
+			latestFrameSequence: latestFrameSequence
+		)
+	}
+
+	private static func appendFallbackFrame(
+		to sampledFrames: inout [NativeScrollCaptureSampleFrame],
+		fallbackRequest: NativeScrollCaptureFallbackRequest?
+	) {
+		guard
+			let fallbackRequest,
+			let image = CaptureOverlayController.captureImageBelowOverlay(
+				in: fallbackRequest.rect,
+				source: fallbackRequest.source
+			),
+			let snapshot = NativeHostImageBridge.rgbaSnapshot(from: image),
+			frameMatchesPixelRect(snapshot, pixelRect: fallbackRequest.pixelRect)
+		else {
+			return
+		}
+		writeNativeScrollCaptureDebugDump(
+			snapshot,
+			name: "fallback-\(fallbackRequest.frameSequence)"
+		)
+		sampledFrames.append(
+			NativeScrollCaptureSampleFrame(
+				region: snapshot,
+				source: "below_overlay_capture_region",
+				frameSequence: fallbackRequest.frameSequence,
+				frameAgeMicroseconds: 0
+			))
+	}
+
+	private static func frameMatchesPixelRect(
+		_ snapshot: RGBARegionSnapshot,
+		pixelRect: CGRect
+	) -> Bool {
+		snapshot.width == Int(pixelRect.width.rounded())
+			&& snapshot.height == Int(pixelRect.height.rounded())
 	}
 
 	private static func observe(
