@@ -145,6 +145,9 @@ Defines:
 - The About section must expose a Check for Updates action backed by Sparkle's standard check
   flow. When an installable update is available, Sparkle owns the native update window, download
   progress, install authorization if needed, and final install-and-relaunch action.
+- The Check for Updates action must remain user-available even while Sparkle reports that a
+  session is active, downloading, or preparing an update. That state must not gray out the user's
+  entry point back into the update flow.
 - The About section must expose one Auto Update mode control rather than separate Automatic Checks
   and Automatic Updates rows. The visible modes are Off, Notify, and Install.
 - Off must disable Sparkle automatic checks and automatic downloads. Notify must enable Sparkle
