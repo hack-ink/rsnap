@@ -2305,6 +2305,7 @@ fn ordered_fresh_rgba_regions_after_seq(
 			if Instant::now() >= deadline {
 				break;
 			}
+
 			thread::sleep(STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL);
 
 			let stream_state = state.as_ref()?;
@@ -3302,6 +3303,7 @@ fn fresh_queued_frames_after_seq(
 	after_frame_seq: u64,
 ) -> Vec<QueuedPixelBufferFrame> {
 	let now = Instant::now();
+
 	output
 		.queued_frames_after_seq(after_frame_seq)
 		.into_iter()
