@@ -112,6 +112,11 @@ product level rather than binding itself to a particular window toolkit or shell
   as a temporary key/main window promotion just to complete ordinary capture flows.
 - Session exit cleanup must ensure the next capture session does not inherit stale focus, stale
   key ownership, stale cursor ownership, or missing pointer input.
+- When no active capture, live preview, Frozen handoff, scroll capture, or launch prewarm needs
+  screen-monitoring streams, macOS live screen-monitoring resources MUST be released after the
+  configured grace window, currently `3s`. Starting a new capture during that window may cancel and
+  reuse the pending stream, but idle screen monitoring must not keep running indefinitely or appear
+  to outlive the grace by multiple seconds without explicit telemetry explaining the delay.
 
 ## Frozen mode
 
@@ -141,6 +146,9 @@ product level rather than binding itself to a particular window toolkit or shell
   single visible handoff instead of waiting on a later visible capture swap.
 - The live-to-Frozen handoff MUST NOT flash through a blank surface, a mask/scrim-only state, or
   any other intermediate mode-switch artifact.
+- The first visible Frozen toolbar MUST be installed with the first Frozen display handoff or
+  immediately after it from already prepared display state. A first capture after app launch MUST
+  NOT leave the user waiting for a visibly late toolbar while background capture streams warm up.
 - The live-to-Frozen handoff MUST NOT show a doubled mask/scrim caused by capturing Rsnap's own
   capture UI into the frozen display image. Frozen-frame streams that were created before capture
   overlay windows became visible must be rebuilt or invalidated before their frames can be used for
@@ -189,6 +197,29 @@ this contract.
   committed viewport and then re-advances past the resume frontier.
 - If pairwise proof is weak, ambiguous, stale, or otherwise not trustworthy, the system must fail
   closed: no append, no position advance, and no best-guess resume.
+- Scroll capture entry MUST keep the visible UI responsive. Pressing plain `s` or the toolbar
+  button must enter scroll capture from already prepared or quickly primed capture resources; it
+  must not intentionally cold-start the live frame stream when a usable stream is already active.
+  Seconds-stale live frames must be rejected by source frame age or sequence metadata instead of
+  being treated as current content.
+- Active scroll-capture toolbar Liquid Glass is a required scroll UI surface. It MUST seed from
+  real frozen display content before first reveal so it does not flash or remain as a solid
+  tint/material-only toolbar. While scroll capture is active, the toolbar backdrop MUST continue
+  sampling from native live region frames at interactive cadence. It MUST NOT stall for seconds and
+  refresh only near the end of the scroll.
+- Active toolbar backdrop sampling MUST NOT use repeated below-overlay screenshot capture as the
+  steady-state source. Slow screenshot fallback may only be an exceptional recovery path outside
+  the active scroll backdrop cadence; the normal active path must use fresh native live frames or
+  keep the previous/seed backdrop until a fresh frame is available.
+- The scroll preview MUST follow committed scroll progress from the stitched canvas at interactive
+  cadence during active wheel input. If overlap proof is unavailable, the preview may pause rather
+  than inventing movement, but it MUST NOT wait until the end of the gesture and then jump directly
+  to the final viewport.
+- Dense wheel input, smooth scroll, or faster-than-default scroll gestures do not weaken the image
+  proof contract: Rsnap may skip unprovable intermediate frames, but any visible preview movement
+  and any exported growth MUST come from committed stitcher state. The user-visible preview should
+  update as proof-backed growth is committed instead of buffering all acceptable growth until the
+  end of the gesture.
 - Preview, `Space`, and save/export must all render from the same committed stitched canvas.
   Provisional or preview-only state must never produce a different clipboard or saved result from
   what the user sees.

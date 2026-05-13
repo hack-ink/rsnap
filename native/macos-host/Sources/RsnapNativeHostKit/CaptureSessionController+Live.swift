@@ -160,8 +160,7 @@ extension CaptureSessionController {
 		// The Rust live sampler treats these IDs as current-process windows to
 		// include through the app-level exclusion. Overlay windows must stay out
 		// of this list so color sampling sees the desktop under the capture UI.
-		pendingLiveFrameStreamRelease?.cancel()
-		pendingLiveFrameStreamRelease = nil
+		cancelPendingScreenCaptureStreamRelease(reason: "start_capture")
 		liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
 		let warmStartedAt = ProcessInfo.processInfo.systemUptime
 		let initialSample = warmLiveSamplingIfPossible(

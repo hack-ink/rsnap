@@ -61,19 +61,7 @@ impl ScrollSession {
 			return Ok(self.observe_worker_pairwise_no_change(frame, fingerprint, reason));
 		}
 
-		let vision_match =
-			support::classify_vision_downward_sample_motion_against(&previous_worker_frame, &frame);
-		let (matched, corroborated_shift_rows) = if let Some(matched) = vision_match {
-			(
-				matched,
-				support::trusted_pairwise_downward_shift_rows_near_motion(
-					&previous_worker_frame,
-					&frame,
-					matched.motion_rows,
-					WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS,
-				),
-			)
-		} else if let Some(matched) =
+		let (matched, corroborated_shift_rows) = if let Some(matched) =
 			support::trusted_pairwise_downward_shift_match(&previous_worker_frame, &frame)
 		{
 			let max_pixel_fallback_motion_rows =
@@ -97,6 +85,18 @@ impl ScrollSession {
 			}
 
 			(matched, Some(matched.motion_rows))
+		} else if let Some(matched) =
+			support::classify_vision_downward_sample_motion_against(&previous_worker_frame, &frame)
+		{
+			(
+				matched,
+				support::trusted_pairwise_downward_shift_rows_near_motion(
+					&previous_worker_frame,
+					&frame,
+					matched.motion_rows,
+					WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS,
+				),
+			)
 		} else {
 			if let Some(upward_motion_rows) =
 				support::trusted_pairwise_upward_shift_rows(&previous_worker_frame, &frame)

@@ -36,11 +36,14 @@ final class CaptureSessionController: NSObject {
 	static let scrollCaptureControlledScrollSettleDelay: TimeInterval = 0.18
 	static let scrollCaptureInputLiveFrameMaxAge: TimeInterval = 0.18
 	static let scrollCaptureSampleInterval: TimeInterval = 1.0 / 30.0
+	static let scrollCaptureActiveInputSampleInterval: TimeInterval = 1.0 / 120.0
+	static let scrollCaptureActiveInputTail: TimeInterval = 0.45
 	static let scrollCaptureMaxFramesPerSample = 3
+	static let scrollCaptureMaxPendingSampleFrames = 18
 	static let scrollCaptureInitialSampleWindow: TimeInterval = 0.35
 	static let scrollCaptureInputSampleWindow: TimeInterval = 1.8
-	static let scrollCaptureFallbackCaptureInterval: TimeInterval = 0.08
-	static let scrollCapturePreviewRefreshInterval: TimeInterval = 0.18
+	static let scrollCaptureFallbackCaptureInterval: TimeInterval = 1.0 / 60.0
+	static let scrollCapturePreviewRefreshInterval: TimeInterval = 1.0 / 30.0
 	static let scrollCaptureToolbarBackdropRefreshInterval: TimeInterval = 1.0 / 120.0
 	static let scrollCaptureWheelTelemetryInterval: TimeInterval = 0.25
 	static let scrollCapturePassthroughWheelMotionHintMultiplier = 3.5
@@ -56,6 +59,10 @@ final class CaptureSessionController: NSObject {
 	let scrollCaptureStitchQueue = DispatchQueue(
 		label: "ink.hack.rsnap.scroll-capture-stitch",
 		qos: .userInitiated
+	)
+	let scrollCaptureSampleQueue = DispatchQueue(
+		label: "ink.hack.rsnap.scroll-capture-sample",
+		qos: .userInteractive
 	)
 	let frozenImageRenderQueue = DispatchQueue(
 		label: "ink.hack.rsnap.frozen-image-render",

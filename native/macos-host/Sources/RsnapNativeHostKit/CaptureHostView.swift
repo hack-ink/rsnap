@@ -40,7 +40,7 @@ func makeFrozenMosaicPatch(from image: CGImage, sourceRect: CGRect) -> CGImage? 
 @MainActor
 final class CaptureHostView: NSView {
 	private static let liveDragIntentThreshold: CGFloat = 3
-	private static let scrollToolbarBackdropCaptureMinimumInterval: TimeInterval = 1.0 / 30.0
+	private static let scrollToolbarBackdropCaptureMinimumInterval: TimeInterval = 1.0 / 60.0
 
 	private final class FrozenToolbarRenderView: NSView {
 		struct Item: Equatable {
@@ -310,6 +310,8 @@ final class CaptureHostView: NSView {
 	private var scrollToolbarBackdropCaptureGeneration: UInt64 = 0
 	private var scrollToolbarBackdropSeedFrame: CGRect?
 	private var scrollToolbarBackdropSeedImage: CGImage?
+	private var scrollToolbarBackdropSeedPatchCache: GlassPatchCache?
+	private var scrollToolbarBackdropLastFrameSequence: UInt64 = 0
 	private var trackingAreaRef: NSTrackingArea?
 	private var pointerOverFrozenToolbar = false
 	private var hoveredToolbarAction: ToolbarItemKind?
@@ -403,12 +405,18 @@ final class CaptureHostView: NSView {
 			defersFrozenToolbarClassicGlassUntilAfterFirstDisplay = false
 			scrollToolbarBackdropSeedFrame = nil
 			scrollToolbarBackdropSeedImage = nil
+			scrollToolbarBackdropSeedPatchCache = nil
+			scrollToolbarBackdropLastFrameSequence = 0
 		} else if previousChrome.scrollMinimapPreview == nil, chrome.scrollMinimapPreview != nil {
 			scrollToolbarBackdropSeedFrame = previousChrome.frozenDisplayFrame
 			scrollToolbarBackdropSeedImage = previousChrome.frozenDisplayImage
+			scrollToolbarBackdropSeedPatchCache = nil
+			scrollToolbarBackdropLastFrameSequence = 0
 		} else if previousChrome.scrollMinimapPreview != nil, chrome.scrollMinimapPreview == nil {
 			scrollToolbarBackdropSeedFrame = nil
 			scrollToolbarBackdropSeedImage = nil
+			scrollToolbarBackdropSeedPatchCache = nil
+			scrollToolbarBackdropLastFrameSequence = 0
 		}
 		self.scene = scene
 		self.chrome = chrome
@@ -3335,11 +3343,29 @@ final class CaptureHostView: NSView {
 	}
 
 	private func scrollToolbarBackdropSeedPatch(in globalFrame: CGRect) -> CGImage? {
-		frozenDisplayPatch(
-			in: globalFrame,
-			displayFrame: scrollToolbarBackdropSeedFrame,
-			image: scrollToolbarBackdropSeedImage
+		if let cached = scrollToolbarBackdropSeedPatchCache,
+			abs(cached.frame.minX - globalFrame.minX) < 1,
+			abs(cached.frame.minY - globalFrame.minY) < 1,
+			abs(cached.frame.width - globalFrame.width) < 1,
+			abs(cached.frame.height - globalFrame.height) < 1
+		{
+			return cached.image
+		}
+		guard
+			let image = frozenDisplayPatch(
+				in: globalFrame,
+				displayFrame: scrollToolbarBackdropSeedFrame,
+				image: scrollToolbarBackdropSeedImage
+			)
+		else {
+			return nil
+		}
+		scrollToolbarBackdropSeedPatchCache = GlassPatchCache(
+			frame: globalFrame,
+			capturedAt: ProcessInfo.processInfo.systemUptime,
+			image: image
 		)
+		return image
 	}
 
 	private func frozenDisplayPatch(
@@ -3643,7 +3669,8 @@ final class CaptureHostView: NSView {
 		globalFrame: CGRect
 	) {
 		guard scrollToolbarBackdropCaptureInFlight == false,
-			let captureSource = controller?.scrollCaptureState?.captureSource
+			controller?.scrollCaptureState != nil,
+			let liveFrameStream = controller?.liveFrameStream
 		else {
 			return
 		}
@@ -3659,22 +3686,26 @@ final class CaptureHostView: NSView {
 		scrollToolbarBackdropCaptureInFlight = true
 		scrollToolbarBackdropCaptureGeneration &+= 1
 		let generation = scrollToolbarBackdropCaptureGeneration
+		let afterFrameSequence = scrollToolbarBackdropLastFrameSequence
 		DispatchQueue.main.async { [weak self] in
 			guard let self, self.scrollToolbarBackdropCaptureGeneration == generation else {
 				self?.scrollToolbarBackdropCaptureInFlight = false
 				return
 			}
 			self.scrollToolbarBackdropCaptureQueue.async {
-				[toolbarFrame, globalFrame, captureSource] in
-				let patch = CaptureOverlayController.captureImageBelowOverlay(
+				[toolbarFrame, globalFrame, liveFrameStream, afterFrameSequence] in
+				let frame = liveFrameStream.nextRegionFrame(
 					in: globalFrame,
-					source: captureSource
+					afterFrameSequence: afterFrameSequence,
+					waitForFresh: true
 				)
+				let patch = frame.flatMap { NativeHostImageBridge.cgImage(from: $0.region) }
 				DispatchQueue.main.async { [weak self] in
 					self?.finishScrollToolbarBackdropCapture(
 						patch,
 						toolbarFrame: toolbarFrame,
-						generation: generation
+						generation: generation,
+						frameSequence: frame?.frameSequence
 					)
 				}
 			}
@@ -3684,12 +3715,19 @@ final class CaptureHostView: NSView {
 	private func finishScrollToolbarBackdropCapture(
 		_ patch: CGImage?,
 		toolbarFrame: CGRect,
-		generation: UInt64
+		generation: UInt64,
+		frameSequence: UInt64?
 	) {
 		guard scrollToolbarBackdropCaptureGeneration == generation else {
 			return
 		}
 		scrollToolbarBackdropCaptureInFlight = false
+		if let frameSequence {
+			scrollToolbarBackdropLastFrameSequence = max(
+				scrollToolbarBackdropLastFrameSequence,
+				frameSequence
+			)
+		}
 		guard
 			scene.mode == .frozen,
 			chrome.scrollMinimapPreview != nil,
@@ -3892,6 +3930,8 @@ final class CaptureHostView: NSView {
 		lastScrollToolbarBackdropCaptureStartedUptime = 0
 		scrollToolbarBackdropSeedFrame = nil
 		scrollToolbarBackdropSeedImage = nil
+		scrollToolbarBackdropSeedPatchCache = nil
+		scrollToolbarBackdropLastFrameSequence = 0
 		toolbarLiquidGlassBackdropView?.isHidden = true
 		toolbarLiquidGlassBackdropView?.image = nil
 		toolbarLiquidGlassView?.isHidden = true
