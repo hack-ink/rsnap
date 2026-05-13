@@ -3375,7 +3375,7 @@ checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rsnap"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "color-eyre",
  "directories",
@@ -3388,7 +3388,7 @@ dependencies = [
 
 [[package]]
 name = "rsnap-capture-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "color-eyre",
  "fast_image_resize",
@@ -3399,7 +3399,7 @@ dependencies = [
 
 [[package]]
 name = "rsnap-host-ffi"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "rsnap-capture-core",
  "rsnap-overlay",
@@ -3407,7 +3407,7 @@ dependencies = [
 
 [[package]]
 name = "rsnap-overlay"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "block2 0.6.2",
  "color-eyre",
@@ -3449,7 +3449,7 @@ dependencies = [
 
 [[package]]
 name = "rsnap-perf"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "color-eyre",
  "image",

@@ -201,3 +201,12 @@ final class NativeHostSoftwareUpdater {
 		return url
 	}
 }
+
+package enum SoftwareUpdateManualCheckAvailability {
+	package static func isEnabled(sparkleCanCheckForUpdates: Bool) -> Bool {
+		// Sparkle flips canCheckForUpdates off while a session is active, but Rsnap's
+		// Check action is the user's way back into that update flow.
+		_ = sparkleCanCheckForUpdates
+		return true
+	}
+}
