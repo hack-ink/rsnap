@@ -1525,6 +1525,35 @@ pub unsafe extern "C" fn rsnap_scroll_session_take_export_rgba(
 	RsnapStatus::Ok
 }
 
+/// Copies the current committed scroll-capture preview into a Rust-owned RGBA buffer.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer returned by `rsnap_scroll_session_create`, and
+/// `out_region` must be writable. The returned buffer must be released with
+/// `rsnap_owned_rgba_region_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_scroll_session_take_preview_rgba(
+	handle: *mut RsnapScrollSessionHandle,
+	out_region: *mut RsnapOwnedRgbaRegion,
+) -> RsnapStatus {
+	let Some(handle) = (unsafe { scroll_session_handle_mut(handle) }) else {
+		return RsnapStatus::NullHandle;
+	};
+
+	if out_region.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let preview = handle.session.preview_image();
+
+	unsafe {
+		ptr::write(out_region, owned_region_from_scroll_image(preview));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Reverts the most recent committed scroll-capture append when possible.
 ///
 /// # Safety
@@ -4937,7 +4966,7 @@ mod tests {
 		let base = scroll_frame(16, 96, 0);
 		let moved = scroll_frame(16, 96, 24);
 		let handle =
-			unsafe { crate::rsnap_scroll_session_create(16, 96, base.as_ptr(), base.len(), 16) };
+			unsafe { crate::rsnap_scroll_session_create(16, 96, base.as_ptr(), base.len(), 8) };
 
 		assert!(!handle.is_null());
 
@@ -4970,8 +4999,19 @@ mod tests {
 		assert_eq!(export.height, 120);
 		assert_eq!(export.len, 16 * 120 * 4);
 
+		let mut preview = RsnapOwnedRgbaRegion::default();
+
+		assert_eq!(
+			unsafe { crate::rsnap_scroll_session_take_preview_rgba(handle, &mut preview) },
+			RsnapStatus::Ok
+		);
+		assert_eq!(preview.width, 8);
+		assert_eq!(preview.height, 60);
+		assert_eq!(preview.len, 8 * 60 * 4);
+
 		unsafe {
 			crate::rsnap_owned_rgba_region_release(&mut export);
+			crate::rsnap_owned_rgba_region_release(&mut preview);
 			crate::rsnap_scroll_session_destroy(handle);
 		}
 	}

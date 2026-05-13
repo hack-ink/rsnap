@@ -224,11 +224,12 @@ enum LiveChromeLiquidGlassBridge {
 		return glassView
 	}
 
-	static func update(_ glassView: NSView, settings: NativeHostSettings) {
+	@discardableResult
+	static func update(_ glassView: NSView, settings: NativeHostSettings) -> Bool {
 		guard let glassView = glassView as? LiveChromeLiquidGlassView else {
-			return
+			return false
 		}
-		glassView.update(settings: settings)
+		return glassView.update(settings: settings)
 	}
 }
 
@@ -272,16 +273,16 @@ final class LiveChromeLiquidGlassView: NSView {
 		fatalError("init(coder:) has not been implemented")
 	}
 
-	func update(settings: NativeHostSettings) {
+	@discardableResult
+	func update(settings: NativeHostSettings) -> Bool {
 		guard currentSettings != settings else {
-			needsLayout = true
-			layoutSubtreeIfNeeded()
-			return
+			return false
 		}
 		currentSettings = settings
 		glassHostView.rootView = Self.makeGlassRoot(settings: settings)
 		needsLayout = true
 		layoutSubtreeIfNeeded()
+		return true
 	}
 
 	private static func makeGlassRoot(settings: NativeHostSettings) -> AnyView {

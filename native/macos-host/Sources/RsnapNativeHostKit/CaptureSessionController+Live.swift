@@ -8,6 +8,19 @@ extension CaptureSessionController {
 		liveFrameStream.prepareSampler(reason: reason)
 	}
 
+	func prepareLaunchCaptureStreams(reason: String) {
+		liveFrameStream.prepareSampler(reason: reason)
+		guard NativePermissions.screenRecordingGranted else {
+			return
+		}
+		_ = warmLiveSamplingIfPossible(
+			at: NSEvent.mouseLocation,
+			source: reason,
+			excludeSelfFromFrozenAuthority: true
+		)
+		releaseScreenCaptureStreams()
+	}
+
 	func allocateCaptureTelemetryID() -> UInt64 {
 		let captureID = nextCaptureTelemetryID
 		nextCaptureTelemetryID &+= 1
@@ -147,8 +160,7 @@ extension CaptureSessionController {
 		// The Rust live sampler treats these IDs as current-process windows to
 		// include through the app-level exclusion. Overlay windows must stay out
 		// of this list so color sampling sees the desktop under the capture UI.
-		pendingLiveFrameStreamRelease?.cancel()
-		pendingLiveFrameStreamRelease = nil
+		cancelPendingScreenCaptureStreamRelease(reason: "start_capture")
 		liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
 		let warmStartedAt = ProcessInfo.processInfo.systemUptime
 		let initialSample = warmLiveSamplingIfPossible(
@@ -213,31 +225,12 @@ extension CaptureSessionController {
 				guard let self, let overlayController else {
 					return
 				}
-				let selfCaptureExceptionWindowIDs =
-					overlayController.selfCaptureExceptionWindowIDs
-				self.liveFrameStream.start(
-					for: NSScreen.screens,
-					prewarmPoint: startPoint,
-					captureID: captureID
+				self.prepareOverlayCaptureStreams(
+					overlayController: overlayController,
+					startPoint: startPoint,
+					captureID: captureID,
+					capturableOwnWindowIDs: capturableOwnWindowIDs
 				)
-				if self.frozenFrameAuthority.hasSelfCaptureCompleteFrame(
-					containing: startPoint)
-				{
-					NativeHostTelemetry.captureEvent(
-						"capture.self_capture_rebuild_skipped",
-						captureID: captureID,
-						detail: "start_capture_complete_filter"
-					)
-				} else {
-					_ = self.warmLiveSamplingIfPossible(
-						at: startPoint,
-						source: "capture_overlay_preflight",
-						captureID: captureID,
-						excludeSelfFromFrozenAuthority: true,
-						selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-						includedCurrentProcessWindowIDs: capturableOwnWindowIDs
-					)
-				}
 			}
 		)
 		overlayController.prepareCaptureStreamsNow(trigger: "overlay_show")
@@ -259,6 +252,47 @@ extension CaptureSessionController {
 			screenCount: NSScreen.screens.count,
 			windowCount: initialWindowSnapshots.count
 		)
+	}
+
+	private func prepareOverlayCaptureStreams(
+		overlayController: CaptureOverlayController,
+		startPoint: CGPoint,
+		captureID: UInt64,
+		capturableOwnWindowIDs: Set<CGWindowID>
+	) {
+		let selfCaptureExceptionWindowIDs =
+			overlayController.selfCaptureExceptionWindowIDs
+		liveFrameStream.start(
+			for: NSScreen.screens,
+			prewarmPoint: startPoint,
+			captureID: captureID
+		)
+		if capturableOwnWindowIDs.isEmpty,
+			frozenFrameAuthority.hasSelfCaptureCompleteFrame(containing: startPoint)
+		{
+			NativeHostTelemetry.captureEvent(
+				"capture.self_capture_rebuild_skipped",
+				captureID: captureID,
+				detail: "start_capture_complete_filter"
+			)
+		} else if capturableOwnWindowIDs.isEmpty,
+			frozenFrameAuthority.hasSelfCaptureCompleteStream(containing: startPoint)
+		{
+			NativeHostTelemetry.captureEvent(
+				"capture.self_capture_rebuild_skipped",
+				captureID: captureID,
+				detail: "start_capture_complete_stream"
+			)
+		} else {
+			_ = warmLiveSamplingIfPossible(
+				at: startPoint,
+				source: "capture_overlay_preflight",
+				captureID: captureID,
+				excludeSelfFromFrozenAuthority: true,
+				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+				includedCurrentProcessWindowIDs: capturableOwnWindowIDs
+			)
+		}
 	}
 
 	func ensureCapturePermissions() -> Bool {

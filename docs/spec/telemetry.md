@@ -129,6 +129,11 @@ Expected capture-session chain:
 Optional host-effect timing events include `capture_timing.recognize_text` when the user requests
 OCR from a frozen capture.
 
+Screen-monitoring resource lifecycle events include `capture.stream_release_scheduled`,
+`capture.stream_release_canceled`, `capture.stream_release_requested`, and
+`capture.stream_release_completed`. These events distinguish an intentional `3s` grace window,
+grace reuse by a new capture, and the moment Rsnap actually requests stream shutdown.
+
 Missing events in the chain are evidence of the next failing phase and should be treated as
 debug signal, not as logging noise.
 

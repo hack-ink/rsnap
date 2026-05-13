@@ -319,6 +319,7 @@ extension CaptureSessionController {
 			try syncCore()
 		}
 		schedulePreparedFrozenExport(reason: "freeze_commit")
+		schedulePreparedRecognizeTextImage(reason: "freeze_commit")
 	}
 
 	func frozenFrameLatchWait(containing _: CGPoint) -> TimeInterval {

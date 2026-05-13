@@ -4,10 +4,16 @@ import Darwin
 import Foundation
 import RsnapHostBridge
 
+private struct ActiveScrollCaptureExportSnapshot: @unchecked Sendable {
+	let snapshot: RGBARegionSnapshot
+	let revision: UInt64
+}
+
 private struct FrozenSelectionImageRenderRequest: @unchecked Sendable {
 	let captureID: UInt64
 	let selection: CGRect
 	let scrollExportSnapshot: RGBARegionSnapshot?
+	let scrollExportRevision: UInt64
 	let frozenDisplayFrame: CGRect?
 	let frozenDisplayImage: CGImage?
 	let frozenBaseImage: CGImage?
@@ -27,6 +33,7 @@ private struct FrozenSelectionImageRenderRequest: @unchecked Sendable {
 			selection: selection,
 			scrollExportWidth: scrollExportSnapshot?.width ?? 0,
 			scrollExportHeight: scrollExportSnapshot?.height ?? 0,
+			scrollExportRevision: scrollExportRevision,
 			frozenDisplayFrame: frozenDisplayFrame,
 			frozenBaseWidth: frozenBaseImage?.width ?? 0,
 			frozenBaseHeight: frozenBaseImage?.height ?? 0,
@@ -43,9 +50,7 @@ private struct FrozenSelectionImageRenderRequest: @unchecked Sendable {
 	}
 
 	var canPrepareExportInBackground: Bool {
-		// Scroll capture exports change as the stitched document grows; prepare those on demand
-		// until the scroll pipeline exposes a stable export revision.
-		scrollExportSnapshot == nil
+		true
 	}
 }
 
@@ -54,6 +59,7 @@ private struct FrozenPreparedExportKey: Equatable, @unchecked Sendable {
 	let selection: CGRect
 	let scrollExportWidth: Int
 	let scrollExportHeight: Int
+	let scrollExportRevision: UInt64
 	let frozenDisplayFrame: CGRect?
 	let frozenBaseWidth: Int
 	let frozenBaseHeight: Int
@@ -122,11 +128,39 @@ private struct CopyCaptureJobResult: @unchecked Sendable {
 private struct SaveCaptureJobResult: @unchecked Sendable {
 	let outputURL: URL?
 	let failureMessage: String
+	let failureStage: String
+	let captureImageMilliseconds: Double
+	let makeImageMilliseconds: Double
+	let writeFileMilliseconds: Double
+	let width: Int
+	let height: Int
+	let cacheHit: Bool
+}
+
+struct PreparedRecognizeTextCaptureImage: @unchecked Sendable {
+	let image: CGImage
+	let captureImageMilliseconds: Double
+	let cacheHit: Bool
 }
 
 private struct FrozenPreparedExportEntry: @unchecked Sendable {
 	let key: FrozenPreparedExportKey
 	let result: CopyCaptureJobResult
+}
+
+private struct PreparedRecognizeTextImageJobResult: @unchecked Sendable {
+	let image: CGImage?
+	let baseImage: CGImage?
+	let captureImageMilliseconds: Double
+	let width: Int
+	let height: Int
+}
+
+private struct FrozenPreparedRecognizeTextImageEntry: @unchecked Sendable {
+	let key: FrozenPreparedExportKey
+	let image: CGImage
+	let width: Int
+	let height: Int
 }
 
 final class FrozenPreparedExportStore: @unchecked Sendable {
@@ -160,6 +194,17 @@ final class FrozenPreparedExportStore: @unchecked Sendable {
 		return generation
 	}
 
+	fileprivate func preparationIsCurrent(
+		for request: FrozenSelectionImageRenderRequest,
+		generation preparedGeneration: UInt64
+	) -> Bool {
+		let key = request.preparedExportKey
+		lock.lock()
+		let isCurrent = generation == preparedGeneration && inFlightKey == key
+		lock.unlock()
+		return isCurrent
+	}
+
 	fileprivate func finishPreparing(
 		for request: FrozenSelectionImageRenderRequest,
 		generation preparedGeneration: UInt64,
@@ -189,6 +234,83 @@ final class FrozenPreparedExportStore: @unchecked Sendable {
 		let result = entry?.key == key ? entry?.result.preparedCacheHit : nil
 		lock.unlock()
 		return result
+	}
+}
+
+final class FrozenPreparedRecognizeTextImageStore: @unchecked Sendable {
+	private let lock = NSLock()
+	private var generation: UInt64 = 0
+	private var inFlightKey: FrozenPreparedExportKey?
+	private var entry: FrozenPreparedRecognizeTextImageEntry?
+
+	func reset() {
+		invalidate()
+	}
+
+	fileprivate func invalidate() {
+		lock.lock()
+		generation &+= 1
+		inFlightKey = nil
+		entry = nil
+		lock.unlock()
+	}
+
+	fileprivate func beginPreparing(for request: FrozenSelectionImageRenderRequest) -> UInt64? {
+		let key = request.preparedExportKey
+		lock.lock()
+		defer {
+			lock.unlock()
+		}
+		if entry?.key == key || inFlightKey == key {
+			return nil
+		}
+		inFlightKey = key
+		return generation
+	}
+
+	fileprivate func preparationIsCurrent(
+		for request: FrozenSelectionImageRenderRequest,
+		generation preparedGeneration: UInt64
+	) -> Bool {
+		let key = request.preparedExportKey
+		lock.lock()
+		let isCurrent = generation == preparedGeneration && inFlightKey == key
+		lock.unlock()
+		return isCurrent
+	}
+
+	fileprivate func finishPreparing(
+		for request: FrozenSelectionImageRenderRequest,
+		generation preparedGeneration: UInt64,
+		result: PreparedRecognizeTextImageJobResult
+	) {
+		let key = request.preparedExportKey
+		lock.lock()
+		defer {
+			lock.unlock()
+		}
+		guard generation == preparedGeneration, inFlightKey == key else {
+			return
+		}
+		inFlightKey = nil
+		guard let image = result.image else {
+			entry = nil
+			return
+		}
+		entry = FrozenPreparedRecognizeTextImageEntry(
+			key: key,
+			image: image,
+			width: result.width,
+			height: result.height
+		)
+	}
+
+	fileprivate func result(matching request: FrozenSelectionImageRenderRequest) -> CGImage? {
+		let key = request.preparedExportKey
+		lock.lock()
+		let image = entry?.key == key ? entry?.image : nil
+		lock.unlock()
+		return image
 	}
 }
 
@@ -250,6 +372,7 @@ extension CaptureSessionController {
 			refreshOverlay()
 			return
 		}
+		let saveStartedAt = ProcessInfo.processInfo.systemUptime
 		let outputURL = try nextOutputURL()
 		hostEffectJobGeneration &+= 1
 		let jobGeneration = hostEffectJobGeneration
@@ -264,7 +387,11 @@ extension CaptureSessionController {
 				preparedExportStore: preparedExportStore
 			)
 			DispatchQueue.main.async {
-				self?.finishSaveCaptureJob(result, jobGeneration: jobGeneration)
+				self?.finishSaveCaptureJob(
+					result,
+					saveStartedAt: saveStartedAt,
+					jobGeneration: jobGeneration
+				)
 			}
 		}
 	}
@@ -273,8 +400,7 @@ extension CaptureSessionController {
 		guard let selection = currentFrozenSelection() else {
 			return nil
 		}
-		let scrollExportSnapshot =
-			scrollCaptureState == nil ? nil : try activeScrollCaptureExportSnapshot()
+		let scrollExportSnapshot = try activeScrollCaptureExportSnapshot()
 		let settings = settingsStore.settings
 		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
 		let screen = screen(containing: selectionCenter)
@@ -285,7 +411,8 @@ extension CaptureSessionController {
 		return FrozenSelectionImageRenderRequest(
 			captureID: currentCaptureTelemetryID,
 			selection: selection,
-			scrollExportSnapshot: scrollExportSnapshot,
+			scrollExportSnapshot: scrollExportSnapshot?.snapshot,
+			scrollExportRevision: scrollExportSnapshot?.revision ?? 0,
 			frozenDisplayFrame: chromeState.frozenDisplayFrame,
 			frozenDisplayImage: chromeState.frozenDisplayImage,
 			frozenBaseImage: chromeState.frozenBaseImage,
@@ -306,7 +433,193 @@ extension CaptureSessionController {
 	}
 
 	func invalidatePreparedFrozenExport() {
+		pendingScrollCapturePreparedExport?.cancel()
+		pendingScrollCapturePreparedExport = nil
+		pendingFrozenAnnotationPreparedExport?.cancel()
+		pendingFrozenAnnotationPreparedExport = nil
+		pendingFrozenRecognizeTextImagePreparation?.cancel()
+		pendingFrozenRecognizeTextImagePreparation = nil
 		frozenPreparedExportStore.invalidate()
+		frozenPreparedRecognizeTextImageStore.invalidate()
+	}
+
+	func schedulePreparedFrozenAnnotationExport(reason: String) {
+		pendingFrozenAnnotationPreparedExport?.cancel()
+		let workItem = DispatchWorkItem { [weak self] in
+			guard let self else {
+				return
+			}
+			self.pendingFrozenAnnotationPreparedExport = nil
+			self.schedulePreparedFrozenExport(reason: reason)
+			self.schedulePreparedRecognizeTextImage(reason: reason)
+		}
+		pendingFrozenAnnotationPreparedExport = workItem
+		DispatchQueue.main.asyncAfter(
+			deadline: .now() + Self.frozenAnnotationPreparedExportDelay,
+			execute: workItem
+		)
+	}
+
+	func schedulePreparedScrollCaptureExport(reason: String, revision: UInt64) {
+		schedulePreparedScrollCaptureExport(
+			reason: reason,
+			revision: revision,
+			delay: Self.scrollCapturePreparedExportDelay
+		)
+	}
+
+	private func schedulePreparedScrollCaptureExport(
+		reason: String,
+		revision: UInt64,
+		delay: TimeInterval
+	) {
+		pendingScrollCapturePreparedExport?.cancel()
+		let workItem = DispatchWorkItem { [weak self] in
+			guard let self else {
+				return
+			}
+			self.pendingScrollCapturePreparedExport = nil
+			guard let state = self.scrollCaptureState,
+				state.exportRevision == revision
+			else {
+				return
+			}
+			let remainingDelay = self.remainingPreparedScrollExportQuietDelay(state: state)
+			if remainingDelay > 0 {
+				self.schedulePreparedScrollCaptureExport(
+					reason: reason,
+					revision: revision,
+					delay: remainingDelay
+				)
+				return
+			}
+			self.schedulePreparedFrozenExport(reason: reason)
+			self.schedulePreparedRecognizeTextImage(reason: reason)
+		}
+		pendingScrollCapturePreparedExport = workItem
+		DispatchQueue.main.asyncAfter(
+			deadline: .now() + delay,
+			execute: workItem
+		)
+	}
+
+	private func remainingPreparedScrollExportQuietDelay(
+		state: NativeScrollCaptureState
+	) -> TimeInterval {
+		let lastInputUptime = max(
+			state.lastObservedWheelUptime,
+			state.lastForwardedWheelUptime
+		)
+		guard lastInputUptime > 0 else {
+			return 0
+		}
+		let elapsed = ProcessInfo.processInfo.systemUptime - lastInputUptime
+		return max(0, Self.scrollCapturePreparedExportDelay - elapsed)
+	}
+
+	private var canPrepareRecognizeTextImage: Bool {
+		let allowTextInput =
+			session?.configuration.allowTextInput
+			?? settingsStore.sessionConfiguration.allowTextInput
+		return allowTextInput
+			&& currentFrozenSelection() != nil
+			&& chromeState.frozenOverlay.hasRecognizeTextBlockingEdits == false
+	}
+
+	func schedulePreparedRecognizeTextImage(reason: String) {
+		guard canPrepareRecognizeTextImage else {
+			pendingFrozenRecognizeTextImagePreparation?.cancel()
+			pendingFrozenRecognizeTextImagePreparation = nil
+			frozenPreparedRecognizeTextImageStore.invalidate()
+			return
+		}
+		schedulePreparedRecognizeTextImage(
+			reason: reason,
+			delay: Self.frozenRecognizeTextImagePreparationDelay
+		)
+	}
+
+	private func schedulePreparedRecognizeTextImage(
+		reason: String,
+		delay: TimeInterval
+	) {
+		pendingFrozenRecognizeTextImagePreparation?.cancel()
+		let workItem = DispatchWorkItem { [weak self] in
+			guard let self else {
+				return
+			}
+			self.pendingFrozenRecognizeTextImagePreparation = nil
+			guard
+				let request = try? self.frozenSelectionImageRenderRequest(),
+				request.canPrepareExportInBackground,
+				let preparationGeneration =
+					self.frozenPreparedRecognizeTextImageStore.beginPreparing(for: request)
+			else {
+				return
+			}
+
+			let preparedImageStore = self.frozenPreparedRecognizeTextImageStore
+			self.frozenImageRenderQueue.async {
+				guard
+					preparedImageStore.preparationIsCurrent(
+						for: request,
+						generation: preparationGeneration
+					)
+				else {
+					return
+				}
+				let startedAt = ProcessInfo.processInfo.systemUptime
+				let result = Self.renderPreparedRecognizeTextImageJob(request: request)
+				preparedImageStore.finishPreparing(
+					for: request,
+					generation: preparationGeneration,
+					result: result
+				)
+				NativeHostTelemetry.preparedRecognizeTextImageTiming(
+					captureID: request.captureID,
+					totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAt),
+					captureImageMilliseconds: result.captureImageMilliseconds,
+					success: result.image != nil,
+					reason: reason,
+					width: result.width,
+					height: result.height
+				)
+			}
+		}
+		pendingFrozenRecognizeTextImagePreparation = workItem
+		DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+	}
+
+	func preparedRecognizeTextCaptureImage(
+		captureImageStartedAt: TimeInterval
+	) throws -> PreparedRecognizeTextCaptureImage? {
+		guard let request = try frozenSelectionImageRenderRequest() else {
+			return nil
+		}
+		if let image = frozenPreparedRecognizeTextImageStore.result(matching: request) {
+			return PreparedRecognizeTextCaptureImage(
+				image: image,
+				captureImageMilliseconds: 0,
+				cacheHit: true
+			)
+		}
+
+		let result = Self.renderPreparedRecognizeTextImageJob(request: request)
+		if let baseImage = result.baseImage,
+			chromeState.frozenSelectionSnapshot == request.selection,
+			chromeState.frozenBaseImage == nil
+		{
+			chromeState.frozenBaseImage = baseImage
+		}
+		guard let image = result.image else {
+			return nil
+		}
+		return PreparedRecognizeTextCaptureImage(
+			image: image,
+			captureImageMilliseconds: NativeHostTelemetry.milliseconds(
+				since: captureImageStartedAt),
+			cacheHit: false
+		)
 	}
 
 	func schedulePreparedFrozenExport(reason: String) {
@@ -319,6 +632,14 @@ extension CaptureSessionController {
 
 		let preparedExportStore = frozenPreparedExportStore
 		frozenImageRenderQueue.async {
+			guard
+				preparedExportStore.preparationIsCurrent(
+					for: request,
+					generation: preparationGeneration
+				)
+			else {
+				return
+			}
 			let startedAt = ProcessInfo.processInfo.systemUptime
 			let result = Self.renderCopyCaptureJob(request: request)
 			preparedExportStore.finishPreparing(
@@ -337,6 +658,42 @@ extension CaptureSessionController {
 				height: result.height
 			)
 		}
+	}
+
+	nonisolated private static func renderPreparedRecognizeTextImageJob(
+		request: FrozenSelectionImageRenderRequest
+	) -> PreparedRecognizeTextImageJobResult {
+		let captureImageStartedAt = ProcessInfo.processInfo.systemUptime
+		let renderResult: FrozenSelectionImageRenderResult
+		do {
+			renderResult = try renderFrozenSelectionImage(
+				from: request,
+				applyingCaptureFrameEffect: false,
+				prefersPixelSnapshot: false
+			)
+		} catch {
+			return PreparedRecognizeTextImageJobResult(
+				image: nil,
+				baseImage: nil,
+				captureImageMilliseconds: NativeHostTelemetry.milliseconds(
+					since: captureImageStartedAt),
+				width: 0,
+				height: 0
+			)
+		}
+
+		let captureImageMilliseconds =
+			NativeHostTelemetry.milliseconds(since: captureImageStartedAt)
+		let image =
+			renderResult.image
+			?? renderResult.rgbaSnapshot.flatMap { NativeHostImageBridge.cgImage(from: $0) }
+		return PreparedRecognizeTextImageJobResult(
+			image: image,
+			baseImage: renderResult.baseImage,
+			captureImageMilliseconds: captureImageMilliseconds,
+			width: renderResult.width,
+			height: renderResult.height
+		)
 	}
 
 	nonisolated private static func renderCopyCaptureJob(
@@ -423,13 +780,33 @@ extension CaptureSessionController {
 		if let preparedResult = preparedExportStore.result(matching: request),
 			let pngData = preparedResult.pngData
 		{
+			let writeStartedAt = ProcessInfo.processInfo.systemUptime
 			do {
 				try pngData.write(to: outputURL, options: .atomic)
-				return SaveCaptureJobResult(outputURL: outputURL, failureMessage: "")
+				return SaveCaptureJobResult(
+					outputURL: outputURL,
+					failureMessage: "",
+					failureStage: "none",
+					captureImageMilliseconds: 0,
+					makeImageMilliseconds: 0,
+					writeFileMilliseconds: NativeHostTelemetry.milliseconds(
+						since: writeStartedAt),
+					width: preparedResult.width,
+					height: preparedResult.height,
+					cacheHit: true
+				)
 			} catch {
 				return SaveCaptureJobResult(
 					outputURL: nil,
-					failureMessage: "Could not save the capture."
+					failureMessage: "Could not save the capture.",
+					failureStage: "file_write",
+					captureImageMilliseconds: 0,
+					makeImageMilliseconds: 0,
+					writeFileMilliseconds: NativeHostTelemetry.milliseconds(
+						since: writeStartedAt),
+					width: preparedResult.width,
+					height: preparedResult.height,
+					cacheHit: true
 				)
 			}
 		}
@@ -441,17 +818,28 @@ extension CaptureSessionController {
 		outputURL: URL
 	) -> SaveCaptureJobResult {
 		do {
+			let captureImageStartedAt = ProcessInfo.processInfo.systemUptime
 			let renderResult = try renderFrozenSelectionImage(
 				from: request,
 				applyingCaptureFrameEffect: true,
 				prefersPixelSnapshot: true
 			)
+			let captureImageMilliseconds =
+				NativeHostTelemetry.milliseconds(since: captureImageStartedAt)
 			guard renderResult.rgbaSnapshot != nil || renderResult.image != nil else {
 				return SaveCaptureJobResult(
 					outputURL: nil,
-					failureMessage: "Could not capture the frozen selection."
+					failureMessage: "Could not capture the frozen selection.",
+					failureStage: renderResult.failureStage ?? "capture_image",
+					captureImageMilliseconds: captureImageMilliseconds,
+					makeImageMilliseconds: 0,
+					writeFileMilliseconds: 0,
+					width: renderResult.width,
+					height: renderResult.height,
+					cacheHit: false
 				)
 			}
+			let makeImageStartedAt = ProcessInfo.processInfo.systemUptime
 			let pngData: Data?
 			if let snapshot = renderResult.rgbaSnapshot {
 				pngData = try RsnapExportEncoder.pngData(from: snapshot)
@@ -460,18 +848,46 @@ extension CaptureSessionController {
 			} else {
 				pngData = nil
 			}
+			let makeImageMilliseconds = NativeHostTelemetry.milliseconds(since: makeImageStartedAt)
+			let width = renderResult.rgbaSnapshot?.width ?? renderResult.image?.width ?? 0
+			let height = renderResult.rgbaSnapshot?.height ?? renderResult.image?.height ?? 0
 			guard let pngData else {
 				return SaveCaptureJobResult(
 					outputURL: nil,
-					failureMessage: "Could not encode the captured image."
+					failureMessage: "Could not encode the captured image.",
+					failureStage: "encode_image",
+					captureImageMilliseconds: captureImageMilliseconds,
+					makeImageMilliseconds: makeImageMilliseconds,
+					writeFileMilliseconds: 0,
+					width: width,
+					height: height,
+					cacheHit: false
 				)
 			}
+			let writeStartedAt = ProcessInfo.processInfo.systemUptime
 			try pngData.write(to: outputURL, options: .atomic)
-			return SaveCaptureJobResult(outputURL: outputURL, failureMessage: "")
+			return SaveCaptureJobResult(
+				outputURL: outputURL,
+				failureMessage: "",
+				failureStage: "none",
+				captureImageMilliseconds: captureImageMilliseconds,
+				makeImageMilliseconds: makeImageMilliseconds,
+				writeFileMilliseconds: NativeHostTelemetry.milliseconds(since: writeStartedAt),
+				width: width,
+				height: height,
+				cacheHit: false
+			)
 		} catch {
 			return SaveCaptureJobResult(
 				outputURL: nil,
-				failureMessage: "Could not save the capture."
+				failureMessage: "Could not save the capture.",
+				failureStage: "file_write",
+				captureImageMilliseconds: 0,
+				makeImageMilliseconds: 0,
+				writeFileMilliseconds: 0,
+				width: 0,
+				height: 0,
+				cacheHit: false
 			)
 		}
 	}
@@ -546,11 +962,24 @@ extension CaptureSessionController {
 
 	private func finishSaveCaptureJob(
 		_ result: SaveCaptureJobResult,
+		saveStartedAt: TimeInterval,
 		jobGeneration: UInt64
 	) {
 		guard hostEffectJobGeneration == jobGeneration, session != nil else {
 			return
 		}
+		NativeHostTelemetry.saveCaptureTiming(
+			captureID: currentCaptureTelemetryID,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: saveStartedAt),
+			captureImageMilliseconds: result.captureImageMilliseconds,
+			makeImageMilliseconds: result.makeImageMilliseconds,
+			writeFileMilliseconds: result.writeFileMilliseconds,
+			success: result.outputURL != nil,
+			failureStage: result.failureStage,
+			width: result.width,
+			height: result.height,
+			cacheHit: result.cacheHit
+		)
 		guard let outputURL = result.outputURL else {
 			try? setHostStatusMessage(result.failureMessage)
 			refreshOverlay()
@@ -603,14 +1032,20 @@ extension CaptureSessionController {
 		)
 	}
 
-	func activeScrollCaptureExportSnapshot() throws -> RGBARegionSnapshot? {
+	private func activeScrollCaptureExportSnapshot() throws -> ActiveScrollCaptureExportSnapshot? {
 		guard Self.scrollCaptureEnabled else {
 			return nil
 		}
 		guard let state = scrollCaptureState else {
 			return nil
 		}
-		return try state.stitcher.exportImage()
+		guard let snapshot = try state.stitcher.exportImage() else {
+			return nil
+		}
+		return ActiveScrollCaptureExportSnapshot(
+			snapshot: snapshot,
+			revision: state.exportRevision
+		)
 	}
 
 	func captureFrozenSelectionImage(applyingCaptureFrameEffect: Bool = false) throws

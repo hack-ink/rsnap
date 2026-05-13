@@ -10,6 +10,7 @@ enum RsnapNativeHostKitProbe {
 		assertRoundedExclusionMaskKeepsCornersFilled()
 		assertCaptureFrameEffectExpandsExportCanvas()
 		assertScrollCaptureViewportPointAcceptsFlippedGlobalMouseCoordinates()
+		assertScrollCaptureObservedInputAcceptsSourceWindowGutter()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -128,6 +129,57 @@ enum RsnapNativeHostKitProbe {
 			) == nativePoint
 		else {
 			fatalError("scroll capture should preserve native bottom-origin wheel coordinates")
+		}
+	}
+
+	private static func assertScrollCaptureObservedInputAcceptsSourceWindowGutter() {
+		let viewport = CGRect(x: 333, y: 1_119, width: 821, height: 461)
+		let sourceFrame = CGRect(x: 200, y: 900, width: 1_500, height: 720)
+		let desktop = CGRect(x: 0, y: 0, width: 3_008, height: 1_692)
+		let gutterPoint = CGPoint(x: 1_319, y: 1_090)
+		guard
+			let inputPoint = scrollCaptureObservedInputPoint(
+				for: gutterPoint,
+				viewportRect: viewport,
+				sourceFrame: sourceFrame,
+				desktopFrame: desktop,
+				padding: 260
+			),
+			inputPoint.inputSource == "near_viewport",
+			inputPoint.insideViewport == false,
+			inputPoint.viewportPoint == CGPoint(x: 1_154, y: 1_119)
+		else {
+			fatalError("scroll capture should accept wheel input in the source window gutter")
+		}
+
+		let smokeViewport = CGRect(x: 902, y: 508, width: 1_203, height: 677)
+		let smokeRightOutsidePoint = CGPoint(x: 2_325, y: 847)
+		guard
+			let smokeInputPoint = scrollCaptureObservedInputPoint(
+				for: smokeRightOutsidePoint,
+				viewportRect: smokeViewport,
+				sourceFrame: .null,
+				desktopFrame: desktop,
+				padding: 360
+			),
+			smokeInputPoint.inputSource == "near_viewport",
+			smokeInputPoint.insideViewport == false,
+			smokeInputPoint.viewportPoint == CGPoint(x: 2_105, y: 847)
+		else {
+			fatalError("scroll capture should accept right-side smoke input near the viewport")
+		}
+
+		let unrelatedPoint = CGPoint(x: 40, y: 40)
+		guard
+			scrollCaptureObservedInputPoint(
+				for: unrelatedPoint,
+				viewportRect: viewport,
+				sourceFrame: sourceFrame,
+				desktopFrame: desktop,
+				padding: 260
+			) == nil
+		else {
+			fatalError("scroll capture should ignore wheel input far outside the source window")
 		}
 	}
 
