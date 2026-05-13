@@ -4,10 +4,16 @@ import Darwin
 import Foundation
 import RsnapHostBridge
 
+private struct ActiveScrollCaptureExportSnapshot: @unchecked Sendable {
+	let snapshot: RGBARegionSnapshot
+	let revision: UInt64
+}
+
 private struct FrozenSelectionImageRenderRequest: @unchecked Sendable {
 	let captureID: UInt64
 	let selection: CGRect
 	let scrollExportSnapshot: RGBARegionSnapshot?
+	let scrollExportRevision: UInt64
 	let frozenDisplayFrame: CGRect?
 	let frozenDisplayImage: CGImage?
 	let frozenBaseImage: CGImage?
@@ -27,6 +33,7 @@ private struct FrozenSelectionImageRenderRequest: @unchecked Sendable {
 			selection: selection,
 			scrollExportWidth: scrollExportSnapshot?.width ?? 0,
 			scrollExportHeight: scrollExportSnapshot?.height ?? 0,
+			scrollExportRevision: scrollExportRevision,
 			frozenDisplayFrame: frozenDisplayFrame,
 			frozenBaseWidth: frozenBaseImage?.width ?? 0,
 			frozenBaseHeight: frozenBaseImage?.height ?? 0,
@@ -43,9 +50,7 @@ private struct FrozenSelectionImageRenderRequest: @unchecked Sendable {
 	}
 
 	var canPrepareExportInBackground: Bool {
-		// Scroll capture exports change as the stitched document grows; prepare those on demand
-		// until the scroll pipeline exposes a stable export revision.
-		scrollExportSnapshot == nil
+		true
 	}
 }
 
@@ -54,6 +59,7 @@ private struct FrozenPreparedExportKey: Equatable, @unchecked Sendable {
 	let selection: CGRect
 	let scrollExportWidth: Int
 	let scrollExportHeight: Int
+	let scrollExportRevision: UInt64
 	let frozenDisplayFrame: CGRect?
 	let frozenBaseWidth: Int
 	let frozenBaseHeight: Int
@@ -158,6 +164,17 @@ final class FrozenPreparedExportStore: @unchecked Sendable {
 		}
 		inFlightKey = key
 		return generation
+	}
+
+	fileprivate func preparationIsCurrent(
+		for request: FrozenSelectionImageRenderRequest,
+		generation preparedGeneration: UInt64
+	) -> Bool {
+		let key = request.preparedExportKey
+		lock.lock()
+		let isCurrent = generation == preparedGeneration && inFlightKey == key
+		lock.unlock()
+		return isCurrent
 	}
 
 	fileprivate func finishPreparing(
@@ -273,8 +290,7 @@ extension CaptureSessionController {
 		guard let selection = currentFrozenSelection() else {
 			return nil
 		}
-		let scrollExportSnapshot =
-			scrollCaptureState == nil ? nil : try activeScrollCaptureExportSnapshot()
+		let scrollExportSnapshot = try activeScrollCaptureExportSnapshot()
 		let settings = settingsStore.settings
 		let selectionCenter = CGPoint(x: selection.midX, y: selection.midY)
 		let screen = screen(containing: selectionCenter)
@@ -285,7 +301,8 @@ extension CaptureSessionController {
 		return FrozenSelectionImageRenderRequest(
 			captureID: currentCaptureTelemetryID,
 			selection: selection,
-			scrollExportSnapshot: scrollExportSnapshot,
+			scrollExportSnapshot: scrollExportSnapshot?.snapshot,
+			scrollExportRevision: scrollExportSnapshot?.revision ?? 0,
 			frozenDisplayFrame: chromeState.frozenDisplayFrame,
 			frozenDisplayImage: chromeState.frozenDisplayImage,
 			frozenBaseImage: chromeState.frozenBaseImage,
@@ -306,7 +323,65 @@ extension CaptureSessionController {
 	}
 
 	func invalidatePreparedFrozenExport() {
+		pendingScrollCapturePreparedExport?.cancel()
+		pendingScrollCapturePreparedExport = nil
 		frozenPreparedExportStore.invalidate()
+	}
+
+	func schedulePreparedScrollCaptureExport(reason: String, revision: UInt64) {
+		schedulePreparedScrollCaptureExport(
+			reason: reason,
+			revision: revision,
+			delay: Self.scrollCapturePreparedExportDelay
+		)
+	}
+
+	private func schedulePreparedScrollCaptureExport(
+		reason: String,
+		revision: UInt64,
+		delay: TimeInterval
+	) {
+		pendingScrollCapturePreparedExport?.cancel()
+		let workItem = DispatchWorkItem { [weak self] in
+			guard let self else {
+				return
+			}
+			self.pendingScrollCapturePreparedExport = nil
+			guard let state = self.scrollCaptureState,
+				state.exportRevision == revision
+			else {
+				return
+			}
+			let remainingDelay = self.remainingPreparedScrollExportQuietDelay(state: state)
+			if remainingDelay > 0 {
+				self.schedulePreparedScrollCaptureExport(
+					reason: reason,
+					revision: revision,
+					delay: remainingDelay
+				)
+				return
+			}
+			self.schedulePreparedFrozenExport(reason: reason)
+		}
+		pendingScrollCapturePreparedExport = workItem
+		DispatchQueue.main.asyncAfter(
+			deadline: .now() + delay,
+			execute: workItem
+		)
+	}
+
+	private func remainingPreparedScrollExportQuietDelay(
+		state: NativeScrollCaptureState
+	) -> TimeInterval {
+		let lastInputUptime = max(
+			state.lastObservedWheelUptime,
+			state.lastForwardedWheelUptime
+		)
+		guard lastInputUptime > 0 else {
+			return 0
+		}
+		let elapsed = ProcessInfo.processInfo.systemUptime - lastInputUptime
+		return max(0, Self.scrollCapturePreparedExportDelay - elapsed)
 	}
 
 	func schedulePreparedFrozenExport(reason: String) {
@@ -319,6 +394,14 @@ extension CaptureSessionController {
 
 		let preparedExportStore = frozenPreparedExportStore
 		frozenImageRenderQueue.async {
+			guard
+				preparedExportStore.preparationIsCurrent(
+					for: request,
+					generation: preparationGeneration
+				)
+			else {
+				return
+			}
 			let startedAt = ProcessInfo.processInfo.systemUptime
 			let result = Self.renderCopyCaptureJob(request: request)
 			preparedExportStore.finishPreparing(
@@ -603,14 +686,20 @@ extension CaptureSessionController {
 		)
 	}
 
-	func activeScrollCaptureExportSnapshot() throws -> RGBARegionSnapshot? {
+	private func activeScrollCaptureExportSnapshot() throws -> ActiveScrollCaptureExportSnapshot? {
 		guard Self.scrollCaptureEnabled else {
 			return nil
 		}
 		guard let state = scrollCaptureState else {
 			return nil
 		}
-		return try state.stitcher.exportImage()
+		guard let snapshot = try state.stitcher.exportImage() else {
+			return nil
+		}
+		return ActiveScrollCaptureExportSnapshot(
+			snapshot: snapshot,
+			revision: state.exportRevision
+		)
 	}
 
 	func captureFrozenSelectionImage(applyingCaptureFrameEffect: Bool = false) throws
