@@ -2227,6 +2227,23 @@ public final class RsnapScrollCaptureSession: @unchecked Sendable {
 		return rsnapOwnedRgbaSnapshot(from: outRegion)
 	}
 
+	public func previewImage() throws -> RGBARegionSnapshot? {
+		stateLock.lock()
+		defer { stateLock.unlock() }
+
+		var outRegion = RsnapOwnedRgbaRegion()
+		let status = rsnap_scroll_session_take_preview_rgba(handle, &outRegion)
+		let code = rsnap_status_code(status)
+		if code == 3 {
+			return nil
+		}
+		if code != 0 {
+			throw HostBridgeError.ffiStatus(
+				context: "taking scroll-capture preview RGBA", code: code)
+		}
+		return rsnapOwnedRgbaSnapshot(from: outRegion)
+	}
+
 	private func decode(result: RsnapScrollObserveResult) throws -> ScrollObserveResult {
 		guard let outcome = ScrollObserveOutcome(rawValue: result.kind) else {
 			throw HostBridgeError.ffiStatus(

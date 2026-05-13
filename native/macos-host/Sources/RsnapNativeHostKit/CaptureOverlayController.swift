@@ -479,7 +479,8 @@ final class CaptureOverlayController {
 		}
 		return CaptureSessionController.FrozenCaptureJobSource(
 			referenceWindowID: CGWindowID(referenceWindow.windowNumber),
-			desktopFrame: Self.desktopFrame
+			desktopFrame: Self.desktopFrame,
+			referenceFrame: referenceWindow.frame
 		)
 	}
 

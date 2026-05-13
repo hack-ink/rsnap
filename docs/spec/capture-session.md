@@ -188,6 +188,10 @@ this contract.
 - While scroll capture is active, Rsnap should forward overlay-local wheel events inside the selected
   viewport through short all-overlay passthrough windows. Wheel deltas are input and forwarding
   signals only; they must not be treated as content-movement authority.
+- Real user wheel input may occur in the same target window or scroll surface but outside the
+  selected viewport, such as a right gutter, margin, or preview-adjacent area. Those observed wheel
+  events must still keep toolbar sampling and stitch sampling active for the selected viewport;
+  only pairwise image proof may commit growth.
 - Pairwise image registration plus overlap proof between adjacent ordered frames is the
   source of truth for downward scroll progress, viewport reacquisition, and append eligibility.
 - Stitching is downward-only:

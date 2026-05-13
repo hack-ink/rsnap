@@ -50,6 +50,16 @@ esac
 
 RUST_PROFILE="${RSNAP_NATIVE_HOST_RUST_PROFILE:-$default_rust_profile}"
 SWIFT_CONFIGURATION="${RSNAP_NATIVE_HOST_SWIFT_CONFIGURATION:-$default_swift_configuration}"
+if [[ -z "${RSNAP_NATIVE_HOST_SWIFT_CLEAN:-}" ]]; then
+	if [[ "$SWIFT_CONFIGURATION" == "release" ]]; then
+		# SwiftPM can reuse stale release objects across local worktree rebuilds. Prefer a
+		# correct staged native host by default; set RSNAP_NATIVE_HOST_SWIFT_CLEAN=0 for
+		# explicit incremental release rebuilds.
+		RSNAP_NATIVE_HOST_SWIFT_CLEAN=1
+	else
+		RSNAP_NATIVE_HOST_SWIFT_CLEAN=0
+	fi
+fi
 if [[ "$RUST_PROFILE" == "debug" ]]; then
 	RUST_LIB_DIR="$ROOT_DIR/target/debug"
 else
@@ -485,9 +495,18 @@ staged_bundle_is_current() {
 
 terminate_running_host() {
 	local remaining_pids=""
-	pkill -x "$EXECUTABLE_NAME" >/dev/null 2>&1 || true
+	collect_running_host_pids() {
+		{
+			pgrep -x "$EXECUTABLE_NAME" || true
+			pgrep -f "$APP_BINARY" || true
+		} | awk 'NF && !seen[$0]++'
+	}
+	while IFS= read -r pid; do
+		[[ -n "$pid" ]] || continue
+		kill "$pid" >/dev/null 2>&1 || true
+	done <<<"$(collect_running_host_pids)"
 	for ((attempt = 0; attempt < 20; attempt++)); do
-		remaining_pids="$(pgrep -x "$EXECUTABLE_NAME" || true)"
+		remaining_pids="$(collect_running_host_pids)"
 		[[ -z "$remaining_pids" ]] && return 0
 		sleep 0.1
 	done

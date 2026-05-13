@@ -523,14 +523,10 @@ impl MacLiveFrameStream {
 		#[cfg(test)]
 		self.record_debug_request_kind("ordered_rgba_regions_after_seq_nonblocking");
 
-		let now = Instant::now();
 		let frames = self
 			.shared_latest_frame
 			.frames_after_seq_for_monitor(monitor.id, after_frame_seq)
 			.into_iter()
-			.filter(|frame| {
-				now.saturating_duration_since(frame.captured_at) <= STREAM_REGION_FRAME_MAX_AGE
-			})
 			.collect::<Vec<_>>();
 
 		if frames.is_empty() {
