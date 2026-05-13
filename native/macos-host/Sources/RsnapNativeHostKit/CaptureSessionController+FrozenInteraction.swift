@@ -200,6 +200,10 @@ extension CaptureSessionController {
 		pointerMoved(to: point)
 	}
 
+	var hasFrozenOverlayActiveInteraction: Bool {
+		scene.mode == .frozen && chromeState.frozenOverlay.hasActiveInteraction
+	}
+
 	func completeFrozenInteraction(at point: CGPoint) {
 		guard scene.mode == .frozen, let selection = currentFrozenSelection() else {
 			pointerMoved(to: point)
