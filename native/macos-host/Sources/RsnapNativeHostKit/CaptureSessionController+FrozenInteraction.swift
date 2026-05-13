@@ -187,6 +187,7 @@ extension CaptureSessionController {
 		let _ = chromeState.frozenOverlay.update(to: point, selection: selection)
 		if chromeState.frozenOverlay.finish(selection: selection) {
 			refreshOverlay()
+			schedulePreparedFrozenAnnotationExport(reason: "annotation_finish")
 			return
 		}
 		pointerMoved(to: point)
@@ -313,6 +314,7 @@ extension CaptureSessionController {
 			return
 		}
 		refreshOverlay()
+		schedulePreparedFrozenAnnotationExport(reason: "annotation_undo")
 	}
 
 	func performFrozenRedo() {
@@ -320,6 +322,7 @@ extension CaptureSessionController {
 			return
 		}
 		refreshOverlay()
+		schedulePreparedFrozenAnnotationExport(reason: "annotation_redo")
 	}
 
 	func performFrozenAnnotationStyleAction(_ action: FrozenAnnotationStyleAction) {
@@ -431,6 +434,7 @@ extension CaptureSessionController {
 				style: chromeState.annotationStyle.textStyle)
 			{
 				refreshOverlay()
+				schedulePreparedFrozenAnnotationExport(reason: "annotation_text_commit")
 				return true
 			}
 			return false

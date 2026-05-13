@@ -374,6 +374,23 @@ enum NativeHostTelemetry {
 		)
 	}
 
+	static func saveCaptureTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		captureImageMilliseconds: Double,
+		makeImageMilliseconds: Double,
+		writeFileMilliseconds: Double,
+		success: Bool,
+		failureStage: String,
+		width: Int,
+		height: Int,
+		cacheHit: Bool
+	) {
+		captureTimingLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.save_capture totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) makeImageMs=\(makeImageMilliseconds, format: .fixed(precision: 2), privacy: .public) writeFileMs=\(writeFileMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) failureStage=\(failureStage, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public) cacheHit=\(cacheHit, privacy: .public)"
+		)
+	}
+
 	static func recognizeTextTiming(
 		captureID: UInt64,
 		totalMilliseconds: Double,

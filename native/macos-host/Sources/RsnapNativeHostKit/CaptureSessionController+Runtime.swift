@@ -78,6 +78,8 @@ extension CaptureSessionController {
 		hostEffectJobGeneration &+= 1
 		pendingScrollCapturePreparedExport?.cancel()
 		pendingScrollCapturePreparedExport = nil
+		pendingFrozenAnnotationPreparedExport?.cancel()
+		pendingFrozenAnnotationPreparedExport = nil
 		frozenPreparedExportStore.reset()
 		completedHostEffect = nil
 		removeNativeScrollCaptureMonitor()

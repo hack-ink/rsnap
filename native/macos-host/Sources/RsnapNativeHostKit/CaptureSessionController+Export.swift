@@ -128,6 +128,13 @@ private struct CopyCaptureJobResult: @unchecked Sendable {
 private struct SaveCaptureJobResult: @unchecked Sendable {
 	let outputURL: URL?
 	let failureMessage: String
+	let failureStage: String
+	let captureImageMilliseconds: Double
+	let makeImageMilliseconds: Double
+	let writeFileMilliseconds: Double
+	let width: Int
+	let height: Int
+	let cacheHit: Bool
 }
 
 private struct FrozenPreparedExportEntry: @unchecked Sendable {
@@ -267,6 +274,7 @@ extension CaptureSessionController {
 			refreshOverlay()
 			return
 		}
+		let saveStartedAt = ProcessInfo.processInfo.systemUptime
 		let outputURL = try nextOutputURL()
 		hostEffectJobGeneration &+= 1
 		let jobGeneration = hostEffectJobGeneration
@@ -281,7 +289,11 @@ extension CaptureSessionController {
 				preparedExportStore: preparedExportStore
 			)
 			DispatchQueue.main.async {
-				self?.finishSaveCaptureJob(result, jobGeneration: jobGeneration)
+				self?.finishSaveCaptureJob(
+					result,
+					saveStartedAt: saveStartedAt,
+					jobGeneration: jobGeneration
+				)
 			}
 		}
 	}
@@ -325,7 +337,25 @@ extension CaptureSessionController {
 	func invalidatePreparedFrozenExport() {
 		pendingScrollCapturePreparedExport?.cancel()
 		pendingScrollCapturePreparedExport = nil
+		pendingFrozenAnnotationPreparedExport?.cancel()
+		pendingFrozenAnnotationPreparedExport = nil
 		frozenPreparedExportStore.invalidate()
+	}
+
+	func schedulePreparedFrozenAnnotationExport(reason: String) {
+		pendingFrozenAnnotationPreparedExport?.cancel()
+		let workItem = DispatchWorkItem { [weak self] in
+			guard let self else {
+				return
+			}
+			self.pendingFrozenAnnotationPreparedExport = nil
+			self.schedulePreparedFrozenExport(reason: reason)
+		}
+		pendingFrozenAnnotationPreparedExport = workItem
+		DispatchQueue.main.asyncAfter(
+			deadline: .now() + Self.frozenAnnotationPreparedExportDelay,
+			execute: workItem
+		)
 	}
 
 	func schedulePreparedScrollCaptureExport(reason: String, revision: UInt64) {
@@ -506,13 +536,33 @@ extension CaptureSessionController {
 		if let preparedResult = preparedExportStore.result(matching: request),
 			let pngData = preparedResult.pngData
 		{
+			let writeStartedAt = ProcessInfo.processInfo.systemUptime
 			do {
 				try pngData.write(to: outputURL, options: .atomic)
-				return SaveCaptureJobResult(outputURL: outputURL, failureMessage: "")
+				return SaveCaptureJobResult(
+					outputURL: outputURL,
+					failureMessage: "",
+					failureStage: "none",
+					captureImageMilliseconds: 0,
+					makeImageMilliseconds: 0,
+					writeFileMilliseconds: NativeHostTelemetry.milliseconds(
+						since: writeStartedAt),
+					width: preparedResult.width,
+					height: preparedResult.height,
+					cacheHit: true
+				)
 			} catch {
 				return SaveCaptureJobResult(
 					outputURL: nil,
-					failureMessage: "Could not save the capture."
+					failureMessage: "Could not save the capture.",
+					failureStage: "file_write",
+					captureImageMilliseconds: 0,
+					makeImageMilliseconds: 0,
+					writeFileMilliseconds: NativeHostTelemetry.milliseconds(
+						since: writeStartedAt),
+					width: preparedResult.width,
+					height: preparedResult.height,
+					cacheHit: true
 				)
 			}
 		}
@@ -524,17 +574,28 @@ extension CaptureSessionController {
 		outputURL: URL
 	) -> SaveCaptureJobResult {
 		do {
+			let captureImageStartedAt = ProcessInfo.processInfo.systemUptime
 			let renderResult = try renderFrozenSelectionImage(
 				from: request,
 				applyingCaptureFrameEffect: true,
 				prefersPixelSnapshot: true
 			)
+			let captureImageMilliseconds =
+				NativeHostTelemetry.milliseconds(since: captureImageStartedAt)
 			guard renderResult.rgbaSnapshot != nil || renderResult.image != nil else {
 				return SaveCaptureJobResult(
 					outputURL: nil,
-					failureMessage: "Could not capture the frozen selection."
+					failureMessage: "Could not capture the frozen selection.",
+					failureStage: renderResult.failureStage ?? "capture_image",
+					captureImageMilliseconds: captureImageMilliseconds,
+					makeImageMilliseconds: 0,
+					writeFileMilliseconds: 0,
+					width: renderResult.width,
+					height: renderResult.height,
+					cacheHit: false
 				)
 			}
+			let makeImageStartedAt = ProcessInfo.processInfo.systemUptime
 			let pngData: Data?
 			if let snapshot = renderResult.rgbaSnapshot {
 				pngData = try RsnapExportEncoder.pngData(from: snapshot)
@@ -543,18 +604,46 @@ extension CaptureSessionController {
 			} else {
 				pngData = nil
 			}
+			let makeImageMilliseconds = NativeHostTelemetry.milliseconds(since: makeImageStartedAt)
+			let width = renderResult.rgbaSnapshot?.width ?? renderResult.image?.width ?? 0
+			let height = renderResult.rgbaSnapshot?.height ?? renderResult.image?.height ?? 0
 			guard let pngData else {
 				return SaveCaptureJobResult(
 					outputURL: nil,
-					failureMessage: "Could not encode the captured image."
+					failureMessage: "Could not encode the captured image.",
+					failureStage: "encode_image",
+					captureImageMilliseconds: captureImageMilliseconds,
+					makeImageMilliseconds: makeImageMilliseconds,
+					writeFileMilliseconds: 0,
+					width: width,
+					height: height,
+					cacheHit: false
 				)
 			}
+			let writeStartedAt = ProcessInfo.processInfo.systemUptime
 			try pngData.write(to: outputURL, options: .atomic)
-			return SaveCaptureJobResult(outputURL: outputURL, failureMessage: "")
+			return SaveCaptureJobResult(
+				outputURL: outputURL,
+				failureMessage: "",
+				failureStage: "none",
+				captureImageMilliseconds: captureImageMilliseconds,
+				makeImageMilliseconds: makeImageMilliseconds,
+				writeFileMilliseconds: NativeHostTelemetry.milliseconds(since: writeStartedAt),
+				width: width,
+				height: height,
+				cacheHit: false
+			)
 		} catch {
 			return SaveCaptureJobResult(
 				outputURL: nil,
-				failureMessage: "Could not save the capture."
+				failureMessage: "Could not save the capture.",
+				failureStage: "file_write",
+				captureImageMilliseconds: 0,
+				makeImageMilliseconds: 0,
+				writeFileMilliseconds: 0,
+				width: 0,
+				height: 0,
+				cacheHit: false
 			)
 		}
 	}
@@ -629,11 +718,24 @@ extension CaptureSessionController {
 
 	private func finishSaveCaptureJob(
 		_ result: SaveCaptureJobResult,
+		saveStartedAt: TimeInterval,
 		jobGeneration: UInt64
 	) {
 		guard hostEffectJobGeneration == jobGeneration, session != nil else {
 			return
 		}
+		NativeHostTelemetry.saveCaptureTiming(
+			captureID: currentCaptureTelemetryID,
+			totalMilliseconds: NativeHostTelemetry.milliseconds(since: saveStartedAt),
+			captureImageMilliseconds: result.captureImageMilliseconds,
+			makeImageMilliseconds: result.makeImageMilliseconds,
+			writeFileMilliseconds: result.writeFileMilliseconds,
+			success: result.outputURL != nil,
+			failureStage: result.failureStage,
+			width: result.width,
+			height: result.height,
+			cacheHit: result.cacheHit
+		)
 		guard let outputURL = result.outputURL else {
 			try? setHostStatusMessage(result.failureMessage)
 			refreshOverlay()
