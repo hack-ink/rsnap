@@ -329,6 +329,7 @@ final class CaptureHostView: NSView {
 	private var livePrimaryCompletionInFlight = false
 	private var liveMouseUpMonitor: Any?
 	private var liveMouseReleaseWatchdog: DispatchWorkItem?
+	private var frozenMouseReleaseWatchdog: DispatchWorkItem?
 	private var livePointerPreviewGlobal: CGPoint?
 	private var livePointerPreviewInputUptime: TimeInterval?
 	private var livePointerPreviewInputSequence: UInt64 = 0
@@ -737,10 +738,13 @@ final class CaptureHostView: NSView {
 	}
 
 	override func mouseMoved(with event: NSEvent) {
+		let point = globalPoint(from: event)
 		if scene.mode == .frozen {
 			refreshHoveredToolbarAction(for: event.locationInWindow)
+			if recoverReleasedFrozenInteractionIfNeeded(at: point) {
+				return
+			}
 		}
-		let point = globalPoint(from: event)
 		if scene.mode == .live {
 			if recoverReleasedLivePrimaryInteractionIfNeeded(at: point) {
 				return
@@ -772,7 +776,11 @@ final class CaptureHostView: NSView {
 			updateLivePointerPreview(to: point, rendersImmediately: false)
 			queuePointerEvent(liveDragExceededThreshold ? .liveDragged(point) : .moved(point))
 		} else {
-			controller?.continueFrozenInteraction(to: globalPoint(from: event))
+			let point = globalPoint(from: event)
+			if recoverReleasedFrozenInteractionIfNeeded(at: point) {
+				return
+			}
+			controller?.continueFrozenInteraction(to: point)
 			syncVisibleCursor()
 		}
 	}
@@ -809,6 +817,9 @@ final class CaptureHostView: NSView {
 				return
 			}
 			controller?.beginFrozenInteraction(at: point)
+			if controller?.hasFrozenOverlayActiveInteraction == true {
+				installFrozenMouseReleaseWatchdog()
+			}
 			syncVisibleCursor()
 		}
 	}
@@ -847,6 +858,7 @@ final class CaptureHostView: NSView {
 			logLivePrimaryInputEvent("capture.live_primary_mouse_up", point: point)
 			controller?.completeLivePrimaryInteraction(from: self, at: point)
 		} else if scene.mode == .frozen {
+			cancelFrozenMouseReleaseWatchdog()
 			controller?.completeFrozenInteraction(at: point)
 			syncVisibleCursor()
 		}
@@ -1266,6 +1278,21 @@ final class CaptureHostView: NSView {
 		return true
 	}
 
+	@discardableResult
+	private func recoverReleasedFrozenInteractionIfNeeded(at point: CGPoint) -> Bool {
+		guard
+			scene.mode == .frozen,
+			controller?.hasFrozenOverlayActiveInteraction == true,
+			!isPrimaryMouseButtonPressed()
+		else {
+			return false
+		}
+		cancelFrozenMouseReleaseWatchdog()
+		controller?.completeFrozenInteraction(at: point)
+		syncVisibleCursor()
+		return true
+	}
+
 	private func liveDragCompletionPoint(for point: CGPoint) -> CGPoint {
 		liveDragExceededThreshold ? point : liveDragStartGlobal ?? point
 	}
@@ -1369,6 +1396,46 @@ final class CaptureHostView: NSView {
 		scheduleLiveMouseReleaseWatchdog()
 	}
 
+	private func installFrozenMouseReleaseWatchdog() {
+		cancelFrozenMouseReleaseWatchdog()
+		scheduleFrozenMouseReleaseWatchdog()
+	}
+
+	private func scheduleFrozenMouseReleaseWatchdog() {
+		let workItem = DispatchWorkItem { [weak self] in
+			self?.pollFrozenMouseReleaseWatchdog()
+		}
+		frozenMouseReleaseWatchdog = workItem
+		DispatchQueue.main.asyncAfter(
+			deadline: .now()
+				+ NativeHostDisplayRefresh.frameInterval(
+					forTargetFramesPerSecond: NativeHostDisplayRefresh.maximumTargetFramesPerSecond),
+			execute: workItem
+		)
+	}
+
+	private func pollFrozenMouseReleaseWatchdog() {
+		frozenMouseReleaseWatchdog = nil
+		guard
+			scene.mode == .frozen,
+			controller?.hasFrozenOverlayActiveInteraction == true
+		else {
+			return
+		}
+		if isPrimaryMouseButtonPressed() == false {
+			let point = currentGlobalMousePoint() ?? NSEvent.mouseLocation
+			NativeHostTelemetry.captureEvent(
+				"capture.frozen_primary_release_watchdog",
+				captureID: controller?.activeTelemetryCaptureID ?? 0,
+				detail: "x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded()))"
+			)
+			controller?.completeFrozenInteraction(at: point)
+			syncVisibleCursor()
+			return
+		}
+		scheduleFrozenMouseReleaseWatchdog()
+	}
+
 	private func logLivePrimaryInputEvent(
 		_ event: String,
 		point: CGPoint,
@@ -1385,6 +1452,11 @@ final class CaptureHostView: NSView {
 	private func cancelLiveMouseReleaseWatchdog() {
 		liveMouseReleaseWatchdog?.cancel()
 		liveMouseReleaseWatchdog = nil
+	}
+
+	private func cancelFrozenMouseReleaseWatchdog() {
+		frozenMouseReleaseWatchdog?.cancel()
+		frozenMouseReleaseWatchdog = nil
 	}
 
 	private func cancelQueuedPointerDispatch() {

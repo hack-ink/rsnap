@@ -517,8 +517,17 @@ extension CaptureSessionController {
 		return max(0, Self.scrollCapturePreparedExportDelay - elapsed)
 	}
 
+	private var canPrepareRecognizeTextImage: Bool {
+		let allowTextInput =
+			session?.configuration.allowTextInput
+			?? settingsStore.sessionConfiguration.allowTextInput
+		return allowTextInput
+			&& currentFrozenSelection() != nil
+			&& chromeState.frozenOverlay.hasRecognizeTextBlockingEdits == false
+	}
+
 	func schedulePreparedRecognizeTextImage(reason: String) {
-		guard recognizeTextActionEnabled else {
+		guard canPrepareRecognizeTextImage else {
 			pendingFrozenRecognizeTextImagePreparation?.cancel()
 			pendingFrozenRecognizeTextImagePreparation = nil
 			frozenPreparedRecognizeTextImageStore.invalidate()
