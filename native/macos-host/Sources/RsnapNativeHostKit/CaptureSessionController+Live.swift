@@ -225,41 +225,12 @@ extension CaptureSessionController {
 				guard let self, let overlayController else {
 					return
 				}
-				let selfCaptureExceptionWindowIDs =
-					overlayController.selfCaptureExceptionWindowIDs
-				self.liveFrameStream.start(
-					for: NSScreen.screens,
-					prewarmPoint: startPoint,
-					captureID: captureID
+				self.prepareOverlayCaptureStreams(
+					overlayController: overlayController,
+					startPoint: startPoint,
+					captureID: captureID,
+					capturableOwnWindowIDs: capturableOwnWindowIDs
 				)
-				if capturableOwnWindowIDs.isEmpty,
-					self.frozenFrameAuthority.hasSelfCaptureCompleteFrame(
-						containing: startPoint)
-				{
-					NativeHostTelemetry.captureEvent(
-						"capture.self_capture_rebuild_skipped",
-						captureID: captureID,
-						detail: "start_capture_complete_filter"
-					)
-				} else if capturableOwnWindowIDs.isEmpty,
-					self.frozenFrameAuthority.hasSelfCaptureCompleteStream(
-						containing: startPoint)
-				{
-					NativeHostTelemetry.captureEvent(
-						"capture.self_capture_rebuild_skipped",
-						captureID: captureID,
-						detail: "start_capture_complete_stream"
-					)
-				} else {
-					_ = self.warmLiveSamplingIfPossible(
-						at: startPoint,
-						source: "capture_overlay_preflight",
-						captureID: captureID,
-						excludeSelfFromFrozenAuthority: true,
-						selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-						includedCurrentProcessWindowIDs: capturableOwnWindowIDs
-					)
-				}
 			}
 		)
 		overlayController.prepareCaptureStreamsNow(trigger: "overlay_show")
@@ -281,6 +252,47 @@ extension CaptureSessionController {
 			screenCount: NSScreen.screens.count,
 			windowCount: initialWindowSnapshots.count
 		)
+	}
+
+	private func prepareOverlayCaptureStreams(
+		overlayController: CaptureOverlayController,
+		startPoint: CGPoint,
+		captureID: UInt64,
+		capturableOwnWindowIDs: Set<CGWindowID>
+	) {
+		let selfCaptureExceptionWindowIDs =
+			overlayController.selfCaptureExceptionWindowIDs
+		liveFrameStream.start(
+			for: NSScreen.screens,
+			prewarmPoint: startPoint,
+			captureID: captureID
+		)
+		if capturableOwnWindowIDs.isEmpty,
+			frozenFrameAuthority.hasSelfCaptureCompleteFrame(containing: startPoint)
+		{
+			NativeHostTelemetry.captureEvent(
+				"capture.self_capture_rebuild_skipped",
+				captureID: captureID,
+				detail: "start_capture_complete_filter"
+			)
+		} else if capturableOwnWindowIDs.isEmpty,
+			frozenFrameAuthority.hasSelfCaptureCompleteStream(containing: startPoint)
+		{
+			NativeHostTelemetry.captureEvent(
+				"capture.self_capture_rebuild_skipped",
+				captureID: captureID,
+				detail: "start_capture_complete_stream"
+			)
+		} else {
+			_ = warmLiveSamplingIfPossible(
+				at: startPoint,
+				source: "capture_overlay_preflight",
+				captureID: captureID,
+				excludeSelfFromFrozenAuthority: true,
+				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+				includedCurrentProcessWindowIDs: capturableOwnWindowIDs
+			)
+		}
 	}
 
 	func ensureCapturePermissions() -> Bool {

@@ -3760,7 +3760,7 @@ final class CaptureHostView: NSView {
 		let existingFrameMatches = toolbarLiquidGlassBackdropView?.frame == toolbarFrame
 		let existingHasImage = toolbarLiquidGlassBackdropView?.image != nil
 		if existingHasImage {
-			if !existingFrameMatches {
+			if existingFrameMatches == false {
 				toolbarLiquidGlassBackdropView?.frame = toolbarFrame
 			}
 			toolbarLiquidGlassBackdropView?.isHidden = preparingFirstVisibleToolbar
@@ -3768,7 +3768,7 @@ final class CaptureHostView: NSView {
 			toolbarLiquidGlassBackdropView?.isHidden = true
 			toolbarLiquidGlassBackdropView?.image = nil
 		}
-		if !existingHasImage,
+		if existingHasImage == false,
 			let toolbarLiquidGlassView,
 			let seedPatch = scrollToolbarBackdropSeedPatch(in: globalFrame)
 		{
