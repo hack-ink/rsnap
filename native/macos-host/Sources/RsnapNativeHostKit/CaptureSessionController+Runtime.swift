@@ -76,6 +76,8 @@ extension CaptureSessionController {
 		frozenFrameLatchToken = nil
 		frozenSnapshotGeneration &+= 1
 		hostEffectJobGeneration &+= 1
+		pendingScrollCapturePreparedExport?.cancel()
+		pendingScrollCapturePreparedExport = nil
 		frozenPreparedExportStore.reset()
 		completedHostEffect = nil
 		removeNativeScrollCaptureMonitor()

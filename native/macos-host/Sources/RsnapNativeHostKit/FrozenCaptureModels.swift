@@ -561,6 +561,7 @@ struct NativeScrollCaptureState {
 	var sampleDrainSequence: UInt64 = 0
 	var observedWheelCount: UInt64 = 0
 	var committedSampleCount: UInt64 = 0
+	var exportRevision: UInt64 = 0
 	var lastStreamFrameSequence: UInt64 = 0
 	var lastQueuedStreamFrameSequence: UInt64 = 0
 	var pendingSampleFrames: [NativeScrollCaptureSampleFrame] = []

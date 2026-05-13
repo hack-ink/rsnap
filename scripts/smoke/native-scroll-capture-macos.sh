@@ -28,6 +28,7 @@ Useful overrides:
   MIN_EXPORT_GROWTH_PX=180               defaults to 0 when EXPECT_SCROLL_GROWTH=0
   MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS=24
   MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS=8
+  EXPECT_SCROLL_COPY_CACHE_HIT=0         set to 1 to require prepared scroll export copy path
   VALIDATE_SCROLL_EXPORT_CONTINUITY=0    set to 1 with SCROLL_BACKGROUND_PROOF_STRIPE=1
   APP_POST_VERIFY_SETTLE_S=0
   POST_FREEZE_SETTLE_S=2.0
@@ -101,6 +102,7 @@ fi
 APP_POST_VERIFY_SETTLE_S="${APP_POST_VERIFY_SETTLE_S:-0}"
 MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS="${MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS:-24}"
 MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS="${MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS:-8}"
+EXPECT_SCROLL_COPY_CACHE_HIT="${EXPECT_SCROLL_COPY_CACHE_HIT:-0}"
 VALIDATE_SCROLL_EXPORT_CONTINUITY="${VALIDATE_SCROLL_EXPORT_CONTINUITY:-0}"
 OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0.10}"
 POST_FREEZE_SETTLE_S="${POST_FREEZE_SETTLE_S:-2.0}"
@@ -307,7 +309,7 @@ start_scroll_background() {
 parse_telemetry() {
 	local log_path="$1"
 
-	python3 - "$log_path" "$MIN_SCROLL_COMMITS" "$MIN_EXPORT_GROWTH_PX" "$SCROLL_START_METHOD" "$EXPECT_SCROLL_GROWTH" "$MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS" "$MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS" <<'PY'
+	python3 - "$log_path" "$MIN_SCROLL_COMMITS" "$MIN_EXPORT_GROWTH_PX" "$SCROLL_START_METHOD" "$EXPECT_SCROLL_GROWTH" "$MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS" "$MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS" "$EXPECT_SCROLL_COPY_CACHE_HIT" <<'PY'
 import re
 import sys
 
@@ -319,12 +321,14 @@ import sys
     expect_growth_raw,
     max_toolbar_gap_p50_raw,
     max_toolbar_duration_p95_raw,
-) = sys.argv[1:8]
+    expect_scroll_copy_cache_hit_raw,
+) = sys.argv[1:9]
 min_commits = int(min_commits_raw)
 min_growth = int(min_growth_raw)
 expect_growth = expect_growth_raw != "0"
 max_toolbar_gap_p50 = float(max_toolbar_gap_p50_raw)
 max_toolbar_duration_p95 = float(max_toolbar_duration_p95_raw)
+expect_scroll_copy_cache_hit = expect_scroll_copy_cache_hit_raw != "0"
 expected_start_source = {
     "keyboard": "keyboard_s",
     "toolbar": "toolbar",
@@ -410,6 +414,25 @@ toolbar_duration_samples = sum(samples for samples, _, _, _ in toolbar_duration_
 toolbar_gap_p50 = max((p50 for _, p50, _, _ in toolbar_gap_metrics), default=None)
 toolbar_gap_p95 = max((p95 for _, _, p95, _ in toolbar_gap_metrics), default=None)
 toolbar_duration_p95 = max((p95 for _, _, p95, _ in toolbar_duration_metrics), default=None)
+prepared_scroll_exports = [
+    line
+    for line in re.findall(r"event=capture_timing\.prepared_frozen_export\b[^\n]*", text)
+    if "success=true" in line and "reason=scroll_capture_revision_" in line
+]
+copy_capture_timings = re.findall(r"event=capture_timing\.copy_capture\b[^\n]*", text)
+copy_capture_successes = [line for line in copy_capture_timings if "success=true" in line]
+copy_capture_cache_hits = [
+    line for line in copy_capture_successes if "cacheHit=true" in line
+]
+copy_capture_total_ms = []
+copy_capture_image_ms = []
+for line in copy_capture_successes:
+    total_match = re.search(r"totalMs=([0-9.]+)", line)
+    image_match = re.search(r"captureImageMs=([0-9.]+)", line)
+    if total_match:
+        copy_capture_total_ms.append(float(total_match.group(1)))
+    if image_match:
+        copy_capture_image_ms.append(float(image_match.group(1)))
 
 print(
     f"[smoke] telemetry froze={froze} handoff={handoff} "
@@ -426,7 +449,11 @@ print(
     f"toolbar_backdrop_gap_p50={toolbar_gap_p50 if toolbar_gap_p50 is not None else 'none'} "
     f"toolbar_backdrop_gap_p95={toolbar_gap_p95 if toolbar_gap_p95 is not None else 'none'} "
     f"toolbar_backdrop_duration_samples={toolbar_duration_samples} "
-    f"toolbar_backdrop_duration_p95={toolbar_duration_p95 if toolbar_duration_p95 is not None else 'none'}"
+    f"toolbar_backdrop_duration_p95={toolbar_duration_p95 if toolbar_duration_p95 is not None else 'none'} "
+    f"prepared_scroll_exports={len(prepared_scroll_exports)} "
+    f"copy_cache_hits={len(copy_capture_cache_hits)} "
+    f"copy_total_ms={copy_capture_total_ms[-1] if copy_capture_total_ms else 'none'} "
+    f"copy_capture_image_ms={copy_capture_image_ms[-1] if copy_capture_image_ms else 'none'}"
 )
 
 failures = []
@@ -479,6 +506,13 @@ if toolbar_glass_expected:
         failures.append(
             f"scroll toolbar backdrop refresh duration p95 {toolbar_duration_p95:.2f}ms > {max_toolbar_duration_p95:.2f}ms"
         )
+if expect_scroll_copy_cache_hit:
+    if not prepared_scroll_exports:
+        failures.append("prepared scroll export timing was not recorded")
+    if not copy_capture_successes:
+        failures.append("copy capture timing was not recorded")
+    elif not copy_capture_cache_hits:
+        failures.append("copy capture did not use prepared scroll export cache")
 
 if failures:
     for failure in failures:

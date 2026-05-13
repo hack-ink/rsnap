@@ -875,6 +875,7 @@ extension CaptureSessionController {
 			return
 		}
 
+		var latestCommittedExportRevision: UInt64?
 		for observation in batch.observations {
 			let sampledFrame = observation.sampledFrame
 			if let errorDescription = observation.errorDescription {
@@ -895,6 +896,8 @@ extension CaptureSessionController {
 				latestState.lastStreamFrameSequence = sampledFrame.frameSequence
 				if result.outcome == .committed {
 					latestState.committedSampleCount &+= 1
+					latestState.exportRevision &+= 1
+					latestCommittedExportRevision = latestState.exportRevision
 					latestState.pendingDownwardMotionHintRows = 0
 				} else if result.outcome == .noChange, latestState.controlledScrollInFlight {
 					latestState.pendingDownwardMotionHintRows = 0
@@ -952,6 +955,13 @@ extension CaptureSessionController {
 				captureID: captureID,
 				stage: "refresh_preview",
 				error: previewErrorDescription
+			)
+		}
+
+		if let latestCommittedExportRevision {
+			schedulePreparedScrollCaptureExport(
+				reason: "scroll_capture_revision_\(latestCommittedExportRevision)",
+				revision: latestCommittedExportRevision
 			)
 		}
 	}
