@@ -45,6 +45,7 @@ final class CaptureSessionController: NSObject {
 	static let scrollCaptureFallbackCaptureInterval: TimeInterval = 1.0 / 60.0
 	static let scrollCapturePreviewRefreshInterval: TimeInterval = 1.0 / 30.0
 	static let scrollCapturePreparedExportDelay: TimeInterval = 0.30
+	static let frozenAnnotationPreparedExportDelay: TimeInterval = 0.25
 	static let scrollCaptureToolbarBackdropRefreshInterval: TimeInterval = 1.0 / 120.0
 	static let scrollCaptureWheelTelemetryInterval: TimeInterval = 0.25
 	static let scrollCapturePassthroughWheelMotionHintMultiplier = 3.5
@@ -86,6 +87,7 @@ final class CaptureSessionController: NSObject {
 	var activeCaptureTelemetryID: UInt64?
 	var pendingLiveFrameStreamRelease: DispatchWorkItem?
 	var pendingScrollCapturePreparedExport: DispatchWorkItem?
+	var pendingFrozenAnnotationPreparedExport: DispatchWorkItem?
 	var captureStateDidChange: (() -> Void)?
 	var scene = SceneSnapshot(
 		mode: .hidden,
