@@ -22,12 +22,15 @@ Useful overrides:
   SCROLL_DELTA_Y=36
   SCROLL_INTERVAL_MS=220
   SCROLL_BACKGROUND_MODE=full_document|codex_like
+  SCROLL_POINT_MODE=center|right_outside_selection
   SCROLL_START_SETTLE_S=5.0
   EXPECT_SCROLL_GROWTH=1                 defaults to 0 for codex_like
   MIN_SCROLL_COMMITS=2                   defaults to 0 when EXPECT_SCROLL_GROWTH=0
   MIN_EXPORT_GROWTH_PX=180               defaults to 0 when EXPECT_SCROLL_GROWTH=0
   MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS=24
   MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS=8
+  MAX_SCROLL_TOOLBAR_BACKDROP_CHANGED_GAP_P95_MS=80
+  MAX_SCROLL_PREVIEW_EXPORT_MS=4
   EXPECT_SCROLL_COPY_CACHE_HIT=0         set to 1 to require prepared scroll export copy path
   VALIDATE_SCROLL_EXPORT_CONTINUITY=0    set to 1 with SCROLL_BACKGROUND_PROOF_STRIPE=1
   APP_POST_VERIFY_SETTLE_S=0
@@ -77,6 +80,7 @@ SCROLL_DELTA_Y="${SCROLL_DELTA_Y:-36}"
 SCROLL_INTERVAL_MS="${SCROLL_INTERVAL_MS:-220}"
 SCROLL_START_SETTLE_S="${SCROLL_START_SETTLE_S:-5.0}"
 SCROLL_BACKGROUND_MODE="${SCROLL_BACKGROUND_MODE:-full_document}"
+SCROLL_POINT_MODE="${SCROLL_POINT_MODE:-center}"
 SCROLL_BACKGROUND_PROOF_STRIPE="${SCROLL_BACKGROUND_PROOF_STRIPE:-0}"
 if [[ -z "${EXPECT_SCROLL_GROWTH:-}" ]]; then
 	if [[ "$SCROLL_BACKGROUND_MODE" == "codex_like" ]]; then
@@ -102,6 +106,8 @@ fi
 APP_POST_VERIFY_SETTLE_S="${APP_POST_VERIFY_SETTLE_S:-0}"
 MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS="${MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS:-24}"
 MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS="${MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS:-8}"
+MAX_SCROLL_TOOLBAR_BACKDROP_CHANGED_GAP_P95_MS="${MAX_SCROLL_TOOLBAR_BACKDROP_CHANGED_GAP_P95_MS:-80}"
+MAX_SCROLL_PREVIEW_EXPORT_MS="${MAX_SCROLL_PREVIEW_EXPORT_MS:-4}"
 EXPECT_SCROLL_COPY_CACHE_HIT="${EXPECT_SCROLL_COPY_CACHE_HIT:-0}"
 VALIDATE_SCROLL_EXPORT_CONTINUITY="${VALIDATE_SCROLL_EXPORT_CONTINUITY:-0}"
 OVERLAY_SETTLE_S="${OVERLAY_SETTLE_S:-0.10}"
@@ -309,7 +315,7 @@ start_scroll_background() {
 parse_telemetry() {
 	local log_path="$1"
 
-	python3 - "$log_path" "$MIN_SCROLL_COMMITS" "$MIN_EXPORT_GROWTH_PX" "$SCROLL_START_METHOD" "$EXPECT_SCROLL_GROWTH" "$MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS" "$MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS" "$EXPECT_SCROLL_COPY_CACHE_HIT" <<'PY'
+	python3 - "$log_path" "$MIN_SCROLL_COMMITS" "$MIN_EXPORT_GROWTH_PX" "$SCROLL_START_METHOD" "$EXPECT_SCROLL_GROWTH" "$MAX_SCROLL_TOOLBAR_BACKDROP_GAP_P50_MS" "$MAX_SCROLL_TOOLBAR_BACKDROP_DURATION_P95_MS" "$MAX_SCROLL_TOOLBAR_BACKDROP_CHANGED_GAP_P95_MS" "$MAX_SCROLL_PREVIEW_EXPORT_MS" "$EXPECT_SCROLL_COPY_CACHE_HIT" <<'PY'
 import re
 import sys
 
@@ -321,13 +327,17 @@ import sys
     expect_growth_raw,
     max_toolbar_gap_p50_raw,
     max_toolbar_duration_p95_raw,
+    max_toolbar_changed_gap_p95_raw,
+    max_preview_export_ms_raw,
     expect_scroll_copy_cache_hit_raw,
-) = sys.argv[1:9]
+) = sys.argv[1:11]
 min_commits = int(min_commits_raw)
 min_growth = int(min_growth_raw)
 expect_growth = expect_growth_raw != "0"
 max_toolbar_gap_p50 = float(max_toolbar_gap_p50_raw)
 max_toolbar_duration_p95 = float(max_toolbar_duration_p95_raw)
+max_toolbar_changed_gap_p95 = float(max_toolbar_changed_gap_p95_raw)
+max_preview_export_ms = float(max_preview_export_ms_raw)
 expect_scroll_copy_cache_hit = expect_scroll_copy_cache_hit_raw != "0"
 expected_start_source = {
     "keyboard": "keyboard_s",
@@ -369,6 +379,18 @@ wheel_observed = bool(
         text,
     )
 )
+wheel_observed_lines = re.findall(
+    r"event=capture\.scroll_wheel_observed\b[^\n]*",
+    text,
+)
+wheel_observed_accepted = [
+    line
+    for line in wheel_observed_lines
+    if "outcome=success" in line or "outcome=accepted_outside_viewport" in line
+]
+wheel_observed_outside = [
+    line for line in wheel_observed_lines if "outcome=outside_viewport" in line
+]
 wheel_input_seen = wheel_intercepted or wheel_observed
 sampled = "event=capture.scroll_sample_observed" in text
 started_match = re.search(r"event=capture\.scroll_capture_started\b[^\n]*height=([0-9]+)", text)
@@ -381,6 +403,11 @@ preview_refreshes = re.findall(
     r"event=capture\.scroll_preview_refreshed\b[^\n]*outcome=success\b[^\n]*",
     text,
 )
+preview_export_ms = []
+for line in preview_refreshes:
+    match = re.search(r"exportMs=([0-9.]+)", line)
+    if match:
+        preview_export_ms.append(float(match.group(1)))
 heights = []
 for line in re.findall(r"event=capture\.scroll_sample_observed\b[^\n]*", text):
     match = re.search(r"exportHeight=([0-9]+)", line)
@@ -409,11 +436,24 @@ toolbar_duration_metrics = [
         text,
     )
 ]
+toolbar_changed_gap_metrics = [
+    (int(samples), float(p50), float(p95), float(max_value))
+    for samples, p50, p95, max_value in re.findall(
+        r"metric=scroll_capture\.toolbar_backdrop_changed_gap\b[^\n]*samples=([0-9]+)[^\n]*p50=([0-9.]+)[^\n]*p95=([0-9.]+)[^\n]*max=([0-9.]+)",
+        text,
+    )
+]
+toolbar_changed_events = re.findall(
+    r"event=capture\.scroll_toolbar_backdrop_changed\b[^\n]*",
+    text,
+)
 toolbar_gap_samples = sum(samples for samples, _, _, _ in toolbar_gap_metrics)
 toolbar_duration_samples = sum(samples for samples, _, _, _ in toolbar_duration_metrics)
+toolbar_changed_gap_samples = sum(samples for samples, _, _, _ in toolbar_changed_gap_metrics)
 toolbar_gap_p50 = max((p50 for _, p50, _, _ in toolbar_gap_metrics), default=None)
 toolbar_gap_p95 = max((p95 for _, _, p95, _ in toolbar_gap_metrics), default=None)
 toolbar_duration_p95 = max((p95 for _, _, p95, _ in toolbar_duration_metrics), default=None)
+toolbar_changed_gap_p95 = max((p95 for _, _, p95, _ in toolbar_changed_gap_metrics), default=None)
 prepared_scroll_exports = [
     line
     for line in re.findall(r"event=capture_timing\.prepared_frozen_export\b[^\n]*", text)
@@ -440,8 +480,11 @@ print(
     f"started={started} manual_mode={manual_mode} input_ready={input_ready} "
     f"sampled={sampled} commits={len(commits)} "
     f"preview_refreshes={len(preview_refreshes)} "
+    f"preview_export_ms_max={max(preview_export_ms) if preview_export_ms else 'none'} "
     f"tap_not_used={tap_not_used} wheel_intercepted={wheel_intercepted} "
     f"wheel_observed={wheel_observed} "
+    f"wheel_observed_accepted={len(wheel_observed_accepted)} "
+    f"wheel_observed_outside={len(wheel_observed_outside)} "
     f"max_export_height={max_height} base_height={base_height} growth={growth} "
     f"missing_live_frame={missing} auto_event={auto_event} "
     f"toolbar_glass_expected={toolbar_glass_expected} "
@@ -450,6 +493,9 @@ print(
     f"toolbar_backdrop_gap_p95={toolbar_gap_p95 if toolbar_gap_p95 is not None else 'none'} "
     f"toolbar_backdrop_duration_samples={toolbar_duration_samples} "
     f"toolbar_backdrop_duration_p95={toolbar_duration_p95 if toolbar_duration_p95 is not None else 'none'} "
+    f"toolbar_backdrop_changed_gap_samples={toolbar_changed_gap_samples} "
+    f"toolbar_backdrop_changed_gap_p95={toolbar_changed_gap_p95 if toolbar_changed_gap_p95 is not None else 'none'} "
+    f"toolbar_backdrop_changed_events={len(toolbar_changed_events)} "
     f"prepared_scroll_exports={len(prepared_scroll_exports)} "
     f"copy_cache_hits={len(copy_capture_cache_hits)} "
     f"copy_total_ms={copy_capture_total_ms[-1] if copy_capture_total_ms else 'none'} "
@@ -473,6 +519,8 @@ if not tap_not_used:
     failures.append("scroll capture did not use passthrough/global wheel monitoring")
 if not wheel_input_seen:
     failures.append("scroll capture did not receive wheel input")
+elif wheel_observed and not wheel_intercepted and not wheel_observed_accepted:
+    failures.append("scroll capture only observed wheel input outside the accepted scroll surface")
 if not sampled:
     failures.append("scroll capture did not sample")
 if base_height <= 0:
@@ -486,6 +534,10 @@ if expect_growth:
         )
     if growth < min_growth:
         failures.append(f"export growth {growth}px < {min_growth}px")
+    if preview_export_ms and max(preview_export_ms) > max_preview_export_ms:
+        failures.append(
+            f"scroll preview export max {max(preview_export_ms):.2f}ms > {max_preview_export_ms:.2f}ms"
+        )
 else:
     if len(commits) != 0:
         failures.append(f"expected fail-closed no growth, but committed growth count was {len(commits)}")
@@ -506,6 +558,16 @@ if toolbar_glass_expected:
         failures.append(
             f"scroll toolbar backdrop refresh duration p95 {toolbar_duration_p95:.2f}ms > {max_toolbar_duration_p95:.2f}ms"
         )
+    if expect_growth:
+        if toolbar_changed_gap_p95 is None and not toolbar_changed_events:
+            failures.append("scroll toolbar liquid-glass backdrop changed evidence was not emitted")
+        elif (
+            toolbar_changed_gap_p95 is not None
+            and toolbar_changed_gap_p95 > max_toolbar_changed_gap_p95
+        ):
+            failures.append(
+                f"scroll toolbar backdrop changed gap p95 {toolbar_changed_gap_p95:.2f}ms > {max_toolbar_changed_gap_p95:.2f}ms"
+            )
 if expect_scroll_copy_cache_hit:
     if not prepared_scroll_exports:
         failures.append("prepared scroll export timing was not recorded")
@@ -544,13 +606,25 @@ PY
 fi
 if [[ -z "${SCROLL_POINT:-}" ]]; then
 	SCROLL_POINT="$(
-		python3 - "$DRAG_POINTS" <<'PY'
+		python3 - "$DRAG_POINTS" "$DISPLAY_BOUNDS" "$SCROLL_POINT_MODE" <<'PY'
 import sys
 
-start_raw, end_raw = sys.argv[1].split(";")
+drag_points, display_bounds, point_mode = sys.argv[1:4]
+start_raw, end_raw = drag_points.split(";")
 x1, y1 = map(int, start_raw.split(","))
 x2, y2 = map(int, end_raw.split(","))
-print(f"{(x1 + x2) // 2},{(y1 + y2) // 2}")
+left, top, right, bottom = map(int, display_bounds.replace(" ", "").split(","))
+selection_max_x = max(x1, x2)
+center_y = (y1 + y2) // 2
+
+if point_mode == "center":
+    print(f"{(x1 + x2) // 2},{center_y}")
+elif point_mode == "right_outside_selection":
+    right_space = max(1, right - selection_max_x - 24)
+    x = min(right - 24, selection_max_x + max(80, min(220, right_space // 2)))
+    print(f"{x},{center_y}")
+else:
+    raise SystemExit(f"unknown SCROLL_POINT_MODE={point_mode}")
 PY
 	)"
 fi
@@ -566,7 +640,7 @@ PY
 )"
 
 smoke_log "display bounds: $DISPLAY_BOUNDS"
-smoke_log "drag points: $DRAG_POINTS scroll_point=$SCROLL_POINT base_height=$BASE_HEIGHT"
+smoke_log "drag points: $DRAG_POINTS scroll_point=$SCROLL_POINT point_mode=$SCROLL_POINT_MODE base_height=$BASE_HEIGHT"
 smoke_log "background_mode=$SCROLL_BACKGROUND_MODE expect_growth=$EXPECT_SCROLL_GROWTH min_commits=$MIN_SCROLL_COMMITS min_growth=$MIN_EXPORT_GROWTH_PX"
 case "$SCROLL_BACKGROUND_MODE" in
 	full_document|codex_like)
@@ -581,6 +655,14 @@ case "$SCROLL_START_METHOD" in
 		;;
 	*)
 		echo "[smoke] FAIL unknown SCROLL_START_METHOD=$SCROLL_START_METHOD" >&2
+		exit 2
+		;;
+esac
+case "$SCROLL_POINT_MODE" in
+	center|right_outside_selection)
+		;;
+	*)
+		echo "[smoke] FAIL unknown SCROLL_POINT_MODE=$SCROLL_POINT_MODE" >&2
 		exit 2
 		;;
 esac

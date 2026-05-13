@@ -210,6 +210,9 @@ Required behavior:
 - smooth-scroll and dense wheel-input paths should continue producing incremental proof-backed
   preview updates; if proof cannot keep up, Rsnap must fail closed for those frames instead of
   showing guessed progress or waiting to jump the preview at the end
+- wheel input observed in the same target window but outside the selected viewport, for example in a
+  right gutter or page margin, must still drive toolbar and stitch sampling for the selected
+  viewport
 - active scroll-capture UI sampling must use fresh native live frames in the steady state; repeated
   below-overlay screenshot capture is not an acceptable way to satisfy the cadence contract
 - stale source frames must be rejected by frame age or sequence metadata instead of being displayed
@@ -288,8 +291,15 @@ The current overlay runtime already exposes several useful diagnostic thresholds
 - Native-host `scroll_capture.toolbar_backdrop_refresh_duration` reports the main-thread cost of
   scheduling or applying active scroll toolbar backdrop updates. It must stay low because slow
   source capture belongs off the visible update path.
+- Native-host `scroll_capture.toolbar_backdrop_changed_gap` reports the cadence of actual sampled
+  toolbar backdrop image changes during scroll capture. The scroll smoke gates this separately from
+  refresh scheduling so a path that calls the refresh loop but leaves Liquid Glass visually frozen is
+  a regression.
 - Native-host `capture.scroll_preview_refreshed` reports committed stitched-preview exports during
   scroll capture, including `exportMs` for the preview image generation step.
+- Scroll preview refreshes must use the lightweight preview image path and stay below the smoke
+  `MAX_SCROLL_PREVIEW_EXPORT_MS` gate. Preview generation must not clone or convert the full
+  committed export image during active scroll.
 - Native-host `capture.stream_release_scheduled`, `capture.stream_release_canceled`,
   `capture.stream_release_requested`, and `capture.stream_release_completed` report the macOS
   screen-monitoring release lifecycle and whether a new capture reused the pending release grace.

@@ -228,8 +228,8 @@ enum NativeScrollCaptureObservationPipeline {
 		}
 		let previewStartedAt = ProcessInfo.processInfo.systemUptime
 		do {
-			if let export = try stitcher.exportImage() {
-				guard let exportImage = NativeHostImageBridge.cgImage(from: export) else {
+			if let preview = try stitcher.previewImage() {
+				guard let previewImage = NativeHostImageBridge.cgImage(from: preview) else {
 					return (
 						nil,
 						"scroll preview export returned no image",
@@ -239,9 +239,9 @@ enum NativeScrollCaptureObservationPipeline {
 
 				return (
 					NativeScrollCapturePreviewUpdate(
-						image: exportImage,
-						exportWidth: export.width,
-						exportHeight: export.height,
+						image: previewImage,
+						exportWidth: result.exportWidth,
+						exportHeight: result.exportHeight,
 						result: result,
 						viewportTopYPixels: result.currentViewportTopY,
 						viewportHeightPixels: candidate.sampledFrame.region.height

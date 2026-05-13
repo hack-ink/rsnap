@@ -525,6 +525,10 @@ enum RsnapStatus rsnap_scroll_session_take_export_rgba(
 	RsnapScrollSessionHandle *handle,
 	struct RsnapOwnedRgbaRegion *out_region
 );
+enum RsnapStatus rsnap_scroll_session_take_preview_rgba(
+	RsnapScrollSessionHandle *handle,
+	struct RsnapOwnedRgbaRegion *out_region
+);
 enum RsnapStatus rsnap_scroll_session_undo_last_append(
 	RsnapScrollSessionHandle *handle,
 	struct RsnapScrollObserveResult *out_result

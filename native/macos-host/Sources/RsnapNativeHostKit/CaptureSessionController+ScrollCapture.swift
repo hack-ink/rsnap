@@ -37,6 +37,73 @@ private func scrollCaptureViewportPointCandidates(
 	return [point, flippedPoint]
 }
 
+package struct ScrollCaptureObservedInputPoint: Equatable {
+	package let viewportPoint: CGPoint
+	package let inputSource: String
+	package let insideViewport: Bool
+}
+
+package func scrollCaptureObservedInputPoint(
+	for point: CGPoint,
+	viewportRect: CGRect,
+	sourceFrame: CGRect,
+	desktopFrame: CGRect? = nil,
+	padding: CGFloat
+) -> ScrollCaptureObservedInputPoint? {
+	if let viewportPoint = scrollCaptureViewportPoint(
+		for: point,
+		in: viewportRect,
+		desktopFrame: desktopFrame
+	) {
+		return ScrollCaptureObservedInputPoint(
+			viewportPoint: viewportPoint,
+			inputSource: "viewport",
+			insideViewport: true
+		)
+	}
+
+	let expandedViewport = CGRect(
+		x: viewportRect.minX - padding,
+		y: viewportRect.minY - padding,
+		width: viewportRect.width + padding * 2,
+		height: viewportRect.height + padding * 2
+	)
+	if expandedViewport.inclusivelyContains(point) {
+		let viewportPoint = CGPoint(
+			x: point.x.clamped(to: viewportRect.minX...viewportRect.maxX),
+			y: point.y.clamped(to: viewportRect.minY...viewportRect.maxY)
+		)
+		return ScrollCaptureObservedInputPoint(
+			viewportPoint: viewportPoint,
+			inputSource: "near_viewport",
+			insideViewport: false
+		)
+	}
+	let expandedSource = sourceFrame.isNull ? CGRect.null : sourceFrame.insetBy(dx: -8, dy: -8)
+	for candidate in scrollCaptureViewportPointCandidates(
+		for: point,
+		desktopFrame: desktopFrame
+	) {
+		let sourceContainsCandidate =
+			expandedSource.isNull == false && expandedSource.inclusivelyContains(candidate)
+		let nearViewport = expandedViewport.inclusivelyContains(candidate)
+		guard sourceContainsCandidate || nearViewport else {
+			continue
+		}
+		let viewportPoint = CGPoint(
+			x: candidate.x.clamped(to: viewportRect.minX...viewportRect.maxX),
+			y: candidate.y.clamped(to: viewportRect.minY...viewportRect.maxY)
+		)
+		return ScrollCaptureObservedInputPoint(
+			viewportPoint: viewportPoint,
+			inputSource: sourceContainsCandidate ? "capture_source" : "near_viewport",
+			insideViewport: false
+		)
+	}
+
+	return nil
+}
+
 private let nativeScrollCaptureMinimumNonzeroWheelMotionHintRows = 12.0
 
 private struct NativeScrollCaptureGeometry {
@@ -163,10 +230,28 @@ extension CaptureSessionController {
 			return
 		}
 		let point = NSEvent.mouseLocation
+		let rawDeltaY = Double(event.scrollingDeltaY)
+		guard rawDeltaY != 0 else {
+			if nativeScrollCaptureShouldLogWheelTelemetry(
+				\.lastWheelObservedTelemetryUptime
+			) {
+				NativeHostTelemetry.captureEvent(
+					"capture.scroll_wheel_observed",
+					captureID: currentCaptureTelemetryID,
+					outcome: "zero_delta_ignored",
+					detail:
+						"source=\(source),deltaX=\(Int(event.scrollingDeltaX.rounded())),deltaY=0,x=\(Int(point.x.rounded())),y=\(Int(point.y.rounded()))"
+				)
+			}
+			return
+		}
 		guard
-			let viewportPoint = scrollCaptureViewportPoint(
+			let inputPoint = scrollCaptureObservedInputPoint(
 				for: point,
-				in: state.viewportRect
+				viewportRect: state.viewportRect,
+				sourceFrame: state.captureSource.referenceFrame,
+				desktopFrame: state.captureSource.desktopFrame,
+				padding: Self.scrollCaptureInputViewportPaddingPoints
 			)
 		else {
 			if nativeScrollCaptureShouldLogWheelTelemetry(
@@ -177,11 +262,12 @@ extension CaptureSessionController {
 					captureID: currentCaptureTelemetryID,
 					outcome: "outside_viewport",
 					detail:
-						"source=\(source),deltaX=\(Int(event.scrollingDeltaX.rounded())),deltaY=\(Int(event.scrollingDeltaY.rounded())),x=\(Int(point.x.rounded())),y=\(Int(point.y.rounded())),viewportX=\(Int(state.viewportRect.minX.rounded())),viewportY=\(Int(state.viewportRect.minY.rounded())),viewportWidth=\(Int(state.viewportRect.width.rounded())),viewportHeight=\(Int(state.viewportRect.height.rounded()))"
+						"source=\(source),deltaX=\(Int(event.scrollingDeltaX.rounded())),deltaY=\(Int(event.scrollingDeltaY.rounded())),x=\(Int(point.x.rounded())),y=\(Int(point.y.rounded())),viewportX=\(Int(state.viewportRect.minX.rounded())),viewportY=\(Int(state.viewportRect.minY.rounded())),viewportWidth=\(Int(state.viewportRect.width.rounded())),viewportHeight=\(Int(state.viewportRect.height.rounded())),inputPadding=\(Int(Self.scrollCaptureInputViewportPaddingPoints.rounded())),sourceX=\(Int(state.captureSource.referenceFrame.minX.rounded())),sourceY=\(Int(state.captureSource.referenceFrame.minY.rounded())),sourceWidth=\(Int(state.captureSource.referenceFrame.width.rounded())),sourceHeight=\(Int(state.captureSource.referenceFrame.height.rounded()))"
 				)
 			}
 			return
 		}
+		let viewportPoint = inputPoint.viewportPoint
 		guard nativeScrollCaptureAcceptsManualInput(state: state) else {
 			if nativeScrollCaptureShouldLogWheelTelemetry(
 				\.lastWheelObservedTelemetryUptime
@@ -202,7 +288,7 @@ extension CaptureSessionController {
 		let forwardedByRsnap = Self.scrollCaptureEventWasForwardedByRsnap(event)
 		if forwardedByRsnap == false {
 			recordNativeScrollCaptureMotionHint(
-				deltaY: abs(Double(event.scrollingDeltaY)),
+				deltaY: abs(rawDeltaY),
 				multiplier: Self.scrollCapturePassthroughWheelMotionHintMultiplier
 			)
 		}
@@ -212,8 +298,9 @@ extension CaptureSessionController {
 			NativeHostTelemetry.captureEvent(
 				"capture.scroll_wheel_observed",
 				captureID: currentCaptureTelemetryID,
+				outcome: inputPoint.insideViewport ? "success" : "accepted_outside_viewport",
 				detail:
-					"source=\(source),count=\(state.observedWheelCount),deltaX=\(Int(event.scrollingDeltaX.rounded())),deltaY=\(Int(event.scrollingDeltaY.rounded())),x=\(Int(point.x.rounded())),y=\(Int(point.y.rounded())),viewportX=\(Int(viewportPoint.x.rounded())),viewportY=\(Int(viewportPoint.y.rounded())),forwardedByRsnap=\(forwardedByRsnap)"
+					"source=\(source),inputSource=\(inputPoint.inputSource),count=\(state.observedWheelCount),deltaX=\(Int(event.scrollingDeltaX.rounded())),deltaY=\(Int(event.scrollingDeltaY.rounded())),x=\(Int(point.x.rounded())),y=\(Int(point.y.rounded())),viewportX=\(Int(viewportPoint.x.rounded())),viewportY=\(Int(viewportPoint.y.rounded())),forwardedByRsnap=\(forwardedByRsnap)"
 			)
 		}
 		overlayController?.refreshScrollCaptureToolbarBackdropNow()
@@ -419,13 +506,17 @@ extension CaptureSessionController {
 		state.sampleUntilUptime = max(state.sampleUntilUptime, now + max(window, 0))
 		guard state.sampleLoopScheduled == false, state.sampleDrainProcessing == false else {
 			scrollCaptureState = state
-			scheduleNativeScrollCaptureToolbarBackdropRefresh()
+			if nativeScrollCaptureToolbarBackdropShouldLoop(state: state) {
+				scheduleNativeScrollCaptureToolbarBackdropRefresh()
+			}
 			return
 		}
 
 		state.sampleLoopScheduled = true
 		scrollCaptureState = state
-		scheduleNativeScrollCaptureToolbarBackdropRefresh()
+		if nativeScrollCaptureToolbarBackdropShouldLoop(state: state) {
+			scheduleNativeScrollCaptureToolbarBackdropRefresh()
+		}
 		DispatchQueue.main.asyncAfter(deadline: .now() + max(delay, 0)) {
 			[weak self] in
 			self?.observeNativeScrollCaptureFrame()
@@ -433,7 +524,10 @@ extension CaptureSessionController {
 	}
 
 	func scheduleNativeScrollCaptureToolbarBackdropRefresh() {
-		guard var state = scrollCaptureState, state.toolbarBackdropLoopScheduled == false else {
+		guard var state = scrollCaptureState,
+			state.toolbarBackdropLoopScheduled == false,
+			nativeScrollCaptureToolbarBackdropShouldLoop(state: state)
+		else {
 			return
 		}
 		state.toolbarBackdropLoopScheduled = true
@@ -451,9 +545,12 @@ extension CaptureSessionController {
 		}
 		state.toolbarBackdropLoopScheduled = false
 		scrollCaptureState = state
+		guard nativeScrollCaptureToolbarBackdropShouldLoop(state: state) else {
+			return
+		}
 		overlayController?.refreshScrollCaptureToolbarBackdropNow()
 		guard let latestState = scrollCaptureState,
-			nativeScrollCaptureShouldKeepSampling(state: latestState)
+			nativeScrollCaptureToolbarBackdropShouldLoop(state: latestState)
 		else {
 			return
 		}
@@ -521,7 +618,10 @@ extension CaptureSessionController {
 		debugDumpNativeScrollCaptureSnapshot(baseSnapshot, name: "base-\(baseSource)")
 		let stitcher = try RsnapScrollCaptureSession(
 			baseImage: baseSnapshot,
-			previewWidthPixels: baseSnapshot.width
+			previewWidthPixels: min(
+				baseSnapshot.width,
+				Self.scrollCapturePreviewImageWidthPixels
+			)
 		)
 		var initialState = NativeScrollCaptureState(
 			stitcher: stitcher,
@@ -571,7 +671,6 @@ extension CaptureSessionController {
 		scheduleNativeScrollCaptureSample(
 			extendingWindowBy: Self.scrollCaptureInitialSampleWindow
 		)
-		scheduleNativeScrollCaptureToolbarBackdropRefresh()
 	}
 
 	private func prepareNativeScrollCaptureLiveStream(for selection: CGRect) {
@@ -706,7 +805,6 @@ extension CaptureSessionController {
 		)
 		let fallbackRequest =
 			nativeScrollCaptureFallbackReadyForInput(state: state)
-				&& !nativeScrollCaptureActiveInputOngoing(state: state, at: sampleUptime)
 				&& nativeScrollCaptureFallbackAllowed(at: sampleUptime)
 			? NativeScrollCaptureFallbackRequest(
 				rect: state.viewportSamplingRect,
@@ -1002,6 +1100,14 @@ extension CaptureSessionController {
 			|| state.queuedForwardedWheelDeltaY != 0
 	}
 
+	func nativeScrollCaptureToolbarBackdropShouldLoop(state: NativeScrollCaptureState) -> Bool {
+		nativeScrollCaptureShouldKeepSampling(state: state)
+			&& (state.observedWheelCount > 0
+				|| state.lastObservedWheelUptime > 0
+				|| state.lastForwardedWheelUptime > 0
+				|| state.queuedForwardedWheelDeltaY != 0)
+	}
+
 	func nativeScrollCaptureNextSampleDelay(state: NativeScrollCaptureState) -> TimeInterval {
 		let now = ProcessInfo.processInfo.systemUptime
 		if nativeScrollCaptureActiveInputOngoing(state: state, at: now) {
@@ -1043,6 +1149,9 @@ extension CaptureSessionController {
 	private func nativeScrollCaptureMaximumStreamFrameAge(
 		state: NativeScrollCaptureState
 	) -> UInt64? {
+		if nativeScrollCaptureFallbackReadyForInput(state: state) {
+			return UInt64(Self.scrollCaptureActiveInputLiveFrameMaxAge * 1_000_000)
+		}
 		return UInt64(Self.scrollCaptureInputLiveFrameMaxAge * 1_000_000)
 	}
 

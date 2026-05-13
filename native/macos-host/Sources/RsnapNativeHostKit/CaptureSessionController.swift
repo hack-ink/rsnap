@@ -13,6 +13,7 @@ final class CaptureSessionController: NSObject {
 	struct FrozenCaptureJobSource: Sendable {
 		let referenceWindowID: CGWindowID
 		let desktopFrame: CGRect
+		let referenceFrame: CGRect
 	}
 
 	struct PendingFrozenCommit: Sendable {
@@ -35,6 +36,7 @@ final class CaptureSessionController: NSObject {
 	static let scrollCaptureForwardingPassthrough: TimeInterval = 0.012
 	static let scrollCaptureControlledScrollSettleDelay: TimeInterval = 0.18
 	static let scrollCaptureInputLiveFrameMaxAge: TimeInterval = 0.18
+	static let scrollCaptureActiveInputLiveFrameMaxAge: TimeInterval = 0.75
 	static let scrollCaptureSampleInterval: TimeInterval = 1.0 / 30.0
 	static let scrollCaptureActiveInputSampleInterval: TimeInterval = 1.0 / 120.0
 	static let scrollCaptureActiveInputTail: TimeInterval = 0.45
@@ -44,11 +46,13 @@ final class CaptureSessionController: NSObject {
 	static let scrollCaptureInputSampleWindow: TimeInterval = 1.8
 	static let scrollCaptureFallbackCaptureInterval: TimeInterval = 1.0 / 60.0
 	static let scrollCapturePreviewRefreshInterval: TimeInterval = 1.0 / 30.0
+	static let scrollCapturePreviewImageWidthPixels = 192
 	static let scrollCapturePreparedExportDelay: TimeInterval = 0.30
 	static let frozenAnnotationPreparedExportDelay: TimeInterval = 0.25
 	static let frozenRecognizeTextImagePreparationDelay: TimeInterval = 0.35
 	static let scrollCaptureToolbarBackdropRefreshInterval: TimeInterval = 1.0 / 120.0
 	static let scrollCaptureWheelTelemetryInterval: TimeInterval = 0.25
+	static let scrollCaptureInputViewportPaddingPoints: CGFloat = 360
 	static let scrollCapturePassthroughWheelMotionHintMultiplier = 3.5
 	static let liveFrameStreamReleaseGrace: TimeInterval = 3.0
 

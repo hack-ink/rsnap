@@ -80,6 +80,9 @@ Procedural takeaways:
    - During Scroll Capture, `capture.scroll_input_tap` must report `outcome=not_used`.
    - Real wheel input inside the selected viewport must emit `capture.scroll_wheel_intercepted` with
      `source=overlay`.
+   - Real wheel input observed in the same target window but outside the selected viewport must emit
+     `capture.scroll_wheel_observed` with `outcome=accepted_outside_viewport`, then keep toolbar
+     and stitch sampling active for the selected viewport.
    - The global wheel observer may emit `capture.scroll_wheel_observed` as diagnostic telemetry.
    - It must not produce legacy `capture.scroll_auto_*` telemetry.
    - The deterministic smoke background must report `offsetY > 0` for `SCROLL_DRIVER=wheel`.
