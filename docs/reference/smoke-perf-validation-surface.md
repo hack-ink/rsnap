@@ -17,7 +17,7 @@ Depends on: `docs/runbook/performance-validation.md`; `docs/spec/performance.md`
 Covers: The current layer map for smoke/perf entrypoints, deterministic replay/bench surfaces,
 overlay runtime integration tests, and scroll-capture session semantics tests.
 
-Release exposure note: v0.2.2 exposes user-facing Scroll Capture for dragged-region Frozen captures
+Release exposure note: v0.2.3 exposes user-facing Scroll Capture for dragged-region Frozen captures
 in the native host. The scroll-capture entries in this reference remain the retained validation
 assets and recovery surfaces; follow `docs/runbook/scroll-capture-recovery-plan.md` before making a
 release-scope readiness claim for broader target apps.
