@@ -46,6 +46,7 @@ final class CaptureSessionController: NSObject {
 	static let scrollCapturePreviewRefreshInterval: TimeInterval = 1.0 / 30.0
 	static let scrollCapturePreparedExportDelay: TimeInterval = 0.30
 	static let frozenAnnotationPreparedExportDelay: TimeInterval = 0.25
+	static let frozenRecognizeTextImagePreparationDelay: TimeInterval = 0.35
 	static let scrollCaptureToolbarBackdropRefreshInterval: TimeInterval = 1.0 / 120.0
 	static let scrollCaptureWheelTelemetryInterval: TimeInterval = 0.25
 	static let scrollCapturePassthroughWheelMotionHintMultiplier = 3.5
@@ -71,6 +72,7 @@ final class CaptureSessionController: NSObject {
 		qos: .userInitiated
 	)
 	let frozenPreparedExportStore = FrozenPreparedExportStore()
+	let frozenPreparedRecognizeTextImageStore = FrozenPreparedRecognizeTextImageStore()
 	let captureSuccessSound = CaptureSuccessSound.load()
 	let ocrCompletionSound = OcrCompletionSound.load()
 	var session: RsnapHostSession?
@@ -88,6 +90,7 @@ final class CaptureSessionController: NSObject {
 	var pendingLiveFrameStreamRelease: DispatchWorkItem?
 	var pendingScrollCapturePreparedExport: DispatchWorkItem?
 	var pendingFrozenAnnotationPreparedExport: DispatchWorkItem?
+	var pendingFrozenRecognizeTextImagePreparation: DispatchWorkItem?
 	var captureStateDidChange: (() -> Void)?
 	var scene = SceneSnapshot(
 		mode: .hidden,

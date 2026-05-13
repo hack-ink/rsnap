@@ -38,21 +38,22 @@ extension CaptureSessionController {
 		)
 		let captureImageStartedAt = ProcessInfo.processInfo.systemUptime
 		guard
-			let cgImage = try recognizeTextCaptureImage(
+			let captureImage = try recognizeTextCaptureImage(
 				run: run,
 				captureImageStartedAt: captureImageStartedAt
 			)
 		else {
 			return
 		}
-		let captureImageMilliseconds =
-			NativeHostTelemetry.milliseconds(since: captureImageStartedAt)
+		let cgImage = captureImage.image
+		let captureImageMilliseconds = captureImage.captureImageMilliseconds
 		let request = recognizeTextRequest(run: run)
 		let visionRequestMilliseconds = try performRecognizeTextRequest(
 			request,
 			cgImage: cgImage,
 			run: run,
-			captureImageMilliseconds: captureImageMilliseconds
+			captureImageMilliseconds: captureImageMilliseconds,
+			cacheHit: captureImage.cacheHit
 		)
 		let result = recognizeTextResult(from: request)
 		guard
@@ -62,7 +63,8 @@ extension CaptureSessionController {
 				cgImage: cgImage,
 				captureImageMilliseconds: captureImageMilliseconds,
 				visionRequestMilliseconds: visionRequestMilliseconds,
-				result: result
+				result: result,
+				cacheHit: captureImage.cacheHit
 			)
 		else {
 			return
@@ -82,7 +84,8 @@ extension CaptureSessionController {
 			height: cgImage.height,
 			observationCount: result.observations.count,
 			recognizedLines: result.recognizedLines.count,
-			recognizedCharacters: result.text.count
+			recognizedCharacters: result.text.count,
+			cacheHit: captureImage.cacheHit
 		)
 
 		if result.text.isEmpty == false {
@@ -101,8 +104,12 @@ extension CaptureSessionController {
 	func recognizeTextCaptureImage(
 		run: RecognizeTextRun,
 		captureImageStartedAt: TimeInterval
-	) throws -> CGImage? {
-		guard let cgImage = try captureFrozenSelectionImage() else {
+	) throws -> PreparedRecognizeTextCaptureImage? {
+		guard
+			let captureImage = try preparedRecognizeTextCaptureImage(
+				captureImageStartedAt: captureImageStartedAt
+			)
+		else {
 			recordRecognizeTextTiming(
 				run: run,
 				captureImageMilliseconds: NativeHostTelemetry.milliseconds(
@@ -118,12 +125,13 @@ extension CaptureSessionController {
 				height: 0,
 				observationCount: 0,
 				recognizedLines: 0,
-				recognizedCharacters: 0
+				recognizedCharacters: 0,
+				cacheHit: false
 			)
 			try sendHostStatusMessage("Could not capture the frozen selection.")
 			return nil
 		}
-		return cgImage
+		return captureImage
 	}
 
 	func recognizeTextRequest(run: RecognizeTextRun) -> VNRecognizeTextRequest {
@@ -138,7 +146,8 @@ extension CaptureSessionController {
 		_ request: VNRecognizeTextRequest,
 		cgImage: CGImage,
 		run: RecognizeTextRun,
-		captureImageMilliseconds: Double
+		captureImageMilliseconds: Double,
+		cacheHit: Bool
 	) throws -> Double {
 		let handler = VNImageRequestHandler(cgImage: cgImage)
 		let visionStartedAt = ProcessInfo.processInfo.systemUptime
@@ -160,7 +169,8 @@ extension CaptureSessionController {
 				height: cgImage.height,
 				observationCount: 0,
 				recognizedLines: 0,
-				recognizedCharacters: 0
+				recognizedCharacters: 0,
+				cacheHit: cacheHit
 			)
 			throw error
 		}
@@ -193,7 +203,8 @@ extension CaptureSessionController {
 		cgImage: CGImage,
 		captureImageMilliseconds: Double,
 		visionRequestMilliseconds: Double,
-		result: RecognizeTextResult
+		result: RecognizeTextResult,
+		cacheHit: Bool
 	) throws -> RecognizeTextPasteboardTiming? {
 		guard text.isEmpty == false else {
 			return RecognizeTextPasteboardTiming(clearMilliseconds: 0, writeMilliseconds: 0)
@@ -221,7 +232,8 @@ extension CaptureSessionController {
 				height: cgImage.height,
 				observationCount: result.observations.count,
 				recognizedLines: result.recognizedLines.count,
-				recognizedCharacters: text.count
+				recognizedCharacters: text.count,
+				cacheHit: cacheHit
 			)
 			try sendHostStatusMessage("Could not copy recognized text.")
 			return nil
@@ -246,7 +258,8 @@ extension CaptureSessionController {
 		height: Int,
 		observationCount: Int,
 		recognizedLines: Int,
-		recognizedCharacters: Int
+		recognizedCharacters: Int,
+		cacheHit: Bool
 	) {
 		NativeHostTelemetry.recognizeTextTiming(
 			captureID: run.captureID,
@@ -266,7 +279,8 @@ extension CaptureSessionController {
 			recognizedCharacters: recognizedCharacters,
 			recognitionLevel: run.recognitionLevel,
 			languageCorrection: run.usesLanguageCorrection,
-			automaticLanguageDetection: run.automaticallyDetectsLanguage
+			automaticLanguageDetection: run.automaticallyDetectsLanguage,
+			cacheHit: cacheHit
 		)
 	}
 }

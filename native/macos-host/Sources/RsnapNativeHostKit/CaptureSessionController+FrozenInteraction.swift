@@ -277,6 +277,7 @@ extension CaptureSessionController {
 				try self.session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 				try self.syncCore()
 				self.schedulePreparedFrozenExport(reason: "selection_transform")
+				self.schedulePreparedRecognizeTextImage(reason: "selection_transform")
 				NativeHostTelemetry.captureEvent(
 					"capture.frozen_selection_transform_commit",
 					captureID: captureID
@@ -413,6 +414,7 @@ extension CaptureSessionController {
 			try session?.send(report: .freezeSnapshotCommitted(selection: nextSelection))
 			try syncCore()
 			schedulePreparedFrozenExport(reason: "auto_center")
+			schedulePreparedRecognizeTextImage(reason: "auto_center")
 		} catch {
 			NativeHostTelemetry.captureWarning(
 				"capture.frozen_auto_center_failed",
