@@ -11,6 +11,7 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureFrameEffectExpandsExportCanvas()
 		assertScrollCaptureViewportPointAcceptsFlippedGlobalMouseCoordinates()
 		assertScrollCaptureObservedInputAcceptsSourceWindowGutter()
+		assertManualUpdateCheckRemainsAvailable()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -65,6 +66,15 @@ enum RsnapNativeHostKitProbe {
 			"scroll minimap should fall back to the left when the right side is constrained"
 		)
 		assertLaunchAtLoginStateMapping()
+	}
+
+	private static func assertManualUpdateCheckRemainsAvailable() {
+		guard
+			SoftwareUpdateManualCheckAvailability.isEnabled(sparkleCanCheckForUpdates: true),
+			SoftwareUpdateManualCheckAvailability.isEnabled(sparkleCanCheckForUpdates: false)
+		else {
+			fatalError("manual update check should stay available across Sparkle session states")
+		}
 	}
 
 	private static func assertRectEqual(_ actual: CGRect, _ expected: CGRect, _ message: String) {

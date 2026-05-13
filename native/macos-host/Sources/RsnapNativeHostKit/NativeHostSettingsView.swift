@@ -2383,8 +2383,8 @@ private struct UpdateCheckButtonGroup: View {
 			.rsnapGlassButton(prominent: false)
 			.controlSize(.small)
 			.disabled(
-				model.softwareUpdateSettings.isConfigured
-					&& !model.softwareUpdateSettings.canCheckForUpdates)
+				!SoftwareUpdateManualCheckAvailability.isEnabled(
+					sparkleCanCheckForUpdates: model.softwareUpdateSettings.canCheckForUpdates))
 		}
 	}
 }
