@@ -607,6 +607,10 @@ final class FrozenOverlayState {
 	var keepsFrozenSelectionFixed: Bool { snapshot.keepsFrozenSelectionFixed }
 	var isMovingMovableAnnotation: Bool { snapshot.isMovingMovableAnnotation }
 	var hasActiveInteraction: Bool { snapshot.hasActiveInteraction }
+	var hasRecognizeTextBlockingEdits: Bool {
+		snapshot.hasActiveInteraction || snapshot.activeTextEdit != nil
+			|| snapshot.elements.isEmpty == false
+	}
 	var activeTextEdit: FrozenTextEditState? {
 		snapshot.activeTextEdit.map { FrozenTextEditState(anchor: $0.anchor, text: $0.text) }
 	}

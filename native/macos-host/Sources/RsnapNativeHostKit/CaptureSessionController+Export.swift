@@ -518,6 +518,12 @@ extension CaptureSessionController {
 	}
 
 	func schedulePreparedRecognizeTextImage(reason: String) {
+		guard recognizeTextActionEnabled else {
+			pendingFrozenRecognizeTextImagePreparation?.cancel()
+			pendingFrozenRecognizeTextImagePreparation = nil
+			frozenPreparedRecognizeTextImageStore.invalidate()
+			return
+		}
 		schedulePreparedRecognizeTextImage(
 			reason: reason,
 			delay: Self.frozenRecognizeTextImagePreparationDelay

@@ -873,6 +873,9 @@ final class CaptureHostView: NSView {
 				}
 				return
 			case "s":
+				guard toolbarItem(.save)?.enabled == true else {
+					return
+				}
 				controller?.saveSelection()
 				return
 			default:
@@ -887,6 +890,9 @@ final class CaptureHostView: NSView {
 			controller?.toggleLoupe()
 		case 49:
 			if scene.mode == .frozen {
+				guard toolbarItem(.copy)?.enabled == true else {
+					return
+				}
 				controller?.copySelection()
 			} else if scene.mode == .live {
 				controller?.completePrimaryInteraction(at: scene.pointer ?? NSEvent.mouseLocation)
@@ -2256,7 +2262,8 @@ final class CaptureHostView: NSView {
 			case .scroll:
 				item.enabled = controller?.scrollCaptureToolbarEnabled ?? false
 			case .ocr:
-				item.enabled = originalItem.enabled
+				item.enabled =
+					originalItem.enabled && !chrome.frozenOverlay.hasRecognizeTextBlockingEdits
 			case .copy, .save:
 				item.enabled = originalItem.enabled
 			}

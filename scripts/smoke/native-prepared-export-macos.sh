@@ -16,7 +16,7 @@ Runs focused native-host prepared-export smokes:
   4. invoke Copy, Save, and/or OCR and require prepared cache hits
 
 Useful overrides:
-  PREPARED_EXPORT_CASES=annotation-copy,annotation-save,plain-ocr
+  PREPARED_EXPORT_CASES=annotation-copy,annotation-save,plain-ocr,annotation-ocr-disabled
   POST_FREEZE_SETTLE_S=0.25
   POST_PREPARED_SETTLE_S=0.75
   POST_ANNOTATION_SETTLE_S=0.75
@@ -24,6 +24,10 @@ Useful overrides:
   EXPECT_ANNOTATION_COPY_CACHE_HIT=1
   EXPECT_ANNOTATION_SAVE_CACHE_HIT=1
   EXPECT_OCR_CACHE_HIT=1
+  POST_DRAG_FREEZE_SETTLE_S=2.8
+  MAX_FREEZE_COMMIT_TOTAL_MS=1800
+  MAX_FREEZE_SNAPSHOT_WAIT_MS=2200
+  MAX_FROZEN_FIRST_DISPLAY_HANDOFF_MS=120
 EOF
 }
 
@@ -58,14 +62,18 @@ smoke_log() {
 PREF_DOMAIN="${RSNAP_PREF_DOMAIN:-ink.hack.rsnap}"
 PREF_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/rsnap-prepared-export-prefs.XXXXXX.plist")"
 PREF_SNAPSHOT_EXISTS=0
-PREPARED_EXPORT_CASES="${PREPARED_EXPORT_CASES:-annotation-copy,annotation-save,plain-ocr}"
+PREPARED_EXPORT_CASES="${PREPARED_EXPORT_CASES:-annotation-copy,annotation-save,plain-ocr,annotation-ocr-disabled}"
 POST_FREEZE_SETTLE_S="${POST_FREEZE_SETTLE_S:-0.25}"
+POST_DRAG_FREEZE_SETTLE_S="${POST_DRAG_FREEZE_SETTLE_S:-2.8}"
 POST_PREPARED_SETTLE_S="${POST_PREPARED_SETTLE_S:-0.75}"
 POST_ANNOTATION_SETTLE_S="${POST_ANNOTATION_SETTLE_S:-0.75}"
 POST_ACTION_SETTLE_S="${POST_ACTION_SETTLE_S:-0.35}"
 EXPECT_ANNOTATION_COPY_CACHE_HIT="${EXPECT_ANNOTATION_COPY_CACHE_HIT:-1}"
 EXPECT_ANNOTATION_SAVE_CACHE_HIT="${EXPECT_ANNOTATION_SAVE_CACHE_HIT:-1}"
 EXPECT_OCR_CACHE_HIT="${EXPECT_OCR_CACHE_HIT:-${EXPECT_ANNOTATION_OCR_CACHE_HIT:-1}}"
+MAX_FREEZE_COMMIT_TOTAL_MS="${MAX_FREEZE_COMMIT_TOTAL_MS:-1800}"
+MAX_FREEZE_SNAPSHOT_WAIT_MS="${MAX_FREEZE_SNAPSHOT_WAIT_MS:-2200}"
+MAX_FROZEN_FIRST_DISPLAY_HANDOFF_MS="${MAX_FROZEN_FIRST_DISPLAY_HANDOFF_MS:-120}"
 PATH_CYCLES="${PATH_CYCLES:-1}"
 SAVE_OUTPUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rsnap-prepared-export-save.XXXXXX")"
 
@@ -174,16 +182,21 @@ center_y = bottom - (frame_y + height / 2.0)
 print(f"{round(center_x)},{round(center_y)}")
 PY
 	)"
-	smoke_log "clicking toolbar item index=$item_index at $point"
-	PATH_POINTS="$point;$point" \
-		PATH_MODE="click-point" \
-		PATH_DRIVER="${PATH_DRIVER:-event}" \
-		PATH_SEGMENT_STEPS="${PATH_SEGMENT_STEPS:-1}" \
-		PATH_STEP_DELAY_MS="${PATH_STEP_DELAY_MS:-0}" \
-		PATH_DURATION_MS="${PATH_DURATION_MS:-0}" \
-		PATH_RATE_HZ="${PATH_RATE_HZ:-120}" \
-		PATH_CYCLES="${PATH_CYCLES:-1}" \
-		live_hud_run_mouse_path
+	local click_index click_repeats
+	click_repeats="${PREPARED_EXPORT_TOOLBAR_CLICK_REPEATS:-2}"
+	for ((click_index = 1; click_index <= click_repeats; click_index += 1)); do
+		smoke_log "clicking toolbar item index=$item_index at $point repeat=$click_index/$click_repeats"
+		PATH_POINTS="$point;$point" \
+			PATH_MODE="click-point" \
+			PATH_DRIVER="${PATH_DRIVER:-event}" \
+			PATH_SEGMENT_STEPS="${PATH_SEGMENT_STEPS:-1}" \
+			PATH_STEP_DELAY_MS="${PATH_STEP_DELAY_MS:-0}" \
+			PATH_DURATION_MS="${PATH_DURATION_MS:-0}" \
+			PATH_RATE_HZ="${PATH_RATE_HZ:-120}" \
+			PATH_CYCLES="${PATH_CYCLES:-1}" \
+			live_hud_run_mouse_path
+		sleep "${PREPARED_EXPORT_TOOLBAR_CLICK_REPEAT_SETTLE_S:-0.12}"
+	done
 }
 
 parse_telemetry() {
@@ -192,25 +205,70 @@ parse_telemetry() {
 	local expect_copy_cache_hit="$3"
 	local expect_save_cache_hit="$4"
 	local expect_ocr_cache_hit="$5"
+	local max_freeze_commit_total_ms="$6"
+	local max_freeze_snapshot_wait_ms="$7"
+	local max_frozen_first_display_handoff_ms="$8"
 
-	python3 - "$log_path" "$case_name" "$expect_copy_cache_hit" "$expect_save_cache_hit" "$expect_ocr_cache_hit" <<'PY'
+	python3 - "$log_path" "$case_name" "$expect_copy_cache_hit" "$expect_save_cache_hit" "$expect_ocr_cache_hit" "$max_freeze_commit_total_ms" "$max_freeze_snapshot_wait_ms" "$max_frozen_first_display_handoff_ms" <<'PY'
 import re
 import sys
 
-path, case_name, expect_copy_raw, expect_save_raw, expect_ocr_raw = sys.argv[1:6]
+(
+    path,
+    case_name,
+    expect_copy_raw,
+    expect_save_raw,
+    expect_ocr_raw,
+    max_freeze_commit_total_raw,
+    max_freeze_snapshot_wait_raw,
+    max_frozen_first_display_handoff_raw,
+) = sys.argv[1:9]
 expect_copy = expect_copy_raw != "0"
 expect_save = expect_save_raw != "0"
 expect_ocr = expect_ocr_raw != "0"
+max_freeze_commit_total = float(max_freeze_commit_total_raw)
+max_freeze_snapshot_wait = float(max_freeze_snapshot_wait_raw)
+max_frozen_first_display_handoff = float(max_frozen_first_display_handoff_raw)
 text = open(path, "r", encoding="utf-8", errors="replace").read()
+all_lines = text.splitlines()
+
+capture_ids = [
+    match.group(1)
+    for line in all_lines
+    if (match := re.search(r"\bcaptureID=(\d+)\b.*\bevent=capture\.freeze_snapshot_requested\b", line))
+]
+if not capture_ids:
+    capture_ids = [
+        match.group(1)
+        for line in all_lines
+        if (match := re.search(r"\bcaptureID=(\d+)\b.*\bevent=capture_timing\.freeze_commit\b", line))
+    ]
+current_capture_id = capture_ids[-1] if capture_ids else None
+
+def current_capture_lines(lines):
+    if current_capture_id is None:
+        return lines
+    return [
+        line
+        for line in lines
+        if re.search(rf"\bcaptureID={re.escape(current_capture_id)}\b", line)
+    ]
+
+def timing_lines(event):
+	return current_capture_lines(
+		[line for line in all_lines if f"event=capture_timing.{event}" in line]
+	)
 
 prepared_annotation_exports = [
     line
-    for line in re.findall(r"event=capture_timing\.prepared_frozen_export\b[^\n]*", text)
+    for line in timing_lines("prepared_frozen_export")
     if "success=true" in line and "reason=annotation_" in line
 ]
+freeze_commits = timing_lines("freeze_commit")
+frozen_first_display_handoffs = timing_lines("frozen_first_display_handoff")
 prepared_ocr_images = [
     line
-    for line in re.findall(r"event=capture_timing\.prepared_recognize_text_image\b[^\n]*", text)
+    for line in timing_lines("prepared_recognize_text_image")
     if "success=true" in line
 ]
 prepared_freeze_ocr_images = [
@@ -225,19 +283,19 @@ prepared_annotation_ocr_images = [
 ]
 copy_successes = [
     line
-    for line in re.findall(r"event=capture_timing\.copy_capture\b[^\n]*", text)
+    for line in timing_lines("copy_capture")
     if "success=true" in line
 ]
 copy_cache_hits = [line for line in copy_successes if "cacheHit=true" in line]
 save_successes = [
     line
-    for line in re.findall(r"event=capture_timing\.save_capture\b[^\n]*", text)
+    for line in timing_lines("save_capture")
     if "success=true" in line
 ]
 save_cache_hits = [line for line in save_successes if "cacheHit=true" in line]
 ocr_successes = [
     line
-    for line in re.findall(r"event=capture_timing\.recognize_text\b[^\n]*", text)
+    for line in timing_lines("recognize_text")
     if "success=true" in line
 ]
 ocr_cache_hits = [line for line in ocr_successes if "cacheHit=true" in line]
@@ -246,11 +304,21 @@ def metric(line, name):
     match = re.search(rf"{name}=([0-9.]+)", line)
     return match.group(1) if match else "none"
 
+def metric_float(line, name):
+    raw = metric(line, name)
+    return float(raw) if raw != "none" else None
+
+freeze_tail = freeze_commits[-1] if freeze_commits else ""
+handoff_tail = frozen_first_display_handoffs[-1] if frozen_first_display_handoffs else ""
 copy_tail = copy_successes[-1] if copy_successes else ""
 save_tail = save_successes[-1] if save_successes else ""
 ocr_tail = ocr_successes[-1] if ocr_successes else ""
 print(
     f"[smoke] telemetry case={case_name} "
+    f"capture_id={current_capture_id or 'unknown'} "
+    f"freeze_commit_total_ms={metric(freeze_tail, 'totalMs')} "
+    f"freeze_snapshot_wait_ms={metric(freeze_tail, 'snapshotWaitMs')} "
+    f"frozen_first_display_handoff_ms={metric(handoff_tail, 'totalMs')} "
     f"prepared_annotation_exports={len(prepared_annotation_exports)} "
     f"prepared_ocr_images={len(prepared_ocr_images)} "
     f"copy_cache_hits={len(copy_cache_hits)} "
@@ -266,6 +334,31 @@ print(
 )
 
 failures = []
+freeze_commit_total = metric_float(freeze_tail, "totalMs")
+freeze_snapshot_wait = metric_float(freeze_tail, "snapshotWaitMs")
+frozen_first_display_handoff = metric_float(handoff_tail, "totalMs")
+if freeze_commit_total is None:
+    failures.append("freeze commit timing was not recorded")
+elif max_freeze_commit_total > 0 and freeze_commit_total > max_freeze_commit_total:
+    failures.append(
+        f"freeze commit total {freeze_commit_total:.2f}ms > {max_freeze_commit_total:.2f}ms"
+    )
+if freeze_snapshot_wait is None:
+    failures.append("freeze snapshot wait timing was not recorded")
+elif max_freeze_snapshot_wait > 0 and freeze_snapshot_wait > max_freeze_snapshot_wait:
+    failures.append(
+        f"freeze snapshot wait {freeze_snapshot_wait:.2f}ms > {max_freeze_snapshot_wait:.2f}ms"
+    )
+if frozen_first_display_handoff is None:
+    failures.append("frozen first display handoff timing was not recorded")
+elif (
+    max_frozen_first_display_handoff > 0
+    and frozen_first_display_handoff > max_frozen_first_display_handoff
+):
+    failures.append(
+        "frozen first display handoff "
+        f"{frozen_first_display_handoff:.2f}ms > {max_frozen_first_display_handoff:.2f}ms"
+    )
 if case_name in ("annotation-copy", "annotation-save") and not prepared_annotation_exports:
     failures.append("annotation prepared export timing was not recorded")
 if case_name == "annotation-copy":
@@ -278,13 +371,11 @@ if case_name == "annotation-save":
         failures.append("save capture timing was not recorded")
     elif expect_save and not save_cache_hits:
         failures.append("annotation save did not use prepared export cache")
-if case_name == "annotation-ocr":
-    if not prepared_annotation_ocr_images:
-        failures.append("annotation prepared OCR image timing was not recorded")
-    if not ocr_successes:
-        failures.append("OCR timing was not recorded")
-    elif expect_ocr and not ocr_cache_hits:
-        failures.append("annotation OCR did not use prepared image cache")
+if case_name == "annotation-ocr-disabled":
+    if prepared_annotation_ocr_images:
+        failures.append("annotation OCR image was prepared while OCR was disabled")
+    if ocr_successes:
+        failures.append("annotation OCR shortcut ran while OCR was disabled")
 if case_name == "plain-ocr":
     if not prepared_freeze_ocr_images:
         failures.append("plain OCR prepared image timing was not recorded")
@@ -352,7 +443,7 @@ run_prepared_export_case() {
 		PATH_RATE_HZ="${PATH_RATE_HZ:-120}" \
 		PATH_HOLD_BEFORE_RELEASE_MS="${DRAG_HOLD_BEFORE_RELEASE_MS:-180}" \
 		live_hud_run_mouse_path
-	sleep "$POST_FREEZE_SETTLE_S"
+	sleep "$POST_DRAG_FREEZE_SETTLE_S"
 	live_hud_focus_rsnap_overlay
 
 	if [[ "$case_name" == annotation-* ]]; then
@@ -379,7 +470,7 @@ run_prepared_export_case() {
 		annotation-save)
 			press_command_s
 			;;
-		annotation-ocr|plain-ocr)
+		annotation-ocr-disabled|plain-ocr)
 			press_plain_r
 			;;
 		*)
@@ -395,7 +486,10 @@ run_prepared_export_case() {
 		"$case_name" \
 		"$EXPECT_ANNOTATION_COPY_CACHE_HIT" \
 		"$EXPECT_ANNOTATION_SAVE_CACHE_HIT" \
-		"$EXPECT_OCR_CACHE_HIT"
+		"$EXPECT_OCR_CACHE_HIT" \
+		"$MAX_FREEZE_COMMIT_TOTAL_MS" \
+		"$MAX_FREEZE_SNAPSHOT_WAIT_MS" \
+		"$MAX_FROZEN_FIRST_DISPLAY_HANDOFF_MS"
 	if [[ "$case_name" == "annotation-copy" ]]; then
 		PASTEBOARD_WAIT_MS="${PASTEBOARD_WAIT_MS:-5000}" \
 			swift "$SCRIPT_DIR/lib/pasteboard-image-info.swift" >/dev/null
