@@ -80,7 +80,10 @@ extension CaptureSessionController {
 		pendingScrollCapturePreparedExport = nil
 		pendingFrozenAnnotationPreparedExport?.cancel()
 		pendingFrozenAnnotationPreparedExport = nil
+		pendingFrozenRecognizeTextImagePreparation?.cancel()
+		pendingFrozenRecognizeTextImagePreparation = nil
 		frozenPreparedExportStore.reset()
+		frozenPreparedRecognizeTextImageStore.reset()
 		completedHostEffect = nil
 		removeNativeScrollCaptureMonitor()
 		scrollCaptureState = nil

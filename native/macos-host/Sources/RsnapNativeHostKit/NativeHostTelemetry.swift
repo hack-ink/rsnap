@@ -391,6 +391,20 @@ enum NativeHostTelemetry {
 		)
 	}
 
+	static func preparedRecognizeTextImageTiming(
+		captureID: UInt64,
+		totalMilliseconds: Double,
+		captureImageMilliseconds: Double,
+		success: Bool,
+		reason: String,
+		width: Int,
+		height: Int
+	) {
+		captureTimingLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.prepared_recognize_text_image totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) reason=\(reason, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public)"
+		)
+	}
+
 	static func recognizeTextTiming(
 		captureID: UInt64,
 		totalMilliseconds: Double,
@@ -409,10 +423,11 @@ enum NativeHostTelemetry {
 		recognizedCharacters: Int,
 		recognitionLevel: String,
 		languageCorrection: Bool,
-		automaticLanguageDetection: Bool
+		automaticLanguageDetection: Bool,
+		cacheHit: Bool = false
 	) {
 		captureTimingLogger.info(
-			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.recognize_text totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) visionRequestMs=\(visionRequestMilliseconds, format: .fixed(precision: 2), privacy: .public) resultProcessingMs=\(resultProcessingMilliseconds, format: .fixed(precision: 2), privacy: .public) clearPasteboardMs=\(clearPasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) writePasteboardMs=\(writePasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) outcome=\(outcome, privacy: .public) failureStage=\(failureStage, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public) observationCount=\(observationCount, privacy: .public) recognizedLines=\(recognizedLines, privacy: .public) recognizedCharacters=\(recognizedCharacters, privacy: .public) recognitionLevel=\(recognitionLevel, privacy: .public) languageCorrection=\(languageCorrection, privacy: .public) automaticLanguageDetection=\(automaticLanguageDetection, privacy: .public)"
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=capture_timing.recognize_text totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) captureImageMs=\(captureImageMilliseconds, format: .fixed(precision: 2), privacy: .public) visionRequestMs=\(visionRequestMilliseconds, format: .fixed(precision: 2), privacy: .public) resultProcessingMs=\(resultProcessingMilliseconds, format: .fixed(precision: 2), privacy: .public) clearPasteboardMs=\(clearPasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) writePasteboardMs=\(writePasteboardMilliseconds, format: .fixed(precision: 2), privacy: .public) success=\(success, privacy: .public) outcome=\(outcome, privacy: .public) failureStage=\(failureStage, privacy: .public) width=\(width, privacy: .public) height=\(height, privacy: .public) observationCount=\(observationCount, privacy: .public) recognizedLines=\(recognizedLines, privacy: .public) recognizedCharacters=\(recognizedCharacters, privacy: .public) recognitionLevel=\(recognitionLevel, privacy: .public) languageCorrection=\(languageCorrection, privacy: .public) automaticLanguageDetection=\(automaticLanguageDetection, privacy: .public) cacheHit=\(cacheHit, privacy: .public)"
 		)
 	}
 

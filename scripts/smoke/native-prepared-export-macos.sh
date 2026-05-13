@@ -12,16 +12,18 @@ Usage: native-prepared-export-macos.sh [--self-check] [--help]
 Runs focused native-host prepared-export smokes:
   1. build and launch Rsnap
   2. drag-freeze a region
-  3. add a pen annotation
-  4. invoke Copy and/or Save and require prepared cache hits
+  3. optionally add a pen annotation for annotation-* cases
+  4. invoke Copy, Save, and/or OCR and require prepared cache hits
 
 Useful overrides:
-  PREPARED_EXPORT_CASES=annotation-copy,annotation-save
+  PREPARED_EXPORT_CASES=annotation-copy,annotation-save,plain-ocr
   POST_FREEZE_SETTLE_S=0.25
+  POST_PREPARED_SETTLE_S=0.75
   POST_ANNOTATION_SETTLE_S=0.75
   POST_ACTION_SETTLE_S=0.35
   EXPECT_ANNOTATION_COPY_CACHE_HIT=1
   EXPECT_ANNOTATION_SAVE_CACHE_HIT=1
+  EXPECT_OCR_CACHE_HIT=1
 EOF
 }
 
@@ -56,12 +58,14 @@ smoke_log() {
 PREF_DOMAIN="${RSNAP_PREF_DOMAIN:-ink.hack.rsnap}"
 PREF_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/rsnap-prepared-export-prefs.XXXXXX.plist")"
 PREF_SNAPSHOT_EXISTS=0
-PREPARED_EXPORT_CASES="${PREPARED_EXPORT_CASES:-annotation-copy,annotation-save}"
+PREPARED_EXPORT_CASES="${PREPARED_EXPORT_CASES:-annotation-copy,annotation-save,plain-ocr}"
 POST_FREEZE_SETTLE_S="${POST_FREEZE_SETTLE_S:-0.25}"
+POST_PREPARED_SETTLE_S="${POST_PREPARED_SETTLE_S:-0.75}"
 POST_ANNOTATION_SETTLE_S="${POST_ANNOTATION_SETTLE_S:-0.75}"
 POST_ACTION_SETTLE_S="${POST_ACTION_SETTLE_S:-0.35}"
 EXPECT_ANNOTATION_COPY_CACHE_HIT="${EXPECT_ANNOTATION_COPY_CACHE_HIT:-1}"
 EXPECT_ANNOTATION_SAVE_CACHE_HIT="${EXPECT_ANNOTATION_SAVE_CACHE_HIT:-1}"
+EXPECT_OCR_CACHE_HIT="${EXPECT_OCR_CACHE_HIT:-${EXPECT_ANNOTATION_OCR_CACHE_HIT:-1}}"
 PATH_CYCLES="${PATH_CYCLES:-1}"
 SAVE_OUTPUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rsnap-prepared-export-save.XXXXXX")"
 
@@ -112,6 +116,14 @@ press_command_s() {
 	osascript <<'APPLESCRIPT' >/dev/null
 tell application "System Events"
 	key code 1 using command down
+end tell
+APPLESCRIPT
+}
+
+press_plain_r() {
+	osascript <<'APPLESCRIPT' >/dev/null
+tell application "System Events"
+	key code 15
 end tell
 APPLESCRIPT
 }
@@ -179,19 +191,36 @@ parse_telemetry() {
 	local case_name="$2"
 	local expect_copy_cache_hit="$3"
 	local expect_save_cache_hit="$4"
+	local expect_ocr_cache_hit="$5"
 
-	python3 - "$log_path" "$case_name" "$expect_copy_cache_hit" "$expect_save_cache_hit" <<'PY'
+	python3 - "$log_path" "$case_name" "$expect_copy_cache_hit" "$expect_save_cache_hit" "$expect_ocr_cache_hit" <<'PY'
 import re
 import sys
 
-path, case_name, expect_copy_raw, expect_save_raw = sys.argv[1:5]
+path, case_name, expect_copy_raw, expect_save_raw, expect_ocr_raw = sys.argv[1:6]
 expect_copy = expect_copy_raw != "0"
 expect_save = expect_save_raw != "0"
+expect_ocr = expect_ocr_raw != "0"
 text = open(path, "r", encoding="utf-8", errors="replace").read()
 
 prepared_annotation_exports = [
     line
     for line in re.findall(r"event=capture_timing\.prepared_frozen_export\b[^\n]*", text)
+    if "success=true" in line and "reason=annotation_" in line
+]
+prepared_ocr_images = [
+    line
+    for line in re.findall(r"event=capture_timing\.prepared_recognize_text_image\b[^\n]*", text)
+    if "success=true" in line
+]
+prepared_freeze_ocr_images = [
+    line
+    for line in prepared_ocr_images
+    if "reason=freeze_commit" in line
+]
+prepared_annotation_ocr_images = [
+    line
+    for line in prepared_ocr_images
     if "success=true" in line and "reason=annotation_" in line
 ]
 copy_successes = [
@@ -206,6 +235,12 @@ save_successes = [
     if "success=true" in line
 ]
 save_cache_hits = [line for line in save_successes if "cacheHit=true" in line]
+ocr_successes = [
+    line
+    for line in re.findall(r"event=capture_timing\.recognize_text\b[^\n]*", text)
+    if "success=true" in line
+]
+ocr_cache_hits = [line for line in ocr_successes if "cacheHit=true" in line]
 
 def metric(line, name):
     match = re.search(rf"{name}=([0-9.]+)", line)
@@ -213,19 +248,25 @@ def metric(line, name):
 
 copy_tail = copy_successes[-1] if copy_successes else ""
 save_tail = save_successes[-1] if save_successes else ""
+ocr_tail = ocr_successes[-1] if ocr_successes else ""
 print(
     f"[smoke] telemetry case={case_name} "
     f"prepared_annotation_exports={len(prepared_annotation_exports)} "
+    f"prepared_ocr_images={len(prepared_ocr_images)} "
     f"copy_cache_hits={len(copy_cache_hits)} "
     f"copy_total_ms={metric(copy_tail, 'totalMs')} "
     f"copy_capture_image_ms={metric(copy_tail, 'captureImageMs')} "
     f"save_cache_hits={len(save_cache_hits)} "
     f"save_total_ms={metric(save_tail, 'totalMs')} "
-    f"save_capture_image_ms={metric(save_tail, 'captureImageMs')}"
+    f"save_capture_image_ms={metric(save_tail, 'captureImageMs')} "
+    f"ocr_cache_hits={len(ocr_cache_hits)} "
+    f"ocr_total_ms={metric(ocr_tail, 'totalMs')} "
+    f"ocr_capture_image_ms={metric(ocr_tail, 'captureImageMs')} "
+    f"ocr_vision_request_ms={metric(ocr_tail, 'visionRequestMs')}"
 )
 
 failures = []
-if not prepared_annotation_exports:
+if case_name in ("annotation-copy", "annotation-save") and not prepared_annotation_exports:
     failures.append("annotation prepared export timing was not recorded")
 if case_name == "annotation-copy":
     if not copy_successes:
@@ -237,6 +278,20 @@ if case_name == "annotation-save":
         failures.append("save capture timing was not recorded")
     elif expect_save and not save_cache_hits:
         failures.append("annotation save did not use prepared export cache")
+if case_name == "annotation-ocr":
+    if not prepared_annotation_ocr_images:
+        failures.append("annotation prepared OCR image timing was not recorded")
+    if not ocr_successes:
+        failures.append("OCR timing was not recorded")
+    elif expect_ocr and not ocr_cache_hits:
+        failures.append("annotation OCR did not use prepared image cache")
+if case_name == "plain-ocr":
+    if not prepared_freeze_ocr_images:
+        failures.append("plain OCR prepared image timing was not recorded")
+    if not ocr_successes:
+        failures.append("OCR timing was not recorded")
+    elif expect_ocr and not ocr_cache_hits:
+        failures.append("plain OCR did not use prepared image cache")
 
 if failures:
     for failure in failures:
@@ -300,16 +355,20 @@ run_prepared_export_case() {
 	sleep "$POST_FREEZE_SETTLE_S"
 	live_hud_focus_rsnap_overlay
 
-	click_frozen_toolbar_item 1
-	sleep 0.10
-	PATH_POINTS="$ANNOTATION_POINTS" \
-		PATH_MODE="drag-region" \
-		PATH_DRIVER="${PATH_DRIVER:-event}" \
-		PATH_DURATION_MS="${ANNOTATION_DURATION_MS:-180}" \
-		PATH_RATE_HZ="${PATH_RATE_HZ:-120}" \
-		PATH_HOLD_BEFORE_RELEASE_MS="${ANNOTATION_HOLD_BEFORE_RELEASE_MS:-40}" \
-		live_hud_run_mouse_path
-	sleep "$POST_ANNOTATION_SETTLE_S"
+	if [[ "$case_name" == annotation-* ]]; then
+		click_frozen_toolbar_item 1
+		sleep 0.10
+		PATH_POINTS="$ANNOTATION_POINTS" \
+			PATH_MODE="drag-region" \
+			PATH_DRIVER="${PATH_DRIVER:-event}" \
+			PATH_DURATION_MS="${ANNOTATION_DURATION_MS:-180}" \
+			PATH_RATE_HZ="${PATH_RATE_HZ:-120}" \
+			PATH_HOLD_BEFORE_RELEASE_MS="${ANNOTATION_HOLD_BEFORE_RELEASE_MS:-40}" \
+			live_hud_run_mouse_path
+		sleep "$POST_ANNOTATION_SETTLE_S"
+	else
+		sleep "$POST_PREPARED_SETTLE_S"
+	fi
 	live_hud_focus_rsnap_overlay
 
 	case "$case_name" in
@@ -319,6 +378,9 @@ run_prepared_export_case() {
 			;;
 		annotation-save)
 			press_command_s
+			;;
+		annotation-ocr|plain-ocr)
+			press_plain_r
 			;;
 		*)
 			echo "[smoke] FAIL unknown prepared export case=$case_name" >&2
@@ -332,7 +394,8 @@ run_prepared_export_case() {
 	parse_telemetry "$out_dir/native-host.oslog" \
 		"$case_name" \
 		"$EXPECT_ANNOTATION_COPY_CACHE_HIT" \
-		"$EXPECT_ANNOTATION_SAVE_CACHE_HIT"
+		"$EXPECT_ANNOTATION_SAVE_CACHE_HIT" \
+		"$EXPECT_OCR_CACHE_HIT"
 	if [[ "$case_name" == "annotation-copy" ]]; then
 		PASTEBOARD_WAIT_MS="${PASTEBOARD_WAIT_MS:-5000}" \
 			swift "$SCRIPT_DIR/lib/pasteboard-image-info.swift" >/dev/null
