@@ -14,7 +14,7 @@ Depends on: `docs/spec/performance.md`
 Outputs: A repeatable local benchmark run, an optional saved Criterion baseline, and a clear
 understanding of what the synthetic fixture is intended to cover.
 
-Current release status: v0.2.4 exposes user-facing Scroll Capture for dragged-region Frozen
+Current release status: v0.2.5 exposes user-facing Scroll Capture for dragged-region Frozen
 captures in the native host. This runbook applies to the retained internal scroll-capture engine,
 replay, and stitching validation work; it is not release-readiness evidence by itself.
 

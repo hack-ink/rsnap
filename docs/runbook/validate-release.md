@@ -58,12 +58,12 @@ Validate these user-visible flows:
   fullscreen fallback.
 - Frozen toolbar tools: pointer, pen, arrow, text, mosaic, spotlight, undo, redo, auto-center,
   Recognize Text, Scroll Capture, copy, and save.
-- For the v0.2.4 native-host release, Scroll Capture must stay absent for window-click and
+- For the v0.2.5 native-host release, Scroll Capture must stay absent for window-click and
   fullscreen freezes, remain available after dragged-region movement or auto-center, start from a
   dragged-region freeze via toolbar or plain `s`, and pass the functional scroll path in
   `docs/runbook/scroll-capture-recovery-plan.md`. Scroll toolbar Liquid Glass cadence, dynamic
   backdrop-change evidence, preview export latency, and cached copy/export timing are part of the
-  v0.2.4 publish gate.
+  v0.2.5 publish gate.
 - Light and dark appearance; Classic Glass and Liquid Glass where the OS and current build support
   Liquid Glass.
 - Settings -> About update rows: `Auto Update` and `Release Version` must use Title Case for row
