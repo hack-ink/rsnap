@@ -44,7 +44,7 @@ use rsnap_overlay::scroll_stitching::{
 };
 
 /// ABI version exported by the thin C host bridge.
-pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 35;
+pub const RSNAP_HOST_FFI_ABI_VERSION: u32 = 36;
 
 const RSNAP_TOOLBAR_ITEM_CAPACITY: usize = 16;
 const RSNAP_STATUS_MESSAGE_CAPACITY: usize = 256;
@@ -1627,6 +1627,43 @@ pub unsafe extern "C" fn rsnap_export_rgba_to_png(
 	RsnapStatus::Ok
 }
 
+/// Encodes a full RGBA export image as lossless PNG with physical-pixel density metadata.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data, and `out_png` must be writable. The returned buffer must
+/// be released with `rsnap_owned_bytes_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_export_rgba_to_png_with_screen_scale(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	scale_factor_x1000: u32,
+	out_png: *mut RsnapOwnedBytes,
+) -> RsnapStatus {
+	if out_png.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(image) = RgbaExportImage::from_raw(width, height, bytes.to_vec()) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(png) = image.to_png_bytes_with_screen_scale(scale_factor_x1000) else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_png, owned_bytes_from_vec(png));
+	}
+
+	RsnapStatus::Ok
+}
+
 /// Encodes a pixel-space RGBA export crop as lossless PNG through the Rust product core.
 ///
 /// # Safety
@@ -1657,6 +1694,47 @@ pub unsafe extern "C" fn rsnap_export_rgba_crop_to_png(
 		return RsnapStatus::InvalidInput;
 	};
 	let Ok(png) = cropped.to_png_bytes() else {
+		return RsnapStatus::InvalidInput;
+	};
+
+	unsafe {
+		ptr::write(out_png, owned_bytes_from_vec(png));
+	}
+
+	RsnapStatus::Ok
+}
+
+/// Encodes a pixel-space RGBA crop as lossless PNG with physical-pixel density metadata.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_len` readable bytes containing `width * height * 4`
+/// row-major RGBA data, and `out_png` must be writable. The returned buffer must
+/// be released with `rsnap_owned_bytes_release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsnap_export_rgba_crop_to_png_with_screen_scale(
+	width: u32,
+	height: u32,
+	rgba: *const u8,
+	rgba_len: usize,
+	crop_rect: RsnapPixelRect,
+	scale_factor_x1000: u32,
+	out_png: *mut RsnapOwnedBytes,
+) -> RsnapStatus {
+	if out_png.is_null() {
+		return RsnapStatus::NullOutput;
+	}
+
+	let Some(bytes) = (unsafe { rgba_bytes(rgba, rgba_len) }) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(image) = RgbaExportImage::from_raw(width, height, bytes.to_vec()) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Some(cropped) = image.crop(decode_pixel_rect(crop_rect)) else {
+		return RsnapStatus::InvalidInput;
+	};
+	let Ok(png) = cropped.to_png_bytes_with_screen_scale(scale_factor_x1000) else {
 		return RsnapStatus::InvalidInput;
 	};
 
@@ -4162,6 +4240,41 @@ mod tests {
 		(width, height)
 	}
 
+	fn png_phys_chunk(png: &[u8]) -> Option<(u32, u32, u8)> {
+		assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+
+		let mut offset = 8;
+
+		while offset + 12 <= png.len() {
+			let length = u32::from_be_bytes(
+				png[offset..offset + 4].try_into().expect("PNG chunk length bytes"),
+			) as usize;
+			let data_start = offset + 8;
+			let data_end = data_start.checked_add(length)?;
+			let next_offset = data_end.checked_add(4)?;
+
+			if next_offset > png.len() {
+				return None;
+			}
+			if &png[offset + 4..offset + 8] == b"pHYs" {
+				assert_eq!(length, 9);
+
+				let x = u32::from_be_bytes(
+					png[data_start..data_start + 4].try_into().expect("pHYs x bytes"),
+				);
+				let y = u32::from_be_bytes(
+					png[data_start + 4..data_start + 8].try_into().expect("pHYs y bytes"),
+				);
+
+				return Some((x, y, png[data_start + 8]));
+			}
+
+			offset = next_offset;
+		}
+
+		None
+	}
+
 	#[test]
 	fn ffi_session_enters_live_and_emits_request() {
 		let handle = unsafe { crate::rsnap_session_create(default_config()) };
@@ -4298,7 +4411,11 @@ mod tests {
 			RsnapStatus::Ok
 		);
 		assert!(png.len > 0);
-		assert_eq!(png_dimensions(unsafe { slice::from_raw_parts(png.bytes, png.len) }), (4, 4));
+
+		let png_bytes = unsafe { slice::from_raw_parts(png.bytes, png.len) };
+
+		assert_eq!(png_dimensions(png_bytes), (4, 4));
+		assert_eq!(png_phys_chunk(png_bytes), None);
 
 		unsafe {
 			crate::rsnap_owned_bytes_release(&mut png);
@@ -4307,6 +4424,56 @@ mod tests {
 		assert!(png.bytes.is_null());
 		assert_eq!(png.len, 0);
 		assert_eq!(png.capacity, 0);
+	}
+
+	#[test]
+	fn ffi_export_rgba_to_png_with_screen_scale_writes_density() {
+		let rgba = scroll_frame(4, 4, 0);
+		let mut png = RsnapOwnedBytes::default();
+
+		assert_eq!(
+			unsafe {
+				crate::rsnap_export_rgba_to_png_with_screen_scale(
+					4,
+					4,
+					rgba.as_ptr(),
+					rgba.len(),
+					2_000,
+					&mut png,
+				)
+			},
+			RsnapStatus::Ok
+		);
+
+		let png_bytes = unsafe { slice::from_raw_parts(png.bytes, png.len) };
+
+		assert_eq!(png_dimensions(png_bytes), (4, 4));
+		assert_eq!(png_phys_chunk(png_bytes), Some((5_669, 5_669, 1)));
+
+		unsafe {
+			crate::rsnap_owned_bytes_release(&mut png);
+		}
+	}
+
+	#[test]
+	fn ffi_export_rgba_to_png_with_screen_scale_rejects_zero_scale() {
+		let rgba = scroll_frame(4, 4, 0);
+		let mut png = RsnapOwnedBytes::default();
+
+		assert_eq!(
+			unsafe {
+				crate::rsnap_export_rgba_to_png_with_screen_scale(
+					4,
+					4,
+					rgba.as_ptr(),
+					rgba.len(),
+					0,
+					&mut png,
+				)
+			},
+			RsnapStatus::InvalidInput
+		);
+		assert!(png.bytes.is_null());
 	}
 
 	#[test]
@@ -4329,6 +4496,37 @@ mod tests {
 			RsnapStatus::Ok
 		);
 		assert_eq!(png_dimensions(unsafe { slice::from_raw_parts(png.bytes, png.len) }), (2, 3));
+
+		unsafe {
+			crate::rsnap_owned_bytes_release(&mut png);
+		}
+	}
+
+	#[test]
+	fn ffi_export_rgba_crop_to_png_with_screen_scale_writes_density() {
+		let rgba = scroll_frame(4, 4, 0);
+		let crop = RsnapPixelRect { x: 1, y: 0, width: 2, height: 3 };
+		let mut png = RsnapOwnedBytes::default();
+
+		assert_eq!(
+			unsafe {
+				crate::rsnap_export_rgba_crop_to_png_with_screen_scale(
+					4,
+					4,
+					rgba.as_ptr(),
+					rgba.len(),
+					crop,
+					2_000,
+					&mut png,
+				)
+			},
+			RsnapStatus::Ok
+		);
+
+		let png_bytes = unsafe { slice::from_raw_parts(png.bytes, png.len) };
+
+		assert_eq!(png_dimensions(png_bytes), (2, 3));
+		assert_eq!(png_phys_chunk(png_bytes), Some((5_669, 5_669, 1)));
 
 		unsafe {
 			crate::rsnap_owned_bytes_release(&mut png);

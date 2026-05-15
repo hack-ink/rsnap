@@ -89,17 +89,38 @@ int main(void) {
 		return 11;
 	}
 	rsnap_owned_bytes_release(&png_export);
-	if (rsnap_export_rgba_crop_to_png(4, 4, rgba, sizeof(rgba), crop, &png_export) != RSNAP_STATUS_OK) {
+	if (rsnap_export_rgba_to_png_with_screen_scale(4, 4, rgba, sizeof(rgba), 2000, &png_export) !=
+		RSNAP_STATUS_OK) {
 		rsnap_scroll_session_destroy(scroll_handle);
 		rsnap_session_destroy(handle);
 		return 12;
+	}
+	rsnap_owned_bytes_release(&png_export);
+	if (rsnap_export_rgba_crop_to_png(4, 4, rgba, sizeof(rgba), crop, &png_export) != RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 13;
+	}
+	rsnap_owned_bytes_release(&png_export);
+	if (rsnap_export_rgba_crop_to_png_with_screen_scale(
+			4,
+			4,
+			rgba,
+			sizeof(rgba),
+			crop,
+			2000,
+			&png_export
+		) != RSNAP_STATUS_OK) {
+		rsnap_scroll_session_destroy(scroll_handle);
+		rsnap_session_destroy(handle);
+		return 14;
 	}
 	rsnap_owned_bytes_release(&png_export);
 	if (rsnap_frozen_display_crop_rect(2880, 1800, display_frame, selection, &display_crop) !=
 		RSNAP_STATUS_OK) {
 		rsnap_scroll_session_destroy(scroll_handle);
 		rsnap_session_destroy(handle);
-		return 13;
+		return 15;
 	}
 	if (display_crop.x != 200 || display_crop.y != 1100 || display_crop.width != 600 ||
 		display_crop.height != 300) {
