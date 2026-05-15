@@ -73,7 +73,7 @@ Prototype / in active development.
   `docs/spec/capture-session.md` is the current contract source of truth.
 - Menubar and Dock are not included in live window-outline targeting.
 - Windows support is planned (minimum Windows 10), but not implemented yet.
-- As of v0.2.4, the native-host release exposes Scroll Capture for dragged-region Frozen captures
+- As of v0.2.5, the native-host release exposes Scroll Capture for dragged-region Frozen captures
   on macOS. It uses ordered ScreenCaptureKit region frames, overlay-local wheel forwarding, and
   Rust-owned fail-closed stitching. Release readiness for broader target apps is governed by
   `docs/runbook/scroll-capture-recovery-plan.md`.
@@ -129,7 +129,7 @@ Rsnap requires **Screen Recording** permission to capture other apps/windows.
 - Normal region/window/monitor capture does not require Accessibility or Input Monitoring.
 - The retained scroll-capture path uses Screen Recording-backed screenshots plus overlay-local
   wheel forwarding; it does not require Accessibility, Input Monitoring, Accessibility target
-  acquisition, app scripting, or browser/DOM access. The v0.2.4 native-host release exposes Scroll
+  acquisition, app scripting, or browser/DOM access. The v0.2.5 native-host release exposes Scroll
   Capture from dragged-region Frozen captures only.
 - macOS may describe Screen Recording as `Screen & System Audio Recording` or as direct screen/audio access when Rsnap bypasses the system picker.
 - Settings -> Permissions shows Screen Recording as the required capture permission.
@@ -166,7 +166,7 @@ Rsnap requires **Screen Recording** permission to capture other apps/windows.
 
 ### Current scroll-capture status
 
-As of v0.2.4, Scroll Capture is exposed for dragged-region Frozen captures on macOS. It remains
+As of v0.2.5, Scroll Capture is exposed for dragged-region Frozen captures on macOS. It remains
 absent for window-click and fullscreen freezes. The retained Rust scroll-capture session,
 deterministic replay, and benchmark surfaces remain the validation authority for stitching behavior.
 
