@@ -1928,8 +1928,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func drawSelectionSizeBadge(for rect: CGRect, in context: CGContext) {
-		let scale = window?.screen?.backingScaleFactor ?? 1
-		let text = "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))"
+		let text = selectionSizeText(for: rect)
 		let font = Self.hudLayoutMetrics.font
 		let textSize = text.size(using: font)
 		let badgeFrame = CaptureChrome.selectionSizeBadgeFrame(
@@ -3286,7 +3285,13 @@ final class CaptureHostView: NSView {
 
 	private func selectionSizeText(for rect: CGRect) -> String {
 		let scale = window?.screen?.backingScaleFactor ?? 1
-		return "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))"
+		let sizeText = "\(Int(round(rect.width * scale)))x\(Int(round(rect.height * scale)))px"
+
+		if abs(scale - 1) <= 0.005 {
+			return sizeText
+		}
+
+		return "\(sizeText) @\(String(format: "%g", Double(scale)))x"
 	}
 
 	private func currentPositionDisplay() -> LivePositionDisplay {
