@@ -1269,30 +1269,8 @@ impl WindowRenderer {
 		size_points: RectPoints,
 	) -> String {
 		let size_pixels = monitor.local_rect_to_pixels(size_points);
-		let size_text = format!("{}x{} px", size_pixels.width, size_pixels.height);
 
-		if monitor.scale_factor_x1000 == 1_000 {
-			return size_text;
-		}
-
-		format!("{} @{}x", size_text, Self::selection_size_badge_scale_text(monitor))
-	}
-
-	fn selection_size_badge_scale_text(monitor: MonitorRect) -> String {
-		let scale_integer = monitor.scale_factor_x1000 / 1_000;
-		let scale_fraction = monitor.scale_factor_x1000 % 1_000;
-
-		if scale_fraction == 0 {
-			return scale_integer.to_string();
-		}
-
-		let mut scale_fraction_text = format!("{scale_fraction:03}");
-
-		while scale_fraction_text.ends_with('0') {
-			scale_fraction_text.pop();
-		}
-
-		format!("{scale_integer}.{scale_fraction_text}")
+		format!("{}x{}", size_pixels.width, size_pixels.height)
 	}
 
 	fn selection_size_badge_visual_overflow(pixels_per_point: f32) -> SelectionSizeBadgePadding {
