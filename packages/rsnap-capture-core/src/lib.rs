@@ -30,7 +30,10 @@ pub use self::{
 		render_capture_frame_effect,
 	},
 	export::{DisplayPointRect, frozen_display_crop_rect},
-	export::{RgbaExportImage, crop_export_image, crop_rgba_image, encode_png_lossless_fast},
+	export::{
+		RgbaExportImage, crop_export_image, crop_rgba_image, encode_png_lossless_fast,
+		encode_png_lossless_fast_with_screen_scale,
+	},
 	geometry::{
 		GlobalPoint, GlobalRect, MonitorRect, MonitorRectPoints, RectPoints, Rgb, WindowHit,
 		WindowRect,

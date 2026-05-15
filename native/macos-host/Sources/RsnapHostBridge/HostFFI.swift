@@ -1313,6 +1313,30 @@ public enum RsnapExportEncoder {
 		return try data(from: outPNG, context: "taking encoded export PNG")
 	}
 
+	public static func pngData(
+		from image: RGBARegionSnapshot,
+		screenScaleFactor: CGFloat
+	) throws -> Data {
+		let scaleFactorX1000 = encode(screenScaleFactor: screenScaleFactor)
+		var outPNG = RsnapOwnedBytes()
+		let status = image.rgba.withUnsafeBytes { buffer -> RsnapStatus in
+			guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
+				return RSNAP_STATUS_INVALID_INPUT
+			}
+			return rsnap_export_rgba_to_png_with_screen_scale(
+				UInt32(max(image.width, 0)),
+				UInt32(max(image.height, 0)),
+				baseAddress,
+				image.rgba.count,
+				scaleFactorX1000,
+				&outPNG
+			)
+		}
+		try rsnapRequireOk(status, context: "encoding export PNG with screen scale")
+
+		return try data(from: outPNG, context: "taking encoded export PNG with screen scale")
+	}
+
 	public static func pngData(from image: RGBARegionSnapshot, crop: CGRect) throws -> Data {
 		let cropRect = try encode(crop: crop)
 		var outPNG = RsnapOwnedBytes()
@@ -1332,6 +1356,34 @@ public enum RsnapExportEncoder {
 		try rsnapRequireOk(status, context: "encoding cropped export PNG")
 
 		return try data(from: outPNG, context: "taking encoded cropped export PNG")
+	}
+
+	public static func pngData(
+		from image: RGBARegionSnapshot,
+		crop: CGRect,
+		screenScaleFactor: CGFloat
+	) throws -> Data {
+		let cropRect = try encode(crop: crop)
+		let scaleFactorX1000 = encode(screenScaleFactor: screenScaleFactor)
+		var outPNG = RsnapOwnedBytes()
+		let status = image.rgba.withUnsafeBytes { buffer -> RsnapStatus in
+			guard let baseAddress = buffer.bindMemory(to: UInt8.self).baseAddress else {
+				return RSNAP_STATUS_INVALID_INPUT
+			}
+			return rsnap_export_rgba_crop_to_png_with_screen_scale(
+				UInt32(max(image.width, 0)),
+				UInt32(max(image.height, 0)),
+				baseAddress,
+				image.rgba.count,
+				cropRect,
+				scaleFactorX1000,
+				&outPNG
+			)
+		}
+		try rsnapRequireOk(status, context: "encoding cropped export PNG with screen scale")
+
+		return try data(
+			from: outPNG, context: "taking encoded cropped export PNG with screen scale")
 	}
 
 	public static func frozenDisplayCropRect(
@@ -1440,6 +1492,13 @@ public enum RsnapExportEncoder {
 			width: UInt32(width),
 			height: UInt32(height)
 		)
+	}
+
+	private static func encode(screenScaleFactor: CGFloat) -> UInt32 {
+		let scale = screenScaleFactor.isFinite ? max(screenScaleFactor, 1) : 1
+		let scaled = min((scale * 1_000).rounded(), CGFloat(UInt32.max))
+
+		return UInt32(scaled)
 	}
 
 	private static func data(from outPNG: RsnapOwnedBytes, context: String) throws -> Data {

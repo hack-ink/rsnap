@@ -366,6 +366,24 @@ enum RsnapHostBridgeProbe {
 		guard let fullPNGDimensions = pngDimensions(png), fullPNGDimensions == (16, 120) else {
 			fatalError("unexpected PNG export dimensions")
 		}
+		guard pngPixelDensity(png) == nil else {
+			fatalError("unexpected PNG density metadata on default export")
+		}
+		let scaledPNG = try RsnapExportEncoder.pngData(
+			from: scrollExport,
+			screenScaleFactor: 2
+		)
+		let scaledPNGDensity = pngPixelDensity(scaledPNG)
+		guard
+			let scaledPNGDimensions = pngDimensions(scaledPNG),
+			scaledPNGDimensions == (16, 120),
+			let scaledPNGDensity,
+			scaledPNGDensity.0 == 5_669,
+			scaledPNGDensity.1 == 5_669,
+			scaledPNGDensity.2 == 1
+		else {
+			fatalError("unexpected scaled PNG export metadata")
+		}
 		let croppedPNG = try RsnapExportEncoder.pngData(
 			from: scrollExport,
 			crop: CGRect(x: 1, y: 2, width: 4, height: 8)
@@ -747,6 +765,52 @@ enum RsnapHostBridgeProbe {
 			| Int(UInt32(bytes[23]))
 
 		return (width, height)
+	}
+
+	private static func pngPixelDensity(_ data: Data) -> (Int, Int, UInt8)? {
+		let bytes = [UInt8](data)
+		guard
+			bytes.count >= 24,
+			bytes[0..<8].elementsEqual([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+		else {
+			return nil
+		}
+
+		var offset = 8
+		while offset + 12 <= bytes.count {
+			let length =
+				Int(UInt32(bytes[offset]) << 24)
+				| Int(UInt32(bytes[offset + 1]) << 16)
+				| Int(UInt32(bytes[offset + 2]) << 8)
+				| Int(UInt32(bytes[offset + 3]))
+			let typeStart = offset + 4
+			let dataStart = offset + 8
+			let dataEnd = dataStart + length
+			let nextOffset = dataEnd + 4
+			guard nextOffset <= bytes.count else {
+				return nil
+			}
+			if bytes[typeStart..<typeStart + 4].elementsEqual([0x70, 0x48, 0x59, 0x73]) {
+				guard length == 9 else {
+					return nil
+				}
+				let x =
+					Int(UInt32(bytes[dataStart]) << 24)
+					| Int(UInt32(bytes[dataStart + 1]) << 16)
+					| Int(UInt32(bytes[dataStart + 2]) << 8)
+					| Int(UInt32(bytes[dataStart + 3]))
+				let y =
+					Int(UInt32(bytes[dataStart + 4]) << 24)
+					| Int(UInt32(bytes[dataStart + 5]) << 16)
+					| Int(UInt32(bytes[dataStart + 6]) << 8)
+					| Int(UInt32(bytes[dataStart + 7]))
+
+				return (x, y, bytes[dataStart + 8])
+			}
+			offset = nextOffset
+		}
+
+		return nil
 	}
 
 	private static func makeScrollFrame(
