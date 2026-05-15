@@ -17,7 +17,7 @@ Depends on: `docs/spec/performance.md`
 Outputs: A clear command choice for the regression class you are testing, plus a repeatable local
 baseline workflow for the committed Criterion benchmark targets.
 
-Current release status: v0.2.4 exposes user-facing Scroll Capture for dragged-region Frozen
+Current release status: v0.2.5 exposes user-facing Scroll Capture for dragged-region Frozen
 captures in the native host. The replay and benchmark commands in this runbook still own retained
 internal scroll-capture engine validation, but they do not replace the recovery plan or a final
 target-app acceptance run for broader release claims.
