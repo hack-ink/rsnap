@@ -306,34 +306,18 @@ fn selection_size_badge_reserved_rect_accepts_overlap_when_no_non_overlapping_sl
 
 #[test]
 fn selection_size_badge_text_uses_monitor_pixel_dimensions() {
+	let monitor = tests::test_monitor_with_scale(1_000, 800, 2_000);
+
 	assert_eq!(
-		WindowRenderer::selection_size_badge_text(
-			tests::test_monitor_with_scale(1_000, 800, 2_000),
-			RectPoints::new(10, 20, 120, 80),
-		),
-		"240x160 px @2x"
-	);
-	assert_eq!(
-		WindowRenderer::selection_size_badge_text(
-			tests::test_monitor_with_scale(1_000, 800, 1_500),
-			RectPoints::new(10, 20, 120, 80),
-		),
-		"180x120 px @1.5x"
-	);
-	assert_eq!(
-		WindowRenderer::selection_size_badge_text(
-			tests::test_monitor_with_scale(1_000, 800, 1_000),
-			RectPoints::new(10, 20, 120, 80),
-		),
-		"120x80 px"
+		WindowRenderer::selection_size_badge_text(monitor, RectPoints::new(10, 20, 120, 80)),
+		"240x160"
 	);
 }
 
 #[test]
 fn selection_size_badge_layout_keeps_visual_bounds_inside_badge_rect() {
 	let ctx = tests::test_egui_context();
-	let layout =
-		WindowRenderer::selection_size_badge_layout(&ctx, "240x160 px @2x", HudTheme::Light, 1.0);
+	let layout = WindowRenderer::selection_size_badge_layout(&ctx, "240x160", HudTheme::Light, 1.0);
 	let screen_rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0));
 
 	for (label, capture_rect) in [
