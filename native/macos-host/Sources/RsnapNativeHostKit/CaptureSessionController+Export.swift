@@ -738,10 +738,17 @@ extension CaptureSessionController {
 
 		let makeImageStartedAt = ProcessInfo.processInfo.systemUptime
 		let pngData: Data?
+		let screenScaleFactor = request.captureFrameEnvironment.screenScaleFactor
 		if let snapshot = renderResult.rgbaSnapshot {
-			pngData = try? RsnapExportEncoder.pngData(from: snapshot)
+			pngData = try? RsnapExportEncoder.pngData(
+				from: snapshot,
+				screenScaleFactor: screenScaleFactor
+			)
 		} else if let cgImage = renderResult.image {
-			pngData = try? losslessPNGData(from: cgImage)
+			pngData = try? losslessPNGData(
+				from: cgImage,
+				screenScaleFactor: screenScaleFactor
+			)
 		} else {
 			pngData = nil
 		}
@@ -841,10 +848,17 @@ extension CaptureSessionController {
 			}
 			let makeImageStartedAt = ProcessInfo.processInfo.systemUptime
 			let pngData: Data?
+			let screenScaleFactor = request.captureFrameEnvironment.screenScaleFactor
 			if let snapshot = renderResult.rgbaSnapshot {
-				pngData = try RsnapExportEncoder.pngData(from: snapshot)
+				pngData = try RsnapExportEncoder.pngData(
+					from: snapshot,
+					screenScaleFactor: screenScaleFactor
+				)
 			} else if let cgImage = renderResult.image {
-				pngData = try losslessPNGData(from: cgImage)
+				pngData = try losslessPNGData(
+					from: cgImage,
+					screenScaleFactor: screenScaleFactor
+				)
 			} else {
 				pngData = nil
 			}
@@ -1549,12 +1563,18 @@ extension CaptureSessionController {
 		return image.cropping(to: cropRect)
 	}
 
-	nonisolated static func losslessPNGData(from image: CGImage) throws -> Data? {
+	nonisolated static func losslessPNGData(
+		from image: CGImage,
+		screenScaleFactor: CGFloat
+	) throws -> Data? {
 		guard let snapshot = NativeHostImageBridge.rgbaSnapshot(from: image) else {
 			return nil
 		}
 
-		return try RsnapExportEncoder.pngData(from: snapshot)
+		return try RsnapExportEncoder.pngData(
+			from: snapshot,
+			screenScaleFactor: screenScaleFactor
+		)
 	}
 	func compositeFrozenOverlay(on image: CGImage, selection: CGRect) throws -> CGImage {
 		let elements = chromeState.frozenOverlay.exportElements

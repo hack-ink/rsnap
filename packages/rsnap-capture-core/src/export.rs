@@ -1,10 +1,13 @@
 //! Lossless export-image primitives owned by the Rust product core.
 
 use color_eyre::eyre::{self, Result, WrapErr};
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use image::{ExtendedColorType, ImageEncoder, RgbaImage, imageops};
+use image::{RgbaImage, imageops};
+use png::{BitDepth, ColorType, Compression, Encoder, Filter, PixelDimensions, Unit};
 
 use crate::RectPoints;
+
+const BASE_SCREEN_DPI: f64 = 72.0;
+const INCHES_PER_METER: f64 = 39.370_078_740_157_48;
 
 /// Rectangle in display point space used for export geometry decisions.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -111,6 +114,11 @@ impl RgbaExportImage {
 	pub fn to_png_bytes(&self) -> Result<Vec<u8>> {
 		encode_png_lossless_fast(&self.image)
 	}
+
+	/// Encodes this export image with display-density metadata for the screen scale.
+	pub fn to_png_bytes_with_screen_scale(&self, scale_factor_x1000: u32) -> Result<Vec<u8>> {
+		encode_png_lossless_fast_with_screen_scale(&self.image, scale_factor_x1000)
+	}
 }
 
 /// Returns a pixel-exact crop when the requested rectangle lies inside the image.
@@ -176,6 +184,27 @@ pub fn frozen_display_crop_rect(
 /// the image byte-exact after decoding while avoiding expensive deflate work on
 /// the capture hot path.
 pub fn encode_png_lossless_fast(image: &RgbaImage) -> Result<Vec<u8>> {
+	encode_png_lossless_fast_inner(image, None)
+}
+
+/// Encodes an RGBA export image with PNG physical-pixel density metadata.
+///
+/// A 2x Retina capture still stores every physical pixel. The density metadata lets
+/// consumers that honor PNG `pHYs` display it as `points @ scale` instead of as a
+/// larger 1x image.
+pub fn encode_png_lossless_fast_with_screen_scale(
+	image: &RgbaImage,
+	scale_factor_x1000: u32,
+) -> Result<Vec<u8>> {
+	let pixel_dims = screen_scale_pixel_dimensions(scale_factor_x1000)?;
+
+	encode_png_lossless_fast_inner(image, Some(pixel_dims))
+}
+
+fn encode_png_lossless_fast_inner(
+	image: &RgbaImage,
+	pixel_dims: Option<PixelDimensions>,
+) -> Result<Vec<u8>> {
 	let raw_len = image.as_raw().len();
 	let mut bytes = Vec::new();
 
@@ -184,17 +213,33 @@ pub fn encode_png_lossless_fast(image: &RgbaImage) -> Result<Vec<u8>> {
 		let _ = bytes.try_reserve_exact(raw_len.saturating_add(extra));
 	}
 
-	let encoder = PngEncoder::new_with_quality(
-		&mut bytes,
-		CompressionType::Uncompressed,
-		FilterType::NoFilter,
-	);
+	let mut encoder = Encoder::new(&mut bytes, image.width(), image.height());
 
-	encoder
-		.write_image(image.as_raw(), image.width(), image.height(), ExtendedColorType::Rgba8)
-		.wrap_err("failed to encode screenshot as PNG")?;
+	encoder.set_color(ColorType::Rgba);
+	encoder.set_depth(BitDepth::Eight);
+	encoder.set_compression(Compression::NoCompression);
+	encoder.set_filter(Filter::NoFilter);
+	encoder.set_pixel_dims(pixel_dims);
+
+	let mut writer = encoder.write_header().wrap_err("failed to encode screenshot as PNG")?;
+
+	writer.write_image_data(image.as_raw()).wrap_err("failed to encode screenshot as PNG")?;
+
+	drop(writer);
 
 	Ok(bytes)
+}
+
+fn screen_scale_pixel_dimensions(scale_factor_x1000: u32) -> Result<PixelDimensions> {
+	if scale_factor_x1000 == 0 {
+		return Err(eyre::eyre!("PNG screen scale factor must be non-zero"));
+	}
+
+	let scale = f64::from(scale_factor_x1000) / 1_000.0;
+	let pixels_per_meter =
+		(BASE_SCREEN_DPI * scale * INCHES_PER_METER).round().clamp(1.0, f64::from(u32::MAX)) as u32;
+
+	Ok(PixelDimensions { xppu: pixels_per_meter, yppu: pixels_per_meter, unit: Unit::Meter })
 }
 
 fn integral_image_intersection(
@@ -365,6 +410,23 @@ mod tests {
 		let png = crate::encode_png_lossless_fast(&image).expect("PNG encode should succeed");
 
 		assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+		assert_eq!(png_phys_chunk(&png), None);
+	}
+
+	#[test]
+	fn encode_png_lossless_fast_with_screen_scale_writes_retina_density() {
+		let image = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
+		let png = crate::encode_png_lossless_fast_with_screen_scale(&image, 2_000)
+			.expect("PNG encode should succeed");
+
+		assert_eq!(png_phys_chunk(&png), Some((5_669, 5_669, 1)));
+	}
+
+	#[test]
+	fn encode_png_lossless_fast_with_screen_scale_rejects_zero_scale() {
+		let image = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
+
+		assert!(crate::encode_png_lossless_fast_with_screen_scale(&image, 0).is_err());
 	}
 
 	#[test]
@@ -378,5 +440,36 @@ mod tests {
 		assert_eq!(crop.width(), 2);
 		assert_eq!(crop.height(), 2);
 		assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+	}
+
+	fn png_phys_chunk(bytes: &[u8]) -> Option<(u32, u32, u8)> {
+		if bytes.len() < 8 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+			return None;
+		}
+
+		let mut offset = 8_usize;
+
+		while offset.checked_add(12)? <= bytes.len() {
+			let length = u32::from_be_bytes(bytes[offset..offset + 4].try_into().ok()?) as usize;
+			let chunk_type = &bytes[offset + 4..offset + 8];
+			let data_start = offset.checked_add(8)?;
+			let data_end = data_start.checked_add(length)?;
+			let chunk_end = data_end.checked_add(4)?;
+
+			if chunk_end > bytes.len() {
+				return None;
+			}
+			if chunk_type == b"pHYs" && length == 9 {
+				let xppu = u32::from_be_bytes(bytes[data_start..data_start + 4].try_into().ok()?);
+				let yppu =
+					u32::from_be_bytes(bytes[data_start + 4..data_start + 8].try_into().ok()?);
+
+				return Some((xppu, yppu, bytes[data_start + 8]));
+			}
+
+			offset = chunk_end;
+		}
+
+		None
 	}
 }

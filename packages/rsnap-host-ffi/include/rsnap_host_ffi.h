@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define RSNAP_HOST_FFI_ABI_VERSION 35u
+#define RSNAP_HOST_FFI_ABI_VERSION 36u
 #define RSNAP_TOOLBAR_ITEM_CAPACITY 16u
 #define RSNAP_STATUS_MESSAGE_CAPACITY 256u
 #define RSNAP_LIVE_SAMPLE_PATCH_CAPACITY 4096u
@@ -540,12 +540,29 @@ enum RsnapStatus rsnap_export_rgba_to_png(
 	size_t rgba_len,
 	struct RsnapOwnedBytes *out_png
 );
+enum RsnapStatus rsnap_export_rgba_to_png_with_screen_scale(
+	uint32_t width,
+	uint32_t height,
+	const uint8_t *rgba,
+	size_t rgba_len,
+	uint32_t scale_factor_x1000,
+	struct RsnapOwnedBytes *out_png
+);
 enum RsnapStatus rsnap_export_rgba_crop_to_png(
 	uint32_t width,
 	uint32_t height,
 	const uint8_t *rgba,
 	size_t rgba_len,
 	struct RsnapPixelRect crop_rect,
+	struct RsnapOwnedBytes *out_png
+);
+enum RsnapStatus rsnap_export_rgba_crop_to_png_with_screen_scale(
+	uint32_t width,
+	uint32_t height,
+	const uint8_t *rgba,
+	size_t rgba_len,
+	struct RsnapPixelRect crop_rect,
+	uint32_t scale_factor_x1000,
 	struct RsnapOwnedBytes *out_png
 );
 enum RsnapStatus rsnap_frozen_overlay_export_render_rgba(
