@@ -221,6 +221,45 @@ stage_sparkle_framework() {
 	fi
 }
 
+staged_app_rpaths() {
+	otool -l "$APP_BINARY" | awk '
+		$1 == "cmd" && $2 == "LC_RPATH" {
+			in_rpath = 1
+			next
+		}
+		in_rpath && $1 == "path" {
+			sub(/^[[:space:]]*path /, "")
+			sub(/[[:space:]]+\(offset [0-9]+\)$/, "")
+			print
+			in_rpath = 0
+		}
+	'
+}
+
+is_local_toolchain_rpath() {
+	case "$1" in
+		/Applications/*.app/Contents/Developer/Toolchains/*/usr/lib/swift*/macosx | \
+			/Library/Developer/CommandLineTools/usr/lib/swift*/macosx | \
+			/Users/*/Applications/*.app/Contents/Developer/Toolchains/*/usr/lib/swift*/macosx)
+			return 0
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+sanitize_staged_app_rpaths() {
+	local rpath
+	while IFS= read -r rpath; do
+		[[ -n "$rpath" ]] || continue
+		if is_local_toolchain_rpath "$rpath"; then
+			install_name_tool -delete_rpath "$rpath" "$APP_BINARY"
+			STAGED_APP_DIRTY=1
+		fi
+	done < <(staged_app_rpaths)
+}
+
 write_if_changed() {
 	local destination="$1"
 	local contents="$2"
@@ -273,6 +312,7 @@ stage_app_bundle() {
 		install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP_BINARY"
 		STAGED_APP_DIRTY=1
 	fi
+	sanitize_staged_app_rpaths
 
 	if [[ -f "$APP_ICON_SOURCE" ]]; then
 		if copy_if_changed "$APP_ICON_SOURCE" "$APP_RESOURCES/$APP_ICON_NAME"; then
