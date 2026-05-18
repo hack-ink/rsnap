@@ -94,7 +94,7 @@ final class NativeHostSoftwareUpdater {
 			isConfigured: true,
 			canCheckForUpdates: updater.canCheckForUpdates,
 			allowsAutomaticUpdates: updater.allowsAutomaticUpdates,
-			mode: Self.mode(
+			mode: SoftwareUpdateModeResolution.mode(
 				automaticallyChecksForUpdates: updater.automaticallyChecksForUpdates,
 				automaticallyDownloadsUpdates: updater.automaticallyDownloadsUpdates),
 			currentVersion: Self.currentAppVersionLabel,
@@ -158,19 +158,6 @@ final class NativeHostSoftwareUpdater {
 			&& nonEmptyInfoValue(forKey: "SUPublicEDKey") != nil
 	}
 
-	private static func mode(
-		automaticallyChecksForUpdates: Bool,
-		automaticallyDownloadsUpdates: Bool
-	) -> Mode {
-		if automaticallyDownloadsUpdates {
-			return .install
-		}
-		if automaticallyChecksForUpdates {
-			return .check
-		}
-		return .off
-	}
-
 	private static var currentAppVersionLabel: String {
 		nonEmptyInfoValue(forKey: "CFBundleShortVersionString") ?? "Development Build"
 	}
@@ -199,6 +186,32 @@ final class NativeHostSoftwareUpdater {
 			preconditionFailure("Invalid static Rsnap update URL: \(host)\(path)")
 		}
 		return url
+	}
+}
+
+package enum SoftwareUpdateModeResolution {
+	fileprivate static func mode(
+		automaticallyChecksForUpdates: Bool,
+		automaticallyDownloadsUpdates: Bool
+	) -> NativeHostSoftwareUpdater.Mode {
+		guard automaticallyChecksForUpdates else {
+			return .off
+		}
+		if automaticallyDownloadsUpdates {
+			return .install
+		}
+		return .check
+	}
+
+	package static func modeRawValue(
+		automaticallyChecksForUpdates: Bool,
+		automaticallyDownloadsUpdates: Bool
+	) -> String {
+		mode(
+			automaticallyChecksForUpdates: automaticallyChecksForUpdates,
+			automaticallyDownloadsUpdates: automaticallyDownloadsUpdates
+		)
+		.rawValue
 	}
 }
 

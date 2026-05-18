@@ -393,6 +393,12 @@ test -f "$APP_PATH/Contents/Resources/AppIcon.icns"
 test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework"
 otool -L "$APP_PATH/Contents/MacOS/RsnapNativeHost" | grep -q '@rpath/Sparkle.framework'
 otool -l "$APP_PATH/Contents/MacOS/RsnapNativeHost" | grep -q '@executable_path/../Frameworks'
+if otool -l "$APP_PATH/Contents/MacOS/RsnapNativeHost" \
+  | awk '$1 == "cmd" && $2 == "LC_RPATH" { in_rpath = 1; next } in_rpath && $1 == "path" { sub(/^[[:space:]]*path /, ""); sub(/[[:space:]]+\(offset [0-9]+\)$/, ""); print; in_rpath = 0 }' \
+  | grep -E '^(/Applications/.*\.app/Contents/Developer/Toolchains/.*/usr/lib/swift[^/]*/macosx|/Library/Developer/CommandLineTools/usr/lib/swift[^/]*/macosx|/Users/.*/Applications/.*\.app/Contents/Developer/Toolchains/.*/usr/lib/swift[^/]*/macosx)$'; then
+  echo "RsnapNativeHost must not ship local Swift toolchain rpaths" >&2
+  exit 1
+fi
 plutil -extract CFBundleName raw "$APP_PATH/Contents/Info.plist" | grep -qx 'Rsnap'
 plutil -extract CFBundleDisplayName raw "$APP_PATH/Contents/Info.plist" | grep -qx 'Rsnap'
 plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist" | grep -qx 'ink.hack.rsnap'
