@@ -11,6 +11,7 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureFrameEffectExpandsExportCanvas()
 		assertScrollCaptureViewportPointAcceptsFlippedGlobalMouseCoordinates()
 		assertScrollCaptureObservedInputAcceptsSourceWindowGutter()
+		assertSoftwareUpdateModeResolution()
 		assertManualUpdateCheckRemainsAvailable()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
@@ -66,6 +67,25 @@ enum RsnapNativeHostKitProbe {
 			"scroll minimap should fall back to the left when the right side is constrained"
 		)
 		assertLaunchAtLoginStateMapping()
+	}
+
+	private static func assertSoftwareUpdateModeResolution() {
+		guard
+			SoftwareUpdateModeResolution.modeRawValue(
+				automaticallyChecksForUpdates: false,
+				automaticallyDownloadsUpdates: false) == "off",
+			SoftwareUpdateModeResolution.modeRawValue(
+				automaticallyChecksForUpdates: false,
+				automaticallyDownloadsUpdates: true) == "off",
+			SoftwareUpdateModeResolution.modeRawValue(
+				automaticallyChecksForUpdates: true,
+				automaticallyDownloadsUpdates: false) == "check",
+			SoftwareUpdateModeResolution.modeRawValue(
+				automaticallyChecksForUpdates: true,
+				automaticallyDownloadsUpdates: true) == "install"
+		else {
+			fatalError("software update mode should treat disabled checks as off")
+		}
 	}
 
 	private static func assertManualUpdateCheckRemainsAvailable() {
