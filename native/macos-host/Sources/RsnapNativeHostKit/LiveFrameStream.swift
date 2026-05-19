@@ -90,7 +90,7 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 			Self.monitorSnapshot(for: $0, mainDisplayHeight: mainDisplayHeight)
 		}
 		let targetMonitor = prewarmPoint.flatMap { point in
-			nextMonitors.first(where: { $0.appKitFrame.contains(point) })
+			nextMonitors.first(where: { $0.appKitFrame.inclusivelyContains(point) })
 		}
 		let monitorsUnchanged = nextMonitors == monitors
 		monitors = nextMonitors
@@ -308,7 +308,7 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		stateLock.lock()
 		let monitors = self.monitors
 		stateLock.unlock()
-		return monitors.first(where: { $0.appKitFrame.contains(point) })
+		return monitors.first(where: { $0.appKitFrame.inclusivelyContains(point) })
 	}
 
 	private static func makeSampler(exceptionWindowIDs: Set<CGWindowID>) -> RsnapLiveSampler? {

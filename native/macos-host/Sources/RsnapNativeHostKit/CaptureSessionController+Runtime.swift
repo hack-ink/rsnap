@@ -5,7 +5,7 @@ import RsnapHostBridge
 
 extension CaptureSessionController {
 	func screen(containing point: CGPoint) -> NSScreen? {
-		NSScreen.screens.first(where: { $0.frame.contains(point) })
+		NSScreen.screens.first(where: { $0.frame.inclusivelyContains(point) })
 	}
 
 	func activeMonitor(at point: CGPoint) -> MonitorSnapshot? {

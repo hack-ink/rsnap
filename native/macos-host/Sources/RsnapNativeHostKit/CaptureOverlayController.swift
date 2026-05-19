@@ -77,7 +77,7 @@ final class CaptureOverlayController {
 				settings: settings
 			)
 			windows.append(window)
-			if targetWindow == nil, screen.frame.contains(focusPoint) {
+			if targetWindow == nil, screen.frame.inclusivelyContains(focusPoint) {
 				targetWindow = window
 			}
 		}
@@ -213,7 +213,9 @@ final class CaptureOverlayController {
 	}
 
 	func focusWindow(at point: CGPoint) {
-		guard let targetWindow = windows.first(where: { $0.frame.contains(point) }) ?? windows.first
+		guard
+			let targetWindow = windows.first(where: { $0.frame.inclusivelyContains(point) })
+				?? windows.first
 		else {
 			return
 		}
@@ -355,14 +357,14 @@ final class CaptureOverlayController {
 	}
 
 	func hoverWindow(at point: CGPoint) -> WindowSnapshot? {
-		guard NSScreen.screens.contains(where: { $0.frame.contains(point) }) else {
+		guard NSScreen.screens.contains(where: { $0.frame.inclusivelyContains(point) }) else {
 			return nil
 		}
 		return windowSnapshotFeed.window(at: point)
 	}
 
 	func hoverWindowPreview(at point: CGPoint) -> WindowSnapshot? {
-		guard NSScreen.screens.contains(where: { $0.frame.contains(point) }) else {
+		guard NSScreen.screens.contains(where: { $0.frame.inclusivelyContains(point) }) else {
 			return nil
 		}
 		return windowSnapshotFeed.window(at: point)
@@ -472,7 +474,7 @@ final class CaptureOverlayController {
 		near point: CGPoint
 	) -> CaptureSessionController.FrozenCaptureJobSource? {
 		guard
-			let referenceWindow = windows.first(where: { $0.frame.contains(point) })
+			let referenceWindow = windows.first(where: { $0.frame.inclusivelyContains(point) })
 				?? windows.first
 		else {
 			return nil
@@ -492,13 +494,13 @@ final class CaptureOverlayController {
 
 	fileprivate func liveColorSampleSource(near point: CGPoint) -> LiveColorSampleSource? {
 		guard
-			let referenceWindow = windows.first(where: { $0.frame.contains(point) })
+			let referenceWindow = windows.first(where: { $0.frame.inclusivelyContains(point) })
 				?? windows.first
 		else {
 			return nil
 		}
 		let screen =
-			NSScreen.screens.first(where: { $0.frame.contains(point) })
+			NSScreen.screens.first(where: { $0.frame.inclusivelyContains(point) })
 			?? referenceWindow.screen
 		guard let displayID = screen.flatMap(Self.displayID) else {
 			return nil
@@ -827,7 +829,7 @@ final class CaptureOverlayController {
 
 		let focusPoint = CGPoint(x: selection.midX, y: selection.midY)
 		guard
-			let primaryWindow = windows.first(where: { $0.frame.contains(focusPoint) })
+			let primaryWindow = windows.first(where: { $0.frame.inclusivelyContains(focusPoint) })
 				?? windows.first
 		else {
 			return

@@ -1367,9 +1367,3 @@ private func scrollCaptureFlippedDesktopPoint(_ point: CGPoint) -> CGPoint {
 		y: desktop.minY + desktop.maxY - point.y
 	)
 }
-
-extension CGRect {
-	fileprivate func inclusivelyContains(_ point: CGPoint) -> Bool {
-		point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY
-	}
-}

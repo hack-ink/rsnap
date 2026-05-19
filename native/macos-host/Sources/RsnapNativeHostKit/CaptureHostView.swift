@@ -1605,11 +1605,11 @@ final class CaptureHostView: NSView {
 		guard let window else {
 			return nil
 		}
-		let local = CGPoint(
-			x: globalPoint.x - window.frame.minX,
-			y: globalPoint.y - window.frame.minY
+		return captureOverlayLocalPoint(
+			from: globalPoint,
+			windowFrame: window.frame,
+			bounds: bounds
 		)
-		return bounds.contains(local) ? local : nil
 	}
 
 	private func currentLocalMousePoint() -> CGPoint? {
@@ -1617,7 +1617,7 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 		let localPoint = window.mouseLocationOutsideOfEventStream
-		return bounds.contains(localPoint) ? localPoint : nil
+		return bounds.clampedInclusivePoint(localPoint)
 	}
 
 	private func currentCursorPresentation() -> CursorPresentation {
@@ -1765,7 +1765,7 @@ final class CaptureHostView: NSView {
 		}
 		let localPoint = window.mouseLocationOutsideOfEventStream
 		let globalPoint = window.convertPoint(toScreen: localPoint)
-		return NSScreen.screens.contains(where: { $0.frame.contains(globalPoint) })
+		return NSScreen.screens.contains(where: { $0.frame.inclusivelyContains(globalPoint) })
 			? globalPoint : nil
 	}
 
