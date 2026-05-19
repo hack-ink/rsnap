@@ -3,7 +3,7 @@ import Foundation
 import Sparkle
 
 @MainActor
-final class NativeHostSoftwareUpdater {
+final class NativeHostSoftwareUpdater: NSObject {
 	enum Mode: String, CaseIterable {
 		case off
 		case check
@@ -60,14 +60,15 @@ final class NativeHostSoftwareUpdater {
 		host: "github.com",
 		path: "/hack-ink/rsnap/releases/latest")
 
-	private let updaterController: SPUStandardUpdaterController?
+	private var updaterController: SPUStandardUpdaterController?
 
-	init() {
+	override init() {
+		super.init()
 		if Self.hasSparkleConfiguration {
 			let controller = SPUStandardUpdaterController(
 				startingUpdater: true,
 				updaterDelegate: nil,
-				userDriverDelegate: nil)
+				userDriverDelegate: self)
 			updaterController = controller
 			NativeHostTelemetry.lifecycleEvent("native_host.sparkle_updater_started")
 			requestImmediateLaunchUpdateCheckIfEnabled(using: controller.updater)
@@ -177,6 +178,11 @@ final class NativeHostSoftwareUpdater {
 		return trimmed.isEmpty ? nil : trimmed
 	}
 
+	private func showUpdateAlertInFront() {
+		NSApp.setActivationPolicy(.regular)
+		NSRunningApplication.current.activate(options: [.activateAllWindows])
+	}
+
 	private static func httpsURL(host: String, path: String) -> URL {
 		var components = URLComponents()
 		components.scheme = "https"
@@ -186,6 +192,33 @@ final class NativeHostSoftwareUpdater {
 			preconditionFailure("Invalid static Rsnap update URL: \(host)\(path)")
 		}
 		return url
+	}
+}
+
+extension NativeHostSoftwareUpdater: @preconcurrency SPUStandardUserDriverDelegate {
+	var supportsGentleScheduledUpdateReminders: Bool {
+		true
+	}
+
+	func standardUserDriverShouldHandleShowingScheduledUpdate(
+		_: SUAppcastItem,
+		andInImmediateFocus _: Bool
+	) -> Bool {
+		true
+	}
+
+	func standardUserDriverWillHandleShowingUpdate(
+		_ handleShowingUpdate: Bool,
+		forUpdate _: SUAppcastItem,
+		state _: SPUUserUpdateState
+	) {
+		guard handleShowingUpdate else {
+			return
+		}
+		showUpdateAlertInFront()
+		NativeHostTelemetry.lifecycleEvent(
+			"native_host.sparkle_update_alert_focused",
+			detail: "source=standard_driver")
 	}
 }
 
