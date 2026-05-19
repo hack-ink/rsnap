@@ -760,7 +760,10 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		defer {
 			stateLock.unlock()
 		}
-		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		guard
+			let displayID = displayTargets.first(where: {
+				$0.value.frame.inclusivelyContains(point)
+			})?.key
 		else {
 			return nil
 		}
@@ -783,7 +786,10 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		guard selfCaptureFilterRequired else {
 			return false
 		}
-		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		guard
+			let displayID = displayTargets.first(where: {
+				$0.value.frame.inclusivelyContains(point)
+			})?.key
 		else {
 			return false
 		}
@@ -800,7 +806,10 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		defer {
 			stateLock.unlock()
 		}
-		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key,
+		guard
+			let displayID = displayTargets.first(where: {
+				$0.value.frame.inclusivelyContains(point)
+			})?.key,
 			let record = latestFrames[displayID],
 			let eligibleRecord = snapshotEligibleRecordLocked(record)
 		else {
@@ -817,7 +826,10 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		guard selfCaptureFilterRequired else {
 			return false
 		}
-		guard let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key,
+		guard
+			let displayID = displayTargets.first(where: {
+				$0.value.frame.inclusivelyContains(point)
+			})?.key,
 			let stream = streams[displayID]
 		else {
 			return false
@@ -831,7 +843,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 
 	func liveRgbSample(containing point: CGPoint) -> LiveRgbSample? {
 		stateLock.lock()
-		let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		let displayID = displayTargets.first(where: { $0.value.frame.inclusivelyContains(point) })?
+			.key
 		let record = displayID.flatMap { latestFrames[$0] }.flatMap(snapshotEligibleRecordLocked)
 		stateLock.unlock()
 		guard let record else {
@@ -858,7 +871,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 
 	func loupePatch(containing point: CGPoint, sidePixels: Int) -> CGImage? {
 		stateLock.lock()
-		let displayID = displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+		let displayID = displayTargets.first(where: { $0.value.frame.inclusivelyContains(point) })?
+			.key
 		let record = displayID.flatMap { latestFrames[$0] }.flatMap(snapshotEligibleRecordLocked)
 		stateLock.unlock()
 		guard let record else {
@@ -880,7 +894,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let deadline = Date(timeIntervalSinceNow: max(0, maxWait))
 		stateLock.lock()
 		let displayID =
-			token?.displayID ?? displayTargets.first(where: { $0.value.frame.contains(point) })?.key
+			token?.displayID
+			?? displayTargets.first(where: { $0.value.frame.inclusivelyContains(point) })?.key
 		guard let displayID else {
 			stateLock.unlock()
 			return nil
