@@ -9,6 +9,7 @@ enum RsnapNativeHostKitProbe {
 		assertScrimExclusionPreservesExistingPixels()
 		assertRoundedExclusionMaskKeepsCornersFilled()
 		assertCaptureFrameEffectExpandsExportCanvas()
+		assertCaptureOverlayLocalPointKeepsScreenEdgesVisible()
 		assertScrollCaptureViewportPointAcceptsFlippedGlobalMouseCoordinates()
 		assertScrollCaptureObservedInputAcceptsSourceWindowGutter()
 		assertSoftwareUpdateModeResolution()
@@ -94,6 +95,41 @@ enum RsnapNativeHostKitProbe {
 			SoftwareUpdateManualCheckAvailability.isEnabled(sparkleCanCheckForUpdates: false)
 		else {
 			fatalError("manual update check should stay available across Sparkle session states")
+		}
+	}
+
+	private static func assertCaptureOverlayLocalPointKeepsScreenEdgesVisible() {
+		let windowFrame = CGRect(x: 0, y: 0, width: 1_440, height: 900)
+		let bounds = CGRect(x: 0, y: 0, width: 1_440, height: 900)
+
+		guard
+			captureOverlayLocalPoint(
+				from: CGPoint(x: windowFrame.maxX, y: windowFrame.maxY),
+				windowFrame: windowFrame,
+				bounds: bounds
+			) == CGPoint(x: bounds.maxX, y: bounds.maxY)
+		else {
+			fatalError("capture overlay should keep HUD placement alive at screen max edges")
+		}
+
+		guard
+			captureOverlayLocalPoint(
+				from: CGPoint(x: windowFrame.minX, y: windowFrame.minY),
+				windowFrame: windowFrame,
+				bounds: bounds
+			) == CGPoint(x: bounds.minX, y: bounds.minY)
+		else {
+			fatalError("capture overlay should keep HUD placement alive at screen min edges")
+		}
+
+		guard
+			captureOverlayLocalPoint(
+				from: CGPoint(x: windowFrame.maxX + 1, y: windowFrame.midY),
+				windowFrame: windowFrame,
+				bounds: bounds
+			) == nil
+		else {
+			fatalError("capture overlay should still reject points outside the screen edge")
 		}
 	}
 

@@ -79,7 +79,7 @@ final class WindowSnapshotFeed {
 		stateLock.lock()
 		let snapshots = latestSnapshots
 		stateLock.unlock()
-		return snapshots.first(where: { $0.frame.contains(point) })
+		return snapshots.first(where: { $0.frame.inclusivelyContains(point) })
 	}
 
 	static func snapshots(desktopFrame: CGRect) -> [WindowSnapshot] {
@@ -137,7 +137,7 @@ final class WindowSnapshotFeed {
 	}
 
 	static func window(at point: CGPoint, in snapshots: [WindowSnapshot]) -> WindowSnapshot? {
-		snapshots.first(where: { $0.frame.contains(point) })
+		snapshots.first(where: { $0.frame.inclusivelyContains(point) })
 	}
 
 	private func refresh() {
