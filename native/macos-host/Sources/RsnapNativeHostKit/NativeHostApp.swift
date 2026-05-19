@@ -108,7 +108,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private var selfCaptureRegistrationWindow: NSWindow?
 	private var didBootstrap = false
 	private var didPresentLaunchPermissionOnboarding = false
-	private let softwareUpdater = NativeHostSoftwareUpdater()
+	private lazy var softwareUpdater = NativeHostSoftwareUpdater()
 	@objc public dynamic var window: NSWindow?
 	private lazy var sessionController: CaptureSessionController = {
 		let controller = CaptureSessionController(settingsStore: settingsStore)
@@ -145,6 +145,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		)
 		Self.applyApplicationIcon()
 		configureStatusItem()
+		_ = softwareUpdater
 		configureGlobalHotKeys()
 		showSelfCaptureRegistrationWindow()
 		NotificationCenter.default.addObserver(
