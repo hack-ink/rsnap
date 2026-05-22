@@ -122,6 +122,55 @@ final class CaptureOverlayController {
 		}
 	}
 
+	func showFrozenFirstFrame(
+		scene: SceneSnapshot,
+		chrome: CaptureChromeState,
+		settings: NativeHostSettings,
+		focusPoint: CGPoint
+	) {
+		close()
+		var targetWindow: CaptureOverlayWindow?
+		for screen in NSScreen.screens {
+			let window = CaptureOverlayWindow(
+				screen: screen,
+				controller: controller,
+				initialScene: scene,
+				initialChrome: chrome,
+				initialSettings: settings
+			)
+			window.hostView.update(
+				scene: scene,
+				chrome: chrome,
+				settings: settings
+			)
+			windows.append(window)
+			if targetWindow == nil, screen.frame.inclusivelyContains(focusPoint) {
+				targetWindow = window
+			}
+		}
+
+		let focusedWindow = targetWindow ?? windows.first
+		for window in windows {
+			window.orderFrontRegardless()
+			if window === focusedWindow {
+				window.makeKey()
+				window.makeFirstResponder(window.hostView)
+				focusedWindowNumber = window.windowNumber
+				(NSApp.delegate as? NativeHostApplicationController)?.window = window
+			}
+		}
+		collapsedForFrozen = false
+		for window in windows {
+			window.displayIfNeeded()
+		}
+		presentFrozenFirstFrame(
+			scene: scene,
+			chrome: chrome,
+			settings: settings
+		)
+		primaryWindow?.displayIfNeeded()
+	}
+
 	func prepareCaptureStreamsNow(trigger: String) {
 		guard let prepareCaptureStreams = pendingCaptureStreamPreparation else {
 			return
