@@ -104,6 +104,7 @@ package func scrollCaptureMinimapPlan(
 public final class NativeHostApplicationController: NSObject, NSApplicationDelegate {
 	private let settingsStore = NativeHostSettingsStore()
 	private let hotKeyCoordinator = HotKeyBindingCoordinator()
+	private let quickScreenshotController = QuickScreenshotController()
 	private var lifecycleActivity: NSObjectProtocol?
 	private var selfCaptureRegistrationWindow: NSWindow?
 	private var didBootstrap = false
@@ -122,6 +123,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}()
 	private var statusItem: NSStatusItem?
 	private weak var captureMenuItem: NSMenuItem?
+	private weak var quickScreenshotMenuItem: NSMenuItem?
 	private lazy var permissionRecoveryWindowController = PermissionRecoveryGuideWindowController()
 	private lazy var settingsWindowController = SettingsWindowController(
 		settingsStore: settingsStore,
@@ -147,6 +149,9 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		configureStatusItem()
 		_ = softwareUpdater
 		configureGlobalHotKeys()
+		quickScreenshotController.onStateChanged = { [weak self] in
+			self?.refreshStatusMenuState()
+		}
 		showSelfCaptureRegistrationWindow()
 		NotificationCenter.default.addObserver(
 			self,
@@ -173,6 +178,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 	public func applicationWillTerminate(_ notification: Notification) {
 		hotKeyCoordinator.invalidate()
+		quickScreenshotController.cancel()
 		sessionController.releaseScreenCaptureStreams(immediate: true)
 	}
 
@@ -224,6 +230,20 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		}
 		sessionController.startCapture(
 			capturableOwnWindowIDs: settingsWindowController.captureExceptionWindowIDs)
+	}
+
+	@objc
+	private func startQuickScreenshot(_ sender: Any?) {
+		if presentPermissionRecoveryIfNeeded(source: "quick_screenshot") {
+			return
+		}
+		let source = sender == nil ? "hotkey" : "menu"
+		quickScreenshotController.startInteractiveFrozenCapture(
+			captureController: sessionController,
+			capturableOwnWindowIDs: settingsWindowController.captureExceptionWindowIDs,
+			source: source
+		)
+		refreshStatusMenuState()
 	}
 
 	@objc
@@ -335,6 +355,11 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			action: #selector(startCapture(_:)),
 			keyEquivalent: ""
 		)
+		let quickScreenshotItem = menu.addItem(
+			withTitle: "Quick Screenshot",
+			action: #selector(startQuickScreenshot(_:)),
+			keyEquivalent: ""
+		)
 		menu.addItem(.separator())
 		menu.addItem(
 			withTitle: "Open Screenshots Folder",
@@ -356,7 +381,9 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		item.menu = menu
 		statusItem = item
 		captureMenuItem = captureItem
+		self.quickScreenshotMenuItem = quickScreenshotItem
 		updateCaptureMenuShortcut()
+		updateQuickScreenshotMenuShortcut()
 		NativeHostTelemetry.lifecycleEvent(
 			"native_host.status_item_installed",
 			detail: "visible=\(item.isVisible),hasMenu=\(item.menu != nil)"
@@ -366,6 +393,9 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private func configureGlobalHotKeys() {
 		hotKeyCoordinator.onCaptureRequested = { [weak self] in
 			self?.startCapture(nil)
+		}
+		hotKeyCoordinator.onQuickScreenshotRequested = { [weak self] in
+			self?.startQuickScreenshot(nil)
 		}
 		hotKeyCoordinator.onCancelRequested = { [weak self] in
 			self?.cancelCapture(nil)
@@ -379,8 +409,10 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}
 
 	fileprivate func refreshStatusMenuState() {
-		let isCaptureActive = sessionController.isCaptureActive
+		let isCaptureActive =
+			sessionController.isCaptureActive || quickScreenshotController.isActive
 		captureMenuItem?.isEnabled = !isCaptureActive
+		quickScreenshotMenuItem?.isEnabled = !isCaptureActive
 	}
 
 	private func updateCaptureMenuShortcut() {
@@ -393,9 +425,20 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		captureMenuItem.keyEquivalentModifierMask = shortcut.modifierMask
 	}
 
+	private func updateQuickScreenshotMenuShortcut() {
+		guard let quickScreenshotMenuItem else {
+			return
+		}
+		let shortcut = NativeHostSettings.quickScreenshotHotKeyPresentation(
+			for: settingsStore.settings.quickScreenshotHotkey)
+		quickScreenshotMenuItem.keyEquivalent = shortcut.keyEquivalent
+		quickScreenshotMenuItem.keyEquivalentModifierMask = shortcut.modifierMask
+	}
+
 	private func refreshHotKeyBindings(for mode: SceneKind) {
 		hotKeyCoordinator.update(
 			captureHotKey: settingsStore.settings.captureHotkey,
+			quickScreenshotHotKey: settingsStore.settings.quickScreenshotHotkey,
 			sceneMode: mode
 		)
 	}
@@ -404,6 +447,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private func settingsDidChange() {
 		refreshHotKeyBindings(for: sessionController.currentSceneMode)
 		updateCaptureMenuShortcut()
+		updateQuickScreenshotMenuShortcut()
 	}
 
 	private static func statusItemImage() -> NSImage? {

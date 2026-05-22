@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+@preconcurrency import CoreGraphics
 import Foundation
 import RsnapHostBridge
 
@@ -10,16 +11,38 @@ final class GlobalHotKeyCenter {
 		case cancel = 2
 		case loupe = 3
 		case save = 4
+		case quickScreenshot = 5
 	}
 
 	private struct HotKeyDefinition: Equatable {
 		let keyCode: UInt32
 		let modifiers: UInt32
+
+		var eventFlags: CGEventFlags {
+			var flags = CGEventFlags()
+			if modifiers & UInt32(optionKey) != 0 {
+				flags.insert(.maskAlternate)
+			}
+			if modifiers & UInt32(cmdKey) != 0 {
+				flags.insert(.maskCommand)
+			}
+			if modifiers & UInt32(controlKey) != 0 {
+				flags.insert(.maskControl)
+			}
+			if modifiers & UInt32(shiftKey) != 0 {
+				flags.insert(.maskShift)
+			}
+			return flags
+		}
 	}
 
 	private static let signature = OSType(0x5253_4E50)  // RSNP
+	private static let trackedEventFlags: CGEventFlags = [
+		.maskAlternate, .maskCommand, .maskControl, .maskShift,
+	]
 
 	var onCaptureRequested: (() -> Void)?
+	var onQuickScreenshotRequested: (() -> Void)?
 	var onCancelRequested: (() -> Void)?
 	var onToggleLoupeRequested: (() -> Void)?
 	var onSaveRequested: (() -> Void)?
@@ -27,6 +50,9 @@ final class GlobalHotKeyCenter {
 	private var handlerRef: EventHandlerRef?
 	private var hotKeyRefs: [Binding: EventHotKeyRef?] = [:]
 	private var registeredDefinitions: [Binding: HotKeyDefinition] = [:]
+	private var quickScreenshotEventTap: CFMachPort?
+	private var quickScreenshotEventTapSource: CFRunLoopSource?
+	private var quickScreenshotEventTapDefinition: HotKeyDefinition?
 
 	init() {
 		var eventType = EventTypeSpec(
@@ -51,6 +77,7 @@ final class GlobalHotKeyCenter {
 	}
 
 	func invalidate() {
+		unregisterQuickScreenshotEventTap()
 		for binding in Binding.allCases {
 			unregister(binding)
 		}
@@ -62,12 +89,23 @@ final class GlobalHotKeyCenter {
 
 	func updateBindings(
 		captureHotKey: String,
+		quickScreenshotHotKey: String,
 		sceneMode: SceneKind
 	) -> Bool {
 		var allRequestedBindingsRegistered = true
 		let captureDefinition = Self.parseCaptureHotKey(captureHotKey) ?? Self.defaultCaptureHotKey
 		allRequestedBindingsRegistered =
 			register(.capture, definition: captureDefinition) && allRequestedBindingsRegistered
+
+		let quickScreenshotDefinition =
+			Self.parseCaptureHotKey(quickScreenshotHotKey) ?? Self.defaultQuickScreenshotHotKey
+		if registerQuickScreenshotEventTap(definition: quickScreenshotDefinition) {
+			unregister(.quickScreenshot)
+		} else {
+			allRequestedBindingsRegistered =
+				register(.quickScreenshot, definition: quickScreenshotDefinition)
+				&& allRequestedBindingsRegistered
+		}
 
 		let wantsCancel = sceneMode != .hidden
 		let wantsLoupe = sceneMode == .live
@@ -147,6 +185,104 @@ final class GlobalHotKeyCenter {
 		registeredDefinitions.removeValue(forKey: binding)
 	}
 
+	private func registerQuickScreenshotEventTap(definition: HotKeyDefinition) -> Bool {
+		if quickScreenshotEventTapDefinition == definition, quickScreenshotEventTap != nil {
+			return true
+		}
+		unregisterQuickScreenshotEventTap()
+
+		let mask = CGEventMask(1) << CGEventType.keyDown.rawValue
+		let callback: CGEventTapCallBack = { _, type, event, userInfo in
+			guard let userInfo else {
+				return Unmanaged.passUnretained(event)
+			}
+			return MainActor.assumeIsolated {
+				let center = Unmanaged<GlobalHotKeyCenter>
+					.fromOpaque(userInfo)
+					.takeUnretainedValue()
+				return center.handleQuickScreenshotEventTap(type: type, event: event)
+			}
+		}
+		guard
+			let eventTap = CGEvent.tapCreate(
+				tap: .cgSessionEventTap,
+				place: .headInsertEventTap,
+				options: .defaultTap,
+				eventsOfInterest: mask,
+				callback: callback,
+				userInfo: Unmanaged.passUnretained(self).toOpaque()
+			)
+		else {
+			NativeHostTelemetry.lifecycleWarning(
+				"native_host.quick_screenshot_event_tap_failed",
+				detail:
+					"keyCode=\(definition.keyCode),modifiers=\(definition.modifiers)"
+			)
+			return false
+		}
+
+		let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+		CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+		CGEvent.tapEnable(tap: eventTap, enable: true)
+		quickScreenshotEventTap = eventTap
+		quickScreenshotEventTapSource = source
+		quickScreenshotEventTapDefinition = definition
+		NativeHostTelemetry.lifecycleEvent(
+			"native_host.quick_screenshot_event_tap_registered",
+			detail:
+				"keyCode=\(definition.keyCode),modifiers=\(definition.modifiers)"
+		)
+		return true
+	}
+
+	private func unregisterQuickScreenshotEventTap() {
+		if let quickScreenshotEventTap {
+			CGEvent.tapEnable(tap: quickScreenshotEventTap, enable: false)
+		}
+		if let quickScreenshotEventTapSource {
+			CFRunLoopRemoveSource(CFRunLoopGetMain(), quickScreenshotEventTapSource, .commonModes)
+		}
+		quickScreenshotEventTap = nil
+		quickScreenshotEventTapSource = nil
+		quickScreenshotEventTapDefinition = nil
+	}
+
+	private func handleQuickScreenshotEventTap(type: CGEventType, event: CGEvent)
+		-> Unmanaged<CGEvent>?
+	{
+		switch type {
+		case .tapDisabledByTimeout, .tapDisabledByUserInput:
+			if let quickScreenshotEventTap {
+				CGEvent.tapEnable(tap: quickScreenshotEventTap, enable: true)
+			}
+			return Unmanaged.passUnretained(event)
+		case .keyDown:
+			guard matchesQuickScreenshotEvent(event) else {
+				return Unmanaged.passUnretained(event)
+			}
+			if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+				DispatchQueue.main.async { [weak self] in
+					self?.onQuickScreenshotRequested?()
+				}
+			}
+			return nil
+		default:
+			return Unmanaged.passUnretained(event)
+		}
+	}
+
+	private func matchesQuickScreenshotEvent(_ event: CGEvent) -> Bool {
+		guard let definition = quickScreenshotEventTapDefinition else {
+			return false
+		}
+		let keyCode = UInt32(event.getIntegerValueField(.keyboardEventKeycode))
+		guard keyCode == definition.keyCode else {
+			return false
+		}
+		return event.flags.intersection(Self.trackedEventFlags)
+			== definition.eventFlags.intersection(Self.trackedEventFlags)
+	}
+
 	private func handleHotKey(_ eventRef: EventRef) -> OSStatus {
 		var hotKeyID = EventHotKeyID()
 		let status = GetEventParameter(
@@ -167,6 +303,8 @@ final class GlobalHotKeyCenter {
 		switch binding {
 		case .capture:
 			onCaptureRequested?()
+		case .quickScreenshot:
+			onQuickScreenshotRequested?()
 		case .cancel:
 			onCancelRequested?()
 		case .loupe:
@@ -180,6 +318,10 @@ final class GlobalHotKeyCenter {
 	private static let defaultCaptureHotKey = HotKeyDefinition(
 		keyCode: 7,
 		modifiers: UInt32(optionKey)
+	)
+	private static let defaultQuickScreenshotHotKey = HotKeyDefinition(
+		keyCode: 7,
+		modifiers: UInt32(optionKey | shiftKey)
 	)
 
 	private static func parseCaptureHotKey(_ raw: String) -> HotKeyDefinition? {
