@@ -4,8 +4,8 @@ import SwiftUI
 
 enum NativeHostSettingsWindowMetrics {
 	static let width: CGFloat = 620
-	static let minHeight: CGFloat = 304
-	static let idealHeight: CGFloat = 304
+	static let minHeight: CGFloat = 332
+	static let idealHeight: CGFloat = 332
 	static let cornerRadius: CGFloat = 18
 }
 
@@ -333,7 +333,7 @@ private struct SettingsDashboard: View {
 						)
 					)
 					.padding(.trailing, 8)
-					.padding(.bottom, 6)
+					.padding(.bottom, 2)
 			}
 			.scrollIndicators(.hidden)
 			.frame(maxWidth: .infinity, alignment: .topLeading)
@@ -478,6 +478,13 @@ private struct CaptureInspector: View {
 			ShortcutHero(
 				title: NativeHostSettings.captureHotKeyPresentation(for: settings.captureHotkey)
 					.displayTitle
+			)
+			InspectorMetric(
+				title: "Quick",
+				value: NativeHostSettings.quickScreenshotHotKeyPresentation(
+					for: settings.quickScreenshotHotkey
+				).displayTitle,
+				symbolName: "bolt.fill"
 			)
 			InspectorMetric(
 				title: "Toolbar",
@@ -1756,6 +1763,8 @@ private struct SettingsHeroControlTile<Control: View>: View {
 			VStack(alignment: .leading, spacing: 2) {
 				Text(title)
 					.font(.system(size: 13, weight: .semibold))
+					.lineLimit(1)
+					.minimumScaleFactor(0.86)
 				Text(subtitle)
 					.font(.system(size: 10.8, weight: .medium))
 					.foregroundStyle(.secondary)
@@ -1999,6 +2008,14 @@ private struct CaptureSettingsPanel: View {
 				CaptureHotKeyField(model: model)
 			}
 
+			SettingsHeroControlTile(
+				symbolName: "bolt.fill",
+				title: "Quick Screenshot Shortcut",
+				subtitle: "Current: \(quickScreenshotShortcutPresentation.displayTitle)."
+			) {
+				QuickScreenshotHotKeyField(model: model)
+			}
+
 			VStack(spacing: 0) {
 				SettingsControlTile(
 					symbolName: "rectangle.bottomthird.inset.filled",
@@ -2056,6 +2073,11 @@ private struct CaptureSettingsPanel: View {
 	private var shortcutPresentation: CaptureHotKeyPresentation {
 		NativeHostSettings.captureHotKeyPresentation(for: model.settings.captureHotkey)
 	}
+
+	private var quickScreenshotShortcutPresentation: CaptureHotKeyPresentation {
+		NativeHostSettings.quickScreenshotHotKeyPresentation(
+			for: model.settings.quickScreenshotHotkey)
+	}
 }
 
 private struct CaptureHotKeyField: View {
@@ -2103,6 +2125,57 @@ private struct CaptureHotKeyField: View {
 		let committed = NativeHostSettings.captureHotKeyPresentation(for: draft).displayTitle
 		if committed != model.settings.captureHotkey {
 			model.update { $0.captureHotkey = committed }
+		}
+		draft = committed
+	}
+}
+
+private struct QuickScreenshotHotKeyField: View {
+	@ObservedObject var model: NativeHostSettingsViewModel
+	@FocusState private var isFocused: Bool
+	@State private var draft = ""
+
+	var body: some View {
+		TextField("Option-Shift-X", text: $draft)
+			.font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+			.textFieldStyle(.plain)
+			.padding(.horizontal, 10)
+			.padding(.vertical, 6)
+			.background(Color.primary.opacity(0.070), in: .rect(cornerRadius: 9))
+			.overlay {
+				RoundedRectangle(cornerRadius: 9, style: .continuous)
+					.stroke(Color.primary.opacity(0.075), lineWidth: 1)
+			}
+			.frame(width: SettingsControlLayout.controlColumnWidth)
+			.focused($isFocused)
+			.onAppear(perform: syncDraft)
+			.onSubmit(commitDraft)
+			.onChange(of: isFocused) { _, focused in
+				if focused {
+					syncDraft()
+				} else {
+					commitDraft()
+				}
+			}
+			.onChange(of: model.settings.quickScreenshotHotkey) { _, _ in
+				if isFocused == false {
+					syncDraft()
+				}
+			}
+	}
+
+	private func syncDraft() {
+		draft =
+			NativeHostSettings.quickScreenshotHotKeyPresentation(
+				for: model.settings.quickScreenshotHotkey
+			).displayTitle
+	}
+
+	private func commitDraft() {
+		let committed = NativeHostSettings.quickScreenshotHotKeyPresentation(for: draft)
+			.displayTitle
+		if committed != model.settings.quickScreenshotHotkey {
+			model.update { $0.quickScreenshotHotkey = committed }
 		}
 		draft = committed
 	}
