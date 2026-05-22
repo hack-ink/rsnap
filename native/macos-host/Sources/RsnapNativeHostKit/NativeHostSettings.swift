@@ -8,6 +8,7 @@ final class NativeHostSettingsStore {
 
 	private enum DefaultsKey {
 		static let captureHotkey = "captureHotkey"
+		static let quickScreenshotHotkey = "quickScreenshotHotkey"
 		static let outputDirectory = "outputDirectory"
 		static let outputFilenamePrefix = "outputFilenamePrefix"
 		static let outputNaming = "outputNaming"
@@ -41,6 +42,8 @@ final class NativeHostSettingsStore {
 		let settings = NativeHostSettings(
 			captureHotkey: defaults.string(forKey: DefaultsKey.captureHotkey)
 				?? baseSettings.captureHotkey,
+			quickScreenshotHotkey: defaults.string(forKey: DefaultsKey.quickScreenshotHotkey)
+				?? baseSettings.quickScreenshotHotkey,
 			outputDirectory: defaults.url(forKey: DefaultsKey.outputDirectory)
 				?? baseSettings.outputDirectory,
 			outputFilenamePrefix: defaults.string(forKey: DefaultsKey.outputFilenamePrefix)
@@ -110,6 +113,9 @@ final class NativeHostSettingsStore {
 	private static func persist(_ settings: NativeHostSettings, into defaults: UserDefaults) {
 		defaults.set(settings.outputDirectory, forKey: DefaultsKey.outputDirectory)
 		defaults.set(settings.captureHotkey, forKey: DefaultsKey.captureHotkey)
+		defaults.set(
+			settings.quickScreenshotHotkey,
+			forKey: DefaultsKey.quickScreenshotHotkey)
 		defaults.set(settings.outputFilenamePrefix, forKey: DefaultsKey.outputFilenamePrefix)
 		defaults.set(settings.outputNaming.rawValue, forKey: DefaultsKey.outputNaming)
 		defaults.set(settings.toolbarPlacement.rawValue, forKey: DefaultsKey.toolbarPlacement)
@@ -140,7 +146,10 @@ final class NativeHostSettingsStore {
 }
 
 struct NativeHostSettings: Equatable {
+	static let defaultQuickScreenshotHotkey = "Option-Shift-X"
+
 	var captureHotkey: String
+	var quickScreenshotHotkey: String
 	var outputDirectory: URL
 	var outputFilenamePrefix: String
 	var outputNaming: OutputNamingPreference
@@ -164,6 +173,7 @@ struct NativeHostSettings: Equatable {
 	static var defaults: NativeHostSettings {
 		NativeHostSettings(
 			captureHotkey: "Option-X",
+			quickScreenshotHotkey: defaultQuickScreenshotHotkey,
 			outputDirectory: FileManager.default.homeDirectoryForCurrentUser
 				.appendingPathComponent("Desktop", isDirectory: true),
 			outputFilenamePrefix: NativeHostBrand.defaultFilenamePrefix,
@@ -193,6 +203,10 @@ struct NativeHostSettings: Equatable {
 			copy.outputDirectory = Self.defaults.outputDirectory
 		}
 		copy.captureHotkey = Self.sanitizeCaptureHotkey(copy.captureHotkey)
+		copy.quickScreenshotHotkey = Self.sanitizeHotkey(
+			copy.quickScreenshotHotkey,
+			fallback: Self.defaultQuickScreenshotHotkey
+		)
 		copy.outputFilenamePrefix = Self.sanitizeFilenamePrefix(copy.outputFilenamePrefix)
 		copy.hudOpacity = copy.hudOpacity.clamped(to: 0...1)
 		copy.hudBlur = copy.hudBlur.clamped(to: 0...1)
@@ -220,16 +234,30 @@ struct NativeHostSettings: Equatable {
 	}
 
 	private static func sanitizeCaptureHotkey(_ raw: String) -> String {
+		sanitizeHotkey(raw, fallback: defaults.captureHotkey)
+	}
+
+	private static func sanitizeHotkey(_ raw: String, fallback: String) -> String {
 		let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard trimmed.isEmpty == false else {
-			return defaults.captureHotkey
+			return fallback
 		}
-		return captureHotKeyPresentation(for: trimmed).displayTitle
+		return hotKeyPresentation(for: trimmed, fallback: fallback).displayTitle
 	}
 
 	static func captureHotKeyPresentation(for raw: String) -> CaptureHotKeyPresentation {
+		hotKeyPresentation(for: raw, fallback: defaults.captureHotkey)
+	}
+
+	static func quickScreenshotHotKeyPresentation(for raw: String) -> CaptureHotKeyPresentation {
+		hotKeyPresentation(for: raw, fallback: defaultQuickScreenshotHotkey)
+	}
+
+	static func hotKeyPresentation(for raw: String, fallback: String)
+		-> CaptureHotKeyPresentation
+	{
 		parseCaptureHotKeyPresentation(raw)
-			?? parseCaptureHotKeyPresentation(defaults.captureHotkey)
+			?? parseCaptureHotKeyPresentation(fallback)
 			?? CaptureHotKeyPresentation(
 				displayTitle: "Option-X",
 				keyEquivalent: "x",
