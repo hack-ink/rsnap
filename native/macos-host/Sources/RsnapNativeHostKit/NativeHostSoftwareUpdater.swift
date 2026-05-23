@@ -60,14 +60,17 @@ final class NativeHostSoftwareUpdater: NSObject {
 		host: "github.com",
 		path: "/hack-ink/rsnap/releases/latest")
 
+	var canPerformImmediateInstall: (() -> Bool)?
+
 	private var updaterController: SPUStandardUpdaterController?
+	private var pendingImmediateInstall: (() -> Void)?
 
 	override init() {
 		super.init()
 		if Self.hasSparkleConfiguration {
 			let controller = SPUStandardUpdaterController(
 				startingUpdater: true,
-				updaterDelegate: nil,
+				updaterDelegate: self,
 				userDriverDelegate: self)
 			updaterController = controller
 			NativeHostTelemetry.lifecycleEvent("native_host.sparkle_updater_started")
@@ -123,6 +126,10 @@ final class NativeHostSoftwareUpdater: NSObject {
 		NativeHostTelemetry.lifecycleEvent(
 			"native_host.sparkle_update_mode_changed",
 			detail: "mode=\(mode.rawValue)")
+	}
+
+	func retryDeferredImmediateInstall() {
+		_ = performPendingImmediateInstallIfPossible(source: "state_changed")
 	}
 
 	func checkForUpdates(_ sender: Any?) {
@@ -183,6 +190,24 @@ final class NativeHostSoftwareUpdater: NSObject {
 		NSRunningApplication.current.activate(options: [.activateAllWindows])
 	}
 
+	private func performPendingImmediateInstallIfPossible(source: String) -> Bool {
+		guard let install = pendingImmediateInstall else {
+			return false
+		}
+		guard canPerformImmediateInstall?() ?? true else {
+			NativeHostTelemetry.lifecycleEvent(
+				"native_host.sparkle_immediate_install_deferred",
+				detail: "source=\(source),reason=app_busy")
+			return false
+		}
+		pendingImmediateInstall = nil
+		NativeHostTelemetry.lifecycleEvent(
+			"native_host.sparkle_immediate_install_started",
+			detail: "source=\(source)")
+		install()
+		return true
+	}
+
 	private static func httpsURL(host: String, path: String) -> URL {
 		var components = URLComponents()
 		components.scheme = "https"
@@ -192,6 +217,18 @@ final class NativeHostSoftwareUpdater: NSObject {
 			preconditionFailure("Invalid static Rsnap update URL: \(host)\(path)")
 		}
 		return url
+	}
+}
+
+extension NativeHostSoftwareUpdater: SPUUpdaterDelegate {
+	func updater(
+		_: SPUUpdater,
+		willInstallUpdateOnQuit _: SUAppcastItem,
+		immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
+	) -> Bool {
+		pendingImmediateInstall = immediateInstallHandler
+		_ = performPendingImmediateInstallIfPossible(source: "sparkle_ready")
+		return true
 	}
 }
 
@@ -254,5 +291,17 @@ package enum SoftwareUpdateManualCheckAvailability {
 		// Check action is the user's way back into that update flow.
 		_ = sparkleCanCheckForUpdates
 		return true
+	}
+}
+
+package enum SoftwareUpdateImmediateInstallGate {
+	package static func canInstall(
+		captureActive: Bool,
+		quickScreenshotActive: Bool,
+		userFacingWindowVisible: Bool
+	) -> Bool {
+		captureActive == false
+			&& quickScreenshotActive == false
+			&& userFacingWindowVisible == false
 	}
 }

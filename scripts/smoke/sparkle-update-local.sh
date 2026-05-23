@@ -23,7 +23,8 @@ Builds a local Sparkle update fixture:
   4. sign the zip and write appcast.xml
   5. serve the appcast locally and launch the old app
 
-The final Install and Relaunch confirmation is intentionally manual.
+The final version readback is manually gated so the operator can observe the automatic
+install-and-relaunch path.
 
 Options:
   --prepare-only  build fixtures and print paths without launching the app or server
@@ -222,15 +223,13 @@ Appcast URL: $APPCAST_URL
 HTTP log: $LOG_PATH
 
 Next manual steps:
-  1. In Rsnap, open Settings -> About.
-  2. Click Check.
-  3. In Sparkle's updater window, confirm the update and click Install and Relaunch.
-  4. Return here and press Enter.
+  1. Wait for Rsnap to detect, install, and relaunch from the local appcast.
+  2. Return here and press Enter.
 EOF
 
 pkill -f "$old_app/Contents/MacOS/RsnapNativeHost" >/dev/null 2>&1 || true
 /usr/bin/open -n "$old_app"
-read -r -p "Press Enter after Sparkle finishes Install and Relaunch..."
+read -r -p "Press Enter after Rsnap finishes the automatic install and relaunch..."
 
 actual_version="$(plutil -extract CFBundleVersion raw "$old_app/Contents/Info.plist")"
 if [[ "$actual_version" != "$NEW_VERSION" ]]; then

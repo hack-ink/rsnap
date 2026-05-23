@@ -14,6 +14,7 @@ enum RsnapNativeHostKitProbe {
 		assertScrollCaptureObservedInputAcceptsSourceWindowGutter()
 		assertSoftwareUpdateModeResolution()
 		assertManualUpdateCheckRemainsAvailable()
+		assertImmediateInstallGateWaitsForCaptureIdle()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -95,6 +96,33 @@ enum RsnapNativeHostKitProbe {
 			SoftwareUpdateManualCheckAvailability.isEnabled(sparkleCanCheckForUpdates: false)
 		else {
 			fatalError("manual update check should stay available across Sparkle session states")
+		}
+	}
+
+	private static func assertImmediateInstallGateWaitsForCaptureIdle() {
+		guard
+			SoftwareUpdateImmediateInstallGate.canInstall(
+				captureActive: false,
+				quickScreenshotActive: false,
+				userFacingWindowVisible: false),
+			SoftwareUpdateImmediateInstallGate.canInstall(
+				captureActive: true,
+				quickScreenshotActive: false,
+				userFacingWindowVisible: false) == false,
+			SoftwareUpdateImmediateInstallGate.canInstall(
+				captureActive: false,
+				quickScreenshotActive: true,
+				userFacingWindowVisible: false) == false,
+			SoftwareUpdateImmediateInstallGate.canInstall(
+				captureActive: true,
+				quickScreenshotActive: true,
+				userFacingWindowVisible: false) == false,
+			SoftwareUpdateImmediateInstallGate.canInstall(
+				captureActive: false,
+				quickScreenshotActive: false,
+				userFacingWindowVisible: true) == false
+		else {
+			fatalError("immediate update install should wait until Rsnap is idle")
 		}
 	}
 
