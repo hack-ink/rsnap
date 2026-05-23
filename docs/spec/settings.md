@@ -155,6 +155,11 @@ Defines:
   `automaticallyDownloadsUpdates` setting when automatic updates are available.
 - Sparkle must use a 24-hour scheduled check interval, and each fresh app launch should request one
   immediate background check after the updater starts when the selected mode is Notify or Install.
+- Install mode must keep Sparkle's automatic download/install behavior enabled and must invoke
+  Sparkle's immediate install-and-relaunch handler after an automatic update is prepared. If a
+  capture, quick screenshot, Settings window, or permission recovery guide is active, Rsnap must
+  defer that handler until Rsnap returns to its idle menubar state. Rsnap must not add a separate
+  custom update prompt for this automatic path.
 - The Auto Update secondary text must use sentence case, must not read like download or install
   progress, and should display Sparkle's last successful check time while Notify or Install is
   selected. When Sparkle is not configured in a development build, the secondary text may state
