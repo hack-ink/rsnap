@@ -109,12 +109,15 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	private var selfCaptureRegistrationWindow: NSWindow?
 	private var didBootstrap = false
 	private var didPresentLaunchPermissionOnboarding = false
+	private var settingsWindowIsVisible = false
+	private var permissionRecoveryGuideIsVisible = false
 	private lazy var softwareUpdater = NativeHostSoftwareUpdater()
 	@objc public dynamic var window: NSWindow?
 	private lazy var sessionController: CaptureSessionController = {
 		let controller = CaptureSessionController(settingsStore: settingsStore)
 		controller.captureStateDidChange = { [weak self] in
 			self?.refreshStatusMenuState()
+			self?.retryDeferredSoftwareUpdateInstall()
 		}
 		controller.sceneDidChange = { [weak self] scene in
 			self?.refreshHotKeyBindings(for: scene.mode)
@@ -147,10 +150,13 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		)
 		Self.applyApplicationIcon()
 		configureStatusItem()
-		_ = softwareUpdater
+		softwareUpdater.canPerformImmediateInstall = { [weak self] in
+			self?.canPerformImmediateSoftwareUpdateInstall ?? true
+		}
 		configureGlobalHotKeys()
 		quickScreenshotController.onStateChanged = { [weak self] in
 			self?.refreshStatusMenuState()
+			self?.retryDeferredSoftwareUpdateInstall()
 		}
 		showSelfCaptureRegistrationWindow()
 		NotificationCenter.default.addObserver(
@@ -253,6 +259,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 	@objc
 	private func openSettings(_ sender: Any?) {
+		settingsWindowIsVisible = true
 		settingsWindowController.present()
 	}
 
@@ -292,7 +299,9 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 		oncePerLaunch: Bool = false
 	) -> Bool {
 		guard NativePermissions.screenRecordingGranted == false else {
+			permissionRecoveryGuideIsVisible = false
 			permissionRecoveryWindowController.close()
+			retryDeferredSoftwareUpdateInstall()
 			return false
 		}
 		if oncePerLaunch {
@@ -301,6 +310,11 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			}
 			didPresentLaunchPermissionOnboarding = true
 		}
+		permissionRecoveryWindowController.onClose = { [weak self] in
+			self?.permissionRecoveryGuideIsVisible = false
+			self?.retryDeferredSoftwareUpdateInstall()
+		}
+		permissionRecoveryGuideIsVisible = true
 		permissionRecoveryWindowController.present()
 		NativeHostTelemetry.lifecycleEvent(
 			"native_host.permission_recovery_presented",
@@ -316,7 +330,9 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			else {
 				return
 			}
+			self.settingsWindowIsVisible = false
 			NSApp.setActivationPolicy(.accessory)
+			self.retryDeferredSoftwareUpdateInstall()
 		}
 	}
 
@@ -413,6 +429,23 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 			sessionController.isCaptureActive || quickScreenshotController.isActive
 		captureMenuItem?.isEnabled = !isCaptureActive
 		quickScreenshotMenuItem?.isEnabled = !isCaptureActive
+	}
+
+	private var canPerformImmediateSoftwareUpdateInstall: Bool {
+		SoftwareUpdateImmediateInstallGate.canInstall(
+			captureActive: sessionController.isCaptureActive,
+			quickScreenshotActive: quickScreenshotController.isActive,
+			userFacingWindowVisible: isUserFacingWindowVisible)
+	}
+
+	private func retryDeferredSoftwareUpdateInstall() {
+		DispatchQueue.main.async { [weak self] in
+			self?.softwareUpdater.retryDeferredImmediateInstall()
+		}
+	}
+
+	private var isUserFacingWindowVisible: Bool {
+		settingsWindowIsVisible || permissionRecoveryGuideIsVisible
 	}
 
 	private func updateCaptureMenuShortcut() {

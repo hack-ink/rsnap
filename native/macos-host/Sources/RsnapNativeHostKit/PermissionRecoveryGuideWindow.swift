@@ -26,6 +26,7 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 	private var guideDirection: GuideDirection = .left
 	private let materialView = NSVisualEffectView()
 	private var hostingController: NSHostingController<PermissionRecoveryGuideView>?
+	var onClose: (() -> Void)?
 
 	init() {
 		let panel = NSPanel(
@@ -67,6 +68,7 @@ final class PermissionRecoveryGuideWindowController: NSWindowController {
 		positionWorkItem = nil
 		statusPollWorkItem = nil
 		super.close()
+		onClose?()
 	}
 
 	private func updateRootView() {
