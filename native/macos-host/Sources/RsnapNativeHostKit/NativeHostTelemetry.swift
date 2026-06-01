@@ -183,6 +183,34 @@ enum NativeHostTelemetry {
 		)
 	}
 
+	static func liveChromeWindowSnapshotRefresh(
+		captureID: UInt64,
+		source: String,
+		totalMilliseconds: Double,
+		candidateWindowCount: Int,
+		targetableWindowCount: Int,
+		ownWindowCount: Int,
+		ownTargetableWindowCount: Int,
+		highLayerWindowCount: Int,
+		tinyWindowCount: Int,
+		transparentWindowCount: Int
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.window_snapshot_refresh source=\(source, privacy: .public) totalMs=\(totalMilliseconds, format: .fixed(precision: 2), privacy: .public) candidateWindowCount=\(candidateWindowCount, privacy: .public) targetableWindowCount=\(targetableWindowCount, privacy: .public) ownWindowCount=\(ownWindowCount, privacy: .public) ownTargetableWindowCount=\(ownTargetableWindowCount, privacy: .public) highLayerWindowCount=\(highLayerWindowCount, privacy: .public) tinyWindowCount=\(tinyWindowCount, privacy: .public) transparentWindowCount=\(transparentWindowCount, privacy: .public)"
+		)
+	}
+
+	static func liveStreamSelfCaptureExceptionUpdate(
+		captureID: UInt64,
+		previousWindowCount: Int,
+		nextWindowCount: Int,
+		samplerRebuilt: Bool
+	) {
+		liveChromeLogger.info(
+			"schema=\(schema, privacy: .public) runID=\(runID, privacy: .public) captureID=\(captureID, privacy: .public) event=live_chrome.self_capture_exception_update previousWindowCount=\(previousWindowCount, privacy: .public) nextWindowCount=\(nextWindowCount, privacy: .public) samplerRebuilt=\(samplerRebuilt, privacy: .public)"
+		)
+	}
+
 	static func liveChromeInputSummary(
 		captureID: UInt64,
 		reason: String,
