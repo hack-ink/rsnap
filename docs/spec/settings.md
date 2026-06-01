@@ -38,7 +38,7 @@ Defines:
 
 ## Status Menu
 
-- The status menu must expose New Capture, Open Screenshots Folder, Check for Updates, Settings,
+- The status menu must expose New Screenshot, Open Screenshots Folder, Check for Updates, Settings,
   and Quit.
 - Open Screenshots Folder must open the configured output directory, creating it first when needed.
 - Check for Updates must invoke the same Sparkle-backed update check flow as the About section.
@@ -46,7 +46,7 @@ Defines:
   `Esc` and secondary click in both live and Frozen modes.
 - The status menu must not expose Permissions as a separate menu item. Permission status and
   recovery live in Settings.
-- New Capture must use the same configured shortcut as the global capture hotkey.
+- New Screenshot must use the same configured shortcut as the global capture hotkey.
 
 ## Settings Window
 
