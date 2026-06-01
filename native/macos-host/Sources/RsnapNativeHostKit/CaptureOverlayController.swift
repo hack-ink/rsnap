@@ -104,9 +104,11 @@ final class CaptureOverlayController {
 		for window in windows {
 			window.displayIfNeeded()
 		}
-		windowSnapshotFeed.start(
-			desktopFrame: Self.desktopFrame, initialSnapshots: initialWindowSnapshots)
 		let captureID = controller?.activeTelemetryCaptureID ?? 0
+		windowSnapshotFeed.start(
+			desktopFrame: Self.desktopFrame,
+			initialSnapshots: initialWindowSnapshots,
+			captureID: captureID)
 		chromeSampleFeed.start(
 			targetFramesPerSecond: NativeHostDisplayRefresh.samplingFramesPerSecond(),
 			captureID: captureID)
@@ -179,7 +181,7 @@ final class CaptureOverlayController {
 		NativeHostTelemetry.captureEvent(
 			"capture.stream_prepare_started",
 			captureID: controller?.activeTelemetryCaptureID ?? 0,
-			detail: "trigger=\(trigger)"
+			detail: "trigger=\(trigger) overlayWindowCount=\(selfCaptureExceptionWindowIDs.count)"
 		)
 		prepareCaptureStreams()
 	}

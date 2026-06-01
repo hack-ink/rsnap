@@ -47,8 +47,12 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		)
 	}
 
-	func updateSelfCaptureExceptionWindowIDs(_ windowIDs: Set<CGWindowID>) {
+	func updateSelfCaptureExceptionWindowIDs(
+		_ windowIDs: Set<CGWindowID>,
+		captureID: UInt64 = 0
+	) {
 		stateLock.lock()
+		let previousWindowCount = selfCaptureExceptionWindowIDs.count
 		guard windowIDs != selfCaptureExceptionWindowIDs else {
 			stateLock.unlock()
 			return
@@ -65,6 +69,12 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 			sampler = Self.makeSampler(exceptionWindowIDs: windowIDs)
 		}
 		stateLock.unlock()
+		NativeHostTelemetry.liveStreamSelfCaptureExceptionUpdate(
+			captureID: captureID,
+			previousWindowCount: previousWindowCount,
+			nextWindowCount: windowIDs.count,
+			samplerRebuilt: oldSampler != nil
+		)
 		try? oldSampler?.reset()
 	}
 
