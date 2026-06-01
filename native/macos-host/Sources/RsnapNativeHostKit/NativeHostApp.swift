@@ -367,7 +367,7 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 
 		let menu = NSMenu(title: NativeHostBrand.displayName)
 		let captureItem = menu.addItem(
-			withTitle: "New Capture",
+			withTitle: "New Screenshot",
 			action: #selector(startCapture(_:)),
 			keyEquivalent: ""
 		)
