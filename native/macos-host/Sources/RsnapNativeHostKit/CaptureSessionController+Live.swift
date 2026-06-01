@@ -161,7 +161,10 @@ extension CaptureSessionController {
 		// include through the app-level exclusion. Overlay windows must stay out
 		// of this list so color sampling sees the desktop under the capture UI.
 		cancelPendingScreenCaptureStreamRelease(reason: "start_capture")
-		liveFrameStream.updateSelfCaptureExceptionWindowIDs(capturableOwnWindowIDs)
+		liveFrameStream.updateSelfCaptureExceptionWindowIDs(
+			capturableOwnWindowIDs,
+			captureID: captureID
+		)
 		let warmStartedAt = ProcessInfo.processInfo.systemUptime
 		let initialSample = warmLiveSamplingIfPossible(
 			at: startPoint,
@@ -179,9 +182,22 @@ extension CaptureSessionController {
 			captureID: captureID
 		)
 		let windowSnapshotStartedAt = ProcessInfo.processInfo.systemUptime
-		let initialWindowSnapshots = WindowSnapshotFeed.snapshots(desktopFrame: desktopFrame)
+		let initialWindowReport = WindowSnapshotFeed.snapshotReport(desktopFrame: desktopFrame)
+		let initialWindowSnapshots = initialWindowReport.snapshots
 		let windowSnapshotMilliseconds =
 			NativeHostTelemetry.milliseconds(since: windowSnapshotStartedAt)
+		NativeHostTelemetry.liveChromeWindowSnapshotRefresh(
+			captureID: captureID,
+			source: "start_capture",
+			totalMilliseconds: windowSnapshotMilliseconds,
+			candidateWindowCount: initialWindowReport.candidateWindowCount,
+			targetableWindowCount: initialWindowReport.snapshots.count,
+			ownWindowCount: initialWindowReport.ownWindowCount,
+			ownTargetableWindowCount: initialWindowReport.ownTargetableWindowCount,
+			highLayerWindowCount: initialWindowReport.highLayerWindowCount,
+			tinyWindowCount: initialWindowReport.tinyWindowCount,
+			transparentWindowCount: initialWindowReport.transparentWindowCount
+		)
 		let initialHighlightedWindow = WindowSnapshotFeed.window(
 			at: startPoint, in: initialWindowSnapshots)
 		chromeState.rgbSample = initialRgbSample
@@ -284,6 +300,12 @@ extension CaptureSessionController {
 				detail: "start_capture_complete_stream"
 			)
 		} else {
+			NativeHostTelemetry.captureEvent(
+				"capture.self_capture_rebuild_requested",
+				captureID: captureID,
+				detail:
+					"overlayWindowCount=\(selfCaptureExceptionWindowIDs.count) capturableOwnWindowCount=\(capturableOwnWindowIDs.count)"
+			)
 			_ = warmLiveSamplingIfPossible(
 				at: startPoint,
 				source: "capture_overlay_preflight",
