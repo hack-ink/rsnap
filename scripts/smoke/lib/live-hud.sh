@@ -250,13 +250,13 @@ tell application "System Events"
         tell process "RsnapNativeHost"
             click menu bar item 1 of menu bar 1
             delay 0.06
-            click menu item "New Capture" of menu 1 of menu bar item 1 of menu bar 1
+            click menu item "New Screenshot" of menu 1 of menu bar item 1 of menu bar 1
         end tell
     else
         tell process "Rsnap"
             click menu bar item 1 of menu bar 1
             delay 0.06
-            click menu item "New Capture" of menu 1 of menu bar item 1 of menu bar 1
+            click menu item "New Screenshot" of menu 1 of menu bar item 1 of menu bar 1
         end tell
     end if
 end tell

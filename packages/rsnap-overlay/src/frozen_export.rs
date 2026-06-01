@@ -266,7 +266,7 @@ pub fn render_frozen_overlay_export_rgba(
 fn rgba_image_from_bytes(width: u32, height: u32, rgba: &[u8]) -> Result<RgbaImage> {
 	let expected_len = usize::try_from(width)
 		.ok()
-		.and_then(|width| usize::try_from(height).ok().map(|height| (width, height)))
+		.zip(usize::try_from(height).ok())
 		.and_then(|(width, height)| width.checked_mul(height))
 		.and_then(|pixels| pixels.checked_mul(4))
 		.ok_or_else(|| eyre::eyre!("frozen-overlay export dimensions overflow"))?;

@@ -2002,7 +2002,7 @@ private struct CaptureSettingsPanel: View {
 		VStack(spacing: 8) {
 			SettingsHeroControlTile(
 				symbolName: "keyboard",
-				title: "New Capture Shortcut",
+				title: "New Screenshot Shortcut",
 				subtitle: "Current: \(shortcutPresentation.displayTitle)."
 			) {
 				CaptureHotKeyField(model: model)

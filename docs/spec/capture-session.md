@@ -41,7 +41,7 @@ product level rather than binding itself to a particular window toolkit or shell
    closing Settings must return Rsnap to the background menubar shell.
 2. Global hotkey starts capture session (default `Alt+X`, macOS: Option+X) and can be customized
    from Settings.
-3. The status menu's New Capture item must use the configured capture shortcut. Shortcut display
+3. The status menu's New Screenshot item must use the configured capture shortcut. Shortcut display
    strings must use platform-native names such as `Option-X`, not raw event names such as
    `alt+KeyX`.
 4. The status menu must not expose Cancel Capture or Permissions entries. Capture cancellation is
