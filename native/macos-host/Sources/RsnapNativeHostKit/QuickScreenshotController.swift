@@ -91,6 +91,15 @@ private final class QuickScreenshotAcquisitionController {
 		)
 		case finishing
 		case canceled
+
+		var isInterceptingEvents: Bool {
+			switch self {
+			case .armed, .selecting:
+				return true
+			case .finishing, .canceled:
+				return false
+			}
+		}
 	}
 
 	private static let minimumSelectionSide: CGFloat = 2
@@ -172,12 +181,16 @@ private final class QuickScreenshotAcquisitionController {
 	}
 
 	private func handleEventTap(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+		guard eventTap != nil, state.isInterceptingEvents else {
+			return Unmanaged.passUnretained(event)
+		}
+
 		switch type {
 		case .tapDisabledByTimeout, .tapDisabledByUserInput:
 			if let eventTap {
 				CGEvent.tapEnable(tap: eventTap, enable: true)
 			}
-			return nil
+			return Unmanaged.passUnretained(event)
 		case .keyDown:
 			if event.getIntegerValueField(.keyboardEventKeycode) == 53 {
 				cancel(reason: "escape")
@@ -281,14 +294,20 @@ private final class QuickScreenshotAcquisitionController {
 	}
 
 	private func close() {
-		if let eventTap {
-			CGEvent.tapEnable(tap: eventTap, enable: false)
+		let activeEventTap = eventTap
+		let activeEventTapSource = eventTapSource
+		self.eventTap = nil
+		self.eventTapSource = nil
+
+		if let activeEventTap {
+			CGEvent.tapEnable(tap: activeEventTap, enable: false)
 		}
-		if let eventTapSource {
-			CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
+		if let activeEventTapSource {
+			CFRunLoopRemoveSource(CFRunLoopGetMain(), activeEventTapSource, .commonModes)
 		}
-		eventTap = nil
-		eventTapSource = nil
+		if let activeEventTap {
+			CFMachPortInvalidate(activeEventTap)
+		}
 		overlayController?.close()
 		overlayController = nil
 		preparedDisplayFrames.removeAll()

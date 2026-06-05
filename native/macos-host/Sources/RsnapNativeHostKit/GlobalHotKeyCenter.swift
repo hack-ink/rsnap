@@ -236,15 +236,21 @@ final class GlobalHotKeyCenter {
 	}
 
 	private func unregisterQuickScreenshotEventTap() {
-		if let quickScreenshotEventTap {
-			CGEvent.tapEnable(tap: quickScreenshotEventTap, enable: false)
-		}
-		if let quickScreenshotEventTapSource {
-			CFRunLoopRemoveSource(CFRunLoopGetMain(), quickScreenshotEventTapSource, .commonModes)
-		}
+		let activeEventTap = quickScreenshotEventTap
+		let activeEventTapSource = quickScreenshotEventTapSource
 		quickScreenshotEventTap = nil
 		quickScreenshotEventTapSource = nil
 		quickScreenshotEventTapDefinition = nil
+
+		if let activeEventTap {
+			CGEvent.tapEnable(tap: activeEventTap, enable: false)
+		}
+		if let activeEventTapSource {
+			CFRunLoopRemoveSource(CFRunLoopGetMain(), activeEventTapSource, .commonModes)
+		}
+		if let activeEventTap {
+			CFMachPortInvalidate(activeEventTap)
+		}
 	}
 
 	private func handleQuickScreenshotEventTap(type: CGEventType, event: CGEvent)
