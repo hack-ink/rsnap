@@ -469,10 +469,11 @@ public final class NativeHostApplicationController: NSObject, NSApplicationDeleg
 	}
 
 	private func refreshHotKeyBindings(for mode: SceneKind) {
+		let effectiveMode: SceneKind = sessionController.isCaptureActive ? mode : .hidden
 		hotKeyCoordinator.update(
 			captureHotKey: settingsStore.settings.captureHotkey,
 			quickScreenshotHotKey: settingsStore.settings.quickScreenshotHotkey,
-			sceneMode: mode
+			sceneMode: effectiveMode
 		)
 	}
 
