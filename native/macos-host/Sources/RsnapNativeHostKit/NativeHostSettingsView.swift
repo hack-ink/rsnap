@@ -177,7 +177,7 @@ private enum NativeHostSettingsSection: String, CaseIterable, Identifiable {
 
 private enum NativeHostAboutLinks {
 	static let source = "https://github.com/hack-ink/rsnap"
-	static let creator = "https://x.com/YvetteCipher"
+	static let creator = "https://x.com/hackink"
 }
 
 private enum SettingsControlLayout {
@@ -2480,7 +2480,7 @@ private struct AboutIntroBlock: View {
 					.help(NativeHostAboutLinks.creator)
 				}
 				Text(
-					"Rsnap is an open-source macOS capture tool. I keep sharing progress, design notes, and release updates on X; following helps support future work through X creator rewards."
+					"Rsnap is an open-source macOS capture tool. Follow @hackink on X for progress, design notes, and release updates; attention there helps support future work."
 				)
 				.font(.system(size: 10.8, weight: .medium))
 				.foregroundStyle(.secondary)
