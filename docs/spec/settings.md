@@ -133,9 +133,9 @@ Defines:
 - The About section must identify Yvette Cipher as the creator and describe Rsnap as an
   open-source macOS capture tool.
 - The About section must include external links to `https://github.com/hack-ink/rsnap` and
-  `https://x.com/YvetteCipher`.
-- The creator link may encourage following for ongoing Rsnap updates and may state that follows
-  help support future work through X creator rewards.
+  `https://x.com/hackink`.
+- The X link may encourage following for ongoing Rsnap updates and may state that follows
+  help support future work.
 - Release builds must use Sparkle's standard updater UI and appcast format for macOS self-updates.
   GitHub Releases remains the distribution surface, but the Sparkle appcast at
   `https://github.com/hack-ink/rsnap/releases/latest/download/appcast.xml` is the update-version
