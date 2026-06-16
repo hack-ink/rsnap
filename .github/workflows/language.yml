@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch latest code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Linux desktop build dependencies
         run: |
@@ -59,12 +59,12 @@ jobs:
         run: rustup toolchain install nightly --component rustfmt
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@e0eafa9a0d485c37f97c0f7beb930a58a2facbac # v2.79.4
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
         with:
           tool: cargo-make
 
       - name: Install nextest
-        uses: taiki-e/install-action@e0eafa9a0d485c37f97c0f7beb930a58a2facbac # v2.79.4
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
         with:
           tool: nextest
 
@@ -90,7 +90,7 @@ jobs:
     runs-on: macos-26
     steps:
       - name: Fetch latest code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Print Apple toolchain
         run: |
@@ -105,7 +105,7 @@ jobs:
           rustflags: ''
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@e0eafa9a0d485c37f97c0f7beb930a58a2facbac # v2.79.4
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
         with:
           tool: cargo-make
 
@@ -131,7 +131,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch latest code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
@@ -140,12 +140,12 @@ jobs:
           rustflags: ''
 
       - name: Install cargo-make
-        uses: taiki-e/install-action@e0eafa9a0d485c37f97c0f7beb930a58a2facbac # v2.79.4
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
         with:
           tool: cargo-make
 
       - name: Install taplo
-        uses: taiki-e/install-action@e0eafa9a0d485c37f97c0f7beb930a58a2facbac # v2.79.4
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
         with:
           tool: taplo
 
