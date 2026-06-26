@@ -20,7 +20,7 @@ criterion                = { version = "0.8", features = ["html_reports"] }
 device_query             = { version = "4.0" }
 directories              = { version = "6.0" }
 dispatch2                = { version = "0.3" }
-egui                     = { version = "0.34" }
+egui                     = { version = "0.35" }
 egui-phosphor            = { version = "0.12", features = ["fill"] }
 egui-wgpu                = { version = "0.34" }
 egui-winit               = { version = "0.34" }
