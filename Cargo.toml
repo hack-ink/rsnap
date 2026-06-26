@@ -23,7 +23,7 @@ dispatch2                = { version = "0.3" }
 egui                     = { version = "0.34" }
 egui-phosphor            = { version = "0.12", features = ["fill"] }
 egui-wgpu                = { version = "0.34" }
-egui-winit               = { version = "0.34" }
+egui-winit               = { version = "0.35" }
 fast_image_resize        = { version = "6.0" }
 font8x8                  = { version = "0.3" }
 fontdb                   = { version = "0.23" }
