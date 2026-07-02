@@ -8,9 +8,11 @@ use crate::overlay::session_state::FrozenBrushStyle;
 use crate::overlay::{
 	FrozenArrowAnnotation, FrozenBrushStroke, FrozenCaptureSource, FrozenCommittedOverlay,
 	FrozenEditKind, FrozenExportTransform, FrozenSpotlightAnnotation, FrozenTextAnnotation,
-	MonitorRect, OverlaySession, Pos2, RectPoints, WINDOW_CAPTURE_MATTE_DARK_RGBA,
-	WINDOW_CAPTURE_MATTE_LIGHT_RGBA, WindowCaptureAlphaMode,
+	MonitorRect, OverlaySession, Pos2, RectPoints, WindowCaptureAlphaMode,
 };
+
+const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: Rgba<u8> = Rgba([246, 246, 246, 255]);
+const WINDOW_CAPTURE_MATTE_DARK_RGBA: Rgba<u8> = Rgba([24, 24, 24, 255]);
 
 impl OverlaySession {
 	pub(super) fn cropped_frozen_capture_image(&self) -> Option<RgbaImage> {
