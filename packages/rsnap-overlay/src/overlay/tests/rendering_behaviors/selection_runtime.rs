@@ -3,7 +3,7 @@ use std::time::Duration;
 use image::{Rgba, RgbaImage};
 
 #[cfg(target_os = "macos")]
-use crate::overlay::tests::rendering_behaviors::overlay;
+use crate::overlay::tests::rendering_behaviors::overlay::macos_cursor_runtime;
 use crate::overlay::tests::rendering_behaviors::{
 	CursorIcon, ElementState, FrozenCaptureSource, FrozenSelectionCorner, FrozenSelectionDragState,
 	FrozenSelectionInteractionKind, FrozenToolbarState, FrozenToolbarTool, GlobalPoint,
@@ -526,15 +526,15 @@ fn frozen_selection_cursor_rects_use_native_handle_hover_and_full_window_resize_
 	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
 
 	assert_eq!(
-		overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(95.0, 115.0)),
+		macos_cursor_runtime::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(95.0, 115.0)),
 		Some(CursorIcon::NwseResize)
 	);
 	assert_eq!(
-		overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(305.0, 115.0)),
+		macos_cursor_runtime::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(305.0, 115.0)),
 		Some(CursorIcon::NeswResize)
 	);
 	assert_eq!(
-		overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(150.0, 180.0)),
+		macos_cursor_runtime::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(150.0, 180.0)),
 		Some(CursorIcon::Grab)
 	);
 
@@ -611,7 +611,7 @@ fn frozen_selection_cursor_rects_match_resize_hit_test_for_tiny_overlapping_hand
 		Some(FrozenSelectionCorner::TopRight)
 	);
 	assert_eq!(
-		overlay::overlay_cursor_rect_icon_at_point(&rects, top_overlap),
+		macos_cursor_runtime::overlay_cursor_rect_icon_at_point(&rects, top_overlap),
 		Some(CursorIcon::NeswResize)
 	);
 	assert_eq!(
@@ -619,12 +619,12 @@ fn frozen_selection_cursor_rects_match_resize_hit_test_for_tiny_overlapping_hand
 		Some(FrozenSelectionCorner::TopLeft)
 	);
 	assert_eq!(
-		overlay::overlay_cursor_rect_icon_at_point(&rects, top_overlap_midline_tie),
+		macos_cursor_runtime::overlay_cursor_rect_icon_at_point(&rects, top_overlap_midline_tie),
 		Some(CursorIcon::NwseResize)
 	);
 	assert_eq!(WindowRenderer::frozen_selection_resize_hit_test(capture_rect, center_inside), None);
 	assert_eq!(
-		overlay::overlay_cursor_rect_icon_at_point(&rects, center_inside),
+		macos_cursor_runtime::overlay_cursor_rect_icon_at_point(&rects, center_inside),
 		Some(CursorIcon::Grab)
 	);
 }
