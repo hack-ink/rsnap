@@ -4,6 +4,7 @@ use image::{Rgba, RgbaImage};
 
 use crate::overlay::LIVE_DRAG_START_THRESHOLD_PX;
 #[cfg(target_os = "macos")]
+use crate::overlay::frozen_selection_handles;
 use crate::overlay::macos_cursor_runtime::{self, OverlayCursorRect};
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
@@ -13,7 +14,7 @@ use crate::overlay::{
 	OverlaySession, Pos2, RectPoints, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS, Rect, Vec2};
+use crate::overlay::{Rect, Vec2};
 
 impl OverlaySession {
 	#[cfg(target_os = "macos")]
@@ -637,22 +638,19 @@ impl OverlaySession {
 			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
 			Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
 		);
-		let interior_reach_x = (selection_rect.width() * 0.35)
-			.min(FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS);
-		let interior_reach_y = (selection_rect.height() * 0.35)
-			.min(FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS);
+		let interior_reach = frozen_selection_handles::resize_handle_interior_reach(selection_rect);
 		let mut x_edges = vec![
 			selection_rect.min.x,
-			selection_rect.min.x + interior_reach_x,
+			selection_rect.min.x + interior_reach.x,
 			selection_rect.center().x,
-			selection_rect.max.x - interior_reach_x,
+			selection_rect.max.x - interior_reach.x,
 			selection_rect.max.x,
 		];
 		let mut y_edges = vec![
 			selection_rect.min.y,
-			selection_rect.min.y + interior_reach_y,
+			selection_rect.min.y + interior_reach.y,
 			selection_rect.center().y,
-			selection_rect.max.y - interior_reach_y,
+			selection_rect.max.y - interior_reach.y,
 			selection_rect.max.y,
 		];
 
