@@ -252,16 +252,6 @@ type Result<T, E = Report> = std::result::Result<T, E>;
 
 pub(crate) const CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED: bool = false;
 
-#[cfg(target_os = "macos")]
-const KCG_SCROLL_EVENT_UNIT_PIXEL: u32 = 0;
-#[cfg(target_os = "macos")]
-const KCG_SCROLL_EVENT_UNIT_LINE: u32 = 1;
-#[cfg(target_os = "macos")]
-const MACOS_SCROLL_PIXEL_WRAP_MODULUS: f64 = 4_294_967_296.0;
-#[cfg(target_os = "macos")]
-const MACOS_SCROLL_PIXEL_WRAP_THRESHOLD: f64 = 1_000_000.0;
-#[cfg(target_os = "macos")]
-const MACOS_SCROLL_PIXEL_DELTA_CLAMP: f64 = 240.0;
 const HUD_PILL_BODY_FILL_DARK_SRGBA8: [u8; 4] = [28, 28, 32, 156];
 const HUD_PILL_BODY_FILL_LIGHT_SRGBA8: [u8; 4] = [232, 236, 243, 176];
 const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
