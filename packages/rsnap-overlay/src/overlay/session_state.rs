@@ -8,16 +8,18 @@ use std::{
 use image::RgbaImage;
 
 use crate::overlay::{
-	Color32, DeviceCursorPointSource, FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS,
-	FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS, FROZEN_BRUSH_STROKE_WIDTH_POINTS,
-	FROZEN_TEXT_FONT_SIZE_MAX_POINTS, FROZEN_TEXT_FONT_SIZE_MIN_POINTS,
-	FROZEN_TEXT_FONT_SIZE_POINTS, FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint,
-	LIVE_PRESENT_INTERVAL_MIN, MonitorRect, MouseScrollDelta, PhysicalPosition, Pos2,
-	REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints, SLOW_OP_WARN_INTERVAL,
+	Color32, DeviceCursorPointSource, FROZEN_TEXT_FONT_SIZE_MAX_POINTS,
+	FROZEN_TEXT_FONT_SIZE_MIN_POINTS, FROZEN_TEXT_FONT_SIZE_POINTS, FrozenSelectionInteractionKind,
+	FrozenToolbarTool, GlobalPoint, LIVE_PRESENT_INTERVAL_MIN, MonitorRect, MouseScrollDelta,
+	PhysicalPosition, Pos2, REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints, SLOW_OP_WARN_INTERVAL,
 	ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2, WindowId,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{ExternalScrollInputDrainReader, MacLiveFrameStream};
+
+pub(in crate::overlay) const FROZEN_BRUSH_STROKE_WIDTH_POINTS: f32 = 3.5;
+pub(in crate::overlay) const FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS: f32 = 1.0;
+pub(in crate::overlay) const FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS: f32 = 24.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct WindowFreezeCaptureTarget {
