@@ -7,34 +7,37 @@ mod frame_store;
 mod live_frame_buffer;
 mod stream_config;
 mod stream_filter;
+mod stream_lifecycle;
 mod stream_output;
 
 use std::ptr;
 use std::ptr::NonNull;
+#[cfg(test)]
+use std::sync::Mutex;
 use std::sync::{
-	Arc, Mutex,
-	atomic::{AtomicU64, Ordering},
+	Arc,
+	atomic::AtomicU64,
 	mpsc::{self, Receiver, Sender},
 };
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use block2::RcBlock;
-use dispatch2::{DispatchQueue, DispatchRetained};
 use image::RgbaImage;
-use objc2::AnyThread;
 use objc2::rc::Retained;
-use objc2::runtime::ProtocolObject;
 use objc2_core_foundation::{self, CFRetained};
 use objc2_core_video::CVPixelBufferCreate;
 use objc2_foundation::NSError;
-use objc2_screen_capture_kit::{SCContentFilter, SCStream, SCStreamOutputType};
 
 use self::frame_store::{SharedLatestFrame, StreamGenerationStatus};
 use self::live_frame_buffer::{OrderedRegionFrame, QueuedPixelBufferFrame, SharedPixelBuffer};
 use self::stream_config::{StreamCaptureRegion, StreamCaptureTarget};
-use self::stream_filter::{StreamFilterConfig, StreamFilterMode};
-use self::stream_output::StreamOutput;
+use self::stream_filter::StreamFilterConfig;
+use self::stream_lifecycle::{StreamRequestProgress, StreamState};
+#[cfg(test)]
+use self::stream_lifecycle::{
+	StreamReuseDecision, refresh_stream_requires_setup_backoff, stream_reuse_decision,
+	stream_setup_backoff,
+};
 use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb};
 
 pub(crate) const STREAM_REGION_FRAME_MAX_AGE: Duration = Duration::from_millis(90);
@@ -573,39 +576,6 @@ impl Drop for MacLiveFrameStream {
 	}
 }
 
-struct StreamState {
-	monitor_id: u32,
-	stream_generation: u64,
-	self_capture_filter_complete: bool,
-	stream: Retained<SCStream>,
-	output: Retained<StreamOutput>,
-	sample_handler_queue: DispatchRetained<DispatchQueue>,
-}
-
-struct RefreshStreamArgs<'a> {
-	state: &'a mut Option<StreamState>,
-	last_setup_attempt_at: &'a mut Option<Instant>,
-	monitor: MonitorRect,
-	filter: &'a StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-}
-
-struct StartedStreamArtifacts {
-	stream_generation: u64,
-	stream: Retained<SCStream>,
-	output: Retained<StreamOutput>,
-	sample_handler_queue: DispatchRetained<DispatchQueue>,
-	config_build_ms: u128,
-	queue_build_ms: u128,
-	output_build_ms: u128,
-	stream_init_ms: u128,
-	add_output_ms: u128,
-	start_capture_ms: u128,
-}
-
 enum WorkerRequest {
 	EnsureMonitor {
 		monitor: MonitorRect,
@@ -642,19 +612,6 @@ enum WorkerRequest {
 	Shutdown,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StreamRequestProgress {
-	AwaitingFirstFrame,
-	Settled,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StreamReuseDecision {
-	SetupFresh,
-	ReuseCurrent,
-	RetryUpgradeUsingCurrent,
-}
-
 fn stream_rect_for_requested_region(
 	capture_target: StreamCaptureTarget,
 	requested_rect_px: RectPoints,
@@ -681,6 +638,10 @@ fn stream_rect_for_requested_region(
 			))
 		},
 	}
+}
+
+fn stream_error(code: isize) -> Retained<NSError> {
+	stream_lifecycle::stream_error(code)
 }
 
 fn should_refresh_monitor_frame(
@@ -727,7 +688,7 @@ fn stream_worker_loop(
 		}
 	}
 
-	teardown_stream(&mut state);
+	stream_lifecycle::teardown_stream(&mut state);
 }
 
 fn handle_reset_request(
@@ -740,7 +701,7 @@ fn handle_reset_request(
 		stream_generation: state.stream_generation,
 	});
 
-	teardown_stream(state);
+	stream_lifecycle::teardown_stream(state);
 
 	*last_setup_attempt_at = None;
 
@@ -892,7 +853,7 @@ fn handle_ensure_monitor_request(
 		"Handling an asynchronous ScreenCaptureKit ensure request."
 	);
 
-	let progress = ensure_stream(
+	let progress = stream_lifecycle::ensure_stream(
 		state,
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
@@ -942,7 +903,7 @@ fn handle_refresh_monitor_request(
 		"Handling an asynchronous ScreenCaptureKit refresh request."
 	);
 
-	let progress = refresh_stream_nonblocking(
+	let progress = stream_lifecycle::refresh_stream_nonblocking(
 		state,
 		last_setup_attempt_at,
 		monitor,
@@ -977,7 +938,7 @@ fn reply_with_sample_cursor(
 	patch_height_px: u32,
 	reply_tx: Sender<Option<LiveCursorSample>>,
 ) {
-	let _ = ensure_stream(
+	let _ = stream_lifecycle::ensure_stream(
 		state,
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
@@ -1016,7 +977,7 @@ fn reply_with_latest_rgba_snapshot(
 	shared_latest_frame: Arc<SharedLatestFrame>,
 	reply_tx: Sender<Option<Arc<MonitorImageSnapshot>>>,
 ) {
-	let _ = ensure_stream(
+	let _ = stream_lifecycle::ensure_stream(
 		state,
 		last_setup_attempt_at,
 		STREAM_SETUP_BACKOFF,
@@ -1062,7 +1023,7 @@ fn reply_with_latest_rgba_region(
 	shared_latest_frame: Arc<SharedLatestFrame>,
 	reply_tx: Sender<Option<RgbaImage>>,
 ) {
-	let image = latest_fresh_rgba_region(
+	let image = stream_lifecycle::latest_fresh_rgba_region(
 		state,
 		last_setup_attempt_at,
 		monitor,
@@ -1092,7 +1053,7 @@ fn reply_with_ordered_rgba_regions_after_seq(
 	nonblocking: bool,
 ) {
 	let frames = if nonblocking {
-		ordered_queued_rgba_regions_after_seq_nonblocking(
+		stream_lifecycle::ordered_queued_rgba_regions_after_seq_nonblocking(
 			state,
 			last_setup_attempt_at,
 			monitor,
@@ -1105,7 +1066,7 @@ fn reply_with_ordered_rgba_regions_after_seq(
 			shared_latest_frame,
 		)
 	} else {
-		ordered_fresh_rgba_regions_after_seq(
+		stream_lifecycle::ordered_fresh_rgba_regions_after_seq(
 			state,
 			last_setup_attempt_at,
 			monitor,
@@ -1119,717 +1080,6 @@ fn reply_with_ordered_rgba_regions_after_seq(
 		)
 	};
 	let _ = reply_tx.send(frames);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn refresh_stream_nonblocking(
-	state: &mut Option<StreamState>,
-	last_setup_attempt_at: &mut Option<Instant>,
-	monitor: MonitorRect,
-	filter: &StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-) -> StreamRequestProgress {
-	let now = Instant::now();
-	let current_monitor_id = state.as_ref().map(|current| current.monitor_id);
-
-	if refresh_stream_requires_setup_backoff(current_monitor_id, monitor.id)
-		&& let Some(last) = *last_setup_attempt_at
-		&& now.duration_since(last) < STREAM_SETUP_BACKOFF
-	{
-		tracing::info!(
-			op = "live_frame_stream.refresh_monitor_backoff",
-			monitor_id = monitor.id,
-			current_monitor_id,
-			elapsed_since_last_setup_ms = now.duration_since(last).as_millis(),
-			backoff_ms = STREAM_SETUP_BACKOFF.as_millis(),
-			"Skipped ScreenCaptureKit refresh because setup backoff is still active."
-		);
-
-		return StreamRequestProgress::Settled;
-	}
-	if current_monitor_id != Some(monitor.id) {
-		tracing::info!(
-			op = "live_frame_stream.refresh_monitor_recover_via_ensure",
-			monitor_id = monitor.id,
-			current_monitor_id,
-			"Refresh request found no matching live stream and is falling back to ensure."
-		);
-
-		return ensure_stream(
-			state,
-			last_setup_attempt_at,
-			STREAM_SETUP_BACKOFF,
-			false,
-			monitor,
-			filter,
-			capture_target,
-			frame_waker,
-			frame_seq_counter,
-			shared_latest_frame,
-		);
-	}
-
-	refresh_stream(RefreshStreamArgs {
-		state,
-		last_setup_attempt_at,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-	})
-}
-
-fn refresh_stream_requires_setup_backoff(
-	current_monitor_id: Option<u32>,
-	requested_monitor_id: u32,
-) -> bool {
-	current_monitor_id != Some(requested_monitor_id)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn ensure_stream(
-	state: &mut Option<StreamState>,
-	last_setup_attempt_at: &mut Option<Instant>,
-	setup_backoff: Duration,
-	force_retry_upgrade: bool,
-	monitor: MonitorRect,
-	filter: &StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-) -> StreamRequestProgress {
-	let reuse_decision = stream_reuse_decision(
-		state.as_ref().map(|current| current.monitor_id),
-		state.as_ref().is_some_and(|current| current.self_capture_filter_complete),
-		monitor.id,
-	);
-	let setup_backoff = stream_setup_backoff(reuse_decision, setup_backoff, force_retry_upgrade);
-
-	if reuse_decision == StreamReuseDecision::ReuseCurrent {
-		return StreamRequestProgress::Settled;
-	}
-
-	let now = Instant::now();
-
-	if let Some(last_attempt_at) = *last_setup_attempt_at
-		&& now.duration_since(last_attempt_at) < setup_backoff
-	{
-		tracing::info!(
-			op = "live_frame_stream.ensure_stream_backoff",
-			monitor_id = monitor.id,
-			reuse_decision = ?reuse_decision,
-			elapsed_since_last_setup_ms = now.duration_since(last_attempt_at).as_millis(),
-			backoff_ms = setup_backoff.as_millis(),
-			"Skipped ScreenCaptureKit setup because the current setup backoff window is still active."
-		);
-
-		return StreamRequestProgress::Settled;
-	}
-
-	*last_setup_attempt_at = Some(now);
-
-	let Some(next_state) = setup_stream_for_monitor(
-		monitor,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame.clone(),
-	) else {
-		tracing::warn!(
-			op = "live_frame_stream.ensure_stream_setup_failed",
-			monitor_id = monitor.id,
-			reuse_decision = ?reuse_decision,
-			had_existing_state = state.is_some(),
-			"ScreenCaptureKit setup did not produce a usable live stream."
-		);
-
-		return StreamRequestProgress::Settled;
-	};
-
-	if reuse_decision == StreamReuseDecision::RetryUpgradeUsingCurrent {
-		if !next_state.self_capture_filter_complete {
-			tracing::info!(
-				op = "live_frame_stream.ensure_stream_upgrade_deferred",
-				monitor_id = monitor.id,
-				"Retained the current live stream because the replacement setup still lacked complete self-capture exclusions."
-			);
-
-			let mut next_state = Some(next_state);
-
-			teardown_stream(&mut next_state);
-
-			return StreamRequestProgress::Settled;
-		}
-
-		let stream_generation = next_state.stream_generation;
-
-		shared_latest_frame.activate_stream_generation(monitor.id, stream_generation);
-
-		let mut previous_state = state.replace(next_state);
-
-		shared_latest_frame.defer_stream_filter_complete_until_next_frame(
-			monitor.id,
-			stream_generation,
-			true,
-		);
-
-		teardown_stream(&mut previous_state);
-
-		shared_latest_frame.mark_waiting_for_frame(monitor.id);
-
-		tracing::debug!(
-			op = "live_frame_stream.ensure_stream_ready",
-			monitor_id = monitor.id,
-			reuse_decision = ?reuse_decision,
-			self_capture_filter_complete = true,
-			replaced_existing_state = true,
-			"ScreenCaptureKit setup replaced the existing live stream."
-		);
-
-		return StreamRequestProgress::AwaitingFirstFrame;
-	}
-
-	teardown_stream(state);
-
-	let self_capture_filter_complete = next_state.self_capture_filter_complete;
-	let stream_generation = next_state.stream_generation;
-
-	shared_latest_frame.activate_stream_generation(monitor.id, stream_generation);
-
-	*state = Some(next_state);
-
-	shared_latest_frame.defer_stream_filter_complete_until_next_frame(
-		monitor.id,
-		stream_generation,
-		self_capture_filter_complete,
-	);
-	shared_latest_frame.mark_waiting_for_frame(monitor.id);
-
-	tracing::debug!(
-		op = "live_frame_stream.ensure_stream_ready",
-		monitor_id = monitor.id,
-		reuse_decision = ?reuse_decision,
-		self_capture_filter_complete,
-		replaced_existing_state = false,
-		"ScreenCaptureKit setup produced a live stream."
-	);
-
-	StreamRequestProgress::AwaitingFirstFrame
-}
-
-#[allow(clippy::too_many_arguments)]
-fn latest_fresh_rgba_region(
-	state: &mut Option<StreamState>,
-	last_setup_attempt_at: &mut Option<Instant>,
-	monitor: MonitorRect,
-	rect_px: RectPoints,
-	filter: &StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-) -> Option<RgbaImage> {
-	let stream_rect_px = stream_rect_for_requested_region(capture_target, rect_px)?;
-	let _ = ensure_stream(
-		state,
-		last_setup_attempt_at,
-		STREAM_SETUP_BACKOFF,
-		false,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker.clone(),
-		frame_seq_counter.clone(),
-		shared_latest_frame.clone(),
-	);
-	let now = Instant::now();
-	let stream_state = state.as_ref()?;
-
-	if let Some(frame) = stream_state.output.latest_frame()
-		&& now.saturating_duration_since(frame.captured_at) <= STREAM_REGION_FRAME_MAX_AGE
-	{
-		return self::live_frame_buffer::rgba_region_from_pixel_buffer(
-			&frame.pixel_buffer,
-			stream_rect_px,
-		);
-	}
-
-	let _ = refresh_stream(RefreshStreamArgs {
-		state,
-		last_setup_attempt_at,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-	});
-	let min_captured_at = Instant::now();
-	let deadline = min_captured_at + STREAM_REGION_FRAME_REFRESH_TIMEOUT;
-
-	loop {
-		let stream_state = state.as_ref()?;
-
-		if let Some(frame) = stream_state.output.latest_frame()
-			&& frame.captured_at >= min_captured_at
-		{
-			return self::live_frame_buffer::rgba_region_from_pixel_buffer(
-				&frame.pixel_buffer,
-				stream_rect_px,
-			);
-		}
-
-		if Instant::now() >= deadline {
-			return None;
-		}
-
-		thread::sleep(STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL);
-	}
-}
-
-#[allow(clippy::too_many_arguments)]
-fn ordered_queued_rgba_regions_after_seq_nonblocking(
-	state: &mut Option<StreamState>,
-	last_setup_attempt_at: &mut Option<Instant>,
-	monitor: MonitorRect,
-	rect_px: RectPoints,
-	after_frame_seq: u64,
-	filter: &StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-) -> Option<Vec<OrderedRegionFrame>> {
-	let stream_rect_px = stream_rect_for_requested_region(capture_target, rect_px)?;
-	let _ = ensure_stream(
-		state,
-		last_setup_attempt_at,
-		STREAM_SETUP_BACKOFF,
-		false,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-	);
-	let stream_state = state.as_ref()?;
-	let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
-	let frames = self::live_frame_buffer::ordered_rgba_regions_from_frames(frames, stream_rect_px);
-
-	(!frames.is_empty()).then_some(frames)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn ordered_fresh_rgba_regions_after_seq(
-	state: &mut Option<StreamState>,
-	last_setup_attempt_at: &mut Option<Instant>,
-	monitor: MonitorRect,
-	rect_px: RectPoints,
-	after_frame_seq: u64,
-	filter: &StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-) -> Option<Vec<OrderedRegionFrame>> {
-	let stream_rect_px = stream_rect_for_requested_region(capture_target, rect_px)?;
-	let _ = ensure_stream(
-		state,
-		last_setup_attempt_at,
-		STREAM_SETUP_BACKOFF,
-		false,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker.clone(),
-		frame_seq_counter.clone(),
-		shared_latest_frame.clone(),
-	);
-	let stream_state = state.as_ref()?;
-	let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
-	let frames = self::live_frame_buffer::ordered_rgba_regions_from_frames(frames, stream_rect_px);
-
-	if !frames.is_empty() {
-		return Some(frames);
-	}
-
-	let latest_frame = stream_state.output.latest_frame()?;
-
-	if Instant::now().saturating_duration_since(latest_frame.captured_at)
-		<= STREAM_REGION_FRAME_MAX_AGE
-	{
-		let deadline = Instant::now() + STREAM_REGION_FRAME_AHEAD_WAIT_TIMEOUT;
-
-		loop {
-			if Instant::now() >= deadline {
-				break;
-			}
-
-			thread::sleep(STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL);
-
-			let stream_state = state.as_ref()?;
-			let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
-			let frames =
-				self::live_frame_buffer::ordered_rgba_regions_from_frames(frames, stream_rect_px);
-
-			if !frames.is_empty() {
-				return Some(frames);
-			}
-		}
-	}
-
-	let _ = refresh_stream(RefreshStreamArgs {
-		state,
-		last_setup_attempt_at,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-	});
-	let min_captured_at = Instant::now();
-	let deadline = min_captured_at + STREAM_REGION_FRAME_REFRESH_TIMEOUT;
-
-	loop {
-		let stream_state = state.as_ref()?;
-		let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
-		let frames =
-			self::live_frame_buffer::ordered_rgba_regions_from_frames(frames, stream_rect_px);
-
-		if !frames.is_empty() {
-			return Some(frames);
-		}
-		if Instant::now() >= deadline {
-			return None;
-		}
-
-		thread::sleep(STREAM_REGION_FRAME_REFRESH_POLL_INTERVAL);
-	}
-}
-
-fn refresh_stream(args: RefreshStreamArgs<'_>) -> StreamRequestProgress {
-	let RefreshStreamArgs {
-		state,
-		last_setup_attempt_at,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-	} = args;
-
-	tracing::info!(
-		op = "live_frame_stream.refresh_stream_begin",
-		monitor_id = monitor.id,
-		current_monitor_id = state.as_ref().map(|current| current.monitor_id),
-		"Refreshing the ScreenCaptureKit live stream."
-	);
-
-	*last_setup_attempt_at = Some(Instant::now());
-
-	let Some(next_state) = setup_stream_for_monitor(
-		monitor,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame.clone(),
-	) else {
-		return StreamRequestProgress::Settled;
-	};
-	let self_capture_filter_complete = next_state.self_capture_filter_complete;
-	let stream_generation = next_state.stream_generation;
-	let replaced_existing_state = state.is_some();
-
-	shared_latest_frame.activate_stream_generation(monitor.id, stream_generation);
-
-	let mut previous_state = state.replace(next_state);
-
-	shared_latest_frame.defer_stream_filter_complete_until_next_frame(
-		monitor.id,
-		stream_generation,
-		self_capture_filter_complete,
-	);
-
-	teardown_stream(&mut previous_state);
-
-	shared_latest_frame.mark_waiting_for_frame(monitor.id);
-
-	tracing::debug!(
-		op = "live_frame_stream.refresh_stream_ready",
-		monitor_id = monitor.id,
-		self_capture_filter_complete,
-		replaced_existing_state,
-		"Refresh completed and installed a new ScreenCaptureKit live stream."
-	);
-
-	StreamRequestProgress::AwaitingFirstFrame
-}
-
-fn teardown_stream(state: &mut Option<StreamState>) {
-	let Some(state) = state.take() else {
-		return;
-	};
-
-	tracing::info!(
-		op = "live_frame_stream.teardown_stream",
-		monitor_id = state.monitor_id,
-		"Stopping the current ScreenCaptureKit live stream."
-	);
-
-	let stop_block = RcBlock::new(|_err: *mut NSError| {});
-
-	unsafe { state.stream.stopCaptureWithCompletionHandler(Some(&stop_block)) };
-}
-
-fn setup_stream_for_monitor(
-	monitor: MonitorRect,
-	filter: &StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-) -> Option<StreamState> {
-	let setup_started_at = Instant::now();
-	let prepared_filter = self::stream_filter::prepare_stream_filter_for_monitor(
-		monitor,
-		&filter.self_capture_exception_window_ids,
-	)?;
-	let started_stream = build_and_start_stream_artifacts(
-		monitor,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-		prepared_filter.filter_mode,
-		prepared_filter.filter,
-	)?;
-
-	tracing::debug!(
-			op = "live_frame_stream.setup_stream_ready",
-			monitor_id = monitor.id,
-			shareable_content_mode = "on_screen_windows_only",
-			filter_mode = ?prepared_filter.filter_mode,
-			self_capture_filter_complete = prepared_filter.self_capture_filter_complete,
-			self_capture_exception_window_ids_complete =
-				prepared_filter.self_capture_exception_window_ids_complete,
-			excepting_window_count = prepared_filter.excepting_window_count,
-			fallback_excluded_window_count = prepared_filter.fallback_excluded_window_count,
-		missing_window_ids = ?prepared_filter.missing_window_ids,
-		shareable_content_ms = prepared_filter.shareable_content_ms,
-		find_display_ms = prepared_filter.find_display_ms,
-		exception_windows_ms = prepared_filter.exception_windows_ms,
-		filter_build_ms = prepared_filter.filter_build_ms,
-		config_build_ms = started_stream.config_build_ms,
-		queue_build_ms = started_stream.queue_build_ms,
-		output_build_ms = started_stream.output_build_ms,
-		stream_init_ms = started_stream.stream_init_ms,
-		add_output_ms = started_stream.add_output_ms,
-		start_capture_ms = started_stream.start_capture_ms,
-		total_setup_ms = setup_started_at.elapsed().as_millis(),
-		"ScreenCaptureKit setup created a live stream for the requested monitor."
-	);
-
-	Some(StreamState {
-		monitor_id: monitor.id,
-		stream_generation: started_stream.stream_generation,
-		self_capture_filter_complete: prepared_filter.self_capture_filter_complete,
-		stream: started_stream.stream,
-		output: started_stream.output,
-		sample_handler_queue: started_stream.sample_handler_queue,
-	})
-}
-
-fn build_and_start_stream_artifacts(
-	monitor: MonitorRect,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-	filter_mode: StreamFilterMode,
-	filter: Retained<SCContentFilter>,
-) -> Option<StartedStreamArtifacts> {
-	let config_build_started_at = Instant::now();
-	let config = self::stream_config::build_stream_config_for_monitor(monitor, capture_target);
-	let config_build_ms = config_build_started_at.elapsed().as_millis();
-	let queue_build_started_at = Instant::now();
-	let sample_handler_queue =
-		self::stream_config::build_sample_handler_queue_for_monitor(monitor.id);
-	let queue_build_ms = queue_build_started_at.elapsed().as_millis();
-	let output_build_started_at = Instant::now();
-	let stream_generation = frame_seq_counter.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-	let output = StreamOutput::new(
-		monitor.id,
-		stream_generation,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-	);
-	let output_build_ms = output_build_started_at.elapsed().as_millis();
-	let stream_init_started_at = Instant::now();
-	let delegate_proto = ProtocolObject::from_ref(&*output);
-	let stream = unsafe {
-		SCStream::initWithFilter_configuration_delegate(
-			SCStream::alloc(),
-			&filter,
-			&config,
-			Some(delegate_proto),
-		)
-	};
-	let stream_init_ms = stream_init_started_at.elapsed().as_millis();
-	let add_output_started_at = Instant::now();
-	let output_proto = ProtocolObject::from_ref(&*output);
-
-	if unsafe {
-		stream.addStreamOutput_type_sampleHandlerQueue_error(
-			output_proto,
-			SCStreamOutputType::Screen,
-			Some(&sample_handler_queue),
-		)
-	}
-	.is_err()
-	{
-		log_add_stream_output_failed(monitor.id, filter_mode);
-
-		return None;
-	}
-
-	let add_output_ms = add_output_started_at.elapsed().as_millis();
-	let start_capture_started_at = Instant::now();
-
-	if let Err(error) = start_capture_blocking(&stream) {
-		log_start_capture_failed(monitor.id, filter_mode, &error);
-
-		return None;
-	}
-
-	Some(StartedStreamArtifacts {
-		stream_generation,
-		stream,
-		output,
-		sample_handler_queue,
-		config_build_ms,
-		queue_build_ms,
-		output_build_ms,
-		stream_init_ms,
-		add_output_ms,
-		start_capture_ms: start_capture_started_at.elapsed().as_millis(),
-	})
-}
-
-fn log_add_stream_output_failed(monitor_id: u32, filter_mode: StreamFilterMode) {
-	tracing::warn!(
-		op = "live_frame_stream.add_stream_output_failed",
-		monitor_id,
-		filter_mode = ?filter_mode,
-		"Failed to register the ScreenCaptureKit stream output."
-	);
-}
-
-fn log_start_capture_failed(monitor_id: u32, filter_mode: StreamFilterMode, error: &NSError) {
-	tracing::warn!(
-		op = "live_frame_stream.start_capture_failed",
-		monitor_id,
-		filter_mode = ?filter_mode,
-		error_code = error.code(),
-		error_domain = %error.domain(),
-		error_description = %error.localizedDescription(),
-		"ScreenCaptureKit failed to start the live stream."
-	);
-}
-
-fn stream_reuse_decision(
-	current_monitor_id: Option<u32>,
-	self_capture_filter_complete: bool,
-	requested_monitor_id: u32,
-) -> StreamReuseDecision {
-	match current_monitor_id {
-		Some(current_monitor_id)
-			if current_monitor_id == requested_monitor_id && self_capture_filter_complete =>
-		{
-			StreamReuseDecision::ReuseCurrent
-		},
-		Some(current_monitor_id) if current_monitor_id == requested_monitor_id => {
-			StreamReuseDecision::RetryUpgradeUsingCurrent
-		},
-		_ => StreamReuseDecision::SetupFresh,
-	}
-}
-
-fn stream_setup_backoff(
-	reuse_decision: StreamReuseDecision,
-	default_setup_backoff: Duration,
-	force_retry_upgrade: bool,
-) -> Duration {
-	match reuse_decision {
-		StreamReuseDecision::RetryUpgradeUsingCurrent if force_retry_upgrade => Duration::ZERO,
-		StreamReuseDecision::RetryUpgradeUsingCurrent => {
-			STREAM_INCOMPLETE_EXCEPTION_UPGRADE_BACKOFF
-		},
-		StreamReuseDecision::SetupFresh | StreamReuseDecision::ReuseCurrent => {
-			default_setup_backoff
-		},
-	}
-}
-
-fn start_capture_blocking(stream: &SCStream) -> Result<(), Retained<NSError>> {
-	let (tx, rx) = mpsc::sync_channel::<Result<(), Retained<NSError>>>(1);
-	let tx = Mutex::new(Some(tx));
-	let block = RcBlock::new(move |err: *mut NSError| {
-		let mut maybe_tx = match tx.lock() {
-			Ok(guard) => guard,
-			Err(poisoned) => poisoned.into_inner(),
-		};
-		let Some(tx) = maybe_tx.take() else {
-			return;
-		};
-
-		if err.is_null() {
-			let _ = tx.send(Ok(()));
-
-			return;
-		}
-
-		let Some(err) = (unsafe { Retained::retain(err) }) else {
-			let _ = tx.send(Err(stream_error(STREAM_ERROR_RETAIN_FAILED_CODE)));
-
-			return;
-		};
-		let _ = tx.send(Err(err));
-	});
-
-	unsafe { stream.startCaptureWithCompletionHandler(Some(&block)) };
-
-	rx.recv_timeout(Duration::from_secs(2)).map_err(|_| stream_error(STREAM_ERROR_TIMEOUT_CODE))?
-}
-
-fn stream_error(code: isize) -> Retained<NSError> {
-	NSError::new(code, objc2_foundation::ns_string!("io.hackink.rsnap.live_frame_stream"))
-}
-
-fn fresh_queued_frames_after_seq(
-	output: &StreamOutput,
-	after_frame_seq: u64,
-) -> Vec<QueuedPixelBufferFrame> {
-	let now = Instant::now();
-
-	output
-		.queued_frames_after_seq(after_frame_seq)
-		.into_iter()
-		.filter(|frame| {
-			now.saturating_duration_since(frame.captured_at) <= STREAM_REGION_FRAME_MAX_AGE
-		})
-		.collect()
 }
 
 #[cfg(test)]
