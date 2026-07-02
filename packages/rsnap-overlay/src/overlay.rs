@@ -22,6 +22,8 @@ mod hud_runtime;
 mod image_helpers;
 mod input_runtime;
 #[cfg(target_os = "macos")]
+mod macos_capture_host;
+#[cfg(target_os = "macos")]
 mod macos_cursor_runtime;
 #[cfg(target_os = "macos")]
 mod macos_native_capture_shell_runtime;
@@ -42,6 +44,11 @@ mod window_position_runtime;
 mod window_runtime;
 mod worker_runtime;
 
+#[cfg(target_os = "macos")]
+pub use self::macos_capture_host::{
+	MacOSNativeCaptureInputEvent, MacOSNativeCaptureScrollDelta, ScrollCaptureHostAdapter,
+	ScrollCaptureHostFrameRequestError, ScrollCaptureHostStartRequest,
+};
 #[cfg(target_os = "macos")]
 pub use self::macos_native_capture_shell_runtime::{MacOSCaptureHost, MacOSCaptureHostSyncState};
 
@@ -148,6 +155,12 @@ use self::frozen_export_model::{FrozenExportTransform, FrozenImagePatch, FrozenM
 use self::frozen_text_runtime::{FrozenTextInputSource, FrozenTextRecentInput};
 use self::frozen_transition_runtime::FrozenTransitionRuntime;
 #[cfg(target_os = "macos")]
+use self::macos_capture_host::ExternalScrollInputDrainReader;
+#[cfg(all(test, target_os = "macos"))]
+use self::macos_capture_host::{
+	ScrollCaptureStartGuard, ScrollCaptureStartedHook, ScrollCaptureStartingHook,
+};
+#[cfg(target_os = "macos")]
 use self::macos_window_bridge::{
 	MacOSFrontmostApplication, MacOSNativeCaptureInputDispatch, macos_activate_app,
 	macos_configure_hud_window, macos_configure_overlay_window_mouse_moved_events,
@@ -227,40 +240,6 @@ macro_rules! sel_impl {
 		objc::sel_impl!($($tt)*)
 	};
 }
-
-#[cfg(target_os = "macos")]
-type ExternalScrollInputEvent = (u64, Instant, f64, f64, f64, bool, bool);
-
-#[cfg(target_os = "macos")]
-type ExternalScrollInputDrainReader =
-	Arc<dyn Fn(u64, Instant) -> Vec<ExternalScrollInputEvent> + Send + Sync>;
-
-#[cfg(target_os = "macos")]
-type ScrollCaptureHostStart =
-	Arc<dyn Fn(ScrollCaptureHostStartRequest) -> color_eyre::eyre::Result<bool> + Send + Sync>;
-
-#[cfg(target_os = "macos")]
-type ScrollCaptureHostStop = Arc<dyn Fn() + Send + Sync>;
-
-#[cfg(target_os = "macos")]
-type ScrollCaptureHostFrameRequest = Arc<
-	dyn Fn(
-			MonitorRect,
-			RectPoints,
-			u64,
-		) -> std::result::Result<(), ScrollCaptureHostFrameRequestError>
-		+ Send
-		+ Sync,
->;
-
-#[cfg(all(test, target_os = "macos"))]
-type ScrollCaptureStartGuard = Arc<dyn Fn() -> color_eyre::eyre::Result<bool> + Send + Sync>;
-
-#[cfg(all(test, target_os = "macos"))]
-type ScrollCaptureStartingHook = Arc<dyn Fn() -> color_eyre::eyre::Result<()> + Send + Sync>;
-
-#[cfg(all(test, target_os = "macos"))]
-type ScrollCaptureStartedHook = Arc<dyn Fn() + Send + Sync>;
 
 type Result<T, E = Report> = std::result::Result<T, E>;
 
@@ -427,16 +406,6 @@ const SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL: Duration = Duration:
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE: Duration = Duration::from_millis(180);
 const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
-#[cfg(target_os = "macos")]
-#[derive(Debug)]
-/// Failure contract for one host-owned scroll-capture frame request.
-pub enum ScrollCaptureHostFrameRequestError {
-	/// The host capability is temporarily busy; the core should back off and retry.
-	Busy,
-	/// The host capability is unavailable and the session must fail closed with this message.
-	Unavailable(String),
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Selects how the live HUD should be positioned.
 pub enum HudAnchor {
@@ -516,129 +485,6 @@ pub enum WindowCaptureAlphaMode {
 	MatteLight,
 	/// Composite transparency against a dark matte color.
 	MatteDark,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, PartialEq)]
-/// Scroll-wheel delta routed from the native passive capture host.
-pub enum MacOSNativeCaptureScrollDelta {
-	/// A line-based scroll delta measured in lines along the x/y axes.
-	Line {
-		/// Horizontal line delta.
-		x: f32,
-		/// Vertical line delta.
-		y: f32,
-	},
-	/// A pixel-based scroll delta measured in pixels along the x/y axes.
-	Pixel {
-		/// Horizontal pixel delta.
-		x: f64,
-		/// Vertical pixel delta.
-		y: f64,
-	},
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Debug, PartialEq)]
-/// Input event routed from the app-owned macOS passive capture host into the overlay core.
-pub enum MacOSNativeCaptureInputEvent {
-	/// Pointer movement over a passive overlay shell.
-	OverlayPointerMoved {
-		/// Monitor whose passive shell observed the pointer movement.
-		monitor: MonitorRect,
-		/// Pointer location in global desktop coordinates.
-		global: GlobalPoint,
-	},
-	/// Mouse-button activity observed by a passive overlay shell.
-	OverlayMouseInput {
-		/// Monitor whose passive shell observed the mouse input.
-		monitor: MonitorRect,
-		/// Pointer location in global desktop coordinates.
-		global: GlobalPoint,
-		/// Mouse button that changed state.
-		button: MouseButton,
-		/// New state for the button.
-		state: ElementState,
-	},
-	/// Pointer movement over a passive toolbar shell.
-	ToolbarPointerMoved {
-		/// Monitor that currently anchors the toolbar shell.
-		monitor: MonitorRect,
-		/// Pointer location in toolbar-local coordinates.
-		local: Pos2,
-		/// Pointer location in global desktop coordinates.
-		global: GlobalPoint,
-		/// Toolbar shell origin in global desktop coordinates.
-		outer_position: GlobalPoint,
-	},
-	/// Pointer exit from the passive toolbar shell.
-	ToolbarPointerLeft,
-	/// Mouse-button activity observed by the passive toolbar shell.
-	ToolbarMouseInput {
-		/// Mouse button that changed state.
-		button: MouseButton,
-		/// New state for the button.
-		state: ElementState,
-	},
-	/// Scroll-wheel input observed by the passive toolbar shell.
-	ToolbarScrollWheel {
-		/// Scroll delta reported by the native host.
-		delta: MacOSNativeCaptureScrollDelta,
-	},
-	/// Keyboard input forwarded from the passive key-focus shell.
-	KeyboardInput {
-		/// Monitor associated with the active key-focus shell, if any.
-		monitor: Option<MonitorRect>,
-		/// Opaque keyboard event payload translated from winit/native state.
-		event: OverlayKeyboardInputEvent,
-	},
-	/// IME input forwarded from the passive key-focus shell.
-	Ime {
-		/// Monitor associated with the active key-focus shell, if any.
-		monitor: Option<MonitorRect>,
-		/// IME payload to apply inside the overlay session.
-		event: Ime,
-	},
-	/// Modifier-key state update forwarded from the native host.
-	ModifiersChanged {
-		/// Current modifier-key state.
-		state: ModifiersState,
-	},
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug)]
-/// Host-owned scroll-capture start request emitted by the core.
-pub struct ScrollCaptureHostStartRequest {
-	/// Target monitor for the scroll-capture session.
-	pub monitor: MonitorRect,
-	/// Scroll-capture rect in point-space.
-	pub capture_rect_points: RectPoints,
-	/// Scroll-capture rect in monitor-local pixels.
-	pub capture_rect_pixels: RectPoints,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone)]
-/// Explicit host/core seam for scroll-capture capability ownership.
-pub struct ScrollCaptureHostAdapter {
-	start: ScrollCaptureHostStart,
-	stop: ScrollCaptureHostStop,
-	request_frame: ScrollCaptureHostFrameRequest,
-	external_input_drain_reader: ExternalScrollInputDrainReader,
-}
-#[cfg(target_os = "macos")]
-impl ScrollCaptureHostAdapter {
-	#[must_use]
-	/// Creates the host-owned scroll-capture capability adapter for the overlay core.
-	pub fn new(
-		start: ScrollCaptureHostStart,
-		stop: ScrollCaptureHostStop,
-		request_frame: ScrollCaptureHostFrameRequest,
-		external_input_drain_reader: ExternalScrollInputDrainReader,
-	) -> Self {
-		Self { start, stop, request_frame, external_input_drain_reader }
-	}
 }
 
 #[derive(Clone, Debug)]
