@@ -7,12 +7,21 @@ use crate::overlay::rendering::{
 	SelectionFlowGeometryCache, SelectionFlowGeometryCacheKey, WindowRenderer,
 };
 use crate::overlay::{
-	Color32, HudTheme, LIVE_DRAG_START_THRESHOLD_PX, Mesh, Painter, Pos2, Rect,
-	SELECTION_FLOW_CORE_FLOW_WIDTH, SELECTION_FLOW_CORNER_RADIUS_PX, SELECTION_FLOW_FLOW_BOOST,
-	SELECTION_FLOW_LIGHT_PALETTE, SELECTION_FLOW_MAX_SEGMENTS, SELECTION_FLOW_MIN_SEGMENTS,
-	SELECTION_FLOW_PALETTE, SELECTION_FLOW_SAMPLE_STEP_PX, SELECTION_FLOW_SPEED,
-	SelectionFlowStyle, Shape, Vec2,
+	Color32, HudTheme, LIVE_DRAG_START_THRESHOLD_PX, Mesh, Painter, Pos2, Rect, SelectionFlowStyle,
+	Shape, Vec2,
 };
+
+const SELECTION_FLOW_CORNER_RADIUS_PX: f32 = 9.0;
+const SELECTION_FLOW_MIN_SEGMENTS: usize = 160;
+const SELECTION_FLOW_MAX_SEGMENTS: usize = 1_536;
+const SELECTION_FLOW_SAMPLE_STEP_PX: f32 = 3.2;
+const SELECTION_FLOW_SPEED: f32 = 0.24;
+const SELECTION_FLOW_CORE_FLOW_WIDTH: f32 = 0.06;
+const SELECTION_FLOW_FLOW_BOOST: f32 = 2.8;
+const SELECTION_FLOW_PALETTE: [(u8, u8, u8); 3] =
+	[(196, 226, 255), (228, 198, 255), (176, 244, 224)];
+const SELECTION_FLOW_LIGHT_PALETTE: [(u8, u8, u8); 3] =
+	[(0, 104, 226), (124, 54, 214), (0, 128, 104)];
 
 impl WindowRenderer {
 	pub(in crate::overlay) fn render_selection_flow_ring(
