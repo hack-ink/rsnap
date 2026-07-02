@@ -9,6 +9,7 @@ use egui::Galley;
 use egui::RawInput;
 use egui::Response;
 use egui::text::CCursor;
+use egui_phosphor::regular::{MINUS, PLUS};
 
 use crate::overlay::rendering::{
 	FrozenSelectionResizeHandleGeometry, FrozenToolbarButtonStyle, SelectionDashedBorderCache,
@@ -49,7 +50,6 @@ use crate::overlay::{
 	SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind, TOOLBAR_CAPTURE_GAP_PX,
 	TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_PILL_INNER_MARGIN_Y_POINTS, TOOLBAR_SCREEN_MARGIN_PX,
 	ToolbarPlacement, Ui, UiBuilder, Vec2,
-	regular::{MINUS, PLUS},
 };
 
 const FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS: f32 = 4.0;
