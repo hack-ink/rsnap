@@ -99,7 +99,6 @@ use wgpu::BlendState;
 use wgpu::Buffer;
 use wgpu::BufferBindingType;
 use wgpu::BufferSize;
-use wgpu::BufferUsages;
 use wgpu::ColorWrites;
 use wgpu::CompositeAlphaMode;
 use wgpu::CurrentSurfaceTexture;
