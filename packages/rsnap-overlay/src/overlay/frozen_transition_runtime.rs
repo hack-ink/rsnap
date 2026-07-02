@@ -42,11 +42,12 @@ impl FrozenTransitionRuntime {
 }
 
 impl OverlaySession {
+	#[cfg(target_os = "macos")]
 	pub(super) fn frozen_transition_started_at(&self) -> Option<Instant> {
 		self.frozen_transition.started_at
 	}
 
-	#[cfg(test)]
+	#[cfg(all(target_os = "macos", test))]
 	pub(super) fn debug_set_frozen_transition_started_at(&mut self, started_at: Option<Instant>) {
 		self.frozen_transition.started_at = started_at;
 	}
