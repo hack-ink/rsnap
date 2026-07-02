@@ -25,6 +25,8 @@ mod input_runtime;
 mod macos_cursor_runtime;
 #[cfg(target_os = "macos")]
 mod macos_native_capture_shell_runtime;
+#[cfg(target_os = "macos")]
+mod macos_window_bridge;
 mod rendering;
 mod runtime_model;
 mod scroll_capture_runtime;
@@ -45,12 +47,9 @@ pub use self::macos_native_capture_shell_runtime::{MacOSCaptureHost, MacOSCaptur
 
 #[cfg(not(target_os = "macos"))]
 use std::env;
-#[cfg(target_os = "macos")]
-use std::ffi::c_void;
 use std::mem;
+#[cfg(not(target_os = "macos"))]
 use std::panic;
-#[cfg(target_os = "macos")]
-use std::process;
 use std::ptr;
 use std::slice;
 #[cfg(target_os = "macos")]
@@ -85,10 +84,6 @@ use egui_wgpu::{Renderer, ScreenDescriptor};
 use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use image::imageops;
-#[cfg(target_os = "macos")]
-use objc::runtime::{BOOL, NO, Object, YES};
-#[cfg(target_os = "macos")]
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::{Deserialize, Serialize};
 use wgpu::Adapter;
 use wgpu::AddressMode;
@@ -153,6 +148,14 @@ use self::frozen_export_model::{FrozenExportTransform, FrozenImagePatch, FrozenM
 use self::frozen_text_runtime::{FrozenTextInputSource, FrozenTextRecentInput};
 use self::frozen_transition_runtime::FrozenTransitionRuntime;
 #[cfg(target_os = "macos")]
+use self::macos_window_bridge::{
+	MacOSFrontmostApplication, MacOSNativeCaptureInputDispatch, macos_activate_app,
+	macos_configure_hud_window, macos_configure_overlay_window_mouse_moved_events,
+	macos_frontmost_application, macos_hid_event_source_state_id, macos_mouse_location,
+	macos_overlay_window_ns_view, macos_post_scroll_wheel_event,
+	macos_restore_frontmost_application, macos_set_capture_window_mouse_passthrough,
+};
+#[cfg(target_os = "macos")]
 use self::rendering::StartupLiveRgbPlan;
 use self::rendering::{
 	GpuContext, HudOverlayWindow, HudPillGeometry, HudRedrawSummary, OverlayWindow,
@@ -210,6 +213,7 @@ use rsnap_capture_core::DeferredTextRecognitionRequest;
 use rsnap_capture_core::{OutputNaming, PreparedHostEffectRequest};
 
 #[cfg(target_os = "macos")]
+#[allow(unused_macros)]
 macro_rules! sel {
 	($($tt:tt)*) => {
 		objc::sel!($($tt)*)
@@ -217,17 +221,12 @@ macro_rules! sel {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(unused_macros)]
 macro_rules! sel_impl {
 	($($tt:tt)*) => {
 		objc::sel_impl!($($tt)*)
 	};
 }
-
-#[cfg(target_os = "macos")]
-type CFTypeRef = *const c_void;
-
-#[cfg(target_os = "macos")]
-type CGEventRef = *mut c_void;
 
 #[cfg(target_os = "macos")]
 type ExternalScrollInputEvent = (u64, Instant, f64, f64, f64, bool, bool);
@@ -268,8 +267,6 @@ type Result<T, E = Report> = std::result::Result<T, E>;
 pub(crate) const CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED: bool = false;
 
 #[cfg(target_os = "macos")]
-const KCG_HID_EVENT_TAP: u32 = 0;
-#[cfg(target_os = "macos")]
 const KCG_SCROLL_EVENT_UNIT_PIXEL: u32 = 0;
 #[cfg(target_os = "macos")]
 const KCG_SCROLL_EVENT_UNIT_LINE: u32 = 1;
@@ -285,10 +282,6 @@ const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
 const HUD_PILL_BLUR_TINT_ALPHA_LIGHT: f32 = 0.22;
 const LOUPE_TILE_CORNER_RADIUS_POINTS: f64 = 12.0;
 const HUD_LOUPE_STRIP_GAP_POINTS: i32 = 8;
-#[cfg(target_os = "macos")]
-const MACOS_HUD_WINDOW_LEVEL: isize = 26;
-#[cfg(target_os = "macos")]
-const MACOS_OVERLAY_WINDOW_LEVEL: isize = 25;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
 const TOOLBAR_PILL_INNER_MARGIN_Y_POINTS: f32 = 6.0;
@@ -434,9 +427,6 @@ const SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL: Duration = Duration:
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE: Duration = Duration::from_millis(180);
 const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
-#[cfg(target_os = "macos")]
-const KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE: u32 = 0;
-
 #[cfg(target_os = "macos")]
 #[derive(Debug)]
 /// Failure contract for one host-owned scroll-capture frame request.
@@ -3349,37 +3339,12 @@ impl LiveClickCaptureTarget {
 	}
 }
 
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MacOSFrontmostApplication {
-	process_id: i32,
-}
-
-#[cfg(target_os = "macos")]
-#[repr(C)]
-struct MacOSCGPoint {
-	x: f64,
-	y: f64,
-}
-
 #[derive(Clone, Copy, Debug)]
 struct FrozenArrowGeometry {
 	shaft_end: Pos2,
 	tip: Pos2,
 	head_left: Pos2,
 	head_right: Pos2,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone)]
-struct MacOSNativeCaptureInputDispatch {
-	sink: Arc<dyn Fn(MacOSNativeCaptureInputEvent) + Send + Sync>,
-}
-#[cfg(target_os = "macos")]
-impl MacOSNativeCaptureInputDispatch {
-	fn enqueue(&self, event: MacOSNativeCaptureInputEvent) {
-		(self.sink)(event);
-	}
 }
 
 fn should_request_overlay_redraw_after_surface_skip(
@@ -3405,11 +3370,6 @@ fn should_request_overlay_redraw_after_surface_skip(
 	}
 }
 
-#[cfg(target_os = "macos")]
-fn macos_hid_event_source_state_id() -> u32 {
-	KCG_EVENT_SOURCE_STATE_HID_SYSTEM_STATE
-}
-
 fn global_to_local(cursor: GlobalPoint, monitor: MonitorRect) -> Option<Pos2> {
 	let (x, y) = monitor.local_u32(cursor)?;
 
@@ -3421,302 +3381,6 @@ fn current_unix_millis() -> u64 {
 	match SystemTime::now().duration_since(UNIX_EPOCH) {
 		Ok(duration) => duration.as_millis().try_into().unwrap_or(u64::MAX),
 		Err(_err) => 0,
-	}
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-	fn CGEventGetLocation(event: CGEventRef) -> MacOSCGPoint;
-	fn CGEventCreate(source: *const c_void) -> CGEventRef;
-	fn CGEventSourceCreate(source_state_id: u32) -> CFTypeRef;
-	fn CGEventCreateScrollWheelEvent2(
-		source: *const c_void,
-		units: u32,
-		wheel_count: u32,
-		wheel1: i32,
-		wheel2: i32,
-		wheel3: i32,
-	) -> CGEventRef;
-	fn CGEventPost(tap_location: u32, event: CGEventRef);
-	fn CGEventSetLocation(event: CGEventRef, location: MacOSCGPoint);
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "CoreFoundation", kind = "framework")]
-unsafe extern "C" {
-	fn CFRelease(obj: CFTypeRef);
-}
-
-#[cfg(target_os = "macos")]
-fn macos_mouse_location() -> Option<GlobalPoint> {
-	let event = unsafe { CGEventCreate(ptr::null()) };
-
-	if event.is_null() {
-		return None;
-	}
-
-	let point = unsafe { CGEventGetLocation(event) };
-
-	unsafe { CFRelease(event) };
-
-	Some(GlobalPoint::new(point.x as i32, point.y as i32))
-}
-
-#[cfg(target_os = "macos")]
-fn macos_overlay_window_ns_view(window: &Window) -> Option<*mut Object> {
-	let Ok(handle) = window.window_handle() else {
-		return None;
-	};
-	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-		return None;
-	};
-
-	Some(appkit.ns_view.as_ptr().cast::<Object>())
-}
-
-#[cfg(target_os = "macos")]
-fn macos_activate_app() {
-	unsafe {
-		let app: *mut Object = objc::msg_send![objc::class!(NSApplication), sharedApplication];
-
-		if app.is_null() {
-			return;
-		}
-
-		let _: () = objc::msg_send![app, activateIgnoringOtherApps: YES];
-	}
-}
-
-#[cfg(target_os = "macos")]
-fn macos_frontmost_application() -> Option<MacOSFrontmostApplication> {
-	unsafe {
-		let workspace: *mut Object = objc::msg_send![objc::class!(NSWorkspace), sharedWorkspace];
-
-		if workspace.is_null() {
-			return None;
-		}
-
-		let app: *mut Object = objc::msg_send![workspace, frontmostApplication];
-
-		if app.is_null() {
-			return None;
-		}
-
-		let process_id: i32 = objc::msg_send![app, processIdentifier];
-
-		(process_id > 0).then_some(MacOSFrontmostApplication { process_id })
-	}
-}
-
-#[cfg(target_os = "macos")]
-fn macos_restore_frontmost_application(target: MacOSFrontmostApplication) -> bool {
-	if target.process_id == process::id() as i32 {
-		macos_activate_app();
-
-		return true;
-	}
-
-	unsafe {
-		let running_application_class = objc::class!(NSRunningApplication);
-		let app: *mut Object = objc::msg_send![
-			running_application_class,
-			runningApplicationWithProcessIdentifier: target.process_id
-		];
-
-		if app.is_null() {
-			return false;
-		}
-
-		let options: usize = 1 << 1;
-		let activated: BOOL = objc::msg_send![app, activateWithOptions: options];
-
-		activated == YES
-	}
-}
-
-#[cfg(target_os = "macos")]
-fn macos_post_scroll_wheel_event(
-	delta: MacOSScrollWheelEvent,
-	target_point: GlobalPoint,
-) -> color_eyre::eyre::Result<()> {
-	let units = delta.units;
-	let wheel1 = delta.posted_y;
-	let wheel2 = delta.posted_x;
-
-	if wheel1 == 0 && wheel2 == 0 {
-		return Ok(());
-	}
-
-	let source = unsafe { CGEventSourceCreate(macos_hid_event_source_state_id()) };
-
-	if source.is_null() {
-		return Err(eyre::eyre!("failed to create macOS scroll wheel event source"));
-	}
-
-	let wheel_count = if wheel2 != 0 { 2 } else { 1 };
-	let event =
-		unsafe { CGEventCreateScrollWheelEvent2(source, units, wheel_count, wheel1, wheel2, 0) };
-
-	if event.is_null() {
-		unsafe {
-			CFRelease(source);
-		}
-
-		return Err(eyre::eyre!("failed to create macOS scroll wheel event"));
-	}
-
-	unsafe {
-		CGEventSetLocation(
-			event,
-			MacOSCGPoint { x: f64::from(target_point.x), y: f64::from(target_point.y) },
-		);
-		CGEventPost(KCG_HID_EVENT_TAP, event);
-		CFRelease(event);
-		CFRelease(source);
-	}
-
-	Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn macos_configure_overlay_window_mouse_moved_events(window: &Window) {
-	let Ok(handle) = window.window_handle() else {
-		return;
-	};
-	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-		return;
-	};
-	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
-
-	unsafe {
-		let ns_window: *mut Object = objc::msg_send![ns_view, window];
-
-		if ns_window.is_null() {
-			return;
-		}
-
-		macos_configure_nonactivating_capture_window_with_ns_window(ns_window);
-
-		let _: () = objc::msg_send![ns_window, setOpaque: false];
-		let _: () = objc::msg_send![ns_window, setHasShadow: false];
-		let clear: *mut Object = objc::msg_send![objc::class!(NSColor), clearColor];
-		let _: () = objc::msg_send![ns_window, setBackgroundColor: clear];
-		let _: () = objc::msg_send![ns_window, setLevel: MACOS_OVERLAY_WINDOW_LEVEL];
-		let _: () = objc::msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
-	}
-}
-
-#[cfg(target_os = "macos")]
-fn macos_configure_hud_window(
-	window: &Window,
-	blur_enabled: bool,
-	blur_amount: f32,
-	corner_radius_points: Option<f64>,
-) {
-	let Ok(handle) = window.window_handle() else {
-		return;
-	};
-	let RawWindowHandle::AppKit(appkit) = handle.as_raw() else {
-		return;
-	};
-	let ns_view = appkit.ns_view.as_ptr().cast::<Object>();
-
-	unsafe {
-		let ns_window: *mut Object = objc::msg_send![ns_view, window];
-
-		if ns_window.is_null() {
-			return;
-		}
-
-		macos_configure_nonactivating_capture_window_with_ns_window(ns_window);
-
-		// winit exposes blur as a boolean. We also set an explicit radius so we can drive it from
-		// settings (this uses the same private CGS API that winit uses internally).
-		{
-			#[link(name = "CoreGraphics", kind = "framework")]
-			unsafe extern "C" {
-				fn CGSMainConnectionID() -> *mut c_void;
-
-				fn CGSSetWindowBackgroundBlurRadius(
-					connection_id: *mut c_void,
-					window_id: isize,
-					radius: i64,
-				) -> i32;
-			}
-
-			let amount = blur_amount.clamp(0.0, 1.0);
-			let radius = if blur_enabled {
-				// Map the slider linearly (0..=1) to the native blur radius.
-				// Keep the upper bound conservative; CGS blur radius gets strong quickly.
-				let max_radius = 12.0;
-
-				(amount * max_radius).round().clamp(0.0, 200.0) as i64
-			} else {
-				0
-			};
-			let window_number: isize = objc::msg_send![ns_window, windowNumber];
-			let _ = CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, radius);
-		}
-
-		let _: () = objc::msg_send![ns_window, setOpaque: false];
-		let _: () = objc::msg_send![ns_window, setHasShadow: false];
-		let _: () = objc::msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
-		let _: () = objc::msg_send![ns_window, setLevel: MACOS_HUD_WINDOW_LEVEL];
-		let clear: *mut Object = objc::msg_send![objc::class!(NSColor), clearColor];
-		let _: () = objc::msg_send![ns_window, setBackgroundColor: clear];
-		let content_view: *mut Object = objc::msg_send![ns_window, contentView];
-
-		if content_view.is_null() {
-			return;
-		}
-
-		let _: () = objc::msg_send![content_view, setWantsLayer: YES];
-		let layer: *mut Object = objc::msg_send![content_view, layer];
-
-		if layer.is_null() {
-			return;
-		}
-
-		// Round the window itself so native blur doesn't show a rectangular boundary.
-		let scale = window.scale_factor().max(1.0);
-		let size = window.inner_size();
-		let height_points = (size.height as f64) / scale;
-		let radius = corner_radius_points.unwrap_or(height_points * 0.5);
-		let _: () = objc::msg_send![layer, setCornerRadius: radius];
-		let _: () = objc::msg_send![layer, setMasksToBounds: YES];
-	}
-}
-
-#[cfg(target_os = "macos")]
-fn macos_configure_nonactivating_capture_window_with_ns_window(ns_window: *mut Object) {
-	if ns_window.is_null() {
-		return;
-	}
-
-	unsafe {
-		let style_mask: usize = objc::msg_send![ns_window, styleMask];
-		let nonactivating_panel_mask: usize = 1 << 7;
-		let _: () = objc::msg_send![ns_window, setStyleMask: style_mask | nonactivating_panel_mask];
-		let _: () = objc::msg_send![ns_window, setHidesOnDeactivate: false];
-	}
-}
-
-#[cfg(target_os = "macos")]
-fn macos_set_capture_window_mouse_passthrough(window: &Window, passthrough: bool) {
-	let Some(ns_view) = macos_overlay_window_ns_view(window) else {
-		return;
-	};
-
-	unsafe {
-		let ns_window: *mut Object = objc::msg_send![ns_view, window];
-
-		if ns_window.is_null() {
-			return;
-		}
-
-		let ignores_mouse_events = if passthrough { YES } else { NO };
-		let _: () = objc::msg_send![ns_window, setIgnoresMouseEvents: ignores_mouse_events];
 	}
 }
 
