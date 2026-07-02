@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use egui::{FontId, Pos2, Rect, Vec2};
 use image::RgbaImage;
 #[cfg(not(target_os = "macos"))]
@@ -8,6 +10,9 @@ use crate::overlay::{
 	FrozenToolbarTool, GlobalPoint, MonitorRect, OverlaySession, WindowRenderer,
 };
 use crate::text_rendering::{self, RasterTextAnnotation};
+
+pub(in crate::overlay) const FROZEN_TEXT_CARET_REPAINT_INTERVAL: Duration =
+	Duration::from_millis(250);
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct FrozenTextRecentInput {

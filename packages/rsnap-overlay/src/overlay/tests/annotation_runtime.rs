@@ -10,7 +10,8 @@ use crate::overlay::frozen_brush_runtime::{
 };
 use crate::overlay::session_state::{
 	FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS, FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS,
-	FROZEN_BRUSH_STROKE_WIDTH_POINTS,
+	FROZEN_BRUSH_STROKE_WIDTH_POINTS, FROZEN_TEXT_FONT_SIZE_MAX_POINTS,
+	FROZEN_TEXT_FONT_SIZE_MIN_POINTS, FROZEN_TEXT_FONT_SIZE_POINTS,
 };
 use crate::overlay::tests::{
 	self, ActiveFrozenBrushStroke, Duration, ElementState, FROZEN_EDIT_HISTORY_LIMIT,
@@ -18,7 +19,7 @@ use crate::overlay::tests::{
 	FrozenBrushStroke, FrozenBrushStyle, FrozenCommittedOverlay, FrozenEditKind,
 	FrozenExportTransform, FrozenTextAnnotation, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarTool, GlobalPoint, Ime, Instant, Key, MonitorRect, MouseScrollDelta, NamedKey,
-	OverlaySession, PhysicalPosition, Pos2, RectPoints, Rgba, Vec2, overlay,
+	OverlaySession, PhysicalPosition, Pos2, RectPoints, Rgba, Vec2,
 };
 
 #[test]
@@ -482,10 +483,7 @@ fn begin_frozen_text_edit_at_ignores_non_authoritative_monitor() {
 fn default_frozen_text_style_uses_16_point_font() {
 	let session = OverlaySession::new();
 
-	assert_eq!(
-		session.toolbar_state.text_style.font_size_points,
-		overlay::FROZEN_TEXT_FONT_SIZE_POINTS
-	);
+	assert_eq!(session.toolbar_state.text_style.font_size_points, FROZEN_TEXT_FONT_SIZE_POINTS);
 	assert_eq!(session.toolbar_state.text_style.font_size_points, 16.0);
 	assert_eq!(session.toolbar_state.text_style.color, FrozenAnnotationColor::Blue);
 }
@@ -508,15 +506,9 @@ fn frozen_text_style_accepts_arbitrary_sizes_and_clamps_to_bounds() {
 	assert!(session.toolbar_state.text_style.set_font_size(27.5));
 	assert_eq!(session.toolbar_state.text_style.font_size_points, 27.5);
 	assert!(session.toolbar_state.text_style.set_font_size(2.0));
-	assert_eq!(
-		session.toolbar_state.text_style.font_size_points,
-		overlay::FROZEN_TEXT_FONT_SIZE_MIN_POINTS
-	);
+	assert_eq!(session.toolbar_state.text_style.font_size_points, FROZEN_TEXT_FONT_SIZE_MIN_POINTS);
 	assert!(session.toolbar_state.text_style.set_font_size(200.0));
-	assert_eq!(
-		session.toolbar_state.text_style.font_size_points,
-		overlay::FROZEN_TEXT_FONT_SIZE_MAX_POINTS
-	);
+	assert_eq!(session.toolbar_state.text_style.font_size_points, FROZEN_TEXT_FONT_SIZE_MAX_POINTS);
 }
 
 #[test]

@@ -40,6 +40,7 @@ use crate::overlay::FrozenCaptureSource;
 #[cfg(target_os = "macos")]
 use crate::overlay::LiveCaptureInteraction;
 use crate::overlay::PngAction;
+use crate::overlay::frozen_text_runtime::FROZEN_TEXT_CARET_REPAINT_INTERVAL;
 use crate::overlay::rendering;
 #[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
@@ -48,18 +49,18 @@ use crate::overlay::session_state::{
 	FrozenExportSessionState, WindowFreezeCaptureTarget,
 };
 use crate::overlay::{
-	self, ActiveFrozenBrushStroke, FROZEN_EDIT_HISTORY_LIMIT, FROZEN_TEXT_CARET_REPAINT_INTERVAL,
-	FrozenAnnotationColor, FrozenArrowAnnotation, FrozenBrushModelState, FrozenBrushStroke,
-	FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform, FrozenImagePatch,
-	FrozenMosaicEdit, FrozenSelectionDragState, FrozenSpotlightAnnotation, FrozenTextAnnotation,
-	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool,
-	HUD_LOUPE_STRIP_GAP_POINTS, HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
-	OutputNaming, OverlayControl, OverlaySession, Pos2, PreparedHostEffectRequest, Rect,
-	SCROLL_CAPTURE_SAMPLE_INTERVAL, SELECTION_SIZE_BADGE_GAP_PX,
-	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
-	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
-	SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
-	Vec2, WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
+	self, ActiveFrozenBrushStroke, FROZEN_EDIT_HISTORY_LIMIT, FrozenAnnotationColor,
+	FrozenArrowAnnotation, FrozenBrushModelState, FrozenBrushStroke, FrozenCommittedOverlay,
+	FrozenEditKind, FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit,
+	FrozenSelectionDragState, FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState,
+	FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS,
+	HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OutputNaming, OverlayControl,
+	OverlaySession, Pos2, PreparedHostEffectRequest, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
+	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache, SelectionFlowGeometryCache,
+	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowCaptureAlphaMode, WindowRenderer,
+	hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
