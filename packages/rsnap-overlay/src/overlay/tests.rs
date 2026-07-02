@@ -64,11 +64,11 @@ use crate::overlay::{
 #[cfg(target_os = "macos")]
 use crate::overlay::{
 	HUD_PILL_CORNER_RADIUS_POINTS, HudPillGeometry, InflightScrollCaptureObservation,
-	KCG_SCROLL_EVENT_UNIT_PIXEL, LiveSampleApplyResult, LiveStreamStaleGrace,
-	MacOSScrollPixelResidual, OverlayExit, SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW,
-	SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
-	SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource,
-	ScrollCaptureHostAdapter, ScrollCaptureHostFrameRequestError, StartupLiveRgbPlan,
+	LiveSampleApplyResult, LiveStreamStaleGrace, MacOSScrollPixelResidual, OverlayExit,
+	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
+	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
+	ScrollCaptureFrameSource, ScrollCaptureHostAdapter, ScrollCaptureHostFrameRequestError,
+	StartupLiveRgbPlan,
 };
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 #[cfg(target_os = "macos")]
