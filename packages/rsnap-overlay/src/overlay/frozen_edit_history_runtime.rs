@@ -1,4 +1,6 @@
-use crate::overlay::{FROZEN_EDIT_HISTORY_LIMIT, FrozenEditKind, OverlaySession};
+use crate::overlay::{FrozenEditKind, OverlaySession};
+
+pub(in crate::overlay) const FROZEN_EDIT_HISTORY_LIMIT: usize = 24;
 
 impl OverlaySession {
 	pub(super) fn clear_frozen_redo_history(&mut self) {

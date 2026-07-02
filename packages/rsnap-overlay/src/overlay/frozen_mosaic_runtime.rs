@@ -1,9 +1,10 @@
 use image::{Rgba, RgbaImage, imageops};
 
 use crate::overlay::{
-	FROZEN_MOSAIC_BLOCK_SIZE_PX, FrozenEditKind, FrozenImagePatch, FrozenMosaicEdit, MonitorRect,
-	OverlaySession, RectPoints,
+	FrozenEditKind, FrozenImagePatch, FrozenMosaicEdit, MonitorRect, OverlaySession, RectPoints,
 };
+
+const FROZEN_MOSAIC_BLOCK_SIZE_PX: u32 = 12;
 
 impl OverlaySession {
 	pub(super) fn intersect_rect_points(left: RectPoints, right: RectPoints) -> Option<RectPoints> {
