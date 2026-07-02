@@ -13,6 +13,7 @@ mod frozen_mosaic_runtime;
 mod frozen_selection_runtime;
 mod frozen_spotlight_runtime;
 mod frozen_text_runtime;
+mod frozen_transition_runtime;
 mod hud_helpers;
 mod hud_runtime;
 mod image_helpers;
@@ -155,6 +156,7 @@ use winit::{
 };
 
 use self::frozen_text_runtime::{FrozenTextInputSource, FrozenTextRecentInput};
+use self::frozen_transition_runtime::FrozenTransitionRuntime;
 #[cfg(target_os = "macos")]
 use self::rendering::StartupLiveRgbPlan;
 use self::rendering::{
@@ -798,15 +800,7 @@ pub struct OverlaySession {
 	loupe_patch_width_px: u32,
 	loupe_patch_height_px: u32,
 	frozen_capture_session_state: FrozenCaptureSessionState,
-	frozen_transition_press_pending_at: Option<Instant>,
-	frozen_transition_started_at: Option<Instant>,
-	frozen_transition_preview_committed_at: Option<Instant>,
-	frozen_transition_preview_source: Option<&'static str>,
-	frozen_transition_final_ready_at: Option<Instant>,
-	frozen_transition_toolbar_visible_at: Option<Instant>,
-	frozen_transition_toolbar_first_draw_at: Option<Instant>,
-	frozen_transition_badge_slot_armed_at: Option<Instant>,
-	frozen_transition_target_window_id: Option<u32>,
+	frozen_transition: FrozenTransitionRuntime,
 	frozen_window_image: Option<RgbaImage>,
 	frozen_capture_source: FrozenCaptureSource,
 	capture_windows_hidden: bool,
@@ -1038,11 +1032,7 @@ impl OverlaySession {
 			loupe_patch_height_px: 0,
 			egui_repaint_deadline: Arc::new(Mutex::new(None)),
 			frozen_capture_session_state: FrozenCaptureSessionState::Inactive,
-			frozen_transition_press_pending_at: None,
-			frozen_transition_started_at: None, frozen_transition_preview_committed_at: None,
-			frozen_transition_preview_source: None, frozen_transition_final_ready_at: None,
-			frozen_transition_toolbar_visible_at: None, frozen_transition_toolbar_first_draw_at: None,
-			frozen_transition_badge_slot_armed_at: None, frozen_transition_target_window_id: None,
+			frozen_transition: FrozenTransitionRuntime::default(),
 			frozen_window_image: None,
 			frozen_capture_source: FrozenCaptureSource::None,
 			capture_windows_hidden: false,
@@ -1843,441 +1833,6 @@ impl OverlaySession {
 		monitor: MonitorRect,
 	) -> Option<WindowFreezeCaptureTarget> {
 		self.frozen_capture_window_target().filter(|target| target.monitor == monitor)
-	}
-
-	fn frozen_transition_elapsed_ms_since(
-		&self,
-		started_at: Option<Instant>,
-		now: Instant,
-	) -> Option<u128> {
-		started_at
-			.and_then(|started_at| now.checked_duration_since(started_at))
-			.map(|elapsed| elapsed.as_millis())
-	}
-
-	fn reset_frozen_transition_timing(&mut self) {
-		self.frozen_transition_started_at = None;
-		self.frozen_transition_preview_committed_at = None;
-		self.frozen_transition_preview_source = None;
-		self.frozen_transition_final_ready_at = None;
-		self.frozen_transition_toolbar_visible_at = None;
-		self.frozen_transition_toolbar_first_draw_at = None;
-		self.frozen_transition_badge_slot_armed_at = None;
-		self.frozen_transition_target_window_id = None;
-	}
-
-	fn log_frozen_transition_timing_info(&self, event: FrozenTransitionTimingInfo) {
-		let now = Instant::now();
-		let since_press_ms =
-			self.frozen_transition_elapsed_ms_since(self.frozen_transition_press_pending_at, now);
-		let since_begin_ms =
-			self.frozen_transition_elapsed_ms_since(self.frozen_transition_started_at, now);
-		let since_preview_ms = self
-			.frozen_transition_elapsed_ms_since(self.frozen_transition_preview_committed_at, now);
-		let since_final_ready_ms =
-			self.frozen_transition_elapsed_ms_since(self.frozen_transition_final_ready_at, now);
-		let since_toolbar_first_draw_ms = self
-			.frozen_transition_elapsed_ms_since(self.frozen_transition_toolbar_first_draw_at, now);
-		let slow_transition = matches!(
-			event.op,
-			"overlay.freeze_transition_preview_committed"
-				| "overlay.freeze_transition_toolbar_visible"
-				| "overlay.freeze_transition_toolbar_first_draw"
-				| "overlay.freeze_transition_badge_slot_armed"
-		) && since_press_ms.is_some_and(|elapsed_ms| elapsed_ms >= 400);
-
-		if slow_transition {
-			tracing::warn!(
-				target: "rsnap",
-				op = event.op,
-				monitor_id = event.monitor.map(|monitor| monitor.id),
-				frozen_capture_source = ?self.frozen_capture_source,
-				alpha_mode = ?self.config.window_capture_alpha_mode,
-				target_window_id = self.frozen_transition_target_window_id,
-				captured_window_id = event.captured_window_id,
-				source = event.source,
-				preview_source = self.frozen_transition_preview_source,
-				reason = event.reason,
-				snapshot_age_ms = event.snapshot_age_ms,
-				grace_ms = event.grace_ms,
-				capture_windows_hidden = self.capture_windows_hidden,
-				since_press_ms,
-				since_begin_ms,
-				since_preview_ms,
-				since_final_ready_ms,
-				since_toolbar_first_draw_ms,
-				"{}",
-				event.message
-			);
-		} else {
-			tracing::info!(
-				target: "rsnap",
-				op = event.op,
-				monitor_id = event.monitor.map(|monitor| monitor.id),
-				frozen_capture_source = ?self.frozen_capture_source,
-				alpha_mode = ?self.config.window_capture_alpha_mode,
-				target_window_id = self.frozen_transition_target_window_id,
-				captured_window_id = event.captured_window_id,
-				source = event.source,
-				preview_source = self.frozen_transition_preview_source,
-				reason = event.reason,
-				snapshot_age_ms = event.snapshot_age_ms,
-				grace_ms = event.grace_ms,
-				capture_windows_hidden = self.capture_windows_hidden,
-				since_press_ms,
-				since_begin_ms,
-				since_preview_ms,
-				since_final_ready_ms,
-				since_toolbar_first_draw_ms,
-				"{}",
-				event.message
-			);
-		}
-	}
-
-	fn begin_frozen_transition_timing(
-		&mut self,
-		monitor: MonitorRect,
-		capture_rect: RectPoints,
-		window_target: Option<WindowFreezeCaptureTarget>,
-	) {
-		let now = Instant::now();
-
-		self.reset_frozen_transition_timing();
-
-		self.frozen_transition_started_at = Some(now);
-		self.frozen_transition_target_window_id = window_target.map(|target| target.window_id);
-
-		tracing::debug!(
-			op = "overlay.freeze_transition_begin",
-			monitor_id = monitor.id,
-			frozen_capture_source = ?self.frozen_capture_source,
-			alpha_mode = ?self.config.window_capture_alpha_mode,
-			capture_rect = ?capture_rect,
-			target_window_id = self.frozen_transition_target_window_id,
-			"Frozen transition started."
-		);
-
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_begin",
-			monitor: Some(monitor),
-			reason: None,
-			source: None,
-			snapshot_age_ms: None,
-			grace_ms: None,
-			captured_window_id: None,
-			message: "Frozen transition started.",
-		});
-	}
-
-	fn note_frozen_transition_press_pending(
-		&mut self,
-		monitor: MonitorRect,
-		click_target: Option<LiveClickCaptureTarget>,
-	) {
-		let now = Instant::now();
-		let reason = click_target.map(|target| {
-			if target.window_target.is_some() {
-				"window_target"
-			} else if target.capture_rect.is_none() {
-				"fullscreen_fallback"
-			} else {
-				"rect_target"
-			}
-		});
-
-		self.frozen_transition_press_pending_at = Some(now);
-
-		if self.frozen_transition_target_window_id.is_none() {
-			self.frozen_transition_target_window_id =
-				click_target.and_then(|target| target.window_target).map(|target| target.window_id);
-		}
-
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_press_pending",
-			monitor: Some(monitor),
-			reason,
-			source: None,
-			snapshot_age_ms: None,
-			grace_ms: None,
-			captured_window_id: None,
-			message: "Frozen transition intent was armed on mouse-down.",
-		});
-	}
-
-	#[cfg(target_os = "macos")]
-	fn note_frozen_transition_preview_deferred(
-		&self,
-		monitor: MonitorRect,
-		reason: &'static str,
-		snapshot_age_ms: Option<u128>,
-	) {
-		let now = Instant::now();
-
-		tracing::debug!(
-			op = "overlay.freeze_transition_preview_deferred",
-			monitor_id = monitor.id,
-			frozen_capture_source = ?self.frozen_capture_source,
-			alpha_mode = ?self.config.window_capture_alpha_mode,
-			target_window_id = self.frozen_transition_target_window_id,
-			reason,
-			snapshot_age_ms,
-			since_begin_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_started_at, now),
-			"Frozen transition preview is deferred while capture settles."
-		);
-
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_preview_deferred",
-			monitor: Some(monitor),
-			reason: Some(reason),
-			source: None,
-			snapshot_age_ms,
-			grace_ms: None,
-			captured_window_id: None,
-			message: "Frozen transition preview is deferred while capture settles.",
-		});
-	}
-
-	fn note_frozen_transition_preview_committed(
-		&mut self,
-		monitor: MonitorRect,
-		source: &'static str,
-		snapshot_age_ms: Option<u128>,
-	) {
-		if self.frozen_transition_preview_committed_at.is_some() {
-			return;
-		}
-
-		let now = Instant::now();
-
-		self.frozen_transition_preview_committed_at = Some(now);
-		self.frozen_transition_preview_source = Some(source);
-
-		tracing::debug!(
-			op = "overlay.freeze_transition_preview_committed",
-			monitor_id = monitor.id,
-			frozen_capture_source = ?self.frozen_capture_source,
-			alpha_mode = ?self.config.window_capture_alpha_mode,
-			target_window_id = self.frozen_transition_target_window_id,
-			source,
-			snapshot_age_ms,
-			since_begin_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_started_at, now),
-			"Frozen transition preview became visible."
-		);
-
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_preview_committed",
-			monitor: Some(monitor),
-			reason: None,
-			source: Some(source),
-			snapshot_age_ms,
-			grace_ms: None,
-			captured_window_id: None,
-			message: "Frozen transition preview became visible.",
-		});
-	}
-
-	fn note_frozen_transition_worker_requested(
-		&mut self,
-		monitor: MonitorRect,
-		pending_window_target: Option<WindowFreezeCaptureTarget>,
-	) {
-		let now = Instant::now();
-
-		if self.frozen_transition_target_window_id.is_none() {
-			self.frozen_transition_target_window_id =
-				pending_window_target.map(|target| target.window_id);
-		}
-
-		tracing::debug!(
-			op = "overlay.freeze_transition_worker_requested",
-			monitor_id = monitor.id,
-			frozen_capture_source = ?self.frozen_capture_source,
-			alpha_mode = ?self.config.window_capture_alpha_mode,
-			target_window_id = self.frozen_transition_target_window_id,
-			capture_windows_hidden = self.capture_windows_hidden,
-			since_begin_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_started_at, now),
-			since_preview_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_preview_committed_at, now),
-			"Authoritative frozen capture was requested from the worker."
-		);
-
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_worker_requested",
-			monitor: Some(monitor),
-			reason: None,
-			source: None,
-			snapshot_age_ms: None,
-			grace_ms: None,
-			captured_window_id: None,
-			message: "Authoritative frozen capture was requested from the worker.",
-		});
-	}
-
-	fn note_frozen_transition_final_ready(
-		&mut self,
-		monitor: MonitorRect,
-		source: &'static str,
-		captured_window_id: Option<u32>,
-	) {
-		if self.frozen_transition_final_ready_at.is_some() {
-			return;
-		}
-
-		let now = Instant::now();
-
-		self.frozen_transition_final_ready_at = Some(now);
-
-		tracing::debug!(
-			op = "overlay.freeze_transition_final_ready",
-			monitor_id = monitor.id,
-			frozen_capture_source = ?self.frozen_capture_source,
-			alpha_mode = ?self.config.window_capture_alpha_mode,
-			target_window_id = self.frozen_transition_target_window_id,
-			captured_window_id,
-			source,
-			preview_source = self.frozen_transition_preview_source,
-			since_begin_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_started_at, now),
-			since_preview_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_preview_committed_at, now),
-			"Frozen transition final capture is ready."
-		);
-
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_final_ready",
-			monitor: Some(monitor),
-			reason: None,
-			source: Some(source),
-			snapshot_age_ms: None,
-			grace_ms: None,
-			captured_window_id,
-			message: "Frozen transition final capture is ready.",
-		});
-	}
-
-	#[cfg(target_os = "macos")]
-	fn note_frozen_transition_toolbar_visible(&mut self, monitor: MonitorRect) {
-		if self.frozen_transition_toolbar_visible_at.is_some() {
-			return;
-		}
-
-		let now = Instant::now();
-
-		self.frozen_transition_toolbar_visible_at = Some(now);
-
-		tracing::debug!(
-			op = "overlay.freeze_transition_toolbar_visible",
-			monitor_id = monitor.id,
-			frozen_capture_source = ?self.frozen_capture_source,
-			alpha_mode = ?self.config.window_capture_alpha_mode,
-			target_window_id = self.frozen_transition_target_window_id,
-			preview_source = self.frozen_transition_preview_source,
-			since_begin_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_started_at, now),
-			since_preview_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_preview_committed_at, now),
-			since_final_ready_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_final_ready_at, now),
-			"Frozen transition toolbar became visible."
-		);
-
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_toolbar_visible",
-			monitor: Some(monitor),
-			reason: None,
-			source: None,
-			snapshot_age_ms: None,
-			grace_ms: None,
-			captured_window_id: None,
-			message: "Frozen transition toolbar became visible.",
-		});
-	}
-
-	#[cfg(target_os = "macos")]
-	fn note_frozen_transition_toolbar_first_draw(&mut self, monitor: MonitorRect) {
-		if self.frozen_transition_toolbar_first_draw_at.is_some() {
-			return;
-		}
-
-		self.frozen_transition_toolbar_first_draw_at = Some(Instant::now());
-
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_toolbar_first_draw",
-			monitor: Some(monitor),
-			reason: None,
-			source: None,
-			snapshot_age_ms: None,
-			grace_ms: None,
-			captured_window_id: None,
-			message: "Frozen transition rendered the first visible toolbar frame.",
-		});
-	}
-
-	#[cfg(target_os = "macos")]
-	fn note_frozen_transition_badge_slot_armed(&mut self, monitor: MonitorRect) {
-		if self.frozen_transition_badge_slot_armed_at.is_some() {
-			return;
-		}
-
-		self.frozen_transition_badge_slot_armed_at = Some(Instant::now());
-
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_badge_slot_armed",
-			monitor: Some(monitor),
-			reason: None,
-			source: None,
-			snapshot_age_ms: None,
-			grace_ms: None,
-			captured_window_id: None,
-			message: "Frozen transition armed overlay badge-slot avoidance after toolbar draw.",
-		});
-	}
-
-	#[cfg(target_os = "macos")]
-	fn note_frozen_transition_authoritative_handoff_armed(&self, monitor: MonitorRect) {
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_authoritative_handoff_armed",
-			monitor: Some(monitor),
-			reason: None,
-			source: None,
-			snapshot_age_ms: None,
-			grace_ms: None,
-			captured_window_id: None,
-			message: "Frozen transition armed authoritative capture fallback.",
-		});
-	}
-
-	fn note_frozen_transition_aborted(&self, message: &str) {
-		let now = Instant::now();
-
-		tracing::debug!(
-			op = "overlay.freeze_transition_aborted",
-			frozen_capture_source = ?self.frozen_capture_source,
-			alpha_mode = ?self.config.window_capture_alpha_mode,
-			target_window_id = self.frozen_transition_target_window_id,
-			preview_source = self.frozen_transition_preview_source,
-			message,
-			since_begin_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_started_at, now),
-			since_preview_ms =
-				self.frozen_transition_elapsed_ms_since(self.frozen_transition_preview_committed_at, now),
-			"Frozen transition was aborted before completion."
-		);
-
-		self.log_frozen_transition_timing_info(FrozenTransitionTimingInfo {
-			op: "overlay.freeze_transition_aborted",
-			monitor: None,
-			reason: None,
-			source: None,
-			snapshot_age_ms: None,
-			grace_ms: None,
-			captured_window_id: None,
-			message: "Frozen transition was aborted before completion.",
-		});
 	}
 
 	#[cfg(target_os = "macos")]
@@ -4024,9 +3579,9 @@ impl OverlaySession {
 		self.toolbar_window_visible = false;
 		self.toolbar_window_drawn_once = false;
 		self.toolbar_badge_slot_ready = false;
-		self.frozen_transition_press_pending_at = None;
-		self.frozen_transition_toolbar_first_draw_at = None;
-		self.frozen_transition_badge_slot_armed_at = None;
+
+		self.frozen_transition.clear_exit_window_runtime();
+
 		#[cfg(target_os = "macos")]
 		{
 			self.toolbar_window_cursor_hittest_enabled = false;
@@ -4198,17 +3753,6 @@ impl Drop for MacOSOverlayCursorRectSupport {
 
 		macos_remove_overlay_cursor_view(self.view_key);
 	}
-}
-
-struct FrozenTransitionTimingInfo {
-	op: &'static str,
-	monitor: Option<MonitorRect>,
-	reason: Option<&'static str>,
-	source: Option<&'static str>,
-	snapshot_age_ms: Option<u128>,
-	grace_ms: Option<u128>,
-	captured_window_id: Option<u32>,
-	message: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

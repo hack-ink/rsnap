@@ -396,7 +396,7 @@ impl OverlaySession {
 			};
 		}
 
-		let Some(started_at) = self.frozen_transition_started_at else {
+		let Some(started_at) = self.frozen_transition_started_at() else {
 			return FrozenCaptureBackendUpdate::none();
 		};
 		let Some(elapsed) = now.checked_duration_since(started_at) else {
