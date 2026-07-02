@@ -34,6 +34,7 @@ mod rendering;
 mod runtime_model;
 mod scroll_capture_runtime;
 mod scroll_input_runtime;
+mod scroll_preview_geometry;
 mod scroll_preview_runtime;
 mod scroll_runtime;
 mod session_bootstrap_runtime;
@@ -326,9 +327,6 @@ const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LOUPE_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LIVE_DRAG_START_THRESHOLD_PX: f32 = 6.0;
 const INTERACTIVE_REPAINT_TARGET_FPS: f32 = 120.0;
-const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
-const SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS: f64 = 360.0;
-const SCROLL_PREVIEW_WINDOW_MARGIN_POINTS: i32 = 16;
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
 #[cfg(not(target_os = "macos"))]
@@ -337,7 +335,6 @@ const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
 const SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL: Duration = Duration::from_millis(60);
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE: Duration = Duration::from_millis(180);
-const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
 /// Transitional Rust-core session controller that owns product state, rendering,
 /// explicit host requests, and host-sync state consumed by the native app host.
 pub struct OverlaySession {

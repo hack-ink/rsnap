@@ -5,7 +5,7 @@ use image::{
 	imageops::{self, FilterType},
 };
 
-use crate::overlay::SCROLL_CAPTURE_PREVIEW_WIDTH_PX;
+use crate::overlay::scroll_preview_geometry::SCROLL_CAPTURE_PREVIEW_WIDTH_PX;
 
 pub(super) fn resize_scroll_preview_segment(segment: &RgbaImage) -> RgbaImage {
 	if segment.width() <= SCROLL_CAPTURE_PREVIEW_WIDTH_PX {
