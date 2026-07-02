@@ -8,11 +8,13 @@ use wgpu::SurfaceConfiguration;
 
 use crate::overlay::rendering::overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED;
 use crate::overlay::rendering::{GpuContext, ScrollPreviewView, WindowRenderer};
+use crate::overlay::scroll_preview_geometry::{
+	SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS, SCROLL_PREVIEW_WINDOW_WIDTH_POINTS,
+};
 use crate::overlay::{
 	AcquiredSurfaceFrame, ActiveEventLoop, Align, Arc, CentralPanel, Color32, ColorImage,
 	CornerRadius, CurrentSurfaceTexture, FontDefinitions, Frame, FullOutput, HudTheme, Layout,
-	LoadOp, LogicalSize, Margin, PhysicalSize, Renderer, Result, RgbaImage,
-	SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS, SCROLL_PREVIEW_WINDOW_WIDTH_POINTS, ScreenDescriptor,
+	LoadOp, LogicalSize, Margin, PhysicalSize, Renderer, Result, RgbaImage, ScreenDescriptor,
 	StoreOp, Stroke, Surface, SurfaceFrameSkipReason, TextureHandle, TextureOptions,
 	TextureViewDescriptor, Vec2, ViewportId, Visuals, WindowEvent, WindowLevel, WrapErr, eyre,
 	image_helpers,
