@@ -6,6 +6,8 @@ use winit::keyboard::Key;
 
 use rsnap_capture_core::{OutputNaming, PreparedHostEffectRequest};
 
+const SELECTION_FLOW_CORE_WIDTH_PX: f32 = 2.4;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Selects how the live HUD should be positioned.
 pub enum HudAnchor {
@@ -126,6 +128,30 @@ pub struct OverlayConfig {
 	pub window_capture_alpha_mode: WindowCaptureAlphaMode,
 	/// Current-process windows that should remain capturable while the rest of Rsnap stays excluded.
 	pub self_capture_exception_window_ids: Vec<u32>,
+}
+impl Default for OverlayConfig {
+	fn default() -> Self {
+		Self {
+			hud_anchor: HudAnchor::Cursor,
+			show_alt_hint_keycap: true,
+			show_hud_blur: true,
+			selection_flow_enabled: true,
+			selection_flow_stroke_width_px: SELECTION_FLOW_CORE_WIDTH_PX,
+			hud_opaque: false,
+			hud_opacity: 0.35,
+			hud_fog_amount: 0.16,
+			hud_milk_amount: 0.0,
+			hud_tint_hue: 0.585,
+			toolbar_placement: ToolbarPlacement::Bottom,
+			loupe_sample_side_px: 21,
+			theme_mode: ThemeMode::System,
+			output_dir: PathBuf::from("."),
+			output_filename_prefix: String::from("Rsnap"),
+			output_naming: OutputNaming::Timestamp,
+			window_capture_alpha_mode: WindowCaptureAlphaMode::Background,
+			self_capture_exception_window_ids: Vec::new(),
+		}
+	}
 }
 
 #[derive(Clone, Debug, PartialEq)]
