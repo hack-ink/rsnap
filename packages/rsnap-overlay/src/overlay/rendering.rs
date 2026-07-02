@@ -4,6 +4,11 @@ mod hud_surface;
 mod scroll_preview_window;
 mod window_surface;
 
+#[cfg(test)]
+pub(super) use self::affordances::size_badge::{
+	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
+	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
+};
 pub(super) use self::{hud_surface::HudPillGeometry, scroll_preview_window::ScrollPreviewWindow};
 
 use egui::Context;
