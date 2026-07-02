@@ -1,8 +1,10 @@
+use crate::overlay::scroll_preview_geometry::{
+	SCROLL_CAPTURE_PREVIEW_WIDTH_PX, SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS,
+	SCROLL_PREVIEW_WINDOW_MARGIN_POINTS, SCROLL_PREVIEW_WINDOW_WIDTH_POINTS,
+};
 use crate::overlay::{
 	ElementState, MonitorRect, MouseButton, OverlayControl, OverlayExit, OverlaySession, Pos2,
-	Rect, RgbaImage, SCROLL_CAPTURE_PREVIEW_WIDTH_PX, SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS,
-	SCROLL_PREVIEW_WINDOW_MARGIN_POINTS, SCROLL_PREVIEW_WINDOW_WIDTH_POINTS, ScrollPreviewView,
-	Vec2, WindowEvent, WindowId, hud_helpers, scroll_capture,
+	Rect, RgbaImage, ScrollPreviewView, Vec2, WindowEvent, WindowId, hud_helpers, scroll_capture,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{LogicalPosition, LogicalSize};
