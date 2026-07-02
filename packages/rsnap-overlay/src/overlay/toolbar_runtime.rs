@@ -1,7 +1,7 @@
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
-	self, Arc, Duration, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant,
-	MonitorRect, OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
+	Arc, Duration, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant, MonitorRect,
+	OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
 	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2, WindowId,
 	WindowRenderer,
 };
@@ -468,7 +468,7 @@ impl OverlaySession {
 
 				self.configure_hud_window_common(
 					window.as_ref(),
-					Some(overlay::toolbar_layout_model::frozen_toolbar_corner_radius_points(
+					Some(toolbar_layout_model::frozen_toolbar_corner_radius_points(
 						toolbar_height_points,
 					)),
 				);

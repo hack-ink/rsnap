@@ -5,8 +5,10 @@ use winit::window::WindowId;
 #[cfg(target_os = "macos")]
 use crate::backend;
 #[cfg(target_os = "macos")]
+use crate::overlay;
+#[cfg(target_os = "macos")]
 use crate::overlay::OverlayWorker;
-use crate::overlay::{self, toolbar_layout_model};
+use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	Arc, Instant, LOUPE_TILE_CORNER_RADIUS_POINTS, OverlayConfig, OverlayMode, OverlaySession,
 	WindowRenderer,
