@@ -3,12 +3,12 @@
 	reason = "XY-113 narrows the public crate facade while leaving ScreenCaptureKit implementation cleanup to a separate follow-up lane."
 )]
 
+mod live_frame_buffer;
+
 use std::collections::VecDeque;
-use std::ops::Deref;
 use std::process;
 use std::ptr;
 use std::ptr::NonNull;
-use std::slice;
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicU64, Ordering},
@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
-use image::Rgba;
 use image::RgbaImage;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -27,20 +26,15 @@ use objc2::{AnyThread, DefinedClass, Message};
 use objc2_core_foundation::{self, CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_media::{CMSampleBuffer, kCMTimeZero};
 use objc2_core_video::CVPixelBufferCreate;
-use objc2_core_video::CVPixelBufferGetHeight;
-use objc2_core_video::CVPixelBufferGetWidth;
-use objc2_core_video::{
-	CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
-	CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
-	kCVReturnSuccess,
-};
 use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
 use objc2_screen_capture_kit::{
 	SCContentFilter, SCDisplay, SCRunningApplication, SCShareableContent, SCStream,
 	SCStreamConfiguration, SCStreamDelegate, SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
-use crate::macos_color;
+use self::live_frame_buffer::{
+	OrderedRegionFrame, QueuedPixelBufferFrame, SharedPixelBuffer, SharedQueuedPixelBufferFrames,
+};
 use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb};
 
 objc2::define_class!(
@@ -133,12 +127,6 @@ const STREAM_POST_SETUP_FRAME_GRACE: Duration = STREAM_SETUP_BACKOFF;
 const STREAM_ERROR_TIMEOUT_CODE: isize = 1;
 const STREAM_ERROR_NULL_CONTENT_CODE: isize = 2;
 const STREAM_ERROR_RETAIN_FAILED_CODE: isize = 3;
-
-pub(crate) struct OrderedRegionFrame {
-	pub(crate) frame_seq: u64,
-	pub(crate) captured_at: Instant,
-	pub(crate) image: RgbaImage,
-}
 
 pub(crate) struct LiveCursorFrameSample {
 	pub(crate) sample: LiveCursorSample,
@@ -404,7 +392,7 @@ impl MacLiveFrameStream {
 	) -> Option<LiveCursorFrameSample> {
 		let sample =
 			self.shared_latest_frame.latest_frame_for_monitor(monitor.id).and_then(|frame| {
-				let sample = sample_cursor_from_pixel_buffer(
+				let sample = self::live_frame_buffer::sample_cursor_from_pixel_buffer(
 					&frame.pixel_buffer,
 					request.x_px,
 					request.y_px,
@@ -444,9 +432,14 @@ impl MacLiveFrameStream {
 
 			return None;
 		};
-		let (width_px, height_px) = pixel_buffer_size_px(&frame.pixel_buffer)?;
-		let image =
-			rgba_image_from_pixel_buffer(&frame.pixel_buffer, width_px, height_px, monitor.id)?;
+		let (width_px, height_px) =
+			self::live_frame_buffer::pixel_buffer_size_px(&frame.pixel_buffer)?;
+		let image = self::live_frame_buffer::rgba_image_from_pixel_buffer(
+			&frame.pixel_buffer,
+			width_px,
+			height_px,
+			monitor.id,
+		)?;
 
 		Some(Arc::new(MonitorImageSnapshot {
 			captured_at: frame.captured_at,
@@ -538,7 +531,11 @@ impl MacLiveFrameStream {
 		}
 
 		let stream_rect_px = self.stream_rect_for_requested_region(rect_px)?;
-		let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
+		let frames =
+			crate::live_frame_stream_macos::live_frame_buffer::ordered_rgba_regions_from_frames(
+				frames,
+				stream_rect_px,
+			);
 
 		(!frames.is_empty()).then_some(frames)
 	}
@@ -661,37 +658,6 @@ struct StreamCaptureRegion {
 #[derive(Clone, Debug, Default)]
 struct StreamFilterConfig {
 	self_capture_exception_window_ids: Vec<u32>,
-}
-
-#[derive(Clone)]
-struct SharedPixelBuffer(CFRetained<CVPixelBuffer>);
-// Safety: CoreVideo pixel buffers are retained CF objects. This wrapper only exposes
-// immutable queries plus read-only base-address locks, so sharing retained references
-// across threads does not permit unsynchronized mutation from Rust.
-unsafe impl Send for SharedPixelBuffer {}
-
-impl Deref for SharedPixelBuffer {
-	type Target = CFRetained<CVPixelBuffer>;
-
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-unsafe impl Sync for SharedPixelBuffer {}
-
-#[derive(Clone)]
-struct QueuedPixelBufferFrame {
-	frame_seq: u64,
-	stream_generation: u64,
-	captured_at: Instant,
-	pixel_buffer: SharedPixelBuffer,
-}
-
-#[derive(Clone)]
-struct SharedQueuedPixelBufferFrames {
-	monitor_id: u32,
-	frames: VecDeque<QueuedPixelBufferFrame>,
 }
 
 #[derive(Default)]
@@ -1366,18 +1332,6 @@ struct RefreshStreamArgs<'a> {
 	shared_latest_frame: Arc<SharedLatestFrame>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StreamCaptureTarget {
-	FullMonitor,
-	Region(StreamCaptureRegion),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StreamFilterMode {
-	ExcludeCurrentProcess,
-	ExcludeCurrentProcessShareableWindows,
-}
-
 struct PreparedStreamFilter {
 	filter_mode: StreamFilterMode,
 	filter: Retained<SCContentFilter>,
@@ -1403,6 +1357,63 @@ struct StartedStreamArtifacts {
 	stream_init_ms: u128,
 	add_output_ms: u128,
 	start_capture_ms: u128,
+}
+
+impl StreamOutput {
+	fn new(
+		monitor_id: u32,
+		stream_generation: u64,
+		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
+		frame_seq_counter: Arc<AtomicU64>,
+		shared_latest_frame: Arc<SharedLatestFrame>,
+	) -> Retained<Self> {
+		let this = Self::alloc().set_ivars(StreamOutputIvars::new(
+			monitor_id,
+			stream_generation,
+			frame_waker,
+			frame_seq_counter,
+			shared_latest_frame,
+		));
+
+		unsafe { objc2::msg_send![super(this), init] }
+	}
+
+	fn latest_frame(&self) -> Option<QueuedPixelBufferFrame> {
+		match self.ivars().frames.lock() {
+			Ok(guard) => guard.back().cloned(),
+			Err(poisoned) => poisoned.into_inner().back().cloned(),
+		}
+	}
+
+	fn latest_pixel_buffer(&self) -> Option<SharedPixelBuffer> {
+		self.latest_frame().map(|frame| frame.pixel_buffer)
+	}
+
+	fn queued_frames_after_seq(&self, after_frame_seq: u64) -> Vec<QueuedPixelBufferFrame> {
+		match self.ivars().frames.lock() {
+			Ok(guard) => {
+				guard.iter().filter(|frame| frame.frame_seq > after_frame_seq).cloned().collect()
+			},
+			Err(poisoned) => poisoned
+				.into_inner()
+				.iter()
+				.filter(|frame| frame.frame_seq > after_frame_seq)
+				.cloned()
+				.collect(),
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamCaptureTarget {
+	FullMonitor,
+	Region(StreamCaptureRegion),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamFilterMode {
+	ExcludeCurrentProcess,
+	ExcludeCurrentProcessShareableWindows,
 }
 
 enum WorkerRequest {
@@ -1452,51 +1463,6 @@ enum StreamReuseDecision {
 	SetupFresh,
 	ReuseCurrent,
 	RetryUpgradeUsingCurrent,
-}
-
-impl StreamOutput {
-	fn new(
-		monitor_id: u32,
-		stream_generation: u64,
-		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-		frame_seq_counter: Arc<AtomicU64>,
-		shared_latest_frame: Arc<SharedLatestFrame>,
-	) -> Retained<Self> {
-		let this = Self::alloc().set_ivars(StreamOutputIvars::new(
-			monitor_id,
-			stream_generation,
-			frame_waker,
-			frame_seq_counter,
-			shared_latest_frame,
-		));
-
-		unsafe { objc2::msg_send![super(this), init] }
-	}
-
-	fn latest_frame(&self) -> Option<QueuedPixelBufferFrame> {
-		match self.ivars().frames.lock() {
-			Ok(guard) => guard.back().cloned(),
-			Err(poisoned) => poisoned.into_inner().back().cloned(),
-		}
-	}
-
-	fn latest_pixel_buffer(&self) -> Option<SharedPixelBuffer> {
-		self.latest_frame().map(|frame| frame.pixel_buffer)
-	}
-
-	fn queued_frames_after_seq(&self, after_frame_seq: u64) -> Vec<QueuedPixelBufferFrame> {
-		match self.ivars().frames.lock() {
-			Ok(guard) => {
-				guard.iter().filter(|frame| frame.frame_seq > after_frame_seq).cloned().collect()
-			},
-			Err(poisoned) => poisoned
-				.into_inner()
-				.iter()
-				.filter(|frame| frame.frame_seq > after_frame_seq)
-				.cloned()
-				.collect(),
-		}
-	}
 }
 
 fn stream_rect_for_requested_region(
@@ -1835,7 +1801,7 @@ fn reply_with_sample_cursor(
 	);
 	let rgb = state.as_ref().and_then(|stream_state| {
 		stream_state.output.latest_pixel_buffer().and_then(|pixel_buffer| {
-			sample_cursor_from_pixel_buffer(
+			self::live_frame_buffer::sample_cursor_from_pixel_buffer(
 				&pixel_buffer,
 				x_px,
 				y_px,
@@ -1874,9 +1840,14 @@ fn reply_with_latest_rgba_snapshot(
 	);
 	let snapshot = state.as_ref().and_then(|stream_state| {
 		let frame = stream_state.output.latest_frame()?;
-		let (width_px, height_px) = pixel_buffer_size_px(&frame.pixel_buffer)?;
-		let image =
-			rgba_image_from_pixel_buffer(&frame.pixel_buffer, width_px, height_px, monitor.id)?;
+		let (width_px, height_px) =
+			self::live_frame_buffer::pixel_buffer_size_px(&frame.pixel_buffer)?;
+		let image = self::live_frame_buffer::rgba_image_from_pixel_buffer(
+			&frame.pixel_buffer,
+			width_px,
+			height_px,
+			monitor.id,
+		)?;
 
 		Some(Arc::new(MonitorImageSnapshot {
 			captured_at: frame.captured_at,
@@ -2194,7 +2165,10 @@ fn latest_fresh_rgba_region(
 	if let Some(frame) = stream_state.output.latest_frame()
 		&& now.saturating_duration_since(frame.captured_at) <= STREAM_REGION_FRAME_MAX_AGE
 	{
-		return rgba_region_from_pixel_buffer(&frame.pixel_buffer, stream_rect_px);
+		return self::live_frame_buffer::rgba_region_from_pixel_buffer(
+			&frame.pixel_buffer,
+			stream_rect_px,
+		);
 	}
 
 	let _ = refresh_stream(RefreshStreamArgs {
@@ -2216,7 +2190,10 @@ fn latest_fresh_rgba_region(
 		if let Some(frame) = stream_state.output.latest_frame()
 			&& frame.captured_at >= min_captured_at
 		{
-			return rgba_region_from_pixel_buffer(&frame.pixel_buffer, stream_rect_px);
+			return self::live_frame_buffer::rgba_region_from_pixel_buffer(
+				&frame.pixel_buffer,
+				stream_rect_px,
+			);
 		}
 
 		if Instant::now() >= deadline {
@@ -2255,7 +2232,7 @@ fn ordered_queued_rgba_regions_after_seq_nonblocking(
 	);
 	let stream_state = state.as_ref()?;
 	let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
-	let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
+	let frames = self::live_frame_buffer::ordered_rgba_regions_from_frames(frames, stream_rect_px);
 
 	(!frames.is_empty()).then_some(frames)
 }
@@ -2288,7 +2265,7 @@ fn ordered_fresh_rgba_regions_after_seq(
 	);
 	let stream_state = state.as_ref()?;
 	let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
-	let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
+	let frames = self::live_frame_buffer::ordered_rgba_regions_from_frames(frames, stream_rect_px);
 
 	if !frames.is_empty() {
 		return Some(frames);
@@ -2310,7 +2287,8 @@ fn ordered_fresh_rgba_regions_after_seq(
 
 			let stream_state = state.as_ref()?;
 			let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
-			let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
+			let frames =
+				self::live_frame_buffer::ordered_rgba_regions_from_frames(frames, stream_rect_px);
 
 			if !frames.is_empty() {
 				return Some(frames);
@@ -2334,7 +2312,8 @@ fn ordered_fresh_rgba_regions_after_seq(
 	loop {
 		let stream_state = state.as_ref()?;
 		let frames = fresh_queued_frames_after_seq(&stream_state.output, after_frame_seq);
-		let frames = ordered_rgba_regions_from_frames(frames, stream_rect_px);
+		let frames =
+			self::live_frame_buffer::ordered_rgba_regions_from_frames(frames, stream_rect_px);
 
 		if !frames.is_empty() {
 			return Some(frames);
@@ -3060,244 +3039,6 @@ fn sample_handler_queue_label(monitor_id: u32) -> String {
 	format!("io.hackink.rsnap.scroll-capture.sample-handler.monitor-{monitor_id}")
 }
 
-fn pixel_buffer_size_px(pixel_buffer: &CFRetained<CVPixelBuffer>) -> Option<(u32, u32)> {
-	let width = CVPixelBufferGetWidth(pixel_buffer);
-	let height = CVPixelBufferGetHeight(pixel_buffer);
-	let width = u32::try_from(width).ok()?;
-	let height = u32::try_from(height).ok()?;
-
-	Some((width, height))
-}
-
-fn sample_cursor_from_pixel_buffer(
-	pixel_buffer: &CFRetained<CVPixelBuffer>,
-	x_px: u32,
-	y_px: u32,
-	want_patch: bool,
-	patch_width_px: u32,
-	patch_height_px: u32,
-) -> Option<LiveCursorSample> {
-	let (width, height) = pixel_buffer_size_px(pixel_buffer)?;
-	let lock_result =
-		unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
-
-	if lock_result != kCVReturnSuccess {
-		return None;
-	}
-
-	let out = (|| {
-		let base = CVPixelBufferGetBaseAddress(pixel_buffer) as *const u8;
-
-		if base.is_null() {
-			return None;
-		}
-
-		let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
-		let byte_len = (height as usize).saturating_mul(bytes_per_row);
-		let bytes = unsafe { slice::from_raw_parts(base, byte_len) };
-
-		sample_cursor_from_bgra_bytes(
-			bytes,
-			bytes_per_row,
-			width,
-			height,
-			x_px,
-			y_px,
-			want_patch,
-			patch_width_px,
-			patch_height_px,
-		)
-	})();
-	let _ =
-		unsafe { CVPixelBufferUnlockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
-
-	out
-}
-
-#[allow(clippy::too_many_arguments)]
-fn sample_cursor_from_bgra_bytes(
-	bytes: &[u8],
-	bytes_per_row: usize,
-	width_px: u32,
-	height_px: u32,
-	x_px: u32,
-	y_px: u32,
-	want_patch: bool,
-	patch_width_px: u32,
-	patch_height_px: u32,
-) -> Option<LiveCursorSample> {
-	if x_px >= width_px || y_px >= height_px {
-		return None;
-	}
-
-	let offset = (y_px as usize).saturating_mul(bytes_per_row).saturating_add((x_px as usize) * 4);
-	let b = *bytes.get(offset)?;
-	let g = *bytes.get(offset + 1)?;
-	let r = *bytes.get(offset + 2)?;
-	let _a = *bytes.get(offset + 3)?;
-	let rgb = Some(Rgb::new(r, g, b));
-	let patch = if want_patch {
-		let out_patch_w = patch_width_px.max(1);
-		let out_patch_h = patch_height_px.max(1);
-		let half_w = (out_patch_w as i32) / 2;
-		let half_h = (out_patch_h as i32) / 2;
-		let center_x = x_px as i32;
-		let center_y = y_px as i32;
-		let in_w = width_px as i32;
-		let in_h = height_px as i32;
-		let mut out_patch = RgbaImage::new(out_patch_w, out_patch_h);
-
-		for oy in 0..(out_patch_h as i32) {
-			let iy = (center_y - half_h + oy).clamp(0, in_h.saturating_sub(1));
-
-			for ox in 0..(out_patch_w as i32) {
-				let ix = (center_x - half_w + ox).clamp(0, in_w.saturating_sub(1));
-				let offset =
-					(iy as usize).saturating_mul(bytes_per_row).saturating_add((ix as usize) * 4);
-				let b = *bytes.get(offset)?;
-				let g = *bytes.get(offset + 1)?;
-				let r = *bytes.get(offset + 2)?;
-				let a = *bytes.get(offset + 3)?;
-
-				out_patch.put_pixel(ox as u32, oy as u32, Rgba([r, g, b, a]));
-			}
-		}
-
-		Some(out_patch)
-	} else {
-		None
-	};
-
-	Some(LiveCursorSample { rgb, patch })
-}
-
-fn rgba_image_from_pixel_buffer(
-	pixel_buffer: &CFRetained<CVPixelBuffer>,
-	width_px: u32,
-	height_px: u32,
-	display_id: u32,
-) -> Option<RgbaImage> {
-	if let Some(image) = macos_color::rgba_image_from_pixel_buffer_color_managed(
-		pixel_buffer,
-		width_px,
-		height_px,
-		Some(display_id),
-	) {
-		return Some(image);
-	}
-
-	let lock_result =
-		unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
-
-	if lock_result != kCVReturnSuccess {
-		return None;
-	}
-
-	let out = (|| {
-		let base = CVPixelBufferGetBaseAddress(pixel_buffer) as *const u8;
-
-		if base.is_null() {
-			return None;
-		}
-
-		let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
-		let mut out = RgbaImage::new(width_px.max(1), height_px.max(1));
-		let out_w = out.width() as usize;
-		let out_h = out.height() as usize;
-
-		for y in 0..out_h {
-			let row = unsafe { slice::from_raw_parts(base.add(y * bytes_per_row), bytes_per_row) };
-
-			for x in 0..out_w {
-				let idx = x * 4;
-				let b = row.get(idx).copied().unwrap_or(0);
-				let g = row.get(idx + 1).copied().unwrap_or(0);
-				let r = row.get(idx + 2).copied().unwrap_or(0);
-				let a = row.get(idx + 3).copied().unwrap_or(255);
-
-				out.put_pixel(x as u32, y as u32, Rgba([r, g, b, a]));
-			}
-		}
-
-		Some(out)
-	})();
-	let _ =
-		unsafe { CVPixelBufferUnlockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
-
-	out
-}
-
-fn rgba_region_from_pixel_buffer(
-	pixel_buffer: &CFRetained<CVPixelBuffer>,
-	rect_px: RectPoints,
-) -> Option<RgbaImage> {
-	let (buffer_width_px, buffer_height_px) = pixel_buffer_size_px(pixel_buffer)?;
-	let width_px = rect_px.width.max(1).min(buffer_width_px.max(1));
-	let height_px = rect_px.height.max(1).min(buffer_height_px.max(1));
-	let x_px = rect_px.x.min(buffer_width_px.saturating_sub(width_px));
-	let y_px = rect_px.y.min(buffer_height_px.saturating_sub(height_px));
-	let lock_result =
-		unsafe { CVPixelBufferLockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
-
-	if lock_result != kCVReturnSuccess {
-		return None;
-	}
-
-	let out = (|| {
-		let base = CVPixelBufferGetBaseAddress(pixel_buffer) as *const u8;
-
-		if base.is_null() {
-			return None;
-		}
-
-		let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
-		let mut out = RgbaImage::new(width_px.max(1), height_px.max(1));
-		let out_w = out.width() as usize;
-		let out_h = out.height() as usize;
-		let src_x = x_px as usize;
-		let src_y = y_px as usize;
-
-		for y in 0..out_h {
-			let row_offset = (src_y + y).saturating_mul(bytes_per_row);
-			let row = unsafe { slice::from_raw_parts(base.add(row_offset), bytes_per_row) };
-
-			for x in 0..out_w {
-				let idx = (src_x + x).saturating_mul(4);
-				let b = row.get(idx).copied().unwrap_or(0);
-				let g = row.get(idx + 1).copied().unwrap_or(0);
-				let r = row.get(idx + 2).copied().unwrap_or(0);
-				let a = row.get(idx + 3).copied().unwrap_or(255);
-
-				out.put_pixel(x as u32, y as u32, Rgba([r, g, b, a]));
-			}
-		}
-
-		Some(out)
-	})();
-	let _ =
-		unsafe { CVPixelBufferUnlockBaseAddress(pixel_buffer, CVPixelBufferLockFlags::ReadOnly) };
-
-	out
-}
-
-fn ordered_rgba_regions_from_frames(
-	frames: Vec<QueuedPixelBufferFrame>,
-	rect_px: RectPoints,
-) -> Vec<OrderedRegionFrame> {
-	frames
-		.into_iter()
-		.filter_map(|frame| {
-			let image = rgba_region_from_pixel_buffer(&frame.pixel_buffer, rect_px)?;
-
-			Some(OrderedRegionFrame {
-				frame_seq: frame.frame_seq,
-				captured_at: frame.captured_at,
-				image,
-			})
-		})
-		.collect()
-}
-
 fn fresh_queued_frames_after_seq(
 	output: &StreamOutput,
 	after_frame_seq: u64,
@@ -3323,7 +3064,6 @@ mod tests {
 	use objc2_core_video::{CVPixelBufferCreate, kCVPixelFormatType_32BGRA, kCVReturnSuccess};
 
 	use crate::live_frame_stream_macos::{self, STREAM_POST_SETUP_FRAME_GRACE, StreamFilterMode};
-	use crate::state::Rgb;
 
 	fn test_pixel_buffer() -> live_frame_stream_macos::SharedPixelBuffer {
 		let mut buffer = ptr::null_mut();
@@ -3889,52 +3629,5 @@ mod tests {
 			live_frame_stream_macos::sample_handler_queue_label(7),
 			live_frame_stream_macos::sample_handler_queue_label(9)
 		);
-	}
-
-	#[test]
-	fn sample_cursor_from_bgra_bytes_reads_rgb_without_patch() {
-		let sample = live_frame_stream_macos::sample_cursor_from_bgra_bytes(
-			&[
-				1, 2, 3, 255, 11, 12, 13, 254, //
-				21, 22, 23, 253, 31, 32, 33, 252,
-			],
-			8,
-			2,
-			2,
-			1,
-			0,
-			false,
-			0,
-			0,
-		)
-		.expect("sample should exist inside bounds");
-
-		assert_eq!(sample.rgb, Some(Rgb::new(13, 12, 11)));
-		assert!(sample.patch.is_none());
-	}
-
-	#[test]
-	fn sample_cursor_from_bgra_bytes_clamps_patch_edges() {
-		let sample = live_frame_stream_macos::sample_cursor_from_bgra_bytes(
-			&[
-				1, 2, 3, 255, 11, 12, 13, 254, //
-				21, 22, 23, 253, 31, 32, 33, 252,
-			],
-			8,
-			2,
-			2,
-			0,
-			0,
-			true,
-			3,
-			3,
-		)
-		.expect("sample should exist inside bounds");
-		let patch = sample.patch.expect("patch should be present");
-
-		assert_eq!(patch.dimensions(), (3, 3));
-		assert_eq!(patch.get_pixel(0, 0).0, [3, 2, 1, 255]);
-		assert_eq!(patch.get_pixel(1, 0).0, [3, 2, 1, 255]);
-		assert_eq!(patch.get_pixel(2, 2).0, [33, 32, 31, 252]);
 	}
 }
