@@ -13,6 +13,7 @@ use winit::event::{ElementState, Ime, MouseButton};
 use winit::keyboard::{Key, ModifiersState, NamedKey, NativeKey};
 
 use crate::overlay::MacOSFrontmostApplication;
+use crate::overlay::macos_cursor_runtime::{self, MacOSOverlayPoint};
 use crate::overlay::{
 	CursorIcon, GlobalPoint, MacOSNativeCaptureInputDispatch, MacOSNativeCaptureInputEvent,
 	MacOSNativeCaptureScrollDelta, MonitorRect, OverlayKeyboardInputEvent, OverlayMode,
@@ -446,7 +447,7 @@ impl From<NSSize> for MacOSSize {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct MacOSRect {
-	origin: super::MacOSOverlayPoint,
+	origin: MacOSOverlayPoint,
 	size: MacOSSize,
 }
 unsafe impl Encode for MacOSRect {
@@ -458,7 +459,7 @@ unsafe impl Encode for MacOSRect {
 impl From<NSRect> for MacOSRect {
 	fn from(value: NSRect) -> Self {
 		Self {
-			origin: super::MacOSOverlayPoint { x: value.origin.x, y: value.origin.y },
+			origin: MacOSOverlayPoint { x: value.origin.x, y: value.origin.y },
 			size: MacOSSize::from(value.size),
 		}
 	}
@@ -1065,7 +1066,7 @@ fn macos_passive_shell_view_class() -> *const Class {
 			decl.add_method(
 				objc::sel!(hitTest:),
 				macos_passive_shell_view_hit_test
-					as extern "C" fn(&Object, Sel, super::MacOSOverlayPoint) -> *mut Object,
+					as extern "C" fn(&Object, Sel, MacOSOverlayPoint) -> *mut Object,
 			);
 			decl.add_method(
 				objc::sel!(drawRect:),
@@ -1212,7 +1213,7 @@ fn macos_key_focus_shell_view_class() -> *const Class {
 			decl.add_method(
 				objc::sel!(characterIndexForPoint:),
 				macos_key_focus_shell_view_character_index_for_point
-					as extern "C" fn(&Object, Sel, super::MacOSOverlayPoint) -> usize,
+					as extern "C" fn(&Object, Sel, MacOSOverlayPoint) -> usize,
 			);
 			decl.add_method(
 				objc::sel!(firstRectForCharacterRange:actualRange:),
@@ -1266,7 +1267,7 @@ extern "C" fn macos_passive_shell_view_accepts_first_mouse(
 extern "C" fn macos_passive_shell_view_hit_test(
 	this: &Object,
 	_cmd: Sel,
-	_point: super::MacOSOverlayPoint,
+	_point: MacOSOverlayPoint,
 ) -> *mut Object {
 	this as *const Object as *mut Object
 }
@@ -1298,10 +1299,10 @@ extern "C" fn macos_passive_shell_view_reset_cursor_rects(this: &Object, _cmd: S
 	};
 	let cursor = match callback {
 		MacOSPassiveShellCallback::Overlay { .. } => {
-			super::macos_cursor_object_for_icon(CursorIcon::Crosshair)
+			macos_cursor_runtime::macos_cursor_object_for_icon(CursorIcon::Crosshair)
 		},
 		MacOSPassiveShellCallback::Toolbar { .. } | MacOSPassiveShellCallback::KeyFocus { .. } => {
-			super::macos_cursor_object_for_icon(CursorIcon::Default)
+			macos_cursor_runtime::macos_cursor_object_for_icon(CursorIcon::Default)
 		},
 	};
 
@@ -1342,10 +1343,10 @@ extern "C" fn macos_passive_shell_view_cursor_update(
 
 	match callback {
 		MacOSPassiveShellCallback::Overlay { .. } => {
-			super::macos_set_cursor_icon(CursorIcon::Crosshair);
+			macos_cursor_runtime::macos_set_cursor_icon(CursorIcon::Crosshair);
 		},
 		MacOSPassiveShellCallback::Toolbar { .. } => {
-			super::macos_set_cursor_icon(CursorIcon::Default);
+			macos_cursor_runtime::macos_set_cursor_icon(CursorIcon::Default);
 		},
 		MacOSPassiveShellCallback::KeyFocus { .. } => {},
 	}
@@ -1742,7 +1743,7 @@ extern "C" fn macos_key_focus_shell_view_attributed_substring_for_proposed_range
 extern "C" fn macos_key_focus_shell_view_character_index_for_point(
 	_this: &Object,
 	_cmd: Sel,
-	_point: super::MacOSOverlayPoint,
+	_point: MacOSOverlayPoint,
 ) -> usize {
 	0
 }
@@ -1849,12 +1850,12 @@ fn macos_dispatch_shell_pointer_moved(this: &Object, event: *mut Object) {
 				Some(local_point),
 			);
 
-			super::macos_set_cursor_icon(CursorIcon::Crosshair);
+			macos_cursor_runtime::macos_set_cursor_icon(CursorIcon::Crosshair);
 		},
 		MacOSPassiveShellCallback::Toolbar { .. } => {
 			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
 
-			super::macos_set_cursor_icon(CursorIcon::Default);
+			macos_cursor_runtime::macos_set_cursor_icon(CursorIcon::Default);
 		},
 		MacOSPassiveShellCallback::KeyFocus { .. } => {
 			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
@@ -1879,12 +1880,12 @@ fn macos_dispatch_shell_mouse_input(
 		MacOSPassiveShellCallback::Overlay { .. } => {
 			macos_update_passive_shell_cursor_point(this as *const Object as usize, local_point);
 
-			super::macos_set_cursor_icon(CursorIcon::Crosshair);
+			macos_cursor_runtime::macos_set_cursor_icon(CursorIcon::Crosshair);
 		},
 		MacOSPassiveShellCallback::Toolbar { .. } => {
 			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
 
-			super::macos_set_cursor_icon(CursorIcon::Default);
+			macos_cursor_runtime::macos_set_cursor_icon(CursorIcon::Default);
 		},
 		MacOSPassiveShellCallback::KeyFocus { .. } => {
 			macos_update_passive_shell_cursor_point(this as *const Object as usize, None);
@@ -1935,7 +1936,7 @@ fn macos_shell_scroll_delta(event: *mut Object) -> Option<MacOSNativeCaptureScro
 }
 
 fn macos_set_crosshair_cursor() {
-	super::macos_set_cursor_icon(CursorIcon::Crosshair);
+	macos_cursor_runtime::macos_set_cursor_icon(CursorIcon::Crosshair);
 }
 
 fn macos_passive_shell_cursor_points() -> &'static Mutex<HashMap<usize, Option<NSPoint>>> {
