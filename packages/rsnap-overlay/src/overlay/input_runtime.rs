@@ -10,6 +10,7 @@ use winit::keyboard::ModifiersState;
 use crate::overlay::FrozenGlobalHotkey;
 #[cfg(target_os = "macos")]
 use crate::overlay::SLOW_OP_WARN_CURSOR_LOCATION;
+use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource, ElementState,
 	FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
@@ -155,7 +156,7 @@ impl OverlaySession {
 
 	fn toolbar_primary_rect_contains(&self, cursor_local: Pos2) -> bool {
 		#[cfg(target_os = "macos")]
-		let toolbar_primary_origin = super::frozen_toolbar_window_primary_origin();
+		let toolbar_primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 		#[cfg(not(target_os = "macos"))]
 		let toolbar_primary_origin = Pos2::ZERO;
 

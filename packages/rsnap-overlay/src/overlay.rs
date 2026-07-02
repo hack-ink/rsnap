@@ -31,6 +31,7 @@ mod scroll_preview_runtime;
 mod scroll_runtime;
 mod session_bootstrap_runtime;
 mod session_state;
+mod toolbar_layout_model;
 mod toolbar_runtime;
 mod trace_recording;
 mod window_position_runtime;
@@ -2826,12 +2827,18 @@ impl OverlaySession {
 
 		self.toolbar_state.default_slot_position = Some(current_default_pos);
 
-		if frozen_toolbar_matches_default_slot(toolbar_pos, previous_default_pos) {
+		if toolbar_layout_model::frozen_toolbar_matches_default_slot(
+			toolbar_pos,
+			previous_default_pos,
+		) {
 			self.toolbar_state.floating_position = Some(current_default_pos);
 
 			self.sync_frozen_annotation_style_capsule_placement(monitor);
 
-			return !frozen_toolbar_matches_default_slot(toolbar_pos, current_default_pos);
+			return !toolbar_layout_model::frozen_toolbar_matches_default_slot(
+				toolbar_pos,
+				current_default_pos,
+			);
 		}
 
 		self.sync_frozen_annotation_style_capsule_placement(monitor);
@@ -3162,13 +3169,16 @@ impl OverlaySession {
 
 	#[cfg(any(target_os = "macos", test))]
 	fn advance_frozen_toolbar_readiness_sample(&mut self, screen_rect: Rect) -> bool {
-		advance_frozen_toolbar_readiness_sample_state(&mut self.toolbar_state, screen_rect)
+		toolbar_layout_model::advance_frozen_toolbar_readiness_sample_state(
+			&mut self.toolbar_state,
+			screen_rect,
+		)
 	}
 
 	#[cfg(any(not(target_os = "macos"), test))]
 	fn frozen_toolbar_ready_for_draw(&self, screen_rect: Rect) -> bool {
 		let screen_size_points = screen_rect.size();
-		let needs_new_sample = frozen_toolbar_needs_new_sample(
+		let needs_new_sample = toolbar_layout_model::frozen_toolbar_needs_new_sample(
 			self.toolbar_state.layout_last_screen_size_points,
 			screen_size_points,
 		);
@@ -3476,76 +3486,6 @@ impl MacOSNativeCaptureInputDispatch {
 	}
 }
 
-pub(super) fn frozen_toolbar_corner_radius_u8(toolbar_height_points: f32) -> u8 {
-	if toolbar_height_points <= TOOLBAR_EXPANDED_HEIGHT_PX + 0.5 {
-		(toolbar_height_points * 0.5).round().clamp(1.0, f32::from(u8::MAX)) as u8
-	} else {
-		HUD_PILL_CORNER_RADIUS_POINTS
-	}
-}
-
-pub(super) fn frozen_toolbar_corner_radius_points(toolbar_height_points: f32) -> f64 {
-	f64::from(frozen_toolbar_corner_radius_u8(toolbar_height_points))
-}
-
-#[cfg(target_os = "macos")]
-pub(in crate::overlay) fn frozen_toolbar_window_primary_origin() -> Pos2 {
-	Pos2::new(0.0, WindowRenderer::frozen_toolbar_window_top_padding_points())
-}
-
-fn frozen_toolbar_window_startup_size_points() -> Vec2 {
-	[
-		FrozenToolbarState::default(),
-		FrozenToolbarState {
-			selected_tool: FrozenToolbarTool::Pen,
-			..FrozenToolbarState::default()
-		},
-		FrozenToolbarState {
-			selected_tool: FrozenToolbarTool::Arrow,
-			..FrozenToolbarState::default()
-		},
-		FrozenToolbarState {
-			selected_tool: FrozenToolbarTool::Text,
-			..FrozenToolbarState::default()
-		},
-		FrozenToolbarState { auto_center_available: true, ..FrozenToolbarState::default() },
-		FrozenToolbarState { scroll_capture_available: true, ..FrozenToolbarState::default() },
-		FrozenToolbarState {
-			auto_center_available: true,
-			scroll_capture_available: true,
-			..FrozenToolbarState::default()
-		},
-		FrozenToolbarState {
-			selected_tool: FrozenToolbarTool::Pen,
-			auto_center_available: true,
-			scroll_capture_available: true,
-			..FrozenToolbarState::default()
-		},
-		FrozenToolbarState {
-			selected_tool: FrozenToolbarTool::Arrow,
-			auto_center_available: true,
-			scroll_capture_available: true,
-			..FrozenToolbarState::default()
-		},
-		FrozenToolbarState {
-			selected_tool: FrozenToolbarTool::Text,
-			auto_center_available: true,
-			scroll_capture_available: true,
-			..FrozenToolbarState::default()
-		},
-		FrozenToolbarState {
-			scroll_capture_active: true,
-			scroll_capture_available: true,
-			..FrozenToolbarState::default()
-		},
-	]
-	.into_iter()
-	.map(|toolbar_state| WindowRenderer::frozen_toolbar_size(&toolbar_state))
-	.fold(Vec2::new(0.0, TOOLBAR_EXPANDED_HEIGHT_PX), |max_size, size| {
-		Vec2::new(max_size.x.max(size.x), max_size.y.max(size.y))
-	}) + Vec2::new(0.0, WindowRenderer::frozen_toolbar_window_top_padding_points())
-}
-
 #[cfg(target_os = "macos")]
 fn overlay_cursor_rect_icon_at_point(
 	rects: &[OverlayCursorRect],
@@ -3595,53 +3535,6 @@ fn should_request_overlay_redraw_after_surface_skip(
 			},
 		},
 	}
-}
-
-fn frozen_toolbar_needs_new_sample(
-	last_screen_size_points: Option<Vec2>,
-	screen_size_points: Vec2,
-) -> bool {
-	match last_screen_size_points {
-		None => true,
-		Some(last) => {
-			let dx = (last.x - screen_size_points.x).abs();
-			let dy = (last.y - screen_size_points.y).abs();
-
-			dx > 0.5 || dy > 0.5
-		},
-	}
-}
-
-fn advance_frozen_toolbar_readiness_sample_state(
-	toolbar_state: &mut FrozenToolbarState,
-	screen_rect: Rect,
-) -> bool {
-	let screen_size_points = screen_rect.size();
-
-	if frozen_toolbar_needs_new_sample(
-		toolbar_state.layout_last_screen_size_points,
-		screen_size_points,
-	) {
-		toolbar_state.layout_last_screen_size_points = Some(screen_size_points);
-		toolbar_state.layout_stable_frames = 0;
-
-		return false;
-	}
-	if toolbar_state.layout_stable_frames < 1 {
-		toolbar_state.layout_stable_frames = toolbar_state.layout_stable_frames.saturating_add(1);
-
-		return false;
-	}
-
-	true
-}
-
-fn frozen_toolbar_matches_default_slot(toolbar_pos: Pos2, default_pos: Pos2) -> bool {
-	let dx = (toolbar_pos.x - default_pos.x).abs();
-	let dy = (toolbar_pos.y - default_pos.y).abs();
-
-	dx <= TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS
-		&& dy <= TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS
 }
 
 #[cfg(target_os = "macos")]
