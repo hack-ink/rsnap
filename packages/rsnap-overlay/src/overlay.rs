@@ -20,6 +20,7 @@ mod input_runtime;
 #[cfg(target_os = "macos")]
 mod macos_native_capture_shell_runtime;
 mod rendering;
+mod runtime_model;
 mod scroll_capture_runtime;
 mod scroll_input_runtime;
 mod scroll_preview_runtime;
@@ -73,16 +74,7 @@ use egui::{
 	Area, CentralPanel, ClippedPrimitive, Id, LayerId, Order, RichText, Sense, Shape, Stroke,
 	StrokeKind, UiBuilder, ViewportId, Visuals,
 };
-#[cfg(target_os = "macos")]
-use egui_phosphor::regular::FILE_TEXT;
-use egui_phosphor::{
-	Variant,
-	regular::{
-		self, ARROW_CLOCKWISE, ARROW_COUNTER_CLOCKWISE, ARROW_UP_RIGHT, ARROWS_DOWN_UP,
-		ARROWS_IN_CARDINAL, CHECKERBOARD, COPY, CURSOR, FLOPPY_DISK, FRAME_CORNERS, PENCIL_SIMPLE,
-		TEXT_T,
-	},
-};
+use egui_phosphor::Variant;
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use image::RgbaImage;
 #[cfg(target_os = "macos")]
@@ -172,6 +164,12 @@ use self::rendering::{
 #[cfg(test)]
 use self::rendering::{
 	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
+};
+use self::runtime_model::{
+	AcquiredSurfaceFrame, DeviceCursorPointSource, FrozenCaptureSource, FrozenCommittedOverlay,
+	FrozenEditKind, FrozenSelectionCorner, FrozenSelectionInteractionKind, FrozenToolbarTool,
+	HudTheme, LiveCaptureInteraction, OverlayEventLoopPhase, PngAction, ScrollCaptureFrameSource,
+	SelectionFlowStyle, SurfaceFrameSkipReason, WindowRendererPath,
 };
 #[cfg(all(target_os = "macos", test))]
 use self::session_state::InflightScrollCaptureObservation;
@@ -618,300 +616,6 @@ pub enum MacOSNativeCaptureInputEvent {
 		/// Current modifier-key state.
 		state: ModifiersState,
 	},
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-/// Single source of truth for live capture entry.
-///
-/// State flow:
-/// `Idle` -> `HoverWindow` -> `PressPending` -> `DraggingSelection` -> `FrozenFromDrag`
-/// `Idle` -> `HoverWindow` -> `PressPending` -> `FrozenFromClick`
-///
-/// Hover and drag visuals are derived from this state instead of being coordinated through
-/// separate button, hover, and drag flags.
-enum LiveCaptureInteraction {
-	#[default]
-	Idle,
-	HoverWindow {
-		monitor: MonitorRect,
-		target: LiveClickCaptureTarget,
-	},
-	PressPending {
-		monitor: MonitorRect,
-		press_global: GlobalPoint,
-		click_target: Option<LiveClickCaptureTarget>,
-		release_global: Option<GlobalPoint>,
-		released: bool,
-	},
-	DraggingSelection {
-		monitor: MonitorRect,
-		press_global: GlobalPoint,
-		current_global: GlobalPoint,
-	},
-	FrozenFromClick {
-		monitor: MonitorRect,
-		target: LiveClickCaptureTarget,
-	},
-	FrozenFromDrag {
-		monitor: MonitorRect,
-		capture_rect: RectPoints,
-	},
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum OverlayEventLoopPhase {
-	Idle,
-	WindowEvent,
-	AboutToWait,
-	RedrawDispatch,
-	HudRedraw,
-	LoupeRedraw,
-	ToolbarRedraw,
-	OverlayRedraw,
-}
-impl OverlayEventLoopPhase {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Idle => "idle",
-			Self::WindowEvent => "window_event",
-			Self::AboutToWait => "about_to_wait",
-			Self::RedrawDispatch => "redraw_dispatch",
-			Self::HudRedraw => "hud_redraw",
-			Self::LoupeRedraw => "loupe_redraw",
-			Self::ToolbarRedraw => "toolbar_redraw",
-			Self::OverlayRedraw => "overlay_window_redraw",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HudTheme {
-	Dark,
-	Light,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FrozenToolbarTool {
-	Pointer,
-	Pen,
-	Arrow,
-	Text,
-	Mosaic,
-	Spotlight,
-	Undo,
-	Redo,
-	AutoCenter,
-	Scroll,
-	#[cfg(target_os = "macos")]
-	Ocr,
-	Copy,
-	Save,
-}
-impl FrozenToolbarTool {
-	const fn label(self) -> &'static str {
-		match self {
-			Self::Pointer => "Pointer",
-			Self::Pen => "Pen",
-			Self::Arrow => "Arrow",
-			Self::Text => "Text",
-			Self::Mosaic => "Mosaic",
-			Self::Spotlight => "Spotlight",
-			Self::Undo => "Undo",
-			Self::Redo => "Redo",
-			Self::AutoCenter => "Auto-center (C)",
-			Self::Scroll => "Scroll Capture",
-			#[cfg(target_os = "macos")]
-			Self::Ocr => "Recognize Text",
-			Self::Copy => "Copy",
-			Self::Save => "Save",
-		}
-	}
-
-	const fn icon(self) -> &'static str {
-		match self {
-			Self::Pointer => CURSOR,
-			Self::Pen => PENCIL_SIMPLE,
-			Self::Arrow => ARROW_UP_RIGHT,
-			Self::Text => TEXT_T,
-			Self::Mosaic => CHECKERBOARD,
-			Self::Spotlight => FRAME_CORNERS,
-			Self::Undo => ARROW_COUNTER_CLOCKWISE,
-			Self::Redo => ARROW_CLOCKWISE,
-			Self::AutoCenter => ARROWS_IN_CARDINAL,
-			Self::Scroll => ARROWS_DOWN_UP,
-			#[cfg(target_os = "macos")]
-			Self::Ocr => FILE_TEXT,
-			Self::Copy => COPY,
-			Self::Save => FLOPPY_DISK,
-		}
-	}
-
-	const fn is_mode_tool(self) -> bool {
-		matches!(
-			self,
-			Self::Pointer | Self::Pen | Self::Arrow | Self::Text | Self::Mosaic | Self::Spotlight
-		)
-	}
-
-	const fn requires_final_capture(self) -> bool {
-		match self {
-			Self::Pointer
-			| Self::Pen
-			| Self::Arrow
-			| Self::Text
-			| Self::AutoCenter
-			| Self::Spotlight => false,
-			Self::Mosaic | Self::Undo | Self::Redo => true,
-			Self::Scroll | Self::Copy | Self::Save => true,
-			#[cfg(target_os = "macos")]
-			Self::Ocr => true,
-		}
-	}
-
-	fn is_available(self, toolbar_state: &FrozenToolbarState) -> bool {
-		match self {
-			Self::Undo => toolbar_state.undo_available,
-			Self::Redo => toolbar_state.redo_available,
-			_ => true,
-		}
-	}
-
-	fn unavailable_label(self, toolbar_state: &FrozenToolbarState) -> &'static str {
-		if self.requires_final_capture() && !toolbar_state.final_capture_ready {
-			return "Preparing capture...";
-		}
-
-		match self {
-			Self::Undo => "Nothing to undo",
-			Self::Redo => "Nothing to redo",
-			_ => "Preparing capture...",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ScrollCaptureFrameSource {
-	Worker { request_id: u64 },
-	LiveStream { frame_seq: u64 },
-}
-impl ScrollCaptureFrameSource {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Worker { .. } => "worker",
-			Self::LiveStream { .. } => "live_stream",
-		}
-	}
-
-	const fn worker_request_id(self) -> Option<u64> {
-		match self {
-			Self::Worker { request_id } => Some(request_id),
-			Self::LiveStream { .. } => None,
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PngAction {
-	Copy,
-	Save,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum FrozenCaptureSource {
-	#[default]
-	None,
-	DragRegion,
-	Window,
-	FullscreenFallback,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FrozenSelectionCorner {
-	TopLeft,
-	TopRight,
-	BottomLeft,
-	BottomRight,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum FrozenSelectionInteractionKind {
-	#[default]
-	Move,
-	Resize(FrozenSelectionCorner),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DeviceCursorPointSource {
-	DevicePoints,
-	DevicePixelsFallback,
-	EventRecentFallback,
-}
-impl DeviceCursorPointSource {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::DevicePoints => "device_points",
-			Self::DevicePixelsFallback => "device_pixels_fallback",
-			Self::EventRecentFallback => "event_recent_fallback",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SelectionFlowStyle {
-	Band,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum WindowRendererPath {
-	Overlay,
-	LoupeTile,
-}
-impl WindowRendererPath {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Overlay => "overlay",
-			Self::LoupeTile => "loupe_tile",
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SurfaceFrameSkipReason {
-	Timeout,
-	Occluded,
-}
-impl SurfaceFrameSkipReason {
-	const fn as_str(self) -> &'static str {
-		match self {
-			Self::Timeout => "timeout",
-			Self::Occluded => "occluded",
-		}
-	}
-
-	const fn should_request_redraw(self) -> bool {
-		matches!(self, Self::Timeout)
-	}
-}
-
-enum AcquiredSurfaceFrame {
-	Ready(SurfaceTexture),
-	Skipped(SurfaceFrameSkipReason),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FrozenEditKind {
-	BrushStroke,
-	MosaicEdit,
-	TextAnnotation,
-	ArrowAnnotation,
-	SpotlightAnnotation,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum FrozenCommittedOverlay<'a> {
-	Brush(&'a FrozenBrushStroke),
-	Text(&'a FrozenTextAnnotation),
-	Arrow(&'a FrozenArrowAnnotation),
 }
 
 #[cfg(target_os = "macos")]
