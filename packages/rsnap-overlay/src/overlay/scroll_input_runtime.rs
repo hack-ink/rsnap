@@ -7,12 +7,22 @@ use crate::overlay::{
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
-	KCG_SCROLL_EVENT_UNIT_LINE, KCG_SCROLL_EVENT_UNIT_PIXEL, MACOS_SCROLL_PIXEL_DELTA_CLAMP,
-	MACOS_SCROLL_PIXEL_WRAP_MODULUS, MACOS_SCROLL_PIXEL_WRAP_THRESHOLD, MacOSScrollPixelResidual,
-	MacOSScrollWheelEvent, MonitorRect, RectPoints,
+	MacOSScrollPixelResidual, MacOSScrollWheelEvent, MonitorRect, RectPoints,
 	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW,
 	SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
 };
+
+#[cfg(target_os = "macos")]
+pub(in crate::overlay) const KCG_SCROLL_EVENT_UNIT_LINE: u32 = 1;
+#[cfg(target_os = "macos")]
+pub(in crate::overlay) const KCG_SCROLL_EVENT_UNIT_PIXEL: u32 = 0;
+
+#[cfg(target_os = "macos")]
+const MACOS_SCROLL_PIXEL_DELTA_CLAMP: f64 = 240.0;
+#[cfg(target_os = "macos")]
+const MACOS_SCROLL_PIXEL_WRAP_MODULUS: f64 = 4_294_967_296.0;
+#[cfg(target_os = "macos")]
+const MACOS_SCROLL_PIXEL_WRAP_THRESHOLD: f64 = 1_000_000.0;
 
 impl OverlaySession {
 	pub(super) fn handle_scroll_mouse_wheel(
