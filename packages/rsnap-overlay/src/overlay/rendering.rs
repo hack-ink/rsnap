@@ -28,13 +28,13 @@ use crate::overlay::{
 	self, AcquiredSurfaceFrame, Adapter, Arc, BindGroupLayout, Buffer, ClippedPrimitive, Color32,
 	Device, Duration, Event, ExperimentalFeatures, Features, FontDefinitions, FontFamily,
 	FrozenArrowAnnotation, FrozenBrushState, FrozenCaptureSource, FrozenEditKind,
-	FrozenSelectionCorner, FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState,
-	FrozenTextStyle, FrozenToolbarPointerState, FrozenToolbarState, FullOutput, HudAnchor,
-	HudDrawConfig, HudTheme, Id, Instant, LayerId, MemoryHints, MonitorRect, Order, OverlayMode,
-	OverlayState, PhysicalSize, PointerButton, Pos2, PowerPreference, Queue, Rect, RectPoints,
-	RenderPipeline, Renderer, Result, Sampler, ScreenDescriptor, SlowOperationLogger, Surface,
-	ThemeMode, ToolbarPlacement, Trace, Variant, Vec2, ViewportId, Visuals, WindowId,
-	WindowRendererPath, WrapErr, eyre, hud_helpers, mem,
+	FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState, FrozenTextStyle,
+	FrozenToolbarPointerState, FrozenToolbarState, FullOutput, HudAnchor, HudDrawConfig, HudTheme,
+	Id, Instant, LayerId, MemoryHints, MonitorRect, Order, OverlayMode, OverlayState, PhysicalSize,
+	PointerButton, Pos2, PowerPreference, Queue, Rect, RectPoints, RenderPipeline, Renderer,
+	Result, Sampler, ScreenDescriptor, SlowOperationLogger, Surface, ThemeMode, ToolbarPlacement,
+	Trace, Variant, Vec2, ViewportId, Visuals, WindowId, WindowRendererPath, WrapErr, eyre,
+	hud_helpers, mem,
 };
 use crate::system_fonts;
 
@@ -137,13 +137,6 @@ pub(super) struct SelectionSizeBadgeLayout {
 pub(super) struct SelectionSizeBadgeTarget {
 	pub(super) rect: Rect,
 	pub(super) size_points: RectPoints,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct FrozenSelectionResizeHandleGeometry {
-	pub(super) corner: FrozenSelectionCorner,
-	pub(super) anchor: Pos2,
-	pub(super) hit_rect: Rect,
 }
 
 pub(super) struct HudOverlayWindow {
