@@ -69,7 +69,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
 	borrow::Cow,
 	collections::{HashMap, HashSet},
-	path::PathBuf,
 	sync::{Arc, Mutex},
 	time::{Duration, Instant},
 };
@@ -227,7 +226,9 @@ use crate::{
 };
 #[cfg(target_os = "macos")]
 use rsnap_capture_core::DeferredTextRecognitionRequest;
-use rsnap_capture_core::{OutputNaming, PreparedHostEffectRequest};
+#[cfg(test)]
+use rsnap_capture_core::OutputNaming;
+use rsnap_capture_core::PreparedHostEffectRequest;
 
 #[cfg(target_os = "macos")]
 #[allow(unused_macros)]
@@ -342,7 +343,6 @@ const SELECTION_FLOW_MIN_SEGMENTS: usize = 160;
 const SELECTION_FLOW_MAX_SEGMENTS: usize = 1_536;
 const SELECTION_FLOW_SAMPLE_STEP_PX: f32 = 3.2;
 const SELECTION_FLOW_SPEED: f32 = 0.24;
-const SELECTION_FLOW_CORE_WIDTH_PX: f32 = 2.4;
 const SELECTION_FLOW_CORE_FLOW_WIDTH: f32 = 0.06;
 const SELECTION_FLOW_FLOW_BOOST: f32 = 2.8;
 const INTERACTIVE_REPAINT_TARGET_FPS: f32 = 120.0;
@@ -410,31 +410,6 @@ const SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL: Duration = Duration:
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE: Duration = Duration::from_millis(180);
 const SCROLL_CAPTURE_PREVIEW_WIDTH_PX: u32 = 320;
-impl Default for OverlayConfig {
-	fn default() -> Self {
-		Self {
-			hud_anchor: HudAnchor::Cursor,
-			show_alt_hint_keycap: true,
-			show_hud_blur: true,
-			selection_flow_enabled: true,
-			selection_flow_stroke_width_px: SELECTION_FLOW_CORE_WIDTH_PX,
-			hud_opaque: false,
-			hud_opacity: 0.35,
-			hud_fog_amount: 0.16,
-			hud_milk_amount: 0.0,
-			hud_tint_hue: 0.585,
-			toolbar_placement: ToolbarPlacement::Bottom,
-			loupe_sample_side_px: 21,
-			theme_mode: ThemeMode::System,
-			output_dir: PathBuf::from("."),
-			output_filename_prefix: String::from("Rsnap"),
-			output_naming: OutputNaming::Timestamp,
-			window_capture_alpha_mode: WindowCaptureAlphaMode::Background,
-			self_capture_exception_window_ids: Vec::new(),
-		}
-	}
-}
-
 /// Transitional Rust-core session controller that owns product state, rendering,
 /// explicit host requests, and host-sync state consumed by the native app host.
 pub struct OverlaySession {
