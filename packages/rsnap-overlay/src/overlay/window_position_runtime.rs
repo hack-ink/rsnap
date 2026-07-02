@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, MonitorRect, OverlayMode, OverlaySession, Pos2, Rect,

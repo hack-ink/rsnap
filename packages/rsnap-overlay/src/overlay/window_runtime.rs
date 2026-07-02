@@ -920,7 +920,7 @@ impl OverlaySession {
 		window.set_transparent(true);
 		self.configure_hud_window_common(
 			window.as_ref(),
-			Some(overlay::toolbar_layout_model::frozen_toolbar_corner_radius_points(
+			Some(toolbar_layout_model::frozen_toolbar_corner_radius_points(
 				WindowRenderer::frozen_toolbar_primary_size(&self.toolbar_state).y,
 			)),
 		);
