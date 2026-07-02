@@ -832,7 +832,7 @@ extension CaptureSessionController {
 				liveFrameRequest: liveFrameRequest,
 				fallbackRequest: fallbackRequest
 			)
-			DispatchQueue.main.async { [weak self] in
+			DispatchQueue.main.async { [weak self = self] in
 				self?.finishNativeScrollCaptureSampleDrain(
 					batch,
 					captureID: captureID,
@@ -936,7 +936,7 @@ extension CaptureSessionController {
 				motionRowsHint: motionRowsHint,
 				previewRefreshDue: previewRefreshDue
 			)
-			DispatchQueue.main.async { [weak self] in
+			DispatchQueue.main.async { [weak self = self] in
 				self?.finishNativeScrollCaptureObservations(
 					batch,
 					captureID: captureID,
