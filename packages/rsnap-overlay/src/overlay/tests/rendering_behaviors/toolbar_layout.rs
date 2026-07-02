@@ -4,14 +4,14 @@ use crate::overlay::tests::rendering_behaviors::{
 	FrozenToolbarState, FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme,
 	MonitorRect, OverlayMode, OverlaySession, OverlayState, Pos2, RawInput, Rect, RectPoints,
 	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, Vec2, WindowRenderer,
-	overlay, tests,
+	overlay::toolbar_layout_model, tests,
 };
 
 #[test]
 fn toolbar_position_update_queues_pending_move_without_window() {
 	let monitor = tests::test_monitor();
 	#[cfg(target_os = "macos")]
-	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	let primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 	let mut session = OverlaySession::new();
 
 	session.toolbar_inner_size_points = Some((460, 54));
@@ -32,7 +32,7 @@ fn toolbar_position_update_queues_pending_move_without_window() {
 fn toolbar_window_position_sync_updates_runtime_state_without_requeueing_in_bounds_move() {
 	let monitor = tests::test_monitor();
 	#[cfg(target_os = "macos")]
-	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	let primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 	let mut session = OverlaySession::new();
 
 	session.toolbar_inner_size_points = Some((460, 54));
@@ -56,10 +56,10 @@ fn toolbar_position_update_near_edge_clamps_with_runtime_positioning_geometry() 
 	let desired = Pos2::new(900.0, 760.0);
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let startup_size = toolbar_layout_model::frozen_toolbar_window_startup_size_points();
 	let positioning_size = WindowRenderer::frozen_toolbar_positioning_size(&session.toolbar_state);
 	#[cfg(target_os = "macos")]
-	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	let primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 	#[cfg(not(target_os = "macos"))]
 	let startup_window_size = Vec2::new(startup_size.x, startup_size.y);
 
@@ -106,10 +106,10 @@ fn toolbar_window_position_sync_near_edge_clamps_with_runtime_positioning_geomet
 	let desired_local = Pos2::new(desired_outer.x as f32, desired_outer.y as f32);
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let startup_size = toolbar_layout_model::frozen_toolbar_window_startup_size_points();
 	let positioning_size = WindowRenderer::frozen_toolbar_positioning_size(&session.toolbar_state);
 	#[cfg(target_os = "macos")]
-	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	let primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 	#[cfg(not(target_os = "macos"))]
 	let startup_window_size = Vec2::new(startup_size.x, startup_size.y);
 
@@ -158,7 +158,7 @@ fn toolbar_position_update_clamps_scroll_mode_pen_from_primary_anchor_width() {
 	let desired = Pos2::new(900.0, 160.0);
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let startup_size = toolbar_layout_model::frozen_toolbar_window_startup_size_points();
 	let primary_toolbar_state = FrozenToolbarState {
 		selected_tool: FrozenToolbarTool::Pen,
 		scroll_capture_active: true,
@@ -167,7 +167,7 @@ fn toolbar_position_update_clamps_scroll_mode_pen_from_primary_anchor_width() {
 	let primary_size = WindowRenderer::frozen_toolbar_primary_size(&primary_toolbar_state);
 	let full_toolbar_size = WindowRenderer::frozen_toolbar_size(&primary_toolbar_state);
 	#[cfg(target_os = "macos")]
-	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	let primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 	let mut session = OverlaySession::new();
 
 	assert!(
@@ -214,7 +214,7 @@ fn toolbar_event_outer_position_uses_best_available_source() {
 	let cached_outer_pos = Some(GlobalPoint::new(340, 420));
 	let floating_position = Some(Pos2::new(80.4, 90.6));
 	#[cfg(target_os = "macos")]
-	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	let primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 	#[cfg(target_os = "macos")]
 	let floating_outer_pos = GlobalPoint::new(80, (90.6 - primary_origin.y).round() as i32);
 	#[cfg(not(target_os = "macos"))]
@@ -334,7 +334,7 @@ fn render_frozen_toolbar_ui_keeps_runtime_drag_when_pointer_snapshot_is_missing(
 fn seeded_frozen_toolbar_default_slot_uses_positioning_window_size() {
 	let monitor = tests::test_monitor();
 	let capture_rect = RectPoints::new(760, 160, 160, 240);
-	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let startup_size = toolbar_layout_model::frozen_toolbar_window_startup_size_points();
 	let mut session = OverlaySession::new();
 
 	session.toolbar_inner_size_points =
@@ -970,11 +970,15 @@ fn auto_center_toolbar_tool_only_appears_when_available() {
 
 #[test]
 fn toolbar_window_startup_size_covers_every_tool_permutation() {
-	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let startup_size = toolbar_layout_model::frozen_toolbar_window_startup_size_points();
 	let toolbar_states = [
 		FrozenToolbarState::default(),
 		FrozenToolbarState {
 			selected_tool: FrozenToolbarTool::Pen,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Arrow,
 			..FrozenToolbarState::default()
 		},
 		FrozenToolbarState {
@@ -990,6 +994,12 @@ fn toolbar_window_startup_size_covers_every_tool_permutation() {
 		},
 		FrozenToolbarState {
 			selected_tool: FrozenToolbarTool::Pen,
+			auto_center_available: true,
+			scroll_capture_available: true,
+			..FrozenToolbarState::default()
+		},
+		FrozenToolbarState {
+			selected_tool: FrozenToolbarTool::Arrow,
 			auto_center_available: true,
 			scroll_capture_available: true,
 			..FrozenToolbarState::default()

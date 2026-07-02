@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, MonitorRect, OverlayMode, OverlaySession, Pos2, Rect,
 	TOOLBAR_SCREEN_MARGIN_PX, Vec2, WindowRenderer,
@@ -14,7 +16,7 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		primary_anchor: Pos2,
 	) -> GlobalPoint {
-		let primary_origin = super::frozen_toolbar_window_primary_origin();
+		let primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 
 		GlobalPoint::new(
 			monitor.origin.x.saturating_add((primary_anchor.x - primary_origin.x).round() as i32),
@@ -28,7 +30,7 @@ impl OverlaySession {
 		monitor: MonitorRect,
 		outer_position: GlobalPoint,
 	) -> Pos2 {
-		let primary_origin = super::frozen_toolbar_window_primary_origin();
+		let primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 
 		Pos2::new(
 			outer_position.x as f32 - monitor.origin.x as f32 + primary_origin.x,

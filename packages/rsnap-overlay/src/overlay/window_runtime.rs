@@ -11,8 +11,11 @@ use winit::window::{Window, WindowId};
 
 use crate::backend;
 #[cfg(target_os = "macos")]
+use crate::overlay;
+use crate::overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED;
+#[cfg(target_os = "macos")]
 use crate::overlay::MacOSHudWindowConfigState;
-use crate::overlay::{self, CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED};
+use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	ActiveEventLoop, GlobalPoint, GpuContext, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS,
 	LiveSampleApplyResult, LogicalPosition, LogicalSize, MonitorRect, OverlayMode, OverlaySession,
@@ -894,7 +897,7 @@ impl OverlaySession {
 	}
 
 	fn create_toolbar_window(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
-		let startup_size = super::frozen_toolbar_window_startup_size_points();
+		let startup_size = toolbar_layout_model::frozen_toolbar_window_startup_size_points();
 		let attrs = Window::default_attributes()
 			.with_title("rsnap-toolbar")
 			.with_decorations(false)
@@ -919,7 +922,7 @@ impl OverlaySession {
 		window.set_transparent(true);
 		self.configure_hud_window_common(
 			window.as_ref(),
-			Some(overlay::frozen_toolbar_corner_radius_points(
+			Some(toolbar_layout_model::frozen_toolbar_corner_radius_points(
 				WindowRenderer::frozen_toolbar_primary_size(&self.toolbar_state).y,
 			)),
 		);

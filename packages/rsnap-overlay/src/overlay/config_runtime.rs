@@ -4,9 +4,11 @@ use winit::window::WindowId;
 
 #[cfg(target_os = "macos")]
 use crate::backend;
+#[cfg(target_os = "macos")]
 use crate::overlay;
 #[cfg(target_os = "macos")]
 use crate::overlay::OverlayWorker;
+use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	Arc, Instant, LOUPE_TILE_CORNER_RADIUS_POINTS, OverlayConfig, OverlayMode, OverlaySession,
 	WindowRenderer,
@@ -184,7 +186,9 @@ impl OverlaySession {
 
 			self.configure_hud_window_common(
 				window.as_ref(),
-				Some(overlay::frozen_toolbar_corner_radius_points(toolbar_height_points)),
+				Some(toolbar_layout_model::frozen_toolbar_corner_radius_points(
+					toolbar_height_points,
+				)),
 			);
 		}
 	}
