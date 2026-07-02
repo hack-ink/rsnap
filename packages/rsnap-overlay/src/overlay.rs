@@ -10,6 +10,7 @@ mod frozen_arrow_runtime;
 mod frozen_brush_runtime;
 mod frozen_capture_backend_adapter;
 mod frozen_edit_history_runtime;
+mod frozen_export_model;
 mod frozen_export_runtime;
 mod frozen_mosaic_runtime;
 mod frozen_selection_runtime;
@@ -158,6 +159,7 @@ use winit::{
 	window::{CursorIcon, WindowId, WindowLevel},
 };
 
+use self::frozen_export_model::{FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit};
 use self::frozen_text_runtime::{FrozenTextInputSource, FrozenTextRecentInput};
 use self::frozen_transition_runtime::FrozenTransitionRuntime;
 #[cfg(target_os = "macos")]
@@ -3430,55 +3432,6 @@ struct OverlayCursorRect {
 impl OverlayCursorRect {
 	const fn new(rect: Rect, icon: CursorIcon) -> Self {
 		Self { rect, icon }
-	}
-}
-
-#[derive(Clone, Debug)]
-struct FrozenImagePatch {
-	rect: RectPoints,
-	before: RgbaImage,
-	after: RgbaImage,
-}
-
-#[derive(Clone, Debug)]
-struct FrozenMosaicEdit {
-	preview_patch: FrozenImagePatch,
-	export_patch: FrozenImagePatch,
-	window_patch: Option<FrozenImagePatch>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct FrozenExportTransform {
-	capture_rect: RectPoints,
-	scale_x: f32,
-	scale_y: f32,
-}
-impl FrozenExportTransform {
-	fn new(capture_rect: RectPoints, export_width: u32, export_height: u32) -> Option<Self> {
-		if capture_rect.width == 0
-			|| capture_rect.height == 0
-			|| export_width == 0
-			|| export_height == 0
-		{
-			return None;
-		}
-
-		Some(Self {
-			capture_rect,
-			scale_x: export_width as f32 / capture_rect.width as f32,
-			scale_y: export_height as f32 / capture_rect.height as f32,
-		})
-	}
-
-	fn point_to_pixels(self, point: Pos2) -> Pos2 {
-		Pos2::new(
-			(point.x - self.capture_rect.x as f32) * self.scale_x,
-			(point.y - self.capture_rect.y as f32) * self.scale_y,
-		)
-	}
-
-	fn scalar_scale(self) -> f32 {
-		(self.scale_x + self.scale_y) * 0.5
 	}
 }
 
