@@ -34,9 +34,9 @@ use std::slice;
 #[cfg(not(target_os = "macos"))]
 use rsnap_overlay as _;
 
-use self::abi::{
-	RSNAP_LIVE_SAMPLE_PATCH_CAPACITY, RSNAP_STATUS_MESSAGE_CAPACITY, RSNAP_TOOLBAR_ITEM_CAPACITY,
-};
+#[cfg(target_os = "macos")]
+use self::abi::RSNAP_LIVE_SAMPLE_PATCH_CAPACITY;
+use self::abi::{RSNAP_STATUS_MESSAGE_CAPACITY, RSNAP_TOOLBAR_ITEM_CAPACITY};
 use rsnap_capture_core::SceneModel;
 use rsnap_capture_core::{
 	self, AutoCenterImageError, BgraFrameView, CaptureFrameBackgroundKind,
