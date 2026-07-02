@@ -18,14 +18,16 @@ use image::{Rgba, RgbaImage};
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 #[cfg(target_os = "macos")]
+use crate::overlay::scroll_input_runtime::KCG_SCROLL_EVENT_UNIT_PIXEL;
+#[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 use crate::overlay::tests::{self, GlobalPoint, MonitorRect, OverlaySession, RectPoints};
 #[cfg(not(target_os = "macos"))]
 use crate::overlay::tests::{FrozenCaptureSource, OverlayMode};
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::{
-	FrozenToolbarTool, KCG_SCROLL_EVENT_UNIT_PIXEL, LiveStreamStaleGrace, MacOSScrollPixelResidual,
-	MouseScrollDelta, OverlayControl, PhysicalPosition, SCROLL_CAPTURE_INPUT_FRESHNESS,
+	FrozenToolbarTool, LiveStreamStaleGrace, MacOSScrollPixelResidual, MouseScrollDelta,
+	OverlayControl, PhysicalPosition, SCROLL_CAPTURE_INPUT_FRESHNESS,
 	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, ScrollCaptureFrameSource,
 	ScrollCaptureHostAdapter, ScrollCaptureHostFrameRequestError,
 };
