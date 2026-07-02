@@ -93,9 +93,9 @@ use egui::{
 };
 use egui_phosphor::Variant;
 use egui_wgpu::{Renderer, ScreenDescriptor};
-use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use image::imageops;
+use image::{Rgba, RgbaImage};
 use wgpu::Adapter;
 use wgpu::AddressMode;
 use wgpu::BindGroupLayout;
@@ -326,8 +326,6 @@ const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LOUPE_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LIVE_DRAG_START_THRESHOLD_PX: f32 = 6.0;
 const INTERACTIVE_REPAINT_TARGET_FPS: f32 = 120.0;
-const WINDOW_CAPTURE_MATTE_LIGHT_RGBA: image::Rgba<u8> = image::Rgba([246, 246, 246, 255]);
-const WINDOW_CAPTURE_MATTE_DARK_RGBA: image::Rgba<u8> = image::Rgba([24, 24, 24, 255]);
 const SCROLL_PREVIEW_WINDOW_WIDTH_POINTS: f64 = 260.0;
 const SCROLL_PREVIEW_WINDOW_HEIGHT_POINTS: f64 = 360.0;
 const SCROLL_PREVIEW_WINDOW_MARGIN_POINTS: i32 = 16;
@@ -839,7 +837,7 @@ impl OverlaySession {
 		let frozen_image = RgbaImage::from_pixel(
 			capture_rect.width.max(1),
 			capture_rect.height.max(1),
-			image::Rgba([0, 0, 0, 255]),
+			Rgba([0, 0, 0, 255]),
 		);
 
 		self.state.commit_frozen_display_image(monitor, frozen_image.clone());
