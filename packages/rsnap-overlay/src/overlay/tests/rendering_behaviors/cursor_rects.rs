@@ -4,7 +4,7 @@ use crate::overlay::tests::rendering_behaviors::{
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::rendering_behaviors::{Object, frozen_selection_runtime};
 #[cfg(target_os = "macos")]
-use crate::overlay::tests::rendering_behaviors::{Rect, Vec2, overlay};
+use crate::overlay::tests::rendering_behaviors::{Rect, Vec2, overlay::macos_cursor_runtime};
 
 #[test]
 fn toolbar_cursor_global_position_from_outer_uses_cached_toolbar_origin() {
@@ -63,7 +63,7 @@ fn macos_live_cursor_sync_keeps_render_rects_active_during_native_shell_input() 
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_cursor_object_maps_crosshair_icon() {
-	let actual = overlay::macos_cursor_object_for_icon(CursorIcon::Crosshair) as usize;
+	let actual = macos_cursor_runtime::macos_cursor_object_for_icon(CursorIcon::Crosshair) as usize;
 	let expected: *mut Object = unsafe { objc::msg_send![objc::class!(NSCursor), crosshairCursor] };
 
 	assert_eq!(actual, expected as usize);
@@ -73,7 +73,7 @@ fn macos_cursor_object_maps_crosshair_icon() {
 #[test]
 fn macos_cursor_icon_defaults_without_active_rect_entries() {
 	assert_eq!(
-		overlay::macos_cursor_icon_for_current_pointer(
+		macos_cursor_runtime::macos_cursor_icon_for_current_pointer(
 			None,
 			Some(Pos2::new(150.0, 180.0)),
 			Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0))),
@@ -86,7 +86,7 @@ fn macos_cursor_icon_defaults_without_active_rect_entries() {
 #[test]
 fn macos_cursor_icon_skips_windows_outside_pointer_bounds() {
 	assert_eq!(
-		overlay::macos_cursor_icon_for_current_pointer(
+		macos_cursor_runtime::macos_cursor_icon_for_current_pointer(
 			None,
 			Some(Pos2::new(450.0, 180.0)),
 			Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0))),
