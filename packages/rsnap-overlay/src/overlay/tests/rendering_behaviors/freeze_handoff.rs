@@ -8,7 +8,7 @@ use crate::overlay::tests::rendering_behaviors::{
 	OverlayMode, OverlaySession, OverlayState, PngAction, Pos2, RawInput, Rect, RectPoints,
 	SelectionDashedBorderCache, SelectionFlowGeometryCache, TOOLBAR_CAPTURE_GAP_PX,
 	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, Vec2, WindowFreezeCaptureTarget,
-	WindowRenderer, WorkerErrorSource, WorkerResponse, overlay, tests,
+	WindowRenderer, WorkerErrorSource, WorkerResponse, overlay::toolbar_layout_model, tests,
 };
 
 #[cfg(target_os = "macos")]
@@ -438,7 +438,7 @@ fn frozen_annotation_toolbar_hud_pill_keeps_standard_corner_radius() {
 
 	assert_eq!(
 		hud_pill.radius_points,
-		f32::from(overlay::frozen_toolbar_corner_radius_u8(hud_pill.rect.height())),
+		f32::from(toolbar_layout_model::frozen_toolbar_corner_radius_u8(hud_pill.rect.height())),
 	);
 }
 
@@ -629,7 +629,7 @@ fn frozen_annotation_capsule_flip_keeps_native_toolbar_outer_position_stable() {
 	let monitor = tests::test_monitor();
 	let screen_rect =
 		Rect::from_min_size(Pos2::ZERO, Vec2::new(monitor.width as f32, monitor.height as f32));
-	let startup_size = overlay::frozen_toolbar_window_startup_size_points();
+	let startup_size = toolbar_layout_model::frozen_toolbar_window_startup_size_points();
 	let mut session = OverlaySession::new();
 
 	session.toolbar_inner_size_points =
