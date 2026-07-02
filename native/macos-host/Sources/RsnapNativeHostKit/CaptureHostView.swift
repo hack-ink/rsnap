@@ -3883,7 +3883,7 @@ final class CaptureHostView: NSView {
 				let patch = shouldUseFallback ? fallbackPatch : (livePatch ?? fallbackPatch)
 				let signature =
 					shouldUseFallback ? fallbackSignature : (liveSignature ?? fallbackSignature)
-				DispatchQueue.main.async { [weak self] in
+				DispatchQueue.main.async { [weak self = self] in
 					self?.finishScrollToolbarBackdropCapture(
 						patch,
 						toolbarFrame: toolbarFrame,
