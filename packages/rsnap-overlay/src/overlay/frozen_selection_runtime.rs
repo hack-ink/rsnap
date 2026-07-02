@@ -5,6 +5,7 @@ use image::{Rgba, RgbaImage};
 use crate::overlay::LIVE_DRAG_START_THRESHOLD_PX;
 #[cfg(target_os = "macos")]
 use crate::overlay::frozen_selection_handles;
+#[cfg(target_os = "macos")]
 use crate::overlay::macos_cursor_runtime::{self, OverlayCursorRect};
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
