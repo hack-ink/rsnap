@@ -7,8 +7,8 @@ mod frame_store;
 mod live_frame_buffer;
 mod stream_config;
 mod stream_filter;
+mod stream_output;
 
-use std::collections::VecDeque;
 use std::ptr;
 use std::ptr::NonNull;
 use std::sync::{
@@ -22,97 +22,20 @@ use std::time::{Duration, Instant};
 use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchRetained};
 use image::RgbaImage;
+use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2::{AnyThread, DefinedClass};
 use objc2_core_foundation::{self, CFRetained};
-use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::CVPixelBufferCreate;
-use objc2_foundation::{NSError, NSObject, NSObjectProtocol};
-use objc2_screen_capture_kit::{
-	SCContentFilter, SCStream, SCStreamDelegate, SCStreamOutput, SCStreamOutputType,
-};
+use objc2_foundation::NSError;
+use objc2_screen_capture_kit::{SCContentFilter, SCStream, SCStreamOutputType};
 
 use self::frame_store::{SharedLatestFrame, StreamGenerationStatus};
 use self::live_frame_buffer::{OrderedRegionFrame, QueuedPixelBufferFrame, SharedPixelBuffer};
 use self::stream_config::{StreamCaptureRegion, StreamCaptureTarget};
 use self::stream_filter::{StreamFilterConfig, StreamFilterMode};
+use self::stream_output::StreamOutput;
 use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb};
-
-objc2::define_class!(
-	#[unsafe(super = NSObject)]
-	#[thread_kind = objc2::AnyThread]
-	#[ivars = StreamOutputIvars]
-	struct StreamOutput;
-
-	unsafe impl NSObjectProtocol for StreamOutput {}
-
-	unsafe impl SCStreamDelegate for StreamOutput {
-		#[unsafe(method(stream:didStopWithError:))]
-		fn stream_did_stop_with_error(&self, _stream: &SCStream, error: &NSError) {
-			tracing::info!(
-				op = "live_frame_stream.stopped_with_error",
-				monitor_id = self.ivars().monitor_id,
-				error_code = error.code(),
-				error_domain = %error.domain(),
-				error_description = %error.localizedDescription(),
-				"ScreenCaptureKit stopped delivering frames for the live stream."
-			);
-		}
-	}
-
-	unsafe impl SCStreamOutput for StreamOutput {
-		#[unsafe(method(stream:didOutputSampleBuffer:ofType:))]
-		fn stream_did_output_sample_buffer_of_type(
-			&self,
-			_stream: &SCStream,
-			sample_buffer: &CMSampleBuffer,
-			r#type: SCStreamOutputType,
-		) {
-			if r#type != SCStreamOutputType::Screen {
-				return;
-			}
-
-			let Some(image_buffer) = (unsafe { sample_buffer.image_buffer() }) else {
-				return;
-			};
-			let frame_seq =
-				self.ivars().frame_seq_counter.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-			let frame = QueuedPixelBufferFrame {
-				frame_seq,
-				stream_generation: self.ivars().stream_generation,
-				captured_at: Instant::now(),
-				pixel_buffer: SharedPixelBuffer(image_buffer),
-			};
-			let mut frames = match self.ivars().frames.lock() {
-				Ok(guard) => guard,
-				Err(poisoned) => poisoned.into_inner(),
-			};
-
-			if frames.len() >= STREAM_FRAME_QUEUE_CAPACITY {
-				frames.pop_front();
-			}
-			frames.push_back(frame.clone());
-			drop(frames);
-			let store_outcome =
-				self.ivars().shared_latest_frame.store(self.ivars().monitor_id, &frame);
-			if store_outcome.completed_ensure || store_outcome.completed_refresh {
-				tracing::info!(
-					op = "live_frame_stream.frame_received",
-					monitor_id = self.ivars().monitor_id,
-					frame_seq,
-					completed_ensure = store_outcome.completed_ensure,
-					completed_refresh = store_outcome.completed_refresh,
-					"Received a ScreenCaptureKit frame that satisfied a pending ensure or refresh request."
-				);
-			}
-
-			if let Some(frame_waker) = self.ivars().frame_waker.as_ref() {
-				frame_waker();
-			}
-		}
-	}
-);
 
 pub(crate) const STREAM_REGION_FRAME_MAX_AGE: Duration = Duration::from_millis(90);
 
@@ -650,33 +573,6 @@ impl Drop for MacLiveFrameStream {
 	}
 }
 
-struct StreamOutputIvars {
-	monitor_id: u32,
-	stream_generation: u64,
-	frames: Mutex<VecDeque<QueuedPixelBufferFrame>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-}
-impl StreamOutputIvars {
-	fn new(
-		monitor_id: u32,
-		stream_generation: u64,
-		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-		frame_seq_counter: Arc<AtomicU64>,
-		shared_latest_frame: Arc<SharedLatestFrame>,
-	) -> Self {
-		Self {
-			monitor_id,
-			stream_generation,
-			frames: Mutex::new(VecDeque::with_capacity(STREAM_FRAME_QUEUE_CAPACITY)),
-			frame_seq_counter,
-			frame_waker,
-			shared_latest_frame,
-		}
-	}
-}
-
 struct StreamState {
 	monitor_id: u32,
 	stream_generation: u64,
@@ -708,51 +604,6 @@ struct StartedStreamArtifacts {
 	stream_init_ms: u128,
 	add_output_ms: u128,
 	start_capture_ms: u128,
-}
-
-impl StreamOutput {
-	fn new(
-		monitor_id: u32,
-		stream_generation: u64,
-		frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-		frame_seq_counter: Arc<AtomicU64>,
-		shared_latest_frame: Arc<SharedLatestFrame>,
-	) -> Retained<Self> {
-		let this = Self::alloc().set_ivars(StreamOutputIvars::new(
-			monitor_id,
-			stream_generation,
-			frame_waker,
-			frame_seq_counter,
-			shared_latest_frame,
-		));
-
-		unsafe { objc2::msg_send![super(this), init] }
-	}
-
-	fn latest_frame(&self) -> Option<QueuedPixelBufferFrame> {
-		match self.ivars().frames.lock() {
-			Ok(guard) => guard.back().cloned(),
-			Err(poisoned) => poisoned.into_inner().back().cloned(),
-		}
-	}
-
-	fn latest_pixel_buffer(&self) -> Option<SharedPixelBuffer> {
-		self.latest_frame().map(|frame| frame.pixel_buffer)
-	}
-
-	fn queued_frames_after_seq(&self, after_frame_seq: u64) -> Vec<QueuedPixelBufferFrame> {
-		match self.ivars().frames.lock() {
-			Ok(guard) => {
-				guard.iter().filter(|frame| frame.frame_seq > after_frame_seq).cloned().collect()
-			},
-			Err(poisoned) => poisoned
-				.into_inner()
-				.iter()
-				.filter(|frame| frame.frame_seq > after_frame_seq)
-				.cloned()
-				.collect(),
-		}
-	}
 }
 
 enum WorkerRequest {
