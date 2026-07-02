@@ -1,9 +1,9 @@
+use crate::overlay::frozen_text_runtime::FROZEN_TEXT_CARET_REPAINT_INTERVAL;
 use crate::overlay::{
-	Duration, FROZEN_TEXT_CARET_REPAINT_INTERVAL, GlobalPoint, HUD_LOUPE_MOVE_INTERVAL_MIN,
-	INTERACTIVE_REPAINT_TARGET_FPS, Instant, LOUPE_WINDOW_WARMUP_REDRAWS, LogicalPosition,
-	MonitorRect, MonitorRectPoints, OVERLAY_EVENT_LOOP_STALL_THRESHOLD, OverlayControl,
-	OverlayEventLoopPhase, OverlayMode, OverlaySession, SLOW_OP_WARN_INTERVAL,
-	SLOW_OP_WARN_OUTER_POSITION, WindowEvent,
+	Duration, GlobalPoint, HUD_LOUPE_MOVE_INTERVAL_MIN, INTERACTIVE_REPAINT_TARGET_FPS, Instant,
+	LOUPE_WINDOW_WARMUP_REDRAWS, LogicalPosition, MonitorRect, MonitorRectPoints,
+	OVERLAY_EVENT_LOOP_STALL_THRESHOLD, OverlayControl, OverlayEventLoopPhase, OverlayMode,
+	OverlaySession, SLOW_OP_WARN_INTERVAL, SLOW_OP_WARN_OUTER_POSITION, WindowEvent,
 };
 
 impl OverlaySession {

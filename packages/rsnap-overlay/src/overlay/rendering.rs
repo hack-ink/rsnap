@@ -33,6 +33,8 @@ use crate::overlay::{
 };
 use crate::system_fonts;
 
+pub(in crate::overlay) const FROZEN_TEXT_CARET_BLINK_PERIOD_SECS: f64 = 1.0;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct FrozenToolbarButtonStyle {
 	pub(super) icon_color: Color32,
