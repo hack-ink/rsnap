@@ -11,9 +11,11 @@ use winit::window::{Window, WindowId};
 
 use crate::backend;
 #[cfg(target_os = "macos")]
+use crate::overlay;
+use crate::overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED;
+#[cfg(target_os = "macos")]
 use crate::overlay::MacOSHudWindowConfigState;
 use crate::overlay::toolbar_layout_model;
-use crate::overlay::{self, CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED};
 use crate::overlay::{
 	ActiveEventLoop, GlobalPoint, GpuContext, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS,
 	LiveSampleApplyResult, LogicalPosition, LogicalSize, MonitorRect, OverlayMode, OverlaySession,
