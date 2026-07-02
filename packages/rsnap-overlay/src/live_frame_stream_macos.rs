@@ -5,6 +5,7 @@
 
 mod frame_store;
 mod live_frame_buffer;
+mod stream_config;
 
 use std::collections::VecDeque;
 use std::process;
@@ -19,22 +20,23 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use block2::RcBlock;
-use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
+use dispatch2::{DispatchQueue, DispatchRetained};
 use image::RgbaImage;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass, Message};
-use objc2_core_foundation::{self, CFRetained, CGPoint, CGRect, CGSize};
-use objc2_core_media::{CMSampleBuffer, kCMTimeZero};
+use objc2_core_foundation::{self, CFRetained};
+use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::CVPixelBufferCreate;
 use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
 use objc2_screen_capture_kit::{
 	SCContentFilter, SCDisplay, SCRunningApplication, SCShareableContent, SCStream,
-	SCStreamConfiguration, SCStreamDelegate, SCStreamOutput, SCStreamOutputType, SCWindow,
+	SCStreamDelegate, SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
 use self::frame_store::{SharedLatestFrame, StreamGenerationStatus};
 use self::live_frame_buffer::{OrderedRegionFrame, QueuedPixelBufferFrame, SharedPixelBuffer};
+use self::stream_config::{StreamCaptureRegion, StreamCaptureTarget};
 use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb};
 
 objc2::define_class!(
@@ -118,7 +120,6 @@ const STREAM_RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const STREAM_SETUP_BACKOFF: Duration = Duration::from_millis(300);
 const STREAM_INCOMPLETE_EXCEPTION_UPGRADE_BACKOFF: Duration = Duration::from_secs(3);
 const STREAM_FRAME_QUEUE_CAPACITY: usize = 16;
-const STREAM_CONFIG_QUEUE_DEPTH: usize = 8;
 const STREAM_ACTIVE_GESTURE_FORCE_REFRESH_MIN_AGE: Duration = Duration::from_millis(60);
 const STREAM_REGION_FRAME_REFRESH_TIMEOUT: Duration = Duration::from_millis(180);
 const STREAM_REGION_FRAME_AHEAD_WAIT_TIMEOUT: Duration = Duration::from_millis(24);
@@ -649,12 +650,6 @@ impl Drop for MacLiveFrameStream {
 	}
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct StreamCaptureRegion {
-	rect_points: RectPoints,
-	rect_pixels: RectPoints,
-}
-
 #[derive(Clone, Debug, Default)]
 struct StreamFilterConfig {
 	self_capture_exception_window_ids: Vec<u32>,
@@ -788,12 +783,6 @@ impl StreamOutput {
 				.collect(),
 		}
 	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum StreamCaptureTarget {
-	FullMonitor,
-	Region(StreamCaptureRegion),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2028,10 +2017,11 @@ fn build_and_start_stream_artifacts(
 	filter: Retained<SCContentFilter>,
 ) -> Option<StartedStreamArtifacts> {
 	let config_build_started_at = Instant::now();
-	let config = build_stream_config_for_monitor(monitor, capture_target);
+	let config = self::stream_config::build_stream_config_for_monitor(monitor, capture_target);
 	let config_build_ms = config_build_started_at.elapsed().as_millis();
 	let queue_build_started_at = Instant::now();
-	let sample_handler_queue = build_sample_handler_queue_for_monitor(monitor.id);
+	let sample_handler_queue =
+		self::stream_config::build_sample_handler_queue_for_monitor(monitor.id);
 	let queue_build_ms = queue_build_started_at.elapsed().as_millis();
 	let output_build_started_at = Instant::now();
 	let stream_generation = frame_seq_counter.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
@@ -2374,57 +2364,6 @@ fn find_display(content: &SCShareableContent, monitor_id: u32) -> Option<Retaine
 	None
 }
 
-fn build_stream_config_for_monitor(
-	monitor: MonitorRect,
-	capture_target: StreamCaptureTarget,
-) -> Retained<SCStreamConfiguration> {
-	let config = unsafe { SCStreamConfiguration::new() };
-	let sf = monitor.scale_factor().max(1.0);
-	let (width_px, height_px) = match capture_target {
-		StreamCaptureTarget::FullMonitor => (
-			((monitor.width as f32) * sf).round().max(1.0) as usize,
-			((monitor.height as f32) * sf).round().max(1.0) as usize,
-		),
-		StreamCaptureTarget::Region(region) => {
-			(region.rect_pixels.width.max(1) as usize, region.rect_pixels.height.max(1) as usize)
-		},
-	};
-
-	unsafe { config.setWidth(width_px) };
-	unsafe { config.setHeight(height_px) };
-	// Keep cursor out of the frame so sampling isn't affected by pointer pixels.
-	unsafe { config.setShowsCursor(false) };
-	unsafe { config.setShowMouseClicks(false) };
-
-	// 4cc("BGRA")
-	let bgra = u32::from_be_bytes(*b"BGRA");
-
-	unsafe { config.setPixelFormat(bgra) };
-	unsafe { config.setMinimumFrameInterval(kCMTimeZero) };
-	// Give ScreenCaptureKit enough headroom to absorb bursty trackpad motion without
-	// starving the registrar on fresh frames.
-	unsafe { config.setQueueDepth(STREAM_CONFIG_QUEUE_DEPTH as isize) };
-
-	if let StreamCaptureTarget::Region(region) = capture_target {
-		let source_rect = CGRect::new(
-			CGPoint::new(f64::from(region.rect_points.x), f64::from(region.rect_points.y)),
-			CGSize::new(f64::from(region.rect_points.width), f64::from(region.rect_points.height)),
-		);
-
-		unsafe { config.setSourceRect(source_rect) };
-	}
-
-	config
-}
-
-fn build_sample_handler_queue_for_monitor(monitor_id: u32) -> DispatchRetained<DispatchQueue> {
-	DispatchQueue::new(&sample_handler_queue_label(monitor_id), DispatchQueueAttr::SERIAL)
-}
-
-fn sample_handler_queue_label(monitor_id: u32) -> String {
-	format!("io.hackink.rsnap.scroll-capture.sample-handler.monitor-{monitor_id}")
-}
-
 fn fresh_queued_frames_after_seq(
 	output: &StreamOutput,
 	after_frame_seq: u64,
@@ -2449,6 +2388,7 @@ mod tests {
 	use objc2_core_foundation::CFRetained;
 	use objc2_core_video::{CVPixelBufferCreate, kCVPixelFormatType_32BGRA, kCVReturnSuccess};
 
+	use crate::live_frame_stream_macos::stream_config;
 	use crate::live_frame_stream_macos::{self, STREAM_POST_SETUP_FRAME_GRACE, StreamFilterMode};
 
 	fn test_pixel_buffer() -> live_frame_stream_macos::SharedPixelBuffer {
@@ -2925,14 +2865,14 @@ mod tests {
 			height: 900,
 			scale_factor_x1000: 2_000,
 		};
-		let config = live_frame_stream_macos::build_stream_config_for_monitor(
+		let config = stream_config::build_stream_config_for_monitor(
 			monitor,
 			live_frame_stream_macos::StreamCaptureTarget::FullMonitor,
 		);
 
 		assert_eq!(
 			unsafe { config.queueDepth() },
-			live_frame_stream_macos::STREAM_CONFIG_QUEUE_DEPTH as isize
+			stream_config::STREAM_CONFIG_QUEUE_DEPTH as isize
 		);
 	}
 
@@ -2947,7 +2887,7 @@ mod tests {
 		};
 		let region_points = crate::state::RectPoints::new(120, 80, 300, 220);
 		let region_pixels = monitor.local_rect_to_pixels(region_points);
-		let config = live_frame_stream_macos::build_stream_config_for_monitor(
+		let config = stream_config::build_stream_config_for_monitor(
 			monitor,
 			live_frame_stream_macos::StreamCaptureTarget::Region(
 				live_frame_stream_macos::StreamCaptureRegion {
@@ -3001,12 +2941,12 @@ mod tests {
 	#[test]
 	fn sample_handler_queue_label_is_monitor_scoped() {
 		assert_eq!(
-			live_frame_stream_macos::sample_handler_queue_label(7),
+			stream_config::sample_handler_queue_label(7),
 			"io.hackink.rsnap.scroll-capture.sample-handler.monitor-7"
 		);
 		assert_ne!(
-			live_frame_stream_macos::sample_handler_queue_label(7),
-			live_frame_stream_macos::sample_handler_queue_label(9)
+			stream_config::sample_handler_queue_label(7),
+			stream_config::sample_handler_queue_label(9)
 		);
 	}
 }
