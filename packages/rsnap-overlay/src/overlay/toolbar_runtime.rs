@@ -1,3 +1,4 @@
+use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	self, Arc, Duration, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant,
 	MonitorRect, OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
@@ -344,8 +345,8 @@ impl OverlaySession {
 		window_toolbar_outer_pos.or(cached_toolbar_outer_pos).or_else(|| {
 			floating_position.map(|floating_position| {
 				#[cfg(target_os = "macos")]
-				let floating_position =
-					floating_position - super::frozen_toolbar_window_primary_origin().to_vec2();
+				let floating_position = floating_position
+					- toolbar_layout_model::frozen_toolbar_window_primary_origin().to_vec2();
 
 				GlobalPoint::new(
 					monitor.origin.x.saturating_add(floating_position.x.round() as i32),
@@ -467,7 +468,9 @@ impl OverlaySession {
 
 				self.configure_hud_window_common(
 					window.as_ref(),
-					Some(overlay::frozen_toolbar_corner_radius_points(toolbar_height_points)),
+					Some(overlay::toolbar_layout_model::frozen_toolbar_corner_radius_points(
+						toolbar_height_points,
+					)),
 				);
 
 				OverlayControl::Continue
@@ -545,7 +548,7 @@ impl OverlaySession {
 			let frozen_arrow_preview = self.active_frozen_arrow_preview();
 
 			self.toolbar_state.floating_position =
-				Some(super::frozen_toolbar_window_primary_origin());
+				Some(toolbar_layout_model::frozen_toolbar_window_primary_origin());
 
 			let Some(toolbar_window) = self.toolbar_window.as_mut() else {
 				return Ok(());
@@ -790,7 +793,7 @@ impl OverlaySession {
 		let cursor_local =
 			Self::toolbar_cursor_local_position_from_outer(toolbar_outer_pos, cursor_global);
 		#[cfg(target_os = "macos")]
-		let toolbar_primary_origin = super::frozen_toolbar_window_primary_origin();
+		let toolbar_primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 		#[cfg(not(target_os = "macos"))]
 		let toolbar_primary_origin = Pos2::ZERO;
 

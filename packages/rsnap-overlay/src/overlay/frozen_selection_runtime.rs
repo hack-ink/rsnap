@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use image::{Rgba, RgbaImage};
 
 use crate::overlay::LIVE_DRAG_START_THRESHOLD_PX;
+use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	CursorIcon, FrozenCaptureSource, FrozenMosaicDragState, FrozenSelectionCorner,
 	FrozenSelectionDragState, FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint,
@@ -1087,7 +1088,10 @@ impl OverlaySession {
 			self.toolbar_state.default_slot_position,
 		) {
 			(Some(floating_pos), Some(default_pos))
-				if !super::frozen_toolbar_matches_default_slot(floating_pos, default_pos) =>
+				if !toolbar_layout_model::frozen_toolbar_matches_default_slot(
+					floating_pos,
+					default_pos,
+				) =>
 			{
 				floating_pos
 			},

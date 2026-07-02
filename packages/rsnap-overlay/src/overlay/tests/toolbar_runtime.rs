@@ -1,5 +1,5 @@
 #[cfg(target_os = "macos")]
-use crate::overlay::tests::overlay;
+use crate::overlay::tests::overlay::toolbar_layout_model;
 use crate::overlay::tests::{
 	self, FrozenToolbarTool, GlobalPoint, HudTheme, OverlaySession, Pos2, Rect,
 	TOOLBAR_SCREEN_MARGIN_PX, Vec2, WindowRenderer,
@@ -33,7 +33,7 @@ fn toolbar_cursor_left_during_drag_keeps_drag_session_alive() {
 #[test]
 fn toolbar_drag_start_eligibility_uses_live_cursor_then_cached_pointer() {
 	#[cfg(target_os = "macos")]
-	let primary_origin = overlay::frozen_toolbar_window_primary_origin();
+	let primary_origin = toolbar_layout_model::frozen_toolbar_window_primary_origin();
 	#[cfg(not(target_os = "macos"))]
 	let primary_origin = Pos2::ZERO;
 	let primary_rect = WindowRenderer::frozen_toolbar_primary_rect(

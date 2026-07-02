@@ -19,7 +19,7 @@ use crate::overlay::rendering::{
 };
 use crate::overlay::session_state::FrozenAnnotationStyleCapsulePlacement;
 use crate::overlay::{
-	self, Align, Align2, Area, Color32, CornerRadius, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
+	Align, Align2, Area, Color32, CornerRadius, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
 	FROZEN_SELECTION_DASHED_BORDER_WIDTH_PX,
 	FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_CORNER_KEEPOUT_POINTS,
@@ -49,7 +49,7 @@ use crate::overlay::{
 	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SELECTION_SIZE_BADGE_TEXT_OUTSET_POINTS,
 	SelectionFlowStyle, Sense, Shape, Stroke, StrokeKind, TOOLBAR_CAPTURE_GAP_PX,
 	TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_PILL_INNER_MARGIN_Y_POINTS, TOOLBAR_SCREEN_MARGIN_PX,
-	ToolbarPlacement, Ui, UiBuilder, Vec2,
+	ToolbarPlacement, Ui, UiBuilder, Vec2, toolbar_layout_model,
 };
 
 const FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS: f32 = 4.0;
@@ -1249,7 +1249,7 @@ impl WindowRenderer {
 		);
 		let toolbar_pos = toolbar_state.floating_position.unwrap_or(default_pos);
 
-		if !overlay::frozen_toolbar_matches_default_slot(toolbar_pos, default_pos) {
+		if !toolbar_layout_model::frozen_toolbar_matches_default_slot(toolbar_pos, default_pos) {
 			return None;
 		}
 
@@ -2629,7 +2629,10 @@ impl WindowRenderer {
 
 		#[cfg(any(not(target_os = "macos"), test))]
 		{
-			if !overlay::advance_frozen_toolbar_readiness_sample_state(toolbar_state, screen_rect) {
+			if !toolbar_layout_model::advance_frozen_toolbar_readiness_sample_state(
+				toolbar_state,
+				screen_rect,
+			) {
 				ctx.request_repaint();
 
 				return;
@@ -2864,7 +2867,7 @@ impl WindowRenderer {
 			"Frozen toolbar birth attempt."
 		);
 
-		let needs_new_sample = overlay::frozen_toolbar_needs_new_sample(
+		let needs_new_sample = toolbar_layout_model::frozen_toolbar_needs_new_sample(
 			toolbar_state.layout_last_screen_size_points,
 			screen_size_points,
 		);
@@ -3107,7 +3110,7 @@ impl WindowRenderer {
 
 			*hud_pill_out = Some(HudPillGeometry {
 				rect: window_rect,
-				radius_points: f32::from(overlay::frozen_toolbar_corner_radius_u8(
+				radius_points: f32::from(toolbar_layout_model::frozen_toolbar_corner_radius_u8(
 					window_rect.height(),
 				)),
 			});
@@ -3125,7 +3128,7 @@ impl WindowRenderer {
 		hud_milk_amount: f32,
 		hud_tint_hue: f32,
 	) {
-		let corner_radius = overlay::frozen_toolbar_corner_radius_u8(rect.height());
+		let corner_radius = toolbar_layout_model::frozen_toolbar_corner_radius_u8(rect.height());
 		let body_fill = Self::tinted_hud_body_fill(
 			theme,
 			hud_blur_active,
