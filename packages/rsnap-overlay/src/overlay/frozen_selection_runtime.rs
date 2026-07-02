@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 use image::{Rgba, RgbaImage};
 
 use crate::overlay::LIVE_DRAG_START_THRESHOLD_PX;
+#[cfg(target_os = "macos")]
+use crate::overlay::macos_cursor_runtime::{self, OverlayCursorRect};
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	CursorIcon, FrozenCaptureSource, FrozenMosaicDragState, FrozenSelectionCorner,
@@ -11,9 +13,7 @@ use crate::overlay::{
 	OverlaySession, Pos2, RectPoints, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{
-	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS, OverlayCursorRect, Rect, Vec2,
-};
+use crate::overlay::{FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS, Rect, Vec2};
 
 impl OverlaySession {
 	#[cfg(target_os = "macos")]
@@ -38,7 +38,7 @@ impl OverlaySession {
 				&& matches!(self.state.mode, OverlayMode::Live)
 				&& !self.windows.is_empty()
 			{
-				super::macos_set_cursor_icon(CursorIcon::Crosshair);
+				macos_cursor_runtime::macos_set_cursor_icon(CursorIcon::Crosshair);
 			}
 
 			return;
@@ -663,8 +663,8 @@ impl OverlaySession {
 			y_edges.push(handle.hit_rect.max.y);
 		}
 
-		super::sort_unique_axis_values(&mut x_edges);
-		super::sort_unique_axis_values(&mut y_edges);
+		macos_cursor_runtime::sort_unique_axis_values(&mut x_edges);
+		macos_cursor_runtime::sort_unique_axis_values(&mut y_edges);
 
 		let mut rects = Vec::new();
 
@@ -705,28 +705,32 @@ impl OverlaySession {
 					Pos2::new(rect.min.x, point.y),
 				) != Some(corner)
 				{
-					adjusted_min.x = super::trim_rect_min_edge(adjusted_min.x, adjusted_max.x);
+					adjusted_min.x =
+						macos_cursor_runtime::trim_rect_min_edge(adjusted_min.x, adjusted_max.x);
 				}
 				if WindowRenderer::frozen_selection_resize_hit_test(
 					capture_rect,
 					Pos2::new(rect.max.x, point.y),
 				) != Some(corner)
 				{
-					adjusted_max.x = super::trim_rect_max_edge(adjusted_max.x, adjusted_min.x);
+					adjusted_max.x =
+						macos_cursor_runtime::trim_rect_max_edge(adjusted_max.x, adjusted_min.x);
 				}
 				if WindowRenderer::frozen_selection_resize_hit_test(
 					capture_rect,
 					Pos2::new(point.x, rect.min.y),
 				) != Some(corner)
 				{
-					adjusted_min.y = super::trim_rect_min_edge(adjusted_min.y, adjusted_max.y);
+					adjusted_min.y =
+						macos_cursor_runtime::trim_rect_min_edge(adjusted_min.y, adjusted_max.y);
 				}
 				if WindowRenderer::frozen_selection_resize_hit_test(
 					capture_rect,
 					Pos2::new(point.x, rect.max.y),
 				) != Some(corner)
 				{
-					adjusted_max.y = super::trim_rect_max_edge(adjusted_max.y, adjusted_min.y);
+					adjusted_max.y =
+						macos_cursor_runtime::trim_rect_max_edge(adjusted_max.y, adjusted_min.y);
 				}
 				if adjusted_max.x <= adjusted_min.x || adjusted_max.y <= adjusted_min.y {
 					continue;

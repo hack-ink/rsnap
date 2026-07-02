@@ -8,7 +8,7 @@ use crate::overlay::tests::rendering_behaviors::{
 	SelectionDashedBorderCache, SelectionFlowGeometryCache, Ui, Vec2, WindowRenderer, tests,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::tests::rendering_behaviors::{CursorIcon, overlay};
+use crate::overlay::tests::rendering_behaviors::{CursorIcon, overlay::macos_cursor_runtime};
 
 #[test]
 fn frozen_mosaic_drag_waits_for_final_capture_ready() {
@@ -492,10 +492,13 @@ fn frozen_mosaic_cursor_rects_preserve_crosshair_hover_and_drag() {
 	let rects = session.frozen_selection_cursor_rects_for_monitor(monitor);
 
 	assert_eq!(
-		overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(150.0, 180.0)),
+		macos_cursor_runtime::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(150.0, 180.0)),
 		Some(CursorIcon::Crosshair)
 	);
-	assert_eq!(overlay::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(80.0, 100.0)), None);
+	assert_eq!(
+		macos_cursor_runtime::overlay_cursor_rect_icon_at_point(&rects, Pos2::new(80.0, 100.0)),
+		None
+	);
 
 	session.frozen_mosaic_drag.active = true;
 

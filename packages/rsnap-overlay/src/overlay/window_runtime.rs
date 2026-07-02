@@ -6,24 +6,28 @@ use std::time::Duration;
 use std::time::Instant;
 
 #[cfg(target_os = "macos")]
+use objc2::MainThreadMarker;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::NSScreen;
+#[cfg(target_os = "macos")]
 use objc2_foundation::NSArray;
 use winit::window::{Window, WindowId};
 
 use crate::backend;
-#[cfg(target_os = "macos")]
-use crate::overlay;
 use crate::overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED;
+#[cfg(target_os = "macos")]
+use crate::overlay::MacLiveFrameStream;
 #[cfg(target_os = "macos")]
 use crate::overlay::MacOSHudWindowConfigState;
 use crate::overlay::toolbar_layout_model;
+#[cfg(target_os = "macos")]
+use crate::overlay::{self, macos_cursor_runtime};
 use crate::overlay::{
 	ActiveEventLoop, GlobalPoint, GpuContext, HudOverlayWindow, LOUPE_TILE_CORNER_RADIUS_POINTS,
 	LiveSampleApplyResult, LogicalPosition, LogicalSize, MonitorRect, OverlayMode, OverlaySession,
 	OverlayWindow, OverlayWorker, Result, ScrollPreviewWindow, TOOLBAR_EXPANDED_HEIGHT_PX,
 	WindowLevel, WindowRenderer, hud_helpers,
 };
-#[cfg(target_os = "macos")]
-use crate::overlay::{MacLiveFrameStream, MainThreadMarker, NSScreen};
 
 impl OverlaySession {
 	/// Starts the core session runtime and prepares the render windows and surfaces that the
@@ -726,7 +730,8 @@ impl OverlaySession {
 			overlay::macos_configure_overlay_window_mouse_moved_events(window.as_ref());
 
 			#[cfg(target_os = "macos")]
-			let cursor_rects = overlay::macos_install_overlay_cursor_rect_support(window.as_ref())?;
+			let cursor_rects =
+				macos_cursor_runtime::macos_install_overlay_cursor_rect_support(window.as_ref())?;
 
 			if visible {
 				window.request_redraw();
