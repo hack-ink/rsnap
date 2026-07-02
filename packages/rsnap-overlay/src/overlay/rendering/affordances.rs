@@ -13,6 +13,7 @@ use egui::RawInput;
 use egui::text::CCursor;
 
 use crate::overlay::frozen_brush_runtime::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS;
+use crate::overlay::rendering::FROZEN_TEXT_CARET_BLINK_PERIOD_SECS;
 use crate::overlay::rendering::{
 	FrozenSelectionResizeHandleGeometry, SelectionDashedBorderCache, SelectionFlowGeometryCache,
 	WindowRenderer,
@@ -23,15 +24,15 @@ use crate::overlay::{
 	FROZEN_SELECTION_RESIZE_HANDLE_HIT_SIZE_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
-	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FROZEN_TEXT_CARET_BLINK_PERIOD_SECS,
-	FROZEN_TEXT_PREVIEW_PLACEHOLDER, FontId, FrozenAnnotationColor, FrozenArrowAnnotation,
-	FrozenBrushState, FrozenCaptureSource, FrozenCommittedOverlay, FrozenEditKind,
-	FrozenSelectionCorner, FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState,
-	FrozenTextStyle, HudTheme, Id, LIVE_DRAG_START_THRESHOLD_PX, LayerId, MonitorRect, Order,
-	OverlayMode, OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints, SelectionFlowStyle,
-	Shape, Stroke, Vec2,
+	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FontId, FrozenAnnotationColor,
+	FrozenArrowAnnotation, FrozenBrushState, FrozenCaptureSource, FrozenCommittedOverlay,
+	FrozenEditKind, FrozenSelectionCorner, FrozenSpotlightAnnotation, FrozenTextAnnotation,
+	FrozenTextEditState, FrozenTextStyle, HudTheme, Id, LIVE_DRAG_START_THRESHOLD_PX, LayerId,
+	MonitorRect, Order, OverlayMode, OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints,
+	SelectionFlowStyle, Shape, Stroke, Vec2,
 };
 
+const FROZEN_TEXT_PREVIEW_PLACEHOLDER: &str = "Type";
 const FROZEN_TEXT_INTERACTION_PADDING_X_POINTS: f32 = 8.0;
 const FROZEN_TEXT_INTERACTION_PADDING_Y_POINTS: f32 = 6.0;
 

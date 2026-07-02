@@ -24,8 +24,9 @@ use crate::overlay::OverlayControl;
 use crate::overlay::WindowCaptureAlphaMode;
 #[cfg(target_os = "macos")]
 use crate::overlay::frozen_selection_runtime;
+use crate::overlay::rendering::FROZEN_TEXT_CARET_BLINK_PERIOD_SECS;
 use crate::overlay::session_state::{
-	FrozenAnnotationStyleCapsulePlacement, WindowFreezeCaptureTarget,
+	FROZEN_TEXT_FONT_SIZE_POINTS, FrozenAnnotationStyleCapsulePlacement, WindowFreezeCaptureTarget,
 };
 use crate::overlay::tests::{
 	self, ElementState, FrozenCaptureSource, FrozenSelectionDragState, FrozenToolbarState,
@@ -37,9 +38,8 @@ use crate::overlay::tests::{
 	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowRenderer, overlay,
 };
 use crate::overlay::{
-	FROZEN_TEXT_CARET_BLINK_PERIOD_SECS, FROZEN_TEXT_FONT_SIZE_POINTS, FontId,
-	FrozenAnnotationColor, FrozenEditKind, FrozenSelectionCorner, FrozenSelectionInteractionKind,
-	FrozenTextAnnotation, FrozenTextEditState,
+	FontId, FrozenAnnotationColor, FrozenEditKind, FrozenSelectionCorner,
+	FrozenSelectionInteractionKind, FrozenTextAnnotation, FrozenTextEditState,
 };
 #[cfg(target_os = "macos")]
 use crate::state::MonitorImageSnapshot;
