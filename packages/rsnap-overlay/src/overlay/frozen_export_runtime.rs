@@ -3,12 +3,13 @@ use image::{
 	imageops::{self, FilterType},
 };
 
+use crate::overlay::frozen_brush_runtime::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS;
 use crate::overlay::session_state::FrozenBrushStyle;
 use crate::overlay::{
-	FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS, FrozenArrowAnnotation, FrozenBrushStroke,
-	FrozenCaptureSource, FrozenCommittedOverlay, FrozenEditKind, FrozenExportTransform,
-	FrozenSpotlightAnnotation, FrozenTextAnnotation, MonitorRect, OverlaySession, Pos2, RectPoints,
-	WINDOW_CAPTURE_MATTE_DARK_RGBA, WINDOW_CAPTURE_MATTE_LIGHT_RGBA, WindowCaptureAlphaMode,
+	FrozenArrowAnnotation, FrozenBrushStroke, FrozenCaptureSource, FrozenCommittedOverlay,
+	FrozenEditKind, FrozenExportTransform, FrozenSpotlightAnnotation, FrozenTextAnnotation,
+	MonitorRect, OverlaySession, Pos2, RectPoints, WINDOW_CAPTURE_MATTE_DARK_RGBA,
+	WINDOW_CAPTURE_MATTE_LIGHT_RGBA, WindowCaptureAlphaMode,
 };
 
 impl OverlaySession {

@@ -4,17 +4,21 @@ use winit::event::{DeviceId, TouchPhase, WindowEvent};
 #[cfg(not(target_os = "macos"))]
 use winit::window::WindowId;
 
+use crate::overlay::frozen_brush_runtime::{
+	FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MAX, FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MIN,
+	FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
+};
+use crate::overlay::session_state::{
+	FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS, FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS,
+	FROZEN_BRUSH_STROKE_WIDTH_POINTS,
+};
 use crate::overlay::tests::{
 	self, ActiveFrozenBrushStroke, Duration, ElementState, FROZEN_EDIT_HISTORY_LIMIT,
 	FROZEN_TEXT_CARET_REPAINT_INTERVAL, FrozenAnnotationColor, FrozenBrushModelState,
 	FrozenBrushStroke, FrozenBrushStyle, FrozenCommittedOverlay, FrozenEditKind,
 	FrozenExportTransform, FrozenTextAnnotation, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarTool, GlobalPoint, Ime, Instant, Key, MonitorRect, MouseScrollDelta, NamedKey,
-	OverlaySession, PhysicalPosition, Pos2, RectPoints, Rgba, Vec2,
-	overlay::{
-		self, FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
-		FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
-	},
+	OverlaySession, PhysicalPosition, Pos2, RectPoints, Rgba, Vec2, overlay,
 };
 
 #[test]
@@ -402,8 +406,8 @@ fn frozen_brush_model_response_follows_fast_strokes_more_closely() {
 	let fast = OverlaySession::frozen_brush_input_response(&points, 16.0 / 1_600.0);
 
 	assert!(slow < fast);
-	assert!(slow >= overlay::FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MIN);
-	assert!(fast <= overlay::FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MAX);
+	assert!(slow >= FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MIN);
+	assert!(fast <= FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MAX);
 }
 
 #[test]
@@ -492,7 +496,7 @@ fn default_frozen_brush_style_uses_existing_width_and_color() {
 
 	assert_eq!(
 		session.toolbar_state.brush_style.stroke_width_points,
-		overlay::FROZEN_BRUSH_STROKE_WIDTH_POINTS
+		FROZEN_BRUSH_STROKE_WIDTH_POINTS
 	);
 	assert_eq!(session.toolbar_state.brush_style.color, FrozenAnnotationColor::Blue);
 }
@@ -524,12 +528,12 @@ fn frozen_brush_style_accepts_arbitrary_sizes_and_clamps_to_bounds() {
 	assert!(session.toolbar_state.brush_style.set_stroke_width(0.1));
 	assert_eq!(
 		session.toolbar_state.brush_style.stroke_width_points,
-		overlay::FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS
+		FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS
 	);
 	assert!(session.toolbar_state.brush_style.set_stroke_width(100.0));
 	assert_eq!(
 		session.toolbar_state.brush_style.stroke_width_points,
-		overlay::FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS
+		FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS
 	);
 }
 
