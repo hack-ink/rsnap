@@ -14,23 +14,21 @@ use egui::RawInput;
 use egui::text::CCursor;
 
 use crate::overlay::frozen_brush_runtime::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS;
+use crate::overlay::frozen_selection_handles::{
+	self, FrozenSelectionResizeHandleGeometry, RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
+	RESIZE_HANDLE_OUTER_RADIUS_POINTS, RESIZE_HANDLE_STROKE_WIDTH_POINTS,
+};
 use crate::overlay::rendering::FROZEN_TEXT_CARET_BLINK_PERIOD_SECS;
 use crate::overlay::rendering::{
-	FrozenSelectionResizeHandleGeometry, SelectionDashedBorderCache, SelectionFlowGeometryCache,
-	WindowRenderer,
+	SelectionDashedBorderCache, SelectionFlowGeometryCache, WindowRenderer,
 };
 use crate::overlay::{
-	Color32, FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
-	FROZEN_SELECTION_RESIZE_HANDLE_HIT_OFFSET_POINTS,
-	FROZEN_SELECTION_RESIZE_HANDLE_HIT_SIZE_POINTS,
-	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS,
-	FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
-	FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS, FontId, FrozenAnnotationColor,
-	FrozenArrowAnnotation, FrozenBrushState, FrozenCaptureSource, FrozenCommittedOverlay,
-	FrozenEditKind, FrozenSelectionCorner, FrozenSpotlightAnnotation, FrozenTextAnnotation,
-	FrozenTextEditState, FrozenTextStyle, HudTheme, Id, LIVE_DRAG_START_THRESHOLD_PX, LayerId,
-	MonitorRect, Order, OverlayMode, OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints,
-	SelectionFlowStyle, Shape, Stroke, Vec2,
+	Color32, FontId, FrozenAnnotationColor, FrozenArrowAnnotation, FrozenBrushState,
+	FrozenCaptureSource, FrozenCommittedOverlay, FrozenEditKind, FrozenSelectionCorner,
+	FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState, FrozenTextStyle,
+	HudTheme, Id, LIVE_DRAG_START_THRESHOLD_PX, LayerId, MonitorRect, Order, OverlayMode,
+	OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints, SelectionFlowStyle, Shape,
+	Stroke, Vec2,
 };
 
 const FROZEN_TEXT_PREVIEW_PLACEHOLDER: &str = "Type";
@@ -800,51 +798,7 @@ impl WindowRenderer {
 	pub(in crate::overlay) fn frozen_selection_resize_handles(
 		capture_rect: RectPoints,
 	) -> [FrozenSelectionResizeHandleGeometry; 4] {
-		let rect = Rect::from_min_size(
-			Pos2::new(capture_rect.x as f32, capture_rect.y as f32),
-			Vec2::new(capture_rect.width as f32, capture_rect.height as f32),
-		);
-
-		[
-			Self::frozen_selection_resize_handle(FrozenSelectionCorner::TopLeft, rect.min),
-			Self::frozen_selection_resize_handle(
-				FrozenSelectionCorner::TopRight,
-				Pos2::new(rect.max.x, rect.min.y),
-			),
-			Self::frozen_selection_resize_handle(
-				FrozenSelectionCorner::BottomLeft,
-				Pos2::new(rect.min.x, rect.max.y),
-			),
-			Self::frozen_selection_resize_handle(FrozenSelectionCorner::BottomRight, rect.max),
-		]
-	}
-
-	fn frozen_selection_resize_handle(
-		corner: FrozenSelectionCorner,
-		anchor: Pos2,
-	) -> FrozenSelectionResizeHandleGeometry {
-		let hit_size = Vec2::splat(FROZEN_SELECTION_RESIZE_HANDLE_HIT_SIZE_POINTS);
-		let hit_offset = FROZEN_SELECTION_RESIZE_HANDLE_HIT_OFFSET_POINTS;
-		let hit_center = match corner {
-			FrozenSelectionCorner::TopLeft => {
-				Pos2::new(anchor.x - hit_offset, anchor.y - hit_offset)
-			},
-			FrozenSelectionCorner::TopRight => {
-				Pos2::new(anchor.x + hit_offset, anchor.y - hit_offset)
-			},
-			FrozenSelectionCorner::BottomLeft => {
-				Pos2::new(anchor.x - hit_offset, anchor.y + hit_offset)
-			},
-			FrozenSelectionCorner::BottomRight => {
-				Pos2::new(anchor.x + hit_offset, anchor.y + hit_offset)
-			},
-		};
-
-		FrozenSelectionResizeHandleGeometry {
-			corner,
-			anchor,
-			hit_rect: Rect::from_center_size(hit_center, hit_size),
-		}
+		frozen_selection_handles::resize_handles(capture_rect)
 	}
 
 	pub(in crate::overlay) fn frozen_selection_resize_hit_test(
@@ -863,7 +817,7 @@ impl WindowRenderer {
 				continue;
 			}
 			if rect.contains(cursor_local)
-				&& !Self::frozen_selection_resize_handle_interior_hit(
+				&& !frozen_selection_handles::resize_handle_interior_hit(
 					handle.corner,
 					rect,
 					cursor_local,
@@ -882,48 +836,18 @@ impl WindowRenderer {
 		best_corner
 	}
 
-	fn frozen_selection_resize_handle_interior_hit(
-		corner: FrozenSelectionCorner,
-		rect: Rect,
-		cursor_local: Pos2,
-	) -> bool {
-		let interior_reach_x =
-			(rect.width() * 0.35).min(FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS);
-		let interior_reach_y =
-			(rect.height() * 0.35).min(FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS);
-
-		match corner {
-			FrozenSelectionCorner::TopLeft => {
-				cursor_local.x <= rect.min.x + interior_reach_x
-					&& cursor_local.y <= rect.min.y + interior_reach_y
-			},
-			FrozenSelectionCorner::TopRight => {
-				cursor_local.x >= rect.max.x - interior_reach_x
-					&& cursor_local.y <= rect.min.y + interior_reach_y
-			},
-			FrozenSelectionCorner::BottomLeft => {
-				cursor_local.x <= rect.min.x + interior_reach_x
-					&& cursor_local.y >= rect.max.y - interior_reach_y
-			},
-			FrozenSelectionCorner::BottomRight => {
-				cursor_local.x >= rect.max.x - interior_reach_x
-					&& cursor_local.y >= rect.max.y - interior_reach_y
-			},
-		}
-	}
-
 	fn frozen_selection_resize_handle_outline_stroke(theme: HudTheme) -> Stroke {
 		let _ = theme;
 		let color = Color32::from_rgba_unmultiplied(229, 247, 255, 124);
 
-		Stroke::new(FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS + 0.6, color)
+		Stroke::new(RESIZE_HANDLE_STROKE_WIDTH_POINTS + 0.6, color)
 	}
 
 	fn frozen_selection_resize_handle_stroke(theme: HudTheme) -> Stroke {
 		let _ = theme;
 
 		Stroke::new(
-			FROZEN_SELECTION_RESIZE_HANDLE_STROKE_WIDTH_POINTS,
+			RESIZE_HANDLE_STROKE_WIDTH_POINTS,
 			Color32::from_rgba_unmultiplied(167, 223, 255, 246),
 		)
 	}
@@ -950,21 +874,9 @@ impl WindowRenderer {
 		for handle in Self::frozen_selection_resize_handles(capture_rect) {
 			let center = Self::frozen_selection_resize_handle_center(handle);
 
-			painter.circle_stroke(
-				center,
-				FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
-				outline_stroke,
-			);
-			painter.circle_stroke(
-				center,
-				FROZEN_SELECTION_RESIZE_HANDLE_OUTER_RADIUS_POINTS,
-				stroke,
-			);
-			painter.circle_filled(
-				center,
-				FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
-				center_dot_color,
-			);
+			painter.circle_stroke(center, RESIZE_HANDLE_OUTER_RADIUS_POINTS, outline_stroke);
+			painter.circle_stroke(center, RESIZE_HANDLE_OUTER_RADIUS_POINTS, stroke);
+			painter.circle_filled(center, RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS, center_dot_color);
 		}
 
 		true
