@@ -9,6 +9,8 @@ use image::RgbaImage;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
+#[cfg(target_os = "macos")]
+use crate::overlay::scroll_preview_geometry::SCROLL_CAPTURE_PREVIEW_WIDTH_PX;
 use crate::overlay::{
 	FrozenCaptureSource, Key, MonitorRect, NamedKey, OverlayControl, OverlayKeyboardInputEvent,
 	OverlayMode, OverlaySession, PngAction, Pos2, Rect, SCROLL_CAPTURE_INPUT_FRESHNESS,
@@ -16,8 +18,8 @@ use crate::overlay::{
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
-	MacOSScrollPixelResidual, RectPoints, SCROLL_CAPTURE_PREVIEW_WIDTH_PX,
-	ScrollCaptureHostStartRequest, ScrollCaptureState, ScrollCaptureTraceRecorder, ScrollSession,
+	MacOSScrollPixelResidual, RectPoints, ScrollCaptureHostStartRequest, ScrollCaptureState,
+	ScrollCaptureTraceRecorder, ScrollSession,
 };
 
 impl OverlaySession {
