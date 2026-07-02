@@ -12,13 +12,13 @@ use egui::Galley;
 use egui::RawInput;
 use egui::text::CCursor;
 
+use crate::overlay::frozen_brush_runtime::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS;
 use crate::overlay::rendering::{
 	FrozenSelectionResizeHandleGeometry, SelectionDashedBorderCache, SelectionFlowGeometryCache,
 	WindowRenderer,
 };
 use crate::overlay::{
-	Color32, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
-	FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
+	Color32, FROZEN_SELECTION_RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_HIT_OFFSET_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_HIT_SIZE_POINTS,
 	FROZEN_SELECTION_RESIZE_HANDLE_INTERIOR_REACH_MAX_POINTS,
