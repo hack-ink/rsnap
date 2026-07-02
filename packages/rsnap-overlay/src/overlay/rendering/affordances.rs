@@ -1,6 +1,7 @@
+pub(super) mod size_badge;
+
 mod selection_flow;
 mod selection_scrim;
-mod size_badge;
 mod toolbar;
 
 use std::sync::{Arc, OnceLock};
