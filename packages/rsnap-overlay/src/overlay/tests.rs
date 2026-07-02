@@ -56,11 +56,9 @@ use crate::overlay::{
 	FrozenTextInputSource, FrozenToolbarState, FrozenToolbarTool, HUD_LOUPE_STRIP_GAP_POINTS,
 	HudRedrawSummary, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OutputNaming, OverlayControl,
 	OverlaySession, Pos2, PreparedHostEffectRequest, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL,
-	SELECTION_SIZE_BADGE_GAP_PX, SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX,
-	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX, SelectionDashedBorderCache, SelectionFlowGeometryCache,
-	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX,
-	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2, WindowCaptureAlphaMode, WindowRenderer,
-	hud_helpers,
+	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
+	SurfaceFrameSkipReason, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
+	Vec2, WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
