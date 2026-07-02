@@ -898,7 +898,6 @@ fn decode_point(point: RsnapPoint) -> rsnap_capture_core::GlobalPoint {
 	rsnap_capture_core::GlobalPoint::new(point.x, point.y)
 }
 
-#[cfg(target_os = "macos")]
 fn encode_rgb(rgb: Rgb) -> RsnapRgb {
 	RsnapRgb { r: rgb.r, g: rgb.g, b: rgb.b }
 }
@@ -917,7 +916,6 @@ fn encode_monitor(monitor: rsnap_capture_core::MonitorRect) -> RsnapMonitorRect 
 	}
 }
 
-#[cfg(target_os = "macos")]
 fn encode_window(window: WindowRect) -> RsnapWindowRect {
 	RsnapWindowRect {
 		window_id: window.window_id.unwrap_or_default(),
