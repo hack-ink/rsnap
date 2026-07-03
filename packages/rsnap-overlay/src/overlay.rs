@@ -3,6 +3,7 @@ pub(crate) mod replay_support;
 mod aux_window_runtime;
 mod capture_window_runtime;
 mod config_runtime;
+mod coordinate_geometry;
 mod cursor_context_runtime;
 mod cursor_runtime;
 mod exit_runtime;
@@ -1912,8 +1913,11 @@ impl OverlaySession {
 		self.toolbar_left_button_went_down = false;
 		self.toolbar_left_button_went_up = false;
 
-		let cursor_local = toolbar_cursor_local_override
-			.or_else(|| self.state.cursor.and_then(|cursor| global_to_local(cursor, monitor)))?;
+		let cursor_local = toolbar_cursor_local_override.or_else(|| {
+			self.state
+				.cursor
+				.and_then(|cursor| coordinate_geometry::global_to_local(cursor, monitor))
+		})?;
 
 		Some(FrozenToolbarPointerState {
 			cursor_local,
@@ -2645,12 +2649,6 @@ impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
 	}
-}
-
-fn global_to_local(cursor: GlobalPoint, monitor: MonitorRect) -> Option<Pos2> {
-	let (x, y) = monitor.local_u32(cursor)?;
-
-	Some(Pos2::new(x as f32, y as f32))
 }
 
 #[cfg(target_os = "macos")]
