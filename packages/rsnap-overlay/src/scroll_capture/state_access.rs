@@ -23,6 +23,25 @@ impl ScrollSession {
 		self.current_viewport_top_y
 	}
 
+	pub(super) fn growth_rows_for_candidate_viewport_top_y(
+		&self,
+		candidate_viewport_top_y: i32,
+	) -> u32 {
+		self.resume_frontier_top_y.map_or_else(
+			|| {
+				u32::try_from(candidate_viewport_top_y.saturating_sub(self.current_viewport_top_y))
+					.unwrap_or_default()
+			},
+			|frontier_top_y| {
+				if candidate_viewport_top_y <= frontier_top_y {
+					0
+				} else {
+					u32::try_from(candidate_viewport_top_y - frontier_top_y).unwrap_or_default()
+				}
+			},
+		)
+	}
+
 	pub(crate) fn export_dimensions(&self) -> (u32, u32) {
 		self.export_image.dimensions()
 	}
