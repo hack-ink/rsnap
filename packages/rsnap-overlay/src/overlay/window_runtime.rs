@@ -20,14 +20,14 @@ use crate::overlay::MacLiveFrameStream;
 #[cfg(target_os = "macos")]
 use crate::overlay::MacOSHudWindowConfigState;
 use crate::overlay::hud_geometry::LOUPE_TILE_CORNER_RADIUS_POINTS;
+use crate::overlay::toolbar_geometry::TOOLBAR_EXPANDED_HEIGHT_PX;
 use crate::overlay::toolbar_layout_model;
 #[cfg(target_os = "macos")]
 use crate::overlay::{self, macos_cursor_runtime};
 use crate::overlay::{
 	ActiveEventLoop, GlobalPoint, GpuContext, HudOverlayWindow, LiveSampleApplyResult,
 	LogicalPosition, LogicalSize, MonitorRect, OverlayMode, OverlaySession, OverlayWindow,
-	OverlayWorker, Result, ScrollPreviewWindow, TOOLBAR_EXPANDED_HEIGHT_PX, WindowLevel,
-	WindowRenderer, hud_helpers,
+	OverlayWorker, Result, ScrollPreviewWindow, WindowLevel, WindowRenderer, hud_helpers,
 };
 
 impl OverlaySession {

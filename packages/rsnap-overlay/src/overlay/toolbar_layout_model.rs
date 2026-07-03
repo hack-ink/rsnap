@@ -2,10 +2,10 @@ use egui::{Pos2, Rect, Vec2};
 
 use crate::overlay::hud_pill_style::HUD_PILL_CORNER_RADIUS_POINTS;
 use crate::overlay::rendering::WindowRenderer;
-use crate::overlay::{
-	FrozenToolbarState, FrozenToolbarTool, TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS,
-	TOOLBAR_EXPANDED_HEIGHT_PX,
+use crate::overlay::toolbar_geometry::{
+	TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS, TOOLBAR_EXPANDED_HEIGHT_PX,
 };
+use crate::overlay::{FrozenToolbarState, FrozenToolbarTool};
 
 pub(super) fn frozen_toolbar_corner_radius_u8(toolbar_height_points: f32) -> u8 {
 	if toolbar_height_points <= TOOLBAR_EXPANDED_HEIGHT_PX + 0.5 {
