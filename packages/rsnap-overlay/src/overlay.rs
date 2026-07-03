@@ -13,6 +13,7 @@ mod frozen_edit_history_runtime;
 mod frozen_export_model;
 mod frozen_export_runtime;
 mod frozen_mosaic_runtime;
+mod frozen_selection_geometry;
 mod frozen_selection_handles;
 mod frozen_selection_runtime;
 mod frozen_spotlight_runtime;
@@ -263,7 +264,6 @@ type Result<T, E = Report> = std::result::Result<T, E>;
 
 pub(crate) const CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED: bool = false;
 
-const LIVE_DRAG_START_THRESHOLD_PX: f32 = 6.0;
 /// Transitional Rust-core session controller that owns product state, rendering,
 /// explicit host requests, and host-sync state consumed by the native app host.
 pub struct OverlaySession {
