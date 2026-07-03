@@ -7,11 +7,12 @@ use image::{Rgba, RgbaImage};
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 #[cfg(not(target_os = "macos"))]
 use crate::overlay::OverlayConfig;
+use crate::overlay::runtime_timing::OCCLUDED_FRAME_REDRAW_RETRY_WINDOW;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::GlobalPoint;
 use crate::overlay::tests::{
-	self, HudTheme, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OverlayMode, OverlaySession,
-	SurfaceFrameSkipReason, WindowRenderer, hud_helpers, overlay,
+	self, HudTheme, OverlayMode, OverlaySession, SurfaceFrameSkipReason, WindowRenderer,
+	hud_helpers, overlay,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::{LiveCaptureInteraction, ModifiersState};
