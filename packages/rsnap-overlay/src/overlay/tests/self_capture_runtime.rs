@@ -826,7 +826,7 @@ fn authoritative_freeze_capture_hides_overlay_windows_on_macos() {
 #[test]
 #[allow(clippy::assertions_on_constants)]
 fn capture_windows_are_not_content_protected_on_macos() {
-	assert!(!super::super::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED);
+	assert!(!super::super::window_content_policy::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED);
 }
 
 #[cfg(target_os = "macos")]
