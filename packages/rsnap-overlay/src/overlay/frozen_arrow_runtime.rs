@@ -1,6 +1,6 @@
 use crate::overlay::{
-	FrozenArrowAnnotation, FrozenArrowDragState, FrozenArrowGeometry, FrozenEditKind,
-	FrozenToolbarTool, GlobalPoint, OverlaySession, Pos2, Vec2,
+	FrozenArrowAnnotation, FrozenArrowDragState, FrozenEditKind, FrozenToolbarTool, GlobalPoint,
+	OverlaySession, Pos2, Vec2,
 };
 
 const FROZEN_ARROW_MIN_LENGTH_POINTS: f32 = 6.0;
@@ -12,6 +12,14 @@ const FROZEN_ARROW_HEAD_LENGTH_MULTIPLIER: f32 = 4.2;
 const FROZEN_ARROW_HEAD_WIDTH_MULTIPLIER: f32 = 3.2;
 const FROZEN_ARROW_HEAD_LENGTH_MIN_POINTS: f32 = 16.0;
 const FROZEN_ARROW_HEAD_WIDTH_MIN_POINTS: f32 = 14.0;
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::overlay) struct FrozenArrowGeometry {
+	pub(in crate::overlay) shaft_end: Pos2,
+	pub(in crate::overlay) tip: Pos2,
+	pub(in crate::overlay) head_left: Pos2,
+	pub(in crate::overlay) head_right: Pos2,
+}
 
 impl OverlaySession {
 	pub(super) fn frozen_arrow_stroke_width_points(stroke_width_points: f32) -> f32 {
