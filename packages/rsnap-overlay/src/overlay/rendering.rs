@@ -24,6 +24,7 @@ use self::hud_surface::HudBg;
 use crate::overlay::macos_configure_hud_window;
 #[cfg(target_os = "macos")]
 use crate::overlay::macos_cursor_runtime::MacOSOverlayCursorRectSupport;
+use crate::overlay::runtime_timing;
 use crate::overlay::{
 	self, AcquiredSurfaceFrame, Adapter, Arc, BindGroupLayout, Buffer, ClippedPrimitive, Color32,
 	Device, Duration, Event, ExperimentalFeatures, Features, FontDefinitions, FontFamily,
@@ -667,7 +668,7 @@ impl WindowRenderer {
 					"Skipped overlay window frame acquisition."
 				);
 
-				if overlay::should_request_overlay_redraw_after_surface_skip(
+				if runtime_timing::should_request_overlay_redraw_after_surface_skip(
 					reason,
 					Instant::now(),
 					&mut self.occluded_redraw_retry_until,
