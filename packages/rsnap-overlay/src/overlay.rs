@@ -27,6 +27,7 @@ mod hud_pill_style;
 mod hud_runtime;
 mod image_helpers;
 mod input_runtime;
+mod keyboard_input_runtime;
 mod live_capture_target;
 #[cfg(target_os = "macos")]
 mod macos_capture_host;
