@@ -1,9 +1,10 @@
+use crate::overlay::hud_geometry::HUD_LOUPE_STRIP_GAP_POINTS;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::rendering_behaviors::FrozenCaptureSource;
 use crate::overlay::tests::rendering_behaviors::{
-	FrozenToolbarState, FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme,
-	MonitorRect, OverlayMode, OverlaySession, OverlayState, Pos2, RawInput, Rect, RectPoints,
-	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, Vec2, WindowRenderer,
+	FrozenToolbarState, FrozenToolbarTool, GlobalPoint, HudTheme, MonitorRect, OverlayMode,
+	OverlaySession, OverlayState, Pos2, RawInput, Rect, RectPoints, TOOLBAR_CAPTURE_GAP_PX,
+	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, Vec2, WindowRenderer,
 	overlay::toolbar_layout_model, tests,
 };
 
