@@ -31,6 +31,7 @@ use crate::overlay::rendering::hud_surface::HudBlurUniformRaw;
 use crate::overlay::rendering::{
 	self, GpuContext, SelectionDashedBorderCache, SelectionFlowGeometryCache, WindowRenderer,
 };
+use crate::overlay::runtime_model::SurfaceFrameSkipReason;
 use crate::overlay::runtime_timing::SLOW_OP_WARN_RENDER;
 use crate::overlay::{
 	AcquiredSurfaceFrame, AddressMode, Arc, BindGroupLayout, BindingResource, BindingType,
@@ -39,9 +40,8 @@ use crate::overlay::{
 	MultisampleState, Mutex, PhysicalSize, PipelineCompilationOptions, PolygonMode, PresentMode,
 	PrimitiveTopology, RenderPipeline, Renderer, Result, Sampler, SamplerBindingType,
 	ScreenDescriptor, ShaderSource, ShaderStages, SlowOperationLogger, StoreOp,
-	SurfaceCapabilities, SurfaceFrameSkipReason, SurfaceTexture, Texture, TextureAspect,
-	TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension, WrapErr, eyre,
-	mem,
+	SurfaceCapabilities, SurfaceTexture, Texture, TextureAspect, TextureSampleType, TextureUsages,
+	TextureViewDescriptor, TextureViewDimension, WrapErr, eyre, mem,
 };
 
 impl WindowRenderer {

@@ -7,12 +7,12 @@ use image::{Rgba, RgbaImage};
 use crate::live_frame_stream_macos::MacLiveFrameStream;
 #[cfg(not(target_os = "macos"))]
 use crate::overlay::OverlayConfig;
-use crate::overlay::runtime_timing::OCCLUDED_FRAME_REDRAW_RETRY_WINDOW;
+use crate::overlay::runtime_timing;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::GlobalPoint;
 use crate::overlay::tests::{
 	self, HudTheme, OverlayMode, OverlaySession, SurfaceFrameSkipReason, WindowRenderer,
-	hud_helpers, overlay,
+	hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::{LiveCaptureInteraction, ModifiersState};
@@ -354,20 +354,20 @@ fn occluded_surface_skip_requests_redraw_until_retry_window_expires() {
 	let now = Instant::now();
 	let mut retry_until = None;
 
-	assert!(overlay::should_request_overlay_redraw_after_surface_skip(
+	assert!(runtime_timing::should_request_overlay_redraw_after_surface_skip(
 		SurfaceFrameSkipReason::Occluded,
 		now,
 		&mut retry_until,
 	));
-	assert_eq!(retry_until, Some(now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW));
-	assert!(overlay::should_request_overlay_redraw_after_surface_skip(
+	assert_eq!(retry_until, Some(now + runtime_timing::OCCLUDED_FRAME_REDRAW_RETRY_WINDOW));
+	assert!(runtime_timing::should_request_overlay_redraw_after_surface_skip(
 		SurfaceFrameSkipReason::Occluded,
 		now + Duration::from_millis(500),
 		&mut retry_until,
 	));
-	assert!(!overlay::should_request_overlay_redraw_after_surface_skip(
+	assert!(!runtime_timing::should_request_overlay_redraw_after_surface_skip(
 		SurfaceFrameSkipReason::Occluded,
-		now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
+		now + runtime_timing::OCCLUDED_FRAME_REDRAW_RETRY_WINDOW,
 		&mut retry_until,
 	));
 	assert_eq!(retry_until, None);
@@ -379,7 +379,7 @@ fn timeout_surface_skip_always_requests_redraw_without_touching_occluded_retry_w
 	let retry_deadline = now + Duration::from_millis(250);
 	let mut retry_until = Some(retry_deadline);
 
-	assert!(overlay::should_request_overlay_redraw_after_surface_skip(
+	assert!(runtime_timing::should_request_overlay_redraw_after_surface_skip(
 		SurfaceFrameSkipReason::Timeout,
 		now,
 		&mut retry_until,

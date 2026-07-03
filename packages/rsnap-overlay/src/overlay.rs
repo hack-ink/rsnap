@@ -194,9 +194,9 @@ use self::runtime_model::{
 	AcquiredSurfaceFrame, DeviceCursorPointSource, FrozenCaptureSource, FrozenCommittedOverlay,
 	FrozenEditKind, FrozenSelectionCorner, FrozenSelectionInteractionKind, FrozenToolbarTool,
 	HudTheme, LiveCaptureInteraction, OverlayEventLoopPhase, PngAction, ScrollCaptureFrameSource,
-	SelectionFlowStyle, SurfaceFrameSkipReason, WindowRendererPath,
+	SelectionFlowStyle, WindowRendererPath,
 };
-use self::runtime_timing::{OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, SLOW_OP_WARN_WINDOW_EVENT};
+use self::runtime_timing::SLOW_OP_WARN_WINDOW_EVENT;
 #[cfg(all(target_os = "macos", test))]
 use self::session_state::InflightScrollCaptureObservation;
 use self::session_state::{
@@ -2644,29 +2644,6 @@ impl OverlaySession {
 impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
-	}
-}
-
-fn should_request_overlay_redraw_after_surface_skip(
-	reason: SurfaceFrameSkipReason,
-	now: Instant,
-	occluded_redraw_retry_until: &mut Option<Instant>,
-) -> bool {
-	match reason {
-		SurfaceFrameSkipReason::Timeout => true,
-		SurfaceFrameSkipReason::Occluded => match occluded_redraw_retry_until {
-			Some(deadline) if now >= *deadline => {
-				*occluded_redraw_retry_until = None;
-
-				false
-			},
-			Some(_) => true,
-			None => {
-				*occluded_redraw_retry_until = Some(now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW);
-
-				true
-			},
-		},
 	}
 }
 

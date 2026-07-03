@@ -43,6 +43,7 @@ use crate::overlay::PngAction;
 use crate::overlay::frozen_edit_history_runtime::FROZEN_EDIT_HISTORY_LIMIT;
 use crate::overlay::frozen_text_runtime::FROZEN_TEXT_CARET_REPAINT_INTERVAL;
 use crate::overlay::rendering;
+use crate::overlay::runtime_model::SurfaceFrameSkipReason;
 use crate::overlay::scroll_capture_timing::SCROLL_CAPTURE_SAMPLE_INTERVAL;
 #[cfg(target_os = "macos")]
 use crate::overlay::scroll_capture_timing::{
@@ -64,8 +65,7 @@ use crate::overlay::{
 	FrozenToolbarState, FrozenToolbarTool, HudRedrawSummary, HudTheme, OutputNaming,
 	OverlayControl, OverlaySession, Pos2, PreparedHostEffectRequest, Rect,
 	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
-	SurfaceFrameSkipReason, ToolbarPlacement, Vec2, WindowCaptureAlphaMode, WindowRenderer,
-	hud_helpers,
+	ToolbarPlacement, Vec2, WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
