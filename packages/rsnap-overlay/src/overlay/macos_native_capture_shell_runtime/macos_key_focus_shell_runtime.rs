@@ -72,7 +72,7 @@ pub(super) fn macos_key_focus_shell_view_class() -> *const Class {
 		unsafe {
 			decl.add_method(
 				objc::sel!(isFlipped),
-				super::macos_passive_shell_view_is_flipped as extern "C" fn(&Object, Sel) -> BOOL,
+				super::macos_capture_shell_view_is_flipped as extern "C" fn(&Object, Sel) -> BOOL,
 			);
 			decl.add_method(
 				objc::sel!(acceptsFirstResponder),
