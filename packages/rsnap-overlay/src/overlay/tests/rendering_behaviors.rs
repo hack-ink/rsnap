@@ -23,7 +23,7 @@ use crate::overlay::OverlayControl;
 #[cfg(target_os = "macos")]
 use crate::overlay::WindowCaptureAlphaMode;
 #[cfg(target_os = "macos")]
-use crate::overlay::frozen_selection_runtime;
+use crate::overlay::cursor_icon_runtime;
 use crate::overlay::rendering::{
 	FROZEN_TEXT_CARET_BLINK_PERIOD_SECS, SELECTION_SIZE_BADGE_GAP_PX,
 	SELECTION_SIZE_BADGE_INSIDE_MARGIN_PX, SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,

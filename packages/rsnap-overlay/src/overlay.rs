@@ -5,6 +5,7 @@ mod capture_window_runtime;
 mod config_runtime;
 mod coordinate_geometry;
 mod cursor_context_runtime;
+mod cursor_icon_runtime;
 mod cursor_runtime;
 mod exit_runtime;
 mod frozen_arrow_runtime;
