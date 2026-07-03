@@ -24,6 +24,7 @@ use crate::overlay::MacOSNativeCaptureInputEvent;
 use crate::overlay::OverlayKeyboardInputEvent;
 #[cfg(target_os = "macos")]
 use crate::overlay::hud_pill_style::HUD_PILL_CORNER_RADIUS_POINTS;
+use crate::overlay::live_capture_target::LiveClickCaptureTarget;
 #[cfg(target_os = "macos")]
 use crate::overlay::runtime_timing::PENDING_CLICK_HIT_TEST_TIMEOUT;
 use crate::overlay::tests;
@@ -41,7 +42,7 @@ use crate::overlay::tests::{
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{FrozenGlobalHotkey, PngAction};
-use crate::overlay::{LiveCaptureInteraction, LiveClickCaptureTarget, OverlayControl};
+use crate::overlay::{LiveCaptureInteraction, OverlayControl};
 #[cfg(target_os = "macos")]
 use crate::state::{WindowHit, WindowRect};
 
