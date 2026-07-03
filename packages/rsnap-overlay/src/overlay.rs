@@ -36,6 +36,7 @@ mod rendering;
 mod runtime_model;
 mod runtime_timing;
 mod scroll_capture_runtime;
+mod scroll_capture_timing;
 mod scroll_input_runtime;
 mod scroll_preview_geometry;
 mod scroll_preview_runtime;
@@ -270,37 +271,9 @@ const DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT: Duration = Duration::from_millis(600);
 const LIVE_PRESENT_INTERVAL_MIN: Duration = Duration::from_nanos(8_333_333);
 const HUD_LOUPE_MOVE_INTERVAL_MIN: Duration = LIVE_PRESENT_INTERVAL_MIN;
 const CURSOR_POLL_INTERVAL_MIN: Duration = LIVE_PRESENT_INTERVAL_MIN;
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_STREAM_EVENT_FALLBACK_POLL_INTERVAL: Duration = Duration::from_millis(40);
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_STREAM_POLL_INTERVAL: Duration = Duration::from_millis(8);
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_STREAM_BACKLOG_MAX_FRAMES: usize = 12;
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW: Duration =
-	Duration::from_millis(320);
-// macOS trackpad/wheel sequences can keep delivering usable follow-up frames after the
-// initiating input event. Keep the observation window wide enough for the capture pipeline
-// to pair those frames before declaring the input stale.
-const SCROLL_CAPTURE_INPUT_FRESHNESS: Duration = Duration::from_millis(600);
-const SCROLL_CAPTURE_INPUT_MOTION_PRIOR_ROWS_MAX: f64 = 4_096.0;
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES: u8 = 5;
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_DUPLICATE_STREAM_STALL_THRESHOLD: u8 = 3;
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_DUPLICATE_STREAM_REFRESH_INTERVAL: Duration = Duration::from_millis(80);
 const LOUPE_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LIVE_DRAG_START_THRESHOLD_PX: f32 = 6.0;
 const INTERACTIVE_REPAINT_TARGET_FPS: f32 = 120.0;
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
-#[cfg(not(target_os = "macos"))]
-const SCROLL_CAPTURE_SAMPLE_INTERVAL: Duration = Duration::from_millis(50);
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_DUPLICATE_WORKER_FRAME_RETRY_INTERVAL: Duration = Duration::from_millis(60);
-#[cfg(target_os = "macos")]
-const SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE: Duration = Duration::from_millis(180);
 /// Transitional Rust-core session controller that owns product state, rendering,
 /// explicit host requests, and host-sync state consumed by the native app host.
 pub struct OverlaySession {

@@ -9,12 +9,15 @@ use image::RgbaImage;
 
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::MacLiveFrameStream;
+use crate::overlay::scroll_capture_timing::{
+	SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_SAMPLE_INTERVAL,
+};
 #[cfg(target_os = "macos")]
 use crate::overlay::scroll_preview_geometry::SCROLL_CAPTURE_PREVIEW_WIDTH_PX;
 use crate::overlay::{
 	FrozenCaptureSource, Key, MonitorRect, NamedKey, OverlayControl, OverlayKeyboardInputEvent,
-	OverlayMode, OverlaySession, PngAction, Pos2, Rect, SCROLL_CAPTURE_INPUT_FRESHNESS,
-	SCROLL_CAPTURE_SAMPLE_INTERVAL, ScrollDirection, ScrollObserveOutcome, Vec2, WindowRenderer,
+	OverlayMode, OverlaySession, PngAction, Pos2, Rect, ScrollDirection, ScrollObserveOutcome,
+	Vec2, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
