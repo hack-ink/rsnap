@@ -63,9 +63,9 @@ use crate::overlay::{
 	FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit, FrozenSelectionDragState,
 	FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarState, FrozenToolbarTool, HudRedrawSummary, HudTheme, OutputNaming,
-	OverlayControl, OverlaySession, Pos2, PreparedHostEffectRequest, Rect,
-	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
-	ToolbarPlacement, Vec2, WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
+	OverlayControl, OverlaySession, Pos2, Rect, SelectionDashedBorderCache,
+	SelectionFlowGeometryCache, SelectionSizeBadgeTarget, ToolbarPlacement, Vec2,
+	WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
@@ -86,6 +86,7 @@ use crate::state::{WindowListSnapshot, WindowRect};
 use crate::worker::OverlayWorker;
 #[cfg(target_os = "macos")]
 use crate::worker::{WorkerErrorSource, WorkerRequestSendError, WorkerResponse};
+use rsnap_capture_core::PreparedHostEffectRequest;
 
 fn make_scroll_capture_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
 	scroll_capture_runtime_support::make_scroll_capture_test_image(width, rows)
