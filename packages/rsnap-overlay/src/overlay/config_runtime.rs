@@ -9,13 +9,12 @@ use crate::overlay;
 #[cfg(target_os = "macos")]
 use crate::overlay::OverlayWorker;
 use crate::overlay::hud_geometry::LOUPE_TILE_CORNER_RADIUS_POINTS;
+#[cfg(target_os = "macos")]
+use crate::overlay::runtime_timing::SLOW_OP_WARN_HUD_CONFIG;
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{Arc, Instant, OverlayConfig, OverlayMode, OverlaySession, WindowRenderer};
 #[cfg(target_os = "macos")]
-use crate::overlay::{
-	FrozenCaptureWorkerState, MacLiveFrameStream, MacOSHudWindowConfigState,
-	SLOW_OP_WARN_HUD_CONFIG,
-};
+use crate::overlay::{FrozenCaptureWorkerState, MacLiveFrameStream, MacOSHudWindowConfigState};
 
 impl OverlaySession {
 	/// Applies updated runtime configuration to an existing session.

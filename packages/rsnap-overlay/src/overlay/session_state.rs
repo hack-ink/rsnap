@@ -7,11 +7,11 @@ use std::{
 
 use image::RgbaImage;
 
+use crate::overlay::runtime_timing::{REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, SLOW_OP_WARN_INTERVAL};
 use crate::overlay::{
 	Color32, DeviceCursorPointSource, FrozenSelectionInteractionKind, FrozenToolbarTool,
 	GlobalPoint, LIVE_PRESENT_INTERVAL_MIN, MonitorRect, MouseScrollDelta, PhysicalPosition, Pos2,
-	REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, RectPoints, SLOW_OP_WARN_INTERVAL,
-	ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2, WindowId,
+	RectPoints, ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2, WindowId,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{ExternalScrollInputDrainReader, MacLiveFrameStream};

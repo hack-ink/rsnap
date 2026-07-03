@@ -34,6 +34,7 @@ mod macos_native_capture_shell_runtime;
 mod macos_window_bridge;
 mod rendering;
 mod runtime_model;
+mod runtime_timing;
 mod scroll_capture_runtime;
 mod scroll_input_runtime;
 mod scroll_preview_geometry;
@@ -193,6 +194,7 @@ use self::runtime_model::{
 	HudTheme, LiveCaptureInteraction, OverlayEventLoopPhase, PngAction, ScrollCaptureFrameSource,
 	SelectionFlowStyle, SurfaceFrameSkipReason, WindowRendererPath,
 };
+use self::runtime_timing::{OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, SLOW_OP_WARN_WINDOW_EVENT};
 use self::session_bootstrap_runtime::InitialSessionRuntime;
 #[cfg(all(target_os = "macos", test))]
 use self::session_state::InflightScrollCaptureObservation;
@@ -277,17 +279,6 @@ const SCROLL_CAPTURE_STREAM_BACKLOG_MAX_FRAMES: usize = 12;
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW: Duration =
 	Duration::from_millis(320);
-const OVERLAY_EVENT_LOOP_STALL_THRESHOLD: Duration = Duration::from_millis(250);
-#[cfg(target_os = "macos")]
-const SLOW_OP_WARN_CURSOR_LOCATION: Duration = Duration::from_millis(8);
-#[cfg(target_os = "macos")]
-const SLOW_OP_WARN_HUD_CONFIG: Duration = Duration::from_millis(40);
-const SLOW_OP_WARN_OUTER_POSITION: Duration = Duration::from_millis(24);
-const SLOW_OP_WARN_RENDER: Duration = Duration::from_millis(24);
-const SLOW_OP_WARN_WINDOW_EVENT: Duration = Duration::from_millis(40);
-const SLOW_OP_WARN_INTERVAL: Duration = Duration::from_secs(1);
-const OCCLUDED_FRAME_REDRAW_RETRY_WINDOW: Duration = Duration::from_secs(2);
-const REDRAW_SUBSTEP_CONTRIBUTION_FLOOR: Duration = Duration::from_millis(4);
 // macOS trackpad/wheel sequences can keep delivering usable follow-up frames after the
 // initiating input event. Keep the observation window wide enough for the capture pipeline
 // to pair those frames before declaring the input stale.
