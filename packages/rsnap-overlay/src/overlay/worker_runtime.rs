@@ -1,10 +1,9 @@
-use crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT;
+use crate::overlay::runtime_timing::{CURSOR_POLL_INTERVAL_MIN, PENDING_CLICK_HIT_TEST_TIMEOUT};
 use crate::overlay::{
-	Arc, CURSOR_POLL_INTERVAL_MIN, CapturedMonitorRegionResult, Duration, FrozenCaptureWorkerState,
-	GlobalPoint, Instant, LiveCaptureInteraction, LiveClickCaptureTarget, LiveCursorSample,
-	LiveSampleApplyResult, MonitorRect, OverlayControl, OverlayMode, OverlaySession,
-	WindowFreezeCaptureTarget, WindowHit, WindowListSnapshot, WorkerErrorSource,
-	WorkerRequestSendError, WorkerResponse,
+	Arc, CapturedMonitorRegionResult, Duration, FrozenCaptureWorkerState, GlobalPoint, Instant,
+	LiveCaptureInteraction, LiveClickCaptureTarget, LiveCursorSample, LiveSampleApplyResult,
+	MonitorRect, OverlayControl, OverlayMode, OverlaySession, WindowFreezeCaptureTarget, WindowHit,
+	WindowListSnapshot, WorkerErrorSource, WorkerRequestSendError, WorkerResponse,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{CursorSampleRequest, mem};
@@ -36,7 +35,7 @@ impl OverlaySession {
 		tracing::warn!(
 			request_id,
 			elapsed_ms = elapsed.as_millis(),
-			timeout_ms = crate::overlay::PENDING_CLICK_HIT_TEST_TIMEOUT.as_millis(),
+			timeout_ms = PENDING_CLICK_HIT_TEST_TIMEOUT.as_millis(),
 			"Pending click hit test timed out."
 		);
 

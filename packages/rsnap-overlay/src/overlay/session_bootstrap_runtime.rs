@@ -1,9 +1,7 @@
 use std::time::{Duration, Instant};
 
-use crate::overlay::{
-	CURSOR_POLL_INTERVAL_MIN, LIVE_WINDOW_LIST_REFRESH_INTERVAL, OverlayConfig, OverlaySession,
-	OverlayState,
-};
+use crate::overlay::runtime_timing::{CURSOR_POLL_INTERVAL_MIN, LIVE_WINDOW_LIST_REFRESH_INTERVAL};
+use crate::overlay::{OverlayConfig, OverlaySession, OverlayState};
 
 pub(super) struct InitialSessionRuntime {
 	live_bg_request_interval: Duration,

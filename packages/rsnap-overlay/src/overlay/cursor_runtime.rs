@@ -1,6 +1,7 @@
+use crate::overlay::runtime_timing::{CURSOR_POLL_INTERVAL_MIN, LIVE_HOVER_HIT_TEST_INTERVAL};
 use crate::overlay::{
-	CURSOR_POLL_INTERVAL_MIN, DeviceCursorPointSource, Duration, GlobalPoint, Instant,
-	LIVE_HOVER_HIT_TEST_INTERVAL, MonitorRect, OverlayMode, OverlaySession,
+	DeviceCursorPointSource, Duration, GlobalPoint, Instant, MonitorRect, OverlayMode,
+	OverlaySession,
 };
 
 impl OverlaySession {
