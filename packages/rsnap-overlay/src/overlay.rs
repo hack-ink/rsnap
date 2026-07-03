@@ -50,6 +50,7 @@ mod session_bootstrap_runtime;
 mod session_contracts;
 mod session_state;
 mod toolbar_geometry;
+mod toolbar_input_runtime;
 mod toolbar_layout_model;
 mod toolbar_runtime;
 mod trace_recording;
