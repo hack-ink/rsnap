@@ -3,7 +3,7 @@ use image::RgbaImage;
 
 use crate::scroll_capture::{
 	self, INITIAL_DOWNWARD_MAX_MOTION_ROWS, MotionObservation, ScrollDirection,
-	ScrollObserveOutcome, ScrollSession, support,
+	ScrollObserveOutcome, ScrollSession, pairwise_shift,
 };
 
 const WORKER_PAIRWISE_CORROBORATION_TOLERANCE_ROWS: u32 = 24;
@@ -62,7 +62,7 @@ impl ScrollSession {
 		}
 
 		let (matched, corroborated_shift_rows) = if let Some(matched) =
-			support::trusted_pairwise_downward_shift_match(&previous_worker_frame, &frame)
+			pairwise_shift::trusted_pairwise_downward_shift_match(&previous_worker_frame, &frame)
 		{
 			let max_pixel_fallback_motion_rows =
 				previous_worker_frame.height().saturating_div(2).max(1);
@@ -85,12 +85,13 @@ impl ScrollSession {
 			}
 
 			(matched, Some(matched.motion_rows))
-		} else if let Some(matched) =
-			support::classify_vision_downward_sample_motion_against(&previous_worker_frame, &frame)
-		{
+		} else if let Some(matched) = pairwise_shift::classify_vision_downward_sample_motion_against(
+			&previous_worker_frame,
+			&frame,
+		) {
 			(
 				matched,
-				support::trusted_pairwise_downward_shift_rows_near_motion(
+				pairwise_shift::trusted_pairwise_downward_shift_rows_near_motion(
 					&previous_worker_frame,
 					&frame,
 					matched.motion_rows,
@@ -99,7 +100,7 @@ impl ScrollSession {
 			)
 		} else {
 			if let Some(upward_motion_rows) =
-				support::trusted_pairwise_upward_shift_rows(&previous_worker_frame, &frame)
+				pairwise_shift::trusted_pairwise_upward_shift_rows(&previous_worker_frame, &frame)
 			{
 				return Ok(self.observe_worker_pairwise_upward_motion(
 					frame,
@@ -160,7 +161,7 @@ impl ScrollSession {
 				INITIAL_DOWNWARD_MAX_MOTION_ROWS,
 			);
 
-			support::trusted_pairwise_downward_shift_rows_near_motion(
+			pairwise_shift::trusted_pairwise_downward_shift_rows_near_motion(
 				&self.last_committed_frame,
 				frame,
 				hint,
@@ -168,7 +169,7 @@ impl ScrollSession {
 			)
 		});
 		let fallback_match = || {
-			support::trusted_pairwise_downward_shift_match(&self.last_committed_frame, frame)
+			pairwise_shift::trusted_pairwise_downward_shift_match(&self.last_committed_frame, frame)
 				.map(|matched| matched.motion_rows)
 		};
 
