@@ -55,11 +55,11 @@ use crate::overlay::{
 	FrozenBrushModelState, FrozenBrushStroke, FrozenCommittedOverlay, FrozenEditKind,
 	FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit, FrozenSelectionDragState,
 	FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState, FrozenTextInputSource,
-	FrozenToolbarState, FrozenToolbarTool, HudRedrawSummary, HudTheme,
-	OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OutputNaming, OverlayControl, OverlaySession, Pos2,
-	PreparedHostEffectRequest, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL, SelectionDashedBorderCache,
-	SelectionFlowGeometryCache, SelectionSizeBadgeTarget, SurfaceFrameSkipReason, ToolbarPlacement,
-	Vec2, WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
+	FrozenToolbarState, FrozenToolbarTool, HudRedrawSummary, HudTheme, OutputNaming,
+	OverlayControl, OverlaySession, Pos2, PreparedHostEffectRequest, Rect,
+	SCROLL_CAPTURE_SAMPLE_INTERVAL, SelectionDashedBorderCache, SelectionFlowGeometryCache,
+	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, ToolbarPlacement, Vec2,
+	WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
