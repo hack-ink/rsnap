@@ -2,16 +2,19 @@ mod annotation_style;
 
 use egui::Context;
 
+use crate::overlay::hud_pill_style::{
+	HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_STROKE_WIDTH_POINTS,
+};
 use crate::overlay::rendering::{FrozenToolbarButtonStyle, WindowRenderer};
 use crate::overlay::session_state::FrozenAnnotationStyleCapsulePlacement;
 use crate::overlay::{
 	Align, Align2, Area, Color32, CornerRadius, FROZEN_TOOLBAR_BUTTON_SIZE_POINTS,
 	FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId, FrozenAnnotationColor,
-	FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool,
-	HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_STROKE_WIDTH_POINTS, HudPillGeometry, HudTheme, Id,
-	Layout, MonitorRect, Order, OverlayMode, OverlayState, Pos2, Rect, Sense, Stroke, StrokeKind,
-	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
-	TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder, Vec2, toolbar_layout_model,
+	FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool, HudPillGeometry, HudTheme,
+	Id, Layout, MonitorRect, Order, OverlayMode, OverlayState, Pos2, Rect, Sense, Stroke,
+	StrokeKind, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_EXPANDED_HEIGHT_PX,
+	TOOLBAR_PILL_INNER_MARGIN_Y_POINTS, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder,
+	Vec2, toolbar_layout_model,
 };
 use annotation_style::{
 	FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS, FROZEN_ANNOTATION_TOOLBAR_SECTION_HEIGHT_POINTS,
@@ -294,7 +297,7 @@ impl WindowRenderer {
 		let spacing_count = (tool_count - 1.0).max(0.0);
 		let width = tool_count * FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
 			+ spacing_count * FROZEN_TOOLBAR_ITEM_SPACING_POINTS
-			+ 2.0 * HUD_PILL_INNER_MARGIN_X_POINTS
+			+ 2.0 * f32::from(HUD_PILL_INNER_MARGIN_X_POINTS)
 			+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
 		let height = toolbar_state.pill_height_points.unwrap_or(TOOLBAR_EXPANDED_HEIGHT_PX);
 
@@ -317,7 +320,7 @@ impl WindowRenderer {
 			+ (swatch_count - 1.0).max(0.0) * FROZEN_ANNOTATION_TOOLBAR_SWATCH_GAP_POINTS;
 		let content_width = style_kind.size_control_width() + 4.0 + swatches_width;
 		let width = content_width
-			+ 2.0 * HUD_PILL_INNER_MARGIN_X_POINTS
+			+ 2.0 * f32::from(HUD_PILL_INNER_MARGIN_X_POINTS)
 			+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
 		let height = toolbar_state.pill_height_points.unwrap_or(TOOLBAR_EXPANDED_HEIGHT_PX);
 
@@ -673,7 +676,7 @@ impl WindowRenderer {
 			);
 
 			let toolbar_inner_rect = toolbar_rect.shrink2(egui::vec2(
-				HUD_PILL_INNER_MARGIN_X_POINTS,
+				f32::from(HUD_PILL_INNER_MARGIN_X_POINTS),
 				TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
 			));
 			let _ = ui.scope_builder(UiBuilder::new().max_rect(toolbar_inner_rect), |ui| {
@@ -698,7 +701,7 @@ impl WindowRenderer {
 				);
 
 				let style_inner_rect = style_rect.shrink2(egui::vec2(
-					HUD_PILL_INNER_MARGIN_X_POINTS,
+					f32::from(HUD_PILL_INNER_MARGIN_X_POINTS),
 					TOOLBAR_PILL_INNER_MARGIN_Y_POINTS,
 				));
 				let _ = ui.scope_builder(UiBuilder::new().max_rect(style_inner_rect), |ui| {
@@ -762,12 +765,12 @@ impl WindowRenderer {
 			HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
 			HudTheme::Light => Color32::from_rgba_unmultiplied(255, 255, 255, 140),
 		};
-		let inner_rect = rect.shrink(1.0);
+		let inner_rect = rect.shrink(HUD_PILL_STROKE_WIDTH_POINTS);
 
 		ui.painter().rect_stroke(
 			inner_rect,
 			CornerRadius::same(corner_radius.saturating_sub(1)),
-			Stroke::new(1.0, inner_stroke_color),
+			Stroke::new(HUD_PILL_STROKE_WIDTH_POINTS, inner_stroke_color),
 			StrokeKind::Inside,
 		);
 	}
