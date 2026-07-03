@@ -4,7 +4,7 @@ use crate::scroll_capture::{
 	self, DirectionMatch, DownwardRegistration, DownwardViewportCandidate,
 	DownwardViewportCandidateSource, DownwardViewportResolution, MotionObservation,
 	OverlapSearchConfig, PreviewOnlyDownwardLocalSample, ScrollDirection, ScrollFrameFingerprint,
-	ScrollObserveOutcome, ScrollSession, pairwise_shift, support, test_support,
+	ScrollObserveOutcome, ScrollSession, downward_candidates, pairwise_shift, test_support,
 };
 
 fn make_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
@@ -1680,7 +1680,7 @@ fn viewport_selection_fails_closed_when_observed_and_committed_authority_conflic
 	let mut candidates = [observed, committed];
 
 	assert_eq!(
-		support::select_downward_viewport_candidate(&mut candidates),
+		downward_candidates::select_downward_viewport_candidate(&mut candidates),
 		DownwardViewportResolution::Ambiguous { preferred: committed, competing: observed }
 	);
 }
@@ -1798,7 +1798,7 @@ fn nearby_local_candidate_wins_when_committed_is_only_modestly_better() {
 	let mut candidates = [observed, committed];
 
 	assert_eq!(
-		support::select_downward_viewport_candidate(&mut candidates),
+		downward_candidates::select_downward_viewport_candidate(&mut candidates),
 		DownwardViewportResolution::Selected(observed)
 	);
 }
