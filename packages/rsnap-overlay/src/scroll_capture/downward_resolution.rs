@@ -1,6 +1,5 @@
 use color_eyre::eyre::Result;
 
-use crate::scroll_capture::support;
 use crate::scroll_capture::{
 	CommittedDownwardViewportCandidateMode, DIRECTION_WARNING_MARGIN_X100,
 	DOWNWARD_KEYFRAME_MIN_OVERLAP_DIVISOR, DOWNWARD_KEYFRAME_SEARCH_LIMIT,
@@ -17,6 +16,7 @@ use crate::scroll_capture::{
 	TRANSIENT_BURST_UNDERCONSUMED_HINT_MIN_ROWS, UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS,
 	eyre,
 };
+use crate::scroll_capture::{downward_candidates, support};
 
 impl ScrollSession {
 	pub(super) fn evaluate_reference_overlap_direction(
@@ -518,7 +518,7 @@ impl ScrollSession {
 		let candidates_before_prune = candidates.clone();
 
 		self.last_downward_viewport_candidates_before_prune =
-			Some(support::format_downward_viewport_candidates(&candidates));
+			Some(downward_candidates::format_downward_viewport_candidates(&candidates));
 
 		self.prune_committed_keyframe_candidates_outside_local_continuity(&mut candidates);
 		self.restore_repeated_small_preview_only_local_candidate_after_empty_prune(
@@ -544,9 +544,9 @@ impl ScrollSession {
 
 		self.last_downward_viewport_candidate_count = Some(candidates.len());
 		self.last_downward_viewport_candidates_after_prune =
-			Some(support::format_downward_viewport_candidates(&candidates));
+			Some(downward_candidates::format_downward_viewport_candidates(&candidates));
 
-		support::select_downward_viewport_candidate(&mut candidates)
+		downward_candidates::select_downward_viewport_candidate(&mut candidates)
 	}
 
 	pub(super) fn collect_committed_downward_viewport_candidates(
@@ -834,7 +834,7 @@ impl ScrollSession {
 
 		self.collect_fallback_downward_viewport_candidates(&frame, &mut candidates);
 
-		match support::select_downward_viewport_candidate(&mut candidates) {
+		match downward_candidates::select_downward_viewport_candidate(&mut candidates) {
 			DownwardViewportResolution::NoMatch => {
 				self.record_transient_burst_missing_downward_candidate_frame(preview_changed);
 				self.refresh_preview_only_downward_local_sample(
