@@ -2647,14 +2647,6 @@ impl Default for OverlaySession {
 	}
 }
 
-#[derive(Clone, Copy, Debug)]
-struct FrozenArrowGeometry {
-	shaft_end: Pos2,
-	tip: Pos2,
-	head_left: Pos2,
-	head_right: Pos2,
-}
-
 fn should_request_overlay_redraw_after_surface_skip(
 	reason: SurfaceFrameSkipReason,
 	now: Instant,
