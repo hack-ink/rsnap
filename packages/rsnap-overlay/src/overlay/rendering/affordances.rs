@@ -14,6 +14,7 @@ use egui::RawInput;
 use egui::text::CCursor;
 
 use crate::overlay::frozen_brush_runtime::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS;
+use crate::overlay::frozen_selection_geometry::LIVE_DRAG_START_THRESHOLD_PX;
 use crate::overlay::frozen_selection_handles::{
 	self, FrozenSelectionResizeHandleGeometry, RESIZE_HANDLE_CENTER_DOT_RADIUS_POINTS,
 	RESIZE_HANDLE_OUTER_RADIUS_POINTS, RESIZE_HANDLE_STROKE_WIDTH_POINTS,
@@ -26,9 +27,8 @@ use crate::overlay::{
 	Color32, FontId, FrozenAnnotationColor, FrozenArrowAnnotation, FrozenBrushState,
 	FrozenCaptureSource, FrozenCommittedOverlay, FrozenEditKind, FrozenSelectionCorner,
 	FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState, FrozenTextStyle,
-	HudTheme, Id, LIVE_DRAG_START_THRESHOLD_PX, LayerId, MonitorRect, Order, OverlayMode,
-	OverlaySession, OverlayState, Painter, Pos2, Rect, RectPoints, SelectionFlowStyle, Shape,
-	Stroke, Vec2,
+	HudTheme, Id, LayerId, MonitorRect, Order, OverlayMode, OverlaySession, OverlayState, Painter,
+	Pos2, Rect, RectPoints, SelectionFlowStyle, Shape, Stroke, Vec2,
 };
 
 const FROZEN_TEXT_PREVIEW_PLACEHOLDER: &str = "Type";
