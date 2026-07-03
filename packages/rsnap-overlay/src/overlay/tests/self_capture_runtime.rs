@@ -5,13 +5,13 @@ use std::ptr;
 use image::{Rgba, RgbaImage};
 
 #[cfg(target_os = "macos")]
-use crate::overlay::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT;
-#[cfg(target_os = "macos")]
 use crate::overlay::LiveClickCaptureTarget;
 #[cfg(target_os = "macos")]
 use crate::overlay::OverlayMode;
 #[cfg(target_os = "macos")]
 use crate::overlay::RectPoints;
+#[cfg(target_os = "macos")]
+use crate::overlay::runtime_timing::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT;
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::WorkerRequestSendError;
 #[cfg(target_os = "macos")]

@@ -195,7 +195,9 @@ use self::runtime_model::{
 	HudTheme, LiveCaptureInteraction, OverlayEventLoopPhase, PngAction, ScrollCaptureFrameSource,
 	SelectionFlowStyle, SurfaceFrameSkipReason, WindowRendererPath,
 };
-use self::runtime_timing::{OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, SLOW_OP_WARN_WINDOW_EVENT};
+use self::runtime_timing::{
+	CURSOR_POLL_INTERVAL_MIN, OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, SLOW_OP_WARN_WINDOW_EVENT,
+};
 use self::session_bootstrap_runtime::InitialSessionRuntime;
 #[cfg(all(target_os = "macos", test))]
 use self::session_state::InflightScrollCaptureObservation;
@@ -261,19 +263,7 @@ type Result<T, E = Report> = std::result::Result<T, E>;
 
 pub(crate) const CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED: bool = false;
 
-const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
-const CURSOR_EVENT_TICK_TTL: Duration = Duration::from_millis(24);
-const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
-const LIVE_WINDOW_LIST_REFRESH_INTERVAL: Duration = Duration::from_millis(120);
-const PENDING_CLICK_HIT_TEST_TIMEOUT: Duration = Duration::from_millis(250);
-#[cfg(target_os = "macos")]
-const DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT: Duration = Duration::from_millis(600);
-const LIVE_PRESENT_INTERVAL_MIN: Duration = Duration::from_nanos(8_333_333);
-const HUD_LOUPE_MOVE_INTERVAL_MIN: Duration = LIVE_PRESENT_INTERVAL_MIN;
-const CURSOR_POLL_INTERVAL_MIN: Duration = LIVE_PRESENT_INTERVAL_MIN;
-const LOUPE_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LIVE_DRAG_START_THRESHOLD_PX: f32 = 6.0;
-const INTERACTIVE_REPAINT_TARGET_FPS: f32 = 120.0;
 /// Transitional Rust-core session controller that owns product state, rendering,
 /// explicit host requests, and host-sync state consumed by the native app host.
 pub struct OverlaySession {

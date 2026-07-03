@@ -1,8 +1,9 @@
+use crate::overlay::runtime_timing::LIVE_EVENT_CURSOR_CACHE_TTL;
 #[cfg(target_os = "macos")]
 use crate::overlay::{CursorSampleRequest, StartupLiveRgbPlan};
 use crate::overlay::{
-	DeviceCursorPointSource, FreezeCaptureTarget, GlobalPoint, Instant,
-	LIVE_EVENT_CURSOR_CACHE_TTL, MonitorRect, OverlayMode, OverlaySession,
+	DeviceCursorPointSource, FreezeCaptureTarget, GlobalPoint, Instant, MonitorRect, OverlayMode,
+	OverlaySession,
 };
 
 impl OverlaySession {
