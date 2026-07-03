@@ -4,6 +4,7 @@ mod downward_recovery;
 mod downward_resolution;
 mod fingerprint;
 mod logging;
+mod pairwise_shift;
 mod resume_frontier;
 mod sample_input;
 mod sample_state;

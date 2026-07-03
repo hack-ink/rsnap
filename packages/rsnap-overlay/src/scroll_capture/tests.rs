@@ -4,7 +4,7 @@ use crate::scroll_capture::{
 	self, DirectionMatch, DownwardRegistration, DownwardViewportCandidate,
 	DownwardViewportCandidateSource, DownwardViewportResolution, MotionObservation,
 	OverlapSearchConfig, PreviewOnlyDownwardLocalSample, ScrollDirection, ScrollFrameFingerprint,
-	ScrollObserveOutcome, ScrollSession, support, test_support,
+	ScrollObserveOutcome, ScrollSession, pairwise_shift, support, test_support,
 };
 
 fn make_test_image(width: u32, rows: &[[u8; 4]]) -> image::RgbaImage {
@@ -166,7 +166,7 @@ fn worker_pairwise_growth_rows(
 	next: &image::RgbaImage,
 	reason: &str,
 ) -> u32 {
-	match support::classify_vision_downward_sample_motion_against(previous, next) {
+	match pairwise_shift::classify_vision_downward_sample_motion_against(previous, next) {
 		Some(matched) => matched.motion_rows,
 		None => panic!("{reason}"),
 	}
@@ -279,7 +279,7 @@ fn assert_worker_pairwise_blocked_overshot_does_not_commit_tail(
 }
 
 fn assert_pairwise_rejects_static_selection(previous: &image::RgbaImage, next: &image::RgbaImage) {
-	assert_eq!(support::estimate_pairwise_downward_shift_rows(previous, next), None);
+	assert_eq!(pairwise_shift::estimate_pairwise_downward_shift_rows(previous, next), None);
 }
 
 #[cfg(target_os = "macos")]
@@ -730,7 +730,7 @@ fn transient_burst_visual_match_underconsuming_large_input_hint_does_not_commit(
 fn worker_pairwise_vision_commits_substantial_downward_growth_with_corroboration() {
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let moved = make_sparse_textlike_window(512, 640, 90);
-	let matched = support::classify_vision_downward_sample_motion_against(&base, &moved)
+	let matched = pairwise_shift::classify_vision_downward_sample_motion_against(&base, &moved)
 		.expect("vision registration should detect the substantial downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 	let outcome = session.observe_worker_pairwise_vision_frame(moved).unwrap();
@@ -752,7 +752,7 @@ fn pairwise_downward_shift_estimate_matches_sparse_textlike_motion() {
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let moved = make_sparse_textlike_window(512, 640, 58);
 
-	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &moved), Some(58));
+	assert_eq!(pairwise_shift::estimate_pairwise_downward_shift_rows(&base, &moved), Some(58));
 }
 
 #[test]
@@ -760,7 +760,7 @@ fn pairwise_downward_shift_estimate_matches_browser_like_motion_above_legacy_cap
 	let base = make_browser_like_window(512, 640, 0);
 	let moved = make_browser_like_window(512, 640, 320);
 
-	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &moved), Some(320));
+	assert_eq!(pairwise_shift::estimate_pairwise_downward_shift_rows(&base, &moved), Some(320));
 }
 
 #[test]
@@ -772,7 +772,7 @@ fn pairwise_downward_shift_estimate_tracks_successive_browser_like_steps() {
 
 	for window in frames.windows(2) {
 		assert_eq!(
-			support::estimate_pairwise_downward_shift_rows(&window[0], &window[1]),
+			pairwise_shift::estimate_pairwise_downward_shift_rows(&window[0], &window[1]),
 			Some(180)
 		);
 	}
@@ -795,9 +795,9 @@ fn pairwise_shift_estimate_fails_closed_when_periodic_content_does_not_visibly_c
 	let base = make_window(&document, 8, 0, 96);
 	let moved = make_window(&document, 8, 24, 96);
 
-	assert_eq!(support::estimate_pairwise_downward_shift_rows(&base, &moved), None);
+	assert_eq!(pairwise_shift::estimate_pairwise_downward_shift_rows(&base, &moved), None);
 	assert_eq!(
-		support::trusted_pairwise_downward_shift_rows_near_motion(&base, &moved, 24, 24),
+		pairwise_shift::trusted_pairwise_downward_shift_rows_near_motion(&base, &moved, 24, 24),
 		None
 	);
 }
@@ -898,7 +898,7 @@ fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_no_change()
 fn worker_pairwise_vision_clears_preview_local_followup_carryover_on_commit() {
 	let base = make_sparse_textlike_window(512, 640, 0);
 	let moved = make_sparse_textlike_window(512, 640, 180);
-	let matched = support::classify_vision_downward_sample_motion_against(&base, &moved)
+	let matched = pairwise_shift::classify_vision_downward_sample_motion_against(&base, &moved)
 		.expect("pairwise registration should detect downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
@@ -950,7 +950,7 @@ fn worker_pairwise_vision_commits_successive_slowdown_steps() {
 fn worker_pairwise_vision_commits_browser_like_growth_above_legacy_cap() {
 	let base = make_browser_like_window(512, 640, 0);
 	let moved = make_browser_like_window(512, 640, 320);
-	let matched = support::classify_vision_downward_sample_motion_against(&base, &moved)
+	let matched = pairwise_shift::classify_vision_downward_sample_motion_against(&base, &moved)
 		.expect("vision registration should detect the browser-like downward motion");
 	let mut session = ScrollSession::new(base, 320).unwrap();
 
@@ -1006,7 +1006,7 @@ fn worker_pairwise_vision_catches_up_from_committed_frontier_after_reacquire_blo
 	);
 
 	assert_eq!(
-		support::trusted_pairwise_downward_shift_rows_near_motion(
+		pairwise_shift::trusted_pairwise_downward_shift_rows_near_motion(
 			&first_reference,
 			&catchup,
 			360,
