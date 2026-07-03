@@ -1,4 +1,4 @@
-use crate::scroll_capture::support;
+use crate::scroll_capture::downward_candidates;
 use crate::scroll_capture::{
 	BlockedPreviewOnlyLocalCandidate, DIRECTION_WARNING_MARGIN_X100,
 	DOWNWARD_COMMITTED_KEYFRAME_LOCAL_OVERRUN_MAX_ROWS, DOWNWARD_VIEWPORT_AUTHORITY_GAP_ROWS,
@@ -354,7 +354,8 @@ impl ScrollSession {
 		let has_committed_candidate = candidates.iter().any(|candidate| {
 			candidate.source == DownwardViewportCandidateSource::CommittedKeyframe
 		});
-		let mut local_anchor = support::best_local_downward_viewport_candidate(candidates);
+		let mut local_anchor =
+			downward_candidates::best_local_downward_viewport_candidate(candidates);
 
 		if local_anchor.is_some_and(|anchor| {
 			has_committed_candidate
@@ -376,7 +377,7 @@ impl ScrollSession {
 				candidate.source != DownwardViewportCandidateSource::PreviewOnlyLocalSample
 			});
 
-			local_anchor = support::best_local_downward_viewport_candidate(candidates);
+			local_anchor = downward_candidates::best_local_downward_viewport_candidate(candidates);
 		}
 
 		let Some(local_anchor) = local_anchor else {
