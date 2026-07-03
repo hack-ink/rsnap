@@ -25,6 +25,7 @@ mod hud_pill_style;
 mod hud_runtime;
 mod image_helpers;
 mod input_runtime;
+mod live_capture_target;
 #[cfg(target_os = "macos")]
 mod macos_capture_host;
 #[cfg(target_os = "macos")]
@@ -227,7 +228,7 @@ use crate::worker::CapturedMonitorRegionResult;
 use crate::{
 	state::{
 		GlobalPoint, MonitorRect, MonitorRectPoints, OverlayMode, OverlayState, RectPoints, Rgb,
-		WindowHit, WindowListSnapshot,
+		WindowListSnapshot,
 	},
 	worker::{
 		FreezeCaptureTarget, OverlayWorker, WorkerErrorSource, WorkerRequestSendError,
@@ -2643,28 +2644,6 @@ impl OverlaySession {
 impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct LiveClickCaptureTarget {
-	capture_rect: Option<RectPoints>,
-	window_target: Option<WindowFreezeCaptureTarget>,
-}
-impl LiveClickCaptureTarget {
-	fn fullscreen_fallback() -> Self {
-		Self { capture_rect: None, window_target: None }
-	}
-
-	fn from_window_hit(monitor: MonitorRect, hit: WindowHit) -> Self {
-		Self {
-			capture_rect: Some(hit.rect),
-			window_target: hit.window_id.map(|window_id| WindowFreezeCaptureTarget {
-				monitor,
-				window_id,
-				rect: hit.rect,
-			}),
-		}
 	}
 }
 

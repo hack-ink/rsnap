@@ -5,14 +5,15 @@ use image::{Rgba, RgbaImage};
 use crate::overlay::frozen_selection_geometry::LIVE_DRAG_START_THRESHOLD_PX;
 #[cfg(target_os = "macos")]
 use crate::overlay::frozen_selection_handles;
+use crate::overlay::live_capture_target::LiveClickCaptureTarget;
 #[cfg(target_os = "macos")]
 use crate::overlay::macos_cursor_runtime::{self, OverlayCursorRect};
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	CursorIcon, FrozenCaptureSource, FrozenMosaicDragState, FrozenSelectionCorner,
 	FrozenSelectionDragState, FrozenSelectionInteractionKind, FrozenToolbarTool, GlobalPoint,
-	LiveCaptureInteraction, LiveClickCaptureTarget, MonitorRect, MonitorRectPoints, OverlayMode,
-	OverlaySession, Pos2, RectPoints, WindowRenderer,
+	LiveCaptureInteraction, MonitorRect, MonitorRectPoints, OverlayMode, OverlaySession, Pos2,
+	RectPoints, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{Rect, Vec2};
