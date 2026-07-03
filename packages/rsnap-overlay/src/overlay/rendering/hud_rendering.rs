@@ -1,8 +1,9 @@
 use egui::Context;
 
+use crate::overlay::hud_geometry::HUD_LOUPE_STRIP_GAP_POINTS;
 use crate::overlay::rendering::WindowRenderer;
 use crate::overlay::{
-	Align, Area, Color32, ColorImage, CornerRadius, Frame, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS,
+	Align, Area, Color32, ColorImage, CornerRadius, Frame, GlobalPoint,
 	HUD_PILL_CORNER_RADIUS_POINTS, HudAnchor, HudPillGeometry, HudTheme, Id, Layout, Margin,
 	MonitorRect, Order, OverlayMode, OverlayState, Pos2, Rect, RichText, Sense, Stroke, StrokeKind,
 	TextureHandle, TextureId, TextureOptions, Ui, Vec2, hud_helpers,

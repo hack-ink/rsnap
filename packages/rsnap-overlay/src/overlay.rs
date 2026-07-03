@@ -18,6 +18,7 @@ mod frozen_selection_runtime;
 mod frozen_spotlight_runtime;
 mod frozen_text_runtime;
 mod frozen_transition_runtime;
+mod hud_geometry;
 mod hud_helpers;
 mod hud_runtime;
 mod image_helpers;
@@ -159,6 +160,7 @@ use winit::{
 use self::frozen_export_model::{FrozenExportTransform, FrozenImagePatch, FrozenMosaicEdit};
 use self::frozen_text_runtime::{FrozenTextInputSource, FrozenTextRecentInput};
 use self::frozen_transition_runtime::FrozenTransitionRuntime;
+use self::hud_geometry::LOUPE_TILE_CORNER_RADIUS_POINTS;
 #[cfg(target_os = "macos")]
 use self::macos_capture_host::ExternalScrollInputDrainReader;
 #[cfg(all(test, target_os = "macos"))]
@@ -256,8 +258,6 @@ const HUD_PILL_BODY_FILL_DARK_SRGBA8: [u8; 4] = [28, 28, 32, 156];
 const HUD_PILL_BODY_FILL_LIGHT_SRGBA8: [u8; 4] = [232, 236, 243, 176];
 const HUD_PILL_BLUR_TINT_ALPHA_DARK: f32 = 0.18;
 const HUD_PILL_BLUR_TINT_ALPHA_LIGHT: f32 = 0.22;
-const LOUPE_TILE_CORNER_RADIUS_POINTS: f64 = 12.0;
-const HUD_LOUPE_STRIP_GAP_POINTS: i32 = 8;
 const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
 const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
 const TOOLBAR_PILL_INNER_MARGIN_Y_POINTS: f32 = 6.0;
