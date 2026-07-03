@@ -49,6 +49,7 @@ use crate::overlay::session_state::{
 	FrozenBrushStyle, FrozenCaptureSessionState, FrozenCaptureWorkerState,
 	FrozenExportSessionState, WindowFreezeCaptureTarget,
 };
+use crate::overlay::toolbar_geometry::{TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX};
 use crate::overlay::{
 	self, ActiveFrozenBrushStroke, FrozenAnnotationColor, FrozenArrowAnnotation,
 	FrozenBrushModelState, FrozenBrushStroke, FrozenCommittedOverlay, FrozenEditKind,
@@ -57,9 +58,8 @@ use crate::overlay::{
 	FrozenToolbarState, FrozenToolbarTool, HudRedrawSummary, HudTheme,
 	OCCLUDED_FRAME_REDRAW_RETRY_WINDOW, OutputNaming, OverlayControl, OverlaySession, Pos2,
 	PreparedHostEffectRequest, Rect, SCROLL_CAPTURE_SAMPLE_INTERVAL, SelectionDashedBorderCache,
-	SelectionFlowGeometryCache, SelectionSizeBadgeTarget, SurfaceFrameSkipReason,
-	TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Vec2,
-	WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
+	SelectionFlowGeometryCache, SelectionSizeBadgeTarget, SurfaceFrameSkipReason, ToolbarPlacement,
+	Vec2, WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{

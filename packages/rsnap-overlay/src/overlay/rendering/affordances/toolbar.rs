@@ -7,14 +7,15 @@ use crate::overlay::hud_pill_style::{
 };
 use crate::overlay::rendering::{FrozenToolbarButtonStyle, WindowRenderer};
 use crate::overlay::session_state::FrozenAnnotationStyleCapsulePlacement;
+use crate::overlay::toolbar_geometry::{
+	FROZEN_TOOLBAR_BUTTON_SIZE_POINTS, FROZEN_TOOLBAR_ITEM_SPACING_POINTS, TOOLBAR_CAPTURE_GAP_PX,
+	TOOLBAR_EXPANDED_HEIGHT_PX, TOOLBAR_PILL_INNER_MARGIN_Y_POINTS, TOOLBAR_SCREEN_MARGIN_PX,
+};
 use crate::overlay::{
-	Align, Align2, Area, Color32, CornerRadius, FROZEN_TOOLBAR_BUTTON_SIZE_POINTS,
-	FROZEN_TOOLBAR_ITEM_SPACING_POINTS, FontFamily, FontId, FrozenAnnotationColor,
+	Align, Align2, Area, Color32, CornerRadius, FontFamily, FontId, FrozenAnnotationColor,
 	FrozenToolbarPointerState, FrozenToolbarState, FrozenToolbarTool, HudPillGeometry, HudTheme,
 	Id, Layout, MonitorRect, Order, OverlayMode, OverlayState, Pos2, Rect, Sense, Stroke,
-	StrokeKind, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_EXPANDED_HEIGHT_PX,
-	TOOLBAR_PILL_INNER_MARGIN_Y_POINTS, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement, Ui, UiBuilder,
-	Vec2, toolbar_layout_model,
+	StrokeKind, ToolbarPlacement, Ui, UiBuilder, Vec2, toolbar_layout_model,
 };
 use annotation_style::{
 	FROZEN_ANNOTATION_TOOLBAR_SECTION_GAP_POINTS, FROZEN_ANNOTATION_TOOLBAR_SECTION_HEIGHT_POINTS,
