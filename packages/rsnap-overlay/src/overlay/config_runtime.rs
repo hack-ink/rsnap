@@ -8,11 +8,9 @@ use crate::backend;
 use crate::overlay;
 #[cfg(target_os = "macos")]
 use crate::overlay::OverlayWorker;
+use crate::overlay::hud_geometry::LOUPE_TILE_CORNER_RADIUS_POINTS;
 use crate::overlay::toolbar_layout_model;
-use crate::overlay::{
-	Arc, Instant, LOUPE_TILE_CORNER_RADIUS_POINTS, OverlayConfig, OverlayMode, OverlaySession,
-	WindowRenderer,
-};
+use crate::overlay::{Arc, Instant, OverlayConfig, OverlayMode, OverlaySession, WindowRenderer};
 #[cfg(target_os = "macos")]
 use crate::overlay::{
 	FrozenCaptureWorkerState, MacLiveFrameStream, MacOSHudWindowConfigState,
