@@ -1,4 +1,6 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use crate::overlay::runtime_model::SurfaceFrameSkipReason;
 
 pub(in crate::overlay) const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
 pub(in crate::overlay) const CURSOR_EVENT_TICK_TTL: Duration = Duration::from_millis(24);
@@ -26,3 +28,26 @@ pub(in crate::overlay) const SLOW_OP_WARN_INTERVAL: Duration = Duration::from_se
 pub(in crate::overlay) const SLOW_OP_WARN_OUTER_POSITION: Duration = Duration::from_millis(24);
 pub(in crate::overlay) const SLOW_OP_WARN_RENDER: Duration = Duration::from_millis(24);
 pub(in crate::overlay) const SLOW_OP_WARN_WINDOW_EVENT: Duration = Duration::from_millis(40);
+
+pub(in crate::overlay) fn should_request_overlay_redraw_after_surface_skip(
+	reason: SurfaceFrameSkipReason,
+	now: Instant,
+	occluded_redraw_retry_until: &mut Option<Instant>,
+) -> bool {
+	match reason {
+		SurfaceFrameSkipReason::Timeout => true,
+		SurfaceFrameSkipReason::Occluded => match occluded_redraw_retry_until {
+			Some(deadline) if now >= *deadline => {
+				*occluded_redraw_retry_until = None;
+
+				false
+			},
+			Some(_) => true,
+			None => {
+				*occluded_redraw_retry_until = Some(now + OCCLUDED_FRAME_REDRAW_RETRY_WINDOW);
+
+				true
+			},
+		},
+	}
+}
