@@ -1,12 +1,16 @@
 use egui::Context;
 
 use crate::overlay::hud_geometry::HUD_LOUPE_STRIP_GAP_POINTS;
+use crate::overlay::hud_pill_style::{
+	HUD_PILL_CORNER_RADIUS_POINTS, HUD_PILL_INNER_MARGIN_X_POINTS, HUD_PILL_INNER_MARGIN_Y_POINTS,
+	HUD_PILL_STROKE_WIDTH_POINTS,
+};
 use crate::overlay::rendering::WindowRenderer;
 use crate::overlay::{
-	Align, Area, Color32, ColorImage, CornerRadius, Frame, GlobalPoint,
-	HUD_PILL_CORNER_RADIUS_POINTS, HudAnchor, HudPillGeometry, HudTheme, Id, Layout, Margin,
-	MonitorRect, Order, OverlayMode, OverlayState, Pos2, Rect, RichText, Sense, Stroke, StrokeKind,
-	TextureHandle, TextureId, TextureOptions, Ui, Vec2, hud_helpers,
+	Align, Area, Color32, ColorImage, CornerRadius, Frame, GlobalPoint, HudAnchor, HudPillGeometry,
+	HudTheme, Id, Layout, Margin, MonitorRect, Order, OverlayMode, OverlayState, Pos2, Rect,
+	RichText, Sense, Stroke, StrokeKind, TextureHandle, TextureId, TextureOptions, Ui, Vec2,
+	hud_helpers,
 };
 use crate::state::LoupeSample;
 
@@ -127,8 +131,8 @@ impl WindowRenderer {
 			HudTheme::Dark => Color32::from_rgba_unmultiplied(0, 0, 0, 44),
 			HudTheme::Light => Color32::from_rgba_unmultiplied(255, 255, 255, 140),
 		};
-		let inner_stroke = Stroke::new(1.0, inner_stroke_color);
-		let inner_rect = pill_rect.shrink(1.0);
+		let inner_stroke = Stroke::new(HUD_PILL_STROKE_WIDTH_POINTS, inner_stroke_color);
+		let inner_rect = pill_rect.shrink(HUD_PILL_STROKE_WIDTH_POINTS);
 
 		ui.painter().rect_stroke(
 			inner_rect,
@@ -177,10 +181,13 @@ impl WindowRenderer {
 
 		Frame {
 			fill: body_fill,
-			stroke: Stroke::new(1.0, outer_stroke_color),
+			stroke: Stroke::new(HUD_PILL_STROKE_WIDTH_POINTS, outer_stroke_color),
 			shadow: pill_shadow,
 			corner_radius: CornerRadius::same(HUD_PILL_CORNER_RADIUS_POINTS),
-			inner_margin: Margin::symmetric(12, 8),
+			inner_margin: Margin::symmetric(
+				HUD_PILL_INNER_MARGIN_X_POINTS,
+				HUD_PILL_INNER_MARGIN_Y_POINTS,
+			),
 			..Frame::default()
 		}
 	}
