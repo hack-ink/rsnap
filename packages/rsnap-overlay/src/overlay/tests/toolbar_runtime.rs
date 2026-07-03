@@ -1,9 +1,10 @@
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::overlay::toolbar_layout_model;
 use crate::overlay::tests::{
-	self, FrozenToolbarTool, GlobalPoint, HudTheme, OverlaySession, Pos2, Rect,
-	TOOLBAR_SCREEN_MARGIN_PX, Vec2, WindowRenderer,
+	self, FrozenToolbarTool, GlobalPoint, HudTheme, OverlaySession, Pos2, Rect, Vec2,
+	WindowRenderer,
 };
+use crate::overlay::toolbar_geometry::TOOLBAR_SCREEN_MARGIN_PX;
 
 #[test]
 fn toolbar_cursor_left_during_drag_keeps_drag_session_alive() {

@@ -1,9 +1,9 @@
 use crate::overlay::hud_geometry::HUD_LOUPE_STRIP_GAP_POINTS;
+use crate::overlay::toolbar_geometry::TOOLBAR_SCREEN_MARGIN_PX;
 #[cfg(target_os = "macos")]
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
-	GlobalPoint, MonitorRect, OverlayMode, OverlaySession, Pos2, Rect, TOOLBAR_SCREEN_MARGIN_PX,
-	Vec2, WindowRenderer,
+	GlobalPoint, MonitorRect, OverlayMode, OverlaySession, Pos2, Rect, Vec2, WindowRenderer,
 };
 
 impl OverlaySession {

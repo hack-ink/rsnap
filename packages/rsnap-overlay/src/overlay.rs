@@ -42,6 +42,7 @@ mod scroll_runtime;
 mod session_bootstrap_runtime;
 mod session_contracts;
 mod session_state;
+mod toolbar_geometry;
 mod toolbar_layout_model;
 mod toolbar_runtime;
 mod trace_recording;
@@ -162,7 +163,6 @@ use self::frozen_export_model::{FrozenExportTransform, FrozenImagePatch, FrozenM
 use self::frozen_text_runtime::{FrozenTextInputSource, FrozenTextRecentInput};
 use self::frozen_transition_runtime::FrozenTransitionRuntime;
 use self::hud_geometry::LOUPE_TILE_CORNER_RADIUS_POINTS;
-use self::hud_pill_style::HUD_PILL_STROKE_WIDTH_POINTS;
 #[cfg(target_os = "macos")]
 use self::macos_capture_host::ExternalScrollInputDrainReader;
 #[cfg(all(test, target_os = "macos"))]
@@ -211,6 +211,8 @@ use self::session_state::{
 	MacOSScrollWheelEvent,
 };
 #[cfg(target_os = "macos")]
+use self::toolbar_geometry::TOOLBAR_WINDOW_WARMUP_REDRAWS;
+#[cfg(target_os = "macos")]
 use self::trace_recording::ScrollCaptureTraceInputRecord;
 use self::trace_recording::{
 	ScrollCaptureTraceFrameRecord, ScrollCaptureTraceRecorder, ScrollCaptureTraceSessionSnapshot,
@@ -256,9 +258,6 @@ type Result<T, E = Report> = std::result::Result<T, E>;
 
 pub(crate) const CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED: bool = false;
 
-const FROZEN_TOOLBAR_BUTTON_SIZE_POINTS: f32 = 24.0;
-const FROZEN_TOOLBAR_ITEM_SPACING_POINTS: f32 = 4.0;
-const TOOLBAR_PILL_INNER_MARGIN_Y_POINTS: f32 = 6.0;
 const LIVE_EVENT_CURSOR_CACHE_TTL: Duration = Duration::from_millis(120);
 const CURSOR_EVENT_TICK_TTL: Duration = Duration::from_millis(24);
 const LIVE_HOVER_HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
@@ -300,15 +299,6 @@ const SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES: u8 = 5;
 const SCROLL_CAPTURE_DUPLICATE_STREAM_STALL_THRESHOLD: u8 = 3;
 #[cfg(target_os = "macos")]
 const SCROLL_CAPTURE_DUPLICATE_STREAM_REFRESH_INTERVAL: Duration = Duration::from_millis(80);
-const TOOLBAR_EXPANDED_HEIGHT_PX: f32 = FROZEN_TOOLBAR_BUTTON_SIZE_POINTS
-	+ 2.0 * TOOLBAR_PILL_INNER_MARGIN_Y_POINTS
-	+ 2.0 * HUD_PILL_STROKE_WIDTH_POINTS;
-const TOOLBAR_CAPTURE_GAP_PX: f32 = 10.0;
-const TOOLBAR_SCREEN_MARGIN_PX: f32 = 10.0;
-const TOOLBAR_DEFAULT_SLOT_POSITION_EPSILON_POINTS: f32 = 1.0;
-const TOOLBAR_DRAG_START_THRESHOLD_PX: f32 = 6.0;
-#[cfg(target_os = "macos")]
-const TOOLBAR_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LOUPE_WINDOW_WARMUP_REDRAWS: u8 = 30;
 const LIVE_DRAG_START_THRESHOLD_PX: f32 = 6.0;
 const INTERACTIVE_REPAINT_TARGET_FPS: f32 = 120.0;
