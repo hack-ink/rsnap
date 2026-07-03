@@ -1,9 +1,10 @@
 use winit::window::Window;
 
+use crate::overlay::runtime_timing::LIVE_PRESENT_INTERVAL_MIN;
 use crate::overlay::{
 	Duration, FrozenCaptureSource, GlobalPoint, HudAnchor, HudPillGeometry, HudRedrawSummary,
-	Instant, LIVE_PRESENT_INTERVAL_MIN, LogicalSize, MonitorRect, OverlayControl,
-	OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession, Pos2, Rect, Result, eyre,
+	Instant, LogicalSize, MonitorRect, OverlayControl, OverlayEventLoopPhase, OverlayExit,
+	OverlayMode, OverlaySession, Pos2, Rect, Result, eyre,
 };
 
 impl OverlaySession {

@@ -4,10 +4,11 @@ use image::RgbaImage;
 #[cfg(target_os = "macos")]
 use crate::live_frame_stream_macos::STREAM_REGION_FRAME_MAX_AGE;
 #[cfg(target_os = "macos")]
+use crate::overlay::runtime_timing::DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT;
+#[cfg(target_os = "macos")]
 use crate::overlay::{
-	Arc, DISPLAY_FIRST_FREEZE_LIVE_TIMEOUT, FreezeCaptureTarget, FrozenCaptureWorkerState,
-	GlobalPoint, Instant, MonitorRect, OverlayMode, OverlaySession, WindowCaptureAlphaMode,
-	WindowFreezeCaptureTarget,
+	Arc, FreezeCaptureTarget, FrozenCaptureWorkerState, GlobalPoint, Instant, MonitorRect,
+	OverlayMode, OverlaySession, WindowCaptureAlphaMode, WindowFreezeCaptureTarget,
 };
 #[cfg(target_os = "macos")]
 use crate::state::MonitorImageSnapshot;

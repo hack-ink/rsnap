@@ -8,17 +8,17 @@ use winit::keyboard::ModifiersState;
 
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenGlobalHotkey;
+use crate::overlay::runtime_timing::CURSOR_EVENT_TICK_TTL;
 #[cfg(target_os = "macos")]
 use crate::overlay::runtime_timing::SLOW_OP_WARN_CURSOR_LOCATION;
 #[cfg(target_os = "macos")]
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
-	CURSOR_EVENT_TICK_TTL, CursorMoveTrace, DeviceCursorPointSource, ElementState,
-	FrozenSelectionDragCursorMoveTiming, FrozenTextEditState, FrozenTextInputSource,
-	FrozenToolbarTool, GlobalPoint, Ime, Key, LiveCaptureInteraction, LiveClickCaptureTarget,
-	Modifiers, MonitorRect, MouseScrollDelta, NamedKey, OverlayControl, OverlayKeyboardInputEvent,
-	OverlayMode, OverlaySession, PhysicalPosition, PhysicalSize, PngAction, Pos2, Vec2, WindowId,
-	WindowRenderer,
+	CursorMoveTrace, DeviceCursorPointSource, ElementState, FrozenSelectionDragCursorMoveTiming,
+	FrozenTextEditState, FrozenTextInputSource, FrozenToolbarTool, GlobalPoint, Ime, Key,
+	LiveCaptureInteraction, LiveClickCaptureTarget, Modifiers, MonitorRect, MouseScrollDelta,
+	NamedKey, OverlayControl, OverlayKeyboardInputEvent, OverlayMode, OverlaySession,
+	PhysicalPosition, PhysicalSize, PngAction, Pos2, Vec2, WindowId, WindowRenderer,
 };
 
 impl OverlaySession {
