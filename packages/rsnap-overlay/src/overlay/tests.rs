@@ -43,6 +43,12 @@ use crate::overlay::PngAction;
 use crate::overlay::frozen_edit_history_runtime::FROZEN_EDIT_HISTORY_LIMIT;
 use crate::overlay::frozen_text_runtime::FROZEN_TEXT_CARET_REPAINT_INTERVAL;
 use crate::overlay::rendering;
+use crate::overlay::scroll_capture_timing::SCROLL_CAPTURE_SAMPLE_INTERVAL;
+#[cfg(target_os = "macos")]
+use crate::overlay::scroll_capture_timing::{
+	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW, SCROLL_CAPTURE_INPUT_FRESHNESS,
+	SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES, SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
+};
 #[cfg(target_os = "macos")]
 use crate::overlay::session_state::ScrollCaptureLiveFrame;
 use crate::overlay::session_state::{
@@ -57,17 +63,15 @@ use crate::overlay::{
 	FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState, FrozenTextInputSource,
 	FrozenToolbarState, FrozenToolbarTool, HudRedrawSummary, HudTheme, OutputNaming,
 	OverlayControl, OverlaySession, Pos2, PreparedHostEffectRequest, Rect,
-	SCROLL_CAPTURE_SAMPLE_INTERVAL, SelectionDashedBorderCache, SelectionFlowGeometryCache,
-	SelectionSizeBadgeTarget, SurfaceFrameSkipReason, ToolbarPlacement, Vec2,
-	WindowCaptureAlphaMode, WindowRenderer, hud_helpers,
+	SelectionDashedBorderCache, SelectionFlowGeometryCache, SelectionSizeBadgeTarget,
+	SurfaceFrameSkipReason, ToolbarPlacement, Vec2, WindowCaptureAlphaMode, WindowRenderer,
+	hud_helpers,
 };
 #[cfg(target_os = "macos")]
 use crate::overlay::{
 	HudPillGeometry, InflightScrollCaptureObservation, LiveSampleApplyResult, LiveStreamStaleGrace,
-	MacOSScrollPixelResidual, OverlayExit, SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW,
-	SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_LIVE_STREAM_STALE_GRACE_FRAMES,
-	SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE, ScrollCaptureFrameSource,
-	ScrollCaptureHostAdapter, ScrollCaptureHostFrameRequestError, StartupLiveRgbPlan,
+	MacOSScrollPixelResidual, OverlayExit, ScrollCaptureFrameSource, ScrollCaptureHostAdapter,
+	ScrollCaptureHostFrameRequestError, StartupLiveRgbPlan,
 };
 use crate::scroll_capture::{ScrollDirection, ScrollObserveOutcome, ScrollSession};
 #[cfg(target_os = "macos")]

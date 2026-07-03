@@ -1,16 +1,19 @@
 use std::time::Instant;
 
-use crate::overlay::{
-	GlobalPoint, MouseScrollDelta, OverlayControl, OverlaySession, SCROLL_CAPTURE_INPUT_FRESHNESS,
-	SCROLL_CAPTURE_INPUT_MOTION_PRIOR_ROWS_MAX, ScrollCaptureTraceSessionSnapshot, ScrollDirection,
-	ScrollObserveOutcome, WindowId,
-};
 #[cfg(target_os = "macos")]
-use crate::overlay::{
-	MacOSScrollPixelResidual, MacOSScrollWheelEvent, MonitorRect, RectPoints,
+use crate::overlay::scroll_capture_timing::{
 	SCROLL_CAPTURE_ACTIVE_GESTURE_STALE_REFRESH_DEAD_WINDOW,
 	SCROLL_CAPTURE_MOUSE_PASSTHROUGH_IDLE_GRACE,
 };
+use crate::overlay::scroll_capture_timing::{
+	SCROLL_CAPTURE_INPUT_FRESHNESS, SCROLL_CAPTURE_INPUT_MOTION_PRIOR_ROWS_MAX,
+};
+use crate::overlay::{
+	GlobalPoint, MouseScrollDelta, OverlayControl, OverlaySession,
+	ScrollCaptureTraceSessionSnapshot, ScrollDirection, ScrollObserveOutcome, WindowId,
+};
+#[cfg(target_os = "macos")]
+use crate::overlay::{MacOSScrollPixelResidual, MacOSScrollWheelEvent, MonitorRect, RectPoints};
 
 #[cfg(target_os = "macos")]
 pub(in crate::overlay) const KCG_SCROLL_EVENT_UNIT_LINE: u32 = 1;
