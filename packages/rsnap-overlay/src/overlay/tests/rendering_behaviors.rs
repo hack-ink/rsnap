@@ -33,9 +33,9 @@ use crate::overlay::session_state::{
 };
 use crate::overlay::tests::{
 	self, ElementState, FrozenCaptureSource, FrozenSelectionDragState, FrozenToolbarState,
-	FrozenToolbarTool, GlobalPoint, HUD_LOUPE_STRIP_GAP_POINTS, HudTheme, MonitorRect,
-	MonitorRectPoints, MouseButton, OverlayMode, OverlaySession, OverlayState, PngAction, Pos2,
-	Rect, RectPoints, Rgba, ScrollSession, SelectionDashedBorderCache, SelectionFlowGeometryCache,
+	FrozenToolbarTool, GlobalPoint, HudTheme, MonitorRect, MonitorRectPoints, MouseButton,
+	OverlayMode, OverlaySession, OverlayState, PngAction, Pos2, Rect, RectPoints, Rgba,
+	ScrollSession, SelectionDashedBorderCache, SelectionFlowGeometryCache,
 	SelectionSizeBadgeTarget, TOOLBAR_CAPTURE_GAP_PX, TOOLBAR_SCREEN_MARGIN_PX, ToolbarPlacement,
 	Vec2, WindowRenderer, overlay,
 };
