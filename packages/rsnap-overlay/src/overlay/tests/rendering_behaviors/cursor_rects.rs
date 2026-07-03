@@ -2,7 +2,7 @@ use crate::overlay::tests::rendering_behaviors::{
 	CursorIcon, GlobalPoint, OverlayMode, OverlaySession, Pos2, tests,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::tests::rendering_behaviors::{Object, frozen_selection_runtime};
+use crate::overlay::tests::rendering_behaviors::{Object, cursor_icon_runtime};
 #[cfg(target_os = "macos")]
 use crate::overlay::tests::rendering_behaviors::{Rect, Vec2, overlay::macos_cursor_runtime};
 
@@ -46,18 +46,11 @@ fn live_cursor_rects_cover_overlay_with_crosshair() {
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_live_cursor_sync_keeps_render_rects_active_during_native_shell_input() {
-	assert!(frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
-		OverlayMode::Live,
-		true,
-	));
-	assert!(frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
-		OverlayMode::Live,
-		false,
-	));
-	assert!(frozen_selection_runtime::macos_overlay_cursor_uses_render_rects(
-		OverlayMode::Frozen,
-		true,
-	));
+	assert!(cursor_icon_runtime::macos_overlay_cursor_uses_render_rects(OverlayMode::Live, true,));
+	assert!(cursor_icon_runtime::macos_overlay_cursor_uses_render_rects(OverlayMode::Live, false,));
+	assert!(
+		cursor_icon_runtime::macos_overlay_cursor_uses_render_rects(OverlayMode::Frozen, true,)
+	);
 }
 
 #[cfg(target_os = "macos")]
