@@ -14,7 +14,6 @@ use objc2_foundation::NSArray;
 use winit::window::{Window, WindowId};
 
 use crate::backend;
-use crate::overlay::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED;
 #[cfg(target_os = "macos")]
 use crate::overlay::MacLiveFrameStream;
 #[cfg(target_os = "macos")]
@@ -22,6 +21,7 @@ use crate::overlay::MacOSHudWindowConfigState;
 use crate::overlay::hud_geometry::LOUPE_TILE_CORNER_RADIUS_POINTS;
 use crate::overlay::toolbar_geometry::TOOLBAR_EXPANDED_HEIGHT_PX;
 use crate::overlay::toolbar_layout_model;
+use crate::overlay::window_content_policy::CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED;
 #[cfg(target_os = "macos")]
 use crate::overlay::{self, macos_cursor_runtime};
 use crate::overlay::{

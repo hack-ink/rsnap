@@ -49,6 +49,7 @@ mod toolbar_geometry;
 mod toolbar_layout_model;
 mod toolbar_runtime;
 mod trace_recording;
+mod window_content_policy;
 mod window_position_runtime;
 mod window_runtime;
 mod worker_runtime;
@@ -261,8 +262,6 @@ macro_rules! sel_impl {
 }
 
 type Result<T, E = Report> = std::result::Result<T, E>;
-
-pub(crate) const CAPTURE_WINDOW_CONTENT_PROTECTION_ENABLED: bool = false;
 
 /// Transitional Rust-core session controller that owns product state, rendering,
 /// explicit host requests, and host-sync state consumed by the native app host.
