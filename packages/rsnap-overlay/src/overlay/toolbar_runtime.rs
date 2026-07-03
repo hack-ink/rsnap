@@ -1,12 +1,14 @@
+use crate::overlay::toolbar_geometry::TOOLBAR_DRAG_START_THRESHOLD_PX;
+#[cfg(target_os = "macos")]
+use crate::overlay::toolbar_geometry::TOOLBAR_WINDOW_WARMUP_REDRAWS;
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
 	Arc, Duration, FrozenToolbarPointerState, GlobalPoint, HudOverlayWindow, Instant, MonitorRect,
 	OverlayControl, OverlayEventLoopPhase, OverlayExit, OverlayMode, OverlaySession,
-	PhysicalPosition, PhysicalSize, Pos2, Result, TOOLBAR_DRAG_START_THRESHOLD_PX, Vec2, WindowId,
-	WindowRenderer,
+	PhysicalPosition, PhysicalSize, Pos2, Result, Vec2, WindowId, WindowRenderer,
 };
 #[cfg(target_os = "macos")]
-use crate::overlay::{FrozenCaptureSource, HudAnchor, TOOLBAR_WINDOW_WARMUP_REDRAWS};
+use crate::overlay::{FrozenCaptureSource, HudAnchor};
 
 impl OverlaySession {
 	pub(super) fn handle_toolbar_window_moved(
