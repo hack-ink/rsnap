@@ -1,5 +1,6 @@
 pub mod bench_support;
 
+mod downward_recovery;
 mod downward_resolution;
 mod fingerprint;
 mod logging;
