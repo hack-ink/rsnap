@@ -20,14 +20,15 @@ use winit::window::Window;
 
 use self::hud_rendering::LiveLoupeTexture;
 use self::hud_surface::HudBg;
+use crate::overlay::coordinate_geometry;
 #[cfg(target_os = "macos")]
 use crate::overlay::macos_configure_hud_window;
 #[cfg(target_os = "macos")]
 use crate::overlay::macos_cursor_runtime::MacOSOverlayCursorRectSupport;
 use crate::overlay::runtime_timing;
 use crate::overlay::{
-	self, AcquiredSurfaceFrame, Adapter, Arc, BindGroupLayout, Buffer, ClippedPrimitive, Color32,
-	Device, Duration, Event, ExperimentalFeatures, Features, FontDefinitions, FontFamily,
+	AcquiredSurfaceFrame, Adapter, Arc, BindGroupLayout, Buffer, ClippedPrimitive, Color32, Device,
+	Duration, Event, ExperimentalFeatures, Features, FontDefinitions, FontFamily,
 	FrozenArrowAnnotation, FrozenBrushState, FrozenCaptureSource, FrozenEditKind,
 	FrozenSpotlightAnnotation, FrozenTextAnnotation, FrozenTextEditState, FrozenTextStyle,
 	FrozenToolbarPointerState, FrozenToolbarState, FullOutput, HudAnchor, HudDrawConfig, HudTheme,
@@ -377,7 +378,7 @@ impl WindowRenderer {
 		let hud_data = if can_draw_hud {
 			state.cursor.and_then(|cursor| {
 				let local_cursor = hud_local_cursor_override
-					.or_else(|| overlay::global_to_local(cursor, monitor))?;
+					.or_else(|| coordinate_geometry::global_to_local(cursor, monitor))?;
 
 				Some((cursor, local_cursor))
 			})
