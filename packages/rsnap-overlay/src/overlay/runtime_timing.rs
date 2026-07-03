@@ -1,4 +1,6 @@
 use std::time::{Duration, Instant};
+#[cfg(target_os = "macos")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::overlay::runtime_model::SurfaceFrameSkipReason;
 
@@ -28,6 +30,14 @@ pub(in crate::overlay) const SLOW_OP_WARN_INTERVAL: Duration = Duration::from_se
 pub(in crate::overlay) const SLOW_OP_WARN_OUTER_POSITION: Duration = Duration::from_millis(24);
 pub(in crate::overlay) const SLOW_OP_WARN_RENDER: Duration = Duration::from_millis(24);
 pub(in crate::overlay) const SLOW_OP_WARN_WINDOW_EVENT: Duration = Duration::from_millis(40);
+
+#[cfg(target_os = "macos")]
+pub(in crate::overlay) fn current_unix_millis() -> u64 {
+	match SystemTime::now().duration_since(UNIX_EPOCH) {
+		Ok(duration) => duration.as_millis().try_into().unwrap_or(u64::MAX),
+		Err(_err) => 0,
+	}
+}
 
 pub(in crate::overlay) fn should_request_overlay_redraw_after_surface_skip(
 	reason: SurfaceFrameSkipReason,

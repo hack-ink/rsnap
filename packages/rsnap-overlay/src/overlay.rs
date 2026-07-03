@@ -71,8 +71,6 @@ pub use self::session_contracts::{
 use std::mem;
 use std::ptr;
 use std::slice;
-#[cfg(target_os = "macos")]
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
 	borrow::Cow,
 	collections::{HashMap, HashSet},
@@ -1933,7 +1931,7 @@ impl OverlaySession {
 		&mut self,
 		request_id: u64,
 	) -> Option<DeferredTextRecognitionRequest> {
-		let requested_at_unix_ms = current_unix_millis();
+		let requested_at_unix_ms = runtime_timing::current_unix_millis();
 
 		if self.scroll_capture.active {
 			let image = self.scroll_capture.session.as_ref()?.export_image().clone();
@@ -2648,14 +2646,6 @@ impl OverlaySession {
 impl Default for OverlaySession {
 	fn default() -> Self {
 		Self::new()
-	}
-}
-
-#[cfg(target_os = "macos")]
-fn current_unix_millis() -> u64 {
-	match SystemTime::now().duration_since(UNIX_EPOCH) {
-		Ok(duration) => duration.as_millis().try_into().unwrap_or(u64::MAX),
-		Err(_err) => 0,
 	}
 }
 
