@@ -29,6 +29,7 @@ mod image_helpers;
 mod input_runtime;
 mod keyboard_input_runtime;
 mod live_capture_target;
+mod loupe_input_runtime;
 #[cfg(target_os = "macos")]
 mod macos_capture_host;
 #[cfg(target_os = "macos")]
