@@ -8,9 +8,10 @@ use egui_phosphor::regular::{
 };
 use wgpu::SurfaceTexture;
 
+use crate::overlay::live_capture_target::LiveClickCaptureTarget;
 use crate::overlay::{
 	FrozenArrowAnnotation, FrozenBrushStroke, FrozenTextAnnotation, FrozenToolbarState,
-	GlobalPoint, LiveClickCaptureTarget, MonitorRect, RectPoints,
+	GlobalPoint, MonitorRect, RectPoints,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

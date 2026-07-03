@@ -1,8 +1,7 @@
 use std::time::Instant;
 
-use crate::overlay::{
-	LiveClickCaptureTarget, MonitorRect, OverlaySession, RectPoints, WindowFreezeCaptureTarget,
-};
+use crate::overlay::live_capture_target::LiveClickCaptureTarget;
+use crate::overlay::{MonitorRect, OverlaySession, RectPoints, WindowFreezeCaptureTarget};
 
 #[derive(Debug, Default)]
 pub(super) struct FrozenTransitionRuntime {
