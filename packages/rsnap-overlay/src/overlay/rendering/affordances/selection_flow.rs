@@ -3,12 +3,12 @@ use std::f32::consts::PI;
 
 use egui::Context;
 
+use crate::overlay::frozen_selection_geometry::LIVE_DRAG_START_THRESHOLD_PX;
 use crate::overlay::rendering::{
 	SelectionFlowGeometryCache, SelectionFlowGeometryCacheKey, WindowRenderer,
 };
 use crate::overlay::{
-	Color32, HudTheme, LIVE_DRAG_START_THRESHOLD_PX, Mesh, Painter, Pos2, Rect, SelectionFlowStyle,
-	Shape, Vec2,
+	Color32, HudTheme, Mesh, Painter, Pos2, Rect, SelectionFlowStyle, Shape, Vec2,
 };
 
 const SELECTION_FLOW_CORNER_RADIUS_PX: f32 = 9.0;

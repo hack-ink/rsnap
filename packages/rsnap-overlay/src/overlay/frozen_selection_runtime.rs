@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use image::{Rgba, RgbaImage};
 
-use crate::overlay::LIVE_DRAG_START_THRESHOLD_PX;
+use crate::overlay::frozen_selection_geometry::LIVE_DRAG_START_THRESHOLD_PX;
 #[cfg(target_os = "macos")]
 use crate::overlay::frozen_selection_handles;
 #[cfg(target_os = "macos")]
