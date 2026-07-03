@@ -16,7 +16,7 @@ use crate::scroll_capture::{
 	TRANSIENT_BURST_UNDERCONSUMED_HINT_MIN_ROWS, UNDERCONSUMED_OBSERVED_BURST_RECOVERY_GAP_ROWS,
 	eyre,
 };
-use crate::scroll_capture::{downward_candidates, support};
+use crate::scroll_capture::{downward_candidates, image_stack, support};
 
 impl ScrollSession {
 	pub(super) fn evaluate_reference_overlap_direction(
@@ -940,12 +940,14 @@ impl ScrollSession {
 		previous_motion_rows_hint: Option<u32>,
 	) -> Result<ScrollObserveOutcome> {
 		let fingerprint = support::scroll_capture_fingerprint(&frame);
-		let strip = support::crop_bottom_rows(&frame, growth_rows)
+		let strip = image_stack::crop_bottom_rows(&frame, growth_rows)
 			.ok_or_else(|| eyre::eyre!("failed to extract growth strip"))?;
-		let preview_strip = support::resize_strip_to_preview_width(&strip, self.preview_width_px);
+		let preview_strip =
+			image_stack::resize_strip_to_preview_width(&strip, self.preview_width_px);
 
-		self.export_image = support::append_vertical_image(&self.export_image, &strip)?;
-		self.preview_image = support::append_vertical_image(&self.preview_image, &preview_strip)?;
+		self.export_image = image_stack::append_vertical_image(&self.export_image, &strip)?;
+		self.preview_image =
+			image_stack::append_vertical_image(&self.preview_image, &preview_strip)?;
 
 		self.bottom_segments.push(strip);
 		self.bottom_preview_segments.push(preview_strip);
@@ -1042,7 +1044,7 @@ impl ScrollSession {
 			ordered.push(strip);
 		}
 
-		support::stack_vertical_images(&ordered)
+		image_stack::stack_vertical_images(&ordered)
 	}
 
 	pub(super) fn rebuild_preview_image(&self) -> Result<RgbaImage> {
@@ -1054,6 +1056,6 @@ impl ScrollSession {
 			ordered.push(strip);
 		}
 
-		support::stack_vertical_images(&ordered)
+		image_stack::stack_vertical_images(&ordered)
 	}
 }

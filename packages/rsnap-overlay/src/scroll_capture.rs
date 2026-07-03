@@ -4,6 +4,7 @@ mod downward_candidates;
 mod downward_recovery;
 mod downward_resolution;
 mod fingerprint;
+mod image_stack;
 mod logging;
 mod pairwise_shift;
 mod resume_frontier;
@@ -16,9 +17,10 @@ mod upward_input;
 mod worker_pairwise;
 
 pub(crate) use self::fingerprint::ScrollFrameFingerprint;
+pub(crate) use self::image_stack::compose_provisional_preview_image;
+pub(crate) use self::support::scroll_capture_fingerprint;
 #[cfg(any(test, target_os = "macos"))]
 pub(crate) use self::support::scroll_capture_fingerprint_delta;
-pub(crate) use self::support::{compose_provisional_preview_image, scroll_capture_fingerprint};
 #[cfg(test)]
 pub(crate) use self::types::OverlapMatch;
 pub(crate) use self::types::{
@@ -134,7 +136,7 @@ impl ScrollSession {
 	pub(crate) fn new(base_frame: RgbaImage, preview_width_px: u32) -> Result<Self> {
 		let fingerprint = scroll_capture_fingerprint(&base_frame);
 		let anchor_preview =
-			self::support::resize_strip_to_preview_width(&base_frame, preview_width_px.max(1));
+			self::image_stack::resize_strip_to_preview_width(&base_frame, preview_width_px.max(1));
 
 		Ok(Self {
 			anchor_frame: base_frame.clone(),
