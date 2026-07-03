@@ -9,7 +9,7 @@ use winit::keyboard::ModifiersState;
 #[cfg(target_os = "macos")]
 use crate::overlay::FrozenGlobalHotkey;
 #[cfg(target_os = "macos")]
-use crate::overlay::SLOW_OP_WARN_CURSOR_LOCATION;
+use crate::overlay::runtime_timing::SLOW_OP_WARN_CURSOR_LOCATION;
 #[cfg(target_os = "macos")]
 use crate::overlay::toolbar_layout_model;
 use crate::overlay::{
