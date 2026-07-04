@@ -94,10 +94,7 @@ final class CaptureHostView: NSView {
 	private var annotationStyleWheelLastStepTimestamp: TimeInterval?
 	private var lastCursorPresentation: CaptureHostCursorPresentation?
 	private var lastAppliedCursorPresentation: CaptureHostCursorPresentation?
-	private var liveDragStartGlobal: CGPoint?
-	private var liveDragReleasedGlobal: CGPoint?
-	private var liveDragExceededThreshold = false
-	private var livePrimaryCompletionInFlight = false
+	private var livePrimaryInteraction = CaptureHostLivePrimaryInteractionState()
 	private var liveMouseUpMonitor: Any?
 	private var liveMouseReleaseWatchdog: DispatchWorkItem?
 	private var frozenMouseReleaseWatchdog: DispatchWorkItem?
@@ -106,7 +103,6 @@ final class CaptureHostView: NSView {
 	private var livePointerPreviewInputSequence: UInt64 = 0
 	private var lastLivePointerEventUptime: TimeInterval?
 	private var liveHighlightedWindowPreview: WindowSnapshot?
-	private var liveHoverChromeSuppressed = false
 	private var sampleUpdatedLiveChromeRenderInProgress = false
 	private var pendingFrozenFirstDisplay = false
 	private var frozenFirstDisplayCompletionQueued = false
@@ -237,7 +233,7 @@ final class CaptureHostView: NSView {
 		if scene.mode == .live {
 			pendingFrozenFirstDisplay = false
 			if previousMode != .live {
-				liveHoverChromeSuppressed = false
+				livePrimaryInteraction.clearHoverChromeSuppression()
 				resetLiveChromeInputTelemetry()
 				seedLiveChromeSampleCache(from: chrome, point: scene.pointer)
 			}
@@ -250,7 +246,7 @@ final class CaptureHostView: NSView {
 		} else {
 			clearLivePrimaryInteractionState(rendersImmediately: false)
 			if scene.mode == .hidden {
-				liveHoverChromeSuppressed = false
+				livePrimaryInteraction.clearHoverChromeSuppression()
 				pendingFrozenFirstDisplay = false
 				lastLivePreviewSnapshot = nil
 				latestLiveChromeSample = nil
@@ -400,7 +396,7 @@ final class CaptureHostView: NSView {
 		self.scene = scene
 		self.chrome = chrome
 		self.settings = settings
-		liveHoverChromeSuppressed = false
+		livePrimaryInteraction.clearHoverChromeSuppression()
 		pendingFrozenFirstDisplay = false
 		frozenFirstDisplayCompletionQueued = false
 		frozenFirstDisplayHandoffStartedAt = nil
@@ -471,7 +467,7 @@ final class CaptureHostView: NSView {
 		self.scene = scene
 		self.chrome = chrome
 		self.settings = settings
-		liveHoverChromeSuppressed = false
+		livePrimaryInteraction.clearHoverChromeSuppression()
 		pendingFrozenFirstDisplay = retainedLivePreview != nil || scene.frozenSelection != nil
 		frozenFirstDisplayCompletionQueued = false
 		frozenFirstDisplayHandoffStartedAt =
@@ -580,14 +576,15 @@ final class CaptureHostView: NSView {
 			if recoverReleasedLivePrimaryInteractionIfNeeded(at: point) {
 				return
 			}
-			if liveDragExceededThreshold == false,
-				liveDragDistance(from: point) >= Self.liveDragIntentThreshold
-			{
-				liveDragExceededThreshold = true
+			if livePrimaryInteraction.updateDragThreshold(
+				from: point,
+				threshold: Self.liveDragIntentThreshold
+			) {
 				logLivePrimaryInputEvent("capture.live_primary_drag_threshold", point: point)
 			}
 			updateLivePointerPreview(to: point, rendersImmediately: false)
-			queuePointerEvent(liveDragExceededThreshold ? .liveDragged(point) : .moved(point))
+			queuePointerEvent(
+				livePrimaryInteraction.dragExceededThreshold ? .liveDragged(point) : .moved(point))
 		} else {
 			let point = globalPoint(from: event)
 			if recoverReleasedFrozenInteractionIfNeeded(at: point) {
@@ -606,10 +603,7 @@ final class CaptureHostView: NSView {
 			break
 		case .live:
 			suppressLiveHoverChrome()
-			liveDragStartGlobal = point
-			liveDragReleasedGlobal = nil
-			liveDragExceededThreshold = false
-			livePrimaryCompletionInFlight = false
+			livePrimaryInteraction.begin(at: point)
 			logLivePrimaryInputEvent("capture.live_primary_mouse_down", point: point)
 			controller?.registerLivePrimaryInteractionOwner(self)
 			installLiveMouseUpMonitor()
@@ -952,36 +946,22 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentImmediateLiveDragSelectionLocal() -> CGRect? {
-		guard scene.mode == .live, let dragStart = liveDragStartGlobal, let window else {
+		guard scene.mode == .live, let window else {
 			return nil
 		}
-		guard liveDragExceededThreshold else {
+		guard
+			let globalRect = livePrimaryInteraction.immediateDragSelectionGlobal(
+				current: livePointerPreviewGlobal ?? scene.pointer,
+				in: window.frame
+			)
+		else {
 			return nil
 		}
-		let current =
-			liveDragReleasedGlobal ?? livePointerPreviewGlobal ?? scene.pointer ?? dragStart
-		let windowFrame = window.frame
-		guard windowFrame.contains(dragStart) else {
-			return nil
-		}
-		let normalized = windowFrame.normalizedRect(anchor: dragStart, current: current)
-		guard max(normalized.width, normalized.height) >= 1 else {
-			return nil
-		}
-		let globalRect = CGRect(
-			x: normalized.minX,
-			y: normalized.minY,
-			width: max(normalized.width, 1),
-			height: max(normalized.height, 1)
-		)
 		return localRect(from: globalRect)
 	}
 
 	private func liveDragDistance(from point: CGPoint) -> CGFloat {
-		guard let dragStart = liveDragStartGlobal else {
-			return 0
-		}
-		return max(abs(point.x - dragStart.x), abs(point.y - dragStart.y))
+		livePrimaryInteraction.dragDistance(from: point)
 	}
 
 	private func localPointer() -> CGPoint? {
@@ -1033,40 +1013,39 @@ final class CaptureHostView: NSView {
 	}
 
 	func markLivePrimaryInteractionReleased(at point: CGPoint) {
-		guard scene.mode == .live, liveDragStartGlobal != nil else {
+		guard scene.mode == .live, livePrimaryInteraction.hasInteraction else {
 			return
 		}
+		let wasDragSelection = livePrimaryInteraction.dragExceededThreshold
 		let completionPoint = liveDragCompletionPoint(for: point)
 		logLivePrimaryInputEvent(
 			"capture.live_primary_release_marked",
 			point: completionPoint,
-			detail: "dragExceeded=\(liveDragExceededThreshold)"
+			detail: "dragExceeded=\(wasDragSelection)"
 		)
-		livePrimaryCompletionInFlight = true
-		liveDragReleasedGlobal = completionPoint
-		liveHoverChromeSuppressed = false
+		livePrimaryInteraction.markReleased(at: point)
 		removeLiveMouseUpMonitor()
 		cancelQueuedPointerDispatch()
 		updateLivePointerPreview(
 			to: completionPoint,
 			rendersImmediately: true,
-			rendersFullPreview: liveDragExceededThreshold
+			rendersFullPreview: wasDragSelection
 		)
 	}
 
 	var hasLivePrimaryInteraction: Bool {
-		scene.mode == .live && liveDragStartGlobal != nil
+		scene.mode == .live && livePrimaryInteraction.hasInteraction
 	}
 
 	func completeOwnedLivePrimaryInteraction(at point: CGPoint) {
-		guard scene.mode == .live, liveDragStartGlobal != nil, !livePrimaryCompletionInFlight else {
+		guard scene.mode == .live, livePrimaryInteraction.canCompleteInteraction else {
 			return
 		}
 		let completionPoint = liveDragCompletionPoint(for: point)
 		logLivePrimaryInputEvent(
 			"capture.live_primary_complete_owned",
 			point: completionPoint,
-			detail: "dragExceeded=\(liveDragExceededThreshold)"
+			detail: "dragExceeded=\(livePrimaryInteraction.dragExceededThreshold)"
 		)
 		markLivePrimaryInteractionReleased(at: point)
 		if let controller {
@@ -1080,8 +1059,7 @@ final class CaptureHostView: NSView {
 	private func recoverReleasedLivePrimaryInteractionIfNeeded(at point: CGPoint) -> Bool {
 		guard
 			scene.mode == .live,
-			liveDragStartGlobal != nil,
-			!livePrimaryCompletionInFlight,
+			livePrimaryInteraction.canCompleteInteraction,
 			!isPrimaryMouseButtonPressed()
 		else {
 			return false
@@ -1107,7 +1085,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func liveDragCompletionPoint(for point: CGPoint) -> CGPoint {
-		liveDragExceededThreshold ? point : liveDragStartGlobal ?? point
+		livePrimaryInteraction.completionPoint(for: point)
 	}
 
 	private func isPrimaryMouseButtonPressed() -> Bool {
@@ -1116,11 +1094,7 @@ final class CaptureHostView: NSView {
 
 	func clearLivePrimaryInteractionState(rendersImmediately: Bool) {
 		cancelQueuedPointerDispatch()
-		liveHoverChromeSuppressed = false
-		liveDragStartGlobal = nil
-		liveDragReleasedGlobal = nil
-		liveDragExceededThreshold = false
-		livePrimaryCompletionInFlight = false
+		livePrimaryInteraction.reset()
 		removeLiveMouseUpMonitor()
 		if rendersImmediately, scene.mode == .live {
 			liveRenderer.renderNow()
@@ -1157,8 +1131,7 @@ final class CaptureHostView: NSView {
 	) {
 		guard
 			scene.mode == .live,
-			liveDragStartGlobal != nil,
-			livePrimaryCompletionInFlight == false
+			livePrimaryInteraction.canCompleteInteraction
 		else {
 			return
 		}
@@ -1195,8 +1168,7 @@ final class CaptureHostView: NSView {
 		liveMouseReleaseWatchdog = nil
 		guard
 			scene.mode == .live,
-			liveDragStartGlobal != nil,
-			!livePrimaryCompletionInFlight
+			livePrimaryInteraction.canCompleteInteraction
 		else {
 			return
 		}
@@ -1258,7 +1230,7 @@ final class CaptureHostView: NSView {
 			event,
 			captureID: controller?.activeTelemetryCaptureID ?? 0,
 			detail:
-				"\(detail) x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded())) inFlight=\(livePrimaryCompletionInFlight)"
+				"\(detail) x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded())) inFlight=\(livePrimaryInteraction.completionInFlight)"
 		)
 	}
 
@@ -2160,7 +2132,7 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 
-		if livePrimaryCompletionInFlight == false {
+		if livePrimaryInteraction.completionInFlight == false {
 			let polledPoint = currentGlobalMousePoint() ?? NSEvent.mouseLocation
 			if let currentPreview = livePointerPreviewGlobal {
 				if hypot(currentPreview.x - polledPoint.x, currentPreview.y - polledPoint.y)
@@ -2182,7 +2154,8 @@ final class CaptureHostView: NSView {
 		let loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
 		let dragSelectionLocal =
 			currentImmediateLiveDragSelectionLocal()
-			?? (usesSceneDragPreview && liveDragStartGlobal != nil && liveDragExceededThreshold
+			?? (usesSceneDragPreview && livePrimaryInteraction.hasInteraction
+				&& livePrimaryInteraction.dragExceededThreshold
 				? localRect(from: scene.liveSelectionPreview) : nil)
 		let hoverSelectionLocal =
 			dragSelectionLocal == nil
@@ -2190,10 +2163,11 @@ final class CaptureHostView: NSView {
 			: nil
 		let positionDisplay = currentPositionDisplay()
 		let colorDisplay = currentLiveColorDisplay(for: rgbSample)
-		let hudPlacement = liveHoverChromeSuppressed ? nil : currentHudPlacement()
+		let hudPlacement =
+			livePrimaryInteraction.hoverChromeSuppressed ? nil : currentHudPlacement()
 		let hudFrame = hudPlacement?.frame
 		let loupeFrame =
-			!liveHoverChromeSuppressed && scene.loupeVisible
+			!livePrimaryInteraction.hoverChromeSuppressed && scene.loupeVisible
 			? hudPlacement.flatMap {
 				currentLoupeFrame(
 					hudFrame: $0.frame,
@@ -2247,7 +2221,10 @@ final class CaptureHostView: NSView {
 	}
 
 	private func refreshLiveHighlightedWindowPreviewForFastPath(at globalPoint: CGPoint) -> Bool {
-		guard liveDragStartGlobal == nil, !liveHoverChromeSuppressed else {
+		guard
+			livePrimaryInteraction.hasInteraction == false,
+			livePrimaryInteraction.hoverChromeSuppressed == false
+		else {
 			return false
 		}
 		let previousPreview = liveHighlightedWindowPreview
@@ -2329,10 +2306,11 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentLiveChromeLayerFrames() -> (hud: CGRect?, loupe: CGRect?) {
-		let hudPlacement = liveHoverChromeSuppressed ? nil : currentHudPlacement()
+		let hudPlacement =
+			livePrimaryInteraction.hoverChromeSuppressed ? nil : currentHudPlacement()
 		let hudFrame = hudPlacement?.frame
 		let loupeFrame =
-			!liveHoverChromeSuppressed && scene.loupeVisible
+			!livePrimaryInteraction.hoverChromeSuppressed && scene.loupeVisible
 			? hudPlacement.flatMap {
 				currentLoupeFrame(
 					hudFrame: $0.frame,
@@ -2420,7 +2398,7 @@ final class CaptureHostView: NSView {
 		controller?.updateLivePreviewDemand(
 			point: point,
 			settings: settings,
-			includeLoupePatch: scene.loupeVisible && !liveHoverChromeSuppressed
+			includeLoupePatch: scene.loupeVisible && !livePrimaryInteraction.hoverChromeSuppressed
 		)
 	}
 
@@ -2438,7 +2416,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentLiveChromeSample(at point: CGPoint?) -> LiveChromeSample? {
-		let wantsLoupePatch = scene.loupeVisible && !liveHoverChromeSuppressed
+		let wantsLoupePatch = scene.loupeVisible && !livePrimaryInteraction.hoverChromeSuppressed
 		let sample = controller?.liveChromeSnapshot(
 			point: point,
 			settings: settings,
@@ -3459,10 +3437,9 @@ final class CaptureHostView: NSView {
 	}
 
 	private func suppressLiveHoverChrome() {
-		guard scene.mode == .live, !liveHoverChromeSuppressed else {
+		guard scene.mode == .live, livePrimaryInteraction.suppressHoverChrome() else {
 			return
 		}
-		liveHoverChromeSuppressed = true
 		updateLivePreviewDemands()
 		liveRenderer.renderNow()
 	}
