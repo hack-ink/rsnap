@@ -5,6 +5,7 @@ mod downward_recovery;
 mod downward_resolution;
 mod fingerprint;
 mod image_stack;
+mod informative_span;
 mod logging;
 mod pairwise_shift;
 mod resume_frontier;
