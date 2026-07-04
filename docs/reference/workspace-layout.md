@@ -190,6 +190,11 @@ The main host-kit files are split by responsibility:
   capture source management
 - `CaptureHostView.swift`: AppKit view rendering, hit testing, cursor presentation, and native
   pointer/key routing
+- `LiveOverlayRenderer.swift`: live overlay layer composition for HUD, loupe, scrims, and selection
+  affordances
+- `LiveOverlayWindowSnapshotFeed.swift`, `LiveOverlayChromeSampleFeed.swift`, and
+  `LiveFrameClockDriver.swift`: live overlay support boundaries for target-window snapshots,
+  chrome color/patch sampling, and display-rate frame ticks
 - `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostFrozenImageEffects.swift`,
   `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
   boundaries for shared capture geometry, capture-host cursors, Rust-backed frozen image effects,
