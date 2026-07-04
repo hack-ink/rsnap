@@ -95,6 +95,8 @@ The current native-host Swift split is:
   chrome color/patch sampling, and display-rate frame ticks.
 - `FrozenToolbarLayoutPlanner.swift`: deterministic frozen-toolbar item availability, layout, and
   hit-test geometry used by AppKit drawing, Liquid Glass toolbar content, and native probes.
+- `FrozenToolbarRenderView.swift`: shared frozen-toolbar content drawing for classic AppKit
+  toolbar rendering and Liquid Glass toolbar content.
 - `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostFrozenImageEffects.swift`,
   `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
   boundaries for shared capture geometry, capture-host cursor adaptation, Rust-backed frozen image
