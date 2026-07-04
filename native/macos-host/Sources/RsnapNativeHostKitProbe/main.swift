@@ -22,6 +22,7 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureHostCursorMapping()
 		assertCaptureHostPointerDispatchSupport()
 		assertCaptureHostLivePrimaryInteractionState()
+		assertCaptureHostFrozenFirstDisplayHandoffState()
 		assertCaptureHostAnnotationStyleWheelGate()
 		assertCaptureHostToolbarHoverState()
 		assertCaptureHostLiveSampleCachePointMatching()
@@ -235,6 +236,87 @@ enum RsnapNativeHostKitProbe {
 		state.reset()
 		guard state == CaptureHostLivePrimaryInteractionState() else {
 			fatalError("live primary state should reset to idle")
+		}
+	}
+
+	private static func assertCaptureHostFrozenFirstDisplayHandoffState() {
+		var state = CaptureHostFrozenFirstDisplayHandoffState()
+		guard
+			state.pending == false,
+			state.completionQueued == false,
+			state.startedAt == nil,
+			state.pendingFrameDisplayed == false,
+			state.allowsClassicToolbarGlass
+		else {
+			fatalError("frozen first-display handoff should start idle")
+		}
+
+		state.beginTransitionToFrozen(now: 4.25)
+		guard
+			state.pending,
+			state.startedAt == 4.25,
+			state.pendingFrameDisplayed == false,
+			state.queueCompletionIfNeeded(),
+			state.queueCompletionIfNeeded() == false
+		else {
+			fatalError("frozen first-display transition should queue completion once")
+		}
+		state.markPendingFrameDisplayed()
+		guard
+			state.finish()
+				== CaptureHostFrozenFirstDisplayHandoffCompletion(
+					startedAt: 4.25,
+					pendingFrameDisplayed: true,
+					deferredClassicToolbarGlass: false),
+			state.pending == false,
+			state.completionQueued == false,
+			state.startedAt == nil,
+			state.pendingFrameDisplayed == false,
+			state.allowsClassicToolbarGlass
+		else {
+			fatalError("frozen first-display transition should finish with display evidence")
+		}
+
+		state.beginFrozenFirstFrameInstall(
+			pending: true,
+			defersClassicToolbarGlass: true,
+			now: 8.5
+		)
+		guard
+			state.pending,
+			state.startedAt == 8.5,
+			state.allowsClassicToolbarGlass == false,
+			state.finish()
+				== CaptureHostFrozenFirstDisplayHandoffCompletion(
+					startedAt: 8.5,
+					pendingFrameDisplayed: false,
+					deferredClassicToolbarGlass: true),
+			state.allowsClassicToolbarGlass == false
+		else {
+			fatalError("frozen first-frame install should preserve deferred toolbar glass")
+		}
+		state.clearDeferredClassicToolbarGlass()
+		guard state.allowsClassicToolbarGlass else {
+			fatalError("frozen first-frame install should clear deferred toolbar glass later")
+		}
+
+		state.beginFrozenFirstFrameInstall(
+			pending: false,
+			defersClassicToolbarGlass: true,
+			now: 10
+		)
+		guard
+			state.pending == false,
+			state.startedAt == nil,
+			state.queueCompletionIfNeeded() == false,
+			state.finish() == nil
+		else {
+			fatalError("frozen first-frame install should stay idle when no pending frame exists")
+		}
+
+		state.reset()
+		guard state == CaptureHostFrozenFirstDisplayHandoffState() else {
+			fatalError("frozen first-display handoff should reset to idle")
 		}
 	}
 
