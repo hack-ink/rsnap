@@ -1,6 +1,7 @@
 pub mod bench_support;
 
 mod downward_candidates;
+mod downward_followup;
 mod downward_recovery;
 mod downward_resolution;
 mod fingerprint;
