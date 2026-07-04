@@ -192,6 +192,8 @@ The main host-kit files are split by responsibility:
   pointer/key routing
 - `LiveOverlayRenderer.swift`: live overlay layer composition for HUD, loupe, scrims, and selection
   affordances
+- `LiveChromePlacement.swift`: live HUD/loupe text metrics, pending color text, and deterministic
+  floating placement geometry shared by capture host and live chrome rendering
 - `LiveOverlayWindowSnapshotFeed.swift`, `LiveOverlayChromeSampleFeed.swift`, and
   `LiveFrameClockDriver.swift`: live overlay support boundaries for target-window snapshots,
   chrome color/patch sampling, and display-rate frame ticks
