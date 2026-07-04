@@ -102,11 +102,7 @@ final class CaptureHostView: NSView {
 	private var lastLivePointerEventUptime: TimeInterval?
 	private var liveHighlightedWindowPreview: WindowSnapshot?
 	private var sampleUpdatedLiveChromeRenderInProgress = false
-	private var pendingFrozenFirstDisplay = false
-	private var frozenFirstDisplayCompletionQueued = false
-	private var frozenFirstDisplayHandoffStartedAt: TimeInterval?
-	private var frozenFirstDisplayPendingFrameDisplayed = false
-	private var defersFrozenToolbarClassicGlassUntilAfterFirstDisplay = false
+	private var frozenFirstDisplayHandoff = CaptureHostFrozenFirstDisplayHandoffState()
 	private var lastLivePreviewSnapshot: LivePreviewSnapshot?
 	private var liveSampleCache = CaptureHostLiveSampleCache()
 	private var glassPatchCache: [GlassSurfaceKind: GlassPatchCache] = [:]
@@ -175,10 +171,7 @@ final class CaptureHostView: NSView {
 		let hostLocalFrozenSelectingEnded =
 			previousChrome.hostLocalFrozenSelecting && !chrome.hostLocalFrozenSelecting
 		if scene.mode != .frozen {
-			frozenFirstDisplayCompletionQueued = false
-			frozenFirstDisplayHandoffStartedAt = nil
-			frozenFirstDisplayPendingFrameDisplayed = false
-			defersFrozenToolbarClassicGlassUntilAfterFirstDisplay = false
+			frozenFirstDisplayHandoff.reset()
 			scrollToolbarBackdropSeedFrame = nil
 			scrollToolbarBackdropSeedImage = nil
 			scrollToolbarBackdropSeedPatchCache = nil
@@ -226,7 +219,7 @@ final class CaptureHostView: NSView {
 			updateTrackingAreas()
 		}
 		if scene.mode == .live {
-			pendingFrozenFirstDisplay = false
+			frozenFirstDisplayHandoff.reset()
 			if previousMode != .live {
 				livePrimaryInteraction.clearHoverChromeSuppression()
 				resetLiveChromeInputTelemetry()
@@ -242,15 +235,15 @@ final class CaptureHostView: NSView {
 			clearLivePrimaryInteractionState(rendersImmediately: false)
 			if scene.mode == .hidden {
 				livePrimaryInteraction.clearHoverChromeSuppression()
-				pendingFrozenFirstDisplay = false
+				frozenFirstDisplayHandoff.reset()
 				lastLivePreviewSnapshot = nil
 				liveSampleCache.reset()
 			}
 			resetLivePointerPreview()
 			liveHighlightedWindowPreview = nil
 			if transitioningToFrozen {
-				pendingFrozenFirstDisplay = true
-				frozenFirstDisplayHandoffStartedAt = ProcessInfo.processInfo.systemUptime
+				frozenFirstDisplayHandoff.beginTransitionToFrozen(
+					now: ProcessInfo.processInfo.systemUptime)
 			}
 		}
 		refreshHoveredToolbarAction()
@@ -300,7 +293,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func completeFrozenFirstDisplayHandoff() {
-		guard pendingFrozenFirstDisplay else {
+		guard frozenFirstDisplayHandoff.pending else {
 			return
 		}
 		window?.disableScreenUpdatesUntilFlush()
@@ -308,14 +301,9 @@ final class CaptureHostView: NSView {
 	}
 
 	private func finishFrozenFirstDisplayHandoff() {
-		let handoffStartedAt = frozenFirstDisplayHandoffStartedAt
-		pendingFrozenFirstDisplay = false
-		frozenFirstDisplayCompletionQueued = false
-		frozenFirstDisplayHandoffStartedAt = nil
-		let pendingFrameDisplayed = frozenFirstDisplayPendingFrameDisplayed
-		frozenFirstDisplayPendingFrameDisplayed = false
-		let deferredClassicToolbarGlass =
-			defersFrozenToolbarClassicGlassUntilAfterFirstDisplay
+		guard let completion = frozenFirstDisplayHandoff.finish() else {
+			return
+		}
 		let materialStartedAt = ProcessInfo.processInfo.systemUptime
 		updateChromeMaterialViews()
 		let materialMilliseconds = NativeHostTelemetry.milliseconds(since: materialStartedAt)
@@ -335,22 +323,22 @@ final class CaptureHostView: NSView {
 		displayIfNeeded()
 		let displayMilliseconds = NativeHostTelemetry.milliseconds(since: displayStartedAt)
 		CATransaction.commit()
-		if deferredClassicToolbarGlass {
+		if completion.deferredClassicToolbarGlass {
 			DispatchQueue.main.async { [weak self] in
 				guard let self else {
 					return
 				}
-				self.defersFrozenToolbarClassicGlassUntilAfterFirstDisplay = false
+				self.frozenFirstDisplayHandoff.clearDeferredClassicToolbarGlass()
 				self.needsDisplay = true
 			}
 		}
-		if let handoffStartedAt {
+		if let handoffStartedAt = completion.startedAt {
 			emitFrozenFirstDisplayHandoffTiming(
 				startedAt: handoffStartedAt,
 				materialMilliseconds: materialMilliseconds,
 				liveRendererStopMilliseconds: liveRendererStopMilliseconds,
 				displayMilliseconds: displayMilliseconds,
-				pendingFrameDisplayed: pendingFrameDisplayed
+				pendingFrameDisplayed: completion.pendingFrameDisplayed
 			)
 		}
 	}
@@ -389,11 +377,7 @@ final class CaptureHostView: NSView {
 		self.chrome = chrome
 		self.settings = settings
 		livePrimaryInteraction.clearHoverChromeSuppression()
-		pendingFrozenFirstDisplay = false
-		frozenFirstDisplayCompletionQueued = false
-		frozenFirstDisplayHandoffStartedAt = nil
-		frozenFirstDisplayPendingFrameDisplayed = false
-		defersFrozenToolbarClassicGlassUntilAfterFirstDisplay = false
+		frozenFirstDisplayHandoff.reset()
 		lastLivePreviewSnapshot = nil
 		if scene.mode == .live {
 			seedLivePointerPreview(scene.pointer, recordsInputLatency: false)
@@ -460,12 +444,11 @@ final class CaptureHostView: NSView {
 		self.chrome = chrome
 		self.settings = settings
 		livePrimaryInteraction.clearHoverChromeSuppression()
-		pendingFrozenFirstDisplay = retainedLivePreview != nil || scene.frozenSelection != nil
-		frozenFirstDisplayCompletionQueued = false
-		frozenFirstDisplayHandoffStartedAt =
-			pendingFrozenFirstDisplay ? ProcessInfo.processInfo.systemUptime : nil
-		frozenFirstDisplayPendingFrameDisplayed = false
-		defersFrozenToolbarClassicGlassUntilAfterFirstDisplay = settings.usesClassicHudGlass
+		frozenFirstDisplayHandoff.beginFrozenFirstFrameInstall(
+			pending: retainedLivePreview != nil || scene.frozenSelection != nil,
+			defersClassicToolbarGlass: settings.usesClassicHudGlass,
+			now: ProcessInfo.processInfo.systemUptime
+		)
 		lastLivePreviewSnapshot = retainedLivePreview
 		clearLivePrimaryInteractionState(rendersImmediately: false)
 		resetLivePointerPreview()
@@ -475,14 +458,14 @@ final class CaptureHostView: NSView {
 		needsDisplay = true
 		controller?.updateLivePreviewDemand(
 			point: nil, settings: settings, includeLoupePatch: false)
-		if rendersPendingFrame, pendingFrozenFirstDisplay {
-			frozenFirstDisplayPendingFrameDisplayed = true
+		if rendersPendingFrame, frozenFirstDisplayHandoff.pending {
+			frozenFirstDisplayHandoff.markPendingFrameDisplayed()
 			liveRenderer.renderNow()
 		}
 	}
 
 	func finishFrozenFirstFrameInstall() {
-		guard pendingFrozenFirstDisplay else {
+		guard frozenFirstDisplayHandoff.pending else {
 			return
 		}
 		window?.disableScreenUpdatesUntilFlush()
@@ -774,8 +757,8 @@ final class CaptureHostView: NSView {
 		case .live:
 			break
 		case .frozen:
-			if pendingFrozenFirstDisplay {
-				frozenFirstDisplayPendingFrameDisplayed = true
+			if frozenFirstDisplayHandoff.pending {
+				frozenFirstDisplayHandoff.markPendingFrameDisplayed()
 				scheduleFrozenFirstFrameInstallCompletionIfNeeded()
 				return
 			}
@@ -821,10 +804,9 @@ final class CaptureHostView: NSView {
 	}
 
 	private func scheduleFrozenFirstFrameInstallCompletionIfNeeded() {
-		guard pendingFrozenFirstDisplay, !frozenFirstDisplayCompletionQueued else {
+		guard frozenFirstDisplayHandoff.queueCompletionIfNeeded() else {
 			return
 		}
-		frozenFirstDisplayCompletionQueued = true
 		DispatchQueue.main.async { [weak self] in
 			self?.finishFrozenFirstFrameInstall()
 		}
@@ -1925,7 +1907,7 @@ final class CaptureHostView: NSView {
 			theme: theme,
 			strongShadow: false,
 			surfaceKind: .toolbar,
-			allowsClassicGlass: !defersFrozenToolbarClassicGlassUntilAfterFirstDisplay
+			allowsClassicGlass: frozenFirstDisplayHandoff.allowsClassicToolbarGlass
 		)
 		FrozenToolbarDrawing.drawToolbarContent(
 			items: layout.items,
@@ -2006,7 +1988,7 @@ final class CaptureHostView: NSView {
 			lastLivePreviewSnapshot = snapshot
 			return snapshot
 		}
-		if pendingFrozenFirstDisplay {
+		if frozenFirstDisplayHandoff.pending {
 			return currentPendingFrozenPreviewSnapshot() ?? lastLivePreviewSnapshot
 		}
 		return nil
@@ -2047,7 +2029,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentPendingFrozenPreviewSnapshot() -> LivePreviewSnapshot? {
-		guard pendingFrozenFirstDisplay else {
+		guard frozenFirstDisplayHandoff.pending else {
 			return nil
 		}
 		let frozenSelectionLocal =
@@ -2281,7 +2263,7 @@ final class CaptureHostView: NSView {
 		guard liveRendererInstalled else {
 			return
 		}
-		guard scene.mode == .live || pendingFrozenFirstDisplay else {
+		guard scene.mode == .live || frozenFirstDisplayHandoff.pending else {
 			liveRenderer.suspend()
 			loggedLiveRefreshTarget = nil
 			return
@@ -2320,10 +2302,7 @@ final class CaptureHostView: NSView {
 	private func stopLivePresentationNow() {
 		deferredLiveShutdownWorkItem?.cancel()
 		deferredLiveShutdownWorkItem = nil
-		pendingFrozenFirstDisplay = false
-		frozenFirstDisplayHandoffStartedAt = nil
-		frozenFirstDisplayPendingFrameDisplayed = false
-		defersFrozenToolbarClassicGlassUntilAfterFirstDisplay = false
+		frozenFirstDisplayHandoff.reset()
 		lastLivePreviewSnapshot = nil
 		hideLiveLiquidGlassViews()
 		guard scene.mode != .live else {
