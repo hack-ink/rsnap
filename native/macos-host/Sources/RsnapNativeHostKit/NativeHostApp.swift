@@ -8,21 +8,28 @@ import QuartzCore
 import RsnapHostBridge
 import Vision
 
-struct LiveRgbSample: Sendable {
+package struct LiveRgbSample: Sendable {
 	// SCStream may stop emitting while the captured display is static; FrozenFrameAuthority
 	// applies its own strict age budget for authoritative screenshot frames.
-	static let maximumDisplayAge: TimeInterval = 60.0
-	static let maximumReusableAge: TimeInterval = 0.04
+	package static let maximumDisplayAge: TimeInterval = 60.0
+	package static let maximumReusableAge: TimeInterval = 0.04
 
-	let rgb: RGBSample
-	let capturedAtUptime: TimeInterval
-	let source: String
+	package let rgb: RGBSample
+	package let capturedAtUptime: TimeInterval
+	package let source: String
 
-	func ageMilliseconds(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double {
+	package init(rgb: RGBSample, capturedAtUptime: TimeInterval, source: String) {
+		self.rgb = rgb
+		self.capturedAtUptime = capturedAtUptime
+		self.source = source
+	}
+
+	package func ageMilliseconds(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Double
+	{
 		max(0, now - capturedAtUptime) * 1_000
 	}
 
-	func isFresh(
+	package func isFresh(
 		maximumAge: TimeInterval = Self.maximumDisplayAge,
 		now: TimeInterval = ProcessInfo.processInfo.systemUptime
 	) -> Bool {
@@ -30,20 +37,20 @@ struct LiveRgbSample: Sendable {
 	}
 }
 
-struct LiveChromeSample {
-	let rgb: LiveRgbSample?
-	let loupePatch: CGImage?
+package struct LiveChromeSample {
+	package let rgb: LiveRgbSample?
+	package let loupePatch: CGImage?
 
-	var rgbSample: RGBSample? {
+	package var rgbSample: RGBSample? {
 		rgb?.rgb
 	}
 
-	init(rgb: LiveRgbSample?, loupePatch: CGImage?) {
+	package init(rgb: LiveRgbSample?, loupePatch: CGImage?) {
 		self.rgb = rgb
 		self.loupePatch = loupePatch
 	}
 
-	init(
+	package init(
 		rgbSample: RGBSample?,
 		rgbCapturedAtUptime: TimeInterval? = nil,
 		rgbSource: String = "unqualified",
