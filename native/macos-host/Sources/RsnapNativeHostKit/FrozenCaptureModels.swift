@@ -3,7 +3,7 @@ import CoreGraphics
 import Foundation
 import RsnapHostBridge
 
-enum FrozenAnnotationColor: CaseIterable, Equatable {
+package enum FrozenAnnotationColor: CaseIterable, Equatable {
 	case white
 	case yellow
 	case green
@@ -244,13 +244,13 @@ extension FrozenAnnotationStyleState {
 	}
 }
 
-enum FrozenAnnotationStyleAction: Equatable {
+package enum FrozenAnnotationStyleAction: Equatable {
 	case decreaseSize
 	case increaseSize
 	case color(FrozenAnnotationColor)
 }
 
-enum FrozenAnnotationStyleToolbarKind: Equatable {
+package enum FrozenAnnotationStyleToolbarKind: Equatable {
 	case brush
 	case spotlight
 	case text
@@ -327,10 +327,12 @@ enum FrozenAnnotationStyleToolbarKind: Equatable {
 	}
 }
 
-struct FrozenAnnotationStyleState: Equatable {
+package struct FrozenAnnotationStyleState: Equatable {
 	var brushStyle = FrozenBrushStyle()
 	var spotlightStyle = FrozenSpotlightStyle()
 	var textStyle = FrozenTextStyle()
+
+	package init() {}
 
 	mutating func apply(
 		_ action: FrozenAnnotationStyleAction,
@@ -803,33 +805,33 @@ final class FrozenOverlayState {
 	}
 }
 
-struct FrozenToolbarItemLayout: Equatable {
-	let kind: ToolbarItemKind
-	let frame: CGRect
-	let enabled: Bool
-	let selected: Bool
+package struct FrozenToolbarItemLayout: Equatable {
+	package let kind: ToolbarItemKind
+	package let frame: CGRect
+	package let enabled: Bool
+	package let selected: Bool
 }
 
-struct FrozenAnnotationColorSwatchLayout: Equatable {
-	let color: FrozenAnnotationColor
-	let frame: CGRect
-	let selected: Bool
+package struct FrozenAnnotationColorSwatchLayout: Equatable {
+	package let color: FrozenAnnotationColor
+	package let frame: CGRect
+	package let selected: Bool
 }
 
-struct FrozenAnnotationStyleLayout: Equatable {
-	let kind: FrozenAnnotationStyleToolbarKind
-	let scale: CGFloat
-	let frame: CGRect
-	let sizeControlFrame: CGRect
-	let decreaseFrame: CGRect
-	let increaseFrame: CGRect
-	let displayFrame: CGRect
-	let swatches: [FrozenAnnotationColorSwatchLayout]
+package struct FrozenAnnotationStyleLayout: Equatable {
+	package let kind: FrozenAnnotationStyleToolbarKind
+	package let scale: CGFloat
+	package let frame: CGRect
+	package let sizeControlFrame: CGRect
+	package let decreaseFrame: CGRect
+	package let increaseFrame: CGRect
+	package let displayFrame: CGRect
+	package let swatches: [FrozenAnnotationColorSwatchLayout]
 }
 
-struct FrozenToolbarLayout {
-	let scale: CGFloat
-	let frame: CGRect
-	let items: [FrozenToolbarItemLayout]
-	let annotationStyle: FrozenAnnotationStyleLayout?
+package struct FrozenToolbarLayout {
+	package let scale: CGFloat
+	package let frame: CGRect
+	package let items: [FrozenToolbarItemLayout]
+	package let annotationStyle: FrozenAnnotationStyleLayout?
 }
