@@ -22,6 +22,7 @@ use crate::live_frame_stream_macos::live_frame_buffer::{
 use crate::live_frame_stream_macos::stream_config::{self, StreamCaptureTarget};
 use crate::live_frame_stream_macos::stream_filter::{self, StreamFilterConfig, StreamFilterMode};
 use crate::live_frame_stream_macos::stream_output::StreamOutput;
+use crate::live_frame_stream_macos::stream_worker;
 use crate::live_frame_stream_macos::{
 	STREAM_ERROR_RETAIN_FAILED_CODE, STREAM_ERROR_TIMEOUT_CODE,
 	STREAM_INCOMPLETE_EXCEPTION_UPGRADE_BACKOFF, STREAM_REGION_FRAME_AHEAD_WAIT_TIMEOUT,
@@ -291,7 +292,7 @@ pub(super) fn latest_fresh_rgba_region(
 	frame_seq_counter: Arc<AtomicU64>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<RgbaImage> {
-	let stream_rect_px = super::stream_rect_for_requested_region(capture_target, rect_px)?;
+	let stream_rect_px = stream_worker::stream_rect_for_requested_region(capture_target, rect_px)?;
 	let _ = ensure_stream(
 		state,
 		last_setup_attempt_at,
@@ -362,7 +363,7 @@ pub(super) fn ordered_queued_rgba_regions_after_seq_nonblocking(
 	frame_seq_counter: Arc<AtomicU64>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<Vec<OrderedRegionFrame>> {
-	let stream_rect_px = super::stream_rect_for_requested_region(capture_target, rect_px)?;
+	let stream_rect_px = stream_worker::stream_rect_for_requested_region(capture_target, rect_px)?;
 	let _ = ensure_stream(
 		state,
 		last_setup_attempt_at,
@@ -395,7 +396,7 @@ pub(super) fn ordered_fresh_rgba_regions_after_seq(
 	frame_seq_counter: Arc<AtomicU64>,
 	shared_latest_frame: Arc<SharedLatestFrame>,
 ) -> Option<Vec<OrderedRegionFrame>> {
-	let stream_rect_px = super::stream_rect_for_requested_region(capture_target, rect_px)?;
+	let stream_rect_px = stream_worker::stream_rect_for_requested_region(capture_target, rect_px)?;
 	let _ = ensure_stream(
 		state,
 		last_setup_attempt_at,
