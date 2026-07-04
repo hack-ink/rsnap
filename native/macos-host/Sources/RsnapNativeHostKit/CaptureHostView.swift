@@ -1,7 +1,6 @@
 import AppKit
 import CoreGraphics
 import CoreImage
-import CoreText
 import Foundation
 import QuartzCore
 import RsnapHostBridge
@@ -2101,77 +2100,16 @@ final class CaptureHostView: NSView {
 			surfaceKind: .toolbar,
 			allowsClassicGlass: !defersFrozenToolbarClassicGlassUntilAfterFirstDisplay
 		)
-
-		for item in layout.items {
-			if hoveredToolbarAction == item.kind, item.enabled, !item.selected {
-				context.setFillColor(palette.toolbarHoverBackground.cgColor)
-				let radius = CaptureChrome.toolbarControlCornerRadius * layout.scale
-				let hoverPath = NSBezierPath(
-					roundedRect: item.frame,
-					xRadius: radius,
-					yRadius: radius
-				)
-				hoverPath.fill()
-			}
-			if item.selected {
-				context.setFillColor(palette.toolbarSelectedBackground.cgColor)
-				let radius = CaptureChrome.toolbarControlCornerRadius * layout.scale
-				let selectedPath = NSBezierPath(
-					roundedRect: item.frame,
-					xRadius: radius,
-					yRadius: radius
-				)
-				selectedPath.fill()
-			}
-
-			let symbolColor =
-				item.enabled
-				? (item.selected ? palette.toolbarSelectedIcon : palette.toolbarIcon)
-				: palette.toolbarDisabledIcon
-			drawToolbarGlyph(
-				item.kind,
-				selected: item.selected,
-				in: item.frame,
-				scale: layout.scale,
-				color: symbolColor,
-				context: context
-			)
-		}
-
-		if let styleLayout = layout.annotationStyle {
-			FrozenToolbarDrawing.drawAnnotationStyleControls(
-				styleLayout,
-				state: chrome.annotationStyle,
-				hoveredAction: hoveredAnnotationStyleAction,
-				palette: palette,
-				in: context
-			)
-		}
-	}
-
-	private func drawToolbarGlyph(
-		_ kind: ToolbarItemKind,
-		selected: Bool,
-		in rect: CGRect,
-		scale: CGFloat,
-		color: NSColor,
-		context: CGContext
-	) {
-		let glyph = PhosphorToolbarIcons.cachedGlyph(
-			for: kind,
-			selected: selected,
-			size: CaptureChrome.toolbarGlyphSize * scale
+		FrozenToolbarDrawing.drawToolbarContent(
+			items: layout.items,
+			hoveredToolbarAction: hoveredToolbarAction,
+			toolbarScale: layout.scale,
+			annotationStyleState: chrome.annotationStyle,
+			annotationStyleLayout: layout.annotationStyle,
+			hoveredAnnotationStyleAction: hoveredAnnotationStyleAction,
+			palette: palette,
+			in: context
 		)
-		let origin = CGPoint(
-			x: rect.midX - glyph.bounds.width * 0.5 - glyph.bounds.origin.x,
-			y: rect.midY - glyph.bounds.height * 0.5 - glyph.bounds.origin.y
-		)
-		context.saveGState()
-		context.setFillColor(color.cgColor)
-		context.textMatrix = .identity
-		context.textPosition = origin
-		CTLineDraw(glyph.line, context)
-		context.restoreGState()
 	}
 
 	private func syncVisibleCursor() {
@@ -3561,7 +3499,7 @@ final class CaptureHostView: NSView {
 				)
 			},
 			items: layout.items.map { item in
-				FrozenToolbarRenderView.Item(
+				FrozenToolbarItemLayout(
 					kind: item.kind,
 					frame: item.frame.offsetBy(dx: -layout.frame.minX, dy: -layout.frame.minY),
 					enabled: item.enabled,
