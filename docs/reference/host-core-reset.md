@@ -87,6 +87,8 @@ The current native-host Swift split is:
   per-gesture step throttling.
 - `CaptureHostToolbarHoverState.swift`: frozen toolbar hover target state, change detection, and
   clearing behavior.
+- `CaptureHostFrozenFirstDisplayHandoffState.swift`: capture-host frozen-entry first-display
+  handoff state, completion queueing, pending-frame evidence, and deferred classic toolbar glass.
 - `CaptureHostView.swift`: AppKit/Quartz drawing, hit testing, Liquid Glass surfaces, live/frozen
   HUD and toolbar rendering, and native pointer/key event routing into the session controller.
 - `CaptureHostLiveSampleCache.swift`: capture-host live chrome/RGB sample reuse cache and pointer
@@ -107,12 +109,13 @@ The current native-host Swift split is:
 - `FrozenToolbarRenderView.swift`: shared frozen-toolbar content drawing for classic AppKit
   toolbar rendering and Liquid Glass toolbar content.
 - `CaptureGeometry.swift`, `CaptureHostAnnotationStyleWheelGate.swift`,
-  `CaptureHostToolbarHoverState.swift`, `CaptureHostCursorSupport.swift`,
-  `CaptureHostLiveSampleCache.swift`, `CaptureHostLivePrimaryInteractionState.swift`,
-  `CaptureHostPointerDispatch.swift`, `CaptureHostFrozenImageEffects.swift`,
-  `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
-  boundaries for shared capture geometry, frozen annotation-size wheel gating, frozen toolbar hover
-  state, capture-host cursor presentation and NSCursor adaptation, live sample reuse, live primary
+  `CaptureHostToolbarHoverState.swift`, `CaptureHostFrozenFirstDisplayHandoffState.swift`,
+  `CaptureHostCursorSupport.swift`, `CaptureHostLiveSampleCache.swift`,
+  `CaptureHostLivePrimaryInteractionState.swift`, `CaptureHostPointerDispatch.swift`,
+  `CaptureHostFrozenImageEffects.swift`, `LiveChromeRefreshTelemetryKey.swift`, and
+  `NativeHostTextMetrics.swift`: focused support boundaries for shared capture geometry, frozen
+  annotation-size wheel gating, frozen toolbar hover state, frozen first-display handoff state,
+  capture-host cursor presentation and NSCursor adaptation, live sample reuse, live primary
   interaction state, pointer dispatch queue throttling, Rust-backed frozen image effects,
   live-chrome telemetry identity, and native text measurement.
 - `FrozenCaptureModels.swift`: Swift view-adapter state for Rust-owned frozen overlay editing,
