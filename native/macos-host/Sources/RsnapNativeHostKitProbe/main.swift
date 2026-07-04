@@ -22,6 +22,7 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureHostCursorMapping()
 		assertCaptureHostPointerDispatchSupport()
 		assertCaptureHostLivePrimaryInteractionState()
+		assertCaptureHostAnnotationStyleWheelGate()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -232,6 +233,105 @@ enum RsnapNativeHostKitProbe {
 		state.reset()
 		guard state == CaptureHostLivePrimaryInteractionState() else {
 			fatalError("live primary state should reset to idle")
+		}
+	}
+
+	private static func assertCaptureHostAnnotationStyleWheelGate() {
+		var gate = CaptureHostAnnotationStyleWheelGate()
+		guard
+			gate.steps(
+				timestamp: 1,
+				deltaY: 0.01,
+				hasPreciseScrollingDeltas: false,
+				phaseActive: false,
+				phaseEndedOrCancelled: false,
+				momentumActive: false
+			) == 0,
+			gate.steps(
+				timestamp: 1,
+				deltaY: 1,
+				hasPreciseScrollingDeltas: false,
+				phaseActive: false,
+				phaseEndedOrCancelled: false,
+				momentumActive: false
+			) == 1,
+			gate.steps(
+				timestamp: 1.02,
+				deltaY: -1,
+				hasPreciseScrollingDeltas: false,
+				phaseActive: false,
+				phaseEndedOrCancelled: false,
+				momentumActive: false
+			) == 0,
+			gate.steps(
+				timestamp: 1.05,
+				deltaY: -1,
+				hasPreciseScrollingDeltas: false,
+				phaseActive: false,
+				phaseEndedOrCancelled: false,
+				momentumActive: false
+			) == -1
+		else {
+			fatalError("annotation style wheel gate should throttle discrete wheel steps")
+		}
+
+		gate.reset()
+		guard
+			gate.steps(
+				timestamp: 2,
+				deltaY: 1,
+				hasPreciseScrollingDeltas: true,
+				phaseActive: true,
+				phaseEndedOrCancelled: false,
+				momentumActive: false
+			) == 1,
+			gate.steps(
+				timestamp: 2.10,
+				deltaY: 1,
+				hasPreciseScrollingDeltas: true,
+				phaseActive: true,
+				phaseEndedOrCancelled: false,
+				momentumActive: false
+			) == 0,
+			gate.steps(
+				timestamp: 2.19,
+				deltaY: 1,
+				hasPreciseScrollingDeltas: true,
+				phaseActive: true,
+				phaseEndedOrCancelled: false,
+				momentumActive: false
+			) == 1,
+			gate.steps(
+				timestamp: 2.20,
+				deltaY: 1,
+				hasPreciseScrollingDeltas: false,
+				phaseActive: false,
+				phaseEndedOrCancelled: false,
+				momentumActive: true
+			) == 0
+		else {
+			fatalError("annotation style wheel gate should throttle precise wheel steps")
+		}
+
+		guard
+			gate.steps(
+				timestamp: 2.21,
+				deltaY: 1,
+				hasPreciseScrollingDeltas: false,
+				phaseActive: false,
+				phaseEndedOrCancelled: true,
+				momentumActive: false
+			) == 0,
+			gate.steps(
+				timestamp: 2.22,
+				deltaY: -1,
+				hasPreciseScrollingDeltas: false,
+				phaseActive: false,
+				phaseEndedOrCancelled: false,
+				momentumActive: false
+			) == -1
+		else {
+			fatalError("annotation style wheel gate should reset on ended phases")
 		}
 	}
 
