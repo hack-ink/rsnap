@@ -107,6 +107,9 @@ The current native-host Swift split is:
   completion effects.
 - `NativeHostImageBridge.swift` and `RsnapHostBridge`: conversion and FFI glue between
   CoreGraphics/AppKit images and Rust-owned RGBA snapshots.
+- `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`,
+  `NativeHostSettingsSurface.swift`, and `NativeHostCaptureFrameSettings.swift`: SwiftUI settings
+  shell, navigation, reusable settings surfaces, and capture-frame preset controls.
 
 This means a large Swift line count can still be reasonable when those lines are AppKit,
 CoreGraphics, ScreenCaptureKit, Vision, pasteboard, save-panel, sound, update, or window lifecycle
