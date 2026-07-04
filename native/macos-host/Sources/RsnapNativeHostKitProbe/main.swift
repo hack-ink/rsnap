@@ -21,6 +21,7 @@ enum RsnapNativeHostKitProbe {
 		assertImmediateInstallGateWaitsForCaptureIdle()
 		assertCaptureHostCursorMapping()
 		assertCaptureHostPointerDispatchSupport()
+		assertCaptureHostLivePrimaryInteractionState()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -186,6 +187,51 @@ enum RsnapNativeHostKitProbe {
 				lastDispatchUptime: 9.50) == 0
 		else {
 			fatalError("capture host pointer dispatch support should preserve throttling")
+		}
+	}
+
+	private static func assertCaptureHostLivePrimaryInteractionState() {
+		var state = CaptureHostLivePrimaryInteractionState()
+		guard state.hasInteraction == false, state.dragDistance(from: .zero) == 0 else {
+			fatalError("live primary state should start idle")
+		}
+
+		guard state.suppressHoverChrome(), state.hoverChromeSuppressed else {
+			fatalError("live primary state should record hover suppression")
+		}
+		state.begin(at: CGPoint(x: 10, y: 20))
+		guard
+			state.hasInteraction,
+			state.hoverChromeSuppressed,
+			state.completionPoint(for: CGPoint(x: 40, y: 50)) == CGPoint(x: 10, y: 20),
+			state.updateDragThreshold(from: CGPoint(x: 12, y: 22), threshold: 3) == false,
+			state.updateDragThreshold(from: CGPoint(x: 14, y: 20), threshold: 3),
+			state.dragExceededThreshold,
+			state.completionPoint(for: CGPoint(x: 4, y: 30)) == CGPoint(x: 4, y: 30),
+			state.immediateDragSelectionGlobal(
+				current: CGPoint(x: 4, y: 30),
+				in: CGRect(x: 0, y: 0, width: 100, height: 100)
+			) == CGRect(x: 4, y: 20, width: 6, height: 10)
+		else {
+			fatalError("live primary state should preserve drag threshold behavior")
+		}
+
+		let completionPoint = state.markReleased(at: CGPoint(x: 4, y: 30))
+		guard
+			completionPoint == CGPoint(x: 4, y: 30),
+			state.completionInFlight,
+			state.hoverChromeSuppressed == false,
+			state.immediateDragSelectionGlobal(
+				current: nil,
+				in: CGRect(x: 0, y: 0, width: 100, height: 100)
+			) == CGRect(x: 4, y: 20, width: 6, height: 10)
+		else {
+			fatalError("live primary state should preserve release behavior")
+		}
+
+		state.reset()
+		guard state == CaptureHostLivePrimaryInteractionState() else {
+			fatalError("live primary state should reset to idle")
 		}
 	}
 
