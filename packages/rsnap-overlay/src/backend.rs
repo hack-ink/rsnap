@@ -7,7 +7,6 @@ mod window_list;
 
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
-#[cfg(target_os = "macos")]
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, mpsc};
