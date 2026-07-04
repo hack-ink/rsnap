@@ -1,19 +1,14 @@
 //! Minimal reference session used to drive the new host/core boundary.
 
+mod selection_interaction;
+
 use std::collections::VecDeque;
 
-use crate::geometry::GlobalPoint;
-use crate::geometry::MonitorRect;
+use crate::geometry::{GlobalPoint, GlobalRect, MonitorRect, WindowRect};
 use crate::protocol::{
 	CaptureMode, CursorIntent, HostEffectKind, HostEvent, HostReport, HostRequest, PermissionKind,
 	SceneModel, SessionConfig, ToolbarItemKind, ToolbarItemModel,
 };
-
-const RESIZE_HANDLE_RADIUS_POINTS: i32 = 12;
-const RESIZE_EDGE_TOLERANCE_POINTS: i32 = 4;
-const LIVE_SELECTION_DEFAULT_WIDTH: u32 = 320;
-const LIVE_SELECTION_DEFAULT_HEIGHT: u32 = 200;
-const LIVE_SELECTION_DRAG_THRESHOLD_POINTS: u32 = 1;
 
 /// Reference capture-session core that owns semantic state and emits host requests.
 #[derive(Debug)]
@@ -22,7 +17,7 @@ pub struct CaptureSessionCore {
 	scene: SceneModel,
 	selected_toolbar_item: ToolbarItemKind,
 	live_press_start: Option<GlobalPoint>,
-	live_press_target: Option<crate::geometry::GlobalRect>,
+	live_press_target: Option<GlobalRect>,
 	pending_frozen_selection_editable: bool,
 	frozen_selection_editable: bool,
 	pending_requests: VecDeque<HostRequest>,
@@ -92,7 +87,7 @@ impl CaptureSessionCore {
 					self.update_live_pointer_context(point, active_monitor, highlighted_window);
 
 					self.live_press_start = Some(point);
-					self.live_press_target = resolve_live_target(
+					self.live_press_target = selection_interaction::resolve_target(
 						self.scene.active_monitor,
 						self.scene.highlighted_window,
 					);
@@ -103,8 +98,11 @@ impl CaptureSessionCore {
 				if self.scene.mode == CaptureMode::Live {
 					self.update_live_pointer_context(point, active_monitor, highlighted_window);
 
-					self.scene.live_selection_preview =
-						self.compute_live_selection_preview(point, self.scene.active_monitor);
+					self.scene.live_selection_preview = selection_interaction::drag_preview(
+						self.live_press_start,
+						point,
+						self.scene.active_monitor,
+					);
 				}
 			},
 			HostEvent::PrimaryInteractionCompleted {
@@ -285,7 +283,7 @@ impl CaptureSessionCore {
 		&mut self,
 		point: GlobalPoint,
 		active_monitor: Option<MonitorRect>,
-		highlighted_window: Option<crate::geometry::WindowRect>,
+		highlighted_window: Option<WindowRect>,
 	) {
 		self.scene.pointer = Some(point);
 		self.scene.active_monitor = active_monitor;
@@ -293,34 +291,10 @@ impl CaptureSessionCore {
 		self.scene.hud.pointer = Some(point);
 	}
 
-	fn compute_live_selection_preview(
-		&self,
-		point: GlobalPoint,
-		active_monitor: Option<MonitorRect>,
-	) -> Option<crate::geometry::GlobalRect> {
-		let live_press_start = self.live_press_start?;
-		let active_monitor = active_monitor?;
-
-		if !active_monitor.contains(live_press_start) || !active_monitor.contains(point) {
-			return None;
-		}
-
-		let left = live_press_start.x.min(point.x);
-		let top = live_press_start.y.min(point.y);
-		let width = live_press_start.x.abs_diff(point.x);
-		let height = live_press_start.y.abs_diff(point.y);
-
-		if width.max(height) < LIVE_SELECTION_DRAG_THRESHOLD_POINTS {
-			return None;
-		}
-
-		Some(crate::geometry::GlobalRect::new(left, top, width.max(1), height.max(1)))
-	}
-
 	fn finalize_live_selection(&mut self, point: GlobalPoint, active_monitor: Option<MonitorRect>) {
 		let had_live_press = self.live_press_start.is_some();
 		let release_drag_selection = if had_live_press {
-			self.compute_live_selection_preview(point, active_monitor)
+			selection_interaction::drag_preview(self.live_press_start, point, active_monitor)
 		} else {
 			None
 		};
@@ -329,17 +303,23 @@ impl CaptureSessionCore {
 			release_drag_selection
 				.or(self.live_press_target)
 				.or_else(|| {
-					resolve_live_target(self.scene.active_monitor, self.scene.highlighted_window)
+					selection_interaction::resolve_target(
+						self.scene.active_monitor,
+						self.scene.highlighted_window,
+					)
 				})
-				.or_else(|| Some(default_live_selection(point, active_monitor)))
+				.or_else(|| Some(selection_interaction::default_selection(point, active_monitor)))
 		} else {
 			self.scene
 				.live_selection_preview
 				.or(self.live_press_target)
 				.or_else(|| {
-					resolve_live_target(self.scene.active_monitor, self.scene.highlighted_window)
+					selection_interaction::resolve_target(
+						self.scene.active_monitor,
+						self.scene.highlighted_window,
+					)
 				})
-				.or_else(|| Some(default_live_selection(point, active_monitor)))
+				.or_else(|| Some(selection_interaction::default_selection(point, active_monitor)))
 		};
 
 		self.live_press_start = None;
@@ -364,138 +344,16 @@ impl CaptureSessionCore {
 					CursorIntent::Default
 				} else {
 					self.scene.frozen_selection.map_or(CursorIntent::Default, |selection| {
-						self.frozen_cursor_intent(point, selection)
+						selection_interaction::frozen_cursor_intent(
+							point,
+							selection,
+							self.selected_toolbar_item,
+						)
 					})
 				}
 			},
 		};
 	}
-
-	fn frozen_cursor_intent(
-		&self,
-		point: GlobalPoint,
-		selection: crate::geometry::GlobalRect,
-	) -> CursorIntent {
-		let selection_left = selection.x;
-		let selection_top = selection.y;
-		let selection_right = selection.x.saturating_add_unsigned(selection.width);
-		let selection_bottom = selection.y.saturating_add_unsigned(selection.height);
-
-		if point_in_handle(point, selection_left, selection_top, RESIZE_HANDLE_RADIUS_POINTS) {
-			return CursorIntent::ResizeNorthWest;
-		}
-		if point_in_handle(point, selection_right, selection_bottom, RESIZE_HANDLE_RADIUS_POINTS) {
-			return CursorIntent::ResizeSouthEast;
-		}
-		if point_in_handle(point, selection_right, selection_top, RESIZE_HANDLE_RADIUS_POINTS) {
-			return CursorIntent::ResizeNorthEast;
-		}
-		if point_in_handle(point, selection_left, selection_bottom, RESIZE_HANDLE_RADIUS_POINTS) {
-			return CursorIntent::ResizeSouthWest;
-		}
-
-		let on_vertical_edge = point.y >= selection_top
-			&& point.y <= selection_bottom
-			&& (point.x - selection_left).abs() <= RESIZE_EDGE_TOLERANCE_POINTS;
-
-		if on_vertical_edge {
-			return CursorIntent::ResizeWest;
-		}
-
-		let on_right_edge = point.y >= selection_top
-			&& point.y <= selection_bottom
-			&& (point.x - selection_right).abs() <= RESIZE_EDGE_TOLERANCE_POINTS;
-
-		if on_right_edge {
-			return CursorIntent::ResizeEast;
-		}
-
-		let on_top_edge = point.x >= selection_left
-			&& point.x <= selection_right
-			&& (point.y - selection_top).abs() <= RESIZE_EDGE_TOLERANCE_POINTS;
-
-		if on_top_edge {
-			return CursorIntent::ResizeNorth;
-		}
-
-		let on_bottom_edge = point.x >= selection_left
-			&& point.x <= selection_right
-			&& (point.y - selection_bottom).abs() <= RESIZE_EDGE_TOLERANCE_POINTS;
-
-		if on_bottom_edge {
-			return CursorIntent::ResizeSouth;
-		}
-		if selection.contains(point) {
-			return match self.selected_toolbar_item {
-				ToolbarItemKind::Text => CursorIntent::Text,
-				ToolbarItemKind::Pointer => CursorIntent::Grab,
-				_ => CursorIntent::Default,
-			};
-		}
-
-		CursorIntent::Default
-	}
-}
-
-fn point_in_handle(point: GlobalPoint, handle_x: i32, handle_y: i32, radius: i32) -> bool {
-	(point.x - handle_x).abs() <= radius && (point.y - handle_y).abs() <= radius
-}
-
-fn resolve_live_target(
-	active_monitor: Option<MonitorRect>,
-	highlighted_window: Option<crate::geometry::WindowRect>,
-) -> Option<crate::geometry::GlobalRect> {
-	highlighted_window.and_then(crate::geometry::WindowRect::global_rect).or_else(|| {
-		active_monitor.map(|monitor| {
-			crate::geometry::GlobalRect::new(
-				monitor.origin.x,
-				monitor.origin.y,
-				monitor.width,
-				monitor.height,
-			)
-		})
-	})
-}
-
-fn default_live_selection(
-	point: GlobalPoint,
-	active_monitor: Option<MonitorRect>,
-) -> crate::geometry::GlobalRect {
-	let half_width = (LIVE_SELECTION_DEFAULT_WIDTH / 2) as i32;
-	let half_height = (LIVE_SELECTION_DEFAULT_HEIGHT / 2) as i32;
-	let unclamped_x = point.x.saturating_sub(half_width);
-	let unclamped_y = point.y.saturating_sub(half_height);
-	let (origin_x, origin_y) = if let Some(monitor) = active_monitor {
-		let max_x = if monitor.width > LIVE_SELECTION_DEFAULT_WIDTH {
-			monitor
-				.origin
-				.x
-				.saturating_add_unsigned(monitor.width)
-				.saturating_sub_unsigned(LIVE_SELECTION_DEFAULT_WIDTH)
-		} else {
-			monitor.origin.x
-		};
-		let max_y = if monitor.height > LIVE_SELECTION_DEFAULT_HEIGHT {
-			monitor
-				.origin
-				.y
-				.saturating_add_unsigned(monitor.height)
-				.saturating_sub_unsigned(LIVE_SELECTION_DEFAULT_HEIGHT)
-		} else {
-			monitor.origin.y
-		};
-
-		(unclamped_x.clamp(monitor.origin.x, max_x), unclamped_y.clamp(monitor.origin.y, max_y))
-	} else {
-		(unclamped_x, unclamped_y)
-	};
-
-	crate::geometry::GlobalRect::new(
-		origin_x,
-		origin_y,
-		LIVE_SELECTION_DEFAULT_WIDTH,
-		LIVE_SELECTION_DEFAULT_HEIGHT,
-	)
 }
 
 #[cfg(test)]
