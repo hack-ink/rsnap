@@ -24,6 +24,7 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureHostLivePrimaryInteractionState()
 		assertCaptureHostAnnotationStyleWheelGate()
 		assertCaptureHostToolbarHoverState()
+		assertCaptureHostLiveSampleCachePointMatching()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -373,6 +374,92 @@ enum RsnapNativeHostKitProbe {
 		else {
 			fatalError("toolbar hover state should switch and clear hover targets")
 		}
+	}
+
+	private static func assertCaptureHostLiveSampleCachePointMatching() {
+		let currentRgb = LiveRgbSample(
+			rgb: RGBSample(r: 1, g: 2, b: 3),
+			capturedAtUptime: ProcessInfo.processInfo.systemUptime,
+			source: "probe"
+		)
+		let staleRgb = LiveRgbSample(
+			rgb: RGBSample(r: 4, g: 5, b: 6),
+			capturedAtUptime:
+				ProcessInfo.processInfo.systemUptime - LiveRgbSample.maximumDisplayAge - 1,
+			source: "probe-stale"
+		)
+		let loupePatch = makeProbeImage()
+		var cache = CaptureHostLiveSampleCache()
+		cache.seedChrome(LiveChromeSample(rgb: currentRgb, loupePatch: nil), point: .zero)
+		cache.seedRgb(currentRgb, point: .zero)
+		guard
+			cache.chromeSample(matching: CGPoint(x: 0.5, y: -0.5))?.rgb?.rgb
+				== RGBSample(r: 1, g: 2, b: 3),
+			cache.rgbSample(matching: CGPoint(x: 0.5, y: -0.5))?.rgb
+				== RGBSample(r: 1, g: 2, b: 3),
+			cache.chromeSample(matching: CGPoint(x: 0.51, y: 0)) == nil,
+			cache.rgbSample(matching: CGPoint(x: 0.51, y: 0)) == nil
+		else {
+			fatalError("live sample cache should reuse fresh samples only at matching points")
+		}
+
+		cache.seedChrome(LiveChromeSample(rgb: staleRgb, loupePatch: loupePatch), point: .zero)
+		cache.seedRgb(staleRgb, point: .zero)
+		guard
+			cache.chromeSample(matching: .zero)?.rgb == nil,
+			cache.chromeSample(matching: .zero)?.loupePatch === loupePatch,
+			cache.rgbSample(matching: .zero) == nil
+		else {
+			fatalError(
+				"live sample cache should preserve stale chrome patch while stripping stale RGB")
+		}
+		cache.reset()
+		guard cache.latestChrome == nil, cache.latestRgb == nil else {
+			fatalError("live sample cache should reset cached samples")
+		}
+
+		guard
+			CaptureHostLiveSampleCache.pointsMatch(nil, nil),
+			CaptureHostLiveSampleCache.pointsMatch(CGPoint(x: 10, y: 20), nil) == false,
+			CaptureHostLiveSampleCache.pointsMatch(nil, CGPoint(x: 10, y: 20)) == false,
+			CaptureHostLiveSampleCache.pointsMatch(
+				CGPoint(x: 10, y: 20),
+				CGPoint(x: 10.5, y: 19.5)
+			),
+			CaptureHostLiveSampleCache.pointsMatch(
+				CGPoint(x: 10, y: 20),
+				CGPoint(x: 10.51, y: 20)
+			) == false,
+			CaptureHostLiveSampleCache.pointsMatch(
+				CGPoint(x: 10, y: 20),
+				CGPoint(x: 10, y: 19.49)
+			) == false
+		else {
+			fatalError("live sample cache should preserve point matching tolerance")
+		}
+	}
+
+	private static func makeProbeImage() -> CGImage {
+		let data = Data([255, 0, 0, 255])
+		guard
+			let provider = CGDataProvider(data: data as CFData),
+			let image = CGImage(
+				width: 1,
+				height: 1,
+				bitsPerComponent: 8,
+				bitsPerPixel: 32,
+				bytesPerRow: 4,
+				space: CGColorSpaceCreateDeviceRGB(),
+				bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+				provider: provider,
+				decode: nil,
+				shouldInterpolate: false,
+				intent: .defaultIntent
+			)
+		else {
+			fatalError("expected probe image")
+		}
+		return image
 	}
 
 	private static func approximatelyEqual(
