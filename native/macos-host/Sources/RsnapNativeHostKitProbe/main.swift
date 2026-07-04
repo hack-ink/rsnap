@@ -23,6 +23,7 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureHostPointerDispatchSupport()
 		assertCaptureHostLivePrimaryInteractionState()
 		assertCaptureHostAnnotationStyleWheelGate()
+		assertCaptureHostToolbarHoverState()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -332,6 +333,45 @@ enum RsnapNativeHostKitProbe {
 			) == -1
 		else {
 			fatalError("annotation style wheel gate should reset on ended phases")
+		}
+	}
+
+	private static func assertCaptureHostToolbarHoverState() {
+		var state = CaptureHostToolbarHoverState()
+		guard state.isActive == false, state.clear() == false else {
+			fatalError("toolbar hover state should start idle")
+		}
+
+		let toolbarHit = FrozenToolbarHitState(
+			pointerOverToolbar: true,
+			toolbarAction: .copy,
+			annotationStyleAction: nil
+		)
+		guard
+			state.update(to: toolbarHit),
+			state.isActive,
+			state.pointerOverToolbar,
+			state.toolbarAction == .copy,
+			state.annotationStyleAction == nil,
+			state.update(to: toolbarHit) == false
+		else {
+			fatalError("toolbar hover state should update only when toolbar hit state changes")
+		}
+
+		let styleHit = FrozenToolbarHitState(
+			pointerOverToolbar: true,
+			toolbarAction: nil,
+			annotationStyleAction: .decreaseSize
+		)
+		guard
+			state.update(to: styleHit),
+			state.pointerOverToolbar,
+			state.toolbarAction == nil,
+			state.annotationStyleAction == .decreaseSize,
+			state.clear(),
+			state == CaptureHostToolbarHoverState()
+		else {
+			fatalError("toolbar hover state should switch and clear hover targets")
 		}
 	}
 
