@@ -11,7 +11,8 @@ use crate::live_frame_stream_macos::frame_store::{SharedLatestFrame, StreamGener
 use crate::live_frame_stream_macos::live_frame_buffer::{self, OrderedRegionFrame};
 use crate::live_frame_stream_macos::stream_config::StreamCaptureTarget;
 use crate::live_frame_stream_macos::stream_filter::StreamFilterConfig;
-use crate::live_frame_stream_macos::stream_lifecycle::{self, StreamRequestProgress, StreamState};
+use crate::live_frame_stream_macos::stream_lifecycle::{self, StreamRequestProgress};
+use crate::live_frame_stream_macos::stream_setup::{self, StreamState};
 use crate::live_frame_stream_macos::{STREAM_REGION_FRAME_MAX_AGE, STREAM_SETUP_BACKOFF};
 use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints};
 
@@ -123,7 +124,7 @@ pub(super) fn stream_worker_loop(
 		}
 	}
 
-	stream_lifecycle::teardown_stream(&mut state);
+	stream_setup::teardown_stream(&mut state);
 }
 
 fn handle_reset_request(
@@ -136,7 +137,7 @@ fn handle_reset_request(
 		stream_generation: state.stream_generation,
 	});
 
-	stream_lifecycle::teardown_stream(state);
+	stream_setup::teardown_stream(state);
 
 	*last_setup_attempt_at = None;
 
