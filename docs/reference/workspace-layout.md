@@ -188,8 +188,7 @@ The main host-kit files are split by responsibility:
 - `CaptureOverlayWindow.swift`: AppKit `NSPanel` wrapper for capture overlay windows
 - `CaptureOverlayController.swift`: overlay window set, focus, stream preparation, and below-overlay
   capture source management
-- `CaptureHostView.swift`: AppKit view rendering, hit testing, cursor presentation, and native
-  pointer/key routing
+- `CaptureHostView.swift`: AppKit view rendering, hit testing, and native pointer/key routing
 - `LiveOverlayRenderer.swift`: live overlay layer composition for HUD, loupe, scrims, and selection
   affordances
 - `LiveChromePlacement.swift`: live HUD/loupe text metrics, pending color text, and deterministic
@@ -203,8 +202,9 @@ The main host-kit files are split by responsibility:
   toolbar rendering and Liquid Glass toolbar content
 - `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostFrozenImageEffects.swift`,
   `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
-  boundaries for shared capture geometry, capture-host cursors, Rust-backed frozen image effects,
-  live-chrome telemetry identity, and shared native text measurement
+  boundaries for shared capture geometry, capture-host cursor presentation and NSCursor adaptation,
+  Rust-backed frozen image effects, live-chrome telemetry identity, and shared native text
+  measurement
 - `FrozenCaptureModels.swift`: Swift adapter models for Rust-owned frozen overlay editing
 - `NativeHostFeedbackSound.swift`: host-side sound lookup/playback for completion effects
 - `NativeHostImageBridge.swift`: RGBA/CoreGraphics image conversion used by the FFI bridge
