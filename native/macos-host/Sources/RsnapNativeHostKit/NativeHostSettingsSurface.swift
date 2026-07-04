@@ -139,6 +139,163 @@ struct ModernSliderRow: View {
 	}
 }
 
+struct SettingsHeroControlTile<Control: View>: View {
+	let symbolName: String
+	let title: String
+	let subtitle: String
+	let control: Control
+
+	init(
+		symbolName: String,
+		title: String,
+		subtitle: String,
+		@ViewBuilder control: () -> Control
+	) {
+		self.symbolName = symbolName
+		self.title = title
+		self.subtitle = subtitle
+		self.control = control()
+	}
+
+	var body: some View {
+		HStack(spacing: 10) {
+			SettingsTileIcon(symbolName: symbolName, size: 20)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(title)
+					.font(.system(size: 13, weight: .semibold))
+					.lineLimit(1)
+					.minimumScaleFactor(0.86)
+				Text(subtitle)
+					.font(.system(size: 10.8, weight: .medium))
+					.foregroundStyle(.secondary)
+					.lineLimit(1)
+					.minimumScaleFactor(0.86)
+			}
+			.layoutPriority(1)
+			Spacer(minLength: 8)
+			control
+				.frame(width: SettingsControlLayout.controlColumnWidth, alignment: .trailing)
+		}
+		.padding(.vertical, 6)
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+}
+
+struct SettingsControlTile<Control: View>: View {
+	let symbolName: String
+	let title: String
+	let subtitle: String
+	let control: Control
+
+	init(
+		symbolName: String,
+		title: String,
+		subtitle: String,
+		@ViewBuilder control: () -> Control
+	) {
+		self.symbolName = symbolName
+		self.title = title
+		self.subtitle = subtitle
+		self.control = control()
+	}
+
+	var body: some View {
+		HStack(spacing: 10) {
+			SettingsTileIcon(symbolName: symbolName, size: 19)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(title)
+					.font(.system(size: 13, weight: .semibold))
+					.lineLimit(1)
+				Text(subtitle)
+					.font(.system(size: 10.5, weight: .medium))
+					.foregroundStyle(.secondary)
+					.lineLimit(1)
+					.minimumScaleFactor(0.86)
+			}
+			.layoutPriority(1)
+			Spacer(minLength: 10)
+			control
+				.frame(width: SettingsControlLayout.controlColumnWidth, alignment: .trailing)
+		}
+		.padding(.vertical, 5)
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+}
+
+struct SettingsTileIcon: View {
+	let symbolName: String
+	let size: CGFloat
+	@Environment(\.colorScheme) private var colorScheme
+
+	var body: some View {
+		Image(systemName: symbolName)
+			.symbolRenderingMode(.hierarchical)
+			.font(.system(size: size * 0.86, weight: .semibold))
+			.foregroundStyle(Color.accentColor.opacity(colorScheme == .light ? 0.88 : 0.95))
+			.frame(width: size + 8, height: size + 8)
+			.contentShape(Rectangle())
+	}
+}
+
+struct ModernSegmentButton: View {
+	let title: String
+	let isSelected: Bool
+	let isEnabled: Bool
+	let action: () -> Void
+	@Environment(\.colorScheme) private var colorScheme
+	@State private var isHovered = false
+
+	var body: some View {
+		Button {
+			withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+				action()
+			}
+		} label: {
+			VStack(spacing: 3) {
+				Text(title)
+					.font(.system(size: 10.2, weight: .semibold))
+					.lineLimit(1)
+					.minimumScaleFactor(0.9)
+					.foregroundStyle(textColor)
+					.padding(.horizontal, 6)
+
+				Capsule()
+					.fill(isSelected ? Color.accentColor : Color.clear)
+					.frame(width: 14, height: 2)
+			}
+			.padding(.vertical, 2)
+			.frame(maxWidth: .infinity, minHeight: 22)
+			.background(hoverBackground, in: .rect(cornerRadius: 6, style: .continuous))
+			.contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+		}
+		.buttonStyle(.plain)
+		.disabled(!isEnabled)
+		.frame(maxWidth: .infinity)
+		.animation(.spring(response: 0.22, dampingFraction: 0.84), value: isSelected)
+		.animation(.easeOut(duration: 0.12), value: isHovered)
+		.onHover { hovering in
+			isHovered = hovering
+		}
+	}
+
+	private var hoverBackground: Color {
+		if isHovered && isSelected == false && isEnabled {
+			return colorScheme == .light ? Color.black.opacity(0.035) : Color.white.opacity(0.050)
+		}
+		return .clear
+	}
+
+	private var textColor: Color {
+		if isEnabled == false {
+			return Color.secondary.opacity(0.54)
+		}
+		if isSelected {
+			return Color.accentColor
+		}
+		return Color.primary.opacity(colorScheme == .light ? 0.88 : 0.92)
+	}
+}
+
 struct GlassSlider: View {
 	@Binding var value: Double
 	let isEnabled: Bool
