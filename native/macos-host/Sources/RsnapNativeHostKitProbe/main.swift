@@ -1,4 +1,5 @@
 import CoreGraphics
+import RsnapHostBridge
 import RsnapNativeHostKit
 
 @main
@@ -12,6 +13,8 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureOverlayLocalPointKeepsScreenEdgesVisible()
 		assertScrollCaptureViewportPointAcceptsFlippedGlobalMouseCoordinates()
 		assertScrollCaptureObservedInputAcceptsSourceWindowGutter()
+		assertFrozenToolbarPlannerDisablesEditingDuringScroll()
+		assertFrozenToolbarPlannerPlacesStyleRowAndHitsControls()
 		assertSoftwareUpdateModeResolution()
 		assertManualUpdateCheckRemainsAvailable()
 		assertImmediateInstallGateWaitsForCaptureIdle()
@@ -123,6 +126,100 @@ enum RsnapNativeHostKitProbe {
 				userFacingWindowVisible: true) == false
 		else {
 			fatalError("immediate update install should wait until Rsnap is idle")
+		}
+	}
+
+	private static func assertFrozenToolbarPlannerDisablesEditingDuringScroll() {
+		let items = FrozenToolbarLayoutPlanner.visibleItems(
+			from: [
+				ToolbarItem(kind: .pen, enabled: true, selected: true),
+				ToolbarItem(kind: .undo, enabled: true, selected: false),
+				ToolbarItem(kind: .redo, enabled: true, selected: false),
+				ToolbarItem(kind: .autoCenter, enabled: true, selected: false),
+				ToolbarItem(kind: .scroll, enabled: false, selected: false),
+				ToolbarItem(kind: .copy, enabled: true, selected: false),
+			],
+			availability: FrozenToolbarAvailability(
+				scrollCaptureActive: true,
+				canUndo: true,
+				canRedo: true,
+				frozenSelectionAvailable: true,
+				keepsFrozenSelectionFixed: false,
+				scrollToolbarEnabled: true,
+				hasRecognizeTextBlockingEdits: false
+			)
+		)
+		guard
+			items.first(where: { $0.kind == .pen })?.enabled == false,
+			items.first(where: { $0.kind == .undo })?.enabled == false,
+			items.first(where: { $0.kind == .redo })?.enabled == false,
+			items.first(where: { $0.kind == .autoCenter })?.enabled == false,
+			items.first(where: { $0.kind == .scroll })?.enabled == true,
+			items.first(where: { $0.kind == .copy })?.enabled == true
+		else {
+			fatalError("frozen toolbar planner should isolate scroll capture edit availability")
+		}
+	}
+
+	private static func assertFrozenToolbarPlannerPlacesStyleRowAndHitsControls() {
+		let items = FrozenToolbarLayoutPlanner.visibleItems(
+			from: [
+				ToolbarItem(kind: .pen, enabled: true, selected: true),
+				ToolbarItem(kind: .copy, enabled: true, selected: false),
+				ToolbarItem(kind: .save, enabled: true, selected: false),
+			],
+			availability: FrozenToolbarAvailability(
+				scrollCaptureActive: false,
+				canUndo: false,
+				canRedo: false,
+				frozenSelectionAvailable: true,
+				keepsFrozenSelectionFixed: false,
+				scrollToolbarEnabled: false,
+				hasRecognizeTextBlockingEdits: false
+			)
+		)
+		let selection = CGRect(x: 100, y: 100, width: 80, height: 50)
+		guard
+			let layout = FrozenToolbarLayoutPlanner.layout(
+				selection: selection,
+				bounds: CGRect(x: 0, y: 0, width: 320, height: 320),
+				prefersTopPlacement: false,
+				items: items,
+				annotationStyle: FrozenAnnotationStyleState()
+			),
+			let annotationStyle = layout.annotationStyle
+		else {
+			fatalError("frozen toolbar planner should include brush style controls")
+		}
+
+		guard layout.frame.minY > selection.maxY else {
+			fatalError("frozen toolbar planner should place room-available bottom toolbar")
+		}
+		let firstItem = layout.items[0]
+		let itemHit = FrozenToolbarLayoutPlanner.hitState(
+			at: CGPoint(x: firstItem.frame.midX, y: firstItem.frame.midY),
+			in: layout
+		)
+		guard itemHit.pointerOverToolbar, itemHit.toolbarAction == .pen else {
+			fatalError("frozen toolbar planner should hit enabled primary toolbar items")
+		}
+
+		let decreaseHit = FrozenToolbarLayoutPlanner.hitState(
+			at: CGPoint(
+				x: annotationStyle.decreaseFrame.midX, y: annotationStyle.decreaseFrame.midY),
+			in: layout
+		)
+		guard decreaseHit.annotationStyleAction == .decreaseSize else {
+			fatalError("frozen toolbar planner should hit annotation size controls")
+		}
+
+		let localStyle = FrozenToolbarLayoutPlanner.localAnnotationStyleLayout(
+			annotationStyle,
+			relativeTo: layout.frame
+		)
+		guard localStyle.frame.minX >= 0, localStyle.frame.maxX <= layout.frame.width else {
+			fatalError(
+				"frozen toolbar planner should translate style controls into toolbar-local space")
 		}
 	}
 
