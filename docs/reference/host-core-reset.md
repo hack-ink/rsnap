@@ -83,9 +83,8 @@ The current native-host Swift split is:
 - `CaptureOverlayController.swift`: AppKit overlay-window set management, focus/first-responder
   routing, capture-stream preparation, mouse passthrough, and CoreGraphics capture sources needed
   to sample below native overlay windows.
-- `CaptureHostView.swift`: AppKit/Quartz drawing, hit testing, cursor presentation, Liquid Glass
-  surfaces, live/frozen HUD and toolbar rendering, and native pointer/key event routing into the
-  session controller.
+- `CaptureHostView.swift`: AppKit/Quartz drawing, hit testing, Liquid Glass surfaces, live/frozen
+  HUD and toolbar rendering, and native pointer/key event routing into the session controller.
 - `LiveOverlayRenderer.swift`: live overlay layer composition for HUD, loupe, scrims, and selection
   affordances.
 - `LiveChromePlacement.swift`: live HUD/loupe text metrics, pending color text, and deterministic
@@ -99,8 +98,8 @@ The current native-host Swift split is:
   toolbar rendering and Liquid Glass toolbar content.
 - `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostFrozenImageEffects.swift`,
   `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
-  boundaries for shared capture geometry, capture-host cursor adaptation, Rust-backed frozen image
-  effects, live-chrome telemetry identity, and native text measurement.
+  boundaries for shared capture geometry, capture-host cursor presentation and NSCursor adaptation,
+  Rust-backed frozen image effects, live-chrome telemetry identity, and native text measurement.
 - `FrozenCaptureModels.swift`: Swift view-adapter state for Rust-owned frozen overlay editing,
   including conversion from Rust edit snapshots into AppKit draw models.
 - `NativeHostFeedbackSound.swift`: host-side `NSSound` lookup/playback for capture and OCR
