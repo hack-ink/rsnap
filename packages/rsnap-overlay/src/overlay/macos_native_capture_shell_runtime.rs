@@ -1,23 +1,25 @@
 mod macos_key_focus_shell_runtime;
 mod macos_passive_shell_runtime;
+mod shell_model;
 
 use std::collections::HashMap;
 use std::ptr;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use egui::FontId;
 use objc::runtime::{BOOL, NO, Object, Sel, YES};
-use objc::{Encode, Encoding};
-use objc2_foundation::{NSPoint, NSRange, NSRect, NSSize};
-use winit::event::{ElementState, MouseButton};
-use winit::keyboard::{Key, ModifiersState};
+use objc2_foundation::{NSPoint, NSRect, NSSize};
+use winit::event::ElementState;
+use winit::keyboard::Key;
 
+use self::shell_model::{
+	MacOSKeyFocusShellKind, MacOSKeyFocusShellState, MacOSKeyFocusShellTarget,
+	MacOSPassiveShellCallback, MacOSPassiveToolbarShellState,
+};
 use crate::overlay::MacOSFrontmostApplication;
-use crate::overlay::macos_cursor_runtime::MacOSOverlayPoint;
 use crate::overlay::{
-	GlobalPoint, MacOSNativeCaptureInputDispatch, MacOSNativeCaptureInputEvent,
-	MacOSNativeCaptureScrollDelta, MonitorRect, OverlayKeyboardInputEvent, OverlayMode,
-	OverlaySession, Pos2, Window,
+	GlobalPoint, MacOSNativeCaptureInputDispatch, MacOSNativeCaptureInputEvent, MonitorRect,
+	OverlayKeyboardInputEvent, OverlayMode, OverlaySession, Window,
 };
 
 macro_rules! sel {
@@ -408,98 +410,6 @@ struct MacOSCaptureHostKeyFocusTarget {
 	target: MacOSKeyFocusShellTarget,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MacOSRange {
-	location: usize,
-	length: usize,
-}
-unsafe impl Encode for MacOSRange {
-	fn encode() -> Encoding {
-		unsafe { Encoding::from_str("{_NSRange=QQ}") }
-	}
-}
-
-impl From<NSRange> for MacOSRange {
-	fn from(value: NSRange) -> Self {
-		Self { location: value.location, length: value.length }
-	}
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct MacOSSize {
-	width: f64,
-	height: f64,
-}
-unsafe impl Encode for MacOSSize {
-	fn encode() -> Encoding {
-		unsafe { Encoding::from_str("{CGSize=dd}") }
-	}
-}
-
-impl From<NSSize> for MacOSSize {
-	fn from(value: NSSize) -> Self {
-		Self { width: value.width, height: value.height }
-	}
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct MacOSRect {
-	origin: MacOSOverlayPoint,
-	size: MacOSSize,
-}
-unsafe impl Encode for MacOSRect {
-	fn encode() -> Encoding {
-		unsafe { Encoding::from_str("{CGRect={CGPoint=dd}{CGSize=dd}}") }
-	}
-}
-
-impl From<NSRect> for MacOSRect {
-	fn from(value: NSRect) -> Self {
-		Self {
-			origin: MacOSOverlayPoint { x: value.origin.x, y: value.origin.y },
-			size: MacOSSize::from(value.size),
-		}
-	}
-}
-
-#[derive(Clone, Copy, Default)]
-struct MacOSPassiveToolbarShellState {
-	monitor: Option<MonitorRect>,
-	outer_position: Option<GlobalPoint>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct MacOSKeyFocusShellTarget {
-	kind: MacOSKeyFocusShellKind,
-	monitor: Option<MonitorRect>,
-	ime_allowed: bool,
-	ime_origin: NSPoint,
-	ime_size: NSSize,
-}
-
-#[derive(Debug)]
-struct MacOSKeyFocusShellState {
-	target: Option<MacOSKeyFocusShellTarget>,
-	keyboard_modifiers: ModifiersState,
-	marked_text: String,
-	forward_key_event_to_app: bool,
-	had_ime_input_during_keydown: bool,
-}
-impl Default for MacOSKeyFocusShellState {
-	fn default() -> Self {
-		Self {
-			target: None,
-			keyboard_modifiers: ModifiersState::empty(),
-			marked_text: String::new(),
-			forward_key_event_to_app: false,
-			had_ime_input_during_keydown: false,
-		}
-	}
-}
-
 struct MacOSPassiveShellWindow {
 	window_key: usize,
 	view_key: usize,
@@ -539,7 +449,7 @@ impl MacOSPassiveShellWindow {
 			}
 		}
 
-		if let Some(callback) = macos_shell_callback(self.view_key) {
+		if let Some(callback) = self::shell_model::macos_shell_callback(self.view_key) {
 			match callback {
 				MacOSPassiveShellCallback::Overlay { .. } => {
 					let seeded_point = visible
@@ -581,8 +491,7 @@ impl MacOSPassiveShellWindow {
 
 impl Drop for MacOSPassiveShellWindow {
 	fn drop(&mut self) {
-		macos_unregister_shell_callback(self.view_key);
-
+		self::shell_model::macos_unregister_shell_callback(self.view_key);
 		macos_passive_shell_runtime::macos_clear_passive_shell_cursor_point(self.view_key);
 
 		unsafe {
@@ -723,7 +632,7 @@ impl MacOSKeyFocusShellWindow {
 
 impl Drop for MacOSKeyFocusShellWindow {
 	fn drop(&mut self) {
-		macos_unregister_shell_callback(self.view_key);
+		self::shell_model::macos_unregister_shell_callback(self.view_key);
 
 		unsafe {
 			let ns_window = self.window_key as *mut Object;
@@ -740,24 +649,6 @@ impl Drop for MacOSKeyFocusShellWindow {
 				let _: () = objc::msg_send![view, release];
 			}
 		}
-	}
-}
-
-impl From<MacOSRange> for NSRange {
-	fn from(value: MacOSRange) -> Self {
-		Self::new(value.location, value.length)
-	}
-}
-
-impl From<MacOSSize> for NSSize {
-	fn from(value: MacOSSize) -> Self {
-		Self::new(value.width, value.height)
-	}
-}
-
-impl From<MacOSRect> for NSRect {
-	fn from(value: MacOSRect) -> Self {
-		Self::new(NSPoint::new(value.origin.x, value.origin.y), NSSize::from(value.size))
 	}
 }
 
@@ -897,152 +788,8 @@ impl OverlaySession {
 	}
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MacOSKeyFocusShellKind {
-	FrozenText,
-	ScrollCapture,
-}
-
-#[derive(Clone)]
-enum MacOSPassiveShellCallback {
-	Overlay {
-		monitor: MonitorRect,
-		dispatch: MacOSNativeCaptureInputDispatch,
-	},
-	Toolbar {
-		state: Arc<Mutex<MacOSPassiveToolbarShellState>>,
-		dispatch: MacOSNativeCaptureInputDispatch,
-	},
-	KeyFocus {
-		state: Arc<Mutex<MacOSKeyFocusShellState>>,
-		dispatch: MacOSNativeCaptureInputDispatch,
-	},
-}
-impl MacOSPassiveShellCallback {
-	fn dispatch_pointer_moved(&self, local_point: NSPoint) {
-		match self {
-			Self::Overlay { monitor, dispatch } => {
-				dispatch.enqueue(MacOSNativeCaptureInputEvent::OverlayPointerMoved {
-					monitor: *monitor,
-					global: clamp_monitor_local_point(*monitor, local_point),
-				});
-			},
-			Self::Toolbar { state, dispatch } => {
-				let Ok(state) = state.lock() else {
-					return;
-				};
-				let (Some(monitor), Some(outer_position)) = (state.monitor, state.outer_position)
-				else {
-					return;
-				};
-				let local = Pos2::new(local_point.x as f32, local_point.y as f32);
-				let global = GlobalPoint::new(
-					outer_position.x.saturating_add(local.x.round() as i32),
-					outer_position.y.saturating_add(local.y.round() as i32),
-				);
-
-				dispatch.enqueue(MacOSNativeCaptureInputEvent::ToolbarPointerMoved {
-					monitor,
-					local,
-					global,
-					outer_position,
-				});
-			},
-			Self::KeyFocus { .. } => {},
-		}
-	}
-
-	fn dispatch_mouse_input(
-		&self,
-		local_point: Option<NSPoint>,
-		button: MouseButton,
-		state: ElementState,
-	) {
-		match self {
-			Self::Overlay { monitor, dispatch } => {
-				let Some(local_point) = local_point else {
-					return;
-				};
-
-				dispatch.enqueue(MacOSNativeCaptureInputEvent::OverlayMouseInput {
-					monitor: *monitor,
-					global: clamp_monitor_local_point(*monitor, local_point),
-					button,
-					state,
-				});
-			},
-			Self::Toolbar { dispatch, .. } => {
-				dispatch.enqueue(MacOSNativeCaptureInputEvent::ToolbarMouseInput { button, state });
-			},
-			Self::KeyFocus { .. } => {},
-		}
-	}
-
-	fn dispatch_mouse_exited(&self, view_key: usize) {
-		match self {
-			Self::Overlay { .. } => {
-				macos_passive_shell_runtime::macos_update_passive_shell_cursor_point(
-					view_key, None,
-				);
-			},
-			Self::Toolbar { dispatch, .. } => {
-				dispatch.enqueue(MacOSNativeCaptureInputEvent::ToolbarPointerLeft);
-			},
-			Self::KeyFocus { .. } => {},
-		}
-	}
-
-	fn dispatch_scroll_wheel(&self, delta: MacOSNativeCaptureScrollDelta) {
-		if let Self::Toolbar { dispatch, .. } = self {
-			dispatch.enqueue(MacOSNativeCaptureInputEvent::ToolbarScrollWheel { delta });
-		}
-	}
-}
-
-fn macos_capture_shell_mouse_location() -> Option<GlobalPoint> {
-	super::macos_mouse_location()
-}
-
 extern "C" fn macos_capture_shell_view_is_flipped(_this: &Object, _cmd: Sel) -> BOOL {
 	YES
-}
-
-fn clamp_monitor_local_point(monitor: MonitorRect, local_point: NSPoint) -> GlobalPoint {
-	let max_x = monitor.width.saturating_sub(1) as i32;
-	let max_y = monitor.height.saturating_sub(1) as i32;
-	let local_x = (local_point.x.round() as i32).clamp(0, max_x);
-	let local_y = (local_point.y.round() as i32).clamp(0, max_y);
-
-	GlobalPoint::new(
-		monitor.origin.x.saturating_add(local_x),
-		monitor.origin.y.saturating_add(local_y),
-	)
-}
-
-fn macos_shell_callbacks() -> &'static Mutex<HashMap<usize, MacOSPassiveShellCallback>> {
-	static CALLBACKS: OnceLock<Mutex<HashMap<usize, MacOSPassiveShellCallback>>> = OnceLock::new();
-
-	CALLBACKS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn macos_register_shell_callback(view_key: usize, callback: MacOSPassiveShellCallback) {
-	macos_shell_callbacks().lock().expect("shell callback map poisoned").insert(view_key, callback);
-}
-
-fn macos_unregister_shell_callback(view_key: usize) {
-	macos_shell_callbacks().lock().expect("shell callback map poisoned").remove(&view_key);
-}
-
-fn macos_shell_callback(view_key: usize) -> Option<MacOSPassiveShellCallback> {
-	macos_shell_callbacks().lock().expect("shell callback map poisoned").get(&view_key).cloned()
-}
-
-fn macos_shell_callback_name(callback: &MacOSPassiveShellCallback) -> &'static str {
-	match callback {
-		MacOSPassiveShellCallback::Overlay { .. } => "overlay",
-		MacOSPassiveShellCallback::Toolbar { .. } => "toolbar",
-		MacOSPassiveShellCallback::KeyFocus { .. } => "key_focus",
-	}
 }
 
 fn macos_create_passive_overlay_shell_window(
@@ -1124,7 +871,7 @@ fn macos_create_key_focus_shell_window(
 		let _: () = objc::msg_send![ns_window, setHidesOnDeactivate: NO];
 		let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
 
-		macos_register_shell_callback(
+		self::shell_model::macos_register_shell_callback(
 			view as usize,
 			MacOSPassiveShellCallback::KeyFocus { state: Arc::clone(&state), dispatch },
 		);
@@ -1210,7 +957,7 @@ fn macos_create_passive_shell_window(
 		let _: () = objc::msg_send![ns_window, setHidesOnDeactivate: NO];
 		let _: () = objc::msg_send![ns_window, orderOut: ptr::null_mut::<Object>()];
 
-		macos_register_shell_callback(view as usize, callback);
+		self::shell_model::macos_register_shell_callback(view as usize, callback);
 
 		Ok(MacOSPassiveShellWindow {
 			window_key: ns_window as usize,
