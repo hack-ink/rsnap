@@ -10,6 +10,7 @@ mod stream_facade;
 mod stream_filter;
 mod stream_lifecycle;
 mod stream_output;
+mod stream_setup;
 mod stream_worker;
 
 pub(crate) use self::stream_facade::{CursorSampleRequest, MacLiveFrameStream};
@@ -47,7 +48,7 @@ const STREAM_ERROR_NULL_CONTENT_CODE: isize = 2;
 const STREAM_ERROR_RETAIN_FAILED_CODE: isize = 3;
 
 fn stream_error(code: isize) -> Retained<NSError> {
-	stream_lifecycle::stream_error(code)
+	stream_setup::stream_error(code)
 }
 
 #[cfg(test)]
