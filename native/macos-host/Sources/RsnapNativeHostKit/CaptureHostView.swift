@@ -88,9 +88,7 @@ final class CaptureHostView: NSView {
 	private var lastScrollToolbarBackdropChangedUptime: TimeInterval = 0
 	private var lastScrollToolbarBackdropFallbackCaptureStartedUptime: TimeInterval = 0
 	private var trackingAreaRef: NSTrackingArea?
-	private var pointerOverFrozenToolbar = false
-	private var hoveredToolbarAction: ToolbarItemKind?
-	private var hoveredAnnotationStyleAction: FrozenAnnotationStyleAction?
+	private var toolbarHoverState = CaptureHostToolbarHoverState()
 	private var annotationStyleWheelGate = CaptureHostAnnotationStyleWheelGate()
 	private var lastCursorPresentation: CaptureHostCursorPresentation?
 	private var lastAppliedCursorPresentation: CaptureHostCursorPresentation?
@@ -1343,7 +1341,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentCursorPresentation() -> CaptureHostCursorPresentation {
-		if pointerOverFrozenToolbar || hoveredToolbarAction != nil {
+		if toolbarHoverState.pointerOverToolbar || toolbarHoverState.toolbarAction != nil {
 			return .arrow
 		}
 		if scene.mode == .frozen {
@@ -1891,15 +1889,9 @@ final class CaptureHostView: NSView {
 	}
 
 	private func clearHoveredToolbarAction() {
-		guard
-			pointerOverFrozenToolbar || hoveredToolbarAction != nil
-				|| hoveredAnnotationStyleAction != nil
-		else {
+		guard toolbarHoverState.clear() else {
 			return
 		}
-		pointerOverFrozenToolbar = false
-		hoveredToolbarAction = nil
-		hoveredAnnotationStyleAction = nil
 	}
 
 	private func refreshHoveredToolbarAction(for localPoint: CGPoint? = nil) {
@@ -1914,16 +1906,7 @@ final class CaptureHostView: NSView {
 				annotationStyleAction: nil
 			)
 		}
-		let pointerOverToolbar = hitState.pointerOverToolbar
-		let hoveredAction = hitState.toolbarAction
-		let hoveredStyleAction = hitState.annotationStyleAction
-		if hoveredToolbarAction != hoveredAction
-			|| hoveredAnnotationStyleAction != hoveredStyleAction
-			|| pointerOverFrozenToolbar != pointerOverToolbar
-		{
-			pointerOverFrozenToolbar = pointerOverToolbar
-			hoveredToolbarAction = hoveredAction
-			hoveredAnnotationStyleAction = hoveredStyleAction
+		if toolbarHoverState.update(to: hitState) {
 			syncVisibleCursor()
 			updateChromeMaterialViews()
 			needsDisplay = true
@@ -1952,11 +1935,11 @@ final class CaptureHostView: NSView {
 		)
 		FrozenToolbarDrawing.drawToolbarContent(
 			items: layout.items,
-			hoveredToolbarAction: hoveredToolbarAction,
+			hoveredToolbarAction: toolbarHoverState.toolbarAction,
 			toolbarScale: layout.scale,
 			annotationStyleState: chrome.annotationStyle,
 			annotationStyleLayout: layout.annotationStyle,
-			hoveredAnnotationStyleAction: hoveredAnnotationStyleAction,
+			hoveredAnnotationStyleAction: toolbarHoverState.annotationStyleAction,
 			palette: palette,
 			in: context
 		)
@@ -3344,8 +3327,8 @@ final class CaptureHostView: NSView {
 		let changed = contentView.update(
 			theme: chromeTheme(),
 			settings: settings,
-			hoveredToolbarAction: hoveredToolbarAction,
-			hoveredAnnotationStyleAction: hoveredAnnotationStyleAction,
+			hoveredToolbarAction: toolbarHoverState.toolbarAction,
+			hoveredAnnotationStyleAction: toolbarHoverState.annotationStyleAction,
 			toolbarScale: layout.scale,
 			annotationStyleState: chrome.annotationStyle,
 			annotationStyleLayout: layout.annotationStyle.map {
