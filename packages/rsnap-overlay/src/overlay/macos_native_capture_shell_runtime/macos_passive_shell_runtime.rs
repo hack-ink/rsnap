@@ -10,7 +10,10 @@ use winit::window::CursorIcon;
 
 use crate::overlay::MacOSNativeCaptureScrollDelta;
 use crate::overlay::macos_cursor_runtime::{self, MacOSOverlayPoint};
-use crate::overlay::macos_native_capture_shell_runtime::{MacOSPassiveShellCallback, MacOSRect};
+use crate::overlay::macos_native_capture_shell_runtime::shell_model;
+use crate::overlay::macos_native_capture_shell_runtime::shell_model::{
+	MacOSPassiveShellCallback, MacOSRect,
+};
 
 macro_rules! sel {
 	($($tt:tt)*) => {
@@ -180,7 +183,7 @@ extern "C" fn macos_passive_shell_view_hit_test(
 }
 
 extern "C" fn macos_passive_shell_view_draw_rect(this: &Object, _cmd: Sel, dirty_rect: MacOSRect) {
-	let Some(callback) = super::macos_shell_callback(this as *const Object as usize) else {
+	let Some(callback) = shell_model::macos_shell_callback(this as *const Object as usize) else {
 		return;
 	};
 
@@ -201,7 +204,7 @@ extern "C" fn macos_passive_shell_view_draw_rect(this: &Object, _cmd: Sel, dirty
 
 extern "C" fn macos_passive_shell_view_reset_cursor_rects(this: &Object, _cmd: Sel) {
 	let bounds: NSRect = unsafe { objc::msg_send![this, bounds] };
-	let Some(callback) = super::macos_shell_callback(this as *const Object as usize) else {
+	let Some(callback) = shell_model::macos_shell_callback(this as *const Object as usize) else {
 		return;
 	};
 	let cursor = match callback {
@@ -231,13 +234,13 @@ extern "C" fn macos_passive_shell_view_cursor_update(
 	_cmd: Sel,
 	_event: *mut Object,
 ) {
-	let Some(callback) = super::macos_shell_callback(this as *const Object as usize) else {
+	let Some(callback) = shell_model::macos_shell_callback(this as *const Object as usize) else {
 		return;
 	};
 
 	tracing::trace!(
 		op = "overlay.macos_passive_shell_cursor_update",
-		callback = %super::macos_shell_callback_name(&callback),
+		callback = %shell_model::macos_shell_callback_name(&callback),
 		"Passive shell received cursorUpdate."
 	);
 
@@ -274,7 +277,7 @@ extern "C" fn macos_passive_shell_view_right_mouse_down(
 
 extern "C" fn macos_passive_shell_view_mouse_exited(this: &Object, _cmd: Sel, _event: *mut Object) {
 	let view_key = this as *const Object as usize;
-	let Some(callback) = super::macos_shell_callback(this as *const Object as usize) else {
+	let Some(callback) = shell_model::macos_shell_callback(this as *const Object as usize) else {
 		return;
 	};
 
@@ -282,7 +285,7 @@ extern "C" fn macos_passive_shell_view_mouse_exited(this: &Object, _cmd: Sel, _e
 }
 
 extern "C" fn macos_passive_shell_view_scroll_wheel(this: &Object, _cmd: Sel, event: *mut Object) {
-	let Some(callback) = super::macos_shell_callback(this as *const Object as usize) else {
+	let Some(callback) = shell_model::macos_shell_callback(this as *const Object as usize) else {
 		return;
 	};
 	let Some(delta) = macos_shell_scroll_delta(event) else {
@@ -293,7 +296,7 @@ extern "C" fn macos_passive_shell_view_scroll_wheel(this: &Object, _cmd: Sel, ev
 }
 
 fn macos_dispatch_shell_pointer_moved(this: &Object, event: *mut Object) {
-	let Some(callback) = super::macos_shell_callback(this as *const Object as usize) else {
+	let Some(callback) = shell_model::macos_shell_callback(this as *const Object as usize) else {
 		return;
 	};
 	let Some(local_point) = macos_shell_local_point(this, event) else {
@@ -302,7 +305,7 @@ fn macos_dispatch_shell_pointer_moved(this: &Object, event: *mut Object) {
 
 	tracing::trace!(
 		op = "overlay.macos_passive_shell_pointer_moved",
-		callback = %super::macos_shell_callback_name(&callback),
+		callback = %shell_model::macos_shell_callback_name(&callback),
 		x = local_point.x,
 		y = local_point.y,
 		"Passive shell received pointer movement."
@@ -336,7 +339,7 @@ fn macos_dispatch_shell_mouse_input(
 	button: MouseButton,
 	state: ElementState,
 ) {
-	let Some(callback) = super::macos_shell_callback(this as *const Object as usize) else {
+	let Some(callback) = shell_model::macos_shell_callback(this as *const Object as usize) else {
 		return;
 	};
 	let local_point = macos_shell_local_point(this, event);
@@ -491,7 +494,7 @@ fn macos_seed_passive_shell_cursor_point_impl(
 		return None;
 	}
 
-	let global = super::macos_capture_shell_mouse_location()?;
+	let global = shell_model::macos_capture_shell_mouse_location()?;
 
 	unsafe {
 		let screen_point = NSPoint::new(f64::from(global.x), f64::from(global.y));

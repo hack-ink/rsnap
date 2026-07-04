@@ -10,7 +10,8 @@ use winit::event::{ElementState, Ime};
 use winit::keyboard::{Key, ModifiersState, NamedKey, NativeKey};
 
 use crate::overlay::macos_cursor_runtime::MacOSOverlayPoint;
-use crate::overlay::macos_native_capture_shell_runtime::{
+use crate::overlay::macos_native_capture_shell_runtime::shell_model;
+use crate::overlay::macos_native_capture_shell_runtime::shell_model::{
 	MacOSKeyFocusShellState, MacOSKeyFocusShellTarget, MacOSPassiveShellCallback, MacOSRange,
 	MacOSRect,
 };
@@ -169,7 +170,7 @@ extern "C" fn macos_key_focus_shell_view_accepts_first_responder(
 fn macos_key_focus_shell_state(
 	this: &Object,
 ) -> Option<(Arc<Mutex<MacOSKeyFocusShellState>>, MacOSNativeCaptureInputDispatch)> {
-	let callback = super::macos_shell_callback(this as *const Object as usize)?;
+	let callback = shell_model::macos_shell_callback(this as *const Object as usize)?;
 
 	match callback {
 		MacOSPassiveShellCallback::KeyFocus { state, dispatch } => Some((state, dispatch)),
