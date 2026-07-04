@@ -86,6 +86,11 @@ The current native-host Swift split is:
 - `CaptureHostView.swift`: AppKit/Quartz drawing, hit testing, cursor presentation, Liquid Glass
   surfaces, live/frozen HUD and toolbar rendering, and native pointer/key event routing into the
   session controller.
+- `LiveOverlayRenderer.swift`: live overlay layer composition for HUD, loupe, scrims, and selection
+  affordances.
+- `LiveOverlayWindowSnapshotFeed.swift`, `LiveOverlayChromeSampleFeed.swift`, and
+  `LiveFrameClockDriver.swift`: native live overlay support boundaries for target-window snapshots,
+  chrome color/patch sampling, and display-rate frame ticks.
 - `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostFrozenImageEffects.swift`,
   `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
   boundaries for shared capture geometry, capture-host cursor adaptation, Rust-backed frozen image
