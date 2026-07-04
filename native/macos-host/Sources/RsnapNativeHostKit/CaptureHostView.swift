@@ -91,7 +91,7 @@ final class CaptureHostView: NSView {
 	private var pointerOverFrozenToolbar = false
 	private var hoveredToolbarAction: ToolbarItemKind?
 	private var hoveredAnnotationStyleAction: FrozenAnnotationStyleAction?
-	private var annotationStyleWheelLastStepTimestamp: TimeInterval?
+	private var annotationStyleWheelGate = CaptureHostAnnotationStyleWheelGate()
 	private var lastCursorPresentation: CaptureHostCursorPresentation?
 	private var lastAppliedCursorPresentation: CaptureHostCursorPresentation?
 	private var livePrimaryInteraction = CaptureHostLivePrimaryInteractionState()
@@ -753,43 +753,20 @@ final class CaptureHostView: NSView {
 			&& flags.contains(.shift) == false
 	}
 
-	private static let annotationStyleWheelDeadZone: CGFloat = 0.05
-	private static let annotationStylePreciseWheelStepInterval: TimeInterval = 0.18
-	private static let annotationStyleDiscreteWheelStepInterval: TimeInterval = 0.04
-
 	private func annotationStyleWheelSteps(from event: NSEvent) -> Int {
-		guard event.momentumPhase == [] else {
-			return 0
-		}
 		let phase = event.phase
-		if phase.contains(.ended) || phase.contains(.cancelled) {
-			resetAnnotationStyleWheelGate()
-			return 0
-		}
-		let deltaY = event.scrollingDeltaY
-		guard abs(deltaY) > .ulpOfOne else {
-			return 0
-		}
-		guard abs(deltaY) >= Self.annotationStyleWheelDeadZone else {
-			return 0
-		}
-		let direction = deltaY > 0 ? 1 : -1
-		let isSmoothScroll = event.hasPreciseScrollingDeltas || phase != []
-		let minimumInterval =
-			isSmoothScroll
-			? Self.annotationStylePreciseWheelStepInterval
-			: Self.annotationStyleDiscreteWheelStepInterval
-		if let lastStepTimestamp = annotationStyleWheelLastStepTimestamp,
-			event.timestamp - lastStepTimestamp < minimumInterval
-		{
-			return 0
-		}
-		annotationStyleWheelLastStepTimestamp = event.timestamp
-		return direction
+		return annotationStyleWheelGate.steps(
+			timestamp: event.timestamp,
+			deltaY: event.scrollingDeltaY,
+			hasPreciseScrollingDeltas: event.hasPreciseScrollingDeltas,
+			phaseActive: phase != [],
+			phaseEndedOrCancelled: phase.contains(.ended) || phase.contains(.cancelled),
+			momentumActive: event.momentumPhase != []
+		)
 	}
 
 	private func resetAnnotationStyleWheelGate() {
-		annotationStyleWheelLastStepTimestamp = nil
+		annotationStyleWheelGate.reset()
 	}
 
 	override func draw(_ dirtyRect: NSRect) {
