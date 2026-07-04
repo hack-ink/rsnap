@@ -31,11 +31,6 @@ final class CaptureHostView: NSView {
 		let image: CGImage
 	}
 
-	private struct LiveFloatingPlacement {
-		let frame: CGRect
-		let flippedHorizontally: Bool
-	}
-
 	private enum CursorPresentation: Equatable {
 		case arrow
 		case crosshair
@@ -50,41 +45,6 @@ final class CaptureHostView: NSView {
 		case iBeam
 	}
 
-	private struct HudLayoutMetrics {
-		let font: NSFont
-		let lineHeight: CGFloat
-		let commaWidth: CGFloat
-		let xPrefixWidth: CGFloat
-		let yPrefixWidth: CGFloat
-		let digitWidth: CGFloat
-		let minusWidth: CGFloat
-		let keycapTextSize: CGSize
-		let keycapFrameSize: CGSize
-		let hexSlotWidth: CGFloat
-		let placeholderXSlotWidth: CGFloat
-		let placeholderYSlotWidth: CGFloat
-	}
-
-	private static let hudLayoutMetrics: HudLayoutMetrics = {
-		let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .medium)
-		let keycapTextSize = "Tab".size(using: font)
-		return HudLayoutMetrics(
-			font: font,
-			lineHeight: ceil("x=0".size(using: font).height),
-			commaWidth: ",".size(using: font).width,
-			xPrefixWidth: "x=".size(using: font).width,
-			yPrefixWidth: "y=".size(using: font).width,
-			digitWidth: "0".size(using: font).width,
-			minusWidth: "-".size(using: font).width,
-			keycapTextSize: keycapTextSize,
-			keycapFrameSize: CGSize(
-				width: keycapTextSize.width + 12, height: keycapTextSize.height + 4),
-			hexSlotWidth: "#FFFFFF".size(using: font).width,
-			placeholderXSlotWidth: "x=?".size(using: font).width,
-			placeholderYSlotWidth: "y=?".size(using: font).width
-		)
-	}()
-	private static let pendingHudHexWheel = Array("0123456789ABCDEF")
 	private static let liveChromeLiquidGlassZ: CGFloat = 200
 	private static let frozenToolbarLiquidGlassBackdropZ: CGFloat = 295
 	private static let frozenToolbarLiquidGlassZ: CGFloat = 300
@@ -1752,7 +1712,7 @@ final class CaptureHostView: NSView {
 
 	private func drawSelectionSizeBadge(for rect: CGRect, in context: CGContext) {
 		let text = selectionSizeText(for: rect)
-		let font = Self.hudLayoutMetrics.font
+		let font = LiveChromePlacementPlanner.metrics.font
 		let textSize = text.size(using: font)
 		let badgeFrame = CaptureChrome.selectionSizeBadgeFrame(
 			for: rect,
@@ -2436,46 +2396,16 @@ final class CaptureHostView: NSView {
 		cursor(for: cursorPresentation).set()
 	}
 
-	private func currentHudPlacement() -> LiveFloatingPlacement? {
+	private func currentHudPlacement() -> LiveChromeFloatingPlacement? {
 		guard scene.mode == .live, let anchor = localPointer() else {
 			return nil
 		}
-		return liveFloatingPlacement(
+		return LiveChromePlacementPlanner.hudPlacement(
+			bounds: bounds,
 			anchor: anchor,
-			size: currentHudSize(),
-			offsetX: 48,
-			offsetY: 24,
-			preferBelow: true
+			positionDisplay: currentPositionDisplay(),
+			keycapVisible: settings.showAltHintKeycap
 		)
-	}
-
-	private func currentHudSize() -> CGSize {
-		let metrics = Self.hudLayoutMetrics
-		let swatchSize = CaptureChrome.hudSwatchSize
-		let keycapVisible = settings.showAltHintKeycap
-		let keycapFrame = keycapVisible ? metrics.keycapFrameSize : .zero
-		let contentHeight = max(metrics.lineHeight, swatchSize.height, keycapFrame.height)
-		let positionDisplay = currentPositionDisplay()
-		let contentWidth =
-			positionDisplay.xSlotWidth
-			+ metrics.commaWidth
-			+ positionDisplay.ySlotWidth
-			+ CaptureChrome.hudGroupSpacing
-			+ swatchSize.width
-			+ CaptureChrome.hudColorItemSpacing
-			+ metrics.hexSlotWidth
-			+ (keycapVisible
-				? CaptureChrome.hudGroupSpacing + keycapFrame.width
-				: 0)
-		let size = CGSize(
-			width: contentWidth + CaptureChrome.hudInnerMarginX * 2,
-			height: contentHeight + CaptureChrome.hudInnerMarginY * 2
-		)
-		return size
-	}
-
-	private func currentHudFrame() -> CGRect? {
-		currentHudPlacement()?.frame
 	}
 
 	private func currentLoupeFrame(
@@ -2483,16 +2413,10 @@ final class CaptureHostView: NSView {
 		patch: CGImage?,
 		alignTrailing: Bool
 	) -> CGRect? {
-		guard let patch else {
-			return nil
-		}
-		let innerSide = CGFloat(patch.width) * CaptureChrome.loupeCellSize
-		let size = CGSize(width: innerSide + 20, height: innerSide + 20)
-		return liveStackedRect(
-			referenceFrame: hudFrame,
-			size: size,
-			gap: CaptureChrome.hudLoupeGap,
-			preferBelow: true,
+		LiveChromePlacementPlanner.loupeFrame(
+			bounds: bounds,
+			hudFrame: hudFrame,
+			patch: patch,
 			alignTrailing: alignTrailing
 		)
 	}
@@ -2783,77 +2707,6 @@ final class CaptureHostView: NSView {
 		return (hudFrame, loupeFrame)
 	}
 
-	private func liveFloatingPlacement(
-		anchor: CGPoint,
-		size: CGSize,
-		offsetX: CGFloat,
-		offsetY: CGFloat,
-		preferBelow: Bool
-	) -> LiveFloatingPlacement {
-		let minX: CGFloat = 6
-		let minY: CGFloat = 6
-		let maxX = max(bounds.width - size.width - 6, minX)
-		let maxY = max(bounds.height - size.height - 6, minY)
-
-		var x = anchor.x + offsetX
-		var flippedHorizontally = false
-		if x + size.width > bounds.width - 6 {
-			x = anchor.x - offsetX - size.width
-			flippedHorizontally = true
-		}
-		x = x.clamped(to: minX...maxX)
-
-		let preferredBelowY = anchor.y - offsetY - size.height
-		let preferredAboveY = anchor.y + offsetY
-		var y = preferBelow ? preferredBelowY : preferredAboveY
-		if preferBelow {
-			if y < minY {
-				y = preferredAboveY
-			}
-		} else if y + size.height > bounds.height - 6 {
-			y = preferredBelowY
-		}
-		y = y.clamped(to: minY...maxY)
-
-		return LiveFloatingPlacement(
-			frame: CGRect(origin: CGPoint(x: x, y: y), size: size),
-			flippedHorizontally: flippedHorizontally
-		)
-	}
-
-	private func liveStackedRect(
-		referenceFrame: CGRect,
-		size: CGSize,
-		gap: CGFloat,
-		preferBelow: Bool,
-		alignTrailing: Bool = false
-	) -> CGRect {
-		let minX: CGFloat = 6
-		let minY: CGFloat = 6
-		let maxX = max(bounds.width - size.width - 6, minX)
-		let maxY = max(bounds.height - size.height - 6, minY)
-
-		var x = alignTrailing ? (referenceFrame.maxX - size.width) : referenceFrame.minX
-		if alignTrailing == false, x + size.width > bounds.width - 6 {
-			x = referenceFrame.maxX - size.width
-		}
-		x = x.clamped(to: minX...maxX)
-
-		let preferredBelowY = referenceFrame.minY - gap - size.height
-		let preferredAboveY = referenceFrame.maxY + gap
-		var y = preferBelow ? preferredBelowY : preferredAboveY
-		if preferBelow {
-			if y < minY {
-				y = preferredAboveY
-			}
-		} else if y + size.height > bounds.height - 6 {
-			y = preferredBelowY
-		}
-		y = y.clamped(to: minY...maxY)
-
-		return CGRect(origin: CGPoint(x: x, y: y), size: size)
-	}
-
 	private func updateLiveRendererState() {
 		guard liveRendererInstalled else {
 			return
@@ -3118,7 +2971,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentPositionDisplay() -> LivePositionDisplay {
-		let metrics = Self.hudLayoutMetrics
+		let metrics = LiveChromePlacementPlanner.metrics
 		guard let pointer = livePointerPreviewGlobal ?? scene.pointer else {
 			return LivePositionDisplay(
 				xValueText: "?",
@@ -3132,28 +2985,15 @@ final class CaptureHostView: NSView {
 		return LivePositionDisplay(
 			xValueText: xValueText,
 			yValueText: yValueText,
-			xSlotWidth: Self.coordinateSlotWidth(
+			xSlotWidth: metrics.coordinateSlotWidth(
 				prefixWidth: metrics.xPrefixWidth,
-				valueText: xValueText,
-				metrics: metrics
+				valueText: xValueText
 			),
-			ySlotWidth: Self.coordinateSlotWidth(
+			ySlotWidth: metrics.coordinateSlotWidth(
 				prefixWidth: metrics.yPrefixWidth,
-				valueText: yValueText,
-				metrics: metrics
+				valueText: yValueText
 			)
 		)
-	}
-
-	private static func coordinateSlotWidth(
-		prefixWidth: CGFloat,
-		valueText: String,
-		metrics: HudLayoutMetrics
-	) -> CGFloat {
-		prefixWidth
-			+ valueText.reduce(CGFloat(0)) { width, character in
-				width + (character == "-" ? metrics.minusWidth : metrics.digitWidth)
-			}
 	}
 
 	private func currentLiveColorDisplay(for sample: RGBSample?) -> LiveColorDisplay {
@@ -3162,24 +3002,13 @@ final class CaptureHostView: NSView {
 			?? pendingLiveColorHexText()
 		return LiveColorDisplay(
 			hexText: hexText,
-			hexSlotWidth: Self.hudLayoutMetrics.hexSlotWidth,
+			hexSlotWidth: LiveChromePlacementPlanner.metrics.hexSlotWidth,
 			isPending: sample == nil
 		)
 	}
 
 	private func pendingLiveColorHexText() -> String {
-		let uptime = ProcessInfo.processInfo.systemUptime
-		let digits = (0..<6).map { index -> Character in
-			let rate = 9 + ((index * 7) % 6)
-			let phase = Double((index * 23) % 31) / 31.0
-			let tick = Int(((uptime + phase) * Double(rate)).rounded(.down))
-			var seed =
-				UInt64(tick + 1) &* 1_099_511_628_211
-				^ UInt64(index + 1) &* 0x9E37_79B9_7F4A_7C15
-			seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-			return Self.pendingHudHexWheel[Int((seed >> 58) & 0xF)]
-		}
-		return "#" + String(digits)
+		LiveChromePendingColorText.hexText()
 	}
 
 	private func drawPill(
