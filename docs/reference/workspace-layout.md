@@ -197,6 +197,8 @@ The main host-kit files are split by responsibility:
 - `LiveOverlayWindowSnapshotFeed.swift`, `LiveOverlayChromeSampleFeed.swift`, and
   `LiveFrameClockDriver.swift`: live overlay support boundaries for target-window snapshots,
   chrome color/patch sampling, and display-rate frame ticks
+- `FrozenToolbarLayoutPlanner.swift`: deterministic frozen-toolbar item availability, layout, and
+  hit-test geometry shared by classic drawing, Liquid Glass content, and native probes
 - `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostFrozenImageEffects.swift`,
   `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
   boundaries for shared capture geometry, capture-host cursors, Rust-backed frozen image effects,

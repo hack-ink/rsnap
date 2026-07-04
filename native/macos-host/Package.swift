@@ -75,7 +75,7 @@ let package = Package(
 		),
 		.executableTarget(
 			name: "RsnapNativeHostKitProbe",
-			dependencies: ["RsnapNativeHostKit"]
+			dependencies: ["RsnapHostBridge", "RsnapNativeHostKit"]
 		),
 		.executableTarget(
 			name: "RsnapNativeHost",
