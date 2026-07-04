@@ -8,35 +8,6 @@ import RsnapHostBridge
 
 @MainActor private let frozenEffectCIContext = CIContext(options: nil)
 
-struct LiveChromeRefreshTelemetryKey: Equatable {
-	let targetHz: Int
-	let hudGlassEnabled: Bool
-	let hudGlassMode: String
-	let liquidGlassStyle: String
-	let liquidGlassAvailable: Bool
-}
-
-func makeFrozenMosaicPatch(from image: CGImage, sourceRect: CGRect) -> CGImage? {
-	guard
-		let patch = try? RsnapExportEncoder.frozenMosaicLightPrivacyPatch(
-			imageWidth: image.width,
-			imageHeight: image.height,
-			sourceRect: sourceRect
-		)
-	else {
-		return nil
-	}
-
-	let bitmapInfo =
-		CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
-	return NativeHostImageBridge.cgImage(
-		width: patch.width,
-		height: patch.height,
-		rgba: patch.rgba,
-		bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo)
-	)
-}
-
 @MainActor
 final class CaptureHostView: NSView {
 	private static let liveDragIntentThreshold: CGFloat = 3
@@ -4139,72 +4110,4 @@ final class CaptureHostView: NSView {
 		}
 	}
 
-}
-
-extension NSCursor {
-	private static func frozenDiagonalCursor(
-		from baseCursor: NSCursor
-	) -> NSCursor {
-		NSCursor(image: baseCursor.image, hotSpot: baseCursor.hotSpot)
-	}
-
-	private static var _diagonalTopLeftBottomRight: NSCursor {
-		if #available(macOS 15.0, *) {
-			return frozenDiagonalCursor(
-				from: .frameResize(position: .topLeft, directions: [.inward, .outward])
-			)
-		}
-		return .crosshair
-	}
-
-	private static var _diagonalTopRightBottomLeft: NSCursor {
-		if #available(macOS 15.0, *) {
-			return frozenDiagonalCursor(
-				from: .frameResize(position: .topRight, directions: [.inward, .outward])
-			)
-		}
-		return .crosshair
-	}
-
-	fileprivate static var _windowResizeTopRight: NSCursor {
-		_diagonalTopRightBottomLeft
-	}
-
-	fileprivate static var _windowResizeTopLeft: NSCursor {
-		_diagonalTopLeftBottomRight
-	}
-
-	fileprivate static var _windowResizeBottomLeft: NSCursor {
-		_diagonalTopRightBottomLeft
-	}
-
-	fileprivate static var _windowResizeBottomRight: NSCursor {
-		_diagonalTopLeftBottomRight
-	}
-}
-
-extension CGRect {
-	fileprivate func clamp(_ point: CGPoint) -> CGPoint {
-		CGPoint(
-			x: point.x.clamped(to: minX...maxX),
-			y: point.y.clamped(to: minY...maxY)
-		)
-	}
-
-	fileprivate func normalizedRect(anchor: CGPoint, current: CGPoint) -> CGRect {
-		let clampedAnchor = clamp(anchor)
-		let clampedCurrent = clamp(current)
-		return CGRect(
-			x: min(clampedAnchor.x, clampedCurrent.x),
-			y: min(clampedAnchor.y, clampedCurrent.y),
-			width: abs(clampedCurrent.x - clampedAnchor.x),
-			height: abs(clampedCurrent.y - clampedAnchor.y)
-		)
-	}
-}
-
-extension String {
-	func size(using font: NSFont) -> CGSize {
-		(self as NSString).size(withAttributes: [.font: font])
-	}
 }

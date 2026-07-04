@@ -190,6 +190,10 @@ The main host-kit files are split by responsibility:
   capture source management
 - `CaptureHostView.swift`: AppKit view rendering, hit testing, cursor presentation, and native
   pointer/key routing
+- `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostFrozenImageEffects.swift`,
+  `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
+  boundaries for shared capture geometry, capture-host cursors, Rust-backed frozen image effects,
+  live-chrome telemetry identity, and shared native text measurement
 - `FrozenCaptureModels.swift`: Swift adapter models for Rust-owned frozen overlay editing
 - `NativeHostFeedbackSound.swift`: host-side sound lookup/playback for completion effects
 - `NativeHostImageBridge.swift`: RGBA/CoreGraphics image conversion used by the FFI bridge
