@@ -16,6 +16,24 @@ extension CGRect {
 			y: point.y.clamped(to: minY...maxY)
 		)
 	}
+
+	private func clampedPoint(_ point: CGPoint) -> CGPoint {
+		CGPoint(
+			x: point.x.clamped(to: minX...maxX),
+			y: point.y.clamped(to: minY...maxY)
+		)
+	}
+
+	package func normalizedRect(anchor: CGPoint, current: CGPoint) -> CGRect {
+		let clampedAnchor = clampedPoint(anchor)
+		let clampedCurrent = clampedPoint(current)
+		return CGRect(
+			x: min(clampedAnchor.x, clampedCurrent.x),
+			y: min(clampedAnchor.y, clampedCurrent.y),
+			width: abs(clampedCurrent.x - clampedAnchor.x),
+			height: abs(clampedCurrent.y - clampedAnchor.y)
+		)
+	}
 }
 
 package func captureOverlayLocalPoint(
