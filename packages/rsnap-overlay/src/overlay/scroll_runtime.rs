@@ -15,7 +15,6 @@ use crate::overlay::LiveStreamStaleGrace;
 use crate::overlay::ScrollCaptureHostFrameRequestError;
 #[cfg(target_os = "macos")]
 use crate::overlay::ScrollCaptureTraceInputRecord;
-#[cfg(target_os = "macos")]
 use crate::overlay::scroll_capture_timing::SCROLL_CAPTURE_SAMPLE_INTERVAL;
 #[cfg(target_os = "macos")]
 use crate::overlay::scroll_capture_timing::SCROLL_CAPTURE_STREAM_BACKLOG_MAX_FRAMES;
@@ -35,6 +34,7 @@ use crate::overlay::{
 	OverlayControl, OverlaySession, ScrollCaptureFrameSource, ScrollCaptureTraceFrameRecord,
 	ScrollObserveOutcome,
 };
+#[cfg(target_os = "macos")]
 use crate::scroll_capture::ScrollDirection;
 #[cfg(target_os = "macos")]
 use crate::scroll_capture::{self};
