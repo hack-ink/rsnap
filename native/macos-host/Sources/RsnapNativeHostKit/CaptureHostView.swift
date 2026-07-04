@@ -13,11 +13,6 @@ final class CaptureHostView: NSView {
 	private static let scrollToolbarBackdropCaptureMinimumInterval: TimeInterval = 1.0 / 60.0
 	private static let scrollToolbarBackdropFallbackMinimumInterval: TimeInterval = 1.0 / 20.0
 
-	private enum QueuedPointerEvent {
-		case moved(CGPoint)
-		case liveDragged(CGPoint)
-	}
-
 	private enum GlassSurfaceKind: Hashable {
 		case hud
 		case loupe
@@ -99,10 +94,6 @@ final class CaptureHostView: NSView {
 	private var annotationStyleWheelLastStepTimestamp: TimeInterval?
 	private var lastCursorPresentation: CaptureHostCursorPresentation?
 	private var lastAppliedCursorPresentation: CaptureHostCursorPresentation?
-	private var queuedPointerEvent: QueuedPointerEvent?
-	private var queuedPointerWorkItem: DispatchWorkItem?
-	private var lastHoverPointerDispatchUptime: TimeInterval = 0
-	private var lastDragPointerDispatchUptime: TimeInterval = 0
 	private var liveDragStartGlobal: CGPoint?
 	private var liveDragReleasedGlobal: CGPoint?
 	private var liveDragExceededThreshold = false
@@ -128,6 +119,19 @@ final class CaptureHostView: NSView {
 	private var latestLiveRgbSample: LiveRgbSample?
 	private var latestLiveRgbSamplePoint: CGPoint?
 	private var glassPatchCache: [GlassSurfaceKind: GlassPatchCache] = [:]
+	private lazy var pointerDispatchQueue = CaptureHostPointerDispatchQueue(
+		targetInterval: { [weak self] in
+			guard let self else {
+				return NativeHostDisplayRefresh.frameInterval(
+					forTargetFramesPerSecond:
+						NativeHostDisplayRefresh.maximumTargetFramesPerSecond)
+			}
+			return self.pointerDispatchInterval()
+		},
+		dispatchEvent: { [weak self] event in
+			self?.dispatchPointerEvent(event)
+		}
+	)
 	private lazy var liveRenderer = LiveOverlayRenderer(hostView: self)
 	private var liveRendererInstalled = false
 	private var deferredLiveShutdownWorkItem: DispatchWorkItem?
@@ -1269,9 +1273,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func cancelQueuedPointerDispatch() {
-		queuedPointerWorkItem?.cancel()
-		queuedPointerWorkItem = nil
-		queuedPointerEvent = nil
+		pointerDispatchQueue.cancel()
 	}
 
 	private func updateLivePointerPreview(
@@ -3473,38 +3475,11 @@ final class CaptureHostView: NSView {
 		theme == .dark ? 0.015 : -0.01
 	}
 
-	private func queuePointerEvent(_ event: QueuedPointerEvent) {
-		let now = ProcessInfo.processInfo.systemUptime
-		let targetInterval = pointerDispatchInterval()
-		let elapsed = now - lastPointerDispatchUptime(for: event)
-
-		queuedPointerEvent = event
-		guard queuedPointerWorkItem == nil else {
-			return
-		}
-
-		let delay = max(0, targetInterval - elapsed)
-		let workItem = DispatchWorkItem { [weak self] in
-			guard let self else {
-				return
-			}
-			self.queuedPointerWorkItem = nil
-			guard let event = self.queuedPointerEvent else {
-				return
-			}
-			self.queuedPointerEvent = nil
-			self.setLastPointerDispatchUptime(ProcessInfo.processInfo.systemUptime, for: event)
-			self.dispatchPointerEvent(event)
-		}
-		queuedPointerWorkItem = workItem
-		if delay <= 0 {
-			DispatchQueue.main.async(execute: workItem)
-		} else {
-			DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-		}
+	private func queuePointerEvent(_ event: CaptureHostPointerDispatchEvent) {
+		pointerDispatchQueue.enqueue(event)
 	}
 
-	private func dispatchPointerEvent(_ event: QueuedPointerEvent) {
+	private func dispatchPointerEvent(_ event: CaptureHostPointerDispatchEvent) {
 		switch event {
 		case .moved(let point):
 			controller?.pointerMoved(to: point)
@@ -3519,25 +3494,6 @@ final class CaptureHostView: NSView {
 	private func pointerDispatchInterval() -> TimeInterval {
 		NativeHostDisplayRefresh.frameInterval(
 			forTargetFramesPerSecond: currentDisplayTargetFramesPerSecond())
-	}
-
-	private func lastPointerDispatchUptime(for event: QueuedPointerEvent) -> TimeInterval {
-		switch event {
-		case .moved:
-			return lastHoverPointerDispatchUptime
-		case .liveDragged:
-			return lastDragPointerDispatchUptime
-		}
-	}
-
-	private func setLastPointerDispatchUptime(_ uptime: TimeInterval, for event: QueuedPointerEvent)
-	{
-		switch event {
-		case .moved:
-			lastHoverPointerDispatchUptime = uptime
-		case .liveDragged:
-			lastDragPointerDispatchUptime = uptime
-		}
 	}
 
 }

@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import RsnapHostBridge
 import RsnapNativeHostKit
 
@@ -19,6 +20,7 @@ enum RsnapNativeHostKitProbe {
 		assertManualUpdateCheckRemainsAvailable()
 		assertImmediateInstallGateWaitsForCaptureIdle()
 		assertCaptureHostCursorMapping()
+		assertCaptureHostPointerDispatchSupport()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -166,6 +168,33 @@ enum RsnapNativeHostKitProbe {
 		else {
 			fatalError("capture host cursor support should preserve cursor mappings")
 		}
+	}
+
+	private static func assertCaptureHostPointerDispatchSupport() {
+		guard
+			CaptureHostPointerDispatchEvent.moved(.zero).track == .hover,
+			CaptureHostPointerDispatchEvent.liveDragged(.zero).track == .drag,
+			approximatelyEqual(
+				CaptureHostPointerDispatchTiming.delay(
+					now: 10,
+					targetInterval: 0.25,
+					lastDispatchUptime: 9.90),
+				0.15),
+			CaptureHostPointerDispatchTiming.delay(
+				now: 10,
+				targetInterval: 0.25,
+				lastDispatchUptime: 9.50) == 0
+		else {
+			fatalError("capture host pointer dispatch support should preserve throttling")
+		}
+	}
+
+	private static func approximatelyEqual(
+		_ lhs: TimeInterval,
+		_ rhs: TimeInterval,
+		tolerance: TimeInterval = 0.000_001
+	) -> Bool {
+		abs(lhs - rhs) <= tolerance
 	}
 
 	private static func assertFrozenToolbarPlannerDisablesEditingDuringScroll() {

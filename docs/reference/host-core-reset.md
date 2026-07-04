@@ -85,6 +85,8 @@ The current native-host Swift split is:
   to sample below native overlay windows.
 - `CaptureHostView.swift`: AppKit/Quartz drawing, hit testing, Liquid Glass surfaces, live/frozen
   HUD and toolbar rendering, and native pointer/key event routing into the session controller.
+- `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
+  with per-track throttling state, and AppKit-to-controller pointer delivery support.
 - `LiveOverlayRenderer.swift`: live overlay layer composition for HUD, loupe, scrims, and selection
   affordances.
 - `LiveChromePlacement.swift`: live HUD/loupe text metrics, pending color text, and deterministic
@@ -96,9 +98,10 @@ The current native-host Swift split is:
   hit-test geometry used by AppKit drawing, Liquid Glass toolbar content, and native probes.
 - `FrozenToolbarRenderView.swift`: shared frozen-toolbar content drawing for classic AppKit
   toolbar rendering and Liquid Glass toolbar content.
-- `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostFrozenImageEffects.swift`,
-  `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
-  boundaries for shared capture geometry, capture-host cursor presentation and NSCursor adaptation,
+- `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostPointerDispatch.swift`,
+  `CaptureHostFrozenImageEffects.swift`, `LiveChromeRefreshTelemetryKey.swift`, and
+  `NativeHostTextMetrics.swift`: focused support boundaries for shared capture geometry,
+  capture-host cursor presentation and NSCursor adaptation, pointer dispatch queue throttling,
   Rust-backed frozen image effects, live-chrome telemetry identity, and native text measurement.
 - `FrozenCaptureModels.swift`: Swift view-adapter state for Rust-owned frozen overlay editing,
   including conversion from Rust edit snapshots into AppKit draw models.
