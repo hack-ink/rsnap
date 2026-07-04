@@ -208,6 +208,9 @@ The main host-kit files are split by responsibility:
 - `FrozenCaptureModels.swift`: Swift adapter models for Rust-owned frozen overlay editing
 - `NativeHostFeedbackSound.swift`: host-side sound lookup/playback for completion effects
 - `NativeHostImageBridge.swift`: RGBA/CoreGraphics image conversion used by the FFI bridge
+- `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`,
+  `NativeHostSettingsSurface.swift`, and `NativeHostCaptureFrameSettings.swift`: SwiftUI settings
+  shell, navigation, reusable settings surfaces, and capture-frame preset controls
 
 It depends on:
 
