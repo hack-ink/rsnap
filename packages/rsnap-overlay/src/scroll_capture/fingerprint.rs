@@ -1,6 +1,6 @@
 use image::RgbaImage;
 
-use crate::scroll_capture::support;
+use crate::scroll_capture::informative_span;
 
 const FINGERPRINT_GRID_COLUMNS: u32 = 12;
 const FINGERPRINT_GRID_ROWS: u32 = 16;
@@ -16,7 +16,7 @@ impl ScrollFrameFingerprint {
 	pub(crate) fn from_image(image: &RgbaImage) -> Self {
 		let width = image.width().max(1);
 		let height = image.height().max(1);
-		let informative_span = support::informative_column_span(image, 0, height);
+		let informative_span = informative_span::informative_column_span(image, 0, height);
 		let informative_left =
 			informative_span.map_or(0, |span| span.start_x.min(width.saturating_sub(1)));
 		let informative_right = informative_span
@@ -33,11 +33,15 @@ impl ScrollFrameFingerprint {
 			Vec::with_capacity((FINGERPRINT_GRID_COLUMNS * FINGERPRINT_GRID_ROWS) as usize);
 
 		for row in 0..FINGERPRINT_GRID_ROWS {
-			let y = support::evenly_spaced_sample(top, bottom, row, FINGERPRINT_GRID_ROWS);
+			let y = informative_span::evenly_spaced_sample(top, bottom, row, FINGERPRINT_GRID_ROWS);
 
 			for column in 0..FINGERPRINT_GRID_COLUMNS {
-				let x =
-					support::evenly_spaced_sample(left, right, column, FINGERPRINT_GRID_COLUMNS);
+				let x = informative_span::evenly_spaced_sample(
+					left,
+					right,
+					column,
+					FINGERPRINT_GRID_COLUMNS,
+				);
 				let pixel = image.get_pixel(x, y).0;
 
 				samples.push(pixel);
