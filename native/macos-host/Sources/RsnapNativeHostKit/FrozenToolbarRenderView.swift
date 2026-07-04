@@ -5,13 +5,6 @@ import RsnapHostBridge
 
 @MainActor
 final class FrozenToolbarRenderView: NSView {
-	struct Item: Equatable {
-		let kind: ToolbarItemKind
-		let frame: CGRect
-		let enabled: Bool
-		let selected: Bool
-	}
-
 	private var theme: CaptureChromeTheme = .dark
 	private var settings = NativeHostSettings.defaults
 	private var hoveredToolbarAction: ToolbarItemKind?
@@ -19,7 +12,7 @@ final class FrozenToolbarRenderView: NSView {
 	private var toolbarScale: CGFloat = 1
 	private var annotationStyleState = FrozenAnnotationStyleState()
 	private var annotationStyleLayout: FrozenAnnotationStyleLayout?
-	private var items: [Item] = []
+	private var items: [FrozenToolbarItemLayout] = []
 
 	override var isOpaque: Bool { false }
 
@@ -36,7 +29,7 @@ final class FrozenToolbarRenderView: NSView {
 		toolbarScale: CGFloat,
 		annotationStyleState: FrozenAnnotationStyleState,
 		annotationStyleLayout: FrozenAnnotationStyleLayout?,
-		items: [Item]
+		items: [FrozenToolbarItemLayout]
 	) -> Bool {
 		let changed =
 			self.theme != theme || self.settings != settings
@@ -79,6 +72,75 @@ final class FrozenToolbarRenderView: NSView {
 		context.setLineWidth(1)
 		pillPath.stroke()
 
+		FrozenToolbarDrawing.drawToolbarContent(
+			items: items,
+			hoveredToolbarAction: hoveredToolbarAction,
+			toolbarScale: toolbarScale,
+			annotationStyleState: annotationStyleState,
+			annotationStyleLayout: annotationStyleLayout,
+			hoveredAnnotationStyleAction: hoveredAnnotationStyleAction,
+			palette: palette,
+			in: context
+		)
+	}
+}
+
+@MainActor
+enum FrozenToolbarDrawing {
+	static func drawToolbarContent(
+		items: [FrozenToolbarItemLayout],
+		hoveredToolbarAction: ToolbarItemKind?,
+		toolbarScale: CGFloat,
+		annotationStyleState: FrozenAnnotationStyleState,
+		annotationStyleLayout: FrozenAnnotationStyleLayout?,
+		hoveredAnnotationStyleAction: FrozenAnnotationStyleAction?,
+		palette: CaptureChromePalette,
+		in context: CGContext
+	) {
+		drawToolbarItems(
+			items,
+			hoveredToolbarAction: hoveredToolbarAction,
+			toolbarScale: toolbarScale,
+			palette: palette,
+			in: context
+		)
+		if let annotationStyleLayout {
+			drawAnnotationStyleControls(
+				annotationStyleLayout,
+				state: annotationStyleState,
+				hoveredAction: hoveredAnnotationStyleAction,
+				palette: palette,
+				in: context
+			)
+		}
+	}
+
+	static func drawAnnotationStyleControls(
+		_ layout: FrozenAnnotationStyleLayout,
+		state: FrozenAnnotationStyleState,
+		hoveredAction: FrozenAnnotationStyleAction?,
+		palette: CaptureChromePalette,
+		in context: CGContext
+	) {
+		drawSizeControl(
+			layout,
+			state: state,
+			hoveredAction: hoveredAction,
+			palette: palette,
+			in: context
+		)
+		for swatch in layout.swatches {
+			drawColorSwatch(swatch, palette: palette, in: context)
+		}
+	}
+
+	private static func drawToolbarItems(
+		_ items: [FrozenToolbarItemLayout],
+		hoveredToolbarAction: ToolbarItemKind?,
+		toolbarScale: CGFloat,
+		palette: CaptureChromePalette,
+		in context: CGContext
+	) {
 		for item in items {
 			if hoveredToolbarAction == item.kind, item.enabled, !item.selected {
 				context.setFillColor(palette.toolbarHoverBackground.cgColor)
@@ -114,19 +176,9 @@ final class FrozenToolbarRenderView: NSView {
 				context: context
 			)
 		}
-
-		if let annotationStyleLayout {
-			FrozenToolbarDrawing.drawAnnotationStyleControls(
-				annotationStyleLayout,
-				state: annotationStyleState,
-				hoveredAction: hoveredAnnotationStyleAction,
-				palette: palette,
-				in: context
-			)
-		}
 	}
 
-	private func drawToolbarGlyph(
+	private static func drawToolbarGlyph(
 		_ kind: ToolbarItemKind,
 		selected: Bool,
 		in rect: CGRect,
@@ -149,28 +201,6 @@ final class FrozenToolbarRenderView: NSView {
 		context.textPosition = origin
 		CTLineDraw(glyph.line, context)
 		context.restoreGState()
-	}
-}
-
-@MainActor
-enum FrozenToolbarDrawing {
-	static func drawAnnotationStyleControls(
-		_ layout: FrozenAnnotationStyleLayout,
-		state: FrozenAnnotationStyleState,
-		hoveredAction: FrozenAnnotationStyleAction?,
-		palette: CaptureChromePalette,
-		in context: CGContext
-	) {
-		drawSizeControl(
-			layout,
-			state: state,
-			hoveredAction: hoveredAction,
-			palette: palette,
-			in: context
-		)
-		for swatch in layout.swatches {
-			drawColorSwatch(swatch, palette: palette, in: context)
-		}
 	}
 
 	private static func drawSizeControl(
