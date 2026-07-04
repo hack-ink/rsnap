@@ -189,6 +189,8 @@ The main host-kit files are split by responsibility:
 - `CaptureOverlayController.swift`: overlay window set, focus, stream preparation, and below-overlay
   capture source management
 - `CaptureHostView.swift`: AppKit view rendering, hit testing, and native pointer/key routing
+- `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
+  with per-track throttling state, and AppKit-to-controller pointer delivery
 - `LiveOverlayRenderer.swift`: live overlay layer composition for HUD, loupe, scrims, and selection
   affordances
 - `LiveChromePlacement.swift`: live HUD/loupe text metrics, pending color text, and deterministic
@@ -200,9 +202,10 @@ The main host-kit files are split by responsibility:
   hit-test geometry shared by classic drawing, Liquid Glass content, and native probes
 - `FrozenToolbarRenderView.swift`: shared frozen-toolbar content drawing for classic AppKit
   toolbar rendering and Liquid Glass toolbar content
-- `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostFrozenImageEffects.swift`,
-  `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
-  boundaries for shared capture geometry, capture-host cursor presentation and NSCursor adaptation,
+- `CaptureGeometry.swift`, `CaptureHostCursorSupport.swift`, `CaptureHostPointerDispatch.swift`,
+  `CaptureHostFrozenImageEffects.swift`, `LiveChromeRefreshTelemetryKey.swift`, and
+  `NativeHostTextMetrics.swift`: focused support boundaries for shared capture geometry,
+  capture-host cursor presentation and NSCursor adaptation, pointer dispatch queue throttling,
   Rust-backed frozen image effects, live-chrome telemetry identity, and shared native text
   measurement
 - `FrozenCaptureModels.swift`: Swift adapter models for Rust-owned frozen overlay editing
