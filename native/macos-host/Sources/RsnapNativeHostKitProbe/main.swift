@@ -18,6 +18,7 @@ enum RsnapNativeHostKitProbe {
 		assertSoftwareUpdateModeResolution()
 		assertManualUpdateCheckRemainsAvailable()
 		assertImmediateInstallGateWaitsForCaptureIdle()
+		assertCaptureHostCursorMapping()
 		let minimapExportSize = CGSize(width: 100, height: 200)
 		guard
 			let rightMinimap = scrollCaptureMinimapPlan(
@@ -126,6 +127,44 @@ enum RsnapNativeHostKitProbe {
 				userFacingWindowVisible: true) == false
 		else {
 			fatalError("immediate update install should wait until Rsnap is idle")
+		}
+	}
+
+	private static func assertCaptureHostCursorMapping() {
+		guard
+			CaptureHostCursorSupport.presentation(for: .default) == .arrow,
+			CaptureHostCursorSupport.presentation(for: .crosshair) == .crosshair,
+			CaptureHostCursorSupport.presentation(for: .grab) == .openHand,
+			CaptureHostCursorSupport.presentation(for: .grabbing) == .closedHand,
+			CaptureHostCursorSupport.presentation(for: .resizeNorth) == .resizeUpDown,
+			CaptureHostCursorSupport.presentation(for: .resizeSouth) == .resizeUpDown,
+			CaptureHostCursorSupport.presentation(for: .resizeEast) == .resizeLeftRight,
+			CaptureHostCursorSupport.presentation(for: .resizeWest) == .resizeLeftRight,
+			CaptureHostCursorSupport.presentation(for: .resizeNorthEast) == .resizeTopRight,
+			CaptureHostCursorSupport.presentation(for: .resizeNorthWest) == .resizeTopLeft,
+			CaptureHostCursorSupport.presentation(for: .resizeSouthEast) == .resizeBottomRight,
+			CaptureHostCursorSupport.presentation(for: .resizeSouthWest) == .resizeBottomLeft,
+			CaptureHostCursorSupport.presentation(for: .text) == .iBeam,
+			CaptureHostCursorSupport.cursorIntent(for: .move, active: false) == .grab,
+			CaptureHostCursorSupport.cursorIntent(for: .move, active: true) == .grabbing,
+			CaptureHostCursorSupport.cursorIntent(for: .resizeLeft, active: false)
+				== .resizeWest,
+			CaptureHostCursorSupport.cursorIntent(for: .resizeRight, active: false)
+				== .resizeEast,
+			CaptureHostCursorSupport.cursorIntent(for: .resizeTop, active: false)
+				== .resizeNorth,
+			CaptureHostCursorSupport.cursorIntent(for: .resizeBottom, active: false)
+				== .resizeSouth,
+			CaptureHostCursorSupport.cursorIntent(for: .resizeTopLeft, active: false)
+				== .resizeNorthWest,
+			CaptureHostCursorSupport.cursorIntent(for: .resizeTopRight, active: false)
+				== .resizeNorthEast,
+			CaptureHostCursorSupport.cursorIntent(for: .resizeBottomLeft, active: false)
+				== .resizeSouthWest,
+			CaptureHostCursorSupport.cursorIntent(for: .resizeBottomRight, active: true)
+				== .resizeSouthEast
+		else {
+			fatalError("capture host cursor support should preserve cursor mappings")
 		}
 	}
 
