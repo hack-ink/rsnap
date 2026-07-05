@@ -137,7 +137,10 @@ The current native-host Swift split is:
 - `NativeHostFeedbackSound.swift`: host-side `NSSound` lookup/playback for capture and OCR
   completion effects.
 - `NativeHostImageBridge.swift` and `RsnapHostBridge`: conversion and FFI glue between
-  CoreGraphics/AppKit images and Rust-owned RGBA snapshots.
+  CoreGraphics/AppKit images and Rust-owned RGBA snapshots. Inside `RsnapHostBridge`,
+  `HostFFI.swift` owns the session and non-frozen bridge surfaces, `FrozenOverlayFFI.swift` owns
+  frozen overlay edit/export bridge models, and `HostFFISupport.swift` owns shared status,
+  geometry, and owned-buffer adaptation helpers.
 - `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`,
   `NativeHostSettingsSurface.swift`, `NativeHostAppearanceSettings.swift`, and
   `NativeHostCaptureFrameSettings.swift`: SwiftUI settings shell, navigation, reusable settings
