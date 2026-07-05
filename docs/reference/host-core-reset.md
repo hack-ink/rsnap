@@ -86,8 +86,10 @@ The current native-host Swift split is:
   routing, capture-stream preparation, and mouse passthrough.
 - `CaptureOverlayImageSampler.swift`: CoreGraphics below-overlay capture and display-point sample
   adaptation used by overlay windows, live chrome, and scroll fallback acquisition.
-- `FrozenFrameAuthority.swift`: ScreenCaptureKit frozen-frame stream setup, self-capture-safe
-  stream gating, and lifecycle state.
+- `FrozenFrameAuthority.swift`: frozen-frame authority state, frame storage, setup completion, and
+  telemetry bookkeeping.
+- `FrozenFrameAuthority+StreamSetup.swift`: ScreenCaptureKit frozen-frame stream setup,
+  shareable-content lookup, self-capture-safe stream gating, and lifecycle reset.
 - `FrozenFrameAuthority+SnapshotResolution.swift`: frozen-frame latch-token resolution, RGB/loupe
   sampling, self-capture-safe frame gating, and fresh-frame authority decisions.
 - `FrozenFrameStreamOutput.swift`: ScreenCaptureKit stream-output delegate adaptation,
