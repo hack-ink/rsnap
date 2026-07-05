@@ -201,9 +201,10 @@ The current native-host Swift split is:
 - `NativeHostImageBridge.swift` and `RsnapHostBridge`: conversion and FFI glue between
   CoreGraphics/AppKit images and Rust-owned RGBA snapshots. Inside `RsnapHostBridge`,
   `HostSessionFFI.swift` owns session protocol models and session-handle adaptation,
-  `HostFFI.swift` owns scroll, live-sampling, export, and remaining non-frozen bridge surfaces,
-  `CaptureFrameFFI.swift` owns capture-frame planning/rendering and wallpaper thumbnail bridge
-  models, `FrozenOverlayFFI.swift` owns frozen overlay edit/export bridge models, and
+  `HostFFI.swift` owns scroll, export, and remaining non-frozen bridge surfaces,
+  `LiveSamplerFFI.swift` owns live sampler models, sampler-handle lifecycle, and live RGBA region
+  frame adaptation, `CaptureFrameFFI.swift` owns capture-frame planning/rendering and wallpaper
+  thumbnail bridge models, `FrozenOverlayFFI.swift` owns frozen overlay edit/export bridge models, and
   `HostFFISupport.swift` owns shared status, geometry, and owned-buffer adaptation helpers.
 - `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`, and
   `NativeHostSettingsSurface.swift`: SwiftUI settings view model, shell layout, navigation, and
