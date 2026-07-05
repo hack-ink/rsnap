@@ -113,6 +113,9 @@ Key paths:
   under `backend/xcap_capture_backend.rs`
 - `packages/rsnap-overlay/src/overlay.rs`: current overlay root plus its focused
   runtime/rendering support modules
+- `packages/rsnap-overlay/src/overlay/session_state.rs`: shared transitional overlay session
+  state; frozen capture/export lifecycle state lives under
+  `overlay/session_state/frozen_capture.rs`
 - `packages/rsnap-overlay/src/overlay/rendering.rs`: overlay window renderer orchestration; shared
   selection geometry/cache structs live under `overlay/rendering/selection_geometry.rs`, and
   renderer phase timing telemetry lives under `overlay/rendering/timing.rs`
