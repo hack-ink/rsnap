@@ -105,6 +105,8 @@ The current native-host Swift split is:
   loupe-patch reuse, and cache seeding policy.
 - `CaptureHostLiveInputTelemetry.swift`: capture-host live pointer/mouse input telemetry,
   pointer-event gap recording, and live-chrome input summary emission.
+- `CaptureHostLivePointerPreviewState.swift`: capture-host live pointer preview point,
+  input-latency timestamp, sequence, and duplicate-move suppression state.
 - `CaptureHostLivePrimaryInteractionState.swift`: capture-host live primary drag, release,
   completion, and hover-suppression state transitions.
 - `CaptureHostMouseReleaseRecovery.swift`: capture-host local mouse-up monitor and live/frozen
@@ -129,15 +131,16 @@ The current native-host Swift split is:
   `CaptureHostScrollToolbarBackdropState.swift`, `CaptureHostCursorSupport.swift`,
   `CaptureHostScrollMinimapRenderer.swift`, `CaptureHostLiveSampleCache.swift`,
   `CaptureHostLiveSampleResolver.swift`, `CaptureHostLiveInputTelemetry.swift`,
-  `CaptureHostLivePrimaryInteractionState.swift`, `CaptureHostMouseReleaseRecovery.swift`,
-  `CaptureHostPointerDispatch.swift`, `CaptureHostFrozenImageEffects.swift`,
+  `CaptureHostLivePointerPreviewState.swift`, `CaptureHostLivePrimaryInteractionState.swift`,
+  `CaptureHostMouseReleaseRecovery.swift`, `CaptureHostPointerDispatch.swift`,
+  `CaptureHostFrozenImageEffects.swift`,
   `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
   boundaries for shared capture geometry, frozen annotation-size wheel gating, frozen toolbar hover
   state, frozen first-display handoff state, scroll toolbar backdrop state, capture-host cursor
   presentation and NSCursor adaptation, frozen minimap presentation, live sample reuse, live sample
-  resolution, live input telemetry, live primary interaction state, AppKit mouse-release recovery,
-  pointer dispatch queue throttling, Rust-backed frozen image effects, live-chrome telemetry
-  identity, and native text measurement.
+  resolution, live input telemetry, live pointer preview state, live primary interaction state,
+  AppKit mouse-release recovery, pointer dispatch queue throttling, Rust-backed frozen image
+  effects, live-chrome telemetry identity, and native text measurement.
 - `FrozenCaptureModels.swift`: Swift view-adapter state for Rust-owned frozen overlay editing,
   including conversion from Rust edit snapshots into AppKit draw models.
 - `NativeHostFeedbackSound.swift`: host-side `NSSound` lookup/playback for capture and OCR
