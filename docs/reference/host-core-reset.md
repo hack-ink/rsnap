@@ -182,11 +182,14 @@ The current native-host Swift split is:
   `CaptureFrameFFI.swift` owns capture-frame planning/rendering and wallpaper thumbnail bridge
   models, `FrozenOverlayFFI.swift` owns frozen overlay edit/export bridge models, and
   `HostFFISupport.swift` owns shared status, geometry, and owned-buffer adaptation helpers.
-- `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`,
-  `NativeHostSettingsSurface.swift`, `NativeHostAppearanceSettings.swift`,
-  `NativeHostCaptureFrameSettings.swift`, and `PermissionsSettingsPanel.swift`: SwiftUI settings
-  shell, navigation, reusable settings surfaces, appearance controls, capture-frame preset
-  controls, and permission/setup controls.
+- `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`, and
+  `NativeHostSettingsSurface.swift`: SwiftUI settings view model, shell layout, navigation, and
+  reusable settings surfaces.
+- `NativeHostAppearanceSettings.swift`, `NativeHostCaptureSettingsPanel.swift`,
+  `NativeHostOutputSettingsPanel.swift`, `NativeHostCaptureFrameSettings.swift`,
+  `PermissionsSettingsPanel.swift`, and `NativeHostAboutSettingsPanel.swift`: focused settings
+  panels for appearance, capture shortcuts/input, output location/naming, capture-frame presets,
+  permission/setup controls, and about/update controls.
 
 This means a large Swift line count can still be reasonable when those lines are AppKit,
 CoreGraphics, ScreenCaptureKit, Vision, pasteboard, save-panel, sound, update, or window lifecycle
