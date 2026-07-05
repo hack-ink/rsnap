@@ -92,7 +92,9 @@ The current native-host Swift split is:
 - `CaptureHostScrollToolbarBackdropState.swift`: capture-host scroll toolbar backdrop capture
   generation, seed-patch cache, active frame, refresh cadence, and change-count state.
 - `CaptureHostView.swift`: AppKit/Quartz drawing, hit testing, Liquid Glass surfaces, live/frozen
-  HUD and toolbar rendering, and native pointer/key event routing into the session controller.
+  HUD and toolbar orchestration, and native pointer/key event routing into the session controller.
+- `CaptureHostFrozenOverlayRenderer.swift`: frozen annotation overlay rendering for mosaic,
+  spotlight, pen, arrow, and text overlays.
 - `CaptureHostLiveSampleCache.swift`: capture-host live chrome/RGB sample reuse cache and pointer
   sample matching.
 - `CaptureHostLivePrimaryInteractionState.swift`: capture-host live primary drag, release,

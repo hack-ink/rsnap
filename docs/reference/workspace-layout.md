@@ -196,7 +196,10 @@ The main host-kit files are split by responsibility:
   completion queueing, pending-frame evidence, and deferred classic toolbar glass
 - `CaptureHostScrollToolbarBackdropState.swift`: scroll toolbar backdrop capture generation,
   seed-patch cache, active frame, refresh cadence, and change-count state
-- `CaptureHostView.swift`: AppKit view rendering, hit testing, and native pointer/key routing
+- `CaptureHostView.swift`: AppKit view rendering orchestration, hit testing, and native pointer/key
+  routing
+- `CaptureHostFrozenOverlayRenderer.swift`: frozen annotation overlay rendering for mosaic,
+  spotlight, pen, arrow, and text overlays
 - `CaptureHostLiveSampleCache.swift`: capture-host live chrome/RGB sample reuse cache and pointer
   sample matching
 - `CaptureHostLivePrimaryInteractionState.swift`: capture-host live primary drag, release,
