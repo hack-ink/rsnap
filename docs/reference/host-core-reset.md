@@ -201,13 +201,15 @@ The current native-host Swift split is:
 - `NativeHostImageBridge.swift` and `RsnapHostBridge`: conversion and FFI glue between
   CoreGraphics/AppKit images and Rust-owned RGBA snapshots. Inside `RsnapHostBridge`,
   `HostSessionFFI.swift` owns session protocol models and session-handle adaptation,
-  `HostFFI.swift` owns scroll and remaining non-frozen bridge surfaces, `ExportEncoderFFI.swift`
-  owns PNG encoding, frozen display crop, mosaic privacy patch, and frozen overlay export-image
-  adaptation, `LiveSamplerFFI.swift` owns live sampler models, sampler-handle lifecycle, and live
-  RGBA region frame adaptation, `CaptureFrameFFI.swift` owns capture-frame planning/rendering and
-  wallpaper thumbnail bridge models, `FrozenOverlayFFI.swift` owns frozen overlay edit/export bridge
-  models, and `HostFFISupport.swift` owns shared status, geometry, and owned-buffer adaptation
-  helpers.
+  `HostFFI.swift` owns shared RGB/RGBA models plus selection-transform, auto-center, and BGRA
+  frame-sampling bridge surfaces, `ScrollCaptureFFI.swift` owns scroll minimap planning,
+  scroll-capture observation models, session-handle lifecycle, and stitched preview/export image
+  adaptation, `ExportEncoderFFI.swift` owns PNG encoding, frozen display crop, mosaic privacy patch,
+  and frozen overlay export-image adaptation, `LiveSamplerFFI.swift` owns live sampler models,
+  sampler-handle lifecycle, and live RGBA region frame adaptation, `CaptureFrameFFI.swift` owns
+  capture-frame planning/rendering and wallpaper thumbnail bridge models, `FrozenOverlayFFI.swift`
+  owns frozen overlay edit/export bridge models, and `HostFFISupport.swift` owns shared status,
+  geometry, and owned-buffer adaptation helpers.
 - `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`, and
   `NativeHostSettingsSurface.swift`: SwiftUI settings view model, shell layout, navigation, and
   reusable settings surfaces.
