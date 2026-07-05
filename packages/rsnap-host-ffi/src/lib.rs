@@ -7,6 +7,7 @@
 mod abi;
 mod capture_frame;
 mod frozen_overlay;
+mod frozen_overlay_export;
 #[cfg(target_os = "macos")]
 mod live_sampler;
 mod scroll_session;
@@ -48,8 +49,9 @@ pub use self::frozen_overlay::{
 	rsnap_frozen_overlay_edit_session_destroy, rsnap_frozen_overlay_edit_session_finish,
 	rsnap_frozen_overlay_edit_session_redo, rsnap_frozen_overlay_edit_session_reset,
 	rsnap_frozen_overlay_edit_session_undo, rsnap_frozen_overlay_edit_session_update,
-	rsnap_frozen_overlay_edit_snapshot_release, rsnap_frozen_overlay_export_render_rgba,
+	rsnap_frozen_overlay_edit_snapshot_release,
 };
+pub use self::frozen_overlay_export::rsnap_frozen_overlay_export_render_rgba;
 #[cfg(target_os = "macos")]
 pub use self::live_sampler::{
 	rsnap_live_sampler_create, rsnap_live_sampler_create_with_self_capture_exception_window_ids,
