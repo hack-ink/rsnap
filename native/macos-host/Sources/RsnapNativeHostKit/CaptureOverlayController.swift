@@ -11,23 +11,8 @@ final class CaptureOverlayController {
 	private weak var livePrimaryInteractionOwner: CaptureHostView?
 	private var focusedWindowNumber: Int?
 	private var collapsedForFrozen = false
-	private let liveFrameStream: LiveFrameStreamBroker
-	private let frameRgbSampler: ChromeSampleFeed.FrameRgbSampler
-	private let framePatchSampler: ChromeSampleFeed.FramePatchSampler
 	private lazy var windowSnapshotFeed = WindowSnapshotFeed()
-	private lazy var chromeSampleFeed = ChromeSampleFeed(
-		broker: liveFrameStream,
-		frameRgbSampler: frameRgbSampler,
-		framePatchSampler: framePatchSampler,
-		backgroundSampler: CaptureOverlayImageSampler.chromeSampleAtDisplayPoint,
-		sampleUpdated: { [weak self] in
-			DispatchQueue.main.async { [weak self] in
-				(self?.primaryWindow as? CaptureOverlayWindow)?.hostView
-					.refreshSampleUpdatedLiveChromeNow()
-			}
-		}
-	)
-	private let liveChromeBackdrops = LiveChromeBackdropWindowController()
+	private let liveChromePipeline: CaptureOverlayLiveChromePipeline
 	private var pendingCaptureStreamPreparation: (() -> Void)?
 	private var primaryMousePassthroughToken: UInt64 = 0
 	private var allMousePassthroughActive = false
@@ -39,9 +24,15 @@ final class CaptureOverlayController {
 		framePatchSampler: @escaping ChromeSampleFeed.FramePatchSampler
 	) {
 		self.controller = controller
-		self.liveFrameStream = liveFrameStream
-		self.frameRgbSampler = frameRgbSampler
-		self.framePatchSampler = framePatchSampler
+		self.liveChromePipeline = CaptureOverlayLiveChromePipeline(
+			liveFrameStream: liveFrameStream,
+			frameRgbSampler: frameRgbSampler,
+			framePatchSampler: framePatchSampler,
+			sampleUpdated: { [weak controller] in
+				(controller?.overlayController?.primaryWindow as? CaptureOverlayWindow)?.hostView
+					.refreshSampleUpdatedLiveChromeNow()
+			}
+		)
 	}
 
 	var primaryWindow: NSWindow? {
@@ -95,26 +86,22 @@ final class CaptureOverlayController {
 		if let prepareCaptureStreams {
 			pendingCaptureStreamPreparation = prepareCaptureStreams
 		}
-		liveFrameStream.start(
+		let captureID = controller?.activeTelemetryCaptureID ?? 0
+		liveChromePipeline.startFrameStream(
 			for: NSScreen.screens,
-			prewarmPoint: focusPoint,
-			captureID: controller?.activeTelemetryCaptureID ?? 0
+			focusPoint: focusPoint,
+			captureID: captureID
 		)
 		for window in windows {
 			window.displayIfNeeded()
 		}
-		let captureID = controller?.activeTelemetryCaptureID ?? 0
 		windowSnapshotFeed.start(
 			desktopFrame: Self.desktopFrame,
 			initialSnapshots: initialWindowSnapshots,
 			captureID: captureID)
-		chromeSampleFeed.start(
-			targetFramesPerSecond: NativeHostDisplayRefresh.samplingFramesPerSecond(),
-			captureID: captureID)
-		chromeSampleFeed.updateDemand(
-			point: focusPoint,
-			sidePixels: 1,
-			includeLoupePatch: false,
+		liveChromePipeline.startSampling(
+			focusPoint: focusPoint,
+			captureID: captureID,
 			source: liveColorSampleSource(near: focusPoint)
 		)
 		if let focusedWindow {
@@ -278,7 +265,7 @@ final class CaptureOverlayController {
 		targetWindow.makeFirstResponder(targetWindow.hostView)
 		focusedWindowNumber = targetWindow.windowNumber
 		(NSApp.delegate as? NativeHostApplicationController)?.window = targetWindow
-		liveChromeBackdrops.hideAll()
+		liveChromePipeline.hideBackdrops()
 		targetWindow.hostView.refreshLivePresentationNow()
 		targetWindow.displayIfNeeded()
 	}
@@ -377,8 +364,7 @@ final class CaptureOverlayController {
 	func close() {
 		pendingCaptureStreamPreparation = nil
 		windowSnapshotFeed.stop()
-		chromeSampleFeed.stop()
-		liveChromeBackdrops.hideAll()
+		liveChromePipeline.stop()
 		guard windows.isEmpty == false else {
 			focusedWindowNumber = nil
 			collapsedForFrozen = false
@@ -421,17 +407,17 @@ final class CaptureOverlayController {
 	}
 
 	func backgroundPatch(in rect: CGRect) -> CGImage? {
-		liveFrameStream.region(in: rect)
-			?? captureImageBelowOverlay(in: rect, near: CGPoint(x: rect.midX, y: rect.midY))
-			?? liveFrameStream.patch(in: rect)
+		liveChromePipeline.backgroundPatch(in: rect) { [self] in
+			captureImageBelowOverlay(in: rect, near: CGPoint(x: rect.midX, y: rect.midY))
+		}
 	}
 
 	func streamPatch(in rect: CGRect) -> CGImage? {
-		liveFrameStream.patch(in: rect)
+		liveChromePipeline.streamPatch(in: rect)
 	}
 
 	func cachedRegionImage(in rect: CGRect) -> CGImage? {
-		liveFrameStream.region(in: rect)
+		liveChromePipeline.cachedRegionImage(in: rect)
 	}
 
 	func nextRegionFrame(
@@ -439,7 +425,7 @@ final class CaptureOverlayController {
 		afterFrameSequence: UInt64,
 		waitForFresh: Bool
 	) -> RGBARegionFrameSnapshot? {
-		liveFrameStream.nextRegionFrame(
+		liveChromePipeline.nextRegionFrame(
 			in: rect,
 			afterFrameSequence: afterFrameSequence,
 			waitForFresh: waitForFresh
@@ -452,7 +438,7 @@ final class CaptureOverlayController {
 		afterFrameSequence: UInt64,
 		waitForFresh: Bool
 	) -> RGBARegionFrameSnapshot? {
-		liveFrameStream.nextRegionFrame(
+		liveChromePipeline.nextRegionFrame(
 			in: rect,
 			pixelRect: pixelRect,
 			afterFrameSequence: afterFrameSequence,
@@ -465,10 +451,9 @@ final class CaptureOverlayController {
 		settings: NativeHostSettings,
 		includeLoupePatch: Bool
 	) {
-		let samplePixels = includeLoupePatch ? settings.loupeSampleSize.sidePixels : 1
-		chromeSampleFeed.updateDemand(
+		liveChromePipeline.updateLivePreviewDemand(
 			point: point,
-			sidePixels: samplePixels,
+			settings: settings,
 			includeLoupePatch: includeLoupePatch,
 			source: point.flatMap { liveColorSampleSource(near: $0) }
 		)
@@ -479,29 +464,11 @@ final class CaptureOverlayController {
 		settings: NativeHostSettings,
 		includeLoupePatch: Bool
 	) -> LiveChromeSample? {
-		let latestSample = chromeSampleFeed.snapshot(for: point)
-		let wantsLoupePatch = includeLoupePatch
-		let wantsLoupePatchSide = settings.loupeSampleSize.sidePixels
-		let latestLoupePatchSatisfiesDemand =
-			latestSample?.loupePatch.map {
-				$0.width == wantsLoupePatchSide && $0.height == wantsLoupePatchSide
-			}
-			?? false
-		let latestSampleSatisfiesDemand =
-			latestSample?.rgbSample != nil
-			&& (!wantsLoupePatch || latestLoupePatchSatisfiesDemand)
-		if latestSampleSatisfiesDemand {
-			return latestSample
-		}
-		if wantsLoupePatch, latestLoupePatchSatisfiesDemand {
-			return latestSample
-		}
-
-		let _ = point
-		if wantsLoupePatch, let latestSample {
-			return LiveChromeSample(rgb: latestSample.rgb, loupePatch: nil)
-		}
-		return latestSample
+		liveChromePipeline.liveChromeSnapshot(
+			point: point,
+			settings: settings,
+			includeLoupePatch: includeLoupePatch
+		)
 	}
 
 	func immediateLiveChromeSample(
@@ -509,15 +476,20 @@ final class CaptureOverlayController {
 		settings: NativeHostSettings,
 		includeLoupePatch: Bool
 	) -> LiveChromeSample? {
-		let samplePixels = includeLoupePatch ? settings.loupeSampleSize.sidePixels : 1
-		return liveFrameStream.sample(at: point, sidePixels: samplePixels)
-			?? chromeSampleFeed.snapshot(for: point)
+		liveChromePipeline.immediateLiveChromeSample(
+			point: point,
+			settings: settings,
+			includeLoupePatch: includeLoupePatch
+		)
 	}
 
 	func updateLiveChromeBackdrops(
 		_ snapshot: LiveChromeBackdropSnapshot?
 	) {
-		liveChromeBackdrops.update(snapshot: snapshot, focusedWindowNumber: focusedWindowNumber)
+		liveChromePipeline.updateLiveChromeBackdrops(
+			snapshot,
+			focusedWindowNumber: focusedWindowNumber
+		)
 	}
 
 	fileprivate func frozenCaptureJobSource(
@@ -590,8 +562,7 @@ final class CaptureOverlayController {
 			return
 		}
 		windowSnapshotFeed.stop()
-		chromeSampleFeed.stop()
-		liveChromeBackdrops.hideAll()
+		liveChromePipeline.stop()
 
 		guard windows.count > 1 else {
 			return
