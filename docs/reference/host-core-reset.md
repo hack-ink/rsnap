@@ -85,8 +85,10 @@ The current native-host Swift split is:
 - `CaptureOverlayController.swift`: AppKit overlay-window set management, focus/first-responder
   routing, capture-stream preparation, mouse passthrough, and CoreGraphics capture sources needed
   to sample below native overlay windows.
-- `FrozenFrameAuthority.swift`: ScreenCaptureKit frozen-frame stream lifecycle, latch-token
+- `FrozenFrameAuthority.swift`: ScreenCaptureKit frozen-frame stream setup, latch-token
   resolution, self-capture-safe frame gating, and fresh-frame authority decisions.
+- `FrozenFrameStreamOutput.swift`: ScreenCaptureKit stream-output delegate adaptation,
+  usable-frame filtering, display-time conversion, and frame-record emission into the authority.
 - `FrozenFrameContentFilterPlanner.swift`: frozen-frame display target planning, shareable-content
   cache freshness, self-capture-excluding content filter construction, and stream configuration.
 - `NSScreenDisplayID.swift`: shared AppKit display-ID extraction for native capture surfaces.
