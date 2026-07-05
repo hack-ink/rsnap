@@ -26,7 +26,6 @@ final class CaptureHostView: NSView {
 	private(set) var chrome = CaptureChromeState()
 	private(set) var settings = NativeHostSettings.defaults
 	private var trackingAreaRef: NSTrackingArea?
-	private(set) var toolbarHoverState = CaptureHostToolbarHoverState()
 	private var annotationStyleWheelGate = CaptureHostAnnotationStyleWheelGate()
 	private var lastCursorPresentation: CaptureHostCursorPresentation?
 	private var lastAppliedCursorPresentation: CaptureHostCursorPresentation?
@@ -38,6 +37,7 @@ final class CaptureHostView: NSView {
 	private var frozenFirstDisplayHandoff = CaptureHostFrozenFirstDisplayHandoffState()
 	private var lastLivePreviewSnapshot: LivePreviewSnapshot?
 	private var liveSampleCache = CaptureHostLiveSampleCache()
+	private lazy var frozenToolbar = CaptureHostFrozenToolbarCoordinator(hostView: self)
 	private lazy var materialViews = CaptureHostMaterialViewCoordinator(hostView: self)
 	private lazy var pointerDispatchQueue = CaptureHostPointerDispatchQueue(
 		targetInterval: { [weak self] in
@@ -60,11 +60,13 @@ final class CaptureHostView: NSView {
 
 	override var acceptsFirstResponder: Bool { true }
 	override var isOpaque: Bool { false }
+	var toolbarHoverState: CaptureHostToolbarHoverState { frozenToolbar.hoverState }
 
 	override func hitTest(_ point: NSPoint) -> NSView? {
 		guard scene.mode == .frozen, chrome.scrollMinimapPreview != nil,
 			let selection = localFrozenSelectionRect(), selection.contains(point),
-			!toolbarFrameContains(point), annotationStyleAction(at: point) == nil
+			!frozenToolbar.frameContains(point),
+			frozenToolbar.annotationStyleAction(at: point) == nil
 		else {
 			return super.hitTest(point)
 		}
@@ -147,7 +149,7 @@ final class CaptureHostView: NSView {
 					now: ProcessInfo.processInfo.systemUptime)
 			}
 		}
-		refreshHoveredToolbarAction()
+		frozenToolbar.refreshHoveredAction()
 		syncVisibleCursor()
 		updateChromeMaterialViews()
 		updateLiveRendererState()
@@ -258,7 +260,7 @@ final class CaptureHostView: NSView {
 			liveRendererStopMilliseconds: liveRendererStopMilliseconds,
 			displayMilliseconds: displayMilliseconds,
 			toolbarVisible: frozenToolbarVisibleForContract(),
-			toolbarItemCount: visibleToolbarItems().count,
+			toolbarItemCount: frozenToolbar.visibleItems().count,
 			usesLiquidHudGlass: settings.usesLiquidHudGlass,
 			usesClassicHudGlass: settings.usesClassicHudGlass,
 			liquidGlassAvailable: LiveChromeGlassMaterialSupport.isLiquidGlassAvailable,
@@ -355,7 +357,7 @@ final class CaptureHostView: NSView {
 		clearLivePrimaryInteractionState(rendersImmediately: false)
 		resetLivePointerPreview()
 		liveHighlightedWindowPreview = nil
-		clearHoveredToolbarAction()
+		frozenToolbar.clearHoveredAction()
 		syncVisibleCursor()
 		needsDisplay = true
 		controller?.updateLivePreviewDemand(
@@ -418,7 +420,7 @@ final class CaptureHostView: NSView {
 
 	override func cursorUpdate(with event: NSEvent) {
 		if scene.mode == .frozen {
-			refreshHoveredToolbarAction(for: event.locationInWindow)
+			frozenToolbar.refreshHoveredAction(for: event.locationInWindow)
 		}
 		applyVisibleCursorIfNeeded(currentCursorPresentation())
 	}
@@ -426,7 +428,7 @@ final class CaptureHostView: NSView {
 	override func mouseMoved(with event: NSEvent) {
 		let point = globalPoint(from: event)
 		if scene.mode == .frozen {
-			refreshHoveredToolbarAction(for: event.locationInWindow)
+			frozenToolbar.refreshHoveredAction(for: event.locationInWindow)
 			if recoverReleasedFrozenInteractionIfNeeded(at: point) {
 				return
 			}
@@ -445,7 +447,7 @@ final class CaptureHostView: NSView {
 
 	override func mouseDragged(with event: NSEvent) {
 		if scene.mode == .frozen {
-			refreshHoveredToolbarAction(for: event.locationInWindow)
+			frozenToolbar.refreshHoveredAction(for: event.locationInWindow)
 		}
 
 		if scene.mode == .live {
@@ -488,13 +490,13 @@ final class CaptureHostView: NSView {
 			updateLivePointerPreview(to: point, rendersImmediately: true)
 			controller?.beginPrimaryInteraction(at: point)
 		case .frozen:
-			refreshHoveredToolbarAction(for: localPoint)
-			if let styleAction = annotationStyleAction(at: localPoint) {
-				performAnnotationStyleAction(styleAction)
+			frozenToolbar.refreshHoveredAction(for: localPoint)
+			if let styleAction = frozenToolbar.annotationStyleAction(at: localPoint) {
+				frozenToolbar.performAnnotationStyleAction(styleAction)
 				return
 			}
-			if let action = toolbarAction(at: localPoint) {
-				performToolbarAction(action)
+			if let action = frozenToolbar.toolbarAction(at: localPoint) {
+				frozenToolbar.performToolbarAction(action)
 				return
 			}
 			guard chrome.scrollMinimapPreview == nil else {
@@ -519,7 +521,7 @@ final class CaptureHostView: NSView {
 			return
 		}
 		let localPoint = event.locationInWindow
-		guard annotationStyleSizeControlContains(localPoint) else {
+		guard frozenToolbar.annotationStyleSizeControlContains(localPoint) else {
 			resetAnnotationStyleWheelGate()
 			super.scrollWheel(with: event)
 			return
@@ -529,7 +531,7 @@ final class CaptureHostView: NSView {
 			return
 		}
 		controller?.performFrozenAnnotationSizeSteps(steps)
-		refreshHoveredToolbarAction(for: localPoint)
+		frozenToolbar.refreshHoveredAction(for: localPoint)
 	}
 
 	override func rightMouseDown(with event: NSEvent) {
@@ -557,19 +559,19 @@ final class CaptureHostView: NSView {
 			switch event.charactersIgnoringModifiers?.lowercased() {
 			case "z":
 				if event.modifierFlags.contains(.shift) {
-					guard toolbarItem(.redo)?.enabled == true else {
+					guard frozenToolbar.item(.redo)?.enabled == true else {
 						return
 					}
 					controller?.performFrozenRedo()
 				} else {
-					guard toolbarItem(.undo)?.enabled == true else {
+					guard frozenToolbar.item(.undo)?.enabled == true else {
 						return
 					}
 					controller?.performFrozenUndo()
 				}
 				return
 			case "s":
-				guard toolbarItem(.save)?.enabled == true else {
+				guard frozenToolbar.item(.save)?.enabled == true else {
 					return
 				}
 				controller?.saveSelection()
@@ -586,7 +588,7 @@ final class CaptureHostView: NSView {
 			controller?.toggleLoupe()
 		case 49:
 			if scene.mode == .frozen {
-				guard toolbarItem(.copy)?.enabled == true else {
+				guard frozenToolbar.item(.copy)?.enabled == true else {
 					return
 				}
 				controller?.copySelection()
@@ -597,19 +599,19 @@ final class CaptureHostView: NSView {
 			if scene.mode == .frozen, plainFrozenShortcutAvailable(event) {
 				switch event.charactersIgnoringModifiers?.lowercased() {
 				case "c":
-					guard toolbarItem(.autoCenter)?.enabled == true else {
+					guard frozenToolbar.item(.autoCenter)?.enabled == true else {
 						return
 					}
 					controller?.performFrozenAutoCenter()
 					return
 				case "r":
-					guard toolbarItem(.ocr)?.enabled == true else {
+					guard frozenToolbar.item(.ocr)?.enabled == true else {
 						return
 					}
 					controller?.recognizeText()
 					return
 				case "s":
-					guard toolbarItem(.scroll)?.enabled == true else {
+					guard frozenToolbar.item(.scroll)?.enabled == true else {
 						return
 					}
 					controller?.startScrollCapture(source: "keyboard_s")
@@ -1037,7 +1039,7 @@ final class CaptureHostView: NSView {
 		)
 	}
 
-	private func currentLocalMousePoint() -> CGPoint? {
+	func currentLocalMousePoint() -> CGPoint? {
 		guard let window else {
 			return nil
 		}
@@ -1055,7 +1057,8 @@ final class CaptureHostView: NSView {
 					for: CaptureHostCursorSupport.cursorIntent(for: interaction.kind, active: true))
 			}
 			if let selection = chrome.frozenSelectionSnapshot ?? scene.frozenSelection,
-				let selectedModeTool = visibleToolbarItems().first(where: { $0.selected })?.kind
+				let selectedModeTool = frozenToolbar.visibleItems().first(where: { $0.selected })?
+					.kind
 			{
 				if [ToolbarItemKind.pen, .arrow, .mosaic, .spotlight].contains(selectedModeTool) {
 					return .crosshair
@@ -1105,13 +1108,7 @@ final class CaptureHostView: NSView {
 	}
 
 	func toolbarLayout(for selection: CGRect) -> FrozenToolbarLayout? {
-		FrozenToolbarLayoutPlanner.layout(
-			selection: selection,
-			bounds: bounds,
-			prefersTopPlacement: settings.toolbarPlacement == .top,
-			items: visibleToolbarItems(),
-			annotationStyle: chrome.annotationStyle
-		)
+		frozenToolbar.layout(for: selection)
 	}
 
 	private func frozenToolbarVisibleForContract() -> Bool {
@@ -1128,100 +1125,7 @@ final class CaptureHostView: NSView {
 		return true
 	}
 
-	private func visibleToolbarItems() -> [ToolbarItem] {
-		FrozenToolbarLayoutPlanner.visibleItems(
-			from: scene.toolbarItems,
-			availability: FrozenToolbarAvailability(
-				scrollCaptureActive: chrome.scrollMinimapPreview != nil,
-				canUndo: chrome.frozenOverlay.canUndo,
-				canRedo: chrome.frozenOverlay.canRedo,
-				frozenSelectionAvailable: scene.frozenSelection != nil,
-				keepsFrozenSelectionFixed: chrome.frozenOverlay.keepsFrozenSelectionFixed,
-				scrollToolbarEnabled: controller?.scrollCaptureToolbarEnabled ?? false,
-				hasRecognizeTextBlockingEdits: chrome.frozenOverlay.hasRecognizeTextBlockingEdits
-			)
-		)
-	}
-
-	private func toolbarItem(_ kind: ToolbarItemKind) -> ToolbarItem? {
-		visibleToolbarItems().first(where: { $0.kind == kind })
-	}
-
-	private func toolbarAction(at point: CGPoint) -> ToolbarItemKind? {
-		frozenToolbarHitState(at: point).toolbarAction
-	}
-
-	private func annotationStyleAction(at point: CGPoint) -> FrozenAnnotationStyleAction? {
-		frozenToolbarHitState(at: point).annotationStyleAction
-	}
-
-	private func annotationStyleSizeControlContains(_ point: CGPoint) -> Bool {
-		guard scene.mode == .frozen, let selection = localFrozenSelectionRect(),
-			let styleLayout = toolbarLayout(for: selection)?.annotationStyle
-		else {
-			return false
-		}
-		return styleLayout.sizeControlFrame.contains(point)
-	}
-
-	private func toolbarFrameContains(_ point: CGPoint) -> Bool {
-		frozenToolbarHitState(at: point).pointerOverToolbar
-	}
-
-	private func performToolbarAction(_ action: ToolbarItemKind) {
-		switch action {
-		case .undo:
-			controller?.performFrozenUndo()
-		case .redo:
-			controller?.performFrozenRedo()
-		case .autoCenter:
-			controller?.performFrozenAutoCenter()
-		default:
-			controller?.invokeToolbarItem(action)
-		}
-	}
-
-	private func performAnnotationStyleAction(_ action: FrozenAnnotationStyleAction) {
-		controller?.performFrozenAnnotationStyleAction(action)
-	}
-
-	private func frozenToolbarHitState(at point: CGPoint) -> FrozenToolbarHitState {
-		guard scene.mode == .frozen, let selection = localFrozenSelectionRect() else {
-			return FrozenToolbarHitState(
-				pointerOverToolbar: false,
-				toolbarAction: nil,
-				annotationStyleAction: nil
-			)
-		}
-		return FrozenToolbarLayoutPlanner.hitState(at: point, in: toolbarLayout(for: selection))
-	}
-
-	private func clearHoveredToolbarAction() {
-		guard toolbarHoverState.clear() else {
-			return
-		}
-	}
-
-	private func refreshHoveredToolbarAction(for localPoint: CGPoint? = nil) {
-		let probePoint = scene.mode == .frozen ? (localPoint ?? currentLocalMousePoint()) : nil
-		let hitState: FrozenToolbarHitState
-		if let probePoint {
-			hitState = frozenToolbarHitState(at: probePoint)
-		} else {
-			hitState = FrozenToolbarHitState(
-				pointerOverToolbar: false,
-				toolbarAction: nil,
-				annotationStyleAction: nil
-			)
-		}
-		if toolbarHoverState.update(to: hitState) {
-			syncVisibleCursor()
-			updateChromeMaterialViews()
-			needsDisplay = true
-		}
-	}
-
-	private func syncVisibleCursor() {
+	func syncVisibleCursor() {
 		let cursorPresentation = currentCursorPresentation()
 		guard cursorPresentation != lastCursorPresentation else {
 			return
@@ -1747,7 +1651,7 @@ final class CaptureHostView: NSView {
 		effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua ? .light : .dark
 	}
 
-	private func updateChromeMaterialViews() {
+	func updateChromeMaterialViews() {
 		materialViews.updateChromeMaterialViews()
 	}
 
