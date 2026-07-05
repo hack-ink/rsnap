@@ -139,7 +139,8 @@ Treat `packages/rsnap-host-ffi/` as the thin ABI companion to `rsnap-capture-cor
 It owns:
 
 - opaque session handles for foreign hosts
-- FFI-safe config, event, report, scene, and request types
+- FFI-safe config, event, report, scene, request, live-sample, frozen-overlay, capture-frame, and
+  scroll-capture types under the `abi/` module tree
 - exported `extern "C"` functions that forward into `rsnap-capture-core`
 - exported `extern "C"` functions that bridge retained Rust transition modules while they migrate
   toward `rsnap-capture-core`
@@ -147,6 +148,20 @@ It owns:
   `packages/rsnap-host-ffi/include/rsnap_host_ffi.h`
 
 It does not own product behavior beyond ABI adaptation.
+
+Key paths:
+
+- `packages/rsnap-host-ffi/src/abi.rs`: ABI constants plus the canonical re-export surface
+- `packages/rsnap-host-ffi/src/abi/handles.rs`: opaque Rust-owned handles for foreign callers
+- `packages/rsnap-host-ffi/src/abi/geometry.rs`: shared FFI-safe geometry, RGB, and owned-buffer
+  payloads
+- `packages/rsnap-host-ffi/src/abi/session.rs`: session config, host event/report, scene, toolbar,
+  and host-request payloads
+- `packages/rsnap-host-ffi/src/abi/live.rs`: live-sampler cursor sample payloads
+- `packages/rsnap-host-ffi/src/abi/frozen_overlay.rs`: frozen overlay edit/export and selection
+  transform payloads
+- `packages/rsnap-host-ffi/src/abi/capture_frame.rs`: capture-frame planning/rendering payloads
+- `packages/rsnap-host-ffi/src/abi/scroll.rs`: scroll minimap and observation payloads
 
 ### `native/macos-host/`
 
