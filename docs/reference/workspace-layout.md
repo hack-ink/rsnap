@@ -113,6 +113,8 @@ Key paths:
 - `packages/rsnap-overlay/src/overlay/rendering.rs`: overlay window renderer orchestration; shared
   selection geometry/cache structs live under `overlay/rendering/selection_geometry.rs`, and
   renderer phase timing telemetry lives under `overlay/rendering/timing.rs`
+- `packages/rsnap-overlay/src/overlay/rendering/affordances/toolbar.rs`: Frozen toolbar rendering
+  entry; geometry and tool-palette policy live under `overlay/rendering/affordances/toolbar/`
 - `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: current macOS live-stream support
 - `packages/rsnap-overlay/src/scroll_capture.rs`: current scroll-capture session entry with
   focused support modules under `scroll_capture/`
