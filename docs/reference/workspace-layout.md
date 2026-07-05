@@ -189,7 +189,10 @@ The main host-kit files are split by responsibility:
 - `CaptureOverlayController.swift`: overlay window set, focus, stream preparation, and below-overlay
   capture source management
 - `FrozenFrameAuthority.swift`: ScreenCaptureKit frozen-frame stream lifecycle, latch-token
-  resolution, self-capture filter completeness, and fresh-frame authority decisions
+  resolution, self-capture-safe frame gating, and fresh-frame authority decisions
+- `FrozenFrameContentFilterPlanner.swift`: frozen-frame display target planning, shareable-content
+  cache freshness, self-capture-excluding content filter construction, and stream configuration
+- `NSScreenDisplayID.swift`: shared AppKit display-ID extraction for native capture surfaces
 - `FrozenFramePixelBufferBridge.swift`: CVPixelBuffer lock/lifetime adaptation for frozen-frame
   CGImage creation, RGB sampling, and loupe patch extraction
 - `CaptureHostAnnotationStyleWheelGate.swift`: frozen annotation-size wheel dead-zone and

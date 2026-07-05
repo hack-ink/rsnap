@@ -84,7 +84,10 @@ The current native-host Swift split is:
   routing, capture-stream preparation, mouse passthrough, and CoreGraphics capture sources needed
   to sample below native overlay windows.
 - `FrozenFrameAuthority.swift`: ScreenCaptureKit frozen-frame stream lifecycle, latch-token
-  resolution, self-capture filter completeness, and fresh-frame authority decisions.
+  resolution, self-capture-safe frame gating, and fresh-frame authority decisions.
+- `FrozenFrameContentFilterPlanner.swift`: frozen-frame display target planning, shareable-content
+  cache freshness, self-capture-excluding content filter construction, and stream configuration.
+- `NSScreenDisplayID.swift`: shared AppKit display-ID extraction for native capture surfaces.
 - `FrozenFramePixelBufferBridge.swift`: CVPixelBuffer lock/lifetime adaptation for frozen-frame
   CGImage creation, RGB sampling, and loupe patch extraction.
 - `CaptureHostAnnotationStyleWheelGate.swift`: frozen annotation-size wheel dead-zone and

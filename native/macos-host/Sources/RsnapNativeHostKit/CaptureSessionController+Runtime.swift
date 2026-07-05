@@ -20,8 +20,7 @@ extension CaptureSessionController {
 	}
 
 	static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
-		(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
-			.uint32Value
+		screen.nativeDisplayID
 	}
 
 	func highlightedWindow(at point: CGPoint) -> WindowSnapshot? {

@@ -1753,8 +1753,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentDisplayID() -> CGDirectDisplayID? {
-		(window?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
-			.uint32Value
+		window?.screen?.nativeDisplayID
 	}
 
 	func currentDisplayTargetFramesPerSecond() -> Int {
