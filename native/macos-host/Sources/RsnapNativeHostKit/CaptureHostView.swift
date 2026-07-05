@@ -719,23 +719,35 @@ final class CaptureHostView: NSView {
 			if let selection = localFrozenSelectionRect().map(pixelAlignedSelectionRect) {
 				drawFrozenDisplaySurface(in: context)
 				let toolbarScrimExclusionPath = frozenToolbarScrimExclusionPath(for: selection)
-				drawSelectionScrim(
+				CaptureHostFrozenSelectionChromeRenderer.drawSelectionScrim(
 					for: selection,
+					bounds: bounds,
 					in: context,
 					alpha: CaptureChrome.frozenScrimAlpha,
 					excluding: toolbarScrimExclusionPath
 				)
-				drawDashedSelectionBorder(
+				CaptureHostFrozenSelectionChromeRenderer.drawDashedSelectionBorder(
 					around: selection,
 					in: context,
-					lineWidth: CaptureChrome.frozenDashedBorderWidth
+					lineWidth: CaptureChrome.frozenDashedBorderWidth,
+					pixelsPerPoint: window?.screen?.backingScaleFactor ?? 1
 				)
 				if chrome.frozenSelectionTransformAllowed {
-					drawFrozenResizeHandles(for: selection, in: context)
+					CaptureHostFrozenSelectionChromeRenderer.drawFrozenResizeHandles(
+						for: selection,
+						orientation: settings.frozenResizeHandleOrientation,
+						in: context
+					)
 				}
 				drawFrozenOverlays(for: selection, in: context)
 				drawScrollCaptureMinimap(for: selection, in: context)
-				drawSelectionSizeBadge(for: selection, in: context)
+				CaptureHostFrozenSelectionChromeRenderer.drawSelectionSizeBadge(
+					for: selection,
+					text: selectionSizeText(for: selection),
+					bounds: bounds,
+					avoiding: toolbarLayout(for: selection)?.frame,
+					in: context
+				)
 				drawFrozenToolbar(for: selection, in: context)
 			}
 			scheduleFrozenFirstFrameInstallCompletionIfNeeded()
@@ -1327,193 +1339,6 @@ final class CaptureHostView: NSView {
 		let globalPoint = window.convertPoint(toScreen: localPoint)
 		return NSScreen.screens.contains(where: { $0.frame.inclusivelyContains(globalPoint) })
 			? globalPoint : nil
-	}
-
-	private func drawSelectionScrim(
-		for focusRect: CGRect,
-		in context: CGContext,
-		alpha: CGFloat,
-		excluding exclusionPath: CGPath? = nil
-	) {
-		let scrimColor = NSColor(calibratedWhite: 0, alpha: alpha)
-		let visibleFocusRect = focusRect.intersection(bounds)
-		if visibleFocusRect.isNull || visibleFocusRect.width <= 0 || visibleFocusRect.height <= 0 {
-			context.setFillColor(scrimColor.cgColor)
-			context.fill(bounds)
-			return
-		}
-
-		context.saveGState()
-		OverlayMaskGeometry.drawScrim(
-			in: context,
-			bounds: bounds,
-			focusRect: visibleFocusRect,
-			color: scrimColor.cgColor,
-			pathExclusions: [exclusionPath].compactMap { $0 }
-		)
-		context.restoreGState()
-	}
-
-	private func drawLiveSelectionGlow(around rect: CGRect, in context: CGContext) {
-		context.saveGState()
-		context.setShadow(
-			offset: .zero,
-			blur: 12,
-			color: NSColor(calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 0.55).cgColor
-		)
-		let path = NSBezierPath(
-			roundedRect: rect,
-			xRadius: CaptureChrome.liveSelectionCornerRadius,
-			yRadius: CaptureChrome.liveSelectionCornerRadius
-		)
-		context.setStrokeColor(
-			NSColor(calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 0.45).cgColor)
-		context.setLineWidth(2.25)
-		path.stroke()
-		context.restoreGState()
-	}
-
-	private func drawDashedSelectionBorder(
-		around rect: CGRect,
-		in context: CGContext,
-		lineWidth: CGFloat
-	) {
-		let outlineColor = NSColor(
-			calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 116 / 255)
-		let strokeColor = NSColor(
-			calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 248 / 255)
-		let pixelsPerPoint = window?.screen?.backingScaleFactor ?? 1
-		let borderOutset = CaptureChrome.dashedBorderOutset(
-			strokeWidth: lineWidth,
-			pixelsPerPoint: pixelsPerPoint
-		)
-		let borderRect = rect.insetBy(dx: -borderOutset, dy: -borderOutset)
-		let path = CaptureChrome.dashedBorderPath(
-			for: borderRect
-		)
-
-		context.saveGState()
-		context.setLineCap(.butt)
-		context.setLineJoin(.miter)
-
-		context.addPath(path)
-		context.setStrokeColor(outlineColor.cgColor)
-		context.setLineWidth(lineWidth + 0.75)
-		context.strokePath()
-
-		context.addPath(path)
-		context.setStrokeColor(strokeColor.cgColor)
-		context.setLineWidth(lineWidth)
-		context.strokePath()
-		context.restoreGState()
-	}
-
-	private func drawFrozenResizeHandles(for rect: CGRect, in context: CGContext) {
-		let outlineColor = NSColor(
-			calibratedRed: 229 / 255, green: 247 / 255, blue: 1, alpha: 124 / 255)
-		let strokeColor = NSColor(
-			calibratedRed: 167 / 255, green: 223 / 255, blue: 1, alpha: 246 / 255)
-		let leg = CaptureChrome.resizeHandleLegLength
-		let offset = CaptureChrome.resizeHandleOffset
-		let handles: [(CGPoint, CGPoint, CGPoint)]
-		switch settings.frozenResizeHandleOrientation {
-		case .outward:
-			handles = [
-				(
-					CGPoint(x: rect.minX - offset - leg, y: rect.maxY + offset + leg),
-					CGPoint(x: rect.minX - offset, y: rect.maxY + offset + leg),
-					CGPoint(x: rect.minX - offset - leg, y: rect.maxY + offset)
-				),
-				(
-					CGPoint(x: rect.maxX + offset + leg, y: rect.maxY + offset + leg),
-					CGPoint(x: rect.maxX + offset, y: rect.maxY + offset + leg),
-					CGPoint(x: rect.maxX + offset + leg, y: rect.maxY + offset)
-				),
-				(
-					CGPoint(x: rect.minX - offset - leg, y: rect.minY - offset - leg),
-					CGPoint(x: rect.minX - offset, y: rect.minY - offset - leg),
-					CGPoint(x: rect.minX - offset - leg, y: rect.minY - offset)
-				),
-				(
-					CGPoint(x: rect.maxX + offset + leg, y: rect.minY - offset - leg),
-					CGPoint(x: rect.maxX + offset, y: rect.minY - offset - leg),
-					CGPoint(x: rect.maxX + offset + leg, y: rect.minY - offset)
-				),
-			]
-		case .inward:
-			handles = [
-				(
-					CGPoint(x: rect.minX - offset, y: rect.maxY + offset),
-					CGPoint(x: rect.minX - offset - leg, y: rect.maxY + offset),
-					CGPoint(x: rect.minX - offset, y: rect.maxY + offset + leg)
-				),
-				(
-					CGPoint(x: rect.maxX + offset, y: rect.maxY + offset),
-					CGPoint(x: rect.maxX + offset + leg, y: rect.maxY + offset),
-					CGPoint(x: rect.maxX + offset, y: rect.maxY + offset + leg)
-				),
-				(
-					CGPoint(x: rect.minX - offset, y: rect.minY - offset),
-					CGPoint(x: rect.minX - offset - leg, y: rect.minY - offset),
-					CGPoint(x: rect.minX - offset, y: rect.minY - offset - leg)
-				),
-				(
-					CGPoint(x: rect.maxX + offset, y: rect.minY - offset),
-					CGPoint(x: rect.maxX + offset + leg, y: rect.minY - offset),
-					CGPoint(x: rect.maxX + offset, y: rect.minY - offset - leg)
-				),
-			]
-		}
-
-		context.saveGState()
-		context.setLineCap(.butt)
-		context.setLineJoin(.miter)
-		for (elbow, horizontal, vertical) in handles {
-			let path = CGMutablePath()
-			path.move(to: horizontal)
-			path.addLine(to: elbow)
-			path.addLine(to: vertical)
-
-			context.addPath(path)
-			context.setStrokeColor(outlineColor.cgColor)
-			context.setLineWidth(CaptureChrome.resizeHandleStrokeWidth + 0.8)
-			context.strokePath()
-
-			context.addPath(path)
-			context.setStrokeColor(strokeColor.cgColor)
-			context.setLineWidth(CaptureChrome.resizeHandleStrokeWidth)
-			context.strokePath()
-		}
-		context.restoreGState()
-	}
-
-	private func drawSelectionSizeBadge(for rect: CGRect, in context: CGContext) {
-		let text = selectionSizeText(for: rect)
-		let font = LiveChromePlacementPlanner.metrics.font
-		let textSize = text.size(using: font)
-		let badgeFrame = CaptureChrome.selectionSizeBadgeFrame(
-			for: rect,
-			textSize: textSize,
-			in: bounds,
-			avoiding: toolbarLayout(for: rect)?.frame
-		)
-		let anchor = badgeFrame.origin
-
-		drawText(
-			text, at: CGPoint(x: anchor.x, y: anchor.y - 1),
-			color: NSColor.black.withAlphaComponent(0.6), font: font)
-		drawText(
-			text, at: CGPoint(x: anchor.x - 1, y: anchor.y),
-			color: NSColor.black.withAlphaComponent(0.75), font: font)
-		drawText(
-			text, at: CGPoint(x: anchor.x + 1, y: anchor.y),
-			color: NSColor.black.withAlphaComponent(0.75), font: font)
-		drawText(
-			text, at: CGPoint(x: anchor.x, y: anchor.y + 1),
-			color: NSColor.black.withAlphaComponent(0.75), font: font)
-		drawText(
-			text, at: CGPoint(x: anchor.x, y: anchor.y),
-			color: NSColor.white.withAlphaComponent(0.98), font: font)
 	}
 
 	private func drawFrozenOverlays(for selection: CGRect, in context: CGContext) {
@@ -2489,15 +2314,6 @@ final class CaptureHostView: NSView {
 		}
 		return frozenEffectCIContext.createCGImage(
 			colorAdjustedImage, from: colorAdjustedImage.extent) ?? image
-	}
-
-	private func drawText(_ text: String, at point: CGPoint, color: NSColor, font: NSFont) {
-		(text as NSString).draw(
-			at: point,
-			withAttributes: [
-				.font: font,
-				.foregroundColor: color,
-			])
 	}
 
 	private func chromeTheme() -> CaptureChromeTheme {
