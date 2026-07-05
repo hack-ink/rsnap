@@ -107,8 +107,8 @@ The current native-host Swift split is:
   handoff state, completion queueing, pending-frame evidence, and deferred classic toolbar glass.
 - `CaptureHostScrollToolbarBackdropState.swift`: capture-host scroll toolbar backdrop capture
   generation, seed-patch cache, active frame, refresh cadence, and change-count state.
-- `CaptureHostView.swift`: AppKit view orchestration, hit testing, and native pointer/key event
-  routing into the session controller.
+- `CaptureHostView.swift`: AppKit view orchestration, hit testing, and frozen presentation
+  rendering.
 - `CaptureHostMaterialViewCoordinator.swift`: capture-host Liquid Glass/material subview ownership,
   classic glass patch resolution, and scroll-toolbar backdrop refresh/capture scheduling.
 - `CaptureHostGlassPatchResolver.swift`: capture-host classic glass patch cache lookup, frozen
@@ -140,6 +140,8 @@ The current native-host Swift split is:
   release-watchdog scheduling for AppKit interactions whose mouse-up event can be missed.
 - `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
   with per-track throttling state, and AppKit-to-controller pointer delivery support.
+- `CaptureHostView+InputRouting.swift`: capture-host AppKit mouse, wheel, key, cursor, toolbar
+  shortcut, and pointer-dispatch routing into the session controller.
 - `CaptureHostView+LivePrimaryInteraction.swift`: capture-host live primary interaction release
   recovery, pointer-preview mutation, mouse-up monitor wiring, and release-watchdog orchestration.
 - `CaptureHostView+LivePreview.swift`: capture-host live preview snapshots, HUD/loupe placement,
