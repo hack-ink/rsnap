@@ -245,6 +245,8 @@ The main host-kit files are split by responsibility:
   with per-track throttling state, and AppKit-to-controller pointer delivery
 - `CaptureHostView+LivePrimaryInteraction.swift`: capture-host live primary interaction release
   recovery, pointer-preview mutation, mouse-up monitor wiring, and release-watchdog orchestration
+- `CaptureHostView+LivePreview.swift`: capture-host live preview snapshots, HUD/loupe placement,
+  live sample-cache use, and controller preview-demand updates
 - `LiveOverlayRenderer.swift`: live overlay render orchestration for HUD, loupe, frozen-pending
   preview, and live chrome layers
 - `LiveHudColorRollCoordinator.swift`: live HUD color swatch/hex presentation, pending color roll
