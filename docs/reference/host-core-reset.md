@@ -154,6 +154,10 @@ The current native-host Swift split is:
   selection-flow, frozen-pending, drag-selection, and size-badge rendering.
 - `LiveHudColorRollCoordinator.swift`: live HUD color swatch/hex presentation, pending color roll
   animation state, resolved hex roll transitions, and roll-layer lifecycle.
+- `LiveHudHexRollPlan.swift`: deterministic pending/resolved hex-roll digit sequences,
+  direction choices, durations, and phase offsets for live HUD color animation.
+- `LiveHudColorRollTextLayerFactory.swift`: CATextLayer construction and text application helpers
+  for live HUD color roll stacks.
 - `LiveOverlayTypography.swift`: shared native live overlay font and text metrics.
 - `LiveOverlayLayers.swift`: reusable Core Animation layer subclasses for live selection flow and
   scrim masking.

@@ -9,7 +9,7 @@ final class LiveHudColorRollCoordinator {
 	private let hudHexLayer: CATextLayer
 	private let hudHexRollLayer: CALayer
 	private let hudSwatchLayer: CALayer
-	private let backingScaleProvider: () -> CGFloat
+	private let textLayerFactory: LiveHudColorRollTextLayerFactory
 
 	private static let resolveAnimationKey = "rsnap.hud.color.resolve"
 	private static let resolveBackgroundAnimationKey = "rsnap.hud.color.resolve.background"
@@ -17,8 +17,6 @@ final class LiveHudColorRollCoordinator {
 	private static let pendingRollAnimationKey = "rsnap.hud.color.pending.roll"
 	private static let rollDuration: TimeInterval = 0.40
 	private static let rollDigitStagger: TimeInterval = 0.024
-	private static let hexWheel = Array("0123456789ABCDEF")
-	private static let pendingHexRollBaseSeed: UInt64 = 0x5EED_71A5_C01D
 
 	private struct PendingRollColumnState {
 		let digits: [Character]
@@ -46,7 +44,8 @@ final class LiveHudColorRollCoordinator {
 		self.hudHexLayer = hudHexLayer
 		self.hudHexRollLayer = hudHexRollLayer
 		self.hudSwatchLayer = hudSwatchLayer
-		self.backingScaleProvider = backingScaleProvider
+		self.textLayerFactory = LiveHudColorRollTextLayerFactory(
+			backingScaleProvider: backingScaleProvider)
 	}
 
 	func render(
@@ -73,7 +72,7 @@ final class LiveHudColorRollCoordinator {
 		let hexTextColor =
 			colorDisplay.isPending
 			? palette.labelText.withAlphaComponent(0.46) : palette.labelText
-		applyText(
+		textLayerFactory.applyText(
 			hudHexLayer,
 			text: colorDisplay.hexText,
 			font: font,
@@ -112,7 +111,7 @@ final class LiveHudColorRollCoordinator {
 					hudSwatchLayer.backgroundColor = lastResolvedSwatchColor
 				}
 				if let lastResolvedHexText {
-					applyText(
+					textLayerFactory.applyText(
 						hudHexLayer,
 						text: lastResolvedHexText,
 						font: font,
@@ -281,7 +280,7 @@ final class LiveHudColorRollCoordinator {
 			font: font,
 			lineHeight: lineHeight
 		)
-		let hashLayer = makeRollTextLayer(
+		let hashLayer = textLayerFactory.makeTextLayer(
 			text: "#",
 			font: font,
 			color: textColor.withAlphaComponent(0.72),
@@ -307,122 +306,6 @@ final class LiveHudColorRollCoordinator {
 				digitWidth: characterFrame.width
 			)
 			pendingRollColumns.append(columnState)
-		}
-	}
-
-	private static func pendingHexRollSeed(index: Int) -> UInt64 {
-		let uptimeBucket = UInt64((ProcessInfo.processInfo.systemUptime * 1_000).rounded(.down))
-		let mixedIndex = UInt64(index + 1) &* 0x9E37_79B9_7F4A_7C15
-		return pendingHexRollBaseSeed ^ uptimeBucket ^ mixedIndex
-	}
-
-	private static func pendingHexRollSequence(index: Int) -> [Character] {
-		var seed = pendingHexRollSeed(index: index)
-		seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-		let visibleRows = 47 + Int((seed >> 57) & 0x1F) + index * 3
-		var digits: [Character] = []
-		digits.reserveCapacity(visibleRows + 1)
-		var previous: Character?
-		for offset in 0..<visibleRows {
-			seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-			var wheelIndex = Int((seed >> 58) & 0xF)
-			if let previousDigit = previous,
-				Self.hexWheel[wheelIndex] == previousDigit
-			{
-				wheelIndex = (wheelIndex + offset + index + 1) % Self.hexWheel.count
-			}
-			let digit = Self.hexWheel[wheelIndex]
-			digits.append(digit)
-			previous = digit
-		}
-		if let first = digits.first {
-			digits.append(first)
-		}
-		return digits
-	}
-
-	private static func pendingHexRollColumnDuration(index: Int) -> TimeInterval {
-		let seed =
-			pendingHexRollSeed(index: index)
-			&* 2_862_933_555_777_941_757
-			&+ 3_037_000_493
-		return 1.58 + Double((seed >> 56) & 0x1F) * 0.031
-	}
-
-	private static func pendingHexRollColumnPhase(index: Int, duration: TimeInterval)
-		-> TimeInterval
-	{
-		let seed =
-			pendingHexRollSeed(index: index)
-			&* 11_400_714_819_323_198_485
-			&+ 12_829_314
-		let ratio = Double((seed >> 40) & 0xFFFF) / 65_535.0
-		return duration * ratio
-	}
-
-	private static func pendingHexRollColumnScrollsUp(index: Int) -> Bool {
-		let uptimeBucket = UInt64((ProcessInfo.processInfo.systemUptime * 1_000).rounded(.down))
-		let startsUp = ((pendingHexRollBaseSeed ^ uptimeBucket) & 1) == 0
-		if index <= 1 {
-			return index == 0 ? startsUp : !startsUp
-		}
-		let seed =
-			pendingHexRollSeed(index: index)
-			&* 3_202_034_522_624_059_733
-			&+ 1_029
-		return ((seed >> 63) & 1) == 0
-	}
-
-	private static func resolveHexRollColumnScrollsUp(
-		index: Int,
-		startDigit: Character,
-		targetDigit: Character
-	) -> Bool {
-		let startValue = UInt64(startDigit.unicodeScalars.first?.value ?? 0)
-		let targetValue = UInt64(targetDigit.unicodeScalars.first?.value ?? 0)
-		let seed =
-			pendingHexRollSeed(index: index)
-			^ (startValue &* 1_099_511_628_211)
-			^ (targetValue &* 2_862_933_555_777_941_757)
-		let startsUp = ((seed >> 63) & 1) == 0
-		if index <= 1 {
-			return index == 0 ? startsUp : !startsUp
-		}
-		return ((seed >> 59) & 1) == 0
-	}
-
-	private static func resolveHexRollExtraLoops(index: Int, targetDigit: Character) -> Int {
-		let targetValue = UInt64(targetDigit.unicodeScalars.first?.value ?? 0)
-		let seed =
-			pendingHexRollSeed(index: index)
-			^ (targetValue &* 11_400_714_819_323_198_485)
-		return 1 + Int((seed >> 60) & 1)
-	}
-
-	private static func resolveHexRollSequence(
-		from startDigit: Character,
-		to targetDigit: Character,
-		index: Int,
-		scrollsUp: Bool
-	) -> [Character] {
-		let wheelCount = max(hexWheel.count, 1)
-		let startIndex = hexWheel.firstIndex(of: startDigit) ?? 0
-		let targetIndex = hexWheel.firstIndex(of: targetDigit) ?? startIndex
-		let directedDistance =
-			scrollsUp
-			? (targetIndex - startIndex + wheelCount) % wheelCount
-			: (startIndex - targetIndex + wheelCount) % wheelCount
-		let extraSteps =
-			resolveHexRollExtraLoops(index: index, targetDigit: targetDigit)
-			* wheelCount
-		let totalSteps =
-			directedDistance + extraSteps
-		return (0...totalSteps).map { offset in
-			let wheelIndex =
-				scrollsUp
-				? (startIndex + offset) % wheelCount
-				: (startIndex - offset + (totalSteps + wheelCount) * wheelCount) % wheelCount
-			return hexWheel[wheelIndex]
 		}
 	}
 
@@ -452,7 +335,7 @@ final class LiveHudColorRollCoordinator {
 			font: font,
 			lineHeight: lineHeight
 		)
-		let hashLayer = makeRollTextLayer(
+		let hashLayer = textLayerFactory.makeTextLayer(
 			text: "#",
 			font: font,
 			color: textColor.withAlphaComponent(0.72),
@@ -473,11 +356,11 @@ final class LiveHudColorRollCoordinator {
 				index < startDigits.count
 				? startDigits[index]
 				: nil
-			let resolvedStartDigit = startDigit ?? Self.hexWheel.first ?? targetDigit
+			let resolvedStartDigit = startDigit ?? LiveHudHexRollPlan.hexWheel.first ?? targetDigit
 			let scrollsUp =
 				index < pendingDirections.count
 				? pendingDirections[index]
-				: Self.resolveHexRollColumnScrollsUp(
+				: LiveHudHexRollPlan.resolveColumnScrollsUp(
 					index: index,
 					startDigit: resolvedStartDigit,
 					targetDigit: targetDigit
@@ -526,8 +409,8 @@ final class LiveHudColorRollCoordinator {
 		lineHeight: CGFloat,
 		digitWidth: CGFloat
 	) -> PendingRollColumnState {
-		var digits = Self.pendingHexRollSequence(index: index)
-		let scrollsUp = Self.pendingHexRollColumnScrollsUp(index: index)
+		var digits = LiveHudHexRollPlan.pendingSequence(index: index)
+		let scrollsUp = LiveHudHexRollPlan.pendingColumnScrollsUp(index: index)
 		if scrollsUp == false {
 			digits.reverse()
 		}
@@ -541,7 +424,7 @@ final class LiveHudColorRollCoordinator {
 		)
 		columnLayer.addSublayer(contentLayer)
 
-		let digitLayer = makeRollMultilineTextLayer(
+		let digitLayer = textLayerFactory.makeMultilineTextLayer(
 			text: contentText,
 			font: font,
 			color: textColor.withAlphaComponent(0.72),
@@ -554,11 +437,11 @@ final class LiveHudColorRollCoordinator {
 		let travel = lineHeight * CGFloat(max(digits.count - 1, 1))
 		animation.fromValue = scrollsUp ? 0 : -travel
 		animation.toValue = scrollsUp ? -travel : 0
-		let duration = Self.pendingHexRollColumnDuration(index: index)
+		let duration = LiveHudHexRollPlan.pendingColumnDuration(index: index)
 		animation.duration = duration
 		animation.beginTime =
 			CACurrentMediaTime()
-			- Self.pendingHexRollColumnPhase(index: index, duration: duration)
+			- LiveHudHexRollPlan.pendingColumnPhase(index: index, duration: duration)
 		animation.repeatCount = .infinity
 		animation.timingFunction = CAMediaTimingFunction(name: .linear)
 		animation.isRemovedOnCompletion = false
@@ -595,7 +478,7 @@ final class LiveHudColorRollCoordinator {
 		digitWidth: CGFloat,
 		scrollsUp: Bool
 	) -> (state: PendingRollColumnState, endOffset: TimeInterval) {
-		let rollDigits = Self.resolveHexRollSequence(
+		let rollDigits = LiveHudHexRollPlan.resolveSequence(
 			from: startDigit,
 			to: targetDigit,
 			index: index,
@@ -644,7 +527,8 @@ final class LiveHudColorRollCoordinator {
 		let stagger = Double(index) * Self.rollDigitStagger
 		let duration =
 			Self.rollDuration
-			+ Double(Self.resolveHexRollExtraLoops(index: index, targetDigit: targetDigit)) * 0.035
+			+ Double(LiveHudHexRollPlan.resolveExtraLoops(index: index, targetDigit: targetDigit))
+			* 0.035
 		let animation = CABasicAnimation(keyPath: "transform.translation.y")
 		animation.fromValue = fromY
 		animation.toValue = toY
@@ -671,7 +555,7 @@ final class LiveHudColorRollCoordinator {
 		digitWidth: CGFloat
 	) {
 		for (row, digit) in digits.enumerated() {
-			let digitLayer = makeRollTextLayer(
+			let digitLayer = textLayerFactory.makeTextLayer(
 				text: String(digit),
 				font: font,
 				color: color,
@@ -689,63 +573,8 @@ final class LiveHudColorRollCoordinator {
 	private func removeRollLayerAnimations() {
 		hudHexRollLayer.removeAllAnimations()
 		for sublayer in hudHexRollLayer.sublayers ?? [] {
-			removeAnimationsRecursively(from: sublayer)
+			LiveHudColorRollTextLayerFactory.removeAnimationsRecursively(from: sublayer)
 		}
-	}
-
-	private func removeAnimationsRecursively(from layer: CALayer) {
-		layer.removeAllAnimations()
-		for sublayer in layer.sublayers ?? [] {
-			removeAnimationsRecursively(from: sublayer)
-		}
-	}
-
-	private func makeRollTextLayer(
-		text: String,
-		font: NSFont,
-		color: NSColor,
-		frame: CGRect
-	) -> CATextLayer {
-		let layer = CATextLayer()
-		layer.contentsScale = backingScaleProvider()
-		layer.string = text
-		layer.font = font
-		layer.fontSize = font.pointSize
-		layer.foregroundColor = color.cgColor
-		layer.alignmentMode = .left
-		layer.frame = frame
-		layer.isWrapped = false
-		return layer
-	}
-
-	private func makeRollMultilineTextLayer(
-		text: String,
-		font: NSFont,
-		color: NSColor,
-		lineHeight: CGFloat,
-		frame: CGRect
-	) -> CATextLayer {
-		let paragraphStyle = NSMutableParagraphStyle()
-		paragraphStyle.alignment = .left
-		paragraphStyle.lineBreakMode = .byClipping
-		paragraphStyle.minimumLineHeight = lineHeight
-		paragraphStyle.maximumLineHeight = lineHeight
-		let attributedString = NSAttributedString(
-			string: text,
-			attributes: [
-				.font: font,
-				.foregroundColor: color,
-				.paragraphStyle: paragraphStyle,
-			]
-		)
-		let layer = CATextLayer()
-		layer.contentsScale = backingScaleProvider()
-		layer.string = attributedString
-		layer.alignmentMode = .left
-		layer.frame = frame
-		layer.isWrapped = true
-		layer.truncationMode = .none
-		return layer
 	}
 
 	private func clearRollAnimation() {
@@ -761,21 +590,4 @@ final class LiveHudColorRollCoordinator {
 		hudHexRollLayer.isHidden = true
 	}
 
-	private func applyText(
-		_ layer: CATextLayer,
-		text: String,
-		font: NSFont,
-		color: NSColor,
-		frame: CGRect,
-		alignment: CATextLayerAlignmentMode
-	) {
-		layer.contentsScale = backingScaleProvider()
-		layer.string = text
-		layer.font = font
-		layer.fontSize = font.pointSize
-		layer.foregroundColor = color.cgColor
-		layer.alignmentMode = alignment
-		layer.frame = frame
-		layer.isWrapped = false
-	}
 }
