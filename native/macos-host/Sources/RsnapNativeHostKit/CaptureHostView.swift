@@ -74,9 +74,7 @@ final class CaptureHostView: NSView {
 	private var lastCursorPresentation: CaptureHostCursorPresentation?
 	private var lastAppliedCursorPresentation: CaptureHostCursorPresentation?
 	private var livePrimaryInteraction = CaptureHostLivePrimaryInteractionState()
-	private var liveMouseUpMonitor: Any?
-	private var liveMouseReleaseWatchdog: DispatchWorkItem?
-	private var frozenMouseReleaseWatchdog: DispatchWorkItem?
+	private let mouseReleaseRecovery = CaptureHostMouseReleaseRecovery()
 	private var livePointerPreviewGlobal: CGPoint?
 	private var livePointerPreviewInputUptime: TimeInterval?
 	private var livePointerPreviewInputSequence: UInt64 = 0
@@ -956,7 +954,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func isPrimaryMouseButtonPressed() -> Bool {
-		(NSEvent.pressedMouseButtons & 1) == 1
+		mouseReleaseRecovery.isPrimaryMouseButtonPressed
 	}
 
 	func clearLivePrimaryInteractionState(rendersImmediately: Bool) {
@@ -969,20 +967,13 @@ final class CaptureHostView: NSView {
 	}
 
 	private func installLiveMouseUpMonitor() {
-		removeLiveMouseUpMonitor()
-		liveMouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) {
-			[weak self] event in
+		mouseReleaseRecovery.installLiveMouseUpMonitor { [weak self] event in
 			self?.completeLivePrimaryInteractionFromMouseUp(event)
-			return event
 		}
 	}
 
 	private func removeLiveMouseUpMonitor() {
-		cancelLiveMouseReleaseWatchdog()
-		if let liveMouseUpMonitor {
-			NSEvent.removeMonitor(liveMouseUpMonitor)
-			self.liveMouseUpMonitor = nil
-		}
+		mouseReleaseRecovery.removeLiveMouseUpMonitor()
 	}
 
 	private func completeLivePrimaryInteractionFromMouseUp(_ event: NSEvent) {
@@ -1014,65 +1005,39 @@ final class CaptureHostView: NSView {
 	}
 
 	private func installLiveMouseReleaseWatchdog() {
-		cancelLiveMouseReleaseWatchdog()
-		scheduleLiveMouseReleaseWatchdog()
-	}
-
-	private func scheduleLiveMouseReleaseWatchdog() {
-		let workItem = DispatchWorkItem { [weak self] in
-			self?.pollLiveMouseReleaseWatchdog()
+		mouseReleaseRecovery.installLiveMouseReleaseWatchdog { [weak self] in
+			self?.pollLiveMouseReleaseWatchdog() ?? false
 		}
-		liveMouseReleaseWatchdog = workItem
-		DispatchQueue.main.asyncAfter(
-			deadline: .now()
-				+ NativeHostDisplayRefresh.frameInterval(
-					forTargetFramesPerSecond: NativeHostDisplayRefresh.maximumTargetFramesPerSecond),
-			execute: workItem
-		)
 	}
 
-	private func pollLiveMouseReleaseWatchdog() {
-		liveMouseReleaseWatchdog = nil
+	private func pollLiveMouseReleaseWatchdog() -> Bool {
 		guard
 			scene.mode == .live,
 			livePrimaryInteraction.canCompleteInteraction
 		else {
-			return
+			return false
 		}
 		if isPrimaryMouseButtonPressed() == false {
 			let point = NSEvent.mouseLocation
 			logLivePrimaryInputEvent("capture.live_primary_release_watchdog", point: point)
 			completeLivePrimaryInteractionFromSystemMouseUp(at: point, source: "watchdog")
-			return
+			return false
 		}
-		scheduleLiveMouseReleaseWatchdog()
+		return true
 	}
 
 	private func installFrozenMouseReleaseWatchdog() {
-		cancelFrozenMouseReleaseWatchdog()
-		scheduleFrozenMouseReleaseWatchdog()
-	}
-
-	private func scheduleFrozenMouseReleaseWatchdog() {
-		let workItem = DispatchWorkItem { [weak self] in
-			self?.pollFrozenMouseReleaseWatchdog()
+		mouseReleaseRecovery.installFrozenMouseReleaseWatchdog { [weak self] in
+			self?.pollFrozenMouseReleaseWatchdog() ?? false
 		}
-		frozenMouseReleaseWatchdog = workItem
-		DispatchQueue.main.asyncAfter(
-			deadline: .now()
-				+ NativeHostDisplayRefresh.frameInterval(
-					forTargetFramesPerSecond: NativeHostDisplayRefresh.maximumTargetFramesPerSecond),
-			execute: workItem
-		)
 	}
 
-	private func pollFrozenMouseReleaseWatchdog() {
-		frozenMouseReleaseWatchdog = nil
+	private func pollFrozenMouseReleaseWatchdog() -> Bool {
 		guard
 			scene.mode == .frozen,
 			controller?.hasFrozenOverlayActiveInteraction == true
 		else {
-			return
+			return false
 		}
 		if isPrimaryMouseButtonPressed() == false {
 			let point = currentGlobalMousePoint() ?? NSEvent.mouseLocation
@@ -1083,9 +1048,9 @@ final class CaptureHostView: NSView {
 			)
 			controller?.completeFrozenInteraction(at: point)
 			syncVisibleCursor()
-			return
+			return false
 		}
-		scheduleFrozenMouseReleaseWatchdog()
+		return true
 	}
 
 	private func logLivePrimaryInputEvent(
@@ -1102,13 +1067,11 @@ final class CaptureHostView: NSView {
 	}
 
 	private func cancelLiveMouseReleaseWatchdog() {
-		liveMouseReleaseWatchdog?.cancel()
-		liveMouseReleaseWatchdog = nil
+		mouseReleaseRecovery.cancelLiveMouseReleaseWatchdog()
 	}
 
 	private func cancelFrozenMouseReleaseWatchdog() {
-		frozenMouseReleaseWatchdog?.cancel()
-		frozenMouseReleaseWatchdog = nil
+		mouseReleaseRecovery.cancelFrozenMouseReleaseWatchdog()
 	}
 
 	private func cancelQueuedPointerDispatch() {
