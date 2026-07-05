@@ -253,7 +253,8 @@ Current reset posture for the scroll-capture slice:
 Current reset posture for the boundary slice:
 
 - durable geometry and scene protocol types now belong in `rsnap-capture-core`
-- native-host ABI entry points now belong in `rsnap-host-ffi`
+- native-host ABI entry points now belong in `rsnap-host-ffi`; its Rust ABI payload definitions are
+  grouped by owner under `src/abi/` while preserving the crate-level C ABI export surface
 - final-byte and performance-sensitive image algorithms should move behind Rust ABI entry points as
   reusable cross-platform core work, while Swift stays limited to OS acquisition, presentation, and
   host-side effects
