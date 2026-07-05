@@ -213,7 +213,8 @@ The main host-kit files are split by responsibility:
   completion queueing, pending-frame evidence, and deferred classic toolbar glass
 - `CaptureHostScrollToolbarBackdropState.swift`: scroll toolbar backdrop capture generation,
   seed-patch cache, active frame, refresh cadence, and change-count state
-- `CaptureHostView.swift`: AppKit view orchestration, hit testing, and native pointer/key routing
+- `CaptureHostView.swift`: AppKit view orchestration, hit testing, and frozen presentation
+  rendering
 - `CaptureHostMaterialViewCoordinator.swift`: Liquid Glass/material subview ownership, classic glass
   patch resolution, and scroll-toolbar backdrop refresh/capture scheduling
 - `CaptureHostGlassPatchResolver.swift`: classic glass patch cache lookup, frozen display crop
@@ -245,6 +246,8 @@ The main host-kit files are split by responsibility:
   release-watchdog scheduling for AppKit interactions whose mouse-up event can be missed
 - `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
   with per-track throttling state, and AppKit-to-controller pointer delivery
+- `CaptureHostView+InputRouting.swift`: capture-host AppKit mouse, wheel, key, cursor, toolbar
+  shortcut, and pointer-dispatch routing into the session controller
 - `CaptureHostView+LivePrimaryInteraction.swift`: capture-host live primary interaction release
   recovery, pointer-preview mutation, mouse-up monitor wiring, and release-watchdog orchestration
 - `CaptureHostView+LivePreview.swift`: capture-host live preview snapshots, HUD/loupe placement,
