@@ -462,7 +462,7 @@ final class CaptureHostMaterialViewCoordinator {
 						&& liveSignature == capture.previousSignature)
 				let fallbackPatch =
 					liveWouldRemainStatic && capture.fallbackPermitted
-					? CaptureOverlayController.captureImageBelowOverlay(
+					? CaptureOverlayImageSampler.captureBelowOverlay(
 						in: globalFrame,
 						source: fallbackSource
 					) : nil

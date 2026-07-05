@@ -157,7 +157,7 @@ enum NativeScrollCaptureObservationPipeline {
 	) {
 		guard
 			let fallbackRequest,
-			let image = CaptureOverlayController.captureImageBelowOverlay(
+			let image = CaptureOverlayImageSampler.captureBelowOverlay(
 				in: fallbackRequest.rect,
 				source: fallbackRequest.source
 			),
