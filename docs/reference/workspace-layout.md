@@ -115,7 +115,8 @@ Key paths:
   runtime/rendering support modules
 - `packages/rsnap-overlay/src/overlay/session_state.rs`: shared transitional overlay session
   state; frozen capture/export lifecycle state lives under
-  `overlay/session_state/frozen_capture.rs`
+  `overlay/session_state/frozen_capture.rs`, and scroll-capture session state lives under
+  `overlay/session_state/scroll_capture.rs`
 - `packages/rsnap-overlay/src/overlay/rendering.rs`: overlay window renderer orchestration; shared
   selection geometry/cache structs live under `overlay/rendering/selection_geometry.rs`, and
   renderer phase timing telemetry lives under `overlay/rendering/timing.rs`
