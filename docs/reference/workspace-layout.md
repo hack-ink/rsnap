@@ -105,6 +105,8 @@ Key paths:
   capture
 - `packages/rsnap-overlay/src/scroll_capture/downward_resolution.rs`: downward viewport candidate
   scoring and resolution helpers for session-owned stitching decisions
+- `packages/rsnap-overlay/src/overlay/trace_recording.rs`: scroll-capture live-trace recorder and
+  loader; its serializable manifest and entry schema lives under `overlay/trace_recording/model.rs`
 
 ### `packages/rsnap-capture-core/`
 

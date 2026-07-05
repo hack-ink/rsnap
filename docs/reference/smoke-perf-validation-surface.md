@@ -10,6 +10,7 @@ the owner for a behavior.
 Sources: `scripts/smoke/`; `scripts/perf/`; `packages/rsnap-overlay/src/scroll_capture/tests.rs`;
 `packages/rsnap-overlay/src/overlay/tests/worker_tick_runtime.rs`;
 `packages/rsnap-overlay/src/overlay/tests/worker_observation_runtime.rs`;
+`packages/rsnap-overlay/src/overlay/trace_recording.rs`;
 `packages/rsnap-overlay/src/overlay/replay_support.rs`; `packages/rsnap-overlay/benches/scroll_capture.rs`
 
 Depends on: `docs/runbook/performance-validation.md`; `docs/spec/performance.md`
@@ -46,7 +47,8 @@ release-scope readiness claim for broader target apps.
 | `scripts/perf/local.sh` | Script entrypoint | deterministic benches | Runs the committed Criterion smoke-sized benchmark sweep. |
 | `scripts/perf/self-check-macos.sh` | Script entrypoint | perf aggregation | Runs local deterministic benches plus macOS smoke readiness. |
 | `scripts/perf/macos.sh` | Script entrypoint | perf aggregation | Runs local deterministic benches, the HUD-follow perf smoke, and the core native visual contract. |
-| `packages/rsnap-overlay/src/overlay/replay_support.rs` tests | Deterministic replay / bench | replay harness | Trace round-trip, replay mode selection, and summary classification. |
+| `packages/rsnap-overlay/src/overlay/trace_recording.rs` tests | Deterministic replay / bench | trace recorder | Trace manifest/schema round-trip, final artifact persistence, and repeated-frame path reuse. |
+| `packages/rsnap-overlay/src/overlay/replay_support.rs` tests | Deterministic replay / bench | replay harness | Replay mode selection and summary classification from recorded trace inputs. |
 | `packages/rsnap-overlay/benches/scroll_capture.rs` | Deterministic replay / bench | hot-path perf | Stable fingerprint, overlap-match, and one-step session commit baselines. |
 | `packages/rsnap-overlay/src/overlay/tests/worker_tick_runtime.rs` | Overlay runtime integration | overlay runtime | Request issuance, retry timing, backoff, and fresh-input worker scheduling. |
 | `packages/rsnap-overlay/src/overlay/tests/worker_observation_runtime.rs` | Overlay runtime integration | overlay runtime | Latched, stale, and superseded worker observation context handling. |
