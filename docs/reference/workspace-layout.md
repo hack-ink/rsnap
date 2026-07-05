@@ -217,10 +217,12 @@ The main host-kit files are split by responsibility:
   completion queueing, pending-frame evidence, and deferred classic toolbar glass
 - `CaptureHostScrollToolbarBackdropState.swift`: scroll toolbar backdrop capture generation,
   seed-patch cache, active frame, refresh cadence, and change-count state
+- `CaptureHostScrollToolbarBackdropWorker.swift`: scroll toolbar backdrop live-frame freshness,
+  signature hashing, fallback capture selection, and capture result shaping
 - `CaptureHostView.swift`: AppKit view orchestration, hit testing, and frozen presentation
   rendering
 - `CaptureHostMaterialViewCoordinator.swift`: Liquid Glass/material subview ownership, classic glass
-  patch resolution, and scroll-toolbar backdrop refresh/capture scheduling
+  patch resolution, and scroll-toolbar backdrop refresh scheduling plus view installation
 - `CaptureHostGlassPatchResolver.swift`: classic glass patch cache lookup, frozen display crop
   extraction, and CoreImage blur/tint adaptation for capture-host HUD, loupe, and toolbar surfaces
 - `FrozenPreparedExportStore.swift`: frozen export render requests, prepared export cache keys,
