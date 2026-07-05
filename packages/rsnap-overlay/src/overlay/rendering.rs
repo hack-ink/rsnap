@@ -2,6 +2,8 @@ mod affordances;
 mod hud_rendering;
 mod hud_surface;
 mod scroll_preview_window;
+mod selection_geometry;
+mod timing;
 mod window_surface;
 
 #[cfg(test)]
@@ -10,6 +12,14 @@ pub(super) use self::affordances::size_badge::{
 	SELECTION_SIZE_BADGE_SCREEN_MARGIN_PX,
 };
 pub(super) use self::{hud_surface::HudPillGeometry, scroll_preview_window::ScrollPreviewWindow};
+pub(super) use self::{
+	selection_geometry::{
+		SelectionDashedBorderCache, SelectionDashedBorderCacheKey, SelectionDashedBorderMetrics,
+		SelectionFlowGeometryCache, SelectionFlowGeometryCacheKey, SelectionSizeBadgeLayout,
+		SelectionSizeBadgePadding, SelectionSizeBadgeTarget,
+	},
+	timing::WindowRendererPhaseTimings,
+};
 
 use egui::Context;
 use egui::Modifiers;
@@ -52,93 +62,6 @@ pub(super) struct FrozenToolbarButtonStyle {
 pub(super) struct ScrollPreviewView {
 	pub(super) paused: bool,
 	pub(super) theme: HudTheme,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct SelectionFlowGeometryCacheKey {
-	rect_min_x_bits: u32,
-	rect_min_y_bits: u32,
-	rect_max_x_bits: u32,
-	rect_max_y_bits: u32,
-	corner_radius_bits: u32,
-	seam_offset_bits: u32,
-	sample_count: usize,
-}
-impl SelectionFlowGeometryCacheKey {
-	const fn new(rect: Rect, corner_radius: f32, seam_offset: f32, sample_count: usize) -> Self {
-		Self {
-			rect_min_x_bits: rect.min.x.to_bits(),
-			rect_min_y_bits: rect.min.y.to_bits(),
-			rect_max_x_bits: rect.max.x.to_bits(),
-			rect_max_y_bits: rect.max.y.to_bits(),
-			corner_radius_bits: corner_radius.to_bits(),
-			seam_offset_bits: seam_offset.to_bits(),
-			sample_count,
-		}
-	}
-}
-
-#[derive(Debug, Default)]
-pub(super) struct SelectionFlowGeometryCache {
-	key: Option<SelectionFlowGeometryCacheKey>,
-	samples: Vec<(Pos2, f32)>,
-	normals: Vec<Vec2>,
-}
-impl SelectionFlowGeometryCache {
-	#[cfg(test)]
-	pub(super) fn is_empty(&self) -> bool {
-		self.key.is_none() && self.samples.is_empty() && self.normals.is_empty()
-	}
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct SelectionDashedBorderCacheKey {
-	rect_min_x_bits: u32,
-	rect_min_y_bits: u32,
-	rect_max_x_bits: u32,
-	rect_max_y_bits: u32,
-	dash_length_bits: u32,
-	gap_length_bits: u32,
-	corner_keepout_bits: u32,
-}
-impl SelectionDashedBorderCacheKey {
-	const fn new(rect: Rect, dash_length: f32, gap_length: f32, corner_keepout: f32) -> Self {
-		Self {
-			rect_min_x_bits: rect.min.x.to_bits(),
-			rect_min_y_bits: rect.min.y.to_bits(),
-			rect_max_x_bits: rect.max.x.to_bits(),
-			rect_max_y_bits: rect.max.y.to_bits(),
-			dash_length_bits: dash_length.to_bits(),
-			gap_length_bits: gap_length.to_bits(),
-			corner_keepout_bits: corner_keepout.to_bits(),
-		}
-	}
-}
-
-#[derive(Debug, Default)]
-pub(super) struct SelectionDashedBorderCache {
-	pub(super) key: Option<SelectionDashedBorderCacheKey>,
-	pub(super) segments: Vec<[Pos2; 2]>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct SelectionDashedBorderMetrics {
-	pub(super) stroke_width: f32,
-	pub(super) dash_length: f32,
-	pub(super) gap_length: f32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct SelectionSizeBadgeLayout {
-	pub(super) text_size: Vec2,
-	pub(super) badge_size: Vec2,
-	padding: SelectionSizeBadgePadding,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct SelectionSizeBadgeTarget {
-	pub(super) rect: Rect,
-	pub(super) size_points: RectPoints,
 }
 
 pub(super) struct HudOverlayWindow {
@@ -885,128 +808,6 @@ impl WindowRenderer {
 					state.monitor == Some(monitor) && state.frozen_display_surface_image().is_some()
 				},
 			}
-	}
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct SelectionSizeBadgePadding {
-	left: f32,
-	right: f32,
-	top: f32,
-	bottom: f32,
-}
-
-#[derive(Debug, Default)]
-struct WindowRendererPhaseTimings {
-	prepare_input: Duration,
-	sync_hud_bg: Duration,
-	run_egui: Duration,
-	update_hud_blur_uniform: Duration,
-	sync_egui_textures: Duration,
-	tessellate: Duration,
-	acquire_frame: Duration,
-	render_frame: Duration,
-	total: Duration,
-}
-impl WindowRendererPhaseTimings {
-	fn trace(
-		&self,
-		path: WindowRendererPath,
-		window_id: WindowId,
-		monitor_id: u32,
-		mode: OverlayMode,
-		toolbar_active: bool,
-		paint_jobs: usize,
-	) {
-		tracing::trace!(
-			op = "overlay.window_renderer_phase_timing",
-			path = path.as_str(),
-			window_id = ?window_id,
-			monitor_id,
-			mode = ?mode,
-			toolbar_active,
-			paint_jobs,
-			total_us = self.total.as_micros(),
-			prepare_input_us = self.prepare_input.as_micros(),
-			sync_hud_bg_us = self.sync_hud_bg.as_micros(),
-			run_egui_us = self.run_egui.as_micros(),
-			update_hud_blur_uniform_us = self.update_hud_blur_uniform.as_micros(),
-			sync_egui_textures_us = self.sync_egui_textures.as_micros(),
-			tessellate_us = self.tessellate.as_micros(),
-			acquire_frame_us = self.acquire_frame.as_micros(),
-			render_frame_us = self.render_frame.as_micros(),
-			"Overlay window renderer phase timing."
-		);
-	}
-
-	fn warn_if_substeps_slow(
-		&self,
-		slow_op_logger: &mut SlowOperationLogger,
-		path: WindowRendererPath,
-		window_id: WindowId,
-		monitor_id: u32,
-		mode: OverlayMode,
-		paint_jobs: usize,
-	) {
-		let context = || {
-			format!(
-				"path={} window_id={window_id:?} monitor_id={monitor_id} mode={mode:?} paint_jobs={paint_jobs}",
-				path.as_str()
-			)
-		};
-
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.prepare_input",
-			self.prepare_input,
-			&context,
-		);
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.sync_hud_bg",
-			self.sync_hud_bg,
-			&context,
-		);
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.run_egui",
-			self.run_egui,
-			&context,
-		);
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.update_hud_blur_uniform",
-			self.update_hud_blur_uniform,
-			&context,
-		);
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.sync_egui_textures",
-			self.sync_egui_textures,
-			&context,
-		);
-		self.warn_phase_if_slow(
-			slow_op_logger,
-			"overlay.window_renderer.tessellate",
-			self.tessellate,
-			&context,
-		);
-	}
-
-	fn warn_phase_if_slow<F>(
-		&self,
-		slow_op_logger: &mut SlowOperationLogger,
-		op: &'static str,
-		elapsed: Duration,
-		describe: &F,
-	) where
-		F: Fn() -> String,
-	{
-		if elapsed.is_zero() {
-			return;
-		}
-
-		slow_op_logger.warn_if_redraw_substep_slow(op, elapsed, self.total, describe);
 	}
 }
 
