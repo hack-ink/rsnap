@@ -566,8 +566,7 @@ final class CaptureOverlayController {
 	}
 
 	private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
-		(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
-			.uint32Value
+		screen.nativeDisplayID
 	}
 
 	func captureImageBelowOverlay(in rect: CGRect, near point: CGPoint) -> CGImage? {
