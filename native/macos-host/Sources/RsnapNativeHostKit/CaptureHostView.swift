@@ -78,7 +78,6 @@ final class CaptureHostView: NSView {
 	private var livePointerPreviewGlobal: CGPoint?
 	private var livePointerPreviewInputUptime: TimeInterval?
 	private var livePointerPreviewInputSequence: UInt64 = 0
-	private var lastLivePointerEventUptime: TimeInterval?
 	private var liveHighlightedWindowPreview: WindowSnapshot?
 	private var sampleUpdatedLiveChromeRenderInProgress = false
 	private var frozenFirstDisplayHandoff = CaptureHostFrozenFirstDisplayHandoffState()
@@ -102,12 +101,7 @@ final class CaptureHostView: NSView {
 	private var liveRendererInstalled = false
 	private var deferredLiveShutdownWorkItem: DispatchWorkItem?
 	private var loggedLiveRefreshTarget: LiveChromeRefreshTelemetryKey?
-	private let livePointerEventGapMetric = NativeHostTelemetry.distribution(
-		"live_chrome.pointer_event_gap",
-		category: "LiveChromeTelemetry"
-	)
-	private var liveChromeMouseEventCount = 0
-	private var didEmitLiveChromeInputSummary = false
+	private let liveInputTelemetry = CaptureHostLiveInputTelemetry()
 
 	override var acceptsFirstResponder: Bool { true }
 	override var isOpaque: Bool { false }
@@ -174,7 +168,7 @@ final class CaptureHostView: NSView {
 			frozenFirstDisplayHandoff.reset()
 			if previousMode != .live {
 				livePrimaryInteraction.clearHoverChromeSuppression()
-				resetLiveChromeInputTelemetry()
+				liveInputTelemetry.reset()
 				seedLiveChromeSampleCache(from: chrome, point: scene.pointer)
 			}
 			if livePointerPreviewGlobal == nil {
@@ -485,7 +479,7 @@ final class CaptureHostView: NSView {
 			if recoverReleasedLivePrimaryInteractionIfNeeded(at: point) {
 				return
 			}
-			liveChromeMouseEventCount += 1
+			liveInputTelemetry.recordMouseEvent()
 			updateLivePointerPreview(to: point, rendersImmediately: true)
 			return
 		}
@@ -869,12 +863,11 @@ final class CaptureHostView: NSView {
 	}
 
 	private func resetLivePointerPreview() {
-		emitLiveChromeInputSummary(reason: "reset")
-		resetLiveChromeInputTelemetry()
+		finishLivePresentationTelemetry(reason: "reset")
+		liveInputTelemetry.reset()
 		livePointerPreviewGlobal = nil
 		livePointerPreviewInputUptime = nil
 		livePointerPreviewInputSequence = 0
-		lastLivePointerEventUptime = nil
 	}
 
 	func markLivePrimaryInteractionReleased(at point: CGPoint) {
@@ -1086,7 +1079,7 @@ final class CaptureHostView: NSView {
 		guard scene.mode == .live else {
 			return
 		}
-		recordLivePointerEventGap()
+		liveInputTelemetry.recordPointerEvent()
 		let pointerChanged = setLivePointerPreview(to: globalPoint)
 		let hoverTargetChanged = refreshLiveHighlightedWindowPreviewForFastPath(at: globalPoint)
 		if pointerChanged || rendersImmediately || hoverTargetChanged {
@@ -1100,50 +1093,11 @@ final class CaptureHostView: NSView {
 		}
 	}
 
-	private func recordLivePointerEventGap() {
-		let now = ProcessInfo.processInfo.systemUptime
-		if let lastLivePointerEventUptime {
-			let gapMilliseconds = (now - lastLivePointerEventUptime) * 1_000
-			if gapMilliseconds >= 0, gapMilliseconds < 250 {
-				livePointerEventGapMetric.record(gapMilliseconds)
-			}
-		}
-		lastLivePointerEventUptime = now
-	}
-
 	func finishLivePresentationTelemetry(reason: String) {
-		emitLiveChromeInputSummary(reason: reason)
-	}
-
-	private func resetLiveChromeInputTelemetry() {
-		liveChromeMouseEventCount = 0
-		didEmitLiveChromeInputSummary = false
-	}
-
-	private func emitLiveChromeInputSummary(reason: String) {
-		guard didEmitLiveChromeInputSummary == false else {
-			return
-		}
-		let observedMouseEvents = max(
-			liveChromeMouseEventCount,
-			Int(min(livePointerPreviewInputSequence, UInt64(Int.max)))
-		)
-		guard observedMouseEvents > 0 else {
-			return
-		}
-		didEmitLiveChromeInputSummary = true
-		NativeHostTelemetry.liveChromeInputSummary(
-			captureID: controller?.activeTelemetryCaptureID ?? 0,
+		liveInputTelemetry.emitInputSummary(
 			reason: reason,
-			mouseEvents: observedMouseEvents,
-			followTicks: 0,
-			fastMoveAttempts: 0,
-			fastMoveSuccesses: 0,
-			loupeFastMoveAttempts: 0,
-			loupeFastMoveSuccesses: 0,
-			predictedMoves: 0,
-			fallbackRefreshes: 0,
-			immediateRefreshes: 0
+			captureID: controller?.activeTelemetryCaptureID ?? 0,
+			pointerInputSequence: livePointerPreviewInputSequence
 		)
 	}
 
