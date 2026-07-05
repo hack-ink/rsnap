@@ -19,12 +19,6 @@ final class CaptureHostView: NSView {
 		case toolbar
 	}
 
-	private struct GlassPatchCache {
-		let frame: CGRect
-		let capturedAt: TimeInterval
-		let image: CGImage
-	}
-
 	private static let liveChromeLiquidGlassZ: CGFloat = 200
 	private static let frozenToolbarLiquidGlassBackdropZ: CGFloat = 295
 	private static let frozenToolbarLiquidGlassZ: CGFloat = 300
@@ -54,8 +48,6 @@ final class CaptureHostView: NSView {
 	private var toolbarLiquidGlassContentView: FrozenToolbarRenderView?
 	private var frozenToolbarLiquidGlassVisible = false
 	private var frozenToolbarLiquidGlassContentDrawn = false
-	private var lastScrollCaptureToolbarBackdropRefreshUptime: TimeInterval = 0
-	private var lastScrollToolbarBackdropCaptureStartedUptime: TimeInterval = 0
 	private let scrollToolbarBackdropRefreshGapMetric = NativeHostTelemetry.distribution(
 		"scroll_capture.toolbar_backdrop_refresh_gap",
 		category: "Capture",
@@ -75,18 +67,7 @@ final class CaptureHostView: NSView {
 		label: "ink.hack.rsnap.scroll-toolbar-backdrop-capture",
 		qos: .userInitiated
 	)
-	private var scrollToolbarBackdropCaptureInFlight = false
-	private var scrollToolbarBackdropCaptureGeneration: UInt64 = 0
-	private var scrollToolbarBackdropSeedFrame: CGRect?
-	private var scrollToolbarBackdropSeedImage: CGImage?
-	private var scrollToolbarBackdropSeedPatchCache: GlassPatchCache?
-	private var scrollToolbarBackdropLastFrameSequence: UInt64 = 0
-	private var scrollToolbarBackdropLastSignature: UInt64?
-	private var scrollToolbarBackdropChangedCount: UInt64 = 0
-	private var scrollToolbarBackdropFrame: CGRect?
-	private var scrollToolbarBackdropGlobalFrame: CGRect?
-	private var lastScrollToolbarBackdropChangedUptime: TimeInterval = 0
-	private var lastScrollToolbarBackdropFallbackCaptureStartedUptime: TimeInterval = 0
+	private var scrollToolbarBackdropState = CaptureHostScrollToolbarBackdropState()
 	private var trackingAreaRef: NSTrackingArea?
 	private var toolbarHoverState = CaptureHostToolbarHoverState()
 	private var annotationStyleWheelGate = CaptureHostAnnotationStyleWheelGate()
@@ -105,7 +86,7 @@ final class CaptureHostView: NSView {
 	private var frozenFirstDisplayHandoff = CaptureHostFrozenFirstDisplayHandoffState()
 	private var lastLivePreviewSnapshot: LivePreviewSnapshot?
 	private var liveSampleCache = CaptureHostLiveSampleCache()
-	private var glassPatchCache: [GlassSurfaceKind: GlassPatchCache] = [:]
+	private var glassPatchCache: [GlassSurfaceKind: CaptureHostGlassPatchCache] = [:]
 	private lazy var pointerDispatchQueue = CaptureHostPointerDispatchQueue(
 		targetInterval: { [weak self] in
 			guard let self else {
@@ -172,41 +153,14 @@ final class CaptureHostView: NSView {
 			previousChrome.hostLocalFrozenSelecting && !chrome.hostLocalFrozenSelecting
 		if scene.mode != .frozen {
 			frozenFirstDisplayHandoff.reset()
-			scrollToolbarBackdropSeedFrame = nil
-			scrollToolbarBackdropSeedImage = nil
-			scrollToolbarBackdropSeedPatchCache = nil
-			scrollToolbarBackdropLastFrameSequence = 0
-			scrollToolbarBackdropLastSignature = nil
-			scrollToolbarBackdropChangedCount = 0
-			scrollToolbarBackdropFrame = nil
-			scrollToolbarBackdropGlobalFrame = nil
-			lastScrollToolbarBackdropChangedUptime = 0
-			lastScrollToolbarBackdropFallbackCaptureStartedUptime = 0
-			lastScrollCaptureToolbarBackdropRefreshUptime = 0
+			scrollToolbarBackdropState.resetTracking()
 		} else if previousChrome.scrollMinimapPreview == nil, chrome.scrollMinimapPreview != nil {
-			scrollToolbarBackdropSeedFrame = previousChrome.frozenDisplayFrame
-			scrollToolbarBackdropSeedImage = previousChrome.frozenDisplayImage
-			scrollToolbarBackdropSeedPatchCache = nil
-			scrollToolbarBackdropLastFrameSequence = 0
-			scrollToolbarBackdropLastSignature = nil
-			scrollToolbarBackdropChangedCount = 0
-			scrollToolbarBackdropFrame = nil
-			scrollToolbarBackdropGlobalFrame = nil
-			lastScrollToolbarBackdropChangedUptime = 0
-			lastScrollToolbarBackdropFallbackCaptureStartedUptime = 0
-			lastScrollCaptureToolbarBackdropRefreshUptime = 0
+			scrollToolbarBackdropState.resetTracking(
+				seedFrame: previousChrome.frozenDisplayFrame,
+				seedImage: previousChrome.frozenDisplayImage
+			)
 		} else if previousChrome.scrollMinimapPreview != nil, chrome.scrollMinimapPreview == nil {
-			scrollToolbarBackdropSeedFrame = nil
-			scrollToolbarBackdropSeedImage = nil
-			scrollToolbarBackdropSeedPatchCache = nil
-			scrollToolbarBackdropLastFrameSequence = 0
-			scrollToolbarBackdropLastSignature = nil
-			scrollToolbarBackdropChangedCount = 0
-			scrollToolbarBackdropFrame = nil
-			scrollToolbarBackdropGlobalFrame = nil
-			lastScrollToolbarBackdropChangedUptime = 0
-			lastScrollToolbarBackdropFallbackCaptureStartedUptime = 0
-			lastScrollCaptureToolbarBackdropRefreshUptime = 0
+			scrollToolbarBackdropState.resetTracking()
 		}
 		self.scene = scene
 		self.chrome = chrome
@@ -2592,7 +2546,11 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 
-		glassPatchCache[surfaceKind] = GlassPatchCache(frame: frame, capturedAt: now, image: image)
+		glassPatchCache[surfaceKind] = CaptureHostGlassPatchCache(
+			frame: frame,
+			capturedAt: now,
+			image: image
+		)
 		return image
 	}
 
@@ -2625,24 +2583,19 @@ final class CaptureHostView: NSView {
 	}
 
 	private func scrollToolbarBackdropSeedPatch(in globalFrame: CGRect) -> CGImage? {
-		if let cached = scrollToolbarBackdropSeedPatchCache,
-			abs(cached.frame.minX - globalFrame.minX) < 1,
-			abs(cached.frame.minY - globalFrame.minY) < 1,
-			abs(cached.frame.width - globalFrame.width) < 1,
-			abs(cached.frame.height - globalFrame.height) < 1
-		{
-			return cached.image
+		if let cached = scrollToolbarBackdropState.cachedSeedPatch(matching: globalFrame) {
+			return cached
 		}
 		guard
 			let image = frozenDisplayPatch(
 				in: globalFrame,
-				displayFrame: scrollToolbarBackdropSeedFrame,
-				image: scrollToolbarBackdropSeedImage
+				displayFrame: scrollToolbarBackdropState.seedFrame,
+				image: scrollToolbarBackdropState.seedImage
 			)
 		else {
 			return nil
 		}
-		scrollToolbarBackdropSeedPatchCache = GlassPatchCache(
+		scrollToolbarBackdropState.storeSeedPatch(
 			frame: globalFrame,
 			capturedAt: ProcessInfo.processInfo.systemUptime,
 			image: image
@@ -2913,15 +2866,12 @@ final class CaptureHostView: NSView {
 		guard chrome.scrollMinimapPreview != nil,
 			let globalFrame = globalRect(from: toolbarFrame)
 		else {
-			lastScrollToolbarBackdropCaptureStartedUptime = 0
-			scrollToolbarBackdropFrame = nil
-			scrollToolbarBackdropGlobalFrame = nil
+			scrollToolbarBackdropState.clearActiveFrame()
 			toolbarLiquidGlassBackdropView?.isHidden = true
 			toolbarLiquidGlassBackdropView?.image = nil
 			return
 		}
-		scrollToolbarBackdropFrame = toolbarFrame
-		scrollToolbarBackdropGlobalFrame = globalFrame
+		scrollToolbarBackdropState.updateActiveFrame(toolbarFrame, globalFrame: globalFrame)
 		let existingFrameMatches = toolbarLiquidGlassBackdropView?.frame == toolbarFrame
 		let existingHasImage = toolbarLiquidGlassBackdropView?.image != nil
 		if existingHasImage {
@@ -2954,50 +2904,39 @@ final class CaptureHostView: NSView {
 		toolbarFrame: CGRect,
 		globalFrame: CGRect
 	) {
-		guard scrollToolbarBackdropCaptureInFlight == false,
-			let scrollCaptureState = controller?.scrollCaptureState,
+		guard let scrollCaptureState = controller?.scrollCaptureState,
 			let liveFrameStream = controller?.liveFrameStream
 		else {
 			return
 		}
 		let now = ProcessInfo.processInfo.systemUptime
 		guard
-			lastScrollToolbarBackdropCaptureStartedUptime == 0
-				|| now - lastScrollToolbarBackdropCaptureStartedUptime
-					>= Self.scrollToolbarBackdropCaptureMinimumInterval
+			let capture = scrollToolbarBackdropState.beginCapture(
+				now: now,
+				minimumInterval: Self.scrollToolbarBackdropCaptureMinimumInterval,
+				fallbackMinimumInterval: Self.scrollToolbarBackdropFallbackMinimumInterval
+			)
 		else {
 			return
 		}
-		lastScrollToolbarBackdropCaptureStartedUptime = now
-		let fallbackPermitted =
-			lastScrollToolbarBackdropFallbackCaptureStartedUptime == 0
-			|| now - lastScrollToolbarBackdropFallbackCaptureStartedUptime
-				>= Self.scrollToolbarBackdropFallbackMinimumInterval
-		if fallbackPermitted {
-			lastScrollToolbarBackdropFallbackCaptureStartedUptime = now
-		}
-		scrollToolbarBackdropCaptureInFlight = true
-		scrollToolbarBackdropCaptureGeneration &+= 1
-		let generation = scrollToolbarBackdropCaptureGeneration
-		let afterFrameSequence = scrollToolbarBackdropLastFrameSequence
-		let previousSignature = scrollToolbarBackdropLastSignature
 		let fallbackSource = scrollCaptureState.captureSource
 		let maximumLiveFrameAgeMicroseconds = UInt64(
 			CaptureSessionController.scrollCaptureActiveInputLiveFrameMaxAge * 1_000_000
 		)
 		DispatchQueue.main.async { [weak self] in
-			guard let self, self.scrollToolbarBackdropCaptureGeneration == generation else {
-				self?.scrollToolbarBackdropCaptureInFlight = false
+			guard let self, self.scrollToolbarBackdropState.captureGeneration == capture.generation
+			else {
+				self?.scrollToolbarBackdropState.clearInFlightForAbandonedCapture()
 				return
 			}
 			self.scrollToolbarBackdropCaptureQueue.async {
 				[
-					toolbarFrame, globalFrame, liveFrameStream, afterFrameSequence, fallbackSource,
-					maximumLiveFrameAgeMicroseconds, previousSignature, fallbackPermitted,
+					toolbarFrame, globalFrame, liveFrameStream, fallbackSource,
+					maximumLiveFrameAgeMicroseconds, capture,
 				] in
 				let rawFrame = liveFrameStream.nextRegionFrame(
 					in: globalFrame,
-					afterFrameSequence: afterFrameSequence,
+					afterFrameSequence: capture.afterFrameSequence,
 					waitForFresh: false
 				)
 				let nonblockingFrame: RGBARegionFrameSnapshot? =
@@ -3024,9 +2963,10 @@ final class CaptureHostView: NSView {
 				}
 				let liveWouldRemainStatic =
 					liveSignature == nil
-					|| (previousSignature != nil && liveSignature == previousSignature)
+					|| (capture.previousSignature != nil
+						&& liveSignature == capture.previousSignature)
 				let fallbackPatch =
-					liveWouldRemainStatic && fallbackPermitted
+					liveWouldRemainStatic && capture.fallbackPermitted
 					? CaptureOverlayController.captureImageBelowOverlay(
 						in: globalFrame,
 						source: fallbackSource
@@ -3039,7 +2979,8 @@ final class CaptureHostView: NSView {
 				}
 				let shouldUseFallback =
 					fallbackPatch != nil
-					&& (previousSignature == nil || fallbackSignature != previousSignature)
+					&& (capture.previousSignature == nil
+						|| fallbackSignature != capture.previousSignature)
 				let patch = shouldUseFallback ? fallbackPatch : (livePatch ?? fallbackPatch)
 				let signature =
 					shouldUseFallback ? fallbackSignature : (liveSignature ?? fallbackSignature)
@@ -3047,7 +2988,7 @@ final class CaptureHostView: NSView {
 					self?.finishScrollToolbarBackdropCapture(
 						patch,
 						toolbarFrame: toolbarFrame,
-						generation: generation,
+						generation: capture.generation,
 						frameSequence: frameSequence > 0 ? frameSequence : nil,
 						signature: signature
 					)
@@ -3070,15 +3011,13 @@ final class CaptureHostView: NSView {
 		frameSequence: UInt64?,
 		signature: UInt64?
 	) {
-		guard scrollToolbarBackdropCaptureGeneration == generation else {
-			return
-		}
-		scrollToolbarBackdropCaptureInFlight = false
-		if let frameSequence {
-			scrollToolbarBackdropLastFrameSequence = max(
-				scrollToolbarBackdropLastFrameSequence,
-				frameSequence
+		guard
+			scrollToolbarBackdropState.finishCapture(
+				generation: generation,
+				frameSequence: frameSequence
 			)
+		else {
+			return
 		}
 		guard
 			scene.mode == .frozen,
@@ -3101,31 +3040,22 @@ final class CaptureHostView: NSView {
 	}
 
 	private func recordScrollToolbarBackdropChangeIfNeeded(signature: UInt64?) {
-		guard let signature else {
-			return
-		}
-		let previousSignature = scrollToolbarBackdropLastSignature
-		scrollToolbarBackdropLastSignature = signature
-		guard previousSignature != signature else {
-			return
-		}
 		let now = ProcessInfo.processInfo.systemUptime
-		scrollToolbarBackdropChangedCount &+= 1
-		if lastScrollToolbarBackdropChangedUptime > 0 {
-			let gapMilliseconds = (now - lastScrollToolbarBackdropChangedUptime) * 1_000
+		guard let change = scrollToolbarBackdropState.recordChange(signature: signature, now: now)
+		else {
+			return
+		}
+		if let gapMilliseconds = change.gapMilliseconds {
 			scrollToolbarBackdropChangedGapMetric.record(gapMilliseconds)
-			if scrollToolbarBackdropChangedCount == 2
-				|| scrollToolbarBackdropChangedCount.isMultiple(of: 30)
-			{
+			if change.count == 2 || change.count.isMultiple(of: 30) {
 				NativeHostTelemetry.captureEvent(
 					"capture.scroll_toolbar_backdrop_changed",
 					captureID: controller?.activeTelemetryCaptureID ?? 0,
 					detail:
-						"count=\(scrollToolbarBackdropChangedCount),gapMs=\(String(format: "%.2f", gapMilliseconds))"
+						"count=\(change.count),gapMs=\(String(format: "%.2f", gapMilliseconds))"
 				)
 			}
 		}
-		lastScrollToolbarBackdropChangedUptime = now
 	}
 
 	nonisolated private static func scrollToolbarBackdropSignature(
@@ -3162,19 +3092,18 @@ final class CaptureHostView: NSView {
 		let now = ProcessInfo.processInfo.systemUptime
 		let interval = NativeHostDisplayRefresh.frameInterval(
 			forTargetFramesPerSecond: currentDisplayTargetFramesPerSecond())
-		guard now - lastScrollCaptureToolbarBackdropRefreshUptime >= interval else {
+		guard let refresh = scrollToolbarBackdropState.beginRefresh(now: now, interval: interval)
+		else {
 			return
 		}
-		if lastScrollCaptureToolbarBackdropRefreshUptime > 0 {
-			scrollToolbarBackdropRefreshGapMetric.record(
-				(now - lastScrollCaptureToolbarBackdropRefreshUptime) * 1_000)
+		if let gapMilliseconds = refresh.gapMilliseconds {
+			scrollToolbarBackdropRefreshGapMetric.record(gapMilliseconds)
 		}
-		lastScrollCaptureToolbarBackdropRefreshUptime = now
 		let refreshStartedAt = now
-		if let scrollToolbarBackdropFrame, let scrollToolbarBackdropGlobalFrame {
+		if let toolbarFrame = refresh.activeFrame, let globalFrame = refresh.activeGlobalFrame {
 			scheduleScrollToolbarBackdropCapture(
-				toolbarFrame: scrollToolbarBackdropFrame,
-				globalFrame: scrollToolbarBackdropGlobalFrame
+				toolbarFrame: toolbarFrame,
+				globalFrame: globalFrame
 			)
 		} else {
 			_ = refreshFrozenToolbarBackdropOnly()
@@ -3306,20 +3235,7 @@ final class CaptureHostView: NSView {
 		let wasVisible = frozenToolbarLiquidGlassVisible
 		frozenToolbarLiquidGlassVisible = false
 		frozenToolbarLiquidGlassContentDrawn = false
-		scrollToolbarBackdropCaptureGeneration &+= 1
-		scrollToolbarBackdropCaptureInFlight = false
-		lastScrollToolbarBackdropCaptureStartedUptime = 0
-		scrollToolbarBackdropSeedFrame = nil
-		scrollToolbarBackdropSeedImage = nil
-		scrollToolbarBackdropSeedPatchCache = nil
-		scrollToolbarBackdropLastFrameSequence = 0
-		scrollToolbarBackdropLastSignature = nil
-		scrollToolbarBackdropChangedCount = 0
-		scrollToolbarBackdropFrame = nil
-		scrollToolbarBackdropGlobalFrame = nil
-		lastScrollToolbarBackdropChangedUptime = 0
-		lastScrollToolbarBackdropFallbackCaptureStartedUptime = 0
-		lastScrollCaptureToolbarBackdropRefreshUptime = 0
+		scrollToolbarBackdropState.resetAndInvalidateCaptures()
 		toolbarLiquidGlassBackdropView?.isHidden = true
 		toolbarLiquidGlassBackdropView?.image = nil
 		toolbarLiquidGlassView?.isHidden = true
