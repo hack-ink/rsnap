@@ -83,8 +83,9 @@ The current native-host Swift split is:
 - `CaptureOverlayWindow.swift`: the AppKit `NSPanel` wrapper that embeds `CaptureHostView` for each
   capture overlay window.
 - `CaptureOverlayController.swift`: AppKit overlay-window set management, focus/first-responder
-  routing, capture-stream preparation, mouse passthrough, and CoreGraphics capture sources needed
-  to sample below native overlay windows.
+  routing, capture-stream preparation, and mouse passthrough.
+- `CaptureOverlayImageSampler.swift`: CoreGraphics below-overlay capture and display-point sample
+  adaptation used by overlay windows, live chrome, and scroll fallback acquisition.
 - `FrozenFrameAuthority.swift`: ScreenCaptureKit frozen-frame stream setup, latch-token
   resolution, self-capture-safe frame gating, and fresh-frame authority decisions.
 - `FrozenFrameStreamOutput.swift`: ScreenCaptureKit stream-output delegate adaptation,
