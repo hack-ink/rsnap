@@ -1,29 +1,29 @@
 mod frozen_capture;
+mod scroll_capture;
 
 pub(super) use self::frozen_capture::{
 	FrozenCaptureSessionState, FrozenCaptureWorkerState, FrozenExportSessionState,
 	WindowFreezeCaptureTarget,
 };
-
+pub(super) use self::scroll_capture::ScrollCaptureState;
 #[cfg(target_os = "macos")]
-use std::collections::VecDeque;
+pub(super) use self::scroll_capture::{
+	InflightScrollCaptureObservation, LiveStreamStaleGrace, MacOSScrollPixelResidual,
+	MacOSScrollWheelEvent, ScrollCaptureLiveFrame,
+};
+
 use std::{
 	collections::HashMap,
 	time::{Duration, Instant},
 };
-
-use image::RgbaImage;
 
 use crate::overlay::runtime_timing::{
 	LIVE_PRESENT_INTERVAL_MIN, REDRAW_SUBSTEP_CONTRIBUTION_FLOOR, SLOW_OP_WARN_INTERVAL,
 };
 use crate::overlay::{
 	Color32, DeviceCursorPointSource, FrozenSelectionInteractionKind, FrozenToolbarTool,
-	GlobalPoint, MonitorRect, MouseScrollDelta, PhysicalPosition, Pos2, RectPoints,
-	ScrollCaptureTraceRecorder, ScrollDirection, ScrollSession, Vec2, WindowId,
+	GlobalPoint, MonitorRect, MouseScrollDelta, PhysicalPosition, Pos2, RectPoints, Vec2, WindowId,
 };
-#[cfg(target_os = "macos")]
-use crate::overlay::{ExternalScrollInputDrainReader, MacLiveFrameStream};
 
 pub(in crate::overlay) const FROZEN_BRUSH_STROKE_WIDTH_POINTS: f32 = 3.5;
 pub(in crate::overlay) const FROZEN_BRUSH_STROKE_WIDTH_MIN_POINTS: f32 = 1.0;
@@ -549,119 +549,6 @@ pub(super) struct FrozenSpotlightDragState {
 	pub(super) active: bool,
 	pub(super) anchor_x: u32,
 	pub(super) anchor_y: u32,
-}
-
-#[derive(Default)]
-pub(super) struct ScrollCaptureState {
-	pub(super) active: bool,
-	pub(super) paused: bool,
-	pub(super) monitor: Option<MonitorRect>,
-	#[cfg(target_os = "macos")]
-	pub(super) capture_rect_points: Option<RectPoints>,
-	pub(super) capture_rect_pixels: Option<RectPoints>,
-	pub(super) input_direction: Option<ScrollDirection>,
-	pub(super) input_direction_at: Option<Instant>,
-	pub(super) input_gesture_active: bool,
-	pub(super) downward_motion_rows_pending: f64,
-	#[cfg(target_os = "macos")]
-	pub(super) overlay_mouse_passthrough_active: bool,
-	#[cfg(target_os = "macos")]
-	pub(super) overlay_mouse_passthrough_persistent: bool,
-	#[cfg(target_os = "macos")]
-	pub(super) overlay_mouse_passthrough_until: Option<Instant>,
-	#[cfg(target_os = "macos")]
-	pub(super) external_scroll_input_drain_reader: Option<ExternalScrollInputDrainReader>,
-	pub(super) last_external_scroll_input_seq: u64,
-	#[cfg(target_os = "macos")]
-	pub(super) pixel_delta_residual: MacOSScrollPixelResidual,
-	#[cfg(target_os = "macos")]
-	pub(super) live_stream: Option<MacLiveFrameStream>,
-	#[cfg(target_os = "macos")]
-	pub(super) live_stream_backlog: VecDeque<ScrollCaptureLiveFrame>,
-	pub(super) last_stream_frame_seq: u64,
-	#[cfg(target_os = "macos")]
-	pub(super) last_stream_frame_fingerprint: Option<Vec<u8>>,
-	#[cfg(target_os = "macos")]
-	pub(super) consecutive_identical_stream_frames: u8,
-	#[cfg(target_os = "macos")]
-	pub(super) last_consumed_stream_frame_captured_at: Option<Instant>,
-	#[cfg(target_os = "macos")]
-	pub(super) last_stream_event_at: Option<Instant>,
-	#[cfg(target_os = "macos")]
-	pub(super) last_stream_poll_at: Option<Instant>,
-	#[cfg(target_os = "macos")]
-	pub(super) last_duplicate_stream_refresh_at: Option<Instant>,
-	pub(super) pending_post_stall_burst_after_seq: Option<u64>,
-	#[cfg(target_os = "macos")]
-	pub(super) live_stream_stale_grace: Option<LiveStreamStaleGrace>,
-	pub(super) next_sample_at: Option<Instant>,
-	pub(super) next_request_id: u64,
-	pub(super) inflight_request_id: Option<u64>,
-	#[cfg(target_os = "macos")]
-	pub(super) inflight_request_observation: Option<InflightScrollCaptureObservation>,
-	#[cfg(all(test, target_os = "macos"))]
-	pub(super) force_worker_sampling_in_tests: bool,
-	pub(super) session: Option<ScrollSession>,
-	pub(super) preview_committed_image: Option<RgbaImage>,
-	pub(super) preview_latest_frame: Option<RgbaImage>,
-	pub(super) preview_display_image: Option<RgbaImage>,
-	pub(super) retained_overlay_preview_image: Option<RgbaImage>,
-	pub(super) retained_overlay_preview_motion_rows_hint: Option<u32>,
-	pub(super) last_overlay_preview_motion_rows_hint: Option<u32>,
-	pub(super) last_overlay_preview_provisional_motion_rows_hint: Option<u32>,
-	pub(super) last_overlay_preview_existing_candidate_height: Option<u32>,
-	pub(super) last_overlay_preview_existing_candidate_motion_rows_hint: Option<u32>,
-	pub(super) last_overlay_preview_ledger_candidate_height: Option<u32>,
-	pub(super) last_overlay_preview_ledger_candidate_motion_rows_hint: Option<u32>,
-	pub(super) last_overlay_preview_retained_candidate_height: Option<u32>,
-	pub(super) last_overlay_preview_retained_candidate_motion_rows_hint: Option<u32>,
-	pub(super) last_overlay_preview_retained_hint_matches_motion_rows: bool,
-	pub(super) last_overlay_preview_fresh_latest_frame_can_drive: bool,
-	pub(super) last_overlay_preview_strong_unresolved_registration: bool,
-	pub(super) last_overlay_preview_latest_frame_present: bool,
-	pub(super) last_overlay_preview_used_provisional: bool,
-	pub(super) trace_recorder: Option<ScrollCaptureTraceRecorder>,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Debug)]
-pub(super) struct ScrollCaptureLiveFrame {
-	pub(super) frame_seq: u64,
-	pub(super) captured_at: Instant,
-	pub(super) image: RgbaImage,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(super) struct InflightScrollCaptureObservation {
-	pub(super) was_observable: bool,
-	pub(super) external_input_seq: u64,
-	pub(super) input_direction: Option<ScrollDirection>,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct LiveStreamStaleGrace {
-	pub(super) external_input_seq: u64,
-	pub(super) remaining_stale_frames: u8,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(super) struct MacOSScrollPixelResidual {
-	pub(super) x: f64,
-	pub(super) y: f64,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct MacOSScrollWheelEvent {
-	pub(super) units: u32,
-	pub(super) normalized_x: f64,
-	pub(super) normalized_y: f64,
-	pub(super) posted_x: i32,
-	pub(super) posted_y: i32,
-	pub(super) residual: MacOSScrollPixelResidual,
 }
 
 #[derive(Clone, Copy, Debug)]
