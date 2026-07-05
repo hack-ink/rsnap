@@ -202,6 +202,8 @@ The main host-kit files are split by responsibility:
   seed-patch cache, active frame, refresh cadence, and change-count state
 - `CaptureHostView.swift`: AppKit view rendering orchestration, hit testing, and native pointer/key
   routing
+- `CaptureHostMaterialViewCoordinator.swift`: Liquid Glass/material subview ownership, classic glass
+  patch resolution, and scroll-toolbar backdrop refresh/capture scheduling
 - `CaptureHostGlassPatchResolver.swift`: classic glass patch cache lookup, frozen display crop
   extraction, and CoreImage blur/tint adaptation for capture-host HUD, loupe, and toolbar surfaces
 - `FrozenPreparedExportStore.swift`: frozen export render requests, prepared export cache keys,
