@@ -192,8 +192,10 @@ The main host-kit files are split by responsibility:
   passthrough management
 - `CaptureOverlayImageSampler.swift`: CoreGraphics below-overlay capture and display-point sample
   adaptation for live chrome, frozen capture effects, and scroll fallback acquisition
-- `FrozenFrameAuthority.swift`: ScreenCaptureKit frozen-frame stream setup, latch-token
-  resolution, self-capture-safe frame gating, and fresh-frame authority decisions
+- `FrozenFrameAuthority.swift`: ScreenCaptureKit frozen-frame stream setup, self-capture-safe
+  stream gating, and lifecycle state
+- `FrozenFrameAuthority+SnapshotResolution.swift`: frozen-frame latch-token resolution, RGB/loupe
+  sampling, self-capture-safe frame gating, and fresh-frame authority decisions
 - `FrozenFrameStreamOutput.swift`: ScreenCaptureKit stream-output delegate adaptation,
   usable-frame filtering, display-time conversion, and frame-record emission into the authority
 - `FrozenFrameContentFilterPlanner.swift`: frozen-frame display target planning, shareable-content
