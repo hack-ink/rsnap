@@ -182,8 +182,10 @@ The main host-kit files are split by responsibility:
   lifecycle, forwarded CGEvent posting, queued forwarded-delta draining, and motion-hint updates
 - `NativeScrollCaptureObservationPipeline.swift`: conversion of ordered native samples and
   fallback frames into Rust scroll observations plus preview export batches
-- `CaptureSessionController+Export.swift`: copy/save host effects, output naming, prepared export
-  scheduling, and capture-image export orchestration
+- `CaptureSessionController+Export.swift`: copy/save host effects, output naming, and
+  capture-image export orchestration
+- `CaptureSessionController+PreparedExport.swift`: frozen export render request construction,
+  prepared export invalidation, scroll/annotation quiet-delay scheduling, and OCR image prewarming
 - `CaptureSessionController+TextRecognition.swift`: Vision OCR request execution and recognized
   text pasteboard publication
 - `CaptureSessionController+Runtime.swift`: shared monitor/window lookup, overlay refresh,
