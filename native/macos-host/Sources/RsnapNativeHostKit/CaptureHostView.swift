@@ -75,9 +75,7 @@ final class CaptureHostView: NSView {
 	private var lastAppliedCursorPresentation: CaptureHostCursorPresentation?
 	private var livePrimaryInteraction = CaptureHostLivePrimaryInteractionState()
 	private let mouseReleaseRecovery = CaptureHostMouseReleaseRecovery()
-	private var livePointerPreviewGlobal: CGPoint?
-	private var livePointerPreviewInputUptime: TimeInterval?
-	private var livePointerPreviewInputSequence: UInt64 = 0
+	private let livePointerPreview = CaptureHostLivePointerPreviewState()
 	private var liveHighlightedWindowPreview: WindowSnapshot?
 	private var sampleUpdatedLiveChromeRenderInProgress = false
 	private var frozenFirstDisplayHandoff = CaptureHostFrozenFirstDisplayHandoffState()
@@ -171,7 +169,7 @@ final class CaptureHostView: NSView {
 				liveInputTelemetry.reset()
 				seedLiveChromeSampleCache(from: chrome, point: scene.pointer)
 			}
-			if livePointerPreviewGlobal == nil {
+			if livePointerPreview.globalPoint == nil {
 				seedLivePointerPreview(scene.pointer, recordsInputLatency: false)
 			}
 			if liveHighlightedWindowPreview == nil {
@@ -810,7 +808,7 @@ final class CaptureHostView: NSView {
 		}
 		guard
 			let globalRect = livePrimaryInteraction.immediateDragSelectionGlobal(
-				current: livePointerPreviewGlobal ?? scene.pointer,
+				current: livePointerPreview.currentPoint(fallback: scene.pointer),
 				in: window.frame
 			)
 		else {
@@ -824,7 +822,7 @@ final class CaptureHostView: NSView {
 	}
 
 	private func localPointer() -> CGPoint? {
-		guard let globalPoint = livePointerPreviewGlobal ?? scene.pointer else {
+		guard let globalPoint = livePointerPreview.currentPoint(fallback: scene.pointer) else {
 			return nil
 		}
 		return localPoint(from: globalPoint)
@@ -838,14 +836,7 @@ final class CaptureHostView: NSView {
 			resetLivePointerPreview()
 			return
 		}
-		livePointerPreviewGlobal = globalPoint
-		if recordsInputLatency {
-			livePointerPreviewInputUptime = ProcessInfo.processInfo.systemUptime
-			livePointerPreviewInputSequence &+= 1
-		} else {
-			livePointerPreviewInputUptime = nil
-			livePointerPreviewInputSequence = 0
-		}
+		livePointerPreview.seed(globalPoint, recordsInputLatency: recordsInputLatency)
 	}
 
 	@discardableResult
@@ -853,21 +844,13 @@ final class CaptureHostView: NSView {
 		to globalPoint: CGPoint,
 		recordsInputLatency: Bool = true
 	) -> Bool {
-		if let current = livePointerPreviewGlobal,
-			hypot(current.x - globalPoint.x, current.y - globalPoint.y) < 0.05
-		{
-			return false
-		}
-		seedLivePointerPreview(globalPoint, recordsInputLatency: recordsInputLatency)
-		return true
+		livePointerPreview.set(to: globalPoint, recordsInputLatency: recordsInputLatency)
 	}
 
 	private func resetLivePointerPreview() {
 		finishLivePresentationTelemetry(reason: "reset")
 		liveInputTelemetry.reset()
-		livePointerPreviewGlobal = nil
-		livePointerPreviewInputUptime = nil
-		livePointerPreviewInputSequence = 0
+		livePointerPreview.reset()
 	}
 
 	func markLivePrimaryInteractionReleased(at point: CGPoint) {
@@ -1097,7 +1080,7 @@ final class CaptureHostView: NSView {
 		liveInputTelemetry.emitInputSummary(
 			reason: reason,
 			captureID: controller?.activeTelemetryCaptureID ?? 0,
-			pointerInputSequence: livePointerPreviewInputSequence
+			pointerInputSequence: livePointerPreview.inputSequence
 		)
 	}
 
@@ -1475,7 +1458,7 @@ final class CaptureHostView: NSView {
 			return nil
 		}
 		let rgbSample = liveSampleCache.rgbSample(
-			matching: livePointerPreviewGlobal ?? scene.pointer)?
+			matching: livePointerPreview.currentPoint(fallback: scene.pointer))?
 			.rgb
 		return LivePreviewSnapshot(
 			bounds: bounds,
@@ -1543,7 +1526,7 @@ final class CaptureHostView: NSView {
 
 		if livePrimaryInteraction.completionInFlight == false {
 			let polledPoint = currentGlobalMousePoint() ?? NSEvent.mouseLocation
-			if let currentPreview = livePointerPreviewGlobal {
+			if let currentPreview = livePointerPreview.globalPoint {
 				if hypot(currentPreview.x - polledPoint.x, currentPreview.y - polledPoint.y)
 					>= 0.5
 				{
@@ -1554,10 +1537,11 @@ final class CaptureHostView: NSView {
 			}
 		}
 
-		refreshLiveHighlightedWindowPreview(at: livePointerPreviewGlobal ?? scene.pointer)
+		refreshLiveHighlightedWindowPreview(
+			at: livePointerPreview.currentPoint(fallback: scene.pointer))
 		updateLivePreviewDemands()
 
-		let point = livePointerPreviewGlobal ?? scene.pointer
+		let point = livePointerPreview.currentPoint(fallback: scene.pointer)
 		let chromeSample = currentLiveChromeSample(at: point)
 		let rgbSample = liveRgbSample(from: chromeSample, at: point)
 		let loupePatch = scene.loupeVisible ? chromeSample?.loupePatch : nil
@@ -1605,7 +1589,7 @@ final class CaptureHostView: NSView {
 			rgbSample: rgbSample,
 			keycapVisible: settings.showAltHintKeycap,
 			inputUptime: sampleUpdatedLiveChromeRenderInProgress
-				? nil : livePointerPreviewInputUptime,
+				? nil : livePointerPreview.inputUptime,
 			loupePatch: loupePatch,
 			glassPatches: [:]
 		)
@@ -1800,7 +1784,7 @@ final class CaptureHostView: NSView {
 				point: nil, settings: settings, includeLoupePatch: false)
 			return
 		}
-		let point = livePointerPreviewGlobal ?? scene.pointer
+		let point = livePointerPreview.currentPoint(fallback: scene.pointer)
 		controller?.updateLivePreviewDemand(
 			point: point,
 			settings: settings,
@@ -1876,7 +1860,7 @@ final class CaptureHostView: NSView {
 
 	private func currentPositionDisplay() -> LivePositionDisplay {
 		let metrics = LiveChromePlacementPlanner.metrics
-		guard let pointer = livePointerPreviewGlobal ?? scene.pointer else {
+		guard let pointer = livePointerPreview.currentPoint(fallback: scene.pointer) else {
 			return LivePositionDisplay(
 				xValueText: "?",
 				yValueText: "?",
