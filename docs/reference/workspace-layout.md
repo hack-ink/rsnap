@@ -243,6 +243,8 @@ The main host-kit files are split by responsibility:
   release-watchdog scheduling for AppKit interactions whose mouse-up event can be missed
 - `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
   with per-track throttling state, and AppKit-to-controller pointer delivery
+- `CaptureHostView+LivePrimaryInteraction.swift`: capture-host live primary interaction release
+  recovery, pointer-preview mutation, mouse-up monitor wiring, and release-watchdog orchestration
 - `LiveOverlayRenderer.swift`: live overlay render orchestration for HUD, loupe, frozen-pending
   preview, and live chrome layers
 - `LiveHudColorRollCoordinator.swift`: live HUD color swatch/hex presentation, pending color roll
