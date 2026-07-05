@@ -1,3 +1,10 @@
+mod frozen_capture;
+
+pub(super) use self::frozen_capture::{
+	FrozenCaptureSessionState, FrozenCaptureWorkerState, FrozenExportSessionState,
+	WindowFreezeCaptureTarget,
+};
+
 #[cfg(target_os = "macos")]
 use std::collections::VecDeque;
 use std::{
@@ -24,49 +31,6 @@ pub(in crate::overlay) const FROZEN_BRUSH_STROKE_WIDTH_MAX_POINTS: f32 = 24.0;
 pub(in crate::overlay) const FROZEN_TEXT_FONT_SIZE_POINTS: f32 = 16.0;
 pub(in crate::overlay) const FROZEN_TEXT_FONT_SIZE_MIN_POINTS: f32 = 12.0;
 pub(in crate::overlay) const FROZEN_TEXT_FONT_SIZE_MAX_POINTS: f32 = 72.0;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct WindowFreezeCaptureTarget {
-	pub(super) monitor: MonitorRect,
-	pub(super) window_id: u32,
-	pub(super) rect: RectPoints,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) enum FrozenCaptureWorkerState {
-	#[default]
-	Idle,
-	Armed,
-	Inflight,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum FrozenExportSessionState {
-	Pending {
-		worker_state: FrozenCaptureWorkerState,
-		window_target: Option<WindowFreezeCaptureTarget>,
-	},
-	Ready,
-	Failed,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) enum FrozenCaptureSessionState {
-	#[default]
-	Inactive,
-	DisplayPending {
-		monitor: MonitorRect,
-		worker_state: FrozenCaptureWorkerState,
-		window_target: Option<WindowFreezeCaptureTarget>,
-	},
-	DisplayFailed {
-		monitor: MonitorRect,
-	},
-	DisplayReady {
-		monitor: MonitorRect,
-		export: FrozenExportSessionState,
-	},
-}
 
 #[derive(Default)]
 pub(super) struct SlowOperationLogger {
