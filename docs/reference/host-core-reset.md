@@ -97,6 +97,8 @@ The current native-host Swift split is:
   handles, and selection-size badge rendering.
 - `CaptureHostFrozenOverlayRenderer.swift`: frozen annotation overlay rendering for mosaic,
   spotlight, pen, arrow, and text overlays.
+- `CaptureHostScrollMinimapRenderer.swift`: frozen scroll-capture minimap presentation over the
+  Rust-owned minimap layout plan and host-provided preview image.
 - `CaptureHostLiveSampleCache.swift`: capture-host live chrome/RGB sample reuse cache and pointer
   sample matching.
 - `CaptureHostLivePrimaryInteractionState.swift`: capture-host live primary drag, release,
@@ -119,14 +121,15 @@ The current native-host Swift split is:
 - `CaptureGeometry.swift`, `CaptureHostAnnotationStyleWheelGate.swift`,
   `CaptureHostToolbarHoverState.swift`, `CaptureHostFrozenFirstDisplayHandoffState.swift`,
   `CaptureHostScrollToolbarBackdropState.swift`, `CaptureHostCursorSupport.swift`,
-  `CaptureHostLiveSampleCache.swift`, `CaptureHostLivePrimaryInteractionState.swift`,
-  `CaptureHostPointerDispatch.swift`, `CaptureHostFrozenImageEffects.swift`,
+  `CaptureHostScrollMinimapRenderer.swift`, `CaptureHostLiveSampleCache.swift`,
+  `CaptureHostLivePrimaryInteractionState.swift`, `CaptureHostPointerDispatch.swift`,
+  `CaptureHostFrozenImageEffects.swift`,
   `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
   boundaries for shared capture geometry, frozen annotation-size wheel gating, frozen toolbar hover
   state, frozen first-display handoff state, scroll toolbar backdrop state, capture-host cursor
-  presentation and NSCursor adaptation, live sample reuse, live primary interaction state, pointer
-  dispatch queue throttling, Rust-backed frozen image effects, live-chrome telemetry identity, and
-  native text measurement.
+  presentation and NSCursor adaptation, frozen minimap presentation, live sample reuse, live
+  primary interaction state, pointer dispatch queue throttling, Rust-backed frozen image effects,
+  live-chrome telemetry identity, and native text measurement.
 - `FrozenCaptureModels.swift`: Swift view-adapter state for Rust-owned frozen overlay editing,
   including conversion from Rust edit snapshots into AppKit draw models.
 - `NativeHostFeedbackSound.swift`: host-side `NSSound` lookup/playback for capture and OCR
