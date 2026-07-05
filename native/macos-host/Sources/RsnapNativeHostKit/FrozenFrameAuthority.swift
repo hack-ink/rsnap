@@ -2,7 +2,6 @@ import AppKit
 import CoreGraphics
 import CoreMedia
 import CoreVideo
-import Darwin
 import Foundation
 import RsnapHostBridge
 import ScreenCaptureKit
@@ -42,14 +41,6 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		LiveRgbSample.maximumDisplayAge * 1_000
 	private static let selfCaptureFilterRetryInterval: TimeInterval = 0.035
 	private static let selfCaptureFilterRetryWindow: TimeInterval = 2.5
-
-	private struct DisplayTarget: Equatable {
-		let displayID: CGDirectDisplayID
-		let frame: CGRect
-		let widthPixels: Int
-		let heightPixels: Int
-		let framesPerSecond: Int
-	}
 
 	struct FrameRecord: @unchecked Sendable {
 		let displayID: CGDirectDisplayID
@@ -97,64 +88,20 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let startedAtUptime: TimeInterval
 	}
 
-	private struct PreparedContentFilter {
-		let filter: SCContentFilter
-		let selfCaptureFilterComplete: Bool
-		let expectedWindowCount: Int
-		let matchedWindowCount: Int
-	}
-
-	private final class ShareableContentCache: @unchecked Sendable {
-		private let lock = NSLock()
-		private var content: SCShareableContent?
-		private var cachedAtUptime: TimeInterval = 0
-
-		func store(_ content: SCShareableContent) {
-			lock.lock()
-			self.content = content
-			cachedAtUptime = ProcessInfo.processInfo.systemUptime
-			lock.unlock()
-		}
-
-		func fresh(
-			maxAge: TimeInterval,
-			covering displayIDs: Set<CGDirectDisplayID>? = nil
-		) -> SCShareableContent? {
-			let now = ProcessInfo.processInfo.systemUptime
-			lock.lock()
-			let content = now - cachedAtUptime <= maxAge ? self.content : nil
-			lock.unlock()
-			guard let content else {
-				return nil
-			}
-			guard content.displays.isEmpty == false else {
-				return nil
-			}
-			guard let displayIDs else {
-				return content
-			}
-			let availableDisplayIDs = Set(content.displays.map(\.displayID))
-			guard displayIDs.isSubset(of: availableDisplayIDs) else {
-				return nil
-			}
-			return content
-		}
-	}
-
 	private let stateLock = NSCondition()
 	private let outputQueue = DispatchQueue(
 		label: "ink.hack.rsnap.native-host.frozen-frame-authority-output",
 		qos: .userInteractive
 	)
 	private static let shareableContentCacheMaxAge: TimeInterval = 3_600
-	private static let shareableContentCache = ShareableContentCache()
+	private static let shareableContentCache = FrozenFrameShareableContentCache()
 	private var generation: UInt64 = 0
 	private var setupRequestID: UInt64 = 0
 	private var setupDisplayIDs: Set<CGDirectDisplayID>?
 	private var selfCaptureFilterRequired = false
 	private var selfCaptureUnsafeAfterUptime: TimeInterval?
 	private var activeDisplayIDs: Set<CGDirectDisplayID> = []
-	private var displayTargets: [CGDirectDisplayID: DisplayTarget] = [:]
+	private var displayTargets: [CGDirectDisplayID: FrozenFrameDisplayTarget] = [:]
 	private var streams: [CGDirectDisplayID: DisplayStream] = [:]
 	private var latestFrames: [CGDirectDisplayID: FrameRecord] = [:]
 	private var firstFrameStartUptimes: [CGDirectDisplayID: TimeInterval] = [:]
@@ -176,13 +123,13 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				)
 				return
 			}
-			guard Self.shareableContentHasDisplays(content) else {
+			guard FrozenFrameContentFilterPlanner.shareableContentHasDisplays(content) else {
 				NativeHostTelemetry.frozenAuthorityWarning(
 					"frozen_authority.content_cache_refresh_invalid",
 					captureID: captureID,
 					source: source,
 					displayID: 0,
-					error: Self.shareableContentDisplayDetail(
+					error: FrozenFrameContentFilterPlanner.shareableContentDisplayDetail(
 						content,
 						requiredDisplayIDs: []
 					)
@@ -231,7 +178,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		includedCurrentProcessWindowIDs: Set<CGWindowID> = []
 	) {
 		let setupStartedAt = ProcessInfo.processInfo.systemUptime
-		let targets = screens.compactMap(Self.displayTarget(for:))
+		let targets = screens.compactMap(FrozenFrameContentFilterPlanner.displayTarget(for:))
 		guard targets.isEmpty == false else {
 			stop()
 			return
@@ -324,7 +271,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	}
 
 	private func rebuildStreamsFromShareableContent(
-		targets: [DisplayTarget],
+		targets: [FrozenFrameDisplayTarget],
 		targetIDs: Set<CGDirectDisplayID>,
 		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
 		includedCurrentProcessWindowIDs: Set<CGWindowID>,
@@ -366,7 +313,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	}
 
 	private func configureStreamsFromCachedShareableContent(
-		targets: [DisplayTarget],
+		targets: [FrozenFrameDisplayTarget],
 		targetIDs: Set<CGDirectDisplayID>,
 		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
 		includedCurrentProcessWindowIDs: Set<CGWindowID>,
@@ -378,13 +325,14 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		guard let content = Self.cachedShareableContent(covering: targetIDs) else {
 			return false
 		}
-		let preparedFilters = Self.contentFilters(
+		let preparedFilters = FrozenFrameContentFilterPlanner.contentFilters(
 			for: targets,
 			in: content,
 			selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
 			includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
 		)
-		guard Self.filtersAreComplete(preparedFilters, for: targets) else {
+		guard FrozenFrameContentFilterPlanner.filtersAreComplete(preparedFilters, for: targets)
+		else {
 			return false
 		}
 		NativeHostTelemetry.frozenAuthorityContentLookupTiming(
@@ -410,7 +358,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	private func handleShareableContentLookup(
 		_ content: SCShareableContent?,
 		error: Error?,
-		targets: [DisplayTarget],
+		targets: [FrozenFrameDisplayTarget],
 		targetIDs: Set<CGDirectDisplayID>,
 		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
 		includedCurrentProcessWindowIDs: Set<CGWindowID>,
@@ -440,7 +388,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			return
 		}
 
-		let contentCoversTargets = Self.shareableContent(content, covers: targetIDs)
+		let contentCoversTargets = FrozenFrameContentFilterPlanner.shareableContent(
+			content, covers: targetIDs)
 		NativeHostTelemetry.frozenAuthorityContentLookupTiming(
 			captureID: captureID,
 			source: source,
@@ -458,7 +407,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				captureID: captureID,
 				source: source,
 				displayID: 0,
-				error: Self.shareableContentDisplayDetail(content, requiredDisplayIDs: targetIDs)
+				error: FrozenFrameContentFilterPlanner.shareableContentDisplayDetail(
+					content, requiredDisplayIDs: targetIDs)
 			)
 			if ProcessInfo.processInfo.systemUptime < retryUntilUptime {
 				retryRebuildStreamsFromShareableContent(
@@ -478,13 +428,14 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 			return
 		}
 		Self.shareableContentCache.store(content)
-		let preparedFilters = Self.contentFilters(
+		let preparedFilters = FrozenFrameContentFilterPlanner.contentFilters(
 			for: targets,
 			in: content,
 			selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
 			includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
 		)
-		guard Self.filtersAreComplete(preparedFilters, for: targets) else {
+		guard FrozenFrameContentFilterPlanner.filtersAreComplete(preparedFilters, for: targets)
+		else {
 			if ProcessInfo.processInfo.systemUptime < retryUntilUptime {
 				retryRebuildStreamsFromShareableContent(
 					targets: targets,
@@ -516,7 +467,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	}
 
 	private func retryRebuildStreamsFromShareableContent(
-		targets: [DisplayTarget],
+		targets: [FrozenFrameDisplayTarget],
 		targetIDs: Set<CGDirectDisplayID>,
 		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
 		includedCurrentProcessWindowIDs: Set<CGWindowID>,
@@ -544,9 +495,9 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	}
 
 	private func replaceStreamsFromPreparedFilters(
-		targets: [DisplayTarget],
+		targets: [FrozenFrameDisplayTarget],
 		targetIDs: Set<CGDirectDisplayID>,
-		preparedFilters: [CGDirectDisplayID: PreparedContentFilter],
+		preparedFilters: [CGDirectDisplayID: FrozenFramePreparedContentFilter],
 		captureID: UInt64,
 		source: String,
 		startedAtUptime: TimeInterval,
@@ -585,7 +536,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	}
 
 	private func configureStreamsFromShareableContent(
-		targets: [DisplayTarget],
+		targets: [FrozenFrameDisplayTarget],
 		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
 		includedCurrentProcessWindowIDs: Set<CGWindowID>,
 		generation requestGeneration: UInt64,
@@ -603,7 +554,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				displayCount: content.displays.count,
 				windowCount: content.windows.count
 			)
-			let preparedFilters = Self.contentFilters(
+			let preparedFilters = FrozenFrameContentFilterPlanner.contentFilters(
 				for: targets,
 				in: content,
 				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
@@ -646,7 +597,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				self.finishSetup(generation: requestGeneration)
 				return
 			}
-			let contentCoversTargets = Self.shareableContent(content, covers: targetIDs)
+			let contentCoversTargets = FrozenFrameContentFilterPlanner.shareableContent(
+				content, covers: targetIDs)
 			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
 				captureID: captureID,
 				source: source,
@@ -661,7 +613,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 					captureID: captureID,
 					source: source,
 					displayID: 0,
-					error: Self.shareableContentDisplayDetail(
+					error: FrozenFrameContentFilterPlanner.shareableContentDisplayDetail(
 						content,
 						requiredDisplayIDs: targetIDs
 					)
@@ -686,7 +638,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				return
 			}
 			Self.shareableContentCache.store(content)
-			let preparedFilters = Self.contentFilters(
+			let preparedFilters = FrozenFrameContentFilterPlanner.contentFilters(
 				for: targets,
 				in: content,
 				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
@@ -1000,8 +952,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	}
 
 	private func configureStreams(
-		targets: [DisplayTarget],
-		preparedFilters: [CGDirectDisplayID: PreparedContentFilter],
+		targets: [FrozenFrameDisplayTarget],
+		preparedFilters: [CGDirectDisplayID: FrozenFramePreparedContentFilter],
 		generation requestGeneration: UInt64,
 		captureID: UInt64,
 		source: String
@@ -1024,7 +976,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 				self?.currentTelemetrySnapshot() ?? (captureID: captureID, source: source)
 			}
 			let stream = SCStream(
-				filter: preparedFilter.filter, configuration: Self.streamConfiguration(for: target),
+				filter: preparedFilter.filter,
+				configuration: FrozenFrameContentFilterPlanner.streamConfiguration(for: target),
 				delegate: output)
 			do {
 				try stream.addStreamOutput(
@@ -1086,8 +1039,8 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	}
 
 	private func logIncompleteFilters(
-		_ preparedFilters: [CGDirectDisplayID: PreparedContentFilter],
-		targets: [DisplayTarget],
+		_ preparedFilters: [CGDirectDisplayID: FrozenFramePreparedContentFilter],
+		targets: [FrozenFrameDisplayTarget],
 		captureID: UInt64,
 		source: String
 	) {
@@ -1114,96 +1067,6 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 					"expectedWindowCount=\(preparedFilter.expectedWindowCount) matchedWindowCount=\(preparedFilter.matchedWindowCount)"
 			)
 		}
-	}
-
-	private static func filtersAreComplete(
-		_ preparedFilters: [CGDirectDisplayID: PreparedContentFilter],
-		for targets: [DisplayTarget]
-	) -> Bool {
-		targets.allSatisfy { target in
-			preparedFilters[target.displayID]?.selfCaptureFilterComplete == true
-		}
-	}
-
-	private static func contentFilters(
-		for targets: [DisplayTarget],
-		in content: SCShareableContent,
-		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
-		includedCurrentProcessWindowIDs: Set<CGWindowID>
-	) -> [CGDirectDisplayID: PreparedContentFilter] {
-		Dictionary(
-			uniqueKeysWithValues: targets.compactMap { target in
-				guard
-					let filter = contentFilter(
-						for: target,
-						in: content,
-						selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-						includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
-					)
-				else {
-					return nil
-				}
-				return (target.displayID, filter)
-			}
-		)
-	}
-
-	private static func contentFilter(
-		for target: DisplayTarget,
-		in content: SCShareableContent,
-		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
-		includedCurrentProcessWindowIDs: Set<CGWindowID>
-	) -> PreparedContentFilter? {
-		guard let display = content.displays.first(where: { $0.displayID == target.displayID })
-		else {
-			return nil
-		}
-		let currentPID = getpid()
-		let excludedApplications = content.applications.filter { $0.processID == currentPID }
-		if excludedApplications.isEmpty == false {
-			let includedWindows = content.windows.filter {
-				includedCurrentProcessWindowIDs.contains($0.windowID)
-			}
-			let matchedIncludedWindowIDs = Set(includedWindows.map(\.windowID))
-			let missingIncludedWindowIDs =
-				includedCurrentProcessWindowIDs.subtracting(matchedIncludedWindowIDs)
-			return PreparedContentFilter(
-				filter: SCContentFilter(
-					display: display,
-					excludingApplications: excludedApplications,
-					exceptingWindows: includedWindows
-				),
-				selfCaptureFilterComplete: missingIncludedWindowIDs.isEmpty,
-				expectedWindowCount: selfCaptureExceptionWindowIDs.count
-					+ includedCurrentProcessWindowIDs.count,
-				matchedWindowCount: selfCaptureExceptionWindowIDs.count
-					+ matchedIncludedWindowIDs.count
-			)
-		}
-		let excludedWindows = content.windows.filter {
-			$0.owningApplication?.processID == currentPID
-				&& !includedCurrentProcessWindowIDs.contains($0.windowID)
-		}
-		let matchedExcludedWindowIDs = Set(excludedWindows.map(\.windowID))
-		let matchedIncludedWindowIDs = Set(
-			content.windows.filter {
-				$0.owningApplication?.processID == currentPID
-					&& includedCurrentProcessWindowIDs.contains($0.windowID)
-			}.map(\.windowID))
-		let missingExcludedWindowIDs =
-			selfCaptureExceptionWindowIDs.subtracting(matchedExcludedWindowIDs)
-		let missingIncludedWindowIDs =
-			includedCurrentProcessWindowIDs.subtracting(matchedIncludedWindowIDs)
-		let hasCompleteWindowExclusion =
-			missingExcludedWindowIDs.isEmpty && missingIncludedWindowIDs.isEmpty
-		return PreparedContentFilter(
-			filter: SCContentFilter(display: display, excludingWindows: excludedWindows),
-			selfCaptureFilterComplete: hasCompleteWindowExclusion,
-			expectedWindowCount: selfCaptureExceptionWindowIDs.count
-				+ includedCurrentProcessWindowIDs.count,
-			matchedWindowCount: selfCaptureExceptionWindowIDs.count
-				- missingExcludedWindowIDs.count + matchedIncludedWindowIDs.count
-		)
 	}
 
 	private func store(
@@ -1316,61 +1179,6 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let snapshot = (captureID: telemetryContext.captureID, source: telemetryContext.source)
 		stateLock.unlock()
 		return snapshot
-	}
-
-	private static func shareableContentHasDisplays(_ content: SCShareableContent) -> Bool {
-		!content.displays.isEmpty
-	}
-
-	private static func shareableContent(
-		_ content: SCShareableContent,
-		covers displayIDs: Set<CGDirectDisplayID>
-	) -> Bool {
-		guard shareableContentHasDisplays(content) else {
-			return false
-		}
-		let availableDisplayIDs = Set(content.displays.map(\.displayID))
-		return displayIDs.isSubset(of: availableDisplayIDs)
-	}
-
-	private static func shareableContentDisplayDetail(
-		_ content: SCShareableContent,
-		requiredDisplayIDs: Set<CGDirectDisplayID>
-	) -> String {
-		let required = requiredDisplayIDs.sorted().map { String($0) }.joined(separator: ",")
-		let available = content.displays.map(\.displayID).sorted().map { String($0) }.joined(
-			separator: ",")
-		return "requiredDisplayIDs=\(required) availableDisplayIDs=\(available)"
-	}
-
-	private static func streamConfiguration(for target: DisplayTarget) -> SCStreamConfiguration {
-		let configuration = SCStreamConfiguration()
-		configuration.width = target.widthPixels
-		configuration.height = target.heightPixels
-		configuration.pixelFormat = kCVPixelFormatType_32BGRA
-		configuration.minimumFrameInterval = CMTime(
-			value: 1, timescale: CMTimeScale(target.framesPerSecond))
-		configuration.queueDepth = 3
-		configuration.showsCursor = false
-		configuration.scalesToFit = false
-		if #available(macOS 14.0, *) {
-			configuration.preservesAspectRatio = true
-		}
-		return configuration
-	}
-
-	private static func displayTarget(for screen: NSScreen) -> DisplayTarget? {
-		guard let displayID = screen.displayID else {
-			return nil
-		}
-		let scale = max(screen.backingScaleFactor, 1)
-		return DisplayTarget(
-			displayID: displayID,
-			frame: screen.frame,
-			widthPixels: max(1, Int((screen.frame.width * scale).rounded())),
-			heightPixels: max(1, Int((screen.frame.height * scale).rounded())),
-			framesPerSecond: NativeHostDisplayRefresh.targetFramesPerSecond(for: screen)
-		)
 	}
 
 }
@@ -1520,11 +1328,5 @@ private final class FrozenFrameStreamOutput: NSObject, SCStreamOutput, SCStreamD
 		let nanoseconds =
 			Double(machTime) * Double(timebase.numer) / Double(timebase.denom)
 		return nanoseconds / 1_000_000_000
-	}
-}
-
-extension NSScreen {
-	fileprivate var displayID: CGDirectDisplayID? {
-		(deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
 	}
 }
