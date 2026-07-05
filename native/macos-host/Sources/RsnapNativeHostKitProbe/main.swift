@@ -23,6 +23,7 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureHostPointerDispatchSupport()
 		assertCaptureHostLivePrimaryInteractionState()
 		assertCaptureHostFrozenFirstDisplayHandoffState()
+		assertCaptureHostScrollToolbarBackdropState()
 		assertCaptureHostAnnotationStyleWheelGate()
 		assertCaptureHostToolbarHoverState()
 		assertCaptureHostLiveSampleCachePointMatching()
@@ -317,6 +318,103 @@ enum RsnapNativeHostKitProbe {
 		state.reset()
 		guard state == CaptureHostFrozenFirstDisplayHandoffState() else {
 			fatalError("frozen first-display handoff should reset to idle")
+		}
+	}
+
+	private static func assertCaptureHostScrollToolbarBackdropState() {
+		var state = CaptureHostScrollToolbarBackdropState()
+		guard
+			let firstCapture = state.beginCapture(
+				now: 10,
+				minimumInterval: 0.25,
+				fallbackMinimumInterval: 1
+			),
+			firstCapture.generation == 1,
+			firstCapture.afterFrameSequence == 0,
+			firstCapture.previousSignature == nil,
+			firstCapture.fallbackPermitted,
+			state.captureInFlight,
+			state.beginCapture(now: 10.1, minimumInterval: 0.25, fallbackMinimumInterval: 1)
+				== nil,
+			state.finishCapture(generation: firstCapture.generation, frameSequence: 7),
+			state.captureInFlight == false,
+			state.lastFrameSequence == 7,
+			state.beginCapture(now: 10.1, minimumInterval: 0.25, fallbackMinimumInterval: 1)
+				== nil,
+			let secondCapture = state.beginCapture(
+				now: 10.3,
+				minimumInterval: 0.25,
+				fallbackMinimumInterval: 1
+			),
+			secondCapture.generation == 2,
+			secondCapture.afterFrameSequence == 7,
+			secondCapture.fallbackPermitted == false,
+			state.finishCapture(generation: secondCapture.generation, frameSequence: 5),
+			state.lastFrameSequence == 7
+		else {
+			fatalError("scroll toolbar backdrop state should throttle captures and keep sequence")
+		}
+
+		guard
+			state.recordChange(signature: nil, now: 10.4) == nil,
+			state.recordChange(signature: 42, now: 11)
+				== CaptureHostScrollToolbarBackdropChange(count: 1, gapMilliseconds: nil),
+			state.recordChange(signature: 42, now: 11.2) == nil,
+			state.recordChange(signature: 43, now: 12)
+				== CaptureHostScrollToolbarBackdropChange(count: 2, gapMilliseconds: 1_000)
+		else {
+			fatalError("scroll toolbar backdrop state should record signature changes")
+		}
+
+		let frame = CGRect(x: 1, y: 2, width: 30, height: 40)
+		let globalFrame = CGRect(x: 100, y: 200, width: 30, height: 40)
+		state.updateActiveFrame(frame, globalFrame: globalFrame)
+		guard
+			state.beginRefresh(now: 12, interval: 0.5)
+				== CaptureHostScrollToolbarBackdropRefresh(
+					gapMilliseconds: nil,
+					activeFrame: frame,
+					activeGlobalFrame: globalFrame),
+			state.beginRefresh(now: 12.25, interval: 0.5) == nil,
+			state.beginRefresh(now: 12.5, interval: 0.5)
+				== CaptureHostScrollToolbarBackdropRefresh(
+					gapMilliseconds: 500,
+					activeFrame: frame,
+					activeGlobalFrame: globalFrame)
+		else {
+			fatalError("scroll toolbar backdrop state should throttle refresh cadence")
+		}
+
+		let seedFrame = CGRect(x: 5, y: 6, width: 7, height: 8)
+		let seedImage = makeProbeImage()
+		let seedPatchFrame = CGRect(x: 10, y: 20, width: 30, height: 40)
+		state.resetTracking(seedFrame: seedFrame, seedImage: seedImage)
+		state.storeSeedPatch(frame: seedPatchFrame, capturedAt: 13, image: seedImage)
+		guard
+			state.seedFrame == seedFrame,
+			state.seedImage != nil,
+			state.activeFrame == nil,
+			state.changedCount == 0,
+			state.cachedSeedPatch(
+				matching: CGRect(x: 10.5, y: 20.5, width: 30.5, height: 40.5)) != nil,
+			state.cachedSeedPatch(
+				matching: CGRect(x: 12, y: 20, width: 30, height: 40)) == nil
+		else {
+			fatalError("scroll toolbar backdrop state should reset and cache seed patches")
+		}
+
+		let generationBeforeReset = state.captureGeneration
+		state.resetAndInvalidateCaptures()
+		guard
+			state.captureGeneration == generationBeforeReset + 1,
+			state.captureInFlight == false,
+			state.seedFrame == nil,
+			state.seedImage == nil,
+			state.seedPatchCache == nil,
+			state.lastCaptureStartedUptime == 0,
+			state.lastRefreshUptime == 0
+		else {
+			fatalError("scroll toolbar backdrop state should invalidate captures on full reset")
 		}
 	}
 
