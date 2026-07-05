@@ -188,8 +188,10 @@ The main host-kit files are split by responsibility:
   teardown, status message, and capture-stream release helpers
 - `CaptureChrome.swift`: shared native chrome metrics, palette, and drawing geometry
 - `CaptureOverlayWindow.swift`: AppKit `NSPanel` wrapper for capture overlay windows
-- `CaptureOverlayController.swift`: overlay window set, focus, stream preparation, and below-overlay
-  capture source management
+- `CaptureOverlayController.swift`: overlay window set, focus, stream preparation, and mouse
+  passthrough management
+- `CaptureOverlayImageSampler.swift`: CoreGraphics below-overlay capture and display-point sample
+  adaptation for live chrome, frozen capture effects, and scroll fallback acquisition
 - `FrozenFrameAuthority.swift`: ScreenCaptureKit frozen-frame stream setup, latch-token
   resolution, self-capture-safe frame gating, and fresh-frame authority decisions
 - `FrozenFrameStreamOutput.swift`: ScreenCaptureKit stream-output delegate adaptation,
