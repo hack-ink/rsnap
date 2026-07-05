@@ -70,8 +70,8 @@ The current native-host Swift split is:
 - `CaptureSessionController.swift` plus `CaptureSessionController+*.swift`: the Swift host-session
   coordinator around the Rust `RsnapHostSession`. The base file owns shared controller state and
   lifecycle hooks; the extensions split live capture/input, frozen selection interactions,
-  host-request draining, native scroll-capture lifecycle, copy/save/export effects, Vision OCR, and
-  runtime teardown/window helpers.
+  host-request draining, native scroll-capture lifecycle, copy/save/export effects, prepared export
+  scheduling, Vision OCR, and runtime teardown/window helpers.
 - `NativeScrollCaptureWheelInput.swift`: native scroll-capture wheel interception, global monitor
   lifecycle, forwarded CGEvent posting, queued forwarded-delta draining, and motion-hint updates.
 - `NativeScrollCaptureObservationPipeline.swift`: native scroll-capture sample batching, fallback
