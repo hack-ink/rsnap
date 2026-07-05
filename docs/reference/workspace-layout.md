@@ -108,6 +108,9 @@ Key paths:
 
 - `packages/rsnap-overlay/src/lib.rs`: explicit `session` façade plus quarantined
   `host_macos` / `host_effects_macos` transition modules
+- `packages/rsnap-overlay/src/backend.rs`: capture-backend facade and default factory; backend
+  contract/Stub live under `backend/contract.rs`, and production xcap/native implementation lives
+  under `backend/xcap_capture_backend.rs`
 - `packages/rsnap-overlay/src/overlay.rs`: current overlay root plus its focused
   runtime/rendering support modules
 - `packages/rsnap-overlay/src/overlay/rendering.rs`: overlay window renderer orchestration; shared
