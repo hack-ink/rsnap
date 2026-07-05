@@ -240,8 +240,10 @@ The main host-kit files are split by responsibility:
 - `FrozenCaptureModels.swift`: Swift adapter models for Rust-owned frozen overlay editing
 - `NativeHostFeedbackSound.swift`: host-side sound lookup/playback for completion effects
 - `NativeHostImageBridge.swift`: RGBA/CoreGraphics image conversion used by the FFI bridge
-- `Sources/RsnapHostBridge/HostFFI.swift`: Swift bridge session and non-frozen FFI surfaces used by
-  the native host
+- `Sources/RsnapHostBridge/HostFFI.swift`: Swift bridge session, scroll, live-sampling, and
+  remaining non-frozen FFI surfaces used by the native host
+- `Sources/RsnapHostBridge/CaptureFrameFFI.swift`: capture-frame planning/rendering and wallpaper
+  thumbnail bridge models over Rust-owned capture-frame algorithms
 - `Sources/RsnapHostBridge/FrozenOverlayFFI.swift`: Swift bridge models and storage for frozen
   overlay edit/export FFI calls
 - `Sources/RsnapHostBridge/HostFFISupport.swift`: shared Swift bridge status, geometry, and
