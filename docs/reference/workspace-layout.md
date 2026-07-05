@@ -206,6 +206,8 @@ The main host-kit files are split by responsibility:
   Rust-owned minimap layout plan and host-provided preview image
 - `CaptureHostLiveSampleCache.swift`: capture-host live chrome/RGB sample reuse cache and pointer
   sample matching
+- `CaptureHostLiveSampleResolver.swift`: capture-host live chrome/RGB sample resolution,
+  loupe-patch reuse, and cache seeding policy
 - `CaptureHostLivePrimaryInteractionState.swift`: capture-host live primary drag, release,
   completion, and hover-suppression state transitions
 - `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
@@ -227,14 +229,14 @@ The main host-kit files are split by responsibility:
   `CaptureHostToolbarHoverState.swift`, `CaptureHostFrozenFirstDisplayHandoffState.swift`,
   `CaptureHostScrollToolbarBackdropState.swift`, `CaptureHostCursorSupport.swift`,
   `CaptureHostScrollMinimapRenderer.swift`, `CaptureHostLiveSampleCache.swift`,
-  `CaptureHostLivePrimaryInteractionState.swift`, `CaptureHostPointerDispatch.swift`,
-  `CaptureHostFrozenImageEffects.swift`,
+  `CaptureHostLiveSampleResolver.swift`, `CaptureHostLivePrimaryInteractionState.swift`,
+  `CaptureHostPointerDispatch.swift`, `CaptureHostFrozenImageEffects.swift`,
   `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
   boundaries for shared capture geometry, frozen annotation-size wheel gating, frozen toolbar hover
   state, frozen first-display handoff state, scroll toolbar backdrop state, capture-host cursor
-  presentation and NSCursor adaptation, frozen minimap presentation, live sample reuse, live
-  primary interaction state, pointer dispatch queue throttling, Rust-backed frozen image effects,
-  live-chrome telemetry identity, and shared native text measurement
+  presentation and NSCursor adaptation, frozen minimap presentation, live sample reuse, live sample
+  resolution, live primary interaction state, pointer dispatch queue throttling, Rust-backed frozen
+  image effects, live-chrome telemetry identity, and shared native text measurement
 - `FrozenCaptureModels.swift`: Swift adapter models for Rust-owned frozen overlay editing
 - `NativeHostFeedbackSound.swift`: host-side sound lookup/playback for completion effects
 - `NativeHostImageBridge.swift`: RGBA/CoreGraphics image conversion used by the FFI bridge

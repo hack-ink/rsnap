@@ -1905,121 +1905,45 @@ final class CaptureHostView: NSView {
 	}
 
 	private func currentLiveChromeSample(at point: CGPoint?) -> LiveChromeSample? {
-		let wantsLoupePatch = scene.loupeVisible && !livePrimaryInteraction.hoverChromeSuppressed
-		let sample = controller?.liveChromeSnapshot(
-			point: point,
+		CaptureHostLiveSampleResolver.currentLiveChromeSample(
+			at: point,
+			scenePointer: scene.pointer,
+			loupeVisible: scene.loupeVisible,
+			hoverChromeSuppressed: livePrimaryInteraction.hoverChromeSuppressed,
 			settings: settings,
-			includeLoupePatch: wantsLoupePatch
-		)
-		if let sample {
-			let resolvedSample = sampleWithCachedLoupePatch(
-				sample,
+			chrome: chrome,
+			cache: &liveSampleCache
+		) { wantsLoupePatch in
+			controller?.liveChromeSnapshot(
 				point: point,
-				wantsLoupePatch: wantsLoupePatch
-			)
-			seedLiveChromeSampleCache(resolvedSample, point: point)
-			if let rgbSample = resolvedSample.rgb {
-				seedLiveRgbSampleCache(rgbSample, point: point)
-			}
-			return resolvedSample
-		}
-		if let cachedSample = liveSampleCache.chromeSample(matching: point) {
-			return cachedSample
-		}
-		if chrome.loupePatch != nil,
-			CaptureHostLiveSampleCache.pointsMatch(scene.pointer, point)
-		{
-			seedLiveChromeSampleCache(from: chrome, point: scene.pointer)
-			return liveSampleCache.chromeSample(matching: point)
-		}
-		if wantsLoupePatch, let cachedPatch = reusableLiveLoupePatch() {
-			return LiveChromeSample(rgb: nil, loupePatch: cachedPatch)
-		}
-		return nil
-	}
-
-	private func sampleWithCachedLoupePatch(
-		_ sample: LiveChromeSample,
-		point: CGPoint?,
-		wantsLoupePatch: Bool
-	) -> LiveChromeSample {
-		guard wantsLoupePatch, sample.loupePatch == nil else {
-			return sample
-		}
-		if let cachedSample = liveSampleCache.chromeSample(matching: point),
-			let cachedPatch = cachedSample.loupePatch
-		{
-			return LiveChromeSample(
-				rgb: sample.rgb,
-				loupePatch: cachedPatch
+				settings: settings,
+				includeLoupePatch: wantsLoupePatch
 			)
 		}
-		if let cachedPatch = reusableLiveLoupePatch() {
-			return LiveChromeSample(
-				rgb: sample.rgb,
-				loupePatch: cachedPatch
-			)
-		}
-		if CaptureHostLiveSampleCache.pointsMatch(scene.pointer, point),
-			let chromePatch = chrome.loupePatch,
-			liveLoupePatchMatchesCurrentSize(chromePatch)
-		{
-			return LiveChromeSample(
-				rgb: sample.rgb,
-				loupePatch: chromePatch
-			)
-		}
-		return sample
 	}
 
 	private func reusableLiveLoupePatch() -> CGImage? {
-		if let patch = liveSampleCache.latestChrome?.loupePatch,
-			liveLoupePatchMatchesCurrentSize(patch)
-		{
-			return patch
-		}
-		if let patch = chrome.loupePatch,
-			liveLoupePatchMatchesCurrentSize(patch)
-		{
-			return patch
-		}
-		return nil
-	}
-
-	private func liveLoupePatchMatchesCurrentSize(_ patch: CGImage) -> Bool {
-		let sidePixels = settings.loupeSampleSize.sidePixels
-		return patch.width == sidePixels && patch.height == sidePixels
-	}
-
-	private func liveRgbSample(from sample: LiveChromeSample?, at point: CGPoint?) -> RGBSample? {
-		if let rgbSample = sample?.rgb,
-			rgbSample.isFresh()
-		{
-			seedLiveRgbSampleCache(rgbSample, point: point)
-			return rgbSample.rgb
-		}
-		return liveSampleCache.rgbSample(matching: point)?.rgb
-	}
-
-	private func seedLiveChromeSampleCache(from chrome: CaptureChromeState, point: CGPoint?) {
-		guard chrome.loupePatch != nil else {
-			return
-		}
-		seedLiveChromeSampleCache(
-			LiveChromeSample(
-				rgb: nil,
-				loupePatch: chrome.loupePatch
-			),
-			point: point
+		CaptureHostLiveSampleResolver.reusableLiveLoupePatch(
+			cache: liveSampleCache,
+			chrome: chrome,
+			settings: settings
 		)
 	}
 
-	private func seedLiveChromeSampleCache(_ sample: LiveChromeSample, point: CGPoint?) {
-		liveSampleCache.seedChrome(sample, point: point)
+	private func liveRgbSample(from sample: LiveChromeSample?, at point: CGPoint?) -> RGBSample? {
+		CaptureHostLiveSampleResolver.liveRgbSample(
+			from: sample,
+			at: point,
+			cache: &liveSampleCache
+		)
 	}
 
-	private func seedLiveRgbSampleCache(_ rgbSample: LiveRgbSample, point: CGPoint?) {
-		liveSampleCache.seedRgb(rgbSample, point: point)
+	private func seedLiveChromeSampleCache(from chrome: CaptureChromeState, point: CGPoint?) {
+		CaptureHostLiveSampleResolver.seedChromeSample(
+			from: chrome,
+			point: point,
+			cache: &liveSampleCache
+		)
 	}
 
 	private func selectionSizeText(for rect: CGRect) -> String {
