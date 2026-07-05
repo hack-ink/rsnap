@@ -203,8 +203,10 @@ The main host-kit files are split by responsibility:
   completion, and hover-suppression state transitions
 - `CaptureHostPointerDispatch.swift`: capture-host pointer dispatch events, a shared delivery queue
   with per-track throttling state, and AppKit-to-controller pointer delivery
-- `LiveOverlayRenderer.swift`: live overlay layer composition for HUD, loupe, scrims, and selection
-  affordances
+- `LiveOverlayRenderer.swift`: live overlay render orchestration for HUD, loupe, frozen-pending
+  preview, and live chrome layers
+- `LiveOverlayLayers.swift`: reusable Core Animation layer subclasses for live selection flow and
+  scrim masking
 - `LiveChromePlacement.swift`: live HUD/loupe text metrics, pending color text, and deterministic
   floating placement geometry shared by capture host and live chrome rendering
 - `LiveOverlayWindowSnapshotFeed.swift`, `LiveOverlayChromeSampleFeed.swift`, and
