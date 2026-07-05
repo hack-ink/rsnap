@@ -288,11 +288,14 @@ The main host-kit files are split by responsibility:
   overlay edit/export FFI calls
 - `Sources/RsnapHostBridge/HostFFISupport.swift`: shared Swift bridge status, geometry, and
   owned-buffer adaptation helpers
-- `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`,
-  `NativeHostSettingsSurface.swift`, `NativeHostAppearanceSettings.swift`,
-  `NativeHostCaptureFrameSettings.swift`, and `PermissionsSettingsPanel.swift`: SwiftUI settings
-  shell, navigation, reusable settings surfaces, appearance controls, capture-frame preset
-  controls, and permission/setup controls
+- `NativeHostSettingsView.swift`, `NativeHostSettingsNavigation.swift`, and
+  `NativeHostSettingsSurface.swift`: SwiftUI settings view model, shell layout, navigation, and
+  reusable settings surfaces
+- `NativeHostAppearanceSettings.swift`, `NativeHostCaptureSettingsPanel.swift`,
+  `NativeHostOutputSettingsPanel.swift`, `NativeHostCaptureFrameSettings.swift`,
+  `PermissionsSettingsPanel.swift`, and `NativeHostAboutSettingsPanel.swift`: focused settings
+  panels for appearance, capture shortcuts/input, output location/naming, capture-frame presets,
+  permission/setup controls, and about/update controls
 
 It depends on:
 
