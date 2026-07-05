@@ -92,8 +92,6 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		label: "ink.hack.rsnap.native-host.frozen-frame-authority-output",
 		qos: .userInteractive
 	)
-	static let shareableContentCacheMaxAge: TimeInterval = 3_600
-	static let shareableContentCache = FrozenFrameShareableContentCache()
 	var generation: UInt64 = 0
 	var setupRequestID: UInt64 = 0
 	var setupDisplayIDs: Set<CGDirectDisplayID>?
