@@ -148,8 +148,10 @@ The current native-host Swift split is:
   recovery, pointer-preview mutation, mouse-up monitor wiring, and release-watchdog orchestration.
 - `CaptureHostView+LivePreview.swift`: capture-host live preview snapshots, HUD/loupe placement,
   live sample-cache use, and controller preview-demand updates.
-- `LiveOverlayRenderer.swift`: live overlay render orchestration for HUD, loupe, frozen-pending
-  preview, and live chrome layers.
+- `LiveOverlayRenderer.swift`: live overlay render orchestration for HUD, loupe, frame clock,
+  chrome transactions, and layer setup.
+- `LiveOverlayRenderer+FocusRendering.swift`: live overlay frozen display, focus scrim,
+  selection-flow, frozen-pending, drag-selection, and size-badge rendering.
 - `LiveHudColorRollCoordinator.swift`: live HUD color swatch/hex presentation, pending color roll
   animation state, resolved hex roll transitions, and roll-layer lifecycle.
 - `LiveOverlayTypography.swift`: shared native live overlay font and text metrics.
