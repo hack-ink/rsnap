@@ -32,6 +32,7 @@ For the active target architecture and migration direction, read:
 | --- | --- |
 | `native/macos-host/` | SwiftPM AppKit-first macOS host shell: menu bar entry, full-screen capture windows, in-window HUD/toolbar, and native bridging into `rsnap-host-ffi` |
 | `apps/rsnap/` | Thin launcher/bootstrap crate: startup logging, build metadata, stable-bundle resolution, and `cargo run -p rsnap` handoff into the staged native macOS host |
+| `apps/rsnap-perf/` | Deterministic local performance sweep: fixed fixture construction, checksum-backed correctness checks, case timing, and budget assertions |
 | `packages/rsnap-overlay/` | Transitional Rust runtime and implementation reservoir: legacy overlay runtime, retained scroll-capture logic, frozen edit/export logic, and macOS adapters that have not yet moved into `rsnap-capture-core` |
 | `packages/rsnap-capture-core/` | Durable Rust product-semantics and image-algorithm crate: shared geometry, semantic scene model, host/core protocol enums, reset-native session core, export/crop/PNG encoding, capture-frame rendering, wallpaper thumbnail, minimap, mosaic, selection transform, auto-center, and live-sample helpers |
 | `packages/rsnap-host-ffi/` | Thin C ABI bridge crate used by the native macOS host to call the Rust product core and retained Rust transition modules |
@@ -63,6 +64,24 @@ Key paths:
 - `apps/rsnap/src/native_launcher_macos.rs`: staged native-bundle lookup and launch handoff
 - `apps/rsnap/src/startup.rs`: startup logging/bootstrap helpers
 - `apps/rsnap/src/unsupported_platform.rs`: explicit non-macOS error path
+
+### `apps/rsnap-perf/`
+
+Treat `apps/rsnap-perf/` as the deterministic local performance sweep.
+
+It owns:
+
+- fixed export, capture-frame, frozen-edit, and scroll-capture performance cases
+- checksum-backed correctness checks that guard benchmark fixture drift
+- deterministic fixture construction under `apps/rsnap-perf/src/fixtures.rs`
+- timing and budget result reporting under `apps/rsnap-perf/src/measurement.rs`
+
+Key paths:
+
+- `apps/rsnap-perf/src/main.rs`: perf sweep orchestration plus semantic verification for each
+  case family
+- `apps/rsnap-perf/src/fixtures.rs`: deterministic fixture, checksum, and expected-value support
+- `apps/rsnap-perf/src/measurement.rs`: per-case timing, formatting, and budget enforcement
 
 ### `packages/rsnap-overlay/`
 
