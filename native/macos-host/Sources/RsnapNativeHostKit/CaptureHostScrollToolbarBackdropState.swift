@@ -18,6 +18,18 @@ package struct CaptureHostScrollToolbarBackdropCaptureStart: Equatable {
 	package let afterFrameSequence: UInt64
 	package let previousSignature: UInt64?
 	package let fallbackPermitted: Bool
+
+	package init(
+		generation: UInt64,
+		afterFrameSequence: UInt64,
+		previousSignature: UInt64?,
+		fallbackPermitted: Bool
+	) {
+		self.generation = generation
+		self.afterFrameSequence = afterFrameSequence
+		self.previousSignature = previousSignature
+		self.fallbackPermitted = fallbackPermitted
+	}
 }
 
 package struct CaptureHostScrollToolbarBackdropChange: Equatable {
