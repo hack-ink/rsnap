@@ -178,8 +178,8 @@ The main host-kit files are split by responsibility:
   forwarding, viewport sampling, and scroll minimap preview refresh
 - `NativeScrollCaptureObservationPipeline.swift`: conversion of ordered native samples and
   fallback frames into Rust scroll observations plus preview export batches
-- `CaptureSessionController+Export.swift`: copy/save host effects, output naming, capture-image
-  export, capture-frame effect application, and Rust-backed PNG encoding
+- `CaptureSessionController+Export.swift`: copy/save host effects, output naming, prepared export
+  scheduling, and capture-image export orchestration
 - `CaptureSessionController+TextRecognition.swift`: Vision OCR request execution and recognized
   text pasteboard publication
 - `CaptureSessionController+Runtime.swift`: shared monitor/window lookup, overlay refresh,
@@ -212,6 +212,9 @@ The main host-kit files are split by responsibility:
   extraction, and CoreImage blur/tint adaptation for capture-host HUD, loupe, and toolbar surfaces
 - `FrozenPreparedExportStore.swift`: frozen export render requests, prepared export cache keys,
   copy/save/recognize-text job result models, and thread-safe prepared image stores
+- `FrozenSelectionImageRenderer.swift`: frozen selection render jobs, capture-frame effect
+  application, overlay composition, display cropping, and PNG encoding for copy/save/OCR
+  preparation
 - `CaptureHostFrozenPresentationRenderer.swift`: frozen display surface, selection chrome, overlay,
   minimap, size badge, and classic toolbar drawing orchestration from an explicit host context
 - `CaptureHostFrozenSelectionChromeRenderer.swift`: frozen selection scrim, dashed border, resize

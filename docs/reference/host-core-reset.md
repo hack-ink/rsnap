@@ -108,6 +108,9 @@ The current native-host Swift split is:
   display crop extraction, and CoreImage blur/tint adaptation for HUD, loupe, and toolbar surfaces.
 - `FrozenPreparedExportStore.swift`: frozen export render requests, prepared export cache keys,
   copy/save/recognize-text job result models, and thread-safe prepared image stores.
+- `FrozenSelectionImageRenderer.swift`: frozen selection render jobs, capture-frame effect
+  application, overlay composition, display cropping, and PNG encoding for copy/save/OCR
+  preparation.
 - `CaptureHostFrozenPresentationRenderer.swift`: frozen display surface, selection chrome, overlay,
   minimap, size badge, and classic toolbar drawing orchestration from an explicit host context.
 - `CaptureHostFrozenSelectionChromeRenderer.swift`: frozen selection scrim, dashed border, resize
