@@ -202,6 +202,8 @@ The main host-kit files are split by responsibility:
   seed-patch cache, active frame, refresh cadence, and change-count state
 - `CaptureHostView.swift`: AppKit view rendering orchestration, hit testing, and native pointer/key
   routing
+- `CaptureHostGlassPatchResolver.swift`: classic glass patch cache lookup, frozen display crop
+  extraction, and CoreImage blur/tint adaptation for capture-host HUD, loupe, and toolbar surfaces
 - `CaptureHostFrozenSelectionChromeRenderer.swift`: frozen selection scrim, dashed border, resize
   handles, and selection-size badge rendering
 - `CaptureHostFrozenOverlayRenderer.swift`: frozen annotation overlay rendering for mosaic,
@@ -242,15 +244,16 @@ The main host-kit files are split by responsibility:
   `CaptureHostLiveSampleResolver.swift`, `CaptureHostLiveInputTelemetry.swift`,
   `CaptureHostLivePointerPreviewState.swift`, `CaptureHostLivePrimaryInteractionState.swift`,
   `CaptureHostMouseReleaseRecovery.swift`, `CaptureHostPointerDispatch.swift`,
-  `CaptureHostFrozenImageEffects.swift`, `FrozenFramePixelBufferBridge.swift`,
-  `LiveChromeRefreshTelemetryKey.swift`, and `NativeHostTextMetrics.swift`: focused support
+  `CaptureHostFrozenImageEffects.swift`, `CaptureHostGlassPatchResolver.swift`,
+  `FrozenFramePixelBufferBridge.swift`, `LiveChromeRefreshTelemetryKey.swift`, and
+  `NativeHostTextMetrics.swift`: focused support
   boundaries for shared capture geometry, frozen annotation-size wheel gating, frozen toolbar hover
   state, frozen first-display handoff state, scroll toolbar backdrop state, capture-host cursor
   presentation and NSCursor adaptation, frozen minimap presentation, live sample reuse, live sample
   resolution, live input telemetry, live pointer preview state, live primary interaction state,
   AppKit mouse-release recovery, pointer dispatch queue throttling, Rust-backed frozen image
-  effects, frozen-frame pixel-buffer image/sampling adaptation, live-chrome telemetry identity, and
-  shared native text measurement
+  effects, capture-host glass patch caching and blur/tint adaptation, frozen-frame pixel-buffer
+  image/sampling adaptation, live-chrome telemetry identity, and shared native text measurement
 - `FrozenCaptureModels.swift`: Swift adapter models for Rust-owned frozen overlay editing
 - `NativeHostFeedbackSound.swift`: host-side sound lookup/playback for completion effects
 - `NativeHostImageBridge.swift`: RGBA/CoreGraphics image conversion used by the FFI bridge

@@ -1,23 +1,14 @@
 import AppKit
 import CoreGraphics
-import CoreImage
 import Foundation
 import QuartzCore
 import RsnapHostBridge
-
-@MainActor private let frozenEffectCIContext = CIContext(options: nil)
 
 @MainActor
 final class CaptureHostView: NSView {
 	private static let liveDragIntentThreshold: CGFloat = 3
 	private static let scrollToolbarBackdropCaptureMinimumInterval: TimeInterval = 1.0 / 60.0
 	private static let scrollToolbarBackdropFallbackMinimumInterval: TimeInterval = 1.0 / 20.0
-
-	private enum GlassSurfaceKind: Hashable {
-		case hud
-		case loupe
-		case toolbar
-	}
 
 	private static let liveChromeLiquidGlassZ: CGFloat = 200
 	private static let frozenToolbarLiquidGlassBackdropZ: CGFloat = 295
@@ -81,7 +72,7 @@ final class CaptureHostView: NSView {
 	private var frozenFirstDisplayHandoff = CaptureHostFrozenFirstDisplayHandoffState()
 	private var lastLivePreviewSnapshot: LivePreviewSnapshot?
 	private var liveSampleCache = CaptureHostLiveSampleCache()
-	private var glassPatchCache: [GlassSurfaceKind: CaptureHostGlassPatchCache] = [:]
+	private var glassPatchResolver = CaptureHostGlassPatchResolver()
 	private lazy var pointerDispatchQueue = CaptureHostPointerDispatchQueue(
 		targetInterval: { [weak self] in
 			guard let self else {
@@ -1904,7 +1895,7 @@ final class CaptureHostView: NSView {
 		context: CGContext,
 		theme: CaptureChromeTheme,
 		strongShadow: Bool,
-		surfaceKind: GlassSurfaceKind,
+		surfaceKind: CaptureHostGlassSurfaceKind,
 		allowsLiquidGlassClearFill: Bool = true,
 		allowsClassicGlass: Bool = true
 	) {
@@ -1950,34 +1941,24 @@ final class CaptureHostView: NSView {
 		pillPath.stroke()
 	}
 
-	private func glassPatch(for surfaceKind: GlassSurfaceKind, frame: CGRect) -> CGImage? {
-		let now = ProcessInfo.processInfo.systemUptime
-		if let cached = glassPatchCache[surfaceKind],
-			now - cached.capturedAt < glassPatchCacheInterval(),
-			abs(cached.frame.minX - frame.minX) < 1,
-			abs(cached.frame.minY - frame.minY) < 1,
-			abs(cached.frame.width - frame.width) < 1,
-			abs(cached.frame.height - frame.height) < 1
-		{
-			return cached.image
-		}
-
+	private func glassPatch(
+		for surfaceKind: CaptureHostGlassSurfaceKind,
+		frame: CGRect
+	) -> CGImage? {
 		guard let globalFrame = globalRect(from: frame) else {
 			return nil
 		}
-		guard let patch = glassSourcePatch(in: globalFrame) else {
-			return nil
-		}
-		guard let image = blurredGlassPatch(from: patch, surfaceKind: surfaceKind) else {
-			return nil
-		}
-
-		glassPatchCache[surfaceKind] = CaptureHostGlassPatchCache(
+		return glassPatchResolver.patch(
+			for: surfaceKind,
 			frame: frame,
-			capturedAt: now,
-			image: image
-		)
-		return image
+			globalFrame: globalFrame,
+			now: ProcessInfo.processInfo.systemUptime,
+			cacheInterval: glassPatchCacheInterval(),
+			theme: chromeTheme(),
+			settings: settings
+		) { [weak self] globalFrame in
+			self?.glassSourcePatch(in: globalFrame)
+		}
 	}
 
 	private func glassPatchCacheInterval() -> TimeInterval {
@@ -2034,61 +2015,11 @@ final class CaptureHostView: NSView {
 		displayFrame: CGRect?,
 		image: CGImage?
 	) -> CGImage? {
-		guard
-			let displayFrame,
-			let image
-		else {
-			return nil
-		}
-		let cropRect = CGRect(
-			x: ((globalFrame.minX - displayFrame.minX) / max(displayFrame.width, 1))
-				* CGFloat(image.width),
-			y: ((displayFrame.maxY - globalFrame.maxY) / max(displayFrame.height, 1))
-				* CGFloat(image.height),
-			width: (globalFrame.width / max(displayFrame.width, 1)) * CGFloat(image.width),
-			height: (globalFrame.height / max(displayFrame.height, 1)) * CGFloat(image.height)
-		).integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
-		guard cropRect.width > 0, cropRect.height > 0 else {
-			return nil
-		}
-		return image.cropping(to: cropRect)
-	}
-
-	private func blurredGlassPatch(from image: CGImage, surfaceKind: GlassSurfaceKind) -> CGImage? {
-		let ciImage = CIImage(cgImage: image)
-		let clampedImage = ciImage.clampedToExtent()
-		guard let filter = CIFilter(name: "CIGaussianBlur") else {
-			return image
-		}
-		let blurAmount = CGFloat(settings.hudBlur.clamped(to: 0...1))
-		let blurRadius: CGFloat =
-			switch surfaceKind {
-			case .hud, .loupe, .toolbar:
-				14 + blurAmount * 32.0
-			}
-		filter.setValue(clampedImage, forKey: kCIInputImageKey)
-		filter.setValue(blurRadius, forKey: kCIInputRadiusKey)
-		guard let blurredImage = filter.outputImage?.cropped(to: ciImage.extent) else {
-			return image
-		}
-		let colorAdjustedImage: CIImage
-		if let colorControls = CIFilter(name: "CIColorControls") {
-			colorControls.setValue(blurredImage, forKey: kCIInputImageKey)
-			switch surfaceKind {
-			case .hud, .loupe, .toolbar:
-				colorControls.setValue(
-					1.18 + settings.hudTint.clamped(to: 0...1) * 0.42, forKey: kCIInputSaturationKey
-				)
-				colorControls.setValue(1.04, forKey: kCIInputContrastKey)
-				colorControls.setValue(themeBrightnessBias(), forKey: kCIInputBrightnessKey)
-			}
-			colorAdjustedImage =
-				colorControls.outputImage?.cropped(to: ciImage.extent) ?? blurredImage
-		} else {
-			colorAdjustedImage = blurredImage
-		}
-		return frozenEffectCIContext.createCGImage(
-			colorAdjustedImage, from: colorAdjustedImage.extent) ?? image
+		CaptureHostGlassPatchResolver.frozenDisplayPatch(
+			in: globalFrame,
+			displayFrame: displayFrame,
+			image: image
+		)
 	}
 
 	private func chromeTheme() -> CaptureChromeTheme {
@@ -2672,10 +2603,6 @@ final class CaptureHostView: NSView {
 
 	private func themeBrightnessBias() -> Double {
 		chromeTheme() == .dark ? 0.015 : -0.01
-	}
-
-	private func themeBrightnessBias(for theme: CaptureChromeTheme) -> Double {
-		theme == .dark ? 0.015 : -0.01
 	}
 
 	private func queuePointerEvent(_ event: CaptureHostPointerDispatchEvent) {
