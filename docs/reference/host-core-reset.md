@@ -94,6 +94,8 @@ The current native-host Swift split is:
   per-gesture step throttling.
 - `CaptureHostToolbarHoverState.swift`: frozen toolbar hover target state, change detection, and
   clearing behavior.
+- `CaptureHostFrozenToolbarCoordinator.swift`: capture-host frozen toolbar visible item planning,
+  hit testing, hover state ownership, and toolbar action dispatch into the session controller.
 - `CaptureHostFrozenFirstDisplayHandoffState.swift`: capture-host frozen-entry first-display
   handoff state, completion queueing, pending-frame evidence, and deferred classic toolbar glass.
 - `CaptureHostScrollToolbarBackdropState.swift`: capture-host scroll toolbar backdrop capture

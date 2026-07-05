@@ -199,6 +199,8 @@ The main host-kit files are split by responsibility:
   per-gesture step throttling
 - `CaptureHostToolbarHoverState.swift`: frozen toolbar hover target state, change detection, and
   clearing behavior
+- `CaptureHostFrozenToolbarCoordinator.swift`: frozen toolbar visible item planning, hit testing,
+  hover state ownership, and toolbar action dispatch into the session controller
 - `CaptureHostFrozenFirstDisplayHandoffState.swift`: frozen-entry first-display handoff state,
   completion queueing, pending-frame evidence, and deferred classic toolbar glass
 - `CaptureHostScrollToolbarBackdropState.swift`: scroll toolbar backdrop capture generation,
