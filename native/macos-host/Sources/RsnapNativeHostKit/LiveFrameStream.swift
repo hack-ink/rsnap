@@ -422,7 +422,7 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		for screen: NSScreen,
 		mainDisplayHeight: CGFloat
 	) -> SamplerMonitor? {
-		guard let displayID = screen.displayID else {
+		guard let displayID = screen.nativeDisplayID else {
 			return nil
 		}
 		let appKitFrame = screen.frame
@@ -472,11 +472,5 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 			height: sample.patchHeight,
 			rgba: patchRGBA
 		)
-	}
-}
-
-extension NSScreen {
-	fileprivate var displayID: CGDirectDisplayID? {
-		(deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
 	}
 }
