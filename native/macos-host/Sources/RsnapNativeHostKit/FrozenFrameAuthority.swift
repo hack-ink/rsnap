@@ -35,8 +35,8 @@ struct FrozenFrameSnapshot: @unchecked Sendable {
 /// Keeping those states here prevents cached stream frames from being treated as authoritative
 /// screenshots just because a pixel buffer happens to exist.
 final class FrozenFrameAuthority: @unchecked Sendable {
-	private static let maximumSnapshotAgeMilliseconds = 150.0
-	private static let maximumLiveRgbAgeMilliseconds =
+	static let maximumSnapshotAgeMilliseconds = 150.0
+	static let maximumLiveRgbAgeMilliseconds =
 		LiveRgbSample.maximumDisplayAge * 1_000
 	private static let selfCaptureFilterRetryInterval: TimeInterval = 0.035
 	private static let selfCaptureFilterRetryWindow: TimeInterval = 2.5
@@ -61,7 +61,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		case noFreshFrame
 	}
 
-	private final class DisplayStream: @unchecked Sendable {
+	final class DisplayStream: @unchecked Sendable {
 		let stream: SCStream
 		let output: FrozenFrameStreamOutput
 		let selfCaptureFilterComplete: Bool
@@ -87,7 +87,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		let startedAtUptime: TimeInterval
 	}
 
-	private let stateLock = NSCondition()
+	let stateLock = NSCondition()
 	private let outputQueue = DispatchQueue(
 		label: "ink.hack.rsnap.native-host.frozen-frame-authority-output",
 		qos: .userInteractive
@@ -97,12 +97,12 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	private var generation: UInt64 = 0
 	private var setupRequestID: UInt64 = 0
 	private var setupDisplayIDs: Set<CGDirectDisplayID>?
-	private var selfCaptureFilterRequired = false
-	private var selfCaptureUnsafeAfterUptime: TimeInterval?
+	var selfCaptureFilterRequired = false
+	var selfCaptureUnsafeAfterUptime: TimeInterval?
 	private var activeDisplayIDs: Set<CGDirectDisplayID> = []
-	private var displayTargets: [CGDirectDisplayID: FrozenFrameDisplayTarget] = [:]
-	private var streams: [CGDirectDisplayID: DisplayStream] = [:]
-	private var latestFrames: [CGDirectDisplayID: FrameRecord] = [:]
+	var displayTargets: [CGDirectDisplayID: FrozenFrameDisplayTarget] = [:]
+	var streams: [CGDirectDisplayID: DisplayStream] = [:]
+	var latestFrames: [CGDirectDisplayID: FrameRecord] = [:]
 	private var firstFrameStartUptimes: [CGDirectDisplayID: TimeInterval] = [:]
 	private var firstFrameLoggedDisplayIDs: Set<CGDirectDisplayID> = []
 	private var telemetryContext = TelemetryContext(
@@ -674,280 +674,6 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 		for staleStream in staleStreams {
 			staleStream.stop()
 		}
-	}
-
-	func latchToken(containing point: CGPoint) -> FrozenFrameLatchToken? {
-		stateLock.lock()
-		defer {
-			stateLock.unlock()
-		}
-		guard
-			let displayID = displayTargets.first(where: {
-				$0.value.frame.inclusivelyContains(point)
-			})?.key
-		else {
-			return nil
-		}
-		let latestRecord = latestFrames[displayID]
-		let tokenRecord =
-			latestRecord.flatMap { snapshotEligibleRecordLocked($0) }
-		return FrozenFrameLatchToken(
-			displayID: displayID,
-			generation: tokenRecord?.generation ?? 0,
-			minSequence: tokenRecord?.sequence ?? 0,
-			startedAtUptime: ProcessInfo.processInfo.systemUptime
-		)
-	}
-
-	func needsSelfCaptureCompleteFrame(containing point: CGPoint) -> Bool {
-		stateLock.lock()
-		defer {
-			stateLock.unlock()
-		}
-		guard selfCaptureFilterRequired else {
-			return false
-		}
-		guard
-			let displayID = displayTargets.first(where: {
-				$0.value.frame.inclusivelyContains(point)
-			})?.key
-		else {
-			return false
-		}
-		guard let record = latestFrames[displayID],
-			let eligibleRecord = snapshotEligibleRecordLocked(record)
-		else {
-			return true
-		}
-		return eligibleRecord.selfCaptureFilterComplete == false
-	}
-
-	func hasSelfCaptureCompleteFrame(containing point: CGPoint) -> Bool {
-		stateLock.lock()
-		defer {
-			stateLock.unlock()
-		}
-		guard
-			let displayID = displayTargets.first(where: {
-				$0.value.frame.inclusivelyContains(point)
-			})?.key,
-			let record = latestFrames[displayID],
-			let eligibleRecord = snapshotEligibleRecordLocked(record)
-		else {
-			return false
-		}
-		return eligibleRecord.selfCaptureFilterComplete
-	}
-
-	func hasSelfCaptureCompleteStream(containing point: CGPoint) -> Bool {
-		stateLock.lock()
-		defer {
-			stateLock.unlock()
-		}
-		guard selfCaptureFilterRequired else {
-			return false
-		}
-		guard
-			let displayID = displayTargets.first(where: {
-				$0.value.frame.inclusivelyContains(point)
-			})?.key,
-			let stream = streams[displayID]
-		else {
-			return false
-		}
-		return stream.selfCaptureFilterComplete
-	}
-
-	func rgbSample(containing point: CGPoint) -> RGBSample? {
-		liveRgbSample(containing: point)?.rgb
-	}
-
-	func liveRgbSample(containing point: CGPoint) -> LiveRgbSample? {
-		stateLock.lock()
-		let displayID = displayTargets.first(where: { $0.value.frame.inclusivelyContains(point) })?
-			.key
-		let record = displayID.flatMap { latestFrames[$0] }.flatMap(snapshotEligibleRecordLocked)
-		stateLock.unlock()
-		guard let record else {
-			return nil
-		}
-		guard record.ageMilliseconds() <= Self.maximumLiveRgbAgeMilliseconds else {
-			return nil
-		}
-		guard
-			let rgb = FrozenFramePixelBufferBridge.rgbSample(
-				from: record.pixelBuffer,
-				point: point,
-				displayFrame: record.displayFrame
-			)
-		else {
-			return nil
-		}
-		return LiveRgbSample(
-			rgb: rgb,
-			capturedAtUptime: record.capturedAtUptime,
-			source: "frame_authority"
-		)
-	}
-
-	func loupePatch(containing point: CGPoint, sidePixels: Int) -> CGImage? {
-		stateLock.lock()
-		let displayID = displayTargets.first(where: { $0.value.frame.inclusivelyContains(point) })?
-			.key
-		let record = displayID.flatMap { latestFrames[$0] }.flatMap(snapshotEligibleRecordLocked)
-		stateLock.unlock()
-		guard let record else {
-			return nil
-		}
-		return FrozenFramePixelBufferBridge.loupePatch(
-			from: record.pixelBuffer,
-			point: point,
-			displayFrame: record.displayFrame,
-			sidePixels: sidePixels
-		)
-	}
-
-	func snapshot(
-		containing point: CGPoint,
-		after token: FrozenFrameLatchToken?,
-		maxWait: TimeInterval
-	) -> FrozenFrameSnapshot? {
-		let deadline = Date(timeIntervalSinceNow: max(0, maxWait))
-		stateLock.lock()
-		let displayID =
-			token?.displayID
-			?? displayTargets.first(where: { $0.value.frame.inclusivelyContains(point) })?.key
-		guard let displayID else {
-			stateLock.unlock()
-			return nil
-		}
-		var source = "post_token"
-		var record = freshRecordLocked(displayID: displayID, token: token)
-		if record == nil,
-			let fallbackRecord = unchangedRecordLocked(
-				displayID: displayID,
-				token: token
-			)
-		{
-			record = fallbackRecord
-			source = "latest_unchanged"
-		}
-		while record == nil, Date() < deadline {
-			stateLock.wait(until: deadline)
-			record = freshRecordLocked(displayID: displayID, token: token)
-			if record == nil,
-				let fallbackRecord = unchangedRecordLocked(
-					displayID: displayID,
-					token: token
-				)
-			{
-				record = fallbackRecord
-				source = "latest_unchanged"
-			}
-		}
-		stateLock.unlock()
-
-		guard let record,
-			let image = FrozenFramePixelBufferBridge.makeImage(from: record.pixelBuffer)
-		else {
-			return nil
-		}
-		return FrozenFrameSnapshot(
-			displayID: record.displayID,
-			displayFrame: record.displayFrame,
-			image: image,
-			generation: record.generation,
-			sequence: record.sequence,
-			capturedAtUptime: record.capturedAtUptime,
-			source: source,
-			selfCaptureSafe: true,
-			selfCaptureFilterComplete: record.selfCaptureFilterComplete
-		)
-	}
-
-	func resolveSnapshot(
-		containing point: CGPoint,
-		after token: FrozenFrameLatchToken?,
-		maxWait: TimeInterval
-	) -> SnapshotResolution {
-		if let snapshot = snapshot(containing: point, after: token, maxWait: maxWait) {
-			return .resolved(snapshot)
-		}
-		if needsSelfCaptureCompleteFrame(containing: point) {
-			return .pendingSelfCaptureFrame
-		}
-		return .noFreshFrame
-	}
-
-	private func freshRecordLocked(displayID: CGDirectDisplayID, token: FrozenFrameLatchToken?)
-		-> FrameRecord?
-	{
-		guard let record = latestFrames[displayID],
-			let eligibleRecord = snapshotEligibleRecordLocked(record)
-		else {
-			return nil
-		}
-		guard Self.isFreshForSnapshot(eligibleRecord) else {
-			return nil
-		}
-		guard let token else {
-			return eligibleRecord
-		}
-		if eligibleRecord.capturedAtUptime >= token.startedAtUptime {
-			return eligibleRecord
-		}
-		if eligibleRecord.generation == token.generation,
-			eligibleRecord.sequence > token.minSequence
-		{
-			return eligibleRecord
-		}
-		if token.minSequence == 0 {
-			return eligibleRecord
-		}
-		return nil
-	}
-
-	private func unchangedRecordLocked(displayID: CGDirectDisplayID, token: FrozenFrameLatchToken?)
-		-> FrameRecord?
-	{
-		guard let token, token.minSequence > 0, let record = latestFrames[displayID],
-			let eligibleRecord = snapshotEligibleRecordLocked(record),
-			eligibleRecord.generation == token.generation,
-			eligibleRecord.sequence == token.minSequence
-		else {
-			return nil
-		}
-		guard Self.isFreshForSnapshot(eligibleRecord) else {
-			return nil
-		}
-		// ScreenCaptureKit display streams may not emit another frame while the display is
-		// visually unchanged. Even then, same-sequence frames must stay inside the freshness
-		// budget; a complete self-capture-excluding filter proves visibility safety, not age.
-		return eligibleRecord
-	}
-
-	private func snapshotEligibleRecordLocked(_ record: FrameRecord) -> FrameRecord? {
-		if isSelfCaptureSafeLocked(record) == false {
-			return nil
-		}
-		return record
-	}
-
-	private func isSelfCaptureSafeLocked(_ record: FrameRecord) -> Bool {
-		if record.selfCaptureFilterComplete {
-			return true
-		}
-		guard selfCaptureFilterRequired else {
-			return true
-		}
-		guard let unsafeAfterUptime = selfCaptureUnsafeAfterUptime else {
-			return false
-		}
-		return record.capturedAtUptime < unsafeAfterUptime
-	}
-
-	private static func isFreshForSnapshot(_ record: FrameRecord) -> Bool {
-		record.ageMilliseconds() <= maximumSnapshotAgeMilliseconds
 	}
 
 	private func configureStreams(
