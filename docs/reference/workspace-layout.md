@@ -271,9 +271,10 @@ The main host-kit files are split by responsibility:
   scrim masking
 - `LiveChromePlacement.swift`: live HUD/loupe text metrics, pending color text, and deterministic
   floating placement geometry shared by capture host and live chrome rendering
-- `LiveOverlayWindowSnapshotFeed.swift`, `LiveOverlayChromeSampleFeed.swift`, and
-  `LiveFrameClockDriver.swift`: live overlay support boundaries for target-window snapshots,
-  chrome color/patch sampling, and display-rate frame ticks
+- `LiveOverlayWindowSnapshotFeed.swift`, `LiveOverlayChromeSampleFeed.swift`,
+  `LiveOverlayChromeSamplePolicy.swift`, and `LiveFrameClockDriver.swift`: live overlay support
+  boundaries for target-window snapshots, chrome color/patch sampling and cache policy, and
+  display-rate frame ticks
 - `FrozenToolbarLayoutPlanner.swift`: deterministic frozen-toolbar item availability, layout, and
   hit-test geometry shared by classic drawing, Liquid Glass content, and native probes
 - `FrozenToolbarRenderView.swift`: shared frozen-toolbar content drawing for classic AppKit
