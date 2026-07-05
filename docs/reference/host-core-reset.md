@@ -184,6 +184,8 @@ The current native-host Swift split is:
   effects, capture-host glass patch caching and blur/tint adaptation, frozen-frame pixel-buffer
   image/sampling adaptation, prepared export cache ownership, live-chrome telemetry identity, and
   native text measurement.
+- `FrozenAnnotationStyles.swift`: frozen annotation colors, style toolbar state, and Swift/Rust
+  frozen overlay style conversion.
 - `FrozenCaptureModels.swift`: Swift view-adapter state for Rust-owned frozen overlay editing,
   including conversion from Rust edit snapshots into AppKit draw models.
 - `NativeHostFeedbackSound.swift`: host-side `NSSound` lookup/playback for capture and OCR
