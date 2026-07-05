@@ -4,66 +4,6 @@ import Foundation
 import ScreenCaptureKit
 
 extension FrozenFrameAuthority {
-	func refreshShareableContentCache(captureID: UInt64 = 0, source: String = "cache") {
-		let startedAtUptime = ProcessInfo.processInfo.systemUptime
-		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) {
-			content, error in
-			guard let content else {
-				NativeHostTelemetry.frozenAuthorityWarning(
-					"frozen_authority.content_cache_refresh_failed",
-					captureID: captureID,
-					source: source,
-					displayID: 0,
-					error: String(describing: error)
-				)
-				return
-			}
-			guard FrozenFrameContentFilterPlanner.shareableContentHasDisplays(content) else {
-				NativeHostTelemetry.frozenAuthorityWarning(
-					"frozen_authority.content_cache_refresh_invalid",
-					captureID: captureID,
-					source: source,
-					displayID: 0,
-					error: FrozenFrameContentFilterPlanner.shareableContentDisplayDetail(
-						content,
-						requiredDisplayIDs: []
-					)
-				)
-				NativeHostTelemetry.frozenAuthorityContentLookupTiming(
-					captureID: captureID,
-					source: source,
-					totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-					success: false,
-					displayCount: content.displays.count,
-					windowCount: content.windows.count
-				)
-				return
-			}
-			Self.shareableContentCache.store(content)
-			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
-				captureID: captureID,
-				source: source,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-				success: true,
-				displayCount: content.displays.count,
-				windowCount: content.windows.count
-			)
-		}
-	}
-
-	private static func cachedShareableContent(
-		covering displayIDs: Set<CGDirectDisplayID>? = nil
-	) -> SCShareableContent? {
-		shareableContentCache.fresh(
-			maxAge: shareableContentCacheMaxAge,
-			covering: displayIDs
-		)
-	}
-
-	func hasFreshShareableContentCache() -> Bool {
-		Self.cachedShareableContent() != nil
-	}
-
 	func start(
 		for screens: [NSScreen],
 		captureID: UInt64 = 0,
@@ -176,7 +116,7 @@ extension FrozenFrameAuthority {
 		retryUntilUptime: TimeInterval,
 		requestID: UInt64
 	) {
-		if configureStreamsFromCachedShareableContent(
+		FrozenFrameShareableContentLookup.resolveCompleteFilters(
 			targets: targets,
 			targetIDs: targetIDs,
 			selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
@@ -184,208 +124,24 @@ extension FrozenFrameAuthority {
 			captureID: captureID,
 			source: source,
 			startedAtUptime: startedAtUptime,
-			requestID: requestID
-		) {
-			return
-		}
-
-		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) {
-			[weak self] content, error in
-			self?.handleShareableContentLookup(
-				content,
-				error: error,
-				targets: targets,
-				targetIDs: targetIDs,
-				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-				includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
-				captureID: captureID,
-				source: source,
-				startedAtUptime: startedAtUptime,
-				retryUntilUptime: retryUntilUptime,
-				requestID: requestID
-			)
-		}
-	}
-
-	private func configureStreamsFromCachedShareableContent(
-		targets: [FrozenFrameDisplayTarget],
-		targetIDs: Set<CGDirectDisplayID>,
-		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
-		includedCurrentProcessWindowIDs: Set<CGWindowID>,
-		captureID: UInt64,
-		source: String,
-		startedAtUptime: TimeInterval,
-		requestID: UInt64
-	) -> Bool {
-		guard let content = Self.cachedShareableContent(covering: targetIDs) else {
-			return false
-		}
-		let preparedFilters = FrozenFrameContentFilterPlanner.contentFilters(
-			for: targets,
-			in: content,
-			selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-			includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
-		)
-		guard FrozenFrameContentFilterPlanner.filtersAreComplete(preparedFilters, for: targets)
-		else {
-			return false
-		}
-		NativeHostTelemetry.frozenAuthorityContentLookupTiming(
-			captureID: captureID,
-			source: source,
-			totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-			success: true,
-			displayCount: content.displays.count,
-			windowCount: content.windows.count
-		)
-		replaceStreamsFromPreparedFilters(
-			targets: targets,
-			targetIDs: targetIDs,
-			preparedFilters: preparedFilters,
-			captureID: captureID,
-			source: source,
-			startedAtUptime: startedAtUptime,
-			requestID: requestID
-		)
-		return true
-	}
-
-	private func handleShareableContentLookup(
-		_ content: SCShareableContent?,
-		error: Error?,
-		targets: [FrozenFrameDisplayTarget],
-		targetIDs: Set<CGDirectDisplayID>,
-		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
-		includedCurrentProcessWindowIDs: Set<CGWindowID>,
-		captureID: UInt64,
-		source: String,
-		startedAtUptime: TimeInterval,
-		retryUntilUptime: TimeInterval,
-		requestID: UInt64
-	) {
-		guard let content else {
-			NativeHostTelemetry.frozenAuthorityWarning(
-				"frozen_authority.content_lookup_failed",
-				captureID: captureID,
-				source: source,
-				displayID: 0,
-				error: String(describing: error)
-			)
-			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
-				captureID: captureID,
-				source: source,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-				success: false,
-				displayCount: targets.count,
-				windowCount: 0
-			)
-			finishSetup(targetIDs: targetIDs)
-			return
-		}
-
-		let contentCoversTargets = FrozenFrameContentFilterPlanner.shareableContent(
-			content, covers: targetIDs)
-		NativeHostTelemetry.frozenAuthorityContentLookupTiming(
-			captureID: captureID,
-			source: source,
-			totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-			success: contentCoversTargets,
-			displayCount: content.displays.count,
-			windowCount: content.windows.count
-		)
-		guard isCurrentSetupRequest(requestID, targetIDs: targetIDs) else {
-			return
-		}
-		guard contentCoversTargets else {
-			NativeHostTelemetry.frozenAuthorityWarning(
-				"frozen_authority.content_lookup_invalid",
-				captureID: captureID,
-				source: source,
-				displayID: 0,
-				error: FrozenFrameContentFilterPlanner.shareableContentDisplayDetail(
-					content, requiredDisplayIDs: targetIDs)
-			)
-			if ProcessInfo.processInfo.systemUptime < retryUntilUptime {
-				retryRebuildStreamsFromShareableContent(
-					targets: targets,
-					targetIDs: targetIDs,
-					selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-					includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
-					captureID: captureID,
-					source: source,
-					startedAtUptime: startedAtUptime,
-					retryUntilUptime: retryUntilUptime,
-					requestID: requestID
-				)
-				return
-			}
-			finishSetup(targetIDs: targetIDs)
-			return
-		}
-		Self.shareableContentCache.store(content)
-		let preparedFilters = FrozenFrameContentFilterPlanner.contentFilters(
-			for: targets,
-			in: content,
-			selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-			includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
-		)
-		guard FrozenFrameContentFilterPlanner.filtersAreComplete(preparedFilters, for: targets)
-		else {
-			if ProcessInfo.processInfo.systemUptime < retryUntilUptime {
-				retryRebuildStreamsFromShareableContent(
-					targets: targets,
-					targetIDs: targetIDs,
-					selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-					includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
-					captureID: captureID,
-					source: source,
-					startedAtUptime: startedAtUptime,
-					retryUntilUptime: retryUntilUptime,
-					requestID: requestID
-				)
-				return
-			}
-			logIncompleteFilters(
-				preparedFilters, targets: targets, captureID: captureID, source: source)
-			finishSetup(targetIDs: targetIDs)
-			return
-		}
-		replaceStreamsFromPreparedFilters(
-			targets: targets,
-			targetIDs: targetIDs,
-			preparedFilters: preparedFilters,
-			captureID: captureID,
-			source: source,
-			startedAtUptime: startedAtUptime,
-			requestID: requestID
-		)
-	}
-
-	private func retryRebuildStreamsFromShareableContent(
-		targets: [FrozenFrameDisplayTarget],
-		targetIDs: Set<CGDirectDisplayID>,
-		selfCaptureExceptionWindowIDs: Set<CGWindowID>,
-		includedCurrentProcessWindowIDs: Set<CGWindowID>,
-		captureID: UInt64,
-		source: String,
-		startedAtUptime: TimeInterval,
-		retryUntilUptime: TimeInterval,
-		requestID: UInt64
-	) {
-		DispatchQueue.global(qos: .userInteractive).asyncAfter(
-			deadline: .now() + Self.selfCaptureFilterRetryInterval
+			retryUntilUptime: retryUntilUptime
 		) { [weak self] in
-			self?.rebuildStreamsFromShareableContent(
-				targets: targets,
-				targetIDs: targetIDs,
-				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-				includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
-				captureID: captureID,
-				source: source,
-				startedAtUptime: startedAtUptime,
-				retryUntilUptime: retryUntilUptime,
-				requestID: requestID
-			)
+			self?.isCurrentSetupRequest(requestID, targetIDs: targetIDs) == true
+		} completion: { [weak self] outcome in
+			switch outcome {
+			case .prepared(let preparedFilters):
+				self?.replaceStreamsFromPreparedFilters(
+					targets: targets,
+					targetIDs: targetIDs,
+					preparedFilters: preparedFilters,
+					captureID: captureID,
+					source: source,
+					startedAtUptime: startedAtUptime,
+					requestID: requestID
+				)
+			case .unavailable:
+				self?.finishSetup(targetIDs: targetIDs)
+			}
 		}
 	}
 
@@ -439,113 +195,29 @@ extension FrozenFrameAuthority {
 		source: String,
 		startedAtUptime: TimeInterval
 	) {
-		let targetIDs = Set(targets.map(\.displayID))
-		if let content = Self.cachedShareableContent(covering: targetIDs) {
-			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
-				captureID: captureID,
-				source: source,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-				success: true,
-				displayCount: content.displays.count,
-				windowCount: content.windows.count
-			)
-			let preparedFilters = FrozenFrameContentFilterPlanner.contentFilters(
-				for: targets,
-				in: content,
-				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-				includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
-			)
-			configureStreams(
-				targets: targets,
-				preparedFilters: preparedFilters,
-				generation: requestGeneration,
-				captureID: captureID,
-				source: source
-			)
-			return
-		}
-		let retryUntilUptime = startedAtUptime + Self.selfCaptureFilterRetryWindow
-		SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) {
-			[weak self] content, error in
-			guard let self else {
-				return
-			}
-			guard self.isCurrentGeneration(requestGeneration) else {
-				return
-			}
-			guard let content else {
-				NativeHostTelemetry.frozenAuthorityWarning(
-					"frozen_authority.content_lookup_failed",
+		FrozenFrameShareableContentLookup.resolveFilters(
+			targets: targets,
+			selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
+			includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
+			captureID: captureID,
+			source: source,
+			startedAtUptime: startedAtUptime,
+			retryUntilUptime: startedAtUptime + Self.selfCaptureFilterRetryWindow
+		) { [weak self] in
+			self?.isCurrentGeneration(requestGeneration) == true
+		} completion: { [weak self] outcome in
+			switch outcome {
+			case .prepared(let preparedFilters):
+				self?.configureStreams(
+					targets: targets,
+					preparedFilters: preparedFilters,
+					generation: requestGeneration,
 					captureID: captureID,
-					source: source,
-					displayID: 0,
-					error: String(describing: error)
+					source: source
 				)
-				NativeHostTelemetry.frozenAuthorityContentLookupTiming(
-					captureID: captureID,
-					source: source,
-					totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-					success: false,
-					displayCount: targets.count,
-					windowCount: 0
-				)
-				self.finishSetup(generation: requestGeneration)
-				return
+			case .unavailable:
+				self?.finishSetup(generation: requestGeneration)
 			}
-			let contentCoversTargets = FrozenFrameContentFilterPlanner.shareableContent(
-				content, covers: targetIDs)
-			NativeHostTelemetry.frozenAuthorityContentLookupTiming(
-				captureID: captureID,
-				source: source,
-				totalMilliseconds: NativeHostTelemetry.milliseconds(since: startedAtUptime),
-				success: contentCoversTargets,
-				displayCount: content.displays.count,
-				windowCount: content.windows.count
-			)
-			guard contentCoversTargets else {
-				NativeHostTelemetry.frozenAuthorityWarning(
-					"frozen_authority.content_lookup_invalid",
-					captureID: captureID,
-					source: source,
-					displayID: 0,
-					error: FrozenFrameContentFilterPlanner.shareableContentDisplayDetail(
-						content,
-						requiredDisplayIDs: targetIDs
-					)
-				)
-				if ProcessInfo.processInfo.systemUptime < retryUntilUptime {
-					DispatchQueue.global(qos: .userInteractive).asyncAfter(
-						deadline: .now() + Self.selfCaptureFilterRetryInterval
-					) { [weak self] in
-						self?.configureStreamsFromShareableContent(
-							targets: targets,
-							selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-							includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs,
-							generation: requestGeneration,
-							captureID: captureID,
-							source: source,
-							startedAtUptime: startedAtUptime
-						)
-					}
-					return
-				}
-				self.finishSetup(generation: requestGeneration)
-				return
-			}
-			Self.shareableContentCache.store(content)
-			let preparedFilters = FrozenFrameContentFilterPlanner.contentFilters(
-				for: targets,
-				in: content,
-				selfCaptureExceptionWindowIDs: selfCaptureExceptionWindowIDs,
-				includedCurrentProcessWindowIDs: includedCurrentProcessWindowIDs
-			)
-			self.configureStreams(
-				targets: targets,
-				preparedFilters: preparedFilters,
-				generation: requestGeneration,
-				captureID: captureID,
-				source: source
-			)
 		}
 	}
 
@@ -657,36 +329,5 @@ extension FrozenFrameAuthority {
 			}
 		}
 		finishSetup(generation: requestGeneration)
-	}
-
-	private func logIncompleteFilters(
-		_ preparedFilters: [CGDirectDisplayID: FrozenFramePreparedContentFilter],
-		targets: [FrozenFrameDisplayTarget],
-		captureID: UInt64,
-		source: String
-	) {
-		for target in targets {
-			guard let preparedFilter = preparedFilters[target.displayID] else {
-				NativeHostTelemetry.frozenAuthorityWarning(
-					"frozen_authority.self_capture_filter_incomplete",
-					captureID: captureID,
-					source: source,
-					displayID: target.displayID,
-					error: "missingFilter"
-				)
-				continue
-			}
-			guard preparedFilter.selfCaptureFilterComplete == false else {
-				continue
-			}
-			NativeHostTelemetry.frozenAuthorityWarning(
-				"frozen_authority.self_capture_filter_incomplete",
-				captureID: captureID,
-				source: source,
-				displayID: target.displayID,
-				error:
-					"expectedWindowCount=\(preparedFilter.expectedWindowCount) matchedWindowCount=\(preparedFilter.matchedWindowCount)"
-			)
-		}
 	}
 }
