@@ -230,6 +230,9 @@ The main host-kit files are split by responsibility:
   with per-track throttling state, and AppKit-to-controller pointer delivery
 - `LiveOverlayRenderer.swift`: live overlay render orchestration for HUD, loupe, frozen-pending
   preview, and live chrome layers
+- `LiveHudColorRollCoordinator.swift`: live HUD color swatch/hex presentation, pending color roll
+  animation state, resolved hex roll transitions, and roll-layer lifecycle
+- `LiveOverlayTypography.swift`: shared native live overlay font and text metrics
 - `LiveOverlayLayers.swift`: reusable Core Animation layer subclasses for live selection flow and
   scrim masking
 - `LiveChromePlacement.swift`: live HUD/loupe text metrics, pending color text, and deterministic
