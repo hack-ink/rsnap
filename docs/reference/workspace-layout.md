@@ -174,8 +174,10 @@ The main host-kit files are split by responsibility:
   annotation commands, auto-center, loupe, and toolbar command forwarding
 - `CaptureSessionController+HostRequests.swift`: Rust host-request draining, freeze-snapshot
   commit handling, host-owned frozen scene preparation, and host-effect dispatch
-- `CaptureSessionController+ScrollCapture.swift`: native scroll-capture lifecycle, viewport
-  sampling, observation scheduling, and scroll minimap preview refresh
+- `CaptureSessionController+ScrollCapture.swift`: native scroll-capture lifecycle startup,
+  viewport geometry, sampling-loop scheduling, and scroll minimap chrome setup
+- `CaptureSessionController+ScrollCaptureObservation.swift`: native scroll-capture live/fallback
+  sample drains, observation batching, stitch result application, and preview refresh
 - `NativeScrollCaptureWheelInput.swift`: native scroll-capture wheel interception, global monitor
   lifecycle, forwarded CGEvent posting, queued forwarded-delta draining, and motion-hint updates
 - `NativeScrollCaptureObservationPipeline.swift`: conversion of ordered native samples and
