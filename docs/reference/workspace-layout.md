@@ -198,6 +198,8 @@ The main host-kit files are split by responsibility:
   seed-patch cache, active frame, refresh cadence, and change-count state
 - `CaptureHostView.swift`: AppKit view rendering orchestration, hit testing, and native pointer/key
   routing
+- `CaptureHostFrozenSelectionChromeRenderer.swift`: frozen selection scrim, dashed border, resize
+  handles, and selection-size badge rendering
 - `CaptureHostFrozenOverlayRenderer.swift`: frozen annotation overlay rendering for mosaic,
   spotlight, pen, arrow, and text overlays
 - `CaptureHostLiveSampleCache.swift`: capture-host live chrome/RGB sample reuse cache and pointer
