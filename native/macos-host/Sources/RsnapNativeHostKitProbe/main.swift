@@ -24,6 +24,7 @@ enum RsnapNativeHostKitProbe {
 		assertCaptureHostLivePrimaryInteractionState()
 		assertCaptureHostFrozenFirstDisplayHandoffState()
 		assertCaptureHostScrollToolbarBackdropState()
+		assertCaptureHostScrollToolbarBackdropWorker()
 		assertCaptureHostAnnotationStyleWheelGate()
 		assertCaptureHostToolbarHoverState()
 		assertCaptureHostLiveSampleCachePointMatching()
@@ -415,6 +416,85 @@ enum RsnapNativeHostKitProbe {
 			state.lastRefreshUptime == 0
 		else {
 			fatalError("scroll toolbar backdrop state should invalidate captures on full reset")
+		}
+	}
+
+	private static func assertCaptureHostScrollToolbarBackdropWorker() {
+		let liveRegion = RGBARegionSnapshot(
+			width: 2,
+			height: 1,
+			rgba: Data([1, 2, 3, 4, 5, 6, 7, 8])
+		)
+		let fallbackRegion = RGBARegionSnapshot(
+			width: 2,
+			height: 1,
+			rgba: Data([8, 7, 6, 5, 4, 3, 2, 1])
+		)
+		let liveSignature = CaptureHostScrollToolbarBackdropWorker.signature(liveRegion)
+		let fallbackSignature =
+			CaptureHostScrollToolbarBackdropWorker.signature(fallbackRegion)
+		let freshFrame = RGBARegionFrameSnapshot(
+			frameSequence: 9,
+			frameAgeMicroseconds: 10,
+			region: liveRegion
+		)
+		let fallbackImage = makeProbeImage()
+		var fallbackCalls = 0
+		let fallbackResult = CaptureHostScrollToolbarBackdropWorker.captureResult(
+			rawFrame: freshFrame,
+			maximumLiveFrameAgeMicroseconds: 10,
+			capture: CaptureHostScrollToolbarBackdropCaptureStart(
+				generation: 1,
+				afterFrameSequence: 3,
+				previousSignature: liveSignature,
+				fallbackPermitted: true
+			),
+			fallbackPatch: {
+				fallbackCalls += 1
+				return fallbackImage
+			},
+			fallbackSnapshot: { _ in fallbackRegion }
+		)
+		guard
+			fallbackCalls == 1,
+			fallbackResult.patch != nil,
+			fallbackResult.frameSequence == 9,
+			fallbackResult.signature == fallbackSignature
+		else {
+			fatalError("scroll toolbar backdrop worker should replace static live frames")
+		}
+
+		fallbackCalls = 0
+		let staleResult = CaptureHostScrollToolbarBackdropWorker.captureResult(
+			rawFrame: RGBARegionFrameSnapshot(
+				frameSequence: 10,
+				frameAgeMicroseconds: 11,
+				region: liveRegion
+			),
+			maximumLiveFrameAgeMicroseconds: 10,
+			capture: CaptureHostScrollToolbarBackdropCaptureStart(
+				generation: 2,
+				afterFrameSequence: 9,
+				previousSignature: nil,
+				fallbackPermitted: false
+			),
+			fallbackPatch: {
+				fallbackCalls += 1
+				return fallbackImage
+			},
+			fallbackSnapshot: { _ in fallbackRegion }
+		)
+		guard
+			fallbackCalls == 0,
+			staleResult.patch == nil,
+			staleResult.frameSequence == 10,
+			staleResult.signature == nil,
+			CaptureHostScrollToolbarBackdropWorker.frameIsFresh(
+				freshFrame,
+				maximumAgeMicroseconds: 10
+			)
+		else {
+			fatalError("scroll toolbar backdrop worker should reject stale live frames")
 		}
 	}
 

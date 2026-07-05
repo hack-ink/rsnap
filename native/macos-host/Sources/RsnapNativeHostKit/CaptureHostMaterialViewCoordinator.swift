@@ -429,74 +429,24 @@ final class CaptureHostMaterialViewCoordinator {
 					toolbarFrame, globalFrame, liveFrameStream, fallbackSource,
 					maximumLiveFrameAgeMicroseconds, capture,
 				] in
-				let rawFrame = liveFrameStream.nextRegionFrame(
+				let result = CaptureHostScrollToolbarBackdropWorker.captureResult(
 					in: globalFrame,
-					afterFrameSequence: capture.afterFrameSequence,
-					waitForFresh: false
+					liveFrameStream: liveFrameStream,
+					fallbackSource: fallbackSource,
+					maximumLiveFrameAgeMicroseconds: maximumLiveFrameAgeMicroseconds,
+					capture: capture
 				)
-				let nonblockingFrame: RGBARegionFrameSnapshot? =
-					if let rawFrame,
-						Self.scrollToolbarBackdropFrameIsFresh(
-							rawFrame,
-							maximumAgeMicroseconds: maximumLiveFrameAgeMicroseconds
-						)
-					{
-						rawFrame
-					} else {
-						nil
-					}
-				let freshFrame = nonblockingFrame
-				let frameSequence = max(
-					rawFrame?.frameSequence ?? 0,
-					freshFrame?.frameSequence ?? 0
-				)
-				let livePatch = freshFrame.flatMap {
-					NativeHostImageBridge.cgImage(from: $0.region)
-				}
-				let liveSignature = freshFrame.map {
-					Self.scrollToolbarBackdropSignature($0.region)
-				}
-				let liveWouldRemainStatic =
-					liveSignature == nil
-					|| (capture.previousSignature != nil
-						&& liveSignature == capture.previousSignature)
-				let fallbackPatch =
-					liveWouldRemainStatic && capture.fallbackPermitted
-					? CaptureOverlayImageSampler.captureBelowOverlay(
-						in: globalFrame,
-						source: fallbackSource
-					) : nil
-				let fallbackSnapshot = fallbackPatch.flatMap {
-					NativeHostImageBridge.rgbaSnapshot(from: $0)
-				}
-				let fallbackSignature = fallbackSnapshot.map {
-					Self.scrollToolbarBackdropSignature($0)
-				}
-				let shouldUseFallback =
-					fallbackPatch != nil
-					&& (capture.previousSignature == nil
-						|| fallbackSignature != capture.previousSignature)
-				let patch = shouldUseFallback ? fallbackPatch : (livePatch ?? fallbackPatch)
-				let signature =
-					shouldUseFallback ? fallbackSignature : (liveSignature ?? fallbackSignature)
 				DispatchQueue.main.async { [weak self = self] in
 					self?.finishScrollToolbarBackdropCapture(
-						patch,
+						result.patch,
 						toolbarFrame: toolbarFrame,
 						generation: capture.generation,
-						frameSequence: frameSequence > 0 ? frameSequence : nil,
-						signature: signature
+						frameSequence: result.frameSequence,
+						signature: result.signature
 					)
 				}
 			}
 		}
-	}
-
-	nonisolated private static func scrollToolbarBackdropFrameIsFresh(
-		_ frame: RGBARegionFrameSnapshot,
-		maximumAgeMicroseconds: UInt64
-	) -> Bool {
-		frame.frameAgeMicroseconds <= maximumAgeMicroseconds
 	}
 
 	private func finishScrollToolbarBackdropCapture(
@@ -551,28 +501,6 @@ final class CaptureHostMaterialViewCoordinator {
 				)
 			}
 		}
-	}
-
-	nonisolated private static func scrollToolbarBackdropSignature(
-		_ region: RGBARegionSnapshot
-	) -> UInt64 {
-		var hash: UInt64 = 14_695_981_039_346_656_037
-		let stride = max(region.rgba.count / 256, 4)
-		region.rgba.withUnsafeBytes { rawBuffer in
-			guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress else {
-				return
-			}
-			var index = 0
-			while index < region.rgba.count {
-				hash ^= UInt64(bytes[index])
-				hash &*= 1_099_511_628_211
-				index += stride
-			}
-		}
-		hash ^= UInt64(max(region.width, 0))
-		hash &*= 1_099_511_628_211
-		hash ^= UInt64(max(region.height, 0))
-		return hash
 	}
 
 	func refreshScrollCaptureToolbarBackdropNow() {
