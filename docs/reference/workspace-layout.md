@@ -309,8 +309,10 @@ The main host-kit files are split by responsibility:
 - `NativeHostImageBridge.swift`: RGBA/CoreGraphics image conversion used by the FFI bridge
 - `Sources/RsnapHostBridge/HostSessionFFI.swift`: Swift bridge session protocol models and
   session-handle adaptation used by the native host
-- `Sources/RsnapHostBridge/HostFFI.swift`: Swift bridge scroll, export, and remaining non-frozen
-  FFI surfaces used by the native host
+- `Sources/RsnapHostBridge/HostFFI.swift`: Swift bridge scroll and remaining non-frozen FFI
+  surfaces used by the native host
+- `Sources/RsnapHostBridge/ExportEncoderFFI.swift`: Swift bridge PNG encoding, frozen display
+  crop, mosaic privacy patch, and frozen overlay export-image adaptation
 - `Sources/RsnapHostBridge/LiveSamplerFFI.swift`: Swift bridge live sampler models,
   sampler-handle lifecycle, and live RGBA region frame adaptation
 - `Sources/RsnapHostBridge/CaptureFrameFFI.swift`: capture-frame planning/rendering and wallpaper
