@@ -138,7 +138,8 @@ The current native-host Swift split is:
   completion effects.
 - `NativeHostImageBridge.swift` and `RsnapHostBridge`: conversion and FFI glue between
   CoreGraphics/AppKit images and Rust-owned RGBA snapshots. Inside `RsnapHostBridge`,
-  `HostFFI.swift` owns session, scroll, live-sampling, and remaining non-frozen bridge surfaces,
+  `HostSessionFFI.swift` owns session protocol models and session-handle adaptation,
+  `HostFFI.swift` owns scroll, live-sampling, export, and remaining non-frozen bridge surfaces,
   `CaptureFrameFFI.swift` owns capture-frame planning/rendering and wallpaper thumbnail bridge
   models, `FrozenOverlayFFI.swift` owns frozen overlay edit/export bridge models, and
   `HostFFISupport.swift` owns shared status, geometry, and owned-buffer adaptation helpers.
