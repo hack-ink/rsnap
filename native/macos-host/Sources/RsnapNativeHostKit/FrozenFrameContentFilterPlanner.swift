@@ -6,7 +6,7 @@ import Darwin
 import Foundation
 import ScreenCaptureKit
 
-struct FrozenFrameDisplayTarget: Equatable {
+struct FrozenFrameDisplayTarget: Equatable, Sendable {
 	let displayID: CGDirectDisplayID
 	let frame: CGRect
 	let widthPixels: Int
@@ -14,7 +14,7 @@ struct FrozenFrameDisplayTarget: Equatable {
 	let framesPerSecond: Int
 }
 
-struct FrozenFramePreparedContentFilter {
+struct FrozenFramePreparedContentFilter: @unchecked Sendable {
 	let filter: SCContentFilter
 	let selfCaptureFilterComplete: Bool
 	let expectedWindowCount: Int
