@@ -51,8 +51,8 @@ The active split below is by question type, not by human-versus-agent audience.
   `docs/decisions/native-host-rust-core-reset.md`
 - Need the accepted layered scroll-capture architecture and prior-art analysis ->
   `docs/decisions/scroll-capture-architecture.md`
-- Need the supporting machine-readable research run for scroll-capture prior-art analysis ->
-  `docs/research/scroll-capture-prior-art-2026-05-10.json`
+- Need the supporting research contract for scroll-capture prior-art analysis ->
+  `docs/research/scroll-capture-prior-art-2026-05-10.md`
 - Need generic repo gate names -> `Makefile.toml`
 - Need smoke or perf validation entrypoints -> `scripts/smoke/` and `scripts/perf/`
 - Need documentation placement or authoring rules -> `docs/policy.md`

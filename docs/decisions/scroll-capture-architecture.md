@@ -1,3 +1,12 @@
+---
+title: "Scroll Capture Architecture"
+description: "Scroll Capture Architecture documentation for Rsnap."
+type: "Decision"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Scroll Capture Architecture
 
 Status: accepted and implemented for the current macOS validation path
@@ -23,7 +32,7 @@ Screen Recording because frames come from ScreenCaptureKit. Rsnap observes wheel
 input, forwarding, and sampling signal. Wheel deltas are not treated as content movement authority,
 because trackpad/mouse deltas do not reliably map to viewport pixels.
 
-Supporting research run: `docs/research/scroll-capture-prior-art-2026-05-10.json`.
+Supporting research contract: `docs/research/scroll-capture-prior-art-2026-05-10.md`.
 
 ## Prior-Art Findings
 

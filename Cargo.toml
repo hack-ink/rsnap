@@ -17,21 +17,14 @@ arboard                  = { version = "3.6" }
 block2                   = { version = "0.6" }
 color-eyre               = { version = "0.6" }
 criterion                = { version = "0.8", features = ["html_reports"] }
-device_query             = { version = "4.0" }
 directories              = { version = "6.0" }
 dispatch2                = { version = "0.3" }
-egui                     = { version = "0.34" }
-egui-phosphor            = { version = "0.12", features = ["fill"] }
-egui-wgpu                = { version = "0.34" }
-egui-winit               = { version = "0.34" }
 fast_image_resize        = { version = "6.0" }
 font8x8                  = { version = "0.3" }
 fontdb                   = { version = "0.23" }
 fontdue                  = { version = "0.9" }
 image                    = { version = "0.25", default-features = false, features = ["png"] }
-objc                     = { version = "0.2" }
 objc2                    = { version = "0.6" }
-objc2-app-kit            = { version = "0.3", features = ["NSEvent", "block2"] }
 objc2-core-foundation    = { version = "0.3" }
 objc2-core-graphics      = { version = "0.3" }
 objc2-core-media         = { version = "0.3" }
@@ -40,19 +33,13 @@ objc2-foundation         = { version = "0.3" }
 objc2-screen-capture-kit = { version = "0.3" }
 objc2-vision             = { version = "0.3" }
 png                      = { version = "0.18" }
-pollster                 = { version = "0.4" }
-raw-window-handle        = { version = "0.6" }
 serde                    = { version = "1.0", features = ["derive"] }
-serde_json               = { version = "1.0" }
 thiserror                = { version = "2.0" }
 toml                     = { version = "1.1" }
 tracing                  = { version = "0.1" }
 tracing-appender         = { version = "0.2" }
 tracing-subscriber       = { version = "0.3", features = ["env-filter"] }
 ttf-parser               = { version = "0.25" }
-wgpu                     = { version = "29.0" }
-winit                    = { version = "0.30", features = ["rwh_06"] }
-xcap                     = { version = "0.9" }
 
 rsnap-capture-core = { version = "0.2.10", path = "packages/rsnap-capture-core" }
 rsnap-host-ffi     = { version = "0.2.10", path = "packages/rsnap-host-ffi" }

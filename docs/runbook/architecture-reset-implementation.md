@@ -1,3 +1,12 @@
+---
+title: "Execute Host/Core Reset Slice"
+description: "Execute Host/Core Reset Slice documentation for Rsnap."
+type: "Runbook"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Execute Host/Core Reset Slice
 
 Goal: Land one host/core reset slice without reintroducing mixed ownership, historical shell
@@ -70,8 +79,8 @@ Start with the smallest checked-in command set that matches the slice:
   run the docs-only sequence in `docs/runbook/architecture-reset-validation.md`
 - Rust logic or cross-platform product behavior:
   run `cargo make test`
-- scroll-capture behavior or replay-sensitive stitching logic:
-  run `scripts/smoke/replay-scroll-capture.sh`
+- scroll-capture behavior or stitching logic:
+  run `cargo test -p rsnap-overlay scroll_capture --lib`
 - performance-sensitive rendering or interaction:
   run `scripts/perf/local.sh`
 - dedicated macOS desktop readiness without claiming full live acceptance:

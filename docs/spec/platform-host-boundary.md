@@ -1,3 +1,12 @@
+---
+title: "Platform Host Boundary"
+description: "Platform Host Boundary documentation for Rsnap."
+type: "Spec"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Platform Host Boundary
 
 Purpose: Define the normative ownership boundary between native platform hosts and the Rust core
@@ -58,7 +67,7 @@ The Rust core owns:
 - final-byte image algorithms: crop mapping, lossless PNG export encoding, capture-frame planning
   and compositing, wallpaper thumbnail decoding/caching, mosaic patch generation, minimap planning,
   selection transforms, auto-centering analysis, and live-sample pixel extraction
-- deterministic replay, test fixtures, and product-level validation logic
+- deterministic tests, fixtures, and product-level validation logic
 - cross-platform product data models and behavior contracts
 
 ## Allowed host/core protocol

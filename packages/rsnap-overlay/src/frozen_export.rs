@@ -13,12 +13,12 @@ pub use model::{
 use std::f32::consts::PI;
 
 use color_eyre::eyre::{self, Result};
-use egui::Pos2;
 use image::{
 	Rgba, RgbaImage,
 	imageops::{self, FilterType},
 };
 
+use crate::point::PixelPoint;
 use crate::text_rendering::{self, RasterTextAnnotation};
 use rsnap_capture_core::{self, DisplayPointRect};
 
@@ -29,9 +29,9 @@ const LIGHT_TEXT_SHADOW_RGBA: [u8; 4] = [255, 255, 255, 122];
 
 #[derive(Clone, Copy, Debug)]
 struct ArrowGeometry {
-	shaft_end: Pos2,
-	head_left: Pos2,
-	head_right: Pos2,
+	shaft_end: PixelPoint,
+	head_left: PixelPoint,
+	head_right: PixelPoint,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -82,7 +82,7 @@ impl ExportTransform {
 		((self.scale_x + self.scale_y) * 0.5) as f32
 	}
 
-	fn point_to_pixels(self, point: FrozenOverlayExportPoint) -> Option<Pos2> {
+	fn point_to_pixels(self, point: FrozenOverlayExportPoint) -> Option<PixelPoint> {
 		if !point.x.is_finite() || !point.y.is_finite() {
 			return None;
 		}
@@ -90,7 +90,7 @@ impl ExportTransform {
 		let x = (point.x - self.selection.x) * self.scale_x;
 		let y = (self.selection.y + self.selection.height - point.y) * self.scale_y;
 
-		f64_pair_to_pos2(x, y)
+		f64_pair_to_pixel_point(x, y)
 	}
 
 	fn float_rect(self, rect: DisplayPointRect) -> Option<FloatRect> {
@@ -102,8 +102,8 @@ impl ExportTransform {
 		let y = (self.selection.y + self.selection.height - (rect.y + rect.height)) * self.scale_y;
 		let width = rect.width * self.scale_x;
 		let height = rect.height * self.scale_y;
-		let origin = f64_pair_to_pos2(x, y)?;
-		let size = f64_pair_to_pos2(width, height)?;
+		let origin = f64_pair_to_pixel_point(x, y)?;
+		let size = f64_pair_to_pixel_point(width, height)?;
 
 		Some(FloatRect { x: origin.x, y: origin.y, width: size.x, height: size.y })
 	}
@@ -310,10 +310,10 @@ fn render_spotlight_border(
 	stroke_raster::draw_segments(
 		image,
 		&[
-			(Pos2::new(left, top), Pos2::new(right, top)),
-			(Pos2::new(right, top), Pos2::new(right, bottom)),
-			(Pos2::new(right, bottom), Pos2::new(left, bottom)),
-			(Pos2::new(left, bottom), Pos2::new(left, top)),
+			(PixelPoint::new(left, top), PixelPoint::new(right, top)),
+			(PixelPoint::new(right, top), PixelPoint::new(right, bottom)),
+			(PixelPoint::new(right, bottom), PixelPoint::new(left, bottom)),
+			(PixelPoint::new(left, bottom), PixelPoint::new(left, top)),
 		],
 		line_width,
 		Rgba(color),
@@ -413,7 +413,7 @@ fn render_text_annotation(
 		return;
 	};
 	let font_size_px = (annotation.style.font_size_points * transform.scalar_scale()).max(1.0);
-	let shadow_anchor = Pos2::new(anchor.x, anchor.y + transform.scalar_scale().max(1.0));
+	let shadow_anchor = PixelPoint::new(anchor.x, anchor.y + transform.scalar_scale().max(1.0));
 	let shadow = RasterTextAnnotation {
 		anchor_px: shadow_anchor,
 		font_size_px,
@@ -445,8 +445,8 @@ fn with_scaled_alpha(mut rgba: [u8; 4], scale: f32) -> [u8; 4] {
 }
 
 fn arrow_geometry(
-	start: Pos2,
-	end: Pos2,
+	start: PixelPoint,
+	end: PixelPoint,
 	stroke_width_points: f32,
 	transform: ExportTransform,
 ) -> Option<ArrowGeometry> {
@@ -460,19 +460,19 @@ fn arrow_geometry(
 	let head_length = (stroke_width * 4.2).max(16.0 * transform.scalar_scale()).min(distance * 0.9);
 	let head_spread = PI / 7.0;
 	let angle = (end.y - start.y).atan2(end.x - start.x);
-	let direction = Pos2::new(angle.cos(), angle.sin());
-	let shaft_end = Pos2::new(
+	let direction = PixelPoint::new(angle.cos(), angle.sin());
+	let shaft_end = PixelPoint::new(
 		end.x - direction.x * head_length * 0.72,
 		end.y - direction.y * head_length * 0.72,
 	);
 
 	Some(ArrowGeometry {
 		shaft_end,
-		head_left: Pos2::new(
+		head_left: PixelPoint::new(
 			end.x - (angle - head_spread).cos() * head_length,
 			end.y - (angle - head_spread).sin() * head_length,
 		),
-		head_right: Pos2::new(
+		head_right: PixelPoint::new(
 			end.x - (angle + head_spread).cos() * head_length,
 			end.y - (angle + head_spread).sin() * head_length,
 		),
@@ -488,7 +488,7 @@ fn valid_rect(rect: DisplayPointRect) -> bool {
 		&& rect.height > 0.0
 }
 
-fn f64_pair_to_pos2(x: f64, y: f64) -> Option<Pos2> {
+fn f64_pair_to_pixel_point(x: f64, y: f64) -> Option<PixelPoint> {
 	if x.is_finite()
 		&& y.is_finite()
 		&& x >= f64::from(f32::MIN)
@@ -496,7 +496,7 @@ fn f64_pair_to_pos2(x: f64, y: f64) -> Option<Pos2> {
 		&& x <= f64::from(f32::MAX)
 		&& y <= f64::from(f32::MAX)
 	{
-		Some(Pos2::new(x as f32, y as f32))
+		Some(PixelPoint::new(x as f32, y as f32))
 	} else {
 		None
 	}

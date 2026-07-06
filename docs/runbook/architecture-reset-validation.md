@@ -1,3 +1,12 @@
+---
+title: "Validate Host/Core Reset Work"
+description: "Validate Host/Core Reset Work documentation for Rsnap."
+type: "Runbook"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Validate Host/Core Reset Work
 
 Goal: Validate architecture-reset changes without routing through superseded shell-specific
@@ -35,8 +44,8 @@ Do not claim full reset validation when only one slice changed.
 - For docs-only changes, run the bounded router and link checks in the next subsection.
 - For code changes, run the repository's selected gate for the current lane before relying on live
   manual checks.
-- If the touched slice has replay or deterministic entrypoints, treat those as authoritative before
-  live desktop validation.
+- If the touched slice has deterministic entrypoints, treat those as authoritative before live
+  desktop validation.
 
 ### Docs-only validation
 

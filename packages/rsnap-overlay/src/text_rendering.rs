@@ -1,6 +1,5 @@
 use std::sync::{Arc, OnceLock};
 
-use egui::{FontData, FontDefinitions, FontFamily, Pos2};
 use font8x8::{BASIC_FONTS, UnicodeFonts};
 use fontdue::{
 	Font, FontSettings,
@@ -8,7 +7,9 @@ use fontdue::{
 };
 use image::{Rgba, RgbaImage};
 
+use crate::point::PixelPoint;
 use crate::system_fonts;
+use crate::system_fonts::SystemTextFontData;
 
 const BITMAP_GLYPH_SIDE_PX: u32 = 8;
 const BITMAP_GLYPH_ADVANCE_PX: u32 = 8;
@@ -16,7 +17,7 @@ const BITMAP_LINE_GAP_PX: u32 = 2;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RasterTextAnnotation<'a> {
-	pub(crate) anchor_px: Pos2,
+	pub(crate) anchor_px: PixelPoint,
 	pub(crate) font_size_px: f32,
 	pub(crate) fill_rgba: [u8; 4],
 	pub(crate) text: &'a str,
@@ -30,11 +31,11 @@ pub(crate) struct TextBounds {
 
 #[derive(Debug)]
 struct ExportTextFont {
-	font_data: Arc<FontData>,
+	font_data: Arc<SystemTextFontData>,
 	fontdue_font: OnceLock<Option<Font>>,
 }
 impl ExportTextFont {
-	fn new(font_data: Arc<FontData>) -> Self {
+	fn new(font_data: Arc<SystemTextFontData>) -> Self {
 		Self { font_data, fontdue_font: OnceLock::new() }
 	}
 
@@ -42,7 +43,7 @@ impl ExportTextFont {
 		self.fontdue_font
 			.get_or_init(|| {
 				Font::from_bytes(
-					self.font_data.as_ref().as_ref(),
+					self.font_data.bytes.as_slice(),
 					FontSettings {
 						collection_index: self.font_data.index,
 						..FontSettings::default()
@@ -108,22 +109,11 @@ fn export_text_fonts() -> &'static [ExportTextFont] {
 }
 
 fn load_export_text_fonts() -> Vec<ExportTextFont> {
-	let mut fonts = FontDefinitions::default();
-
-	system_fonts::configure_text_font_fallbacks(&mut fonts);
-
-	collect_export_text_fonts(
-		fonts
-			.families
-			.get(&FontFamily::Proportional)
-			.into_iter()
-			.flat_map(|family| family.iter())
-			.filter_map(|font_name| fonts.font_data.get(font_name).cloned()),
-	)
+	collect_export_text_fonts(system_fonts::system_text_fonts().iter().map(|font| font.font_data()))
 }
 
 fn collect_export_text_fonts(
-	font_data: impl IntoIterator<Item = Arc<FontData>>,
+	font_data: impl IntoIterator<Item = Arc<SystemTextFontData>>,
 ) -> Vec<ExportTextFont> {
 	font_data
 		.into_iter()
@@ -461,9 +451,10 @@ fn blend_pixel(image: &mut RgbaImage, x: i32, y: i32, color: Rgba<u8>, coverage:
 mod tests {
 	use std::sync::Arc;
 
-	use egui::{FontData, FontDefinitions, Pos2};
 	use image::Rgba;
 
+	use crate::point::PixelPoint;
+	use crate::system_fonts::{self, SystemTextFontData};
 	use crate::text_rendering::RasterTextAnnotation;
 
 	#[test]
@@ -473,7 +464,7 @@ mod tests {
 		super::render_with_bitmap_fallback(
 			&mut image,
 			RasterTextAnnotation {
-				anchor_px: Pos2::new(8.0, 8.0),
+				anchor_px: PixelPoint::new(8.0, 8.0),
 				font_size_px: 16.0,
 				fill_rgba: [255, 255, 255, 255],
 				text: "Text",
@@ -490,7 +481,7 @@ mod tests {
 		super::render_with_bitmap_fallback(
 			&mut image,
 			RasterTextAnnotation {
-				anchor_px: Pos2::new(8.0, 8.0),
+				anchor_px: PixelPoint::new(8.0, 8.0),
 				font_size_px: 16.0,
 				fill_rgba: [255, 255, 255, 255],
 				text: "A",
@@ -539,13 +530,13 @@ mod tests {
 		let runs =
 			super::build_text_font_runs(fonts, text).expect("ASCII text should map to a font");
 		let annotation_at_origin = RasterTextAnnotation {
-			anchor_px: Pos2::new(0.0, 0.0),
+			anchor_px: PixelPoint::new(0.0, 0.0),
 			font_size_px: 28.0,
 			fill_rgba: [255, 255, 255, 255],
 			text,
 		};
 		let annotation_with_negative_anchor =
-			RasterTextAnnotation { anchor_px: Pos2::new(-8.0, -8.0), ..annotation_at_origin };
+			RasterTextAnnotation { anchor_px: PixelPoint::new(-8.0, -8.0), ..annotation_at_origin };
 		let mut image_at_origin = image::RgbaImage::from_pixel(96, 64, Rgba([0, 0, 0, 0]));
 		let mut image_with_negative_anchor =
 			image::RgbaImage::from_pixel(96, 64, Rgba([0, 0, 0, 0]));
@@ -575,14 +566,12 @@ mod tests {
 
 	#[test]
 	fn collect_export_text_fonts_filters_unparsable_font_data() {
-		let valid_font_data = FontDefinitions::default()
-			.font_data
-			.values()
-			.next()
-			.cloned()
-			.expect("default egui fonts should include at least one font");
+		let valid_font_data = system_fonts::system_text_fonts()
+			.first()
+			.expect("system font database should include at least one text font")
+			.font_data();
 		let fonts = super::collect_export_text_fonts([
-			Arc::new(FontData::from_static(b"not-a-font")),
+			Arc::new(SystemTextFontData::from_static(b"not-a-font")),
 			valid_font_data,
 		]);
 
@@ -601,7 +590,7 @@ mod tests {
 		assert!(super::render_with_font_stack(
 			&mut image,
 			RasterTextAnnotation {
-				anchor_px: Pos2::new(8.0, 8.0),
+				anchor_px: PixelPoint::new(8.0, 8.0),
 				font_size_px: 24.0,
 				fill_rgba: [255, 255, 255, 255],
 				text,

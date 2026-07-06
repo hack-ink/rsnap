@@ -1,3 +1,12 @@
+---
+title: "Documentation Policy"
+description: "Documentation Policy documentation for Rsnap."
+type: "Policy"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Documentation Policy
 
 Purpose: Define how agent-facing documentation is organized, updated, and kept consistent
@@ -25,7 +34,7 @@ artifacts is by task shape, not by reader type.
 | Runbook | `docs/runbook/` | Which sequence should I execute? | Runbooks, migrations, validation, troubleshooting | Any procedure or operational change |
 | Reference | `docs/reference/` | How is it currently organized or implemented? | Ownership maps, implementation-model notes, non-normative technical context | Any layout, ownership, or current-implementation explanation change |
 | Decisions | `docs/decisions/` | Why was this tradeoff accepted? | Durable rationale for accepted technical or product choices | Any accepted decision with long-lived consequences |
-| Research | `docs/research/` | What evidence supported a bounded investigation? | Machine-readable supporting research runs, not primary behavior authority | Any evidence-backed research run that must remain replayable |
+| Research | `docs/research/` | What evidence supported a bounded investigation? | Supporting research contracts, not primary behavior authority | Any evidence-backed research run that must remain replayable |
 
 ## Placement rules
 

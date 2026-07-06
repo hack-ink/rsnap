@@ -1,3 +1,12 @@
+---
+title: "Live Sampling Reference"
+description: "Live Sampling Reference documentation for Rsnap."
+type: "Reference"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Live Sampling Reference
 
 Purpose: Describe the current stream-first live RGB/loupe sampling path and why Rsnap uses it.
