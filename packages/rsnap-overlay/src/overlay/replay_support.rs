@@ -16,7 +16,6 @@ use std::{
 };
 
 use color_eyre::eyre::{self, Result, WrapErr};
-use image::{self, RgbaImage};
 
 use crate::overlay::trace_recording::ScrollCaptureTraceFrameEntry;
 use crate::overlay::trace_recording::ScrollCaptureTraceInputEntry;
@@ -157,7 +156,7 @@ fn replay_frame_entry(
 	let recorded_estimated_downward_shift_rows = replay_stats
 		.previous_recorded_frame
 		.as_ref()
-		.and_then(|previous| estimate_recorded_downward_shift_rows(previous, &image));
+		.and_then(|previous| semantic::estimate_recorded_downward_shift_rows(previous, &image));
 	let observed_at = started_at + Duration::from_millis(frame.observed_at_ms);
 	let outcome = match replay_mode {
 		RecordedScrollCaptureReplayMode::RecordedSource => match frame.frame_source {
@@ -217,8 +216,10 @@ fn replay_frame_entry(
 		replay_stats.previous_replayed_preview_height,
 		replayed_preview_height,
 	);
-	let semantic_issue =
-		classify_recorded_semantic_issue(&recorded_outcome, recorded_estimated_downward_shift_rows);
+	let semantic_issue = semantic::classify_recorded_semantic_issue(
+		&recorded_outcome,
+		recorded_estimated_downward_shift_rows,
+	);
 
 	if let RecordedScrollCaptureReplayRecordedOutcome::Committed { growth_rows, .. } =
 		recorded_outcome
@@ -253,20 +254,6 @@ fn replay_frame_entry(
 	replay_stats.previous_recorded_frame = Some(image);
 
 	Ok(())
-}
-
-fn estimate_recorded_downward_shift_rows(previous: &RgbaImage, current: &RgbaImage) -> Option<u32> {
-	semantic::estimate_recorded_downward_shift_rows(previous, current)
-}
-
-fn classify_recorded_semantic_issue(
-	recorded_outcome: &RecordedScrollCaptureReplayRecordedOutcome,
-	recorded_estimated_downward_shift_rows: Option<u32>,
-) -> Option<RecordedScrollCaptureSemanticIssue> {
-	semantic::classify_recorded_semantic_issue(
-		recorded_outcome,
-		recorded_estimated_downward_shift_rows,
-	)
 }
 
 #[cfg(target_os = "macos")]
@@ -333,6 +320,7 @@ mod tests {
 
 	use image::{Rgba, RgbaImage};
 
+	use crate::overlay::replay_support::semantic;
 	use crate::overlay::replay_support::summary;
 	use crate::overlay::replay_support::{self, RecordedScrollCaptureReplayMode};
 	use crate::overlay::{
@@ -657,7 +645,7 @@ mod tests {
 		let previous = make_window(&rows, 0);
 		let current = make_window(&rows, 2);
 
-		assert_eq!(super::estimate_recorded_downward_shift_rows(&previous, &current), Some(2));
+		assert_eq!(semantic::estimate_recorded_downward_shift_rows(&previous, &current), Some(2));
 	}
 
 	#[test]
@@ -827,7 +815,7 @@ mod tests {
 	#[test]
 	fn semantic_issue_flags_missed_downward_motion_when_shift_exists_without_growth() {
 		assert_eq!(
-			super::classify_recorded_semantic_issue(
+			semantic::classify_recorded_semantic_issue(
 				&super::RecordedScrollCaptureReplayRecordedOutcome::PreviewUpdated,
 				Some(12),
 			),
