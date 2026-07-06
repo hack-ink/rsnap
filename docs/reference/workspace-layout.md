@@ -134,6 +134,10 @@ Key paths:
 - `packages/rsnap-overlay/src/overlay/window_runtime.rs`: overlay startup, prewarm, and render
   window creation; deferred auxiliary window creation policy lives under
   `overlay/aux_window_runtime.rs`
+- `packages/rsnap-overlay/src/overlay/scroll_runtime.rs`: scroll-capture runtime dispatch for
+  worker responses, external input replay, and frame observation; live-stream polling, backlog
+  consumption, duplicate-frame refresh, and stale-input grace live under
+  `overlay/scroll_runtime/live_stream.rs`
 - `packages/rsnap-overlay/src/worker.rs`: overlay worker thread and backend request handlers;
   worker message protocol and pending-request coalescing live under `worker/`
 - `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: current macOS live-stream support
