@@ -121,9 +121,10 @@ Key paths:
 - `packages/rsnap-overlay/src/overlay/frozen_brush_runtime.rs`: Frozen pen interaction routing
   for `OverlaySession`; the brush sampling, response, smoothing, preview, and rendered point model
   lives under `overlay/frozen_brush_model.rs`
-- `packages/rsnap-overlay/src/overlay/rendering.rs`: overlay window renderer orchestration; shared
-  selection geometry/cache structs live under `overlay/rendering/selection_geometry.rs`, and
-  renderer phase timing telemetry lives under `overlay/rendering/timing.rs`
+- `packages/rsnap-overlay/src/overlay/rendering.rs`: overlay renderer type and GPU context surface;
+  per-frame egui input/draw orchestration lives under `overlay/rendering/frame_pipeline.rs`,
+  shared selection geometry/cache structs live under `overlay/rendering/selection_geometry.rs`,
+  and renderer phase timing telemetry lives under `overlay/rendering/timing.rs`
 - `packages/rsnap-overlay/src/overlay/rendering/affordances/toolbar.rs`: Frozen toolbar rendering
   entry; geometry and tool-palette policy live under `overlay/rendering/affordances/toolbar/`
 - `packages/rsnap-overlay/src/overlay/rendering/affordances/frozen_annotations.rs`: Frozen
