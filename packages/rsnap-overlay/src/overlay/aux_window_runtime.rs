@@ -3,6 +3,8 @@ use crate::overlay::runtime_timing::{
 	HUD_LOUPE_MOVE_INTERVAL_MIN, INTERACTIVE_REPAINT_TARGET_FPS, LOUPE_WINDOW_WARMUP_REDRAWS,
 	OVERLAY_EVENT_LOOP_STALL_THRESHOLD, SLOW_OP_WARN_INTERVAL, SLOW_OP_WARN_OUTER_POSITION,
 };
+#[cfg(target_os = "macos")]
+use crate::overlay::{ActiveEventLoop, Result};
 use crate::overlay::{
 	Duration, GlobalPoint, Instant, LogicalPosition, MonitorRect, MonitorRectPoints,
 	OverlayControl, OverlayEventLoopPhase, OverlayMode, OverlaySession, WindowEvent,
@@ -56,6 +58,158 @@ impl OverlaySession {
 
 	pub(super) fn reset_loupe_window_warmup_redraws(&mut self) {
 		self.loupe_window_warmup_redraws_remaining = 0;
+	}
+
+	#[cfg(target_os = "macos")]
+	/// Completes creation of non-critical auxiliary windows after the first overlay frame.
+	pub fn finish_startup_aux_window_creation(
+		&mut self,
+		event_loop: &ActiveEventLoop,
+	) -> Result<(), String> {
+		if !self.startup_aux_window_creation_pending && !self.aux_window_creation_needed() {
+			return Ok(());
+		}
+
+		self.startup_aux_window_creation_scheduled = false;
+
+		let mut created_aux_windows = false;
+
+		if self.loupe_window.is_none() && self.loupe_window_needed() {
+			self.create_loupe_window(event_loop)?;
+
+			created_aux_windows = true;
+		}
+		if self.toolbar_window.is_none() && self.toolbar_window_needed() {
+			self.create_toolbar_window(event_loop)?;
+
+			created_aux_windows = true;
+		}
+		if self.scroll_preview_window.is_none() && self.scroll_preview_window_needed() {
+			self.create_scroll_preview_window(event_loop)?;
+
+			created_aux_windows = true;
+		}
+
+		self.complete_startup_aux_window_creation(created_aux_windows);
+
+		if created_aux_windows
+			&& let Some(monitor) = self.scroll_capture.monitor
+			&& self.rebuild_active_scroll_capture_live_stream()
+			&& let Some(live_stream) = self.scroll_capture.live_stream.as_ref()
+		{
+			live_stream.prime_monitor_nonblocking(monitor);
+		}
+		if self.loupe_window_needed() {
+			self.set_alt_loupe_window_visible(self.active_cursor_monitor(), true);
+		}
+		if self.toolbar_window_needed() {
+			self.request_redraw_toolbar_window();
+		}
+		if self.scroll_preview_window_needed() {
+			if let Some(monitor) = self.scroll_capture.monitor {
+				self.position_scroll_preview_window(monitor);
+			}
+
+			self.request_redraw_scroll_preview_window();
+		}
+
+		Ok(())
+	}
+
+	#[cfg(target_os = "macos")]
+	fn loupe_window_needed(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Live)
+			&& self.state.alt_held
+			&& !self.live_loupe_uses_hud_window()
+	}
+
+	#[cfg(target_os = "macos")]
+	fn toolbar_window_needed(&self) -> bool {
+		matches!(self.state.mode, OverlayMode::Frozen)
+			&& self.toolbar_state.visible
+			&& self.frozen_preview_visible()
+	}
+
+	#[cfg(target_os = "macos")]
+	fn scroll_preview_window_needed(&self) -> bool {
+		self.scroll_capture.active
+	}
+
+	#[cfg(target_os = "macos")]
+	fn aux_window_creation_needed(&self) -> bool {
+		(self.loupe_window.is_none() && self.loupe_window_needed())
+			|| (self.toolbar_window.is_none() && self.toolbar_window_needed())
+			|| (self.scroll_preview_window.is_none() && self.scroll_preview_window_needed())
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn request_aux_window_creation_if_needed(&mut self) {
+		if !self.aux_window_creation_needed() {
+			return;
+		}
+
+		self.startup_aux_window_creation_pending = true;
+
+		self.maybe_schedule_startup_aux_window_creation();
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn maybe_schedule_startup_aux_window_creation(&mut self) {
+		if !self.startup_aux_window_creation_pending || self.startup_aux_window_creation_scheduled {
+			return;
+		}
+
+		let Some(waker) = self.startup_aux_window_waker.as_ref().cloned() else {
+			return;
+		};
+
+		self.startup_aux_window_creation_scheduled = true;
+
+		waker();
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn complete_startup_aux_window_creation(&mut self, created_aux_windows: bool) {
+		self.startup_aux_window_creation_pending = false;
+
+		if created_aux_windows {
+			if self.latest_live_cursor_sample_request_id.is_some() {
+				// If startup already primed live sampling, keep the existing stream alive
+				// and defer the narrow ScreenCaptureKit upgrade until an auxiliary window
+				// is actually shown.
+				self.pending_startup_aux_live_stream_filter_upgrade = true;
+			} else {
+				// Delay the first live-stream ensure until after the aux windows exist so
+				// startup can begin with the full self-capture exclusion set.
+				self.kick_startup_live_sampling();
+			}
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	pub(super) fn maybe_apply_pending_startup_aux_live_stream_filter_upgrade(
+		&mut self,
+		monitor: MonitorRect,
+	) {
+		if !self.pending_startup_aux_live_stream_filter_upgrade {
+			return;
+		}
+
+		let Some(stream) = self.live_sample_stream.as_ref() else {
+			return;
+		};
+
+		if stream.upgrade_monitor_nonblocking(monitor) {
+			self.pending_startup_aux_live_stream_filter_upgrade = false;
+		}
+	}
+
+	#[cfg(not(target_os = "macos"))]
+	pub(super) fn maybe_apply_pending_startup_aux_live_stream_filter_upgrade(
+		&mut self,
+		monitor: MonitorRect,
+	) {
+		let _ = monitor;
 	}
 
 	/// Advances periodic session work before the event loop goes idle.
