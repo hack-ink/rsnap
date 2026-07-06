@@ -128,6 +128,9 @@ Key paths:
 - `packages/rsnap-overlay/src/overlay/macos_native_capture_shell_runtime.rs`: retained macOS
   native capture-shell host sync; AppKit shell window lifecycle and creation live under
   `overlay/macos_native_capture_shell_runtime/shell_windows.rs`
+- `packages/rsnap-overlay/src/overlay/worker_runtime.rs`: overlay worker response dispatch and
+  freeze-capture worker lifecycle; live cursor sampling, window-list refresh, and click hit-test
+  ownership lives under `overlay/worker_runtime/live_sampling.rs`
 - `packages/rsnap-overlay/src/worker.rs`: overlay worker thread and backend request handlers;
   worker message protocol and pending-request coalescing live under `worker/`
 - `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: current macOS live-stream support
