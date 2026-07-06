@@ -3,7 +3,7 @@ use image::{
 	imageops::{self, FilterType},
 };
 
-use crate::overlay::frozen_brush_runtime::FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS;
+use crate::overlay::frozen_brush_model::{self, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS};
 use crate::overlay::session_state::FrozenBrushStyle;
 use crate::overlay::{
 	FrozenArrowAnnotation, FrozenBrushStroke, FrozenCaptureSource, FrozenCommittedOverlay,
@@ -125,7 +125,7 @@ impl OverlaySession {
 		);
 
 		if let Some(active_stroke) = &self.frozen_brush.active_stroke {
-			let display_points = Self::active_frozen_brush_display_points(active_stroke);
+			let display_points = frozen_brush_model::active_display_points(active_stroke);
 			let coverage_mask = brush_coverage_mask.get_or_insert_with(|| {
 				vec![0_u8; image.width() as usize * image.height() as usize]
 			});
@@ -444,7 +444,7 @@ impl OverlaySession {
 		radius: f32,
 	) {
 		let rendered_points =
-			Self::rendered_frozen_brush_points(points, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS);
+			frozen_brush_model::rendered_points(points, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS);
 		let Some(first) = rendered_points.first().copied() else {
 			return;
 		};
