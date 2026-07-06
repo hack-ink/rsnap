@@ -126,6 +126,9 @@ extension FrozenFrameAuthority {
 		guard let record else {
 			return nil
 		}
+		guard record.ageMilliseconds() <= Self.maximumLiveRgbAgeMilliseconds else {
+			return nil
+		}
 		return FrozenFramePixelBufferBridge.loupePatch(
 			from: record.pixelBuffer,
 			point: point,

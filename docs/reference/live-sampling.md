@@ -92,11 +92,13 @@ Fallback behavior:
 
 ## macOS implementation details
 
-- Stream: `SCStream` (`SCStreamConfiguration`, `CMSampleBuffer`) via
-  `objc2-screen-capture-kit`.
+- Live HUD RGB and loupe pixels: Swift `FrozenFrameAuthority` samples the latest eligible
+  `SCStream` frame through native `ScreenCaptureKit`.
+- Scroll/backdrop region continuity: Rust `rsnap-overlay` keeps the transitional ordered
+  region-frame stream behind `rsnap-host-ffi`.
 - Minimum: macOS 12.3+.
-- Pixel sampling is requested through a combined cursor-sample operation to avoid repeated buffer
-  locks.
+- Cursor/loupe FFI has been removed; the Rust live sampler no longer owns live chrome cursor
+  sampling.
 - Stream queue depth is tuned for latest-frame behavior and low-latency live response.
 - HUD/Loupe movement remains throttled in the render scheduling path.
 
@@ -117,11 +119,10 @@ Fallback behavior:
 
 ## Frozen-frame freshness boundary
 
-The live sampler's latest-monitor APIs are cache-oriented. They can return the last warm stream
-frame without proving when that frame was captured, and the Swift FFI bridge does not currently
-carry the source frame age or sequence. That is acceptable for live RGB/Loupe sampling, where the
-next stream tick can correct the HUD, but it is not acceptable for the frozen screenshot first
-frame.
+The legacy live sampler latest-monitor APIs were cache-oriented. They could return the last warm
+stream frame without proving when that frame was captured, so they have been removed from the
+native-host bridge. The live HUD now samples RGB and loupe pixels through the Swift native frozen
+frame authority, while Rust live-stream FFI is retained only for region-frame continuity.
 
 Frozen commit must use `FrozenFrameAuthority` or another source with equivalent provenance:
 
@@ -129,8 +130,8 @@ Frozen commit must use `FrozenFrameAuthority` or another source with equivalent 
 - `post_token` is preferred: the frame sequence advanced after the frozen latch.
 - `latest_unchanged` is allowed only for a fresh same-sequence frame on an unchanged/static
   desktop.
-- Cache-only `peekLatestMonitorImage`, `take_latest_monitor_rgba`, or wrappers that synthesize
-  `capturedAt` at call time must not feed the frozen first frame.
+- Cache-only wrappers that synthesize `capturedAt` at call time must not feed the frozen first
+  frame.
 - A frozen-authority stream warmed before overlay windows became visible must be replaced after
   those windows are on screen, but replacement must be a hot handoff: keep the previous
   self-capture-excluding stream alive until the replacement stream is configured so fast click
@@ -156,7 +157,8 @@ Linux/Windows details remain out of scope for the current macOS-first contract.
 
 ## Known status
 
-- [x] Implemented macOS `SCStream` live path for cursor samples (RGB/Loupe).
+- [x] Implemented macOS `SCStream` live path for cursor samples (RGB/Loupe), now owned by
+  Swift `FrozenFrameAuthority`.
 - [x] Removed live full-display refresh dependency from cursor path.
 - [x] Kept frozen first-frame commit off cache-only live-sampler full-monitor snapshots.
 - [ ] Add opt-in diagnostics for live sample latency beyond frozen `frameAgeMs`.

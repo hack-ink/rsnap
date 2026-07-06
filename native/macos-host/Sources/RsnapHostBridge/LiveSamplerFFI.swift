@@ -2,37 +2,6 @@ import CRsnapHostFFI
 import CoreGraphics
 import Foundation
 
-public struct LiveSampleSnapshot: Equatable, Sendable {
-	public var rgb: RGBSample?
-	public var capturedAtUptime: TimeInterval?
-	public var frameAgeMicroseconds: UInt64?
-	public var frameSequence: UInt64?
-	public var streamGeneration: UInt64?
-	public var patchWidth: Int
-	public var patchHeight: Int
-	public var patchRGBA: Data?
-
-	public init(
-		rgb: RGBSample?,
-		capturedAtUptime: TimeInterval? = nil,
-		frameAgeMicroseconds: UInt64? = nil,
-		frameSequence: UInt64? = nil,
-		streamGeneration: UInt64? = nil,
-		patchWidth: Int = 0,
-		patchHeight: Int = 0,
-		patchRGBA: Data? = nil
-	) {
-		self.rgb = rgb
-		self.capturedAtUptime = capturedAtUptime
-		self.frameAgeMicroseconds = frameAgeMicroseconds
-		self.frameSequence = frameSequence
-		self.streamGeneration = streamGeneration
-		self.patchWidth = patchWidth
-		self.patchHeight = patchHeight
-		self.patchRGBA = patchRGBA
-	}
-}
-
 public struct RGBARegionFrameSnapshot: Equatable, Sendable {
 	public var frameSequence: UInt64
 	public var frameAgeMicroseconds: UInt64
@@ -80,69 +49,6 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 
 	deinit {
 		rsnap_live_sampler_destroy(handle)
-	}
-
-	public func sampleCursor(
-		monitor: MonitorSnapshot,
-		point: CGPoint,
-		patchSidePixels: Int
-	) throws -> LiveSampleSnapshot? {
-		stateLock.lock()
-		defer { stateLock.unlock() }
-
-		var outSample = RsnapLiveSample()
-		let status = rsnap_live_sampler_sample_cursor(
-			handle,
-			RsnapMonitorRect(
-				id: monitor.id,
-				origin: RsnapPoint(
-					x: Int32(monitor.frame.origin.x.rounded()),
-					y: Int32(monitor.frame.origin.y.rounded())
-				),
-				width: UInt32(max(monitor.frame.width.rounded(), 0)),
-				height: UInt32(max(monitor.frame.height.rounded(), 0)),
-				scale_factor_x1000: monitor.scaleFactorX1000
-			),
-			RsnapPoint(x: Int32(point.x.rounded()), y: Int32(point.y.rounded())),
-			UInt32(max(patchSidePixels, 0)),
-			UInt32(max(patchSidePixels, 0)),
-			&outSample
-		)
-		let code = rsnap_status_code(status)
-		if code == 3 {
-			return nil
-		}
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(context: "sampling live cursor", code: code)
-		}
-
-		let patchData: Data? = withUnsafeBytes(of: outSample.patch_rgba) { rawBuffer in
-			let count = min(Int(outSample.patch_len), rawBuffer.count)
-			guard count > 0 else {
-				return nil
-			}
-			return Data(rawBuffer.prefix(count))
-		}
-
-		let frameAgeMicroseconds =
-			outSample.has_frame_metadata == 0 ? nil : UInt64(outSample.frame_age_micros)
-		let capturedAtUptime = frameAgeMicroseconds.map {
-			ProcessInfo.processInfo.systemUptime - (Double($0) / 1_000_000.0)
-		}
-
-		return LiveSampleSnapshot(
-			rgb: outSample.has_rgb == 0
-				? nil : RGBSample(r: outSample.rgb.r, g: outSample.rgb.g, b: outSample.rgb.b),
-			capturedAtUptime: capturedAtUptime,
-			frameAgeMicroseconds: frameAgeMicroseconds,
-			frameSequence: outSample.has_frame_metadata == 0
-				? nil : UInt64(outSample.frame_seq),
-			streamGeneration: outSample.has_frame_metadata == 0
-				? nil : UInt64(outSample.stream_generation),
-			patchWidth: Int(outSample.patch_width),
-			patchHeight: Int(outSample.patch_height),
-			patchRGBA: patchData
-		)
 	}
 
 	public func primeMonitor(_ monitor: MonitorSnapshot) throws {
@@ -362,40 +268,4 @@ public final class RsnapLiveSampler: @unchecked Sendable {
 		)
 	}
 
-	/// Returns the live sampler's cache-only full-monitor snapshot.
-	///
-	/// This API does not expose the original frame capture time or stream sequence. Do not use it
-	/// as a frozen screenshot source unless the FFI contract is extended to prove freshness.
-	public func peekLatestMonitorImage(
-		monitor: MonitorSnapshot
-	) throws -> RGBARegionSnapshot? {
-		stateLock.lock()
-		defer { stateLock.unlock() }
-
-		var outRegion = RsnapOwnedRgbaRegion()
-		let encodedMonitor = RsnapMonitorRect(
-			id: monitor.id,
-			origin: RsnapPoint(
-				x: Int32(monitor.frame.origin.x.rounded()),
-				y: Int32(monitor.frame.origin.y.rounded())
-			),
-			width: UInt32(max(monitor.frame.width.rounded(), 0)),
-			height: UInt32(max(monitor.frame.height.rounded(), 0)),
-			scale_factor_x1000: monitor.scaleFactorX1000
-		)
-		let status = rsnap_live_sampler_take_latest_monitor_rgba(
-			handle,
-			encodedMonitor,
-			&outRegion
-		)
-		let code = rsnap_status_code(status)
-		if code == 3 {
-			return nil
-		}
-		if code != 0 {
-			throw HostBridgeError.ffiStatus(
-				context: "peeking latest monitor RGBA snapshot", code: code)
-		}
-		return rsnapOwnedRgbaSnapshot(from: outRegion)
-	}
 }

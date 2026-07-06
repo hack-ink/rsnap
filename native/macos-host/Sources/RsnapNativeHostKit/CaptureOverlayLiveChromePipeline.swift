@@ -8,6 +8,8 @@ final class CaptureOverlayLiveChromePipeline {
 	private let liveFrameStream: LiveFrameStreamBroker
 	private let chromeSampleFeed: ChromeSampleFeed
 	private let liveChromeBackdrops = LiveChromeBackdropWindowController()
+	private let frameRgbSampler: ChromeSampleFeed.FrameRgbSampler
+	private let framePatchSampler: ChromeSampleFeed.FramePatchSampler
 
 	init(
 		liveFrameStream: LiveFrameStreamBroker,
@@ -16,8 +18,9 @@ final class CaptureOverlayLiveChromePipeline {
 		sampleUpdated: @escaping () -> Void
 	) {
 		self.liveFrameStream = liveFrameStream
+		self.frameRgbSampler = frameRgbSampler
+		self.framePatchSampler = framePatchSampler
 		self.chromeSampleFeed = ChromeSampleFeed(
-			broker: liveFrameStream,
 			frameRgbSampler: frameRgbSampler,
 			framePatchSampler: framePatchSampler,
 			backgroundSampler: CaptureOverlayImageSampler.chromeSampleAtDisplayPoint,
@@ -160,8 +163,25 @@ final class CaptureOverlayLiveChromePipeline {
 		includeLoupePatch: Bool
 	) -> LiveChromeSample? {
 		let samplePixels = includeLoupePatch ? settings.loupeSampleSize.sidePixels : 1
-		return liveFrameStream.sample(at: point, sidePixels: samplePixels)
+		return nativeChromeSample(
+			point: point,
+			sidePixels: samplePixels,
+			includeLoupePatch: includeLoupePatch
+		)
 			?? chromeSampleFeed.snapshot(for: point)
+	}
+
+	private func nativeChromeSample(
+		point: CGPoint,
+		sidePixels: Int,
+		includeLoupePatch: Bool
+	) -> LiveChromeSample? {
+		let rgbSample = frameRgbSampler(point)
+		let loupePatch = includeLoupePatch ? framePatchSampler(point, sidePixels) : nil
+		guard rgbSample != nil || loupePatch != nil else {
+			return nil
+		}
+		return LiveChromeSample(rgb: rgbSample, loupePatch: loupePatch)
 	}
 
 	func updateLiveChromeBackdrops(
