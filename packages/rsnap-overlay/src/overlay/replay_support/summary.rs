@@ -2,10 +2,11 @@ use color_eyre::eyre::{self, Result};
 
 use crate::overlay::{
 	OverlaySession,
+	replay_support::stats::ReplayStats,
 	replay_support::{
 		RecordedScrollCaptureReplayMode, RecordedScrollCaptureReplayRecordedOutcome,
 		RecordedScrollCaptureReplayStepResult, RecordedScrollCaptureReplaySummary,
-		RecordedScrollCaptureSemanticIssue, ReplayStats, ScrollCaptureReplayOutcome,
+		RecordedScrollCaptureSemanticIssue, ScrollCaptureReplayOutcome,
 	},
 	trace_recording::LoadedScrollCaptureLiveTrace,
 };
