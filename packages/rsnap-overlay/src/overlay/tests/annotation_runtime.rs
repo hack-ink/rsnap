@@ -4,8 +4,8 @@ use winit::event::{DeviceId, TouchPhase, WindowEvent};
 #[cfg(not(target_os = "macos"))]
 use winit::window::WindowId;
 
-use crate::overlay::frozen_brush_runtime::{
-	FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MAX, FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MIN,
+use crate::overlay::frozen_brush_model::{
+	self, FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MAX, FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MIN,
 	FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
 };
 use crate::overlay::session_state::{
@@ -80,10 +80,8 @@ fn rasterizing_frozen_brush_clears_reused_coverage_mask() {
 #[test]
 fn rendered_frozen_brush_points_round_corners_into_a_curve() {
 	let points = [Pos2::new(1.0, 1.0), Pos2::new(1.0, 5.0), Pos2::new(5.0, 5.0)];
-	let rendered = OverlaySession::rendered_frozen_brush_points(
-		&points,
-		FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
-	);
+	let rendered =
+		frozen_brush_model::rendered_points(&points, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS);
 
 	assert_eq!(rendered.first().copied(), Some(points[0]));
 	assert_eq!(rendered.last().copied(), Some(points[2]));
@@ -96,7 +94,7 @@ fn rendered_frozen_brush_points_round_corners_into_a_curve() {
 #[test]
 fn corrected_frozen_brush_points_preserve_open_stroke_endpoints() {
 	let points = [Pos2::new(1.0, 1.0), Pos2::new(4.0, 2.0), Pos2::new(7.0, 6.0)];
-	let corrected = OverlaySession::corrected_frozen_brush_points(&points);
+	let corrected = frozen_brush_model::corrected_points(&points);
 
 	assert_eq!(corrected.first().copied(), Some(points[0]));
 	assert_eq!(corrected.last().copied(), Some(points[2]));
@@ -114,7 +112,7 @@ fn corrected_frozen_brush_points_keep_annotation_loops_open() {
 		Pos2::new(0.0, 6.0),
 		Pos2::new(1.5, 1.0),
 	];
-	let corrected = OverlaySession::corrected_frozen_brush_points(&points);
+	let corrected = frozen_brush_model::corrected_points(&points);
 
 	assert!(corrected.len() >= 2);
 	assert_eq!(corrected.first().copied(), Some(points[0]));
@@ -131,7 +129,7 @@ fn corrected_frozen_brush_points_suppress_small_local_dent() {
 		Pos2::new(11.0, 0.6),
 		Pos2::new(16.0, 0.3),
 	];
-	let corrected = OverlaySession::corrected_frozen_brush_points(&points);
+	let corrected = frozen_brush_model::corrected_points(&points);
 	let deepest_y = corrected.iter().fold(f32::INFINITY, |deepest, point| deepest.min(point.y));
 
 	assert_eq!(corrected.first().copied(), Some(points[0]));
@@ -150,7 +148,7 @@ fn corrected_frozen_brush_points_preserve_monotonic_arc_trend() {
 		Pos2::new(14.0, 6.4),
 		Pos2::new(18.0, 8.8),
 	];
-	let corrected = OverlaySession::corrected_frozen_brush_points(&points);
+	let corrected = frozen_brush_model::corrected_points(&points);
 
 	assert_eq!(corrected.first().copied(), Some(points[0]));
 	assert_eq!(corrected.last().copied(), Some(points[6]));
@@ -168,7 +166,7 @@ fn corrected_frozen_brush_points_preserve_small_wave_backbone() {
 		Pos2::new(20.0, 1.7),
 		Pos2::new(24.0, 0.0),
 	];
-	let corrected = OverlaySession::corrected_frozen_brush_points(&points);
+	let corrected = frozen_brush_model::corrected_points(&points);
 	let reversals = tests::significant_y_direction_reversals(&corrected, 0.12);
 	let (min_y, max_y) = corrected.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |acc, point| {
 		(acc.0.min(point.y), acc.1.max(point.y))
@@ -206,8 +204,8 @@ fn preview_frozen_brush_points_keep_live_modeled_path_before_commit() {
 		started_at: Instant::now(),
 		last_sample_at: Instant::now(),
 	};
-	let preview = OverlaySession::preview_frozen_brush_points(&active_stroke);
-	let committed = OverlaySession::corrected_frozen_brush_points(&active_stroke.raw_points);
+	let preview = frozen_brush_model::preview_points(&active_stroke);
+	let committed = frozen_brush_model::corrected_points(&active_stroke.raw_points);
 
 	assert_eq!(preview.first().copied(), active_stroke.raw_points.first().copied());
 	assert_eq!(preview.last().copied(), active_stroke.raw_points.last().copied());
@@ -240,7 +238,7 @@ fn preview_frozen_brush_points_follow_modeled_centerline_instead_of_raw_wobble()
 		started_at: Instant::now(),
 		last_sample_at: Instant::now(),
 	};
-	let preview = OverlaySession::preview_frozen_brush_points(&active_stroke);
+	let preview = frozen_brush_model::preview_points(&active_stroke);
 	let (min_y, max_y) = preview.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |acc, point| {
 		(acc.0.min(point.y), acc.1.max(point.y))
 	});
@@ -265,7 +263,7 @@ fn rendered_live_frozen_brush_wave_preview_avoids_hard_inflection_kinks() {
 		Pos2::new(24.0, 0.0),
 	];
 	let started_at = Instant::now();
-	let mut stroke = OverlaySession::new_active_frozen_brush_stroke(
+	let mut stroke = frozen_brush_model::new_active_stroke(
 		raw_points[0],
 		started_at,
 		FrozenBrushStyle::default(),
@@ -277,16 +275,14 @@ fn rendered_live_frozen_brush_wave_preview_avoids_hard_inflection_kinks() {
 				index as f32 * FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
 			);
 
-		OverlaySession::append_frozen_brush_raw_sample(&mut stroke, point, sampled_at);
+		frozen_brush_model::append_raw_sample(&mut stroke, point, sampled_at);
 	}
 
-	let preview = OverlaySession::preview_frozen_brush_points(&stroke);
-	let rendered = OverlaySession::rendered_frozen_brush_points(
-		&preview,
-		FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
-	);
+	let preview = frozen_brush_model::preview_points(&stroke);
+	let rendered =
+		frozen_brush_model::rendered_points(&preview, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS);
 	let max_turn_angle = rendered.windows(3).fold(0.0_f32, |max_turn, window| {
-		max_turn.max(OverlaySession::frozen_brush_turn_angle(window[0], window[1], window[2]))
+		max_turn.max(frozen_brush_model::turn_angle(window[0], window[1], window[2]))
 	});
 
 	assert!(
@@ -312,7 +308,7 @@ fn rendered_live_frozen_brush_arc_preview_avoids_corner_snap() {
 		Pos2::new(4.9, 12.0),
 	];
 	let started_at = Instant::now();
-	let mut stroke = OverlaySession::new_active_frozen_brush_stroke(
+	let mut stroke = frozen_brush_model::new_active_stroke(
 		raw_points[0],
 		started_at,
 		FrozenBrushStyle::default(),
@@ -324,16 +320,14 @@ fn rendered_live_frozen_brush_arc_preview_avoids_corner_snap() {
 				index as f32 * FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
 			);
 
-		OverlaySession::append_frozen_brush_raw_sample(&mut stroke, point, sampled_at);
+		frozen_brush_model::append_raw_sample(&mut stroke, point, sampled_at);
 	}
 
-	let preview = OverlaySession::preview_frozen_brush_points(&stroke);
-	let rendered = OverlaySession::rendered_frozen_brush_points(
-		&preview,
-		FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
-	);
+	let preview = frozen_brush_model::preview_points(&stroke);
+	let rendered =
+		frozen_brush_model::rendered_points(&preview, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS);
 	let max_turn_angle = rendered.windows(3).fold(0.0_f32, |max_turn, window| {
-		max_turn.max(OverlaySession::frozen_brush_turn_angle(window[0], window[1], window[2]))
+		max_turn.max(frozen_brush_model::turn_angle(window[0], window[1], window[2]))
 	});
 
 	assert!(
@@ -366,7 +360,7 @@ fn rendered_live_frozen_brush_suppresses_slow_straight_wobble() {
 		Pos2::new(8.0, 0.0),
 	];
 	let started_at = Instant::now();
-	let mut stroke = OverlaySession::new_active_frozen_brush_stroke(
+	let mut stroke = frozen_brush_model::new_active_stroke(
 		raw_points[0],
 		started_at,
 		FrozenBrushStyle::default(),
@@ -378,14 +372,12 @@ fn rendered_live_frozen_brush_suppresses_slow_straight_wobble() {
 				index as f32 * FROZEN_BRUSH_MODEL_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
 			);
 
-		OverlaySession::append_frozen_brush_raw_sample(&mut stroke, point, sampled_at);
+		frozen_brush_model::append_raw_sample(&mut stroke, point, sampled_at);
 	}
 
-	let preview = OverlaySession::preview_frozen_brush_points(&stroke);
-	let rendered = OverlaySession::rendered_frozen_brush_points(
-		&preview,
-		FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS,
-	);
+	let preview = frozen_brush_model::preview_points(&stroke);
+	let rendered =
+		frozen_brush_model::rendered_points(&preview, FROZEN_BRUSH_RENDER_SAMPLE_STEP_POINTS);
 	let (min_y, max_y) = rendered.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |acc, point| {
 		(acc.0.min(point.y), acc.1.max(point.y))
 	});
@@ -403,8 +395,8 @@ fn rendered_live_frozen_brush_suppresses_slow_straight_wobble() {
 #[test]
 fn frozen_brush_model_response_follows_fast_strokes_more_closely() {
 	let points = [Pos2::new(0.0, 0.0), Pos2::new(16.0, 0.0)];
-	let slow = OverlaySession::frozen_brush_input_response(&points, 16.0 / 120.0);
-	let fast = OverlaySession::frozen_brush_input_response(&points, 16.0 / 1_600.0);
+	let slow = frozen_brush_model::input_response(&points, 16.0 / 120.0);
+	let fast = frozen_brush_model::input_response(&points, 16.0 / 1_600.0);
 
 	assert!(slow < fast);
 	assert!(slow >= FROZEN_BRUSH_MODEL_INPUT_RESPONSE_MIN);
@@ -427,8 +419,8 @@ fn frozen_brush_model_response_boosts_sustained_curve_motion() {
 		Pos2::new(5.0, 3.2),
 		Pos2::new(5.8, 5.1),
 	];
-	let straight = OverlaySession::frozen_brush_input_response(&straight_points, 2.0 / 120.0);
-	let curved = OverlaySession::frozen_brush_input_response(&curved_points, 2.0 / 120.0);
+	let straight = frozen_brush_model::input_response(&straight_points, 2.0 / 120.0);
+	let curved = frozen_brush_model::input_response(&curved_points, 2.0 / 120.0);
 
 	assert!(
 		curved > straight,
