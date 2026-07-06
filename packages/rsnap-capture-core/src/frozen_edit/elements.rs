@@ -1,4 +1,4 @@
-use rsnap_capture_core::{
+use crate::{
 	DisplayPointRect, FrozenOverlayExportArrow, FrozenOverlayExportElement,
 	FrozenOverlayExportMosaic, FrozenOverlayExportPen, FrozenOverlayExportPoint,
 	FrozenOverlayExportSpotlight, FrozenOverlayExportSpotlightStyle,

@@ -12,7 +12,7 @@ use crate::{
 	RsnapFrozenOverlayEditStyle, RsnapFrozenOverlayExportElement,
 	RsnapFrozenOverlayExportElementKind, RsnapStatus, RsnapToolbarItemKind,
 };
-use rsnap_overlay::frozen_edit::{
+use rsnap_capture_core::{
 	FrozenOverlayEditArrow, FrozenOverlayEditColor, FrozenOverlayEditElement,
 	FrozenOverlayEditMosaic, FrozenOverlayEditPen, FrozenOverlayEditPoint, FrozenOverlayEditRect,
 	FrozenOverlayEditSession, FrozenOverlayEditSnapshot, FrozenOverlayEditSpotlight,

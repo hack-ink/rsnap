@@ -4,7 +4,6 @@
 //! used by native-host FFI and deterministic performance checks. The retired Rust UI
 //! overlay runtime is no longer part of the public or compiled crate surface.
 
-pub mod frozen_edit;
 #[cfg(target_os = "macos")]
 pub mod host_live_sampling_macos;
 

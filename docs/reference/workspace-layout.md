@@ -42,8 +42,8 @@ For the active target architecture and migration direction, read:
 | `native/macos-host/` | SwiftPM AppKit-first macOS host shell: menu bar entry, full-screen capture windows, in-window HUD/toolbar, and native bridging into `rsnap-host-ffi` |
 | `apps/rsnap/` | Thin launcher/bootstrap crate: startup logging, build metadata, stable-bundle resolution, and `cargo run -p rsnap` handoff into the staged native macOS host |
 | `apps/rsnap-perf/` | Deterministic local performance sweep: fixed fixture construction, checksum-backed correctness checks, case timing, and budget assertions |
-| `packages/rsnap-overlay/` | Narrow Rust transition crate: retained frozen edit state and macOS live-sampling adapters that have not yet moved into durable owners |
-| `packages/rsnap-capture-core/` | Durable Rust product-semantics and image-algorithm crate: shared geometry, semantic scene model, host/core protocol enums, reset-native session core, export/crop/PNG encoding, frozen-overlay export composition, capture-frame rendering, wallpaper thumbnail, minimap, mosaic, selection transform, auto-center, scroll stitching, and live-sample helpers |
+| `packages/rsnap-overlay/` | Narrow Rust transition crate: macOS live-sampling adapters that have not yet moved into the native host |
+| `packages/rsnap-capture-core/` | Durable Rust product-semantics and image-algorithm crate: shared geometry, semantic scene model, host/core protocol enums, reset-native session core, export/crop/PNG encoding, frozen-overlay edit/export, capture-frame rendering, wallpaper thumbnail, minimap, mosaic, selection transform, auto-center, scroll stitching, and live-sample helpers |
 | `packages/rsnap-host-ffi/` | Thin C ABI bridge crate used by the native macOS host to call the Rust product core and retained Rust transition modules |
 | `docs/` | Agent-facing repository docs split into `spec`, `runbook`, `reference`, and `decisions` |
 | `assets/` | Shared app-icon source plus generated bundle/runtime assets |
@@ -100,7 +100,6 @@ has native-host callers or deterministic validation surfaces but has not yet mov
 
 Today it owns:
 
-- frozen edit state that is still Rust-owned but has not yet moved into `rsnap-capture-core`
 - macOS live-frame and live-sampling adapters used through `rsnap-host-ffi`
 
 Important:
@@ -115,10 +114,7 @@ Important:
 Key paths:
 
 - `packages/rsnap-overlay/src/lib.rs`: explicit public surface for the remaining transition
-  helpers: frozen edit and macOS live sampling
-- `packages/rsnap-overlay/src/frozen_edit.rs`: Rust-owned frozen overlay edit session state
-  machine, including edit geometry, text hit bounds, and movement clamping policy; element models
-  live under `frozen_edit/elements.rs`
+  helper: macOS live sampling
 - `packages/rsnap-overlay/src/host_live_sampling_macos.rs`: macOS live sampler adapter exposed
   through `rsnap-host-ffi`
 - `packages/rsnap-overlay/src/live_frame_stream_macos.rs`: macOS ScreenCaptureKit live-frame stream
@@ -140,7 +136,7 @@ It owns:
 - the first reset-native reference session core
 - RGBA/BGRA pixel helpers used by host bridge code
 - export crop mapping and lossless PNG encoding
-- frozen-overlay export composition, text rendering, and system font fallback selection
+- frozen-overlay edit state, export composition, text rendering, and system font fallback selection
 - capture-frame layout, background planning, shadowing, wallpaper thumbnail decode/cache, and final
   RGBA composition
 - scroll minimap planning
@@ -158,6 +154,9 @@ This crate must stay free of:
 
 Key frozen-overlay export paths:
 
+- `packages/rsnap-capture-core/src/frozen_edit.rs`: frozen-overlay edit session state machine,
+  including edit geometry, text hit bounds, movement clamping policy, and element models under
+  `frozen_edit/elements.rs`
 - `packages/rsnap-capture-core/src/frozen_overlay_export.rs`: public frozen-overlay export
   compositor used by `rsnap-host-ffi` and `rsnap-perf`
 - `packages/rsnap-capture-core/src/frozen_overlay_export/model.rs`: export element schema shared

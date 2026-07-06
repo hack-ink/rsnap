@@ -10,7 +10,7 @@ pub use self::elements::{
 	FrozenOverlayEditTextStyle, FrozenOverlayTextEdit,
 };
 
-use rsnap_capture_core::{FrozenOverlayTextBounds, ToolbarItemKind};
+use crate::{FrozenOverlayTextBounds, ToolbarItemKind};
 
 const PEN_SAMPLE_MIN_DISTANCE_POINTS: f64 = 1.5;
 const ARROW_MIN_DISTANCE_POINTS: f64 = 6.0;
@@ -706,13 +706,12 @@ fn text_hit_bounds(annotation: &FrozenOverlayEditText) -> FrozenOverlayEditRect 
 
 fn text_bounds(annotation: &FrozenOverlayEditText) -> FrozenOverlayEditRect {
 	let font_size = annotation.style.font_size_points.max(1.0) as f32;
-	let bounds =
-		rsnap_capture_core::measure_frozen_overlay_text_bounds(&annotation.text, font_size)
-			.unwrap_or_else(|| {
-				let width = annotation.text.chars().count().max(1) as f32 * font_size * 0.6;
+	let bounds = crate::measure_frozen_overlay_text_bounds(&annotation.text, font_size)
+		.unwrap_or_else(|| {
+			let width = annotation.text.chars().count().max(1) as f32 * font_size * 0.6;
 
-				FrozenOverlayTextBounds { width, height: font_size * 1.2 }
-			});
+			FrozenOverlayTextBounds { width, height: font_size * 1.2 }
+		});
 
 	FrozenOverlayEditRect::new(
 		annotation.anchor.x,
@@ -724,12 +723,12 @@ fn text_bounds(annotation: &FrozenOverlayEditText) -> FrozenOverlayEditRect {
 
 #[cfg(test)]
 mod tests {
+	use crate::ToolbarItemKind;
 	use crate::frozen_edit::{
 		FrozenOverlayEditColor, FrozenOverlayEditElement, FrozenOverlayEditPoint,
 		FrozenOverlayEditRect, FrozenOverlayEditSession, FrozenOverlayEditStyle,
 		FrozenOverlayEditTextStyle, FrozenOverlayTextEdit,
 	};
-	use rsnap_capture_core::ToolbarItemKind;
 
 	fn selection() -> FrozenOverlayEditRect {
 		FrozenOverlayEditRect::new(10.0, 20.0, 400.0, 240.0)
