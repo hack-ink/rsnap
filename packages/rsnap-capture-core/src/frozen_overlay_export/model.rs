@@ -1,4 +1,4 @@
-use rsnap_capture_core::DisplayPointRect;
+use crate::DisplayPointRect;
 
 /// Point-space coordinate used by frozen-overlay export annotations.
 #[derive(Clone, Copy, Debug, PartialEq)]

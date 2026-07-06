@@ -23,10 +23,13 @@ pub(crate) struct RasterTextAnnotation<'a> {
 	pub(crate) text: &'a str,
 }
 
+/// Pixel bounds for a frozen-overlay text annotation.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct TextBounds {
-	pub(crate) width: f32,
-	pub(crate) height: f32,
+pub struct FrozenOverlayTextBounds {
+	/// Text width in pixels.
+	pub width: f32,
+	/// Text height in pixels.
+	pub height: f32,
 }
 
 #[derive(Debug)]
@@ -65,7 +68,12 @@ struct TextFontRun<'a> {
 	text: &'a str,
 }
 
-pub(crate) fn measure_text_bounds(text: &str, font_size_px: f32) -> Option<TextBounds> {
+/// Measures a frozen-overlay text annotation with the platform font fallback stack.
+#[must_use]
+pub fn measure_frozen_overlay_text_bounds(
+	text: &str,
+	font_size_px: f32,
+) -> Option<FrozenOverlayTextBounds> {
 	if text.is_empty() {
 		return None;
 	}
@@ -166,7 +174,7 @@ fn measure_with_font_stack(
 	font_size_px: f32,
 	fonts: &[ExportTextFont],
 	runs: &[TextFontRun<'_>],
-) -> Option<TextBounds> {
+) -> Option<FrozenOverlayTextBounds> {
 	let parsed_fonts: Vec<_> = fonts.iter().filter_map(ExportTextFont::font).collect();
 
 	if parsed_fonts.is_empty() || parsed_fonts.len() != fonts.len() {
@@ -199,13 +207,13 @@ fn measure_with_font_stack(
 	let line_count = text.lines().count().max(1) as f32;
 	let line_height = font_size_px.max(8.0) * 1.2;
 
-	Some(TextBounds {
+	Some(FrozenOverlayTextBounds {
 		width: max_x.ceil().max(1.0),
 		height: max_y.ceil().max(line_height * line_count).max(1.0),
 	})
 }
 
-fn measure_bitmap_text_bounds(text: &str, font_size_px: f32) -> TextBounds {
+fn measure_bitmap_text_bounds(text: &str, font_size_px: f32) -> FrozenOverlayTextBounds {
 	let scale = (font_size_px.max(8.0) / BITMAP_GLYPH_SIDE_PX as f32).round().max(1.0) as u32;
 	let glyph_advance = BITMAP_GLYPH_ADVANCE_PX.saturating_mul(scale) as f32;
 	let line_height = BITMAP_GLYPH_SIDE_PX
@@ -227,7 +235,7 @@ fn measure_bitmap_text_bounds(text: &str, font_size_px: f32) -> TextBounds {
 
 	max_width = max_width.max(line_width);
 
-	TextBounds {
+	FrozenOverlayTextBounds {
 		width: max_width.ceil().max(1.0),
 		height: (line_height * line_count as f32).ceil().max(1.0),
 	}

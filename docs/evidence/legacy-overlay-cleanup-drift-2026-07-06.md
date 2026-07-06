@@ -25,12 +25,14 @@ last_verified: 2026-07-06
 
 - `Cargo.toml` and `packages/rsnap-overlay/Cargo.toml` remove the `egui*` workspace dependencies
   and crate dependencies.
-- `packages/rsnap-overlay/src/lib.rs` exposes only frozen edit/export and macOS live sampling
-  transition helpers; scroll stitching has since moved to `packages/rsnap-capture-core/`.
-- `packages/rsnap-overlay/src/point.rs`, `packages/rsnap-overlay/src/frozen_export.rs`,
-  `packages/rsnap-overlay/src/frozen_export/stroke_raster.rs`, and
-  `packages/rsnap-overlay/src/text_rendering.rs` replace the former UI-toolkit point/font coupling
-  with crate-local export/text types.
+- `packages/rsnap-overlay/src/lib.rs` exposes only frozen edit and macOS live sampling transition
+  helpers; scroll stitching and frozen-overlay export have since moved to
+  `packages/rsnap-capture-core/`.
+- `packages/rsnap-capture-core/src/point.rs`,
+  `packages/rsnap-capture-core/src/frozen_overlay_export.rs`,
+  `packages/rsnap-capture-core/src/frozen_overlay_export/stroke_raster.rs`, and
+  `packages/rsnap-capture-core/src/text_rendering.rs` replace the former UI-toolkit point/font
+  coupling with core-owned export/text types.
 - `docs/reference/workspace-layout.md`,
   `docs/reference/smoke-perf-validation-surface.md`, and
   `docs/runbook/performance-validation.md` describe the current retained validation surface.

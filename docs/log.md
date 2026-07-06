@@ -2,6 +2,9 @@
 
 ## 2026-07-06
 
+- Moved frozen-overlay export composition, text rendering, and font fallback references from
+  `rsnap-overlay` to `rsnap-capture-core` after the compositor migrated into the durable core
+  crate.
 - Moved scroll-capture ownership references from `rsnap-overlay` to `rsnap-capture-core` after the
   stitching engine, tests, and Criterion benchmark target migrated into the durable core crate.
 - Removed stale documentation routes for the retired Rust overlay UI runtime, recorded replay

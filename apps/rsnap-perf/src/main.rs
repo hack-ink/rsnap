@@ -12,13 +12,12 @@ use crate::measurement::PerfCaseResult;
 use rsnap_capture_core::{
 	self, BgraFrameView, CaptureFrameBackgroundKind, CaptureFrameRenderImageRef,
 	CaptureFrameRenderKind, CaptureFrameSourceKind, DisplayPointRect, FrozenSelectionTransformKind,
-	RectPoints,
+	RectPoints, frozen_overlay_export,
 };
 use rsnap_capture_core::{
 	ScrollCaptureBenchHarness, ScrollCaptureBenchScenario, ScrollCaptureFingerprintMetrics,
 	ScrollCaptureOverlapMetrics, ScrollCaptureSessionMetrics,
 };
-use rsnap_overlay::frozen_export;
 
 fn main() -> Result<()> {
 	color_eyre::install()?;
@@ -116,7 +115,7 @@ fn run_core_export_perf_cases(results: &mut Vec<PerfCaseResult>, image: &RgbaIma
 		10,
 		Duration::from_millis(900),
 		|| {
-			let rendered = frozen_export::render_frozen_overlay_export_rgba(
+			let rendered = frozen_overlay_export::render_frozen_overlay_export_rgba(
 				image.width(),
 				image.height(),
 				image.as_raw(),
@@ -463,7 +462,7 @@ fn verify_mosaic_patch() -> Result<()> {
 }
 
 fn verify_frozen_overlay_export(image: &RgbaImage) -> Result<()> {
-	let rendered = frozen_export::render_frozen_overlay_export_rgba(
+	let rendered = frozen_overlay_export::render_frozen_overlay_export_rgba(
 		image.width(),
 		image.height(),
 		image.as_raw(),

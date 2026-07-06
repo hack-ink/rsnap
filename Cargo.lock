@@ -1061,10 +1061,14 @@ dependencies = [
  "color-eyre",
  "criterion",
  "fast_image_resize",
+ "font8x8",
+ "fontdb",
+ "fontdue",
  "image",
  "png",
  "serde",
  "tracing",
+ "ttf-parser 0.25.1",
 ]
 
 [[package]]
@@ -1080,11 +1084,7 @@ name = "rsnap-overlay"
 version = "0.2.10"
 dependencies = [
  "block2",
- "color-eyre",
  "dispatch2",
- "font8x8",
- "fontdb",
- "fontdue",
  "image",
  "objc2",
  "objc2-core-foundation",
@@ -1095,7 +1095,6 @@ dependencies = [
  "objc2-screen-capture-kit",
  "rsnap-capture-core",
  "tracing",
- "ttf-parser 0.25.1",
 ]
 
 [[package]]

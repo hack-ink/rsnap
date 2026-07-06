@@ -10,8 +10,7 @@ pub use self::elements::{
 	FrozenOverlayEditTextStyle, FrozenOverlayTextEdit,
 };
 
-use crate::text_rendering::{self, TextBounds};
-use rsnap_capture_core::ToolbarItemKind;
+use rsnap_capture_core::{FrozenOverlayTextBounds, ToolbarItemKind};
 
 const PEN_SAMPLE_MIN_DISTANCE_POINTS: f64 = 1.5;
 const ARROW_MIN_DISTANCE_POINTS: f64 = 6.0;
@@ -708,11 +707,12 @@ fn text_hit_bounds(annotation: &FrozenOverlayEditText) -> FrozenOverlayEditRect 
 fn text_bounds(annotation: &FrozenOverlayEditText) -> FrozenOverlayEditRect {
 	let font_size = annotation.style.font_size_points.max(1.0) as f32;
 	let bounds =
-		text_rendering::measure_text_bounds(&annotation.text, font_size).unwrap_or_else(|| {
-			let width = annotation.text.chars().count().max(1) as f32 * font_size * 0.6;
+		rsnap_capture_core::measure_frozen_overlay_text_bounds(&annotation.text, font_size)
+			.unwrap_or_else(|| {
+				let width = annotation.text.chars().count().max(1) as f32 * font_size * 0.6;
 
-			TextBounds { width, height: font_size * 1.2 }
-		});
+				FrozenOverlayTextBounds { width, height: font_size * 1.2 }
+			});
 
 	FrozenOverlayEditRect::new(
 		annotation.anchor.x,
