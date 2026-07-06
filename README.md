@@ -53,8 +53,9 @@ Prototype / in active development.
   - `native/macos-host/` is the SwiftPM AppKit host shell and the default local Run path.
   - `apps/rsnap/` is now a thin launcher/bootstrap crate that stages or opens the native host
     bundle and records startup logging.
-  - `packages/rsnap-overlay/` remains a transitional Rust implementation container for reset
-    slices that have not yet moved into `rsnap-capture-core` / the native host.
+  - `packages/rsnap-overlay/` is now a narrowed Rust transition crate for retained stitching,
+    frozen edit/export, text rendering, benchmarks, and macOS live-sampling adapters that have not
+    yet moved into `rsnap-capture-core` / the native host.
 - The active reset target is no longer a pure-Rust UI stack. New boundary crates now live in:
   - `packages/rsnap-capture-core/` for platform-neutral session semantics and host/core protocol
     models, plus Rust-owned export, capture-frame rendering, wallpaper thumbnail, minimap,
@@ -168,7 +169,7 @@ Rsnap requires **Screen Recording** permission to capture other apps/windows.
 
 As of v0.2.5, Scroll Capture is exposed for dragged-region Frozen captures on macOS. It remains
 absent for window-click and fullscreen freezes. The retained Rust scroll-capture session,
-deterministic replay, and benchmark surfaces remain the validation authority for stitching behavior.
+deterministic tests, and benchmark surfaces remain the validation authority for stitching behavior.
 
 The implementation commits downward growth only after ordered-frame pairwise registration plus
 overlap proof, fails closed on weak registration or rewind, and forwards wheel input to target apps
@@ -206,20 +207,20 @@ Native-host local loop:
 Smoke/perf entrypoints:
 
 ```sh
-scripts/smoke/replay-scroll-capture.sh
-scripts/smoke/replay-scroll-capture-self-check.sh
-scripts/smoke/analyze-scroll-capture-trace.sh
 scripts/smoke/native-hud-follow-macos.sh
+scripts/smoke/native-visual-contract-macos.sh
+scripts/smoke/native-scroll-capture-macos.sh
 scripts/smoke/self-check-macos.sh
 scripts/smoke/macos.sh
+scripts/smoke/native-prepared-export-macos.sh
 scripts/smoke/sparkle-update-local.sh
 scripts/perf/local.sh
 scripts/perf/self-check-macos.sh
 scripts/perf/macos.sh
 ```
 
-`scripts/smoke/macos.sh` and `scripts/perf/macos.sh` run the native-host HUD-follow smoke
-plus recorded scroll-capture replay.
+`scripts/smoke/macos.sh` runs the native visual contract and HUD-follow smoke. `scripts/perf/macos.sh`
+runs the deterministic Rust perf sweep plus the native-host HUD-follow and visual-contract smokes.
 
 For durable command selection, verification order, baseline workflow, and asset ownership:
 
@@ -235,7 +236,7 @@ The tracked workspace currently keeps:
 
 - `native/macos-host/` as the new AppKit-first macOS host shell and local run target
 - `apps/rsnap/` as the thin launcher/bootstrap crate for the native host bundle
-- `packages/rsnap-overlay/` as the large transitional overlay/runtime container
+- `packages/rsnap-overlay/` as the narrowed Rust transition crate for retained helper surfaces
 - `packages/rsnap-capture-core/` as the durable product-semantics and image-algorithm layer
 - `packages/rsnap-host-ffi/` as the thin C ABI bridge used by the native macOS host
 

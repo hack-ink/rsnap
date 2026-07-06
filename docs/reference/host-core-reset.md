@@ -1,3 +1,12 @@
+---
+title: "Host/Core Reset Reference"
+description: "Host/Core Reset Reference documentation for Rsnap."
+type: "Reference"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Host/Core Reset Reference
 
 Purpose: Describe the active target architecture for the Rsnap reset lane and how new work should
@@ -41,9 +50,10 @@ The checked-in repository does not yet fully match the target design.
 Today:
 
 - `apps/rsnap/` is now the thin launcher/bootstrap layer for the staged native host bundle
-- `packages/rsnap-overlay/` is still a large transitional runtime container, but its public root
-  now centers on session/replay surfaces while remaining macOS host adapters stay behind explicit
-  host modules
+- `packages/rsnap-overlay/` is now a narrowed transition crate for retained scroll-capture
+  stitching, frozen edit/export, text rendering, deterministic benches, and macOS live-sampling
+  adapters; the legacy Rust overlay UI/runtime, replay harness, trace recorder, shaders, and
+  backend worker tree are no longer part of the checked-in source
 - `packages/rsnap-capture-core/` is now the checked-in landing zone for portable geometry,
   semantic scene models, host/core protocol types, export/crop/PNG encoding, capture-frame
   planning/rendering, wallpaper thumbnail decode/cache, minimap planning, mosaic generation,
@@ -245,10 +255,10 @@ Current reset posture for the scroll-capture slice:
 
 - the native app host owns scroll-capture permission checks, external scroll-input observer
   lifecycle, native scroll-input normalization, and screenshot capability acquisition
-- the Rust overlay core owns scroll-capture session state, overlap proof, stitching, and
+- the retained Rust scroll-capture core owns scroll-capture session state, overlap proof, stitching, and
   fail-closed product semantics
 - capability start/stop, frame delivery, and host-side failures must cross the boundary as explicit
-  host/core protocol calls instead of implicit worker ownership inside the overlay runtime
+  host/core protocol calls instead of implicit worker ownership inside a Rust UI runtime
 
 Current reset posture for the boundary slice:
 

@@ -3,7 +3,6 @@ use std::{
 	sync::{Arc, OnceLock},
 };
 
-use egui::{FontData, FontDefinitions, FontFamily};
 use fontdb::{Database, FaceInfo, Family, ID, Query, Stretch, Style, Weight};
 use ttf_parser::Face;
 
@@ -15,16 +14,23 @@ const MAX_SYSTEM_TEXT_FALLBACKS: usize = 16;
 const MAX_SYSTEM_TEXT_COVERAGE_PROBES: usize = 64;
 
 #[derive(Debug)]
+pub(crate) struct SystemTextFontData {
+	pub(crate) bytes: Arc<Vec<u8>>,
+	pub(crate) index: u32,
+}
+impl SystemTextFontData {
+	#[cfg(test)]
+	pub(crate) fn from_static(bytes: &'static [u8]) -> Self {
+		Self { bytes: Arc::new(bytes.to_vec()), index: 0 }
+	}
+}
+
+#[derive(Debug)]
 pub(crate) struct SystemTextFont {
-	name: String,
-	font_data: Arc<FontData>,
+	font_data: Arc<SystemTextFontData>,
 }
 impl SystemTextFont {
-	pub(crate) fn egui_name(&self) -> &str {
-		self.name.as_str()
-	}
-
-	pub(crate) fn egui_font_data(&self) -> Arc<FontData> {
+	pub(crate) fn font_data(&self) -> Arc<SystemTextFontData> {
 		Arc::clone(&self.font_data)
 	}
 }
@@ -55,20 +61,6 @@ pub(crate) fn system_text_fonts() -> &'static [SystemTextFont] {
 	static FONTS: OnceLock<Vec<SystemTextFont>> = OnceLock::new();
 
 	FONTS.get_or_init(load_system_text_fonts).as_slice()
-}
-
-pub(crate) fn configure_text_font_fallbacks(fonts: &mut FontDefinitions) {
-	for font in system_text_fonts() {
-		fonts.font_data.insert(font.egui_name().to_owned(), font.egui_font_data());
-	}
-
-	let proportional_family = fonts.families.entry(FontFamily::Proportional).or_default();
-
-	for font in system_text_fonts() {
-		if !proportional_family.iter().any(|name| name == font.egui_name()) {
-			proportional_family.push(font.egui_name().to_owned());
-		}
-	}
 }
 
 fn load_system_text_fonts() -> Vec<SystemTextFont> {
@@ -258,13 +250,11 @@ fn primary_family_name(face: &FaceInfo) -> Option<String> {
 fn build_system_text_font(database: &Database, face_id: ID) -> Option<SystemTextFont> {
 	database
 		.with_face_data(face_id, |font_bytes, face_index| {
-			let mut font_data = FontData::from_owned(font_bytes.to_vec());
-
-			font_data.index = face_index;
-
 			Some(SystemTextFont {
-				name: format!("system-fallback-{face_id}"),
-				font_data: Arc::new(font_data),
+				font_data: Arc::new(SystemTextFontData {
+					bytes: Arc::new(font_bytes.to_vec()),
+					index: face_index,
+				}),
 			})
 		})
 		.flatten()

@@ -1,3 +1,12 @@
+---
+title: "Rsnap Capture Session Contract"
+description: "Rsnap Capture Session Contract documentation for Rsnap."
+type: "Spec"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Rsnap Capture Session Contract
 
 Purpose: Define the product-level normative contract for Rsnap capture flow, Frozen-mode
@@ -228,9 +237,9 @@ this contract.
   what the user sees.
 - `Space` copies the stitched image and exits. Cmd+S (macOS) / Ctrl+S saves it and exits.
   `Esc` / `Back` stops scroll capture and restores the original Frozen capture.
-- Verification order is part of the contract: deterministic and replay entrypoints must pass
-  before any final live touchpad acceptance run is treated as authoritative for re-enabling the
-  feature.
+- Verification order is part of the contract: deterministic scroll-capture tests and native scroll
+  smoke must pass before any final live touchpad acceptance run is treated as authoritative for
+  re-enabling the feature.
 
 ## HUD and control defaults
 

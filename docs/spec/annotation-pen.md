@@ -1,3 +1,12 @@
+---
+title: "Rsnap Annotation Pen Contract"
+description: "Rsnap Annotation Pen Contract documentation for Rsnap."
+type: "Spec"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Rsnap Annotation Pen Contract
 
 Purpose: Define the normative behavior contract for the Frozen-mode pen tool used for screenshot

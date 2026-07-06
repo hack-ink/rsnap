@@ -1,3 +1,12 @@
+---
+title: "Scroll-Capture Benchmark Runbook"
+description: "Scroll-Capture Benchmark Runbook documentation for Rsnap."
+type: "Runbook"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Scroll-Capture Benchmark Runbook
 
 Goal: Run the deterministic `rsnap-overlay` scroll-capture benchmarks, understand the committed
@@ -16,15 +25,15 @@ understanding of what the synthetic fixture is intended to cover.
 
 Current release status: v0.2.5 exposes user-facing Scroll Capture for dragged-region Frozen
 captures in the native host. This runbook applies to the retained internal scroll-capture engine,
-replay, and stitching validation work; it is not release-readiness evidence by itself.
+benchmark, and stitching validation work; it is not release-readiness evidence by itself.
 
 If you are debugging correctness rather than hot-path speed, route through
-`docs/runbook/performance-validation.md` first. That runbook owns replay,
-self-check, semantic analysis, and macOS smoke command selection.
+`docs/runbook/performance-validation.md` first. That runbook owns deterministic scroll-capture
+tests, readiness self-checks, performance sweeps, and macOS smoke command selection.
 
 Use the benchmark target below only when you specifically need performance numbers. A clean
-benchmark run does not replace replay, trace analysis, or the final fresh live touchpad
-acceptance run.
+benchmark run does not replace deterministic correctness tests, native scroll smoke, or the final
+fresh live touchpad acceptance run.
 
 ## Fixture contract
 
@@ -82,8 +91,8 @@ session-commit groups before escalating to live desktop smoke.
 
 ## When to use a different surface
 
-- If the regression is in live overlay cadence, HUD movement, or loupe timing, use the overlay
-  instrumentation and desktop smoke surfaces instead of this runbook.
+- If the regression is in native live chrome cadence, HUD movement, or loupe timing, use the
+  native-host instrumentation and desktop smoke surfaces instead of this runbook.
 - If the fixture itself needs to change because the scroll-capture algorithm contract changed,
   update the code-generated fixture in `scroll_capture::bench_support` and keep the scenario names
   explicit in the commit so baseline history remains interpretable.

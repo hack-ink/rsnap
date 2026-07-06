@@ -243,6 +243,10 @@ pub(crate) fn rgba_image_from_pixel_buffer_color_managed(
 }
 
 #[cfg(target_os = "macos")]
+#[allow(
+	dead_code,
+	reason = "Retained for native image inputs until the remaining live-sampling adapter moves out of this transition crate."
+)]
 pub(crate) fn rgba_image_from_cg_image_color_managed(
 	cg_image: &CGImage,
 	display_id: Option<u32>,

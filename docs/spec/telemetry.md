@@ -1,3 +1,12 @@
+---
+title: "Telemetry Schema"
+description: "Telemetry Schema documentation for Rsnap."
+type: "Spec"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Telemetry Schema
 
 Purpose: Define the required telemetry fields, source boundaries, and naming rules for
@@ -25,7 +34,7 @@ Rsnap has two active telemetry sources.
 Native-host events are the authoritative source for screenshot startup, live sampling,
 Frozen transition, pasteboard write, and native ScreenCaptureKit lifecycle timing.
 
-Rust tracing events are the authoritative source for the older Rust overlay runtime,
+Rust tracing events are the authoritative source for retained Rust transition helpers,
 scroll capture, live frame stream internals, and file-log initialization.
 
 ## Required Fields

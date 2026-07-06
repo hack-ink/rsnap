@@ -1,3 +1,12 @@
+---
+title: "Settings and App Shell Contract"
+description: "Settings and App Shell Contract documentation for Rsnap."
+type: "Spec"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Settings and App Shell Contract
 
 Purpose: Define the normative Settings, status-menu, shortcut, permission, and macOS app-shell

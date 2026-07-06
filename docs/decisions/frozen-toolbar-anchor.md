@@ -1,3 +1,12 @@
+---
+title: "Frozen Toolbar Stable Anchor"
+description: "Frozen Toolbar Stable Anchor documentation for Rsnap."
+type: "Decision"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Frozen Toolbar Stable Anchor
 
 Status: accepted

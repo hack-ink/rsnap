@@ -1,3 +1,12 @@
+---
+title: "Telemetry Debugging"
+description: "Telemetry Debugging documentation for Rsnap."
+type: "Runbook"
+status: active
+authority: normative
+owner: hack-ink/rsnap
+last_verified: 2026-07-06
+---
 # Telemetry Debugging
 
 Goal: Collect and summarize Rsnap native-host and Rust telemetry for screenshot,
