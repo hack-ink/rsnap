@@ -5,16 +5,14 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use image::RgbaImage;
-
 use crate::live_frame_stream_macos::frame_store::{SharedLatestFrame, StreamGenerationStatus};
-use crate::live_frame_stream_macos::live_frame_buffer::{self, OrderedRegionFrame};
+use crate::live_frame_stream_macos::live_frame_buffer::OrderedRegionFrame;
 use crate::live_frame_stream_macos::stream_config::StreamCaptureTarget;
 use crate::live_frame_stream_macos::stream_filter::StreamFilterConfig;
 use crate::live_frame_stream_macos::stream_lifecycle::{self, StreamRequestProgress};
 use crate::live_frame_stream_macos::stream_setup::{self, StreamState};
 use crate::live_frame_stream_macos::{STREAM_REGION_FRAME_MAX_AGE, STREAM_SETUP_BACKOFF};
-use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints};
+use crate::state::{MonitorRect, RectPoints};
 
 pub(super) enum WorkerRequest {
 	EnsureMonitor {
@@ -24,24 +22,6 @@ pub(super) enum WorkerRequest {
 	Reset,
 	RefreshMonitor {
 		monitor: MonitorRect,
-	},
-	SampleCursor {
-		monitor: MonitorRect,
-		x_px: u32,
-		y_px: u32,
-		want_patch: bool,
-		patch_width_px: u32,
-		patch_height_px: u32,
-		reply_tx: Sender<Option<LiveCursorSample>>,
-	},
-	LatestRgbaSnapshot {
-		monitor: MonitorRect,
-		reply_tx: Sender<Option<Arc<MonitorImageSnapshot>>>,
-	},
-	LatestRgbaRegion {
-		monitor: MonitorRect,
-		rect_px: RectPoints,
-		reply_tx: Sender<Option<RgbaImage>>,
 	},
 	OrderedRgbaRegionsAfterSeq {
 		monitor: MonitorRect,
@@ -184,65 +164,6 @@ fn handle_stream_worker_request(
 			frame_seq_counter,
 			shared_latest_frame,
 		),
-		WorkerRequest::SampleCursor {
-			monitor,
-			x_px,
-			y_px,
-			want_patch,
-			patch_width_px,
-			patch_height_px,
-			reply_tx,
-		} => {
-			reply_with_sample_cursor(
-				state,
-				last_setup_attempt_at,
-				monitor,
-				filter,
-				capture_target,
-				frame_waker,
-				frame_seq_counter,
-				shared_latest_frame,
-				x_px,
-				y_px,
-				want_patch,
-				patch_width_px,
-				patch_height_px,
-				reply_tx,
-			);
-
-			true
-		},
-		WorkerRequest::LatestRgbaSnapshot { monitor, reply_tx } => {
-			reply_with_latest_rgba_snapshot(
-				state,
-				last_setup_attempt_at,
-				monitor,
-				filter,
-				capture_target,
-				frame_waker,
-				frame_seq_counter,
-				shared_latest_frame,
-				reply_tx,
-			);
-
-			true
-		},
-		WorkerRequest::LatestRgbaRegion { monitor, rect_px, reply_tx } => {
-			reply_with_latest_rgba_region(
-				state,
-				last_setup_attempt_at,
-				monitor,
-				rect_px,
-				filter,
-				capture_target,
-				frame_waker,
-				frame_seq_counter,
-				shared_latest_frame,
-				reply_tx,
-			);
-
-			true
-		},
 		WorkerRequest::OrderedRgbaRegionsAfterSeq {
 			monitor,
 			rect_px,
@@ -355,121 +276,6 @@ fn handle_refresh_monitor_request(
 	}
 
 	true
-}
-
-#[allow(clippy::too_many_arguments)]
-fn reply_with_sample_cursor(
-	state: &mut Option<StreamState>,
-	last_setup_attempt_at: &mut Option<Instant>,
-	monitor: MonitorRect,
-	filter: &StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-	x_px: u32,
-	y_px: u32,
-	want_patch: bool,
-	patch_width_px: u32,
-	patch_height_px: u32,
-	reply_tx: Sender<Option<LiveCursorSample>>,
-) {
-	let _ = stream_lifecycle::ensure_stream(
-		state,
-		last_setup_attempt_at,
-		STREAM_SETUP_BACKOFF,
-		false,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-	);
-	let rgb = state.as_ref().and_then(|stream_state| {
-		stream_state.output.latest_pixel_buffer().and_then(|pixel_buffer| {
-			live_frame_buffer::sample_cursor_from_pixel_buffer(
-				&pixel_buffer,
-				x_px,
-				y_px,
-				want_patch,
-				patch_width_px,
-				patch_height_px,
-			)
-		})
-	});
-	let _ = reply_tx.send(rgb);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn reply_with_latest_rgba_snapshot(
-	state: &mut Option<StreamState>,
-	last_setup_attempt_at: &mut Option<Instant>,
-	monitor: MonitorRect,
-	filter: &StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-	reply_tx: Sender<Option<Arc<MonitorImageSnapshot>>>,
-) {
-	let _ = stream_lifecycle::ensure_stream(
-		state,
-		last_setup_attempt_at,
-		STREAM_SETUP_BACKOFF,
-		false,
-		monitor,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-	);
-	let snapshot = state.as_ref().and_then(|stream_state| {
-		let frame = stream_state.output.latest_frame()?;
-		let (width_px, height_px) = live_frame_buffer::pixel_buffer_size_px(&frame.pixel_buffer)?;
-		let image = live_frame_buffer::rgba_image_from_pixel_buffer(
-			&frame.pixel_buffer,
-			width_px,
-			height_px,
-			monitor.id,
-		)?;
-
-		Some(Arc::new(MonitorImageSnapshot {
-			captured_at: frame.captured_at,
-			stream_generation: frame.stream_generation,
-			monitor,
-			image: Arc::new(image),
-		}))
-	});
-	let _ = reply_tx.send(snapshot);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn reply_with_latest_rgba_region(
-	state: &mut Option<StreamState>,
-	last_setup_attempt_at: &mut Option<Instant>,
-	monitor: MonitorRect,
-	rect_px: RectPoints,
-	filter: &StreamFilterConfig,
-	capture_target: StreamCaptureTarget,
-	frame_waker: Option<Arc<dyn Fn() + Send + Sync>>,
-	frame_seq_counter: Arc<AtomicU64>,
-	shared_latest_frame: Arc<SharedLatestFrame>,
-	reply_tx: Sender<Option<RgbaImage>>,
-) {
-	let image = stream_lifecycle::latest_fresh_rgba_region(
-		state,
-		last_setup_attempt_at,
-		monitor,
-		rect_px,
-		filter,
-		capture_target,
-		frame_waker,
-		frame_seq_counter,
-		shared_latest_frame,
-	);
-	let _ = reply_tx.send(image);
 }
 
 #[allow(clippy::too_many_arguments)]

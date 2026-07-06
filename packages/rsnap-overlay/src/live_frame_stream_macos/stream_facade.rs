@@ -7,9 +7,8 @@ use std::sync::{
 	mpsc::{self, Sender},
 };
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use image::RgbaImage;
 use objc2_core_foundation::CFRetained;
 use objc2_core_video::CVPixelBufferCreate;
 
@@ -21,38 +20,7 @@ use crate::live_frame_stream_macos::live_frame_buffer::{
 use crate::live_frame_stream_macos::stream_config::{StreamCaptureRegion, StreamCaptureTarget};
 use crate::live_frame_stream_macos::stream_filter::StreamFilterConfig;
 use crate::live_frame_stream_macos::stream_worker::{self, WorkerRequest};
-use crate::state::{LiveCursorSample, MonitorImageSnapshot, MonitorRect, RectPoints, Rgb};
-
-pub(crate) struct LiveCursorFrameSample {
-	pub(crate) sample: LiveCursorSample,
-	pub(crate) frame_age: Duration,
-	pub(crate) frame_seq: u64,
-	pub(crate) stream_generation: u64,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct CursorSampleRequest {
-	pub(crate) x_px: u32,
-	pub(crate) y_px: u32,
-	pub(crate) want_patch: bool,
-	pub(crate) patch_width_px: u32,
-	pub(crate) patch_height_px: u32,
-}
-impl CursorSampleRequest {
-	pub(crate) fn rgb(x_px: u32, y_px: u32) -> Self {
-		Self { x_px, y_px, want_patch: false, patch_width_px: 0, patch_height_px: 0 }
-	}
-
-	pub(crate) fn with_optional_patch(
-		x_px: u32,
-		y_px: u32,
-		want_patch: bool,
-		patch_width_px: u32,
-		patch_height_px: u32,
-	) -> Self {
-		Self { x_px, y_px, want_patch, patch_width_px, patch_height_px }
-	}
-}
+use crate::state::{MonitorRect, RectPoints};
 
 pub(crate) struct MacLiveFrameStream {
 	request_tx: Sender<WorkerRequest>,
@@ -242,112 +210,6 @@ impl MacLiveFrameStream {
 		})
 	}
 
-	pub(crate) fn sample_rgb(&mut self, monitor: MonitorRect, x_px: u32, y_px: u32) -> Option<Rgb> {
-		self.request(|reply_tx| WorkerRequest::SampleCursor {
-			monitor,
-			x_px,
-			y_px,
-			want_patch: false,
-			patch_width_px: 0,
-			patch_height_px: 0,
-			reply_tx,
-		})
-		.flatten()
-		.and_then(|sample| sample.rgb)
-	}
-
-	pub(crate) fn sample_rgba_patch(
-		&mut self,
-		monitor: MonitorRect,
-		center_x_px: u32,
-		center_y_px: u32,
-		width_px: u32,
-		height_px: u32,
-	) -> Option<RgbaImage> {
-		self.request(|reply_tx| WorkerRequest::SampleCursor {
-			monitor,
-			x_px: center_x_px,
-			y_px: center_y_px,
-			want_patch: true,
-			patch_width_px: width_px,
-			patch_height_px: height_px,
-			reply_tx,
-		})
-		.flatten()
-		.and_then(|sample| sample.patch)
-	}
-
-	pub(crate) fn latest_cursor_sample(
-		&self,
-		monitor: MonitorRect,
-		request: CursorSampleRequest,
-	) -> Option<LiveCursorSample> {
-		self.latest_cursor_frame_sample(monitor, request).map(|sample| sample.sample)
-	}
-
-	pub(crate) fn latest_cursor_frame_sample(
-		&self,
-		monitor: MonitorRect,
-		request: CursorSampleRequest,
-	) -> Option<LiveCursorFrameSample> {
-		let sample =
-			self.shared_latest_frame.latest_frame_for_monitor(monitor.id).and_then(|frame| {
-				let sample = live_frame_buffer::sample_cursor_from_pixel_buffer(
-					&frame.pixel_buffer,
-					request.x_px,
-					request.y_px,
-					request.want_patch,
-					request.patch_width_px,
-					request.patch_height_px,
-				)?;
-
-				Some(LiveCursorFrameSample {
-					sample,
-					frame_age: Instant::now().saturating_duration_since(frame.captured_at),
-					frame_seq: frame.frame_seq,
-					stream_generation: frame.stream_generation,
-				})
-			});
-
-		if sample.is_none() {
-			self.prime_monitor_nonblocking(monitor);
-		}
-
-		sample
-	}
-
-	pub(crate) fn latest_rgba_snapshot(
-		&mut self,
-		monitor: MonitorRect,
-	) -> Option<Arc<MonitorImageSnapshot>> {
-		self.request(|reply_tx| WorkerRequest::LatestRgbaSnapshot { monitor, reply_tx }).flatten()
-	}
-
-	pub(crate) fn peek_latest_rgba_snapshot(
-		&self,
-		monitor: MonitorRect,
-	) -> Option<Arc<MonitorImageSnapshot>> {
-		let Some(frame) = self.shared_latest_frame.latest_frame_for_monitor(monitor.id) else {
-			self.prime_monitor_nonblocking(monitor);
-
-			return None;
-		};
-		let (width_px, height_px) = live_frame_buffer::pixel_buffer_size_px(&frame.pixel_buffer)?;
-		let image = live_frame_buffer::rgba_image_from_pixel_buffer(
-			&frame.pixel_buffer,
-			width_px,
-			height_px,
-			monitor.id,
-		)?;
-
-		Some(Arc::new(MonitorImageSnapshot {
-			captured_at: frame.captured_at,
-			stream_generation: frame.stream_generation,
-			monitor,
-			image: Arc::new(image),
-		}))
-	}
-
 	pub(crate) fn latest_frame_frontier_for_monitor(
 		&self,
 		monitor: MonitorRect,
@@ -359,33 +221,6 @@ impl MacLiveFrameStream {
 
 	pub(crate) fn self_capture_filter_complete_for_monitor(&self, monitor: MonitorRect) -> bool {
 		self.shared_latest_frame.self_capture_filter_complete_for_monitor(monitor.id)
-	}
-
-	pub(crate) fn latest_rgba_region(
-		&mut self,
-		monitor: MonitorRect,
-		rect_px: RectPoints,
-	) -> Option<RgbaImage> {
-		#[cfg(test)]
-		self.record_debug_request_kind("latest_rgba_region");
-
-		self.request(|reply_tx| WorkerRequest::LatestRgbaRegion { monitor, rect_px, reply_tx })
-			.flatten()
-	}
-
-	pub(crate) fn latest_rgba_region_if_new(
-		&mut self,
-		monitor: MonitorRect,
-		rect_px: RectPoints,
-		after_frame_seq: u64,
-	) -> Option<(u64, RgbaImage)> {
-		#[cfg(test)]
-		self.record_debug_request_kind("latest_rgba_region_if_new");
-
-		let mut frames = self.ordered_rgba_regions_after_seq(monitor, rect_px, after_frame_seq)?;
-		let frame = frames.pop()?;
-
-		Some((frame.frame_seq, frame.image))
 	}
 
 	pub(crate) fn ordered_rgba_regions_after_seq(

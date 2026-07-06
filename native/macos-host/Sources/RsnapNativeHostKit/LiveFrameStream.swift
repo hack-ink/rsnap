@@ -117,35 +117,6 @@ final class LiveFrameStreamBroker: @unchecked Sendable {
 		try? sampler.reset()
 	}
 
-	func patch(in rect: CGRect) -> CGImage? {
-		region(in: rect)
-	}
-
-	func region(in rect: CGRect) -> CGImage? {
-		guard let monitor = monitor(containing: CGPoint(x: rect.midX, y: rect.midY)) else {
-			return nil
-		}
-		stateLock.lock()
-		let sampler = self.sampler
-		let mainDisplayHeight = self.mainDisplayHeight
-		let encodedMonitor = samplerMonitorSnapshot(for: monitor)
-		stateLock.unlock()
-		guard let sampler else {
-			return nil
-		}
-		let quartzRect = Self.appKitRectToQuartz(rect, mainDisplayHeight: mainDisplayHeight)
-		guard let snapshot = try? sampler.peekRegion(monitor: encodedMonitor, rect: quartzRect)
-		else {
-			return nil
-		}
-
-		return NativeHostImageBridge.cgImage(
-			width: snapshot.width,
-			height: snapshot.height,
-			rgba: snapshot.rgba
-		)
-	}
-
 	func nextRegionFrame(
 		in rect: CGRect,
 		afterFrameSequence: UInt64,

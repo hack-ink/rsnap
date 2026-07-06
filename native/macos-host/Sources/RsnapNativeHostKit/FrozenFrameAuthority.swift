@@ -38,6 +38,7 @@ final class FrozenFrameAuthority: @unchecked Sendable {
 	static let maximumSnapshotAgeMilliseconds = 150.0
 	static let maximumLiveRgbAgeMilliseconds =
 		LiveRgbSample.maximumDisplayAge * 1_000
+	static let maximumLiveRegionAgeMilliseconds = maximumSnapshotAgeMilliseconds
 	static let selfCaptureFilterRetryInterval: TimeInterval = 0.035
 	static let selfCaptureFilterRetryWindow: TimeInterval = 2.5
 

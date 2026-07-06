@@ -5,21 +5,26 @@ import RsnapHostBridge
 
 @MainActor
 final class CaptureOverlayLiveChromePipeline {
+	typealias FrameRegionSampler = @Sendable (CGRect) -> CGImage?
+
 	private let liveFrameStream: LiveFrameStreamBroker
 	private let chromeSampleFeed: ChromeSampleFeed
 	private let liveChromeBackdrops = LiveChromeBackdropWindowController()
 	private let frameRgbSampler: ChromeSampleFeed.FrameRgbSampler
 	private let framePatchSampler: ChromeSampleFeed.FramePatchSampler
+	private let frameRegionSampler: FrameRegionSampler
 
 	init(
 		liveFrameStream: LiveFrameStreamBroker,
 		frameRgbSampler: @escaping ChromeSampleFeed.FrameRgbSampler,
 		framePatchSampler: @escaping ChromeSampleFeed.FramePatchSampler,
+		frameRegionSampler: @escaping FrameRegionSampler,
 		sampleUpdated: @escaping () -> Void
 	) {
 		self.liveFrameStream = liveFrameStream
 		self.frameRgbSampler = frameRgbSampler
 		self.framePatchSampler = framePatchSampler
+		self.frameRegionSampler = frameRegionSampler
 		self.chromeSampleFeed = ChromeSampleFeed(
 			frameRgbSampler: frameRgbSampler,
 			framePatchSampler: framePatchSampler,
@@ -73,17 +78,16 @@ final class CaptureOverlayLiveChromePipeline {
 		in rect: CGRect,
 		captureBelowOverlay: () -> CGImage?
 	) -> CGImage? {
-		liveFrameStream.region(in: rect)
+		frameRegionSampler(rect)
 			?? captureBelowOverlay()
-			?? liveFrameStream.patch(in: rect)
 	}
 
 	func streamPatch(in rect: CGRect) -> CGImage? {
-		liveFrameStream.patch(in: rect)
+		frameRegionSampler(rect)
 	}
 
 	func cachedRegionImage(in rect: CGRect) -> CGImage? {
-		liveFrameStream.region(in: rect)
+		frameRegionSampler(rect)
 	}
 
 	func nextRegionFrame(
